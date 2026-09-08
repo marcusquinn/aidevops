@@ -690,6 +690,21 @@ test_non_review_failure_blocks_required_check_bypass() {
 	return 0
 }
 
+test_superseded_non_review_cancel_does_not_block_required_check_bypass() {
+	local fixture_tmp="${TEST_ROOT}/pr-with-superseded-cancel.json"
+
+	write_pr_fixture "dependabot" "dependabot[bot]" "requirements-lock.txt" "SUCCESS"
+	jq '.statusCheckRollup += [{"name":"Framework Validation","conclusion":"CANCELLED","status":"COMPLETED"}]' \
+		"${TEST_ROOT}/pr.json" >"$fixture_tmp"
+	mv "$fixture_tmp" "${TEST_ROOT}/pr.json"
+	if _trusted_dependabot_non_review_checks_green "24473" "owner/repo"; then
+		print_result "superseded non-review cancellation does not block Dependabot required-check bypass" 0
+		return 0
+	fi
+	print_result "superseded non-review cancellation does not block Dependabot required-check bypass" 1 "Expected a same-name successful check to supersede cancellation. Log: $(<"$LOGFILE")"
+	return 0
+}
+
 main() {
 	setup_test_env
 	trap teardown_test_env EXIT
@@ -728,6 +743,7 @@ main() {
 	test_review_bot_failure_is_ignored_when_other_checks_green
 	test_precomputed_status_rollup_skips_graphql
 	test_non_review_failure_blocks_required_check_bypass
+	test_superseded_non_review_cancel_does_not_block_required_check_bypass
 
 	printf '\nTests run: %s\n' "$TESTS_RUN"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
