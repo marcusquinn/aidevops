@@ -10,6 +10,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.344] - 2026-09-08
+
+### Added
+
+- complete approved maintainer review fixes
+
+### Changed
+
+- Maintenance: mark t18413 complete (pr:#31589 completed:2026-09-08) (#31591)
+
+### Fixed
+
+- downgrade stale progress advisory (#31626)
+- allow trusted secretlint updates (#31624)
+- trust React DOM Dependabot update (#31623)
+- allow trusted React DOM type updates (#31619)
+- trust Secretlint Dependabot updates (#31614)
+- dispatch OpenCode canary reviews
+
 ## [3.32.343] - 2026-09-08
 
 ### Changed
