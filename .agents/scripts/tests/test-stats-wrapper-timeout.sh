@@ -396,6 +396,36 @@ test_health_dashboard_slow_cross_repo_rates_are_bounded_once() {
 	return 0
 }
 
+test_health_dashboard_reserves_publication_time_from_history() {
+	if (
+		local scripts="${SCRIPT_DIR}/.."
+		local SCRIPT_DIR="$scripts"
+		# shellcheck source=../shared-constants.sh
+		source "$scripts/shared-constants.sh"
+		# shellcheck source=../worker-lifecycle-common.sh
+		source "$scripts/worker-lifecycle-common.sh"
+		# shellcheck source=../stats-functions.sh
+		source "$scripts/stats-functions.sh"
+		local now timeout
+		now=$(date +%s)
+		AIDEVOPS_GH_DEADLINE_EPOCH=$((now + 10))
+		STATS_HEALTH_ACTIVITY_TIMEOUT=60
+		STATS_HEALTH_PUBLICATION_RESERVE_SECONDS=4
+		timeout=$(_stats_health_optional_section_timeout 2)
+		[[ "$timeout" -ge 2 && "$timeout" -le 3 ]] || exit 1
+		timeout=$(_stats_health_optional_section_timeout 1)
+		[[ "$timeout" -ge 4 && "$timeout" -le 6 ]] || exit 2
+		AIDEVOPS_GH_DEADLINE_EPOCH=$((now + 3))
+		timeout=$(_stats_health_optional_section_timeout 1)
+		[[ "$timeout" -eq 0 ]] || exit 3
+	); then
+		pass "history sections share remaining time and reserve dashboard publication"
+	else
+		fail "history sections share remaining time and reserve dashboard publication" "fixture exit=$?"
+	fi
+	return 0
+}
+
 _test_stats_preflight_deadlines() {
 	local REPOS_JSON="$HOME/repos.json" start elapsed
 	local STATS_OPTIONAL_WORK_RESERVE_SECONDS=0 QUALITY_SWEEP_CLEANUP_RESERVE_SECONDS=0
@@ -430,6 +460,7 @@ main_test() {
 	test_healthy_update_runs_health_then_quality_once
 	test_resumable_quality_batches
 	test_health_dashboard_slow_cross_repo_rates_are_bounded_once
+	test_health_dashboard_reserves_publication_time_from_history
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	[[ "$TESTS_FAILED" -eq 0 ]]
 }
