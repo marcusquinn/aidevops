@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.340] - 2026-09-08
+
+### Added
+
+- add local site inventory lookup (#31567)
+
+### Fixed
+
+- retain release tag identity through reconciliation
+- use registered repository cwd (#31565)
+
 ## [3.32.339] - 2026-09-08
 
 ### Fixed
