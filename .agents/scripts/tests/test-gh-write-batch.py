@@ -16,7 +16,8 @@ from unittest import mock
 
 SCRIPT = Path(__file__).resolve().parents[1] / "gh-write-batch.py"
 SPEC = importlib.util.spec_from_file_location("gh_write_batch", SCRIPT)
-assert SPEC and SPEC.loader
+if SPEC is None or SPEC.loader is None:
+    raise RuntimeError("unable to load gh-write-batch.py")
 BATCH = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(BATCH)
 
@@ -25,12 +26,12 @@ class BatchTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory(prefix="gh-write-batch-test.")
         self.root = Path(self.temporary.name)
-        os.chmod(self.root, 0o700)
+        os.chmod(self.root, 0o700)  # nosec B103 - owner-only writable fixture directory
         self.signature = self.private_file(
             "signature-helper.sh",
             "#!/usr/bin/env bash\nprintf '%s\\n' '<!-- aidevops:sig -->' 'canonical footer'\n",
         )
-        os.chmod(self.signature, 0o700)
+        os.chmod(self.signature, 0o500)
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
@@ -95,6 +96,16 @@ class BatchTests(unittest.TestCase):
             result = BATCH.execute(args)
         return result, json.loads(receipt_path.read_text(encoding="utf-8"))
 
+    def two_comment_batch(self) -> tuple[dict, dict]:
+        body = self.private_file("body.md", "Comment\n")
+        prepared = self.prepare(
+            [
+                {"id": "one", "kind": "issue_comment", "number": 1, "body_file": str(body)},
+                {"id": "two", "kind": "pr_comment", "number": 2, "body_file": str(body)},
+            ]
+        )
+        return prepared, self.preflight(prepared)
+
     def test_prepare_signs_comments_and_rejects_unsafe_shapes(self) -> None:
         body = self.private_file("body.md", "Substantive comment\n")
         prepared = self.prepare(
@@ -141,15 +152,8 @@ class BatchTests(unittest.TestCase):
         self.assertEqual(receipt["overall"], "succeeded")
         self.assertEqual({op["status"] for op in receipt["operations"]}, {"succeeded"})
 
-    def test_partial_error_timeout_and_authority_fail_closed(self) -> None:
-        body = self.private_file("body.md", "Comment\n")
-        prepared = self.prepare(
-            [
-                {"id": "one", "kind": "issue_comment", "number": 1, "body_file": str(body)},
-                {"id": "two", "kind": "pr_comment", "number": 2, "body_file": str(body)},
-            ]
-        )
-        preflight = self.preflight(prepared)
+    def test_partial_and_graphql_errors_fail_closed(self) -> None:
+        prepared, preflight = self.two_comment_batch()
         partial = {
             "data": {
                 "o0": {
@@ -179,6 +183,8 @@ class BatchTests(unittest.TestCase):
         )
         self.assertEqual({op["status"] for op in receipt["operations"]}, {"unknown"})
 
+    def test_timeout_deferred_and_preflight_rejections(self) -> None:
+        prepared, preflight = self.two_comment_batch()
         _, receipt = self.execute(
             prepared,
             [(0, json.dumps(preflight), "", False), (124, "", "timeout", True)],
@@ -210,7 +216,7 @@ class BatchTests(unittest.TestCase):
         self.assertEqual(result, 1)
         self.assertEqual(receipt["operations"][0]["status"], "rejected")
 
-    def test_recovery_uses_original_marker_and_prevents_duplicate_comment(self) -> None:
+    def test_comment_recovery_uses_marker_and_exact_payload(self) -> None:
         body = self.private_file("recovery-body.md", "Recover me\n")
         original = self.prepare(
             [{"id": "recover", "kind": "issue_comment", "number": 9, "body_file": str(body)}]
@@ -238,6 +244,7 @@ class BatchTests(unittest.TestCase):
                 {"manifest_sha256": original["manifest_sha256"], "receipt_file": str(receipt_path)},
             )
 
+    def test_pr_edit_recovery_ignores_dynamic_signature_footer(self) -> None:
         pr_body = self.private_file("pr-body.md", "Stable PR content\n")
         original_edit = self.prepare(
             [{"id": "edit", "kind": "pr_edit", "number": 10, "body_file": str(pr_body)}]
@@ -248,10 +255,12 @@ class BatchTests(unittest.TestCase):
         original_published_body = Path(original_edit["operations"][0]["body_file"]).read_text(
             encoding="utf-8"
         )
-        self.signature.write_text(
+        self.signature.unlink()
+        self.signature = self.private_file(
+            "signature-helper.sh",
             "#!/usr/bin/env bash\nprintf '%s\\n' '<!-- aidevops:sig -->' 'new canonical footer'\n",
-            encoding="utf-8",
         )
+        os.chmod(self.signature, 0o500)
         recovered_edit = self.prepare(
             [{"id": "edit", "kind": "pr_edit", "number": 10, "body_file": str(pr_body)}],
             {
