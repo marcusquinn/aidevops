@@ -60,12 +60,31 @@ _full_loop_recovery_process_uses_path() {
 	return $?
 }
 
+_release_lane_executor_observe() {
+	printf '{"state":"%s"}\n' "$EXECUTOR_STATE"
+	return 0
+}
+
 git() {
 	local args="$*"
 	case "$args" in
 	*"rev-parse HEAD"*) printf '%s\n' "$SNAPSHOT" ;;
 	*"symbolic-ref -q HEAD"*) return 1 ;;
-	*"show-ref --verify --quiet refs/tags/v1.2.4"*) return 1 ;;
+	*"show-ref --verify --quiet refs/tags/v1.2.4"*)
+		[[ "$LOCAL_TAG" == "false" ]] && return 1
+		return 0
+		;;
+	*"worktree list --porcelain"*)
+		[[ "$REGISTRY_ERROR" == "false" ]] || return 128
+		[[ "$REGISTERED" == "true" ]] && printf 'worktree %s\n' "$AIDEVOPS_WORKTREE_BASE_DIR/aidevops-release-101-42"
+		return 0
+		;;
+	*"worktree add --detach"*)
+		[[ "$6" == "$AIDEVOPS_WORKTREE_BASE_DIR/aidevops-release-101-42" && "$7" == "$SNAPSHOT" ]] || return 1
+		mkdir -p "$6"
+		printf '1.2.3\n' >"$6/VERSION"
+		RECONSTRUCT_CALLS=$((RECONSTRUCT_CALLS + 1))
+		;;
 	*"ls-remote --heads origin refs/heads/chore/release-v1.2.4-provenance"*)
 		[[ "$PROTECTED_BRANCH" == "false" ]] && return 0
 		printf '%s\t%s\n' 4444444444444444444444444444444444444444 refs/heads/chore/release-v1.2.4-provenance
@@ -98,6 +117,12 @@ reset_fixture() {
 	LANE_ABSENT=false
 	RECOVERY_CALLS=0
 	CAPTURED_EVIDENCE=""
+	EXECUTOR_STATE=dead
+	LOCAL_TAG=false
+	REGISTERED=false
+	REGISTRY_ERROR=false
+	RECONSTRUCT_CALLS=0
+	mkdir -p "$AIDEVOPS_WORKTREE_BASE_DIR/aidevops-release-101-42"
 	printf '1.2.4\n' >"$AIDEVOPS_WORKTREE_BASE_DIR/aidevops-release-101-42/VERSION"
 	return 0
 }
@@ -135,3 +160,59 @@ for refusal in authorization channels process permission branch version; do
 	[[ "$RECOVERY_CALLS" -eq 0 ]] || exit 1
 done
 printf 'PASS preparing recovery refuses authorization, channel, process, branch, and worktree uncertainty\n'
+
+reset_fixture
+rm -rf "$AIDEVOPS_WORKTREE_BASE_DIR/aidevops-release-101-42"
+_full_loop_recovery_dead_preparing test/repo 101 "$EXPECTED" patch >/dev/null
+[[ "$RECOVERY_CALLS" -eq 1 && "$RECONSTRUCT_CALLS" -eq 1 ]] || exit 1
+jq -e '.worktree_reconstructed == true and .worktree_head == "2222222222222222222222222222222222222222"' <<<"$CAPTURED_EVIDENCE" >/dev/null
+printf 'PASS missing preparation reconstructed from exact snapshot with explicit evidence\n'
+
+(
+	unset -f git
+	REPO_ROOT="$TEST_ROOT/real-repo"
+	AIDEVOPS_WORKTREE_BASE_DIR="$TEST_ROOT/real-worktrees"
+	mkdir -p "$REPO_ROOT" "$AIDEVOPS_WORKTREE_BASE_DIR"
+	git init -q "$REPO_ROOT"
+	printf '1.2.3\n' >"$REPO_ROOT/VERSION"
+	git -C "$REPO_ROOT" add VERSION
+	git -C "$REPO_ROOT" -c user.name=Fixture -c user.email=fixture@example.invalid \
+		-c commit.gpgsign=false commit -qm snapshot
+	SNAPSHOT=$(git -C "$REPO_ROOT" rev-parse HEAD)
+	_full_loop_recovery_restore_preparation 101 42 \
+		"$AIDEVOPS_WORKTREE_BASE_DIR/aidevops-release-101-42" "$SNAPSHOT" v1.2.4
+	[[ "$(git -C "$AIDEVOPS_WORKTREE_BASE_DIR/aidevops-release-101-42" rev-parse HEAD)" == "$SNAPSHOT" ]]
+	if git -C "$AIDEVOPS_WORKTREE_BASE_DIR/aidevops-release-101-42" symbolic-ref -q HEAD; then
+		exit 1
+	fi
+	[[ "$_FULL_LOOP_RECOVERY_WORKTREE_RECONSTRUCTED" == "true" ]]
+)
+printf 'PASS real Git reconstruction creates a detached exact-snapshot worktree\n'
+
+for refusal in authorization channels process permission branch executor registration local_tag registry_error directory_symlink symlink; do
+	reset_fixture
+	rm -rf "$AIDEVOPS_WORKTREE_BASE_DIR/aidevops-release-101-42"
+	case "$refusal" in
+	authorization) AUTHORIZATION='101@9999999999999999999999999999999999999999' ;;
+	channels) CHANNELS_ABSENT=false ;;
+	process) SURVIVING_PROCESS=true ;;
+	permission) PERMISSION=false ;;
+	branch) PROTECTED_BRANCH=true ;;
+	executor) EXECUTOR_STATE=unknown ;;
+	registration) REGISTERED=true ;;
+	local_tag) LOCAL_TAG=true ;;
+	registry_error) REGISTRY_ERROR=true ;;
+	directory_symlink)
+		mkdir -p "$TEST_ROOT/symlink-target"
+		printf '1.2.3\n' >"$TEST_ROOT/symlink-target/VERSION"
+		ln -s "$TEST_ROOT/symlink-target" "$AIDEVOPS_WORKTREE_BASE_DIR/aidevops-release-101-42"
+		;;
+	symlink) ln -s "$TEST_ROOT/missing" "$AIDEVOPS_WORKTREE_BASE_DIR/aidevops-release-101-42" ;;
+	esac
+	if _full_loop_recovery_dead_preparing test/repo 101 "$EXPECTED" patch >/dev/null 2>&1; then
+		printf 'FAIL unsafe missing-worktree %s state was recovered\n' "$refusal" >&2
+		exit 1
+	fi
+	[[ "$RECOVERY_CALLS" -eq 0 && "$RECONSTRUCT_CALLS" -eq 0 ]] || exit 1
+done
+printf 'PASS missing preparation refuses uncertain ownership, publication, registration, and paths\n'
