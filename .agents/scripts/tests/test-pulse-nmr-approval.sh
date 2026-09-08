@@ -64,7 +64,17 @@ setup_test_env() {
 	CHECK_RUNS_FIXTURE="${TEST_ROOT}/check-runs.json"
 	POSTED_COMMENT="${TEST_ROOT}/posted-comment.txt"
 	export COMMENTS_FIXTURE PR_LIST_FIXTURE CHECK_RUNS_FIXTURE POSTED_COMMENT
+	install_notification_gh_stub
 
+	# Seed empty fixtures independently of the fake transport implementation.
+	printf '[]\n' >"$COMMENTS_FIXTURE"
+	printf '[]\n' >"$PR_LIST_FIXTURE"
+	printf '{"check_runs":[]}\n' >"$CHECK_RUNS_FIXTURE"
+	: >"$POSTED_COMMENT"
+	return 0
+}
+
+install_notification_gh_stub() {
 	# gh stub: serves comments from COMMENTS_FIXTURE for 'gh api ...comments',
 	# serves exact GraphQL PR-search data from PR_LIST_FIXTURE, serves REST
 	# check-runs from CHECK_RUNS_FIXTURE for 'gh api ...commits/SHA/check-runs'
@@ -80,20 +90,32 @@ if [[ "${1:-}" == "api" ]]; then
 		exit 0
 	fi
 	jq_filter=""
+	slurp=0
 	shift 2 2>/dev/null || true
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 			--paginate) shift ;;
+			--slurp) slurp=1; shift ;;
 			--jq) jq_filter="$2"; shift 2 ;;
 			*) shift ;;
 		esac
 	done
 	if [[ "$path" == */comments ]]; then
+		[[ "${STUB_COMMENT_ERROR:-0}" != 1 ]] || exit 1
 		if [[ -n "$jq_filter" ]]; then
-			jq -r "$jq_filter" <"$COMMENTS_FIXTURE" 2>/dev/null || echo "0"
+			if [[ "$slurp" == 1 ]]; then
+				jq -s -r "$jq_filter" "$COMMENTS_FIXTURE"
+			else
+				jq -r "$jq_filter" <"$COMMENTS_FIXTURE"
+			fi
 		else
 			cat "$COMMENTS_FIXTURE"
 		fi
+		exit 0
+	fi
+	if [[ "$path" == repos/*/issues/[0-9]* ]]; then
+		[[ "${STUB_ISSUE_ERROR:-0}" != 1 ]] || exit 1
+		printf 'false\n'
 		exit 0
 	fi
 	# GH#21799: REST check-runs endpoint
@@ -134,13 +156,6 @@ printf 'unsupported gh invocation: %s\n' "$*" >&2
 exit 1
 GHEOF
 	chmod +x "${TEST_ROOT}/bin/gh"
-
-	# Seed empty fixtures
-	printf '[]\n' >"$COMMENTS_FIXTURE"
-	printf '[]\n' >"$PR_LIST_FIXTURE"
-	printf '{"check_runs":[]}\n' >"$CHECK_RUNS_FIXTURE"
-	: >"$POSTED_COMMENT"
-
 	return 0
 }
 
@@ -261,6 +276,8 @@ issue_has_required_approval() {
 	local repo_slug="$2"
 	local known_status="${3:-}"
 	[[ -n "$issue_num" && -n "$repo_slug" && -n "$known_status" ]] || return 0
+	_NMR_APPROVAL_RESULT="${STUB_APPROVAL_RESULT:-NO_APPROVAL}"
+	[[ "$_NMR_APPROVAL_RESULT" != VERIFIED ]] || return 0
 	return 1
 }
 export -f issue_has_required_approval
@@ -519,6 +536,62 @@ test_j_ever_nmr_remediation_includes_repo_slug() {
 	return 0
 }
 
+check_production_approval_result() (
+	local expected="$1" helper_rc="$2" expected_rc="$3"
+	local AGENTS_DIR="${TEST_ROOT}/approval-state"
+	mkdir -p "${AGENTS_DIR}/scripts"
+	printf '#!/usr/bin/env bash\nprintf "%%s\\n" "%s"\nexit %s\n' "$expected" "$helper_rc" >"${AGENTS_DIR}/scripts/approval-helper.sh"
+	_nmr_issue_author_has_repo_write_authority() { return 1; }
+	local implementation="" rc=0
+	implementation=$(awk '/^issue_has_required_approval\(\) \{/,/^}$/ { print }' "$NMR_SCRIPT")
+	eval "$implementation"
+	issue_has_required_approval 3733 exampleorg/examplerepo true || rc=$?
+	[[ "$rc" == "$expected_rc" && "$_NMR_APPROVAL_RESULT" == "$expected" ]]
+)
+
+test_remediation_does_not_stale_existing_approval() {
+	local pair=""
+	for pair in NO_APPROVAL:1 STALE_APPROVAL:4 NO_KEY:2 API_ERROR:6; do
+		if check_production_approval_result "${pair%:*}" "${pair#*:}" 1; then
+			print_result "production approval gate preserves $pair without granting authority" 0
+		else
+			print_result "production approval gate preserves $pair without granting authority" 1
+		fi
+	done
+	if check_production_approval_result VERIFIED 0 0; then
+		print_result "production approval gate accepts VERIFIED with success status" 0
+	else
+		print_result "production approval gate accepts VERIFIED with success status" 1
+	fi
+	local state=""
+	for state in VERIFIED STALE_APPROVAL NO_KEY API_ERROR HELPER_UNAVAILABLE UNKNOWN; do
+		reset_posted_comment
+		STUB_APPROVAL_RESULT="$state" notify_ever_nmr_without_approval 3733 exampleorg/examplerepo
+		if was_comment_posted; then
+			print_result "no missing-approval notification for $state" 1
+		else
+			print_result "no missing-approval notification for $state" 0
+		fi
+	done
+	reset_posted_comment
+	set_comments '[{"body":"<!-- aidevops-signed-approval -->"}]'
+	notify_ever_nmr_without_approval 3733 exampleorg/examplerepo
+	if was_comment_posted; then
+		print_result "newly published signature suppresses notification race" 1
+	else
+		print_result "newly published signature suppresses notification race" 0
+	fi
+	set_comments '[]'
+	STUB_COMMENT_ERROR=1 notify_ever_nmr_without_approval 3733 exampleorg/examplerepo
+	STUB_ISSUE_ERROR=1 notify_ever_nmr_without_approval 3733 exampleorg/examplerepo
+	if was_comment_posted; then
+		print_result "API uncertainty never creates remediation comments" 1
+	else
+		print_result "API uncertainty never creates remediation comments" 0
+	fi
+	return 0
+}
+
 # Case K: calibrated GraphQL cost drift must fail closed rather than treating
 # an unmetered policy-level review decision as authoritative.
 test_k_graphql_cost_drift_no_candidate() {
@@ -756,6 +829,7 @@ main() {
 	test_h_idempotency_no_duplicate
 	test_i_empty_nmr_timestamp_no_candidate
 	test_j_ever_nmr_remediation_includes_repo_slug
+	test_remediation_does_not_stale_existing_approval
 	test_k_graphql_cost_drift_no_candidate
 	test_l_exact_target_reconciliation_is_bounded_and_fail_closed
 	test_m_reconciliation_protocol_uncertainty_stays_fail_closed

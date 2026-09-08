@@ -11,6 +11,7 @@
 
 [[ -n "${_APPROVAL_HELPER_CONTINUITY_LOADED:-}" ]] && return 0
 _APPROVAL_HELPER_CONTINUITY_LOADED=1
+_APPROVAL_LABELED_EVENT="labeled"
 
 if [[ -z "${SCRIPT_DIR:-}" ]]; then
 	_approval_continuity_lib_path="${BASH_SOURCE[0]%/*}"
@@ -37,7 +38,7 @@ _approval_continuity_is_repository_status_default() {
 	local actor="$3"
 	local actor_id="$4"
 	local actor_type="$5"
-	[[ "$event" == "labeled" && "$subject" == "$_APPROVAL_AVAILABLE_LABEL" ]] || return 1
+	[[ "$event" == "$_APPROVAL_LABELED_EVENT" && "$subject" == "$_APPROVAL_AVAILABLE_LABEL" ]] || return 1
 	[[ "$actor" == "github-actions[bot]" ]] || return 1
 	[[ "$actor_id" == "$_APPROVAL_GITHUB_ACTIONS_BOT_ID" ]] || return 1
 	[[ "$actor_type" == "Bot" ]] || return 1
@@ -91,13 +92,15 @@ _approval_continuity_ordered_mutation_rows() {
 _approval_continuity_lifecycle_change_allowed() {
 	local signed_lifecycle="$1"
 	local current_snapshot="$2"
+	local self_hosting="${3:-false}"
 
 	# #aidevops:trust-boundary — deterministic tier backfill may only select a
 	# canonical workload tier. Status labels remain workflow metadata, but every
 	# resulting timeline mutation still requires authorization during replay.
-	jq -e --argjson signed "$signed_lifecycle" '
-		def allowed_label: . == "needs-maintainer-review" or . == "auto-dispatch" or . == "status:available" or . == "status:queued" or . == "status:claimed" or . == "status:in-progress" or . == "status:in-review" or . == "status:done" or . == "status:blocked" or . == "tier:simple" or . == "tier:standard" or . == "tier:thinking";
-		def tier_label: . == "tier:simple" or . == "tier:standard" or . == "tier:thinking";
+	jq -e --argjson signed "$signed_lifecycle" --argjson self_hosting "$self_hosting" \
+		--argjson tiers '["tier:simple","tier:standard","tier:thinking"]' '
+		def tier_label: . as $label | $tiers | index($label) != null;
+		def allowed_label: . == "needs-maintainer-review" or . == "auto-dispatch" or . == "status:available" or . == "status:queued" or . == "status:claimed" or . == "status:in-progress" or . == "status:in-review" or . == "status:done" or . == "status:blocked" or tier_label;
 		.lifecycle as $current |
 		($current.labels | map(.name)) as $current_labels |
 		($signed.labels | map(.name)) as $signed_labels |
@@ -114,9 +117,36 @@ _approval_continuity_lifecycle_change_allowed() {
 		and $current.milestone == $signed.milestone
 		and $current.lock_anchor == $signed.lock_anchor
 		and ([$added_labels[], $removed_labels[]] | unique | all(allowed_label))
-		and (if ($added_tiers + $removed_tiers) > 0 then $signed_tiers == 0 and $current_tiers == 1 and $added_tiers == 1 and $removed_tiers == 0 else true end)
+		and (if ($added_tiers + $removed_tiers) > 0 then
+			($signed_tiers == 0 and $current_tiers == 1 and $added_tiers == 1 and $removed_tiers == 0)
+			or ($self_hosting and $signed_tiers == 1 and $current_tiers == 1
+				and $added_tiers == 1 and $removed_tiers == 1
+				and ($added_labels | index($tiers[2])) != null
+				and any($removed_labels[]; . == $tiers[0] or . == $tiers[1]))
+		else true end)
 		and ($current.assignees != $signed.assignees or $current.labels != $signed.labels)
 	' <<<"$current_snapshot" >/dev/null 2>&1
+	return $?
+}
+
+_approval_continuity_self_hosting_audit() {
+	local slug="$1" number="$2" issued="$3" timeline="$4"
+	local pages="" audits="" actor=""
+	pages=$(_approval_snapshot_v2_fetch_pages "repos/${slug}/issues/${number}/comments?per_page=100") || return 2
+	# Reuse the exact canonical matcher, not a second hand-copied writer regex.
+	# #aidevops:trust-boundary — an audit is evidence, never authority by itself;
+	# the normal ordered timeline replay still authenticates every mutation.
+	audits=$(_approval_snapshot_v2_comments_json "$pages" "" conversation "$issued" "$number" "$slug" self-hosting-audit) || return 2
+	actor=$(jq -er 'select(length == 1) | .[0].actor | select(type == "string" and length > 0)' <<<"$audits") || return 1
+	jq -e --arg actor "$actor" --arg issued "$issued" --arg added "$_APPROVAL_LABELED_EVENT" --arg removed "unlabeled" \
+		--argjson tiers '["tier:simple","tier:standard","tier:thinking"]' '
+		[.[][]? | select(.created_at > $issued)
+		| select((.event == $added or .event == $removed) and ((.label.name // "") | startswith("tier:")))] as $changes
+		| ($changes | length) == 2
+		and all($changes[]; .actor.login == $actor)
+		and any($changes[]; .event == $added and .label.name == $tiers[2])
+		and any($changes[]; .event == $removed and (.label.name == $tiers[0] or .label.name == $tiers[1]))
+	' <<<"$timeline" >/dev/null 2>&1
 	return $?
 }
 
@@ -161,13 +191,15 @@ _approval_verify_locked_issue_continuity() {
 	candidate=$(jq -cS --argjson lifecycle "$signed_lifecycle" '.lifecycle = $lifecycle' <<<"$current_snapshot") || return 1
 	candidate_digest=$(approval_snapshot_v2_digest "$candidate") || return 2
 	[[ "$candidate_digest" == "$signed_digest" ]] || return 1
-	if ! _approval_continuity_lifecycle_change_allowed "$signed_lifecycle" "$current_snapshot"; then
-		return 1
-	fi
-
 	timeline_pages=$(_approval_snapshot_v2_fetch_pages "repos/${slug}/issues/${target_number}/timeline?per_page=100") || return 2
 	mutation_rows=$(_approval_continuity_ordered_mutation_rows "$timeline_pages" "$issued_at" "$approval_comment_id" 2>/dev/null) || return 2
 	[[ -n "$mutation_rows" ]] || return 1
+	if ! _approval_continuity_lifecycle_change_allowed "$signed_lifecycle" "$current_snapshot"; then
+		# Only the existing canonical self-hosting escalation can replace a
+		# signed workload tier; arbitrary tier changes remain approval-bound.
+		_approval_continuity_lifecycle_change_allowed "$signed_lifecycle" "$current_snapshot" true || return 1
+		_approval_continuity_self_hosting_audit "$slug" "$target_number" "$issued_at" "$timeline_pages" || return $?
+	fi
 
 	while IFS=$'\t' read -r event actor subject actor_id actor_type; do
 		[[ -n "$event" ]] || continue

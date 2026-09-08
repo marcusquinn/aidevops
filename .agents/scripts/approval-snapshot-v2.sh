@@ -44,11 +44,35 @@ _approval_snapshot_v2_fetch_pages() {
 	return 0
 }
 
+# Keep metadata projection separate from the authenticated audit predicates.
+_approval_snapshot_v2_comment_identity() {
+	cat <<'JQ'
+def comment_identity:
+	{
+		source: $source, id: .id, node_id: (.node_id // ""),
+		author: {
+			id: (.user.id // null), node_id: (.user.node_id // $empty),
+			login: (.user.login // $empty), type: (.user.type // $empty)
+		},
+		author_association: (.author_association // $empty),
+		created_at: (.created_at // $empty),
+		updated_at: (.updated_at // .created_at // $empty),
+		body: (.body // $empty), path: (.path // null),
+		line: (.line // null), side: (.side // null),
+		commit_id: (.commit_id // null),
+		original_commit_id: (.original_commit_id // null)
+	};
+JQ
+	return 0
+}
+
 _approval_snapshot_v2_comments_json() {
 	local pages_json="$1"
 	local excluded_comment_id="${2:-}"
 	local source_name="${3:-conversation}"
 	local issued_at_cutoff="${4:-}"
+	local target_number="${5:-}" target_repo="${6:-}"
+	local selection="${7:-snapshot}"
 	local empty_string=""
 
 	# #aidevops:trust-boundary — exclude the exact approval comment whose
@@ -56,11 +80,16 @@ _approval_snapshot_v2_comments_json() {
 	# audit written after verification. Marker text is attacker-controlled:
 	# excluding arbitrary marker comments would let an external contributor hide
 	# later drift by copying the marker into an unsigned comment.
-	jq -cS --arg excluded "$excluded_comment_id" --arg source "$source_name" --arg cutoff "$issued_at_cutoff" --arg empty "$empty_string" '
+	jq -cS --arg excluded "$excluded_comment_id" --arg source "$source_name" --arg cutoff "$issued_at_cutoff" --arg empty "$empty_string" --arg number "$target_number" --arg repo "$target_repo" --arg selection "$selection" "$(_approval_snapshot_v2_comment_identity)"'
 		def trusted_association:
 			. == "OWNER" or . == "MEMBER" or . == "COLLABORATOR";
 		def aidevops_worker_footer:
 			"(?:\\n<!-- aidevops:origin:worker -->)?\\n<!-- aidevops:sig -->\\n---\\n\\[aidevops\\.sh\\]\\(https://aidevops\\.sh\\) v[A-Za-z0-9._+-]+ [^\\n]+\\n?";
+		def canonical_ever_nmr_remediation:
+			("<!-- ever-nmr-remediation -->\n> Label `needs-maintainer-review` was removed, but the `ever-NMR` history flag is still set. Pulse will continue to skip dispatch until cryptographic approval lands:\n>\n> ```\n> sudo aidevops approve issue " + $number + " " + $repo + "\n> ```\n>\n> This gate cannot be bypassed by label manipulation (security design — see `reference/auto-merge.md` NMR section).") as $body
+			| ($source == "conversation" and $number != "" and $repo != "")
+			and startswith($body)
+			and (.[$body | length:] | test("^(?:\\n<!-- aidevops:origin:worker -->)?\\n<!-- aidevops:sig -->\\n---\\n\\[aidevops\\.sh\\]\\(https://aidevops\\.sh\\) v[0-9]+\\.[0-9]+\\.[0-9]+ automated scan\\.\\n?$"));
 		def canonical_dispatch_audit:
 			test(
 				"^<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->\\n(?:" +
@@ -78,7 +107,13 @@ _approval_snapshot_v2_comments_json() {
 			test(
 				"^<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->\\n<!-- no-work-escalation-skip -->\\n## Tier Escalation Skipped: Infrastructure Failure \\(no_work\\)\\n\\n\\*\\*Trigger:\\*\\* [0-9]+ worker failure\\(s\\) classified as `no_work` — the worker exited during setup without reading any target files\\.\\n\\*\\*Action:\\*\\* Tier escalation \\*\\*skipped\\*\\*\\. The issue stays at its current tier so the next retry can succeed cheaply once the infrastructure issue resolves\\.\\n\\*\\*Reason:\\*\\* [A-Za-z0-9._:-]+\\n\\n\\*\\*Why no cascade:\\*\\* `no_work` means the worker never produced reliable implementation evidence — it crashed during runtime setup \\(FD exhaustion, plugin init failure, branch naming race, auth refresh race\\) or stale-recovery falsely concluded no progress\\. A more expensive model cannot fix an infrastructure problem it never reached\\. Cascading to `tier:thinking` would waste capacity on a problem the mapped standard or simple model can handle once the infrastructure clears\\.\\n\\nAfter [0-9]+ consecutive `no_work` failures the per-issue no_work circuit breaker \\(t2769\\) applies `status:blocked` and files a machine-recoverable root-cause meta-issue\\.\\n\\n_Automated by `escalate_issue_tier\\(\\)` no_work skip \\(t2387\\) in worker-lifecycle-common\\.sh_\\n<!-- ops:end -->" + aidevops_worker_footer + "$"
 			);
-		[.[][]?
+		if $selection == "self-hosting-audit" then
+			[.[][]? | select(.user.type == "User")
+			| select((.author_association // $empty) | trusted_association)
+			| select($cutoff != $empty and .created_at > $cutoff and (.updated_at // .created_at) == .created_at)
+			| select((.body // $empty) | canonical_self_hosting_override)
+			| {id, actor: .user.login}]
+		else [.[][]?
 		| select((.id | tostring) != $excluded)
 		| select((.user.type // $empty) != "Bot")
 		| select((
@@ -93,7 +128,20 @@ _approval_snapshot_v2_comments_json() {
 			# optional worktree qualifier bounded to its backtick-delimited basename;
 			# trusted prose or copied markers must remain approval-significant.
 			((.author_association // $empty) | trusted_association)
-			and ((.body // $empty) | test("^<!-- aidevops-interactive-claim/v1 -->\\n<!-- ops:start -->\\n> Interactive session claimed by @[^\\n`]+(?: in `[^`\\n]+`)? on [^\\n]+\\.\\n> Pulse dispatch blocked via `status:in-review` \\+ self-assignment\\.\\n<!-- ops:end -->\\n(?:<!-- aidevops:origin:interactive -->\\n)?<!-- aidevops:sig -->\\n---\\n[^\\n]+\\n?$"))
+			# Preserve historical signatures that included pre-existing claimed
+			# audits. The legacy in-review exclusion is unchanged.
+			and (((.body // $empty) | contains("`status:in-review`"))
+				or ($cutoff != $empty and .created_at > $cutoff and (.updated_at // .created_at) == .created_at))
+			and ((.body // $empty) | test("^<!-- aidevops-interactive-claim/v1 -->\\n<!-- ops:start -->\\n> Interactive session claimed by @[^\\n`]+(?: in `[^`\\n]+`)? on [^\\n]+\\.\\n> Pulse dispatch blocked via `status:(?:in-review|claimed)` \\+ self-assignment\\.\\n<!-- ops:end -->\\n(?:<!-- aidevops:origin:interactive -->\\n)?<!-- aidevops:sig -->\\n---\\n[^\\n]+\\n?$"))
+		) | not)
+		| select((
+			# #aidevops:trust-boundary — only the exact historical notification
+			# for this target, from a trusted author, added unedited after signing.
+			# It conveys no implementation instructions or approval authority.
+			((.author_association // $empty) | trusted_association)
+			and ($cutoff != $empty) and (.created_at > $cutoff)
+			and ((.updated_at // .created_at) == .created_at)
+			and ((.body // $empty) | canonical_ever_nmr_remediation)
 		) | not)
 		| select((
 			# #aidevops:trust-boundary — these comments are excluded only when
@@ -107,27 +155,8 @@ _approval_snapshot_v2_comments_json() {
 			and ((.created_at // $empty) > $cutoff)
 			and ((.body // $empty) | canonical_dispatch_audit or canonical_self_hosting_override or canonical_no_work_escalation_skip)
 		) | not)
-		| {
-			source: $source,
-			id: .id,
-			node_id: (.node_id // ""),
-			author: {
-				id: (.user.id // null),
-				node_id: (.user.node_id // $empty),
-				login: (.user.login // $empty),
-				type: (.user.type // $empty)
-			},
-			author_association: (.author_association // $empty),
-			created_at: (.created_at // $empty),
-			updated_at: (.updated_at // .created_at // $empty),
-			body: (.body // $empty),
-			path: (.path // null),
-			line: (.line // null),
-			side: (.side // null),
-			commit_id: (.commit_id // null),
-			original_commit_id: (.original_commit_id // null)
-		}
-		] | sort_by(.source, .id)
+		| comment_identity
+		] | sort_by(.source, .id) end
 	' <<<"$pages_json"
 	return $?
 }
@@ -314,7 +343,7 @@ approval_snapshot_v2_build() (
 	fi
 
 	comments_pages=$(_approval_snapshot_v2_fetch_pages "repos/${slug}/issues/${target_number}/comments?per_page=100") || return 1
-	comments_json=$(_approval_snapshot_v2_comments_json "$comments_pages" "$excluded_comment_id" "conversation" "$issued_at_cutoff") || return 1
+	comments_json=$(_approval_snapshot_v2_comments_json "$comments_pages" "$excluded_comment_id" "conversation" "$issued_at_cutoff" "$target_number" "$slug") || return 1
 	timeline_pages=$(_approval_snapshot_v2_fetch_pages "repos/${slug}/issues/${target_number}/timeline?per_page=100") || return 1
 	linked_references_json=$(_approval_snapshot_v2_linked_references_json "$timeline_pages" "$issued_at_cutoff" "$source_timestamp_profile") || return 1
 	if [[ "$target_type" == "$APPROVAL_TARGET_ISSUE" && "$issue_lifecycle_profile" == "$APPROVAL_SNAPSHOT_PROFILE_CURRENT" ]]; then

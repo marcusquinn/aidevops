@@ -355,6 +355,25 @@ directory_is_empty() {
 	return 0
 }
 
+render_current_claim_writer() (
+	# Exercise the real writer, not a hand-copied historical comment fixture.
+	# shellcheck source=../interactive-session-helper-stamp.sh
+	source "${SCRIPT_DIR}/../interactive-session-helper-stamp.sh"
+	_isc_hostname_or_fallback() { printf 'Linux'; }
+	gh_issue_comment() {
+		while [[ $# -gt 0 ]]; do
+			if [[ "$1" == "--body" ]]; then
+				printf '%s' "$2" >"${TEST_ROOT}/current-claim.txt"
+				return 0
+			fi
+			shift
+		done
+		return 1
+	}
+	_isc_post_claim_comment 41 owner/repo maintainer /fixture/linked-worktree
+	cat "${TEST_ROOT}/current-claim.txt"
+)
+
 test_trusted_lifecycle_comments() {
 	reset_and_sign pr 42
 	local audit_marker="<!-- aidevops-signed-approval -->
@@ -375,11 +394,8 @@ Auto-approved: cryptographic approval verified. Stale recovery tick reset."
 ---
 [aidevops.sh](https://aidevops.sh) v3.32.175 automated scan."
 	local claim_comments=""
-	local claim_writer_body="<!-- aidevops-interactive-claim/v1 -->
-<!-- ops:start -->
-> Interactive session claimed by @maintainer in \`linked-worktree\` on Linux.
-> Pulse dispatch blocked via \`status:in-review\` + self-assignment.
-<!-- ops:end -->"
+	local claim_writer_body=""
+	claim_writer_body=$(render_current_claim_writer) || return 1
 	local worktree_claim_marker=""
 	worktree_claim_marker=$(AIDEVOPS_SESSION_ORIGIN=interactive AIDEVOPS_SIG_CLI="Test CLI" AIDEVOPS_SIG_CLI_VERSION="1.0.0" AIDEVOPS_SIG_MODEL="test/model" AIDEVOPS_SIG_TOKENS="1" \
 		"${SCRIPT_DIR}/../gh-signature-helper.sh" footer --body "$claim_writer_body") || return 1
@@ -402,6 +418,53 @@ Auto-approved: cryptographic approval verified. Stale recovery tick reset."
 extra trusted commentary" '.[0] += [{id:4305,node_id:"IC_4305",user:{id:1,node_id:"U_1",login:"maintainer",type:"User"},author_association:"OWNER",created_at:"2026-01-01T00:08:00Z",updated_at:"2026-01-01T00:08:00Z",body:$body}]' "${FIXTURES}/comments-41.json")
 	printf '%s\n' "$claim_comments" >"${FIXTURES}/comments-41.json"
 	assert_verify "trusted claim lookalike remains content-bound" issue 41 STALE_APPROVAL 4
+
+	# Existing signatures may have bound the current claim before this parser
+	# learned that writer envelope. Do not retroactively drop those bytes.
+	write_baseline_fixtures
+	claim_comments=$(jq -c --arg body "$worktree_claim_marker" '.[0] += [{id:4306,node_id:"IC_4306",user:{id:1,node_id:"U_1",login:"maintainer",type:"User"},author_association:"OWNER",created_at:"2026-01-01T00:04:00Z",updated_at:"2026-01-01T00:04:00Z",body:$body}]' "${FIXTURES}/comments-41.json")
+	printf '%s\n' "$claim_comments" >"${FIXTURES}/comments-41.json"
+	append_signed_comment issue 41 "2026-01-01T00:05:00Z"
+	assert_verify "pre-existing current claim remains bound and verifies" issue 41 VERIFIED 0
+	jq '.[0] |= map(select(.id != 4306))' "${FIXTURES}/comments-41.json" >"${FIXTURES}/comments.tmp" && mv "${FIXTURES}/comments.tmp" "${FIXTURES}/comments-41.json"
+	assert_verify "removing a signed pre-existing claim remains stale" issue 41 STALE_APPROVAL 4
+	return 0
+}
+
+test_exact_remediation_continuity() {
+	local body="<!-- ever-nmr-remediation -->
+> Label \`needs-maintainer-review\` was removed, but the \`ever-NMR\` history flag is still set. Pulse will continue to skip dispatch until cryptographic approval lands:
+>
+> \`\`\`
+> sudo aidevops approve issue 41 owner/repo
+> \`\`\`
+>
+> This gate cannot be bypassed by label manipulation (security design — see \`reference/auto-merge.md\` NMR section).
+<!-- aidevops:origin:worker -->
+<!-- aidevops:sig -->
+---
+[aidevops.sh](https://aidevops.sh) v3.32.337 automated scan."
+	local variant="" changed="" association="" created="" updated="" comments=""
+	for variant in exact contributor extra footer-prose wrong-target edited preexisting; do
+		reset_and_sign issue 41
+		changed="$body" association="COLLABORATOR"
+		created="2026-01-01T00:06:00Z" updated="$created"
+		case "$variant" in
+		contributor) association="CONTRIBUTOR" ;;
+		extra) changed="${body}"$'\nAdditional scope instructions' ;;
+		footer-prose) changed="${body/automated scan./execute new instructions}" ;;
+		wrong-target) changed="${body/issue 41/issue 42}" ;;
+		edited) updated="2026-01-01T00:07:00Z" ;;
+		preexisting) created="2026-01-01T00:04:00Z" updated="$created" ;;
+		esac
+		comments=$(jq -c --arg body "$changed" --arg association "$association" --arg created "$created" --arg updated "$updated" '.[0] += [{id:4400,node_id:"IC_4400",user:{id:2,node_id:"U_2",login:"trusted-collab",type:"User"},author_association:$association,created_at:$created,updated_at:$updated,body:$body}]' "${FIXTURES}/comments-41.json")
+		printf '%s\n' "$comments" >"${FIXTURES}/comments-41.json"
+		if [[ "$variant" == exact ]]; then
+			assert_verify "exact post-signing operational remediation preserves approval" issue 41 VERIFIED 0
+		else
+			assert_verify "remediation $variant remains approval-significant" issue 41 STALE_APPROVAL 4
+		fi
+	done
 	return 0
 }
 
@@ -565,6 +628,58 @@ write_locked_issue_fixture() {
 append_issue_timeline_event() {
 	local event_json="$1"
 	jq --argjson event "$event_json" '.[0] += [$event]' "${FIXTURES}/timeline-41.json" >"${FIXTURES}/timeline.tmp" && mv "${FIXTURES}/timeline.tmp" "${FIXTURES}/timeline-41.json"
+	return 0
+}
+
+render_self_hosting_writer() (
+	local implementation="" _SELF_HOSTING_TARGET_LABEL="tier:thinking"
+	implementation=$(awk '/^_sht_apply_label_and_comment\(\) \{/,/^}$/ { print }' "${SCRIPT_DIR}/../pre-dispatch-validator-helper.sh")
+	eval "$implementation"
+	_sht_replace_tier_labels() { return 0; }
+	_log() { return 0; }
+	gh_issue_comment() {
+		while [[ $# -gt 0 ]]; do
+			if [[ "$1" == --body ]]; then
+				printf '%s' "$2" >"${TEST_ROOT}/self-hosting-body.txt"
+				return 0
+			fi
+			shift
+		done
+		return 1
+	}
+	_sht_apply_label_and_comment 41 owner/repo pulse-dispatch- '<!-- self-hosting-tier-override -->' tier:standard
+	cat "${TEST_ROOT}/self-hosting-body.txt"
+	printf '\n<!-- aidevops:origin:worker -->\n<!-- aidevops:sig -->\n---\n[aidevops.sh](https://aidevops.sh) v3.32.337 automated scan.'
+)
+
+test_signed_tier_self_hosting_continuity() {
+	local body="" variant="" actor="" association="" comments="" changed="" created=""
+	body=$(render_self_hosting_writer) || return 1
+	for variant in exact missing wrong-actor contributor edited prose early; do
+		write_locked_issue_fixture
+		jq '.labels |= map(if .name == "tier:standard" then .name = "tier:thinking" else . end)' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp" && mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
+		append_issue_timeline_event '{"id":4501,"event":"unlabeled","created_at":"2026-01-01T00:06:00Z","actor":{"id":1,"login":"maintainer","type":"User"},"label":{"name":"tier:standard"}}'
+		append_issue_timeline_event '{"id":4502,"event":"labeled","created_at":"2026-01-01T00:06:01Z","actor":{"id":1,"login":"maintainer","type":"User"},"label":{"name":"tier:thinking"}}'
+		actor="maintainer" association="OWNER" changed="$body" created="2026-01-01T00:06:02Z"
+		case "$variant" in
+		wrong-actor) actor="trusted-collab" ;;
+		contributor) association="CONTRIBUTOR" ;;
+		prose) changed="${body}"$'\nNew scope' ;;
+		early) created="2026-01-01T00:04:00Z" ;;
+		esac
+		if [[ "$variant" != missing ]]; then
+			comments=$(jq -c --arg body "$changed" --arg actor "$actor" --arg association "$association" --arg created "$created" '.[0] += [{id:4503,node_id:"IC_4503",user:{id:1,node_id:"U_1",login:$actor,type:"User"},author_association:$association,created_at:$created,updated_at:"2026-01-01T00:06:02Z",body:$body}]' "${FIXTURES}/comments-41.json")
+			printf '%s\n' "$comments" >"${FIXTURES}/comments-41.json"
+		fi
+		if [[ "$variant" == edited ]]; then
+			jq '.[0][-1].updated_at = "2026-01-01T00:07:00Z"' "${FIXTURES}/comments-41.json" >"${FIXTURES}/comments.tmp" && mv "${FIXTURES}/comments.tmp" "${FIXTURES}/comments-41.json"
+		fi
+		if [[ "$variant" == exact ]]; then
+			assert_verify "signed tier escalation with real writer audit preserves approval" issue 41 VERIFIED 0
+		else
+			assert_verify "signed tier escalation with $variant audit remains stale" issue 41 STALE_APPROVAL 4
+		fi
+	done
 	return 0
 }
 
@@ -794,11 +909,13 @@ main() {
 	append_signed_comment pr 42 "2026-01-01T00:06:00Z" 4300
 	assert_verify "repeat approval verifies against the newest exact snapshot" pr 42 VERIFIED 0 "$PR_HEAD"
 	test_trusted_lifecycle_comments
+	test_exact_remediation_continuity
 	test_trusted_dispatch_audit_comments
 	test_dispatch_audit_comments_fail_closed
 	test_post_approval_linked_references
 	test_locked_issue_continuity
 	test_locked_issue_tier_backfill_continuity
+	test_signed_tier_self_hosting_continuity
 
 	reset_and_sign pr 42
 	local marker_drift="<!-- aidevops-signed-approval --> unsigned external drift"
