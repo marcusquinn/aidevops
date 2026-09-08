@@ -17,6 +17,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, NamedTuple
 
+from gh_write_batch_graphql import mutation, preflight_query
+
 SCHEMA = "aidevops.github-write-batch/v1"
 PREPARED_SCHEMA = "aidevops.github-write-batch-prepared/v1"
 RECEIPT_SCHEMA = "aidevops.github-write-batch-receipt/v1"
@@ -57,14 +59,6 @@ class BodyPreparation(NamedTuple):
     root: Path
     marker_sha: str
     signature_helper: Path
-
-
-class MutationBuild(NamedTuple):
-    """Mutable containers shared while compiling one GraphQL mutation."""
-
-    label_ids: dict[str, str]
-    declarations: list[str]
-    variables: dict[str, Any]
 
 
 def now_iso() -> str:
@@ -403,30 +397,6 @@ def graphql_call(query: str, variables: dict[str, Any], timeout: int) -> tuple[i
         return 124, stdout, stderr, True
 
 
-def preflight_query(prepared: dict[str, Any]) -> tuple[str, dict[str, Any]]:
-    declarations = ["$owner:String!", "$name:String!"]
-    fields: list[str] = ["viewerPermission"]
-    variables: dict[str, Any] = {}
-    owner, name = prepared["repository"].split("/", 1)
-    variables.update(owner=owner, name=name)
-    labels = sorted({label for op in prepared["operations"] for label in op.get("labels", [])})
-    for index, operation in enumerate(prepared["operations"]):
-        declarations.append(f"$number{index}:Int!")
-        variables[f"number{index}"] = operation["number"]
-        comments = ""
-        if prepared.get("recovery_of") and operation["kind"].endswith("_comment"):
-            comments = " comments(last:100){nodes{body} pageInfo{hasPreviousPage}}"
-        fields.append(
-            f't{index}:issueOrPullRequest(number:$number{index}){{__typename ... on Issue{{id number title body labels(first:100){{nodes{{id name}} pageInfo{{hasNextPage}}}}{comments}}} ... on PullRequest{{id number title body labels(first:100){{nodes{{id name}} pageInfo{{hasNextPage}}}}{comments}}}}}}}'
-        )
-    for index, label in enumerate(labels):
-        declarations.append(f"$label{index}:String!")
-        variables[f"label{index}"] = label
-        fields.append(f'l{index}:label(name:$label{index}){{id name}}')
-    query = f"query({','.join(declarations)}){{repository(owner:$owner,name:$name){{{' '.join(fields)}}}}}"
-    return query, variables
-
-
 def preflight_label_ids(prepared: dict[str, Any], repository: dict[str, Any]) -> dict[str, str]:
     label_ids: dict[str, str] = {}
     label_names = sorted({label for op in prepared["operations"] for label in op.get("labels", [])})
@@ -523,77 +493,6 @@ def checked_body(operation: dict[str, Any]) -> str:
     if hashlib.sha256(body.encode("utf-8")).hexdigest() != operation["body_sha256"]:
         raise BatchError(f"operation {operation['id']} prepared body changed before publication")
     return body
-
-
-def comment_mutation(
-    index: int, alias: str, operation: dict[str, Any], build: MutationBuild
-) -> str:
-    build.declarations.append(f"$body{index}:String!")
-    build.variables[f"body{index}"] = checked_body(operation)
-    return f'{alias}:addComment(input:{{subjectId:$target{index},body:$body{index},clientMutationId:$client{index}}}){{clientMutationId commentEdge{{node{{id url}}}}}}'
-
-
-def edit_mutation(
-    index: int, alias: str, operation: dict[str, Any], build: MutationBuild
-) -> str:
-    mutation_name = "updatePullRequest" if operation["kind"] == "pr_edit" else "updateIssue"
-    inputs = [f"id:$target{index}", f"clientMutationId:$client{index}"]
-    for field in ("title", "body"):
-        operation_key = "body_file" if field == "body" else field
-        if operation_key not in operation:
-            continue
-        build.declarations.append(f"${field}{index}:String!")
-        build.variables[f"{field}{index}"] = (
-            checked_body(operation) if field == "body" else operation[operation_key]
-        )
-        inputs.append(f"{field}:${field}{index}")
-    result_name = "pullRequest" if operation["kind"] == "pr_edit" else "issue"
-    return f'{alias}:{mutation_name}(input:{{{",".join(inputs)}}}){{clientMutationId {result_name}{{id number}}}}'
-
-
-def label_mutation(
-    index: int, alias: str, operation: dict[str, Any], build: MutationBuild
-) -> str:
-    build.declarations.append(f"$labels{index}:[ID!]!")
-    build.variables[f"labels{index}"] = [build.label_ids[label] for label in operation["labels"]]
-    mutation_name = (
-        "addLabelsToLabelable" if operation["kind"].endswith("add_labels") else "removeLabelsFromLabelable"
-    )
-    return f'{alias}:{mutation_name}(input:{{labelableId:$target{index},labelIds:$labels{index},clientMutationId:$client{index}}}){{clientMutationId}}'
-
-
-def mutation_field(
-    index: int, alias: str, operation: dict[str, Any], build: MutationBuild
-) -> str:
-    kind = operation["kind"]
-    if kind.endswith("_comment"):
-        return comment_mutation(index, alias, operation, build)
-    if kind.endswith("_edit"):
-        return edit_mutation(index, alias, operation, build)
-    return label_mutation(index, alias, operation, build)
-
-
-def mutation(
-    prepared: dict[str, Any], label_ids: dict[str, str], already: set[str]
-) -> tuple[str, dict[str, Any], list[dict[str, Any]]]:
-    declarations: list[str] = []
-    fields: list[str] = []
-    variables: dict[str, Any] = {}
-    build = MutationBuild(label_ids, declarations, variables)
-    attempted: list[dict[str, Any]] = []
-    for index, operation in enumerate(prepared["operations"]):
-        if operation["id"] in already:
-            continue
-        alias = f"o{index}"
-        operation["alias"] = alias
-        attempted.append(operation)
-        declarations.extend((f"$target{index}:ID!", f"$client{index}:String!"))
-        variables[f"target{index}"] = operation["target_id"]
-        variables[f"client{index}"] = operation["id"]
-        fields.append(mutation_field(index, alias, operation, build))
-    if not attempted:
-        return "", {}, []
-    return f"mutation({','.join(declarations)}){{{' '.join(fields)}}}", variables, attempted
 
 
 def base_receipt(prepared: dict[str, Any]) -> dict[str, Any]:
@@ -746,7 +645,7 @@ def execute(args: argparse.Namespace) -> int:
     for operation_id in already:
         by_id[operation_id]["status"] = "already_succeeded"
         by_id[operation_id]["detail"] = "fresh_state_already_matches"
-    query, variables, attempted = mutation(prepared, label_ids, already)
+    query, variables, attempted = mutation(prepared, label_ids, already, checked_body)
     if not attempted:
         emit_receipt(receipt_path, receipt)
         print(json.dumps(receipt, sort_keys=True))

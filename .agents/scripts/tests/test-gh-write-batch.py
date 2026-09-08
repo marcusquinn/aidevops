@@ -7,6 +7,7 @@ import argparse
 import importlib.util
 import json
 import os
+import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -15,6 +16,7 @@ from pathlib import Path
 from unittest import mock
 
 SCRIPT = Path(__file__).resolve().parents[1] / "gh-write-batch.py"
+sys.path.insert(0, str(SCRIPT.parent))
 SPEC = importlib.util.spec_from_file_location("gh_write_batch", SCRIPT)
 if SPEC is None or SPEC.loader is None:
     raise RuntimeError("unable to load gh-write-batch.py")
