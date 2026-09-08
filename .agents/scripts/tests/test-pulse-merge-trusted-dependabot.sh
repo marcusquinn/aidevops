@@ -587,6 +587,20 @@ test_repository_allows_secretlint_recommend() {
 	return 0
 }
 
+test_repository_allows_secretlint() {
+	local fixture_allowlist="$AIDEVOPS_TRUSTED_DEPENDABOT_UPDATES_CONF"
+
+	unset AIDEVOPS_TRUSTED_DEPENDABOT_UPDATES_CONF
+	if _trusted_dependabot_dependency_allowed "bun" "secretlint"; then
+		export AIDEVOPS_TRUSTED_DEPENDABOT_UPDATES_CONF="$fixture_allowlist"
+		print_result "repository allowlist permits Secretlint Bun updates" 0
+		return 0
+	fi
+	export AIDEVOPS_TRUSTED_DEPENDABOT_UPDATES_CONF="$fixture_allowlist"
+	print_result "repository allowlist permits Secretlint Bun updates" 1
+	return 0
+}
+
 test_repository_allows_trusted_actions() {
 	local fixture_allowlist="$AIDEVOPS_TRUSTED_DEPENDABOT_UPDATES_CONF"
 	local dependency_name=""
@@ -693,6 +707,7 @@ main() {
 	test_repository_allows_fontsource_inter
 	test_repository_allows_fontsource_source_serif_4
 	test_repository_allows_secretlint_recommend
+	test_repository_allows_secretlint
 	test_repository_allows_trusted_actions
 	test_trusted_dependabot_can_be_approved
 	test_review_bot_failure_is_ignored_when_other_checks_green
