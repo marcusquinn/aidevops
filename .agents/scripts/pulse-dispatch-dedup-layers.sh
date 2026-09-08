@@ -148,6 +148,58 @@ _stale_recovery_has_worker_evidence() {
 #   1 - no duplicate (safe to dispatch)
 #######################################
 #######################################
+# Block all but one runnable issue for an authoritative Dependabot PR target.
+# Intake creation is locally serialized, but separate Pulse hosts can still
+# create issues concurrently. Elect an existing live owner first, otherwise the
+# lowest issue number. Unknown repository reads fail closed.
+# Arguments: issue_number, repo_slug, issue_body
+# Exit: 0 = blocked, 1 = current issue owns the target or is not an intake
+#######################################
+_dedup_dependabot_intake_target() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local issue_body="$3"
+	local target_repo=""
+	local target_pr=""
+	local marker=""
+	local issues_json=""
+	local owner_issue=""
+
+	if [[ "$issue_body" =~ aidevops:dependabot-pr-intake[[:space:]]repo=([^[:space:]]+)[[:space:]]pr=([0-9]+) ]]; then
+		target_repo="${BASH_REMATCH[1]}"
+		target_pr="${BASH_REMATCH[2]}"
+	else
+		return 1
+	fi
+	[[ "$target_repo" == "$repo_slug" ]] || {
+		echo "[pulse-wrapper] Dedup: Dependabot intake #${issue_number} target repository mismatch; blocking dispatch" >>"$LOGFILE"
+		return 0
+	}
+	marker="<!-- aidevops:dependabot-pr-intake repo=${target_repo} pr=${target_pr} -->"
+	issues_json=$(gh_issue_list --repo "$repo_slug" --state open --label dependencies \
+		--limit 500 --json number,body,labels,assignees 2>/dev/null) || {
+		echo "[pulse-wrapper] Dedup: authoritative Dependabot intake lookup unavailable for #${issue_number}; blocking dispatch" >>"$LOGFILE"
+		return 0
+	}
+	owner_issue=$(printf '%s' "$issues_json" | jq -er --arg marker "$marker" '
+		[.[] | select((.body // "") | contains($marker))] as $matches
+		| if ($matches | length) == 0 then error("missing current intake") else
+			([$matches[]
+				| select(((.assignees // []) | length) > 0 or
+					([.labels[]?.name // ""] | any(. == "status:in-progress" or . == "status:in-review")))
+				| .number] | min) // ([$matches[].number] | min)
+		end' 2>/dev/null) || {
+		echo "[pulse-wrapper] Dedup: invalid Dependabot intake evidence for #${issue_number}; blocking dispatch" >>"$LOGFILE"
+		return 0
+	}
+	if [[ "$owner_issue" != "$issue_number" ]]; then
+		echo "[pulse-wrapper] Dedup: Dependabot PR #${target_pr} intake #${issue_number} blocked by target owner #${owner_issue}" >>"$LOGFILE"
+		return 0
+	fi
+	return 1
+}
+
+#######################################
 # Layer 1 (GH#6696): in-flight dispatch ledger check.
 # Catches workers in the 10-15 min gap between dispatch and PR creation.
 # Arguments: issue_number, repo_slug

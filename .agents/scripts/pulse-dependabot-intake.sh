@@ -23,8 +23,13 @@ _pulse_dependabot_existing_intake_issue() {
 	local marker="$3"
 	local issues_json="[]"
 
+	[[ "$pr_number" =~ ^[0-9]+$ ]] || return 1
+	# Do not use GitHub search for this identity check. Search indexing can lag
+	# issue creation, so two Pulse cycles may both observe an invented absence.
+	# The repository issue list is authoritative and the dependencies label keeps
+	# the bounded read focused on generated intake candidates.
 	issues_json=$(gh_issue_list --repo "$repo_slug" --state open \
-		--search "Dependabot PR #${pr_number} in:title" --limit 20 \
+		--label dependencies --limit 500 \
 		--json number,body,url 2>/dev/null) || return 1
 	printf '%s' "$issues_json" | jq -r --arg marker "$marker" \
 		'[.[] | select((.body // "") | contains($marker))][0].url // ""' 2>/dev/null

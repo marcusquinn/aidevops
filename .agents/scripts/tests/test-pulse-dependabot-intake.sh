@@ -42,6 +42,7 @@ _is_authentic_dependabot_pr() {
 
 gh_issue_list() {
 	local args=" $* "
+	printf '%s\n' "$*" >>"${TEST_ROOT}/issue-list-args"
 	if [[ "$args" == *" --state closed "* ]]; then
 		printf '%s\n' "$CLOSED_ISSUES_JSON"
 	else
@@ -122,10 +123,39 @@ test_creates_worker_ready_issue() {
 }
 
 test_reuses_existing_issue() {
-	rm -f "${TEST_ROOT}/create-args"
+	rm -f "${TEST_ROOT}/create-args" "${TEST_ROOT}/issue-list-args"
 	OPEN_ISSUES_JSON='[{"number":42,"url":"https://github.com/owner/repo/issues/42","body":"<!-- aidevops:dependabot-pr-intake repo=owner/repo pr=30038 -->"}]'
 	_pulse_route_dependabot_pr_to_worker_issue "30038" "owner/repo" "app/dependabot" "head-current" "terminal-ci-failure"
 	[[ ! -e "${TEST_ROOT}/create-args" ]]
+	if grep -q -- '--search' "${TEST_ROOT}/issue-list-args"; then
+		return 1
+	fi
+	assert_file_contains "intake lookup uses authoritative labeled issue list" \
+		"${TEST_ROOT}/issue-list-args" "--label dependencies --limit 500"
+	return $?
+}
+
+test_target_level_dispatch_dedup() {
+	local marker='<!-- aidevops:dependabot-pr-intake repo=owner/repo pr=30038 -->'
+	local current_body="$marker"
+
+	OPEN_ISSUES_JSON='[{"number":42,"body":"<!-- aidevops:dependabot-pr-intake repo=owner/repo pr=30038 -->","assignees":[{"login":"runner"}],"labels":[{"name":"status:in-progress"}]},{"number":43,"body":"<!-- aidevops:dependabot-pr-intake repo=owner/repo pr=30038 -->","assignees":[],"labels":[{"name":"status:available"}]}]'
+	_dedup_dependabot_intake_target "43" "owner/repo" "$current_body"
+	if _dedup_dependabot_intake_target "42" "owner/repo" "$current_body"; then
+		return 1
+	fi
+
+	OPEN_ISSUES_JSON='[{"number":43,"body":"<!-- aidevops:dependabot-pr-intake repo=owner/repo pr=30039 -->","assignees":[],"labels":[{"name":"status:available"}]}]'
+	if _dedup_dependabot_intake_target "43" "owner/repo" '<!-- aidevops:dependabot-pr-intake repo=owner/repo pr=30039 -->'; then
+		return 1
+	fi
+	return 0
+}
+
+test_target_lookup_failure_blocks_dispatch() {
+	gh_issue_list() { return 1; }
+	_dedup_dependabot_intake_target "43" "owner/repo" \
+		'<!-- aidevops:dependabot-pr-intake repo=owner/repo pr=30038 -->'
 	return $?
 }
 
@@ -353,6 +383,8 @@ main() {
 	trap teardown_test_env EXIT
 	# shellcheck source=../pulse-dependabot-intake.sh
 	source "$INTAKE_SCRIPT"
+	# shellcheck source=../pulse-dispatch-dedup-layers.sh
+	source "${SCRIPT_DIR}/../pulse-dispatch-dedup-layers.sh"
 	test_creates_worker_ready_issue
 	test_reuses_existing_issue
 	printf 'PASS existing intake is idempotent\n'
@@ -369,6 +401,10 @@ main() {
 	printf 'PASS dry-run performs no GitHub write\n'
 	test_concurrent_routes_create_once
 	printf 'PASS concurrent routes converge on one issue\n'
+	test_target_level_dispatch_dedup
+	printf 'PASS same-target intake dispatch elects one live owner\n'
+	test_target_lookup_failure_blocks_dispatch
+	printf 'PASS unknown target lookup fails closed\n'
 	return 0
 }
 
