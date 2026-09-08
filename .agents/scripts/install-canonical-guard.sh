@@ -13,18 +13,18 @@
 #
 # Model: mirrors .agents/scripts/install-privacy-guard.sh (t1965).
 #
-# The installer targets the git COMMON dir (`git rev-parse --git-common-dir`)
-# so worktrees share the hook with the parent repo. If a pre-existing hook
-# that is not ours is found, we refuse to overwrite and print chaining
-# instructions.
+# The installer respects the effective core.hooksPath, which may be shared by
+# worktrees. Refuse unmanaged hooks; preserve a complete trailing Beads section
+# when refreshing our dispatcher. Never use this installer to edit another
+# session's shared hook without coordinating ownership first.
 
 set -euo pipefail
 
-RED=$'\033[0;31m'
-GREEN=$'\033[0;32m'
-YELLOW=$'\033[1;33m'
-BLUE=$'\033[0;34m'
-NC=$'\033[0m'
+[[ -n "${RED+x}" ]] || RED=$'\033[0;31m'
+[[ -n "${GREEN+x}" ]] || GREEN=$'\033[0;32m'
+[[ -n "${YELLOW+x}" ]] || YELLOW=$'\033[1;33m'
+[[ -n "${BLUE+x}" ]] || BLUE=$'\033[0;34m'
+[[ -n "${NC+x}" ]] || NC=$'\033[0m'
 
 print_info() { printf '%s[INFO]%s %s\n' "$BLUE" "$NC" "$1"; }
 print_success() { printf '%s[OK]%s %s\n' "$GREEN" "$NC" "$1"; }
@@ -83,12 +83,46 @@ _git_hooks_dir() {
 }
 
 #######################################
+# Extract only a single complete trailing Beads section. Fail closed if the
+# markers are ambiguous or other code follows it; never silently discard it.
+#######################################
+_beads_section() {
+	local hook_path="$1"
+	awk '
+		/^# --- BEGIN BEADS INTEGRATION v[^ ]+ ---$/ {
+			if (started++) invalid = 1
+			# The version immediately precedes the closing marker.
+			version = $(NF - 1)
+			active = 1
+			print
+			next
+		}
+		/^# --- END BEADS INTEGRATION( v[^ ]+)? ---$/ {
+			if (!active || ended++) invalid = 1
+			if (NF == 7 && $(NF - 1) != version) invalid = 1
+			active = 0
+			print
+			next
+		}
+		/BEADS INTEGRATION/ { invalid = 1 }
+		active { print; next }
+		ended && /[^[:space:]]/ { invalid = 1 }
+		END { if (invalid || active || started != ended) exit 1 }
+	' "$hook_path"
+	return $?
+}
+
+#######################################
 # Install the hook. Refuses to overwrite unmanaged pre-existing hooks.
 #######################################
-cmd_install() {
+cmd_install() (
 	local hooks_dir
 	hooks_dir=$(_git_hooks_dir) || return 1
 	local hook_path="${hooks_dir}/post-checkout"
+	if [[ -L "$hook_path" || (-e "$hook_path" && ! -f "$hook_path") ]]; then
+		print_error "refusing non-regular or symlink hook: $hook_path"
+		return 1
+	fi
 	mkdir -p "$(dirname "$hook_path")"
 
 	local source_hook
@@ -99,7 +133,12 @@ cmd_install() {
 		return 1
 	fi
 
+	local beads_section=""
 	if [[ -f "$hook_path" ]]; then
+		if ! beads_section=$(_beads_section "$hook_path"); then
+			print_error "ambiguous Beads integration; leaving existing hook unchanged"
+			return 1
+		fi
 		if grep -q "$HOOK_MARKER" "$hook_path" 2>/dev/null; then
 			print_info "canonical-on-main-guard already installed at $hook_path — refreshing"
 		elif grep -q "$LEGACY_MARKER" "$hook_path" 2>/dev/null; then
@@ -118,7 +157,12 @@ cmd_install() {
 		fi
 	fi
 
-	cat >"$hook_path" <<HOOKEOF
+	local staged_hook=""
+	staged_hook=$(mktemp "${hook_path}.tmp.XXXXXX") || return 1
+	trap 'rm -f "$staged_hook"' EXIT
+	local deployed_literal=""
+	printf -v deployed_literal '%q' "$DEPLOYED_HOOK"
+	cat >"$staged_hook" <<HOOKEOF
 #!/usr/bin/env bash
 $HOOK_MARKER
 # Managed by .agents/scripts/install-canonical-guard.sh — do not edit.
@@ -130,22 +174,27 @@ _repo_hook=""
 if git_dir=\$(git rev-parse --show-toplevel 2>/dev/null); then
 	_repo_hook="\${git_dir}/.agents/hooks/canonical-on-main-guard.sh"
 fi
-_deployed_hook="$DEPLOYED_HOOK"
+_deployed_hook=$deployed_literal
 
 if [[ -n "\$_repo_hook" && -f "\$_repo_hook" ]]; then
-	exec "\$_repo_hook" "\$@"
+	"\$_repo_hook" "\$@" || exit \$?
 elif [[ -f "\$_deployed_hook" ]]; then
-	exec "\$_deployed_hook" "\$@"
+	"\$_deployed_hook" "\$@" || exit \$?
 else
 	printf 'CRITICAL: aidevops canonical guard source is missing\n' >&2
 	exit 1
 fi
 HOOKEOF
-	chmod +x "$hook_path"
+	if [[ -n "$beads_section" ]]; then
+		printf '\n%s\n' "$beads_section" >>"$staged_hook"
+	fi
+	bash -n "$staged_hook" || return 1
+	chmod 755 "$staged_hook" || return 1
+	mv -f "$staged_hook" "$hook_path" || return 1
 	print_success "installed canonical-on-main-guard at $hook_path"
 	print_info "source hook: $source_hook"
 	return 0
-}
+)
 
 #######################################
 # Remove the hook if (and only if) it is managed by us.
@@ -155,12 +204,20 @@ cmd_uninstall() {
 	hooks_dir=$(_git_hooks_dir) || return 1
 	local hook_path="${hooks_dir}/post-checkout"
 
+	if [[ -L "$hook_path" ]]; then
+		print_error "refusing symlink hook: $hook_path"
+		return 1
+	fi
 	if [[ ! -f "$hook_path" ]]; then
 		print_info "no post-checkout hook installed"
 		return 0
 	fi
 
 	if grep -q "$HOOK_MARKER" "$hook_path" 2>/dev/null; then
+		if grep -q 'BEADS INTEGRATION' "$hook_path"; then
+			print_error "hook also contains Beads integration; refusing to remove it"
+			return 1
+		fi
 		rm -f "$hook_path"
 		print_success "removed canonical-on-main-guard post-checkout hook"
 		return 0
