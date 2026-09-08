@@ -1173,7 +1173,10 @@ gh_pr_checks_observed_json() {
 	[[ "$_GH_PR_CHECKS_OBSERVATION_CACHE_HIT" == 0 ]] || return "$result_code"
 	while [[ "$attempts" -lt 2 ]]; do
 		attempts=$((attempts + 1))
-		gh_request_state_singleflight_begin "$request_key"
+		if ! gh_request_state_singleflight_begin "$request_key"; then
+			gh_pr_checks_exact_json "$slug" "$pr_number" "$mode" "$head_sha"
+			return $?
+		fi
 		generation="$_GHRS_BEGIN_GENERATION"
 		case "$_GHRS_BEGIN_ROLE" in
 		leader)
@@ -1184,14 +1187,17 @@ gh_pr_checks_observed_json() {
 				return "$result_code"
 			fi
 			invalidation_generation="$(_gh_pr_checks_observation_invalidation_generation "$slug" "$pr_number" "$mode" "$head_sha")" || invalidation_generation=""
-			if [[ -n "$invalidation_generation" ]]; then
-				result_code=0
-				_gh_pr_checks_observation_fetch_and_cache "$slug" "$pr_number" "$mode" "$head_sha" \
-					"$request_key" "$generation" "$invalidation_generation" || result_code=$?
-				if [[ "$result_code" -eq 0 || "$result_code" -eq 1 || "$result_code" -eq 8 ]]; then
-					gh_request_state_singleflight_finish "$request_key" "$generation" success || true
-					return "$result_code"
-				fi
+			if [[ -z "$invalidation_generation" ]]; then
+				gh_request_state_singleflight_finish "$request_key" "$generation" failure || true
+				gh_pr_checks_exact_json "$slug" "$pr_number" "$mode" "$head_sha"
+				return $?
+			fi
+			result_code=0
+			_gh_pr_checks_observation_fetch_and_cache "$slug" "$pr_number" "$mode" "$head_sha" \
+				"$request_key" "$generation" "$invalidation_generation" || result_code=$?
+			if [[ "$result_code" -eq 0 || "$result_code" -eq 1 || "$result_code" -eq 8 ]]; then
+				gh_request_state_singleflight_finish "$request_key" "$generation" success || true
+				return "$result_code"
 			fi
 			gh_request_state_singleflight_finish "$request_key" "$generation" failure || true
 			return 2
@@ -1207,6 +1213,10 @@ gh_pr_checks_observed_json() {
 			return 2
 			;;
 		bypass)
+			gh_pr_checks_exact_json "$slug" "$pr_number" "$mode" "$head_sha"
+			return $?
+			;;
+		*)
 			gh_pr_checks_exact_json "$slug" "$pr_number" "$mode" "$head_sha"
 			return $?
 			;;

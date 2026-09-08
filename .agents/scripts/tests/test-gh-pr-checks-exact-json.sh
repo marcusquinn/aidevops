@@ -357,6 +357,43 @@ for worker in 1 2 3 4; do
 	assert_json "concurrent observer ${worker} reuses validated evidence" 'length == 1 and .[0].bucket == "pending"' "$(<"${TEST_ROOT}/concurrent-${worker}.out")"
 done
 
+run_coordination_fallback() {
+	local scenario="$1"
+	rm -rf "$AIDEVOPS_GH_REQUEST_STATE_DIR" "$AIDEVOPS_GH_CHECKS_OBSERVATION_CACHE_DIR"
+	: >"$CALL_LOG"
+	(
+		case "$scenario" in
+		begin-failure)
+			gh_request_state_singleflight_begin() { return 1; }
+			;;
+		unknown-role)
+			gh_request_state_singleflight_begin() {
+				_GHRS_BEGIN_ROLE=unexpected
+				_GHRS_BEGIN_GENERATION=fixture-generation
+				return 0
+			}
+			;;
+		invalidation-failure)
+			_gh_pr_checks_observation_invalidation_generation() { return 1; }
+			;;
+		esac
+		set +e
+		GH_TEST_MODE=pending gh_pr_checks_observed_json owner/repo 42 required "$HEAD_SHA" \
+			>"${TEST_ROOT}/fallback-${scenario}.out" 2>"${TEST_ROOT}/fallback-${scenario}.err"
+		printf '%s\n' "$?" >"${TEST_ROOT}/fallback-${scenario}.rc"
+	)
+	assert_eq "${scenario} preserves the fresh exact exit" "8" "$(<"${TEST_ROOT}/fallback-${scenario}.rc")"
+	assert_json "${scenario} returns fresh exact evidence" 'length == 1 and .[0].bucket == "pending"' \
+		"$(<"${TEST_ROOT}/fallback-${scenario}.out")"
+	assert_eq "${scenario} performs one fresh identity read" "1" "$(grep -c '^rest|' "$CALL_LOG" || true)"
+	assert_eq "${scenario} performs one fresh status-rollup read" "1" "$(grep -c '^graphql|' "$CALL_LOG" || true)"
+	return 0
+}
+
+run_coordination_fallback begin-failure
+run_coordination_fallback unknown-role
+run_coordination_fallback invalidation-failure
+
 run_case multipage required 1
 assert_eq "page bound fails closed" "2" "$CASE_RC"
 assert_contains "page bound is diagnosed" "pagination exceeded 1 pages" "$CASE_ERR"
