@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.345] - 2026-09-08
+
+### Fixed
+
+- protect persistent OpenCode sessions from Pulse cleanup
+- make merge PR listing deadline-aware
+- ignore superseded Dependabot check cancellations (#31630)
+
 ## [3.32.344] - 2026-09-08
 
 ### Added
