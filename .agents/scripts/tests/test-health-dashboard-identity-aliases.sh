@@ -488,6 +488,10 @@ export HEALTH_FIXTURE=label_hygiene
 gh() {
 	local call="$*"
 	printf '%s\n' "$call" >>"$GH_CALLS"
+	if [[ "$call" == *"label list --repo owner/repo"* ]]; then
+		printf '%s' '[{"name":"persistent"},{"name":"source:health-dashboard"},{"name":"supervisor"},{"name":"github-user"},{"name":"origin:worker"}]'
+		return 0
+	fi
 	if [[ "$call" == *"issue view 20408 --repo owner/repo --json labels"* ]]; then
 		printf '%s' '{"labels":[{"name":"persistent"},{"name":"source:health-dashboard"},{"name":"supervisor"},{"name":"github-user"},{"name":"operator:canonical-operator"},{"name":"origin:worker"},{"name":"origin:interactive"},{"name":"origin:worker-takeover"},{"name":"auto-dispatch"},{"name":"status:available"}]}'
 	fi
@@ -497,10 +501,34 @@ _normalize_health_issue_labels "20408" "owner/repo" "github-user" "supervisor" "
 if grep -q -- '--remove-label auto-dispatch' "$GH_CALLS" \
 	&& grep -q -- '--remove-label status:available' "$GH_CALLS" \
 	&& grep -q -- '--remove-label origin:interactive' "$GH_CALLS" \
-	&& grep -q -- '--remove-label origin:worker-takeover' "$GH_CALLS"; then
-	pass "dashboard label normalization removes task lifecycle labels"
+	&& grep -q -- '--remove-label origin:worker-takeover' "$GH_CALLS" \
+	&& grep -q -- 'label create operator:canonical-operator' "$GH_CALLS" \
+	&& ! grep -q -- 'label create origin:worker' "$GH_CALLS"; then
+	pass "dashboard label normalization provisions missing labels and removes task lifecycle labels"
 else
-	fail "dashboard label normalization removes task lifecycle labels" "calls=$(tr '\n' ';' <"$GH_CALLS")"
+	fail "dashboard label normalization provisions missing labels and removes task lifecycle labels" "calls=$(tr '\n' ';' <"$GH_CALLS")"
+fi
+
+: >"$GH_CALLS"
+: >"$LOGFILE"
+gh() {
+	local call="$*"
+	printf '%s\n' "$call" >>"$GH_CALLS"
+	if [[ "$call" == *"issue view 20408 --repo owner/repo --json labels"* ]]; then
+		printf '%s' '{"labels":[{"name":"persistent"}]}'
+	elif [[ "$call" == *"label list --repo owner/repo"* ]]; then
+		printf '%s' '[]'
+	elif [[ "$call" == *"label create persistent"* ]]; then
+		return 1
+	fi
+	return 0
+}
+_normalize_health_issue_labels "20408" "owner/repo" "github-user" "supervisor" "canonical-operator"
+if grep -q 'failed to provision label persistent' "$LOGFILE" \
+	&& ! grep -q 'issue edit' "$GH_CALLS"; then
+	pass "dashboard label provisioning failure preserves diagnostics and skips normalization"
+else
+	fail "dashboard label provisioning failure preserves diagnostics and skips normalization" "calls=$(tr '\n' ';' <"$GH_CALLS"); log=$(tr '\n' ';' <"$LOGFILE")"
 fi
 
 : >"$GH_CALLS"
