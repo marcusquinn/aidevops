@@ -273,6 +273,15 @@ jq -e '.status == "failed" and .requested_pr == 43 and .requested_merge == .curr
 	and .attempted_tag == "v2.9.10" and .release_type == "patch"' \
 	"$ROOT/receipts/marcusquinn_aidevops-43.failure.json" >/dev/null
 printf 'PASS failed release persists actionable provenance without publication evidence\n'
+retained_preparation=0
+for retained_path in "$ROOT/worktrees"/aidevops-release-43-*; do
+	[[ -d "$retained_path" ]] && retained_preparation=$((retained_preparation + 1))
+done
+[[ "$retained_preparation" -eq 1 ]] || {
+	printf 'FAIL failed release lost its preparation worktree during EXIT cleanup\n' >&2
+	exit 1
+}
+printf 'PASS failed release retains preparation for guarded recovery\n'
 rm -f "$LANE_HEAD_FILE" "$LANE_STATE_FILE"
 
 if (
@@ -486,5 +495,26 @@ printf 'PASS omitted expected sources still resume a persisted failed pre-public
 	[[ "$resolve_rc" -ne 0 && "$evidence_writes" -eq 1 ]]
 )
 printf 'PASS recovered retries preserve their original failure evidence until preparing\n'
+
+for temporary_kind in aggregate reconcile; do
+	temporary_path="$ROOT/worktrees/aidevops-release-${temporary_kind}-cleanup-test"
+	cleanup_rc=0
+	(
+		cd "$ROOT/repo/linked-branch"
+		export PATH="$ROOT/bin:/usr/bin:/bin"
+		export GIT_CALL_LOG="$ROOT/git.log" FAKE_REPO_ROOT="$ROOT/repo"
+		export AIDEVOPS_WORKTREE_BASE_DIR="$ROOT/worktrees"
+		source "$SCRIPT_DIR/full-loop-release-helper.sh" help >/dev/null
+		mkdir -p "$temporary_path"
+		_FULL_LOOP_RELEASE_PATH="$temporary_path"
+		trap 'cleanup_release_worktree' EXIT
+		exit 7
+	) || cleanup_rc=$?
+	[[ "$cleanup_rc" -eq 7 && ! -d "$temporary_path" ]] || {
+		printf 'FAIL temporary %s checkout retained as preparation\n' "$temporary_kind" >&2
+		exit 1
+	}
+done
+printf 'PASS failed aggregate and reconcile temporary checkouts are still cleaned\n'
 
 exit 0
