@@ -190,7 +190,7 @@ test_skip_on_dirty() {
 	rm -f "$CANONICAL_MAINTENANCE_LAST_RUN"
 
 	# Capture log output
-	true > "$LOGFILE"
+	true >"$LOGFILE"
 	_canonical_fast_forward "0"
 
 	if grep -q "dirty tree" "$LOGFILE"; then
@@ -220,7 +220,7 @@ EOF
 	# Reset cadence
 	rm -f "$CANONICAL_MAINTENANCE_LAST_RUN"
 
-	true > "$LOGFILE"
+	true >"$LOGFILE"
 	_canonical_fast_forward "0"
 	export WORKER_PROCESS_PATTERN="$previous_worker_process_pattern"
 
@@ -252,7 +252,7 @@ test_fast_forward_success() {
 	before_head=$(git -C "$clone_dir" rev-parse HEAD)
 	before_index=$(cksum <"$clone_dir/.git/index")
 	before_tree=$(cksum <"$clone_dir/file.txt")
-	true > "$LOGFILE"
+	true >"$LOGFILE"
 	_canonical_fast_forward "0"
 
 	if grep -q "Diagnostic:.*differs from origin/main" "$LOGFILE" &&
@@ -278,7 +278,7 @@ test_already_up_to_date() {
 	(cd "$clone_dir" && git fetch origin --quiet) >/dev/null 2>&1
 
 	rm -f "$CANONICAL_MAINTENANCE_LAST_RUN"
-	true > "$LOGFILE"
+	true >"$LOGFILE"
 	_canonical_fast_forward "0"
 
 	if grep -q "already up to date" "$LOGFILE"; then
@@ -331,7 +331,7 @@ test_skip_not_on_main() {
 	(cd "$clone_dir" && git checkout -b feature/test) >/dev/null 2>&1
 
 	rm -f "$CANONICAL_MAINTENANCE_LAST_RUN"
-	true > "$LOGFILE"
+	true >"$LOGFILE"
 	_canonical_fast_forward "0"
 
 	if grep -q "not on main" "$LOGFILE"; then
@@ -363,7 +363,7 @@ EOS
 
 	local scheduler_cwd="${TEST_ROOT}/scheduler-cwd"
 	mkdir -p "$scheduler_cwd"
-	true > "$LOGFILE"
+	true >"$LOGFILE"
 
 	local removed
 	removed=$(cd "$scheduler_cwd" && _stale_worktree_sweep_single_repo "$clone_dir" "0" "$helper_path")
@@ -388,7 +388,7 @@ test_worktree_sweep_non_git_path_skips() {
 EOF
 	export REPOS_JSON="${HOME}/.config/aidevops/repos.json"
 
-	true > "$LOGFILE"
+	true >"$LOGFILE"
 	_stale_worktree_sweep "0"
 
 	if grep -q "Skipping ${non_git_dir} — not a git repository" "$LOGFILE" && ! grep -q "timed out" "$LOGFILE"; then
@@ -396,6 +396,190 @@ EOF
 	else
 		print_result "worktree-sweep-non-git-path-skips" 1 "(expected non-git skip without timeout; log=$(cat "$LOGFILE"))"
 	fi
+	return 0
+}
+
+_setup_budget_repos() {
+	local repo_count="${1:-3}"
+	local repos_body=""
+	local index repo_path
+	for ((index = 1; index <= repo_count; index++)); do
+		repo_path="${TEST_ROOT}/budget-repo-${index}"
+		rm -rf "$repo_path"
+		git init "$repo_path" >/dev/null 2>&1
+		[[ -n "$repos_body" ]] && repos_body="${repos_body},"
+		repos_body="${repos_body}{\"slug\":\"test/budget-${index}\",\"path\":\"${repo_path}\",\"pulse\":false}"
+	done
+	printf '{"initialized_repos":[%s]}\n' "$repos_body" >"${HOME}/.config/aidevops/repos.json"
+	export REPOS_JSON="${HOME}/.config/aidevops/repos.json"
+	return 0
+}
+
+_setup_fake_sweep_helper() {
+	local helper_dir="${TEST_ROOT}/budget-helper"
+	mkdir -p "$helper_dir"
+	cat >"${helper_dir}/worktree-helper.sh" <<'EOS'
+#!/usr/bin/env bash
+printf '%s\n' "$PWD" >>"$SWEEP_VISITS"
+if [[ -z "${FAKE_SLOW_REPO:-}" || "$PWD" == "$FAKE_SLOW_REPO" ]]; then
+	sleep "${FAKE_SWEEP_SLEEP:-0}"
+fi
+exit 0
+EOS
+	chmod +x "${helper_dir}/worktree-helper.sh"
+	SCRIPT_DIR="$helper_dir"
+	export SCRIPT_DIR
+	return 0
+}
+
+# =============================================================================
+# Test 12: A slow child is bounded, checkpointed, and resumed without replay
+# =============================================================================
+test_budget_yield_and_resume() {
+	_setup_budget_repos 3
+	_setup_fake_sweep_helper
+	export SWEEP_VISITS="${TEST_ROOT}/sweep-visits"
+	export FAKE_SWEEP_SLEEP=5
+	export FAKE_SLOW_REPO="${TEST_ROOT}/budget-repo-2"
+	CANONICAL_MAINTENANCE_LAST_RUN="${TEST_ROOT}/budget-last-run"
+	CANONICAL_MAINTENANCE_CHECKPOINT="${CANONICAL_MAINTENANCE_LAST_RUN}.checkpoint"
+	CANONICAL_MAINTENANCE_STAGE_BUDGET_SECONDS=3
+	CANONICAL_MAINTENANCE_STAGE_RESERVE_SECONDS=1
+	CANONICAL_MAINTENANCE_TIMEOUT=60
+	rm -f "$SWEEP_VISITS" "$CANONICAL_MAINTENANCE_LAST_RUN" "$CANONICAL_MAINTENANCE_CHECKPOINT"
+	_canonical_maintenance_write_checkpoint sweep
+
+	local started elapsed first_repo slow_repo first_count slow_count
+	started=$(date +%s)
+	run_canonical_maintenance
+	elapsed=$(($(date +%s) - started))
+	first_repo=$(jq -r '.completed[0] // ""' "$CANONICAL_MAINTENANCE_CHECKPOINT" 2>/dev/null)
+	slow_repo="$FAKE_SLOW_REPO"
+	first_count=$(grep -Fxc "$first_repo" "$SWEEP_VISITS" 2>/dev/null || true)
+	slow_count=$(grep -Fxc "$slow_repo" "$SWEEP_VISITS" 2>/dev/null || true)
+	if [[ "$elapsed" -lt 3 && -n "$first_repo" && "$first_count" -eq 1 && ! -f "$CANONICAL_MAINTENANCE_LAST_RUN" ]] &&
+		[[ "$slow_count" -eq 1 ]] && grep -q "yielded after timeout" "$LOGFILE"; then
+		print_result "budget-yield-before-outer-timeout" 0
+	else
+		print_result "budget-yield-before-outer-timeout" 1 "(elapsed=${elapsed}; checkpoint=$(cat "$CANONICAL_MAINTENANCE_CHECKPOINT" 2>/dev/null); log=$(cat "$LOGFILE"))"
+	fi
+
+	export FAKE_SWEEP_SLEEP=0
+	export FAKE_SLOW_REPO=""
+	CANONICAL_MAINTENANCE_STAGE_BUDGET_SECONDS=10
+	run_canonical_maintenance
+	first_count=$(grep -Fxc "$first_repo" "$SWEEP_VISITS" 2>/dev/null || true)
+	slow_count=$(grep -Fxc "$slow_repo" "$SWEEP_VISITS" 2>/dev/null || true)
+	if [[ "$first_count" -eq 1 && "$slow_count" -eq 2 && -f "$CANONICAL_MAINTENANCE_LAST_RUN" && ! -f "$CANONICAL_MAINTENANCE_CHECKPOINT" ]]; then
+		print_result "budget-resume-without-replay" 0
+	else
+		print_result "budget-resume-without-replay" 1 "(first_repo_visits=${first_count}; slow_repo_visits=${slow_count}; visits=$(cat "$SWEEP_VISITS" 2>/dev/null))"
+	fi
+	SCRIPT_DIR="$TEST_SCRIPTS_DIR"
+	export SCRIPT_DIR
+	return 0
+}
+
+# =============================================================================
+# Test 13: Stock-macOS Perl fallback still bounds a slow child
+# =============================================================================
+test_portable_timeout_fallback() {
+	local fallback_bin="${TEST_ROOT}/fallback-bin"
+	local command_path started elapsed timeout_rc=0
+	mkdir -p "$fallback_bin"
+	command_path=$(command -v perl)
+	ln -sf "$command_path" "${fallback_bin}/perl"
+	command_path=$(command -v sleep)
+	ln -sf "$command_path" "${fallback_bin}/sleep"
+	started=$(date +%s)
+	PATH="$fallback_bin" _canonical_maintenance_run_with_timeout 1 sleep 5 || timeout_rc=$?
+	elapsed=$(($(date +%s) - started))
+	if [[ "$timeout_rc" -eq 124 && "$elapsed" -lt 3 ]]; then
+		print_result "portable-timeout-fallback-bounds-child" 0
+	else
+		print_result "portable-timeout-fallback-bounds-child" 1 "(rc=${timeout_rc}; elapsed=${elapsed})"
+	fi
+	return 0
+}
+
+# =============================================================================
+# Test 14: Reordered and removed registrations preserve identity-safe progress
+# =============================================================================
+test_checkpoint_registration_identity() {
+	_setup_budget_repos 3
+	_setup_fake_sweep_helper
+	export SWEEP_VISITS="${TEST_ROOT}/identity-visits"
+	export FAKE_SWEEP_SLEEP=0
+	CANONICAL_MAINTENANCE_LAST_RUN="${TEST_ROOT}/identity-last-run"
+	CANONICAL_MAINTENANCE_CHECKPOINT="${CANONICAL_MAINTENANCE_LAST_RUN}.checkpoint"
+	CANONICAL_MAINTENANCE_STAGE_BUDGET_SECONDS=10
+	CANONICAL_MAINTENANCE_STAGE_RESERVE_SECONDS=1
+	rm -f "$SWEEP_VISITS" "$CANONICAL_MAINTENANCE_LAST_RUN" "$CANONICAL_MAINTENANCE_CHECKPOINT"
+	_canonical_maintenance_write_checkpoint sweep "${TEST_ROOT}/budget-repo-2"
+	cat >"$REPOS_JSON" <<EOF
+{"initialized_repos":[
+ {"slug":"test/budget-3","path":"${TEST_ROOT}/budget-repo-3","pulse":false},
+ {"slug":"test/budget-2","path":"${TEST_ROOT}/budget-repo-2","pulse":false},
+ {"slug":"test/budget-1","path":"${TEST_ROOT}/budget-repo-1","pulse":false}
+]}
+EOF
+	run_canonical_maintenance
+	if ! grep -Fxq "${TEST_ROOT}/budget-repo-2" "$SWEEP_VISITS" &&
+		grep -Fxq "${TEST_ROOT}/budget-repo-3" "$SWEEP_VISITS" &&
+		grep -Fxq "${TEST_ROOT}/budget-repo-1" "$SWEEP_VISITS"; then
+		print_result "checkpoint-reorder-uses-repository-identity" 0
+	else
+		print_result "checkpoint-reorder-uses-repository-identity" 1 "(visits=$(cat "$SWEEP_VISITS" 2>/dev/null))"
+	fi
+
+	rm -f "$SWEEP_VISITS" "$CANONICAL_MAINTENANCE_LAST_RUN"
+	_canonical_maintenance_write_checkpoint sweep "${TEST_ROOT}/budget-repo-2"
+	cat >"$REPOS_JSON" <<EOF
+{"initialized_repos":[{"slug":"test/budget-1","path":"${TEST_ROOT}/budget-repo-1","pulse":false}]}
+EOF
+	run_canonical_maintenance
+	if [[ "$(cat "$SWEEP_VISITS")" == "${TEST_ROOT}/budget-repo-1" && -f "$CANONICAL_MAINTENANCE_LAST_RUN" ]]; then
+		print_result "checkpoint-removed-registration-does-not-starve" 0
+	else
+		print_result "checkpoint-removed-registration-does-not-starve" 1 "(visits=$(cat "$SWEEP_VISITS" 2>/dev/null))"
+	fi
+	SCRIPT_DIR="$TEST_SCRIPTS_DIR"
+	export SCRIPT_DIR
+	return 0
+}
+
+# =============================================================================
+# Test 15: Worktree sweep preserves active-owner exclusions
+# =============================================================================
+test_sweep_skips_active_session() {
+	_setup_budget_repos 1
+	_setup_fake_sweep_helper
+	export SWEEP_VISITS="${TEST_ROOT}/active-sweep-visits"
+	export FAKE_SWEEP_SLEEP=0
+	export FAKE_SLOW_REPO=""
+	CANONICAL_MAINTENANCE_LAST_RUN="${TEST_ROOT}/active-last-run"
+	CANONICAL_MAINTENANCE_CHECKPOINT="${CANONICAL_MAINTENANCE_LAST_RUN}.checkpoint"
+	CANONICAL_MAINTENANCE_STAGE_BUDGET_SECONDS=10
+	CANONICAL_MAINTENANCE_STAGE_RESERVE_SECONDS=1
+	local stamp_dir="$CANONICAL_MAINTENANCE_CLAIM_STAMP_DIR"
+	local previous_worker_process_pattern="${WORKER_PROCESS_PATTERN:-}"
+	mkdir -p "$stamp_dir"
+	cat >"${stamp_dir}/budget-active.json" <<EOF
+{"worktree":"${TEST_ROOT}/budget-repo-1","pid":$$,"issue":31553}
+EOF
+	export WORKER_PROCESS_PATTERN=""
+	rm -f "$SWEEP_VISITS" "$CANONICAL_MAINTENANCE_LAST_RUN" "$CANONICAL_MAINTENANCE_CHECKPOINT"
+	_canonical_maintenance_write_checkpoint sweep
+	run_canonical_maintenance
+	export WORKER_PROCESS_PATTERN="$previous_worker_process_pattern"
+	rm -f "${stamp_dir}/budget-active.json"
+	if [[ ! -f "$SWEEP_VISITS" ]] && grep -q "Skipping worktree sweep.*active session" "$LOGFILE"; then
+		print_result "worktree-sweep-skips-active-session" 0
+	else
+		print_result "worktree-sweep-skips-active-session" 1 "(visits=$(cat "$SWEEP_VISITS" 2>/dev/null); log=$(cat "$LOGFILE"))"
+	fi
+	SCRIPT_DIR="$TEST_SCRIPTS_DIR"
+	export SCRIPT_DIR
 	return 0
 }
 
@@ -413,6 +597,10 @@ test_dry_run
 test_skip_not_on_main
 test_worktree_sweep_uses_repo_cwd
 test_worktree_sweep_non_git_path_skips
+test_budget_yield_and_resume
+test_portable_timeout_fallback
+test_checkpoint_registration_identity
+test_sweep_skips_active_session
 
 # =============================================================================
 # Summary

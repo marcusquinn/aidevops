@@ -45,28 +45,94 @@ unset _PULSE_CM_SCRIPT_DIR
 # ---------------------------------------------------------------------------
 # _canonical_maintenance_run_with_timeout
 #
-# Runs a command with a timeout, falling back to running directly if the
-# `timeout` utility is not available (common on stock macOS without coreutils).
+# Runs a command with a timeout. Stock macOS uses gtimeout when installed or
+# Perl's inherited alarm when GNU timeout is unavailable.
 # Arguments: $1 - timeout_seconds, $2.. - command and args
 # ---------------------------------------------------------------------------
 _canonical_maintenance_run_with_timeout() {
 	local timeout_seconds="$1"
+	local command_rc=0
 	shift
 	if command -v timeout &>/dev/null; then
 		timeout "$timeout_seconds" "$@"
-	else
-		"$@"
+		return $?
 	fi
-	return $?
+	if command -v gtimeout &>/dev/null; then
+		gtimeout "$timeout_seconds" "$@"
+		return $?
+	fi
+	# Perl source is intentionally single-quoted. alarm survives exec and bounds
+	# the replacement process without introducing a detached timeout owner.
+	# shellcheck disable=SC2016
+	perl -e '$timeout=shift; alarm $timeout; exec @ARGV' "$timeout_seconds" "$@" || command_rc=$?
+	[[ "$command_rc" -eq 142 ]] && return 124
+	return "$command_rc"
 }
 
 # ---------------------------------------------------------------------------
 # Configuration constants (overridable via env)
 # ---------------------------------------------------------------------------
-CANONICAL_MAINTENANCE_CADENCE="${CANONICAL_MAINTENANCE_CADENCE:-1800}"       # 30 min
+CANONICAL_MAINTENANCE_CADENCE="${CANONICAL_MAINTENANCE_CADENCE:-1800}" # 30 min
 CANONICAL_MAINTENANCE_LAST_RUN="${CANONICAL_MAINTENANCE_LAST_RUN:-${HOME}/.aidevops/.agent-workspace/pulse-canonical-maintenance-last-run}"
-CANONICAL_MAINTENANCE_TIMEOUT="${CANONICAL_MAINTENANCE_TIMEOUT:-60}"         # 60s per-repo hard timeout
+CANONICAL_MAINTENANCE_TIMEOUT="${CANONICAL_MAINTENANCE_TIMEOUT:-60}" # 60s per-repo hard timeout
 CANONICAL_MAINTENANCE_CLAIM_STAMP_DIR="${CANONICAL_MAINTENANCE_CLAIM_STAMP_DIR:-${HOME}/.aidevops/.agent-workspace/interactive-claims}"
+CANONICAL_MAINTENANCE_CHECKPOINT="${CANONICAL_MAINTENANCE_CHECKPOINT:-${CANONICAL_MAINTENANCE_LAST_RUN}.checkpoint}"
+CANONICAL_MAINTENANCE_STAGE_BUDGET_SECONDS="${CANONICAL_MAINTENANCE_STAGE_BUDGET_SECONDS:-${PRE_RUN_STAGE_TIMEOUT:-600}}"
+CANONICAL_MAINTENANCE_STAGE_RESERVE_SECONDS="${CANONICAL_MAINTENANCE_STAGE_RESERVE_SECONDS:-5}"
+
+_canonical_maintenance_checkpoint_has_repo() {
+	local phase="$1"
+	local repo_path="$2"
+	[[ -f "$CANONICAL_MAINTENANCE_CHECKPOINT" ]] || return 1
+	jq -e --arg phase "$phase" --arg path "$repo_path" \
+		'.phase == $phase and (.completed // [] | index($path) != null)' \
+		"$CANONICAL_MAINTENANCE_CHECKPOINT" >/dev/null 2>&1
+}
+
+_canonical_maintenance_write_checkpoint() {
+	local phase="$1"
+	local repo_path="${2:-}"
+	local checkpoint_dir="${CANONICAL_MAINTENANCE_CHECKPOINT%/*}"
+	local tmp_file=""
+	[[ "$checkpoint_dir" == "$CANONICAL_MAINTENANCE_CHECKPOINT" ]] && checkpoint_dir="."
+	mkdir -p "$checkpoint_dir" 2>/dev/null || return 1
+	tmp_file=$(mktemp "${CANONICAL_MAINTENANCE_CHECKPOINT}.tmp.XXXXXX") || return 1
+	if [[ -n "$repo_path" && -f "$CANONICAL_MAINTENANCE_CHECKPOINT" ]]; then
+		jq --arg phase "$phase" --arg path "$repo_path" \
+			'{phase: $phase, completed: (if .phase == $phase then ((.completed // []) + [$path] | unique) else [$path] end)}' \
+			"$CANONICAL_MAINTENANCE_CHECKPOINT" >"$tmp_file" 2>/dev/null || true
+	elif [[ -n "$repo_path" ]]; then
+		jq -n --arg phase "$phase" --arg path "$repo_path" '{phase: $phase, completed: [$path]}' >"$tmp_file"
+	else
+		jq -n --arg phase "$phase" '{phase: $phase, completed: []}' >"$tmp_file"
+	fi
+	if [[ ! -s "$tmp_file" ]]; then
+		rm -f "$tmp_file"
+		return 1
+	fi
+	mv "$tmp_file" "$CANONICAL_MAINTENANCE_CHECKPOINT"
+}
+
+_canonical_maintenance_phase() {
+	if [[ -f "$CANONICAL_MAINTENANCE_CHECKPOINT" ]]; then
+		jq -r '.phase // "diagnostic"' "$CANONICAL_MAINTENANCE_CHECKPOINT" 2>/dev/null || printf '%s\n' diagnostic
+	else
+		printf '%s\n' diagnostic
+	fi
+}
+
+_canonical_maintenance_operation_timeout() {
+	local started_epoch="$1"
+	local now_epoch remaining operation_timeout
+	now_epoch=$(date +%s)
+	remaining=$((CANONICAL_MAINTENANCE_STAGE_BUDGET_SECONDS - (now_epoch - started_epoch) - CANONICAL_MAINTENANCE_STAGE_RESERVE_SECONDS))
+	if [[ "$remaining" -le 0 ]]; then
+		return 1
+	fi
+	operation_timeout="$CANONICAL_MAINTENANCE_TIMEOUT"
+	[[ "$operation_timeout" -gt "$remaining" ]] && operation_timeout="$remaining"
+	printf '%s\n' "$operation_timeout"
+}
 
 # ---------------------------------------------------------------------------
 # _get_default_branch_for_repo
@@ -137,8 +203,8 @@ _canonical_maintenance_has_active_session() {
 			# t2421: command-aware liveness — bare kill -0 lies on macOS PID reuse.
 			local stamp_hash=""
 			stamp_hash=$(jq -r '.owner_argv_hash // empty' "$stamp" 2>/dev/null || echo "")
-			if [[ -n "$stamp_pid" ]] && [[ "$stamp_pid" =~ ^[0-9]+$ ]] && \
-			   _is_process_alive_and_matches "$stamp_pid" "${WORKER_PROCESS_PATTERN:-}" "$stamp_hash"; then
+			if [[ -n "$stamp_pid" ]] && [[ "$stamp_pid" =~ ^[0-9]+$ ]] &&
+				_is_process_alive_and_matches "$stamp_pid" "${WORKER_PROCESS_PATTERN:-}" "$stamp_hash"; then
 				return 0
 			fi
 		fi
@@ -222,6 +288,7 @@ _canonical_ff_should_skip_repo() {
 _canonical_ff_single_repo() {
 	local repo_path="$1"
 	local dry_run="$2"
+	local operation_timeout="${3:-$CANONICAL_MAINTENANCE_TIMEOUT}"
 
 	# Determine default branch — skip rather than assume if origin/HEAD is not set.
 	local main_branch
@@ -235,11 +302,13 @@ _canonical_ff_single_repo() {
 	if [[ "$dry_run" == "1" ]]; then
 		echo "[DRY_RUN] Would diagnose origin for ${repo_path}"
 	else
-		local remote_sha=""
-		remote_sha=$(_canonical_maintenance_run_with_timeout "$CANONICAL_MAINTENANCE_TIMEOUT" git -C "$repo_path" ls-remote origin "refs/heads/${main_branch}" 2>/dev/null | awk 'NR == 1 {print $1}') || {
+		local remote_sha="" remote_rc=0
+		remote_sha=$(_canonical_maintenance_run_with_timeout "$operation_timeout" git -C "$repo_path" ls-remote origin "refs/heads/${main_branch}" 2>/dev/null | awk 'NR == 1 {print $1}') || remote_rc=$?
+		if [[ "$remote_rc" -ne 0 ]]; then
 			echo "[pulse-canonical-maintenance] Remote diagnostic failed/timed out for ${repo_path}" >>"${LOGFILE:-/dev/null}"
+			[[ "$remote_rc" -eq 124 ]] && return 2
 			return 1
-		}
+		fi
 		if [[ -z "$remote_sha" ]]; then
 			echo "[pulse-canonical-maintenance] Skipping ${repo_path} — remote ${main_branch} not found" >>"${LOGFILE:-/dev/null}"
 			return 1
@@ -267,25 +336,42 @@ _canonical_ff_single_repo() {
 # ---------------------------------------------------------------------------
 _canonical_fast_forward() {
 	local dry_run="${1:-0}"
+	local started_epoch="${2:-0}"
 	local repos_json="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
 	[[ -f "$repos_json" ]] && command -v jq &>/dev/null || return 0
 
 	local -a _repo_list=()
 	mapfile -t _repo_list < <(jq -r '.initialized_repos[] | select(.maintenance != false) | select((.pulse // false) == true) | select((.local_only // false) == false) | .path // ""' "$repos_json" 2>/dev/null)
 
-	local repo_path ff_count=0 skip_count=0
+	local repo_path operation_timeout ff_count=0 skip_count=0
 	for repo_path in "${_repo_list[@]}"; do
 		[[ -z "$repo_path" ]] && continue
 		[[ ! -d "$repo_path/.git" ]] && continue
+		if [[ "$dry_run" -eq 0 && "$started_epoch" -gt 0 ]] && _canonical_maintenance_checkpoint_has_repo diagnostic "$repo_path"; then
+			continue
+		fi
+		operation_timeout="$CANONICAL_MAINTENANCE_TIMEOUT"
+		if [[ "$dry_run" -eq 0 && "$started_epoch" -gt 0 ]] && ! operation_timeout=$(_canonical_maintenance_operation_timeout "$started_epoch"); then
+			echo "[pulse-canonical-maintenance] Diagnostic pass yielded with resumable progress" >>"${LOGFILE:-/dev/null}"
+			return 2
+		fi
 
 		if _canonical_ff_should_skip_repo "$repo_path"; then
 			skip_count=$((skip_count + 1))
+			[[ "$dry_run" -eq 0 && "$started_epoch" -gt 0 ]] && _canonical_maintenance_write_checkpoint diagnostic "$repo_path" || true
 			continue
 		fi
 
-		if _canonical_ff_single_repo "$repo_path" "$dry_run"; then
+		local ff_rc=0
+		_canonical_ff_single_repo "$repo_path" "$dry_run" "$operation_timeout" || ff_rc=$?
+		if [[ "$ff_rc" -eq 2 ]]; then
+			echo "[pulse-canonical-maintenance] Diagnostic pass yielded after timeout for ${repo_path}" >>"${LOGFILE:-/dev/null}"
+			return 2
+		fi
+		if [[ "$ff_rc" -eq 0 ]]; then
 			ff_count=$((ff_count + 1))
 		fi
+		[[ "$dry_run" -eq 0 && "$started_epoch" -gt 0 ]] && _canonical_maintenance_write_checkpoint diagnostic "$repo_path" || true
 	done
 
 	echo "[pulse-canonical-maintenance] Diagnostic pass: ${ff_count} repos stale/diverged, ${skip_count} skipped" >>"${LOGFILE:-/dev/null}"
@@ -304,6 +390,7 @@ _stale_worktree_sweep_single_repo() {
 	local repo_path="$1"
 	local dry_run="$2"
 	local worktree_helper="$3"
+	local operation_timeout="${4:-$CANONICAL_MAINTENANCE_TIMEOUT}"
 	local _wt_prefix="^worktree "
 
 	if [[ "$dry_run" == "1" ]]; then
@@ -328,7 +415,7 @@ _stale_worktree_sweep_single_repo() {
 	local sweep_rc=0
 	(
 		cd -- "$repo_path" || exit 125
-		_canonical_maintenance_run_with_timeout "$CANONICAL_MAINTENANCE_TIMEOUT" "$worktree_helper" clean --auto --force-merged
+		_canonical_maintenance_run_with_timeout "$operation_timeout" "$worktree_helper" clean --auto --force-merged
 	) >>"${LOGFILE:-/dev/null}" 2>&1 || sweep_rc=$?
 	if [[ "$sweep_rc" -ne 0 ]]; then
 		if [[ "$sweep_rc" -eq 124 ]]; then
@@ -337,6 +424,7 @@ _stale_worktree_sweep_single_repo() {
 			echo "[pulse-canonical-maintenance] Worktree sweep skipped for ${repo_path} (helper exited ${sweep_rc})" >>"${LOGFILE:-/dev/null}"
 		fi
 		printf '0'
+		[[ "$sweep_rc" -eq 124 ]] && return 2
 		return 0
 	fi
 
@@ -369,6 +457,7 @@ _stale_worktree_sweep_single_repo() {
 # ---------------------------------------------------------------------------
 _stale_worktree_sweep() {
 	local dry_run="${1:-0}"
+	local started_epoch="${2:-0}"
 	local repos_json="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
 	[[ -f "$repos_json" ]] && command -v jq &>/dev/null || return 0
 
@@ -393,15 +482,33 @@ _stale_worktree_sweep() {
 	local -a _repo_list=()
 	mapfile -t _repo_list < <(jq -r '.initialized_repos[] | select((.local_only // false) == false) | .path // ""' "$repos_json" 2>/dev/null)
 
-	local repo_path sweep_count=0
+	local repo_path operation_timeout sweep_count=0
 	for repo_path in "${_repo_list[@]}"; do
 		[[ -z "$repo_path" ]] && continue
-		if ! git -C "$repo_path" rev-parse --git-dir >/dev/null 2>&1; then
-			echo "[pulse-canonical-maintenance] Skipping ${repo_path} — not a git repository" >>"${LOGFILE:-/dev/null}"
+		if [[ "$dry_run" -eq 0 && "$started_epoch" -gt 0 ]] && _canonical_maintenance_checkpoint_has_repo sweep "$repo_path"; then
 			continue
 		fi
-		local removed=0
-		removed=$(_stale_worktree_sweep_single_repo "$repo_path" "$dry_run" "$worktree_helper")
+		operation_timeout="$CANONICAL_MAINTENANCE_TIMEOUT"
+		if [[ "$dry_run" -eq 0 && "$started_epoch" -gt 0 ]] && ! operation_timeout=$(_canonical_maintenance_operation_timeout "$started_epoch"); then
+			echo "[pulse-canonical-maintenance] Worktree sweep yielded with resumable progress" >>"${LOGFILE:-/dev/null}"
+			return 2
+		fi
+		if ! git -C "$repo_path" rev-parse --git-dir >/dev/null 2>&1; then
+			echo "[pulse-canonical-maintenance] Skipping ${repo_path} — not a git repository" >>"${LOGFILE:-/dev/null}"
+			[[ "$dry_run" -eq 0 && "$started_epoch" -gt 0 ]] && _canonical_maintenance_write_checkpoint sweep "$repo_path" || true
+			continue
+		fi
+		if _canonical_maintenance_has_active_session "$repo_path"; then
+			echo "[pulse-canonical-maintenance] Skipping worktree sweep for ${repo_path} — active session detected" >>"${LOGFILE:-/dev/null}"
+			[[ "$dry_run" -eq 0 && "$started_epoch" -gt 0 ]] && _canonical_maintenance_write_checkpoint sweep "$repo_path" || true
+			continue
+		fi
+		local removed=0 sweep_repo_rc=0
+		removed=$(_stale_worktree_sweep_single_repo "$repo_path" "$dry_run" "$worktree_helper" "$operation_timeout") || sweep_repo_rc=$?
+		if [[ "$sweep_repo_rc" -eq 2 ]]; then
+			echo "[pulse-canonical-maintenance] Worktree sweep yielded after timeout for ${repo_path}" >>"${LOGFILE:-/dev/null}"
+			return 2
+		fi
 		# t2559 defense-in-depth: sanitise the captured count before arithmetic.
 		# Even with the stdout fix in _stale_worktree_sweep_single_repo, guard
 		# against future regressions where stray text might leak into $removed.
@@ -409,6 +516,7 @@ _stale_worktree_sweep() {
 		removed="${removed//[^0-9]/}"
 		removed="${removed:-0}"
 		sweep_count=$((sweep_count + removed))
+		[[ "$dry_run" -eq 0 && "$started_epoch" -gt 0 ]] && _canonical_maintenance_write_checkpoint sweep "$repo_path" || true
 	done
 
 	echo "[pulse-canonical-maintenance] Worktree sweep: ${sweep_count} total removed" >>"${LOGFILE:-/dev/null}"
@@ -429,8 +537,9 @@ run_canonical_maintenance() {
 		dry_run=1
 	fi
 
-	local now_epoch
+	local now_epoch started_epoch phase pass_rc=0
 	now_epoch=$(date +%s)
+	started_epoch="$now_epoch"
 
 	# Cadence gate (skip in dry-run mode to always show output)
 	if [[ "$dry_run" -eq 0 ]] && ! _canonical_maintenance_check_cadence "$now_epoch"; then
@@ -439,13 +548,27 @@ run_canonical_maintenance() {
 
 	echo "[pulse-canonical-maintenance] Starting canonical maintenance pass" >>"${LOGFILE:-/dev/null}"
 
-	_canonical_fast_forward "$dry_run"
-	_stale_worktree_sweep "$dry_run"
+	phase=$(_canonical_maintenance_phase)
+	if [[ "$dry_run" -eq 1 || "$phase" == "diagnostic" ]]; then
+		_canonical_fast_forward "$dry_run" "$started_epoch" || pass_rc=$?
+		if [[ "$pass_rc" -eq 2 ]]; then
+			return 0
+		fi
+		if [[ "$dry_run" -eq 0 ]]; then
+			_canonical_maintenance_write_checkpoint sweep || return 0
+		fi
+	fi
+	pass_rc=0
+	_stale_worktree_sweep "$dry_run" "$started_epoch" || pass_rc=$?
+	if [[ "$pass_rc" -eq 2 ]]; then
+		return 0
+	fi
 
 	# Update cadence state file
 	if [[ "$dry_run" -eq 0 ]]; then
 		mkdir -p "$(dirname "$CANONICAL_MAINTENANCE_LAST_RUN")" 2>/dev/null || true
 		echo "$now_epoch" >"$CANONICAL_MAINTENANCE_LAST_RUN"
+		rm -f "$CANONICAL_MAINTENANCE_CHECKPOINT"
 	fi
 
 	echo "[pulse-canonical-maintenance] Canonical maintenance pass complete" >>"${LOGFILE:-/dev/null}"
