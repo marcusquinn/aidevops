@@ -1653,6 +1653,11 @@ _dispatch_dedup_check_layers() {
 	_dss_t0=$(_ds_now_ns)
 	local _dispatch_issue_body
 	_dispatch_issue_body=$(printf '%s' "$issue_meta_json" | jq -r '.body // ""' 2>/dev/null) || _dispatch_issue_body=""
+	if _dedup_dependabot_intake_target "$issue_number" "$repo_slug" "$_dispatch_issue_body"; then
+		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: another issue owns the same Dependabot PR target" >>"$LOGFILE"
+		_ds_record "$issue_number" "$repo_slug" "dedup.dependabot_target" "$_dss_t0"
+		return 1
+	fi
 	if is_blocked_by_unresolved "$_dispatch_issue_body" "$repo_slug" "$issue_number"; then
 		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: unresolved blocked-by dependency (t1927)" >>"$LOGFILE"
 		_ds_record "$issue_number" "$repo_slug" "dedup.blocked_by" "$_dss_t0"
