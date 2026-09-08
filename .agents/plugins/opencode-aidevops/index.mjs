@@ -187,6 +187,20 @@ function run(cmd, timeout = 5000) {
 }
 
 /**
+ * Run a shell command while preserving failures for user-facing tool calls.
+ * @param {string} cmd
+ * @param {number} [timeout=5000]
+ * @returns {string}
+ */
+function runChecked(cmd, timeout = 5000) {
+  return execSync(cmd, {
+    encoding: "utf-8",
+    timeout,
+    stdio: ["pipe", "pipe", "pipe"],
+  }).trim();
+}
+
+/**
  * Read a file if it exists, or return empty string.
  * @param {string} filepath
  * @returns {string}
@@ -393,6 +407,7 @@ export async function AidevopsPlugin({ directory, client }) {
   });
   process.once("exit", () => boundedOperationManager.dispose());
   const baseTools = createTools(SCRIPTS_DIR, run, {
+    aidevopsRun: runChecked,
     sessionOrigin: process.env.AIDEVOPS_SESSION_ORIGIN,
     poolToolFactory: () => createPoolTool(client),
     imageFetch: IMAGE_FETCH,

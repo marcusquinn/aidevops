@@ -7,6 +7,7 @@ import { createPreEditCheckTool } from "./pre-edit-check-tool.mjs";
 import { BoundedInteractiveOperationManager } from "./bounded-interactive-operation.mjs";
 import { createOutputSandboxReader, createOutputSandboxRecorder } from "./bounded-operation-output.mjs";
 import { createBoundedInteractiveOperationTool } from "./bounded-operation-tool.mjs";
+import { scrubCredentials } from "./quality-hooks-output-scrub.mjs";
 
 const FALLBACK_SCHEMA_NODE = {
   _zod: {},
@@ -121,8 +122,24 @@ function createAidevopsTool(run) {
         return `Error: command contains disallowed characters. Only alphanumeric, spaces, hyphens, underscores, dots, slashes, colons, # and @ are permitted.`;
       }
       const cmd = `aidevops ${rawCmd}`;
-      const result = run(cmd, 15000);
-      return result || `Command completed: ${cmd}`;
+      try {
+        const result = run(cmd, 15000);
+        return result || `Command completed: ${cmd}`;
+      } catch (error) {
+        const exitCode = Number.isInteger(error?.status) ? error.status : null;
+        const reason = exitCode !== null
+          ? `exit ${exitCode}`
+          : error?.code === "ETIMEDOUT"
+            ? "timed out"
+            : error?.signal
+              ? `signal ${error.signal}`
+              : "execution error";
+        const stderr = Buffer.isBuffer(error?.stderr)
+          ? error.stderr.toString("utf8")
+          : String(error?.stderr || "");
+        const detail = scrubCredentials(stderr.trim()).scrubbed.slice(0, 4096);
+        throw new Error(`aidevops command failed (${reason})${detail ? `: ${detail}` : ""}`);
+      }
     },
   });
 }
@@ -217,7 +234,7 @@ function createMemoryTool(scriptsDir, run) {
  *
  * @param {string} scriptsDir - Path to scripts directory
  * @param {function} run - Shell command runner
- * @param {{preEditTimeoutMs?: number, workerWorktree?: string, sessionOrigin?: string, poolToolFactory?: function, mcpClient?: object, mcpDirectory?: string, managedMcpNames?: string[], managedMcpWorkspaces?: object, boundedOperationManager?: object}} [options] - Tool-specific test/runtime overrides
+ * @param {{aidevopsRun?: function, preEditTimeoutMs?: number, workerWorktree?: string, sessionOrigin?: string, poolToolFactory?: function, mcpClient?: object, mcpDirectory?: string, managedMcpNames?: string[], managedMcpWorkspaces?: object, boundedOperationManager?: object}} [options] - Tool-specific test/runtime overrides
  * @returns {Record<string, object>}
  */
 export function createTools(scriptsDir, run, options = {}) {
@@ -230,7 +247,7 @@ export function createTools(scriptsDir, run, options = {}) {
   });
 
   const tools = {
-    aidevops: createAidevopsTool(run),
+    aidevops: createAidevopsTool(options.aidevopsRun || run),
     gpt_image_generate: createGptImageTool(tool, z, {
       scriptsDir,
       env: options.env,
