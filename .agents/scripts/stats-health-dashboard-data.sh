@@ -539,8 +539,11 @@ PY
 
 # Worker success rates are cross-repository data. Compute them once per stats
 # cycle instead of repeating the same repository-wide GitHub queries while
-# rendering every dashboard. A timed-out refresh leaves the last good cache in
-# place; absence is rendered as unavailable rather than as a successful sample.
+# rendering every dashboard. The stats-wrapper scheduler runs hourly, so retain
+# a sample for at most two scheduler intervals. A timed-out refresh leaves the
+# last good cache in place only while its sample time remains trustworthy;
+# otherwise rendering marks the rates unavailable rather than current.
+WORKER_SUCCESS_RATES_CACHE_MAX_AGE_SECONDS="${WORKER_SUCCESS_RATES_CACHE_MAX_AGE_SECONDS:-7200}"
 _worker_success_rates_cache_file() {
 	local runner_user="$1" runner_safe
 	if [[ -n "${WORKER_SUCCESS_RATES_CACHE_FILE:-}" ]]; then
@@ -578,16 +581,32 @@ _refresh_worker_success_rates_cache() {
 }
 
 _read_worker_success_rates_cache() {
-	local runner_user="$1" cache_file
+	local runner_user="$1" cache_file refreshed_at refreshed_epoch now_epoch cache_age cache_max_age
 	cache_file=$(_worker_success_rates_cache_file "$runner_user")
+	cache_max_age="$WORKER_SUCCESS_RATES_CACHE_MAX_AGE_SECONDS"
+	[[ "$cache_max_age" =~ ^[0-9]+$ ]] || cache_max_age=7200
 	if [[ -f "$cache_file" ]] && jq -e '
-		(.rate24 | type == "string") and (.total24 | test("^[0-9]+$")) and
-		(.rate7 | type == "string") and (.total7 | test("^[0-9]+$"))
+		def is_string: type == "string";
+		(.rate24 | is_string) and (.total24 | test("^[0-9]+$")) and
+		(.rate7 | is_string) and (.total7 | test("^[0-9]+$")) and
+		(.refreshed_at | is_string and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))
 	' "$cache_file" >/dev/null 2>&1; then
-		jq -r '[.rate24,.total24,.rate7,.total7] | @tsv' "$cache_file"
-	else
-		printf '%s\t%s\t%s\t%s\n' '—' '0' '—' '0'
+		refreshed_at=$(jq -r '.refreshed_at' "$cache_file")
+		if [[ "$OSTYPE" == darwin* ]]; then
+			refreshed_epoch=$(date -j -u -f '%Y-%m-%dT%H:%M:%SZ' "$refreshed_at" +%s 2>/dev/null)
+		else
+			refreshed_epoch=$(date -u -d "$refreshed_at" +%s 2>/dev/null)
+		fi
+		now_epoch=$(date -u +%s)
+		if [[ "$refreshed_epoch" =~ ^[0-9]+$ ]] && [[ "$now_epoch" =~ ^[0-9]+$ ]]; then
+			cache_age=$((now_epoch - refreshed_epoch))
+			if [[ "$cache_age" -ge 0 && "$cache_age" -le "$cache_max_age" ]]; then
+				jq -r '[.rate24,.total24,.rate7,.total7] | @tsv' "$cache_file"
+				return 0
+			fi
+		fi
 	fi
+	printf '%s\t%s\t%s\t%s\n' '—' '0' '—' '0'
 	return 0
 }
 
