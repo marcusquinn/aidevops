@@ -517,4 +517,32 @@ for temporary_kind in aggregate reconcile; do
 done
 printf 'PASS failed aggregate and reconcile temporary checkouts are still cleaned\n'
 
+(
+	cd "$ROOT/repo/linked-branch"
+	export PATH="$ROOT/bin:/usr/bin:/bin"
+	export GIT_CALL_LOG="$ROOT/git.log" FAKE_REPO_ROOT="$ROOT/repo"
+	export AIDEVOPS_WORKTREE_BASE_DIR="$ROOT/worktrees"
+	source "$SCRIPT_DIR/full-loop-release-helper.sh" help >/dev/null
+	_full_loop_resolve_repo() { printf 'test/repo\n'; }
+	release_lane_read() {
+		_AIDEVOPS_RELEASE_LANE_JSON='{"active":true,"source_pr":42,"phase":"preparing","tag":null,"operation_token":"fixture-token"}'
+		return 0
+	}
+	release_lane_liveness_report() { return 0; }
+	_full_loop_release_existing_command() {
+		_FULL_LOOP_RELEASE_FOUND_TAG=v1.2.3
+		return 8
+	}
+	updated=0
+	release_lane_update() {
+		[[ "$1" == "test/repo" && "$2" == "42" && "$3" == "remote-publication" && "${4:-}" == "v1.2.3" ]] || return 1
+		updated=1
+		return 0
+	}
+	existing_rc=0
+	_full_loop_release_existing_with_lane reconcile 42 || existing_rc=$?
+	[[ "$existing_rc" -eq 8 && "$updated" -eq 1 ]]
+)
+printf 'PASS pending reconciliation persists its verified discovered tag\n'
+
 exit 0
