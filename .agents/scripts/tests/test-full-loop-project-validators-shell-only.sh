@@ -48,6 +48,15 @@ print_error() {
 	return 0
 }
 
+# Production callers inherit the portable implementation from shared-constants.
+# This focused source-level fixture supplies the same command contract.
+timeout_sec() {
+	local _seconds="$1"
+	shift
+	"$@"
+	return $?
+}
+
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck source=../full-loop-helper-commit.sh
 source "${SCRIPT_DIR}/full-loop-helper-commit.sh"
@@ -65,15 +74,11 @@ FAKE_BIN="${TEST_ROOT}/bin"
 mkdir -p "$FAKE_BIN"
 cat >"${FAKE_BIN}/npm" <<'EOF'
 #!/usr/bin/env bash
-printf '%s\n' "npm should not run for shell-only diffs" >>"${NPM_CALL_LOG:?}"
-if [[ "${NPM_FAKE_ACTION:-}" == "delete-cwd-after-edit" ]]; then
-	printf '%s\n' 'fixed' >>"${NPM_FIX_TARGET:?}"
-	if [[ -n "${NPM_DELETE_DIR:-}" ]]; then
-		rm -rf "$NPM_DELETE_DIR"
-	fi
-	exit 0
+printf '%s|%s\n' "$PWD" "$*" >>"${NPM_CALL_LOG:?}"
+if [[ "${NPM_FAKE_ACTION:-}" == "mutate-other" ]]; then
+	printf '%s\n' 'validator mutation' >>"${NPM_FIX_TARGET:?}"
 fi
-exit "${NPM_FAKE_RC:-2}"
+exit "${NPM_FAKE_RC:-0}"
 EOF
 chmod +x "${FAKE_BIN}/npm"
 
@@ -173,37 +178,143 @@ else
 	print_result "docs-only branch skips project validators" 1 "rc=${case3_rc}, npm_log=$(wc -c <"$NPM_CALL_LOG" 2>/dev/null || printf 0)"
 fi
 
-# Case 4: if an auto-fix command removes the process' current subdirectory,
-# the validator restores the repository root before running git diff/add/amend.
-# This guards the GH#22526 failure class where amend hit getcwd() from a stale
-# cwd and reported: fatal: Unable to read current working directory.
-CWD_REPO="${TEST_ROOT}/cwd-restore"
-make_repo "$CWD_REPO"
-mkdir -p "${CWD_REPO}/vanishing"
-(
-	cd "$CWD_REPO" || exit 1
-	cat >package.json <<'EOF'
-{"scripts":{"format:fix":"node scripts/fix.js"}}
+make_workspace_repo() {
+	local repo_dir="$1"
+	mkdir -p "$repo_dir/packages/a" "$repo_dir/packages/b"
+	(
+		cd "$repo_dir" || exit 1
+		git init -q
+		git config commit.gpgsign false
+		git config tag.gpgsign false
+		git branch -M develop
+		cat >package.json <<'EOF'
+{"private":true,"workspaces":["packages/*"],"scripts":{"lint:fix":"unsafe-root-fixer"}}
 EOF
-	printf '%s\n' 'before' >tracked.txt
-	git add package.json tracked.txt
-	git -c user.name='Test User' -c user.email='test@example.invalid' commit -qm 'node project'
-)
-NPM_CALL_LOG="${TEST_ROOT}/npm-cwd.log"
-NPM_FIX_TARGET="${CWD_REPO}/tracked.txt"
-NPM_DELETE_DIR="${CWD_REPO}/vanishing"
-export NPM_CALL_LOG NPM_FIX_TARGET NPM_DELETE_DIR NPM_FAKE_ACTION=delete-cwd-after-edit NPM_FAKE_RC=0
+		printf '%s\n' '{"scripts":{"lint":"eslint .","typecheck":"tsc --noEmit"}}' >packages/a/package.json
+		printf '%s\n' '{"scripts":{"lint":"eslint ."}}' >packages/b/package.json
+		printf '%s\n' 'export const a = 1;' >packages/a/index.ts
+		printf '%s\n' 'export const b = 1;' >packages/b/index.ts
+		git add .
+		git -c user.name='Test User' -c user.email='test@example.invalid' commit -qm 'initial workspace'
+		git remote add origin .
+		git update-ref refs/remotes/origin/develop HEAD
+		git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/develop
+		git switch -qc feature/test
+	) || return 1
+	return 0
+}
+
+# Case 4: a package-A-only change runs only package A checks. Pre-existing
+# staged and unstaged edits in package B retain their bytes and index state.
+WORKSPACE_REPO="${TEST_ROOT}/workspace-scope"
+make_workspace_repo "$WORKSPACE_REPO"
+NPM_CALL_LOG="${TEST_ROOT}/npm-workspace.log"
+export NPM_CALL_LOG NPM_FAKE_ACTION='' NPM_FAKE_RC=0
 (
-	cd "${CWD_REPO}/vanishing" || exit 1
-	PATH="${FAKE_BIN}:$PATH" fix_changes=0 _run_node_auto_fix npm 30 0
+	cd "$WORKSPACE_REPO" || exit 1
+	printf '%s\n' 'export const a = 2;' >packages/a/index.ts
+	git add packages/a/index.ts
+	git -c user.name='Test User' -c user.email='test@example.invalid' commit -qm 'change package a'
+	printf '%s\n' 'pre-existing staged package b edit' >>packages/b/index.ts
+	git add packages/b/index.ts
+	printf '%s\n' 'pre-existing unstaged package b edit' >>packages/b/index.ts
+	PATH="${FAKE_BIN}:$PATH" _run_project_validators 0
 )
 case4_rc=$?
-case4_head_subject=$(git -C "$CWD_REPO" log -1 --format=%s 2>/dev/null || printf '')
-case4_file=$(git -C "$CWD_REPO" show HEAD:tracked.txt 2>/dev/null || printf '')
-if [[ "$case4_rc" -eq 0 && "$case4_head_subject" == "node project" && "$case4_file" == $'before\nfixed' ]]; then
-	print_result "auto-fix restores repo root before amend when cwd disappears" 0
+case4_b=$(git -C "$WORKSPACE_REPO" diff -- packages/b/index.ts)
+case4_cached=$(git -C "$WORKSPACE_REPO" diff --cached --name-only)
+case4_index_b=$(git -C "$WORKSPACE_REPO" show :packages/b/index.ts)
+if [[ "$case4_rc" -eq 0 && "$case4_b" == *"pre-existing unstaged package b edit"* && "$case4_cached" == "packages/b/index.ts" && "$case4_index_b" == *"pre-existing staged package b edit"* ]] &&
+	[[ $(wc -l <"$NPM_CALL_LOG") -eq 2 ]] && ! grep -q '/packages/b|' "$NPM_CALL_LOG" && ! grep -q 'unsafe-root-fixer' "$NPM_CALL_LOG"; then
+	print_result "affected workspace checks preserve unrelated tracked edits" 0
 else
-	print_result "auto-fix restores repo root before amend when cwd disappears" 1 "rc=${case4_rc}, subject=${case4_head_subject}, file=${case4_file}"
+	print_result "affected workspace checks preserve unrelated tracked edits" 1 "rc=${case4_rc}, cached=${case4_cached}"
+fi
+
+# Case 5: a nominally check-only script that mutates package B fails closed.
+MUTATION_REPO="${TEST_ROOT}/workspace-mutation"
+make_workspace_repo "$MUTATION_REPO"
+NPM_CALL_LOG="${TEST_ROOT}/npm-mutation.log"
+NPM_FIX_TARGET="${MUTATION_REPO}/packages/b/index.ts"
+export NPM_CALL_LOG NPM_FIX_TARGET NPM_FAKE_ACTION=mutate-other NPM_FAKE_RC=0
+(
+	cd "$MUTATION_REPO" || exit 1
+	printf '%s\n' 'export const a = 2;' >packages/a/index.ts
+	git add packages/a/index.ts
+	git -c user.name='Test User' -c user.email='test@example.invalid' commit -qm 'change package a'
+	PATH="${FAKE_BIN}:$PATH" _run_project_validators 0
+)
+case5_rc=$?
+case5_head=$(git -C "$MUTATION_REPO" show HEAD:packages/b/index.ts)
+case5_worktree=$(git -C "$MUTATION_REPO" diff -- packages/b/index.ts)
+case5_cached=$(git -C "$MUTATION_REPO" diff --cached --name-only)
+if [[ "$case5_rc" -ne 0 && "$case5_head" == 'export const b = 1;' && "$case5_worktree" == *"validator mutation"* && -z "$case5_cached" ]]; then
+	print_result "out-of-scope validator mutation fails without staging or amend" 0
+else
+	print_result "out-of-scope validator mutation fails without staging or amend" 1 "rc=${case5_rc}, cached=${case5_cached}"
+fi
+
+# Case 6: portable timeout status is distinct from a validator check failure.
+TIMEOUT_REPO="${TEST_ROOT}/validator-timeout"
+make_repo "$TIMEOUT_REPO"
+NPM_CALL_LOG="${TEST_ROOT}/npm-timeout.log"
+export NPM_CALL_LOG NPM_FAKE_ACTION='' NPM_FAKE_RC=0
+(
+	cd "$TIMEOUT_REPO" || exit 1
+	printf '%s\n' 'const answer: number = 42;' >index.ts
+	git add index.ts
+	git -c user.name='Test User' -c user.email='test@example.invalid' commit -qm 'typescript change'
+	timeout_sec() { return 124; }
+	PATH="${FAKE_BIN}:$PATH" _run_project_validators 0
+) 2>"${TEST_ROOT}/timeout-error.log"
+case6_rc=$?
+if [[ "$case6_rc" -ne 0 ]] && grep -q 'TIMEOUT after' "${TEST_ROOT}/timeout-error.log"; then
+	print_result "portable validator timeout is a distinct failure" 0
+else
+	print_result "portable validator timeout is a distinct failure" 1 "rc=${case6_rc}"
+fi
+
+# Case 7: a root/shared Node change visibly broadens to every declared workspace
+# without invoking the root's mutating-only lint:fix script.
+ROOT_SCOPE_REPO="${TEST_ROOT}/root-shared-scope"
+make_workspace_repo "$ROOT_SCOPE_REPO"
+NPM_CALL_LOG="${TEST_ROOT}/npm-root-scope.log"
+export NPM_CALL_LOG NPM_FAKE_ACTION='' NPM_FAKE_RC=0
+(
+	cd "$ROOT_SCOPE_REPO" || exit 1
+	cat >package.json <<'EOF'
+{"private":true,"workspaces":["packages/*"],"engines":{"node":">=20"},"scripts":{"lint:fix":"unsafe-root-fixer"}}
+EOF
+	git add package.json
+	git -c user.name='Test User' -c user.email='test@example.invalid' commit -qm 'change shared node contract'
+	PATH="${FAKE_BIN}:$PATH" _run_project_validators 0
+)
+case7_rc=$?
+if [[ "$case7_rc" -eq 0 && $(wc -l <"$NPM_CALL_LOG") -eq 3 ]] &&
+	grep -q '/packages/a|' "$NPM_CALL_LOG" && grep -q '/packages/b|' "$NPM_CALL_LOG" && ! grep -q 'unsafe-root-fixer' "$NPM_CALL_LOG"; then
+	print_result "root shared changes broaden to check-only workspace validation" 0
+else
+	print_result "root shared changes broaden to check-only workspace validation" 1 "rc=${case7_rc}, calls=$(wc -l <"$NPM_CALL_LOG")"
+fi
+
+# Case 8: mutating-only root scripts are never executed and cannot create a
+# false green; publication fails with check-only configuration guidance.
+UNSCOPED_REPO="${TEST_ROOT}/mutating-only"
+make_repo "$UNSCOPED_REPO"
+NPM_CALL_LOG="${TEST_ROOT}/npm-mutating-only.log"
+export NPM_CALL_LOG NPM_FAKE_ACTION='' NPM_FAKE_RC=0
+(
+	cd "$UNSCOPED_REPO" || exit 1
+	printf '%s\n' '{"scripts":{"format:fix":"prettier --write ."}}' >package.json
+	git add package.json
+	git -c user.name='Test User' -c user.email='test@example.invalid' commit -qm 'configure mutating-only formatter'
+	PATH="${FAKE_BIN}:$PATH" _run_project_validators 0
+) 2>"${TEST_ROOT}/unscoped-error.log"
+case8_rc=$?
+if [[ "$case8_rc" -ne 0 && ! -s "$NPM_CALL_LOG" ]] && grep -q 'NO SCOPED CHECKS AVAILABLE' "${TEST_ROOT}/unscoped-error.log"; then
+	print_result "mutating-only scripts fail with scoped-check guidance" 0
+else
+	print_result "mutating-only scripts fail with scoped-check guidance" 1 "rc=${case8_rc}, calls=$(wc -l <"$NPM_CALL_LOG" 2>/dev/null || printf 0)"
 fi
 
 printf '\n%d tests run, %d failed\n' "$TESTS_RUN" "$TESTS_FAILED"
