@@ -300,6 +300,23 @@ _refresh_health_issue_title_from_body() {
 	return 0
 }
 
+_run_health_issue_maintenance() {
+	local repo_slug="$1" runner_user="$2" runner_role="$3" role_label="$4"
+	local role_display="$5" health_issue_number="$6" canonical_identity="$7"
+	local identity_aliases="$8"
+	_periodic_health_issue_dedup \
+		"$repo_slug" "$runner_user" "$runner_role" \
+		"$role_label" "$role_display" "$health_issue_number" \
+		"$canonical_identity" "$identity_aliases"
+	_normalize_health_issue_labels \
+		"$health_issue_number" "$repo_slug" "$runner_user" \
+		"$runner_role" "$canonical_identity"
+	if [[ "$runner_role" == "supervisor" ]]; then
+		_ensure_health_issue_pinned "$health_issue_number" "$repo_slug" "$runner_user"
+	fi
+	return 0
+}
+
 #######################################
 # Update pinned health issue for a single repo
 #
@@ -414,17 +431,9 @@ _update_health_issue_for_repo() {
 	# seconds per repo+runner+role, default 1h). Closes duplicates that
 	# slipped in during past GraphQL rate-limit windows when the cache
 	# was valid so the label-scan inside _find_health_issue never ran.
-	_periodic_health_issue_dedup \
-		"$repo_slug" "$runner_user" "$runner_role" \
-		"$role_label" "$role_display" "$health_issue_number" \
-		"$canonical_identity" "$identity_aliases"
-	_normalize_health_issue_labels \
-		"$health_issue_number" "$repo_slug" "$runner_user" \
-		"$runner_role" "$canonical_identity"
-
-	if [[ "$runner_role" == "supervisor" ]]; then
-		_ensure_health_issue_pinned "$health_issue_number" "$repo_slug" "$runner_user"
-	fi
+	_run_health_issue_maintenance \
+		"$repo_slug" "$runner_user" "$runner_role" "$role_label" \
+		"$role_display" "$health_issue_number" "$canonical_identity" "$identity_aliases"
 
 	_record_health_repo_stage "$stage_file" "complete"
 	return 0
@@ -649,6 +658,16 @@ _health_routine_repo_entries() {
 	return 0
 }
 
+_refresh_health_aggregate_caches() {
+	local runner_user="$1" aggregate_timeout="$2"
+	_stats_run_bounded "$aggregate_timeout" "$_HEALTH_WORK_DEADLINE" \
+		_refresh_worker_success_rates_cache "$runner_user" ||
+		echo "[stats] Health dashboard worker success-rate cache deferred/failed" >>"$LOGFILE"
+	_stats_run_bounded "$aggregate_timeout" "$_HEALTH_WORK_DEADLINE" _refresh_person_stats_cache ||
+		echo "[stats] Health dashboard person cache deferred/failed" >>"$LOGFILE"
+	return 0
+}
+
 #######################################
 # Update health issues for ALL pulse-enabled repos
 #
@@ -707,11 +726,7 @@ update_health_issues() {
 	# Refresh person-stats cache if stale (t1426: hourly, not every pulse)
 	local aggregate_timeout
 	aggregate_timeout=$(_stats_seconds "${STATS_HEALTH_AGGREGATE_TIMEOUT:-30}" 30)
-	_stats_run_bounded "$aggregate_timeout" "$_HEALTH_WORK_DEADLINE" \
-		_refresh_worker_success_rates_cache "$routine_runner_user" ||
-		echo "[stats] Health dashboard worker success-rate cache deferred/failed" >>"$LOGFILE"
-	_stats_run_bounded "$aggregate_timeout" "$_HEALTH_WORK_DEADLINE" _refresh_person_stats_cache ||
-		echo "[stats] Health dashboard person cache deferred/failed" >>"$LOGFILE"
+	_refresh_health_aggregate_caches "$routine_runner_user" "$aggregate_timeout"
 
 	local cross_repo_md=""
 	local cross_repo_session_time_md=""
