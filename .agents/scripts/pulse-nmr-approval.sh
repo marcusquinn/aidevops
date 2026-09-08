@@ -372,6 +372,7 @@ issue_has_required_approval() {
 
 	# It was NMR-labeled at some point — check for cryptographic approval
 	local approval_helper="${AGENTS_DIR:-$HOME/.aidevops/agents}/scripts/approval-helper.sh"
+	local missing_result="NO_APPROVAL"
 	_NMR_APPROVAL_RESULT="HELPER_UNAVAILABLE"
 	if [[ -f "$approval_helper" ]]; then
 		local verify_result="" verify_rc=0
@@ -382,9 +383,9 @@ issue_has_required_approval() {
 		fi
 		# Preserve the reason: missing keys, stale scope and API uncertainty are
 		# not proof that the maintainer never approved. Dispatch stays blocked.
-		[[ "$verify_rc" -eq 1 && "$verify_result" == "NO_APPROVAL" ]] || {
+		[[ "$verify_rc" -eq 1 && "$verify_result" == "$missing_result" ]] || {
 			echo "[pulse-wrapper] approval verification blocked #${issue_num} in ${slug}: state=${_NMR_APPROVAL_RESULT} rc=${verify_rc}" >>"$LOGFILE"
-			[[ "$verify_result" != "NO_APPROVAL" ]] || _NMR_APPROVAL_RESULT="API_ERROR"
+			[[ "$verify_result" != "$missing_result" ]] || _NMR_APPROVAL_RESULT="API_ERROR"
 			return 1
 		}
 	fi

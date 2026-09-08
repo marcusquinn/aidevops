@@ -64,7 +64,17 @@ setup_test_env() {
 	CHECK_RUNS_FIXTURE="${TEST_ROOT}/check-runs.json"
 	POSTED_COMMENT="${TEST_ROOT}/posted-comment.txt"
 	export COMMENTS_FIXTURE PR_LIST_FIXTURE CHECK_RUNS_FIXTURE POSTED_COMMENT
+	install_notification_gh_stub
 
+	# Seed empty fixtures independently of the fake transport implementation.
+	printf '[]\n' >"$COMMENTS_FIXTURE"
+	printf '[]\n' >"$PR_LIST_FIXTURE"
+	printf '{"check_runs":[]}\n' >"$CHECK_RUNS_FIXTURE"
+	: >"$POSTED_COMMENT"
+	return 0
+}
+
+install_notification_gh_stub() {
 	# gh stub: serves comments from COMMENTS_FIXTURE for 'gh api ...comments',
 	# serves exact GraphQL PR-search data from PR_LIST_FIXTURE, serves REST
 	# check-runs from CHECK_RUNS_FIXTURE for 'gh api ...commits/SHA/check-runs'
@@ -146,13 +156,6 @@ printf 'unsupported gh invocation: %s\n' "$*" >&2
 exit 1
 GHEOF
 	chmod +x "${TEST_ROOT}/bin/gh"
-
-	# Seed empty fixtures
-	printf '[]\n' >"$COMMENTS_FIXTURE"
-	printf '[]\n' >"$PR_LIST_FIXTURE"
-	printf '{"check_runs":[]}\n' >"$CHECK_RUNS_FIXTURE"
-	: >"$POSTED_COMMENT"
-
 	return 0
 }
 

@@ -44,6 +44,28 @@ _approval_snapshot_v2_fetch_pages() {
 	return 0
 }
 
+# Keep metadata projection separate from the authenticated audit predicates.
+_approval_snapshot_v2_comment_identity() {
+	cat <<'JQ'
+def comment_identity:
+	{
+		source: $source, id: .id, node_id: (.node_id // ""),
+		author: {
+			id: (.user.id // null), node_id: (.user.node_id // $empty),
+			login: (.user.login // $empty), type: (.user.type // $empty)
+		},
+		author_association: (.author_association // $empty),
+		created_at: (.created_at // $empty),
+		updated_at: (.updated_at // .created_at // $empty),
+		body: (.body // $empty), path: (.path // null),
+		line: (.line // null), side: (.side // null),
+		commit_id: (.commit_id // null),
+		original_commit_id: (.original_commit_id // null)
+	};
+JQ
+	return 0
+}
+
 _approval_snapshot_v2_comments_json() {
 	local pages_json="$1"
 	local excluded_comment_id="${2:-}"
@@ -58,7 +80,7 @@ _approval_snapshot_v2_comments_json() {
 	# audit written after verification. Marker text is attacker-controlled:
 	# excluding arbitrary marker comments would let an external contributor hide
 	# later drift by copying the marker into an unsigned comment.
-	jq -cS --arg excluded "$excluded_comment_id" --arg source "$source_name" --arg cutoff "$issued_at_cutoff" --arg empty "$empty_string" --arg number "$target_number" --arg repo "$target_repo" --arg selection "$selection" '
+	jq -cS --arg excluded "$excluded_comment_id" --arg source "$source_name" --arg cutoff "$issued_at_cutoff" --arg empty "$empty_string" --arg number "$target_number" --arg repo "$target_repo" --arg selection "$selection" "$(_approval_snapshot_v2_comment_identity)"'
 		def trusted_association:
 			. == "OWNER" or . == "MEMBER" or . == "COLLABORATOR";
 		def aidevops_worker_footer:
@@ -133,26 +155,7 @@ _approval_snapshot_v2_comments_json() {
 			and ((.created_at // $empty) > $cutoff)
 			and ((.body // $empty) | canonical_dispatch_audit or canonical_self_hosting_override or canonical_no_work_escalation_skip)
 		) | not)
-		| {
-			source: $source,
-			id: .id,
-			node_id: (.node_id // ""),
-			author: {
-				id: (.user.id // null),
-				node_id: (.user.node_id // $empty),
-				login: (.user.login // $empty),
-				type: (.user.type // $empty)
-			},
-			author_association: (.author_association // $empty),
-			created_at: (.created_at // $empty),
-			updated_at: (.updated_at // .created_at // $empty),
-			body: (.body // $empty),
-			path: (.path // null),
-			line: (.line // null),
-			side: (.side // null),
-			commit_id: (.commit_id // null),
-			original_commit_id: (.original_commit_id // null)
-		}
+		| comment_identity
 		] | sort_by(.source, .id) end
 	' <<<"$pages_json"
 	return $?
