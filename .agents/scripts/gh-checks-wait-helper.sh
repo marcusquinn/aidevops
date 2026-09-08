@@ -15,6 +15,9 @@ _GCW_DEFAULT_INITIAL_INTERVAL="${AIDEVOPS_GH_CHECKS_INITIAL_INTERVAL_SECONDS:-15
 _GCW_DEFAULT_MAX_INTERVAL="${AIDEVOPS_GH_CHECKS_MAX_INTERVAL_SECONDS:-120}"
 _GCW_DEFAULT_HEARTBEAT_INTERVAL="${AIDEVOPS_GH_CHECKS_HEARTBEAT_SECONDS:-120}"
 readonly _GCW_BUCKET_PASS="pass" _GCW_BUCKET_PENDING="pending" _GCW_BUCKET_SKIPPING="skipping"
+_GCW_ACTIVE_DEFERRAL=""
+_GCW_API_ERROR_VISIBLE=0
+_GCW_NEXT_INTERVAL=""
 
 usage() {
 	cat <<'EOF'
@@ -82,6 +85,7 @@ fetch_checks() {
 	local repo="$2"
 	local required_only="$3"
 	local poll_number="$4"
+	local expected_head_sha="$5"
 	local fixture_dir="${AIDEVOPS_GH_CHECKS_FIXTURE_DIR:-}"
 	if [[ -n "$fixture_dir" ]]; then
 		local fixture=""
@@ -102,8 +106,13 @@ PY
 	local checks_stderr=""
 	local checks_stderr_file=""
 	checks_stderr_file=$(mktemp "${TMPDIR:-/tmp}/aidevops-gh-checks-wait.XXXXXX") || return 1
-	checks=$(gh_pr_checks_exact_json "$repo" "$pr_number" "$selection_mode" \
-		2>"$checks_stderr_file") || rc=$?
+	if declare -F gh_pr_checks_observed_json >/dev/null 2>&1; then
+		checks=$(gh_pr_checks_observed_json "$repo" "$pr_number" "$selection_mode" "$expected_head_sha" \
+			2>"$checks_stderr_file") || rc=$?
+	else
+		checks=$(gh_pr_checks_exact_json "$repo" "$pr_number" "$selection_mode" "$expected_head_sha" \
+			2>"$checks_stderr_file") || rc=$?
+	fi
 	checks_stderr=$(<"$checks_stderr_file")
 	rm -f "$checks_stderr_file"
 	if [[ "$required_only" -eq 1 && "$rc" -eq 1 && -z "$checks" && "$checks_stderr" =~ ^no\ required\ checks\ reported\ on\ the\ \'[^\']+\'\ branch$ ]]; then
@@ -111,13 +120,114 @@ PY
 		return 0
 	fi
 	if [[ -n "$checks_stderr" ]]; then
-		return 1
+		printf '%s\n' "$checks_stderr" >&2
+		return "$rc"
 	fi
 	if [[ "$rc" -eq 0 || "$rc" -eq 1 || "$rc" -eq 8 ]]; then
 		printf '%s' "$checks"
 		return 0
 	fi
 	return "$rc"
+}
+
+current_epoch() {
+	if [[ "${AIDEVOPS_GH_CHECKS_TEST_NOW_EPOCH:-}" =~ ^[0-9]+$ ]]; then
+		printf '%s\n' "$AIDEVOPS_GH_CHECKS_TEST_NOW_EPOCH"
+		return 0
+	fi
+	date +%s
+	return $?
+}
+
+classify_fetch_diagnostic() {
+	local diagnostic="$1"
+	local deadline="unknown"
+	if [[ "$diagnostic" == *"error_kind=github-api-read-deferred attempted=false deferred_by=local_admission "* ]]; then
+		[[ ! "$diagnostic" =~ retry_at=([0-9]+([.][0-9]+)?) ]] || deadline="${BASH_REMATCH[1]}"
+		printf 'local-admission\t%s\n' "$deadline"
+		return 0
+	fi
+	if [[ "$diagnostic" == *"error_kind=github-api-cooldown"* ]]; then
+		[[ ! "$diagnostic" =~ expires_at=([0-9]+([.][0-9]+)?) ]] || deadline="${BASH_REMATCH[1]}"
+		printf 'cooldown\t%s\n' "$deadline"
+		return 0
+	fi
+	if [[ "$diagnostic" == *"malformed"* || "$diagnostic" == *"partial"* ||
+		"$diagnostic" == *"incomplete"* || "$diagnostic" == *"aggregation failed"* ]]; then
+		printf 'malformed\tunknown\n'
+		return 0
+	fi
+	if [[ "$diagnostic" == *"attempted=true"* ]]; then
+		printf 'api-failure\tunknown\n'
+		return 0
+	fi
+	printf 'unavailable\tunknown\n'
+	return 0
+}
+
+deferral_delay() {
+	local deadline="$1" now_epoch="$2" remaining="$3"
+	local jitter="${AIDEVOPS_GH_CHECKS_DEFERRAL_JITTER_SECONDS:-$((RANDOM % 3))}"
+	[[ "$jitter" =~ ^[0-5]$ ]] || jitter=0
+	python3 - "$deadline" "$now_epoch" "$remaining" "$jitter" <<'PY'
+import math
+import sys
+
+try:
+    deadline = float(sys.argv[1])
+    now = int(sys.argv[2])
+    remaining = int(sys.argv[3])
+    jitter = int(sys.argv[4])
+except (ValueError, IndexError):
+    raise SystemExit(2)
+
+if not math.isfinite(deadline):
+    raise SystemExit(2)
+delay = max(0, math.ceil(deadline - now)) + jitter
+if delay > remaining:
+    raise SystemExit(2)
+print(delay)
+PY
+	return $?
+}
+
+handle_unavailable_fetch() {
+	local diagnostic="$1" elapsed="$2" timeout="$3" now_epoch="$4"
+	local interval="$5" max_interval="$6"
+	local fetch_kind="" fetch_deadline="unknown" classification="" delay="" remaining=0 deferral_key=""
+	classification=$(classify_fetch_diagnostic "$diagnostic")
+	IFS=$'\t' read -r fetch_kind fetch_deadline <<<"$classification"
+	if [[ ("$fetch_kind" == "local-admission" || "$fetch_kind" == "cooldown") && "$fetch_deadline" != "unknown" ]]; then
+		remaining=$((timeout - elapsed))
+		delay=$(deferral_delay "$fetch_deadline" "$now_epoch" "$remaining" 2>/dev/null || true)
+		if [[ -z "$delay" ]]; then
+			printf 'INDETERMINATE: GitHub check observation deferred until %s beyond the remaining %ss timeout\n' "$fetch_deadline" "$remaining" >&2
+			return 2
+		fi
+		deferral_key="${fetch_kind}:${fetch_deadline}"
+		if [[ "$_GCW_ACTIVE_DEFERRAL" != "$deferral_key" ]]; then
+			printf 'GitHub check observation deferred by %s until epoch %s; pausing without intermediate calls\n' "$fetch_kind" "$fetch_deadline" >&2
+			_GCW_ACTIVE_DEFERRAL="$deferral_key"
+		fi
+		poll_sleep "$delay"
+		_GCW_NEXT_INTERVAL="$interval"
+		return 0
+	fi
+	if [[ "$_GCW_API_ERROR_VISIBLE" -eq 0 ]]; then
+		case "$fetch_kind" in
+		malformed) printf 'WARN: required-check evidence was malformed; retaining the last verified state and retrying\n' >&2 ;;
+		api-failure) printf 'WARN: attempted GitHub/API read failed; retaining the last verified state and retrying\n' >&2 ;;
+		*) printf 'WARN: required-check state unavailable; retaining the last verified state and retrying\n' >&2 ;;
+		esac
+		_GCW_API_ERROR_VISIBLE=1
+	fi
+	if [[ "$elapsed" -ge "$timeout" ]]; then
+		printf 'INDETERMINATE: required-check state unavailable after %ss\n' "$elapsed" >&2
+		return 2
+	fi
+	poll_sleep "$interval"
+	_GCW_NEXT_INTERVAL=$(next_interval "$interval" "$max_interval")
+	return 0
 }
 
 canonicalize_checks() {
@@ -251,6 +361,9 @@ write_runtime_heartbeat() {
 poll_sleep() {
 	local seconds="$1"
 	if [[ "${AIDEVOPS_GH_CHECKS_TEST_NO_SLEEP:-0}" == "1" ]]; then
+		if [[ -n "${AIDEVOPS_GH_CHECKS_TEST_SLEEP_LOG:-}" ]]; then
+			printf '%s\n' "$seconds" >>"$AIDEVOPS_GH_CHECKS_TEST_SLEEP_LOG"
+		fi
 		return 0
 	fi
 	sleep "$seconds"
@@ -270,7 +383,7 @@ wait_for_checks() {
 	local pr_number="$1" repo="$2" required_only="$3" timeout="$4"
 	local initial_interval="$5" max_interval="$6" heartbeat_interval="$7"
 	local start_epoch=""
-	start_epoch=$(date +%s)
+	start_epoch=$(current_epoch)
 	local next_heartbeat=$((start_epoch + heartbeat_interval))
 	local interval="$initial_interval" previous="" initial_head=""
 	initial_head=$(read_head_sha "$pr_number" "$repo" 2>/dev/null || true)
@@ -278,33 +391,38 @@ wait_for_checks() {
 		printf 'INDETERMINATE: PR head could not be verified before required-check observation\n' >&2
 		return 2
 	fi
-	local poll_number=0 valid_state_seen=0 api_error_visible=0
+	local poll_number=0 valid_state_seen=0
+	_GCW_ACTIVE_DEFERRAL=""
+	_GCW_API_ERROR_VISIBLE=0
+	_GCW_NEXT_INTERVAL="$interval"
 	while true; do
 		poll_number=$((poll_number + 1))
 		write_runtime_heartbeat
-		local raw="" fetch_rc=0 current="" now_epoch="" elapsed=0 changed=0 classification="" final_head=""
-		raw=$(fetch_checks "$pr_number" "$repo" "$required_only" "$poll_number") || fetch_rc=$?
+		local raw="" fetch_rc=0 fetch_diagnostic="" fetch_diagnostic_file="" current="" now_epoch="" elapsed=0 changed=0 classification="" final_head=""
+		fetch_diagnostic_file=$(mktemp "${TMPDIR:-/tmp}/aidevops-gh-checks-wait-fetch.XXXXXX") || return 2
+		raw=$(fetch_checks "$pr_number" "$repo" "$required_only" "$poll_number" "$initial_head" 2>"$fetch_diagnostic_file") || fetch_rc=$?
+		fetch_diagnostic=$(<"$fetch_diagnostic_file")
+		rm -f "$fetch_diagnostic_file"
 		if [[ "$fetch_rc" -eq 0 ]]; then
 			current=$(canonicalize_checks "$raw" 2>/dev/null || true)
+			if [[ -z "$current" ]]; then
+				fetch_diagnostic="error_kind=github-api-malformed attempted=true operation=waiter-check-evidence"
+			fi
 		fi
-		now_epoch=$(date +%s)
+		now_epoch=$(current_epoch)
 		elapsed=$((now_epoch - start_epoch))
 		if [[ -z "$current" ]]; then
-			if [[ "$api_error_visible" -eq 0 ]]; then
-				printf 'WARN: required-check state unavailable; retaining the last verified state and retrying\n' >&2
-				api_error_visible=1
-			fi
-			if [[ "$elapsed" -ge "$timeout" ]]; then
-				printf 'INDETERMINATE: required-check state unavailable after %ss\n' "$elapsed" >&2
-				return 2
-			fi
-			poll_sleep "$interval"
-			interval=$(next_interval "$interval" "$max_interval")
+			handle_unavailable_fetch "$fetch_diagnostic" "$elapsed" "$timeout" "$now_epoch" "$interval" "$max_interval" || return $?
+			interval="$_GCW_NEXT_INTERVAL"
 			continue
 		fi
-		if [[ "$api_error_visible" -eq 1 ]]; then
+		if [[ -n "$_GCW_ACTIVE_DEFERRAL" ]]; then
+			printf 'GitHub check observation recovered: %s\n' "$(state_counts "$current")"
+			_GCW_ACTIVE_DEFERRAL=""
+		fi
+		if [[ "$_GCW_API_ERROR_VISIBLE" -eq 1 ]]; then
 			printf 'API state recovered: %s\n' "$(state_counts "$current")"
-			api_error_visible=0
+			_GCW_API_ERROR_VISIBLE=0
 		fi
 		valid_state_seen=1
 		if [[ -z "$previous" ]]; then
