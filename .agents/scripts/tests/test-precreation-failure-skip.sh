@@ -58,6 +58,11 @@ fail() {
 TMP=$(mktemp -d -t t2981.XXXXXX)
 trap 'rm -rf "$TMP"' EXIT
 
+# Sourced launch helpers reclaim Pulse scratch space. Never scan/reclaim the
+# operator's real workspace (or recursively size it) from an offline fixture.
+export AIDEVOPS_TEMP_DIR="${TMP}/agent-tmp"
+mkdir -p "$AIDEVOPS_TEMP_DIR"
+
 export LOGFILE="${TMP}/test-pulse.log"
 export SCRIPT_DIR="$TMP"
 export PULSE_STATS_FILE="${TMP}/pulse-stats.json"
@@ -906,6 +911,64 @@ if [[ "$success_rc" -eq 0 && "$actual_calls" == "hold precreate final-gates prom
 	pass "successful launch acquires queued ownership at final boundary"
 else
 	fail "successful launch acquires queued ownership at final boundary" "rc=$success_rc calls='$actual_calls'"
+fi
+
+test_bounded_prelaunch_handoff() (
+	# Keep the real orchestrator, early/late renewal and spawn boundary; only
+	# replace GitHub and worktree I/O and advance Bash elapsed time, not sleep.
+	_claim_lease_token="fixture-lease"
+	local preparation_delay=125 lease_rc=0
+	export STUB_RENEW_RC=0
+	eval "$(awk '/^_dlw_prepare_opencode_db\(\) \{/,/^}$/ { print }' "${SCRIPTS_DIR}/pulse-dispatch-worker-launch.sh")"
+	# Sourcing the launcher replaced the early test stub. Keep the actual
+	# renewal path, but do not start a real OpenCode database during this test.
+	_dlw_prewarm_opencode_db() { _DLW_PREWARM_DIR=""; return 0; }
+	cat >"${TMP}/dispatch-claim-helper.sh" <<'LEASE_STUB'
+#!/usr/bin/env bash
+if [[ "$1" == transition ]]; then
+	[[ -n "${AIDEVOPS_ATTEMPT_ID:-}" && "$AIDEVOPS_ATTEMPT_ID" != unknown ]] || exit 1
+	printf 'renew %s\n' "$7" >>"$ORCHESTRATOR_CALLS_FILE"
+	exit "${STUB_RENEW_RC:-0}"
+fi
+printf 'ownership-guard\n' >>"$ORCHESTRATOR_CALLS_FILE"
+exit 0
+LEASE_STUB
+	_dlw_precreate_worktree() {
+		printf 'precreate\n' >>"$ORCHESTRATOR_CALLS_FILE"
+		SECONDS=$((SECONDS + preparation_delay))
+		_DLW_WORKTREE_PATH="$ORCHESTRATOR_WORKTREE"
+		_DLW_WORKTREE_BRANCH="feature/auto-test"
+		_DLW_WORKTREE_REUSED=0
+		return 0
+	}
+	local scenario="" first_line=""
+	for scenario in slow expired renewal-failed; do
+		SECONDS=0 preparation_delay=125 STUB_RENEW_RC=0 lease_rc=0
+		[[ "$scenario" != expired ]] || preparation_delay=301
+		[[ "$scenario" != renewal-failed ]] || STUB_RENEW_RC=1
+		: >"$ORCHESTRATOR_CALLS_FILE"
+		: >"${TMP}/setsid-calls.txt"
+		_dispatch_launch_worker 77782 owner/repo dispatch issue testuser "$FAKE_REPO" prompt issue-77782 "" '{}' || lease_rc=$?
+		IFS= read -r first_line <"$ORCHESTRATOR_CALLS_FILE"
+		[[ "$first_line" == renew\ * ]] || return 1
+		if [[ "$scenario" == slow ]]; then
+			[[ "$lease_rc" == 0 && -s "${TMP}/setsid-calls.txt" ]] || return 1
+			[[ "$(grep -c '^renew ' "$ORCHESTRATOR_CALLS_FILE")" == 2 ]] || return 1
+			# The later renewal only covers the remaining preparation budget.
+			local last_ttl=""
+			last_ttl=$(awk '/^renew / { ttl=$2 } END { print ttl }' "$ORCHESTRATOR_CALLS_FILE")
+			[[ "$last_ttl" -lt "${first_line#renew }" ]] || return 1
+		else
+			[[ "$lease_rc" == 2 && ! -s "${TMP}/setsid-calls.txt" ]] || return 1
+			! grep -q '^assign$' "$ORCHESTRATOR_CALLS_FILE" || return 1
+		fi
+	done
+	return 0
+)
+if test_bounded_prelaunch_handoff; then
+	pass "slow prelaunch is protected early; expired budgets and failed renewals cannot assign/spawn"
+else
+	fail "bounded prelaunch lease handoff" "inspect renewal and preparation stage ordering"
 fi
 
 # =============================================================================

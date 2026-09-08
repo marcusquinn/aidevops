@@ -175,15 +175,34 @@ _dlw_final_assignment_guard() {
 	return 1
 }
 
+_dlw_lock_prelaunch_issue() {
+	local issue_number="$1" repo_slug="$2" started_ns=""
+	# Freeze instructions before ownership publication, only within the budget.
+	_dlw_prelaunch_budget_available "$issue_number" "$repo_slug" || return $?
+	started_ns=$(_ds_now_ns)
+	if ! lock_issue_for_worker "$issue_number" "$repo_slug"; then
+		_ds_record "$issue_number" "$repo_slug" "lock_issue" "$started_ns"
+		_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "conversation_lock_failed" 2
+		return $?
+	fi
+	_ds_record "$issue_number" "$repo_slug" "lock_issue" "$started_ns"
+	return 0
+}
+
 _dlw_publish_queued_ownership() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local self_login="$3"
 	local issue_meta_json="$4"
+	local guard_started_ns="" guard_stage="final_ownership_fence"
+	guard_started_ns=$(_ds_now_ns)
 	if ! _dlw_final_assignment_guard "$issue_number" "$repo_slug" "$self_login"; then
-		_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "final_ownership_fence" 2
+		_ds_record "$issue_number" "$repo_slug" "$guard_stage" "$guard_started_ns"
+		_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "$guard_stage" 2
 		return $?
 	fi
+	_ds_record "$issue_number" "$repo_slug" "$guard_stage" "$guard_started_ns"
+	_dlw_prelaunch_budget_available "$issue_number" "$repo_slug" || return $?
 
 	local assignment_started_ns=""
 	assignment_started_ns=$(_ds_now_ns)
@@ -849,10 +868,35 @@ _dlw_prewarm_opencode_db() {
 	return 0
 }
 
+_dlw_begin_prelaunch() {
+	local issue_number="$1" repo_slug="$2" session_key="$3" worker_log="$4"
+	local budget="${AIDEVOPS_DISPATCH_PRELAUNCH_BUDGET_SECONDS:-300}"
+	[[ "$budget" =~ ^[1-9][0-9]{0,2}$ ]] || budget=300
+	# These locals belong to _dispatch_launch_worker and survive command
+	# substitutions used by warm-up/spawn. Never slide the preparation deadline.
+	prelaunch_deadline=$((SECONDS + budget))
+	attempt_id=$(aidevops_generate_execution_id "attempt")
+	attempt_started_at=$(_worker_attempt_start_marker)
+	if ! _dlw_renew_prelaunch_lease "$issue_number" "$repo_slug" "$session_key" "$worker_log" "$attempt_id"; then
+		_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "prelaunch_lease_failed" 2
+		return $?
+	fi
+	return 0
+}
+
+_dlw_prelaunch_budget_available() {
+	local issue_number="$1" repo_slug="$2"
+	if [[ "${prelaunch_deadline:-0}" -gt 0 && "$SECONDS" -ge "$prelaunch_deadline" ]]; then
+		_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "prelaunch_budget_exhausted" 2
+		return $?
+	fi
+	return 0
+}
+
 #######################################
-# Renew the dispatcher's prelaunch lease before the potentially slow OpenCode
-# database warm-up. The worker renews it again after process start; this renewal
-# closes the gap between worktree preparation and that worker-side transition.
+# Protect the complete bounded preparation interval before worktree/API work,
+# then recheck before OpenCode warm-up. The worker renews after process start.
+# Remaining preparation time decreases; retries cannot slide that deadline.
 # Arguments: issue_number repo_slug session_key worker_log
 #######################################
 _dlw_renew_prelaunch_lease() {
@@ -870,10 +914,19 @@ _dlw_renew_prelaunch_lease() {
 	fi
 	[[ "$prewarm_timeout" =~ ^[0-9]+$ ]] || prewarm_timeout=90
 	[[ "$lease_ttl" =~ ^[0-9]+$ ]] || lease_ttl=$((prewarm_timeout + 60))
+	if [[ "${prelaunch_deadline:-0}" -gt 0 ]]; then
+		local remaining=$((prelaunch_deadline - SECONDS))
+		if [[ "$remaining" -le 0 ]]; then
+			_dlw_prelaunch_budget_available "$issue_number" "$repo_slug" || return 1
+			return 1
+		fi
+		lease_ttl=$((lease_ttl + remaining))
+	fi
 
 	_dlw_append_lifecycle_log "$worker_log" "$attempt_id" \
 		"dispatcher_prelaunch_lease_renew_start session=${session_key} pid=$$"
 	AIDEVOPS_DEVICE_ID="${_claim_lease_device:-${AIDEVOPS_DEVICE_ID:-}}" \
+		AIDEVOPS_ATTEMPT_ID="$attempt_id" \
 		"${SCRIPT_DIR}/dispatch-claim-helper.sh" transition prelaunch "$issue_number" \
 		"$repo_slug" "$_claim_lease_token" "$session_key" "$lease_ttl" \
 		>/dev/null 2>&1 || claim_rc=$?
@@ -1815,6 +1868,8 @@ _dispatch_launch_worker() {
 	if ! _dlw_claim_lock_after_canary "$issue_number" "$repo_slug" "$self_login"; then
 		_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "claim_lock_failed" 2 || return $?
 	fi
+	local worker_pid attempt_id="" attempt_started_at="" prelaunch_deadline=0
+	_dlw_begin_prelaunch "$issue_number" "$repo_slug" "$session_key" "$worker_log" || return $?
 
 	local zero_output_comment_metrics=""
 	zero_output_comment_metrics=$(_dlw_comment_bloat_metrics "$issue_number" "$repo_slug")
@@ -1824,6 +1879,7 @@ _dispatch_launch_worker() {
 
 	# t2981: capture pre-creation return code — skip dispatch on failure
 	# instead of falling back to canonical repo on the default branch.
+	_dlw_prelaunch_budget_available "$issue_number" "$repo_slug" || return $?
 	_ds_t0=$(_ds_now_ns)
 	if ! _dlw_precreate_worktree "$issue_number" "$repo_path"; then
 		_ds_record "$issue_number" "$repo_slug" "precreate_worktree" "$_ds_t0"
@@ -1836,21 +1892,14 @@ _dispatch_launch_worker() {
 	_dlw_final_worker_spawn_gates "$issue_number" "$repo_slug" "$worker_worktree_branch" "$worker_worktree_reused" \
 		"${repo_path}/TODO.md" "$worker_worktree_path" "$issue_meta_json" "$repo_path" || return $?
 
-	local worker_pid attempt_id="" attempt_started_at=""
-	attempt_id=$(aidevops_generate_execution_id "attempt")
-	attempt_started_at=$(_worker_attempt_start_marker)
 	local launch_prompt=""
 	launch_prompt=$(_dlw_prepare_prompt_for_launch "$issue_number" "$repo_slug" "$issue_title" "$prompt" "$zero_output_comment_metrics")
 
 	# Freeze the worker-readable instruction surface before queued ownership is
 	# published. A lock failure must not create assignment/status notifications.
-	_ds_t0=$(_ds_now_ns)
-	if ! lock_issue_for_worker "$issue_number" "$repo_slug"; then
-		_ds_record "$issue_number" "$repo_slug" "lock_issue" "$_ds_t0"
-		_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "conversation_lock_failed" 2 || return $?
-	fi
-	_ds_record "$issue_number" "$repo_slug" "lock_issue" "$_ds_t0"
+	_dlw_lock_prelaunch_issue "$issue_number" "$repo_slug" || return $?
 
+	_dlw_prelaunch_budget_available "$issue_number" "$repo_slug" || return $?
 	_dlw_publish_queued_ownership "$issue_number" "$repo_slug" "$self_login" "$issue_meta_json" || return $?
 	_dlw_start_codegraph_init "$issue_number" "$worker_worktree_path"
 

@@ -1161,7 +1161,14 @@ _resolve_claim_race_result() {
 	oldest_device=$(printf '%s' "$claims" | jq -r --arg fallback "$LEGACY_DEVICE_MARKER" '.[0].device // $fallback' 2>/dev/null) || oldest_device="$LEGACY_DEVICE_MARKER"
 	our_device=$(_resolve_device_id)
 	now_epoch=$(_now_epoch)
-	lease_expires_at="$((now_epoch + DISPATCH_CLAIM_ORPHAN_GRACE))"
+	# Consensus/API latency consumes the persisted lease; logging a fresh
+	# now+grace here falsely promises an extension that was never published.
+	lease_expires_at=$(printf '%s' "$claims" | jq -r '.[0].lease_expires_at // 0') || return 2
+	[[ "$lease_expires_at" =~ ^[0-9]+$ ]] || return 2
+	if [[ "$lease_expires_at" -gt 0 && "$lease_expires_at" -lt "$now_epoch" ]]; then
+		printf 'CLAIM_ERROR: selected lease expired during consensus issue=#%s\n' "$issue_number" >&2
+		return 2
+	fi
 	if [[ "$oldest_nonce" == "$nonce" ]]; then
 		printf 'CLAIM_WON: runner=%s nonce=%s issue=#%s comment_id=%s lease_token=%s device=%s phase=prelaunch expires_at=%s\n' \
 			"$runner" "$nonce" "$issue_number" "$comment_id" "$nonce" "$our_device" "$lease_expires_at"
