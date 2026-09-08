@@ -355,14 +355,17 @@ release_lane_recover_dead_preparing() {
 	[[ "$updated_epoch" =~ ^[0-9]+$ && "$now_epoch" =~ ^[0-9]+$ && "$now_epoch" -ge "$updated_epoch" ]] || return 3
 	[[ $((now_epoch - updated_epoch)) -ge "$stale_after" ]] || return 3
 	jq -e --arg tag "$attempted_tag" --arg expected "$expected_sources" --arg sha_pattern '^[0-9a-f]{40}$' \
-		--arg absent "$_AIDEVOPS_RELEASE_LANE_STATE_ABSENT" '
+		--arg absent "$_AIDEVOPS_RELEASE_LANE_STATE_ABSENT" --arg string_type "string" '
 		.type == "preparing-recovery/v1" and .attempted_tag == $tag
 		and .expected_sources == $expected and .remote_tag == $absent
 		and .github_release == $absent and .protected_branch == $absent
 		and .npm == $absent and .homebrew == $absent
-		and .surviving_process == $absent and .worktree_state == "isolated"
-		and (.worktree_head | test($sha_pattern))
-		and (.checked_at | type) == "string" and (.checked_at | length) > 0
+		and .surviving_process == $absent
+		and ((.worktree_state == "isolated" and (.worktree_head | type) == $string_type
+			and (.worktree_head | test($sha_pattern)))
+			or (.worktree_state == $absent and has("worktree_head") and .worktree_head == null
+				and .worktree_registration == $absent and .local_tag == $absent))
+		and (.checked_at | type) == $string_type and (.checked_at | length) > 0
 	' <<<"$recovery_evidence" >/dev/null || return 1
 	operation_token="${_AIDEVOPS_RELEASE_LANE_TOKEN_PREFIX}$(openssl rand -hex 16 2>/dev/null)" || return 1
 	state_json=$(jq -c --arg reserved "$_AIDEVOPS_RELEASE_LANE_PHASE_RESERVED" \

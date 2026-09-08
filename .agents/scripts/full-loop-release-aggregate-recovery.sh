@@ -656,6 +656,31 @@ _full_loop_recovery_process_uses_path() {
 	return $?
 }
 
+# Return evidence, never reconstruct a removed worktree or invent its old HEAD.
+#aidevops:trust-boundary
+_full_loop_recovery_worktree_evidence() {
+	local release_path="$1" snapshot="$2" base_tag="$3" attempted_tag="$4"
+	local worktree_head="" worktree_version="" worktrees="" tag_rc=0
+	git -C "$REPO_ROOT" show-ref --verify --quiet "refs/tags/${attempted_tag}" || tag_rc=$?
+	[[ "$tag_rc" -eq 1 ]] || return 1
+	if [[ -d "$release_path" && ! -L "$release_path" ]]; then
+		worktree_head=$(git -C "$release_path" rev-parse HEAD 2>/dev/null) || return 1
+		[[ "$worktree_head" == "$snapshot" ]] || return 1
+		! git -C "$release_path" symbolic-ref -q HEAD >/dev/null 2>&1 || return 1
+		worktree_version=$(tr -d '[:space:]' <"$release_path/VERSION") || return 1
+		[[ "v${worktree_version}" == "$base_tag" || "$worktree_version" == "${attempted_tag#v}" ]] || return 1
+		jq -cn --arg head "$worktree_head" '{worktree_state:"isolated",worktree_head:$head}'
+		return $?
+	fi
+	[[ ! -e "$release_path" && ! -L "$release_path" ]] || return 1
+	worktrees=$(git -C "$REPO_ROOT" worktree list --porcelain) || return 1
+	[[ "$worktrees" == worktree\ * ]] || return 1
+	[[ $'\n'"$worktrees"$'\n' != *$'\n'"worktree $release_path"$'\n'* ]] || return 1
+	jq -cn --arg absent "$_FULL_LOOP_RECOVERY_STATE_ABSENT" \
+		'{worktree_state:$absent,worktree_head:null,worktree_registration:$absent,local_tag:$absent}'
+	return $?
+}
+
 # A preparing release runs entirely in an isolated detached worktree until its
 # signed tag is pushed. A dead attempt can restart from the immutable snapshot
 # only after both that worktree and all remote publication precursors are proven
@@ -671,11 +696,9 @@ _full_loop_recovery_dead_preparing() {
 	local snapshot=""
 	local base_tag=""
 	local attempted_tag=""
-	local attempted_version=""
 	local owner_pid=""
 	local release_path=""
-	local worktree_head=""
-	local worktree_version=""
+	local worktree_evidence=""
 	local remote_refs=""
 	local recovery_evidence=""
 	local process_rc=0
@@ -692,12 +715,13 @@ _full_loop_recovery_dead_preparing() {
 		<<<"$_AIDEVOPS_RELEASE_LANE_JSON" >/dev/null || return 2
 	lane_sources=$(jq -er '.expected_sources' <<<"$_AIDEVOPS_RELEASE_LANE_JSON") || return 1
 	persisted_sources=$(_full_loop_read_release_authorization "$repo" "$source_pr") || return 1
+	# An omitted CLI assertion reuses the pinned manifest, never a newer main tip.
+	expected_sources="${expected_sources:-$lane_sources}"
 	[[ "$expected_sources" == "$lane_sources" && "$persisted_sources" == "$lane_sources" ]] || return 1
 	snapshot=$(jq -er '.snapshot_sha | select(test("^[0-9a-f]{40}$"))' <<<"$_AIDEVOPS_RELEASE_LANE_JSON") || return 1
 	base_tag=$(jq -er '.snapshot_base_tag | select(test("^v[0-9]+\\.[0-9]+\\.[0-9]+$"))' \
 		<<<"$_AIDEVOPS_RELEASE_LANE_JSON") || return 1
 	attempted_tag=$(_full_loop_release_expected_tag_at_commit "$snapshot" "$release_type") || return 1
-	attempted_version="${attempted_tag#v}"
 	owner_pid=$(jq -er '.executor.pid | select(type == "number" and . > 0 and floor == .)' \
 		<<<"$_AIDEVOPS_RELEASE_LANE_JSON") || return 1
 	release_path=$(jq -r '.preparation.worktree // ""' <<<"$_AIDEVOPS_RELEASE_LANE_JSON") || return 1
@@ -708,13 +732,7 @@ _full_loop_recovery_dead_preparing() {
 	"${AIDEVOPS_WORKTREE_BASE_DIR:-${HOME}/Git/_worktrees}"/aidevops-release-"${source_pr}"-*) ;;
 	*) return 1 ;;
 	esac
-	[[ -d "$release_path" ]] || return 1
-	worktree_head=$(git -C "$release_path" rev-parse HEAD 2>/dev/null) || return 1
-	[[ "$worktree_head" == "$snapshot" ]] || return 1
-	! git -C "$release_path" symbolic-ref -q HEAD >/dev/null 2>&1 || return 1
-	! git -C "$release_path" show-ref --verify --quiet "refs/tags/${attempted_tag}" || return 1
-	worktree_version=$(tr -d '[:space:]' <"$release_path/VERSION") || return 1
-	[[ "v${worktree_version}" == "$base_tag" || "$worktree_version" == "$attempted_version" ]] || return 1
+	worktree_evidence=$(_full_loop_recovery_worktree_evidence "$release_path" "$snapshot" "$base_tag" "$attempted_tag") || return 1
 	_full_loop_recovery_process_uses_path "$release_path" || process_rc=$?
 	[[ "$process_rc" -eq 0 ]] || return 1
 	permission=$(gh api "repos/${repo}" \
@@ -724,13 +742,15 @@ _full_loop_recovery_dead_preparing() {
 	remote_refs=$(git -C "$REPO_ROOT" ls-remote --heads origin \
 		"refs/heads/chore/release-${attempted_tag}-provenance") || return 1
 	[[ -z "$remote_refs" ]] || return 1
+	# Recheck local evidence after remote lookups, just before the fenced CAS.
+	worktree_evidence=$(_full_loop_recovery_worktree_evidence "$release_path" "$snapshot" "$base_tag" "$attempted_tag") || return 1
 	recovery_evidence=$(jq -cn --arg tag "$attempted_tag" --arg expected "$lane_sources" \
-		--arg head "$worktree_head" --arg path "$release_path" --arg now "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+		--argjson worktree "$worktree_evidence" --arg path "$release_path" --arg now "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
 		--arg absent "$_FULL_LOOP_RECOVERY_STATE_ABSENT" \
 		'{type:"preparing-recovery/v1",attempted_tag:$tag,expected_sources:$expected,
-		worktree:$path,worktree_head:$head,worktree_state:"isolated",surviving_process:$absent,
+		worktree:$path,surviving_process:$absent,
 		remote_tag:$absent,github_release:$absent,npm:$absent,homebrew:$absent,
-		protected_branch:$absent,checked_at:$now}') || return 1
+		protected_branch:$absent,checked_at:$now} + $worktree') || return 1
 	release_lane_recover_dead_preparing "$repo" "$source_pr" "$lane_sources" "$attempted_tag" "$recovery_evidence"
 	return $?
 }

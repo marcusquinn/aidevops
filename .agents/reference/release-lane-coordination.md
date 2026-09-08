@@ -100,12 +100,20 @@ Age alone never unlocks a lane. Live/recent reservations, legacy/foreign owners,
 publication phases and aggregation recovery are not automatically released. A
 stale `preparing` lane is resumable only by the exact same authorized source and
 increment when the local executor is verifiably dead, its deterministic detached
-worktree remains isolated at the pinned snapshot, no release process survives,
+worktree remains isolated at the pinned snapshot or is proven absent and
+unregistered, no release process survives,
 the persisted source manifest still matches, and the intended tag, protected
 release branch, GitHub release, npm version, and Homebrew version are all proven
 absent. The publisher rotates the operation token through the lane compare-and-swap,
 retains durable `preparing_recovery` evidence, and restarts from a fresh copy of
 the pinned commit; lookup uncertainty or any existing artifact refuses recovery.
+An absent worktree must have neither a filesystem entry nor a dangling symlink;
+a successful Git worktree lookup must also show no registration, including stale
+or prunable registrations. A failed lookup is not absence. Local evidence is
+checked again after publication-channel reads, before the fenced transition.
+The receipt records `worktree_head: null` for absence, never an invented historical
+HEAD. An omitted source assertion reuses the lane manifest only when it exactly
+matches independently persisted authorization; an explicit mismatch still fails.
 Same-source reservation reclaim still removes automatic eligibility, but now
 records a `same-source-reclaim/v1` marker when it removes a modern fenced
 contract. For lanes reclaimed before that marker existed, recovery must verify

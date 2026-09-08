@@ -668,6 +668,14 @@ run_dead_preparing_recovery_test() (
 		release_lane_recover_dead_preparing test/repo 101 "$expected" v1.2.4 "$evidence" >/dev/null || return 1
 	jq -e '.phase == "reserved" and (.preparing_recovery.revalidations | length) == 1
 		and .preparing_recovery.revalidations[0].previous_executor.pid == 77' <<<"$written" >/dev/null
+	state=$(jq -c '.phase="preparing" | .updated_at="2020-01-01T00:00:00Z"' <<<"$state") || return 1
+	evidence=$(jq -c '.worktree_state="absent" | .worktree_head=null
+		| .worktree_registration="absent" | .local_tag="absent"' <<<"$evidence") || return 1
+	AIDEVOPS_RELEASE_LANE_STALE_SECONDS=1 \
+		release_lane_recover_dead_preparing test/repo 101 "$expected" v1.2.4 "$evidence" >/dev/null || return 1
+	jq -e '.phase == "reserved" and (.preparing_recovery.revalidations | length) == 2
+		and .preparing_recovery.revalidations[1].evidence.worktree_state == "absent"
+		and .preparing_recovery.revalidations[1].evidence.worktree_head == null' <<<"$written" >/dev/null
 )
 
 run_reclaimed_contract_recovery_test() (
@@ -780,6 +788,17 @@ run_dead_preparing_refusal_test() (
 		fi
 	done
 	state="$base"
+	local invalid_evidence=""
+	for transform in '.worktree_state="absent"' '.worktree_head=null' \
+		'.worktree_state="absent" | .worktree_head=null | .local_tag="absent"' \
+		'.worktree_state="absent" | .worktree_head=null | .worktree_registration="absent"' \
+		'.worktree_state="absent" | del(.worktree_head) | .worktree_registration="absent" | .local_tag="absent"'; do
+		invalid_evidence=$(jq -c "$transform" <<<"$evidence") || return 1
+		if AIDEVOPS_RELEASE_LANE_STALE_SECONDS=1 \
+			release_lane_recover_dead_preparing test/repo 101 "$expected" v1.2.4 "$invalid_evidence" >/dev/null 2>&1; then
+			return 1
+		fi
+	done
 	write_rc=2
 	if AIDEVOPS_RELEASE_LANE_STALE_SECONDS=1 \
 		release_lane_recover_dead_preparing test/repo 101 "$expected" v1.2.4 "$evidence" >/dev/null 2>&1; then
