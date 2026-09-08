@@ -38,12 +38,18 @@ REPO_ROOT=$(_full_loop_release_resolve_repo_root) || {
 }
 _FULL_LOOP_RELEASE_PATH=""
 _FULL_LOOP_RELEASE_CONTROL_PATH=""
+_FULL_LOOP_RELEASE_PREPARATION_PATH=""
 
 cleanup_release_worktree() {
+	local exit_status="$?"
 	local release_path="${_FULL_LOOP_RELEASE_PATH:-}"
 	local control_path="${_FULL_LOOP_RELEASE_CONTROL_PATH:-}"
 	if [[ -n "$release_path" && "$release_path" != "$control_path" && -d "$release_path" ]]; then
-		git -C "$REPO_ROOT" worktree remove "$release_path" >/dev/null 2>&1 || true
+		if [[ "$exit_status" -eq 0 || "$release_path" != "${_FULL_LOOP_RELEASE_PREPARATION_PATH:-}" ]]; then
+			git -C "$REPO_ROOT" worktree remove "$release_path" >/dev/null 2>&1 || true
+		else
+			printf 'Release preparation retained for guarded recovery (exit %s).\n' "$exit_status" >&2
+		fi
 	fi
 	if [[ -n "$control_path" && -d "$control_path" ]]; then
 		git -C "$control_path" worktree remove "$control_path" >/dev/null 2>&1 || true
@@ -332,6 +338,7 @@ _full_loop_release_prepare_new() {
 	fi
 	_full_loop_release_timing_finish release-run-worktree-add "$phase_started" ok
 	_FULL_LOOP_RELEASE_PATH="$release_path"
+	_FULL_LOOP_RELEASE_PREPARATION_PATH="$release_path"
 	trap 'cleanup_release_worktree' EXIT
 
 	phase_started=$(_full_loop_release_timing_start release-run-capture-authorization)

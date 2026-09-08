@@ -656,6 +656,40 @@ _full_loop_recovery_process_uses_path() {
 	return $?
 }
 
+# Publication/authorization probes run before this helper; the existing fenced
+# recovery rechecks lane ownership afterwards. Never invent preservation evidence.
+#aidevops:trust-boundary
+_full_loop_recovery_restore_preparation() {
+	local source_pr="$1"
+	local owner_pid="$2"
+	local release_path="$3"
+	local snapshot="$4"
+	local attempted_tag="$5"
+	local worktree_base="${AIDEVOPS_WORKTREE_BASE_DIR:-${HOME}/Git/_worktrees}"
+	local registered=""
+	local tag_rc=0
+	_FULL_LOOP_RECOVERY_WORKTREE_RECONSTRUCTED=false
+	[[ ! -L "$release_path" && "$release_path" == "$worktree_base/aidevops-release-${source_pr}-${owner_pid}" ]] || return 1
+	[[ -d "$release_path" ]] && return 0
+	[[ ! -e "$release_path" && -d "$worktree_base" ]] || return 1
+	[[ "$(_release_lane_executor_observe "$_AIDEVOPS_RELEASE_LANE_JSON" | jq -r '.state')" == "dead" ]] || return 1
+	registered=$(git -C "$REPO_ROOT" worktree list --porcelain) || return 1
+	if printf '%s\n' "$registered" | grep -Fxq "worktree $release_path"; then
+		printf 'Missing release preparation still has a Git registration; refusing reconstruction.\n' >&2
+		return 1
+	fi
+	git -C "$REPO_ROOT" show-ref --verify --quiet "refs/tags/${attempted_tag}" || tag_rc=$?
+	[[ "$tag_rc" -eq 1 ]] || return 1
+	mkdir "$release_path" || return 1
+	if ! git -C "$REPO_ROOT" worktree add --detach "$release_path" "$snapshot" >/dev/null; then
+		rmdir "$release_path" 2>/dev/null || true
+		return 1
+	fi
+	_FULL_LOOP_RECOVERY_WORKTREE_RECONSTRUCTED=true
+	printf 'Reconstructed missing release preparation from its authorized snapshot; publication remains fenced.\n' >&2
+	return 0
+}
+
 # A preparing release runs entirely in an isolated detached worktree until its
 # signed tag is pushed. A dead attempt can restart from the immutable snapshot
 # only after both that worktree and all remote publication precursors are proven
@@ -708,13 +742,6 @@ _full_loop_recovery_dead_preparing() {
 	"${AIDEVOPS_WORKTREE_BASE_DIR:-${HOME}/Git/_worktrees}"/aidevops-release-"${source_pr}"-*) ;;
 	*) return 1 ;;
 	esac
-	[[ -d "$release_path" ]] || return 1
-	worktree_head=$(git -C "$release_path" rev-parse HEAD 2>/dev/null) || return 1
-	[[ "$worktree_head" == "$snapshot" ]] || return 1
-	! git -C "$release_path" symbolic-ref -q HEAD >/dev/null 2>&1 || return 1
-	! git -C "$release_path" show-ref --verify --quiet "refs/tags/${attempted_tag}" || return 1
-	worktree_version=$(tr -d '[:space:]' <"$release_path/VERSION") || return 1
-	[[ "v${worktree_version}" == "$base_tag" || "$worktree_version" == "$attempted_version" ]] || return 1
 	_full_loop_recovery_process_uses_path "$release_path" || process_rc=$?
 	[[ "$process_rc" -eq 0 ]] || return 1
 	permission=$(gh api "repos/${repo}" \
@@ -724,10 +751,22 @@ _full_loop_recovery_dead_preparing() {
 	remote_refs=$(git -C "$REPO_ROOT" ls-remote --heads origin \
 		"refs/heads/chore/release-${attempted_tag}-provenance") || return 1
 	[[ -z "$remote_refs" ]] || return 1
+	_full_loop_recovery_restore_preparation "$source_pr" "$owner_pid" "$release_path" "$snapshot" "$attempted_tag" || {
+		printf 'Release preparation could not be verified or safely reconstructed; lane unchanged.\n' >&2
+		return 1
+	}
+	worktree_head=$(git -C "$release_path" rev-parse HEAD 2>/dev/null) || return 1
+	[[ "$worktree_head" == "$snapshot" ]] || return 1
+	! git -C "$release_path" symbolic-ref -q HEAD >/dev/null 2>&1 || return 1
+	! git -C "$release_path" show-ref --verify --quiet "refs/tags/${attempted_tag}" || return 1
+	worktree_version=$(tr -d '[:space:]' <"$release_path/VERSION") || return 1
+	[[ "v${worktree_version}" == "$base_tag" || "$worktree_version" == "$attempted_version" ]] || return 1
 	recovery_evidence=$(jq -cn --arg tag "$attempted_tag" --arg expected "$lane_sources" \
 		--arg head "$worktree_head" --arg path "$release_path" --arg now "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+		--argjson reconstructed "$_FULL_LOOP_RECOVERY_WORKTREE_RECONSTRUCTED" \
 		--arg absent "$_FULL_LOOP_RECOVERY_STATE_ABSENT" \
 		'{type:"preparing-recovery/v1",attempted_tag:$tag,expected_sources:$expected,
+		worktree_reconstructed:$reconstructed,
 		worktree:$path,worktree_head:$head,worktree_state:"isolated",surviving_process:$absent,
 		remote_tag:$absent,github_release:$absent,npm:$absent,homebrew:$absent,
 		protected_branch:$absent,checked_at:$now}') || return 1
