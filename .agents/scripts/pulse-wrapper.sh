@@ -1300,7 +1300,8 @@ _pulse_run_deterministic_pipeline() {
 	if [[ -f "$STOP_FLAG" ]]; then
 		echo "[pulse-wrapper] Stop flag appeared — skipping canonical maintenance" >>"$LOGFILE"
 	else
-		_pulse_run_budget_priority_stage_with_timeout "canonical_maintenance" "$PRE_RUN_STAGE_TIMEOUT" \
+		CANONICAL_MAINTENANCE_STAGE_BUDGET_SECONDS="$PRE_RUN_STAGE_TIMEOUT" \
+			_pulse_run_budget_priority_stage_with_timeout "canonical_maintenance" "$PRE_RUN_STAGE_TIMEOUT" \
 			run_canonical_maintenance || true
 	fi
 
