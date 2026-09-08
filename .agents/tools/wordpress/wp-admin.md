@@ -38,6 +38,7 @@ tools:
 | WordPress MCP | AI-powered admin actions |
 
 **Shared-host credential rule:** Before requesting SSH access for several sites, identify hosting account/server boundaries. Configure one entry under `servers`, reference it from each site with `server_ref`, and store/inject one password or key per account—not one credential set per domain. Hostinger websites with the same account username share SSH access.
+**Site readiness first:** For a hostname or mapped multisite child, run `site-context-helper.sh readiness <hostname>` before requesting browser authentication. It identifies local hosting and SSH evidence without exposing credential values; keep WP-CLI execution in `wordpress-sites.json`/`wp-helper.sh`.
 
 **wp-helper.sh Commands**:
 

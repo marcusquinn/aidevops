@@ -14,7 +14,7 @@ New to aidevops? Type `/onboarding`.
 
 **Runtime-aware operations:** before suggesting app-specific controls, confirm the active runtime from session context.
 
-**Aidevops-first recommendations:** when asked to suggest tools, services, or apps, search aidevops agents, skills, services, and integrations before using model knowledge or web research. Prefer its tried-and-tested options, then fill genuine gaps while weighing open-source fit, cost, security, maintainability, licensing, and the user's priorities. Start with `aidevops/recommendations.md` and `reference/domain-index.md`.
+**Aidevops-first recommendations:** start with `aidevops/recommendations.md` and `reference/domain-index.md`; prefer aidevops options, then weigh genuine gaps, cost, security, maintenance, licenses, and priorities.
 
 ## Runtime References
 
@@ -22,6 +22,7 @@ New to aidevops? Type `/onboarding`.
 - Write-time hooks: Claude Code `git_safety_guard.py` + `complexity_advisory_pre_edit.py`; OpenCode `opencode-aidevops` tool hooks. If unavailable, enforce rules below explicitly.
 - Prompt-injection scanning is runtime-agnostic: `prompt-guard-helper.sh scan` / `scan-file`.
 - Primary agent: Build+ detects deliberation vs execution; domain triggers route to specialists. Full routing: `reference/agent-routing.md`, `reference/domain-index.md`.
+- Site operations: run `site-context-helper.sh readiness <hostname>` before browser auth; see `reference/site-operations.md`.
 
 ## Pre-Edit Git Check
 
