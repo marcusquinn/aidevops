@@ -856,11 +856,12 @@ _full_loop_read_release_authorization() {
 	return 0
 }
 lane_expected_sources='90@1111111111111111111111111111111111111111'
+lane_patch_json='{}'
 release_lane_read() {
 	local repo="$1"
 	[[ "$repo" == "test/repo" ]] || return 1
-	_AIDEVOPS_RELEASE_LANE_JSON=$(jq -cn --arg expected "$lane_expected_sources" \
-		'{active:true,source_pr:90,expected_sources:$expected,phase:"remote-publication",tag:"v1.2.3",terminal_receipt:null}') || return 1
+	_AIDEVOPS_RELEASE_LANE_JSON=$(jq -cn --arg expected "$lane_expected_sources" --argjson patch "$lane_patch_json" \
+		'{active:true,source_pr:90,expected_sources:$expected,phase:"remote-publication",tag:"v1.2.3",terminal_receipt:null} + $patch') || return 1
 	return 0
 }
 _full_loop_release_resolve_tag_commit() {
@@ -918,6 +919,34 @@ for lane_expected_sources in \
 	fi
 done
 lane_expected_sources='90@1111111111111111111111111111111111111111'
+lane_patch_json='{"tag":null,"snapshot_manifest_bound":true,"snapshot_sha":"1111111111111111111111111111111111111111"}'
+if ! (
+	tag_bound=0
+	release_lane_update_if_owned() {
+		[[ "$1" == "test/repo" && "$2" == "90" && "$3" == "exact-tag-deployment" && "$4" == "v1.2.3" ]] || return 1
+		tag_bound=1
+		return 0
+	}
+	_full_loop_release_finalize_reconciliation test/repo 90 v1.2.3 || exit 1
+	[[ "$tag_bound" -eq 1 ]]
+); then
+	printf 'FAIL published null-tag lane with exact bound snapshot could not resume\n'
+	exit 1
+fi
+for lane_patch_json in \
+	'{"tag":"v9.9.9","snapshot_manifest_bound":true,"snapshot_sha":"1111111111111111111111111111111111111111"}' \
+	'{"tag":null,"snapshot_manifest_bound":true,"snapshot_sha":"2222222222222222222222222222222222222222"}' \
+	'{"tag":null,"snapshot_manifest_bound":false,"snapshot_sha":"1111111111111111111111111111111111111111"}' \
+	'{"tag":null}' \
+	'{"tag":null,"snapshot_manifest_bound":true,"snapshot_sha":"1111111111111111111111111111111111111111","source_pr":91}' \
+	'{"tag":null,"snapshot_manifest_bound":true,"snapshot_sha":"1111111111111111111111111111111111111111","terminal_receipt":{}}'; do
+	if _full_loop_release_finalize_reconciliation test/repo 90 v1.2.3; then
+		printf 'FAIL unsafe null-tag lane accepted: %s\n' "$lane_patch_json"
+		exit 1
+	fi
+done
+lane_patch_json='{}'
+printf 'PASS null-tag reconciliation requires exact modern snapshot and retains mismatch refusals\n'
 SCRIPT_DIR="$saved_script_dir"
 _FULL_LOOP_RELEASE_PATH=""
 printf 'PASS reconciliation uses hardened tag runtime and accepts only equivalent legacy lane intent\n'

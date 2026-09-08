@@ -518,7 +518,7 @@ _full_loop_release_existing_with_lane() {
 			"$_FULL_LOOP_AGGREGATE_RECOVERY_PHASE" | "$_AIDEVOPS_RELEASE_LANE_PHASE_AGGREGATION_REFRESH" | "$_FULL_LOOP_AGGREGATE_COMMIT_PHASE")
 				printf 'Aggregate recovery transaction remains fenced in phase %s\n' "$lane_phase"
 				;;
-			*) release_lane_update "$existing_repo" "$source_pr" "remote-publication" || return 1 ;;
+			*) release_lane_update "$existing_repo" "$source_pr" "remote-publication" "${_FULL_LOOP_RELEASE_FOUND_TAG:-}" || return 1 ;;
 			esac
 		fi
 	fi

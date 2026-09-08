@@ -24,6 +24,7 @@ _FULL_LOOP_RELEASE_MODE_RECONCILE="reconcile"
 _FULL_LOOP_RELEASE_STEP_QUEUE_POSTFLIGHT="Queue exact-tag postflight"
 _FULL_LOOP_RELEASE_PROVENANCE_PREDICATE="https://slsa.dev/provenance/v1"
 _FULL_LOOP_RELEASE_TRUE="true"
+_FULL_LOOP_RELEASE_SHA_REGEX='^[0-9a-f]{40}$'
 _FULL_LOOP_RELEASE_VERSION_TAG_REGEX='^v[0-9]+\.[0-9]+\.[0-9]+$'
 _FULL_LOOP_RELEASE_TIMESTAMP_REGEX='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'
 
@@ -517,12 +518,13 @@ _full_loop_release_find_workflow_run() {
 		--arg selection_mode "$selection_mode" --arg completed "$_FULL_LOOP_RELEASE_STATUS_COMPLETED" \
 		--arg success "$_FULL_LOOP_RELEASE_CONCLUSION_SUCCESS" \
 		--arg string_type "$_FULL_LOOP_RELEASE_JSON_STRING_TYPE" \
+		--arg sha_regex "$_FULL_LOOP_RELEASE_SHA_REGEX" \
 		--argjson push "$push_runs" --argjson recovery "$recovery_runs" '
 		([($push.workflow_runs[]? | select(.event == $push_event and .head_branch == $tag and .head_sha == $sha))]
 		 + [($recovery.workflow_runs[]?
 			| select(.event == $recovery_event and .head_branch == "main"
 				and ((.head_sha | type) == $string_type)
-				and (.head_sha | test("^[0-9a-f]{40}$"))
+				and (.head_sha | test($sha_regex))
 				and .display_title == ($title + " [" + $sha + "." + .head_sha + "]")))])
 		| if $selection_mode == "successful" then
 			map(select(.status == $completed and .conclusion == $success))
@@ -531,6 +533,7 @@ _full_loop_release_find_workflow_run() {
 	') || return 1
 	[[ -n "$_FULL_LOOP_RELEASE_RUN_JSON" && "$_FULL_LOOP_RELEASE_RUN_JSON" != "null" ]] || return 3
 	jq -e --arg string_type "$_FULL_LOOP_RELEASE_JSON_STRING_TYPE" \
+		--arg sha_regex "$_FULL_LOOP_RELEASE_SHA_REGEX" \
 		--arg number_type "$_FULL_LOOP_RELEASE_JSON_NUMBER_TYPE" \
 		--arg completed "$_FULL_LOOP_RELEASE_STATUS_COMPLETED" \
 		--arg push_event "$_FULL_LOOP_RELEASE_EVENT_PUSH" \
@@ -538,7 +541,7 @@ _full_loop_release_find_workflow_run() {
 		((.id | type) == $number_type)
 		and (.event == $push_event or .event == $recovery_event)
 		and ((.head_sha | type) == $string_type)
-		and (.head_sha | test("^[0-9a-f]{40}$"))
+		and (.head_sha | test($sha_regex))
 		and ((.status | type) == $string_type)
 		and ((.status // "") | length > 0)
 		and ((.created_at | type) == $string_type)
@@ -945,12 +948,23 @@ _full_loop_release_validate_published_reconciliation_intent() {
 		<<<"$observed_json") || return 1
 	release_authorization_compare "$persisted_sources" "$observed_sources" || return 1
 	release_lane_read "$repo" || return 1
-	jq -e --argjson source_pr "$requested_pr" --arg tag_name "$tag_name" '
-		.active == true and .source_pr == $source_pr and .tag == $tag_name
-		and (.expected_sources | type) == "string"
+	# A verified published tag can precede its interrupted lane bookkeeping.
+	# Recover only a missing tag bound to the exact modern signed snapshot.
+	#aidevops:trust-boundary
+	jq -e --argjson source_pr "$requested_pr" --arg tag_name "$tag_name" --argjson signed_source "$source_json" \
+		--arg string_type "$_FULL_LOOP_RELEASE_JSON_STRING_TYPE" --arg sha_regex "$_FULL_LOOP_RELEASE_SHA_REGEX" '
+		.active == true and .source_pr == $source_pr
+		and (.tag == $tag_name or (.tag == null and .snapshot_manifest_bound == true
+			and (.snapshot_sha | type) == $string_type
+			and (.snapshot_sha | test($sha_regex))
+			and .snapshot_sha == $signed_source.source_merge))
+		and (.expected_sources | type) == $string_type
 		and (.phase == "remote-publication" or .phase == "exact-tag-deployment")
 		and ((.terminal_receipt // null) == null)
-	' <<<"$_AIDEVOPS_RELEASE_LANE_JSON" >/dev/null || return 1
+	' <<<"$_AIDEVOPS_RELEASE_LANE_JSON" >/dev/null || {
+		printf 'Published reconciliation refused: lane source/tag/snapshot identity does not match verified release %s for PR #%s.\n' "$tag_name" "$requested_pr" >&2
+		return 1
+	}
 	lane_sources=$(jq -er '.expected_sources' <<<"$_AIDEVOPS_RELEASE_LANE_JSON") || return 1
 	if [[ "$lane_sources" != "$persisted_sources" ]]; then
 		lane_intent_json=$(release_authorization_intent_json "$lane_sources") || return 1
