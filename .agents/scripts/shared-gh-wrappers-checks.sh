@@ -1035,11 +1035,15 @@ _gh_pr_checks_observation_cache_get() {
 	local diagnostic=""
 	local fetched_at=""
 	local normalized_sha=""
+	local file_perms=""
 	_GH_PR_CHECKS_OBSERVATION_CACHE_HIT=0
 	normalized_sha=$(printf '%s' "$head_sha" | tr '[:upper:]' '[:lower:]')
 	request_key="$(_gh_pr_checks_observation_request_key "$slug" "$pr_number" "$mode" "$head_sha")" || return 1
 	path="$(_gh_pr_checks_observation_cache_path "$request_key")" || return 1
-	[[ -s "$path" ]] || return 1
+	[[ -s "$path" && -f "$path" && ! -L "$path" ]] || return 1
+	declare -F _file_perms >/dev/null 2>&1 || return 1
+	file_perms="$(_file_perms "$path")" || return 1
+	[[ "$file_perms" == 600 ]] || return 1
 	invalidation_generation="$(_gh_pr_checks_observation_invalidation_generation "$slug" "$pr_number" "$mode" "$head_sha")" || return 1
 	entry=$(jq -cer --arg schema "$_GH_PR_CHECKS_OBSERVATION_SCHEMA" \
 		--arg repository "$slug" --argjson pr_number "$pr_number" --arg mode "$mode" \
