@@ -2025,6 +2025,25 @@ claim_released reason=worker_complete
 	return 0
 }
 
+test_claim_winner_persisted_expiry() {
+	local result=0
+	(
+		local implementation="" output="" rc=0
+		implementation=$(awk '/^_resolve_claim_race_result\(\) \{/,/^}$/ { print }' "$CLAIM_HELPER")
+		eval "$implementation"
+		LEGACY_DEVICE_MARKER=legacy
+		_resolve_device_id() { printf 'fixture-device'; }
+		_now_epoch() { printf '1050'; }
+		output=$(_resolve_claim_race_result 42 owner/repo runner fixture 10 '[{"nonce":"fixture","runner":"runner","device":"fixture-device","age_seconds":50,"lease_expires_at":1120}]') || return 1
+		[[ "$output" == *"expires_at=1120" ]] || return 1
+		_now_epoch() { printf '1121'; }
+		_resolve_claim_race_result 42 owner/repo runner fixture 10 '[{"nonce":"fixture","runner":"runner","device":"fixture-device","age_seconds":121,"lease_expires_at":1120}]' >/dev/null 2>&1 || rc=$?
+		[[ "$rc" == 2 ]]
+	) || result=1
+	print_result "CLAIM_WON reports persisted expiry and rejects consensus-expired leases" "$result"
+	return 0
+}
+
 #######################################
 # Main
 #######################################
@@ -2033,6 +2052,7 @@ main() {
 	echo ""
 
 	test_help_exits_zero
+	test_claim_winner_persisted_expiry
 	test_claim_missing_args
 	test_claim_non_numeric_issue
 	test_check_missing_args

@@ -42,6 +42,7 @@ pulse-dispatch-worker-launch.sh    — launch sub-stages instrumented
 | `assign_and_label`    | Issue edit: swap assignees + status:queued + origin:worker |
 | `resolve_tier_model`  | Label-based tier resolution + round-robin model select |
 | `lock_issue`          | Verified issue conversation lock (t1894/t1934); linked PRs remain open for CI reviews |
+| `final_ownership_fence` | Live ownership check immediately before queued assignment |
 | `precreate_worktree`  | Git worktree pre-creation (or reuse) + dep restore  |
 | `worker_spawn`        | DB prewarm + setsid/nohup launch + early-exit monitor |
 | `post_launch_hooks`   | Stagger delay + ledger + dispatch comment + claim audit |
@@ -92,6 +93,22 @@ awk -F'\t' '{print $4 "\t" $5}' ~/.aidevops/logs/dispatch-stages.tsv | \
 ```
 
 ## Env Vars
+
+### Prelaunch lease budget
+
+The dispatcher renews its live claim immediately after winning, before comment
+reads and worktree preparation. `AIDEVOPS_DISPATCH_PRELAUNCH_BUDGET_SECONDS`
+defaults to 300 (valid range 1–999). The renewed lease covers the remaining
+preparation interval plus the existing OpenCode warm-up/handoff allowance.
+Preparation has a fixed elapsed-time deadline: the warm-up renewal cannot
+restart it. Expired budgets stop at stage boundaries before further ownership
+publication or spawn; underlying operations retain their own timeout controls.
+Failed renewal aborts through the existing exact-claim cleanup path.
+
+`CLAIM_WON expires_at` reports the persisted lease expiry, not a fresh deadline
+calculated after consensus. Claim acquisition consumes that lease; an expired
+claim is never revived. Keep the default orphan grace and ownership gates intact
+rather than increasing orphan retention to hide slow preparation.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
