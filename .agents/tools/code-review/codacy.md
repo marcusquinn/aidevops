@@ -160,8 +160,8 @@ stale, invalid, or incomplete telemetry cannot verify the target.
 2. **Recover indexing through authorised Codacy operations.** The documented
    `POST /organizations/gh/{owner}/repositories/{repo}/reanalyzeCommit` accepts
    `{"commitUuid":"<verified SHA>","cleanCache":true}`, but Codacy Support
-   confirmed in ticket 19472 that cache-cleared analysis is restricted to its
-   internal Super Admin role. The published schema may advertise project-token
+   confirmed that cache-cleared analysis is restricted to its internal Super
+   Admin role. The published schema may advertise project-token
    authentication even though a valid repository token receives `403`. Use the
    ordinary UI **Reanalyze** action only for a normal rerun; an index incident
    requiring cache clearance must go to Codacy Support. Verify the completed
