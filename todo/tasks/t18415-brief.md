@@ -96,9 +96,9 @@ Source-fix paths cannot be selected responsibly before index and policy recovery
   1,201,981 analysed LOC, and 755 complex files.
 - **Rating-driver decision:** Codacy reports `issuesPercentage: 0` and grade A, so
   no open finding is currently a rating driver requiring a remediation child.
-  The aggregate overview still records existing advisory/security and complexity
-  debt, but filing speculative bulk-fix tasks would not advance the authorised
-  A-grade outcome.
+  The same-branch aggregate overview still records 328 security, 54 error-prone,
+  and 312 complexity findings as existing debt, but filing speculative bulk-fix
+  tasks would not advance the authorised A-grade outcome.
 - **Policy recovery:** The three obsolete ESLint compatibility/style counts are
   zero. The remaining 83 cached `Bandit_B404` findings are ruled out as a source
   remediation batch by the verified policy audit in GH#31459: B404 is disabled
