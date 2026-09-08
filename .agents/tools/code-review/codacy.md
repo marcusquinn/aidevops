@@ -77,7 +77,9 @@ token value in a command argument, repository file, log, issue, or chat.
 
 Codacy project-token authentication uses the `project-token` HTTP header. The
 older account token uses `api-token`; using the wrong header can look like a
-permission failure even when the token itself is valid.
+permission failure even when the token itself is valid. A valid project token
+can authenticate repository reads while still receiving `403` for privileged
+operations; successful authentication is not proof of mutation authority.
 
 ```bash
 # Commit delta statistics (new issues count + complexity delta)
@@ -157,10 +159,14 @@ stale, invalid, or incomplete telemetry cannot verify the target.
    such a discontinuity as thousands of newly introduced defects.
 2. **Recover indexing through authorised Codacy operations.** The documented
    `POST /organizations/gh/{owner}/repositories/{repo}/reanalyzeCommit` accepts
-   `{"commitUuid":"<verified SHA>","cleanCache":true}`. Verify the completed
-   analysis and restored scope, not just an accepted request. A 403 is an access
-   blocker: use an authorised account or Codacy support, not repeated requests,
-   synthetic source edits, or expanded exclusions.
+   `{"commitUuid":"<verified SHA>","cleanCache":true}`, but Codacy Support
+   confirmed in ticket 19472 that cache-cleared analysis is restricted to its
+   internal Super Admin role. The published schema may advertise project-token
+   authentication even though a valid repository token receives `403`. Use the
+   ordinary UI **Reanalyze** action only for a normal rerun; an index incident
+   requiring cache clearance must go to Codacy Support. Verify the completed
+   analysis and restored scope, not just an accepted request. Do not repeat a
+   denied request, create synthetic source edits, or expand exclusions.
 3. **Triage genuine findings in small batches.** Start with security/error findings,
    then high-density complexity, duplication and unused-code hotspots. Inspect
    actual callsites and preserve behaviour. Incorrect language-version rules need
