@@ -57,6 +57,10 @@ readonly STATS_HEALTH_EX_PARTIAL="${EX_PARTIAL:-75}"
 # single slow history scan consume the whole dashboard refresh budget.
 : "${STATS_HEALTH_ACTIVITY_TIMEOUT:=60}"
 
+# Keep this much of a per-repository bounded refresh for issue publication and
+# its title update. Optional history sections share only the remainder.
+: "${STATS_HEALTH_PUBLICATION_RESERVE_SECONDS:=10}"
+
 # --- Functions ---
 
 #######################################
@@ -779,6 +783,37 @@ _update_health_issue_title() {
 }
 
 #######################################
+# Return a fair share of the remaining per-repository deadline for one optional
+# section. A bounded repository child exports AIDEVOPS_GH_DEADLINE_EPOCH; direct
+# callers without it retain the configured per-section ceiling.
+#
+# Arguments:
+#   $1 - number of optional sections still to gather
+# Output: timeout seconds (0 means publish unavailable evidence immediately)
+#######################################
+_stats_health_optional_section_timeout() {
+	local sections_remaining="$1" configured_timeout now deadline reserve available timeout
+	configured_timeout=$(_stats_seconds "$STATS_HEALTH_ACTIVITY_TIMEOUT" 60)
+	[[ "$sections_remaining" =~ ^[1-9][0-9]*$ ]] || sections_remaining=1
+	[[ "${AIDEVOPS_GH_DEADLINE_EPOCH:-}" =~ ^[0-9]{1,11}$ ]] || {
+		printf '%s\n' "$configured_timeout"
+		return 0
+	}
+	now=$(date +%s)
+	deadline=$((10#$AIDEVOPS_GH_DEADLINE_EPOCH))
+	reserve=$(_stats_seconds "$STATS_HEALTH_PUBLICATION_RESERVE_SECONDS" 10)
+	available=$((deadline - now - reserve))
+	if [[ "$available" -le 0 ]]; then
+		printf '%s\n' 0
+		return 0
+	fi
+	timeout=$((available / sections_remaining))
+	[[ "$timeout" -le "$configured_timeout" ]] || timeout="$configured_timeout"
+	printf '%s\n' "$timeout"
+	return 0
+}
+
+#######################################
 # Gather commit activity markdown for a single repo.
 #
 # Arguments:
@@ -788,9 +823,14 @@ _update_health_issue_title() {
 #######################################
 _gather_activity_stats_for_repo() {
 	local repo_path="$1"
-	local activity_helper="${HOME}/.aidevops/agents/scripts/contributor-activity-helper.sh"
+	local activity_helper="${HOME}/.aidevops/agents/scripts/contributor-activity-helper.sh" timeout
+	timeout=$(_stats_health_optional_section_timeout 2)
+	[[ "$timeout" -gt 0 ]] || {
+		echo "_Activity data unavailable — publication time reserved._"
+		return 0
+	}
 	if [[ -x "$activity_helper" ]]; then
-		timeout_sec "$STATS_HEALTH_ACTIVITY_TIMEOUT" bash "$activity_helper" summary "$repo_path" --period month --format markdown || echo "_Activity data unavailable._"
+		timeout_sec "$timeout" bash "$activity_helper" summary "$repo_path" --period month --format markdown || echo "_Activity data unavailable._"
 	else
 		echo "_Activity helper not installed._"
 	fi
@@ -806,9 +846,14 @@ _gather_activity_stats_for_repo() {
 #######################################
 _gather_session_time_for_repo() {
 	local repo_path="$1"
-	local activity_helper="${HOME}/.aidevops/agents/scripts/contributor-activity-helper.sh"
+	local activity_helper="${HOME}/.aidevops/agents/scripts/contributor-activity-helper.sh" timeout
+	timeout=$(_stats_health_optional_section_timeout 1)
+	[[ "$timeout" -gt 0 ]] || {
+		echo "_Session data unavailable — publication time reserved._"
+		return 0
+	}
 	if [[ -x "$activity_helper" ]]; then
-		timeout_sec "$STATS_HEALTH_ACTIVITY_TIMEOUT" bash "$activity_helper" session-time "$repo_path" --period all --format markdown || echo "_Session data unavailable._"
+		timeout_sec "$timeout" bash "$activity_helper" session-time "$repo_path" --period all --format markdown || echo "_Session data unavailable._"
 	else
 		echo "_Activity helper not installed._"
 	fi
