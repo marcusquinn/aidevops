@@ -215,6 +215,61 @@ HELPER
 	return 0
 }
 
+test_pulse_routine_scripts_use_registered_repository() {
+	local fake_home="$TEST_DIR/context-home"
+	local agents_dir="$fake_home/.aidevops/agents"
+	local repo_dir="$TEST_DIR/registered-repo"
+	local launcher_dir="$TEST_DIR/launcher"
+	local configured_capture="$TEST_DIR/configured-cwd"
+	local custom_capture="$TEST_DIR/custom-cwd"
+	local original_cwd=""
+	local caller_cwd=""
+	local missing_failed=0
+	mkdir -p "$agents_dir/scripts" "$agents_dir/custom/scripts" "$repo_dir" "$launcher_dir" "$TEST_DIR/bin"
+	cat >"$agents_dir/scripts/record-cwd.sh" <<'SCRIPT'
+#!/usr/bin/env bash
+printf '%s|%s\n' "$PWD" "$*" >"$ROUTINE_CWD_CAPTURE"
+SCRIPT
+	cat >"$agents_dir/custom/scripts/r-cwd.sh" <<'SCRIPT'
+#!/usr/bin/env bash
+printf '%s\n' "$PWD" >"$ROUTINE_CUSTOM_CWD_CAPTURE"
+SCRIPT
+	cat >"$TEST_DIR/bin/routine-log-helper.sh" <<'HELPER'
+#!/usr/bin/env bash
+exit 0
+HELPER
+	chmod +x "$agents_dir/scripts/record-cwd.sh" "$agents_dir/custom/scripts/r-cwd.sh" "$TEST_DIR/bin/routine-log-helper.sh"
+
+	HOME="$fake_home"
+	ROUTINE_STATE_FILE="$TEST_DIR/context-state.json"
+	LOGFILE="$TEST_DIR/context-pulse.log"
+	ROUTINE_LOG_HELPER="$TEST_DIR/bin/routine-log-helper.sh"
+	ROUTINE_CWD_CAPTURE="$configured_capture"
+	ROUTINE_CUSTOM_CWD_CAPTURE="$custom_capture"
+	export ROUTINE_CWD_CAPTURE ROUTINE_CUSTOM_CWD_CAPTURE
+	original_cwd=$(pwd)
+	cd "$launcher_dir" || return 1
+	caller_cwd=$(pwd)
+	_routine_execute "r-cwd-configured" "configured cwd" "scripts/record-cwd.sh with-argument" "" "$repo_dir"
+	_routine_execute "r-cwd" "custom cwd" "" "" "$repo_dir"
+	if _routine_execute "r-cwd-missing" "missing cwd" "scripts/record-cwd.sh" "" "$TEST_DIR/missing-repo"; then
+		missing_failed=0
+	else
+		missing_failed=1
+	fi
+	if [[ "$(<"$configured_capture")" == "${repo_dir}|with-argument" ]] &&
+		[[ "$(<"$custom_capture")" == "$repo_dir" ]] &&
+		[[ "$(pwd)" == "$caller_cwd" ]] &&
+		[[ "$missing_failed" -eq 1 ]] &&
+		[[ "$(<"$LOGFILE")" == *"repository directory not found or not a directory"* ]]; then
+		print_result "pulse routine scripts use registered repository cwd" 0
+	else
+		print_result "pulse routine scripts use registered repository cwd" 1 "configured=$(<"$configured_capture") custom=$(<"$custom_capture") cwd=$(pwd)"
+	fi
+	cd "$original_cwd" || return 1
+	return 0
+}
+
 test_agent_routine_waits_for_terminal_result() {
 	local capture_file="$TEST_DIR/agent-routine-lifecycle.args"
 	local done_file="$TEST_DIR/agent-routine.done"
@@ -490,6 +545,7 @@ main() {
 	test_core_routine_shell_quote_escapes_single_quotes
 	test_linux_core_scheduler_commands_are_logged
 	test_pulse_routine_update_uses_flags_and_duration
+	test_pulse_routine_scripts_use_registered_repository
 	test_agent_routine_waits_for_terminal_result
 	test_opencode_archive_scheduler_is_daily_and_low_priority
 	test_opencode_archive_scheduler_tolerates_unset_home

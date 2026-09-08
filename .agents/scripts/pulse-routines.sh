@@ -265,6 +265,11 @@ _routine_execute() {
 	started_epoch=$(date +%s)
 
 	if [[ -n "$run_script" ]]; then
+		if [[ ! -d "$repo_path" ]]; then
+			echo "[pulse-wrapper] routine ${routine_id}: repository directory not found or not a directory: ${repo_path}" >>"$LOGFILE"
+			_routine_finalize_terminal "$routine_id" "$_ROUTINE_STATUS_FAILURE" "$started_epoch"
+			return 1
+		fi
 		local run_parts=()
 		IFS=' ' read -r -a run_parts <<<"$run_script"
 		local script_path="${agents_dir}/${run_parts[0]}"
@@ -278,10 +283,10 @@ _routine_execute() {
 		if [[ "${#run_parts[@]}" -gt 1 ]]; then
 			local script_args=("${run_parts[@]:1}")
 			echo "[pulse-wrapper] routine ${routine_id}: executing script ${script_path} ${script_args[*]}" >>"$LOGFILE"
-			"$script_path" "${script_args[@]}" >>"$LOGFILE" 2>&1 || exit_code=$?
+			(cd "$repo_path" && "$script_path" "${script_args[@]}") >>"$LOGFILE" 2>&1 || exit_code=$?
 		else
 			echo "[pulse-wrapper] routine ${routine_id}: executing script ${script_path}" >>"$LOGFILE"
-			"$script_path" >>"$LOGFILE" 2>&1 || exit_code=$?
+			(cd "$repo_path" && "$script_path") >>"$LOGFILE" 2>&1 || exit_code=$?
 		fi
 		if [[ "$exit_code" -eq "$_ROUTINE_TEMPFAIL_EXIT" ]]; then
 			status="$_ROUTINE_STATUS_DEFERRED"
@@ -299,8 +304,13 @@ _routine_execute() {
 
 	local custom_script="${agents_dir}/custom/scripts/${routine_id}.sh"
 	if [[ -z "$agent_name" && -x "$custom_script" ]]; then
+		if [[ ! -d "$repo_path" ]]; then
+			echo "[pulse-wrapper] routine ${routine_id}: repository directory not found or not a directory: ${repo_path}" >>"$LOGFILE"
+			_routine_finalize_terminal "$routine_id" "$_ROUTINE_STATUS_FAILURE" "$started_epoch"
+			return 1
+		fi
 		echo "[pulse-wrapper] routine ${routine_id}: executing custom script ${custom_script}" >>"$LOGFILE"
-		"$custom_script" >>"$LOGFILE" 2>&1 || exit_code=$?
+		(cd "$repo_path" && "$custom_script") >>"$LOGFILE" 2>&1 || exit_code=$?
 		[[ "$exit_code" -eq 0 ]] || status="$_ROUTINE_STATUS_FAILURE"
 		_routine_finalize_terminal "$routine_id" "$status" "$started_epoch"
 		return 0
