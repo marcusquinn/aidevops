@@ -23,12 +23,6 @@
 [[ -n "${_FULL_LOOP_COMMIT_VALIDATORS_LIB_LOADED:-}" ]] && return 0
 _FULL_LOOP_COMMIT_VALIDATORS_LIB_LOADED=1
 
-# Run auto-fix passes (format then lint). Continue past failures —
-# fix scripts may legitimately exit non-zero on un-auto-fixable issues.
-# If auto-fix produced changes, amend the HEAD commit.
-# Sets caller-scope `fix_changes` to 1 if amend happened, 0 otherwise.
-# Args: $1=pm (npm|pnpm|yarn) $2=timeout_secs $3=timeout_available (0|1)
-# Returns 0 on success, 1 if amend failed.
 _restore_validator_repo_root() {
 	local repo_root="$1"
 	local phase="$2"
@@ -45,103 +39,177 @@ _restore_validator_repo_root() {
 	return 0
 }
 
-_run_node_auto_fix() {
-	local pm="$1"
-	local t="$2"
-	local timeout_available="${3:-0}"
-	local repo_root=""
-	repo_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd -P 2>/dev/null || echo "")
-	if [[ -z "$repo_root" ]]; then
-		print_error "[validators] cannot determine repository root before auto-fix"
+_validator_file_is_node_related() {
+	local changed_file="$1"
+	case "$changed_file" in
+	package.json | package-lock.json | npm-shrinkwrap.json | pnpm-lock.yaml | yarn.lock | bun.lock | bun.lockb | \
+		*.js | *.jsx | *.mjs | *.cjs | *.ts | *.tsx | *.mts | *.cts | \
+		*.eslintrc.* | eslint.config.* | tsconfig*.json | jsconfig*.json | prettier.config.* | .prettierrc*) return 0 ;;
+	esac
+	return 1
+}
+
+_validator_workspace_patterns() {
+	jq -r '.workspaces // empty | if type == "array" then .[] elif type == "object" then (.packages // [])[] else empty end' package.json 2>/dev/null
+}
+
+_validator_workspace_matches() {
+	local scope="$1"
+	local workspace_patterns="$2"
+	local pattern=""
+	while IFS= read -r pattern; do
+		# Workspace declarations are glob patterns (for example packages/*).
+		# shellcheck disable=SC2053
+		[[ -n "$pattern" && "$scope" == $pattern ]] && return 0
+	done <<<"$workspace_patterns"
+	return 1
+}
+
+_validator_all_workspace_scopes() {
+	local workspace_patterns="$1"
+	local manifest="" scope="" scopes=""
+	while IFS= read -r manifest; do
+		[[ "$manifest" == "package.json" ]] && continue
+		scope=${manifest%/package.json}
+		_validator_workspace_matches "$scope" "$workspace_patterns" || continue
+		case $'\n'"$scopes"$'\n' in
+		*$'\n'"$scope"$'\n'*) ;;
+		*) scopes="${scopes}${scopes:+$'\n'}${scope}" ;;
+		esac
+	done < <(git ls-files '*package.json')
+	if _validator_package_has_check package.json; then
+		scopes=".${scopes:+$'\n'}${scopes}"
+	fi
+	if [[ -z "$scopes" ]]; then
+		print_error "[validators] root/shared change requires broader checks, but no check-only workspace scripts are available"
 		return 1
 	fi
-	_restore_validator_repo_root "$repo_root" "startup" || return 1
-	# Build a timeout prefix array; empty when timeout(1) is not available.
-	local -a timeout_prefix=()
-	[[ "$timeout_available" == "1" ]] && timeout_prefix=("timeout" "$t")
-	fix_changes=0
-	local script_name
-	for script_name in format:fix format:write prettier:fix; do
-		if jq -e --arg s "$script_name" '.scripts[$s] // empty' package.json >/dev/null 2>&1; then
-			print_info "[validators] $pm run $script_name (auto-fix)"
-			"${timeout_prefix[@]}" "$pm" run "$script_name" >/dev/null 2>&1 || true
-			_restore_validator_repo_root "$repo_root" "$script_name" || return 1
-			break
-		fi
-	done
-	# Lint auto-fix loop pattern matches format for parallel extension.
-	# shellcheck disable=SC2043
-	for script_name in lint:fix; do
-		if jq -e --arg s "$script_name" '.scripts[$s] // empty' package.json >/dev/null 2>&1; then
-			print_info "[validators] $pm run $script_name (auto-fix)"
-			"${timeout_prefix[@]}" "$pm" run "$script_name" >/dev/null 2>&1 || true
-			_restore_validator_repo_root "$repo_root" "$script_name" || return 1
-			break
-		fi
-	done
-	_restore_validator_repo_root "$repo_root" "auto-fix" || return 1
-	if git diff --quiet 2>/dev/null; then
-		return 0
-	fi
-	print_info "[validators] auto-fix produced changes, amending commit"
-	# Use git add -u (tracked files only) to avoid staging untracked artifacts
-	# that format/lint runners may create (e.g. caches, generated files).
-	git add -u
-	# --no-verify on amend: avoid recursing into pre-commit territory.
-	if ! git commit --amend --no-edit --no-verify >/dev/null 2>&1; then
-		print_error "[validators] failed to amend commit with auto-fix changes"
-		git status -s 2>&1 | head -10 >&2
-		return 1
-	fi
-	fix_changes=1
+	printf '%s\n' "$scopes"
 	return 0
 }
 
-# Run check-only typecheck. Picks first existing script in preference order.
-# Captures output for failure diagnosis. Mentor error on failure.
-# Args: $1=pm $2=timeout_secs $3=timeout_available (0|1)
-# Returns 0 on pass/no-script, 1 on failure.
-_run_node_typecheck() {
-	local pm="$1"
-	local t="$2"
-	local timeout_available="${3:-0}"
-	# Build a timeout prefix array; empty when timeout(1) is not available.
-	local -a timeout_prefix=()
-	[[ "$timeout_available" == "1" ]] && timeout_prefix=("timeout" "$t")
-	local typecheck_script
-	typecheck_script=""
-	local script_name
-	for script_name in typecheck check:types tsc; do
-		if jq -e --arg s "$script_name" '.scripts[$s] // empty' package.json >/dev/null 2>&1; then
-			typecheck_script="$script_name"
-			break
+# Print the package roots that own Node-related files in the complete PR range.
+# A root/shared change intentionally selects the root package and broader checks.
+_validator_scopes() {
+	local changed_files="" workspace_patterns="" changed_file=""
+	local scope=""
+	changed_files=$(_validator_changed_files) || return 1
+	workspace_patterns=$(_validator_workspace_patterns)
+	if [[ -z "$workspace_patterns" ]]; then
+		printf '.\n'
+		return 0
+	fi
+	local scopes=""
+	while IFS= read -r changed_file; do
+		_validator_file_is_node_related "$changed_file" || continue
+		scope=${changed_file%/*}
+		[[ "$scope" == "$changed_file" ]] && scope="."
+		while [[ "$scope" != "." && ! -f "$scope/package.json" ]]; do
+			if [[ "$scope" == */* ]]; then
+				scope=${scope%/*}
+			else
+				scope="."
+			fi
+		done
+		if [[ "$scope" == "." ]]; then
+			_validator_all_workspace_scopes "$workspace_patterns"
+			return $?
+		fi
+		if ! _validator_workspace_matches "$scope" "$workspace_patterns"; then
+			print_error "[validators] cannot map changed Node file to a declared workspace: $changed_file"
+			print_error "[validators] add a package-level check script or correct package.json workspaces before publication"
+			return 1
+		fi
+		case $'\n'"$scopes"$'\n' in
+		*$'\n'"$scope"$'\n'*) ;;
+		*) scopes="${scopes}${scopes:+$'\n'}${scope}" ;;
+		esac
+	done <<<"$changed_files"
+	[[ -n "$scopes" ]] || return 1
+	printf '%s\n' "$scopes"
+	return 0
+}
+
+_validator_select_script() {
+	local package_json="$1" phase="$2" script_name=""
+	local candidates=""
+	case "$phase" in
+	format) candidates=$'format:check\ncheck:format\nprettier:check' ;;
+	lint) candidates=$'lint:check\nlint' ;;
+	typecheck) candidates=$'typecheck\ncheck:types\ntsc' ;;
+	esac
+	while IFS= read -r script_name; do
+		if jq -e --arg s "$script_name" '.scripts[$s] // empty' "$package_json" >/dev/null 2>&1; then
+			printf '%s\n' "$script_name"
+			return 0
+		fi
+	done <<<"$candidates"
+	return 1
+}
+
+_validator_package_has_check() {
+	local package_json="$1" phase=""
+	for phase in format lint typecheck; do
+		_validator_select_script "$package_json" "$phase" >/dev/null && return 0
+	done
+	return 1
+}
+
+_validator_snapshot() {
+	local prefix="$1"
+	git diff --binary --no-ext-diff >"${prefix}.worktree" || return 1
+	git diff --cached --binary --no-ext-diff >"${prefix}.index" || return 1
+	return 0
+}
+
+_validator_state_unchanged() {
+	local before="$1" after="$2" command_label="$3"
+	if cmp -s "${before}.worktree" "${after}.worktree" && cmp -s "${before}.index" "${after}.index"; then
+		return 0
+	fi
+	print_error "[validators] check-only command modified tracked files or index state: $command_label"
+	print_error "[validators] changes were preserved but will not be staged or amended; inspect git status and configure a non-mutating check"
+	git status --short >&2
+	return 1
+}
+
+_run_scoped_node_checks() {
+	local pm="$1" scope="$2" t="$3" snapshot_dir="$4"
+	local package_json="package.json" scope_label="repository root"
+	if [[ "$scope" != "." ]]; then
+		package_json="$scope/package.json"
+		scope_label="$scope"
+	fi
+	local phase="" script_name="" check_count=0 command_rc=0 check_index=0
+	for phase in format lint typecheck; do
+		script_name=$(_validator_select_script "$package_json" "$phase") || continue
+		check_count=$((check_count + 1))
+		check_index=$((check_index + 1))
+		print_info "[validators] scope=${scope_label} reason=$([[ "$scope" == "." ]] && printf 'root-or-shared-change' || printf 'affected-workspace') command=$pm run $script_name"
+		_validator_snapshot "${snapshot_dir}/before-${check_index}" || return 1
+		command_rc=0
+		(
+			cd "$scope" || exit 1
+			timeout_sec "$t" "$pm" run "$script_name"
+		) >"${snapshot_dir}/command-${check_index}.log" 2>&1 || command_rc=$?
+		_restore_validator_repo_root "$(git rev-parse --show-toplevel 2>/dev/null)" "$script_name" || return 1
+		_validator_snapshot "${snapshot_dir}/after-${check_index}" || return 1
+		_validator_state_unchanged "${snapshot_dir}/before-${check_index}" "${snapshot_dir}/after-${check_index}" "$pm run $script_name ($scope_label)" || return 1
+		if [[ "$command_rc" -eq 124 ]]; then
+			print_error "[validators] TIMEOUT after ${t}s: $pm run $script_name ($scope_label)"
+			return 1
+		elif [[ "$command_rc" -ne 0 ]]; then
+			print_error "[validators] CHECK FAILED (exit ${command_rc}): $pm run $script_name ($scope_label)"
+			tail -20 "${snapshot_dir}/command-${check_index}.log" >&2
+			return 1
 		fi
 	done
-	if [[ -z "$typecheck_script" ]]; then
-		return 0
+	if [[ "$check_count" -eq 0 ]]; then
+		print_error "[validators] NO SCOPED CHECKS AVAILABLE for ${scope_label}"
+		print_error "[validators] configure lint, typecheck, or a check-only format script in ${package_json}"
+		return 1
 	fi
-	print_info "[validators] $pm run $typecheck_script (check-only)"
-	# Separate declaration from mktemp assignment: local masks the exit code of
-	# command substitutions, so declare first then assign (Gemini review PR #20898).
-	# mktemp without -t: more portable (GNU and BSD mktemp differ on -t semantics).
-	local tc_log
-	tc_log="$(mktemp)"
-	local tc_rc=0
-	"${timeout_prefix[@]}" "$pm" run "$typecheck_script" >"$tc_log" 2>&1 || tc_rc=$?
-	if [[ "$tc_rc" -eq 0 ]]; then
-		rm -f "$tc_log"
-		return 0
-	fi
-	print_error "[validators] $typecheck_script FAILED — code has type errors"
-	print_error "  last 20 lines:"
-	tail -20 "$tc_log" >&2
-	rm -f "$tc_log"
-	print_error ""
-	print_error "  diagnose:    $pm run $typecheck_script"
-	print_error "  fix errors, commit, then re-run: full-loop-helper.sh commit-and-pr ..."
-	print_error "  bypass:      full-loop-helper.sh commit-and-pr ... --skip-hooks"
-	print_error "               (or AIDEVOPS_SKIP_PROJECT_VALIDATORS=1 env)"
-	return 1
+	return 0
 }
 
 # Orchestrator. Args: $1=skip_hooks (0|1). Returns 0 on pass/skip, 1 on fail.
@@ -163,18 +231,26 @@ _run_project_validators() {
 	print_info "[validators] running node project validators ($pm)..."
 	local validator_timeout
 	validator_timeout="${AIDEVOPS_VALIDATOR_TIMEOUT:-300}"
-	# Detect timeout(1) availability once here; sub-functions receive a flag so
-	# they don't each re-check (portability: macOS may lack timeout without
-	# GNU coreutils; pattern mirrors _rebase_and_push:L941).
-	local timeout_available=0
-	command -v timeout >/dev/null 2>&1 && timeout_available=1
-	local fix_changes=0
-	_run_node_auto_fix "$pm" "$validator_timeout" "$timeout_available" || return 1
-	_run_node_typecheck "$pm" "$validator_timeout" "$timeout_available" || return 1
-	if [[ "$fix_changes" == "1" ]]; then
-		print_info "[validators] passed (auto-fix amended into commit)"
-	else
-		print_info "[validators] passed"
+	if ! [[ "$validator_timeout" =~ ^[1-9][0-9]*$ ]]; then
+		print_error "[validators] AIDEVOPS_VALIDATOR_TIMEOUT must be a positive integer"
+		return 1
 	fi
+	if ! command -v "$pm" >/dev/null 2>&1; then
+		print_error "[validators] REQUIRED COMMAND UNAVAILABLE: $pm"
+		return 1
+	fi
+	local scopes="" snapshot_dir=""
+	local scope=""
+	scopes=$(_validator_scopes) || return 1
+	snapshot_dir=$(mktemp -d) || return 1
+	while IFS= read -r scope; do
+		[[ -n "$scope" ]] || continue
+		_run_scoped_node_checks "$pm" "$scope" "$validator_timeout" "$snapshot_dir" || {
+			rm -rf "$snapshot_dir"
+			return 1
+		}
+	done <<<"$scopes"
+	rm -rf "$snapshot_dir"
+	print_info "[validators] passed (check-only scope: ${scopes//$'\n'/, })"
 	return 0
 }

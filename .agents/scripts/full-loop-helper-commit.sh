@@ -1037,8 +1037,8 @@ _finalize_wip_history() {
 #   _run_project_validators       — orchestrator
 #   _validators_should_run        — bypass-path check
 #   _detect_node_project          — node-project detection (returns pm)
-#   _run_node_auto_fix            — format/lint auto-fix + amend
-#   _run_node_typecheck           — typecheck check-only
+#   _validator_scopes             — affected-workspace/root scope selection
+#   _run_scoped_node_checks       — bounded, mutation-guarded check-only scripts
 
 # Print every file changed between the remote default branch and HEAD.
 # The merge-base range keeps classification aligned with the complete PR diff
@@ -1126,17 +1126,18 @@ _detect_node_project() {
 		return 1
 	fi
 	local has_relevant_scripts
-	# Only include scripts that are actually executed by the runner.
-	# "format" and "lint" (without :fix suffix) are omitted because the runner
-	# only attempts format:fix/format:write/prettier:fix and lint:fix — detecting
-	# on bare format/lint causes false positives where validators report "passed"
-	# without actually running anything (Augment review, PR #20898).
+	# Check-only scripts and workspaces are executable validation surfaces. Legacy
+	# mutating-only scripts are also detected so the orchestrator can fail with
+	# actionable configuration guidance instead of silently reporting success.
 	has_relevant_scripts=$(jq -r '
-		.scripts // {} |
-		[has("format:fix"),has("format:write"),has("prettier:fix"),
-		 has("lint:fix"),
-		 has("typecheck"),has("check:types"),has("tsc")] |
-		any
+		(.scripts // {} |
+		 [has("format:check"),has("check:format"),has("prettier:check"),
+		  has("lint:check"),has("lint"),
+		  has("typecheck"),has("check:types"),has("tsc"),
+		  has("format:fix"),has("format:write"),has("prettier:fix"),has("lint:fix")] |
+		 any) or
+		((.workspaces // []) |
+		 if arrays then length > 0 else ((.packages? // []) | length > 0) end)
 	' package.json 2>/dev/null || echo "false")
 	if [[ "$has_relevant_scripts" != "true" ]]; then
 		return 1
@@ -1146,10 +1147,6 @@ _detect_node_project() {
 		pm="pnpm"
 	elif [[ -f yarn.lock ]]; then
 		pm="yarn"
-	fi
-	if ! command -v "$pm" >/dev/null 2>&1; then
-		print_warning "[validators] $pm not available on PATH — skipping (set AIDEVOPS_SKIP_PROJECT_VALIDATORS=1 to silence)"
-		return 1
 	fi
 	return 0
 }
