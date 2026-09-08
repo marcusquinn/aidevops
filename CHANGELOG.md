@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.343] - 2026-09-08
+
+### Changed
+
+- Documentation: document verified Codacy recovery boundaries
+
+### Fixed
+
+- provision legacy dashboard labels (#31586)
+- reserve dashboard publication time (#31585)
+- expose stale worker success rate caches (#31581)
+- preserve trusted PRs from baseline CI debt (#31578)
+
 ## [3.32.342] - 2026-09-08
 
 ### Fixed
