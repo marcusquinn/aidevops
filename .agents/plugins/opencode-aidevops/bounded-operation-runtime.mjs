@@ -20,6 +20,7 @@ export function appendCapture(operation, chunk) {
 export function observeProgress(operation, chunk, now) {
   const text = `${operation.progressRemainder}${String(chunk)}`;
   const lines = text.split(/\r?\n/);
+  let observed = false;
   operation.progressRemainder = lines.pop() || "";
   if (Buffer.byteLength(operation.progressRemainder) > MAX_PROGRESS_REMAINDER_BYTES) {
     operation.progressRemainder = operation.progressRemainder.slice(-MAX_PROGRESS_REMAINDER_BYTES);
@@ -28,8 +29,10 @@ export function observeProgress(operation, chunk, now) {
     if (/^AIDEVOPS_PROGRESS:\s*\S/.test(line)) {
       operation.lastMeaningfulProgressAt = now();
       operation.progressEvents += 1;
+      observed = true;
     }
   }
+  return observed;
 }
 
 export function signalSupervisor(child) {

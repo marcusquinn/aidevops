@@ -106,6 +106,61 @@ describe("bounded interactive operations", () => {
     assert.equal(JSON.stringify(result).includes("phase-one"), false);
   });
 
+  test("wait-aware status returns on progress, terminal state, or its bound", async () => {
+    const instance = manager();
+    const progressing = await instance.start({
+      command: [process.execPath, "-e", "setTimeout(() => console.log('AIDEVOPS_PROGRESS: ready'), 40); setTimeout(() => process.exit(0), 250)"],
+      budgetMs: 1000,
+      progressIntervalMs: 500,
+    }, owner);
+    const progressStarted = Date.now();
+    const progress = await instance.status(progressing.operation_id, owner, { waitMs: 500 });
+    assert.equal(progress.state, "running");
+    assert.equal(progress.progress_events, 1);
+    assert.ok(Date.now() - progressStarted < 400, "progress did not wake status promptly");
+    const completed = await instance.status(progressing.operation_id, owner, { waitMs: 500 });
+    assert.ok(["finalizing", "succeeded"].includes(completed.state));
+    assert.equal((await terminal(instance, progressing.operation_id)).state, "succeeded");
+
+    const quiet = await instance.start({
+      command: [process.execPath, "-e", "setTimeout(() => process.exit(0), 500)"],
+      budgetMs: 1000,
+    }, owner);
+    const boundStarted = Date.now();
+    const bounded = await instance.status(quiet.operation_id, owner, { waitMs: 30 });
+    assert.equal(bounded.state, "running");
+    assert.ok(Date.now() - boundStarted >= 20, "status returned before its wait bound");
+    instance.cancel(quiet.operation_id, owner);
+    await terminal(instance, quiet.operation_id);
+  });
+
+  test("wait-aware status preserves immediate, ownership, cancellation, and tool behavior", async () => {
+    const instance = manager();
+    const started = await instance.start({
+      command: [process.execPath, "-e", "setTimeout(() => {}, 1000)"],
+      budgetMs: 1000,
+    }, owner);
+    assert.equal(instance.status(started.operation_id, owner).state, "running");
+    assert.throws(() => instance.status(started.operation_id, owner, { waitMs: 60001 }), /0 to 60000/);
+    assert.throws(() => instance.status(started.operation_id, { sessionID: "ses_other" }, { waitMs: 20 }), /owner mismatch/);
+
+    const waiting = instance.status(started.operation_id, owner, { waitMs: 500 });
+    instance.cancel(started.operation_id, owner);
+    assert.equal((await waiting).state, "cancelling");
+
+    const schemaNode = { optional() { return this; } };
+    const z = { enum: () => schemaNode, string: () => schemaNode, number: () => schemaNode, array: () => schemaNode };
+    const tool = createBoundedInteractiveOperationTool((definition) => definition, z, instance);
+    const toolResult = JSON.parse(await tool.execute({
+      action: "status",
+      operation_id: started.operation_id,
+      wait_seconds: 1,
+    }, owner));
+    assert.ok(["cancelling", "finalizing", "cancelled"].includes(toolResult.state), JSON.stringify(toolResult));
+    assert.equal(toolResult.schema, "aidevops.interactive-operation/v1");
+    await terminal(instance, started.operation_id);
+  });
+
   test("an outside cwd requires a session-owned worktree resolution before spawn", async () => {
     const linked = mkdtempSync(join(tmpdir(), "aidevops-bounded-linked-"));
     let resolution;
@@ -236,6 +291,24 @@ describe("bounded interactive operations", () => {
     const timedRestoreResult = await terminal(instance, timedRestore.operation_id);
     assert.equal(timedRestoreResult.state, "restoration_failed");
     assert.equal(timedRestoreResult.restoration_state, "timed_out");
+  });
+
+  test("wait-aware status wakes when restoration reaches its timeout", async () => {
+    const instance = manager({ kill: () => false });
+    const started = await instance.start({
+      command: [process.execPath, "-e", "process.exit(0)"],
+      restorationCommand: [process.execPath, "-e", "setTimeout(() => process.exit(0), 200)"],
+      budgetMs: 1000,
+      restorationBudgetMs: 30,
+    }, owner);
+    const deadline = Date.now() + 1000;
+    while (instance.status(started.operation_id, owner).state !== "restoring" && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    const result = await instance.status(started.operation_id, owner, { waitMs: 500 });
+    assert.equal(result.state, "restoring");
+    assert.equal(result.restoration_state, "timing_out");
+    assert.equal((await terminal(instance, started.operation_id)).state, "restoration_failed");
   });
 
   test("expired generations and private command data stay isolated", async () => {
