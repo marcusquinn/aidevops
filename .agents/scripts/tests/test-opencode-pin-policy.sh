@@ -19,13 +19,13 @@ assert_eq() {
 	fi
 }
 
-assert_eq "pin version is explicit" "1.18.25" "$OPENCODE_PINNED_VERSION"
+assert_eq "pin version is explicit" "1.18.29" "$OPENCODE_PINNED_VERSION"
 assert_eq "pin platform is scoped" "Linux" "$OPENCODE_PIN_PLATFORM"
 assert_eq "pin runtime is scoped" "headless" "$OPENCODE_PIN_RUNTIME_MODE"
 assert_eq "introduction date is recorded" "2026-07-30" "$OPENCODE_PIN_INTRODUCED_DATE"
-assert_eq "last canary is recorded" "2026-09-01" "$OPENCODE_PIN_LAST_CANARY_DATE"
-assert_eq "review deadline is recorded" "2026-09-08" "$OPENCODE_PIN_REVIEW_DEADLINE"
-assert_eq "plugin compatibility signal is explicit" "1.18.25" "$OPENCODE_PLUGIN_TESTED_VERSION"
+assert_eq "last canary is recorded" "2026-09-08" "$OPENCODE_PIN_LAST_CANARY_DATE"
+assert_eq "review deadline is recorded" "2026-09-15" "$OPENCODE_PIN_REVIEW_DEADLINE"
+assert_eq "plugin compatibility signal is explicit" "1.18.29" "$OPENCODE_PLUGIN_TESTED_VERSION"
 
 scope_rc=0
 aidevops_opencode_pin_applies Linux headless || scope_rc=$?
@@ -40,7 +40,7 @@ assert_eq "interactive setup is outside observed scope" "1" "$scope_rc"
 status=$(
 	PATH="/usr/bin:/bin" "$REPO_ROOT/.agents/scripts/opencode-pin-canary.sh" status
 )
-[[ "$status" == *"pinned=1.18.25"* && "$status" == *"registry-latest="* && "$status" == *"plugin-tested=1.18.25"* && "$status" == *"last-canary=2026-09-01"* ]] || {
+[[ "$status" == *"pinned=1.18.29"* && "$status" == *"registry-latest="* && "$status" == *"plugin-tested=1.18.29"* && "$status" == *"last-canary=2026-09-08"* ]] || {
 	printf 'FAIL: status omits compatibility evidence: %s\n' "$status" >&2
 	fail=$((fail + 1))
 }
@@ -49,7 +49,7 @@ workflow="$REPO_ROOT/.github/workflows/opencode-pin-canary.yml"
 canary_script="$REPO_ROOT/.agents/scripts/opencode-pin-canary.sh"
 if grep -q 'persist-credentials: false' "$workflow" && grep -q 'record-review:' "$workflow" &&
 	grep -q 'needs: linux-headless-canary' "$workflow" &&
-	grep -q 'actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0' "$workflow"; then
+	grep -q 'actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c' "$workflow"; then
 	printf 'PASS: candidate execution is separated from the issue-write token\n'
 else
 	printf 'FAIL: candidate execution can retain or reach repository write credentials\n' >&2
@@ -76,6 +76,16 @@ if grep -q 'cron:' "$workflow" && grep -q "title=\"Promote passing OpenCode comp
 	printf 'PASS: scheduled passing candidates create a promotion review\n'
 else
 	printf 'FAIL: scheduled passing-candidate promotion path is missing\n' >&2
+	fail=$((fail + 1))
+fi
+if grep -q "'labels\[\]=origin:worker'" "$workflow" &&
+	grep -q "'labels\[\]=auto-dispatch'" "$workflow" &&
+	grep -q "'labels\[\]=tier:standard'" "$workflow" &&
+	grep -q "'labels\[\]=status:available'" "$workflow" &&
+	! grep -q "'labels\[\]=status:in-review'" "$workflow"; then
+	printf 'PASS: generated compatibility work is available to Pulse workers\n'
+else
+	printf 'FAIL: generated compatibility work is not worker-dispatchable\n' >&2
 	fail=$((fail + 1))
 fi
 if grep -q "title=\"OpenCode compatibility pin review is due\"" "$workflow" &&

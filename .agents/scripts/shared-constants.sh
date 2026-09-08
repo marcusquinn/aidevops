@@ -185,18 +185,19 @@ aidevops_ensure_symlink_target() {
 # 1.18.16 after a credential-free same-revision baseline comparison; GH#30393
 # promoted 1.18.18 after making that comparison self-contained; GH#30695
 # promoted 1.18.23 after the isolated baseline and candidate probes passed;
-# GH#30957 promoted 1.18.25 after the same isolated comparison passed. Keep the
-# complete compatibility decision visible and machine-readable; general installs
-# track latest because the observed failure scope is Linux headless.
-readonly OPENCODE_PINNED_VERSION="1.18.25"
+# GH#30957 promoted 1.18.25 and GH#31588 promoted 1.18.29 after the same isolated
+# comparison passed. Keep the complete compatibility decision visible and
+# machine-readable; general installs track latest because the observed failure
+# scope is Linux headless.
+readonly OPENCODE_PINNED_VERSION="1.18.29"
 readonly OPENCODE_PIN_REASON="GH#28766 Linux headless bootstrap stalled with isolated XDG_DATA_HOME"
 readonly OPENCODE_PIN_PLATFORM="Linux"
 readonly OPENCODE_PIN_RUNTIME_MODE="headless"
 readonly OPENCODE_PIN_INTRODUCED_DATE="2026-07-30"
-readonly OPENCODE_PIN_LAST_CANARY_DATE="2026-09-01"
-readonly OPENCODE_PIN_LAST_CANARY_RESULT="pass:1.18.25"
-readonly OPENCODE_PIN_REVIEW_DEADLINE="2026-09-08"
-readonly OPENCODE_PLUGIN_TESTED_VERSION="1.18.25"
+readonly OPENCODE_PIN_LAST_CANARY_DATE="2026-09-08"
+readonly OPENCODE_PIN_LAST_CANARY_RESULT="pass:1.18.29"
+readonly OPENCODE_PIN_REVIEW_DEADLINE="2026-09-15"
+readonly OPENCODE_PLUGIN_TESTED_VERSION="1.18.29"
 
 aidevops_opencode_pin_applies() {
 	local platform="${1:-$(uname -s 2>/dev/null || printf 'unknown')}"
