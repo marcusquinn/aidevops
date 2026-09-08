@@ -148,11 +148,20 @@ _scan_auto_dispatch_queue() {
 		return 0
 	fi
 
+	local remaining=$((_PULSE_CHECK_REPORT_DEADLINE - SECONDS))
+	local queue_budget="${PULSE_CHECK_QUEUE_BUDGET_SECONDS:-20}"
+	[[ "$queue_budget" =~ ^[1-9][0-9]*$ ]] || queue_budget=20
+	if [[ "$remaining" -le 2 ]]; then
+		queue_budget=1
+	elif [[ "$queue_budget" -gt $((remaining - 2)) ]]; then
+		queue_budget=$((remaining - 2))
+	fi
 	PULSE_CHECK_REPOS_JSON="$REPOS_JSON" \
 		PULSE_CHECK_MAX_ISSUES_PER_REPO="$MAX_ISSUES_PER_REPO" \
 		PULSE_CHECK_OLD_AVAILABLE_MINUTES="$OLD_AVAILABLE_MINUTES" \
 		PULSE_CHECK_NMR_INACTIVE_MINUTES="$NMR_INACTIVE_MINUTES" \
-		_PULSE_CHECK_COMPONENT_BUDGET=25 \
+		PULSE_CHECK_QUEUE_BUDGET_SECONDS="$queue_budget" \
+		_PULSE_CHECK_COMPONENT_BUDGET="$((queue_budget + 2))" \
 		_run_json_helper '{"aggregate":{},"error":"queue_collection_unavailable"}' python3 "$QUEUE_SCANNER"
 	return 0
 }
@@ -171,7 +180,7 @@ _collect_report_json() {
 
 	current_state=$(_run_json_helper '{}' "$CURRENT_STATE_HELPER" --window "$WINDOW" --json)
 	if [[ -f "$PULSE_HEALTH_FILE" ]]; then
-		pulse_health=$(jq -c . "$PULSE_HEALTH_FILE" 2>/dev/null || printf '{}')
+		pulse_health=$(jq -c 'if type == "object" then . else {} end' "$PULSE_HEALTH_FILE" 2>/dev/null || printf '{}')
 		current_state=$(printf '%s' "$current_state" | jq -c --argjson health "$pulse_health" '. + {pulse_health: $health}' 2>/dev/null || printf '%s' "$current_state")
 	fi
 	worker_summary=$(_run_json_helper '{}' "$WORKER_ACTIVITY_HELPER" summary --since "$SINCE" --json --no-pr-check)

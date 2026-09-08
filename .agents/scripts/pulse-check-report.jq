@@ -19,7 +19,14 @@ def non_failure_handoff_family:
   and ((.examples // []) | length) > 0
   and all(.examples[]?; .result == "post_pr_handoff" and (.exit_code // 1) == 0);
 
-(($current.active_worker_processes // $current.pulse_health.workers_active // null) | capacity_number) as $active_worker_processes |
+(try ($window | capture("^(?<value>[0-9]+)(?<unit>[smhd])$")
+  | (.value | tonumber) * ({s:1,m:60,h:3600,d:86400}[.unit])) catch null) as $window_seconds |
+(try ($current.pulse_health.timestamp | fromdateiso8601) catch null) as $health_timestamp |
+(if $health_timestamp == null then null else now - $health_timestamp end) as $health_age |
+($health_age != null and $window_seconds != null and $health_age >= 0 and $health_age <= $window_seconds) as $health_fresh |
+($current.active_worker_processes | capacity_number) as $process_workers |
+((if $health_fresh then $current.pulse_health.workers_active else null end) | capacity_number) as $health_workers |
+($process_workers // $health_workers) as $active_worker_processes |
 (($current.pulse_gauges.dispatch_capacity_final_max_workers // $current.pulse_health.workers_max // null) | capacity_number) as $raw_max_workers |
 ($current.current_state_guardrails.available_slots_last // $current.pulse_gauges.pulse_dispatch_guardrail_available_slots // (if ($current.pulse_health.workers_max // null) == null or $active_worker_processes == null then null else ([($current.pulse_health.workers_max | number_or_zero) - $active_worker_processes, 0] | max) end)) as $raw_available_slots |
 ($raw_available_slots | capacity_number) as $available_slots |
@@ -88,10 +95,13 @@ end) as $max_workers |
   summary: {
     max_workers: $max_workers,
     active_workers: $active_workers,
-    active_workers_source: (if $active_workers == null then "unavailable" elif $active_worker_processes == null then "capacity_gauge" else "process_scan" end),
+    active_workers_source: (if $process_workers != null then "process_scan" elif $health_workers != null then "pulse_health_snapshot" elif $active_workers != null then "capacity_gauge" else "unavailable" end),
+    max_workers_source: (if ($current.pulse_gauges.dispatch_capacity_final_max_workers | capacity_number) != null then "capacity_gauge" elif ($current.pulse_health.workers_max | capacity_number) != null then "pulse_health_configured_snapshot" elif $max_workers != null then "inferred_from_observed_slots" else "unavailable" end),
+    health_snapshot_fresh: $health_fresh,
+    health_snapshot_age_seconds: (if $health_age == null then null else ($health_age | floor) end),
     inferred_active_workers: $inferred_active_workers,
     available_slots: $effective_available_slots,
-    capacity_state: (if $max_workers == null or $effective_available_slots == null then "unknown" else "observed" end),
+    capacity_state: (if $max_workers == null or $effective_available_slots == null then "unknown" elif $raw_max_workers != null and ($current.pulse_gauges.dispatch_capacity_final_max_workers | capacity_number) == null then "configured_snapshot" else "observed" end),
     cycle_state_freshness: ($current.cycle_state.availability // "unavailable"),
     dispatch_alive: (if $current.dispatch_alive == null then null else $dispatch_alive end),
     dispatch_stage_events: ($current.dispatch_stage_events // null),

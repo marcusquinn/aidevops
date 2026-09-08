@@ -407,7 +407,7 @@ assert_eq "delivery collection records verified state" "ok" "$(printf '%s' "$DEL
 
 cat >"${TEST_ROOT}/slow-current.sh" <<'SH'
 #!/usr/bin/env bash
-sleep 10
+sleep "${PULSE_CHECK_FIXTURE_DELAY:-10}"
 printf '{}\n'
 SH
 chmod +x "${TEST_ROOT}/slow-current.sh"
@@ -417,6 +417,14 @@ assert_eq "slow collector returns a timed-out evidence record" "timed_out" "$(pr
 assert_eq "timed-out collector does not invent active worker count" "null" "$(printf '%s' "$BOUNDED_JSON" | jq -r '.summary.active_workers')"
 assert_eq "overall report deadline returns before the slow child completes" "true" "$([[ $((SECONDS - bounded_start)) -lt 9 ]] && printf true || printf false)"
 assert_eq "uncollected queue is explicitly unavailable" "queue_collection_unavailable" "$(printf '%s' "$BOUNDED_JSON" | jq -r '.summary.auto_dispatch_scan_state')"
+assert_eq "missing current measurements are not zero launches" "null" "$(printf '%s' "$BOUNDED_JSON" | jq -r '.summary.worker_launches_in_window')"
+assert_eq "missing queue measurements are not zero open work" "null" "$(printf '%s' "$BOUNDED_JSON" | jq -r '.summary.auto_dispatch_open')"
+
+NESTED_JSON=$(env "${COMMON_ENV[@]}" "PULSE_CHECK_CURRENT_STATE_HELPER=${TEST_ROOT}/slow-current.sh" \
+	"PULSE_CHECK_FIXTURE_DELAY=2" "PULSE_CHECK_QUEUE_FIXTURE=slow-dependency-scan" "$HELPER" json --budget 8 2>&1)
+assert_eq "nested queue deadline returns valid partial JSON before outer kill" "ok" "$(printf '%s' "$NESTED_JSON" | jq -r '.collection.queue.state')"
+assert_eq "nested deadline preserves collected inventories" "2" "$(printf '%s' "$NESTED_JSON" | jq -r '.queue.repos_scanned')"
+assert_eq "nested deadline marks incomplete enrichment" "queue_budget_exhausted" "$(printf '%s' "$NESTED_JSON" | jq -r '.summary.auto_dispatch_scan_state')"
 
 PARTIAL_JSON=$(env "${COMMON_ENV[@]}" "PULSE_CHECK_QUEUE_FIXTURE=slow-dependency-scan" "PULSE_CHECK_QUEUE_BUDGET_SECONDS=1" "$HELPER" json 2>&1)
 assert_eq "slow enrichment retains all repository inventories" "2" "$(printf '%s' "$PARTIAL_JSON" | jq -r '.queue.repos_scanned')"
@@ -583,9 +591,7 @@ assert_eq "json does not equate unknown capacity with zero free slots" "null" "$
 assert_eq "json retains the independently observed worker count" "2" "$(printf '%s' "$JSON_ACTIVE_NO_GAUGE_OUT" | jq -r '.summary.active_workers')"
 assert_contains "text explicitly reports unknown capacity" "Active workers: 2 / unknown" "$(env "${COMMON_ENV[@]}" "PULSE_CHECK_CURRENT_STATE_HELPER=${TEST_ROOT}/current-state-active-no-gauge.sh" "$HELPER" report 2>&1)"
 
-cat >"${TEST_ROOT}/pulse-health.json" <<'JSON'
-{"workers_active":1,"workers_max":2}
-JSON
+jq -n '{workers_active:1,workers_max:2,timestamp:(now | todateiso8601)}' >"${TEST_ROOT}/pulse-health.json"
 cat >"${TEST_ROOT}/current-state-active-health-only.sh" <<'SH'
 #!/usr/bin/env bash
 cat <<'JSON'
@@ -606,6 +612,18 @@ JSON_ACTIVE_HEALTH_OUT=$(env "${COMMON_ENV[@]}" \
 	"PULSE_CHECK_PULSE_HEALTH_FILE=${TEST_ROOT}/pulse-health.json" "$HELPER" json 2>&1)
 assert_eq "json falls back to pulse health max when capacity gauge is absent" "2" "$(printf '%s' "$JSON_ACTIVE_HEALTH_OUT" | jq -r '.summary.max_workers')"
 assert_eq "json derives available slots from pulse health when gauge is absent" "1" "$(printf '%s' "$JSON_ACTIVE_HEALTH_OUT" | jq -r '.summary.available_slots')"
+assert_eq "fresh health count is named as a snapshot not a process scan" "pulse_health_snapshot" "$(printf '%s' "$JSON_ACTIVE_HEALTH_OUT" | jq -r '.summary.active_workers_source')"
+assert_eq "health maximum is characterized as configured snapshot" "pulse_health_configured_snapshot" "$(printf '%s' "$JSON_ACTIVE_HEALTH_OUT" | jq -r '.summary.max_workers_source')"
+for health_age in stale missing future; do
+	jq -n --arg age "$health_age" '{workers_active:1,workers_max:2,
+      timestamp:(if $age == "missing" then null elif $age == "stale" then (now - 3600 | todateiso8601) else (now + 3600 | todateiso8601) end)}' >"${TEST_ROOT}/pulse-health.json"
+	HEALTH_UNKNOWN_JSON=$(env "${COMMON_ENV[@]}" \
+		"PULSE_CHECK_CURRENT_STATE_HELPER=${TEST_ROOT}/current-state-active-health-only.sh" \
+		"PULSE_CHECK_PULSE_HEALTH_FILE=${TEST_ROOT}/pulse-health.json" "$HELPER" json 2>&1)
+	assert_eq "$health_age health snapshot does not supply current workers" "null" "$(printf '%s' "$HEALTH_UNKNOWN_JSON" | jq -r '.summary.active_workers')"
+	assert_eq "$health_age health snapshot does not supply free slots" "null" "$(printf '%s' "$HEALTH_UNKNOWN_JSON" | jq -r '.summary.available_slots')"
+	assert_eq "$health_age health snapshot retains separately identified configured maximum" "2" "$(printf '%s' "$HEALTH_UNKNOWN_JSON" | jq -r '.summary.max_workers')"
+done
 
 cat >"${TEST_ROOT}/current-state-shortfall.sh" <<'SH'
 #!/usr/bin/env bash
