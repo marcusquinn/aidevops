@@ -83,6 +83,12 @@ terminal command path, and its exit remains independently visible. Raw output
 is represented only by an opaque output ID when terminal evidence storage is
 available.
 
+After a terminal receipt reports `evidence_state: recorded`, retrieve a bounded
+slice through the same native tool with action `output`, the receipt's
+`operation_id`, and optional `output_offset`/`output_limit` values. Retrieval is
+terminal-only, limited to 500 lines per call, and revalidates session ownership;
+callers cannot use a bare output ID to bypass the operation generation.
+
 Cancellation is restricted to the runtime session that started the operation
 and signals only the retained detached process group. The implementation is an
 OpenCode process-lifetime adapter, not a durable scheduler: restarting or

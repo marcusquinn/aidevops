@@ -64,7 +64,7 @@ import { createSubagentCancellationReceipt } from "./subagent-cancellation-recei
 import {
   BoundedInteractiveOperationManager,
 } from "./bounded-interactive-operation.mjs";
-import { createOutputSandboxRecorder } from "./bounded-operation-output.mjs";
+import { createOutputSandboxReader, createOutputSandboxRecorder } from "./bounded-operation-output.mjs";
 import { createRoutingFeedbackHandler } from "./routing-feedback-handler.mjs";
 import { createSessionBoundaryAdvisory } from "./session-boundary-advisory.mjs";
 import { createProviderErrorHandler } from "./provider-error-diagnostics.mjs";
@@ -389,6 +389,7 @@ export async function AidevopsPlugin({ directory, client }) {
     projectRoot: directory,
     scriptsDir: SCRIPTS_DIR,
     recordOutput: createOutputSandboxRecorder(join(SCRIPTS_DIR, "output-sandbox-helper.sh")),
+    readOutput: createOutputSandboxReader(join(SCRIPTS_DIR, "output-sandbox-helper.sh")),
   });
   process.once("exit", () => boundedOperationManager.dispose());
   const baseTools = createTools(SCRIPTS_DIR, run, {

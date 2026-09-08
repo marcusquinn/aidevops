@@ -24,6 +24,7 @@ import {
 import { resolveSessionOwnedWorktreeRoot } from "./gpt-image-worktree.mjs";
 
 const MAX_OPERATIONS = 24;
+const MAX_OUTPUT_LINES = 500;
 const SUPERVISOR_PATH = fileURLToPath(new URL("./bounded-operation-supervisor.mjs", import.meta.url));
 const SUPERVISOR_RUNTIME = "node";
 
@@ -36,6 +37,9 @@ export class BoundedInteractiveOperationManager {
     this.now = options.now || Date.now;
     this.makeID = options.makeID || (() => `op_${this.now()}_${randomBytes(6).toString("hex")}`);
     this.recordOutput = options.recordOutput || (async () => "");
+    this.readOutput = options.readOutput || (async () => {
+      throw new Error("stored output retrieval is unavailable");
+    });
     this.kill = options.kill || signalSupervisor;
     this.killGraceMs = options.killGraceMs ?? 500;
     this.setTimer = options.setTimer || setTimeout;
@@ -251,6 +255,32 @@ export class BoundedInteractiveOperationManager {
     return this.receipt(this.ownedOperation(id, context));
   }
 
+  async output(id, context = {}, requested = {}) {
+    const operation = this.ownedOperation(id, context);
+    if (["starting", "running", "cancelling", "timing_out", "restoring", "finalizing"].includes(operation.state)) {
+      throw new Error("stored output is available only after the operation reaches a terminal state");
+    }
+    if (!operation.outputID) throw new Error("stored output is unavailable");
+    const offset = Number(requested.offset ?? 1);
+    const limit = Number(requested.limit ?? 120);
+    if (!Number.isSafeInteger(offset) || offset < 1) throw new Error("output offset must be a positive integer");
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_OUTPUT_LINES) {
+      throw new Error(`output limit must be an integer from 1 to ${MAX_OUTPUT_LINES}`);
+    }
+    const result = await this.readOutput(operation.outputID, { offset, limit });
+    return {
+      schema: "aidevops.interactive-operation-output/v1",
+      operation_id: operation.id,
+      state: operation.state,
+      output_id: operation.outputID,
+      offset,
+      limit,
+      output: result.output,
+      output_redacted: Boolean(result.redacted),
+      output_truncated: Boolean(result.truncated),
+    };
+  }
+
   cancel(id, context = {}) {
     const operation = this.ownedOperation(id, context);
     if (!["running", "starting"].includes(operation.state)) return this.receipt(operation);
@@ -278,5 +308,6 @@ export class BoundedInteractiveOperationManager {
   dispose() {
     disposeOperations(this.operations, this.kill, this.clearTimer);
     this.recordOutput.dispose?.();
+    this.readOutput.dispose?.();
   }
 }

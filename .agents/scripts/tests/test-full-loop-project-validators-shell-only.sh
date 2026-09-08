@@ -317,6 +317,29 @@ else
 	print_result "mutating-only scripts fail with scoped-check guidance" 1 "rc=${case8_rc}, calls=$(wc -l <"$NPM_CALL_LOG" 2>/dev/null || printf 0)"
 fi
 
+# Case 9: a nested package with its own check-only test script remains a valid
+# validation scope even when it is intentionally outside the root workspaces.
+NESTED_PACKAGE_REPO="${TEST_ROOT}/nested-package"
+make_workspace_repo "$NESTED_PACKAGE_REPO"
+NPM_CALL_LOG="${TEST_ROOT}/npm-nested-package.log"
+export NPM_CALL_LOG NPM_FAKE_ACTION='' NPM_FAKE_RC=0
+(
+	cd "$NESTED_PACKAGE_REPO" || exit 1
+	mkdir -p .agents/plugins/example
+	printf '%s\n' '{"scripts":{"test":"node --test tests/*.mjs"}}' >.agents/plugins/example/package.json
+	printf '%s\n' 'export const example = true;' >.agents/plugins/example/index.mjs
+	git add .agents/plugins/example
+	git -c user.name='Test User' -c user.email='test@example.invalid' commit -qm 'add nested package'
+	PATH="${FAKE_BIN}:$PATH" _run_project_validators 0
+)
+case9_rc=$?
+if [[ "$case9_rc" -eq 0 && $(wc -l <"$NPM_CALL_LOG") -eq 1 ]] &&
+	grep -q '/.agents/plugins/example|run test' "$NPM_CALL_LOG" && ! grep -q '/packages/' "$NPM_CALL_LOG"; then
+	print_result "nested package test script defines a focused validation scope" 0
+else
+	print_result "nested package test script defines a focused validation scope" 1 "rc=${case9_rc}, calls=$(wc -l <"$NPM_CALL_LOG" 2>/dev/null || printf 0)"
+fi
+
 printf '\n%d tests run, %d failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 [[ "$TESTS_FAILED" -eq 0 ]] || exit 1
 exit 0

@@ -839,9 +839,27 @@ _repos_remove() {
 		print_error "jq required for repo management"
 		return 1
 	}
+	local match_count
+	match_count=$(jq --arg path "$repo_path" '[.initialized_repos[]? | select(.path == $path)] | length' "$REPOS_FILE") || return 1
+	if [[ "$match_count" -eq 0 ]]; then
+		print_error "Repository is not registered: $repo_path"
+		return 1
+	fi
 	local temp_file="${REPOS_FILE}.tmp"
-	jq --arg path "$repo_path" '.initialized_repos |= map(select(.path != $path))' "$REPOS_FILE" >"$temp_file" && mv "$temp_file" "$REPOS_FILE"
+	if ! jq --arg path "$repo_path" '.initialized_repos |= map(select(.path != $path))' "$REPOS_FILE" >"$temp_file"; then
+		rm -f "$temp_file"
+		return 1
+	fi
+	mv "$temp_file" "$REPOS_FILE" || return 1
 	print_success "Removed $repo_path from registry"
+	return 0
+}
+
+_repos_remove_usage() {
+	echo "Usage: aidevops repos remove [repo-path]"
+	echo ""
+	echo "Remove the selected repository from the aidevops registry."
+	echo "When repo-path is omitted, use the current Git repository."
 	return 0
 }
 
@@ -907,7 +925,12 @@ cmd_repos() {
 		shift
 		_repos_add "$@"
 		;;
-	remove | rm) _repos_remove "${2:-}" ;;
+	remove | rm)
+		case "${2:-}" in
+		help | -h | --help) _repos_remove_usage ;;
+		*) _repos_remove "${2:-}" ;;
+		esac
+		;;
 	clean) _repos_clean ;;
 	migrate-layout)
 		shift
