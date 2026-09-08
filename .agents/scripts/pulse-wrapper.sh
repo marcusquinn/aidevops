@@ -1850,17 +1850,18 @@ main() {
 }
 
 #######################################
-# Kill orphaned opencode processes
+# Clean verified stale OpenCode sessions
 #
 # Criteria (ALL must be true):
-#   - No TTY (headless — not a user's terminal tab)
-#   - Not a current worker (/full-loop or /review-issue-pr not in command)
-#   - Not the supervisor pulse (Supervisor Pulse not in command)
-#   - Not a strategic review (Strategic Review not in command)
+#   - Explicit disposable session mode (`opencode run`)
+#   - Not owned by a managed service cgroup
 #   - Older than ORPHAN_MAX_AGE seconds
+#   - Session DB activity older than ORPHAN_INACTIVITY_AGE seconds
+#   - Process tree is idle, with all evidence revalidated before SIGTERM
 #
-# These are completed headless sessions where opencode entered idle
-# state with a file watcher and never exited.
+# Persistent modes, active sessions, and ambiguous evidence fail closed.
+# The classifier covers both no-TTY and TTY-attached disposable sessions but
+# never kills an unrelated parent terminal shell.
 #######################################
 
 #######################################
@@ -1887,25 +1888,8 @@ STALLED_WORKER_MIN_AGE="${STALLED_WORKER_MIN_AGE:-300}"             # 5 minutes
 STALLED_WORKER_MAX_LOG_BYTES="${STALLED_WORKER_MAX_LOG_BYTES:-500}" # just the startup line
 
 #######################################
-# Kill stale opencode processes (TTY-attached)
-#
-# cleanup_orphans only handles headless (no-TTY) processes. Workers
-# dispatched via terminal tabs retain a TTY, so they survive the orphan
-# reaper. When OpenCode completes a task it enters an idle file-watcher
-# state (0% CPU) and never exits — consuming memory and TTY slots.
-#
-# Criteria (ALL must be true):
-#   - Is a .opencode binary process
-#   - Launched as a headless worker (command contains --format json)
-#   - Older than STALE_OPENCODE_MAX_AGE seconds (default: 4 hours)
-#   - CPU usage below PULSE_IDLE_CPU_THRESHOLD (default: 5%)
-#   - Not the current interactive session (skip our own PID tree)
-#
-# Interactive sessions (no --format json) are NEVER killed — they may be
-# idle because the user stepped away, not because the task completed.
-#
-# Also kills the parent node launcher and grandparent zsh for each
-# stale .opencode process to fully reclaim the terminal tab.
+# Legacy compatibility: cleanup_stale_opencode remains callable, but its unsafe
+# age/CPU-only TTY cleanup is consolidated into cleanup_orphans.
 #######################################
 STALE_OPENCODE_MAX_AGE="${STALE_OPENCODE_MAX_AGE:-28800}" # 8 hours — was 4h, increased to avoid killing long-running complex tasks
 
