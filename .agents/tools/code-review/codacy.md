@@ -81,6 +81,29 @@ permission failure even when the token itself is valid. A valid project token
 can authenticate repository reads while still receiving `403` for privileged
 operations; successful authentication is not proof of mutation authority.
 
+### Verified repository policy audit (2026-09-08)
+
+Codacy's repository tool endpoint is the authority for effective tool state;
+the legacy `engines.*.enabled` entries in `.codacy.yml` do not enable or disable
+tools. The verified aidevops policy uses the dedicated `aidevops modern
+runtimes` coding standard with these 17 tools enabled: Agentlinter, Bandit,
+Biome, Brakeman, ESLint, Hadolint, Jackson Linter, Lizard, markdownlint,
+Opengrep, Pylint, RuboCop, ShellCheck, SQLint, Stylelint, Trivy, and TSQLLint.
+PMD and Prospector remain disabled. Bandit, Biome, markdownlint, and ShellCheck
+report that they use their checked-in native configuration files.
+
+The language-settings API exposes enabled/detected languages and extensions,
+not an ECMAScript-version selector. JavaScript and TypeScript are detected and
+enabled. This repository declares ES modules and Node.js 20 or newer, and its
+TypeScript server check targets ES2022. Therefore the ES3/ES5 compatibility
+patterns `ESLint8_es-x_no-modules`,
+`ESLint8_es-x_no-block-scoped-variables`, and
+`ESLint8_es-x_no-trailing-commas` are intentionally disabled. `Bandit_B404` is
+also disabled because `.bandit` documents the narrower subprocess rules that
+remain active. Before correction, exact-SHA overview counts were 84, 56, 40,
+and 83 respectively. Keep the live standard and native files aligned; changing
+the inert `.codacy.yml` engine map is not a tool-setting migration.
+
 ```bash
 # Commit delta statistics (new issues count + complexity delta)
 curl -s -H "api-token: $CODACY_API_TOKEN" \
