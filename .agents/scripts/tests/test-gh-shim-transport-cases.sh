@@ -4,7 +4,7 @@
 # Sourced by the existing hermetic gh shim harness after legacy-path coverage.
 
 printf '\nTest 27: shared raw transport controls and response-owned quota\n'
-for library in gh-transport-controls.sh gh-transport-governor.py gh_transport_budget.py gh_transport_identity.py gh_transport_reconcile.py gh_transport_recovery.py gh_transport_capacity.py shared-gh-secondary-cooldown.sh shared-gh-primary-cooldown.sh; do
+for library in gh-transport-controls.sh gh-transport-governor.py gh_transport_budget.py gh_transport_schema.py gh_transport_identity.py gh_transport_reconcile.py gh_transport_recovery.py gh_transport_capacity.py shared-gh-secondary-cooldown.sh shared-gh-primary-cooldown.sh; do
 	cp "${REPO_DIR}/.agents/scripts/${library}" "${TMP}/scripts/${library}"
 done
 mkdir -p "${TMP}/governor/tmp"
@@ -107,6 +107,15 @@ fi
 
 # Exact capture owns multi-frame native attempts. The normal final-response
 # adapter must never take that route away from an explicitly metered window.
+# Load the same accounting/transport dependencies as the real shim before
+# exercising the transport function directly in this shell.
+# shellcheck source=/dev/null
+source "${TMP}/scripts/gh-api-instrument.sh"
+# shellcheck source=/dev/null
+source "${TMP}/scripts/gh-quota-attribution-lib.sh"
+# shellcheck source=/dev/null
+source "${TMP}/scripts/gh-native-transport-lib.sh"
+export AIDEVOPS_GH_LOGICAL_ID=fixture-local-admission
 # shellcheck source=/dev/null
 source "${TMP}/scripts/gh-transport-controls.sh"
 
@@ -120,7 +129,8 @@ python3() {
 		printf '%s\n' "$governor_calls" >"$_governor_count_file"
 		local metadata="$2"
 		if [[ "$governor_calls" -eq 1 ]]; then
-			printf '{"attempted":false,"deferred_by":"local_admission","retry_at":1}\n' >"$metadata"
+			printf '{"attempted":false,"deferred_by":"local_admission","retry_at":%s,"reason":"fixture quota wait"}\n' "${_governor_retry_at:-1}" >"$metadata"
+			printf '[gh-transport] deferred: fixture quota wait\n' >&2
 			return 75
 		fi
 		printf '{"attempted":true,"status":200,"resource":"core","remaining":4999,"reset":%s,"retry_after":null,"cost":1}\n' "$_governor_reset" >"$metadata"
@@ -131,14 +141,27 @@ python3() {
 }
 _governor_rc=0
 _governor_output=$(AIDEVOPS_GH_LOCAL_ADMISSION_RETRY_DELAY_SECONDS=0 \
-	_gh_transport_run_rest "${TMP}/bin/gh" rest gh_api_rest 0 api user 2>/dev/null) || _governor_rc=$?
-unset -f python3
+	_gh_transport_run_rest "${TMP}/bin/gh" rest gh_api_rest 0 api user 2>"${TMP}/governor/retry-error") || _governor_rc=$?
 _governor_calls=$(<"$_governor_count_file")
-if [[ "$_governor_calls" -eq 2 && "$_governor_output" == '{"fixture":true}' ]]; then
+if [[ "$_governor_calls" -eq 2 && "$_governor_output" == '{"fixture":true}' && ! -s "${TMP}/governor/retry-error" ]]; then
 	_pass "local admission deferral retries once only after attempted=false evidence"
 else
-	_fail "local admission deferral was not retried safely (rc=${_governor_rc} calls=${_governor_calls} output=${_governor_output:-<empty>})"
+	_fail "local admission deferral was not retried safely (rc=${_governor_rc} calls=${_governor_calls} output=${_governor_output:-<empty>})" "$(<"${TMP}/governor/retry-error")"
 fi
+
+printf '0\n' >"$_governor_count_file"
+_governor_retry_at=$(($(date +%s) + 120))
+_governor_rc=0
+_gh_transport_run_rest "${TMP}/bin/gh" rest gh_api_rest 0 api user \
+	>/dev/null 2>"${TMP}/governor/deferred-error" || _governor_rc=$?
+if [[ "$_governor_rc" -eq 75 && "$(<"$_governor_count_file")" -eq 1 ]] &&
+	grep -q "attempted=false deferred_by=local_admission retry_at=${_governor_retry_at}" "${TMP}/governor/deferred-error"; then
+	_pass "future admission deadline preserves explicit evidence without an early retry"
+else
+	_fail "future admission deadline was retried early or lost its evidence"
+fi
+unset -f python3
+unset _governor_retry_at
 
 _governor_rc=0
 AIDEVOPS_GH_EXACT_QUOTA_CAPTURE=1 _gh_transport_run_rest \

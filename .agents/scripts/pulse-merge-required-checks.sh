@@ -179,6 +179,18 @@ _ruleset_ref_matches_default_branch() {
 # Stdout: newline-delimited contexts
 # Returns: 0=resolved, 1=API/parse error
 #######################################
+_pmrc_emit_local_deferral() {
+	local diagnostics="$1" line=""
+	while IFS= read -r line; do
+		case "$line" in
+		'[gh-transport] error_kind=github-api-read-deferred attempted=false deferred_by=local_admission '*)
+			printf '%s\n' "$line" >&2
+			;;
+		esac
+	done <<<"$diagnostics"
+	return 0
+}
+
 _required_contexts_from_rulesets_for_default_branch() {
 	local repo_slug="$1"
 	local default_branch="$2"
@@ -186,6 +198,7 @@ _required_contexts_from_rulesets_for_default_branch() {
 
 	rulesets_json=$(_pmrc_gh_read gh api "repos/${repo_slug}/rulesets" 2>&1) || rulesets_rc=$?
 	if [[ "$rulesets_rc" -ne 0 ]]; then
+		_pmrc_emit_local_deferral "$rulesets_json"
 		if _pmrc_private_plan_feature_unavailable "$rulesets_json"; then
 			aidevops_log_line "[pulse-merge] _required_contexts_from_rulesets_for_default_branch: rulesets unavailable for ${repo_slug} on the private plan (HTTP 403) — empty contexts (GH#29484)"
 			return 0
@@ -218,7 +231,8 @@ _required_contexts_from_rulesets_for_default_branch() {
 	local matches_default=0 excluded_default=0 contexts=""
 	while IFS= read -r id; do
 		[[ -n "$id" ]] || continue
-		detail=$(_pmrc_gh_read gh api "repos/${repo_slug}/rulesets/${id}" 2>/dev/null) || {
+		detail=$(_pmrc_gh_read gh api "repos/${repo_slug}/rulesets/${id}" 2>&1) || {
+			_pmrc_emit_local_deferral "$detail"
 			aidevops_log_line "[pulse-merge] _required_contexts_from_rulesets_for_default_branch: ruleset detail ${id} failed for ${repo_slug} — caller will fail closed (GH#23019)"
 			rm -f "$contexts_tmp"
 			return 1
@@ -286,8 +300,9 @@ _required_contexts_from_rulesets_for_default_branch() {
 _required_contexts_for_default_branch_uncached() {
 	local repo_slug="$1"
 	local default_branch="" default_branch_rc=0
-	default_branch=$(_pmrc_gh_read gh api "repos/${repo_slug}" --jq '.default_branch' 2>/dev/null) || default_branch_rc=$?
+	default_branch=$(_pmrc_gh_read gh api "repos/${repo_slug}" --jq '.default_branch' 2>&1) || default_branch_rc=$?
 	if [[ "$default_branch_rc" -ne 0 || -z "$default_branch" ]]; then
+		_pmrc_emit_local_deferral "$default_branch"
 		aidevops_log_line "[pulse-merge] _required_contexts_for_default_branch: failed to resolve default branch for ${repo_slug} (read_exit=${default_branch_rc}, output_bytes=${#default_branch}) — caller will fail closed (t2922)"
 		return 1
 	fi
@@ -299,6 +314,7 @@ _required_contexts_for_default_branch_uncached() {
 		"repos/${repo_slug}/branches/${default_branch}/protection/required_status_checks" \
 		2>&1) || protection_rc=$?
 	if [[ "$protection_rc" -ne 0 ]]; then
+		_pmrc_emit_local_deferral "$protection_resp"
 		local classic_unavailable_reason=""
 		if grep -qi 'HTTP 404\|Not Found' <<<"$protection_resp"; then
 			classic_unavailable_reason="HTTP 404"
@@ -347,6 +363,9 @@ _required_contexts_for_default_branch() {
 		if [[ -f "$cache_rc_file" && -f "$cache_body_file" ]]; then
 			cache_rc=$(<"$cache_rc_file")
 			[[ "$cache_rc" =~ ^[0-9]+$ ]] || cache_rc=1
+			if [[ "$cache_rc" -ne 0 && -f "${cache_body_file}.error" ]]; then
+				_pmrc_emit_local_deferral "$(<"${cache_body_file}.error")"
+			fi
 			if [[ "$cache_rc" -eq 0 && -s "$cache_body_file" ]]; then
 				while IFS= read -r contexts; do
 					printf '%s\n' "$contexts"
@@ -356,7 +375,12 @@ _required_contexts_for_default_branch() {
 		fi
 	fi
 
-	contexts=$(_required_contexts_for_default_branch_uncached "$repo_slug") || rc=$?
+	if [[ -n "$cache_body_file" ]]; then
+		contexts=$(_required_contexts_for_default_branch_uncached "$repo_slug" 2>"${cache_body_file}.error") || rc=$?
+		[[ "$rc" -eq 0 ]] || _pmrc_emit_local_deferral "$(<"${cache_body_file}.error")"
+	else
+		contexts=$(_required_contexts_for_default_branch_uncached "$repo_slug") || rc=$?
+	fi
 	if [[ -n "$cache_body_file" && -n "$cache_rc_file" ]]; then
 		printf '%s\n' "$rc" >"$cache_rc_file"
 		if [[ -n "$contexts" ]]; then

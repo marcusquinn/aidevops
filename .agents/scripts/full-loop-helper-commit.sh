@@ -84,6 +84,24 @@ _full_loop_persist_pr_check_evidence() {
 	return 0
 }
 
+_full_loop_local_admission_evidence() {
+	local diagnostics="$1" line=""
+	while IFS= read -r line; do
+		case "$line" in
+		'[gh-transport] error_kind=github-api-read-deferred attempted=false deferred_by=local_admission '*)
+			FULL_LOOP_PRE_MERGE_BLOCKER_KIND="${line#*error_kind=}"
+			FULL_LOOP_PRE_MERGE_BLOCKER_KIND="${FULL_LOOP_PRE_MERGE_BLOCKER_KIND%% *}"
+			FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL="retry-when-capacity-returns"
+			[[ ! "$line" =~ retry_at=([0-9]+([.][0-9]+)?) ]] || FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL="${BASH_REMATCH[1]}"
+			FULL_LOOP_REQUIRED_CHECKS_ERROR_EVIDENCE="$FULL_LOOP_PRE_MERGE_BLOCKER_KIND"
+			FULL_LOOP_REQUIRED_CHECKS_ERROR_DETAIL="$line"
+			return 0
+			;;
+		esac
+	done <<<"$diagnostics"
+	return 1
+}
+
 _full_loop_query_required_checks() {
 	local pr_number="$1"
 	local repo="$2"
@@ -105,24 +123,32 @@ _full_loop_query_required_checks() {
 	FULL_LOOP_PRE_MERGE_BLOCKER_KIND=""
 	FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL=""
 
-	required_contexts=$(_required_contexts_for_default_branch "$repo") || required_contexts_rc=$?
+	required_checks_stderr_file=$(mktemp "${TMPDIR:-/tmp}/aidevops-full-loop-required-checks.XXXXXX") || {
+		FULL_LOOP_REQUIRED_CHECKS_ERROR_EVIDENCE="stderr-capture-unavailable"
+		FULL_LOOP_REQUIRED_CHECKS_ERROR_DETAIL="cannot capture gh stderr"
+		return 1
+	}
+	required_contexts=$(_required_contexts_for_default_branch "$repo" 2>"$required_checks_stderr_file") || required_contexts_rc=$?
+	if [[ "$required_contexts_rc" -ne 0 ]] && _full_loop_local_admission_evidence "$(<"$required_checks_stderr_file")"; then
+		rm -f "$required_checks_stderr_file"
+		return 1
+	fi
 	if [[ "$required_contexts_rc" -eq 0 && -z "$required_contexts" ]]; then
+		rm -f "$required_checks_stderr_file"
 		FULL_LOOP_REQUIRED_CHECKS_JSON="[]"
 		FULL_LOOP_REQUIRED_CHECKS_SUCCESS_EVIDENCE="no-required-checks"
 		FULL_LOOP_REQUIRED_CHECKS_SUCCESS_SUMMARY="no required checks are configured"
 		return 0
 	fi
 
-	required_checks_stderr_file=$(mktemp "${TMPDIR:-/tmp}/aidevops-full-loop-required-checks.XXXXXX") || {
-		FULL_LOOP_REQUIRED_CHECKS_ERROR_EVIDENCE="stderr-capture-unavailable"
-		FULL_LOOP_REQUIRED_CHECKS_ERROR_DETAIL="cannot capture gh stderr"
-		return 1
-	}
 	required_checks=$(gh_pr_checks_exact_json "$repo" "$pr_number" required \
 		2>"$required_checks_stderr_file") || required_rc=$?
 	required_checks_stderr=$(<"$required_checks_stderr_file")
 	rm -f "$required_checks_stderr_file"
 	FULL_LOOP_REQUIRED_CHECKS_ERROR_DETAIL="exact check read exit ${required_rc}"
+	if [[ "$required_rc" -ne 0 ]] && _full_loop_local_admission_evidence "$required_checks_stderr"; then
+		return 1
+	fi
 	if [[ "$required_checks_stderr" == *"error_kind=github-api-cooldown"* ]]; then
 		FULL_LOOP_PRE_MERGE_BLOCKER_KIND="github-api-cooldown"
 		FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL="unknown"

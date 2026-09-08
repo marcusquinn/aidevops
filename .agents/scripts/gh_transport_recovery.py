@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
 """Bounded recovery predicates and read-only REST admission diagnostics."""
 
+import json
 import os
 import sqlite3
 import time
@@ -28,7 +29,52 @@ def reserve_probe_allowed(row, active, total, previous, now):
     if active or row[0] - total < 1:
         return False
     last_probe = previous[0] if previous else row[2]
-    return now - max(row[2], last_probe) >= 60
+    return now - last_probe >= 60
+
+
+def revalidation_wait(budget, resource, row, active, now):
+    """Persist cadence independently of response freshness; drain before probing.
+
+    Reuses the existing schema. An empty reservation ID is only a cadence anchor,
+    never a grant; older readers remain conservative and cannot recover through it.
+    """
+    if not row or row[1] <= now:
+        return False
+    budget.db.execute("INSERT OR IGNORE INTO revalidation VALUES(?,?,?,?)",
+                      (budget.scope, resource, row[2], ""))
+    previous = budget.db.execute(
+        "SELECT started,reservation_id FROM revalidation WHERE scope=? AND resource=?",
+        (budget.scope, resource),
+    ).fetchone()
+    probe_active = budget.db.execute(
+        "SELECT 1 FROM reservation WHERE id=? AND scope=? AND resource=? AND uncertain=0",
+        (previous[1], budget.scope, resource),
+    ).fetchone()
+    return bool(probe_active or (active and now - previous[0] >= 60))
+
+
+def record_budget_transition(budget, previous, incoming, accepted, recovered, ordered,
+                             *, event="response_observation"):
+    """Opt-in numeric evidence only: never headers, endpoints or identities."""
+    if os.environ.get("AIDEVOPS_GH_BUDGET_DIAGNOSTICS") != "1":
+        return
+    record = json.dumps({
+        "event": event, "previous": previous, "observed_at": time.time(),
+        "incoming": incoming, "accepted": accepted, "probe_recovered": recovered,
+        "causally_newer": ordered,
+        "reason": "serialized_probe" if recovered else "conservative_observation",
+    }, sort_keys=True)
+    try:
+        fd = os.open(budget.path.parent / "budget-transitions.jsonl",
+                     os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, "a", encoding="utf-8") as stream:
+            if os.fstat(stream.fileno()).st_uid != os.getuid():
+                return
+            os.fchmod(stream.fileno(), 0o600)
+            print(record, file=stream)
+    except OSError:
+        # Optional evidence must never change admission or contaminate CLI JSON.
+        return
 
 
 def probe_recovers(budget, reservation, resource, row, reset_at):

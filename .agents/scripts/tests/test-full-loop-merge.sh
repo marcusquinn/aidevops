@@ -1503,6 +1503,48 @@ test_prospective_todo_merge_guard() {
 	return 0
 }
 
+test_local_deferral_survives_context_resolution() {
+	local result=0
+	(
+		local scripts_dir="${SCRIPT_DIR}/.." attempt="" rc=0
+		# shellcheck source=/dev/null
+		source "$scripts_dir/shared-constants.sh"
+		# shellcheck source=/dev/null
+		source "$scripts_dir/pulse-merge-required-checks.sh"
+		# shellcheck source=/dev/null
+		source "$scripts_dir/full-loop-helper-commit.sh"
+		aidevops_log_line() { return 0; }
+		_pmrc_gh_read() {
+			case "$3" in
+			repos/testorg/testrepo) printf 'main\n' ;;
+			*/protection/required_status_checks) printf '{"contexts":[]}\n' ;;
+			*/rulesets)
+				printf '[gh-transport] error_kind=github-api-read-deferred attempted=false deferred_by=local_admission retry_at=1893456000 reason="fixture quota wait"\n' >&2
+				return 75
+				;;
+			*) return 1 ;;
+			esac
+			return 0
+		}
+		gh_pr_checks_exact_json() {
+			touch "$TEST_ROOT/unexpected-exact-read"
+			return 0
+		}
+		export AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR="$TEST_ROOT/deferral-context-cache"
+		mkdir -p "$AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR"
+		for attempt in first cached; do
+			rc=0
+			_full_loop_query_required_checks 42 testorg/testrepo feature/test || rc=$?
+			[[ "$rc" -eq 1 && "$FULL_LOOP_PRE_MERGE_BLOCKER_KIND" == github-api-read-deferred ]] || return 1
+			[[ "$FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL" == 1893456000 ]] || return 1
+			[[ "$FULL_LOOP_REQUIRED_CHECKS_ERROR_DETAIL" == *'reason="fixture quota wait"'* ]] || return 1
+			[[ ! -e "$TEST_ROOT/unexpected-exact-read" ]] || return 1
+		done
+	) || result=1
+	print_result "local deferral survives ruleset resolution and cache without a fallback check read" "$result"
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -1521,6 +1563,7 @@ main() {
 	test_graphql_rate_limit_auto_no_rest_fallback
 	test_review_gate_failure_blocks_rest_fallback
 	test_cooldown_gate_failure_reports_cooldown
+	test_local_deferral_survives_context_resolution
 	test_auto_review_required_interactive_admin_fallback
 	test_auto_review_required_headless_no_admin_fallback
 	test_stale_cache_401_retry
