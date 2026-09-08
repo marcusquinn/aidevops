@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.339] - 2026-09-08
+
+### Fixed
+
+- recover missing release preparation safely
+- protect bounded prelaunch lease handoff
+- make sweep recovery purpose-led and owned
+
 ## [3.32.338] - 2026-09-08
 
 ### Changed
