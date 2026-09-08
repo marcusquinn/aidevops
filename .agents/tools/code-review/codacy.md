@@ -58,6 +58,29 @@ Skip via bundle config: add gate names to `skip_gates` in the project bundle.
 
 ## Codacy API Patterns (verified working)
 
+### Project-token naming and scale
+
+Treat a repository-scoped token's storage name as part of its scope. Use
+`CODACY_<OWNER>_<REPOSITORY>_PROJECT_TOKEN` (uppercase, with non-alphanumeric
+characters replaced by underscores), for example
+`CODACY_MARCUSQUINN_AIDEVOPS_PROJECT_TOKEN`. This prevents one repository's
+token from silently replacing another as the managed repository set grows.
+
+`CODACY_PROJECT_TOKEN` is Codacy's standard process-level variable and remains a
+compatibility interface for tools that require that exact name; it should not be
+the default persistent identity for multiple repositories. Inject or map only
+the selected repository token into that variable for the lifetime of one
+command. Until aidevops secret injection supports environment-name aliases,
+repository-specific direct API operations should read the scoped secret by its
+exact stored name rather than persisting another generic copy. Never put either
+token value in a command argument, repository file, log, issue, or chat.
+
+Codacy project-token authentication uses the `project-token` HTTP header. The
+older account token uses `api-token`; using the wrong header can look like a
+permission failure even when the token itself is valid. A valid project token
+can authenticate repository reads while still receiving `403` for privileged
+operations; successful authentication is not proof of mutation authority.
+
 ```bash
 # Commit delta statistics (new issues count + complexity delta)
 curl -s -H "api-token: $CODACY_API_TOKEN" \
@@ -136,10 +159,14 @@ stale, invalid, or incomplete telemetry cannot verify the target.
    such a discontinuity as thousands of newly introduced defects.
 2. **Recover indexing through authorised Codacy operations.** The documented
    `POST /organizations/gh/{owner}/repositories/{repo}/reanalyzeCommit` accepts
-   `{"commitUuid":"<verified SHA>","cleanCache":true}`. Verify the completed
-   analysis and restored scope, not just an accepted request. A 403 is an access
-   blocker: use an authorised account or Codacy support, not repeated requests,
-   synthetic source edits, or expanded exclusions.
+   `{"commitUuid":"<verified SHA>","cleanCache":true}`, but Codacy Support
+   confirmed that cache-cleared analysis is restricted to its internal Super
+   Admin role. The published schema may advertise project-token
+   authentication even though a valid repository token receives `403`. Use the
+   ordinary UI **Reanalyze** action only for a normal rerun; an index incident
+   requiring cache clearance must go to Codacy Support. Verify the completed
+   analysis and restored scope, not just an accepted request. Do not repeat a
+   denied request, create synthetic source edits, or expand exclusions.
 3. **Triage genuine findings in small batches.** Start with security/error findings,
    then high-density complexity, duplication and unused-code hotspots. Inspect
    actual callsites and preserve behaviour. Incorrect language-version rules need
