@@ -88,6 +88,7 @@ _GH_PR_CHECKS_OBSERVATION_PROJECTION="status-rollup-exact/v1"
 _GH_PR_CHECKS_OBSERVATION_SOURCE="graphql-status-rollup"
 _GH_PR_CHECKS_OBSERVATION_PUT_OK=0
 _GH_PR_CHECKS_OBSERVATION_CACHE_HIT=0
+_GH_PR_CHECKS_OBSERVATION_COORDINATION_EXIT=3
 _GH_PR_CHECKS_JSON_ARRAY_TYPE='array'
 _GH_PR_CHECKS_JSON_NUMBER_TYPE='number'
 _GH_PR_CHECKS_VALIDATION_STATUS='validated'
@@ -1143,12 +1144,12 @@ _gh_pr_checks_observation_fetch_and_cache() {
 		_gh_pr_checks_exact_error "error_kind=github-api-malformed attempted=true operation=exact-observation-result"
 		return 2
 	}
-	gh_request_state_singleflight_is_owner "$request_key" "$generation" || return 2
-	_gh_pr_checks_observation_invalidation_is_current "$slug" "$pr_number" "$mode" "$head_sha" "$invalidation_generation" || return 2
+	gh_request_state_singleflight_is_owner "$request_key" "$generation" || return "$_GH_PR_CHECKS_OBSERVATION_COORDINATION_EXIT"
+	_gh_pr_checks_observation_invalidation_is_current "$slug" "$pr_number" "$mode" "$head_sha" "$invalidation_generation" || return "$_GH_PR_CHECKS_OBSERVATION_COORDINATION_EXIT"
 	_gh_pr_checks_observation_cache_put "$slug" "$pr_number" "$mode" "$head_sha" "$result_code" \
-		"$checks" "$diagnostic" "$invalidation_generation" "$request_key" "$generation" || return 2
-	[[ "$_GH_PR_CHECKS_OBSERVATION_PUT_OK" == 1 ]] || return 2
-	_gh_pr_checks_observation_invalidation_is_current "$slug" "$pr_number" "$mode" "$head_sha" "$invalidation_generation" || return 2
+		"$checks" "$diagnostic" "$invalidation_generation" "$request_key" "$generation" || return "$_GH_PR_CHECKS_OBSERVATION_COORDINATION_EXIT"
+	[[ "$_GH_PR_CHECKS_OBSERVATION_PUT_OK" == 1 ]] || return "$_GH_PR_CHECKS_OBSERVATION_COORDINATION_EXIT"
+	_gh_pr_checks_observation_invalidation_is_current "$slug" "$pr_number" "$mode" "$head_sha" "$invalidation_generation" || return "$_GH_PR_CHECKS_OBSERVATION_COORDINATION_EXIT"
 	_gh_pr_checks_observation_emit "$result_code" "$checks" "$diagnostic"
 	return $?
 }
@@ -1200,6 +1201,10 @@ gh_pr_checks_observed_json() {
 				return "$result_code"
 			fi
 			gh_request_state_singleflight_finish "$request_key" "$generation" failure || true
+			if [[ "$result_code" -eq "$_GH_PR_CHECKS_OBSERVATION_COORDINATION_EXIT" ]]; then
+				gh_pr_checks_exact_json "$slug" "$pr_number" "$mode" "$head_sha"
+				return $?
+			fi
 			return 2
 			;;
 		follower-success)

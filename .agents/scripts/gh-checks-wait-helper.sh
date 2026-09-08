@@ -184,7 +184,7 @@ except (ValueError, IndexError):
 if not math.isfinite(deadline):
     raise SystemExit(2)
 delay = max(0, math.ceil(deadline - now)) + jitter
-if delay > remaining:
+if delay >= remaining:
     raise SystemExit(2)
 print(delay)
 PY

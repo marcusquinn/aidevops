@@ -359,6 +359,8 @@ done
 
 run_coordination_fallback() {
 	local scenario="$1"
+	local expected_reads=1
+	[[ "$scenario" != "publication-failure" ]] || expected_reads=2
 	rm -rf "$AIDEVOPS_GH_REQUEST_STATE_DIR" "$AIDEVOPS_GH_CHECKS_OBSERVATION_CACHE_DIR"
 	: >"$CALL_LOG"
 	(
@@ -376,6 +378,9 @@ run_coordination_fallback() {
 		invalidation-failure)
 			_gh_pr_checks_observation_invalidation_generation() { return 1; }
 			;;
+		publication-failure)
+			_gh_pr_checks_observation_cache_put() { return 1; }
+			;;
 		esac
 		set +e
 		GH_TEST_MODE=pending gh_pr_checks_observed_json owner/repo 42 required "$HEAD_SHA" \
@@ -385,14 +390,15 @@ run_coordination_fallback() {
 	assert_eq "${scenario} preserves the fresh exact exit" "8" "$(<"${TEST_ROOT}/fallback-${scenario}.rc")"
 	assert_json "${scenario} returns fresh exact evidence" 'length == 1 and .[0].bucket == "pending"' \
 		"$(<"${TEST_ROOT}/fallback-${scenario}.out")"
-	assert_eq "${scenario} performs one fresh identity read" "1" "$(grep -c '^rest|' "$CALL_LOG" || true)"
-	assert_eq "${scenario} performs one fresh status-rollup read" "1" "$(grep -c '^graphql|' "$CALL_LOG" || true)"
+	assert_eq "${scenario} performs the expected identity reads" "$expected_reads" "$(grep -c '^rest|' "$CALL_LOG" || true)"
+	assert_eq "${scenario} performs the expected status-rollup reads" "$expected_reads" "$(grep -c '^graphql|' "$CALL_LOG" || true)"
 	return 0
 }
 
 run_coordination_fallback begin-failure
 run_coordination_fallback unknown-role
 run_coordination_fallback invalidation-failure
+run_coordination_fallback publication-failure
 
 run_case multipage required 1
 assert_eq "page bound fails closed" "2" "$CASE_RC"

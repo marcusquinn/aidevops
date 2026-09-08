@@ -106,17 +106,13 @@ if [[ "${1:-}" == "pr" && "${2:-}" == "view" ]]; then
 	exit 0
 fi
 if [[ "${1:-}" == "api" && "${2:-}" == "repos/example/repo/pulls/123" ]]; then
-	if [[ "${GH_TEST_MODE:-no-required}" == "local-deferral" ]]; then
-		printf '%s\n' '[gh-transport] error_kind=github-api-read-deferred attempted=false deferred_by=local_admission retry_at=1010 reason="fixture"' >&2
-		exit 75
-	fi
-	if [[ "${GH_TEST_MODE:-no-required}" == "local-deferral-once" ]]; then
+	if [[ "${GH_TEST_MODE:-no-required}" == "local-deferral" || "${GH_TEST_MODE:-no-required}" == "local-deferral-once" ]]; then
 		count=0
 		[[ ! -s "${GH_TEST_CALL_COUNT:-}" ]] || count=$(<"$GH_TEST_CALL_COUNT")
 		count=$((count + 1))
 		printf '%s\n' "$count" >"$GH_TEST_CALL_COUNT"
-		if [[ "$count" -eq 1 ]]; then
-			printf '%s\n' '[gh-transport] error_kind=github-api-read-deferred attempted=false deferred_by=local_admission retry_at=1010 reason="fixture"' >&2
+		if [[ "${GH_TEST_MODE:-no-required}" == "local-deferral" || "$count" -eq 1 ]]; then
+			printf '[gh-transport] error_kind=github-api-read-deferred attempted=false deferred_by=local_admission retry_at=%s reason="fixture"\n' "${GH_TEST_RETRY_AT:-1010}" >&2
 			exit 75
 		fi
 	fi
@@ -171,6 +167,18 @@ beyond_timeout_rc=$?
 set -e
 [[ "$beyond_timeout_rc" -eq 2 ]] && pass "deadline beyond timeout is indeterminate" || fail "deadline beyond timeout is indeterminate" "got ${beyond_timeout_rc}"
 assert_contains "deadline beyond timeout is explicit" "beyond the remaining 5s timeout" "$beyond_timeout_output"
+
+: >"$deferral_count_file"
+set +e
+equal_timeout_output=$(PATH="${live_bin}:$PATH" GH_TEST_MODE=local-deferral-once GH_TEST_CALL_COUNT="$deferral_count_file" \
+	GH_TEST_RETRY_AT=1005 AIDEVOPS_GH_CHECKS_TEST_NO_SLEEP=1 AIDEVOPS_GH_CHECKS_TEST_NOW_EPOCH=1000 \
+	AIDEVOPS_GH_CHECKS_DEFERRAL_JITTER_SECONDS=0 AIDEVOPS_GH_SINGLEFLIGHT_DISABLE=1 \
+	"$HELPER" wait 123 --repo example/repo --timeout 5 2>&1)
+equal_timeout_rc=$?
+set -e
+[[ "$equal_timeout_rc" -eq 2 ]] && pass "deadline at timeout is indeterminate" || fail "deadline at timeout is indeterminate" "got ${equal_timeout_rc}"
+assert_eq "deadline at timeout performs no follow-up identity read" "1" "$(<"$deferral_count_file")"
+assert_contains "deadline at timeout is explicit" "beyond the remaining 5s timeout" "$equal_timeout_output"
 
 mixed_skipping_dir="${TMPDIR_TEST}/mixed-skipping"
 write_fixture "$mixed_skipping_dir" 1 '[{"name":"Required","workflow":"CI","state":"SUCCESS","bucket":"pass","link":""},{"name":"Optional","workflow":"CI","state":"SKIPPED","bucket":"skipping","link":""}]'
