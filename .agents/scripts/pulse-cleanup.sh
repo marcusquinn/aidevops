@@ -857,167 +857,193 @@ cleanup_stalled_workers() {
 	return 0
 }
 
+_pulse_process_cgroup_path() {
+	local pid="$1"
+	local proc_root="${AIDEVOPS_PULSE_PROC_ROOT:-/proc}"
+	local cgroup_file="${proc_root%/}/${pid}/cgroup"
+	local line="" path="" fallback=""
+
+	[[ -r "$cgroup_file" ]] || return 1
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		path="${line#*:*:}"
+		[[ -z "$fallback" && -n "$path" ]] && fallback="$path"
+		case "$line" in
+		0::* | *:name=systemd:*)
+			printf '%s' "$path"
+			return 0
+			;;
+		esac
+	done <"$cgroup_file"
+	[[ -n "$fallback" ]] || return 1
+	printf '%s' "$fallback"
+	return 0
+}
+
+_pulse_orphan_lifecycle_owner() {
+	local pid="$1"
+	local cgroup_path=""
+	cgroup_path=$(_pulse_process_cgroup_path "$pid") || return 1
+	case "$cgroup_path" in
+	*/opencode-web.service | */opencode-web.service/* | */opencode-web-watchdog.service | */opencode-web-watchdog.service/* | */opencode-web@*.service | */opencode-web@*.service/*)
+		printf '%s' 'opencode-web-service'
+		return 0
+		;;
+	*/*.service | */*.service/*)
+		printf '%s' 'managed-service'
+		return 0
+		;;
+	esac
+	return 1
+}
+
+_pulse_orphan_activity_age() {
+	local cmd="$1"
+	local session_id="" db_path=""
+	session_id=$(_resolve_session_id_from_cmd "$cmd")
+	db_path=$(_opencode_db_path)
+	[[ -n "$session_id" && -f "$db_path" ]] || return 1
+
+	PULSE_ORPHAN_DB_PATH="$db_path" PULSE_ORPHAN_SESSION_ID="$session_id" python3 - 2>/dev/null <<'PY'
+import os
+import sqlite3
+import time
+
+connection = sqlite3.connect(os.environ["PULSE_ORPHAN_DB_PATH"])
+connection.execute("PRAGMA busy_timeout=5000")
+row = connection.execute(
+    """
+    SELECT MAX(CASE WHEN time_created > 20000000000
+                    THEN time_created / 1000 ELSE time_created END)
+    FROM message WHERE session_id = ?
+    """,
+    (os.environ["PULSE_ORPHAN_SESSION_ID"],),
+).fetchone()
+last_activity = int(row[0] or 0)
+if last_activity <= 0:
+    raise SystemExit(1)
+print(max(0, int(time.time()) - last_activity))
+connection.close()
+PY
+}
+
+_pulse_orphan_command_mode() {
+	local cmd="$1"
+	if [[ "$cmd" =~ (^|[[:space:]/])opencode[[:space:]]+serve([[:space:]]|$) ]]; then
+		printf '%s' 'serve'
+	elif [[ "$cmd" =~ (^|[[:space:]/])opencode[[:space:]]+run([[:space:]]|$) ]]; then
+		printf '%s' 'run'
+	else
+		printf '%s' 'ambiguous'
+	fi
+	return 0
+}
+
+_pulse_orphan_decision() {
+	local pid="$1" cmd="$2" age_seconds="$3"
+	local mode="" owner="" inactivity="" tree_cpu=""
+	mode=$(_pulse_orphan_command_mode "$cmd")
+
+	if [[ ! "$pid" =~ ^[1-9][0-9]*$ || ! "$age_seconds" =~ ^[0-9]+$ ]]; then
+		printf '%s' 'skip|invalid-process-evidence|ambiguous|unknown|unknown|unknown'
+		return 0
+	fi
+	if [[ "$age_seconds" -lt "${ORPHAN_MAX_AGE:-7200}" ]]; then
+		printf 'skip|process-young|%s|unknown|unknown|unknown' "$mode"
+		return 0
+	fi
+	owner=$(_pulse_orphan_lifecycle_owner "$pid") || owner="unmanaged"
+	if [[ "$owner" != "unmanaged" ]]; then
+		printf 'skip|lifecycle-owned|%s|unknown|cgroup|%s' "$mode" "$owner"
+		return 0
+	fi
+	if [[ "$mode" == "serve" ]]; then
+		printf '%s' 'skip|persistent-command|serve|unknown|command|unmanaged'
+		return 0
+	fi
+	if [[ "$mode" != "run" ]]; then
+		printf 'skip|ambiguous-command|%s|unknown|unknown|unmanaged' "$mode"
+		return 0
+	fi
+	inactivity=$(_pulse_orphan_activity_age "$cmd") || inactivity=""
+	if [[ ! "$inactivity" =~ ^[0-9]+$ ]]; then
+		printf '%s' 'skip|activity-unavailable|run|unknown|session-db|unmanaged'
+		return 0
+	fi
+	if [[ "$inactivity" -lt "${ORPHAN_INACTIVITY_AGE:-259200}" ]]; then
+		printf 'skip|recent-session-activity|run|%s|session-db|unmanaged' "$inactivity"
+		return 0
+	fi
+	tree_cpu=$(_get_process_tree_cpu "$pid")
+	[[ "$tree_cpu" =~ ^[0-9]+$ ]] || tree_cpu=0
+	if [[ "$tree_cpu" -ge "${PULSE_IDLE_CPU_THRESHOLD:-2}" ]]; then
+		printf 'skip|active-process-tree|run|%s|session-db|unmanaged' "$inactivity"
+		return 0
+	fi
+	printf 'kill|verified-stale-session|run|%s|session-db|unmanaged' "$inactivity"
+	return 0
+}
+
+_pulse_list_opencode_candidates() {
+	ps axwwo pid,tty,etime,rss,command | awk '
+		$0 ~ /bash-language-server/ { next }
+		$0 ~ /[.]opencode/ { print; next }
+		$0 ~ /node.*opencode/ { print }
+	'
+	return 0
+}
+
+_pulse_process_command() {
+	local pid="$1"
+	ps -ww -p "$pid" -o command= 2>/dev/null
+	return $?
+}
+
+_pulse_log_orphan_decision() {
+	local pid="$1" tty="$2" age="$3" action="$4" reason="$5" mode="$6" inactivity="$7" source="$8" owner="$9"
+	printf '[pulse-wrapper] orphan-decision pid=%s tty=%s process_age=%s inactivity=%s inactivity_source=%s mode=%s owner=%s action=%s reason=%s\n' \
+		"$pid" "$tty" "$age" "$inactivity" "$source" "$mode" "$owner" "$action" "$reason" >>"$LOGFILE"
+	return 0
+}
+
 cleanup_orphans() {
-
-	local killed=0
-	local total_mb=0
-
+	local killed=0 total_mb=0 line=""
 	while IFS= read -r line; do
-		local pid tty etime rss cmd
+		local pid="" tty="" etime="" rss="" cmd="" age="" decision=""
+		local action="" reason="" mode="" inactivity="" source="" owner="" current_cmd="" recheck=""
 		read -r pid tty etime rss cmd <<<"$line"
+		age=$(_get_process_age "$pid")
+		decision=$(_pulse_orphan_decision "$pid" "$cmd" "$age")
+		IFS='|' read -r action reason mode inactivity source owner <<<"$decision"
+		_pulse_log_orphan_decision "$pid" "$tty" "$age" "$action" "$reason" "$mode" "$inactivity" "$source" "$owner"
+		[[ "$action" == "kill" ]] || continue
 
-		# Skip interactive sessions (has a real TTY).
-		# Exclude both '?' (Linux headless) and '??' (macOS headless) — only
-		# those are headless; anything else (pts/N, ttys00N) is interactive.
-		if [[ "$tty" != "?" && "$tty" != "??" ]]; then
+		current_cmd=$(_pulse_process_command "$pid") || current_cmd=""
+		[[ -n "$current_cmd" && "$current_cmd" == "$cmd" ]] || {
+			_pulse_log_orphan_decision "$pid" "$tty" "$age" skip process-identity-changed "$mode" "$inactivity" "$source" "$owner"
 			continue
-		fi
-
-		# Skip active workers, pulse, strategic reviews, and language servers.
-		# Use case instead of [[ =~ ]] with | alternation — zsh parses the |
-		# as a pipe operator inside [[ ]], causing a parse error. See GH#4904.
-		case "$cmd" in
-		*"/full-loop"* | *"/review-issue-pr"* | *"Supervisor Pulse"* | *"Strategic Review"* | *"language-server"* | *"eslintServer"*)
+		}
+		recheck=$(_pulse_orphan_decision "$pid" "$current_cmd" "$(_get_process_age "$pid")")
+		[[ "$recheck" == kill\|* ]] || {
+			IFS='|' read -r action reason mode inactivity source owner <<<"$recheck"
+			_pulse_log_orphan_decision "$pid" "$tty" "$age" "$action" "$reason" "$mode" "$inactivity" "$source" "$owner"
 			continue
-			;;
-		esac
+		}
 
-		# Skip young processes
-		# t2859: ${ORPHAN_MAX_AGE:-7200} fallback (2h) — without this,
-		# unbound expansion to "" makes every process look "older than 0"
-		# and would kill all matched orphans regardless of actual age.
-		local age_seconds
-		age_seconds=$(_get_process_age "$pid")
-		if [[ "$age_seconds" -lt "${ORPHAN_MAX_AGE:-7200}" ]]; then
-			continue
-		fi
-
-		# This is an orphan — kill it
 		[[ "$rss" =~ ^[0-9]+$ ]] || rss=0
-		local mb=$((rss / 1024))
-		kill "$pid" 2>/dev/null || true
-		killed=$((killed + 1))
-		total_mb=$((total_mb + mb))
-	done < <(ps axwwo pid,tty,etime,rss,command | grep '[.]opencode' | grep -v 'bash-language-server')
-
-	# Also kill orphaned node launchers (parent of .opencode processes)
-	while IFS= read -r line; do
-		local pid tty etime rss cmd
-		read -r pid tty etime rss cmd <<<"$line"
-
-		[[ "$tty" != "?" && "$tty" != "??" ]] && continue
-		# Use case instead of [[ =~ ]] with | alternation — zsh parse error. See GH#4904.
-		case "$cmd" in
-		*"/full-loop"* | *"/review-issue-pr"* | *"Supervisor Pulse"* | *"Strategic Review"* | *"language-server"* | *"eslintServer"*)
-			continue
-			;;
-		esac
-
-		# t2859: ${ORPHAN_MAX_AGE:-7200} fallback (2h) — see comment above.
-		local age_seconds
-		age_seconds=$(_get_process_age "$pid")
-		[[ "$age_seconds" -lt "${ORPHAN_MAX_AGE:-7200}" ]] && continue
-
-		kill "$pid" 2>/dev/null || true
-		[[ "$rss" =~ ^[0-9]+$ ]] || rss=0
-		local mb=$((rss / 1024))
-		killed=$((killed + 1))
-		total_mb=$((total_mb + mb))
-	done < <(ps axwwo pid,tty,etime,rss,command | grep 'node.*opencode' | grep -v '[.]opencode')
+		if kill "$pid" 2>/dev/null; then
+			killed=$((killed + 1))
+			total_mb=$((total_mb + rss / 1024))
+		fi
+	done < <(_pulse_list_opencode_candidates)
 
 	if [[ "$killed" -gt 0 ]]; then
-		echo "[pulse-wrapper] Cleaned up $killed orphaned opencode processes (freed ~${total_mb}MB)" >>"$LOGFILE"
+		echo "[pulse-wrapper] Cleaned up $killed verified stale opencode sessions (freed ~${total_mb}MB)" >>"$LOGFILE"
 	fi
 	return 0
 }
 
 cleanup_stale_opencode() {
-	local killed=0
-	local total_mb=0
-
-	# Get our own PID tree to avoid killing the current session
-	local my_pid="$$"
-	local my_ppid
-	my_ppid=$(ps -p "$my_pid" -o ppid= 2>/dev/null | tr -d ' ') || my_ppid=""
-
-	while IFS= read -r line; do
-		local pid cpu rss
-		read -r pid cpu rss <<<"$line"
-
-		# Skip our own process tree
-		if [[ "$pid" == "$my_pid" || "$pid" == "$my_ppid" ]]; then
-			continue
-		fi
-
-		# Skip interactive sessions — only kill headless workers.
-		# Headless workers are launched via headless-runtime-helper.sh with
-		# --format json in the command line. Interactive sessions (user typing
-		# in a terminal) never have this flag. Without this guard, any idle
-		# interactive session (user stepped away) gets killed along with its
-		# parent shell, closing the terminal tab entirely.
-		local proc_cmd
-		proc_cmd=$(ps -p "$pid" -o command= 2>/dev/null) || proc_cmd=""
-		if [[ "$proc_cmd" != *"--format json"* ]]; then
-			continue
-		fi
-
-		# Skip young processes
-		local age_seconds
-		age_seconds=$(_get_process_age "$pid")
-		if [[ "$age_seconds" -lt "$STALE_OPENCODE_MAX_AGE" ]]; then
-			continue
-		fi
-
-		# Skip processes with significant CPU usage (actively working)
-		# cpu is a float like "0.0" or "40.3" — compare integer part.
-		# t2859: ${PULSE_IDLE_CPU_THRESHOLD:-2} fallback (2% CPU) — without
-		# this, unbound expansion to "" treated as 0 would make every
-		# process "active" (cpu >= 0) and skip every kill candidate.
-		local cpu_int
-		cpu_int="${cpu%%.*}"
-		[[ "$cpu_int" =~ ^[0-9]+$ ]] || cpu_int=0
-		if [[ "$cpu_int" -ge "${PULSE_IDLE_CPU_THRESHOLD:-2}" ]]; then
-			continue
-		fi
-
-		# This is a stale headless worker — kill it and its parent chain
-		[[ "$rss" =~ ^[0-9]+$ ]] || rss=0
-		local mb=$((rss / 1024))
-
-		# Kill parent (node launcher) and grandparent (zsh tab) first
-		local ppid
-		ppid=$(ps -p "$pid" -o ppid= 2>/dev/null | tr -d ' ') || ppid=""
-		if [[ -n "$ppid" && "$ppid" != "1" ]]; then
-			local gppid
-			gppid=$(ps -p "$ppid" -o ppid= 2>/dev/null | tr -d ' ') || gppid=""
-			# Kill grandparent zsh (the terminal tab shell)
-			if [[ -n "$gppid" && "$gppid" != "1" ]]; then
-				local gp_cmd
-				gp_cmd=$(ps -p "$gppid" -o command= 2>/dev/null) || gp_cmd=""
-				# Only kill if it's a shell that launched opencode
-				case "$gp_cmd" in
-				*zsh* | *bash* | *sh*)
-					kill "$gppid" 2>/dev/null || true
-					;;
-				esac
-			fi
-			# Kill parent node launcher
-			kill "$ppid" 2>/dev/null || true
-		fi
-
-		# Kill the .opencode process — SIGTERM first, SIGKILL fallback.
-		# OpenCode's file watcher may ignore SIGTERM.
-		kill "$pid" 2>/dev/null || true
-		sleep 1
-		if kill -0 "$pid" 2>/dev/null; then
-			kill -9 "$pid" 2>/dev/null || true
-		fi
-		killed=$((killed + 1))
-		total_mb=$((total_mb + mb))
-	done < <(ps axwwo pid,%cpu,rss,command | awk '$0 ~ /[.]opencode/ && $0 !~ /bash-language-server/ { print $1, $2, $3 }')
-
-	if [[ "$killed" -gt 0 ]]; then
-		echo "[pulse-wrapper] Cleaned up $killed stale headless opencode workers (freed ~${total_mb}MB)" >>"$LOGFILE"
-	fi
+	# Consolidated into cleanup_orphans(), whose lifecycle and activity proof now
+	# safely covers eligible no-TTY and TTY-attached `opencode run` sessions.
 	return 0
 }
