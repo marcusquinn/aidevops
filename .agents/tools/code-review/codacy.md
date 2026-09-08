@@ -100,9 +100,15 @@ patterns `ESLint8_es-x_no-modules`,
 `ESLint8_es-x_no-block-scoped-variables`, and
 `ESLint8_es-x_no-trailing-commas` are intentionally disabled. `Bandit_B404` is
 also disabled because `.bandit` documents the narrower subprocess rules that
-remain active. Before correction, exact-SHA overview counts were 84, 56, 40,
-and 83 respectively. Keep the live standard and native files aligned; changing
-the inert `.codacy.yml` engine map is not a tool-setting migration.
+remain active. Before correction, exact-SHA overview counts were 84
+(`no-modules`), 56 (`no-block-scoped-variables`), 40 (`no-trailing-commas`),
+and 83 (`B404`). A normal exact-SHA reanalysis cleared the three ESLint counts,
+but retained 83 cached B404 findings even though both the effective pattern and
+`.bandit` disable B404. This is evidence that a cache-cleared support reanalysis
+is still required for native-config policy changes; do not weaken Bandit or
+rewrite safe subprocess imports to compensate for stale derived state. Keep the
+live standard and native files aligned; changing the inert `.codacy.yml` engine
+map is not a tool-setting migration.
 
 ```bash
 # Commit delta statistics (new issues count + complexity delta)
