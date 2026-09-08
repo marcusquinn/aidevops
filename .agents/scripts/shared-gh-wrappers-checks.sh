@@ -41,6 +41,10 @@
 #     → echoes the internal `gh pr checks --json` field superset while every
 #       GraphQL page reports its own operation-owned rateLimit.cost.
 #
+#   gh_pr_checks_observed_json <slug> <pr_number> <required|all> <head_sha>
+#     → coalesces short-lived immutable-head observations. Consequential gates
+#       must continue to call gh_pr_checks_exact_json directly.
+#
 # Usage: source "${SCRIPT_DIR}/shared-gh-wrappers-checks.sh"
 #
 # Dependencies:
@@ -79,6 +83,15 @@ _GH_PR_CHECK_STATUS_NONE=none
 _GH_PR_CHECK_STATUS_CACHE_PUT_OK=0
 _GH_PR_CHECK_STATUS_FETCH_INVALIDATED=0
 _GH_PR_CHECK_STATUS_INVALIDATION_INITIAL="${_GHRS_INVALIDATION_INITIAL:-0000000000000000000000000000000000000000000000000000000000000000}"
+_GH_PR_CHECKS_OBSERVATION_SCHEMA="aidevops-gh-pr-checks-observation/v1"
+_GH_PR_CHECKS_OBSERVATION_PROJECTION="status-rollup-exact/v1"
+_GH_PR_CHECKS_OBSERVATION_SOURCE="graphql-status-rollup"
+_GH_PR_CHECKS_OBSERVATION_PUT_OK=0
+_GH_PR_CHECKS_OBSERVATION_CACHE_HIT=0
+_GH_PR_CHECKS_OBSERVATION_COORDINATION_EXIT=3
+_GH_PR_CHECKS_JSON_ARRAY_TYPE='array'
+_GH_PR_CHECKS_JSON_NUMBER_TYPE='number'
+_GH_PR_CHECKS_VALIDATION_STATUS='validated'
 
 #######################################
 # Record an observational check-status cache decision without counting an HTTP
@@ -505,12 +518,23 @@ _gh_pr_checks_exact_error() {
 #######################################
 # Preserve a cooldown classification while keeping the public exact-check
 # helper contract at exit 2 for API/parse failures.
-# Args: $1=operation detail, $2=read exit
+# Args: $1=operation detail, $2=read exit, $3=captured diagnostics
 #######################################
 _gh_pr_checks_exact_read_error() {
 	local operation="$1"
 	local read_exit="$2"
+	local diagnostics="${3:-}"
 	local expires_at="unknown"
+	local line=""
+
+	while IFS= read -r line; do
+		case "$line" in
+		'[gh-transport] error_kind=github-api-read-deferred attempted=false deferred_by=local_admission '*)
+			_gh_pr_checks_exact_error "${line} operation=${operation}"
+			return 0
+			;;
+		esac
+	done <<<"$diagnostics"
 
 	if [[ "$read_exit" -eq 75 ]] &&
 		declare -F _gh_secondary_cooldown_active >/dev/null 2>&1 &&
@@ -523,11 +547,11 @@ _gh_pr_checks_exact_read_error() {
 		return 0
 	fi
 	if [[ "$read_exit" -eq 75 ]]; then
-		_gh_pr_checks_exact_error "error_kind=github-api-read-deferred operation=${operation}"
+		_gh_pr_checks_exact_error "error_kind=github-api-read-deferred attempted=false deferred_by=transport retry_at=unknown operation=${operation}"
 		return 0
 	fi
 
-	_gh_pr_checks_exact_error "${operation} failed"
+	_gh_pr_checks_exact_error "error_kind=github-api-failure attempted=true exit_code=${read_exit} operation=${operation}"
 	return 0
 }
 
@@ -615,15 +639,21 @@ _gh_pr_checks_exact_identity() {
 	local slug="$1"
 	local pr_number="$2"
 	local identity_json="" identity=""
-	local identity_exit=0
+	local identity_exit=0 diagnostics_file="" diagnostics=""
 	local object_type='object'
 	local string_type='string'
 
+	diagnostics_file=$(mktemp "${AIDEVOPS_TEMP_DIR:-${TMPDIR:-/tmp}}/aidevops-gh-pr-identity.XXXXXX" 2>/dev/null) || {
+		_gh_pr_checks_exact_error "pull-request identity diagnostic capture was unavailable"
+		return 2
+	}
 	identity_json=$(AIDEVOPS_GH_QUOTA_COST=1 \
 		AIDEVOPS_GH_ROUTE_DECISION="gh-pr-checks-identity-rest" \
-		_gh_checks_api_read "repos/${slug}/pulls/${pr_number}" 2>/dev/null) || identity_exit=$?
+		_gh_checks_api_read "repos/${slug}/pulls/${pr_number}" 2>"$diagnostics_file") || identity_exit=$?
+	diagnostics=$(<"$diagnostics_file")
+	rm -f "$diagnostics_file"
 	if [[ "$identity_exit" -ne 0 ]]; then
-		_gh_pr_checks_exact_read_error "pull-request-identity-read" "$identity_exit"
+		_gh_pr_checks_exact_read_error "pull-request-identity-read" "$identity_exit" "$diagnostics"
 		return 2
 	fi
 	identity=$(printf '%s' "$identity_json" | jq -er --argjson expected "$pr_number" \
@@ -734,6 +764,7 @@ _gh_pr_checks_exact_collect_pages() {
 	local max_pages="$4"
 	local page_number=0 cursor="" next_cursor="" has_next="" page_meta=""
 	local response="" nodes_json="" seen_cursors=$'\n' cursor_flag="" cursor_field=""
+	local diagnostics_file="" diagnostics=""
 	local false_text='false'
 
 	while true; do
@@ -751,12 +782,19 @@ _gh_pr_checks_exact_collect_pages() {
 			cursor_field="endCursor=null"
 		fi
 		local response_exit=0
+		diagnostics_file=$(mktemp "${AIDEVOPS_TEMP_DIR:-${TMPDIR:-/tmp}}/aidevops-gh-pr-rollup.XXXXXX" 2>/dev/null) || {
+			rm -f "$pages_file"
+			_gh_pr_checks_exact_error "status-rollup diagnostic capture was unavailable"
+			return 2
+		}
 		response=$(AIDEVOPS_GH_GRAPHQL_COST_FROM_RESPONSE=1 \
 			AIDEVOPS_GH_ROUTE_DECISION="gh-pr-checks-status-rollup-exact-cost" \
-			_gh_checks_api_read graphql -f id="$node_id" "$cursor_flag" "$cursor_field" -f query="$query" 2>/dev/null) || response_exit=$?
+			_gh_checks_api_read graphql -f id="$node_id" "$cursor_flag" "$cursor_field" -f query="$query" 2>"$diagnostics_file") || response_exit=$?
+		diagnostics=$(<"$diagnostics_file")
+		rm -f "$diagnostics_file"
 		if [[ "$response_exit" -ne 0 ]]; then
 			rm -f "$pages_file"
-			_gh_pr_checks_exact_read_error "status-rollup-page-${page_number}-read" "$response_exit"
+			_gh_pr_checks_exact_read_error "status-rollup-page-${page_number}-read" "$response_exit" "$diagnostics"
 			return 2
 		fi
 		page_meta=$(_gh_pr_checks_exact_page_meta "$response") || page_meta=""
@@ -847,7 +885,8 @@ _gh_pr_checks_exact_emit_result() {
 # surface used by framework internals; it is not a replacement for interactive
 # `gh pr checks` modes such as --watch, --web, or templates.
 #
-# Args: $1=repo slug, $2=numeric PR, $3=required|all
+# Args: $1=repo slug, $2=numeric PR, $3=required|all,
+#       $4=optional expected full head SHA
 # Stdout: JSON array with name/state/bucket/link/workflow plus CLI-compatible
 #         event, description, startedAt, and completedAt fields
 # Returns: 0=no failing or pending checks, 1=terminal failure/no matching checks,
@@ -857,6 +896,7 @@ gh_pr_checks_exact_json() {
 	local slug="$1"
 	local pr_number="$2"
 	local mode="$3"
+	local expected_head_sha="${4:-}"
 	local max_pages="${AIDEVOPS_GH_PR_CHECKS_MAX_PAGES:-20}"
 	local identity="" identity_exit=0 node_id="" head_ref="" head_sha=""
 	local pages_file="" temp_root="${AIDEVOPS_TEMP_DIR:-${TMPDIR:-/tmp}}"
@@ -883,6 +923,10 @@ gh_pr_checks_exact_json() {
 		_gh_pr_checks_exact_error "pull-request identity response was incomplete"
 		return 2
 	fi
+	if [[ -n "$expected_head_sha" && "$head_sha" != "$expected_head_sha" ]]; then
+		_gh_pr_checks_exact_error "error_kind=github-api-malformed attempted=true operation=pull-request-head-changed"
+		return 2
+	fi
 
 	pages_file=$(mktemp "${temp_root}/aidevops-gh-pr-checks.XXXXXX" 2>/dev/null) || {
 		_gh_pr_checks_exact_error "temporary page collection unavailable"
@@ -898,6 +942,309 @@ gh_pr_checks_exact_json() {
 	_gh_pr_checks_exact_emit_result "$mode" "$head_ref" "$pages_file" || result_exit=$?
 	rm -f "$pages_file"
 	return "$result_exit"
+}
+
+_gh_pr_checks_observation_identity_valid() {
+	local slug="$1" pr_number="$2" mode="$3" head_sha="$4"
+	_gh_pr_check_status_cache_identity_valid "$slug" "$head_sha" || return 1
+	[[ "$pr_number" =~ ^[1-9][0-9]*$ ]] || return 1
+	[[ "$mode" == "required" || "$mode" == "all" ]] || return 1
+	return 0
+}
+
+_gh_pr_checks_observation_identity() {
+	local pr_number="$1" mode="$2" head_sha="$3"
+	local normalized_sha=""
+	normalized_sha=$(printf '%s' "$head_sha" | tr '[:upper:]' '[:lower:]')
+	printf '%s\034%s\034%s\n' "$pr_number" "$mode" "$normalized_sha"
+	return 0
+}
+
+_gh_pr_checks_observation_request_key() {
+	local slug="$1" pr_number="$2" mode="$3" head_sha="$4" identity=""
+	_gh_pr_checks_observation_identity_valid "$slug" "$pr_number" "$mode" "$head_sha" || return 1
+	declare -F gh_request_state_request_key >/dev/null 2>&1 || return 1
+	identity="$(_gh_pr_checks_observation_identity "$pr_number" "$mode" "$head_sha")" || return 1
+	gh_request_state_request_key "$slug" status-rollup-exact \
+		"$_GH_PR_CHECKS_OBSERVATION_PROJECTION" "$identity" graphql
+	return $?
+}
+
+_gh_pr_checks_observation_invalidation_key() {
+	local slug="$1" pr_number="$2" mode="$3" head_sha="$4" identity=""
+	_gh_pr_checks_observation_identity_valid "$slug" "$pr_number" "$mode" "$head_sha" || return 1
+	declare -F gh_request_state_invalidation_key >/dev/null 2>&1 || return 1
+	identity="$(_gh_pr_checks_observation_identity "$pr_number" "$mode" "$head_sha")" || return 1
+	gh_request_state_invalidation_key "$slug" status-rollup-exact \
+		"$_GH_PR_CHECKS_OBSERVATION_PROJECTION" "$identity"
+	return $?
+}
+
+_gh_pr_checks_observation_invalidation_generation() {
+	local invalidation_key=""
+	invalidation_key="$(_gh_pr_checks_observation_invalidation_key "$@")" || return 1
+	gh_request_state_invalidation_generation_get "$invalidation_key"
+	return $?
+}
+
+_gh_pr_checks_observation_invalidation_is_current() {
+	local slug="$1" pr_number="$2" mode="$3" head_sha="$4" generation="$5"
+	local invalidation_key=""
+	invalidation_key="$(_gh_pr_checks_observation_invalidation_key "$slug" "$pr_number" "$mode" "$head_sha")" || return 1
+	gh_request_state_invalidation_generation_is_current "$invalidation_key" "$generation"
+	return $?
+}
+
+_gh_pr_checks_observation_cache_path() {
+	local request_key="$1"
+	local work_dir="${AIDEVOPS_WORK_DIR:-${HOME:+${HOME}/.aidevops/.agent-workspace/work}}"
+	local cache_dir="${AIDEVOPS_GH_CHECKS_OBSERVATION_CACHE_DIR:-${work_dir:+${work_dir}/gh-pr-checks-observations}}"
+	[[ "$request_key" =~ ^[A-Fa-f0-9]{64}$ && -n "$cache_dir" ]] || return 1
+	(umask 077 && mkdir -p "$cache_dir") 2>/dev/null || return 1
+	chmod 700 "$cache_dir" 2>/dev/null || return 1
+	printf '%s/entry-%s.json\n' "$cache_dir" "$request_key"
+	return 0
+}
+
+_gh_pr_checks_observation_ttl() {
+	local ttl="${AIDEVOPS_GH_CHECKS_OBSERVATION_TTL_SECONDS:-5}"
+	[[ "$ttl" =~ ^[1-9][0-9]*$ && "$ttl" -le 30 ]] || ttl=5
+	printf '%s\n' "$ttl"
+	return 0
+}
+
+_gh_pr_checks_observation_emit() {
+	local result_code="$1" checks="$2" diagnostic="$3"
+	[[ -z "$diagnostic" ]] || printf '%s\n' "$diagnostic" >&2
+	if [[ ! ("$result_code" -eq 1 && "$checks" == '[]' && "$diagnostic" =~ ^no\ (required\ )?checks\ reported) ]]; then
+		[[ -z "$checks" ]] || printf '%s\n' "$checks"
+	fi
+	return "$result_code"
+}
+
+_gh_pr_checks_observation_cache_get() {
+	local slug="$1" pr_number="$2" mode="$3" head_sha="$4"
+	local request_key=""
+	local path=""
+	local invalidation_generation=""
+	local entry=""
+	local now=""
+	local ttl=""
+	local result_code=""
+	local checks=""
+	local diagnostic=""
+	local fetched_at=""
+	local normalized_sha=""
+	local file_perms=""
+	_GH_PR_CHECKS_OBSERVATION_CACHE_HIT=0
+	normalized_sha=$(printf '%s' "$head_sha" | tr '[:upper:]' '[:lower:]')
+	request_key="$(_gh_pr_checks_observation_request_key "$slug" "$pr_number" "$mode" "$head_sha")" || return 1
+	path="$(_gh_pr_checks_observation_cache_path "$request_key")" || return 1
+	[[ -s "$path" && -f "$path" && ! -L "$path" ]] || return 1
+	declare -F _file_perms >/dev/null 2>&1 || return 1
+	file_perms="$(_file_perms "$path")" || return 1
+	[[ "$file_perms" == 600 ]] || return 1
+	invalidation_generation="$(_gh_pr_checks_observation_invalidation_generation "$slug" "$pr_number" "$mode" "$head_sha")" || return 1
+	entry=$(jq -cer --arg schema "$_GH_PR_CHECKS_OBSERVATION_SCHEMA" \
+		--arg repository "$slug" --argjson pr_number "$pr_number" --arg mode "$mode" \
+		--arg head_sha "$normalized_sha" --arg projection "$_GH_PR_CHECKS_OBSERVATION_PROJECTION" \
+		--arg source "$_GH_PR_CHECKS_OBSERVATION_SOURCE" --arg generation "$invalidation_generation" \
+		--arg array_type "$_GH_PR_CHECKS_JSON_ARRAY_TYPE" --arg number_type "$_GH_PR_CHECKS_JSON_NUMBER_TYPE" \
+		--arg validation_status "$_GH_PR_CHECKS_VALIDATION_STATUS" '
+		select(.schema == $schema and .repository == $repository and .pr_number == $pr_number and
+			.mode == $mode and .head_sha == $head_sha and .projection == $projection and
+			.source == $source and .validation == $validation_status and
+			.invalidation_generation == $generation and
+			(.result_code == 0 or .result_code == 1 or .result_code == 8) and
+			(.checks | type) == $array_type and (.diagnostic | type) == "string" and
+			(.fetched_at | type) == $number_type and (.fetched_at | floor) == .fetched_at)
+		| [.result_code, .checks, .diagnostic, .fetched_at]' "$path" 2>/dev/null) || entry=""
+	[[ -n "$entry" ]] || return 1
+	result_code=$(printf '%s' "$entry" | jq -r '.[0]')
+	checks=$(printf '%s' "$entry" | jq -c '.[1]')
+	diagnostic=$(printf '%s' "$entry" | jq -r '.[2]')
+	fetched_at=$(printf '%s' "$entry" | jq -r '.[3]')
+	now=$(date +%s 2>/dev/null || printf '0')
+	ttl="$(_gh_pr_checks_observation_ttl)"
+	[[ "$now" =~ ^[0-9]+$ && "$fetched_at" =~ ^[0-9]+$ && "$now" -ge "$fetched_at" && $((now - fetched_at)) -le "$ttl" ]] || return 1
+	_GH_PR_CHECKS_OBSERVATION_CACHE_HIT=1
+	_gh_pr_checks_observation_emit "$result_code" "$checks" "$diagnostic"
+	return $?
+}
+
+_gh_pr_checks_observation_cache_put() {
+	local slug="$1" pr_number="$2" mode="$3" head_sha="$4" result_code="$5"
+	local checks="$6" diagnostic="$7" invalidation_generation="$8" request_key="$9"
+	local lease_generation="${10}"
+	local path=""
+	local dir=""
+	local tmp=""
+	local now=""
+	local normalized_sha=""
+	_GH_PR_CHECKS_OBSERVATION_PUT_OK=0
+	[[ "$result_code" == 0 || "$result_code" == 1 || "$result_code" == 8 ]] || return 1
+	printf '%s' "$checks" | jq -e 'type == "array"' >/dev/null 2>&1 || return 1
+	normalized_sha=$(printf '%s' "$head_sha" | tr '[:upper:]' '[:lower:]')
+	path="$(_gh_pr_checks_observation_cache_path "$request_key")" || return 1
+	dir="${path%/*}"
+	now=$(date +%s 2>/dev/null || printf '0')
+	[[ "$now" =~ ^[0-9]+$ && "$now" -gt 0 ]] || return 1
+	tmp=$(mktemp "${dir}/.exact-observation.XXXXXX" 2>/dev/null) || return 1
+	chmod 600 "$tmp" 2>/dev/null || {
+		rm -f "$tmp"
+		return 1
+	}
+	if ! jq -n --arg schema "$_GH_PR_CHECKS_OBSERVATION_SCHEMA" \
+		--arg repository "$slug" --argjson pr_number "$pr_number" --arg mode "$mode" \
+		--arg head_sha "$normalized_sha" --arg projection "$_GH_PR_CHECKS_OBSERVATION_PROJECTION" \
+		--arg source "$_GH_PR_CHECKS_OBSERVATION_SOURCE" --arg diagnostic "$diagnostic" \
+		--arg generation "$invalidation_generation" --argjson result_code "$result_code" \
+		--argjson checks "$checks" --argjson fetched_at "$now" \
+		--arg validation_status "$_GH_PR_CHECKS_VALIDATION_STATUS" \
+		'{schema:$schema,repository:$repository,pr_number:$pr_number,mode:$mode,
+		head_sha:$head_sha,projection:$projection,source:$source,validation:$validation_status,
+		result_code:$result_code,checks:$checks,diagnostic:$diagnostic,
+		fetched_at:$fetched_at,invalidation_generation:$generation}' >"$tmp"; then
+		rm -f "$tmp"
+		return 1
+	fi
+	if ! gh_request_state_singleflight_is_owner "$request_key" "$lease_generation" ||
+		! _gh_pr_checks_observation_invalidation_is_current "$slug" "$pr_number" "$mode" "$head_sha" "$invalidation_generation"; then
+		rm -f "$tmp"
+		return 1
+	fi
+	if mv "$tmp" "$path" 2>/dev/null; then
+		_GH_PR_CHECKS_OBSERVATION_PUT_OK=1
+		return 0
+	fi
+	rm -f "$tmp"
+	return 1
+}
+
+_gh_pr_checks_observation_fetch_and_cache() {
+	local slug="$1" pr_number="$2" mode="$3" head_sha="$4" request_key="$5" generation="$6"
+	local invalidation_generation="$7"
+	local checks=""
+	local diagnostic=""
+	local result_code=0
+	local diagnostic_file=""
+	diagnostic_file=$(mktemp "${AIDEVOPS_TEMP_DIR:-${TMPDIR:-/tmp}}/aidevops-gh-pr-observation.XXXXXX" 2>/dev/null) || return 2
+	checks=$(gh_pr_checks_exact_json "$slug" "$pr_number" "$mode" "$head_sha" 2>"$diagnostic_file") || result_code=$?
+	diagnostic=$(<"$diagnostic_file")
+	rm -f "$diagnostic_file"
+	[[ "$result_code" == 0 || "$result_code" == 1 || "$result_code" == 8 ]] || {
+		_gh_pr_checks_observation_emit "$result_code" "$checks" "$diagnostic"
+		return $?
+	}
+	if [[ -z "$checks" ]]; then
+		if [[ "$result_code" -eq 1 && "$diagnostic" =~ ^no\ (required\ )?checks\ reported\ on\ the\ \'[^\']+\'\ branch$ ]]; then
+			checks='[]'
+		else
+			_gh_pr_checks_exact_error "error_kind=github-api-malformed attempted=true operation=exact-observation-empty-result"
+			return 2
+		fi
+	fi
+	printf '%s' "$checks" | jq -e --arg array_type "$_GH_PR_CHECKS_JSON_ARRAY_TYPE" 'type == $array_type' >/dev/null 2>&1 || {
+		_gh_pr_checks_exact_error "error_kind=github-api-malformed attempted=true operation=exact-observation-result"
+		return 2
+	}
+	gh_request_state_singleflight_is_owner "$request_key" "$generation" || return "$_GH_PR_CHECKS_OBSERVATION_COORDINATION_EXIT"
+	_gh_pr_checks_observation_invalidation_is_current "$slug" "$pr_number" "$mode" "$head_sha" "$invalidation_generation" || return "$_GH_PR_CHECKS_OBSERVATION_COORDINATION_EXIT"
+	_gh_pr_checks_observation_cache_put "$slug" "$pr_number" "$mode" "$head_sha" "$result_code" \
+		"$checks" "$diagnostic" "$invalidation_generation" "$request_key" "$generation" || return "$_GH_PR_CHECKS_OBSERVATION_COORDINATION_EXIT"
+	[[ "$_GH_PR_CHECKS_OBSERVATION_PUT_OK" == 1 ]] || return "$_GH_PR_CHECKS_OBSERVATION_COORDINATION_EXIT"
+	_gh_pr_checks_observation_invalidation_is_current "$slug" "$pr_number" "$mode" "$head_sha" "$invalidation_generation" || return "$_GH_PR_CHECKS_OBSERVATION_COORDINATION_EXIT"
+	_gh_pr_checks_observation_emit "$result_code" "$checks" "$diagnostic"
+	return $?
+}
+
+gh_pr_checks_observed_json() {
+	local slug="$1" pr_number="$2" mode="$3" head_sha="$4"
+	local request_key=""
+	local generation=""
+	local invalidation_generation=""
+	local attempts=0
+	local result_code=0
+	_gh_pr_checks_observation_identity_valid "$slug" "$pr_number" "$mode" "$head_sha" || {
+		_gh_pr_checks_exact_error "error_kind=github-api-malformed attempted=false operation=exact-observation-identity"
+		return 2
+	}
+	request_key="$(_gh_pr_checks_observation_request_key "$slug" "$pr_number" "$mode" "$head_sha")" || {
+		gh_pr_checks_exact_json "$slug" "$pr_number" "$mode" "$head_sha"
+		return $?
+	}
+	result_code=0
+	_gh_pr_checks_observation_cache_get "$slug" "$pr_number" "$mode" "$head_sha" || result_code=$?
+	[[ "$_GH_PR_CHECKS_OBSERVATION_CACHE_HIT" == 0 ]] || return "$result_code"
+	while [[ "$attempts" -lt 2 ]]; do
+		attempts=$((attempts + 1))
+		if ! gh_request_state_singleflight_begin "$request_key"; then
+			gh_pr_checks_exact_json "$slug" "$pr_number" "$mode" "$head_sha"
+			return $?
+		fi
+		generation="$_GHRS_BEGIN_GENERATION"
+		case "$_GHRS_BEGIN_ROLE" in
+		leader)
+			result_code=0
+			_gh_pr_checks_observation_cache_get "$slug" "$pr_number" "$mode" "$head_sha" || result_code=$?
+			if [[ "$_GH_PR_CHECKS_OBSERVATION_CACHE_HIT" == 1 ]]; then
+				gh_request_state_singleflight_finish "$request_key" "$generation" success || true
+				return "$result_code"
+			fi
+			invalidation_generation="$(_gh_pr_checks_observation_invalidation_generation "$slug" "$pr_number" "$mode" "$head_sha")" || invalidation_generation=""
+			if [[ -z "$invalidation_generation" ]]; then
+				gh_request_state_singleflight_finish "$request_key" "$generation" failure || true
+				gh_pr_checks_exact_json "$slug" "$pr_number" "$mode" "$head_sha"
+				return $?
+			fi
+			result_code=0
+			_gh_pr_checks_observation_fetch_and_cache "$slug" "$pr_number" "$mode" "$head_sha" \
+				"$request_key" "$generation" "$invalidation_generation" || result_code=$?
+			if [[ "$result_code" -eq 0 || "$result_code" -eq 1 || "$result_code" -eq 8 ]]; then
+				gh_request_state_singleflight_finish "$request_key" "$generation" success || true
+				return "$result_code"
+			fi
+			gh_request_state_singleflight_finish "$request_key" "$generation" failure || true
+			if [[ "$result_code" -eq "$_GH_PR_CHECKS_OBSERVATION_COORDINATION_EXIT" ]]; then
+				gh_pr_checks_exact_json "$slug" "$pr_number" "$mode" "$head_sha"
+				return $?
+			fi
+			return 2
+			;;
+		follower-success)
+			result_code=0
+			_gh_pr_checks_observation_cache_get "$slug" "$pr_number" "$mode" "$head_sha" || result_code=$?
+			[[ "$_GH_PR_CHECKS_OBSERVATION_CACHE_HIT" == 0 ]] || return "$result_code"
+			[[ "$attempts" -lt 2 ]] || return 2
+			;;
+		follower-failure | timeout)
+			_gh_pr_checks_exact_error "error_kind=github-api-read-deferred attempted=false deferred_by=singleflight retry_at=unknown operation=exact-observation"
+			return 2
+			;;
+		bypass)
+			gh_pr_checks_exact_json "$slug" "$pr_number" "$mode" "$head_sha"
+			return $?
+			;;
+		*)
+			gh_pr_checks_exact_json "$slug" "$pr_number" "$mode" "$head_sha"
+			return $?
+			;;
+		esac
+	done
+	return 2
+}
+
+gh_pr_checks_observation_invalidate() {
+	local slug="$1" pr_number="$2" mode="$3" head_sha="$4"
+	local invalidation_key=""
+	local request_key=""
+	local path=""
+	invalidation_key="$(_gh_pr_checks_observation_invalidation_key "$slug" "$pr_number" "$mode" "$head_sha")" || return 1
+	request_key="$(_gh_pr_checks_observation_request_key "$slug" "$pr_number" "$mode" "$head_sha")" || return 1
+	gh_request_state_invalidate "$invalidation_key" || return 1
+	path="$(_gh_pr_checks_observation_cache_path "$request_key")" || return 0
+	rm -f "$path"
+	return $?
 }
 
 #######################################

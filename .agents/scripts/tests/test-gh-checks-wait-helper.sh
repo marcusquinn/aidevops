@@ -39,6 +39,16 @@ assert_contains() {
 	return 0
 }
 
+assert_eq() {
+	local name="$1" expected="$2" actual="$3"
+	if [[ "$actual" == "$expected" ]]; then
+		pass "$name"
+	else
+		fail "$name" "expected ${expected}, got ${actual}"
+	fi
+	return 0
+}
+
 write_fixture() {
 	local directory="$1"
 	local number="$2"
@@ -53,6 +63,7 @@ run_fixture_wait() {
 	shift
 	AIDEVOPS_GH_CHECKS_FIXTURE_DIR="$fixture_dir" \
 		AIDEVOPS_GH_CHECKS_TEST_NO_SLEEP=1 \
+		AIDEVOPS_GH_SINGLEFLIGHT_DISABLE=1 \
 		AIDEVOPS_GH_CHECKS_TEST_HEAD="${AIDEVOPS_GH_CHECKS_TEST_HEAD_OVERRIDE-fixture-head}" \
 		"$HELPER" wait 123 --repo example/repo --initial-interval 1 --max-interval 4 "$@"
 	return $?
@@ -91,10 +102,20 @@ mkdir -p "$live_bin"
 cat >"${live_bin}/gh" <<'STUB'
 #!/usr/bin/env bash
 if [[ "${1:-}" == "pr" && "${2:-}" == "view" ]]; then
-	printf '%s\n' 'live-head'
+	printf '%s\n' '0123456789abcdef0123456789abcdef01234567'
 	exit 0
 fi
 if [[ "${1:-}" == "api" && "${2:-}" == "repos/example/repo/pulls/123" ]]; then
+	if [[ "${GH_TEST_MODE:-no-required}" == "local-deferral" || "${GH_TEST_MODE:-no-required}" == "local-deferral-once" ]]; then
+		count=0
+		[[ ! -s "${GH_TEST_CALL_COUNT:-}" ]] || count=$(<"$GH_TEST_CALL_COUNT")
+		count=$((count + 1))
+		printf '%s\n' "$count" >"$GH_TEST_CALL_COUNT"
+		if [[ "${GH_TEST_MODE:-no-required}" == "local-deferral" || "$count" -eq 1 ]]; then
+			printf '[gh-transport] error_kind=github-api-read-deferred attempted=false deferred_by=local_admission retry_at=%s reason="fixture"\n' "${GH_TEST_RETRY_AT:-1010}" >&2
+			exit 75
+		fi
+	fi
 	printf '%s\n' '{"number":123,"node_id":"PR_fixture","head":{"ref":"feature/test","sha":"0123456789abcdef0123456789abcdef01234567"}}'
 	exit 0
 fi
@@ -110,17 +131,54 @@ exit 1
 STUB
 chmod +x "${live_bin}/gh"
 
-live_no_required_output=$(PATH="${live_bin}:$PATH" AIDEVOPS_GH_CHECKS_TEST_NO_SLEEP=1 \
+live_no_required_output=$(PATH="${live_bin}:$PATH" AIDEVOPS_GH_CHECKS_TEST_NO_SLEEP=1 AIDEVOPS_GH_SINGLEFLIGHT_DISABLE=1 \
 	"$HELPER" wait 123 --repo example/repo --timeout 0 2>&1)
 assert_contains "canonical no-required message is explicit terminal success" "PASS: verified no required checks; optional checks were not evaluated" "$live_no_required_output"
 
 set +e
-live_api_error_output=$(PATH="${live_bin}:$PATH" GH_TEST_MODE=api-error AIDEVOPS_GH_CHECKS_TEST_NO_SLEEP=1 \
+live_api_error_output=$(PATH="${live_bin}:$PATH" GH_TEST_MODE=api-error AIDEVOPS_GH_CHECKS_TEST_NO_SLEEP=1 AIDEVOPS_GH_SINGLEFLIGHT_DISABLE=1 \
 	"$HELPER" wait 123 --repo example/repo --timeout 0 2>&1)
 live_api_error_rc=$?
 set -e
 [[ "$live_api_error_rc" -eq 2 ]] && pass "exact-read API error remains indeterminate" || fail "exact-read API error remains indeterminate" "got ${live_api_error_rc}"
-assert_contains "exact-read API error is diagnosed" "state unavailable" "$live_api_error_output"
+assert_contains "exact-read API error is diagnosed" "attempted GitHub/API read failed" "$live_api_error_output"
+
+deferral_count_file="${TMPDIR_TEST}/deferral-count"
+deferral_sleep_log="${TMPDIR_TEST}/deferral-sleeps"
+: >"$deferral_count_file"
+: >"$deferral_sleep_log"
+deferral_output=$(PATH="${live_bin}:$PATH" GH_TEST_MODE=local-deferral-once GH_TEST_CALL_COUNT="$deferral_count_file" \
+	AIDEVOPS_GH_CHECKS_TEST_NO_SLEEP=1 AIDEVOPS_GH_CHECKS_TEST_NOW_EPOCH=1000 \
+	AIDEVOPS_GH_CHECKS_TEST_SLEEP_LOG="$deferral_sleep_log" AIDEVOPS_GH_CHECKS_DEFERRAL_JITTER_SECONDS=0 \
+	AIDEVOPS_GH_SINGLEFLIGHT_DISABLE=1 "$HELPER" wait 123 --repo example/repo --timeout 30 2>&1)
+assert_contains "local admission emits one actionable transition" "deferred by local-admission until epoch 1010" "$deferral_output"
+assert_contains "local admission recovery is explicit" "GitHub check observation recovered" "$deferral_output"
+assert_eq "local admission sleeps to the known deadline" "10" "$(<"$deferral_sleep_log")"
+deferral_message_count=$(printf '%s\n' "$deferral_output" | grep -c 'deferred by local-admission' || true)
+[[ "$deferral_message_count" -eq 1 ]] && pass "local admission warning is not repeated" || fail "local admission warning is not repeated" "count ${deferral_message_count}"
+
+: >"$deferral_count_file"
+set +e
+beyond_timeout_output=$(PATH="${live_bin}:$PATH" GH_TEST_MODE=local-deferral GH_TEST_CALL_COUNT="$deferral_count_file" \
+	AIDEVOPS_GH_CHECKS_TEST_NO_SLEEP=1 AIDEVOPS_GH_CHECKS_TEST_NOW_EPOCH=1000 \
+	AIDEVOPS_GH_CHECKS_DEFERRAL_JITTER_SECONDS=0 AIDEVOPS_GH_SINGLEFLIGHT_DISABLE=1 \
+	"$HELPER" wait 123 --repo example/repo --timeout 5 2>&1)
+beyond_timeout_rc=$?
+set -e
+[[ "$beyond_timeout_rc" -eq 2 ]] && pass "deadline beyond timeout is indeterminate" || fail "deadline beyond timeout is indeterminate" "got ${beyond_timeout_rc}"
+assert_contains "deadline beyond timeout is explicit" "beyond the remaining 5s timeout" "$beyond_timeout_output"
+
+: >"$deferral_count_file"
+set +e
+equal_timeout_output=$(PATH="${live_bin}:$PATH" GH_TEST_MODE=local-deferral-once GH_TEST_CALL_COUNT="$deferral_count_file" \
+	GH_TEST_RETRY_AT=1005 AIDEVOPS_GH_CHECKS_TEST_NO_SLEEP=1 AIDEVOPS_GH_CHECKS_TEST_NOW_EPOCH=1000 \
+	AIDEVOPS_GH_CHECKS_DEFERRAL_JITTER_SECONDS=0 AIDEVOPS_GH_SINGLEFLIGHT_DISABLE=1 \
+	"$HELPER" wait 123 --repo example/repo --timeout 5 2>&1)
+equal_timeout_rc=$?
+set -e
+[[ "$equal_timeout_rc" -eq 2 ]] && pass "deadline at timeout is indeterminate" || fail "deadline at timeout is indeterminate" "got ${equal_timeout_rc}"
+assert_eq "deadline at timeout performs no follow-up identity read" "1" "$(<"$deferral_count_file")"
+assert_contains "deadline at timeout is explicit" "beyond the remaining 5s timeout" "$equal_timeout_output"
 
 mixed_skipping_dir="${TMPDIR_TEST}/mixed-skipping"
 write_fixture "$mixed_skipping_dir" 1 '[{"name":"Required","workflow":"CI","state":"SUCCESS","bucket":"pass","link":""},{"name":"Optional","workflow":"CI","state":"SKIPPED","bucket":"skipping","link":""}]'
@@ -166,7 +224,7 @@ recovery_dir="${TMPDIR_TEST}/recovery"
 write_fixture "$recovery_dir" 1 'not-json'
 write_fixture "$recovery_dir" 2 '[{"name":"Recovered","workflow":"CI","state":"SUCCESS","bucket":"pass","link":""}]'
 recovery_output=$(run_fixture_wait "$recovery_dir" 2>&1)
-assert_contains "API failure is visible" "state unavailable" "$recovery_output"
+assert_contains "malformed evidence is visible" "required-check evidence was malformed" "$recovery_output"
 assert_contains "API recovery is visible" "API state recovered" "$recovery_output"
 assert_contains "API recovery can reach success" "PASS: required checks completed" "$recovery_output"
 

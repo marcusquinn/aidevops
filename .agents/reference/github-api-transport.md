@@ -156,6 +156,33 @@ evidence before tuning defaults or claiming an integrated benchmark pass.
 Rollback: `AIDEVOPS_GH_TRANSPORT_GOVERNOR_DISABLE=1` disables the read adapter,
 not shared cooldown. It does not authorize bypassing signatures or safety gates.
 
+## Exact required-check observations
+
+The long-running required-check waiter preserves structured transport outcomes
+from exact identity and paginated status-rollup reads. A proven unattempted local
+admission uses its `retry_at`; an active secondary cooldown uses `expires_at`.
+When the deadline fits inside the waiter's overall timeout, the waiter sleeps to
+that deadline with bounded jitter and performs no intermediate GitHub request.
+Deadlines beyond the timeout return an explicit indeterminate result. Attempted
+API failures and malformed evidence remain separate diagnostics, and deferral
+plus recovery messages are transition-only.
+
+`gh_pr_checks_observed_json` coalesces only short-lived observational reads for
+the waiter. Its request identity includes repository, PR, full head SHA,
+required/all mode, projection version, API pool, and a hashed auth scope. The
+mode-600 payload is validated before reuse and expires after five seconds by
+default (maximum 30). Lease ownership and auth-independent invalidation
+generation are rechecked immediately before publication; a PR-head mismatch
+cannot publish under the old key. Scope or coordination failure falls back to a
+fresh exact read rather than sharing across an uncertain boundary.
+
+This cache grants no merge authority. `gh_pr_checks_exact_json` remains the
+uncached action-boundary API used by merge and other consequential gates. The
+waiter also performs fresh PR-head reads around terminal observation. Use
+`gh_pr_checks_observation_invalidate` when a verified event invalidates one exact
+repository/PR/head/mode identity. Rollback can disable shared coordination with
+`AIDEVOPS_GH_SINGLEFLIGHT_DISABLE=1`; direct exact reads remain available.
+
 ## Pulse scheduling versus request admission
 
 Pulse scheduling hints do not reserve quota a second time. REST progress work
@@ -220,6 +247,9 @@ python3 .agents/scripts/tests/test-gh-transport-budget.py
 bash .agents/scripts/tests/test-gh-shim.sh
 bash .agents/scripts/tests/test-gh-api-instrument.sh
 bash .agents/scripts/tests/test-gh-wrapper-rest-fallback.sh
+bash .agents/scripts/tests/test-gh-pr-checks-exact-json.sh
+bash .agents/scripts/tests/test-gh-checks-wait-helper.sh
+bash .agents/scripts/tests/test-gh-request-singleflight.sh
 bash .agents/scripts/tests/test-pulse-issue-reconcile.sh
 bash tests/test-peer-productivity-monitor.sh
 bash .agents/scripts/tests/test-pulse-dispatch-dirty-worktree-marker.sh
