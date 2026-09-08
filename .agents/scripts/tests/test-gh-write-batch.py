@@ -142,7 +142,8 @@ class BatchTests(unittest.TestCase):
             ]
         )
         preflight = self.preflight(prepared)
-        _, preflight_variables = BATCH.preflight_query(prepared)
+        preflight_query, preflight_variables = BATCH.preflight_query(prepared)
+        self.assertEqual(preflight_query.count("{"), preflight_query.count("}"))
         self.assertEqual(preflight_variables["label0"], "alpha")
         self.assertEqual(preflight_variables["label1"], "zeta")
         mutation = {"data": {"o0": {"clientMutationId": "labels"}, "o1": {"clientMutationId": "edit", "issue": {"id": "T1", "number": 4}}}}
@@ -153,6 +154,12 @@ class BatchTests(unittest.TestCase):
         self.assertEqual(result, 0)
         self.assertEqual(receipt["overall"], "succeeded")
         self.assertEqual({op["status"] for op in receipt["operations"]}, {"succeeded"})
+
+    def test_pr_edit_uses_graphql_pull_request_identifier(self) -> None:
+        prepared = self.prepare([{"id": "edit", "kind": "pr_edit", "number": 4, "title": "Updated"}])
+        label_ids, already = BATCH.validate_preflight(prepared, self.preflight(prepared))
+        query, _, _ = BATCH.mutation(prepared, label_ids, already, BATCH.checked_body)
+        self.assertIn("pullRequestId:$target0", query)
 
     def test_partial_and_graphql_errors_fail_closed(self) -> None:
         prepared, preflight = self.two_comment_batch()

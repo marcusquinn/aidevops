@@ -28,8 +28,13 @@ def preflight_query(prepared: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         comments = ""
         if prepared.get("recovery_of") and operation["kind"].endswith("_comment"):
             comments = " comments(last:100){nodes{body} pageInfo{hasPreviousPage}}"
+        target_fields = (
+            "id number title body "
+            f"labels(first:100){{nodes{{id name}} pageInfo{{hasNextPage}}}}{comments}"
+        )
         fields.append(
-            f't{index}:issueOrPullRequest(number:$number{index}){{__typename ... on Issue{{id number title body labels(first:100){{nodes{{id name}} pageInfo{{hasNextPage}}}}{comments}}} ... on PullRequest{{id number title body labels(first:100){{nodes{{id name}} pageInfo{{hasNextPage}}}}{comments}}}}}}}'
+            f"t{index}:issueOrPullRequest(number:$number{index}){{__typename "
+            f"... on Issue{{{target_fields}}} ... on PullRequest{{{target_fields}}}}}"
         )
     for index, label in enumerate(labels):
         declarations.append(f"$label{index}:String!")
@@ -46,8 +51,10 @@ def comment_mutation(index: int, alias: str, operation: dict[str, Any], build: M
 
 
 def edit_mutation(index: int, alias: str, operation: dict[str, Any], build: MutationBuild) -> str:
-    mutation_name = "updatePullRequest" if operation["kind"] == "pr_edit" else "updateIssue"
-    inputs = [f"id:$target{index}", f"clientMutationId:$client{index}"]
+    pull_request = operation["kind"] == "pr_edit"
+    mutation_name = "updatePullRequest" if pull_request else "updateIssue"
+    id_field = "pullRequestId" if pull_request else "id"
+    inputs = [f"{id_field}:$target{index}", f"clientMutationId:$client{index}"]
     for field in ("title", "body"):
         operation_key = "body_file" if field == "body" else field
         if operation_key not in operation:
@@ -57,7 +64,7 @@ def edit_mutation(index: int, alias: str, operation: dict[str, Any], build: Muta
             build.body_loader(operation) if field == "body" else operation[operation_key]
         )
         inputs.append(f"{field}:${field}{index}")
-    result_name = "pullRequest" if operation["kind"] == "pr_edit" else "issue"
+    result_name = "pullRequest" if pull_request else "issue"
     return f'{alias}:{mutation_name}(input:{{{",".join(inputs)}}}){{clientMutationId {result_name}{{id number}}}}'
 
 
