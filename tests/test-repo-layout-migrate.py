@@ -322,7 +322,21 @@ class RepoLayoutMigrationTest(unittest.TestCase):
         self.destination.rmdir()
         self.destination.parent.rmdir()
 
-        summary = self._plan()
+        active_plan = self._run(
+            "plan",
+            "--workspace",
+            str(self.workspace),
+            "--output",
+            str(self.plan),
+            "--repos-json",
+            str(self.repos_json),
+            "--include-registered-paths",
+            cwd=self.source,
+        )
+        summary = json.loads(active_plan.stdout)
+        self.assertTrue(summary["active_path_handoff_required"])
+        self.assertGreaterEqual(summary["active_path_consumers"], 1)
+        self.assertIn("migrate-layout apply", summary["resume_command"])
         active = self._run(
             "apply",
             "--plan",
@@ -334,6 +348,8 @@ class RepoLayoutMigrationTest(unittest.TestCase):
         )
         self.assertEqual(active.returncode, 2)
         self.assertIn("Active-path ambiguity", active.stderr)
+        self.assertIn("Run /checkpoint", active.stderr)
+        self.assertIn(summary["resume_command"], active.stderr)
         self.assertTrue(self.source.is_dir())
 
     def test_refusal_for_unexpected_linked_pointer(self) -> None:

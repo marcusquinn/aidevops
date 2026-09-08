@@ -11,6 +11,7 @@ import importlib.util
 import json
 import os
 import re
+import shlex
 import shutil
 import sqlite3
 import stat
@@ -591,13 +592,29 @@ def plan_command(args: argparse.Namespace) -> int:
     if any(item["source_device"] != item["destination_device"] for item in repositories):
         raise MigrationError("Cross-device move detected; no plan was written")
     atomic_write(output, canonical_bytes(plan))
+    active_path_consumers = len(active_path_matches(plan))
+    resume_command = shlex.join(
+        [
+            "aidevops",
+            "repos",
+            "migrate-layout",
+            "apply",
+            "--plan",
+            str(output),
+            "--confirm",
+            plan["plan_sha256"],
+        ]
+    )
     print(
         json.dumps(
             {
+                "active_path_consumers": active_path_consumers,
+                "active_path_handoff_required": active_path_consumers > 0,
                 "plan": str(output),
                 "plan_sha256": plan["plan_sha256"],
                 "moves": len(repositories),
                 "exclusions": len(exclusions),
+                "resume_command": resume_command,
             },
             sort_keys=True,
         )
@@ -882,8 +899,8 @@ def release_lock(lock: Path) -> None:
         pass
 
 
-def assert_no_active_path(plan: dict[str, Any]) -> None:
-    """Reject observed process working directories below a planned path."""
+def active_path_matches(plan: dict[str, Any]) -> set[Path]:
+    """Return observed process working directories below a planned path."""
     current = Path.cwd().resolve()
     active_directories = [current]
     lsof = shutil.which("lsof")
@@ -904,14 +921,26 @@ def assert_no_active_path(plan: dict[str, Any]) -> None:
                 )
         except (OSError, subprocess.TimeoutExpired):
             pass
+    matches: set[Path] = set()
     for item in plan["repositories"]:
         source = Path(item["source"])
         destination = Path(item["destination"])
         for active in active_directories:
             if path_is_inside(source, active) or path_is_inside(destination, active):
-                raise MigrationError(
-                    "Active-path ambiguity: a process cwd is inside a planned repository"
-                )
+                matches.add(active)
+    return matches
+
+
+def assert_no_active_path(plan: dict[str, Any], resume_command: str) -> None:
+    """Reject active paths with a safe checkpoint-and-restart handoff."""
+    if not active_path_matches(plan):
+        return
+    raise MigrationError(
+        "Active-path ambiguity: a process cwd is inside a planned repository. "
+        "Run /checkpoint, exit every process using the source or destination, "
+        "restart from a directory outside both paths, then resume with: "
+        f"{resume_command}"
+    )
 
 
 def validate_repository_plan(
@@ -1412,7 +1441,19 @@ def apply_command(args: argparse.Namespace) -> int:
         if "migration:complete" in completed:
             print(json.dumps(receipt_status(receipt_id, receipt_dir, journal), sort_keys=True))
             return 0
-        assert_no_active_path(plan)
+        resume_command = shlex.join(
+            [
+                "aidevops",
+                "repos",
+                "migrate-layout",
+                "apply",
+                "--plan",
+                str(plan_path),
+                "--confirm",
+                args.confirm,
+            ]
+        )
+        assert_no_active_path(plan, resume_command)
         validate_apply_repositories(plan, completed, events)
         validate_consumers(plan, completed, events)
         context = (journal, events, completed)
@@ -1991,7 +2032,19 @@ def rollback_command(args: argparse.Namespace) -> int:
         if "migration:rolled-back" in completed:
             print(json.dumps(receipt_status(receipt_id, directory, journal), sort_keys=True))
             return 0
-        assert_no_active_path(plan)
+        resume_arguments = [
+            "aidevops",
+            "repos",
+            "migrate-layout",
+            "rollback",
+            "--receipt",
+            args.receipt,
+            "--confirm",
+            args.confirm,
+        ]
+        if args.state_dir:
+            resume_arguments.extend(["--state-dir", args.state_dir])
+        assert_no_active_path(plan, shlex.join(resume_arguments))
         for index in reversed(range(len(plan["consumers"].get("markers", [])))):
             key = f"consumer:marker:{index}"
             event = event_for_key(events, key)

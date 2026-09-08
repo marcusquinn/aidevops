@@ -3,6 +3,14 @@
 
 import { spawn } from "node:child_process";
 
+const MAX_READ_BYTES = 128 * 1024;
+
+function captureBounded(current, chunk) {
+  if (Buffer.byteLength(current) >= MAX_READ_BYTES) return current;
+  const remaining = MAX_READ_BYTES - Buffer.byteLength(current);
+  return current + Buffer.from(chunk).subarray(0, remaining).toString("utf8");
+}
+
 export function createOutputSandboxRecorder(helperPath, spawnImpl = spawn, timeoutMs = 5000) {
   const activeChildren = new Set();
   const recorder = (content, evidence = {}) => new Promise((resolve) => {
@@ -41,4 +49,51 @@ export function createOutputSandboxRecorder(helperPath, spawnImpl = spawn, timeo
     activeChildren.clear();
   };
   return recorder;
+}
+
+export function createOutputSandboxReader(helperPath, spawnImpl = spawn, timeoutMs = 5000) {
+  const activeChildren = new Set();
+  const reader = (outputID, { offset, limit }) => new Promise((resolve, reject) => {
+    const child = spawnImpl("bash", [
+      helperPath, "show", outputID, "--offset", String(offset), "--limit", String(limit),
+    ], { stdio: ["ignore", "pipe", "pipe"] });
+    activeChildren.add(child);
+    let stdout = "";
+    let stderr = "";
+    let truncated = false;
+    let settled = false;
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      activeChildren.delete(child);
+      if (error) reject(error);
+      else resolve({ output: stdout, redacted: /redacted before storage/i.test(stderr), truncated });
+    };
+    const timer = setTimeout(() => {
+      if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+      finish(new Error("stored output retrieval timed out"));
+    }, timeoutMs);
+    child.stdout?.on("data", (chunk) => {
+      const next = captureBounded(stdout, chunk);
+      if (Buffer.byteLength(next) < Buffer.byteLength(stdout) + Buffer.byteLength(chunk)) truncated = true;
+      stdout = next;
+    });
+    child.stderr?.on("data", (chunk) => { stderr = captureBounded(stderr, chunk); });
+    child.once("error", () => finish(new Error("stored output retrieval is unavailable")));
+    child.once("close", (code) => {
+      if (code !== 0) {
+        finish(new Error(stderr.trim() || "stored output is unavailable"));
+        return;
+      }
+      finish();
+    });
+  });
+  reader.dispose = () => {
+    for (const child of activeChildren) {
+      if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+    }
+    activeChildren.clear();
+  };
+  return reader;
 }

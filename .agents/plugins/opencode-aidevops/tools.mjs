@@ -5,7 +5,7 @@ import { createGptImageTool } from "./gpt-image-tool.mjs";
 import { createMcpActivationTool } from "./mcp-activation-tool.mjs";
 import { createPreEditCheckTool } from "./pre-edit-check-tool.mjs";
 import { BoundedInteractiveOperationManager } from "./bounded-interactive-operation.mjs";
-import { createOutputSandboxRecorder } from "./bounded-operation-output.mjs";
+import { createOutputSandboxReader, createOutputSandboxRecorder } from "./bounded-operation-output.mjs";
 import { createBoundedInteractiveOperationTool } from "./bounded-operation-tool.mjs";
 
 const FALLBACK_SCHEMA_NODE = {
@@ -226,6 +226,7 @@ export function createTools(scriptsDir, run, options = {}) {
     projectRoot: options.projectRoot || process.cwd(),
     scriptsDir,
     recordOutput: createOutputSandboxRecorder(join(scriptsDir, "output-sandbox-helper.sh")),
+    readOutput: createOutputSandboxReader(join(scriptsDir, "output-sandbox-helper.sh")),
   });
 
   const tools = {

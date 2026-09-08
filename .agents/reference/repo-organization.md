@@ -75,6 +75,11 @@ aidevops repos migrate-layout rollback --receipt <receipt-id> --confirm <receipt
 
 `plan` is non-mutating. It inventories dirty state, branches, stashes,
 submodules, linked worktrees, registrations, local consumers, and collisions.
+Its summary also reports active-path consumers and the exact confirmed apply
+command to resume. When a source or destination is active, save a session
+checkpoint with `/checkpoint`, exit every process using either path, restart
+from outside both paths, and run that resume command. The migration does not
+create compatibility symlinks for a live process.
 Explicit `initialized_repos[].path` entries remain excluded unless planning uses
 `--include-registered-paths`; that approval is recorded in the content-hashed
 plan. Apply rechecks the complete before-state, rejects cross-device moves and

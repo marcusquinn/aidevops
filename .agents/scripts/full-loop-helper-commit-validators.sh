@@ -115,7 +115,7 @@ _validator_scopes() {
 			_validator_all_workspace_scopes "$workspace_patterns"
 			return $?
 		fi
-		if ! _validator_workspace_matches "$scope" "$workspace_patterns"; then
+		if ! _validator_workspace_matches "$scope" "$workspace_patterns" && ! _validator_package_has_check "$scope/package.json"; then
 			print_error "[validators] cannot map changed Node file to a declared workspace: $changed_file"
 			print_error "[validators] add a package-level check script or correct package.json workspaces before publication"
 			return 1
@@ -137,6 +137,7 @@ _validator_select_script() {
 	format) candidates=$'format:check\ncheck:format\nprettier:check' ;;
 	lint) candidates=$'lint:check\nlint' ;;
 	typecheck) candidates=$'typecheck\ncheck:types\ntsc' ;;
+	test) candidates='test' ;;
 	esac
 	while IFS= read -r script_name; do
 		if jq -e --arg s "$script_name" '.scripts[$s] // empty' "$package_json" >/dev/null 2>&1; then
@@ -149,7 +150,7 @@ _validator_select_script() {
 
 _validator_package_has_check() {
 	local package_json="$1" phase=""
-	for phase in format lint typecheck; do
+	for phase in format lint typecheck test; do
 		_validator_select_script "$package_json" "$phase" >/dev/null && return 0
 	done
 	return 1
@@ -181,7 +182,7 @@ _run_scoped_node_checks() {
 		scope_label="$scope"
 	fi
 	local phase="" script_name="" check_count=0 command_rc=0 check_index=0
-	for phase in format lint typecheck; do
+	for phase in format lint typecheck test; do
 		script_name=$(_validator_select_script "$package_json" "$phase") || continue
 		check_count=$((check_count + 1))
 		check_index=$((check_index + 1))

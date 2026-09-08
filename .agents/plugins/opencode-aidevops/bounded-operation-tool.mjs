@@ -10,13 +10,15 @@ function responseError(message) {
 export function createBoundedInteractiveOperationTool(tool, z, manager) {
   return tool({
     description:
-      "Start, inspect, or cancel a bounded long-running command without blocking the interactive session. " +
-      "Use start for operations expected to exceed the progress interval, then call status periodically. " +
+      "Start, inspect, retrieve output from, or cancel a bounded long-running command without blocking the interactive session. " +
+      "Use start for operations expected to exceed the progress interval, call status periodically, then use output with the operation ID after it reaches a terminal state. " +
       "Commands are argv arrays, remain confined to the active project root, and must not daemonize or create a new process session. " +
       "Cancellation is session-owned and restoration evidence remains explicit.",
     args: {
-      action: z.enum(["start", "status", "cancel"]),
+      action: z.enum(["start", "status", "output", "cancel"]),
       operation_id: z.string().optional(),
+      output_offset: z.number().optional(),
+      output_limit: z.number().optional(),
       command: z.array(z.string()).optional(),
       cwd: z.string().optional(),
       budget_seconds: z.number().optional(),
@@ -38,6 +40,11 @@ export function createBoundedInteractiveOperationTool(tool, z, manager) {
           }, context);
         } else if (args.action === "status") {
           receipt = manager.status(args.operation_id, context);
+        } else if (args.action === "output") {
+          receipt = await manager.output(args.operation_id, context, {
+            offset: args.output_offset,
+            limit: args.output_limit,
+          });
         } else if (args.action === "cancel") {
           receipt = manager.cancel(args.operation_id, context);
         } else {

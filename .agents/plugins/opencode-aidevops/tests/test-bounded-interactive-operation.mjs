@@ -7,8 +7,11 @@ import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, test } from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { BoundedInteractiveOperationManager } from "../bounded-interactive-operation.mjs";
+import { createOutputSandboxReader, createOutputSandboxRecorder } from "../bounded-operation-output.mjs";
+import { createBoundedInteractiveOperationTool } from "../bounded-operation-tool.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "aidevops-bounded-operation-"));
 const owner = { sessionID: "ses_owner" };
@@ -28,6 +31,11 @@ function manager(options = {}) {
       recorded.push({ content: String(content), evidence });
       return `out_fixture_${recorded.length}`;
     },
+    readOutput: async (outputID, bounds) => ({
+      output: `${bounds.offset}: output for ${outputID}\n`,
+      redacted: false,
+      truncated: false,
+    }),
     ...options,
   });
   managers.push(instance);
@@ -250,6 +258,58 @@ describe("bounded interactive operations", () => {
     }, owner);
     await terminal(instance, newlineFree.operation_id);
     assert.ok(instance.operations.get(newlineFree.operation_id).progressRemainder.length <= 4096);
+  });
+
+  test("terminal output retrieval is bounded and session-owned", async () => {
+    const instance = manager();
+    const started = await instance.start({
+      command: [process.execPath, "-e", "console.log('retrieval-proof')"],
+      budgetMs: 1000,
+    }, owner);
+    await assert.rejects(instance.output(started.operation_id, owner), /only after.*terminal/i);
+    await terminal(instance, started.operation_id);
+
+    const result = await instance.output(started.operation_id, owner, { offset: 2, limit: 10 });
+    assert.equal(result.schema, "aidevops.interactive-operation-output/v1");
+    assert.equal(result.output, `2: output for ${result.output_id}\n`);
+    assert.equal(result.offset, 2);
+    assert.equal(result.limit, 10);
+    await assert.rejects(instance.output(started.operation_id, { sessionID: "ses_other" }), /owner mismatch/);
+    await assert.rejects(instance.output(started.operation_id, owner, { offset: 0 }), /positive integer/);
+    await assert.rejects(instance.output(started.operation_id, owner, { limit: 501 }), /1 to 500/);
+
+    const schemaNode = { optional() { return this; } };
+    const z = { enum: () => schemaNode, string: () => schemaNode, number: () => schemaNode, array: () => schemaNode };
+    const tool = createBoundedInteractiveOperationTool((definition) => definition, z, instance);
+    const toolResult = JSON.parse(await tool.execute({
+      action: "output",
+      operation_id: started.operation_id,
+      output_offset: 3,
+      output_limit: 4,
+    }, owner));
+    assert.equal(toolResult.output, `3: output for ${toolResult.output_id}\n`);
+  });
+
+  test("the sandbox adapter retrieves stored output without exposing its path", async () => {
+    const helper = fileURLToPath(new URL("../../../scripts/output-sandbox-helper.sh", import.meta.url));
+    const previousDirectory = process.env.AIDEVOPS_OUTPUT_SANDBOX_DIR;
+    process.env.AIDEVOPS_OUTPUT_SANDBOX_DIR = join(root, "output-sandbox");
+    const recorder = createOutputSandboxRecorder(helper);
+    const reader = createOutputSandboxReader(helper);
+    try {
+      const outputID = await recorder(Buffer.from("first\nsecond\n"), { exitCode: 0 });
+      assert.match(outputID, /^out_/);
+      const result = await reader(outputID, { offset: 2, limit: 1 });
+      assert.equal(result.output, "2: second\n");
+      assert.equal(result.redacted, false);
+      assert.equal(result.output.includes(process.env.AIDEVOPS_OUTPUT_SANDBOX_DIR), false);
+      await assert.rejects(reader("out_missing", { offset: 1, limit: 1 }), /output not found/);
+    } finally {
+      recorder.dispose();
+      reader.dispose();
+      if (previousDirectory === undefined) delete process.env.AIDEVOPS_OUTPUT_SANDBOX_DIR;
+      else process.env.AIDEVOPS_OUTPUT_SANDBOX_DIR = previousDirectory;
+    }
   });
 
   test("session deletion cancels only operations owned by that session", async () => {
