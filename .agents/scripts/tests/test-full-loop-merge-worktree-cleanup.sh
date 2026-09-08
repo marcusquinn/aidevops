@@ -374,11 +374,17 @@ test_cmd_merge_defers_current_linked_worktree() {
 		 and (.owner.pid | type == "number") and (.owner.process_identity | length > 0)' \
 		"$receipt_path" >/dev/null || rc=1
 	cmd_record_no_release "123" "example/repo" >/dev/null || rc=1
+	# An initialized-only direct-completion executor differs from the merge
+	# executor that owns the existing receipt. Completion must preserve that
+	# immutable owner evidence and converge through canonical finalization.
+	jq '.owner.session = "merge-executor-session"' "$receipt_path" >"${receipt_path}.tmp" || rc=1
+	mv "${receipt_path}.tmp" "$receipt_path" || rc=1
 	cmd_complete >/dev/null || rc=1
 	jq -e '
 		.executor_completion_state == "COMPLETE"
 		and .resource_cleanup_state == "CLEANUP_DEFERRED"
 		and .release_status == "not-requested"
+		and .owner.session == "merge-executor-session"
 	' "$receipt_path" >/dev/null || rc=1
 	cp "$receipt_path" "${TEST_ROOT}/completed-receipt.json"
 	cmd_complete >/dev/null || rc=1

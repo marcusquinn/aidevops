@@ -2051,9 +2051,12 @@ cmd_complete() {
 	fi
 	receipt_path=$(_full_loop_cleanup_receipt_path "$repo" "$PR_NUMBER") || return 1
 	if [[ -f "$receipt_path" ]]; then
+		# A merged direct-completion receipt can belong to the merge executor rather
+		# than this initialized-only executor. Finalize through the same canonical
+		# terminal-evidence path as `finalize-receipt` so immutable receipt identity
+		# remains preserved instead of requiring the current process identity.
 		full_loop_finalize_cleanup_receipt "$repo" "$PR_NUMBER" \
-			"${RELEASE_STATUS:-$_FULL_LOOP_RELEASE_NOT_REQUESTED}" "$current_root" "$current_branch" \
-			"$owner_pid" "$owner_session" || {
+			"${RELEASE_STATUS:-$_FULL_LOOP_RELEASE_NOT_REQUESTED}" || {
 			print_error "Cannot finalize durable deferred-cleanup handoff"
 			return 1
 		}
@@ -2061,8 +2064,7 @@ cmd_complete() {
 		"$owner_pid" "$owner_session" "${RELEASE_STATUS:-$_FULL_LOOP_RELEASE_NOT_REQUESTED}" >/dev/null; then
 		# A merge process may have created the receipt after the existence check.
 		full_loop_finalize_cleanup_receipt "$repo" "$PR_NUMBER" \
-			"${RELEASE_STATUS:-$_FULL_LOOP_RELEASE_NOT_REQUESTED}" "$current_root" "$current_branch" \
-			"$owner_pid" "$owner_session" || {
+			"${RELEASE_STATUS:-$_FULL_LOOP_RELEASE_NOT_REQUESTED}" || {
 			print_error "Cannot persist durable deferred-cleanup handoff"
 			return 1
 		}
