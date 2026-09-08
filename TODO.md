@@ -1340,7 +1340,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18401 Restore profile activity reporting #bug #framework #interactive ref:GH#31199 -> [todo/tasks/t18401-brief.md] pr:#31200 completed:2026-09-05
 
-- [ ] t18413 Recover complete comparable Codacy default-branch analysis #codacy #interactive-needed #no-auto-dispatch #quality ref:GH#31457 -> [todo/tasks/t18413-brief.md]
+- [x] t18413 Recover complete comparable Codacy default-branch analysis #codacy #interactive-needed #no-auto-dispatch #quality ref:GH#31457 -> [todo/tasks/t18413-brief.md] pr:#31589 completed:2026-09-08
 
 - [ ] t18414 Audit and correct Codacy policy drift after index recovery #auto-dispatch #codacy #quality #verification blocked-by:t18413 ref:GH#31459 -> [todo/tasks/t18414-brief.md]
 
