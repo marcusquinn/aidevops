@@ -213,7 +213,60 @@ def parse_stage(line):
         'repo': parts[2] if len(parts) > 2 else '',
         'stage': parts[3] if len(parts) > 3 else 'unknown',
         'duration_ms': int(parts[4]) if len(parts) > 4 and str(parts[4]).isdigit() else 0,
+        'event': parts[5] if len(parts) > 5 and parts[5] in {'start', 'complete'} else 'complete',
+        'attempt_id': parts[6] if len(parts) > 6 else '',
+        'cycle_id': parts[7] if len(parts) > 7 else '',
+        'owner_pid': int(parts[8]) if len(parts) > 8 and str(parts[8]).isdigit() else 0,
     }
+
+
+def process_owner_state(pid):
+    if not pid:
+        return 'unknown'
+    try:
+        os.kill(pid, 0)
+        return 'alive'
+    except ProcessLookupError:
+        return 'absent'
+    except (PermissionError, OSError):
+        return 'unknown'
+
+
+def build_stage_execution(stage_records, cycle_state):
+    completed_attempts = {
+        record['attempt_id'] for record in stage_records
+        if record['event'] == 'complete' and record['attempt_id']
+    }
+    executions = []
+    for record in stage_records:
+        if record['event'] != 'start' or not record['attempt_id']:
+            continue
+        if record['attempt_id'] in completed_attempts:
+            continue
+        owner_state = process_owner_state(record['owner_pid'])
+        cycle_supports_liveness = all((
+            cycle_state.get('availability') == 'available',
+            cycle_state.get('cycle_id') == record['cycle_id'],
+            cycle_state.get('outcome') == 'running',
+        ))
+        if owner_state == 'alive' and cycle_supports_liveness:
+            classification = 'in_flight'
+            next_action = 'recheck_owner_and_matching_completion_within_60s'
+        elif owner_state == 'absent':
+            classification = 'interrupted'
+            next_action = 'inspect_matching_cycle_terminal_evidence'
+        else:
+            classification = 'unknown'
+            next_action = 'verify_owner_process_or_cycle_lineage'
+        executions.append({
+            'issue': record['issue'],
+            'stage': record['stage'],
+            'classification': classification,
+            'age_seconds': max(0, int(now - record['ts'])),
+            'cycle_id': record['cycle_id'] or None,
+            'next_diagnostic_action': next_action,
+        })
+    return executions
 
 
 def classify_metric(item):
@@ -567,9 +620,19 @@ if canonical_reconciliation_refusal_count:
 # Keep their resource context, but never credit them as implementation workers.
 worker_metrics = [item for item in metrics if item.get('role') == 'worker']
 metric_class_counts = Counter(classify_metric(item) for item in worker_metrics)
-stage_counts = Counter(record['stage'] for record in stage_records)
-stage_timing = defaultdict(lambda: {'count': 0, 'sum_ms': 0, 'max_ms': 0})
+completed_stage_records = []
+completed_attempt_ids = set()
 for record in stage_records:
+    if record['event'] != 'complete':
+        continue
+    if record['attempt_id'] and record['attempt_id'] in completed_attempt_ids:
+        continue
+    completed_stage_records.append(record)
+    if record['attempt_id']:
+        completed_attempt_ids.add(record['attempt_id'])
+stage_counts = Counter(record['stage'] for record in completed_stage_records)
+stage_timing = defaultdict(lambda: {'count': 0, 'sum_ms': 0, 'max_ms': 0})
+for record in completed_stage_records:
     item = stage_timing[record['stage']]
     item['count'] += 1
     item['sum_ms'] += record['duration_ms']
@@ -684,6 +747,7 @@ prefetch_cache = {
 }
 health_path = os.path.join(log_dir, 'pulse-health.json')
 cycle_state = build_cycle_state(health_path)
+stage_executions = build_stage_execution(stage_records, cycle_state)
 if os.path.exists(health_path):
     try:
         with open(health_path, encoding='utf-8') as health_file:
@@ -735,9 +799,10 @@ resource_recovery = build_resource_recovery_evidence(wrapper_log_lines, worker_m
 
 result = {
     'window_seconds': window_s,
-    'dispatch_stage_events': len(stage_records),
+    'dispatch_stage_events': len(completed_stage_records),
     'dispatch_stage_counts': dict(stage_counts),
     'dispatch_stage_timing_ms': stage_timing_summary,
+    'dispatch_stage_executions': stage_executions,
     'worker_terminal_events': len(worker_metrics),
     'non_worker_terminal_events': len(metrics) - len(worker_metrics),
     'worker_result_counts': dict(metric_class_counts),
@@ -842,6 +907,7 @@ else:
     print(f'- Dispatch alive: {str(result["dispatch_alive"]).lower()}')
     print(f'- Dispatch stage events: {result["dispatch_stage_events"]}')
     print(f'- Dispatch stage counts: {json.dumps(result["dispatch_stage_counts"], sort_keys=True)}')
+    print(f'- Dispatch stages in progress or interrupted: {json.dumps(result["dispatch_stage_executions"], sort_keys=True)}')
     print(f'- Worker terminal events: {result["worker_terminal_events"]} ({result["worker_successes"]} success, {result["worker_failures_or_stalls"]} non-success)')
     print(f'- Worker outcomes: {json.dumps(result["worker_outcomes"], sort_keys=True)}')
     print(f'- Resource context: {json.dumps(result["resource_context"], sort_keys=True)}')

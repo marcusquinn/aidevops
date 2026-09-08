@@ -16,9 +16,15 @@ import json, os, sys, time
 root = sys.argv[1]
 now = time.time()
 iso = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(now))
+old_iso = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(now - 5))
 open(os.path.join(root, 'dispatch-stages.tsv'), 'w').write(
     f'{iso}\t#1\tmarcusquinn/aidevops\tworker_launch_total\t123\n'
     f'{iso}\t#1\tmarcusquinn/aidevops\tceremony_total\t456\n'
+    f'{old_iso}\t#2\tmarcusquinn/aidevops\tdedup.nmr_gate\t0\tstart\tdead-attempt\tcycle-2\t99999999\n'
+    f'{iso}\t#4\tmarcusquinn/aidevops\tdedup.footprint\t0\tstart\tlive-attempt\tcycle-4\t{os.getppid()}\n'
+    f'{iso}\t#3\tmarcusquinn/aidevops\tdedup.label_checks\t0\tstart\tcomplete-attempt\tcycle-3\t99999999\n'
+    f'{iso}\t#3\tmarcusquinn/aidevops\tdedup.label_checks\t25\tcomplete\tcomplete-attempt\tcycle-3\t99999999\n'
+    f'{iso}\t#3\tmarcusquinn/aidevops\tdedup.label_checks\t99\tcomplete\tcomplete-attempt\tcycle-3\t99999999\n'
 )
 open(os.path.join(root, 'headless-runtime-metrics.jsonl'), 'w').write(
     json.dumps({'ts': now, 'role': 'worker', 'result': 'success', 'exit_code': 0, 'duration_ms': 1000, 'load_1min': 1.5, 'load_per_cpu': 0.2}) + '\n' +
@@ -197,6 +203,12 @@ jq -e '.pre_launch_blockers.cost_budget_exceeded == 2' "$json_output" >/dev/null
 jq -e '.pre_launch_blockers.dedup_active_claim == 1' "$json_output" >/dev/null
 jq -e '.top_pre_launch_blockers[0].reason == "cost_budget_exceeded"' "$json_output" >/dev/null
 jq -e '.dispatch_stage_timing_ms.worker_launch_total.avg_ms == 123' "$json_output" >/dev/null
+jq -e '.dispatch_stage_events == 3' "$json_output" >/dev/null
+jq -e '.dispatch_stage_counts["dedup.nmr_gate"] == null' "$json_output" >/dev/null
+jq -e '.dispatch_stage_timing_ms["dedup.label_checks"].count == 1' "$json_output" >/dev/null
+jq -e '.dispatch_stage_executions | length == 2' "$json_output" >/dev/null
+jq -e '.dispatch_stage_executions[] | select(.issue == "#2") | .classification == "interrupted" and .age_seconds >= 5 and .next_diagnostic_action == "inspect_matching_cycle_terminal_evidence"' "$json_output" >/dev/null
+jq -e '.dispatch_stage_executions[] | select(.issue == "#4") | .classification == "unknown" and .next_diagnostic_action == "verify_owner_process_or_cycle_lineage"' "$json_output" >/dev/null
 jq -e '.api_call_pressure.graphql_read_calls == 9' "$json_output" >/dev/null
 jq -e '.api_call_pressure.rest_read_calls == 8' "$json_output" >/dev/null
 jq -e '.api_call_pressure.graphql_search_calls == 11' "$json_output" >/dev/null
@@ -260,6 +272,28 @@ assert "graphql_budget_status = (" not in implementation_source
 assert 'import subprocess' not in implementation_source
 assert 'subprocess.check_output' not in implementation_source
 PY
+
+live_stage_dir="$TMP_DIR/live-stage"
+mkdir -p "$live_stage_dir"
+python3 - "$live_stage_dir" "$$" <<'PY'
+import json, os, sys, time
+root, owner_pid = sys.argv[1], sys.argv[2]
+now = time.time()
+iso = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(now))
+open(os.path.join(root, 'dispatch-stages.tsv'), 'w').write(
+    f'{iso}\t#9\towner/repo\tdedup.nmr_gate\t0\tstart\tslow-gate\tlive-cycle\t{owner_pid}\n'
+)
+json.dump({'cycle_state': {
+    'schema': 'aidevops.pulse-cycle-state/v1', 'cycle_id': 'live-cycle',
+    'phase': 'preflight', 'outcome': 'running', 'heartbeat_at': iso,
+    'progress': {'last_at': None, 'kinds': [], 'consecutive_no_progress_cycles': 0},
+    'blocker': {'kind': 'none', 'fingerprint': None, 'consecutive_same_cycles': 0},
+}}, open(os.path.join(root, 'pulse-health.json'), 'w'))
+PY
+live_stage_json="$TMP_DIR/live-stage.json"
+"$HELPER" --log-dir "$live_stage_dir" --repo-path "$PWD" --window 15m --json >"$live_stage_json"
+jq -e '.dispatch_stage_events == 0 and .dispatch_stage_timing_ms == {}' "$live_stage_json" >/dev/null
+jq -e '.dispatch_stage_executions[0].classification == "in_flight" and .dispatch_stage_executions[0].age_seconds >= 0 and .dispatch_stage_executions[0].next_diagnostic_action == "recheck_owner_and_matching_completion_within_60s"' "$live_stage_json" >/dev/null
 
 missing_dir="$TMP_DIR/missing-cycle-state"
 mkdir -p "$missing_dir"
@@ -339,5 +373,29 @@ AIDEVOPS_ACTIVE_WORKER_PROCESSES_OVERRIDE=0 AIDEVOPS_ZERO_WORKER_MIN_CYCLES=3 \
 jq -e '.zero_worker_underutilization.actionable == true' "$zero_json" >/dev/null
 jq -e '.zero_worker_underutilization.github_read_complete == false' "$zero_json" >/dev/null
 jq -e '.zero_worker_underutilization.classifications == {"admission_failure":1,"assignment_ownership":1,"dependency_state":1,"github_read_incomplete":1,"queue_labels":1}' "$zero_json" >/dev/null
+
+instrument_log="$TMP_DIR/instrument.tsv"
+(
+	export AIDEVOPS_DISPATCH_STAGES_LOG="$instrument_log"
+	# shellcheck source=../dispatch-stage-instrument.sh
+	source "${SCRIPT_DIR}/../dispatch-stage-instrument.sh"
+	same_start=$(_ds_now_ns)
+	outer_attempt=""
+	inner_attempt=""
+	_ds_stage_start 10 owner/repo nested_gate "$same_start" outer_attempt
+	_ds_stage_start 10 owner/repo nested_gate "$same_start" inner_attempt
+	_ds_record 10 owner/repo nested_gate "$same_start" "$inner_attempt"
+	_ds_record 10 owner/repo nested_gate "$same_start" "$inner_attempt"
+	_ds_record 10 owner/repo nested_gate "$same_start" "$outer_attempt"
+)
+python3 - "$instrument_log" <<'PY'
+import sys
+rows = [line.rstrip('\n').split('\t') for line in open(sys.argv[1], encoding='utf-8')]
+starts = [row for row in rows if row[5] == 'start']
+completions = [row for row in rows if row[5] == 'complete']
+assert len(starts) == 2 and len(completions) == 2
+assert len({row[6] for row in starts}) == 2
+assert {row[6] for row in starts} == {row[6] for row in completions}
+PY
 
 printf 'PASS pulse-current-state-helper\n'

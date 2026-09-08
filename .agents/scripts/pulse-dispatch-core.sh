@@ -1523,7 +1523,7 @@ _dispatch_dedup_check_layers() {
 	# t3043: per-sub-stage timing inside dedup_check. The outer
 	# dispatch_with_dedup records "dedup_check" as one blob; these
 	# sub-stage records let us identify which gate dominates the 235s avg.
-	local _dss_t0
+	local _dss_t0 _ds_stage_attempt_id
 
 	local target_state="" target_title=""
 	# GH#21717: normalize to uppercase — REST fallback returns lowercase "open"/"closed"
@@ -1537,6 +1537,7 @@ _dispatch_dedup_check_layers() {
 	# of assignee identity. A terminal worker draft checkpoint is the sole narrow
 	# exception: route its existing exact PR before consuming the generic hold.
 	_dss_t0=$(_ds_now_ns)
+	_ds_stage_start "$issue_number" "$repo_slug" "interactive_hold" "$_dss_t0" _ds_stage_attempt_id
 	if _dispatch_interactive_hold_gate "$issue_number" "$repo_slug" "$issue_title" \
 		"$self_login" "$issue_meta_json"; then
 		_ds_record "$issue_number" "$repo_slug" "dedup.interactive_hold" "$_dss_t0"
@@ -1548,6 +1549,7 @@ _dispatch_dedup_check_layers() {
 	# than 5 GiB or 5% available. The same fail-closed policy runs at the actual
 	# worktree creation boundary, covering interactive and non-Pulse callers.
 	_dss_t0=$(_ds_now_ns)
+	_ds_stage_start "$issue_number" "$repo_slug" "disk_space" "$_dss_t0" _ds_stage_attempt_id
 	local _capacity_rc=0
 	local _capacity_path="${AIDEVOPS_WORKTREE_BASE_DIR:-$HOME}"
 	aidevops_worktree_capacity_check "$_capacity_path" || _capacity_rc=$?
@@ -1555,7 +1557,7 @@ _dispatch_dedup_check_layers() {
 		if _dispatch_cleanup_disk_pressure "$issue_number" "$repo_slug" "$_capacity_path" \
 			"${AIDEVOPS_DISK_CAPACITY_REASON}" "${AIDEVOPS_DISK_CAPACITY_AVAILABLE_KB}" \
 			"${AIDEVOPS_DISK_CAPACITY_AVAILABLE_PERCENT}"; then
-			_ds_record "$issue_number" "$repo_slug" "dedup.disk_space" "$_dss_t0"
+			:
 		else
 			echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: disk space critical (reason=${AIDEVOPS_DISK_CAPACITY_REASON}, available=${AIDEVOPS_DISK_CAPACITY_AVAILABLE_KB}KB/${AIDEVOPS_DISK_CAPACITY_AVAILABLE_PERCENT}%, require at least ${AIDEVOPS_MIN_WORKTREE_FREE_KB:-5242880}KB and ${AIDEVOPS_MIN_WORKTREE_FREE_PERCENT:-5}%). Run: worktree-helper.sh clean --auto --force-merged" >>"$LOGFILE"
 			_ds_record "$issue_number" "$repo_slug" "dedup.disk_space" "$_dss_t0"
@@ -1568,6 +1570,7 @@ _dispatch_dedup_check_layers() {
 	# registered git worktrees. At that scale, new worktrees risk consuming
 	# tens of GB; stale merged ones should be cleaned before adding more.
 	_dss_t0=$(_ds_now_ns)
+	_ds_stage_start "$issue_number" "$repo_slug" "worktree_cap" "$_dss_t0" _ds_stage_attempt_id
 	local _wt_max=""
 	_wt_max="${AIDEVOPS_MAX_WORKTREES:-200}"
 	[[ "$_wt_max" =~ ^[1-9][0-9]*$ ]] || _wt_max=200
@@ -1579,20 +1582,25 @@ _dispatch_dedup_check_layers() {
 	_ds_record "$issue_number" "$repo_slug" "dedup.worktree_cap" "$_dss_t0"
 
 	_dss_t0=$(_ds_now_ns)
+	_ds_stage_start "$issue_number" "$repo_slug" "state_check" "$_dss_t0" _ds_stage_attempt_id
 	if [[ "$target_state" != "OPEN" ]]; then
 		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: issue state is ${target_state:-unknown}" >>"$LOGFILE"
 		_ds_record "$issue_number" "$repo_slug" "dedup.state_check" "$_dss_t0"
 		return 1
 	fi
+	_ds_record "$issue_number" "$repo_slug" "dedup.state_check" "$_dss_t0"
 
 	# publication:pending is an unconditional hold while canonical planning is
 	# absent from the default branch. It is checked here as defence-in-depth
 	# before direct-dispatch paths can claim or launch a worker.
+	_dss_t0=$(_ds_now_ns)
+	_ds_stage_start "$issue_number" "$repo_slug" "publication_pending" "$_dss_t0" _ds_stage_attempt_id
 	if _has_publication_pending_label "$issue_meta_json"; then
 		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: publication:pending label present" >>"$LOGFILE"
 		_ds_record "$issue_number" "$repo_slug" "dedup.publication_pending" "$_dss_t0"
 		return 1
 	fi
+	_ds_record "$issue_number" "$repo_slug" "dedup.publication_pending" "$_dss_t0"
 
 	# GH#20219: parent-task / meta added here as defence-in-depth. The
 	# canonical parent-task guard is in dispatch-dedup-helper.sh Layer 6
@@ -1602,15 +1610,20 @@ _dispatch_dedup_check_layers() {
 	# code path that skips check_dispatch_dedup). This closes Factor 1 of
 	# the #20161 incident where a parent-task issue was dispatched despite
 	# the label being continuously present.
+	_dss_t0=$(_ds_now_ns)
+	_ds_stage_start "$issue_number" "$repo_slug" "mgmt_label" "$_dss_t0" _ds_stage_attempt_id
 	if _has_consolidated_label "$issue_meta_json"; then
 		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: consolidated issue label present (GH#23187)" >>"$LOGFILE"
 		_ds_record "$issue_number" "$repo_slug" "dedup.mgmt_label" "$_dss_t0"
 		return 1
 	fi
+	_ds_record "$issue_number" "$repo_slug" "dedup.mgmt_label" "$_dss_t0"
 
+	_dss_t0=$(_ds_now_ns)
+	_ds_stage_start "$issue_number" "$repo_slug" "label_checks" "$_dss_t0" _ds_stage_attempt_id
 	if printf '%s' "$issue_meta_json" | jq -e '.labels | map(.name) | (index("supervisor") or index("contributor") or index("persistent") or index("quality-review") or index("on hold") or index("blocked") or index("parent-task") or index("meta"))' >/dev/null 2>&1; then
 		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: non-dispatchable management label present" >>"$LOGFILE"
-		_ds_record "$issue_number" "$repo_slug" "dedup.mgmt_label" "$_dss_t0"
+		_ds_record "$issue_number" "$repo_slug" "dedup.label_checks" "$_dss_t0"
 		return 1
 	fi
 
@@ -1627,6 +1640,7 @@ _dispatch_dedup_check_layers() {
 	# t1894/GH#18648: Cryptographic approval gate (ever-NMR) with
 	# review-followup exemption for bot-generated cleanup issues.
 	_dss_t0=$(_ds_now_ns)
+	_ds_stage_start "$issue_number" "$repo_slug" "nmr_gate" "$_dss_t0" _ds_stage_attempt_id
 	if _check_nmr_approval_gate "$issue_number" "$repo_slug" "$issue_meta_json"; then
 		_ds_record "$issue_number" "$repo_slug" "dedup.nmr_gate" "$_dss_t0"
 		return 1
@@ -1651,6 +1665,7 @@ _dispatch_dedup_check_layers() {
 	# large-file, and footprint gates below — eliminating 1-2 extra gh calls
 	# per dispatch candidate.
 	_dss_t0=$(_ds_now_ns)
+	_ds_stage_start "$issue_number" "$repo_slug" "blocked_by" "$_dss_t0" _ds_stage_attempt_id
 	local _dispatch_issue_body
 	_dispatch_issue_body=$(printf '%s' "$issue_meta_json" | jq -r '.body // ""' 2>/dev/null) || _dispatch_issue_body=""
 	if is_blocked_by_unresolved "$_dispatch_issue_body" "$repo_slug" "$issue_number"; then
@@ -1668,6 +1683,7 @@ _dispatch_dedup_check_layers() {
 	# t2996: pass meta_json through so the consolidation helper skips its
 	# `gh issue view --json labels` call (label CSV derived from JSON instead).
 	_dss_t0=$(_ds_now_ns)
+	_ds_stage_start "$issue_number" "$repo_slug" "consolidation" "$_dss_t0" _ds_stage_attempt_id
 	if _issue_needs_consolidation "$issue_number" "$repo_slug" "$issue_meta_json"; then
 		_dispatch_issue_consolidation "$issue_number" "$repo_slug" "$repo_path"
 		echo "[dispatch_with_dedup] Dispatch deferred for #${issue_number} in ${repo_slug}: issue needs comment consolidation" >>"$LOGFILE"
@@ -1683,6 +1699,7 @@ _dispatch_dedup_check_layers() {
 	# t2996: pass meta_json through so the gate skips its `gh issue view --json
 	# labels` AND `--json title` calls (both derived from the bundled JSON).
 	_dss_t0=$(_ds_now_ns)
+	_ds_stage_start "$issue_number" "$repo_slug" "large_file" "$_dss_t0" _ds_stage_attempt_id
 	if _issue_targets_large_files "$issue_number" "$repo_slug" "$_dispatch_issue_body" "$repo_path" "" "$issue_meta_json"; then
 		echo "[dispatch_with_dedup] Dispatch deferred for #${issue_number} in ${repo_slug}: targets large file(s), simplification gate" >>"$LOGFILE"
 		_ds_record "$issue_number" "$repo_slug" "dedup.large_file" "$_dss_t0"
@@ -1695,6 +1712,7 @@ _dispatch_dedup_check_layers() {
 	# prevent CONFLICTING cascades. The check is cheap (cached per repo per
 	# cycle) and decays naturally when the blocking issue's status labels clear.
 	_dss_t0=$(_ds_now_ns)
+	_ds_stage_start "$issue_number" "$repo_slug" "footprint" "$_dss_t0" _ds_stage_attempt_id
 	local _footprint_signal=""
 	_footprint_signal=$(_footprint_check_overlap "$issue_number" "$repo_slug" "$_dispatch_issue_body" 2>/dev/null) || true
 	if [[ -n "$_footprint_signal" ]]; then
@@ -1713,6 +1731,7 @@ _dispatch_dedup_check_layers() {
 	# export, those layers re-fetch the same JSON we just bundled — wasting
 	# 1-2 more gh calls under load.
 	_dss_t0=$(_ds_now_ns)
+	_ds_stage_start "$issue_number" "$repo_slug" "7_layers" "$_dss_t0" _ds_stage_attempt_id
 	local _dedup_rc=0
 	local _dedup_signal=""
 	_dedup_signal=$(ISSUE_META_JSON="$issue_meta_json" DISPATCH_REPO_PATH="$repo_path" \
@@ -1738,6 +1757,7 @@ _dispatch_dedup_check_layers() {
 	# GH#22399/GH#31404: fail closed before launch, but only after dedup
 	# confirms eligibility. Never mutate author-gate labels on an active PR.
 	_dss_t0=$(_ds_now_ns)
+	_ds_stage_start "$issue_number" "$repo_slug" "external_author_gate" "$_dss_t0" _ds_stage_attempt_id
 	if _check_external_issue_author_gate "$issue_number" "$repo_slug"; then
 		_ds_record "$issue_number" "$repo_slug" "dedup.external_author_gate" "$_dss_t0"
 		return 1

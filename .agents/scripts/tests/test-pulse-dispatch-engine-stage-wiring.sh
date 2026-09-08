@@ -586,6 +586,15 @@ assert_not_grep \
 	"10e: benign block reasons are not counted as candidate failure reasons" \
 	'dedup_active_claim \| cost_budget_exceeded' \
 	"$DISPATCH_LIB"
+assert_grep \
+	"10f: NMR gate entry is recorded before the potentially slow gate" \
+	'_ds_stage_start.*nmr_gate' \
+	"$CORE"
+assert_order \
+	"10g: NMR stage entry precedes gate execution" \
+	'_ds_stage_start.*nmr_gate' \
+	'^[[:space:]]*if _check_nmr_approval_gate' \
+	"$CORE"
 
 # --- Summary ---
 
