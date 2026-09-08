@@ -1523,7 +1523,7 @@ _dispatch_dedup_check_layers() {
 	# t3043: per-sub-stage timing inside dedup_check. The outer
 	# dispatch_with_dedup records "dedup_check" as one blob; these
 	# sub-stage records let us identify which gate dominates the 235s avg.
-	local _dss_t0 _ds_stage_attempt_id
+	local _dss_t0="" _ds_stage_attempt_id=""
 
 	local target_state="" target_title=""
 	# GH#21717: normalize to uppercase — REST fallback returns lowercase "open"/"closed"
