@@ -149,6 +149,16 @@ def valid_cycle_state_contract(state):
     return valid_terminal_cycle_state(state, progress, blocker)
 
 
+def cycle_state_problem(state):
+    if not isinstance(state, dict):
+        return 'malformed', 'cycle-state-object'
+    if not valid_cycle_state_contract(state):
+        return 'malformed', 'cycle-state-contract'
+    if parse_time(state['heartbeat_at']) > now:
+        return 'unavailable', 'future-heartbeat'
+    return None
+
+
 def build_cycle_state(path):
     try:
         with open(path, encoding='utf-8') as handle:
@@ -162,14 +172,12 @@ def build_cycle_state(path):
     state = health.get('cycle_state')
     if state is None:
         return unavailable_cycle_state('unavailable')
-    if not isinstance(state, dict) or not valid_cycle_state_contract(state):
-        reason = 'cycle-state-object' if not isinstance(state, dict) else 'cycle-state-contract'
-        return unavailable_cycle_state('malformed', reason)
+    problem = cycle_state_problem(state)
+    if problem:
+        return unavailable_cycle_state(*problem)
     progress = state['progress']
     blocker = state['blocker']
     heartbeat_age = now - parse_time(state['heartbeat_at'])
-    if heartbeat_age < 0:
-        return unavailable_cycle_state('unavailable', 'future-heartbeat')
     return {
         'availability': 'available' if heartbeat_age <= window_s else 'stale',
         'heartbeat_age_seconds': int(heartbeat_age),

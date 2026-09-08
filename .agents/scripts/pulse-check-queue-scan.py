@@ -14,6 +14,7 @@ import shutil
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
+from functools import lru_cache
 from typing import Any, Optional
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
@@ -173,7 +174,9 @@ def _load_repos(repos_json: pathlib.Path) -> tuple[list[dict[str, Any]], str]:
     return repos, ""
 
 
+@lru_cache(maxsize=None)
 def _fetch_repo_issues(slug: str, max_issues: int) -> Optional[list[dict[str, Any]]]:
+    """Reuse the same bounded inventory during this report's enrichment pass."""
     issues: Optional[list[dict[str, Any]]] = None
     cmd = [
         "gh", "issue", "list",
@@ -269,12 +272,9 @@ def _scan_repo(
     max_issues: int,
     now: dt.datetime,
     old_minutes: int,
-    issues: Optional[list[dict[str, Any]]] = None,
-    prefetched: bool = False,
 ) -> None:
     slug = str(repo.get("slug") or "")
-    if not prefetched:
-        issues = _fetch_repo_issues(slug, max_issues)
+    issues = _fetch_repo_issues(slug, max_issues)
     if issues is None:
         aggregate[GH_ERRORS_KEY] += 1
         return
@@ -325,11 +325,11 @@ def main() -> int:
     # Inventory all repositories before spending the remaining budget on
     # dependency/progress enrichment. Independent reads retain gh admission.
     with ThreadPoolExecutor(max_workers=4) as pool:
-        inventories = list(pool.map(_fetch_repo_issues,
-                                    [str(repo.get("slug") or "") for repo in repos],
-                                    [max_issues] * len(repos)))
-    for repo, issues in zip(repos, inventories):
-        _scan_repo(aggregate, repo, max_issues, now, old_minutes, issues, prefetched=True)
+        list(pool.map(_fetch_repo_issues,
+                      [str(repo.get("slug") or "") for repo in repos],
+                      [max_issues] * len(repos)))
+    for repo in repos:
+        _scan_repo(aggregate, repo, max_issues, now, old_minutes)
 
     error = "queue_budget_exhausted" if time.monotonic() >= dependency_scan.QUERY_DEADLINE else ""
     _emit(aggregate, error=error, scanned_at=now.isoformat())
