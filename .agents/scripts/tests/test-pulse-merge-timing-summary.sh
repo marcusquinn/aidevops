@@ -114,12 +114,51 @@ if [[ "$(grep -c 'deterministic_merge_pass timing: repo=' "$LOGFILE")" -ne 2 ]];
 fi
 
 for repo in owner/alpha owner/beta; do
-  if ! grep -qE "deterministic_merge_pass timing: repo=${repo} .*list_s=[0-9]+ .*mergeability_s=[0-9]+ .*ruleset_s=[0-9]+ .*branch_protection_s=[0-9]+ .*stuck_detector_s=[0-9]+" "$LOGFILE"; then
+	if ! grep -qE "deterministic_merge_pass timing: repo=${repo} .*list_s=[0-9]+ list_state=complete .*mergeability_s=[0-9]+ .*ruleset_s=[0-9]+ .*branch_protection_s=[0-9]+ .*stuck_detector_s=[0-9]+" "$LOGFILE"; then
     printf 'FAIL: missing structured timing summary for %s\n' "$repo"
     cat "$LOGFILE"
     exit 1
   fi
 done
+
+LIST_TIMEOUT_FILE="${TEST_ROOT}/list-timeout"
+pulse_pr_list_get() {
+	printf '%s' "${AIDEVOPS_GH_READ_TIMEOUT:-unset}" >"$LIST_TIMEOUT_FILE"
+	printf '%s' 'request timed out' >&2
+	return 124
+}
+failed_merged=0 failed_closed=0 failed_count=0 failed_pr_count=0
+failed_list_s=0 failed_list_state="complete"
+_merge_ready_prs_for_repo "owner/failure" failed_merged failed_closed failed_count failed_pr_count "failed_"
+if [[ "$(<"$LIST_TIMEOUT_FILE")" != "45" ]]; then
+	printf 'FAIL: merge PR list did not receive its list-specific 45s timeout\n'
+	exit 1
+fi
+if [[ "$failed_list_state" != "incomplete" || "$failed_pr_count" -ne 0 ]]; then
+	printf 'FAIL: failed PR list was not recorded as incomplete with zero observed PRs\n'
+	exit 1
+fi
+_pmp_log_repo_timing_summary "owner/failure" 0 "$failed_list_s" 0 0 0 0 0 0 0 "$failed_pr_count" "$failed_list_state"
+if ! grep -q 'deterministic_merge_pass timing: repo=owner/failure .*list_state=incomplete' "$LOGFILE"; then
+	printf 'FAIL: missing explicit incomplete PR-list timing telemetry\n'
+	exit 1
+fi
+
+_pmp_now_epoch() { printf '100'; }
+_PMP_MERGE_PASS_DEADLINE_EPOCH=110
+if [[ "$(_pmp_merge_pr_list_timeout_seconds)" != "10" ]]; then
+	printf 'FAIL: PR-list timeout was not clamped to the remaining pass deadline\n'
+	exit 1
+fi
+rm -f "$LIST_TIMEOUT_FILE"
+_PMP_MERGE_PASS_DEADLINE_EPOCH=100
+expired_rc=0
+_merge_ready_prs_for_repo "owner/expired" failed_merged failed_closed failed_count failed_pr_count "failed_" || expired_rc=$?
+if [[ "$expired_rc" -ne 5 || -f "$LIST_TIMEOUT_FILE" || "$failed_list_state" != "incomplete" ]]; then
+	printf 'FAIL: expired deadline did not pause before the PR-list provider call\n'
+	exit 1
+fi
+_PMP_MERGE_PASS_DEADLINE_EPOCH=0
 
 if ! grep -q 'deterministic_merge_pass timing: total_s=' "$LOGFILE"; then
   printf 'FAIL: missing overall deterministic_merge_pass timing summary\n'

@@ -65,7 +65,8 @@ _pmp_log_repo_timing_summary() {
 	local closed="${9:-0}"
 	local failed="${10:-0}"
 	local pr_count="${11:-0}"
+	local list_state="${12:-complete}"
 
-	echo "[pulse-wrapper] deterministic_merge_pass timing: repo=${repo_slug} total_s=${total_s} list_s=${list_s} mergeability_s=${mergeability_s} ruleset_s=${ruleset_s} branch_protection_s=${branch_protection_s} stuck_detector_s=${stuck_detector_s} merged=${merged} closed=${closed} failed=${failed} prs=${pr_count}" >>"$logfile"
+	echo "[pulse-wrapper] deterministic_merge_pass timing: repo=${repo_slug} total_s=${total_s} list_s=${list_s} list_state=${list_state} mergeability_s=${mergeability_s} ruleset_s=${ruleset_s} branch_protection_s=${branch_protection_s} stuck_detector_s=${stuck_detector_s} merged=${merged} closed=${closed} failed=${failed} prs=${pr_count}" >>"$logfile"
 	return 0
 }

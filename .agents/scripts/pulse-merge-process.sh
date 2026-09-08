@@ -524,6 +524,56 @@ _pmp_record_processed_pr_result() {
 }
 
 #######################################
+# Resolve the merge pass's list-specific read timeout. PR-list reads need more
+# headroom than ordinary point reads, but must remain inside the pass deadline.
+#######################################
+_pmp_merge_pr_list_timeout_seconds() {
+	local timeout_seconds="${PULSE_MERGE_PR_LIST_TIMEOUT_SECONDS:-45}"
+	local deadline="${_PMP_MERGE_PASS_DEADLINE_EPOCH:-0}"
+	local now_epoch="" remaining_seconds=""
+	[[ "$timeout_seconds" =~ ^[0-9]+$ && "$timeout_seconds" -ge 1 && "$timeout_seconds" -le 120 ]] || timeout_seconds=45
+	if [[ "$deadline" =~ ^[0-9]+$ && "$deadline" -gt 0 ]]; then
+		now_epoch=$(_pmp_now_epoch)
+		remaining_seconds=$((deadline - now_epoch))
+		[[ "$remaining_seconds" -ge 1 ]] || return 1
+		[[ "$remaining_seconds" -lt "$timeout_seconds" ]] && timeout_seconds="$remaining_seconds"
+	fi
+	printf '%s' "$timeout_seconds"
+	return 0
+}
+
+_pmp_fetch_ready_pr_list() {
+	local repo_slug="$1"
+	local timeout_seconds="$2"
+	local error_file="$3"
+	if declare -F pulse_pr_list_get >/dev/null 2>&1; then
+		AIDEVOPS_GH_READ_TIMEOUT="$timeout_seconds" pulse_pr_list_get --repo "$repo_slug" --state open \
+			--json "$(_pulse_merge_ready_pr_json_fields)" --limit "$PULSE_MERGE_BATCH_LIMIT" 2>"$error_file"
+		return $?
+	fi
+	AIDEVOPS_GH_READ_TIMEOUT="$timeout_seconds" gh_pr_list --repo "$repo_slug" --state open \
+		--json "$(_pulse_merge_ready_pr_json_fields)" --limit "$PULSE_MERGE_BATCH_LIMIT" 2>"$error_file"
+	return $?
+}
+
+#######################################
+# Record elapsed PR-list time and whether the observed list was authoritative.
+#######################################
+_pmp_record_pr_list_timing() {
+	local timing_prefix="$1"
+	local list_start="$2"
+	local list_complete="$3"
+	[[ -n "$timing_prefix" ]] || return 0
+	_pmp_add_elapsed_seconds "${timing_prefix}list_s" "$list_start"
+	if [[ "$list_complete" -eq 1 ]]; then
+		printf -v "${timing_prefix}list_state" '%s' 'complete'
+	else
+		printf -v "${timing_prefix}list_state" '%s' 'incomplete'
+	fi
+	return 0
+}
+
+#######################################
 # Merge ready PRs for a single repo.
 #
 # Fetches the PR list for the repo, iterates, and delegates each PR
@@ -546,31 +596,31 @@ _merge_ready_prs_for_repo() {
 	local _timing_prefix="${6:-}"
 
 	local merged=0 closed=0 failed=0
-	local pr_json="" pr_merge_err="" _list_start="" pr_count=""
+	local pr_json="" pr_merge_err="" _list_start="" pr_count="" pr_list_timeout="" pr_list_rc=0
 	local pr_list_complete=1 outcomes_complete=1
 	_list_start=$(_pmp_now_epoch)
-	pr_merge_err=$(mktemp)
-	if declare -F pulse_pr_list_get >/dev/null 2>&1; then
-		pr_json=$(pulse_pr_list_get --repo "$repo_slug" --state open \
-			--json "$(_pulse_merge_ready_pr_json_fields)" \
-			--limit "$PULSE_MERGE_BATCH_LIMIT" 2>"$pr_merge_err") || pr_json=""
-	else
-		pr_json=$(gh_pr_list --repo "$repo_slug" --state open \
-			--json "$(_pulse_merge_ready_pr_json_fields)" \
-			--limit "$PULSE_MERGE_BATCH_LIMIT" 2>"$pr_merge_err") || pr_json=""
+	if ! pr_list_timeout=$(_pmp_merge_pr_list_timeout_seconds); then
+		_pmp_record_pr_list_timing "$_timing_prefix" "$_list_start" 0
+		if [[ -n "$_pr_count_var" ]]; then
+			[[ "$_pr_count_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
+			printf -v "$_pr_count_var" '%s' '0'
+		fi
+		eval "${_merged_var}=0; ${_closed_var}=0; ${_failed_var}=0"
+		return 5
 	fi
-	if [[ -z "$pr_json" || "$pr_json" == "null" ]]; then
+	pr_merge_err=$(mktemp)
+	pr_json=$(_pmp_fetch_ready_pr_list "$repo_slug" "$pr_list_timeout" "$pr_merge_err") || pr_list_rc=$?
+	if [[ "$pr_list_rc" -ne 0 || -z "$pr_json" || "$pr_json" == "null" ]]; then
 		local _pr_merge_err_msg
 		_pr_merge_err_msg=$(cat "$pr_merge_err" 2>/dev/null || echo "unknown error")
-		echo "[pulse-wrapper] _process_merge_batch: pulse_pr_list_get FAILED for ${repo_slug}: ${_pr_merge_err_msg}" >>"$LOGFILE"
+		echo "[pulse-wrapper] _process_merge_batch: pulse_pr_list_get FAILED for ${repo_slug}: list_state=incomplete rc=${pr_list_rc} timeout_s=${pr_list_timeout}: ${_pr_merge_err_msg}" >>"$LOGFILE"
 		pr_json="[]"
 		pr_list_complete=0
 	fi
 	rm -f "$pr_merge_err"
-	[[ -n "$_timing_prefix" ]] && _pmp_add_elapsed_seconds "${_timing_prefix}list_s" "$_list_start"
-
 	pr_count=$(printf '%s' "$pr_json" | jq 'length' 2>/dev/null) || { pr_count=0; pr_list_complete=0; }
-	[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
+	[[ "$pr_count" =~ ^[0-9]+$ ]] || { pr_count=0; pr_list_complete=0; }
+	_pmp_record_pr_list_timing "$_timing_prefix" "$_list_start" "$pr_list_complete"
 	if [[ -n "$_pr_count_var" ]]; then
 		[[ "$_pr_count_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
 		printf -v "$_pr_count_var" '%s' "$pr_count"
