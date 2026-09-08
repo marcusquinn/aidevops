@@ -1,0 +1,30 @@
+{
+  "_description": "Local Site and Application Inventory",
+  "_setup": "Copy to ~/.config/aidevops/site-inventory.json. Keep this working file private and store credential values with aidevops secret set, never here.",
+  "version": 1,
+  "hosting_accounts": {
+    "shared-hosting-account": {
+      "provider": "hostinger",
+      "account_ref": "shared-hosting-account",
+      "ssh_host": "ssh.example.com",
+      "ssh_port": 65002,
+      "ssh_user": "u123456789",
+      "credential_env": "HOSTING_SSH_PASSWORD_SHARED_ACCOUNT",
+      "last_verified": "2026-01-01T00:00:00Z"
+    }
+  },
+  "sites": {
+    "example-wordpress-network": {
+      "name": "Example WordPress Network",
+      "canonical_hostname": "example.com",
+      "aliases": ["www.example.com"],
+      "platform": "wordpress-multisite",
+      "environment": "production",
+      "dns": { "provider": "cloudflare", "zone_ref": "example.com" },
+      "hosting": { "provider": "hostinger", "account_ref": "shared-hosting-account", "deployment_path": "/domains/example.com/public_html" },
+      "provenance": "manual",
+      "last_verified": "2026-01-01T00:00:00Z",
+      "children": { "store": { "hostname": "store.example.com", "identity": "store", "deployment_path": "/domains/example.com/public_html" } }
+    }
+  }
+}

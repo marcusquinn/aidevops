@@ -22,6 +22,7 @@ New to aidevops? Type `/onboarding`.
 - Write-time hooks: Claude Code `git_safety_guard.py` + `complexity_advisory_pre_edit.py`; OpenCode `opencode-aidevops` tool hooks. If unavailable, enforce rules below explicitly.
 - Prompt-injection scanning is runtime-agnostic: `prompt-guard-helper.sh scan` / `scan-file`.
 - Primary agent: Build+ detects deliberation vs execution; domain triggers route to specialists. Full routing: `reference/agent-routing.md`, `reference/domain-index.md`.
+- Website/app operations: consult `reference/site-operations.md` and run `site-context-helper.sh readiness <hostname>` before requesting browser authentication.
 
 ## Pre-Edit Git Check
 
