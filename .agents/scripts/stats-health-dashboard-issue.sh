@@ -39,6 +39,63 @@ _HEALTH_OPERATOR_LABEL_PREFIX="operator:"
 # --- Functions ---
 
 #######################################
+# Provision labels needed by a legacy health dashboard without changing existing
+# repository label metadata. Returns non-zero when inventory or creation fails.
+# Arguments:
+#   $1 - repo slug
+#   $2 - runner user
+#   $3 - runner role (supervisor|contributor)
+#   $4 - canonical operator identity
+#######################################
+_ensure_health_dashboard_labels() {
+	local repo_slug="$1"
+	local runner_user="$2"
+	local runner_role="$3"
+	local canonical_identity="$4"
+	local operator_label="${_HEALTH_OPERATOR_LABEL_PREFIX}${canonical_identity}"
+	local role_label role_label_color role_label_desc
+	if [[ "$runner_role" == "$_ROLE_SUPERVISOR" ]]; then
+		role_label="$_ROLE_SUPERVISOR"
+		role_label_color="1D76DB"
+		role_label_desc="Supervisor health dashboard"
+	else
+		role_label="$_ROLE_CONTRIBUTOR"
+		role_label_color="A2EEEF"
+		role_label_desc="Contributor health dashboard"
+	fi
+	local labels_json rc=0
+
+	labels_json=$(gh label list --repo "$repo_slug" --limit 1000 --json name 2>/dev/null) || rc=$?
+	if [[ $rc -ne 0 || -z "$labels_json" ]]; then
+		echo "[stats] Health issue: label provisioning inventory failed for ${repo_slug} (rc=${rc})" \
+			>>"${LOGFILE:-/dev/null}"
+		return 1
+	fi
+
+	local label_name label_color label_description
+	while IFS='|' read -r label_name label_color label_description; do
+		if printf '%s' "$labels_json" | jq -e --arg name "$label_name" \
+			'any(.[]; .name == $name)' >/dev/null 2>&1; then
+			continue
+		fi
+		if ! gh label create "$label_name" --repo "$repo_slug" --color "$label_color" \
+			--description "$label_description" 2>/dev/null; then
+			echo "[stats] Health issue: failed to provision label ${label_name} in ${repo_slug}" \
+				>>"${LOGFILE:-/dev/null}"
+			return 1
+		fi
+	done <<EOF
+${_HEALTH_PERSISTENT_LABEL}|FBCA04|Persistent issue — do not close
+source:health-dashboard|C2E0C6|Auto-created by stats-functions.sh health dashboard
+${role_label}|${role_label_color}|${role_label_desc}
+${runner_user}|0E8A16|Health dashboard runner: ${runner_user}
+${operator_label}|0E8A16|Canonical dashboard operator: ${canonical_identity}
+origin:worker|C5DEF5|Created by a headless worker
+EOF
+	return 0
+}
+
+#######################################
 # List open health issues matching a role + runner_user pair, filtered
 # by title-prefix. Helper centralises the jq filter so `_find_health_issue`
 # and `_periodic_health_issue_dedup` share one query definition.
@@ -144,6 +201,12 @@ _normalize_health_issue_labels() {
 		opposite_role_label="$_ROLE_CONTRIBUTOR"
 	fi
 	local canonical_label="${_HEALTH_OPERATOR_LABEL_PREFIX}${canonical_identity}"
+	if ! _ensure_health_dashboard_labels "$repo_slug" "$runner_user" \
+		"$runner_role" "$canonical_identity"; then
+		echo "[stats] Health issue: failed to normalize labels for #${issue_number} in ${repo_slug}" \
+			>>"${LOGFILE:-/dev/null}"
+		return 0
+	fi
 
 	local -a edit_args=()
 	local expected_label
