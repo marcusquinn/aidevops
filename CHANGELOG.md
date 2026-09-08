@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.346] - 2026-09-08
+
+### Added
+
+- add wait-aware bounded operation status
+
+### Fixed
+
+- propagate aidevops tool command failures
+- recover direct-merge completion (#31642)
+
 ## [3.32.345] - 2026-09-08
 
 ### Fixed
