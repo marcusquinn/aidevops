@@ -30,9 +30,13 @@ _pulse_dependabot_existing_intake_issue() {
 	# the bounded read focused on generated intake candidates.
 	issues_json=$(gh_issue_list --repo "$repo_slug" --state open \
 		--label dependencies --limit 500 \
-		--json number,body,url 2>/dev/null) || return 1
+		--json number,body,url,labels 2>/dev/null) || return 1
 	printf '%s' "$issues_json" | jq -r --arg marker "$marker" \
-		'[.[] | select((.body // "") | contains($marker))][0].url // ""' 2>/dev/null
+		'[.[]
+			| ([.labels[]?.name // ""] | unique) as $labels
+			| select(($labels | index("origin:worker")) != null)
+			| select(($labels | index("dependencies")) != null)
+			| select((.body // "") | contains($marker))][0].url // ""' 2>/dev/null
 	return $?
 }
 

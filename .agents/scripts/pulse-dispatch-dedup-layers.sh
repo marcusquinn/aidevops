@@ -182,7 +182,11 @@ _dedup_dependabot_intake_target() {
 		return 0
 	}
 	owner_issue=$(printf '%s' "$issues_json" | jq -er --arg marker "$marker" '
-		[.[] | select((.body // "") | contains($marker))] as $matches
+		[.[]
+			| ([.labels[]?.name // ""] | unique) as $labels
+			| select(($labels | index("origin:worker")) != null)
+			| select(($labels | index("dependencies")) != null)
+			| select((.body // "") | contains($marker))] as $matches
 		| if ($matches | length) == 0 then error("missing current intake") else
 			([$matches[]
 				| select(((.assignees // []) | length) > 0 or

@@ -35,8 +35,8 @@ _is_authentic_dependabot_pr() {
 	local repo_slug="$2"
 	local pr_author="$3"
 	local expected_head_sha="$4"
-	[[ "$AUTHENTIC" -eq 1 && "$pr_number" == "30038" && "$repo_slug" == "owner/repo" \
-		&& "$pr_author" == "app/dependabot" && "$expected_head_sha" == "head-current" ]]
+	[[ "$AUTHENTIC" -eq 1 && "$pr_number" == "30038" && "$repo_slug" == "owner/repo" &&
+		"$pr_author" == "app/dependabot" && "$expected_head_sha" == "head-current" ]]
 	return $?
 }
 
@@ -124,7 +124,7 @@ test_creates_worker_ready_issue() {
 
 test_reuses_existing_issue() {
 	rm -f "${TEST_ROOT}/create-args" "${TEST_ROOT}/issue-list-args"
-	OPEN_ISSUES_JSON='[{"number":42,"url":"https://github.com/owner/repo/issues/42","body":"<!-- aidevops:dependabot-pr-intake repo=owner/repo pr=30038 -->"}]'
+	OPEN_ISSUES_JSON='[{"number":42,"url":"https://github.com/owner/repo/issues/42","body":"<!-- aidevops:dependabot-pr-intake repo=owner/repo pr=30038 -->","labels":[{"name":"origin:worker"},{"name":"dependencies"}]}]'
 	_pulse_route_dependabot_pr_to_worker_issue "30038" "owner/repo" "app/dependabot" "head-current" "terminal-ci-failure"
 	[[ ! -e "${TEST_ROOT}/create-args" ]]
 	if grep -q -- '--search' "${TEST_ROOT}/issue-list-args"; then
@@ -139,14 +139,23 @@ test_target_level_dispatch_dedup() {
 	local marker='<!-- aidevops:dependabot-pr-intake repo=owner/repo pr=30038 -->'
 	local current_body="$marker"
 
-	OPEN_ISSUES_JSON='[{"number":42,"body":"<!-- aidevops:dependabot-pr-intake repo=owner/repo pr=30038 -->","assignees":[{"login":"runner"}],"labels":[{"name":"status:in-progress"}]},{"number":43,"body":"<!-- aidevops:dependabot-pr-intake repo=owner/repo pr=30038 -->","assignees":[],"labels":[{"name":"status:available"}]}]'
+	OPEN_ISSUES_JSON='[{"number":42,"body":"<!-- aidevops:dependabot-pr-intake repo=owner/repo pr=30038 -->","assignees":[{"login":"runner"}],"labels":[{"name":"origin:worker"},{"name":"dependencies"},{"name":"status:in-progress"}]},{"number":43,"body":"<!-- aidevops:dependabot-pr-intake repo=owner/repo pr=30038 -->","assignees":[],"labels":[{"name":"origin:worker"},{"name":"dependencies"},{"name":"status:available"}]}]'
 	_dedup_dependabot_intake_target "43" "owner/repo" "$current_body"
 	if _dedup_dependabot_intake_target "42" "owner/repo" "$current_body"; then
 		return 1
 	fi
 
-	OPEN_ISSUES_JSON='[{"number":43,"body":"<!-- aidevops:dependabot-pr-intake repo=owner/repo pr=30039 -->","assignees":[],"labels":[{"name":"status:available"}]}]'
+	OPEN_ISSUES_JSON='[{"number":43,"body":"<!-- aidevops:dependabot-pr-intake repo=owner/repo pr=30039 -->","assignees":[],"labels":[{"name":"origin:worker"},{"name":"dependencies"},{"name":"status:available"}]}]'
 	if _dedup_dependabot_intake_target "43" "owner/repo" '<!-- aidevops:dependabot-pr-intake repo=owner/repo pr=30039 -->'; then
+		return 1
+	fi
+	return 0
+}
+
+test_untrusted_marker_does_not_own_target() {
+	OPEN_ISSUES_JSON='[{"number":41,"url":"https://github.com/owner/repo/issues/41","body":"<!-- aidevops:dependabot-pr-intake repo=owner/repo pr=30038 -->","assignees":[{"login":"runner"}],"labels":[{"name":"dependencies"},{"name":"status:in-progress"}]},{"number":42,"url":"https://github.com/owner/repo/issues/42","body":"<!-- aidevops:dependabot-pr-intake repo=owner/repo pr=30038 -->","assignees":[],"labels":[{"name":"origin:worker"},{"name":"dependencies"},{"name":"status:available"}]}]'
+	if _dedup_dependabot_intake_target "42" "owner/repo" \
+		'<!-- aidevops:dependabot-pr-intake repo=owner/repo pr=30038 -->'; then
 		return 1
 	fi
 	return 0
@@ -342,7 +351,7 @@ _is_authentic_dependabot_pr() {
 
 gh_issue_list() {
 	if [[ -f "${SHARED_STATE}/created" ]]; then
-		printf '%s\n' '[{"number":42,"url":"https://github.com/owner/repo/issues/42","body":"<!-- aidevops:dependabot-pr-intake repo=owner/repo pr=30038 -->"}]'
+		printf '%s\n' '[{"number":42,"url":"https://github.com/owner/repo/issues/42","body":"<!-- aidevops:dependabot-pr-intake repo=owner/repo pr=30038 -->","labels":[{"name":"origin:worker"},{"name":"dependencies"}]}]'
 	else
 		printf '%s\n' '[]'
 	fi
@@ -403,6 +412,8 @@ main() {
 	printf 'PASS concurrent routes converge on one issue\n'
 	test_target_level_dispatch_dedup
 	printf 'PASS same-target intake dispatch elects one live owner\n'
+	test_untrusted_marker_does_not_own_target
+	printf 'PASS untrusted marker cannot own an intake target\n'
 	test_target_lookup_failure_blocks_dispatch
 	printf 'PASS unknown target lookup fails closed\n'
 	return 0
