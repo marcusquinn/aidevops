@@ -134,6 +134,10 @@ cat >"${TEST_ROOT}/worker-activity.sh" <<'SH'
 #!/usr/bin/env bash
 cmd="${1:-}"
 shift || true
+if [[ " $* " == *" --pr-check "* ]]; then
+  printf '%s\n' '{"delivery_stages":{"delivered_successes":30,"pr_merged":30,"check_state":"ok"}}'
+  exit 0
+fi
 if [[ "$cmd" == "providers" ]]; then
   cat <<'JSON'
 {"provider_diagnostics":{"provider_model_usage":[],"recent_events":[],"account_pool":[{"provider":"openai","total":1,"available":1,"capacity_slots":24,"active_idle":1,"rate_limited":0,"auth_errors":0}]}}
@@ -219,6 +223,9 @@ if [[ " $* " == *" api -i /repos/"*"/collaborators/fixture-user/permission "* ||
   exit 0
 fi
 if [[ " $* " == *" api graphql "* ]]; then
+  if [[ "${PULSE_CHECK_QUEUE_FIXTURE:-}" == "slow-dependency-scan" ]]; then
+    sleep 5
+  fi
   if [[ "${PULSE_CHECK_QUEUE_FIXTURE:-}" == "dependency-scan-error" ]]; then
     printf 'simulated dependency lookup failure\n' >&2
     exit 1
@@ -392,6 +399,30 @@ HANDOFF_RATE=$(printf '%s' "$JSON_OUT" | jq -r '.summary.historical_runtime_hand
 assert_eq "json runtime handoff rate uses terminal session denominator" "90" "$HANDOFF_RATE"
 SUCCESS_RATE=$(printf '%s' "$JSON_OUT" | jq -r '.summary.historical_success_rate')
 assert_eq "json delivered success rate is unknown without GitHub delivery check" "null" "$SUCCESS_RATE"
+DELIVERY_JSON=$(env "${COMMON_ENV[@]}" "$HELPER" json --verify-delivery 2>&1)
+assert_eq "explicit delivery verification exposes observed GitHub deliveries" "30" "$(printf '%s' "$DELIVERY_JSON" | jq -r '.summary.historical_worker_delivered_successes')"
+assert_eq "independent delivery counts never create a 300 percent attempt success rate" "null" "$(printf '%s' "$DELIVERY_JSON" | jq -r '.summary.historical_delivery_success_rate')"
+assert_eq "delivery verification retains local terminal handoff denominator" "90" "$(printf '%s' "$DELIVERY_JSON" | jq -r '.summary.historical_runtime_handoff_rate')"
+assert_eq "delivery collection records verified state" "ok" "$(printf '%s' "$DELIVERY_JSON" | jq -r '.collection.delivery.state')"
+
+cat >"${TEST_ROOT}/slow-current.sh" <<'SH'
+#!/usr/bin/env bash
+sleep 10
+printf '{}\n'
+SH
+chmod +x "${TEST_ROOT}/slow-current.sh"
+bounded_start="$SECONDS"
+BOUNDED_JSON=$(env "${COMMON_ENV[@]}" "PULSE_CHECK_CURRENT_STATE_HELPER=${TEST_ROOT}/slow-current.sh" "$HELPER" json --budget 2 2>&1)
+assert_eq "slow collector returns a timed-out evidence record" "timed_out" "$(printf '%s' "$BOUNDED_JSON" | jq -r '.collection.current.state')"
+assert_eq "timed-out collector does not invent active worker count" "null" "$(printf '%s' "$BOUNDED_JSON" | jq -r '.summary.active_workers')"
+assert_eq "overall report deadline returns before the slow child completes" "true" "$([[ $((SECONDS - bounded_start)) -lt 9 ]] && printf true || printf false)"
+assert_eq "uncollected queue is explicitly unavailable" "queue_collection_unavailable" "$(printf '%s' "$BOUNDED_JSON" | jq -r '.summary.auto_dispatch_scan_state')"
+
+PARTIAL_JSON=$(env "${COMMON_ENV[@]}" "PULSE_CHECK_QUEUE_FIXTURE=slow-dependency-scan" "PULSE_CHECK_QUEUE_BUDGET_SECONDS=1" "$HELPER" json 2>&1)
+assert_eq "slow enrichment retains all repository inventories" "2" "$(printf '%s' "$PARTIAL_JSON" | jq -r '.queue.repos_scanned')"
+assert_eq "slow enrichment retains observed open issue counts" "6" "$(printf '%s' "$PARTIAL_JSON" | jq -r '.queue.auto_dispatch_open')"
+assert_eq "queue deadline is explicit instead of empty output" "queue_budget_exhausted" "$(printf '%s' "$PARTIAL_JSON" | jq -r '.summary.auto_dispatch_scan_state')"
+assert_eq "unknown dependency evidence is counted" "true" "$(printf '%s' "$PARTIAL_JSON" | jq -r '.queue.dependency_unknown > 0')"
 HANDOFF_FAMILY_JSON=$(env "${COMMON_ENV[@]}" "PULSE_CHECK_HANDOFF_FAILURE_FIXTURE=yes" "$HELPER" json 2>&1)
 assert_eq "post-PR handoff family is absent from remediation candidates" "0" \
 	"$(printf '%s' "$HANDOFF_FAMILY_JSON" | jq -r '.failure_family_remediation | length')"
@@ -547,8 +578,10 @@ JSON
 SH
 chmod +x "${TEST_ROOT}/current-state-active-no-gauge.sh"
 JSON_ACTIVE_NO_GAUGE_OUT=$(env "${COMMON_ENV[@]}" "PULSE_CHECK_CURRENT_STATE_HELPER=${TEST_ROOT}/current-state-active-no-gauge.sh" "$HELPER" json 2>&1)
-assert_eq "json falls back to process count when capacity gauge is absent" "2" "$(printf '%s' "$JSON_ACTIVE_NO_GAUGE_OUT" | jq -r '.summary.max_workers')"
-assert_eq "json absent capacity gauge avoids impossible active over max report" "Active workers: 2 / 2" "$(env "${COMMON_ENV[@]}" "PULSE_CHECK_CURRENT_STATE_HELPER=${TEST_ROOT}/current-state-active-no-gauge.sh" "$HELPER" report 2>&1 | grep -o 'Active workers: [0-9] / [0-9]')"
+assert_eq "json preserves unknown maximum when capacity gauge is absent" "null" "$(printf '%s' "$JSON_ACTIVE_NO_GAUGE_OUT" | jq -r '.summary.max_workers')"
+assert_eq "json does not equate unknown capacity with zero free slots" "null" "$(printf '%s' "$JSON_ACTIVE_NO_GAUGE_OUT" | jq -r '.summary.available_slots')"
+assert_eq "json retains the independently observed worker count" "2" "$(printf '%s' "$JSON_ACTIVE_NO_GAUGE_OUT" | jq -r '.summary.active_workers')"
+assert_contains "text explicitly reports unknown capacity" "Active workers: 2 / unknown" "$(env "${COMMON_ENV[@]}" "PULSE_CHECK_CURRENT_STATE_HELPER=${TEST_ROOT}/current-state-active-no-gauge.sh" "$HELPER" report 2>&1)"
 
 cat >"${TEST_ROOT}/pulse-health.json" <<'JSON'
 {"workers_active":1,"workers_max":2}

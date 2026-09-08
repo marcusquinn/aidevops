@@ -167,8 +167,13 @@ def build_cycle_state(path):
         return unavailable_cycle_state('malformed', reason)
     progress = state['progress']
     blocker = state['blocker']
+    heartbeat_age = now - parse_time(state['heartbeat_at'])
+    if heartbeat_age < 0:
+        return unavailable_cycle_state('unavailable', 'future-heartbeat')
     return {
-        'availability': 'available',
+        'availability': 'available' if heartbeat_age <= window_s else 'stale',
+        'heartbeat_age_seconds': int(heartbeat_age),
+        'freshness_window_seconds': window_s,
         'schema': state['schema'],
         'cycle_id': state['cycle_id'],
         'phase': state['phase'],

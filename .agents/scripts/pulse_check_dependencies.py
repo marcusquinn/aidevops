@@ -8,7 +8,10 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import time
 from typing import Any, Optional
+
+QUERY_DEADLINE: Optional[float] = None
 
 NATIVE_ABSENT = "absent"
 NATIVE_CLEAR = "clear"
@@ -27,9 +30,12 @@ def _issue_labels(issue: dict[str, Any]) -> set[str]:
 
 
 def _run_gh_json(cmd: list[str]) -> Optional[Any]:
+    timeout = 30.0 if QUERY_DEADLINE is None else min(30.0, QUERY_DEADLINE - time.monotonic())
+    if timeout <= 0:
+        return None
     try:
         completed = subprocess.run(  # nosec B603
-            cmd, text=True, capture_output=True, timeout=30, check=False
+            cmd, text=True, capture_output=True, timeout=timeout, check=False
         )
     except (OSError, subprocess.SubprocessError):
         return None
