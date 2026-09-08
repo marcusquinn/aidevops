@@ -27,16 +27,17 @@ _pulse_dependabot_existing_intake_issue() {
 	# Do not use GitHub search for this identity check. Search indexing can lag
 	# issue creation, so two Pulse cycles may both observe an invented absence.
 	# The repository issue list is authoritative and the dependencies label keeps
-	# the bounded read focused on generated intake candidates.
+	# the bounded read focused on generated intake candidates. The extra result is
+	# a truncation sentinel: a saturated read is unknown, never absence.
 	issues_json=$(gh_issue_list --repo "$repo_slug" --state open \
-		--label dependencies --limit 500 \
+		--label dependencies --limit 501 \
 		--json number,body,url,labels 2>/dev/null) || return 1
 	printf '%s' "$issues_json" | jq -r --arg marker "$marker" \
-		'[.[]
+		'if length >= 501 then error("intake lookup truncated") else [.[]
 			| ([.labels[]?.name // ""] | unique) as $labels
 			| select(($labels | index("origin:worker")) != null)
 			| select(($labels | index("dependencies")) != null)
-			| select((.body // "") | contains($marker))][0].url // ""' 2>/dev/null
+			| select((.body // "") | contains($marker))][0].url // "" end' 2>/dev/null
 	return $?
 }
 

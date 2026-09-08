@@ -177,12 +177,12 @@ _dedup_dependabot_intake_target() {
 	}
 	marker="<!-- aidevops:dependabot-pr-intake repo=${target_repo} pr=${target_pr} -->"
 	issues_json=$(gh_issue_list --repo "$repo_slug" --state open --label dependencies \
-		--limit 500 --json number,body,labels,assignees 2>/dev/null) || {
+		--limit 501 --json number,body,labels,assignees 2>/dev/null) || {
 		echo "[pulse-wrapper] Dedup: authoritative Dependabot intake lookup unavailable for #${issue_number}; blocking dispatch" >>"$LOGFILE"
 		return 0
 	}
 	owner_issue=$(printf '%s' "$issues_json" | jq -er --arg marker "$marker" '
-		[.[]
+		if length >= 501 then error("intake lookup truncated") else [.[]
 			| ([.labels[]?.name // ""] | unique) as $labels
 			| select(($labels | index("origin:worker")) != null)
 			| select(($labels | index("dependencies")) != null)
@@ -192,7 +192,7 @@ _dedup_dependabot_intake_target() {
 				| select(((.assignees // []) | length) > 0 or
 					([.labels[]?.name // ""] | any(. == "status:in-progress" or . == "status:in-review")))
 				| .number] | min) // ([$matches[].number] | min)
-		end' 2>/dev/null) || {
+		end end' 2>/dev/null) || {
 		echo "[pulse-wrapper] Dedup: invalid Dependabot intake evidence for #${issue_number}; blocking dispatch" >>"$LOGFILE"
 		return 0
 	}

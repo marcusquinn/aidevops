@@ -131,7 +131,7 @@ test_reuses_existing_issue() {
 		return 1
 	fi
 	assert_file_contains "intake lookup uses authoritative labeled issue list" \
-		"${TEST_ROOT}/issue-list-args" "--label dependencies --limit 500"
+		"${TEST_ROOT}/issue-list-args" "--label dependencies --limit 501"
 	return $?
 }
 
@@ -163,6 +163,16 @@ test_untrusted_marker_does_not_own_target() {
 
 test_target_lookup_failure_blocks_dispatch() {
 	gh_issue_list() { return 1; }
+	_dedup_dependabot_intake_target "43" "owner/repo" \
+		'<!-- aidevops:dependabot-pr-intake repo=owner/repo pr=30038 -->'
+	return $?
+}
+
+test_saturated_target_lookup_blocks_dispatch() {
+	gh_issue_list() {
+		jq -nc '[range(501) | {number: ., body: "", labels: [], assignees: []}]'
+		return 0
+	}
 	_dedup_dependabot_intake_target "43" "owner/repo" \
 		'<!-- aidevops:dependabot-pr-intake repo=owner/repo pr=30038 -->'
 	return $?
@@ -416,6 +426,8 @@ main() {
 	printf 'PASS untrusted marker cannot own an intake target\n'
 	test_target_lookup_failure_blocks_dispatch
 	printf 'PASS unknown target lookup fails closed\n'
+	test_saturated_target_lookup_blocks_dispatch
+	printf 'PASS saturated target lookup fails closed\n'
 	return 0
 }
 
