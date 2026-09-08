@@ -537,6 +537,60 @@ PY
 	return 0
 }
 
+# Worker success rates are cross-repository data. Compute them once per stats
+# cycle instead of repeating the same repository-wide GitHub queries while
+# rendering every dashboard. A timed-out refresh leaves the last good cache in
+# place; absence is rendered as unavailable rather than as a successful sample.
+_worker_success_rates_cache_file() {
+	local runner_user="$1" runner_safe
+	if [[ -n "${WORKER_SUCCESS_RATES_CACHE_FILE:-}" ]]; then
+		printf '%s\n' "$WORKER_SUCCESS_RATES_CACHE_FILE"
+		return 0
+	fi
+	runner_safe=$(_sanitize_runner_identity_for_cache "$runner_user")
+	printf '%s/.aidevops/logs/worker-success-rates-%s.json\n' "$HOME" "$runner_safe"
+	return 0
+}
+
+_refresh_worker_success_rates_cache() {
+	local runner_user="$1"
+	local cache_file
+	cache_file=$(_worker_success_rates_cache_file "$runner_user")
+	local cache_dir="${cache_file%/*}" cache_tmp sr24h_raw sr7d_raw
+
+	mkdir -p "$cache_dir" || return 1
+	sr24h_raw=$(_compute_worker_success_rates "$runner_user" "24") || return $?
+	sr7d_raw=$(_compute_worker_success_rates "$runner_user" "168") || return $?
+	cache_tmp=$(mktemp "${cache_file}.XXXXXX") || return 1
+	jq -n \
+		--arg rate24 "$(printf '%s' "$sr24h_raw" | cut -f3)" \
+		--arg total24 "$(printf '%s' "$sr24h_raw" | cut -f2)" \
+		--arg rate7 "$(printf '%s' "$sr7d_raw" | cut -f3)" \
+		--arg total7 "$(printf '%s' "$sr7d_raw" | cut -f2)" \
+		--arg refreshed_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+		'{rate24:$rate24,total24:$total24,rate7:$rate7,total7:$total7,refreshed_at:$refreshed_at}' \
+		>"$cache_tmp" || {
+		rm -f "$cache_tmp"
+		return 1
+	}
+	mv "$cache_tmp" "$cache_file"
+	return 0
+}
+
+_read_worker_success_rates_cache() {
+	local runner_user="$1" cache_file
+	cache_file=$(_worker_success_rates_cache_file "$runner_user")
+	if [[ -f "$cache_file" ]] && jq -e '
+		(.rate24 | type == "string") and (.total24 | test("^[0-9]+$")) and
+		(.rate7 | type == "string") and (.total7 | test("^[0-9]+$"))
+	' "$cache_file" >/dev/null 2>&1; then
+		jq -r '[.rate24,.total24,.rate7,.total7] | @tsv' "$cache_file"
+	else
+		printf '%s\t%s\t%s\t%s\n' '—' '0' '—' '0'
+	fi
+	return 0
+}
+
 #######################################
 # Build the health issue body markdown.
 #
@@ -850,15 +904,10 @@ _assemble_health_issue_body() {
 	session_time_md=$(_gather_session_time_for_repo "$repo_path")
 	person_stats_md=$(_read_person_stats_cache "$slug_safe")
 
-	local sr24h_raw sr7d_raw
-	sr24h_raw=$(_compute_worker_success_rates "$runner_user" "24")
-	sr7d_raw=$(_compute_worker_success_rates "$runner_user" "168")
 	local worker_success_rate_24h worker_total_runs_24h
-	worker_success_rate_24h=$(printf '%s' "$sr24h_raw" | cut -f3)
-	worker_total_runs_24h=$(printf '%s' "$sr24h_raw" | cut -f2)
 	local worker_success_rate_7d worker_total_runs_7d
-	worker_success_rate_7d=$(printf '%s' "$sr7d_raw" | cut -f3)
-	worker_total_runs_7d=$(printf '%s' "$sr7d_raw" | cut -f2)
+	IFS=$'\t' read -r worker_success_rate_24h worker_total_runs_24h \
+		worker_success_rate_7d worker_total_runs_7d < <(_read_worker_success_rates_cache "$runner_user")
 
 	_build_health_issue_body \
 		"$now_iso" "$role_display" "$runner_user" "$repo_slug" \

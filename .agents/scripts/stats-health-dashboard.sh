@@ -207,6 +207,16 @@ _record_health_issue_refresh_state() {
 	return 0
 }
 
+# Persist the last entered per-repository stage. A bounded child that is killed
+# cannot print a useful stack trace, so this small checkpoint identifies where
+# the next scheduler run should focus without claiming a successful refresh.
+_record_health_repo_stage() {
+	local stage_file="${1:-}" stage="${2:-unknown}"
+	[[ -n "$stage_file" ]] || return 0
+	printf '%s|%s\n' "$stage" "$(date +%s)" >"$stage_file"
+	return 0
+}
+
 #######################################
 # Persist only the trailing issue number for subsequent dashboard updates.
 # Arguments:
@@ -321,9 +331,11 @@ _update_health_issue_for_repo() {
 	local cross_repo_md="${3:-}"
 	local cross_repo_session_time_md="${4:-}"
 	local cross_repo_person_stats_md="${5:-}"
+	local stage_file="${6:-}"
 
 	[[ -z "$repo_slug" ]] && return 0
 
+	_record_health_repo_stage "$stage_file" "identity-and-role"
 	local runner_user
 	runner_user=$(_resolve_current_gh_login_or_fallback)
 
@@ -350,25 +362,33 @@ _update_health_issue_for_repo() {
 	local health_issue_file="${cache_dir}/health-issue-${canonical_identity_cache_safe}-${slug_safe}"
 	mkdir -p "$cache_dir"
 
+	_record_health_repo_stage "$stage_file" "activity-guard"
 	_HEALTH_ISSUE_ACTIVITY_STATE="$_HEALTH_ACTIVITY_STATE_ACTIVE"
-	_check_health_issue_activity_guard \
-		"$repo_slug" "$repo_path" "$runner_user" "$health_issue_file" || return 0
+	if ! _check_health_issue_activity_guard \
+		"$repo_slug" "$repo_path" "$runner_user" "$health_issue_file"; then
+		_record_health_repo_stage "$stage_file" "skipped-idle"
+		return 0
+	fi
 	local activity_state="${_HEALTH_ISSUE_ACTIVITY_STATE:-$_HEALTH_ACTIVITY_STATE_ACTIVE}"
 
+	_record_health_repo_stage "$stage_file" "issue-resolution"
 	local health_issue_number
 	health_issue_number=$(_resolve_health_issue_number \
 		"$repo_slug" "$runner_user" "$runner_role" "$runner_prefix" \
 		"$role_label" "$role_label_color" "$role_label_desc" \
 		"$role_display" "$health_issue_file" \
 		"$canonical_identity" "$identity_aliases")
-	[[ -z "$health_issue_number" ]] && return 0
-	[[ "$health_issue_number" == "$_HEALTH_QUERY_FAILED_SENTINEL" ]] && return 0
+	if [[ -z "$health_issue_number" || "$health_issue_number" == "$_HEALTH_QUERY_FAILED_SENTINEL" ]]; then
+		_record_health_repo_stage "$stage_file" "deferred-issue-resolution"
+		return 0
+	fi
 
 	_cache_health_issue_number "$health_issue_number" "$health_issue_file"
 
 	local now_iso
 	now_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
+	_record_health_repo_stage "$stage_file" "data-gather"
 	local body
 	body=$(_assemble_health_issue_body \
 		"$repo_slug" "$repo_path" "$runner_user" "$slug_safe" \
@@ -376,6 +396,7 @@ _update_health_issue_for_repo() {
 		"$cross_repo_md" "$cross_repo_session_time_md" "$cross_repo_person_stats_md" \
 		"$canonical_identity" "$identity_aliases")
 
+	_record_health_repo_stage "$stage_file" "body-publication"
 	local body_update_ec=0
 	_update_health_issue_body_or_fail "$health_issue_number" "$repo_slug" "$body" || body_update_ec=$?
 	[[ "$body_update_ec" -ne 0 ]] && return "$body_update_ec"
@@ -383,6 +404,7 @@ _update_health_issue_for_repo() {
 		"$health_issue_number" "$repo_slug" "$runner_prefix" "$body" "$now_iso"
 	_record_health_issue_refresh_state "$health_issue_file" "$activity_state"
 
+	_record_health_repo_stage "$stage_file" "maintenance"
 	# Publish the freshness marker before periodic maintenance. The latter can
 	# consume multiple GitHub requests (dedup, label normalization, pinning),
 	# and must not leave the primary operator dashboard stale when the bounded
@@ -404,6 +426,7 @@ _update_health_issue_for_repo() {
 		_ensure_health_issue_pinned "$health_issue_number" "$repo_slug" "$runner_user"
 	fi
 
+	_record_health_repo_stage "$stage_file" "complete"
 	return 0
 }
 
@@ -493,7 +516,7 @@ _order_health_repo_entries() {
 }
 
 _refresh_health_repo_bounded() {
-	local slug="$1" cache repo_timeout
+	local slug="$1" cache repo_timeout result=0 stage="unknown"
 	cache=$(_health_schedule_cache_file "$slug" "$_HEALTH_SCHEDULE_RUNNER")
 	[[ "$(date +%s)" -lt "$((_HEALTH_WORK_DEADLINE - 2))" ]] || return 124
 	mkdir -p "${cache%/*}" || return 1
@@ -501,8 +524,12 @@ _refresh_health_repo_bounded() {
 	repo_timeout=$(_stats_seconds "${STATS_HEALTH_REPO_TIMEOUT:-60}" 60)
 	[[ "$repo_timeout" -gt 0 ]] || repo_timeout=60
 	_stats_run_bounded "$repo_timeout" \
-		"$_HEALTH_WORK_DEADLINE" _update_health_issue_for_repo "$@"
-	return $?
+		"$_HEALTH_WORK_DEADLINE" _update_health_issue_for_repo "$@" "${cache}.stage" || result=$?
+	if [[ "$result" -ne 0 && -f "${cache}.stage" ]]; then
+		IFS='|' read -r stage _ <"${cache}.stage" || stage="unknown"
+		echo "[stats] Health issue update stopped for ${slug} (rc=${result} stage=${stage:-unknown})" >>"$LOGFILE"
+	fi
+	return "$result"
 }
 
 #######################################
@@ -680,6 +707,9 @@ update_health_issues() {
 	# Refresh person-stats cache if stale (t1426: hourly, not every pulse)
 	local aggregate_timeout
 	aggregate_timeout=$(_stats_seconds "${STATS_HEALTH_AGGREGATE_TIMEOUT:-30}" 30)
+	_stats_run_bounded "$aggregate_timeout" "$_HEALTH_WORK_DEADLINE" \
+		_refresh_worker_success_rates_cache "$routine_runner_user" ||
+		echo "[stats] Health dashboard worker success-rate cache deferred/failed" >>"$LOGFILE"
 	_stats_run_bounded "$aggregate_timeout" "$_HEALTH_WORK_DEADLINE" _refresh_person_stats_cache ||
 		echo "[stats] Health dashboard person cache deferred/failed" >>"$LOGFILE"
 

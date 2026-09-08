@@ -313,6 +313,62 @@ test_resumable_quality_batches() {
 	return 0
 }
 
+test_health_dashboard_slow_cross_repo_rates_are_bounded_once() {
+	local batch_home
+	batch_home=$(mktemp -d "${TMPDIR:-/tmp}/stats-health-stages.XXXXXX") || return 1
+	if (
+		export HOME="$batch_home" LOGFILE="$batch_home/stats.log"
+		local scripts="${SCRIPT_DIR}/.."
+		local SCRIPT_DIR="$scripts"
+		# shellcheck source=../shared-constants.sh
+		source "$scripts/shared-constants.sh"
+		# shellcheck source=../worker-lifecycle-common.sh
+		source "$scripts/worker-lifecycle-common.sh"
+		# shellcheck source=../stats-functions.sh
+		source "$scripts/stats-functions.sh"
+		_gather_health_stats() {
+			printf '%s\0' 0 '_No open PRs_' 0 0 '_No active workers_' 0 \
+				0 1 0.00 0.00 unknown 0 0 '?' 0 '' '_No diagnostics_'
+		}
+		_gather_activity_stats_for_repo() { printf '_Activity unavailable._\n'; }
+		_gather_session_time_for_repo() { printf '_Session data unavailable._\n'; }
+		_read_person_stats_cache() { printf '_Person stats unavailable._\n'; }
+		_compute_worker_success_rates() {
+			printf '%s\n' "$2" >>"$HOME/rate-attempts"
+			sleep 30
+		}
+		local now rc=0 body
+		now=$(date +%s)
+		_stats_run_bounded 1 "$((now + 5))" _refresh_worker_success_rates_cache tester || rc=$?
+		[[ "$rc" -eq 124 ]] || exit 1
+		[[ "$(wc -l <"$HOME/rate-attempts" | tr -d ' ')" -eq 1 ]] || exit 2
+		body=$(_assemble_health_issue_body owner/repo "$HOME" tester owner-repo \
+			2026-09-08T00:00:00Z Supervisor supervisor '' '' '' tester tester) || exit 3
+		[[ "$body" == *'| 24h | — |'* && "$body" == *'last_refresh: 2026-09-08T00:00:00Z'* ]] || exit 4
+		[[ "$(wc -l <"$HOME/rate-attempts" | tr -d ' ')" -eq 1 ]] || exit 5
+		local stage_file="$HOME/stage"
+		_record_health_repo_stage "$stage_file" body-publication || exit 6
+		[[ "$(<"$stage_file")" == body-publication\|* ]] || exit 7
+		_update_health_issue_for_repo() {
+			_record_health_repo_stage "$6" data-gather
+			sleep 30
+		}
+		local _HEALTH_SCHEDULE_RUNNER=tester _HEALTH_WORK_DEADLINE
+		local STATS_HEALTH_REPO_TIMEOUT=1
+		_HEALTH_WORK_DEADLINE=$(($(date +%s) + 5))
+		rc=0
+		_refresh_health_repo_bounded owner/slow "$HOME" '' '' '' || rc=$?
+		[[ "$rc" -eq 124 ]] || exit 8
+		grep -q 'owner/slow (rc=124 stage=data-gather)' "$LOGFILE" || exit 9
+	); then
+		pass "slow cross-repo rate collection is bounded once and leaves truthful render/stage evidence"
+	else
+		fail "slow cross-repo rate collection is bounded once and leaves truthful render/stage evidence" "fixture exit=$?"
+	fi
+	rm -rf "$batch_home"
+	return 0
+}
+
 _test_stats_preflight_deadlines() {
 	local REPOS_JSON="$HOME/repos.json" start elapsed
 	local STATS_OPTIONAL_WORK_RESERVE_SECONDS=0 QUALITY_SWEEP_CLEANUP_RESERVE_SECONDS=0
@@ -346,6 +402,7 @@ main_test() {
 	test_failed_health_update_still_runs_quality_sweep_once
 	test_healthy_update_runs_health_then_quality_once
 	test_resumable_quality_batches
+	test_health_dashboard_slow_cross_repo_rates_are_bounded_once
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	[[ "$TESTS_FAILED" -eq 0 ]]
 }
