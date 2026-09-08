@@ -356,6 +356,7 @@ issue_has_required_approval() {
 	local issue_num="$1"
 	local slug="$2"
 	local known_status="${3:-unknown}"
+	_NMR_APPROVAL_RESULT="NOT_REQUIRED"
 
 	# If it was never NMR-labeled, no approval needed
 	if ! issue_was_ever_nmr "$issue_num" "$slug" "$known_status"; then
@@ -371,12 +372,21 @@ issue_has_required_approval() {
 
 	# It was NMR-labeled at some point — check for cryptographic approval
 	local approval_helper="${AGENTS_DIR:-$HOME/.aidevops/agents}/scripts/approval-helper.sh"
+	_NMR_APPROVAL_RESULT="HELPER_UNAVAILABLE"
 	if [[ -f "$approval_helper" ]]; then
-		local verify_result
-		verify_result=$(bash "$approval_helper" verify "$issue_num" "$slug" 2>/dev/null) || verify_result=""
-		if [[ "$verify_result" == "VERIFIED" ]]; then
+		local verify_result="" verify_rc=0
+		verify_result=$(bash "$approval_helper" verify "$issue_num" "$slug" 2>/dev/null) || verify_rc=$?
+		_NMR_APPROVAL_RESULT="${verify_result:-API_ERROR}"
+		if [[ "$verify_rc" -eq 0 && "$verify_result" == "VERIFIED" ]]; then
 			return 0
 		fi
+		# Preserve the reason: missing keys, stale scope and API uncertainty are
+		# not proof that the maintainer never approved. Dispatch stays blocked.
+		[[ "$verify_rc" -eq 1 && "$verify_result" == "NO_APPROVAL" ]] || {
+			echo "[pulse-wrapper] approval verification blocked #${issue_num} in ${slug}: state=${_NMR_APPROVAL_RESULT} rc=${verify_rc}" >>"$LOGFILE"
+			[[ "$verify_result" != "NO_APPROVAL" ]] || _NMR_APPROVAL_RESULT="API_ERROR"
+			return 1
+		}
 	fi
 
 	# Was ever NMR, no signed approval found — blocked
@@ -1436,7 +1446,7 @@ _nmr_applied_by_maintainer() {
 # Detection logic (all four conditions must hold):
 #   1. Label needs-maintainer-review is absent (label was removed by human)
 #   2. ever-NMR history is set (issue_was_ever_nmr returns true)
-#   3. No cryptographic approval comment exists (approval-helper verify != VERIFIED)
+#   3. Verification positively reports NO_APPROVAL, not uncertainty/staleness
 #   4. No prior <!-- ever-nmr-remediation --> marker exists (idempotency guard)
 #
 # Arguments:
@@ -1458,8 +1468,8 @@ notify_ever_nmr_without_approval() {
 	local has_nmr_label
 	has_nmr_label=$(gh api "repos/${repo_slug}/issues/${issue_number}" \
 		--jq '.labels | map(.name) | index("needs-maintainer-review") != null' \
-		2>/dev/null) || has_nmr_label="false"
-	if [[ "$has_nmr_label" == "true" ]]; then
+		2>/dev/null) || return 0
+	if [[ "$has_nmr_label" != "false" ]]; then
 		# Label still present — no remediation needed, block is visible to user.
 		return 0
 	fi
@@ -1473,17 +1483,21 @@ notify_ever_nmr_without_approval() {
 	# Delegate to issue_has_required_approval with known_status="true" (ever-NMR
 	# confirmed above) so that only the approval helper is consulted, short-
 	# circuiting the redundant timeline API call for ever-NMR provenance.
+	_NMR_APPROVAL_RESULT="UNKNOWN"
 	if issue_has_required_approval "$issue_number" "$repo_slug" "true"; then
 		# Approved — block will clear on next dispatch cycle.
 		return 0
 	fi
+	[[ "${_NMR_APPROVAL_RESULT:-UNKNOWN}" == "NO_APPROVAL" ]] || return 0
 
 	# Condition 4: idempotency guard — never post twice.
 	local already_notified
-	already_notified=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" --paginate \
-		--jq '[.[] | select(.body | test("ever-nmr-remediation"))] | length' \
-		2>/dev/null) || already_notified=0
-	[[ "$already_notified" =~ ^[0-9]+$ ]] || already_notified=0
+	# Check all pages together. A signature published since verification also
+	# suppresses notification; presence alone never grants dispatch authority.
+	already_notified=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" --paginate --slurp \
+		--jq '[.[][] | select((.body // "") | test("ever-nmr-remediation|aidevops-signed-approval"))] | length' \
+		2>/dev/null) || return 0
+	[[ "$already_notified" =~ ^[0-9]+$ ]] || return 0
 	if [[ "$already_notified" -gt 0 ]]; then
 		echo "[pulse-wrapper] notify_ever_nmr_without_approval: #${issue_number} in ${repo_slug} — remediation comment already posted, skipping" >>"$LOGFILE"
 		return 0
