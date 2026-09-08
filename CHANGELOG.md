@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.342] - 2026-09-08
+
+### Fixed
+
+- preserve locked approval diagnostics (#31575)
+
 ## [3.32.341] - 2026-09-08
 
 ### Fixed
