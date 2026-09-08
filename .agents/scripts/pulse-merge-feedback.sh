@@ -831,6 +831,71 @@ _ci_check_evidence_role() {
 }
 
 #######################################
+# Preserve a PR when supplied preflight evidence is only a non-required
+# repository-baseline failure. Exact required-context and successful regression
+# evidence are authoritative: retain repair routing when either is unavailable.
+#
+# Args: $1=repo slug, $2=PR number, $3=supplied checks JSON
+# Stdout: checks JSON eligible for CI repair routing
+#######################################
+_ci_filter_nonrequired_baseline_evidence() {
+	local repo_slug="$1"
+	local pr_number="$2"
+	local supplied_checks_json="$3"
+	local required_checks_json="" required_checks_rc=0 all_checks_json="" all_checks_rc=0
+
+	[[ -n "$supplied_checks_json" ]] || {
+		printf '[]\n'
+		return 0
+	}
+	required_checks_json=$(gh_pr_checks_exact_json "$repo_slug" "$pr_number" required 2>/dev/null) || required_checks_rc=$?
+	case "$required_checks_rc" in
+	0 | 1 | 8) [[ -n "$required_checks_json" ]] || required_checks_json="[]" ;;
+	*)
+		# Unknown required-check state must remain blocking rather than silently
+		# treating supplied evidence as advisory.
+		printf '%s\n' "$supplied_checks_json"
+		return 0
+		;;
+	esac
+	all_checks_json=$(gh_pr_checks_exact_json "$repo_slug" "$pr_number" all 2>/dev/null) || all_checks_rc=$?
+	case "$all_checks_rc" in
+	0 | 1 | 8) [[ -n "$all_checks_json" ]] || all_checks_json="[]" ;;
+	*)
+		# PR-delta attribution is unavailable, so preserve the conservative route.
+		printf '%s\n' "$supplied_checks_json"
+		return 0
+		;;
+	esac
+
+	jq -c --argjson required "$required_checks_json" --argjson all "$all_checks_json" '
+		[.[]? | select(
+			(.name as $name
+			| ($required | any(.[]?; .name == $name))
+			) or (
+				((.name | ascii_downcase) | test("qlty.*(threshold|absolute|baseline)"; "i") | not)
+				or (($all | any(.[]?; .name == "Qlty Smell Regression" and ((.conclusion // .state // "") | ascii_downcase) == "success")) | not)
+			)
+		)]
+	' <<<"$supplied_checks_json" 2>/dev/null || printf '%s\n' "$supplied_checks_json"
+	return 0
+}
+
+_ci_repair_checks_for_dispatch() {
+	local repo_slug="$1"
+	local pr_number="$2"
+	local supplied_checks_json="${3:-}"
+	local checks_json=""
+
+	checks_json=$(_ci_repair_required_checks_json "$repo_slug" "$pr_number" "$supplied_checks_json")
+	if [[ -n "$supplied_checks_json" ]]; then
+		checks_json=$(_ci_filter_nonrequired_baseline_evidence "$repo_slug" "$pr_number" "$checks_json")
+	fi
+	printf '%s\n' "$checks_json"
+	return 0
+}
+
+#######################################
 # Return terminal failed check details and names from one jq pass.
 #
 # Args:
@@ -928,7 +993,7 @@ _dispatch_ci_fix_worker() {
 	local terminal_failed_check_filter='(.bucket == "fail" or .bucket == "cancel") and (((.conclusion // .state // "") | ascii_downcase) | test("^(failure|action_required)$")) and ((.link // "") != "")'
 	local checks_json="" result_marker=$'\n__AIDEVOPS_CHECK_NAMES__'
 	local check_results="" failing_checks_json="" failing_checks="" failing_names="" classification_output=""
-	checks_json=$(_ci_repair_required_checks_json "$repo_slug" "$pr_number" "$supplied_checks_json")
+	checks_json=$(_ci_repair_checks_for_dispatch "$repo_slug" "$pr_number" "$supplied_checks_json")
 	check_results=$(_ci_terminal_failed_check_results "$checks_json" "$terminal_failed_check_filter")
 	failing_checks_json="${check_results%%"$result_marker"*}"
 	failing_names="${check_results#*"$result_marker"}"

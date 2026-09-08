@@ -246,8 +246,11 @@ _append_gh_mock_routes() {
 		fi
 		if [[ "$*" == *"name,bucket,state,link"* ]]; then
 			case "${TEST_CHECK_SCENARIO:-terminal_failure}:${_is_required}" in
-				terminal_failure:1 | log_exit_143:1 | required_and_advisory:1 | infra_registry_rate_limit:1 | infra_dockerhub_rate_limit:1 | infra_github_api_rate_limit:1)
+				terminal_failure:1 | log_exit_143:1 | required_and_advisory:1 | nonrequired_baseline:1 | infra_registry_rate_limit:1 | infra_dockerhub_rate_limit:1 | infra_github_api_rate_limit:1)
 					printf '%s\n' '[{"name":"Lint","bucket":"fail","state":"FAILURE","link":"https://github.com/owner/repo/actions/runs/123/job/456"}]'
+					;;
+				nonrequired_baseline:0)
+					printf '%s\n' '[{"name":"Qlty Smell Threshold","bucket":"fail","state":"FAILURE","link":"https://github.com/owner/repo/actions/runs/125/job/791"},{"name":"Qlty Smell Regression","bucket":"pass","state":"SUCCESS","conclusion":"success","link":"https://github.com/owner/repo/actions/runs/125/job/792"}]'
 					;;
 				required_and_advisory:0)
 					printf '%s\n' '[{"name":"Lint","bucket":"fail","state":"FAILURE","link":"https://github.com/owner/repo/actions/runs/123/job/456"},{"name":"Qlty","bucket":"fail","state":"FAILURE","link":"https://github.com/owner/repo/actions/runs/124/job/790"}]'
@@ -506,12 +509,6 @@ define_process_helper() {
 define_feedback_helpers() {
 	local fns=(
 		_pmf_gh_read _build_ci_feedback_section
-		_ci_check_url_has_infra_failure_log
-		_ci_actionable_failed_checks_markdown
-		_ci_check_evidence_role
-		_ci_terminal_failed_check_results
-		_ci_merge_check_sets
-		_ci_repair_required_checks_json
 		_append_feedback_to_issue
 		_transition_issue_for_redispatch
 		_ci_repair_outcome_id
@@ -547,7 +544,6 @@ define_feedback_helpers() {
 		_ci_repair_session_key
 		_dispatch_ci_repair_session
 		_route_ci_repair_fallback
-		_dispatch_ci_fix_worker
 	)
 	local fn fn_src
 	cat >"${TEST_ROOT}/bin/git" <<'EOF'
@@ -575,6 +571,14 @@ EOF
 		local selection_mode="$3"
 		printf 'exact-checks %s %s %s\n' "$repo_slug" "$pr_number" "$selection_mode" >>"$GH_LOG"
 		case "${TEST_CHECK_SCENARIO:-terminal_failure}" in
+		nonrequired_baseline)
+			if [[ "$selection_mode" == "all" ]]; then
+				printf '%s\n' '[{"name":"Qlty Smell Threshold","bucket":"fail","state":"FAILURE","link":"https://github.com/owner/repo/actions/runs/125/job/791"},{"name":"Qlty Smell Regression","bucket":"pass","state":"SUCCESS","conclusion":"success","link":"https://github.com/owner/repo/actions/runs/125/job/792"}]'
+			else
+				printf '%s\n' '[{"name":"Lint","bucket":"fail","state":"FAILURE","link":"https://github.com/owner/repo/actions/runs/123/job/456"}]'
+			fi
+			return 1
+			;;
 		pending_only)
 			printf '%s\n' '[{"name":"Lint","bucket":"pending","state":"IN_PROGRESS","link":""}]'
 			return 8
@@ -599,7 +603,30 @@ EOF
 		# shellcheck disable=SC1090
 		eval "$fn_src"
 	done
+	define_ci_dispatch_helpers || return 1
 	_load_feedback_finalizer
+	return 0
+}
+
+define_ci_dispatch_helpers() {
+	local fns=(
+		_ci_check_url_has_infra_failure_log
+		_ci_actionable_failed_checks_markdown
+		_ci_check_evidence_role
+		_ci_filter_nonrequired_baseline_evidence
+		_ci_terminal_failed_check_results
+		_ci_merge_check_sets
+		_ci_repair_required_checks_json
+		_ci_repair_checks_for_dispatch
+		_dispatch_ci_fix_worker
+	)
+	local fn fn_src=""
+	for fn in "${fns[@]}"; do
+		fn_src=$(extract_function "$fn" "$FEEDBACK_SCRIPT")
+		[[ -n "$fn_src" ]] || return 1
+		# shellcheck disable=SC1090
+		eval "$fn_src"
+	done
 	return 0
 }
 
@@ -1221,20 +1248,20 @@ test_ci_feedback_emits_terminal_failure_with_conclusion_and_url() {
 	return 0
 }
 
-test_ci_feedback_uses_supplied_non_required_blocker_evidence() {
+test_ci_feedback_preserves_supplied_nonrequired_baseline_evidence() {
 	setup_test_env
+	TEST_CHECK_SCENARIO="nonrequired_baseline"
 	define_feedback_helpers || { print_result "defines feedback helpers for supplied preflight evidence" 1 "could not extract feedback helpers"; teardown_test_env; return 0; }
 
-	local supplied='[{"name":"CodeFactor","bucket":"fail","state":"FAILURE","conclusion":"failure","link":"https://github.com/owner/repo/actions/runs/125/job/791"}]'
+	local supplied='[{"name":"Qlty Smell Threshold","bucket":"fail","state":"FAILURE","conclusion":"failure","link":"https://github.com/owner/repo/actions/runs/125/job/791"}]'
 	_dispatch_ci_fix_worker "100" "owner/repo" "42" "$supplied"
-	sleep 1
 
-	local prompt_file=""
-	prompt_file=$(find "$AIDEVOPS_CI_REPAIR_STATE_DIR" -name prompt.md -type f -print -quit)
-	if [[ -z "$prompt_file" ]] || ! grep -qF '**CodeFactor**: failure — [check URL](https://github.com/owner/repo/actions/runs/125/job/791)' "$prompt_file"; then
-		print_result "supplied non-required blocker launches CI repair" 1 "Dispatch log: $(cat "$GH_LOG")"
+	if grep -qF 'PR #100: CI repair' "$GH_LOG"; then
+		print_result "non-required baseline failure preserves PR and skips CI repair" 1 "Dispatch log: $(cat "$GH_LOG")"
+	elif ! grep -qF 'no actionable failed checks' "$LOGFILE"; then
+		print_result "non-required baseline failure preserves PR and skips CI repair" 1 "Log: $(cat "$LOGFILE")"
 	else
-		print_result "supplied non-required preflight blocker launches bounded CI repair" 0
+		print_result "non-required baseline failure preserves PR and skips CI repair" 0
 	fi
 	teardown_test_env
 	return 0
@@ -1570,7 +1597,7 @@ main() {
 	test_ci_feedback_classifies_qlty_evidence_roles
 	test_ci_repair_archives_trusted_terminal_outcome
 	test_ci_feedback_emits_terminal_failure_with_conclusion_and_url
-	test_ci_feedback_uses_supplied_non_required_blocker_evidence
+	test_ci_feedback_preserves_supplied_nonrequired_baseline_evidence
 	test_ci_feedback_defers_when_head_changes_during_collection
 	test_ci_feedback_defers_without_initial_head_snapshot
 	test_ci_feedback_skips_infra_timeout_checks
