@@ -399,8 +399,13 @@ _trusted_dependabot_non_review_checks_green() {
 		def is_review_gate: ((check_label | test("(^|/ )review-bot-gate$|^review-bot-gate$"; "i")) or ((.workflowName // "") == "Review Bot Gate"));
 		def passish: (up(.conclusion) == "SUCCESS" or up(.conclusion) == "NEUTRAL" or up(.conclusion) == "SKIPPED" or up(.state) == "SUCCESS");
 		def pendingish: (up(.status) == "QUEUED" or up(.status) == "IN_PROGRESS" or up(.state) == "PENDING" or up(.state) == "EXPECTED" or ((up(.conclusion) == "") and (up(.state) != "SUCCESS") and (up(.status) != "COMPLETED")));
-		[([.statusCheckRollup[]? | select(is_review_gate | not)] | length),
-		 ([.statusCheckRollup[]? | select((is_review_gate | not) and (pendingish or (passish | not)))] | length)] | @tsv
+		. as $rollup
+		| def superseded_cancel: (
+			up(.conclusion) == "CANCELLED"
+			and (. as $check | any($rollup.statusCheckRollup[]?; check_label == ($check | check_label) and passish))
+		);
+		[([$rollup.statusCheckRollup[]? | select(is_review_gate | not)] | length),
+		 ([$rollup.statusCheckRollup[]? | select((is_review_gate | not) and (pendingish or ((passish or superseded_cancel) | not)))] | length)] | @tsv
 	' 2>/dev/null) || return 1
 	read -r non_review_count blocker_count <<<"$result"
 	[[ "$non_review_count" =~ ^[0-9]+$ && "$blocker_count" =~ ^[0-9]+$ ]] || return 1
