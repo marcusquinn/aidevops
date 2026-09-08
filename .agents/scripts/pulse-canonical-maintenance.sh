@@ -123,7 +123,7 @@ _canonical_maintenance_phase() {
 
 _canonical_maintenance_operation_timeout() {
 	local started_epoch="$1"
-	local now_epoch remaining operation_timeout
+	local now_epoch="" remaining=0 operation_timeout=0
 	now_epoch=$(date +%s)
 	remaining=$((CANONICAL_MAINTENANCE_STAGE_BUDGET_SECONDS - (now_epoch - started_epoch) - CANONICAL_MAINTENANCE_STAGE_RESERVE_SECONDS))
 	if [[ "$remaining" -le 0 ]]; then
@@ -343,7 +343,7 @@ _canonical_fast_forward() {
 	local -a _repo_list=()
 	mapfile -t _repo_list < <(jq -r '.initialized_repos[] | select(.maintenance != false) | select((.pulse // false) == true) | select((.local_only // false) == false) | .path // ""' "$repos_json" 2>/dev/null)
 
-	local repo_path operation_timeout ff_count=0 skip_count=0
+	local repo_path="" operation_timeout=0 ff_count=0 skip_count=0
 	for repo_path in "${_repo_list[@]}"; do
 		[[ -z "$repo_path" ]] && continue
 		[[ ! -d "$repo_path/.git" ]] && continue
@@ -482,7 +482,7 @@ _stale_worktree_sweep() {
 	local -a _repo_list=()
 	mapfile -t _repo_list < <(jq -r '.initialized_repos[] | select((.local_only // false) == false) | .path // ""' "$repos_json" 2>/dev/null)
 
-	local repo_path operation_timeout sweep_count=0
+	local repo_path="" operation_timeout=0 sweep_count=0
 	for repo_path in "${_repo_list[@]}"; do
 		[[ -z "$repo_path" ]] && continue
 		if [[ "$dry_run" -eq 0 && "$started_epoch" -gt 0 ]] && _canonical_maintenance_checkpoint_has_repo sweep "$repo_path"; then
@@ -537,7 +537,7 @@ run_canonical_maintenance() {
 		dry_run=1
 	fi
 
-	local now_epoch started_epoch phase pass_rc=0
+	local now_epoch="" started_epoch=0 phase="" pass_rc=0
 	now_epoch=$(date +%s)
 	started_epoch="$now_epoch"
 

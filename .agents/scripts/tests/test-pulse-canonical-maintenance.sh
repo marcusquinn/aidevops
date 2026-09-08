@@ -402,7 +402,7 @@ EOF
 _setup_budget_repos() {
 	local repo_count="${1:-3}"
 	local repos_body=""
-	local index repo_path
+	local index=0 repo_path=""
 	for ((index = 1; index <= repo_count; index++)); do
 		repo_path="${TEST_ROOT}/budget-repo-${index}"
 		rm -rf "$repo_path"
@@ -449,7 +449,7 @@ test_budget_yield_and_resume() {
 	rm -f "$SWEEP_VISITS" "$CANONICAL_MAINTENANCE_LAST_RUN" "$CANONICAL_MAINTENANCE_CHECKPOINT"
 	_canonical_maintenance_write_checkpoint sweep
 
-	local started elapsed first_repo slow_repo first_count slow_count
+	local started=0 elapsed=0 first_repo="" slow_repo="" first_count=0 slow_count=0
 	started=$(date +%s)
 	run_canonical_maintenance
 	elapsed=$(($(date +%s) - started))
@@ -485,7 +485,7 @@ test_budget_yield_and_resume() {
 # =============================================================================
 test_portable_timeout_fallback() {
 	local fallback_bin="${TEST_ROOT}/fallback-bin"
-	local command_path started elapsed timeout_rc=0
+	local command_path="" started=0 elapsed=0 timeout_rc=0
 	mkdir -p "$fallback_bin"
 	command_path=$(command -v perl)
 	ln -sf "$command_path" "${fallback_bin}/perl"
