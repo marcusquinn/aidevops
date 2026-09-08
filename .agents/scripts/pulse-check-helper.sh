@@ -31,6 +31,8 @@ COMMAND="report"
 WINDOW="15m"
 SINCE="24h"
 RECENT_SINCE="1h"
+REPORT_BUDGET_SECONDS="${PULSE_CHECK_REPORT_BUDGET_SECONDS:-45}"
+VERIFY_DELIVERY=0
 APPLY_REPO="${PULSE_CHECK_APPLY_REPO:-}"
 JSON_OUTPUT=0
 APPLY_MODE=0
@@ -52,6 +54,8 @@ Options:
   --window <15m|30m|1h>       Current-state window (default: ${WINDOW})
   --since <1h|6h|24h|48h|7d> Historical worker summary window (default: ${SINCE})
   --recent <1h|6h|24h>       Recent worker outcome window (default: ${RECENT_SINCE})
+  --budget <seconds>         Collection deadline; missing evidence stays unknown (default: ${REPORT_BUDGET_SECONDS})
+  --verify-delivery          Also verify GitHub delivery counts within the collection deadline
   --repo <owner/repo>        Repo for --apply self-improvement issues
   --max-issues <N>           Per-repo auto-dispatch issue scan limit (default: ${MAX_ISSUES_PER_REPO})
   --available-threshold <N>  Queue depth threshold for underfill findings (default: ${AVAILABLE_THRESHOLD})
@@ -81,6 +85,8 @@ _parse_args() {
 		--window) WINDOW="$next"; shift 2 ;;
 		--since) SINCE="$next"; shift 2 ;;
 		--recent) RECENT_SINCE="$next"; shift 2 ;;
+		--budget) REPORT_BUDGET_SECONDS="$next"; shift 2 ;;
+		--verify-delivery) VERIFY_DELIVERY=1; shift ;;
 		--repo) APPLY_REPO="$next"; shift 2 ;;
 		--max-issues) MAX_ISSUES_PER_REPO="$next"; shift 2 ;;
 		--available-threshold) AVAILABLE_THRESHOLD="$next"; shift 2 ;;
@@ -103,6 +109,7 @@ _validate_numeric_options() {
 	[[ "$NMR_INACTIVE_MINUTES" =~ ^[0-9]+$ ]] || NMR_INACTIVE_MINUTES=10080
 	[[ "$FAILURE_FAMILY_THRESHOLD" =~ ^[0-9]+$ ]] || FAILURE_FAMILY_THRESHOLD=3
 	[[ "$FAILURE_FAMILY_RECOVERY_SECONDS" =~ ^[0-9]+$ ]] || FAILURE_FAMILY_RECOVERY_SECONDS=86400
+	[[ "$REPORT_BUDGET_SECONDS" =~ ^[1-9][0-9]*$ ]] || REPORT_BUDGET_SECONDS=45
 	return 0
 }
 
@@ -111,13 +118,26 @@ _run_json_helper() {
 	shift
 
 	local output=""
-	local rc=0
-	output=$("$@" 2>/dev/null) || rc=$?
-	if [[ "$rc" -ne 0 || -z "$output" ]] || ! printf '%s' "$output" | jq empty >/dev/null 2>&1; then
-		printf '%s\n' "$fallback_json"
-		return 0
+	local rc=0 started="$SECONDS" state="ok"
+	local remaining=$((_PULSE_CHECK_REPORT_DEADLINE - SECONDS))
+	local component_budget="${_PULSE_CHECK_COMPONENT_BUDGET:-10}"
+	if [[ "$remaining" -le 0 ]]; then
+		state="deadline_exhausted"
+	else
+		[[ "$remaining" -lt "$component_budget" ]] && component_budget="$remaining"
+		output=$(timeout_sec "$component_budget" "$@" 2>/dev/null) || rc=$?
+		if [[ "$rc" -eq 124 ]]; then
+			state="timed_out"
+		elif [[ "$rc" -ne 0 ]]; then
+			state="failed"
+		elif [[ -z "$output" ]] || ! printf '%s' "$output" | jq -e 'type == "object"' >/dev/null 2>&1; then
+			state="invalid_json"
+		fi
 	fi
-	printf '%s\n' "$output"
+	[[ "$state" == "ok" ]] || output="$fallback_json"
+	printf '%s' "$output" | jq --arg state "$state" --argjson rc "$rc" \
+		--argjson elapsed "$((SECONDS - started))" \
+		'. + {_collection:{state:$state,exit_code:$rc,elapsed_seconds:$elapsed}}'
 	return 0
 }
 
@@ -128,11 +148,21 @@ _scan_auto_dispatch_queue() {
 		return 0
 	fi
 
+	local remaining=$((_PULSE_CHECK_REPORT_DEADLINE - SECONDS))
+	local queue_budget="${PULSE_CHECK_QUEUE_BUDGET_SECONDS:-20}"
+	[[ "$queue_budget" =~ ^[1-9][0-9]*$ ]] || queue_budget=20
+	if [[ "$remaining" -le 2 ]]; then
+		queue_budget=1
+	elif [[ "$queue_budget" -gt $((remaining - 2)) ]]; then
+		queue_budget=$((remaining - 2))
+	fi
 	PULSE_CHECK_REPOS_JSON="$REPOS_JSON" \
 		PULSE_CHECK_MAX_ISSUES_PER_REPO="$MAX_ISSUES_PER_REPO" \
 		PULSE_CHECK_OLD_AVAILABLE_MINUTES="$OLD_AVAILABLE_MINUTES" \
 		PULSE_CHECK_NMR_INACTIVE_MINUTES="$NMR_INACTIVE_MINUTES" \
-		python3 "$QUEUE_SCANNER"
+		PULSE_CHECK_QUEUE_BUDGET_SECONDS="$queue_budget" \
+		_PULSE_CHECK_COMPONENT_BUDGET="$((queue_budget + 2))" \
+		_run_json_helper '{"aggregate":{},"error":"queue_collection_unavailable"}' python3 "$QUEUE_SCANNER"
 	return 0
 }
 
@@ -145,16 +175,16 @@ _collect_report_json() {
 	local api_budget="{}"
 	local queue="{}"
 	local pulse_health="{}"
+	local delivery='{"_collection":{"state":"not_requested"}}'
+	_PULSE_CHECK_REPORT_DEADLINE=$((SECONDS + REPORT_BUDGET_SECONDS))
 
 	current_state=$(_run_json_helper '{}' "$CURRENT_STATE_HELPER" --window "$WINDOW" --json)
 	if [[ -f "$PULSE_HEALTH_FILE" ]]; then
-		pulse_health=$(jq -c . "$PULSE_HEALTH_FILE" 2>/dev/null || printf '{}')
+		pulse_health=$(jq -c 'if type == "object" then . else {} end' "$PULSE_HEALTH_FILE" 2>/dev/null || printf '{}')
 		current_state=$(printf '%s' "$current_state" | jq -c --argjson health "$pulse_health" '. + {pulse_health: $health}' 2>/dev/null || printf '%s' "$current_state")
 	fi
 	worker_summary=$(_run_json_helper '{}' "$WORKER_ACTIVITY_HELPER" summary --since "$SINCE" --json --no-pr-check)
 	worker_recent=$(_run_json_helper '{}' "$WORKER_ACTIVITY_HELPER" summary --since "$RECENT_SINCE" --json --no-pr-check)
-	providers=$(_run_json_helper '{}' "$WORKER_ACTIVITY_HELPER" providers --since "$RECENT_SINCE" --json)
-	runner_health=$(_run_json_helper '{}' "$RUNNER_HEALTH_HELPER" diagnose --json)
 	api_budget=$(_run_json_helper '{}' "$PULSE_DIAGNOSE_HELPER" api-budget --json)
 	local rest_admission="{}"
 	rest_admission=$(_run_json_helper '{}' python3 "${SCRIPT_DIR}/gh_transport_budget.py" status)
@@ -168,6 +198,15 @@ _collect_report_json() {
 	else
 		queue=$(_scan_auto_dispatch_queue)
 	fi
+	# Optional diagnostics must not consume the ready-work inventory budget.
+	if [[ "$VERIFY_DELIVERY" -eq 1 && "$skip_queue_scan" != "1" ]]; then
+		delivery=$(_PULSE_CHECK_COMPONENT_BUDGET=20 _run_json_helper '{}' \
+			"$WORKER_ACTIVITY_HELPER" summary --since "$SINCE" --json --pr-check)
+	elif [[ "$VERIFY_DELIVERY" -eq 1 ]]; then
+		delivery='{"_collection":{"state":"api_cooldown_active"}}'
+	fi
+	providers=$(_run_json_helper '{}' "$WORKER_ACTIVITY_HELPER" providers --since "$RECENT_SINCE" --json)
+	runner_health=$(_run_json_helper '{}' "$RUNNER_HEALTH_HELPER" diagnose --json)
 
 	if [[ ! -f "$REPORT_FILTER" ]]; then
 		print_error "pulse-check: report filter not found: ${REPORT_FILTER}"
@@ -187,6 +226,7 @@ _collect_report_json() {
 		--argjson runner "$runner_health" \
 		--argjson api "$api_budget" \
 		--argjson queue "$queue" \
+		--argjson delivery "$delivery" \
 		-f "$REPORT_FILTER"
 	return 0
 }
@@ -196,14 +236,18 @@ _render_text_report() {
 	printf '%s' "$report_json" | jq -r '
 		def percent_text: if . == null then "n/a" else (. | tostring) + "%" end;
 		def unknown: "unknown";
+		def count_text: if . == null then unknown else tostring end;
 		"Pulse Check — " + .generated_at,
 		"",
 		"## Current utilisation",
-		"- Active workers: " + (.summary.active_workers | tostring) + " / " + (.summary.max_workers | tostring) + " (available slots: " + (.summary.available_slots | tostring) + ")",
-		"- Auto-dispatch queue: " + (.summary.auto_dispatch_available_unassigned | tostring) + " available (" + (.summary.auto_dispatch_eligible_available_unassigned | tostring) + " label-eligible; launch admission not verified) / " + (.summary.auto_dispatch_open | tostring) + " open across " + (.queue.repos | tostring) + " pulse repos",
+		"- Active workers: " + (.summary.active_workers | count_text) + " / " + (.summary.max_workers | count_text) + " (available slots: " + (.summary.available_slots | count_text) + ")",
+		"- Auto-dispatch queue: " + (.summary.auto_dispatch_available_unassigned | count_text) + " available (" + (.summary.auto_dispatch_eligible_available_unassigned | count_text) + " label-eligible; launch admission not verified) / " + (.summary.auto_dispatch_open | count_text) + " open across " + (.queue.repos | count_text) + " pulse repos",
 		"- Queue scan state: " + (.summary.auto_dispatch_scan_state // "scanned"),
-		"- Current window launches: " + (.summary.worker_launches_in_window | tostring) + "; terminal worker events: " + (.summary.worker_terminal_events_in_window | tostring),
-		"- Recent worker metric events: " + (.summary.recent_worker_events | tostring) + "; " + .inputs.historical_window + " runtime handoff rate: " + (.summary.historical_runtime_handoff_rate | percent_text) + "; delivered success rate: " + (.summary.historical_delivery_success_rate | percent_text),
+		"- Queue coverage: " + (.queue.repos_scanned | count_text) + "/" + (.queue.repos | count_text) + " repositories; counts are " + .summary.queue_counts_basis + ", not independent work targets",
+		"- Collection evidence: " + (.collection | tojson),
+		"- Current window launches: " + (.summary.worker_launches_in_window | count_text) + "; terminal worker events: " + (.summary.worker_terminal_events_in_window | count_text),
+		"- Recent worker metric events: " + (.summary.recent_worker_events | count_text) + "; " + .inputs.historical_window + " runtime handoff rate: " + (.summary.historical_runtime_handoff_rate | percent_text),
+		"- Verified deliveries in " + .inputs.historical_window + ": " + (.summary.historical_worker_delivered_successes | count_text) + " (" + .summary.delivery_measurement_state + "; independent of the local attempt cohort)",
 		"- GraphQL: " + (.summary.graphql_budget_status // unknown),
 		"- REST transport admission: " + ((.summary.rest_admission // {state:"unknown"}) | tojson),
 		"- Current launch blockers: " + ((.current_state.top_pre_launch_blockers // []) | tojson),
@@ -218,7 +262,7 @@ _render_text_report() {
 		"## Evidence commands",
 		"- pulse-current-state-helper.sh --window " + .inputs.current_window + " --json",
 		"- worker-activity-helper.sh summary --since " + .inputs.recent_window + " --json --no-pr-check",
-		"- worker-activity-helper.sh summary --since " + .inputs.historical_window + " --json --no-pr-check",
+		"- worker-activity-helper.sh summary --since " + .inputs.historical_window + " --json --pr-check",
 		"- worker-activity-helper.sh live-workers",
 		"- pulse-diagnose-helper.sh cycle-health --window 1h",
 		"",

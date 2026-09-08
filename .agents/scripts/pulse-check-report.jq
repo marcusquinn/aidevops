@@ -1,4 +1,6 @@
 def number_or_zero: (tonumber? // 0);
+def capacity_number:
+  (tonumber? // null) | if type == "number" and . >= 0 and floor == . then . else null end;
 
 def finding($id; $severity; $title; $evidence; $recommendation; $autofile): {
   id: $id,
@@ -17,18 +19,25 @@ def non_failure_handoff_family:
   and ((.examples // []) | length) > 0
   and all(.examples[]?; .result == "post_pr_handoff" and (.exit_code // 1) == 0);
 
-(if ($current.active_worker_processes // $current.pulse_health.workers_active // null) == null then null else ($current.active_worker_processes // $current.pulse_health.workers_active | number_or_zero) end) as $active_worker_processes |
-($current.pulse_gauges.dispatch_capacity_final_max_workers // $current.pulse_health.workers_max // null) as $raw_max_workers |
+(try ($window | capture("^(?<value>[0-9]+)(?<unit>[smhd])$")
+  | (.value | tonumber) * ({s:1,m:60,h:3600,d:86400}[.unit])) catch null) as $window_seconds |
+(try ($current.pulse_health.timestamp | fromdateiso8601) catch null) as $health_timestamp |
+(if $health_timestamp == null then null else now - $health_timestamp end) as $health_age |
+($health_age != null and $window_seconds != null and $health_age >= 0 and $health_age <= $window_seconds) as $health_fresh |
+($current.active_worker_processes | capacity_number) as $process_workers |
+((if $health_fresh then $current.pulse_health.workers_active else null end) | capacity_number) as $health_workers |
+($process_workers // $health_workers) as $active_worker_processes |
+(($current.pulse_gauges.dispatch_capacity_final_max_workers // $current.pulse_health.workers_max // null) | capacity_number) as $raw_max_workers |
 ($current.current_state_guardrails.available_slots_last // $current.pulse_gauges.pulse_dispatch_guardrail_available_slots // (if ($current.pulse_health.workers_max // null) == null or $active_worker_processes == null then null else ([($current.pulse_health.workers_max | number_or_zero) - $active_worker_processes, 0] | max) end)) as $raw_available_slots |
-($raw_available_slots // 0 | number_or_zero) as $available_slots |
+($raw_available_slots | capacity_number) as $available_slots |
 (if $raw_max_workers == null then
-  (if $active_worker_processes == null then $available_slots else ($active_worker_processes + $available_slots) end)
+  (if $active_worker_processes == null or $available_slots == null then null else ($active_worker_processes + $available_slots) end)
 else
-  ($raw_max_workers | number_or_zero)
+  $raw_max_workers
 end) as $max_workers |
-([$max_workers - $available_slots, 0] | max) as $inferred_active_workers |
+(if $max_workers == null or $available_slots == null then null else ([$max_workers - $available_slots, 0] | max) end) as $inferred_active_workers |
 (if $active_worker_processes == null then $inferred_active_workers else $active_worker_processes end) as $active_workers |
-(if $active_worker_processes == null then $available_slots else ([$max_workers - $active_worker_processes, 0] | max) end) as $effective_available_slots |
+(if $active_worker_processes == null or $max_workers == null then $available_slots else ([$max_workers - $active_worker_processes, 0] | max) end) as $effective_available_slots |
 ($queue.aggregate.available_unassigned // 0 | number_or_zero) as $available_issues |
 ($queue.aggregate.eligible_available_unassigned // $queue.aggregate.available_unassigned // 0 | number_or_zero) as $eligible_issues |
 ($queue.aggregate.excluded_persistent_dashboard // 0 | number_or_zero) as $excluded_persistent_dashboard |
@@ -50,7 +59,7 @@ end) as $max_workers |
 ($summary.metrics.total // 0 | number_or_zero) as $hist_total |
 ($summary.metrics.terminal_session_total // $summary.metrics.total // 0 | number_or_zero) as $hist_terminal_total |
 ($summary.metrics.runtime_handoffs // $summary.metrics.succeeded // 0 | number_or_zero) as $hist_handoffs |
-($summary.delivery_stages // {}) as $hist_delivery |
+(if ($delivery._collection.state // "") == "ok" then ($delivery.delivery_stages // {}) else ($summary.delivery_stages // {}) end) as $hist_delivery |
 (if $hist_delivery.delivered_successes == null then null else ($hist_delivery.delivered_successes | number_or_zero) end) as $hist_delivered |
 ($summary.metrics.failure_families // [] | map(select(non_failure_handoff_family | not))) as $failure_families |
 ($recent_summary.metrics.failure_families // [] | map(select(non_failure_handoff_family | not))) as $recent_failure_families |
@@ -73,37 +82,57 @@ end) as $max_workers |
 {
   generated_at: (now | todateiso8601),
   inputs: {current_window: $window, historical_window: $since, recent_window: $recent},
+  collection: {
+    current: ($current._collection // {state:"unknown"}),
+    history: ($summary._collection // {state:"unknown"}),
+    recent: ($recent_summary._collection // {state:"unknown"}),
+    api: ($api._collection // {state:"unknown"}),
+    queue: ($queue._collection // {state:"unknown"}),
+    delivery: ($delivery._collection // {state:"not_requested"}),
+    providers: ($providers._collection // {state:"unknown"}),
+    runner: ($runner._collection // {state:"unknown"})
+  },
   summary: {
     max_workers: $max_workers,
     active_workers: $active_workers,
-    active_workers_source: (if $active_worker_processes == null then "capacity_gauge" else "process_scan" end),
+    active_workers_source: (if $process_workers != null then "process_scan" elif $health_workers != null then "pulse_health_snapshot" elif $active_workers != null then "capacity_gauge" else "unavailable" end),
+    max_workers_source: (if ($current.pulse_gauges.dispatch_capacity_final_max_workers | capacity_number) != null then "capacity_gauge" elif ($current.pulse_health.workers_max | capacity_number) != null then "pulse_health_configured_snapshot" elif $max_workers != null then "inferred_from_observed_slots" else "unavailable" end),
+    health_snapshot_fresh: $health_fresh,
+    health_snapshot_age_seconds: (if $health_age == null then null else ($health_age | floor) end),
     inferred_active_workers: $inferred_active_workers,
     available_slots: $effective_available_slots,
-    dispatch_alive: $dispatch_alive,
-    dispatch_stage_events: ($current.dispatch_stage_events // 0),
-    worker_launches_in_window: $spawned,
-    worker_terminal_events_in_window: $current_terminal_events,
+    capacity_state: (if $max_workers == null or $effective_available_slots == null then "unknown" elif $raw_max_workers != null and ($current.pulse_gauges.dispatch_capacity_final_max_workers | capacity_number) == null then "configured_snapshot" else "observed" end),
+    cycle_state_freshness: ($current.cycle_state.availability // "unavailable"),
+    dispatch_alive: (if $current.dispatch_alive == null then null else $dispatch_alive end),
+    dispatch_stage_events: ($current.dispatch_stage_events // null),
+    worker_launches_in_window: (if $current.worker_outcomes.spawned == null then null else $spawned end),
+    worker_terminal_events_in_window: (if $current.worker_terminal_events == null then null else $current_terminal_events end),
     worker_launch_validation_failures_in_window: $launch_validation_failed,
-    recent_worker_events: $recent_total,
-    historical_worker_events: $hist_total,
+    recent_worker_events: (if $recent_summary.metrics.total == null then null else $recent_total end),
+    historical_worker_events: (if $summary.metrics.total == null then null else $hist_total end),
     historical_worker_runtime_handoffs: $hist_handoffs,
     historical_runtime_handoff_rate: (if $hist_terminal_total > 0 then (($hist_handoffs / $hist_terminal_total) * 100 | floor) else null end),
     historical_worker_delivered_successes: $hist_delivered,
-    historical_delivery_success_rate: (if $hist_terminal_total > 0 and $hist_delivered != null then (($hist_delivered / $hist_terminal_total) * 100 | floor) else null end),
+    historical_delivery_success_rate: null,
+    delivery_measurement_state: ($hist_delivery.check_state // $delivery._collection.state // "unavailable"),
+    delivery_rate_basis: "unavailable_without_matched_attempt_cohort",
     historical_worker_successes: $hist_delivered,
-    historical_success_rate: (if $hist_terminal_total > 0 and $hist_delivered != null then (($hist_delivered / $hist_terminal_total) * 100 | floor) else null end),
-    auto_dispatch_open: ($queue.aggregate.auto_dispatch_open // 0),
-    auto_dispatch_available_unassigned: $available_issues,
-    auto_dispatch_eligible_available_unassigned: $eligible_issues,
+    historical_success_rate: null,
+    auto_dispatch_open: ($queue.aggregate.auto_dispatch_open // null),
+    auto_dispatch_available_unassigned: (if $queue.aggregate.available_unassigned == null then null else $available_issues end),
+    auto_dispatch_eligible_available_unassigned: (if $queue.aggregate.available_unassigned == null then null else $eligible_issues end),
     auto_dispatch_excluded_persistent_dashboard: $excluded_persistent_dashboard,
     auto_dispatch_available_old: $old_available,
     auto_dispatch_dependency_inconsistent_available: $dependency_inconsistent,
     auto_dispatch_repos_with_available: ($queue.aggregate.repos_with_available // 0),
     auto_dispatch_scan_errors: $gh_errors,
-    auto_dispatch_scan_state: (if $queue_error == "" then "scanned" else $queue_error end),
+    auto_dispatch_scan_state: (if $queue_error != "" then $queue_error elif $gh_errors > 0 then "partial" else "scanned" end),
+    auto_dispatch_scan_complete: $queue_scan_complete,
+    queue_counts_basis: (if $queue_scan_complete then "complete_inventory" elif $queue.aggregate.auto_dispatch_open == null then "unavailable" else "partial_observation" end),
     graphql_budget_status: ($current.graphql_budget_status // "unknown"),
     rest_admission: ($api.rest_admission // {state:"unknown"}),
     eligibility_basis: "labels_and_dependencies_not_launch_admission",
+    parallelism_basis: "issue_entries_not_deduplicated_work_targets",
     secondary_cooldown_state: $secondary_cooldown_state,
     secondary_cooldown_active: $secondary_cooldown_active,
     runner_health: ($runner.finding // "unknown"),
@@ -374,7 +403,7 @@ end) as $max_workers |
         "medium";
         "Auto-dispatch queue scan was skipped or incomplete";
         [("queue_scan_state=" + $queue_error)];
-        "Re-run pulse-check after API cooldown clears before making queue-depth or underfill claims.";
+        "Inspect collection timings and queue coverage; distinguish deadline exhaustion from API cooldown. Retry only missing evidence within an explicit budget before making queue-depth or underfill claims.";
         false
       )
     else empty end,
@@ -398,16 +427,7 @@ end) as $max_workers |
         false
       )
     else empty end,
-    if ($hist_terminal_total >= 10 and $hist_delivered != null and (($hist_delivered * 100) / $hist_terminal_total) < 70) then
-      finding(
-        "worker-delivery-rate-regression";
-        "medium";
-        "Historical worker delivered-success rate is below the productivity target";
-        [("delivered_success_rate_percent=" + (((($hist_delivered * 100) / $hist_terminal_total) | floor) | tostring)), ("delivered_successes=" + ($hist_delivered | tostring)), ("terminal_session_outcomes=" + ($hist_terminal_total | tostring))];
-        "Compare runtime handoffs, opened PRs, merged PRs, and solved issues with worker-activity-helper summary --pr-check before changing dispatch capacity.";
-        false
-      )
-    else empty end
+    empty
     ,
     ($failure_families[] as $family
       | $family

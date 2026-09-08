@@ -63,3 +63,38 @@ For provider/model/account questions, use `worker-activity-helper.sh providers -
 - Listing aggregate failure-mode counts ("66 circuit-breaker trips in 48h") without checking whether they fired in the last 10 min.
 
 This rule sits alongside t3215 (canonical sources) and t2204 (attribution before verification) — all three fire at the diagnosis-publish step, all three demand evidence-then-claim.
+
+## Actionable productivity measurements
+
+Use `pulse-check-helper.sh report --window 15m --since 6h --budget 60 --verify-delivery`
+for a bounded combined observation. The default collection budget is 45 seconds;
+each component also has a ceiling. The report returns partial evidence rather
+than waiting indefinitely. `collection` records component state and elapsed
+seconds; a timeout is missing evidence, not zero activity or an empty queue.
+
+- **Capacity:** active processes are a local snapshot. Missing maximum/free-slot
+  evidence remains unknown, not a claim that capacity equals current activity.
+  A cycle heartbeat outside the requested window is stale; its retained progress
+  history cannot trigger current under-utilisation conclusions.
+- **Work supply:** inventory coverage and dependency/progress enrichment are
+  separate. Partial counts do not establish the total ready backlog. Issue entries
+  are not independent work targets: duplicate intakes can name the same PR, and
+  assigned work may have a live owner. Verify both before filling slots.
+- **Flow:** use stage durations and their sample counts to locate admission delays.
+  Nested stage times overlap; do not sum them into an invented end-to-end latency.
+  Compare current launches/completions with ready supply and live ownership before
+  attributing a quiet interval to a broken dispatcher.
+- **Delivery:** optional GitHub verification reports deliveries independently of
+  local terminal attempt records. A blocked attempt may later produce a merged
+  PR; multiple attempts may contribute to one delivery. Do not divide these
+  unmatched counts into a success percentage. Existing compatibility percentage
+  fields remain null until a matched cohort is available; runtime handoff rate
+  retains its own terminal-attempt denominator.
+- **Next action:** insufficient independent authorized supply calls for reviewing
+  existing plans and blockers, not manufacturing tasks. Ready work with idle slots
+  calls for tracing admission. High occupancy with low delivery calls for reviewing
+  progress, quality and integration waits. Include evidence gaps and the next
+  bounded verification, rather than declaring health from occupancy alone.
+
+The objective is verified useful delivery with less user time and avoidable cost,
+not maximum processes, comments, attempts, or tokens.

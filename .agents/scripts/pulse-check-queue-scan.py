@@ -11,8 +11,10 @@ import os
 import pathlib
 import re
 import shutil
-import subprocess
 import sys
+import time
+from concurrent.futures import ThreadPoolExecutor
+from functools import lru_cache
 from typing import Any, Optional
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
@@ -62,6 +64,8 @@ def _int_from_env(name: str, default: int) -> int:
 def _empty_aggregate() -> dict[str, int]:
     return {
         "repos": 0,
+        "repos_scanned": 0,
+        "dependency_unknown": 0,
         "auto_dispatch_open": 0,
         "available_unassigned": 0,
         "eligible_available_unassigned": 0,
@@ -170,7 +174,9 @@ def _load_repos(repos_json: pathlib.Path) -> tuple[list[dict[str, Any]], str]:
     return repos, ""
 
 
+@lru_cache(maxsize=None)
 def _fetch_repo_issues(slug: str, max_issues: int) -> Optional[list[dict[str, Any]]]:
+    """Reuse the same bounded inventory during this report's enrichment pass."""
     issues: Optional[list[dict[str, Any]]] = None
     cmd = [
         "gh", "issue", "list",
@@ -181,24 +187,9 @@ def _fetch_repo_issues(slug: str, max_issues: int) -> Optional[list[dict[str, An
         "--json", "number,title,body,labels,assignees,createdAt,updatedAt",
     ]
     if _valid_repo_slug(slug):
-        try:
-            # Fixed argv, shell=False, validated owner/repo slug.
-            completed = subprocess.run(  # nosec B603
-                cmd,
-                text=True,
-                capture_output=True,
-                timeout=30,
-                check=False,
-            )
-        except (OSError, subprocess.SubprocessError):
-            completed = None
-        if completed is not None and completed.returncode == 0:
-            try:
-                parsed = json.loads(completed.stdout or "[]")
-            except json.JSONDecodeError:
-                parsed = None
-            if isinstance(parsed, list):
-                issues = [issue for issue in parsed if isinstance(issue, dict)]
+        parsed = _run_gh_json(cmd)
+        if isinstance(parsed, list):
+            issues = [issue for issue in parsed if isinstance(issue, dict)]
     return issues
 
 
@@ -287,6 +278,7 @@ def _scan_repo(
     if issues is None:
         aggregate[GH_ERRORS_KEY] += 1
         return
+    aggregate["repos_scanned"] += 1
     if len(issues) > max_issues:
         aggregate[GH_ERRORS_KEY] += 1
         issues = issues[:max_issues]
@@ -294,7 +286,11 @@ def _scan_repo(
         inconsistent, scan_error = _dependency_diagnostic(slug, issue)
         issue["dependency_inconsistent"] = inconsistent
         aggregate[GH_ERRORS_KEY] += int(scan_error)
-        _count_durable_progress(aggregate, slug, issue, now)
+        aggregate["dependency_unknown"] += int(scan_error)
+        if dependency_scan.QUERY_DEADLINE is None or time.monotonic() < dependency_scan.QUERY_DEADLINE:
+            _count_durable_progress(aggregate, slug, issue, now)
+        else:
+            aggregate["durable_progress_unknown"] += 1
     repo_available = sum(
         int(_count_issue(aggregate, issue, now, old_minutes))
         for issue in issues
@@ -324,10 +320,19 @@ def main() -> int:
         return 0
 
     now = dt.datetime.now(dt.timezone.utc)
+    budget = max(1, _int_from_env("PULSE_CHECK_QUEUE_BUDGET_SECONDS", 20))
+    dependency_scan.QUERY_DEADLINE = time.monotonic() + budget
+    # Inventory all repositories before spending the remaining budget on
+    # dependency/progress enrichment. Independent reads retain gh admission.
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        list(pool.map(_fetch_repo_issues,
+                      [str(repo.get("slug") or "") for repo in repos],
+                      [max_issues] * len(repos)))
     for repo in repos:
         _scan_repo(aggregate, repo, max_issues, now, old_minutes)
 
-    _emit(aggregate, scanned_at=now.isoformat())
+    error = "queue_budget_exhausted" if time.monotonic() >= dependency_scan.QUERY_DEADLINE else ""
+    _emit(aggregate, error=error, scanned_at=now.isoformat())
     return 0
 
 

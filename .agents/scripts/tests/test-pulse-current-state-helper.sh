@@ -267,6 +267,17 @@ missing_json="$TMP_DIR/missing-cycle-state.json"
 "$HELPER" --log-dir "$missing_dir" --repo-path "$PWD" --window 15m --json >"$missing_json"
 jq -e '.cycle_state.availability == "unavailable"' "$missing_json" >/dev/null
 
+jq '.cycle_state.heartbeat_at = ((now - 1800) | todateiso8601)' \
+	"$TMP_DIR/pulse-health.json" >"$missing_dir/pulse-health.json"
+"$HELPER" --log-dir "$missing_dir" --repo-path "$PWD" --window 15m --json >"$missing_json"
+jq -e '.cycle_state.availability == "stale" and .cycle_state.heartbeat_age_seconds >= 1800
+  and .cycle_state.freshness_window_seconds == 900
+  and .zero_worker_underutilization.actionable == false' "$missing_json" >/dev/null
+jq '.cycle_state.heartbeat_at = ((now + 3600) | todateiso8601)' \
+	"$TMP_DIR/pulse-health.json" >"$missing_dir/pulse-health.json"
+"$HELPER" --log-dir "$missing_dir" --repo-path "$PWD" --window 15m --json >"$missing_json"
+jq -e '.cycle_state.availability == "unavailable" and .cycle_state.reason == "future-heartbeat"' "$missing_json" >/dev/null
+
 upstream_mismatch_dir="$TMP_DIR/upstream-mismatch"
 mkdir -p "$upstream_mismatch_dir"
 printf 'ERROR Refusing reconciliation: HEAD is not exact origin/main SHA private-sha\n' >"$upstream_mismatch_dir/pulse-wrapper.log"
