@@ -70,10 +70,11 @@ canonical help command instead of repeating the full catalogue.
 
 OpenCode exposes `aidevops_bounded_operation` for a command expected to outlast
 the next useful progress update. Start it with argv arrays rather than shell
-text, retain the opaque `operation_id`, and poll `status` no later than the
-configured progress interval. The start action returns after the owned process
-spawns, so the primary session remains available for progress reports and
-scoped cancellation.
+text and retain the opaque `operation_id`. Status accepts an optional
+`wait_seconds` value from 1 to 60 and returns early when meaningful progress or
+a lifecycle transition occurs; omit it for an immediate snapshot. The start
+action returns after the owned process spawns, so the primary session remains
+available for progress reports and scoped cancellation.
 
 The receipt distinguishes running, failed, timed-out, cancelled, and
 restoration-failed states. `AIDEVOPS_PROGRESS: ...` lines count as explicit

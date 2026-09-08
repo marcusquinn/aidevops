@@ -24,6 +24,7 @@ import {
 import { resolveSessionOwnedWorktreeRoot } from "./gpt-image-worktree.mjs";
 
 const MAX_OPERATIONS = 24;
+const MAX_STATUS_WAIT_MS = 60 * 1000;
 const MAX_OUTPUT_LINES = 500;
 const SUPERVISOR_PATH = fileURLToPath(new URL("./bounded-operation-supervisor.mjs", import.meta.url));
 const SUPERVISOR_RUNTIME = "node";
@@ -67,9 +68,25 @@ export class BoundedInteractiveOperationManager {
     for (const stream of [child.stdout, child.stderr]) {
       stream?.on("data", (chunk) => {
         appendCapture(operation, chunk);
-        observeProgress(operation, chunk, this.now);
+        if (observeProgress(operation, chunk, this.now)) this.notifyStatusWaiters(operation);
       });
     }
+  }
+
+  statusVersion(operation) {
+    return `${operation.state}:${operation.restorationState}:${operation.progressEvents}`;
+  }
+
+  notifyStatusWaiters(operation) {
+    const version = this.statusVersion(operation);
+    for (const waiter of operation.statusWaiters) {
+      if (waiter.version === version) continue;
+      waiter.finish();
+    }
+  }
+
+  clearStatusWaiters(operation) {
+    for (const waiter of operation.statusWaiters) waiter.finish();
   }
 
   spawnOwned(operation, command, stage) {
@@ -142,6 +159,7 @@ export class BoundedInteractiveOperationManager {
       restorationTimer: null,
       budgetTimer: null,
       killTimer: null,
+      statusWaiters: new Set(),
     };
     this.operations.set(operation.id, operation);
 
@@ -151,6 +169,7 @@ export class BoundedInteractiveOperationManager {
       child.once("exit", () => { operation.childExited = true; });
       child.once("spawn", () => {
         operation.state = "running";
+        this.notifyStatusWaiters(operation);
         operation.budgetTimer = this.setTimer(() => this.requestTermination(operation, "timed_out"), operation.budgetMs);
         resolve();
       });
@@ -173,6 +192,7 @@ export class BoundedInteractiveOperationManager {
     if (!canTerminate(operation)) return false;
     operation.disposition = disposition;
     operation.state = disposition === "cancelled" ? "cancelling" : "timing_out";
+    this.notifyStatusWaiters(operation);
     operation.processSignal = "SIGTERM";
     const signalled = this.kill(operation.child, "SIGTERM");
     return signalled;
@@ -194,6 +214,7 @@ export class BoundedInteractiveOperationManager {
   async runRestoration(operation) {
     operation.state = "restoring";
     operation.restorationState = "running";
+    this.notifyStatusWaiters(operation);
     await new Promise((resolve) => {
       let settled = false;
       const finish = (state, code = null) => {
@@ -203,6 +224,7 @@ export class BoundedInteractiveOperationManager {
         operation.restorationChild = null;
         operation.restorationExit = Number.isInteger(code) ? code : null;
         operation.restorationState = state;
+        this.notifyStatusWaiters(operation);
         resolve();
       };
       const child = this.spawnOwned(operation, operation.restorationCommand, "restoration");
@@ -211,6 +233,7 @@ export class BoundedInteractiveOperationManager {
       child.once("exit", () => { operation.restorationChildExited = true; });
       operation.restorationTimer = this.setTimer(() => {
         operation.restorationState = "timing_out";
+        this.notifyStatusWaiters(operation);
         if (!operation.restorationChildExited && child.exitCode === null && child.signalCode === null) {
           this.kill(child, "SIGTERM");
         }
@@ -229,6 +252,7 @@ export class BoundedInteractiveOperationManager {
       ? "restoration_failed"
       : operation.disposition;
     operation.state = "finalizing";
+    this.notifyStatusWaiters(operation);
     try {
       operation.outputID = await this.recordOutput(Buffer.concat(operation.output), {
         exitCode: operation.processExit,
@@ -239,6 +263,7 @@ export class BoundedInteractiveOperationManager {
     }
     operation.output = [];
     operation.state = finalState;
+    this.notifyStatusWaiters(operation);
     if (operation.ownerDeleted) this.operations.delete(operation.id);
   }
 
@@ -251,8 +276,28 @@ export class BoundedInteractiveOperationManager {
     return operation;
   }
 
-  status(id, context = {}) {
-    return this.receipt(this.ownedOperation(id, context));
+  status(id, context = {}, requested = {}) {
+    const operation = this.ownedOperation(id, context);
+    const waitMs = Number(requested.waitMs ?? 0);
+    if (!Number.isSafeInteger(waitMs) || waitMs < 0 || waitMs > MAX_STATUS_WAIT_MS) {
+      throw new Error("status wait must be an integer from 0 to 60000 milliseconds");
+    }
+    if (waitMs === 0 || !["starting", "running", "cancelling", "timing_out", "restoring", "finalizing"].includes(operation.state)) {
+      return this.receipt(operation);
+    }
+    return new Promise((resolve) => {
+      const waiter = {
+        version: this.statusVersion(operation),
+        finish: () => {
+          if (!operation.statusWaiters.delete(waiter)) return;
+          this.clearTimer(waiter.timer);
+          resolve(this.receipt(operation));
+        },
+        timer: null,
+      };
+      operation.statusWaiters.add(waiter);
+      waiter.timer = this.setTimer(waiter.finish, waitMs);
+    });
   }
 
   async output(id, context = {}, requested = {}) {
@@ -306,6 +351,7 @@ export class BoundedInteractiveOperationManager {
   }
 
   dispose() {
+    for (const operation of this.operations.values()) this.clearStatusWaiters(operation);
     disposeOperations(this.operations, this.kill, this.clearTimer);
     this.recordOutput.dispose?.();
     this.readOutput.dispose?.();
