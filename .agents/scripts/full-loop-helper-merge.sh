@@ -1894,6 +1894,9 @@ _merge_report_pre_merge_gate_failure() {
 			print_error "Merge deferred: GitHub API cooldown is active; retry after the cooldown expires."
 		fi
 		;;
+	github-api-read-deferred)
+		print_error "Merge deferred by GitHub read admission: ${FULL_LOOP_REQUIRED_CHECKS_ERROR_DETAIL:-retry when capacity returns}"
+		;;
 	review-bot)
 		print_error "Merge blocked by review bot gate. Address bot findings or wait for reviews."
 		;;

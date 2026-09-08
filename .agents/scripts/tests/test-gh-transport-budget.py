@@ -127,6 +127,46 @@ class AdmissionTests(unittest.TestCase):
         self.budget.finish(probe, "core", headers(99), started=1061, now=1062)
         self.budget.acquire("core", now=1063)
 
+    def test_continuous_responses_do_not_slide_revalidation_deadline(self):
+        self.seed(763)
+        for now in (1010, 1020, 1030, 1040, 1050, 1060):
+            request = self.budget.acquire("core", now=now)
+            self.budget.finish(request, "core", headers(4934), started=now, now=now + 0.1)
+        self.assertEqual(self.budget.db.execute("SELECT remaining FROM quota").fetchone()[0], 763)
+        probe = self.budget.acquire("core", now=1061)
+        with self.assertRaisesRegex(Deferred, "serialized quota revalidation"):
+            self.budget.acquire("core", now=1061.1)
+        self.budget.finish(probe, "core", headers(4934), started=1061, now=1062)
+        self.assertEqual(self.budget.db.execute("SELECT remaining FROM quota").fetchone()[0], 4934)
+
+    def test_due_revalidation_drains_active_work_without_erasing_debt(self):
+        self.seed(763)
+        earlier = self.budget.acquire("core", now=1050)
+        with self.assertRaisesRegex(Deferred, "serialized quota revalidation"):
+            self.budget.acquire("core", now=1061)
+        self.budget.finish(earlier, "core", {}, started=1050, now=1062)
+        probe = self.budget.acquire("core", now=1063)
+        self.assertEqual(self.budget.db.execute("SELECT COUNT(*) FROM reservation").fetchone()[0], 2)
+        self.budget.finish(probe, "core", headers(4934), started=1063, now=1064)
+        self.assertEqual(self.budget.db.execute("SELECT COUNT(*) FROM reservation").fetchone()[0], 0)
+
+    def test_budget_diagnostics_are_opt_in_and_identity_free(self):
+        self.seed(763)
+        diagnostic = self.directory / "budget-transitions.jsonl"
+        self.assertFalse(diagnostic.exists())
+        output = io.StringIO()
+        with patch.dict(os.environ, {"AIDEVOPS_GH_BUDGET_DIAGNOSTICS": "1"}), patch("sys.stderr", output):
+            request = self.budget.acquire("core", now=1010)
+            self.budget.finish(request, "core", headers(4934), started=1010, now=1011)
+        self.assertEqual(output.getvalue(), "")
+        event = json.loads(diagnostic.read_text())
+        self.assertEqual(event["previous"]["remaining"], 763)
+        self.assertEqual(event["incoming"]["remaining"], 4934)
+        self.assertEqual(event["accepted"]["remaining"], 763)
+        self.assertFalse(event["probe_recovered"])
+        self.assertNotIn("owner-one", diagnostic.read_text())
+        self.assertEqual(diagnostic.stat().st_mode & 0o777, 0o600)
+
     def test_serialized_reserve_probe_repairs_same_credential_stale_balance(self):
         self.seed(100)
         probe = self.budget.acquire("core", now=1061)

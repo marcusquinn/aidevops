@@ -21,7 +21,10 @@ from pathlib import Path
 from gh_transport_capacity import capacity_wait
 from gh_transport_identity import quota_owner
 from gh_transport_reconcile import reconcile_scope as _reconcile_scope
-from gh_transport_recovery import admission_status, mark_dead_reservations, probe_recovers, reserve_probe_allowed
+from gh_transport_recovery import (
+    admission_status, mark_dead_reservations, probe_recovers,
+    record_budget_transition, reserve_probe_allowed, revalidation_wait,
+)
 from gh_transport_schema import SCHEMA_VERSION, ensure_schema
 
 
@@ -103,13 +106,15 @@ class Budget:
         try:
             self._ensure_schema()
             with self.transaction():
-                self._bind_scope()
+                binding_events = self._bind_scope()
         except BaseException:
             self.db.close()
             raise
         # A configured owner is authoritative only after its requested scope is
         # canonical. A legacy owner->unresolved alias still needs reconciliation.
         self.attributed = attributed and self.scope == requested_scope
+        for event in binding_events:
+            record_budget_transition(self, *event, event="scope_binding")
 
     def _ensure_schema(self) -> None:
         ensure_schema(self.db)
@@ -122,7 +127,8 @@ class Budget:
             scope = row[0]
         raise ValueError("quota scope alias cycle")
 
-    def _bind_scope(self) -> None:
+    def _bind_scope(self) -> list:
+        events = []
         self.scope = self._root(self.scope)
         bound = self.db.execute(
             "SELECT scope FROM binding WHERE credential=?", (self.credential,)
@@ -145,6 +151,11 @@ class Budget:
                 )
                 self.db.execute("INSERT OR REPLACE INTO quota VALUES(?,?,?,?,?,?,?)",
                                 (previous, row[0], *values))
+                events.append((
+                    {"remaining": old[0], "reset": old[1]} if old else None,
+                    {"remaining": row[1], "reset": row[2]},
+                    {"remaining": values[0], "reset": values[1]}, False, None,
+                ))
             self.db.execute("DELETE FROM quota WHERE scope=?", (self.scope,))
             self.db.execute("UPDATE reservation SET scope=? WHERE scope=?", (previous, self.scope))
             self.db.execute("UPDATE admission_history SET scope=? WHERE scope=?", (previous, self.scope))
@@ -165,6 +176,7 @@ class Budget:
             self.db.execute("INSERT OR REPLACE INTO alias VALUES(?,?)", (self.scope, previous))
             self.scope = previous
         self.db.execute("INSERT OR REPLACE INTO binding VALUES(?,?)", (self.credential, self.scope))
+        return events
 
     @contextmanager
     def transaction(self):
@@ -205,6 +217,9 @@ class Budget:
                     f"local primary capacity exhausted (remaining={row[0]}, reserved={total}, "
                     f"reset={int(row[1])})", retry_at=row[1],
                 )
+            if revalidation_wait(self, resource, row, active, now):
+                raise Deferred("waiting for serialized quota revalidation",
+                               retryable=True, retry_at=now + 1)
             # Expired/missing observations are not a new 5,000-point grant.
             # Permit one serialized real request to obtain fresh headers.
             fresh = row and 0 <= now - row[2] <= 20 and row[1] > now
@@ -282,6 +297,14 @@ class Budget:
                     "UPDATE reservation SET uncertain=1,started=? WHERE id=?",
                     (now, reservation),
                 )
+        if valid:
+            record_budget_transition(
+                self,
+                {"remaining": row[0], "reset": row[1]} if row else None,
+                {"remaining": int(remaining), "reset": int(reset)},
+                {"remaining": available, "reset": reset_at},
+                recovered, bool(row and started >= row[2]),
+            )
 
     def close(self) -> None:
         self.db.close()

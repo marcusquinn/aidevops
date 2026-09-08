@@ -89,16 +89,36 @@ child environment; credentials are never exported to a long-lived parent.
   with `attempted=false`, a local admission reason and `retry_at`; callers can
   reschedule without treating a local deferral as a GitHub rejection. No alternate
   transport retry or cached application response is substituted.
+  The shim retries at most once, only for proven unattempted local admission and
+  only when the supplied deadline fits a five-second wait. Longer or invalid
+  deadlines return rescheduling evidence immediately. Required-context readers
+  and the merge gate retain the reason and deadline, including cached failures;
+  unknown required checks never become a passing result. A successful retry does
+  not leak the superseded error into JSON output.
 - Missing/stale observations permit one serialized observation, not an assumed
   new allowance. Unknown execution remains debt until a later response from
   the same credential covers it. Out-of-order responses cannot restore spent
   quota inside a live reset window.
-- A stale positive balance can revalidate through one accounted GET after 60
-  seconds without a newer observation/probe. No active request, real cooldown,
+- A stale positive balance can revalidate through one accounted GET every 60
+  seconds, independently of ordinary response freshness. Once due, new admissions
+  yield until active work drains; admissions also wait for the probe to finish.
+  Continuous healthy traffic therefore cannot indefinitely postpone recovery.
+  The existing revalidation table stores the cadence anchor; no schema migration
+  is needed. Older callers stay conservative, but only updated callers provide
+  the drain/serialization guarantee during a mixed-version rollout.
+  No active request, real cooldown,
   exhaustion or uncertain spend may be bypassed. The exact probe reservation
   can repair a stale balance only with causally newer resource-owned headers and
-  a single bound credential; ambiguous/shared scopes stay conservative. This is
+  a single bound credential or an explicitly configured canonical owner;
+  unresolved shared scopes stay conservative. This is
   bounded recovery, not an alternative transport or a status-endpoint grant.
+- Set `AIDEVOPS_GH_BUDGET_DIAGNOSTICS=1` for numeric response and scope-binding
+  transition evidence in `budget-transitions.jsonl` beside `admission.sqlite3`.
+  The mode-600 log records previous/incoming/accepted balances and reset times,
+  ordering, probe recovery and the conservative decision after commit. It never
+  contaminates CLI JSON or logs credentials, owners, endpoints or response bodies.
+  Disable it after capturing evidence; logging errors never alter admission.
+  This diagnoses future transitions, not the unproven origin of an existing balance.
 - `python3 gh_transport_budget.py status` reads local admission evidence without
   HTTP, credential values or database mutation. Pulse Check reports this separately
   from GraphQL. Label-eligible queue counts are not proof of launch admission.

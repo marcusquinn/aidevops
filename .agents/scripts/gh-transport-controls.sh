@@ -58,6 +58,31 @@ _gh_transport_capture_errors() {
 	return "$rc"
 }
 
+_gh_transport_local_retry_delay() {
+	local metadata="$1" fallback="$2"
+	python3 -c '
+import json, math, sys, time
+with open(sys.argv[1], encoding="utf-8") as stream:
+    deadline = json.load(stream).get("retry_at")
+if deadline is None:
+    delay = min(5.0, float(sys.argv[2]))
+elif isinstance(deadline, (int, float)) and not isinstance(deadline, bool) and math.isfinite(deadline):
+    delay = max(0.0, deadline - time.time())
+else:
+    delay = -1
+print(f"{delay:.6f}" if 0 <= delay <= 5 else "-1")
+' "$metadata" "$fallback"
+	return $?
+}
+
+_gh_transport_emit_local_deferral() {
+	local metadata="$1"
+	jq -r 'select(.attempted == false and .deferred_by == "local_admission") |
+		"[gh-transport] error_kind=github-api-read-deferred attempted=false deferred_by=local_admission retry_at=\(if (.retry_at | type) == "number" then .retry_at else "unknown" end) reason=\((.reason // "unknown") | tojson)"' \
+		"$metadata" >&2
+	return $?
+}
+
 # _GHGT_HANDLED distinguishes unsupported-before-execution from native exit125.
 # Supported REST records metadata here, not a second attempt in the ordinary
 # recorder. Exact capture retains its existing multi-response-frame owner.
@@ -84,15 +109,19 @@ _gh_transport_run_rest() {
 	if [[ "$rc" -eq 75 && "$attempted" != true && "$deferred_by" == "local_admission" ]]; then
 		local retry_delay="${AIDEVOPS_GH_LOCAL_ADMISSION_RETRY_DELAY_SECONDS:-1}"
 		[[ "$retry_delay" =~ ^[0-5]([.][0-9]+)?$ ]] || retry_delay=1
-		command cat "$error_file" >&2
-		printf '[gh-transport] retrying one request that local admission proved was not attempted\n' >&2
-		sleep "$retry_delay"
-		: >"$error_file"
-		rc=0
-		python3 "${_GHGT_DIR}/gh-transport-governor.py" "$metadata" "$executable" "$@" 2>"$error_file" || rc=$?
+		retry_delay=$(_gh_transport_local_retry_delay "$metadata" "$retry_delay") || retry_delay=-1
+		if [[ "$retry_delay" != -1 ]]; then
+			sleep "$retry_delay"
+			: >"$error_file"
+			rc=0
+			python3 "${_GHGT_DIR}/gh-transport-governor.py" "$metadata" "$executable" "$@" 2>"$error_file" || rc=$?
+		fi
 	fi
 	end_ms=$(_gh_now_ms)
 	command cat "$error_file" >&2
+	if [[ "$rc" -eq 75 ]]; then
+		_gh_transport_emit_local_deferral "$metadata" || true
+	fi
 	attempted=$(jq -r '.attempted // false' "$metadata" 2>/dev/null) || attempted=false
 	if [[ "$rc" -eq 125 && "$attempted" != true ]]; then
 		rm -f -- "$metadata" "$error_file"
