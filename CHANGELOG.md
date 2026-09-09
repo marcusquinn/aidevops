@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.348] - 2026-09-09
+
+### Fixed
+
+- fix release-blocking js-yaml audit
+
 ## [3.32.347] - 2026-09-09
 
 ### Fixed
