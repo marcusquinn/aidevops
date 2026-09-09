@@ -14,9 +14,7 @@ import {
   withinRoot,
 } from "./bounded-operation-values.mjs";
 import {
-  appendCapture,
   disposeOperations,
-  observeProgress,
   operationReceipt,
   signalSupervisor,
   trimTerminalOperations,
@@ -52,8 +50,6 @@ export class BoundedInteractiveOperationManager {
     this.killGraceMs = options.killGraceMs ?? 500;
     this.setTimer = options.setTimer || setTimeout;
     this.clearTimer = options.clearTimer || clearTimeout;
-    this.appendCapture = appendCapture;
-    this.observeProgress = observeProgress;
     this.supervisorRuntime = options.supervisorRuntime || SUPERVISOR_RUNTIME;
     this.operations = new Map();
   }

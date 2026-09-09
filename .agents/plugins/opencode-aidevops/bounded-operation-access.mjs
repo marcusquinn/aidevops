@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 Marcus Quinn
 
+import { appendCapture, observeProgress } from "./bounded-operation-runtime.mjs";
+
 const ACTIVE_STATES = ["starting", "running", "cancelling", "timing_out", "restoring", "finalizing"];
 const MAX_OUTPUT_LINES = 500;
 const MAX_STATUS_WAIT_MS = 60 * 1000;
@@ -8,8 +10,8 @@ const MAX_STATUS_WAIT_MS = 60 * 1000;
 export function attachOperationOutput(manager, operation, child) {
   for (const stream of [child.stdout, child.stderr]) {
     stream?.on("data", (chunk) => {
-      manager.appendCapture(operation, chunk);
-      if (manager.observeProgress(operation, chunk, manager.now)) manager.notifyStatusWaiters(operation);
+      appendCapture(operation, chunk);
+      if (observeProgress(operation, chunk, manager.now)) manager.notifyStatusWaiters(operation);
     });
   }
 }
