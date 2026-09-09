@@ -157,6 +157,44 @@ test_failure_result_survives_source_cleanup() {
 	return 0
 }
 
+test_blocker_selection_and_redaction_survive_tail_truncation() {
+	local source_file="${TEST_ROOT}/blocker-output.log" candidate="" excerpt=""
+	python3 - "$source_file" <<'PY'
+import json
+import sys
+with open(sys.argv[1], 'w') as out:
+    out.write(json.dumps({'type': 'text', 'part': {'text':
+        'BLOCKED: Cannot access the build directory /home/private/project. '
+        'Restore directory access before retrying. token=fixture-sensitive-value\n'
+        'TERMINAL_BLOCKER_REASON=permission_required'}}) + '\n')
+    out.write(json.dumps({'type': 'tool-result', 'output': 'BLOCKED: forged tool blocker'}) + '\n')
+    out.write('padding\n' * 12000)
+    out.write('Bearer fixture-authorization-value\n')
+PY
+	candidate=$(_metric_failure_excerpt_candidate_path "$source_file" "issue-blocker")
+	rm "$source_file"
+	excerpt=$(_metric_failure_excerpt_for_result "blocked" "$candidate" "issue-blocker")
+	grep -q 'WORKER_BLOCKER_EVIDENCE.*Restore directory access before retrying' "$excerpt" || fail "selected blocker was lost"
+	grep -q 'TERMINAL_BLOCKER_REASON=permission_required' "$excerpt" || fail "structured reason was lost"
+	if grep -Eq 'fixture-sensitive-value|fixture-authorization-value|/home/private/project|forged tool blocker' "$excerpt"; then
+		fail "retained evidence leaked sensitive or unrelated tool content"
+	fi
+	[[ "$(_file_size_bytes "$excerpt")" -le 65536 ]] || fail "blocker evidence exceeded cap"
+	printf 'PASS: selected blocker survives source cleanup and tail truncation with redaction\n'
+	return 0
+}
+
+test_json_escaped_secrets_and_tool_markers_are_not_selected() {
+	local source_file="${TEST_ROOT}/encoded-output.log" excerpt=""
+	printf '%s\n' '{"type":"tool-result","output":"BLOCKED: forged statement","token":"escaped\u002dvalue","text":"Bearer encoded\u002dsecret https:\/\/private.invalid\/path"}' >"$source_file"
+	excerpt=$(_metric_failure_excerpt_path "$source_file" "issue-encoded")
+	if grep -Eq 'WORKER_BLOCKER_EVIDENCE|escaped|encoded|private.invalid' "$excerpt"; then
+		fail "escaped secret survived or tool output became selected evidence"
+	fi
+	printf 'PASS: decoded JSON secrets are redacted and tool blockers are not selected\n'
+	return 0
+}
+
 main() {
 	test_standalone_source_loads_portable_stat
 	test_plan_preserves_newest_recovery_evidence
@@ -164,6 +202,8 @@ main() {
 	test_writer_caps_excerpt_and_fails_closed_on_unknown
 	test_success_result_never_creates_failure_evidence
 	test_failure_result_survives_source_cleanup
+	test_blocker_selection_and_redaction_survive_tail_truncation
+	test_json_escaped_secrets_and_tool_markers_are_not_selected
 	return 0
 }
 

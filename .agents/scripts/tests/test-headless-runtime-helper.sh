@@ -255,6 +255,78 @@ run_private_workload_attempt_identity_tests() {
 	return 0
 }
 
+# Exercise the real attempt/result/metric chain, not only the classifier API.
+test_terminal_attempt_evidence_preserves_classification() {
+	local evidence=""
+	evidence=$(
+		local role="worker" provider="openai" session_key="issue-31676"
+		local selected_model="openai/fixture" output_file="${TEST_ROOT}/terminal-evidence.out"
+		local permission_request_file="${TEST_ROOT}/terminal-permission.json"
+		local work_dir="$TEST_ROOT" metric_work_dir="$TEST_ROOT"
+		local _metric_kill_reason="natural" _metric_session_id="" _metric_output_file="" _metric_excerpt_candidate=""
+		local resource_sampler_pid="" start_ms=0 end_ms=0 duration_ms=0
+		local exit_code=1 status=0 backoff_reason="" backoff_model=""
+		local _rl_fast_sentinel="${TEST_ROOT}/terminal-fast"
+		_hrw_reconcile_session_permission_blockers() { return 0; }
+		attempt_pool_recovery() { return 1; }
+		record_provider_backoff() {
+			backoff_reason="$2"
+			backoff_model="$4"
+			return 0
+		}
+		append_runtime_metric() {
+			printf '%s|%s|%s|%s|%s|%s\n' "$5" "$6" "${15}" "${16}" "${18}" "${19}"
+			if [[ -f "${13}" ]]; then
+				if grep -q 'cause=rate_limit .*provider_status=429' "${13}"; then printf 'classified-diagnostic\n'; fi
+				if grep -q 'cause=unknown' "${13}"; then printf 'incorrect-unknown\n'; fi
+				if grep -q 'WORKER_BLOCKER_EVIDENCE.*Restore directory access' "${13}"; then printf 'actionable-blocker\n'; fi
+			fi
+			return 0
+		}
+		print_info() { return 0; }
+		print_warning() { return 0; }
+		for exit_code in 1 124; do
+			printf '%s\n' 'OpenAI error: You have hit your usage limit. HTTP 429 Too Many Requests' >"$output_file"
+			_append_run_attempt_diagnostics
+			status=0
+			_finish_run_attempt_result || status=$?
+			printf 'exit=%s backoff=%s model=%s\n' "$status" "$backoff_reason" "$backoff_model"
+		done
+		printf 'unexpected local failure\n' >"$output_file"
+		_handle_run_result 1 "$output_file" "$role" "$provider" "$session_key" "$selected_model" "$work_dir" || true
+		printf 'reset=%s|%s|%s\n' "${_run_result_label:-}" "${_run_provider_status:-}" "${_run_classification_source:-}"
+		printf 'OpenAI error: HTTP 429 Too Many Requests\n' >"$output_file"
+		_finish_run_attempt_rate_limit_fast || status=$?
+		printf 'fast-exit=%s\n' "$status"
+		exit_code=0
+		printf '%s\n' '{"type":"text","part":{"text":"BLOCKED: Restore directory access before retrying."}}' >"$output_file"
+		_append_run_attempt_diagnostics
+		_finish_run_attempt_result || status=$?
+		printf 'blocked-exit=%s\n' "$status"
+	)
+	if [[ "$evidence" == *"rate_limit|1|rate_limit|429|trusted_provider|"* &&
+		"$evidence" == *"rate_limit|124|rate_limit|429|trusted_provider|"* &&
+		"$evidence" == *"classified-diagnostic"* && "$evidence" != *"incorrect-unknown"* &&
+		"$evidence" == *"exit=1 backoff=rate_limit model=openai/fixture"* &&
+		"$evidence" == *"reset=local_error||default_local"* &&
+		"$evidence" == *"rate_limit_fast|0|rate_limit|429|rate_limit_fast_monitor|rate_limit_fast_sentinel"* &&
+		"$evidence" == *"fast-exit=80"* && "$evidence" == *"blocked|83|||model_blocked_signal|terminal_blocked"* &&
+		"$evidence" == *"actionable-blocker"* && "$evidence" == *"blocked-exit=83"* ]]; then
+		print_result "terminal attempts retain provider classification, diagnostics and fast-path parity" 0
+	else
+		print_result "terminal attempts retain provider classification, diagnostics and fast-path parity" 1 "$evidence"
+	fi
+	return 0
+}
+
+run_failure_evidence_tests() {
+	test_failure_classifier_records_provenance
+	test_terminal_attempt_evidence_preserves_classification
+	test_failure_classifier_distinguishes_quota_exhaustion
+	test_failure_classifier_distinguishes_anthropic_credit_exhaustion
+	return 0
+}
+
 main() {
 	setup_test_env
 	test_appends_escalation_contract
@@ -312,9 +384,7 @@ main() {
 	test_headless_sandbox_timeout_budget
 	test_claude_bare_paths_use_resolved_sandbox_timeout
 	test_activity_watchdog_classifiers_detect_rate_limit_and_ci_wait
-	test_failure_classifier_records_provenance
-	test_failure_classifier_distinguishes_quota_exhaustion
-	test_failure_classifier_distinguishes_anthropic_credit_exhaustion
+	run_failure_evidence_tests
 	test_service_interruption_candidate_uses_separate_path
 	test_service_interruption_exhausted_metric_preserves_context
 	test_pr_checkpoint_lifecycle_cases

@@ -187,6 +187,9 @@ _classify_local_runtime_failure() {
 
 classify_failure_reason() {
 	local file_path="$1"
+	# Same-shell callers retain this reason alongside the structured fields.
+	# Keep stdout unchanged for legacy reason-only command substitutions.
+	_failure_reason="local_error"
 	_failure_provider_error_type=""
 	_failure_provider_status=""
 	_failure_runtime_error_type=""
@@ -201,6 +204,7 @@ classify_failure_reason() {
 		_failure_provider_status="$classified_status"
 		_failure_classification_source="$classified_source"
 		_failure_classification_pattern="$classified_pattern"
+		_failure_reason="$classified_reason"
 		printf '%s' "$classified_reason"
 		return 0
 	fi
