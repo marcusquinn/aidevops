@@ -34,13 +34,27 @@ mkdir -p "$SCRIPT_DIR"
 : >"$WRAPPER_LOGFILE"
 
 GH_QUERY_FILE="${TMP}/query.txt"
+GH_CONTEXT_FILE="${TMP}/context.txt"
+GH_CALL_COUNT_FILE="${TMP}/gh-call-count.txt"
 TIMEOUT_CALL_FILE="${TMP}/timeout.txt"
 export GH_QUERY_FILE
+export GH_CONTEXT_FILE
+export GH_CALL_COUNT_FILE
 export TIMEOUT_CALL_FILE
 export TIMEOUT_MODE="pass"
+export GH_OUTPUT="0"
+export IDLE_DECISION="skip"
+printf '0\n' >"$GH_CALL_COUNT_FILE"
 gh() {
+	local call_count=""
+	call_count=$(<"$GH_CALL_COUNT_FILE")
+	printf '%s\n' "$((call_count + 1))" >"$GH_CALL_COUNT_FILE"
 	printf '%s\n' "$*" >"$GH_QUERY_FILE"
-	printf '0\n'
+	printf '%s|%s|%s|%s|%s|%s\n' \
+		"${AIDEVOPS_GH_COOLDOWN_METHOD:-}" "${AIDEVOPS_GH_COOLDOWN_ENDPOINT:-}" \
+		"${AIDEVOPS_GH_COOLDOWN_QUERY:-}" "${AIDEVOPS_GH_COOLDOWN_OPERATION:-}" \
+		"${AIDEVOPS_GH_COOLDOWN_WRAPPER:-}" "${AIDEVOPS_GH_COOLDOWN_STAGE:-}" >"$GH_CONTEXT_FILE"
+	printf '%s\n' "$GH_OUTPUT"
 	return 0
 }
 
@@ -51,6 +65,12 @@ timeout_sec() {
 	if [[ "$TIMEOUT_MODE" == "timeout" ]]; then
 		return 124
 	fi
+	if [[ "$TIMEOUT_MODE" == "deferred" ]]; then
+		return 75
+	fi
+	if [[ "$TIMEOUT_MODE" == "error" ]]; then
+		return 1
+	fi
 	"$@"
 	return $?
 }
@@ -58,7 +78,11 @@ timeout_sec() {
 cat >"${SCRIPT_DIR}/pulse-idle-backoff-helper.sh" <<'EOF'
 #!/usr/bin/env bash
 case "${1:-}" in
-should-skip) exit 0 ;;
+should-skip)
+	[[ "${AIDEVOPS_PULSE_IDLE_AVAILABLE_WORK:-0}" != "1" ]] || exit 1
+	[[ "${IDLE_DECISION:-skip}" != "proceed" ]] || exit 1
+	exit 0
+	;;
 state)
 	printf '{"consecutive_idle":2,"current_effective_interval_s":120}\n'
 	exit 0
@@ -124,6 +148,12 @@ else
 	fail "idle-work query excludes unpublished planning issues" "query=$(<"$GH_QUERY_FILE")"
 fi
 
+if [[ "$(<"$GH_CONTEXT_FILE")" == 'GET|/search/issues|q=repo:owner/repo&per_page=1|idle_available_work|pulse-wrapper.sh|idle-backoff-availability' ]]; then
+	pass "idle-work query carries sanitized cooldown attribution context"
+else
+	fail "idle-work query carries sanitized cooldown attribution context" "context=$(<"$GH_CONTEXT_FILE")"
+fi
+
 timeout_value=$(<"$TIMEOUT_CALL_FILE")
 if grep -q 'AIDEVOPS_PULSE_IDLE_AVAILABLE_WORK_TIMEOUT:-30' "$SOURCE_SCRIPT" &&
 	[[ "$timeout_value" =~ ^[0-9]+$ ]] &&
@@ -146,9 +176,9 @@ else
 fi
 
 if _pulse_check_idle_backoff_gate; then
-	pass "idle-work timeout bypasses idle backoff"
+	pass "idle-work timeout preserves unknown and fails open"
 else
-	fail "idle-work timeout bypasses idle backoff"
+	fail "idle-work timeout preserves unknown and fails open"
 fi
 
 if grep -q 'timed out after 30s' "$WRAPPER_LOGFILE"; then
@@ -156,6 +186,99 @@ if grep -q 'timed out after 30s' "$WRAPPER_LOGFILE"; then
 else
 	fail "idle-work timeout is logged"
 fi
+
+export TIMEOUT_MODE="deferred"
+if _pulse_available_auto_dispatch_work_exists; then
+	fail "idle-work transport deferral preserves status"
+else
+	query_rc=$?
+	if [[ "$query_rc" -eq 75 ]]; then
+		pass "idle-work transport deferral preserves status"
+	else
+		fail "idle-work transport deferral preserves status" "rc=${query_rc}"
+	fi
+fi
+
+export TIMEOUT_MODE="pass"
+export GH_OUTPUT="malformed"
+if _pulse_available_auto_dispatch_work_exists; then
+	fail "idle-work malformed response remains unknown"
+else
+	query_rc=$?
+	if [[ "$query_rc" -eq 2 ]]; then
+		pass "idle-work malformed response remains unknown"
+	else
+		fail "idle-work malformed response remains unknown" "rc=${query_rc}"
+	fi
+fi
+
+export TIMEOUT_MODE="error"
+if _pulse_available_auto_dispatch_work_exists; then
+	fail "attempted query failure maps to typed unknown"
+else
+	query_rc=$?
+	if [[ "$query_rc" -eq 2 ]]; then
+		pass "attempted query failure maps to typed unknown"
+	else
+		fail "attempted query failure maps to typed unknown" "rc=${query_rc}"
+	fi
+fi
+
+export GH_OUTPUT="0"
+export IDLE_DECISION="proceed"
+printf '0\n' >"$GH_CALL_COUNT_FILE"
+if _pulse_check_idle_backoff_gate && [[ "$(<"$GH_CALL_COUNT_FILE")" -eq 0 ]]; then
+	pass "normal cycle avoids unnecessary pre-backoff Search"
+else
+	fail "normal cycle avoids unnecessary pre-backoff Search" "calls=$(<"$GH_CALL_COUNT_FILE")"
+fi
+
+export IDLE_DECISION="skip"
+printf '0\n' >"$GH_CALL_COUNT_FILE"
+_gh_secondary_read_ramp_phase() { printf 'cooldown-recovery\n'; }
+if _pulse_check_idle_backoff_gate; then
+	fail "recovery ramp keeps optional availability probe quiet"
+elif [[ "$(<"$GH_CALL_COUNT_FILE")" -eq 0 ]]; then
+	pass "recovery ramp keeps optional availability probe quiet"
+else
+	fail "recovery ramp keeps optional availability probe quiet" "calls=$(<"$GH_CALL_COUNT_FILE")"
+fi
+unset -f _gh_secondary_read_ramp_phase
+
+printf '0\n' >"$GH_CALL_COUNT_FILE"
+_gh_secondary_cooldown_active() { return 0; }
+if _pulse_check_idle_backoff_gate; then
+	fail "active cooldown keeps optional availability probe quiet"
+elif [[ "$(<"$GH_CALL_COUNT_FILE")" -eq 0 ]]; then
+	pass "active cooldown keeps optional availability probe quiet"
+else
+	fail "active cooldown keeps optional availability probe quiet" "calls=$(<"$GH_CALL_COUNT_FILE")"
+fi
+unset -f _gh_secondary_cooldown_active
+
+export TIMEOUT_MODE="deferred"
+if _pulse_check_idle_backoff_gate; then
+	fail "transport deferral retains prior local backoff decision"
+else
+	pass "transport deferral retains prior local backoff decision"
+fi
+export TIMEOUT_MODE="pass"
+
+export TIMEOUT_MODE="error"
+if _pulse_check_idle_backoff_gate; then
+	pass "attempted query failure preserves unknown and fails open"
+else
+	fail "attempted query failure preserves unknown and fails open"
+fi
+export TIMEOUT_MODE="pass"
+
+export GH_OUTPUT="1"
+if _pulse_check_idle_backoff_gate; then
+	pass "visible work still bypasses active idle backoff"
+else
+	fail "visible work still bypasses active idle backoff"
+fi
+export GH_OUTPUT="0"
 
 : >"$EVIDENCE_FILE"
 : >"$EVIDENCE_TIMESTAMP_FILE"

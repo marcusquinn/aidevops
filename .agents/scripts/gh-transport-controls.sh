@@ -37,7 +37,12 @@ _gh_transport_record_error() {
 	response="${response}$(<"$error_file")"
 	AIDEVOPS_GH_COOLDOWN_NO_PROBE=1 \
 		_gh_secondary_cooldown_record_if_needed "$rc" "$response" \
-		"GH-CLI" "unknown" "" "transport" "gh" "${AIDEVOPS_PULSE_STAGE:-unknown}"
+		"${AIDEVOPS_GH_COOLDOWN_METHOD:-GH-CLI}" \
+		"${AIDEVOPS_GH_COOLDOWN_ENDPOINT:-unknown}" \
+		"${AIDEVOPS_GH_COOLDOWN_QUERY:-}" \
+		"${AIDEVOPS_GH_COOLDOWN_OPERATION:-transport}" \
+		"${AIDEVOPS_GH_COOLDOWN_WRAPPER:-gh}" \
+		"${AIDEVOPS_GH_COOLDOWN_STAGE:-${AIDEVOPS_PULSE_STAGE:-unknown}}"
 	return 0
 }
 

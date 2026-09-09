@@ -202,6 +202,20 @@ deferred while quota expires unused. Do not claim throughput improvement from
 unit tests or fewer requests alone. Existing freshness/trust checks and optional
 benchmark comparability rules remain unchanged.
 
+Pulse idle backoff evaluates its local interval before the optional
+available-work Search probe. A normal cycle therefore does not spend a
+pre-backoff Search request. When local state already calls for a skipped cycle,
+an active shared secondary cooldown or its recovery ramp suppresses that
+optional probe so interactive authority checks receive the recovery window.
+Timeouts, other request errors, and malformed counts remain unknown rather than
+becoming an empty queue, so the watchdog-protected cycle fails open. A proven
+unattempted local transport deferral (exit 75) instead retains the prior local
+skip decision and reschedules without a backend request. Successful eligible-work
+evidence still resets idle backoff. Cooldown diagnostics retain only sanitized
+method, endpoint/query shape, operation, wrapper, and Pulse-stage attribution.
+Rollback should revert the idle-gate ordering while leaving the shared cooldown
+enabled.
+
 ## Durable PR wake hints
 
 `pulse-merge-dirty-queue.py` stores repo/PR identifiers, generation, wake and

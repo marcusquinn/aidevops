@@ -200,7 +200,7 @@ _pulse_available_auto_dispatch_work_exists() {
 	local _timeout_secs="${AIDEVOPS_PULSE_IDLE_AVAILABLE_WORK_TIMEOUT:-30}"
 	[[ "$_timeout_secs" =~ ^[1-9][0-9]*$ ]] || _timeout_secs=30
 	if ! declare -F timeout_sec >/dev/null 2>&1; then
-		printf '[pulse-wrapper] Idle available-work check has no timeout helper; proceeding without idle backoff (GH#27769)\n' \
+		printf '[pulse-wrapper] Idle available-work check has no timeout helper; preserving unknown work state (GH#27769)\n' \
 			>>"${WRAPPER_LOGFILE:-/dev/null}"
 		return 124
 	fi
@@ -217,16 +217,37 @@ _pulse_available_auto_dispatch_work_exists() {
 		fi
 		_count=""
 		_query_rc=0
-		_count=$(timeout_sec "$_remaining" gh api -X GET search/issues \
+		_count=$(AIDEVOPS_GH_COOLDOWN_METHOD=GET \
+			AIDEVOPS_GH_COOLDOWN_ENDPOINT=/search/issues \
+			AIDEVOPS_GH_COOLDOWN_QUERY="q=repo:${_slug}&per_page=1" \
+			AIDEVOPS_GH_COOLDOWN_OPERATION=idle_available_work \
+			AIDEVOPS_GH_COOLDOWN_WRAPPER=pulse-wrapper.sh \
+			AIDEVOPS_GH_COOLDOWN_STAGE=idle-backoff-availability \
+			timeout_sec "$_remaining" gh api -X GET search/issues \
 			-f "q=repo:${_slug} is:issue is:open label:auto-dispatch label:status:available -label:publication:pending -label:needs-maintainer-review -label:needs-maintainer-permissions -label:infrastructure no:assignee" \
 			-f per_page=1 \
 			--jq '.total_count // 0' 2>/dev/null) || _query_rc=$?
-		if [[ "$_query_rc" -eq 124 ]]; then
-			printf '[pulse-wrapper] Idle available-work check timed out after %ss; proceeding without idle backoff (GH#27769)\n' \
-				"$_timeout_secs" >>"${WRAPPER_LOGFILE:-/dev/null}"
-			return 124
+		if [[ "$_query_rc" -ne 0 ]]; then
+			if [[ "$_query_rc" -eq 124 ]]; then
+				printf '[pulse-wrapper] Idle available-work check timed out after %ss; preserving unknown work state (GH#27769)\n' \
+					"$_timeout_secs" >>"${WRAPPER_LOGFILE:-/dev/null}"
+			elif [[ "$_query_rc" -eq 75 ]]; then
+				printf '[pulse-wrapper] Idle available-work check deferred by transport admission; rescheduling with local backoff (GH#31662)\n' \
+					>>"${WRAPPER_LOGFILE:-/dev/null}"
+			else
+				printf '[pulse-wrapper] Idle available-work check unavailable (rc=%s); preserving unknown work state (GH#31662)\n' \
+					"$_query_rc" >>"${WRAPPER_LOGFILE:-/dev/null}"
+			fi
+			case "$_query_rc" in
+			75 | 124) return "$_query_rc" ;;
+			*) return 2 ;;
+			esac
 		fi
-		[[ "$_count" =~ ^[0-9]+$ ]] || _count=0
+		if ! [[ "$_count" =~ ^[0-9]+$ ]]; then
+			printf '[pulse-wrapper] Idle available-work check returned malformed evidence; preserving unknown work state (GH#31662)\n' \
+				>>"${WRAPPER_LOGFILE:-/dev/null}"
+			return 2
+		fi
 		if [[ "$_count" -gt 0 ]]; then
 			echo "[pulse-wrapper] Idle backoff bypass: eligible auto-dispatch work is visible in ${_slug} (GH#22631)" >>"$WRAPPER_LOGFILE"
 			return 0
@@ -238,37 +259,52 @@ _pulse_available_auto_dispatch_work_exists() {
 _pulse_check_idle_backoff_gate() {
 	local _ib_helper="${SCRIPT_DIR}/pulse-idle-backoff-helper.sh"
 	[[ -x "$_ib_helper" ]] || return 0
-	local _ib_available_work=0
-	local _ib_available_work_rc=0
-	if _pulse_available_auto_dispatch_work_exists; then
-		_ib_available_work=1
-	else
-		_ib_available_work_rc=$?
-		# Unknown work state must not suppress the watchdog-protected cycle.
-		[[ "$_ib_available_work_rc" -eq 124 ]] && return 0
-	fi
 	local _ib_ts_file="${HOME}/.aidevops/logs/pulse-wrapper-last-run.ts"
 	local _ib_last=0
 	if [[ -f "$_ib_ts_file" ]]; then
 		read -r _ib_last <"$_ib_ts_file" || [[ -n "$_ib_last" ]] || _ib_last=0
 		[[ "$_ib_last" =~ ^[0-9]+$ ]] || _ib_last=0
 	fi
-	# Helper convention: exit 0 = "skip this cycle", exit 1 = "proceed".
-	# Mirrors should-skip semantics so the helper composes naturally with
-	# `if helper should-skip; then return; fi` at the call site.
-	if AIDEVOPS_PULSE_IDLE_AVAILABLE_WORK="$_ib_available_work" "$_ib_helper" should-skip "$_ib_last" >/dev/null 2>&1; then
-		local _ib_state="" _ib_count="" _ib_interval=""
-		_ib_state=$("$_ib_helper" state 2>/dev/null || echo '{}')
-		_ib_count=$(echo "$_ib_state" | jq -r '.consecutive_idle // 0' 2>/dev/null || echo "0")
-		_ib_interval=$(echo "$_ib_state" | jq -r '.current_effective_interval_s // 90' 2>/dev/null || echo "90")
-		echo "[pulse-wrapper] Idle backoff: skipping cycle (consecutive_idle=${_ib_count}, effective_interval=${_ib_interval}s) (t3027)" >>"$WRAPPER_LOGFILE"
-		_PULSE_HEALTH_IDLE_CYCLE_SKIPPED=$((${_PULSE_HEALTH_IDLE_CYCLE_SKIPPED:-0} + 1))
-		if declare -F pulse_stats_increment >/dev/null 2>&1; then
-			pulse_stats_increment "pulse_idle_cycle_skipped" 2>/dev/null || true
-		fi
-		return 1
+	# Do not spend a Search request until local state has already decided this
+	# cycle would be skipped. During a secondary hold or its recovery ramp, keep
+	# this optional wake-up probe quiet so interactive authority checks get the
+	# recovery window. The normal cycle remains fail-open when no backoff applies.
+	if ! AIDEVOPS_PULSE_IDLE_AVAILABLE_WORK=0 "$_ib_helper" should-skip "$_ib_last" >/dev/null 2>&1; then
+		return 0
 	fi
-	return 0
+	if declare -F _gh_secondary_cooldown_active >/dev/null 2>&1 && _gh_secondary_cooldown_active; then
+		printf '[pulse-wrapper] Idle backoff: skipping availability probe during shared GitHub cooldown (GH#31662)\n' \
+			>>"${WRAPPER_LOGFILE:-/dev/null}"
+	elif declare -F _gh_secondary_read_ramp_phase >/dev/null 2>&1 && [[ -n "$(_gh_secondary_read_ramp_phase 2>/dev/null || true)" ]]; then
+		printf '[pulse-wrapper] Idle backoff: skipping availability probe during GitHub recovery ramp (GH#31662)\n' \
+			>>"${WRAPPER_LOGFILE:-/dev/null}"
+	elif _pulse_available_auto_dispatch_work_exists; then
+		AIDEVOPS_PULSE_IDLE_AVAILABLE_WORK=1 "$_ib_helper" should-skip "$_ib_last" >/dev/null 2>&1 || true
+		return 0
+	else
+		local _ib_available_work_rc=$?
+		if [[ "$_ib_available_work_rc" -eq 75 ]]; then
+			printf '[pulse-wrapper] Idle backoff: transport deferred optional availability; retaining local skip decision (GH#31662)\n' \
+				>>"${WRAPPER_LOGFILE:-/dev/null}"
+		elif [[ "$_ib_available_work_rc" -ne 1 ]]; then
+			printf '[pulse-wrapper] Idle backoff: availability remains unknown (rc=%s); bypassing local skip decision (GH#31662)\n' \
+				"$_ib_available_work_rc" >>"${WRAPPER_LOGFILE:-/dev/null}"
+			# Timeouts, malformed evidence, and attempted request failures remain
+			# fail-open for watchdog/liveness. A proven unattempted local transport
+			# deferral (75) is the only query result that reschedules this skipped cycle.
+			return 0
+		fi
+	fi
+	local _ib_state="" _ib_count="" _ib_interval=""
+	_ib_state=$("$_ib_helper" state 2>/dev/null || echo '{}')
+	_ib_count=$(echo "$_ib_state" | jq -r '.consecutive_idle // 0' 2>/dev/null || echo "0")
+	_ib_interval=$(echo "$_ib_state" | jq -r '.current_effective_interval_s // 90' 2>/dev/null || echo "90")
+	echo "[pulse-wrapper] Idle backoff: skipping cycle (consecutive_idle=${_ib_count}, effective_interval=${_ib_interval}s) (t3027)" >>"$WRAPPER_LOGFILE"
+	_PULSE_HEALTH_IDLE_CYCLE_SKIPPED=$((${_PULSE_HEALTH_IDLE_CYCLE_SKIPPED:-0} + 1))
+	if declare -F pulse_stats_increment >/dev/null 2>&1; then
+		pulse_stats_increment "pulse_idle_cycle_skipped" 2>/dev/null || true
+	fi
+	return 1
 }
 
 _pulse_refresh_supervisor_circuit_breaker() {
