@@ -565,6 +565,87 @@ _dry_run_validators() {
 	return 0
 }
 
+_runtime_policy_helper_path() {
+	local environment_key="$1"
+	local filename="$2"
+	local configured_path=""
+	case "$environment_key" in
+	AIDEVOPS_COMMAND_POLICY_HELPER)
+		configured_path="${AIDEVOPS_COMMAND_POLICY_HELPER:-}"
+		;;
+	AIDEVOPS_CANONICAL_WRITE_POLICY_HELPER)
+		configured_path="${AIDEVOPS_CANONICAL_WRITE_POLICY_HELPER:-}"
+		;;
+	*)
+		print_error "Unknown runtime policy helper key: $environment_key"
+		return 1
+		;;
+	esac
+
+	if [[ -n "$configured_path" ]]; then
+		printf '%s\n' "$configured_path"
+		return 0
+	fi
+	printf '%s/.aidevops/agents/scripts/%s\n' "$HOME" "$filename"
+	return 0
+}
+
+_check_runtime_policy_dependencies() {
+	local command_helper
+	command_helper=$(_runtime_policy_helper_path \
+		"AIDEVOPS_COMMAND_POLICY_HELPER" "command-policy-helper.py")
+	local write_helper
+	write_helper=$(_runtime_policy_helper_path \
+		"AIDEVOPS_CANONICAL_WRITE_POLICY_HELPER" "canonical-write-policy-helper.py")
+
+	if [[ ! -f "$command_helper" ]]; then
+		print_error "Command policy helper is unavailable: $command_helper"
+		print_info "Run 'aidevops update' or './setup.sh --stage agents' before installing hooks"
+		return 1
+	fi
+	if ! python3 "$command_helper" validate >/dev/null 2>&1; then
+		print_error "Command policy helper failed its validation: $command_helper"
+		print_info "Run 'aidevops update' or './setup.sh --stage agents' to repair the deployed agents tree"
+		return 1
+	fi
+	if [[ ! -f "$write_helper" ]]; then
+		print_error "Canonical-write policy helper is unavailable: $write_helper"
+		print_info "Run 'aidevops update' or './setup.sh --stage agents' before installing hooks"
+		return 1
+	fi
+	if ! python3 "$write_helper" classify --cwd "$PWD" >/dev/null 2>&1; then
+		print_error "Canonical-write policy helper failed its validation: $write_helper"
+		print_info "Run 'aidevops update' or './setup.sh --stage agents' to repair the deployed agents tree"
+		return 1
+	fi
+
+	return 0
+}
+
+_probe_hook_runtime() {
+	local hook_script="$1"
+	local hook_input='{"tool_name":"Bash","tool_input":{"command":"true"}}'
+	local output=""
+
+	if [[ ! -f "$hook_script" || ! -x "$hook_script" ]]; then
+		print_error "Installed hook is unavailable or not executable: $hook_script"
+		return 1
+	fi
+	output=$(python3 "$hook_script" <<<"$hook_input" 2>&1) || {
+		print_error "Installed hook runtime probe failed: $hook_script"
+		return 1
+	}
+	if [[ -n "$output" ]]; then
+		print_error "Installed hook denied a benign Bash probe"
+		if [[ "$output" == *"policy.helper-unavailable"* ]]; then
+			print_info "The deployed command policy is incomplete; run 'aidevops update' or './setup.sh --stage agents'"
+		fi
+		return 1
+	fi
+
+	return 0
+}
+
 install_hook() {
 	local force_install="false"
 	local arg
@@ -596,6 +677,9 @@ install_hook() {
 
 	# Pre-install validator dry-run (t2226): abort if validators fail HEAD state
 	_dry_run_validators "$source_hook" "$force_install" || return 1
+	# A fail-closed hook without its deployed policy graph blocks every Bash call.
+	# Validate that graph before changing the active Claude configuration.
+	_check_runtime_policy_dependencies || return 1
 
 	# Create hooks directory
 	mkdir -p "$HOOKS_DIR"
@@ -616,6 +700,7 @@ install_hook() {
 	cp "$source_complexity_advisory_hook" "$COMPLEXITY_ADVISORY_SCRIPT"
 	chmod +x "$COMPLEXITY_ADVISORY_SCRIPT"
 	print_success "Installed $COMPLEXITY_ADVISORY_SCRIPT"
+	_probe_hook_runtime "$HOOK_SCRIPT" || return 1
 
 	# Configure Claude Code settings.json
 	configure_claude_settings || return 1
@@ -1015,6 +1100,17 @@ _check_status_hook_script() {
 	return 1
 }
 
+_check_status_policy_runtime() {
+	if ! _check_runtime_policy_dependencies; then
+		return 1
+	fi
+	if ! _probe_hook_runtime "$HOOK_SCRIPT"; then
+		return 1
+	fi
+	print_success "Hook policy runtime: healthy"
+	return 0
+}
+
 _check_status_python() {
 	if command -v python3 &>/dev/null; then
 		print_success "Python 3: $(python3 --version 2>&1)"
@@ -1214,6 +1310,7 @@ check_status() {
 
 	_check_status_hook_script || all_ok=false
 	_check_status_python || all_ok=false
+	_check_status_policy_runtime || all_ok=false
 	_check_status_claude_settings || all_ok=false
 
 	echo ""
@@ -1261,9 +1358,13 @@ check_status() {
 }
 
 _test_hook_script_path() {
-	# Always test the source about to be installed. The currently deployed hook
-	# may be stale while setup is repairing an interrupted deployment.
+	# Prefer the active installed hook so repository-adjacent helpers cannot mask
+	# a missing deployed policy graph. Installation copies the source first.
 	local test_script=""
+	if [[ -f "$HOOK_SCRIPT" && -x "$HOOK_SCRIPT" ]]; then
+		printf '%s\n' "$HOOK_SCRIPT"
+		return 0
+	fi
 	test_script=$(find_source_hook) || return 1
 	printf '%s\n' "$test_script"
 	return 0
