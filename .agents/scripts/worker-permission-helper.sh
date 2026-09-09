@@ -363,7 +363,7 @@ permission_reconcile_block() {
 
 cmd_request() {
 	local capture_file="" issue_number="" repo_slug="" session_key="" work_dir=""
-	local request_id="" capability_json="" permission="" tool="" risk_level="" grantable=""
+	local request_id="" capability_json="" permission="" tool="" risk_level="" grantable="" has_grantable=""
 	while [[ $# -gt 0 ]]; do
 		local arg="$1"
 		case "$arg" in
@@ -405,7 +405,8 @@ cmd_request() {
 	tool="$(jq -r '.tool' <<<"$capability_json")"
 	risk_level="$(jq -r '.risk_level' <<<"$capability_json")"
 	grantable="$(jq -r '.grantable' <<<"$capability_json")"
-	if [[ "$grantable" != "true" ]]; then
+	has_grantable="$(jq -r 'any(.requests[]; .risk.grantable == true)' "$capture_file")"
+	if [[ "$has_grantable" != "true" ]]; then
 		permission_record_blocker "permission_not_grantable" "$PERMISSION_BLOCKER_STATUS" \
 			"permission_boundary_requires_alternative" "$PERMISSION_BLOCKER_TRUE" "$issue_number" "$repo_slug" "$session_key" "" \
 			"Captured permission request is not eligible for a maintainer grant" \
