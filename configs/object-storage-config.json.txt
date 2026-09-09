@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "accounts": {
+    "example-object-storage": {
+      "provider": "s3-compatible",
+      "remote": "example_rclone_remote",
+      "endpoint": "https://s3.example.invalid",
+      "region": "example-region-1",
+      "buckets": ["example-backups"]
+    }
+  },
+  "security": {
+    "credentials": "Configure the named rclone remote outside this file. Never add access keys or private account names here.",
+    "transfer_default": "dry-run",
+    "allowed_providers": ["idrive-e2", "backblaze-b2", "wasabi", "s3-compatible"]
+  }
+}
