@@ -1605,13 +1605,18 @@ export protected_state_log protected_source_log protected_push_log protected_rem
 		local repo="$1"
 		local tag_name="$2"
 		printf '%s %s\n' "$repo" "$tag_name" >>"$protected_source_log"
-		return 0
+		[[ "${invalid_local_source:-false}" == "false" ]]
+		return $?
 	}
 	_version_manager_reconcile_protected_release_tag() {
 		local repo="$1"
 		local tag_name="$2"
 		local mode="$3"
 		printf '%s %s %s\n' "$repo" "$tag_name" "$mode" >>"$protected_state_log"
+		if [[ "${missing_protected_pr:-false}" == "true" ]]; then
+			_VERSION_MANAGER_PROTECTED_RELEASE_RESULT="$_VERSION_MANAGER_RELEASE_PR_MISSING"
+			return 0
+		fi
 		if [[ "$mode" == "reconcile" ]]; then
 			printf '%s %s\n' "$repo" "$tag_name" >"$protected_push_log"
 			_VERSION_MANAGER_PROTECTED_RELEASE_RESULT="tag-pushed"
@@ -1624,6 +1629,30 @@ export protected_state_log protected_source_log protected_push_log protected_rem
 		printf 'v1.2.3\n'
 		return 0
 	}
+	_full_loop_release_queue_preserved_tag() {
+		[[ "$1" == "test/repo" && "$2" == "90" && "$3" == "v1.2.3" ]] || return 1
+		printf 'queued\n' >"${TEST_ROOT}/preserved-queue.log"
+		return 8
+	}
+	missing_protected_pr=true
+	status_rc=0
+	AIDEVOPS_FULL_LOOP_REPO=test/repo _full_loop_release_existing_command status 90 \
+		>/dev/null 2>&1 || status_rc=$?
+	[[ "$status_rc" -eq 8 && ! -e "${TEST_ROOT}/preserved-queue.log" ]] || exit 1
+	reconcile_rc=0
+	AIDEVOPS_FULL_LOOP_REPO=test/repo _full_loop_release_existing_command reconcile 90 \
+		>/dev/null 2>&1 || reconcile_rc=$?
+	[[ "$reconcile_rc" -eq 8 && -e "${TEST_ROOT}/preserved-queue.log" ]] || exit 1
+	rm -f "${TEST_ROOT}/preserved-queue.log"
+	invalid_local_source=true
+	reconcile_rc=0
+	AIDEVOPS_FULL_LOOP_REPO=test/repo _full_loop_release_existing_command reconcile 90 \
+		>/dev/null 2>&1 || reconcile_rc=$?
+	[[ "$reconcile_rc" -eq 1 && ! -e "${TEST_ROOT}/preserved-queue.log" ]] || exit 1
+	printf 'PASS missing-PR discovery reaches only authorized reconcile and still verifies provenance\n'
+	missing_protected_pr=false
+	invalid_local_source=false
+	rm -f "$protected_state_log" "$protected_source_log"
 	status_rc=0
 	AIDEVOPS_FULL_LOOP_REPO=test/repo _full_loop_release_existing_command status 90 \
 		>/dev/null 2>&1 || status_rc=$?

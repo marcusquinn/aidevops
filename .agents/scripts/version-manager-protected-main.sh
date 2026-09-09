@@ -33,6 +33,7 @@ _VERSION_MANAGER_PROTECTED_SUPERSESSION_JSON=""
 _VERSION_MANAGER_TAG_STATE_ABSENT="absent"
 _VERSION_MANAGER_TAG_STATE_MATCHING="matching"
 _VERSION_MANAGER_RELEASE_RESULT_QUEUED="queued"
+_VERSION_MANAGER_RELEASE_PR_MISSING="pr-missing"
 _VERSION_MANAGER_MODE_RECONCILE="reconcile"
 _VERSION_MANAGER_PR_STATE_OPEN="open"
 _VERSION_MANAGER_PR_STATE_CLOSED="closed"
@@ -40,6 +41,9 @@ _VERSION_MANAGER_TIMESTAMP_REGEX='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:
 
 #aidevops:trust-boundary
 _version_manager_require_aggregate_fence() {
+	if declare -F _version_manager_verify_preserved_lane_fence >/dev/null 2>&1; then
+		_version_manager_verify_preserved_lane_fence || return 1
+	fi
 	if declare -F _version_manager_verify_aggregate_lane_fence >/dev/null 2>&1; then
 		_version_manager_verify_aggregate_lane_fence
 		return $?
@@ -664,8 +668,9 @@ _version_manager_reconcile_protected_release_tag() {
 	branch_name=$(_version_manager_protected_release_branch_name "$version") || return 1
 	_version_manager_find_protected_release_pr "$repo" "$branch_name" || return 1
 	if [[ -z "$_VERSION_MANAGER_PROTECTED_PR_NUMBER" ]]; then
-		print_error "No protected release PR exists for preserved ${tag_name}"
-		return 1
+		_VERSION_MANAGER_PROTECTED_RELEASE_RESULT="$_VERSION_MANAGER_RELEASE_PR_MISSING"
+		printf 'Protected release PR is not yet queued for preserved %s\n' "$tag_name"
+		return 0
 	fi
 	pr_head=$(jq -r '.head.sha // ""' <<<"$_VERSION_MANAGER_PROTECTED_PR_JSON") || return 1
 	_version_manager_verify_protected_pr_head "$pr_head" || return 1

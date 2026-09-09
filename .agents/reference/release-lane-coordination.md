@@ -106,6 +106,18 @@ release branch, GitHub release, npm version, and Homebrew version are all proven
 absent. The publisher rotates the operation token through the lane compare-and-swap,
 retains durable `preparing_recovery` evidence, and restarts from a fresh copy of
 the pinned commit; lookup uncertainty or any existing artifact refuses recovery.
+
+An already-signed local candidate interrupted before its protected-main PR is a
+different checkpoint: status reports pending without creating the PR. Authorized
+same-source reconciliation verifies its local source provenance, exact persisted
+manifest and snapshot, dead local executor/no surviving release process, write
+permission, and absent publication channels. It rotates the lane token with CAS,
+records the unchanged tag object/commit in `preserved_tag_recovery`, and resumes
+the existing protected-main queue without another bump. Every queue mutation
+rechecks the token and tag identity; live/unknown owners, competing sources,
+legacy contracts, source drift, and uncertain remote state remain blocked.
+Interruption after this claim can resume the same fenced tag; no tag is rewritten.
+
 Same-source reservation reclaim still removes automatic eligibility, but now
 records a `same-source-reclaim/v1` marker when it removes a modern fenced
 contract. For lanes reclaimed before that marker existed, recovery must verify

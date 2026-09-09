@@ -255,7 +255,7 @@ _full_loop_release_guard_existing() {
 		_full_loop_release_validate_existing_tag_authorization "$repo" "$source_pr" "$expected_sources" || return 1
 		printf 'Existing signed release tag found for PR #%s; reconciling without another version bump\n' "$source_pr"
 		_full_loop_release_timing_finish release-existing-guard "$guard_started" existing-tag
-		_full_loop_release_existing_command reconcile "$source_pr"
+		_full_loop_release_existing_with_lane reconcile "$source_pr"
 		return $?
 		;;
 	1)
