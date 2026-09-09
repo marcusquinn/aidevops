@@ -1342,7 +1342,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18413 Recover complete comparable Codacy default-branch analysis #codacy #interactive-needed #no-auto-dispatch #quality ref:GH#31457 -> [todo/tasks/t18413-brief.md] pr:#31589 completed:2026-09-08
 
-- [ ] t18414 Audit and correct Codacy policy drift after index recovery #auto-dispatch #codacy #quality #verification blocked-by:t18413 ref:GH#31459 -> [todo/tasks/t18414-brief.md]
+- [x] t18414 Audit and correct Codacy policy drift after index recovery #auto-dispatch #codacy #quality #verification blocked-by:t18413 ref:GH#31459 -> [todo/tasks/t18414-brief.md] pr:#31664 completed:2026-09-09
 
 - [ ] t18415 Triage refreshed Codacy findings into bounded remediation children #auto-dispatch #codacy #decomposition #quality blocked-by:t18414 ref:GH#31460 -> [todo/tasks/t18415-brief.md]
 
@@ -4884,3 +4884,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t18312 Restore deterministic Qlty smell threshold #auto-dispatch #bug #quality-debt ref:GH#30876
 
 - [x] t18395 detect and recover stale GitHub runner broker sessions #auto-dispatch #bug #ci #github #infrastructure #monitoring #reliability #self-healing #shell ref:GH#31136 pr:#31142 completed:2026-09-04
+
+- [ ] t18416 Preserve actionable terminal evidence for provider and model blockers #auto-dispatch #external-contributor ref:GH#31676
