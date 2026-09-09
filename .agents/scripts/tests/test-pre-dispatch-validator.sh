@@ -727,6 +727,46 @@ test_generated_implementation_brief_with_scope_allows_dispatch() {
 	return 0
 }
 
+test_dependabot_intake_without_scope_blocks_before_worker() {
+	setup_test_env
+	create_gh_stub_generated_brief_body '<!-- aidevops:dependabot-pr-intake repo=marcusquinn/aidevops pr=31609 -->
+## Dependabot PR worker intake
+Inspect and repair the dependency update.'
+
+	local rc=0 output=""
+	output=$("$HELPER_SCRIPT" validate "31652" "marcusquinn/aidevops" 2>&1) || rc=$?
+
+	if [[ "$rc" -eq 30 ]] && [[ "$output" == *"brief-defect"* ]]; then
+		print_result "malformed Dependabot intake blocks before worker launch" 0
+	else
+		print_result "malformed Dependabot intake blocks before worker launch" 1 "Expected typed exit 30, got ${rc}: ${output}"
+	fi
+
+	teardown_test_env
+	return 0
+}
+
+test_dependabot_intake_with_scope_allows_dispatch() {
+	setup_test_env
+	# shellcheck disable=SC2016 # Literal Markdown code span in fixture.
+	create_gh_stub_generated_brief_body '<!-- aidevops:dependabot-pr-intake repo=marcusquinn/aidevops pr=31609 -->
+### Files Scope
+
+- EDIT: `.github/workflows/code-quality.yml`'
+
+	local rc=0
+	"$HELPER_SCRIPT" validate "31652" "marcusquinn/aidevops" >/dev/null 2>&1 || rc=$?
+
+	if [[ "$rc" -eq 0 ]]; then
+		print_result "Dependabot intake with canonical scope remains dispatchable" 0
+	else
+		print_result "Dependabot intake with canonical scope remains dispatchable" 1 "Expected exit 0, got ${rc}"
+	fi
+
+	teardown_test_env
+	return 0
+}
+
 test_planning_only_generated_brief_without_scope_allows_dispatch() {
 	setup_test_env
 	# shellcheck disable=SC2016 # literal generated issue body
@@ -1133,6 +1173,8 @@ main() {
 	test_bypass_env_var
 	test_generated_implementation_brief_without_scope_blocks_dispatch
 	test_generated_implementation_brief_with_scope_allows_dispatch
+	test_dependabot_intake_without_scope_blocks_before_worker
+	test_dependabot_intake_with_scope_allows_dispatch
 	test_planning_only_generated_brief_without_scope_allows_dispatch
 	test_zero_progress_meta_recovered_blocks_dispatch
 	test_zero_progress_meta_recovered_readonly_allows_dispatch_without_write

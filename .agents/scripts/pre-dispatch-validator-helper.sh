@@ -161,7 +161,8 @@ _brief_requires_files_scope() {
 		return 1
 	fi
 
-	printf '%s' "$issue_body" | grep -qE '<!-- aidevops:generator=[a-z0-9_-]+[^>]* cited_file=[^ >]+'
+	printf '%s' "$issue_body" | grep -qE \
+		'<!-- aidevops:generator=[a-z0-9_-]+[^>]* cited_file=[^ >]+|<!-- aidevops:dependabot-pr-intake[[:space:]]'
 	return $?
 }
 

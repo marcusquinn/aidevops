@@ -17,6 +17,41 @@ _pulse_dependabot_intake_marker() {
 	return 0
 }
 
+# Build executable scope from the authentic source PR's exact current diff.
+# The identity gate runs first; this second read binds the scope to the same
+# head and rejects paths that cannot be represented safely in Markdown.
+_pulse_dependabot_intake_scope_lines() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local expected_head_sha="$3"
+	local scope_json=""
+	local scope_head=""
+	local paths=""
+	local path=""
+
+	scope_json=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
+		--json headRefOid,files 2>/dev/null) || return 1
+	scope_head=$(printf '%s' "$scope_json" | jq -r '.headRefOid // ""' 2>/dev/null) || return 1
+	[[ "$scope_head" == "$expected_head_sha" ]] || return 1
+	paths=$(printf '%s' "$scope_json" | jq -er '
+		if ((.files | type) != "array") or (.files | length) == 0
+		then error("Dependabot diff files unavailable")
+		else .files[] | .path
+		end' 2>/dev/null) || return 1
+
+	# shellcheck disable=SC2016 # Literal Markdown scope declaration.
+	printf '%s\n' '- EDIT: `.agents/configs/trusted-dependabot-updates.conf`'
+	while IFS= read -r path; do
+		case "$path" in
+		"" | /* | ../* | */../* | */.. | *'`'*) return 1 ;;
+		esac
+		[[ "$path" != *$'\r'* ]] || return 1
+		# shellcheck disable=SC2016 # Literal Markdown code-span delimiters.
+		printf -- '- EDIT: `%s`\n' "$path"
+	done <<<"$paths"
+	return 0
+}
+
 _pulse_dependabot_existing_intake_issue() {
 	local pr_number="$1"
 	local repo_slug="$2"
@@ -137,6 +172,7 @@ _pulse_dependabot_intake_body() {
 	local head_sha="$3"
 	local reason="$4"
 	local marker="$5"
+	local scope_lines="$6"
 
 	cat <<-EOF
 		## Dependabot PR worker intake
@@ -156,10 +192,12 @@ _pulse_dependabot_intake_body() {
 		update is unsafe or intentionally deferred, apply an explicit maintainer-review hold
 		with rationale. Close or supersede the source PR only after preserving this evidence.
 
-		### Files and patterns
+		### Files Scope
 
-		Start from the source PR diff. Dependency manifests, lockfiles, workflow references,
-		and exact failing test paths are intentionally unknown until inspection. Follow the
+		${scope_lines}
+
+		Start from the source PR diff. The exact observed paths above and the narrow trusted
+		dependency policy are the initial executable boundary. Follow the
 		trusted boundary in \`.agents/scripts/trusted-dependabot-lib.sh\` and the repair-routing
 		pattern in \`.agents/scripts/pulse-merge-process.sh::_route_pr_to_fix_worker\`.
 
@@ -188,19 +226,19 @@ _pulse_dependabot_acquire_intake_lock() {
 	local pr_number="$1"
 	local repo_slug="$2"
 	local output_var="$3"
-	local lock_dir=""
+	local lock_path=""
 	local lock_pid=""
 	local stale_dir=""
 	local attempt=0
 
-	lock_dir=$(_pulse_dependabot_intake_lock_dir "$pr_number" "$repo_slug") || return 1
-	mkdir -p "${lock_dir%/*}" 2>/dev/null || return 1
-	while ! mkdir "$lock_dir" 2>/dev/null; do
+	lock_path=$(_pulse_dependabot_intake_lock_dir "$pr_number" "$repo_slug") || return 1
+	mkdir -p "${lock_path%/*}" 2>/dev/null || return 1
+	while ! mkdir "$lock_path" 2>/dev/null; do
 		lock_pid=""
-		[[ -f "${lock_dir}/pid" ]] && lock_pid=$(<"${lock_dir}/pid")
+		[[ -f "${lock_path}/pid" ]] && lock_pid=$(<"${lock_path}/pid")
 		if [[ "$lock_pid" =~ ^[1-9][0-9]*$ ]] && ! kill -0 "$lock_pid" 2>/dev/null; then
-			stale_dir="${lock_dir}.stale.$$"
-			if mv "$lock_dir" "$stale_dir" 2>/dev/null; then
+			stale_dir="${lock_path}.stale.$$"
+			if mv "$lock_path" "$stale_dir" 2>/dev/null; then
 				rm -rf "$stale_dir"
 				continue
 			fi
@@ -209,11 +247,11 @@ _pulse_dependabot_acquire_intake_lock() {
 		[[ "$attempt" -lt 300 ]] || return 1
 		sleep 0.1
 	done
-	printf '%s\n' "$$" >"${lock_dir}/pid" 2>/dev/null || {
-		rmdir "$lock_dir" 2>/dev/null || true
+	printf '%s\n' "$$" >"${lock_path}/pid" 2>/dev/null || {
+		rmdir "$lock_path" 2>/dev/null || true
 		return 1
 	}
-	printf -v "$output_var" '%s' "$lock_dir"
+	printf -v "$output_var" '%s' "$lock_path"
 	return 0
 }
 
@@ -242,6 +280,7 @@ _pulse_route_dependabot_pr_to_worker_issue() {
 	local issue_output=""
 	local lock_dir=""
 	local hold_rc=0
+	local scope_lines=""
 
 	case "$reason" in
 	policy-ineligible | terminal-ci-failure | merge-conflict) ;;
@@ -291,6 +330,12 @@ _pulse_route_dependabot_pr_to_worker_issue() {
 		echo "[pulse-dependabot-intake] PR #${pr_number} in ${repo_slug}: existing worker issue ${existing_url}" >>"$LOGFILE"
 		return 0
 	fi
+	scope_lines=$(_pulse_dependabot_intake_scope_lines \
+		"$pr_number" "$repo_slug" "$expected_head_sha") || {
+		_pulse_dependabot_release_intake_lock "$lock_dir" || true
+		echo "[pulse-dependabot-intake] PR #${pr_number} in ${repo_slug}: exact-head Files Scope unavailable; failing before issue creation" >>"$LOGFILE"
+		return 1
+	}
 
 	temp_dir="${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}"
 	mkdir -p "$temp_dir" 2>/dev/null || {
@@ -301,7 +346,7 @@ _pulse_route_dependabot_pr_to_worker_issue() {
 		_pulse_dependabot_release_intake_lock "$lock_dir" || true
 		return 1
 	}
-	_pulse_dependabot_intake_body "$pr_number" "$repo_slug" "$expected_head_sha" "$reason" "$marker" >"$body_file" || {
+	_pulse_dependabot_intake_body "$pr_number" "$repo_slug" "$expected_head_sha" "$reason" "$marker" "$scope_lines" >"$body_file" || {
 		rm -f "$body_file"
 		_pulse_dependabot_release_intake_lock "$lock_dir" || true
 		return 1
