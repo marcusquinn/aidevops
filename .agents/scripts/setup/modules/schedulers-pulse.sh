@@ -593,7 +593,7 @@ _install_supervisor_pulse() {
 	mkdir -p "$HOME/.aidevops/logs"
 
 	if [[ "$_os" == "Darwin" ]]; then
-		_install_pulse_launchd "$pulse_label" "$wrapper_script" "$opencode_bin" "$_pulse_installed"
+		_install_pulse_launchd "$pulse_label" "$wrapper_script" "$opencode_bin" "$_pulse_installed" || return 1
 		return 0
 	fi
 
@@ -686,6 +686,8 @@ _pulse_runtime_pin_preserves_scheduler() {
 
 setup_supervisor_pulse() {
 	local _os="$1"
+	# Never retain a previous successful install decision after a failed retry.
+	PULSE_ENABLED="false"
 
 	# Record template hash so auto-update can detect drift between
 	# schedulers.sh and the installed plists on macOS (t2119).
@@ -712,6 +714,12 @@ setup_supervisor_pulse() {
 
 	local _do_install
 	_do_install=$(_determine_pulse_install "$_pulse_user_config" "$wrapper_script")
+	# Session stop takes precedence over persisted consent during updates. Only
+	# an explicit Pulse start may remove this flag, not scheduler reconciliation.
+	if [[ -f "$HOME/.aidevops/logs/pulse-session.stop" ]]; then
+		_do_install=false
+		print_info "Supervisor pulse remains stopped by explicit session request"
+	fi
 
 	local _pulse_lower
 	_pulse_lower=$(echo "$_pulse_user_config" | tr '[:upper:]' '[:lower:]')
@@ -733,7 +741,7 @@ setup_supervisor_pulse() {
 		if [[ "$_pin_scheduler_rc" -eq 0 ]]; then
 			print_info "Supervisor pulse scheduler preserved while its bounded runtime pin is active"
 		elif [[ "$_pin_scheduler_rc" -eq 1 ]]; then
-			_install_supervisor_pulse "$_os" "$pulse_label" "$wrapper_script" "$opencode_bin" "$_pulse_installed"
+			_install_supervisor_pulse "$_os" "$pulse_label" "$wrapper_script" "$opencode_bin" "$_pulse_installed" || return 1
 		else
 			print_error "Supervisor pulse scheduler refused an invalid runtime pin"
 			return 1
@@ -913,7 +921,35 @@ PLIST
 	return 0
 }
 
-# Install supervisor pulse via launchd (macOS)
+# Only the consent-gated Pulse installer may clear a persistent disabled
+# override. Shared scheduler installation must not re-enable unrelated jobs.
+_install_authorized_pulse_launchd() {
+	local pulse_label="$1"
+	local pulse_plist="$2"
+	local pulse_plist_content="$3"
+	local domain
+	command -v launchctl >/dev/null 2>&1 || return 1
+	domain="gui/$(id -u)"
+
+	if ! launchctl enable "${domain}/${pulse_label}"; then
+		print_error "Failed to enable Pulse LaunchAgent ${domain}/${pulse_label}; inspect launchctl print-disabled ${domain}"
+		return 1
+	fi
+	_launchd_install_if_changed "$pulse_label" "$pulse_plist" "$pulse_plist_content" || return 1
+	# Legacy load can return success without registering the service. Bootstrap
+	# only when absent; unchanged loaded jobs retain their StartInterval timing.
+	if ! launchctl print "${domain}/${pulse_label}" >/dev/null 2>&1; then
+		launchctl bootstrap "$domain" "$pulse_plist" || return 1
+	fi
+	if ! launchctl print "${domain}/${pulse_label}" >/dev/null 2>&1; then
+		# shell-portability: ignore next — diagnostic text, not command execution
+		print_error "Pulse LaunchAgent is not registered: launchctl print ${domain}/${pulse_label}"
+		return 1
+	fi
+	return 0
+}
+
+# Install supervisor pulse via launchd (macOS), after effective consent checks.
 _install_pulse_launchd() {
 	local pulse_label="$1"
 	local wrapper_script="$2"
@@ -955,7 +991,7 @@ _install_pulse_launchd() {
 	# _launchd_install_if_changed handles unload-before-replace only when content
 	# has changed, and writes atomically via tmp+rename (see setup.sh).
 	# shell-portability: ignore next — _install_pulse_launchd is macOS-only (launchd)
-	if _launchd_install_if_changed "$pulse_label" "$pulse_plist" "$pulse_plist_content"; then
+	if _install_authorized_pulse_launchd "$pulse_label" "$pulse_plist" "$pulse_plist_content"; then
 		if [[ "$_pulse_installed" == "true" ]]; then
 			print_info "Supervisor pulse updated (launchd config regenerated, every ${_interval_label})"
 		else
@@ -964,7 +1000,8 @@ _install_pulse_launchd() {
 		# Log any user-provided env var overrides that were injected (GH#20563 / t2759)
 		_log_plist_env_overrides "$pulse_label"
 	else
-		print_warning "Failed to load supervisor pulse LaunchAgent"
+		print_error "Failed to load supervisor pulse LaunchAgent; inspect launchd errors and retry aidevops setup --scope pulse"
+		return 1
 	fi
 	return 0
 }
