@@ -289,6 +289,11 @@ export PATH="${SCRIPT_DIR}:${PATH}"
 # BASH_SOURCE[1] and re-exec the wrong script. (GH#19632)
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/shared-constants.sh"
+# GH#31662: the pre-cycle idle gate reads shared cooldown/recovery state
+# locally so optional Search probes cannot consume the interactive recovery
+# window. The include guard keeps later transport sourcing idempotent.
+# shellcheck source=/dev/null
+source "${SCRIPT_DIR}/shared-gh-secondary-cooldown.sh"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/config-helper.sh" 2>/dev/null || true
 # shellcheck source=/dev/null

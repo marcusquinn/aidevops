@@ -97,7 +97,7 @@ reset_case() {
 	rm -f "${AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE}.primary-core" "${AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE}.primary-graphql" "${AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE}.primary-code_search"
 	rm -f "$AIDEVOPS_GH_SECONDARY_COOLDOWN_EVENTS_FILE"
 	rm -f "$AIDEVOPS_GH_READ_RAMP_STATE_FILE"
-	unset GH_SECONDARY_FAIL GH_REST_CORE_403_FAIL GH_CORE_RATE_LIMIT_RESET GH_SEARCH_RATE_LIMIT_RESET GH_HEADER_LIMIT_FAIL GH_GENERIC_403_FAIL GH_ABUSE_403_FAIL GH_PRIMARY_REMAINING_ZERO_FAIL GH_PRIMARY_REMAINING_ZERO_SUCCESS GH_LARGE_SUCCESS AIDEVOPS_GH_SECONDARY_COOLDOWN_OVERRIDE AIDEVOPS_GH_SECONDARY_COOLDOWN_EVENTS_MAX_LINES AIDEVOPS_GH_SECONDARY_COOLDOWN_EVENTS_MAX_BYTES AIDEVOPS_GH_READ_RAMP_BUDGET AIDEVOPS_GH_READ_RAMP_BOOT_SECS AIDEVOPS_GH_READ_RAMP_RECOVERY_SECS AIDEVOPS_GH_READ_RAMP_OVERRIDE AIDEVOPS_GH_AUTH_MODE AIDEVOPS_GH_AUTH_PRINCIPAL AIDEVOPS_GH_COOLDOWN_OPERATION AIDEVOPS_GH_COOLDOWN_WRAPPER AIDEVOPS_GH_COOLDOWN_STAGE AIDEVOPS_GH_API_POOL AIDEVOPS_GH_ROUTE_DECISION 2>/dev/null || true
+	unset GH_SECONDARY_FAIL GH_REST_CORE_403_FAIL GH_CORE_RATE_LIMIT_RESET GH_SEARCH_RATE_LIMIT_RESET GH_HEADER_LIMIT_FAIL GH_GENERIC_403_FAIL GH_ABUSE_403_FAIL GH_PRIMARY_REMAINING_ZERO_FAIL GH_PRIMARY_REMAINING_ZERO_SUCCESS GH_LARGE_SUCCESS AIDEVOPS_GH_SECONDARY_COOLDOWN_OVERRIDE AIDEVOPS_GH_SECONDARY_COOLDOWN_EVENTS_MAX_LINES AIDEVOPS_GH_SECONDARY_COOLDOWN_EVENTS_MAX_BYTES AIDEVOPS_GH_READ_RAMP_BUDGET AIDEVOPS_GH_READ_RAMP_BOOT_SECS AIDEVOPS_GH_READ_RAMP_RECOVERY_SECS AIDEVOPS_GH_READ_RAMP_OVERRIDE AIDEVOPS_GH_AUTH_MODE AIDEVOPS_GH_AUTH_PRINCIPAL AIDEVOPS_GH_COOLDOWN_METHOD AIDEVOPS_GH_COOLDOWN_ENDPOINT AIDEVOPS_GH_COOLDOWN_QUERY AIDEVOPS_GH_COOLDOWN_OPERATION AIDEVOPS_GH_COOLDOWN_WRAPPER AIDEVOPS_GH_COOLDOWN_STAGE AIDEVOPS_GH_API_POOL AIDEVOPS_GH_ROUTE_DECISION 2>/dev/null || true
 	_GH_SECONDARY_COOLDOWN_LOGGED_ACTIVE=0
 	_GH_SECONDARY_COOLDOWN_LOGGED_RAMP=0
 	_gh_secondary_system_boot_ts() { return 1; }
@@ -558,6 +558,24 @@ test_all_primary_resources_remain_isolated() {
 	return 0
 }
 
+test_transport_preserves_sanitized_caller_context() {
+	local error_file="${TMP_HOME}/transport-error" response=""
+	reset_case
+	: >"$error_file"
+	response=$(printf 'HTTP/2 403\r\nX-RateLimit-Remaining: 14\r\nX-RateLimit-Resource: search\r\n\r\n{"message":"secondary rate limit"}\n')
+	AIDEVOPS_GH_COOLDOWN_METHOD=GET \
+		AIDEVOPS_GH_COOLDOWN_ENDPOINT=/search/issues \
+		AIDEVOPS_GH_COOLDOWN_QUERY='q=private-value&per_page=1' \
+		AIDEVOPS_GH_COOLDOWN_OPERATION=idle_available_work \
+		AIDEVOPS_GH_COOLDOWN_WRAPPER=pulse-wrapper.sh \
+		AIDEVOPS_GH_COOLDOWN_STAGE=idle-backoff-availability \
+		_gh_transport_record_error 1 "$error_file" "$response"
+	jq -e '.diagnostic.method == "GET" and .diagnostic.endpoint == "/search/issues" and .diagnostic.query_shape == "q=<redacted>&per_page=<redacted>" and .diagnostic.operation == "idle_available_work" and .diagnostic.wrapper == "pulse-wrapper.sh" and .diagnostic.pulse_stage == "idle-backoff-availability"' \
+		"$AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE" >/dev/null
+	printf 'PASS transport cooldown records sanitized originating context\n'
+	return 0
+}
+
 test_secondary_response_writes_cooldown
 test_header_response_writes_retry_after_cooldown
 test_generic_403_diagnostic_distinguishes_forbidden
@@ -581,3 +599,4 @@ test_read_ramp_does_not_defer_writes
 test_primary_search_isolation
 test_search_expiry_and_secondary_precedence
 test_all_primary_resources_remain_isolated
+test_transport_preserves_sanitized_caller_context
