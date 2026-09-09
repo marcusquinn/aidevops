@@ -144,6 +144,95 @@ if _dispatch_permission_history_requires_grant 123 owner/repo; then
 fi
 [[ "$_DISPATCH_PERMISSION_VERIFY_RESULT" == "VERIFIED" ]]
 
+handoff_test_dir="${TEST_ROOT}/handoff"
+mkdir -p "$handoff_test_dir/repo"
+git init -q "$handoff_test_dir/repo"
+handoff_capture="$handoff_test_dir/capture.json"
+cat >"$handoff_capture" <<'JSON'
+{
+  "schema": "aidevops-permission-capture/v1",
+  "issue": "123",
+  "repo": "owner/repo",
+  "requests": [{
+    "permission": "external_directory",
+    "patterns": ["~/.cache/example/**"],
+    "tool": "read",
+    "intent": "Inspect a bounded external dependency",
+    "risk": {"level": "medium", "grantable": true, "reason": "external boundary"},
+    "opencode": {"request_id": "oc-1", "session_id": "ses-1"}
+  }]
+}
+JSON
+
+cat >"$handoff_test_dir/run.sh" <<'TEST'
+#!/usr/bin/env bash
+set -euo pipefail
+source "$1"
+capture_file="$2"
+repo_dir="$3"
+state_dir="$4"
+export AIDEVOPS_PERMISSION_PERSISTENCE_RETRY_DELAY=0
+: >"$state_dir/events"
+: >"$state_dir/comment-calls"
+: >"$state_dir/edit-calls"
+
+permission_request_already_posted() {
+	[[ -s "$state_dir/comment-posted" ]]
+	return $?
+}
+gh_issue_comment() {
+	printf 'comment\n' >>"$state_dir/comment-calls"
+	# Simulate an uncertain response: GitHub accepted the comment, but the
+	# transport reported failure. The retry must discover it, not duplicate it.
+	printf 'posted\n' >"$state_dir/comment-posted"
+	return 1
+}
+gh_issue_view() {
+	if [[ -s "$state_dir/block-applied" ]]; then
+		printf '%s\n' '{"labels":[{"name":"needs-maintainer-permissions"},{"name":"status:blocked"}]}'
+	else
+		printf '%s\n' '{"labels":[]}'
+	fi
+	return 0
+}
+gh_issue_edit_safe() {
+	printf 'edit\n' >>"$state_dir/edit-calls"
+	if [[ "$(wc -l <"$state_dir/edit-calls" | tr -d ' ')" -eq 1 ]]; then
+		return 1
+	fi
+	printf 'applied\n' >"$state_dir/block-applied"
+	return 0
+}
+permission_record_blocker() {
+	printf '%s|%s\n' "$1" "$3" >>"$state_dir/events"
+	return 0
+}
+
+cmd_request --file "$capture_file" --issue 123 --repo owner/repo --session issue-123 --work-dir "$repo_dir" >/dev/null
+[[ "$(wc -l <"$state_dir/comment-calls" | tr -d ' ')" == "1" ]]
+[[ "$(wc -l <"$state_dir/edit-calls" | tr -d ' ')" == "2" ]]
+grep -q '^permission_request_persistence_failed|github_block_label_failed$' "$state_dir/events"
+permission_issue_block_persisted 123 owner/repo
+
+# A repeated handoff reuses the stable request ID and cannot duplicate the
+# request comment. Labels remain a set even when the idempotent edit repeats.
+cmd_request --file "$capture_file" --issue 123 --repo owner/repo --session issue-123 --work-dir "$repo_dir" >/dev/null
+[[ "$(wc -l <"$state_dir/comment-calls" | tr -d ' ')" == "1" ]]
+
+jq '.requests[0].risk.grantable = false' "$capture_file" >"$state_dir/non-grantable.json"
+rm -f "$state_dir/comment-posted" "$state_dir/block-applied"
+: >"$state_dir/comment-calls"
+: >"$state_dir/edit-calls"
+if cmd_request --file "$state_dir/non-grantable.json" --issue 123 --repo owner/repo --session issue-123 --work-dir "$repo_dir"; then
+	printf 'non-grantable request unexpectedly persisted a maintainer hold\n' >&2
+	exit 1
+fi
+[[ ! -s "$state_dir/comment-calls" && ! -s "$state_dir/edit-calls" ]]
+TEST
+chmod +x "$handoff_test_dir/run.sh"
+"$handoff_test_dir/run.sh" "${SCRIPT_DIR}/worker-permission-helper.sh" "$handoff_capture" \
+	"$handoff_test_dir/repo" "$handoff_test_dir"
+
 jq '.[0] = [.[0][0], .[0][2], .[0][3]]' "$comments_file" >"${comments_file}.pending"
 mv "${comments_file}.pending" "$comments_file"
 if ! _dispatch_permission_history_requires_grant 123 owner/repo; then

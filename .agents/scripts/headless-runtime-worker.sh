@@ -1879,9 +1879,19 @@ _hrw_finish_permission_required_run() {
 		--repo "${DISPATCH_REPO_SLUG:-${WORKER_REPO_SLUG:-}}" \
 		--session "$session_key" \
 		--work-dir "$work_dir"; then
-		_hrw_record_permission_blocker_failure "$session_key" "permission_handoff_failed"
-		_hrw_mark_failed_terminal_state "$_HRW_STATUS_FAILED" "$_HRW_PERMISSION_PERSISTENCE_FAILED"
-		return 1
+		# Retry from the retained capture. worker-permission-helper derives a stable
+		# request identity from that file, so this reconciles partial GitHub writes
+		# without creating a second permission dossier.
+		if ! "$helper" request \
+			--file "$_run_permission_request_file" \
+			--issue "${WORKER_ISSUE_NUMBER:-}" \
+			--repo "${DISPATCH_REPO_SLUG:-${WORKER_REPO_SLUG:-}}" \
+			--session "$session_key" \
+			--work-dir "$work_dir"; then
+			_hrw_record_permission_blocker_failure "$session_key" "permission_handoff_failed"
+			_hrw_mark_failed_terminal_state "$_HRW_STATUS_FAILED" "$_HRW_PERMISSION_PERSISTENCE_FAILED"
+			return 1
+		fi
 	fi
 	_hrw_release_dispatch_claim "$session_key" "$permission_status"
 	_HRW_FINAL_RUNTIME_EVENT="$_HRW_EVENT_DEFERRED"

@@ -836,6 +836,15 @@ test_permission_history_guard_requires_current_grant() {
 	[[ "$rc" -eq 1 && "$out" == *"bound to its original worker session and worktree"* ]] && check=0
 	print_result "permission history guard rejects new worker for bound grant" "$check" "rc=$rc output=$out"
 
+	# A retained label event remains a dispatch block even when the issue's
+	# current metadata lost the label during a partial permission handoff.
+	rc=0
+	export MOCK_PERMISSION_VERIFICATION="NO_APPROVAL"
+	out=$(_dsi_guard_permission_history_verified 24354 owner/repo 2>&1) || rc=$?
+	check=1
+	[[ "$rc" -eq 1 && "$out" == *"permission-request history without a current matching signed grant"* ]] && check=0
+	print_result "permission history guard preserves failed handoff block" "$check" "rc=$rc output=$out"
+
 	_DSI_APPROVAL_HELPER="$original_helper"
 	MOCK_GH_PERMISSION_EVENTS_JSON='[[]]'
 	unset MOCK_PERMISSION_VERIFICATION

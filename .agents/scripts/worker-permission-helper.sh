@@ -161,7 +161,9 @@ permission_build_envelope() {
 	changed_files=$(permission_changed_files_json "$work_dir")
 	branch=$(git -C "$work_dir" branch --show-current 2>/dev/null || true)
 	worktree_digest=$(permission_sha256_text "$work_dir")
-	created_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+	# Keep the request identity stable when the runtime retries a failed GitHub
+	# handoff with the same captured permission file.
+	created_at=$(date -u -r "$capture_file" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)
 	base_file=$(mktemp)
 	jq -cS \
 		--arg schema "$PERMISSION_REQUEST_SCHEMA" \
@@ -297,7 +299,20 @@ This signs only the listed capabilities for this issue. It does not approve the 
 $(jq . "$envelope_file")
 ~~~
 EOF
-	if ! gh_issue_comment "$issue_number" --repo "$repo_slug" --body-file "$comment_file" >/dev/null; then
+	local attempt=1
+	while [[ "$attempt" -le 3 ]]; do
+		if permission_request_already_posted "$issue_number" "$repo_slug" "$request_id"; then
+			rm -f "$envelope_file" "$comment_file"
+			printf '%s\n' "$request_id"
+			return 0
+		fi
+		if gh_issue_comment "$issue_number" --repo "$repo_slug" --body-file "$comment_file" >/dev/null; then
+			break
+		fi
+		attempt=$((attempt + 1))
+		[[ "$attempt" -gt 3 ]] || sleep "${AIDEVOPS_PERMISSION_PERSISTENCE_RETRY_DELAY:-1}"
+	done
+	if [[ "$attempt" -gt 3 ]] && ! permission_request_already_posted "$issue_number" "$repo_slug" "$request_id"; then
 		rm -f "$envelope_file" "$comment_file"
 		return 1
 	fi
@@ -311,10 +326,38 @@ permission_apply_block() {
 	local repo_slug="$2"
 	gh_issue_edit_safe "$issue_number" --repo "$repo_slug" \
 		--add-label "needs-maintainer-permissions" \
+		--add-label "status:blocked" \
 		--remove-label "status:queued" \
 		--remove-label "status:claimed" \
 		--remove-label "status:in-progress" \
 		--remove-label "status:in-review" >/dev/null
+	return $?
+}
+
+permission_issue_block_persisted() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local issue_json=""
+	issue_json=$(gh_issue_view "$issue_number" --repo "$repo_slug" --json labels 2>/dev/null) || return 1
+	jq -e '(.labels // [] | map(.name)) as $labels
+		| ($labels | index("needs-maintainer-permissions") != null)
+		and ($labels | index("status:blocked") != null)' <<<"$issue_json" >/dev/null
+	return $?
+}
+
+permission_reconcile_block() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local attempt=1
+	while [[ "$attempt" -le 2 ]]; do
+		# An uncertain first write may have succeeded server-side. Avoid another
+		# mutation unless the canonical hold is actually absent.
+		permission_issue_block_persisted "$issue_number" "$repo_slug" && return 0
+		sleep "${AIDEVOPS_PERMISSION_PERSISTENCE_RETRY_DELAY:-1}"
+		permission_apply_block "$issue_number" "$repo_slug" && return 0
+		attempt=$((attempt + 1))
+	done
+	permission_issue_block_persisted "$issue_number" "$repo_slug"
 	return $?
 }
 
@@ -362,6 +405,13 @@ cmd_request() {
 	tool="$(jq -r '.tool' <<<"$capability_json")"
 	risk_level="$(jq -r '.risk_level' <<<"$capability_json")"
 	grantable="$(jq -r '.grantable' <<<"$capability_json")"
+	if [[ "$grantable" != "true" ]]; then
+		permission_record_blocker "permission_not_grantable" "$PERMISSION_BLOCKER_STATUS" \
+			"permission_boundary_requires_alternative" "$PERMISSION_BLOCKER_TRUE" "$issue_number" "$repo_slug" "$session_key" "" \
+			"Captured permission request is not eligible for a maintainer grant" \
+			"$permission" "$tool" "$risk_level" "$grantable"
+		return 1
+	fi
 	if ! request_id=$(permission_post_request "$capture_file" "$issue_number" "$repo_slug" "$session_key" "$work_dir"); then
 		permission_record_blocker "$PERMISSION_PERSISTENCE_FAILED_EVENT" "$PERMISSION_BLOCKER_STATUS" \
 			"github_request_comment_failed" "$PERMISSION_BLOCKER_TRUE" "$issue_number" "$repo_slug" "$session_key" "" \
@@ -372,7 +422,7 @@ cmd_request() {
 		permission_record_blocker "$PERMISSION_PERSISTENCE_FAILED_EVENT" "$PERMISSION_BLOCKER_STATUS" \
 			"github_block_label_failed" "$PERMISSION_BLOCKER_TRUE" "$issue_number" "$repo_slug" "$session_key" "$request_id" \
 			"Maintainer permission blocker label could not be persisted"
-		return 1
+		permission_reconcile_block "$issue_number" "$repo_slug" || return 1
 	fi
 	if [[ -n "$work_dir" && -d "$work_dir" ]]; then
 		local git_dir="" pending_file=""
