@@ -480,7 +480,7 @@ _append_run_attempt_diagnostics() {
 		137) printf '[WORKER_EXIT_DIAGNOSTICS] cause=SIGKILL (OOM or external kill)\n' ;;
 		143) printf '[WORKER_EXIT_DIAGNOSTICS] cause=SIGTERM (graceful termination)\n' ;;
 		0) [[ "$diag_incomplete_msgs" -le 0 ]] || printf '[WORKER_EXIT_DIAGNOSTICS] cause=mid_turn_death (session %s has %s incomplete assistant messages — API likely dropped)\n' "$diag_session_id" "$diag_incomplete_msgs" ;;
-		*) printf '[WORKER_EXIT_DIAGNOSTICS] cause=unknown (exit_code=%s)\n' "$exit_code" ;;
+		*) printf '[WORKER_EXIT_DIAGNOSTICS] classification=pending (exit_code=%s)\n' "$exit_code" ;;
 		esac
 	} >>"$output_file" 2>/dev/null || true
 	print_info "[lifecycle] calling_handle_run_result session=$session_key exit_code=$exit_code output_size=$(wc -c <"$output_file" 2>/dev/null || echo 0)"
@@ -519,6 +519,14 @@ _finish_run_attempt_result() {
 	_stop_run_attempt_resource_sampler "${_run_result_label:-failed}"
 	local metric_result_label="${_run_result_label:-failed}"
 	if ! _headless_run_is_ephemeral "$role"; then
+		# The handler removes raw output. Reconcile the preserved candidate with
+		# the final classification, not a guess made from the process exit code.
+		if [[ -n "$_metric_excerpt_candidate" && -f "$_metric_excerpt_candidate" ]]; then
+			printf '\n[WORKER_EXIT_DIAGNOSTICS] cause=%s provider_error_type=%s provider_status=%s classification_source=%s classification_pattern=%s\n' \
+				"${_run_failure_reason:-$metric_result_label}" "${_run_provider_error_type:-none}" \
+				"${_run_provider_status:-none}" "${_run_classification_source:-none}" \
+				"${_run_classification_pattern:-none}" >>"$_metric_excerpt_candidate" 2>/dev/null || true
+		fi
 		_metric_output_file=$(_metric_failure_excerpt_for_result "$metric_result_label" "$_metric_excerpt_candidate" "$session_key")
 	fi
 	[[ -z "$_metric_excerpt_candidate" ]] || rm -f "$_metric_excerpt_candidate"

@@ -181,7 +181,8 @@ _handle_run_result_success_output() {
 
 # Classify exit 124. Sets failure_reason and optional _run_result_handled_exit.
 _classify_watchdog_run_result() {
-	failure_reason=$(classify_failure_reason "$output_file")
+	classify_failure_reason "$output_file" >/dev/null
+	failure_reason="$_failure_reason"
 	if [[ "$failure_reason" == "$_RUN_RESULT_RATE_LIMIT" ]]; then
 		print_warning "$selected_model watchdog saw provider/rate-limit marker — classifying as rate_limit for rotation"
 		return 0
@@ -260,7 +261,8 @@ _classify_signal_run_result() {
 		_run_result_handled_exit=78
 		return 0
 	fi
-	failure_reason=$(classify_failure_reason "$output_file")
+	classify_failure_reason "$output_file" >/dev/null
+	failure_reason="$_failure_reason"
 	return 0
 }
 

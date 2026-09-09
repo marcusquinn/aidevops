@@ -188,18 +188,7 @@ _metric_failure_excerpt_candidate_path() {
 	mkdir -p "$retention_tmp_dir" 2>/dev/null || return 0
 	candidate_path=$(mktemp "${retention_tmp_dir}/worker-failure-${safe_key:-unknown}.XXXXXX" 2>/dev/null || true)
 	[[ -n "$candidate_path" ]] || return 0
-	if ! python3 - "$output_file" "$candidate_path" <<'PY' >/dev/null 2>&1
-import sys
-src, dst = sys.argv[1], sys.argv[2]
-try:
-    with open(src, "rb") as f:
-        data = f.read()[-65536:]
-    with open(dst, "wb") as f:
-        f.write(data)
-except OSError:
-    sys.exit(1)
-PY
-	then
+	if ! python3 "${BASH_SOURCE[0]%/*}/worker-failure-excerpt.py" "$output_file" "$candidate_path" >/dev/null 2>&1; then
 		rm -f "$candidate_path"
 		return 0
 	fi
@@ -232,17 +221,7 @@ _metric_failure_excerpt_path() {
 	safe_key=$(printf '%s' "$session_key" | tr -c 'A-Za-z0-9._-' '_')
 	timestamp=$(date -u +%Y%m%dT%H%M%SZ 2>/dev/null || printf '%s' "unknown")
 	excerpt_path="${excerpt_dir}/${safe_key:-unknown}-${timestamp}-$$.log"
-	python3 - "$output_file" "$excerpt_path" <<'PY' >/dev/null 2>&1 || return 0
-import sys
-src, dst = sys.argv[1], sys.argv[2]
-try:
-    with open(src, "rb") as f:
-        data = f.read()[-65536:]
-    with open(dst, "wb") as f:
-        f.write(data)
-except OSError:
-    sys.exit(0)
-PY
+	python3 "${BASH_SOURCE[0]%/*}/worker-failure-excerpt.py" "$output_file" "$excerpt_path" >/dev/null 2>&1 || return 0
 	if [[ -s "$excerpt_path" ]]; then
 		retention_tmp_dir="${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}"
 		if mkdir -p "$retention_tmp_dir" 2>/dev/null; then
