@@ -22,9 +22,13 @@ import {
   trimTerminalOperations,
 } from "./bounded-operation-runtime.mjs";
 import {
+  attachOperationOutput,
   cancelOperation,
+  clearOperationStatusWaiters,
+  notifyOperationStatusWaiters,
   operationOutput,
   operationStatus,
+  operationStatusVersion,
 } from "./bounded-operation-access.mjs";
 import { resolveSessionOwnedWorktreeRoot } from "./gpt-image-worktree.mjs";
 
@@ -48,6 +52,8 @@ export class BoundedInteractiveOperationManager {
     this.killGraceMs = options.killGraceMs ?? 500;
     this.setTimer = options.setTimer || setTimeout;
     this.clearTimer = options.clearTimer || clearTimeout;
+    this.appendCapture = appendCapture;
+    this.observeProgress = observeProgress;
     this.supervisorRuntime = options.supervisorRuntime || SUPERVISOR_RUNTIME;
     this.operations = new Map();
   }
@@ -68,28 +74,19 @@ export class BoundedInteractiveOperationManager {
   }
 
   attachOutput(operation, child) {
-    for (const stream of [child.stdout, child.stderr]) {
-      stream?.on("data", (chunk) => {
-        appendCapture(operation, chunk);
-        if (observeProgress(operation, chunk, this.now)) this.notifyStatusWaiters(operation);
-      });
-    }
+    attachOperationOutput(this, operation, child);
   }
 
   statusVersion(operation) {
-    return `${operation.state}:${operation.restorationState}:${operation.progressEvents}`;
+    return operationStatusVersion(operation);
   }
 
   notifyStatusWaiters(operation) {
-    const version = this.statusVersion(operation);
-    for (const waiter of operation.statusWaiters) {
-      if (waiter.version === version) continue;
-      waiter.finish();
-    }
+    notifyOperationStatusWaiters(this, operation);
   }
 
   clearStatusWaiters(operation) {
-    for (const waiter of operation.statusWaiters) waiter.finish();
+    clearOperationStatusWaiters(operation);
   }
 
   spawnOwned(operation, command, stage) {

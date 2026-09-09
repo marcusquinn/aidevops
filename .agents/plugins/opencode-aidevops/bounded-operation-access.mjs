@@ -5,6 +5,31 @@ const ACTIVE_STATES = ["starting", "running", "cancelling", "timing_out", "resto
 const MAX_OUTPUT_LINES = 500;
 const MAX_STATUS_WAIT_MS = 60 * 1000;
 
+export function attachOperationOutput(manager, operation, child) {
+  for (const stream of [child.stdout, child.stderr]) {
+    stream?.on("data", (chunk) => {
+      manager.appendCapture(operation, chunk);
+      if (manager.observeProgress(operation, chunk, manager.now)) manager.notifyStatusWaiters(operation);
+    });
+  }
+}
+
+export function operationStatusVersion(operation) {
+  return `${operation.state}:${operation.restorationState}:${operation.progressEvents}`;
+}
+
+export function notifyOperationStatusWaiters(manager, operation) {
+  const version = manager.statusVersion(operation);
+  for (const waiter of operation.statusWaiters) {
+    if (waiter.version === version) continue;
+    waiter.finish();
+  }
+}
+
+export function clearOperationStatusWaiters(operation) {
+  for (const waiter of operation.statusWaiters) waiter.finish();
+}
+
 export function operationStatus(manager, id, context = {}, requested = {}) {
   const operation = manager.ownedOperation(id, context);
   const waitMs = Number(requested.waitMs ?? 0);
