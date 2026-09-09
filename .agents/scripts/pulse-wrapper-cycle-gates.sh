@@ -250,11 +250,14 @@ _pulse_available_auto_dispatch_work_exists() {
 			def valid: type == "object" and (.state | type) == "string"
 				and (.assignees | is_array) and (.labels | is_array)
 				and all(.labels[]; type == "object" and (.name | type) == "string");
+			# Mirror the hard management/status exclusions in pulse-dispatch-core.sh.
+			def held_labels: ["publication:pending", "needs-maintainer-review", "needs-maintainer-permissions",
+				"infrastructure", "supervisor", "contributor", "persistent", "quality-review", "on hold",
+				"blocked", "parent-task", "meta", "consolidated", "status:done", "status:resolved"];
 			def eligible: .pull_request == null and .state == "open" and (.assignees | length) == 0
 				and any(.labels[]; .name == "auto-dispatch")
 				and any(.labels[]; .name == "status:available")
-				and all(.labels[]; .name != "publication:pending" and .name != "needs-maintainer-review"
-					and .name != "needs-maintainer-permissions" and .name != "infrastructure");
+				and all(.labels[]; .name as $label | (held_labels | index($label)) == null);
 			if (is_array | not) or (all(.[]; valid) | not) then error("invalid issue page")
 			elif any(.[]; eligible) then 1
 			elif length < 100 then 0

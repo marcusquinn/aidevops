@@ -268,7 +268,8 @@ if _pulse_check_idle_backoff_gate; then
 else
 	fail "visible work still bypasses active idle backoff"
 fi
-for excluded_label in publication:pending needs-maintainer-review needs-maintainer-permissions infrastructure; do
+for excluded_label in publication:pending needs-maintainer-review needs-maintainer-permissions infrastructure \
+	supervisor contributor persistent quality-review 'on hold' blocked parent-task meta consolidated status:done status:resolved; do
 	GH_OUTPUT=$(printf '%s' "$ELIGIBLE_ISSUE" | jq -c --arg label "$excluded_label" '[.labels += [{name:$label}]]')
 	query_rc=0
 	_pulse_available_auto_dispatch_work_exists || query_rc=$?
@@ -313,6 +314,11 @@ test_repeated_recovery_windows() (
 		[[ "$(<"$GH_CALL_COUNT_FILE")" -eq $((window / 1000)) && "$(<"$GH_QUERY_FILE")" != *search/issues* ]] || return 1
 		[[ "$(_gh_secondary_cooldown_expires_at)" == "$expiry" ]] || return 1
 	done
+	TIMEOUT_MODE=deferred
+	if _pulse_check_idle_backoff_gate; then return 1; fi
+	TIMEOUT_MODE=timeout
+	_pulse_check_idle_backoff_gate || return 1
+	[[ "$(<"$GH_CALL_COUNT_FILE")" -eq 3 && "$(_gh_secondary_cooldown_expires_at)" == "$expiry" ]] || return 1
 	return 0
 )
 if test_repeated_recovery_windows; then

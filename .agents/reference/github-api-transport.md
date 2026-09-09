@@ -207,6 +207,10 @@ discovery. A normal cycle therefore spends no pre-backoff discovery request.
 The wake hint uses one REST repository-issues page, server-filtered by open state,
 both dispatch labels and no assignee, instead of Search. Client filtering excludes
 PRs, unpublished work, maintainer/permission holds and infrastructure advisories.
+It also mirrors the dispatcher's hard management/status exclusions: persistent
+audit/supervisor tickets, parents, held, consolidated and completed work cannot
+continually reset idle backoff just because stale availability labels remain.
+The hint still grants no launch authority; fresh dispatch gates remain canonical.
 A full page with no eligible issue is incomplete evidence, not an empty queue;
 normal cycle discovery handles it without unbounded optional pagination. This
 removes the recurring availability Search producer, not GitHub's secondary limit.
