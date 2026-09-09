@@ -388,7 +388,7 @@ _codacy_policy_drift() {
 			(.total | type == "number" and . >= 0 and . == floor))
 	' <<<"$issues_response" >/dev/null 2>&1 || return 1
 	jq -r '
-		["Bandit_B404", "ESLint8_es-x_no-modules",
+		["ESLint8_es-x_no-modules",
 		 "ESLint8_es-x_no-block-scoped-variables", "ESLint8_es-x_no-trailing-commas"] as $rules |
 		.data.counts.patterns[] | select(.id as $id | $rules | index($id)) |
 		select(.total > 0) | "  - `\(.id)`: \(.total)"

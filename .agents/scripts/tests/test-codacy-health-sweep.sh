@@ -75,6 +75,9 @@ curl() {
 		policy-drift)
 			printf '%s' '{"data":{"counts":{"patterns":[{"id":"Bandit_B404","title":"Import subprocess","total":76},{"id":"ESLint8_es-x_no-modules","total":84},{"id":"ESLint8_es-x_no-block-scoped-variables","total":56},{"id":"ESLint8_es-x_no-trailing-commas","total":40}]}}}'
 			;;
+		b404-history)
+			printf '%s' '{"data":{"counts":{"patterns":[{"id":"Bandit_B404","title":"Import subprocess","total":83}]}}}'
+			;;
 		overview-failure) return 1 ;;
 		overview-missing) printf '%s' '{"data":{"counts":{}}}' ;;
 		overview-invalid) printf '%s' '{"data":{"counts":{"patterns":[{"id":"Bandit_B404","total":"76"}]}}}' ;;
@@ -157,11 +160,15 @@ LOC=1000
 MODE="policy-drift"
 RESULT=$(_sweep_codacy "owner/repo" "/fake/repo")
 assert_contains "documented rule renders policy drift" "$RESULT" "**Analysis health**: POLICY_DRIFT"
-assert_contains "documented rule includes exact aggregate count" "$RESULT" "\`Bandit_B404\`: 76"
 assert_contains "ES modules policy drift includes exact count" "$RESULT" "\`ESLint8_es-x_no-modules\`: 84"
 assert_contains "block-scoped variables drift includes exact count" "$RESULT" "\`ESLint8_es-x_no-block-scoped-variables\`: 56"
 assert_contains "trailing commas drift includes exact count" "$RESULT" "\`ESLint8_es-x_no-trailing-commas\`: 40"
 assert_contains "drifting A is not verified at target" "$RESULT" "**Grade target**: A / UNVERIFIED"
+
+MODE="b404-history"
+RESULT=$(_sweep_codacy "owner/repo" "/fake/repo")
+assert_contains "retained disabled B404 history does not report policy drift" "$RESULT" "**Analysis health**: HEALTHY"
+assert_contains "retained disabled B404 history preserves verified A target" "$RESULT" "**Grade target**: A / AT_TARGET"
 
 for MODE in overview-failure overview-missing overview-invalid search-page; do
 	RESULT=$(_sweep_codacy "owner/repo" "/fake/repo")
