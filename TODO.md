@@ -4896,3 +4896,12 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t18395 detect and recover stale GitHub runner broker sessions #auto-dispatch #bug #ci #github #infrastructure #monitoring #reliability #self-healing #shell ref:GH#31136 pr:#31142 completed:2026-09-04
 
 - [ ] t18416 Preserve actionable terminal evidence for provider and model blockers #auto-dispatch #external-contributor ref:GH#31676
+
+## Evidence-based model effort and delegation optimisation
+
+- [ ] t18422 Evidence-based model effort and delegation optimisation #parent #enhancement #framework #observability #interactive priority:high tier:thinking ref:GH#31696 logged:2026-09-10 -> [todo/tasks/t18422-brief.md]
+- [ ] t18423 Record model-effort harness and cost provenance #auto-dispatch #enhancement #framework #observability #interactive priority:high tier:standard ~3h parent:t18422 ref:GH#31698 logged:2026-09-10 -> [todo/tasks/t18423-brief.md]
+- [ ] t18424 Correlate objectives with verified outcomes and subagent repair #auto-dispatch #enhancement #framework #observability #interactive priority:high status:blocked tier:standard ~4h parent:t18422 blocked-by:t18423 ref:GH#31699 logged:2026-09-10 -> [todo/tasks/t18424-brief.md]
+- [ ] t18425 Report matched objective cost and routing evidence coverage #auto-dispatch #enhancement #framework #observability #interactive priority:high status:blocked tier:standard ~3h parent:t18422 blocked-by:t18424 ref:GH#31701 logged:2026-09-10 -> [todo/tasks/t18425-brief.md]
+- [ ] t18426 Prepare portable bounded model-effort pilot using existing replay #auto-dispatch #enhancement #framework #observability #interactive priority:medium status:blocked tier:standard ~3h parent:t18422 blocked-by:t18425 ref:GH#31700 logged:2026-09-10 -> [todo/tasks/t18426-brief.md]
+- [ ] t18427 Evaluate effort and delegation economics and document routing decision #auto-dispatch #enhancement #framework #observability #interactive priority:medium status:blocked tier:thinking ~2h parent:t18422 blocked-by:t18426 ref:GH#31702 logged:2026-09-10 -> [todo/tasks/t18427-brief.md]
