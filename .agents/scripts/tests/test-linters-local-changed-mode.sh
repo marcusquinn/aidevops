@@ -194,7 +194,7 @@ create_changed_mode_fixture() {
 	git -C "$repo" commit -qm "feature"
 	printf 'staged\n' >"${repo}/staged.txt"
 	git -C "$repo" add staged.txt
-	printf 'unstaged\n' >>"${repo}/feature.txt"
+	printf 'unstaged\n' >>"${repo}/common.txt"
 	printf 'untracked\n' >"${repo}/untracked.txt"
 	return 0
 }
@@ -263,6 +263,7 @@ test_changed_inventory_uses_remote_default() {
 	inventory=$(changed_inventory_for_repo "$repo")
 	assert_inventory_contains "$inventory" "feature.txt" "develop base includes committed feature change"
 	assert_inventory_contains "$inventory" "staged.txt" "develop base retains staged changes"
+	assert_inventory_contains "$inventory" "common.txt" "develop base retains unstaged changes"
 	assert_inventory_contains "$inventory" "untracked.txt" "develop base retains untracked changes"
 	assert_inventory_excludes "$inventory" "develop-baseline.txt" "develop base excludes integration history"
 	assert_inventory_excludes "$inventory" "main-only.txt" "develop base excludes divergent main history"
@@ -341,6 +342,13 @@ test_help_and_invalid_arguments() {
 		print_result "missing --base-ref argument exits 2" 0
 	else
 		print_result "missing --base-ref argument exits 2" 1 "rc=$rc output=$output"
+	fi
+	rc=0
+	output=$(cd "$outside_repo" && PATH="/usr/bin:/bin" bash "${REPO_ROOT}/.agents/scripts/linters-local.sh" --base-ref refs/heads/missing 2>&1) || rc=$?
+	if [[ "$rc" -ne 0 && "$output" == *"not resolvable from HEAD"* && "$output" != *"ALL LOCAL CHECKS"* ]]; then
+		print_result "unresolvable explicit base fails before gates" 0
+	else
+		print_result "unresolvable explicit base fails before gates" 1 "rc=$rc output=$output"
 	fi
 	rm -rf "$outside_repo"
 	return 0
