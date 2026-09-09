@@ -30,25 +30,34 @@ def scrub(text):
     return text
 
 
-def blocker_text(raw):
-    """Match the terminal assistant text boundary, never tool output."""
-    final_text = ""
-    structured = False
+def output_events(raw):
+    """Yield only complete structured events from the runtime stream."""
     for line in raw.splitlines():
         try:
             event = json.loads(line)
         except (ValueError, TypeError):
             continue
-        if not isinstance(event, dict):
-            continue
+        if isinstance(event, dict):
+            yield event
+
+
+def assistant_text(event):
+    """OpenCode emits completed assistant text as type=text, without a role."""
+    if event.get("type") != "text":
+        return ""
+    part = event.get("part")
+    part = part if isinstance(part, dict) else {}
+    value = event.get("text") or part.get("text")
+    return value if isinstance(value, str) else ""
+
+
+def blocker_text(raw):
+    """Match the terminal assistant text boundary, never tool output."""
+    final_text = ""
+    structured = False
+    for event in output_events(raw):
         structured = True
-        if event.get("type") == "text":
-            part = event.get("part")
-            part = part if isinstance(part, dict) else {}
-            value = event.get("text") or part.get("text")
-            if isinstance(value, str) and value:
-                final_text = value
-    # OpenCode emits completed assistant text as type=text (no role field).
+        final_text = assistant_text(event) or final_text
     # Tool output remains nested in other event types and is never selected.
     candidate = final_text if structured else raw
     match = re.search(r"(?:^|\n)\s*BLOCKED(?:\s*:|\s*$)", candidate, re.I)
