@@ -27,6 +27,19 @@ if [[ "${1:-}" == "api" && "${2:-}" == "graphql" ]]; then
 		draft) is_draft=true ;;
 		changes) review_decision="CHANGES_REQUESTED" ;;
 		closed) state="CLOSED" ;;
+		readiness-cooldown)
+			printf '%s\n' '[gh-cooldown] secondary-rate-limit active=true skip=read expires_at=1893456000' >&2
+			exit 75 ;;
+		readiness-ramp)
+			printf '%s\n' '[gh-cooldown] read-ramp active=true phase=cooldown-recovery budget_per_minute=60 action=defer' >&2
+			exit 75 ;;
+		readiness-local)
+			printf '%s\n' '[gh-transport] error_kind=github-api-read-deferred attempted=false deferred_by=local_admission retry_at=1893456000 reason="fixture wait"' >&2
+			exit 75 ;;
+		readiness-timeout) exit 124 ;;
+		readiness-api-error)
+			printf '%s\n' 'HTTP 503: service unavailable' >&2
+			exit 1 ;;
 		readiness-missing-cost)
 			printf '{"data":{"repository":{"pullRequest":{"state":"OPEN","isDraft":false,"reviewDecision":"APPROVED","headRefOid":"abc123","headRefName":"remote-branch"}}}}\n'
 			exit 0
@@ -254,5 +267,35 @@ else
 	printf 'FAIL read admission deferral lost its classification: rc=%s output=%s\n' "$deferred_rc" "$deferred_output"
 	exit 1
 fi
+
+for mode in readiness-cooldown readiness-ramp readiness-local readiness-timeout readiness-api-error; do
+	readiness_rc=0
+	readiness_output=$(run_gate "$mode" visible 2>&1) || readiness_rc=$?
+	[[ "$readiness_rc" -ne 0 ]] || {
+		printf 'FAIL readiness failure passed: %s\n' "$mode"
+		exit 1
+	}
+	case "$mode" in
+	readiness-cooldown)
+		[[ "$readiness_output" == *CHECK_STATUS=api-deferred* && "$readiness_output" == *'until epoch 1893456000'* ]]
+		;;
+	readiness-ramp)
+		[[ "$readiness_output" == *CHECK_STATUS=api-deferred* && "$readiness_output" == *'recovery/admission'* ]]
+		;;
+	readiness-local)
+		[[ "$readiness_output" == *CHECK_STATUS=api-deferred* && "$readiness_output" == *retry_at=1893456000* ]]
+		;;
+	readiness-timeout)
+		[[ "$readiness_output" == *CHECK_STATUS=indeterminate* && "$readiness_output" == *'timed out'* ]]
+		;;
+	readiness-api-error)
+		[[ "$readiness_output" == *CHECK_STATUS=indeterminate* && "$readiness_output" == *'exit 1'* ]]
+		;;
+	esac || {
+		printf 'FAIL readiness evidence lost: %s\n' "$readiness_output"
+		exit 1
+	}
+	printf 'PASS readiness preserves typed failure: %s\n' "$mode"
+done
 
 exit 0

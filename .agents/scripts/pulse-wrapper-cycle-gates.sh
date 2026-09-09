@@ -206,7 +206,7 @@ _pulse_available_auto_dispatch_work_exists() {
 	fi
 
 	local _deadline=$((SECONDS + _timeout_secs))
-	local _slug="" _count="" _query_rc=0 _remaining=0
+	local _slug="" _page="" _count="" _query_rc=0 _remaining=0
 	while IFS= read -r _slug; do
 		[[ -n "$_slug" ]] || continue
 		_remaining=$((_deadline - SECONDS))
@@ -217,16 +217,18 @@ _pulse_available_auto_dispatch_work_exists() {
 		fi
 		_count=""
 		_query_rc=0
-		_count=$(AIDEVOPS_GH_COOLDOWN_METHOD=GET \
-			AIDEVOPS_GH_COOLDOWN_ENDPOINT=/search/issues \
-			AIDEVOPS_GH_COOLDOWN_QUERY="q=repo:${_slug}&per_page=1" \
+		# This is a repository-scoped existence hint, not a search problem. Avoid
+		# the Search endpoint implicated in recurring secondary holds (GH#31669).
+		# Bound discovery to one page; a saturated excluded page remains unknown.
+		_page=$(AIDEVOPS_GH_COOLDOWN_METHOD=GET \
+			AIDEVOPS_GH_COOLDOWN_ENDPOINT="/repos/${_slug}/issues" \
+			AIDEVOPS_GH_COOLDOWN_QUERY="state=open&labels=auto-dispatch,status:available&assignee=none&per_page=100" \
 			AIDEVOPS_GH_COOLDOWN_OPERATION=idle_available_work \
 			AIDEVOPS_GH_COOLDOWN_WRAPPER=pulse-wrapper.sh \
 			AIDEVOPS_GH_COOLDOWN_STAGE=idle-backoff-availability \
-			timeout_sec "$_remaining" gh api -X GET search/issues \
-			-f "q=repo:${_slug} is:issue is:open label:auto-dispatch label:status:available -label:publication:pending -label:needs-maintainer-review -label:needs-maintainer-permissions -label:infrastructure no:assignee" \
-			-f per_page=1 \
-			--jq '.total_count // 0' 2>/dev/null) || _query_rc=$?
+			timeout_sec "$_remaining" gh api -X GET "repos/${_slug}/issues" \
+			-f state=open -f labels=auto-dispatch,status:available \
+			-f assignee=none -f per_page=100 2>/dev/null) || _query_rc=$?
 		if [[ "$_query_rc" -ne 0 ]]; then
 			if [[ "$_query_rc" -eq 124 ]]; then
 				printf '[pulse-wrapper] Idle available-work check timed out after %ss; preserving unknown work state (GH#27769)\n' \
@@ -243,8 +245,21 @@ _pulse_available_auto_dispatch_work_exists() {
 			*) return 2 ;;
 			esac
 		fi
-		if ! [[ "$_count" =~ ^[0-9]+$ ]]; then
-			printf '[pulse-wrapper] Idle available-work check returned malformed evidence; preserving unknown work state (GH#31662)\n' \
+		if ! _count=$(printf '%s' "$_page" | jq -er '
+			def is_array: type == "array";
+			def valid: type == "object" and (.state | type) == "string"
+				and (.assignees | is_array) and (.labels | is_array)
+				and all(.labels[]; type == "object" and (.name | type) == "string");
+			def eligible: .pull_request == null and .state == "open" and (.assignees | length) == 0
+				and any(.labels[]; .name == "auto-dispatch")
+				and any(.labels[]; .name == "status:available")
+				and all(.labels[]; .name != "publication:pending" and .name != "needs-maintainer-review"
+					and .name != "needs-maintainer-permissions" and .name != "infrastructure");
+			if (is_array | not) or (all(.[]; valid) | not) then error("invalid issue page")
+			elif any(.[]; eligible) then 1
+			elif length < 100 then 0
+			else error("incomplete issue page") end' 2>/dev/null); then
+			printf '[pulse-wrapper] Idle available-work check returned malformed or incomplete evidence; preserving unknown work state (GH#31669)\n' \
 				>>"${WRAPPER_LOGFILE:-/dev/null}"
 			return 2
 		fi
@@ -265,7 +280,7 @@ _pulse_check_idle_backoff_gate() {
 		read -r _ib_last <"$_ib_ts_file" || [[ -n "$_ib_last" ]] || _ib_last=0
 		[[ "$_ib_last" =~ ^[0-9]+$ ]] || _ib_last=0
 	fi
-	# Do not spend a Search request until local state has already decided this
+	# Do not spend a discovery request until local state has already decided this
 	# cycle would be skipped. During a secondary hold or its recovery ramp, keep
 	# this optional wake-up probe quiet so interactive authority checks get the
 	# recovery window. The normal cycle remains fail-open when no backoff applies.

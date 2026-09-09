@@ -25,12 +25,13 @@ fail() {
 	return 0
 }
 
+export HOME="${TMP}/home"
 export SCRIPT_DIR="${TMP}/scripts"
 export WRAPPER_LOGFILE="${TMP}/wrapper.log"
 export AIDEVOPS_GH_API_EVIDENCE_COVERAGE_START_FILE="${TMP}/coverage-start"
 export PULSE_SCOPE_REPOS="owner/repo"
 unset GH_API_REPORT
-mkdir -p "$SCRIPT_DIR"
+mkdir -p "$SCRIPT_DIR" "$HOME"
 : >"$WRAPPER_LOGFILE"
 
 GH_QUERY_FILE="${TMP}/query.txt"
@@ -42,7 +43,7 @@ export GH_CONTEXT_FILE
 export GH_CALL_COUNT_FILE
 export TIMEOUT_CALL_FILE
 export TIMEOUT_MODE="pass"
-export GH_OUTPUT="0"
+export GH_OUTPUT='[]'
 export IDLE_DECISION="skip"
 printf '0\n' >"$GH_CALL_COUNT_FILE"
 gh() {
@@ -130,25 +131,13 @@ else
 	pass "zero eligible issues does not bypass idle backoff"
 fi
 
-if grep -q -- '-label:needs-maintainer-review' "$GH_QUERY_FILE"; then
-	pass "idle-work query excludes NMR-held issues"
+if [[ "$(<"$GH_QUERY_FILE")" == 'api -X GET repos/owner/repo/issues -f state=open -f labels=auto-dispatch,status:available -f assignee=none -f per_page=100' ]]; then
+	pass "idle-work query uses one bounded repository REST page, not Search"
 else
-	fail "idle-work query excludes NMR-held issues" "query=$(<"$GH_QUERY_FILE")"
+	fail "idle-work query uses one bounded repository REST page, not Search" "query=$(<"$GH_QUERY_FILE")"
 fi
 
-if grep -q -- '-label:infrastructure' "$GH_QUERY_FILE"; then
-	pass "idle-work query excludes infrastructure advisory issues"
-else
-	fail "idle-work query excludes infrastructure advisory issues" "query=$(<"$GH_QUERY_FILE")"
-fi
-
-if grep -q -- '-label:publication:pending' "$GH_QUERY_FILE"; then
-	pass "idle-work query excludes unpublished planning issues"
-else
-	fail "idle-work query excludes unpublished planning issues" "query=$(<"$GH_QUERY_FILE")"
-fi
-
-if [[ "$(<"$GH_CONTEXT_FILE")" == 'GET|/search/issues|q=repo:owner/repo&per_page=1|idle_available_work|pulse-wrapper.sh|idle-backoff-availability' ]]; then
+if [[ "$(<"$GH_CONTEXT_FILE")" == 'GET|/repos/owner/repo/issues|state=open&labels=auto-dispatch,status:available&assignee=none&per_page=100|idle_available_work|pulse-wrapper.sh|idle-backoff-availability' ]]; then
 	pass "idle-work query carries sanitized cooldown attribution context"
 else
 	fail "idle-work query carries sanitized cooldown attribution context" "context=$(<"$GH_CONTEXT_FILE")"
@@ -224,7 +213,7 @@ else
 	fi
 fi
 
-export GH_OUTPUT="0"
+export GH_OUTPUT='[]'
 export IDLE_DECISION="proceed"
 printf '0\n' >"$GH_CALL_COUNT_FILE"
 if _pulse_check_idle_backoff_gate && [[ "$(<"$GH_CALL_COUNT_FILE")" -eq 0 ]]; then
@@ -272,13 +261,66 @@ else
 fi
 export TIMEOUT_MODE="pass"
 
-export GH_OUTPUT="1"
+ELIGIBLE_ISSUE='{"state":"open","assignees":[],"labels":[{"name":"auto-dispatch"},{"name":"status:available"}]}'
+export GH_OUTPUT="[$ELIGIBLE_ISSUE]"
 if _pulse_check_idle_backoff_gate; then
 	pass "visible work still bypasses active idle backoff"
 else
 	fail "visible work still bypasses active idle backoff"
 fi
-export GH_OUTPUT="0"
+for excluded_label in publication:pending needs-maintainer-review needs-maintainer-permissions infrastructure; do
+	GH_OUTPUT=$(printf '%s' "$ELIGIBLE_ISSUE" | jq -c --arg label "$excluded_label" '[.labels += [{name:$label}]]')
+	query_rc=0
+	_pulse_available_auto_dispatch_work_exists || query_rc=$?
+	if [[ "$query_rc" -eq 1 ]]; then pass "idle-work excludes $excluded_label"; else fail "idle-work excludes $excluded_label"; fi
+done
+for mutation in '.pull_request = {}' '.assignees = [{login:"fixture"}]' '.state = "closed"' '.labels = [{name:"auto-dispatch"}]'; do
+	GH_OUTPUT=$(printf '%s' "$ELIGIBLE_ISSUE" | jq -c "[${mutation}]")
+	query_rc=0
+	_pulse_available_auto_dispatch_work_exists || query_rc=$?
+	if [[ "$query_rc" -eq 1 ]]; then pass "idle-work rejects ineligible row: $mutation"; else fail "idle-work rejects ineligible row: $mutation"; fi
+done
+GH_OUTPUT=$(printf '%s' "$ELIGIBLE_ISSUE" | jq -c '[range(100) as $i | .pull_request = {}]')
+query_rc=0
+_pulse_available_auto_dispatch_work_exists || query_rc=$?
+if [[ "$query_rc" -eq 2 ]]; then pass "full excluded page is unknown, not empty"; else fail "full excluded page is unknown, not empty"; fi
+
+test_repeated_recovery_windows() (
+	export AIDEVOPS_GH_SECONDARY_COOLDOWN_HOME="$HOME"
+	export AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE="$TMP/window-cooldown.json"
+	export AIDEVOPS_GH_SECONDARY_COOLDOWN_EVENTS_FILE="$TMP/window-events.jsonl"
+	export AIDEVOPS_GH_READ_RAMP_STATE_FILE="$TMP/window-ramp.tsv"
+	export AIDEVOPS_GH_SECONDARY_COOLDOWN_SECS=300 AIDEVOPS_GH_READ_RAMP_RECOVERY_SECS=300 AIDEVOPS_GH_READ_RAMP_BOOT_SECS=0
+	# shellcheck source=../shared-gh-secondary-cooldown.sh
+	source "${SOURCE_SCRIPT%/*}/shared-gh-secondary-cooldown.sh"
+	local fixture_now=1000 window=0 expiry="" response=""
+	_gh_secondary_cooldown_now() { printf '%s\n' "$fixture_now"; }
+	_gh_secondary_system_boot_ts() { return 1; }
+	GH_OUTPUT="[$ELIGIBLE_ISSUE]"
+	printf '0\n' >"$GH_CALL_COUNT_FILE"
+	for window in 1000 2000 3000; do
+		fixture_now="$window"
+		response=$'HTTP/2 403\r\nx-ratelimit-resource: search\r\nx-ratelimit-remaining: 27\r\n\r\n{"message":"secondary rate limit"}\n'
+		AIDEVOPS_GH_COOLDOWN_NO_PROBE=1 _gh_secondary_cooldown_record_if_needed 1 "$response" GET /search/issues || return 1
+		expiry=$(_gh_secondary_cooldown_expires_at)
+		fixture_now=$((window + 100))
+		if _pulse_check_idle_backoff_gate; then return 1; fi
+		fixture_now=$((window + 400))
+		if _pulse_check_idle_backoff_gate; then return 1; fi
+		[[ "$(<"$GH_CALL_COUNT_FILE")" -eq $((window / 1000 - 1)) ]] || return 1
+		fixture_now=$((window + 601))
+		_pulse_check_idle_backoff_gate || return 1
+		[[ "$(<"$GH_CALL_COUNT_FILE")" -eq $((window / 1000)) && "$(<"$GH_QUERY_FILE")" != *search/issues* ]] || return 1
+		[[ "$(_gh_secondary_cooldown_expires_at)" == "$expiry" ]] || return 1
+	done
+	return 0
+)
+if test_repeated_recovery_windows; then
+	pass "repeated cooldown/recovery windows resume useful REST discovery without Search or cooldown renewal"
+else
+	fail "repeated cooldown/recovery windows resume useful REST discovery without Search or cooldown renewal"
+fi
+export GH_OUTPUT='[]'
 
 : >"$EVIDENCE_FILE"
 : >"$EVIDENCE_TIMESTAMP_FILE"

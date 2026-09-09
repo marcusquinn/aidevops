@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Replace optional Pulse availability Search with bounded repository-issue discovery and preserve typed PR-readiness deferrals and remaining-quota diagnostics (#31669).
+
 ## [3.32.349] - 2026-09-09
 
 ### Fixed
