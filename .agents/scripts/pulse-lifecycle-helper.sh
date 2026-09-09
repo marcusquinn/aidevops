@@ -232,9 +232,12 @@ _pulse_launchd_supervisor_disabled() {
 	command -v launchctl >/dev/null 2>&1 || return 1
 	disabled_state=$(launchctl print-disabled "gui/$(id -u)" 2>/dev/null) || return 1
 	while IFS= read -r disabled_line; do
-		if [[ "$disabled_line" == *"$pulse_label"* && "$disabled_line" == *"=> true"* ]]; then
-			return 0
-		fi
+		# launchctl uses boolean or named states depending on macOS version.
+		# Match the complete label, not a watchdog/sidecar sharing its prefix.
+		disabled_line="${disabled_line//[[:space:]]/}"
+		case "$disabled_line" in
+		"\"${pulse_label}\"=>true" | "\"${pulse_label}\"=>disabled" | "${pulse_label}=>true" | "${pulse_label}=>disabled") return 0 ;;
+		esac
 	done <<<"$disabled_state"
 	return 1
 }
@@ -852,7 +855,7 @@ _reconcile_managed() {
 		return 1
 	fi
 
-	if [[ "${AIDEVOPS_PULSE_MANAGED_ENABLED:-false}" != "true" ]]; then
+	if [[ "${AIDEVOPS_PULSE_MANAGED_ENABLED:-false}" != "true" || -f "$HOME/.aidevops/logs/pulse-session.stop" ]]; then
 		supervisor_disabled=true
 	elif _pulse_launchd_supervisor_disabled; then
 		supervisor_disabled=true

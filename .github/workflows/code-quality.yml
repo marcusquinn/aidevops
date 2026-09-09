@@ -121,6 +121,14 @@ jobs:
 
     - name: Install Bubblewrap
       run: |
+        # Bubblewrap comes from Ubuntu, not the runner's browser/vendor repos.
+        # Keep unrelated mirror/signature failures out of boundary verification.
+        for source_file in /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
+          [ -e "$source_file" ] || continue
+          if grep -qE 'packages[.]microsoft[.]com|dl[.]google[.]com/linux/chrome' "$source_file"; then
+            sudo mv "$source_file" "${source_file}.disabled"
+          fi
+        done
         sudo apt-get update -qq
         sudo apt-get install -y bubblewrap
 
@@ -499,8 +507,8 @@ jobs:
       # 22.04+ ships shfmt in the default apt repos; --to-json is stable since
       # v3.0.0 so the packaged version is fine. Hosted runner images can carry
       # third-party apt sources that fail independently of this repo; remove the
-      # known failing Microsoft package source before apt update so shfmt install
-      # is not blocked by unrelated 403/signature errors.
+      # unused Microsoft/Chrome package sources before apt update so shfmt install
+      # is not blocked by unrelated 403/signature/hash-mismatch errors.
       run: |
         # Keep each network-bound apt phase within a five-minute budget. The
         # heartbeat makes a slow runner distinguishable from a silent stall.
@@ -536,7 +544,7 @@ jobs:
 
         for source_file in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
           [ -e "$source_file" ] || continue
-          if grep -q 'packages.microsoft.com' "$source_file"; then
+          if grep -qE 'packages[.]microsoft[.]com|dl[.]google[.]com/linux/chrome' "$source_file"; then
             sudo mv "$source_file" "${source_file}.disabled"
           fi
         done
