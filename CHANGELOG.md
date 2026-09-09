@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.347] - 2026-09-09
+
+### Fixed
+
+- fix Dependabot worker intake dispatch loops
+
 ## [3.32.346] - 2026-09-08
 
 ### Added
