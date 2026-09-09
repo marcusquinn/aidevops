@@ -32,9 +32,11 @@
 #
 # Execution flags:
 #   --changed           Changed-file scope (default; safety gates still run)
+#   --base-ref REF      Compare changed files with REF (no fetch or ref mutation)
 #   --no-cache          Do not reuse broad/advisory gate cache entries
 #   --full              Release-boundary path: run every gate without cache/time-budget downgrade
 #   --strict            Make ratchet failures and broad-gate timeouts blocking
+#   --help, -h          Show this usage without running quality gates
 # Ratchet flags:
 #   --update-baseline   Record only same/lower committed compatibility counts
 #   --init-baseline     Same as --update-baseline (alias for first-time setup)
@@ -124,8 +126,23 @@ collect_shell_files() {
 }
 
 _linters_local_base_ref() {
+	local requested_ref="${LINTERS_LOCAL_BASE_REF:-}"
+	local default_ref=""
 	local base_ref=""
-	base_ref=$(git merge-base HEAD origin/main 2>/dev/null || git merge-base HEAD main 2>/dev/null || git merge-base HEAD master 2>/dev/null || true)
+
+	if [[ -z "$requested_ref" ]]; then
+		default_ref=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)
+		requested_ref="$default_ref"
+	fi
+	if [[ -z "$requested_ref" ]]; then
+		printf 'Error: cannot resolve the changed-file base from origin/HEAD; use --base-ref REF.\n' >&2
+		return 1
+	fi
+	base_ref=$(git merge-base HEAD "$requested_ref" 2>/dev/null || true)
+	if [[ -z "$base_ref" ]]; then
+		printf 'Error: changed-file base ref is not resolvable from HEAD: %s\n' "$requested_ref" >&2
+		return 1
+	fi
 	printf '%s\n' "$base_ref"
 	return 0
 }
@@ -141,7 +158,7 @@ _linters_local_prepare_changed_inventory() {
 		return 0
 	fi
 	local base_ref=""
-	base_ref=$(_linters_local_base_ref)
+	base_ref=$(_linters_local_base_ref) || return $?
 	lint_changed_files "$base_ref"
 	return 0
 }
@@ -162,17 +179,55 @@ _collect_changed_shell_files() {
 	return 0
 }
 
+_linters_local_usage() {
+	cat <<'EOF'
+Usage: linters-local.sh [OPTIONS]
+
+Run local quality gates. Changed-file scope is the default.
+
+Options:
+  --changed, --fast-pr  Run changed-file safety gates (default)
+  --base-ref REF        Compare changed files with REF without fetching
+  --no-cache            Disable broad/advisory gate cache reuse
+  --full                Run every release-boundary gate without cache
+  --strict              Make ratchet failures and broad timeouts blocking
+  --update-baseline     Update compatible ratchet baseline counts
+  --init-baseline       Alias for --update-baseline
+  --migrate-baseline    Allow an explicit ratchet baseline migration
+  --dry-run             Report ratchet baseline changes without writing
+  -h, --help            Show this help and exit
+EOF
+	return 0
+}
+
 _linters_local_parse_args() {
-	local arg
 	export LINTERS_LOCAL_CACHE_ENABLED=true
 	export LINTERS_LOCAL_FULL=false
 	export LINTERS_LOCAL_CHANGED=true
 	export LINTERS_LOCAL_MODE="$LINTERS_LOCAL_MODE_CHANGED"
-	for arg in "$@"; do
-		case "$arg" in
+	export LINTERS_LOCAL_HELP=false
+	while [[ "$#" -gt 0 ]]; do
+		case "$1" in
 		--changed | --fast-pr)
 			export LINTERS_LOCAL_CHANGED=true
 			export LINTERS_LOCAL_MODE="$LINTERS_LOCAL_MODE_CHANGED"
+			;;
+		--base-ref)
+			if [[ "$#" -lt 2 || -z "$2" || "$2" == -* ]]; then
+				printf 'Error: --base-ref requires a Git ref argument.\n' >&2
+				_linters_local_usage >&2
+				return 2
+			fi
+			export LINTERS_LOCAL_BASE_REF="$2"
+			shift
+			;;
+		--base-ref=*)
+			if [[ -z "${1#--base-ref=}" ]]; then
+				printf 'Error: --base-ref requires a Git ref argument.\n' >&2
+				_linters_local_usage >&2
+				return 2
+			fi
+			export LINTERS_LOCAL_BASE_REF="${1#--base-ref=}"
 			;;
 		--no-cache)
 			export LINTERS_LOCAL_CACHE_ENABLED=false
@@ -198,13 +253,27 @@ _linters_local_parse_args() {
 		--dry-run)
 			export RATCHET_DRY_RUN=true
 			;;
+		-h | --help)
+			export LINTERS_LOCAL_HELP=true
+			_linters_local_usage
+			return 0
+			;;
+		*)
+			printf 'Error: unknown option: %s\n' "$1" >&2
+			_linters_local_usage >&2
+			return 2
+			;;
 		esac
+		shift
 	done
 	return 0
 }
 
 main() {
-	_linters_local_parse_args "$@"
+	local parse_rc=0
+	_linters_local_parse_args "$@" || parse_rc=$?
+	[[ "$parse_rc" -eq 0 ]] || return "$parse_rc"
+	[[ "${LINTERS_LOCAL_HELP:-false}" == "true" ]] && return 0
 
 	print_header
 
