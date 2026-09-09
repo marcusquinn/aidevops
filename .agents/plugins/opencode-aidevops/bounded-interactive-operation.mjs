@@ -21,11 +21,14 @@ import {
   signalSupervisor,
   trimTerminalOperations,
 } from "./bounded-operation-runtime.mjs";
+import {
+  cancelOperation,
+  operationOutput,
+  operationStatus,
+} from "./bounded-operation-access.mjs";
 import { resolveSessionOwnedWorktreeRoot } from "./gpt-image-worktree.mjs";
 
 const MAX_OPERATIONS = 24;
-const MAX_STATUS_WAIT_MS = 60 * 1000;
-const MAX_OUTPUT_LINES = 500;
 const SUPERVISOR_PATH = fileURLToPath(new URL("./bounded-operation-supervisor.mjs", import.meta.url));
 const SUPERVISOR_RUNTIME = "node";
 
@@ -277,60 +280,15 @@ export class BoundedInteractiveOperationManager {
   }
 
   status(id, context = {}, requested = {}) {
-    const operation = this.ownedOperation(id, context);
-    const waitMs = Number(requested.waitMs ?? 0);
-    if (!Number.isSafeInteger(waitMs) || waitMs < 0 || waitMs > MAX_STATUS_WAIT_MS) {
-      throw new Error("status wait must be an integer from 0 to 60000 milliseconds");
-    }
-    if (waitMs === 0 || !["starting", "running", "cancelling", "timing_out", "restoring", "finalizing"].includes(operation.state)) {
-      return this.receipt(operation);
-    }
-    return new Promise((resolve) => {
-      const waiter = {
-        version: this.statusVersion(operation),
-        finish: () => {
-          if (!operation.statusWaiters.delete(waiter)) return;
-          this.clearTimer(waiter.timer);
-          resolve(this.receipt(operation));
-        },
-        timer: null,
-      };
-      operation.statusWaiters.add(waiter);
-      waiter.timer = this.setTimer(waiter.finish, waitMs);
-    });
+    return operationStatus(this, id, context, requested);
   }
 
   async output(id, context = {}, requested = {}) {
-    const operation = this.ownedOperation(id, context);
-    if (["starting", "running", "cancelling", "timing_out", "restoring", "finalizing"].includes(operation.state)) {
-      throw new Error("stored output is available only after the operation reaches a terminal state");
-    }
-    if (!operation.outputID) throw new Error("stored output is unavailable");
-    const offset = Number(requested.offset ?? 1);
-    const limit = Number(requested.limit ?? 120);
-    if (!Number.isSafeInteger(offset) || offset < 1) throw new Error("output offset must be a positive integer");
-    if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_OUTPUT_LINES) {
-      throw new Error(`output limit must be an integer from 1 to ${MAX_OUTPUT_LINES}`);
-    }
-    const result = await this.readOutput(operation.outputID, { offset, limit });
-    return {
-      schema: "aidevops.interactive-operation-output/v1",
-      operation_id: operation.id,
-      state: operation.state,
-      output_id: operation.outputID,
-      offset,
-      limit,
-      output: result.output,
-      output_redacted: Boolean(result.redacted),
-      output_truncated: Boolean(result.truncated),
-    };
+    return operationOutput(this, id, context, requested);
   }
 
   cancel(id, context = {}) {
-    const operation = this.ownedOperation(id, context);
-    if (!["running", "starting"].includes(operation.state)) return this.receipt(operation);
-    if (!this.requestTermination(operation, "cancelled")) throw new Error("owned process could not be signalled");
-    return this.receipt(operation);
+    return cancelOperation(this, id, context);
   }
 
   handleEvent(input) {
