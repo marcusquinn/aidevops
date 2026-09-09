@@ -187,6 +187,24 @@ unset AIDEVOPS_RELEASE_LANE_OPERATION_TOKEN
 unset -f _version_manager_verify_aggregate_lane_fence
 printf 'PASS stale aggregate lane is checked immediately before direct publication push\n'
 
+for unqueued_mode in status reconcile; do
+	_version_manager_reconcile_protected_release_tag test/repo v1.2.3 "$unqueued_mode" >/dev/null
+	[[ "$_VERSION_MANAGER_PROTECTED_RELEASE_RESULT" == "$_VERSION_MANAGER_RELEASE_PR_MISSING" ]]
+	[[ ! -e "$PR_CREATED_FILE" && ! -e "$DIRECT_PUSH_COUNT" ]]
+done
+[[ -z "$("$REAL_GIT" ls-remote --tags "$REMOTE" refs/tags/v1.2.3)" ]]
+printf 'PASS missing protected PR is typed read-only state, not invalid local provenance\n'
+
+_version_manager_verify_preserved_lane_fence() { return 1; }
+if _version_manager_queue_protected_main_release 1.2.3 >/dev/null 2>&1; then
+	printf 'FAIL stale preserved-tag lane queued publication\n'
+	exit 1
+fi
+[[ ! -e "$PR_CREATED_FILE" && ! -e "$DIRECT_PUSH_COUNT" ]]
+[[ -z "$("$REAL_GIT" ls-remote --heads "$REMOTE" refs/heads/chore/release-v1.2.3-provenance)" ]]
+unset -f _version_manager_verify_preserved_lane_fence
+printf 'PASS preserved-tag fence refuses branch and PR mutation\n'
+
 push_rc=0
 push_output=$(push_changes 1.2.3 2>&1) || push_rc=$?
 if [[ "$push_rc" -ne 8 ]]; then
@@ -215,6 +233,13 @@ printf 'PASS recovery branch preserves the original release commit and tag objec
 grep -q '^pr create .*--head chore/release-v1.2.3-provenance .*--base main ' "$FAKE_GH_LOG"
 grep -q "^pr merge 77 --repo test/repo --auto --merge --match-head-commit ${RECOVERY_HEAD}$" "$FAKE_GH_LOG"
 printf 'PASS recovery queues merge topology against the exact PR head\n'
+
+create_calls_before=$(grep -c '^pr create ' "$FAKE_GH_LOG")
+_version_manager_queue_protected_main_release 1.2.3 >/dev/null
+create_calls_after=$(grep -c '^pr create ' "$FAKE_GH_LOG")
+[[ "$create_calls_after" -eq "$create_calls_before" ]]
+[[ "$("$REAL_GIT" -C "$REPO" rev-parse refs/tags/v1.2.3)" == "$TAG_OBJECT" ]]
+printf 'PASS resumed queue reuses the exact protected PR and immutable tag\n'
 
 merge_calls_before=$(grep -c '^pr merge ' "$FAKE_GH_LOG")
 AIDEVOPS_RELEASE_LANE_OPERATION_TOKEN=stale-token

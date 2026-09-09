@@ -21,6 +21,7 @@ _FULL_LOOP_RELEASE_CONCLUSION_SKIPPED="skipped"
 _FULL_LOOP_RELEASE_CONCLUSION_SUCCESS="success"
 _FULL_LOOP_RELEASE_JSON_STRING_TYPE="string"
 _FULL_LOOP_RELEASE_MODE_RECONCILE="reconcile"
+_FULL_LOOP_RELEASE_PHASE_REMOTE="remote-publication"
 _FULL_LOOP_RELEASE_STEP_QUEUE_POSTFLIGHT="Queue exact-tag postflight"
 _FULL_LOOP_RELEASE_PROVENANCE_PREDICATE="https://slsa.dev/provenance/v1"
 _FULL_LOOP_RELEASE_TRUE="true"
@@ -121,7 +122,7 @@ _full_loop_release_verify_candidate_tag_provenance() {
 			>/dev/null || protected_state_rc=$?
 		[[ "$protected_state_rc" -eq 0 ]] || return 1
 		case "$_VERSION_MANAGER_PROTECTED_RELEASE_RESULT" in
-		pr-pending | tag-ready) return 0 ;;
+		pr-pending | tag-ready | "$_VERSION_MANAGER_RELEASE_PR_MISSING") return 0 ;;
 		remote-tag-present)
 			_full_loop_release_verify_tag_provenance "$repo" "$tag_name"
 			return $?
@@ -130,6 +131,103 @@ _full_loop_release_verify_candidate_tag_provenance() {
 		;;
 	esac
 	return 1
+}
+
+#aidevops:trust-boundary
+# A signed candidate is not publication authority. Claim only its exact modern
+# snapshot lane, after proving the old local executor and descendants are gone.
+_full_loop_release_claim_preserved_tag() {
+	local repo="$1"
+	local source_pr="$2"
+	local tag_name="$3"
+	local expected_sources="" source_json="" snapshot="" release_parent=""
+	local lane_head="" release_path="" observation="" permission="" state_json="" token=""
+	local owner_pid=""
+	release_lane_read "$repo" || return 1
+	lane_head="$_AIDEVOPS_RELEASE_LANE_HEAD"
+	_version_manager_local_tag_identity "$tag_name" || return 1
+	jq -e --argjson pr "$source_pr" --arg tag "$tag_name" \
+		--arg phase "$_FULL_LOOP_RELEASE_PHASE_REMOTE" \
+		--arg object "$_VERSION_MANAGER_LOCAL_TAG_OBJECT" \
+		--arg commit "$_VERSION_MANAGER_LOCAL_TAG_COMMIT" '
+		.active == true and .source_pr == $pr and .terminal_receipt == null
+		and .reservation_contract == "fenced-prepublication/v1"
+		and .snapshot_manifest_bound == true
+		and (.aggregate_recovery // null) == null and (.aggregate_successor // null) == null
+		and (.reserved_authorization_refresh // null) == null
+		and (.prepublication_recovery // null) == null
+		and ((.phase == "preparing" and .tag == null)
+			or (.phase == $phase and .tag == $tag
+				and .preserved_tag_recovery.tag_object == $object
+				and .preserved_tag_recovery.release_commit == $commit))
+	' <<<"$_AIDEVOPS_RELEASE_LANE_JSON" >/dev/null || return 75
+	expected_sources=$(_full_loop_read_release_authorization "$repo" "$source_pr") || return 1
+	[[ "$expected_sources" == "$(jq -er '.expected_sources' <<<"$_AIDEVOPS_RELEASE_LANE_JSON")" ]] || return 1
+	source_json=$(_full_loop_release_source_json_from_tag "$tag_name") || return 1
+	_full_loop_recovery_source_matches_authorization "$expected_sources" "$source_json" || return 1
+	snapshot=$(jq -er '.snapshot_sha' <<<"$_AIDEVOPS_RELEASE_LANE_JSON") || return 1
+	release_parent=$(git -C "$REPO_ROOT" rev-parse "${_VERSION_MANAGER_LOCAL_TAG_COMMIT}^") || return 1
+	[[ "$snapshot" == "$release_parent" ]] || return 1
+	observation=$(_release_lane_executor_observe "$_AIDEVOPS_RELEASE_LANE_JSON") || return 1
+	[[ "$(jq -r '.state' <<<"$observation")" == "dead" ]] || return 75
+	owner_pid=$(jq -er '.executor.pid | select(type == "number" and . > 0 and floor == .)' \
+		<<<"$_AIDEVOPS_RELEASE_LANE_JSON") || return 1
+	release_path="${AIDEVOPS_WORKTREE_BASE_DIR:-${HOME}/Git/_worktrees}/aidevops-release-${source_pr}-${owner_pid}"
+	if [[ "$(jq -r '.phase' <<<"$_AIDEVOPS_RELEASE_LANE_JSON")" == "$_FULL_LOOP_RELEASE_PHASE_REMOTE" ]]; then
+		release_path="${AIDEVOPS_WORKTREE_BASE_DIR:-${HOME}/Git/_worktrees}/aidevops-release-reconcile-${tag_name#v}-${owner_pid}"
+	fi
+	_full_loop_recovery_process_uses_path "$release_path" || return 75
+	permission=$(gh api "repos/${repo}" \
+		--jq '.permissions.push == true or .permissions.maintain == true or .permissions.admin == true') || return 1
+	[[ "$permission" == "true" ]] || return 75
+	_full_loop_recovery_verify_channels_absent "$repo" "$tag_name" || return 1
+	token=$(uuidgen) || return 1
+	state_json=$(jq -c --arg token "$token" --arg tag "$tag_name" \
+		--arg phase "$_FULL_LOOP_RELEASE_PHASE_REMOTE" \
+		--arg object "$_VERSION_MANAGER_LOCAL_TAG_OBJECT" --arg commit "$_VERSION_MANAGER_LOCAL_TAG_COMMIT" \
+		--arg owner "${_AIDEVOPS_RELEASE_LANE_OWNER_PREFIX}$$" \
+		--arg now "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" --argjson executor "$(_release_lane_executor_capture)" '
+		.executor as $previous_executor | .phase=$phase | .tag=$tag
+		| .operation_token=$token | .owner=$owner | .executor=$executor | .updated_at=$now
+		| .preserved_tag_recovery={tag_object:$object,release_commit:$commit,
+			previous_executor:$previous_executor,claimed_at:$now}
+	' <<<"$_AIDEVOPS_RELEASE_LANE_JSON") || return 1
+	_release_lane_write "$repo" "$state_json" "$lane_head" || return $?
+	_AIDEVOPS_RELEASE_LANE_TOKEN="$token"
+	return 0
+}
+
+_full_loop_release_queue_preserved_tag() {
+	local repo="$1"
+	local source_pr="$2"
+	local tag_name="$3"
+	local tag_object="" release_commit="" lane_token=""
+	_full_loop_release_verify_protected_source_provenance "$repo" "$tag_name" || return 1
+	_full_loop_release_claim_preserved_tag "$repo" "$source_pr" "$tag_name" || return $?
+	tag_object="$_VERSION_MANAGER_LOCAL_TAG_OBJECT"
+	release_commit="$_VERSION_MANAGER_LOCAL_TAG_COMMIT"
+	lane_token="$_AIDEVOPS_RELEASE_LANE_TOKEN"
+	(
+		REPO_ROOT="$_FULL_LOOP_RELEASE_PATH"
+		AIDEVOPS_VERSION_MANAGER_REPO_SLUG="$repo"
+		#aidevops:trust-boundary
+		# Existing protected-main mutation boundaries recheck this rotated token
+		# and the immutable local tag, in addition to any aggregate fence.
+		_version_manager_verify_preserved_lane_fence() {
+			release_lane_read "$repo" || return 1
+			jq -e --argjson pr "$source_pr" --arg token "$lane_token" --arg tag "$tag_name" \
+				--arg phase "$_FULL_LOOP_RELEASE_PHASE_REMOTE" '
+				.active == true and .source_pr == $pr and .phase == $phase
+				and .operation_token == $token and .tag == $tag and .terminal_receipt == null
+			' <<<"$_AIDEVOPS_RELEASE_LANE_JSON" >/dev/null || return 1
+			_version_manager_local_tag_identity "$tag_name" || return 1
+			[[ "$_VERSION_MANAGER_LOCAL_TAG_OBJECT" == "$tag_object" &&
+				"$_VERSION_MANAGER_LOCAL_TAG_COMMIT" == "$release_commit" ]]
+			return $?
+		}
+		_version_manager_queue_protected_main_release "${tag_name#v}"
+	) || return 1
+	return 8
 }
 
 _full_loop_release_raw_candidate_tags_for_pr() {
@@ -1192,6 +1290,24 @@ _full_loop_release_finalize_stale_supersession() {
 	return $?
 }
 
+_full_loop_release_reconcile_protected_state() {
+	local repo="$1"
+	local requested_pr="$2"
+	local tag_name="$3"
+	local mode="$4"
+	_version_manager_reconcile_protected_release_tag "$repo" "$tag_name" "$mode" || return 1
+	case "$_VERSION_MANAGER_PROTECTED_RELEASE_RESULT" in
+	"$_VERSION_MANAGER_RELEASE_PR_MISSING")
+		[[ "$mode" == "$_FULL_LOOP_RELEASE_MODE_RECONCILE" ]] || return 8
+		_full_loop_release_queue_preserved_tag "$repo" "$requested_pr" "$tag_name"
+		return $?
+		;;
+	pr-pending | tag-ready | tag-pushed) return 8 ;;
+	remote-tag-present) return 0 ;;
+	*) return 1 ;;
+	esac
+}
+
 _full_loop_release_existing_command() {
 	local mode="$1"
 	local requested_pr="$2"
@@ -1199,7 +1315,6 @@ _full_loop_release_existing_command() {
 	local tag_name=""
 	local latest_tag=""
 	local inspect_rc=0
-	local protected_tag_state_rc=0
 	local receipt_path=""
 	local receipt_status=""
 	local source_json=""
@@ -1251,15 +1366,7 @@ _full_loop_release_existing_command() {
 		printf 'release:superseded source_tag=%s successor_tag=%s\n' "$tag_name" "$latest_tag"
 		return 0
 	fi
-	_version_manager_reconcile_protected_release_tag "$repo" "$tag_name" "$mode" || protected_tag_state_rc=$?
-	[[ "$protected_tag_state_rc" -eq 0 ]] || return 1
-	case "$_VERSION_MANAGER_PROTECTED_RELEASE_RESULT" in
-	pr-pending | tag-ready | tag-pushed)
-		return 8
-		;;
-	remote-tag-present) ;;
-	*) return 1 ;;
-	esac
+	_full_loop_release_reconcile_protected_state "$repo" "$requested_pr" "$tag_name" "$mode" || return $?
 	_full_loop_release_inspect_remote "$repo" "$tag_name" || inspect_rc=$?
 	if [[ "$inspect_rc" -eq 0 ]]; then
 		if [[ "$mode" == "$_FULL_LOOP_RELEASE_MODE_RECONCILE" ]]; then

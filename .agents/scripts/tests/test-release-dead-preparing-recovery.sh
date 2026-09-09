@@ -216,3 +216,113 @@ for refusal in authorization channels process permission branch executor registr
 	[[ "$RECOVERY_CALLS" -eq 0 && "$RECONSTRUCT_CALLS" -eq 0 ]] || exit 1
 done
 printf 'PASS missing preparation refuses uncertain ownership, publication, registration, and paths\n'
+
+(
+	# shellcheck source=../full-loop-release-reconcile.sh
+	source "$SCRIPT_DIR/full-loop-release-reconcile.sh"
+	# shellcheck source=../release-authorization-manifest-helper.sh
+	source "$SCRIPT_DIR/release-authorization-manifest-helper.sh"
+	_full_loop_release_source_json_from_tag() {
+		printf '{"source_pr":101,"source_merge":"1111111111111111111111111111111111111111","aggregated_sources":[]}\n'
+		return 0
+	}
+	_version_manager_local_tag_identity() {
+		[[ "$1" == "v1.2.4" ]] || return 1
+		_VERSION_MANAGER_LOCAL_TAG_OBJECT=4444444444444444444444444444444444444444
+		_VERSION_MANAGER_LOCAL_TAG_COMMIT=5555555555555555555555555555555555555555
+		return 0
+	}
+	git() {
+		[[ "$*" == *'rev-parse 5555555555555555555555555555555555555555^' ]] || return 1
+		printf '%s\n' "$SNAPSHOT"
+		return 0
+	}
+	_full_loop_release_verify_protected_source_provenance() {
+		_FULL_LOOP_RELEASE_PATH="${TEST_ROOT}/tag-checkout"
+		[[ "$VALID_SOURCE" == "true" ]]
+		return $?
+	}
+	_release_lane_executor_capture() {
+		printf '{"host_id":"local","pid":43,"started_at":"new"}\n'
+		return 0
+	}
+	_release_lane_write() {
+		[[ "$1" == "test/repo" && "$3" == aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ]] || return 1
+		[[ "$CAS_FAIL" == "false" ]] || return 75
+		STATE="$2"
+		RECOVERY_CALLS=$((RECOVERY_CALLS + 1))
+		return 0
+	}
+	_version_manager_queue_protected_main_release() {
+		[[ "$1" == "1.2.4" && "$REPO_ROOT" == "${TEST_ROOT}/tag-checkout" ]] || return 1
+		[[ "$AIDEVOPS_VERSION_MANAGER_REPO_SLUG" == "test/repo" ]] || return 1
+		if [[ "$FENCE_RACE" == "true" ]]; then
+			STATE=$(jq '.operation_token = "competing-fixture"' <<<"$STATE") || return 1
+		fi
+		_version_manager_require_aggregate_fence || return 1
+		printf 'queued\n' >>"${TEST_ROOT}/preserved-queue.log"
+		return 0
+	}
+	reset_preserved_fixture() {
+		# Do not follow the dangling path deliberately left by the preceding fixture.
+		STATE="$BASE_STATE"
+		AUTHORIZATION="$EXPECTED"
+		CHANNELS_ABSENT=true
+		SURVIVING_PROCESS=false
+		PERMISSION=true
+		LANE_ABSENT=false
+		EXECUTOR_STATE=dead
+		RECOVERY_CALLS=0
+		VALID_SOURCE=true
+		CAS_FAIL=false
+		FENCE_RACE=false
+		rm -f "${TEST_ROOT}/preserved-queue.log"
+		return 0
+	}
+	reset_preserved_fixture
+	queue_rc=0
+	_full_loop_release_queue_preserved_tag test/repo 101 v1.2.4 >/dev/null || queue_rc=$?
+	[[ "$queue_rc" -eq 8 && "$RECOVERY_CALLS" -eq 1 && -e "${TEST_ROOT}/preserved-queue.log" ]]
+	jq -e '.phase == "remote-publication" and .tag == "v1.2.4"
+		and .operation_token != "token-old"
+		and .preserved_tag_recovery.tag_object == "4444444444444444444444444444444444444444"
+		and .preserved_tag_recovery.release_commit == "5555555555555555555555555555555555555555"
+		and .expected_sources == "101@1111111111111111111111111111111111111111"' <<<"$STATE" >/dev/null
+	# An interruption after the claim but before PR creation retains the same tag.
+	queue_rc=0
+	_full_loop_release_queue_preserved_tag test/repo 101 v1.2.4 >/dev/null || queue_rc=$?
+	[[ "$queue_rc" -eq 8 && "$RECOVERY_CALLS" -eq 2 ]]
+	printf 'PASS preserved signed candidate resumes after either preparation interruption without a bump\n'
+	for refusal in provenance authorization manifest channels process permission alive unknown competing phase snapshot contract cas; do
+		reset_preserved_fixture
+		case "$refusal" in
+		provenance) VALID_SOURCE=false ;;
+		authorization) AUTHORIZATION='101@9999999999999999999999999999999999999999' ;;
+		manifest)
+			STATE=$(jq '.expected_sources="101@9999999999999999999999999999999999999999"' <<<"$STATE")
+			AUTHORIZATION='101@9999999999999999999999999999999999999999'
+			;;
+		channels) CHANNELS_ABSENT=false ;;
+		process) SURVIVING_PROCESS=true ;;
+		permission) PERMISSION=false ;;
+		alive | unknown) EXECUTOR_STATE="$refusal" ;;
+		competing) STATE=$(jq '.source_pr=102' <<<"$STATE") ;;
+		phase) STATE=$(jq '.phase="reserved"' <<<"$STATE") ;;
+		snapshot) STATE=$(jq '.snapshot_sha="9999999999999999999999999999999999999999"' <<<"$STATE") ;;
+		contract) STATE=$(jq 'del(.reservation_contract)' <<<"$STATE") ;;
+		cas) CAS_FAIL=true ;;
+		esac
+		queue_rc=0
+		_full_loop_release_queue_preserved_tag test/repo 101 v1.2.4 >/dev/null 2>&1 || queue_rc=$?
+		[[ "$queue_rc" -ne 8 && "$queue_rc" -ne 0 && "$RECOVERY_CALLS" -eq 0 && ! -e "${TEST_ROOT}/preserved-queue.log" ]] || {
+			printf 'FAIL unsafe preserved-tag %s state queued publication\n' "$refusal" >&2
+			exit 1
+		}
+	done
+	reset_preserved_fixture
+	FENCE_RACE=true
+	queue_rc=0
+	_full_loop_release_queue_preserved_tag test/repo 101 v1.2.4 >/dev/null 2>&1 || queue_rc=$?
+	[[ "$queue_rc" -eq 1 && "$RECOVERY_CALLS" -eq 1 && ! -e "${TEST_ROOT}/preserved-queue.log" ]]
+	printf 'PASS preserved-tag recovery fails closed before CAS and at the publication fence\n'
+)
