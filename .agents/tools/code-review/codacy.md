@@ -102,13 +102,15 @@ patterns `ESLint8_es-x_no-modules`,
 also disabled because `.bandit` documents the narrower subprocess rules that
 remain active. Before correction, exact-SHA overview counts were 84
 (`no-modules`), 56 (`no-block-scoped-variables`), 40 (`no-trailing-commas`),
-and 83 (`B404`). A normal exact-SHA reanalysis cleared the three ESLint counts,
-but retained 83 cached B404 findings even though both the effective pattern and
-`.bandit` disable B404. This is evidence that a cache-cleared support reanalysis
-is still required for native-config policy changes; do not weaken Bandit or
-rewrite safe subprocess imports to compensate for stale derived state. Keep the
-live standard and native files aligned; changing the inert `.codacy.yml` engine
-map is not a tool-setting migration.
+and 83 (`B404`). A normal exact-SHA reanalysis cleared the three ESLint counts.
+A subsequent Codacy Support cache-cleared reanalysis still retained 83 historical
+B404 issue records even though the effective pattern endpoint and `.bandit` both
+disable B404. The issue overview therefore does not prove current policy drift
+for a disabled pattern. Use the effective pattern endpoint as the policy
+authority; do not bulk-ignore records, weaken Bandit, or rewrite safe subprocess
+imports to manipulate historical issue totals. Keep the live standard and native
+files aligned; changing the inert `.codacy.yml` engine map is not a tool-setting
+migration.
 
 ```bash
 # Commit delta statistics (new issues count + complexity delta)
@@ -160,7 +162,7 @@ The verified API v3.1.0 contracts are:
 | `HEALTHY` | The analysed SHA matches the remote default head, LOC is at least 80% of the healthy high-water sample, and overview data is valid and drift-free. | Treat the telemetry as comparable; this does not mean grade A. |
 | `STALE_ANALYSIS` | Codacy analysed a different commit from the remote default head. | Request/retry analysis; do not compare findings yet. |
 | `INDEX_DEGRADED` | Current analysed LOC is below 80% of the last healthy sample. | Investigate Codacy indexing; the healthy denominator is retained. |
-| `POLICY_DRIFT` | A documented-noise rule has a non-zero overview count. | Investigate coding-standard drift; do not change external settings from the sweep. |
+| `POLICY_DRIFT` | A monitored drift sentinel has a non-zero overview count. | Investigate coding-standard drift; do not change external settings from the sweep. |
 | `UNKNOWN` | An API, parse, remote-SHA, or state-write failure prevented a trustworthy classification. | Resolve telemetry failure and retain the previous baseline. |
 
 Healthy samples are stored atomically in `QUALITY_SWEEP_STATE_DIR` per repository.
@@ -169,10 +171,12 @@ that baseline, including on first observation. Small LOC drops retain the entire
 prior sample, so successive drops cannot gradually normalize a collapsed index.
 An intentional analysis-scope reduction requires an independently verified new
 baseline; do not erase state merely to clear an index warning.
-The documented-noise rules are `Bandit_B404`, `ESLint8_es-x_no-modules`,
+The monitored drift sentinels are `ESLint8_es-x_no-modules`,
 `ESLint8_es-x_no-block-scoped-variables`, and
 `ESLint8_es-x_no-trailing-commas`; their counts are observational evidence, not
-permission to alter Codacy, Bandit, ESLint, or exclusions.
+permission to alter Codacy, ESLint, or exclusions. `Bandit_B404` is intentionally
+disabled in both effective service policy and `.bandit`; its retained historical
+issue records do not indicate current policy drift.
 
 The separate **Grade target** is `A / AT_TARGET`, `A / BELOW_TARGET`, or
 `A / UNVERIFIED`. Only a current A with `HEALTHY` analysis is verified at target.
