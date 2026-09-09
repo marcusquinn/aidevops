@@ -61,6 +61,9 @@ source "${SCRIPT_DIR}/full-loop-helper-risk.sh"
 # shellcheck source=./full-loop-helper-commit.sh
 # shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
 source "${SCRIPT_DIR}/full-loop-helper-commit.sh"
+# shellcheck source=./issue-open-pr-guard.sh
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/issue-open-pr-guard.sh"
 
 # shellcheck source=./full-loop-helper-merge.sh
 # shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
@@ -90,6 +93,7 @@ cmd_commit_and_pr() {
 	local issue_number="" commit_message="" pr_title="" summary_what="" summary_testing="" summary_decisions=""
 	local runtime_risk="" testing_level=""
 	local completion_bookkeeping=0 bookkeeping_proof_pr="" bookkeeping_task_id=""
+	local replacement_pr="" replacement_reason=""
 	local -a extra_labels=()
 	local allow_parent_close=0
 	local skip_hooks=0 skip_rebase=0
@@ -99,6 +103,12 @@ cmd_commit_and_pr() {
 	# Validate inputs and detect repo/branch (sets $repo and $branch in this scope)
 	local repo="" branch="" base_branch="" base_ref=""
 	_validate_commit_and_pr_inputs "$issue_number" "$commit_message" || return 1
+	if [[ -n "$replacement_pr" || -n "$replacement_reason" ]]; then
+		if [[ ! "$replacement_pr" =~ ^[1-9][0-9]*$ || ${#replacement_reason} -lt 20 ]]; then
+			print_error "Explicit replacement requires --replace-pr N and --replacement-reason with at least 20 characters"
+			return 1
+		fi
+	fi
 	_validate_explicit_pr_metadata "$runtime_risk" "$testing_level" || return 1
 	_validate_completion_bookkeeping_request "$completion_bookkeeping" "$bookkeeping_proof_pr" \
 		"$bookkeeping_task_id" "$allow_parent_close" "$repo" \
@@ -107,6 +117,24 @@ cmd_commit_and_pr() {
 	base_ref="origin/${base_branch}"
 	_validate_pending_runtime_metadata "$runtime_risk" "$testing_level" \
 		"$summary_testing" "$summary_what" "$base_ref" || return 1
+	local parent_issue=0
+	_issue_has_parent_task_label "$issue_number" "$repo" && parent_issue=1
+	if [[ "$parent_issue" -eq 0 ]]; then
+		local initial_open_pr_guard_rc=0
+		issue_open_pr_guard_check "$issue_number" "$repo" "$branch" \
+			"$replacement_pr" "$replacement_reason" 0 || initial_open_pr_guard_rc=$?
+		case "$initial_open_pr_guard_rc" in
+		0 | 3) ;;
+		1)
+			print_error "Issue #${issue_number} already has open PR #${ISSUE_OPEN_PR_NUMBER}; continue branch '${ISSUE_OPEN_PR_HEAD_REF}' or use an explicit audited replacement"
+			return 1
+			;;
+		*)
+			print_error "Open-PR linkage evidence is unavailable or ambiguous for issue #${issue_number}; refusing PR workflow"
+			return 1
+			;;
+		esac
+	fi
 
 	_stage_and_commit "$commit_message" || return 1
 	# GH#27902: WIP commits are durable checkpoints, not publishable history.
@@ -167,7 +195,11 @@ cmd_commit_and_pr() {
 		print_info "Issue #${issue_number} has parent-task label — using 'For' keyword (t2242)"
 	fi
 
-	pr_body=$(_build_pr_body "$issue_number" "$summary_what" "$summary_testing" "$files_changed" "$sig_footer" "$closing_keyword" "$runtime_risk" "$testing_level" "$base_ref") || return 1
+	local replacement_note=""
+	if [[ -n "$replacement_pr" ]]; then
+		replacement_note="This explicitly justified replacement preserves open PR #${replacement_pr}. Rationale: ${replacement_reason}"
+	fi
+	pr_body=$(_build_pr_body "$issue_number" "$summary_what" "$summary_testing" "$files_changed" "$sig_footer" "$closing_keyword" "$runtime_risk" "$testing_level" "$base_ref" "$replacement_note") || return 1
 
 	# t2046: parent-task keyword guard — prevent Resolves/Closes/Fixes on
 	# parent-task issues. The parent must stay open until all phase children merge.
@@ -195,7 +227,6 @@ cmd_commit_and_pr() {
 		print_error "Aborting: dispatch claim no longer valid for #${issue_number} (t1955)"
 		return 1
 	}
-
 	# t2091: Guard against filing PRs on already-closed issues.
 	# A worker racing an interactive session may finish implementation after
 	# the issue was already resolved. Opening a PR against a closed issue
@@ -233,9 +264,28 @@ Worker aborted PR creation: issue #${issue_number} was already closed by the tim
 	fi
 
 	_push_branch "$branch" "$skip_hooks" || return 1
+	local continuation_pr=""
+	if [[ "$parent_issue" -eq 0 ]]; then
+		local final_open_pr_guard_rc=0
+		issue_open_pr_guard_check "$issue_number" "$repo" "$branch" \
+			"$replacement_pr" "$replacement_reason" 1 || final_open_pr_guard_rc=$?
+		case "$final_open_pr_guard_rc" in
+		0) ;;
+		3) continuation_pr="$ISSUE_OPEN_PR_NUMBER" ;;
+		1)
+			print_error "Aborting duplicate PR creation: open PR #${ISSUE_OPEN_PR_NUMBER} remains durable work, or its head is not preserved by this replacement"
+			return 1
+			;;
+		*)
+			print_error "Aborting PR creation: final open-PR linkage evidence is unavailable or ambiguous"
+			return 1
+			;;
+		esac
+	fi
 
 	local pr_number=""
-	pr_number=$(_create_pr "$repo" "$pr_title" "$pr_body" "$origin_label" "${extra_labels[@]+"${extra_labels[@]}"}") || return 1
+	pr_number=$(_create_or_continue_pr "$continuation_pr" "$repo" "$pr_title" "$pr_body" \
+		"$origin_label" "${extra_labels[@]+"${extra_labels[@]}"}") || return 1
 	# A worker PR is only eligible for the worker-briefed merge path when GitHub
 	# can associate it with the issue that dispatched the worker. Creation should
 	# already preserve this body, but recover from partial GraphQL writes before

@@ -477,7 +477,7 @@ _parse_commit_and_pr_args() {
 	while [[ "$index" -lt "${#args[@]}" ]]; do
 		arg="${args[$index]}"
 		case "$arg" in
-		--issue | --message | --title | --summary | --testing | --risk-level | --testing-level | --decisions | --label | --proof-pr | --task-id)
+		--issue | --message | --title | --summary | --testing | --risk-level | --testing-level | --decisions | --label | --proof-pr | --task-id | --replace-pr | --replacement-reason)
 			if [[ $((index + 1)) -ge ${#args[@]} ]]; then
 				print_error "${arg} requires a value"
 				return 1
@@ -529,6 +529,14 @@ _parse_commit_and_pr_args() {
 			;;
 		--task-id)
 			bookkeeping_task_id="$value"
+			index=$((index + 2))
+			;;
+		--replace-pr)
+			replacement_pr="$value"
+			index=$((index + 2))
+			;;
+		--replacement-reason)
+			replacement_reason="$value"
 			index=$((index + 2))
 			;;
 		--completion-bookkeeping)
@@ -1369,6 +1377,7 @@ _build_pr_body() {
 	local requested_risk="${7:-}"
 	local requested_testing_level="${8:-}"
 	local base_ref="${9:-}"
+	local replacement_note="${10:-}"
 	local runtime_risk=""
 	local testing_level=""
 
@@ -1378,6 +1387,11 @@ _build_pr_body() {
 	printf '%s\n' "## Summary
 
 ${summary_what:-Implementation for issue #${issue_number}.}
+
+${replacement_note:+## Replacement Audit
+
+${replacement_note}
+}
 
 ## Files Changed
 
@@ -1655,6 +1669,24 @@ _reconcile_pr_origin_label() {
 # GH#26045: After extracting the PR number, verify/re-apply the current session
 # origin label via set_origin_label so recovered partial-success PRs cannot remain
 # unlabeled and unroutable by pulse CI/review repair workers.
+_create_or_continue_pr() {
+	local continuation_pr="$1"
+	local repo="$2"
+	local pr_title="$3"
+	local pr_body="$4"
+	local origin_label="$5"
+	shift 5
+	if [[ -n "$continuation_pr" ]]; then
+		print_info "Continuing existing issue-linked PR #${continuation_pr} at the final creation boundary"
+		_reconcile_pr_origin_label "$continuation_pr" "$repo" "${origin_label#origin:}" || return 1
+		_reconcile_recovered_pr_metadata "$continuation_pr" "$repo" "$pr_title" "$pr_body" || return 1
+		printf '%s\n' "$continuation_pr"
+		return 0
+	fi
+	_create_pr "$repo" "$pr_title" "$pr_body" "$origin_label" "$@"
+	return $?
+}
+
 _create_pr() {
 	local repo="$1" pr_title="$2" pr_body="$3" origin_label="$4"
 	shift 4

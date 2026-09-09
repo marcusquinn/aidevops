@@ -55,6 +55,7 @@ eval "$(extract_function "$COMMIT_HELPER" _validate_completion_bookkeeping_paths
 eval "$(extract_function "$COMMIT_HELPER" _validate_completion_bookkeeping_todo)"
 eval "$(extract_function "$COMMIT_HELPER" _validate_completion_bookkeeping_pr_body)"
 eval "$(extract_function "$COMMIT_HELPER" _validate_closed_issue_completion_bookkeeping)"
+eval "$(extract_function "$COMMIT_HELPER" _create_or_continue_pr)"
 eval "$(extract_function "$MAIN_HELPER" cmd_commit_and_pr)"
 
 _FULL_LOOP_TRUE="true"
@@ -251,6 +252,10 @@ _issue_has_parent_task_label() {
 	local repo_slug="$2"
 	[[ -n "$issue_number" && -n "$repo_slug" ]] || return 1
 	return 1
+}
+
+issue_open_pr_guard_check() {
+	return 0
 }
 
 _validate_worker_claim() {

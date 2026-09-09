@@ -10,7 +10,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 _usage() {
 	cat <<'EOF'
-Usage: interactive-start-helper.sh --issue N --repo owner/repo --task "description" [--auto-dispatch] [--background]
+Usage: interactive-start-helper.sh --issue N --repo owner/repo --task "description" [--auto-dispatch] [--background] [--replace-pr N --replacement-reason "reason"]
 
 Claims the issue for interactive implementation, runs the pre-edit loop check,
 validates and enters the linked worktree selected by pre-edit, refreshes the
@@ -126,6 +126,8 @@ _interactive_start_parse_args() {
 	_INTERACTIVE_START_TASK=""
 	_INTERACTIVE_START_AUTO_DISPATCH=0
 	_INTERACTIVE_START_BACKGROUND=0
+	_INTERACTIVE_START_REPLACEMENT_PR=""
+	_INTERACTIVE_START_REPLACEMENT_REASON=""
 	_INTERACTIVE_START_HELP_REQUESTED=0
 	_INTERACTIVE_START_SOURCE_PATHS=()
 	while [[ $# -gt 0 ]]; do
@@ -160,6 +162,22 @@ _interactive_start_parse_args() {
 			shift
 			;;
 		--auto-dispatch) _INTERACTIVE_START_AUTO_DISPATCH=1 ;;
+		--replace-pr)
+			[[ $# -gt 0 ]] || {
+				printf 'ERROR: --replace-pr requires a value\n' >&2
+				return 2
+			}
+			_INTERACTIVE_START_REPLACEMENT_PR="$1"
+			shift
+			;;
+		--replacement-reason)
+			[[ $# -gt 0 ]] || {
+				printf 'ERROR: --replacement-reason requires a value\n' >&2
+				return 2
+			}
+			_INTERACTIVE_START_REPLACEMENT_REASON="$1"
+			shift
+			;;
 		--source-path)
 			if [[ $# -eq 0 || -z "$1" || "$1" == /* || "$1" == ".." || "$1" == ../* || "$1" == */../* || "$1" == */.. ]]; then
 				printf 'ERROR: --source-path requires a repository-relative candidate\n' >&2
@@ -183,6 +201,12 @@ _interactive_start_parse_args() {
 	if [[ -z "$_INTERACTIVE_START_ISSUE" || -z "$_INTERACTIVE_START_REPO" || -z "$_INTERACTIVE_START_TASK" ]]; then
 		_usage >&2
 		return 2
+	fi
+	if [[ -n "$_INTERACTIVE_START_REPLACEMENT_PR" || -n "$_INTERACTIVE_START_REPLACEMENT_REASON" ]]; then
+		if [[ ! "$_INTERACTIVE_START_REPLACEMENT_PR" =~ ^[1-9][0-9]*$ || ${#_INTERACTIVE_START_REPLACEMENT_REASON} -lt 20 ]]; then
+			printf 'ERROR: explicit replacement requires --replace-pr N and a rationale of at least 20 characters\n' >&2
+			return 2
+		fi
 	fi
 	return 0
 }
@@ -232,12 +256,17 @@ main() {
 	local task="$_INTERACTIVE_START_TASK"
 	local auto_dispatch="$_INTERACTIVE_START_AUTO_DISPATCH"
 	local background="$_INTERACTIVE_START_BACKGROUND"
+	local replacement_pr="$_INTERACTIVE_START_REPLACEMENT_PR"
+	local replacement_reason="$_INTERACTIVE_START_REPLACEMENT_REASON"
 	# Reaching this entrypoint means the issue is being implemented locally.
 	# Export the marker so asynchronous local children inherit that authority.
 	export AIDEVOPS_INTERACTIVE_ISSUE_IMPLEMENTATION=1
 	# Retain --auto-dispatch for CLI compatibility; takeover is now unconditional.
 	: "$auto_dispatch"
 	local initial_claim_args=(claim "$issue" "$repo" --implementing --defer-comment)
+	if [[ -n "$replacement_pr" || -n "$replacement_reason" ]]; then
+		initial_claim_args+=(--replace-pr "$replacement_pr" --replacement-reason "$replacement_reason")
+	fi
 	if ! interactive-session-helper.sh "${initial_claim_args[@]}"; then
 		printf 'ERROR: initial interactive claim failed for #%s in %s\n' "$issue" "$repo" >&2
 		return 1
@@ -254,6 +283,9 @@ main() {
 	local worktree_path=""
 	worktree_path=$(_interactive_start_resolve_worktree "$pre_edit_output") || return 1
 	local refresh_claim_args=(claim "$issue" "$repo" --implementing --worktree "$worktree_path")
+	if [[ -n "$replacement_pr" || -n "$replacement_reason" ]]; then
+		refresh_claim_args+=(--replace-pr "$replacement_pr" --replacement-reason "$replacement_reason")
+	fi
 	if ! interactive-session-helper.sh "${refresh_claim_args[@]}"; then
 		printf 'ERROR: interactive claim refresh failed; recoverable worktree: %s\n' "$worktree_path" >&2
 		return 1
