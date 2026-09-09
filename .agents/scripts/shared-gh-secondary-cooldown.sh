@@ -658,7 +658,7 @@ _gh_secondary_cooldown_parse_response_metadata() {
 		case "$meta_key" in
 		[Rr][Ee][Tt][Rr][Yy]-[Aa][Ff][Tt][Ee][Rr]) retry_after="$meta_value" ;;
 		[Xx]-[Rr][Aa][Tt][Ee][Ll][Ii][Mm][Ii][Tt]-[Ll][Ii][Mm][Ii][Tt]) ratelimit_limit="$meta_value" ;;
-		[Xx]-[Rr][Aa][Tt][Ee][Ll][Ii][Mm][Ii][Tt]-[Rr][Ee][Mm][Aa][Ii][Nn][Ii][Ng]) ratelimit_remaining="$meta_value" ;;
+		[Xx]-[Rr][Aa][Tt][Ee][Ll][Ii][Mm][Ii][Tt]-[Rr][Ee][Mm][Aa][Ii][Nn][Ii][Nn][Gg]) ratelimit_remaining="$meta_value" ;;
 		[Xx]-[Rr][Aa][Tt][Ee][Ll][Ii][Mm][Ii][Tt]-[Rr][Ee][Ss][Ee][Tt]) ratelimit_reset="$meta_value" ;;
 		[Xx]-[Rr][Aa][Tt][Ee][Ll][Ii][Mm][Ii][Tt]-[Uu][Ss][Ee][Dd]) ratelimit_used="$meta_value" ;;
 		[Xx]-[Rr][Aa][Tt][Ee][Ll][Ii][Mm][Ii][Tt]-[Rr][Ee][Ss][Oo][Uu][Rr][Cc][Ee]) ratelimit_resource="$meta_value" ;;
