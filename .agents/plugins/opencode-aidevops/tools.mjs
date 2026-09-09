@@ -80,6 +80,34 @@ function isSafeCommand(command) {
   return /^[a-zA-Z0-9 _\-./:#@]+$/.test(command);
 }
 
+function aidevopsFailureReason(error) {
+  if (Number.isInteger(error?.status)) return `exit ${error.status}`;
+  if (error?.code === "ETIMEDOUT") return "timed out";
+  if (error?.signal) return `signal ${error.signal}`;
+  return "execution error";
+}
+
+function aidevopsFailureDetail(error) {
+  const stderr = Buffer.isBuffer(error?.stderr)
+    ? error.stderr.toString("utf8")
+    : String(error?.stderr || "");
+  return scrubCredentials(stderr.trim()).scrubbed.slice(0, 4096);
+}
+
+function executeAidevopsCommand(run, rawCommand) {
+  const rawCmd = String(rawCommand);
+  if (!isSafeCommand(rawCmd)) {
+    return "Error: command contains disallowed characters. Only alphanumeric, spaces, hyphens, underscores, dots, slashes, colons, # and @ are permitted.";
+  }
+  const cmd = `aidevops ${rawCmd}`;
+  try {
+    return run(cmd, 15000) || `Command completed: ${cmd}`;
+  } catch (error) {
+    const detail = aidevopsFailureDetail(error);
+    throw new Error(`aidevops command failed (${aidevopsFailureReason(error)})${detail ? `: ${detail}` : ""}`);
+  }
+}
+
 /**
  * Validate memory tool arguments before invoking the shell helper.
  * @param {object} args
@@ -117,29 +145,7 @@ function createAidevopsTool(run) {
       command: z.string().describe('aidevops command and arguments, e.g. "status" or "repos"'),
     },
     async execute(args) {
-      const rawCmd = String(args.command || args);
-      if (!isSafeCommand(rawCmd)) {
-        return `Error: command contains disallowed characters. Only alphanumeric, spaces, hyphens, underscores, dots, slashes, colons, # and @ are permitted.`;
-      }
-      const cmd = `aidevops ${rawCmd}`;
-      try {
-        const result = run(cmd, 15000);
-        return result || `Command completed: ${cmd}`;
-      } catch (error) {
-        const exitCode = Number.isInteger(error?.status) ? error.status : null;
-        const reason = exitCode !== null
-          ? `exit ${exitCode}`
-          : error?.code === "ETIMEDOUT"
-            ? "timed out"
-            : error?.signal
-              ? `signal ${error.signal}`
-              : "execution error";
-        const stderr = Buffer.isBuffer(error?.stderr)
-          ? error.stderr.toString("utf8")
-          : String(error?.stderr || "");
-        const detail = scrubCredentials(stderr.trim()).scrubbed.slice(0, 4096);
-        throw new Error(`aidevops command failed (${reason})${detail ? `: ${detail}` : ""}`);
-      }
+      return executeAidevopsCommand(run, args.command || args);
     },
   });
 }

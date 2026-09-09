@@ -25,13 +25,9 @@ on:
     # in-flight required check before job-level guards could skip them. Docs-only
     # PRs observed 15+ cancelled runs per workflow, which `gh pr checks`
     # then surfaces as `fail` (it displays `cancelled` conclusions as
-    # `fail` in its TSV output). Filtering docs-only at the trigger
-    # level reduces no-op runs; keeping cancel-in-progress disabled prevents
-    # label events on mixed PRs from cancelling required checks. In-workflow
-    # `detect-scope` still runs as a belt-and-suspenders check.
-    paths-ignore:
-      - '**/*.md'
-      - 'todo/**'
+    # `fail` in its TSV output). Keep the workflow trigger unconditional so the
+    # stable required-check summary below is always published; `detect-scope`
+    # avoids the expensive Qlty scan for docs-only and unrelated label events.
 
 permissions:
   pull-requests: write
@@ -205,3 +201,26 @@ jobs:
           fi
           echo "::error::Qlty smell regression detected (exit $EXIT_CODE). Add the 'ratchet-bump' label to override if justified (maintainer only)."
           exit 1
+
+  required-check:
+    name: Qlty Regression Gate
+    runs-on: ubuntu-latest
+    needs: [detect-scope, qlty-diff]
+    if: always()
+    env:
+      SCOPE_RESULT: ${{ needs.detect-scope.result }}
+      SHOULD_SCAN: ${{ needs.detect-scope.outputs.should_scan }}
+      DIFF_RESULT: ${{ needs.qlty-diff.result }}
+    steps:
+      - name: Publish stable regression verdict
+        run: |
+          set -euo pipefail
+          if [ "$SCOPE_RESULT" = "failure" ] || [ "$SCOPE_RESULT" = "cancelled" ]; then
+            echo "::error::Qlty scope detection did not complete successfully ($SCOPE_RESULT)."
+            exit 1
+          fi
+          if [ "$SHOULD_SCAN" = "true" ] && [ "$DIFF_RESULT" != "success" ]; then
+            echo "::error::Qlty regression scan did not pass ($DIFF_RESULT)."
+            exit 1
+          fi
+          echo "Qlty regression gate passed (scope=$SHOULD_SCAN, diff=$DIFF_RESULT)."
