@@ -4,7 +4,7 @@
 #
 # test-install-hooks-validator-preflight.sh — t2226 regression test.
 #
-# Validates the pre-install validator dry-run gate in install-hooks-helper.sh:
+# Validates the pre-install gates in install-hooks-helper.sh:
 #   1. _dry_run_validators function exists.
 #   2. Happy path: validators pass → install proceeds (function returns 0).
 #   3. Failure path: a broken validator → install aborts (function returns 1).
@@ -12,7 +12,7 @@
 #   5. install_hook accepts --force-install flag.
 #   6. Validator enumeration finds validate_* functions from pre-commit-hook.sh.
 #
-# These tests validate the preflight logic without running actual install
+# These tests validate the preflight and deployed-runtime logic without running actual install
 # (no .git/hooks writes, no settings.json modifications).
 
 set -uo pipefail
@@ -194,6 +194,101 @@ test_help_text() {
 	return 0
 }
 
+_run_runtime_dependency_test() {
+	local mode="$1"
+	local test_tmpdir
+	test_tmpdir=$(mktemp -d)
+	local test_home="$test_tmpdir/home"
+	mkdir -p "$test_home/.aidevops/agents/scripts"
+
+	if [[ "$mode" == "healthy" ]]; then
+		cat >"$test_home/.aidevops/agents/scripts/command-policy-helper.py" <<'PYEOF'
+#!/usr/bin/env python3
+raise SystemExit(0)
+PYEOF
+		cat >"$test_home/.aidevops/agents/scripts/canonical-write-policy-helper.py" <<'PYEOF'
+#!/usr/bin/env python3
+raise SystemExit(0)
+PYEOF
+	fi
+
+	cat >"$test_tmpdir/harness.sh" <<HARNESS_EOF
+#!/usr/bin/env bash
+set -uo pipefail
+SCRIPT_DIR="$TEST_SCRIPTS_DIR"
+source "\${SCRIPT_DIR}/shared-constants.sh"
+eval "\$(sed '/^set -euo pipefail\$/d; /^# Main\$/,\$ d' "$TEST_SCRIPTS_DIR/install-hooks-helper.sh")"
+_check_runtime_policy_dependencies
+HARNESS_EOF
+
+	local rc=0
+	local output=""
+	output=$(HOME="$test_home" bash "$test_tmpdir/harness.sh" 2>&1) || rc=$?
+	rm -rf "$test_tmpdir"
+	if [[ "$rc" -ne 0 && "$mode" == "healthy" ]]; then
+		printf '%s\n' "$output" >&2
+	fi
+	return "$rc"
+}
+
+test_runtime_dependency_preflight() {
+	local rc=0
+	_run_runtime_dependency_test "missing" || rc=$?
+	if [[ "$rc" -ne 0 ]]; then
+		print_result "missing deployed policy graph blocks hook installation" 0
+	else
+		print_result "missing deployed policy graph blocks hook installation" 1 "expected non-zero exit"
+	fi
+
+	rc=0
+	_run_runtime_dependency_test "healthy" || rc=$?
+	if [[ "$rc" -eq 0 ]]; then
+		print_result "healthy deployed policy graph passes hook preflight" 0
+	else
+		print_result "healthy deployed policy graph passes hook preflight" 1 "exit=$rc"
+	fi
+	return 0
+}
+
+test_installed_hook_probe() {
+	local test_tmpdir
+	test_tmpdir=$(mktemp -d)
+	local test_home="$test_tmpdir/home"
+	local installed_hook="$test_home/.aidevops/hooks/git_safety_guard.py"
+	mkdir -p "$(dirname "$installed_hook")"
+	cp "$TEST_SCRIPTS_DIR/../hooks/git_safety_guard.py" "$installed_hook"
+	chmod +x "$installed_hook"
+	cat >"$test_tmpdir/harness.sh" <<HARNESS_EOF
+#!/usr/bin/env bash
+set -uo pipefail
+SCRIPT_DIR="$TEST_SCRIPTS_DIR"
+source "\${SCRIPT_DIR}/shared-constants.sh"
+eval "\$(sed '/^set -euo pipefail\$/d; /^# Main\$/,\$ d' "$TEST_SCRIPTS_DIR/install-hooks-helper.sh")"
+_probe_hook_runtime "$installed_hook"
+HARNESS_EOF
+
+	local missing_rc=0
+	local output=""
+	output=$(HOME="$test_home" bash "$test_tmpdir/harness.sh" 2>&1) || missing_rc=$?
+	if [[ "$missing_rc" -ne 0 ]]; then
+		print_result "installed hook probe detects policy.helper-unavailable" 0
+	else
+		print_result "installed hook probe detects policy.helper-unavailable" 1 "expected non-zero exit"
+	fi
+
+	ln -s "$TEST_SCRIPTS_DIR/.." "$test_home/.aidevops/agents"
+	local healthy_rc=0
+	output=$(HOME="$test_home" bash "$test_tmpdir/harness.sh" 2>&1) || healthy_rc=$?
+	if [[ "$healthy_rc" -eq 0 ]]; then
+		print_result "installed hook probe accepts complete deployed policy graph" 0
+	else
+		print_result "installed hook probe accepts complete deployed policy graph" 1 "exit=$healthy_rc output=$output"
+	fi
+
+	rm -rf "$test_tmpdir"
+	return 0
+}
+
 # --- Run all tests ---
 main() {
 	echo "=== install-hooks-helper.sh validator preflight tests (t2226) ==="
@@ -207,6 +302,8 @@ main() {
 	test_dry_run_failure_path
 	test_force_install_bypass
 	test_help_text
+	test_runtime_dependency_preflight
+	test_installed_hook_probe
 
 	echo ""
 	echo "=== Results: $TESTS_RUN tests, $TESTS_FAILED failures ==="
