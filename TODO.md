@@ -1346,6 +1346,16 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18415 Triage refreshed Codacy findings into bounded remediation children #auto-dispatch #codacy #decomposition #quality blocked-by:t18414 ref:GH#31460 -> [todo/tasks/t18415-brief.md]
 
+- [ ] t18417 Add provider-neutral S3 object storage integrations for IDrive, Backblaze, and Wasabi #feat #parent-task #thinking ref:GH#31684 logged:2026-09-09 -> [todo/tasks/t18417-brief.md]
+
+- [ ] t18418 Build provider-neutral rclone-backed S3 object storage foundation #auto-dispatch #feat #standard ~3h ref:GH#31685 logged:2026-09-09 -> [todo/tasks/t18418-brief.md]
+
+- [ ] t18419 Add guarded IDrive e2 object storage integration #auto-dispatch #feat #standard ~2h blocked-by:t18418 ref:GH#31686 logged:2026-09-09 -> [todo/tasks/t18419-brief.md]
+
+- [ ] t18420 Add guarded Backblaze B2 object storage and official MCP integration #auto-dispatch #feat #standard ~4h blocked-by:t18418 ref:GH#31687 logged:2026-09-09 -> [todo/tasks/t18420-brief.md]
+
+- [ ] t18421 Add guarded Wasabi object storage integration with beta MCP boundary #auto-dispatch #feat #standard ~3h blocked-by:t18418 ref:GH#31688 logged:2026-09-09 -> [todo/tasks/t18421-brief.md]
+
 ## In Progress
 
 - [x] t2744 raise GraphQL throttle defaults and reduce pulse/stats cycle pressure — circuit breaker default `0.05`→`0.30` (trips at 1500 remaining instead of 250), REST fallback default `10`→`1000` (REST takes over earlier, GraphQL kept in reserve), pulse interval default `120s`→`180s`, stats-wrapper interval `900s`→`3600s`. Also fixes macOS launchd path that ignored `supervisor.pulse_interval_seconds` from settings. Evidence: GraphQL=0/5000 vs REST=4044/5000 with 21 EXHAUSTED events in current pulse log; per-cycle cost (~400-700 pts) × 30 cycles/hr × 14 repos exceeds 5000/hr ceiling by 2-4×. All env-overridable, fully backwards-compatible. See `todo/tasks/t2744-brief.md`. #framework #pulse #interactive ~1h ref:GH#20482 started:2026-04-22 pr:#20483 completed:2026-04-22
