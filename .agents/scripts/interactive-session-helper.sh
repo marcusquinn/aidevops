@@ -58,6 +58,9 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/shared-constants.sh"
+# shellcheck source=./issue-open-pr-guard.sh
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/issue-open-pr-guard.sh"
 
 set -euo pipefail
 

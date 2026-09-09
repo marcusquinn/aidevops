@@ -153,6 +153,16 @@ assert_log_line "claim cwd=${linked_worktree} marker=1 args=claim 43 owner/repo 
 assert_log_line "full-loop cwd=${linked_worktree} marker=1 args=start GH#43 queued fix --background"
 
 : >"$call_log"
+(
+	cd "$linked_worktree" || exit 1
+	PRE_EDIT_MODE=linked-current PATH="${stub_dir}:$PATH" \
+		"$helper" --issue 46 --repo owner/repo --task "replace abandoned work" \
+		--replace-pr 77 --replacement-reason "The existing implementation cannot satisfy the current API contract." </dev/null
+) || fail "explicit replacement issue start failed"
+assert_log_line "claim cwd=${linked_worktree} marker=1 args=claim 46 owner/repo --implementing --defer-comment --replace-pr 77 --replacement-reason The existing implementation cannot satisfy the current API contract."
+assert_log_line "claim cwd=${linked_worktree} marker=1 args=claim 46 owner/repo --implementing --worktree ${linked_worktree} --replace-pr 77 --replacement-reason The existing implementation cannot satisfy the current API contract."
+
+: >"$call_log"
 if STUB_CLAIM_FAILS=1 PATH="${stub_dir}:$PATH" \
 	"$helper" --issue 31317 --repo owner/repo --task "failed claim" </dev/null >/dev/null 2>&1; then
 	fail "failed initial claim reached success"

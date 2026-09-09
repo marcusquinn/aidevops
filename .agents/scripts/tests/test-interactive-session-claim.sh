@@ -168,7 +168,20 @@ auth)
 		fi
 		exit 0
 		;;
-issue)
+	pr)
+		if [[ "$2" == "list" ]]; then
+			if [[ -n "${STUB_OPEN_PR_ISSUE:-}" ]]; then
+				printf '[{"number":77,"headRefName":"feature/existing","headRefOid":"1111111111111111111111111111111111111111","headRepository":{"nameWithOwner":"%s/%s"},"author":{"login":"other-human"},"closingIssuesReferences":[{"number":%s,"repository":{"owner":{"login":"%s"},"name":"%s"}}],"isDraft":false}]\n' \
+					"${STUB_OPEN_PR_OWNER:-regress}" "${STUB_OPEN_PR_REPO:-test}" "$STUB_OPEN_PR_ISSUE" \
+					"${STUB_OPEN_PR_OWNER:-regress}" "${STUB_OPEN_PR_REPO:-test}"
+			else
+				printf '[]\n'
+			fi
+			exit 0
+		fi
+		exit 1
+		;;
+	issue)
 	case "$2" in
 	view)
 		# GH#20946 PR #20977 review: STUB_GH_VIEW_FAILS=1 simulates a gh lookup
@@ -744,6 +757,24 @@ else
 		"(rc=$takeover_rc owner=$takeover_owner stamp=$([[ -f "$takeover_stamp" ]] && echo yes || echo no) log=$(tr '\n' '|' <"$STUB_LOG") out=${takeover_out:0:120})"
 fi
 
+# --- Case (d2b): an old foreign claim with a linked open PR is durable work ---
+rm -f "${claim_dir}"/*.json 2>/dev/null || true
+: >"$STUB_LOG"
+old_claim_time=$(date -u -v-3H +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '3 hours ago' +%Y-%m-%dT%H:%M:%SZ)
+printf '{"state":"OPEN","labels":[{"name":"status:in-review"}],"assignees":[{"login":"other-human"}],"comments":[{"author":{"login":"other-human"},"createdAt":"%s","body":"> Interactive session claimed by @other-human on other-host."}]}\n' \
+	"$old_claim_time" >"${STUB_STATE_DIR}/56007.json"
+open_pr_out=$(STUB_OPEN_PR_ISSUE=56007 "$HELPER_PATH" claim 56007 regress/test --implementing --worktree /tmp/replacement-wt 2>&1)
+open_pr_rc=$?
+open_pr_stamp="${claim_dir}/regress-test-56007.json"
+if [[ $open_pr_rc -eq 1 && ! -f "$open_pr_stamp" ]] &&
+	! grep -q 'issue edit 56007' "$STUB_LOG" &&
+	printf '%s' "$open_pr_out" | grep -q "already has open PR #77"; then
+	print_result "old foreign claim with fresh open PR blocks interactive takeover" 0
+else
+	print_result "old foreign claim with fresh open PR blocks interactive takeover" 1 \
+		"(rc=$open_pr_rc stamp=$([[ -f "$open_pr_stamp" ]] && echo yes || echo no) out=${open_pr_out:0:180})"
+fi
+
 # --- Case (d3): a recent compatible foreign interactive claim is protected ---
 rm -f "${claim_dir}"/*.json 2>/dev/null || true
 : >"$STUB_LOG"
@@ -969,6 +1000,7 @@ rm -f "${claim_dir}"/*.json 2>/dev/null || true
 : >"$STUB_LOG"
 
 ad_pt_out=$(STUB_ISSUE_HAS_IN_REVIEW=0 STUB_ISSUE_HAS_AUTO_DISPATCH=1 STUB_ISSUE_HAS_PARENT_TASK=1 STUB_GH_MODE=online \
+	STUB_OPEN_PR_ISSUE=60003 STUB_OPEN_PR_OWNER=carveout STUB_OPEN_PR_REPO=test \
 	"$HELPER_PATH" claim 60003 carveout/test --worktree /tmp/carveout-wt 2>&1)
 ad_pt_rc=$?
 

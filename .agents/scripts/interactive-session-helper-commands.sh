@@ -282,8 +282,76 @@ _isc_handle_existing_claim_ownership() {
 	esac
 }
 
+_isc_guard_existing_open_pr() {
+	local issue="$1"
+	local slug="$2"
+	local replacement_pr="$3"
+	local replacement_reason="$4"
+	local claim_metadata="$5"
+	local user="$6"
+	local current_branch=""
+	local open_pr_guard_rc=0
+	local parent_issue=0
+
+	current_branch=$(git branch --show-current 2>/dev/null || true)
+	printf '%s' "$claim_metadata" | jq -e \
+		'any(.labels[]?; .name == "parent-task" or .name == "meta")' >/dev/null 2>&1 && parent_issue=1
+	if [[ "$parent_issue" -eq 0 ]]; then
+		issue_open_pr_guard_check "$issue" "$slug" "$current_branch" \
+			"$replacement_pr" "$replacement_reason" 0 "" "$user" || open_pr_guard_rc=$?
+	fi
+	case "$open_pr_guard_rc" in
+	0 | 3) ;;
+	1)
+		_isc_err "claim: issue #$issue already has open PR #${ISSUE_OPEN_PR_NUMBER}; continue branch '${ISSUE_OPEN_PR_HEAD_REF}' instead of taking over ownership"
+		return 1
+		;;
+	*)
+		_isc_err "claim: open-PR linkage evidence unavailable or ambiguous for #$issue; refusing ownership mutation"
+		return 1
+		;;
+	esac
+	if [[ -n "$replacement_pr" && "$replacement_pr" == "$ISSUE_OPEN_PR_NUMBER" ]]; then
+		local replacement_marker="<!-- aidevops:replacement-pr original=${replacement_pr} -->"
+		if ! printf '%s' "$claim_metadata" | jq -e --arg marker "$replacement_marker" \
+			'any(.comments[]?; (.body // "") | contains($marker))' >/dev/null 2>&1; then
+			gh_issue_comment "$issue" --repo "$slug" --body "${replacement_marker}
+Explicit replacement authorized for open PR #${replacement_pr}. Rationale: ${replacement_reason}. The replacement must preserve the original PR head before PR creation." >/dev/null || return 1
+		fi
+	fi
+	return 0
+}
+
+_isc_validate_claim_request() {
+	local issue="$1"
+	local slug="$2"
+	local replacement_pr="$3"
+	local replacement_reason="$4"
+	local implementing="$5"
+	if [[ -z "$issue" || -z "$slug" ]]; then
+		_isc_err "claim: <issue> and <slug> are required"
+		_isc_err "usage: interactive-session-helper.sh claim <issue> <slug> [--worktree PATH] [--implementing] [--defer-comment]"
+		return 2
+	fi
+	if [[ ! "$issue" =~ ^[0-9]+$ ]]; then
+		_isc_err "claim: <issue> must be numeric (got: $issue)"
+		return 2
+	fi
+	if [[ -n "$replacement_pr" || -n "$replacement_reason" ]] &&
+		[[ ! "$replacement_pr" =~ ^[1-9][0-9]*$ || ${#replacement_reason} -lt 20 ]]; then
+		_isc_err "claim: explicit replacement requires --replace-pr N and a rationale of at least 20 characters"
+		return 2
+	fi
+	if [[ "${AIDEVOPS_INTERACTIVE_ISSUE_IMPLEMENTATION:-0}" == "1" && $implementing -eq 0 ]]; then
+		_isc_err "claim: interactive issue implementation requires --implementing; refusing worker-claim routing"
+		return 2
+	fi
+	return 0
+}
+
 _isc_cmd_claim() {
 	local issue="" slug="" worktree_path="" implementing=0 defer_comment=0
+	local replacement_pr="" replacement_reason=""
 
 	# Parse positional + flags
 	while [[ $# -gt 0 ]]; do
@@ -305,6 +373,14 @@ _isc_cmd_claim() {
 			defer_comment=1
 			shift
 			;;
+		--replace-pr)
+			replacement_pr="${2:-}"
+			shift 2
+			;;
+		--replacement-reason)
+			replacement_reason="${2:-}"
+			shift 2
+			;;
 		-h | --help)
 			_isc_cmd_help
 			return 0
@@ -322,21 +398,7 @@ _isc_cmd_claim() {
 		esac
 	done
 
-	if [[ -z "$issue" || -z "$slug" ]]; then
-		_isc_err "claim: <issue> and <slug> are required"
-		_isc_err "usage: interactive-session-helper.sh claim <issue> <slug> [--worktree PATH] [--implementing] [--defer-comment]"
-		return 2
-	fi
-
-	if [[ ! "$issue" =~ ^[0-9]+$ ]]; then
-		_isc_err "claim: <issue> must be numeric (got: $issue)"
-		return 2
-	fi
-
-	if [[ "${AIDEVOPS_INTERACTIVE_ISSUE_IMPLEMENTATION:-0}" == "1" && $implementing -eq 0 ]]; then
-		_isc_err "claim: interactive issue implementation requires --implementing; refusing worker-claim routing"
-		return 2
-	fi
+	_isc_validate_claim_request "$issue" "$slug" "$replacement_pr" "$replacement_reason" "$implementing" || return $?
 	_isc_validate_worktree_origin "$slug" "$worktree_path" || return 1
 
 	local user
@@ -354,6 +416,8 @@ _isc_cmd_claim() {
 		_isc_err "claim: ownership metadata unavailable for #$issue; no stamp written"
 		return 1
 	fi
+	_isc_guard_existing_open_pr "$issue" "$slug" "$replacement_pr" \
+		"$replacement_reason" "$claim_metadata" "$user" || return 1
 	local ownership_rc=0
 	_isc_handle_existing_claim_ownership "$issue" "$slug" "$worktree_path" "$user" \
 		"$defer_comment" "$implementing" "$claim_metadata" || ownership_rc=$?
