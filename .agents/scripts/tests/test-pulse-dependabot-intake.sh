@@ -12,6 +12,7 @@ CLOSED_ISSUES_JSON="[]"
 AUTHENTIC=1
 PR_LABELS=""
 PR_FINAL_JSON='{"state":"OPEN","headRefOid":"head-current","labels":[{"name":"needs-maintainer-review"}]}'
+PR_SCOPE_JSON='{"headRefOid":"head-current","files":[{"path":"package.json"},{"path":"bun.lock"}]}'
 PR_VIEW_FAIL=0
 SUPERSEDING_PR=""
 
@@ -53,7 +54,9 @@ gh_issue_list() {
 
 gh_pr_view() {
 	[[ "$PR_VIEW_FAIL" -eq 0 ]] || return 1
-	if [[ " $* " == *" --json state,headRefOid,labels "* ]]; then
+	if [[ " $* " == *" --json headRefOid,files "* ]]; then
+		printf '%s\n' "$PR_SCOPE_JSON"
+	elif [[ " $* " == *" --json state,headRefOid,labels "* ]]; then
 		printf '%s\n' "$PR_FINAL_JSON"
 	else
 		printf '%s\n' "$PR_LABELS"
@@ -118,7 +121,42 @@ test_creates_worker_ready_issue() {
 	[[ -f "${TEST_ROOT}/create-args" ]] || return 1
 	assert_file_contains "worker issue has auto-dispatch ownership" "${TEST_ROOT}/create-args" "auto-dispatch,origin:worker,tier:standard,dependencies"
 	assert_file_contains "worker issue cites source PR" "${TEST_ROOT}/created-body" "Source PR: https://github.com/owner/repo/pull/30038"
+	assert_file_contains "worker issue has canonical Files Scope" "${TEST_ROOT}/created-body" "### Files Scope"
+	# shellcheck disable=SC2016 # Literal Markdown scope declarations.
+	assert_file_contains "worker issue scopes the exact source diff" "${TEST_ROOT}/created-body" '- EDIT: `package.json`'
+	# shellcheck disable=SC2016 # Literal Markdown scope declarations.
+	assert_file_contains "worker issue permits narrow trust-policy repair" "${TEST_ROOT}/created-body" '- EDIT: `.agents/configs/trusted-dependabot-updates.conf`'
 	assert_file_contains "worker issue carries idempotency marker" "${TEST_ROOT}/created-body" "aidevops:dependabot-pr-intake repo=owner/repo pr=30038"
+	return 0
+}
+
+test_scope_read_fails_closed_on_head_drift() {
+	local route_rc=0
+
+	rm -f "${TEST_ROOT}/create-args"
+	OPEN_ISSUES_JSON="[]"
+	AUTHENTIC=1
+	PR_LABELS=""
+	PR_SCOPE_JSON='{"headRefOid":"head-new","files":[{"path":"package.json"}]}'
+	_pulse_route_dependabot_pr_to_worker_issue \
+		"30038" "owner/repo" "app/dependabot" "head-current" "policy-ineligible" || route_rc=$?
+	[[ "$route_rc" -eq 1 ]] || return 1
+	[[ ! -e "${TEST_ROOT}/create-args" ]] || return 1
+	assert_file_contains "head drift blocks intake creation" "$LOGFILE" "exact-head Files Scope unavailable"
+	PR_SCOPE_JSON='{"headRefOid":"head-current","files":[{"path":"package.json"},{"path":"bun.lock"}]}'
+	return 0
+}
+
+test_scope_read_rejects_unsafe_markdown_path() {
+	local scope_output=""
+
+	PR_SCOPE_JSON='{"headRefOid":"head-current","files":[{"path":"docs/unsafe`path.md"}]}'
+	if scope_output=$(_pulse_dependabot_intake_scope_lines "30038" "owner/repo" "head-current"); then
+		printf 'FAIL unsafe Markdown path was accepted: %s\n' "$scope_output" >&2
+		return 1
+	fi
+	PR_SCOPE_JSON='{"headRefOid":"head-current","files":[{"path":"package.json"},{"path":"bun.lock"}]}'
+	printf 'PASS unsafe Markdown path fails closed\n'
 	return 0
 }
 
@@ -377,7 +415,11 @@ gh_create_issue() {
 }
 
 gh_pr_view() {
-	printf '%s\n' ''
+	if [[ " $* " == *" --json headRefOid,files "* ]]; then
+		printf '%s\n' '{"headRefOid":"head-current","files":[{"path":"package.json"}]}'
+	else
+		printf '%s\n' ''
+	fi
 	return 0
 }
 
@@ -405,6 +447,8 @@ main() {
 	# shellcheck source=../pulse-dispatch-dedup-layers.sh
 	source "${SCRIPT_DIR}/../pulse-dispatch-dedup-layers.sh"
 	test_creates_worker_ready_issue
+	test_scope_read_fails_closed_on_head_drift
+	test_scope_read_rejects_unsafe_markdown_path
 	test_reuses_existing_issue
 	printf 'PASS existing intake is idempotent\n'
 	test_rejects_unverified_author
