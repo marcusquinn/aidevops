@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.349] - 2026-09-09
+
+### Fixed
+
+- align Codacy drift telemetry with effective policy
+- protect Pulse cooldown recovery windows
+- preserve open issue-linked pull requests (#31661)
+
 ## [3.32.348] - 2026-09-09
 
 ### Fixed
