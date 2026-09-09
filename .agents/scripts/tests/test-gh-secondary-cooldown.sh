@@ -576,6 +576,26 @@ test_transport_preserves_sanitized_caller_context() {
 	return 0
 }
 
+test_remaining_header_survives_diagnostics() {
+	local header="" response="" expected="27"
+	for header in X-RateLimit-Remaining x-ratelimit-remaining x-RaTeLiMiT-ReMaInInG missing; do
+		reset_case
+		if [[ "$header" == missing ]]; then
+			response=$'HTTP/2 403\r\n\r\n{"message":"secondary rate limit"}\n'
+			expected=""
+		else
+			response=$(printf 'HTTP/2 403\r\n%s: 27\r\n\r\n{"message":"secondary rate limit"}\n' "$header")
+		fi
+		_gh_secondary_cooldown_record_if_needed 1 "$response" GET /search/issues
+		jq -e --arg expected "$expected" '.diagnostic.headers.x_ratelimit_remaining == $expected and .diagnostic.body_classification == "secondary-rate-limit"' \
+			"$AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE" >/dev/null
+		jq -e --arg expected "$expected" '.headers.x_ratelimit_remaining == $expected and .body_message_class == "secondary-rate-limit"' \
+			"$AIDEVOPS_GH_SECONDARY_COOLDOWN_EVENTS_FILE" >/dev/null
+	done
+	printf 'PASS remaining quota survives state/event diagnostics across header casing; missing remains unknown\n'
+	return 0
+}
+
 test_secondary_response_writes_cooldown
 test_header_response_writes_retry_after_cooldown
 test_generic_403_diagnostic_distinguishes_forbidden
@@ -600,3 +620,4 @@ test_primary_search_isolation
 test_search_expiry_and_secondary_precedence
 test_all_primary_resources_remain_isolated
 test_transport_preserves_sanitized_caller_context
+test_remaining_header_survives_diagnostics

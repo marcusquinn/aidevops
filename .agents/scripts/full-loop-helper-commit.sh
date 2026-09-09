@@ -26,6 +26,8 @@ _FULL_LOOP_COMMIT_LIB_LOADED=1
 _FULL_LOOP_CHECK_PENDING="pending"
 _FULL_LOOP_CHECK_INDETERMINATE="indeterminate"
 _FULL_LOOP_CHECK_DEFERRED="api-deferred"
+_FULL_LOOP_ERROR_COOLDOWN="github-api-cooldown"
+_FULL_LOOP_ERROR_READ_DEFERRED="github-api-read-deferred"
 _FULL_LOOP_TRUE="true"
 FULL_LOOP_COMPLETION_BOOKKEEPING_AUDIT=""
 FULL_LOOP_COMPLETION_BOOKKEEPING_FILES=""
@@ -150,21 +152,21 @@ _full_loop_query_required_checks() {
 		return 1
 	fi
 	if [[ "$required_checks_stderr" == *"error_kind=github-api-cooldown"* ]]; then
-		FULL_LOOP_PRE_MERGE_BLOCKER_KIND="github-api-cooldown"
+		FULL_LOOP_PRE_MERGE_BLOCKER_KIND="$_FULL_LOOP_ERROR_COOLDOWN"
 		FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL="unknown"
 		if [[ "$required_checks_stderr" =~ expires_at=([0-9]+) ]]; then
 			FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL="${BASH_REMATCH[1]}"
 		fi
-		FULL_LOOP_REQUIRED_CHECKS_ERROR_EVIDENCE="github-api-cooldown"
+		FULL_LOOP_REQUIRED_CHECKS_ERROR_EVIDENCE="$_FULL_LOOP_ERROR_COOLDOWN"
 		if [[ "$FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL" =~ ^[0-9]+$ ]]; then
 			FULL_LOOP_REQUIRED_CHECKS_ERROR_DETAIL="GitHub API cooldown is active until epoch ${FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL}"
 		else
 			FULL_LOOP_REQUIRED_CHECKS_ERROR_DETAIL="GitHub API cooldown is active"
 		fi
 	elif [[ "$required_checks_stderr" == *"error_kind=github-api-read-deferred"* ]]; then
-		FULL_LOOP_PRE_MERGE_BLOCKER_KIND="github-api-read-deferred"
+		FULL_LOOP_PRE_MERGE_BLOCKER_KIND="$_FULL_LOOP_ERROR_READ_DEFERRED"
 		FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL="retry-when-capacity-returns"
-		FULL_LOOP_REQUIRED_CHECKS_ERROR_EVIDENCE="github-api-read-deferred"
+		FULL_LOOP_REQUIRED_CHECKS_ERROR_EVIDENCE="$_FULL_LOOP_ERROR_READ_DEFERRED"
 		FULL_LOOP_REQUIRED_CHECKS_ERROR_DETAIL="GitHub API read capacity is deferred; preserve the PR and retry when capacity returns"
 	fi
 
@@ -201,7 +203,7 @@ _full_loop_review_bot_gate_helper_path() {
 # activity can otherwise leave the benchmark attempt unattributed.
 # Args: $1=pr_number, $2=repo_slug
 # Output: gh-pr-view-compatible readiness JSON
-# Returns: 0=complete exact-cost snapshot, 1=API/validation failure
+# Returns: 0=complete exact-cost snapshot, otherwise transport/validation failure
 #######################################
 _full_loop_pr_readiness_json_graphql() {
 	local pr_number="$1"
@@ -227,7 +229,7 @@ _full_loop_pr_readiness_json_graphql() {
 				}
 			}
 			rateLimit { cost }
-		}' 2>/dev/null) || return 1
+		}') || return $?
 
 	pr_json=$(printf '%s' "$response" | jq -ce --arg string_type "$jq_string_type" '
 		select(((.errors // []) | type) == "array")
@@ -244,6 +246,46 @@ _full_loop_pr_readiness_json_graphql() {
 	' 2>/dev/null) || return 1
 	printf '%s\n' "$pr_json"
 	return 0
+}
+
+# Capture at the caller boundary: command substitution cannot propagate blocker
+# globals. Keep transport evidence distinct without replaying a readiness read.
+_full_loop_read_pr_readiness() {
+	local pr_number="$1" repo="$2"
+	local error_file="" diagnostics="" read_rc=0
+	FULL_LOOP_PR_READINESS_JSON=""
+	FULL_LOOP_PRE_MERGE_BLOCKER_KIND=""
+	FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL=""
+	error_file=$(mktemp "${TMPDIR:-/tmp}/aidevops-pr-readiness.XXXXXX") || return 1
+	FULL_LOOP_PR_READINESS_JSON=$(_full_loop_pr_readiness_json_graphql "$pr_number" "$repo" 2>"$error_file") || read_rc=$?
+	diagnostics=$(<"$error_file")
+	rm -f "$error_file"
+	[[ "$read_rc" -ne 0 ]] || return 0
+	FULL_LOOP_REQUIRED_CHECKS_ERROR_EVIDENCE="readiness-unavailable"
+	FULL_LOOP_REQUIRED_CHECKS_ERROR_DETAIL="PR readiness read failed (exit ${read_rc})"
+	if _full_loop_local_admission_evidence "$diagnostics"; then
+		: # Existing typed local-admission evidence owns the reason and deadline.
+	elif [[ "$diagnostics" == *'error_kind=github-api-cooldown'* ||
+		"$diagnostics" == *'[gh-cooldown] secondary-rate-limit active=true'* ||
+		"$diagnostics" == *'[gh-cooldown] primary-'*' active=true'* ]]; then
+		FULL_LOOP_PRE_MERGE_BLOCKER_KIND="$_FULL_LOOP_ERROR_COOLDOWN"
+		FULL_LOOP_REQUIRED_CHECKS_ERROR_EVIDENCE="$FULL_LOOP_PRE_MERGE_BLOCKER_KIND"
+		FULL_LOOP_REQUIRED_CHECKS_ERROR_DETAIL="GitHub API cooldown is active"
+		if [[ "$diagnostics" =~ expires_at=([0-9]+) ]]; then
+			FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL="${BASH_REMATCH[1]}"
+			FULL_LOOP_REQUIRED_CHECKS_ERROR_DETAIL+=" until epoch ${BASH_REMATCH[1]}"
+		fi
+	elif [[ "$diagnostics" == *'[gh-cooldown] read-ramp active=true'* ||
+		"$diagnostics" == *'error_kind=github-api-read-deferred'* ]]; then
+		FULL_LOOP_PRE_MERGE_BLOCKER_KIND="$_FULL_LOOP_ERROR_READ_DEFERRED"
+		FULL_LOOP_REQUIRED_CHECKS_ERROR_EVIDENCE="$FULL_LOOP_PRE_MERGE_BLOCKER_KIND"
+		FULL_LOOP_REQUIRED_CHECKS_ERROR_DETAIL="GitHub API read capacity is deferred (recovery/admission)"
+	elif [[ "$read_rc" -eq 124 ]]; then
+		FULL_LOOP_REQUIRED_CHECKS_ERROR_EVIDENCE="readiness-timeout"
+		FULL_LOOP_REQUIRED_CHECKS_ERROR_DETAIL="PR readiness read timed out; evidence remains unknown"
+	fi
+	_full_loop_record_check_read_failure "$pr_number" ""
+	return 1
 }
 
 _full_loop_reconcile_stale_coderabbit_review() {
@@ -263,10 +305,11 @@ _full_loop_reconcile_stale_coderabbit_review() {
 		print_error "PR #${pr_number} retains changes-requested review state; automatic reconciliation was not authorized"
 		return 1
 	fi
-	refreshed_json=$(_full_loop_pr_readiness_json_graphql "$pr_number" "$repo") || {
+	_full_loop_read_pr_readiness "$pr_number" "$repo" || {
 		print_error "Cannot refresh PR #${pr_number} after CodeRabbit reconciliation"
 		return 1
 	}
+	refreshed_json="$FULL_LOOP_PR_READINESS_JSON"
 	if [[ "$(printf '%s' "$refreshed_json" | jq -r '.headRefOid // empty')" != "$expected_head" ]]; then
 		print_error "PR #${pr_number} head changed during CodeRabbit reconciliation"
 		return 1
@@ -300,10 +343,8 @@ _full_loop_verify_pr_readiness() {
 	local verified_head=""
 	local review_decision=""
 
-	pr_json=$(_full_loop_pr_readiness_json_graphql "$pr_number" "$repo") || {
-		print_error "Cannot read PR #${pr_number} readiness evidence"
-		return 1
-	}
+	_full_loop_read_pr_readiness "$pr_number" "$repo" || return 1
+	pr_json="$FULL_LOOP_PR_READINESS_JSON"
 	verified_head=$(printf '%s' "$pr_json" | jq -r '.headRefOid // empty')
 	review_decision=$(printf '%s' "$pr_json" | jq -r '(.reviewDecision // "") | ascii_upcase')
 	if [[ "$review_decision" == "CHANGES_REQUESTED" && -n "$verified_head" ]]; then

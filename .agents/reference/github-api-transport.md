@@ -202,19 +202,39 @@ deferred while quota expires unused. Do not claim throughput improvement from
 unit tests or fewer requests alone. Existing freshness/trust checks and optional
 benchmark comparability rules remain unchanged.
 
-Pulse idle backoff evaluates its local interval before the optional
-available-work Search probe. A normal cycle therefore does not spend a
-pre-backoff Search request. When local state already calls for a skipped cycle,
+Pulse idle backoff evaluates its local interval before optional available-work
+discovery. A normal cycle therefore spends no pre-backoff discovery request.
+The wake hint uses one REST repository-issues page, server-filtered by open state,
+both dispatch labels and no assignee, instead of Search. Client filtering excludes
+PRs, unpublished work, maintainer/permission holds and infrastructure advisories.
+It also mirrors the dispatcher's hard management/status exclusions: persistent
+audit/supervisor tickets, parents, held, consolidated and completed work cannot
+continually reset idle backoff just because stale availability labels remain.
+The hint still grants no launch authority; fresh dispatch gates remain canonical.
+A full page with no eligible issue is incomplete evidence, not an empty queue;
+normal cycle discovery handles it without unbounded optional pagination. This
+removes the recurring availability Search producer, not GitHub's secondary limit.
+When local state already calls for a skipped cycle,
 an active shared secondary cooldown or its recovery ramp suppresses that
 optional probe so interactive authority checks receive the recovery window.
-Timeouts, other request errors, and malformed counts remain unknown rather than
+Timeouts, other request errors, and malformed/incomplete pages remain unknown rather than
 becoming an empty queue, so the watchdog-protected cycle fails open. A proven
 unattempted local transport deferral (exit 75) instead retains the prior local
 skip decision and reschedules without a backend request. Successful eligible-work
 evidence still resets idle backoff. Cooldown diagnostics retain only sanitized
 method, endpoint/query shape, operation, wrapper, and Pulse-stage attribution.
-Rollback should revert the idle-gate ordering while leaving the shared cooldown
-enabled.
+Remaining-quota headers retain their value in event and state metadata regardless
+of header casing; a missing value stays unknown. Positive primary quota never
+overrides a genuine secondary response. Rollback may revert the query change,
+but must preserve the local-first idle ordering and shared cooldown.
+
+Fresh PR-readiness reads preserve transport cooldown, recovery-ramp and local
+admission diagnostics across command substitution. Those outcomes defer merge
+without generating a false CI failure; timeouts, malformed responses and other
+failed reads remain indeterminate. No additional retry, cached authorization or
+alternate transport is introduced. Continuous interactive development and useful
+worker delivery within finite GitHub/AI allowances remain the objective, rather
+than either maximum request volume or minimum request count in isolation.
 
 ## Durable PR wake hints
 
