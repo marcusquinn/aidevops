@@ -127,6 +127,7 @@ install_stubs() {
 	_dispatch_pr_fix_worker() { local pr_number="$1"; local repo_slug="$2"; local linked_issue="$3"; printf 'dispatch-review %s %s %s\n' "$pr_number" "$repo_slug" "$linked_issue" >>"$GH_CALL_LOG"; return "$DISPATCH_RC"; }
 	_dispatch_conflict_fix_worker() { local pr_number="$1"; local repo_slug="$2"; local linked_issue="$3"; printf 'dispatch-conflict %s %s %s\n' "$pr_number" "$repo_slug" "$linked_issue" >>"$GH_CALL_LOG"; return "$DISPATCH_RC"; }
 	_pulse_merge_queue_enqueue() { local repo_slug="$1"; local pr_number="$2"; printf 'retry-hint %s %s\n' "$repo_slug" "$pr_number" >>"$GH_CALL_LOG"; printf 'coalesced\n'; return 0; }
+	_pulse_merge_queue_finish() { local result="$1"; printf 'retry-finish %s\n' "$result" >>"$GH_CALL_LOG"; return 0; }
 	_check_required_checks_has_terminal_failure() { local repo_slug="$1"; local pr_number="$2"; local expected_head_sha="${3:-}"; printf 'terminal-check %s %s %s\n' "$repo_slug" "$pr_number" "$expected_head_sha" >>"$GH_CALL_LOG"; return "$TERMINAL_CHECK_RC"; }
 	_check_required_checks_have_pending_or_in_progress() { local repo_slug="$1"; local pr_number="$2"; local expected_head_sha="${3:-}"; printf 'pending-check %s %s %s\n' "$repo_slug" "$pr_number" "$expected_head_sha" >>"$GH_CALL_LOG"; return "$PENDING_CHECK_RC"; }
 	_pulse_merge_admin_safety_check() { local pr_number="$1"; local repo_slug="$2"; local expected_head_sha="${3:-}"; printf 'admin-safety %s %s %s\n' "$pr_number" "$repo_slug" "$expected_head_sha" >>"$GH_CALL_LOG"; return "$ADMIN_SAFETY_RC"; }
@@ -513,6 +514,21 @@ test_deferred_finalizer_dispatch_persists_retry_hint() {
 	return 0
 }
 
+test_successful_finalizer_dispatch_retires_retry_hint() {
+	install_stubs
+	: >"$GH_CALL_LOG"
+	_route_pr_to_fix_worker "9017" "owner/repo" "456" "review" "origin:worker" || true
+	if ! grep -qF 'dispatch-review 9017 owner/repo 456' "$GH_CALL_LOG" \
+		|| ! grep -qF 'retry-finish 2' "$GH_CALL_LOG" \
+		|| grep -qF 'retry-hint owner/repo 9017' "$GH_CALL_LOG"; then
+		fail "successful finalizer dispatch retires retry hint" \
+			"calls=$(tr '\n' ';' <"$GH_CALL_LOG")"
+		return 0
+	fi
+	pass "successful finalizer dispatch retires retry hint"
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -541,6 +557,7 @@ main() {
 	test_review_terminal_label_rechecks_current_evidence
 	test_trusted_worker_terminal_guard_outcome_propagates
 	test_deferred_finalizer_dispatch_persists_retry_hint
+	test_successful_finalizer_dispatch_retires_retry_hint
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	[[ "$TESTS_FAILED" -eq 0 ]]
 	return $?

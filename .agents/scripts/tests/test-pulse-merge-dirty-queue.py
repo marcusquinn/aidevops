@@ -80,6 +80,14 @@ class QueueTests(unittest.TestCase):
             self.queue.enqueue("owner/repo", 43, 1000 + module.RETENTION_SECONDS * 2)
         self.assertIsNotNone(self.queue.row("owner/repo", 42))
 
+    def test_capacity_admits_new_target_by_evicting_oldest_idle_hint(self):
+        self.queue.enqueue("owner/repo", 41, 1000)
+        self.queue.enqueue("owner/repo", 42, 1001)
+        with patch.object(module, "MAX_HINTS", 2):
+            self.assertEqual(self.queue.enqueue("owner/repo", 43, 1002), "wake")
+        self.assertIsNone(self.queue.row("owner/repo", 41))
+        self.assertEqual(self.queue.priority("owner/repo", 1003), "|43|42|")
+
     def test_unhandled_hints_remain_available_to_polling(self):
         self.queue.enqueue("owner/repo", 42, 1000)
         receipt = self.queue.claim("owner/repo", 42, os.getpid(), 1001)

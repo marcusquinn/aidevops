@@ -1344,6 +1344,9 @@ _route_pr_guard_and_dispatch_with_retry() {
 	if [[ "$route_rc" -eq 0 ]]; then
 		_dispatch_pr_repair_by_kind "$kind" "$pr_number" "$repo_slug" "$linked_issue" "$pr_title" "$checks_json" || route_rc=$?
 	fi
+	if [[ "$route_rc" -eq 0 ]] && declare -F _pulse_merge_queue_finish >/dev/null 2>&1; then
+		_pulse_merge_queue_finish 2
+	fi
 	_route_pr_preserve_deferred_retry "$route_rc" "$pr_number" "$repo_slug" "$linked_issue" "$kind"
 	return $?
 }

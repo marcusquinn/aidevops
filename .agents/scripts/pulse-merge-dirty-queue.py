@@ -70,7 +70,15 @@ class Queue:
         # Expiry removes hints, not GitHub work. Polling remains authoritative.
         self.db.execute("DELETE FROM work WHERE nonce='' AND updated<?", (now - RETENTION_SECONDS,))
         if self.db.execute("SELECT count(*) FROM work").fetchone()[0] >= MAX_HINTS:
-            raise ValueError("queue capacity reached; polling recovery required")
+            # Preserve active leases, but let a newer exact target replace the
+            # oldest idle hint. Broad polling remains the recovery path for the
+            # evicted target and the queue stays strictly bounded.
+            oldest = self.db.execute(
+                "SELECT repo,pr FROM work WHERE nonce='' ORDER BY updated ASC LIMIT 1"
+            ).fetchone()
+            if not oldest:
+                raise ValueError("queue capacity reached; polling recovery required")
+            self.db.execute("DELETE FROM work WHERE repo=? AND pr=?", (oldest["repo"], oldest["pr"]))
 
     def enqueue(self, repo: str, pr: int, now: float) -> str:
         repo = repo.lower()
