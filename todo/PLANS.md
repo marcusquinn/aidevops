@@ -25,6 +25,15 @@ Each plan includes:
 
 ## Active Plans
 
+### [2026-09-10] Evidence-based model effort and delegation optimisation
+
+**Status:** Planned; five dependency-ordered auto-dispatch leaves.
+**Parent:** t18422 — [decision record and execution plan](tasks/t18422-brief.md).
+**Sequence:** t18423 provenance → t18424 objective/acceptance evidence → t18425 scorecard → t18426 no-inference pilot preparation → t18427 bounded evaluation.
+**Tiers:** Standard for the first four leaves; thinking for evidence synthesis. The parent is structural and never dispatched.
+**Estimate:** ~15h across workers; live evaluation has a separate 24-cell/90-minute ceiling, not an allowance or cash-cost claim.
+**Decision:** Extend existing telemetry and replay tooling. Preserve routing defaults, safety controls and private evidence until the evaluation supports a separately reviewed policy change. Publication must validate every TODO/ref/brief before releasing dispatch labels.
+
 ### [2026-04-10] Qlty Maintainability Recovery Phase 2 (C→A)
 
 **Status:** In Progress (Phase 1/4)
@@ -2424,7 +2433,7 @@ This plan reduces the always-loaded footprint by ~49% (18,300 → ~9,300 tokens)
 
 #### Architecture: File Roles After Optimisation
 
-```
+```text
 ALWAYS LOADED (every session):
   build.txt (~2,800 tokens)
     - Universal behavioural rules (mission, tone, critical thinking)
@@ -3246,7 +3255,7 @@ Output: normalised markdown + optional .pageindex.json
 
 #### Surprises & Discoveries
 
-_(none yet)_
+*(none yet)*
 
 ### [2026-02-13] Continual Improvement Audit Loop
 
@@ -4124,7 +4133,7 @@ Create a plugin architecture for aidevops that allows private extension repos (`
 
 1. **Namespaced directories** - Plugins get their own namespace to avoid clashes:
 
-   ```
+   ```text
    ~/.aidevops/agents/
    ├── tools/              # Main repo
    ├── pro.md              # Plugin entry point (like wordpress.md)
@@ -4137,7 +4146,7 @@ Create a plugin architecture for aidevops that allows private extension repos (`
 
 2. **Plugin structure mirrors main** - Same `.agents/` pattern:
 
-   ```
+   ```text
    ~/Git/aidevops-pro/
    ├── AGENTS.md           # Points to main framework
    ├── README.md
@@ -7485,7 +7494,7 @@ No existing aidevops integration covers secure messaging at this level. Matrix (
 
 **Bot API Architecture:**
 
-```
+```text
 User (SimpleX mobile/desktop/CLI)
     |
     | SimpleX Protocol (E2E encrypted, no user IDs)
