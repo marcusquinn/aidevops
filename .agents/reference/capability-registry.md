@@ -2,7 +2,7 @@
 
 # Capability Registry
 
-Catalogued capabilities: **14**
+Catalogued capabilities: **15**
 
 | Capability | Owner | Runtimes | Mandatory readiness | Fallback |
 |---|---|---|---|---|
@@ -17,6 +17,7 @@ Catalogued capabilities: **14**
 | `youtube-approved-upload` | Content | opencode, claude-code | deployed, configured, authenticated, authorized, reachable, usable | `gated-no-mutation` |
 | `approval-bound-social-publishing` | Content | opencode, claude-code | deployed, configured, authenticated, authorized, reachable, usable | `approval-required-manual-handoff` |
 | `campaign-growth-orchestration` | Aidevops | opencode, claude-code | deployed, runtime_compatible, tool_visible | `evidence-only-manual-handoff` |
+| `posthog-product-analytics` | Product | opencode | deployed, enabled, authenticated, authorized, reachable, runtime_compatible, tool_visible, usable | `posthog-ui-or-export` |
 | `accounting-operations` | Business | opencode, claude-code | deployed, runtime_compatible | `manual-accounting-workpaper` |
 | `quickfile-accounting` | Business | opencode, claude-code | deployed, installed, configured, authenticated, authorized, reachable, runtime_compatible, tool_visible, usable | `accounting-export-workpaper` |
 | `vault-operations` | Vault | opencode, claude-code | deployed, configured, enabled, authenticated, authorized, usable | `redacted-manual-handoff` |
