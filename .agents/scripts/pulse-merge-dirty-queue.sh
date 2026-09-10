@@ -31,6 +31,17 @@ _pulse_merge_queue_enqueue() {
 	return $?
 }
 
+_pulse_merge_queue_defer() {
+	local repo="$1" pr="$2"
+	if [[ "${AIDEVOPS_PULSE_MERGE_DIRTY_QUEUE_ENABLED:-0}" != 1 || "${DRY_RUN:-0}" == 1 ]]; then
+		printf 'legacy\n'
+		return 0
+	fi
+	_pulse_merge_queue_enabled || return 1
+	python3 "$_PULSE_MERGE_DIRTY_HELPER" defer "$repo" "$pr"
+	return $?
+}
+
 # Outputs are caller-local dynamic-scope variables. Context is deliberately not
 # exported, and a borrowed claim must match the current Bash process and target.
 _pulse_merge_queue_begin() {

@@ -18,6 +18,7 @@ from gh_transport_budget import private_directory, process_birth
 
 
 MAX_HINTS = 4096
+MAX_DEFERRED_HINTS = 4096
 RETENTION_SECONDS = 604800
 
 
@@ -57,7 +58,11 @@ class Queue:
             repo TEXT NOT NULL, pr INTEGER NOT NULL, generation TEXT NOT NULL,
             updated REAL NOT NULL, wake_until REAL NOT NULL DEFAULT 0,
             nonce TEXT NOT NULL DEFAULT '', pid INTEGER NOT NULL DEFAULT 0,
-            birth TEXT NOT NULL DEFAULT '', PRIMARY KEY(repo,pr))""")
+            birth TEXT NOT NULL DEFAULT '', durable INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY(repo,pr))""")
+        columns = {row[1] for row in self.db.execute("PRAGMA table_info(work)")}
+        if "durable" not in columns:
+            self.db.execute("ALTER TABLE work ADD COLUMN durable INTEGER NOT NULL DEFAULT 0")
 
     def row(self, repo: str, pr: int):
         row = self.db.execute("SELECT * FROM work WHERE repo=? AND pr=?", (repo, pr)).fetchone()
@@ -66,30 +71,33 @@ class Queue:
             return self.db.execute("SELECT * FROM work WHERE repo=? AND pr=?", (repo, pr)).fetchone()
         return row
 
-    def capacity(self, now: float) -> None:
+    def capacity(self, now: float, durable: bool = False) -> None:
         # Expiry removes hints, not GitHub work. Polling remains authoritative.
         self.db.execute("DELETE FROM work WHERE nonce='' AND updated<?", (now - RETENTION_SECONDS,))
-        if self.db.execute("SELECT count(*) FROM work").fetchone()[0] >= MAX_HINTS:
+        limit = MAX_DEFERRED_HINTS if durable else MAX_HINTS
+        if self.db.execute("SELECT count(*) FROM work WHERE durable=?", (int(durable),)).fetchone()[0] >= limit:
             # Preserve active leases, but let a newer exact target replace the
-            # oldest idle hint. Broad polling remains the recovery path for the
-            # evicted target and the queue stays strictly bounded.
+            # oldest idle hint within the same tier. Deferred-route capacity is
+            # independent, so ordinary event churn cannot evict durable retries.
             oldest = self.db.execute(
-                "SELECT repo,pr FROM work WHERE nonce='' ORDER BY updated ASC LIMIT 1"
+                "SELECT repo,pr FROM work WHERE durable=? AND nonce='' ORDER BY updated ASC LIMIT 1",
+                (int(durable),),
             ).fetchone()
             if not oldest:
                 raise ValueError("queue capacity reached; polling recovery required")
             self.db.execute("DELETE FROM work WHERE repo=? AND pr=?", (oldest["repo"], oldest["pr"]))
 
-    def enqueue(self, repo: str, pr: int, now: float) -> str:
+    def enqueue(self, repo: str, pr: int, now: float, durable: bool = False) -> str:
         repo = repo.lower()
         row = self.row(repo, pr)
         if not row:
-            self.capacity(now)
-            self.db.execute("INSERT INTO work(repo,pr,generation,updated) VALUES(?,?,?,?)",
-                            (repo, pr, "", now))
+            self.capacity(now, durable)
+            self.db.execute("INSERT INTO work(repo,pr,generation,updated,durable) VALUES(?,?,?,?,?)",
+                            (repo, pr, "", now, int(durable)))
         wake = not row or (not row["nonce"] and row["wake_until"] <= now)
-        self.db.execute("UPDATE work SET generation=?,updated=?,wake_until=? WHERE repo=? AND pr=?",
-                        (uuid.uuid4().hex, now, now + 30 if wake else (row["wake_until"] if row else 0), repo, pr))
+        self.db.execute("UPDATE work SET generation=?,updated=?,wake_until=?,durable=max(durable,?) WHERE repo=? AND pr=?",
+                        (uuid.uuid4().hex, now, now + 30 if wake else (row["wake_until"] if row else 0),
+                         int(durable), repo, pr))
         return "wake" if wake else "coalesced"
 
     def claim(self, repo: str, pr: int, pid: int, now: float) -> dict | None:
@@ -143,6 +151,8 @@ def main(args: list[str]) -> int:
         output = None
         if command == "enqueue" and len(args) == 3:
             output = queue.enqueue(*target(args[1], args[2]), now)
+        elif command == "defer" and len(args) == 3:
+            output = queue.enqueue(*target(args[1], args[2]), now, durable=True)
         elif command == "claim" and len(args) == 4:
             receipt = queue.claim(*target(args[1], args[2]), int(args[3]), now)
             if receipt is None:

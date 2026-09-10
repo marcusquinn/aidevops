@@ -62,6 +62,7 @@ _PULSE_MERGE_PROCESS_LOADED=1
 _PMP_ORIGIN_INTERACTIVE_PATTERN=",origin:interactive,"
 _PMP_ORIGIN_WORKER_PATTERN=",origin:worker,"
 _PMP_ORIGIN_TAKEOVER_PATTERN=",origin:worker-takeover,"
+_PMP_CHECK_FAILURE="FAILURE"
 
 #######################################
 # Return the persistent state path for one interactive PR's semantic
@@ -241,9 +242,9 @@ _pmp_classify_pr_backlog_state() {
 	local _RS=$'\x1e'
 	local number="" mergeable="" review_decision="" is_draft="" labels="" failed_count="" pending_count=""
 	IFS="$_RS" read -r number mergeable review_decision is_draft labels failed_count pending_count < <(
-		printf '%s' "$pr_obj" | jq -r '
+		printf '%s' "$pr_obj" | jq -r --arg failure "$_PMP_CHECK_FAILURE" '
 			def up(v): (v // "" | ascii_upcase);
-			def failed: [.statusCheckRollup[]? | select(up(.conclusion) == "FAILURE" or up(.state) == "FAILURE")] | length;
+			def failed: [.statusCheckRollup[]? | select(up(.conclusion) == $failure or up(.state) == $failure)] | length;
 			def pending: [.statusCheckRollup[]? | select(up(.status) == "QUEUED" or up(.status) == "IN_PROGRESS" or up(.state) == "PENDING" or up(.state) == "EXPECTED" or ((up(.conclusion) == "") and (up(.state) != "SUCCESS") and (up(.status) != "COMPLETED")))] | length;
 			"\(.number // "")\u001e\(.mergeable // "UNKNOWN")\u001e\(if ((has("reviewDecision") | not) or .reviewDecision == null or (.reviewDecision | tostring | length) == 0) then "UNKNOWN" else .reviewDecision end)\u001e\(.isDraft // false)\u001e\([.labels[].name] | join(","))\u001e\(failed)\u001e\(pending)"' 2>/dev/null
 	)
@@ -288,10 +289,10 @@ _pmp_enrich_prs_with_rest_check_status() {
 	local status_json=""
 	status_json=$(gh_pr_check_status_rest_batch "$repo_slug" "$pr_json" 2>/dev/null) || status_json="[]"
 	[[ -n "$status_json" && "$status_json" != "null" ]] || status_json="[]"
-	jq -n --argjson prs "$pr_json" --argjson statuses "$status_json" '
+	jq -n --arg failure "$_PMP_CHECK_FAILURE" --argjson prs "$pr_json" --argjson statuses "$status_json" '
 		def rollup($s):
 			if $s == "PASS" then [{status:"COMPLETED", conclusion:"SUCCESS", state:"SUCCESS"}]
-			elif $s == "FAIL" then [{status:"COMPLETED", conclusion:"FAILURE", state:"FAILURE"}]
+			elif $s == "FAIL" then [{status:"COMPLETED", conclusion:$failure, state:$failure}]
 			elif $s == "PENDING" then [{status:"IN_PROGRESS", conclusion:null, state:"PENDING"}]
 			else [] end;
 		$prs | map(. as $pr | ($statuses | map(select(.number == $pr.number)) | last | .status // "none") as $s | $pr + {statusCheckRollup: rollup($s)})' \
@@ -1304,7 +1305,9 @@ _route_pr_preserve_deferred_retry() {
 	local queue_action="unavailable"
 
 	[[ "$route_rc" -eq "${PULSE_FEEDBACK_ROUTE_DEFERRED_RC:-75}" ]] || return "$route_rc"
-	if declare -F _pulse_merge_queue_enqueue >/dev/null 2>&1; then
+	if declare -F _pulse_merge_queue_defer >/dev/null 2>&1; then
+		queue_action=$(_pulse_merge_queue_defer "$repo_slug" "$pr_number" 2>>"$LOGFILE") || queue_action="unavailable"
+	elif declare -F _pulse_merge_queue_enqueue >/dev/null 2>&1; then
 		queue_action=$(_pulse_merge_queue_enqueue "$repo_slug" "$pr_number" 2>>"$LOGFILE") || queue_action="unavailable"
 	fi
 	echo "[pulse-wrapper] _route_pr_to_fix_worker: preserved deferred ${kind} route for PR #${pr_number} and issue #${linked_issue} in ${repo_slug} (retry_hint=${queue_action})" >>"$LOGFILE"

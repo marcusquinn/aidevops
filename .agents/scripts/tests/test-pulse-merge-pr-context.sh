@@ -127,6 +127,7 @@ install_stubs() {
 	_dispatch_pr_fix_worker() { local pr_number="$1"; local repo_slug="$2"; local linked_issue="$3"; printf 'dispatch-review %s %s %s\n' "$pr_number" "$repo_slug" "$linked_issue" >>"$GH_CALL_LOG"; return "$DISPATCH_RC"; }
 	_dispatch_conflict_fix_worker() { local pr_number="$1"; local repo_slug="$2"; local linked_issue="$3"; printf 'dispatch-conflict %s %s %s\n' "$pr_number" "$repo_slug" "$linked_issue" >>"$GH_CALL_LOG"; return "$DISPATCH_RC"; }
 	_pulse_merge_queue_enqueue() { local repo_slug="$1"; local pr_number="$2"; printf 'retry-hint %s %s\n' "$repo_slug" "$pr_number" >>"$GH_CALL_LOG"; printf 'coalesced\n'; return 0; }
+	_pulse_merge_queue_defer() { local repo_slug="$1"; local pr_number="$2"; printf 'retry-hint %s %s\n' "$repo_slug" "$pr_number" >>"$GH_CALL_LOG"; printf 'coalesced\n'; return 0; }
 	_pulse_merge_queue_finish() { local result="$1"; printf 'retry-finish %s\n' "$result" >>"$GH_CALL_LOG"; return 0; }
 	_check_required_checks_has_terminal_failure() { local repo_slug="$1"; local pr_number="$2"; local expected_head_sha="${3:-}"; printf 'terminal-check %s %s %s\n' "$repo_slug" "$pr_number" "$expected_head_sha" >>"$GH_CALL_LOG"; return "$TERMINAL_CHECK_RC"; }
 	_check_required_checks_have_pending_or_in_progress() { local repo_slug="$1"; local pr_number="$2"; local expected_head_sha="${3:-}"; printf 'pending-check %s %s %s\n' "$repo_slug" "$pr_number" "$expected_head_sha" >>"$GH_CALL_LOG"; return "$PENDING_CHECK_RC"; }
