@@ -85,6 +85,9 @@ For the light task, narrow the objective to arithmetic and select `effort: simpl
 Expected parent-verifiable evidence is 2% versus 3%, a 1 percentage-point difference;
 these counts alone do not establish causality. Host completion is not acceptance.
 Return missing evidence/capability as unavailable and cancellation as cancelled.
+When a parent has explicit acceptance evidence, it may append one
+`subagent.acceptance` runtime event for the bounded contribution/objective; never
+emit it per turn or infer it from a child terminal response.
 
 Canonical identity reuses the t18405 primary-delivery contract: only a configured
 primary whose resolved prompt equals its canonical source is eligible. The focused
