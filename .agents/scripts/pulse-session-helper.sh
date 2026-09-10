@@ -427,7 +427,7 @@ _stop_force_kill_workers() {
 	print_warning "Force mode: sending SIGTERM to all workers..."
 	local killed=0
 	while IFS= read -r line; do
-		local pid _worker_details
+		local pid="" _worker_details=""
 		read -r pid _worker_details <<<"$line"
 		if [[ -n "$pid" ]]; then
 			kill "$pid" 2>/dev/null || true
