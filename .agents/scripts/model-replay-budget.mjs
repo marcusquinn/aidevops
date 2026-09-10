@@ -60,11 +60,8 @@ export function loadBudgetReceipt(experimentDir, plan) {
   }
   const receipt = JSON.parse(readFileSync(path, "utf8"));
   if (receipt.receipt_sha256 !== receiptDigest(receipt)
-    || receipt.plan_sha256 !== plan.plan_sha256
-    || stableJson(receipt.budget) !== stableJson(validateBudgetContract(plan.budget))
-    || !Array.isArray(receipt.launched_cell_ids)
-    || !Array.isArray(receipt.completed_cell_ids)
-    || receipt.completed_cell_ids.some((cellID) => !receipt.launched_cell_ids.includes(cellID))) {
+    || !receiptMatchesPlan(receipt, plan)
+    || !receiptLaunchesAreValid(receipt)) {
     throw new Error("Model replay budget receipt integrity check failed");
   }
   return receipt;
@@ -73,6 +70,17 @@ export function loadBudgetReceipt(experimentDir, plan) {
 function persistReceipt(experimentDir, receipt) {
   receipt.receipt_sha256 = receiptDigest(receipt);
   writeJson(receiptPath(experimentDir), receipt);
+}
+
+function receiptMatchesPlan(receipt, plan) {
+  return receipt.plan_sha256 === plan.plan_sha256
+    && stableJson(receipt.budget) === stableJson(validateBudgetContract(plan.budget));
+}
+
+function receiptLaunchesAreValid(receipt) {
+  return Array.isArray(receipt.launched_cell_ids)
+    && Array.isArray(receipt.completed_cell_ids)
+    && !receipt.completed_cell_ids.some((cellID) => !receipt.launched_cell_ids.includes(cellID));
 }
 
 export function reserveCellLaunch(experimentDir, plan, receipt, cell) {
