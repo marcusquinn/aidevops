@@ -80,11 +80,22 @@ def probe_value(spec: dict[str, Any], agents_dir: Path) -> str:
     return handler(spec, agents_dir) if handler else "unknown"
 
 
-def assess(capability: dict[str, Any], dimensions: list[str], runtime: str, fixture: dict[str, Any] | None, agents_dir: Path) -> dict[str, Any]:
+def assess(
+    capability: dict[str, Any],
+    dimensions: list[str],
+    runtime: str,
+    fixture: dict[str, Any] | None,
+    agents_dir: Path,
+    live_evidence: dict[str, str] | None = None,
+) -> dict[str, Any]:
     readiness = dict.fromkeys(dimensions, "unknown")
     readiness["catalogued"] = "true"
     readiness["runtime_compatible"] = "true" if runtime in capability["runtimes"] else ("unknown" if runtime == "unknown" else "false")
-    readiness.update({dimension: probe_value(spec, agents_dir) for dimension, spec in capability.get("probes", {}).items()})
+    evidence = live_evidence or {}
+    readiness.update({
+        dimension: evidence.get(dimension, "unknown") if "live" in spec else probe_value(spec, agents_dir)
+        for dimension, spec in capability.get("probes", {}).items()
+    })
     overrides = (fixture or {}).get("capabilities", {}).get(capability["name"], {})
     readiness.update({dimension: value for dimension, value in overrides.items() if dimension in readiness and value in STATES})
     missing = [dimension for dimension in capability["required"] if readiness[dimension] != "true"]

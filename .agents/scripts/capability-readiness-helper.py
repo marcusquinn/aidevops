@@ -7,6 +7,8 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
+import subprocess
 import sys
 from typing import Any
 
@@ -16,6 +18,7 @@ from capability_registry_validation import validate
 SCRIPT_DIR = Path(__file__).resolve().parent
 AGENTS_DIR = SCRIPT_DIR.parent
 DEFAULT_REGISTRY = AGENTS_DIR / "configs" / "capability-registry.json"
+GITHUB_TARGET_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -26,6 +29,34 @@ def load_json(path: Path) -> dict[str, Any]:
 def capability_for(registry: dict[str, Any], requested: str) -> dict[str, Any] | None:
     key = requested.casefold()
     return next((item for item in registry["capabilities"] if key in {name.casefold() for name in [item["name"], *item.get("aliases", [])]}), None)
+
+
+def github_live_evidence(target: str, operation: str) -> tuple[dict[str, str], dict[str, str]]:
+    if not GITHUB_TARGET_PATTERN.fullmatch(target):
+        raise ValueError("GitHub target must be OWNER/REPO")
+    try:
+        result = subprocess.run(  # nosec B603
+            ["gh", "api", f"repos/{target}"],
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=15,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return {"reachable": "false", "authorized": "unknown"}, {"target": target, "operation": operation}
+    if result.returncode != 0:
+        return {"reachable": "false", "authorized": "unknown"}, {"target": target, "operation": operation}
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return {"reachable": "false", "authorized": "unknown"}, {"target": target, "operation": operation}
+    permissions = payload.get("permissions") or {}
+    allowed = operation == "read"
+    if operation == "write":
+        allowed = bool(permissions.get("push") or permissions.get("maintain") or permissions.get("admin"))
+    elif operation == "admin":
+        allowed = bool(permissions.get("admin"))
+    return {"reachable": "true", "authorized": "true" if allowed else "false"}, {"target": target, "operation": operation}
 
 
 def generate(registry: dict[str, Any], output: Path) -> None:
@@ -47,15 +78,17 @@ def parse_args() -> argparse.Namespace:
         child = sub.add_parser(command)
         child.add_argument("capability", nargs="?" if command == "query" else None)
         child.add_argument("--runtime", choices=["opencode", "claude-code"])
+        child.add_argument("--target")
+        child.add_argument("--operation", choices=["read", "write", "admin"], default="read")
     sub.add_parser("check")
     generator = sub.add_parser("generate")
     generator.add_argument("--output", type=Path, default=AGENTS_DIR / "reference" / "capability-registry.md")
     return parser.parse_args()
 
 
-def route_output(result: dict[str, Any]) -> tuple[dict[str, Any], int]:
+def route_output(result: dict[str, Any], evidence_scope: dict[str, str] | None = None) -> tuple[dict[str, Any], int]:
     ready = result["route_ready"]
-    payload = {"decision": "route" if ready else "fallback", "capability": result["name"], "owner": result["owner"] if ready else None, "fallback": None if ready else result["fallback"], "reason": None if ready else "mandatory readiness is false or unknown", "coverage_impact": result["missing_required"], "readiness": result["readiness"]}
+    payload = {"decision": "route" if ready else "fallback", "capability": result["name"], "owner": result["owner"] if ready else None, "fallback": None if ready else result["fallback"], "reason": None if ready else "mandatory readiness is false or unknown", "coverage_impact": result["missing_required"], "readiness": result["readiness"], "evidence_scope": evidence_scope}
     return payload, 0 if ready else 3
 
 
@@ -75,9 +108,17 @@ def main() -> int:
         return 2
     runtime = args.runtime or os.environ.get("AIDEVOPS_RUNTIME", "unknown").casefold()
     fixture = load_json(args.fixture) if args.fixture else None
+    live_evidence = None
+    evidence_scope = None
+    if selected and selected["name"] == "github-operations" and args.target:
+        try:
+            live_evidence, evidence_scope = github_live_evidence(args.target, args.operation)
+        except ValueError as error:
+            print(json.dumps({"error": "invalid_target", "detail": str(error)}))
+            return 2
     capabilities = [selected] if selected else registry["capabilities"]
-    results = [assess(item, registry["dimensions"], runtime, fixture, AGENTS_DIR) for item in capabilities]
-    payload, status = route_output(results[0]) if args.command == "route" else ({"schema_version": registry["schema_version"], "runtime": runtime, "capabilities": results}, 0)
+    results = [assess(item, registry["dimensions"], runtime, fixture, AGENTS_DIR, live_evidence if item["name"] == "github-operations" else None) for item in capabilities]
+    payload, status = route_output(results[0], evidence_scope) if args.command == "route" else ({"schema_version": registry["schema_version"], "runtime": runtime, "capabilities": results}, 0)
     print(json.dumps(payload, indent=2))
     return status
 
