@@ -72,20 +72,25 @@ function validateAcceptance(payload) {
   requiredValue(payload.source, "source");
   requiredValue(payload.observed_at, "observed_at");
   requiredValue(payload.policy_version, "policy_version");
-  if (!Number.isSafeInteger(payload.intervention_count) || payload.intervention_count < 0 || payload.intervention_count > 1000) {
+  const interventions = payload.intervention_count;
+  if (!Number.isSafeInteger(interventions) || interventions < 0 || interventions > 1000) {
     throw new TypeError("intervention_count must be a bounded non-negative integer");
   }
   opaqueId(payload.repair_contribution_id, "repair_contribution_id", { required: false });
 }
 
+const OBJECTIVE_VALIDATORS = Object.freeze({
+  "objective.outcome": validateOutcome,
+  "objective.session.attached": validateAttachment,
+  "objective.started": requireObjectiveIdentity,
+  "subagent.acceptance": validateAcceptance,
+});
+
 /** Reject malformed objective evidence before it can be silently recorded. */
 export function validateObjectiveRuntimeEvent(eventType, payload = {}) {
   if (!OBJECTIVE_EVENT_TYPES.has(eventType)) return;
   if (payload.objective_version !== 1) throw new TypeError("objective evidence requires objective_version 1");
-  if (eventType === "objective.started") requireObjectiveIdentity(payload);
-  if (eventType === "objective.session.attached") validateAttachment(payload);
-  if (eventType === "objective.outcome") validateOutcome(payload);
-  if (eventType === "subagent.acceptance") validateAcceptance(payload);
+  OBJECTIVE_VALIDATORS[eventType](payload);
 }
 
 export function isObjectiveRuntimeEvent(eventType) {
