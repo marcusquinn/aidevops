@@ -10,6 +10,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.352] - 2026-09-10
+
+### Added
+
+- add guarded Wasabi storage integration (#31719)
+
+### Changed
+
+- Maintenance: mark t18423 complete (pr:#31721 completed:2026-09-10) (#31720)
+- Documentation: specify worker lease-attempt efficiency metrics
+
+### Fixed
+
+- fix Pulse session worker detection
+
 ## [3.32.351] - 2026-09-10
 
 ### Added
