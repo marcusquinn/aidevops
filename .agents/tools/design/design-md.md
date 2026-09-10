@@ -46,6 +46,7 @@ Upstream `@google/design.md` v0.2.0 and follow-up commit `18508f2` were reviewed
 | `tools/design/brand-identity.md` | Strategic brand profile (8 dimensions) | **Upstream** — feeds DESIGN.md generation |
 | `tools/design/ui-ux-inspiration.md` | URL study + interview workflow | **Discovery** — finds and studies references |
 | `tools/design/design-md-from-links.md` | Website/brand links to DESIGN.md | **Producer** — extracts, validates, previews, and hands off tokens |
+| `tools/design/distinctive-ui.md` | Brief-led composition, audit, redesign and study | **Design judgment** — avoids generic templates while preserving the system |
 | `tools/design/report-presentation.md` | Report presentation tokens/components | **Specialisation** — Markdown, HTML, and PDF-ready reports |
 | `tools/design/design-inspiration.md` | 60+ curated gallery resources | **Discovery** |
 | `tools/design/colour-palette.md` | Palette generation and spinning | **Tool** |
@@ -56,6 +57,12 @@ Upstream `@google/design.md` v0.2.0 and follow-up commit `18508f2` were reviewed
 | `tools/design/ui-ux-catalogue.toon` | 36+ UI style patterns | **Data** |
 
 **Workflow** (apply in order):
+
+For a design audit or reference study without implementation/export authority,
+use `tools/design/distinctive-ui.md` first; do not create or modify DESIGN.md.
+For new page composition, structural redesign or "less generic" requests, load
+that guide before choosing the layout. It records decisions in this existing
+format, not a competing token schema.
 
 1. **Check** — does `DESIGN.md` exist in project root? If yes, use it. If no, create one.
 2. **Load context** — for new brand/style guides, read the focused design references before drafting: `brand-identity.md`, `colour-palette.md`, `design-md-from-links.md`, `ui-ux-inspiration.md`, `ui-ux-catalogue.toon`, and `report-presentation.md` when HTML/PDF reports are in scope. Use `design-inspiration.md`, `open-design.md`, and `open-design-ingestion.md` for discovery/artifact workflows only when relevant.

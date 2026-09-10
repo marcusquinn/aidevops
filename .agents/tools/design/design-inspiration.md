@@ -186,6 +186,15 @@ Interactive tools for generating palettes and font pairings. See also `tools/des
 2. **Check Email Love** for newsletter design trends
 3. **Use React Email** components to implement (see `tools/ui/react-email.md`)
 
+## Brief-Led Composition and Critique
+
+[Hallmark](https://github.com/nutlope/hallmark) (MIT) contributes a structure-first
+approach to avoiding generic generated UI. Use the aidevops adaptation in
+`tools/design/distinctive-ui.md` for build, audit, redesign and study, with existing
+brand/accessibility constraints intact. See `tools/design/hallmark.md` for the
+value/overlap assessment, pinned provenance and deliberate departures from upstream.
+No separate install is needed.
+
 ## AI-Readable Design Systems (DESIGN.md)
 
 For design systems that coding agents can read directly, see the **DESIGN.md library**:
