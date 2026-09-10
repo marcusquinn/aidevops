@@ -36,8 +36,8 @@ test("registers only the explicit MCP activation profiles", () => {
   const config = {};
   const count = registerOnDemandMcpAgents(config, AGENTS_DIR);
 
-  assert.equal(count, 4);
-  assert.deepEqual(Object.keys(config.agent), ["playwriter", "playwright", "quickfile", "blender"]);
+  assert.equal(count, 5);
+  assert.deepEqual(Object.keys(config.agent), ["playwriter", "playwright", "quickfile", "blender", "backblaze-b2"]);
   assert.equal(config.tools.aidevops_mcp, false);
   assert.equal(config.agent.playwriter.mode, "subagent");
   assert.equal(config.agent.playwriter.tools.aidevops_mcp, true);
@@ -72,6 +72,13 @@ test("registers only the explicit MCP activation profiles", () => {
   assert.match(config.agent.quickfile.prompt, /# QuickFile Agent/);
   assert.match(config.agent.quickfile.prompt, /business\/accounting\.md/);
   assert.doesNotMatch(config.agent.quickfile.prompt, /browser tab/i);
+  assert.equal(config.agent["backblaze-b2"].mode, "subagent");
+  assert.equal(config.agent["backblaze-b2"].tools.aidevops_mcp, true);
+  assert.equal(config.agent["backblaze-b2"].tools["backblaze-b2_*"], true);
+  assert.equal(config.agent["backblaze-b2"].permission.aidevops_mcp, "allow");
+  assert.equal(config.agent["backblaze-b2"].permission["backblaze-b2_*"], "allow");
+  assert.match(config.agent["backblaze-b2"].prompt, /connect.*backblaze-b2/);
+  assert.match(config.agent["backblaze-b2"].prompt, /# Backblaze B2 Agent/);
 });
 
 test("keeps Playwriter reachable from the Build+ routing profile", () => {

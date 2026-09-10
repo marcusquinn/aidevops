@@ -146,6 +146,7 @@ with supplied evidence; selection, exclusions and envelope: `reference/agent-rou
 | Browser automation | `tools/browser/browser-automation.md` |
 | Accessibility | `tools/accessibility/accessibility-audit.md` |
 | Local dev / .local / ports / proxy / HTTPS / LocalWP | `services/hosting/local-hosting.md` |
+| Backblaze B2 / B2 cloud storage / object storage | `services/hosting/backblaze-b2.md` |
 | Node.js/Next server runtime, package-manager maintenance, LTS updates, CPU/RAM/heap or process operations | `tools/runtime/node-server-admin.md` |
 
 ## Planning File Access

@@ -22,7 +22,7 @@ assert_json() {
 }
 
 cat >"$CONFIG" <<'JSON'
-{"version":1,"accounts":{"fixture":{"provider":"s3-compatible","remote":"fixture_remote","endpoint":"https://s3.example.invalid","region":"test-1","buckets":["backup"]}}}
+{"version":1,"accounts":{"fixture":{"provider":"s3-compatible","remote":"fixture_remote","endpoint":"https://s3.example.invalid","region":"test-1","buckets":["backup"]},"b2":{"provider":"backblaze-b2","remote":"b2_remote","endpoint":"https://s3.us-west-000.backblazeb2.com","region":"us-west-000","buckets":["b2-backup"]}}}
 JSON
 cat >"$RCLONE" <<'SH'
 #!/usr/bin/env bash
@@ -42,6 +42,8 @@ run_helper() {
 
 result=$(run_helper readiness fixture)
 assert_json "$result" '.status == "ok" and .data.ready == true' "readiness did not return stable JSON"
+result=$(run_helper readiness b2)
+assert_json "$result" '.data.provider == "backblaze-b2"' "Backblaze B2 profile was not accepted"
 result=$(run_helper list-buckets fixture)
 assert_json "$result" '.data[0].bucket == "backup"' "bucket listing did not normalize JSON"
 result=$(run_helper list-objects fixture backup --limit 1)
