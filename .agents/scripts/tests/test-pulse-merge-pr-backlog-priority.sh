@@ -66,6 +66,11 @@ gh() {
 	return 1
 }
 
+_pulse_merge_ready_pr_json_fields() {
+	printf '%s' 'number,state,author,title,isDraft,labels,updatedAt,headRefOid,headRefName,baseRefName,createdAt'
+	return 0
+}
+
 printf '%s=== GH#22303: PR backlog priority tests ===%s\n' "$TEST_BLUE" "$TEST_NC"
 
 merge_ready_pr='{"number":1,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[],"statusCheckRollup":[{"status":"COMPLETED","conclusion":"SUCCESS"}]}'
@@ -139,6 +144,20 @@ sorted_numbers=$(_pmp_sort_prs_by_backlog_priority "[$human_pr,$dirty_pr,$checks
 assert_eq "2b: dirty hints break ties without overriding readiness priorities" \
 	"6,1,3,2,4,5" "$sorted_numbers"
 unset -f _pulse_merge_queue_priority_keys
+
+_pulse_merge_queue_priority_keys() { printf '|99|'; return 0; }
+gh_pr_view() {
+	local pr_number="$1"
+	[[ "$pr_number" == 99 ]] || return 1
+	printf '%s\n' '{"number":99,"state":"OPEN","mergeable":"CONFLICTING","reviewDecision":"APPROVED","isDraft":false,"labels":[],"statusCheckRollup":[]}'
+	return 0
+}
+queued_json=$(_pmp_include_queued_pr_targets owner/repo "[$merge_ready_pr]")
+assert_eq "2c: due exact retry target outside the broad list is prepended" \
+	"99,1" "$(printf '%s' "$queued_json" | jq -r '[.[].number] | join(",")')"
+assert_eq "2d: due exact retry target is processed before ordinary backlog priorities" \
+	"99,1" "$(_pmp_sort_prs_by_backlog_priority "$queued_json" owner/repo | jq -r '[.[].number] | join(",")')"
+unset -f _pulse_merge_queue_priority_keys gh_pr_view
 
 : >"$LOGFILE"
 _pmp_log_pr_backlog_counts "owner/repo" "$unsorted_json"
