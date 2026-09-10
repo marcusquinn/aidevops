@@ -414,6 +414,13 @@ cmd_request() {
 	tool="$(jq -r '.tool' <<<"$capability_json")"
 	risk_level="$(jq -r '.risk_level' <<<"$capability_json")"
 	grantable="$(jq -r '.grantable' <<<"$capability_json")"
+	if [[ "$grantable" != "true" ]]; then
+		permission_record_blocker "permission_request_non_grantable" "$PERMISSION_BLOCKER_STATUS" \
+			"permission_non_grantable" "$PERMISSION_BLOCKER_TRUE" "$issue_number" "$repo_slug" "$session_key" "" \
+			"Permission request cannot be represented as a scoped maintainer grant" \
+			"$permission" "$tool" "$risk_level" "$grantable"
+		return 1
+	fi
 	if ! request_id=$(permission_post_request "$capture_file" "$issue_number" "$repo_slug" "$session_key" "$work_dir"); then
 		permission_record_blocker "$PERMISSION_PERSISTENCE_FAILED_EVENT" "$PERMISSION_BLOCKER_STATUS" \
 			"github_request_comment_failed" "$PERMISSION_BLOCKER_TRUE" "$issue_number" "$repo_slug" "$session_key" "" \
