@@ -14,7 +14,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { test } from "node:test";
@@ -33,7 +33,8 @@ const z = { enum() { return schemaNode; } };
 const tool = (definition) => definition;
 
 test("registers only the explicit MCP activation profiles", () => {
-  const config = {};
+  const config = { mcp: {}, tools: {} };
+  registerMcpServers(config);
   const count = registerOnDemandMcpAgents(config, AGENTS_DIR);
 
   assert.equal(count, 5);
@@ -79,6 +80,25 @@ test("registers only the explicit MCP activation profiles", () => {
   assert.equal(config.agent["backblaze-b2"].permission["backblaze-b2_*"], "allow");
   assert.match(config.agent["backblaze-b2"].prompt, /connect.*backblaze-b2/);
   assert.match(config.agent["backblaze-b2"].prompt, /# Backblaze B2 Agent/);
+  assert.deepEqual(config.mcp["backblaze-b2"], {
+    type: "local",
+    command: [join(homedir(), ".aidevops", "agents", "scripts", "backblaze-b2-mcp-launcher.sh")],
+    enabled: false,
+  });
+  assert.equal(config.tools["backblaze-b2_*"], false);
+});
+
+test("keeps custom Backblaze B2 commands disconnected", () => {
+  const config = {
+    mcp: { "backblaze-b2": { type: "local", command: ["custom-b2-mcp"], enabled: true } },
+    tools: { "backblaze-b2_*": true },
+  };
+
+  registerMcpServers(config);
+
+  assert.deepEqual(config.mcp["backblaze-b2"].command, ["custom-b2-mcp"]);
+  assert.equal(config.mcp["backblaze-b2"].enabled, false);
+  assert.equal(config.tools["backblaze-b2_*"], false);
 });
 
 test("keeps Playwriter reachable from the Build+ routing profile", () => {
