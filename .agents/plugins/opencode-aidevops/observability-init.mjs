@@ -38,8 +38,8 @@ export function isSchemaInitialized(dbPath) {
        "AND name IN ('llm_requests','tool_calls','session_summaries','runtime_events','runtime_event_archives')) AS tbls, " +
         "(SELECT COUNT(*) FROM pragma_table_info('tool_calls') " +
         "WHERE name IN ('intent','outcome_category')) AS tool_call_cols, " +
-       "(SELECT COUNT(*) FROM pragma_table_info('llm_requests') WHERE name IN " +
-        "('parent_session_id','routing_tier','routing_candidate_index','routing_attempt','routing_reason','routing_escalated','routing_population','aidevops_version','pricing_version')) AS routing_cols, " +
+        "(SELECT COUNT(*) FROM pragma_table_info('llm_requests') WHERE name IN " +
+         "('parent_session_id','routing_tier','routing_candidate_index','routing_attempt','routing_reason','routing_escalated','routing_population','aidevops_version','pricing_version','requested_effort','resolved_effort','observed_effort','effort_source','provider_confirmed_effort','requested_model','observed_model','runtime_name','runtime_version','adapter_version','policy_fingerprint','billing_mode','cost_source','pricing_quality')) AS routing_cols, " +
        "(SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' " +
        "AND name IN ('runtime_events_reject_update','runtime_events_reject_delete'," +
        "'runtime_event_archives_reject_update','runtime_event_archives_reject_delete')) AS guards;"],
@@ -51,7 +51,7 @@ export function isSchemaInitialized(dbPath) {
     ).trim();
     if (!result) return false;
     const [tbls, toolCallCols, routingCols, guards] = result.split("|");
-    return tbls === "5" && toolCallCols === "2" && routingCols === "9" && guards === "4";
+    return tbls === "5" && toolCallCols === "2" && routingCols === "23" && guards === "4";
   } catch {
     return false;
   }
@@ -98,7 +98,21 @@ CREATE TABLE IF NOT EXISTS llm_requests (
   routing_escalated INTEGER DEFAULT 0,
   routing_population TEXT,
   aidevops_version TEXT,
-  pricing_version TEXT
+  pricing_version TEXT,
+  requested_effort TEXT,
+  resolved_effort TEXT,
+  observed_effort TEXT,
+  effort_source TEXT,
+  provider_confirmed_effort TEXT,
+  requested_model TEXT,
+  observed_model TEXT,
+  runtime_name TEXT,
+  runtime_version TEXT,
+  adapter_version TEXT,
+  policy_fingerprint TEXT,
+  billing_mode TEXT,
+  cost_source TEXT,
+  pricing_quality TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_llm_requests_session

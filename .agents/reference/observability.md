@@ -31,6 +31,12 @@ ordinary turns in one child route and increments only for an actual retry or
 capability escalation. Use `aidevops_version` to segment request, token, cost,
 error, and escalation outcomes before and after routing-policy releases.
 
+Each request also keeps nullable provenance: requested, routing-resolved and
+host-observed effort/model values remain distinct; provider-confirmed effort is
+null unless the host actually supplies it. Costs are local estimates and include
+`pricing_quality` (`exact_model`, `fallback`, or `unknown`), so a configured
+variant or fallback price is never reported as provider-confirmed usage.
+
 ### Runtime-event contract
 
 `.agents/scripts/runtime-events.mjs` owns the runtime-neutral envelope and uses
