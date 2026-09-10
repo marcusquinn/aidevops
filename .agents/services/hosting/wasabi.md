@@ -22,7 +22,7 @@ tools:
 - **Type**: S3-compatible object storage, operated through rclone.
 - **Config**: `configs/object-storage-config.json` holds a named Wasabi rclone remote and bucket allowlist; never add credentials to the template.
 - **Commands**: `object-storage-helper.sh [readiness|list-buckets|list-objects|object-info|verify-backups|audit-protection|copy|download] <account> [args]`
-- **Endpoint**: configure only `https://s3.<region>.wasabisys.com`, with `<region>` exactly matching the configured `region`.
+- **Endpoint**: use an official Wasabi service URL. The canonical `https://s3.<region>.wasabisys.com` form must match the configured region; documented primary and regional aliases map to their canonical regions.
 - **MCP**: defer registration. The official beta advertises a broad 140-tool surface spanning storage, IAM, and account governance, but this integration has no verified package pin, license, transport contract, or focused global-denial/agent-isolation evidence.
 
 <!-- AI-CONTEXT-END -->

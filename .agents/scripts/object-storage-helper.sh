@@ -109,11 +109,25 @@ validate_provider_endpoint() {
 		endpoint_region="${BASH_REMATCH[1]}"
 		;;
 	wasabi)
-		[[ "$endpoint" =~ ^https://s3\.([a-z0-9-]+)\.wasabisys\.com$ ]] || {
+		case "$endpoint" in
+		https://s3.wasabisys.com)
+			endpoint_region="us-east-1"
+			;;
+		https://s3.us-east-1.wasabisys.com | https://s3.us-east-2.wasabisys.com | https://s3.us-central-1.wasabisys.com | https://s3.us-west-1.wasabisys.com | https://s3.us-west-2.wasabisys.com | https://s3.ca-central-1.wasabisys.com | https://s3.eu-central-1.wasabisys.com | https://s3.eu-central-2.wasabisys.com | https://s3.eu-west-1.wasabisys.com | https://s3.eu-west-2.wasabisys.com | https://s3.eu-west-3.wasabisys.com | https://s3.eu-south-1.wasabisys.com | https://s3.ap-northeast-1.wasabisys.com | https://s3.ap-northeast-2.wasabisys.com | https://s3.ap-southeast-1.wasabisys.com | https://s3.ap-southeast-2.wasabisys.com)
+			endpoint_region="${endpoint#https://s3.}"
+			endpoint_region="${endpoint_region%.wasabisys.com}"
+			;;
+		https://s3.nl-1.wasabisys.com) endpoint_region="eu-central-1" ;;
+		https://s3.de-1.wasabisys.com) endpoint_region="eu-central-2" ;;
+		https://s3.uk-1.wasabisys.com) endpoint_region="eu-west-1" ;;
+		https://s3.fr-1.wasabisys.com) endpoint_region="eu-west-2" ;;
+		https://s3.uk-2.wasabisys.com) endpoint_region="eu-west-3" ;;
+		https://s3.it-1.wasabisys.com) endpoint_region="eu-south-1" ;;
+		*)
 			fail_json "wasabi_endpoint_invalid"
 			return 1
-		}
-		endpoint_region="${BASH_REMATCH[1]}"
+			;;
+		esac
 		;;
 	*)
 		return 0
