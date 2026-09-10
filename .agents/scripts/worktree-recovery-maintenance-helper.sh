@@ -1309,11 +1309,33 @@ _worktree_recovery_maintenance_no_candidates_json() {
 	printf '%s\n' "$policy_json" | jq -c \
 		--arg schema "$WORKTREE_RECOVERY_MAINTENANCE_RUN_SCHEMA" \
 		--argjson diagnostics "$diagnostics_json" \
-		'{schema:$schema,outcome:"no-candidates",reclaimed_bytes:0,policy:.,diagnostics:$diagnostics,
-		escalation:(if (.pressure_active == true and $diagnostics.sustained_non_reclamation.escalation_threshold_reached == true)
-		then {required:true,reason:"pressure-sustained-no-candidates",authority:"read-only",
-		command:["worktree-helper.sh","recovery","plan","--output","<absolute-new-path>"]}
-		else {required:false,reason:null,authority:null,command:null} end)}'
+		'def process_visibility_count:
+			[($diagnostics.classification_reason_counts.process_evidence_unavailable // 0),
+			($diagnostics.zero_candidate_cycle.reason_counts.process_evidence_unavailable // 0)] | max;
+		def sustained_pressure:
+			.pressure_active == true and
+			$diagnostics.sustained_non_reclamation.escalation_threshold_reached == true;
+		def process_visibility_intervention:
+			sustained_pressure and process_visibility_count > 0;
+		{schema:$schema,
+		outcome:(if process_visibility_intervention then "operator-intervention-required" else "no-candidates" end),
+		reclaimed_bytes:0,policy:.,diagnostics:$diagnostics,
+		unsupported_condition:(if process_visibility_intervention then {
+			code:"unsupported-process-visibility",deletion_authority:false,
+			blocked_archive_observations:process_visibility_count,
+			guidance:[
+				"Run the read-only recovery plan and inspect process-evidence-unavailable entries locally.",
+				"Stop affected same-user processes through their normal process or service controls, then rerun the plan.",
+				"If complete process visibility cannot be restored, retain the archives; automatic permanent deletion is unsupported in this environment."
+			]
+		} else null end),
+		escalation:(if process_visibility_intervention then {
+			required:true,reason:"unsupported-process-visibility",authority:"read-only",
+			command:["worktree-helper.sh","recovery","plan","--output","<absolute-new-path>"]
+		} elif sustained_pressure then {
+			required:true,reason:"pressure-sustained-no-candidates",authority:"read-only",
+			command:["worktree-helper.sh","recovery","plan","--output","<absolute-new-path>"]
+		} else {required:false,reason:null,authority:null,command:null} end)}'
 	return $?
 }
 

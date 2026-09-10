@@ -1864,10 +1864,6 @@ _hrw_finish_permission_required_run() {
 	local work_dir="$2"
 	local helper="${SCRIPT_DIR}/worker-permission-helper.sh"
 	local permission_status="$_HRW_STATUS_PERMISSION_REQUIRED"
-	# Captured tool-request identities end with the runtime session. A successful
-	# issue handoff appends its own aggregate request identity below, which stays
-	# blocking until the scoped grant is applied.
-	_hrw_reconcile_session_permission_blockers "$session_key" "permission_handoff_transition"
 	if [[ ! -x "$helper" || -z "${_run_permission_request_file:-}" ]]; then
 		_hrw_record_permission_blocker_failure "$session_key" "permission_capture_or_helper_unavailable"
 		_hrw_mark_failed_terminal_state "$_HRW_STATUS_FAILED" "$_HRW_PERMISSION_PERSISTENCE_FAILED"
@@ -1883,6 +1879,10 @@ _hrw_finish_permission_required_run() {
 		_hrw_mark_failed_terminal_state "$_HRW_STATUS_FAILED" "$_HRW_PERMISSION_PERSISTENCE_FAILED"
 		return 1
 	fi
+	# Captured tool-request identities end only after the issue handoff is durable.
+	# Keeping them active across a failed label/comment write preserves enough
+	# request-specific evidence for the next reconciliation pass.
+	_hrw_reconcile_session_permission_blockers "$session_key" "permission_handoff_transition"
 	_hrw_release_dispatch_claim "$session_key" "$permission_status"
 	_HRW_FINAL_RUNTIME_EVENT="$_HRW_EVENT_DEFERRED"
 	_HRW_FINAL_RUNTIME_STATUS="$permission_status"

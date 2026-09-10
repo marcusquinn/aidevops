@@ -2452,6 +2452,49 @@ test_automatic_maintenance_escalates_completed_zero_candidate_cycle() {
 	return 0
 }
 
+test_automatic_maintenance_reports_unsupported_process_visibility() {
+	local policy='{"pressure_active":true}'
+	local diagnostics=''
+	local output=''
+	local rc=0
+
+	diagnostics=$(jq -cn '
+		{classification_reason_counts:{process_evidence_unavailable:2},
+		zero_candidate_cycle:{reason_counts:{process_evidence_unavailable:3}},
+		sustained_non_reclamation:{escalation_threshold_reached:true}}') || rc=1
+	output=$(_worktree_recovery_maintenance_no_candidates_json "$policy" "$diagnostics") || rc=1
+	printf '%s\n' "$output" | jq -e '
+		.outcome == "operator-intervention-required" and .reclaimed_bytes == 0 and
+		.unsupported_condition.code == "unsupported-process-visibility" and
+		.unsupported_condition.deletion_authority == false and
+		.unsupported_condition.blocked_archive_observations == 3 and
+		(.unsupported_condition.guidance | length) == 3 and
+		.escalation.required == true and .escalation.reason == "unsupported-process-visibility" and
+		.escalation.authority == "read-only" and
+		.escalation.command == ["worktree-helper.sh","recovery","plan","--output","<absolute-new-path>"]
+	' >/dev/null || rc=1
+	diagnostics=$(printf '%s\n' "$diagnostics" | jq -c \
+		'.sustained_non_reclamation.escalation_threshold_reached = false') || rc=1
+	output=$(_worktree_recovery_maintenance_no_candidates_json "$policy" "$diagnostics") || rc=1
+	printf '%s\n' "$output" | jq -e '
+		.outcome == "no-candidates" and .unsupported_condition == null and
+		.escalation.required == false
+	' >/dev/null || rc=1
+	diagnostics=$(printf '%s\n' "$diagnostics" | jq -c '
+		.classification_reason_counts.process_evidence_unavailable = 0 |
+		.zero_candidate_cycle.reason_counts.process_evidence_unavailable = 0 |
+		.sustained_non_reclamation.escalation_threshold_reached = true') || rc=1
+	output=$(_worktree_recovery_maintenance_no_candidates_json "$policy" "$diagnostics") || rc=1
+	printf '%s\n' "$output" | jq -e '
+		.outcome == "no-candidates" and .unsupported_condition == null and
+		.escalation.required == true and
+		.escalation.reason == "pressure-sustained-no-candidates"
+	' >/dev/null || rc=1
+	print_result "automatic_maintenance_reports_unsupported_process_visibility" "$rc" \
+		"Expected sustained process-visibility blockers to require read-only operator intervention without deletion authority"
+	return 0
+}
+
 test_automatic_maintenance_rejects_symlink_cycle_state() {
 	local home_path="${TEST_DIR}/automatic-cycle-symlink-home"
 	local recovery_root="${home_path}/.aidevops/recovery/worktrees"
@@ -2691,6 +2734,7 @@ run_all_tests() {
 	test_automatic_maintenance_preserves_bucket_when_exact_size_is_unavailable
 	test_automatic_maintenance_escalates_completed_zero_candidate_cycle
 	test_automatic_maintenance_escalates_sustained_churn
+	test_automatic_maintenance_reports_unsupported_process_visibility
 	test_automatic_maintenance_resumes_interrupted_apply
 	test_automatic_maintenance_rejects_symlink_cursor
 	test_automatic_maintenance_rejects_symlink_cycle_state
