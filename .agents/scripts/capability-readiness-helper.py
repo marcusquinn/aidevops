@@ -12,7 +12,7 @@ import subprocess
 import sys
 from typing import Any
 
-from capability_readiness_probes import assess
+from capability_readiness_probes import AssessmentContext, assess
 from capability_registry_validation import validate
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -117,7 +117,8 @@ def main() -> int:
             print(json.dumps({"error": "invalid_target", "detail": str(error)}))
             return 2
     capabilities = [selected] if selected else registry["capabilities"]
-    results = [assess(item, registry["dimensions"], runtime, fixture, AGENTS_DIR, live_evidence if item["name"] == "github-operations" else None) for item in capabilities]
+    context = AssessmentContext(AGENTS_DIR, fixture, live_evidence)
+    results = [assess(item, registry["dimensions"], runtime, context) for item in capabilities]
     payload, status = route_output(results[0], evidence_scope) if args.command == "route" else ({"schema_version": registry["schema_version"], "runtime": runtime, "capabilities": results}, 0)
     print(json.dumps(payload, indent=2))
     return status

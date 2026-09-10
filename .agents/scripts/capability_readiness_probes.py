@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import os
 from pathlib import Path
 import re
@@ -10,6 +11,13 @@ import subprocess
 from typing import Any, Callable
 
 STATES = {"true", "false", "unknown", "not_applicable"}
+
+
+@dataclass(frozen=True)
+class AssessmentContext:
+    agents_dir: Path
+    fixture: dict[str, Any] | None
+    live_evidence: dict[str, str] | None
 
 
 def _command(spec: dict[str, Any], _: Path) -> str:
@@ -84,19 +92,17 @@ def assess(
     capability: dict[str, Any],
     dimensions: list[str],
     runtime: str,
-    fixture: dict[str, Any] | None,
-    agents_dir: Path,
-    live_evidence: dict[str, str] | None = None,
+    context: AssessmentContext,
 ) -> dict[str, Any]:
     readiness = dict.fromkeys(dimensions, "unknown")
     readiness["catalogued"] = "true"
     readiness["runtime_compatible"] = "true" if runtime in capability["runtimes"] else ("unknown" if runtime == "unknown" else "false")
-    evidence = live_evidence or {}
+    evidence = context.live_evidence or {}
     readiness.update({
-        dimension: evidence.get(dimension, "unknown") if "live" in spec else probe_value(spec, agents_dir)
+        dimension: evidence.get(dimension, "unknown") if "live" in spec else probe_value(spec, context.agents_dir)
         for dimension, spec in capability.get("probes", {}).items()
     })
-    overrides = (fixture or {}).get("capabilities", {}).get(capability["name"], {})
+    overrides = (context.fixture or {}).get("capabilities", {}).get(capability["name"], {})
     readiness.update({dimension: value for dimension, value in overrides.items() if dimension in readiness and value in STATES})
     missing = [dimension for dimension in capability["required"] if readiness[dimension] != "true"]
     return {**capability, "readiness": readiness, "route_ready": not missing, "missing_required": missing, "runtime": runtime}
