@@ -615,9 +615,29 @@ else
 fi
 
 # =============================================================================
-# Test 17: phase filing lock serializes same parent/phase attempts (GH#22636)
+# Test 17: Markdown-linked child refs remain filed
 # =============================================================================
-printf '%s--- Test 17: phase filing lock serializes duplicate attempts ---%s\n' "$TEST_BLUE" "$TEST_NC"
+printf '%s--- Test 17: Markdown-linked phase child refs ---%s\n' "$TEST_BLUE" "$TEST_NC"
+
+PARENT_BODY_MARKDOWN_LINKS='## Phases
+
+- Phase 1 - Foundation [#31685](https://github.com/example/repo/issues/31685)
+**Phase 2 — Adapter [#31686](https://github.com/example/repo/issues/31686)**'
+
+markdown_output=$(_parse_phases_section "$PARENT_BODY_MARKDOWN_LINKS")
+markdown_list_child=$(printf '%s\n' "$markdown_output" | sed -n '1p' | cut -f4)
+markdown_bold_child=$(printf '%s\n' "$markdown_output" | sed -n '2p' | cut -f4)
+if [[ "$markdown_list_child" == "31685" && "$markdown_bold_child" == "31686" ]]; then
+	pass "Markdown-linked list and bold phase refs are parsed as filed children"
+else
+	fail "Markdown-linked phase refs were not parsed" \
+		"list='${markdown_list_child}' bold='${markdown_bold_child}' output='${markdown_output}'"
+fi
+
+# =============================================================================
+# Test 18: phase filing lock serializes same parent/phase attempts (GH#22636)
+# =============================================================================
+printf '%s--- Test 18: phase filing lock serializes duplicate attempts ---%s\n' "$TEST_BLUE" "$TEST_NC"
 
 export AIDEVOPS_PHASE_FILING_LOCK_ROOT="${TMP}/phase-locks"
 lock_one=$(_phase_acquire_filing_lock "owner/repo" "22616" "4")
@@ -639,9 +659,9 @@ fi
 _phase_release_filing_lock "$lock_three"
 
 # =============================================================================
-# Test 18: closed parent issue cannot drive phase auto-filing (GH#23526)
+# Test 19: closed parent issue cannot drive phase auto-filing (GH#23526)
 # =============================================================================
-printf '%s--- Test 18: closed parent blocks auto-file ---%s\n' "$TEST_BLUE" "$TEST_NC"
+printf '%s--- Test 19: closed parent blocks auto-file ---%s\n' "$TEST_BLUE" "$TEST_NC"
 
 export AIDEVOPS_SEQUENTIAL_PHASE_AUTOFILE=1
 phase_parent_state="closed"
