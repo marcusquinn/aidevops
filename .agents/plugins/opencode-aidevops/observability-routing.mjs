@@ -20,22 +20,28 @@ function routingPopulation(msg, decision) {
 export function recordRoutingDecision(sessionID, decision = {}) {
   if (!sessionID) return;
   const queue = routingDecisions.get(sessionID) || [];
-  queue.push({
-    parentSessionID: decision.parentSessionID || "",
-    tier: decision.tier || "",
-    model: decision.model || "",
-    variant: decision.variant || "",
-    candidateIndex: Number.isInteger(decision.candidateIndex) ? decision.candidateIndex : -1,
-    attempt: Number.isInteger(decision.attempt) ? decision.attempt : 1,
-    reason: decision.reason || "",
-    escalated: decision.escalated ? 1 : 0,
-    population: decision.population || "",
-  });
+  queue.push(normalizeRoutingDecision(decision));
   if (queue.length > 32) queue.splice(0, queue.length - 32);
   routingDecisions.set(sessionID, queue);
   if (routingDecisions.size > 1000) {
     for (const key of [...routingDecisions.keys()].slice(0, 500)) routingDecisions.delete(key);
   }
+}
+
+function normalizeRoutingDecision(decision) {
+  return {
+    parentSessionID: decision.parentSessionID || "",
+    tier: decision.tier || "",
+    model: decision.model || "",
+    variant: decision.variant || "",
+    requestedVariant: decision.requestedVariant || "",
+    resolvedVariant: decision.resolvedVariant || decision.variant || "",
+    candidateIndex: Number.isInteger(decision.candidateIndex) ? decision.candidateIndex : -1,
+    attempt: Number.isInteger(decision.attempt) ? decision.attempt : 1,
+    reason: decision.reason || "",
+    escalated: decision.escalated ? 1 : 0,
+    population: decision.population || "",
+  };
 }
 
 /** Return current-process routed request feedback for a root or child session. */
@@ -93,6 +99,8 @@ export function consumeRoutingDecision(msg) {
     tier: envTier,
     model: `${msg.providerID || ""}/${msg.modelID || ""}`,
     variant: msg.variant || "",
+    requestedVariant: "",
+    resolvedVariant: msg.variant || "",
     candidateIndex: Number.parseInt(process.env.AIDEVOPS_ROUTING_CANDIDATE_INDEX || "-1", 10),
     attempt: Number.parseInt(process.env.AIDEVOPS_ROUTING_ATTEMPT || "1", 10),
     reason: process.env.AIDEVOPS_ROUTING_REASON || (envTier ? "headless_dispatch" : ""),

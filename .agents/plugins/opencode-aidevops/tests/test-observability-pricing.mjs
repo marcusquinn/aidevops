@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { getPricing } from "../observability.mjs";
-import { PRICING_VERSION } from "../observability-pricing.mjs";
+import { getPricingProvenance, PRICING_VERSION } from "../observability-pricing.mjs";
 
 test("GPT-6 Astra and GPT-5.6 pricing use published Standard short-context API rates", () => {
   assert.deepEqual(getPricing("openai/gpt-6-astra"), {
@@ -27,4 +27,10 @@ test("Sol Pro does not inherit unpublished standard Sol pricing", () => {
   assert.deepEqual(getPricing("gpt-5.6-sol-pro"), {
     input: 3.0, output: 15.0, cacheRead: 0.30, cacheWrite: 3.75,
   });
+});
+
+test("price estimates retain exact, fallback, and unknown quality", () => {
+  assert.equal(getPricingProvenance("gpt-5.6-terra").quality, "exact_model");
+  assert.equal(getPricingProvenance("unlisted-model").quality, "fallback");
+  assert.equal(getPricingProvenance("gpt-5.6-sol-pro").quality, "unknown");
 });

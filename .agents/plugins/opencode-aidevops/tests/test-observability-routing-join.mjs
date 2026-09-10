@@ -49,6 +49,10 @@ test("routing populations remain disjoint across execution contexts", () => {
 
 test("completed child responses join queued routing decisions to parent feedback", async () => {
   const root = mkdtempSync(join(tmpdir(), "aidevops-routing-join-"));
+  const previousHeadless = process.env.AIDEVOPS_HEADLESS;
+  const previousTier = process.env.AIDEVOPS_DISPATCH_TIER;
+  delete process.env.AIDEVOPS_HEADLESS;
+  delete process.env.AIDEVOPS_DISPATCH_TIER;
   process.env.AIDEVOPS_OBS_DB_OVERRIDE = join(root, "llm-requests.db");
   const observability = await import(`../observability.mjs?routing-join=${Date.now()}`);
   const sqlite = await import("../../../scripts/sqlite-process.mjs");
@@ -60,6 +64,8 @@ test("completed child responses join queued routing decisions to parent feedback
       tier: "simple",
       model: "openai/gpt-5.6-luna",
       variant: "max",
+      requestedVariant: "xhigh",
+      resolvedVariant: "max",
       candidateIndex: 0,
       attempt: 1,
       reason: "subagent_profile",
@@ -115,10 +121,13 @@ test("completed child responses join queued routing decisions to parent feedback
     await new Promise((resolve) => setTimeout(resolve, 100));
 
     const persisted = sqlite.sqliteExecSync(`
-SELECT routing_population || '|' || aidevops_version || '|' || pricing_version
+      SELECT routing_population || '|' || aidevops_version || '|' || pricing_version || '|'
+        || requested_effort || '|' || resolved_effort || '|' || observed_effort || '|'
+        || effort_source || '|' || coalesce(provider_confirmed_effort, '') || '|' || cost_source || '|'
+        || pricing_quality
 FROM llm_requests WHERE message_id = 'message-1';
     `);
-    assert.equal(persisted, "interactive_child|3.32.240|2026-09-05.1");
+    assert.equal(persisted, "interactive_child|3.32.240|2026-09-05.1|xhigh|max|max|host_observed||local_estimate|exact_model");
 
     const outcomePayload = JSON.parse(sqlite.sqliteExecSync(`
 SELECT payload_json FROM runtime_events WHERE event_type = 'subagent.host.outcome' LIMIT 1;
@@ -136,6 +145,10 @@ SELECT payload_json FROM runtime_events WHERE event_type = 'subagent.host.outcom
   } finally {
     sqlite.shutdownSqlite();
     delete process.env.AIDEVOPS_OBS_DB_OVERRIDE;
+    if (previousHeadless === undefined) delete process.env.AIDEVOPS_HEADLESS;
+    else process.env.AIDEVOPS_HEADLESS = previousHeadless;
+    if (previousTier === undefined) delete process.env.AIDEVOPS_DISPATCH_TIER;
+    else process.env.AIDEVOPS_DISPATCH_TIER = previousTier;
     rmSync(root, { recursive: true, force: true });
   }
 });
