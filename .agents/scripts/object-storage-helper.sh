@@ -100,20 +100,45 @@ validate_provider_endpoint() {
 	local endpoint region endpoint_region
 	endpoint=$(jq -r '.endpoint // empty' <<<"$ACCOUNT_JSON")
 	region=$(jq -r '.region // empty' <<<"$ACCOUNT_JSON")
-	if [[ "$ACCOUNT_PROVIDER" != "idrive-e2" ]]; then
+	case "$ACCOUNT_PROVIDER" in
+	idrive-e2)
+		[[ "$endpoint" =~ ^https://s3\.([a-z0-9-]+)\.idrivee2\.com$ ]] || {
+			fail_json "idrive_endpoint_invalid"
+			return 1
+		}
+		endpoint_region="${BASH_REMATCH[1]}"
+		;;
+	wasabi)
+		case "$endpoint" in
+		https://s3.wasabisys.com)
+			endpoint_region="us-east-1"
+			;;
+		https://s3.us-east-1.wasabisys.com | https://s3.us-east-2.wasabisys.com | https://s3.us-central-1.wasabisys.com | https://s3.us-west-1.wasabisys.com | https://s3.us-west-2.wasabisys.com | https://s3.ca-central-1.wasabisys.com | https://s3.eu-central-1.wasabisys.com | https://s3.eu-central-2.wasabisys.com | https://s3.eu-west-1.wasabisys.com | https://s3.eu-west-2.wasabisys.com | https://s3.eu-west-3.wasabisys.com | https://s3.eu-south-1.wasabisys.com | https://s3.ap-northeast-1.wasabisys.com | https://s3.ap-northeast-2.wasabisys.com | https://s3.ap-southeast-1.wasabisys.com | https://s3.ap-southeast-2.wasabisys.com)
+			endpoint_region="${endpoint#https://s3.}"
+			endpoint_region="${endpoint_region%.wasabisys.com}"
+			;;
+		https://s3.nl-1.wasabisys.com) endpoint_region="eu-central-1" ;;
+		https://s3.de-1.wasabisys.com) endpoint_region="eu-central-2" ;;
+		https://s3.uk-1.wasabisys.com) endpoint_region="eu-west-1" ;;
+		https://s3.fr-1.wasabisys.com) endpoint_region="eu-west-2" ;;
+		https://s3.uk-2.wasabisys.com) endpoint_region="eu-west-3" ;;
+		https://s3.it-1.wasabisys.com) endpoint_region="eu-south-1" ;;
+		*)
+			fail_json "wasabi_endpoint_invalid"
+			return 1
+			;;
+		esac
+		;;
+	*)
 		return 0
-	fi
-	if [[ ! "$endpoint" =~ ^https://s3\.([a-z0-9-]+)\.idrivee2\.com$ ]]; then
-		fail_json "idrive_endpoint_invalid"
-		return 1
-	fi
-	endpoint_region="${BASH_REMATCH[1]}"
+		;;
+	esac
 	[[ "$region" =~ ^[a-z0-9-]+$ ]] || {
-		fail_json "idrive_endpoint_invalid"
+		fail_json "${ACCOUNT_PROVIDER}_endpoint_invalid"
 		return 1
 	}
 	[[ "$endpoint_region" == "$region" ]] || {
-		fail_json "idrive_region_mismatch"
+		fail_json "${ACCOUNT_PROVIDER}_region_mismatch"
 		return 1
 	}
 	return 0
