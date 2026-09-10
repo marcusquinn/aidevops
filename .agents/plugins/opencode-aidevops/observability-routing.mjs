@@ -20,7 +20,16 @@ function routingPopulation(msg, decision) {
 export function recordRoutingDecision(sessionID, decision = {}) {
   if (!sessionID) return;
   const queue = routingDecisions.get(sessionID) || [];
-  queue.push({
+  queue.push(normalizeRoutingDecision(decision));
+  if (queue.length > 32) queue.splice(0, queue.length - 32);
+  routingDecisions.set(sessionID, queue);
+  if (routingDecisions.size > 1000) {
+    for (const key of [...routingDecisions.keys()].slice(0, 500)) routingDecisions.delete(key);
+  }
+}
+
+function normalizeRoutingDecision(decision) {
+  return {
     parentSessionID: decision.parentSessionID || "",
     tier: decision.tier || "",
     model: decision.model || "",
@@ -32,12 +41,7 @@ export function recordRoutingDecision(sessionID, decision = {}) {
     reason: decision.reason || "",
     escalated: decision.escalated ? 1 : 0,
     population: decision.population || "",
-  });
-  if (queue.length > 32) queue.splice(0, queue.length - 32);
-  routingDecisions.set(sessionID, queue);
-  if (routingDecisions.size > 1000) {
-    for (const key of [...routingDecisions.keys()].slice(0, 500)) routingDecisions.delete(key);
-  }
+  };
 }
 
 /** Return current-process routed request feedback for a root or child session. */
