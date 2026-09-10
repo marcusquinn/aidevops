@@ -468,6 +468,28 @@ _render_json() {
 # function under 100 lines (function-complexity gate, t2370).
 # =============================================================================
 
+# Fetch and validate native sub-issue evidence once for both provenance and the
+# merged child set. Outputs through prefixed globals to avoid a duplicate API
+# read while keeping cmd_parent_status below the complexity threshold.
+_load_parent_subissue_evidence() {
+	local issue_num="$1" repo="$2"
+	_PARENT_STATUS_SUB_ISSUES_JSON="[]"
+	_PARENT_STATUS_NATIVE_GRAPH_COUNT=0
+	_PARENT_STATUS_SUB_ISSUES_INCOMPLETE=0
+	if ! _PARENT_STATUS_SUB_ISSUES_JSON=$(_fetch_sub_issues "$issue_num" "$repo"); then
+		_PARENT_STATUS_SUB_ISSUES_JSON="[]"
+		_PARENT_STATUS_SUB_ISSUES_INCOMPLETE=1
+	elif ! printf '%s' "$_PARENT_STATUS_SUB_ISSUES_JSON" |
+		jq -e 'type == "array" and all(.[]; .number | type == "number")' >/dev/null 2>&1; then
+		_PARENT_STATUS_SUB_ISSUES_JSON="[]"
+		_PARENT_STATUS_SUB_ISSUES_INCOMPLETE=1
+	else
+		_PARENT_STATUS_NATIVE_GRAPH_COUNT=$(printf '%s' "$_PARENT_STATUS_SUB_ISSUES_JSON" |
+			jq 'length' 2>/dev/null || true)
+	fi
+	return 0
+}
+
 # Gather all child issue numbers for a parent by merging the sub-issues API
 # result with prose refs extracted from the issue body.
 # Arguments: $1=issue_num $2=repo $3=parent_body $4=optional prefetched sub-issues JSON
@@ -731,16 +753,10 @@ cmd_parent_status() {
 
 	local all_child_nums children_state_lines retrieval_incomplete=0
 	local sub_issues_json="[]" native_graph_count=0
-	if ! sub_issues_json=$(_fetch_sub_issues "$issue_num" "$repo"); then
-		retrieval_incomplete=1
-		sub_issues_json="[]"
-	elif ! printf '%s' "$sub_issues_json" |
-		jq -e 'type == "array" and all(.[]; .number | type == "number")' >/dev/null 2>&1; then
-		retrieval_incomplete=1
-		sub_issues_json="[]"
-	else
-		native_graph_count=$(printf '%s' "$sub_issues_json" | jq 'length' 2>/dev/null || true)
-	fi
+	_load_parent_subissue_evidence "$issue_num" "$repo"
+	sub_issues_json="$_PARENT_STATUS_SUB_ISSUES_JSON"
+	native_graph_count="$_PARENT_STATUS_NATIVE_GRAPH_COUNT"
+	retrieval_incomplete="$_PARENT_STATUS_SUB_ISSUES_INCOMPLETE"
 	if ! all_child_nums=$(_gather_child_nums "$issue_num" "$repo" "$parent_body" "$sub_issues_json"); then
 		retrieval_incomplete=1
 	fi
