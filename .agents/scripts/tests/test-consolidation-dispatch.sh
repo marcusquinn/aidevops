@@ -1193,7 +1193,7 @@ fixture_live_interactive_claim() {
 test_live_interactive_claim_blocks_classification_and_clears_stale_label() {
 	setup_gh_stub
 	GH_ISSUE_VIEW_LABELS="bug,needs-consolidation,status:in-review"
-	GH_ISSUE_META_JSON=$(jq -n '{state: "OPEN", labels: [{name: "status:in-review"}], assignees: [{login: "interactive-owner"}]}')
+	GH_ISSUE_META_JSON=$(jq -n '{state: "OPEN", labels: [{name: "status:claimed"}], assignees: [{login: "interactive-owner"}]}')
 	GH_API_COMMENTS_JSON=$(fixture_live_interactive_claim)
 	GH_ISSUE_LIST_CHILD_JSON="[]"
 	export GH_ISSUE_VIEW_LABELS GH_ISSUE_META_JSON GH_API_COMMENTS_JSON GH_ISSUE_LIST_CHILD_JSON
@@ -1205,6 +1205,86 @@ test_live_interactive_claim_blocks_classification_and_clears_stale_label() {
 	else
 		print_result "live interactive claim blocks consolidation classification and clears stale label" 1 \
 			"expected stale needs-consolidation cleanup"
+	fi
+
+	teardown_gh_stub
+	return 0
+}
+
+test_live_interactive_claim_uses_newest_paginated_record() {
+	setup_gh_stub
+	local stale_time claim_time stale_page current_page
+	stale_time="2020-01-01T00:00:00Z"
+	claim_time=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+	stale_page=$(jq -nc --arg timestamp "$stale_time" '[{
+		created_at:$timestamp,user:{login:"former-owner",type:"User"},
+		body:"<!-- aidevops-interactive-claim/v1 --> old"
+	}]')
+	current_page=$(jq -nc --arg timestamp "$claim_time" '[{
+		created_at:$timestamp,user:{login:"interactive-owner",type:"User"},
+		body:"<!-- aidevops-interactive-claim/v1 --> current"
+	}]')
+	GH_API_COMMENTS_JSON="${stale_page}
+${current_page}"
+	GH_ISSUE_META_JSON=$(jq -n '{state:"OPEN",labels:[{name:"status:claimed"}],assignees:[{login:"interactive-owner"}]}')
+	export GH_API_COMMENTS_JSON GH_ISSUE_META_JSON
+
+	if _consolidation_live_interactive_claim 31690 "marcusquinn/aidevops"; then
+		print_result "GH#31705: newest claim is selected across paginated comments" 0
+	else
+		print_result "GH#31705: newest claim is selected across paginated comments" 1
+	fi
+
+	teardown_gh_stub
+	return 0
+}
+
+test_claim_comment_is_not_substantive_without_live_metadata() {
+	setup_gh_stub
+	local scope_body claim_body
+	scope_body=$(printf 'One genuine contextual clarification. %.0s' {1..3})
+	claim_body=$(printf '<!-- aidevops-interactive-claim/v1 -->\n<!-- ops:start -->\n> Interactive session claimed by @interactive-owner. %.0s' {1..4})
+	GH_ISSUE_VIEW_LABELS="bug,tier:standard"
+	GH_ISSUE_META_JSON=$(jq -n '{state:"OPEN",labels:[],assignees:[]}')
+	GH_API_COMMENTS_JSON=$(jq -n --arg scope "$scope_body" --arg claim "$claim_body" '[
+		{user:{login:"reporter",type:"User"},created_at:"2026-09-09T22:07:47Z",body:$scope},
+		{user:{login:"interactive-owner",type:"User"},created_at:"2026-09-09T23:59:09Z",body:$claim}
+	]')
+	GH_ISSUE_LIST_CHILD_JSON="[]"
+	export GH_ISSUE_VIEW_LABELS GH_ISSUE_META_JSON GH_API_COMMENTS_JSON GH_ISSUE_LIST_CHILD_JSON
+
+	local filtered_count=0
+	filtered_count=$(_consolidation_substantive_comments 31690 "marcusquinn/aidevops" | jq -r 'length') || filtered_count=0
+	if _issue_needs_consolidation 31690 "marcusquinn/aidevops"; then
+		print_result "GH#31705: one contextual comment plus an operational claim does not trigger consolidation" 1
+	elif [[ "$filtered_count" -ne 1 ]]; then
+		print_result "GH#31705: shared significance filter excludes operational claim" 1 \
+			"expected one retained comment, got ${filtered_count}"
+	else
+		print_result "GH#31705: claim is excluded consistently from classification and child content" 0
+	fi
+
+	teardown_gh_stub
+	return 0
+}
+
+test_signature_footer_does_not_make_short_comment_substantive() {
+	setup_gh_stub
+	local body
+	body="Short clarification.
+<!-- aidevops:origin:interactive -->
+<!-- aidevops:sig -->
+$(printf 'audit metadata %.0s' {1..12})"
+	GH_API_COMMENTS_JSON=$(jq -n --arg body "$body" '[{user:{login:"reporter",type:"User"},body:$body}]')
+	export GH_API_COMMENTS_JSON
+
+	local filtered_count=0
+	filtered_count=$(_consolidation_substantive_comments 31690 "marcusquinn/aidevops" | jq -r 'length') || filtered_count=0
+	if [[ "$filtered_count" -eq 0 ]]; then
+		print_result "GH#31705: provenance footer length is excluded from significance" 0
+	else
+		print_result "GH#31705: provenance footer length is excluded from significance" 1 \
+			"expected zero retained comments, got ${filtered_count}"
 	fi
 
 	teardown_gh_stub
@@ -1344,6 +1424,9 @@ main() {
 	test_needs_consolidation_skips_with_inflight_resolving_pr
 	test_dispatch_skips_with_inflight_resolving_pr
 	test_live_interactive_claim_blocks_classification_and_clears_stale_label
+	test_live_interactive_claim_uses_newest_paginated_record
+	test_claim_comment_is_not_substantive_without_live_metadata
+	test_signature_footer_does_not_make_short_comment_substantive
 	test_live_interactive_claim_appearing_after_classification_blocks_dispatch
 	test_manual_hold_blocks_direct_consolidation
 	test_consolidation_hold_reads_fail_closed

@@ -24,8 +24,8 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
-REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)" || exit 1
+TEST_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
+REPO_ROOT="$(cd "${TEST_SCRIPT_DIR}/../../.." && pwd)" || exit 1
 
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'
@@ -85,6 +85,7 @@ if [[ "$cmd1" == "issue" && "$cmd2" == "view" ]]; then
 	done
 	case "$local_json" in
 	labels) printf '%s\n' "${GH_ISSUE_VIEW_LABELS:-bug,tier:standard}" ;;
+	state,labels,assignees) printf '%s\n' '{"state":"OPEN","labels":[],"assignees":[]}' ;;
 	*) printf '\n' ;;
 	esac
 	exit 0
@@ -137,6 +138,14 @@ setup_test_env() {
 	# Source pulse-triage.sh in isolation (without pulse-wrapper.sh).
 	# shellcheck disable=SC1091
 	source "${REPO_ROOT}/.agents/scripts/pulse-triage.sh"
+	gh_issue_list() {
+		gh issue list "$@"
+		return $?
+	}
+	gh_pr_list() {
+		gh pr list "$@"
+		return $?
+	}
 	return 0
 }
 
