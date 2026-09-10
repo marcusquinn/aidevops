@@ -1348,7 +1348,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18417 Add provider-neutral S3 object storage integrations for IDrive, Backblaze, and Wasabi #feat #parent-task #tier:thinking #interactive ref:GH#31684 logged:2026-09-09 -> [todo/tasks/t18417-brief.md]
 
-- [ ] t18418 Build provider-neutral rclone-backed S3 object storage foundation #auto-dispatch #feat #tier:standard #interactive ~3h ref:GH#31685 logged:2026-09-09 -> [todo/tasks/t18418-brief.md]
+- [x] t18418 Build provider-neutral rclone-backed S3 object storage foundation #auto-dispatch #feat #tier:standard #interactive ~3h ref:GH#31685 logged:2026-09-09 -> [todo/tasks/t18418-brief.md] pr:#31695 completed:2026-09-09
 
 - [ ] t18419 Add guarded IDrive e2 object storage integration #auto-dispatch #feat #tier:standard #interactive ~2h blocked-by:t18418 ref:GH#31686 logged:2026-09-09 -> [todo/tasks/t18419-brief.md]
 
@@ -4895,7 +4895,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t18395 detect and recover stale GitHub runner broker sessions #auto-dispatch #bug #ci #github #infrastructure #monitoring #reliability #self-healing #shell ref:GH#31136 pr:#31142 completed:2026-09-04
 
-- [ ] t18416 Preserve actionable terminal evidence for provider and model blockers #auto-dispatch #external-contributor ref:GH#31676
+- [x] t18416 Preserve actionable terminal evidence for provider and model blockers #auto-dispatch #external-contributor ref:GH#31676 pr:#31680 completed:2026-09-09
 
 ## Evidence-based model effort and delegation optimisation
 
