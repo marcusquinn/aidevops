@@ -14,6 +14,20 @@ readonly PERMISSION_BLOCKER_STATUS="blocked"
 readonly PERMISSION_BLOCKER_TRUE="true"
 readonly PERMISSION_PERSISTENCE_FAILED_EVENT="permission_request_persistence_failed"
 
+permission_persistence_attempts() {
+	local attempts="${AIDEVOPS_PERMISSION_PERSISTENCE_ATTEMPTS:-3}"
+	[[ "$attempts" =~ ^[1-9][0-9]*$ ]] || attempts=3
+	printf '%s\n' "$attempts"
+	return 0
+}
+
+permission_persistence_retry_delay() {
+	local delay="${AIDEVOPS_PERMISSION_PERSISTENCE_RETRY_DELAY:-1}"
+	[[ "$delay" =~ ^[0-9]+$ ]] || delay=1
+	printf '%s\n' "$delay"
+	return 0
+}
+
 permission_record_blocker() {
 	local event="$1"
 	local status="$2"
@@ -208,6 +222,18 @@ permission_request_already_posted() {
 	return $?
 }
 
+permission_issue_has_block() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local issue_json=""
+	issue_json=$(gh_issue_view "$issue_number" --repo "$repo_slug" --json labels 2>/dev/null) || return 1
+	jq -e '
+		([.labels[]?.name] | index("needs-maintainer-permissions") != null)
+		and ([.labels[]?.name] | index("status:blocked") != null)
+	' <<<"$issue_json" >/dev/null 2>&1
+	return $?
+}
+
 permission_render_capabilities() {
 	local envelope_file="$1"
 	jq -r '.capabilities[] |
@@ -297,10 +323,22 @@ This signs only the listed capabilities for this issue. It does not approve the 
 $(jq . "$envelope_file")
 ~~~
 EOF
-	if ! gh_issue_comment "$issue_number" --repo "$repo_slug" --body-file "$comment_file" >/dev/null; then
-		rm -f "$envelope_file" "$comment_file"
-		return 1
-	fi
+	local attempt=1 attempts delay
+	attempts=$(permission_persistence_attempts)
+	delay=$(permission_persistence_retry_delay)
+	while ! gh_issue_comment "$issue_number" --repo "$repo_slug" --body-file "$comment_file" >/dev/null; do
+		# A timed-out write may still have reached GitHub. Verify before retrying so
+		# request-specific evidence remains exactly-once.
+		if permission_request_already_posted "$issue_number" "$repo_slug" "$request_id"; then
+			break
+		fi
+		if [[ "$attempt" -ge "$attempts" ]]; then
+			rm -f "$envelope_file" "$comment_file"
+			return 1
+		fi
+		attempt=$((attempt + 1))
+		[[ "$delay" -eq 0 ]] || sleep "$delay"
+	done
 	rm -f "$envelope_file" "$comment_file"
 	printf '%s\n' "$request_id"
 	return 0
@@ -309,13 +347,27 @@ EOF
 permission_apply_block() {
 	local issue_number="$1"
 	local repo_slug="$2"
-	gh_issue_edit_safe "$issue_number" --repo "$repo_slug" \
-		--add-label "needs-maintainer-permissions" \
-		--remove-label "status:queued" \
-		--remove-label "status:claimed" \
-		--remove-label "status:in-progress" \
-		--remove-label "status:in-review" >/dev/null
-	return $?
+	local attempt=1 attempts delay
+	attempts=$(permission_persistence_attempts)
+	delay=$(permission_persistence_retry_delay)
+	permission_issue_has_block "$issue_number" "$repo_slug" && return 0
+	while true; do
+		if gh_issue_edit_safe "$issue_number" --repo "$repo_slug" \
+			--add-label "needs-maintainer-permissions" \
+			--add-label "status:blocked" \
+			--remove-label "status:queued" \
+			--remove-label "status:claimed" \
+			--remove-label "status:in-progress" \
+			--remove-label "status:in-review" >/dev/null; then
+			return 0
+		fi
+		# Re-read after an ambiguous failure. A successful first write must not be
+		# repeated merely because the response was lost.
+		permission_issue_has_block "$issue_number" "$repo_slug" && return 0
+		[[ "$attempt" -lt "$attempts" ]] || return 1
+		attempt=$((attempt + 1))
+		[[ "$delay" -eq 0 ]] || sleep "$delay"
+	done
 }
 
 cmd_request() {
@@ -362,6 +414,13 @@ cmd_request() {
 	tool="$(jq -r '.tool' <<<"$capability_json")"
 	risk_level="$(jq -r '.risk_level' <<<"$capability_json")"
 	grantable="$(jq -r '.grantable' <<<"$capability_json")"
+	if [[ "$grantable" != "true" ]]; then
+		permission_record_blocker "permission_request_non_grantable" "$PERMISSION_BLOCKER_STATUS" \
+			"permission_non_grantable" "$PERMISSION_BLOCKER_TRUE" "$issue_number" "$repo_slug" "$session_key" "" \
+			"Permission request cannot be represented as a scoped maintainer grant" \
+			"$permission" "$tool" "$risk_level" "$grantable"
+		return 1
+	fi
 	if ! request_id=$(permission_post_request "$capture_file" "$issue_number" "$repo_slug" "$session_key" "$work_dir"); then
 		permission_record_blocker "$PERMISSION_PERSISTENCE_FAILED_EVENT" "$PERMISSION_BLOCKER_STATUS" \
 			"github_request_comment_failed" "$PERMISSION_BLOCKER_TRUE" "$issue_number" "$repo_slug" "$session_key" "" \

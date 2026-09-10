@@ -219,6 +219,16 @@ _post_simplification_gate_cleared_comment() {
 	return 0
 }
 
+# Treat each local fixture as the authoritative remote-default blob. The
+# production helper requires remote confirmation before reopening stale debt;
+# these characterization tests intentionally exercise the resulting line-count
+# decision without contacting GitHub.
+_large_file_gate_remote_default_line_count() {
+	local lf_path="$2"
+	wc -l <"${TMP}/${lf_path}" | tr -d ' '
+	return 0
+}
+
 # =============================================================================
 # Assertions
 # =============================================================================
@@ -304,10 +314,24 @@ assert_eq \
 
 # ---- Test 5: failed stale-label removal keeps the gate applied ----
 reset_state
+GH_VIEW_JSON='{"labels":[{"name":"needs-simplification"},{"name":"status:queued"}]}'
+rc=0
+_issue_targets_large_files "9995" "owner/repo" "$large_body" "$TMP" "true" || rc=$?
+assert_eq \
+	"active dispatch + forced recheck → retains simplification gate" \
+	"0" "$rc"
+if grep -qF '_post_simplification_gate_cleared_comment' "$GH_CALLS_LOG"; then
+	assert_eq "active dispatch + forced recheck → no false CLEARED comment" "absent" "present"
+else
+	assert_eq "active dispatch + forced recheck → no false CLEARED comment" "absent" "absent"
+fi
+
+# ---- Test 6: failed stale-label removal keeps the gate applied ----
+reset_state
 GH_VIEW_JSON='{"labels":[{"name":"needs-simplification"}]}'
 GH_EDIT_RC=1
 rc=0
-_issue_targets_large_files "9995" "owner/repo" "$empty_body" "$TMP" "true" || rc=$?
+_issue_targets_large_files "9994" "owner/repo" "$empty_body" "$TMP" "true" || rc=$?
 assert_eq \
 	"failed stale-label removal → gate remains applied" \
 	"0" "$rc"
@@ -317,12 +341,12 @@ else
 	assert_eq "failed stale-label removal → no false CLEARED comment" "absent" "absent"
 fi
 
-# ---- Test 6: unconfirmed stale-label removal keeps the gate applied ----
+# ---- Test 7: unconfirmed stale-label removal keeps the gate applied ----
 reset_state
 GH_VIEW_JSON='{"labels":[{"name":"needs-simplification"}]}'
 GH_EDIT_KEEP_LABEL="true"
 rc=0
-_issue_targets_large_files "9994" "owner/repo" "$empty_body" "$TMP" "true" || rc=$?
+_issue_targets_large_files "9993" "owner/repo" "$empty_body" "$TMP" "true" || rc=$?
 assert_eq \
 	"unconfirmed stale-label removal → gate remains applied" \
 	"0" "$rc"

@@ -57,6 +57,9 @@ _large_file_gate_precheck_labels() {
 	local repo_slug="$2"
 	local issue_labels="$3"
 	local force_recheck="$4"
+	local labels_tokenized=",${issue_labels},"
+	local simplification_label_token=",needs-"
+	simplification_label_token+="simplification,"
 
 	# GH#18042: Never gate simplification tasks behind the large-file gate.
 	# Issues tagged "simplification", "file-size-debt", or "function-complexity-debt"
@@ -64,11 +67,11 @@ _large_file_gate_precheck_labels() {
 	# can never be simplified because the simplification issue is held by the gate.
 	# "simplification-debt" kept for backward compat during label migration.
 	# If the label was already applied (e.g., before this fix), auto-clear it.
-	if [[ ",$issue_labels," == *",simplification,"* ]] ||
-		[[ ",$issue_labels," == *",file-size-debt,"* ]] ||
-		[[ ",$issue_labels," == *",function-complexity-debt,"* ]] ||
-		[[ ",$issue_labels," == *",simplification-debt,"* ]]; then
-		if [[ ",$issue_labels," == *",needs-simplification,"* ]]; then
+	if [[ "$labels_tokenized" == *",simplification,"* ]] ||
+		[[ "$labels_tokenized" == *",file-size-debt,"* ]] ||
+		[[ "$labels_tokenized" == *",function-complexity-debt,"* ]] ||
+		[[ "$labels_tokenized" == *",simplification-debt,"* ]]; then
+		if [[ "$labels_tokenized" == *"$simplification_label_token"* ]]; then
 			if gh issue edit "$issue_number" --repo "$repo_slug" \
 				--remove-label "needs-simplification" >/dev/null 2>&1; then
 				echo "[pulse-wrapper] Simplification gate auto-cleared for #${issue_number} (${repo_slug}) — issue is itself a simplification task (GH#18042)" >>"$LOGFILE"
@@ -90,9 +93,9 @@ _large_file_gate_precheck_labels() {
 	# simplification is the only remaining gate when in fact the parent-task
 	# block is permanent and independent of file size.
 	# If the label was already applied (e.g., before this fix), auto-clear it.
-	if [[ ",$issue_labels," == *",parent-task,"* ]] ||
-		[[ ",$issue_labels," == *",meta,"* ]]; then
-		if [[ ",$issue_labels," == *",needs-simplification,"* ]]; then
+	if [[ "$labels_tokenized" == *",parent-task,"* ]] ||
+		[[ "$labels_tokenized" == *",meta,"* ]]; then
+		if [[ "$labels_tokenized" == *"$simplification_label_token"* ]]; then
 			if gh issue edit "$issue_number" --repo "$repo_slug" \
 				--remove-label "needs-simplification" >/dev/null 2>&1; then
 				echo "[pulse-wrapper] Simplification gate auto-cleared for #${issue_number} (${repo_slug}) — issue is a parent-task/meta, never dispatched directly (t2088)" >>"$LOGFILE"
@@ -113,25 +116,31 @@ _large_file_gate_precheck_labels() {
 	# #18346 and any similar stale issue impossible to unstick even after
 	# the target file had been simplified below threshold.
 	if [[ "$force_recheck" != "true" ]] &&
-		[[ ",$issue_labels," == *",needs-simplification,"* ]]; then
+		[[ "$labels_tokenized" == *"$simplification_label_token"* ]]; then
 		return 2
 	fi
 	# Skip if simplification was already done
-	if [[ ",$issue_labels," == *",simplified,"* ]]; then
+	if [[ "$labels_tokenized" == *",simplified,"* ]]; then
 		return 1
 	fi
 
-	# GH#17958: Skip if issue is already dispatched (worker actively running).
-	# A second pulse cycle can re-evaluate the same issue and post a spurious
-	# simplification comment even though the worker is mid-implementation.
-	# The gate should only fire for issues that haven't been claimed yet.
-	if [[ ",$issue_labels," == *",status:queued,"* ]] ||
-		[[ ",$issue_labels," == *",status:in-progress,"* ]]; then
+	# GH#17958/GH#31678: Skip if issue is already dispatched (worker actively
+	# running). During forced re-evaluation, an existing simplification label
+	# must remain a gate result rather than a generic "no gate" result. The
+	# triage caller interprets return 1 as proof that the label was cleared; using
+	# that result while a claim is in flight posts a false CLEARED comment and
+	# leaves the still-present label orphaning later dispatch cycles.
+	if [[ "$labels_tokenized" == *",status:queued,"* ]] ||
+		[[ "$labels_tokenized" == *",status:in-progress,"* ]]; then
+		if [[ "$force_recheck" == "true" ]] &&
+			[[ "$labels_tokenized" == *"$simplification_label_token"* ]]; then
+			return 2
+		fi
 		return 1
 	fi
 	# Also skip if assigned with origin:worker — worker was dispatched even if
 	# status label hasn't been applied yet (race window between assign and label).
-	if [[ ",$issue_labels," == *",origin:worker,"* ]]; then
+	if [[ "$labels_tokenized" == *",origin:worker,"* ]]; then
 		local assignee_count
 		assignee_count=$(gh_issue_view "$issue_number" --repo "$repo_slug" \
 			--json assignees --jq '.assignees | length' 2>/dev/null) || assignee_count="0"
@@ -1113,7 +1122,10 @@ _issue_targets_large_files() {
 	[[ -d "$repo_path" ]] || return 1
 
 	local issue_labels=""
+	local issue_labels_tokenized=""
+	local simplification_gate_label="needs-simplification"
 	issue_labels=$(_large_file_gate_issue_labels "$issue_number" "$repo_slug" "$pre_fetched_json")
+	issue_labels_tokenized=",${issue_labels},"
 
 	local _precheck_rc=0
 	_large_file_gate_precheck_labels "$issue_number" "$repo_slug" "$issue_labels" "$force_recheck" || _precheck_rc=$?
@@ -1133,7 +1145,7 @@ _issue_targets_large_files() {
 		# comment but the label persisted; 17 min of zero label events after
 		# pulse restart confirmed the extractor fix worked but the stale label
 		# required human intervention to clear.
-		if [[ ",$issue_labels," == *",needs-simplification,"* ]]; then
+		if [[ "$issue_labels_tokenized" == *",$simplification_gate_label,"* ]]; then
 			_large_file_gate_clear_stale_label "$issue_number" "$repo_slug" || return 0
 		fi
 		return 1
@@ -1150,7 +1162,7 @@ _issue_targets_large_files() {
 	if _large_file_gate_check_surgical_brief \
 		"$_surgical_title" "$all_paths" "$repo_path"; then
 		echo "[pulse-wrapper] Large-file gate EXEMPTED for #${issue_number} (${repo_slug}): surgical brief with line ranges for ${_LFG_SURGICAL_EXEMPTED_FILES}" >>"$LOGFILE"
-		if [[ ",$issue_labels," == *",needs-simplification,"* ]]; then
+		if [[ "$issue_labels_tokenized" == *",$simplification_gate_label,"* ]]; then
 			_large_file_gate_clear_stale_label "$issue_number" "$repo_slug" || return 0
 		fi
 		return 1
@@ -1178,7 +1190,7 @@ _issue_targets_large_files() {
 
 	# If was_already_labeled but no large files found (e.g., all files now
 	# excluded by skip pattern or simplified below threshold), auto-clear.
-	if [[ ",$issue_labels," == *",needs-simplification,"* ]]; then
+	if [[ "$issue_labels_tokenized" == *",$simplification_gate_label,"* ]]; then
 		_large_file_gate_clear_stale_label "$issue_number" "$repo_slug" || return 0
 	fi
 
