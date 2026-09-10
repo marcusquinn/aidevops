@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.354] - 2026-09-10
+
+### Fixed
+
+- conclude completed parent trackers
+
 ## [3.32.353] - 2026-09-10
 
 ### Added
