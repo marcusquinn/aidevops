@@ -255,7 +255,7 @@ PLANS_BODY=$(printf '%s\n' "${JOB_BODY}" | awk '
 ')
 # shellcheck disable=SC2016 # Assert the literal workflow variable reference.
 if printf '%s\n' "${JOB_BODY}" | grep -qE 'AIDEVOPS_PLANNING_GIT_BIN=.*RUNNER_GIT' &&
-	printf '%s\n' "${PROOF_BODY}" | grep -qE 'issue-sync-git-push-helper\.sh"?[[:space:]]+publish-todo[[:space:]]+main' &&
+	printf '%s\n' "${PROOF_BODY}" | grep -qE 'issue-sync-git-push-helper\.sh"?[[:space:]]+publish-todo[[:space:]]+"\$ISSUE_SYNC_TARGET_BRANCH"' &&
 	! printf '%s\n' "${PROOF_BODY}" | grep -qE 'planning_publish[[:space:]]' &&
 	! printf '%s\n' "${PROOF_BODY}" | grep -qE '^[[:space:]]+git[[:space:]]+(config|add|commit|pull|push)' &&
 	printf '%s\n' "${PLANS_BODY}" | grep -qE 'planning_publish[[:space:]]' &&
@@ -270,8 +270,9 @@ fi
 # Test 7: every legacy issue-sync TODO writer routes through the same helper.
 # The deterministic helper owns GH006 detection and PR deduplication.
 # ============================================================
-PUBLISH_CALL_COUNT=$(grep -cE 'issue-sync-git-push-helper\.sh"?[[:space:]]+publish-todo[[:space:]]+main' "$WORKFLOW_FILE" || true)
-LEGACY_PUSH_COUNT=$(grep -cE 'issue-sync-git-push-helper\.sh[[:space:]]+push-todo[[:space:]]+main' "$WORKFLOW_FILE" || true)
+# shellcheck disable=SC2016 # Match the literal workflow variable, not the test environment.
+PUBLISH_CALL_COUNT=$(grep -cE 'issue-sync-git-push-helper\.sh"?[[:space:]]+publish-todo[[:space:]]+"\$ISSUE_SYNC_TARGET_BRANCH"' "$WORKFLOW_FILE" || true)
+LEGACY_PUSH_COUNT=$(grep -cE 'issue-sync-git-push-helper\.sh[[:space:]]+push-todo[[:space:]]+' "$WORKFLOW_FILE" || true)
 if [[ "$PUBLISH_CALL_COUNT" -eq 4 && "$LEGACY_PUSH_COUNT" -eq 0 ]]; then
 	check 1 "all four TODO publication paths share the idempotent PR-safe helper" ""
 else
@@ -301,6 +302,25 @@ if [[ "$PR_TOKEN_FALLBACK_COUNT" -eq 4 ]]; then
 else
 	check 0 "all four TODO publication paths expose the bounded PR token fallback" \
 		"fallback exports=${PR_TOKEN_FALLBACK_COUNT}"
+fi
+
+# ============================================================
+# Publication must follow the trusted caller branch, independently of the
+# framework checkout ref. PR base takes precedence over synthetic merge refs;
+# tag/non-branch events fall back to the consumer's default branch.
+# ============================================================
+TARGET_BRANCH_EXPRESSION="ISSUE_SYNC_TARGET_BRANCH: \${{ github.event.pull_request.base.ref || (github.ref_type == 'branch' && github.ref_name) || github.event.repository.default_branch }}"
+if grep -Fq "$TARGET_BRANCH_EXPRESSION" "$WORKFLOW_FILE" &&
+	grep -Fq "origin \"\$ISSUE_SYNC_TARGET_BRANCH\" todo/PLANS.md" "$WORKFLOW_FILE" &&
+	! grep -qE 'publish-todo main|origin main todo/PLANS.md|merged to main\.' "$WORKFLOW_FILE"; then
+	check 1 "TODO, PLANS and completion messages use the caller publication branch" ""
+else
+	check 0 "TODO, PLANS and completion messages use the caller publication branch" "hard-coded main or unsafe branch precedence remains"
+fi
+if grep -Fq "ref: \${{ inputs.aidevops_ref || 'main' }}" "$WORKFLOW_FILE"; then
+	check 1 "framework checkout retains its independent upstream ref" ""
+else
+	check 0 "framework checkout retains its independent upstream ref" "consumer branch must not replace aidevops_ref"
 fi
 
 # ============================================================

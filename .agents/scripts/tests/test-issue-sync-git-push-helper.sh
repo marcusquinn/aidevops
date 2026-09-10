@@ -350,6 +350,7 @@ run_issue_sync_helper() {
 	local fallback_token="${10:-}"
 	local reject_pr_token="${11:-}"
 	local trusted_git="${12:-}"
+	local target_branch="${13:-main}"
 	local ci_home="${output_file}.home"
 	local runner_temp="${output_file}.runner"
 	mkdir -p "$ci_home" "$runner_temp"
@@ -371,7 +372,7 @@ run_issue_sync_helper() {
 			GH_STUB_REJECT_PR_TOKEN="$reject_pr_token" \
 			GIT_GUARD_LOG="${output_file}.git-guard" \
 			AIDEVOPS_PLANNING_GIT_BIN="$trusted_git" \
-			bash "$HELPER" publish-todo main "$attempts" \
+			bash "$HELPER" publish-todo "$target_branch" "$attempts" \
 			"chore: sync fixture issue refs to TODO.md [skip ci]" >"$output_file" 2>&1
 	)
 	return $?
@@ -939,6 +940,63 @@ test_noop_publishes_nothing() {
 	return 0
 }
 
+test_shallow_publication_target() {
+	local target_branch="$1"
+	local origin_dir="$TMP/target-${target_branch}-origin.git"
+	local seed_dir="$TMP/target-${target_branch}-seed"
+	local work_dir="$TMP/target-${target_branch}-work"
+	local fake_bin="$TMP/target-${target_branch}-bin"
+	local gh_log="$TMP/target-${target_branch}-gh.log"
+	local output_file="$TMP/target-${target_branch}-output.log"
+	local main_before=""
+	local develop_before=""
+	local candidate_before=""
+	local rc=0
+
+	create_origin "$origin_dir" "$seed_dir"
+	git -C "$seed_dir" checkout -b develop >/dev/null 2>&1
+	printf '\nDevelopment branch context.\n' >>"$seed_dir/TODO.md"
+	git -C "$seed_dir" add TODO.md
+	git -C "$seed_dir" commit -m "advance develop" >/dev/null
+	git -C "$seed_dir" push origin develop >/dev/null 2>&1
+	git clone --depth 1 --branch develop "file://${origin_dir}" "$work_dir" >/dev/null 2>&1
+	git_init_repo "$work_dir"
+	write_fake_gh "$fake_bin"
+	: >"$gh_log"
+	printf '\n- [ ] t9004 development-only projection ref:GH#9004\n' >>"$work_dir/TODO.md"
+	main_before=$(git --git-dir="$origin_dir" rev-parse main)
+	develop_before=$(git --git-dir="$origin_dir" rev-parse develop)
+	candidate_before=$(git -C "$work_dir" hash-object TODO.md)
+
+	run_issue_sync_helper "$work_dir" "$fake_bin" "$gh_log" "$TMP/target-${target_branch}-pr.marker" \
+		"$TMP/target-${target_branch}-head" "$TMP/target-${target_branch}-title" "$output_file" 1 \
+		"fixture-token" "" "" "" "$target_branch" || rc=$?
+	if [[ "$target_branch" == "develop" ]]; then
+		if [[ "$rc" -eq 0 ]] && git --git-dir="$origin_dir" show develop:TODO.md | grep -q 't9004 development-only projection'; then
+			pass "shallow develop checkout publishes to develop"
+		else
+			fail "shallow develop checkout publishes to develop"
+		fi
+	else
+		if [[ "$rc" -ne 0 ]] && grep -q 'Cannot find a common ancestor.*refusing TODO.md publication' "$output_file" &&
+			[[ "$(git --git-dir="$origin_dir" rev-parse develop)" == "$develop_before" ]]; then
+			pass "shallow branch mismatch fails closed with an actionable diagnostic"
+		else
+			fail "shallow branch mismatch fails closed with an actionable diagnostic"
+		fi
+	fi
+	if [[ "$(git --git-dir="$origin_dir" rev-parse main)" == "$main_before" &&
+	"$(git -C "$work_dir" rev-parse HEAD)" == "$develop_before" &&
+	"$(git -C "$work_dir" hash-object TODO.md)" == "$candidate_before" && ! -s "$gh_log" ]]; then
+		pass "${target_branch} target preserves main, caller state, and avoids GitHub writes"
+	else
+		fail "${target_branch} target preserves main, caller state, and avoids GitHub writes"
+	fi
+	return 0
+}
+
+test_shallow_publication_target develop
+test_shallow_publication_target main
 test_successful_push
 test_rebase_conflict_neutralizes_cleanly
 test_protected_branch_uses_one_rebased_pr

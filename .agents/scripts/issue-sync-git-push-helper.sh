@@ -351,7 +351,10 @@ issue_sync_prepare_base_snapshot() {
 	issue_sync_git -C "$repo_path" fetch -q origin "$default_branch" || return 1
 	ISSUE_SYNC_BASE_SHA=$(issue_sync_git -C "$repo_path" rev-parse FETCH_HEAD) || return 1
 	source_head=$(issue_sync_git -C "$repo_path" rev-parse "HEAD^{commit}") || return 1
-	ISSUE_SYNC_SOURCE_BASE_SHA=$(issue_sync_git -C "$repo_path" merge-base "$source_head" "$ISSUE_SYNC_BASE_SHA") || return 1
+	if ! ISSUE_SYNC_SOURCE_BASE_SHA=$(issue_sync_git -C "$repo_path" merge-base "$source_head" "$ISSUE_SYNC_BASE_SHA"); then
+		echo "::error::Cannot find a common ancestor between the source checkout and publication branch '${default_branch}'; refusing TODO.md publication. Verify branch selection and trusted checkout history." >&2
+		return 1
+	fi
 	cp -p "$source_file" "$merged_file" || return 1
 	issue_sync_read_todo_blob "$repo_path" "$ISSUE_SYNC_SOURCE_BASE_SHA" "$source_ancestor" || return 1
 	issue_sync_read_todo_blob "$repo_path" "$ISSUE_SYNC_BASE_SHA" "$latest_todo" || return 1
