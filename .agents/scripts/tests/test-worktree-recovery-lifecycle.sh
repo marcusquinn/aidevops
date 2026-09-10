@@ -481,6 +481,31 @@ test_detached_claim_does_not_invent_active_owner() {
 	return 0
 }
 
+assert_profile_unavailable_process_reason() {
+	local identity="$1"
+	local evidence_path="${TEST_DIR}/profile-evidence.json"
+	local evidence=""
+	local result=""
+
+	(
+		_worktree_recovery_plan_git_state() { printf 'clear\n'; }
+		_worktree_recovery_plan_worktree_reference_state() { printf 'clear\n'; }
+		_worktree_recovery_plan_registry_state() { printf 'clear\n'; }
+		_worktree_recovery_plan_claim_state() { printf 'not-applicable\n'; }
+		_worktree_recovery_plan_process_state() { printf 'unavailable\n'; }
+		_worktree_recovery_plan_external_evidence_json() { return 99; }
+		_worktree_recovery_plan_evidence_json "$identity" >"$evidence_path"
+	) || return 1
+	evidence=$(<"$evidence_path") || return 1
+	result=$(_worktree_recovery_plan_classification_json "$identity" "$evidence" true) || return 1
+	[[ "$(printf '%s\n' "$result" | jq -r '.disposition + ":" + .reasons[0]')" == 'unknown:process-evidence-unavailable' ]] || return 1
+	result=$(_worktree_recovery_plan_classification_json \
+		"$(printf '%s\n' "$identity" | jq -c '.producer_context = "legacy"')" \
+		"$evidence" true) || return 1
+	[[ "$(printf '%s\n' "$result" | jq -r '.disposition + ":" + .reasons[0]')" == 'protected:detached-or-unresolved-branch' ]]
+	return $?
+}
+
 test_profile_publication_detached_evidence_is_exact_and_fail_closed() {
 	local identity='' evidence='' result='' disposition='' reason='' mode=''
 	local evidence_path="${TEST_DIR}/profile-evidence.json"
@@ -539,7 +564,7 @@ test_profile_publication_detached_evidence_is_exact_and_fail_closed() {
 		case "$mode" in
 		published) [[ "$disposition:$reason" == 'candidate:producer-published-detached-evidence-clear' ]] || rc=1 ;;
 		unpublished) [[ "$disposition:$reason" == 'protected:exact-commit-not-published' ]] || rc=1 ;;
-		unavailable) [[ "$disposition:$reason" == 'unknown:required-evidence-unavailable' ]] || rc=1 ;;
+		unavailable) [[ "$disposition:$reason" == 'unknown:commit-evidence-unavailable' ]] || rc=1 ;;
 		esac
 	done
 	evidence='{"commit":"published","open_pr":"clear","task":"not-applicable","issue_number":null,"repo":"example/profile","provenance":"profile-publication"}'
@@ -566,8 +591,9 @@ test_profile_publication_detached_evidence_is_exact_and_fail_closed() {
 	evidence=$(<"$evidence_path") || rc=1
 	[[ "$(printf '%s\n' "$evidence" | jq -r '.claim')" == 'not-applicable' ]] || rc=1
 	[[ "$(printf '%s\n' "$evidence" | jq -r '.external.commit')" == 'published' ]] || rc=1
+	assert_profile_unavailable_process_reason "$identity" || rc=1
 	print_result "profile_publication_detached_evidence_is_exact_and_fail_closed" "$rc" \
-		"Expected producer-bound publication proof while malformed, live, unavailable, or unpublished archives remain preserved"
+		"Expected identity-aware unavailable reasons while malformed, live, unavailable, or unpublished archives remain preserved"
 	return 0
 }
 

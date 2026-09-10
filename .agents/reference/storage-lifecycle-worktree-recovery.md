@@ -103,7 +103,12 @@ eligible only when GitHub independently proves the archived HEAD is the merge
 base of the repository's current default-branch tip. A changed producer/context,
 unavailable API, non-ancestor commit, dirty archive, or live local reference
 still preserves the bucket. Other detached producers remain protected until
-they define an equally specific evidence contract.
+they define an equally specific evidence contract. Classification recognises
+the exact producer identity before external publication proof is available, so
+an early evidence failure reports its owning stage (for example,
+`process-evidence-unavailable`) instead of misreporting a supported producer as
+an unsupported detached branch. Identity recognition grants no deletion
+authority: provenance and publication proof remain mandatory for candidacy.
 
 Automatic maintenance may reclaim those same approved cache roots from an
 otherwise protected mixed archive without deleting the archive. This narrower

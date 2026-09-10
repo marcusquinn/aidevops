@@ -931,14 +931,27 @@ _worktree_recovery_plan_classification_json() {
 		--arg profile_provenance "$WORKTREE_RECOVERY_PROFILE_PROVENANCE" \
 		--arg published "$WORKTREE_RECOVERY_PLAN_COMMIT_PUBLISHED" \
 		--arg not_applicable "$WORKTREE_RECOVERY_PLAN_STATE_NOT_APPLICABLE" \
+		--arg unrecognised "unrecognised-evidence-state" \
 		--argjson identity "$identity_json" --argjson evidence "$evidence_json" \
 		--argjson stable "$stable" '
-		def profile_publication:
+		def profile_identity:
 			$identity.format == "aidevops-worktree-recovery-v2" and
 			$identity.branch == "detached" and
 			$identity.producer == $profile_producer and
-			$identity.producer_context == $profile_context and
+			$identity.producer_context == $profile_context;
+		def profile_publication:
+			profile_identity and
 			($evidence.external.provenance // "") == $profile_provenance;
+		def unavailable_reason:
+			if $evidence.git == $unavailable then "git-evidence-unavailable"
+			elif $evidence.worktree == $unavailable then "worktree-evidence-unavailable"
+			elif $evidence.registry == $unavailable then "registry-evidence-unavailable"
+			elif $evidence.claim == $unavailable then "claim-evidence-unavailable"
+			elif $evidence.process == $unavailable then "process-evidence-unavailable"
+			elif $evidence.external.commit == $unavailable then "commit-evidence-unavailable"
+			elif $evidence.external.open_pr == $unavailable then "pull-request-evidence-unavailable"
+			elif $evidence.external.task == $unavailable then "task-evidence-unavailable"
+			else "required-evidence-unavailable" end;
 		if $stable != true then {disposition:$unknown,reasons:["identity-or-size-changed"]}
 		elif $evidence.git == $dirty then {disposition:$protected,reasons:["archive-worktree-dirty"]}
 		elif $evidence.worktree == $active then {disposition:$protected,reasons:["active-git-worktree-reference"]}
@@ -947,15 +960,17 @@ _worktree_recovery_plan_classification_json() {
 		elif $evidence.process == $active then {disposition:$protected,reasons:["active-process-reference"]}
 		elif $evidence.external.open_pr == $active then {disposition:$protected,reasons:["open-pull-request"]}
 		elif $identity.source_removal_outcome != "removed" then {disposition:$protected,reasons:["source-removal-not-complete"]}
-		elif ($identity.branch | startswith("refs/heads/") | not) and (profile_publication | not)
+		elif ($identity.branch | startswith("refs/heads/") | not) and (profile_identity | not)
 		then {disposition:$protected,reasons:["detached-or-unresolved-branch"]}
 		elif ([ $evidence.git,$evidence.worktree,$evidence.registry,$evidence.claim,$evidence.process,
 			$evidence.external.commit,$evidence.external.open_pr,$evidence.external.task ] | index($unavailable)) != null
-		then {disposition:$unknown,reasons:["required-evidence-unavailable"]}
+		then {disposition:$unknown,reasons:[unavailable_reason]}
+		elif profile_identity and (profile_publication | not)
+		then {disposition:$unknown,reasons:[$unrecognised]}
 		elif profile_publication and $evidence.external.commit != $published
 		then {disposition:$protected,reasons:["exact-commit-not-published"]}
 		elif profile_publication and $evidence.external.task != $not_applicable
-		then {disposition:$unknown,reasons:["unrecognised-evidence-state"]}
+		then {disposition:$unknown,reasons:[$unrecognised]}
 		elif profile_publication and
 			([ $evidence.git,$evidence.worktree,$evidence.registry,$evidence.process ] | all(. == $clear)) and
 			$evidence.claim == $not_applicable
@@ -964,7 +979,7 @@ _worktree_recovery_plan_classification_json() {
 		elif $evidence.external.task != "closed" then {disposition:$protected,reasons:["linked-task-not-closed"]}
 		elif ([ $evidence.git,$evidence.worktree,$evidence.registry,$evidence.claim,$evidence.process ] | all(. == $clear))
 		then {disposition:$candidate,reasons:["all-required-evidence-clear"]}
-		else {disposition:$unknown,reasons:["unrecognised-evidence-state"]}
+		else {disposition:$unknown,reasons:[$unrecognised]}
 		end'
 	return $?
 }
