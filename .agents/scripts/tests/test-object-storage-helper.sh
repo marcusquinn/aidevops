@@ -22,7 +22,7 @@ assert_json() {
 }
 
 cat >"$CONFIG" <<'JSON'
-{"version":1,"accounts":{"fixture":{"provider":"s3-compatible","remote":"fixture_remote","endpoint":"https://s3.example.invalid","region":"test-1","buckets":["backup"]},"idrive":{"provider":"idrive-e2","remote":"idrive_remote","endpoint":"https://s3.us-west-1.idrivee2.com","region":"us-west-1","buckets":["backup"]},"idrive-wrong-host":{"provider":"idrive-e2","remote":"idrive_remote","endpoint":"https://s3.us-west-1.example.invalid","region":"us-west-1","buckets":["backup"]},"idrive-wrong-region":{"provider":"idrive-e2","remote":"idrive_remote","endpoint":"https://s3.us-west-1.idrivee2.com","region":"us-east-1","buckets":["backup"]},"b2":{"provider":"backblaze-b2","remote":"b2_remote","endpoint":"https://s3.us-west-000.backblazeb2.com","region":"us-west-000","buckets":["b2-backup"]}}}
+{"version":1,"accounts":{"fixture":{"provider":"s3-compatible","remote":"fixture_remote","endpoint":"https://s3.example.invalid","region":"test-1","buckets":["backup"]},"idrive":{"provider":"idrive-e2","remote":"idrive_remote","endpoint":"https://s3.us-west-1.idrivee2.com","region":"us-west-1","buckets":["backup"]},"idrive-wrong-host":{"provider":"idrive-e2","remote":"idrive_remote","endpoint":"https://s3.us-west-1.example.invalid","region":"us-west-1","buckets":["backup"]},"idrive-wrong-region":{"provider":"idrive-e2","remote":"idrive_remote","endpoint":"https://s3.us-west-1.idrivee2.com","region":"us-east-1","buckets":["backup"]},"wasabi":{"provider":"wasabi","remote":"wasabi_remote","endpoint":"https://s3.us-east-1.wasabisys.com","region":"us-east-1","buckets":["wasabi-backup"]},"wasabi-primary":{"provider":"wasabi","remote":"wasabi_remote","endpoint":"https://s3.wasabisys.com","region":"us-east-1","buckets":["wasabi-backup"]},"wasabi-alias":{"provider":"wasabi","remote":"wasabi_remote","endpoint":"https://s3.nl-1.wasabisys.com","region":"eu-central-1","buckets":["wasabi-backup"]},"wasabi-unknown-region":{"provider":"wasabi","remote":"wasabi_remote","endpoint":"https://s3.moon-1.wasabisys.com","region":"moon-1","buckets":["wasabi-backup"]},"wasabi-wrong-host":{"provider":"wasabi","remote":"wasabi_remote","endpoint":"https://s3.us-east-1.example.invalid","region":"us-east-1","buckets":["wasabi-backup"]},"wasabi-wrong-region":{"provider":"wasabi","remote":"wasabi_remote","endpoint":"https://s3.us-east-1.wasabisys.com","region":"us-west-1","buckets":["wasabi-backup"]},"b2":{"provider":"backblaze-b2","remote":"b2_remote","endpoint":"https://s3.us-west-000.backblazeb2.com","region":"us-west-000","buckets":["b2-backup"]}}}
 JSON
 cat >"$RCLONE" <<'SH'
 #!/usr/bin/env bash
@@ -57,6 +57,26 @@ result=$(run_helper readiness idrive)
 assert_json "$result" '.status == "ok" and .data.provider == "idrive-e2"' "valid IDrive endpoint was rejected"
 if run_helper readiness idrive-wrong-host >/dev/null 2>&1; then fail "non-IDrive endpoint was accepted"; fi
 if run_helper readiness idrive-wrong-region >/dev/null 2>&1; then fail "mismatched IDrive region was accepted"; fi
+result=$(run_helper readiness wasabi)
+assert_json "$result" '.status == "ok" and .data.provider == "wasabi"' "valid Wasabi endpoint was rejected"
+run_helper readiness wasabi-primary >/dev/null || fail "Wasabi US East primary endpoint was rejected"
+run_helper readiness wasabi-alias >/dev/null || fail "official Wasabi endpoint alias was rejected"
+if run_helper readiness wasabi-unknown-region >/dev/null 2>&1; then fail "unknown Wasabi region was accepted"; fi
+if run_helper readiness wasabi-wrong-host >/dev/null 2>&1; then fail "non-Wasabi endpoint was accepted"; fi
+if run_helper readiness wasabi-wrong-region >/dev/null 2>&1; then fail "mismatched Wasabi region was accepted"; fi
+result=$(run_helper list-objects wasabi wasabi-backup --limit 1)
+assert_json "$result" '.data | length == 1' "bounded Wasabi inventory failed"
+result=$(run_helper verify-backups wasabi wasabi-backup --max-age-days 30)
+assert_json "$result" '.data.fresh == true and .data.restore_verified == false' "Wasabi backup freshness was not reported safely"
+result=$(run_helper audit-protection wasabi wasabi-backup)
+assert_json "$result" '.data.mutation_supported == false and .data.status == "manual_provider_review_required"' "Wasabi protection audit exposed mutation"
+result=$(run_helper download wasabi wasabi-backup backup-current restore-target)
+assert_json "$result" '.data.dry_run == true and .data.confirmation_required == "preview:wasabi:wasabi-backup"' "Wasabi restore was not preview-only"
+result=$(run_helper download wasabi wasabi-backup backup-current restore-target --confirm preview:wasabi:wasabi-backup)
+assert_json "$result" '.data.dry_run == true and .data.executed == false' "confirmed Wasabi restore escaped dry-run"
+if run_helper list-objects wasabi wasabi-backup --limit 1 --delete >/dev/null 2>&1; then fail "arbitrary Wasabi flag was accepted"; fi
+if run_helper delete wasabi wasabi-backup backup-current >/dev/null 2>&1; then fail "Wasabi deletion command was accepted"; fi
+if AIDEVOPS_OBJECT_STORAGE_CONFIG="$CONFIG" AIDEVOPS_RCLONE_BIN="$TEST_ROOT/missing-rclone" "$HELPER" readiness wasabi >/dev/null 2>&1; then fail "missing rclone was accepted"; fi
 if run_helper object-info fixture backup https://invalid >/dev/null 2>&1; then fail "raw URL was accepted"; fi
 result=$(run_helper copy fixture backup source destination)
 assert_json "$result" '.data.dry_run == true and .data.confirmation_required == "preview:fixture:backup"' "copy was not preview-only"
