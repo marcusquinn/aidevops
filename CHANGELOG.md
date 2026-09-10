@@ -10,6 +10,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.351] - 2026-09-10
+
+### Added
+
+- add guarded IDrive e2 storage integration (#31704)
+- add object storage helper foundation (#31695)
+
+### Changed
+
+- Maintenance: mark t18420 complete (pr:#31710 completed:2026-09-10) (#31708)
+- Documentation: plan evidence-based effort and delegation optimisation
+- Maintenance: mark t18418 complete (pr:#31695 completed:2026-09-09) (#31682)
+- Maintenance: correct object storage task label mappings
+- Maintenance: add object storage integration roadmap
+- Maintenance: sync ref:GH#31676 to TODO.md (#31665)
+- Tests: add opt-in Pulse launchd integration check (#31675)
+
+### Fixed
+
+- retry deferred feedback routes
+- report unavailable evidence stage
+- prevent false consolidation of fresh claimed issues
+- retain escalation through inventory churn (#31707)
+- resume preserved release tags before protected PR creation
+
 ## [3.32.350] - 2026-09-09
 
 ### Fixed
