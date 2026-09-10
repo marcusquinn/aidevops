@@ -1354,7 +1354,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18420 Add guarded Backblaze B2 object storage and official MCP integration #auto-dispatch #feat #tier:standard #interactive ~4h blocked-by:t18418 ref:GH#31687 logged:2026-09-09 -> [todo/tasks/t18420-brief.md] pr:#31710 completed:2026-09-10
 
-- [ ] t18421 Add guarded Wasabi object storage integration with beta MCP boundary #auto-dispatch #feat #tier:standard #interactive ~3h blocked-by:t18418 ref:GH#31688 logged:2026-09-09 -> [todo/tasks/t18421-brief.md]
+- [x] t18421 Add guarded Wasabi object storage integration with beta MCP boundary #auto-dispatch #feat #tier:standard #interactive ~3h blocked-by:t18418 ref:GH#31688 logged:2026-09-09 -> [todo/tasks/t18421-brief.md] pr:#31719 completed:2026-09-10
 
 ## In Progress
 
@@ -4900,7 +4900,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 ## Evidence-based model effort and delegation optimisation
 
 - [ ] t18422 Evidence-based model effort and delegation optimisation #parent #enhancement #framework #observability #interactive priority:high tier:thinking ref:GH#31696 logged:2026-09-10 -> [todo/tasks/t18422-brief.md]
-- [ ] t18423 Record model-effort harness and cost provenance #auto-dispatch #enhancement #framework #observability #interactive priority:high tier:standard ~3h parent:t18422 ref:GH#31698 logged:2026-09-10 -> [todo/tasks/t18423-brief.md]
+- [x] t18423 Record model-effort harness and cost provenance #auto-dispatch #enhancement #framework #observability #interactive priority:high tier:standard ~3h parent:t18422 ref:GH#31698 logged:2026-09-10 -> [todo/tasks/t18423-brief.md] pr:#31721 completed:2026-09-10
 - [ ] t18424 Correlate objectives with verified outcomes and subagent repair #auto-dispatch #enhancement #framework #observability #interactive priority:high status:blocked tier:standard ~4h parent:t18422 blocked-by:t18423 ref:GH#31699 logged:2026-09-10 -> [todo/tasks/t18424-brief.md]
 - [ ] t18425 Report matched objective cost and routing evidence coverage #auto-dispatch #enhancement #framework #observability #interactive priority:high status:blocked tier:standard ~3h parent:t18422 blocked-by:t18424 ref:GH#31701 logged:2026-09-10 -> [todo/tasks/t18425-brief.md]
 - [ ] t18426 Prepare portable bounded model-effort pilot using existing replay #auto-dispatch #enhancement #framework #observability #interactive priority:medium status:blocked tier:standard ~3h parent:t18422 blocked-by:t18425 ref:GH#31700 logged:2026-09-10 -> [todo/tasks/t18426-brief.md]
