@@ -44,6 +44,7 @@ subagents:
   - coolify
   - vercel
   - cloudflare-mcp
+  - idrive-e2
   # Monitoring
   - sentry
   - socket

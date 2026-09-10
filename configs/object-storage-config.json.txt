@@ -7,6 +7,13 @@
       "endpoint": "https://s3.example.invalid",
       "region": "example-region-1",
       "buckets": ["example-backups"]
+    },
+    "example-idrive-e2": {
+      "provider": "idrive-e2",
+      "remote": "example_idrive_e2_remote",
+      "endpoint": "https://s3.example-region-1.idrivee2.com",
+      "region": "example-region-1",
+      "buckets": ["example-idrive-backups"]
     }
   },
   "security": {
