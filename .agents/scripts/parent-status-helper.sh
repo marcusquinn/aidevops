@@ -468,18 +468,43 @@ _render_json() {
 # function under 100 lines (function-complexity gate, t2370).
 # =============================================================================
 
+# Fetch and validate native sub-issue evidence once for both provenance and the
+# merged child set. Outputs through prefixed globals to avoid a duplicate API
+# read while keeping cmd_parent_status below the complexity threshold.
+_load_parent_subissue_evidence() {
+	local issue_num="$1" repo="$2"
+	_PARENT_STATUS_SUB_ISSUES_JSON="[]"
+	_PARENT_STATUS_NATIVE_GRAPH_COUNT=0
+	_PARENT_STATUS_SUB_ISSUES_INCOMPLETE=0
+	if ! _PARENT_STATUS_SUB_ISSUES_JSON=$(_fetch_sub_issues "$issue_num" "$repo"); then
+		_PARENT_STATUS_SUB_ISSUES_JSON="[]"
+		_PARENT_STATUS_SUB_ISSUES_INCOMPLETE=1
+	elif ! printf '%s' "$_PARENT_STATUS_SUB_ISSUES_JSON" |
+		jq -e 'type == "array" and all(.[]; .number | type == "number")' >/dev/null 2>&1; then
+		_PARENT_STATUS_SUB_ISSUES_JSON="[]"
+		_PARENT_STATUS_SUB_ISSUES_INCOMPLETE=1
+	else
+		_PARENT_STATUS_NATIVE_GRAPH_COUNT=$(printf '%s' "$_PARENT_STATUS_SUB_ISSUES_JSON" |
+			jq 'length' 2>/dev/null || true)
+	fi
+	return 0
+}
+
 # Gather all child issue numbers for a parent by merging the sub-issues API
 # result with prose refs extracted from the issue body.
-# Arguments: $1=issue_num $2=repo $3=parent_body
+# Arguments: $1=issue_num $2=repo $3=parent_body $4=optional prefetched sub-issues JSON
 # Echo: sorted unique child numbers, one per line
 _gather_child_nums() {
 	local issue_num="$1"
 	local repo="$2"
 	local parent_body="$3"
+	local supplied_sub_issues_json="${4:-}"
 
 	local sub_issues_json
 	local fetch_incomplete=0
-	if ! sub_issues_json=$(_fetch_sub_issues "$issue_num" "$repo"); then
+	if [[ -n "$supplied_sub_issues_json" ]]; then
+		sub_issues_json="$supplied_sub_issues_json"
+	elif ! sub_issues_json=$(_fetch_sub_issues "$issue_num" "$repo"); then
 		sub_issues_json="[]"
 		fetch_incomplete=1
 	fi
@@ -583,11 +608,15 @@ _summarize_child_readiness() {
 }
 
 # Read deterministic parent close-contract constraints from the body.
+# Arguments: $1=parent_body $2=phase_plan $3=native_graph_count
 # Echo: "<expected_children>|<incomplete_reason>"
 _read_close_contract() {
 	local parent_body="$1"
 	local phase_plan="$2"
+	local native_graph_count="${3:-0}"
 	local expected_children="" reason=""
+	local declared_phase_count=0
+	declared_phase_count=$(printf '%s\n' "$phase_plan" | grep -c '|' 2>/dev/null || true)
 	expected_children=$(printf '%s\n' "$parent_body" |
 		sed -nE 's/.*<!-- parent-close-contract: expected-children=([0-9]+) -->.*/\1/p' | head -n1)
 	if [[ "$parent_body" == *"<!-- parent-close-contract: needs-decomposition -->"* ||
@@ -596,9 +625,11 @@ _read_close_contract() {
 	elif [[ "$parent_body" == *"<!-- parent-close-contract: phase-plan -->"* && -z "$phase_plan" ]]; then
 		reason="invalid-phase-plan"
 	elif [[ -n "$phase_plan" ]] &&
+		[[ "$native_graph_count" -lt "$declared_phase_count" ]] &&
 		printf '%s\n' "$phase_plan" | awk -F'|' '$3 == "" { found=1 } END { exit !found }'; then
 		reason="unfiled-phases"
-	elif printf '%s\n' "$parent_body" | grep -qE '^[[:space:]]*[-*][[:space:]]+\[[[:space:]]\]'; then
+	elif [[ "$native_graph_count" -eq 0 ]] &&
+		printf '%s\n' "$parent_body" | grep -qE '^[[:space:]]*[-*][[:space:]]+\[[[:space:]]\]'; then
 		reason="unchecked-criteria"
 	fi
 	printf '%s|%s\n' "$expected_children" "$reason"
@@ -721,7 +752,12 @@ cmd_parent_status() {
 	[[ -z "$phase_plan" ]] && phases_total=0
 
 	local all_child_nums children_state_lines retrieval_incomplete=0
-	if ! all_child_nums=$(_gather_child_nums "$issue_num" "$repo" "$parent_body"); then
+	local sub_issues_json="[]" native_graph_count=0
+	_load_parent_subissue_evidence "$issue_num" "$repo"
+	sub_issues_json="$_PARENT_STATUS_SUB_ISSUES_JSON"
+	native_graph_count="$_PARENT_STATUS_NATIVE_GRAPH_COUNT"
+	retrieval_incomplete="$_PARENT_STATUS_SUB_ISSUES_INCOMPLETE"
+	if ! all_child_nums=$(_gather_child_nums "$issue_num" "$repo" "$parent_body" "$sub_issues_json"); then
 		retrieval_incomplete=1
 	fi
 	if ! children_state_lines=$(_resolve_children_state "$all_child_nums" "$repo"); then
@@ -746,7 +782,7 @@ cmd_parent_status() {
 	if [[ -z "$phase_plan" ]]; then phases_total="${total_line#TOTAL:}"; fi
 
 	local close_contract expected_children contract_reason next_action
-	close_contract=$(_read_close_contract "$parent_body" "$phase_plan")
+	close_contract=$(_read_close_contract "$parent_body" "$phase_plan" "$native_graph_count")
 	IFS='|' read -r expected_children contract_reason <<< "$close_contract"
 	next_action=$(_derive_next_action \
 		"$phases_total" "$phases_filed" "$in_flight_pr_num" "$phases_merged" \

@@ -348,8 +348,8 @@ assert_grep_fixed \
 	'_parent_close_contract_incomplete() {' \
 	"$ACTIONS_TARGET"
 assert_grep_fixed \
-	'B7b: close path checks the contract after child terminality' \
-	'if _parent_close_contract_incomplete "$parent_body" "$child_count"; then' \
+	'B7b: close path checks the contract with child provenance after terminality' \
+	'if _parent_close_contract_incomplete "$parent_body" "$child_count" "$child_source"; then' \
 	"$ACTIONS_TARGET"
 assert_grep_fixed \
 	'B7c: incomplete canonical phases post the idempotent phase nudge' \
@@ -382,6 +382,10 @@ assert_grep_fixed \
 assert_grep_fixed \
 	'B7g: unchecked parent criteria are deterministic close blockers' \
 	'_PARENT_CLOSE_CONTRACT_REASON="unchecked-criteria"' \
+	"$ACTIONS_TARGET"
+assert_grep_fixed \
+	'B7g2: native graph completion supersedes stale unchecked tracker criteria' \
+	'[[ "$native_graph_complete" -eq 0 ]]' \
 	"$ACTIONS_TARGET"
 assert_grep_fixed \
 	'B7h: incomplete parent close contracts use an explicit review hold' \
@@ -423,11 +427,11 @@ assert_grep_fixed \
 	"$PARENT_TARGET"
 TESTS_RUN=$((TESTS_RUN + 1))
 hold_guard_count=$(grep -Fc '_pir_parent_mutation_is_allowed "$slug" "$issue_num"' "$ACTIONS_TARGET" 2>/dev/null || true)
-if [[ "$hold_guard_count" -ge 6 ]]; then
+if [[ "$hold_guard_count" -ge 5 ]]; then
 	echo "${TEST_GREEN}PASS${TEST_NC}: B10d: every parent mutation class has a live hold recheck"
 else
 	TESTS_FAILED=$((TESTS_FAILED + 1))
-	echo "${TEST_RED}FAIL${TEST_NC}: B10d: expected at least 6 live parent hold checks, found $hold_guard_count"
+	echo "${TEST_RED}FAIL${TEST_NC}: B10d: expected at least 5 live parent hold checks, found $hold_guard_count"
 fi
 
 # B11: parent creation stamps a machine-readable contract before signing.

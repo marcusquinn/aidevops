@@ -29,6 +29,16 @@ Sources, inspirations, and third-party resources incorporated into or referenced
   - Repository: https://github.com/dominikmartn/nothing-design-skill
   - Adapted as `.agents/tools/ui/nothing-design-skill/`
 
+### Hallmark
+
+- **Nutlope/hallmark** (MIT License, copyright 2026 Hallmark contributors) —
+  Structure-first composition, brief-specific design critique, and build/audit/
+  redesign/study concepts adapted into `.agents/tools/design/distinctive-ui.md`
+  and its composition/audit references, not vendored or installed wholesale.
+  - Repository: https://github.com/nutlope/hallmark
+  - Reviewed commit: `13ac0ec7e148655948100b6396439e481361d690`
+  - Value assessment, departures and full MIT notice: `.agents/tools/design/hallmark.md`
+
 ### Logo & Brand Identity Tools
 
 - **Brandmark** -- AI logo maker that generates logo, typography, and colour schemes from keywords.
