@@ -73,6 +73,9 @@ Created 2026-09-10, interactive auto-dispatch brief. Parent: t18422. Blocked by 
 4. Include parent/child/repair token and estimated-cost components, observed interventions, active inference time versus wall/CI/tool wait where available, and p50/p95 only with sample counts. Do not sum overlapping durations into wall time. Distinguish normal tool turns, route changes and actual retries; default fields are not evidence of absent transport retries.
 5. Keep recorded pricing versions unchanged; reprice only as a labelled comparable estimate with exact model-match coverage and known rate/service-context limitations. Unknown prices, long-context uplifts and shared-account quota attribution stay unavailable, not fabricated dollars or percentages.
 6. Add coverage fields for objective mapping, verification, effort evidence, population, lineage and price provenance. Reuse them in feedback without changing automatic routing or downgrading task tiers. Keep public output to aggregates and opaque fingerprints.
+7. **Lease attempts to solve:** report the number of distinct won worker leases through verified resolution per issue/solve episode, using t18424's identity/completeness contract. Include median/p95/max, a 1/2/3/4+ distribution and the one-lease share among fully observed solved issues, always with the denominator and independent issue count. Show overall completion rate plus attempts-to-date for unsolved/censored issues alongside these solved-only statistics to avoid survivorship bias.
+8. Separate allocated leases, actually launched workers, prelaunch failures, expiry/handoff and evidence-backed no-progress/repair. Renewals, duplicate observations, losing claim races and within-lease model/tool retries must not inflate the lease count. Keep partial historical counts labelled lower-bound/unknown, separate reopened solve episodes from lifetime totals, and preserve per-attempt model/effort attribution for mixed-route issues.
+9. Pair lease counts with total issue cost/time including unsuccessful attempts. When showing a cohort ratio of total leases divided by verified solved issues, include failed-issue leases in the numerator, label that cohort ratio separately from per-solved-issue counts, and return null for a zero or unknown verified denominator. Lease counts indicate recovery overhead, not task difficulty or model causality on their own.
 
 ### Hazards and Compatibility
 
@@ -93,6 +96,8 @@ node .agents/plugins/opencode-aidevops/tests/test-routing-feedback.mjs
 
 Use disposable fixtures for 2 successful objectives plus 1 failure, descendant/repair joins, multi-objective sessions, shared work, unknown effort/price, no verified outcomes and incomplete windows. Assert hand-calculated totals and denominator, no double counting, original DB bytes unchanged, and no inference/provider calls. The live read-only command is a smoke check, not evidence of a model winner.
 
+Lease arithmetic fixture: solved issue A has one lease plus three renewals; solved B has three distinct leases; unsolved C has two leases. Report solved distribution `{1:1, 3:1}`, median two, one-lease share 1/2, C attempts-to-date two, and the separately labelled cohort ratio six leases / two verified solves = three. Unknown/incomplete history cannot silently enter the complete-history denominator.
+
 - **Surface mapping:** Python fixtures prove attribution/arithmetic/read-only privacy; JS feedback tests prove consistent acceptance semantics; the existing CLI smoke checks production compatibility; changed-file lint covers the edited surface.
 
 ### Progressive Context Plan
@@ -108,6 +113,7 @@ Keep any shell entry-point change to argument forwarding; put new aggregation in
 - [ ] Fixture totals include failed attempts and all observed parent/child/repair work exactly once, with an independently checkable verified denominator.
 - [ ] Unknown/mixed/partial evidence prevents a spurious cheapest-route claim; legacy databases still return useful request-level output.
 - [ ] Production smoke output contains no raw private identifiers and leaves historical records/costs untouched.
+- [ ] Lease-attempt statistics match the explicit fixture arithmetic, preserve unsolved-issue visibility and do not count renewals as fresh attempts or confuse solved-only statistics with cohort-wide expenditure.
 
 ## Recovery and Seeded Draft PR
 
