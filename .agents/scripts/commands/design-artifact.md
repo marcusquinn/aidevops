@@ -13,6 +13,12 @@ Request: $ARGUMENTS
 
 ## Decision Tree
 
+For design audit or reference study, use `tools/design/distinctive-ui.md` in its
+read-only mode and stop after the report unless implementation/export is requested.
+For new UI composition, redesign or "less generic" requests, load that guide before
+choosing a structure; keep the existing DESIGN.md authoritative. The following
+creation/export steps apply only to the authorized artifact scope.
+
 1. If the project lacks `DESIGN.md`, create/lint it first via `tools/design/design-md.md`.
 2. For brand guideline handoff, run `aidevops design guidelines . --pdf` and review `_reports/brand-guidelines/`.
 3. For cross-repo rollout, run `aidevops design survey --json` then `aidevops design issues --apply` to file worker-ready GUI repo tasks.
