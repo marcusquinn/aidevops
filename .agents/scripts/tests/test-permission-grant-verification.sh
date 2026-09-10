@@ -152,4 +152,59 @@ if ! _dispatch_permission_history_requires_grant 123 owner/repo; then
 fi
 [[ "$_DISPATCH_PERMISSION_VERIFY_RESULT" == "NO_APPROVAL" ]]
 
+permission_retry_result=$(bash -c '
+	set -euo pipefail
+	source "$1"
+	export AIDEVOPS_PERMISSION_PERSISTENCE_ATTEMPTS=3
+	export AIDEVOPS_PERMISSION_PERSISTENCE_RETRY_DELAY=0
+	edit_calls=0
+	block_visible=false
+	gh_issue_view() {
+		if [[ "$block_visible" == true ]]; then
+			printf "%s\n" "{\"labels\":[{\"name\":\"needs-maintainer-permissions\"},{\"name\":\"status:blocked\"}]}"
+		else
+			printf "%s\n" "{\"labels\":[{\"name\":\"status:in-progress\"}]}"
+		fi
+	}
+	gh_issue_edit_safe() {
+		edit_calls=$((edit_calls + 1))
+		if [[ "$edit_calls" -eq 1 ]]; then
+			return 1
+		fi
+		block_visible=true
+		return 0
+	}
+	permission_apply_block 123 owner/repo
+	permission_apply_block 123 owner/repo
+
+	capture_file=$(mktemp)
+	jq -cn '\''{
+		schema: "aidevops-permission-capture/v1",
+		issue: "123",
+		repo: "owner/repo",
+		requests: [{
+			permission: "network",
+			patterns: ["example.invalid"],
+			tool: "webfetch",
+			intent: "test non-grantable boundary",
+			risk: {level: "critical", grantable: false, reason: "not representable"}
+		}]
+	}'\'' >"$capture_file"
+	recorded_event=""
+	post_calls=0
+	block_calls=0
+	permission_record_blocker() { recorded_event="$1"; }
+	permission_post_request() { post_calls=$((post_calls + 1)); }
+	permission_apply_block() { block_calls=$((block_calls + 1)); }
+	non_grantable_rc=0
+	cmd_request --file "$capture_file" --issue 123 --repo owner/repo --session issue-123 --work-dir "" || non_grantable_rc=$?
+	rm -f "$capture_file"
+	printf "calls=%s visible=%s nongrantable_rc=%s event=%s post=%s block=%s\n" \
+		"$edit_calls" "$block_visible" "$non_grantable_rc" "$recorded_event" "$post_calls" "$block_calls"
+' _ "${SCRIPT_DIR}/worker-permission-helper.sh")
+[[ "$permission_retry_result" == "calls=2 visible=true nongrantable_rc=1 event=permission_request_non_grantable post=0 block=0" ]] || {
+	printf 'permission blocker retry was not idempotent: %s\n' "$permission_retry_result" >&2
+	exit 1
+}
+
 printf 'permission grant verification tests passed\n'

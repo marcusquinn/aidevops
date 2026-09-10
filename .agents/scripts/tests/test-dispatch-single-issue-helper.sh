@@ -810,6 +810,12 @@ test_maintainer_permission_guard_blocks_manual_dispatch() {
 	local check=1
 	[[ "$rc" -eq 1 && "$out" == *"scoped maintainer permission grant"* && "$out" == *"--request perm-"* ]] && check=0
 	print_result "maintainer-permission guard blocks manual dispatch" "$check" "rc=$rc output=$out"
+
+	rc=0
+	out=$(_dsi_guard_no_maintainer_permission_required "bug,status:blocked" 24354 owner/repo 2>&1) || rc=$?
+	check=1
+	[[ "$rc" -eq 0 && -z "$out" ]] && check=0
+	print_result "generic blocker does not impersonate maintainer-permission hold" "$check" "rc=$rc output=$out"
 	return 0
 }
 
