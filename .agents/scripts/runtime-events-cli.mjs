@@ -43,20 +43,20 @@ function emitPayload(args) {
   ]);
 }
 
-function emitCommand(args, runtime) {
-  const generatedEventId = optionValue(args, "--event-id") ||
-    (args.includes("--root-dispatch") ? randomUUID() : undefined);
-  const eventType = args[1];
-  const payload = emitPayload(args);
+function objectiveValidationFailure(eventType, payload) {
   try {
     validateObjectiveRuntimeEvent(eventType, payload);
   } catch (error) {
     if (isObjectiveRuntimeEvent(eventType)) {
       printJson({ recorded: false, error: error.message });
-      return 1;
+      return true;
     }
   }
-  const envelope = runtime.appendRuntimeEventSync({
+  return false;
+}
+
+function appendEmittedEvent(args, runtime, eventType, payload, generatedEventId) {
+  return runtime.appendRuntimeEventSync({
     eventId: generatedEventId,
     eventType,
     subjectId: cliSubject(args),
@@ -71,6 +71,15 @@ function emitCommand(args, runtime) {
     parentEventId: optionValue(args, "--parent-event") || undefined,
     payload,
   });
+}
+
+function emitCommand(args, runtime) {
+  const generatedEventId = optionValue(args, "--event-id") ||
+    (args.includes("--root-dispatch") ? randomUUID() : undefined);
+  const eventType = args[1];
+  const payload = emitPayload(args);
+  if (objectiveValidationFailure(eventType, payload)) return 1;
+  const envelope = appendEmittedEvent(args, runtime, eventType, payload, generatedEventId);
   if (envelope) {
     if (args.includes("--print-id")) process.stdout.write(`${envelope.eventId}\n`);
     else printJson(envelope);
