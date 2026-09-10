@@ -42,6 +42,7 @@ const AGENT_MCP_TOOLS = {
   mainwp: ["localwp_*"],
   localwp: ["localwp_*"],
   quickfile: ["quickfile_*"],
+  "backblaze-b2": ["backblaze-b2_*"],
   "amazon-order-history": ["amazon-order-history_*"],
   // AI tooling
   "claude-code": ["claude-code-mcp_*"],
