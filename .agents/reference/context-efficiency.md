@@ -65,7 +65,7 @@ subcommand; add `--json` for the full evidence contract. It queries SQLite in
 read-only mode and never rewrites historical costs. It includes reasoning,
 median/p95 prompt sizes by model/effort, current-table repricing, historical price
 versions, routing observation coverage and parent-plus-child session families.
-Session output uses fingerprints rather than titles, paths or raw session IDs.
+Session output uses fingerprints rather than titles, paths or raw session IDs. When runtime objective events are available, the scorecard reports only aggregate outcomes joined through explicit unique request attachments; it does not allocate shared work or infer acceptance from a finished response.
 
 Cache hits remain billable for many APIs. A smaller useful prompt may reduce the
 hit percentage while saving money. API-equivalent estimates are not subscription
