@@ -100,20 +100,31 @@ validate_provider_endpoint() {
 	local endpoint region endpoint_region
 	endpoint=$(jq -r '.endpoint // empty' <<<"$ACCOUNT_JSON")
 	region=$(jq -r '.region // empty' <<<"$ACCOUNT_JSON")
-	if [[ "$ACCOUNT_PROVIDER" != "idrive-e2" ]]; then
+	case "$ACCOUNT_PROVIDER" in
+	idrive-e2)
+		[[ "$endpoint" =~ ^https://s3\.([a-z0-9-]+)\.idrivee2\.com$ ]] || {
+			fail_json "idrive_endpoint_invalid"
+			return 1
+		}
+		endpoint_region="${BASH_REMATCH[1]}"
+		;;
+	wasabi)
+		[[ "$endpoint" =~ ^https://s3\.([a-z0-9-]+)\.wasabisys\.com$ ]] || {
+			fail_json "wasabi_endpoint_invalid"
+			return 1
+		}
+		endpoint_region="${BASH_REMATCH[1]}"
+		;;
+	*)
 		return 0
-	fi
-	if [[ ! "$endpoint" =~ ^https://s3\.([a-z0-9-]+)\.idrivee2\.com$ ]]; then
-		fail_json "idrive_endpoint_invalid"
-		return 1
-	fi
-	endpoint_region="${BASH_REMATCH[1]}"
+		;;
+	esac
 	[[ "$region" =~ ^[a-z0-9-]+$ ]] || {
-		fail_json "idrive_endpoint_invalid"
+		fail_json "${ACCOUNT_PROVIDER}_endpoint_invalid"
 		return 1
 	}
 	[[ "$endpoint_region" == "$region" ]] || {
-		fail_json "idrive_region_mismatch"
+		fail_json "${ACCOUNT_PROVIDER}_region_mismatch"
 		return 1
 	}
 	return 0
