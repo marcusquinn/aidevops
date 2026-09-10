@@ -55,6 +55,9 @@ define_functions_under_test() {
 		/^_route_pr_has_linked_issue\(\) \{/,/^}$/ { print }
 		/^_route_pr_issue_labels_for_dispatch\(\) \{/,/^}$/ { print }
 		/^_route_pr_feedback_terminal_guard\(\) \{/,/^}$/ { print }
+		/^_route_pr_preserve_deferred_retry\(\) \{/,/^}$/ { print }
+		/^_route_pr_issue_labels_with_retry\(\) \{/,/^}$/ { print }
+		/^_route_pr_guard_and_dispatch_with_retry\(\) \{/,/^}$/ { print }
 		/^_route_pr_to_fix_worker\(\) \{/,/^}$/ { print }
 	' "$PROCESS_SCRIPT")
 	if [[ -z "$fn_src" ]]; then
@@ -76,6 +79,7 @@ install_stubs() {
 	SET_ORIGIN_RC=0
 	RECONCILED_PR_LABELS="origin:worker"
 	ROUTE_GUARD_RC=0
+	DISPATCH_RC=0
 	COMPARE_FAIL=0
 	COMPARE_BEHIND=1
 	TERMINAL_CHECK_RC=0
@@ -119,9 +123,10 @@ install_stubs() {
 		fi
 		return 0
 	}
-	_dispatch_ci_fix_worker() { local pr_number="$1"; local repo_slug="$2"; local linked_issue="$3"; printf 'dispatch-ci %s %s %s\n' "$pr_number" "$repo_slug" "$linked_issue" >>"$GH_CALL_LOG"; return 0; }
-	_dispatch_pr_fix_worker() { local pr_number="$1"; local repo_slug="$2"; local linked_issue="$3"; printf 'dispatch-review %s %s %s\n' "$pr_number" "$repo_slug" "$linked_issue" >>"$GH_CALL_LOG"; return 0; }
-	_dispatch_conflict_fix_worker() { local pr_number="$1"; local repo_slug="$2"; local linked_issue="$3"; printf 'dispatch-conflict %s %s %s\n' "$pr_number" "$repo_slug" "$linked_issue" >>"$GH_CALL_LOG"; return 0; }
+	_dispatch_ci_fix_worker() { local pr_number="$1"; local repo_slug="$2"; local linked_issue="$3"; printf 'dispatch-ci %s %s %s\n' "$pr_number" "$repo_slug" "$linked_issue" >>"$GH_CALL_LOG"; return "$DISPATCH_RC"; }
+	_dispatch_pr_fix_worker() { local pr_number="$1"; local repo_slug="$2"; local linked_issue="$3"; printf 'dispatch-review %s %s %s\n' "$pr_number" "$repo_slug" "$linked_issue" >>"$GH_CALL_LOG"; return "$DISPATCH_RC"; }
+	_dispatch_conflict_fix_worker() { local pr_number="$1"; local repo_slug="$2"; local linked_issue="$3"; printf 'dispatch-conflict %s %s %s\n' "$pr_number" "$repo_slug" "$linked_issue" >>"$GH_CALL_LOG"; return "$DISPATCH_RC"; }
+	_pulse_merge_queue_enqueue() { local repo_slug="$1"; local pr_number="$2"; printf 'retry-hint %s %s\n' "$repo_slug" "$pr_number" >>"$GH_CALL_LOG"; printf 'coalesced\n'; return 0; }
 	_check_required_checks_has_terminal_failure() { local repo_slug="$1"; local pr_number="$2"; local expected_head_sha="${3:-}"; printf 'terminal-check %s %s %s\n' "$repo_slug" "$pr_number" "$expected_head_sha" >>"$GH_CALL_LOG"; return "$TERMINAL_CHECK_RC"; }
 	_check_required_checks_have_pending_or_in_progress() { local repo_slug="$1"; local pr_number="$2"; local expected_head_sha="${3:-}"; printf 'pending-check %s %s %s\n' "$repo_slug" "$pr_number" "$expected_head_sha" >>"$GH_CALL_LOG"; return "$PENDING_CHECK_RC"; }
 	_pulse_merge_admin_safety_check() { local pr_number="$1"; local repo_slug="$2"; local expected_head_sha="${3:-}"; printf 'admin-safety %s %s %s\n' "$pr_number" "$repo_slug" "$expected_head_sha" >>"$GH_CALL_LOG"; return "$ADMIN_SAFETY_RC"; }
@@ -431,7 +436,8 @@ test_linked_issue_metadata_failure_is_retryable() {
 	local route_rc=0
 	_route_pr_to_fix_worker "9014" "owner/repo" "456" "conflict" \
 		"origin:worker" || route_rc=$?
-	if [[ "$route_rc" -ne 75 ]] || grep -Eq 'route-guard|dispatch-' "$GH_CALL_LOG"; then
+	if [[ "$route_rc" -ne 75 ]] || grep -Eq 'route-guard|dispatch-' "$GH_CALL_LOG" \
+		|| ! grep -qF 'retry-hint owner/repo 9014' "$GH_CALL_LOG"; then
 		fail "linked issue metadata failure is retryable" \
 			"rc=${route_rc}; calls=$(tr '\n' ';' <"$GH_CALL_LOG")"
 		return 0
@@ -479,12 +485,31 @@ test_trusted_worker_terminal_guard_outcome_propagates() {
 	_route_pr_to_fix_worker "9013" "owner/repo" "456" "ci" \
 		"origin:worker,ci-feedback-routed" || route_rc=$?
 	if [[ "$route_rc" -ne 75 ]] || ! grep -qF 'route-guard 9013 owner/repo 456 ci' "$GH_CALL_LOG" \
+		|| ! grep -qF 'retry-hint owner/repo 9013' "$GH_CALL_LOG" \
 		|| grep -qF 'dispatch-ci' "$GH_CALL_LOG"; then
 		fail "trusted worker terminal guard outcome propagates" \
 			"rc=${route_rc}; calls=$(tr '\n' ';' <"$GH_CALL_LOG")"
 		return 0
 	fi
 	pass "trusted worker partial-route outcome propagates without dispatch"
+	return 0
+}
+
+test_deferred_finalizer_dispatch_persists_retry_hint() {
+	install_stubs
+	DISPATCH_RC=75
+	: >"$GH_CALL_LOG"
+	local route_rc=0
+	_route_pr_to_fix_worker "9016" "owner/repo" "456" "conflict" \
+		"origin:worker" || route_rc=$?
+	if [[ "$route_rc" -ne 75 ]] \
+		|| ! grep -qF 'dispatch-conflict 9016 owner/repo 456' "$GH_CALL_LOG" \
+		|| ! grep -qF 'retry-hint owner/repo 9016' "$GH_CALL_LOG"; then
+		fail "deferred finalizer dispatch persists retry hint" \
+			"rc=${route_rc}; calls=$(tr '\n' ';' <"$GH_CALL_LOG")"
+		return 0
+	fi
+	pass "deferred finalizer dispatch persists retry hint"
 	return 0
 }
 
@@ -515,6 +540,7 @@ main() {
 	test_fresh_interactive_route_does_not_enter_terminal_guard
 	test_review_terminal_label_rechecks_current_evidence
 	test_trusted_worker_terminal_guard_outcome_propagates
+	test_deferred_finalizer_dispatch_persists_retry_hint
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	[[ "$TESTS_FAILED" -eq 0 ]]
 	return $?
