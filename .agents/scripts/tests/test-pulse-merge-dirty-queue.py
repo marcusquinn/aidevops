@@ -97,6 +97,13 @@ class QueueTests(unittest.TestCase):
         self.assertIsNone(self.queue.row("owner/repo", 42))
         self.assertEqual(self.queue.priority("other/repo", 1003), "|43|")
 
+    def test_priority_budget_selects_durable_retries_before_ordinary_hints(self):
+        self.queue.enqueue("owner/repo", 41, 1000, durable=True)
+        self.queue.enqueue("owner/repo", 42, 1001)
+        self.queue.enqueue("owner/repo", 43, 1002)
+        with patch.object(module, "MAX_HINTS", 2):
+            self.assertEqual(self.queue.priority("owner/repo", 1003), "|41|43|")
+
     def test_unhandled_hints_remain_available_to_polling(self):
         self.queue.enqueue("owner/repo", 42, 1000)
         receipt = self.queue.claim("owner/repo", 42, os.getpid(), 1001)

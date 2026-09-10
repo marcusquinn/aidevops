@@ -131,7 +131,7 @@ class Queue:
             self.db.execute("UPDATE work SET nonce='',pid=0,birth='' WHERE repo=? AND pr=?", (repo, pr))
 
     def priority(self, repo: str, now: float) -> str:
-        rows = self.db.execute("SELECT pr FROM work WHERE repo=? AND generation!='' AND updated>=? ORDER BY updated DESC LIMIT ?",
+        rows = self.db.execute("SELECT pr FROM work WHERE repo=? AND generation!='' AND updated>=? ORDER BY durable DESC,updated DESC LIMIT ?",
                                (repo.lower(), now - RETENTION_SECONDS, MAX_HINTS)).fetchall()
         return "|" + "|".join(str(row[0]) for row in rows) + "|" if rows else ""
 
