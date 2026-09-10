@@ -92,6 +92,30 @@ get_account_config() {
 		return 1
 		;;
 	esac
+	validate_provider_endpoint || return 1
+	return 0
+}
+
+validate_provider_endpoint() {
+	local endpoint region endpoint_region
+	endpoint=$(jq -r '.endpoint // empty' <<<"$ACCOUNT_JSON")
+	region=$(jq -r '.region // empty' <<<"$ACCOUNT_JSON")
+	if [[ "$ACCOUNT_PROVIDER" != "idrive-e2" ]]; then
+		return 0
+	fi
+	if [[ ! "$endpoint" =~ ^https://s3\.([a-z0-9-]+)\.idrivee2\.com$ ]]; then
+		fail_json "idrive_endpoint_invalid"
+		return 1
+	fi
+	endpoint_region="${BASH_REMATCH[1]}"
+	[[ "$region" =~ ^[a-z0-9-]+$ ]] || {
+		fail_json "idrive_endpoint_invalid"
+		return 1
+	}
+	[[ "$endpoint_region" == "$region" ]] || {
+		fail_json "idrive_region_mismatch"
+		return 1
+	}
 	return 0
 }
 
@@ -161,7 +185,11 @@ run_verify_backups() {
 	local account="$1" bucket="$2" max_age="$3" output=""
 	[[ "$max_age" =~ ^[1-9][0-9]*$ && "$max_age" -le 3650 ]] || fail_json "max_age_invalid"
 	output=$(rclone_json lsjson --files-only --max-depth 1 "${ACCOUNT_REMOTE}:${bucket}") || fail_json "$ERROR_RCLONE_FAILED"
-	emit_result "verify-backups" "$account" "$(printf '%s\n' "$output" | jq --argjson days "$max_age" '{max_age_days:$days,objects:(if type == "array" then length else 0 end),verified:true}')"
+	emit_result "verify-backups" "$account" "$(printf '%s\n' "$output" | jq --argjson days "$max_age" '
+		if type != "array" then [] else . end |
+		[.[] | select((.ModTime? | fromdateiso8601) >= (now - ($days * 86400)))] as $fresh |
+		{max_age_days:$days,objects:length,fresh_objects:($fresh | length),fresh:($fresh | length > 0),restore_verified:false}
+	')"
 }
 
 run_audit_protection() {
