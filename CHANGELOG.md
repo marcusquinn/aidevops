@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.353] - 2026-09-10
+
+### Added
+
+- Add Hallmark-informed distinctive UI design
+- correlate objective runtime evidence (#31726)
+
+### Changed
+
+- Documentation: record model effort evaluation (#31732)
+
 ## [3.32.352] - 2026-09-10
 
 ### Added
