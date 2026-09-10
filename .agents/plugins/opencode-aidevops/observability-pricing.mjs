@@ -105,6 +105,18 @@ export function getPricing(modelID) {
   return DEFAULT_PRICING;
 }
 
+/** Return the price and the evidence quality used to select it. */
+export function getPricingProvenance(modelID) {
+  const lower = String(modelID || "").toLowerCase();
+  if (!lower || UNKNOWN_PRICING_MODELS.some((model) => lower.includes(model))) {
+    return { pricing: getPricing(modelID), quality: "unknown" };
+  }
+  if (Object.keys(MODEL_PRICING).some((key) => lower.includes(key))) {
+    return { pricing: getPricing(modelID), quality: "exact_model" };
+  }
+  return { pricing: getPricing(modelID), quality: "fallback" };
+}
+
 /**
  * Calculate cost from token counts and model pricing.
  * OpenCode does not provide cost in message events — we must compute it.
