@@ -38,7 +38,7 @@ export const RUNTIME_EVENT_MAINTENANCE_MAX_DURATION_SECONDS_DEFAULT = 120;
 const ERROR_STATUS = new Set([
   "blocked", "cancelled", "denied", "error", "failed", "rejected", "timed_out", "timeout",
 ]);
-const PROTECTED_EVENT_TYPE = /^(audit|deploy|full-loop|permission|release|security|session|subagent|worker)\.|(^|\.)(blocked|cancelled|completed|denied|error|failed|rejected|started|stopped|terminated|timeout)(\.|$)/;
+const PROTECTED_EVENT_TYPE = /^(audit|deploy|full-loop|objective|permission|release|security|session|subagent|worker)\.|(^|\.)(blocked|cancelled|completed|denied|error|failed|rejected|started|stopped|terminated|timeout)(\.|$)/;
 const EVENT_COLUMNS = [
   "id", "envelope_version", "occurred_at", "event_id", "event_type", "correlation_id",
   "causation_id", "subject_id", "session_id", "worker_id", "parent_worker_id",

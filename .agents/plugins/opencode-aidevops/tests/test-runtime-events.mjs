@@ -27,6 +27,7 @@ import {
   resolveRuntimeEventsDbPath,
 } from "../../../scripts/runtime-events.mjs";
 import { canonicalizeSqliteDbPath } from "../../../scripts/sqlite-process.mjs";
+import { validateObjectiveRuntimeEvent } from "../../../scripts/runtime-events-objectives.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -40,6 +41,37 @@ function sqliteAvailable() {
 }
 
 describe("runtime-event envelopes", () => {
+  test("validates explicit objective evidence without inferring verification", () => {
+    const base = {
+      attempt_id: "attempt:1",
+      objective_id: "objective:1",
+      objective_version: 1,
+      run_id: "run:1",
+    };
+    assert.doesNotThrow(() => validateObjectiveRuntimeEvent("objective.session.attached", {
+      ...base,
+      allocation: "unique",
+      boundary: "request:10-request:12",
+      contribution_id: "contribution:child",
+      request_ids: ["request:10", "request:11"],
+    }));
+    assert.doesNotThrow(() => validateObjectiveRuntimeEvent("subagent.acceptance", {
+      ...base,
+      contribution_id: "contribution:repair",
+      contribution_outcome: "accepted_repaired",
+      intervention_count: 1,
+      observed_at: "2026-09-10T00:00:00.000Z",
+      policy_version: "v1",
+      source: "parent_assertion",
+    }));
+    assert.throws(() => validateObjectiveRuntimeEvent("objective.outcome", {
+      ...base,
+      observed_at: "2026-09-10T00:00:00.000Z",
+      outcome: "verified",
+      policy_version: "v1",
+      source: "caller",
+    }), /evidence_kind/);
+  });
   test("strictly allowlists ordinary payloads and redacts secret fixtures", () => {
     const privateRoot = process.env.AIDEVOPS_PRIVATE_ROOTS;
     process.env.AIDEVOPS_PRIVATE_ROOTS = "/srv/private-root";

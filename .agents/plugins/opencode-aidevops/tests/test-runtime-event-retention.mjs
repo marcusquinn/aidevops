@@ -77,6 +77,10 @@ describe("runtime-event protection policy", () => {
       payload_json: '{"state":{}}',
       state_version: 1,
     }), true);
+    assert.equal(isProtectedRuntimeEvent({
+      event_type: "objective.session.attached",
+      payload_json: "{}",
+    }), true);
   });
 });
 

@@ -3,6 +3,7 @@
 
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { isObjectiveRuntimeEvent, validateObjectiveRuntimeEvent } from "./runtime-events-objectives.mjs";
 
 function optionValue(args, name, fallback = "") {
   const index = args.indexOf(name);
@@ -45,10 +46,21 @@ function emitPayload(args) {
 function emitCommand(args, runtime) {
   const generatedEventId = optionValue(args, "--event-id") ||
     (args.includes("--root-dispatch") ? randomUUID() : undefined);
+  const eventType = args[1];
+  const payload = emitPayload(args);
+  try {
+    validateObjectiveRuntimeEvent(eventType, payload);
+  } catch (error) {
+    if (isObjectiveRuntimeEvent(eventType)) {
+      printJson({ recorded: false, error: error.message });
+      return 1;
+    }
+  }
   const envelope = runtime.appendRuntimeEventSync({
     eventId: generatedEventId,
-    eventType: args[1],
+    eventType,
     subjectId: cliSubject(args),
+    sessionId: optionValue(args, "--session") || undefined,
     workerId: optionValue(args, "--worker") || undefined,
     parentWorkerId: optionValue(args, "--parent-worker") || undefined,
     rootWorkerId: optionValue(args, "--root-worker") || undefined,
@@ -57,11 +69,15 @@ function emitCommand(args, runtime) {
     rootEventId: optionValue(args, "--root-event") ||
       (args.includes("--root-dispatch") ? process.env.AIDEVOPS_ROOT_EVENT_ID || generatedEventId : undefined),
     parentEventId: optionValue(args, "--parent-event") || undefined,
-    payload: emitPayload(args),
+    payload,
   });
   if (envelope) {
     if (args.includes("--print-id")) process.stdout.write(`${envelope.eventId}\n`);
     else printJson(envelope);
+  }
+  if (!envelope && isObjectiveRuntimeEvent(eventType)) {
+    printJson({ recorded: false, error: "objective evidence storage unavailable" });
+    return 1;
   }
   return 0;
 }
@@ -80,6 +96,8 @@ function queryCommand(args, runtime) {
     correlationId: optionValue(args, "--correlation"),
     eventType: optionValue(args, "--type"),
     limit: optionValue(args, "--limit", "100"),
+    objectiveId: optionValue(args, "--objective"),
+    sessionId: optionValue(args, "--session"),
     subjectId: optionValue(args, "--subject"),
     workerId: optionValue(args, "--worker"),
   }));

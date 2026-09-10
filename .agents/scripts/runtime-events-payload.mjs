@@ -24,8 +24,11 @@ const ABSOLUTE_PATH_PATTERN = /(^|[\s("'=])(?:\/[^\s"',)}\]]+|[A-Za-z]:[\\/][^\s
 const REPOSITORY_LIKE_PATTERN = /\b[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\b/g;
 const ORDINARY_PAYLOAD_KEYS = new Set([
   "aidevops_version", "attempt_id", "call_id", "classification", "duration_ms", "error_type", "exit_code",
+  "allocation", "boundary", "contribution_id", "contribution_outcome", "evidence_fingerprint", "evidence_kind",
   "finish_reason", "model_id", "observation", "outcome_category", "provider_id", "reason", "result",
+  "intervention_count", "objective_id", "objective_version", "observed_at", "observer", "outcome", "policy_version",
   "pricing_version", "role", "routing_attempt", "routing_candidate_index", "routing_escalated",
+  "repair_contribution_id", "request_ids",
   "routing_population", "routing_reason", "routing_tier", "run_id", "source", "status", "success",
   "suppressed_part_bytes", "suppressed_part_events", "tool_name",
 ]);
