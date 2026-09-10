@@ -47,6 +47,7 @@ describe("GPT image provider requests", () => {
     const body = JSON.parse(captured.init.body);
     assert.equal(captured.url, "https://chatgpt.com/backend-api/codex/responses");
     assert.equal(captured.init.headers.Authorization, "Bearer oauth-test-token");
+    assert.equal(body.model, "gpt-5.6-sol");
     assert.equal(body.tools[0].type, "image_generation");
     assert.equal(body.tools[0].output_format, "webp");
     assert.equal(body.tools[0].size, "1024x1024");
@@ -70,6 +71,43 @@ describe("GPT image provider requests", () => {
       },
     );
     assert.equal(Object.hasOwn(captured.tools[0], "size"), false);
+  });
+
+  test("retries OAuth image generation once with the next routed model", async () => {
+    const models = [];
+    const event = `data: ${JSON.stringify({
+      type: "response.output_item.done",
+      item: { type: "image_generation_call", result: IMAGE_RESULT },
+    })}\n\n`;
+    const result = await requestOAuthImage(
+      { accessToken: "[redacted-credential]" },
+      { prompt: "draw a test", quality: "auto", size: "auto", format: "png" },
+      [],
+      async (_url, init) => {
+        models.push(JSON.parse(init.body).model);
+        if (models.length === 1) {
+          return Response.json({ error: { code: "model_not_found", message: "unavailable" } }, { status: 404 });
+        }
+        return new Response(event, { status: 200 });
+      },
+    );
+    assert.deepEqual(models, ["gpt-5.6-sol", "gpt-5.6-terra"]);
+    assert.equal(result.base64, IMAGE_RESULT);
+  });
+
+  test("does not retry non-model OAuth errors", async () => {
+    let calls = 0;
+    const result = await requestOAuthImage(
+      { accessToken: "[redacted-credential]" },
+      { prompt: "draw a test", quality: "auto", size: "auto", format: "png" },
+      [],
+      async () => {
+        calls += 1;
+        return Response.json({ error: { code: "permission_denied", message: "denied" } }, { status: 403 });
+      },
+    );
+    assert.equal(calls, 1);
+    assert.equal(result.error.code, "permission_denied");
   });
 
   test("uses the explicit GPT Image 2 generations endpoint for API auth", async () => {

@@ -7,7 +7,7 @@
 
 Dispatch issue-backed workers with `dispatch-single-issue-helper.sh dispatch NUMBER OWNER/REPO`. It performs deduplication and ownership ceremony, creates the worktree, and forwards the verified runner identity to `headless-runtime-helper.sh`. Use `headless-runtime-helper.sh run` directly only for non-issue headless jobs. Never use bare runtime CLIs: they skip lifecycle reinforcement and can stop after PR creation (GH#5096).
 
-Capability cataloguing is not evidence of live usability. Before routing execution that depends on an external tool or service, run `scripts/capability-readiness-helper.py route <capability> --runtime <opencode|claude-code>`. Mandatory dimensions that are false **or unknown** force the declared fallback; the structured response reports the reason and coverage impact. The canonical contract is `configs/capability-registry.json`; generated inventory: `reference/capability-registry.md`.
+Capability cataloguing is not evidence of live usability. Before routing execution that depends on an external tool or service, run `scripts/capability-readiness-helper.py route <capability> --runtime <opencode|claude-code>`. GitHub operations also require `--target OWNER/REPO --operation read|write|admin` so live reachability and repository permission evidence are bound to the intended action. Mandatory dimensions that are false **or unknown** force the declared fallback; the structured response reports the reason, coverage impact, and evidence scope. The canonical contract is `configs/capability-registry.json`; generated inventory: `reference/capability-registry.md`.
 
 Conceptual comparison using supplied information needs no service probe. Select
 domain knowledge without claiming installed, authenticated or authorized access.

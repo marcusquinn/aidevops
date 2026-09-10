@@ -77,6 +77,58 @@ class CapabilityReadinessTests(unittest.TestCase):
         self.assertEqual("fallback", output["decision"])
         self.assertIn("authenticated", output["coverage_impact"])
 
+    def test_github_live_evidence_is_target_and_operation_bound(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            fake_gh = Path(directory) / "gh"
+            fake_gh.write_text(
+                "#!/bin/sh\n"
+                "if [ \"$1\" = auth ]; then exit 0; fi\n"
+                "if [ \"$1\" = api ] && [ \"$2\" = repos/owner/repo ]; then\n"
+                "  printf \"%s\\n\" '{\"permissions\":{\"push\":true,\"admin\":false}}'\n"
+                "  exit 0\n"
+                "fi\n"
+                "exit 1\n"
+            )
+            fake_gh.chmod(0o755)
+            environment = dict(os.environ)
+            environment["PATH"] = f"{directory}{os.pathsep}{environment['PATH']}"
+            result = subprocess.run(  # nosec B603
+                [sys.executable, str(HELPER), "route", "github", "--runtime", "opencode", "--target", "owner/repo", "--operation", "write"],
+                text=True,
+                capture_output=True,
+                check=False,
+                env=environment,
+            )
+        self.assertEqual(0, result.returncode, result.stderr or result.stdout)
+        output = json.loads(result.stdout)
+        self.assertEqual("route", output["decision"])
+        self.assertEqual({"target": "owner/repo", "operation": "write"}, output["evidence_scope"])
+        self.assertEqual("true", output["readiness"]["reachable"])
+        self.assertEqual("true", output["readiness"]["authorized"])
+
+    def test_github_live_evidence_denies_unproven_admin(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            fake_gh = Path(directory) / "gh"
+            fake_gh.write_text(
+                "#!/bin/sh\n"
+                "if [ \"$1\" = auth ]; then exit 0; fi\n"
+                "printf \"%s\\n\" '{\"permissions\":{\"push\":true,\"admin\":false}}'\n"
+            )
+            fake_gh.chmod(0o755)
+            environment = dict(os.environ)
+            environment["PATH"] = f"{directory}{os.pathsep}{environment['PATH']}"
+            result = subprocess.run(  # nosec B603
+                [sys.executable, str(HELPER), "route", "github", "--runtime", "opencode", "--target", "owner/repo", "--operation", "admin"],
+                text=True,
+                capture_output=True,
+                check=False,
+                env=environment,
+            )
+        self.assertEqual(3, result.returncode, result.stderr or result.stdout)
+        output = json.loads(result.stdout)
+        self.assertEqual("true", output["readiness"]["reachable"])
+        self.assertEqual("false", output["readiness"]["authorized"])
+
     def test_unreachable_service_falls_back(self) -> None:
         output = self.run_helper("route", "seo-data", "--runtime", "opencode", expected=3)
         self.assertIn("reachable", output["coverage_impact"])

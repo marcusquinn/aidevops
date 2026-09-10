@@ -8,7 +8,9 @@
 const CODEX_RESPONSES_ENDPOINT = "https://chatgpt.com/backend-api/codex/responses";
 const OPENAI_IMAGES_GENERATE_ENDPOINT = "https://api.openai.com/v1/images/generations";
 const OPENAI_IMAGES_EDIT_ENDPOINT = "https://api.openai.com/v1/images/edits";
-const SUBSCRIPTION_ROUTER_MODEL = "gpt-5.5";
+import { readFileSync } from "node:fs";
+
+const MODEL_ROUTING_TABLE = new URL("../../configs/model-routing-table.json", import.meta.url);
 const MAX_SSE_BUFFER_CHARS = 96 * 1024 * 1024;
 const MAX_SSE_TOTAL_BYTES = 128 * 1024 * 1024;
 const MAX_API_RESPONSE_BYTES = 96 * 1024 * 1024;
@@ -35,11 +37,20 @@ function imageToolArgs(args) {
   };
 }
 
-function oauthRequestBody(args, images) {
+function subscriptionRouterModels() {
+  const routing = JSON.parse(readFileSync(MODEL_ROUTING_TABLE, "utf8"));
+  const models = ["thinking", "standard", "simple"]
+    .flatMap((tier) => routing.tiers?.[tier]?.models || [])
+    .filter((model) => model.startsWith("openai/"))
+    .map((model) => model.slice("openai/".length));
+  return [...new Set(models)].slice(0, 2);
+}
+
+function oauthRequestBody(args, images, model) {
   const content = [{ type: "input_text", text: args.prompt }];
   for (const image of images) content.push({ type: "input_image", image_url: image.dataUrl });
   return {
-    model: SUBSCRIPTION_ROUTER_MODEL,
+    model,
     instructions: "Generate the requested image by invoking the image_generation tool exactly once.",
     input: [{ role: "user", content }],
     tools: [imageToolArgs(args)],
@@ -146,15 +157,22 @@ export async function parseImageSse(stream) {
 }
 
 export async function requestOAuthImage(auth, args, images, fetchImpl) {
+  const models = subscriptionRouterModels();
+  if (models.length === 0) throw new Error("No OpenAI subscription router model is configured.");
   return withImageRequestTimeout(async (signal) => {
-    const response = await fetchImpl(CODEX_RESPONSES_ENDPOINT, {
-      method: "POST",
-      headers: oauthHeaders(auth),
-      body: JSON.stringify(oauthRequestBody(args, images)),
-      signal,
-    });
-    if (!response.ok) return { response, base64: "", error: await imageRequestError(response, "oauth") };
-    return { response, base64: await parseImageSse(response.body) };
+    let result;
+    for (const model of models) {
+      const response = await fetchImpl(CODEX_RESPONSES_ENDPOINT, {
+        method: "POST",
+        headers: oauthHeaders(auth),
+        body: JSON.stringify(oauthRequestBody(args, images, model)),
+        signal,
+      });
+      if (response.ok) return { response, base64: await parseImageSse(response.body) };
+      result = { response, base64: "", error: await imageRequestError(response, "oauth") };
+      if (result.error.code !== "model_not_found") return result;
+    }
+    return result;
   });
 }
 
@@ -250,5 +268,8 @@ export async function imageRequestError(response, mode) {
     message = "provider returned a non-JSON error";
   }
   const detail = [code, message].filter(Boolean).map(redactProviderDetail).join(": ");
-  return new Error(`OpenAI ${mode} image request failed (${response.status})${detail ? `: ${detail}` : "."}`);
+  const error = new Error(`OpenAI ${mode} image request failed (${response.status})${detail ? `: ${detail}` : "."}`);
+  error.code = code;
+  error.status = response.status;
+  return error;
 }
