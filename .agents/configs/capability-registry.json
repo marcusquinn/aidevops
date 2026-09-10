@@ -146,6 +146,18 @@
       "probes": {"deployed": {"path": "scripts/campaign-growth-helper.py"}, "tool_visible": {"tool": "python3"}}
     },
     {
+      "name": "posthog-product-analytics",
+      "aliases": ["posthog", "posthog-mcp", "product-analytics"],
+      "owner": "Product",
+      "description": "Scoped PostHog analytics, feature flag, experiment, error, and support operations through the hosted MCP",
+      "runtimes": ["opencode"],
+      "entry_points": ["services/analytics/posthog.md", "product/analytics.md"],
+      "mcp": "posthog",
+      "fallback": "posthog-ui-or-export",
+      "required": ["deployed", "enabled", "authenticated", "authorized", "reachable", "runtime_compatible", "tool_visible", "usable"],
+      "probes": {"deployed": {"path": "services/analytics/posthog.md"}, "enabled": {"live": "requires on-demand MCP activation"}, "authenticated": {"live": "requires PostHog OAuth or securely injected personal API key"}, "authorized": {"live": "requires confirmed organization, project, and operation authority"}, "reachable": {"live": "requires hosted MCP handshake"}, "tool_visible": {"tool": "posthog_*"}, "usable": {"live": "requires the requested capability to be exposed in the connected tool mode"}}
+    },
+    {
       "name": "accounting-operations",
       "aliases": ["accounting", "bookkeeping", "accounts"],
       "owner": "Business",

@@ -1481,7 +1481,7 @@ See `.agents/tools/ocr/glm-ocr.md` for batch processing, PDF workflows, and Peek
 
 **Model Context Protocol servers for real-time AI assistant integration.** The framework configures these MCPs for **[OpenCode](https://opencode.ai/)** (TUI, Desktop, and Extension for Zed/VSCode).
 
-### **All Supported MCPs (19 available)**
+### **All Supported MCPs (20 available)**
 
 MCP integrations use reviewed local package runners or remote HTTPS endpoints. Security-sensitive local integrations use exact package pins where required; setup may globally cache selected tools for faster startup. Run `setup.sh` or `aidevops update-tools` to refresh managed tooling.
 
@@ -1498,6 +1498,7 @@ MCP integrations use reviewed local package runners or remote HTTPS endpoints. S
 | [LocalWP](https://localwp.com/) | WordPress database access | Per-agent | No (local) |
 | [macOS Automator](https://github.com/steipete/macos-automator-mcp) | macOS automation | Per-agent | No |
 | [Playwright MCP](https://github.com/microsoft/playwright-mcp) | Isolated or extension-connected browser automation | Per-agent | No |
+| [PostHog](https://posthog.com/docs/model-context-protocol) | Product analytics, feature flags, experiments, and error data | On-demand per-agent | OAuth |
 | [QuickFile](https://github.com/marcusquinn/quickfile-mcp) | Guarded multi-account accounting API | On-demand per-agent | Yes |
 | [Repomix](https://github.com/yamadashy/repomix) | Codebase packing for AI context | Per-agent | No |
 | [Sentry](https://sentry.io/) | Error tracking | Per-agent | Yes |
@@ -2099,6 +2100,7 @@ These are examples of subagents that have supporting MCPs enabled. See `.agents/
 | `@browser-automation` | Testing, scraping, DevTools | chrome-devtools, context7 |
 | `@performance` | Core Web Vitals, network analysis, accessibility | chrome-devtools |
 | `@git-platforms` | GitHub, GitLab, Gitea | context7 |
+| `@posthog` | Product analytics, feature flags, experiments, errors, and support | posthog |
 | `@sentry` | Error monitoring, Next.js SDK setup | sentry |
 | `@socket` | Dependency security scanning | socket |
 | `@security-analysis` | AI-powered vulnerability detection (OSV, Ferret, git history) | osv-scanner, gemini-cli-security |
