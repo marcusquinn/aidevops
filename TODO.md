@@ -1350,9 +1350,9 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18418 Build provider-neutral rclone-backed S3 object storage foundation #auto-dispatch #feat #tier:standard #interactive ~3h ref:GH#31685 logged:2026-09-09 -> [todo/tasks/t18418-brief.md] pr:#31695 completed:2026-09-09
 
-- [ ] t18419 Add guarded IDrive e2 object storage integration #auto-dispatch #feat #tier:standard #interactive ~2h blocked-by:t18418 ref:GH#31686 logged:2026-09-09 -> [todo/tasks/t18419-brief.md]
+- [x] t18419 Add guarded IDrive e2 object storage integration #auto-dispatch #feat #tier:standard #interactive ~2h blocked-by:t18418 ref:GH#31686 logged:2026-09-09 -> [todo/tasks/t18419-brief.md] pr:#31704 completed:2026-09-10
 
-- [ ] t18420 Add guarded Backblaze B2 object storage and official MCP integration #auto-dispatch #feat #tier:standard #interactive ~4h blocked-by:t18418 ref:GH#31687 logged:2026-09-09 -> [todo/tasks/t18420-brief.md]
+- [x] t18420 Add guarded Backblaze B2 object storage and official MCP integration #auto-dispatch #feat #tier:standard #interactive ~4h blocked-by:t18418 ref:GH#31687 logged:2026-09-09 -> [todo/tasks/t18420-brief.md] pr:#31710 completed:2026-09-10
 
 - [ ] t18421 Add guarded Wasabi object storage integration with beta MCP boundary #auto-dispatch #feat #tier:standard #interactive ~3h blocked-by:t18418 ref:GH#31688 logged:2026-09-09 -> [todo/tasks/t18421-brief.md]
 
