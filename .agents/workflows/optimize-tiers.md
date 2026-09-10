@@ -160,6 +160,14 @@ The dry run holds the experiment lock, validates the corpus, catalog, exact base
 trees, plan, candidate, prediction, and runtime seals, makes zero provider calls,
 and writes a reproducible report.
 
+### Bounded pilot
+
+`configs/model-effort-pilot.json` defines a portable three-case pilot and its public
+source metadata. Pass a local file containing its `budget` object to `plan --budget`.
+The sealed receipt reserves launches before execution and does not refund an
+interrupted launch on resume. See `reference/model-effort-pilot.md` for the approved
+runner recipe and limitations.
+
 ### 4. Execute and interpret
 
 ```bash

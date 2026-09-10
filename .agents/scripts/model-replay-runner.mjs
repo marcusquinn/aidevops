@@ -4,6 +4,12 @@
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { executeCell } from "./model-replay-cell.mjs";
+import {
+  assertNoAmbiguousLaunches,
+  completeCellLaunch,
+  loadBudgetReceipt,
+  reserveCellLaunch,
+} from "./model-replay-budget.mjs";
 import { modelReplayExecutionPosture } from "./model-replay-contracts.mjs";
 import {
   appendJsonLine,
@@ -78,9 +84,10 @@ function createDryRunRecord({ experimentDir, plan, sealed, pending }) {
   };
 }
 
-function executePendingCells({ cells, plan, sealed, corpusDir, catalog, experimentDir, candidates }) {
+function executePendingCells({ cells, plan, sealed, corpusDir, catalog, experimentDir, candidates, receipt }) {
   const results = [];
   for (const cell of cells) {
+    reserveCellLaunch(experimentDir, plan, receipt, cell);
     const result = executeCell({
       cell,
       plan,
@@ -91,6 +98,7 @@ function executePendingCells({ cells, plan, sealed, corpusDir, catalog, experime
       candidates,
     });
     appendJsonLine(join(experimentDir, "results.jsonl"), result);
+    completeCellLaunch(experimentDir, receipt, cell);
     results.push(result);
   }
   return results;
@@ -119,6 +127,8 @@ export function runExperiment({ experimentDir, corpusDir, catalogPath, dryRun = 
       writeJson(join(experimentDir, "dry-run.json"), record);
       return record;
     }
+    const receipt = loadBudgetReceipt(experimentDir, plan);
+    assertNoAmbiguousLaunches(receipt, existingResults);
     const lockedResults = validatedResultRecords(experimentDir, plan, sealed);
     const executableCells = pendingCells(plan, lockedResults);
     if (executableCells.length > 0 && modelReplayExecutionPosture(plan) === "enforced") {
@@ -132,6 +142,7 @@ export function runExperiment({ experimentDir, corpusDir, catalogPath, dryRun = 
       catalog,
       experimentDir,
       candidates,
+      receipt,
     });
     return {
       experiment_id: plan.experiment_id,

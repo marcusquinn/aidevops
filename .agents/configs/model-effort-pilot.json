@@ -1,0 +1,48 @@
+{
+  "schema_version": "aidevops-model-effort-pilot/v1",
+  "purpose": "Narrow isolated replay pilot; not production-routing evidence.",
+  "source": {
+    "repository": "marcusquinn/aidevops",
+    "base_sha": "3226532e2659b69f644a9aba99feda4a02845a79",
+    "rebuild": "Reconstruct private corpus inputs from this public commit on the approved runner; do not commit prompts, checks, patches, catalogs, or run artifacts."
+  },
+  "cases": [
+    {
+      "case_id": "pilot-simple",
+      "tier": "simple",
+      "profile": "aidevops",
+      "visibility": "private",
+      "prompt_fidelity": "reconstructed",
+      "check_recipe": "One deterministic fail-to-pass and one pass-to-pass check, retained locally."
+    },
+    {
+      "case_id": "pilot-standard",
+      "tier": "standard",
+      "profile": "aidevops",
+      "visibility": "private",
+      "prompt_fidelity": "reconstructed",
+      "check_recipe": "One deterministic fail-to-pass and one pass-to-pass check, retained locally."
+    },
+    {
+      "case_id": "pilot-thinking",
+      "tier": "thinking",
+      "profile": "aidevops",
+      "visibility": "private",
+      "prompt_fidelity": "reconstructed",
+      "check_recipe": "One deterministic fail-to-pass and one pass-to-pass check, retained locally."
+    }
+  ],
+  "budget": {
+    "schema_version": "aidevops-model-replay-budget/v1",
+    "max_cell_launches": 24,
+    "per_cell_timeout_seconds": 180,
+    "program_wall_seconds": 5400,
+    "concurrency": 1,
+    "reservation": "Four canaries, twelve primary cells, then retained capacity for explicit confirmation; retries never renew this ceiling."
+  },
+  "candidate_arms": {
+    "provider": "openai",
+    "required": ["gpt-5.6-sol:medium", "gpt-6-astra:low", "gpt-6-astra:medium", "gpt-6-astra:observed-highest"],
+    "rule": "Each same-model effort arm needs a separate candidate manifest because replay rejects duplicate model identities. Names remain requests until the runtime records the concrete model and effective effort."
+  }
+}

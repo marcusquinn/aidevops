@@ -295,6 +295,26 @@ try {
   );
   assert.equal(plan.cells.length, 1);
   assert.equal(plan.execution_posture, "enforced");
+  const budgetPath = join(sandbox, "budget.json");
+  writeJson(budgetPath, {
+    schema_version: "aidevops-model-replay-budget/v1",
+    max_cell_launches: 1,
+    per_cell_timeout_seconds: 60,
+    program_wall_seconds: 3600,
+    concurrency: 1,
+  });
+  const budgetExperiment = join(sandbox, "experiment-budget");
+  const budgetPlan = invokeRequired(
+    environment,
+    "plan", "--corpus", corpus, "--candidates", candidates,
+    "--experiment", budgetExperiment, "--experiment-id", "fixture-budget",
+    "--suite", "quick", "--stage", "primary", "--mode", "autonomous",
+    "--budget", budgetPath,
+  );
+  assert.equal(budgetPlan.budget.max_cell_launches, 1);
+  const budgetPredictions = join(sandbox, "predictions-budget.json");
+  writeJson(budgetPredictions, completedPredictions(budgetExperiment));
+  invokeRequired(environment, "seal", "--experiment", budgetExperiment, "--input", budgetPredictions);
   const predictionInput = join(sandbox, "predictions-autonomous.json");
   writeJson(predictionInput, completedPredictions(experiment));
   invokeRequired(environment, "seal", "--experiment", experiment, "--input", predictionInput);
@@ -321,6 +341,12 @@ try {
   assert.equal(dryRun.provider_calls_made, 0);
   assert.equal(dryRun.execution_posture, "enforced");
   assert.equal(existsSync(runtimeMarker), false);
+  const budgetDryRun = invokeRequired(
+    environment,
+    "run", "--experiment", budgetExperiment, "--corpus", corpus, "--catalog", catalog, "--dry-run",
+  );
+  assert.equal(budgetDryRun.provider_calls_made, 0);
+  assert.equal(existsSync(join(budgetExperiment, "budget-receipt.json")), false);
   assert.equal(existsSync(join(experiment, "report.json")), true);
   invokeRequired(environment, "report", "--experiment", experiment);
   const firstReport = readFileSync(join(experiment, "report.json"), "utf8");
@@ -545,6 +571,51 @@ try {
   assert.equal(existsSync(runtimeState), false);
   assert.equal(existsSync(sharedOauthPool), false);
   assert.deepEqual(readdirSync(sensitiveTemp), []);
+  const budgetRun = invokeRequired(
+    environment,
+    "run", "--experiment", budgetExperiment, "--corpus", corpus, "--catalog", catalog,
+  );
+  assert.equal(budgetRun.results.length, 1);
+  const budgetReceipt = JSON.parse(readFileSync(join(budgetExperiment, "budget-receipt.json"), "utf8"));
+  assert.deepEqual(budgetReceipt.launched_cell_ids, [budgetPlan.cells[0].cell_id]);
+  assert.deepEqual(budgetReceipt.completed_cell_ids, [budgetPlan.cells[0].cell_id]);
+  const exhaustedCandidates = join(sandbox, "candidates-exhausted.json");
+  const exhaustedCandidateConfig = JSON.parse(readFileSync(candidates, "utf8"));
+  exhaustedCandidateConfig.candidates.push({
+    ...exhaustedCandidateConfig.candidates[0],
+    model: "openai/replay-fixture-second",
+  });
+  writeJson(exhaustedCandidates, exhaustedCandidateConfig);
+  const exhaustedExperiment = join(sandbox, "experiment-budget-exhausted");
+  const exhaustedPlan = invokeRequired(
+    environment,
+    "plan", "--corpus", corpus, "--candidates", exhaustedCandidates,
+    "--experiment", exhaustedExperiment, "--experiment-id", "fixture-budget-exhausted",
+    "--suite", "quick", "--stage", "primary", "--mode", "autonomous",
+    "--budget", budgetPath,
+  );
+  const exhaustedPredictions = join(sandbox, "predictions-budget-exhausted.json");
+  writeJson(exhaustedPredictions, completedPredictions(exhaustedExperiment));
+  invokeRequired(
+    environment,
+    "seal", "--experiment", exhaustedExperiment, "--input", exhaustedPredictions,
+  );
+  expectFailure(
+    environment,
+    /aggregate launch budget is exhausted/u,
+    "run", "--experiment", exhaustedExperiment, "--corpus", corpus, "--catalog", catalog,
+  );
+  const exhaustedReceipt = JSON.parse(readFileSync(
+    join(exhaustedExperiment, "budget-receipt.json"),
+    "utf8",
+  ));
+  assert.deepEqual(exhaustedReceipt.launched_cell_ids, [exhaustedPlan.cells[0].cell_id]);
+  assert.deepEqual(exhaustedReceipt.completed_cell_ids, [exhaustedPlan.cells[0].cell_id]);
+  expectFailure(
+    environment,
+    /aggregate launch budget is exhausted/u,
+    "run", "--experiment", exhaustedExperiment, "--corpus", corpus, "--catalog", catalog,
+  );
   const patch = readFileSync(join(experiment, "artifacts", `${plan.cells[0].cell_id}.patch`), "utf8");
   assert.equal(patch.includes("created.txt"), true);
   assert.equal(patch.includes("PATCH_END_MARKER"), true);
