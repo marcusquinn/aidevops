@@ -400,6 +400,12 @@ test_real_qlty_regression_mitigated() {
 	if [[ $rc -ne 0 ]]; then
 		failed=1
 	fi
+	if ! grep -Fq "github.event.action == 'labeled' && github.event.label.name != 'ratchet-bump'" "$qlty_file"; then
+		failed=1
+	fi
+	if ! grep -Fq "'Qlty Regression Gate (label ignored)' || 'Qlty Regression Gate'" "$qlty_file"; then
+		failed=1
+	fi
 	print_result "real: qlty-regression.yml NOT flagged (cancel disabled)" "$failed" "exit=$rc output=$output"
 	return 0
 }
