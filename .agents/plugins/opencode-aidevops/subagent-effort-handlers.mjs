@@ -183,6 +183,8 @@ async function recordRootRouting(context, sessionID, input, childModel, currentV
     tier: rootTier,
     model: childModel === "/" ? "" : childModel,
     variant: currentVariant || routedVariant,
+    requestedVariant: routedVariant,
+    resolvedVariant: currentVariant || routedVariant,
     candidateIndex: routingCandidateIndex(context.modelRouting, rootTier, childModel),
     attempt: 1,
     reason: "model_profile",
@@ -221,6 +223,8 @@ async function recordChildRouting(context, {
     tier: desiredEffort,
     model: policy?.routedModel || (childModel === "/" ? "" : childModel),
     variant: effectiveVariant,
+    requestedVariant: policy?.requestedVariant || effectiveVariant,
+    resolvedVariant: effectiveVariant,
     candidateIndex: policy?.candidateIndex
       ?? routingCandidateIndex(context.modelRouting, desiredEffort, childModel),
     attempt: policy?.attempt || 1,
@@ -272,6 +276,7 @@ async function routeChatParams(context, input, output) {
       requestedVariant,
       currentVariant,
     );
+    if (policy) policy.requestedVariant = requestedVariant;
     applyRequestedVariant(output, requestedVariant, effectiveVariant);
     await recordChildRouting(context, {
       sessionID,
