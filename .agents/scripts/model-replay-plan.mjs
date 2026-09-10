@@ -3,6 +3,7 @@
 
 import { chmodSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { loadBudgetContract, validateBudgetContract } from "./model-replay-budget.mjs";
 import { contaminationFor, loadCandidates } from "./model-replay-candidates.mjs";
 import {
   EXECUTION_POSTURES,
@@ -56,6 +57,7 @@ export function loadVerifiedPlan(experimentDir) {
     throw new Error("Experiment plan integrity check failed");
   }
   modelReplayExecutionPosture(plan);
+  if (plan.budget !== null && plan.budget !== undefined) validateBudgetContract(plan.budget);
   return plan;
 }
 
@@ -195,6 +197,7 @@ export function createPlan({
   mode = "autonomous",
   executionPosture = "enforced",
   allowContaminated = false,
+  budgetPath = "",
 }) {
   experimentDir = resolveExperimentDirectory(experimentDir, true);
   validatePlanOptions({ experimentID, suite, stage, mode, executionPosture });
@@ -203,6 +206,7 @@ export function createPlan({
   }
   const corpus = loadCorpus(corpusDir);
   const candidateConfig = loadCandidates(candidatePath);
+  const budget = budgetPath ? loadBudgetContract(budgetPath) : null;
   const entries = selectSuiteEntries(corpus, suite, stage);
   const cases = entries.map((entry) => plannedCase(corpusDir, entry, mode));
   const planned = buildCells({
@@ -226,6 +230,7 @@ export function createPlan({
     framework: frameworkIdentity(candidateConfig),
     candidate_config_sha256: sha256(stableJson(candidateConfig)),
     allowed_providers: candidateConfig.allowed_providers,
+    budget,
     cases,
     cells: planned.cells,
     integrity: {

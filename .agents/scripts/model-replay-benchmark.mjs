@@ -33,6 +33,7 @@ function commandPlan(options) {
     mode: options.mode || "autonomous",
     executionPosture: options.execution_posture || "enforced",
     allowContaminated: Boolean(options.allow_contaminated),
+    budgetPath: options.budget ? resolve(options.budget) : "",
   });
 }
 
