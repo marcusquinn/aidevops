@@ -394,16 +394,27 @@ _parent_comments_api_path() {
 #   - <!-- parent-close-contract: needs-decomposition|keep-open -->
 # Unchecked Markdown task-list criteria also block closure.
 #
-# Args: $1=parent_body, $2=known_child_count
+# A complete native sub-issue graph is the authoritative decomposition record.
+# Once every graph child is terminal (verified by the caller), stale unchecked
+# tracker criteria do not keep the parent open. Explicit keep-open and expected
+# child contracts still win.
+# Args: $1=parent_body, $2=known_child_count, $3=child evidence source
 # Returns: 0=incomplete, 1=complete or legacy-unknown
 #######################################
 _parent_close_contract_incomplete() {
 	local parent_body="$1"
 	local known_child_count="${2:-0}"
+	local child_source="${3:-}"
+	local native_graph_complete=0
 	_PARENT_CLOSE_CONTRACT_REASON=""
 	_PARENT_CLOSE_CONTRACT_DECLARED=0
 	_PARENT_CLOSE_CONTRACT_UNFILED=""
 	[[ -n "$parent_body" ]] || return 1
+	case "+${child_source}+" in
+	*+graph+*)
+		[[ "$known_child_count" -gt 0 ]] && native_graph_complete=1
+		;;
+	esac
 
 	local phases_section="" unfiled_count=0
 	phases_section=$(_parse_phases_section "$parent_body")
@@ -414,7 +425,8 @@ _parent_close_contract_incomplete() {
 			awk -F'\t' '$1 ~ /^[0-9]+$/ && $4 == "" { printf "Phase %s: %s\n", $1, $2 }')
 		unfiled_count=$(printf '%s\n' "$phases_section" |
 			awk -F'\t' '$1 ~ /^[0-9]+$/ && $4 == "" { c++ } END { print c+0 }')
-		if [[ "$unfiled_count" -gt 0 ]]; then
+		if [[ "$unfiled_count" -gt 0 ]] &&
+			[[ "$native_graph_complete" -eq 0 || "$known_child_count" -lt "$_PARENT_CLOSE_CONTRACT_DECLARED" ]]; then
 			_PARENT_CLOSE_CONTRACT_REASON="unfiled-phases"
 			return 0
 		fi
@@ -438,7 +450,8 @@ _parent_close_contract_incomplete() {
 		_PARENT_CLOSE_CONTRACT_REASON="needs-decomposition"
 		return 0
 	fi
-	if printf '%s\n' "$parent_body" | grep -qE '^[[:space:]]*[-*][[:space:]]+\[[[:space:]]\]'; then
+	if [[ "$native_graph_complete" -eq 0 ]] &&
+		printf '%s\n' "$parent_body" | grep -qE '^[[:space:]]*[-*][[:space:]]+\[[[:space:]]\]'; then
 		_PARENT_CLOSE_CONTRACT_REASON="unchecked-criteria"
 		return 0
 	fi
@@ -479,12 +492,13 @@ _pir_parent_revision_from_json() {
 # Apply the parent close contract to a freshly fetched issue object. A missing
 # or non-string body is ambiguous and therefore blocks closure, while an
 # explicitly empty body preserves the legacy compatibility contract.
-# Args: $1=live_issue_json, $2=known_child_count
+# Args: $1=live_issue_json, $2=known_child_count, $3=child evidence source
 # Returns: 0=incomplete or ambiguous, 1=complete or legacy-unknown
 #######################################
 _parent_live_close_contract_incomplete() {
 	local live_issue_json="$1"
 	local known_child_count="${2:-0}"
+	local child_source="${3:-}"
 	local live_body=""
 	if ! live_body=$(_pir_parent_body_from_json "$live_issue_json"); then
 		_PARENT_CLOSE_CONTRACT_REASON="$_PARENT_CLOSE_CONTRACT_LIVE_BODY_UNAVAILABLE"
@@ -492,7 +506,7 @@ _parent_live_close_contract_incomplete() {
 		_PARENT_CLOSE_CONTRACT_UNFILED=""
 		return 0
 	fi
-	_parent_close_contract_incomplete "$live_body" "$known_child_count"
+	_parent_close_contract_incomplete "$live_body" "$known_child_count" "$child_source"
 	return $?
 }
 
@@ -554,11 +568,11 @@ _mark_parent_review_hold() {
 # Verify that a live parent is still an automation-completed close whose body
 # deterministically requires repair. Intentional or unknown close reasons fail
 # closed. Sets _PIR_CPT_REPAIR_REASON on success.
-# Args: $1=live issue JSON, $2=known child count
+# Args: $1=live issue JSON, $2=known child count, $3=child evidence source
 # Returns: 0=repairable, 1=not repairable or ambiguous
 #######################################
 _pir_closed_parent_repair_reason() {
-	local live_issue_json="$1" known_child_count="$2"
+	local live_issue_json="$1" known_child_count="$2" child_source="${3:-}"
 	_PIR_CPT_REPAIR_REASON=""
 	printf '%s' "$live_issue_json" | jq -e --arg string_type "$_PIR_JSON_TYPE_STRING" '
 		(.state_reason // .stateReason) as $reason |
@@ -566,7 +580,7 @@ _pir_closed_parent_repair_reason() {
 		($reason | type) == $string_type and
 		($reason | ascii_downcase) == "completed"
 	' >/dev/null 2>&1 || return 1
-	_parent_live_close_contract_incomplete "$live_issue_json" "$known_child_count" || return 1
+	_parent_live_close_contract_incomplete "$live_issue_json" "$known_child_count" "$child_source" || return 1
 	[[ "$_PARENT_CLOSE_CONTRACT_REASON" != "$_PARENT_CLOSE_CONTRACT_LIVE_BODY_UNAVAILABLE" ]] || return 1
 	_PIR_CPT_REPAIR_REASON="$_PARENT_CLOSE_CONTRACT_REASON"
 	return 0
@@ -603,7 +617,8 @@ _repair_closed_parent_contract() {
 	_pir_collect_parent_child_evidence "$slug" "$parent_num" "$first_body" || return 1
 	first_child_nums="$_PIR_CPT_CHILD_NUMS"
 	first_child_source="$_PIR_CPT_CHILD_SOURCE"
-	_pir_closed_parent_repair_reason "$_PIR_LIVE_PARENT_JSON" "$_PIR_CPT_KNOWN_CHILD_COUNT" || return 1
+	_pir_closed_parent_repair_reason "$_PIR_LIVE_PARENT_JSON" "$_PIR_CPT_KNOWN_CHILD_COUNT" \
+		"$_PIR_CPT_CHILD_SOURCE" || return 1
 
 	_pir_parent_mutation_is_allowed "$slug" "$parent_num" closed || return 1
 	final_body=$(_pir_parent_body_from_json "$_PIR_LIVE_PARENT_JSON") || return 1
@@ -619,7 +634,8 @@ _repair_closed_parent_contract() {
 	_pir_parent_mutation_is_allowed "$slug" "$parent_num" closed || return 1
 	[[ "$(_pir_parent_body_from_json "$_PIR_LIVE_PARENT_JSON")" == "$final_body" ]] || return 1
 	[[ "$(_pir_parent_revision_from_json "$_PIR_LIVE_PARENT_JSON")" == "$final_revision" ]] || return 1
-	_pir_closed_parent_repair_reason "$_PIR_LIVE_PARENT_JSON" "$final_child_count" || return 1
+	_pir_closed_parent_repair_reason "$_PIR_LIVE_PARENT_JSON" "$final_child_count" \
+		"$final_child_source" || return 1
 	reason="$_PIR_CPT_REPAIR_REASON"
 	gh issue reopen "$parent_num" --repo "$slug" >/dev/null 2>&1 || return 1
 	_post_parent_close_contract_nudge "$slug" "$parent_num" "$reason" "$marker" || true
@@ -706,7 +722,8 @@ _pir_parent_close_snapshot_is_stable() {
 		"$_PIR_CPT_CHILD_SOURCE" == "$expected_child_source" ]] || return 1
 	_pir_verify_parent_children_closed "$slug" "$_PIR_CPT_CHILD_NUMS" || return 1
 	child_count="$_PIR_CPT_VERIFIED_CHILD_COUNT"
-	if _parent_close_contract_incomplete "$live_parent_body" "$child_count"; then
+	if _parent_close_contract_incomplete "$live_parent_body" "$child_count" \
+		"$_PIR_CPT_CHILD_SOURCE"; then
 		_hold_parent_for_incomplete_close_contract "$slug" "$parent_num" "$child_count" live
 		return 1
 	fi
@@ -759,7 +776,8 @@ _pir_parent_close_postcondition_is_stable() {
 		"$_PIR_CPT_CHILD_SOURCE" == "$expected_child_source" ]] || return 1
 	_pir_verify_parent_children_closed "$slug" "$_PIR_CPT_CHILD_NUMS" || return 1
 	child_count="$_PIR_CPT_VERIFIED_CHILD_COUNT"
-	_parent_close_contract_incomplete "$live_parent_body" "$child_count" && return 1
+	_parent_close_contract_incomplete "$live_parent_body" "$child_count" \
+		"$_PIR_CPT_CHILD_SOURCE" && return 1
 	return 0
 }
 
@@ -812,7 +830,7 @@ _try_close_parent_tracker() {
 	# child set it false), and produce the absurd close-comment
 	# "All 0 filed child task(s) are resolved." Require at least
 	# one real child issue (Gemini review of PR #22605, t3544).
-	if _parent_close_contract_incomplete "$parent_body" "$child_count"; then
+	if _parent_close_contract_incomplete "$parent_body" "$child_count" "$child_source"; then
 		_hold_parent_for_incomplete_close_contract "$slug" "$parent_num" "$child_count" cached
 		return 1
 	fi
@@ -840,7 +858,7 @@ _try_close_parent_tracker() {
 	_pir_verify_parent_children_closed "$slug" "$child_nums" || return 1
 	child_count="$_PIR_CPT_VERIFIED_CHILD_COUNT"
 	child_summary="$_PIR_CPT_VERIFIED_CHILD_SUMMARY"
-	if _parent_close_contract_incomplete "$live_parent_body" "$child_count"; then
+	if _parent_close_contract_incomplete "$live_parent_body" "$child_count" "$child_source"; then
 		_hold_parent_for_incomplete_close_contract "$slug" "$parent_num" "$child_count" live
 		return 1
 	fi

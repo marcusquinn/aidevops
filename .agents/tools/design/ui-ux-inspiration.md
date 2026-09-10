@@ -32,8 +32,13 @@ model: standard
 - **Report presentation**: `tools/design/report-presentation.md` (Markdown/HTML/PDF report tokens and component taxonomy)
 - **Palette tools**: `tools/design/colour-palette.md` (generation, spinning, narrowing)
 - **Browser**: Playwright full-render extraction (see `tools/browser/browser-automation.md`)
+- **Composition / critique**: `tools/design/distinctive-ui.md` for structure-first design, read-only audit/study, and faithful adoption of accepted reference traits
 
 **Design workflow** (apply in order):
+
+For study-only requests, extract and report first; do not run the design-file
+creation steps unless implementation or export is requested. Distinguish observed,
+inferred and accepted traits; screenshots do not establish exact fonts or rights.
 
 1. **Check brand identity** -- does `brand-identity.md` exist? If yes, use it. If no, run brand identity interview.
 2. **Check DESIGN.md** -- does `DESIGN.md` exist in project root? If yes, coding agents can use it directly. If no, generate one after brand identity is established.
@@ -123,8 +128,8 @@ Extract computed styles from representative elements in each category:
 
 ```text
 1. Navigate with Playwright (headed mode, full render)
-2. Wait for fonts/images (networkidle)
-3. Take full-page screenshot for reference
+2. Wait for relevant fonts/images with bounded page readiness; do not rely on networkidle on a streaming page
+3. Capture viewport-sized screenshots (max 1568px longest side) using browser-qa-helper.sh; never fullPage: true for AI review
 4. Extract computed styles from representative elements:
    - Sample across headings, body text, containers/cards, form controls,
      navigation, interactive elements (buttons, links, chips, badges)

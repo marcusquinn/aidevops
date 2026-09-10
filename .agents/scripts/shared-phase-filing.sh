@@ -169,8 +169,12 @@ _parse_phase_line_list_form() {
 
 	marker=$(_phase_marker_for_line "$line" "$_PHASE_MARKER_NONE")
 
-	# Child ref: trailing bare #NNN at end of line only (anchored).
-	child_ref=$(printf '%s' "$line" | sed -nE 's/.*#([0-9]+)[[:space:]]*$/\1/p')
+	# Child ref: accept a trailing bare #NNN or a Markdown-linked issue ref.
+	# Managed planning briefs commonly render children as [#NNN](issue-url);
+	# treating those as unfiled leaves completed native sub-issue graphs stuck.
+	child_ref=$(printf '%s' "$line" |
+		sed -E 's/\]\([^)]*\)[[:space:]]*$/]/' |
+		sed -nE 's/.*#([0-9]+)\]?[[:space:]]*$/\1/p')
 
 	printf '%s\t%s\t%s\t%s\n' "$phase_num" "$description" "$marker" "$child_ref"
 	return 0
@@ -213,11 +217,13 @@ _parse_phase_line_bold_form() {
 
 	marker=$(_phase_marker_for_line "$line" "$global_auto_fire")
 
-	# Child ref: match #NNN either outside (`** #NNN`) or inside (`#NNN**`).
-	# Strip closing `**` first so the anchored tail regex finds either form.
+	# Child ref: match bare or Markdown-linked #NNN either outside or inside
+	# the bold span. Strip the link destination and closing `**` first so the
+	# anchored tail regex finds each supported form.
 	child_ref=$(printf '%s' "$line" \
+		| sed -E 's/\]\([^)]*\)(\*\*)?[[:space:]]*$/]\1/' \
 		| sed -E 's/\*\*[[:space:]]*$//' \
-		| sed -nE 's/.*#([0-9]+)[[:space:]]*$/\1/p')
+		| sed -nE 's/.*#([0-9]+)\]?[[:space:]]*$/\1/p')
 
 	printf '%s\t%s\t%s\t%s\n' "$phase_num" "$description" "$marker" "$child_ref"
 	return 0

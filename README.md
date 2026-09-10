@@ -348,6 +348,7 @@ aidevops now treats design as a self-contained stack with optional peripherals:
 - **Brand guideline exports**: `aidevops design guidelines . --pdf` generates `_reports/brand-guidelines/brand-guidelines.md`, HTML, and A4/US Letter/slides PDFs from `DESIGN.md`.
 - **Repo rollout**: `aidevops design survey --json` audits owned initialized GUI repos; `aidevops design issues --apply` files worker-ready auto-dispatch issues for missing `DESIGN.md`/brand-guideline artifacts.
 - **Design agents and skills**: brand identity, palettes, UI inspiration, product UI rules, shadcn/Tailwind/UI skills, Nothing-style design, email rendering, Remotion/video, and browser-based UI verification.
+- **Distinctive UI**: [Hallmark-informed design guidance](.agents/tools/design/distinctive-ui.md) for brief-led composition, read-only audits, non-destructive redesign and reference study. Ask "audit this page for generic design" or "redesign this UI while preserving DESIGN.md". No extra install; [assessment and provenance](.agents/tools/design/hallmark.md) explain what was adapted and why.
 - **Artifact routing commands**: `/design-artifact` decides whether to use aidevops-native implementation or a companion artifact studio; `/open-design` manages optional Open Design workflows.
 - **Verification gates**: Playwright screenshots, accessibility/contrast checks, email rendering, deck export/fidelity checks, and media smoke tests before generated artifacts are accepted.
 

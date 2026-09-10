@@ -689,7 +689,37 @@ else
 fi
 
 # -----------------------------------------------------------------------------
-# Scenario 11b: cached complete evidence cannot outrun a freshly edited parent
+# Scenario 11b: a complete native graph is authoritative over stale unchecked
+# tracker criteria. Explicit keep-open contracts remain blocking.
+# -----------------------------------------------------------------------------
+reset_scenario
+set_parent_list 1440 "t1440: completed graph with stale checklist" $'## Acceptance Criteria\n\n- [ ] Parent summary copied from child deliverables'
+set_live_parent 1440 "t1440: completed graph with stale checklist" $'## Acceptance Criteria\n\n- [ ] Parent summary copied from child deliverables'
+set_subissues "1441:CLOSED" "1442:CLOSED"
+set_child_states "1441:closed:phase-one" "1442:closed:phase-two"
+
+reconcile_completed_parent_tasks >/dev/null 2>&1
+
+if grep -q "issue close 1440" "$GH_CALLS"; then
+	print_result "native graph completion: stale unchecked tracker criteria do not block close" 0
+else
+	print_result "native graph completion: stale unchecked tracker criteria do not block close" 1 \
+		"(calls: $(tr '\n' '|' <"$GH_CALLS" | head -c 400))"
+fi
+
+reset_scenario
+set_parent_list 1445 "t1445: body-only children with unchecked work" $'## Acceptance Criteria\n\n- [ ] Independent parent work\n\n## Children\n\n- #1446'
+set_subissues
+set_child_states "1446:closed:body-only-child"
+reconcile_completed_parent_tasks >/dev/null 2>&1
+if grep -q "issue close 1445" "$GH_CALLS"; then
+	print_result "body-only completion: unchecked independent work remains blocking" 1
+else
+	print_result "body-only completion: unchecked independent work remains blocking" 0
+fi
+
+# -----------------------------------------------------------------------------
+# Scenario 11c: cached complete evidence cannot outrun a freshly edited parent
 # body. Unchecked criteria and keep-open markers observed at the final mutation
 # boundary block closure.
 # -----------------------------------------------------------------------------

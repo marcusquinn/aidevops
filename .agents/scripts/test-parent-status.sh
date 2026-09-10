@@ -266,6 +266,15 @@ printf '%s\n' '{"number":30701,"title":"Complete phase","state":"CLOSED","stateR
 	>"$STUB_DIR/issue-30701.json"
 printf 'null\n' >"$STUB_DIR/pr-for-30701.json"
 
+# Native graph completion is authoritative over stale tracker checkboxes.
+# Body-only declarations retain the conservative unchecked-work blocker.
+jq -n '{number:30800,title:"Complete graph with stale checklist",state:"OPEN",body:"## Acceptance Criteria\n\n- [ ] Stale tracker summary",labels:[{name:"parent-task"}]}' \
+	>"$STUB_DIR/issue-30800.json"
+printf '%s\n' '[{"number":30101}]' >"$STUB_DIR/sub-issues-30800.json"
+jq -n '{number:30900,title:"Body-only incomplete parent",state:"OPEN",body:"## Acceptance Criteria\n\n- [ ] Independent parent work\n\n## Children\n\n- #30101",labels:[{name:"parent-task"}]}' \
+	>"$STUB_DIR/issue-30900.json"
+printf '%s\n' '[]' >"$STUB_DIR/sub-issues-30900.json"
+
 # =============================================================================
 # Test runner
 # =============================================================================
@@ -497,6 +506,22 @@ if printf '%s' "$legacy_phase_output" | grep -q 'Parent close contract is incomp
 	pass "23: unfiled canonical phase blocks closure without an explicit marker"
 else
 	fail "23: legacy canonical phase plan produced an unsafe recommendation"
+fi
+
+native_graph_output=$(run_helper 30800 --repo marcusquinn/aidevops)
+if printf '%s' "$native_graph_output" | grep -q 'close the parent issue' &&
+	! printf '%s' "$native_graph_output" | grep -q 'unchecked-criteria'; then
+	pass "24: complete native graph supersedes stale parent checklist"
+else
+	fail "24: complete native graph did not recommend parent closure"
+fi
+
+body_only_output=$(run_helper 30900 --repo marcusquinn/aidevops)
+if printf '%s' "$body_only_output" | grep -q 'Parent close contract is incomplete (unchecked-criteria)' &&
+	! printf '%s' "$body_only_output" | grep -q 'close the parent issue'; then
+	pass "25: body-only child evidence preserves unchecked parent work"
+else
+	fail "25: body-only child evidence bypassed unchecked parent work"
 fi
 
 # =============================================================================

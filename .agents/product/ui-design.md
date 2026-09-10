@@ -25,6 +25,7 @@ tools:
 - **Standards**: Apple HIG, Material Design 3, WCAG 2.1 AA accessibility
 - **Tools**: Vision AI for asset generation, Remotion for animated previews, Gemini for SVG design
 - **Applies to**: Mobile apps, browser extensions, desktop apps, web apps
+- **Composition / audit / redesign**: `tools/design/distinctive-ui.md` — load for new page structures, design critique, reference study, or "less generic" UI; skip for small fixes
 
 **Design pillars**: Simple (remove non-essentials) · Clean (whitespace, hierarchy, spacing) · Stylish (typography, colour, animation) · Beautiful (pixel detail, micro-interactions) · Accessible (WCAG 2.1 AA)
 
