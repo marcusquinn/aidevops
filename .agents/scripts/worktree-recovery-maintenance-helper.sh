@@ -274,7 +274,11 @@ _worktree_recovery_maintenance_order_inventory() {
 
 _worktree_recovery_maintenance_zero_reason_counts_json() {
 	jq -cn '{unknown_archive:0,sizing_unavailable:0,sizing_timeout:0,classification_unavailable:0,
-		identity_or_size_changed:0,required_evidence_unavailable:0,
+		identity_or_size_changed:0,required_evidence_unavailable:0,git_evidence_unavailable:0,
+		worktree_evidence_unavailable:0,registry_evidence_unavailable:0,
+		claim_evidence_unavailable:0,process_evidence_unavailable:0,
+		commit_evidence_unavailable:0,pull_request_evidence_unavailable:0,
+		task_evidence_unavailable:0,
 		unrecognised_evidence_state:0,age_unavailable:0,archive_worktree_dirty:0,
 		active_git_worktree_reference:0,active_registry_owner:0,active_session_claim:0,
 		active_process_reference:0,open_pull_request:0,source_removal_not_complete:0,
@@ -297,6 +301,14 @@ _worktree_recovery_maintenance_record_reason() {
 	classification-unavailable) safe_reason="classification_unavailable" ;;
 	identity-or-size-changed) safe_reason="identity_or_size_changed" ;;
 	required-evidence-unavailable) safe_reason="required_evidence_unavailable" ;;
+	git-evidence-unavailable) safe_reason="git_evidence_unavailable" ;;
+	worktree-evidence-unavailable) safe_reason="worktree_evidence_unavailable" ;;
+	registry-evidence-unavailable) safe_reason="registry_evidence_unavailable" ;;
+	claim-evidence-unavailable) safe_reason="claim_evidence_unavailable" ;;
+	process-evidence-unavailable) safe_reason="process_evidence_unavailable" ;;
+	commit-evidence-unavailable) safe_reason="commit_evidence_unavailable" ;;
+	pull-request-evidence-unavailable) safe_reason="pull_request_evidence_unavailable" ;;
+	task-evidence-unavailable) safe_reason="task_evidence_unavailable" ;;
 	unrecognised-evidence-state) safe_reason="unrecognised_evidence_state" ;;
 	age-unavailable) safe_reason="age_unavailable" ;;
 	archive-worktree-dirty) safe_reason="archive_worktree_dirty" ;;
