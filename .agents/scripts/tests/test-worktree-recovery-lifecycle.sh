@@ -2295,6 +2295,7 @@ run_zero_candidate_cycle_fixture() {
 	local home_path="$1"
 	local recovery_root="$2"
 	local state_dir="$3"
+	local extra_archives="${4:-0}"
 
 	uname() {
 		printf 'Linux\n'
@@ -2314,6 +2315,10 @@ run_zero_candidate_cycle_fixture() {
 		: "$ignored_platform"
 		printf '%s/unknown-a\n%s/protected\n%s/unknown-b\n' \
 			"$recovery_root" "$recovery_root" "$recovery_root" >"$output_path"
+		while [[ "$extra_archives" -gt 0 ]]; do
+			printf '%s/unknown-extra-%s\n' "$recovery_root" "$extra_archives" >>"$output_path"
+			extra_archives=$((extra_archives - 1))
+		done
 		return $?
 	}
 	_worktree_recovery_inventory_bucket_state() {
@@ -2348,6 +2353,40 @@ run_zero_candidate_cycle_fixture() {
 		AIDEVOPS_WORKTREE_RECOVERY_MAINTENANCE_MIN_FREE_PERCENT=0 \
 		worktree_recovery_maintenance_run
 	return $?
+}
+
+test_automatic_maintenance_escalates_sustained_churn() {
+	local home_path="${TEST_DIR}/automatic-churn-home"
+	local recovery_root="${home_path}/.aidevops/recovery/worktrees"
+	local state_dir="${home_path}/maintenance-state"
+	local first_output="" second_output="" third_output=""
+	local rc=0
+
+	mkdir -p "$recovery_root" || rc=1
+	first_output=$(run_zero_candidate_cycle_fixture "$home_path" "$recovery_root" "$state_dir" 0) || rc=1
+	second_output=$(run_zero_candidate_cycle_fixture "$home_path" "$recovery_root" "$state_dir" 1) || rc=1
+	third_output=$(run_zero_candidate_cycle_fixture "$home_path" "$recovery_root" "$state_dir" 2) || rc=1
+	printf '%s\n' "$first_output" | jq -e '
+		.diagnostics.zero_candidate_cycle.completed_this_run == false and
+		.diagnostics.sustained_non_reclamation.scanned_count == 2 and
+		.escalation.required == false
+	' >/dev/null || rc=1
+	printf '%s\n' "$second_output" | jq -e '
+		.diagnostics.inventory_count == 4 and
+		.diagnostics.zero_candidate_cycle.completed_this_run == false and
+		.diagnostics.sustained_non_reclamation.scanned_count == 4 and
+		.escalation.required == true and
+		.escalation.reason == "pressure-sustained-no-candidates"
+	' >/dev/null || rc=1
+	printf '%s\n' "$third_output" | jq -e '
+		.diagnostics.inventory_count == 5 and
+		.diagnostics.zero_candidate_cycle.completed_this_run == false and
+		.diagnostics.sustained_non_reclamation.scanned_count == 6 and
+		.escalation.required == true
+	' >/dev/null || rc=1
+	print_result "automatic_maintenance_escalates_sustained_churn" "$rc" \
+		"Expected persistent non-reclamation accounting to survive inventory changes"
+	return 0
 }
 
 test_automatic_maintenance_escalates_completed_zero_candidate_cycle() {
@@ -2625,6 +2664,7 @@ run_all_tests() {
 	test_automatic_maintenance_bounds_classification_subprocesses
 	test_automatic_maintenance_preserves_bucket_when_exact_size_is_unavailable
 	test_automatic_maintenance_escalates_completed_zero_candidate_cycle
+	test_automatic_maintenance_escalates_sustained_churn
 	test_automatic_maintenance_resumes_interrupted_apply
 	test_automatic_maintenance_rejects_symlink_cursor
 	test_automatic_maintenance_rejects_symlink_cycle_state

@@ -213,7 +213,12 @@ Exact safe reason buckets distinguish sizing, identity drift, unavailable
 evidence, live references, unfinished tasks, retention policy, and selection
 limits without exposing archive paths. A private state record accumulates those
 counts across bounded cursor windows and resets if the inventory or pressure
-state changes.
+state changes. Exact-inventory coverage resets on inventory change, so it never
+claims that an old partial scan covered a new inventory. Separately, while
+pressure remains active and no safe candidate is selected, persistent sustained
+non-reclamation accounting survives inventory churn. Once its scanned work
+reaches the current inventory size, it requests the same read-only operator
+plan even if no exact full-inventory cycle completed.
 
 When protected mixed archives contain approved cache roots, one pass selects at
 most 100 roots and 5 GiB by default inside the same scan and deadline budget.
@@ -238,9 +243,12 @@ filesystem free-space changes from concurrent `df` activity. Run outcomes report
 `cache-pruned` or `resumed-and-pruned`. User files and the protected archive
 remain untouched.
 
-When a stable inventory completes a full pressure-active scan cycle with zero
-candidates, the result retains `outcome:"no-candidates"` and sets
-`escalation.required:true`. Its fixed command array directs the operator to run
+When sustained pressure-active scanning finds zero candidates for at least one
+current-inventory's worth of bounded work, the result retains
+`outcome:"no-candidates"` and sets `escalation.required:true`. A stable full
+scan records `zero_candidate_cycle.completed_this_run:true`; inventory churn
+instead remains explicitly incomplete while its separate sustained accounting
+triggers the warning. Its fixed command array directs the operator to run
 `worktree-helper.sh recovery plan --output <absolute-new-path>`. Planning is the
 bounded, read-only remediation path described above; it grants no deletion
 authority. Protected and uncertain buckets remain untouched, and only a

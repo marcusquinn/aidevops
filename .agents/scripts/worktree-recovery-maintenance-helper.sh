@@ -13,7 +13,7 @@ source "${WORKTREE_RECOVERY_MAINTENANCE_DIR}/worktree-recovery-lifecycle-helper.
 source "${WORKTREE_RECOVERY_MAINTENANCE_DIR}/disk-capacity-lib.sh"
 
 WORKTREE_RECOVERY_MAINTENANCE_RUN_SCHEMA="aidevops.worktree-recovery-maintenance-run/v1"
-WORKTREE_RECOVERY_MAINTENANCE_CYCLE_SCHEMA="aidevops.worktree-recovery-zero-candidate-cycle/v1"
+WORKTREE_RECOVERY_MAINTENANCE_CYCLE_SCHEMA="aidevops.worktree-recovery-zero-candidate-cycle/v2"
 WORKTREE_RECOVERY_MAINTENANCE_JSON_NUMBER_TYPE='number'
 WORKTREE_RECOVERY_MAINTENANCE_OPERATION_CACHE_PRUNE='cache-prune'
 WORKTREE_RECOVERY_MAINTENANCE_LOCK_PATH=""
@@ -44,11 +44,14 @@ WORKTREE_RECOVERY_MAINTENANCE_PRESSURE_ACTIVE=false
 WORKTREE_RECOVERY_MAINTENANCE_PREVIOUS_CYCLE_SCANNED=0
 WORKTREE_RECOVERY_MAINTENANCE_PREVIOUS_COMPLETED_CYCLES=0
 WORKTREE_RECOVERY_MAINTENANCE_PREVIOUS_CYCLE_REASONS_JSON=""
+WORKTREE_RECOVERY_MAINTENANCE_PREVIOUS_SUSTAINED_SCANNED=0
 WORKTREE_RECOVERY_MAINTENANCE_REASON_COUNTS_JSON=""
 WORKTREE_RECOVERY_MAINTENANCE_CYCLE_REASON_COUNTS_JSON=""
 WORKTREE_RECOVERY_MAINTENANCE_CYCLE_SCANNED=0
 WORKTREE_RECOVERY_MAINTENANCE_CYCLE_COMPLETE=false
 WORKTREE_RECOVERY_MAINTENANCE_COMPLETED_CYCLES=0
+WORKTREE_RECOVERY_MAINTENANCE_SUSTAINED_SCANNED=0
+WORKTREE_RECOVERY_MAINTENANCE_SUSTAINED_ESCALATION=false
 WORKTREE_RECOVERY_MAINTENANCE_TEMP_INVENTORY=""
 WORKTREE_RECOVERY_MAINTENANCE_TEMP_ORDERED=""
 WORKTREE_RECOVERY_MAINTENANCE_TEMP_SELECTED=""
@@ -358,27 +361,37 @@ _worktree_recovery_maintenance_load_cycle_state() {
 	local pressure_active=""
 	local scanned_in_cycle=""
 	local completed_cycles=""
+	local sustained_scanned=""
 	local normalized_reasons=""
 
 	WORKTREE_RECOVERY_MAINTENANCE_PREVIOUS_CYCLE_SCANNED=0
 	WORKTREE_RECOVERY_MAINTENANCE_PREVIOUS_COMPLETED_CYCLES=0
+	WORKTREE_RECOVERY_MAINTENANCE_PREVIOUS_SUSTAINED_SCANNED=0
 	WORKTREE_RECOVERY_MAINTENANCE_PREVIOUS_CYCLE_REASONS_JSON=$(
 		_worktree_recovery_maintenance_zero_reason_counts_json
 	) || return 1
 	[[ -e "$cycle_path" || -L "$cycle_path" ]] || return 0
 	[[ -f "$cycle_path" && ! -L "$cycle_path" ]] || return 1
 	metadata=$(jq -er '[.schema,.inventory_digest,.inventory_count,.pressure_active,
-		.scanned_in_cycle,.completed_cycles] | @tsv' "$cycle_path") || return 1
+		.scanned_in_cycle,.completed_cycles,(.sustained_scanned // 0)] | @tsv' "$cycle_path") || return 1
 	IFS=$'\t' read -r schema inventory_digest inventory_count pressure_active \
-		scanned_in_cycle completed_cycles <<<"$metadata"
+		scanned_in_cycle completed_cycles sustained_scanned <<<"$metadata"
+	if [[ "$schema" == "aidevops.worktree-recovery-zero-candidate-cycle/v1" ]]; then
+		# v1 has no churn-safe accounting; begin a truthful v2 window on this pass.
+		return 0
+	fi
 	[[ "$schema" == "$WORKTREE_RECOVERY_MAINTENANCE_CYCLE_SCHEMA" &&
 		"$inventory_digest" =~ ^[0-9a-f]{64}$ && "$inventory_count" =~ ^[0-9]+$ &&
 		"$pressure_active" =~ ^(true|false)$ && "$scanned_in_cycle" =~ ^[0-9]+$ &&
-		"$completed_cycles" =~ ^[0-9]+$ && "$completed_cycles" -le 1000000000 ]] || return 1
+		"$completed_cycles" =~ ^[0-9]+$ && "$completed_cycles" -le 1000000000 &&
+		"$sustained_scanned" =~ ^[0-9]+$ && "$sustained_scanned" -le 1000000000 ]] || return 1
 	normalized_reasons=$(_worktree_recovery_maintenance_normalize_reason_counts "$cycle_path") || return 1
+	if [[ "$pressure_active" != "$WORKTREE_RECOVERY_MAINTENANCE_PRESSURE_ACTIVE" ]]; then
+		return 0
+	fi
+	WORKTREE_RECOVERY_MAINTENANCE_PREVIOUS_SUSTAINED_SCANNED="$sustained_scanned"
 	if [[ "$inventory_digest" != "$WORKTREE_RECOVERY_MAINTENANCE_INVENTORY_DIGEST" ||
-		"$inventory_count" != "$WORKTREE_RECOVERY_MAINTENANCE_BUCKET_COUNT" ||
-		"$pressure_active" != "$WORKTREE_RECOVERY_MAINTENANCE_PRESSURE_ACTIVE" ]]; then
+		"$inventory_count" != "$WORKTREE_RECOVERY_MAINTENANCE_BUCKET_COUNT" ]]; then
 		return 0
 	fi
 	[[ "$inventory_count" -eq 0 || "$scanned_in_cycle" -lt "$inventory_count" ]] || return 1
@@ -419,6 +432,7 @@ _worktree_recovery_maintenance_update_cycle_state() {
 	local total_scanned=0
 	local state_scanned=0
 	local completed_cycles=0
+	local sustained_scanned=0
 	local payload=""
 
 	zero_json=$(_worktree_recovery_maintenance_zero_reason_counts_json) || return 1
@@ -426,6 +440,8 @@ _worktree_recovery_maintenance_update_cycle_state() {
 	WORKTREE_RECOVERY_MAINTENANCE_CYCLE_SCANNED=0
 	WORKTREE_RECOVERY_MAINTENANCE_CYCLE_COMPLETE=false
 	WORKTREE_RECOVERY_MAINTENANCE_COMPLETED_CYCLES=0
+	WORKTREE_RECOVERY_MAINTENANCE_SUSTAINED_SCANNED=0
+	WORKTREE_RECOVERY_MAINTENANCE_SUSTAINED_ESCALATION=false
 	if [[ "$WORKTREE_RECOVERY_MAINTENANCE_SELECTED" -gt 0 ||
 		"$WORKTREE_RECOVERY_MAINTENANCE_CACHE_SELECTED" -gt 0 ||
 		"$WORKTREE_RECOVERY_MAINTENANCE_BUCKET_COUNT" -eq 0 ]]; then
@@ -443,6 +459,8 @@ _worktree_recovery_maintenance_update_cycle_state() {
 	total_scanned=$((WORKTREE_RECOVERY_MAINTENANCE_PREVIOUS_CYCLE_SCANNED + WORKTREE_RECOVERY_MAINTENANCE_SCANNED))
 	[[ "$total_scanned" -le "$WORKTREE_RECOVERY_MAINTENANCE_BUCKET_COUNT" ]] || return 1
 	completed_cycles="$WORKTREE_RECOVERY_MAINTENANCE_PREVIOUS_COMPLETED_CYCLES"
+	sustained_scanned=$((WORKTREE_RECOVERY_MAINTENANCE_PREVIOUS_SUSTAINED_SCANNED + WORKTREE_RECOVERY_MAINTENANCE_SCANNED))
+	[[ "$sustained_scanned" -le 1000000000 ]] || return 1
 	state_scanned="$total_scanned"
 	state_reasons="$combined_reasons"
 	if [[ "$total_scanned" -eq "$WORKTREE_RECOVERY_MAINTENANCE_BUCKET_COUNT" ]]; then
@@ -454,15 +472,21 @@ _worktree_recovery_maintenance_update_cycle_state() {
 	WORKTREE_RECOVERY_MAINTENANCE_CYCLE_REASON_COUNTS_JSON="$combined_reasons"
 	WORKTREE_RECOVERY_MAINTENANCE_CYCLE_SCANNED="$total_scanned"
 	WORKTREE_RECOVERY_MAINTENANCE_COMPLETED_CYCLES="$completed_cycles"
+	WORKTREE_RECOVERY_MAINTENANCE_SUSTAINED_SCANNED="$sustained_scanned"
+	if [[ "$sustained_scanned" -ge "$WORKTREE_RECOVERY_MAINTENANCE_BUCKET_COUNT" ]]; then
+		WORKTREE_RECOVERY_MAINTENANCE_SUSTAINED_ESCALATION=true
+	fi
 	payload=$(jq -cn --arg schema "$WORKTREE_RECOVERY_MAINTENANCE_CYCLE_SCHEMA" \
 		--arg digest "$WORKTREE_RECOVERY_MAINTENANCE_INVENTORY_DIGEST" \
 		--argjson inventory_count "$WORKTREE_RECOVERY_MAINTENANCE_BUCKET_COUNT" \
 		--argjson pressure_active "$WORKTREE_RECOVERY_MAINTENANCE_PRESSURE_ACTIVE" \
 		--argjson scanned_in_cycle "$state_scanned" \
-		--argjson completed_cycles "$completed_cycles" --argjson reason_counts "$state_reasons" \
+		--argjson completed_cycles "$completed_cycles" --argjson sustained_scanned "$sustained_scanned" \
+		--argjson reason_counts "$state_reasons" \
 		'{schema:$schema,inventory_digest:$digest,inventory_count:$inventory_count,
 		pressure_active:$pressure_active,scanned_in_cycle:$scanned_in_cycle,
-		completed_cycles:$completed_cycles,reason_counts:$reason_counts}') || return 1
+		completed_cycles:$completed_cycles,sustained_scanned:$sustained_scanned,
+		reason_counts:$reason_counts}') || return 1
 	_worktree_recovery_maintenance_replace_cycle_state "$cycle_path" "$payload"
 	return $?
 }
@@ -1170,6 +1194,8 @@ _worktree_recovery_maintenance_diagnostics_json() {
 		--argjson cycle_scanned "$WORKTREE_RECOVERY_MAINTENANCE_CYCLE_SCANNED" \
 		--argjson cycle_complete "$WORKTREE_RECOVERY_MAINTENANCE_CYCLE_COMPLETE" \
 		--argjson completed_cycles "$WORKTREE_RECOVERY_MAINTENANCE_COMPLETED_CYCLES" \
+		--argjson sustained_scanned "$WORKTREE_RECOVERY_MAINTENANCE_SUSTAINED_SCANNED" \
+		--argjson sustained_escalation "$WORKTREE_RECOVERY_MAINTENANCE_SUSTAINED_ESCALATION" \
 		'{inventory_count:$inventory_count,scanned_count:$scanned_count,
 		cursor_before:$cursor_before,cursor_after:$cursor_after,
 		deadline_seconds:$deadline_seconds,deadline_exhausted:$deadline_exhausted,
@@ -1182,7 +1208,9 @@ _worktree_recovery_maintenance_diagnostics_json() {
 		selected_roots:$cache_selected,selected_bytes:$cache_selected_bytes},
 		classification_reason_counts:$classification_reason_counts,
 		zero_candidate_cycle:{scanned_count:$cycle_scanned,completed_this_run:$cycle_complete,
-		completed_cycles:$completed_cycles,reason_counts:$cycle_reason_counts}}'
+		completed_cycles:$completed_cycles,reason_counts:$cycle_reason_counts},
+		sustained_non_reclamation:{scanned_count:$sustained_scanned,
+		escalation_threshold_reached:$sustained_escalation}}'
 	return $?
 }
 
@@ -1270,8 +1298,8 @@ _worktree_recovery_maintenance_no_candidates_json() {
 		--arg schema "$WORKTREE_RECOVERY_MAINTENANCE_RUN_SCHEMA" \
 		--argjson diagnostics "$diagnostics_json" \
 		'{schema:$schema,outcome:"no-candidates",reclaimed_bytes:0,policy:.,diagnostics:$diagnostics,
-		escalation:(if (.pressure_active == true and $diagnostics.zero_candidate_cycle.completed_this_run == true)
-		then {required:true,reason:"pressure-zero-candidate-cycle",authority:"read-only",
+		escalation:(if (.pressure_active == true and $diagnostics.sustained_non_reclamation.escalation_threshold_reached == true)
+		then {required:true,reason:"pressure-sustained-no-candidates",authority:"read-only",
 		command:["worktree-helper.sh","recovery","plan","--output","<absolute-new-path>"]}
 		else {required:false,reason:null,authority:null,command:null} end)}'
 	return $?
