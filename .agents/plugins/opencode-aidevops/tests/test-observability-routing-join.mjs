@@ -118,6 +118,15 @@ test("completed child responses join queued routing decisions to parent feedback
       status: "completed",
       success: true,
     });
+    observability.recordSubagentAcceptance({
+      contributionID: "contribution:child",
+      interventionCount: 1,
+      objectiveID: "objective:1",
+      outcome: "accepted_repaired",
+      parentSessionID: "root-session",
+      policyVersion: "v1",
+      runID: "run:1",
+    });
     await new Promise((resolve) => setTimeout(resolve, 100));
 
     const persisted = sqlite.sqliteExecSync(`
@@ -142,6 +151,11 @@ SELECT payload_json FROM runtime_events WHERE event_type = 'subagent.host.outcom
       terminal_evidence: "stop",
       verification: "unknown",
     });
+    const acceptancePayload = JSON.parse(sqlite.sqliteExecSync(`
+SELECT payload_json FROM runtime_events WHERE event_type = 'subagent.acceptance' LIMIT 1;
+    `));
+    assert.equal(acceptancePayload.contribution_outcome, "accepted_repaired");
+    assert.equal(acceptancePayload.intervention_count, 1);
   } finally {
     sqlite.shutdownSqlite();
     delete process.env.AIDEVOPS_OBS_DB_OVERRIDE;

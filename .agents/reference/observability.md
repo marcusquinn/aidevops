@@ -45,6 +45,20 @@ the same `llm-requests.db`; it does not create another database or state store.
 events are evidence and projections, not a task, mailbox, audit, transcript, or
 worker-state authority.
 
+Optional objective evidence is versioned and append-only: `objective.started`,
+`objective.session.attached`, `objective.outcome`, and `subagent.acceptance`.
+Attachments declare bounded request/message boundaries and are either uniquely
+allocated or explicitly unallocated, preventing a multi-objective session from
+being charged repeatedly. Outcomes remain `unknown` without evidence. `verified`
+requires an independent observer plus a check/receipt kind, fingerprint, policy
+version, and timestamp; host completion and a parent assertion alone never verify
+an objective. Parent acceptance records contribution outcome and repair linkage,
+not semantic success inferred from a child terminal state. Emit through
+`runtime-events.mjs emit --session <opaque-id>` and query with `--session` or
+`--objective`; malformed objective evidence fails visibly while legacy evidence
+writes remain fail-open. Objective and subagent lifecycle evidence is protected by
+retention; corrections supersede through new observations rather than mutation.
+
 Envelope version 1 stores `event_id`, `event_type`, `correlation_id`,
 `causation_id`, `subject_id`, `session_id`, `worker_id`, `parent_worker_id`,
 `root_worker_id`, `root_event_id`, and `parent_event_id`. The supervisor emits
