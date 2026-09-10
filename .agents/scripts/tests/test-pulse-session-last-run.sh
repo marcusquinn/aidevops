@@ -20,7 +20,10 @@ trap _cleanup EXIT
 # Load functions without invoking the CLI. The helper derives all readonly
 # paths from the isolated HOME above.
 # shellcheck source=/dev/null
-source <(sed '/^main "\$@"$/d' "$_TEST_TARGET")
+source <(sed \
+	-e '/^main "\$@"$/d' \
+	-e "s|^SCRIPT_DIR=.*|SCRIPT_DIR=\"${_TEST_REPO_ROOT}/.agents/scripts\"|" \
+	"$_TEST_TARGET")
 
 _TESTS_RUN=0
 _TESTS_FAILED=0
@@ -110,11 +113,75 @@ _test_status_summary_uses_marker() {
 	return 0
 }
 
+_test_status_uses_canonical_worker_detector() {
+	local worker_count=""
+	local output=""
+	worker_count=$(
+		list_active_worker_processes() {
+			printf '%s\n' '650 00:18 bash /Users/test/.aidevops/agents/scripts/headless-runtime-helper.sh run --role worker --session-key issue-14944 --dir /tmp/aidevops --title "Issue #14944" --prompt-file /tmp/pulse-14944.prompt'
+			return 0
+		}
+		count_workers
+	)
+	_assert_equal "1" "$worker_count" \
+		"worker count delegates to the canonical detector"
+	output=$(
+		list_active_worker_processes() {
+			printf '%s\n' '650 00:18 bash /Users/test/.aidevops/agents/scripts/headless-runtime-helper.sh run --role worker --session-key issue-14944 --dir /tmp/aidevops --title "Issue #14944" --prompt-file /tmp/pulse-14944.prompt'
+			return 0
+		}
+		_status_print_worker_details 1
+	)
+	if [[ "$output" == *"PID 650 (00:18): Issue #14944"* ]]; then
+		_assert_equal "present" "present" \
+			"status displays a detached headless worker from the canonical detector"
+	else
+		_assert_equal "present" "missing" \
+			"status displays a detached headless worker from the canonical detector"
+	fi
+	return 0
+}
+
+_test_force_stop_targets_canonical_worker_pid() {
+	local killed_pid_file="${_TEST_TMP_DIR}/killed-pid"
+	local output=""
+	output=$(
+		list_active_worker_processes() {
+			printf '%s\n' '651 00:19 bash /Users/test/.aidevops/agents/scripts/headless-runtime-helper.sh run --role worker --session-key issue-14945 --dir /tmp/aidevops'
+			return 0
+		}
+		count_workers() {
+			printf '%s\n' "0"
+			return 0
+		}
+		kill() {
+			printf '%s\n' "$1" >"$killed_pid_file"
+			return 0
+		}
+		sleep() {
+			return 0
+		}
+		_stop_force_kill_workers 1
+	)
+	_assert_equal "651" "$(<"$killed_pid_file")" \
+		"force stop targets the logical PID from the canonical detector"
+	if [[ "$output" == *"Sent SIGTERM to 1 worker(s)"* && "$output" == *"All workers stopped"* ]]; then
+		_assert_equal "present" "present" \
+			"force stop reports canonical worker termination"
+	else
+		_assert_equal "present" "missing" \
+			"force stop reports canonical worker termination"
+	fi
+	return 0
+}
+
 main() {
 	_test_marker_precedes_optional_cycle_log
 	_test_log_fallbacks
 	_test_portable_date_fallback
 	_test_status_summary_uses_marker
+	_test_status_uses_canonical_worker_detector
+	_test_force_stop_targets_canonical_worker_pid
 	printf '1..%d\n' "$_TESTS_RUN"
 	if [[ "$_TESTS_FAILED" -ne 0 ]]; then
 		return 1
