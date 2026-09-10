@@ -19,6 +19,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from report_token_objectives import collect_objective_evidence
+
 TOKEN_FIELDS = ("tokens_input", "tokens_output", "tokens_reasoning", "tokens_cache_read", "tokens_cache_write")
 OPTIONAL_FIELDS = ("provider_id", "variant", "parent_session_id", "pricing_version", "cost", "error_type", "routing_attempt", "routing_escalated", "routing_tier")
 RATE_FIELDS = ("input", "output", "output", "cache_read", "cache_write")
@@ -161,20 +163,24 @@ def collect_efficiency(db: Path, pricing: dict[str, Any], since: str, limit: int
         versions[row["pricing_version"] or "unknown"] += 1
     roots, ambiguous = lineage_roots(parents)
     family_rows = session_families(sessions, roots)
+    with closing(sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True, timeout=5)) as conn:
+        objective_evidence = collect_objective_evidence(conn, since)
     return {
         "schema_version": 1, "since": since, "generated_at": datetime.now(timezone.utc).isoformat(),
         "pricing_version": pricing.get("version", "unknown"), "recorded_pricing_versions": dict(sorted(versions.items())),
         "summary": finish_totals(total), "models": model_rows(groups),
         "session_family_count": len(family_rows), "ambiguous_lineage_sessions": ambiguous,
         "largest_session_families": sorted(family_rows, key=lambda row: -row["raw_tokens_total"])[:limit],
-        "verified_completion_rate": None, "cost_per_verified_objective_usd": None,
+        "objective_evidence": objective_evidence,
+        "verified_completion_rate": ratio(objective_evidence["verified_objective_count"], objective_evidence["objective_count"], 100) if objective_evidence["available"] else None,
+        "cost_per_verified_objective_usd": objective_evidence["cost_per_verified_objective_usd"],
         "notes": [
             "Cache rate is token-weighted: read / (uncached input + cache read + cache write), not request hit rate.",
             "Repriced costs use one current flat Standard short-context API table, including separate reasoning tokens. They are not invoices or subscription allowance measurements; long-context and service-tier uplifts are not modelled.",
             "Unknown exact model prices produce null complete estimates; known_repriced_cost_usd is only the priced subtotal. Historical recorded estimates remain untouched.",
             "Retries/escalations describe recorded routing metadata, not unobserved transport attempts. Coverage counts distinguish missing metadata from zero.",
             "Session families use observed parent links, including ancestors outside the time window. Missing links can fragment families. Largest families rank by raw tokens, not price or failure.",
-            "Completion and cost per verified objective are unavailable: a finished model response is not acceptance evidence. Join task acceptance before evaluating routing quality.",
+            "Objective economics use only explicit unique request attachments and independently verified outcomes. Shared, conflicting, cancelled and incomplete evidence is not allocated or converted into success.",
         ],
     }
 

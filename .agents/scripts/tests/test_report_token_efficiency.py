@@ -67,6 +67,22 @@ class EfficiencyTests(unittest.TestCase):
             self.assertIsNone(result["summary"]["cache_token_hit_pct"])
             self.assertIsNone(result["summary"]["recorded_cost_usd"])
 
+    def test_objective_evidence_counts_failed_work_once_and_excludes_shared_work(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db = Path(directory) / "objectives.db"
+            with sqlite3.connect(db) as conn:
+                conn.execute("CREATE TABLE llm_requests (id TEXT, timestamp TEXT, session_id TEXT, model_id TEXT, tokens_input INTEGER, tokens_output INTEGER, tokens_reasoning INTEGER, tokens_cache_read INTEGER, tokens_cache_write INTEGER, cost REAL)")
+                conn.execute("CREATE TABLE runtime_events (id INTEGER, occurred_at TEXT, event_type TEXT, payload_json TEXT)")
+                conn.executemany("INSERT INTO llm_requests VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [("a", "2026-02-01", "one", "model", 10, 2, 0, 0, 0, 1), ("b", "2026-02-01", "two", "model", 20, 3, 0, 0, 0, 2)])
+                events = [(1, "2026-02-01", "objective.outcome", {"objective_id": "one", "outcome": "verified"}), (2, "2026-02-01", "objective.outcome", {"objective_id": "two", "outcome": "failed"}), (3, "2026-02-01", "objective.session.attached", {"objective_id": "one", "allocation": "unique", "request_ids": ["a"]}), (4, "2026-02-01", "objective.session.attached", {"objective_id": "two", "allocation": "unique", "request_ids": ["b"]}), (5, "2026-02-01", "objective.session.attached", {"objective_id": "one", "allocation": "unallocated", "request_ids": ["shared"]})]
+                conn.executemany("INSERT INTO runtime_events VALUES (?, ?, ?, ?)", [(event_id, occurred_at, event_type, json.dumps(payload)) for event_id, occurred_at, event_type, payload in events])
+            evidence = collect_efficiency(db, {}, "2026-01-01")["objective_evidence"]
+            self.assertEqual(evidence["verified_objective_count"], 1)
+            self.assertEqual(evidence["attributable_request_count"], 2)
+            self.assertEqual(evidence["attributable_cost_usd"], 3)
+            self.assertEqual(evidence["cost_per_verified_objective_usd"], 3)
+            self.assertEqual(evidence["coverage"]["unallocated_attachments"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()
