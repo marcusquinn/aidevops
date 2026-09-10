@@ -78,6 +78,9 @@ Created 2026-09-10 through interactive planning. Parent: t18422. Blocked by t184
 4. Contribution outcomes distinguish accepted unchanged, accepted with repair, rejected, reused and unknown. Capture observed repair linkage and intervention counts, never invent human minutes or semantic success from tool exit/host finish. Preserve original observations and append corrections/supersession rather than rewriting history.
 5. Extend `runtime-events.mjs emit` with explicit session attribution as needed (its current CLI lacks a session flag), validate bounded fields, and return a receipt that can be checked with `query`. Preserve fail-open legacy writes; strict validation/readback for this new evidence must reveal when recording was unavailable, not silently claim recorded success.
 6. Add one optional terminal recording instruction in the owning reference: record only when the parent has acceptance evidence, once per contribution/objective, not every turn. Support headless lineage already supplied through event correlation/run IDs without modifying launch mechanics. Protect outcome/attachment events in retention and preserve private evidence outside Git.
+7. **Worker lease attempts:** bind each distinct successfully acquired worker lease to the issue/solve episode, execution attempt and contributing sessions. Read existing evidence from `.agents/scripts/dispatch-ledger-helper.sh:376` (registration includes issue, attempt and lease identity; repeated registration is idempotent at line 494) and `.agents/scripts/dispatch-lease-claims.jq` (trusted claim/phase/release parsing). These are reference/read surfaces, not added dispatch write scope. Use opaque attempt/claim identities; never persist or publish raw lease tokens or account/device identifiers.
+8. Count a fresh won lease once, including a lease whose worker fails before launch. Renewals, heartbeats, ready/terminal transitions, replayed registrations and request/tool retries under the same lease do not increment it. Losing claim races are separate acquisition failures, not worker lease attempts. A new lease after expiry/handoff counts even if it resumes the same session/worktree. Distinguish allocated leases from launched workers and record termination/retry reason and observed model/effort per lease; never attribute all earlier attempts to the final successful model.
+9. Retain complete issue-attempt history through the verified solve event, including failed/expired/prelaunch and still-open episodes. A current-active-lease list or age-filtered claim view cannot establish lifetime attempts. Missing history is partial/unknown, not zero. Reopened issues start a separate solve episode while lifetime counts remain distinguishable; productive/no-progress classifications require evidence and otherwise remain unknown.
 
 ### Hazards and Compatibility
 
@@ -100,6 +103,8 @@ bash .agents/scripts/tests/test-observability-runtime-events.sh
 
 Add focused fixtures for a root+child+repair chain, two objectives in one session, shared/unallocated work, duplicate/out-of-order/corrected observations, bare host-success, forged verification source, redaction and interrupted recording. Exercise `emit`→`query` on a disposable database. These commands are requirements, not claims of completed implementation testing.
 
+Lease fixtures: one acquired lease with three renewals and duplicate terminal observations counts as one; a fresh won replacement counts as two. Losing claims add zero leases, while a won prelaunch failure counts as one lease and zero launched workers. Cover cross-runner replay, mixed models, missing history, unsolved issues and a reopened solve episode.
+
 - **Surface mapping:** Event/CLI tests prove payload validation and readback; routing join proves contribution identity; retention proves durable lifecycle evidence; changed-file lint covers all modified modules/references.
 
 ### Progressive Context Plan
@@ -111,6 +116,7 @@ Read the CLI/envelope/allowlist first, then the host outcome callback. Load rete
 - [ ] An objective can be joined to uniquely bounded contributing requests, children and repair attempts using explicit evidence.
 - [ ] Host completion and parent assertions cannot manufacture automated verification; missing/conflicting attribution is reported unknown/unallocated.
 - [ ] Event replay and retention preserve one logical contribution without duplicate cost or loss of evidence; old consumers and permission/dispatch behaviour are unchanged.
+- [ ] Verified solved issues expose distinct worker lease attempts with completeness evidence; renewals and replay never inflate attempts, and unsuccessful/unfinished episodes remain observable.
 
 ## Recovery and Seeded Draft PR
 
