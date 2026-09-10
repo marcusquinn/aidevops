@@ -43,3 +43,16 @@ existing enforced egress sandbox and observed concrete model/effort evidence; do
 use API-key billing, fixture runtimes, trusted-local posture, or alternate providers.
 The runner records the outcome and exact prerequisite failure. The t18425 report may
 join only sealed receipts and public hashes, not raw artifacts.
+
+## 2026-09-10 execution outcome
+
+The first approved attempt reconstructed and disclosed all three private cases,
+then stopped during three-repeat qualification because the Linux runner had no
+enforcing verifier filesystem sandbox. No plan or seal was created, no provider
+call occurred, and 0 of 24 launches were consumed. `unshare` and `systemd-run`
+were present, but the harness approves neither as a substitute for Bubblewrap.
+
+The retain decision, production coverage, fingerprints, and exact resume
+condition are recorded in `model-effort-evaluation.md`. This prerequisite failure
+is terminal evidence for the attempt, not a successful pilot. Do not resume with
+`trusted-local`, a different provider, API-key billing, or weaker verification.

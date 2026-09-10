@@ -152,6 +152,12 @@ work, repair and time; use existing routing feedback rather than a new benchmark
 gate. Under-spec model/effort when safe, escalate only for material evidence or an
 explicit request, and keep all security and verification requirements unchanged.
 
+The dated repository evaluation and its blocked isolated-pilot evidence live in
+`reference/model-effort-evaluation.md`. Its 2026-09-10 decision retains these
+routes because production objective coverage was absent and the replay could not
+pass its enforcing filesystem-sandbox prerequisite; it is not a superiority
+claim and defines the evidence required before reconsideration.
+
 ### Per-user override that survives auto-update
 
 Auto-update overwrites `~/.aidevops/agents/configs/*.json` and `~/.aidevops/agents/scripts/*`, so user-specific routing must live outside those paths.
