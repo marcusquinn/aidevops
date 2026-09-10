@@ -261,6 +261,19 @@ separately reviewed manual plan can proceed to the existing confirmation-bound
 apply path. A maintenance failure leaves the affected archive intact and does
 not turn a successful broader cleanup cycle into a failure.
 
+If that sustained pressure includes `process-evidence-unavailable`, maintenance
+instead reports `outcome:"operator-intervention-required"` with the fixed
+`unsupported-process-visibility` condition. The result includes only a bounded
+scan-observation count and fixed guidance: inspect the read-only plan locally,
+stop affected same-user processes through their normal process or service
+controls, and rerun planning. It never reports process names, command lines,
+CWDs, usernames, or archive paths. If complete visibility remains unavailable,
+automatic permanent deletion is explicitly unsupported and the archives remain
+retained. This diagnostic outcome grants no deletion authority, does not trust
+process names, and does not require root access or weaker kernel process
+protections. A readable CWD match remains a positive live-reference block, and
+every other candidacy and apply invariant above remains unchanged.
+
 An originating OpenCode or Claude session identifier is recovery guidance, not
 deletion proof. Session history can reconstruct text edits and intent but may be
 archived, unavailable, or incomplete and does not prove preservation of ignored
