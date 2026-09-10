@@ -422,6 +422,31 @@ function getMcpRegistry() {
       description: "Official Blender Lab MCP with opt-in isolated provisioning",
     },
     {
+      name: "backblaze-b2",
+      type: "local",
+      command: [
+        join(
+          homedir(),
+          ".aidevops",
+          "agents",
+          "scripts",
+          "backblaze-b2-mcp-launcher.sh",
+        ),
+      ],
+      eager: false,
+      toolPattern: "backblaze-b2_*",
+      globallyEnabled: false,
+      activationAgent: "backblaze-b2",
+      agentSource: ["services", "hosting", "backblaze-b2.md"],
+      activationGuidance: [
+        "Use the rclone-backed object-storage helper for deterministic backup verification and large transfers.",
+        "Inspect the connected MCP tool schema before use; never use key-management, partner, group, or destructive tools without an explicit approved workflow.",
+        "Disconnect the MCP when the B2 task is complete.",
+      ],
+      modelTier: "standard",
+      description: "Official Backblaze B2 cloud storage MCP with application-key-only launcher",
+    },
+    {
       name: "amazon-order-history",
       type: "local",
       command: [
