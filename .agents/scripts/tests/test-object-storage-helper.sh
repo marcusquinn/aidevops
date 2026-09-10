@@ -22,7 +22,7 @@ assert_json() {
 }
 
 cat >"$CONFIG" <<'JSON'
-{"version":1,"accounts":{"fixture":{"provider":"s3-compatible","remote":"fixture_remote","endpoint":"https://s3.example.invalid","region":"test-1","buckets":["backup"]},"idrive":{"provider":"idrive-e2","remote":"idrive_remote","endpoint":"https://s3.us-west-1.idrivee2.com","region":"us-west-1","buckets":["backup"]},"idrive-wrong-host":{"provider":"idrive-e2","remote":"idrive_remote","endpoint":"https://s3.us-west-1.example.invalid","region":"us-west-1","buckets":["backup"]},"idrive-wrong-region":{"provider":"idrive-e2","remote":"idrive_remote","endpoint":"https://s3.us-west-1.idrivee2.com","region":"us-east-1","buckets":["backup"]},"b2":{"provider":"backblaze-b2","remote":"b2_remote","endpoint":"https://s3.us-west-000.backblazeb2.com","region":"us-west-000","buckets":["b2-backup"]}}}
+{"version":1,"accounts":{"fixture":{"provider":"s3-compatible","remote":"fixture_remote","endpoint":"https://s3.example.invalid","region":"test-1","buckets":["backup"]},"idrive":{"provider":"idrive-e2","remote":"idrive_remote","endpoint":"https://s3.us-west-1.idrivee2.com","region":"us-west-1","buckets":["backup"]},"idrive-wrong-host":{"provider":"idrive-e2","remote":"idrive_remote","endpoint":"https://s3.us-west-1.example.invalid","region":"us-west-1","buckets":["backup"]},"idrive-wrong-region":{"provider":"idrive-e2","remote":"idrive_remote","endpoint":"https://s3.us-west-1.idrivee2.com","region":"us-east-1","buckets":["backup"]},"wasabi":{"provider":"wasabi","remote":"wasabi_remote","endpoint":"https://s3.us-east-1.wasabisys.com","region":"us-east-1","buckets":["wasabi-backup"]},"wasabi-wrong-host":{"provider":"wasabi","remote":"wasabi_remote","endpoint":"https://s3.us-east-1.example.invalid","region":"us-east-1","buckets":["wasabi-backup"]},"wasabi-wrong-region":{"provider":"wasabi","remote":"wasabi_remote","endpoint":"https://s3.us-east-1.wasabisys.com","region":"us-west-1","buckets":["wasabi-backup"]},"b2":{"provider":"backblaze-b2","remote":"b2_remote","endpoint":"https://s3.us-west-000.backblazeb2.com","region":"us-west-000","buckets":["b2-backup"]}}}
 JSON
 cat >"$RCLONE" <<'SH'
 #!/usr/bin/env bash
@@ -57,6 +57,10 @@ result=$(run_helper readiness idrive)
 assert_json "$result" '.status == "ok" and .data.provider == "idrive-e2"' "valid IDrive endpoint was rejected"
 if run_helper readiness idrive-wrong-host >/dev/null 2>&1; then fail "non-IDrive endpoint was accepted"; fi
 if run_helper readiness idrive-wrong-region >/dev/null 2>&1; then fail "mismatched IDrive region was accepted"; fi
+result=$(run_helper readiness wasabi)
+assert_json "$result" '.status == "ok" and .data.provider == "wasabi"' "valid Wasabi endpoint was rejected"
+if run_helper readiness wasabi-wrong-host >/dev/null 2>&1; then fail "non-Wasabi endpoint was accepted"; fi
+if run_helper readiness wasabi-wrong-region >/dev/null 2>&1; then fail "mismatched Wasabi region was accepted"; fi
 if run_helper object-info fixture backup https://invalid >/dev/null 2>&1; then fail "raw URL was accepted"; fi
 result=$(run_helper copy fixture backup source destination)
 assert_json "$result" '.data.dry_run == true and .data.confirmation_required == "preview:fixture:backup"' "copy was not preview-only"
