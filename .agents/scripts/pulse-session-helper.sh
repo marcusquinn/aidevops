@@ -31,6 +31,8 @@ unset _aidevops_path_prefix
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/config-helper.sh" 2>/dev/null || true
+# shellcheck source=./worker-lifecycle-common.sh
+source "${SCRIPT_DIR}/worker-lifecycle-common.sh"
 
 # Configuration
 readonly SESSION_FLAG="${HOME}/.aidevops/logs/pulse-session.flag"
@@ -91,9 +93,7 @@ is_session_active() {
 # Returns: count via stdout
 #######################################
 count_workers() {
-	local count
-	count=$(ps axwwo command | grep '[/]full-loop' | grep -c '\.opencode') || count=0
-	echo "$count"
+	count_active_workers
 	return 0
 }
 
@@ -427,13 +427,13 @@ _stop_force_kill_workers() {
 	print_warning "Force mode: sending SIGTERM to all workers..."
 	local killed=0
 	while IFS= read -r line; do
-		local pid
-		pid=$(echo "$line" | awk '{print $1}')
+		local pid _worker_details
+		read -r pid _worker_details <<<"$line"
 		if [[ -n "$pid" ]]; then
 			kill "$pid" 2>/dev/null || true
 			killed=$((killed + 1))
 		fi
-	done < <(ps axwwo pid,command | grep '[/]full-loop' | grep '\.opencode')
+	done < <(list_active_worker_processes)
 
 	if [[ "$killed" -gt 0 ]]; then
 		print_info "Sent SIGTERM to ${killed} worker(s)"
@@ -444,7 +444,7 @@ _stop_force_kill_workers() {
 		if [[ "$remaining" -gt 0 ]]; then
 			print_warning "${remaining} worker(s) still running after SIGTERM"
 			echo "  They will finish their current operation and exit."
-			echo "  Force kill with: kill -9 \$(ps axwwo pid,command | grep '[/]full-loop' | grep '\\.opencode' | awk '{print \$1}')"
+			echo "  Inspect with: worker-activity-helper.sh live-workers"
 		else
 			print_success "All workers stopped"
 		fi
@@ -691,7 +691,7 @@ _status_print_worker_details() {
 		echo -e "${BOLD}Active Workers${NC}"
 		echo "──────────────"
 		echo ""
-		ps axwwo pid,etime,command | grep '[/]full-loop' | grep '\.opencode' | while IFS= read -r line; do
+		list_active_worker_processes | while IFS= read -r line; do
 			local w_pid w_etime w_cmd
 			read -r w_pid w_etime w_cmd <<<"$line"
 
