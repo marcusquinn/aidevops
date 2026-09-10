@@ -11,6 +11,7 @@ import { randomUUID } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import { runCli } from "./runtime-events-cli.mjs";
 import { normaliseEventType, normaliseIdentifier } from "./runtime-events-identifiers.mjs";
+import { validateObjectiveRuntimeEvent } from "./runtime-events-objectives.mjs";
 import {
   RUNTIME_EVENT_PAYLOAD_MAX_BYTES,
   prepareRuntimePayload,
@@ -69,6 +70,7 @@ function normaliseOccurredAt(value) {
 
 /** Build a validated, redacted runtime-event envelope without writing it. */
 export function createRuntimeEventEnvelope(input, { redactPaths = true, strictTopLevel = true } = {}) {
+  validateObjectiveRuntimeEvent(input?.eventType, input?.payload);
   const eventId = normaliseIdentifier(input?.eventId || randomUUID(), { required: true });
   const sessionId = normaliseIdentifier(input?.sessionId || process.env.AIDEVOPS_SESSION_ID || process.env.OPENCODE_SESSION_ID);
   const workerId = normaliseIdentifier(

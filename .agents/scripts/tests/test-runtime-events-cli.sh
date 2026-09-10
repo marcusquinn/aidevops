@@ -39,6 +39,18 @@ if sqlite3 "$AIDEVOPS_OBS_DB_OVERRIDE" "SELECT payload_json FROM runtime_events;
 fi
 node "$RUNTIME_EVENTS" verify | jq -e '.ok == true' >/dev/null
 
+objective_payload='{"objective_version":1,"objective_id":"objective:cli","run_id":"run:cli","allocation":"unique","boundary":"request:1-request:2","contribution_id":"contribution:cli","request_ids":["request:1"]}'
+node "$RUNTIME_EVENTS" emit objective.session.attached --session session:cli --subject contribution:cli \
+	--payload "$objective_payload" >/dev/null
+objective_json="$(node "$RUNTIME_EVENTS" query --objective objective:cli --session session:cli --limit 10)"
+[[ "$(printf '%s' "$objective_json" | jq 'length')" -eq 1 ]]
+[[ "$(printf '%s' "$objective_json" | jq -r '.[0].event_type')" == "objective.session.attached" ]]
+if node "$RUNTIME_EVENTS" emit objective.outcome --subject objective:cli \
+	--payload '{"objective_version":1,"objective_id":"objective:cli","run_id":"run:cli","outcome":"verified"}' >/dev/null; then
+	printf 'FAIL runtime events accepted unverifiable objective evidence\n' >&2
+	exit 1
+fi
+
 unset _PULSE_DISPATCH_WORKER_LAUNCH_LOADED 2>/dev/null || true
 unset _WORKER_LIFECYCLE_COMMON_LOADED 2>/dev/null || true
 # shellcheck source=../worker-lifecycle-common.sh

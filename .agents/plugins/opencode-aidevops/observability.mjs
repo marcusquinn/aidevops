@@ -626,6 +626,34 @@ export function recordSubagentOutcome(evidence = {}) {
   return envelope;
 }
 
+/** Persist an explicit parent acceptance or repair assertion, never host completion. */
+export function recordSubagentAcceptance(evidence = {}) {
+  if (!dbReady) return null;
+  const observedAt = evidence.observedAt || new Date().toISOString();
+  const envelope = appendRuntimeEvent({
+    eventType: "subagent.acceptance",
+    subjectId: firstTruthy([evidence.contributionID, evidence.childSessionID], "unknown-contribution"),
+    sessionId: firstTruthy([evidence.parentSessionID]),
+    correlationId: firstTruthy([evidence.parentSessionID, evidence.runID], "subagent-acceptance"),
+    causationId: evidence.callID || undefined,
+    payload: {
+      attempt_id: evidence.attemptID,
+      contribution_id: evidence.contributionID,
+      contribution_outcome: evidence.outcome,
+      intervention_count: Number.isSafeInteger(evidence.interventionCount) ? evidence.interventionCount : 0,
+      objective_id: evidence.objectiveID,
+      objective_version: 1,
+      observed_at: observedAt,
+      policy_version: evidence.policyVersion || "unknown",
+      repair_contribution_id: evidence.repairContributionID,
+      run_id: evidence.runID,
+      source: evidence.source || "parent_assertion",
+    },
+  });
+  if (envelope) projectRuntimeEvent(envelope);
+  return envelope;
+}
+
 /**
  * Get the database path for external tools (e.g., observability-helper.sh).
  * @returns {string}

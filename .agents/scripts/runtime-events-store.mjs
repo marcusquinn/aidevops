@@ -189,6 +189,8 @@ export function queryRuntimeEvents(filters = {}, options = {}) {
   if (filters.workerId) clauses.push(`worker_id = ${sqlEscape(normaliseIdentifier(filters.workerId, { required: true }))}`);
   if (filters.correlationId) clauses.push(`correlation_id = ${sqlEscape(normaliseIdentifier(filters.correlationId, { required: true }))}`);
   if (filters.eventType) clauses.push(`event_type = ${sqlEscape(normaliseEventType(filters.eventType))}`);
+  if (filters.sessionId) clauses.push(`session_id = ${sqlEscape(normaliseIdentifier(filters.sessionId, { required: true }))}`);
+  if (filters.objectiveId) clauses.push(`json_extract(payload_json, '$.objective_id') = ${sqlEscape(normaliseIdentifier(filters.objectiveId, { required: true }))}`);
   const limit = Number.parseInt(String(filters.limit || 100), 10);
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) throw new TypeError("query limit must be between 1 and 1000");
   const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
