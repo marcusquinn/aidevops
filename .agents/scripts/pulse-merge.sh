@@ -1490,7 +1490,11 @@ _pmp_stage_handle_conflict() {
 		[[ -n "$timing_prefix" ]] && _pmp_add_elapsed_seconds "${timing_prefix}mergeability_s" "$_mergeability_start"
 		return 2
 	fi
-	if [[ "$conflict_route_rc" -eq "${PULSE_FEEDBACK_ROUTE_DEFERRED_RC:-75}" || "$conflict_route_rc" -eq "${PULSE_FEEDBACK_ROUTE_MAINTAINER_RC:-76}" ]]; then
+	if [[ "$conflict_route_rc" -eq "${PULSE_FEEDBACK_ROUTE_DEFERRED_RC:-75}" ]]; then
+		[[ -n "$timing_prefix" ]] && _pmp_add_elapsed_seconds "${timing_prefix}mergeability_s" "$_mergeability_start"
+		return 4
+	fi
+	if [[ "$conflict_route_rc" -eq "${PULSE_FEEDBACK_ROUTE_MAINTAINER_RC:-76}" ]]; then
 		[[ -n "$timing_prefix" ]] && _pmp_add_elapsed_seconds "${timing_prefix}mergeability_s" "$_mergeability_start"
 		return 1
 	fi

@@ -62,6 +62,7 @@ _PULSE_MERGE_PROCESS_LOADED=1
 _PMP_ORIGIN_INTERACTIVE_PATTERN=",origin:interactive,"
 _PMP_ORIGIN_WORKER_PATTERN=",origin:worker,"
 _PMP_ORIGIN_TAKEOVER_PATTERN=",origin:worker-takeover,"
+_PMP_CHECK_FAILURE="FAILURE"
 
 #######################################
 # Return the persistent state path for one interactive PR's semantic
@@ -241,9 +242,9 @@ _pmp_classify_pr_backlog_state() {
 	local _RS=$'\x1e'
 	local number="" mergeable="" review_decision="" is_draft="" labels="" failed_count="" pending_count=""
 	IFS="$_RS" read -r number mergeable review_decision is_draft labels failed_count pending_count < <(
-		printf '%s' "$pr_obj" | jq -r '
+		printf '%s' "$pr_obj" | jq -r --arg failure "$_PMP_CHECK_FAILURE" '
 			def up(v): (v // "" | ascii_upcase);
-			def failed: [.statusCheckRollup[]? | select(up(.conclusion) == "FAILURE" or up(.state) == "FAILURE")] | length;
+			def failed: [.statusCheckRollup[]? | select(up(.conclusion) == $failure or up(.state) == $failure)] | length;
 			def pending: [.statusCheckRollup[]? | select(up(.status) == "QUEUED" or up(.status) == "IN_PROGRESS" or up(.state) == "PENDING" or up(.state) == "EXPECTED" or ((up(.conclusion) == "") and (up(.state) != "SUCCESS") and (up(.status) != "COMPLETED")))] | length;
 			"\(.number // "")\u001e\(.mergeable // "UNKNOWN")\u001e\(if ((has("reviewDecision") | not) or .reviewDecision == null or (.reviewDecision | tostring | length) == 0) then "UNKNOWN" else .reviewDecision end)\u001e\(.isDraft // false)\u001e\([.labels[].name] | join(","))\u001e\(failed)\u001e\(pending)"' 2>/dev/null
 	)
@@ -288,10 +289,10 @@ _pmp_enrich_prs_with_rest_check_status() {
 	local status_json=""
 	status_json=$(gh_pr_check_status_rest_batch "$repo_slug" "$pr_json" 2>/dev/null) || status_json="[]"
 	[[ -n "$status_json" && "$status_json" != "null" ]] || status_json="[]"
-	jq -n --argjson prs "$pr_json" --argjson statuses "$status_json" '
+	jq -n --arg failure "$_PMP_CHECK_FAILURE" --argjson prs "$pr_json" --argjson statuses "$status_json" '
 		def rollup($s):
 			if $s == "PASS" then [{status:"COMPLETED", conclusion:"SUCCESS", state:"SUCCESS"}]
-			elif $s == "FAIL" then [{status:"COMPLETED", conclusion:"FAILURE", state:"FAILURE"}]
+			elif $s == "FAIL" then [{status:"COMPLETED", conclusion:$failure, state:$failure}]
 			elif $s == "PENDING" then [{status:"IN_PROGRESS", conclusion:null, state:"PENDING"}]
 			else [] end;
 		$prs | map(. as $pr | ($statuses | map(select(.number == $pr.number)) | last | .status // "none") as $s | $pr + {statusCheckRollup: rollup($s)})' \
@@ -349,19 +350,20 @@ _pmp_sort_prs_by_backlog_priority() {
 	fi
 	local i=0
 	while [[ "$i" -lt "$pr_count" ]]; do
-		local pr_obj="" category="" priority="" dirty_priority=1 pr_number=""
+		local pr_obj="" category="" priority="" retry_priority=1 dirty_priority=1 pr_number=""
 		pr_obj=$(printf '%s' "$pr_json" | jq -c ".[$i]" 2>/dev/null)
 		category=$(_pmp_classify_pr_backlog_state "$pr_obj" "$repo_slug")
 		priority=$(_pmp_backlog_priority "$category")
+		printf '%s' "$pr_obj" | jq -e '._pulseDeferredRetry == true' >/dev/null 2>&1 && retry_priority=0
 		if [[ -n "$dirty_keys" ]]; then
 			pr_number=$(printf '%s' "$pr_obj" | jq -r '.number // empty')
 			[[ "$pr_number" =~ ^[1-9][0-9]*$ && "$dirty_keys" == *"|${pr_number}|"* ]] && dirty_priority=0
 		fi
-		printf '%03d\t%d\t%06d\t%s\n' "$priority" "$dirty_priority" "$i" "$pr_obj" >>"$_tmp_lines"
+		printf '%d\t%03d\t%d\t%06d\t%s\n' "$retry_priority" "$priority" "$dirty_priority" "$i" "$pr_obj" >>"$_tmp_lines"
 		i=$((i + 1))
 	done
 
-	LC_ALL=C sort "$_tmp_lines" | cut -f4- | jq -s '.'
+	LC_ALL=C sort "$_tmp_lines" | cut -f5- | jq -s '.'
 	rm -f "$_tmp_lines"
 	return 0
 }
@@ -557,6 +559,73 @@ _pmp_fetch_ready_pr_list() {
 }
 
 #######################################
+# Add due queue targets that fell outside the bounded broad PR list. Each
+# target is fetched authoritatively and remains subject to the normal per-PR
+# enrichment and action gates. Queue output and fetched objects are validated;
+# failures leave the durable hint for a later pass.
+#
+# Args: $1=repo slug, $2=broad PR JSON
+# Output: JSON array with due exact targets prepended and deduplicated
+#######################################
+_pmp_include_queued_pr_targets() {
+	local repo_slug="$1"
+	local pr_json="$2"
+	local dirty_keys=""
+	local remaining=""
+	local pr_number=""
+	local target_json=""
+	local fetched=0
+	local target_limit="${AIDEVOPS_PULSE_MERGE_DIRTY_TARGET_LIMIT:-5}"
+	local target_timeout="${AIDEVOPS_PULSE_MERGE_DIRTY_TARGET_TIMEOUT_SECONDS:-10}"
+
+	[[ "$target_limit" =~ ^[0-9]+$ && "$target_limit" -ge 1 && "$target_limit" -le 20 ]] || target_limit=5
+	[[ "$target_timeout" =~ ^[0-9]+$ && "$target_timeout" -ge 1 && "$target_timeout" -le 30 ]] || target_timeout=10
+	if ! declare -F _pulse_merge_queue_priority_keys >/dev/null 2>&1; then
+		printf '%s' "$pr_json"
+		return 0
+	fi
+	dirty_keys=$(_pulse_merge_queue_priority_keys "$repo_slug") || dirty_keys=""
+	remaining="$dirty_keys"
+	while [[ "$remaining" =~ ^\|([1-9][0-9]*)\|(.*)$ && "$fetched" -lt "$target_limit" ]]; do
+		pr_number="${BASH_REMATCH[1]}"
+		remaining="|${BASH_REMATCH[2]}"
+		if printf '%s' "$pr_json" | jq -e --argjson pr "$pr_number" 'any(.number == $pr)' >/dev/null 2>&1; then
+			pr_json=$(printf '%s' "$pr_json" | jq -c --argjson pr "$pr_number" \
+				'map(if .number == $pr then . + {_pulseDeferredRetry:true} else . end)') || return 1
+			continue
+		fi
+		fetched=$((fetched + 1))
+		target_json=$(AIDEVOPS_GH_READ_TIMEOUT="$target_timeout" AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1 AIDEVOPS_GH_REST_FIRST_READS=1 \
+			gh_pr_view "$pr_number" --repo "$repo_slug" --json "$(_pulse_merge_ready_pr_json_fields)" 2>/dev/null) || target_json=""
+		if ! printf '%s' "$target_json" | jq -e --argjson pr "$pr_number" \
+			'type == "object" and .number == $pr and ((.state // "") | ascii_upcase) == "OPEN"' >/dev/null 2>&1; then
+			echo "[pulse-wrapper] Merge pass: due exact retry target PR #${pr_number} in ${repo_slug} was unavailable or no longer open; retaining hint for bounded recovery" >>"$LOGFILE"
+			continue
+		fi
+		pr_json=$(jq -cn --argjson target "$target_json" --argjson current "$pr_json" \
+			'[($target + {_pulseDeferredRetry:true})] + [$current[] | select(.number != $target.number)]') || return 1
+	done
+	printf '%s' "$pr_json"
+	return 0
+}
+
+_pmp_include_queued_pr_targets_or_fallback() {
+	local repo_slug="$1"
+	local pr_json="$2"
+	local error_file="${3:-}"
+	local expanded_pr_json=""
+
+	[[ -z "$error_file" ]] || rm -f "$error_file"
+	expanded_pr_json=$(_pmp_include_queued_pr_targets "$repo_slug" "$pr_json") || {
+		echo "[pulse-wrapper] Merge pass: exact retry target expansion failed for ${repo_slug}; retaining authoritative bounded broad-list fallback" >>"$LOGFILE"
+		printf '%s' "$pr_json"
+		return 1
+	}
+	printf '%s' "$expanded_pr_json"
+	return 0
+}
+
+#######################################
 # Record elapsed PR-list time and whether the observed list was authoritative.
 #######################################
 _pmp_record_pr_list_timing() {
@@ -617,7 +686,7 @@ _merge_ready_prs_for_repo() {
 		pr_json="[]"
 		pr_list_complete=0
 	fi
-	rm -f "$pr_merge_err"
+	pr_json=$(_pmp_include_queued_pr_targets_or_fallback "$repo_slug" "$pr_json" "$pr_merge_err") || pr_list_complete=0
 	pr_count=$(printf '%s' "$pr_json" | jq 'length' 2>/dev/null) || { pr_count=0; pr_list_complete=0; }
 	[[ "$pr_count" =~ ^[0-9]+$ ]] || { pr_count=0; pr_list_complete=0; }
 	_pmp_record_pr_list_timing "$_timing_prefix" "$_list_start" "$pr_list_complete"
@@ -1227,6 +1296,64 @@ _route_pr_feedback_terminal_guard() {
 	return $?
 }
 
+_route_pr_preserve_deferred_retry() {
+	local route_rc="$1"
+	local pr_number="$2"
+	local repo_slug="$3"
+	local linked_issue="$4"
+	local kind="$5"
+	local queue_action="unavailable"
+
+	[[ "$route_rc" -eq "${PULSE_FEEDBACK_ROUTE_DEFERRED_RC:-75}" ]] || return "$route_rc"
+	if declare -F _pulse_merge_queue_defer >/dev/null 2>&1; then
+		queue_action=$(_pulse_merge_queue_defer "$repo_slug" "$pr_number" 2>>"$LOGFILE") || queue_action="unavailable"
+	elif declare -F _pulse_merge_queue_enqueue >/dev/null 2>&1; then
+		queue_action=$(_pulse_merge_queue_enqueue "$repo_slug" "$pr_number" 2>>"$LOGFILE") || queue_action="unavailable"
+	fi
+	echo "[pulse-wrapper] _route_pr_to_fix_worker: preserved deferred ${kind} route for PR #${pr_number} and issue #${linked_issue} in ${repo_slug} (retry_hint=${queue_action})" >>"$LOGFILE"
+	return "${PULSE_FEEDBACK_ROUTE_DEFERRED_RC:-75}"
+}
+
+_route_pr_issue_labels_with_retry() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local linked_issue="$3"
+	local kind="$4"
+	local issue_labels=""
+	local route_rc=0
+
+	issue_labels=$(_route_pr_issue_labels_for_dispatch "$pr_number" "$repo_slug" "$linked_issue") || route_rc=$?
+	if [[ "$route_rc" -ne 0 ]]; then
+		_route_pr_preserve_deferred_retry "$route_rc" "$pr_number" "$repo_slug" "$linked_issue" "$kind"
+		return $?
+	fi
+	printf '%s' "$issue_labels"
+	return 0
+}
+
+_route_pr_guard_and_dispatch_with_retry() {
+	local has_routed_label="$1"
+	local pr_number="$2"
+	local repo_slug="$3"
+	local linked_issue="$4"
+	local kind="$5"
+	local routed_label="$6"
+	local pr_title="$7"
+	local checks_json="$8"
+	local route_rc=0
+
+	_route_pr_feedback_terminal_guard "$has_routed_label" "$pr_number" "$repo_slug" \
+		"$linked_issue" "$kind" "$routed_label" || route_rc=$?
+	if [[ "$route_rc" -eq 0 ]]; then
+		_dispatch_pr_repair_by_kind "$kind" "$pr_number" "$repo_slug" "$linked_issue" "$pr_title" "$checks_json" || route_rc=$?
+	fi
+	if [[ "$route_rc" -eq 0 ]] && declare -F _pulse_merge_queue_finish >/dev/null 2>&1; then
+		_pulse_merge_queue_finish 2
+	fi
+	_route_pr_preserve_deferred_retry "$route_rc" "$pr_number" "$repo_slug" "$linked_issue" "$kind"
+	return $?
+}
+
 #######################################
 # Route a PR to the appropriate fix worker based on origin label and kind.
 #
@@ -1268,7 +1395,6 @@ _route_pr_to_fix_worker() {
 	local label_list=""
 	local takeover_pattern="$_PMP_ORIGIN_TAKEOVER_PATTERN"
 	local has_routed_label=0
-	local issue_labels_rc=0
 
 	_route_pr_has_linked_issue "$pr_number" "$repo_slug" "$linked_issue" "$kind" || return 1
 
@@ -1306,8 +1432,7 @@ _route_pr_to_fix_worker() {
 	fi
 
 	# A linked issue on explicit maintainer hold is never rewritten or reopened.
-	issue_labels=$(_route_pr_issue_labels_for_dispatch "$pr_number" "$repo_slug" "$linked_issue") || issue_labels_rc=$?
-	[[ "$issue_labels_rc" -eq 0 ]] || return "$issue_labels_rc"
+	issue_labels=$(_route_pr_issue_labels_with_retry "$pr_number" "$repo_slug" "$linked_issue" "$kind") || return $?
 
 	if _route_pr_issue_supplies_worker_origin "$label_list" "$issue_labels"; then
 		issue_has_worker_origin=1
@@ -1321,11 +1446,13 @@ _route_pr_to_fix_worker() {
 			local origin_reconcile_rc=0
 			_route_issue_origin_is_trusted "$pr_number" "$repo_slug" "$linked_issue" \
 				|| origin_reconcile_rc=$?
-			[[ "$origin_reconcile_rc" -eq 0 ]] || return "$origin_reconcile_rc"
+			if [[ "$origin_reconcile_rc" -ne 0 ]]; then
+				_route_pr_preserve_deferred_retry "$origin_reconcile_rc" "$pr_number" "$repo_slug" "$linked_issue" "$kind"
+				return $?
+			fi
 		fi
-		_route_pr_feedback_terminal_guard "$has_routed_label" "$pr_number" "$repo_slug" \
-			"$linked_issue" "$kind" "$routed_label" || return $?
-		_dispatch_pr_repair_by_kind "$kind" "$pr_number" "$repo_slug" "$linked_issue" "$pr_title" "$checks_json"
+		_route_pr_guard_and_dispatch_with_retry "$has_routed_label" "$pr_number" "$repo_slug" \
+			"$linked_issue" "$kind" "$routed_label" "$pr_title" "$checks_json"
 		return $?
 	fi
 
@@ -1342,9 +1469,8 @@ _route_pr_to_fix_worker() {
 			echo "[pulse-wrapper] _route_pr_to_fix_worker: origin:worker-takeover not confirmed for PR #${pr_number} in ${repo_slug} — refusing destructive routing" >>"$LOGFILE"
 			return 1
 		fi
-		_route_pr_feedback_terminal_guard "$has_routed_label" "$pr_number" "$repo_slug" \
-			"$linked_issue" "$kind" "$routed_label" || return $?
-		_dispatch_pr_repair_by_kind "$kind" "$pr_number" "$repo_slug" "$linked_issue" "$pr_title" "$checks_json"
+		_route_pr_guard_and_dispatch_with_retry "$has_routed_label" "$pr_number" "$repo_slug" \
+			"$linked_issue" "$kind" "$routed_label" "$pr_title" "$checks_json"
 		return $?
 	fi
 
