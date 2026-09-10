@@ -37,8 +37,8 @@ test("registers only the explicit MCP activation profiles", () => {
   registerMcpServers(config);
   const count = registerOnDemandMcpAgents(config, AGENTS_DIR);
 
-  assert.equal(count, 5);
-  assert.deepEqual(Object.keys(config.agent), ["playwriter", "playwright", "quickfile", "blender", "backblaze-b2"]);
+  assert.equal(count, 6);
+  assert.deepEqual(Object.keys(config.agent), ["playwriter", "posthog", "playwright", "quickfile", "blender", "backblaze-b2"]);
   assert.equal(config.tools.aidevops_mcp, false);
   assert.equal(config.agent.playwriter.mode, "subagent");
   assert.equal(config.agent.playwriter.tools.aidevops_mcp, true);
@@ -64,6 +64,13 @@ test("registers only the explicit MCP activation profiles", () => {
   assert.equal(config.agent.playwright.permission["playwright_*"], "allow");
   assert.match(config.agent.playwright.prompt, /connect.*playwright/);
   assert.match(config.agent.playwright.prompt, /# Playwright MCP/);
+  assert.equal(config.agent.posthog.mode, "subagent");
+  assert.equal(config.agent.posthog.tools.aidevops_mcp, true);
+  assert.equal(config.agent.posthog.tools["posthog_*"], true);
+  assert.equal(config.agent.posthog.permission.aidevops_mcp, "allow");
+  assert.equal(config.agent.posthog.permission["posthog_*"], "allow");
+  assert.match(config.agent.posthog.prompt, /connect.*posthog/);
+  assert.match(config.agent.posthog.prompt, /# PostHog MCP/);
   assert.equal(config.agent.quickfile.mode, "subagent");
   assert.equal(config.agent.quickfile.tools.aidevops_mcp, true);
   assert.equal(config.agent.quickfile.tools["quickfile_*"], true);

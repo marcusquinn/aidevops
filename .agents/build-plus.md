@@ -45,7 +45,8 @@ subagents:
   - vercel
   - cloudflare-mcp
   - idrive-e2
-  # Monitoring
+  # Analytics / monitoring
+  - posthog
   - sentry
   - socket
   # Runtime operations
