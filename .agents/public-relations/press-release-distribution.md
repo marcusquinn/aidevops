@@ -54,11 +54,12 @@ This is a dated research snapshot, not a permanent allowlist. Re-verify before u
 
 ## Candidate and exclusion notes
 
-- **SubmitPR.org** operated and claimed free instant publication on 2026-09-11,
+- [**SubmitPR.org**](https://www.submitpr.org/) operated and claimed free instant
+  publication on 2026-09-11,
   but its reach, provenance, Google News, and SEO claims lacked independent support.
   Treat it as low-confidence and verify trust and audience fit before recommending.
-- **PRUrgent** operated on 2026-09-11 but had moved to paid-only express plans;
-  do not call it free.
+- [**PRUrgent**](https://www.prurgent.com/) operated on 2026-09-11 but had moved to
+  paid-only express plans; do not call it free.
 - **Online PR News**, **Press Release Point**, and **PRSync** did not provide enough
   retrievable official pricing/submission evidence during the 2026-09-11 review.
   Do not recommend them as free without fresh verification.
