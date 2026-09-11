@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.360] - 2026-09-11
+
+### Changed
+
+- Documentation: add UI component and motion inspiration resources
+
+### Fixed
+
+- omit untracked bundle absolute paths (#31791)
+
 ## [3.32.359] - 2026-09-11
 
 ### Changed
