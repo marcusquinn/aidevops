@@ -9,6 +9,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 UNKNOWN_STATUS="unknown"
 CURRENT_STATUS="current"
+REST_UNKNOWN_JSON='{"state":"unknown"}'
 
 _usage() {
 	cat <<'EOF'
@@ -359,6 +360,17 @@ _current_graphql_budget_status() {
 	return 0
 }
 
+_current_rest_admission_status() {
+	if [[ -n "${AIDEVOPS_REST_ADMISSION_STATUS_OVERRIDE:-}" ]]; then
+		printf '%s\n' "$AIDEVOPS_REST_ADMISSION_STATUS_OVERRIDE"
+	elif [[ -f "${SCRIPT_DIR}/gh_transport_budget.py" ]]; then
+		python3 "${SCRIPT_DIR}/gh_transport_budget.py" status 2>/dev/null || printf '%s\n' "$REST_UNKNOWN_JSON"
+	else
+		printf '%s\n' "$REST_UNKNOWN_JSON"
+	fi
+	return 0
+}
+
 main() {
 	local window="15m"
 	local repo_path="${AIDEVOPS_REPO_PATH:-$HOME/Git/aidevops}"
@@ -425,7 +437,7 @@ main() {
 	projection_output=$(
 		AIDEVOPS_ACTIVE_WORKER_PROCESSES="$active_worker_processes" \
 			AIDEVOPS_WORKER_WORKTREE_COUNT="$worker_worktree_count" \
-			AIDEVOPS_GRAPHQL_BUDGET_STATUS="$graphql_budget_status" \
+			AIDEVOPS_GRAPHQL_BUDGET_STATUS="$graphql_budget_status" AIDEVOPS_REST_ADMISSION_STATUS="$(_current_rest_admission_status)" \
 			AIDEVOPS_OBJECTIVE_STATE_FILE="$objective_state_file" \
 			AIDEVOPS_RUNTIME_STATE_OUTPUT="$runtime_state_file" \
 			python3 "${SCRIPT_DIR}/pulse-current-state.py" \
