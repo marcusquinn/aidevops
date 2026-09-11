@@ -545,4 +545,25 @@ printf 'PASS failed aggregate and reconcile temporary checkouts are still cleane
 )
 printf 'PASS pending reconciliation persists its verified discovered tag\n'
 
+(
+	cd "$ROOT/repo/linked-branch"
+	export PATH="$ROOT/bin:/usr/bin:/bin"
+	export GIT_CALL_LOG="$ROOT/git.log" FAKE_REPO_ROOT="$ROOT/repo"
+	export AIDEVOPS_WORKTREE_BASE_DIR="$ROOT/worktrees"
+	source "$SCRIPT_DIR/full-loop-release-helper.sh" help >/dev/null
+	_AIDEVOPS_RELEASE_LANE_TOKEN="fixture-token"
+	_AIDEVOPS_RELEASE_LANE_HEAD="fixture-head"
+	lane_state='{"active":true,"source_pr":42,"phase":"remote-publication","terminal_receipt":null,"operation_token":"fixture-token"}'
+	release_lane_read() {
+		_AIDEVOPS_RELEASE_LANE_JSON="$lane_state"
+		return 0
+	}
+	_release_lane_write() {
+		lane_state='{"active":false,"source_pr":42,"phase":"terminal","terminal_receipt":"published","operation_token":"fixture-token"}'
+		return 1
+	}
+	release_lane_finalize test/repo 42 published || exit 1
+)
+printf 'PASS terminal lane writes reconcile durable state after transport uncertainty\n'
+
 exit 0
