@@ -55,11 +55,11 @@ on:
         required: false
         description: 'Optional fine-grained PAT with Contents:read/write; add Pull requests:read/write when it must backstop disabled Actions PR creation'
 
-# Match the trusted caller checkout: never use a PR head or synthetic merge ref.
-# Issue events fall back to the consumer's default branch; framework refs remain
-# independently pinned by aidevops_ref.
+# Match the trusted caller checkout: never use a PR head, synthetic merge ref,
+# or a deleted push ref. Ref-less events fall back to the consumer's default
+# branch; framework refs remain independently pinned by aidevops_ref.
 env:
-  ISSUE_SYNC_TARGET_BRANCH: ${{ github.event.pull_request.base.ref || (github.ref_type == 'branch' && github.ref_name) || github.event.repository.default_branch }}
+  ISSUE_SYNC_TARGET_BRANCH: ${{ github.event.pull_request.base.ref || (!github.event.deleted && github.ref_type == 'branch' && github.ref_name) || github.event.repository.default_branch }}
 
 jobs:
   forge-event:

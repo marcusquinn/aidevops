@@ -307,9 +307,10 @@ fi
 # ============================================================
 # Publication must follow the trusted caller branch, independently of the
 # framework checkout ref. PR base takes precedence over synthetic merge refs;
-# tag/non-branch events fall back to the consumer's default branch.
+# deleted pushes and tag/non-branch events fall back to the consumer's default
+# branch instead of publishing to an invalid ref.
 # ============================================================
-TARGET_BRANCH_EXPRESSION="ISSUE_SYNC_TARGET_BRANCH: \${{ github.event.pull_request.base.ref || (github.ref_type == 'branch' && github.ref_name) || github.event.repository.default_branch }}"
+TARGET_BRANCH_EXPRESSION="ISSUE_SYNC_TARGET_BRANCH: \${{ github.event.pull_request.base.ref || (!github.event.deleted && github.ref_type == 'branch' && github.ref_name) || github.event.repository.default_branch }}"
 if grep -Fq "$TARGET_BRANCH_EXPRESSION" "$WORKFLOW_FILE" &&
 	grep -Fq "origin \"\$ISSUE_SYNC_TARGET_BRANCH\" todo/PLANS.md" "$WORKFLOW_FILE" &&
 	! grep -qE 'publish-todo main|origin main todo/PLANS.md|merged to main\.' "$WORKFLOW_FILE"; then
