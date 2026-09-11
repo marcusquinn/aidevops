@@ -178,7 +178,7 @@ _review_is_binary_untracked() {
 	local repo_root="$1"
 	local path="$2"
 	local numstat=""
-	numstat=$(git -C "$repo_root" diff --no-index --numstat -- /dev/null "$repo_root/$path" 2>/dev/null || true)
+	numstat=$(git -C "$repo_root" diff --no-index --numstat -- /dev/null "$path" 2>/dev/null || true)
 	[[ "$numstat" == $'-\t-\t'* ]]
 }
 
@@ -310,7 +310,7 @@ _review_write_local() {
 		while IFS= read -r -d '' untracked_file; do
 			[[ -z "$untracked_file" ]] && continue
 			if ! _review_binary_path_recorded "$untracked_file"; then
-				git -C "$repo_root" diff --no-index --no-ext-diff -- /dev/null "$repo_root/$untracked_file" || true
+				git -C "$repo_root" diff --no-index --no-ext-diff -- /dev/null "$untracked_file" || true
 			fi
 		done < <(git -C "$repo_root" ls-files --others --exclude-standard -z)
 		printf '```\n'
