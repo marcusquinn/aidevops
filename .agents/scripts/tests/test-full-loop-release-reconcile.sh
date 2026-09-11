@@ -852,7 +852,7 @@ _full_loop_read_release_authorization() {
 	local repo="$1"
 	local requested_pr="$2"
 	[[ "$repo" == "test/repo" && "$requested_pr" == "90" ]] || return 1
-	printf '%s\n' '90@1111111111111111111111111111111111111111'
+	printf '%s\n' "${authorization_expected_sources:-90@1111111111111111111111111111111111111111}"
 	return 0
 }
 lane_expected_sources='90@1111111111111111111111111111111111111111'
@@ -1718,7 +1718,30 @@ _version_manager_reconcile_protected_release_tag() {
 	local tag_name="$2"
 	local mode="$3"
 	[[ -n "$repo" && -n "$tag_name" && ("$mode" == "status" || "$mode" == "reconcile") ]] || return 1
-	_VERSION_MANAGER_PROTECTED_RELEASE_RESULT="remote-tag-present"
+	case "${PROTECTED_FIXTURE_MODE:-remote}" in
+	open) _VERSION_MANAGER_PROTECTED_RELEASE_RESULT="pr-pending" ;;
+	merged)
+		if [[ "$mode" == "status" ]]; then
+			_VERSION_MANAGER_PROTECTED_RELEASE_RESULT="tag-ready"
+		else
+			_VERSION_MANAGER_PROTECTED_RELEASE_RESULT="tag-pushed"
+		fi
+		;;
+	mismatch) return 1 ;;
+	remote) _VERSION_MANAGER_PROTECTED_RELEASE_RESULT="remote-tag-present" ;;
+	*) return 1 ;;
+	esac
+	return 0
+}
+_full_loop_release_verify_protected_source_provenance() {
+	[[ "$1" == "test/repo" && "$2" == "v1.2.3" ]]
+	return $?
+}
+_full_loop_release_claim_preserved_tag() {
+	[[ "$1" == "test/repo" && "$2" == "90" && "$3" == "v1.2.3" ]] || return 1
+	[[ "${CLAIM_FIXTURE_RC:-0}" -eq 0 ]] || return "$CLAIM_FIXTURE_RC"
+	printf 'claimed\n' >>"${TEST_ROOT}/existing-pr-claim.log"
+	lane_patch_json='{"phase":"remote-publication","tag":"v1.2.3","reservation_contract":"fenced-prepublication/v1","snapshot_manifest_bound":true}'
 	return 0
 }
 _full_loop_release_finalize_stale_supersession() {
@@ -1742,6 +1765,72 @@ _full_loop_update_superseded_cleanup_receipt() {
 	printf '%s %s\n' "$repo" "$pr_number" >"${TEST_ROOT}/cleanup-update.log"
 	return 0
 }
+
+printf 'not-requested\n' >"${TEST_ROOT}/receipts/test_repo-90.status"
+lane_patch_json='{"phase":"preparing","tag":null,"reservation_contract":"fenced-prepublication/v1","snapshot_manifest_bound":true}'
+PROTECTED_FIXTURE_MODE=open
+export PROTECTED_FIXTURE_MODE
+authorization_expected_sources='91@2222222222222222222222222222222222222222'
+protected_intent_rc=0
+AIDEVOPS_FULL_LOOP_REPO=test/repo _full_loop_release_existing_command reconcile 90 \
+	>/dev/null 2>&1 || protected_intent_rc=$?
+if [[ "$protected_intent_rc" -ne 1 || -e "${TEST_ROOT}/existing-pr-claim.log" ]] ||
+	[[ "$(jq -r '.phase' <<<"$lane_patch_json")" != "preparing" ]]; then
+	printf 'FAIL mismatched explicit intent mutated the dead preparing lane\n'
+	exit 1
+fi
+printf 'PASS explicit intent is verified before the dead preparing lane is claimed\n'
+authorization_expected_sources=''
+protected_open_rc=0
+AIDEVOPS_FULL_LOOP_REPO=test/repo _full_loop_release_existing_command reconcile 90 \
+	>/dev/null 2>"${TEST_ROOT}/protected-open.err" || protected_open_rc=$?
+if [[ "$protected_open_rc" -ne 8 ]] ||
+	[[ "$(grep -c '^claimed$' "${TEST_ROOT}/existing-pr-claim.log")" -ne 1 ]] ||
+	[[ "$(jq -r '.phase' <<<"$lane_patch_json")" != "remote-publication" ]]; then
+	printf 'FAIL exact open protected PR did not claim and resume the dead preparing lane (rc=%s claim=%s lane=%s)\n' \
+		"$protected_open_rc" "$(test -f "${TEST_ROOT}/existing-pr-claim.log" && grep -c '^claimed$' "${TEST_ROOT}/existing-pr-claim.log" || true)" \
+		"$lane_patch_json stderr=$(<"${TEST_ROOT}/protected-open.err")"
+	exit 1
+fi
+printf 'PASS exact open protected PR claims the lane and remains queued\n'
+
+rm -f "${TEST_ROOT}/existing-pr-claim.log" "${TEST_ROOT}/finalize.log"
+lane_patch_json='{"phase":"preparing","tag":null,"reservation_contract":"fenced-prepublication/v1","snapshot_manifest_bound":true}'
+PROTECTED_FIXTURE_MODE=merged
+protected_merged_rc=0
+AIDEVOPS_FULL_LOOP_REPO=test/repo _full_loop_release_existing_command reconcile 90 \
+	>/dev/null 2>&1 || protected_merged_rc=$?
+if [[ "$protected_merged_rc" -ne 8 ]] ||
+	! grep -qx claimed "${TEST_ROOT}/existing-pr-claim.log"; then
+	printf 'FAIL exact merged protected PR did not resume its preserved tag\n'
+	exit 1
+fi
+PROTECTED_FIXTURE_MODE=remote
+INSPECT_RC=0
+AIDEVOPS_FULL_LOOP_REPO=test/repo _full_loop_release_existing_command reconcile 90 >/dev/null
+if ! grep -qx 'test/repo 90 v1.2.3' "${TEST_ROOT}/finalize.log"; then
+	printf 'FAIL merged protected PR recovery did not reach terminal reconciliation\n'
+	exit 1
+fi
+printf 'PASS exact merged protected PR resumes and reaches terminal reconciliation\n'
+
+rm -f "${TEST_ROOT}/existing-pr-claim.log" "${TEST_ROOT}/finalize.log"
+lane_patch_json='{"phase":"preparing","tag":null,"reservation_contract":"fenced-prepublication/v1","snapshot_manifest_bound":true}'
+PROTECTED_FIXTURE_MODE=mismatch
+protected_mismatch_rc=0
+AIDEVOPS_FULL_LOOP_REPO=test/repo _full_loop_release_existing_command reconcile 90 \
+	>/dev/null 2>&1 || protected_mismatch_rc=$?
+if [[ "$protected_mismatch_rc" -ne 1 || -e "${TEST_ROOT}/existing-pr-claim.log" ]] ||
+	[[ "$(jq -r '.phase' <<<"$lane_patch_json")" != "preparing" ]]; then
+	printf 'FAIL mismatched protected PR mutated the dead preparing lane\n'
+	exit 1
+fi
+printf 'PASS protected PR mismatch leaves the dead preparing lane unchanged\n'
+
+rm -f "${TEST_ROOT}/receipts/test_repo-90.status"
+lane_patch_json='{}'
+PROTECTED_FIXTURE_MODE=remote
+INSPECT_RC=3
 
 reconcile_rc=0
 AIDEVOPS_FULL_LOOP_REPO=test/repo _full_loop_release_existing_command reconcile 90 \
