@@ -803,8 +803,15 @@ _feedback_route_finish_closed() {
 	local completion_marker="$7"
 	local caller="$8"
 	local closed_by_this_call="$9"
+	local completion_write_rc=0
 
-	if ! _append_feedback_to_issue "$linked_issue" "$repo_slug" "$completion_marker" "" "$caller"; then
+	_append_feedback_to_issue "$linked_issue" "$repo_slug" "$completion_marker" "" "$caller" || completion_write_rc=$?
+	if [[ "$completion_write_rc" -ne 0 ]]; then
+		if [[ "$completion_write_rc" -eq "$PULSE_FEEDBACK_ROUTE_DEFERRED_RC" ]]; then
+			_feedback_route_defer "$pr_number" "$repo_slug" "$linked_issue" \
+				"closed ${kind} route completion evidence write was transiently deferred"
+			return $?
+		fi
 		if [[ "$closed_by_this_call" == "1" ]]; then
 			_feedback_route_restore_after_postclose_failure "$pr_number" "$repo_slug" "$linked_issue" \
 				"$expected_head" "could not persist ${kind} completion evidence"
