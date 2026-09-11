@@ -269,8 +269,8 @@ test_protected_default_creates_planning_pr() {
 		return 0
 	fi
 	pr_title=$(<"$title_file")
-	if [[ "$pr_title" != "plan(t999): add t999 protected planning" ]]; then
-		fail "$name" "single-task PR title is not task-aware: $pr_title"
+	if [[ "$pr_title" != "t999: plan: add t999 protected planning" ]]; then
+		fail "$name" "single-task PR title is not a merge-safe task subject: $pr_title"
 		return 0
 	fi
 	pass "$name"
@@ -307,7 +307,7 @@ test_multi_task_manifest_is_deterministic() {
 	body=$(<"${tmpdir}/body")
 	title=$(<"${tmpdir}/title")
 	for_31_count=$(printf '%s\n' "$body" | grep -c '^- For #31$' || true)
-	if [[ "$rc" -eq 0 && "$title" == "plan: publish planning batch" &&
+	if [[ "$rc" -eq 0 && "$title" == "chore: publish planning batch" &&
 		"$body" == *"task=t2001 issue=31"* && "$body" == *"task=t2002 issue=32"* &&
 		"$body" == *"task=t2003 issue=31"* && "$for_31_count" -eq 1 &&
 		"$body" == *$'- For #31\n- For #32'* ]]; then

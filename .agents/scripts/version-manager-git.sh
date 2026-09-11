@@ -403,7 +403,7 @@ _mark_single_task_complete() {
 	escaped_id=$(task_identity_escape_ere "$task_id") || return 2
 
 	# Build regex patterns (avoids shellcheck SC1087 false positive with [[:space:]])
-	local unchecked_pattern="^[[:space:]]*- \\[ \\] ${escaped_id}[[:space:]]"
+	local unchecked_pattern="^[[:space:]]*- \\[[ >]\\] ${escaped_id}[[:space:]]"
 	local checked_pattern="^[[:space:]]*- \\[x\\] ${escaped_id}[[:space:]]"
 
 	if grep -qE "$unchecked_pattern" "$todo_file"; then
@@ -419,13 +419,13 @@ _mark_single_task_complete() {
 			proof_log=" verified:${today_short}"
 		fi
 
-		local sed_unchecked_pattern="^[[:space:]]*- \\[ \\] ${escaped_id}[[:space:]]"
+		local sed_unchecked_pattern="^[[:space:]]*- \\[[ >]\\] ${escaped_id}[[:space:]]"
 
 		# Check if line already has completed: field
 		if grep -E "$sed_unchecked_pattern" "$todo_file" | grep -q "completed:"; then
-			sed_inplace "s/^\\([[:space:]]*\\)- \\[ \\] \\(${escaped_id}[[:space:]].*\\)\$/\\1- [x] \\2${proof_log}/" "$todo_file"
+			sed_inplace "s/^\\([[:space:]]*\\)- \\[[ >]\\] \\(${escaped_id}[[:space:]].*\\)\$/\\1- [x] \\2${proof_log}/" "$todo_file"
 		else
-			sed_inplace "s/^\\([[:space:]]*\\)- \\[ \\] \\(${escaped_id}[[:space:]].*\\)\$/\\1- [x] \\2${proof_log} completed:$today_short/" "$todo_file"
+			sed_inplace "s/^\\([[:space:]]*\\)- \\[[ >]\\] \\(${escaped_id}[[:space:]].*\\)\$/\\1- [x] \\2${proof_log} completed:$today_short/" "$todo_file"
 		fi
 
 		_dedupe_completed_task_lines "$task_id" "$todo_file" || dedupe_rc=$?

@@ -183,7 +183,7 @@ _complete_task_update_todo() {
 
 	# Find the task line
 	local task_line_num
-	task_line_num=$(grep -n "^\s*- \[ \] ${task_id} " "$todo_file" | head -1 | cut -d: -f1)
+	task_line_num=$(grep -n "^\s*- \[[ >]\] ${task_id} " "$todo_file" | head -1 | cut -d: -f1)
 
 	if [[ -z "$task_line_num" ]]; then
 		log_error "Task ${task_id} not found or already completed in TODO.md"
@@ -196,7 +196,7 @@ _complete_task_update_todo() {
 
 	# Mark as complete
 	local updated_line
-	updated_line=$(echo "$task_line" | sed 's/- \[ \]/- [x]/')
+	updated_line=$(echo "$task_line" | sed 's/- \[[ >]\]/- [x]/')
 
 	# Add proof-log field
 	local today
