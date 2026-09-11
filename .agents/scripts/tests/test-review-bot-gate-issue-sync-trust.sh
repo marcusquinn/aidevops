@@ -294,6 +294,15 @@ assert_live_account_rejected 'with an empty changed-file set' write ''
 assert_live_account_rejected 'with a nested TODO path' write docs/TODO.md
 assert_live_account_rejected 'with an additional changed file' write $'TODO.md\nREADME.md'
 assert_live_account_rejected 'with stale exact-head evidence' write TODO.md stale-head
+if REVIEW_GATE_LIVE_TRUSTED=json REVIEW_GATE_LIVE_JSON="$LIVE_ACCOUNT_JSON" \
+	REVIEW_GATE_ACCOUNT_PERMISSION=write REVIEW_GATE_ACCOUNT_FILES=TODO.md \
+	PATH="${STATE_DIR}/bin:${PATH}" \
+	bash "${HELPER_FILE}" is-trusted-issue-sync-pr \
+		123 marcusquinn/aidevops '' >/dev/null 2>&1; then
+	printf 'FAIL: live helper accepted account Issue Sync without exact-head evidence\n' >&2
+	exit 1
+fi
+printf 'PASS: live helper rejects account Issue Sync without exact-head evidence\n'
 
 ACCOUNT_API_ERROR_STATUS=0
 if REVIEW_GATE_LIVE_TRUSTED=json REVIEW_GATE_LIVE_JSON="$LIVE_ACCOUNT_JSON" \
