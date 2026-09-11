@@ -54,10 +54,13 @@ class ContrastTests(unittest.TestCase):
                     self.assertRegex(result.stdout, rf"WCAG {label} text.*: {decision}")
 
     def test_invalid_inputs(self):
-        for args in (("contrast", "#fff"), ("contrast", "#zzzzzz", "#fff")):
+        # Failures must propagate from both the first and second dispatch groups.
+        cases = (("audit",), ("contrast", "#fff"), ("contrast", "#zzzzzz", "#fff"))
+        for args in cases:
             with self.subTest(args=args):
                 result = self.run_cli(*args)
                 self.assertEqual(result.returncode, 1)
+                self.assertTrue(result.stdout or result.stderr)
                 self.assertNotIn("PASS", result.stdout)
 
     def test_help_and_unknown_dispatch(self):
