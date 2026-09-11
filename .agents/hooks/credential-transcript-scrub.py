@@ -73,6 +73,8 @@ PEM_REDACTION_TOKEN = "[redacted-private-key]"
 PEM_BEGIN_MARKER = "-----BEGIN "
 PEM_KEY_SUFFIX = "PRIVATE KEY-----"
 PEM_LABEL_PATTERN = re.compile(r"^[A-Z0-9 ]*$")
+IDENTIFIER_FIELD_NAMES = {"KEY", "NAME", "VARIABLE"}
+VALUE_FIELD_NAMES = {"VALUE"}
 PLACEHOLDER_VALUES = {
     "",
     "***",
@@ -120,6 +122,16 @@ def is_placeholder_value(value: str) -> bool:
 def preserves_sensitive_value(value) -> bool:
     """Keep absence and explicit string placeholders under sensitive keys."""
     return value is None or (isinstance(value, str) and is_placeholder_value(value))
+
+
+def is_identifier_field_name(name: str) -> bool:
+    """Return whether a field identifies the name of a sibling value."""
+    return normalize_field_name(name) in IDENTIFIER_FIELD_NAMES
+
+
+def is_value_field_name(name: str) -> bool:
+    """Return whether a field holds the value named by a sibling identifier."""
+    return normalize_field_name(name) in VALUE_FIELD_NAMES
 
 
 def redact_named_assignment(match: re.Match) -> str:
@@ -191,18 +203,74 @@ def scrub_credentials(text: str) -> tuple[str, int]:
 def scrub_value(value):
     """Recursively scrub credentials from any JSON-serialisable value."""
     if isinstance(value, str):
-        return scrub_credentials(value)[0]
+        parsed = parse_structured_text(value)
+        if parsed is not None:
+            parsed_value, stringify = parsed
+            scrubbed, count = scrub_value(parsed_value)
+            if count:
+                return stringify(scrubbed), count
+        return scrub_credentials(value)
     if isinstance(value, dict):
         scrubbed = {}
+        count = 0
+        has_sensitive_identifier = any(
+            is_identifier_field_name(key)
+            and isinstance(nested, str)
+            and is_sensitive_field_name(nested)
+            for key, nested in value.items()
+        )
         for key, nested in value.items():
             if is_sensitive_field_name(key) and not preserves_sensitive_value(nested):
                 scrubbed[key] = REDACTION_TOKEN
+                count += 1
+            elif has_sensitive_identifier and is_value_field_name(key) and not preserves_sensitive_value(nested):
+                scrubbed[key] = REDACTION_TOKEN
+                count += 1
             else:
-                scrubbed[key] = scrub_value(nested)
-        return scrubbed
+                scrubbed[key], nested_count = scrub_value(nested)
+                count += nested_count
+        return scrubbed, count
     if isinstance(value, list):
-        return [scrub_value(item) for item in value]
-    return value
+        scrubbed = []
+        count = 0
+        for item in value:
+            nested, nested_count = scrub_value(item)
+            scrubbed.append(nested)
+            count += nested_count
+        return scrubbed, count
+    return value, 0
+
+
+def parse_structured_text(value: str):
+    """Parse a complete JSON document or independently bounded NDJSON records."""
+    if not value.strip():
+        return None
+    try:
+        parsed = json.loads(value)
+        if not isinstance(parsed, (dict, list)):
+            return None
+        return parsed, lambda scrubbed: json.dumps(scrubbed, separators=(",", ":"))
+    except json.JSONDecodeError:
+        pass
+
+    lines = value.splitlines()
+    if not lines:
+        return None
+    parsed = []
+    for line in lines:
+        if not line.strip():
+            parsed.append(None)
+            continue
+        try:
+            record = json.loads(line)
+            if not isinstance(record, (dict, list)):
+                return None
+            parsed.append(record)
+        except json.JSONDecodeError:
+            return None
+    return parsed, lambda scrubbed: "\n".join(
+        "" if record is None else json.dumps(record, separators=(",", ":")) for record in scrubbed
+    )
 
 
 def main() -> None:
@@ -217,25 +285,14 @@ def main() -> None:
 
     tool_response = data.get("tool_response", "")
 
-    # Fast path: no known prefix, private key, or named assignment in the payload.
-    if (
-        not CREDENTIAL_PATTERN.search(raw)
-        and PEM_BEGIN_MARKER not in raw
-        and not NAMED_CREDENTIAL_ASSIGNMENT_PATTERN.search(raw)
-    ):
-        return
-
     # Scrub the tool_response field (may be str or nested JSON object).
     if isinstance(tool_response, str):
-        scrubbed, count = scrub_credentials(tool_response)
+        scrubbed, count = scrub_value(tool_response)
         if count == 0:
             return
     elif isinstance(tool_response, (dict, list)):
-        scrubbed = scrub_value(tool_response)
-        # Re-serialise to detect if anything actually changed.
-        original_json = json.dumps(tool_response, ensure_ascii=False)
-        scrubbed_json = json.dumps(scrubbed, ensure_ascii=False)
-        if original_json == scrubbed_json:
+        scrubbed, count = scrub_value(tool_response)
+        if count == 0:
             return
     else:
         return

@@ -129,6 +129,42 @@ describe("credential transcript scrub boundary", () => {
     assertScrub("MONKEY_TOKENIZER=enabled", "MONKEY_TOKENIZER=enabled", 0);
   });
 
+  test("redacts sibling credential records in structured JSON and NDJSON", () => {
+    const record = { key: "SYNTHETIC_API_KEY", value: "opaque-synthetic-value-1234567890", enabled: true };
+    assertScrub(JSON.stringify(record), JSON.stringify({ ...record, value: REDACTION_TOKEN }), 1);
+    assertScrub(
+      `${JSON.stringify(record)}\n${JSON.stringify({ key: "REGION", value: "eu-west" })}`,
+      `${JSON.stringify({ ...record, value: REDACTION_TOKEN })}\n${JSON.stringify({ key: "REGION", value: "eu-west" })}`,
+      1,
+    );
+  });
+
+  test("toolExecuteAfter redacts sibling credential records without cross-record bleed", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "aidevops-sibling-credential-scrub-"));
+    const output = {
+      output: {
+        stdout: JSON.stringify([
+          { name: "SYNTHETIC_API_KEY", value: "opaque-synthetic-value-1234567890" },
+          { variable: "REGION", value: "eu-west" },
+          { key: "API_TOKEN", value: "[redacted-credential]" },
+        ]),
+      },
+      metadata: {},
+    };
+
+    try {
+      const hooks = createQualityHooks({ scriptsDir: tempDir, logsDir: tempDir });
+      await hooks.toolExecuteAfter({ tool: "test", callID: "" }, output);
+      assert.deepEqual(JSON.parse(output.output.stdout), [
+        { name: "SYNTHETIC_API_KEY", value: REDACTION_TOKEN },
+        { variable: "REGION", value: "eu-west" },
+        { key: "API_TOKEN", value: "[redacted-credential]" },
+      ]);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   test("scans adversarial 10KB named-field input within the performance budget", () => {
     const input = "A ".repeat(5_000);
     const runs = 100;
