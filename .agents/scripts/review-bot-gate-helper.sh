@@ -1305,6 +1305,59 @@ _rbg_is_trusted_issue_sync_pr_metadata() {
 	' <<<"$pr_metadata_json" >/dev/null 2>&1
 }
 
+_rbg_is_account_issue_sync_pr_metadata() {
+	local repo="$1"
+	local pr_metadata_json="$2"
+	local expected_head_sha="$3"
+
+	[[ -n "$repo" && -n "$pr_metadata_json" && -n "$expected_head_sha" ]] || return 1
+	command -v jq >/dev/null 2>&1 || return 1
+
+	#aidevops:trust-boundary -- account-authored generated updates require the
+	# same immutable PR shape and exact head as bot-authored updates. Live
+	# permission and changed-file evidence are checked separately below.
+	jq -e \
+		--arg repo "$repo" \
+		--arg branch "$RBG_ISSUE_SYNC_PR_BRANCH" \
+		--arg expected_head "$expected_head_sha" \
+		--arg marker "$RBG_ISSUE_SYNC_PR_MARKER" '
+		try (
+			(.user.login | type == "string" and length > 0) and
+			.user.type == "User" and
+			.head.repo.full_name == $repo and
+			.base.repo.full_name == $repo and
+			.head.ref == $branch and
+			.head.sha == $expected_head and
+			(.body | contains($marker))
+		) catch false
+	' <<<"$pr_metadata_json" >/dev/null 2>&1
+}
+
+_rbg_is_trusted_account_issue_sync_pr() {
+	local pr_number="$1"
+	local repo="$2"
+	local pr_metadata_json="$3"
+	local expected_head_sha="$4"
+	local author_login=""
+	local permission=""
+	local changed_files=""
+
+	_rbg_is_account_issue_sync_pr_metadata "$repo" "$pr_metadata_json" "$expected_head_sha" || return 1
+	author_login=$(jq -r '.user.login // empty' <<<"$pr_metadata_json" 2>/dev/null) || return 1
+	[[ "$author_login" =~ ^[A-Za-z0-9-]+$ ]] || return 1
+
+	permission=$(gh api "repos/${repo}/collaborators/${author_login}/permission" \
+		--jq '.permission // empty') || return 2
+	case "$permission" in
+	admin | maintain | write) ;;
+	*) return 1 ;;
+	esac
+
+	changed_files=$(gh api --paginate "repos/${repo}/pulls/${pr_number}/files?per_page=100" \
+		--jq '.[].filename') || return 2
+	[[ "$changed_files" == "TODO.md" ]]
+}
+
 do_is_trusted_issue_sync_pr() {
 	local pr_number="$1"
 	local repo="$2"
@@ -1321,6 +1374,15 @@ do_is_trusted_issue_sync_pr() {
 	if _rbg_is_trusted_issue_sync_pr_metadata "$repo" "$pr_metadata_json" "$expected_head_sha"; then
 		echo "TRUSTED"
 		return 0
+	fi
+	local account_trust_rc=0
+	_rbg_is_trusted_account_issue_sync_pr "$pr_number" "$repo" "$pr_metadata_json" "$expected_head_sha" || account_trust_rc=$?
+	if [[ "$account_trust_rc" -eq 0 ]]; then
+		echo "TRUSTED"
+		return 0
+	elif [[ "$account_trust_rc" -eq 2 ]]; then
+		echo "ERROR: Could not establish live account permission or complete changed-file evidence for Issue Sync trust classification." >&2
+		return 2
 	fi
 	echo "UNTRUSTED"
 	return 1

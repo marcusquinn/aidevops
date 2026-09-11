@@ -124,6 +124,19 @@ else
 		"rc=${result} trust=$(cat "$TRUST_CALLS") worker_calls=$(cat "$WORKER_BRIEFED_CALLS") log=$(cat "$LOGFILE")"
 fi
 
+FIXTURE_TRUSTED=1
+FIXTURE_LABELS="external-contributor"
+: >"$TRUST_CALLS"
+: >"$WORKER_BRIEFED_CALLS"
+result=$(run_gate head-current maintainer)
+if [[ "$result" -eq 0 ]] && grep -q '^950 owner/repo head-current$' "$TRUST_CALLS" &&
+	[[ ! -s "$WORKER_BRIEFED_CALLS" ]]; then
+	print_result "exact-head account-authored Issue Sync bypasses worker linked-issue gate" 0
+else
+	print_result "exact-head account-authored Issue Sync bypasses worker linked-issue gate" 1 \
+		"rc=${result} trust=$(cat "$TRUST_CALLS") worker_calls=$(cat "$WORKER_BRIEFED_CALLS") log=$(cat "$LOGFILE")"
+fi
+
 FIXTURE_TRUSTED=0
 FIXTURE_LABELS=""
 : >"$TRUST_CALLS"
@@ -148,6 +161,7 @@ else
 		"rc=${result} calls=$(cat "$TRUST_CALLS")"
 fi
 
+FIXTURE_TRUSTED=0
 FIXTURE_DEPENDABOT_TRUSTED=1
 FIXTURE_CRYPTO_APPROVED=0
 : >"$DEPENDABOT_ROUTE_CALLS"

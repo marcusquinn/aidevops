@@ -27,18 +27,32 @@ if [[ "${2:-}" == "graphql" ]]; then
 	printf '%s\n' '{"data":{"repository":{"pullRequest":{"author":{"__typename":"Bot","login":"dependabot"},"body":"Bumps [vite](source) from 8.1.5 to 8.2.1.","headRefOid":"head-123","headRepository":{"nameWithOwner":"marcusquinn/aidevops"},"headRepositoryOwner":{"login":"marcusquinn"},"commits":{"pageInfo":{"hasNextPage":false},"nodes":[{"commit":{"authors":{"pageInfo":{"hasNextPage":false},"nodes":[{"user":{"login":"dependabot[bot]"}}]}}}]},"files":{"pageInfo":{"hasNextPage":false},"nodes":[{"path":"package.json"},{"path":"bun.lock"}]},"statusCheckRollup":{"contexts":{"pageInfo":{"hasNextPage":false},"nodes":[{"__typename":"CheckRun","name":"ShellCheck","conclusion":"SUCCESS","status":"COMPLETED","workflowName":"Code Quality Analysis"}]}}}},"rateLimit":{"cost":1}}}'
 	exit 0
 fi
-[[ "${2:-}" == "repos/marcusquinn/aidevops/pulls/123" ]] || exit 2
-case "${REVIEW_GATE_LIVE_TRUSTED:-false}" in
-true)
-	printf '%s\n' '{"author_association":"CONTRIBUTOR","user":{"login":"github-actions[bot]","id":41898282,"type":"Bot"},"head":{"ref":"aidevops/issue-sync-todo","sha":"head-123","repo":{"full_name":"marcusquinn/aidevops"}},"base":{"repo":{"full_name":"marcusquinn/aidevops"}},"body":"<!-- aidevops:issue-sync-todo-pr -->"}'
+api_path="${2:-}"
+[[ "$api_path" != "--paginate" ]] || api_path="${3:-}"
+case "$api_path" in
+repos/marcusquinn/aidevops/pulls/123)
+	case "${REVIEW_GATE_LIVE_TRUSTED:-false}" in
+	true)
+		printf '%s\n' '{"author_association":"CONTRIBUTOR","user":{"login":"github-actions[bot]","id":41898282,"type":"Bot"},"head":{"ref":"aidevops/issue-sync-todo","sha":"head-123","repo":{"full_name":"marcusquinn/aidevops"}},"base":{"repo":{"full_name":"marcusquinn/aidevops"}},"body":"<!-- aidevops:issue-sync-todo-pr -->"}'
+		;;
+	json)
+		printf '%s\n' "${REVIEW_GATE_LIVE_JSON:-}"
+		;;
+	error) exit 42 ;;
+	*)
+		printf '%s\n' '{"author_association":"CONTRIBUTOR","user":{"login":"github-actions[bot]","id":999,"type":"Bot"}}'
+		;;
+	esac
 	;;
-json)
-	printf '%s\n' "${REVIEW_GATE_LIVE_JSON:-}"
+repos/marcusquinn/aidevops/collaborators/*/permission)
+	[[ "${REVIEW_GATE_ACCOUNT_PERMISSION_ERROR:-0}" != "1" ]] || exit 42
+	printf '%s\n' "${REVIEW_GATE_ACCOUNT_PERMISSION:-write}"
 	;;
-error) exit 42 ;;
-*)
-	printf '%s\n' '{"author_association":"CONTRIBUTOR","user":{"login":"github-actions[bot]","id":999,"type":"Bot"}}'
+repos/marcusquinn/aidevops/pulls/123/files\?per_page=100)
+	[[ "${REVIEW_GATE_ACCOUNT_FILES_ERROR:-0}" != "1" ]] || exit 42
+	printf '%s\n' "${REVIEW_GATE_ACCOUNT_FILES-TODO.md}"
 	;;
+*) exit 2 ;;
 esac
 EOF
 chmod +x "${STATE_DIR}/bin/gh"
@@ -244,9 +258,85 @@ assert_live_rejected 'missing generated body marker' \
 assert_live_rejected 'different live head SHA' \
 	"$(printf '%s' "$LIVE_BASE_JSON" | jq -c '.head.sha = "other-head"')"
 
-if ! REVIEW_GATE_LIVE_TRUSTED=true PATH="${STATE_DIR}/bin:${PATH}" \
+LIVE_ACCOUNT_JSON='{"author_association":"OWNER","user":{"login":"maintainer","id":123,"type":"User"},"head":{"ref":"aidevops/issue-sync-todo","sha":"head-123","repo":{"full_name":"marcusquinn/aidevops"}},"base":{"repo":{"full_name":"marcusquinn/aidevops"}},"body":"<!-- aidevops:issue-sync-todo-pr -->"}'
+
+for account_permission in write maintain admin; do
+	if ! REVIEW_GATE_LIVE_TRUSTED=json REVIEW_GATE_LIVE_JSON="$LIVE_ACCOUNT_JSON" \
+		REVIEW_GATE_ACCOUNT_PERMISSION="$account_permission" REVIEW_GATE_ACCOUNT_FILES=TODO.md \
+		PATH="${STATE_DIR}/bin:${PATH}" \
+		bash "${HELPER_FILE}" is-trusted-issue-sync-pr \
+			123 marcusquinn/aidevops head-123 >/dev/null; then
+		printf 'FAIL: live helper rejected account Issue Sync author with %s permission\n' "$account_permission" >&2
+		exit 1
+	fi
+done
+printf 'PASS: live helper accepts exact-head account Issue Sync authors with maintainer-equivalent permission\n'
+
+assert_live_account_rejected() {
+	local case_name="$1"
+	local permission="$2"
+	local files="$3"
+	local expected_head="${4:-head-123}"
+	if REVIEW_GATE_LIVE_TRUSTED=json REVIEW_GATE_LIVE_JSON="$LIVE_ACCOUNT_JSON" \
+		REVIEW_GATE_ACCOUNT_PERMISSION="$permission" REVIEW_GATE_ACCOUNT_FILES="$files" \
+		PATH="${STATE_DIR}/bin:${PATH}" \
+		bash "${HELPER_FILE}" is-trusted-issue-sync-pr \
+			123 marcusquinn/aidevops "$expected_head" >/dev/null 2>&1; then
+		printf 'FAIL: live helper accepted account Issue Sync %s\n' "$case_name" >&2
+		return 1
+	fi
+	printf 'PASS: live helper rejects account Issue Sync %s\n' "$case_name"
+	return 0
+}
+
+assert_live_account_rejected 'with read permission' read TODO.md
+assert_live_account_rejected 'with an empty changed-file set' write ''
+assert_live_account_rejected 'with a nested TODO path' write docs/TODO.md
+assert_live_account_rejected 'with an additional changed file' write $'TODO.md\nREADME.md'
+assert_live_account_rejected 'with stale exact-head evidence' write TODO.md stale-head
+if REVIEW_GATE_LIVE_TRUSTED=json REVIEW_GATE_LIVE_JSON="$LIVE_ACCOUNT_JSON" \
+	REVIEW_GATE_ACCOUNT_PERMISSION=write REVIEW_GATE_ACCOUNT_FILES=TODO.md \
+	PATH="${STATE_DIR}/bin:${PATH}" \
+	bash "${HELPER_FILE}" is-trusted-issue-sync-pr \
+		123 marcusquinn/aidevops '' >/dev/null 2>&1; then
+	printf 'FAIL: live helper accepted account Issue Sync without exact-head evidence\n' >&2
+	exit 1
+fi
+printf 'PASS: live helper rejects account Issue Sync without exact-head evidence\n'
+
+ACCOUNT_API_ERROR_STATUS=0
+if REVIEW_GATE_LIVE_TRUSTED=json REVIEW_GATE_LIVE_JSON="$LIVE_ACCOUNT_JSON" \
+	REVIEW_GATE_ACCOUNT_PERMISSION_ERROR=1 PATH="${STATE_DIR}/bin:${PATH}" \
+	bash "${HELPER_FILE}" is-trusted-issue-sync-pr \
+		123 marcusquinn/aidevops head-123 >/dev/null 2>&1; then
+	ACCOUNT_API_ERROR_STATUS=0
+else
+	ACCOUNT_API_ERROR_STATUS=$?
+fi
+if [[ "$ACCOUNT_API_ERROR_STATUS" -ne 2 ]]; then
+	printf 'FAIL: account permission API failure expected exit 2, got %s\n' "$ACCOUNT_API_ERROR_STATUS" >&2
+	exit 1
+fi
+
+ACCOUNT_API_ERROR_STATUS=0
+if REVIEW_GATE_LIVE_TRUSTED=json REVIEW_GATE_LIVE_JSON="$LIVE_ACCOUNT_JSON" \
+	REVIEW_GATE_ACCOUNT_FILES_ERROR=1 PATH="${STATE_DIR}/bin:${PATH}" \
+	bash "${HELPER_FILE}" is-trusted-issue-sync-pr \
+		123 marcusquinn/aidevops head-123 >/dev/null 2>&1; then
+	ACCOUNT_API_ERROR_STATUS=0
+else
+	ACCOUNT_API_ERROR_STATUS=$?
+fi
+if [[ "$ACCOUNT_API_ERROR_STATUS" -ne 2 ]]; then
+	printf 'FAIL: account changed-file API failure expected exit 2, got %s\n' "$ACCOUNT_API_ERROR_STATUS" >&2
+	exit 1
+fi
+printf 'PASS: account Issue Sync live evidence failures remain distinct and fail-closed\n'
+
+if ! REVIEW_GATE_LIVE_TRUSTED=true REVIEW_GATE_ACCOUNT_PERMISSION_ERROR=1 \
+	REVIEW_GATE_ACCOUNT_FILES_ERROR=1 PATH="${STATE_DIR}/bin:${PATH}" \
 	bash "${HELPER_FILE}" is-trusted-issue-sync-pr 123 marcusquinn/aidevops head-123 >/dev/null; then
-	printf 'FAIL: live helper rejected the exact expected PR head\n' >&2
+	printf 'FAIL: live helper rejected the exact official-bot PR head without account evidence\n' >&2
 	exit 1
 fi
 if REVIEW_GATE_LIVE_TRUSTED=true PATH="${STATE_DIR}/bin:${PATH}" \
