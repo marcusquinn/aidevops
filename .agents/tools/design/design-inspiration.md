@@ -36,6 +36,8 @@ tools:
 | Paywall / monetisation | PaywallPro, Mobbin (filter: paywall) |
 | Onboarding flow | Mobbin (filter: onboarding), Page Flows |
 | Dark mode | Dark Mode Design, Mobbin (filter: dark) |
+| AI-native interface | Beautiful UI, beUI |
+| Motion and micro-interactions | Transitions.dev, beUI, Rare UI |
 | DESIGN.md examples | `tools/design/library/brands/` (54 real brands), `tools/design/library/styles/` (12 archetypes) |
 | "Make it like X" | Copy from `library/brands/{brand}/DESIGN.md`, customise colours and typography |
 
@@ -115,6 +117,33 @@ tools:
 | **UISwipe** | https://uiswipe.com | Tinder-style swiping for web design inspiration | Free | Web |
 | **uncoverLAB** | https://uncoverlab.co | Website components, app flows, and colour palettes | Freemium | Both |
 
+## Component and Motion Inspiration
+
+Use these implementation-aware references to study interaction states, motion,
+feedback, and component composition. They complement screenshot galleries such as
+Refero Design; they do not replace product research, the active brand identity, or
+the project's DESIGN.md.
+
+| Resource | URLs | Use it for | Access and implementation notes |
+|----------|------|------------|---------------------------------|
+| **Beautiful UI** | https://www.beautifului.dev/ | AI-native states and complex product surfaces, including thinking, streaming, approvals, tool calls, tasks, records, diffs, and agent screens | Copy-ready primitives published under an MIT licence; adapt their hierarchy and state patterns rather than importing an unrelated visual identity |
+| **beUI** | [Website](https://beui.dev/) · [Source](https://github.com/starc007/ui-components) | React and Next.js motion primitives, morphing controls, feedback states, and reusable app blocks | Free MIT-licensed core plus paid Pro resources; built around Motion, Tailwind CSS, and the shadcn registry |
+| **Rare UI** | [Website](https://www.rareui.com/) · [Source](https://github.com/swamimalode07/rare-ui) | Distinctive animated components and tactile interaction ideas for product and portfolio interfaces | Free MIT-licensed shadcn registry using React, Tailwind CSS, TypeScript, and Motion; source states that components honour `prefers-reduced-motion` |
+| **Transitions.dev** | [Website](https://transitions.dev/) · [Source](https://github.com/Jakubantalik/transitions.dev) | Focused state changes such as card resize, text and icon swaps, menus, modals, validation feedback, and page transitions | Free and Pro examples with portable CSS/React patterns and reduced-motion guards; no repository licence was detected during review, so verify current terms before copying source |
+
+**Apply without losing the product's identity:**
+
+1. Select references for a concrete UX problem or state, not because a component
+   is visually novel.
+2. Record accepted interaction traits in `context/brand-identity.toon`
+   (`buttons_and_forms` and `media_and_motion`) and implementation-ready decisions
+   in DESIGN.md component tokens.
+3. Adapt colour, type, spacing, radius, density, and motion to the existing system;
+   an installed component library must not become the brand by accident.
+4. Before reuse, verify licensing, dependencies, keyboard and focus behaviour,
+   loading/error states, responsive behaviour, and reduced-motion support. Listing
+   a resource here is not blanket approval to install or copy it.
+
 ## UX Education and Pattern Libraries
 
 | Resource | URL | Description | Pricing |
@@ -177,8 +206,10 @@ Interactive tools for generating palettes and font pairings. See also `tools/des
 1. **Search Webframe** for your screen type (dashboard, settings, login)
 2. **Browse Godly / Awwwards** for cutting-edge design trends
 3. **Check Dribbble** for specific component designs (modals, cards, navigation)
-4. **Study SaaS Pages** for landing page patterns
-5. **Review Dark Mode Design** if supporting dark theme
+4. **Compare Beautiful UI / beUI** for AI-native states and agent interactions
+5. **Study Transitions.dev / Rare UI** when motion or tactile feedback supports the task
+6. **Study SaaS Pages** for landing page patterns
+7. **Review Dark Mode Design** if supporting dark theme
 
 ### For Email Design
 
