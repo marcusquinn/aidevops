@@ -16,6 +16,7 @@ _TRUSTED_DEPENDABOT_LAST_PR_JSON=""
 _TRUSTED_DEPENDABOT_LAST_REPO=""
 _TRUSTED_DEPENDABOT_LAST_PR=""
 _TRUSTED_DEPENDABOT_LAST_HEAD=""
+_TRUSTED_DEPENDABOT_AUTH_FAILURE_REASON=""
 
 _td_gh_read() {
 	local rc=0
@@ -283,10 +284,14 @@ _trusted_dependabot_snapshot_is_authentic() {
 	local snapshot_head=""
 	local bad_commits=""
 
+	_TRUSTED_DEPENDABOT_AUTH_FAILURE_REASON="invalid-input"
 	[[ -n "$pr_json" && "$pr_json" != "null" && -n "$repo_slug" && -n "$expected_head_sha" ]] || return 1
 	case "$pr_author" in
 	dependabot\[bot\] | app/dependabot | "") ;;
-	*) return 1 ;;
+	*)
+		_TRUSTED_DEPENDABOT_AUTH_FAILURE_REASON="unsupported-pr-author"
+		return 1
+		;;
 	esac
 
 	api_author=$(printf '%s' "$pr_json" | jq -r '.author.login // ""' 2>/dev/null) || return 1
@@ -296,11 +301,24 @@ _trusted_dependabot_snapshot_is_authentic() {
 	snapshot_head=$(printf '%s' "$pr_json" | jq -r '.headRefOid // ""' 2>/dev/null) || return 1
 	#aidevops:trust-boundary — worker intake and merge trust share this exact-head
 	# GitHub Bot, repository ownership, and commit-authorship verification.
-	[[ "$api_author_type" == "Bot" && "$api_author" == "dependabot" ]] || return 1
-	[[ "$head_owner" == "$repo_owner" && "$head_repo" == "$repo_slug" ]] || return 1
-	[[ "$snapshot_head" == "$expected_head_sha" ]] || return 1
+	if [[ "$api_author_type" != "Bot" || "$api_author" != "dependabot" ]]; then
+		_TRUSTED_DEPENDABOT_AUTH_FAILURE_REASON="bot-identity-mismatch"
+		return 1
+	fi
+	if [[ "$head_owner" != "$repo_owner" || "$head_repo" != "$repo_slug" ]]; then
+		_TRUSTED_DEPENDABOT_AUTH_FAILURE_REASON="repository-ownership-mismatch"
+		return 1
+	fi
+	if [[ "$snapshot_head" != "$expected_head_sha" ]]; then
+		_TRUSTED_DEPENDABOT_AUTH_FAILURE_REASON="head-mismatch"
+		return 1
+	fi
 	bad_commits=$(printf '%s' "$pr_json" | jq '[.commits[]? | select([.authors[]?.login] | index("dependabot[bot]") | not)] | length' 2>/dev/null) || return 1
-	[[ "$bad_commits" == "0" ]] || return 1
+	if [[ "$bad_commits" != "0" ]]; then
+		_TRUSTED_DEPENDABOT_AUTH_FAILURE_REASON="commit-author-mismatch"
+		return 1
+	fi
+	_TRUSTED_DEPENDABOT_AUTH_FAILURE_REASON=""
 	return 0
 }
 
@@ -318,6 +336,7 @@ _is_authentic_dependabot_pr() {
 		&& -n "$_TRUSTED_DEPENDABOT_LAST_PR_JSON" ]]; then
 		pr_json="$_TRUSTED_DEPENDABOT_LAST_PR_JSON"
 	else
+		_TRUSTED_DEPENDABOT_AUTH_FAILURE_REASON="snapshot-unavailable"
 		pr_json=$(_trusted_dependabot_pr_json_graphql "$pr_number" "$repo_slug" auth) || return 1
 		_TRUSTED_DEPENDABOT_LAST_PR_JSON="$pr_json"
 		_TRUSTED_DEPENDABOT_LAST_REPO="$repo_slug"

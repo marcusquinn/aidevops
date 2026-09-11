@@ -167,11 +167,12 @@ FIXTURE_CRYPTO_APPROVED=0
 : >"$DEPENDABOT_ROUTE_CALLS"
 : >"$LOGFILE"
 result=$(run_gate head-current 'dependabot[bot]')
-if [[ "$result" -eq 1 ]] && [[ ! -s "$DEPENDABOT_ROUTE_CALLS" ]] &&
+if [[ "$result" -eq 1 ]] &&
+	grep -qF "950 owner/repo dependabot[bot] head-current policy-ineligible" "$DEPENDABOT_ROUTE_CALLS" &&
 	grep -qF "remains external and lacks current-head maintainer crypto-approval" "$LOGFILE"; then
-	print_result "verified Dependabot without independent authority stops without repair intake" 0
+	print_result "verified Dependabot without independent authority enters lifecycle reconciliation" 0
 else
-	print_result "verified Dependabot without independent authority stops without repair intake" 1 \
+	print_result "verified Dependabot without independent authority enters lifecycle reconciliation" 1 \
 		"rc=${result} route=$(cat "$DEPENDABOT_ROUTE_CALLS") log=$(cat "$LOGFILE")"
 fi
 
