@@ -181,6 +181,46 @@ test_opencode_agent_discovery_runs() {
 	return 0
 }
 
+test_opencode_agent_discovery_cli_is_non_mutating() {
+	local fake_home="$TEST_DIR/fake-home"
+	local config_path="$fake_home/.config/opencode/opencode.json"
+	local before_hash after_help_hash after_unknown_hash output
+
+	# Recreate the fixture because the supported no-argument test mutates it.
+	rm -rf "$fake_home"
+	mkdir -p "$fake_home/.aidevops" "$fake_home/.config/opencode"
+	ln -sfn "$TEST_DIR/agents" "$fake_home/.aidevops/agents"
+	cp "$TEST_DIR/opencode-config/opencode.json" "$config_path"
+
+	before_hash=$(sha256sum "$config_path")
+	if output=$(HOME="$fake_home" python3 "$SCRIPTS_DIR/opencode-agent-discovery.py" --help 2>&1) \
+		&& [[ "$output" == *"usage:"* ]]; then
+		after_help_hash=$(sha256sum "$config_path")
+		if [[ "$before_hash" == "$after_help_hash" ]]; then
+			print_result "opencode-agent-discovery.py help is non-mutating" 0
+		else
+			print_result "opencode-agent-discovery.py help is non-mutating" 1 \
+				"fixture config changed after --help"
+		fi
+	else
+		print_result "opencode-agent-discovery.py help is non-mutating" 1 "$output"
+	fi
+
+	if output=$(HOME="$fake_home" python3 "$SCRIPTS_DIR/opencode-agent-discovery.py" --unknown-option 2>&1); then
+		print_result "opencode-agent-discovery.py rejects unknown options" 1 \
+			"unknown option exited successfully"
+	else
+		after_unknown_hash=$(sha256sum "$config_path")
+		if [[ "$before_hash" == "$after_unknown_hash" ]]; then
+			print_result "opencode-agent-discovery.py rejects unknown options" 0
+		else
+			print_result "opencode-agent-discovery.py rejects unknown options" 1 \
+				"fixture config changed after an unknown option"
+		fi
+	fi
+	return 0
+}
+
 test_missing_subagent_warning() {
 	# The fixture declares a nonexistent subagent; both scripts should surface
 	# a warning on stderr but still exit 0. Guards against the validator being
@@ -279,6 +319,7 @@ main() {
 	test_agent_discovery_runs
 	test_opencode_config_persists_managed_directory_permissions
 	test_opencode_agent_discovery_runs
+	test_opencode_agent_discovery_cli_is_non_mutating
 	test_missing_subagent_warning
 	test_validate_subagent_refs_default_arg
 	test_grep_permission_is_explicit
