@@ -36,6 +36,7 @@ PR agent: earned media strategy, press positioning, newsworthiness, newsjacking,
 - **Start here**: `public-relations/getting-started.md` for routing and first-turn choices.
 - **Open stack**: direct-source article retrieval, RSS/Atom, search providers already available to the runtime, page metadata extraction, local artifacts, and model-grounded scoring. Avoid proprietary PR/media-list APIs by default.
 - **Pipelines**: `public-relations/media-list-builder.md`, `public-relations/news-search.md`, `public-relations/coverage-tracker.md`, `public-relations/newsjack-monitor.md`.
+- **Press-release distribution**: `public-relations/press-release-distribution.md` for free-channel verification, selection, and outcome tracking.
 - **Boundaries**: Content produces owned-channel assets; Marketing-Sales owns CRM/funnels/cold outbound; Automate schedules routines. PR owns earned-media fit and journalist trust.
 
 <!-- AI-CONTEXT-END -->
@@ -54,6 +55,7 @@ PR agent: earned media strategy, press positioning, newsworthiness, newsjacking,
 | Need | Read |
 |---|---|
 | Founder or launch PR strategy | `public-relations/pr-strategy.md` |
+| Distribute a press release | `public-relations/press-release-distribution.md` |
 | Is this newsworthy? | `public-relations/newsworthiness-check.md` |
 | Find recent coverage/current articles | `public-relations/news-search.md` |
 | Build a media list | `public-relations/media-list-builder.md` |
