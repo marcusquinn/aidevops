@@ -4,7 +4,7 @@
 #
 # test-full-loop-gate-pulse-parity.sh — t2890 regression guard.
 #
-# Asserts that `_check_linked_issue_gate` in `.agents/scripts/full-loop-helper-state.sh`
+# Asserts that `_check_linked_issue_gate` in the lifecycle state sub-library
 # inherits the pulse-side structural dispatch gates via
 # `_linked_issue_structural_blocker_reasons`, which calls `dispatch-dedup-helper.sh
 # enumerate-blockers` and translates PARENT_TASK_BLOCKED and HOLD_FOR_REVIEW_BLOCKED
@@ -49,14 +49,16 @@ print_result() {
 # Resolve the helper file relative to the test (tests live in .agents/scripts/tests/)
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-HELPER_FILE="${REPO_ROOT}/.agents/scripts/full-loop-helper-state.sh"
+ENTRYPOINT_FILE="${REPO_ROOT}/.agents/scripts/full-loop-helper-state.sh"
+HELPER_FILE="${REPO_ROOT}/.agents/scripts/full-loop-helper-state-lifecycle.sh"
+RELEASE_FILE="${REPO_ROOT}/.agents/scripts/full-loop-helper-state-release.sh"
 
-if [[ ! -f "$HELPER_FILE" ]]; then
-	print_result "helper file exists" 1 "not found: $HELPER_FILE"
+if [[ ! -f "$ENTRYPOINT_FILE" || ! -f "$HELPER_FILE" || ! -f "$RELEASE_FILE" ]]; then
+	print_result "state modules exist" 1 "one or more state modules are missing"
 	printf '\n%d tests run, %d failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 	exit 1
 fi
-print_result "helper file exists" 0
+print_result "state modules exist" 0
 
 # Extract just the _check_linked_issue_gate function body so per-check
 # assertions only see the function we care about.
@@ -247,13 +249,13 @@ assert_in_structural_helper \
 	"structural blocker helper loop reads from dedup_out heredoc string (t2894)"
 
 # -------------------------------------------------------------------
-# Assertion H: full-loop-helper-state.sh shellcheck-clean
+# Assertion H: full-loop state modules are shellcheck-clean
 # -------------------------------------------------------------------
 if command -v shellcheck >/dev/null 2>&1; then
-	if shellcheck "$HELPER_FILE" >/dev/null 2>&1; then
-		print_result "full-loop-helper-state.sh passes shellcheck" 0
+	if shellcheck "$ENTRYPOINT_FILE" "$HELPER_FILE" "$RELEASE_FILE" >/dev/null 2>&1; then
+		print_result "full-loop state modules pass shellcheck" 0
 	else
-		print_result "full-loop-helper-state.sh passes shellcheck" 1 "shellcheck reported violations"
+		print_result "full-loop state modules pass shellcheck" 1 "shellcheck reported violations"
 	fi
 else
 	# Linter binary unavailable in the runner — skip without failing.
