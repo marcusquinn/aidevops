@@ -370,7 +370,7 @@ _complete_task_require_open_task() {
 	local task_id="$1"
 	local todo_file="$2"
 
-	if grep -qE "^[[:space:]]*- \[ \] ${task_id}${TASK_COMPLETE_ID_BOUNDARY}" "$todo_file"; then
+	if grep -qE "^[[:space:]]*- \[[ >]\] ${task_id}${TASK_COMPLETE_ID_BOUNDARY}" "$todo_file"; then
 		return 0
 	fi
 
@@ -388,7 +388,7 @@ _complete_task_guard_explicit_subtasks() {
 	local todo_file="$2"
 	local explicit_subtasks=""
 
-	explicit_subtasks=$(grep -E "^[[:space:]]*- \[ \] ${task_id}\.[0-9]+( |$)" "$todo_file" || true)
+	explicit_subtasks=$(grep -E "^[[:space:]]*- \[[ >]\] ${task_id}\.[0-9]+( |$)" "$todo_file" || true)
 	if [[ -z "$explicit_subtasks" ]]; then
 		return 0
 	fi
@@ -404,7 +404,7 @@ _complete_task_guard_indented_subtasks() {
 	local task_id="$1"
 	local todo_file="$2"
 	local task_line=""
-	task_line=$(grep -E "^[[:space:]]*- \[ \] ${task_id}${TASK_COMPLETE_ID_BOUNDARY}" "$todo_file" | head -1)
+	task_line=$(grep -E "^[[:space:]]*- \[[ >]\] ${task_id}${TASK_COMPLETE_ID_BOUNDARY}" "$todo_file" | head -1)
 	local task_indent=""
 	task_indent=$(printf '%s\n' "$task_line" | sed -E 's/^([[:space:]]*).*/\1/' | wc -c)
 	task_indent=$((task_indent - 1)) # wc -c counts newline
@@ -412,12 +412,12 @@ _complete_task_guard_indented_subtasks() {
 	local open_subtasks=""
 	open_subtasks=$(awk -v tid="$task_id" -v boundary="$TASK_COMPLETE_ID_BOUNDARY" -v tindent="$task_indent" '
 		BEGIN { found=0 }
-		$0 ~ ("^[[:space:]]*- \\[ \\] " tid boundary) { found=1; next }
+		$0 ~ ("^[[:space:]]*- \\[[ >]\\] " tid boundary) { found=1; next }
 		found && /^[[:space:]]*- \[/ {
 			match($0, /^[[:space:]]*/);
 			line_indent = RLENGTH;
 			if (line_indent > tindent) {
-				if ($0 ~ /- \[ \]/) { print $0 }
+				if ($0 ~ /- \[[ >]\]/) { print $0 }
 			} else { found=0 }
 		}
 		found && /^[[:space:]]*$/ { next }
@@ -470,10 +470,10 @@ _complete_task_extract_block() {
 	awk -v tid="$task_id" -v boundary="$TASK_COMPLETE_ID_BOUNDARY" -v proof="$proof_log" -v today="$today" -v bf="$tmp_block" '
 BEGIN { in_block=0; block_done=0; block="" }
 
-!in_block && !block_done && $0 ~ ("^[[:space:]]*- \\[ \\] " tid boundary) {
+!in_block && !block_done && $0 ~ ("^[[:space:]]*- \\[[ >]\\] " tid boundary) {
     in_block=1
     line=$0
-    sub(/\[ \]/, "[x]", line)
+    sub(/\[[ >]\]/, "[x]", line)
     sub(/[[:space:]]*$/, "", line)
     line_token_count=split(line, line_tokens, /[[:space:]]+/)
     proof_token_count=split(proof, proof_tokens, /[[:space:]]+/)
@@ -664,7 +664,7 @@ _check_plan_tasks_complete() {
 
 	local ptask=""
 	for ptask in $plan_tasks; do
-		if grep -qE "^[[:space:]]*- \[ \] ${ptask}( |$)" "$todo_file"; then
+		if grep -qE "^[[:space:]]*- \[[ >]\] ${ptask}( |$)" "$todo_file"; then
 			log_info "Task $ptask is still open — plan not complete"
 			return 1
 		fi
@@ -862,7 +862,7 @@ task_issue_number() {
 	local task_line=""
 	local issue_number=""
 
-	task_line=$(grep -E "^- \[[ x]\] ${task_id}${TASK_COMPLETE_ID_BOUNDARY}" "$todo_file" | head -1 || true)
+	task_line=$(grep -E "^- \[[ >x]\] ${task_id}${TASK_COMPLETE_ID_BOUNDARY}" "$todo_file" | head -1 || true)
 	if [[ -z "$task_line" ]]; then
 		log_error "Task $task_id not found in an open TODO.md entry"
 		return 1

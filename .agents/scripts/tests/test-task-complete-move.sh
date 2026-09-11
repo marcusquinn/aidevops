@@ -297,16 +297,16 @@ else
 fi
 
 # =============================================================================
-# Test 5: Task in ## In Progress — also moved to Done
+# Test 5: [>] task in ## In Progress — also moved to Done
 # =============================================================================
-printf '\nTest 5: task in ## In Progress is moved to Done\n'
+printf '\nTest 5: [>] task in ## In Progress is moved to Done\n'
 
 FIXTURE="${FIXTURE_HEADER}
 ## Backlog
 
 ## In Progress
 
-- [ ] t500 in-progress task #tag ~1h ref:GH#500 logged:2026-01-01
+- [>] t500 in-progress task #tag ~1h ref:GH#500 logged:2026-01-01
 
 ## In Review
 

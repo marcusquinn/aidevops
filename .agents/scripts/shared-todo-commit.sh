@@ -445,10 +445,11 @@ _todo_planning_pr_title() {
 	if [[ "$manifest_count" -eq 1 ]]; then
 		task_id="${task_manifest%%$'\t'*}"
 		subject="${commit_msg#*: }"
-		printf 'plan(%s): %s\n' "$task_id" "$subject"
+		printf '%s: %s\n' "$task_id" "$commit_msg"
 		return 0
 	fi
-	printf '%s\n' "$commit_msg"
+	subject="${commit_msg#*: }"
+	printf 'chore: %s\n' "$subject"
 	return 0
 }
 
