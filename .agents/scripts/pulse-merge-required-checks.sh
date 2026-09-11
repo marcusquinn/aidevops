@@ -430,6 +430,64 @@ _pmrc_snapshot_log_failure() {
 	return 0
 }
 
+_pmrc_snapshot_retry_timeout_seconds() {
+	local timeout_seconds="${AIDEVOPS_PULSE_MERGE_SNAPSHOT_RETRY_TIMEOUT_SECONDS:-10}"
+	local deadline=0 candidate="" now_epoch="" remaining_seconds=""
+	[[ "$timeout_seconds" =~ ^[0-9]+$ && "$timeout_seconds" -ge 1 && "$timeout_seconds" -le 30 ]] || timeout_seconds=10
+	for candidate in "${_PMP_MERGE_PASS_DEADLINE_EPOCH:-0}" "${AIDEVOPS_GH_DEADLINE_EPOCH:-0}"; do
+		[[ "$candidate" =~ ^[0-9]+$ && "$candidate" -gt 0 ]] || continue
+		[[ "$deadline" -eq 0 || "$candidate" -lt "$deadline" ]] && deadline="$candidate"
+	done
+	if [[ "$deadline" -gt 0 ]]; then
+		now_epoch=$(date +%s) || return 1
+		remaining_seconds=$((deadline - now_epoch - 1))
+		[[ "$remaining_seconds" -ge 1 ]] || return 1
+		[[ "$remaining_seconds" -lt "$timeout_seconds" ]] && timeout_seconds="$remaining_seconds"
+	fi
+	printf '%s' "$timeout_seconds"
+	return 0
+}
+
+_pmrc_snapshot_checks_with_retry() {
+	local repo_slug="$1"
+	local head_sha="$2"
+	local checks_json="" snapshot_rc=0 retry_timeout=""
+	local retry_delay="${AIDEVOPS_PULSE_MERGE_SNAPSHOT_RETRY_DELAY_SECONDS:-1}"
+
+	checks_json=$(_pmrc_snapshot_checks_json "$repo_slug" "$head_sha") || snapshot_rc=$?
+	if [[ "$snapshot_rc" -eq 0 ]]; then
+		printf '%s\n' "$checks_json"
+		return 0
+	fi
+	[[ "$snapshot_rc" -eq 75 || "$snapshot_rc" -eq 124 ]] || return "$snapshot_rc"
+	retry_timeout=$(_pmrc_snapshot_retry_timeout_seconds) || return "$snapshot_rc"
+	[[ "$retry_delay" =~ ^[0-9]+$ && "$retry_delay" -le 5 ]] || retry_delay=1
+	echo "[pulse-merge] pre-merge snapshot: transient check-set read rc=${snapshot_rc} for head ${head_sha:0:12} in ${repo_slug}; retrying once with ${retry_timeout}s timeout" >>"$LOGFILE"
+	[[ "$retry_delay" -eq 0 ]] || sleep "$retry_delay"
+
+	snapshot_rc=0
+	checks_json=$(AIDEVOPS_GH_READ_TIMEOUT="$retry_timeout" \
+		_pmrc_snapshot_checks_json "$repo_slug" "$head_sha") || snapshot_rc=$?
+	[[ "$snapshot_rc" -eq 0 ]] || return "$snapshot_rc"
+	printf '%s\n' "$checks_json"
+	return 0
+}
+
+_pmrc_prioritize_snapshot_retry() {
+	local repo_slug="$1"
+	local pr_number="$2"
+	local snapshot_rc="$3"
+	local unavailable="unavailable"
+	local queue_action="$unavailable"
+	if declare -F _pulse_merge_queue_defer >/dev/null 2>&1; then
+		queue_action=$(_pulse_merge_queue_defer "$repo_slug" "$pr_number" 2>>"$LOGFILE") || queue_action="$unavailable"
+	elif declare -F _pulse_merge_queue_enqueue >/dev/null 2>&1; then
+		queue_action=$(_pulse_merge_queue_enqueue "$repo_slug" "$pr_number" 2>>"$LOGFILE") || queue_action="$unavailable"
+	fi
+	echo "[pulse-merge] pre-merge snapshot: transient exact-head read exhausted for PR #${pr_number} in ${repo_slug} (rc=${snapshot_rc}); merge remains blocked and next-cycle priority is preserved (retry_hint=${queue_action})" >>"$LOGFILE"
+	return 0
+}
+
 _pmrc_record_preflight_check_mismatch() {
 	if declare -F gh_record_efficiency_evidence >/dev/null 2>&1; then
 		gh_record_efficiency_evidence guardrails.required_check_merge_preflight_mismatches 1 2>/dev/null || true
@@ -549,15 +607,18 @@ _pmrc_snapshot_checks_json() {
 	local head_sha="$2"
 	local runs_pages="" statuses_json="" checks_json=""
 
+	local read_rc=0
 	runs_pages=$(_pmrc_gh_read gh api "repos/${repo_slug}/commits/${head_sha}/check-runs?per_page=100" \
-		--paginate --slurp 2>/dev/null) || {
+		--paginate --slurp 2>/dev/null) || read_rc=$?
+	if [[ "$read_rc" -ne 0 ]]; then
 		_pmrc_snapshot_log_failure "$repo_slug" "${PMRC_SUBJECT_HEAD_PREFIX}${head_sha:0:12}" "check-runs fetch"
-		return 1
-	}
-	statuses_json=$(_pmrc_gh_read gh api "repos/${repo_slug}/commits/${head_sha}/status" 2>/dev/null) || {
+		return "$read_rc"
+	fi
+	statuses_json=$(_pmrc_gh_read gh api "repos/${repo_slug}/commits/${head_sha}/status" 2>/dev/null) || read_rc=$?
+	if [[ "$read_rc" -ne 0 ]]; then
 		_pmrc_snapshot_log_failure "$repo_slug" "${PMRC_SUBJECT_HEAD_PREFIX}${head_sha:0:12}" "commit-status fetch"
-		return 1
-	}
+		return "$read_rc"
+	fi
 	# Stream API documents over stdin instead of passing large check-run payloads
 	# through --argjson, which can exceed the OS per-argument limit (GH#28164).
 	checks_json=$(printf '%s\n%s\n' "$runs_pages" "$statuses_json" |
@@ -1065,10 +1126,15 @@ _pulse_merge_preflight_snapshot_gate() {
 		_pmrc_snapshot_log_failure "$repo_slug" "${PMRC_SUBJECT_PR_PREFIX}${pr_number}" "required-context lookup"
 		return 1
 	}
-	checks_json=$(_pmrc_snapshot_checks_json "$repo_slug" "$current_head_sha") || {
+	local snapshot_rc=0
+	checks_json=$(_pmrc_snapshot_checks_with_retry "$repo_slug" "$current_head_sha") || snapshot_rc=$?
+	if [[ "$snapshot_rc" -ne 0 ]]; then
 		_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND="$PMRC_BLOCKER_SNAPSHOT_UNAVAILABLE"
+		if [[ "$snapshot_rc" -eq 75 || "$snapshot_rc" -eq 124 ]]; then
+			_pmrc_prioritize_snapshot_retry "$repo_slug" "$pr_number" "$snapshot_rc"
+		fi
 		return 1
-	}
+	fi
 	if declare -F _pmp_record_same_pass_check_evidence >/dev/null 2>&1; then
 		_pmp_record_same_pass_check_evidence "$repo_slug" "$current_head_sha" "$checks_json" || true
 	fi
