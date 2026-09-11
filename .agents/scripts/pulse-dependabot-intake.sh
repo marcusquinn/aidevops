@@ -96,7 +96,7 @@ _pulse_dependabot_completed_intake_issue() {
 	return $?
 }
 
-# Close an authentic held source PR only when its generated worker intake is
+# Close an authentic policy-held source PR only when its generated worker intake is
 # terminal and a different same-repository PR verifiably merged to close it.
 # Missing, truncated, stale-head, or unavailable evidence preserves the hold.
 _pulse_dependabot_close_superseded_source_pr() {
@@ -109,26 +109,25 @@ _pulse_dependabot_close_superseded_source_pr() {
 	local final_json=""
 	local final_state=""
 	local final_head=""
-	local final_labels=""
 	local close_comment=""
 
-	declare -F _psh_find_merged_closer_for_closed_issue >/dev/null 2>&1 || return 1
-	declare -F gh_pr_close_safe >/dev/null 2>&1 || return 1
-	intake_issue=$(_pulse_dependabot_completed_intake_issue "$pr_number" "$repo_slug" "$marker") || return 1
+	_PULSE_DEPENDABOT_COMPLETED_INTAKE_ISSUE=""
+	_PULSE_DEPENDABOT_SUPERSEDING_PR=""
+	intake_issue=$(_pulse_dependabot_completed_intake_issue "$pr_number" "$repo_slug" "$marker") || return 2
 	[[ "$intake_issue" =~ ^[0-9]+$ ]] || return 1
+	_PULSE_DEPENDABOT_COMPLETED_INTAKE_ISSUE="$intake_issue"
+	declare -F _psh_find_merged_closer_for_closed_issue >/dev/null 2>&1 || return 2
+	declare -F gh_pr_close_safe >/dev/null 2>&1 || return 2
 	superseding_pr=$(_psh_find_merged_closer_for_closed_issue \
-		"$repo_slug" "$intake_issue" "$pr_number" 2>/dev/null) || return 1
-	[[ "$superseding_pr" =~ ^[0-9]+$ && "$superseding_pr" != "$pr_number" ]] || return 1
+		"$repo_slug" "$intake_issue" "$pr_number" 2>/dev/null) || return 2
+	[[ "$superseding_pr" =~ ^[0-9]+$ && "$superseding_pr" != "$pr_number" ]] || return 2
 
 	final_json=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
-		--json state,headRefOid,labels 2>/dev/null) || return 1
-	final_state=$(printf '%s' "$final_json" | jq -r '.state // ""' 2>/dev/null) || return 1
-	final_head=$(printf '%s' "$final_json" | jq -r '.headRefOid // ""' 2>/dev/null) || return 1
-	final_labels=$(printf '%s' "$final_json" | jq -r '[.labels[]?.name] | join(",")' 2>/dev/null) || return 1
-	[[ "$final_state" == "OPEN" && "$final_head" == "$expected_head_sha" ]] || return 1
-	[[ ",${final_labels}," == *",needs-maintainer-review,"* ]] || return 1
+		--json state,headRefOid,labels 2>/dev/null) || return 2
+	final_state=$(printf '%s' "$final_json" | jq -r '.state // ""' 2>/dev/null) || return 2
+	final_head=$(printf '%s' "$final_json" | jq -r '.headRefOid // ""' 2>/dev/null) || return 2
+	[[ "$final_state" == "OPEN" && "$final_head" == "$expected_head_sha" ]] || return 2
 
-	_PULSE_DEPENDABOT_COMPLETED_INTAKE_ISSUE="$intake_issue"
 	_PULSE_DEPENDABOT_SUPERSEDING_PR="$superseding_pr"
 	if [[ "${DRY_RUN:-0}" == "1" ]]; then
 		echo "[pulse-dependabot-intake] DRY-RUN: PR #${pr_number} in ${repo_slug} would close as superseded by merged PR #${superseding_pr} for completed intake #${intake_issue}" >>"$LOGFILE"
@@ -138,18 +137,73 @@ _pulse_dependabot_close_superseded_source_pr() {
 	close_comment="<!-- aidevops:dependabot-source-superseded intake=${intake_issue} replacement=${superseding_pr} -->
 Closing this Dependabot source PR as superseded: generated worker intake #${intake_issue} is terminal and was closed by verified merged replacement PR #${superseding_pr}.
 
-The explicit maintainer hold prevented unsafe automatic merge while the replacement converged. Pulse revalidated the source head and hold immediately before this close.
+The external-authority policy prevented unsafe automatic merge while the replacement converged. Pulse revalidated the authentic source head immediately before this close.
 
 _Closed by deterministic Dependabot lifecycle reconciliation (GH#30478)._"
 	if ! gh_pr_close_safe "$pr_number" --repo "$repo_slug" --comment "$close_comment" >/dev/null 2>&1; then
 		echo "[pulse-dependabot-intake] PR #${pr_number} in ${repo_slug}: verified replacement PR #${superseding_pr}, but source close failed" >>"$LOGFILE"
-		return 1
+		return 2
 	fi
 	if declare -F _pulse_merge_invalidate_pr_list_cache >/dev/null 2>&1; then
 		_pulse_merge_invalidate_pr_list_cache "$repo_slug" "closed superseded Dependabot source PR #${pr_number}"
 	fi
 	echo "[pulse-dependabot-intake] PR #${pr_number} in ${repo_slug}: closed as superseded by merged PR #${superseding_pr} for completed intake #${intake_issue}" >>"$LOGFILE"
 	return 0
+}
+
+# Classify the one authenticity failure that is both exact-head verified and
+# actionable without guessing: a genuine Dependabot PR whose commit set contains
+# a commit not authored by Dependabot. Unknown snapshot failures remain write-free.
+_pulse_dependabot_mark_modified_source_pr() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local expected_head_sha="$3"
+	local marker="<!-- aidevops:dependabot-modified-source head=${expected_head_sha} -->"
+	local body=""
+
+	declare -F _gh_idempotent_comment >/dev/null 2>&1 || return 1
+	declare -F gh_pr_edit_safe >/dev/null 2>&1 || return 1
+	if [[ "${DRY_RUN:-0}" == "1" ]]; then
+		echo "[pulse-dependabot-intake] DRY-RUN: PR #${pr_number} in ${repo_slug} would receive an actionable maintainer hold for non-Dependabot commit authorship" >>"$LOGFILE"
+		return 0
+	fi
+	body="${marker}
+Pulse verified this PR's GitHub Bot identity, same-repository head, and exact head SHA, but the current commit set contains non-Dependabot commit authorship. Automated merge and worker intake remain blocked because a modified bot branch cannot be treated as an authentic Dependabot update.
+
+Maintainer action: inspect the added commits, then either close and recreate the update from Dependabot or use the repository's existing current-head maintainer approval workflow after accepting the modified branch."
+	_gh_idempotent_comment "$pr_number" "$repo_slug" "$marker" "$body" "pr" || return 1
+	gh_pr_edit_safe "$pr_number" --repo "$repo_slug" \
+		--add-label "needs-maintainer-review" >/dev/null 2>&1 || return 1
+	echo "[pulse-dependabot-intake] PR #${pr_number} in ${repo_slug}: exact-head bot branch contains non-Dependabot commit authorship; added actionable maintainer hold" >>"$LOGFILE"
+	return 0
+}
+
+_pulse_dependabot_preflight_route() {
+	local pr_number="$1" repo_slug="$2" pr_author="$3" expected_head_sha="$4" marker="$5"
+	local reconcile_rc=0
+
+	#aidevops:trust-boundary — only a typed failure reached after exact-head Bot,
+	# repository, and source-head verification may trigger a maintainer hold write.
+	if ! _is_authentic_dependabot_pr "$pr_number" "$repo_slug" "$pr_author" "$expected_head_sha"; then
+		if [[ "${_TRUSTED_DEPENDABOT_AUTH_FAILURE_REASON:-}" == "commit-author-mismatch" ]] &&
+			_pulse_dependabot_mark_modified_source_pr "$pr_number" "$repo_slug" "$expected_head_sha"; then
+			return 5
+		fi
+		return 1
+	fi
+	if _pulse_dependabot_close_superseded_source_pr \
+		"$pr_number" "$repo_slug" "$expected_head_sha" "$marker"; then
+		return 4
+	else
+		reconcile_rc=$?
+	fi
+	[[ "$reconcile_rc" -eq 1 ]] && return 0
+	if [[ "${_PULSE_DEPENDABOT_COMPLETED_INTAKE_ISSUE:-}" =~ ^[0-9]+$ ]]; then
+		echo "[pulse-dependabot-intake] PR #${pr_number} in ${repo_slug}: completed intake #${_PULSE_DEPENDABOT_COMPLETED_INTAKE_ISSUE} has no verified merged replacement; preserving source without duplicate intake" >>"$LOGFILE"
+	else
+		echo "[pulse-dependabot-intake] PR #${pr_number} in ${repo_slug}: completed-intake reconciliation evidence unavailable; preserving source without duplicate intake" >>"$LOGFILE"
+	fi
+	return 6
 }
 
 # Return 0 when the source PR carries an explicit maintainer-review hold,
@@ -280,6 +334,7 @@ _pulse_route_dependabot_pr_to_worker_issue() {
 	local issue_output=""
 	local lock_dir=""
 	local hold_rc=0
+	local preflight_rc=0
 	local scope_lines=""
 
 	case "$reason" in
@@ -296,14 +351,12 @@ _pulse_route_dependabot_pr_to_worker_issue() {
 		echo "[pulse-dependabot-intake] PR #${pr_number} in ${repo_slug}: existing worker issue ${existing_url}" >>"$LOGFILE"
 		return 0
 	fi
-	_is_authentic_dependabot_pr "$pr_number" "$repo_slug" "$pr_author" "$expected_head_sha" || return 1
+	_pulse_dependabot_preflight_route \
+		"$pr_number" "$repo_slug" "$pr_author" "$expected_head_sha" "$marker" || preflight_rc=$?
+	[[ "$preflight_rc" -eq 0 ]] || return "$preflight_rc"
 	_pulse_dependabot_pr_has_maintainer_hold "$pr_number" "$repo_slug" || hold_rc=$?
 	case "$hold_rc" in
 	0)
-		if _pulse_dependabot_close_superseded_source_pr \
-			"$pr_number" "$repo_slug" "$expected_head_sha" "$marker"; then
-			return 4
-		fi
 		echo "[pulse-dependabot-intake] PR #${pr_number} in ${repo_slug}: preserving explicit needs-maintainer-review hold; no worker issue created" >>"$LOGFILE"
 		return 3
 		;;

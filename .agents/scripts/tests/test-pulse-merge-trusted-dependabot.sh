@@ -388,6 +388,25 @@ test_spoofed_author_fails() {
 	return 0
 }
 
+test_human_commit_sets_actionable_auth_failure() {
+	local pr_json=""
+
+	write_pr_fixture "dependabot" "alex" "requirements-lock.txt" "SUCCESS"
+	pr_json=$(<"${TEST_ROOT}/pr.json")
+	if _trusted_dependabot_snapshot_is_authentic \
+		"$pr_json" "owner/repo" "dependabot[bot]" "head-current"; then
+		print_result "human-modified Dependabot branch fails authenticity" 1 "Unexpected authentic result"
+		return 0
+	fi
+	if [[ "${_TRUSTED_DEPENDABOT_AUTH_FAILURE_REASON:-}" == "commit-author-mismatch" ]]; then
+		print_result "human-modified Dependabot branch exposes typed failure" 0
+		return 0
+	fi
+	print_result "human-modified Dependabot branch exposes typed failure" 1 \
+		"reason=${_TRUSTED_DEPENDABOT_AUTH_FAILURE_REASON:-empty}"
+	return 0
+}
+
 test_dependabot_login_with_user_type_fails() {
 	write_pr_fixture "dependabot" "dependabot[bot]" "requirements-lock.txt" "SUCCESS"
 	jq '.data.repository.pullRequest.author.__typename = "User"' \
@@ -735,6 +754,7 @@ main() {
 	test_trusted_dependabot_rejects_paginated_snapshot
 	test_trusted_dependabot_rejects_incomplete_snapshot
 	test_spoofed_author_fails
+	test_human_commit_sets_actionable_auth_failure
 	test_dependabot_login_with_user_type_fails
 	test_security_failure_fails
 	test_non_dependency_file_fails

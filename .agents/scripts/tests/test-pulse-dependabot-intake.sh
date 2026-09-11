@@ -9,7 +9,9 @@ INTAKE_SCRIPT="${SCRIPT_DIR}/../pulse-dependabot-intake.sh"
 TEST_ROOT=""
 OPEN_ISSUES_JSON="[]"
 CLOSED_ISSUES_JSON="[]"
+CLOSED_ISSUE_LIST_FAIL=0
 AUTHENTIC=1
+AUTH_FAILURE_REASON="snapshot-unavailable"
 PR_LABELS=""
 PR_FINAL_JSON='{"state":"OPEN","headRefOid":"head-current","labels":[{"name":"needs-maintainer-review"}]}'
 PR_SCOPE_JSON='{"headRefOid":"head-current","files":[{"path":"package.json"},{"path":"bun.lock"}]}'
@@ -36,15 +38,20 @@ _is_authentic_dependabot_pr() {
 	local repo_slug="$2"
 	local pr_author="$3"
 	local expected_head_sha="$4"
-	[[ "$AUTHENTIC" -eq 1 && "$pr_number" == "30038" && "$repo_slug" == "owner/repo" &&
-		"$pr_author" == "app/dependabot" && "$expected_head_sha" == "head-current" ]]
-	return $?
+	if [[ "$AUTHENTIC" -eq 1 && "$pr_number" == "30038" && "$repo_slug" == "owner/repo" &&
+		"$pr_author" == "app/dependabot" && "$expected_head_sha" == "head-current" ]]; then
+		_TRUSTED_DEPENDABOT_AUTH_FAILURE_REASON=""
+		return 0
+	fi
+	_TRUSTED_DEPENDABOT_AUTH_FAILURE_REASON="$AUTH_FAILURE_REASON"
+	return 1
 }
 
 gh_issue_list() {
 	local args=" $* "
 	printf '%s\n' "$*" >>"${TEST_ROOT}/issue-list-args"
 	if [[ "$args" == *" --state closed "* ]]; then
+		[[ "$CLOSED_ISSUE_LIST_FAIL" -eq 0 ]] || return 1
 		printf '%s\n' "$CLOSED_ISSUES_JSON"
 	else
 		printf '%s\n' "$OPEN_ISSUES_JSON"
@@ -76,6 +83,16 @@ _psh_find_merged_closer_for_closed_issue() {
 
 gh_pr_close_safe() {
 	printf '%s\n' "$@" >"${TEST_ROOT}/pr-close-args"
+	return 0
+}
+
+gh_pr_edit_safe() {
+	printf '%s\n' "$@" >"${TEST_ROOT}/pr-edit-args"
+	return 0
+}
+
+_gh_idempotent_comment() {
+	printf '%s\n' "$@" >"${TEST_ROOT}/idempotent-comment-args"
 	return 0
 }
 
@@ -217,14 +234,36 @@ test_saturated_target_lookup_blocks_dispatch() {
 }
 
 test_rejects_unverified_author() {
-	rm -f "${TEST_ROOT}/create-args"
+	rm -f "${TEST_ROOT}/create-args" "${TEST_ROOT}/pr-edit-args" "${TEST_ROOT}/idempotent-comment-args"
 	OPEN_ISSUES_JSON="[]"
 	AUTHENTIC=0
+	AUTH_FAILURE_REASON="snapshot-unavailable"
 	if _pulse_route_dependabot_pr_to_worker_issue "30038" "owner/repo" "app/dependabot" "head-current" "policy-ineligible"; then
 		return 1
 	fi
-	[[ ! -e "${TEST_ROOT}/create-args" ]]
+	[[ ! -e "${TEST_ROOT}/create-args" && ! -e "${TEST_ROOT}/pr-edit-args" &&
+		! -e "${TEST_ROOT}/idempotent-comment-args" ]]
 	return $?
+}
+
+test_classifies_human_modified_bot_branch() {
+	local route_rc=0
+
+	rm -f "${TEST_ROOT}/create-args" "${TEST_ROOT}/pr-edit-args" "${TEST_ROOT}/idempotent-comment-args"
+	OPEN_ISSUES_JSON="[]"
+	AUTHENTIC=0
+	AUTH_FAILURE_REASON="commit-author-mismatch"
+	_pulse_route_dependabot_pr_to_worker_issue \
+		"30038" "owner/repo" "app/dependabot" "head-current" "policy-ineligible" || route_rc=$?
+	[[ "$route_rc" -eq 5 ]] || return 1
+	[[ ! -e "${TEST_ROOT}/create-args" ]] || return 1
+	assert_file_contains "modified bot branch receives maintainer hold" \
+		"${TEST_ROOT}/pr-edit-args" "needs-maintainer-review"
+	assert_file_contains "modified bot branch receives actionable explanation" \
+		"${TEST_ROOT}/idempotent-comment-args" "non-Dependabot commit authorship"
+	AUTHENTIC=1
+	AUTH_FAILURE_REASON="snapshot-unavailable"
+	return 0
 }
 
 test_preserves_explicit_maintainer_hold() {
@@ -244,15 +283,15 @@ test_preserves_explicit_maintainer_hold() {
 	return 0
 }
 
-test_closes_held_source_after_verified_replacement() {
+test_closes_policy_held_source_after_verified_replacement() {
 	local route_rc=0
 
 	rm -f "${TEST_ROOT}/create-args" "${TEST_ROOT}/pr-close-args"
 	OPEN_ISSUES_JSON="[]"
 	CLOSED_ISSUES_JSON='[{"number":42,"body":"<!-- aidevops:dependabot-pr-intake repo=owner/repo pr=30038 -->","labels":[{"name":"origin:worker"},{"name":"status:done"},{"name":"solved:worker"}]}]'
 	AUTHENTIC=1
-	PR_LABELS="needs-maintainer-review"
-	PR_FINAL_JSON='{"state":"OPEN","headRefOid":"head-current","labels":[{"name":"needs-maintainer-review"}]}'
+	PR_LABELS=""
+	PR_FINAL_JSON='{"state":"OPEN","headRefOid":"head-current","labels":[]}'
 	PR_VIEW_FAIL=0
 	SUPERSEDING_PR="99"
 	_pulse_route_dependabot_pr_to_worker_issue "30038" "owner/repo" "app/dependabot" "head-current" "policy-ineligible" || route_rc=$?
@@ -266,6 +305,41 @@ test_closes_held_source_after_verified_replacement() {
 	return 0
 }
 
+test_completed_intake_without_replacement_does_not_duplicate() {
+	local route_rc=0
+
+	rm -f "${TEST_ROOT}/create-args" "${TEST_ROOT}/pr-close-args"
+	OPEN_ISSUES_JSON="[]"
+	CLOSED_ISSUES_JSON='[{"number":42,"body":"<!-- aidevops:dependabot-pr-intake repo=owner/repo pr=30038 -->","labels":[{"name":"origin:worker"},{"name":"status:done"},{"name":"solved:worker"}]}]'
+	AUTHENTIC=1
+	PR_LABELS=""
+	PR_FINAL_JSON='{"state":"OPEN","headRefOid":"head-current","labels":[]}'
+	SUPERSEDING_PR=""
+	_pulse_route_dependabot_pr_to_worker_issue "30038" "owner/repo" "app/dependabot" "head-current" "policy-ineligible" || route_rc=$?
+	[[ "$route_rc" -eq 6 ]] || return 1
+	[[ ! -e "${TEST_ROOT}/create-args" && ! -e "${TEST_ROOT}/pr-close-args" ]] || return 1
+	assert_file_contains "completed intake without replacement fails closed" \
+		"$LOGFILE" "completed intake #42 has no verified merged replacement; preserving source without duplicate intake"
+	CLOSED_ISSUES_JSON="[]"
+	return 0
+}
+
+test_unavailable_completion_lookup_does_not_duplicate() {
+	local route_rc=0
+
+	rm -f "${TEST_ROOT}/create-args"
+	OPEN_ISSUES_JSON="[]"
+	CLOSED_ISSUE_LIST_FAIL=1
+	AUTHENTIC=1
+	_pulse_route_dependabot_pr_to_worker_issue "30038" "owner/repo" "app/dependabot" "head-current" "policy-ineligible" || route_rc=$?
+	[[ "$route_rc" -eq 6 ]] || return 1
+	[[ ! -e "${TEST_ROOT}/create-args" ]] || return 1
+	assert_file_contains "unavailable completion evidence fails closed" \
+		"$LOGFILE" "completed-intake reconciliation evidence unavailable; preserving source without duplicate intake"
+	CLOSED_ISSUE_LIST_FAIL=0
+	return 0
+}
+
 test_preserves_hold_when_terminal_issue_has_no_merged_replacement() {
 	local route_rc=0
 
@@ -276,7 +350,7 @@ test_preserves_hold_when_terminal_issue_has_no_merged_replacement() {
 	PR_LABELS="needs-maintainer-review"
 	SUPERSEDING_PR=""
 	_pulse_route_dependabot_pr_to_worker_issue "30038" "owner/repo" "app/dependabot" "head-current" "policy-ineligible" || route_rc=$?
-	[[ "$route_rc" -eq 3 ]] || return 1
+	[[ "$route_rc" -eq 6 ]] || return 1
 	[[ ! -e "${TEST_ROOT}/pr-close-args" ]] || return 1
 	CLOSED_ISSUES_JSON="[]"
 	PR_LABELS=""
@@ -312,7 +386,7 @@ test_preserves_hold_when_source_head_drifted() {
 	PR_FINAL_JSON='{"state":"OPEN","headRefOid":"head-changed","labels":[{"name":"needs-maintainer-review"}]}'
 	SUPERSEDING_PR="99"
 	_pulse_route_dependabot_pr_to_worker_issue "30038" "owner/repo" "app/dependabot" "head-current" "policy-ineligible" || route_rc=$?
-	[[ "$route_rc" -eq 3 ]] || return 1
+	[[ "$route_rc" -eq 6 ]] || return 1
 	[[ ! -e "${TEST_ROOT}/pr-close-args" ]] || return 1
 	CLOSED_ISSUES_JSON="[]"
 	PR_FINAL_JSON='{"state":"OPEN","headRefOid":"head-current","labels":[{"name":"needs-maintainer-review"}]}'
@@ -453,8 +527,11 @@ main() {
 	printf 'PASS existing intake is idempotent\n'
 	test_rejects_unverified_author
 	printf 'PASS unverified authors fail closed\n'
+	test_classifies_human_modified_bot_branch
 	test_preserves_explicit_maintainer_hold
-	test_closes_held_source_after_verified_replacement
+	test_closes_policy_held_source_after_verified_replacement
+	test_completed_intake_without_replacement_does_not_duplicate
+	test_unavailable_completion_lookup_does_not_duplicate
 	test_preserves_hold_when_terminal_issue_has_no_merged_replacement
 	test_preserves_hold_without_worker_solution_attribution
 	test_preserves_hold_when_source_head_drifted

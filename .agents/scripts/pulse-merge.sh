@@ -491,12 +491,14 @@ _pm_gate_author_trust() {
 			# #aidevops:trust-boundary — verified provenance and dependency
 			# allowlisting establish authenticity, not collaborator authority.
 			# Dependabot remains external and may proceed only with independent,
-			# current-head maintainer approval. Do not route a policy-only hold to
-			# repair intake: there is no code or dependency defect to repair.
+			# current-head maintainer approval. A policy-only hold still enters the
+			# Dependabot lifecycle router so existing replacement work can converge
+			# or a tightly scoped maintainer-briefed intake can be created.
 			if _has_maintainer_crypto_approval "$pr_number" "$repo_slug" "$expected_head_sha"; then
 				echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} — verified Dependabot author ${pr_author} remains external but has current-head maintainer crypto-approval, proceeding" >>"$LOGFILE"
 			else
-				echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — verified Dependabot author ${pr_author} remains external and lacks current-head maintainer crypto-approval; preserving policy hold without repair intake" >>"$LOGFILE"
+				echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — verified Dependabot author ${pr_author} remains external and lacks current-head maintainer crypto-approval; entering lifecycle reconciliation" >>"$LOGFILE"
+				_pm_gate_route_ineligible_author "$pr_number" "$repo_slug" "$pr_author" "$expected_head_sha"
 				return 1
 			fi
 		elif _has_maintainer_crypto_approval "$pr_number" "$repo_slug" "$expected_head_sha"; then
@@ -522,6 +524,8 @@ _pm_gate_route_ineligible_author() {
 			echo "[pulse-wrapper] Merge pass: closed superseded Dependabot source PR #${pr_number} in ${repo_slug} after verified replacement PR #${_PULSE_DEPENDABOT_SUPERSEDING_PR:-unknown} (GH#30478)" >>"$LOGFILE"
 		fi
 		;;
+	5) echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} — exact-head Dependabot source contains non-Dependabot commit authorship; actionable maintainer hold applied" >>"$LOGFILE" ;;
+	6) echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} — completed Dependabot intake lacks verified replacement evidence; preserving source without duplicate intake" >>"$LOGFILE" ;;
 	*) echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — author ${pr_author} is not a collaborator" >>"$LOGFILE" ;;
 	esac
 	return 0
