@@ -6,7 +6,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HELPER="${SCRIPT_DIR}/../review-evidence-helper.sh"
-TEST_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/review-evidence-test.XXXXXX")"
+TEST_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/private-review-evidence-fixture.XXXXXX")"
+TEST_ROOT_BASENAME="$(basename "$TEST_ROOT")"
 GIT_BIN="${AIDEVOPS_TEST_GIT_BIN:-/usr/bin/git}"
 
 git() {
@@ -96,6 +97,7 @@ fi
 if grep -Fq "$TEST_ROOT" "$LOCAL_BUNDLE"; then
 	fail 'bundle exposed host test path'
 fi
+assert_not_contains "$LOCAL_BUNDLE" "$TEST_ROOT_BASENAME" 'bundle exposed host test path basename'
 
 git -C "$REPO" add tracked.txt untracked.txt
 git -C "$REPO" add tracked.bin untracked.bin
