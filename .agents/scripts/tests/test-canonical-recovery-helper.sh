@@ -1133,6 +1133,172 @@ else
 	exit 1
 fi
 
+UNBORN_REPO="${ROOT}/unborn-repo"
+UNBORN_REMOTE="${ROOT}/unborn-remote.git"
+UNBORN_UPDATER="${ROOT}/unborn-updater"
+UNBORN_CONFIG="${ROOT}/unborn-repos.json"
+UNBORN_URL="ssh://git@github.com:22/Example/Unborn-Mirror.git"
+mkdir -p "$UNBORN_REPO" "$UNBORN_UPDATER"
+/usr/bin/git init -q --bare "$UNBORN_REMOTE"
+/usr/bin/git -C "$UNBORN_UPDATER" init -q -b develop
+/usr/bin/git -C "$UNBORN_UPDATER" config user.name Test
+/usr/bin/git -C "$UNBORN_UPDATER" config user.email test@example.invalid
+/usr/bin/git -C "$UNBORN_UPDATER" config commit.gpgsign false
+printf 'unborn remote seed\n' >"${UNBORN_UPDATER}/README.md"
+/usr/bin/git -C "$UNBORN_UPDATER" add README.md
+/usr/bin/git -C "$UNBORN_UPDATER" commit -q -m seed
+unborn_parent_tip=$(/usr/bin/git -C "$UNBORN_UPDATER" rev-parse HEAD)
+printf 'unborn remote target\n' >"${UNBORN_UPDATER}/remote-only.txt"
+/usr/bin/git -C "$UNBORN_UPDATER" add remote-only.txt
+/usr/bin/git -C "$UNBORN_UPDATER" commit -q -m target
+/usr/bin/git -C "$UNBORN_UPDATER" remote add origin "$UNBORN_REMOTE"
+/usr/bin/git -C "$UNBORN_UPDATER" push -q origin develop
+/usr/bin/git -C "$UNBORN_REMOTE" symbolic-ref HEAD refs/heads/develop
+unborn_remote_tip=$(/usr/bin/git -C "$UNBORN_REMOTE" rev-parse refs/heads/develop)
+
+/usr/bin/git -C "$UNBORN_REPO" init -q -b develop
+/usr/bin/git -C "$UNBORN_REPO" config "url.${UNBORN_REMOTE}.insteadOf" "$UNBORN_URL"
+/usr/bin/git -C "$UNBORN_REPO" remote add github "$UNBORN_URL"
+printf '{"initialized_repos":[{"slug":"example/unborn-mirror","path":"%s","pr_base_branch":"develop"}]}\n' \
+	"$UNBORN_REPO" >"$UNBORN_CONFIG"
+export AIDEVOPS_REPOS_CONFIG="$UNBORN_CONFIG"
+
+unborn_fast_forward_output=""
+unborn_fast_forward_rc=0
+unborn_fast_forward_output=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git bash "$HELPER" \
+	fast-forward-current --repo "$UNBORN_REPO" --branch develop --issue 31755 \
+	--confirm FAST_FORWARD_CANONICAL_BRANCH 2>&1) || unborn_fast_forward_rc=$?
+if [[ "$unborn_fast_forward_rc" -ne 0 ]] &&
+	[[ "$unborn_fast_forward_output" == *"BLOCKED: local develop tip cannot be resolved"* ]] &&
+	! /usr/bin/git -C "$UNBORN_REPO" show-ref --verify --quiet refs/heads/develop; then
+	printf 'PASS non-sync recovery continues to reject an unborn local branch\n'
+else
+	printf 'FAIL non-sync recovery accepted or changed an unborn local branch\n'
+	exit 1
+fi
+
+printf 'untracked state\n' >"${UNBORN_REPO}/untracked.txt"
+unborn_untracked_output=""
+unborn_untracked_rc=0
+unborn_untracked_output=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git bash "$HELPER" \
+	sync-mirror --repo "$UNBORN_REPO" --issue 31755 \
+	--confirm SYNCHRONIZE_CANONICAL_MIRROR 2>&1) || unborn_untracked_rc=$?
+rm "${UNBORN_REPO}/untracked.txt"
+printf 'staged state\n' >"${UNBORN_REPO}/staged.txt"
+/usr/bin/git -C "$UNBORN_REPO" add staged.txt
+unborn_staged_output=""
+unborn_staged_rc=0
+unborn_staged_output=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git bash "$HELPER" \
+	sync-mirror --repo "$UNBORN_REPO" --issue 31755 \
+	--confirm SYNCHRONIZE_CANONICAL_MIRROR 2>&1) || unborn_staged_rc=$?
+/usr/bin/git -C "$UNBORN_REPO" rm -q --cached staged.txt
+rm "${UNBORN_REPO}/staged.txt"
+if [[ "$unborn_untracked_rc" -ne 0 && "$unborn_staged_rc" -ne 0 ]] &&
+	[[ "$unborn_untracked_output" == *"BLOCKED: unborn canonical worktree is not clean"* ]] &&
+	[[ "$unborn_staged_output" == *"BLOCKED: unborn canonical worktree is not clean"* ]] &&
+	! /usr/bin/git -C "$UNBORN_REPO" show-ref --verify --quiet refs/heads/develop; then
+	printf 'PASS unborn synchronization refuses untracked and staged state\n'
+else
+	printf 'FAIL unborn synchronization accepted dirty canonical state\n'
+	exit 1
+fi
+
+/usr/bin/git -C "$UNBORN_REPO" update-ref --no-deref HEAD "$unborn_parent_tip"
+unborn_detached_output=""
+unborn_detached_rc=0
+unborn_detached_output=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git bash "$HELPER" \
+	sync-mirror --repo "$UNBORN_REPO" --issue 31755 \
+	--confirm SYNCHRONIZE_CANONICAL_MIRROR 2>&1) || unborn_detached_rc=$?
+/usr/bin/git -C "$UNBORN_REPO" symbolic-ref HEAD refs/heads/develop
+if [[ "$unborn_detached_rc" -ne 0 ]] &&
+	[[ "$unborn_detached_output" == *"BLOCKED: canonical worktree is detached"* ]] &&
+	! /usr/bin/git -C "$UNBORN_REPO" show-ref --verify --quiet refs/heads/develop; then
+	printf 'PASS unborn synchronization refuses detached HEAD\n'
+else
+	printf 'FAIL unborn synchronization accepted detached HEAD\n'
+	exit 1
+fi
+
+unborn_ref_drift_hook="${ROOT}/unborn-ref-drift.sh"
+printf '%s\n' '#!/usr/bin/env bash' \
+	"/usr/bin/git -C \"${UNBORN_REPO}\" update-ref refs/heads/develop \"${unborn_parent_tip}\"" >"$unborn_ref_drift_hook"
+chmod +x "$unborn_ref_drift_hook"
+unborn_ref_drift_output=""
+unborn_ref_drift_rc=0
+unborn_ref_drift_output=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git \
+	AIDEVOPS_CANONICAL_BEFORE_REF_UPDATE_HOOK="$unborn_ref_drift_hook" \
+	bash "$HELPER" sync-mirror --repo "$UNBORN_REPO" --issue 31755 \
+	--confirm SYNCHRONIZE_CANONICAL_MIRROR 2>&1) || unborn_ref_drift_rc=$?
+if [[ "$unborn_ref_drift_rc" -ne 0 ]] &&
+	[[ "$unborn_ref_drift_output" == *"canonical local or github ref changed"* ]] &&
+	[[ "$(/usr/bin/git -C "$UNBORN_REPO" rev-parse refs/heads/develop)" == "$unborn_parent_tip" ]]; then
+	printf 'PASS unborn compare-and-swap preserves a concurrently created local ref\n'
+else
+	printf 'FAIL unborn compare-and-swap overwrote or missed concurrent local ref creation\n'
+	exit 1
+fi
+/usr/bin/git -C "$UNBORN_REPO" update-ref -d refs/heads/develop "$unborn_parent_tip"
+
+unborn_hook_failure_output=""
+unborn_hook_failure_rc=0
+unborn_hook_failure_output=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git \
+	AIDEVOPS_CANONICAL_BEFORE_WORKTREE_UPDATE_HOOK="$sync_failure_hook" \
+	bash "$HELPER" sync-mirror --repo "$UNBORN_REPO" --issue 31755 \
+	--confirm SYNCHRONIZE_CANONICAL_MIRROR 2>&1) || unborn_hook_failure_rc=$?
+if [[ "$unborn_hook_failure_rc" -ne 0 ]] &&
+	[[ "$unborn_hook_failure_output" == *"BLOCKED: canonical pre-worktree-update hook failed"* ]] &&
+	[[ "$(/usr/bin/git -C "$UNBORN_REPO" symbolic-ref HEAD)" == "refs/heads/develop" ]] &&
+	! /usr/bin/git -C "$UNBORN_REPO" show-ref --verify --quiet refs/heads/develop &&
+	[[ -z "$(/usr/bin/git -C "$UNBORN_REPO" status --porcelain=v1)" ]]; then
+	printf 'PASS interrupted unborn initialization rolls back to a clean absent local ref\n'
+else
+	printf 'FAIL interrupted unborn initialization did not restore the original state\n'
+	exit 1
+fi
+
+unborn_remote_drift_hook="${ROOT}/unborn-remote-drift.sh"
+printf '%s\n' '#!/usr/bin/env bash' \
+	"/usr/bin/git -C \"${UNBORN_REPO}\" update-ref -d refs/remotes/github/develop \"${unborn_remote_tip}\"" >"$unborn_remote_drift_hook"
+chmod +x "$unborn_remote_drift_hook"
+unborn_remote_drift_output=""
+unborn_remote_drift_rc=0
+unborn_remote_drift_output=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git \
+	AIDEVOPS_CANONICAL_BEFORE_WORKTREE_UPDATE_HOOK="$unborn_remote_drift_hook" \
+	bash "$HELPER" sync-mirror --repo "$UNBORN_REPO" --issue 31755 \
+	--confirm SYNCHRONIZE_CANONICAL_MIRROR 2>&1) || unborn_remote_drift_rc=$?
+if [[ "$unborn_remote_drift_rc" -ne 0 ]] &&
+	[[ "$unborn_remote_drift_output" == *"changed before the worktree update; local ref rolled back"* ]] &&
+	! /usr/bin/git -C "$UNBORN_REPO" show-ref --verify --quiet refs/heads/develop &&
+	[[ -z "$(/usr/bin/git -C "$UNBORN_REPO" status --porcelain=v1)" ]] &&
+	[[ ! -e "${UNBORN_REPO}/README.md" ]]; then
+	printf 'PASS remote-tip drift rolls unborn initialization back before materialization\n'
+else
+	printf 'FAIL remote-tip drift left a local ref or materialized worktree behind\n'
+	exit 1
+fi
+
+unborn_sync_output=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git bash "$HELPER" \
+	sync-mirror --repo "$UNBORN_REPO" --issue 31755 \
+	--confirm SYNCHRONIZE_CANONICAL_MIRROR 2>&1)
+if [[ "$unborn_sync_output" == *"SYNCHRONIZED_CANONICAL_MIRROR=true"* ]] &&
+	[[ "$unborn_sync_output" == *"OLD_STATE=unborn"* ]] &&
+	[[ "$unborn_sync_output" == *"OLD_SHA=none"* ]] &&
+	[[ "$(/usr/bin/git -C "$UNBORN_REPO" rev-parse HEAD)" == "$unborn_remote_tip" ]] &&
+	[[ "$(/usr/bin/git -C "$UNBORN_REPO" rev-parse refs/remotes/github/develop)" == "$unborn_remote_tip" ]] &&
+	[[ -z "$(/usr/bin/git -C "$UNBORN_REPO" status --porcelain=v1)" ]] &&
+	[[ -f "${UNBORN_REPO}/README.md" && -f "${UNBORN_REPO}/remote-only.txt" ]] &&
+	grep -q '"local_state":"unborn"' "$HOME/.aidevops/logs/canonical-recovery-audit.jsonl"; then
+	printf 'PASS clean unborn synchronization initializes the exact pinned remote tip with audit evidence\n'
+else
+	printf 'FAIL clean unborn synchronization did not initialize and verify the canonical branch\n'
+	printf '%s\n' "$unborn_sync_output"
+	/usr/bin/git -C "$UNBORN_REPO" status --short --branch
+	if ! /usr/bin/git -C "$UNBORN_REPO" show-ref; then
+		printf 'No refs found in failed unborn synchronization fixture\n'
+	fi
+	exit 1
+fi
+
 UPDATE_REMOTE="${ROOT}/update-remote.git"
 UPDATE_REPO="${ROOT}/update-repo"
 UPDATE_PEER="${ROOT}/update-peer"
