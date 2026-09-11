@@ -19,7 +19,14 @@ For new UI composition, redesign or "less generic" requests, load that guide bef
 choosing a structure; keep the existing DESIGN.md authoritative. The following
 creation/export steps apply only to the authorized artifact scope.
 
-1. If the project lacks `DESIGN.md`, create/lint it first via `tools/design/design-md.md`.
+For brand directions/boards, use `tools/design/brand-concepts.md`. For optional
+visual concepts, image-to-code or a coherent mobile journey, use
+`tools/design/visual-concepts.md` before the creation steps. Concept-only work
+keeps proposals in the authorized brief/artifact area; do not populate canonical
+brand/design files until adoption is authorized. Generation and Open Design are
+optional; lack of a provider is not a blocker to a useful non-generated concept.
+
+1. For authorized implementation or design-system export, if the project lacks `DESIGN.md`, create/lint it via `tools/design/design-md.md` using accepted choices.
 2. For brand guideline handoff, run `aidevops design guidelines . --pdf` and review `_reports/brand-guidelines/`.
 3. For cross-repo rollout, run `aidevops design survey --json` then `aidevops design issues --apply` to file worker-ready GUI repo tasks.
 4. If the task is implementation in an existing codebase, use aidevops UI agents directly.
@@ -31,11 +38,13 @@ creation/export steps apply only to the authorized artifact scope.
 
 | Artifact | Primary route | Verification |
 |----------|---------------|--------------|
+| Brand concept board | aidevops `brand-concepts.md` | rationale, readable labels, rights/contrast; production kit checks remain separate |
+| Visual concept / image-to-code | aidevops `visual-concepts.md` | direction selection, provenance, rendered comparison after implementation |
 | Landing page prototype | aidevops or Open Design `web-prototype` | Playwright screenshots + contrast |
 | SaaS/pricing page | Open Design candidate, then aidevops implementation | CRO review + UI verification |
 | HTML deck/PPT | Open Design deck skill | PDF/PPTX export + fidelity audit |
 | Email creative | Open Design candidate + aidevops email workflow | local render + Email on Acid when needed |
-| Mobile app mock | Open Design mobile skill | mobile/tablet screenshots + accessibility |
+| Mobile app mock | aidevops visual-concepts journey; optional Open Design | shared system, transitions/state, platform screenshots + accessibility |
 | Social carousel/poster | Open Design candidate | dimensions, brand, export QA |
 | Production UI code | aidevops native | tests, lint, browser verification |
 
