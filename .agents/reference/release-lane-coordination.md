@@ -118,6 +118,16 @@ rechecks the token and tag identity; live/unknown owners, competing sources,
 legacy contracts, source drift, and uncertain remote state remain blocked.
 Interruption after this claim can resume the same fenced tag; no tag is rewritten.
 
+The protected-main PR may itself already be durable while the lane still says
+`preparing`. For an explicitly authorized same-source reconcile, recovery first
+verifies that existing PR without mutation: its metadata and head must bind the
+unchanged signed tag, and a merged PR must preserve both release and PR-head
+ancestry on `main`. Only then may the same dead-executor, source-manifest,
+snapshot, absent-channel, permission, and remote-CAS checks rotate the lane into
+`remote-publication`. An open exact PR remains queued; a merged exact PR resumes
+the existing tag publication. Unknown or conflicting PR, ancestry, channel,
+executor, or CAS evidence leaves the preparing lane unchanged.
+
 Same-source reservation reclaim still removes automatic eligibility, but now
 records a `same-source-reclaim/v1` marker when it removes a modern fenced
 contract. For lanes reclaimed before that marker existed, recovery must verify

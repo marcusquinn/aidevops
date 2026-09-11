@@ -1025,6 +1025,19 @@ _full_loop_release_reset_tag_worktree() {
 	return 0
 }
 
+_full_loop_release_validate_explicit_reconciliation_intent() {
+	local repo="$1"
+	local requested_pr="$2"
+	local source_json="$3"
+	local persisted_sources="" persisted_json="" observed_json="" observed_sources=""
+	persisted_sources=$(_full_loop_read_release_authorization "$repo" "$requested_pr") || return 1
+	persisted_json=$(release_authorization_manifest_json "$persisted_sources") || return 1
+	observed_json=$(release_authorization_observed_sources_json "$persisted_json" "$source_json") || return 1
+	observed_sources=$(jq -r 'sort_by(.pr) | map([.pr, .merge] | join("@")) | join(",")' \
+		<<<"$observed_json") || return 1
+	release_authorization_compare "$persisted_sources" "$observed_sources"
+}
+
 _full_loop_release_validate_published_reconciliation_intent() {
 	local repo="$1"
 	local requested_pr="$2"
@@ -1308,6 +1321,33 @@ _full_loop_release_reconcile_protected_state() {
 	esac
 }
 
+#aidevops:trust-boundary
+# A protected PR is durable provenance, but it is not lane ownership. Verify the
+# exact PR read-only before rotating a dead preparing lane through the existing
+# preserved-tag CAS boundary.
+_full_loop_release_recover_existing_protected_pr_lane() {
+	local repo="$1"
+	local requested_pr="$2"
+	local tag_name="$3"
+	local mode="$4"
+	[[ "$mode" == "$_FULL_LOOP_RELEASE_MODE_RECONCILE" ]] || return 0
+	release_lane_read "$repo" || return 1
+	if ! jq -e --argjson source_pr "$requested_pr" '
+		.active == true and .source_pr == $source_pr and .phase == "preparing" and .tag == null
+		and .terminal_receipt == null and .reservation_contract == "fenced-prepublication/v1"
+		and .snapshot_manifest_bound == true
+	' <<<"$_AIDEVOPS_RELEASE_LANE_JSON" >/dev/null; then
+		return 0
+	fi
+	_full_loop_release_verify_protected_source_provenance "$repo" "$tag_name" || return 1
+	_version_manager_reconcile_protected_release_tag "$repo" "$tag_name" status || return 1
+	case "$_VERSION_MANAGER_PROTECTED_RELEASE_RESULT" in
+	pr-pending | tag-ready) ;;
+	*) return 1 ;;
+	esac
+	_full_loop_release_claim_preserved_tag "$repo" "$requested_pr" "$tag_name"
+}
+
 _full_loop_release_existing_command() {
 	local mode="$1"
 	local requested_pr="$2"
@@ -1341,6 +1381,14 @@ _full_loop_release_existing_command() {
 			return 1
 		}
 		source_json=$(_full_loop_release_source_json_from_tag "$tag_name") || return 1
+		_full_loop_release_validate_explicit_reconciliation_intent \
+			"$repo" "$requested_pr" "$source_json" || {
+			printf 'Cannot reconcile release:not-requested without matching explicit publication intent for PR #%s\n' \
+				"$requested_pr" >&2
+			return 1
+		}
+		_full_loop_release_recover_existing_protected_pr_lane \
+			"$repo" "$requested_pr" "$tag_name" "$mode" || return $?
 		_full_loop_release_validate_published_reconciliation_intent \
 			"$repo" "$requested_pr" "$tag_name" "$source_json" || {
 			printf 'Cannot reconcile release:not-requested without matching explicit publication intent for PR #%s\n' \
