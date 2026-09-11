@@ -16,6 +16,12 @@ const MAX_SSE_TOTAL_BYTES = 128 * 1024 * 1024;
 const MAX_API_RESPONSE_BYTES = 96 * 1024 * 1024;
 const MAX_ERROR_RESPONSE_BYTES = 64 * 1024;
 const IMAGE_REQUEST_TIMEOUT_MS = 180_000;
+const TERMINAL_SSE_EVENT_TYPES = new Set([
+  "error",
+  "response.failed",
+  "response.incomplete",
+  "response.completed",
+]);
 
 async function withImageRequestTimeout(operation) {
   const controller = new AbortController();
@@ -70,26 +76,52 @@ function oauthHeaders(auth) {
   };
 }
 
+function completedImageResult(event) {
+  if (
+    event.type === "response.output_item.done"
+    && event.item?.type === "image_generation_call"
+    && typeof event.item.result === "string"
+  ) {
+    return event.item.result;
+  }
+  if (event.type !== "response.completed" || !Array.isArray(event.response?.output)) return "";
+  const image = event.response.output.find(
+    (item) => item?.type === "image_generation_call" && typeof item.result === "string",
+  );
+  return image?.result || "";
+}
+
+function terminalSseError(event) {
+  if (!TERMINAL_SSE_EVENT_TYPES.has(event.type)) return null;
+  const providerError = event.error || event.response?.error || event.response?.incomplete_details || {};
+  let code = providerError.code || providerError.type || providerError.reason || event.code || "";
+  let message = providerError.message || event.message || "";
+  if (event.type === "response.completed" && !code && !message) {
+    code = "image_missing";
+    message = "provider completed the response without an image result";
+  }
+  const detail = [code, message].filter(Boolean).map(redactProviderDetail).join(": ");
+  const error = new Error(`OpenAI oauth image request failed${detail ? `: ${detail}` : `: ${event.type}`}.`);
+  error.code = redactProviderDetail(code);
+  error.eventType = event.type;
+  return error;
+}
+
 function parseSseBlock(block) {
   const data = block
     .split(/\r?\n/)
     .filter((line) => line.startsWith("data:"))
     .map((line) => line.slice(5).trimStart())
     .join("\n");
-  if (!data || data === "[DONE]") return "";
+  if (!data || data === "[DONE]") return { result: "", error: null };
   try {
     const event = JSON.parse(data);
-    if (
-      event.type === "response.output_item.done"
-      && event.item?.type === "image_generation_call"
-      && typeof event.item.result === "string"
-    ) {
-      return event.item.result;
-    }
+    const result = completedImageResult(event);
+    if (result) return { result, error: null };
+    return { result: "", error: terminalSseError(event) };
   } catch {
-    return "";
+    return { result: "", error: null };
   }
-  return "";
 }
 
 function takeNextSseBlock(pending) {
@@ -111,8 +143,12 @@ async function consumeSseBlocks(reader, pending) {
       await cancelSseReader(reader);
       throw new Error("OAuth image event exceeded the safe event-stream limit.");
     }
-    const result = parseSseBlock(next.block);
-    if (result) return { pending, result };
+    const parsed = parseSseBlock(next.block);
+    if (parsed.error) {
+      await cancelSseReader(reader);
+      throw parsed.error;
+    }
+    if (parsed.result) return { pending, result: parsed.result };
   }
   return { pending, result: "" };
 }
@@ -151,8 +187,9 @@ export async function parseImageSse(stream) {
     );
     if (done) break;
   }
-  const finalResult = parseSseBlock(pending);
-  if (finalResult) return finalResult;
+  const finalEvent = parseSseBlock(pending);
+  if (finalEvent.error) throw finalEvent.error;
+  if (finalEvent.result) return finalEvent.result;
   throw new Error("OAuth image response did not contain a completed image.");
 }
 

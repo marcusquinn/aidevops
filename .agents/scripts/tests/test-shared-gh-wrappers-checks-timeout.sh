@@ -46,6 +46,7 @@ main() {
 	trap '_run_cleanups' RETURN
 	WRAPPER_LOG="$(mktemp)"
 	export WRAPPER_LOG
+	export AIDEVOPS_GH_CHECK_STATUS_CACHE_DISABLE=1
 	push_cleanup "rm -f '${WRAPPER_LOG}'"
 
 	local status
