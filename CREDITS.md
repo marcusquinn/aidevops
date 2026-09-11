@@ -39,6 +39,16 @@ Sources, inspirations, and third-party resources incorporated into or referenced
   - Reviewed commit: `13ac0ec7e148655948100b6396439e481361d690`
   - Value assessment, departures and full MIT notice: `.agents/tools/design/hallmark.md`
 
+### Taste Skill
+
+- **Leonxlnx/taste-skill** (MIT License, copyright 2026 Leonxlnx) —
+  Brand concept boards, optional visual-concept handoff and coherent mobile
+  journeys adapted into `.agents/tools/design/brand-concepts.md` and
+  `.agents/tools/design/visual-concepts.md`, not installed or vendored wholesale.
+  - Repository: https://github.com/Leonxlnx/taste-skill
+  - Reviewed commit: `ccbc15639c97057cbfcf32ecebc38ef716e4bb37`
+  - Assessment, departures and MIT notice: `.agents/tools/design/taste-skill.md`
+
 ### Logo & Brand Identity Tools
 
 - **Brandmark** -- AI logo maker that generates logo, typography, and colour schemes from keywords.

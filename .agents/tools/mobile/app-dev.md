@@ -90,6 +90,11 @@ Before writing any code: (1) Define the core daily action (the one thing users r
 
 Search for UI patterns, competitor screenshots, design systems using browser tools.
 
+For a multi-screen concept, use `tools/design/visual-concepts.md`: map the main
+journey and back/recovery transitions, retained state and one shared design system
+before styling independent screens. Image generation is optional; verify real
+platform behaviour and accessibility through `app-dev-testing.md` after building.
+
 ### Stage 4: Development
 
 - Expo: `tools/mobile/app-dev-expo.md`

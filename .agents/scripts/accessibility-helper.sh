@@ -881,11 +881,11 @@ relative_luminance() {
         gs = g / 255.0
         bs = b / 255.0
 
-        if (rs <= 0.03928) rl = rs / 12.92; else rl = ((rs + 0.055) / 1.055) ^ 2.4
-        if (gs <= 0.03928) gl = gs / 12.92; else gl = ((gs + 0.055) / 1.055) ^ 2.4
-        if (bs <= 0.03928) bl = bs / 12.92; else bl = ((bs + 0.055) / 1.055) ^ 2.4
+        if (rs <= 0.04045) rl = rs / 12.92; else rl = ((rs + 0.055) / 1.055) ^ 2.4
+        if (gs <= 0.04045) gl = gs / 12.92; else gl = ((gs + 0.055) / 1.055) ^ 2.4
+        if (bs <= 0.04045) bl = bs / 12.92; else bl = ((bs + 0.055) / 1.055) ^ 2.4
 
-        printf "%.6f\n", 0.2126 * rl + 0.7152 * gl + 0.0722 * bl
+        printf "%.15g\n", 0.2126 * rl + 0.7152 * gl + 0.0722 * bl
     }'
 	return 0
 }
@@ -912,18 +912,16 @@ check_contrast() {
 
 	local ratio
 	ratio=$(awk -v l1="$fg_lum" -v l2="$bg_lum" 'BEGIN {
-        if (l1 > l2) {
-            printf "%.2f\n", (l1 + 0.05) / (l2 + 0.05)
-        } else {
-            printf "%.2f\n", (l2 + 0.05) / (l1 + 0.05)
-        }
+        lighter = (l1 > l2) ? l1 : l2
+        darker = (l1 > l2) ? l2 : l1
+        printf "%.15g\n", (lighter + 0.05) / (darker + 0.05)
     }')
 
 	echo ""
 	print_header_line "Contrast Ratio Check"
 	echo "  Foreground: $fg"
 	echo "  Background: $bg"
-	echo "  Ratio: ${ratio}:1"
+	printf '  Ratio: %.2f:1\n' "$ratio" # Round display only, never threshold decisions.
 	echo ""
 
 	# WCAG AA: 4.5:1 for normal text, 3:1 for large text
@@ -1292,18 +1290,17 @@ _main_dispatch_contrast_wave() {
 main() {
 	local command="${1:-help}"
 	local account_name="${2:-}"
-	local rc
+	local rc=0
 
-	# Try audit/lighthouse/pa11y/email/bulk group
-	_main_dispatch_audit "$command" "$account_name" "${3:-}" "${4:-}"
-	rc=$?
+	# Dispatch fallthrough (2) must not trigger errexit before the next group.
+	_main_dispatch_audit "$command" "$account_name" "${3:-}" "${4:-}" || rc=$?
 	if [[ $rc -ne 2 ]]; then
 		return $rc
 	fi
 
 	# Try contrast/wave group
-	_main_dispatch_contrast_wave "$command" "$account_name" "${3:-}" "${4:-}"
-	rc=$?
+	rc=0
+	_main_dispatch_contrast_wave "$command" "$account_name" "${3:-}" "${4:-}" || rc=$?
 	if [[ $rc -ne 2 ]]; then
 		return $rc
 	fi

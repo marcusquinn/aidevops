@@ -79,6 +79,15 @@ For build/redesign, select structure before decoration using
 when direction is open; present alternatives only when a user decision is useful.
 Explain why the chosen arrangement serves the task, not just why it looks novel.
 
+Decide the appropriate **experimentation, density and motion** from the task, not
+numeric defaults. A data-heavy workflow may need dense familiar controls; a new
+brand may benefit from one unifying visual idea. An official design system such
+as Material or a mandated government system supplies interaction/component rules;
+a brand screenshot or catalogue aesthetic does not. Reuse the existing stack.
+When a board would resolve uncertainty, `visual-concepts.md` provides an optional
+approval/handoff path; `brand-concepts.md` covers new identity directions. Neither
+requires generation, replaces canonical files or weakens accessibility.
+
 Keep a compact decision record in the existing brief, then promote accepted
 cross-cutting choices to the Markdown rationale of `DESIGN.md`:
 
@@ -120,7 +129,10 @@ report unavailable checks rather than inventing scores. Do not edit, generate
 ### Redesign
 
 Inventory the named routes/components and preserve functionality, factual content,
-primary actions, accessibility, analytics and integration contracts. Change the
+primary actions, accessibility, SEO, analytics, consent and integration contracts.
+Inventory affected URLs, redirects, metadata/canonicals, structured data, tracking
+events and consent controls before changing them; a visual brief does not authorize
+removing or renaming these interfaces. Change the
 visual arrangement in place or through additive components. Do not replace the
 app with a standalone HTML mock or delete route trees under a visual brief.
 Get explicit scope for destructive replacements or behaviour changes.

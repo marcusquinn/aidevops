@@ -44,6 +44,7 @@ Upstream `@google/design.md` v0.2.0 and follow-up commit `18508f2` were reviewed
 | Agent | Role | Relationship |
 |-------|------|--------------|
 | `tools/design/brand-identity.md` | Strategic brand profile (8 dimensions) | **Upstream** — feeds DESIGN.md generation |
+| `tools/design/brand-concepts.md`, `tools/design/visual-concepts.md` | Optional direction boards and image-to-code/mobile handoff | **Proposal** — only accepted, validated choices feed canonical files |
 | `tools/design/ui-ux-inspiration.md` | URL study + interview workflow | **Discovery** — finds and studies references |
 | `tools/design/design-md-from-links.md` | Website/brand links to DESIGN.md | **Producer** — extracts, validates, previews, and hands off tokens |
 | `tools/design/distinctive-ui.md` | Brief-led composition, audit, redesign and study | **Design judgment** — avoids generic templates while preserving the system |
@@ -64,7 +65,12 @@ For new page composition, structural redesign or "less generic" requests, load
 that guide before choosing the layout. It records decisions in this existing
 format, not a competing token schema.
 
-1. **Check** — does `DESIGN.md` exist in project root? If yes, use it. If no, create one.
+For concept-only exploration, use `tools/design/visual-concepts.md`; read existing
+tokens as constraints but do not create/overwrite canonical files with unaccepted
+choices. The following creation steps apply to authorized adoption/implementation
+or a requested design-system export, not a speculative board.
+
+1. **Check** — does `DESIGN.md` exist in project root? If yes, use it. If no, create one within the authorized scope.
 2. **Load context** — for new brand/style guides, read the focused design references before drafting: `brand-identity.md`, `colour-palette.md`, `design-md-from-links.md`, `ui-ux-inspiration.md`, `ui-ux-catalogue.toon`, and `report-presentation.md` when HTML/PDF reports are in scope. Use `design-inspiration.md`, `open-design.md`, and `open-design-ingestion.md` for discovery/artifact workflows only when relevant.
 3. **Create** — from scratch (interview), links/local style guides (`tools/design/design-md-from-links.md`), report presentation (`tools/design/report-presentation.md`), or library example.
 4. **Validate** — run `npx @google/design.md lint DESIGN.md`. Zero errors, warnings reviewed.

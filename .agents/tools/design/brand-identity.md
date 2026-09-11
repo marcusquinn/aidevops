@@ -19,8 +19,9 @@ model: standard
 - **Create**: From scratch or existing site via `tools/design/ui-ux-inspiration.md`
 - **Downstream**: Generate `DESIGN.md` from brand identity via `tools/design/design-md.md`
 - **Palette tools**: `tools/design/colour-palette.md` (generation, spinning, narrowing)
+- **Concept directions**: `tools/design/brand-concepts.md` for idea/mark/application boards and production-kit handoff; optional, not a rebrand requirement
 - **Related**: `content/guidelines.md`, `content/platform-personas.md`, `content/production-image.md`, `content/production-characters.md`, `content/humanise.md`, `workflows/ui-verification.md`, `tools/design/ui-ux-catalogue.toon`, `tools/design/library/`
-- **When to use**: Before any design or content work. If `context/brand-identity.toon` is missing, create one first.
+- **When to use**: Check before design/content work. Audits/studies remain read-only when the profile is missing. Concept-only work records proposals in its authorized brief/artifact area; create/update the profile when adoption or production is authorized, using accepted choices rather than speculative tokens.
 
 **Relationship to DESIGN.md**: Brand identity is the **strategic upstream** -- it captures _who you are_ (voice, positioning, brand archetype). DESIGN.md is the **tactical downstream** -- it captures _how to build it_ (exact hex values, font sizes, component specs). After completing a brand identity, generate a DESIGN.md to give coding agents implementation-ready tokens. See `tools/design/design-md.md` for the format and generation workflow.
 
@@ -120,7 +121,7 @@ Every agent producing design or content output MUST check `context/brand-identit
 2. Verbal interview → voice, tone spectrums, CTAs, words to avoid
 3. Imagery & motion → image style, icon library, animation level
 4. Brand positioning → walk each spectrum
-5. Synthesise into `context/brand-identity.toon`, flag contradictions, iterate
+5. If a concrete direction would resolve uncertainty, use `brand-concepts.md` before selection; then synthesise accepted choices into `context/brand-identity.toon`, flag contradictions, iterate
 
 **From existing site** — via `tools/design/ui-ux-inspiration.md`:
 1. URL study → extract colours, typography, UI patterns
