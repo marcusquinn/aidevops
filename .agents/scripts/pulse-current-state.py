@@ -461,17 +461,28 @@ def rest_admission_status_from_env():
     return projection
 
 
+def is_rest_deferral_counter(name):
+    aggregate_names = {
+        'pulse_rest_core_budget_stage_deferred',
+        'pulse_rest_core_unit_blocked',
+        'pulse_rest_core_progress_blocked',
+    }
+    detail_prefixes = (
+        'pulse_rest_core_budget_stage_deferred_',
+        'pulse_rest_core_unit_blocked_',
+        'pulse_rest_core_progress_blocked_',
+    )
+    if name in aggregate_names:
+        return True
+    return name.startswith(detail_prefixes)
+
+
 def build_rest_admission(counter_hits, counter_latest, transport_status):
     deferred_stages = matching_counter_counts(counter_hits, 'pulse_rest_core_budget_stage_deferred_')
     blocked_modes = matching_counter_counts(counter_hits, 'pulse_rest_core_progress_blocked_')
     counter_names = [
         name for name in counter_hits
-        if name == 'pulse_rest_core_budget_stage_deferred'
-        or name.startswith('pulse_rest_core_budget_stage_deferred_')
-        or name == 'pulse_rest_core_unit_blocked'
-        or name.startswith('pulse_rest_core_unit_blocked_')
-        or name == 'pulse_rest_core_progress_blocked'
-        or name.startswith('pulse_rest_core_progress_blocked_')
+        if is_rest_deferral_counter(name)
     ]
     stage_count = counter_hits.get('pulse_rest_core_budget_stage_deferred', 0)
     unit_count = counter_hits.get('pulse_rest_core_unit_blocked', 0)
@@ -566,7 +577,7 @@ def blocker_category(reason):
 
 
 def build_zero_worker_underutilization(active_workers, worker_terminal_events, cycle_state,
-                                       pre_launch_blockers, gauge_values, rest_admission):
+                                       pre_launch_blockers, gauge_values):
     threshold_raw = os.environ.get('AIDEVOPS_ZERO_WORKER_MIN_CYCLES', '3')
     threshold = int(threshold_raw) if threshold_raw.isdigit() and int(threshold_raw) > 0 else 3
     available = gauge_values.get('pulse_dispatch_guardrail_available_slots')
@@ -889,8 +900,7 @@ objective_reconciliation = build_objective_reconciliation(
     os.environ.get('AIDEVOPS_OBJECTIVE_STATE_FILE', '')
 )
 zero_worker_underutilization = build_zero_worker_underutilization(
-    active_worker_processes, len(worker_metrics), cycle_state, pre_launch_blockers, gauge_values,
-    rest_admission,
+    active_worker_processes, len(worker_metrics), cycle_state, pre_launch_blockers, gauge_values
 )
 permission_evidence = build_permission_evidence(
     os.environ.get('AIDEVOPS_WORKER_BLOCKER_LOG_FILE', os.path.join(log_dir, 'worker-progress-blockers.jsonl'))
