@@ -1,3 +1,4 @@
+import argparse
 import json
 import os
 import sys
@@ -13,6 +14,17 @@ from mcp_config import (
     apply_mcp_loading_policy, remove_deprecated_mcps,
     register_standard_mcps, EAGER_MCPS, LAZY_MCPS,
 )
+
+
+def parse_args(argv):
+    """Parse CLI arguments before opening the live OpenCode configuration."""
+    parser = argparse.ArgumentParser(
+        description="Discover and apply aidevops primary agents to OpenCode."
+    )
+    parser.parse_args(argv)
+
+
+parse_args(sys.argv[1:])
 
 config_path = os.path.expanduser("~/.config/opencode/opencode.json")
 agents_dir = os.path.expanduser("~/.aidevops/agents")
