@@ -74,7 +74,7 @@
     "ajv": "8.20.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
-    "secretlint": "11.7.1",
+    "secretlint": "13.0.5",
     "typescript": "7.0.2"
   },
   "overrides": {
