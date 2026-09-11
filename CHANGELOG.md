@@ -10,6 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.358] - 2026-09-11
+
+### Changed
+
+- Documentation: add verified press-release distribution guidance
+- Refactor: split full-loop state helper
+
+### Fixed
+
+- make discovery CLI inspection safe (#31787)
+- trust account-authored Issue Sync TODO PRs
+- preserve verified PR close on transient deferral
+- preserve external Dependabot authority (#31778)
+- release held product reservation slack (#31777)
+- recover preserved releases with existing provenance PRs (#31768)
+
 ## [3.32.357] - 2026-09-11
 
 ### Changed
