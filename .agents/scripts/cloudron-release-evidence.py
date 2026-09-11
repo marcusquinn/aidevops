@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -40,13 +41,20 @@ def decode_json(value):
 
 
 def gh(*args):
-    result = subprocess.run(["gh", *args], capture_output=True, timeout=60, check=False)
+    executable = shutil.which("gh")
+    require(executable is not None, "GitHub CLI is unavailable")
+    result = subprocess.run(  # nosec B603 -- fixed gh CLI, validated argv, never a shell
+        [executable, *args], capture_output=True, timeout=60, check=False,
+    )
     require(result.returncode == 0, "GitHub API or attestation verification failed")
     return decode_json(result.stdout)
 
 
 class CatalogEvidence:
-    def __init__(self, repo, tag, source, commit, workflow, event):
+    def __init__(self, settings):
+        repo, tag, source, commit, workflow, event = (
+            settings[key] for key in ("repo", "tag", "source", "commit", "workflow", "event")
+        )
         require(re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo)
                 and all(part not in (".", "..") for part in repo.split("/")), "invalid repository")
         require(re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", tag), "invalid release tag")
@@ -112,12 +120,12 @@ class CatalogEvidence:
         runs = self.api("actions/workflows/" + self.workflow
                         + "/runs?event=" + self.event + "&status=success&per_page=100")["workflow_runs"]
         accepted = set()
+        expected = {"status": "completed", "conclusion": "success", "event": self.event,
+                    "head_sha": self.source, "head_branch": "main", "path": self.workflow_path}
         for run in runs:
-            if (run.get("status") == "completed" and run.get("conclusion") == "success"
-                    and run.get("event") == self.event and run.get("head_sha") == self.source
-                    and run.get("head_branch") == "main" and run.get("path") == self.workflow_path
-                    and run.get("repository", {}).get("full_name") == self.repo
-                    and run.get("head_repository", {}).get("full_name") == self.repo):
+            same_repository = all(run.get(key, {}).get("full_name") == self.repo
+                                  for key in ("repository", "head_repository"))
+            if all(run.get(key) == value for key, value in expected.items()) and same_repository:
                 run_id, attempt = run["id"], run["run_attempt"]
                 require(type(run_id) is int and run_id > 0 and type(attempt) is int and attempt > 0,
                         "invalid workflow invocation identity")
@@ -148,11 +156,14 @@ class CatalogEvidence:
                 "buildSignerDigest": self.source,
                 "buildTrigger": self.event,
             }
-            if (all(cert.get(key) == value for key, value in expected.items())
-                    and invocation in invocations
-                    and statement.get("predicateType") == "https://slsa.dev/provenance/v1"
-                    and statement.get("subject") == [{"name": name, "digest": {"sha256": digest}}]
-                    and statement["predicate"]["runDetails"]["metadata"]["invocationId"] == invocation):
+            bindings = (
+                all(cert.get(key) == value for key, value in expected.items()),
+                invocation in invocations,
+                statement.get("predicateType") == "https://slsa.dev/provenance/v1",
+                statement.get("subject") == [{"name": name, "digest": {"sha256": digest}}],
+                statement["predicate"]["runDetails"]["metadata"]["invocationId"] == invocation,
+            )
+            if all(bindings):
                 accepted.add(invocation)
         require(accepted, "attestation does not bind the artifact to the expected source/workflow/run")
         return accepted
@@ -180,8 +191,8 @@ def main():
         parser.add_argument("--" + option, required=True)
     args = parser.parse_args()
     try:
-        CatalogEvidence(**vars(args)).verify()
-    except (EvidenceError, KeyError, TypeError, ValueError, OSError, subprocess.TimeoutExpired) as error:
+        CatalogEvidence(vars(args)).verify()
+    except (EvidenceError, KeyError, TypeError, ValueError, AttributeError, OSError, subprocess.TimeoutExpired) as error:
         message = str(error) if isinstance(error, EvidenceError) else "malformed or unavailable evidence"
         print("Generated catalog verification failed: " + message, file=sys.stderr)
         return 1

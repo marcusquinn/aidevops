@@ -23,7 +23,8 @@ class EvidenceTests(unittest.TestCase):
     def setUp(self):
         self.repo = "testorg/package"
         self.source, self.commit = "1" * 40, "2" * 40
-        self.proof = MODULE.CatalogEvidence(self.repo, "v2.0.12", self.source, self.commit, "publish.yml", "push")
+        self.proof = MODULE.CatalogEvidence(dict(repo=self.repo, tag="v2.0.12", source=self.source,
+                                                commit=self.commit, workflow="publish.yml", event="push"))
         self.before = {"stable": True, "versions": {"2.0.11": {"retained": True}}}
         self.manifest = {"version": "2.0.12", "upstreamVersion": "0.77.1", "changelog": "file://CHANGELOG"}
         self.image = "ghcr.io/" + self.repo + "@sha256:" + "3" * 64
