@@ -1447,8 +1447,9 @@ gh_pr_check_status_rest() {
 #
 # Output (stdout): JSON array of normalised check entries:
 #   [{"name":"...","conclusion":"success|failure|null","status":"..."}, ...]
-#   Empty array "[]" on missing args / API error.
-# Returns: 0 always
+#   Empty array "[]" on missing args or when no checks are recorded.
+# Returns: 0=usable JSON, 75=read deferred, 124=read timed out,
+#          other non-zero=API/parse failure
 #######################################
 gh_pr_check_runs_rest() {
 	local slug="$1"
@@ -1461,17 +1462,18 @@ gh_pr_check_runs_rest() {
 
 	# 1. Modern check-runs (GitHub Actions / GitHub Apps) — AUTHORITATIVE.
 	# Almost all check signal in modern repos lives here. If this endpoint
-	# fails, we emit empty so callers can fail-closed; /status alone is
+	# fails, preserve the typed failure so callers can fail closed while
+	# distinguishing retryable admission deferrals/timeouts; /status alone is
 	# insufficient signal for branch-protection gating.
-	local runs=""
+	local runs="" runs_rc=0
 	runs=$(_gh_checks_api_read "repos/${slug}/commits/${sha}/check-runs" --paginate \
-		--jq '[.check_runs[]? | {name, conclusion, status}]' 2>/dev/null) || runs=""
+		--jq '[.check_runs[]? | {name, conclusion, status}]' 2>/dev/null) || runs_rc=$?
+	[[ "$runs_rc" -eq 0 ]] || return "$runs_rc"
 
 	if [[ -z "$runs" ]]; then
-		# /check-runs unreachable or empty output — emit empty so callers
-		# distinguish "fetch failed" from "no checks recorded".
-		echo ""
-		return 0
+		# A successful API read must emit JSON. Empty stdout is indeterminate,
+		# never equivalent to the valid no-checks payload `[]`.
+		return 1
 	fi
 
 	# 2. Legacy combined status (third-party CI services, repo statuses) —
@@ -1509,15 +1511,15 @@ gh_pr_check_runs_rest() {
 	# Concatenate possibly-multi-page check-runs output, then merge with
 	# normalised statuses. `jq -s 'add'` flattens into a single array.
 	# /status failure here is non-fatal: /check-runs already succeeded.
-	local merged=""
+	local merged="" merge_rc=0
 	if [[ -n "$statuses" ]]; then
-		merged=$(printf '%s\n%s' "$runs" "$statuses" | jq -s 'add // []' 2>/dev/null) || merged=""
+		merged=$(printf '%s\n%s' "$runs" "$statuses" | jq -s 'add // []' 2>/dev/null) || merge_rc=$?
 	else
-		merged=$(printf '%s' "$runs" | jq -s 'add // []' 2>/dev/null) || merged=""
+		merged=$(printf '%s' "$runs" | jq -s 'add // []' 2>/dev/null) || merge_rc=$?
 	fi
-	[[ -n "$merged" ]] || merged="[]"
+	[[ "$merge_rc" -eq 0 && -n "$merged" ]] || return 1
 
-	echo "$merged"
+	printf '%s\n' "$merged"
 	return 0
 }
 

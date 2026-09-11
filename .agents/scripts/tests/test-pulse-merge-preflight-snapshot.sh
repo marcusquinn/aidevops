@@ -28,8 +28,11 @@ TESTS_RUN=0
 TESTS_FAILED=0
 EVIDENCE_LOG="${TEST_ROOT}/efficiency-evidence.log"
 RULES_ATTRIBUTION_LOG="${TEST_ROOT}/rules-attribution.log"
+SNAPSHOT_READ_COUNT_FILE="${TEST_ROOT}/snapshot-read-count"
+SNAPSHOT_RETRY_QUEUE_LOG="${TEST_ROOT}/snapshot-retry-queue.log"
 : >"$EVIDENCE_LOG"
 : >"$RULES_ATTRIBUTION_LOG"
+: >"$SNAPSHOT_RETRY_QUEUE_LOG"
 
 gh_record_efficiency_evidence() {
 	local name="$1"
@@ -51,6 +54,22 @@ _pmrc_gh_read() {
 
 	[[ "$command" == "gh" && "$subcommand" == "api" ]] || return 1
 	case "${SNAPSHOT_MODE}:${endpoint}" in
+	"check_runs_deferred:"*check-runs*)
+		return 75
+		;;
+	"check_runs_timeout:"*check-runs*)
+		return 124
+		;;
+	"check_runs_deferred_then_success:"*check-runs* | "check_runs_timeout_then_success:"*check-runs*)
+		local read_count=0
+		[[ -f "$SNAPSHOT_READ_COUNT_FILE" ]] && read_count=$(<"$SNAPSHOT_READ_COUNT_FILE")
+		read_count=$((read_count + 1))
+		printf '%s\n' "$read_count" >"$SNAPSHOT_READ_COUNT_FILE"
+		if [[ "$read_count" -eq 1 ]]; then
+			[[ "$SNAPSHOT_MODE" == "check_runs_deferred_then_success" ]] && return 75
+			return 124
+		fi
+		;;
 	"pr_fetch_error:repos/owner/repo/pulls/7" | "check_runs_error:"*check-runs* | \
 		"status_error:"*commits/sha-reviewed/status* | "reviews_error:"*pulls/7/reviews* | \
 		"issue_comments_error:"*issues/7/comments* | "inline_comments_error:"*pulls/7/comments*)
@@ -66,6 +85,12 @@ _pmrc_gh_read() {
 	esac
 	"$@"
 	return $?
+}
+
+_pulse_merge_queue_defer() {
+	printf '%s/%s\n' "$1" "$2" >>"$SNAPSHOT_RETRY_QUEUE_LOG"
+	printf 'queued\n'
+	return 0
 }
 
 _required_contexts_for_default_branch() {
@@ -257,6 +282,8 @@ assert_gate() {
 	local rc=0
 	SNAPSHOT_MODE="$mode"
 	: >"$LOGFILE"
+	: >"$SNAPSHOT_READ_COUNT_FILE"
+	: >"$SNAPSHOT_RETRY_QUEUE_LOG"
 	_pulse_merge_preflight_snapshot_gate owner/repo 7 sha-reviewed || rc=$?
 	TESTS_RUN=$((TESTS_RUN + 1))
 	if [[ "$rc" -eq "$expected_rc" ]]; then
@@ -265,6 +292,53 @@ assert_gate() {
 	fi
 	printf 'FAIL %s (expected rc=%s, actual rc=%s)\n' "$description" "$expected_rc" "$rc"
 	TESTS_FAILED=$((TESTS_FAILED + 1))
+	return 0
+}
+
+assert_snapshot_transient_retry_cases() {
+	local read_count=""
+	AIDEVOPS_PULSE_MERGE_SNAPSHOT_RETRY_DELAY_SECONDS=0
+	export AIDEVOPS_PULSE_MERGE_SNAPSHOT_RETRY_DELAY_SECONDS
+	_PMP_MERGE_PASS_DEADLINE_EPOCH=$(($(date +%s) + 30))
+
+	assert_gate "admission-deferred exact-head snapshot recovers on one bounded retry" \
+		check_runs_deferred_then_success 0
+	read_count=$(<"$SNAPSHOT_READ_COUNT_FILE")
+	TESTS_RUN=$((TESTS_RUN + 1))
+	if [[ "$read_count" -eq 2 ]] && grep -qF "retrying once" "$LOGFILE"; then
+		printf 'PASS admission deferral used exactly one audited retry\n'
+	else
+		printf 'FAIL admission deferral retry count/log (count=%s)\n' "$read_count"
+		TESTS_FAILED=$((TESTS_FAILED + 1))
+	fi
+
+	assert_gate "timed-out exact-head snapshot recovers on one bounded retry" \
+		check_runs_timeout_then_success 0
+
+	assert_gate_blocker "repeated transient snapshot failure keeps merge blocked" \
+		check_runs_deferred 1 "$PMRC_BLOCKER_SNAPSHOT_UNAVAILABLE"
+	TESTS_RUN=$((TESTS_RUN + 1))
+	if [[ "$(grep -cF 'owner/repo/7' "$SNAPSHOT_RETRY_QUEUE_LOG" || true)" -eq 1 ]] &&
+		grep -qF "next-cycle priority is preserved" "$LOGFILE"; then
+		printf 'PASS exhausted transient retry preserves next-cycle priority\n'
+	else
+		printf 'FAIL exhausted transient retry did not preserve next-cycle priority\n'
+		TESTS_FAILED=$((TESTS_FAILED + 1))
+	fi
+
+	_PMP_MERGE_PASS_DEADLINE_EPOCH=$(date +%s)
+	assert_gate_blocker "expired merge-pass deadline suppresses same-cycle retry" \
+		check_runs_timeout_then_success 1 "$PMRC_BLOCKER_SNAPSHOT_UNAVAILABLE"
+	TESTS_RUN=$((TESTS_RUN + 1))
+	if [[ "$(<"$SNAPSHOT_READ_COUNT_FILE")" -eq 1 ]] &&
+		[[ "$(grep -cF 'owner/repo/7' "$SNAPSHOT_RETRY_QUEUE_LOG" || true)" -eq 1 ]]; then
+		printf 'PASS deadline exhaustion blocks retry and preserves next-cycle priority\n'
+	else
+		printf 'FAIL deadline exhaustion retried or lost next-cycle priority\n'
+		TESTS_FAILED=$((TESTS_FAILED + 1))
+	fi
+
+	unset _PMP_MERGE_PASS_DEADLINE_EPOCH AIDEVOPS_PULSE_MERGE_SNAPSHOT_RETRY_DELAY_SECONDS
 	return 0
 }
 
@@ -585,6 +659,7 @@ main() {
 	assert_configured_advisory_contexts_are_null_safe
 	assert_malformed_advisory_contexts_fail_closed_once
 	assert_snapshot_acquisition_failures_are_audited
+	assert_snapshot_transient_retry_cases
 	assert_gate "large paginated check payload streams without argument overflow" large_payload 0
 	assert_large_bot_activity_streams
 	assert_gate "large inline-comment payload streams through preflight" large_bot_activity 0

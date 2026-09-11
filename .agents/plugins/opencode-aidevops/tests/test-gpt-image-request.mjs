@@ -28,6 +28,70 @@ describe("GPT image provider requests", () => {
     assert.equal(await parseImageSse(splitStream(event, 17)), IMAGE_RESULT);
   });
 
+  test("surfaces bounded redacted provider details from terminal SSE failures", async () => {
+    const exposedBearer = "Bearer provider-secret";
+    const exposedKey = "sk-provider-secret";
+    const event = `data: ${JSON.stringify({
+      type: "response.failed",
+      response: {
+        error: {
+          code: "content_policy_violation",
+          message: `Request denied for ${exposedBearer} and ${exposedKey} ${"x".repeat(500)}`,
+        },
+      },
+    })}\n\n`;
+    await assert.rejects(
+      parseImageSse(splitStream(event, 23)),
+      (error) => {
+        assert.equal(error.code, "content_policy_violation");
+        assert.equal(error.eventType, "response.failed");
+        assert.match(error.message, /content_policy_violation/);
+        assert.match(error.message, /\[REDACTED\]/);
+        assert.equal(error.message.includes("provider-secret"), false);
+        assert.ok(error.message.length < 400);
+        return true;
+      },
+    );
+  });
+
+  test("surfaces response.incomplete reasons", async () => {
+    const event = `data: ${JSON.stringify({
+      type: "response.incomplete",
+      response: { incomplete_details: { reason: "content_filter" } },
+    })}\n\n`;
+    await assert.rejects(parseImageSse(splitStream(event, 8)), /content_filter/);
+  });
+
+  test("diagnoses a completed response that contains no generated image", async () => {
+    const event = `data: ${JSON.stringify({
+      type: "response.completed",
+      response: { output: [] },
+    })}\n\n`;
+    await assert.rejects(parseImageSse(splitStream(event, 11)), /image_missing/);
+  });
+
+  test("does not retry a terminal SSE provider failure with another model", async () => {
+    let calls = 0;
+    const event = `data: ${JSON.stringify({
+      type: "error",
+      code: "server_error",
+      message: "generation failed",
+    })}\n\n`;
+    await assert.rejects(
+      requestOAuthImage(
+        { accessToken: "[redacted-credential]" },
+        { prompt: "draw a test", quality: "auto", size: "auto", format: "png" },
+        [],
+        async () => {
+          calls += 1;
+          return new Response(event, { status: 200 });
+        },
+      ),
+      /server_error: generation failed/,
+    );
+    assert.equal(calls, 1);
+  });
+
   test("builds the OAuth hosted-tool request with references", async () => {
     let captured;
     const event = `data: ${JSON.stringify({
