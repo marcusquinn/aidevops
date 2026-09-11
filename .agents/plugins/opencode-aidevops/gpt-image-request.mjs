@@ -82,21 +82,6 @@ function oauthHeaders(auth) {
   };
 }
 
-function completedImageResult(event) {
-  if (
-    event.type === "response.output_item.done"
-    && event.item?.type === "image_generation_call"
-    && typeof event.item.result === "string"
-  ) {
-    return event.item.result;
-  }
-  if (event.type !== "response.completed" || !Array.isArray(event.response?.output)) return "";
-  const image = event.response.output.find(
-    (item) => item?.type === "image_generation_call" && typeof item.result === "string",
-  );
-  return image?.result || "";
-}
-
 function terminalSseError(event) {
   if (!TERMINAL_SSE_EVENT_TYPES.has(event.type)) return null;
   const providerError = event.error || event.response?.error || event.response?.incomplete_details || {};
@@ -120,8 +105,19 @@ function parseSseBlock(block) {
   if (!data || data === "[DONE]") return { result: "", error: null };
   try {
     const event = JSON.parse(data);
-    const result = completedImageResult(event);
-    if (result) return { result, error: null };
+    if (
+      event.type === "response.output_item.done"
+      && event.item?.type === "image_generation_call"
+      && typeof event.item.result === "string"
+    ) {
+      return { result: event.item.result, error: null };
+    }
+    if (event.type === "response.completed" && Array.isArray(event.response?.output)) {
+      const image = event.response.output.find(
+        (item) => item?.type === "image_generation_call" && typeof item.result === "string",
+      );
+      if (image?.result) return { result: image.result, error: null };
+    }
     return { result: "", error: terminalSseError(event) };
   } catch {
     return { result: "", error: null };
