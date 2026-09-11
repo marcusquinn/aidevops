@@ -19,6 +19,87 @@ ABANDONED_REBASE_MIN_AGE_SECONDS=86400
 ABANDONED_REBASE_KIND="abandoned"
 HEAD_COMMIT_EXPR='HEAD^{commit}'
 NULL_SHA1="0000000000000000000000000000000000000000"
+LOCAL_STATE_BORN="born"
+LOCAL_STATE_UNBORN="unborn"
+BOOLEAN_TRUE="true"
+
+local_ref_is_absent() {
+	local repo="$1"
+	local ref="$2"
+	local status=0
+	"$REAL_GIT" -C "$repo" show-ref --verify --quiet "$ref" || status=$?
+	[[ "$status" -eq 1 ]] || return 1
+	return 0
+}
+
+verify_initial_local_state() {
+	local repo="$1"
+	local ref="$2"
+	local state="$3"
+	local expected_sha="$4"
+	local current_sha=""
+	local head_ref=""
+	if [[ "$state" == "$LOCAL_STATE_UNBORN" ]]; then
+		if ! head_ref=$("$REAL_GIT" -C "$repo" symbolic-ref --quiet HEAD 2>&1); then
+			head_ref=""
+		fi
+		local_ref_is_absent "$repo" "$ref" || return 1
+		[[ "$head_ref" == "$ref" ]] || return 1
+		return 0
+	fi
+	if ! current_sha=$("$REAL_GIT" -C "$repo" rev-parse --verify "${ref}^{commit}" 2>&1); then
+		current_sha=""
+	fi
+	[[ -n "$current_sha" && "$current_sha" == "$expected_sha" ]] || return 1
+	return 0
+}
+
+verify_post_cas_state() {
+	local repo="$1"
+	local local_ref="$2"
+	local branch="$3"
+	local remote_ref="$4"
+	local target_sha="$5"
+	local current_branch=""
+	local current_local_sha=""
+	local current_remote_sha=""
+	if ! current_branch=$("$REAL_GIT" -C "$repo" symbolic-ref --quiet --short HEAD 2>&1); then
+		current_branch=""
+	fi
+	if ! current_local_sha=$("$REAL_GIT" -C "$repo" rev-parse --verify "${local_ref}^{commit}" 2>&1); then
+		current_local_sha=""
+	fi
+	if ! current_remote_sha=$("$REAL_GIT" -C "$repo" rev-parse --verify "${remote_ref}^{commit}" 2>&1); then
+		current_remote_sha=""
+	fi
+	[[ "$current_branch" == "$branch" && "$current_local_sha" == "$target_sha" &&
+		"$current_remote_sha" == "$target_sha" ]] || return 1
+	return 0
+}
+
+rollback_local_ref() {
+	local repo="$1"
+	local ref="$2"
+	local state="$3"
+	local initial_sha="$4"
+	local target_sha="$5"
+	local message="$6"
+	if [[ "$state" == "$LOCAL_STATE_UNBORN" ]]; then
+		"$REAL_GIT" -C "$repo" update-ref -m "$message" -d "$ref" "$target_sha" || return 1
+		return 0
+	fi
+	"$REAL_GIT" -C "$repo" update-ref -m "$message" "$ref" "$initial_sha" "$target_sha" || return 1
+	return 0
+}
+
+restore_unborn_worktree() {
+	local repo="$1"
+	local target_sha="$2"
+	local empty_tree="$3"
+	"$REAL_GIT" -C "$repo" read-tree --dry-run -u -m "$target_sha" "$empty_tree" || return 1
+	"$REAL_GIT" -C "$repo" read-tree -u -m "$target_sha" "$empty_tree" || return 1
+	return 0
+}
 
 github_slug_from_remote_url() {
 	local url="$1"
@@ -270,11 +351,11 @@ resolve_github_remote() {
 	# Multiple names are accepted only after every candidate's complete fetch and
 	# push URL sets independently matched the caller's immutable expected slug.
 	if [[ "$candidate_count" -eq 1 ||
-		("$allow_equivalent_aliases" == "true" && "$candidate_count" -gt 1) ]]; then
+		("$allow_equivalent_aliases" == "$BOOLEAN_TRUE" && "$candidate_count" -gt 1) ]]; then
 		printf '%s\n' "$candidate"
 		return 0
 	fi
-	if [[ "$allow_local_mirror" == "true" && "$candidate_count" -eq 0 && "$github_seen" -eq 0 ]] &&
+	if [[ "$allow_local_mirror" == "$BOOLEAN_TRUE" && "$candidate_count" -eq 0 && "$github_seen" -eq 0 ]] &&
 		origin_is_local_mirror "$repo"; then
 		printf 'origin\n'
 		return 0
@@ -819,10 +900,43 @@ target_sha=$("$REAL_GIT" -C "$repo_path" rev-parse --verify "${remote_ref}^{comm
 	exit 1
 }
 local_sha=$("$REAL_GIT" -C "$repo_path" rev-parse --verify "${local_ref}^{commit}" 2>/dev/null || true)
-[[ -n "$local_sha" ]] || {
-	printf 'BLOCKED: local %s tip cannot be resolved\n' "$target_branch" >&2
-	exit 1
-}
+local_state="$LOCAL_STATE_BORN"
+unborn_empty_tree=""
+null_oid="${target_sha//?/0}"
+if [[ -z "$local_sha" ]]; then
+	[[ "$cmd" == "$SYNC_MIRROR_CMD" ]] || {
+		printf 'BLOCKED: local %s tip cannot be resolved\n' "$target_branch" >&2
+		exit 1
+	}
+	local_ref_is_absent "$repo_path" "$local_ref" || {
+		printf 'BLOCKED: local %s ref exists but is not a valid commit\n' "$target_branch" >&2
+		exit 1
+	}
+	if ! head_ref=$("$REAL_GIT" -C "$repo_path" symbolic-ref --quiet HEAD 2>&1); then
+		head_ref=""
+	fi
+	[[ "$head_ref" == "$local_ref" ]] || {
+		printf 'BLOCKED: unborn canonical HEAD does not target %s\n' "$local_ref" >&2
+		exit 1
+	}
+	unborn_status=$("$REAL_GIT" -C "$repo_path" status --porcelain=v1) || {
+		printf 'BLOCKED: unborn canonical worktree status cannot be read safely\n' >&2
+		exit 1
+	}
+	[[ -z "$unborn_status" ]] || {
+		printf 'BLOCKED: unborn canonical worktree is not clean\n' >&2
+		exit 1
+	}
+	unborn_empty_tree=$("$REAL_GIT" -C "$repo_path" write-tree) || {
+		printf 'BLOCKED: unborn canonical empty index cannot be verified\n' >&2
+		exit 1
+	}
+	"$REAL_GIT" -C "$repo_path" cat-file -e "${unborn_empty_tree}^{tree}" || {
+		printf 'BLOCKED: unborn canonical empty tree cannot be resolved\n' >&2
+		exit 1
+	}
+	local_state="$LOCAL_STATE_UNBORN"
+fi
 if [[ "$cmd" == "$SYNC_MIRROR_CMD" && "$maintenance_reason" == "$AIDEVOPS_UPDATE_REASON" ]]; then
 	tracked_status=$("$REAL_GIT" -C "$repo_path" status --porcelain=v1 --untracked-files=no) || {
 		printf 'BLOCKED: canonical tracked/index state cannot be read safely\n' >&2
@@ -832,7 +946,7 @@ if [[ "$cmd" == "$SYNC_MIRROR_CMD" && "$maintenance_reason" == "$AIDEVOPS_UPDATE
 		printf 'BLOCKED: routine update synchronization accepts untracked-only state\n' >&2
 		exit 1
 	}
-	"$REAL_GIT" -C "$repo_path" merge-base --is-ancestor "$local_ref" "$target_sha" || {
+	[[ "$local_state" == "$LOCAL_STATE_UNBORN" ]] || "$REAL_GIT" -C "$repo_path" merge-base --is-ancestor "$local_ref" "$target_sha" || {
 		printf 'BLOCKED: routine update synchronization will not replace local commits\n' >&2
 		exit 1
 	}
@@ -1021,12 +1135,11 @@ if [[ "$cmd" == "$SYNC_MIRROR_CMD" ]]; then
 		exit 1
 	fi
 	current_branch=$("$REAL_GIT" -C "$repo_path" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
-	current_local_sha=$("$REAL_GIT" -C "$repo_path" rev-parse --verify "${local_ref}^{commit}" 2>/dev/null || true)
 	[[ "$target_branch" == "$current_branch" ]] || {
 		printf 'BLOCKED: canonical branch changed during preservation\n' >&2
 		exit 1
 	}
-	[[ "$local_sha" == "$current_local_sha" ]] || {
+	verify_initial_local_state "$repo_path" "$local_ref" "$local_state" "$local_sha" || {
 		printf 'BLOCKED: canonical local ref changed during preservation\n' >&2
 		exit 1
 	}
@@ -1037,12 +1150,14 @@ if [[ "$cmd" == "$SYNC_MIRROR_CMD" ]]; then
 fi
 
 preservation_ref=""
-if [[ "$cmd" == "$FAST_FORWARD_CMD" ]] && ! "$REAL_GIT" -C "$repo_path" merge-base --is-ancestor "$local_ref" "$target_sha"; then
+if [[ "$local_state" == "$LOCAL_STATE_BORN" && "$cmd" == "$FAST_FORWARD_CMD" ]] &&
+	! "$REAL_GIT" -C "$repo_path" merge-base --is-ancestor "$local_ref" "$target_sha"; then
 	printf 'BLOCKED: local %s has diverged from %s/%s\n' \
 		"$target_branch" "$canonical_remote" "$target_branch" >&2
 	exit 1
 fi
-if [[ "$cmd" != "$FAST_FORWARD_CMD" ]] && ! "$REAL_GIT" -C "$repo_path" merge-base --is-ancestor "$local_ref" "$target_sha"; then
+if [[ "$local_state" == "$LOCAL_STATE_BORN" && "$cmd" != "$FAST_FORWARD_CMD" ]] &&
+	! "$REAL_GIT" -C "$repo_path" merge-base --is-ancestor "$local_ref" "$target_sha"; then
 	preservation_ref="refs/aidevops/canonical-recovery/issue-${issue_number}/${local_sha}"
 	"$REAL_GIT" check-ref-format "$preservation_ref" >/dev/null || {
 		printf 'BLOCKED: canonical preservation ref is invalid\n' >&2
@@ -1070,7 +1185,8 @@ AUDIT_LOG_FILE="$recovery_audit_file" AUDIT_QUIET=true "$audit_helper" log opera
 	--detail "operation=${cmd}" --detail "target=${target_branch}" --detail "target_source=${target_branch_source}" \
 	--detail "remote=${canonical_remote}" --detail "registered_slug=${registered_slug:-none}" \
 	--detail "expected_slug=${expected_slug}" \
-	--detail "target_sha=${target_sha}" --detail "local_sha=${local_sha}" \
+	--detail "target_sha=${target_sha}" --detail "local_sha=${local_sha:-none}" \
+	--detail "local_state=${local_state}" \
 	--detail "preservation_ref=${preservation_ref:-none}" --detail "backup_id=${sync_backup_id:-none}" \
 	--detail "stale_rebase_fingerprint=${stale_rebase_fingerprint:-none}" \
 	--detail "stale_rebase_preservation=${stale_rebase_preservation_dir:-none}" >/dev/null || {
@@ -1082,7 +1198,7 @@ AUDIT_LOG_FILE="$recovery_audit_file" AUDIT_QUIET=true "$audit_helper" log opera
 	printf 'BLOCKED: %s/%s tip changed during recovery\n' "$canonical_remote" "$target_branch" >&2
 	exit 1
 }
-[[ "$("$REAL_GIT" -C "$repo_path" rev-parse --verify "${local_ref}^{commit}")" == "$local_sha" ]] || {
+verify_initial_local_state "$repo_path" "$local_ref" "$local_state" "$local_sha" || {
 	printf 'BLOCKED: local %s tip changed during recovery\n' "$target_branch" >&2
 	exit 1
 }
@@ -1316,33 +1432,45 @@ if [[ "$cmd" == "$FAST_FORWARD_CMD" || "$cmd" == "$SYNC_MIRROR_CMD" ]]; then
 		printf 'BLOCKED: canonical worktree changed during fast-forward\n' >&2
 		exit 1
 	}
-	"$REAL_GIT" -C "$repo_path" read-tree --dry-run -u -m "$local_sha" "$target_sha" || {
-		printf 'BLOCKED: canonical worktree cannot be updated without overwriting local changes\n' >&2
-		exit 1
-	}
+	if [[ "$local_state" == "$LOCAL_STATE_UNBORN" ]]; then
+		"$REAL_GIT" -C "$repo_path" read-tree --dry-run -u -m "$target_sha" || {
+			printf 'BLOCKED: canonical worktree cannot be initialized without overwriting local changes\n' >&2
+			exit 1
+		}
+	else
+		"$REAL_GIT" -C "$repo_path" read-tree --dry-run -u -m "$local_sha" "$target_sha" || {
+			printf 'BLOCKED: canonical worktree cannot be updated without overwriting local changes\n' >&2
+			exit 1
+		}
+	fi
 	if [[ -n "${AIDEVOPS_CANONICAL_BEFORE_REF_UPDATE_HOOK:-}" ]]; then
 		"$AIDEVOPS_CANONICAL_BEFORE_REF_UPDATE_HOOK" "$repo_path" "$target_branch" "$local_sha" "$target_sha" || {
 			printf 'BLOCKED: canonical pre-update hook failed\n' >&2
 			exit 1
 		}
 	fi
+	expected_local_oid="$local_sha"
+	[[ "$local_state" == "$LOCAL_STATE_BORN" ]] || expected_local_oid="$null_oid"
 	if ! printf '%s\n' \
 		'start' \
 		"verify ${remote_ref} ${target_sha}" \
-		"update ${local_ref} ${target_sha} ${local_sha}" \
+		"update ${local_ref} ${target_sha} ${expected_local_oid}" \
 		'prepare' \
 		'commit' | "$REAL_GIT" -C "$repo_path" update-ref \
 		-m "${fast_forward_reflog} for ${audit_reference}" --stdin >/dev/null; then
 		printf 'BLOCKED: canonical local or %s ref changed during fast-forward\n' "$canonical_remote" >&2
 		exit 1
 	fi
-	current_branch=$("$REAL_GIT" -C "$repo_path" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
-	current_remote_sha=$("$REAL_GIT" -C "$repo_path" rev-parse --verify "${remote_ref}^{commit}" 2>/dev/null || true)
-	if [[ "$current_branch" != "$target_branch" || "$current_remote_sha" != "$target_sha" ]]; then
-		if ! "$REAL_GIT" -C "$repo_path" update-ref \
-			-m "${fast_forward_reflog} rollback for issue ${issue_number}" \
-			"$local_ref" "$local_sha" "$target_sha"; then
-			printf 'CRITICAL: canonical branch changed after compare-and-swap and the local ref rollback failed\n' >&2
+	rollback_message="${fast_forward_reflog} rollback for ${audit_reference}"
+	if ! verify_post_cas_state "$repo_path" "$local_ref" "$target_branch" "$remote_ref" "$target_sha"; then
+		if ! rollback_local_ref "$repo_path" "$local_ref" "$local_state" "$local_sha" \
+			"$target_sha" "$rollback_message"; then
+			printf 'CRITICAL: canonical state changed after compare-and-swap and the local ref rollback failed\n' >&2
+			exit 1
+		fi
+		if ! verify_initial_local_state "$repo_path" "$local_ref" "$local_state" "$local_sha" ||
+			[[ -n "$("$REAL_GIT" -C "$repo_path" status --porcelain)" ]]; then
+			printf 'CRITICAL: canonical local ref rolled back but the pre-update state is inconsistent\n' >&2
 			exit 1
 		fi
 		printf 'BLOCKED: canonical branch or %s ref changed during fast-forward; local ref rolled back\n' \
@@ -1351,37 +1479,82 @@ if [[ "$cmd" == "$FAST_FORWARD_CMD" || "$cmd" == "$SYNC_MIRROR_CMD" ]]; then
 	fi
 	if [[ -n "${AIDEVOPS_CANONICAL_BEFORE_WORKTREE_UPDATE_HOOK:-}" ]]; then
 		if ! "$AIDEVOPS_CANONICAL_BEFORE_WORKTREE_UPDATE_HOOK" "$repo_path" "$target_branch" "$local_sha" "$target_sha"; then
-			if ! "$REAL_GIT" -C "$repo_path" update-ref \
-				-m "${fast_forward_reflog} rollback for issue ${issue_number}" \
-				"$local_ref" "$local_sha" "$target_sha"; then
+			if ! rollback_local_ref "$repo_path" "$local_ref" "$local_state" "$local_sha" \
+				"$target_sha" "$rollback_message"; then
 				printf 'CRITICAL: canonical pre-worktree-update hook failed and the local ref rollback also failed\n' >&2
+				exit 1
+			fi
+			if ! verify_initial_local_state "$repo_path" "$local_ref" "$local_state" "$local_sha" ||
+				[[ -n "$("$REAL_GIT" -C "$repo_path" status --porcelain)" ]]; then
+				printf 'CRITICAL: canonical pre-worktree-update rollback left inconsistent state\n' >&2
 				exit 1
 			fi
 			printf 'BLOCKED: canonical pre-worktree-update hook failed\n' >&2
 			exit 1
 		fi
 	fi
-	if ! "$REAL_GIT" -C "$repo_path" read-tree -u -m "$local_sha" "$target_sha"; then
-		if ! "$REAL_GIT" -C "$repo_path" update-ref \
-			-m "${fast_forward_reflog} rollback for issue ${issue_number}" \
-			"$local_ref" "$local_sha" "$target_sha"; then
+	if ! verify_post_cas_state "$repo_path" "$local_ref" "$target_branch" "$remote_ref" "$target_sha"; then
+		if ! rollback_local_ref "$repo_path" "$local_ref" "$local_state" "$local_sha" \
+			"$target_sha" "$rollback_message"; then
+			printf 'CRITICAL: canonical state changed before the worktree update and the local ref rollback failed\n' >&2
+			exit 1
+		fi
+		if ! verify_initial_local_state "$repo_path" "$local_ref" "$local_state" "$local_sha" ||
+			[[ -n "$("$REAL_GIT" -C "$repo_path" status --porcelain)" ]]; then
+			printf 'CRITICAL: canonical pre-worktree drift rollback left inconsistent state\n' >&2
+			exit 1
+		fi
+		printf 'BLOCKED: canonical branch or %s ref changed before the worktree update; local ref rolled back\n' \
+			"$canonical_remote" >&2
+		exit 1
+	fi
+	worktree_update_failed=false
+	if [[ "$local_state" == "$LOCAL_STATE_UNBORN" ]]; then
+		"$REAL_GIT" -C "$repo_path" read-tree -u -m "$target_sha" || worktree_update_failed=true
+	else
+		"$REAL_GIT" -C "$repo_path" read-tree -u -m "$local_sha" "$target_sha" || worktree_update_failed=true
+	fi
+	if [[ "$worktree_update_failed" == "$BOOLEAN_TRUE" ]]; then
+		if ! rollback_local_ref "$repo_path" "$local_ref" "$local_state" "$local_sha" \
+			"$target_sha" "$rollback_message"; then
 			printf 'CRITICAL: canonical worktree update failed and the local ref rollback also failed\n' >&2
+			exit 1
+		fi
+		if [[ "$local_state" == "$LOCAL_STATE_UNBORN" ]] &&
+			! restore_unborn_worktree "$repo_path" "$target_sha" "$unborn_empty_tree"; then
+			printf 'CRITICAL: canonical worktree update failed and the unborn worktree could not be restored\n' >&2
+			exit 1
+		fi
+		if ! verify_initial_local_state "$repo_path" "$local_ref" "$local_state" "$local_sha" ||
+			[[ -n "$("$REAL_GIT" -C "$repo_path" status --porcelain)" ]]; then
+			printf 'CRITICAL: canonical worktree update rollback left inconsistent state\n' >&2
 			exit 1
 		fi
 		printf 'BLOCKED: canonical worktree update failed; local ref rolled back\n' >&2
 		exit 1
 	fi
 	post_update_branch=$("$REAL_GIT" -C "$repo_path" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+	if ! post_update_local_sha=$("$REAL_GIT" -C "$repo_path" rev-parse --verify "${local_ref}^{commit}" 2>&1); then
+		post_update_local_sha=""
+	fi
 	post_update_remote_sha=$("$REAL_GIT" -C "$repo_path" rev-parse --verify "${remote_ref}^{commit}" 2>/dev/null || true)
-	if [[ "$post_update_branch" != "$target_branch" || "$post_update_remote_sha" != "$target_sha" ]]; then
+	if [[ "$post_update_branch" != "$target_branch" || "$post_update_local_sha" != "$target_sha" ||
+		"$post_update_remote_sha" != "$target_sha" ]]; then
+		restore_unborn_state=false
 		if [[ "$post_update_branch" == "$target_branch" ]]; then
-			restore_worktree_sha="$local_sha"
+			if [[ "$local_state" == "$LOCAL_STATE_UNBORN" ]]; then
+				restore_worktree_sha="$unborn_empty_tree"
+				restore_unborn_state=true
+			else
+				restore_worktree_sha="$local_sha"
+			fi
 		else
-			restore_worktree_sha=$("$REAL_GIT" -C "$repo_path" rev-parse --verify "$HEAD_COMMIT_EXPR" 2>/dev/null || true)
+			if ! restore_worktree_sha=$("$REAL_GIT" -C "$repo_path" rev-parse --verify "$HEAD_COMMIT_EXPR" 2>&1); then
+				restore_worktree_sha=""
+			fi
 		fi
-		if ! "$REAL_GIT" -C "$repo_path" update-ref \
-			-m "${fast_forward_reflog} rollback for issue ${issue_number}" \
-			"$local_ref" "$local_sha" "$target_sha"; then
+		if ! rollback_local_ref "$repo_path" "$local_ref" "$local_state" "$local_sha" \
+			"$target_sha" "$rollback_message"; then
 			printf 'CRITICAL: canonical state changed after the worktree update and the local ref rollback failed\n' >&2
 			exit 1
 		fi
@@ -1391,11 +1564,21 @@ if [[ "$cmd" == "$FAST_FORWARD_CMD" || "$cmd" == "$SYNC_MIRROR_CMD" ]]; then
 			printf 'CRITICAL: canonical ref was rolled back but the concurrent branch worktree could not be restored\n' >&2
 			exit 1
 		fi
-		current_head_sha=$("$REAL_GIT" -C "$repo_path" rev-parse --verify "$HEAD_COMMIT_EXPR" 2>/dev/null || true)
-		if [[ "$current_head_sha" != "$restore_worktree_sha" ]] ||
-			[[ -n "$("$REAL_GIT" -C "$repo_path" status --porcelain)" ]]; then
-			printf 'CRITICAL: canonical ref was rolled back but the concurrent branch remains inconsistent\n' >&2
-			exit 1
+		if [[ "$restore_unborn_state" == "$BOOLEAN_TRUE" ]]; then
+			if ! verify_initial_local_state "$repo_path" "$local_ref" "$local_state" "$local_sha" ||
+				[[ -n "$("$REAL_GIT" -C "$repo_path" status --porcelain)" ]]; then
+				printf 'CRITICAL: canonical ref was rolled back but the unborn worktree remains inconsistent\n' >&2
+				exit 1
+			fi
+		else
+			if ! current_head_sha=$("$REAL_GIT" -C "$repo_path" rev-parse --verify "$HEAD_COMMIT_EXPR" 2>&1); then
+				current_head_sha=""
+			fi
+			if [[ "$current_head_sha" != "$restore_worktree_sha" ]] ||
+				[[ -n "$("$REAL_GIT" -C "$repo_path" status --porcelain)" ]]; then
+				printf 'CRITICAL: canonical ref was rolled back but the concurrent branch remains inconsistent\n' >&2
+				exit 1
+			fi
 		fi
 		printf 'BLOCKED: canonical branch or %s ref changed during worktree update; ref and worktree restored\n' \
 			"$canonical_remote" >&2
@@ -1424,7 +1607,8 @@ if [[ "$cmd" == "$FAST_FORWARD_CMD" || "$cmd" == "$SYNC_MIRROR_CMD" ]]; then
 			fi
 		fi
 		printf 'SYNCHRONIZED_CANONICAL_MIRROR=true\n'
-		printf 'OLD_SHA=%s\n' "$local_sha"
+		printf 'OLD_STATE=%s\n' "$local_state"
+		printf 'OLD_SHA=%s\n' "${local_sha:-none}"
 		printf 'NEW_SHA=%s\n' "$target_sha"
 		printf 'CANONICAL_BRANCH=%s\n' "$target_branch"
 		printf 'BRANCH_SOURCE=%s\n' "$target_branch_source"

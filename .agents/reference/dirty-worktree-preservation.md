@@ -57,6 +57,16 @@ cannot select the target. Under the canonical recovery lock it:
 5. compare-and-swaps the local ref and updates the worktree to the pinned tip;
 6. verifies branch, HEAD, remote ref, worktree cleanliness, and the audit chain.
 
+A clean canonical checkout whose resolved default branch is still unborn is a
+supported bootstrap input for `sync-mirror` only. The helper requires symbolic
+`HEAD` to name that exact branch, an absent local ref, and a completely empty
+index and worktree. It records `local_state=unborn`, creates the local ref with
+zero-object compare-and-swap semantics, and materializes only the pinned remote
+tree. Other recovery operations, detached or mismatched `HEAD`, dirty state,
+branch occupancy, identity ambiguity, and ref drift remain blocked. A failure
+after ref creation deletes that ref only when it still points to the pinned tip
+and verifies the original clean unborn state before returning.
+
 Clean records an in-progress transition before its first worktree mutation. Any
 reset, removal, hook, final-status, or evidence-finalization failure immediately
 restores and verifies the complete pre-clean snapshot. The manifest audits the
