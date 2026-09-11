@@ -1,0 +1,18 @@
+name: Qlty Regression Ratchet Refresh
+
+# GH#31789: Keep ratchet-triggered refreshes out of the protected workflow.
+# A separate workflow identity prevents unrelated label suites from replacing
+# the required Qlty Regression Gate association on the PR head.
+on:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  pull-requests: write
+  contents: read
+
+jobs:
+  refresh:
+    if: github.event.label.name == 'ratchet-bump'
+    uses: ./.github/workflows/qlty-regression.yml
+    secrets: inherit
