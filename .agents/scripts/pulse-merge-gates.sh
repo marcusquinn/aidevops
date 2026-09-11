@@ -79,8 +79,7 @@ _pulse_merge_classify_final_authority() {
 	local labels_str="$5" is_fork="$6" author_collab_rc=0
 	_PULSE_FINAL_TRUSTED_ISSUE_SYNC=0
 
-	if [[ "$pr_author" == "github-actions" || "$pr_author" == "app/github-actions" || "$pr_author" == "github-actions[bot]" ]] &&
-		_pulse_is_trusted_issue_sync_pr "$pr_number" "$repo_slug" "$current_head_sha"; then
+	if _pulse_is_trusted_issue_sync_pr "$pr_number" "$repo_slug" "$current_head_sha"; then
 		_PULSE_FINAL_TRUSTED_ISSUE_SYNC=1
 		return 0
 	fi

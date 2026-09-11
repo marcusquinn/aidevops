@@ -470,8 +470,7 @@ _pm_gate_review_mode() {
 _pm_gate_author_trust() {
 	local pr_number="$1" repo_slug="$2" pr_author="$3" expected_head_sha="$4"
 	local trusted_dest="$5" permission_dest="$6" author_collab_rc=0 permission="" trusted=0
-	if [[ "$pr_author" == "app/github-actions" || "$pr_author" == "github-actions[bot]" ]] &&
-		_pulse_is_trusted_issue_sync_pr "$pr_number" "$repo_slug" "$expected_head_sha"; then
+	if _pulse_is_trusted_issue_sync_pr "$pr_number" "$repo_slug" "$expected_head_sha"; then
 		trusted=1
 		permission="write"
 		echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} — author ${pr_author} is trusted repository-generated Issue Sync automation, proceeding" >>"$LOGFILE"
