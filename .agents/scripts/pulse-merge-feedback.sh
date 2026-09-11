@@ -562,7 +562,8 @@ _review_feedback_fetch_evidence() {
 #   $4 - feedback_section (markdown to append)
 #   $5 - caller        (calling function name, for log messages)
 #
-# Returns: 0 on success or skip (already present), 1 on failure.
+# Returns: 0 on success or skip (already present), otherwise the underlying
+# read/write failure status so transient deferrals remain distinguishable.
 #######################################
 _append_feedback_to_issue() {
 	local linked_issue="$1"
@@ -579,7 +580,7 @@ _append_feedback_to_issue() {
 		--json body --jq '.body // ""' 2>/dev/null) || fetch_rc=$?
 	if [[ $fetch_rc -ne 0 ]]; then
 		echo "[pulse-wrapper] ${caller}: failed to fetch issue #${linked_issue} body (exit ${fetch_rc}) — skipping body edit to prevent data loss (t2383)" >>"$LOGFILE"
-		return 1
+		return "$fetch_rc"
 	fi
 
 	if printf '%s' "$current_body" | grep -qF "$marker"; then
@@ -598,11 +599,13 @@ ${feedback_section}"
 	# in shared-gh-wrappers-safe-edit.sh fires when GraphQL is rate-limited.
 	# Bare `gh issue edit` always uses GraphQL and silently fails the body
 	# update when the 5000/hr GraphQL budget is exhausted. PR #21733 model.
+	local update_rc=0
 	gh_issue_edit_safe "$linked_issue" --repo "$repo_slug" \
-		--body "$new_body" >/dev/null 2>&1 || {
-		echo "[pulse-wrapper] ${caller}: failed to update issue #${linked_issue} body — aborting" >>"$LOGFILE"
-		return 1
-	}
+		--body "$new_body" >/dev/null 2>&1 || update_rc=$?
+	if [[ "$update_rc" -ne 0 ]]; then
+		echo "[pulse-wrapper] ${caller}: failed to update issue #${linked_issue} body (exit ${update_rc}) — aborting" >>"$LOGFILE"
+		return "$update_rc"
+	fi
 	return 0
 }
 

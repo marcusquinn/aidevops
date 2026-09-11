@@ -314,7 +314,7 @@ append_gh_mock_issue_edit_cases() {
 		fi
 		printf 'issue-body-%s\n' "$_body_phase" >>"${EVENT_LOG}"
 		if [[ "${TEST_FAIL_BODY_PHASE:-}" == "$_body_phase" ]]; then
-			exit 1
+			exit "${TEST_FAIL_BODY_RC:-1}"
 		fi
 	elif [[ "$*" == *"--add-label status:available"* ]]; then
 		_is_transition=1
@@ -469,6 +469,8 @@ if [[ "${1:-}" == "api" ]]; then
 	if [[ "${2:-}" == "repos/owner/repo/issues/42" ]]; then
 		if [[ "$_jq_filter" == *".body"* ]]; then
 			cat "${TEST_ROOT}/issue-body.txt"
+		elif [[ -z "$_jq_filter" ]]; then
+			jq -nc --arg labels "$(<"${TEST_ROOT}/issue-labels.txt")" --arg assignee "$(<"${TEST_ROOT}/issue-assignees.txt")" '{state:"open", labels:($labels | split(",") | map(select(length > 0) | {name:.})), assignees:([$assignee] | map(select(length > 0) | {login:.}))}'
 		else
 			printf '%s\t%s\n' "$(<"${TEST_ROOT}/issue-labels.txt")" "$(<"${TEST_ROOT}/issue-assignees.txt")"
 		fi
@@ -506,6 +508,20 @@ teardown_test_env() {
 	return 0
 }
 
+run_selected_tests() {
+	local test_name=""
+	for test_name in "$@"; do
+		if [[ "$test_name" != test_* ]] || ! declare -F "$test_name" >/dev/null 2>&1; then
+			printf 'FATAL: unknown test case: %s\n' "$test_name" >&2
+			return 2
+		fi
+		"$test_name"
+	done
+	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
+	[[ "$TESTS_FAILED" -eq 0 ]]
+	return $?
+}
+
 # Source the feedback module so its head-bound finalizer dependency is exercised
 # exactly as Pulse loads it in production.
 define_helpers_under_test() {
@@ -533,6 +549,10 @@ define_helpers_under_test() {
 	unset _PULSE_MERGE_FEEDBACK_LOADED _PULSE_MERGE_FEEDBACK_FINALIZER_LOADED
 	# shellcheck disable=SC1090
 	source "$MERGE_SCRIPT"
+	# Exercise the finalizer fallback against the stateful gh fixture instead of
+	# leaking the host shell's real status-label wrapper into this isolated test.
+	unset -f set_issue_status 2>/dev/null || true
+	_interactive_claim_fence_blocks_dispatch() { return 1; }
 	_classify_ci_failures_by_pattern() { return 0; }
 	return 0
 }
@@ -1146,19 +1166,20 @@ test_dispatch_reopens_when_close_verification_fails() {
 	return 0
 }
 
-test_dispatch_reopens_after_completion_write_failure() {
+test_dispatch_keeps_closed_after_completion_write_deferral() {
 	reset_mock_state
 	export TEST_FAIL_BODY_PHASE="complete"
+	export TEST_FAIL_BODY_RC=75
 	local first_rc=0
 	_dispatch_pr_fix_worker "100" "owner/repo" "42" || first_rc=$?
-	unset TEST_FAIL_BODY_PHASE
+	unset TEST_FAIL_BODY_PHASE TEST_FAIL_BODY_RC
 
 	if [[ "$first_rc" -ne "${PULSE_FEEDBACK_ROUTE_DEFERRED_RC:-75}" \
-		|| "$(<"${TEST_ROOT}/pr-state.txt")" != "OPEN" \
+		|| "$(<"${TEST_ROOT}/pr-state.txt")" != "CLOSED" \
 		|| "$(<"${TEST_ROOT}/issue-body.txt")" == *"feedback-route:complete:review:PR100:SHAabc123repairsha"* \
 		|| ! -s "$EVENT_LOG" ]] \
-		|| ! grep -qF 'pr-reopen' "$EVENT_LOG"; then
-		print_result "post-close completion failure compensates by reopening" 1 \
+		|| grep -qF 'pr-reopen' "$EVENT_LOG"; then
+		print_result "post-close completion deferral preserves verified close" 1 \
 			"rc=${first_rc}; state=$(<"${TEST_ROOT}/pr-state.txt"); events=$(tr '\n' ';' <"$EVENT_LOG")"
 		return 0
 	fi
@@ -1166,11 +1187,31 @@ test_dispatch_reopens_after_completion_write_failure() {
 	local retry_rc=0
 	_dispatch_pr_fix_worker "100" "owner/repo" "42" || retry_rc=$?
 	if [[ "$retry_rc" -ne 0 ]] || ! review_route_is_complete; then
-		print_result "compensated route completes on retry" 1 \
+		print_result "closed deferred route completes on retry" 1 \
 			"rc=${retry_rc}; body=$(tr '\n' ';' <"${TEST_ROOT}/issue-body.txt"); events=$(tr '\n' ';' <"$EVENT_LOG")"
 		return 0
 	fi
-	print_result "completion-write failure reopens and resumes safely" 0
+	print_result "completion-write deferral keeps the PR closed and resumes safely" 0
+	return 0
+}
+
+test_dispatch_reopens_after_nontransient_completion_write_failure() {
+	reset_mock_state
+	export TEST_FAIL_BODY_PHASE="complete"
+	export TEST_FAIL_BODY_RC=1
+	local first_rc=0
+	_dispatch_pr_fix_worker "100" "owner/repo" "42" || first_rc=$?
+	unset TEST_FAIL_BODY_PHASE TEST_FAIL_BODY_RC
+
+	if [[ "$first_rc" -ne "${PULSE_FEEDBACK_ROUTE_DEFERRED_RC:-75}" \
+		|| "$(<"${TEST_ROOT}/pr-state.txt")" != "OPEN" \
+		|| "$(<"${TEST_ROOT}/issue-body.txt")" == *"feedback-route:complete:review:PR100:SHAabc123repairsha"* ]] \
+		|| ! grep -qF 'pr-reopen' "$EVENT_LOG"; then
+		print_result "nontransient completion failure still compensates by reopening" 1 \
+			"rc=${first_rc}; state=$(<"${TEST_ROOT}/pr-state.txt"); events=$(tr '\n' ';' <"$EVENT_LOG")"
+		return 0
+	fi
+	print_result "nontransient completion failure preserves compensating reopen" 0
 	return 0
 }
 
@@ -1886,6 +1927,10 @@ main() {
 		printf 'FATAL: helper extraction failed\n' >&2
 		return 1
 	fi
+	if [[ $# -gt 0 ]]; then
+		run_selected_tests "$@"
+		return $?
+	fi
 
 	test_build_section_includes_marker_and_citations
 	test_build_section_bounds_total_output
@@ -1911,7 +1956,8 @@ main() {
 	test_dispatch_preserves_maintainer_hold_racing_transition
 	test_dispatch_retries_after_close_failure
 	test_dispatch_reopens_when_close_verification_fails
-	test_dispatch_reopens_after_completion_write_failure
+	test_dispatch_keeps_closed_after_completion_write_deferral
+	test_dispatch_reopens_after_nontransient_completion_write_failure
 	test_dispatch_recovers_terminal_label_failure
 	test_dispatch_preserves_human_readded_hold_generation
 	test_dispatch_restores_hold_when_generation_changes_before_transition
