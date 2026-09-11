@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.362] - 2026-09-11
+
+### Fixed
+
+- accept in-progress task completion (#31808)
+- update Elysia dependency (#31803)
+- reconcile durable release lane finalization (#31800)
+
 ## [3.32.361] - 2026-09-11
 
 ### Fixed
