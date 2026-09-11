@@ -271,6 +271,26 @@ receipt's executor finalization fields. After an explicit repository rename, use
 new identity and migrates cleanup plus release receipts while preserving owner,
 lease, worktree, branch, creation time, and irreversible cleanup state.
 
+**Generated Cloudron catalogs:** a repository-owned push/dispatch workflow may
+build at a merged release PR, then create a direct child commit containing only
+the generated `CloudronVersions.json` and tag that child. After independently
+verifying publication, record this explicitly:
+
+```bash
+full-loop-helper.sh record-published-release PR vX.Y.Z OWNER/REPO \
+  --workflow cloudron-catalog-publish.yml --event push --generated-cloudron-catalog
+```
+
+The default still requires tag/merge equality. The opt-in requires a direct
+catalog-only child, exactly one appended published entry, unchanged historical
+entries and source manifest settings, and verified image/catalog attestations
+from the same successful invocation of the exact workflow at the merged source.
+It supports the repository's own GHCR namespace and `refs/heads/main`, not
+arbitrary descendants, registries, reusable-workflow signers, or branch layouts.
+Missing or mismatched proof leaves receipts unchanged. Python 3 and a `gh`
+version exposing verified attestation JSON are required. This command verifies
+an existing release; it never creates or republishes artifacts.
+
 If a maintainer or merge queue merges the PR before the merge wrapper records its
 cleanup receipt, first establish terminal release evidence, then run
 `full-loop-helper.sh adopt-merged-receipt <PR> [REPO]` from the still-registered

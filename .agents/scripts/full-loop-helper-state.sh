@@ -2125,6 +2125,7 @@ _full_loop_verify_published_release() {
 	local merge_commit="$3"
 	local workflow_file="${4:-}"
 	local workflow_event="${5:-$_FULL_LOOP_WORKFLOW_EVENT_RELEASE}"
+	local generated_catalog="${6:-false}"
 	local tag_commit=""
 	local release_json=""
 	local workflow_runs_json=""
@@ -2145,7 +2146,13 @@ _full_loop_verify_published_release() {
 		workflow_runs_endpoint="repos/${repo}/actions/runs?event=release&status=success&per_page=100"
 	fi
 	tag_commit=$(_full_loop_resolve_remote_release_tag_commit "$repo" "$tag_name") || return 1
-	[[ "$tag_commit" == "$merge_commit" ]] || return 1
+	if [[ "$tag_commit" != "$merge_commit" ]]; then
+		# aidevops:trust-boundary — never substitute a generic ancestry check.
+		[[ "$generated_catalog" == "true" && -n "$workflow_file" ]] || return 1
+		python3 "${SCRIPT_DIR}/cloudron-release-evidence.py" --repo "$repo" --tag "$tag_name" \
+			--source "$merge_commit" --commit "$tag_commit" --workflow "$workflow_file" --event "$workflow_event" || return 1
+		[[ "$tag_commit" == "$(_full_loop_resolve_remote_release_tag_commit "$repo" "$tag_name")" ]] || return 1
+	fi
 	release_json=$(gh api "repos/${repo}/releases/tags/${tag_name}" 2>/dev/null) || return 1
 	jq -e --arg tag_name "$tag_name" '.tag_name == $tag_name and .draft == false' <<<"$release_json" >/dev/null || return 1
 	workflow_runs_json=$(gh api "$workflow_runs_endpoint" 2>/dev/null) || return 1
@@ -2217,6 +2224,7 @@ _full_loop_parse_published_release_options() {
 	_FULL_LOOP_PARSED_REPO_ARG=""
 	_FULL_LOOP_PARSED_WORKFLOW_FILE=""
 	_FULL_LOOP_PARSED_WORKFLOW_EVENT="$_FULL_LOOP_WORKFLOW_EVENT_RELEASE"
+	_FULL_LOOP_PARSED_GENERATED_CATALOG="false"
 	if [[ "$arg_index" -lt "$arg_count" ]]; then
 		option="${args[$arg_index]}"
 	fi
@@ -2227,6 +2235,10 @@ _full_loop_parse_published_release_options() {
 	while [[ "$arg_index" -lt "$arg_count" ]]; do
 		option="${args[$arg_index]}"
 		case "$option" in
+		--generated-cloudron-catalog)
+			_FULL_LOOP_PARSED_GENERATED_CATALOG="true"
+			arg_index=$((arg_index + 1))
+			;;
 		--workflow | --event)
 			[[ $((arg_index + 1)) -lt "$arg_count" ]] || {
 				print_error "${option} requires a value"
@@ -2289,7 +2301,7 @@ cmd_record_published_release() {
 		return 1
 	}
 	_full_loop_verify_published_release "$repo" "$tag_name" "$merge_commit" \
-		"$workflow_file" "$workflow_event" || {
+		"$workflow_file" "$workflow_event" "$_FULL_LOOP_PARSED_GENERATED_CATALOG" || {
 		print_error "Cannot record release:published: release, tag, and successful release workflow evidence do not match PR #${pr_number}"
 		return 1
 	}

@@ -254,6 +254,23 @@ grep -qx 'published' "${receipt_dir}/marcusquinn_aidevops-61.status"
 jq -e '.release_status == "published"' "$push_published_receipt" >/dev/null
 printf 'PASS exact repository-owned push workflow records published evidence\n'
 
+# The opt-in does not change the exact-commit path or existing receipt bytes.
+cp "$push_published_receipt" "${ROOT}/generated-opt-in-before.json"
+AIDEVOPS_FULL_LOOP_RECEIPT_DIR="$receipt_dir" AIDEVOPS_FULL_LOOP_CLEANUP_DIR="$cleanup_receipt_dir" \
+	PATH="${ROOT}/bin:/opt/homebrew/bin:/usr/bin:/bin" \
+	bash "$published_record_runner" 61 v3.0.0 marcusquinn/aidevops \
+		--workflow release.yml --event push --generated-cloudron-catalog >/dev/null
+cmp -s "$push_published_receipt" "${ROOT}/generated-opt-in-before.json"
+if COMPLETION_RELEASE_MODE=wrong-tag-commit AIDEVOPS_FULL_LOOP_RECEIPT_DIR="$receipt_dir" \
+	AIDEVOPS_FULL_LOOP_CLEANUP_DIR="$cleanup_receipt_dir" PATH="${ROOT}/bin:/opt/homebrew/bin:/usr/bin:/bin" \
+	bash "$published_record_runner" 61 v3.0.0 marcusquinn/aidevops \
+		--workflow release.yml --event push --generated-cloudron-catalog >/dev/null 2>&1; then
+	printf 'FAIL generated catalog opt-in accepted an unproven descendant\n'
+	exit 1
+fi
+cmp -s "$push_published_receipt" "${ROOT}/generated-opt-in-before.json"
+printf 'PASS generated catalog opt-in preserves exact-commit replay and rejects missing proof without mutation\n'
+
 for invalid_push_mode in push-failed-workflow push-wrong-event push-wrong-sha; do
 	invalid_push_worktree="${ROOT}/invalid-${invalid_push_mode}"
 	mkdir -p "$invalid_push_worktree"
