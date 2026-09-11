@@ -94,7 +94,7 @@ function completedImageResult(event) {
 function terminalSseError(event) {
   if (!TERMINAL_SSE_EVENT_TYPES.has(event.type)) return null;
   const providerError = event.error || event.response?.error || event.response?.incomplete_details || {};
-  let code = providerError.code || providerError.type || providerError.reason || event.code || "";
+  let code = [providerError.code, providerError.type, providerError.reason, event.code].find(Boolean) || "";
   let message = providerError.message || event.message || "";
   if (event.type === "response.completed" && !code && !message) {
     code = "image_missing";
