@@ -1356,7 +1356,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18421 Add guarded Wasabi object storage integration with beta MCP boundary #auto-dispatch #feat #tier:standard #interactive ~3h blocked-by:t18418 ref:GH#31688 logged:2026-09-09 -> [todo/tasks/t18421-brief.md] pr:#31719 completed:2026-09-10
 
-- [>] t18428 Fix Dependabot PR lifecycle convergence #priority:high #type:bug #interactive #tier:thinking ref:GH#31795 started:2026-09-11 -> [todo/tasks/t18428-brief.md]
+- [x] t18428 Fix Dependabot PR lifecycle convergence #priority:high #type:bug #interactive #tier:thinking ref:GH#31795 started:2026-09-11 -> [todo/tasks/t18428-brief.md] pr:#31798 completed:2026-09-11
 
 ## In Progress
 
