@@ -15,7 +15,10 @@ TESTS_RUN=0
 TESTS_FAILED=0
 FIXTURE_TRUSTED=0
 FIXTURE_LABELS=""
+FIXTURE_DEPENDABOT_TRUSTED=0
+FIXTURE_CRYPTO_APPROVED=0
 WORKER_BRIEFED_CALLS="${TEST_ROOT}/worker-briefed-calls.log"
+DEPENDABOT_ROUTE_CALLS="${TEST_ROOT}/dependabot-route-calls.log"
 PULSE_UNKNOWN_STATE="UNKNOWN"
 PULSE_REVIEW_EVIDENCE_SCHEMA="aidevops.review-gate-evidence/v1"
 export LOGFILE AGENTS_DIR
@@ -63,9 +66,12 @@ _is_collaborator_author() {
 	_PULSE_AUTHOR_PERMISSION_VALUE="none"
 	return 1
 }
-_is_trusted_dependabot_update_pr() { return 1; }
-_pulse_route_dependabot_pr_to_worker_issue() { return 1; }
-_has_maintainer_crypto_approval() { return 1; }
+_is_trusted_dependabot_update_pr() { [[ "$FIXTURE_DEPENDABOT_TRUSTED" -eq 1 ]]; }
+_pulse_route_dependabot_pr_to_worker_issue() {
+	printf '%s %s %s %s %s\n' "$1" "$2" "$3" "$4" "$5" >>"$DEPENDABOT_ROUTE_CALLS"
+	return 1
+}
+_has_maintainer_crypto_approval() { [[ "$FIXTURE_CRYPTO_APPROVED" -eq 1 ]]; }
 check_permission_failure_pr() { return 0; }
 check_pr_modifies_workflows() { return 1; }
 check_gh_workflow_scope() { return 0; }
@@ -98,8 +104,9 @@ eval "$gate_src"
 
 run_gate() {
 	local expected_head="${1:-head-current}"
+	local author="${2:-app/github-actions}"
 	local rc=0
-	_check_pr_merge_gates 950 owner/repo app/github-actions APPROVED "" \
+	_check_pr_merge_gates 950 owner/repo "$author" APPROVED "" \
 		"$FIXTURE_LABELS" "$expected_head" merge || rc=$?
 	printf '%s\n' "$rc"
 }
@@ -114,6 +121,19 @@ if [[ "$result" -eq 0 ]] && grep -q '^950 owner/repo head-current$' "$TRUST_CALL
 	print_result "exact-head Issue Sync automation bypasses worker linked-issue gate" 0
 else
 	print_result "exact-head Issue Sync automation bypasses worker linked-issue gate" 1 \
+		"rc=${result} trust=$(cat "$TRUST_CALLS") worker_calls=$(cat "$WORKER_BRIEFED_CALLS") log=$(cat "$LOGFILE")"
+fi
+
+FIXTURE_TRUSTED=1
+FIXTURE_LABELS="external-contributor"
+: >"$TRUST_CALLS"
+: >"$WORKER_BRIEFED_CALLS"
+result=$(run_gate head-current maintainer)
+if [[ "$result" -eq 0 ]] && grep -q '^950 owner/repo head-current$' "$TRUST_CALLS" &&
+	[[ ! -s "$WORKER_BRIEFED_CALLS" ]]; then
+	print_result "exact-head account-authored Issue Sync bypasses worker linked-issue gate" 0
+else
+	print_result "exact-head account-authored Issue Sync bypasses worker linked-issue gate" 1 \
 		"rc=${result} trust=$(cat "$TRUST_CALLS") worker_calls=$(cat "$WORKER_BRIEFED_CALLS") log=$(cat "$LOGFILE")"
 fi
 
@@ -139,6 +159,42 @@ if [[ "$result" -eq 1 ]] && grep -q '^950 owner/repo stale-head$' "$TRUST_CALLS"
 else
 	print_result "stale-head Issue Sync trust evidence fails closed" 1 \
 		"rc=${result} calls=$(cat "$TRUST_CALLS")"
+fi
+
+FIXTURE_TRUSTED=0
+FIXTURE_DEPENDABOT_TRUSTED=1
+FIXTURE_CRYPTO_APPROVED=0
+: >"$DEPENDABOT_ROUTE_CALLS"
+: >"$LOGFILE"
+result=$(run_gate head-current 'dependabot[bot]')
+if [[ "$result" -eq 1 ]] && [[ ! -s "$DEPENDABOT_ROUTE_CALLS" ]] &&
+	grep -qF "remains external and lacks current-head maintainer crypto-approval" "$LOGFILE"; then
+	print_result "verified Dependabot without independent authority stops without repair intake" 0
+else
+	print_result "verified Dependabot without independent authority stops without repair intake" 1 \
+		"rc=${result} route=$(cat "$DEPENDABOT_ROUTE_CALLS") log=$(cat "$LOGFILE")"
+fi
+
+FIXTURE_CRYPTO_APPROVED=1
+: >"$LOGFILE"
+result=$(run_gate head-current 'dependabot[bot]')
+if [[ "$result" -eq 0 ]] && grep -qF "remains external but has current-head maintainer crypto-approval" "$LOGFILE"; then
+	print_result "verified Dependabot with exact-head authority may continue through remaining gates" 0
+else
+	print_result "verified Dependabot with exact-head authority may continue through remaining gates" 1 \
+		"rc=${result} log=$(cat "$LOGFILE")"
+fi
+
+FIXTURE_DEPENDABOT_TRUSTED=0
+FIXTURE_CRYPTO_APPROVED=0
+: >"$DEPENDABOT_ROUTE_CALLS"
+: >"$LOGFILE"
+result=$(run_gate head-current 'dependabot[bot]')
+if [[ "$result" -eq 1 ]] && grep -qF "950 owner/repo dependabot[bot] head-current policy-ineligible" "$DEPENDABOT_ROUTE_CALLS"; then
+	print_result "unverified Dependabot remains eligible for defect repair intake" 0
+else
+	print_result "unverified Dependabot remains eligible for defect repair intake" 1 \
+		"rc=${result} route=$(cat "$DEPENDABOT_ROUTE_CALLS") log=$(cat "$LOGFILE")"
 fi
 
 printf '\nTests run: %d, failed: %d\n' "$TESTS_RUN" "$TESTS_FAILED"

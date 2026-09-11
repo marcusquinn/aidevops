@@ -151,9 +151,53 @@ test_required_context_lookup_uses_cycle_cache() {
 	return 0
 }
 
+test_required_context_lookup_uses_scoped_timeout() {
+	local name="required context lookup uses the scoped merge timeout"
+	local observed_file="${TMPDIR:-/tmp}/aidevops-context-timeout.$$"
+	_required_contexts_for_default_branch_uncached() {
+		printf '%s\n' "${AIDEVOPS_GH_READ_TIMEOUT:-unset}" >"$observed_file"
+		return 0
+	}
+	AIDEVOPS_PULSE_REQUIRED_CONTEXTS_TIMEOUT_SECONDS=30 _required_contexts_for_default_branch "owner/repo" || true
+	if [[ "$(<"$observed_file")" != "30" ]]; then
+		_fail "$name" "expected scoped timeout 30"
+	else
+		_pass "$name"
+	fi
+	rm -f -- "$observed_file"
+	return 0
+}
+
+test_required_context_lookup_does_not_cache_failures() {
+	local name="required context lookup retries after an uncached failure"
+	local cache_dir="" calls_file="${TMPDIR:-/tmp}/aidevops-context-failure-calls.$$"
+	cache_dir=$(mktemp -d "${TMPDIR:-/tmp}/aidevops-context-failure-cache.XXXXXX") || return 1
+	printf '0\n' >"$calls_file"
+	_required_contexts_for_default_branch_uncached() {
+		_increment_counter_file "$calls_file"
+		return 1
+	}
+	AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR="$cache_dir"
+	_required_contexts_for_default_branch "owner/repo" >/dev/null 2>&1 || true
+	_required_contexts_for_default_branch "owner/repo" >/dev/null 2>&1 || true
+	unset AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR
+	if [[ "$(<"$calls_file")" != "2" ]]; then
+		_fail "$name" "expected two uncached attempts"
+	elif [[ -f "$cache_dir/owner_repo.rc" ]]; then
+		_fail "$name" "failure unexpectedly populated the cache"
+	else
+		_pass "$name"
+	fi
+	rm -rf -- "$cache_dir"
+	rm -f -- "$calls_file"
+	return 0
+}
+
 main() {
 	test_author_permission_lookup_uses_cycle_cache
 	test_required_context_lookup_uses_cycle_cache
+	test_required_context_lookup_uses_scoped_timeout
+	test_required_context_lookup_does_not_cache_failures
 
 	printf '\nSummary: %d passed, %d failed\n' "$TESTS_PASSED" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -ne 0 ]]; then

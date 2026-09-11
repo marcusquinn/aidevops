@@ -51,6 +51,21 @@ _pmrc_gh_read() {
 	return "$rc"
 }
 
+_pmrc_required_contexts_timeout_seconds() {
+	local timeout_seconds="${AIDEVOPS_PULSE_REQUIRED_CONTEXTS_TIMEOUT_SECONDS:-30}"
+	local deadline="${_PMP_MERGE_PASS_DEADLINE_EPOCH:-0}"
+	local now_epoch="" remaining_seconds=""
+	[[ "$timeout_seconds" =~ ^[0-9]+$ && "$timeout_seconds" -ge 1 && "$timeout_seconds" -le 120 ]] || timeout_seconds=30
+	if [[ "$deadline" =~ ^[0-9]+$ && "$deadline" -gt 0 ]]; then
+		now_epoch=$(date +%s) || return 1
+		remaining_seconds=$((deadline - now_epoch))
+		[[ "$remaining_seconds" -ge 1 ]] || return 1
+		[[ "$remaining_seconds" -lt "$timeout_seconds" ]] && timeout_seconds="$remaining_seconds"
+	fi
+	printf '%s' "$timeout_seconds"
+	return 0
+}
+
 _pmrc_cache_key() {
 	local raw_key="$1"
 	local safe_key=""
@@ -354,7 +369,7 @@ _required_contexts_for_default_branch() {
 	local repo_slug="$1"
 	local cache_dir="${AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR:-}"
 	local cache_key="" cache_body_file="" cache_rc_file="" cache_rc=""
-	local contexts="" rc=0
+	local contexts="" rc=0 timeout_seconds=""
 
 	if [[ -n "$cache_dir" && -d "$cache_dir" ]]; then
 		cache_key=$(_pmrc_cache_key "$repo_slug")
@@ -375,13 +390,14 @@ _required_contexts_for_default_branch() {
 		fi
 	fi
 
+	timeout_seconds=$(_pmrc_required_contexts_timeout_seconds) || return 1
 	if [[ -n "$cache_body_file" ]]; then
-		contexts=$(_required_contexts_for_default_branch_uncached "$repo_slug" 2>"${cache_body_file}.error") || rc=$?
+		contexts=$(AIDEVOPS_GH_READ_TIMEOUT="$timeout_seconds" _required_contexts_for_default_branch_uncached "$repo_slug" 2>"${cache_body_file}.error") || rc=$?
 		[[ "$rc" -eq 0 ]] || _pmrc_emit_local_deferral "$(<"${cache_body_file}.error")"
 	else
-		contexts=$(_required_contexts_for_default_branch_uncached "$repo_slug") || rc=$?
+		contexts=$(AIDEVOPS_GH_READ_TIMEOUT="$timeout_seconds" _required_contexts_for_default_branch_uncached "$repo_slug") || rc=$?
 	fi
-	if [[ -n "$cache_body_file" && -n "$cache_rc_file" ]]; then
+	if [[ "$rc" -eq 0 && -n "$cache_body_file" && -n "$cache_rc_file" ]]; then
 		printf '%s\n' "$rc" >"$cache_rc_file"
 		if [[ -n "$contexts" ]]; then
 			printf '%s\n' "$contexts" >"$cache_body_file"

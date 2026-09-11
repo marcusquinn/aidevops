@@ -10,6 +10,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.357] - 2026-09-11
+
+### Changed
+
+- Version bump and maintenance updates
+
+## [3.32.356] - 2026-09-11
+
+### Fixed
+
+- guard issue-sync against deleted push refs
+- respect issue-sync publication branch (#31745)
+
+## [3.32.355] - 2026-09-10
+
+### Fixed
+
+- restore live readiness and merge recovery
+
 ## [3.32.354] - 2026-09-10
 
 ### Fixed

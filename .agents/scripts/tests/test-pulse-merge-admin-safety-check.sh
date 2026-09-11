@@ -224,6 +224,7 @@ define_helpers_under_test() {
 		/^_extract_linked_issue\(\) \{/,/^}$/ { print }
 	' "$MERGE_SCRIPT")
 	gates_src=$(awk '
+		/^_pmg_gh_read\(\) \{/,/^}$/ { print }
 		/^_pulse_is_trusted_issue_sync_pr\(\) \{/,/^}$/ { print }
 		/^_pulse_merge_classify_final_authority\(\) \{/,/^}$/ { print }
 		/^_pulse_merge_admin_pr_json_graphql\(\) \{/,/^}$/ { print }
@@ -599,6 +600,25 @@ test_case_t_trusted_issue_sync_is_internal() {
 	return 0
 }
 
+test_case_t2_trusted_account_issue_sync_is_internal() {
+	: >"$LOGFILE"
+	: >"$GH_LOG"
+	set_fixture '[{"name":"external-contributor"}]' 'false' \
+		'<!-- aidevops:issue-sync-todo-pr -->' 'NOT_VERIFIED' 'NO_APPROVAL' maintainer
+	touch "${TEST_ROOT}/issue-sync-trusted"
+
+	local result=0
+	_pulse_merge_admin_safety_check "952" "owner/repo" "head-current" || result=$?
+	if [[ "$result" -eq 0 ]] &&
+		grep -qF "review-helper is-trusted-issue-sync-pr 952 owner/repo head-current" "$GH_LOG" &&
+		grep -qF "Trusted repository-generated Issue Sync authority verified" "$LOGFILE"; then
+		print_result "Case T2: exact-head account-authored Issue Sync bypasses external-author authority only" 0
+		return 0
+	fi
+	print_result "Case T2: exact-head account-authored Issue Sync is trusted" 1 "rc=${result}; calls=$(cat "$GH_LOG"); log=$(cat "$LOGFILE")"
+	return 0
+}
+
 test_case_u_unverified_issue_sync_candidate_fails_closed() {
 	: >"$LOGFILE"
 	: >"$GH_LOG"
@@ -741,6 +761,7 @@ main() {
 	test_case_h_live_nmr_blocks_even_with_v2_approval
 	test_case_i_unlabeled_non_collaborator_is_external
 	test_case_t_trusted_issue_sync_is_internal
+	test_case_t2_trusted_account_issue_sync_is_internal
 	test_case_u_unverified_issue_sync_candidate_fails_closed
 	test_case_j_final_gate_rejects_stale_cached_review_evidence
 	test_case_k_final_gate_refreshes_current_review_evidence

@@ -55,6 +55,12 @@ on:
         required: false
         description: 'Optional fine-grained PAT with Contents:read/write; add Pull requests:read/write when it must backstop disabled Actions PR creation'
 
+# Match the trusted caller checkout: never use a PR head, synthetic merge ref,
+# or a deleted push ref. Ref-less events fall back to the consumer's default
+# branch; framework refs remain independently pinned by aidevops_ref.
+env:
+  ISSUE_SYNC_TARGET_BRANCH: ${{ github.event.pull_request.base.ref || (!github.event.deleted && github.ref_type == 'branch' && github.ref_name) || github.event.repository.default_branch }}
+
 jobs:
   forge-event:
     name: Record ordered forge event
@@ -357,7 +363,7 @@ jobs:
           if git diff --quiet TODO.md 2>/dev/null; then
             echo "No TODO.md changes to publish"
           else
-            bash __aidevops/.agents/scripts/issue-sync-git-push-helper.sh publish-todo main 3 \
+            bash __aidevops/.agents/scripts/issue-sync-git-push-helper.sh publish-todo "$ISSUE_SYNC_TARGET_BRANCH" 3 \
               "chore: sync GitHub issue refs to TODO.md [skip ci]"
           fi
 
@@ -466,7 +472,7 @@ jobs:
           if git diff --quiet TODO.md 2>/dev/null; then
             echo "No TODO.md changes to publish"
           else
-            bash __aidevops/.agents/scripts/issue-sync-git-push-helper.sh publish-todo main 3 \
+            bash __aidevops/.agents/scripts/issue-sync-git-push-helper.sh publish-todo "$ISSUE_SYNC_TARGET_BRANCH" 3 \
               "chore: sync ref:GH#${ISSUE_NUMBER} to TODO.md [skip ci]"
           fi
 
@@ -751,14 +757,14 @@ jobs:
           if git diff --quiet TODO.md 2>/dev/null; then
             echo "No TODO.md changes to publish"
           else
-            bash __aidevops/.agents/scripts/issue-sync-git-push-helper.sh publish-todo main 3 \
+            bash __aidevops/.agents/scripts/issue-sync-git-push-helper.sh publish-todo "$ISSUE_SYNC_TARGET_BRANCH" 3 \
               "chore: manual issue sync ($SYNC_COMMAND) [skip ci]"
           fi
 
   # =========================================================================
   # t1339: Sync issue hygiene on PR merge
   # =========================================================================
-  # When a PR merges to main, this job:
+  # When a PR merges to its target branch, this job:
   #   1. Extracts task ID from PR title (tNNN: ... pattern)
   #   2. Finds linked issues (from PR body Closes/Fixes/Resolves #NNN, or by task ID)
   #   3. Posts a closing comment with PR link
@@ -1070,9 +1076,9 @@ jobs:
 
               # Choose comment text based on rejection state
               if [[ "$IS_REJECTED" == "true" ]]; then
-                COMMENT_BODY="Referenced by [PR #${PR_NUMBER}](${PR_URL}).${TASK_REF} merged to main."
+                COMMENT_BODY="Referenced by [PR #${PR_NUMBER}](${PR_URL}).${TASK_REF} merged to ${ISSUE_SYNC_TARGET_BRANCH}."
               else
-                COMMENT_BODY="Completed via [PR #${PR_NUMBER}](${PR_URL}).${TASK_REF} merged to main."
+                COMMENT_BODY="Completed via [PR #${PR_NUMBER}](${PR_URL}).${TASK_REF} merged to ${ISSUE_SYNC_TARGET_BRANCH}."
               fi
 
               # Check if issue is locked before attempting to comment (locked issues reject comments with exit 1)
@@ -1399,7 +1405,7 @@ jobs:
           fi
 
           SCRIPT_DIR="$GITHUB_WORKSPACE/__aidevops/.agents/scripts"
-          if ! bash "$SCRIPT_DIR/issue-sync-git-push-helper.sh" publish-todo main 3 \
+          if ! bash "$SCRIPT_DIR/issue-sync-git-push-helper.sh" publish-todo "$ISSUE_SYNC_TARGET_BRANCH" 3 \
             "chore: mark $UPDATED_TASK_IDS complete ($PROOF) [skip ci]"; then
             echo "::error::TODO.md publication failed through both direct and protected-branch PR paths"
             exit 1
@@ -1532,7 +1538,7 @@ jobs:
             if ! planning_publish \
               "$GITHUB_WORKSPACE" \
               "chore: sync PLANS.md status for $TASK_IDS (PR #${PR_NUMBER}) [skip ci]" \
-              origin main todo/PLANS.md; then
+              origin "$ISSUE_SYNC_TARGET_BRANCH" todo/PLANS.md; then
               echo "::error::Failed to publish PLANS.md status with a fenced planning update"
               exit 1
             fi

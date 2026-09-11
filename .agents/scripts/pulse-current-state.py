@@ -427,6 +427,103 @@ def graphql_deferred_stages(counter_hits):
     }
 
 
+def matching_counter_counts(counter_hits, prefix):
+    return {
+        key[len(prefix):]: count
+        for key, count in sorted(counter_hits.items())
+        if key.startswith(prefix)
+    }
+
+
+def latest_counter_time(counter_latest, names):
+    observed = [counter_latest.get(name, 0) for name in names]
+    latest = max(observed, default=0)
+    if not latest:
+        return None
+    return datetime.datetime.fromtimestamp(latest, datetime.timezone.utc).isoformat().replace('+00:00', 'Z')
+
+
+def rest_admission_status_from_env():
+    try:
+        status = json.loads(os.environ.get('AIDEVOPS_REST_ADMISSION_STATUS', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        status = {}
+    if not isinstance(status, dict):
+        status = {}
+    allowed = {
+        'state', 'source', 'scope_mode', 'bound_credentials', 'ambiguity',
+        'remaining', 'limit', 'reserved', 'floor', 'blocked_until', 'reset',
+        'observation_age_seconds',
+    }
+    projection = {key: value for key, value in status.items() if key in allowed}
+    if projection.get('state') not in {'available', 'cooldown', 'exhausted', 'unknown'}:
+        projection = {'state': 'unknown'}
+    return projection
+
+
+def is_rest_deferral_counter(name):
+    aggregate_names = {
+        'pulse_rest_core_budget_stage_deferred',
+        'pulse_rest_core_unit_blocked',
+        'pulse_rest_core_progress_blocked',
+    }
+    detail_prefixes = (
+        'pulse_rest_core_budget_stage_deferred_',
+        'pulse_rest_core_unit_blocked_',
+        'pulse_rest_core_progress_blocked_',
+    )
+    if name in aggregate_names:
+        return True
+    return name.startswith(detail_prefixes)
+
+
+def build_rest_admission(counter_hits, counter_latest, transport_status):
+    deferred_stages = matching_counter_counts(counter_hits, 'pulse_rest_core_budget_stage_deferred_')
+    blocked_modes = matching_counter_counts(counter_hits, 'pulse_rest_core_progress_blocked_')
+    counter_names = [
+        name for name in counter_hits
+        if is_rest_deferral_counter(name)
+    ]
+    stage_count = counter_hits.get('pulse_rest_core_budget_stage_deferred', 0)
+    unit_count = counter_hits.get('pulse_rest_core_unit_blocked', 0)
+    progress_count = counter_hits.get('pulse_rest_core_progress_blocked', 0)
+    deferral_count = stage_count + unit_count + progress_count
+    transport_observed = transport_status.get('state') != 'unknown'
+    availability = 'observed' if deferral_count or transport_observed else 'unknown'
+    evidence_state = 'read_incomplete' if deferral_count else 'unknown'
+    return {
+        'availability': availability,
+        'evidence_state': evidence_state,
+        'deferred_by': 'local_admission' if deferral_count else None,
+        'request_attempted': False if deferral_count else None,
+        'deferral_count': deferral_count,
+        'stage_deferral_count': stage_count,
+        'unit_block_count': unit_count,
+        'progress_block_count': progress_count,
+        'deferred_stages': deferred_stages,
+        'blocked_modes': blocked_modes,
+        'last_observed_at': latest_counter_time(counter_latest, counter_names),
+        'source': 'pulse-stats',
+        'transport': transport_status,
+        'window_seconds': window_s,
+        'remote_rejection_observed': False,
+        'authentication_failure_inferred': False,
+    }
+
+
+def build_policy_holds(counter_hits, counter_latest):
+    counter_name = 'dispatch_candidate_failed_reason_policy_gate'
+    count = counter_hits.get(counter_name, 0)
+    return {
+        'availability': 'observed' if count else 'not_observed',
+        'active_in_window': count > 0,
+        'count': count,
+        'last_observed_at': latest_counter_time(counter_latest, [counter_name]),
+        'source': 'pulse-stats',
+        'window_seconds': window_s,
+    }
+
+
 def graphql_related_gauges(gauge_values):
     return {
         key: value
@@ -497,6 +594,9 @@ def build_zero_worker_underutilization(active_workers, worker_terminal_events, c
     prolonged = no_progress >= threshold
     free_capacity = available is not None and available > 0
     zero_delivery = active_workers == 0 and worker_terminal_events == 0
+    github_read_complete = None
+    if categories['github_read_incomplete'] > 0 or rest_admission['evidence_state'] == 'read_incomplete':
+        github_read_complete = False
     return {
         'actionable': bool(free_capacity and zero_delivery and prolonged),
         'available_slots': available,
@@ -504,7 +604,10 @@ def build_zero_worker_underutilization(active_workers, worker_terminal_events, c
         'consecutive_no_progress_cycles': no_progress,
         'minimum_cycles': threshold,
         'classifications': categories,
-        'github_read_complete': categories['github_read_incomplete'] == 0,
+        'github_read_complete': github_read_complete,
+        'github_read_status': (
+            'incomplete' if github_read_complete is False else 'unknown'
+        ),
     }
 
 
@@ -573,6 +676,7 @@ for line in recent_lines(os.path.join(log_dir, 'headless-runtime-metrics.jsonl')
         metrics.append(item)
 
 counter_hits = {}
+counter_latest = {}
 gauge_values = {}
 stats_path = os.path.join(log_dir, 'pulse-stats.json')
 if os.path.exists(stats_path):
@@ -584,11 +688,13 @@ if os.path.exists(stats_path):
                 hits = [v for v in values if isinstance(v, (int, float)) and v >= since]
                 if hits:
                     counter_hits[key] = len(hits)
+                    counter_latest[key] = max(hits)
         for key, item in (stats.get('gauges') or {}).items():
             if isinstance(item, dict) and float(item.get('ts', 0)) >= since:
                 gauge_values[key] = item.get('value')
     except (OSError, json.JSONDecodeError):
         counter_hits = {}
+        counter_latest = {}
         gauge_values = {}
 
 wrapper_log_lines = recent_lines(os.path.join(log_dir, 'pulse-wrapper.log'), 400)
@@ -663,6 +769,10 @@ pr_opened_count, pr_opened_examples = line_count(['pr opened', 'opened pr', 'pul
 pr_merged_count, pr_merged_examples = line_count(['pr merged', 'merged pr', 'squash merged'], wrapper_activity)
 issue_closed_count, issue_closed_examples = line_count(['issue closed', 'closed issue', 'status:done'], wrapper_activity)
 graphql_budget = build_graphql_budget(counter_hits, gauge_values)
+rest_admission = build_rest_admission(
+    counter_hits, counter_latest, rest_admission_status_from_env()
+)
+policy_holds = build_policy_holds(counter_hits, counter_latest)
 dispatch_pacing = {
     'inter_launch_staggered_count': counter_hits.get('dispatch_inter_launch_staggered', 0),
     'last_inter_launch_delay_seconds': gauge_values.get('dispatch_inter_launch_delay_seconds'),
@@ -830,6 +940,8 @@ result = {
         'load_blocked_count': load_blocked_count,
     },
     'graphql_budget': graphql_budget,
+    'rest_admission': rest_admission,
+    'policy_holds': policy_holds,
     'dispatch_pacing': dispatch_pacing,
     'current_state_guardrails': current_state_guardrails,
     'pre_launch_blockers': pre_launch_blockers,
@@ -875,6 +987,8 @@ runtime_state = {
     'dispatch_pacing': dispatch_pacing,
     'dispatch_stage_counts': dict(stage_counts),
     'graphql_budget': graphql_budget,
+    'rest_admission': rest_admission,
+    'policy_holds': policy_holds,
     'prefetch_cache': prefetch_cache,
     'cycle_state': cycle_state,
     'pre_launch_blockers': pre_launch_blockers,
@@ -912,6 +1026,8 @@ else:
     print(f'- Worker outcomes: {json.dumps(result["worker_outcomes"], sort_keys=True)}')
     print(f'- Resource context: {json.dumps(result["resource_context"], sort_keys=True)}')
     print(f'- GraphQL budget: {json.dumps(result["graphql_budget"], sort_keys=True)}')
+    print(f'- REST admission: {json.dumps(rest_admission, sort_keys=True)}')
+    print(f'- Policy holds: {json.dumps(policy_holds, sort_keys=True)}')
     print(f'- Dispatch pacing: {json.dumps(result["dispatch_pacing"], sort_keys=True)}')
     print(f'- Current-state guardrails: {json.dumps(result["current_state_guardrails"], sort_keys=True)}')
     print(f'- Top pre-launch blockers: {json.dumps(result["top_pre_launch_blockers"], sort_keys=True)}')

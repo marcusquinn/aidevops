@@ -36,6 +36,7 @@ subagents:
   # Analytics
   - analytics-tracking
   - google-analytics
+  - posthog
   - app-dev-analytics
 tools:
   read: true
