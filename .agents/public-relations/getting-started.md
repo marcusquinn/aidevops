@@ -18,12 +18,14 @@ Do not dump the full PR menu. Identify the user's immediate job and take one con
 4. Monitor news for reactive opportunities.
 5. Track whether a brand/keyword received coverage.
 6. Review or improve a pitch.
+7. Evaluate press-release distribution channels.
 
 ## Routing
 
 | User asks for | Route |
 |---|---|
 | “How do we get press?” | `pr-strategy.md` |
+| “Where can we publish/distribute this release?” | `press-release-distribution.md` |
 | “Is this worth pitching?” | `newsworthiness-check.md` |
 | “Find reporters/journalists” | `media-list-builder.md` |
 | “Does this journalist fit?” | `journalist-fit-check.md` |
