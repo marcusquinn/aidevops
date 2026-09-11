@@ -389,6 +389,7 @@ test_real_nmr_hold_workflow() {
 
 test_real_qlty_regression_mitigated() {
 	local qlty_file=".github/workflows/qlty-regression.yml"
+	local refresh_file=".github/workflows/qlty-regression-ratchet-refresh.yml"
 	if [ ! -f "$qlty_file" ]; then
 		print_result "real: qlty-regression.yml NOT flagged (cancel disabled)" 1 "file not found"
 		return 0
@@ -400,10 +401,16 @@ test_real_qlty_regression_mitigated() {
 	if [[ $rc -ne 0 ]]; then
 		failed=1
 	fi
-	if ! grep -Fq "github.event.action == 'labeled' && github.event.label.name != 'ratchet-bump'" "$qlty_file"; then
+	if ! grep -Fq "types: [opened, synchronize, reopened]" "$qlty_file" || \
+		grep -Fq "types: [opened, synchronize, reopened, labeled]" "$qlty_file"; then
 		failed=1
 	fi
-	if ! grep -Fq "'Qlty Regression Gate (label ignored)' || 'Qlty Regression Gate'" "$qlty_file"; then
+	if ! grep -Fq "workflow_call:" "$qlty_file" || ! grep -Fqx "    name: Qlty Regression Gate" "$qlty_file"; then
+		failed=1
+	fi
+	if [ ! -f "$refresh_file" ] || ! grep -Fq "types: [labeled]" "$refresh_file" || \
+		! grep -Fq "github.event.label.name == 'ratchet-bump'" "$refresh_file" || \
+		! grep -Fq "uses: ./.github/workflows/qlty-regression.yml" "$refresh_file"; then
 		failed=1
 	fi
 	print_result "real: qlty-regression.yml NOT flagged (cancel disabled)" "$failed" "exit=$rc output=$output"

@@ -17,18 +17,12 @@ env:
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, labeled]
-    # t2220/t3403/GH#31746: suppress required-check cascades on label events.
-    # `gh pr create --label "a,b,c,d"` fires one `labeled` event per label
-    # after the initial `opened`; each event can trigger a new run. When this
-    # workflow used `cancel-in-progress: true`, label runs cancelled the
-    # in-flight required check before job-level guards could skip them. Docs-only
-    # PRs observed 15+ cancelled runs per workflow, which `gh pr checks`
-    # then surfaces as `fail` (it displays `cancelled` conclusions as
-    # `fail` in its TSV output). Keep the workflow trigger unconditional so a
-    # `ratchet-bump` label can refresh the gate. Unrelated label events use a
-    # distinct non-required summary name below, preventing duplicate required
-    # contexts while `detect-scope` avoids the expensive Qlty scan.
+    # GH#31789: Required workflow runs must not receive `labeled` events.
+    # GitHub can select a later label-only suite for required-check association,
+    # leaving a successful exact-head verdict permanently "expected". The
+    # ratchet-bump refresh is isolated in qlty-regression-ratchet-refresh.yml.
+    types: [opened, synchronize, reopened]
+  workflow_call:
 
 permissions:
   pull-requests: write
@@ -204,7 +198,7 @@ jobs:
           exit 1
 
   required-check:
-    name: "${{ github.event.action == 'labeled' && github.event.label.name != 'ratchet-bump' && 'Qlty Regression Gate (label ignored)' || 'Qlty Regression Gate' }}"
+    name: Qlty Regression Gate
     runs-on: ubuntu-latest
     needs: [detect-scope, qlty-diff]
     if: always()
