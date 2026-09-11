@@ -3,6 +3,8 @@
 
 /** Credential transcript scrubbing shared by OpenCode post-tool hooks. */
 
+import { parseStructuredText } from "./credential-structured-text.mjs";
+
 const CREDENTIAL_PATTERN =
   /(^|[^A-Za-z0-9_-])(sk-|GOCSPX-|ghp_|gho_|ghs_|ghu_|github_pat_|glpat-|xoxb-|xoxp-)[A-Za-z0-9_-]{10,}/g;
 const NAMED_CREDENTIAL_ASSIGNMENT_PATTERN =
@@ -134,102 +136,63 @@ function scrubPlainCredentials(text) {
 
 export function scrubCredentials(text) {
   const parsed = parseStructuredText(text);
-  if (parsed) {
-    const scrubbed = scrubValue(parsed.value);
-    if (scrubbed.count > 0) {
-      return { scrubbed: parsed.stringify(scrubbed.value), count: scrubbed.count };
-    }
-  }
-  return scrubPlainCredentials(text);
+  const scrubbed = parsed && scrubValue(parsed.value);
+  return scrubbed?.count > 0
+    ? { scrubbed: parsed.stringify(scrubbed.value), count: scrubbed.count }
+    : scrubPlainCredentials(text);
 }
 
 function scrubValue(value) {
-  if (typeof value === "string") {
-    const parsed = parseStructuredText(value);
-    if (parsed) {
-      const scrubbed = scrubValue(parsed.value);
-      if (scrubbed.count > 0) {
-        return { value: parsed.stringify(scrubbed.value), count: scrubbed.count };
-      }
-    }
-    const { scrubbed, count } = scrubCredentials(value);
-    return { value: scrubbed, count };
-  }
-  if (Array.isArray(value)) {
-    let total = 0;
-    const result = value.map((item) => {
-      const { value: scrubbed, count } = scrubValue(item);
-      total += count;
-      return scrubbed;
-    });
-    return { value: result, count: total };
-  }
-  if (value !== null && typeof value === "object") {
-    let total = 0;
-    const result = {};
-    const hasSensitiveIdentifier = Object.entries(value).some(
-      ([key, nestedValue]) =>
-        isIdentifierFieldName(key) && typeof nestedValue === "string" && isSensitiveFieldName(nestedValue),
-    );
-    for (const [key, nestedValue] of Object.entries(value)) {
-      if (isSensitiveFieldName(key) && !preservesSensitiveValue(nestedValue)) {
-        result[key] = REDACTION_TOKEN;
-        total++;
-        continue;
-      }
-      if (hasSensitiveIdentifier && isValueFieldName(key) && !preservesSensitiveValue(nestedValue)) {
-        result[key] = REDACTION_TOKEN;
-        total++;
-        continue;
-      }
-      const { value: scrubbed, count } = scrubValue(nestedValue);
-      result[key] = scrubbed;
-      total += count;
-    }
-    return { value: result, count: total };
-  }
+  if (typeof value === "string") return scrubTextValue(value);
+  if (Array.isArray(value)) return scrubSequence(value);
+  if (value !== null && typeof value === "object") return scrubMapping(value);
   return { value, count: 0 };
 }
 
-function parseStructuredText(value) {
-  const text = value.trim();
-  if (!text) return null;
-  try {
-    const parsed = JSON.parse(text);
-    if (parsed !== null && typeof parsed === "object") {
-      return { value: parsed, stringify: (scrubbed) => JSON.stringify(scrubbed) };
-    }
-    return null;
-  } catch {
-    // A complete JSON document is not required for tool output; try NDJSON below.
-  }
+function scrubTextValue(value) {
+  const parsed = parseStructuredText(value);
+  const scrubbed = parsed && scrubValue(parsed.value);
+  return scrubbed?.count > 0
+    ? { value: parsed.stringify(scrubbed.value), count: scrubbed.count }
+    : renameScrubbedText(value);
+}
 
-  const lines = value.split(/(\r?\n)/);
-  const parsed = [];
-  let records = 0;
-  for (let index = 0; index < lines.length; index += 2) {
-    const line = lines[index];
-    if (!line.trim()) {
-      parsed.push(null);
-      continue;
-    }
-    try {
-      const record = JSON.parse(line);
-      if (record === null || typeof record !== "object") return null;
-      parsed.push(record);
-      records++;
-    } catch {
-      return null;
-    }
-  }
-  if (records === 0) return null;
-  return {
-    value: parsed,
-    stringify: (scrubbed) =>
-      scrubbed
-        .map((record, index) => (record === null ? lines[index * 2] : JSON.stringify(record)))
-        .join("\n"),
-  };
+function renameScrubbedText(value) {
+  const { scrubbed, count } = scrubCredentials(value);
+  return { value: scrubbed, count };
+}
+
+function scrubSequence(value) {
+  return value.reduce(
+    (result, item) => {
+      const scrubbed = scrubValue(item);
+      result.value.push(scrubbed.value);
+      result.count += scrubbed.count;
+      return result;
+    },
+    { value: [], count: 0 },
+  );
+}
+
+function scrubMapping(value) {
+  const hasSensitiveIdentifier = Object.entries(value).some(
+    ([key, nestedValue]) =>
+      isIdentifierFieldName(key) && typeof nestedValue === "string" && isSensitiveFieldName(nestedValue),
+  );
+  return Object.entries(value).reduce((result, [key, nestedValue]) => {
+    const scrubbed = shouldRedactField(key, nestedValue, hasSensitiveIdentifier)
+      ? { value: REDACTION_TOKEN, count: 1 }
+      : scrubValue(nestedValue);
+    result.value[key] = scrubbed.value;
+    result.count += scrubbed.count;
+    return result;
+  }, { value: {}, count: 0 });
+}
+
+function shouldRedactField(key, value, hasSensitiveIdentifier) {
+  return !preservesSensitiveValue(value) && (
+    isSensitiveFieldName(key) || (hasSensitiveIdentifier && isValueFieldName(key))
+  );
 }
 
 /** Scrub credentials from any JSON-serialisable tool output. */

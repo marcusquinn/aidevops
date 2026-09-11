@@ -203,74 +203,90 @@ def scrub_credentials(text: str) -> tuple[str, int]:
 def scrub_value(value):
     """Recursively scrub credentials from any JSON-serialisable value."""
     if isinstance(value, str):
-        parsed = parse_structured_text(value)
-        if parsed is not None:
-            parsed_value, stringify = parsed
-            scrubbed, count = scrub_value(parsed_value)
-            if count:
-                return stringify(scrubbed), count
-        return scrub_credentials(value)
+        return scrub_text_value(value)
     if isinstance(value, dict):
-        scrubbed = {}
-        count = 0
-        has_sensitive_identifier = any(
-            is_identifier_field_name(key)
-            and isinstance(nested, str)
-            and is_sensitive_field_name(nested)
-            for key, nested in value.items()
-        )
-        for key, nested in value.items():
-            if is_sensitive_field_name(key) and not preserves_sensitive_value(nested):
-                scrubbed[key] = REDACTION_TOKEN
-                count += 1
-            elif has_sensitive_identifier and is_value_field_name(key) and not preserves_sensitive_value(nested):
-                scrubbed[key] = REDACTION_TOKEN
-                count += 1
-            else:
-                scrubbed[key], nested_count = scrub_value(nested)
-                count += nested_count
-        return scrubbed, count
+        return scrub_mapping(value)
     if isinstance(value, list):
-        scrubbed = []
-        count = 0
-        for item in value:
-            nested, nested_count = scrub_value(item)
-            scrubbed.append(nested)
-            count += nested_count
-        return scrubbed, count
+        return scrub_sequence(value)
     return value, 0
 
 
+def scrub_text_value(value: str):
+    """Scrub plain text or recursively scrub an embedded structured payload."""
+    parsed = parse_structured_text(value)
+    if parsed is None:
+        return scrub_credentials(value)
+    parsed_value, stringify = parsed
+    scrubbed, count = scrub_value(parsed_value)
+    return (stringify(scrubbed), count) if count else scrub_credentials(value)
+
+
+def scrub_mapping(value: dict):
+    """Scrub sensitive fields and their sibling value records."""
+    has_sensitive_identifier = has_sensitive_identifier_field(value)
+    scrubbed = {}
+    count = 0
+    for key, nested in value.items():
+        if should_redact_field(key, nested, has_sensitive_identifier):
+            scrubbed[key] = REDACTION_TOKEN
+            count += 1
+        else:
+            scrubbed[key], nested_count = scrub_value(nested)
+            count += nested_count
+    return scrubbed, count
+
+
+def has_sensitive_identifier_field(value: dict) -> bool:
+    """Return whether a record's name field identifies a sensitive value."""
+    return any(
+        is_identifier_field_name(key) and isinstance(nested, str) and is_sensitive_field_name(nested)
+        for key, nested in value.items()
+    )
+
+
+def should_redact_field(key, value, has_sensitive_identifier: bool) -> bool:
+    """Return whether a field is directly or indirectly credential-bearing."""
+    return not preserves_sensitive_value(value) and (
+        is_sensitive_field_name(key) or (has_sensitive_identifier and is_value_field_name(key))
+    )
+
+
+def scrub_sequence(value: list):
+    """Scrub each independent list entry and accumulate its redaction count."""
+    scrubbed = []
+    count = 0
+    for item in value:
+        nested, nested_count = scrub_value(item)
+        scrubbed.append(nested)
+        count += nested_count
+    return scrubbed, count
+
+
 def parse_structured_text(value: str):
-    """Parse a complete JSON document or independently bounded NDJSON records."""
+    """Parse complete JSON or independent NDJSON records for recursive scrubbing."""
     if not value.strip():
         return None
-    try:
-        parsed = json.loads(value)
-        if not isinstance(parsed, (dict, list)):
-            return None
+    parsed = parse_json_document(value)
+    if parsed is not None:
         return parsed, lambda scrubbed: json.dumps(scrubbed, separators=(",", ":"))
-    except json.JSONDecodeError:
-        pass
-
-    lines = value.splitlines()
-    if not lines:
-        return None
-    parsed = []
-    for line in lines:
-        if not line.strip():
-            parsed.append(None)
-            continue
-        try:
-            record = json.loads(line)
-            if not isinstance(record, (dict, list)):
-                return None
-            parsed.append(record)
-        except json.JSONDecodeError:
+    records = []
+    for line in value.splitlines():
+        record = parse_json_document(line) if line.strip() else None
+        if record is None and line.strip():
             return None
-    return parsed, lambda scrubbed: "\n".join(
+        records.append(record)
+    return records, lambda scrubbed: "\n".join(
         "" if record is None else json.dumps(record, separators=(",", ":")) for record in scrubbed
     )
+
+
+def parse_json_document(value: str):
+    """Return JSON containers and leave scalar or invalid values unparsed."""
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, (dict, list)) else None
 
 
 def main() -> None:
