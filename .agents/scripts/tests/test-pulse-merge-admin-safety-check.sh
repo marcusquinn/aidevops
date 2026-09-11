@@ -224,6 +224,7 @@ define_helpers_under_test() {
 		/^_extract_linked_issue\(\) \{/,/^}$/ { print }
 	' "$MERGE_SCRIPT")
 	gates_src=$(awk '
+		/^_pmg_gh_read\(\) \{/,/^}$/ { print }
 		/^_pulse_is_trusted_issue_sync_pr\(\) \{/,/^}$/ { print }
 		/^_pulse_merge_classify_final_authority\(\) \{/,/^}$/ { print }
 		/^_pulse_merge_admin_pr_json_graphql\(\) \{/,/^}$/ { print }

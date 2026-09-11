@@ -489,7 +489,17 @@ _pm_gate_author_trust() {
 	fi
 	if [[ "$trusted" -eq 0 && "$author_collab_rc" -ne 0 ]]; then
 		if _is_trusted_dependabot_update_pr "$pr_number" "$repo_slug" "$pr_author" "$expected_head_sha"; then
-			echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} — author ${pr_author} is trusted Dependabot with allowlisted dependency update, proceeding (GH#24473)" >>"$LOGFILE"
+			# #aidevops:trust-boundary — verified provenance and dependency
+			# allowlisting establish authenticity, not collaborator authority.
+			# Dependabot remains external and may proceed only with independent,
+			# current-head maintainer approval. Do not route a policy-only hold to
+			# repair intake: there is no code or dependency defect to repair.
+			if _has_maintainer_crypto_approval "$pr_number" "$repo_slug" "$expected_head_sha"; then
+				echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} — verified Dependabot author ${pr_author} remains external but has current-head maintainer crypto-approval, proceeding" >>"$LOGFILE"
+			else
+				echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — verified Dependabot author ${pr_author} remains external and lacks current-head maintainer crypto-approval; preserving policy hold without repair intake" >>"$LOGFILE"
+				return 1
+			fi
 		elif _has_maintainer_crypto_approval "$pr_number" "$repo_slug" "$expected_head_sha"; then
 			echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} — author ${pr_author} is not a collaborator but has maintainer crypto-approval, proceeding (t3063)" >>"$LOGFILE"
 		else
