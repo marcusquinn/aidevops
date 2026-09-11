@@ -22,6 +22,12 @@ const TERMINAL_SSE_EVENT_TYPES = new Set([
   "response.incomplete",
   "response.completed",
 ]);
+const TERMINAL_SSE_DEFAULT_ERRORS = new Map([
+  ["response.completed", {
+    code: "image_missing",
+    message: "provider completed the response without an image result",
+  }],
+]);
 
 async function withImageRequestTimeout(operation) {
   const controller = new AbortController();
@@ -94,12 +100,10 @@ function completedImageResult(event) {
 function terminalSseError(event) {
   if (!TERMINAL_SSE_EVENT_TYPES.has(event.type)) return null;
   const providerError = event.error || event.response?.error || event.response?.incomplete_details || {};
-  let code = [providerError.code, providerError.type, providerError.reason, event.code].find(Boolean) || "";
-  let message = providerError.message || event.message || "";
-  if (event.type === "response.completed" && !code && !message) {
-    code = "image_missing";
-    message = "provider completed the response without an image result";
-  }
+  const defaultError = TERMINAL_SSE_DEFAULT_ERRORS.get(event.type) || {};
+  const code = [providerError.code, providerError.type, providerError.reason, event.code, defaultError.code]
+    .find(Boolean) || "";
+  const message = [providerError.message, event.message, defaultError.message].find(Boolean) || "";
   const detail = [code, message].filter(Boolean).map(redactProviderDetail).join(": ");
   const error = new Error(`OpenAI oauth image request failed${detail ? `: ${detail}` : `: ${event.type}`}.`);
   error.code = redactProviderDetail(code);
