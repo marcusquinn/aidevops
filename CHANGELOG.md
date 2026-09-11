@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.359] - 2026-09-11
+
+### Changed
+
+- Maintenance: mark t18426 complete (pr:#31731 completed:2026-09-10) (#31728)
+
+### Fixed
+
+- isolate Qlty label refreshes (#31792)
+- preserve merge evidence and image errors
+
 ## [3.32.358] - 2026-09-11
 
 ### Changed
