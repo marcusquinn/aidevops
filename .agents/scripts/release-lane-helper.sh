@@ -1131,6 +1131,7 @@ release_lane_finalize() {
 	local source_pr="$2"
 	local receipt="$3"
 	local state_json=""
+	local write_rc=0
 	[[ -n "$_AIDEVOPS_RELEASE_LANE_TOKEN" ]] || return 1
 	release_lane_read "$repo" || return 1
 	jq -e --argjson source_pr "$source_pr" --arg token "$_AIDEVOPS_RELEASE_LANE_TOKEN" \
@@ -1139,8 +1140,25 @@ release_lane_finalize() {
 	state_json=$(jq -c --arg receipt "$receipt" --arg now "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
 		'.active=false | .phase="terminal" | .terminal_receipt=$receipt | .updated_at=$now' \
 		<<<"$_AIDEVOPS_RELEASE_LANE_JSON") || return 1
-	_release_lane_write "$repo" "$state_json" "$_AIDEVOPS_RELEASE_LANE_HEAD"
-	return $?
+	_release_lane_write "$repo" "$state_json" "$_AIDEVOPS_RELEASE_LANE_HEAD" || write_rc=$?
+	if [[ "$write_rc" -ne 0 ]]; then
+		# A compare-and-swap write can reach GitHub before its transport reports an
+		# error. Re-read the exact terminal state so a durable publication does not
+		# become a false reconciliation failure.
+		if release_lane_read "$repo" && jq -e --argjson source_pr "$source_pr" \
+			--arg token "$_AIDEVOPS_RELEASE_LANE_TOKEN" --arg receipt "$receipt" '
+			.active == false and .source_pr == $source_pr and .operation_token == $token
+			and .phase == "terminal" and .terminal_receipt == $receipt
+		' <<<"$_AIDEVOPS_RELEASE_LANE_JSON" >/dev/null; then
+			printf 'RELEASE_LANE_FINALIZE_RECONCILED source_pr=%s receipt=%s write_exit=%s\n' \
+				"$source_pr" "$receipt" "$write_rc" >&2
+			return 0
+		fi
+		printf 'RELEASE_LANE_FINALIZE_FAILED source_pr=%s receipt=%s write_exit=%s\n' \
+			"$source_pr" "$receipt" "$write_rc" >&2
+		return "$write_rc"
+	fi
+	return 0
 }
 
 #aidevops:trust-boundary
