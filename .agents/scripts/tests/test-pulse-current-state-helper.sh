@@ -51,6 +51,12 @@ json.dump({
         'dispatch_candidate_failed_reason_cost_budget_exceeded': [now, now],
         'dispatch_candidate_failed_reason_dedup_active_claim': [now],
         'dispatch_candidate_failed_reason_graphql_circuit_breaker': [now],
+        'dispatch_candidate_failed_reason_policy_gate': [now],
+        'pulse_rest_core_progress_blocked': [now],
+        'pulse_rest_core_progress_blocked_unknown': [now],
+        'pulse_rest_core_unit_blocked': [now],
+        'pulse_rest_core_unit_blocked_progress': [now],
+        'pulse_rest_core_progress_blocked_emergency': [now - 3600],
     },
     'gauges': {
         'graphql_remaining': {'value': 1234, 'ts': now},
@@ -148,6 +154,7 @@ export AIDEVOPS_GH_REQUEST_STATE_AUTH_SCOPE="pulse-current-state-test"
 export AIDEVOPS_GH_API_POOL="default"
 export AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR="$TMP_DIR/review-thread-state"
 export AIDEVOPS_OBJECTIVE_STATE_FILE="$TMP_DIR/objective-reconciliation.json"
+export AIDEVOPS_REST_ADMISSION_STATUS_OVERRIDE='{"state":"available","source":"local_response_headers","remaining":462,"limit":5000,"reserved":0,"floor":0,"blocked_until":0,"reset":1893456000,"observation_age_seconds":3,"scope_mode":"configured","bound_credentials":1,"ambiguity":null}'
 # shellcheck source=../shared-gh-request-state.sh
 source "${SCRIPT_DIR}/../shared-gh-request-state.sh"
 rate_reset=$(($(date +%s) + 3600))
@@ -165,6 +172,8 @@ grep -q 'Dispatch alive: true' "$output"
 grep -q 'Worker terminal events: 4' "$output"
 grep -q 'dispatch_backoff_skipped' "$output"
 grep -q 'GraphQL budget:' "$output"
+grep -q 'REST admission:' "$output"
+grep -q 'Policy holds:' "$output"
 grep -q 'Top pre-launch blockers:' "$output"
 if ! grep -q 'Dispatch API blocked by GraphQL: false' "$output"; then
 	printf 'FAIL expected unblocked GraphQL dispatch state:\n%s\n' "$(<"$output")" >&2
@@ -195,6 +204,17 @@ jq -e '.worker_outcomes.canary_failed == 1' "$json_output" >/dev/null
 jq -e '.graphql_budget.skipped_low_count == 1' "$json_output" >/dev/null
 jq -e '.graphql_budget.force_rest_reads_count == 1' "$json_output" >/dev/null
 jq -e '.dispatch_api_blocked == false' "$json_output" >/dev/null
+jq -e '.graphql_budget_status | startswith("OK:")' "$json_output" >/dev/null
+jq -e '.rest_admission.availability == "observed" and .rest_admission.evidence_state == "read_incomplete"' "$json_output" >/dev/null
+jq -e '.rest_admission.deferred_by == "local_admission" and .rest_admission.request_attempted == false' "$json_output" >/dev/null
+jq -e '.rest_admission.deferral_count == 2 and .rest_admission.progress_block_count == 1 and .rest_admission.unit_block_count == 1' "$json_output" >/dev/null
+jq -e '.rest_admission.blocked_modes == {"unknown":1} and .rest_admission.last_observed_at != null' "$json_output" >/dev/null
+jq -e '.rest_admission.source == "pulse-stats" and .rest_admission.window_seconds == 900' "$json_output" >/dev/null
+jq -e '.rest_admission.transport.state == "available" and .rest_admission.transport.remaining == 462 and .rest_admission.transport.source == "local_response_headers"' "$json_output" >/dev/null
+jq -e '.rest_admission.remote_rejection_observed == false and .rest_admission.authentication_failure_inferred == false' "$json_output" >/dev/null
+jq -e '.policy_holds.active_in_window == true and .policy_holds.count == 1' "$json_output" >/dev/null
+jq -e '.policy_holds.source == "pulse-stats" and .policy_holds.window_seconds == 900 and .policy_holds.last_observed_at != null' "$json_output" >/dev/null
+jq -e '.zero_worker_underutilization.github_read_complete == false and .zero_worker_underutilization.github_read_status == "incomplete"' "$json_output" >/dev/null
 jq -e '.graphql_budget.reserve_mode_count == 1' "$json_output" >/dev/null
 jq -e '.graphql_budget.deferred_stage_count == 2' "$json_output" >/dev/null
 jq -e '.graphql_budget.deferred_stages.dashboard_freshness_check == 1' "$json_output" >/dev/null
@@ -300,6 +320,9 @@ mkdir -p "$missing_dir"
 missing_json="$TMP_DIR/missing-cycle-state.json"
 "$HELPER" --log-dir "$missing_dir" --repo-path "$PWD" --window 15m --json >"$missing_json"
 jq -e '.cycle_state.availability == "unavailable"' "$missing_json" >/dev/null
+jq -e '.rest_admission.availability == "observed" and .rest_admission.evidence_state == "unknown"
+  and .rest_admission.transport.state == "available"' "$missing_json" >/dev/null
+jq -e '.zero_worker_underutilization.github_read_complete == null and .zero_worker_underutilization.github_read_status == "unknown"' "$missing_json" >/dev/null
 
 jq '.cycle_state.heartbeat_at = ((now - 1800) | todateiso8601)' \
 	"$TMP_DIR/pulse-health.json" >"$missing_dir/pulse-health.json"
