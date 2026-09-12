@@ -104,7 +104,8 @@ def build(args):
     if args.cad and scene["demo"] != "kitchen":
         raise ValueError("The CAD demo currently supports kitchen components only")
     scene["recipe_hash"] = hashlib.sha256(b"".join((SCRIPTS / filename).read_bytes() for filename in
-        ("_creative_demo_model.py", "creative-demo-blender.py", "creative-demo-freecad.py"))).hexdigest()
+        ("_creative_demo_model.py", "_creative_demo_blender_geometry.py", "creative-demo-blender.py",
+         "creative-demo-freecad.py"))).hexdigest()
     if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}", args.run):
         raise ValueError("Run name must be a short alphanumeric slug")
     runs = within_workspace(root / "runs")

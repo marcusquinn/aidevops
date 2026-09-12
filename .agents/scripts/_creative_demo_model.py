@@ -49,40 +49,40 @@ def configuration(demo, supplied=None):
     return result
 
 
-def part(identifier, kind, size, position, material, assembly, **extra):
+def part(identifier, kind, size, position, **extra):
     return {"id": identifier, "kind": kind, "size": list(size),
-            "position": list(position), "material": material, "assembly": assembly,
+            "position": list(position), "material": extra.pop("material"), "assembly": extra.pop("assembly"),
             "rotation": [0, 0, 0], "explode": [0, 0, 0], **extra}
 
 
 def lamp_parts(cfg):
     s, w, metal = cfg["height"] / 0.44, cfg["shade_width"], cfg["finish"]
     parts = [
-        part("lamp.base", "base", (.20*s, .16*s, .034*s), (0, 0, .005*s), metal, "base"),
-        part("lamp.felt", "cylinder", (.18*s, .14*s, .006*s), (0, 0, .003*s), "black", "base"),
-        part("lamp.stem", "cylinder", (.020*s, .020*s, .292*s), (0, .027*s, .19*s), metal, "support"),
-        part("lamp.collar", "cylinder", (.036*s, .036*s, .026*s), (0, .027*s, .035*s), metal, "support"),
-        part("lamp.crossbar", "cylinder", (.014*s, .014*s, w+.022*s), (0, .027*s, .33*s), metal, "support",
+        part("lamp.base", "base", (.20*s, .16*s, .034*s), (0, 0, .005*s), material=metal, assembly="base"),
+        part("lamp.felt", "cylinder", (.18*s, .14*s, .006*s), (0, 0, .003*s), material="black", assembly="base"),
+        part("lamp.stem", "cylinder", (.020*s, .020*s, .292*s), (0, .027*s, .19*s), material=metal, assembly="support"),
+        part("lamp.collar", "cylinder", (.036*s, .036*s, .026*s), (0, .027*s, .035*s), material=metal, assembly="support"),
+        part("lamp.crossbar", "cylinder", (.014*s, .014*s, w+.022*s), (0, .027*s, .33*s), material=metal, assembly="support",
              rotation=[0, math.pi/2, 0]),
-        part("lamp.shade", "dome", (w, .16*s, .072*s), (0, 0, .366*s), "glass", "shade",
+        part("lamp.shade", "dome", (w, .16*s, .072*s), (0, 0, .366*s), material="glass", assembly="shade",
              explode=[0, 0, .15*s]),
-        part("lamp.rim", "ring", (w, .16*s, .004*s), (0, 0, .366*s), metal, "shade",
+        part("lamp.rim", "ring", (w, .16*s, .004*s), (0, 0, .366*s), material=metal, assembly="shade",
              explode=[0, 0, .15*s]),
-        part("lamp.bulb", "ellipsoid", (w*.70, .027*s, .027*s), (0, 0, .375*s), "bulb", "shade",
+        part("lamp.bulb", "ellipsoid", (w*.70, .027*s, .027*s), (0, 0, .375*s), material="bulb", assembly="shade",
              explode=[0, -.07*s, 0]),
-        part("lamp.cord", "curve", (.25*s, .2*s, .03*s), (0, 0, 0), "black", "base",
+        part("lamp.cord", "curve", (.25*s, .2*s, .03*s), (0, 0, 0), material="black", assembly="base",
              points=[[0, .06*s, .013*s], [.04*s, .16*s, .004*s], [.16*s, .18*s, .004*s],
                      [.22*s, .11*s, .004*s], [.28*s, .14*s, .004*s]]),
     ]
     for side in (-1, 1):
         label = "left" if side < 0 else "right"
         parts.append(part(f"lamp.arm.{label}", "cylinder", (.014*s, .014*s, .047*s),
-                          (side*(w/2+.007*s), .015*s, .348*s), metal, "support"))
+                          (side*(w/2+.007*s), .015*s, .348*s), material=metal, assembly="support"))
         parts.append(part(f"lamp.pivot.{label}", "cylinder", (.027*s, .027*s, .021*s),
-                          (side*(w/2+.007*s), 0, .371*s), metal, "support", rotation=[0, math.pi/2, 0]))
+                          (side*(w/2+.007*s), 0, .371*s), material=metal, assembly="support", rotation=[0, math.pi/2, 0]))
     for index in range(15):
         parts.append(part(f"lamp.chain.{index:02}", "ellipsoid", (.004*s, .004*s, .004*s),
-                          (w*.30, -.035*s, (.36-index*.005)*s), metal, "chain"))
+                          (w*.30, -.035*s, (.36-index*.005)*s), material=metal, assembly="chain"))
     return parts
 
 
@@ -93,15 +93,15 @@ def drawer_parts(group, x, cfg):
         z, front_h = .10+(index+.5)*h/3, h/3-.004
         prefix, shift = f"{group}.drawer.{index+1}", [0, -.40-index*.18, 0]
         result.extend([
-            part(prefix+".front", "box", (w-.008, t, front_h), (x, -d/2-t/2-.002, z), "cabinet", group, explode=shift),
-            part(prefix+".bottom", "box", (w-4*t, d-.08, t), (x, -.015, z-front_h*.32), "oak", group, explode=shift),
-            part(prefix+".back", "box", (w-4*t, t, front_h*.6), (x, d/2-.07, z), "oak", group, explode=shift),
-            part(prefix+".handle", "cylinder", (.008, .008, .18), (x, -d/2-t-.025, z+.035), "brass", group,
+            part(prefix+".front", "box", (w-.008, t, front_h), (x, -d/2-t/2-.002, z), material="cabinet", assembly=group, explode=shift),
+            part(prefix+".bottom", "box", (w-4*t, d-.08, t), (x, -.015, z-front_h*.32), material="oak", assembly=group, explode=shift),
+            part(prefix+".back", "box", (w-4*t, t, front_h*.6), (x, d/2-.07, z), material="oak", assembly=group, explode=shift),
+            part(prefix+".handle", "cylinder", (.008, .008, .18), (x, -d/2-t-.025, z+.035), material="brass", assembly=group,
                  rotation=[0, math.pi/2, 0], explode=shift),
         ])
         for side in (-1, 1):
             result.append(part(prefix+(".left" if side < 0 else ".right"), "box", (t, d-.08, front_h*.6),
-                               (x+side*(w-3*t)/2, -.015, z), "oak", group, explode=shift))
+                               (x+side*(w-3*t)/2, -.015, z), material="oak", assembly=group, explode=shift))
     return result
 
 
@@ -112,13 +112,13 @@ def cabinet_parts(index, cfg, start):
     for side in (-1, 1):
         label = "left" if side < 0 else "right"
         parts.append(part(f"{group}.side.{label}", "box", (t, d, h),
-                          (x+side*(w-t)/2, 0, z), "oak", group, explode=[side*.18, 0, 0]))
+                          (x+side*(w-t)/2, 0, z), material="oak", assembly=group, explode=[side*.18, 0, 0]))
     parts.extend([
-        part(f"{group}.bottom", "box", (w-2*t, d, t), (x, 0, .10+t/2), "oak", group, explode=[0, 0, -.13]),
-        part(f"{group}.back", "box", (w-2*t, t, h-t), (x, (d-t)/2, z+t/2), "oak", group, explode=[0, .25, 0]),
-        part(f"{group}.shelf", "box", (w-2*t, d-2*t, t), (x, 0, z), "oak", group, explode=[0, -.25, .08]),
-        part(f"{group}.rail.front", "box", (w-2*t, .055, t), (x, -d/2+.0275, .10+h-t/2), "oak", group),
-        part(f"{group}.rail.back", "box", (w-2*t, .055, t), (x, d/2-.0275, .10+h-t/2), "oak", group),
+        part(f"{group}.bottom", "box", (w-2*t, d, t), (x, 0, .10+t/2), material="oak", assembly=group, explode=[0, 0, -.13]),
+        part(f"{group}.back", "box", (w-2*t, t, h-t), (x, (d-t)/2, z+t/2), material="oak", assembly=group, explode=[0, .25, 0]),
+        part(f"{group}.shelf", "box", (w-2*t, d-2*t, t), (x, 0, z), material="oak", assembly=group, explode=[0, -.25, .08]),
+        part(f"{group}.rail.front", "box", (w-2*t, .055, t), (x, -d/2+.0275, .10+h-t/2), material="oak", assembly=group),
+        part(f"{group}.rail.back", "box", (w-2*t, .055, t), (x, d/2-.0275, .10+h-t/2), material="oak", assembly=group),
     ])
     if index in (0, 1):
         parts = [item for item in parts if not item["id"].endswith(".shelf")]
@@ -126,13 +126,13 @@ def cabinet_parts(index, cfg, start):
         parts.extend(drawer_parts(group, x, cfg))
     for number, offset in enumerate(() if index == 0 else (-w/4, w/4)):
         parts.append(part(f"{group}.door.{number+1}", "box", (w/2-.004, t, h-.004),
-                          (x+offset, -d/2-t/2-.002, z), "cabinet", group, explode=[0, -.6, 0]))
+                          (x+offset, -d/2-t/2-.002, z), material="cabinet", assembly=group, explode=[0, -.6, 0]))
         parts.append(part(f"{group}.handle.{number+1}", "cylinder", (.008, .008, .15),
-                          (x+offset, -d/2-t-.028, .10+h-.12), "brass", group,
+                          (x+offset, -d/2-t-.028, .10+h-.12), material="brass", assembly=group,
                           rotation=[0, math.pi/2, 0], explode=[0, -.65, 0]))
     for number, (dx, dy) in enumerate(((-w*.36, -d*.34), (w*.36, -d*.34), (-w*.36, d*.34), (w*.36, d*.34))):
         parts.append(part(f"{group}.leg.{number+1}", "cylinder", (.045, .045, .1),
-                          (x+dx, dy, .05), "black", group, explode=[0, 0, -.12]))
+                          (x+dx, dy, .05), material="black", assembly=group, explode=[0, 0, -.12]))
     return parts
 
 
@@ -141,13 +141,13 @@ def upper_parts(index, x, w, d, t):
     result = []
     for side in (-1, 1):
         result.append(part(group+(".left" if side < 0 else ".right"), "box", (t, depth, height),
-                           (x+side*(w-t)/2, y, z), "oak", group, explode=[side*.16, .12, .28]))
+                           (x+side*(w-t)/2, y, z), material="oak", assembly=group, explode=[side*.16, .12, .28]))
     for suffix, level in (("bottom", z-(height-t)/2), ("shelf", z), ("top", z+(height-t)/2)):
-        result.append(part(group+"."+suffix, "box", (w-2*t, depth-t, t), (x, y, level), "oak", group,
+        result.append(part(group+"."+suffix, "box", (w-2*t, depth-t, t), (x, y, level), material="oak", assembly=group,
                            explode=[0, .1, .28+(level-z)*.3]))
     result.extend([
-        part(group+".back", "box", (w-2*t, t, height), (x, y+(depth-t)/2, z), "oak", group, explode=[0, .3, .28]),
-        part(group+".front", "box", (w-.008, .018, height-.004), (x, y-depth/2-.009, z), "cabinet", group,
+        part(group+".back", "box", (w-2*t, t, height), (x, y+(depth-t)/2, z), material="oak", assembly=group, explode=[0, .3, .28]),
+        part(group+".front", "box", (w-.008, .018, height-.004), (x, y-depth/2-.009, z), material="cabinet", assembly=group,
              explode=[0, -.4, .28]),
     ])
     return result
@@ -160,21 +160,21 @@ def kitchen_parts(cfg):
     sink_x, sink_w, sink_d = start+1.5*w, w*.72, d*.62
     parts = [item for index in range(count) for item in cabinet_parts(index, cfg, start)]
     parts.extend([
-        part("kitchen.worktop", "box", (width+.05, d+.065, .035), (0, -.016, top+.0175), "stone", "worktop",
+        part("kitchen.worktop", "box", (width+.05, d+.065, .035), (0, -.016, top+.0175), material="stone", assembly="worktop",
              explode=[0, 0, .65], cuts=[{"size": [sink_w, sink_d, .12], "offset": [sink_x, 0, 0]}]),
-        part("kitchen.sink", "box", (sink_w+.012, sink_d+.012, .14), (sink_x, -.016, top-.034), "steel", "appliances",
+        part("kitchen.sink", "box", (sink_w+.012, sink_d+.012, .14), (sink_x, -.016, top-.034), material="steel", assembly="appliances",
              explode=[0, 0, .70], cuts=[{"size": [sink_w, sink_d, .14], "offset": [0, 0, .007]}]),
-        part("kitchen.tap", "curve", (.028, .20, .31), (0, 0, 0), "steel", "appliances", radius=.012,
+        part("kitchen.tap", "curve", (.028, .20, .31), (0, 0, 0), material="steel", assembly="appliances", radius=.012,
              explode=[0, 0, .70], points=[[sink_x, d*.36, top+.035], [sink_x, d*.36, top+.24],
                                          [sink_x, d*.30, top+.32], [sink_x, .04, top+.30], [sink_x, -.015, top+.22]]),
-        part("kitchen.plinth", "box", (width-.04, .018, .085), (0, -d/2+.07, .043), "cabinet", "base",
+        part("kitchen.plinth", "box", (width-.04, .018, .085), (0, -d/2+.07, .043), material="cabinet", assembly="base",
              explode=[0, -.35, 0]),
-        part("kitchen.hob", "box", (w*.78, d*.76, .009), (start+2.5*w, -.03, top+.040), "black", "appliances",
+        part("kitchen.hob", "box", (w*.78, d*.76, .009), (start+2.5*w, -.03, top+.040), material="black", assembly="appliances",
              explode=[0, 0, .7]),
     ])
     for index, (dx, dy) in enumerate(((-w*.20, -d*.17), (w*.20, -d*.17), (-w*.20, d*.17), (w*.20, d*.17))):
         parts.append(part(f"kitchen.hob.ring.{index}", "ring", (w*.23, w*.23, .001),
-                          (start+2.5*w+dx, -.03+dy, top+.045), "steel", "appliances", explode=[0, 0, .7]))
+                          (start+2.5*w+dx, -.03+dy, top+.045), material="steel", assembly="appliances", explode=[0, 0, .7]))
     for index in range(count):
         x = start+(index+.5)*w
         parts.extend(upper_parts(index, x, w, d, cfg["panel_thickness"]))

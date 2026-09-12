@@ -139,5 +139,14 @@ commands, outcomes, unresolved capabilities and PR identity here as work proceed
   (197 GLB parts; 196 round-tripped CAD solids; 7250 mm worktop).
 - The unrelated pre-existing localhost optional-argument failure is tracked with
   reproducer and auto-dispatch in GH#31825, not patched into this feature.
-- C1-C5 are locally verified. Next: commit the final framing/evidence changes,
-  create the PR, satisfy exact-head remote gates and merge. Release not requested.
+- PR: GH#31826, ready for review. The full affected-plugin package passed before
+  publication after preserving legacy MCP metadata shape and installing its
+  existing locked dependencies (lifecycle scripts disabled; host peer omitted).
+- Its first Qlty gate found six smells. Repair separates parent-route handling
+  and Blender geometry, names part/light properties, and splits tier routing from
+  message dispatch. Qlty 0.643.0 reports no smells across the seven affected files.
+  Both canonical geometry hashes remain identical, 70 targeted plugin checks and
+  10 demo checks pass, and both native render/export paths were rerun successfully.
+- Next: verify the exact committed Qlty diff and refreshed PR checks, then guarded
+  merge/closing. Release remains not requested. Follow current PR/issue state for
+  lifecycle completion rather than interpreting this checkpoint as a live executor.

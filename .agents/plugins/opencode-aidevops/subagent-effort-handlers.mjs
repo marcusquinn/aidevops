@@ -11,6 +11,7 @@ import {
 } from "./model-routing.mjs";
 import { loadDelegatedDomainKnowledge } from "./agent-loader.mjs";
 import { SPECIALIST_ADVISOR, validateSpecialistRequest } from "./specialist-advisor.mjs";
+import { loadChildSessionWithParent, routeCreativeMessage } from "./subagent-parent-routing.mjs";
 
 const DOMAIN_KNOWLEDGE_MARKER = "\n\n[AIDEvOps canonical domain knowledge]";
 const DOMAIN_REQUIRED_FIELDS = ["task", "objective", "scope", "source", "decisions", "evidence", "output"];
@@ -65,15 +66,6 @@ async function routeDomainMessage(context, output, registry, agentName) {
   output.parts = output.parts.filter((part) => part.type !== "text" || part === target);
 }
 
-async function loadChildSessionWithParent(context, sessionID) {
-  try {
-    const childSession = await context.getSession(context.client, sessionID);
-    return childSession?.parentID ? childSession : null;
-  } catch {
-    return null;
-  }
-}
-
 async function applyConnectedRoutingModel(context, route, message, policy) {
   const providerState = await context.resolveProviderState();
   if (!providerState) {
@@ -98,21 +90,6 @@ function applySpecialistPolicy(context, agentName, text, policy) {
   validateSpecialistRequest(text);
   policy.effort = "thinking";
   policy.reason = "specialist_advice";
-}
-
-async function routeCreativeMessage(context, output) {
-  const child = await loadChildSessionWithParent(context, output.message.sessionID);
-  if (!child) throw new Error("[aidevops] Creative executor requires an observed parent session");
-  const parent = await context.getParentRoute(context.client, child);
-  if (!parent.model || !["none", "minimal", "low", "medium", "high", "xhigh", "max"].includes(parent.variant)) {
-    throw new Error("[aidevops] Creative parent model/effort unavailable; execution refused");
-  }
-  output.message.model = routingModelIdentity(parent.model);
-  context.policies.set(output.message.sessionID, {
-    effort: "thinking", reason: "creative_parent", pinned: true, attempt: 1,
-    createdAt: Date.now(), parentSessionID: child.parentID,
-    routedModel: parent.model, domainVariant: parent.variant,
-  });
 }
 
 async function routeChatMessage(context, output) {
@@ -144,6 +121,12 @@ async function routeChatMessage(context, output) {
     await routeCreativeMessage(context, output);
     return;
   }
+  await routeTierMessage(context, output, { agentName, text, now });
+}
+
+async function routeTierMessage(context, output, { agentName, text, now }) {
+  const message = output.message;
+  const sessionID = message.sessionID;
   const route = context.routedPolicy(context.agentRoutingState, agentName, text);
   const policy = {
     effort: route.effort,

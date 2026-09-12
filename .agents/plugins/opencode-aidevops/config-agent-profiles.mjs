@@ -12,6 +12,7 @@ import { DEFAULT_ESCALATION_ORDER, normalizeRoutingTier } from "./model-routing.
 import { recordPluginHealthStage } from "./plugin-health.mjs";
 import { primaryDeliveryEvidence } from "./primary-delivery-evidence.mjs";
 import { registerSpecialistAdvisor, applyDailyDriverDefaults } from "./specialist-advisor.mjs";
+import { resetCreativeRouting, recordCreativeRouting } from "./subagent-parent-routing.mjs";
 
 export { primaryDeliveryEvidence } from "./primary-delivery-evidence.mjs";
 export { registerDelegatedDomainProfiles } from "./agent-loader.mjs";
@@ -167,7 +168,7 @@ export function registerOnDemandMcpAgents(config, agentsDir, routing, state) {
   config.tools[MCP_ACTIVATION_TOOL] = false;
 
   let injected = 0;
-  if (state) state.inheritParentRoute = new Set();
+  resetCreativeRouting(state);
   getOnDemandMcpAgents().forEach((mcp) => {
     if (ensureOnDemandMcpAgent(config, mcp, agentsDir)) injected++;
     if (routing && state) {
@@ -178,9 +179,7 @@ export function registerOnDemandMcpAgents(config, agentsDir, routing, state) {
         mcp.modelTier,
         routing,
       );
-      if (mcp.inheritParentRoute) {
-        state.inheritParentRoute.add(mcp.agentName);
-      }
+      recordCreativeRouting(state, mcp);
     }
   });
   return injected;
