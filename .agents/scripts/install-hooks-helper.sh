@@ -31,6 +31,7 @@ HOOKS_DIR="$HOME/.aidevops/hooks"
 HOOK_SCRIPT="$HOOKS_DIR/git_safety_guard.py"
 POST_HOOK_SCRIPT="$HOOKS_DIR/mcp_task_post_hook.py"
 CREDENTIAL_SCRUB_SCRIPT="$HOOKS_DIR/credential-transcript-scrub.py"
+STRUCTURED_TEXT_PARSER_SCRIPT="$HOOKS_DIR/structured_text_parser.py"
 SECRET_READ_GUARD_SCRIPT="$HOOKS_DIR/secret_file_read_guard.py"
 COMPLEXITY_ADVISORY_SCRIPT="$HOOKS_DIR/complexity_advisory_pre_edit.py"
 CLAUDE_SETTINGS="$HOME/.claude/settings.json"
@@ -670,6 +671,8 @@ install_hook() {
 	source_post_hook=$(find_source_hook "mcp_task_post_hook.py") || return 1
 	local source_credential_scrub_hook
 	source_credential_scrub_hook=$(find_source_hook "credential-transcript-scrub.py") || return 1
+	local source_structured_text_parser
+	source_structured_text_parser=$(find_source_hook "structured_text_parser.py") || return 1
 	local source_secret_read_guard_hook
 	source_secret_read_guard_hook=$(find_source_hook "secret_file_read_guard.py") || return 1
 	local source_complexity_advisory_hook
@@ -694,6 +697,8 @@ install_hook() {
 	cp "$source_credential_scrub_hook" "$CREDENTIAL_SCRUB_SCRIPT"
 	chmod +x "$CREDENTIAL_SCRUB_SCRIPT"
 	print_success "Installed $CREDENTIAL_SCRUB_SCRIPT"
+	cp "$source_structured_text_parser" "$STRUCTURED_TEXT_PARSER_SCRIPT"
+	print_success "Installed $STRUCTURED_TEXT_PARSER_SCRIPT"
 	cp "$source_secret_read_guard_hook" "$SECRET_READ_GUARD_SCRIPT"
 	chmod +x "$SECRET_READ_GUARD_SCRIPT"
 	print_success "Installed $SECRET_READ_GUARD_SCRIPT"

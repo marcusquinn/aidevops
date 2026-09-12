@@ -341,7 +341,7 @@ else
 	fail "27. Performance: ${BENCH_MS}ms per 10KB in-process exceeds 5ms budget"
 fi
 
-NAMED_BENCH_MS=$(python3 -c "
+NAMED_BENCH_MS=$(PYTHONPATH="$HOOKS_DIR" python3 -c "
 import runpy, time
 
 scrub_credentials = runpy.run_path('$HOOK_SCRIPT')['scrub_credentials']
@@ -364,7 +364,7 @@ else
 	fail "28. Named-field performance: ${NAMED_BENCH_MS}ms per 10KB exceeds 5ms budget"
 fi
 
-PEM_BENCH_MS=$(python3 -c "
+PEM_BENCH_MS=$(PYTHONPATH="$HOOKS_DIR" python3 -c "
 import runpy, time
 
 scrub_credentials = runpy.run_path('$HOOK_SCRIPT')['scrub_credentials']

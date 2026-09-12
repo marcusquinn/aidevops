@@ -48,6 +48,8 @@ import re
 import sys
 import time
 
+from structured_text_parser import parse_structured_text
+
 # Regex mirrors shared-constants.sh scrub_credentials sed pattern exactly.
 # Group 1: token prefix family (one of the 10 families).
 # Suffix: 10+ alphanumeric / dash / underscore chars (token body).
@@ -260,36 +262,6 @@ def scrub_sequence(value: list):
         scrubbed.append(nested)
         count += nested_count
     return scrubbed, count
-
-
-def parse_structured_text(value: str):
-    """Parse complete JSON or independent NDJSON records for recursive scrubbing."""
-    parsed = parse_json_document(value)
-    if parsed is not None:
-        return parsed, lambda scrubbed: json.dumps(scrubbed, separators=(",", ":"))
-    records = []
-    for line in value.splitlines():
-        record = parse_json_document(line) if line.strip() else None
-        records.append(line if record is None and line.strip() else record)
-    if not any(isinstance(record, (dict, list)) for record in records):
-        return None
-    return records, lambda scrubbed: "\n".join(
-        ""
-        if record is None
-        else record
-        if isinstance(record, str)
-        else json.dumps(record, separators=(",", ":"))
-        for record in scrubbed
-    )
-
-
-def parse_json_document(value: str):
-    """Return JSON containers and leave scalar or invalid values unparsed."""
-    try:
-        parsed = json.loads(value)
-    except json.JSONDecodeError:
-        return None
-    return parsed if isinstance(parsed, (dict, list)) else None
 
 
 def main() -> None:
