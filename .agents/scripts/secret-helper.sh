@@ -203,18 +203,23 @@ if not secret_values:
     raise SystemExit("redaction values were empty")
 
 marker = b"[REDACTED]"
-maximum_length = len(secret_values[0])
 output = sys.stdout.buffer
 pending = b""
 
 def redact_available(data, final=False):
-    keep = 0 if final else maximum_length - 1
     pieces = []
-    while len(data) > keep:
+    while data:
         match = next((value for value in secret_values if data.startswith(value)), None)
         if match is not None:
+            if not final and any(
+                len(value) > len(match) and value.startswith(data)
+                for value in secret_values
+            ):
+                break
             pieces.append(marker)
             data = data[len(match):]
+        elif not final and any(value.startswith(data) for value in secret_values):
+            break
         else:
             pieces.append(data[:1])
             data = data[1:]
@@ -228,7 +233,7 @@ def redact_available(data, final=False):
     return data
 
 while True:
-    chunk = sys.stdin.buffer.read(65536)
+    chunk = sys.stdin.buffer.read1(65536)
     if not chunk:
         break
     pending = redact_available(pending + chunk)
