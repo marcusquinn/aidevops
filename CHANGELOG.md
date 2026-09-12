@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.363] - 2026-09-12
+
+### Changed
+
+- Maintenance: mark t18429 complete (pr:#31808 completed:2026-09-11) (#31809)
+
+### Fixed
+
+- detect Pulse through stable active link
+- restore dependency updates lost during false supersession
+- approve trusted Issue Sync workflow runs (#31818)
+- stream redacted secret command output
+
 ## [3.32.362] - 2026-09-11
 
 ### Fixed
