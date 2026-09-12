@@ -37,8 +37,8 @@ test("registers only the explicit MCP activation profiles", () => {
   registerMcpServers(config);
   const count = registerOnDemandMcpAgents(config, AGENTS_DIR);
 
-  assert.equal(count, 6);
-  assert.deepEqual(Object.keys(config.agent), ["playwriter", "posthog", "playwright", "quickfile", "blender", "backblaze-b2"]);
+  assert.equal(count, 9);
+  assert.deepEqual(Object.keys(config.agent), ["playwriter", "posthog", "playwright", "quickfile", "blender", "freecad", "ableton", "davinci-resolve", "backblaze-b2"]);
   assert.equal(config.tools.aidevops_mcp, false);
   assert.equal(config.agent.playwriter.mode, "subagent");
   assert.equal(config.agent.playwriter.tools.aidevops_mcp, true);

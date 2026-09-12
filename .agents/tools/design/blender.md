@@ -2,6 +2,7 @@
 description: Blender Lab MCP setup, scene analysis, Python API documentation, and community MCP comparison
 mode: subagent
 tools:
+  "*": false
   read: true
   write: false
   edit: false
@@ -11,12 +12,24 @@ tools:
   webfetch: true
   aidevops_mcp: true
   blender-lab_*: true
+permission:
+  "*": deny
+  read: allow
+  grep: allow
+  webfetch: allow
+  aidevops_mcp: allow
+  blender-lab_*: allow
 ---
 
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
 # Blender MCP
+
+For creative production, operate the supplied bounded brief and scene copy using
+`workflows/creative-production.md`. Do not delegate or change operator consent.
+Keep the parent-selected model/effort, inspect before mutation, and return actual
+artifact/geometry evidence. A fresh child does not remove applicable framework rules.
 
 ## Choose the Correct Project
 

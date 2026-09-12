@@ -100,6 +100,21 @@ function applySpecialistPolicy(context, agentName, text, policy) {
   policy.reason = "specialist_advice";
 }
 
+async function routeCreativeMessage(context, output) {
+  const child = await loadChildSessionWithParent(context, output.message.sessionID);
+  if (!child) throw new Error("[aidevops] Creative executor requires an observed parent session");
+  const parent = await context.getParentRoute(context.client, child);
+  if (!parent.model || !["none", "minimal", "low", "medium", "high", "xhigh", "max"].includes(parent.variant)) {
+    throw new Error("[aidevops] Creative parent model/effort unavailable; execution refused");
+  }
+  output.message.model = routingModelIdentity(parent.model);
+  context.policies.set(output.message.sessionID, {
+    effort: "thinking", reason: "creative_parent", pinned: true, attempt: 1,
+    createdAt: Date.now(), parentSessionID: child.parentID,
+    routedModel: parent.model, domainVariant: parent.variant,
+  });
+}
+
 async function routeChatMessage(context, output) {
   const message = output?.message || {};
   const sessionID = message.sessionID;
@@ -122,6 +137,11 @@ async function routeChatMessage(context, output) {
   const domainRegistry = context.agentRoutingState?.domainDelegation;
   if (domainRegistry?.profiles?.has(agentName)) {
     await routeDomainMessage(context, output, domainRegistry, agentName);
+    return;
+  }
+  if (context.agentRoutingState?.inheritParentRoute?.has(agentName)
+    && !context.agentRoutingState?.pinned?.has(agentName)) {
+    await routeCreativeMessage(context, output);
     return;
   }
   const route = context.routedPolicy(context.agentRoutingState, agentName, text);
@@ -240,7 +260,11 @@ async function routeChatParams(context, input, output) {
 
   const domainPolicy = context.policies.get(sessionID);
   const domainName = input?.message?.agent;
-  if (domainPolicy?.reason === "bounded_domain"
+  const creative = context.agentRoutingState?.inheritParentRoute?.has(domainName);
+  // Preserve the native explicit model/variant override on creative executors.
+  if (creative && context.agentRoutingState?.pinned?.has(domainName)) return;
+  if (["bounded_domain", "creative_parent"].includes(domainPolicy?.reason)
+    || creative
     || context.agentRoutingState?.domainDelegation?.profiles?.has(domainName)) {
     if (!domainPolicy?.domainVariant || childModelFrom(context, input) !== domainPolicy.routedModel) {
       throw new Error("[aidevops] Domain parent ceiling unavailable or model changed");

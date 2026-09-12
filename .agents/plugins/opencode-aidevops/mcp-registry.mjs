@@ -429,6 +429,7 @@ function getMcpRegistry() {
       toolPattern: "blender-lab_*",
       globallyEnabled: false,
       activationAgent: "blender",
+      inheritParentRoute: true,
       agentSource: ["tools", "design", "blender.md"],
       activationGuidance: [
         "Before connecting, require explicit operator approval and an already isolated Blender environment; never set the launcher consent flags yourself.",
@@ -438,6 +439,27 @@ function getMcpRegistry() {
       modelTier: "standard",
       description: "Official Blender Lab MCP with opt-in isolated provisioning",
     },
+    ...[
+      ["freecad", ["tools", "design", "freecad.md"], "Parametric CAD in an approved FreeCAD project"],
+      ["ableton", ["tools", "audio", "ableton.md"], "Music and audio in an approved Ableton Live Set"],
+      ["davinci-resolve", ["tools", "video", "davinci-resolve.md"], "Optional Resolve editing through the compact scripting adapter"],
+    ].map(([name, agentSource, description]) => ({
+      name,
+      type: "local",
+      command: ["python3", "-I", join(homedir(), ".aidevops", "agents", "scripts", "creative-mcp-launcher.py"), name],
+      eager: false,
+      globallyEnabled: false,
+      toolPattern: `${name}_*`,
+      activationAgent: name,
+      inheritParentRoute: true,
+      agentSource,
+      description,
+      activationGuidance: [
+        "Require explicit operator approval, an isolated app/MCP environment and the reviewed source before connecting; never set consent flags yourself.",
+        "Missing apps, dependencies or consent remain unavailable; do not install or launch applications automatically.",
+        "Operate only the supplied creative brief and project copy; no recursive delegation, spending, uploads or publication without separate authority.",
+      ],
+    })),
     {
       name: "backblaze-b2",
       type: "local",
@@ -513,6 +535,7 @@ export function getOnDemandMcpAgents() {
       agentSource: [...mcp.agentSource],
       toolPattern: mcp.toolPattern,
       modelTier: mcp.modelTier || "standard",
+      inheritParentRoute: mcp.inheritParentRoute === true,
       activationGuidance: [...(mcp.activationGuidance || [])],
       description: mcp.description,
     }));

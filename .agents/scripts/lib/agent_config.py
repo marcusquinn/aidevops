@@ -29,6 +29,7 @@ _CS_DARWIN_USER_TEMP_DIR = 65537
 # If not in this map, derive from filename (e.g., build-agent.md -> Build-Agent)
 DISPLAY_NAMES = {
     "build-plus": "Build+",
+    "3d-modelling": "3D Modelling",
     "pr": "PR",
     "seo": "SEO",
     "social-media": "Social-Media",

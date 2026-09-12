@@ -1,4 +1,6 @@
-<!--TOON:agents[13]{name,file,purpose,model_tier,triggers}:
+<!--TOON:agents[16]{name,file,purpose,model_tier,triggers}:
+3D Modelling,3d-modelling.md,Editable 3D parametric CAD configurable products and rendering,thinking,3d modelling modeling blender freecad cad lidar mesh splat render parts exploded
+Audio,audio.md,Music composition arrangement sound design and audio editing,thinking,audio music ableton daw midi stems composition mixing mastering
 Aidevops,aidevops.md,Framework operations setup troubleshooting and aidevops extension,thinking,aidevops framework setup configuration troubleshooting mcp agent skill release
 Build+,build-plus.md,Enhanced Build with context tools,thinking,code fix refactor bug ci tests pr implementation
 Automate,automate.md,Scheduling dispatch monitoring and background orchestration,standard,schedule cron dispatch pulse monitoring automation routine
@@ -12,6 +14,7 @@ Product,product.md,Product management validation onboarding monetisation growth 
 Research,research.md,Research and analysis tasks,standard,research compare market competitor technical analysis realtime
 SEO,seo.md,SEO GEO search-intent and keyword analysis,thinking,seo geo ai search ranking keyword search intent conversational query autocomplete fanout gsc schema sitemap backlinks trends
 Vault,vault.md,Vault security operations encrypted stores fleet trust provider routing and protected-data dispatch,thinking,vault encrypted memory protected data lock unlock rekey device trust remote lock remote unlock secure sync needs_vault
+Video,video.md,Focused editing compositing grading animation and delivery,thinking,video editing resolve davinci timeline grading compositing render footage
 -->
 
 <!--TOON:model_tiers[3]{tier,model_id,use_case}:
