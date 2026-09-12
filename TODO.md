@@ -1360,6 +1360,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18429 Fix in-progress task completion and planning PR title compatibility #auto-dispatch #bug #framework #priority:high ref:GH#31805 -> [todo/tasks/t18429-brief.md] pr:#31808 completed:2026-09-11
 
+- [ ] t18431 Regenerate README for current aidevops capabilities ref:GH#31832
+
 ## In Progress
 
 - [x] t18430 Update OpenCode GitHub Action pin to v1.18.30 #auto-dispatch #dependencies #github_actions #interactive #tier:simple ref:GH#31828 started:2026-09-12 pr:#31829 completed:2026-09-12
