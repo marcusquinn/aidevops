@@ -535,7 +535,7 @@ export function getOnDemandMcpAgents() {
       agentSource: [...mcp.agentSource],
       toolPattern: mcp.toolPattern,
       modelTier: mcp.modelTier || "standard",
-      inheritParentRoute: mcp.inheritParentRoute === true,
+      ...(mcp.inheritParentRoute === true ? { inheritParentRoute: true } : {}),
       activationGuidance: [...(mcp.activationGuidance || [])],
       description: mcp.description,
     }));
