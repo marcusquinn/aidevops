@@ -341,7 +341,7 @@ else
 	fail "27. Performance: ${BENCH_MS}ms per 10KB in-process exceeds 5ms budget"
 fi
 
-NAMED_BENCH_MS=$(python3 -c "
+NAMED_BENCH_MS=$(PYTHONPATH="$HOOKS_DIR" python3 -c "
 import runpy, time
 
 scrub_credentials = runpy.run_path('$HOOK_SCRIPT')['scrub_credentials']
@@ -364,7 +364,7 @@ else
 	fail "28. Named-field performance: ${NAMED_BENCH_MS}ms per 10KB exceeds 5ms budget"
 fi
 
-PEM_BENCH_MS=$(python3 -c "
+PEM_BENCH_MS=$(PYTHONPATH="$HOOKS_DIR" python3 -c "
 import runpy, time
 
 scrub_credentials = runpy.run_path('$HOOK_SCRIPT')['scrub_credentials']
@@ -387,6 +387,30 @@ else
 	fail "29. Unmatched-PEM performance: ${PEM_BENCH_MS}ms per 10KB exceeds 5ms budget"
 fi
 printf '  Note: subprocess launch adds ~50ms Python startup; in-process cost shown above.\n'
+
+SIBLING_PAYLOAD='{"tool_response":"[{\"key\":\"SYNTHETIC_API_KEY\",\"value\":\"opaque-synthetic-value-1234567890\"},{\"name\":\"REGION\",\"value\":\"eu-west\"}]"}'
+output_sibling=$(run_hook "$SIBLING_PAYLOAD")
+if echo "$output_sibling" | python3 -c "import json,sys; response=json.loads(json.load(sys.stdin)['tool_response']); assert response == [{'key':'SYNTHETIC_API_KEY','value':'[redacted-credential]'},{'name':'REGION','value':'eu-west'}]" 2>/dev/null; then
+	pass "30. JSON sibling credential records scrubbed without cross-record bleed"
+else
+	fail "30. JSON sibling credential records scrubbed without cross-record bleed — got: $output_sibling"
+fi
+
+NDJSON_SIBLING_PAYLOAD='{"tool_response":"{\"variable\":\"SYNTHETIC_API_KEY\",\"value\":\"opaque-synthetic-value-1234567890\"}\n{\"key\":\"REGION\",\"value\":\"eu-west\"}"}'
+output_ndjson_sibling=$(run_hook "$NDJSON_SIBLING_PAYLOAD")
+if echo "$output_ndjson_sibling" | python3 -c "import json,sys; response=json.load(sys.stdin)['tool_response'].splitlines(); assert [json.loads(record) for record in response] == [{'variable':'SYNTHETIC_API_KEY','value':'[redacted-credential]'},{'key':'REGION','value':'eu-west'}]" 2>/dev/null; then
+	pass "31. NDJSON sibling credential records scrubbed"
+else
+	fail "31. NDJSON sibling credential records scrubbed — got: $output_ndjson_sibling"
+fi
+
+MIXED_NDJSON_PAYLOAD='{"tool_response":"malformed-before\n{\"key\":\"SYNTHETIC_API_KEY\",\"value\":\"opaque-synthetic-value-1234567890\"}\nmalformed-after"}'
+output_mixed_ndjson=$(run_hook "$MIXED_NDJSON_PAYLOAD")
+if echo "$output_mixed_ndjson" | python3 -c "import json,sys; response=json.load(sys.stdin)['tool_response'].splitlines(); assert response[0] == 'malformed-before' and response[2] == 'malformed-after'; assert json.loads(response[1]) == {'key':'SYNTHETIC_API_KEY','value':'[redacted-credential]'}" 2>/dev/null; then
+	pass "32. Valid NDJSON records remain scrubbed beside malformed records"
+else
+	fail "32. Valid NDJSON records remain scrubbed beside malformed records — got: $output_mixed_ndjson"
+fi
 
 # ── Summary ────────────────────────────────────────────────────────────────
 

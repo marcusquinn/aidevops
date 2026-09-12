@@ -48,6 +48,8 @@ import re
 import sys
 import time
 
+from structured_text_parser import parse_structured_text
+
 # Regex mirrors shared-constants.sh scrub_credentials sed pattern exactly.
 # Group 1: token prefix family (one of the 10 families).
 # Suffix: 10+ alphanumeric / dash / underscore chars (token body).
@@ -73,6 +75,8 @@ PEM_REDACTION_TOKEN = "[redacted-private-key]"
 PEM_BEGIN_MARKER = "-----BEGIN "
 PEM_KEY_SUFFIX = "PRIVATE KEY-----"
 PEM_LABEL_PATTERN = re.compile(r"^[A-Z0-9 ]*$")
+IDENTIFIER_FIELD_NAMES = {"KEY", "NAME", "VARIABLE"}
+VALUE_FIELD_NAMES = {"VALUE"}
 PLACEHOLDER_VALUES = {
     "",
     "***",
@@ -120,6 +124,16 @@ def is_placeholder_value(value: str) -> bool:
 def preserves_sensitive_value(value) -> bool:
     """Keep absence and explicit string placeholders under sensitive keys."""
     return value is None or (isinstance(value, str) and is_placeholder_value(value))
+
+
+def is_identifier_field_name(name: str) -> bool:
+    """Return whether a field identifies the name of a sibling value."""
+    return normalize_field_name(name) in IDENTIFIER_FIELD_NAMES
+
+
+def is_value_field_name(name: str) -> bool:
+    """Return whether a field holds the value named by a sibling identifier."""
+    return normalize_field_name(name) in VALUE_FIELD_NAMES
 
 
 def redact_named_assignment(match: re.Match) -> str:
@@ -191,18 +205,63 @@ def scrub_credentials(text: str) -> tuple[str, int]:
 def scrub_value(value):
     """Recursively scrub credentials from any JSON-serialisable value."""
     if isinstance(value, str):
-        return scrub_credentials(value)[0]
+        return scrub_text_value(value)
     if isinstance(value, dict):
-        scrubbed = {}
-        for key, nested in value.items():
-            if is_sensitive_field_name(key) and not preserves_sensitive_value(nested):
-                scrubbed[key] = REDACTION_TOKEN
-            else:
-                scrubbed[key] = scrub_value(nested)
-        return scrubbed
+        return scrub_mapping(value)
     if isinstance(value, list):
-        return [scrub_value(item) for item in value]
-    return value
+        return scrub_sequence(value)
+    return value, 0
+
+
+def scrub_text_value(value: str):
+    """Scrub plain text or recursively scrub an embedded structured payload."""
+    parsed = parse_structured_text(value)
+    if parsed is None:
+        return scrub_credentials(value)
+    parsed_value, stringify = parsed
+    scrubbed, count = scrub_value(parsed_value)
+    return (stringify(scrubbed), count) if count else scrub_credentials(value)
+
+
+def scrub_mapping(value: dict):
+    """Scrub sensitive fields and their sibling value records."""
+    has_sensitive_identifier = has_sensitive_identifier_field(value)
+    scrubbed = {}
+    count = 0
+    for key, nested in value.items():
+        if should_redact_field(key, nested, has_sensitive_identifier):
+            scrubbed[key] = REDACTION_TOKEN
+            count += 1
+        else:
+            scrubbed[key], nested_count = scrub_value(nested)
+            count += nested_count
+    return scrubbed, count
+
+
+def has_sensitive_identifier_field(value: dict) -> bool:
+    """Return whether a record's name field identifies a sensitive value."""
+    return any(
+        is_identifier_field_name(key) and isinstance(nested, str) and is_sensitive_field_name(nested)
+        for key, nested in value.items()
+    )
+
+
+def should_redact_field(key, value, has_sensitive_identifier: bool) -> bool:
+    """Return whether a field is directly or indirectly credential-bearing."""
+    return not preserves_sensitive_value(value) and (
+        is_sensitive_field_name(key) or (has_sensitive_identifier and is_value_field_name(key))
+    )
+
+
+def scrub_sequence(value: list):
+    """Scrub each independent list entry and accumulate its redaction count."""
+    scrubbed = []
+    count = 0
+    for item in value:
+        nested, nested_count = scrub_value(item)
+        scrubbed.append(nested)
+        count += nested_count
+    return scrubbed, count
 
 
 def main() -> None:
@@ -217,27 +276,11 @@ def main() -> None:
 
     tool_response = data.get("tool_response", "")
 
-    # Fast path: no known prefix, private key, or named assignment in the payload.
-    if (
-        not CREDENTIAL_PATTERN.search(raw)
-        and PEM_BEGIN_MARKER not in raw
-        and not NAMED_CREDENTIAL_ASSIGNMENT_PATTERN.search(raw)
-    ):
-        return
-
     # Scrub the tool_response field (may be str or nested JSON object).
-    if isinstance(tool_response, str):
-        scrubbed, count = scrub_credentials(tool_response)
-        if count == 0:
-            return
-    elif isinstance(tool_response, (dict, list)):
-        scrubbed = scrub_value(tool_response)
-        # Re-serialise to detect if anything actually changed.
-        original_json = json.dumps(tool_response, ensure_ascii=False)
-        scrubbed_json = json.dumps(scrubbed, ensure_ascii=False)
-        if original_json == scrubbed_json:
-            return
-    else:
+    if not isinstance(tool_response, (str, dict, list)):
+        return
+    scrubbed, count = scrub_value(tool_response)
+    if count == 0:
         return
 
     elapsed_ms = (time.monotonic_ns() - start_ns) / 1_000_000
