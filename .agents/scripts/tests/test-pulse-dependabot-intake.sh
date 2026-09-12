@@ -13,11 +13,12 @@ CLOSED_ISSUE_LIST_FAIL=0
 AUTHENTIC=1
 AUTH_FAILURE_REASON="snapshot-unavailable"
 PR_LABELS=""
-PR_FINAL_JSON='{"state":"OPEN","headRefOid":"head-current","baseRefOid":"base-current","labels":[{"name":"needs-maintainer-review"}]}'
+PR_FINAL_JSON='{"state":"OPEN","headRefOid":"head-current","baseRefOid":"base-current","baseRefName":"main","labels":[{"name":"needs-maintainer-review"}]}'
 PR_SCOPE_JSON='{"headRefOid":"head-current","files":[{"path":"package.json"},{"path":"bun.lock"}]}'
-PR_COVERAGE_JSON='{"headRefOid":"head-current","baseRefOid":"base-current","changedFiles":2,"files":[{"path":"package.json"},{"path":"bun.lock"}]}'
-SOURCE_TREE_JSON='{"truncated":false,"tree":[{"path":"package.json","type":"blob","sha":"manifest-updated"},{"path":"bun.lock","type":"blob","sha":"lock-updated"}]}'
-BASE_TREE_JSON='{"truncated":false,"tree":[{"path":"package.json","type":"blob","sha":"manifest-updated"},{"path":"bun.lock","type":"blob","sha":"lock-updated"}]}'
+PR_COVERAGE_JSON='{"headRefOid":"head-current","baseRefOid":"base-current","baseRefName":"main","changedFiles":2,"files":[{"path":"package.json","changeType":"MODIFIED"},{"path":"bun.lock","changeType":"MODIFIED"}]}'
+SOURCE_TREE_JSON='{"truncated":false,"tree":[{"path":"package.json","type":"blob","mode":"100644","sha":"manifest-updated"},{"path":"bun.lock","type":"blob","mode":"100644","sha":"lock-updated"}]}'
+BASE_TREE_JSON='{"truncated":false,"tree":[{"path":"package.json","type":"blob","mode":"100644","sha":"manifest-updated"},{"path":"bun.lock","type":"blob","mode":"100644","sha":"lock-updated"}]}'
+DEFAULT_BRANCH="main"
 TREE_READ_FAIL=0
 PR_VIEW_FAIL=0
 SUPERSEDING_PR=""
@@ -65,11 +66,11 @@ gh_issue_list() {
 
 gh_pr_view() {
 	[[ "$PR_VIEW_FAIL" -eq 0 ]] || return 1
-	if [[ " $* " == *" --json headRefOid,baseRefOid,changedFiles,files "* ]]; then
+	if [[ " $* " == *" --json headRefOid,baseRefOid,baseRefName,changedFiles,files "* ]]; then
 		printf '%s\n' "$PR_COVERAGE_JSON"
 	elif [[ " $* " == *" --json headRefOid,files "* ]]; then
 		printf '%s\n' "$PR_SCOPE_JSON"
-	elif [[ " $* " == *" --json state,headRefOid,baseRefOid,labels "* ]]; then
+	elif [[ " $* " == *" --json state,headRefOid,baseRefOid,baseRefName,labels "* ]]; then
 		printf '%s\n' "$PR_FINAL_JSON"
 	else
 		printf '%s\n' "$PR_LABELS"
@@ -82,6 +83,7 @@ gh() {
 	case " $* " in
 	*"/git/trees/head-current "*) printf '%s\n' "$SOURCE_TREE_JSON" ;;
 	*"/git/trees/base-current "*) printf '%s\n' "$BASE_TREE_JSON" ;;
+	*" repos/owner/repo --jq "*) printf '%s\n' "$DEFAULT_BRANCH" ;;
 	*) return 1 ;;
 	esac
 	return 0
@@ -307,7 +309,7 @@ test_closes_policy_held_source_after_verified_replacement() {
 	CLOSED_ISSUES_JSON='[{"number":42,"body":"<!-- aidevops:dependabot-pr-intake repo=owner/repo pr=30038 -->","labels":[{"name":"origin:worker"},{"name":"status:done"},{"name":"solved:worker"}]}]'
 	AUTHENTIC=1
 	PR_LABELS=""
-	PR_FINAL_JSON='{"state":"OPEN","headRefOid":"head-current","baseRefOid":"base-current","labels":[]}'
+	PR_FINAL_JSON='{"state":"OPEN","headRefOid":"head-current","baseRefOid":"base-current","baseRefName":"main","labels":[]}'
 	PR_VIEW_FAIL=0
 	SUPERSEDING_PR="99"
 	_pulse_route_dependabot_pr_to_worker_issue "30038" "owner/repo" "app/dependabot" "head-current" "policy-ineligible" || route_rc=$?
@@ -329,14 +331,14 @@ test_policy_only_replacement_preserves_source() {
 	CLOSED_ISSUES_JSON='[{"number":42,"body":"<!-- aidevops:dependabot-pr-intake repo=owner/repo pr=30038 -->","labels":[{"name":"origin:worker"},{"name":"status:done"},{"name":"solved:worker"}]}]'
 	AUTHENTIC=1
 	PR_LABELS=""
-	PR_FINAL_JSON='{"state":"OPEN","headRefOid":"head-current","baseRefOid":"base-current","labels":[]}'
-	BASE_TREE_JSON='{"truncated":false,"tree":[{"path":"package.json","type":"blob","sha":"manifest-old"},{"path":"bun.lock","type":"blob","sha":"lock-old"}]}'
+	PR_FINAL_JSON='{"state":"OPEN","headRefOid":"head-current","baseRefOid":"base-current","baseRefName":"main","labels":[]}'
+	BASE_TREE_JSON='{"truncated":false,"tree":[{"path":"package.json","type":"blob","mode":"100644","sha":"manifest-old"},{"path":"bun.lock","type":"blob","mode":"100644","sha":"lock-old"}]}'
 	SUPERSEDING_PR="99"
 	_pulse_route_dependabot_pr_to_worker_issue "30038" "owner/repo" "app/dependabot" "head-current" "policy-ineligible" || route_rc=$?
 	[[ "$route_rc" -eq 6 && ! -e "${TEST_ROOT}/pr-close-args" ]] || return 1
 	assert_file_contains "policy-only replacement preserves source" "$LOGFILE" \
 		"replacement #99 lacks verified dependency-content coverage; preserving source"
-	BASE_TREE_JSON='{"truncated":false,"tree":[{"path":"package.json","type":"blob","sha":"manifest-updated"},{"path":"bun.lock","type":"blob","sha":"lock-updated"}]}'
+	BASE_TREE_JSON='{"truncated":false,"tree":[{"path":"package.json","type":"blob","mode":"100644","sha":"manifest-updated"},{"path":"bun.lock","type":"blob","mode":"100644","sha":"lock-updated"}]}'
 	CLOSED_ISSUES_JSON="[]"
 	SUPERSEDING_PR=""
 	return 0
@@ -364,11 +366,56 @@ test_malformed_coverage_snapshot_preserves_source() {
 
 	rm -f "${TEST_ROOT}/pr-close-args"
 	CLOSED_ISSUES_JSON='[{"number":42,"body":"<!-- aidevops:dependabot-pr-intake repo=owner/repo pr=30038 -->","labels":[{"name":"origin:worker"},{"name":"status:done"},{"name":"solved:worker"}]}]'
-	PR_COVERAGE_JSON='{"headRefOid":"head-current","baseRefOid":"base-current","changedFiles":2,"files":[{"path":"package.json"}]}'
+	PR_COVERAGE_JSON='{"headRefOid":"head-current","baseRefOid":"base-current","baseRefName":"main","changedFiles":2,"files":[{"path":"package.json","changeType":"MODIFIED"}]}'
 	SUPERSEDING_PR="99"
 	_pulse_route_dependabot_pr_to_worker_issue "30038" "owner/repo" "app/dependabot" "head-current" "policy-ineligible" || route_rc=$?
 	[[ "$route_rc" -eq 6 && ! -e "${TEST_ROOT}/pr-close-args" ]] || return 1
-	PR_COVERAGE_JSON='{"headRefOid":"head-current","baseRefOid":"base-current","changedFiles":2,"files":[{"path":"package.json"},{"path":"bun.lock"}]}'
+	PR_COVERAGE_JSON='{"headRefOid":"head-current","baseRefOid":"base-current","baseRefName":"main","changedFiles":2,"files":[{"path":"package.json","changeType":"MODIFIED"},{"path":"bun.lock","changeType":"MODIFIED"}]}'
+	CLOSED_ISSUES_JSON="[]"
+	SUPERSEDING_PR=""
+	return 0
+}
+
+test_mode_mismatch_preserves_source() {
+	local route_rc=0
+
+	rm -f "${TEST_ROOT}/pr-close-args"
+	CLOSED_ISSUES_JSON='[{"number":42,"body":"<!-- aidevops:dependabot-pr-intake repo=owner/repo pr=30038 -->","labels":[{"name":"origin:worker"},{"name":"status:done"},{"name":"solved:worker"}]}]'
+	BASE_TREE_JSON='{"truncated":false,"tree":[{"path":"package.json","type":"blob","mode":"100755","sha":"manifest-updated"},{"path":"bun.lock","type":"blob","mode":"100644","sha":"lock-updated"}]}'
+	SUPERSEDING_PR="99"
+	_pulse_route_dependabot_pr_to_worker_issue "30038" "owner/repo" "app/dependabot" "head-current" "policy-ineligible" || route_rc=$?
+	[[ "$route_rc" -eq 6 && ! -e "${TEST_ROOT}/pr-close-args" ]] || return 1
+	BASE_TREE_JSON='{"truncated":false,"tree":[{"path":"package.json","type":"blob","mode":"100644","sha":"manifest-updated"},{"path":"bun.lock","type":"blob","mode":"100644","sha":"lock-updated"}]}'
+	CLOSED_ISSUES_JSON="[]"
+	SUPERSEDING_PR=""
+	return 0
+}
+
+test_duplicate_diff_path_preserves_source() {
+	local route_rc=0
+
+	rm -f "${TEST_ROOT}/pr-close-args"
+	CLOSED_ISSUES_JSON='[{"number":42,"body":"<!-- aidevops:dependabot-pr-intake repo=owner/repo pr=30038 -->","labels":[{"name":"origin:worker"},{"name":"status:done"},{"name":"solved:worker"}]}]'
+	PR_COVERAGE_JSON='{"headRefOid":"head-current","baseRefOid":"base-current","baseRefName":"main","changedFiles":2,"files":[{"path":"package.json","changeType":"MODIFIED"},{"path":"package.json","changeType":"MODIFIED"}]}'
+	SUPERSEDING_PR="99"
+	_pulse_route_dependabot_pr_to_worker_issue "30038" "owner/repo" "app/dependabot" "head-current" "policy-ineligible" || route_rc=$?
+	[[ "$route_rc" -eq 6 && ! -e "${TEST_ROOT}/pr-close-args" ]] || return 1
+	PR_COVERAGE_JSON='{"headRefOid":"head-current","baseRefOid":"base-current","baseRefName":"main","changedFiles":2,"files":[{"path":"package.json","changeType":"MODIFIED"},{"path":"bun.lock","changeType":"MODIFIED"}]}'
+	CLOSED_ISSUES_JSON="[]"
+	SUPERSEDING_PR=""
+	return 0
+}
+
+test_non_default_base_ref_preserves_source() {
+	local route_rc=0
+
+	rm -f "${TEST_ROOT}/pr-close-args"
+	CLOSED_ISSUES_JSON='[{"number":42,"body":"<!-- aidevops:dependabot-pr-intake repo=owner/repo pr=30038 -->","labels":[{"name":"origin:worker"},{"name":"status:done"},{"name":"solved:worker"}]}]'
+	PR_COVERAGE_JSON='{"headRefOid":"head-current","baseRefOid":"base-current","baseRefName":"release","changedFiles":2,"files":[{"path":"package.json","changeType":"MODIFIED"},{"path":"bun.lock","changeType":"MODIFIED"}]}'
+	SUPERSEDING_PR="99"
+	_pulse_route_dependabot_pr_to_worker_issue "30038" "owner/repo" "app/dependabot" "head-current" "policy-ineligible" || route_rc=$?
+	[[ "$route_rc" -eq 6 && ! -e "${TEST_ROOT}/pr-close-args" ]] || return 1
+	PR_COVERAGE_JSON='{"headRefOid":"head-current","baseRefOid":"base-current","baseRefName":"main","changedFiles":2,"files":[{"path":"package.json","changeType":"MODIFIED"},{"path":"bun.lock","changeType":"MODIFIED"}]}'
 	CLOSED_ISSUES_JSON="[]"
 	SUPERSEDING_PR=""
 	return 0
@@ -382,7 +429,7 @@ test_completed_intake_without_replacement_does_not_duplicate() {
 	CLOSED_ISSUES_JSON='[{"number":42,"body":"<!-- aidevops:dependabot-pr-intake repo=owner/repo pr=30038 -->","labels":[{"name":"origin:worker"},{"name":"status:done"},{"name":"solved:worker"}]}]'
 	AUTHENTIC=1
 	PR_LABELS=""
-	PR_FINAL_JSON='{"state":"OPEN","headRefOid":"head-current","baseRefOid":"base-current","labels":[]}'
+	PR_FINAL_JSON='{"state":"OPEN","headRefOid":"head-current","baseRefOid":"base-current","baseRefName":"main","labels":[]}'
 	SUPERSEDING_PR=""
 	_pulse_route_dependabot_pr_to_worker_issue "30038" "owner/repo" "app/dependabot" "head-current" "policy-ineligible" || route_rc=$?
 	[[ "$route_rc" -eq 6 ]] || return 1
@@ -452,13 +499,13 @@ test_preserves_hold_when_source_head_drifted() {
 	CLOSED_ISSUES_JSON='[{"number":42,"body":"<!-- aidevops:dependabot-pr-intake repo=owner/repo pr=30038 -->","labels":[{"name":"origin:worker"},{"name":"status:done"},{"name":"solved:worker"}]}]'
 	AUTHENTIC=1
 	PR_LABELS="needs-maintainer-review"
-	PR_FINAL_JSON='{"state":"OPEN","headRefOid":"head-changed","baseRefOid":"base-current","labels":[{"name":"needs-maintainer-review"}]}'
+	PR_FINAL_JSON='{"state":"OPEN","headRefOid":"head-changed","baseRefOid":"base-current","baseRefName":"main","labels":[{"name":"needs-maintainer-review"}]}'
 	SUPERSEDING_PR="99"
 	_pulse_route_dependabot_pr_to_worker_issue "30038" "owner/repo" "app/dependabot" "head-current" "policy-ineligible" || route_rc=$?
 	[[ "$route_rc" -eq 6 ]] || return 1
 	[[ ! -e "${TEST_ROOT}/pr-close-args" ]] || return 1
 	CLOSED_ISSUES_JSON="[]"
-	PR_FINAL_JSON='{"state":"OPEN","headRefOid":"head-current","baseRefOid":"base-current","labels":[{"name":"needs-maintainer-review"}]}'
+	PR_FINAL_JSON='{"state":"OPEN","headRefOid":"head-current","baseRefOid":"base-current","baseRefName":"main","labels":[{"name":"needs-maintainer-review"}]}'
 	PR_LABELS=""
 	SUPERSEDING_PR=""
 	return 0
@@ -469,11 +516,11 @@ test_preserves_source_when_base_drifts_after_coverage() {
 
 	rm -f "${TEST_ROOT}/pr-close-args"
 	CLOSED_ISSUES_JSON='[{"number":42,"body":"<!-- aidevops:dependabot-pr-intake repo=owner/repo pr=30038 -->","labels":[{"name":"origin:worker"},{"name":"status:done"},{"name":"solved:worker"}]}]'
-	PR_FINAL_JSON='{"state":"OPEN","headRefOid":"head-current","baseRefOid":"base-changed","labels":[]}'
+	PR_FINAL_JSON='{"state":"OPEN","headRefOid":"head-current","baseRefOid":"base-changed","baseRefName":"main","labels":[]}'
 	SUPERSEDING_PR="99"
 	_pulse_route_dependabot_pr_to_worker_issue "30038" "owner/repo" "app/dependabot" "head-current" "policy-ineligible" || route_rc=$?
 	[[ "$route_rc" -eq 6 && ! -e "${TEST_ROOT}/pr-close-args" ]] || return 1
-	PR_FINAL_JSON='{"state":"OPEN","headRefOid":"head-current","baseRefOid":"base-current","labels":[{"name":"needs-maintainer-review"}]}'
+	PR_FINAL_JSON='{"state":"OPEN","headRefOid":"head-current","baseRefOid":"base-current","baseRefName":"main","labels":[{"name":"needs-maintainer-review"}]}'
 	CLOSED_ISSUES_JSON="[]"
 	SUPERSEDING_PR=""
 	return 0
@@ -617,6 +664,9 @@ main() {
 	test_policy_only_replacement_preserves_source
 	test_unavailable_coverage_evidence_preserves_source
 	test_malformed_coverage_snapshot_preserves_source
+	test_mode_mismatch_preserves_source
+	test_duplicate_diff_path_preserves_source
+	test_non_default_base_ref_preserves_source
 	test_completed_intake_without_replacement_does_not_duplicate
 	test_unavailable_completion_lookup_does_not_duplicate
 	test_preserves_hold_when_terminal_issue_has_no_merged_replacement

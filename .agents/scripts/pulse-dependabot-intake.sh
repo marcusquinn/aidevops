@@ -97,9 +97,9 @@ _pulse_dependabot_completed_intake_issue() {
 }
 
 # Prove that every file in the authentic source PR's exact current diff already
-# has the same blob on the current base. This deliberately accepts exact content
-# equivalence only: ecosystem-specific "newer version" inference is ambiguous,
-# so unknown or non-identical state preserves the source PR.
+# has the same Git entry on the current default branch. This deliberately accepts
+# exact content and mode equivalence only. Ecosystem-specific "newer version"
+# inference is ambiguous, so unknown or non-identical state preserves the source.
 _pulse_dependabot_source_content_on_base() {
 	local pr_number="$1"
 	local repo_slug="$2"
@@ -108,35 +108,47 @@ _pulse_dependabot_source_content_on_base() {
 	local snapshot_values=""
 	local snapshot_head=""
 	local base_head=""
+	local base_ref=""
+	local default_branch=""
 	local changed_files=""
 	local file_count=""
 	local paths=""
 	local path=""
 	local source_tree=""
 	local base_tree=""
-	local source_blob=""
-	local base_blob=""
+	local source_entry=""
+	local base_entry=""
 
 	_PULSE_DEPENDABOT_SUPERSESSION_COVERAGE_REASON="evidence-unavailable"
 	_PULSE_DEPENDABOT_SUPERSESSION_BASE_HEAD=""
+	_PULSE_DEPENDABOT_SUPERSESSION_BASE_REF=""
 	snapshot=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
-		--json headRefOid,baseRefOid,changedFiles,files 2>/dev/null) || return 2
+		--json headRefOid,baseRefOid,baseRefName,changedFiles,files 2>/dev/null) || return 2
 	snapshot_values=$(printf '%s' "$snapshot" | jq -er '
-		[.headRefOid, .baseRefOid] as $refs
+		[.headRefOid, .baseRefOid, .baseRefName] as $refs
 		| (.changedFiles | numbers) as $changed
 		| (.files | arrays) as $files
-		| if (($refs | map(select(strings and length > 0)) | length) == 2) and ($changed >= 0)
-		  then [$refs[0], $refs[1], ($changed | tostring), ($files | length | tostring)] | @tsv
+		| if (($refs | map(select(strings and length > 0)) | length) == 3) and ($changed >= 0)
+		  then [$refs[0], $refs[1], $refs[2], ($changed | tostring), ($files | length | tostring)] | @tsv
 		  else error("invalid Dependabot coverage snapshot")
 		  end' 2>/dev/null) || return 2
-	IFS=$'\t' read -r snapshot_head base_head changed_files file_count <<<"$snapshot_values"
+	IFS=$'\t' read -r snapshot_head base_head base_ref changed_files file_count <<<"$snapshot_values"
 	[[ "$snapshot_head" == "$expected_head_sha" && "$file_count" == "$changed_files" ]] || return 2
+	default_branch=$(gh api -X GET "repos/${repo_slug}" \
+		--jq '.default_branch | strings | select(length > 0)' 2>/dev/null) || return 2
+	[[ "$base_ref" == "$default_branch" ]] || return 2
 	_PULSE_DEPENDABOT_SUPERSESSION_BASE_HEAD="$base_head"
+	_PULSE_DEPENDABOT_SUPERSESSION_BASE_REF="$base_ref"
 	if [[ "$changed_files" -eq 0 ]]; then
 		_PULSE_DEPENDABOT_SUPERSESSION_COVERAGE_REASON="no-remaining-source-diff"
 		return 0
 	fi
-	paths=$(printf '%s' "$snapshot" | jq -er '.files[] | .path | strings | select(length > 0)' 2>/dev/null) || return 2
+	paths=$(printf '%s' "$snapshot" | jq -er '
+		.changedFiles as $changed
+		| [.files[] | (.path | strings) as $path
+			| select(.changeType == "ADDED" or .changeType == "MODIFIED") | $path] as $paths
+		| if (($paths | length) == $changed) and (($paths | unique | length) == $changed)
+		  then $paths[] else error("unsupported or duplicate Dependabot diff path") end' 2>/dev/null) || return 2
 
 	source_tree=$(gh api -X GET "repos/${repo_slug}/git/trees/${expected_head_sha}" \
 		-f recursive=1 2>/dev/null) || return 2
@@ -150,13 +162,13 @@ _pulse_dependabot_source_content_on_base() {
 		"" | /* | ../* | */../* | */..) return 2 ;;
 		esac
 		[[ "$path" != *$'\r'* ]] || return 2
-		source_blob=$(printf '%s' "$source_tree" | jq -er --arg path "$path" \
-			'[.tree[] | select(.path == $path and .type == "blob")] | if length == 1 then .[0].sha else error("source blob unavailable") end' 2>/dev/null) || return 2
-		base_blob=$(printf '%s' "$base_tree" | jq -er --arg path "$path" \
-			'[.tree[] | select(.path == $path and .type == "blob")] | if length == 1 then .[0].sha else error("base blob unavailable") end' 2>/dev/null) || return 2
-		if [[ "$source_blob" != "$base_blob" ]]; then
-			_PULSE_DEPENDABOT_SUPERSESSION_COVERAGE_REASON="base-content-mismatch"
-			echo "[pulse-dependabot-intake] PR #${pr_number} in ${repo_slug}: merged replacement does not reproduce current source content for ${path}; preserving source" >>"$LOGFILE"
+		source_entry=$(printf '%s' "$source_tree" | jq -er --arg path "$path" \
+			'[.tree[] | select(.path == $path and .type == "blob")] | if length == 1 then .[0] | [.sha, .mode, .type] | @tsv else error("source entry unavailable") end' 2>/dev/null) || return 2
+		base_entry=$(printf '%s' "$base_tree" | jq -er --arg path "$path" \
+			'[.tree[] | select(.path == $path and .type == "blob")] | if length == 1 then .[0] | [.sha, .mode, .type] | @tsv else error("base entry unavailable") end' 2>/dev/null) || return 2
+		if [[ "$source_entry" != "$base_entry" ]]; then
+			_PULSE_DEPENDABOT_SUPERSESSION_COVERAGE_REASON="base-entry-mismatch"
+			echo "[pulse-dependabot-intake] PR #${pr_number} in ${repo_slug}: merged replacement does not reproduce current source entry for ${path}; preserving source" >>"$LOGFILE"
 			return 1
 		fi
 	done <<<"$paths"
@@ -179,6 +191,7 @@ _pulse_dependabot_close_superseded_source_pr() {
 	local final_state=""
 	local final_head=""
 	local final_base_head=""
+	local final_base_ref=""
 	local close_comment=""
 	local coverage_rc=0
 
@@ -186,6 +199,7 @@ _pulse_dependabot_close_superseded_source_pr() {
 	_PULSE_DEPENDABOT_SUPERSEDING_PR=""
 	_PULSE_DEPENDABOT_SUPERSESSION_COVERAGE_REASON=""
 	_PULSE_DEPENDABOT_SUPERSESSION_BASE_HEAD=""
+	_PULSE_DEPENDABOT_SUPERSESSION_BASE_REF=""
 	intake_issue=$(_pulse_dependabot_completed_intake_issue "$pr_number" "$repo_slug" "$marker") || return 2
 	[[ "$intake_issue" =~ ^[0-9]+$ ]] || return 1
 	_PULSE_DEPENDABOT_COMPLETED_INTAKE_ISSUE="$intake_issue"
@@ -203,12 +217,14 @@ _pulse_dependabot_close_superseded_source_pr() {
 	fi
 
 	final_json=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
-		--json state,headRefOid,baseRefOid,labels 2>/dev/null) || return 2
+		--json state,headRefOid,baseRefOid,baseRefName,labels 2>/dev/null) || return 2
 	final_state=$(printf '%s' "$final_json" | jq -r '.state // ""' 2>/dev/null) || return 2
 	final_head=$(printf '%s' "$final_json" | jq -r '.headRefOid // ""' 2>/dev/null) || return 2
 	final_base_head=$(printf '%s' "$final_json" | jq -r '.baseRefOid // ""' 2>/dev/null) || return 2
+	final_base_ref=$(printf '%s' "$final_json" | jq -r '.baseRefName // ""' 2>/dev/null) || return 2
 	[[ "$final_state" == "OPEN" && "$final_head" == "$expected_head_sha" &&
-		"$final_base_head" == "$_PULSE_DEPENDABOT_SUPERSESSION_BASE_HEAD" ]] || return 2
+		"$final_base_head" == "$_PULSE_DEPENDABOT_SUPERSESSION_BASE_HEAD" &&
+		"$final_base_ref" == "$_PULSE_DEPENDABOT_SUPERSESSION_BASE_REF" ]] || return 2
 
 	if [[ "${DRY_RUN:-0}" == "1" ]]; then
 		echo "[pulse-dependabot-intake] DRY-RUN: PR #${pr_number} in ${repo_slug} would close as superseded by merged PR #${superseding_pr} for completed intake #${intake_issue}" >>"$LOGFILE"
@@ -218,7 +234,7 @@ _pulse_dependabot_close_superseded_source_pr() {
 	close_comment="<!-- aidevops:dependabot-source-superseded intake=${intake_issue} replacement=${superseding_pr} -->
 Closing this Dependabot source PR as superseded: generated worker intake #${intake_issue} is terminal and was closed by verified merged replacement PR #${superseding_pr}.
 
-The external-authority policy prevented unsafe automatic merge while the replacement converged. Pulse revalidated the authentic source head and proved that the current base exactly contains every file from the source dependency update immediately before this close.
+The external-authority policy prevented unsafe automatic merge while the replacement converged. Pulse revalidated the authentic source head and proved that the current default branch exactly contains every file entry from the source dependency update immediately before this close.
 
 _Closed by deterministic Dependabot lifecycle reconciliation (GH#30478)._"
 	if ! gh_pr_close_safe "$pr_number" --repo "$repo_slug" --comment "$close_comment" >/dev/null 2>&1; then
