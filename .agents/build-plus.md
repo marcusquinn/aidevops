@@ -40,6 +40,11 @@ subagents:
   - github-actions
   # UI components
   - shadcn
+  # Shared creative app specialists
+  - blender
+  - freecad
+  - ableton
+  - davinci-resolve
   # Deployment
   - coolify
   - vercel

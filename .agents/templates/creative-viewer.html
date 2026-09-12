@@ -1,0 +1,220 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2026 Marcus Quinn -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Creative model inspector</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath fill='%2366d9f2' d='M16 2 30 10v13L16 31 2 23V10Zm0 4L6 12l10 6 10-6ZM5 16v5l9 5v-5Zm13 5v5l9-5v-5Z'/%3E%3C/svg%3E">
+  <style>
+    :root { color-scheme: dark; font: 16px/1.5 system-ui, sans-serif; color: #c9d1d9; background: #030707; }
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    main { display: grid; grid-template-columns: 290px minmax(0, 1fr); min-height: 100dvh; }
+    aside { padding: 24px 20px; border-right: 1px solid #30363d; overflow-y: auto; max-height: 100dvh; }
+    h1 { font-size: 23px; line-height: 1.2; margin: 0 0 8px; color: #fff; }
+    h2 { font-size: 16px; margin: 24px 0 8px; }
+    p { margin: 8px 0 16px; font-size: 14px; }
+    label { display: block; margin-top: 16px; }
+    button, select, input { font: inherit; min-height: 44px; width: 100%; margin-top: 6px; }
+    button, select, input[type=text] { padding: 8px; border: 1px solid #30363d; border-radius: 4px; background: #161b22; color: inherit; }
+    button:hover { background: #21262d; }
+    button { cursor: pointer; }
+    :focus-visible { outline: 2px solid #66d9f2; outline-offset: 3px; }
+    a { color: #66d9f2; text-decoration: underline; display: block; padding: 8px 0; min-height: 44px; }
+    #stage { position: relative; min-width: 0; height: 100dvh; background: #e8e5dd; }
+    canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+    #status { position: absolute; bottom: 16px; left: 16px; right: 16px; padding: 10px 14px; color: #172020; background: #fffffff0; border-radius: 4px; font-size: 14px; }
+    #error { color: #ffb6b0; overflow-wrap: anywhere; }
+    pre { font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .notice { color: #8b949e; }
+    @media (max-width: 700px) {
+      main { display: flex; flex-direction: column; }
+      #stage { order: -1; height: 55dvh; min-height: 320px; }
+      aside { max-height: none; border: 0; padding: 20px; }
+    }
+  </style>
+  <script type="importmap">{"imports":{"three":"./node_modules/three/build/three.module.js","three/addons/":"./node_modules/three/examples/jsm/"}}</script>
+</head>
+<body>
+<main>
+  <aside>
+    <h1>Model inspector</h1>
+    <p class="notice">Editable source. Identifiable parts. Reproducible views.</p>
+    <form id="load-form">
+      <label for="run">Run</label><input id="run" type="text" value="preview" pattern="[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}" required>
+      <button type="submit">Load run</button>
+    </form>
+    <p id="error" role="alert"></p>
+    <label for="view">View</label>
+    <select id="view"><option>Perspective</option><option>Front</option><option>Side</option><option>Top</option></select>
+    <label for="explode">Exploded view</label><input id="explode" type="range" min="0" max="1" step="0.01" value="0">
+    <label for="surface">Surface</label><select id="surface"><option value="material">Material</option><option value="wireframe">Wireframe</option></select>
+    <label for="section">Section inspection (0 = off)</label><input id="section" type="range" min="0" max="1" step="0.01" value="0">
+    <label for="parts">Select a part</label><select id="parts"><option value="">All parts</option></select>
+    <button id="fit" type="button">Fit all parts</button>
+    <button id="capture" type="button">Save viewport PNG</button>
+    <h2>Outputs</h2><nav id="outputs" aria-label="Model exports"></nav>
+    <h2>Geometry parameters</h2><pre id="parameters">Load a generated run.</pre>
+    <p class="notice">Edit project.json and build a new named run to change geometry. View controls do not alter the source configuration.</p>
+    <p class="notice">Reference demonstration, not a fabrication or installation specification.</p>
+  </aside>
+  <section id="stage" aria-label="Interactive 3D model"><div id="status" role="status">Loading viewer… If this persists, install the pinned project dependency and serve over local HTTP.</div></section>
+</main>
+<script type="module">
+  import * as THREE from "three";
+  import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+  import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+  import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
+
+  const element = (id) => document.getElementById(id);
+  const stage = element("stage");
+  const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.3;
+  stage.prepend(renderer.domElement);
+  renderer.domElement.setAttribute("aria-label", "Model view; equivalent part selection and view controls are provided alongside");
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0xe8e5dd);
+  const environment = new RoomEnvironment();
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  const environmentTarget = pmrem.fromScene(environment, .04);
+  scene.environment = environmentTarget.texture;
+  environment.dispose();
+  pmrem.dispose();
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x706754, 2));
+  const key = new THREE.DirectionalLight(0xffffff, 3);
+  key.position.set(3, 5, 4);
+  scene.add(key);
+  let camera = new THREE.PerspectiveCamera(40, 1, .001, 1000);
+  let controls = new OrbitControls(camera, renderer.domElement);
+  let object, marker, radius = 1, loading = false;
+  const center = new THREE.Vector3();
+  const parts = new Map();
+  const originalPositions = new Map();
+
+  function draw() { renderer.render(scene, camera); }
+  function resize() {
+    const width = stage.clientWidth, height = stage.clientHeight;
+    renderer.setSize(width, height);
+    if (camera.isPerspectiveCamera) camera.aspect = width/height;
+    else {
+      const extent = radius/Math.min(1, width/height);
+      camera.left = -extent*width/height; camera.right = extent*width/height;
+      camera.top = extent; camera.bottom = -extent;
+    }
+    camera.updateProjectionMatrix();
+    draw();
+  }
+  function setView() {
+    controls.dispose();
+    const mode = element("view").value;
+    camera = mode === "Perspective" ? new THREE.PerspectiveCamera(40, 1, .001, 1000)
+      : new THREE.OrthographicCamera(-radius, radius, radius, -radius, .001, 1000);
+    const direction = mode === "Top" ? new THREE.Vector3(0, 1, .001)
+      : mode === "Side" ? new THREE.Vector3(1, 0, 0)
+      : mode === "Front" ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(.8, .45, 1.4);
+    camera.position.copy(center).add(direction.normalize().multiplyScalar(radius*3.1/Math.min(1, stage.clientWidth/stage.clientHeight)));
+    controls = new OrbitControls(camera, renderer.domElement);
+    controls.target.copy(center);
+    controls.enableRotate = mode === "Perspective";
+    controls.addEventListener("change", draw);
+    controls.update();
+    resize();
+  }
+  function clearObject() {
+    if (!object) return;
+    scene.remove(object);
+    const materials = new Set();
+    object.traverse((node) => {
+      node.geometry?.dispose();
+      for (const mat of Array.isArray(node.material) ? node.material : [node.material]) if (mat) materials.add(mat);
+    });
+    for (const mat of materials) mat.dispose();
+    parts.clear(); originalPositions.clear();
+    if (marker) { scene.remove(marker); marker.dispose(); marker = null; }
+  }
+  function selectPart() {
+    if (marker) { scene.remove(marker); marker.dispose(); marker = null; }
+    const chosen = parts.get(element("parts").value);
+    if (chosen) { marker = new THREE.BoxHelper(chosen, 0x127c96); scene.add(marker); }
+    draw();
+  }
+  async function load() {
+    if (loading) return;
+    loading = true;
+    element("load-form").querySelector("button").disabled = true;
+    try {
+    const run = element("run").value;
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(run)) throw new Error("Choose a valid generated run name");
+    const base = `runs/${run}/`;
+    const response = await fetch(base+"scene.json");
+    if (!response.ok) throw new Error("Run unavailable. Build it with creative-demo-helper.py first.");
+    const source = await response.json();
+    const manifestResponse = await fetch(base+"run.json");
+    if (!manifestResponse.ok) throw new Error("This run is incomplete or predates artifact verification; build a new run.");
+    const manifest = await manifestResponse.json();
+    if (manifest.source_hash !== source.source_hash || manifest.state !== "generated") throw new Error("Run manifest does not match its source.");
+    const loaded = await new GLTFLoader().loadAsync(base+"scene.glb");
+    clearObject(); object = loaded.scene; scene.add(object);
+    object.traverse((node) => {
+      if (!node.userData.part_id) return;
+      parts.set(node.userData.part_id, node);
+      originalPositions.set(node, node.position.clone());
+    });
+    const box = new THREE.Box3().setFromObject(object);
+    box.getCenter(center); radius = Math.max(box.getSize(new THREE.Vector3()).length()*.52, .1);
+    element("parts").replaceChildren(new Option("All parts", ""));
+    for (const id of parts.keys()) element("parts").add(new Option(id, id));
+    element("parameters").textContent = JSON.stringify(source.parameters, null, 2);
+    element("status").textContent = `${source.demo} · ${parts.size} selectable parts · source ${source.source_hash.slice(0, 12)} · metres`;
+    element("outputs").replaceChildren();
+    for (const [file, label] of [["scene.blend", "Blender source"], ["scene.glb", "GLB model"], ["scene.json", "Recipe JSON"], ["parts.csv", "Parts list CSV"], ["render.png", "Cycles render PNG"], ["kitchen.step", "STEP solids"], ["kitchen.FCStd", "FreeCAD project"], ["verification.json", "Geometry verification"], ["cad-verification.json", "CAD verification"]]) {
+      if (!manifest.artifacts.includes(file)) continue;
+      const link = document.createElement("a"); link.href = base+file; link.textContent = label; link.download = file;
+      element("outputs").append(link);
+    }
+    element("explode").value = "0"; element("surface").value = "material"; element("section").value = "0";
+    renderer.clippingPlanes = [];
+    element("error").textContent = ""; setView();
+    } finally {
+      loading = false;
+      element("load-form").querySelector("button").disabled = false;
+    }
+  }
+  element("load-form").addEventListener("submit", (event) => { event.preventDefault(); load().catch((error) => { element("error").textContent = error.message; }); });
+  element("view").addEventListener("change", setView);
+  element("parts").addEventListener("change", selectPart);
+  element("fit").addEventListener("click", () => {
+    if (!object) return;
+    const box = new THREE.Box3().setFromObject(object);
+    box.getCenter(center); radius = Math.max(box.getSize(new THREE.Vector3()).length()*.52, .1);
+    setView();
+  });
+  element("section").addEventListener("input", () => {
+    const value = Number(element("section").value);
+    renderer.clippingPlanes = value ? [new THREE.Plane(new THREE.Vector3(0, 0, -1), center.z+radius*(1-2*value))] : [];
+    draw();
+  });
+  element("explode").addEventListener("input", () => {
+    for (const node of parts.values()) {
+      const offset = node.userData.explode_offset || [0, 0, 0];
+      // Recipe vectors use Blender Z-up; glTF is Y-up.
+      node.position.copy(originalPositions.get(node)).addScaledVector(new THREE.Vector3(offset[0], offset[2], -offset[1]), Number(element("explode").value));
+    }
+    marker?.update(); draw();
+  });
+  element("surface").addEventListener("change", () => {
+    object?.traverse((node) => { if (node.isMesh) for (const mat of Array.isArray(node.material) ? node.material : [node.material]) mat.wireframe = element("surface").value === "wireframe"; });
+    draw();
+  });
+  element("capture").addEventListener("click", () => { draw(); const link = document.createElement("a"); link.download = "model-view.png"; link.href = renderer.domElement.toDataURL("image/png"); link.click(); });
+  new ResizeObserver(resize).observe(stage);
+  const requestedRun = new URLSearchParams(location.search).get("run");
+  if (requestedRun) element("run").value = requestedRun;
+  load().catch((error) => { element("error").textContent = error.message; element("status").textContent = "Choose a generated run"; });
+</script>
+</body>
+</html>

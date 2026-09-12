@@ -2,10 +2,17 @@
 
 # Capability Registry
 
-Catalogued capabilities: **15**
+Catalogued capabilities: **22**
 
 | Capability | Owner | Runtimes | Mandatory readiness | Fallback |
 |---|---|---|---|---|
+| `3d-production` | 3D Modelling | opencode, claude-code | deployed, runtime_compatible, tool_visible | `manual-creative-brief` |
+| `video-production` | Video | opencode, claude-code | deployed, runtime_compatible, tool_visible | `manual-creative-brief` |
+| `audio-production` | Audio | opencode, claude-code | deployed, runtime_compatible, tool_visible | `manual-creative-brief` |
+| `blender-operations` | 3D Modelling | opencode | deployed, installed, configured, enabled, authorized, reachable, runtime_compatible, tool_visible, usable | `gated-creative-app-guidance` |
+| `freecad-operations` | 3D Modelling | opencode | deployed, installed, configured, enabled, authorized, reachable, runtime_compatible, tool_visible, usable | `gated-creative-app-guidance` |
+| `ableton-operations` | Audio | opencode | deployed, installed, configured, enabled, authorized, reachable, runtime_compatible, tool_visible, usable | `gated-creative-app-guidance` |
+| `resolve-operations` | Video | opencode | deployed, installed, configured, enabled, authorized, reachable, runtime_compatible, tool_visible, usable | `gated-creative-app-guidance` |
 | `code-development` | Build+ | opencode, claude-code | deployed, runtime_compatible, tool_visible | `manual-guidance` |
 | `github-operations` | Build+ | opencode, claude-code | installed, authenticated, authorized, reachable | `local-git-only` |
 | `browser-automation` | Build+ | opencode, claude-code | deployed, enabled, runtime_compatible, tool_visible, reachable | `static-web-fetch` |

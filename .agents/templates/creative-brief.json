@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "objective": "",
+  "domain": "3d",
+  "requested_mode": "draft",
+  "verified_mode": null,
+  "render_quality": "preview",
+  "deliverables": [],
+  "references": [],
+  "constraints": {},
+  "assumptions": [],
+  "unknowns": [],
+  "execution": {
+    "app": "",
+    "version": null,
+    "location": "local",
+    "desktop_isolation_verified": false,
+    "operator_connection_approved": false
+  },
+  "budget": {
+    "currency": null,
+    "estimated_range": null,
+    "maximum": 0,
+    "paid_job_approved": false,
+    "subscription_allowance": null,
+    "subscription_reset_window": null,
+    "subscription_estimate_percentage_points": null,
+    "estimate_evidence": "unavailable",
+    "max_refinement_rounds": 3
+  },
+  "source_revision": null,
+  "artifacts": [],
+  "verification": [],
+  "lessons": []
+}

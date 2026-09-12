@@ -11,6 +11,10 @@ subagents:
   - production-video
   - production-audio
   - production-characters
+  - blender
+  - freecad
+  - ableton
+  - davinci-resolve
   - media-generation-providers
   - gemini-image
   - gemini-video
@@ -63,6 +67,7 @@ Content agent. Domain: blog, video, social, newsletters, podcasts, short-form, A
 - **Architecture**: Research -> Story -> multi-media production -> channel adaptation; final textual product copy -> batched Humanise, while non-text assets bypass it
 - **Multiplier**: One researched story -> 10+ outputs across media types and channels
 - **PR handoff**: `pr.md` owns earned-media judgment, journalist lists, and pitch critique. Content turns approved PR angles into owned-channel assets after PR validates newsworthiness and standing.
+- **Focused creative work**: `3d-modelling.md`, `video.md`, and `audio.md` own editable production work. Use their shared app specialists and `workflows/creative-production.md`; do not copy this whole distribution pipeline into modelling/editing tasks.
 
 ```text
                     Research

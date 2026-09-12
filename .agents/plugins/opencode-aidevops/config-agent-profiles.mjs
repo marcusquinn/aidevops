@@ -12,6 +12,7 @@ import { DEFAULT_ESCALATION_ORDER, normalizeRoutingTier } from "./model-routing.
 import { recordPluginHealthStage } from "./plugin-health.mjs";
 import { primaryDeliveryEvidence } from "./primary-delivery-evidence.mjs";
 import { registerSpecialistAdvisor, applyDailyDriverDefaults } from "./specialist-advisor.mjs";
+import { resetCreativeRouting, recordCreativeRouting } from "./subagent-parent-routing.mjs";
 
 export { primaryDeliveryEvidence } from "./primary-delivery-evidence.mjs";
 export { registerDelegatedDomainProfiles } from "./agent-loader.mjs";
@@ -167,6 +168,7 @@ export function registerOnDemandMcpAgents(config, agentsDir, routing, state) {
   config.tools[MCP_ACTIVATION_TOOL] = false;
 
   let injected = 0;
+  resetCreativeRouting(state);
   getOnDemandMcpAgents().forEach((mcp) => {
     if (ensureOnDemandMcpAgent(config, mcp, agentsDir)) injected++;
     if (routing && state) {
@@ -177,6 +179,7 @@ export function registerOnDemandMcpAgents(config, agentsDir, routing, state) {
         mcp.modelTier,
         routing,
       );
+      recordCreativeRouting(state, mcp);
     }
   });
   return injected;
@@ -231,7 +234,7 @@ function parseFrontmatterScalar(value) {
 
 function parseFrontmatterEntry(line) {
   if (!line.trim() || line.trimStart().startsWith("#")) return null;
-  const entry = line.match(/^( *)(?:"([^"]+)"|([A-Za-z0-9_.-]+)):\s*(.*)$/);
+  const entry = line.match(/^( *)(?:"([^"]+)"|([A-Za-z0-9_.*-]+)):\s*(.*)$/);
   if (!entry || entry[1].length % 2 !== 0) throw new Error("Invalid agent frontmatter entry");
   return entry;
 }

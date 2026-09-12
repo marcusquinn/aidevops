@@ -129,6 +129,10 @@ the required notices and preferred credit text.
 - `/onboarding` - Interactive setup wizard (in AI assistant)
 - `/design-artifact` - Route artifact-first UI, deck, email, poster, and mobile mockup work
 - `/open-design` - Manage the optional Open Design companion studio
+- `/3d-modelling`, `/video`, `/audio` - Focused editable creative production with
+  shared Blender/FreeCAD/Resolve/Ableton specialists, bounded budgets and verified
+  artifacts; see [creative production](.agents/workflows/creative-production.md)
+  and the [rebuildable lamp/kitchen demos](.agents/tools/design/3d-demonstrations.md).
 - `/auto-browse` - Learn, optimize, and graduate repeatable browser operations and web data-mining workflows
 - `/report-render` - Render report-ready Markdown or JSON to HTML with sticky TOC, print CSS, evidence badges, and source cards for PDF export
 - `/report-token-use` - Generate a local per-session token, model, compaction, and MCP-use report

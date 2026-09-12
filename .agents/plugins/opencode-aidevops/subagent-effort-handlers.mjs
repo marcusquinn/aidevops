@@ -11,6 +11,7 @@ import {
 } from "./model-routing.mjs";
 import { loadDelegatedDomainKnowledge } from "./agent-loader.mjs";
 import { SPECIALIST_ADVISOR, validateSpecialistRequest } from "./specialist-advisor.mjs";
+import { loadChildSessionWithParent, routeCreativeMessage } from "./subagent-parent-routing.mjs";
 
 const DOMAIN_KNOWLEDGE_MARKER = "\n\n[AIDEvOps canonical domain knowledge]";
 const DOMAIN_REQUIRED_FIELDS = ["task", "objective", "scope", "source", "decisions", "evidence", "output"];
@@ -65,15 +66,6 @@ async function routeDomainMessage(context, output, registry, agentName) {
   output.parts = output.parts.filter((part) => part.type !== "text" || part === target);
 }
 
-async function loadChildSessionWithParent(context, sessionID) {
-  try {
-    const childSession = await context.getSession(context.client, sessionID);
-    return childSession?.parentID ? childSession : null;
-  } catch {
-    return null;
-  }
-}
-
 async function applyConnectedRoutingModel(context, route, message, policy) {
   const providerState = await context.resolveProviderState();
   if (!providerState) {
@@ -124,6 +116,17 @@ async function routeChatMessage(context, output) {
     await routeDomainMessage(context, output, domainRegistry, agentName);
     return;
   }
+  if (context.agentRoutingState?.inheritParentRoute?.has(agentName)
+    && !context.agentRoutingState?.pinned?.has(agentName)) {
+    await routeCreativeMessage(context, output);
+    return;
+  }
+  await routeTierMessage(context, output, { agentName, text, now });
+}
+
+async function routeTierMessage(context, output, { agentName, text, now }) {
+  const message = output.message;
+  const sessionID = message.sessionID;
   const route = context.routedPolicy(context.agentRoutingState, agentName, text);
   const policy = {
     effort: route.effort,
@@ -240,7 +243,11 @@ async function routeChatParams(context, input, output) {
 
   const domainPolicy = context.policies.get(sessionID);
   const domainName = input?.message?.agent;
-  if (domainPolicy?.reason === "bounded_domain"
+  const creative = context.agentRoutingState?.inheritParentRoute?.has(domainName);
+  // Preserve the native explicit model/variant override on creative executors.
+  if (creative && context.agentRoutingState?.pinned?.has(domainName)) return;
+  if (["bounded_domain", "creative_parent"].includes(domainPolicy?.reason)
+    || creative
     || context.agentRoutingState?.domainDelegation?.profiles?.has(domainName)) {
     if (!domainPolicy?.domainVariant || childModelFrom(context, input) !== domainPolicy.routedModel) {
       throw new Error("[aidevops] Domain parent ceiling unavailable or model changed");
