@@ -419,6 +419,84 @@ test_run_redacts_sed_significant_literal_values() {
 	return 0
 }
 
+test_run_streams_safe_output_before_child_exit() {
+	setup
+	trap 'teardown' RETURN
+	export AIDEVOPS_TEST_SECRET='PUBLIC_READY_MARKER_IS_A_LONG_SECRET_VALUE'
+	local result=""
+
+	result=$(
+		HOME="$TEST_DIR/home" HELPER_UNDER_TEST="$HELPER" python3 - <<'PY'
+import os
+import select
+import subprocess
+import sys
+
+program = (
+    'import sys, time; '
+    'sys.stdout.write("PUBLIC_READY_MARKER\\n"); '
+    'sys.stdout.flush(); '
+    'time.sleep(2)'
+)
+process = subprocess.Popen(
+    [
+        "bash",
+        os.environ["HELPER_UNDER_TEST"],
+        "REDACTION_KEY",
+        "--",
+        sys.executable,
+        "-c",
+        program,
+    ],
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+)
+try:
+    readable = bool(select.select([process.stdout], [], [], 1.0)[0])
+    line = process.stdout.readline() if readable else b""
+    child_still_running = process.poll() is None
+    process.wait(timeout=4)
+    if readable and line == b"PUBLIC_READY_MARKER\n" and child_still_running and process.returncode == 0:
+        print("ok")
+    else:
+        print("failed")
+finally:
+    if process.poll() is None:
+        process.kill()
+        process.wait()
+PY
+	)
+
+	if [[ "$result" == "ok" ]]; then
+		print_result "run streams safe output while child remains alive" 0
+	else
+		print_result "run streams safe output while child remains alive" 1 "Expected marker before child exit"
+	fi
+	return 0
+}
+
+test_run_redacts_overlapping_secrets_split_across_writes() {
+	setup
+	trap 'teardown' RETURN
+	export AIDEVOPS_TEST_SECRET='split-boundary-fixture-value'
+	mkdir -p "$TEST_DIR/home/.config/aidevops"
+	cat >"$TEST_DIR/home/.config/aidevops/credentials.sh" <<'EOF'
+export SHORT_REDACTION_KEY="split-boundary"
+EOF
+	chmod 600 "$TEST_DIR/home/.config/aidevops/credentials.sh"
+	local output=""
+
+	output=$(HOME="$TEST_DIR/home" bash "$HELPER" run python3 -c \
+		'import os, sys, time; value = os.environ["REDACTION_KEY"]; short = os.environ["SHORT_REDACTION_KEY"]; sys.stdout.write("safe:" + short); sys.stdout.flush(); time.sleep(0.05); sys.stdout.write(value[len(short):] + ":done\n"); sys.stdout.flush()')
+
+	if [[ "$output" == "safe:[REDACTED]:done" && "$output" != *"$AIDEVOPS_TEST_SECRET"* ]]; then
+		print_result "run redacts overlapping secrets split across writes" 0
+	else
+		print_result "run redacts overlapping secrets split across writes" 1 "Expected one marker without fixture disclosure"
+	fi
+	return 0
+}
+
 test_run_fails_closed_when_redactor_cannot_start() {
 	setup
 	trap 'teardown' RETURN
@@ -453,6 +531,8 @@ main() {
 	test_fallback_set_creates_credentials_store
 	test_concurrent_fallback_sets_preserve_all_credentials
 	test_run_redacts_sed_significant_literal_values
+	test_run_streams_safe_output_before_child_exit
+	test_run_redacts_overlapping_secrets_split_across_writes
 	test_run_fails_closed_when_redactor_cannot_start
 	test_multiline_gopass_injection_preserves_embedded_newlines
 	test_inventory_is_names_only_deterministic_json
