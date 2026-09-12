@@ -140,9 +140,10 @@ def light(name, position, energy, size, target, color=(1, 1, 1)):
     obj.rotation_euler = (Vector(target)-obj.location).to_track_quat("-Z", "Y").to_euler()
 
 
-def studio(demo, mats):
+def studio(demo, mats, parameters):
     lamp = demo == "lamp"
-    target = (0, 0, .24) if lamp else (0, 0, 1.05)
+    scale = parameters["height"]/.44 if lamp else 1
+    target = (0, 0, .24*scale) if lamp else (0, 0, 1.05)
     bpy.ops.mesh.primitive_plane_add(size=200 if lamp else 20, location=(0, 0, -.001))
     floor = bpy.context.object
     floor.name = "Studio floor (not a part)"
@@ -151,7 +152,7 @@ def studio(demo, mats):
         light("Large softbox", (-.65, -.5, 1.1), 18, .7, target)
         light("Rim softbox", (.6, .4, .85), 23, .55, target, (.78, .88, 1))
         light("Front fill", (.3, -.8, .6), 4, .6, target)
-        light("Bulb downward", (0, -.005, .361), .8, .11, (0, 0, 0), (1, .74, .4))
+        light("Bulb downward", (0, -.005*scale, .361*scale), .8*scale*scale, .11*scale, (0, 0, 0), (1, .74, .4))
         camera_location = (.63, -.9, .57)
     else:
         bpy.ops.mesh.primitive_cube_add(size=1, location=(0, .42, 3))
@@ -166,6 +167,23 @@ def studio(demo, mats):
     camera.rotation_euler = (Vector(target)-camera.location).to_track_quat("-Z", "Y").to_euler()
     camera.data.lens = 52 if lamp else 45
     bpy.context.scene.camera = camera
+    return Vector(target)
+
+
+def frame_camera(objects, target):
+    """Keep supported parameter changes inside the actual render projection."""
+    from bpy_extras.object_utils import world_to_camera_view
+
+    scene = bpy.context.scene
+    points = [obj.matrix_world @ Vector(corner) for obj in objects for corner in obj.bound_box]
+    for _ in range(12):
+        bpy.context.view_layer.update()
+        projected = [world_to_camera_view(scene, scene.camera, point) for point in points]
+        if all(.025 <= point.x <= .975 and .025 <= point.y <= .975 and point.z > 0 for point in projected):
+            return [min(p.x for p in projected), min(p.y for p in projected),
+                    max(p.x for p in projected), max(p.y for p in projected)]
+        scene.camera.location = target + (scene.camera.location-target)*1.12
+    raise ValueError("Could not frame all configured parts within the bounded camera adjustment")
 
 
 def export_meshes(objects, out):
@@ -219,7 +237,7 @@ def main():
                     "part_count": len(objects), "part_ids": [obj["part_id"] for obj in objects],
                     "units": "m", "visual_review": "required", "production_certification": False}
     export_meshes(objects, out)
-    studio(data["demo"], mats)
+    target = studio(data["demo"], mats, data["parameters"])
     scene = bpy.context.scene
     scene.unit_settings.system = "METRIC"
     scene.render.engine = "CYCLES"
@@ -227,6 +245,7 @@ def main():
     scene.cycles.use_denoising = True
     scene.render.resolution_x, scene.render.resolution_y = 1000, 800
     scene.render.resolution_percentage = 100
+    verification["projected_part_bounds"] = frame_camera(objects, target)
     scene.world.use_nodes = True
     scene.world.node_tree.nodes["Background"].inputs["Color"].default_value = (.25, .28, .32, 1)
     scene.world.node_tree.nodes["Background"].inputs["Strength"].default_value = .3

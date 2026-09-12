@@ -126,5 +126,18 @@ commands, outcomes, unresolved capabilities and PR identity here as work proceed
 - C5 adds explicit creative workflow/app readiness records; catalogue presence is
   not installation, consent, bridge reachability or verified usability. Git source
   validation also rejects nested directories inheriting a parent repository pin.
-- Next: finish capability-registry validation and independent security closeout,
-  commit, PR and guarded merge. Release remains not requested; no PR exists yet.
+- Capability validation passes; 17 readiness tests pass, including refusal to
+  infer execution readiness from creative-app catalogue presence.
+- Independent runtime/security and demo closeout found no actionable P0/P1 issue
+  in bounded source at `b6c823a18`. Evidence bundle:
+  `466567f6058139cd53b47504ae591268045c6784e6a35a49efb868b585e37577`.
+  The initial oversized bundle was truncated; its apparent no-op tilt finding was
+  rejected against Blender's actual assembly rotation, then narrower source was reviewed.
+- A subsequent camera-only repair verifies all part bounds against the actual
+  render projection. Normal defaults rebuild successfully. Limit runs pass for
+  a 700 mm high / 500 mm wide / 25-degree nickel lamp and an eight-module kitchen
+  (197 GLB parts; 196 round-tripped CAD solids; 7250 mm worktop).
+- The unrelated pre-existing localhost optional-argument failure is tracked with
+  reproducer and auto-dispatch in GH#31825, not patched into this feature.
+- C1-C5 are locally verified. Next: commit the final framing/evidence changes,
+  create the PR, satisfy exact-head remote gates and merge. Release not requested.
