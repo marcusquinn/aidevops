@@ -30,7 +30,8 @@
 #   18. Genuine unkillable snapshot PIDs fail closed with PID evidence
 #   19. Managed replacement requires a new active-bundle PID lease
 #   20. Launchd runtime proof handles prompt, delayed, wrong, and missing starts
-#   21. Default discovery ignores another local user's Pulse process
+#   21. Default discovery uses the stable link when its env override is unset
+#   22. Default discovery ignores another local user's Pulse process
 #
 # No real pulse is touched. We use a unique mock filename and match pattern
 # on pulse-wrapper.sh which we control inside TEST_ROOT.
@@ -1359,6 +1360,53 @@ test_status_sidecar_only_reports_not_running() {
 	return 0
 }
 
+test_default_pattern_uses_stable_link_when_active_link_unset() {
+	_kill_mocks
+	local fixture_home="${TEST_ROOT}-default-home"
+	local active_link="${fixture_home}/.aidevops/agents"
+	mkdir -p "${active_link%/*}"
+	ln -s "$TEST_ROOT" "$active_link"
+	bash "${active_link}/scripts/pulse-wrapper.sh" >/dev/null 2>&1 &
+	local current_pid=$!
+	bash "${active_link}/scripts/pulse-merge-routine.sh" >/dev/null 2>&1 &
+	local current_merge_pid=$!
+	sleep 0.3
+
+	local out="" rc=0
+	out=$(env -u AIDEVOPS_PULSE_PROCESS_PATTERN \
+		-u AIDEVOPS_ACTIVE_AGENTS_LINK \
+		HOME="$fixture_home" \
+		AIDEVOPS_AGENTS_DIR="$TEST_ROOT" \
+		AIDEVOPS_RUNTIME_BUNDLES_DIR="${fixture_home}/.aidevops/runtime-bundles" \
+		"$HELPER" status 2>&1) || rc=$?
+	_assert_eq "default pattern: unset active-link env status exits 0" "0" "$rc"
+	if [[ "$out" == *"Pulse: running (1 instance)"* && "$out" == *"PID ${current_pid}"* ]]; then
+		_print_result "default pattern: stable-link Pulse is detected without env override" 1
+	else
+		_print_result "default pattern: stable-link Pulse was missed without env override (out=$out)" 0
+	fi
+
+	local merge_pids=""
+	# $1 intentionally expands in the child shell.
+	# shellcheck disable=SC2016
+	merge_pids=$(env -u AIDEVOPS_PULSE_MERGE_PROCESS_PATTERN \
+		-u AIDEVOPS_ACTIVE_AGENTS_LINK \
+		HOME="$fixture_home" \
+		AIDEVOPS_AGENTS_DIR="$TEST_ROOT" \
+		AIDEVOPS_RUNTIME_BUNDLES_DIR="${fixture_home}/.aidevops/runtime-bundles" \
+		bash -c 'source "$1"; _pulse_merge_pids_raw' _ "$HELPER")
+	if [[ "$merge_pids" == *"${current_merge_pid}"* ]]; then
+		_print_result "default pattern: stable-link merge routine is detected without env override" 1
+	else
+		_print_result "default pattern: stable-link merge routine was missed without env override (pids=$merge_pids)" 0
+	fi
+
+	kill -KILL "$current_pid" "$current_merge_pid" 2>/dev/null || true
+	wait "$current_pid" "$current_merge_pid" 2>/dev/null || true
+	rm -rf "$fixture_home"
+	return 0
+}
+
 test_default_pattern_ignores_foreign_user_pulse() {
 	_kill_mocks
 	local foreign_root="${TEST_ROOT}-foreign-user"
@@ -1461,6 +1509,7 @@ main() {
 	test_status_four_main_plus_sidecar_warns
 	test_is_running_returns_false_with_only_sidecar
 	test_status_sidecar_only_reports_not_running
+	test_default_pattern_uses_stable_link_when_active_link_unset
 	test_default_pattern_ignores_foreign_user_pulse
 
 	echo ""

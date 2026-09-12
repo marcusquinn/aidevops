@@ -107,7 +107,7 @@ _pulse_escape_ere() {
 	return 0
 }
 # Setup supplies the stable link separately from its physical bundle root.
-_PULSE_DEPLOYED_ROOT=$(_pulse_escape_ere "${AIDEVOPS_ACTIVE_AGENTS_LINK:-${AIDEVOPS_AGENTS_DIR:-${HOME}/.aidevops/agents}}")
+_PULSE_DEPLOYED_ROOT=$(_pulse_escape_ere "$_PULSE_ACTIVE_AGENTS_LINK")
 _PULSE_ACTIVE_ROOT=$(_pulse_escape_ere "$_PULSE_AGENTS_DIR")
 _PULSE_BUNDLES_ROOT=$(_pulse_escape_ere "${AIDEVOPS_RUNTIME_BUNDLES_DIR:-${HOME}/.aidevops/runtime-bundles}")
 _PULSE_DEFAULT_PATTERN="(${_PULSE_DEPLOYED_ROOT}|${_PULSE_ACTIVE_ROOT}|${_PULSE_BUNDLES_ROOT}/[^/]+/agents)/scripts/pulse-wrapper\\.sh( |\$)"
