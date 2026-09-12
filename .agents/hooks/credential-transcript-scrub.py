@@ -264,19 +264,22 @@ def scrub_sequence(value: list):
 
 def parse_structured_text(value: str):
     """Parse complete JSON or independent NDJSON records for recursive scrubbing."""
-    if not value.strip():
-        return None
     parsed = parse_json_document(value)
     if parsed is not None:
         return parsed, lambda scrubbed: json.dumps(scrubbed, separators=(",", ":"))
     records = []
     for line in value.splitlines():
         record = parse_json_document(line) if line.strip() else None
-        if record is None and line.strip():
-            return None
-        records.append(record)
+        records.append(line if record is None and line.strip() else record)
+    if not any(isinstance(record, (dict, list)) for record in records):
+        return None
     return records, lambda scrubbed: "\n".join(
-        "" if record is None else json.dumps(record, separators=(",", ":")) for record in scrubbed
+        ""
+        if record is None
+        else record
+        if isinstance(record, str)
+        else json.dumps(record, separators=(",", ":"))
+        for record in scrubbed
     )
 
 

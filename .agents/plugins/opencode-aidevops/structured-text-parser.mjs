@@ -28,9 +28,8 @@ export function parseStructuredText(value) {
       continue;
     }
     const record = parseJsonContainer(line);
-    if (record === null) return null;
-    records.push(record);
-    recordCount++;
+    records.push(record ?? line);
+    if (record !== null) recordCount++;
   }
   if (recordCount === 0) return null;
 
@@ -39,7 +38,8 @@ export function parseStructuredText(value) {
     stringify: (scrubbed) =>
       scrubbed
         .map((record, index) => {
-          const line = record === null ? parts[index * 2] : JSON.stringify(record);
+          const line =
+            record === null ? parts[index * 2] : typeof record === "string" ? record : JSON.stringify(record);
           return `${line}${parts[index * 2 + 1] ?? ""}`;
         })
         .join(""),

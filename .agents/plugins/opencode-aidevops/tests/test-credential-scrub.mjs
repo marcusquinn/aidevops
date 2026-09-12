@@ -137,6 +137,11 @@ describe("credential transcript scrub boundary", () => {
       `${JSON.stringify({ ...record, value: REDACTION_TOKEN })}\n${JSON.stringify({ key: "REGION", value: "eu-west" })}`,
       1,
     );
+    assertScrub(
+      `malformed-before\r\n${JSON.stringify(record)}\r\nmalformed-after`,
+      `malformed-before\r\n${JSON.stringify({ ...record, value: REDACTION_TOKEN })}\r\nmalformed-after`,
+      1,
+    );
   });
 
   test("toolExecuteAfter redacts sibling credential records without cross-record bleed", async () => {

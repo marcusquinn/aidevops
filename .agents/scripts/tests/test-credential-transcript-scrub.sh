@@ -404,6 +404,14 @@ else
 	fail "31. NDJSON sibling credential records scrubbed — got: $output_ndjson_sibling"
 fi
 
+MIXED_NDJSON_PAYLOAD='{"tool_response":"malformed-before\n{\"key\":\"SYNTHETIC_API_KEY\",\"value\":\"opaque-synthetic-value-1234567890\"}\nmalformed-after"}'
+output_mixed_ndjson=$(run_hook "$MIXED_NDJSON_PAYLOAD")
+if echo "$output_mixed_ndjson" | python3 -c "import json,sys; response=json.load(sys.stdin)['tool_response'].splitlines(); assert response[0] == 'malformed-before' and response[2] == 'malformed-after'; assert json.loads(response[1]) == {'key':'SYNTHETIC_API_KEY','value':'[redacted-credential]'}" 2>/dev/null; then
+	pass "32. Valid NDJSON records remain scrubbed beside malformed records"
+else
+	fail "32. Valid NDJSON records remain scrubbed beside malformed records — got: $output_mixed_ndjson"
+fi
+
 # ── Summary ────────────────────────────────────────────────────────────────
 
 printf '\n'
