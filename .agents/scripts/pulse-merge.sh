@@ -1630,6 +1630,12 @@ _pmp_stage_pre_merge() {
 		fi
 		return 1
 	fi
+	if ! _pmp_approve_issue_sync_action_required_runs "$pr_number" "$repo_slug" "$pr_head_ref_oid"; then
+		return 1
+	fi
+	if [[ "${_PULSE_ISSUE_SYNC_RUNS_APPROVED:-0}" -gt 0 ]]; then
+		return 1
+	fi
 	_set_native_auto_merge_or_skip "$pr_number" "$repo_slug" "${_PULSE_FINAL_REQUIRES_SYNCHRONOUS_MERGE:-0}" "$pr_review" "$pr_head_ref_oid" || native_auto_rc=$?
 	case "$native_auto_rc" in 0) return 4 ;; 2 | 3) return 1 ;; esac
 	if ! _pulse_merge_final_trust_gate "$pr_number" "$repo_slug" "$pr_head_ref_oid"; then
