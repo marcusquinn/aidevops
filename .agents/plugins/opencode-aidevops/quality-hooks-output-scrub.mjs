@@ -3,7 +3,7 @@
 
 /** Credential transcript scrubbing shared by OpenCode post-tool hooks. */
 
-import { parseStructuredText } from "./credential-structured-text.mjs";
+import { parseStructuredText } from "./structured-text-parser.mjs";
 
 const CREDENTIAL_PATTERN =
   /(^|[^A-Za-z0-9_-])(sk-|GOCSPX-|ghp_|gho_|ghs_|ghu_|github_pat_|glpat-|xoxb-|xoxp-)[A-Za-z0-9_-]{10,}/g;

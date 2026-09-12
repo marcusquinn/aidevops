@@ -302,15 +302,10 @@ def main() -> None:
     tool_response = data.get("tool_response", "")
 
     # Scrub the tool_response field (may be str or nested JSON object).
-    if isinstance(tool_response, str):
-        scrubbed, count = scrub_value(tool_response)
-        if count == 0:
-            return
-    elif isinstance(tool_response, (dict, list)):
-        scrubbed, count = scrub_value(tool_response)
-        if count == 0:
-            return
-    else:
+    if not isinstance(tool_response, (str, dict, list)):
+        return
+    scrubbed, count = scrub_value(tool_response)
+    if count == 0:
         return
 
     elapsed_ms = (time.monotonic_ns() - start_ns) / 1_000_000
