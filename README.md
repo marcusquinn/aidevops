@@ -339,6 +339,17 @@ aidevops uninstall        # Remove aidevops
 
 [Blender MCP guidance](.agents/tools/design/blender.md) covers managed setup, scene analysis, Python API lookup, and the distinction between Blender's Lab project and the independent community `blender-mcp` package. Setup/update registers the OpenCode MCP disabled; the `blender` agent connects only on demand. A consent-gated launcher provisions the pinned official source in an isolated uv environment on approved first use. Blender and its add-on remain separate prerequisites. Because generated Python runs without protective guards, explicit operator consent and an isolated system with disposable scene copies are required. Includes standalone [OpenCode](configs/blender-lab-opencode-config.json.txt) and [MCP client](configs/blender-lab-mcp-config.json.txt) templates.
 
+### Focused Creative Production
+
+The `3d-modelling`, `video`, and `audio-music` primary agents share one
+[creative production contract](.agents/content/creative-production.md) while
+loading only the selected Blender, FreeCAD, DaVinci Resolve, Ableton Live, or
+media-production guide. Optional app MCPs start disabled and refuse external
+execution without explicit approval, isolation, reviewed absolute adapter
+commands, and app-specific safeguards. `creative-demo.py` builds deterministic
+Banker's lamp and fictional modern-kitchen recipe, parts-list, preview, and
+evidence packages without installing or controlling creative applications.
+
 ### Optional Design Artifact Studio
 
 aidevops now treats design as a self-contained stack with optional peripherals:

@@ -11,6 +11,7 @@ subagents:
   - production-video
   - production-audio
   - production-characters
+  - creative-production
   - media-generation-providers
   - gemini-image
   - gemini-video
@@ -88,6 +89,7 @@ Content agent. Domain: blog, video, social, newsletters, podcasts, short-form, A
 | Image | `production-image.md` | AI image gen, thumbnails, style libraries |
 | Video | `production-video.md` | Model strategy, provider routing, prompting, seed bracketing |
 | Audio | `production-audio.md` | Voice pipeline, sound design, emotional cues |
+| Focused creative production | `creative-production.md` | Shared 3D, video, audio brief, authority, artifact, and verification contract |
 | Characters | `production-characters.md` | Facial engineering, character bibles, personas |
 | Humanise | `humanise.md` (`/humanise`) | Final product-copy pass after channel adaptation; batch related text outputs |
 | YouTube | `distribution-youtube/` | Long-form (channel-intel, topic-research, script-writer, optimizer, pipeline) |
@@ -100,6 +102,10 @@ Content agent. Domain: blog, video, social, newsletters, podcasts, short-form, A
 | Optimization | `optimization.md` | A/B testing, variant generation, analytics loops |
 
 All subagent paths relative to `content/`.
+
+For app-centred 3D, video, or audio work, hand execution to the `3d-modelling`,
+`video`, or `audio-music` primary. Content retains campaign/story orchestration;
+all four agents use `creative-production.md` rather than duplicating app rules.
 
 Humanise only final textual product copy: scripts, captions, articles, customer email, and social copy. Do not route image, video, audio, character, identifier, or technical-prompt payloads through it.
 

@@ -139,6 +139,7 @@ with supplied evidence; selection, exclusions and envelope: `reference/agent-rou
 |------------------|------------|
 | Images/thumbnails | `content/production-image.md` |
 | Video/animation | `content/production-video.md` + `tools/video/video-prompt-design.md` |
+| 3D modelling / creative app production | `content/creative-production.md` + the `3d-modelling`, `video`, or `audio-music` primary and only its selected app guide |
 | UGC/ads/social | `content.md` → `content/story.md` → `content/production-*.md` |
 | Audio/voice | `content/production-audio.md` + `tools/voice/speech-to-speech.md` |
 | SEO/blog posts | `seo/` + `content/distribution-*.md` |

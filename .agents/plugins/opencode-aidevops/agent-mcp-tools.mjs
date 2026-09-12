@@ -38,6 +38,9 @@ const AGENT_MCP_TOOLS = {
   // UI
   shadcn: ["shadcn_*"],
   blender: ["blender-lab_*"],
+  freecad: ["freecad_*"],
+  "davinci-resolve": ["davinci-resolve_*"],
+  "ableton-live": ["ableton-live_*"],
   // Data / accounting
   outscraper: ["outscraper_*"],
   mainwp: ["localwp_*"],

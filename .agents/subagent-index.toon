@@ -1,5 +1,7 @@
-<!--TOON:agents[13]{name,file,purpose,model_tier,triggers}:
+<!--TOON:agents[16]{name,file,purpose,model_tier,triggers}:
 Aidevops,aidevops.md,Framework operations setup troubleshooting and aidevops extension,thinking,aidevops framework setup configuration troubleshooting mcp agent skill release
+3D-Modelling,3d-modelling.md,Focused 3D modelling dimensional design rendering interchange and evidence-led production,thinking,3d modelling blender freecad cad step stl geometry dimensions fabrication
+Audio-Music,audio-music.md,Focused audio and music production editing arrangement mixing and delivery,thinking,audio music sound ableton recording mixing mastering
 Build+,build-plus.md,Enhanced Build with context tools,thinking,code fix refactor bug ci tests pr implementation
 Automate,automate.md,Scheduling dispatch monitoring and background orchestration,standard,schedule cron dispatch pulse monitoring automation routine
 Business,business.md,Company orchestration including provider-neutral accounting finance invoicing and receipts,standard,company ops accounting bookkeeping reconciliation finance invoice receipts cash flow accounting software strategy runners
@@ -11,6 +13,7 @@ PR,pr.md,Public relations earned media journalist research media lists newsjacki
 Product,product.md,Product management validation onboarding monetisation growth UI and analytics,thinking,product prd roadmap validation onboarding monetisation growth analytics ux
 Research,research.md,Research and analysis tasks,standard,research compare market competitor technical analysis realtime
 SEO,seo.md,SEO GEO search-intent and keyword analysis,thinking,seo geo ai search ranking keyword search intent conversational query autocomplete fanout gsc schema sitemap backlinks trends
+Video,video.md,Focused video production editing motion design rendering and delivery,thinking,video editing davinci resolve remotion timeline render captions
 Vault,vault.md,Vault security operations encrypted stores fleet trust provider routing and protected-data dispatch,thinking,vault encrypted memory protected data lock unlock rekey device trust remote lock remote unlock secure sync needs_vault
 -->
 
@@ -20,46 +23,51 @@ standard,provider-routed,Code review and implementation
 thinking,provider-routed,Architecture and complex reasoning
 -->
 
-<!--TOON:subagents[127]{folder,purpose,key_files}:
-aidevops/,aidevops subagents,add-new-mcp-to-aidevops|agent-sources|api-integrations|architecture|badges|campaigns-plane|cases-plane|claude-flow-comparison|configs|docs|extension|feedback
-aidevops/feedback/,aidevops/feedback subagents,capture-retention|cli-routines|mining-promotion
-aidevops/,aidevops subagents,graduated-learnings|knowledge-plane
+<!--TOON:subagents[143]{folder,purpose,key_files}:
+aidevops/,aidevops subagents,add-new-mcp-to-aidevops|agent-sources|api-integrations|architecture|badges|campaigns-plane|cases-plane|claude-flow-comparison|configs|docs|extension
+aidevops/feedback/,aidevops/feedback subagents,capture-retention|cli-routines
+aidevops/,aidevops subagents,feedback
+aidevops/feedback/,aidevops/feedback subagents,mining-promotion
+aidevops/,aidevops subagents,graduated-learnings
 aidevops/knowledge-plane/,aidevops/knowledge-plane subagents,01-core-contract|02-email-sources|03-platform-and-policy|04-enrichment-index-review|05-social-operations|06-social-provider-capabilities
-aidevops/,aidevops subagents,mcp-integrations|mcp-troubleshooting|memory-patterns|onboarding|orchestration-analysis|performance
+aidevops/,aidevops subagents,knowledge-plane|mcp-integrations|mcp-troubleshooting|memory-patterns|onboarding|orchestration-analysis
 aidevops/performance/,aidevops/performance subagents,01-result-schema|02-marketing-ingest|03-optimization-projections|04-deferred-work
-aidevops/,aidevops subagents,plugins|projects|providers|purpose|reach-capture|recommendations|requirements|resources|routines-health|security-requirements|security|self-improving-agents|service-links|services|setup|troubleshooting
-business/,business subagents,accounting-software|accounting|accounts-receipt-ocr|accounts-subscription-audit|company-runners
-content/,content subagents,content-calendar|context-templates|distribution-blog|distribution-email|distribution-podcast|distribution-short-form|distribution-social|distribution-youtube-channel-intel|distribution-youtube-optimizer|distribution-youtube-pipeline|distribution-youtube-readme|distribution-youtube-script-writer|distribution-youtube-topic-research|distribution-youtube|editor|gemini-image|gemini-media-browser|gemini-music|gemini-video|guidelines
+aidevops/,aidevops subagents,performance|plugins|projects|providers|purpose|reach-capture|recommendations|requirements|resources|routines-health|security|security-requirements|self-improving-agents|service-links|services|setup|troubleshooting
+business/,business subagents,accounting|accounting-software|accounts-receipt-ocr|accounts-subscription-audit|company-runners
+content/,content subagents,content-calendar|context-templates|creative-production|distribution-blog|distribution-email|distribution-podcast|distribution-short-form|distribution-social|distribution-youtube-channel-intel|distribution-youtube|distribution-youtube-optimizer|distribution-youtube-pipeline|distribution-youtube-readme|distribution-youtube-script-writer|distribution-youtube-topic-research|editor|gemini-image|gemini-media-browser|gemini-music|gemini-video|guidelines
 content/heygen-skill/,content/heygen-skill subagents,rules-assets|rules-authentication|rules-avatars|rules-backgrounds|rules-captions|rules-dimensions|rules-photo-avatars|rules-quota|rules-remotion-integration|rules-scripts|rules-streaming-avatars|rules-templates|rules-text-overlays|rules-video-agent|rules-video-generation|rules-video-status|rules-video-translation|rules-voices|rules-webhooks
-content/,content subagents,humanise|internal-linker|media-generation-providers|meta-creator|optimization|platform-personas|production-audio|production-characters|production-image|production-video-01-model-selection|production-video-02-sora-template|production-video-03-veo-workflow|production-video-04-seed-bracketing|production-video-05-camera-shot-reference|production-video-06-two-track-production|production-video-07-post-production|production-video-08-talking-head-pipeline|production-video-09-tools-resources|production-video|production-writing|research|seo-writer|social-algorithms|social-beehiiv|social-binance-square|social-bird|social-bluesky|social-discord|social-discourse|social-forem|social-freshrss|social-ghost|social-github|social-google-business-profile|social-google-sites|social-gumroad|social-hacker-news|social-hashnode|social-lemmy|social-linkedin|social-mastodon|social-medium|social-meta|social-miniflux|social-nextcloud-talk|social-nodebb|social-notion-sites|social-patreon|social-provider-candidates|social-quora|social-readwise-reader|social-reddit|social-signal|social-skool|social-slack|social-stack-exchange|social-substack|social-telegram|social-tiktok|social-whatsapp|social-xurl|social-youtube|story|summarize|VERIFICATION|video-director|video-enhancor|video-higgsfield-ui|video-higgsfield|video-kie|video-muapi|video-real-video-enhancer|video-runway|video-wavespeed|youtube-research|youtube-script|youtube-setup|yt-dlp
-public-relations/,public-relations subagents,coverage-tracker|ethics|getting-started|journalist-fit-check|media-list-builder|news-search|newsjack-monitor|newsworthiness-check|pr-strategy|reactive-comment|routines
-seo/,seo subagents,ahrefs|ai-agent-discovery|ai-hallucination-defense|ai-search-kpi-template|ai-search-readiness|ai-search-report-template|ai-search-scoring|analytics-tracking|backlink-checker|bing-webmaster-tools|content-analyzer|contentking|conversational-search-intent|data-export|dataforseo|debug-favicon|debug-opengraph|domain-opportunities|domain-research-api-reference|domain-research|eeat-score|entity-evidence-audit|geo-strategy|google-search-console|gsc-sitemaps|image-seo|keyword-mapper|keyword-research|llm-visibility-instructional-report|llm-visibility-source-accrual|mom-test-ux|moondream|neuronwriter|programmatic-seo|query-fanout-research|ranking-opportunities|rich-results|schema-validator|screaming-frog|semrush|seo-agent-discovery|seo-ai-baseline|seo-ai-readiness|seo-analyze-content|seo-analyze
-seo/seo-audit-skill/,seo/seo-audit-skill subagents,aeo-geo-patterns
+content/,content subagents,humanise|internal-linker|media-generation-providers|meta-creator|optimization|platform-personas|production-audio|production-characters|production-image|production-video-01-model-selection|production-video-02-sora-template|production-video-03-veo-workflow|production-video-04-seed-bracketing|production-video-05-camera-shot-reference|production-video-06-two-track-production|production-video-07-post-production|production-video-08-talking-head-pipeline|production-video-09-tools-resources|production-video|production-writing|research|seo-writer|social-algorithms|social-beehiiv|social-binance-square|social-bird|social-bluesky|social-discord|social-discourse|social-forem|social-freshrss|social-ghost|social-github|social-google-business-profile|social-google-sites|social-gumroad|social-hacker-news|social-hashnode|social-lemmy|social-linkedin|social-mastodon|social-medium|social-meta|social-miniflux|social-nextcloud-talk|social-nodebb|social-notion-sites|social-patreon|social-provider-candidates|social-quora|social-readwise-reader|social-reddit|social-signal|social-skool|social-slack|social-stack-exchange|social-substack|social-telegram|social-tiktok|social-whatsapp|social-xurl|social-youtube|story|summarize|VERIFICATION|video-director|video-enhancor|video-higgsfield|video-higgsfield-ui|video-kie|video-muapi|video-real-video-enhancer|video-runway|video-wavespeed|youtube-research|youtube-script|youtube-setup|yt-dlp
+public-relations/,public-relations subagents,coverage-tracker|ethics|getting-started|journalist-fit-check|media-list-builder|newsjack-monitor|news-search|newsworthiness-check|press-release-distribution|pr-strategy|reactive-comment|routines
+seo/,seo subagents,ahrefs|ai-agent-discovery|ai-hallucination-defense|ai-search-kpi-template|ai-search-readiness|ai-search-report-template|ai-search-scoring|analytics-tracking|backlink-checker|bing-webmaster-tools|content-analyzer|contentking|conversational-search-intent|data-export|dataforseo|debug-favicon|debug-opengraph|domain-opportunities|domain-research-api-reference|domain-research|eeat-score|entity-evidence-audit|geo-strategy|google-search-console|gsc-sitemaps|image-seo|keyword-mapper|keyword-research|llm-visibility-instructional-report|llm-visibility-source-accrual|mom-test-ux|moondream|neuronwriter|programmatic-seo|query-fanout-research|ranking-opportunities|rich-results|schema-validator|screaming-frog|semrush|seo-agent-discovery|seo-ai-baseline|seo-ai-readiness|seo-analyze-content|seo-analyze|seo-audit
 seo/seo-audit-skill/aeo-geo-patterns/,seo/seo-audit-skill/aeo-geo-patterns subagents,01-aeo-patterns|02-geo-patterns|03-authority-signals-and-attribution|04-page-type-tactic-matrix
-seo/seo-audit-skill/,seo/seo-audit-skill subagents,ai-writing-detection
-seo/,seo subagents,seo-audit|seo-export|seo-fanout|seo-geo-experiment-design|seo-geo|seo-hallucination-defense|seo-opportunities|seo-optimize|seo-optimizer|seo-regex|seo-sro|seo-write|serper|site-crawler|sro-grounding|tech-stack|transcript-seo|upscale|video-schema
-seo/video-schema/,seo/video-schema subagents,clip-key-moments|faqpage-video|howto-video|property-reference|speakable|validation|videoobject
+seo/seo-audit-skill/,seo/seo-audit-skill subagents,aeo-geo-patterns|ai-writing-detection
+seo/,seo subagents,seo-export|seo-fanout|seo-geo-experiment-design|seo-geo|seo-hallucination-defense|seo-opportunities|seo-optimize|seo-optimizer|seo-regex|seo-sro|seo-write|serper|site-crawler|sro-grounding|tech-stack|transcript-seo|upscale
+seo/video-schema/,seo/video-schema subagents,clip-key-moments|faqpage-video|howto-video
+seo/,seo subagents,video-schema
+seo/video-schema/,seo/video-schema subagents,property-reference|speakable|validation|videoobject
 seo/,seo subagents,video-seo|youtube-description-link-acquisition
 services/accounting/,services/accounting subagents,quickfile
 services/analytics/,services/analytics subagents,google-analytics|posthog
 services/communications/,services/communications subagents,bitchat|convos|cross-channel-conversation-continuity|discord|google-chat|imessage|matrix-bot|matterbridge|msteams|nextcloud-talk|nostr|privacy-comparison|signal|simplex|slack|telegram|telfon|twilio|urbit|whatsapp|xmtp
 services/crm/,services/crm subagents,fluentcrm
 services/database/,services/database subagents,multi-org-isolation
-services/database/postgres-drizzle-skill/,services/database/postgres-drizzle-skill subagents,cheatsheet-config|cheatsheet-mutations|cheatsheet-reference|cheatsheet-relations|cheatsheet-schema|cheatsheet|migrations|performance-caching|performance-explain|performance-indexing|performance-monitoring|performance-pagination|performance-pooling|performance-queries|performance|postgres|queries|relations|schema
+services/database/postgres-drizzle-skill/,services/database/postgres-drizzle-skill subagents,cheatsheet-config|cheatsheet|cheatsheet-mutations|cheatsheet-reference|cheatsheet-relations|cheatsheet-schema|migrations|performance-caching|performance-explain|performance-indexing|performance|performance-monitoring|performance-pagination|performance-pooling|performance-queries|postgres|queries|relations|schema
 services/document-processing/,services/document-processing subagents,unstract
 services/ecommerce/,services/ecommerce subagents,shopify
-services/email/,services/email subagents,email-actions|email-agent|email-campaign|email-composition|email-delivery-test|email-design-test|email-health-check|email-inbound-commands|email-inbox|email-intelligence|email-mailbox-search|email-mailbox|email-outreach|email-providers|email-security|email-test-suite|email-testing|email-verification|google-workspace|letter-post-bridge|microsoft-graph|mission-email|openpgp-setup|ses|smime-setup|thunderbird
-services/hosting/,services/hosting subagents,101domains|backblaze-b2|closte
-services/hosting/cloudflare-platform-skill/,services/hosting/cloudflare-platform-skill subagents,agents-sdk-gotchas|agents-sdk-patterns|agents-sdk|ai-gateway|ai-search-gotchas|ai-search-patterns|ai-search|analytics-engine-gotchas|analytics-engine-patterns|analytics-engine|api-gotchas|api-patterns|api-shield-gotchas|api-shield-patterns|api-shield|api|argo-smart-routing-gotchas|argo-smart-routing-patterns|argo-smart-routing|bindings-gotchas|bindings-patterns|bindings|bot-management-gotchas|bot-management-patterns|bot-management|browser-rendering-gotchas|browser-rendering-patterns|browser-rendering|c3|cache-reserve-gotchas|cache-reserve-patterns|cache-reserve|containers-gotchas|containers-patterns|containers|cron-triggers-gotchas|cron-triggers-patterns|cron-triggers|d1-gotchas|d1-patterns|d1|ddos-gotchas|ddos-patterns|ddos|do-storage-gotchas|do-storage-patterns
+services/email/,services/email subagents,email-actions|email-agent|email-campaign|email-composition|email-delivery-test|email-design-test|email-health-check|email-inbound-commands|email-inbox|email-intelligence|email-mailbox|email-mailbox-search|email-outreach|email-providers|email-security|email-testing|email-test-suite|email-verification|google-workspace|letter-post-bridge|microsoft-graph|mission-email|openpgp-setup|ses|smime-setup|thunderbird
+services/hosting/,services/hosting subagents,101domains|backblaze-b2|closte|cloudflare
+services/hosting/cloudflare-platform-skill/,services/hosting/cloudflare-platform-skill subagents,agents-sdk-gotchas|agents-sdk|agents-sdk-patterns|ai-gateway|ai-search-gotchas|ai-search|ai-search-patterns|analytics-engine-gotchas|analytics-engine|analytics-engine-patterns|api-gotchas|api|api-patterns|api-shield-gotchas|api-shield|api-shield-patterns|argo-smart-routing-gotchas|argo-smart-routing|argo-smart-routing-patterns|bindings-gotchas|bindings|bindings-patterns|bot-management-gotchas|bot-management|bot-management-patterns|browser-rendering-gotchas|browser-rendering|browser-rendering-patterns|c3|cache-reserve-gotchas|cache-reserve|cache-reserve-patterns|containers-gotchas|containers|containers-patterns|cron-triggers-gotchas|cron-triggers|cron-triggers-patterns|d1-gotchas|d1|d1-patterns|ddos-gotchas|ddos|ddos-patterns|do-storage-gotchas|do-storage
 services/hosting/cloudflare-platform-skill/do-storage-patterns/,services/hosting/cloudflare-platform-skill/do-storage-patterns subagents,01-schema-migration|02-in-memory-caching|03-rate-limiting|04-batch-processing-with-alarms|05-initialization-and-counters|06-cleanup
-services/hosting/cloudflare-platform-skill/,services/hosting/cloudflare-platform-skill subagents,do-storage|durable-objects-gotchas|durable-objects-patterns|durable-objects|email-routing-gotchas|email-routing-patterns|email-routing|email-workers|hyperdrive-gotchas|hyperdrive-patterns|hyperdrive|images-gotchas|images-patterns|images|kv-gotchas|kv-patterns|kv|miniflare-gotchas|miniflare-patterns|miniflare|network-interconnect-gotchas|network-interconnect-patterns|network-interconnect|observability-gotchas|observability-patterns|observability|pages-functions-gotchas|pages-functions-patterns|pages-functions|pages-gotchas|pages-patterns|pages|pipelines|pulumi-gotchas
-services/hosting/cloudflare-platform-skill/pulumi-gotchas/,services/hosting/cloudflare-platform-skill/pulumi-gotchas subagents,best-practices|ci-cd|common-errors|debugging|migration|performance|resources|security
-services/hosting/cloudflare-platform-skill/,services/hosting/cloudflare-platform-skill subagents,pulumi-patterns|pulumi|queues-gotchas|queues-patterns|queues|r2-data-catalog-gotchas|r2-data-catalog-patterns|r2-data-catalog|r2-gotchas|r2-patterns
+services/hosting/cloudflare-platform-skill/,services/hosting/cloudflare-platform-skill subagents,do-storage-patterns|durable-objects-gotchas|durable-objects|durable-objects-patterns|email-routing-gotchas|email-routing|email-routing-patterns|email-workers|hyperdrive-gotchas|hyperdrive|hyperdrive-patterns|images-gotchas|images|images-patterns|kv-gotchas|kv|kv-patterns|miniflare-gotchas|miniflare|miniflare-patterns|network-interconnect-gotchas|network-interconnect|network-interconnect-patterns|observability-gotchas|observability|observability-patterns|pages-functions-gotchas|pages-functions|pages-functions-patterns|pages-gotchas|pages|pages-patterns|pipelines
+services/hosting/cloudflare-platform-skill/pulumi-gotchas/,services/hosting/cloudflare-platform-skill/pulumi-gotchas subagents,best-practices|ci-cd|common-errors|debugging
+services/hosting/cloudflare-platform-skill/,services/hosting/cloudflare-platform-skill subagents,pulumi-gotchas
+services/hosting/cloudflare-platform-skill/pulumi-gotchas/,services/hosting/cloudflare-platform-skill/pulumi-gotchas subagents,migration|performance|resources|security
+services/hosting/cloudflare-platform-skill/,services/hosting/cloudflare-platform-skill subagents,pulumi|pulumi-patterns|queues-gotchas|queues|queues-patterns|r2-data-catalog-gotchas|r2-data-catalog|r2-data-catalog-patterns|r2-gotchas|r2
 services/hosting/cloudflare-platform-skill/r2-patterns/,services/hosting/cloudflare-platform-skill/r2-patterns subagents,01-streaming-large-files|02-conditional-get|03-upload-with-validation|04-multipart-with-progress|05-batch-delete|06-checksum-validation|07-storage-class-transitions|08-public-bucket-custom-domain
-services/hosting/cloudflare-platform-skill/,services/hosting/cloudflare-platform-skill subagents,r2-sql|r2|realtime-sfu-gotchas|realtime-sfu-patterns|realtime-sfu|realtimekit-gotchas|realtimekit-patterns|realtimekit|sandbox-gotchas|sandbox-patterns
+services/hosting/cloudflare-platform-skill/,services/hosting/cloudflare-platform-skill subagents,r2-patterns|r2-sql|realtimekit-gotchas|realtimekit|realtimekit-patterns|realtime-sfu-gotchas|realtime-sfu|realtime-sfu-patterns|sandbox-gotchas|sandbox
 services/hosting/cloudflare-platform-skill/sandbox-patterns/,services/hosting/cloudflare-platform-skill/sandbox-patterns subagents,01-ai-code-execution|02-interactive-dev-environment|03-ci-cd-pipeline|04-multi-language-code-runner|05-multi-tenant|06-jupyter-integration|07-git-operations
-services/hosting/cloudflare-platform-skill/,services/hosting/cloudflare-platform-skill subagents,sandbox|smart-placement-gotchas|smart-placement-patterns|smart-placement|snippets-gotchas|snippets-patterns|snippets|spectrum-gotchas|spectrum-patterns|spectrum|static-assets-gotchas|static-assets-patterns|static-assets|stream-gotchas|stream-patterns|stream|tail-workers|terraform-gotchas|terraform-patterns|terraform|tunnel-gotchas|tunnel-patterns|tunnel|turn|turnstile-gotchas|turnstile-patterns|turnstile|vectorize-gotchas|vectorize-patterns|vectorize|waf-gotchas|waf-patterns|waf|web-analytics-gotchas|web-analytics-patterns|web-analytics|workerd-gotchas|workerd-patterns|workerd|workers-ai|workers-for-platforms-gotchas|workers-for-platforms-patterns|workers-for-platforms|workers-gotchas|workers-patterns|workers-playground-gotchas|workers-playground-patterns|workers-playground|workers-vpc|workers|workflows-gotchas|workflows-patterns|workflows|wrangler-gotchas|wrangler-patterns|wrangler|zaraz-gotchas|zaraz-patterns|zaraz
-services/hosting/,services/hosting subagents,cloudflare|cloudron|dns-providers|domain-purchasing|hetzner|hostinger-wordpress-cron|hostinger|idrive-e2|local-hosting|localhost|spaceship|ubicloud|wasabi|webhosting
+services/hosting/cloudflare-platform-skill/,services/hosting/cloudflare-platform-skill subagents,sandbox-patterns|smart-placement-gotchas|smart-placement|smart-placement-patterns|snippets-gotchas|snippets|snippets-patterns|spectrum-gotchas|spectrum|spectrum-patterns|static-assets-gotchas|static-assets|static-assets-patterns|stream-gotchas|stream|stream-patterns|tail-workers|terraform-gotchas|terraform|terraform-patterns|tunnel-gotchas|tunnel|tunnel-patterns|turn|turnstile-gotchas|turnstile|turnstile-patterns|vectorize-gotchas|vectorize|vectorize-patterns|waf-gotchas|waf|waf-patterns|web-analytics-gotchas|web-analytics|web-analytics-patterns|workerd-gotchas|workerd|workerd-patterns|workers-ai|workers-for-platforms-gotchas|workers-for-platforms|workers-for-platforms-patterns|workers-gotchas|workers|workers-patterns|workers-playground-gotchas|workers-playground|workers-playground-patterns|workers-vpc|workflows-gotchas|workflows|workflows-patterns|wrangler-gotchas|wrangler|wrangler-patterns|zaraz-gotchas|zaraz|zaraz-patterns
+services/hosting/,services/hosting subagents,cloudron|dns-providers|domain-purchasing|hetzner|hostinger|hostinger-wordpress-cron|idrive-e2|local-hosting|localhost|spaceship|ubicloud|wasabi|webhosting
 services/monitoring/,services/monitoring subagents,langwatch|sentry|socket
 services/networking/,services/networking subagents,netbird|nostr-vpn|obscuravpn|tailscale
 services/outreach/,services/outreach subagents,cold-outreach|infraforge|instantly|leadsforge|manyreach|smartlead|warmforge
@@ -70,62 +78,69 @@ tools/ai-generation/,tools/ai-generation subagents,comfy-cli
 tools/ai-orchestration/,tools/ai-orchestration subagents,autogen|crewai|langflow|openprose|overview|packaging
 tools/animation/,tools/animation subagents,animejs
 tools/api/,tools/api subagents,better-auth|cloudflare-mcp|drizzle|hono|vercel-ai-sdk
+tools/app-stack/,tools/app-stack subagents,api-service-contracts|database-foundation|data-history-relationships|data-protection-sync-scale|decision-matrix|desktop-frameworks|electron-desktop|encrypted-collaboration|identity-security-lifecycle
 tools/,tools subagents,app-stack
-tools/app-stack/,tools/app-stack subagents,api-service-contracts|data-history-relationships|data-protection-sync-scale|database-foundation|decision-matrix|desktop-frameworks|electron-desktop|encrypted-collaboration|identity-security-lifecycle|metadata-architecture|migration-layout|monorepo-app-stack|operations-jobs-scheduling|platform-kernel|public-site-surfaces|rbac-permissions|standard-objects|static-site-starter|ux-shell-patterns|workflow-architecture|workspace-model
-tools/architecture/clean-ddd-hexagonal-skill/,tools/architecture/clean-ddd-hexagonal-skill subagents,cheatsheet|cqrs-events|ddd-strategic|ddd-tactical|hexagonal
+tools/app-stack/,tools/app-stack subagents,metadata-architecture|migration-layout|monorepo-app-stack|operations-jobs-scheduling|platform-kernel|public-site-surfaces|rbac-permissions|standard-objects|static-site-starter|ux-shell-patterns|workflow-architecture|workspace-model
+tools/architecture/clean-ddd-hexagonal-skill/,tools/architecture/clean-ddd-hexagonal-skill subagents,cheatsheet|cqrs-events|ddd-strategic|ddd-tactical
 tools/architecture/clean-ddd-hexagonal-skill/hexagonal/,tools/architecture/clean-ddd-hexagonal-skill/hexagonal subagents,01-introduction|02-ports|03-adapters|04-naming-conventions|05-project-structure|06-configurability|07-strong-vs-weak-ports
-tools/architecture/clean-ddd-hexagonal-skill/,tools/architecture/clean-ddd-hexagonal-skill subagents,layers|testing
+tools/architecture/clean-ddd-hexagonal-skill/,tools/architecture/clean-ddd-hexagonal-skill subagents,hexagonal|layers|testing
 tools/architecture/feature-slicing-skill/,tools/architecture/feature-slicing-skill subagents,cheatsheet|implementation|layers|migration|nextjs|public-api
-tools/,tools subagents,auto-reason
+tools/audio/,tools/audio subagents,ableton-live
+tools/autoagent/autoagent/,tools/autoagent/autoagent subagents,evaluation|hypothesis-types
 tools/autoagent/,tools/autoagent subagents,autoagent
-tools/autoagent/autoagent/,tools/autoagent/autoagent subagents,evaluation|hypothesis-types|safety|signal-mining
+tools/autoagent/autoagent/,tools/autoagent/autoagent subagents,safety|signal-mining
 tools/automation/,tools/automation subagents,cron-agent|mac|macos-activity-cleaner|macos-automator|objective-runner
-tools/autoresearch/,tools/autoresearch subagents,autoresearch
+tools/,tools subagents,auto-reason
 tools/autoresearch/autoresearch/,tools/autoresearch/autoresearch subagents,agent-optimization|completion|logging|loop
-tools/browser/,tools/browser subagents,agent-browser|anti-detect-browser|auto-browse-subagents|auto-browse|browser-automation|browser-benchmark-scripts-01-playwright|browser-benchmark-scripts-02-dev-browser|browser-benchmark-scripts-03-agent-browser|browser-benchmark-scripts-04-crawl4ai|browser-benchmark-scripts-05-stagehand|browser-benchmark-scripts-06-visual-verification|browser-benchmark-scripts|browser-benchmark|browser-profiles|browser-qa|browser-use|chrome-devtools|chrome-webstore-release|chromium-debug-use|crawl4ai-integration|crawl4ai-resources|crawl4ai-usage|crawl4ai|curl-copy|dev-browser|extension-dev
-tools/browser/extension-dev/,tools/browser/extension-dev subagents,development|publishing|testing
-tools/browser/,tools/browser subagents,fingerprint-profiles|pagespeed|peekaboo|playwright-cli|playwright-emulation|playwright|playwriter|proxy-integration|skyvern|stagehand-examples|stagehand-python|stagehand|stealth-patches|sweet-cookie|watercrawl
+tools/autoresearch/,tools/autoresearch subagents,autoresearch
+tools/browser/,tools/browser subagents,agent-browser|anti-detect-browser|auto-browse|auto-browse-subagents|browser-automation|browser-benchmark|browser-benchmark-scripts-01-playwright|browser-benchmark-scripts-02-dev-browser|browser-benchmark-scripts-03-agent-browser|browser-benchmark-scripts-04-crawl4ai|browser-benchmark-scripts-05-stagehand|browser-benchmark-scripts-06-visual-verification|browser-benchmark-scripts|browser-profiles|browser-qa|browser-use|chrome-devtools|chrome-webstore-release|chromium-debug-use|crawl4ai-integration|crawl4ai|crawl4ai-resources|crawl4ai-usage|curl-copy|dev-browser
+tools/browser/extension-dev/,tools/browser/extension-dev subagents,development
+tools/browser/,tools/browser subagents,extension-dev
+tools/browser/extension-dev/,tools/browser/extension-dev subagents,publishing|testing
+tools/browser/,tools/browser subagents,fingerprint-profiles|pagespeed|peekaboo|playwright-cli|playwright-emulation|playwright|playwriter|proxy-integration|skyvern|stagehand-examples|stagehand|stagehand-python|stealth-patches|sweet-cookie|watercrawl
 tools/build-agent/,tools/build-agent subagents,agent-review|agent-testing|build-agent|node-helpers
 tools/build-mcp/,tools/build-mcp subagents,aidevops-plugin|api-wrapper
 tools/build-mcp/api-wrapper/,tools/build-mcp/api-wrapper subagents,patterns
 tools/build-mcp/,tools/build-mcp subagents,build-mcp|deployment|server-patterns|transports
-tools/code-review/,tools/code-review subagents,auditing|automation|best-practices|codacy|code-simplifier|code-standards|coderabbit|management|qlty|review-categories|runtime-patterns|secretlint|security-analysis|security-audit|setup|skill-scanner|snyk|tools
+tools/code-review/,tools/code-review subagents,auditing|automation|best-practices|codacy|coderabbit|code-simplifier|code-standards|management|qlty|review-categories|runtime-patterns|secretlint|security-analysis|security-audit|setup|skill-scanner|snyk|tools
 tools/containers/,tools/containers subagents,orbstack|remote-dispatch
-tools/context/,tools/context subagents,context-builder-agent|context-builder|context-guardrails|context7-cli|context7|dspy|dspyground|github-search|llm-tldr|mcp-discovery|model-routing|openapi-search|pageindex|prompt-optimization|rapidfuzz|toon
+tools/context/,tools/context subagents,context7-cli|context7|context-builder-agent|context-builder|context-guardrails|dspyground|dspy|github-search|llm-tldr|mcp-discovery|model-routing|openapi-search|pageindex|prompt-optimization|rapidfuzz|toon
 tools/conversion/,tools/conversion subagents,mineru|pandoc
 tools/credentials/,tools/credentials subagents,api-key-management|api-key-setup|auth-troubleshooting|bitwarden|cch-reverse-engineering|encryption-stack|enpass|environment-variables|gocryptfs|gopass|list-keys|multi-tenant|psst|sops|vaultwarden
-tools/data-extraction/,tools/data-extraction subagents,outscraper
 tools/database/,tools/database subagents,pglite-local-first|vector-search
 tools/database/vector-search/,tools/database/vector-search subagents,per-tenant-rag|zvec
-tools/deployment/,tools/deployment subagents,agent-skills
-tools/deployment/cloudron-app-packaging-skill/,tools/deployment/cloudron-app-packaging-skill subagents,addons-ref|manifest-ref
+tools/data-extraction/,tools/data-extraction subagents,outscraper
+tools/deployment/,tools/deployment subagents,agent-skills|cloudron-app-packaging
+tools/deployment/cloudron-app-packaging-skill/,tools/deployment/cloudron-app-packaging-skill subagents,addons-ref
 tools/deployment/cloudron-app-packaging-skill/manifest-ref/,tools/deployment/cloudron-app-packaging-skill/manifest-ref subagents,01-overview|02-ports|03-addons|04-metadata|05-behavior|06-post-install|07-versioning
-tools/deployment/,tools/deployment subagents,cloudron-app-packaging|cloudron-git-reference|coolify-cli|coolify-setup|coolify|daytona|fly-io|hosting-comparison|uncloud|vercel
-tools/design/,tools/design subagents,blender|brand-identity|colour-palette|design-inspiration|design-md-from-links|design-md|distinctive-ui-audit|distinctive-ui-composition|distinctive-ui|hallmark|open-design-ingestion|open-design|report-presentation|ui-ux-inspiration
+tools/deployment/cloudron-app-packaging-skill/,tools/deployment/cloudron-app-packaging-skill subagents,manifest-ref
+tools/deployment/,tools/deployment subagents,cloudron-git-reference|coolify-cli|coolify|coolify-setup|daytona|fly-io|hosting-comparison|uncloud|vercel
+tools/design/,tools/design subagents,blender|brand-concepts|brand-identity|colour-palette|design-inspiration|design-md-from-links|design-md|distinctive-ui-audit|distinctive-ui-composition|distinctive-ui|freecad|hallmark|open-design-ingestion|open-design|report-presentation|ui-ux-inspiration|visual-concepts
 tools/diagrams/mermaid-diagrams-skill/,tools/diagrams/mermaid-diagrams-skill subagents,advanced|architecture|cheatsheet|class-er|data-charts|flowcharts|sequence|state-journey
-tools/document/,tools/document subagents,docstrange|document-creation|document-extraction|extraction-schemas
+tools/document/,tools/document subagents,docstrange|document-creation|document-extraction
 tools/document/extraction-schemas/,tools/document/extraction-schemas subagents,01-design-principles|02-purchase-invoice|03-expense-receipt|04-credit-note|05-sales-invoice|06-generic-receipt|07-quickfile-mapping|08-vat-handling|09-nominal-codes|10-classification|11-pipeline-integration|12-validation
-tools/document/,tools/document subagents,extraction-workflow
+tools/document/,tools/document subagents,extraction-schemas|extraction-workflow
+tools/git/,tools/git subagents,authentication|conflict-resolution|gitea-cli|github-actions|github-cli|gitlab-cli|git-security|jujutsu|lumen
 tools/,tools subagents,git
-tools/git/,tools/git subagents,authentication|conflict-resolution|git-security|gitea-cli|github-actions|github-cli|gitlab-cli|jujutsu|lumen|opencode-github-security|opencode-github|opencode-gitlab|worktrunk
-tools/infrastructure/,tools/infrastructure subagents,cloud-gpu|cloudflare-ai|fireworks|nearai|nvidia-cloud|together
+tools/git/,tools/git subagents,opencode-github|opencode-github-security|opencode-gitlab|worktrunk
+tools/infrastructure/,tools/infrastructure subagents,cloudflare-ai|cloud-gpu|fireworks|nearai|nvidia-cloud|together
 tools/legal/,tools/legal subagents,legal-research
 tools/local-models/,tools/local-models subagents,huggingface|local-models
-tools/mcp-toolkit/,tools/mcp-toolkit subagents,mcporter
 tools/mcp/,tools/mcp subagents,cloudflare-code-mode
-tools/mobile/,tools/mobile subagents,agent-device|app-dev-analytics|app-dev-assets|app-dev-backend|app-dev-expo|app-dev-monetisation|app-dev-notifications|app-dev-onboarding|app-dev-planning|app-dev-publishing|app-dev-swift|app-dev-testing|app-dev-ui-design|app-dev|app-store-connect|axe-cli|ios-simulator-mcp|maestro|minisim|serve-sim|swift-xcode-agent-workflow|xcodebuild-mcp
+tools/mcp-toolkit/,tools/mcp-toolkit subagents,mcporter
+tools/mobile/,tools/mobile subagents,agent-device|app-dev-analytics|app-dev-assets|app-dev-backend|app-dev-expo|app-dev|app-dev-monetisation|app-dev-notifications|app-dev-onboarding|app-dev-planning|app-dev-publishing|app-dev-swift|app-dev-testing|app-dev-ui-design|app-store-connect|axe-cli|ios-simulator-mcp|maestro|minisim|serve-sim|swift-xcode-agent-workflow|xcodebuild-mcp
 tools/monorepo/,tools/monorepo subagents,turborepo
 tools/,tools subagents,multimodal-evaluation
 tools/ocr/,tools/ocr subagents,glm-ocr|ocr-research|overview|paddleocr
-tools/opencode/,tools/opencode subagents,opencode-anthropic-auth|opencode-openai-auth|opencode
+tools/opencode/,tools/opencode subagents,opencode-anthropic-auth|opencode|opencode-openai-auth
 tools/pdf/,tools/pdf subagents,libpdf|overview
 tools/performance/,tools/performance subagents,performance|webpagetest
 tools/productivity/,tools/productivity subagents,apple-reminders|calendar|contacts|notes
-tools/programming/modern-javascript-skill/,tools/programming/modern-javascript-skill subagents,01-decision-trees|02-es-versions|cheatsheet|composition|concurrency
+tools/programming/modern-javascript-skill/,tools/programming/modern-javascript-skill subagents,01-decision-trees|02-es-versions|cheatsheet|composition
 tools/programming/modern-javascript-skill/concurrency/,tools/programming/modern-javascript-skill/concurrency subagents,01-sequential|02-parallel|03-batched|04-pool|05-retry|06-timeout|07-debounce|08-throttle|09-async-iteration|10-cancellation|11-semaphore
-tools/programming/modern-javascript-skill/,tools/programming/modern-javascript-skill subagents,es2016-es2017|es2018-es2019|es2022-es2023|es2024|es2025|immutability|promises
+tools/programming/modern-javascript-skill/,tools/programming/modern-javascript-skill subagents,concurrency|es2016-es2017|es2018-es2019|es2022-es2023|es2024|es2025|immutability
 tools/programming/modern-javascript-skill/promises/,tools/programming/modern-javascript-skill/promises subagents,01-promise-creation|02-async-await|03-promise-combinators|04-anti-patterns
-tools/programming/modern-javascript-skill/,tools/programming/modern-javascript-skill subagents,upcoming
+tools/programming/modern-javascript-skill/,tools/programming/modern-javascript-skill subagents,promises|upcoming
 tools/research/providers/,tools/research/providers subagents,crft-lookup|openexplorer|unbuilt|wappalyzer
 tools/research/,tools/research subagents,tech-stack-lookup
 tools/runtime/,tools/runtime subagents,node-server-admin
@@ -134,20 +149,24 @@ tools/task-management/,tools/task-management subagents,beads
 tools/terminal/,tools/terminal subagents,optimise-linux-indexing-backups|optimise-macos-indexing-backups|optimise-windows-indexing-backups|terminal-optimization|terminal-title
 tools/,tools subagents,testing-setup
 tools/ui/,tools/ui subagents,ai-chat-sidebar|frontend-debugging|i18next|nextjs-layouts
-tools/ui/nothing-design-skill/,tools/ui/nothing-design-skill subagents,01-philosophy|02-craft-rules|03-anti-patterns|04-workflow|components|platform-mapping|tokens
+tools/ui/nothing-design-skill/,tools/ui/nothing-design-skill subagents,01-philosophy|02-craft-rules|03-anti-patterns|04-workflow|components|platform-mapping
 tools/ui/nothing-design-skill/tokens/,tools/ui/nothing-design-skill/tokens subagents,01-typography|02-color|03-spacing|04-motion|05-iconography|06-dot-matrix
+tools/ui/nothing-design-skill/,tools/ui/nothing-design-skill subagents,tokens
 tools/ui/,tools/ui subagents,react-context|react-doctor|react-email|shadcn|tailwind-css|ui-skills|wxt
 tools/verification/,tools/verification subagents,parallel-verify
-tools/video/,tools/video subagents,create-onboarding-video|remotion-3d|remotion-animations|remotion-assets|remotion-audio|remotion-calculate-metadata|remotion-can-decode|remotion-charts|remotion-compositions|remotion-display-captions|remotion-extract-frames|remotion-fonts|remotion-get-audio-duration|remotion-get-video-dimensions|remotion-get-video-duration|remotion-gifs|remotion-images|remotion-import-srt-captions|remotion-lottie|remotion-measuring-dom-nodes|remotion-measuring-text|remotion-sequencing|remotion-tailwind|remotion-text-animations|remotion-timing|remotion-transcribe-captions|remotion-transitions|remotion-trimming|remotion-videos|remotion|video-editor|video-prompt-design|video-use-runtime|yt-dlp
+tools/video/,tools/video subagents,create-onboarding-video|davinci-resolve|remotion-3d|remotion-animations|remotion-assets|remotion-audio|remotion-calculate-metadata|remotion-can-decode|remotion-charts|remotion-compositions|remotion-display-captions|remotion-extract-frames|remotion-fonts|remotion-get-audio-duration|remotion-get-video-dimensions|remotion-get-video-duration|remotion-gifs|remotion-images|remotion-import-srt-captions|remotion-lottie|remotion|remotion-measuring-dom-nodes|remotion-measuring-text|remotion-sequencing|remotion-tailwind|remotion-text-animations|remotion-timing|remotion-transcribe-captions|remotion-transitions|remotion-trimming|remotion-videos|video-editor|video-prompt-design|video-use-runtime|yt-dlp
 tools/vision/,tools/vision subagents,create-screenshots|image-editing|image-generation|image-understanding|overview
-tools/voice/,tools/voice subagents,buzz|cloud-tts-apis|cloud-voice-agents|hyprwhspr|ios-shortcut|local-tts-models|pipecat-opencode|qwen3-tts|speech-to-speech|transcription|voice-ai-models|voice-models|voiceink-shortcut
+tools/voice/,tools/voice subagents,buzz|cloud-tts-apis|cloud-voice-agents|hyprwhspr|ios-shortcut|local-tts-models|pipecat-opencode|qwen3-tts|speech-to-speech|transcription|voice-ai-models|voiceink-shortcut|voice-models
+tools/wordpress/,tools/wordpress subagents,localwp|mainwp
 tools/,tools subagents,wordpress
-tools/wordpress/,tools/wordpress subagents,localwp|mainwp|scf|wp-admin|wp-cli-reference|wp-dev|wp-preferred
-workflows/,workflows subagents,ai-research|auto-browse|autoagent|autoresearch|branch
-workflows/branch/,workflows/branch subagents,bugfix|chore|experiment|feature|hotfix|refactor|release
+tools/wordpress/,tools/wordpress subagents,scf|wp-admin|wp-cli-reference|wp-dev|wp-preferred
+workflows/,workflows subagents,ai-research|autoagent|auto-browse|autoresearch
+workflows/branch/,workflows/branch subagents,bugfix|chore|experiment|feature|hotfix
+workflows/,workflows subagents,branch
+workflows/branch/,workflows/branch subagents,refactor|release
 workflows/,workflows subagents,brief
 workflows/brief/,workflows/brief subagents,routing|templates|tier-simple|tier-standard|tier-thinking
-workflows/,workflows subagents,browser-qa|budget-analysis|bug-fixing|campaign-growth|changelog|code-audit-remote|code-simplifier|compare-models-free|compare-models|conversation-starter|cross-review|dashboard|define|error-feedback|feature-development|findings-to-tasks|full-loop|git-workflow|graduate-memories|humanise|init-routines|ip-check|list-todo|list-verify|local-permissions-check|log-issue-aidevops|memory-audit|memory-log|milestone-validation|mission-orchestrator|mission-skill-learning|mission|model-replay|models-pool-check|multi-repo-workspace|new-task|optimise-linux-indexing-backups|optimise-macos-indexing-backups|optimise-windows-indexing-backups|optimize-tiers|patterns|performance|plans|postflight-loop|postflight|pr-loop|pr|pre-edit|preflight|public-launch-checklist|pulse-check|pulse-sweep|pulse|ralph-loop|readme-create-update|readme|recall|release|remember|review-issue-pr|review|route|routine|runners-check|runners|save-todo|score-responses|session-analysis|session-manager|session-review|show-plan|skills|sql-migrations|strategic-review|tech-stack|triage-review|ui-verification|vault-fleet|vault-setup|venv-health|version-bump|wiki-update|wordpress-local-clone|worktree-cleanup|worktree
+workflows/,workflows subagents,browser-qa|budget-analysis|bug-fixing|campaign-growth|changelog|code-audit-remote|code-simplifier|compare-models-free|compare-models|conversation-starter|cross-review|dashboard|define|error-feedback|feature-development|findings-to-tasks|full-loop|git-workflow|graduate-memories|humanise|init-routines|ip-check|list-todo|list-verify|local-permissions-check|log-issue-aidevops|memory-audit|memory-log|milestone-validation|mission|mission-orchestrator|mission-skill-learning|model-replay|models-pool-check|multi-repo-workspace|new-task|optimise-linux-indexing-backups|optimise-macos-indexing-backups|optimise-windows-indexing-backups|optimize-tiers|patterns|performance|plans|postflight-loop|postflight|pre-edit|preflight|pr-loop|pr|public-launch-checklist|pulse-check|pulse|pulse-sweep|ralph-loop|readme-create-update|readme|recall|release|remember|review-issue-pr|review|route|routine|runners-check|runners|save-todo|score-responses|session-analysis|session-manager|session-review|show-plan|skills|sql-migrations|strategic-review|tech-stack|triage-review|ui-verification|vault-fleet|vault-setup|venv-health|version-bump|wiki-update|wordpress-local-clone|worktree-cleanup|worktree
 -->
 
 <!--TOON:mcp_servers[13]{name,url,auth,subagent,purpose}:
