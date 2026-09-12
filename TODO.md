@@ -1358,7 +1358,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18428 Fix Dependabot PR lifecycle convergence #priority:high #type:bug #interactive #tier:thinking ref:GH#31795 started:2026-09-11 -> [todo/tasks/t18428-brief.md] pr:#31798 completed:2026-09-11
 
-- [ ] t18429 Fix in-progress task completion and planning PR title compatibility #auto-dispatch #bug #framework #priority:high ref:GH#31805 -> [todo/tasks/t18429-brief.md]
+- [x] t18429 Fix in-progress task completion and planning PR title compatibility #auto-dispatch #bug #framework #priority:high ref:GH#31805 -> [todo/tasks/t18429-brief.md] pr:#31808 completed:2026-09-11
 
 ## In Progress
 
