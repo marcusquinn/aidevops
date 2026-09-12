@@ -1993,6 +1993,130 @@ _enable_native_auto_merge_for_head() {
 	return 1
 }
 
+_pmp_issue_sync_run_api() {
+	local operation="$1"
+	shift
+	if declare -F _gh_with_timeout >/dev/null 2>&1; then
+		_gh_with_timeout "$operation" "$@"
+	else
+		"$@"
+	fi
+}
+
+_pmp_audit_issue_sync_run_approval() {
+	local repo_slug="$1"
+	local pr_number="$2"
+	local expected_head_sha="$3"
+	local run_id="$4"
+	local outcome="$5"
+	local audit_helper="${_PULSE_MERGE_PROCESS_DIR}/audit-log-helper.sh"
+
+	[[ -x "$audit_helper" ]] || return 0
+	"$audit_helper" log operation.verify \
+		"pulse approved trusted Issue Sync workflow run ${run_id} for PR #${pr_number} in ${repo_slug} — ${outcome}" \
+		--detail "op=pulse.issue-sync-run-approval" \
+		--detail "repo=${repo_slug}" \
+		--detail "pr=${pr_number}" \
+		--detail "head=${expected_head_sha}" \
+		--detail "run=${run_id}" \
+		--detail "outcome=${outcome}" >/dev/null 2>&1 || true
+	return 0
+}
+
+#######################################
+# Approve pull_request workflow runs that GitHub held for a repository-generated
+# Issue Sync PR. The shared immutable trust predicate remains the authority;
+# every candidate and the live PR head are checked again before each mutation.
+#
+# Args: $1=pr_number, $2=repo_slug, $3=expected_head_sha
+# Returns: 0=no candidates or all candidates approved/idempotently cleared;
+#          1=API, schema, identity, association, or freshness failure
+# Sets: _PULSE_ISSUE_SYNC_RUNS_APPROVED to the number of approved/cleared runs
+#######################################
+_pmp_approve_issue_sync_action_required_runs() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local expected_head_sha="$3"
+	local runs_json="" candidates_json="" run_ids="" run_id=""
+	local live_identity="" live_head_sha="" live_head_repo=""
+	local approve_output="" run_conclusion="" approved_count=0
+	_PULSE_ISSUE_SYNC_RUNS_APPROVED=0
+
+	[[ "$pr_number" =~ ^[0-9]+$ && -n "$repo_slug" && -n "$expected_head_sha" ]] || return 1
+	#aidevops:trust-boundary -- workflow approval is available only to the shared
+	# immutable exact-head Issue Sync authority predicate.
+	_pulse_is_trusted_issue_sync_pr "$pr_number" "$repo_slug" "$expected_head_sha" || return 0
+
+	runs_json=$(_pmp_issue_sync_run_api read gh api \
+		"repos/${repo_slug}/actions/runs?event=pull_request&head_sha=${expected_head_sha}&per_page=100") || {
+		echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: trusted Issue Sync action-required run listing failed; refusing workflow approval" >>"$LOGFILE"
+		return 1
+	}
+	if ! printf '%s' "$runs_json" | jq -e '
+		type == "object"
+		and (.total_count | type == "number" and . >= 0 and . <= 100)
+		and (.workflow_runs | type == "array")
+		and (.total_count == (.workflow_runs | length))
+	' >/dev/null 2>&1; then
+		echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: trusted Issue Sync workflow-run response was malformed or exceeded the 100-run bound; refusing workflow approval" >>"$LOGFILE"
+		return 1
+	fi
+	candidates_json=$(printf '%s' "$runs_json" | jq -c '[.workflow_runs[] | select((.conclusion // "") == "action_required")]') || return 1
+	[[ "$candidates_json" != "[]" ]] || return 0
+	if ! printf '%s' "$candidates_json" | jq -e --arg repo "$repo_slug" --arg head "$expected_head_sha" --argjson pr "$pr_number" '
+		all(.[ ];
+			(.id | type == "number")
+			and .event == "pull_request"
+			and .conclusion == "action_required"
+			and .head_sha == $head
+			and .head_repository.full_name == $repo
+			and (.pull_requests | type == "array" and length == 1)
+			and .pull_requests[0].number == $pr)
+	' >/dev/null 2>&1; then
+		echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: action-required run identity, repository, head, or PR association did not match; refusing workflow approval" >>"$LOGFILE"
+		return 1
+	fi
+	run_ids=$(printf '%s' "$candidates_json" | jq -r '.[].id') || return 1
+
+	while IFS= read -r run_id; do
+		[[ "$run_id" =~ ^[0-9]+$ ]] || return 1
+		live_identity=$(_pmp_issue_sync_run_api read gh api "repos/${repo_slug}/pulls/${pr_number}" \
+			--jq '[.head.sha // "", .head.repo.full_name // ""] | @tsv') || return 1
+		IFS=$'\t' read -r live_head_sha live_head_repo <<<"$live_identity"
+		#aidevops:trust-boundary -- revalidate both current ownership and the shared
+		# immutable Issue Sync predicate immediately before every run approval.
+		if [[ "$live_head_sha" != "$expected_head_sha" || "$live_head_repo" != "$repo_slug" ]] \
+			|| ! _pulse_is_trusted_issue_sync_pr "$pr_number" "$repo_slug" "$expected_head_sha"; then
+			echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: head or Issue Sync trust changed before workflow run ${run_id} approval; refusing remaining approvals" >>"$LOGFILE"
+			return 1
+		fi
+		if approve_output=$(_pmp_issue_sync_run_api write gh api -X POST \
+			"repos/${repo_slug}/actions/runs/${run_id}/approve" 2>&1); then
+			approved_count=$((approved_count + 1))
+			_pmp_audit_issue_sync_run_approval "$repo_slug" "$pr_number" "$expected_head_sha" "$run_id" approved
+			continue
+		fi
+		run_conclusion=$(_pmp_issue_sync_run_api read gh api \
+			"repos/${repo_slug}/actions/runs/${run_id}" --jq '.conclusion // ""' 2>/dev/null) || return 1
+		if [[ "$run_conclusion" != "action_required" && -n "$run_conclusion" ]]; then
+			approved_count=$((approved_count + 1))
+			_pmp_audit_issue_sync_run_approval "$repo_slug" "$pr_number" "$expected_head_sha" "$run_id" already-cleared
+			continue
+		fi
+		echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: approval failed for trusted Issue Sync workflow run ${run_id}; refusing remaining approvals: ${approve_output}" >>"$LOGFILE"
+		return 1
+	done <<<"$run_ids"
+
+	_PULSE_ISSUE_SYNC_RUNS_APPROVED="$approved_count"
+	if declare -F gh_pr_check_status_cache_invalidate >/dev/null 2>&1 \
+		&& ! gh_pr_check_status_cache_invalidate "$repo_slug" "$expected_head_sha"; then
+		echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: approved Issue Sync runs but required-check cache invalidation failed; deferring for a fresh pass" >>"$LOGFILE"
+		return 1
+	fi
+	echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: approved or confirmed cleared ${approved_count} exact-head action-required Issue Sync workflow run(s); refreshing required checks on the next pass" >>"$LOGFILE"
+	return 0
+}
+
 _handle_existing_native_auto_merge() {
 	local pr_number="$1"
 	local repo_slug="$2"
