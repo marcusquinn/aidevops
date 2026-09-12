@@ -26,6 +26,7 @@ reference/interchange targets, not applications to purchase or install.
 | C4 | Primary / thinking | Creative demo scripts/templates and configurable lamp/kitchen recipes | C1 | Rebuildable source; named parts; dimensions; rendered/exported evidence; no automatic fabrication certification |
 | C5 | Primary / standard | Existing applicable tests/lint plus focused regressions and runtime evidence | C1-C4 | Registration, authority and artifact checks; independent visual/security review where applicable |
 | C6 | Primary / standard | Signed PR, terminal checks/reviews, guarded merge and cleanup | C5 | Managed full-loop complete; release not requested |
+| C4-V | Advisory critic / standard | Supplied render and responsive-viewer screenshots only; no edits or acceptance authority | C4 artifacts | Concrete visual findings with screenshot citations; primary verifies disposition |
 
 Advisory research is capped at two children with no further delegation. Unit
 ownership is disjoint: runtime-profile discovery and upstream-adapter discovery
@@ -98,9 +99,32 @@ commands, outcomes, unresolved capabilities and PR identity here as work proceed
 - C2 code written: disabled MCP registration, scoped tools, parent-route inheritance
   and source/approval-gated launcher. Preserve venv interpreter symlinks.
 - Markdown lint passes on the new/changed guides. Python/Node syntax checks pass.
-- Initial existing MCP/routing checks: 61 pass, one expected activation-count change
-  (six to nine profiles); exact allowlist updated. New focused regressions pending.
-- C4 demo recipes, runtime artifact verification, README and final index regeneration
-  remain outstanding. No live third-party MCP, app install or paid job authorised.
-- Next: run the focused launcher/profile tests; repair failures; implement and run
-  the local demo CLI; review actual renders/exports; scoped lint/review and PR merge.
+- Foundation committed as `f5db5dc44`. Launcher checks: 8 passed. Combined creative,
+  MCP activation, Blender registry, research boundary and effort-routing checks:
+  71 passed, 0 failed. Fixed wildcard frontmatter parsing and venv symlink handling.
+- C4 recipe/CLI, Blender/FreeCAD exporters and local Three.js viewer are written.
+  The lamp rebuild exports 28 actual GLB meshes; native source and Cycles PNG exist.
+  Evaluated export copies retain editable curves/modifiers in the native project.
+- Fixed FreeCADCmd's imported-script entry point. Kitchen exports 131 GLB meshes;
+  130 valid CAD solids survived native reopening and STEP import. The worktop is
+  3050 mm; the curved tap remains explicitly excluded reference geometry.
+- Browser QA uses the existing installed Playwright Core 1.57.0 via the helper's
+  documented module override and an existing separate browser. Both models load
+  on desktop/mobile. Initial smoke found only a missing favicon; source repaired.
+  Structural accessibility reported no issues. The helper's contrast subcheck was
+  unavailable; a bounded check of actual rendered CSS confirmed ratios 6.58–20.24.
+- Final v3 viewer verification passed part/view/wireframe/explode/section/fit/PNG
+  interactions, 6 lamp and 9 kitchen downloads, keyboard focus, 44px controls,
+  mobile overflow checks and retention of a verified model after a failed load.
+  No unexpected browser errors. Independent C4-V review accepted the refined
+  lighting, material legibility and framing; only optional exploded-view tone polish.
+- Runtime evidence is under ignored `.agents/loop-state/creative-{lamp,kitchen}-v3/`.
+  Viewer uses pinned Three.js 0.186.0 (upstream r186); dependency install ran with
+  lifecycle scripts disabled. No live third-party MCP, app install or paid job ran.
+- Native demonstrations have been archived outside the worktree before cleanup.
+  Offline demo tests: 10 passed; changed-file lint passes with no new regressions.
+- C5 adds explicit creative workflow/app readiness records; catalogue presence is
+  not installation, consent, bridge reachability or verified usability. Git source
+  validation also rejects nested directories inheriting a parent repository pin.
+- Next: finish capability-registry validation and independent security closeout,
+  commit, PR and guarded merge. Release remains not requested; no PR exists yet.

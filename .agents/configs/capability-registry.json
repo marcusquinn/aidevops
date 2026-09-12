@@ -22,6 +22,87 @@
   ],
   "capabilities": [
     {
+      "name": "3d-production",
+      "aliases": ["3d-modelling", "3d-modeling", "creative-3d"],
+      "owner": "3D Modelling",
+      "description": "Brief, representation and verification workflow for editable 3D artifacts; app execution is separately gated",
+      "runtimes": ["opencode", "claude-code"],
+      "entry_points": ["3d-modelling.md", "workflows/creative-production.md"],
+      "fallback": "manual-creative-brief",
+      "required": ["deployed", "runtime_compatible", "tool_visible"],
+      "probes": {"deployed": {"path": "3d-modelling.md"}, "tool_visible": {"tool": "read"}}
+    },
+    {
+      "name": "video-production",
+      "aliases": ["video-editing", "creative-video"],
+      "owner": "Video",
+      "description": "Editable video brief, timeline and delivery workflow; live app and paid-provider readiness are separate",
+      "runtimes": ["opencode", "claude-code"],
+      "entry_points": ["video.md", "workflows/creative-production.md"],
+      "fallback": "manual-creative-brief",
+      "required": ["deployed", "runtime_compatible", "tool_visible"],
+      "probes": {"deployed": {"path": "video.md"}, "tool_visible": {"tool": "read"}}
+    },
+    {
+      "name": "audio-production",
+      "aliases": ["music-production", "creative-audio"],
+      "owner": "Audio",
+      "description": "Audio/music brief, session and delivery workflow; live app and paid-provider readiness are separate",
+      "runtimes": ["opencode", "claude-code"],
+      "entry_points": ["audio.md", "workflows/creative-production.md"],
+      "fallback": "manual-creative-brief",
+      "required": ["deployed", "runtime_compatible", "tool_visible"],
+      "probes": {"deployed": {"path": "audio.md"}, "tool_visible": {"tool": "read"}}
+    },
+    {
+      "name": "blender-operations",
+      "aliases": ["blender", "blender-lab"],
+      "owner": "3D Modelling",
+      "description": "Guarded Blender scene editing and rendering through the approved local bridge",
+      "runtimes": ["opencode"],
+      "entry_points": ["tools/design/blender.md"],
+      "mcp": "blender-lab",
+      "fallback": "gated-creative-app-guidance",
+      "required": ["deployed", "installed", "configured", "enabled", "authorized", "reachable", "runtime_compatible", "tool_visible", "usable"],
+      "probes": {"deployed": {"path": "tools/design/blender.md"}, "installed": {"live": "requires installed app and reviewed bridge inventory"}, "configured": {"live": "requires operator-provisioned isolated environment"}, "enabled": {"live": "requires explicit runtime MCP activation"}, "authorized": {"live": "requires app execution consent and isolation verification"}, "reachable": {"live": "requires bridge handshake"}, "tool_visible": {"tool": "blender-lab_*"}, "usable": {"live": "requires app/project readback and representative export verification"}}
+    },
+    {
+      "name": "freecad-operations",
+      "aliases": ["freecad", "parametric-cad"],
+      "owner": "3D Modelling",
+      "description": "Guarded FreeCAD operations through an operator-provisioned local bridge",
+      "runtimes": ["opencode"],
+      "entry_points": ["tools/design/freecad.md"],
+      "mcp": "freecad",
+      "fallback": "gated-creative-app-guidance",
+      "required": ["deployed", "installed", "configured", "enabled", "authorized", "reachable", "runtime_compatible", "tool_visible", "usable"],
+      "probes": {"deployed": {"path": "tools/design/freecad.md"}, "installed": {"live": "requires installed app and reviewed bridge inventory"}, "configured": {"live": "requires operator paths and verified isolated environment"}, "enabled": {"live": "requires explicit runtime MCP activation"}, "authorized": {"live": "requires operator code-execution approval"}, "reachable": {"live": "requires bridge handshake"}, "tool_visible": {"tool": "freecad_*"}, "usable": {"live": "requires copied document readback and CAD export verification"}}
+    },
+    {
+      "name": "ableton-operations",
+      "aliases": ["ableton", "ableton-live"],
+      "owner": "Audio",
+      "description": "Guarded Live Set operations with upstream telemetry and dataset collection disabled",
+      "runtimes": ["opencode"],
+      "entry_points": ["tools/audio/ableton.md"],
+      "mcp": "ableton",
+      "fallback": "gated-creative-app-guidance",
+      "required": ["deployed", "installed", "configured", "enabled", "authorized", "reachable", "runtime_compatible", "tool_visible", "usable"],
+      "probes": {"deployed": {"path": "tools/audio/ableton.md"}, "installed": {"live": "requires app/version and reviewed bridge inventory"}, "configured": {"live": "requires isolated app/bridge and collection-off verification"}, "enabled": {"live": "requires explicit runtime MCP activation"}, "authorized": {"live": "requires operator code-execution approval"}, "reachable": {"live": "requires local bridge handshake"}, "tool_visible": {"tool": "ableton_*"}, "usable": {"live": "requires copied Live Set readback and representative audio export"}}
+    },
+    {
+      "name": "resolve-operations",
+      "aliases": ["davinci-resolve", "resolve-editing"],
+      "owner": "Video",
+      "description": "Optional guarded Resolve timeline, grading and delivery operations; installation is never assumed",
+      "runtimes": ["opencode"],
+      "entry_points": ["tools/video/davinci-resolve.md"],
+      "mcp": "davinci-resolve",
+      "fallback": "gated-creative-app-guidance",
+      "required": ["deployed", "installed", "configured", "enabled", "authorized", "reachable", "runtime_compatible", "tool_visible", "usable"],
+      "probes": {"deployed": {"path": "tools/video/davinci-resolve.md"}, "installed": {"live": "requires app/version/licence and reviewed bridge inventory"}, "configured": {"live": "requires isolated app with supported local scripting"}, "enabled": {"live": "requires explicit runtime MCP activation"}, "authorized": {"live": "requires operator code-execution approval"}, "reachable": {"live": "requires compact adapter handshake"}, "tool_visible": {"tool": "davinci-resolve_*"}, "usable": {"live": "requires timeline readback and short verified delivery export"}}
+    },
+    {
       "name": "code-development",
       "aliases": ["code", "build", "implementation"],
       "owner": "Build+",

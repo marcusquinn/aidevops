@@ -104,6 +104,9 @@ def prepare(app, env):
     git = shutil.which("git", path=clean.get("PATH", os.defpath))
     if not git:
         raise ValueError("Git is required to verify the reviewed MCP source revision")
+    top = checked_output([git, "-C", str(root), "rev-parse", "--show-toplevel"], clean)
+    if Path(top).resolve() != root:
+        raise ValueError("MCP source must be the Git worktree root, not an ignored nested directory")
     if checked_output([git, "-C", str(root), "rev-parse", "HEAD"], clean) != spec["revision"]:
         raise ValueError("MCP source revision differs from the reviewed launcher pin")
     if checked_output([git, "-C", str(root), "status", "--porcelain", "--untracked-files=normal"], clean):

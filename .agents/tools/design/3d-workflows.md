@@ -43,6 +43,9 @@ units, material fidelity, external assets and stable identity after round-trip.
 
 ## Demonstration acceptance
 
+Run the original lamp/kitchen examples with `3d-demonstrations.md` and
+`scripts/creative-demo-helper.py`; they expose verification limits explicitly.
+
 The lamp tests shade thickness, glass/metal response, plausible light, component
 naming, tilt/dimension parameters and reproducible rendering. It is not electrical
 or thermal certification.

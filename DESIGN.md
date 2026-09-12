@@ -345,6 +345,18 @@ Don't:
 - Generated report handoffs should print cleanly to A4, US Letter, and 16:9 slides without clipped tables.
 - Maintain keyboard and screen-reader access for every control; existing ARIA labels in `.opencode/ui/chat-sidebar/constants.ts` are the naming pattern.
 
+## Creative model inspector
+
+- `.agents/templates/creative-viewer.html` uses a compact dark control rail beside
+  an unframed, neutral-lit model stage. The stage lighting/background belongs to
+  artifact inspection, not a new light-only operational theme.
+- Below 700px, put the model above the controls; keep controls at least 44px high,
+  allow normal page scrolling and retain accessible part/view selectors.
+- Do not auto-spin models. Render on interaction/resize, retain visible focus and
+  distinguish view-only changes from authoritative geometry configuration.
+- Exports and verification state remain explicit. Missing outputs are unavailable,
+  not fabricated download links or an implication of production certification.
+
 ## Agent Prompt Guide
 
 When implementing AI DevOps UI:

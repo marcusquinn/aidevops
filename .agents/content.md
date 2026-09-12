@@ -11,6 +11,10 @@ subagents:
   - production-video
   - production-audio
   - production-characters
+  - blender
+  - freecad
+  - ableton
+  - davinci-resolve
   - media-generation-providers
   - gemini-image
   - gemini-video

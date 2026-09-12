@@ -72,6 +72,14 @@ class CapabilityReadinessTests(unittest.TestCase):
         self.assertEqual("route", output["decision"])
         self.assertEqual("Build+", output["owner"])
 
+    def test_creative_app_catalogue_does_not_imply_execution_readiness(self) -> None:
+        for name in ("blender", "freecad", "ableton", "davinci-resolve"):
+            with self.subTest(name=name):
+                output = self.run_helper("route", name, "--runtime", "opencode", expected=3)
+                self.assertEqual("gated-creative-app-guidance", output["fallback"])
+                self.assertIn("authorized", output["coverage_impact"])
+                self.assertIn("usable", output["coverage_impact"])
+
     def test_unavailable_credentials_fall_back(self) -> None:
         output = self.run_helper("route", "github", "--runtime", "opencode", expected=3)
         self.assertEqual("fallback", output["decision"])

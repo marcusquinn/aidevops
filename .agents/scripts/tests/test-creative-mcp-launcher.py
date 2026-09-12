@@ -34,7 +34,9 @@ import os, sys
 from pathlib import Path
 root = Path(os.environ['HOME'])
 (root / 'git-called').touch()
-if 'rev-parse' in sys.argv:
+if '--show-toplevel' in sys.argv:
+    print(root / 'source')
+elif 'rev-parse' in sys.argv:
     print((root / 'revision').read_text())
 elif (root / 'dirty').exists():
     print(' M modified.py')
@@ -82,6 +84,13 @@ if __name__ == '__main__':
         actual = MODULE.required_path({"PY": str(self.python)}, "PY", executable=True)
         self.assertEqual(actual, self.python)
         self.assertNotEqual(actual, self.python.resolve())
+
+    def test_nested_source_cannot_inherit_a_parent_repository_pin(self):
+        env = self.environment("ableton")
+        nested = self.source / "ignored"
+        nested.mkdir()
+        env["AIDEVOPS_ABLETON_MCP_SOURCE"] = str(nested)
+        self.assertIn("Git worktree root", self.invoke("ableton", env).stderr)
 
     def test_missing_app_revision_drift_and_dirty_source_fail(self):
         env = self.environment("ableton")

@@ -440,10 +440,10 @@ function getMcpRegistry() {
       description: "Official Blender Lab MCP with opt-in isolated provisioning",
     },
     ...[
-      ["freecad", ["tools", "design", "freecad.md"], "Parametric CAD in an approved FreeCAD project"],
-      ["ableton", ["tools", "audio", "ableton.md"], "Music and audio in an approved Ableton Live Set"],
-      ["davinci-resolve", ["tools", "video", "davinci-resolve.md"], "Optional Resolve editing through the compact scripting adapter"],
-    ].map(([name, agentSource, description]) => ({
+      { name: "freecad", agentSource: ["tools", "design", "freecad.md"], description: "Parametric CAD in an approved FreeCAD project" },
+      { name: "ableton", agentSource: ["tools", "audio", "ableton.md"], description: "Music and audio in an approved Ableton Live Set" },
+      { name: "davinci-resolve", agentSource: ["tools", "video", "davinci-resolve.md"], description: "Optional Resolve editing through the compact scripting adapter" },
+    ].map(({ name, agentSource, description }) => ({
       name,
       type: "local",
       command: ["python3", "-I", join(homedir(), ".aidevops", "agents", "scripts", "creative-mcp-launcher.py"), name],
