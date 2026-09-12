@@ -270,9 +270,11 @@ check_string_in_file "subagent-index.toon" "node-server-admin" "Subagent index: 
 # ─── Test 5: Primary agent @mention files ─────────────────────────────────────
 echo ""
 echo "=== 5. Primary Agent @Mention Files ==="
-# 12 primary agents: marketing-sales consolidates marketing+sales; content covers video/social; business covers accounts; PR covers earned media.
+# 15 primary agents: focused 3D/video/audio agents share app production with Content; marketing-sales consolidates marketing+sales; business covers accounts; PR covers earned media.
 AGENT_FILES=(
+	"3d-modelling.md"
 	"aidevops.md"
+	"audio-music.md"
 	"$BUILD_PLUS_FILE"
 	"automate.md"
 	"business.md"
@@ -284,11 +286,16 @@ AGENT_FILES=(
 	"product.md"
 	"research.md"
 	"seo.md"
+	"video.md"
 )
 for af in "${AGENT_FILES[@]}"; do
 	check_file_nonempty "$af" 100 "Primary agent file"
 done
 check_string_in_file "subagent-index.toon" "PR,pr.md" "subagent-index: PR display name is uppercase"
+check_string_in_file "subagent-index.toon" "3D-Modelling,3d-modelling.md" "subagent-index: 3D modelling primary registered"
+check_string_in_file "subagent-index.toon" "Audio-Music,audio-music.md" "subagent-index: audio/music primary registered"
+check_string_in_file "subagent-index.toon" "Video,video.md" "subagent-index: video primary registered"
+check_string_in_file "reference/domain-index.md" "content/creative-production.md" "Domain index: shared creative production contract routed"
 check_frontmatter_description_quoting "services/communications/privacy-comparison.md" "OpenCode subagent YAML safety"
 
 # ─── Test 6: Capabilities section retains key entries ─────────────────────────
