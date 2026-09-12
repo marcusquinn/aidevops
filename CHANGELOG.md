@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.364] - 2026-09-12
+
+### Changed
+
+- Documentation: Regenerate README capability overview
+- Maintenance: mark t18430 complete (pr:#31829 completed:2026-09-12) (#31830)
+- Maintenance: record OpenCode pin completion
+- Maintenance: pin OpenCode GitHub Action to v1.18.30
+
+### Fixed
+
+- default localhost helper arguments (#31827)
+
 ## [3.32.363] - 2026-09-12
 
 ### Changed
