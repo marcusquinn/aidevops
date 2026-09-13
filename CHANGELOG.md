@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.368] - 2026-09-14
+
+### Fixed
+
+- preserve worker blocker safety gates
+- accept Cloudron tag-and-digest images (#31864)
+- harden Cloudron package release checks (#31863)
+
 ## [3.32.367] - 2026-09-13
 
 ### Fixed
