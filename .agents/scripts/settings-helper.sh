@@ -81,11 +81,6 @@ _generate_defaults() {
     "sonarcloud_enabled": true,
     "write_time_linting": true
   },
-  "model_routing": {
-    "default_tier": "standard",
-    "budget_tracking_enabled": true,
-    "prefer_subscription": true
-  },
   "runtime": {
     "opencode": {
       "astra_context_cap": true,
@@ -378,7 +373,7 @@ cmd_validate() {
 	fi
 
 	# Check required sections exist
-	local required_sections=("auto_update" "supervisor" "repo_sync" "quality" "model_routing" "onboarding" "ui")
+	local required_sections=("auto_update" "supervisor" "repo_sync" "quality" "onboarding" "ui")
 	for section in "${required_sections[@]}"; do
 		if ! jq -e ".$section" "$SETTINGS_FILE" >/dev/null 2>&1; then
 			print_warning "Missing section: $section"
@@ -416,6 +411,12 @@ cmd_validate() {
 	fi
 	if [[ "$pulse_interval" -lt 30 || "$pulse_interval" -gt 3600 ]]; then
 		print_warning "orchestration.pulse_interval_seconds ($pulse_interval) should be 30-3600"
+		errors=$((errors + 1))
+	fi
+
+	if jq -e 'has("model_routing")' "$SETTINGS_FILE" >/dev/null 2>&1; then
+		print_warning "model_routing is obsolete; routing now uses configs/model-routing-table.json and explicit tier labels"
+		print_info "  Run: aidevops update  (backs up settings and removes the obsolete section)"
 		errors=$((errors + 1))
 	fi
 
@@ -547,9 +548,6 @@ SETTINGS KEYS (dot-notation):
     quality.shellcheck_enabled           ShellCheck on/off (default: true)
     quality.sonarcloud_enabled           SonarCloud on/off (default: true)
     quality.write_time_linting           Lint on every edit (default: true)
-    model_routing.default_tier           Default model tier (default: standard)
-    model_routing.budget_tracking_enabled Budget tracking on/off (default: true)
-    model_routing.prefer_subscription    Prefer subscription over API (default: true)
     onboarding.completed                 Whether onboarding was completed
     onboarding.work_type                 User's work type from onboarding
     onboarding.familiarity               Concepts user is familiar with
