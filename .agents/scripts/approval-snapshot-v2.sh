@@ -90,8 +90,11 @@ _approval_snapshot_v2_comments_json() {
 			| ($source == "conversation" and $number != "" and $repo != "")
 			and startswith($body)
 			and (.[$body | length:] | test("^(?:\\n<!-- aidevops:origin:worker -->)?\\n<!-- aidevops:sig -->\\n---\\n\\[aidevops\\.sh\\]\\(https://aidevops\\.sh\\) v[0-9]+\\.[0-9]+\\.[0-9]+ automated scan\\.\\n?$"));
+		# aidevops:trust-boundary — accept the renamed deterministic audit text
+		# while preserving already-published round-robin audit compatibility.
 		def canonical_dispatch_audit:
-			test(
+			gsub("auto-select \\(ordered fallback\\)"; "auto-select (round-robin)")
+			| test(
 				"^<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->\\n(?:" +
 				"DISPATCH_CLAIM nonce=[A-Za-z0-9._:-]+ runner=[A-Za-z0-9._:-]+ ts=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z max_age_s=[0-9]+ version=[A-Za-z0-9._+-]+ opencode_version=[A-Za-z0-9._+-]+ lease_token=[A-Za-z0-9._:-]+ device=[A-Za-z0-9._:-]+ session=issue-[0-9]+ phase=prelaunch expires_at=[0-9]+(?: [a-z_]+=[A-Za-z0-9._:-]+)*" +
 				"|DISPATCH_LEASE phase=(?:prelaunch|ready|terminal) lease_token=[A-Za-z0-9._:-]+ device=[A-Za-z0-9._:-]+ session=issue-[0-9]+ expires_at=[0-9]+ ts=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z attempt_id=[A-Za-z0-9._:-]+" +

@@ -2008,7 +2008,7 @@ CLAIM_RELEASED reason=dispatch_aborted:${reason} runner=${self_login} ts=$(date 
 #   $6 - repo_path (local path to the repo)
 #   $7 - prompt (worker prompt string)
 #   $8 - session_key (optional, default "issue-{issue_number}")
-#   $9 - model_override (optional, default empty = auto round-robin)
+#   $9 - model_override (optional, default empty = ordered healthy auto-selection)
 #
 # Exit codes:
 #   0 - worker dispatched successfully

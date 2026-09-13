@@ -40,7 +40,7 @@ pulse-dispatch-worker-launch.sh    — launch sub-stages instrumented
 | Stage name            | What it covers                                     |
 |-----------------------|----------------------------------------------------|
 | `assign_and_label`    | Issue edit: swap assignees + status:queued + origin:worker |
-| `resolve_tier_model`  | Label-based tier resolution + round-robin model select |
+| `resolve_tier_model`  | Label-based tier resolution + ordered healthy model fallback |
 | `lock_issue`          | Verified issue conversation lock (t1894/t1934); linked PRs remain open for CI reviews |
 | `final_ownership_fence` | Live ownership check immediately before queued assignment |
 | `precreate_worktree`  | Git worktree pre-creation (or reuse) + dep restore  |

@@ -501,7 +501,7 @@ ${worker_footer}"
 Dispatching worker (deterministic).
 <!-- aidevops:dispatch lease_token=abc123 device=device-a session=issue-41 attempt_id=attempt:abc123 claim_id=4311 -->
 - **Worker PID**: 12345
-- **Model**: openai/gpt-5.6
+- **Model**: auto-select (ordered fallback)
 - **Tier**: thinking
 - **Runner**: runner-a
 - **aidevops**: v3.32.275
@@ -546,6 +546,13 @@ ${worker_footer}"
 		]' "${FIXTURES}/comments-41.json")
 	printf '%s\n' "$dispatch_comments" >"${FIXTURES}/comments-41.json"
 	assert_verify "trusted canonical dispatch audit comments preserve issue approval" issue 41 VERIFIED 0
+
+	write_baseline_fixtures
+	local legacy_dispatch_launch_audit="${dispatch_launch_audit/auto-select (ordered fallback)/auto-select (round-robin)}"
+	dispatch_comments=$(jq -c --arg body "$legacy_dispatch_launch_audit" '.[0] += [{id:4319,node_id:"IC_4319",user:{id:1,node_id:"U_1",login:"maintainer",type:"User"},author_association:"OWNER",created_at:"2026-01-01T00:04:00Z",updated_at:"2026-01-01T00:04:00Z",body:$body}]' "${FIXTURES}/comments-41.json")
+	printf '%s\n' "$dispatch_comments" >"${FIXTURES}/comments-41.json"
+	append_signed_comment issue 41 "2026-01-01T00:05:00Z"
+	assert_verify "legacy round-robin dispatch audits preserve issue approval" issue 41 VERIFIED 0
 
 	write_baseline_fixtures
 	dispatch_comments=$(jq -c --arg body "$dispatch_claim_audit" '.[0] += [{id:4319,node_id:"IC_4319",user:{id:1,node_id:"U_1",login:"maintainer",type:"User"},author_association:"OWNER",created_at:"2026-01-01T00:04:00Z",updated_at:"2026-01-01T00:04:00Z",body:$body}]' "${FIXTURES}/comments-41.json")

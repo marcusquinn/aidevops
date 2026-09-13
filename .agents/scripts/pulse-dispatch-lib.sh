@@ -1805,7 +1805,7 @@ _dispatch_check_model_concurrency_cap() {
 	local repo_slug="$2"
 	local resolved_model="$3"
 
-	# Empty model = auto round-robin (no explicit model:* label) — skip cap check.
+	# Empty model = ordered auto-selection (no explicit model:* label) — skip cap check.
 	[[ -z "$resolved_model" ]] && return 0
 
 	# Only cap thinking-tier work; standard and simple are unaffected.

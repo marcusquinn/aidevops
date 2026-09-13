@@ -117,7 +117,7 @@ _dlw_post_launch_hooks() {
 	fi
 
 	local dispatch_comment_body
-	local display_model="${selected_model:-auto-select (round-robin)}"
+	local display_model="${selected_model:-auto-select (ordered fallback)}"
 	local aidevops_version="$AIDEVOPS_UNKNOWN_VERSION" opencode_version="$AIDEVOPS_UNKNOWN_VERSION"
 	if declare -F aidevops_find_version >/dev/null 2>&1; then
 		aidevops_version=$(aidevops_find_version 2>/dev/null || printf '%s' "$AIDEVOPS_UNKNOWN_VERSION")
