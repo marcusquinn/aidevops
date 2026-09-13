@@ -19,7 +19,10 @@ import {
 } from "./worker-blocker-reconcile-common.mjs";
 
 export { workerBlockerIdentity } from "./worker-blocker-reconcile-common.mjs";
-export { resolveWorkerBlockersForSession } from "./worker-blocker-session-reconcile.mjs";
+export {
+  resolveStaleSupervisorWorkerBlockers,
+  resolveWorkerBlockersForSession,
+} from "./worker-blocker-session-reconcile.mjs";
 
 function activeWorkerBlockerEvents(logPath, repoSlug, issueNumber = null) {
   return activeWorkerBlockerEventsMatching(logPath, (event) => {

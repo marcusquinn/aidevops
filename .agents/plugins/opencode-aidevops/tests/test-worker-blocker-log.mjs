@@ -16,6 +16,7 @@ import {
 } from "../../../scripts/worker-blocker-log.mjs";
 import {
   listActiveWorkerBlockerIssues,
+  resolveStaleSupervisorWorkerBlockers,
   resolveWorkerBlockersForIssue,
   resolveWorkerBlockersForSession,
 } from "../../../scripts/worker-blocker-reconcile.mjs";
@@ -271,6 +272,56 @@ test("resolve-session CLI appends a terminal event for a null-issue identity", (
   assert.equal(terminal.session_key, "routine-r005");
   assert.equal(terminal.request_id, "request-cli");
   assert.equal(terminal.blocking, false);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("stale supervisor reconciliation preserves evidence and fails closed for current or scoped records", () => {
+  const root = mkdtempSync(join(tmpdir(), "aidevops-worker-blocker-stale-supervisor-"));
+  const logPath = join(root, "events.jsonl");
+  const base = {
+    event: "permission_request_captured",
+    reason: "permission_required",
+    source: "supervisor-pulse",
+    issue_number: null,
+    repo_slug: " ",
+    session_key: "supervisor-pulse",
+  };
+  assert.equal(appendWorkerBlockerEvent({ ...base, request_id: "stale" }, {
+    logPath,
+    now: new Date("2026-07-24T12:00:00Z"),
+  }), true);
+  assert.equal(appendWorkerBlockerEvent({ ...base, request_id: "current" }, {
+    logPath,
+    now: new Date("2026-07-24T12:01:00Z"),
+  }), true);
+  assert.equal(appendWorkerBlockerEvent({ ...base, repo_slug: "owner/repo", request_id: "scoped" }, {
+    logPath,
+    now: new Date("2026-07-24T12:00:00Z"),
+  }), true);
+
+  assert.deepEqual(resolveStaleSupervisorWorkerBlockers({
+    repo_slug: "",
+    session_key: "supervisor-pulse",
+    stale_before: "1784894400",
+  }, { logPath, now: new Date("2026-07-24T12:02:00Z") }), { ok: true, resolvedCount: 1 });
+
+  const events = readFileSync(logPath, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+  const terminal = events.at(-1);
+  assert.equal(events.length, 4);
+  assert.equal(terminal.event, "stale_supervisor_session_terminal_reconciled");
+  assert.equal(terminal.request_id, "stale");
+  assert.equal(terminal.repo_slug, "");
+  assert.equal(terminal.blocking, false);
+  assert.deepEqual(resolveStaleSupervisorWorkerBlockers({
+    repo_slug: "",
+    session_key: "supervisor-pulse",
+    stale_before: "1784894400",
+  }, { logPath, now: new Date("2026-07-24T12:02:01Z") }), { ok: true, resolvedCount: 0 });
+  assert.deepEqual(resolveStaleSupervisorWorkerBlockers({
+    repo_slug: "owner/repo",
+    session_key: "supervisor-pulse",
+    stale_before: "1784894460",
+  }, { logPath }), { ok: false, resolvedCount: 0 });
   rmSync(root, { recursive: true, force: true });
 });
 
