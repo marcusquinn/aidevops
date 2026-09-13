@@ -381,7 +381,7 @@ assert_contains "healthy idle report exposes retained supervisor blocker advisor
 assert_contains "retained blocker report preserves healthy runner state" "Runner health: HEALTHY" "$BLOCKER_OUT"
 assert_contains "retained blocker report shows zero active workers" "Active workers: 0 / 6" "$BLOCKER_OUT"
 assert_contains "retained blocker report gives no-source worker count command" "worker-activity-helper.sh live-workers" "$BLOCKER_OUT"
-assert_contains "retained blocker report gives audited reconciliation guidance" "worker-blocker-cli.mjs resolve-session" "$BLOCKER_OUT"
+assert_contains "retained blocker report gives audited reconciliation guidance" "worker-blocker-cli.mjs resolve-stale-supervisor-session" "$BLOCKER_OUT"
 assert_not_contains "retained blocker report omits private blocker slug" "private/repo-one" "$BLOCKER_OUT"
 assert_not_contains "retained blocker report omits private blocker path" "/private/path" "$BLOCKER_OUT"
 BLOCKER_JSON=$(env "${COMMON_ENV[@]}" "PULSE_CHECK_BLOCKER_FIXTURE=retained" "$HELPER" json --since 7d 2>&1)

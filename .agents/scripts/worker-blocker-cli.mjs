@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url";
 import { appendWorkerBlockerEvent } from "./worker-blocker-log.mjs";
 import {
   listActiveWorkerBlockerIssues,
+  resolveStaleSupervisorWorkerBlockers,
   resolveWorkerBlockersForIssue,
   resolveWorkerBlockersForSession,
 } from "./worker-blocker-reconcile.mjs";
@@ -53,6 +54,7 @@ const COMMAND_HANDLERS = new Map([
   ["append", (event, options) => (appendWorkerBlockerEvent(event, options) ? 0 : 1)],
   ["resolve-issue", (event, options) => runResolution(resolveWorkerBlockersForIssue, event, options)],
   ["resolve-session", (event, options) => runResolution(resolveWorkerBlockersForSession, event, options)],
+  ["resolve-stale-supervisor-session", (event, options) => runResolution(resolveStaleSupervisorWorkerBlockers, event, options)],
   ["list-active-issues", runIssueList],
 ]);
 

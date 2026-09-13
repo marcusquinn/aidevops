@@ -267,7 +267,7 @@ end) as $max_workers |
           ("retained_unverified_blockers_all_sources=" + (($progress_blockers.retained_unverified_total // 0) | tostring)),
           "blocker_evidence=aggregate_redacted"
         ];
-        "Run worker-activity-helper.sh live-workers and worker-activity-helper.sh summary --since 7d to classify retained records. Reconcile only confirmed stale sessions by appending an audited non-blocking terminal event with worker-blocker-cli.mjs resolve-session; do not delete blocker evidence or clear records that still have a live owner.";
+        "Run worker-activity-helper.sh live-workers and worker-activity-helper.sh summary --since 7d to classify retained records. After confirming supervisor-pulse is stale, append audited non-blocking terminal events with worker-blocker-cli.mjs resolve-stale-supervisor-session --repo-slug '' --session-key supervisor-pulse --stale-before <verified-unix-cutoff>; do not delete blocker evidence or clear current or live-owner records.";
         false
       )
     else empty end,

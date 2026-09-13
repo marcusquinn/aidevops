@@ -60,12 +60,62 @@ function terminalSessionWorkerBlockerEvents(active, input) {
   }));
 }
 
+function staleSupervisorSessionScope(input, options) {
+  const repoSlug = normalizeWorkerBlockerRepoSlug(input.repo_slug, options);
+  const sessionKey = normalizeWorkerBlockerSessionKey(input.session_key, options);
+  const staleBefore = Number(input.stale_before);
+  if (repoSlug || sessionKey !== "supervisor-pulse" || !Number.isSafeInteger(staleBefore) || staleBefore <= 0) {
+    throw new Error("Invalid stale supervisor blocker scope");
+  }
+  return { staleBefore };
+}
+
+function activeStaleSupervisorSessionEvents(logPath, scope) {
+  return activeWorkerBlockerEventsMatching(logPath, (event) => (
+    event.repo_slug === ""
+    && event.session_key === "supervisor-pulse"
+    && String(event.source || "").includes("supervisor-pulse")
+    && (event.event === "stale_supervisor_session_terminal_reconciled"
+      || (Number.isFinite(Number(event.ts)) && Number(event.ts) <= scope.staleBefore))
+  ));
+}
+
+function terminalStaleSupervisorSessionEvents(active) {
+  return active.map((event) => ({
+    event: "stale_supervisor_session_terminal_reconciled",
+    status: "resolved",
+    reason: "verified_stale_supervisor_session",
+    blocking: false,
+    source: "worker-blocker-stale-supervisor-pulse-reconcile",
+    issue_number: event.issue_number ?? null,
+    // Preserve the unscoped identity without falling back to the worker's repository environment.
+    repo_slug: " ",
+    session_key: "supervisor-pulse",
+    request_id: event.request_id ?? "",
+    permission: event.permission || "",
+    tool: event.tool || "",
+    risk_level: event.risk_level || "",
+    grantable: typeof event.grantable === "boolean" ? event.grantable : null,
+    detail: "Reconciled after explicit stale cutoff; original blocker evidence retained.",
+  }));
+}
+
 const SESSION_RECONCILIATION_CONTRACT = {
   resolveScope: workerBlockerSessionScope,
   activeEvents: activeWorkerBlockerSessionEvents,
   terminalEvents: terminalSessionWorkerBlockerEvents,
 };
 
+const STALE_SUPERVISOR_SESSION_RECONCILIATION_CONTRACT = {
+  resolveScope: staleSupervisorSessionScope,
+  activeEvents: activeStaleSupervisorSessionEvents,
+  terminalEvents: terminalStaleSupervisorSessionEvents,
+};
+
 export function resolveWorkerBlockersForSession(input = {}, options = {}) {
   return reconcileWorkerBlockers(input, options, SESSION_RECONCILIATION_CONTRACT);
+}
+
+export function resolveStaleSupervisorWorkerBlockers(input = {}, options = {}) {
+  return reconcileWorkerBlockers(input, options, STALE_SUPERVISOR_SESSION_RECONCILIATION_CONTRACT);
 }
