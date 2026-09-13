@@ -308,12 +308,17 @@ Prepare and validate releases without publishing:
 cloudron-package-helper.sh prepare-release 1.2.0 4.5.6 release-notes.md
 cloudron-package-helper.sh check-compatibility
 cloudron-package-helper.sh check-release v1.2.0
+cloudron-package-helper.sh preflight-release v1.2.0
 ```
 
 `prepare-release` validates first, then updates `CloudronManifest.json` and
 inserts a non-empty `CHANGELOG.md` section with rollback on a partial write.
 `check-release` requires a matching `vX.Y.Z` tag, valid manifest, non-empty
 changelog entry, and the exact pinned final Cloudron base image.
+`preflight-release` additionally resolves every tag-and-digest `FROM` source
+without building, pushing, tagging, publishing, or deploying. Run it before
+merge: metadata validity alone does not prove the pinned build sources remain
+available.
 
 Core routines provide ongoing reporting:
 
@@ -324,6 +329,10 @@ Core routines provide ongoing reporting:
 Both routines deduplicate package-local issues, require maintainer-equivalent
 issue authority, and fail closed on GitHub/API errors. They never execute
 upstream instructions or modify package source.
+Applied upstream findings read the package manifest from the target repository's
+remote default branch at a captured commit SHA. The generated schema-v2 brief
+includes a canonical Files Scope; a detected upstream release is only a finding,
+not a prepared, build-verified, or published Cloudron update.
 When GitHub reports a primary or secondary rate limit, `r916` stops before the
 next package registration and records a reset-aware deferred attempt. Pulse
 retries after the shared cooldown boundary plus bounded jitter instead of using

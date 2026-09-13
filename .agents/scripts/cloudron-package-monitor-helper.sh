@@ -76,6 +76,30 @@ _cloudron_monitor_fetch_releases() {
 	return 0
 }
 
+# Fetch the target manifest from the remote default branch. The commit SHA is
+# captured before the content request so a finding cannot silently describe a
+# stale registered checkout.
+_cloudron_monitor_fetch_remote_manifest() {
+	local slug="$1"
+	local manifest_rel="$2"
+	local repository_json=""
+	local default_branch=""
+	local commit_sha=""
+	local encoded_manifest=""
+	local manifest=""
+	repository_json=$(gh api "/repos/${slug}") || _cloudron_monitor_error "Could not resolve the remote default branch for $slug." || return 1
+	default_branch=$(jq -er '.default_branch | select(type == "string" and length > 0)' <<<"$repository_json") || _cloudron_monitor_error "Remote default branch is missing for $slug." || return 1
+	commit_sha=$(gh api "/repos/${slug}/commits/${default_branch}" --jq '.sha') || _cloudron_monitor_error "Could not resolve the remote default-branch commit for $slug." || return 1
+	[[ "$commit_sha" =~ ^[0-9A-Fa-f]{40}$ ]] || _cloudron_monitor_error "Remote default-branch commit SHA is invalid for $slug." || return 1
+	encoded_manifest=$(gh api "/repos/${slug}/contents/${manifest_rel}?ref=${commit_sha}" --jq '.content') || _cloudron_monitor_error "Could not fetch the remote manifest for $slug at ${commit_sha}." || return 1
+	manifest=$(printf '%s' "$encoded_manifest" | tr -d '\n' | base64 -D 2>/dev/null) ||
+		manifest=$(printf '%s' "$encoded_manifest" | tr -d '\n' | base64 --decode 2>/dev/null) ||
+		_cloudron_monitor_error "Remote manifest content could not be decoded for $slug." || return 1
+	jq -e 'type == "object"' <<<"$manifest" >/dev/null 2>&1 || _cloudron_monitor_error "Remote manifest is not valid JSON for $slug." || return 1
+	printf '%s\n%s\n' "$commit_sha" "$manifest"
+	return 0
+}
+
 _cloudron_monitor_require_tools() {
 	command -v jq >/dev/null 2>&1 || _cloudron_monitor_error "jq is required." || return 1
 	command -v gh >/dev/null 2>&1 || _cloudron_monitor_error "GitHub CLI is required." || return 1
@@ -205,31 +229,42 @@ _cloudron_monitor_create_issue() {
 	local fingerprint="$3"
 	local summary="$4"
 	local verification="$5"
+	local manifest_rel="${6:-CloudronManifest.json}"
+	local repo_path="${7:-}"
+	local changelog_scope=""
 	local body_dir="${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}"
 	local body_file=""
 	local issue_wrapper="${CLOUDRON_PACKAGE_ISSUE_WRAPPER:-gh_create_issue}"
 	command -v "$issue_wrapper" >/dev/null 2>&1 || _cloudron_monitor_error "gh_create_issue wrapper is required for managed issue writes." || return 1
 	mkdir -p "$body_dir"
 	body_file=$(mktemp "${body_dir}/cloudron-package-monitor.XXXXXX") || return 1
+	if [[ -n "$repo_path" && -f "${repo_path}/CHANGELOG" ]]; then
+		changelog_scope="- \`CHANGELOG\` — Cloudron-format package release notes."
+	fi
+	if [[ -n "$repo_path" && -f "${repo_path}/CHANGELOG.md" ]]; then
+		changelog_scope="${changelog_scope}
+- \`CHANGELOG.md\` — package release notes before any version bump."
+	fi
 	cat >"$body_file" <<EOF
 <!-- aidevops:cloudron-package-monitor ${fingerprint} -->
+<!-- aidevops:brief-schema=v2 -->
 ## What
 
 ${summary}
 
 The monitor did not build, publish, tag, deploy, or modify package source.
 
-## Files to inspect
+## Files Scope
 
-- \`CloudronManifest.json\` — package and upstream version metadata.
+- \`${manifest_rel}\` — package and upstream version metadata.
 - \`Dockerfile\` or \`Dockerfile.cloudron\` — final Cloudron base image and packaged upstream artifacts.
-- \`CHANGELOG.md\` — package release notes before any version bump.
+${changelog_scope:-\`CHANGELOG.md\` — package release notes before any version bump.}
 
 ## Acceptance criteria
 
 - Reproduce and assess the finding against current upstream and Cloudron packaging guidance.
 - Update package source and tests only when the finding remains actionable.
-- Run the package release check before proposing a tag.
+- Run the package release preflight before proposing a tag.
 - Do not publish a release, image, catalog entry, or deployment without separate operator authorization.
 
 ## Verification
@@ -253,6 +288,8 @@ _cloudron_monitor_apply_finding() {
 	local fingerprint="$4"
 	local summary="$5"
 	local verification="$6"
+	local manifest_rel="${7:-CloudronManifest.json}"
+	local repo_path="${8:-}"
 	local exists_rc=0
 	if _cloudron_monitor_issue_exists "$slug" "$fingerprint"; then
 		printf 'Already handled in %s: %s\n' "$slug" "$fingerprint"
@@ -266,7 +303,7 @@ _cloudron_monitor_apply_finding() {
 		return 0
 	fi
 	_cloudron_monitor_has_authority "$slug" || _cloudron_monitor_error "ADMIN or MAINTAIN issue authority is required for $slug." || return 1
-	_cloudron_monitor_create_issue "$slug" "$title" "$fingerprint" "$summary" "$verification"
+	_cloudron_monitor_create_issue "$slug" "$title" "$fingerprint" "$summary" "$verification" "$manifest_rel" "$repo_path"
 	return $?
 }
 
@@ -288,11 +325,15 @@ _cloudron_monitor_upstream_entry() {
 	[[ "$slug" == */* && "$upstream_slug" == */* ]] || _cloudron_monitor_error "Cloudron upstream monitoring requires target and upstream slugs." || return 1
 	[[ "$manifest_rel" != /* && "$manifest_rel" != *..* ]] || _cloudron_monitor_error "Unsafe manifest path configured for $slug." || return 1
 	repo_path="${repo_path/#\~/$HOME}"
-	local manifest_path="${repo_path}/${manifest_rel}"
-	[[ -f "$manifest_path" ]] || _cloudron_monitor_error "Manifest missing for registered Cloudron package $slug." || return 1
+	local remote_manifest_result=""
+	local remote_commit_sha=""
+	local remote_manifest=""
+	remote_manifest_result=$(_cloudron_monitor_fetch_remote_manifest "$slug" "$manifest_rel") || return $?
+	remote_commit_sha=$(printf '%s\n' "$remote_manifest_result" | awk 'NR == 1 { print; exit }')
+	remote_manifest=$(printf '%s\n' "$remote_manifest_result" | awk 'NR > 1 { print }')
 	local package_title=""
 	if ! package_title=$(jq -er --arg string_type "$_CLOUDRON_MONITOR_JSON_TYPE_STRING" \
-		'.title | select(type == $string_type and test("\\S"))' "$manifest_path"); then
+		'.title | select(type == $string_type and test("\\S"))' <<<"$remote_manifest"); then
 		_cloudron_monitor_error "Manifest title is missing or blank for registered Cloudron package $slug." || return 1
 	fi
 	tag_prefixes=$(jq -c '.cloudron_package.upstream_tag_prefixes as $prefixes | if $prefixes == null then ["v", ""] else $prefixes end' <<<"$entry") || return 1
@@ -304,7 +345,7 @@ _cloudron_monitor_upstream_entry() {
 	local latest_version=""
 	latest_version=$(_cloudron_monitor_latest_release_version "$releases_json" "$tag_prefixes" "$upstream_slug") || return 1
 	local current_version=""
-	current_version=$(jq -r '.upstreamVersion // empty' "$manifest_path") || return 1
+	current_version=$(jq -r '.upstreamVersion // empty' <<<"$remote_manifest") || return 1
 	if [[ -n "$current_version" ]] && ! _cloudron_monitor_version_newer "$latest_version" "$current_version"; then
 		return 0
 	fi
@@ -312,10 +353,10 @@ _cloudron_monitor_upstream_entry() {
 	local title="${package_title} upstream v${latest_version} is available"
 	local summary=""
 	local verification=""
-	printf -v summary "Upstream package \`%s\` released \`v%s\`; the manifest currently records \`%s\`." \
-		"$upstream_slug" "$latest_version" "${current_version:-no upstreamVersion}"
-	printf -v verification "Run \`cloudron-package-helper.sh check-release v<package-version>\` after updating and testing the package."
-	_cloudron_monitor_apply_finding "$apply" "$slug" "$title" "$fingerprint" "$summary" "$verification"
+	printf -v summary "Upstream package \`%s\` released \`v%s\`; remote default-branch manifest commit \`%s\` records \`%s\`." \
+		"$upstream_slug" "$latest_version" "$remote_commit_sha" "${current_version:-no upstreamVersion}"
+	printf -v verification "Run \`cloudron-package-helper.sh preflight-release v<package-version>\` after updating and testing the package."
+	_cloudron_monitor_apply_finding "$apply" "$slug" "$title" "$fingerprint" "$summary" "$verification" "$manifest_rel" "$repo_path"
 	return $?
 }
 

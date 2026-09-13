@@ -72,6 +72,19 @@ run_helper() {
 	return $?
 }
 
+write_fake_docker() {
+	local bin_dir="$1"
+	mkdir -p "$bin_dir"
+	cat >"${bin_dir}/docker" <<'DOCKER'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "${1:-}" == "manifest" && "${2:-}" == "inspect" ]] || exit 1
+[[ "${3:-}" != *"unavailable"* ]]
+DOCKER
+	chmod +x "${bin_dir}/docker"
+	return 0
+}
+
 test_prepare_and_validate_release() {
 	local repo_dir="${TEST_ROOT}/valid"
 	make_fixture "$repo_dir"
@@ -89,6 +102,21 @@ test_prepare_and_validate_release() {
 		fail "mismatched tag rejected"
 	else
 		pass "mismatched tag rejected"
+	fi
+	return 0
+}
+
+test_release_preflight_validates_immutable_sources() {
+	local repo_dir="${TEST_ROOT}/preflight"
+	local bin_dir="${TEST_ROOT}/preflight-bin"
+	make_fixture "$repo_dir"
+	write_fake_docker "$bin_dir"
+	PATH="${bin_dir}:$PATH" run_helper "$repo_dir" preflight-release v1.0.0 >/dev/null && pass "available immutable sources pass preflight" || fail "available immutable sources pass preflight"
+	printf 'FROM example/unavailable:1.0@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\nFROM %s\n' "$PINNED_BASE" >"${repo_dir}/Dockerfile"
+	if PATH="${bin_dir}:$PATH" run_helper "$repo_dir" preflight-release v1.0.0 >/dev/null 2>&1; then
+		fail "unavailable immutable source blocks preflight"
+	else
+		pass "unavailable immutable source blocks preflight"
 	fi
 	return 0
 }
@@ -141,6 +169,7 @@ main() {
 	test_prepare_and_validate_release
 	test_invalid_prepare_is_non_mutating
 	test_release_gate_rejects_package_defects
+	test_release_preflight_validates_immutable_sources
 	printf '\nRan %d tests, %d failed.\n' "$((PASSED + FAILED))" "$FAILED"
 	[[ "$FAILED" -eq 0 ]] || return 1
 	return 0

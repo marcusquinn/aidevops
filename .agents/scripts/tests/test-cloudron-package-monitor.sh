@@ -87,6 +87,26 @@ JSON
     fi
     exit 0
 fi
+if [[ "${1:-}" == "api" && "${2:-}" == "/repos/exampleorg/example-package" ]]; then
+	[[ "${MONITOR_REMOTE_FAILURE:-false}" != true ]] || exit 1
+    printf '%s\n' '{"default_branch":"main"}'
+    exit 0
+fi
+if [[ "${1:-}" == "api" && "${2:-}" == "/repos/exampleorg/example-package/commits/main" ]]; then
+	printf '%s\n' '0123456789012345678901234567890123456789'
+    exit 0
+fi
+if [[ "${1:-}" == "api" && "${2:-}" == "/repos/exampleorg/example-package/contents/CloudronManifest.json?ref=0123456789012345678901234567890123456789" ]]; then
+	if [[ -n "${MONITOR_REMOTE_VERSION:-}" ]]; then
+		remote_manifest=$(printf '{"id":"com.example.package","title":"Example Package","version":"1.0.0","upstreamVersion":"%s","healthCheckPath":"/","httpPort":8000,"manifestVersion":2}' "$MONITOR_REMOTE_VERSION")
+	else
+		manifest_path=$(jq -r '.initialized_repos[0].path + "/CloudronManifest.json"' "${HOME}/.config/aidevops/repos.json")
+		remote_manifest=$(cat "$manifest_path")
+	fi
+    printf '%s' "$remote_manifest" | base64 | tr -d '\n'
+    printf '\n'
+    exit 0
+fi
 if [[ "${1:-}" == "repo" && "${2:-}" == "view" ]]; then
     printf '%s\n' 'ADMIN'
     exit 0
@@ -109,6 +129,13 @@ if [[ "${1:-}" == "issue" && "${2:-}" == "list" ]]; then
 fi
 exit 1
 GH
+	write_fake_issue_wrapper "$bin_dir"
+	chmod +x "${bin_dir}/gh"
+	return 0
+}
+
+write_fake_issue_wrapper() {
+	local bin_dir="$1"
 	cat >"${bin_dir}/gh_create_issue" <<'WRAPPER'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -129,7 +156,7 @@ while IFS= read -r line || [[ -n "$line" ]]; do
     printf '%s\n' "$line" >>"${MONITOR_TEST_LOG}"
 done <"$body_file"
 WRAPPER
-	chmod +x "${bin_dir}/gh" "${bin_dir}/gh_create_issue"
+	chmod +x "${bin_dir}/gh_create_issue"
 	return 0
 }
 
@@ -202,6 +229,9 @@ test_monitor_deduplicates_and_preserves_source() {
 	assert_equal 1 "$(grep -c '^CALL exampleorg/example-package$' "$log_file")" "new upstream release creates one target-local issue"
 	assert_equal 1 "$(grep -c '^TITLE Example Package upstream v2.0.0 is available$' "$log_file")" "upstream issue title uses package manifest title"
 	grep -Fq 'upstream-v2.0.0' "$log_file" && assert_equal true true "upstream issue carries stable fingerprint" || assert_equal true false "upstream issue carries stable fingerprint"
+	grep -Fq '<!-- aidevops:brief-schema=v2 -->' "$log_file" && assert_equal true true "upstream issue uses brief schema v2" || assert_equal true false "upstream issue uses brief schema v2"
+	grep -Fq '## Files Scope' "$log_file" && assert_equal true true "upstream issue has canonical files scope" || assert_equal true false "upstream issue has canonical files scope"
+	grep -Fq '0123456789012345678901234567890123456789' "$log_file" && assert_equal true true "upstream issue records immutable remote evidence" || assert_equal true false "upstream issue records immutable remote evidence"
 	grep -Fq -- '--paginate --jq .' "$api_log" && assert_equal true true "paginated release reads request page-delimited JSON" || assert_equal true false "paginated release reads request page-delimited JSON"
 	assert_equal 2 "$(grep -c '^TIMEOUT 90$' "$api_log")" "paginated release reads use the monitor-specific timeout"
 	assert_equal "$manifest_before" "$(cksum "${repo_dir}/CloudronManifest.json")" "upstream monitor does not mutate manifest"
@@ -215,6 +245,30 @@ test_monitor_deduplicates_and_preserves_source() {
 	HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$log_file" CLOUDRON_PACKAGE_ISSUE_WRAPPER="${bin_dir}/gh_create_issue" bash "$HELPER" compatibility --apply >/dev/null
 	assert_equal 2 "$(grep -c '^CALL ' "$log_file")" "compatibility finding is deduplicated"
 	assert_equal "$docker_before" "$(cksum "${repo_dir}/Dockerfile")" "compatibility monitor does not mutate package source"
+	return 0
+}
+
+test_monitor_uses_remote_manifest_and_fails_closed() {
+	local home_dir="${TEST_ROOT}/remote-home"
+	local repo_dir="${TEST_ROOT}/remote-package"
+	local bin_dir="${TEST_ROOT}/remote-bin"
+	local log_file="${TEST_ROOT}/remote-issues.log"
+	local output=""
+	write_fake_commands "$bin_dir"
+	write_fixture "$home_dir" "$repo_dir"
+	jq '.upstreamVersion = "0.5.14"' "${repo_dir}/CloudronManifest.json" >"${repo_dir}/manifest.tmp"
+	mv "${repo_dir}/manifest.tmp" "${repo_dir}/CloudronManifest.json"
+	HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$log_file" \
+		MONITOR_REMOTE_VERSION=0.5.18 \
+		CLOUDRON_PACKAGE_ISSUE_WRAPPER="${bin_dir}/gh_create_issue" bash "$HELPER" upstream --apply >/dev/null
+	grep -Fq "records \`0.5.18\`" "$log_file" && assert_equal true true "remote manifest baseline overrides stale local checkout" || assert_equal true false "remote manifest baseline overrides stale local checkout"
+	if output=$(HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_REMOTE_FAILURE=true bash "$HELPER" upstream 2>&1); then
+		assert_equal false true "authoritative manifest failure stops monitoring"
+	else
+		[[ "$output" == *"Could not resolve the remote default branch"* ]] &&
+			assert_equal true true "authoritative manifest failure stops monitoring" ||
+			assert_equal true false "authoritative manifest failure reports actionable error"
+	fi
 	return 0
 }
 
@@ -389,8 +443,8 @@ assert_rate_limit_fixture() {
 test_monitor_rate_limit_fixtures() {
 	assert_rate_limit_fixture primary-403-reset 403 primary-rate-limit
 	assert_rate_limit_fixture secondary-403-retry 403 secondary-rate-limit
-	assert_rate_limit_fixture primary-429-retry 429 rate-limit-message
-	assert_rate_limit_fixture primary-429-reset 429 rate-limit-message
+	assert_rate_limit_fixture primary-429-retry 429 primary-rate-limit
+	assert_rate_limit_fixture primary-429-reset 429 primary-rate-limit
 	return 0
 }
 
@@ -495,6 +549,7 @@ main() {
 	TEST_ROOT=$(mktemp -d)
 	trap cleanup EXIT
 	test_monitor_deduplicates_and_preserves_source
+	test_monitor_uses_remote_manifest_and_fails_closed
 	test_monitor_rejects_invalid_release_timeout
 	test_monitor_selects_configured_stream
 	test_monitor_rejects_malformed_prefixes

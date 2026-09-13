@@ -260,3 +260,25 @@ cloudron_package_check_release() {
 	printf 'Cloudron release validation passed for %s.\n' "$release_tag"
 	return 0
 }
+
+# Resolve every immutable Docker source without building, tagging, or publishing.
+# Usage: cloudron_package_preflight_release <vX.Y.Z> [repo-path]
+cloudron_package_preflight_release() {
+	local release_tag="${1:-${GITHUB_REF_NAME:-}}"
+	local repo_path="${2:-.}"
+	local dockerfile=""
+	local image=""
+	local images=""
+
+	cloudron_package_check_release "$release_tag" "$repo_path" || return 1
+	command -v docker >/dev/null 2>&1 || _cloudron_release_error "Docker is required to validate immutable build sources." || return 1
+	dockerfile=$(_cloudron_release_dockerfile "$repo_path") || _cloudron_release_error "Dockerfile or Dockerfile.cloudron is missing." || return 1
+	images=$(awk 'toupper($1) == "FROM" { print $2 }' "$dockerfile")
+	[[ -n "$images" ]] || _cloudron_release_error "No Docker FROM sources found." || return 1
+	while IFS= read -r image; do
+		[[ "$image" == *@sha256:[0-9a-fA-F][0-9a-fA-F]* ]] || _cloudron_release_error "Docker source must use an immutable tag-and-digest reference: $image" || return 1
+		docker manifest inspect "$image" >/dev/null 2>&1 || _cloudron_release_error "Immutable Docker source is unavailable: $image" || return 1
+	done <<<"$images"
+	printf 'Cloudron release preflight passed for %s. No image, tag, catalog, release, or deployment was mutated.\n' "$release_tag"
+	return 0
+}

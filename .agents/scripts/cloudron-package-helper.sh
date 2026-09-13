@@ -1030,6 +1030,11 @@ cmd_check_release() {
 	return $?
 }
 
+cmd_preflight_release() {
+	cloudron_package_preflight_release "$@"
+	return $?
+}
+
 cmd_check_compatibility() {
 	local findings=""
 	if findings=$(cloudron_package_compatibility_findings "."); then
@@ -1062,6 +1067,7 @@ Commands:
   prepare-release <package-version> <upstream-version> <notes-file>
                         Update manifest/changelog without publishing
   check-release <tag>   Validate package, changelog, and vX.Y.Z tag
+  preflight-release <tag> Validate release metadata and immutable Docker sources
   check-compatibility   Audit manifest and final pinned Cloudron base image
   status                Show current package status
   help                  Show this help
@@ -1128,6 +1134,9 @@ main() {
 		;;
 	check-release)
 		cmd_check_release "$@"
+		;;
+	preflight-release)
+		cmd_preflight_release "$@"
 		;;
 	check-compatibility)
 		cmd_check_compatibility "$@"
