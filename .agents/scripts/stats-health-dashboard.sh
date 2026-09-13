@@ -668,6 +668,13 @@ _refresh_health_aggregate_caches() {
 	return 0
 }
 
+_lock_session_time_to_cycle_cache() {
+	# Never fall back to one broad DB scan per remaining repository after the
+	# bounded aggregate attempt. Missing entries retry during the next cycle.
+	export AIDEVOPS_SESSION_TIME_CACHE_ONLY=1
+	return 0
+}
+
 #######################################
 # Update health issues for ALL pulse-enabled repos
 #
@@ -675,7 +682,7 @@ _refresh_health_aggregate_caches() {
 # non-local-only repo with a slug. Runs sequentially to avoid gh API
 # rate limiting. Best-effort — failures in one repo don't block others.
 #######################################
-update_health_issues() {
+_update_health_issues_with_session_cache() {
 	# t2044 Phase 0: dry-run sentinel. When STATS_DRY_RUN=1, return immediately
 	# to exercise the call graph without making gh/git API calls. Temporary
 	# scaffolding — removed after Phase 3 merges.
@@ -739,6 +746,7 @@ update_health_issues() {
 	else
 		echo "[stats] Health dashboard aggregate summaries deferred/failed" >>"$LOGFILE"
 	fi
+	_lock_session_time_to_cycle_cache
 
 	while IFS='|' read -r slug path; do
 		[[ -z "$slug" ]] && continue
@@ -772,4 +780,23 @@ update_health_issues() {
 		return 1
 	fi
 	return 0
+}
+
+update_health_issues() {
+	local cache_dir="" result=0
+	cache_dir=$(mktemp -d "${TMPDIR:-/tmp}/stats-session-time.XXXXXX") || {
+		echo "[stats] Health dashboard session cache initialization failed" >>"$LOGFILE"
+		return 1
+	}
+	chmod 700 "$cache_dir" || {
+		rm -rf "$cache_dir"
+		return 1
+	}
+	(
+		export AIDEVOPS_SESSION_TIME_BATCH_CACHE="${cache_dir}/periods.json"
+		export AIDEVOPS_SESSION_TIME_CACHE_ONLY=0
+		_update_health_issues_with_session_cache
+	) || result=$?
+	rm -rf "$cache_dir"
+	return "$result"
 }

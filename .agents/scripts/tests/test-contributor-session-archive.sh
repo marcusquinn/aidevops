@@ -378,6 +378,84 @@ test_profile_periods_scan_once_and_union_attention() {
 	return 0
 }
 
+test_cross_repo_all_batches_and_reuses_cycle_cache() {
+	local test_name="cross-repo all batches one DB scan and reuses the cycle cache"
+	setup
+	# shellcheck source=../contributor-activity-helper-session.sh
+	source "$SOURCE_SESSION_LIB"
+	local repo_one="${TEST_DIR}/repo-one" repo_two="${TEST_DIR}/repo-two"
+	mkdir -p "$repo_one/.git" "$repo_two/.git"
+	local active_db="${TEST_DIR}/home/.local/share/opencode/opencode.db"
+	create_session_db "$active_db"
+	local now_ms recent_ms counter cache output cached_output scans day_sessions year_sessions cached_sessions
+	now_ms=$(python3 -c 'import time; print(int(time.time() * 1000))')
+	recent_ms=$((now_ms - 60000))
+	insert_session_fixture "$active_db" "repo-one-session" "Repo one" "$recent_ms" "$repo_one"
+	insert_session_fixture "$active_db" "repo-two-session" "Repo two" "$recent_ms" "$repo_two"
+	counter="${TEST_DIR}/scan-count"
+	cache="${TEST_DIR}/session-periods.json"
+	output=$(HOME="${TEST_DIR}/home" AIDEVOPS_SESSION_SCAN_COUNTER="$counter" \
+		AIDEVOPS_SESSION_TIME_BATCH_CACHE="$cache" \
+		cross_repo_session_time "$repo_one" "$repo_two" --period all --format json)
+	scans=$(wc -l <"$counter" | tr -d ' ')
+	day_sessions=$(printf '%s' "$output" | jq -r '.day.total_sessions')
+	year_sessions=$(printf '%s' "$output" | jq -r '.year.total_sessions')
+	cached_output=$(HOME="${TEST_DIR}/home" AIDEVOPS_SESSION_SCAN_COUNTER="$counter" \
+		AIDEVOPS_SESSION_TIME_BATCH_CACHE="$cache" AIDEVOPS_SESSION_TIME_CACHE_ONLY=1 \
+		session_time "$repo_one" --period all --format json)
+	cached_sessions=$(printf '%s' "$cached_output" | jq -r '.day.total_sessions')
+	if [[ "$scans" != "1" || "$day_sessions" != "2" || "$year_sessions" != "2" || "$cached_sessions" != "1" ]]; then
+		print_result "$test_name" 1 "scans=${scans} day=${day_sessions} year=${year_sessions} cached=${cached_sessions}; ${output}"
+		teardown
+		return 0
+	fi
+	if [[ "$(wc -l <"$counter" | tr -d ' ')" != "1" ]]; then
+		print_result "$test_name" 1 "cache read triggered another database scan"
+		teardown
+		return 0
+	fi
+	print_result "$test_name" 0
+	teardown
+	return 0
+}
+
+test_single_period_cycle_cache_round_trip() {
+	local test_name="single-period cycle cache round-trips without rescanning"
+	setup
+	# shellcheck source=../contributor-activity-helper-session.sh
+	source "$SOURCE_SESSION_LIB"
+	local repo_path="${TEST_DIR}/repo-one" uncached_repo="${TEST_DIR}/repo-two"
+	mkdir -p "$repo_path/.git" "$uncached_repo/.git"
+	local active_db="${TEST_DIR}/home/.local/share/opencode/opencode.db"
+	create_session_db "$active_db"
+	local now_ms recent_ms counter cache initial cached scans
+	now_ms=$(python3 -c 'import time; print(int(time.time() * 1000))')
+	recent_ms=$((now_ms - 60000))
+	insert_session_fixture "$active_db" "repo-one-session" "Repo one" "$recent_ms" "$repo_path"
+	counter="${TEST_DIR}/scan-count"
+	cache="${TEST_DIR}/session-periods.json"
+	initial=$(HOME="${TEST_DIR}/home" AIDEVOPS_SESSION_SCAN_COUNTER="$counter" \
+		AIDEVOPS_SESSION_TIME_BATCH_CACHE="$cache" \
+		session_time "$repo_path" --period month --format json)
+	cached=$(HOME="${TEST_DIR}/home" AIDEVOPS_SESSION_SCAN_COUNTER="$counter" \
+		AIDEVOPS_SESSION_TIME_BATCH_CACHE="$cache" AIDEVOPS_SESSION_TIME_CACHE_ONLY=1 \
+		session_time "$repo_path" --period month --format json)
+	local cache_miss_rejected=0
+	if HOME="${TEST_DIR}/home" AIDEVOPS_SESSION_SCAN_COUNTER="$counter" \
+		AIDEVOPS_SESSION_TIME_BATCH_CACHE="$cache" AIDEVOPS_SESSION_TIME_CACHE_ONLY=1 \
+		session_time "$uncached_repo" --period month --format json; then
+		cache_miss_rejected=1
+	fi
+	scans=$(wc -l <"$counter" | tr -d ' ')
+	if [[ "$scans" != "1" || "$cache_miss_rejected" != "0" || "$(printf '%s' "$initial" | jq -Sc .)" != "$(printf '%s' "$cached" | jq -Sc .)" ]]; then
+		print_result "$test_name" 1 "scans=${scans}; miss_rejected=${cache_miss_rejected}; initial=${initial}; cached=${cached}"
+	else
+		print_result "$test_name" 0
+	fi
+	teardown
+	return 0
+}
+
 test_session_time_repo_filter_treats_path_metacharacters_literally() {
 	local test_name="session time repo filter treats SQL path metacharacters literally"
 	setup
@@ -593,7 +671,8 @@ test_session_engine_sibling_modules_deploy_together() {
 	local deploy_dir="${TEST_DIR}/deployed"
 	mkdir -p "$deploy_dir"
 	cp "${SCRIPT_DIR}/../session-time-interval-engine.py" "${SCRIPT_DIR}/../session_time_common.py" \
-		"${SCRIPT_DIR}/../session_time_db.py" "${SCRIPT_DIR}/../session_time_aggregate.py" "$deploy_dir/"
+		"${SCRIPT_DIR}/../session_time_db.py" "${SCRIPT_DIR}/../session_time_db_roots.py" \
+		"${SCRIPT_DIR}/../session_time_aggregate.py" "$deploy_dir/"
 	local output
 	output=$(HOME="${TEST_DIR}/home" python3 "${deploy_dir}/session-time-interval-engine.py" --all-dirs --period day)
 	if [[ "$(printf '%s' "$output" | jq -r '.status')" != "unavailable" ]]; then
@@ -620,6 +699,8 @@ main() {
 	test_session_time_uses_observability_machine_floor
 	test_session_time_repo_filter_treats_path_metacharacters_literally
 	test_profile_periods_scan_once_and_union_attention
+	test_cross_repo_all_batches_and_reuses_cycle_cache
+	test_single_period_cycle_cache_round_trip
 	test_partial_observability_unions_with_message_generation
 	test_observability_sql_filters_old_and_other_roots
 	test_malformed_numeric_rows_and_invalid_period
