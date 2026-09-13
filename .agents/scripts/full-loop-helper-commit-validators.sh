@@ -130,6 +130,12 @@ _validator_scopes() {
 	return 0
 }
 
+_validator_script_is_npm_placeholder() {
+	local package_json="$1" script_name="$2" script_command=""
+	script_command=$(jq -r --arg s "$script_name" '.scripts[$s] // empty' "$package_json" 2>/dev/null) || return 1
+	[[ "$script_command" == 'echo "Error: no test specified" && exit 1' ]]
+}
+
 _validator_select_script() {
 	local package_json="$1" phase="$2" script_name=""
 	local candidates=""
@@ -141,6 +147,7 @@ _validator_select_script() {
 	esac
 	while IFS= read -r script_name; do
 		if jq -e --arg s "$script_name" '.scripts[$s] // empty' "$package_json" >/dev/null 2>&1; then
+			_validator_script_is_npm_placeholder "$package_json" "$script_name" && continue
 			printf '%s\n' "$script_name"
 			return 0
 		fi

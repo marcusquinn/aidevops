@@ -1208,7 +1208,7 @@ _detect_node_project() {
 		(.scripts // {} |
 		 [has("format:check"),has("check:format"),has("prettier:check"),
 		  has("lint:check"),has("lint"),
-		  has("typecheck"),has("check:types"),has("tsc"),
+		  has("typecheck"),has("check:types"),has("tsc"),has("test"),
 		  has("format:fix"),has("format:write"),has("prettier:fix"),has("lint:fix")] |
 		 any) or
 		((.workspaces // []) |

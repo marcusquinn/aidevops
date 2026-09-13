@@ -340,6 +340,25 @@ else
 	print_result "nested package test script defines a focused validation scope" 1 "rc=${case9_rc}, calls=$(wc -l <"$NPM_CALL_LOG" 2>/dev/null || printf 0)"
 fi
 
+# Case 10: npm's generated failing test placeholder is not a scoped check.
+PLACEHOLDER_REPO="${TEST_ROOT}/npm-placeholder"
+make_repo "$PLACEHOLDER_REPO"
+NPM_CALL_LOG="${TEST_ROOT}/npm-placeholder.log"
+export NPM_CALL_LOG NPM_FAKE_ACTION='' NPM_FAKE_RC=0
+(
+	cd "$PLACEHOLDER_REPO" || exit 1
+	printf '%s\n' '{"scripts":{"test":"echo \"Error: no test specified\" && exit 1"}}' >package.json
+	git add package.json
+	git -c user.name='Test User' -c user.email='test@example.invalid' commit -qm 'configure npm placeholder test'
+	PATH="${FAKE_BIN}:$PATH" _run_project_validators 0
+) 2>"${TEST_ROOT}/npm-placeholder-error.log"
+case10_rc=$?
+if [[ "$case10_rc" -ne 0 && ! -s "$NPM_CALL_LOG" ]] && grep -q 'NO SCOPED CHECKS AVAILABLE' "${TEST_ROOT}/npm-placeholder-error.log"; then
+	print_result "npm placeholder test fails with scoped-check guidance" 0
+else
+	print_result "npm placeholder test fails with scoped-check guidance" 1 "rc=${case10_rc}, calls=$(wc -l <"$NPM_CALL_LOG" 2>/dev/null || printf 0)"
+fi
+
 printf '\n%d tests run, %d failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 [[ "$TESTS_FAILED" -eq 0 ]] || exit 1
 exit 0
