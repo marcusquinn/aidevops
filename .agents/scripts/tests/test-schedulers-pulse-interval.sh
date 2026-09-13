@@ -98,11 +98,28 @@ test_default_interval_is_180() {
 	return 0
 }
 
+test_linux_env_uses_isolated_supervisor_workspace() {
+	setup_home
+	local output=""
+	local PULSE_STALE_THRESHOLD_SECONDS=900
+	output=$(_build_pulse_linux_env "")
+	local expected="PULSE_DIR=${HOME}/.aidevops/.agent-workspace/supervisor"
+	teardown_home
+
+	if [[ "$output" == "$expected"$'\n'* ]]; then
+		print_result "Linux pulse env uses isolated supervisor workspace" 0
+	else
+		print_result "Linux pulse env uses isolated supervisor workspace" 1 "Got: $output"
+	fi
+	return 0
+}
+
 main() {
 	printf 'Running scheduler pulse interval tests...\n\n'
 	test_orchestration_interval_wins
 	test_legacy_supervisor_interval_fallback
 	test_default_interval_is_180
+	test_linux_env_uses_isolated_supervisor_workspace
 
 	printf '\n%s/%s tests passed.\n' \
 		"$((TESTS_RUN - TESTS_FAILED))" "$TESTS_RUN"

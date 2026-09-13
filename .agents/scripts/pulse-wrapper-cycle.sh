@@ -186,7 +186,7 @@ _pulse_supervisor_prompt() {
 
 	prompt="${pulse_command}
 
-Runtime sandbox rule: supervisor-pulse is launched from the aidevops agent workspace. Do not run Bash tool calls with workdir set to managed repository paths or any other directory outside that workspace. Use the pre-fetched state file and wrapper/helper functions from the current workspace instead. If repo/worktree data is missing, record a diagnostic and exit cleanly rather than requesting external_directory permission."
+Runtime sandbox rule: supervisor-pulse is launched from an isolated directory inside the aidevops agent workspace. Do not run Bash tool calls with workdir set to managed repository paths or any other directory outside that workspace. Use the pre-fetched state file and deployed wrapper/helper functions instead. If repo/worktree data is missing, record a diagnostic and exit cleanly rather than requesting external_directory permission."
 	if [[ -f "$state_file" ]]; then
 		prompt="${prompt}
 

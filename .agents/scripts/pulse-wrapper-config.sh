@@ -387,12 +387,13 @@ PULSE_EVENT_REFILL_WRAPPER="${PULSE_EVENT_REFILL_WRAPPER:-${SCRIPT_DIR}/pulse-wr
 export AIDEVOPS_PULSE_EVENT_REFILL_ENABLED PULSE_EVENT_REFILL_TRIGGER_FILE
 OPENCODE_BIN="${OPENCODE_BIN:-$(command -v opencode 2>/dev/null || echo "opencode")}"
 # PULSE_DIR: working directory for the supervisor pulse session.
-# Defaults to a neutral workspace path so pulse sessions are not associated
-# with any specific managed repo in the host app's session database.
+# Defaults to an isolated directory inside the neutral workspace so runtime
+# discovery and unscoped file tools cannot traverse retained worker/cache data.
+# The supervisor consumes repository state through the pre-fetched state file.
 # Previously defaulted to ~/Git/aidevops, which caused 155+ orphaned sessions
 # to accumulate under that project even when it had pulse:false (GH#5136).
 # Override via env var if a specific directory is needed.
-PULSE_DIR="${PULSE_DIR:-${HOME}/.aidevops/.agent-workspace}"
+PULSE_DIR="${PULSE_DIR:-${HOME}/.aidevops/.agent-workspace/supervisor}"
 # PULSE_MODEL is derived from routing table above (GH#17769) — no longer user-configurable
 HEADLESS_RUNTIME_HELPER="${HEADLESS_RUNTIME_HELPER:-${SCRIPT_DIR}/headless-runtime-helper.sh}"
 MODEL_AVAILABILITY_HELPER="${MODEL_AVAILABILITY_HELPER:-${SCRIPT_DIR}/model-availability-helper.sh}"

@@ -354,12 +354,19 @@ assert_function_defined() {
 #######################################
 test_source_and_function_existence() {
 	setup_sandbox
+	unset PULSE_DIR
 
 	# Source the wrapper. The _pulse_is_sourced guard at L13786 prevents
 	# main() from running. Suppress config-helper noise that appears only
 	# when $HOME is sandboxed and the configs dir is absent.
 	# shellcheck source=/dev/null
 	source "${PULSE_SCRIPTS_DIR}/pulse-wrapper.sh" 2>/dev/null
+	if [[ "$PULSE_DIR" == "${HOME}/.aidevops/.agent-workspace/supervisor" ]]; then
+		print_result "supervisor defaults to isolated workspace" 0
+	else
+		print_result "supervisor defaults to isolated workspace" 1 \
+			"expected isolated supervisor directory, got: ${PULSE_DIR}"
+	fi
 
 	local missing=()
 	local fn

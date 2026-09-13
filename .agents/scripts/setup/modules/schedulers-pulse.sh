@@ -471,7 +471,7 @@ _build_pulse_linux_env() {
 	# GH#17546/GH#17769: Model config is derived from pool + routing table at
 	# runtime. No model env vars embedded in cron/systemd.
 	local opencode_bin="${1:-}"
-	local _pulse_env="PULSE_DIR=${HOME}/.aidevops/.agent-workspace
+	local _pulse_env="PULSE_DIR=${HOME}/.aidevops/.agent-workspace/supervisor
 PULSE_STALE_THRESHOLD=${PULSE_STALE_THRESHOLD_SECONDS}
 AIDEVOPS_PULSE_ASYNC_POST_DISPATCH_HOUSEKEEPING=0"
 
