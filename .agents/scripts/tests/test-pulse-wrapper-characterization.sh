@@ -85,6 +85,7 @@ setup_sandbox() {
 
 	# Disable jitter so tests are not delayed by up to 30 s.
 	export PULSE_JITTER_MAX=0
+	unset PULSE_DIR
 	return 0
 }
 
@@ -378,6 +379,8 @@ test_source_and_function_existence() {
 		fi
 		print_result "all ${#EXPECTED_FUNCTIONS[@]} pulse-wrapper functions defined after sourcing" 1 "$msg"
 	fi
+	assert_equals "default Pulse project root excludes retained worker trees" \
+		"${HOME}/.aidevops/.agent-workspace/supervisor" "$PULSE_DIR"
 
 	return 0
 }

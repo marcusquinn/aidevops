@@ -391,8 +391,12 @@ OPENCODE_BIN="${OPENCODE_BIN:-$(command -v opencode 2>/dev/null || echo "opencod
 # with any specific managed repo in the host app's session database.
 # Previously defaulted to ~/Git/aidevops, which caused 155+ orphaned sessions
 # to accumulate under that project even when it had pulse:false (GH#5136).
+# Keep the runtime in the dedicated supervisor subtree rather than the whole
+# agent workspace: OpenCode gives FFF the --dir project as its base path, and
+# large-tree scans are reported to scale with that scope (GH#31842; upstream
+# anomalyco/opencode#46256).
 # Override via env var if a specific directory is needed.
-PULSE_DIR="${PULSE_DIR:-${HOME}/.aidevops/.agent-workspace}"
+PULSE_DIR="${PULSE_DIR:-${HOME}/.aidevops/.agent-workspace/supervisor}"
 # PULSE_MODEL is derived from routing table above (GH#17769) — no longer user-configurable
 HEADLESS_RUNTIME_HELPER="${HEADLESS_RUNTIME_HELPER:-${SCRIPT_DIR}/headless-runtime-helper.sh}"
 MODEL_AVAILABILITY_HELPER="${MODEL_AVAILABILITY_HELPER:-${SCRIPT_DIR}/model-availability-helper.sh}"
