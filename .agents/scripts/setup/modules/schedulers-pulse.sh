@@ -471,7 +471,7 @@ _build_pulse_linux_env() {
 	# GH#17546/GH#17769: Model config is derived from pool + routing table at
 	# runtime. No model env vars embedded in cron/systemd.
 	local opencode_bin="${1:-}"
-	local _pulse_env="PULSE_DIR=${HOME}/.aidevops/.agent-workspace
+	local _pulse_env="PULSE_DIR=${HOME}/.aidevops/.agent-workspace/supervisor
 PULSE_STALE_THRESHOLD=${PULSE_STALE_THRESHOLD_SECONDS}
 AIDEVOPS_PULSE_ASYNC_POST_DISPATCH_HOUSEKEEPING=0"
 
@@ -844,9 +844,10 @@ _generate_pulse_plist_content() {
 	_xml_wrapper_script=$(_xml_escape "$wrapper_script")
 	_xml_home=$(_xml_escape "$HOME")
 	_xml_opencode_bin=$(_xml_escape "$opencode_bin")
-	# Use neutral workspace path for PULSE_DIR so supervisor sessions
-	# are not associated with any specific managed repo (GH#5136).
-	_xml_pulse_dir=$(_xml_escape "${HOME}/.aidevops/.agent-workspace")
+	# Use the dedicated supervisor subtree so OpenCode project discovery cannot
+	# visit retained worker trees while the session remains repo-neutral
+	# (GH#5136, GH#31842).
+	_xml_pulse_dir=$(_xml_escape "${HOME}/.aidevops/.agent-workspace/supervisor")
 	_xml_path=$(_xml_escape "$(aidevops_launchd_sanitized_path "$PATH")")
 
 	local _headless_xml_env

@@ -98,11 +98,35 @@ test_default_interval_is_180() {
 	return 0
 }
 
+test_launchd_pulse_dir_uses_supervisor_subtree() {
+	setup_home
+	PULSE_STALE_THRESHOLD_SECONDS=1800
+	_xml_escape() { printf '%s' "$1"; }
+	_resolve_modern_bash() { printf '/bin/bash'; }
+	aidevops_launchd_sanitized_path() { printf '/usr/bin:/bin'; }
+	_build_pulse_headless_env_xml() { return 0; }
+	_build_plist_env_overrides_xml() { return 0; }
+	local output=""
+	output=$(_generate_pulse_plist_content \
+		"sh.aidevops.supervisor-pulse" "/path/to/pulse-wrapper.sh" "/path/to/opencode")
+	local expected="${HOME}/.aidevops/.agent-workspace/supervisor"
+	teardown_home
+
+	if [[ "$output" == *"<key>PULSE_DIR</key>"* ]] && [[ "$output" == *"<string>${expected}</string>"* ]]; then
+		print_result "launchd Pulse directory uses supervisor subtree" 0
+	else
+		print_result "launchd Pulse directory uses supervisor subtree" 1 \
+			"Expected generated plist PULSE_DIR to equal ${expected}"
+	fi
+	return 0
+}
+
 main() {
 	printf 'Running scheduler pulse interval tests...\n\n'
 	test_orchestration_interval_wins
 	test_legacy_supervisor_interval_fallback
 	test_default_interval_is_180
+	test_launchd_pulse_dir_uses_supervisor_subtree
 
 	printf '\n%s/%s tests passed.\n' \
 		"$((TESTS_RUN - TESTS_FAILED))" "$TESTS_RUN"

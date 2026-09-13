@@ -116,6 +116,13 @@ if ! grep -q '^Environment=AIDEVOPS_PULSE_ASYNC_POST_DISPATCH_HOUSEKEEPING="0"$'
 	exit 1
 fi
 
+if ! grep -Fq "Environment=PULSE_DIR=\"${HOME}/.aidevops/.agent-workspace/supervisor\"" "$SERVICE_FILE"; then
+	echo "expected scheduled Pulse project root to use the dedicated supervisor subtree" >&2
+	exit 1
+fi
+
+printf 'PASS %s\n' "scheduled Linux Pulse excludes retained worker trees from its project root"
+
 if [[ "$(_pulse_supervisor_runtime_budget_seconds 1800)" != "3600" ]]; then
 	echo "expected canonical Pulse runtime budget to include the 3600s underfilled recovery ceiling" >&2
 	exit 1
