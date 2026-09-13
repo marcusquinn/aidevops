@@ -97,6 +97,45 @@ _session_require_option_value() {
 	return 0
 }
 
+_session_time_normalize_repo_path() {
+	python3 -c 'import os, sys; print(os.path.abspath(sys.argv[1]))' "$1"
+	return $?
+}
+
+_session_time_cached_result() {
+	local cache_file="$1" repo_path="$2" period="$3"
+	[[ -f "$cache_file" && "$period" != "profile" ]] || return 1
+	jq -cer --arg root "$repo_path" --arg period "$period" '
+        .[$root] as $value |
+        if $value == null then empty
+        elif $period == "all" then $value
+        else $value[$period] // empty
+        end
+    ' "$cache_file"
+	return $?
+}
+
+_session_time_sum_collection() {
+	jq --arg total_human_field "$SESSION_TOTAL_HUMAN_FIELD" \
+		--arg total_machine_field "$SESSION_TOTAL_MACHINE_FIELD" '
+        def sum_field($name): map(.[$name] // 0) | add // 0;
+        {
+            interactive_sessions: sum_field("interactive_sessions"),
+            interactive_human_hours: sum_field("interactive_human_hours"),
+            interactive_machine_hours: sum_field("interactive_machine_hours"),
+            worker_sessions: sum_field("worker_sessions"),
+            worker_human_hours: sum_field("worker_human_hours"),
+            worker_machine_hours: sum_field("worker_machine_hours"),
+            ($total_human_field): sum_field($total_human_field),
+            ($total_machine_field): sum_field($total_machine_field),
+            total_sessions: sum_field("total_sessions"),
+            repo_count: length,
+            status: (if length > 0 then "ok" else "unavailable" end)
+        }
+    '
+	return $?
+}
+
 #######################################
 # Compute observed AI session time.
 # Arguments:
@@ -107,7 +146,7 @@ session_time() {
 	local period="month"
 	local format="markdown"
 	local db_path=""
-	local all_dirs="false"
+	local all_dirs=0
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--period)
@@ -126,7 +165,7 @@ session_time() {
 			shift 2
 			;;
 		--all-dirs)
-			all_dirs="true"
+			all_dirs=1
 			shift
 			;;
 		*)
@@ -150,14 +189,35 @@ session_time() {
 		;;
 	esac
 
+	local normalized_repo=""
+	if [[ "$all_dirs" -eq 0 ]]; then
+		repo_path="${repo_path:-.}"
+		normalized_repo=$(_session_time_normalize_repo_path "$repo_path") || return 1
+		local cached_result=""
+		if [[ -n "${AIDEVOPS_SESSION_TIME_BATCH_CACHE:-}" ]]; then
+			cached_result=$(_session_time_cached_result "$AIDEVOPS_SESSION_TIME_BATCH_CACHE" "$normalized_repo" "$period") || cached_result=""
+			if [[ -n "$cached_result" ]]; then
+				if [[ "$format" == "$SESSION_FORMAT_JSON" ]]; then
+					printf '%s\n' "$cached_result"
+				elif [[ "$period" == "all" ]]; then
+					_session_time_format_period_map "$cached_result"
+				else
+					_session_time_format_markdown "$cached_result" "$period"
+				fi
+				return 0
+			fi
+			[[ "${AIDEVOPS_SESSION_TIME_CACHE_ONLY:-0}" != "1" ]] || return 75
+		fi
+	fi
+
 	local -a engine_args=(--period "$period")
-	if [[ "$all_dirs" == "true" ]]; then
+	if [[ "$all_dirs" -eq 1 ]]; then
 		engine_args+=(--all-dirs)
 	else
-		repo_path="${repo_path:-.}"
-		engine_args+=(--repo "$repo_path")
+		engine_args+=(--repo "$normalized_repo")
 	fi
 	[[ -n "$db_path" ]] && engine_args+=(--db-path "$db_path")
+	[[ -n "${AIDEVOPS_SESSION_TIME_BATCH_CACHE:-}" ]] && engine_args+=(--cache-file "$AIDEVOPS_SESSION_TIME_BATCH_CACHE")
 	local result
 	if ! result=$(python3 "$SESSION_TIME_INTERVAL_ENGINE" "${engine_args[@]}"); then
 		echo "Error: session aggregation failed" >&2
@@ -204,56 +264,37 @@ cross_repo_session_time() {
 		echo "Error: at least one repo path required" >&2
 		return 1
 	fi
-	if [[ "$period" == "all" ]]; then
-		local period_map='{}'
-		local period_name
-		for period_name in day week month quarter year; do
-			local period_stats
-			period_stats=$(cross_repo_session_time "${repo_paths[@]}" --period "$period_name" --format json) || return 1
-			period_map=$(printf '%s' "$period_map" | jq --arg name "$period_name" --argjson stats "$period_stats" '. + {($name):$stats}')
-		done
-		if [[ "$format" == "$SESSION_FORMAT_JSON" ]]; then
-			printf '%s\n' "$period_map"
-		else
-			_session_time_format_period_map "$period_map"
-		fi
-		return 0
-	fi
-	local collected=""
-	local repo_count=0
-	local repo_path
+	local -a engine_args=(--period "$period" --batch)
+	local repo_path normalized_repo
 	for repo_path in "${repo_paths[@]}"; do
 		if [[ ! -d "$repo_path/.git" && ! -f "$repo_path/.git" ]]; then
 			continue
 		fi
-		local item
-		item=$(session_time "$repo_path" --period "$period" --format json) || continue
-		collected="${collected}${item}"$'\n'
-		repo_count=$((repo_count + 1))
+		normalized_repo=$(_session_time_normalize_repo_path "$repo_path") || continue
+		engine_args+=(--repo "$normalized_repo")
 	done
-	local aggregated
-	aggregated=$(printf '%s' "$collected" | jq -s \
-		--argjson repo_count "$repo_count" \
-		--arg total_human_field "$SESSION_TOTAL_HUMAN_FIELD" \
-		--arg total_machine_field "$SESSION_TOTAL_MACHINE_FIELD" '
-        def sum_field($name): map(.[$name] // 0) | add // 0;
-        {
-            interactive_sessions: sum_field("interactive_sessions"),
-            interactive_human_hours: sum_field("interactive_human_hours"),
-            interactive_machine_hours: sum_field("interactive_machine_hours"),
-            worker_sessions: sum_field("worker_sessions"),
-            worker_human_hours: sum_field("worker_human_hours"),
-            worker_machine_hours: sum_field("worker_machine_hours"),
-            ($total_human_field): sum_field($total_human_field),
-            ($total_machine_field): sum_field($total_machine_field),
-            total_sessions: sum_field("total_sessions"),
-            repo_count: $repo_count,
-            status: (if length > 0 then "ok" else "unavailable" end)
-        }
-    ')
+	[[ ${#engine_args[@]} -gt 2 ]] || return 1
+	[[ -n "${AIDEVOPS_SESSION_TIME_BATCH_CACHE:-}" ]] && engine_args+=(--cache-file "$AIDEVOPS_SESSION_TIME_BATCH_CACHE")
+	local batch_json
+	batch_json=$(python3 "$SESSION_TIME_INTERVAL_ENGINE" "${engine_args[@]}") || return 1
+	local aggregated=""
+	if [[ "$period" == "all" ]]; then
+		local period_map='{}' period_name period_stats
+		for period_name in day week month quarter year; do
+			period_stats=$(printf '%s' "$batch_json" | jq -c --arg name "$period_name" '[.[] | .[$name]]' | _session_time_sum_collection) || return 1
+			period_map=$(printf '%s' "$period_map" | jq --arg name "$period_name" --argjson stats "$period_stats" '. + {($name):$stats}') || return 1
+		done
+		aggregated="$period_map"
+	else
+		aggregated=$(printf '%s' "$batch_json" | jq -c '[.[]]' | _session_time_sum_collection) || return 1
+	fi
 	if [[ "$format" == "$SESSION_FORMAT_JSON" ]]; then
 		printf '%s\n' "$aggregated"
+	elif [[ "$period" == "all" ]]; then
+		_session_time_format_period_map "$aggregated"
 	else
+		local repo_count
+		repo_count=$(printf '%s' "$batch_json" | jq 'length')
 		_session_time_format_markdown "$aggregated" "$period across ${repo_count} repos"
 	fi
 	return 0
