@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.365] - 2026-09-13
+
+### Changed
+
+- Performance: narrow Supervisor Pulse project scope
+- Performance: Batch session-time dashboard scans
+- Maintenance: mark t18431 complete (pr:#31834 completed:2026-09-12) (#31835)
+
+### Fixed
+
+- reconcile stale supervisor blockers (#31847)
+
 ## [3.32.364] - 2026-09-12
 
 ### Changed
