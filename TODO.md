@@ -4913,3 +4913,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t18425 Report matched objective cost and routing evidence coverage #auto-dispatch #enhancement #framework #observability #interactive priority:high status:blocked tier:standard ~3h parent:t18422 blocked-by:t18424 ref:GH#31701 logged:2026-09-10 -> [todo/tasks/t18425-brief.md]
 - [x] t18426 Prepare portable bounded model-effort pilot using existing replay #auto-dispatch #enhancement #framework #observability #interactive priority:medium status:blocked tier:standard ~3h parent:t18422 blocked-by:t18425 ref:GH#31700 logged:2026-09-10 -> [todo/tasks/t18426-brief.md] pr:#31731 completed:2026-09-10
 - [ ] t18427 Evaluate effort and delegation economics and document routing decision #auto-dispatch #enhancement #framework #observability #interactive priority:medium status:blocked tier:thinking ~2h parent:t18422 blocked-by:t18426 ref:GH#31702 logged:2026-09-10 -> [todo/tasks/t18427-brief.md]
+
+- [ ] t18432 Fix expected-source normalization on dead preparing release retries #auto-dispatch #bug ref:GH#31870
