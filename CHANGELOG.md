@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.367] - 2026-09-13
+
+### Fixed
+
+- prevent overdue Pulse routines from starving
+
 ## [3.32.366] - 2026-09-13
 
 ### Fixed
