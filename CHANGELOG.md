@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.366] - 2026-09-13
+
+### Fixed
+
+- Retire obsolete model routing settings
+- Align provider routing terminology
+
 ## [3.32.365] - 2026-09-13
 
 ### Changed
