@@ -143,17 +143,12 @@ _issue_needs_consolidation() {
 	if [[ ",$issue_labels," == *",needs-consolidation,"* ]]; then
 		was_already_labeled=true
 	fi
-	# A fresh interactive claim is stronger evidence of live ownership than a
-	# comment-count heuristic. Clear any stale planning label, but defer on an
-	# ambiguous ownership read so a transient API failure cannot create a child.
-	local interactive_claim_rc=0
-	_consolidation_live_interactive_claim "$issue_number" "$repo_slug" || interactive_claim_rc=$?
-	if [[ "$interactive_claim_rc" -eq 0 ]]; then
-		[[ "$was_already_labeled" != false ]] &&
-			_clear_needs_consolidation_label "$issue_number" "$repo_slug" "live interactive claim exists"
+	# Active headless lifecycle ownership and fresh interactive claims both
+	# override the comment-count heuristic; ambiguous reads fail closed.
+	if _consolidation_classification_defers_for_ownership \
+		"$issue_number" "$repo_slug" "$pre_fetched_json" "$was_already_labeled"; then
 		return 1
 	fi
-	[[ "$interactive_claim_rc" -eq 2 ]] && return 1
 	# t2161: Defence-in-depth — if an open PR already resolves this parent
 	# (closing keyword + #N), the work is in flight. Skip consolidation
 	# regardless of substantive-comment count. This catches the cascade
@@ -225,7 +220,7 @@ _dispatch_issue_consolidation() {
 	# closes the classification-to-dispatch race when an interactive session
 	# claims the issue between pulse stages; ambiguity must defer safely too.
 	if _consolidation_dispatch_defers_for_manual_hold "$issue_number" "$repo_slug" ||
-		_consolidation_dispatch_defers_for_interactive_claim "$issue_number" "$repo_slug"; then
+		_consolidation_dispatch_defers_for_active_ownership "$issue_number" "$repo_slug"; then
 		return 0
 	fi
 
@@ -288,7 +283,7 @@ _dispatch_issue_consolidation() {
 	# A hold may arrive while metadata/comments are being assembled. Release
 	# only our consolidation lock; never turn the held parent into fresh work.
 	if _consolidation_dispatch_defers_for_manual_hold "$issue_number" "$repo_slug" ||
-		_consolidation_dispatch_defers_for_interactive_claim "$issue_number" "$repo_slug"; then
+		_consolidation_dispatch_defers_for_active_ownership "$issue_number" "$repo_slug"; then
 		_consolidation_lock_release "$issue_number" "$repo_slug" "$self_login"
 		return 0
 	fi

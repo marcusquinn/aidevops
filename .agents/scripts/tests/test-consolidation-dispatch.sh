@@ -1211,6 +1211,56 @@ test_live_interactive_claim_blocks_classification_and_clears_stale_label() {
 	return 0
 }
 
+test_active_headless_ownership_blocks_classification_and_clears_stale_label() {
+	setup_gh_stub
+	GH_ISSUE_VIEW_LABELS="bug,needs-consolidation,status:in-progress"
+	GH_ISSUE_META_JSON=$(jq -n '{state:"OPEN",labels:[{name:"status:in-progress"}],assignees:[{login:"worker-owner"}]}')
+	GH_API_COMMENTS_JSON=$(fixture_two_substantive_comments)
+	GH_ISSUE_LIST_CHILD_JSON="[]"
+	export GH_ISSUE_VIEW_LABELS GH_ISSUE_META_JSON GH_API_COMMENTS_JSON GH_ISSUE_LIST_CHILD_JSON
+
+	if _issue_needs_consolidation 31838 "marcusquinn/aidevops"; then
+		print_result "GH#31844: active headless ownership blocks consolidation classification" 1
+	elif grep -qE 'issue edit .* --remove-label needs-consolidation' "$GH_LOG" 2>/dev/null; then
+		print_result "GH#31844: active headless ownership clears stale consolidation label" 0
+	else
+		print_result "GH#31844: active headless ownership clears stale consolidation label" 1
+	fi
+
+	teardown_gh_stub
+	return 0
+}
+
+test_active_label_without_assignee_does_not_hold_consolidation() {
+	setup_gh_stub
+	local metadata
+	metadata=$(jq -n '{state:"OPEN",labels:[{name:"status:in-progress"}],assignees:[]}')
+	if _consolidation_metadata_has_active_ownership "$metadata"; then
+		print_result "GH#31844: active label without assignee is not ownership" 1
+	else
+		print_result "GH#31844: active label without assignee is not ownership" 0
+	fi
+	teardown_gh_stub
+	return 0
+}
+
+test_unreadable_ownership_blocks_classification() {
+	setup_gh_stub
+	GH_ISSUE_META_JSON=$(jq -n '{state:"OPEN",labels:null,assignees:[]}')
+	GH_API_COMMENTS_JSON=$(fixture_two_substantive_comments)
+	GH_ISSUE_LIST_CHILD_JSON="[]"
+	export GH_ISSUE_META_JSON GH_API_COMMENTS_JSON GH_ISSUE_LIST_CHILD_JSON
+
+	if _issue_needs_consolidation 31838 "marcusquinn/aidevops"; then
+		print_result "GH#31844: unreadable ownership fails closed during classification" 1
+	else
+		print_result "GH#31844: unreadable ownership fails closed during classification" 0
+	fi
+
+	teardown_gh_stub
+	return 0
+}
+
 test_live_interactive_claim_uses_newest_paginated_record() {
 	setup_gh_stub
 	local stale_time claim_time stale_page current_page
@@ -1311,6 +1361,25 @@ test_live_interactive_claim_appearing_after_classification_blocks_dispatch() {
 	return 0
 }
 
+test_active_headless_ownership_appearing_after_classification_blocks_dispatch() {
+	setup_gh_stub
+	GH_ISSUE_META_JSON=$(jq -n '{state:"OPEN",labels:[{name:"status:in-progress"}],assignees:[{login:"worker-owner"}]}')
+	GH_API_COMMENTS_JSON=$(fixture_two_substantive_comments)
+	GH_ISSUE_LIST_CHILD_JSON="[]"
+	export GH_ISSUE_META_JSON GH_API_COMMENTS_JSON GH_ISSUE_LIST_CHILD_JSON
+
+	_dispatch_issue_consolidation 31838 "marcusquinn/aidevops" "/tmp/fake-path" || true
+
+	if grep -qE 'issue (create|edit|comment)' "$GH_LOG" 2>/dev/null; then
+		print_result "GH#31844: late headless ownership blocks dispatch without mutation" 1
+	else
+		print_result "GH#31844: late headless ownership blocks dispatch without mutation" 0
+	fi
+
+	teardown_gh_stub
+	return 0
+}
+
 test_manual_hold_blocks_direct_consolidation() {
 	local label=""
 	for label in no-auto-dispatch hold-for-review no-takeover 'on hold'; do
@@ -1355,16 +1424,18 @@ test_consolidation_hold_reads_fail_closed() {
 
 test_hold_after_lock_prevents_successor() {
 	local mode=""
-	for mode in manual interactive; do
+	for mode in manual interactive headless; do
 		setup_gh_stub
 		(
 			_consolidation_lock_acquire() {
 				if [[ "$mode" == manual ]]; then
 					export GH_ISSUE_META_JSON='{"state":"OPEN","labels":[{"name":"hold-for-review"}]}'
-				else
+				elif [[ "$mode" == interactive ]]; then
 					export GH_ISSUE_META_JSON='{"state":"OPEN","labels":[{"name":"status:in-review"}],"assignees":[{"login":"interactive-owner"}]}'
 					GH_API_COMMENTS_JSON=$(fixture_live_interactive_claim)
 					export GH_API_COMMENTS_JSON
+				else
+					export GH_ISSUE_META_JSON='{"state":"OPEN","labels":[{"name":"status:in-progress"}],"assignees":[{"login":"worker-owner"}]}'
 				fi
 				return 0
 			}
@@ -1424,10 +1495,14 @@ main() {
 	test_needs_consolidation_skips_with_inflight_resolving_pr
 	test_dispatch_skips_with_inflight_resolving_pr
 	test_live_interactive_claim_blocks_classification_and_clears_stale_label
+	test_active_headless_ownership_blocks_classification_and_clears_stale_label
+	test_active_label_without_assignee_does_not_hold_consolidation
+	test_unreadable_ownership_blocks_classification
 	test_live_interactive_claim_uses_newest_paginated_record
 	test_claim_comment_is_not_substantive_without_live_metadata
 	test_signature_footer_does_not_make_short_comment_substantive
 	test_live_interactive_claim_appearing_after_classification_blocks_dispatch
+	test_active_headless_ownership_appearing_after_classification_blocks_dispatch
 	test_manual_hold_blocks_direct_consolidation
 	test_consolidation_hold_reads_fail_closed
 	test_hold_after_lock_prevents_successor

@@ -38,7 +38,13 @@
 [[ -n "${_PULSE_TRIAGE_EVALUATION_LIB_LOADED:-}" ]] && return 0
 _PULSE_TRIAGE_EVALUATION_LIB_LOADED=1
 _PTE_JSON_ARRAY_TYPE="array"
+_PTE_JSON_OBJECT_TYPE="object"
+_PTE_JSON_STRING_TYPE="string"
 _PTE_ISSUE_OPEN_STATE="OPEN"
+_PTE_STATUS_CLAIMED="status:claimed"
+_PTE_STATUS_IN_PROGRESS="status:in-progress"
+_PTE_STATUS_IN_REVIEW="status:in-review"
+_PTE_STATUS_QUEUED="status:queued"
 
 # Defensive SCRIPT_DIR fallback
 if [[ -z "${SCRIPT_DIR:-}" ]]; then
@@ -84,34 +90,94 @@ _clear_needs_consolidation_label() {
 }
 
 #######################################
+# Return validated metadata used by consolidation ownership checks. A complete
+# pre-fetched dispatch bundle avoids another API call; partial or absent input
+# is refreshed because ownership is mutable safety state.
+# Args: $1=issue_number $2=repo_slug $3=optional pre-fetched issue JSON
+# Returns: 0 with metadata on stdout, 2 when ownership cannot be verified
+#######################################
+_consolidation_issue_ownership_metadata() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local metadata="${3:-}"
+
+	if ! printf '%s' "$metadata" | jq -e --arg object_type "$_PTE_JSON_OBJECT_TYPE" '
+		type == $object_type and has("state") and has("labels") and has("assignees")
+	' >/dev/null 2>&1; then
+		metadata=$(gh issue view "$issue_number" --repo "$repo_slug" \
+			--json state,labels,assignees 2>/dev/null) || return 2
+	fi
+	if ! printf '%s' "$metadata" | jq -e \
+		--arg array_type "$_PTE_JSON_ARRAY_TYPE" \
+		--arg object_type "$_PTE_JSON_OBJECT_TYPE" \
+		--arg string_type "$_PTE_JSON_STRING_TYPE" '
+		type == $object_type and
+		(.state | type == $string_type and length > 0) and
+		(.labels | type == $array_type) and
+		all(.labels[]; .name | type == $string_type and length > 0) and
+		(.assignees | type == $array_type) and
+		all(.assignees[]; .login | type == $string_type and length > 0)
+	' >/dev/null 2>&1; then
+		return 2
+	fi
+	printf '%s' "$metadata"
+	return 0
+}
+
+#######################################
+# Return whether validated issue metadata carries active ownership. The label
+# and assignee must both exist; stale recovery remains responsible for clearing
+# abandoned lifecycle state before consolidation may resume.
+# Args: $1=validated issue metadata JSON
+# Returns: 0=active ownership, 1=no active ownership
+#######################################
+_consolidation_metadata_has_active_ownership() {
+	local metadata="$1"
+	printf '%s' "$metadata" | jq -e \
+		--arg claimed "$_PTE_STATUS_CLAIMED" \
+		--arg in_progress "$_PTE_STATUS_IN_PROGRESS" \
+		--arg in_review "$_PTE_STATUS_IN_REVIEW" \
+		--arg open_state "$_PTE_ISSUE_OPEN_STATE" \
+		--arg queued "$_PTE_STATUS_QUEUED" '
+		(.state | ascii_upcase) == $open_state and
+		([.labels[].name] | any(. == $queued or . == $claimed or
+			. == $in_progress or . == $in_review)) and
+		(.assignees | length > 0)
+	' >/dev/null 2>&1
+}
+
+#######################################
 # Return whether an issue has a fresh, positively verified interactive claim.
 # This mirrors stale-assignment recovery's ownership proof: a signed claim
 # comment must be recent, its author must still be assigned, and the open
 # issue must retain an active lifecycle status. API or timestamp ambiguity returns 2 so
 # consolidation defers rather than creating a conflicting planning task.
-# Args: $1=issue_number $2=repo_slug
+# Args: $1=issue_number $2=repo_slug $3=optional validated issue metadata
 # Returns: 0=live claim, 1=no live claim, 2=ambiguous read
 #######################################
 _consolidation_live_interactive_claim() {
 	local issue_number="$1"
 	local repo_slug="$2"
-	local issue_meta_json="" comments_json="" claim_record=""
+	local issue_meta_json="${3:-}" comments_json="" claim_record=""
 	local claim_timestamp="" claim_author="" claim_epoch="" now_epoch=""
 	local claim_age=0 stale_threshold="${INTERACTIVE_STALE_THRESHOLD_SECONDS:-7200}"
 
 	comments_json=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
 		--paginate --jq '.' 2>/dev/null) || return 2
-	claim_record=$(printf '%s' "$comments_json" | jq -sr '
+	claim_record=$(printf '%s' "$comments_json" | jq -sr \
+		--arg array_type "$_PTE_JSON_ARRAY_TYPE" '
 		add
-		| [.[] | if type == "array" then .[] else . end]
+		| [.[] | if type == $array_type then .[] else . end]
 		| [.[]
 		 | select((.body // "") | contains("<!-- aidevops-interactive-claim/v1 -->"))
 		 | [(.created_at // .createdAt // ""), (.user.login // .author.login // "")] | @tsv]
 		| last // empty
 	' 2>/dev/null) || return 2
 	[[ -n "$claim_record" ]] || return 1
-	issue_meta_json=$(gh issue view "$issue_number" --repo "$repo_slug" \
-		--json state,labels,assignees 2>/dev/null) || return 2
+	if [[ -z "$issue_meta_json" ]]; then
+		issue_meta_json=$(_consolidation_issue_ownership_metadata \
+			"$issue_number" "$repo_slug") || return 2
+	fi
 	IFS=$'\t' read -r claim_timestamp claim_author <<<"$claim_record"
 	[[ -n "$claim_timestamp" && -n "$claim_author" ]] || return 2
 	claim_epoch=$(date -u -d "$claim_timestamp" +%s 2>/dev/null) ||
@@ -121,9 +187,14 @@ _consolidation_live_interactive_claim() {
 	claim_age=$((now_epoch - claim_epoch))
 	[[ "$claim_age" -ge 0 && "$claim_age" -lt "$stale_threshold" ]] || return 1
 
-	if printf '%s' "$issue_meta_json" | jq -e --arg claimant "$claim_author" '
-		(.state | ascii_downcase) == "open" and
-		([.labels[]?.name] | any(. == "status:claimed" or . == "status:in-progress" or . == "status:in-review")) and
+	if printf '%s' "$issue_meta_json" | jq -e \
+		--arg claimed "$_PTE_STATUS_CLAIMED" \
+		--arg claimant "$claim_author" \
+		--arg in_progress "$_PTE_STATUS_IN_PROGRESS" \
+		--arg in_review "$_PTE_STATUS_IN_REVIEW" \
+		--arg open_state "$_PTE_ISSUE_OPEN_STATE" '
+		(.state | ascii_upcase) == $open_state and
+		([.labels[]?.name] | any(. == $claimed or . == $in_progress or . == $in_review)) and
 		([.assignees[]?.login] | index($claimant) != null)
 	' >/dev/null 2>&1; then
 		return 0
@@ -139,9 +210,12 @@ _consolidation_dispatch_defers_for_manual_hold() {
 	local metadata=""
 	metadata=$(gh issue view "$issue_number" --repo "$repo_slug" \
 		--json state,labels,assignees 2>/dev/null) || metadata=""
-	if ! printf '%s' "$metadata" | jq -e --arg array_type "$_PTE_JSON_ARRAY_TYPE" '
-		def nonempty_string: type == "string" and length > 0;
-		type == "object" and (.state | nonempty_string) and
+	if ! printf '%s' "$metadata" | jq -e \
+		--arg array_type "$_PTE_JSON_ARRAY_TYPE" \
+		--arg object_type "$_PTE_JSON_OBJECT_TYPE" \
+		--arg string_type "$_PTE_JSON_STRING_TYPE" '
+		def nonempty_string: type == $string_type and length > 0;
+		type == $object_type and (.state | nonempty_string) and
 		(.labels | type == $array_type) and
 		all(.labels[]; .name | nonempty_string)
 	' >/dev/null 2>&1; then
@@ -162,14 +236,61 @@ _consolidation_dispatch_defers_for_manual_hold() {
 _consolidation_dispatch_defers_for_interactive_claim() {
 	local issue_number="$1"
 	local repo_slug="$2"
+	local issue_meta_json="${3:-}"
 	local interactive_claim_rc=0
 
-	_consolidation_live_interactive_claim "$issue_number" "$repo_slug" || interactive_claim_rc=$?
+	_consolidation_live_interactive_claim \
+		"$issue_number" "$repo_slug" "$issue_meta_json" || interactive_claim_rc=$?
 	if [[ "$interactive_claim_rc" -eq 0 || "$interactive_claim_rc" -eq 2 ]]; then
 		echo "[pulse-wrapper] Consolidation: live or unreadable interactive ownership for #${issue_number} in ${repo_slug}; deferring dispatch" >>"$LOGFILE"
 		return 0
 	fi
 	return 1
+}
+
+_consolidation_classification_defers_for_ownership() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local pre_fetched_json="${3:-}"
+	local was_already_labeled="$4"
+	local issue_meta_json="" interactive_claim_rc=0
+
+	issue_meta_json=$(_consolidation_issue_ownership_metadata \
+		"$issue_number" "$repo_slug" "$pre_fetched_json") || issue_meta_json=""
+	[[ -n "$issue_meta_json" ]] || return 0
+	if _consolidation_metadata_has_active_ownership "$issue_meta_json"; then
+		[[ "$was_already_labeled" != false ]] &&
+			_clear_needs_consolidation_label "$issue_number" "$repo_slug" "active lifecycle ownership exists"
+		return 0
+	fi
+	_consolidation_live_interactive_claim \
+		"$issue_number" "$repo_slug" "$issue_meta_json" || interactive_claim_rc=$?
+	if [[ "$interactive_claim_rc" -eq 0 ]]; then
+		[[ "$was_already_labeled" != false ]] &&
+			_clear_needs_consolidation_label "$issue_number" "$repo_slug" "live interactive claim exists"
+		return 0
+	fi
+	[[ "$interactive_claim_rc" -eq 2 ]] && return 0
+	return 1
+}
+
+_consolidation_dispatch_defers_for_active_ownership() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local issue_meta_json=""
+
+	issue_meta_json=$(_consolidation_issue_ownership_metadata \
+		"$issue_number" "$repo_slug") || issue_meta_json=""
+	if [[ -z "$issue_meta_json" ]]; then
+		echo "[pulse-wrapper] Consolidation: unreadable active ownership for #${issue_number} in ${repo_slug}; deferring dispatch" >>"$LOGFILE"
+		return 0
+	fi
+	if _consolidation_metadata_has_active_ownership "$issue_meta_json"; then
+		echo "[pulse-wrapper] Consolidation: active lifecycle ownership for #${issue_number} in ${repo_slug}; deferring dispatch" >>"$LOGFILE"
+		return 0
+	fi
+	_consolidation_dispatch_defers_for_interactive_claim \
+		"$issue_number" "$repo_slug" "$issue_meta_json"
 }
 
 _consolidation_dispatch_preflight_skips() {
