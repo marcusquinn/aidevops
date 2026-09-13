@@ -1110,7 +1110,7 @@ source "${SCRIPT_DIR}/pulse-wrapper-cycle-gates.sh"
 # _pulse_run_deterministic_pipeline
 #
 # Deterministic cycle stages: merge pass, dependency graph, blocked-status
-# refresh, fill floor, and routine evaluation. Extracted
+# refresh, and fill floor. Extracted
 # from main() (GH#18689) to reduce function length below the 100-line threshold.
 #
 # Side effects:
@@ -1276,16 +1276,6 @@ _pulse_run_deterministic_pipeline() {
 		else
 			_pulse_run_budget_priority_stage "dispatch_max" apply_dispatch_max
 		fi
-	fi
-
-	# Routine evaluation (t1925): check repeat: fields in TODO.md routines
-	# and dispatch due routines. Script-only (run:) routines execute directly
-	# with zero LLM tokens. Agent routines dispatch via headless runtime.
-	if [[ -f "$STOP_FLAG" ]]; then
-		echo "[pulse-wrapper] Stop flag appeared — skipping routine evaluation" >>"$LOGFILE"
-	else
-		_pulse_run_budget_priority_stage_with_timeout "evaluate_routines" "$PRE_RUN_STAGE_TIMEOUT" \
-			evaluate_routines || true
 	fi
 
 	# Dependency-alert monitor: create grouped worker-ready issues for open
@@ -1766,6 +1756,18 @@ main() {
 	# the cycle. See pulse-wrapper-bootstrap.sh::_drain_merge_trigger_file_if_present.
 	_pulse_run_budget_priority_stage "approval_merge_trigger" _drain_merge_trigger_file_if_present || true
 
+	# Routine evaluation (t1925, GH#31855): give due routines a budget decision
+	# before preflight can consume the cycle's REST allowance or hold the Pulse
+	# instance long enough for the next scheduler restart. The stage-level gate
+	# still defers on low/unknown quota, and evaluate_routines retains its
+	# per-work-unit REST hard-floor checks.
+	if [[ -f "$STOP_FLAG" ]]; then
+		echo "[pulse-wrapper] Stop flag appeared — skipping routine evaluation" >>"$LOGFILE"
+	else
+		_pulse_run_budget_priority_stage_with_timeout "evaluate_routines" "$PRE_RUN_STAGE_TIMEOUT" \
+			evaluate_routines || true
+	fi
+
 	# Run pre-flight stages (cleanup, prefetch, normalization)
 	if ! _run_preflight_stages; then
 		_pulse_cycle_state_note_blocker preflight-failed pulse-wrapper preflight || true
@@ -1787,7 +1789,7 @@ main() {
 	fi
 
 	# Run deterministic pipeline: merge pass, dep graph, blocked-status refresh,
-	# fill floor and routine evaluation. GH#18689:
+	# and fill floor. GH#18689:
 	# extracted to helper.
 	_pulse_cycle_state_publish deterministic || true
 	_pulse_run_deterministic_pipeline

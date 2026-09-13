@@ -975,7 +975,47 @@ test_deterministic_merge_guard_uses_routine_lock() {
 }
 
 #######################################
-# Test 10: _pulse_is_sourced returns success when sourced from bash.
+# Test 10: routine evaluation runs before the potentially long preflight.
+# An overdue routine must get a budget decision before preflight can consume
+# the cycle's REST allowance or keep the process busy until the next restart.
+#######################################
+test_routine_evaluation_precedes_preflight() {
+	local main_body=""
+	local graphql_budget_match=""
+	local rest_budget_match=""
+	local routine_match=""
+	local preflight_match=""
+	local graphql_budget_line=0
+	local rest_budget_line=0
+	local routine_line=0
+	local preflight_line=0
+	main_body=$(declare -f main)
+	graphql_budget_match=$(printf '%s\n' "$main_body" | grep -nF '_pulse_set_graphql_budget_priority' || true)
+	rest_budget_match=$(printf '%s\n' "$main_body" | grep -nF '_pulse_set_rest_core_budget_priority' || true)
+	routine_match=$(printf '%s\n' "$main_body" | grep -nF '_pulse_run_budget_priority_stage_with_timeout "evaluate_routines"' || true)
+	preflight_match=$(printf '%s\n' "$main_body" | grep -nF 'if ! _run_preflight_stages; then' || true)
+	graphql_budget_line="${graphql_budget_match%%:*}"
+	rest_budget_line="${rest_budget_match%%:*}"
+	routine_line="${routine_match%%:*}"
+	preflight_line="${preflight_match%%:*}"
+	[[ "$graphql_budget_line" =~ ^[0-9]+$ ]] || graphql_budget_line=0
+	[[ "$rest_budget_line" =~ ^[0-9]+$ ]] || rest_budget_line=0
+	[[ "$routine_line" =~ ^[0-9]+$ ]] || routine_line=0
+	[[ "$preflight_line" =~ ^[0-9]+$ ]] || preflight_line=0
+
+	if [[ "$graphql_budget_line" -gt 0 && "$graphql_budget_line" -lt "$routine_line" && \
+		"$rest_budget_line" -gt 0 && "$rest_budget_line" -lt "$routine_line" && \
+		"$routine_line" -lt "$preflight_line" ]]; then
+		print_result "budget initialization and routine evaluation precede Pulse preflight" 0
+	else
+		print_result "budget initialization and routine evaluation precede Pulse preflight" 1 \
+			"graphql=${graphql_budget_line} rest=${rest_budget_line} routine=${routine_line} preflight=${preflight_line}"
+	fi
+	return 0
+}
+
+#######################################
+# Test 11: _pulse_is_sourced returns success when sourced from bash.
 # Every test above relies on this guard at L13786 preventing main() from
 # running. Verify it works as documented.
 #######################################
@@ -1014,6 +1054,7 @@ main() {
 	test_sourcing_idempotency
 	test_apply_peak_hours_cap_timezone
 	test_deterministic_merge_guard_uses_routine_lock
+	test_routine_evaluation_precedes_preflight
 	test_pulse_is_sourced_guard
 
 	teardown_sandbox
