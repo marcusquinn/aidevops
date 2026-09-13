@@ -1380,6 +1380,35 @@ test_active_headless_ownership_appearing_after_classification_blocks_dispatch() 
 	return 0
 }
 
+test_active_headless_ownership_appearing_before_lock_blocks_lock_mutation() {
+	setup_gh_stub
+	GH_ISSUE_META_JSON=$(jq -n '{state:"OPEN",labels:[],assignees:[]}')
+	GH_API_COMMENTS_JSON=$(fixture_two_substantive_comments)
+	GH_ISSUE_LIST_CHILD_JSON="[]"
+	export GH_ISSUE_META_JSON GH_API_COMMENTS_JSON GH_ISSUE_LIST_CHILD_JSON
+
+	(
+		_consolidation_child_exists() {
+			export GH_ISSUE_META_JSON='{"state":"OPEN","labels":[{"name":"status:in-progress"}],"assignees":[{"login":"worker-owner"}]}'
+			return 1
+		}
+		_consolidation_lock_acquire() {
+			printf 'lock-acquired\n' >>"$GH_LOG"
+			return 0
+		}
+		_dispatch_issue_consolidation 31838 "marcusquinn/aidevops" "/tmp/fake-path"
+	)
+
+	if grep -q 'lock-acquired' "$GH_LOG" 2>/dev/null; then
+		print_result "GH#31844: headless ownership before lock blocks lock mutation" 1
+	else
+		print_result "GH#31844: headless ownership before lock blocks lock mutation" 0
+	fi
+
+	teardown_gh_stub
+	return 0
+}
+
 test_manual_hold_blocks_direct_consolidation() {
 	local label=""
 	for label in no-auto-dispatch hold-for-review no-takeover 'on hold'; do
@@ -1503,6 +1532,7 @@ main() {
 	test_signature_footer_does_not_make_short_comment_substantive
 	test_live_interactive_claim_appearing_after_classification_blocks_dispatch
 	test_active_headless_ownership_appearing_after_classification_blocks_dispatch
+	test_active_headless_ownership_appearing_before_lock_blocks_lock_mutation
 	test_manual_hold_blocks_direct_consolidation
 	test_consolidation_hold_reads_fail_closed
 	test_hold_after_lock_prevents_successor

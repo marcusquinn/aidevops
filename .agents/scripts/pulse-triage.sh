@@ -240,6 +240,12 @@ _dispatch_issue_consolidation() {
 		echo "[pulse-wrapper] Consolidation: child already exists for #${issue_number} in ${repo_slug}; flagged parent and returning" >>"$LOGFILE"
 		return 0
 	fi
+	# Ownership can change while preflight and child dedup reads are running.
+	# Recheck immediately before the lock's first issue-level mutation.
+	if _consolidation_dispatch_defers_for_manual_hold "$issue_number" "$repo_slug" ||
+		_consolidation_dispatch_defers_for_active_ownership "$issue_number" "$repo_slug"; then
+		return 0
+	fi
 
 	# t2151: acquire advisory lock before any visible state changes;
 	# if we lose, flag the parent and yield.
