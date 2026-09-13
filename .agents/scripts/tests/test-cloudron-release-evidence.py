@@ -64,7 +64,7 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual(args[3:], ("--repo", self.repo, "--signer-workflow", self.repo + "/.github/workflows/publish.yml",
                                     "--source-ref", "refs/heads/main", "--format", "json"))
         image = args[2].startswith("oci://")
-        name = self.image.split("@")[0] if image else MODULE.CATALOG
+        name = "ghcr.io/" + self.repo if image else MODULE.CATALOG
         digest = "3" * 64 if image else hashlib.sha256(Path(args[2]).read_bytes()).hexdigest()
         invocation = self.proof.repository_url + "/actions/runs/123/attempts/1"
         cert = dict(issuer="https://token.actions.githubusercontent.com",
@@ -85,6 +85,11 @@ class EvidenceTests(unittest.TestCase):
 
     def test_valid_catalog_and_replay(self):
         self.assertTrue(self.verify())
+        self.assertTrue(self.verify())
+
+    def test_valid_tagged_image_uses_canonical_attestation_subject(self):
+        self.image = "ghcr.io/" + self.repo + ":2.0.12@sha256:" + "3" * 64
+        self.after["versions"]["2.0.12"]["manifest"]["dockerImage"] = self.image
         self.assertTrue(self.verify())
 
     def test_generated_commit_boundaries(self):
@@ -118,6 +123,23 @@ class EvidenceTests(unittest.TestCase):
             mutation(self.after)
             with self.subTest(catalog=self.after), self.assertRaises(MODULE.EvidenceError):
                 self.verify()
+
+    def test_image_reference_negatives(self):
+        invalid_images = [
+            "ghcr.io/" + self.repo + ":@sha256:" + "3" * 64,
+            "ghcr.io/" + self.repo + ":bad/tag@sha256:" + "3" * 64,
+            "ghcr.io/" + self.repo + ":tag",
+            "ghcr.io/other/package:2.0.12@sha256:" + "3" * 64,
+            "ghcr.io/testorg/other:2.0.12@sha256:" + "3" * 64,
+            "docker.io/" + self.repo + ":2.0.12@sha256:" + "3" * 64,
+            "ghcr.io/" + self.repo.upper() + ":2.0.12@sha256:" + "3" * 64,
+            "ghcr.io/" + self.repo + ":2.0.12@sha256:" + "3" * 64 + ".extra",
+        ]
+        for image in invalid_images:
+            with self.subTest(image=image):
+                self.after["versions"]["2.0.12"]["manifest"]["dockerImage"] = image
+                with self.assertRaises(MODULE.EvidenceError):
+                    self.verify()
 
     def test_release_and_workflow_negatives(self):
         original = copy.deepcopy(self.run)
