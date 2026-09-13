@@ -382,6 +382,7 @@ assert_eq "repo normalization fails safely without HOME" "1" "$home_result"
 
 # The shared candidate selector must recover an all-blocked roadmap even when
 # called directly by a workers sweep without the full pulse preflight.
+SCRIPT_DIR="$SCRIPTS_DIR"
 # shellcheck disable=SC1090
 source "${SCRIPTS_DIR}/pulse-repo-meta.sh"
 candidate_fetch_file="${TMP_ROOT}/candidate-fetch-count"
@@ -576,6 +577,16 @@ parent["dependency_inconsistent"] = False
 available = module._count_issue(aggregate, parent, dt.datetime.now(dt.timezone.utc), 30)
 assert available is False
 
+# Contributor information waits remain unavailable even when stale runnable
+# labels coexist, but stay distinct from explicit maintainer holds.
+aggregate = module._empty_aggregate()
+needs_info = issue(201, "", ["status:available", "status:needs-info", "auto-dispatch", "tier:standard"])
+needs_info["dependency_inconsistent"] = False
+available = module._count_issue(aggregate, needs_info, dt.datetime.now(dt.timezone.utc), 30)
+assert available is False
+assert aggregate["blocked_labels"] == 1
+assert aggregate["blocked_explicit_hold"] == 0
+
 # Dependency-inconsistent availability is reported separately and excluded.
 aggregate = module._empty_aggregate()
 roadmap_child["dependency_inconsistent"] = True
@@ -583,7 +594,7 @@ available = module._count_issue(aggregate, roadmap_child, dt.datetime.now(dt.tim
 assert available is False
 assert aggregate["dependency_inconsistent_available"] == 1
 assert aggregate["available_unassigned"] == 0
-print("PASS: queue scanner native/text/missing/parent diagnostics")
+print("PASS: queue scanner native/text/missing/parent/needs-info diagnostics")
 PY
 python_rc=$?
 if [[ "$python_rc" -eq 0 ]]; then

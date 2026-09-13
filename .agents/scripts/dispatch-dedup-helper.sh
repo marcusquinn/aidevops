@@ -1164,7 +1164,7 @@ _classify_structural_dispatch_blocker_reason() {
 			printf 'publication_pending\n'
 			return 0
 			;;
-		*infrastructure_blocked* | *label=infrastructure* | *hold_for_review_blocked* | *hold-for-review* | *external*author*gate* | *nmr*gate* | *approval*required*)
+		*infrastructure_blocked* | *label=infrastructure* | *hold_for_review_blocked* | *hold-for-review* | *needs_info_blocked* | *status:needs-info* | *external*author*gate* | *nmr*gate* | *approval*required*)
 			printf 'policy_gate\n'
 			return 0
 			;;

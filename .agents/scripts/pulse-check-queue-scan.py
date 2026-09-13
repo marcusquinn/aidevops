@@ -38,6 +38,7 @@ BLOCKING_LABELS = frozenset({
     "hold-for-review",
     "blocked",
     "status:blocked",
+    "status:needs-info",
     "status:in-review",
     "consolidated",
     "duplicate",
