@@ -219,6 +219,7 @@ repo_allows_pulse_write_actions() {
 #   - infrastructure + source:ci-failure-miner (operational advisories)
 #   - parent-task (decomposition tracker, never directly dispatchable; t2924)
 #   - no-auto-dispatch (explicit dispatch opt-out; t2924)
+#   - status:needs-info (waiting for contributor evidence)
 #   - status:in-progress, status:in-review, status:claimed without auto-dispatch
 #     (active claims that the dispatcher would otherwise block; t2924)
 #   - status:done (completed work, never dispatchable)
@@ -391,6 +392,7 @@ _filter_dispatchable_issue_candidates_json() {
 			# candidate build and dispatch.
 			select(($labels | index("parent-task")) == null) |
 			select(($labels | index("no-auto-dispatch")) == null) |
+			select(($labels | index("status:needs-info")) == null) |
 			(($labels | index($auto_dispatch_label)) != null) as $has_auto_dispatch |
 			select((($labels | index("status:in-progress")) == null) or $has_auto_dispatch) |
 			select((($labels | index("status:in-review")) == null) or $has_auto_dispatch) |
@@ -419,6 +421,7 @@ _filter_dispatchable_issue_candidates_json() {
 # Candidate rules:
 # - open and not blocked
 # - exclude any issue carrying a needs-* label (e.g. needs-maintainer-review)
+# - exclude status:needs-info while contributor evidence is outstanding
 # - include queued/in-progress/in-review states (status labels are not blockers)
 # - include assigned issues (assignment state is resolved by dedup/claim checks)
 # - exclude supervisor/persistent telemetry issues

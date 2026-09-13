@@ -1621,6 +1621,11 @@ _dispatch_dedup_check_layers() {
 
 	_dss_t0=$(_ds_now_ns)
 	_ds_stage_start "$issue_number" "$repo_slug" "label_checks" "$_dss_t0" _ds_stage_attempt_id
+	if printf '%s' "$issue_meta_json" | jq -e '.labels | map(.name) | index("status:needs-info")' >/dev/null 2>&1; then
+		echo "[dispatch_with_dedup] NEEDS_INFO_BLOCKED for #${issue_number} in ${repo_slug}: status:needs-info label present" >>"$LOGFILE"
+		_ds_record "$issue_number" "$repo_slug" "dedup.label_checks" "$_dss_t0"
+		return 1
+	fi
 	if printf '%s' "$issue_meta_json" | jq -e '.labels | map(.name) | (index("supervisor") or index("contributor") or index("persistent") or index("quality-review") or index("on hold") or index("blocked") or index("parent-task") or index("meta"))' >/dev/null 2>&1; then
 		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: non-dispatchable management label present" >>"$LOGFILE"
 		_ds_record "$issue_number" "$repo_slug" "dedup.label_checks" "$_dss_t0"

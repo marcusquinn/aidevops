@@ -191,13 +191,15 @@ _has_active_claim() {
 #   $3 = (optional) current runner login — if assigned to self, not a dup
 # Returns:
 #   exit 0 if assigned to another login (do NOT dispatch), parent-task labeled,
-#          no-auto-dispatch labeled, cost-budget exceeded, or guard cannot
-#          determine safety (GUARD_UNCERTAIN)
+#          no-auto-dispatch labeled, waiting for contributor information,
+#          cost-budget exceeded, or guard cannot determine safety
+#          (GUARD_UNCERTAIN)
 #   exit 1 if unassigned or assigned only to self (safe to dispatch)
 # Outputs: one of the following signals on stdout when blocking:
 #   PARENT_TASK_BLOCKED (label=<name>)      — unconditional parent-task / meta block
 #   PUBLICATION_PENDING_BLOCKED (label=...) — canonical planning publication has not landed
 #   NO_AUTO_DISPATCH_BLOCKED (label=...)    — unconditional no-auto-dispatch block (t2832)
+#   NEEDS_INFO_BLOCKED (label=...)          — waiting for contributor information
 #   INFRASTRUCTURE_BLOCKED (label=...)      — infrastructure / billing / runner advisory block
 #   COST_BUDGET_EXCEEDED (...)              — token spend circuit breaker
 #   GUARD_UNCERTAIN (reason=...)            — internal error, cannot determine safety
@@ -359,6 +361,27 @@ _is_assigned_check_no_auto_dispatch() {
 	local repo_slug="${3:-unknown}"
 	_is_assigned_check_label_block "$meta_json" "$issue_number" "$repo_slug" \
 		"no-auto-dispatch" "NO_AUTO_DISPATCH_BLOCKED" "no-auto-dispatch-check"
+}
+
+#######################################
+# is_assigned helper: block worker implementation while contributor evidence
+# requested by triage is still outstanding. Pulse's ancillary reconciliation
+# removes status:needs-info after a contributor reply; until then the issue is
+# not runnable even if stale status:available and auto-dispatch labels remain.
+#
+# Args:
+#   $1 = issue metadata JSON (from `gh issue view --json ...,labels`)
+#   $2 = (optional) issue number — included in GUARD_UNCERTAIN output
+#   $3 = (optional) repo slug — included in GUARD_UNCERTAIN output
+# Returns: exit 0 if status:needs-info is present or jq fails (prints signal),
+#          exit 1 if the label is absent and jq succeeds
+#######################################
+_is_assigned_check_needs_info() {
+	local meta_json="$1"
+	local issue_number="${2:-unknown}"
+	local repo_slug="${3:-unknown}"
+	_is_assigned_check_label_block "$meta_json" "$issue_number" "$repo_slug" \
+		"status:needs-info" "NEEDS_INFO_BLOCKED" "needs-info-check"
 }
 
 _is_assigned_check_maintainer_permissions() {
@@ -1264,7 +1287,8 @@ _is_assigned_pre_assignee_guard_blocks() {
 	local issue_number="$2"
 	local repo_slug="$3"
 
-	# Parent-task, pending publication, and no-auto-dispatch are unconditional blocks.
+	# Parent-task, pending publication, manual holds, and external-information
+	# waits are unconditional worker-dispatch blocks.
 	if _is_assigned_check_parent_task "$issue_meta_json" "$issue_number" "$repo_slug"; then
 		return 0
 	fi
@@ -1272,6 +1296,9 @@ _is_assigned_pre_assignee_guard_blocks() {
 		return 0
 	fi
 	if _is_assigned_check_no_auto_dispatch "$issue_meta_json" "$issue_number" "$repo_slug"; then
+		return 0
+	fi
+	if _is_assigned_check_needs_info "$issue_meta_json" "$issue_number" "$repo_slug"; then
 		return 0
 	fi
 	if _is_assigned_check_maintainer_permissions "$issue_meta_json" "$issue_number" "$repo_slug"; then

@@ -168,15 +168,35 @@ else
 		"(rc=$rc output='$output')"
 fi
 
+# Case G: status:needs-info plus stale runnable labels must remain blocked until
+# contributor-reply reconciliation removes status:needs-info.
+write_stub_gh '{"state":"OPEN","assignees":[],"labels":[{"name":"status:needs-info"},{"name":"status:available"},{"name":"auto-dispatch"},{"name":"tier:standard"}]}'
+run_is_assigned 99893 "owner/repo"
+if [[ "$rc" -eq 0 && "$output" == *"NEEDS_INFO_BLOCKED"* && "$output" == *"status:needs-info"* ]]; then
+	print_result "is-assigned blocks status:needs-info despite stale runnable labels" 0
+else
+	print_result "is-assigned blocks status:needs-info despite stale runnable labels" 1 \
+		"(rc=$rc output='$output')"
+fi
+
+classification=$("${TEST_SCRIPTS_DIR}/dispatch-dedup-helper.sh" classify-blocker \
+	"NEEDS_INFO_BLOCKED (label=status:needs-info)")
+if [[ "$classification" == "policy_gate" ]]; then
+	print_result "needs-info block has stable policy-gate telemetry" 0
+else
+	print_result "needs-info block has stable policy-gate telemetry" 1 \
+		"(classification='$classification')"
+fi
+
 # =============================================================================
 # Part 3 — Negative cases (must NOT trigger the new block)
 # =============================================================================
 
-# Case G: unrelated labels only (no `no-auto-dispatch`) → must NOT short-circuit
+# Case H: unrelated labels only (no `no-auto-dispatch`) → must NOT short-circuit
 # on no-auto-dispatch. This case may still allow dispatch (rc=1) or block on
 # other guards; we only assert the NO_AUTO_DISPATCH signal is absent.
 write_stub_gh '{"state":"OPEN","assignees":[],"labels":[{"name":"pulse"},{"name":"tier:standard"}]}'
-run_is_assigned 99893 "owner/repo"
+run_is_assigned 99892 "owner/repo"
 if [[ "$output" != *"NO_AUTO_DISPATCH_BLOCKED"* ]]; then
 	print_result "is-assigned does not emit NO_AUTO_DISPATCH_BLOCKED for unlabeled issue" 0
 else
@@ -184,10 +204,10 @@ else
 		"(rc=$rc output='$output')"
 fi
 
-# Case H: substring-similar label (e.g. "auto-dispatch" alone) must NOT match.
+# Case I: substring-similar label (e.g. "auto-dispatch" alone) must NOT match.
 # The check is exact equality against "no-auto-dispatch", not substring.
 write_stub_gh '{"state":"OPEN","assignees":[],"labels":[{"name":"auto-dispatch"},{"name":"pulse"}]}'
-run_is_assigned 99892 "owner/repo"
+run_is_assigned 99891 "owner/repo"
 if [[ "$output" != *"NO_AUTO_DISPATCH_BLOCKED"* ]]; then
 	print_result "is-assigned does not match 'auto-dispatch' as 'no-auto-dispatch'" 0
 else
@@ -199,10 +219,10 @@ fi
 # Part 4 — Fail-closed contract (jq error path — t2061)
 # =============================================================================
 
-# Case I: labels key is null — must not crash, must allow dispatch (no label
+# Case J: labels key is null — must not crash, must allow dispatch (no label
 # = not blocked by this guard). Validates the `(.labels // [])` null-fallback.
 write_stub_gh '{"state":"OPEN","assignees":[],"labels":null}'
-run_is_assigned 99891 "owner/repo"
+run_is_assigned 99890 "owner/repo"
 if [[ "$output" != *"NO_AUTO_DISPATCH_BLOCKED"* ]]; then
 	print_result "is-assigned allows dispatch when labels key is null (null-fallback safety)" 0
 else
@@ -210,9 +230,9 @@ else
 		"(rc=$rc output='$output')"
 fi
 
-# Case J: labels key absent entirely — same null-fallback safety.
+# Case K: labels key absent entirely — same null-fallback safety.
 write_stub_gh '{"state":"OPEN","assignees":[]}'
-run_is_assigned 99890 "owner/repo"
+run_is_assigned 99889 "owner/repo"
 if [[ "$output" != *"NO_AUTO_DISPATCH_BLOCKED"* ]]; then
 	print_result "is-assigned allows dispatch when labels key is absent (null-fallback safety)" 0
 else

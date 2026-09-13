@@ -268,7 +268,7 @@ if _pulse_check_idle_backoff_gate; then
 else
 	fail "visible work still bypasses active idle backoff"
 fi
-for excluded_label in publication:pending needs-maintainer-review needs-maintainer-permissions infrastructure \
+for excluded_label in publication:pending needs-maintainer-review needs-maintainer-permissions status:needs-info infrastructure \
 	supervisor contributor persistent quality-review 'on hold' blocked parent-task meta consolidated status:done status:resolved; do
 	GH_OUTPUT=$(printf '%s' "$ELIGIBLE_ISSUE" | jq -c --arg label "$excluded_label" '[.labels += [{name:$label}]]')
 	query_rc=0

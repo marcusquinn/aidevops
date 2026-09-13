@@ -253,7 +253,7 @@ _pulse_available_auto_dispatch_work_exists() {
 			# Mirror the hard management/status exclusions in pulse-dispatch-core.sh.
 			def held_labels: ["publication:pending", "needs-maintainer-review", "needs-maintainer-permissions",
 				"infrastructure", "supervisor", "contributor", "persistent", "quality-review", "on hold",
-				"blocked", "parent-task", "meta", "consolidated", "status:done", "status:resolved"];
+				"blocked", "parent-task", "meta", "consolidated", "status:needs-info", "status:done", "status:resolved"];
 			def eligible: .pull_request == null and .state == "open" and (.assignees | length) == 0
 				and any(.labels[]; .name == "auto-dispatch")
 				and any(.labels[]; .name == "status:available")
