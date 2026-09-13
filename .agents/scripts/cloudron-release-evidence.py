@@ -104,7 +104,12 @@ class CatalogEvidence:
         require(source_manifest["version"] == self.version and source_manifest["changelog"] == "file://CHANGELOG",
                 "source manifest version/changelog contract mismatch")
         image = manifest["dockerImage"]
-        require(re.fullmatch(re.escape("ghcr.io/" + self.repo.lower() + "@sha256:") + r"[0-9a-f]{64}", image),
+        image_match = re.fullmatch(
+            r"(?P<repository>" + re.escape("ghcr.io/" + self.repo.lower())
+            + r")(?:\:(?P<tag>[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}))?@sha256:(?P<digest>[0-9a-f]{64})",
+            image,
+        )
+        require(image_match is not None,
                 "image must be a digest in this repository's GHCR namespace")
         comparable = dict(manifest)
         del comparable["dockerImage"]
@@ -114,7 +119,7 @@ class CatalogEvidence:
         section = re.search(r"(?m)^\[" + re.escape(self.version) + r"\]\s*\n(.*?)(?=^\[|\Z)", changelog, re.S)
         require(section is not None and manifest["changelog"].strip() == section[1].strip(),
                 "published changelog differs from the source release section")
-        return data, image
+        return data, image, image_match["repository"], image_match["digest"]
 
     def invocations(self):
         runs = self.api("actions/workflows/" + self.workflow
@@ -173,14 +178,14 @@ class CatalogEvidence:
         release = self.api("releases/tags/" + self.tag)
         require(release["tag_name"] == self.tag and release["draft"] is False
                 and release["prerelease"] is False, "expected a published stable release")
-        data, image = self.catalog()
+        data, image, image_name, image_digest = self.catalog()
         invocations = self.invocations()
         temporary_root = os.environ.get("AIDEVOPS_TEMP_DIR", str(Path.home() / ".aidevops/.agent-workspace/tmp"))
         with tempfile.TemporaryDirectory(prefix="catalog-evidence-", dir=temporary_root) as directory:
             catalog = Path(directory) / CATALOG
             catalog.write_bytes(data)
             file_runs = self.verified_invocations(str(catalog), CATALOG, hashlib.sha256(data).hexdigest(), invocations)
-            image_runs = self.verified_invocations("oci://" + image, image.split("@")[0], image.split(":")[-1], invocations)
+            image_runs = self.verified_invocations("oci://" + image, image_name, image_digest, invocations)
             require(file_runs & image_runs, "catalog and image were not attested by the same successful invocation")
         return True
 
