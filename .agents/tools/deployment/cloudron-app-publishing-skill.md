@@ -29,6 +29,12 @@ Distribute Cloudron apps independently using a `CloudronVersions.json` version c
 
 ## Workflow
 
+Keep these states distinct: **upstream detected** (a monitor finding),
+**package prepared** (manifest and changelog updated), **image build verified**
+(immutable Docker sources resolve and a no-push build succeeds), and **catalog
+published** (a reviewed image is present in `CloudronVersions.json`). Detection
+does not authorize any later state.
+
 ```bash
 cloudron versions init  # creates CloudronVersions.json + DESCRIPTION.md, CHANGELOG, POSTINSTALL.md (edit all placeholders)
 cloudron build          # build and push image (first run prompts for Docker repository, e.g. registry/username/myapp)
