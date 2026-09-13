@@ -82,7 +82,7 @@ _der_todo_blocker_tokens_valid() {
 _der_labels_have_hold() {
 	local labels="$1"
 	local expected=""
-	for expected in needs-maintainer-review hold-for-review no-auto-dispatch; do
+	for expected in needs-maintainer-review needs-maintainer-permissions hold-for-review no-auto-dispatch; do
 		_der_labels_has "$labels" "$expected" && return 0
 	done
 	return 1

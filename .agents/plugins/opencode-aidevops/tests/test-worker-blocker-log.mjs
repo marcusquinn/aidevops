@@ -281,7 +281,7 @@ test("stale supervisor reconciliation preserves evidence and fails closed for cu
   const base = {
     event: "permission_request_captured",
     reason: "permission_required",
-    source: "supervisor-pulse",
+    source: "opencode-permission-broker",
     issue_number: null,
     repo_slug: " ",
     session_key: "supervisor-pulse",
@@ -298,20 +298,30 @@ test("stale supervisor reconciliation preserves evidence and fails closed for cu
     logPath,
     now: new Date("2026-07-24T12:00:00Z"),
   }), true);
+  assert.equal(appendWorkerBlockerEvent({ ...base, session_key: "supervisor-pulse-retry", request_id: "other-session" }, {
+    logPath,
+    now: new Date("2026-07-24T12:00:00Z"),
+  }), true);
 
-  assert.deepEqual(resolveStaleSupervisorWorkerBlockers({
-    repo_slug: "",
-    session_key: "supervisor-pulse",
-    stale_before: "1784894400",
-  }, { logPath, now: new Date("2026-07-24T12:02:00Z") }), { ok: true, resolvedCount: 1 });
+  const result = spawnSync(process.execPath, [
+    CLI_PATH,
+    "resolve-stale-supervisor-session",
+    "--log-file", logPath,
+    "--repo-slug", "",
+    "--session-key", "supervisor-pulse",
+    "--stale-before", "1784894400",
+  ], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout.trim(), "1");
 
   const events = readFileSync(logPath, "utf8").trim().split("\n").map((line) => JSON.parse(line));
   const terminal = events.at(-1);
-  assert.equal(events.length, 4);
+  assert.equal(events.length, 5);
   assert.equal(terminal.event, "stale_supervisor_session_terminal_reconciled");
   assert.equal(terminal.request_id, "stale");
   assert.equal(terminal.repo_slug, "");
   assert.equal(terminal.blocking, false);
+  assert.equal(events.some((event) => event.request_id === "other-session" && event.blocking === false), false);
   assert.deepEqual(resolveStaleSupervisorWorkerBlockers({
     repo_slug: "",
     session_key: "supervisor-pulse",

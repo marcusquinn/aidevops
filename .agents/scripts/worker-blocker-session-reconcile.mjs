@@ -74,7 +74,6 @@ function activeStaleSupervisorSessionEvents(logPath, scope) {
   return activeWorkerBlockerEventsMatching(logPath, (event) => (
     event.repo_slug === ""
     && event.session_key === "supervisor-pulse"
-    && String(event.source || "").includes("supervisor-pulse")
     && (event.event === "stale_supervisor_session_terminal_reconciled"
       || (Number.isFinite(Number(event.ts)) && Number(event.ts) <= scope.staleBefore))
   ));
