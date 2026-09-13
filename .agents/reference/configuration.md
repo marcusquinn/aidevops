@@ -10,7 +10,7 @@ aidevops uses two complementary configuration files.
 | File | Format | Purpose | Managed by |
 |------|--------|---------|------------|
 | `~/.config/aidevops/config.jsonc` | JSONC | Framework behaviour: updates, models, safety, quality, orchestration, paths | `config-helper.sh` / `aidevops config` |
-| `~/.config/aidevops/settings.json` | JSON | User preferences: onboarding state, UI, model routing defaults | `settings-helper.sh` |
+| `~/.config/aidevops/settings.json` | JSON | User preferences: onboarding state and UI | `settings-helper.sh` |
 
 Both created automatically on first run. Neither required — sensible defaults apply when absent.
 
@@ -423,9 +423,6 @@ These keys exist only in `settings.json` (no `config.jsonc` equivalent):
 | `supervisor.circuit_breaker_max_failures` | number | `3` | Consecutive failures before circuit breaker pauses dispatch. |
 | `supervisor.strategic_review_hours` | number | `4` | Hours between thinking-tier strategic reviews of queue health. |
 | `repo_sync.schedule` | string | `"daily"` | Sync schedule. Only `daily` supported. |
-| `model_routing.default_tier` | string | `"standard"` | Default tier for tasks without an explicit tier. Options: `simple`, `standard`, `thinking`. |
-| `model_routing.budget_tracking_enabled` | boolean | `true` | Track per-provider API spend. |
-| `model_routing.prefer_subscription` | boolean | `true` | Prefer subscription plans over API billing when both available. |
 | `onboarding.completed` | boolean | `false` | Whether the user has completed `/onboarding`. |
 | `onboarding.work_type` | string | `""` | User's primary work type (e.g., `"web"`, `"devops"`, `"seo"`, `"WordPress"`). |
 | `onboarding.familiarity` | array | `[]` | Concepts the user is familiar with (e.g., `["git", "terminal", "api_keys"]`). |

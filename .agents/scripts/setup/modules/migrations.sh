@@ -1828,53 +1828,61 @@ migrate_custom_model_routing_reasoning_defaults() {
 	return 0
 }
 
-# Migrate provider-family names that predate canonical workload tiers. Preserve
-# the original document before changing a user setting.
-migrate_settings_model_routing_default_tier() {
+# Remove the obsolete settings.json model_routing section. Runtime routing uses
+# explicit tier labels and the canonical model-routing-table.json instead.
+migrate_obsolete_settings_model_routing() {
 	local settings_file="${HOME:+$HOME/.config/aidevops/settings.json}"
 	local backup_dir="${HOME:+$HOME/.aidevops/config-backups/migrations}"
 	local backup_file="${backup_dir:+$backup_dir/t31849-settings.json}"
 	local temp_file=""
-	local current_tier=""
+	local file_mode=""
+	local jq_object_type=object
+	local effective_uid="${EUID:-$(id -u)}"
 
 	if [[ -z "$settings_file" ]]; then
-		print_warning "HOME unavailable; model routing default tier migration will retry"
+		print_warning "HOME unavailable; obsolete model routing settings migration will retry"
 		return 0
 	fi
 	[[ -f "$settings_file" ]] || return 0
-	if [[ -L "$settings_file" || ! -O "$settings_file" ]] || ! command -v jq >/dev/null 2>&1; then
-		print_warning "Skipping unsafe or unreadable settings file; model routing default tier migration will retry"
+	if [[ -L "$settings_file" || (! -O "$settings_file" && "$effective_uid" -ne 0) ]] || ! command -v jq >/dev/null 2>&1; then
+		print_warning "Skipping unsafe or unreadable settings file; obsolete model routing settings migration will retry"
 		return 0
 	fi
-	current_tier=$(jq -r '.model_routing.default_tier // empty' "$settings_file" 2>/dev/null) || {
-		print_warning "Invalid settings file; model routing default tier migration will retry"
+	if ! jq -e --arg object_type "$jq_object_type" 'type == $object_type' "$settings_file" >/dev/null 2>&1; then
+		print_warning "Invalid settings file; obsolete model routing settings migration will retry"
 		return 0
-	}
-	case "$current_tier" in
-	haiku) current_tier="simple" ;;
-	sonnet) current_tier="standard" ;;
-	opus) current_tier="thinking" ;;
-	*) return 0 ;;
-	esac
+	fi
+	jq -e 'has("model_routing")' "$settings_file" >/dev/null 2>&1 || return 0
 
 	mkdir -p "$backup_dir" || return 0
 	if [[ ! -f "$backup_file" ]] && ! cp -p "$settings_file" "$backup_file"; then
-		print_warning "Failed to back up settings before model routing default tier migration; migration will retry"
+		print_warning "Failed to back up settings before obsolete model routing settings migration; migration will retry"
 		return 0
 	fi
-	temp_file=$(mktemp "${settings_file}.t31849.XXXXXX") || return 0
-	if ! jq --arg tier "$current_tier" '.model_routing.default_tier = $tier' "$settings_file" >"$temp_file"; then
+	file_mode=$(stat -f '%Lp' "$settings_file" 2>/dev/null || stat -c '%a' "$settings_file" 2>/dev/null) || {
+		print_warning "Failed to read settings permissions; obsolete model routing settings migration will retry"
+		return 0
+	}
+	temp_file=$(mktemp "${settings_file}.t31849.XXXXXX") || {
+		print_warning "Failed to create temporary settings file; obsolete model routing settings migration will retry"
+		return 0
+	}
+	if ! jq 'del(.model_routing)' "$settings_file" >"$temp_file"; then
 		rm -f "$temp_file"
-		print_warning "Failed to migrate model routing default tier; migration will retry"
+		print_warning "Failed to remove obsolete model routing settings; migration will retry"
 		return 0
 	fi
-	chmod 600 "$temp_file"
+	if ! chmod "$file_mode" "$temp_file"; then
+		rm -f "$temp_file"
+		print_warning "Failed to preserve settings permissions; obsolete model routing settings migration will retry"
+		return 0
+	fi
 	if ! mv "$temp_file" "$settings_file"; then
 		rm -f "$temp_file"
-		print_warning "Failed to replace settings after model routing default tier migration; migration will retry"
+		print_warning "Failed to replace settings after obsolete model routing settings migration; migration will retry"
 		return 0
 	fi
-	print_info "Migrated model_routing.default_tier to canonical workload tier"
+	print_info "Removed obsolete model_routing settings; backup: $backup_file"
 	return 0
 }
 

@@ -108,7 +108,7 @@ fi
 #######################################
 # Resolve the worker tier from issue labels. When multiple tier:* labels
 # are present (collision — see t1997), pick the highest rank order.
-# Fallback: the configured model_routing.default_tier, then tier:standard.
+# Fallback: tier:standard if no tier label is present.
 # Arguments:
 #   $1 - comma-separated label list (e.g., "bug,tier:simple,auto-dispatch")
 # Output:
@@ -130,14 +130,7 @@ _resolve_worker_tier() {
 	elif [[ "$labels_with_commas" == *",tier:simple,"* ]]; then
 		printf 'tier:simple'
 	else
-		local default_tier="${AIDEVOPS_DEFAULT_TIER:-}"
-		if [[ -z "$default_tier" && -r "$HOME/.config/aidevops/settings.json" ]] && command -v jq >/dev/null 2>&1; then
-			default_tier=$(jq -r '.model_routing.default_tier // empty' "$HOME/.config/aidevops/settings.json" 2>/dev/null)
-		fi
-		case "$default_tier" in
-		simple|standard|thinking) printf 'tier:%s' "$default_tier" ;;
-		*) printf 'tier:standard' ;;
-		esac
+		printf 'tier:standard' # default when no tier label present
 	fi
 	return 0
 }

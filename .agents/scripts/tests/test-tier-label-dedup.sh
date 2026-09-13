@@ -79,13 +79,7 @@ assert_equals "tier:standard" "$result" "No tier label: default to standard"
 result=$(_resolve_worker_tier "")
 assert_equals "tier:standard" "$result" "Empty label list: default to standard"
 
-# Test 10: configured default tier is used when no label is present
-AIDEVOPS_DEFAULT_TIER="thinking"
-result=$(_resolve_worker_tier "bug,auto-dispatch")
-assert_equals "tier:thinking" "$result" "No tier label: configured default is used"
-unset AIDEVOPS_DEFAULT_TIER
-
-# Test 11: Case insensitivity - uppercase TIER:STANDARD
+# Test 10: Case insensitivity - uppercase TIER:STANDARD
 result=$(_resolve_worker_tier "bug,TIER:STANDARD")
 assert_equals "tier:standard" "$result" "Case insensitive: TIER:STANDARD"
 

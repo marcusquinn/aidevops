@@ -81,11 +81,6 @@ _generate_defaults() {
     "sonarcloud_enabled": true,
     "write_time_linting": true
   },
-  "model_routing": {
-    "default_tier": "standard",
-    "budget_tracking_enabled": true,
-    "prefer_subscription": true
-  },
   "runtime": {
     "opencode": {
       "astra_context_cap": true,
@@ -130,7 +125,6 @@ _env_var_for_key() {
 	supervisor.peak_hours_tz) echo "AIDEVOPS_PEAK_HOURS_TZ" ;;
 	supervisor.peak_hours_worker_fraction) echo "AIDEVOPS_PEAK_HOURS_WORKER_FRACTION" ;;
 	repo_sync.enabled) echo "AIDEVOPS_REPO_SYNC" ;;
-	model_routing.default_tier) echo "AIDEVOPS_DEFAULT_TIER" ;;
 	*) echo "" ;;
 	esac
 	return 0
@@ -379,7 +373,7 @@ cmd_validate() {
 	fi
 
 	# Check required sections exist
-	local required_sections=("auto_update" "supervisor" "repo_sync" "quality" "model_routing" "onboarding" "ui")
+	local required_sections=("auto_update" "supervisor" "repo_sync" "quality" "onboarding" "ui")
 	for section in "${required_sections[@]}"; do
 		if ! jq -e ".$section" "$SETTINGS_FILE" >/dev/null 2>&1; then
 			print_warning "Missing section: $section"
@@ -420,16 +414,11 @@ cmd_validate() {
 		errors=$((errors + 1))
 	fi
 
-	local default_tier
-	default_tier=$(jq -r '.model_routing.default_tier // empty' "$SETTINGS_FILE" 2>/dev/null)
-	case "$default_tier" in
-	simple|standard|thinking) ;;
-	*)
-		print_warning "model_routing.default_tier (${default_tier:-missing}) must be simple, standard, or thinking"
-		print_info "  Legacy tiers are migrated by: aidevops update"
+	if jq -e 'has("model_routing")' "$SETTINGS_FILE" >/dev/null 2>&1; then
+		print_warning "model_routing is obsolete; routing now uses configs/model-routing-table.json and explicit tier labels"
+		print_info "  Run: aidevops update  (backs up settings and removes the obsolete section)"
 		errors=$((errors + 1))
-		;;
-	esac
+	fi
 
 	# Validate peak_hours settings when enabled
 	local peak_enabled
@@ -496,7 +485,6 @@ cmd_export_env() {
 		"supervisor.peak_hours_tz"
 		"supervisor.peak_hours_worker_fraction"
 		"repo_sync.enabled"
-		"model_routing.default_tier"
 	)
 
 	for key in "${keys[@]}"; do
@@ -560,9 +548,6 @@ SETTINGS KEYS (dot-notation):
     quality.shellcheck_enabled           ShellCheck on/off (default: true)
     quality.sonarcloud_enabled           SonarCloud on/off (default: true)
     quality.write_time_linting           Lint on every edit (default: true)
-    model_routing.default_tier           Default model tier (default: standard)
-    model_routing.budget_tracking_enabled Budget tracking on/off (default: true)
-    model_routing.prefer_subscription    Prefer subscription over API (default: true)
     onboarding.completed                 Whether onboarding was completed
     onboarding.work_type                 User's work type from onboarding
     onboarding.familiarity               Concepts user is familiar with

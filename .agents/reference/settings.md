@@ -56,14 +56,6 @@
 | `quality.sonarcloud_enabled` | boolean | `true` | -- | Run SonarCloud analysis. |
 | `quality.write_time_linting` | boolean | `true` | -- | Lint after each edit, not just at commit. |
 
-### model_routing
-
-| Key | Type | Default | Env Var | Description |
-|-----|------|---------|---------|-------------|
-| `model_routing.default_tier` | string | `"standard"` | -- | Default tier for untagged tasks (`simple`, `standard`, `thinking`). |
-| `model_routing.budget_tracking_enabled` | boolean | `true` | -- | Track per-provider API spend. |
-| `model_routing.prefer_subscription` | boolean | `true` | -- | Prefer subscription over API billing when both available. |
-
 ### runtime.opencode
 
 | Key | Type | Default | Env Var | Description |
@@ -78,6 +70,10 @@ evidence. Restart OpenCode after changes. These are file-only preferences, read
 at startup and retained by normal updates; no environment override is defined.
 The CLI/plugin support `AIDEVOPS_SETTINGS_FILE` for isolated probes and tests.
 Earlier compaction is not a guarantee of subscription savings.
+
+Model routing is configured separately through
+`configs/model-routing-table.json`; the obsolete `settings.json`
+`model_routing` section is removed automatically during updates.
 
 ### onboarding
 
