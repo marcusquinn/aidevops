@@ -79,7 +79,7 @@ _dlw_display_version_or_unknown() {
 # has confirmed the issue is safe to dispatch:
 #   - Issue edit: replace assignees, add status:queued + origin:worker
 #   - Worker log file setup (per-issue temp log, GH#14483)
-#   - Model/tier resolution (round-robin, t1997)
+#   - Model/tier resolution (ordered healthy fallback, t1997)
 #   - Verified issue conversation lock; linked PRs stay open for CI (t1894/t1934)
 #   - Git pull to latest remote commit (GH#17584)
 #   - Worktree pre-creation for the worker (5-8 tool call savings)
@@ -98,7 +98,7 @@ _dlw_display_version_or_unknown() {
 #    $6 - repo_path (local path to the repo)
 #    $7 - prompt (worker prompt string)
 #    $8 - session_key
-#    $9 - model_override (empty = auto-select via round-robin)
+#    $9 - model_override (empty = auto-select via ordered healthy fallback)
 #   $10 - issue_meta_json (pre-fetched JSON: number,title,state,labels,assignees)
 #
 # Dynamic scoping: reads/writes _claim_comment_id from the calling
@@ -246,18 +246,18 @@ _dlw_setup_worker_log() {
 #   _DLW_DISPATCH_MODEL_TIER  — runtime tier: simple|standard|thinking|bundle tier
 #   _DLW_SELECTED_MODEL       — concrete model name, or empty for auto-select
 #
-# ROUND-ROBIN MODEL SELECTION (owned by this helper, NOT the caller).
+# ORDERED HEALTHY MODEL SELECTION (owned by this helper, NOT the caller).
 # When model_override is EMPTY, calls headless-runtime-helper.sh select
 # --role worker, which resolves the worker model from the routing table /
 # local override (respecting backoff DB, auth availability, provider
-# allowlists, and rotation). The resolved model name is shown in the
+# allowlists, and configured candidate order). The resolved model name is shown in the
 # dispatch comment so the audit trail records exactly which provider/model
 # the worker used.
 #
 # IMPORTANT: Callers MUST NOT pass a model override for default dispatches.
-# Only pass model_override when a specific tier is required. Passing an
-# arbitrary model here bypasses the round-robin and causes provider
-# imbalance. History: GH#17503 moved model resolution here from the worker.
+# Only pass model_override when a specific model is required. Passing an
+# arbitrary model here bypasses ordered candidate selection and pins that
+# model. History: GH#17503 moved model resolution here from the worker.
 #
 # Arguments: issue_meta_json, model_override, repo_path
 #######################################

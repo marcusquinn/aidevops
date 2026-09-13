@@ -129,7 +129,9 @@ launchctl bootout gui/$(id -u)/sh.aidevops.<name> && \
 1. **OAuth pool** (`oauth-pool-helper.sh list all`) — available providers
 2. **Routing table** (`configs/model-routing-table.json`) — models per tier per provider
 
-Round-robin selects an available standard-tier model per pool provider. Workers rotate across eligible providers.
+The first healthy model in the selected tier is the primary. Later configured
+models are ordered availability fallbacks when the primary is unavailable or
+backed off; routine dispatch does not round-robin across healthy providers.
 
 **No manual model configuration required.** Deprecated `PULSE_MODEL` and `AIDEVOPS_HEADLESS_MODELS` env vars are respected one release cycle with deprecation warnings. Remove from `credentials.sh`.
 
