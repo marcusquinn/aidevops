@@ -53,6 +53,7 @@ assert_file_contains() {
 }
 
 assert_eq "2" "$(grep -c 'migrate_custom_model_routing_reasoning_defaults' "$SETUP_SCRIPT")" "setup runs the migration in interactive and non-interactive paths" || true
+assert_eq "2" "$(grep -c 'migrate_settings_model_routing_default_tier' "$SETUP_SCRIPT")" "setup runs settings tier migration in interactive and non-interactive paths" || true
 
 unset HOME
 migrate_custom_model_routing_reasoning_defaults
@@ -104,6 +105,33 @@ printf '{invalid\n' >"$custom_table"
 migrate_custom_model_routing_reasoning_defaults
 assert_eq "{invalid" "$(tr -d '\n' <"$custom_table")" "invalid custom table remains untouched" || true
 assert_eq "no" "$([[ -f "$HOME/.aidevops/cache/migrations/t18137-model-routing-reasoning-defaults" ]] && printf yes || printf no)" "invalid custom table remains eligible for retry" || true
+
+HOME="$TEST_ROOT/settings"
+export HOME
+settings_file="$HOME/.config/aidevops/settings.json"
+bash "$SCRIPT_DIR/../settings-helper.sh" init >/dev/null
+jq '.model_routing.default_tier = "sonnet" | .preserve = true' "$settings_file" >"${settings_file}.tmp"
+mv "${settings_file}.tmp" "$settings_file"
+migrate_settings_model_routing_default_tier
+assert_eq "standard" "$(jq -r '.model_routing.default_tier' "$settings_file")" "legacy sonnet tier migrates to standard" || true
+assert_eq "true" "$(jq -r '.preserve' "$settings_file")" "settings migration preserves unrelated values" || true
+assert_eq "sonnet" "$(jq -r '.model_routing.default_tier' "$HOME/.aidevops/config-backups/migrations/t31849-settings.json")" "settings migration preserves a pre-migration backup" || true
+migrate_settings_model_routing_default_tier
+assert_eq "standard" "$(jq -r '.model_routing.default_tier' "$settings_file")" "settings tier migration is idempotent" || true
+if bash "$SCRIPT_DIR/../settings-helper.sh" validate >/dev/null 2>&1; then
+	printf 'PASS: canonical model routing tier validates\n'
+else
+	printf 'FAIL: canonical model routing tier should validate\n' >&2
+	failures=$((failures + 1))
+fi
+jq '.model_routing.default_tier = "sonnet"' "$settings_file" >"${settings_file}.tmp"
+mv "${settings_file}.tmp" "$settings_file"
+if bash "$SCRIPT_DIR/../settings-helper.sh" validate >/dev/null 2>&1; then
+	printf 'FAIL: legacy model routing tier should fail validation\n' >&2
+	failures=$((failures + 1))
+else
+	printf 'PASS: legacy model routing tier fails validation\n'
+fi
 
 if [[ "$failures" -ne 0 ]]; then
 	printf '\n%d model routing migration test(s) failed\n' "$failures" >&2

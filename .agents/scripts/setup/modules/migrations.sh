@@ -1828,6 +1828,56 @@ migrate_custom_model_routing_reasoning_defaults() {
 	return 0
 }
 
+# Migrate provider-family names that predate canonical workload tiers. Preserve
+# the original document before changing a user setting.
+migrate_settings_model_routing_default_tier() {
+	local settings_file="${HOME:+$HOME/.config/aidevops/settings.json}"
+	local backup_dir="${HOME:+$HOME/.aidevops/config-backups/migrations}"
+	local backup_file="${backup_dir:+$backup_dir/t31849-settings.json}"
+	local temp_file=""
+	local current_tier=""
+
+	if [[ -z "$settings_file" ]]; then
+		print_warning "HOME unavailable; model routing default tier migration will retry"
+		return 0
+	fi
+	[[ -f "$settings_file" ]] || return 0
+	if [[ -L "$settings_file" || ! -O "$settings_file" ]] || ! command -v jq >/dev/null 2>&1; then
+		print_warning "Skipping unsafe or unreadable settings file; model routing default tier migration will retry"
+		return 0
+	fi
+	current_tier=$(jq -r '.model_routing.default_tier // empty' "$settings_file" 2>/dev/null) || {
+		print_warning "Invalid settings file; model routing default tier migration will retry"
+		return 0
+	}
+	case "$current_tier" in
+	haiku) current_tier="simple" ;;
+	sonnet) current_tier="standard" ;;
+	opus) current_tier="thinking" ;;
+	*) return 0 ;;
+	esac
+
+	mkdir -p "$backup_dir" || return 0
+	if [[ ! -f "$backup_file" ]] && ! cp -p "$settings_file" "$backup_file"; then
+		print_warning "Failed to back up settings before model routing default tier migration; migration will retry"
+		return 0
+	fi
+	temp_file=$(mktemp "${settings_file}.t31849.XXXXXX") || return 0
+	if ! jq --arg tier "$current_tier" '.model_routing.default_tier = $tier' "$settings_file" >"$temp_file"; then
+		rm -f "$temp_file"
+		print_warning "Failed to migrate model routing default tier; migration will retry"
+		return 0
+	fi
+	chmod 600 "$temp_file"
+	if ! mv "$temp_file" "$settings_file"; then
+		rm -f "$temp_file"
+		print_warning "Failed to replace settings after model routing default tier migration; migration will retry"
+		return 0
+	fi
+	print_info "Migrated model_routing.default_tier to canonical workload tier"
+	return 0
+}
+
 # Backfill GitHub issue relationships from TODO.md metadata (t1889)
 # One-time migration: reads blocked-by:/blocks: and subtask hierarchy from
 # TODO.md in each pulse-enabled repo, and sets the corresponding GitHub

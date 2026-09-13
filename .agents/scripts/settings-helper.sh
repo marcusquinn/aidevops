@@ -130,6 +130,7 @@ _env_var_for_key() {
 	supervisor.peak_hours_tz) echo "AIDEVOPS_PEAK_HOURS_TZ" ;;
 	supervisor.peak_hours_worker_fraction) echo "AIDEVOPS_PEAK_HOURS_WORKER_FRACTION" ;;
 	repo_sync.enabled) echo "AIDEVOPS_REPO_SYNC" ;;
+	model_routing.default_tier) echo "AIDEVOPS_DEFAULT_TIER" ;;
 	*) echo "" ;;
 	esac
 	return 0
@@ -419,6 +420,17 @@ cmd_validate() {
 		errors=$((errors + 1))
 	fi
 
+	local default_tier
+	default_tier=$(jq -r '.model_routing.default_tier // empty' "$SETTINGS_FILE" 2>/dev/null)
+	case "$default_tier" in
+	simple|standard|thinking) ;;
+	*)
+		print_warning "model_routing.default_tier (${default_tier:-missing}) must be simple, standard, or thinking"
+		print_info "  Legacy tiers are migrated by: aidevops update"
+		errors=$((errors + 1))
+		;;
+	esac
+
 	# Validate peak_hours settings when enabled
 	local peak_enabled
 	peak_enabled=$(jq -r '.supervisor.peak_hours_enabled // false' "$SETTINGS_FILE" 2>/dev/null)
@@ -484,6 +496,7 @@ cmd_export_env() {
 		"supervisor.peak_hours_tz"
 		"supervisor.peak_hours_worker_fraction"
 		"repo_sync.enabled"
+		"model_routing.default_tier"
 	)
 
 	for key in "${keys[@]}"; do
