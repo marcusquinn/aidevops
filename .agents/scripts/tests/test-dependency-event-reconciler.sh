@@ -22,6 +22,7 @@ NATIVE_EXTRA_REPO=""
 NATIVE_DIRECT=true
 SEARCH_AMBIGUOUS=false
 EXPLICIT_LABEL=true
+STALE_HOLD_LABEL=""
 BODY20="Blocked by #10"
 CLOSED_TITLE="t10: blocker"
 CONTEXT_REPO="owner/repo"
@@ -198,7 +199,7 @@ gh() {
 		;;
 	"api --paginate")
 		if [[ "$*" == *"/issues?state=open"* ]]; then
-			jq -cn --arg body "$BODY20" '[[{number:20,state:"open",title:"t20: direct",body:$body,labels:[{name:"status:blocked"},{name:"blocked-by:#10"}]}]]'
+			jq -cn --arg body "$BODY20" --arg hold "$STALE_HOLD_LABEL" '[[{number:20,state:"open",title:"t20: direct",body:$body,labels:([{name:"status:blocked"},{name:"blocked-by:#10"}] + (if $hold == "" then [] else [{name:$hold}] end))}]]'
 		else
 			printf '%s\n' "$COMMENTS"
 		fi
@@ -266,6 +267,7 @@ assert_hold 1 "" "ACTION REQUIRED" "status:blocked" "direct classifier preserves
 assert_hold 1 "" "HUMAN_UNBLOCK_REQUIRED" "status:blocked" "direct classifier preserves human-unblock markers"
 assert_hold 1 "The labels are mentioned descriptively." "" "status:blocked,hold-for-review" "direct classifier preserves exact hold-for-review labels"
 assert_hold 1 "" "" "status:blocked,needs-maintainer-review" "direct classifier preserves exact maintainer-review labels"
+assert_hold 1 "" "" "status:blocked,needs-maintainer-permissions" "direct classifier preserves exact maintainer-permission labels"
 assert_hold 1 "" "" "status:blocked,no-auto-dispatch" "direct classifier preserves exact no-auto-dispatch labels"
 assert_hold 0 "The hold-for-review label is documented here." "" "status:blocked" "direct classifier ignores management-label names in prose"
 assert_hold 0 $'| Outcome | Action |\n| unknown_review | Hold for bounded review; no implementation issue |' "" "status:blocked" "direct classifier ignores hold phrases in Markdown tables"
@@ -355,6 +357,11 @@ NATIVE_NULL_NODE=false
 EDIT_COUNT=0 REREAD_LABELS="status:blocked" BODY20="Blocked by #10" COMMENTS='[[]]'
 reconcile_stale_blocked_issues owner/repo >/dev/null 2>&1 || true
 assert_eq 1 "$EDIT_COUNT" "periodic stale sweep releases issue after missed close event"
+
+EDIT_COUNT=0 REREAD_LABELS="status:blocked,needs-maintainer-permissions" BODY20="No dependency blockers" STALE_HOLD_LABEL="needs-maintainer-permissions"
+reconcile_stale_blocked_issues owner/repo >/dev/null 2>&1 || true
+assert_eq 0 "$EDIT_COUNT" "periodic stale sweep preserves maintainer-permission holds"
+STALE_HOLD_LABEL=""
 
 EDIT_COUNT=0 REREAD_LABELS="status:blocked" BODY20=$'Blocked by #10\n\nExample:\n```text\nDo not dispatch\n```'
 reconcile_stale_blocked_issues owner/repo >/dev/null 2>&1 || true
