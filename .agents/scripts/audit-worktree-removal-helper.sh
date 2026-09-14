@@ -216,28 +216,6 @@ _worktree_proc_entry_is_zombie() {
 	return 1
 }
 
-_worktree_proc_entry_is_known_non_worktree_daemon() {
-	local proc_dir="$1"
-	local proc_name=""
-	local proc_cmdline=""
-
-	if [[ -r "$proc_dir/comm" ]]; then
-		IFS= read -r proc_name <"$proc_dir/comm" || proc_name=""
-	fi
-	case "$proc_name" in
-	"(sd-pam)" | gpg-agent)
-		return 0
-		;;
-	sshd)
-		proc_cmdline=$(tr '\0' ' ' <"$proc_dir/cmdline" 2>/dev/null || true)
-		case "$proc_cmdline" in
-		sshd:*@pts/* | sshd:*@notty*) return 0 ;;
-		esac
-		;;
-	esac
-	return 1
-}
-
 _capture_worktree_proc_cwds() {
 	local proc_root="$1"
 	local cwd_link=""
@@ -254,15 +232,13 @@ _capture_worktree_proc_cwds() {
 		if ! cwd_target=$(readlink "$cwd_link" 2>/dev/null); then
 			# Vanished processes are harmless. Linux commonly denies cwd reads for
 			# other users, so skip entries whose ownership proves they are foreign.
-			# Some same-UID session daemons intentionally hide cwd via dumpability
-			# hardening even though they are not worktree-scoped jobs; ignoring those
-			# prevents one login daemon from globally blocking autonomous cleanup.
-			# Unknown same-user processes still degrade visibility fail-closed.
+			# Same-UID metadata such as comm, cmdline, parent, or process start time
+			# cannot prove that an unreadable process is unrelated to this worktree.
+			# Preserve degraded visibility rather than adding daemon exemptions.
 			[[ -L "$cwd_link" || -e "$cwd_link" ]] || continue
 			proc_dir="${cwd_link%/cwd}"
 			_worktree_proc_entry_is_zombie "$proc_dir" && continue
 			_worktree_proc_entry_is_provably_foreign_uid "$proc_dir" "$current_uid" && continue
-			_worktree_proc_entry_is_known_non_worktree_daemon "$proc_dir" && continue
 			visibility_degraded=1
 			continue
 		fi

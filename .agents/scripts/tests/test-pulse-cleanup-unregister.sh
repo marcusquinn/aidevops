@@ -162,183 +162,77 @@ LATE_WRITE_GIT
 	return 0
 }
 
-test_degraded_orphan_removal_is_recoverable() {
+test_degraded_orphan_is_quarantined_with_bounded_retry() {
 	local repo_path="${TEST_ROOT}/repo-degraded"
 	local wt_path="${TEST_ROOT}/wt-degraded"
-	local trash_root="${TEST_ROOT}/recoverable-trash"
+	local guard_log="${TEST_ROOT}/degraded-guard.log"
+	local api_log="${TEST_ROOT}/degraded-api.log"
+	local state_path=""
+	local state_json=""
+	local first_now=2000000000
+	local retry_now=$((first_now + 61))
+	local metadata=""
+	local wt_root=""
 	make_repo_with_worktree "$repo_path" "$wt_path" "feature/degraded"
-	mkdir -p "$trash_root"
+	wt_root=$(/usr/bin/git -C "$wt_path" rev-parse --show-toplevel) || fail "degraded root became unreadable"
+	export PULSE_STATE_DIR="${TEST_ROOT}/pulse-state"
+	export AIDEVOPS_DEGRADED_CWD_RETRY_INITIAL_SECONDS=60
+	export AIDEVOPS_DEGRADED_CWD_RETRY_MAX_SECONDS=120
+	export PROCESS_GUARD_LOG="$guard_log"
+	export DEGRADED_API_LOG="$api_log"
 
 	worktree_removal_guard() {
 		local candidate_path="$1"
 		local caller="$2"
 		local reason="$3"
 		: "$candidate_path" "$caller" "$reason"
+		printf 'guard\n' >>"$PROCESS_GUARD_LOG"
 		WORKTREE_REMOVAL_GUARD_REASON="cwd-visibility-degraded"
 		return 2
 	}
 	gh_pr_list() {
+		printf 'api\n' >>"$DEGRADED_API_LOG"
 		return 0
-	}
-	claim_worktree_ownership() {
-		return 0
-	}
-	worktree_has_exact_owner_contract() {
-		return 0
-	}
-	unregister_worktree_if_owner_contract() {
-		local candidate_path="$1"
-		printf '%s\n' "$candidate_path" >>"$LEASE_RELEASE_LOG"
-		return 0
-	}
-	_worktree_recovery_process_lstart() {
-		local owner_pid="$1"
-		[[ "$owner_pid" =~ ^[0-9]+$ ]] || return 1
-		printf '%s\n' "test-process-start-${owner_pid}"
-		return 0
-	}
-	is_worktree_owned_by_others_for_pid() {
-		return 1
-	}
-	_branch_has_active_interactive_claim() {
-		return 1
 	}
 
-	AIDEVOPS_WORKTREE_TRASH_ROOT="$trash_root" \
-		_cleanup_single_worktree "$repo_path" "$wt_path" "feature/degraded" \
-		"$(date +%s)" "owner/repo" "main" ||
-		fail "degraded eligible orphan was not removed recoverably"
-
-	[[ ! -e "$wt_path" ]] || fail "degraded orphan source path still exists"
-	compgen -G "${trash_root}/aidevops-worktree-cleanup-*/wt-degraded" >/dev/null ||
-		fail "degraded orphan archive was not retained"
-	if /usr/bin/git -C "$repo_path" worktree list --porcelain | grep -Fqx "worktree $wt_path"; then
-		fail "degraded orphan metadata remains registered"
+	if _cleanup_single_worktree "$repo_path" "$wt_path" "feature/degraded" \
+		"$first_now" "owner/repo" "main"; then
+		fail "degraded orphan was reported as removed"
 	fi
-	grep -Fxq "$wt_path" "$LEASE_RELEASE_LOG" || fail "degraded orphan exact lease release was not called"
-	grep -q 'degraded-cwd-orphan-recoverable.*mode=recoverable-trash' "$AIDEVOPS_CLEANUP_LOG" ||
-		fail "recoverable degraded removal was not audited"
-	pass "pulse cleanup recoverably removes a degraded clean zero-ahead no-PR orphan"
-	return 0
-}
+	state_path=$(_pcdo_quarantine_state_path "$wt_path") || fail "degraded state path was not created"
+	[[ -f "$state_path" && -d "$wt_path" ]] || fail "degraded worktree was not quarantined in place"
+	state_json=$(<"$state_path")
+	jq -e --arg path "$wt_path" --arg branch "feature/degraded" --argjson retry "$((first_now + 60))" \
+		'.path == $path and .branch == $branch and .attempt == 1 and .retry_after == $retry' \
+		<<<"$state_json" >/dev/null || fail "initial degraded quarantine state is invalid"
+	[[ "$(wc -l <"$guard_log" | tr -d ' ')" -eq 1 ]] || fail "initial process evidence was not collected once"
+	[[ ! -e "$api_log" ]] || fail "degraded quarantine performed a GitHub API query"
 
-# A foreign Git lock acquired after archive completion but before native source
-# removal must preserve the source, exact metadata, and completed archive.
-test_degraded_orphan_lock_race_is_preserved() {
-	local repo_path="${TEST_ROOT}/repo-degraded-race"
-	local wt_path="${TEST_ROOT}/wt-degraded-race"
-	local trash_root="${TEST_ROOT}/recoverable-race-trash"
-	local wrapper_path="${TEST_ROOT}/degraded-race-git"
-	local marker_path="${TEST_ROOT}/degraded-race-lock-injected"
-	local metadata=""
-	local wt_root=""
-	make_repo_with_worktree "$repo_path" "$wt_path" "feature/degraded-race"
-	wt_root=$(/usr/bin/git -C "$wt_path" rev-parse --show-toplevel) || fail "degraded race root became unreadable"
-	mkdir -p "$trash_root"
-	cat >"$wrapper_path" <<'RACE_GIT'
-#!/usr/bin/env bash
-if [[ "$*" == *"worktree remove"* && ! -e "${RACE_MARKER:?}" ]]; then
-	: >"$RACE_MARKER"
-	"${REAL_GIT:?}" -C "${RACE_REPO:?}" worktree lock --reason "foreign-degraded-race" "${RACE_WORKTREE:?}" || exit 1
-fi
-exec "${REAL_GIT:?}" "$@"
-RACE_GIT
-	chmod +x "$wrapper_path"
-
-	if AIDEVOPS_REAL_GIT_BIN="$wrapper_path" REAL_GIT="$GIT_BIN" \
-		RACE_MARKER="$marker_path" RACE_REPO="$repo_path" RACE_WORKTREE="$wt_path" \
-		AIDEVOPS_WORKTREE_TRASH_ROOT="$trash_root" \
-		_cleanup_single_worktree "$repo_path" "$wt_path" "feature/degraded-race" \
-		"$(date +%s)" "owner/repo" "main"; then
-		fail "degraded lock race was reported as removed"
+	if _cleanup_single_worktree "$repo_path" "$wt_path" "feature/degraded" \
+		"$((first_now + 1))" "owner/repo" "main"; then
+		fail "backoff-suppressed degraded orphan was reported as removed"
 	fi
+	[[ "$(wc -l <"$guard_log" | tr -d ' ')" -eq 1 ]] || fail "backoff recollected process evidence too early"
+	[[ ! -e "$api_log" ]] || fail "backoff-suppressed quarantine performed a GitHub API query"
 
-	[[ -e "$marker_path" && -d "$wt_path" ]] || fail "degraded lock race removed the physical path"
-	compgen -G "${trash_root}/aidevops-worktree-cleanup-*/wt-degraded-race" >/dev/null ||
-		fail "degraded lock race lost the completed archive"
-	metadata=$(/usr/bin/git -C "$repo_path" worktree list --porcelain) || fail "degraded race metadata became unreadable"
-	printf '%s\n' "$metadata" | grep -Fqx "worktree $wt_root" || fail "degraded race registration was removed"
-	printf '%s\n' "$metadata" | grep -Fqx "locked foreign-degraded-race" || fail "foreign degraded race lock was not retained"
+	if _cleanup_single_worktree "$repo_path" "$wt_path" "feature/degraded" \
+		"$retry_now" "owner/repo" "main"; then
+		fail "retried degraded orphan was reported as removed"
+	fi
+	state_json=$(<"$state_path")
+	jq -e --argjson observed "$retry_now" --argjson retry "$((retry_now + 120))" \
+		'.attempt == 2 and .observed_at == $observed and .retry_after == $retry' \
+		<<<"$state_json" >/dev/null || fail "degraded retry did not persist bounded backoff"
+	[[ "$(wc -l <"$guard_log" | tr -d ' ')" -eq 2 ]] || fail "due retry did not collect fresh process evidence"
+	[[ ! -e "$api_log" ]] || fail "due degraded retry performed a GitHub API query"
+	metadata=$(/usr/bin/git -C "$repo_path" worktree list --porcelain) || fail "degraded metadata became unreadable"
+	printf '%s\n' "$metadata" | grep -Fqx "worktree $wt_root" || fail "degraded worktree registration was removed"
 	if [[ -f "$UNREGISTER_LOG" ]] && grep -Fxq "$wt_path" "$UNREGISTER_LOG"; then
-		fail "degraded race worktree was unregistered"
+		fail "degraded quarantine unregistered the worktree"
 	fi
-	grep -q 'git-worktree-locked.*mode=skipped' "$AIDEVOPS_CLEANUP_LOG" || fail "degraded race lock refusal was not audited"
-	pass "pulse degraded cleanup preserves a lock acquired after its guard"
-	return 0
-}
-
-test_degraded_orphan_lease_loss_after_archive_is_preserved() {
-	local repo_path="${TEST_ROOT}/repo-degraded-lease-race"
-	local wt_path="${TEST_ROOT}/wt-degraded-lease-race"
-	local trash_root="${TEST_ROOT}/recoverable-lease-race-trash"
-	local metadata=""
-	local wt_root=""
-	make_repo_with_worktree "$repo_path" "$wt_path" "feature/degraded-lease-race"
-	wt_root=$(/usr/bin/git -C "$wt_path" rev-parse --show-toplevel) || fail "lease race root became unreadable"
-	mkdir -p "$trash_root"
-
-	if (
-		local lease_checks=0
-		worktree_has_exact_owner_contract() {
-			lease_checks=$((lease_checks + 1))
-			[[ "$lease_checks" -eq 1 ]]
-			return $?
-		}
-		AIDEVOPS_WORKTREE_TRASH_ROOT="$trash_root" \
-			_cleanup_single_worktree "$repo_path" "$wt_path" \
-			"feature/degraded-lease-race" "$(date +%s)" "owner/repo" "main"
-	); then
-		fail "degraded lease loss after archive was reported as removed"
-	fi
-
-	[[ -d "$wt_path" ]] || fail "lease loss after archive removed the source"
-	compgen -G "${trash_root}/aidevops-worktree-cleanup-*/wt-degraded-lease-race" >/dev/null ||
-		fail "lease loss after archive lost the completed archive"
-	metadata=$(/usr/bin/git -C "$repo_path" worktree list --porcelain) || fail "lease race metadata became unreadable"
-	printf '%s\n' "$metadata" | grep -Fqx "worktree $wt_root" || fail "lease loss after archive pruned exact metadata"
-	if [[ -f "$UNREGISTER_LOG" ]] && grep -Fxq "$wt_path" "$UNREGISTER_LOG"; then
-		fail "lease loss after archive unregistered replacement ownership"
-	fi
-	if [[ -f "$LEASE_RELEASE_LOG" ]] && grep -Fxq "$wt_path" "$LEASE_RELEASE_LOG"; then
-		fail "lease loss after archive released a replacement ownership contract"
-	fi
-	grep -q 'cleanup-lease-changed-after-archive.*mode=skipped' "$AIDEVOPS_CLEANUP_LOG" ||
-		fail "lease loss after archive was not audited"
-	pass "pulse degraded cleanup preserves source and archive after lease loss"
-	return 0
-}
-
-test_degraded_orphan_remove_failure_preserves_source_and_archive() {
-	local repo_path="${TEST_ROOT}/repo-degraded-remove-failure"
-	local wt_path="${TEST_ROOT}/wt-degraded-remove-failure"
-	local trash_root="${TEST_ROOT}/recoverable-remove-failure-trash"
-	local metadata=""
-	local wt_root=""
-	make_repo_with_worktree "$repo_path" "$wt_path" "feature/degraded-remove-failure"
-	wt_root=$(/usr/bin/git -C "$wt_path" rev-parse --show-toplevel) || fail "remove failure root became unreadable"
-	mkdir -p "$trash_root"
-
-	if (
-		remove_archived_worktree_path() {
-			return 1
-		}
-		AIDEVOPS_WORKTREE_TRASH_ROOT="$trash_root" \
-			_cleanup_single_worktree "$repo_path" "$wt_path" \
-			"feature/degraded-remove-failure" "$(date +%s)" "owner/repo" "main"
-	); then
-		fail "degraded native removal failure was reported as complete"
-	fi
-
-	[[ -d "$wt_path" ]] || fail "native removal failure lost the registered source"
-	compgen -G "${trash_root}/aidevops-worktree-cleanup-*/wt-degraded-remove-failure" >/dev/null ||
-		fail "native removal failure lost the completed archive"
-	metadata=$(/usr/bin/git -C "$repo_path" worktree list --porcelain) || fail "remove failure metadata became unreadable"
-	printf '%s\n' "$metadata" | grep -Fqx "worktree $wt_root" || fail "remove failure pruned exact metadata"
-	if [[ -f "$UNREGISTER_LOG" ]] && grep -Fxq "$wt_path" "$UNREGISTER_LOG"; then
-		fail "native removal failure unregistered partial cleanup"
-	fi
-	grep -q 'recoverable-remove-failed.*mode=skipped' "$AIDEVOPS_CLEANUP_LOG" || fail "remove failure was not audited as skipped"
-	pass "pulse degraded cleanup preserves source and archive when native removal fails"
+	grep -q 'degraded-cwd-in-place-quarantine.*mode=in-place-quarantine' "$AIDEVOPS_CLEANUP_LOG" ||
+		fail "degraded in-place quarantine was not audited"
+	pass "pulse cleanup quarantines degraded worktrees with bounded fresh-evidence retries"
 	return 0
 }
 
@@ -703,9 +597,6 @@ test_zombie_reaper_rejects_unverified_completion
 test_zombie_reaper_fails_closed_on_stale_or_indeterminate_evidence
 test_worker_closing_pr_fails_closed_on_truncated_or_unmetered_graphql
 test_permanent_removal_failure_has_no_git_fallback
-test_degraded_orphan_removal_is_recoverable
-test_degraded_orphan_lock_race_is_preserved
-test_degraded_orphan_lease_loss_after_archive_is_preserved
-test_degraded_orphan_remove_failure_preserves_source_and_archive
+test_degraded_orphan_is_quarantined_with_bounded_retry
 
 exit 0

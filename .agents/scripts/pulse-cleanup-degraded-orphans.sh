@@ -2,172 +2,193 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 #
-# Recoverable Pass 2 cleanup for clean, zero-ahead no-PR worktrees when Linux
-# process-CWD visibility is degraded. This module is sourced by pulse-cleanup.sh.
+# Fail-closed quarantine state for worktrees whose process-CWD visibility is
+# degraded. This module is sourced by pulse-cleanup.sh.
 
 [[ -n "${_PULSE_CLEANUP_DEGRADED_ORPHANS_LOADED:-}" ]] && return 0
 _PULSE_CLEANUP_DEGRADED_ORPHANS_LOADED=1
-_PCDO_REASON_RECOVERABLE="degraded-cwd-orphan-recoverable"
+_PCDO_STATE_SCHEMA="aidevops-degraded-cwd-quarantine/v1"
+_PCDO_REASON_QUARANTINED="degraded-cwd-in-place-quarantine"
+_PCDO_MODE_QUARANTINED="in-place-quarantine"
+_PCDO_JSON_NUMBER_TYPE="number"
+_PCDO_RETRY_AFTER=0
+_PCDO_RETRY_ATTEMPT=0
 
-_PCDO_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [[ -f "${_PCDO_SCRIPT_DIR}/worktree-clean-lib.sh" ]]; then
-	# Reuse the cleanup lease and recoverable-archive primitives. Their remaining
-	# dependencies are resolved only when the corresponding functions are called.
-	# shellcheck source=worktree-clean-lib.sh
-	source "${_PCDO_SCRIPT_DIR}/worktree-clean-lib.sh"
-fi
-
-_pcdo_open_pr_absent_verified() {
-	local repo_slug="$1"
-	local branch_name="$2"
-	local pr_number=""
-
-	[[ -n "$repo_slug" && -n "$branch_name" ]] || return 1
-	pr_number=$(gh_pr_list --repo "$repo_slug" --head "$branch_name" --state open \
-		--limit 1 --json number --jq '.[].number // empty') || return 1
-	[[ -z "$pr_number" ]] || return 1
+_pcdo_quarantine_state_dir() {
+	printf '%s/degraded-worktree-quarantine\n' \
+		"${PULSE_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/pulse}"
 	return 0
 }
 
-_pcdo_release_removal_lease() {
+_pcdo_path_digest() {
 	local wt_path="$1"
-	_clean_release_removal_lease "$wt_path" || true
+	local digest=""
+	if command -v sha256sum >/dev/null 2>&1; then
+		digest=$(printf '%s' "$wt_path" | sha256sum | awk '{print $1}') || return 1
+	elif command -v shasum >/dev/null 2>&1; then
+		digest=$(printf '%s' "$wt_path" | shasum -a 256 | awk '{print $1}') || return 1
+	else
+		return 1
+	fi
+	[[ "$digest" =~ ^[0-9a-f]{64}$ ]] || return 1
+	printf '%s\n' "$digest"
 	return 0
 }
 
-_pcdo_post_lease_owner_or_claim_exists() {
+_pcdo_quarantine_state_path() {
+	local wt_path="$1"
+	local digest=""
+	digest=$(_pcdo_path_digest "$wt_path") || return 1
+	printf '%s/%s.json\n' "$(_pcdo_quarantine_state_dir)" "$digest"
+	return 0
+}
+
+_pcdo_retry_initial_seconds() {
+	local seconds="${AIDEVOPS_DEGRADED_CWD_RETRY_INITIAL_SECONDS:-900}"
+	if [[ ! "$seconds" =~ ^[0-9]+$ || "$seconds" -lt 1 || "$seconds" -gt 86400 ]]; then
+		seconds=900
+	fi
+	printf '%s\n' "$seconds"
+	return 0
+}
+
+_pcdo_retry_max_seconds() {
+	local initial="$1"
+	local seconds="${AIDEVOPS_DEGRADED_CWD_RETRY_MAX_SECONDS:-21600}"
+	if [[ ! "$seconds" =~ ^[0-9]+$ || "$seconds" -lt "$initial" || "$seconds" -gt 604800 ]]; then
+		seconds=21600
+	fi
+	[[ "$seconds" -ge "$initial" ]] || seconds="$initial"
+	printf '%s\n' "$seconds"
+	return 0
+}
+
+_pcdo_retry_delay_seconds() {
+	local attempt="$1"
+	local delay="$2"
+	local maximum="$3"
+	local step=1
+	while [[ "$step" -lt "$attempt" && "$delay" -lt "$maximum" ]]; do
+		if [[ "$delay" -gt $((maximum / 2)) ]]; then
+			delay="$maximum"
+		else
+			delay=$((delay * 2))
+		fi
+		step=$((step + 1))
+	done
+	[[ "$delay" -le "$maximum" ]] || delay="$maximum"
+	printf '%s\n' "$delay"
+	return 0
+}
+
+_pcdo_matching_state_json() {
+	local state_path="$1"
+	local wt_path="$2"
+	local wt_branch="$3"
+	[[ -f "$state_path" && ! -L "$state_path" ]] || return 1
+	jq -ce --arg schema "$_PCDO_STATE_SCHEMA" --arg path "$wt_path" \
+		--arg branch "$wt_branch" --arg number_type "$_PCDO_JSON_NUMBER_TYPE" '
+		.schema == $schema and .path == $path and .branch == $branch
+		and (.attempt | type) == $number_type and .attempt >= 1
+		and (.attempt | floor) == .attempt
+		and (.observed_at | type) == $number_type and .observed_at >= 0
+		and (.observed_at | floor) == .observed_at
+		and (.retry_after | type) == $number_type and .retry_after >= .observed_at
+		and (.retry_after | floor) == .retry_after
+	' "$state_path" >/dev/null 2>&1 || return 1
+	jq -c . "$state_path" 2>/dev/null
+	return $?
+}
+
+# Return 0 when a fresh process scan is due. Return 1 while a valid quarantine
+# backoff is active. Stored state can only delay cleanup; it never authorizes it.
+_pcdo_degraded_retry_due() {
 	local wt_path="$1"
 	local wt_branch="$2"
-
-	if pgrep -f "$wt_path" >/dev/null 2>&1; then
-		return 0
-	fi
-	if ! _clean_has_exact_removal_lease "$wt_path"; then
-		return 0
-	fi
-	if _branch_has_active_interactive_claim "$wt_path" "$wt_branch"; then
-		return 0
-	fi
+	local now_epoch="$3"
+	local state_path=""
+	local state_json=""
+	_PCDO_RETRY_AFTER=0
+	_PCDO_RETRY_ATTEMPT=0
+	state_path=$(_pcdo_quarantine_state_path "$wt_path") || return 0
+	[[ ! -L "$state_path" ]] || return 1
+	state_json=$(_pcdo_matching_state_json "$state_path" "$wt_path" "$wt_branch") || return 0
+	_PCDO_RETRY_AFTER=$(jq -r '.retry_after' <<<"$state_json") || return 0
+	_PCDO_RETRY_ATTEMPT=$(jq -r '.attempt' <<<"$state_json") || return 0
+	[[ "$now_epoch" -ge "$_PCDO_RETRY_AFTER" ]] && return 0
 	return 1
 }
 
-_pcdo_fresh_candidate_state_is_safe() {
-	local rp_age="$1"
-	local wt_path_age="$2"
-	local wt_branch_age="$3"
-	local now_epoch="$4"
-	local repo_slug_age="$5"
-	local main_branch="$6"
-	local orphan_issue_num="$7"
-	local repo_name_age="$8"
-	local audit_context="$9"
-	local wt_created=0
-	local wt_age_secs=0
-	local commits_ahead=0
-	local dirty_count=0
-	local age_grace="${ORPHAN_WORKTREE_GRACE_SECS:-1800}"
-
-	[[ -d "$wt_path_age" ]] || return 1
-	wt_created=$(_worktree_creation_epoch "$wt_path_age" "$wt_branch_age")
-	[[ "$wt_created" -gt 0 ]] || return 1
-	wt_age_secs=$((now_epoch - wt_created))
-	[[ "$wt_age_secs" -ge "$age_grace" ]] || return 1
-	commits_ahead=$(_pc_commits_ahead_from_default "$rp_age" "$wt_path_age" "$main_branch") || return 1
-	[[ "$commits_ahead" -eq 0 ]] || return 1
-	dirty_count=$(git -C "$wt_path_age" status --porcelain 2>/dev/null | wc -l | tr -d ' ') || return 1
-	[[ "$dirty_count" -eq 0 ]] || return 1
-	_pcdo_open_pr_absent_verified "$repo_slug_age" "$wt_branch_age" || return 1
-	_pc_assert_no_uncommitted_work "$wt_path_age" "$wt_branch_age" "$dirty_count" \
-		"$orphan_issue_num" "$wt_age_secs" "$repo_name_age" "$audit_context" || return 1
+_pcdo_write_quarantine_state() {
+	local wt_path="$1" wt_branch="$2" now_epoch="$3"
+	local state_dir="" state_path="" state_json="" temporary=""
+	local attempt=1 initial=0 maximum=0 delay=0
+	state_dir=$(_pcdo_quarantine_state_dir)
+	[[ ! -L "$state_dir" ]] || return 1
+	mkdir -p "$state_dir" || return 1
+	chmod 700 "$state_dir" || return 1
+	state_path=$(_pcdo_quarantine_state_path "$wt_path") || return 1
+	if state_json=$(_pcdo_matching_state_json "$state_path" "$wt_path" "$wt_branch"); then
+		attempt=$(jq -r '.attempt + 1 | if . > 32 then 32 else . end' <<<"$state_json") || return 1
+	fi
+	initial=$(_pcdo_retry_initial_seconds)
+	maximum=$(_pcdo_retry_max_seconds "$initial")
+	delay=$(_pcdo_retry_delay_seconds "$attempt" "$initial" "$maximum")
+	_PCDO_RETRY_AFTER=$((now_epoch + delay))
+	_PCDO_RETRY_ATTEMPT="$attempt"
+	temporary=$(mktemp "${state_path}.XXXXXX") || return 1
+	if ! jq -n --arg schema "$_PCDO_STATE_SCHEMA" --arg path "$wt_path" \
+		--arg branch "$wt_branch" --argjson attempt "$attempt" \
+		--argjson observed_at "$now_epoch" --argjson retry_after "$_PCDO_RETRY_AFTER" \
+		'{schema:$schema,path:$path,branch:$branch,attempt:$attempt,
+		observed_at:$observed_at,retry_after:$retry_after,visibility:"degraded"}' >"$temporary" ||
+		! chmod 600 "$temporary" || ! mv -f "$temporary" "$state_path"; then
+		rm -f "$temporary"
+		return 1
+	fi
 	return 0
 }
 
-_pcdo_fresh_cwd_state_allows_recovery() {
-	local wt_path_age="$1"
-	local guard_status=0
+_pcdo_clear_quarantine_state() {
+	local wt_path="$1"
+	local state_path=""
+	state_path=$(_pcdo_quarantine_state_path "$wt_path") || return 0
+	[[ ! -L "$state_path" ]] || return 0
+	[[ ! -f "$state_path" ]] || rm -f "$state_path"
+	return 0
+}
 
-	if worktree_removal_guard "$wt_path_age" "$_WTAR_PC_CALLER" "$_PCDO_REASON_RECOVERABLE"; then
-		guard_status=0
-	else
-		guard_status=$?
-	fi
-	if [[ "$guard_status" -eq 0 || "$guard_status" -eq "${_WT_CWD_CAPTURE_DEGRADED_RC:-2}" ]]; then
+_pcdo_log_active_backoff() {
+	local wt_path="$1"
+	local context="attempt=${_PCDO_RETRY_ATTEMPT} retry_after=${_PCDO_RETRY_AFTER}"
+	log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_PC_CALLER" "$wt_path" \
+		"degraded-cwd-retry-backoff" "$_PCDO_MODE_QUARANTINED" "$context"
+	return 0
+}
+
+_pcdo_retry_backoff_allows_scan() {
+	local wt_path="$1"
+	local wt_branch="$2"
+	local now_epoch="$3"
+	if _pcdo_degraded_retry_due "$wt_path" "$wt_branch" "$now_epoch"; then
 		return 0
 	fi
+	_pcdo_log_active_backoff "$wt_path"
 	return 1
 }
 
-_pc_remove_degraded_orphan_recoverably() {
-	local rp_age="$1"
-	local wt_path_age="$2"
-	local wt_branch_age="$3"
-	local now_epoch="$4"
-	local repo_slug_age="$5"
-	local main_branch="$6"
-	local orphan_issue_num="$7"
-	local repo_name_age="$8"
-	local commits_ahead="$9"
-	local dirty_count="${10}"
-	local wt_age_secs="${11}"
-	local reason="${12}"
-	local audit_context=""
-	local recoverable_archive=""
-
-	[[ "$commits_ahead" -eq 0 && "$dirty_count" -eq 0 ]] || return 1
-	[[ "$reason" == *"crashed worker"* ]] || return 1
-	_pcdo_open_pr_absent_verified "$repo_slug_age" "$wt_branch_age" || return 1
-	if ! _clean_acquire_removal_lease "$wt_path_age" "$wt_branch_age"; then
-		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_PC_CALLER" "$wt_path_age" \
-			"cleanup-lease-skip" "$_WTAR_MODE_SKIPPED"
+_pcdo_quarantine_degraded_worktree() {
+	local wt_path="$1"
+	local wt_branch="$2"
+	local now_epoch="$3"
+	local context=""
+	if ! _pcdo_write_quarantine_state "$wt_path" "$wt_branch" "$now_epoch"; then
+		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_PC_CALLER" "$wt_path" \
+			"degraded-cwd-quarantine-state-failed" "$_PCDO_MODE_QUARANTINED"
 		return 1
 	fi
-
-	audit_context=$(_pc_worktree_audit_context "$wt_branch_age" "$orphan_issue_num" \
-		"$commits_ahead" "$dirty_count" "$wt_age_secs" "none" "clear" "degraded" \
-		"clear" "recoverable-trash")
-	if _pcdo_post_lease_owner_or_claim_exists "$wt_path_age" "$wt_branch_age" ||
-		! _pcdo_fresh_candidate_state_is_safe "$rp_age" "$wt_path_age" "$wt_branch_age" \
-			"$now_epoch" "$repo_slug_age" "$main_branch" "$orphan_issue_num" \
-			"$repo_name_age" "$audit_context" ||
-		! _pcdo_fresh_cwd_state_allows_recovery "$wt_path_age"; then
-		_pcdo_release_removal_lease "$wt_path_age"
-		return 1
-	fi
-
-	if ! _clean_archive_worktree_recoverably "$wt_path_age" "$_WTAR_PC_CALLER"; then
-		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_PC_CALLER" "$wt_path_age" \
-			"recoverable-archive-failed" "$_WTAR_MODE_SKIPPED" \
-			"$audit_context recoverable_backends=${_WT_CLEAN_RECOVERABLE_FAILURE_DETAIL:-unknown}"
-		_pcdo_release_removal_lease "$wt_path_age"
-		return 1
-	fi
-	recoverable_archive="$_WT_CLEAN_RECOVERABLE_ARCHIVE_PATH"
-	if ! _clean_has_exact_removal_lease "$wt_path_age"; then
-		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_PC_CALLER" "$wt_path_age" \
-			"cleanup-lease-changed-after-archive" "$_WTAR_MODE_SKIPPED" "$audit_context"
-		return 1
-	fi
-	if ! remove_archived_worktree_path "$wt_path_age" "$recoverable_archive" \
-		"$_WTAR_PC_CALLER" "$_PCDO_REASON_RECOVERABLE" "$audit_context" \
-		"true" "false"; then
-		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_PC_CALLER" "$wt_path_age" \
-			"recoverable-remove-failed" "$_WTAR_MODE_SKIPPED" "$audit_context"
-		_pcdo_release_removal_lease "$wt_path_age"
-		return 1
-	fi
-	if ! prune_missing_worktree_metadata "$rp_age" "$wt_path_age"; then
-		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_PC_CALLER" "$wt_path_age" \
-			"metadata-prune-failed" "partial-cleanup" "$audit_context"
-		_pcdo_release_removal_lease "$wt_path_age"
-		return 1
-	fi
-
-	_pcdo_release_removal_lease "$wt_path_age"
-	log_worktree_removal_event "$_WTAR_REMOVED" "$_WTAR_PC_CALLER" "$wt_path_age" \
-		"$_PCDO_REASON_RECOVERABLE" "recoverable-trash" "$audit_context"
-	if declare -F full_loop_mark_cleanup_cleaned_for_worktree >/dev/null 2>&1; then
-		full_loop_mark_cleanup_cleaned_for_worktree "$wt_path_age" || true
-	fi
-	echo "[pulse-wrapper] Orphan cleanup ($repo_name_age): recoverably removed ${wt_branch_age:-detached} — $reason" >>"$LOGFILE"
+	context="attempt=${_PCDO_RETRY_ATTEMPT} observed_at=${now_epoch} retry_after=${_PCDO_RETRY_AFTER}"
+	log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_PC_CALLER" "$wt_path" \
+		"$_PCDO_REASON_QUARANTINED" "$_PCDO_MODE_QUARANTINED" "$context"
 	return 0
 }
