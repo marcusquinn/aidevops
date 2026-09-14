@@ -59,6 +59,12 @@ test("completed child responses join queued routing decisions to parent feedback
 
   try {
     assert.equal(observability.initObservability({ aidevopsVersion: "3.32.240" }), true);
+    observability.handleEvent({
+      event: {
+        type: "message.updated",
+        properties: { info: { id: "root-request", sessionID: "root-session", role: "user" } },
+      },
+    });
     observability.recordRoutingDecision("child-session", {
       parentSessionID: "root-session",
       tier: "simple",
@@ -127,6 +133,18 @@ test("completed child responses join queued routing decisions to parent feedback
       policyVersion: "v1",
       runID: "run:1",
     });
+    const objective = observability.objectiveContextForSession("root-session");
+    const decision = observability.recordObjectiveDecision({
+      parentSessionID: "root-session",
+      contributionID: "opencode-child:child-session",
+      outcome: "accepted_repaired",
+      repairContributionID: "opencode-parent:repair-1",
+      interventionCount: 1,
+      objectiveOutcome: "accepted_unverified",
+      policyVersion: "v1",
+    });
+    assert.equal(decision.recorded, true);
+    assert.equal(decision.objectiveID, objective.objectiveID);
     await new Promise((resolve) => setTimeout(resolve, 100));
 
     const persisted = sqlite.sqliteExecSync(`
@@ -156,6 +174,15 @@ SELECT payload_json FROM runtime_events WHERE event_type = 'subagent.acceptance'
     `));
     assert.equal(acceptancePayload.contribution_outcome, "accepted_repaired");
     assert.equal(acceptancePayload.intervention_count, 1);
+    const attachmentPayload = JSON.parse(sqlite.sqliteExecSync(`
+SELECT payload_json FROM runtime_events WHERE event_type = 'objective.session.attached' LIMIT 1;
+    `));
+    assert.match(attachmentPayload.request_ids[0], /^opencode-message:[a-f0-9]{24}$/);
+    assert.equal(attachmentPayload.objective_id, objective.objectiveID);
+    const decisionOutcome = JSON.parse(sqlite.sqliteExecSync(`
+SELECT payload_json FROM runtime_events WHERE event_type = 'objective.outcome' LIMIT 1;
+    `));
+    assert.equal(decisionOutcome.outcome, "accepted_unverified");
   } finally {
     sqlite.shutdownSqlite();
     delete process.env.AIDEVOPS_OBS_DB_OVERRIDE;

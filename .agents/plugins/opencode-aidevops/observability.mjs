@@ -17,6 +17,7 @@
  * @module observability
  */
 
+import { createHash } from "node:crypto";
 import { mkdirSync, existsSync } from "fs";
 import { join, dirname } from "path";
 import { homedir } from "os";
@@ -55,7 +56,7 @@ import {
 import {
   consumeRoutingDecision,
   getRoutingFeedback,
-  recordRoutingDecision,
+  recordRoutingDecision as queueRoutingDecision,
   rememberRoutingFeedback,
 } from "./observability-routing.mjs";
 import { normalizeProviderError } from "./provider-error-diagnostics.mjs";
@@ -73,7 +74,7 @@ const OBS_DIR = dirname(DB_PATH);
 const COST_BACKFILL_MARKER = `${DB_PATH}.cost-backfill-v2.done`;
 
 export { getPricing };
-export { getRoutingFeedback, recordRoutingDecision };
+export { getRoutingFeedback };
 export { buildToolCallInsertSql, classifyToolOutcome, toolCallSucceeded };
 
 /**
@@ -284,6 +285,97 @@ function firstTruthy(values, fallback = null) {
   return values.find(Boolean) || fallback;
 }
 
+const objectiveContexts = new Map();
+const pendingObjectiveRequests = new Map();
+const startedObjectives = new Set();
+
+function opaqueDigest(value) {
+  return createHash("sha256").update(String(value || "unknown")).digest("hex").slice(0, 24);
+}
+
+function environmentObjectiveContext(sessionID) {
+  const issue = String(process.env.WORKER_ISSUE_NUMBER || "").trim();
+  const configured = String(process.env.AIDEVOPS_OBJECTIVE_ID || "").trim();
+  const run = String(process.env.AIDEVOPS_RUN_ID || "").trim();
+  if (!configured && !issue && !run) return null;
+  return {
+    objectiveID: configured || `issue:${issue || opaqueDigest(run)}`,
+    runID: `run:${opaqueDigest(run || sessionID)}`,
+  };
+}
+
+function beginObjective(sessionID, boundaryID) {
+  const environment = environmentObjectiveContext(sessionID);
+  const context = environment || {
+    objectiveID: `objective:opencode:${opaqueDigest(`${sessionID}:${boundaryID}`)}`,
+    runID: `run:opencode:${opaqueDigest(sessionID)}`,
+  };
+  objectiveContexts.set(sessionID, context);
+  if (!startedObjectives.has(context.objectiveID)) {
+    startedObjectives.add(context.objectiveID);
+    projectRuntimeEvent(appendRuntimeEvent({
+      eventType: "objective.started",
+      subjectId: context.objectiveID,
+      sessionId: sessionID,
+      correlationId: context.runID,
+      payload: {
+        objective_version: 1,
+        objective_id: context.objectiveID,
+        run_id: context.runID,
+      },
+    }));
+  }
+  flushPendingObjectiveRequests(sessionID, context);
+  return context;
+}
+
+function attachObjectiveRequest(sessionID, requestID, context = objectiveContexts.get(sessionID)) {
+  if (!context) {
+    const pending = pendingObjectiveRequests.get(sessionID) || [];
+    pending.push(requestID);
+    pendingObjectiveRequests.set(sessionID, pending.slice(-128));
+    return null;
+  }
+  const requestRef = `opencode-message:${opaqueDigest(requestID)}`;
+  const envelope = appendRuntimeEvent({
+    eventType: "objective.session.attached",
+    subjectId: requestRef,
+    sessionId: sessionID,
+    correlationId: context.runID,
+    payload: {
+      objective_version: 1,
+      objective_id: context.objectiveID,
+      run_id: context.runID,
+      contribution_id: requestRef,
+      request_ids: [requestRef],
+      boundary: "completed_assistant_message",
+      allocation: "unique",
+    },
+  });
+  projectRuntimeEvent(envelope);
+  return envelope;
+}
+
+function flushPendingObjectiveRequests(sessionID, context) {
+  const pending = pendingObjectiveRequests.get(sessionID) || [];
+  pendingObjectiveRequests.delete(sessionID);
+  for (const requestID of pending) attachObjectiveRequest(sessionID, requestID, context);
+}
+
+export function objectiveContextForSession(sessionID) {
+  return objectiveContexts.get(String(sessionID || "")) || environmentObjectiveContext(sessionID);
+}
+
+export function recordRoutingDecision(sessionID, decision = {}) {
+  const result = queueRoutingDecision(sessionID, decision);
+  const parentContext = objectiveContextForSession(decision.parentSessionID);
+  if (parentContext && sessionID) {
+    objectiveContexts.set(sessionID, parentContext);
+    flushPendingObjectiveRequests(sessionID, parentContext);
+  }
+  return result;
+}
+
 function recordOpenCodeRuntimeEvent(event, eventType = event.type, additionalPayload = {}, context = {}) {
   const properties = event.properties || {};
   const info = properties.info || {};
@@ -338,6 +430,10 @@ function recordOpenCodeRuntimeEvent(event, eventType = event.type, additionalPay
  */
 function handleMessageUpdated(event, context = {}) {
   const msg = event.properties?.info;
+  if (msg?.role === "user" && msg.sessionID && msg.id) {
+    beginObjective(msg.sessionID, msg.id);
+    return;
+  }
   const isCompletedAssistant = [msg, msg?.role === "assistant", msg?.time?.completed].every(Boolean);
   if (!isCompletedAssistant) return;
 
@@ -432,6 +528,8 @@ function handleMessageUpdated(event, context = {}) {
   );`;
 
   sqliteExec(sql);
+  const objective = objectiveContextForSession(msg.sessionID) || beginObjective(msg.sessionID, msg.id);
+  attachObjectiveRequest(msg.sessionID, msg.id, objective);
 
   // Update session summary (upsert)
   updateSessionSummary(msg, cost, toolCallCount);
@@ -598,6 +696,11 @@ export function recordSubagentOutcome(evidence = {}) {
     status: "requested",
     success: null,
   }][Number(isDispatch)];
+  const objective = objectiveContextForSession(evidence.parentSessionID);
+  if (objective && evidence.childSessionID) {
+    objectiveContexts.set(evidence.childSessionID, objective);
+    flushPendingObjectiveRequests(evidence.childSessionID, objective);
+  }
   const envelope = appendRuntimeEvent({
     eventType: stageDefaults.eventType,
     subjectId: firstTruthy([evidence.childSessionID, evidence.callID], "unknown-child"),
@@ -624,6 +727,53 @@ export function recordSubagentOutcome(evidence = {}) {
   });
   if (envelope) projectRuntimeEvent(envelope);
   return envelope;
+}
+
+/** Persist an explicit parent decision and optional objective outcome receipt. */
+export function recordObjectiveDecision(evidence = {}) {
+  if (!dbReady) return { recorded: false, reason: "observability unavailable" };
+  const context = evidence.objectiveID && evidence.runID
+    ? { objectiveID: evidence.objectiveID, runID: evidence.runID }
+    : objectiveContextForSession(evidence.parentSessionID);
+  if (!context) return { recorded: false, reason: "objective context unavailable" };
+  const acceptance = evidence.contributionID ? recordSubagentAcceptance({
+    ...evidence,
+    objectiveID: context.objectiveID,
+    runID: context.runID,
+  }) : null;
+  let outcome = null;
+  if (evidence.objectiveOutcome) {
+    const payload = {
+      objective_version: 1,
+      objective_id: context.objectiveID,
+      run_id: context.runID,
+      outcome: evidence.objectiveOutcome,
+      source: evidence.source || "parent_decision",
+      observed_at: evidence.observedAt || new Date().toISOString(),
+      policy_version: evidence.policyVersion || "v1",
+    };
+    if (evidence.objectiveOutcome === "verified") {
+      Object.assign(payload, {
+        evidence_kind: evidence.evidenceKind,
+        evidence_fingerprint: evidence.evidenceFingerprint,
+        observer: evidence.observer,
+      });
+    }
+    outcome = appendRuntimeEvent({
+      eventType: "objective.outcome",
+      subjectId: context.objectiveID,
+      sessionId: evidence.parentSessionID || null,
+      correlationId: context.runID,
+      payload,
+    });
+    projectRuntimeEvent(outcome);
+  }
+  return {
+    recorded: Boolean(acceptance || outcome),
+    acceptanceEventID: acceptance?.eventId || null,
+    outcomeEventID: outcome?.eventId || null,
+    ...context,
+  };
 }
 
 /** Persist an explicit parent acceptance or repair assertion, never host completion. */

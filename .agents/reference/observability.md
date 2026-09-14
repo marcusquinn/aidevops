@@ -59,6 +59,23 @@ not semantic success inferred from a child terminal state. Emit through
 writes remain fail-open. Objective and subagent lifecycle evidence is protected by
 retention; corrections supersede through new observations rather than mutation.
 
+The OpenCode plugin owns normal request-boundary production. A user request starts
+an objective boundary (or reuses the dispatch-provided issue/run identity), and
+each completed assistant request is attached with a source-qualified
+`opencode-message:<digest>` identity. Child routing inherits the parent's current
+objective before request recording; late child identity resolution flushes a
+bounded pending attachment rather than charging an entire session. The report
+resolves those identities through `llm_requests.message_id`; legacy numeric IDs
+remain compatible, while missing or conflicting joins remain explicitly partial.
+
+Task results expose `aidevopsObjective` metadata with the child contribution,
+objective and run IDs. The parent records its actual decision through the
+`aidevops_objective_receipt` tool: acceptance is one of accepted unchanged,
+accepted with repair, rejected, reused or unknown, with repair linkage where
+applicable. An outcome receipt is separate. `verified` still requires an
+independent observer, evidence kind and fingerprint; a child stop, command
+success, PR merge or caller-only assertion is insufficient.
+
 Envelope version 1 stores `event_id`, `event_type`, `correlation_id`,
 `causation_id`, `subject_id`, `session_id`, `worker_id`, `parent_worker_id`,
 `root_worker_id`, `root_event_id`, and `parent_event_id`. The supervisor emits

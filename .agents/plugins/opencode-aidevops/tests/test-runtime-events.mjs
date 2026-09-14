@@ -626,7 +626,7 @@ test("OpenCode observability emits runtime evidence without changing legacy tabl
     `], { encoding: "utf8" }).trim();
     assert.equal(
       counts,
-      "1|1|6|session.created,message.part.updated,message.completed,session.error,tool.completed,subagent.cancellation.receipt|100|PartFailure|gateway_denied|req-safe|1|success|1",
+      "1|1|7|session.created,message.part.updated,message.completed,objective.session.attached,session.error,tool.completed,subagent.cancellation.receipt|100|PartFailure|gateway_denied|req-safe|1|success|1",
     );
   } finally {
     rmSync(tempDir, { force: true, recursive: true });

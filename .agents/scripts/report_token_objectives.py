@@ -6,13 +6,14 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import sqlite3
 from collections import Counter
 from typing import Any
 
 
 def unavailable(reason: str) -> dict[str, Any]:
-    return {"available": False, "reason": reason, "objective_count": 0, "verified_objective_count": 0, "outcome_counts": {}, "attributable_request_count": 0, "attributable_cost_usd": None, "attributable_tokens": 0, "cost_per_verified_objective_usd": None, "coverage": {"objective_mapping": 0, "verification": 0, "unallocated_attachments": 0, "conflicting_attachments": 0}}
+    return {"available": False, "reason": reason, "objective_count": 0, "verified_objective_count": 0, "outcome_counts": {}, "contribution_outcome_counts": {}, "repair_link_count": 0, "attributable_request_count": 0, "attributable_cost_usd": None, "attributable_tokens": 0, "cost_per_verified_objective_usd": None, "coverage": {"objective_mapping": 0, "verification": 0, "acceptance": 0, "unallocated_attachments": 0, "conflicting_attachments": 0, "missing_attachments": 0}}
 
 
 def objective_events(conn: sqlite3.Connection, since: str) -> tuple[dict[str, str], dict[str, set[str]], int]:
@@ -40,21 +41,51 @@ def objective_events(conn: sqlite3.Connection, since: str) -> tuple[dict[str, st
 def closed_request_owners(outcomes: dict[str, str], attachments: dict[str, set[str]]) -> tuple[dict[str, str], int]:
     closed = {objective for objective, outcome in outcomes.items() if outcome in {"verified", "failed"}}
     owner: dict[str, str] = {}
-    conflicts = 0
+    conflicted: set[str] = set()
     for objective in closed:
         for request_id in attachments.get(objective, set()):
             if request_id in owner and owner[request_id] != objective:
-                conflicts += 1
+                conflicted.add(request_id)
             else:
                 owner[request_id] = objective
-    return owner, conflicts
+    for request_id in conflicted:
+        owner.pop(request_id, None)
+    return owner, len(conflicted)
 
 
-def attached_request_rows(conn: sqlite3.Connection, owner: dict[str, str]) -> list[tuple[Any, ...]]:
+def attached_request_rows(conn: sqlite3.Connection, owner: dict[str, str]) -> tuple[list[tuple[Any, ...]], int]:
     if not owner:
-        return []
-    rows = conn.execute("SELECT id, cost, tokens_input, tokens_output, tokens_reasoning, tokens_cache_read, tokens_cache_write FROM llm_requests").fetchall()
-    return [row for row in rows if row[0] in owner]
+        return [], 0
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(llm_requests)")}
+    message_column = ", message_id" if "message_id" in columns else ""
+    rows = conn.execute(f"SELECT id, cost, tokens_input, tokens_output, tokens_reasoning, tokens_cache_read, tokens_cache_write{message_column} FROM llm_requests").fetchall()
+    matched: list[tuple[Any, ...]] = []
+    matched_refs: set[str] = set()
+    for row in rows:
+        aliases = {str(row[0]), f"request:{row[0]}"}
+        if message_column and row[7]:
+            aliases.add(str(row[7]))
+            aliases.add(f"opencode-message:{hashlib.sha256(str(row[7]).encode()).hexdigest()[:24]}")
+        refs = aliases.intersection(owner)
+        if refs:
+            matched.append(row[:7])
+            matched_refs.update(refs)
+    return matched, len(set(owner).difference(matched_refs))
+
+
+def contribution_evidence(conn: sqlite3.Connection, since: str) -> tuple[Counter, int]:
+    latest: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for payload_json, in conn.execute("SELECT payload_json FROM runtime_events WHERE occurred_at >= ? AND event_type = 'subagent.acceptance' ORDER BY id", (since,)):
+        try:
+            payload = json.loads(payload_json)
+        except (TypeError, json.JSONDecodeError):
+            continue
+        identity = (str(payload.get("objective_id") or ""), str(payload.get("run_id") or ""), str(payload.get("contribution_id") or ""))
+        if all(identity):
+            latest[identity] = payload
+    counts = Counter(payload.get("contribution_outcome", "unknown") for payload in latest.values())
+    repairs = sum(bool(payload.get("repair_contribution_id")) for payload in latest.values())
+    return counts, repairs
 
 
 def collect_objective_evidence(conn: sqlite3.Connection, since: str) -> dict[str, Any]:
@@ -68,7 +99,8 @@ def collect_objective_evidence(conn: sqlite3.Connection, since: str) -> dict[str
         return unavailable("request identifiers or token fields are unavailable")
     outcomes, attachments, shared = objective_events(conn, since)
     owner, conflicts = closed_request_owners(outcomes, attachments)
-    rows = attached_request_rows(conn, owner)
+    rows, missing = attached_request_rows(conn, owner)
+    contribution_counts, repairs = contribution_evidence(conn, since)
     cost = sum(float(row[1] or 0) for row in rows) if all(row[1] is not None for row in rows) else None
     verified = sum(outcome == "verified" for outcome in outcomes.values())
-    return {"available": True, "objective_count": len(outcomes), "verified_objective_count": verified, "outcome_counts": dict(sorted(Counter(outcomes.values()).items())), "attributable_request_count": len(rows), "attributable_cost_usd": round(cost, 6) if cost is not None else None, "attributable_tokens": sum(sum(int(value or 0) for value in row[2:]) for row in rows), "cost_per_verified_objective_usd": round(cost / verified, 6) if cost is not None and verified else None, "coverage": {"objective_mapping": len(owner), "verification": verified, "unallocated_attachments": shared, "conflicting_attachments": conflicts}}
+    return {"available": True, "objective_count": len(outcomes), "verified_objective_count": verified, "outcome_counts": dict(sorted(Counter(outcomes.values()).items())), "contribution_outcome_counts": dict(sorted(contribution_counts.items())), "repair_link_count": repairs, "attributable_request_count": len(rows), "attributable_cost_usd": round(cost, 6) if cost is not None else None, "attributable_tokens": sum(sum(int(value or 0) for value in row[2:]) for row in rows), "cost_per_verified_objective_usd": round(cost / verified, 6) if cost is not None and verified else None, "coverage": {"objective_mapping": len(owner), "verification": verified, "acceptance": sum(contribution_counts.values()), "unallocated_attachments": shared, "conflicting_attachments": conflicts, "missing_attachments": missing}}

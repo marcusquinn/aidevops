@@ -180,7 +180,7 @@ def collect_efficiency(db: Path, pricing: dict[str, Any], since: str, limit: int
             "Unknown exact model prices produce null complete estimates; known_repriced_cost_usd is only the priced subtotal. Historical recorded estimates remain untouched.",
             "Retries/escalations describe recorded routing metadata, not unobserved transport attempts. Coverage counts distinguish missing metadata from zero.",
             "Session families use observed parent links, including ancestors outside the time window. Missing links can fragment families. Largest families rank by raw tokens, not price or failure.",
-            "Objective economics use only explicit unique request attachments and independently verified outcomes. Shared, conflicting, cancelled and incomplete evidence is not allocated or converted into success.",
+            "Objective economics use source-qualified message identities or compatible ledger IDs, explicit unique attachments, and independently verified outcomes. Missing joins remain partial; shared, conflicting, cancelled and incomplete evidence is not allocated or converted into success.",
         ],
     }
 

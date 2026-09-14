@@ -85,9 +85,14 @@ For the light task, narrow the objective to arithmetic and select `effort: simpl
 Expected parent-verifiable evidence is 2% versus 3%, a 1 percentage-point difference;
 these counts alone do not establish causality. Host completion is not acceptance.
 Return missing evidence/capability as unavailable and cancellation as cancelled.
-When a parent has explicit acceptance evidence, it may append one
-`subagent.acceptance` runtime event for the bounded contribution/objective; never
-emit it per turn or infer it from a child terminal response.
+Task results expose parent-owned `aidevopsObjective` metadata. At the actual
+contribution decision point the parent calls `aidevops_objective_receipt` with
+accepted unchanged, accepted with repair, rejected, reused, or unknown; repair
+decisions include the repair contribution identity and observed intervention
+count. The tool may append a distinct objective outcome, but independently
+verified requires external check/receipt evidence. Never emit acceptance per
+turn or infer it from child termination, command success, PR merge, missing
+checks, or confident final prose.
 
 Canonical identity reuses the t18405 primary-delivery contract: only a configured
 primary whose resolved prompt equals its canonical source is eligible. The focused
