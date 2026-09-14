@@ -769,6 +769,7 @@ _cleanup_single_worktree() {
 	local now_epoch="$4"
 	local repo_slug_age="$5"
 	local main_branch="$6"
+	_pcdo_retry_backoff_allows_scan "$wt_path_age" "$wt_branch_age" "$now_epoch" || return 1
 
 	local wt_created
 	wt_created=$(_worktree_creation_epoch "$wt_path_age" "$wt_branch_age")
@@ -796,6 +797,11 @@ _cleanup_single_worktree() {
 		"$removal_guard_status" -ne "${_WT_CWD_CAPTURE_DEGRADED_RC:-2}" ]]; then
 		return 1
 	fi
+	if [[ "$removal_guard_status" -eq "${_WT_CWD_CAPTURE_DEGRADED_RC:-2}" ]]; then
+		_pcdo_quarantine_degraded_worktree "$wt_path_age" "$wt_branch_age" "$now_epoch" || true
+		return 1
+	fi
+	_pcdo_clear_quarantine_state "$wt_path_age"
 
 	local repo_name_age
 	repo_name_age=$(basename "$rp_age")
@@ -852,13 +858,6 @@ _cleanup_single_worktree() {
 	if ! _pc_assert_no_uncommitted_work "$wt_path_age" "$wt_branch_age" "$dirty_count" "$orphan_issue_num" "$wt_age_secs" "$repo_name_age" "$audit_context"; then
 		return 1
 	fi
-	if [[ "$removal_guard_status" -eq "${_WT_CWD_CAPTURE_DEGRADED_RC:-2}" ]]; then
-		_pc_remove_degraded_orphan_recoverably "$rp_age" "$wt_path_age" "$wt_branch_age" \
-			"$now_epoch" "$repo_slug_age" "$main_branch" "$orphan_issue_num" \
-			"$repo_name_age" "$commits_ahead" "$dirty_count" "$wt_age_secs" "$reason"
-		return $?
-	fi
-
 	_pc_permanently_remove_eligible_orphan "$rp_age" "$wt_path_age" "$wt_branch_age" \
 		"$reason" "$dirty_count" "$repo_slug_age" "$repo_name_age" "$audit_context"
 	return $?
