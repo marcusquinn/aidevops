@@ -7,7 +7,7 @@
  * transcript, or worker-metric authorities.
  */
 
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import { runCli } from "./runtime-events-cli.mjs";
 import { normaliseEventType, normaliseIdentifier } from "./runtime-events-identifiers.mjs";
@@ -61,95 +61,6 @@ export {
   runtimeEventRetentionInventory,
   verifyRuntimeEventArchive,
 };
-
-function objectiveDigest(value) {
-  return createHash("sha256").update(String(value || "unknown")).digest("hex").slice(0, 24);
-}
-
-/** Own bounded OpenCode request/objective identities without inferring outcomes. */
-export function createObjectiveEvidenceTracker({ appendEvent = appendRuntimeEvent, onEvent = () => {} } = {}) {
-  const contexts = new Map();
-  const pendingRequests = new Map();
-  const started = new Set();
-
-  function environmentContext(sessionID) {
-    const issue = String(process.env.WORKER_ISSUE_NUMBER || "").trim();
-    const configured = String(process.env.AIDEVOPS_OBJECTIVE_ID || "").trim();
-    const run = String(process.env.AIDEVOPS_RUN_ID || "").trim();
-    if (!configured && !issue && !run) return null;
-    return {
-      objectiveID: configured || `issue:${issue || objectiveDigest(run)}`,
-      runID: `run:${objectiveDigest(run || sessionID)}`,
-    };
-  }
-
-  function contextForSession(sessionID) {
-    const known = contexts.get(String(sessionID || ""));
-    if (known) return known;
-    return environmentContext(sessionID) ? begin(sessionID, sessionID) : null;
-  }
-
-  function attach(sessionID, requestID, context = contexts.get(sessionID)) {
-    if (!context) {
-      const pending = pendingRequests.get(sessionID) || [];
-      pending.push(requestID);
-      pendingRequests.set(sessionID, pending.slice(-128));
-      return null;
-    }
-    const requestRef = `opencode-message:${objectiveDigest(requestID)}`;
-    const envelope = appendEvent({
-      eventType: "objective.session.attached",
-      subjectId: requestRef,
-      sessionId: sessionID,
-      correlationId: context.runID,
-      payload: {
-        objective_version: 1, objective_id: context.objectiveID, run_id: context.runID,
-        contribution_id: requestRef, request_ids: [requestRef],
-        boundary: "completed_assistant_message", allocation: "unique",
-      },
-    });
-    onEvent(envelope);
-    return envelope;
-  }
-
-  function flush(sessionID, context) {
-    const pending = pendingRequests.get(sessionID) || [];
-    pendingRequests.delete(sessionID);
-    for (const requestID of pending) attach(sessionID, requestID, context);
-  }
-
-  function begin(sessionID, boundaryID) {
-    const context = environmentContext(sessionID) || {
-      objectiveID: `objective:opencode:${objectiveDigest(`${sessionID}:${boundaryID}`)}`,
-      runID: `run:opencode:${objectiveDigest(sessionID)}`,
-    };
-    contexts.set(sessionID, context);
-    while (contexts.size > 1000) contexts.delete(contexts.keys().next().value);
-    if (!started.has(context.objectiveID)) {
-      started.add(context.objectiveID);
-      while (started.size > 2000) started.delete(started.values().next().value);
-      const envelope = appendEvent({
-        eventType: "objective.started", subjectId: context.objectiveID,
-        sessionId: sessionID, correlationId: context.runID,
-        payload: { objective_version: 1, objective_id: context.objectiveID, run_id: context.runID },
-      });
-      onEvent(envelope);
-    }
-    flush(sessionID, context);
-    return context;
-  }
-
-  function inherit(sessionID, parentSessionID) {
-    const context = contextForSession(parentSessionID);
-    if (context && sessionID) {
-      contexts.set(sessionID, context);
-      flush(sessionID, context);
-    }
-    return context;
-  }
-
-  return { attach, begin, contextForSession, inherit };
-}
 
 function normaliseOccurredAt(value) {
   const date = value ? new Date(value) : new Date();

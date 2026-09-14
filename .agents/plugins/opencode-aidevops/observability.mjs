@@ -38,10 +38,9 @@ import {
 import { scheduleCostBackfill } from "./observability-cost-backfill.mjs";
 import {
   appendRuntimeEvent,
-  appendRuntimeEventSync,
-  createObjectiveEvidenceTracker,
   initialiseRuntimeEventStore,
 } from "../../scripts/runtime-events.mjs";
+import { createObjectiveEvidenceAdapter } from "./objective-evidence.mjs";
 import {
   enrichActiveSpan,
   runtimeEventOtelAttributes,
@@ -286,8 +285,8 @@ function firstTruthy(values, fallback = null) {
   return values.find(Boolean) || fallback;
 }
 
-const objectiveEvidence = createObjectiveEvidenceTracker({
-  appendEvent: appendRuntimeEventSync,
+const objectiveEvidence = createObjectiveEvidenceAdapter({
+  isReady: () => dbReady,
   onEvent: projectRuntimeEvent,
 });
 
@@ -652,77 +651,12 @@ export function recordSubagentOutcome(evidence = {}) {
 
 /** Persist an explicit parent decision and optional objective outcome receipt. */
 export function recordObjectiveDecision(evidence = {}) {
-  if (!dbReady) return { recorded: false, reason: "observability unavailable" };
-  const context = evidence.objectiveID && evidence.runID
-    ? { objectiveID: evidence.objectiveID, runID: evidence.runID }
-    : objectiveContextForSession(evidence.parentSessionID);
-  if (!context) return { recorded: false, reason: "objective context unavailable" };
-  const acceptance = evidence.contributionID ? recordSubagentAcceptance({
-    ...evidence,
-    objectiveID: context.objectiveID,
-    runID: context.runID,
-  }) : null;
-  let outcome = null;
-  if (evidence.objectiveOutcome) {
-    const payload = {
-      objective_version: 1,
-      objective_id: context.objectiveID,
-      run_id: context.runID,
-      outcome: evidence.objectiveOutcome,
-      source: evidence.source || "parent_decision",
-      observed_at: evidence.observedAt || new Date().toISOString(),
-      policy_version: evidence.policyVersion || "v1",
-    };
-    if (evidence.objectiveOutcome === "verified") {
-      Object.assign(payload, {
-        evidence_kind: evidence.evidenceKind,
-        evidence_fingerprint: evidence.evidenceFingerprint,
-        observer: evidence.observer,
-      });
-    }
-    outcome = appendRuntimeEvent({
-      eventType: "objective.outcome",
-      subjectId: context.objectiveID,
-      sessionId: evidence.parentSessionID || null,
-      correlationId: context.runID,
-      payload,
-    });
-    projectRuntimeEvent(outcome);
-  }
-  return {
-    recorded: Boolean(acceptance || outcome),
-    acceptanceEventID: acceptance?.eventId || null,
-    outcomeEventID: outcome?.eventId || null,
-    ...context,
-  };
+  return objectiveEvidence.recordDecision(evidence);
 }
 
 /** Persist an explicit parent acceptance or repair assertion, never host completion. */
 export function recordSubagentAcceptance(evidence = {}) {
-  if (!dbReady) return null;
-  const observedAt = evidence.observedAt || new Date().toISOString();
-  const envelope = appendRuntimeEvent({
-    eventType: "subagent.acceptance",
-    subjectId: firstTruthy([evidence.contributionID, evidence.childSessionID], "unknown-contribution"),
-    sessionId: firstTruthy([evidence.parentSessionID]),
-    correlationId: firstTruthy([evidence.parentSessionID, evidence.runID], "subagent-acceptance"),
-    causationId: evidence.callID || undefined,
-    payload: {
-      attempt_id: evidence.attemptID,
-      contribution_id: evidence.contributionID,
-      contribution_outcome: evidence.outcome,
-      intervention_count: Number.isSafeInteger(evidence.interventionCount) ? evidence.interventionCount : 0,
-      objective_id: evidence.objectiveID,
-      objective_version: 1,
-      observed_at: observedAt,
-      policy_version: evidence.policyVersion || "unknown",
-      repair_contribution_id: evidence.repairContributionID,
-      run_id: evidence.runID,
-      source: evidence.source || "parent_assertion",
-    },
-  });
-  if (envelope) projectRuntimeEvent(envelope);
-  return envelope;
+  return objectiveEvidence.recordAcceptance(evidence);
 }
 
 /**
