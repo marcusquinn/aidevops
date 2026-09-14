@@ -4918,4 +4918,4 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 ## Production outcome and repair recording
 
-- [ ] t18433 Integrate production objective outcomes and subagent repair evidence #auto-dispatch #enhancement #framework #observability #interactive priority:medium tier:thinking ~4h ref:GH#31874 logged:2026-09-14 -> [todo/tasks/t18433-brief.md]
+- [x] t18433 Integrate production objective outcomes and subagent repair evidence #auto-dispatch #enhancement #framework #observability #interactive priority:medium tier:thinking ~4h ref:GH#31874 logged:2026-09-14 -> [todo/tasks/t18433-brief.md] pr:#31876 completed:2026-09-14
