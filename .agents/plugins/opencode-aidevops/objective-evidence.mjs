@@ -8,19 +8,22 @@ function digest(value) {
   return createHash("sha256").update(String(value || "unknown")).digest("hex").slice(0, 24);
 }
 
-/** Own bounded OpenCode objective identities and explicit parent receipts. */
-export function createObjectiveEvidenceAdapter({ isReady = () => true, onEvent = () => {} } = {}) {
-  const contexts = new Map();
-  const pendingRequests = new Map();
-  const started = new Set();
+class ObjectiveEvidenceAdapter {
+  constructor({ isReady = () => true, onEvent = () => {} } = {}) {
+    this.isReady = isReady;
+    this.onEvent = onEvent;
+    this.contexts = new Map();
+    this.pendingRequests = new Map();
+    this.started = new Set();
+  }
 
-  function emit(input) {
+  emit(input) {
     const envelope = appendRuntimeEventSync(input);
-    onEvent(envelope);
+    this.onEvent(envelope);
     return envelope;
   }
 
-  function environmentContext(sessionID) {
+  environmentContext(sessionID) {
     const issue = String(process.env.WORKER_ISSUE_NUMBER || "").trim();
     const configured = String(process.env.AIDEVOPS_OBJECTIVE_ID || "").trim();
     const run = String(process.env.AIDEVOPS_RUN_ID || "").trim();
@@ -31,21 +34,21 @@ export function createObjectiveEvidenceAdapter({ isReady = () => true, onEvent =
     };
   }
 
-  function contextForSession(sessionID) {
-    const known = contexts.get(String(sessionID || ""));
+  contextForSession(sessionID) {
+    const known = this.contexts.get(String(sessionID || ""));
     if (known) return known;
-    return environmentContext(sessionID) ? begin(sessionID, sessionID) : null;
+    return this.environmentContext(sessionID) ? this.begin(sessionID, sessionID) : null;
   }
 
-  function attach(sessionID, requestID, context = contexts.get(sessionID)) {
+  attach(sessionID, requestID, context = this.contexts.get(sessionID)) {
     if (!context) {
-      const pending = pendingRequests.get(sessionID) || [];
+      const pending = this.pendingRequests.get(sessionID) || [];
       pending.push(requestID);
-      pendingRequests.set(sessionID, pending.slice(-128));
+      this.pendingRequests.set(sessionID, pending.slice(-128));
       return null;
     }
     const requestRef = `opencode-message:${digest(requestID)}`;
-    return emit({
+    return this.emit({
       eventType: "objective.session.attached",
       subjectId: requestRef,
       sessionId: sessionID,
@@ -58,44 +61,44 @@ export function createObjectiveEvidenceAdapter({ isReady = () => true, onEvent =
     });
   }
 
-  function flush(sessionID, context) {
-    const pending = pendingRequests.get(sessionID) || [];
-    pendingRequests.delete(sessionID);
-    for (const requestID of pending) attach(sessionID, requestID, context);
+  flush(sessionID, context) {
+    const pending = this.pendingRequests.get(sessionID) || [];
+    this.pendingRequests.delete(sessionID);
+    for (const requestID of pending) this.attach(sessionID, requestID, context);
   }
 
-  function begin(sessionID, boundaryID) {
-    const context = environmentContext(sessionID) || {
+  begin(sessionID, boundaryID) {
+    const context = this.environmentContext(sessionID) || {
       objectiveID: `objective:opencode:${digest(`${sessionID}:${boundaryID}`)}`,
       runID: `run:opencode:${digest(sessionID)}`,
     };
-    contexts.set(sessionID, context);
-    while (contexts.size > 1000) contexts.delete(contexts.keys().next().value);
-    if (!started.has(context.objectiveID)) {
-      started.add(context.objectiveID);
-      while (started.size > 2000) started.delete(started.values().next().value);
-      emit({
+    this.contexts.set(sessionID, context);
+    while (this.contexts.size > 1000) this.contexts.delete(this.contexts.keys().next().value);
+    if (!this.started.has(context.objectiveID)) {
+      this.started.add(context.objectiveID);
+      while (this.started.size > 2000) this.started.delete(this.started.values().next().value);
+      this.emit({
         eventType: "objective.started", subjectId: context.objectiveID,
         sessionId: sessionID, correlationId: context.runID,
         payload: { objective_version: 1, objective_id: context.objectiveID, run_id: context.runID },
       });
     }
-    flush(sessionID, context);
+    this.flush(sessionID, context);
     return context;
   }
 
-  function inherit(sessionID, parentSessionID) {
-    const context = contextForSession(parentSessionID);
+  inherit(sessionID, parentSessionID) {
+    const context = this.contextForSession(parentSessionID);
     if (context && sessionID) {
-      contexts.set(sessionID, context);
-      flush(sessionID, context);
+      this.contexts.set(sessionID, context);
+      this.flush(sessionID, context);
     }
     return context;
   }
 
-  function recordAcceptance(evidence = {}) {
-    if (!isReady()) return null;
-    return emit({
+  recordAcceptance(evidence = {}) {
+    if (!this.isReady()) return null;
+    return this.emit({
       eventType: "subagent.acceptance",
       subjectId: evidence.contributionID || evidence.childSessionID || "unknown-contribution",
       sessionId: evidence.parentSessionID || null,
@@ -117,33 +120,16 @@ export function createObjectiveEvidenceAdapter({ isReady = () => true, onEvent =
     });
   }
 
-  function recordDecision(evidence = {}) {
-    if (!isReady()) return { recorded: false, reason: "observability unavailable" };
+  recordDecision(evidence = {}) {
+    if (!this.isReady()) return { recorded: false, reason: "observability unavailable" };
     const context = evidence.objectiveID && evidence.runID
       ? { objectiveID: evidence.objectiveID, runID: evidence.runID }
-      : contextForSession(evidence.parentSessionID);
+      : this.contextForSession(evidence.parentSessionID);
     if (!context) return { recorded: false, reason: "objective context unavailable" };
     const acceptance = evidence.contributionID
-      ? recordAcceptance({ ...evidence, objectiveID: context.objectiveID, runID: context.runID })
+      ? this.recordAcceptance({ ...evidence, objectiveID: context.objectiveID, runID: context.runID })
       : null;
-    let outcome = null;
-    if (evidence.objectiveOutcome) {
-      const payload = {
-        objective_version: 1, objective_id: context.objectiveID, run_id: context.runID,
-        outcome: evidence.objectiveOutcome, source: evidence.source || "parent_decision",
-        observed_at: evidence.observedAt || new Date().toISOString(),
-        policy_version: evidence.policyVersion || "v1",
-      };
-      if (evidence.objectiveOutcome === "verified") Object.assign(payload, {
-        evidence_kind: evidence.evidenceKind,
-        evidence_fingerprint: evidence.evidenceFingerprint,
-        observer: evidence.observer,
-      });
-      outcome = emit({
-        eventType: "objective.outcome", subjectId: context.objectiveID,
-        sessionId: evidence.parentSessionID || null, correlationId: context.runID, payload,
-      });
-    }
+    const outcome = evidence.objectiveOutcome ? this.recordOutcome(evidence, context) : null;
     return {
       recorded: Boolean(acceptance || outcome),
       acceptanceEventID: acceptance?.eventId || null,
@@ -152,5 +138,25 @@ export function createObjectiveEvidenceAdapter({ isReady = () => true, onEvent =
     };
   }
 
-  return { attach, begin, contextForSession, inherit, recordAcceptance, recordDecision };
+  recordOutcome(evidence, context) {
+    const payload = {
+      objective_version: 1, objective_id: context.objectiveID, run_id: context.runID,
+      outcome: evidence.objectiveOutcome, source: evidence.source || "parent_decision",
+      observed_at: evidence.observedAt || new Date().toISOString(),
+      policy_version: evidence.policyVersion || "v1",
+    };
+    if (evidence.objectiveOutcome === "verified") Object.assign(payload, {
+      evidence_kind: evidence.evidenceKind,
+      evidence_fingerprint: evidence.evidenceFingerprint,
+      observer: evidence.observer,
+    });
+    return this.emit({
+      eventType: "objective.outcome", subjectId: context.objectiveID,
+      sessionId: evidence.parentSessionID || null, correlationId: context.runID, payload,
+    });
+  }
+}
+
+export function createObjectiveEvidenceAdapter(options) {
+  return new ObjectiveEvidenceAdapter(options);
 }
