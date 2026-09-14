@@ -14,6 +14,8 @@ printf '1.2.4\n' >"$AIDEVOPS_WORKTREE_BASE_DIR/aidevops-release-101-42/VERSION"
 
 # shellcheck source=../release-lane-helper.sh
 source "$SCRIPT_DIR/release-lane-helper.sh"
+# shellcheck source=../release-authorization-manifest-helper.sh
+source "$SCRIPT_DIR/release-authorization-manifest-helper.sh"
 # shellcheck source=../full-loop-release-aggregate-recovery.sh
 source "$SCRIPT_DIR/full-loop-release-aggregate-recovery.sh"
 
@@ -135,6 +137,20 @@ jq -e '.attempted_tag == "v1.2.4" and .worktree_state == "isolated"
 	and .npm == "absent" and .homebrew == "absent" and .protected_branch == "absent"' \
 	<<<"$CAPTURED_EVIDENCE" >/dev/null
 printf 'PASS dead preparing recovery proves isolated worktree and absent channels before one CAS\n'
+
+reset_fixture
+normalized_retry=$(_full_loop_recovery_resolve_lane_authorization 101 "$EXPECTED")
+_full_loop_recovery_dead_preparing test/repo 101 "$normalized_retry" patch >/dev/null
+[[ "$normalized_retry" == "$EXPECTED" && "$RECOVERY_CALLS" -eq 1 ]] || exit 1
+printf 'PASS repeated PR-only assertion reaches fenced dead preparing recovery\n'
+
+reset_fixture
+if normalized_retry=$(_full_loop_recovery_resolve_lane_authorization 102 "$EXPECTED"); then
+	printf 'FAIL changed PR set normalized against the immutable manifest\n' >&2
+	exit 1
+fi
+[[ "$RECOVERY_CALLS" -eq 0 && "$RECONSTRUCT_CALLS" -eq 0 ]] || exit 1
+printf 'PASS changed PR set fails before recovery or publication-side mutation\n'
 
 reset_fixture
 LANE_ABSENT=true
