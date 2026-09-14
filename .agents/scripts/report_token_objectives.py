@@ -58,7 +58,12 @@ def attached_request_rows(conn: sqlite3.Connection, owner: dict[str, str]) -> tu
         return [], 0
     columns = {row[1] for row in conn.execute("PRAGMA table_info(llm_requests)")}
     message_column = ", message_id" if "message_id" in columns else ""
-    rows = conn.execute(f"SELECT id, cost, tokens_input, tokens_output, tokens_reasoning, tokens_cache_read, tokens_cache_write{message_column} FROM llm_requests").fetchall()
+    request_query = (
+        "SELECT id, cost, tokens_input, tokens_output, tokens_reasoning, tokens_cache_read, tokens_cache_write, message_id FROM llm_requests"
+        if message_column
+        else "SELECT id, cost, tokens_input, tokens_output, tokens_reasoning, tokens_cache_read, tokens_cache_write FROM llm_requests"
+    )
+    rows = conn.execute(request_query).fetchall()
     matched: list[tuple[Any, ...]] = []
     matched_refs: set[str] = set()
     for row in rows:

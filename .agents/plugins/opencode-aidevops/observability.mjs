@@ -294,6 +294,11 @@ export function objectiveContextForSession(sessionID) {
   return objectiveEvidence.contextForSession(sessionID);
 }
 
+function attachObjectiveMessage(msg) {
+  const objective = objectiveContextForSession(msg.sessionID) || objectiveEvidence.begin(msg.sessionID, msg.id);
+  objectiveEvidence.attach(msg.sessionID, msg.id, objective);
+}
+
 export function recordRoutingDecision(sessionID, decision = {}) {
   const result = queueRoutingDecision(sessionID, decision);
   objectiveEvidence.inherit(sessionID, decision.parentSessionID);
@@ -452,8 +457,7 @@ function handleMessageUpdated(event, context = {}) {
   );`;
 
   sqliteExec(sql);
-  const objective = objectiveContextForSession(msg.sessionID) || objectiveEvidence.begin(msg.sessionID, msg.id);
-  objectiveEvidence.attach(msg.sessionID, msg.id, objective);
+  attachObjectiveMessage(msg);
 
   // Update session summary (upsert)
   updateSessionSummary(msg, cost, toolCallCount);
