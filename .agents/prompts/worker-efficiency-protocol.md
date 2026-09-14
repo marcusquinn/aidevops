@@ -45,7 +45,13 @@ gh pr create --draft --title 'GH#123: description' --body-file '/path/to/pr-body
   largest model. Bounded independent work may use simple/standard children. For an
   evidenced specialist gap, use `specialist-advisor` when available, with the JSON
   evidence contract in `reference/agent-routing.md`. Retain implementation and
-  acceptance ownership; children never recurse. No automatic Astra promotion.
+  acceptance ownership; children never recurse. No automatic whole-session Astra
+  promotion. Exception at the decision boundary: if current-model uncertainty alone
+  would make the worker export an in-scope technical, product or architectural
+  choice, gather the narrow evidence and consult the highest configured and
+  authorized capable advisory route once. Validate its answer and proceed when the
+  decision is safe, reversible and evidence-backed; do not repeat an unchanged
+  consultation or turn routine uncertainty into promotion.
 - Delegate output-heavy independent analysis only when it saves total work. Supply
   actual excerpts through `files`/`agents` to inference-only `ai_research`; paths
   mentioned only in its prompt are not loaded. Do not offload files you need to edit.
@@ -77,6 +83,13 @@ ai_research(prompt: "Review the supplied dispatch function. Return: decision, ev
 
 `BLOCKED` is only valid after exhausting all autonomous solution paths. If the only remaining blocker is the current model's inability to reason through the task safely, emit the exact structured marker `BLOCKED: capability limit - <evidence>`; runtime routing advances to the next configured capability tier. Review-policy metadata, nominal GitHub states, and lower-tier model limits are **not** valid blockers. Permission, authentication, provider, rate-limit, secret, policy, trust-boundary, and locality failures never use the capability marker. A genuine terminal blocker requires evidence: failing check, missing permission, unresolved conflict, or explicit policy gate.
 
+Before either marker for an unresolved in-scope decision, apply the decision-only
+consultation in `reference/agent-routing.md` when its configured route is available
+and safe. Keep authority, consent, taste or values, inaccessible context, unknown
+secrets, irreversible commitments, privacy/locality, billing and explicit model
+pins outside model escalation. Advisory output cannot grant any of them, and
+provider, authentication, rate-limit or tool failures use their own recovery path.
+
 ```text
 BLOCKED: capability limit - bounded attempts could not establish a safe implementation
 ```
@@ -87,7 +100,7 @@ BLOCKED: capability limit - bounded attempts could not establish a safe implemen
 | Review-policy state (e.g. "changes requested") | Continue — address findings, do not stop |
 | Rate limit / auth error | Rotate provider (handled by headless-runtime-helper.sh) |
 | Missing credentials | EXIT BLOCKED (genuine blocker) |
-| Architectural decision needed | EXIT BLOCKED (genuine blocker) |
+| Architectural decision remains after bounded authorized advice, or advice is unavailable/unsafe | EXIT BLOCKED with the evidenced non-capability boundary; use the capability marker only when model capability alone remains |
 | Failing CI check | Fix the check, do not stop |
 
 ## Headless session awareness (GH#17436 — CRITICAL)

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 Marcus Quinn
 
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
@@ -12,6 +13,9 @@ import { registerSpecialistAdvisor, validateSpecialistRequest, applyDailyDriverD
 const agentsDir = fileURLToPath(new URL("../../../", import.meta.url));
 const table = fileURLToPath(new URL("../../../configs/model-routing-table.json", import.meta.url));
 const routing = loadModelRouting([table]);
+const agentRoutingPolicy = readFileSync(new URL("../../../reference/agent-routing.md", import.meta.url), "utf8");
+const selfImprovementPolicy = readFileSync(new URL("../../../reference/self-improvement.md", import.meta.url), "utf8");
+const workerProtocol = readFileSync(new URL("../../../prompts/worker-efficiency-protocol.md", import.meta.url), "utf8");
 const envelope = JSON.stringify({
   objective: "Resolve a supplied ordering failure", scope: "Advice only; no tools",
   evidence: "Two concurrent updates overwrite each other; current check fails",
@@ -28,6 +32,21 @@ test("shipped routes keep Sol medium in charge and Astra outside automatic escal
   assert.equal(mergeModelRouting(routing, { specialist_advisor: null }).specialistAdvisor, null);
   assert.equal(mergeModelRouting(routing, { specialist_advisor: { model: "invalid", variant: "low" } }).specialistAdvisor, null);
   assert.deepEqual(mergeModelRouting(routing, { tiers: {} }).specialistAdvisor, routing.specialistAdvisor);
+});
+
+test("policy requires one bounded highest-capability consultation before an avoidable user decision", () => {
+  assert.match(agentRoutingPolicy, /highest-\s*capability configured and authorized advisory route/);
+  assert.match(agentRoutingPolicy, /validates the result once/);
+  assert.match(selfImprovementPolicy, /highest configured and authorized capable advisory route\s+once/);
+  assert.match(workerProtocol, /consult the highest configured and\s+authorized capable advisory route once/);
+  assert.match(workerProtocol, /do not repeat an unchanged\s+consultation/);
+});
+
+test("decision advice preserves human, route, and failure boundaries", () => {
+  assert.match(agentRoutingPolicy, /Advice cannot supply authority, consent, taste or values/);
+  assert.match(agentRoutingPolicy, /missing\/disabled profile is\s+unavailable; never silently switch providers/);
+  assert.match(workerProtocol, /privacy\/locality, billing and explicit model\s+pins outside model escalation/);
+  assert.match(workerProtocol, /provider, authentication, rate-limit or tool failures use their own recovery path/);
 });
 
 test("registration supplies canonical tool-free adviser and defaults without replacing user pins", () => {

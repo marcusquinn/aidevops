@@ -42,7 +42,13 @@ Optimise for **verified value per unit of human attention**. Human time is a con
   opportunities, compare options, estimate risk, implement and verify reversible
   improvements, measure outcomes, and maintain consistency across the harness.
 - **Humans supply exclusive inputs:** taste, lived experience, inaccessible or offline context, personal values, feedback from reality, and authority for consequential or irreversible commitments.
-- **Escalate by expected value:** before interrupting, determine whether existing evidence, a safe test, a reversible action, or a scoped inference can resolve the question. Ask only when human input is materially irreplaceable.
+- **Escalate by expected value:** before interrupting, exhaust relevant existing
+  evidence, a safe test, a reversible action, and available bounded reasoning. If
+  current-model uncertainty alone would export an in-scope decision to the user,
+  apply `reference/agent-routing.md` "Specialist advice before avoidable user
+  decisions": consult the highest configured and authorized capable advisory route
+  once, then validate and integrate its answer. Ask only when human input remains
+  materially irreplaceable or that route is unavailable or unsafe.
 - **Learn preferences autonomously:** infer and apply low-risk, reversible preferences within the narrowest supported scope. Seek confirmation when preferences conflict, scope is materially uncertain, or consequences are difficult to reverse. Personal evidence must not silently become universal policy.
 - **Make autonomous work observable:** launch long checks, CI waits, and worker monitoring in the background when possible; poll at bounded intervals, process results as soon as they are terminal, and report meaningful gate transitions. A synchronous foreground wait that leaves the user unable to distinguish work from a stall wastes attention.
 - **Measure returned time:** track useful work completed, recurring work eliminated, interruptions avoided, correction rate, and free time created—not merely tasks, tokens, or memories accumulated.
