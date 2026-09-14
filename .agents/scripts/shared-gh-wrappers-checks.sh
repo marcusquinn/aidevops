@@ -1466,7 +1466,7 @@ gh_pr_check_runs_rest() {
 	# distinguishing retryable admission deferrals/timeouts; /status alone is
 	# insufficient signal for branch-protection gating.
 	local runs="" runs_rc=0
-	runs=$(_gh_checks_api_read "repos/${slug}/commits/${sha}/check-runs" --paginate \
+	runs=$(_gh_checks_api_read "repos/${slug}/commits/${sha}/check-runs?per_page=100" --paginate \
 		--jq '[.check_runs[]? | {name, conclusion, status}]' 2>/dev/null) || runs_rc=$?
 	[[ "$runs_rc" -eq 0 ]] || return "$runs_rc"
 
@@ -1486,7 +1486,7 @@ gh_pr_check_runs_rest() {
 	# ($ok/$fail) avoid repeating "success"/"failure" literals three times
 	# each across the file (string-literal ratchet gate).
 	# shellcheck disable=SC2016  # $ok/$fail are jq variables, not bash expansions
-	statuses=$(_gh_checks_api_read "repos/${slug}/commits/${sha}/status" \
+	statuses=$(_gh_checks_api_read "repos/${slug}/commits/${sha}/status?per_page=100" --paginate \
 		--jq '[.statuses[]? |
 			"success" as $ok | "failure" as $fail |
 			{
@@ -1508,7 +1508,7 @@ gh_pr_check_runs_rest() {
 			}
 		]' 2>/dev/null) || statuses=""
 
-	# Concatenate possibly-multi-page check-runs output, then merge with
+	# Concatenate possibly-multi-page check-runs and status output, then merge the
 	# normalised statuses. `jq -s 'add'` flattens into a single array.
 	# /status failure here is non-fatal: /check-runs already succeeded.
 	local merged="" merge_rc=0
