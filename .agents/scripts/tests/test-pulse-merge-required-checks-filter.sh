@@ -89,6 +89,7 @@ print_result() {
 #   ruleset_review_malformed_response — REST reviews payload is not page arrays
 #   ruleset_review_malformed_element — a REST reviews page contains a non-object
 #   ruleset_review_fetch_error — REST reviews endpoint fails
+#   ruleset_review_local_deferral — local admission rejects the REST read
 #   rulesets_private_plan_unavailable — exact feature-unavailable 403 resolves
 #      to an empty repository-ruleset context set
 #   rulesets_generic_forbidden — generic 403 remains an API failure
@@ -99,9 +100,11 @@ setup_test_env() {
 	export PATH="${TEST_ROOT}/bin:${PATH}"
 	export LOGFILE="${TEST_ROOT}/pulse.log"
 	export GH_CALL_LOG="${TEST_ROOT}/gh-calls.log"
+	export GH_ROUTE_LOG="${TEST_ROOT}/gh-routes.log"
 	export MOCK_GH_MODE="all_pass"
 	: >"$LOGFILE"
 	: >"$GH_CALL_LOG"
+	: >"$GH_ROUTE_LOG"
 
 	cat >"${TEST_ROOT}/bin/gh" <<'EOF'
 #!/usr/bin/env bash
@@ -109,6 +112,7 @@ setup_test_env() {
 # Records every top-level invocation and returns canned REST responses for
 # branch-protection required-context verification.
 printf '%s\n' "$*" >>"${GH_CALL_LOG}"
+printf '%s|%s\n' "${AIDEVOPS_GH_ROUTE_DECISION:-}" "$*" >>"${GH_ROUTE_LOG}"
 
 apply_jq() {
 	local json="$1"
@@ -133,7 +137,7 @@ apply_jq() {
 if [[ "$1" == "api" && "$2" == repos/* && "$*" == *"/rulesets/"* ]]; then
 	branch_identity='"id":101,"target":"branch","enforcement":"active"'
 	case "${MOCK_GH_MODE:-all_pass}" in
-	ruleset_review_only_missing | ruleset_review_only_approved | ruleset_review_latest_changes_requested | ruleset_review_paginated_approved | ruleset_review_author_only | ruleset_review_malformed_response | ruleset_review_malformed_element | ruleset_review_fetch_error)
+	ruleset_review_only_missing | ruleset_review_only_approved | ruleset_review_latest_changes_requested | ruleset_review_paginated_approved | ruleset_review_author_only | ruleset_review_malformed_response | ruleset_review_malformed_element | ruleset_review_fetch_error | ruleset_review_local_deferral)
 		apply_jq "{${branch_identity},\"conditions\":{\"ref_name\":{\"include\":[\"refs/heads/main\"]}},\"rules\":[{\"type\":\"pull_request\",\"parameters\":{\"required_approving_review_count\":1,\"dismiss_stale_reviews_on_push\":false,\"require_last_push_approval\":false}}]}" "$@"
 		;;
 	ruleset_review_stale_head_dismiss | ruleset_review_current_head_dismissed)
@@ -171,7 +175,7 @@ if [[ "$1" == "api" && "$2" == repos/* && "$*" == *"/rulesets"* ]]; then
 		printf '%s\n' 'gh: HTTP 403: Resource not accessible by integration' >&2
 		exit 1
 		;;
-	ruleset_review_only_missing | ruleset_review_only_approved | ruleset_mixed_review_status | ruleset_review_zero | ruleset_review_malformed_optional | ruleset_review_latest_changes_requested | ruleset_review_paginated_approved | ruleset_review_author_only | ruleset_review_malformed_response | ruleset_review_malformed_element | ruleset_review_fetch_error | ruleset_review_stale_head_dismiss | ruleset_review_current_head_last_push | ruleset_review_current_head_dismissed | ruleset_review_unknown_freshness)
+	ruleset_review_only_missing | ruleset_review_only_approved | ruleset_mixed_review_status | ruleset_review_zero | ruleset_review_malformed_optional | ruleset_review_latest_changes_requested | ruleset_review_paginated_approved | ruleset_review_author_only | ruleset_review_malformed_response | ruleset_review_malformed_element | ruleset_review_fetch_error | ruleset_review_local_deferral | ruleset_review_stale_head_dismiss | ruleset_review_current_head_last_push | ruleset_review_current_head_dismissed | ruleset_review_unknown_freshness)
 		apply_jq '[{"id":101,"enforcement":"active","target":"branch"}]' "$@"
 		;;
 	*)
@@ -202,7 +206,7 @@ if [[ "$1" == "api" && "$2" == repos/*/pulls/*/reviews* ]]; then
 		printf '%s\n' '[[{"id":6,"state":"APPROVED","commit_id":"abc123def456789000000000000000000000abcd","submitted_at":"2026-06-03T00:00:00Z","user":{"login":"reviewer"}},{"id":7,"state":"DISMISSED","commit_id":"abc123def456789000000000000000000000abcd","submitted_at":"2026-06-04T00:00:00Z","user":{"login":"reviewer"}}]]'
 		;;
 	ruleset_review_author_only)
-		printf '%s\n' '[[{"id":1,"state":"APPROVED","submitted_at":"2026-06-01T00:00:00Z","user":{"login":"author"}}]]'
+		printf '%s\n' '[[{"id":1,"state":"APPROVED","body":"PRIVATE-REVIEW-BODY","submitted_at":"2026-06-01T00:00:00Z","user":{"login":"author"}}]]'
 		;;
 	ruleset_review_malformed_response)
 		printf '%s\n' '{"reviews":[]}'
@@ -213,6 +217,10 @@ if [[ "$1" == "api" && "$2" == repos/*/pulls/*/reviews* ]]; then
 	ruleset_review_fetch_error)
 		printf 'gh: mock reviews endpoint error\n' >&2
 		exit 1
+		;;
+	ruleset_review_local_deferral)
+		printf '%s\n' '[gh-transport] error_kind=github-api-read-deferred attempted=false deferred_by=local_admission route=pulse-ruleset-reviews-rest' >&2
+		exit 75
 		;;
 	*)
 		printf '%s\n' '[[]]'
@@ -800,6 +808,13 @@ test_ruleset_review_only_missing_blocks_merge() {
 	assert_ruleset_review_gate_returns 1 "ruleset-only missing approval → merge blocked (GH#24577)"
 	assert_log_contains "0/1 ruleset-required approval" \
 		"ruleset-only missing approval: skip reason logged"
+	assert_log_contains "diagnostic transport=success pages=1 reviews=0 state_changing=0 expected_head_state_changing=0 payload_bytes=4" \
+		"ruleset-only missing approval: privacy-safe response shape logged"
+	if grep -Fq -- "pulse-ruleset-reviews-rest|api repos/marcusquinn/aidevops/pulls/19023/reviews?per_page=100 --paginate --slurp" "$GH_ROUTE_LOG"; then
+		print_result "ruleset review fetch has stable REST route attribution" 0
+	else
+		print_result "ruleset review fetch has stable REST route attribution" 1 "Expected pulse-ruleset-reviews-rest attribution"
+	fi
 	return 0
 }
 
@@ -891,6 +906,11 @@ test_ruleset_author_approval_does_not_count() {
 	: >"$LOGFILE"
 	export MOCK_GH_MODE="ruleset_review_author_only"
 	assert_ruleset_review_gate_returns 1 "PR author approval does not satisfy ruleset"
+	if grep -Fq -- "PRIVATE-REVIEW-BODY" "$LOGFILE"; then
+		print_result "ruleset review diagnostics omit review bodies" 1 "Private fixture body leaked into diagnostics"
+	else
+		print_result "ruleset review diagnostics omit review bodies" 0
+	fi
 	return 0
 }
 
@@ -921,6 +941,24 @@ test_ruleset_review_fetch_error_fails_closed() {
 	assert_ruleset_review_gate_returns 1 "REST review fetch error fails closed"
 	assert_log_contains "review fetch failed" \
 		"REST review fetch error: failure logged"
+	return 0
+}
+
+test_ruleset_review_local_deferral_propagates_diagnostic() {
+	: >"$GH_CALL_LOG"
+	: >"$LOGFILE"
+	export MOCK_GH_MODE="ruleset_review_local_deferral"
+	local actual_rc=0 diagnostics=""
+	diagnostics=$(_check_ruleset_required_reviews_passing "marcusquinn/aidevops" "19023" "author" "abc123def456789000000000000000000000abcd" 2>&1) || actual_rc=$?
+	if [[ "$actual_rc" -ne 1 ]]; then
+		print_result "ruleset review local deferral fails closed" 1 "Expected rc=1, got rc=${actual_rc}"
+	elif [[ "$diagnostics" != *"error_kind=github-api-read-deferred attempted=false deferred_by=local_admission"* ]]; then
+		print_result "ruleset review local deferral propagates admission diagnostic" 1 "Missing authoritative local-deferral diagnostic"
+	else
+		print_result "ruleset review local deferral propagates admission diagnostic" 0
+	fi
+	assert_log_contains "transport=failed" \
+		"ruleset review local deferral records failed transport without raw response"
 	return 0
 }
 
@@ -1035,6 +1073,7 @@ main() {
 	test_ruleset_malformed_reviews_fail_closed
 	test_ruleset_malformed_review_element_fails_closed
 	test_ruleset_review_fetch_error_fails_closed
+	test_ruleset_review_local_deferral_propagates_diagnostic
 	test_ruleset_mixed_review_status_preserves_both_gates
 	test_ruleset_review_zero_does_not_require_approval
 	test_ruleset_review_malformed_optional_fails_closed

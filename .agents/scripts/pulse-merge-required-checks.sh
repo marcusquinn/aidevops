@@ -1456,6 +1456,84 @@ _ruleset_required_review_count_for_default_branch() {
 	return 0
 }
 
+_pmrc_ruleset_review_summary_valid() {
+	local count=""
+	[[ "$#" -eq 6 ]] || return 1
+	for count in "$@"; do
+		[[ "$count" =~ ^[0-9]+$ ]] || return 1
+	done
+	return 0
+}
+
+_pmrc_ruleset_review_summary() {
+	local pr_author="$1"
+	local expected_head_sha="$2"
+	local required_current_head_count="$3"
+	local empty_string=""
+	local summary=""
+
+	summary=$(jq -er --arg author "$pr_author" --arg empty "$empty_string" \
+		--arg expected_head "$expected_head_sha" --argjson required_current_head "$required_current_head_count" \
+		--arg array_type "$PMRC_JSON_ARRAY" --arg object_type "$PMRC_JSON_OBJECT" \
+		--arg number_type "$PMRC_JSON_NUMBER" --arg string_type "$PMRC_JSON_STRING" '
+		def review_state:
+			(.state // $empty) | if type == $string_type then . else error("invalid review state") end;
+		def state_changing:
+			. == "APPROVED" or . == "CHANGES_REQUESTED" or . == "DISMISSED";
+		def known_state:
+			state_changing or . == "COMMENTED" or . == "PENDING";
+		($author | ascii_downcase) as $author_login |
+		if type != $array_type or any(.[]; type != $array_type) or any(.[][]?; type != $object_type) then
+			error("invalid paginated reviews response")
+		elif any(.[][]?;
+			((review_state | known_state) | not)
+			or ((review_state | state_changing) and (
+				(.user | type) != $object_type
+				or (.user.login | type) != $string_type
+				or (.user.login | length) == 0
+				or (.submitted_at | type) != $string_type
+				or (.submitted_at | length) == 0
+				or ((try (.submitted_at | fromdateiso8601) catch null) == null)
+				or (.id | type) != $number_type
+				or .id <= 0
+				or (.id | floor) != .id
+				or ($required_current_head > 0 and (
+					(.commit_id | type) != $string_type
+					or (.commit_id | length) == 0
+				))
+			))
+		) then
+			error("malformed state-changing review")
+		else
+			(length) as $page_count |
+			[.[][]?] as $all_reviews |
+			[$all_reviews[] | review_state as $state | select($state | state_changing) | {
+				login: ((.user.login // $empty) | ascii_downcase),
+				state: $state,
+				submitted_epoch: ((.submitted_at // $empty) | fromdateiso8601),
+				id: (.id // 0),
+				commit_id: (.commit_id // $empty)
+			} | select(.login != $empty)] as $state_changing_reviews |
+			($state_changing_reviews
+				| group_by(.login)
+				| map(max_by([.submitted_epoch, .id]))
+				| map(select(.login != $author_login))
+				| map(select(.state == "APPROVED"))) as $approved_reviews |
+			[
+				($approved_reviews | length),
+				($approved_reviews | map(select(.commit_id == $expected_head)) | length),
+				$page_count,
+				($all_reviews | length),
+				($state_changing_reviews | length),
+				($state_changing_reviews | map(select(.commit_id == $expected_head)) | length)
+			]
+			| @tsv
+		end
+	' 2>/dev/null) || return 1
+	printf '%s' "$summary"
+	return 0
+}
+
 #######################################
 # Verify active ruleset pull_request approval requirements for one PR.
 #
@@ -1490,70 +1568,31 @@ _check_ruleset_required_reviews_passing() {
 		return 1
 	fi
 
-	local reviews_pages="" approval_counts="" approved_count="" current_head_approved_count="" empty_string=""
-	reviews_pages=$(_pmrc_gh_read gh api "repos/${repo_slug}/pulls/${pr_number}/reviews?per_page=100" --paginate --slurp 2>/dev/null) || reviews_pages=""
+	local reviews_pages="" approval_counts="" approved_count="" current_head_approved_count=""
+	local review_page_count="" review_total_count="" state_changing_count="" current_head_state_count="" review_payload_bytes=""
+	reviews_pages=$(AIDEVOPS_GH_ROUTE_DECISION="pulse-ruleset-reviews-rest" \
+		_pmrc_gh_read gh api "repos/${repo_slug}/pulls/${pr_number}/reviews?per_page=100" --paginate --slurp 2>&1) || {
+		_pmrc_emit_local_deferral "$reviews_pages"
+		reviews_pages=""
+	}
 	if [[ -z "$reviews_pages" || "$reviews_pages" == null ]]; then
-		echo "[pulse-merge] _check_ruleset_required_reviews_passing: review fetch failed for PR #${pr_number} in ${repo_slug} with ruleset requiring ${required_count} approval(s) — failing closed (GH#24577)" >>"$LOGFILE"
+		echo "[pulse-merge] _check_ruleset_required_reviews_passing: review fetch failed for PR #${pr_number} in ${repo_slug} with ruleset requiring ${required_count} approval(s) (transport=failed) — failing closed (GH#24577)" >>"$LOGFILE"
 		return 1
 	fi
-	# #aidevops:trust-boundary — count only each reviewer's latest substantive
-	# decision. COMMENTED submissions do not change GitHub's approval state, while
-	# malformed state-changing reviews must keep ruleset admission fail-closed.
-	approval_counts=$(jq -er --arg author "$pr_author" --arg empty "$empty_string" \
-		--arg expected_head "$expected_head_sha" --argjson required_current_head "$required_current_head_count" \
-		--arg array_type "$PMRC_JSON_ARRAY" --arg object_type "$PMRC_JSON_OBJECT" \
-		--arg number_type "$PMRC_JSON_NUMBER" --arg string_type "$PMRC_JSON_STRING" '
-		def review_state:
-			(.state // $empty) | if type == $string_type then . else error("invalid review state") end;
-		def state_changing:
-			. == "APPROVED" or . == "CHANGES_REQUESTED" or . == "DISMISSED";
-		def known_state:
-			state_changing or . == "COMMENTED" or . == "PENDING";
-		($author | ascii_downcase) as $author_login |
-		if type != $array_type or any(.[]; type != $array_type) or any(.[][]?; type != $object_type) then
-			error("invalid paginated reviews response")
-		elif any(.[][]?;
-			((review_state | known_state) | not)
-			or ((review_state | state_changing) and (
-				(.user | type) != $object_type
-				or (.user.login | type) != $string_type
-				or (.user.login | length) == 0
-				or (.submitted_at | type) != $string_type
-				or (.submitted_at | length) == 0
-				or ((try (.submitted_at | fromdateiso8601) catch null) == null)
-				or (.id | type) != $number_type
-				or .id <= 0
-				or (.id | floor) != .id
-				or ($required_current_head > 0 and (
-					(.commit_id | type) != $string_type
-					or (.commit_id | length) == 0
-				))
-			))
-		) then
-			error("malformed state-changing review")
-		else
-			[.[][]? | review_state as $state | select($state | state_changing) | {
-				login: ((.user.login // $empty) | ascii_downcase),
-				state: $state,
-				submitted_epoch: ((.submitted_at // $empty) | fromdateiso8601),
-				id: (.id // 0),
-				commit_id: (.commit_id // $empty)
-			} | select(.login != $empty)]
-			| group_by(.login)
-			| map(max_by([.submitted_epoch, .id]))
-			| map(select(.login != $author_login))
-			| map(select(.state == "APPROVED"))
-			| [length, map(select(.commit_id == $expected_head)) | length]
-			| @tsv
-		end
-	' <<<"$reviews_pages" 2>/dev/null) || approval_counts=""
-	IFS=$'\t' read -r approved_count current_head_approved_count <<<"$approval_counts"
-	if [[ ! "$approved_count" =~ ^[0-9]+$ || ! "$current_head_approved_count" =~ ^[0-9]+$ ]]; then
+	# #aidevops:trust-boundary — the parser returns counters only; raw review
+	# bodies and identities never reach diagnostics.
+	approval_counts=$(printf '%s' "$reviews_pages" |
+		_pmrc_ruleset_review_summary "$pr_author" "$expected_head_sha" "$required_current_head_count") || approval_counts=""
+	IFS=$'\t' read -r approved_count current_head_approved_count review_page_count review_total_count state_changing_count current_head_state_count <<<"$approval_counts"
+	if ! _pmrc_ruleset_review_summary_valid "$approved_count" "$current_head_approved_count" "$review_page_count" \
+		"$review_total_count" "$state_changing_count" "$current_head_state_count"; then
 		echo "[pulse-merge] _check_ruleset_required_reviews_passing: review parse failed for PR #${pr_number} in ${repo_slug} — failing closed (GH#24577)" >>"$LOGFILE"
 		return 1
 	fi
 	if [[ "$approved_count" -lt "$required_count" || "$current_head_approved_count" -lt "$required_current_head_count" ]]; then
-		echo "[pulse-merge] _check_ruleset_required_reviews_passing: PR #${pr_number} in ${repo_slug} has ${approved_count}/${required_count} ruleset-required approval(s), including ${current_head_approved_count}/${required_current_head_count} required on expected head ${expected_head_sha:0:12} — deferring merge (GH#30638)" >>"$LOGFILE"
+		review_payload_bytes=$(printf '%s' "$reviews_pages" | LC_ALL=C wc -c | tr -d '[:space:]') || review_payload_bytes=0
+		[[ "$review_payload_bytes" =~ ^[0-9]+$ ]] || review_payload_bytes=0
+		echo "[pulse-merge] _check_ruleset_required_reviews_passing: PR #${pr_number} in ${repo_slug} has ${approved_count}/${required_count} ruleset-required approval(s), including ${current_head_approved_count}/${required_current_head_count} required on expected head ${expected_head_sha:0:12} — deferring merge; diagnostic transport=success pages=${review_page_count} reviews=${review_total_count} state_changing=${state_changing_count} expected_head_state_changing=${current_head_state_count} payload_bytes=${review_payload_bytes} (GH#31891)" >>"$LOGFILE"
 		return 1
 	fi
 	echo "[pulse-merge] _check_ruleset_required_reviews_passing: PR #${pr_number} in ${repo_slug} satisfies ${approved_count}/${required_count} ruleset-required approval(s), including ${current_head_approved_count}/${required_current_head_count} required on expected head ${expected_head_sha:0:12} (GH#30638)" >>"$LOGFILE"
