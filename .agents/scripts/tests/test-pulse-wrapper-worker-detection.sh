@@ -578,8 +578,8 @@ test_review_issue_pr_session_key_fallback_dedup() {
 
 test_review_thread_response_session_key_fallback_dedup() {
 	# GH#24625: review-thread response workers use pr-review-thread-response
-	# session keys. The dedup key extraction must fall back to that key and
-	# preserve only the trailing PR number, even when the repo slug contains digits.
+	# session keys. The dedup key extraction must preserve the complete key so
+	# repository and worker identities cannot collide on a trailing PR number.
 	set_ps_fixture "950 S 00:10 opencode run --dir /tmp/repo --session-key pr-review-thread-response-org2--repo-206 --title PR #206 \"/full-loop respond\"
 951 S 00:11 /opt/homebrew/lib/node_modules/opencode-ai/bin/.opencode run --dir /tmp/repo --session-key pr-review-thread-response-org2--repo-206 --title PR #206 \"/full-loop respond\"
 952 S 00:09 opencode run --dir /tmp/repo --session-key pr-review-thread-response-org2--repo-207 --title PR #207 \"/full-loop respond\""
@@ -611,6 +611,55 @@ test_review_thread_response_session_key_fallback_dedup() {
 	fi
 
 	print_result "review-thread response session-key fallback deduplicates correctly (GH#24625)" 0
+	return 0
+}
+
+test_non_issue_session_identity_dedup() {
+	# GH#31890: one non-issue worker process chain must count once, while
+	# distinct session keys, directories, and identity namespaces remain distinct.
+	local count output
+
+	set_ps_fixture "100 S 00:20 bash /home/user/.aidevops/agents/scripts/headless-runtime-helper.sh run --role worker --session-key maintenance --dir /tmp/repo --title maintenance \"/full-loop maintain\"
+101 S 00:19 bash /home/user/.aidevops/agents/scripts/sandbox-exec-helper.sh run -- opencode run \"/full-loop maintain\" --session-key maintenance --dir /tmp/repo
+102 S 00:18 /opt/opencode run \"/full-loop maintain\" --session-key maintenance --dir /tmp/repo"
+	count=$(count_active_workers)
+	output=$(list_active_worker_processes)
+	if [[ "$count" != "1" || "$output" != 100\ * ]]; then
+		print_result "non-issue worker identities deduplicate without collisions (GH#31890)" 1 \
+			"Expected one logical worker retaining PID 100, got count=${count}: ${output}"
+		return 0
+	fi
+
+	set_ps_fixture "200 S 00:20 opencode run \"/full-loop maintain\" --session-key maintenance-a --dir /tmp/repo
+201 S 00:19 opencode run \"/full-loop maintain\" --session-key maintenance-b --dir /tmp/repo
+202 S 00:18 opencode run \"/full-loop maintain\" --session-key maintenance-a --dir /tmp/other"
+	count=$(count_active_workers)
+	if [[ "$count" != "3" ]]; then
+		print_result "non-issue worker identities deduplicate without collisions (GH#31890)" 1 \
+			"Expected distinct session keys/directories to produce 3 workers, got ${count}"
+		return 0
+	fi
+
+	set_ps_fixture "300 S 00:20 opencode run \"/full-loop issue\" --session-key issue-206 --dir /tmp/repo --title Issue #206
+301 S 00:19 opencode run \"/full-loop review\" --session-key pr-review-thread-response-owner--one-206 --dir /tmp/repo --title PR #206
+302 S 00:18 opencode run \"/full-loop review\" --session-key pr-review-thread-response-owner--two-206 --dir /tmp/repo --title PR #206"
+	count=$(count_active_workers)
+	if [[ "$count" != "3" ]]; then
+		print_result "non-issue worker identities deduplicate without collisions (GH#31890)" 1 \
+			"Expected issue and full review-thread identities to produce 3 workers, got ${count}"
+		return 0
+	fi
+
+	set_ps_fixture "400 S 00:20 opencode run \"/full-loop unkeyed-a\" --dir /tmp/repo
+401 S 00:19 opencode run \"/full-loop unkeyed-b\" --dir /tmp/repo"
+	count=$(count_active_workers)
+	if [[ "$count" != "2" ]]; then
+		print_result "non-issue worker identities deduplicate without collisions (GH#31890)" 1 \
+			"Expected unkeyed processes to remain distinct, got ${count}"
+		return 0
+	fi
+
+	print_result "non-issue worker identities deduplicate without collisions (GH#31890)" 0
 	return 0
 }
 
@@ -1611,6 +1660,7 @@ main() {
 	test_counts_review_issue_pr_workers
 	test_review_issue_pr_session_key_fallback_dedup
 	test_review_thread_response_session_key_fallback_dedup
+	test_non_issue_session_identity_dedup
 	test_worker_title_prefixes_issue_number
 	test_check_dispatch_dedup_treats_merged_pr_as_duplicate
 	test_dispatch_with_dedup_blocks_when_duplicate

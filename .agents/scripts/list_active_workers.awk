@@ -11,7 +11,7 @@
 # --dir <path> substrings past position 80 and defeat the patterns below).
 # Output: one line per logical worker: "pid etime command..."
 #
-# Deduplication key: issue_number|worktree_dir
+# Deduplication key: namespaced issue/session identity|worktree_dir
 # Preference: outer launchers (headless-runtime-helper.sh) over child processes.
 {
     is_headless_wrapper = ($0 ~ /(^|[[:space:]\/])headless-runtime-helper\.sh([[:space:]]|$)/ && $0 ~ /(^|[[:space:]])run([[:space:]]|$)/ && $0 ~ /--role[[:space:]]+worker/)
@@ -45,23 +45,27 @@
         gsub(/[^0-9]/, "", rest)
         issue = rest
     }
-    # Fallback: extract from review-thread response session keys.
-    if (issue == "" && match($0, /--session-key[[:space:]]+pr-review-thread-response-[^[:space:]]+-[0-9]+/)) {
-        rest = substr($0, RSTART, RLENGTH)
-        sub(/^.*-/, "", rest)
-        issue = rest
+    # Issue workers retain their canonical issue identity even when one process
+    # in the chain exposes it only through --session-key.
+    worker_identity = ""
+    if (issue != "") {
+        worker_identity = "issue:" issue
+    } else if (match($0, /--session-key[[:space:]]+[^[:space:]]+/)) {
+        session_key = substr($0, RSTART, RLENGTH)
+        sub(/--session-key[[:space:]]+/, "", session_key)
+        worker_identity = "session:" session_key
     }
 
-    # Extract --dir path for dedup key (same issue in different repos
-    # = different logical workers)
+    # Extract --dir path for dedup key (same identity in different repos or
+    # worktrees = different logical workers).
     dir = ""
     if (match($0, /--dir[[:space:]]+[^[:space:]]+/)) {
         dir = substr($0, RSTART, RLENGTH)
         sub(/--dir[[:space:]]+/, "", dir)
     }
-    dedup_key = issue "|" dir
+    dedup_key = worker_identity "|" dir
 
-    # Prefer outer launchers over child processes for same issue+dir.
+    # Prefer outer launchers over child processes for the same identity+dir.
     launcher_rank = 0
     if ($0 ~ /(^|[[:space:]\/])headless-runtime-helper\.sh([[:space:]]|$)/ && $0 ~ /--role[[:space:]]+worker/) {
         launcher_rank = 2
@@ -69,20 +73,21 @@
         launcher_rank = 1
     }
 
-    if (issue != "" && dedup_key in seen) {
-        # Already have a line for this issue+dir — prefer outer launcher
+    if (worker_identity != "" && dedup_key in seen) {
+        # Already have a line for this identity+dir — prefer outer launcher
         if (launcher_rank > seen_launcher_rank[dedup_key]) {
             seen_lines[dedup_key] = line
             seen_launcher_rank[dedup_key] = launcher_rank
         }
         # Otherwise skip (lower-rank child of existing launcher, or duplicate)
-    } else if (issue != "") {
+    } else if (worker_identity != "") {
         seen[dedup_key] = 1
         seen_lines[dedup_key] = line
         seen_launcher_rank[dedup_key] = launcher_rank
         key_order[++key_count] = dedup_key
     } else {
-        # No issue number found — print directly (edge case)
+        # No stable issue/session identity found — retain each process rather
+        # than risk undercounting unrelated workers.
         no_issue_lines[++no_issue_count] = line
     }
 }
