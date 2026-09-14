@@ -429,8 +429,25 @@ printf 'PASS reviewed aggregate source publishes once and truthfully supersedes 
 		"$_FULL_LOOP_RESERVED_RECOVERY_EXPECTED" == "$persisted_sources" &&
 		"$_FULL_LOOP_RESERVED_RECOVERY_COMPLETED" == "true" &&
 		"$_FULL_LOOP_RESERVED_RECOVERY_FAILED_PREPUBLICATION" == "false" ]]
+	lane_checks=0
+	expansion_calls=0
+	_full_loop_recovery_lane_requires_prepublication_transaction() {
+		lane_checks=$((lane_checks + 1))
+		return 1
+	}
+	_full_loop_release_resolve_persisted_intent marcusquinn/aidevops 48 "48" "$persisted_sources" patch
+	[[ "$lane_checks" -eq 1 && "$expansion_calls" -eq 0 &&
+		"$_FULL_LOOP_RESERVED_RECOVERY_EXPECTED" == "$persisted_sources" &&
+		"$_FULL_LOOP_RESERVED_RECOVERY_COMPLETED" == "false" ]]
+	lane_checks=0
+	if _full_loop_release_resolve_persisted_intent marcusquinn/aidevops 48 \
+		'48@1111111111111111111111111111111111111111' "$persisted_sources" patch; then
+		printf 'FAIL conflicting explicit merge SHA was replaced by persisted authorization\n'
+		exit 1
+	fi
+	[[ "$lane_checks" -eq 0 && "$expansion_calls" -eq 0 ]]
 )
-printf 'PASS omitted expected sources still resume a persisted failed pre-publication transaction\n'
+printf 'PASS persisted intent normalizes PR-only retries and rejects conflicting merge SHAs\n'
 
 (
 	cd "$ROOT/repo/linked-branch"

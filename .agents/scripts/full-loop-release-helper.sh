@@ -573,6 +573,9 @@ _full_loop_release_resolve_persisted_intent() {
 	requested_prs=$(release_authorization_intent_json "$requested_sources" | jq -c 'map(.pr)') || return 1
 	persisted_prs=$(release_authorization_intent_json "$persisted_sources" | jq -c 'map(.pr)') || return 1
 	if [[ "$requested_prs" == "$persisted_prs" ]]; then
+		requested_sources=$(_full_loop_recovery_resolve_lane_authorization \
+			"$requested_sources" "$persisted_sources") || return 1
+		_FULL_LOOP_RESERVED_RECOVERY_EXPECTED="$requested_sources"
 		_full_loop_recovery_lane_requires_prepublication_transaction "$repo" "$source_pr" \
 			"$persisted_sources" || transaction_rc=$?
 		case "$transaction_rc" in
