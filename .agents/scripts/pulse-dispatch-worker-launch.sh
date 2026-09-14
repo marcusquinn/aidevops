@@ -1622,15 +1622,15 @@ _dlw_start_codegraph_init() {
 }
 
 _dlw_append_node_tool_env() {
-	local repo_path="$1"
-	local node_tool_bin="${repo_path}/node_modules/.bin"
+	local worker_worktree_path="$1"
+	local node_tool_bin="${worker_worktree_path}/node_modules/.bin"
 	local inherited_path="${PATH:-/usr/bin:/bin}"
 	local worker_path=""
 	local seen=""
 	local candidate=""
 	local IFS=':'
 
-	# Keep canonical package entrypoints first, followed by stable existing user
+	# Keep worktree-local package entrypoints first, followed by stable user
 	# tool installs needed by non-interactive workers. Never place symlinks inside
 	# the worktree or grant broad file access to the canonical checkout.
 	for candidate in \
@@ -1760,7 +1760,7 @@ _dlw_nohup_launch() {
 		AIDEVOPS_DISPATCH_TIER="$dispatch_model_tier"
 		AIDEVOPS_DISPATCH_MODEL="$selected_model"
 	)
-	_dlw_append_node_tool_env "$repo_path"
+	_dlw_append_node_tool_env "$worker_worktree_path"
 	_dlw_append_trusted_release_env
 	_dlw_append_worktree_transfer_env
 	_dlw_append_canary_preflight_env

@@ -109,24 +109,42 @@ fi
 printf 'PASS: rejected, mixed and successful provisioning respect directory attempt budgets\n'
 
 if ! declare -F _dlw_append_node_tool_env >/dev/null 2>&1; then
-	fail "worker launch does not provide a local command path for canonical Node tools"
+	fail "worker launch does not provide a local command path for worktree Node tools"
 fi
 worker_cmd=(env)
 worker_home="${TEST_TMP}/home"
 mkdir -p "${worker_home}/.bun/bin" "${worker_home}/.local/bin" \
-	"${worker_home}/.aidevops/bin" "${worker_home}/.aidevops/agents/scripts"
-HOME="$worker_home" PATH="${worker_home}/.bun/bin:${PATH}" _dlw_append_node_tool_env "$repo_dir"
-expected_tool_prefix="PATH=${repo_dir}/node_modules/.bin:${worker_home}/.bun/bin:${worker_home}/.local/bin:${worker_home}/.aidevops/bin:${worker_home}/.aidevops/agents/scripts:"
+	"${worker_home}/.aidevops/bin" "${worker_home}/.aidevops/agents/scripts" \
+	"${wt_dir}/node_modules/.bin" "${wt_dir}/node_modules/prettier/bin"
+printf '#!/usr/bin/env bash\nprintf "worktree-tool\\n"\n' >"${wt_dir}/node_modules/prettier/bin/prettier.cjs" || fail "failed to create worktree tool fixture"
+chmod +x "${wt_dir}/node_modules/prettier/bin/prettier.cjs" || fail "failed to make worktree tool fixture executable"
+ln -s ../prettier/bin/prettier.cjs "${wt_dir}/node_modules/.bin/prettier" || fail "failed to create worktree tool symlink"
+HOME="$worker_home" PATH="${worker_home}/.bun/bin:${PATH}" _dlw_append_node_tool_env "$wt_dir"
+expected_tool_prefix="PATH=${wt_dir}/node_modules/.bin:${worker_home}/.bun/bin:${worker_home}/.local/bin:${worker_home}/.aidevops/bin:${worker_home}/.aidevops/agents/scripts:"
 if [[ "${worker_cmd[1]:-}" != "$expected_tool_prefix"* ]]; then
-	fail "worker launch did not prepend canonical Node and stable user tool directories"
+	fail "worker launch did not prepend worktree Node and stable user tool directories"
+fi
+if [[ ":${worker_cmd[1]#PATH=}:" == *":${repo_dir}/node_modules/.bin:"* ]]; then
+	fail "worker launch leaked the canonical Node tool directory"
 fi
 bun_path_count=$(printf '%s' "${worker_cmd[1]}" | tr ':' '\n' | grep -Fxc "${worker_home}/.bun/bin" || true)
 if [[ "$bun_path_count" -ne 1 ]]; then
 	fail "worker launch did not deduplicate the stable Bun directory"
 fi
 tool_output=$("${worker_cmd[@]}" prettier) || fail "dispatcher-provided Node tool did not execute"
-if [[ "$tool_output" != "fixture-tool" ]]; then
+if [[ "$tool_output" != "worktree-tool" ]]; then
 	fail "dispatcher-provided Node tool returned unexpected output"
+fi
+
+rm -rf "${wt_dir}/node_modules/.bin" || fail "failed to remove worktree Node tool fixture"
+worker_cmd=(env)
+HOME="$worker_home" PATH="${worker_home}/.bun/bin:${PATH}" _dlw_append_node_tool_env "$wt_dir"
+if [[ ":${worker_cmd[1]#PATH=}:" == *":${repo_dir}/node_modules/.bin:"* ||
+	":${worker_cmd[1]#PATH=}:" == *":${wt_dir}/node_modules/.bin:"* ]]; then
+	fail "worker launch added a project Node tool directory when the worktree bin was absent"
+fi
+if ! grep -Fq "_dlw_append_node_tool_env \"\$worker_worktree_path\"" "${SCRIPTS_DIR}/pulse-dispatch-worker-launch.sh"; then
+	fail "worker launch does not pass the validated worktree path to Node tool discovery"
 fi
 
 _dlw_zero_output_comment_count() {
