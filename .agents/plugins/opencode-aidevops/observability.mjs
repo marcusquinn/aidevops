@@ -311,8 +311,10 @@ function beginObjective(sessionID, boundaryID) {
     runID: `run:opencode:${opaqueDigest(sessionID)}`,
   };
   objectiveContexts.set(sessionID, context);
+  while (objectiveContexts.size > 1000) objectiveContexts.delete(objectiveContexts.keys().next().value);
   if (!startedObjectives.has(context.objectiveID)) {
     startedObjectives.add(context.objectiveID);
+    while (startedObjectives.size > 2000) startedObjectives.delete(startedObjectives.values().next().value);
     projectRuntimeEvent(appendRuntimeEvent({
       eventType: "objective.started",
       subjectId: context.objectiveID,
