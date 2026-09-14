@@ -597,6 +597,7 @@ _todo_open_planning_pr() {
 		--base "$default_branch" \
 		--head "$branch_name" \
 		--title "$pr_title" \
+		--label "allow-auto-merge" \
 		--body "$pr_body" 2>"$pr_error_file") || {
 		pr_error=$(<"$pr_error_file") || pr_error=""
 		rm -f "$pr_error_file"

@@ -230,8 +230,8 @@ test_protected_default_creates_planning_pr() {
 		fail "$name" "source worktree dirty after PR fallback: $status"
 		return 0
 	fi
-	if ! grep -q $'gh\tpr\tcreate' "$log_file" 2>/dev/null; then
-		fail "$name" "gh pr create was not called"
+	if ! grep -q $'gh\tpr\tcreate.*\t--label\tallow-auto-merge' "$log_file" 2>/dev/null; then
+		fail "$name" "planning PR creation did not include merge-throughput opt-in"
 		return 0
 	fi
 	head_branch=$(cat "$head_file" 2>/dev/null || true)
