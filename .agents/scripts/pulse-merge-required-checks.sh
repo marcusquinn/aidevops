@@ -788,6 +788,7 @@ _pmrc_is_explicit_advisory_failure() {
 	local checks_json="$2"
 	local companion=""
 	case "$check_name" in
+	"qlty check") companion="Qlty Regression Gate" ;;
 	"Qlty Smell Threshold") companion="Qlty Smell Regression" ;;
 	*) return 1 ;;
 	esac

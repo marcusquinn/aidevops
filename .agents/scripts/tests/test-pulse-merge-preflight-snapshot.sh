@@ -165,11 +165,25 @@ stub_commit_status() {
 		printf '%s\n' '{"statuses":[]}'
 	elif [[ "$SNAPSHOT_MODE" == "review_stable_fail" ]]; then
 		printf '{"statuses":[{"context":"review-bot-gate","state":"failure","updated_at":"%s"}]}\n' "$gate_at"
+	elif [[ "$SNAPSHOT_MODE" == qlty_external_fail* ]]; then
+		printf '{"statuses":[{"context":"review-bot-gate","state":"success","updated_at":"%s"},{"context":"qlty check","state":"failure","updated_at":"2026-01-01T00:01:05Z"}]}\n' "$gate_at"
 	elif [[ "$SNAPSHOT_MODE" == "same_name_source_conflict" ]]; then
 		printf '{"statuses":[{"context":"review-bot-gate","state":"success","updated_at":"%s"},{"context":"ProviderMirror","state":"failure","updated_at":"2026-01-01T00:01:03Z"}]}\n' "$gate_at"
 	else
 		printf '{"statuses":[{"context":"review-bot-gate","state":"success","updated_at":"%s"}]}\n' "$gate_at"
 	fi
+	return 0
+}
+
+stub_advisory_companion_check() {
+	case "$SNAPSHOT_MODE" in
+	"skipped_companion_rerun")
+		printf '%s' ',{"name":"Qlty Smell Regression","status":"completed","conclusion":"skipped","completed_at":"2026-01-01T00:02:00Z"}'
+		;;
+	"qlty_external_fail_with_companion")
+		printf '%s' ',{"name":"Qlty Regression Gate","status":"completed","conclusion":"success","completed_at":"2026-01-01T00:01:02Z"}'
+		;;
+	esac
 	return 0
 }
 
@@ -213,6 +227,7 @@ gh() {
 		[[ "$SNAPSHOT_MODE" == "empty_check_runs" ]] && return 0
 		local required_conclusion="success" required_url="" broad_status="completed" broad_conclusion="success"
 		local broad_completed_at="2026-01-01T00:01:00Z" extra_check=""
+		extra_check=$(stub_advisory_companion_check)
 		[[ "$SNAPSHOT_MODE" == "required_fail" ]] && required_conclusion="failure"
 		if [[ "$SNAPSHOT_MODE" == "required_infra_fail" ]]; then
 			required_conclusion="failure"
@@ -245,8 +260,6 @@ gh() {
 			extra_check=',{"name":"maintainer-gate","status":"completed","conclusion":"failure","completed_at":"2026-01-01T00:01:02Z"},{"name":"gate / Maintainer Review & Assignee Gate","status":"completed","conclusion":"success","completed_at":"2026-01-01T00:01:01Z"}'
 		elif [[ "$SNAPSHOT_MODE" == "maintainer_legacy_fail" ]]; then
 			extra_check=',{"name":"Maintainer Review & Assignee Gate","status":"completed","conclusion":"failure","completed_at":"2026-01-01T00:01:01Z"},{"name":"gate / Maintainer Review & Assignee Gate","status":"completed","conclusion":"failure","completed_at":"2026-01-01T00:01:02Z"}'
-		elif [[ "$SNAPSHOT_MODE" == "skipped_companion_rerun" ]]; then
-			extra_check=',{"name":"Qlty Smell Regression","status":"completed","conclusion":"skipped","completed_at":"2026-01-01T00:02:00Z"}'
 		elif [[ "$SNAPSHOT_MODE" == "same_name_source_conflict" ]]; then
 			extra_check=',{"name":"ProviderMirror","status":"completed","conclusion":"success","completed_at":"2026-01-01T00:01:02Z"}'
 		fi
@@ -683,6 +696,8 @@ main() {
 		TESTS_FAILED=$((TESTS_FAILED + 1))
 	fi
 	assert_gate "terminal failed required check blocks merge" required_fail 1
+	assert_gate "external qlty failure is advisory when the regression gate passes" qlty_external_fail_with_companion 0
+	assert_gate "external qlty failure blocks without a successful regression gate" qlty_external_fail_without_companion 1
 	assert_gate "infrastructure-failed required check requests rerun and stays blocked" required_infra_fail 1
 	if [[ "$RERUN_CALLS" -eq 1 ]] && grep -q "requested infrastructure rerun.*run=303" "$LOGFILE"; then
 		printf 'PASS infrastructure-failed required check requests one audited rerun\n'
