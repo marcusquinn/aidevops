@@ -15,11 +15,14 @@ MOCK_STATUS_BODY='[]'
 
 _gh_checks_api_read() {
 	local endpoint="$1"
-	if [[ "$endpoint" == */check-runs ]]; then
+	shift
+	[[ " $* " == *" --paginate "* ]] || return 64
+	if [[ "$endpoint" == */check-runs\?per_page=100 ]]; then
 		[[ "$MOCK_CHECK_RUNS_RC" -eq 0 ]] || return "$MOCK_CHECK_RUNS_RC"
 		printf '%s\n' "$MOCK_CHECK_RUNS_BODY"
 		return 0
 	fi
+	[[ "$endpoint" == */status\?per_page=100 ]] || return 64
 	[[ "$MOCK_STATUS_RC" -eq 0 ]] || return "$MOCK_STATUS_RC"
 	printf '%s\n' "$MOCK_STATUS_BODY"
 	return 0
