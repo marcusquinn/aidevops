@@ -136,7 +136,7 @@ and estimate limitations live in `tools/context/model-routing.md`.
 - Use `model-effort-evaluation.md` for the dated aggregate delegation evidence and its coverage limits. Do not infer accepted child contribution or causal policy improvement when objective-linked parent integration and repair are missing.
 - Preserve permission, trust, locality, billing and side-effect boundaries. Safe task-level choices remain autonomous; persistent shared defaults use the normal reviewed change/release path. Interrupt the user only for authority or a consequential trade-off, and keep delivery moving.
 
-### Specialist advice without promoting the parent
+### Specialist advice before avoidable user decisions
 
 Start with the cheapest credible model and reasoning level, not the largest model
 associated with a domain label. The OpenAI daily driver and thinking route use Sol
@@ -150,6 +150,16 @@ Candidates include original UI/UX design, deep domain synthesis, non-obvious
 security/concurrency/performance analysis, and complex 3D geometry. These are
 judgment triggers, not automatic promotions: routine CSS, scanner output, measured
 hotspot collection, and established modelling operations stay on cheaper routes.
+
+When current-model uncertainty is the only reason the parent would ask the user to
+choose an in-scope technical, product or architectural direction, collect the
+narrow evidence first and perform one bounded consultation through the highest-
+capability configured and authorized advisory route that can receive that evidence.
+This is a decision-boundary escalation, not whole-session promotion: the parent
+validates the result once, keeps implementation and verification ownership, and
+continues without interruption when the recommendation is safe, reversible and
+evidence-backed. Key the attempt by the unresolved decision and evidence so an
+unchanged retry cannot create a reasoning loop or duplicate user prompts.
 
 The separately configured `specialist_advisor` route defaults to Astra low. It is
 not a fourth tier, not an availability fallback, and not an automatic continuation
@@ -176,15 +186,21 @@ proposal. The parent performs those operations using the actual domain tools.
 Validate once against the acceptance criteria and integrate the answer; do not
 automatically purchase another review. A tool error, missing source, authentication,
 rate limit, permission or privacy restriction requires repair of that cause, not
-a larger model. No automatic reasoning ladder is shipped for Sol or Astra.
-Raise specialist reasoning only when explicitly requested or evidenced necessary;
-otherwise repair context or stop after a bounded unsuccessful advisory attempt.
+a larger model. No automatic whole-session reasoning ladder is shipped for Sol or
+Astra. The imminent alternative of exporting a still-resolvable decision to the
+user is evidence for this one decision-only consultation; routine uncertainty is
+not. After a bounded unsuccessful attempt, retain the evidence and use the existing
+blocker or user-escalation path rather than recursively consulting another child.
 
 The profile is available to OpenCode interactive and headless parents after
 restart; unsupported runtimes must not pretend it exists. Honour local-only,
 provider and billing constraints before delegating. A missing/disabled profile is
 unavailable; never silently switch providers or start an external worker instead.
 Existing user model/variant pins and custom routing remain explicit overrides.
+Advice cannot supply authority, consent, taste or values, inaccessible context,
+unknown secrets, publication or destructive-operation permission, or acceptance of
+an irreversible commitment. Ask or stop at those human-exclusive boundaries, and
+when materially different high-impact interpretations remain after bounded advice.
 
 ## Primary agents
 
