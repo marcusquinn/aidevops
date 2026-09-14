@@ -300,6 +300,18 @@ class InteractiveSubagentEscalator {
   async afterTool(input, output) {
     if (!TASK_TOOLS.has(safeToolName(input?.tool)) || !this.trackingEnabled()) return null;
     const identity = this.lifecycle.takeChildIdentity(input, output);
+    const objective = this.context.onSubagentOutcome?.objectiveContext?.(input?.sessionID);
+    if (objective && identity.childID) {
+      output.metadata = {
+        ...output.metadata,
+        aidevopsObjective: {
+          childSessionID: identity.childID,
+          contributionID: `opencode-child:${identity.childID}`,
+          objectiveID: objective.objectiveID,
+          runID: objective.runID,
+        },
+      };
+    }
     if (this.enabled() && !identity.childID) {
       output.metadata = {
         ...output.metadata,

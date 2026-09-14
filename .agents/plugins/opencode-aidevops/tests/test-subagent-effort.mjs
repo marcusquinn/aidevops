@@ -373,6 +373,27 @@ test("headless task hooks record host lifecycle evidence without semantic claims
   assert.equal(Object.hasOwn(evidence[1], "semanticAcceptance"), false);
 });
 
+test("task result carries parent-owned objective identity without inferred acceptance", async () => {
+  const onSubagentOutcome = () => {};
+  onSubagentOutcome.objectiveContext = () => ({ objectiveID: "objective:root", runID: "run:root" });
+  const hooks = createSubagentEffortHooks({}, {
+    isHeadless: () => true,
+    onSubagentOutcome,
+  });
+  const input = { tool: "task", callID: "call-objective", sessionID: "parent" };
+  hooks.beforeTool(input, { args: {} });
+  hooks.handleEvent({ event: { type: "session.created", properties: { info: { id: "child-objective", parentID: "parent" } } } });
+  const output = { output: "result", metadata: { status: "completed" } };
+  await hooks.afterTool(input, output);
+  assert.deepEqual(output.metadata.aidevopsObjective, {
+    childSessionID: "child-objective",
+    contributionID: "opencode-child:child-objective",
+    objectiveID: "objective:root",
+    runID: "run:root",
+  });
+  assert.equal(Object.hasOwn(output.metadata.aidevopsObjective, "acceptance"), false);
+});
+
 test("only provider-neutral workload tiers are recognized", () => {
   assert.equal(normalizeEffortTier("simple"), "simple");
   assert.equal(normalizeEffortTier("standard"), "standard");

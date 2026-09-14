@@ -3,6 +3,7 @@
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
 """Focused stdlib regression checks; no provider calls or production writes."""
 import json
+import hashlib
 import sqlite3
 import sys
 import tempfile
@@ -82,6 +83,53 @@ class EfficiencyTests(unittest.TestCase):
             self.assertEqual(evidence["attributable_cost_usd"], 3)
             self.assertEqual(evidence["cost_per_verified_objective_usd"], 3)
             self.assertEqual(evidence["coverage"]["unallocated_attachments"], 1)
+
+    def test_production_integer_ids_and_source_qualified_messages_join_exactly_once(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db = Path(directory) / "production-objectives.db"
+            with sqlite3.connect(db) as conn:
+                conn.execute("CREATE TABLE llm_requests (id INTEGER PRIMARY KEY, message_id TEXT, timestamp TEXT, session_id TEXT, model_id TEXT, tokens_input INTEGER, tokens_output INTEGER, tokens_reasoning INTEGER, tokens_cache_read INTEGER, tokens_cache_write INTEGER, cost REAL)")
+                conn.execute("CREATE TABLE runtime_events (id INTEGER, occurred_at TEXT, event_type TEXT, payload_json TEXT)")
+                conn.executemany("INSERT INTO llm_requests VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [
+                    (1, "message-1", "2026-02-01", "root", "model", 10, 2, 0, 0, 0, 1.5),
+                    (2, "message-2", "2026-02-01", "child", "model", 20, 3, 0, 0, 0, None),
+                ])
+                message_ref = "opencode-message:" + hashlib.sha256(b"message-1").hexdigest()[:24]
+                events = [
+                    (1, "2026-02-01", "objective.outcome", {"objective_id": "objective:one", "outcome": "verified"}),
+                    (2, "2026-02-01", "objective.session.attached", {"objective_id": "objective:one", "allocation": "unique", "request_ids": [message_ref, message_ref]}),
+                    (3, "2026-02-01", "objective.session.attached", {"objective_id": "objective:one", "allocation": "unique", "request_ids": ["request:999"]}),
+                    (4, "2026-02-01", "subagent.acceptance", {"objective_id": "objective:one", "run_id": "run:one", "contribution_id": "opencode-child:one", "contribution_outcome": "accepted_repaired", "repair_contribution_id": "opencode-parent:repair"}),
+                    (5, "2026-02-01", "subagent.acceptance", {"objective_id": "objective:one", "run_id": "run:one", "contribution_id": "opencode-child:one", "contribution_outcome": "accepted_repaired", "repair_contribution_id": "opencode-parent:repair"}),
+                    (6, "2026-02-01", "subagent.acceptance", {"objective_id": "objective:one", "run_id": "run:one", "contribution_id": "opencode-child:rejected", "contribution_outcome": "rejected"}),
+                    (7, "2026-02-01", "subagent.acceptance", {"objective_id": "objective:one", "run_id": "run:one", "contribution_id": "opencode-child:reused", "contribution_outcome": "reused"}),
+                ]
+                conn.executemany("INSERT INTO runtime_events VALUES (?, ?, ?, ?)", [(event_id, occurred_at, event_type, json.dumps(payload)) for event_id, occurred_at, event_type, payload in events])
+            evidence = collect_efficiency(db, {}, "2026-01-01")["objective_evidence"]
+            self.assertEqual(evidence["attributable_request_count"], 1)
+            self.assertEqual(evidence["attributable_cost_usd"], 1.5)
+            self.assertEqual(evidence["coverage"]["missing_attachments"], 1)
+            self.assertEqual(evidence["coverage"]["acceptance"], 3)
+            self.assertEqual(evidence["contribution_outcome_counts"], {"accepted_repaired": 1, "rejected": 1, "reused": 1})
+            self.assertEqual(evidence["repair_link_count"], 1)
+
+    def test_conflicting_request_ownership_is_not_allocated(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db = Path(directory) / "conflicting-objectives.db"
+            with sqlite3.connect(db) as conn:
+                conn.execute("CREATE TABLE llm_requests (id INTEGER PRIMARY KEY, timestamp TEXT, session_id TEXT, model_id TEXT, tokens_input INTEGER, tokens_output INTEGER, tokens_reasoning INTEGER, tokens_cache_read INTEGER, tokens_cache_write INTEGER, cost REAL)")
+                conn.execute("CREATE TABLE runtime_events (id INTEGER, occurred_at TEXT, event_type TEXT, payload_json TEXT)")
+                conn.execute("INSERT INTO llm_requests VALUES (1, '2026-02-01', 'root', 'model', 10, 2, 0, 0, 0, 1.5)")
+                events = [
+                    (1, "objective.outcome", {"objective_id": "objective:one", "outcome": "verified"}),
+                    (2, "objective.outcome", {"objective_id": "objective:two", "outcome": "failed"}),
+                    (3, "objective.session.attached", {"objective_id": "objective:one", "allocation": "unique", "request_ids": ["request:1"]}),
+                    (4, "objective.session.attached", {"objective_id": "objective:two", "allocation": "unique", "request_ids": ["request:1"]}),
+                ]
+                conn.executemany("INSERT INTO runtime_events VALUES (?, '2026-02-01', ?, ?)", [(event_id, event_type, json.dumps(payload)) for event_id, event_type, payload in events])
+            evidence = collect_efficiency(db, {}, "2026-01-01")["objective_evidence"]
+            self.assertEqual(evidence["attributable_request_count"], 0)
+            self.assertEqual(evidence["coverage"]["conflicting_attachments"], 1)
 
 
 if __name__ == "__main__":

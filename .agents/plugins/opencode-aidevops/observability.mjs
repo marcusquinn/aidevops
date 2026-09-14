@@ -40,6 +40,7 @@ import {
   appendRuntimeEvent,
   initialiseRuntimeEventStore,
 } from "../../scripts/runtime-events.mjs";
+import { createObjectiveEvidenceAdapter } from "./objective-evidence.mjs";
 import {
   enrichActiveSpan,
   runtimeEventOtelAttributes,
@@ -55,7 +56,7 @@ import {
 import {
   consumeRoutingDecision,
   getRoutingFeedback,
-  recordRoutingDecision,
+  recordRoutingDecision as queueRoutingDecision,
   rememberRoutingFeedback,
 } from "./observability-routing.mjs";
 import { normalizeProviderError } from "./provider-error-diagnostics.mjs";
@@ -73,7 +74,7 @@ const OBS_DIR = dirname(DB_PATH);
 const COST_BACKFILL_MARKER = `${DB_PATH}.cost-backfill-v2.done`;
 
 export { getPricing };
-export { getRoutingFeedback, recordRoutingDecision };
+export { getRoutingFeedback };
 export { buildToolCallInsertSql, classifyToolOutcome, toolCallSucceeded };
 
 /**
@@ -284,6 +285,26 @@ function firstTruthy(values, fallback = null) {
   return values.find(Boolean) || fallback;
 }
 
+const objectiveEvidence = createObjectiveEvidenceAdapter({
+  isReady: () => dbReady,
+  onEvent: projectRuntimeEvent,
+});
+
+export function objectiveContextForSession(sessionID) {
+  return objectiveEvidence.contextForSession(sessionID);
+}
+
+function attachObjectiveMessage(msg) {
+  const objective = objectiveContextForSession(msg.sessionID) || objectiveEvidence.begin(msg.sessionID, msg.id);
+  objectiveEvidence.attach(msg.sessionID, msg.id, objective);
+}
+
+export function recordRoutingDecision(sessionID, decision = {}) {
+  const result = queueRoutingDecision(sessionID, decision);
+  objectiveEvidence.inherit(sessionID, decision.parentSessionID);
+  return result;
+}
+
 function recordOpenCodeRuntimeEvent(event, eventType = event.type, additionalPayload = {}, context = {}) {
   const properties = event.properties || {};
   const info = properties.info || {};
@@ -338,6 +359,10 @@ function recordOpenCodeRuntimeEvent(event, eventType = event.type, additionalPay
  */
 function handleMessageUpdated(event, context = {}) {
   const msg = event.properties?.info;
+  if (msg?.role === "user" && msg.sessionID && msg.id) {
+    objectiveEvidence.begin(msg.sessionID, msg.id);
+    return;
+  }
   const isCompletedAssistant = [msg, msg?.role === "assistant", msg?.time?.completed].every(Boolean);
   if (!isCompletedAssistant) return;
 
@@ -432,6 +457,7 @@ function handleMessageUpdated(event, context = {}) {
   );`;
 
   sqliteExec(sql);
+  attachObjectiveMessage(msg);
 
   // Update session summary (upsert)
   updateSessionSummary(msg, cost, toolCallCount);
@@ -598,6 +624,7 @@ export function recordSubagentOutcome(evidence = {}) {
     status: "requested",
     success: null,
   }][Number(isDispatch)];
+  objectiveEvidence.inherit(evidence.childSessionID, evidence.parentSessionID);
   const envelope = appendRuntimeEvent({
     eventType: stageDefaults.eventType,
     subjectId: firstTruthy([evidence.childSessionID, evidence.callID], "unknown-child"),
@@ -626,32 +653,14 @@ export function recordSubagentOutcome(evidence = {}) {
   return envelope;
 }
 
+/** Persist an explicit parent decision and optional objective outcome receipt. */
+export function recordObjectiveDecision(evidence = {}) {
+  return objectiveEvidence.recordDecision(evidence);
+}
+
 /** Persist an explicit parent acceptance or repair assertion, never host completion. */
 export function recordSubagentAcceptance(evidence = {}) {
-  if (!dbReady) return null;
-  const observedAt = evidence.observedAt || new Date().toISOString();
-  const envelope = appendRuntimeEvent({
-    eventType: "subagent.acceptance",
-    subjectId: firstTruthy([evidence.contributionID, evidence.childSessionID], "unknown-contribution"),
-    sessionId: firstTruthy([evidence.parentSessionID]),
-    correlationId: firstTruthy([evidence.parentSessionID, evidence.runID], "subagent-acceptance"),
-    causationId: evidence.callID || undefined,
-    payload: {
-      attempt_id: evidence.attemptID,
-      contribution_id: evidence.contributionID,
-      contribution_outcome: evidence.outcome,
-      intervention_count: Number.isSafeInteger(evidence.interventionCount) ? evidence.interventionCount : 0,
-      objective_id: evidence.objectiveID,
-      objective_version: 1,
-      observed_at: observedAt,
-      policy_version: evidence.policyVersion || "unknown",
-      repair_contribution_id: evidence.repairContributionID,
-      run_id: evidence.runID,
-      source: evidence.source || "parent_assertion",
-    },
-  });
-  if (envelope) projectRuntimeEvent(envelope);
-  return envelope;
+  return objectiveEvidence.recordAcceptance(evidence);
 }
 
 /**

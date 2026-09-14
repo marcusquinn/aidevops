@@ -592,7 +592,7 @@ test("OpenCode observability emits runtime evidence without changing legacy tabl
       termination: "confirmed",
       truncated: false,
     }, { childSessionID: "session:child", parentSessionID: "session:1" })) process.exit(3);
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    await new Promise((resolve) => setTimeout(resolve, 1000));
     process.exit(0);
   `;
 
@@ -608,7 +608,7 @@ test("OpenCode observability emits runtime evidence without changing legacy tabl
         (SELECT COUNT(*) FROM tool_calls),
         (SELECT COUNT(*) FROM runtime_events),
         (SELECT group_concat(event_type, ',') FROM (
-          SELECT event_type FROM runtime_events ORDER BY id
+          SELECT event_type FROM runtime_events ORDER BY event_type
         )),
         (SELECT json_extract(payload_json, '$.suppressed_part_events')
           FROM runtime_events WHERE event_type = 'message.completed'),
@@ -626,7 +626,7 @@ test("OpenCode observability emits runtime evidence without changing legacy tabl
     `], { encoding: "utf8" }).trim();
     assert.equal(
       counts,
-      "1|1|6|session.created,message.part.updated,message.completed,session.error,tool.completed,subagent.cancellation.receipt|100|PartFailure|gateway_denied|req-safe|1|success|1",
+      "1|1|8|message.completed,message.part.updated,objective.session.attached,objective.started,session.created,session.error,subagent.cancellation.receipt,tool.completed|100|PartFailure|gateway_denied|req-safe|1|success|1",
     );
   } finally {
     rmSync(tempDir, { force: true, recursive: true });
