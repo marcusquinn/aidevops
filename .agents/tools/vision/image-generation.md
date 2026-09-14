@@ -24,7 +24,7 @@ tools:
 - **OpenCode tool**: `gpt_image_generate`
 - **Default billing route**: ChatGPT subscription OAuth from the aidevops OpenAI account pool
 - **Platform billing route**: explicit `auth: "api"` plus a named account alias
-- **Model**: GPT Image 2 (`gpt-image-2`); project-confined PNG, JPEG, or WebP output
+- **Image models**: OAuth is provider-managed; explicit API selection supports `gpt-image-2`, `gpt-image-2.5-flare`, and `gpt-image-2.5-sunburst`
 - **Reference images**: up to 8 project-relative PNG, JPEG, or WebP files
 - **Safety**: existing files are never overwritten; versioned paths use `-v2`, `-v3`, and so on
 
@@ -55,7 +55,7 @@ Budget-conscious?     → FLUX or SD locally (GPU cost only)
 
 ## Cloud APIs
 
-### GPT Image 2 (OpenAI)
+### GPT Image (OpenAI)
 
 In OpenCode, ask naturally for an image and include the desired project-relative
 output path. The aidevops plugin exposes `gpt_image_generate` automatically.
@@ -94,11 +94,15 @@ from a subscription to API credits. Never paste an API key into chat.
 | `images` | 0-8 project-relative paths | Reference-guided generation/editing; PNG, JPEG, or WebP, 20 MiB each |
 | `auth` | oauth, api | OAuth is the default; API billing must be explicit |
 | `account` | OAuth email or API alias | Exact selection only; no silent account substitution |
+| `model` | gpt-image-2, gpt-image-2.5-flare, gpt-image-2.5-sunburst | API-only; defaults to `gpt-image-2` for compatibility |
 
 OAuth uses OpenCode's Codex channel and is therefore runtime-specific and
-experimental. The public API route calls `gpt-image-2` directly. OpenCode V2
-remains fail-closed until the aidevops V2 adapter implements equivalent tool,
-permission, credential, and session contracts.
+experimental. Its hosted response does not confirm the exact image model, so
+the tool neither sends an image-model selection nor infers one from the text
+router model. The public API route defaults to `gpt-image-2` and accepts the two
+verified GPT Image 2.5 model IDs above. OpenCode V2 remains fail-closed until the
+aidevops V2 adapter implements equivalent tool, permission, credential, and
+session contracts.
 
 When OpenCode starts in a canonical checkout and aidevops creates a linked
 worktree, pass that worktree as `workdir`. Output and reference paths remain
@@ -111,7 +115,9 @@ ChatGPT OAuth route uses a private hosted-tool endpoint without the same stable
 contract and may return different native geometry. The tool therefore decodes
 PNG, JPEG, and WebP dimensions before writing: an explicit-size mismatch fails
 without creating a file, while `auto` accepts the provider-selected size. Every
-successful result reports both the requested size and observed native dimensions.
+successful result reports the requested size, observed native dimensions,
+requested image model, and separately any provider-confirmed image model. A
+missing provider response field is reported as `unknown`, never inferred.
 
 ### Midjourney
 

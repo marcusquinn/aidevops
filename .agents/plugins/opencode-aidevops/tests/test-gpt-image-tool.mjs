@@ -90,6 +90,7 @@ describe("GPT image OpenCode tool", () => {
     assert.match(output, /ChatGPT subscription OAuth/);
     assert.match(output, /generated\/test\.png/);
     assert.match(output, /Requested size: auto; native dimensions: 1x1/);
+    assert.match(output, /Requested image model: provider-managed; provider-confirmed image model: unknown/);
     assert.doesNotMatch(output, new RegExp(root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   });
 
@@ -297,6 +298,50 @@ describe("GPT image OpenCode tool", () => {
     await assert.rejects(
       tool.execute({ prompt: "draw a test", out: "api.png", auth: "api" }),
       /explicit account alias/,
+    );
+    assert.equal(calls, 0);
+  });
+
+  test("selects verified API image models and reports requested and provider-confirmed provenance", async () => {
+    const root = await projectRoot();
+    let requestBody;
+    const tool = createTool({
+      projectRoot: root,
+      readSecret: (_secretName) => "unit-test-credential-value",
+      fetchImpl: async (_url, init) => {
+        requestBody = JSON.parse(init.body);
+        return Response.json({ model: "gpt-image-2.5-sunburst", data: [{ b64_json: PNG_BASE64 }] });
+      },
+    });
+    const output = await tool.execute({
+      prompt: "draw a test",
+      out: "api-model.png",
+      auth: "api",
+      account: "work",
+      model: "gpt-image-2.5-sunburst",
+    });
+    assert.equal(requestBody.model, "gpt-image-2.5-sunburst");
+    assert.match(output, /Requested image model: gpt-image-2\.5-sunburst/);
+    assert.match(output, /provider-confirmed image model: gpt-image-2\.5-sunburst/);
+  });
+
+  test("rejects unavailable and OAuth image-model selection before network access", async () => {
+    const root = await projectRoot();
+    let calls = 0;
+    const tool = createTool({
+      projectRoot: root,
+      fetchImpl: async () => {
+        calls += 1;
+        return oauthSuccess();
+      },
+    });
+    await assert.rejects(
+      tool.execute({ prompt: "draw", out: "unsupported.png", auth: "api", account: "work", model: "future-image" }),
+      /Unsupported API image model/,
+    );
+    await assert.rejects(
+      tool.execute({ prompt: "draw", out: "oauth-model.png", model: "gpt-image-2.5-flare" }),
+      /requires explicit auth=api/,
     );
     assert.equal(calls, 0);
   });
