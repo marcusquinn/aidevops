@@ -12,6 +12,12 @@ import { readFileSync } from "node:fs";
 import { parseImageSse, redactProviderDetail } from "./gpt-image-sse.mjs";
 
 export { parseImageSse };
+export const DEFAULT_API_IMAGE_MODEL = "gpt-image-2";
+export const API_IMAGE_MODELS = Object.freeze([
+  "gpt-image-2",
+  "gpt-image-2.5-flare",
+  "gpt-image-2.5-sunburst",
+]);
 
 const MODEL_ROUTING_TABLE = new URL("../../configs/model-routing-table.json", import.meta.url);
 const MAX_API_RESPONSE_BYTES = 96 * 1024 * 1024;
@@ -83,7 +89,14 @@ export async function requestOAuthImage(auth, args, images, fetchImpl) {
         body: JSON.stringify(oauthRequestBody(args, images, model)),
         signal,
       });
-      if (response.ok) return { response, base64: await parseImageSse(response.body) };
+      if (response.ok) {
+        return {
+          response,
+          base64: await parseImageSse(response.body),
+          requestedModel: null,
+          providerModel: null,
+        };
+      }
       result = { response, base64: "", error: await imageRequestError(response, "oauth") };
       if (result.error.code !== "model_not_found") return result;
     }
@@ -93,7 +106,7 @@ export async function requestOAuthImage(auth, args, images, fetchImpl) {
 
 function apiJsonBody(args) {
   return {
-    model: "gpt-image-2",
+    model: args.model,
     prompt: args.prompt,
     quality: args.quality || "auto",
     size: args.size || "auto",
@@ -103,7 +116,7 @@ function apiJsonBody(args) {
 
 function apiMultipartBody(args, images) {
   const body = new FormData();
-  body.append("model", "gpt-image-2");
+  body.append("model", args.model);
   body.append("prompt", args.prompt);
   body.append("quality", args.quality || "auto");
   body.append("size", args.size || "auto");
@@ -149,7 +162,8 @@ async function readBoundedJson(response, byteLimit, label) {
 
 export async function requestApiImage(auth, args, images, fetchImpl) {
   return withImageRequestTimeout(async (signal) => {
-    const request = apiRequest(auth, args, images, signal);
+    const requestedModel = args.model || DEFAULT_API_IMAGE_MODEL;
+    const request = apiRequest(auth, { ...args, model: requestedModel }, images, signal);
     const response = await fetchImpl(request.endpoint, request.init);
     if (!response.ok) return { response, base64: "", error: await imageRequestError(response, "api") };
     const contentLength = Number(response.headers.get("content-length") || 0);
@@ -160,7 +174,12 @@ export async function requestApiImage(auth, args, images, fetchImpl) {
     const payload = await readBoundedJson(response, MAX_API_RESPONSE_BYTES, "OpenAI Images API response");
     const base64 = payload?.data?.[0]?.b64_json;
     if (typeof base64 !== "string" || !base64) throw new Error("OpenAI Images API response did not contain an image.");
-    return { response, base64 };
+    const responseModel = payload?.model;
+    const providerModel =
+      typeof responseModel === "string" && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$/.test(responseModel)
+        ? responseModel
+        : null;
+    return { response, base64, requestedModel, providerModel };
   });
 }
 

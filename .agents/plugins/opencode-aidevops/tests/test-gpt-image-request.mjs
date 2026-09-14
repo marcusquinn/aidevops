@@ -115,6 +115,7 @@ describe("GPT image provider requests", () => {
     assert.equal(body.tools[0].type, "image_generation");
     assert.equal(body.tools[0].output_format, "webp");
     assert.equal(body.tools[0].size, "1024x1024");
+    assert.equal(Object.hasOwn(body.tools[0], "model"), false);
     assert.equal(body.input[0].content[1].type, "input_image");
     assert.equal(result.base64, IMAGE_RESULT);
   });
@@ -191,6 +192,28 @@ describe("GPT image provider requests", () => {
     assert.equal(body.model, "gpt-image-2");
     assert.equal(body.output_format, "png");
     assert.equal(result.base64, IMAGE_RESULT);
+    assert.equal(result.requestedModel, "gpt-image-2");
+    assert.equal(result.providerModel, null);
+  });
+
+  test("requests a selected API image model and preserves provider-confirmed provenance", async () => {
+    let captured;
+    const fetchImpl = async (url, init) => {
+      captured = { url, init };
+      return Response.json({
+        model: "gpt-image-2.5-sunburst-2026-09-01",
+        data: [{ b64_json: IMAGE_RESULT }],
+      });
+    };
+    const result = await requestApiImage(
+      { accessToken: "[redacted-credential]" },
+      { prompt: "draw a test", quality: "auto", size: "auto", model: "gpt-image-2.5-sunburst" },
+      [],
+      fetchImpl,
+    );
+    assert.equal(JSON.parse(captured.init.body).model, "gpt-image-2.5-sunburst");
+    assert.equal(result.requestedModel, "gpt-image-2.5-sunburst");
+    assert.equal(result.providerModel, "gpt-image-2.5-sunburst-2026-09-01");
   });
 
   test("selects JPEG output for API generation", async () => {
@@ -218,13 +241,19 @@ describe("GPT image provider requests", () => {
     };
     await requestApiImage(
       { accessToken: "unit-test-credential-value" },
-      { prompt: "edit a test", quality: "high", size: "1024x1024", format: "webp" },
+      {
+        prompt: "edit a test",
+        quality: "high",
+        size: "1024x1024",
+        format: "webp",
+        model: "gpt-image-2.5-flare",
+      },
       [{ buffer: Buffer.from("image"), mime: "image/png", name: "source.png" }],
       fetchImpl,
     );
     assert.equal(captured.url, "https://api.openai.com/v1/images/edits");
     assert.ok(captured.init.body instanceof FormData);
-    assert.equal(captured.init.body.get("model"), "gpt-image-2");
+    assert.equal(captured.init.body.get("model"), "gpt-image-2.5-flare");
     assert.equal(captured.init.body.get("output_format"), "webp");
     assert.equal(captured.init.body.getAll("image[]").length, 1);
     assert.equal(new Headers(captured.init.headers).has("Content-Type"), false);

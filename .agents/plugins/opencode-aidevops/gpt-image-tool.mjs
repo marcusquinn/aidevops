@@ -8,11 +8,17 @@ import {
   rotateOAuthImageAccount,
 } from "./gpt-image-auth.mjs";
 import { readReferenceImages, saveGeneratedImage, validateImageOutputPath } from "./gpt-image-io.mjs";
-import { requestApiImage, requestOAuthImage } from "./gpt-image-request.mjs";
+import {
+  API_IMAGE_MODELS,
+  DEFAULT_API_IMAGE_MODEL,
+  requestApiImage,
+  requestOAuthImage,
+} from "./gpt-image-request.mjs";
 import { resolveGptImageProjectRoot } from "./gpt-image-worktree.mjs";
 
 const IMAGE_QUALITIES = new Set(["low", "medium", "high", "auto"]);
 const IMAGE_FORMATS = new Set(["png", "jpeg", "webp"]);
+const API_IMAGE_MODEL_SET = new Set(API_IMAGE_MODELS);
 
 function validateOutputArgs(args) {
   if (typeof args.prompt !== "string" || typeof args.out !== "string") {
@@ -33,6 +39,12 @@ function validateReferenceArgs(args) {
 function validateAuthArgs(args) {
   if (args.auth !== undefined && !["oauth", "api"].includes(args.auth)) throw new Error("Image auth must be oauth or api.");
   if (args.account !== undefined && typeof args.account !== "string") throw new Error("Image account must be a string.");
+  if (args.model !== undefined && (typeof args.model !== "string" || !API_IMAGE_MODEL_SET.has(args.model))) {
+    throw new Error("Unsupported API image model.");
+  }
+  if (args.model !== undefined && args.auth !== "api") {
+    throw new Error("Image model selection requires explicit auth=api because OAuth model selection is unavailable.");
+  }
 }
 
 function validateRawArgs(args) {
@@ -107,6 +119,7 @@ async function executeImageGeneration(rawArgs, options, context) {
   if (auth.mode === "oauth") {
     ({ auth, result } = await requestWithOAuth(auth, args, images, options));
   } else {
+    args.model ||= DEFAULT_API_IMAGE_MODEL;
     result = await requestApiImage(auth, args, images, options.fetchImpl);
   }
   if (!result.response.ok) throw result.error;
@@ -121,7 +134,9 @@ async function executeImageGeneration(rawArgs, options, context) {
   const cleanupNote = saved.cleanupWarning ? " Temporary-file cleanup reported a filesystem warning." : "";
   const rootNote = project.linked ? " in the validated session-owned linked worktree" : "";
   const dimensions = `${saved.width}x${saved.height}`;
-  return `Generated image saved to ${saved.projectPath}${rootNote}. Requested size: ${args.size}; native dimensions: ${dimensions}. Billing route: ${billingLabel(auth.mode)}.${versionNote}${cleanupNote}`;
+  const requestedModel = result.requestedModel || "provider-managed";
+  const providerModel = result.providerModel || "unknown";
+  return `Generated image saved to ${saved.projectPath}${rootNote}. Requested size: ${args.size}; native dimensions: ${dimensions}. Billing route: ${billingLabel(auth.mode)}. Requested image model: ${requestedModel}; provider-confirmed image model: ${providerModel}.${versionNote}${cleanupNote}`;
 }
 
 export function createGptImageTool(tool, z, options = {}) {
@@ -130,17 +145,18 @@ export function createGptImageTool(tool, z, options = {}) {
   const executionOptions = { ...options, fetchImpl, projectRoot: options.projectRoot || process.cwd() };
   return tool({
     description:
-      "Generate or reference-edit a PNG, JPEG, or WebP with GPT Image 2. Uses ChatGPT OAuth by default; API billing must be selected explicitly with auth=api and a named account alias. Writes only inside the OpenCode project or a validated session-owned linked worktree and never overwrites an existing image.",
+      "Generate or reference-edit a PNG, JPEG, or WebP with OpenAI image generation. ChatGPT OAuth uses a provider-managed image model by default; API billing and API image-model selection must be explicit. Writes only inside the OpenCode project or a validated session-owned linked worktree and never overwrites an existing image.",
     args: {
       prompt: z.string().describe("Description of the image to generate or edit."),
       out: z.string().describe("Project-relative output path with an extension matching format."),
       format: z.enum(["png", "jpeg", "webp"]).optional().describe("Native output format; defaults to png."),
-      quality: z.enum(["low", "medium", "high", "auto"]).optional().describe("GPT Image 2 quality; defaults to auto."),
-      size: z.string().optional().describe("auto or WIDTHxHEIGHT satisfying GPT Image 2 constraints."),
+      quality: z.enum(["low", "medium", "high", "auto"]).optional().describe("OpenAI image quality; defaults to auto."),
+      size: z.string().optional().describe("auto or WIDTHxHEIGHT satisfying supported OpenAI image constraints."),
       workdir: z.string().optional().describe("Optional absolute path to the current session-owned linked worktree."),
       images: z.array(z.string()).optional().describe("Optional project-relative PNG, JPEG, or WebP reference image paths."),
       auth: z.enum(["oauth", "api"]).optional().describe("Billing route; defaults to ChatGPT OAuth. API must be explicit."),
       account: z.string().optional().describe("OAuth pool email when auth=oauth, or named API-key alias when auth=api."),
+      model: z.enum(API_IMAGE_MODELS).optional().describe("API-only image model; defaults to gpt-image-2 when auth=api."),
     },
     async execute(args, context) {
       return executeImageGeneration(args && typeof args === "object" ? args : {}, executionOptions, context);
