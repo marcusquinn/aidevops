@@ -396,6 +396,13 @@ if [[ "$_DLW_DISPATCH_TIER" != "bundle" || "$_DLW_DISPATCH_MODEL_TIER" != "stand
 fi
 
 HEADLESS_RUNTIME_HELPER="${TEST_TMP}/bin/headless-runtime-helper.sh" \
+	_dlw_resolve_tier_and_model '{"labels":[]}' "" "$infrastructure_repo" "fix: repair documentation verification" ""
+
+if [[ "$_DLW_DISPATCH_TIER" != "bundle" || "$_DLW_DISPATCH_MODEL_TIER" != "standard" || "$_DLW_SELECTED_MODEL" != "selected-standard" ]]; then
+	fail "incidental workload words in an implementation title overrode its model default"
+fi
+
+HEADLESS_RUNTIME_HELPER="${TEST_TMP}/bin/headless-runtime-helper.sh" \
 	_dlw_resolve_tier_and_model '{"labels":[{"name":"tier:thinking"}]}' "" "$bundle_repo"
 
 if [[ "$_DLW_DISPATCH_TIER" != "thinking" || "$_DLW_DISPATCH_MODEL_TIER" != "thinking" || "$_DLW_SELECTED_MODEL" != "selected-thinking" ]]; then

@@ -359,9 +359,9 @@ _dlw_bundle_model_tier() {
 		return 0
 	fi
 
-	local domain tier
-	domain=$(_dlw_bundle_model_domain "$issue_title" "$prompt")
-	tier=$("$bundle_helper" get "model_defaults.${domain}" "$repo_path" 2>/dev/null) || tier=""
+	local workload_type="" tier=""
+	workload_type=$(_dlw_bundle_workload_type "$issue_title" "$prompt")
+	tier=$("$bundle_helper" get "model_defaults.${workload_type}" "$repo_path" 2>/dev/null) || tier=""
 	if [[ -n "$tier" ]]; then
 		printf '%s\n' "$tier"
 	else
@@ -371,15 +371,18 @@ _dlw_bundle_model_tier() {
 }
 
 #######################################
-# Classify an implementation worker request into a bundle model task type.
+# Classify a worker request into a bundle workload type. This is separate from
+# agent_routing domains such as seo, content, and infrastructure.
 # The title is authoritative because generated worker prompts contain generic
 # review and verification instructions that must not affect model selection.
+# Only explicit conventional title prefixes select a non-implementation type;
+# incidental workload words in implementation titles remain implementation.
 # Arguments:
 #   $1 - issue_title
 #   $2 - prompt (used only when the title is empty)
 # Stdout: model_defaults key
 #######################################
-_dlw_bundle_model_domain() {
+_dlw_bundle_workload_type() {
 	local issue_title="$1"
 	local prompt="$2"
 	local text="$issue_title"
@@ -389,11 +392,11 @@ _dlw_bundle_model_domain() {
 	text=$(printf '%s' "$text" | tr '[:upper:]' '[:lower:]')
 
 	case "$text" in
-	*documentation* | *document\ * | *docs:* | *docs\(* | *readme*) printf 'documentation\n' ;;
-	*architecture* | *architectural* | *system\ design* | *design\ decision*) printf 'architecture\n' ;;
-	*code\ review* | review:* | review\(* | *review\ pr*) printf 'review\n' ;;
-	triage:* | triage\(* | *issue\ triage* | *classify\ issue*) printf 'triage\n' ;;
-	verification:* | verification\(* | verify:* | verify\(* | *cross-provider\ verification*) printf 'verification\n' ;;
+	docs:* | docs\(* | documentation:* | documentation\(* | chore\(docs\):*) printf 'documentation\n' ;;
+	architecture:* | architecture\(* | architectural:* | architectural\(*) printf 'architecture\n' ;;
+	review:* | review\(*) printf 'review\n' ;;
+	triage:* | triage\(*) printf 'triage\n' ;;
+	verification:* | verification\(* | verify:* | verify\(*) printf 'verification\n' ;;
 	*) printf 'implementation\n' ;;
 	esac
 	return 0
