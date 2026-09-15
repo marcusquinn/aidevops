@@ -259,12 +259,14 @@ _dlw_setup_worker_log() {
 # arbitrary model here bypasses ordered candidate selection and pins that
 # model. History: GH#17503 moved model resolution here from the worker.
 #
-# Arguments: issue_meta_json, model_override, repo_path
+# Arguments: issue_meta_json, model_override, repo_path, issue_title, prompt
 #######################################
 _dlw_resolve_tier_and_model() {
 	local issue_meta_json="$1"
 	local model_override="$2"
 	local repo_path="${3:-}"
+	local issue_title="${4:-}"
+	local prompt="${5:-}"
 
 	_DLW_DISPATCH_TIER="$_DLW_STANDARD_TIER"
 	_DLW_DISPATCH_MODEL_TIER="$_DLW_STANDARD_TIER"
@@ -299,11 +301,11 @@ _dlw_resolve_tier_and_model() {
 	esac
 
 	# t1364.6: when issue labels do not force a tier, let project bundles
-	# right-size worker model selection for implementation work. Explicit model
+	# right-size worker model selection for the task type. Explicit model
 	# overrides and tier:* labels still win.
 	if [[ -z "$model_override" && "$explicit_tier_label" -eq 0 && -n "$repo_path" ]]; then
 		local bundle_tier
-		bundle_tier=$(_dlw_bundle_model_tier "$repo_path") || bundle_tier=""
+		bundle_tier=$(_dlw_bundle_model_tier "$repo_path" "$issue_title" "$prompt") || bundle_tier=""
 		if [[ -n "$bundle_tier" ]]; then
 			_DLW_DISPATCH_TIER="bundle"
 			_DLW_DISPATCH_MODEL_TIER="$bundle_tier"
@@ -340,20 +342,63 @@ _dlw_has_explicit_tier_label() {
 }
 
 #######################################
-# Resolve implementation model tier from the project bundle, if configured.
+# Resolve the task-specific model tier from the project bundle, if configured.
 # Arguments:
 #   $1 - repo_path
+#   $2 - issue_title
+#   $3 - prompt
 # Stdout: tier name (empty if unavailable)
 #######################################
 _dlw_bundle_model_tier() {
 	local repo_path="$1"
+	local issue_title="${2:-}"
+	local prompt="${3:-}"
 	local bundle_helper="${_DLW_SCRIPT_DIR:-${BASH_SOURCE[0]%/*}}/bundle-helper.sh"
 
 	if [[ -z "$repo_path" || ! -x "$bundle_helper" ]]; then
 		return 0
 	fi
 
-	"$bundle_helper" get model_defaults.implementation "$repo_path" 2>/dev/null || true
+	local workload_type="" tier=""
+	workload_type=$(_dlw_bundle_workload_type "$issue_title" "$prompt")
+	tier=$("$bundle_helper" get "model_defaults.${workload_type}" "$repo_path" 2>/dev/null) || tier=""
+	if [[ -n "$tier" ]]; then
+		printf '%s\n' "$tier"
+	else
+		"$bundle_helper" get model_defaults.implementation "$repo_path" 2>/dev/null || true
+	fi
+	return 0
+}
+
+#######################################
+# Classify a worker request into a bundle workload type. This is separate from
+# agent_routing domains such as seo, content, and infrastructure.
+# The title is authoritative because generated worker prompts contain generic
+# review and verification instructions that must not affect model selection.
+# Only explicit conventional title prefixes select a non-implementation type;
+# incidental workload words in implementation titles remain implementation.
+# Arguments:
+#   $1 - issue_title
+#   $2 - prompt (used only when the title is empty)
+# Stdout: model_defaults key
+#######################################
+_dlw_bundle_workload_type() {
+	local issue_title="$1"
+	local prompt="$2"
+	local text="$issue_title"
+	if [[ -z "$text" ]]; then
+		text="$prompt"
+	fi
+	text=$(printf '%s' "$text" | tr '[:upper:]' '[:lower:]')
+
+	case "$text" in
+	docs:* | docs\(* | documentation:* | documentation\(* | chore\(docs\):*) printf 'documentation\n' ;;
+	architecture:* | architecture\(* | architectural:* | architectural\(*) printf 'architecture\n' ;;
+	review:* | review\(*) printf 'review\n' ;;
+	triage:* | triage\(*) printf 'triage\n' ;;
+	verification:* | verification\(* | verify:* | verify\(*) printf 'verification\n' ;;
+	*) printf 'implementation\n' ;;
+	esac
 	return 0
 }
 
@@ -1849,7 +1894,7 @@ _dispatch_launch_worker() {
 	fi
 
 	_ds_t0=$(_ds_now_ns)
-	_dlw_resolve_tier_and_model "$issue_meta_json" "$model_override" "$repo_path"
+	_dlw_resolve_tier_and_model "$issue_meta_json" "$model_override" "$repo_path" "$issue_title" "$prompt"
 	_ds_record "$issue_number" "$repo_slug" "resolve_tier_model" "$_ds_t0"
 	local dispatch_tier="$_DLW_DISPATCH_TIER" dispatch_model_tier="$_DLW_DISPATCH_MODEL_TIER" selected_model="$_DLW_SELECTED_MODEL"
 
