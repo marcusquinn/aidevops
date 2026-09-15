@@ -383,11 +383,23 @@ teardown_test_env() {
 extract_function() {
 	local fn_name="$1"
 	local source_file="$2"
-	awk -v name="$fn_name" '
-		$0 ~ "^" name "\\(\\) \\{" { capture = 1 }
-		capture { print }
-		capture && /^}$/ { capture = 0; exit }
-	' "$source_file"
+	local candidate fn_source=""
+	for candidate in "$source_file" \
+		"${source_file%.sh}-review.sh" \
+		"${source_file%.sh}-ci-repair.sh" \
+		"${source_file%.sh}-conflict.sh" \
+		"${source_file%.sh}-ci-patterns.sh"; do
+		[[ -f "$candidate" ]] || continue
+		fn_source=$(awk -v name="$fn_name" '
+			$0 ~ "^" name "\\(\\) \\{" { capture = 1 }
+			capture { print }
+			capture && /^}$/ { capture = 0; exit }
+		' "$candidate")
+		if [[ -n "$fn_source" ]]; then
+			printf '%s\n' "$fn_source"
+			return 0
+		fi
+	done
 	return 0
 }
 
