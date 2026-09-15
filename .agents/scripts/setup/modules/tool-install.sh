@@ -2090,7 +2090,10 @@ _setup_opencode_help_output() {
 	local help_path=""
 
 	help_path=$(_setup_opencode_node_path_for_binary "$bin")
-	PATH="${help_path}${PATH:+:${PATH}}" _setup_opencode_timeout_cmd "$help_timeout" "$bin" --help
+	# OpenCode 1.18.31 writes its help text to stderr. Merge both streams so
+	# identity validation accepts the functional CLI while still checking the
+	# actual command surface rather than trusting semver alone.
+	PATH="${help_path}${PATH:+:${PATH}}" _setup_opencode_timeout_cmd "$help_timeout" "$bin" --help 2>&1
 	return $?
 }
 
@@ -2188,12 +2191,78 @@ _setup_opencode_profile_value() {
 	return 0
 }
 
+_setup_opencode_v2_install_root() {
+	local v2_root="${AIDEVOPS_OPENCODE_V2_ROOT:-${HOME}/.aidevops/runtimes/opencode-v2}"
+	printf '%s\n' "${v2_root}/runtime"
+	return 0
+}
+
+_setup_opencode_v2_install_binary() {
+	local install_root=""
+	install_root=$(_setup_opencode_v2_install_root) || return 1
+	printf '%s\n' "${install_root}/node_modules/.bin/opencode2"
+	return 0
+}
+
+_setup_install_opencode_package() {
+	local install_pkg="$1"
+	if [[ "$(_setup_opencode_profile_id)" != "v2" ]]; then
+		npm_global_install "$install_pkg"
+		return $?
+	fi
+
+	command -v npm >/dev/null 2>&1 || return 1
+	local install_root=""
+	install_root=$(_setup_opencode_v2_install_root) || return 1
+	mkdir -p "$install_root" || return 1
+	chmod 700 "${install_root%/runtime}" "$install_root" 2>/dev/null || true
+	npm install --no-audit --no-fund --prefix "$install_root" "$install_pkg"
+	return $?
+}
+
+_setup_opencode_installer() {
+	if [[ "$(_setup_opencode_profile_id)" == "v2" ]]; then
+		command -v npm >/dev/null 2>&1 || return 1
+		printf 'npm\n'
+		return 0
+	fi
+	if command -v npm >/dev/null 2>&1; then
+		printf 'npm\n'
+		return 0
+	fi
+	if command -v bun >/dev/null 2>&1; then
+		printf 'bun\n'
+		return 0
+	fi
+	return 1
+}
+
+_setup_opencode_print_missing_installer() {
+	if [[ "$(_setup_opencode_profile_id)" == "v2" ]]; then
+		print_warning "npm not found - cannot install the isolated OpenCode V2 preview"
+		print_info "Install Node.js and npm first, then re-run setup"
+		return 0
+	fi
+	print_warning "Neither bun nor npm found - cannot install OpenCode"
+	print_info "Install Node.js or Bun first, then re-run setup"
+	return 0
+}
+
 _setup_opencode_print_manual_install_hint() {
 	local installer="${1:-}"
 	local install_pkg="${2:-opencode-ai@latest}"
 	local current_bin="${3:-}"
 	local brew_action=""
 	local manual_cmd=""
+	local profile=""
+	profile=$(_setup_opencode_profile_id) || return 1
+
+	if [[ "$profile" == "v2" ]]; then
+		local install_root=""
+		install_root=$(_setup_opencode_v2_install_root) || return 1
+		print_info "Try manually: npm install --no-audit --no-fund --prefix $install_root $install_pkg"
+		return 0
+	fi
 
 	if brew_action=$(_setup_opencode_homebrew_owner_action "$current_bin" 2>/dev/null); then
 		print_info "OpenCode appears to be managed by Homebrew; try manually: $brew_action"
@@ -2364,11 +2433,17 @@ _setup_ensure_opencode_stable_shim() {
 	local wrapper_path_value=""
 	local temp_shim=""
 	local isolation_ready=1
+	local existing_target=""
 
 	[[ -n "$real_bin" ]] || return 1
 	resolved_bin=$(command -v "$real_bin" 2>/dev/null || printf '%s' "$real_bin")
 	if [[ "$resolved_bin" == "$shim_path" ]]; then
-		resolved_bin=$(_setup_find_valid_opencode_binary) || return 1
+		existing_target=$(_setup_opencode_managed_shim_target "$shim_path" 2>/dev/null || true)
+		if [[ -n "$existing_target" ]] && _setup_validate_opencode_binary "$existing_target"; then
+			resolved_bin="$existing_target"
+		else
+			resolved_bin=$(_setup_find_valid_opencode_binary) || return 1
+		fi
 	fi
 	_setup_validate_opencode_binary "$resolved_bin" || return 1
 	if _setup_opencode_binary_is_ephemeral "$resolved_bin" && \
@@ -2437,11 +2512,16 @@ _setup_find_valid_opencode_binary() {
 	binary_name=$(_setup_opencode_profile_value binary) || return 1
 	local shim_path="${HOME}/.local/bin/${binary_name}"
 	local managed_shim_target=""
+	local isolated_install_bin=""
 
 	managed_shim_target=$(_setup_opencode_managed_shim_target "$shim_path" 2>/dev/null || true)
+	if [[ "$(_setup_opencode_profile_id)" == "v2" ]]; then
+		isolated_install_bin=$(_setup_opencode_v2_install_binary 2>/dev/null || true)
+	fi
 
 	for candidate in \
 		"$preferred_bin" \
+		"$isolated_install_bin" \
 		"/opt/homebrew/bin/${binary_name}" \
 		"/usr/local/bin/${binary_name}" \
 		"/home/linuxbrew/.linuxbrew/bin/${binary_name}" \
@@ -2599,20 +2679,16 @@ _setup_opencode_force_heal() {
 	print_info "Forcing reinstall of $install_pkg to heal bin collision (t2891)..."
 
 	local installer=""
-	if command -v npm >/dev/null 2>&1; then
-		installer="npm"
-	elif command -v bun >/dev/null 2>&1; then
-		installer="bun"
-	else
-		print_warning "Neither bun nor npm found — cannot heal OpenCode binary"
-		print_info "Install Node.js or Bun first, then re-run 'aidevops update'"
+	installer=$(_setup_opencode_installer 2>/dev/null || true)
+	if [[ -z "$installer" ]]; then
+		_setup_opencode_print_missing_installer
 		return 0
 	fi
 
 	local install_timeout="${AIDEVOPS_OPENCODE_INSTALL_TIMEOUT:-180}"
 	# npm_global_install intentionally uses npm first for opencode-ai when npm is
 	# available, falling back to bun only for bun-only systems.
-	if run_with_spinner "Reinstalling OpenCode via $installer (heal)" _setup_opencode_timeout_cmd "$install_timeout" npm_global_install "$install_pkg"; then
+	if run_with_spinner "Reinstalling OpenCode via $installer (heal)" _setup_opencode_timeout_cmd "$install_timeout" _setup_install_opencode_package "$install_pkg"; then
 		print_success "OpenCode reinstalled via $installer"
 	else
 		print_warning "Heal install failed via $installer"
@@ -2623,7 +2699,12 @@ _setup_opencode_force_heal() {
 	local new_bin
 	local binary_name
 	binary_name=$(_setup_opencode_profile_value binary) || return 1
-	new_bin=$(_setup_find_valid_opencode_binary "$(command -v "$binary_name" 2>/dev/null || echo "")" 2>/dev/null || echo "")
+	local preferred_bin=""
+	preferred_bin=$(command -v "$binary_name" 2>/dev/null || echo "")
+	if [[ "$(_setup_opencode_profile_id)" == "v2" ]]; then
+		preferred_bin=$(_setup_opencode_v2_install_binary 2>/dev/null || printf '%s' "$preferred_bin")
+	fi
+	new_bin=$(_setup_find_valid_opencode_binary "$preferred_bin" 2>/dev/null || echo "")
 	if [[ -n "$new_bin" ]] && _setup_validate_opencode_binary "$new_bin"; then
 		local new_v
 		new_v=$(_setup_opencode_first_line "$(_setup_opencode_version_output "$new_bin" 2>/dev/null || printf 'unknown')")
@@ -2690,13 +2771,9 @@ setup_opencode_cli() {
 
 	# Missing → first-time install path (preserves prompt for interactive UX).
 	local installer=""
-	if command -v npm >/dev/null 2>&1; then
-		installer="npm"
-	elif command -v bun >/dev/null 2>&1; then
-		installer="bun"
-	else
-		print_warning "Neither bun nor npm found - cannot install OpenCode"
-		print_info "Install Node.js or Bun first, then re-run setup"
+	installer=$(_setup_opencode_installer 2>/dev/null || true)
+	if [[ -z "$installer" ]]; then
+		_setup_opencode_print_missing_installer
 		return 0
 	fi
 
@@ -2710,12 +2787,17 @@ setup_opencode_cli() {
 	setup_prompt install_oc "Install ${install_label} via $installer? [Y/n]: " "Y"
 	if [[ "$install_oc" =~ ^[Yy]?$ ]]; then
 		local install_timeout="${AIDEVOPS_OPENCODE_INSTALL_TIMEOUT:-180}"
-		if run_with_spinner "Installing OpenCode" _setup_opencode_timeout_cmd "$install_timeout" npm_global_install "$install_pkg"; then
-			print_success "OpenCode installed"
+		if run_with_spinner "Installing ${install_label}" _setup_opencode_timeout_cmd "$install_timeout" _setup_install_opencode_package "$install_pkg"; then
+			print_success "${install_label} installed"
 
 			# Persist resolved path on first-time success too (t2891).
 			local new_bin
-			new_bin=$(_setup_find_post_install_opencode_binary "$(command -v "$binary_name" 2>/dev/null || echo "")" 2>/dev/null || echo "")
+			local preferred_bin=""
+			preferred_bin=$(command -v "$binary_name" 2>/dev/null || echo "")
+			if [[ "$(_setup_opencode_profile_id)" == "v2" ]]; then
+				preferred_bin=$(_setup_opencode_v2_install_binary 2>/dev/null || printf '%s' "$preferred_bin")
+			fi
+			new_bin=$(_setup_find_post_install_opencode_binary "$preferred_bin" 2>/dev/null || echo "")
 			if [[ -n "$new_bin" ]] && _setup_validate_opencode_binary "$new_bin"; then
 				local stable_bin
 				stable_bin=$(_setup_ensure_opencode_stable_shim "$new_bin") || {

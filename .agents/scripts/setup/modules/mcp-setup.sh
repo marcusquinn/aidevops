@@ -557,18 +557,48 @@ _setup_opencode_plugins_print_pool_guidance() {
 	return 0
 }
 
+_setup_opencode_plugins_resolve_binary() {
+	local binary_name="${1:-opencode}"
+	local profile="${2:-v1}"
+	local resolved=""
+	local receipt_value=""
+	local receipt="${HOME}/.aidevops/.opencode-${profile}-bin-resolved"
+
+	resolved=$(command -v "$binary_name" 2>/dev/null || true)
+	if [[ -r "$receipt" ]]; then
+		IFS= read -r receipt_value <"$receipt" || receipt_value=""
+	fi
+
+	local candidate=""
+	for candidate in \
+		"$resolved" \
+		"$receipt_value" \
+		"${HOME}/.local/bin/${binary_name}" \
+		"/opt/homebrew/bin/${binary_name}" \
+		"/usr/local/bin/${binary_name}" \
+		"${HOME}/.npm-global/bin/${binary_name}" \
+		"${HOME}/.bun/bin/${binary_name}"; do
+		[[ -n "$candidate" && -x "$candidate" ]] || continue
+		printf '%s\n' "$candidate"
+		return 0
+	done
+
+	return 1
+}
+
 _setup_opencode_plugins_auth_guidance() {
 	# Print version-appropriate authentication instructions.
 	# Note: opencode-anthropic-auth is built into OpenCode v1.1.36+
 	# Adding it as an external plugin causes TypeError due to double-loading.
 	# Removed in v2.90.0 - see PR #230.
 	local pool_plugin_registered="$1"
-	local binary_name="${2:-opencode}"
+	local binary_path="${2:-opencode}"
+	local binary_name="${3:-$binary_path}"
 
 	# Detect OpenCode version to give appropriate auth guidance (t1546, GH#5312)
 	# v1.2.30+ removes the built-in anthropic-auth plugin entirely.
 	local oc_raw_version
-	oc_raw_version=$("$binary_name" --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "0.0.0")
+	oc_raw_version=$("$binary_path" --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "0.0.0")
 
 	local oc_major oc_minor oc_patch
 	IFS='.' read -r oc_major oc_minor oc_patch <<<"$oc_raw_version"
@@ -603,6 +633,7 @@ setup_opencode_plugins() {
 	local config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
 	local opencode_config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
 	local opencode_config=""
+	local binary_path=""
 	if declare -F aidevops_opencode_profile_id >/dev/null 2>&1; then
 		profile=$(aidevops_opencode_profile_id)
 	fi
@@ -616,7 +647,7 @@ setup_opencode_plugins() {
 		opencode_config="${AIDEVOPS_OPENCODE_V2_CONFIG:-${opencode_config_dir}/opencode.json}"
 	fi
 	# Check prerequisites before announcing setup (GH#5240)
-	if ! command -v "$binary_name" &>/dev/null; then
+	if ! binary_path=$(_setup_opencode_plugins_resolve_binary "$binary_name" "$profile"); then
 		print_skip "OpenCode plugins" "OpenCode not installed" "Install from https://opencode.ai"
 		setup_track_skipped "OpenCode plugins" "OpenCode not installed"
 		return 0
@@ -668,7 +699,7 @@ setup_opencode_plugins() {
 	setup_track_configured "OpenCode plugins"
 
 	# Version-appropriate auth guidance
-	_setup_opencode_plugins_auth_guidance "$pool_plugin_registered" "$binary_name"
+	_setup_opencode_plugins_auth_guidance "$pool_plugin_registered" "$binary_path" "$binary_name"
 
 	return 0
 }

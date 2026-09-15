@@ -59,6 +59,8 @@ PATH="$SANDBOX/bin:$PATH" AIDEVOPS_OPENCODE_PROFILE=v2 \
 [[ ! -e "$HOME/.local/bin/opencode" ]]
 grep -Fq '# aidevops:opencode-v2-isolation' "$HOME/.local/bin/opencode2"
 grep -Eq '^exec ".*/opencode2" "\$@"$' "$HOME/.local/bin/opencode2"
+resolved_v2_binary=$(PATH="/usr/bin:/bin" _setup_opencode_plugins_resolve_binary opencode2 v2)
+[[ "$resolved_v2_binary" == "$HOME/.local/bin/opencode2" ]]
 
 cat >"$SANDBOX/bin/opencode" <<'SHIM'
 #!/usr/bin/env bash
