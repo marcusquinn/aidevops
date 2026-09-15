@@ -515,16 +515,29 @@ _build_run_cmd() {
 	local agent_name="$6"
 	local persisted_session="$7"
 	shift 7
+	local opencode_profile="${AIDEVOPS_OPENCODE_PROFILE:-v1}"
+	local command_model="$selected_model"
+	if [[ "$opencode_profile" == "v2" && -n "$variant_override" ]]; then
+		command_model="${selected_model}#${variant_override}"
+	fi
 
 	# Emit base command args as null-delimited tokens (bash 3.2 compat: no local -a in subshell)
-	printf '%s\0' "${HEADLESS_OPENCODE_BIN:-$OPENCODE_BIN_DEFAULT}" run "$prompt" --dir "$work_dir" -m "$selected_model" --title "$title" --format json
+	printf '%s\0' "${HEADLESS_OPENCODE_BIN:-$OPENCODE_BIN_DEFAULT}" run "$prompt" -m "$command_model" --title "$title" --format json
+	if [[ "$opencode_profile" == "v2" ]]; then
+		# OpenCode V2 removed `run --dir` and defaults to its shared background
+		# service. The invocation layer sets cwd before launch; standalone keeps
+		# each headless run inside its existing isolated runtime boundary.
+		printf '%s\0' --standalone
+	else
+		printf '%s\0' --dir "$work_dir"
+	fi
 	if [[ -n "$agent_name" ]]; then
 		printf '%s\0' --agent "$agent_name"
 	fi
 	if [[ -n "$persisted_session" ]]; then
 		printf '%s\0' --session "$persisted_session" --continue
 	fi
-	if [[ -n "$variant_override" ]]; then
+	if [[ -n "$variant_override" && "$opencode_profile" != "v2" ]]; then
 		printf '%s\0' --variant "$variant_override"
 	fi
 	# GH#17829: Attach persistent runs to an existing opencode server if one is
@@ -532,7 +545,7 @@ _build_run_cmd() {
 	# Without this, `opencode run` tries to start an embedded server that
 	# conflicts with the user's `opencode serve`, causing "Session not found".
 	local _server_info=""
-	if ! _headless_run_is_ephemeral "${role:-}" && _server_info=$(_detect_opencode_server); then
+	if [[ "$opencode_profile" != "v2" ]] && ! _headless_run_is_ephemeral "${role:-}" && _server_info=$(_detect_opencode_server); then
 		local _server_url _server_pass
 		_server_url=$(echo "$_server_info" | head -1)
 		_server_pass=$(echo "$_server_info" | tail -1)

@@ -198,6 +198,58 @@ readonly OPENCODE_PIN_LAST_CANARY_DATE="2026-09-08"
 readonly OPENCODE_PIN_LAST_CANARY_RESULT="pass:1.18.29"
 readonly OPENCODE_PIN_REVIEW_DEADLINE="2026-09-15"
 readonly OPENCODE_PLUGIN_TESTED_VERSION="1.18.29"
+readonly OPENCODE_V2_PINNED_VERSION="2.0.3"
+readonly OPENCODE_V2_PLUGIN_TESTED_VERSION="2.0.3"
+
+aidevops_opencode_profile_id() {
+	local requested="${AIDEVOPS_OPENCODE_PROFILE:-}"
+	local helper="${AIDEVOPS_AGENTS_DIR:-${HOME}/.aidevops/agents}/scripts/opencode-runtime-profile.py"
+	if [[ -z "$requested" ]] && [[ -f "$helper" ]] && command -v python3 >/dev/null 2>&1; then
+		requested=$(python3 "$helper" default 2>/dev/null || true)
+	fi
+	case "$requested" in
+		v2) printf 'v2\n' ;;
+		*) printf 'v1\n' ;;
+	esac
+	return 0
+}
+
+aidevops_opencode_profile_value() {
+	local field="$1"
+	local profile="${2:-$(aidevops_opencode_profile_id)}"
+	local helper="${AIDEVOPS_AGENTS_DIR:-${HOME}/.aidevops/agents}/scripts/opencode-runtime-profile.py"
+	if [[ -f "$helper" ]] && command -v python3 >/dev/null 2>&1; then
+		python3 "$helper" get "$profile" "$field" 2>/dev/null && return 0
+	fi
+	case "$profile:$field" in
+		v2:package) printf '@opencode/cli\n' ;;
+		v2:binary) printf 'opencode2\n' ;;
+		v2:pluginEntry) printf 'v2.mjs\n' ;;
+		v2:pluginConfigTarget) printf 'v2-plugin\n' ;;
+		v2:headlessPin | v2:testedVersion) printf '%s\n' "$OPENCODE_V2_PINNED_VERSION" ;;
+		v2:introducedDate) printf '2026-09-15\n' ;;
+		v2:pinReason) printf 'Initial OpenCode V2 compatibility qualification\n' ;;
+		v2:pinPlatform) printf 'Linux\n' ;;
+		v2:pinRuntimeMode) printf 'headless\n' ;;
+		v2:lastCanaryDate) printf '2026-09-15\n' ;;
+		v2:lastCanaryResult) printf 'pass:2.0.3\n' ;;
+		v2:reviewDeadline) printf '2026-09-22\n' ;;
+		v1:package) printf 'opencode-ai\n' ;;
+		v1:binary) printf 'opencode\n' ;;
+		v1:pluginEntry) printf 'index.mjs\n' ;;
+		v1:pluginConfigTarget) printf 'index.mjs\n' ;;
+		v1:headlessPin | v1:testedVersion) printf '%s\n' "$OPENCODE_PINNED_VERSION" ;;
+		v1:introducedDate) printf '%s\n' "$OPENCODE_PIN_INTRODUCED_DATE" ;;
+		v1:pinReason) printf '%s\n' "$OPENCODE_PIN_REASON" ;;
+		v1:pinPlatform) printf '%s\n' "$OPENCODE_PIN_PLATFORM" ;;
+		v1:pinRuntimeMode) printf '%s\n' "$OPENCODE_PIN_RUNTIME_MODE" ;;
+		v1:lastCanaryDate) printf '%s\n' "$OPENCODE_PIN_LAST_CANARY_DATE" ;;
+		v1:lastCanaryResult) printf '%s\n' "$OPENCODE_PIN_LAST_CANARY_RESULT" ;;
+		v1:reviewDeadline) printf '%s\n' "$OPENCODE_PIN_REVIEW_DEADLINE" ;;
+		*) return 1 ;;
+	esac
+	return 0
+}
 
 aidevops_opencode_pin_applies() {
 	local platform="${1:-$(uname -s 2>/dev/null || printf 'unknown')}"
@@ -211,12 +263,16 @@ aidevops_opencode_pin_applies() {
 # resolved binary path that is not present on PATH.
 aidevops_opencode_upgrade_command() {
 	local pkg_version="$1"
+	local profile="${2:-$(aidevops_opencode_profile_id)}"
+	local package binary
+	package=$(aidevops_opencode_profile_value package "$profile") || return 1
+	binary=$(aidevops_opencode_profile_value binary "$profile") || return 1
 
 	# shellcheck disable=SC2016  # Single quotes intentional: bash -c payload
 	printf '%s' \
-		'r="${AIDEVOPS_OPENCODE_BIN:-}"; [[ -n "$r" ]] || r=$(command -v opencode 2>/dev/null || printf ""); ' \
+		'r="${AIDEVOPS_OPENCODE_BIN:-}"; [[ -n "$r" ]] || r=$(command -v '"${binary}"' 2>/dev/null || printf ""); ' \
 		'if [[ -n "$r" ]]; then ' \
-		'if command -v brew >/dev/null 2>&1; then ' \
+		'if [[ '"${profile}"' == v1 ]] && command -v brew >/dev/null 2>&1; then ' \
 		'r_dir=$(cd "$(dirname "$r")" 2>/dev/null && pwd -P || printf ""); ' \
 		'r_link=$(readlink "$r" 2>/dev/null || printf ""); r_real="$r"; ' \
 		'if [[ -n "$r_link" ]]; then case "$r_link" in /*) r_real="$r_link" ;; *) r_real="$r_dir/$r_link" ;; esac; fi; ' \
@@ -229,7 +285,7 @@ aidevops_opencode_upgrade_command() {
 		'if [[ -n "$brew_formula_real" ]] && { [[ "$r_dir" == "$brew_formula_real"/* ]] || [[ "$r_real_dir" == "$brew_formula_real"/* ]]; }; then ' \
 		'brew upgrade opencode || brew reinstall opencode; exit $?; ' \
 		'fi; fi; ' \
-		'if [[ "$r" == *bun* ]]; then bun install -g opencode-ai@'"${pkg_version}"'; else npm install -g opencode-ai@'"${pkg_version}"'; fi; ' \
+		'if [[ "$r" == *bun* ]]; then bun install -g '"${package}"'@'"${pkg_version}"'; else npm install -g '"${package}"'@'"${pkg_version}"'; fi; ' \
 		'else printf "OpenCode binary not found for repair\\n" >&2; exit 1; fi'
 	return 0
 }

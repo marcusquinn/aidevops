@@ -1612,6 +1612,19 @@ CANARY_SATURATION_PERCENT="${CANARY_SATURATION_PERCENT:-98}"
 # Remove from any user shell profile that still exports it.
 CANARY_OVERLOAD_LOAD_MULTIPLIER="${CANARY_OVERLOAD_LOAD_MULTIPLIER:-4}"
 
+_headless_opencode_profile_is_v2() {
+	[[ "${AIDEVOPS_OPENCODE_PROFILE:-v1}" == "v2" ]]
+}
+
+_headless_opencode_binary_name() {
+	if _headless_opencode_profile_is_v2; then
+		printf '%s' "opencode2"
+	else
+		printf '%s' "opencode"
+	fi
+	return 0
+}
+
 #######################################
 # t2887: Validate that an opencode binary path is the real anomalyco/opencode.
 #
@@ -1628,10 +1641,12 @@ CANARY_OVERLOAD_LOAD_MULTIPLIER="${CANARY_OVERLOAD_LOAD_MULTIPLIER:-4}"
 #   0 = valid anomalyco/opencode (semver-shaped, no Claude Code marker, major <= 1)
 #   1 = wrong binary (Claude Code marker OR major version >= 2)
 #   2 = missing or unrunnable binary
-# Side-effect: sets _VALIDATE_OC_VERSION to the raw --version output (GH#21003).
+# Side-effect: sets _VALIDATE_OC_VERSION to normalized semver (GH#21003).
 #######################################
 _validate_opencode_binary() {
 	local bin="${1:-}"
+	local expected_major=1
+	_headless_opencode_profile_is_v2 && expected_major=2
 	# GH#21505: clear side-effect variable first so callers never see a stale
 	# version from a previous successful call when this invocation returns early.
 	_VALIDATE_OC_VERSION=""
@@ -1642,19 +1657,23 @@ _validate_opencode_binary() {
 	version_output=$("$bin" --version 2>/dev/null || echo "")
 	[[ -n "$version_output" ]] || return 2
 
-	# GH#21003: expose version to callers so they don't re-run --version.
-	_VALIDATE_OC_VERSION="$version_output"
-
 	# Anthropic claude CLI signature -- highest-confidence rejection
 	[[ "$version_output" == *"(Claude Code)"* ]] && return 1
 
+	# V1 prints bare semver while V2 prefixes it with "opencode v".
+	local semantic_version=""
+	if [[ "$version_output" =~ ([0-9]+\.[0-9]+\.[0-9]+) ]]; then
+		semantic_version="${BASH_REMATCH[1]}"
+	else
+		return 1
+	fi
+	# Expose normalized semver so exact-version checks work for both V1's bare
+	# output and V2's `opencode vX.Y.Z` prefix.
+	_VALIDATE_OC_VERSION="$semantic_version"
 	# GH#21003: Extract major version as integer for robust comparison.
-	# The previous regex ^[2-9][0-9]*\. missed two-digit majors like 10.x.
-	local major="${version_output%%.*}"
-	[[ "$major" =~ ^[0-9]+$ ]] && [[ "$major" -ge 2 ]] && return 1
-
-	# Sanity check: must look like a semver (X.Y.Z)
-	[[ "$version_output" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]] || return 1
+	local major="${semantic_version%%.*}"
+	[[ "$major" =~ ^[0-9]+$ ]] || return 1
+	[[ "$major" -eq "$expected_major" ]] || return 1
 
 	return 0
 }
@@ -1669,14 +1688,16 @@ _headless_runtime_is_linux() {
 }
 
 _opencode_fixed_candidate_paths() {
+	local binary_name=""
+	binary_name=$(_headless_opencode_binary_name)
 	local fixed_candidates=(
-		"/opt/homebrew/bin/opencode"
-		"/usr/local/bin/opencode"
-		"${HOME}/.local/bin/opencode"
-		"${HOME}/.opencode/bin/opencode"
+		"/opt/homebrew/bin/${binary_name}"
+		"/usr/local/bin/${binary_name}"
+		"${HOME}/.local/bin/${binary_name}"
+		"${HOME}/.opencode/bin/${binary_name}"
 	)
 	if _headless_runtime_is_linux; then
-		fixed_candidates+=("/snap/bin/opencode")
+		fixed_candidates+=("/snap/bin/${binary_name}")
 	fi
 	printf '%s\n' "${fixed_candidates[@]}"
 	return 0
@@ -1710,6 +1731,8 @@ _opencode_fixed_candidate_dirs_for_warning() {
 _find_alternative_opencode_binary() {
 	# Fixed install paths (Homebrew, npm-global, Snap, etc.).
 	local candidate
+	local binary_name=""
+	binary_name=$(_headless_opencode_binary_name)
 	while IFS= read -r candidate; do
 		if [[ -x "$candidate" ]] && _validate_opencode_binary "$candidate"; then
 			printf '%s\n' "$candidate"
@@ -1727,10 +1750,10 @@ _find_alternative_opencode_binary() {
 		"${HOME}/.local/share/fnm/node-versions"; do
 		[[ -d "$nvm_root" ]] || continue
 		while IFS= read -r version_dir; do
-			# nvm + volta: <ver>/bin/opencode; fnm: <ver>/installation/bin/opencode
+			# nvm + volta: <ver>/bin/<binary>; fnm: <ver>/installation/bin/<binary>
 			for candidate in \
-				"$version_dir/bin/opencode" \
-				"$version_dir/installation/bin/opencode"; do
+				"$version_dir/bin/${binary_name}" \
+				"$version_dir/installation/bin/${binary_name}"; do
 				if [[ -x "$candidate" ]] && _validate_opencode_binary "$candidate"; then
 					printf '%s\n' "$candidate"
 					return 0
@@ -1747,6 +1770,13 @@ _find_alternative_opencode_binary() {
 #######################################
 _resolve_headless_opencode_install_binary() {
 	local install_root="$1"
+	local binary_name=""
+	binary_name=$(_headless_opencode_binary_name)
+	local package_binary="$install_root/node_modules/.bin/${binary_name}"
+	if [[ -x "$package_binary" ]]; then
+		printf '%s\n' "$package_binary"
+		return 0
+	fi
 	local machine_arch="${AIDEVOPS_TEST_UNAME_M:-}"
 	if [[ -z "$machine_arch" ]]; then
 		machine_arch=$(uname -m 2>/dev/null || true)
@@ -1789,6 +1819,8 @@ _resolve_headless_opencode_install_binary() {
 #######################################
 _provision_headless_opencode_runtime() {
 	local pin="$1"
+	local package="opencode-ai"
+	_headless_opencode_profile_is_v2 && package="@opencode/cli"
 	local runtime_root="${STATE_DIR:-${HOME}/.aidevops/.agent-workspace/headless-runtime}/opencode-runtimes"
 	local install_root="$runtime_root/$pin"
 	local existing_bin=""
@@ -1806,12 +1838,19 @@ _provision_headless_opencode_runtime() {
 	local temp_root="$runtime_root/.${pin}.install.$$"
 	local isolated_home="$temp_root/home"
 	local isolated_cache="$temp_root/cache"
+	local -a install_args=(install --no-audit --no-fund --prefix "$temp_root/prefix")
+	# OpenCode V2 installs its platform executable in postinstall. This exact,
+	# pinned package is contained in a disposable isolated prefix; V1 retains
+	# the established script-free installation path.
+	if ! _headless_opencode_profile_is_v2; then
+		install_args=(install --ignore-scripts --no-audit --no-fund --prefix "$temp_root/prefix")
+	fi
 	mkdir -p "$temp_root/prefix" "$isolated_home" "$isolated_cache" || return 1
 	if ! env -i HOME="$isolated_home" PATH="$PATH" \
 		GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
 		npm_config_userconfig=/dev/null npm_config_cache="$isolated_cache" \
-		npm install --ignore-scripts --no-audit --no-fund --prefix "$temp_root/prefix" \
-		"opencode-ai@${pin}" >/dev/null 2>&1; then
+		npm "${install_args[@]}" \
+		"${package}@${pin}" >/dev/null 2>&1; then
 		print_error "Failed to provision isolated OpenCode ${pin}; general installation was not changed"
 		rm -rf "$temp_root"
 		return 1
@@ -1877,6 +1916,9 @@ _clear_stale_opencode_pin_repair_lock() {
 #######################################
 _enforce_opencode_version_pin() {
 	local pin="${OPENCODE_PINNED_VERSION:-}"
+	if _headless_opencode_profile_is_v2; then
+		pin="${OPENCODE_V2_PINNED_VERSION:-2.0.3}"
+	fi
 	# No pin or pin is "latest" -> nothing to enforce
 	if [[ -z "$pin" || "$pin" == "latest" ]]; then
 		HEADLESS_OPENCODE_BIN="$OPENCODE_BIN_DEFAULT"
@@ -2060,7 +2102,9 @@ _resolve_canary_opencode_binary() {
 	# Structural failure: stamp config_error so later attempts fail fast.
 	print_warning "Canary: headless OpenCode binary='${_CANARY_EFFECTIVE_OPENCODE_BIN}' returns '${wrong_version}' (rc=${validate_rc}) — not anomalyco/opencode."
 	print_warning "Canary: searched $(_opencode_fixed_candidate_dirs_for_warning) — no valid binary found."
-	print_warning "Canary: install with 'npm install -g opencode-ai' or set OPENCODE_BIN to a valid binary (t2887)."
+	local package="opencode-ai"
+	_headless_opencode_profile_is_v2 && package="@opencode/cli"
+	print_warning "Canary: install with 'npm install -g ${package}' or set OPENCODE_BIN to a valid binary (t2887)."
 	mkdir -p "${STATE_DIR}" 2>/dev/null || true
 	date +%s >"$fail_cache_file" 2>/dev/null || true
 	printf 'config_error\n' >"$fail_reason_file" 2>/dev/null || true
@@ -2093,13 +2137,19 @@ _prepare_canary_isolation() {
 	_canary_config_dir=$(mktemp -d "${TMPDIR:-/tmp}/aidevops-canary-config.XXXXXX")
 	mkdir -p "${_canary_config_dir}/opencode"
 	local _canary_plugin_path
-	_canary_plugin_path="${AIDEVOPS_PLUGIN_INDEX:-${HOME}/.aidevops/agents/plugins/opencode-aidevops/index.mjs}"
+	local _canary_plugin_entry="index.mjs"
+	local _canary_plugin_key="plugin"
+	if _headless_opencode_profile_is_v2; then
+		_canary_plugin_entry="v2-plugin"
+		_canary_plugin_key="plugins"
+	fi
+	_canary_plugin_path="${AIDEVOPS_PLUGIN_INDEX:-${HOME}/.aidevops/agents/plugins/opencode-aidevops/${_canary_plugin_entry}}"
 	local _canary_plugin_url=""
-	if [[ -f "$_canary_plugin_path" ]]; then
+	if [[ -e "$_canary_plugin_path" ]]; then
 		_canary_plugin_url=$(python3 -c 'import pathlib, sys; print(pathlib.Path(sys.argv[1]).absolute().as_uri())' "$_canary_plugin_path" 2>/dev/null || printf 'file://%s' "$_canary_plugin_path")
 	fi
-	jq -n --arg plugin_url "$_canary_plugin_url" \
-		'{"$schema":"https://opencode.ai/config.json"} + (if $plugin_url == "" then {} else {plugin: [$plugin_url]} end)' \
+	jq -n --arg plugin_url "$_canary_plugin_url" --arg plugin_key "$_canary_plugin_key" \
+		'{"$schema":"https://opencode.ai/config.json"} + (if $plugin_url == "" then {} else {($plugin_key): [$plugin_url]} end)' \
 		>"${_canary_config_dir}/opencode/opencode.json"
 
 	local _canary_default_provider="anthropic"
@@ -2129,12 +2179,22 @@ _execute_canary_probe() {
 	local _canary_data_dir="$5"
 	local canary_attach_args=()
 	local _canary_server_info=""
-	if _canary_server_info=$(_detect_opencode_server); then
+	if ! _headless_opencode_profile_is_v2 && _canary_server_info=$(_detect_opencode_server); then
 		local _canary_url
 		local _canary_pass
 		_canary_url=$(echo "$_canary_server_info" | head -1)
 		_canary_pass=$(echo "$_canary_server_info" | tail -1)
 		canary_attach_args=(--attach "$_canary_url" --password "$_canary_pass")
+	fi
+	local -a canary_run_args=(run "What is two plus two? Answer with the single word: Four" \
+		-m "$canary_model" --agent build)
+	if _headless_opencode_profile_is_v2; then
+		canary_run_args+=(--standalone)
+	else
+		canary_run_args+=(--dir "${HOME}")
+		if [[ ${#canary_attach_args[@]} -gt 0 ]]; then
+			canary_run_args+=("${canary_attach_args[@]}")
+		fi
 	fi
 
 	# Prefer process-group-aware coreutils timeout; perl is the last resort.
@@ -2148,13 +2208,15 @@ _execute_canary_probe() {
 	fi
 
 	_CANARY_PROBE_EXIT=0
-	XDG_CONFIG_HOME="$_canary_config_dir" XDG_DATA_HOME="$_canary_data_dir" \
-		AIDEVOPS_HEADLESS=1 \
-		run_without_opencode_session_env "${_canary_timeout_cmd[@]}" \
-		"$_effective_opencode_bin" run "What is two plus two? Answer with the single word: Four" \
-		-m "$canary_model" --dir "${HOME}" --agent build \
-		${canary_attach_args[@]+"${canary_attach_args[@]}"} \
-		>"$canary_output" 2>&1 || _CANARY_PROBE_EXIT=$?
+	local _canary_shell_dir="$PWD"
+	_headless_opencode_profile_is_v2 && _canary_shell_dir="$HOME"
+	(
+		cd "$_canary_shell_dir" || exit 1
+		XDG_CONFIG_HOME="$_canary_config_dir" XDG_DATA_HOME="$_canary_data_dir" \
+			AIDEVOPS_HEADLESS=1 \
+			run_without_opencode_session_env "${_canary_timeout_cmd[@]}" \
+			"$_effective_opencode_bin" "${canary_run_args[@]}"
+	) >"$canary_output" 2>&1 || _CANARY_PROBE_EXIT=$?
 	return 0
 }
 

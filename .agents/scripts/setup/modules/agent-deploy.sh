@@ -313,11 +313,21 @@ _verify_deployed_core_plugin_freshness() {
 	local source_file
 	local target_file
 	local -a core_plugin_files=(
+		"configs/opencode-runtime-profiles.json"
 		"hooks/git_safety_guard.py"
+		"plugins/opencode-aidevops/index.mjs"
 		"plugins/opencode-aidevops/model-limits.mjs"
 		"plugins/opencode-aidevops/quality-hooks-git-safety.mjs"
 		"plugins/opencode-aidevops/quality-hooks-output-scrub.mjs"
 		"plugins/opencode-aidevops/quality-hooks.mjs"
+		"plugins/opencode-aidevops/runtime-profile.mjs"
+		"plugins/opencode-aidevops/tool-schema.mjs"
+		"plugins/opencode-aidevops/v2-mcp-adapter.mjs"
+		"plugins/opencode-aidevops/v2-provider-auth.mjs"
+		"plugins/opencode-aidevops/v2-tool-adapter.mjs"
+		"plugins/opencode-aidevops/v2.mjs"
+		"plugins/opencode-aidevops/v2-plugin/index.mjs"
+		"plugins/opencode-aidevops/v2-plugin/package.json"
 		"scripts/canonical_branch_policy.py"
 		"scripts/canonical-write-policy-helper.py"
 	)
@@ -343,7 +353,7 @@ _verify_deployed_core_plugin_freshness() {
 }
 
 # _verify_opencode_plugin_deps plugin_dir
-# Imports both runtime dependencies with a JavaScript runtime before a bundle is
+# Imports shared and both versioned runtime dependencies before a bundle is
 # eligible for activation. Prefer Bun because OpenCode embeds Bun; use Node when
 # the standalone Bun CLI is unavailable.
 _verify_opencode_plugin_deps() {
@@ -361,7 +371,7 @@ _verify_opencode_plugin_deps() {
 
 	if (
 		cd "$plugin_dir" || exit 1
-		"$js_runtime" -e 'Promise.all([import("@bufbuild/protobuf"), import("@opencode-ai/plugin")]).then(([, plugin]) => { if (!plugin.tool || !plugin.tool.schema) throw new Error("@opencode-ai/plugin does not export tool.schema"); }).catch((error) => { console.error(error.message); process.exit(1); })'
+		"$js_runtime" -e 'Promise.all([import("@bufbuild/protobuf"), import("@opencode-ai/plugin"), import("@opencode/plugin")]).then(([, v1, v2]) => { if (!v1.tool || !v1.tool.schema) throw new Error("@opencode-ai/plugin does not export tool.schema"); if (!v2.Plugin || typeof v2.Plugin.define !== "function") throw new Error("@opencode/plugin does not export Plugin.define"); }).catch((error) => { console.error(error.message); process.exit(1); })'
 	); then
 		return 0
 	fi
@@ -454,7 +464,7 @@ _install_agent_runtime_deps() {
 # _install_opencode_plugin_deps target_dir
 # Installs and verifies node_modules for the opencode-aidevops plugin.
 # GH#17829: @bufbuild/protobuf was missing; GH#17891: only symlink on first run.
-# Uses --omit=peer to skip the 630MB opencode-ai peer dep (the host app).
+# Uses --omit=peer to skip host and optional UI peer dependencies.
 # GH#27714: installation or import failure must block bundle activation.
 # GH#29313: a reviewed lockfile makes fallback installs exact and repeatable.
 _install_opencode_plugin_deps() {
@@ -678,8 +688,12 @@ _runtime_bundle_write_manifest() {
 	local framework_version="$_AIDEVOPS_BUNDLE_UNKNOWN"
 	local git_sha="$_AIDEVOPS_BUNDLE_UNKNOWN"
 	local file_count="0"
-	local cli_sha="missing"
-	local plugin_entry_sha="missing"
+	local missing_sha="missing"
+	local cli_sha="$missing_sha"
+	local plugin_entry_sha="$missing_sha"
+	local plugin_v2_entry_sha="$missing_sha"
+	local plugin_v2_loader_sha="$missing_sha"
+	local plugin_v2_loader_package_sha="$missing_sha"
 	local manifest_bundle_id="${bundle_dir##*/}"
 	manifest_bundle_id="${manifest_bundle_id#.staging.}"
 
@@ -689,6 +703,15 @@ _runtime_bundle_write_manifest() {
 	[[ -f "$agents_root/aidevops.sh" ]] && cli_sha=$(_runtime_bundle_sha256_file "$agents_root/aidevops.sh")
 	if [[ -f "$agents_root/plugins/opencode-aidevops/index.mjs" ]]; then
 		plugin_entry_sha=$(_runtime_bundle_sha256_file "$agents_root/plugins/opencode-aidevops/index.mjs")
+	fi
+	if [[ -f "$agents_root/plugins/opencode-aidevops/v2.mjs" ]]; then
+		plugin_v2_entry_sha=$(_runtime_bundle_sha256_file "$agents_root/plugins/opencode-aidevops/v2.mjs")
+	fi
+	if [[ -f "$agents_root/plugins/opencode-aidevops/v2-plugin/index.mjs" ]]; then
+		plugin_v2_loader_sha=$(_runtime_bundle_sha256_file "$agents_root/plugins/opencode-aidevops/v2-plugin/index.mjs")
+	fi
+	if [[ -f "$agents_root/plugins/opencode-aidevops/v2-plugin/package.json" ]]; then
+		plugin_v2_loader_package_sha=$(_runtime_bundle_sha256_file "$agents_root/plugins/opencode-aidevops/v2-plugin/package.json")
 	fi
 
 	{
@@ -701,6 +724,9 @@ _runtime_bundle_write_manifest() {
 		printf 'agents_file_count=%s\n' "$file_count"
 		printf 'cli_sha256=%s\n' "$cli_sha"
 		printf 'plugin_entry_sha256=%s\n' "$plugin_entry_sha"
+		printf 'plugin_v2_entry_sha256=%s\n' "$plugin_v2_entry_sha"
+		printf 'plugin_v2_loader_sha256=%s\n' "$plugin_v2_loader_sha"
+		printf 'plugin_v2_loader_package_sha256=%s\n' "$plugin_v2_loader_package_sha"
 		if declare -F runtime_bundle_plugin_manifest_fields >/dev/null 2>&1; then
 			runtime_bundle_plugin_manifest_fields "$agents_root" "$plugins_file"
 		else

@@ -121,11 +121,14 @@ write_fake_plugin_manifest() {
 
 write_fake_plugin_dependencies() {
 	local plugin_dir="$FAKE_REPO/.agents/plugins/opencode-aidevops"
-	mkdir -p "$plugin_dir/node_modules/@bufbuild/protobuf" "$plugin_dir/node_modules/@opencode-ai/plugin"
+	mkdir -p "$plugin_dir/node_modules/@bufbuild/protobuf" "$plugin_dir/node_modules/@opencode-ai/plugin" \
+		"$plugin_dir/node_modules/@opencode/plugin"
 	printf '{"name":"@bufbuild/protobuf","type":"module","exports":"./index.mjs"}\n' >"$plugin_dir/node_modules/@bufbuild/protobuf/package.json"
 	printf 'export const fixture = true;\n' >"$plugin_dir/node_modules/@bufbuild/protobuf/index.mjs"
 	printf '{"name":"@opencode-ai/plugin","type":"module","exports":"./index.mjs"}\n' >"$plugin_dir/node_modules/@opencode-ai/plugin/package.json"
 	printf 'export const tool = Object.assign((definition) => definition, { schema: {} });\n' >"$plugin_dir/node_modules/@opencode-ai/plugin/index.mjs"
+	printf '{"name":"@opencode/plugin","type":"module","exports":"./index.mjs"}\n' >"$plugin_dir/node_modules/@opencode/plugin/package.json"
+	printf 'export const Plugin = { define: (definition) => definition };\n' >"$plugin_dir/node_modules/@opencode/plugin/index.mjs"
 	return 0
 }
 
@@ -465,6 +468,12 @@ test_plugin_dependency_smoke_check() {
 		fail "missing @opencode-ai/plugin unexpectedly passed the import smoke check"
 	fi
 	pass "missing @opencode-ai/plugin fails the import smoke check"
+	write_fake_plugin_dependencies
+	rm -rf "$plugin_dir/node_modules/@opencode/plugin"
+	if _verify_opencode_plugin_deps "$plugin_dir" >/dev/null 2>&1; then
+		fail "missing @opencode/plugin unexpectedly passed the import smoke check"
+	fi
+	pass "missing @opencode/plugin fails the import smoke check"
 	return 0
 }
 

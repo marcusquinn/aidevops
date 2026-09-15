@@ -11,6 +11,9 @@ IFS=$'\n\t'
 trap 'rc=$?; echo "[ERROR] ${BASH_SOURCE[0]}:${LINENO} exit $rc" >&2' ERR
 shopt -s inherit_errexit 2>/dev/null || true
 
+_SETUP_GOOGLE_ANALYTICS_MCP_KEY="google-analytics-mcp"
+_SETUP_GOOGLE_ANALYTICS_MCP_LABEL="Google Analytics MCP"
+
 _mcp_package_supported_on_platform() {
 	local package="$1"
 	local platform="${2:-}"
@@ -445,12 +448,13 @@ _setup_opencode_plugins_remove_cursor_oauth() {
 
 	local cursor_present
 	cursor_present=$(jq --arg p "$cursor_plugin" \
-		'(.plugin // []) | map(select(. == $p)) | length' \
+		'[((.plugin // []) + (.plugins // []))[] | select(. == $p)] | length' \
 		"$opencode_config" 2>/dev/null || echo "0")
 	if [[ "$cursor_present" -gt 0 ]]; then
 		local tmp_cursor="${opencode_config}.tmp.$$"
 		if jq --arg p "$cursor_plugin" \
-			'.plugin = [.plugin[] | select(. != $p)]' \
+			'.plugin = [(.plugin // [])[] | select(. != $p)]
+			| .plugins = [(.plugins // [])[] | select(. != $p)]' \
 			"$opencode_config" >"$tmp_cursor" 2>/dev/null; then
 			mv "$tmp_cursor" "$opencode_config"
 			print_warning "Removed opencode-cursor-oauth plugin (crashes all plugin loading)"
@@ -469,6 +473,9 @@ _setup_opencode_plugins_register_file_url() {
 	# Prints "true" or "false" to indicate registration status.
 	local opencode_config="$1"
 	local aidevops_plugin_entrypoint="$2"
+	local plugin_key="${3:-plugin}"
+	local other_plugin_key="plugin"
+	[[ "$plugin_key" == "plugin" ]] && other_plugin_key="plugins"
 	local plugin_url="file://${aidevops_plugin_entrypoint}"
 
 	if ! command -v jq &>/dev/null; then
@@ -479,14 +486,16 @@ _setup_opencode_plugins_register_file_url() {
 
 	# Check if the plugin URL is already in the array
 	local already_registered
-	already_registered=$(jq --arg url "$plugin_url" \
-		'(.plugin // []) | map(select(. == $url)) | length' \
+	already_registered=$(jq --arg url "$plugin_url" --arg key "$plugin_key" \
+		'(.[$key] // []) | map(select(. == $url)) | length' \
 		"$opencode_config" || echo "0")
 
 	if [[ "$already_registered" -eq 0 ]]; then
 		local tmp_config="${opencode_config}.tmp.$$"
-		if jq --arg url "$plugin_url" \
-			'.plugin = ((.plugin // []) + [$url] | unique)' \
+		if jq --arg url "$plugin_url" --arg key "$plugin_key" --arg other "$other_plugin_key" \
+			'.[$key] = (((.[$key] // []) + (.[$other] // []))
+			| map(select((type != "string") or (contains("/plugins/opencode-aidevops/") | not)))
+			+ [$url] | unique) | del(.[$other])' \
 			"$opencode_config" >"$tmp_config"; then
 			mv "$tmp_config" "$opencode_config"
 			print_success "aidevops plugin registered in opencode.json"
@@ -525,10 +534,11 @@ _setup_opencode_plugins_register_symlink() {
 _setup_opencode_plugins_print_pool_guidance() {
 	# Print OAuth pool authentication instructions for OpenCode v1.2.30+.
 	local pool_plugin_registered="$1"
+	local binary_name="${2:-opencode}"
 
 	if [[ "$pool_plugin_registered" == "true" ]]; then
 		print_info "Use the aidevops OAuth pool (provided by the aidevops plugin above):"
-		print_info "  1. Run: opencode auth login"
+		print_info "  1. Run: $binary_name auth login"
 		print_info "  2. Select: 'Anthropic Pool' (added by aidevops plugin)"
 		print_info "  3. Enter your Claude account email"
 		print_info "  4. Complete the OAuth flow in your browser"
@@ -536,13 +546,13 @@ _setup_opencode_plugins_print_pool_guidance() {
 		print_info "  6. Switch to 'Anthropic' provider and select a model to start chatting"
 		print_info ""
 		print_info "For Cursor Pro accounts:"
-		print_info "  Run: opencode auth login --provider cursor"
+		print_info "  Run: $binary_name auth login --provider cursor"
 		print_info ""
 		print_info "  Health check: /models-pool-check"
 		print_info "  Manage accounts: /model-accounts-pool list|status|remove"
 	else
 		print_warning "aidevops OpenCode plugin was not registered; 'Anthropic Pool' may be unavailable"
-		print_info "Re-run aidevops setup to register the plugin, then run: opencode auth login"
+		print_info "Re-run aidevops setup to register the plugin, then run: $binary_name auth login"
 	fi
 	return 0
 }
@@ -553,11 +563,12 @@ _setup_opencode_plugins_auth_guidance() {
 	# Adding it as an external plugin causes TypeError due to double-loading.
 	# Removed in v2.90.0 - see PR #230.
 	local pool_plugin_registered="$1"
+	local binary_name="${2:-opencode}"
 
 	# Detect OpenCode version to give appropriate auth guidance (t1546, GH#5312)
 	# v1.2.30+ removes the built-in anthropic-auth plugin entirely.
 	local oc_raw_version
-	oc_raw_version=$(opencode --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "0.0.0")
+	oc_raw_version=$("$binary_name" --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "0.0.0")
 
 	local oc_major oc_minor oc_patch
 	IFS='.' read -r oc_major oc_minor oc_patch <<<"$oc_raw_version"
@@ -575,9 +586,9 @@ _setup_opencode_plugins_auth_guidance() {
 
 	if [[ "$builtin_auth_removed" == "true" ]]; then
 		print_info "OpenCode v${oc_raw_version}: built-in Anthropic OAuth removed in v1.2.30"
-		_setup_opencode_plugins_print_pool_guidance "$pool_plugin_registered"
+		_setup_opencode_plugins_print_pool_guidance "$pool_plugin_registered" "$binary_name"
 	else
-		print_info "After setup, authenticate with: opencode auth login"
+		print_info "After setup, authenticate with: $binary_name auth login"
 		print_info "  - For Claude OAuth (v1.1.36-v1.2.29): Select 'Anthropic' -> 'Claude Pro/Max' (built-in)"
 		print_info "  - Or use the aidevops OAuth pool: Select 'Anthropic Pool' for multi-account rotation"
 	fi
@@ -585,8 +596,20 @@ _setup_opencode_plugins_auth_guidance() {
 }
 
 setup_opencode_plugins() {
+	local profile="${AIDEVOPS_OPENCODE_PROFILE:-v1}"
+	local binary_name="opencode"
+	local plugin_entry="index.mjs"
+	local plugin_key="plugin"
+	if declare -F aidevops_opencode_profile_id >/dev/null 2>&1; then
+		profile=$(aidevops_opencode_profile_id)
+	fi
+	if [[ "$profile" == "v2" ]]; then
+		binary_name="opencode2"
+		plugin_entry="v2-plugin"
+		plugin_key="plugins"
+	fi
 	# Check prerequisites before announcing setup (GH#5240)
-	if ! command -v opencode &>/dev/null; then
+	if ! command -v "$binary_name" &>/dev/null; then
 		print_skip "OpenCode plugins" "OpenCode not installed" "Install from https://opencode.ai"
 		setup_track_skipped "OpenCode plugins" "OpenCode not installed"
 		return 0
@@ -602,19 +625,19 @@ setup_opencode_plugins() {
 	local plugins_dir="$HOME/.config/opencode/plugins"
 	local aidevops_plugin_src="$HOME/.aidevops/agents/plugins/opencode-aidevops"
 	local aidevops_plugin_dst="$plugins_dir/opencode-aidevops"
-	local aidevops_plugin_entrypoint="$aidevops_plugin_src/index.mjs"
+	local aidevops_plugin_entrypoint="$aidevops_plugin_src/$plugin_entry"
 
-	if [[ ! -f "$aidevops_plugin_entrypoint" ]]; then
+	if [[ ! -e "$aidevops_plugin_entrypoint" ]]; then
 		print_skip "OpenCode plugins" "aidevops plugin entry point not found: $aidevops_plugin_entrypoint"
 		setup_track_deferred "OpenCode plugins" "Install/restore aidevops plugin at $aidevops_plugin_entrypoint"
 		return 0
 	fi
 
 	# Mechanism 1: file:// URL in opencode.json
-	local pool_plugin_registered="false"
+	local pool_plugin_registered=""
 	local opencode_config
 	if opencode_config=$(find_opencode_config); then
-		pool_plugin_registered=$(_setup_opencode_plugins_register_file_url "$opencode_config" "$aidevops_plugin_entrypoint")
+		pool_plugin_registered=$(_setup_opencode_plugins_register_file_url "$opencode_config" "$aidevops_plugin_entrypoint" "$plugin_key")
 	else
 		print_info "opencode.json not found — run 'opencode' once to create it, then re-run setup"
 	fi
@@ -625,7 +648,7 @@ setup_opencode_plugins() {
 	setup_track_configured "OpenCode plugins"
 
 	# Version-appropriate auth guidance
-	_setup_opencode_plugins_auth_guidance "$pool_plugin_registered"
+	_setup_opencode_plugins_auth_guidance "$pool_plugin_registered" "$binary_name"
 
 	return 0
 }
@@ -708,10 +731,10 @@ _setup_google_analytics_mcp_update_existing() {
 		local tmp_config
 		tmp_config=$(mktemp)
 		trap 'rm -f "${tmp_config:-}"' RETURN
-		if jq --arg creds "$creds_path" --arg proj "$project_id" \
-			'.mcp["google-analytics-mcp"].environment.GOOGLE_APPLICATION_CREDENTIALS = $creds |
-			 .mcp["google-analytics-mcp"].environment.GOOGLE_PROJECT_ID = $proj |
-			 .mcp["google-analytics-mcp"].enabled = true' \
+		if jq --arg creds "$creds_path" --arg proj "$project_id" --arg mcp_key "$_SETUP_GOOGLE_ANALYTICS_MCP_KEY" \
+			'.mcp[$mcp_key].environment.GOOGLE_APPLICATION_CREDENTIALS = $creds |
+			 .mcp[$mcp_key].environment.GOOGLE_PROJECT_ID = $proj |
+			 .mcp[$mcp_key].enabled = true' \
 			"$opencode_config" >"$tmp_config" 2>/dev/null; then
 			mv "$tmp_config" "$opencode_config"
 			print_success "Updated Google Analytics MCP with GSC credentials (enabled)"
@@ -738,7 +761,8 @@ _setup_google_analytics_mcp_add_new() {
 	trap 'rm -f "${tmp_config:-}"' RETURN
 
 	if jq --arg creds "$creds_path" --arg proj "$project_id" --argjson enabled "$enable_mcp" \
-		'.mcp["google-analytics-mcp"] = {
+		--arg mcp_key "$_SETUP_GOOGLE_ANALYTICS_MCP_KEY" \
+		'.mcp[$mcp_key] = {
 		"type": "local",
 		"command": ["analytics-mcp"],
 		"environment": {
@@ -771,7 +795,7 @@ _setup_google_analytics_mcp_write_config() {
 	local gsc_creds="$5"
 
 	# Update existing entry if present
-	if jq -e '.mcp["google-analytics-mcp"]' "$opencode_config" >/dev/null 2>&1; then
+	if jq -e --arg mcp_key "$_SETUP_GOOGLE_ANALYTICS_MCP_KEY" '.mcp[$mcp_key]' "$opencode_config" >/dev/null 2>&1; then
 		_setup_google_analytics_mcp_update_existing "$opencode_config" "$creds_path" "$project_id" "$enable_mcp"
 		return 0
 	fi
@@ -787,20 +811,20 @@ setup_google_analytics_mcp() {
 	# Check prerequisites before announcing setup (GH#5240)
 	local opencode_config
 	if ! opencode_config=$(find_opencode_config); then
-		print_skip "Google Analytics MCP" "OpenCode config not found" "Run 'opencode' once to create config, then re-run setup"
-		setup_track_skipped "Google Analytics MCP" "OpenCode config not found"
+		print_skip "$_SETUP_GOOGLE_ANALYTICS_MCP_LABEL" "OpenCode config not found" "Run 'opencode' once to create config, then re-run setup"
+		setup_track_skipped "$_SETUP_GOOGLE_ANALYTICS_MCP_LABEL" "OpenCode config not found"
 		return 0
 	fi
 
 	if ! command -v jq &>/dev/null; then
-		print_skip "Google Analytics MCP" "jq not installed" "Install jq: brew install jq (macOS) or apt install jq"
-		setup_track_deferred "Google Analytics MCP" "Install jq"
+		print_skip "$_SETUP_GOOGLE_ANALYTICS_MCP_LABEL" "jq not installed" "Install jq: brew install jq (macOS) or apt install jq"
+		setup_track_deferred "$_SETUP_GOOGLE_ANALYTICS_MCP_LABEL" "Install jq"
 		return 0
 	fi
 
 	if ! command -v pipx &>/dev/null; then
-		print_skip "Google Analytics MCP" "pipx not installed" "Install pipx: brew install pipx (macOS) or pip install pipx"
-		setup_track_deferred "Google Analytics MCP" "Install pipx"
+		print_skip "$_SETUP_GOOGLE_ANALYTICS_MCP_LABEL" "pipx not installed" "Install pipx: brew install pipx (macOS) or pip install pipx"
+		setup_track_deferred "$_SETUP_GOOGLE_ANALYTICS_MCP_LABEL" "Install pipx"
 		return 0
 	fi
 

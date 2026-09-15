@@ -2111,6 +2111,11 @@ _setup_opencode_help_identifies_opencode() {
 	if [[ "$help_output" =~ run[[:space:]]+opencode[[:space:]]+with[[:space:]]+a[[:space:]]+message ]]; then
 		return 0
 	fi
+	if [[ "$(_setup_opencode_profile_id)" == "v2" ]] &&
+		[[ "$help_output" == *"OpenCode command line interface"* ]] &&
+		[[ "$help_output" == *"Run OpenCode with a message"* ]]; then
+		return 0
+	fi
 
 	return 1
 }
@@ -2132,6 +2137,7 @@ _setup_opencode_homebrew_owner_action() {
 	local prefix_real=""
 
 	[[ -n "$bin" ]] || return 1
+	[[ "$(_setup_opencode_profile_id)" == "v1" ]] || return 1
 	command -v brew >/dev/null 2>&1 || return 1
 	brew_bin=$(command -v brew 2>/dev/null || printf '')
 	[[ -n "$brew_bin" ]] || return 1
@@ -2150,6 +2156,35 @@ _setup_opencode_homebrew_owner_action() {
 	esac
 
 	return 1
+}
+
+_setup_opencode_profile_id() {
+	if command -v aidevops_opencode_profile_id >/dev/null 2>&1; then
+		aidevops_opencode_profile_id
+	else
+		case "${AIDEVOPS_OPENCODE_PROFILE:-v1}" in
+			v2) printf 'v2\n' ;;
+			*) printf 'v1\n' ;;
+		esac
+	fi
+	return 0
+}
+
+_setup_opencode_profile_value() {
+	local field="$1"
+	local profile="${2:-$(_setup_opencode_profile_id)}"
+	if command -v aidevops_opencode_profile_value >/dev/null 2>&1; then
+		aidevops_opencode_profile_value "$field" "$profile"
+		return $?
+	fi
+	case "$profile:$field" in
+		v2:package) printf '@opencode/cli\n' ;;
+		v2:binary) printf 'opencode2\n' ;;
+		v1:package) printf 'opencode-ai\n' ;;
+		v1:binary) printf 'opencode\n' ;;
+		*) return 1 ;;
+	esac
+	return 0
 }
 
 _setup_opencode_print_manual_install_hint() {
@@ -2231,7 +2266,9 @@ _setup_opencode_managed_shim_target() {
 _setup_ensure_opencode_stable_shim() {
 	local real_bin="${1:-}"
 	local shim_dir="${HOME}/.local/bin"
-	local shim_path="${shim_dir}/opencode"
+	local binary_name=""
+	binary_name=$(_setup_opencode_profile_value binary) || return 1
+	local shim_path="${shim_dir}/${binary_name}"
 	local resolved_bin=""
 	local wrapper_path=""
 	local wrapper_dir=""
@@ -2295,20 +2332,22 @@ _setup_find_valid_opencode_binary() {
 	local preferred_bin="${1:-}"
 	local candidate=""
 	local candidate_path=""
-	local shim_path="${HOME}/.local/bin/opencode"
+	local binary_name=""
+	binary_name=$(_setup_opencode_profile_value binary) || return 1
+	local shim_path="${HOME}/.local/bin/${binary_name}"
 	local managed_shim_target=""
 
 	managed_shim_target=$(_setup_opencode_managed_shim_target "$shim_path" 2>/dev/null || true)
 
 	for candidate in \
 		"$preferred_bin" \
-		/opt/homebrew/bin/opencode \
-		/usr/local/bin/opencode \
-		/home/linuxbrew/.linuxbrew/bin/opencode \
-		"${HOME}/.npm-global/bin/opencode" \
-		"${HOME}/.bun/bin/opencode" \
+		"/opt/homebrew/bin/${binary_name}" \
+		"/usr/local/bin/${binary_name}" \
+		"/home/linuxbrew/.linuxbrew/bin/${binary_name}" \
+		"${HOME}/.npm-global/bin/${binary_name}" \
+		"${HOME}/.bun/bin/${binary_name}" \
 		"$managed_shim_target" \
-		opencode; do
+		"$binary_name"; do
 		[[ -n "$candidate" ]] || continue
 		[[ "$candidate" == "$shim_path" ]] && continue
 		candidate_path=$(command -v "$candidate" 2>/dev/null || printf '%s' "$candidate")
@@ -2410,6 +2449,8 @@ _setup_find_valid_opencode_alternative() {
 # Returns: 0=valid, 1=wrong package (e.g. claude CLI), 2=missing/unrunnable.
 _setup_validate_opencode_binary() {
 	local bin="${1:-}"
+	local profile=""
+	profile=$(_setup_opencode_profile_id)
 	[[ -n "$bin" ]] || return 2
 	command -v "$bin" >/dev/null 2>&1 || return 2
 
@@ -2423,11 +2464,19 @@ _setup_validate_opencode_binary() {
 	# Anthropic claude CLI signature — highest-confidence rejection.
 	[[ "$v" == *"(Claude Code)"* ]] && return 1
 
-	# opencode is at 1.x; any 2.x+ is wrong (claude CLI is 2.1.x).
-	[[ "$v" =~ ^([2-9]|[1-9][[:digit:]]+)\. ]] && return 1
-
 	# Sanity: must look like a semver (X.Y.Z).
-	[[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]] || return 1
+	local semantic_version=""
+	if [[ "$v" =~ ([0-9]+\.[0-9]+\.[0-9]+) ]]; then
+		semantic_version="${BASH_REMATCH[1]}"
+	else
+		return 1
+	fi
+	if [[ "$profile" == "v2" ]]; then
+		[[ "$semantic_version" =~ ^2\. ]] || return 1
+	else
+		# V1 selection rejects V2 and the similarly versioned Claude CLI.
+		[[ "$semantic_version" =~ ^([2-9]|[1-9][[:digit:]]+)\. ]] && return 1
+	fi
 
 	# Positive OpenCode identity check. Qwen and other CLIs can return a
 	# semver-compatible --version (for example 0.2.1), so version shape alone is
@@ -2473,7 +2522,9 @@ _setup_opencode_force_heal() {
 
 	# Re-validate post-heal.
 	local new_bin
-	new_bin=$(_setup_find_valid_opencode_binary "$(command -v opencode 2>/dev/null || echo "")" 2>/dev/null || echo "")
+	local binary_name
+	binary_name=$(_setup_opencode_profile_value binary) || return 1
+	new_bin=$(_setup_find_valid_opencode_binary "$(command -v "$binary_name" 2>/dev/null || echo "")" 2>/dev/null || echo "")
 	if [[ -n "$new_bin" ]] && _setup_validate_opencode_binary "$new_bin"; then
 		local new_v
 		new_v=$(_setup_opencode_first_line "$(_setup_opencode_version_output "$new_bin" 2>/dev/null || printf 'unknown')")
@@ -2503,7 +2554,10 @@ setup_opencode_cli() {
 
 	# The compatibility pin is scoped to Linux headless dispatch. General setup
 	# tracks upstream; the headless launch guard restores its approved version.
-	local install_pkg="opencode-ai@latest"
+	local package binary_name
+	package=$(_setup_opencode_profile_value package) || return 1
+	binary_name=$(_setup_opencode_profile_value binary) || return 1
+	local install_pkg="${package}@latest"
 
 	# t2891: validate the resolved binary is anomalyco/opencode, not a
 	# wrong package (claude CLI etc) that took the 'opencode' bin name.
@@ -2512,7 +2566,7 @@ setup_opencode_cli() {
 	# this function, leaving t2887's runtime canary to throttle the spam
 	# without ever healing the binary.
 	local current_bin
-	current_bin=$(command -v opencode 2>/dev/null || echo "")
+	current_bin=$(command -v "$binary_name" 2>/dev/null || echo "")
 	local validate_rc=0
 	_setup_validate_opencode_binary "$current_bin" || validate_rc=$?
 	local valid_bin=""
@@ -2561,7 +2615,7 @@ setup_opencode_cli() {
 
 			# Persist resolved path on first-time success too (t2891).
 			local new_bin
-			new_bin=$(_setup_find_post_install_opencode_binary "$(command -v opencode 2>/dev/null || echo "")" 2>/dev/null || echo "")
+			new_bin=$(_setup_find_post_install_opencode_binary "$(command -v "$binary_name" 2>/dev/null || echo "")" 2>/dev/null || echo "")
 			if [[ -n "$new_bin" ]] && _setup_validate_opencode_binary "$new_bin"; then
 				local stable_bin
 				stable_bin=$(_setup_ensure_opencode_stable_shim "$new_bin") || {

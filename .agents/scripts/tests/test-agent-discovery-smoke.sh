@@ -170,6 +170,88 @@ PY
 	return 0
 }
 
+test_opencode_v2_config_and_v1_rollback() {
+	local fake_home="$TEST_DIR/fake-home"
+	local config_path="$fake_home/.config/opencode/opencode.json"
+	local profile_file="$REPO_ROOT/.agents/configs/opencode-runtime-profiles.json"
+	local output
+
+	run_discovery_script "$SCRIPTS_DIR/agent-discovery.py" dummy opencode-json >/dev/null 2>&1 || true
+	cat >"$config_path" <<'JSON'
+{
+  "autoupdate": false,
+  "agent": {"custom": {"prompt": "custom prompt", "temperature": 0.2, "permission": {"bash": "ask"}}},
+  "plugin": ["file:///example/plugin.mjs", "file:///old/plugins/opencode-aidevops/index.mjs"],
+  "permission": {"read": "allow"},
+  "provider": {"custom": {"npm": "custom-provider", "options": {"region": "test"}, "models": {"model": {"options": {"mode": "fast"}}}}},
+  "mcp": {"custom": {"type": "local", "command": ["custom-mcp"], "enabled": false, "env": {"MODE": "test"}}}
+}
+JSON
+	if ! output=$(HOME="$fake_home" AIDEVOPS_OPENCODE_PROFILE=v2 \
+		AIDEVOPS_OPENCODE_PROFILE_FILE="$profile_file" \
+		python3 "$SCRIPTS_DIR/agent-discovery.py" dummy opencode-json 2>&1); then
+		print_result "OpenCode V2 config migration and V1 rollback" 1 "$output"
+		return 0
+	fi
+	if ! python3 - "$config_path" <<'PY'; then
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    config = json.load(handle)
+
+for legacy_key in ("agent", "plugin", "permission", "provider", "autoupdate", "tools"):
+    assert legacy_key not in config, legacy_key
+assert config["update"] == "disable"
+assert config["plugins"][-1].endswith("/v2-plugin")
+assert config["agents"]["custom"]["system"] == "custom prompt"
+assert config["agents"]["custom"]["request"]["body"]["temperature"] == 0.2
+assert {"action": "bash", "resource": "*", "effect": "ask"} in config["agents"]["custom"]["permissions"]
+assert config["providers"]["custom"]["package"] == "custom-provider"
+assert config["providers"]["custom"]["settings"]["region"] == "test"
+assert config["providers"]["custom"]["models"]["model"]["settings"]["mode"] == "fast"
+assert config["providers"]["anthropic"]["settings"]["setCacheKey"] is True
+assert config["mcp"]["servers"]["custom"]["disabled"] is True
+assert config["mcp"]["servers"]["custom"]["environment"] == {"MODE": "test"}
+assert any(rule["action"] == "external_directory" for rule in config["permissions"])
+PY
+		print_result "OpenCode V2 config migration and V1 rollback" 1 "V2 config assertions failed"
+		return 0
+	fi
+
+	if ! output=$(HOME="$fake_home" AIDEVOPS_OPENCODE_PROFILE=v1 \
+		AIDEVOPS_OPENCODE_PROFILE_FILE="$profile_file" \
+		python3 "$SCRIPTS_DIR/agent-discovery.py" dummy opencode-json 2>&1); then
+		print_result "OpenCode V2 config migration and V1 rollback" 1 "$output"
+		return 0
+	fi
+	if python3 - "$config_path" <<'PY'; then
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    config = json.load(handle)
+
+for v2_key in ("agents", "plugins", "permissions", "providers", "update"):
+    assert v2_key not in config, v2_key
+assert config["autoupdate"] is False
+assert config["plugin"][-1].endswith("/index.mjs")
+assert config["agent"]["custom"]["prompt"] == "custom prompt"
+assert config["agent"]["custom"]["temperature"] == 0.2
+assert config["agent"]["custom"]["permission"]["bash"] == "ask"
+assert config["provider"]["custom"]["npm"] == "custom-provider"
+assert config["provider"]["custom"]["options"]["region"] == "test"
+assert config["provider"]["custom"]["models"]["model"]["options"]["mode"] == "fast"
+assert config["mcp"]["custom"]["enabled"] is False
+assert config["mcp"]["custom"]["env"] == {"MODE": "test"}
+PY
+		print_result "OpenCode V2 config migration and V1 rollback" 0
+	else
+		print_result "OpenCode V2 config migration and V1 rollback" 1 "V1 rollback assertions failed"
+	fi
+	return 0
+}
+
 test_opencode_agent_discovery_runs() {
 	local output
 	if output=$(run_discovery_script \
@@ -318,6 +400,7 @@ main() {
 	setup
 	test_agent_discovery_runs
 	test_opencode_config_persists_managed_directory_permissions
+	test_opencode_v2_config_and_v1_rollback
 	test_opencode_agent_discovery_runs
 	test_opencode_agent_discovery_cli_is_non_mutating
 	test_missing_subagent_warning
