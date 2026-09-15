@@ -1434,7 +1434,7 @@ _setup_run_ai_session_incremental() {
 	_setup_init_stage_timing_log
 	if [[ "$_SETUP_AI_SESSION_NEEDS_AGENTS" -eq 1 ]]; then
 		_time_step "$SETUP_STAGE_AGENTS" deploy_aidevops_agents || return $?
-		_time_step "$SETUP_STAGE_OPENCODE_PLUGINS" setup_opencode_plugins || return $?
+		_time_step "$SETUP_STAGE_OPENCODE_PLUGINS" setup_opencode_runtime_plugins || return $?
 		_time_step "$SETUP_STAGE_HOTFIX_CONFIG" _deploy_hotfix_config || return $?
 		_time_step "$SETUP_STAGE_RUNTIME_CONFIG" _setup_reconcile_runtime_config || return $?
 	fi
@@ -1475,12 +1475,12 @@ _setup_run_scoped_stage() {
 	_setup_init_stage_timing_log
 	case "$stage" in
 	"$SETUP_STAGE_OPENCODE")
-		_time_step "$SETUP_STAGE_OPENCODE" setup_opencode_cli
+		_time_step "$SETUP_STAGE_OPENCODE" setup_opencode_runtimes
 		_time_step "setup_opencode_desktop_launcher" setup_opencode_desktop_launcher
 		;;
 	"$SETUP_STAGE_AGENTS")
 		_time_step "$SETUP_STAGE_AGENTS" deploy_aidevops_agents
-		_time_step "$SETUP_STAGE_OPENCODE_PLUGINS" setup_opencode_plugins
+		_time_step "$SETUP_STAGE_OPENCODE_PLUGINS" setup_opencode_runtime_plugins
 		_time_step "$SETUP_STAGE_HOTFIX_CONFIG" _deploy_hotfix_config
 		;;
 	"$SETUP_STAGE_RUNTIME_CONFIG")
@@ -1582,10 +1582,10 @@ _setup_run_non_interactive() {
 	# collision with @anthropic-ai/claude-code or similar). Skipping this
 	# in non-interactive mode is the bug PR #20189 introduced and what
 	# alex-solovyev's runner spam stemmed from.
-	_time_step "$SETUP_STAGE_OPENCODE" setup_opencode_cli
+	_time_step "$SETUP_STAGE_OPENCODE" setup_opencode_runtimes
 	_time_step "validate_opencode_config" validate_opencode_config
 	_time_step "$SETUP_STAGE_AGENTS" deploy_aidevops_agents
-	_time_step "$SETUP_STAGE_OPENCODE_PLUGINS" setup_opencode_plugins
+	_time_step "$SETUP_STAGE_OPENCODE_PLUGINS" setup_opencode_runtime_plugins
 	_time_step "reconcile_buzz_desktop_compatibility" reconcile_buzz_desktop_compatibility
 	_time_step "_setup_install_pulse_plist_early" _setup_install_pulse_plist_early
 	_time_step "$SETUP_STAGE_HOTFIX_CONFIG" _deploy_hotfix_config
@@ -1688,9 +1688,9 @@ _setup_run_interactive_runtime_tools() {
 	confirm_step "Setup AI orchestration frameworks info" && setup_ai_orchestration
 	confirm_step "Setup Ollama (local LLM for knowledge plane pii/sensitive/privileged tiers)" && setup_ollama_for_knowledge
 	confirm_step "Setup Google Workspace CLI (Gmail, Calendar, Drive)" && setup_google_workspace_cli
-	confirm_step "Setup OpenCode CLI (AI coding tool)" && setup_opencode_cli
+	confirm_step "Setup OpenCode V1 and isolated V2 preview CLIs" && setup_opencode_runtimes
 	confirm_step "Install OpenCode AIDevOps Desktop app wrapper" && setup_opencode_desktop_launcher
-	confirm_step "Setup OpenCode plugins" && setup_opencode_plugins
+	confirm_step "Setup OpenCode plugins" && setup_opencode_runtime_plugins
 	confirm_step "Setup Codex CLI (OpenAI AI coding tool)" && setup_codex_cli
 	confirm_step "Setup Droid CLI (Factory.AI coding tool)" && setup_droid_cli
 	return 0

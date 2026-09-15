@@ -70,7 +70,11 @@ extract_functions() {
 		/^_setup_opencode_binary_is_ephemeral\(\)/, /^}$/ { print; next }
 		/^_setup_clear_canary_negative_cache\(\)/, /^}$/ { print; next }
 		/^_setup_opencode_managed_shim_target\(\)/, /^}$/ { print; next }
+		/^_setup_write_opencode_v2_shim\(\)/, /^}$/ { print; next }
+		/^_setup_write_opencode_v1_shim\(\)/, /^}$/ { print; next }
 		/^_setup_ensure_opencode_stable_shim\(\)/, /^}$/ { print; next }
+		/^_setup_record_opencode_binary_path\(\)/, /^}$/ { print; next }
+		/^_setup_opencode_v2_preview_enabled\(\)/, /^}$/ { print; next }
 		/^_setup_find_valid_opencode_binary\(\)/, /^}$/ { print; next }
 		/^_setup_find_post_install_opencode_binary\(\)/, /^}$/ { print; next }
 		/^_setup_record_valid_opencode_binary\(\)/, /^}$/ { print; next }
@@ -79,6 +83,7 @@ extract_functions() {
 		/^_setup_validate_opencode_binary\(\)/, /^}$/ { print; next }
 		/^_setup_opencode_force_heal\(\)/, /^}$/ { print; next }
 		/^setup_opencode_cli\(\)/, /^}$/ { print; next }
+		/^setup_opencode_runtimes\(\)/, /^}$/ { print; next }
 	' "$TOOL_INSTALL" >"$SANDBOX/extract.sh"
 	# Verify extraction worked
 	if ! grep -q "^_setup_validate_opencode_binary()" "$SANDBOX/extract.sh"; then
@@ -776,6 +781,92 @@ repair_checksum=$(cksum "$repair_shim")
 	setup_opencode_cli
 ) >/dev/null 2>&1
 assert_eq "broken marked shim repair is idempotent" "$repair_checksum" "$(cksum "$repair_shim")"
+
+echo "Test 14: V2 stable shim isolates runtime state and defaults the server port"
+v2_home="$SANDBOX/v2-home"
+v2_real_dir="$v2_home/.bun/bin"
+v2_shim="$v2_home/.local/bin/opencode2"
+mkdir -p "$v2_real_dir"
+cat >"$v2_real_dir/opencode2" <<'EOF'
+#!/usr/bin/env bash
+case "${1:-}" in
+--version) printf 'opencode v2.0.3\n' ;;
+--help) printf 'OpenCode command line interface\nrun  Run OpenCode with a message\n' ;;
+env-check)
+	printf '%s|%s|%s|%s|%s|%s|%s|%s\n' \
+		"${AIDEVOPS_OPENCODE_PROFILE:-}" "${XDG_CONFIG_HOME:-}" \
+		"${XDG_DATA_HOME:-}" "${XDG_CACHE_HOME:-}" "${XDG_STATE_HOME:-}" \
+		"${TMPDIR:-}" "${OPENCODE_CONFIG:-}" "${AIDEVOPS_OAUTH_POOL_FILE:-}"
+	;;
+*) printf '%s\n' "$*" ;;
+esac
+EOF
+chmod +x "$v2_real_dir/opencode2"
+(
+	source_extracted
+	export HOME="$v2_home"
+	_setup_opencode_binary_is_ephemeral() { return 1; }
+	AIDEVOPS_OPENCODE_PROFILE=v2 _setup_ensure_opencode_stable_shim "$v2_real_dir/opencode2"
+) >"$SANDBOX/out14" 2>&1
+assert_eq "V2 isolation shim path" "$v2_shim" "$(tail -1 "$SANDBOX/out14")"
+v2_root="$v2_home/.aidevops/runtimes/opencode-v2"
+assert_eq "V2 shim exports isolated roots" \
+	"v2|$v2_root/config|$v2_root/data|$v2_root/cache|$v2_root/state|$v2_root/tmp|$v2_root/config/opencode/opencode.json|$v2_root/auth/oauth-pool.json" \
+	"$(HOME="$v2_home" "$v2_shim" env-check)"
+custom_v2_root="$v2_home/custom-v2-root"
+assert_eq "V2 shim honors a custom isolation root" \
+	"v2|$custom_v2_root/config|$custom_v2_root/data|$custom_v2_root/cache|$custom_v2_root/state|$custom_v2_root/tmp|$custom_v2_root/config/opencode/opencode.json|$custom_v2_root/auth/oauth-pool.json" \
+	"$(HOME="$v2_home" AIDEVOPS_OPENCODE_V2_ROOT="$custom_v2_root" "$v2_shim" env-check)"
+assert_eq "V2 serve gets isolated default port" "serve --port 4097 --hostname 127.0.0.1" \
+	"$(HOME="$v2_home" "$v2_shim" serve --hostname 127.0.0.1)"
+assert_eq "V2 serve preserves explicit port" "serve --port 4999" "$(HOME="$v2_home" "$v2_shim" serve --port 4999)"
+assert_eq "V2 serve supports configured default port" "serve --port 4555" \
+	"$(HOME="$v2_home" AIDEVOPS_OPENCODE_V2_PORT=4555 "$v2_shim" serve)"
+assert_eq "V2 serve after a boolean global option gets the isolated port" \
+	"--print-logs serve --port 4097" "$(HOME="$v2_home" "$v2_shim" --print-logs serve)"
+assert_eq "V2 serve after a valued global option gets the isolated port" \
+	"--log-level DEBUG serve --port 4097" "$(HOME="$v2_home" "$v2_shim" --log-level DEBUG serve)"
+assert_eq "V2 leading global option preserves an explicit port" \
+	"--print-logs serve --port 4999" "$(HOME="$v2_home" "$v2_shim" --print-logs serve --port 4999)"
+assert_eq "V2 does not treat a run message as the serve subcommand" \
+	"run serve" "$(HOME="$v2_home" "$v2_shim" run serve)"
+for isolated_dir in config data cache state tmp auth; do
+	if [[ -d "$v2_root/$isolated_dir" ]]; then
+		assert_eq "V2 shim creates isolated $isolated_dir directory" "present" "present"
+	else
+		assert_eq "V2 shim creates isolated $isolated_dir directory" "present" "absent"
+	fi
+done
+
+echo "Test 15: dual-runtime setup preserves V1 and fail-opens the V2 preview"
+(
+	source_extracted
+	setup_opencode_cli() {
+		printf '%s:%s\n' "${AIDEVOPS_OPENCODE_PROFILE:-v1}" "${AIDEVOPS_OPENCODE_PRESERVE_PRIMARY_RECEIPT:-0}"
+		[[ "${AIDEVOPS_OPENCODE_PROFILE:-v1}" != "v2" ]]
+	}
+	AIDEVOPS_OPENCODE_PROFILE=v1 setup_opencode_runtimes
+) >"$SANDBOX/out15" 2>&1
+assert_eq "default setup installs V1 then isolated V2" $'v1:0\nv2:1' "$(grep -E '^v[12]:' "$SANDBOX/out15")"
+if grep -Fq 'V1 remains available' "$SANDBOX/out15"; then
+	assert_eq "V2 setup failure is explicitly non-disruptive" "warned" "warned"
+else
+	assert_eq "V2 setup failure is explicitly non-disruptive" "warned" "missing"
+fi
+(
+	source_extracted
+	setup_opencode_cli() { printf '%s\n' "${AIDEVOPS_OPENCODE_PROFILE:-v1}"; }
+	AIDEVOPS_OPENCODE_PROFILE=v1 AIDEVOPS_INSTALL_OPENCODE2_PREVIEW=0 setup_opencode_runtimes
+) >"$SANDBOX/out15b" 2>&1
+assert_eq "preview opt-out leaves V1 setup enabled" "v1" "$(grep -E '^v[12]$' "$SANDBOX/out15b")"
+(
+	source_extracted
+	setup_opencode_cli() {
+		printf '%s:%s\n' "${AIDEVOPS_OPENCODE_PROFILE:-v1}" "${AIDEVOPS_OPENCODE_PRESERVE_PRIMARY_RECEIPT:-0}"
+	}
+	AIDEVOPS_OPENCODE_PROFILE=v2 setup_opencode_runtimes
+) >"$SANDBOX/out15c" 2>&1
+assert_eq "V2-primary setup keeps V1 as rollback" $'v1:1\nv2:0' "$(grep -E '^v[12]:' "$SANDBOX/out15c")"
 
 echo ""
 echo "===== Results: $PASS passed, $FAIL failed ====="

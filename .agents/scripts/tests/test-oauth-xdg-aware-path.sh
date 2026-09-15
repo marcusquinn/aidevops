@@ -5,7 +5,7 @@
 # test-oauth-xdg-aware-path.sh — t2249 regression guard.
 #
 # Asserts that `oauth-pool-helper.sh`'s OPENCODE_AUTH_FILE constant is
-# XDG_DATA_HOME-aware. This is the keystone fix: when set, rotation
+# XDG_DATA_HOME-aware and its pool path supports runtime isolation. When set, rotation
 # targets the isolated per-worker auth.json; when unset, rotation
 # targets the shared interactive file (original behaviour).
 #
@@ -20,6 +20,7 @@
 #   1. XDG_DATA_HOME unset, HOME=/h  → /h/.local/share/opencode/auth.json
 #   2. XDG_DATA_HOME=/x, HOME=/h     → /x/opencode/auth.json
 #   3. XDG_DATA_HOME="" (empty)      → /h/.local/share/opencode/auth.json
+#   4. AIDEVOPS_OAUTH_POOL_FILE set  → isolated credential pool
 #
 # Strategy: extract the `OPENCODE_AUTH_FILE=` assignment line from the
 # helper and eval it in isolated subshells with controlled env. This
@@ -70,6 +71,11 @@ LINE=$(grep -E '^OPENCODE_AUTH_FILE=' "$HELPER" | head -1)
 	printf 'FATAL: could not locate OPENCODE_AUTH_FILE= line in %s\n' "$HELPER" >&2
 	exit 1
 }
+POOL_LINE=$(grep -E '^POOL_FILE=' "$HELPER" | head -1)
+[[ -n "$POOL_LINE" ]] || {
+	printf 'FATAL: could not locate POOL_FILE= line in %s\n' "$HELPER" >&2
+	exit 1
+}
 
 printf '%s[test]%s t2249 — OAuth pool OPENCODE_AUTH_FILE is XDG-aware\n' "$TEST_BLUE" "$TEST_NC"
 printf '  extracted: %s\n' "$LINE"
@@ -102,6 +108,17 @@ if [[ "$actual" == "$expected" ]]; then
 	pass "XDG_DATA_HOME empty string falls back to HOME default (\${:-} semantics)"
 else
 	fail "XDG_DATA_HOME empty: expected '$expected', got '$actual'"
+fi
+
+# --- Test 4: explicit pool path → isolated credential pool -------------------
+
+actual=$(env -i HOME=/h4 AIDEVOPS_OAUTH_POOL_FILE=/isolated/oauth-pool.json \
+	bash -c "$POOL_LINE; printf '%s' \"\$POOL_FILE\"")
+expected="/isolated/oauth-pool.json"
+if [[ "$actual" == "$expected" ]]; then
+	pass "AIDEVOPS_OAUTH_POOL_FILE routes to an isolated credential pool"
+else
+	fail "isolated pool: expected '$expected', got '$actual'"
 fi
 
 # --- Summary -----------------------------------------------------------------

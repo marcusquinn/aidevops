@@ -600,6 +600,9 @@ setup_opencode_plugins() {
 	local binary_name="opencode"
 	local plugin_entry="index.mjs"
 	local plugin_key="plugin"
+	local config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
+	local opencode_config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
+	local opencode_config=""
 	if declare -F aidevops_opencode_profile_id >/dev/null 2>&1; then
 		profile=$(aidevops_opencode_profile_id)
 	fi
@@ -607,6 +610,10 @@ setup_opencode_plugins() {
 		binary_name="opencode2"
 		plugin_entry="v2-plugin"
 		plugin_key="plugins"
+		local v2_root="${AIDEVOPS_OPENCODE_V2_ROOT:-${HOME}/.aidevops/runtimes/opencode-v2}"
+		config_home="${AIDEVOPS_OPENCODE_V2_CONFIG_HOME:-${v2_root}/config}"
+		opencode_config_dir="${AIDEVOPS_OPENCODE_V2_CONFIG_DIR:-${config_home}/opencode}"
+		opencode_config="${AIDEVOPS_OPENCODE_V2_CONFIG:-${opencode_config_dir}/opencode.json}"
 	fi
 	# Check prerequisites before announcing setup (GH#5240)
 	if ! command -v "$binary_name" &>/dev/null; then
@@ -622,10 +629,15 @@ setup_opencode_plugins() {
 	#   1. file:// URL in opencode.json "plugin" array (works on all tested versions)
 	#   2. Symlink in ~/.config/opencode/plugins/ (newer OpenCode convention)
 	# Both are idempotent — the plugin's registerPoolProvider() checks before adding.
-	local plugins_dir="$HOME/.config/opencode/plugins"
+	local plugins_dir="${opencode_config_dir}/plugins"
 	local aidevops_plugin_src="$HOME/.aidevops/agents/plugins/opencode-aidevops"
 	local aidevops_plugin_dst="$plugins_dir/opencode-aidevops"
 	local aidevops_plugin_entrypoint="$aidevops_plugin_src/$plugin_entry"
+	local aidevops_plugin_symlink_src="$aidevops_plugin_src"
+	if [[ "$profile" == "v2" ]]; then
+		aidevops_plugin_dst="$plugins_dir/aidevops-v2"
+		aidevops_plugin_symlink_src="$aidevops_plugin_entrypoint"
+	fi
 
 	if [[ ! -e "$aidevops_plugin_entrypoint" ]]; then
 		print_skip "OpenCode plugins" "aidevops plugin entry point not found: $aidevops_plugin_entrypoint"
@@ -635,15 +647,23 @@ setup_opencode_plugins() {
 
 	# Mechanism 1: file:// URL in opencode.json
 	local pool_plugin_registered=""
-	local opencode_config
-	if opencode_config=$(find_opencode_config); then
+	if [[ "$profile" == "v2" ]]; then
+		local opencode_config_parent=""
+		opencode_config_parent=$(dirname "$opencode_config")
+		mkdir -p "$opencode_config_dir" "$opencode_config_parent" || return 1
+		chmod 700 "$config_home" "$opencode_config_dir" "$opencode_config_parent" 2>/dev/null || true
+		if [[ ! -e "$opencode_config" ]]; then
+			(umask 077 && printf '{}\n' >"$opencode_config") || return 1
+		fi
+	fi
+	if [[ -n "$opencode_config" ]] || opencode_config=$(find_opencode_config); then
 		pool_plugin_registered=$(_setup_opencode_plugins_register_file_url "$opencode_config" "$aidevops_plugin_entrypoint" "$plugin_key")
 	else
 		print_info "opencode.json not found — run 'opencode' once to create it, then re-run setup"
 	fi
 
 	# Mechanism 2: symlink in plugins directory
-	_setup_opencode_plugins_register_symlink "$plugins_dir" "$aidevops_plugin_src" "$aidevops_plugin_dst"
+	_setup_opencode_plugins_register_symlink "$plugins_dir" "$aidevops_plugin_symlink_src" "$aidevops_plugin_dst"
 
 	setup_track_configured "OpenCode plugins"
 
@@ -651,6 +671,33 @@ setup_opencode_plugins() {
 	_setup_opencode_plugins_auth_guidance "$pool_plugin_registered" "$binary_name"
 
 	return 0
+}
+
+setup_opencode_v2_preview_plugins() {
+	case "${AIDEVOPS_INSTALL_OPENCODE2_PREVIEW:-1}" in
+	0 | false | FALSE | no | NO) return 0 ;;
+	esac
+	AIDEVOPS_OPENCODE_PROFILE=v2 setup_opencode_plugins
+	return $?
+}
+
+setup_opencode_runtime_plugins() {
+	local selected_profile="v1"
+	if declare -F aidevops_opencode_profile_id >/dev/null 2>&1; then
+		selected_profile=$(aidevops_opencode_profile_id)
+	fi
+	if [[ "$selected_profile" == "v2" ]]; then
+		(
+			unset OPENCODE_CONFIG OPENCODE_CONFIG_DIR XDG_CONFIG_HOME
+			AIDEVOPS_OPENCODE_PROFILE=v1 setup_opencode_plugins
+		) ||
+			print_warning "OpenCode V1 rollback plugin setup encountered issues"
+		AIDEVOPS_OPENCODE_PROFILE=v2 setup_opencode_plugins
+		return $?
+	fi
+	AIDEVOPS_OPENCODE_PROFILE=v1 setup_opencode_plugins || return $?
+	setup_opencode_v2_preview_plugins
+	return $?
 }
 
 setup_seo_mcps() {

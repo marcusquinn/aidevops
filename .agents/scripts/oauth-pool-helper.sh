@@ -32,7 +32,8 @@ IFS=$'\n\t'
 # Constants
 # ---------------------------------------------------------------------------
 
-POOL_FILE="${HOME}/.aidevops/oauth-pool.json"
+# OpenCode V2 and headless runtimes can supply an isolated credential pool.
+POOL_FILE="${AIDEVOPS_OAUTH_POOL_FILE:-${HOME}/.aidevops/oauth-pool.json}"
 # t2249: XDG-aware auth path. Resolves to the isolated per-worker auth.json
 # when called from a headless worker context (XDG_DATA_HOME set by
 # headless-runtime-helper.sh invoke_opencode), and to the shared interactive
