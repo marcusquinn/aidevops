@@ -22,6 +22,7 @@ tools:
 - **Subagents**: hostinger, hetzner, wordpress, seo, code-quality, browser-automation, etc.
 - **Setup**: `cd ~/Git/aidevops && .agents/scripts/generate-opencode-agents.sh`
 - **MCPs disabled globally** — enabled per-agent to save context tokens
+- **Runtime profile**: V1 is the rollback-safe default; V2 is opt-in until its Linux-headless canary passes
 
 | Purpose | Path |
 |---------|------|
@@ -30,6 +31,32 @@ tools:
 | Alternative config | `~/.opencode/` (some installations) |
 | aidevops agents | `~/.aidevops/agents/` (after setup.sh) |
 | Credentials | `~/.config/aidevops/credentials.sh` |
+
+## Runtime profiles
+
+OpenCode 1 and 2 have incompatible packages, binaries, plugin contracts, and
+configuration schemas. Aidevops keeps those differences in
+`.agents/configs/opencode-runtime-profiles.json`; shared plugin behavior remains
+runtime-neutral.
+
+| Profile | CLI package | Binary | Plugin implementation | Config loader | Config keys |
+|---------|-------------|--------|-----------------------|---------------|-------------|
+| `v1` (default) | `opencode-ai` | `opencode` | `index.mjs` | `index.mjs` | `agent`, `plugin`, `permission`, `provider` |
+| `v2` (opt-in) | `@opencode/cli` | `opencode2` | `v2.mjs` | `v2-plugin/` | `agents`, `plugins`, `permissions`, `providers` |
+
+Select a profile for setup and generated configuration:
+
+```bash
+AIDEVOPS_OPENCODE_PROFILE=v2 ./setup.sh --non-interactive
+
+# Explicit rollback. This converts managed config back to V1 keys and restores
+# the V1 plugin entry without deleting user-defined agents, providers, or MCPs.
+AIDEVOPS_OPENCODE_PROFILE=v1 ./setup.sh --non-interactive
+```
+
+V2 promotion requires the isolated plugin, security-hook, lifecycle-cleanup,
+OAuth/MCP, headless execution, and V1 rollback gates to pass. Until then, do not
+change the profile document's `default` from `v1`.
 
 ## Authentication
 
@@ -67,7 +94,10 @@ tools:
 ---
 ```
 
-`opencode.json` pattern: `"mcp": { "name": { ..., "enabled": false } }` + `"agent": { "name": { "tools": { "name_*": true } } }`
+V1 `opencode.json` pattern: `"mcp": { "name": { ..., "enabled": false } }` + `"agent": { "name": { "tools": { "name_*": true } } }`.
+
+V2 uses `"mcp": { "servers": { "name": { ..., "disabled": true } } }`,
+`"agents"`, ordered `"permissions"`, and the V2 plugin's MCP/tool transforms.
 
 ## Usage
 
@@ -96,6 +126,9 @@ TUI requires restart for config changes. Use CLI for quick iteration:
 ```bash
 opencode run "List your available tools" --agent SEO
 opencode run "Quick test" --agent Build+ --model anthropic/claude-sonnet-4-6
+
+# V2 opt-in uses the profile binary
+opencode2 run "List your available tools" --agent SEO
 
 # Persistent server (keeps MCPs warm)
 opencode serve --port 4096                                             # Terminal 1

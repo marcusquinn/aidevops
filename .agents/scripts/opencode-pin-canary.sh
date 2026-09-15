@@ -10,6 +10,22 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=shared-constants.sh
 source "$SCRIPT_DIR/shared-constants.sh"
 
+OPENCODE_CANARY_PROFILE=$(aidevops_opencode_profile_id)
+OPENCODE_CANARY_PACKAGE=$(aidevops_opencode_profile_value package "$OPENCODE_CANARY_PROFILE")
+OPENCODE_CANARY_BINARY=$(aidevops_opencode_profile_value binary "$OPENCODE_CANARY_PROFILE")
+OPENCODE_CANARY_PLUGIN_ENTRY=$(aidevops_opencode_profile_value pluginEntry "$OPENCODE_CANARY_PROFILE")
+OPENCODE_CANARY_PLUGIN_TARGET=$(aidevops_opencode_profile_value pluginConfigTarget "$OPENCODE_CANARY_PROFILE")
+OPENCODE_CANARY_PIN=$(aidevops_opencode_profile_value headlessPin "$OPENCODE_CANARY_PROFILE")
+OPENCODE_CANARY_TESTED=$(aidevops_opencode_profile_value testedVersion "$OPENCODE_CANARY_PROFILE")
+OPENCODE_CANARY_REASON=$(aidevops_opencode_profile_value pinReason "$OPENCODE_CANARY_PROFILE")
+OPENCODE_CANARY_PLATFORM=$(aidevops_opencode_profile_value pinPlatform "$OPENCODE_CANARY_PROFILE")
+OPENCODE_CANARY_RUNTIME_MODE=$(aidevops_opencode_profile_value pinRuntimeMode "$OPENCODE_CANARY_PROFILE")
+OPENCODE_CANARY_INTRODUCED=$(aidevops_opencode_profile_value introducedDate "$OPENCODE_CANARY_PROFILE")
+OPENCODE_CANARY_LAST_DATE=$(aidevops_opencode_profile_value lastCanaryDate "$OPENCODE_CANARY_PROFILE")
+OPENCODE_CANARY_LAST_RESULT=$(aidevops_opencode_profile_value lastCanaryResult "$OPENCODE_CANARY_PROFILE")
+OPENCODE_CANARY_REVIEW_DEADLINE=$(aidevops_opencode_profile_value reviewDeadline "$OPENCODE_CANARY_PROFILE")
+OPENCODE_CANARY_PROVIDER_NAME='Canary'
+
 _CANARY_TEMP_ROOT=""
 _CANARY_MOCK_PID=""
 _CANARY_PLUGIN_PATH=""
@@ -24,7 +40,7 @@ cleanup_canary() {
 
 usage() {
 	printf 'Usage: opencode-pin-canary.sh status [--json]\n'
-	printf '       opencode-pin-canary.sh canary [candidate-version]\n'
+	printf '       opencode-pin-canary.sh canary [candidate-version] [--force]\n'
 }
 
 install_isolated_opencode() {
@@ -32,13 +48,18 @@ install_isolated_opencode() {
 	local version="$2"
 	local isolated_home="$3"
 	local isolated_cache="$4"
+	local -a install_args=(install --no-audit --no-fund --prefix "$install_root")
+	# V2's package installs its platform binary in postinstall. The canary uses
+	# an exact version inside a disposable root, so the script is both required
+	# and contained; V1 retains its established script-free installation.
+	[[ "$OPENCODE_CANARY_PROFILE" == "v2" ]] || install_args+=(--ignore-scripts)
 	mkdir -p "$install_root" "$isolated_home" "$isolated_cache"
 	env -i \
 		HOME="$isolated_home" PATH="$PATH" \
 		GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
 		npm_config_userconfig=/dev/null npm_config_cache="$isolated_cache" \
-		npm install --ignore-scripts --no-audit --no-fund --prefix "$install_root" \
-		"opencode-ai@${version}" >/dev/null
+		npm "${install_args[@]}" \
+		"${OPENCODE_CANARY_PACKAGE}@${version}" >/dev/null
 }
 
 install_isolated_plugin() {
@@ -52,13 +73,18 @@ install_isolated_plugin() {
 		HOME="$isolated_home" PATH="$PATH" \
 		GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
 		npm_config_userconfig=/dev/null npm_config_cache="$isolated_cache" \
-		npm ci --ignore-scripts --no-audit --no-fund --prefix "$install_root" >/dev/null || return 1
-	_CANARY_PLUGIN_PATH="$install_root/index.mjs"
+		npm ci --omit=peer --ignore-scripts --no-audit --no-fund --prefix "$install_root" >/dev/null || return 1
+	_CANARY_PLUGIN_PATH="$install_root/${OPENCODE_CANARY_PLUGIN_TARGET}"
 	return 0
 }
 
 resolve_installed_opencode_binary() {
 	local install_root="$1"
+	local package_binary="$install_root/node_modules/.bin/${OPENCODE_CANARY_BINARY}"
+	if [[ -x "$package_binary" ]]; then
+		printf '%s\n' "$package_binary"
+		return 0
+	fi
 	local machine_arch
 	machine_arch=$(uname -m)
 	local package_arch=""
@@ -104,8 +130,13 @@ port_file, request_file = sys.argv[1:]
 CANARY = "canary"
 CONTENT_LENGTH = "Content-Length"
 CREATED = "created"
+DELTA = "delta"
+FOUR = "Four"
+MESSAGE_ID = "msg_canary"
 MODEL = "model"
 OBJECT = "object"
+STATUS = "status"
+TYPE = "type"
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *_args):
@@ -128,13 +159,29 @@ class Handler(BaseHTTPRequestHandler):
         with open(request_file, "a", encoding="utf-8") as requests:
             requests.write(self.path + "\n")
         now = int(time.time())
-        chunks = [
-            {"id": CANARY, OBJECT: "chat.completion.chunk", CREATED: now,
-             MODEL: CANARY, "choices": [{"index": 0,
-             "delta": {"role": "assistant", "content": "Four"}, "finish_reason": None}]},
-            {"id": CANARY, OBJECT: "chat.completion.chunk", CREATED: now,
-             MODEL: CANARY, "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]},
-        ]
+        if self.path.endswith("/responses"):
+            chunks = [
+                {TYPE: "response.output_item.added",
+                 "item": {TYPE: "message", "id": MESSAGE_ID}},
+                {TYPE: "response.output_text.delta", "item_id": MESSAGE_ID, DELTA: FOUR},
+                {TYPE: "response.completed", "response": {
+                    "id": "resp_canary",
+                    STATUS: "completed",
+                    "output": [{TYPE: "message", "id": MESSAGE_ID, "role": "assistant",
+                                STATUS: "completed", "content": [{TYPE: "output_text", "text": FOUR}]}],
+                    "usage": {"input_tokens": 4, "output_tokens": 1, "total_tokens": 5,
+                              "input_tokens_details": {"cached_tokens": 0},
+                              "output_tokens_details": {"reasoning_tokens": 0}},
+                }},
+            ]
+        else:
+            chunks = [
+                {"id": CANARY, OBJECT: "chat.completion.chunk", CREATED: now,
+                 MODEL: CANARY, "choices": [{"index": 0,
+                 DELTA: {"role": "assistant", "content": FOUR}, "finish_reason": None}]},
+                {"id": CANARY, OBJECT: "chat.completion.chunk", CREATED: now,
+                 MODEL: CANARY, "choices": [{"index": 0, DELTA: {}, "finish_reason": "stop"}]},
+            ]
         payload = "".join("data: " + json.dumps(chunk) + "\n\n" for chunk in chunks)
         payload += "data: [DONE]\n\n"
         encoded = payload.encode()
@@ -168,26 +215,36 @@ run_isolated_probe() {
 	local request_file="$5"
 	local probe_root="$canary_root/probe-$label"
 	local output_file="$canary_root/$label.output"
-	local plugin_path="${_CANARY_PLUGIN_PATH:-$SCRIPT_DIR/../plugins/opencode-aidevops/index.mjs}"
+	local plugin_path="${_CANARY_PLUGIN_PATH:-$SCRIPT_DIR/../plugins/opencode-aidevops/${OPENCODE_CANARY_PLUGIN_TARGET}}"
 	local plugin_url=""
 	local canary_id="canary"
 	local provider_id="$canary_id"
 	local model_id="$canary_id"
+	[[ "$OPENCODE_CANARY_PROFILE" != "v2" ]] || provider_id="openai"
 	local model_ref="${provider_id}/${model_id}"
 	local request_count_before=0
 	local request_count_after=0
 	local probe_timeout_seconds=120
 	mkdir -p "$probe_root/home" "$probe_root/config/opencode" "$probe_root/data" "$probe_root/cache"
-	if [[ -f "$plugin_path" ]]; then
+	if [[ -e "$plugin_path" ]]; then
 		plugin_url=$(python3 -c 'import pathlib, sys; print(pathlib.Path(sys.argv[1]).resolve().as_uri())' "$plugin_path")
 	fi
+	if [[ "$OPENCODE_CANARY_PROFILE" == "v2" ]]; then
+		jq -n --arg api "http://127.0.0.1:${port}/v1" --arg plugin "$plugin_url" \
+			--arg provider "$provider_id" --arg model "$model_id" --arg model_ref "$model_ref" --arg provider_name "$OPENCODE_CANARY_PROVIDER_NAME" \
+			'{model:$model_ref,providers:{($provider):{name:$provider_name,
+			settings:{baseURL:$api,apiKey:"unused-canary-value"},models:{($model):{name:"Canary"}}}}}
+			+ (if $plugin == "" then {} else {plugins:[$plugin]} end)' \
+			>"$probe_root/config/opencode/opencode.json"
+	else
 	jq -n --arg api "http://127.0.0.1:${port}/v1" --arg plugin "$plugin_url" \
-		--arg provider "$provider_id" --arg model "$model_id" --arg model_ref "$model_ref" \
+		--arg provider "$provider_id" --arg model "$model_id" --arg model_ref "$model_ref" --arg provider_name "$OPENCODE_CANARY_PROVIDER_NAME" \
 		'{model:$model_ref,small_model:$model_ref,
-		provider:{($provider):{npm:"@ai-sdk/openai-compatible@3.0.31",name:"Canary",
+		provider:{($provider):{npm:"@ai-sdk/openai-compatible@3.0.31",name:$provider_name,
 		options:{baseURL:$api,apiKey:"canary-local-only"},models:{($model):{name:"Canary"}}}}}
 		+ (if $plugin == "" then {} else {plugin:[$plugin]} end)' \
 		>"$probe_root/config/opencode/opencode.json"
+	fi
 	local routing_file="$probe_root/config/model-routing.json"
 	jq -n --arg model "$model_ref" \
 		'{tiers:{simple:{models:[$model]},standard:{models:[$model]},thinking:{models:[$model]}},
@@ -199,17 +256,24 @@ run_isolated_probe() {
 		timeout_command=(perl -e "alarm ${probe_timeout_seconds}; exec @ARGV" --)
 	fi
 	local probe_rc=0
-	env -i \
-		HOME="$probe_root/home" PATH="$PATH" \
-		XDG_CONFIG_HOME="$probe_root/config" XDG_DATA_HOME="$probe_root/data" \
-		XDG_CACHE_HOME="$probe_root/cache" AIDEVOPS_HEADLESS=1 AIDEVOPS_PLUGIN_DEBUG=1 \
-		AIDEVOPS_MODEL_ROUTING_TABLE="$routing_file" \
-		GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
-		"${timeout_command[@]}" "$binary" run \
-		"What is two plus two? Answer with the single word: Four" \
-		-m "$model_ref" --dir "$probe_root/home" --agent build \
-		--print-logs --log-level DEBUG \
-		>"$output_file" 2>&1 || probe_rc=$?
+	local -a probe_args=(run "What is two plus two? Answer with the single word: Four" \
+		-m "$model_ref" --agent build --print-logs)
+	if [[ "$OPENCODE_CANARY_PROFILE" == "v2" ]]; then
+		probe_args+=(--standalone --log-level debug)
+	else
+		probe_args+=(--dir "$probe_root/home" --log-level DEBUG)
+	fi
+	(
+		cd "$probe_root/home" || exit 1
+		env -i \
+			HOME="$probe_root/home" PATH="$PATH" \
+			XDG_CONFIG_HOME="$probe_root/config" XDG_DATA_HOME="$probe_root/data" \
+			XDG_CACHE_HOME="$probe_root/cache" AIDEVOPS_HEADLESS=1 AIDEVOPS_PLUGIN_DEBUG=1 \
+			AIDEVOPS_OPENCODE_PROFILE="$OPENCODE_CANARY_PROFILE" \
+			AIDEVOPS_MODEL_ROUTING_TABLE="$routing_file" \
+			GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
+			"${timeout_command[@]}" "$binary" "${probe_args[@]}"
+	) >"$output_file" 2>&1 || probe_rc=$?
 	[[ -f "$request_file" ]] && request_count_after=$(wc -l <"$request_file" | tr -d ' ')
 	if [[ "$probe_rc" -eq 0 && "$request_count_after" -gt "$request_count_before" ]] && grep -q 'Four' "$output_file"; then
 		printf 'PASS: %s completed the isolated Linux-headless probe\n' "$label"
@@ -228,7 +292,7 @@ run_isolated_probe() {
 }
 
 pin_age_days() {
-	python3 - "$OPENCODE_PIN_INTRODUCED_DATE" <<'PY'
+	python3 - "$OPENCODE_CANARY_INTRODUCED" <<'PY'
 from datetime import date
 import sys
 print((date.today() - date.fromisoformat(sys.argv[1])).days)
@@ -238,30 +302,35 @@ PY
 cmd_status() {
 	local format="${1:-text}"
 	local registry_latest="unknown"
-	registry_latest=$(npm view opencode-ai version 2>/dev/null || printf 'unknown')
+	registry_latest=$(npm view "$OPENCODE_CANARY_PACKAGE" version 2>/dev/null || printf 'unknown')
 	local installed="not-installed"
-	if command -v opencode >/dev/null 2>&1; then
-		installed=$(opencode --version 2>/dev/null | command head -n 1 || printf 'unknown')
+	if command -v "$OPENCODE_CANARY_BINARY" >/dev/null 2>&1; then
+		installed=$("$OPENCODE_CANARY_BINARY" --version 2>/dev/null | command head -n 1 || printf 'unknown')
 	fi
 	local age
 	age=$(pin_age_days)
 	if [[ "$format" == "--json" ]]; then
-		printf '{"installed":"%s","pinned":"%s","registry_latest":"%s","plugin_tested":"%s","pin_age_days":%s,"reason":"%s","platform":"%s","runtime_mode":"%s","introduced":"%s","last_canary_date":"%s","last_canary_result":"%s","review_deadline":"%s"}\n' \
-			"$installed" "$OPENCODE_PINNED_VERSION" "$registry_latest" "$OPENCODE_PLUGIN_TESTED_VERSION" "$age" "$OPENCODE_PIN_REASON" \
-			"$OPENCODE_PIN_PLATFORM" "$OPENCODE_PIN_RUNTIME_MODE" "$OPENCODE_PIN_INTRODUCED_DATE" \
-			"$OPENCODE_PIN_LAST_CANARY_DATE" "$OPENCODE_PIN_LAST_CANARY_RESULT" "$OPENCODE_PIN_REVIEW_DEADLINE"
+		printf '{"profile":"%s","installed":"%s","pinned":"%s","registry_latest":"%s","plugin_tested":"%s","pin_age_days":%s,"reason":"%s","platform":"%s","runtime_mode":"%s","introduced":"%s","last_canary_date":"%s","last_canary_result":"%s","review_deadline":"%s"}\n' \
+			"$OPENCODE_CANARY_PROFILE" "$installed" "$OPENCODE_CANARY_PIN" "$registry_latest" "$OPENCODE_CANARY_TESTED" "$age" "$OPENCODE_CANARY_REASON" \
+			"$OPENCODE_CANARY_PLATFORM" "$OPENCODE_CANARY_RUNTIME_MODE" "$OPENCODE_CANARY_INTRODUCED" \
+			"$OPENCODE_CANARY_LAST_DATE" "$OPENCODE_CANARY_LAST_RESULT" "$OPENCODE_CANARY_REVIEW_DEADLINE"
 		return 0
 	fi
-	printf 'installed=%s pinned=%s registry-latest=%s pin-age=%sd\n' "$installed" "$OPENCODE_PINNED_VERSION" "$registry_latest" "$age"
+	printf 'profile=%s installed=%s pinned=%s registry-latest=%s pin-age=%sd\n' "$OPENCODE_CANARY_PROFILE" "$installed" "$OPENCODE_CANARY_PIN" "$registry_latest" "$age"
 	printf 'scope=%s/%s plugin-tested=%s last-canary=%s (%s) review-deadline=%s\n' \
-		"$OPENCODE_PIN_PLATFORM" "$OPENCODE_PIN_RUNTIME_MODE" "$OPENCODE_PLUGIN_TESTED_VERSION" "$OPENCODE_PIN_LAST_CANARY_DATE" \
-		"$OPENCODE_PIN_LAST_CANARY_RESULT" "$OPENCODE_PIN_REVIEW_DEADLINE"
+		"$OPENCODE_CANARY_PLATFORM" "$OPENCODE_CANARY_RUNTIME_MODE" "$OPENCODE_CANARY_TESTED" "$OPENCODE_CANARY_LAST_DATE" \
+		"$OPENCODE_CANARY_LAST_RESULT" "$OPENCODE_CANARY_REVIEW_DEADLINE"
 }
 
 cmd_canary() {
 	local candidate="${1:-}"
-	[[ "$(uname -s)" == "$OPENCODE_PIN_PLATFORM" ]] || {
-		printf 'RESULT=inconclusive\nINCONCLUSIVE: candidate canary requires %s\n' "$OPENCODE_PIN_PLATFORM" >&2
+	local force="${2:-}"
+	[[ -z "$force" || "$force" == "--force" ]] || {
+		printf 'RESULT=inconclusive\nINCONCLUSIVE: unsupported canary option %s\n' "$force" >&2
+		return 2
+	}
+	[[ "$(uname -s)" == "$OPENCODE_CANARY_PLATFORM" ]] || {
+		printf 'RESULT=inconclusive\nINCONCLUSIVE: candidate canary requires %s\n' "$OPENCODE_CANARY_PLATFORM" >&2
 		return 2
 	}
 	local required_command
@@ -272,13 +341,13 @@ cmd_canary() {
 		}
 	done
 	if [[ -z "$candidate" || "$candidate" == "latest" ]]; then
-		candidate=$(npm view opencode-ai version 2>/dev/null || true)
+		candidate=$(npm view "$OPENCODE_CANARY_PACKAGE" version 2>/dev/null || true)
 	fi
 	[[ "$candidate" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]] || {
 		printf 'RESULT=inconclusive\nINCONCLUSIVE: invalid candidate version %s\n' "${candidate:-empty}" >&2
 		return 2
 	}
-	if [[ "$candidate" == "$OPENCODE_PINNED_VERSION" ]]; then
+	if [[ "$candidate" == "$OPENCODE_CANARY_PIN" && "$force" != "--force" ]]; then
 		printf 'RESULT=skip\nSKIP: registry candidate equals pin %s\n' "$candidate"
 		return 0
 	fi
@@ -287,7 +356,7 @@ cmd_canary() {
 	mkdir -p "$temp_parent"
 	_CANARY_TEMP_ROOT=$(mktemp -d "${temp_parent}/opencode-pin-canary-XXXXXX")
 	trap cleanup_canary EXIT INT TERM
-	if ! install_isolated_opencode "$_CANARY_TEMP_ROOT/baseline" "$OPENCODE_PINNED_VERSION" \
+	if ! install_isolated_opencode "$_CANARY_TEMP_ROOT/baseline" "$OPENCODE_CANARY_PIN" \
 		"$_CANARY_TEMP_ROOT/install-home-baseline" "$_CANARY_TEMP_ROOT/npm-cache-baseline"; then
 		printf 'RESULT=inconclusive\nINCONCLUSIVE: pinned baseline installation failed\n' >&2
 		return 2
@@ -320,17 +389,17 @@ cmd_canary() {
 	revision=$(git -C "$SCRIPT_DIR/../.." rev-parse HEAD 2>/dev/null || printf 'unknown')
 
 	printf 'Evaluating pinned baseline %s and candidate %s at repository revision %s\n' \
-		"$OPENCODE_PINNED_VERSION" "$candidate" "$revision"
-	if ! run_isolated_probe "baseline-$OPENCODE_PINNED_VERSION" "$baseline_bin" "$_CANARY_TEMP_ROOT" \
+		"$OPENCODE_CANARY_PIN" "$candidate" "$revision"
+	if ! run_isolated_probe "baseline-$OPENCODE_CANARY_PIN" "$baseline_bin" "$_CANARY_TEMP_ROOT" \
 		"$mock_provider_port" "$mock_provider_request_file"; then
 		printf 'RESULT=inconclusive\nINCONCLUSIVE: pinned baseline failed; retaining %s\n' \
-			"$OPENCODE_PINNED_VERSION" >&2
+			"$OPENCODE_CANARY_PIN" >&2
 		return 2
 	fi
 	if ! run_isolated_probe "candidate-$candidate" "$candidate_bin" "$_CANARY_TEMP_ROOT" \
 		"$mock_provider_port" "$mock_provider_request_file"; then
 		printf 'RESULT=fail\nFAIL: candidate failed while the same-revision pinned baseline passed; retaining %s\n' \
-			"$OPENCODE_PINNED_VERSION" >&2
+			"$OPENCODE_CANARY_PIN" >&2
 		return 1
 	fi
 	printf 'RESULT=pass\nPASS: OpenCode %s passed the Linux-headless compatibility canary\n' "$candidate"
@@ -338,7 +407,7 @@ cmd_canary() {
 
 case "${1:-}" in
 status) cmd_status "${2:-}" ;;
-canary) cmd_canary "${2:-latest}" ;;
+canary) cmd_canary "${2:-latest}" "${3:-}" ;;
 *)
 	usage >&2
 	exit 2

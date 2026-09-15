@@ -29,8 +29,10 @@ print_result() {
 
 run_candidate_list_for_platform() {
 	local platform="$1"
+	local profile="${2:-v1}"
 	(
 		export AIDEVOPS_TEST_UNAME_S="$platform"
+		export AIDEVOPS_OPENCODE_PROFILE="$profile"
 		# shellcheck disable=SC1091
 		source "$TEST_REPO_ROOT/.agents/scripts/headless-runtime-lib.sh"
 		_opencode_fixed_candidate_paths
@@ -77,6 +79,16 @@ if [[ "$linux_warning" == *"/snap/bin"* ]]; then
 	print_result "Linux warning text includes /snap/bin" 0
 else
 	print_result "Linux warning text includes /snap/bin" 1 "$linux_warning"
+fi
+
+v2_linux_candidates=$(run_candidate_list_for_platform "Linux" "v2")
+if [[ "$v2_linux_candidates" == *"/snap/bin/opencode2"* ]] && \
+	[[ "$v2_linux_candidates" == *"/.local/bin/opencode2"* ]] && \
+	[[ "$v2_linux_candidates" != *"/snap/bin/opencode"$'\n'* ]] && \
+	[[ "$v2_linux_candidates" != *"/.local/bin/opencode"$'\n'* ]]; then
+	print_result "V2 candidate list selects opencode2" 0
+else
+	print_result "V2 candidate list selects opencode2" 1 "$v2_linux_candidates"
 fi
 
 echo ""

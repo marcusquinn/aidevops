@@ -57,7 +57,7 @@ else
 fi
 if grep -q 'env -i' "$canary_script" && grep -q 'GIT_CONFIG_GLOBAL=/dev/null' "$canary_script" &&
 	grep -q 'npm_config_userconfig=/dev/null' "$canary_script" &&
-	grep -q 'npm ci --ignore-scripts --no-audit --no-fund' "$canary_script"; then
+	grep -q 'npm ci --omit=peer --ignore-scripts --no-audit --no-fund' "$canary_script"; then
 	printf 'PASS: package installation and candidate execution use isolated environments\n'
 else
 	printf 'FAIL: candidate execution is not explicitly isolated from user credentials/config\n' >&2

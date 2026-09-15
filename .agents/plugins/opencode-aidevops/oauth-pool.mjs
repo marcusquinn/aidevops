@@ -145,6 +145,13 @@ async function selectPoolAccount(provider, skipEmail) {
   return null;
 }
 
+// Runtime-neutral selection seam used by OpenCode V2's request hooks. V1 keeps
+// using the client.auth.set adapters below; exposing selection separately keeps
+// credential policy independent from either SDK's request shape.
+export async function selectRuntimePoolAccount(provider, skipEmail) {
+  return selectPoolAccount(provider, skipEmail);
+}
+
 export async function selectOpenAIStartupAccount(skipEmail) {
   const accounts = getAccounts("openai");
   if (accounts.length === 0) return null;

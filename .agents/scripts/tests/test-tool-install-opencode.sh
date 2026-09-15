@@ -57,6 +57,8 @@ assert_eq() {
 extract_functions() {
 	# Use awk to extract the three functions by name.
 	awk '
+		/^_setup_opencode_profile_id\(\)/, /^}$/ { print; next }
+		/^_setup_opencode_profile_value\(\)/, /^}$/ { print; next }
 		/^_setup_opencode_timeout_cmd\(\)/, /^}$/ { print; next }
 		/^_setup_opencode_version_output\(\)/, /^}$/ { print; next }
 		/^_setup_opencode_help_output\(\)/, /^}$/ { print; next }
@@ -217,6 +219,27 @@ chmod +x "$SANDBOX/bin/opencode-claude"
 	echo "$rc"
 ) >"$SANDBOX/out2" 2>&1
 assert_eq "claude shim -> rc=1" "1" "$(tail -1 "$SANDBOX/out2")"
+
+echo "Test 2d: V2 profile accepts only a V2 OpenCode binary"
+cat >"$SANDBOX/bin/opencode-v2" <<'EOF'
+#!/usr/bin/env bash
+[[ "${1:-}" == "--version" ]] && echo "opencode v2.0.3"
+[[ "${1:-}" == "--help" ]] && printf 'OpenCode command line interface\nrun  Run OpenCode with a message\n'
+exit 0
+EOF
+chmod +x "$SANDBOX/bin/opencode-v2"
+(
+	source_extracted
+	AIDEVOPS_OPENCODE_PROFILE=v2 _setup_validate_opencode_binary "$SANDBOX/bin/opencode-v2"
+) >"$SANDBOX/out2d" 2>&1
+assert_eq "V2 profile accepts V2 binary" "0" "$?"
+(
+	source_extracted
+	rc=0
+	AIDEVOPS_OPENCODE_PROFILE=v2 _setup_validate_opencode_binary "$SANDBOX/bin/opencode-real" || rc=$?
+	echo "$rc"
+) >"$SANDBOX/out2e" 2>&1
+assert_eq "V2 profile rejects V1 binary" "1" "$(tail -1 "$SANDBOX/out2e")"
 
 # --- Test 2b: validator rejects multi-digit non-opencode majors ------------
 echo "Test 2b: _setup_validate_opencode_binary rejects major >=10"

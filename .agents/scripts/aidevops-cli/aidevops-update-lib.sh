@@ -280,8 +280,28 @@ _update_check_tools() {
 	echo ""
 	print_header "Checking Key Tools"
 	local stale_count=0 stale_tools=""
-	local key_tool_cmds="opencode gh"
-	local key_tool_pkgs="opencode-ai brew:gh"
+	local opencode_profile="${AIDEVOPS_OPENCODE_PROFILE:-v1}"
+	local opencode_binary="opencode"
+	local opencode_package="opencode-ai"
+	local opencode_pin="${OPENCODE_PINNED_VERSION:-latest}"
+	local opencode_tested="${OPENCODE_PLUGIN_TESTED_VERSION:-unknown}"
+	local opencode_introduced="${OPENCODE_PIN_INTRODUCED_DATE:-2026-07-30}"
+	local opencode_last_canary_date="${OPENCODE_PIN_LAST_CANARY_DATE:-unknown}"
+	local opencode_last_canary_result="${OPENCODE_PIN_LAST_CANARY_RESULT:-unknown}"
+	local opencode_review_deadline="${OPENCODE_PIN_REVIEW_DEADLINE:-9999-12-31}"
+	if declare -F aidevops_opencode_profile_id >/dev/null 2>&1; then
+		opencode_profile=$(aidevops_opencode_profile_id)
+		opencode_binary=$(aidevops_opencode_profile_value binary "$opencode_profile")
+		opencode_package=$(aidevops_opencode_profile_value package "$opencode_profile")
+		opencode_pin=$(aidevops_opencode_profile_value headlessPin "$opencode_profile")
+		opencode_tested=$(aidevops_opencode_profile_value testedVersion "$opencode_profile")
+		opencode_introduced=$(aidevops_opencode_profile_value introducedDate "$opencode_profile")
+		opencode_last_canary_date=$(aidevops_opencode_profile_value lastCanaryDate "$opencode_profile")
+		opencode_last_canary_result=$(aidevops_opencode_profile_value lastCanaryResult "$opencode_profile")
+		opencode_review_deadline=$(aidevops_opencode_profile_value reviewDeadline "$opencode_profile")
+	fi
+	local key_tool_cmds="$opencode_binary gh"
+	local key_tool_pkgs="$opencode_package brew:gh"
 	if declare -F aidevops_gh_slurp_supported >/dev/null 2>&1 && ! aidevops_gh_slurp_supported; then
 		local gh_slurp_message=""
 		if declare -F aidevops_gh_slurp_status_message >/dev/null 2>&1; then
@@ -315,7 +335,7 @@ _update_check_tools() {
 			elif [[ "$brew_pkg" == "gh" ]] && command -v gh &>/dev/null; then latest=$(get_public_release_tag "cli/cli"); fi
 		else latest=$(_timeout_cmd 30 npm view "$pkg_ref" version || true); fi
 		[[ -z "$latest" ]] && continue
-		if [[ "$cmd_name" == "opencode" ]]; then
+		if [[ "$cmd_name" == "$opencode_binary" ]]; then
 			opencode_installed="$installed"
 			opencode_registry="$latest"
 		fi
@@ -332,17 +352,17 @@ _update_check_tools() {
 		echo ""
 		print_info "No global tools were changed; run 'aidevops update-tools --update' to update explicitly"
 	fi
-	if [[ "${OPENCODE_PINNED_VERSION:-latest}" != "latest" ]]; then
+	if [[ "$opencode_pin" != "latest" ]]; then
 		local pin_age_days="unknown"
-		pin_age_days=$(python3 - "$OPENCODE_PIN_INTRODUCED_DATE" <<'PY' 2>/dev/null || printf 'unknown\n'
+		pin_age_days=$(python3 - "$opencode_introduced" <<'PY' 2>/dev/null || printf 'unknown\n'
 from datetime import date
 import sys
 print((date.today() - date.fromisoformat(sys.argv[1])).days)
 PY
 		)
-		print_info "OpenCode compatibility pin: installed=${opencode_installed}, pinned=${OPENCODE_PINNED_VERSION}, registry=${opencode_registry}"
-		print_info "Pin scope=${OPENCODE_PIN_PLATFORM}/${OPENCODE_PIN_RUNTIME_MODE}, age=${pin_age_days}d, plugin-tested=${OPENCODE_PLUGIN_TESTED_VERSION}, last-canary=${OPENCODE_PIN_LAST_CANARY_DATE} (${OPENCODE_PIN_LAST_CANARY_RESULT}), review-deadline=${OPENCODE_PIN_REVIEW_DEADLINE}"
-		if [[ "$(date -u +%Y-%m-%d)" > "$OPENCODE_PIN_REVIEW_DEADLINE" ]]; then
+		print_info "OpenCode ${opencode_profile} compatibility pin: installed=${opencode_installed}, pinned=${opencode_pin}, registry=${opencode_registry}"
+		print_info "Pin scope=${OPENCODE_PIN_PLATFORM}/${OPENCODE_PIN_RUNTIME_MODE}, age=${pin_age_days}d, plugin-tested=${opencode_tested}, last-canary=${opencode_last_canary_date} (${opencode_last_canary_result}), review-deadline=${opencode_review_deadline}"
+		if [[ "$(date -u +%Y-%m-%d)" > "$opencode_review_deadline" ]]; then
 			print_warning "OpenCode compatibility pin review is overdue; scheduled Linux-headless canary must retain or advance it"
 		fi
 	fi

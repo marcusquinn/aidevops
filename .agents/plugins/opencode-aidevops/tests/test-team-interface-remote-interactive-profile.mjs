@@ -24,6 +24,7 @@ const testDirectory = path.dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = path.resolve(testDirectory, "../../../..");
 const agentsDirectory = path.join(repositoryRoot, ".agents");
 const pluginEntryPath = path.join(agentsDirectory, "plugins/opencode-aidevops/index.mjs");
+const v2PluginEntryPath = path.join(agentsDirectory, "plugins/opencode-aidevops/v2.mjs");
 
 function contextFixture() {
   return {
@@ -37,7 +38,7 @@ function contextFixture() {
   };
 }
 
-function createFixture() {
+function createFixture(activePluginEntryPath = pluginEntryPath) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "aidevops-buzz-remote-")));
   const projectRoot = path.join(root, "project");
   const dataRoot = path.join(root, "data");
@@ -68,11 +69,20 @@ function createFixture() {
   };
   const conversation = loadTeamInterfaceConversation(env, agentsDirectory, {
     canonicalRoster: roster,
-    pluginEntryPath,
+    pluginEntryPath: activePluginEntryPath,
     repositoryDir: projectRoot,
   });
   return {conversation, env, homeRoot, overlay, overlayPath, projectRoot, root};
 }
+
+test("remote interactive boundary accepts the pinned V2 plugin entrypoint", () => {
+  const fixture = createFixture(v2PluginEntryPath);
+  try {
+    assert.equal(isRemoteInteractiveConversation(fixture.conversation), true);
+  } finally {
+    fs.rmSync(fixture.root, {recursive: true, force: true});
+  }
+});
 
 test("remote interactive selection preserves full configured capabilities", () => {
   const fixture = createFixture();

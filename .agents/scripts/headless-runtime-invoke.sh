@@ -301,6 +301,21 @@ _invoke_opencode_run_bare() {
 }
 
 # Start the runtime subprocess and publish its PID to the caller scope.
+_invoke_opencode_set_working_directory() {
+	[[ "${AIDEVOPS_OPENCODE_PROFILE:-v1}" == "v2" ]] || return 0
+	if [[ -z "${_invoke_work_dir:-}" || ! -d "$_invoke_work_dir" ]]; then
+		print_error "OpenCode V2 launch directory is unavailable: ${_invoke_work_dir:-<unset>}"
+		printf '%s' "86" >"$exit_code_file"
+		return 86
+	fi
+	if ! cd "$_invoke_work_dir"; then
+		print_error "OpenCode V2 could not enter launch directory: $_invoke_work_dir"
+		printf '%s' "86" >"$exit_code_file"
+		return 86
+	fi
+	return 0
+}
+
 _invoke_opencode_launch_worker() {
 	(
 		set +e
@@ -310,6 +325,8 @@ _invoke_opencode_launch_worker() {
 		local -a sandbox_home_args=()
 		local -a _oc_cmd=()
 		local prepare_status=0
+		_invoke_opencode_set_working_directory || prepare_status=$?
+		[[ "$prepare_status" -eq 0 ]] || exit "$prepare_status"
 		_invoke_opencode_prepare_child_command || prepare_status=$?
 		[[ "$prepare_status" -eq 0 ]] || exit "$prepare_status"
 		if [[ -x "$SANDBOX_EXEC_HELPER" && "${AIDEVOPS_HEADLESS_SANDBOX_DISABLED:-}" != "1" ]]; then

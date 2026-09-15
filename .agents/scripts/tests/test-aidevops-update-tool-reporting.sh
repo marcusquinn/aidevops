@@ -193,6 +193,12 @@ version=$(<"${TOOL_REPORT_STATE_DIR}/opencode-installed")
 printf "%s\n" "$version"'
 
 # shellcheck disable=SC2016 # Stub variables expand only when the generated script runs.
+write_executable "$SANDBOX/bin/opencode2" '#!/usr/bin/env bash
+[[ "${1:-}" == "--version" ]] || exit 1
+version=$(<"${TOOL_REPORT_STATE_DIR}/opencode-installed")
+printf "%s\n" "$version"'
+
+# shellcheck disable=SC2016 # Stub variables expand only when the generated script runs.
 write_executable "$SANDBOX/bin/gh" '#!/usr/bin/env bash
 [[ "${1:-}" == "--version" ]] || exit 1
 version=$(<"${TOOL_REPORT_STATE_DIR}/gh-installed")
@@ -200,7 +206,8 @@ printf "gh version %s\n" "$version"'
 
 # shellcheck disable=SC2016 # Stub variables expand only when the generated script runs.
 write_executable "$SANDBOX/bin/npm" '#!/usr/bin/env bash
-[[ "${1:-}" == "view" && "${2:-}" == "opencode-ai" ]] || exit 1
+[[ "${1:-}" == "view" ]] || exit 1
+[[ "${2:-}" == "opencode-ai" || "${2:-}" == "@opencode/cli" ]] || exit 1
 latest=$(<"${TOOL_REPORT_STATE_DIR}/opencode-registry")
 [[ "$latest" != "failure" ]] || exit 1
 printf "%s\n" "$latest"'
@@ -243,10 +250,30 @@ set_versions "1.18.9" "9.99.9" "2.99.0" "2.99.0"
 run_report "y"
 assert_eq "matching compatibility pin returns success" "0" "$REPORT_RC"
 assert_contains "registry release remains actionable globally" "opencode (1.18.9 -> 9.99.9)" "$REPORT_OUTPUT"
-assert_contains "scoped compatibility pin remains visible" "OpenCode compatibility pin: installed=1.18.9, pinned=1.18.9, registry=9.99.9" "$REPORT_OUTPUT"
+assert_contains "scoped compatibility pin remains visible" "OpenCode v1 compatibility pin: installed=1.18.9, pinned=1.18.9, registry=9.99.9" "$REPORT_OUTPUT"
 assert_contains "pin canary evidence remains visible" "last-canary=2026-07-30 (pass:1.18.9)" "$REPORT_OUTPUT"
 assert_contains "plugin tested version remains visible" "plugin-tested=1.18.9" "$REPORT_OUTPUT"
 assert_no_mutation "matching compatibility pin does not mutate"
+
+aidevops_opencode_profile_id() { printf 'v2\n'; }
+aidevops_opencode_profile_value() {
+	case "$1" in
+		binary) printf 'opencode2\n' ;;
+		package) printf '@opencode/cli\n' ;;
+		headlessPin | testedVersion) printf '2.0.3\n' ;;
+		introducedDate) printf '2026-09-15\n' ;;
+		lastCanaryDate) printf 'not-run\n' ;;
+		lastCanaryResult) printf 'pending\n' ;;
+		reviewDeadline) printf '2026-09-22\n' ;;
+		*) return 1 ;;
+	esac
+}
+set_versions "2.0.3" "2.0.3" "2.99.0" "2.99.0"
+run_report
+assert_eq "V2 profile report returns success" "0" "$REPORT_RC"
+assert_contains "V2 profile uses V2 binary and package" "OpenCode v2 compatibility pin: installed=2.0.3, pinned=2.0.3, registry=2.0.3" "$REPORT_OUTPUT"
+assert_contains "V2 pending canary remains visible" "last-canary=not-run (pending)" "$REPORT_OUTPUT"
+unset -f aidevops_opencode_profile_id aidevops_opencode_profile_value
 
 set_versions "1.18.8" "9.99.9" "2.99.0" "2.99.0"
 run_report "y"
