@@ -474,6 +474,30 @@ STALE_RUNTIME_TEXT=$(env "${COMMON_ENV[@]}" \
 	"PULSE_CHECK_CURRENT_STATE_HELPER=${TEST_ROOT}/current-state-stale-runtime.sh" "$HELPER" report 2>&1)
 assert_contains "text report shows runtime freshness" "Runtime freshness: blocked_dirty_canonical" "$STALE_RUNTIME_TEXT"
 
+cat >"${TEST_ROOT}/current-state-runtime-equivalent.sh" <<'SH'
+#!/usr/bin/env bash
+cat <<'JSON'
+{
+  "dispatch_alive": true,
+  "active_worker_processes": 1,
+  "current_state_guardrails": {"available_slots_last": 5},
+  "pulse_gauges": {"dispatch_capacity_final_max_workers": 6},
+  "worker_outcomes": {"spawned": 0},
+  "runtime_freshness": {
+    "status": "current",
+    "stale": false,
+    "canonical_sha": "canonical-sha",
+    "deployed_sha": "deployed-sha"
+  },
+  "graphql_budget_status": "OK fixture"
+}
+JSON
+SH
+chmod +x "${TEST_ROOT}/current-state-runtime-equivalent.sh"
+RUNTIME_EQUIVALENT_JSON=$(env "${COMMON_ENV[@]}" \
+	"PULSE_CHECK_CURRENT_STATE_HELPER=${TEST_ROOT}/current-state-runtime-equivalent.sh" "$HELPER" json 2>&1)
+assert_eq "runtime-equivalent planning drift creates no stale finding" "0" "$(printf '%s' "$RUNTIME_EQUIVALENT_JSON" | jq -r '[.findings[] | select(.id == "pulse-runtime-stale")] | length')"
+
 SECONDARY_GH_CALL_LOG="${TEST_ROOT}/secondary-gh-calls.log"
 rm -f "$SECONDARY_GH_CALL_LOG"
 SECONDARY_JSON=$(env "${COMMON_ENV[@]}" \
