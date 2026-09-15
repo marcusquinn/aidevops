@@ -301,7 +301,7 @@ _dlw_resolve_tier_and_model() {
 	esac
 
 	# t1364.6: when issue labels do not force a tier, let project bundles
-	# right-size worker model selection for implementation work. Explicit model
+	# right-size worker model selection for the task type. Explicit model
 	# overrides and tier:* labels still win.
 	if [[ -z "$model_override" && "$explicit_tier_label" -eq 0 && -n "$repo_path" ]]; then
 		local bundle_tier
