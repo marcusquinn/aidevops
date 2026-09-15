@@ -1578,6 +1578,127 @@ test_status_json_fails_closed_without_pr_metadata() {
 	return 0
 }
 
+test_status_json_recovers_deferred_post_decision_snapshot() {
+	do_check() {
+		printf 'PASS\n'
+		return 0
+	}
+	local gh_count_file="${TEST_ROOT}/status-json-retry-gh-count"
+	printf '0\n' >"$gh_count_file"
+	gh() {
+		local gh_calls=0
+		IFS= read -r gh_calls <"$gh_count_file" || gh_calls=0
+		gh_calls=$((gh_calls + 1))
+		printf '%s\n' "$gh_calls" >"$gh_count_file"
+		if [[ "$gh_calls" -eq 2 ]]; then
+			return 75
+		fi
+		printf '%s\n' '{"head":{"sha":"head-123"},"user":{"login":"maintainer"},"author_association":"MEMBER"}'
+		return 0
+	}
+	local output="" calls=0
+	output=$(RBG_STATUS_SNAPSHOT_RETRY_DELAY_SECONDS=0 do_status_json 123 'testorg/otherrepo')
+	IFS= read -r calls <"$gh_count_file" || calls=0
+	if jq -e '.status == "PASS" and .head_sha == "head-123" and .permitted == true and .reason == "live_review_pass" and .merge_gate == "clear"' <<<"$output" >/dev/null &&
+		[[ "$calls" -eq 3 ]]; then
+		print_result "status-json recovers one deferred post-decision snapshot" 0
+	else
+		print_result "status-json recovers one deferred post-decision snapshot" 1 "output=${output} calls=${calls}"
+	fi
+	return 0
+}
+
+test_status_json_blocks_exhausted_initial_snapshot() {
+	do_check() {
+		printf 'PASS\n'
+		return 0
+	}
+	local gh_count_file="${TEST_ROOT}/status-json-initial-exhausted-gh-count"
+	printf '0\n' >"$gh_count_file"
+	gh() {
+		local gh_calls=0
+		IFS= read -r gh_calls <"$gh_count_file" || gh_calls=0
+		gh_calls=$((gh_calls + 1))
+		printf '%s\n' "$gh_calls" >"$gh_count_file"
+		if [[ "$gh_calls" -le 2 ]]; then
+			return 75
+		fi
+		printf '%s\n' '{"head":{"sha":"head-123"},"user":{"login":"maintainer"},"author_association":"MEMBER"}'
+		return 0
+	}
+	local output="" calls=0
+	output=$(RBG_STATUS_SNAPSHOT_RETRY_DELAY_SECONDS=0 do_status_json 123 'testorg/otherrepo')
+	IFS= read -r calls <"$gh_count_file" || calls=0
+	if jq -e '.status == "PASS" and .head_sha == "head-123" and .permitted == false and .reason == "initial_snapshot_unavailable" and .merge_gate == "blocked"' <<<"$output" >/dev/null &&
+		[[ "$calls" -eq 3 ]]; then
+		print_result "status-json never replaces an exhausted initial snapshot" 0
+	else
+		print_result "status-json never replaces an exhausted initial snapshot" 1 "output=${output} calls=${calls}"
+	fi
+	return 0
+}
+
+test_status_json_blocks_exhausted_post_decision_snapshot() {
+	do_check() {
+		printf 'PASS\n'
+		return 0
+	}
+	local gh_count_file="${TEST_ROOT}/status-json-exhausted-gh-count"
+	printf '0\n' >"$gh_count_file"
+	gh() {
+		local gh_calls=0
+		IFS= read -r gh_calls <"$gh_count_file" || gh_calls=0
+		gh_calls=$((gh_calls + 1))
+		printf '%s\n' "$gh_calls" >"$gh_count_file"
+		if [[ "$gh_calls" -eq 1 ]]; then
+			printf '%s\n' '{"head":{"sha":"head-123"},"user":{"login":"maintainer"},"author_association":"MEMBER"}'
+			return 0
+		fi
+		return 75
+	}
+	local output="" calls=0
+	output=$(RBG_STATUS_SNAPSHOT_RETRY_DELAY_SECONDS=0 do_status_json 123 'testorg/otherrepo')
+	IFS= read -r calls <"$gh_count_file" || calls=0
+	if jq -e '.status == "PASS" and .head_sha == "" and .permitted == false and .reason == "post_decision_snapshot_unavailable" and .merge_gate == "blocked"' <<<"$output" >/dev/null &&
+		[[ "$calls" -eq 3 ]]; then
+		print_result "status-json fails closed after post-decision snapshot retry exhaustion" 0
+	else
+		print_result "status-json fails closed after post-decision snapshot retry exhaustion" 1 "output=${output} calls=${calls}"
+	fi
+	return 0
+}
+
+test_status_json_blocks_changed_head_snapshot() {
+	do_check() {
+		printf 'PASS\n'
+		return 0
+	}
+	local gh_count_file="${TEST_ROOT}/status-json-changed-head-gh-count"
+	printf '0\n' >"$gh_count_file"
+	gh() {
+		local gh_calls=0
+		IFS= read -r gh_calls <"$gh_count_file" || gh_calls=0
+		gh_calls=$((gh_calls + 1))
+		printf '%s\n' "$gh_calls" >"$gh_count_file"
+		if [[ "$gh_calls" -eq 1 ]]; then
+			printf '%s\n' '{"head":{"sha":"head-123"},"user":{"login":"maintainer"},"author_association":"MEMBER"}'
+		else
+			printf '%s\n' '{"head":{"sha":"head-456"},"user":{"login":"maintainer"},"author_association":"MEMBER"}'
+		fi
+		return 0
+	}
+	local output="" calls=0
+	output=$(RBG_STATUS_SNAPSHOT_RETRY_DELAY_SECONDS=0 do_status_json 123 'testorg/otherrepo')
+	IFS= read -r calls <"$gh_count_file" || calls=0
+	if jq -e '.status == "PASS" and .head_sha == "head-456" and .permitted == false and .reason == "head_changed_during_decision" and .merge_gate == "blocked"' <<<"$output" >/dev/null &&
+		[[ "$calls" -eq 2 ]]; then
+		print_result "status-json rejects a changed post-decision head" 0
+	else
+		print_result "status-json rejects a changed post-decision head" 1 "output=${output} calls=${calls}"
+	fi
+	return 0
+}
+
 run_completion_requirement_tests() {
 	test_trusted_default_does_not_require_completed_review
 	test_owner_rest_association_does_not_require_completed_review
@@ -1599,6 +1720,10 @@ run_status_json_tests() {
 	test_status_json_allows_trusted_skip
 	test_status_json_denies_skip_removed_during_decision
 	test_status_json_fails_closed_without_pr_metadata
+	test_status_json_recovers_deferred_post_decision_snapshot
+	test_status_json_blocks_exhausted_initial_snapshot
+	test_status_json_blocks_exhausted_post_decision_snapshot
+	test_status_json_blocks_changed_head_snapshot
 	return 0
 }
 

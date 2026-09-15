@@ -1675,27 +1675,97 @@ do_wait() {
 	return 1
 }
 
+# Fetch a genuine PR metadata snapshot and retry one locally deferred or timed
+# out read. Never substitutes an earlier snapshot: exhausted retrieval remains
+# unavailable so current-head authorization fails closed.
+_rbg_status_pr_snapshot() {
+	local pr_api="$1"
+	local phase="$2"
+	local response="" rc=0
+	local retry_delay="${RBG_STATUS_SNAPSHOT_RETRY_DELAY_SECONDS:-1}"
+	local retry_timeout="${RBG_STATUS_SNAPSHOT_RETRY_TIMEOUT_SECONDS:-10}"
+
+	response=$(gh api "$pr_api" 2>/dev/null) || rc=$?
+	if [[ "$rc" -eq 0 && -n "$response" ]]; then
+		printf '%s\n' "$response"
+		return 0
+	fi
+
+	# The governed gh transport reports local-admission deferral as 75 and
+	# bounded read timeout as 124. A successful empty response is also not a
+	# usable observation and receives the same single recovery attempt.
+	if [[ "$rc" -ne 0 && "$rc" -ne 75 && "$rc" -ne 124 ]]; then
+		printf '[review-bot-gate] %s PR snapshot transport failure (rc=%s); gate remains blocked\n' "$phase" "$rc" >&2
+		return "$rc"
+	fi
+	[[ "$retry_delay" =~ ^[0-5]$ ]] || retry_delay=1
+	[[ "$retry_timeout" =~ ^[0-9]+$ && "$retry_timeout" -ge 1 && "$retry_timeout" -le 30 ]] || retry_timeout=10
+	printf '[review-bot-gate] %s PR snapshot unavailable (rc=%s); retrying once\n' "$phase" "$rc" >&2
+	[[ "$retry_delay" -eq 0 ]] || sleep "$retry_delay"
+
+	rc=0
+	response=$(AIDEVOPS_GH_READ_TIMEOUT="$retry_timeout" gh api "$pr_api" 2>/dev/null) || rc=$?
+	if [[ "$rc" -eq 0 && -n "$response" ]]; then
+		printf '%s\n' "$response"
+		return 0
+	fi
+	[[ "$rc" -ne 0 ]] || rc=75
+	printf '[review-bot-gate] %s PR snapshot unavailable after bounded retry (rc=%s); gate remains blocked\n' "$phase" "$rc" >&2
+	return "$rc"
+}
+
+_rbg_status_failure_reason() {
+	local reason="$1"
+	local permitted="$2"
+	local snapshot_before_rc="$3"
+	local snapshot_after_rc="$4"
+	local head_sha_before="$5"
+	local head_sha="$6"
+
+	if [[ "$permitted" == "true" ]]; then
+		printf '%s\n' "$reason"
+	elif [[ "$snapshot_before_rc" -ne 0 || -z "$head_sha_before" ]]; then
+		printf 'initial_snapshot_unavailable\n'
+	elif [[ "$snapshot_after_rc" -ne 0 || -z "$head_sha" ]]; then
+		printf 'post_decision_snapshot_unavailable\n'
+	elif [[ "$head_sha_before" != "$head_sha" ]]; then
+		printf 'head_changed_during_decision\n'
+	else
+		printf '%s\n' "$reason"
+	fi
+	return 0
+}
+
+_rbg_snapshot_author_association() {
+	local pr_number="$1"
+	local repo="$2"
+	local pr_json="$3"
+	[[ -n "$pr_json" ]] || return 0
+	_resolve_pr_author_association "$pr_number" "$repo" "$pr_json"
+	return 0
+}
+
 do_status_json() {
 	local pr_number="$1"
 	local repo="$2"
 	local output="" rc=0 state="waiting" blocked_prefix="bloc" status_pass="" pr_api=""
-	local merge_gate=""
+	local merge_gate="" snapshot_before_rc=0 snapshot_after_rc=0
 	local pr_json_before="" pr_json="" head_sha_before="" head_sha="" author_login="" author_association_before="" author_association="" author_class="external"
 	local head_stable="$RBG_FALSE" skip_label_present_after="$RBG_FALSE" permitted="$RBG_FALSE" reason="outcome_not_permitted"
 	merge_gate="${blocked_prefix}ked"
 	status_pass=$(printf 'P%s' 'ASS')
 
 	pr_api=$(printf 'repos/%s/pulls/%s' "$repo" "$pr_number")
-	pr_json_before=$(gh api "$pr_api" 2>/dev/null) || pr_json_before=""
+	pr_json_before=$(_rbg_status_pr_snapshot "$pr_api" "initial") || snapshot_before_rc=$?
 	head_sha_before=$(jq -r '.head.sha // ""' <<<"$pr_json_before" 2>/dev/null) || head_sha_before=""
-	author_association_before=$(_resolve_pr_author_association "$pr_number" "$repo" "$pr_json_before")
+	author_association_before=$(_rbg_snapshot_author_association "$pr_number" "$repo" "$pr_json_before")
 	output=$(REVIEW_GATE_EXPECTED_HEAD_SHA="$head_sha_before" REVIEW_GATE_AUTHOR_ASSOCIATION="$author_association_before" do_check "$pr_number" "$repo" "$pr_json_before" 2>/dev/null) || rc=$?
-	pr_json=$(gh api "$pr_api" 2>/dev/null) || pr_json=""
+	pr_json=$(_rbg_status_pr_snapshot "$pr_api" "post-decision") || snapshot_after_rc=$?
 	if [[ -n "$pr_json" ]]; then
 		head_sha=$(jq -r '.head.sha // ""' <<<"$pr_json" 2>/dev/null) || head_sha=""
 		author_login=$(jq -r '.user.login // ""' <<<"$pr_json" 2>/dev/null) || author_login=""
 	fi
-	author_association=$(_resolve_pr_author_association "$pr_number" "$repo" "$pr_json")
+	author_association=$(_rbg_snapshot_author_association "$pr_number" "$repo" "$pr_json")
 	if [[ -n "$head_sha_before" && "$head_sha_before" == "$head_sha" ]]; then
 		head_stable="true"
 	fi
@@ -1739,6 +1809,9 @@ do_status_json() {
 		fi
 		;;
 	esac
+
+	# Policy outcomes cannot override missing or changed current-head evidence.
+	reason=$(_rbg_status_failure_reason "$reason" "$permitted" "$snapshot_before_rc" "$snapshot_after_rc" "$head_sha_before" "$head_sha")
 
 	case "$output:$permitted" in
 	"$status_pass:true" | P[A]SS_ADVISORY:true | P[A]SS_RATE_LIMITED:true | SKIP:true)
