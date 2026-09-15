@@ -395,7 +395,8 @@ test("V2 provider responses retain request-specific account affinity", async () 
 
 test("V1 tool schemas still resolve across stable package layouts", async () => {
   const helper = (definition) => definition;
-  helper.schema = {};
+  const nativeString = () => ({ native: "string" });
+  helper.schema = { string: nativeString };
   const attempts = [];
   const selected = await loadV1ToolHelper({
     importer: async (specifier) => {
@@ -405,16 +406,20 @@ test("V1 tool schemas still resolve across stable package layouts", async () => 
     },
   });
   assert.equal(typeof selected.schema.boolean, "function");
+  assert.equal(selected.schema.string, nativeString);
   assert.deepEqual(selected({ selected: true }), { selected: true });
   assert.deepEqual(attempts, ["@opencode-ai/plugin/v1"]);
 
+  const rootHelper = (definition) => definition;
+  const nativeBoolean = () => ({ native: "boolean" });
+  rootHelper.schema = { boolean: nativeBoolean };
   const fallback = await loadV1ToolHelper({
     importer: async (specifier) => {
       if (specifier.endsWith("/v1")) throw new Error("legacy package has no v1 export");
-      return { tool: helper };
+      return { tool: rootHelper };
     },
   });
-  assert.equal(typeof fallback.schema.boolean, "function");
+  assert.equal(fallback.schema.boolean, nativeBoolean);
   assert.deepEqual(fallback({ fallback: true }), { fallback: true });
 
   const unavailable = await loadV1ToolHelper({
