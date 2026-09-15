@@ -342,6 +342,8 @@ _pulse_fetch_candidate_issue_snapshot_json() {
 		fi
 		if [[ "$gh_exit_code" -eq 0 ]] && _pulse_issue_snapshot_is_valid "$issue_json"; then
 			printf 'graphql-retry\n' >"$source_file"
+			printf '[pulse-wrapper] list_dispatchable_issue_candidates: recovered %s via bounded native GraphQL retry\n' \
+				"$repo_slug" >>"$LOGFILE"
 			printf '%s\n' "$issue_json"
 			return 0
 		fi
@@ -349,12 +351,41 @@ _pulse_fetch_candidate_issue_snapshot_json() {
 
 	if issue_json=$(_pulse_candidate_cached_issue_snapshot_json "$repo_slug"); then
 		printf 'cache\n' >"$source_file"
+		printf '[pulse-wrapper] list_dispatchable_issue_candidates: recovered %s from fresh complete batch cache\n' \
+			"$repo_slug" >>"$LOGFILE"
 		printf '%s\n' "$issue_json"
 		return 0
+	fi
+	local error_message=""
+	error_message=$(<"$error_file") || error_message="unknown error"
+	if [[ "$error_message" == *"secondary-rate-limit active=true skip=read"* ]]; then
+		printf '[pulse-wrapper] list_dispatchable_issue_candidates: gh_issue_list cooldown skip for %s; recovery sources unavailable: %s\n' \
+			"$repo_slug" "$error_message" >>"$LOGFILE"
+	else
+		printf '[pulse-wrapper] list_dispatchable_issue_candidates: live transports and fresh cache unavailable for %s: %s\n' \
+			"$repo_slug" "${error_message:-unknown error}" >>"$LOGFILE"
 	fi
 	printf 'unavailable\n' >"$source_file"
 	printf '[]\n'
 	return 1
+}
+
+#######################################
+# Refresh a snapshot after dependency normalization only when the current
+# snapshot contains blocked work. The source marker file is updated by fetch.
+#######################################
+_pulse_normalize_candidate_issue_snapshot_json() {
+	local repo_slug="$1" limit="$2" mode="$3" issue_json="$4"
+	local error_file="$5" source_file="$6"
+	if [[ "$mode" == "skip" ]] ||
+		! printf '%s' "$issue_json" | jq -e 'any(.[]; any(.labels[]?; .name == "status:blocked"))' >/dev/null 2>&1 ||
+		! declare -F normalize_repo_dependency_readiness_if_due >/dev/null 2>&1; then
+		printf '%s\n' "$issue_json"
+		return 0
+	fi
+	normalize_repo_dependency_readiness_if_due "$repo_slug" >/dev/null 2>&1 || true
+	_pulse_fetch_candidate_issue_snapshot_json "$repo_slug" "$limit" "$error_file" "$source_file"
+	return $?
 }
 
 list_dispatchable_issue_candidates_json() {
@@ -382,28 +413,11 @@ list_dispatchable_issue_candidates_json() {
 		snapshot_source=$(<"$snapshot_source_file")
 		case "$snapshot_source" in
 		live | graphql-retry) snapshot_succeeded=1 ;;
-		cache)
-			printf '[pulse-wrapper] list_dispatchable_issue_candidates: recovered %s from fresh complete batch cache\n' \
-				"$repo_slug" >>"$LOGFILE"
-			;;
+		*) snapshot_succeeded=0 ;;
 		esac
-		if [[ "$snapshot_source" == "graphql-retry" ]]; then
-			printf '[pulse-wrapper] list_dispatchable_issue_candidates: recovered %s via bounded native GraphQL retry\n' \
-				"$repo_slug" >>"$LOGFILE"
-		fi
 	else
-		local _issue_dispatch_err_msg
-		_issue_dispatch_err_msg=$(<"$issue_dispatch_err") || _issue_dispatch_err_msg="unknown error"
-		if [[ "$_issue_dispatch_err_msg" == *"secondary-rate-limit active=true skip=read"* ]]; then
-			printf '[pulse-wrapper] list_dispatchable_issue_candidates: gh_issue_list cooldown skip for %s; recovery sources unavailable: %s\n' \
-				"$repo_slug" "$_issue_dispatch_err_msg" >>"$LOGFILE"
-		else
-			printf '[pulse-wrapper] list_dispatchable_issue_candidates: live transports and fresh cache unavailable for %s: %s\n' \
-				"$repo_slug" "${_issue_dispatch_err_msg:-unknown error}" >>"$LOGFILE"
-		fi
 		issue_json="[]"
 	fi
-	rm -f "$issue_dispatch_err" "$snapshot_source_file"
 
 	# GH#30180: auto-dispatch is the worker-authorization boundary, not the
 	# later spawn boundary. Reconcile from the complete raw open-issue snapshot
@@ -415,51 +429,37 @@ list_dispatchable_issue_candidates_json() {
 		}
 	fi
 
+	# Dependency-blocked children are filtered before ranking, so they cannot
+	# reach the dispatch-time readiness guard. Normalize once per bounded TTL
+	# whenever the fetched snapshot contains blocked work; this also covers a
+	# roadmap alongside unrelated runnable candidates.
+	if [[ "$snapshot_available" -eq 1 ]]; then
+		local normalized_issue_json=""
+		if normalized_issue_json=$(_pulse_normalize_candidate_issue_snapshot_json \
+			"$repo_slug" "$limit" "$dependency_normalization_mode" "$issue_json" \
+			"$issue_dispatch_err" "$snapshot_source_file"); then
+			issue_json="$normalized_issue_json"
+			snapshot_source=$(<"$snapshot_source_file")
+			case "$snapshot_source" in
+			live | graphql-retry) snapshot_succeeded=1 ;;
+			*) snapshot_succeeded=0 ;;
+			esac
+		else
+			issue_json='[]'
+			snapshot_succeeded=0
+			snapshot_available=0
+		fi
+	fi
+	rm -f "$issue_dispatch_err" "$snapshot_source_file"
+
 	local candidates_json=""
 	candidates_json=$(_filter_dispatchable_issue_candidates_json "$issue_json") || {
 		snapshot_succeeded=0
 		snapshot_available=0
 	}
 	if [[ "$snapshot_source" == "cache" && "$candidates_json" == "[]" ]]; then
-		# A recovery cache may safely supply concrete candidates because final
-		# dispatch gates revalidate them. It must not prove that no work exists.
+		# Cached candidates are revalidated later, but a cache cannot prove absence.
 		snapshot_available=0
-	fi
-
-	# Dependency-blocked children are filtered before ranking, so they cannot
-	# reach the dispatch-time readiness guard. Normalize once per bounded TTL
-	# whenever the fetched snapshot contains blocked work; this also covers a
-	# roadmap alongside unrelated runnable candidates.
-	if [[ "$dependency_normalization_mode" != "skip" ]] &&
-		printf '%s' "$issue_json" | jq -e 'any(.[]; any(.labels[]?; .name == "status:blocked"))' >/dev/null 2>&1 &&
-		declare -F normalize_repo_dependency_readiness_if_due >/dev/null 2>&1; then
-		normalize_repo_dependency_readiness_if_due "$repo_slug" >/dev/null 2>&1 || true
-		local refreshed_issue_json="" refresh_err_file="" refresh_source_file=""
-		refresh_err_file=$(mktemp) || refresh_err_file=""
-		refresh_source_file=$(mktemp) || refresh_source_file=""
-		if [[ -z "$refresh_err_file" || -z "$refresh_source_file" ]] ||
-			! refreshed_issue_json=$(_pulse_fetch_candidate_issue_snapshot_json \
-				"$repo_slug" "$limit" "$refresh_err_file" "$refresh_source_file"); then
-			issue_json='[]'
-			snapshot_succeeded=0
-			snapshot_available=0
-		else
-			issue_json="$refreshed_issue_json"
-			snapshot_available=1
-			snapshot_source=$(<"$refresh_source_file")
-			case "$snapshot_source" in
-			live | graphql-retry) snapshot_succeeded=1 ;;
-			*) snapshot_succeeded=0 ;;
-			esac
-		fi
-		rm -f "$refresh_err_file" "$refresh_source_file"
-		candidates_json=$(_filter_dispatchable_issue_candidates_json "$issue_json") || {
-			snapshot_succeeded=0
-			snapshot_available=0
-		}
-		if [[ "$snapshot_source" == "cache" && "$candidates_json" == "[]" ]]; then
-			snapshot_available=0
-		fi
 	fi
 
 	if [[ -n "$raw_snapshot_file" ]]; then
