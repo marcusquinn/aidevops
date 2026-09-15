@@ -388,6 +388,31 @@ _pulse_normalize_candidate_issue_snapshot_json() {
 	return $?
 }
 
+#######################################
+# Persist optional campaign/source completeness evidence for one snapshot.
+#######################################
+_pulse_persist_candidate_snapshot_evidence() {
+	local repo_slug="$1" issue_json="$2" snapshot_succeeded="$3" limit="$4"
+	local raw_snapshot_file="$5" snapshot_status_file="$6" completeness_file="$7"
+	if [[ -n "$raw_snapshot_file" ]]; then
+		(
+			umask 077
+			printf '%s\n' "$issue_json" >"$raw_snapshot_file"
+		) || printf '[pulse-wrapper] list_dispatchable_issue_candidates: unable to persist campaign snapshot for %s\n' \
+			"$repo_slug" >>"$LOGFILE"
+	fi
+	if [[ -n "$snapshot_status_file" ]]; then
+		(umask 077; printf '%s\n' "$snapshot_succeeded" >"$snapshot_status_file") || true
+	fi
+	# A successful bounded read is not necessarily complete. Never lend a
+	# reserved class's slots based on a failed, malformed or truncated snapshot.
+	if [[ -n "$completeness_file" && "$snapshot_succeeded" == 1 ]] &&
+		jq -e --argjson limit "$limit" 'length < $limit' <<<"$issue_json" >/dev/null 2>&1; then
+		printf '1\n' >"$completeness_file"
+	fi
+	return 0
+}
+
 list_dispatchable_issue_candidates_json() {
 	local repo_slug="$1"
 	local limit="${2:-100}"
@@ -469,27 +494,9 @@ list_dispatchable_issue_candidates_json() {
 		snapshot_available=0
 	fi
 
-	if [[ -n "$raw_snapshot_file" ]]; then
-		(
-			umask 077
-			printf '%s\n' "$issue_json" >"$raw_snapshot_file"
-		) || {
-			printf '[pulse-wrapper] list_dispatchable_issue_candidates: unable to persist campaign snapshot for %s\n' \
-				"$repo_slug" >>"$LOGFILE"
-		}
-	fi
-	if [[ -n "$snapshot_status_file" ]]; then
-		(
-			umask 077
-			printf '%s\n' "$snapshot_succeeded" >"$snapshot_status_file"
-		) || true
-	fi
-	# A successful bounded read is not necessarily complete. Never lend a
-	# reserved class's slots based on a failed, malformed or truncated snapshot.
-	if [[ -n "$completeness_file" && "$snapshot_succeeded" == 1 ]] &&
-		jq -e --argjson limit "$limit" 'length < $limit' <<<"$issue_json" >/dev/null 2>&1; then
-		printf '1\n' >"$completeness_file"
-	fi
+	_pulse_persist_candidate_snapshot_evidence "$repo_slug" "$issue_json" \
+		"$snapshot_succeeded" "$limit" "$raw_snapshot_file" \
+		"$snapshot_status_file" "$completeness_file"
 
 	printf '%s\n' "$candidates_json"
 	[[ "$snapshot_available" -eq 1 ]]
