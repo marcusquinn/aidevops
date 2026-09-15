@@ -195,7 +195,7 @@ _validate_implementation_brief_scope() {
 	fi
 
 	_log "ERROR" "brief-defect: #${issue_number} generated implementation brief lacks a non-empty canonical Files Scope; add '### Files Scope' with '- EDIT: \`repo-relative/path\`' before dispatch"
-	return 30
+	return 40
 }
 
 _load_validated_issue_context() {
@@ -1924,6 +1924,8 @@ _run_pre_generator_validators() {
 #   0  — dispatch proceeds
 #   10 — premise falsified (caller should close issue; this function already did)
 #   20 — validator error (dispatch proceeds with warning)
+#   30 — duplicate-state lookup uncertain (dispatch fails closed)
+#   40 — generated implementation brief lacks required worker context
 # ---------------------------------------------------------------------------
 cmd_validate() {
 	local issue_number="$1"
@@ -2033,6 +2035,7 @@ Exit codes (validate):
   10 — premise falsified; issue closed with rationale comment
   20 — validator error; dispatch proceeds with warning
   30 — duplicate-state lookup uncertain; dispatch must fail closed
+  40 — generated brief invalid; dispatch must fail closed for owner repair
 
 Environment:
   AIDEVOPS_SKIP_PREDISPATCH_VALIDATOR=1  — bypass all validators (exit 0)

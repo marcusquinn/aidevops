@@ -664,8 +664,11 @@ Simplify \`${lf_path}\` — currently over ${LARGE_FILE_LINE_THRESHOLD} lines. B
 ## Why
 Issue #${parent_issue} is blocked by the large-file gate. Workers dispatched against this file spend most of their context budget reading it, leaving insufficient capacity for implementation.${_prior_attempt_ref}
 
-## How
+### Files Scope
+
 - EDIT: \`${lf_path}\`
+
+## How
 - Extract cohesive function groups into separate files
 - Keep a thin orchestrator in the original file that sources the extracted modules
 - Verify: \`wc -l ${lf_path}\` should be below ${LARGE_FILE_LINE_THRESHOLD}
