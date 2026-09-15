@@ -139,12 +139,12 @@ pulse_campaign_shadow_candidates_json() {
 	local source_limit="${3:-1000}"
 	local dependency_normalization_mode="${4:-normalize}"
 	local completeness_file="${5:-}"
-	local candidates_json="[]"
+	local candidates_json="[]" source_status=0
 
 	if ! _pulse_campaign_shadow_enabled; then
-		candidates_json=$(list_dispatchable_issue_candidates_json "$repo_slug" "$source_limit" "" "" "$dependency_normalization_mode" "$completeness_file") || candidates_json='[]'
-		_pulse_campaign_filter_candidates "$repo_slug" "$candidates_json" "$completeness_file"
-		return $?
+		candidates_json=$(list_dispatchable_issue_candidates_json "$repo_slug" "$source_limit" "" "" "$dependency_normalization_mode" "$completeness_file") || source_status=$?
+		_pulse_campaign_filter_candidates "$repo_slug" "$candidates_json" "$completeness_file" || return 1
+		return "$source_status"
 	fi
 
 	local raw_snapshot_file="" ready_file="" plan_file="" snapshot_status_file=""
@@ -155,12 +155,12 @@ pulse_campaign_shadow_candidates_json() {
 	if [[ -z "$raw_snapshot_file" || -z "$ready_file" || -z "$plan_file" || -z "$snapshot_status_file" ]]; then
 		rm -f "$raw_snapshot_file" "$ready_file" "$plan_file" "$snapshot_status_file"
 		_pulse_campaign_log "temporary workspace unavailable repo=${repo_slug}; legacy candidates retained"
-		candidates_json=$(list_dispatchable_issue_candidates_json "$repo_slug" "$source_limit" "" "" "$dependency_normalization_mode" "$completeness_file") || candidates_json='[]'
-		_pulse_campaign_filter_candidates "$repo_slug" "$candidates_json" "$completeness_file"
-		return $?
+		candidates_json=$(list_dispatchable_issue_candidates_json "$repo_slug" "$source_limit" "" "" "$dependency_normalization_mode" "$completeness_file") || source_status=$?
+		_pulse_campaign_filter_candidates "$repo_slug" "$candidates_json" "$completeness_file" || return 1
+		return "$source_status"
 	fi
 
-	candidates_json=$(list_dispatchable_issue_candidates_json "$repo_slug" "$source_limit" "$raw_snapshot_file" "$snapshot_status_file" "$dependency_normalization_mode" "$completeness_file") || candidates_json='[]'
+	candidates_json=$(list_dispatchable_issue_candidates_json "$repo_slug" "$source_limit" "$raw_snapshot_file" "$snapshot_status_file" "$dependency_normalization_mode" "$completeness_file") || source_status=$?
 	candidates_json=$(_pulse_campaign_filter_candidates "$repo_slug" "$candidates_json" "$completeness_file") || {
 		printf '[]\n'
 		rm -f "$raw_snapshot_file" "$ready_file" "$plan_file" "$snapshot_status_file"
@@ -173,11 +173,11 @@ pulse_campaign_shadow_candidates_json() {
 		_pulse_campaign_log "ready snapshot write failed repo=${repo_slug}; legacy candidates retained"
 		printf '%s\n' "$candidates_json"
 		rm -f "$raw_snapshot_file" "$ready_file" "$plan_file" "$snapshot_status_file"
-		return 0
+		return "$source_status"
 	}
 
 	_pulse_campaign_plan_shadow "$repo_slug" "$repo_path" "$source_limit" "$raw_snapshot_file" "$ready_file" "$plan_file" "$snapshot_status_file" || true
 	printf '%s\n' "$candidates_json"
 	rm -f "$raw_snapshot_file" "$ready_file" "$plan_file" "$snapshot_status_file"
-	return 0
+	return "$source_status"
 }
