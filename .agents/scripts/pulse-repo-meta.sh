@@ -318,7 +318,7 @@ _pulse_candidate_cached_issue_snapshot_json() {
 #######################################
 _pulse_fetch_candidate_issue_snapshot_json() {
 	local repo_slug="$1" limit="$2" error_file="$3" source_file="$4"
-	local issue_json="" gh_exit_code=0
+	local issue_json="" gh_exit_code=0 initial_error=""
 	: >"$source_file"
 	issue_json=$(gh_issue_list --repo "$repo_slug" --state open \
 		--json number,title,url,assignees,labels,createdAt,updatedAt \
@@ -328,8 +328,10 @@ _pulse_fetch_candidate_issue_snapshot_json() {
 		printf '%s\n' "$issue_json"
 		return 0
 	fi
+	initial_error=$(<"$error_file") || initial_error=""
 
-	if _pulse_candidate_graphql_retry_available; then
+	if [[ "$initial_error" != *"secondary-rate-limit active=true skip=read"* ]] &&
+		_pulse_candidate_graphql_retry_available; then
 		gh_exit_code=0
 		if declare -F _gh_with_timeout >/dev/null 2>&1; then
 			issue_json=$(_gh_with_timeout read gh issue list --repo "$repo_slug" --state open \

@@ -87,6 +87,23 @@ retry_json=$(_pulse_fetch_candidate_issue_snapshot_json "owner/repo" 100 "$ERROR
 assert_eq "REST failure recovers through one native GraphQL read" "graphql-retry:100" \
 	"$(printf '%s:%s' "$(<"$SOURCE_FILE")" "$(printf '%s' "$retry_json" | jq -r '.[0].number')")"
 
+gh_issue_list() {
+	printf '[gh-cooldown] secondary-rate-limit active=true skip=read\n' >&2
+	return 75
+}
+GRAPHQL_RETRY_LOG="${TEST_ROOT}/graphql-retry.log"
+_pulse_candidate_graphql_retry_available() {
+	printf 'called\n' >>"$GRAPHQL_RETRY_LOG"
+	return 0
+}
+_pulse_candidate_cached_issue_snapshot_json() { return 1; }
+cooldown_rc=0
+_pulse_fetch_candidate_issue_snapshot_json "owner/repo" 100 "$ERROR_FILE" "$SOURCE_FILE" >/dev/null || cooldown_rc=$?
+assert_eq "secondary cooldown skips the alternate live transport" "1:unavailable" \
+	"${cooldown_rc}:$(<"$SOURCE_FILE")"
+[[ ! -s "$GRAPHQL_RETRY_LOG" ]] || fail "secondary cooldown retried GraphQL"
+printf 'PASS secondary cooldown avoids repeated live transport resets\n'
+
 # When both live pools are unavailable, a fresh cache returns candidates but
 # cannot authorize lifecycle lock reconciliation or completeness lending.
 _pulse_candidate_graphql_retry_available() { return 1; }
