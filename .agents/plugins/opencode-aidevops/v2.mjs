@@ -139,7 +139,7 @@ function systemStrings(parts) {
 
 function replaceSystemParts(event, strings) {
   event.system.splice(0, event.system.length, ...strings.map((text, index) => ({
-    ...(event.system[index] || {}),
+    ...event.system[index],
     type: "text",
     text,
   })));
