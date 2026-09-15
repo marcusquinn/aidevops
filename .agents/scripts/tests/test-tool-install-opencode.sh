@@ -66,6 +66,11 @@ extract_functions() {
 		/^_setup_opencode_first_line\(\)/, /^}$/ { print; next }
 		/^_setup_opencode_homebrew_owner_action\(\)/, /^}$/ { print; next }
 		/^_setup_opencode_print_manual_install_hint\(\)/, /^}$/ { print; next }
+		/^_setup_opencode_v2_install_root\(\)/, /^}$/ { print; next }
+		/^_setup_opencode_v2_install_binary\(\)/, /^}$/ { print; next }
+		/^_setup_install_opencode_package\(\)/, /^}$/ { print; next }
+		/^_setup_opencode_installer\(\)/, /^}$/ { print; next }
+		/^_setup_opencode_print_missing_installer\(\)/, /^}$/ { print; next }
 		/^_setup_opencode_node_path_for_binary\(\)/, /^}$/ { print; next }
 		/^_setup_opencode_binary_is_ephemeral\(\)/, /^}$/ { print; next }
 		/^_setup_clear_canary_negative_cache\(\)/, /^}$/ { print; next }
@@ -208,6 +213,22 @@ chmod +x "$SANDBOX/bin/opencode-path-check"
 	PATH="" _setup_opencode_help_output "$SANDBOX/bin/opencode-path-check"
 ) >"$SANDBOX/out1d" 2>&1 || rc1d=$?
 assert_eq "empty PATH expansion has no trailing colon" "0" "${rc1d:-0}"
+
+echo "Test 1e: validator accepts OpenCode help emitted on stderr"
+cat >"$SANDBOX/bin/opencode-stderr-help" <<'EOF'
+#!/usr/bin/env bash
+[[ "${1:-}" == "--version" ]] && echo "1.18.31"
+[[ "${1:-}" == "--help" ]] && echo "opencode run [message..]     run opencode with a message" >&2
+exit 0
+EOF
+chmod +x "$SANDBOX/bin/opencode-stderr-help"
+(
+	source_extracted
+	rc=0
+	_setup_validate_opencode_binary "$SANDBOX/bin/opencode-stderr-help" || rc=$?
+	echo "$rc"
+) >"$SANDBOX/out1e" 2>&1
+assert_eq "stderr help opencode -> rc=0" "0" "$(tail -1 "$SANDBOX/out1e")"
 
 # --- Test 2: validator on claude CLI shim ----------------------------------
 echo "Test 2: _setup_validate_opencode_binary on claude CLI shim"
@@ -381,6 +402,8 @@ cp "$SANDBOX/bin/opencode-claude" "$SANDBOX/bin/opencode"
 		[[ "$bin" == "$SANDBOX/bin/"* ]] && return 1
 		return 0
 	}
+	# Keep this force-heal case isolated from any valid host-level OpenCode.
+	_setup_find_valid_opencode_alternative() { return 1; }
 	export PATH="$SANDBOX/bin:$PATH"
 	rc=0
 	setup_opencode_cli || rc=$?
@@ -418,7 +441,7 @@ rc6b=$(grep '^rc=' "$SANDBOX/out6b" | tail -1)
 resolved6b=$(tail -1 "$SANDBOX/out6b")
 assert_eq "qwen stable shim heal rc" "rc=0" "$rc6b"
 assert_eq "qwen stable shim rewritten" "$HOME/.local/bin/opencode" "$resolved6b"
-if "$HOME/.local/bin/opencode" --help 2>/dev/null | grep -q 'opencode run \[message\.\.\]'; then
+if "$HOME/.local/bin/opencode" --help 2>&1 | grep -q 'opencode run \[message\.\.\]'; then
 	assert_eq "qwen shim now points to valid opencode" "rewritten" "rewritten"
 else
 	assert_eq "qwen shim now points to valid opencode" "rewritten" "not-rewritten"
@@ -473,6 +496,7 @@ EOF
 chmod +x "$SANDBOX/bin/npm" "$SANDBOX/bin/bun"
 (
 	source_extracted
+	_setup_find_valid_opencode_alternative() { return 1; }
 	setup_prompt() {
 		local _var="$1"
 		local _prompt="$2"
@@ -504,6 +528,7 @@ EOF
 chmod +x "$SANDBOX/bin/npm"
 (
 	source_extracted
+	_setup_find_valid_opencode_alternative() { return 1; }
 	npm_global_install() {
 		printf '%s\n' "installer failed: permission denied" >&2
 		return 1
@@ -531,6 +556,12 @@ rm -f "$HOME/.aidevops/.opencode-bin-resolved" "$HOME/.local/bin/opencode" "$SAN
 		[[ "$bin" == "$SANDBOX/bin/"* ]] && return 1
 		return 0
 	}
+	_setup_find_valid_opencode_binary() {
+		local preferred_bin="${1:-}"
+		[[ -n "$preferred_bin" ]] || return 1
+		_setup_validate_opencode_binary "$preferred_bin" || return 1
+		printf '%s\n' "$preferred_bin"
+	}
 	npm_global_install() {
 		cat >"$SANDBOX/bin/opencode" <<'INNER_EOF'
 #!/usr/bin/env bash
@@ -554,7 +585,7 @@ INNER_EOF
 	export -f npm_global_install 2>/dev/null || true
 	export PATH="$SANDBOX/bin:/usr/bin:/bin"
 	export AIDEVOPS_OPENCODE_VERSION_TIMEOUT=1
-	export AIDEVOPS_OPENCODE_POST_INSTALL_ATTEMPTS=2
+	export AIDEVOPS_OPENCODE_POST_INSTALL_ATTEMPTS=3
 	export AIDEVOPS_OPENCODE_POST_INSTALL_RETRY_DELAY=0
 	rc=0
 	setup_opencode_cli || rc=$?
@@ -600,6 +631,7 @@ EOF
 chmod +x "$SANDBOX/bin/brew"
 (
 	source_extracted
+	_setup_find_valid_opencode_alternative() { return 1; }
 	_setup_opencode_binary_is_ephemeral() {
 		local bin="$1"
 		case "$bin" in
@@ -725,7 +757,7 @@ chmod +x "$shim_path"
 	export HOME="$shim_home"
 	export PATH="$real_dir:$PATH"
 	_setup_opencode_binary_is_ephemeral() { return 1; }
-	_setup_ensure_opencode_stable_shim "$shim_path"
+	_setup_ensure_opencode_stable_shim "$real_dir/opencode"
 ) >"$SANDBOX/out12" 2>&1
 assert_eq "old managed shim is repaired" "$shim_path" "$(tail -1 "$SANDBOX/out12")"
 if grep -Fq '# aidevops:terminal-title-owner' "$shim_path"; then
@@ -742,7 +774,7 @@ shim_checksum=$(cksum "$shim_path")
 	export HOME="$shim_home"
 	export PATH="$real_dir:$PATH"
 	_setup_opencode_binary_is_ephemeral() { return 1; }
-	_setup_ensure_opencode_stable_shim "$shim_path"
+	_setup_ensure_opencode_stable_shim "$real_dir/opencode"
 ) >/dev/null 2>&1
 assert_eq "title-owning shim regeneration is idempotent" "$shim_checksum" "$(cksum "$shim_path")"
 
@@ -763,6 +795,7 @@ chmod +x "$repair_shim"
 	source_extracted
 	export HOME="$repair_home"
 	export PATH="$repair_home/.local/bin:$repair_bin:$PATH"
+	_setup_find_valid_opencode_alternative() { printf '%s\n' "$repair_bin/opencode"; }
 	rc=0
 	setup_opencode_cli || rc=$?
 	printf 'rc=%s\n' "$rc"
@@ -867,6 +900,50 @@ assert_eq "preview opt-out leaves V1 setup enabled" "v1" "$(grep -E '^v[12]$' "$
 	AIDEVOPS_OPENCODE_PROFILE=v2 setup_opencode_runtimes
 ) >"$SANDBOX/out15c" 2>&1
 assert_eq "V2-primary setup keeps V1 as rollback" $'v1:1\nv2:0' "$(grep -E '^v[12]:' "$SANDBOX/out15c")"
+
+echo "Test 16: V2 setup installs under its isolated runtime root"
+v2_install_home="$SANDBOX/v2-install-home"
+v2_install_bin="$SANDBOX/v2-install-bin"
+v2_install_root="$v2_install_home/.aidevops/runtimes/opencode-v2/runtime"
+mkdir -p "$v2_install_home" "$v2_install_bin"
+cat >"$v2_install_bin/npm" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >"$HOME/npm-install-args"
+prefix=""
+while [[ $# -gt 0 ]]; do
+	if [[ "$1" == "--prefix" ]]; then
+		prefix="$2"
+		shift 2
+		continue
+	fi
+	shift
+done
+mkdir -p "$prefix/node_modules/.bin"
+cat >"$prefix/node_modules/.bin/opencode2" <<'SHIM'
+#!/usr/bin/env bash
+[[ "${1:-}" == "--version" ]] && printf 'opencode v2.0.3\n'
+[[ "${1:-}" == "--help" ]] && printf 'OpenCode command line interface\nrun  Run OpenCode with a message\n'
+exit 0
+SHIM
+chmod +x "$prefix/node_modules/.bin/opencode2"
+EOF
+chmod +x "$v2_install_bin/npm"
+(
+	source_extracted
+	export HOME="$v2_install_home"
+	export PATH="$v2_install_bin:/usr/bin:/bin"
+	AIDEVOPS_OPENCODE_PROFILE=v2 setup_opencode_cli
+	printf 'resolved=%s\n' "$(<"$HOME/.aidevops/.opencode-v2-bin-resolved")"
+) >"$SANDBOX/out16" 2>&1
+assert_eq "V2 isolated install records the stable shim" \
+	"resolved=$v2_install_home/.local/bin/opencode2" "$(tail -1 "$SANDBOX/out16")"
+assert_eq "V2 install uses npm with a private prefix" \
+	"install --no-audit --no-fund --prefix $v2_install_root @opencode/cli@latest" \
+	"$(<"$v2_install_home/npm-install-args")"
+v2_install_exec=$(grep '^exec "' "$v2_install_home/.local/bin/opencode2")
+v2_install_root_real=$(cd "$v2_install_root" && pwd -P)
+assert_eq "V2 stable shim targets the private package binary" \
+	"exec \"$v2_install_root_real/node_modules/.bin/opencode2\" \"\$@\"" "$v2_install_exec"
 
 echo ""
 echo "===== Results: $PASS passed, $FAIL failed ====="
