@@ -1364,7 +1364,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18432 Fix expected-source normalization on dead preparing release retries #auto-dispatch ref:GH#31870
 
-- [ ] t18436 Install isolated OpenCode V2 preview alongside V1 #auth #auto-dispatch #feat #medium #opencode #plugin #setup ref:GH#31941
+- [x] t18436 Install isolated OpenCode V2 preview alongside V1 #auth #auto-dispatch #feat #medium #opencode #plugin #setup ref:GH#31941 pr:#31944 completed:2026-09-15
 
 ## In Progress
 
