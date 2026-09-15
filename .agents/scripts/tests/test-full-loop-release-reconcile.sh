@@ -973,6 +973,22 @@ no-runs)
 	printf '%s\n' '{"workflow_runs":[]}'
 	exit 0
 	;;
+oversized)
+	[[ "$args" == *" --paginate "* && "$args" == *" -F per_page=100 "* ]] || exit 1
+	if [[ "$args" == *" -f event=push "* ]]; then
+		jq -cn '{workflow_runs:[range(0;1500) | {id:.,event:"push",head_branch:"v0.0.0",
+			head_sha:"0000000000000000000000000000000000000000",status:"completed",
+			conclusion:"success",created_at:"2026-07-26T00:00:00Z",padding:("x" * 256)}]}'
+		printf '%s\n' '{"workflow_runs":[]}'
+	else
+		jq -cn '{workflow_runs:[range(0;1500) | {id:.,event:"workflow_dispatch",head_branch:"main",
+			head_sha:"0000000000000000000000000000000000000000",status:"completed",
+			conclusion:"success",created_at:"2026-07-26T00:00:00Z",display_title:"unrelated",
+			padding:("x" * 256)}]}'
+		printf '%s\n' '{"workflow_runs":[{"id":200,"event":"workflow_dispatch","head_branch":"main","head_sha":"4444444444444444444444444444444444444444","status":"completed","conclusion":"success","created_at":"2026-07-27T00:02:00Z","display_title":"Publish v1.2.3 [3333333333333333333333333333333333333333.4444444444444444444444444444444444444444]"},{"id":201,"event":"workflow_dispatch","head_branch":"main","head_sha":"5555555555555555555555555555555555555555","status":"completed","conclusion":"failure","created_at":"2026-07-27T00:03:00Z","display_title":"Publish v1.2.3 [3333333333333333333333333333333333333333.5555555555555555555555555555555555555555]"}]}'
+	fi
+	exit 0
+	;;
 esac
 if [[ "$args" == *" workflow run publish-packages.yml "* ]]; then
 	printf '%s\n' "$args" >"${FAKE_DISPATCH_LOG:?}"
@@ -1151,6 +1167,22 @@ fi
 export FAKE_RECOVERY_CORRELATION_MODE=valid
 export FAKE_PUSH_BRANCH_MODE=valid
 printf 'PASS push workflow correlation binds the exact release tag ref\n'
+
+export FAKE_RUN_SCHEMA_MODE=oversized
+_full_loop_release_find_workflow_run test/repo v1.2.3 \
+	3333333333333333333333333333333333333333
+if [[ "$(jq -r '.id' <<<"$_FULL_LOOP_RELEASE_RUN_JSON")" != "201" ]]; then
+	printf 'FAIL newest matching workflow run beyond the first oversized page was not selected\n'
+	exit 1
+fi
+_full_loop_release_find_workflow_run test/repo v1.2.3 \
+	3333333333333333333333333333333333333333 successful
+if [[ "$(jq -r '.id' <<<"$_FULL_LOOP_RELEASE_RUN_JSON")" != "200" ]]; then
+	printf 'FAIL newest successful workflow run beyond the first oversized page was not selected\n'
+	exit 1
+fi
+export FAKE_RUN_SCHEMA_MODE=valid
+printf 'PASS oversized paginated workflow histories avoid ARG_MAX and preserve selection\n'
 
 saved_script_dir="$SCRIPT_DIR"
 SCRIPT_DIR="${TEST_ROOT}/no-audit-helper"
