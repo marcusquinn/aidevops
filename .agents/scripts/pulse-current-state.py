@@ -477,7 +477,7 @@ def is_rest_deferral_counter(name):
     return name.startswith(detail_prefixes)
 
 
-def build_rest_admission(counter_hits, counter_latest, transport_status):
+def build_rest_admission(counter_hits, counter_latest, transport_status, stats_state):
     deferred_stages = matching_counter_counts(counter_hits, 'pulse_rest_core_budget_stage_deferred_')
     blocked_modes = matching_counter_counts(counter_hits, 'pulse_rest_core_progress_blocked_')
     counter_names = [
@@ -489,17 +489,20 @@ def build_rest_admission(counter_hits, counter_latest, transport_status):
     progress_count = counter_hits.get('pulse_rest_core_progress_blocked', 0)
     deferral_count = stage_count + unit_count + progress_count
     transport_observed = transport_status.get('state') != 'unknown'
+    stats_available = stats_state['availability'] == 'available'
     availability = 'observed' if deferral_count or transport_observed else 'unknown'
+    if not stats_available and not transport_observed:
+        availability = stats_state['availability']
     evidence_state = 'read_incomplete' if deferral_count else 'unknown'
     return {
         'availability': availability,
         'evidence_state': evidence_state,
         'deferred_by': 'local_admission' if deferral_count else None,
         'request_attempted': False if deferral_count else None,
-        'deferral_count': deferral_count,
-        'stage_deferral_count': stage_count,
-        'unit_block_count': unit_count,
-        'progress_block_count': progress_count,
+        'deferral_count': deferral_count if stats_available else None,
+        'stage_deferral_count': stage_count if stats_available else None,
+        'unit_block_count': unit_count if stats_available else None,
+        'progress_block_count': progress_count if stats_available else None,
         'deferred_stages': deferred_stages,
         'blocked_modes': blocked_modes,
         'last_observed_at': latest_counter_time(counter_latest, counter_names),
@@ -511,7 +514,7 @@ def build_rest_admission(counter_hits, counter_latest, transport_status):
     }
 
 
-def build_policy_holds(counter_events):
+def build_policy_holds(counter_events, stats_state):
     # Newer dispatchers record policy gates as benign blocks. Retain the former
     # failure-named counter for mixed-version readers, deduplicating timestamps
     # where both names describe the same observed policy hold.
@@ -524,6 +527,15 @@ def build_policy_holds(counter_events):
         for counter_name in counter_names
         for timestamp in counter_events.get(counter_name, [])
     }
+    if stats_state['availability'] != 'available':
+        return {
+            'availability': stats_state['availability'],
+            'active_in_window': None,
+            'count': None,
+            'last_observed_at': None,
+            'source': 'pulse-stats',
+            'window_seconds': window_s,
+        }
     count = len(observations)
     return {
         'availability': 'observed' if count else 'not_observed',
@@ -691,10 +703,16 @@ counter_latest = {}
 counter_events = {}
 gauge_values = {}
 stats_path = os.path.join(log_dir, 'pulse-stats.json')
+stats_state = {'availability': 'unavailable', 'reason': 'missing'}
 if os.path.exists(stats_path):
     try:
         with open(stats_path, encoding='utf-8') as stats_file:
             stats = json.load(stats_file)
+        if not isinstance(stats, dict) or not isinstance(stats.get('counters'), dict):
+            raise TypeError('pulse stats schema')
+        if not isinstance(stats.get('gauges', {}), dict) or not isinstance(stats.get('invocation_sources', {}), dict):
+            raise TypeError('pulse stats schema')
+        stats_state = {'availability': 'available', 'reason': None}
         for key, values in (stats.get('counters') or {}).items():
             if isinstance(values, list):
                 hits = [v for v in values if isinstance(v, (int, float)) and v >= since]
@@ -705,7 +723,14 @@ if os.path.exists(stats_path):
         for key, item in (stats.get('gauges') or {}).items():
             if isinstance(item, dict) and float(item.get('ts', 0)) >= since:
                 gauge_values[key] = item.get('value')
-    except (OSError, json.JSONDecodeError):
+    except (json.JSONDecodeError, TypeError, ValueError, OverflowError):
+        stats_state = {'availability': 'malformed', 'reason': 'invalid-json-or-schema'}
+        counter_hits = {}
+        counter_latest = {}
+        counter_events = {}
+        gauge_values = {}
+    except OSError:
+        stats_state = {'availability': 'unavailable', 'reason': 'read-error'}
         counter_hits = {}
         counter_latest = {}
         counter_events = {}
@@ -784,9 +809,9 @@ pr_merged_count, pr_merged_examples = line_count(['pr merged', 'merged pr', 'squ
 issue_closed_count, issue_closed_examples = line_count(['issue closed', 'closed issue', 'status:done'], wrapper_activity)
 graphql_budget = build_graphql_budget(counter_hits, gauge_values)
 rest_admission = build_rest_admission(
-    counter_hits, counter_latest, rest_admission_status_from_env()
+    counter_hits, counter_latest, rest_admission_status_from_env(), stats_state
 )
-policy_holds = build_policy_holds(counter_events)
+policy_holds = build_policy_holds(counter_events, stats_state)
 dispatch_pacing = {
     'inter_launch_staggered_count': counter_hits.get('dispatch_inter_launch_staggered', 0),
     'last_inter_launch_delay_seconds': gauge_values.get('dispatch_inter_launch_delay_seconds'),
@@ -962,6 +987,7 @@ result = {
     'top_pre_launch_blockers': top_pre_launch_blockers[:5],
     'pulse_counter_hits': counter_hits,
     'pulse_gauges': gauge_values,
+    'pulse_stats': stats_state,
     'canonical_reconciliation': {
         'refusal_count': canonical_reconciliation_refusal_count,
         'classification': canonical_reconciliation_classification,
@@ -1008,6 +1034,7 @@ runtime_state = {
     'pre_launch_blockers': pre_launch_blockers,
     'pulse_counter_hits': counter_hits,
     'pulse_gauges': gauge_values,
+    'pulse_stats': stats_state,
     'resource_context': result['resource_context'],
     'review_thread_attention_count': len(review_thread_attention),
     'objective_reconciliation': objective_reconciliation,
@@ -1046,6 +1073,7 @@ else:
     print(f'- Current-state guardrails: {json.dumps(result["current_state_guardrails"], sort_keys=True)}')
     print(f'- Top pre-launch blockers: {json.dumps(result["top_pre_launch_blockers"], sort_keys=True)}')
     print(f'- Pulse counter hits: {json.dumps(counter_hits, sort_keys=True)}')
+    print(f'- Pulse stats: {json.dumps(stats_state, sort_keys=True)}')
     print(f'- GraphQL budget: {graphql_budget_status}')
     print(f'- Prefetch cache: {json.dumps(prefetch_cache, sort_keys=True)}')
     print(f'- Cycle state: {json.dumps(cycle_state, sort_keys=True)}')
