@@ -10,6 +10,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.33.1] - 2026-09-16
+
+### Added
+
+- add OpenCode V2 runtime compatibility
+
+### Changed
+
+- Refactor: split pulse merge feedback modules (#31951)
+- Maintenance: mark t18436 complete (pr:#31944 completed:2026-09-15) (#31946)
+- Maintenance: mark t18434 complete (pr:#31901 completed:2026-09-15) (#31902)
+- Maintenance: sync ref:GH#31899 to TODO.md (#31898)
+
+### Fixed
+
+- restore OpenCode runtime installation
+- recover candidate enumeration failures
+- classify CI checks without runner suffixes (#31954)
+- retry deferred status snapshots
+- Preserve supplied issue descriptions on composition failure
+- converge generated worker intake
+- trust Fredoka Dependabot update (#31948)
+- update Vite dependency (#31943)
+- scope worker discovery to effective uid (#31940)
+- trust IBM Plex Mono Dependabot update (#31937)
+- recover malformed stats writes (#31935)
+- promote OpenCode 1.18.31 compatibility
+- update Vite React plugin (#31931)
+- restore native OpenCode fallback (#31915)
+- remediate OpenTelemetry core dependency alert
+- restore host-resolved custom tool schemas
+- preserve boolean tool schemas
+- report benign policy holds (#31907)
+- prevent release reconciliation ARG_MAX failures (#31900)
+
 ## [3.33.0] - 2026-09-15
 
 ### Added
