@@ -91,8 +91,8 @@ _runtime_deployment_relation() {
 	elif [[ "$deployed_sha" == "$upstream_sha" ]]; then
 		printf '%s' "$CURRENT_STATUS"
 	elif git -C "$repo_path" merge-base --is-ancestor "$deployed_sha" "$upstream_sha" 2>/dev/null; then
-		if _runtime_commits_share_tree "$repo_path" "$deployed_sha" "$upstream_sha" \
-			|| _runtime_commits_differ_only_by_todo "$repo_path" "$deployed_sha" "$upstream_sha"; then
+		if _runtime_commits_share_tree "$repo_path" "$deployed_sha" "$upstream_sha" ||
+			_runtime_commits_differ_only_by_todo "$repo_path" "$deployed_sha" "$upstream_sha"; then
 			printf '%s' "$CURRENT_STATUS"
 		else
 			printf '%s' "behind"
