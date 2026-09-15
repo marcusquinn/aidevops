@@ -566,12 +566,31 @@ _hrw_worker_base_commit_state() {
 #   local classification
 #   classification=$(_worker_produced_output "$session_key" "$work_dir")
 #######################################
+_hrw_is_issue_worker_session() {
+	local session_key="$1"
+	local manual_issue_number=""
+	[[ "$session_key" == issue-* ]] && return 0
+	if [[ "$session_key" =~ ^manual-cli-([1-9][0-9]*)-[0-9]+$ ]]; then
+		manual_issue_number="${BASH_REMATCH[1]}"
+	fi
+	[[ -n "$manual_issue_number" && "${WORKER_ISSUE_NUMBER:-}" == "$manual_issue_number" ]]
+}
+
+_hrw_issue_number_for_session() {
+	local session_key="$1"
+	if [[ "$session_key" =~ ^issue-([1-9][0-9]*)$ ]]; then
+		printf '%s\n' "${BASH_REMATCH[1]}"
+		return 0
+	fi
+	_scl_worker_issue_number "$session_key"
+}
+
 _worker_produced_output() {
 	local session_key="$1"
 	local work_dir="$2"
 
-	# Only applies to worker sessions (issue-* key pattern)
-	if [[ "$session_key" != issue-* ]]; then
+	# Manual keys remain issue workers when their contract matches the embedded issue.
+	if ! _hrw_is_issue_worker_session "$session_key"; then
 		printf 'pr_exists'  # fail-open for non-worker sessions
 		return 0
 	fi
@@ -640,7 +659,7 @@ _worker_produced_output() {
 
 	# Signal 3: exact-head lifecycle first; issue search is inconclusive fallback.
 	local issue_number=""
-	issue_number=$(printf '%s' "$session_key" | grep -oE '[0-9]+$' || true)
+	issue_number=$(_hrw_issue_number_for_session "$session_key")
 	local repo_slug="${DISPATCH_REPO_SLUG:-}"
 	local pr_handoff="unknown|"
 	local pr_state="unknown"

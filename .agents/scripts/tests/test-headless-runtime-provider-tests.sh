@@ -197,6 +197,27 @@ test_blocked_completion_records_blocked_label() {
 	return 0
 }
 
+test_manual_dispatch_blocked_completion_records_blocked_label() {
+	local output_file="${TEST_ROOT}/manual-blocked-output.jsonl"
+	local WORKER_ISSUE_NUMBER="456"
+	printf '%s\n' '{"type":"text","sessionID":"ses_blocked","text":"BLOCKED: missing files scope\nTERMINAL_BLOCKER_REASON=missing_files_scope"}' >"$output_file"
+	local rc=0
+	_handle_run_result 0 "$output_file" "worker" "openai" "manual-cli-456-1789490308" "openai/gpt-5.5" || rc=$?
+	if [[ "$rc" -eq 83 && "${_run_result_label:-}" == "blocked" &&
+		"${_run_classification_pattern:-}" == "terminal_blocked" && ! -f "$output_file" ]]; then
+		print_result "manual issue dispatch preserves terminal BLOCKED outcome" 0
+		return 0
+	fi
+	print_result "manual issue dispatch preserves terminal BLOCKED outcome" 1 \
+		"rc=$rc label=${_run_result_label:-<unset>} pattern=${_run_classification_pattern:-<unset>}"
+	return 0
+}
+
+run_blocked_completion_tests() {
+	test_blocked_completion_records_blocked_label
+	test_manual_dispatch_blocked_completion_records_blocked_label
+}
+
 test_capability_escalation_ladder_is_bounded_and_exact() {
 	local result=0
 	local route_output=""

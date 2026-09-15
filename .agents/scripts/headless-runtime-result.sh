@@ -100,6 +100,16 @@ _run_result_requires_task_complete() {
 	return 1
 }
 
+_run_result_is_issue_worker() {
+	[[ "$role" == "$_RUN_RESULT_ROLE_WORKER" ]] || return 1
+	[[ "$session_key" == issue-* ]] && return 0
+	if [[ "$session_key" =~ ^manual-cli-([1-9][0-9]*)-[0-9]+$ ]]; then
+		[[ "${WORKER_ISSUE_NUMBER:-}" == "${BASH_REMATCH[1]}" ]]
+		return $?
+	fi
+	return 1
+}
+
 _handle_run_result_success_output() {
 	if _run_result_requires_task_complete && ! _private_output_has_task_complete "$output_file"; then
 		local incomplete_label="private_incomplete"
@@ -117,7 +127,7 @@ _handle_run_result_success_output() {
 	if [[ "$role" != "$_RUN_RESULT_ROLE_PULSE" && -n "$discovered_session" ]]; then
 		_store_headless_session_if_allowed "$provider" "$session_key" "$discovered_session" "$selected_model" "$role"
 	fi
-	if [[ "$role" == "$_RUN_RESULT_ROLE_WORKER" && "$session_key" == issue-* ]]; then
+	if _run_result_is_issue_worker; then
 		if ! output_has_completion_signal "$output_file"; then
 			_log_empty_result_gaps "$output_file" "$selected_model" "$session_key"
 			_run_result_label="premature_exit"
@@ -228,7 +238,7 @@ _classify_watchdog_run_result() {
 # Classify non-watchdog signal exits before generic provider parsing.
 _classify_signal_run_result() {
 	local local_kill_reason="${_metric_kill_reason:-}"
-	if [[ "$role" == "$_RUN_RESULT_ROLE_WORKER" && "$session_key" == issue-* ]] &&
+	if _run_result_is_issue_worker &&
 		[[ "${exit_code:-}" == "137" || "${exit_code:-}" == "143" ]] &&
 		[[ -n "$local_kill_reason" && "$local_kill_reason" != "natural" && "$local_kill_reason" != "unknown" ]]; then
 		_run_result_label="local_kill"
@@ -278,7 +288,7 @@ _copy_run_failure_classification() {
 
 # Route interruptions with durable session evidence to dedicated continuations.
 _handle_transient_run_result() {
-	if [[ "$role" == "$_RUN_RESULT_ROLE_WORKER" && "$session_key" == issue-* ]] &&
+	if _run_result_is_issue_worker &&
 		runtime_signal_terminated_candidate "$output_file" "$exit_code" "$activity_detected"; then
 		if [[ -n "$discovered_session" ]]; then
 			_store_headless_session_if_allowed "$provider" "$session_key" "$discovered_session" "$selected_model" "$role"
@@ -293,7 +303,7 @@ _handle_transient_run_result() {
 		_run_result_handled_exit=78
 		return 0
 	fi
-	if [[ "$role" == "$_RUN_RESULT_ROLE_WORKER" && "$session_key" == issue-* ]] &&
+	if _run_result_is_issue_worker &&
 		service_interruption_continue_candidate \
 			"$failure_reason" "$exit_code" "$activity_detected" "$discovered_session" \
 			"${_failure_provider_error_type:-}"; then

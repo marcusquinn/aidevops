@@ -49,9 +49,8 @@ install_isolated_opencode() {
 	local isolated_home="$3"
 	local isolated_cache="$4"
 	local -a install_args=(install --no-audit --no-fund --prefix "$install_root")
-	# V2's package installs its platform binary in postinstall. The canary uses
-	# an exact version inside a disposable root, so the script is both required
-	# and contained; V1 retains its established script-free installation.
+	# V2's package installs its platform binary in postinstall. V1 retains its
+	# script-free installation and resolves the exact native optional dependency.
 	[[ "$OPENCODE_CANARY_PROFILE" == "v2" ]] || install_args+=(--ignore-scripts)
 	mkdir -p "$install_root" "$isolated_home" "$isolated_cache"
 	env -i \
