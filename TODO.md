@@ -4922,6 +4922,6 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t18433 Integrate production objective outcomes and subagent repair evidence #auto-dispatch #enhancement #framework #observability #interactive priority:medium tier:thinking ~4h ref:GH#31874 logged:2026-09-14 -> [todo/tasks/t18433-brief.md] pr:#31876 completed:2026-09-14
 
-- [ ] t18435 Prevent ARG_MAX failures in release workflow reconciliation #auto-dispatch #bug ref:GH#31899
+- [x] t18435 Prevent ARG_MAX failures in release workflow reconciliation #auto-dispatch #bug ref:GH#31899 pr:#31900 completed:2026-09-15
 
-- [ ] t18434 Fix snapshot-mode failed pre-publication release retries #auto-dispatch #bug ref:GH#31897
+- [x] t18434 Fix snapshot-mode failed pre-publication release retries #auto-dispatch #bug ref:GH#31897 pr:#31901 completed:2026-09-15
