@@ -350,6 +350,52 @@ if [[ "$_DLW_DISPATCH_TIER" != "bundle" || "$_DLW_DISPATCH_MODEL_TIER" != "simpl
 fi
 
 HEADLESS_RUNTIME_HELPER="${TEST_TMP}/bin/headless-runtime-helper.sh" \
+	_dlw_resolve_tier_and_model '{"labels":[]}' "" "$bundle_repo" "docs: refresh the README" ""
+
+if [[ "$_DLW_DISPATCH_TIER" != "bundle" || "$_DLW_DISPATCH_MODEL_TIER" != "standard" || "$_DLW_SELECTED_MODEL" != "selected-standard" ]]; then
+	fail "bundle documentation model default was not applied to documentation dispatch"
+fi
+
+infrastructure_repo="${TEST_TMP}/infrastructure"
+mkdir -p "$infrastructure_repo" || fail "failed to create infrastructure bundle fixture"
+printf '{"bundle":"infrastructure"}\n' >"${infrastructure_repo}/.aidevops.json" || fail "failed to create infrastructure bundle config fixture"
+
+HEADLESS_RUNTIME_HELPER="${TEST_TMP}/bin/headless-runtime-helper.sh" \
+	_dlw_resolve_tier_and_model '{"labels":[]}' "" "$infrastructure_repo" "architecture: redesign deployment boundaries" ""
+
+if [[ "$_DLW_DISPATCH_TIER" != "bundle" || "$_DLW_DISPATCH_MODEL_TIER" != "thinking" || "$_DLW_SELECTED_MODEL" != "selected-thinking" ]]; then
+	fail "bundle architecture model default was not applied to architecture dispatch"
+fi
+
+HEADLESS_RUNTIME_HELPER="${TEST_TMP}/bin/headless-runtime-helper.sh" \
+	_dlw_resolve_tier_and_model '{"labels":[]}' "" "$infrastructure_repo" "triage: classify deployment reports" ""
+
+if [[ "$_DLW_DISPATCH_TIER" != "bundle" || "$_DLW_DISPATCH_MODEL_TIER" != "simple" || "$_DLW_SELECTED_MODEL" != "selected-simple" ]]; then
+	fail "bundle triage model default was not applied to triage dispatch"
+fi
+
+HEADLESS_RUNTIME_HELPER="${TEST_TMP}/bin/headless-runtime-helper.sh" \
+	_dlw_resolve_tier_and_model '{"labels":[]}' "" "$infrastructure_repo" "review: audit the deployment change" ""
+
+if [[ "$_DLW_DISPATCH_TIER" != "bundle" || "$_DLW_DISPATCH_MODEL_TIER" != "thinking" || "$_DLW_SELECTED_MODEL" != "selected-thinking" ]]; then
+	fail "bundle review model default was not applied to review dispatch"
+fi
+
+HEADLESS_RUNTIME_HELPER="${TEST_TMP}/bin/headless-runtime-helper.sh" \
+	_dlw_resolve_tier_and_model '{"labels":[]}' "" "$infrastructure_repo" "verification: prove the deployment" ""
+
+if [[ "$_DLW_DISPATCH_TIER" != "bundle" || "$_DLW_DISPATCH_MODEL_TIER" != "thinking" || "$_DLW_SELECTED_MODEL" != "selected-thinking" ]]; then
+	fail "bundle verification model default was not applied to verification dispatch"
+fi
+
+HEADLESS_RUNTIME_HELPER="${TEST_TMP}/bin/headless-runtime-helper.sh" \
+	_dlw_resolve_tier_and_model '{"labels":[]}' "" "$infrastructure_repo" "fix: preserve deploy state" "Review documentation and verification before completion"
+
+if [[ "$_DLW_DISPATCH_TIER" != "bundle" || "$_DLW_DISPATCH_MODEL_TIER" != "standard" || "$_DLW_SELECTED_MODEL" != "selected-standard" ]]; then
+	fail "generated prompt instructions overrode the implementation model default"
+fi
+
+HEADLESS_RUNTIME_HELPER="${TEST_TMP}/bin/headless-runtime-helper.sh" \
 	_dlw_resolve_tier_and_model '{"labels":[{"name":"tier:thinking"}]}' "" "$bundle_repo"
 
 if [[ "$_DLW_DISPATCH_TIER" != "thinking" || "$_DLW_DISPATCH_MODEL_TIER" != "thinking" || "$_DLW_SELECTED_MODEL" != "selected-thinking" ]]; then
