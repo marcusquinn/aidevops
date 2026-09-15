@@ -167,35 +167,34 @@ async function register(registrations, promise) {
   return registration;
 }
 
-export function startEventLoop(ctx, handler) {
+export async function startEventLoop(ctx, handler) {
   let iterator;
   let stopped = false;
-  const ready = Promise.resolve(ctx.event.subscribe()).then((subscription) => {
-    const iterable = subscription?.stream || subscription;
-    if (!iterable?.[Symbol.asyncIterator]) return;
-    iterator = iterable[Symbol.asyncIterator]();
-    void (async () => {
-      while (!stopped) {
-        const next = await iterator.next();
-        if (next.done) break;
-        try {
-          await handler({ event: next.value?.event || next.value });
-        } catch (error) {
-          if (process.env.AIDEVOPS_PLUGIN_DEBUG === "1") {
-            console.error(`[aidevops] V2 event handler failed: ${error.message}`);
-          }
+  const subscription = await ctx.event.subscribe();
+  const iterable = subscription?.stream || subscription;
+  if (!iterable?.[Symbol.asyncIterator]) return async () => {};
+  iterator = iterable[Symbol.asyncIterator]();
+  const loop = (async () => {
+    while (!stopped) {
+      const next = await iterator.next();
+      if (next.done) break;
+      try {
+        await handler({ event: next.value?.event || next.value });
+      } catch (error) {
+        if (process.env.AIDEVOPS_PLUGIN_DEBUG === "1") {
+          console.error(`[aidevops] V2 event handler failed: ${error.message}`);
         }
       }
-    })().catch((error) => {
-      if (!stopped && process.env.AIDEVOPS_PLUGIN_DEBUG === "1") {
-        console.error(`[aidevops] V2 event subscription failed: ${error.message}`);
-      }
-    });
+    }
+  })().catch((error) => {
+    if (!stopped && process.env.AIDEVOPS_PLUGIN_DEBUG === "1") {
+      console.error(`[aidevops] V2 event subscription failed: ${error.message}`);
+    }
   });
   return async () => {
     stopped = true;
-    await ready.catch(() => {});
     await iterator?.return?.().catch(() => {});
+    await loop;
   };
 }
 
@@ -216,6 +215,17 @@ export function applyV2PermissionEvaluation(permissionBroker, event) {
   if (output.status === "deny") event.effect = "deny";
 }
 
+async function disposeAidevopsV2({ stopEvents, boundedOperationManager, mcpRuntime, registrations }) {
+  await stopEvents?.().catch(() => {});
+  try {
+    boundedOperationManager?.dispose();
+  } catch { /* best-effort cleanup */ }
+  await mcpRuntime?.dispose().catch(() => {});
+  for (const registration of registrations.reverse()) {
+    await registration.dispose().catch(() => {});
+  }
+}
+
 export async function setupAidevopsV2(ctx) {
   const initializedAtMs = Date.now();
   const directory = String(ctx.location?.directory || process.cwd());
@@ -234,141 +244,143 @@ export async function setupAidevopsV2(ctx) {
     repositoryDir: directory,
   });
   const mcpRuntime = createV2McpRuntime(ctx, WORKSPACE_DIR, { repositoryDir: directory });
-  await mcpRuntime.initialize();
-  const client = createCompatibilityClient(ctx, mcpRuntime.client);
-  const boundedOperationManager = new BoundedInteractiveOperationManager({
-    projectRoot: directory,
-    scriptsDir: SCRIPTS_DIR,
-    recordOutput: createOutputSandboxRecorder(join(SCRIPTS_DIR, "output-sandbox-helper.sh")),
-    readOutput: createOutputSandboxReader(join(SCRIPTS_DIR, "output-sandbox-helper.sh")),
-  });
-  const baseTools = createTools(SCRIPTS_DIR, run, {
-    aidevopsRun: runChecked,
-    sessionOrigin: process.env.AIDEVOPS_SESSION_ORIGIN,
-    poolToolFactory: () => createPoolTool(client),
-    projectRoot: directory,
-    mcpClient: mcpRuntime.client,
-    mcpDirectory: directory,
-    managedMcpNames: getOnDemandMcpAgents().map((mcp) => mcp.name),
-    managedMcpWorkspaces: mcpRuntime.workspaces,
-    boundedOperationManager,
-  });
-  baseTools.aidevops_objective_receipt = createObjectiveReceiptTool(tool, recordObjectiveDecision);
+  let boundedOperationManager;
+  let stopEvents;
+  try {
+    await mcpRuntime.initialize();
+    const client = createCompatibilityClient(ctx, mcpRuntime.client);
+    boundedOperationManager = new BoundedInteractiveOperationManager({
+      projectRoot: directory,
+      scriptsDir: SCRIPTS_DIR,
+      recordOutput: createOutputSandboxRecorder(join(SCRIPTS_DIR, "output-sandbox-helper.sh")),
+      readOutput: createOutputSandboxReader(join(SCRIPTS_DIR, "output-sandbox-helper.sh")),
+    });
+    const baseTools = createTools(SCRIPTS_DIR, run, {
+      aidevopsRun: runChecked,
+      sessionOrigin: process.env.AIDEVOPS_SESSION_ORIGIN,
+      poolToolFactory: () => createPoolTool(client),
+      projectRoot: directory,
+      mcpClient: mcpRuntime.client,
+      mcpDirectory: directory,
+      managedMcpNames: getOnDemandMcpAgents().map((mcp) => mcp.name),
+      managedMcpWorkspaces: mcpRuntime.workspaces,
+      boundedOperationManager,
+    });
+    baseTools.aidevops_objective_receipt = createObjectiveReceiptTool(tool, recordObjectiveDecision);
 
-  const continuationGuard = createSessionContinuationGuard({
-    repository: directory,
-    checkpointHelper: join(SCRIPTS_DIR, "session-checkpoint-helper.sh"),
-  });
-  const sessionModels = createSessionModelStore();
-  const { toolExecuteBefore, toolExecuteAfter, qualityLog } = createQualityHooks({
-    activeScriptsDir: join(ACTIVE_AGENTS_DIR, "scripts"),
-    scriptsDir: SCRIPTS_DIR,
-    logsDir: LOGS_DIR,
-    repositoryDir: directory,
-    continuationGuard,
-    resolveSessionModel: (sessionID) => sessionModels.resolve(sessionID),
-  });
-  const shellEnvHook = createShellEnvHook({
-    activeAgentsDir: ACTIVE_AGENTS_DIR,
-    agentsDir: AGENTS_DIR,
-    scriptsDir: SCRIPTS_DIR,
-    workspaceDir: WORKSPACE_DIR,
-    onSessionIdentity: (sessionID, modelID) => sessionModels.remember(sessionID, modelID),
-  });
-  const shouldInjectGreeting = async (input) => {
-    if (isHeadless() || !input.sessionID) return false;
-    try {
-      const session = await ctx.session.get({ sessionID: input.sessionID });
-      return !session?.parentID;
-    } catch {
-      return false;
-    }
-  };
-  const { systemTransformHook, messagesTransformHook } = createTtsrHooks({
-    agentsDir: AGENTS_DIR,
-    scriptsDir: SCRIPTS_DIR,
-    readIfExists,
-    qualityLog,
-    run,
-    intentField: INTENT_FIELD,
-    isHeadless,
-    shouldInjectGreeting,
-    initializedAtMs,
-  });
-  const permissionBroker = createPermissionBroker({ isHeadless });
-  const providerAuth = createV2ProviderAuthRuntime();
-  const titleStatus = createSessionTitleStatusHandler({ isHeadless });
+    const continuationGuard = createSessionContinuationGuard({
+      repository: directory,
+      checkpointHelper: join(SCRIPTS_DIR, "session-checkpoint-helper.sh"),
+    });
+    const sessionModels = createSessionModelStore();
+    const { toolExecuteBefore, toolExecuteAfter, qualityLog } = createQualityHooks({
+      activeScriptsDir: join(ACTIVE_AGENTS_DIR, "scripts"),
+      scriptsDir: SCRIPTS_DIR,
+      logsDir: LOGS_DIR,
+      repositoryDir: directory,
+      continuationGuard,
+      resolveSessionModel: (sessionID) => sessionModels.resolve(sessionID),
+    });
+    const shellEnvHook = createShellEnvHook({
+      activeAgentsDir: ACTIVE_AGENTS_DIR,
+      agentsDir: AGENTS_DIR,
+      scriptsDir: SCRIPTS_DIR,
+      workspaceDir: WORKSPACE_DIR,
+      onSessionIdentity: (sessionID, modelID) => sessionModels.remember(sessionID, modelID),
+    });
+    const shouldInjectGreeting = async (input) => {
+      if (isHeadless() || !input.sessionID) return false;
+      try {
+        const session = await ctx.session.get({ sessionID: input.sessionID });
+        return !session?.parentID;
+      } catch {
+        return false;
+      }
+    };
+    const { systemTransformHook, messagesTransformHook } = createTtsrHooks({
+      agentsDir: AGENTS_DIR,
+      scriptsDir: SCRIPTS_DIR,
+      readIfExists,
+      qualityLog,
+      run,
+      intentField: INTENT_FIELD,
+      isHeadless,
+      shouldInjectGreeting,
+      initializedAtMs,
+    });
+    const permissionBroker = createPermissionBroker({ isHeadless });
+    const providerAuth = createV2ProviderAuthRuntime();
+    const titleStatus = createSessionTitleStatusHandler({ isHeadless });
 
-  await register(registrations, ctx.tool.transform((editor) => {
-    addV1ToolsToV2Editor(editor, baseTools, tool.schema, { directory, worktree });
-    editor.update("bash", (definition) => adaptToolDefinition({ toolID: "bash" }, definition));
-  }));
+    await register(registrations, ctx.tool.transform((editor) => {
+      addV1ToolsToV2Editor(editor, baseTools, tool.schema, { directory, worktree });
+      editor.update("bash", (definition) => adaptToolDefinition({ toolID: "bash" }, definition));
+    }));
 
-  await register(registrations, ctx.tool.hook("execute.before", async (event) => {
-    const input = v1HookInput(event);
-    const output = { args: event.input || {} };
-    enforceConversationPathAccess(event.tool, output.args, conversation);
-    permissionBroker.recordToolCall(input, output);
-    await toolExecuteBefore(input, output);
-    event.input = output.args;
-  }));
-  await register(registrations, ctx.tool.hook("execute.after", async (event) => {
-    const output = legacyToolOutput(event.result || {});
-    await toolExecuteAfter(v1HookInput(event), output);
-    if (event.status === "completed") applyLegacyToolOutput(event.result, output);
-  }));
-  await register(registrations, ctx.shell.hook("create.before", async (event) => {
-    await shellEnvHook(v1HookInput(event), event);
-  }));
-  await register(registrations, ctx.session.hook("context", async (event) => {
-    const input = v1HookInput(event);
-    sessionModels.remember(event.sessionID, input.model.modelID);
-    const legacy = { system: systemStrings(event.system), messages: event.messages };
-    await systemTransformHook(input, legacy);
-    await messagesTransformHook(input, legacy).catch((error) => qualityLog("WARN", `V2 message transform skipped: ${error.message}`));
-    try {
-      applyImageSizeGuard(legacy, qualityLog);
-    } catch (error) {
-      qualityLog("WARN", `V2 image guard skipped: ${error.message}`);
-    }
-    if (isRemoteInteractiveConversation(conversation)) appendConversationSystemContext(legacy, conversation);
-    replaceSystemParts(event, legacy.system);
-    event.messages = legacy.messages;
-  }));
-  await register(registrations, ctx.session.hook("compaction", async (event) => {
-    const output = { context: [] };
-    await compactingHook({ workspaceDir: WORKSPACE_DIR, scriptsDir: SCRIPTS_DIR }, event, output, directory);
-    event.system.push(...output.context.map((text) => ({ type: "text", text })));
-  }));
-  await register(registrations, ctx.session.hook("http.request", providerAuth.httpRequest));
-  await register(registrations, ctx.session.hook("http.response", providerAuth.httpResponse));
-  await register(registrations, ctx.session.hook("retry", providerAuth.retry));
-  await register(registrations, ctx.permission.hook("evaluate", async (event) => {
-    applyV2PermissionEvaluation(permissionBroker, event);
-  }));
+    await register(registrations, ctx.tool.hook("execute.before", async (event) => {
+      const input = v1HookInput(event);
+      const output = { args: event.input || {} };
+      enforceConversationPathAccess(event.tool, output.args, conversation);
+      permissionBroker.recordToolCall(input, output);
+      await toolExecuteBefore(input, output);
+      event.input = output.args;
+    }));
+    await register(registrations, ctx.tool.hook("execute.after", async (event) => {
+      const output = legacyToolOutput(event.result || {});
+      await toolExecuteAfter(v1HookInput(event), output);
+      if (event.status === "completed") applyLegacyToolOutput(event.result, output);
+    }));
+    await register(registrations, ctx.shell.hook("create.before", async (event) => {
+      await shellEnvHook(v1HookInput(event), event);
+    }));
+    await register(registrations, ctx.session.hook("context", async (event) => {
+      const input = v1HookInput(event);
+      sessionModels.remember(event.sessionID, input.model.modelID);
+      const legacy = { system: systemStrings(event.system), messages: event.messages };
+      await systemTransformHook(input, legacy);
+      await messagesTransformHook(input, legacy).catch((error) => qualityLog("WARN", `V2 message transform skipped: ${error.message}`));
+      try {
+        applyImageSizeGuard(legacy, qualityLog);
+      } catch (error) {
+        qualityLog("WARN", `V2 image guard skipped: ${error.message}`);
+      }
+      if (isRemoteInteractiveConversation(conversation)) appendConversationSystemContext(legacy, conversation);
+      replaceSystemParts(event, legacy.system);
+      event.messages = legacy.messages;
+    }));
+    await register(registrations, ctx.session.hook("compaction", async (event) => {
+      const output = { context: [] };
+      await compactingHook({ workspaceDir: WORKSPACE_DIR, scriptsDir: SCRIPTS_DIR }, event, output, directory);
+      event.system.push(...output.context.map((text) => ({ type: "text", text })));
+    }));
+    await register(registrations, ctx.session.hook("http.request", providerAuth.httpRequest));
+    await register(registrations, ctx.session.hook("http.response", providerAuth.httpResponse));
+    await register(registrations, ctx.session.hook("retry", providerAuth.retry));
+    await register(registrations, ctx.permission.hook("evaluate", async (event) => {
+      applyV2PermissionEvaluation(permissionBroker, event);
+    }));
 
-  const stopEvents = startEventLoop(ctx, async (input) => {
-    await Promise.all([
-      handleEvent(input, { resolveSessionModel: (sessionID) => sessionModels.resolve(sessionID) }),
-      Promise.resolve(boundedOperationManager.handleEvent(input)),
-      titleStatus(input),
-      permissionBroker.handleEvent(input),
-    ]);
-  });
-  recordPluginHealthStage("factory_initialized", {
-    runtime: "v2",
-    tools: Object.keys(baseTools).length,
-    capabilities: OPENCODE_V2_CAPABILITIES,
-  });
+    stopEvents = await startEventLoop(ctx, async (input) => {
+      await Promise.all([
+        handleEvent(input, { resolveSessionModel: (sessionID) => sessionModels.resolve(sessionID) }),
+        Promise.resolve(boundedOperationManager.handleEvent(input)),
+        titleStatus(input),
+        permissionBroker.handleEvent(input),
+      ]);
+    });
+    recordPluginHealthStage("factory_initialized", {
+      runtime: "v2",
+      tools: Object.keys(baseTools).length,
+      capabilities: OPENCODE_V2_CAPABILITIES,
+    });
 
-  return async () => {
-    await stopEvents();
-    boundedOperationManager.dispose();
-    await mcpRuntime.dispose();
-    for (const registration of registrations.reverse()) {
-      await registration.dispose().catch(() => {});
-    }
-  };
+    return async () => {
+      await disposeAidevopsV2({ stopEvents, boundedOperationManager, mcpRuntime, registrations });
+    };
+  } catch (error) {
+    await disposeAidevopsV2({ stopEvents, boundedOperationManager, mcpRuntime, registrations });
+    throw error;
+  }
 }
 
 export const AidevopsV2Plugin = defineAidevopsV2Adapter(setupAidevopsV2);

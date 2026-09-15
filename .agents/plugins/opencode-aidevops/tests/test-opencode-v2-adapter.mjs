@@ -56,7 +56,7 @@ test("V2 event processing continues after one handler failure", async () => {
   const seen = [];
   let resolveProcessed;
   const processed = new Promise((resolve) => { resolveProcessed = resolve; });
-  const stop = startEventLoop({
+  const stop = await startEventLoop({
     event: {
       async subscribe() {
         return {
@@ -84,11 +84,14 @@ test("V2 setup registers SDK lifecycle hooks and disposes every registration", a
   const registered = [];
   const disposed = [];
   const eventState = { returned: false };
+  let failedRegistration = "";
   const register = (domain, name, callback) => {
+    const key = `${domain}:${name}`;
+    if (key === failedRegistration) return Promise.reject(new Error("synthetic registration failure"));
     registered.push({ domain, name, callback });
     return Promise.resolve({
       async dispose() {
-        disposed.push(`${domain}:${name}`);
+        disposed.push(key);
       },
     });
   };
@@ -158,6 +161,19 @@ test("V2 setup registers SDK lifecycle hooks and disposes every registration", a
 
   await cleanup();
   assert.equal(eventState.returned, true);
+  assert.deepEqual(disposed.sort(), registered.map(({ domain, name }) => `${domain}:${name}`).sort());
+
+  registered.length = 0;
+  disposed.length = 0;
+  failedRegistration = "shell:create.before";
+  await assert.rejects(() => setupAidevopsV2(context), /synthetic registration failure/);
+  assert.deepEqual(disposed.sort(), registered.map(({ domain, name }) => `${domain}:${name}`).sort());
+
+  registered.length = 0;
+  disposed.length = 0;
+  failedRegistration = "";
+  context.event.subscribe = async () => { throw new Error("synthetic subscription failure"); };
+  await assert.rejects(() => setupAidevopsV2(context), /synthetic subscription failure/);
   assert.deepEqual(disposed.sort(), registered.map(({ domain, name }) => `${domain}:${name}`).sort());
 });
 
