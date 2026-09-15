@@ -421,4 +421,36 @@ assert len({row[6] for row in starts}) == 2
 assert {row[6] for row in starts} == {row[6] for row in completions}
 PY
 
+runtime_repo="$TMP_DIR/runtime-freshness-repo"
+git init -q -b main "$runtime_repo"
+git -C "$runtime_repo" config user.email test@example.invalid
+git -C "$runtime_repo" config user.name "Pulse freshness test"
+printf 'runtime baseline\n' >"$runtime_repo/runtime-input.sh"
+git -C "$runtime_repo" add runtime-input.sh
+git -C "$runtime_repo" commit -q -m "runtime baseline"
+deployed_sha=$(git -C "$runtime_repo" rev-parse HEAD)
+printf 'planning metadata\n' >"$runtime_repo/TODO.md"
+git -C "$runtime_repo" add TODO.md
+git -C "$runtime_repo" commit -q -m "planning only"
+mkdir -p "$TMP_DIR/runtime-agents"
+printf 'git_sha=%s\n' "$deployed_sha" >"$TMP_DIR/runtime-agents/.bundle-manifest"
+equivalent_json="$TMP_DIR/runtime-equivalent.json"
+AIDEVOPS_RUNTIME_AGENTS_PATH="$TMP_DIR/runtime-agents" \
+	AIDEVOPS_ACTIVE_RUNTIME_MANIFEST_FILE="$TMP_DIR/no-active-manifest" \
+	AIDEVOPS_DEPLOYED_SHA_FILE="$TMP_DIR/no-deployed-stamp" \
+	AIDEVOPS_RUNTIME_UPSTREAM_REF=HEAD \
+	"$HELPER" --log-dir "$TMP_DIR" --repo-path "$runtime_repo" --window 15m --json >"$equivalent_json"
+jq -e --arg deployed "$deployed_sha" '.runtime_freshness.status == "current" and .runtime_freshness.stale == false and .runtime_freshness.deployed_sha == $deployed' "$equivalent_json" >/dev/null
+
+printf 'runtime change\n' >>"$runtime_repo/runtime-input.sh"
+git -C "$runtime_repo" add runtime-input.sh
+git -C "$runtime_repo" commit -q -m "runtime change"
+stale_runtime_json="$TMP_DIR/runtime-stale.json"
+AIDEVOPS_RUNTIME_AGENTS_PATH="$TMP_DIR/runtime-agents" \
+	AIDEVOPS_ACTIVE_RUNTIME_MANIFEST_FILE="$TMP_DIR/no-active-manifest" \
+	AIDEVOPS_DEPLOYED_SHA_FILE="$TMP_DIR/no-deployed-stamp" \
+	AIDEVOPS_RUNTIME_UPSTREAM_REF=HEAD \
+	"$HELPER" --log-dir "$TMP_DIR" --repo-path "$runtime_repo" --window 15m --json >"$stale_runtime_json"
+jq -e '.runtime_freshness.status == "deployed_behind_canonical" and .runtime_freshness.stale == true' "$stale_runtime_json" >/dev/null
+
 printf 'PASS pulse-current-state-helper\n'

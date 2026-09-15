@@ -72,6 +72,16 @@ _runtime_commits_share_tree() {
 	return $?
 }
 
+_runtime_commits_differ_only_by_todo() {
+	local repo_path="$1"
+	local deployed_sha="$2"
+	local upstream_sha="$3"
+	local changed_paths=""
+	changed_paths=$(git -C "$repo_path" diff --name-only "$deployed_sha" "$upstream_sha" 2>/dev/null) || return 1
+	[[ "$changed_paths" == "TODO.md" ]]
+	return $?
+}
+
 _runtime_deployment_relation() {
 	local repo_path="$1"
 	local deployed_sha="$2"
@@ -81,7 +91,8 @@ _runtime_deployment_relation() {
 	elif [[ "$deployed_sha" == "$upstream_sha" ]]; then
 		printf '%s' "$CURRENT_STATUS"
 	elif git -C "$repo_path" merge-base --is-ancestor "$deployed_sha" "$upstream_sha" 2>/dev/null; then
-		if _runtime_commits_share_tree "$repo_path" "$deployed_sha" "$upstream_sha"; then
+		if _runtime_commits_share_tree "$repo_path" "$deployed_sha" "$upstream_sha" \
+			|| _runtime_commits_differ_only_by_todo "$repo_path" "$deployed_sha" "$upstream_sha"; then
 			printf '%s' "$CURRENT_STATUS"
 		else
 			printf '%s' "behind"
