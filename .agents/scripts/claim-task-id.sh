@@ -621,10 +621,11 @@ create_github_issue() {
 	local body=""
 	local compose_rc=0
 	body=$(_compose_issue_body "$title" "$description") || compose_rc=$?
-	# t1937: If body composition failed (no description + no brief), skip issue creation.
-	# The task ID is already secured — issue can be created later with proper content.
+	# The task ID is already secured. Preserve the typed composition outcome so
+	# supplied-but-invalid input is never misreported as an absent description.
 	if [[ $compose_rc -ne 0 || -z "$body" ]]; then
-		log_warn "Skipping issue creation — no description available. Task ID is secured."
+		[[ $compose_rc -eq 0 ]] && compose_rc="$CLAIM_COMPOSE_FAILED_RC"
+		_report_issue_body_compose_failure "$title" "$compose_rc"
 		return 1
 	fi
 	create_args+=(--body "$body")
