@@ -64,7 +64,7 @@
     "elysia": "1.4.30",
     "file-type": "21.3.4",
     "hono": "4.13.5",
-    "vite": "8.2.1"
+    "vite": "8.2.2"
   },
   "devDependencies": {
     "@secretlint/secretlint-rule-preset-recommend": "13.0.5",
