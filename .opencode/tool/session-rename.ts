@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite"
-import { tool } from "../../.agents/plugins/opencode-aidevops/tool-schema.mjs"
+import { tool } from "@opencode-ai/plugin"
 import { getDbPath } from "../lib/opencode-db-path"
 import {
   isDefaultBranchTitle,

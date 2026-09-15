@@ -12,7 +12,6 @@ const FALLBACK_SCHEMA_NODE = {
 };
 const FALLBACK_TOOL_SCHEMA = {
   array: () => FALLBACK_SCHEMA_NODE,
-  boolean: () => FALLBACK_SCHEMA_NODE,
   enum: () => FALLBACK_SCHEMA_NODE,
   string: () => FALLBACK_SCHEMA_NODE,
   number: () => FALLBACK_SCHEMA_NODE,
@@ -25,13 +24,6 @@ function createFallbackToolHelper() {
   return fallback;
 }
 
-function withFallbackToolSchema(candidate) {
-  const compatible = (definition) => candidate(definition);
-  Object.assign(compatible, candidate);
-  compatible.schema = { ...FALLBACK_TOOL_SCHEMA, ...candidate.schema };
-  return compatible;
-}
-
 export async function loadV1ToolHelper(options = {}) {
   const importer = options.importer || ((specifier) => import(specifier));
   const requirePinnedRuntime = options.requirePinnedRuntime
@@ -40,7 +32,7 @@ export async function loadV1ToolHelper(options = {}) {
   for (const specifier of ["@opencode-ai/plugin/v1", "@opencode-ai/plugin"]) {
     try {
       const candidate = (await importer(specifier))?.tool;
-      if (typeof candidate === "function" && candidate.schema) return withFallbackToolSchema(candidate);
+      if (typeof candidate === "function" && candidate.schema) return candidate;
       lastError = new TypeError(`${specifier} does not export V1 tool schemas`);
     } catch (error) {
       lastError = error;

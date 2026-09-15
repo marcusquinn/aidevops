@@ -395,8 +395,7 @@ test("V2 provider responses retain request-specific account affinity", async () 
 
 test("V1 tool schemas still resolve across stable package layouts", async () => {
   const helper = (definition) => definition;
-  const nativeString = () => ({ native: "string" });
-  helper.schema = { string: nativeString };
+  helper.schema = {};
   const attempts = [];
   const selected = await loadV1ToolHelper({
     importer: async (specifier) => {
@@ -405,27 +404,25 @@ test("V1 tool schemas still resolve across stable package layouts", async () => 
       throw new Error("root import must not be reached");
     },
   });
-  assert.equal(typeof selected.schema.boolean, "function");
-  assert.equal(selected.schema.string, nativeString);
-  assert.deepEqual(selected({ selected: true }), { selected: true });
+  assert.equal(selected, helper);
   assert.deepEqual(attempts, ["@opencode-ai/plugin/v1"]);
 
-  const rootHelper = (definition) => definition;
-  const nativeBoolean = () => ({ native: "boolean" });
-  rootHelper.schema = { boolean: nativeBoolean };
   const fallback = await loadV1ToolHelper({
     importer: async (specifier) => {
       if (specifier.endsWith("/v1")) throw new Error("legacy package has no v1 export");
-      return { tool: rootHelper };
+      return { tool: helper };
     },
   });
-  assert.equal(fallback.schema.boolean, nativeBoolean);
-  assert.deepEqual(fallback({ fallback: true }), { fallback: true });
+  assert.equal(fallback, helper);
+});
 
-  const unavailable = await loadV1ToolHelper({
-    importer: async () => { throw new Error("package unavailable"); },
-    requirePinnedRuntime: false,
-  });
-  assert.equal(typeof unavailable.schema.boolean, "function");
-  assert.equal(unavailable.schema.boolean().optional().describe("flag"), unavailable.schema.boolean());
+test("project custom tools use the host-resolved V1 schema package", () => {
+  for (const relativePath of ["session-rename.ts", "ai-research.ts"]) {
+    const source = readFileSync(
+      new URL(`../../../../.opencode/tool/${relativePath}`, import.meta.url),
+      "utf8",
+    );
+    assert.match(source, /from "@opencode-ai\/plugin"/);
+    assert.doesNotMatch(source, /tool-schema\.mjs/);
+  }
 });
