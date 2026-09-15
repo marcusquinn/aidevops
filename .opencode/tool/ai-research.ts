@@ -13,7 +13,7 @@
  *   ai_research(prompt: "How does TOON encoding work?", agents: ["tools/context/toon.md"])
  */
 
-import { tool } from "../../.agents/plugins/opencode-aidevops/tool-schema.mjs"
+import { tool } from "@opencode-ai/plugin"
 import {
   formatResearchResult,
   research,
