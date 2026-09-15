@@ -855,6 +855,11 @@ printf 'PASS persisted replacement-tag recovery recreates its detached tag workt
 	verified_pr_merge="$failed_merge"
 	_FULL_LOOP_RESOLVED_REQUESTED_MERGE="$requested_merge"
 	_FULL_LOOP_RESOLVED_SOURCE_MERGE="$current_merge"
+	_FULL_LOOP_RESOLVED_SOURCE_PR=99
+	_FULL_LOOP_RESOLVED_SOURCE_JSON=$(jq -cn --arg requested "$requested_merge" --arg second "$second_merge" \
+		--arg failed "$failed_merge" \
+		'{mode:"aggregate",source_pr:99,source_merge:$failed,
+		  aggregated_sources:[{pr:42,merge:$requested},{pr:43,merge:$second}]}')
 	_FULL_LOOP_AGGREGATE_RECOVERY_EXPECTED="$old_manifest"
 	_full_loop_release_evidence_path() {
 		printf '%s\n' "$failure_fixture_path"
@@ -979,19 +984,52 @@ printf 'PASS persisted replacement-tag recovery recreates its detached tag workt
 	fi
 	channel_mode=absent
 	verified_pr_merge="$requested_merge"
+	_FULL_LOOP_RESOLVED_SOURCE_PR=42
+	_FULL_LOOP_RESOLVED_SOURCE_MERGE="$requested_merge"
+	_FULL_LOOP_RESOLVED_SOURCE_JSON=$(jq -cn --arg requested "$requested_merge" \
+		'{mode:"direct",source_pr:42,source_merge:$requested,aggregated_sources:[]}')
 	write_failure_evidence "$requested_merge" 42 "$requested_merge" v1.2.3 patch
 	_full_loop_recovery_validate_failed_prepublication_intent test/repo 42 \
 		"42@${requested_merge}" patch
 	[[ "$_FULL_LOOP_FAILED_PREPUBLICATION_SOURCE_PR" == "42" &&
 		"$_FULL_LOOP_FAILED_PREPUBLICATION_SOURCE_MERGE" == "$requested_merge" &&
 		"$_FULL_LOOP_FAILED_PREPUBLICATION_TAG" == "v1.2.3" ]]
+	_FULL_LOOP_RESOLVED_SOURCE_PR=99
+	_FULL_LOOP_RESOLVED_SOURCE_MERGE="$failed_merge"
+	_FULL_LOOP_RESOLVED_SOURCE_JSON=$(jq -cn --arg requested "$requested_merge" --arg second "$second_merge" \
+		--arg failed "$failed_merge" \
+		'{mode:"snapshot",source_pr:99,source_merge:$failed,
+		  aggregated_sources:[{pr:42,merge:$requested},{pr:43,merge:$second},{pr:99,merge:$failed}]}')
+	verified_pr_merge="$failed_merge"
+	write_failure_evidence "$requested_merge" 99 "$failed_merge" v1.2.3 patch
+	snapshot_manifest="${old_manifest},99@${failed_merge}"
+	_full_loop_recovery_validate_failed_prepublication_intent test/repo 42 "$snapshot_manifest" patch
+	for invalid_snapshot in \
+		'.aggregated_sources |= .[:-1]' \
+		'.aggregated_sources += [{pr:100,merge:"6666666666666666666666666666666666666666"}]' \
+		'.aggregated_sources += [.aggregated_sources[0]]' \
+		'.aggregated_sources[0].merge="malformed"' \
+		'.aggregated_sources[0].merge="6666666666666666666666666666666666666666"'; do
+		original_source_json="$_FULL_LOOP_RESOLVED_SOURCE_JSON"
+		_FULL_LOOP_RESOLVED_SOURCE_JSON=$(jq -c "$invalid_snapshot" <<<"$original_source_json")
+		if _full_loop_recovery_validate_failed_prepublication_intent test/repo 42 "$snapshot_manifest" patch \
+			>/dev/null 2>&1; then
+			exit 1
+		fi
+		_FULL_LOOP_RESOLVED_SOURCE_JSON="$original_source_json"
+	done
+	_FULL_LOOP_RESOLVED_SOURCE_MERGE="$current_merge"
+	if _full_loop_recovery_validate_failed_prepublication_intent test/repo 42 "$snapshot_manifest" patch \
+		>/dev/null 2>&1; then
+		exit 1
+	fi
 	rm -f "$failure_fixture_path"
 	if _full_loop_recovery_validate_failed_prepublication_intent test/repo 42 "$old_manifest" patch \
 		>/dev/null 2>&1; then
 		exit 1
 	fi
 )
-printf 'PASS failed pre-publication retry binds attempted version, absent channels, and direct or aggregate evidence\n'
+printf 'PASS failed pre-publication retry binds attempted version, absent channels, and direct, aggregate, or snapshot evidence\n'
 
 (
 	unset _FULL_LOOP_RELEASE_AGGREGATE_RECOVERY_LOADED
@@ -1018,12 +1056,15 @@ printf 'PASS failed pre-publication retry binds attempted version, absent channe
 	test_resolved_mode=aggregate
 	_full_loop_recovery_prepare_prepublication_source test/repo 42 42
 	[[ "$(jq -r '.mode' <<<"$_FULL_LOOP_RESOLVED_SOURCE_JSON")" == "aggregate" ]]
+	test_resolved_mode=snapshot
+	_full_loop_recovery_prepare_prepublication_source test/repo 42 42
+	[[ "$(jq -r '.mode' <<<"$_FULL_LOOP_RESOLVED_SOURCE_JSON")" == "snapshot" ]]
 	test_resolved_mode=invalid
 	if _full_loop_recovery_prepare_prepublication_source test/repo 42 42 >/dev/null 2>&1; then
 		exit 1
 	fi
 )
-printf 'PASS failed pre-publication preparation admits only reviewed direct or aggregate sources\n'
+printf 'PASS failed pre-publication preparation admits only reviewed direct, aggregate, or snapshot sources\n'
 
 (
 	unset _FULL_LOOP_RELEASE_AGGREGATE_RECOVERY_LOADED
@@ -1376,8 +1417,14 @@ Aidevops-Release-Aggregates: 42@2222222222222222222222222222222222222222'
 		done
 		if [[ "$endpoint" == repos/test/repo/git/ref/heads/release/* ]]; then
 			case "${REF_MODE:-missing}" in
-			existing) printf '%s\n' 4444444444444444444444444444444444444444; return 0 ;;
-			malformed) printf '{"message":"bad metadata"}\n'; return 0 ;;
+			existing)
+				printf '%s\n' 4444444444444444444444444444444444444444
+				return 0
+				;;
+			malformed)
+				printf '{"message":"bad metadata"}\n'
+				return 0
+				;;
 			empty) return 0 ;;
 			missing) status=404 ;;
 			unauthorized) status=401 ;;
@@ -1425,7 +1472,8 @@ Aidevops-Release-Aggregates: 42@2222222222222222222222222222222222222222'
 				printf 'branch-fetch\n' >>"$TEST_ROOT/successor-order"
 				return 1 # Stop after proving branch-create/fetch ordering.
 			fi
-			return 0 ;;
+			return 0
+			;;
 		rev-parse) printf '%s\n' 3333333333333333333333333333333333333333 ;;
 		interpret-trailers) "$real_git" interpret-trailers "$@" ;;
 		*) return 1 ;;
