@@ -121,6 +121,7 @@ cat <<'JSON'
   "current_state_guardrails": {"available_slots_last": 6},
   "pulse_gauges": {"dispatch_capacity_final_max_workers": 6},
   "worker_outcomes": {"spawned": 4},
+  "policy_holds": {"availability": "observed", "active_in_window": true, "count": 1, "last_observed_at": 1, "source": "pulse-stats", "window_seconds": 900},
   "worker_terminal_events": 0,
   "active_claim_state": {"active_workers": 0, "classification_counts": {"zero_worker_infrastructure_hold": 1}, "zero_worker_actionable": true, "live_owner_count": 0, "durable_launch_count": 0},
   "canonical_reconciliation": {"refusal_count": 2, "classification": "dirty_or_uncommitted", "canonical_recovery_advisory_observed": true},
@@ -438,6 +439,7 @@ assert_eq "post-PR handoff family triggers no failure finding" "0" \
 	"$(printf '%s' "$HANDOFF_FAMILY_JSON" | jq -r '[.findings[] | select(.id == "worker-failure-family-launch-failure")] | length')"
 assert_eq "json reports canonical reconciliation refusal aggregate" "2" "$(printf '%s' "$JSON_OUT" | jq -r '.current_state.canonical_reconciliation.refusal_count')"
 assert_eq "json reports canonical reconciliation classification" "dirty_or_uncommitted" "$(printf '%s' "$JSON_OUT" | jq -r '.current_state.canonical_reconciliation.classification')"
+assert_eq "benign policy holds do not inflate worker failures" "0" "$(printf '%s' "$JSON_OUT" | jq -r '.summary.worker_terminal_events_in_window')"
 assert_eq "zero-worker active claim is actionable" "true" "$(printf '%s' "$JSON_OUT" | jq -r '.summary.zero_worker_active_claim_actionable')"
 assert_contains "underfill preserves named active-claim evidence" "zero_worker_infrastructure_hold:1" "$JSON_OUT"
 assert_not_contains "json omits canonical branch detail" "origin/develop" "$JSON_OUT"
