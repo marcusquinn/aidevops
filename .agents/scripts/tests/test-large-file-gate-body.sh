@@ -79,7 +79,19 @@ assert_contains \
 	"$gate_body_section" \
 	"aidevops:generator=large-file-simplification-gate"
 
-# Test 1.2: Playbook link
+# Test 1.2: Canonical worker scope contract
+assert_contains \
+	"large-file: canonical Files Scope heading" \
+	"$gate_body_section" \
+	"### Files Scope"
+
+# shellcheck disable=SC2016 # Literal Markdown scope declaration.
+assert_contains \
+	"large-file: canonical edit target" \
+	"$gate_body_section" \
+	'- EDIT: \`${lf_path}\`'
+
+# Test 1.3: Playbook link
 assert_contains \
 	"large-file: playbook reference" \
 	"$gate_body_section" \

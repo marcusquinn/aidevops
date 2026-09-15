@@ -2161,7 +2161,8 @@ dispatch_with_dedup() {
 	# still true. Exit 0 = dispatch proceeds; exit 10 = premise falsified
 	# (issue already closed by validator); exit 20 = optional validator error
 	# (dispatch proceeds with warning); exit 30 = duplicate-state uncertainty
-	# (fail closed for this cycle).
+	# (fail closed for this cycle); exit 40 = missing required worker context
+	# (fail closed until the generated brief is repaired).
 	_ds_t0=$(_ds_now_ns)
 	_run_predispatch_validator "$issue_number" "$repo_slug"
 	local _validator_rc=$?
@@ -2175,6 +2176,11 @@ dispatch_with_dedup() {
 	if [[ "$_validator_rc" -eq 10 ]]; then
 		echo "[dispatch_with_dedup] Pre-dispatch validator falsified premise for #${issue_number} in ${repo_slug} — issue closed, not dispatching" >>"$LOGFILE"
 		_release_dispatch_claim_on_abort "$issue_number" "$repo_slug" "$self_login" "predispatch_validator_closed"
+		return 1
+	fi
+	if [[ "$_validator_rc" -eq 40 ]]; then
+		echo "[dispatch_with_dedup] Pre-dispatch missing worker context for #${issue_number} in ${repo_slug}: generated brief lacks canonical Files Scope" >>"$LOGFILE"
+		_release_dispatch_claim_on_abort "$issue_number" "$repo_slug" "$self_login" "missing_worker_context"
 		return 1
 	fi
 	if [[ "$_review_followup_validator_required" -eq 1 && "$_validator_rc" -ne 0 ]]; then

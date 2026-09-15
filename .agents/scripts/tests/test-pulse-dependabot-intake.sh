@@ -22,6 +22,7 @@ DEFAULT_BRANCH="main"
 TREE_READ_FAIL=0
 PR_VIEW_FAIL=0
 SUPERSEDING_PR=""
+PULSE_DEPENDABOT_RECONCILE_DELAY_SECONDS=0
 
 setup_test_env() {
 	TEST_ROOT=$(mktemp -d)
@@ -79,6 +80,10 @@ gh_pr_view() {
 }
 
 gh() {
+	if [[ "$1" == "issue" && "$2" == "close" ]]; then
+		printf '%s\n' "$*" >>"${TEST_ROOT}/issue-close-calls"
+		return 0
+	fi
 	[[ "$1" == "api" && "$TREE_READ_FAIL" -eq 0 ]] || return 1
 	case " $* " in
 	*"/git/trees/head-current "*) printf '%s\n' "$SOURCE_TREE_JSON" ;;
@@ -206,6 +211,43 @@ test_reuses_existing_issue() {
 	assert_file_contains "intake lookup uses authoritative labeled issue list" \
 		"${TEST_ROOT}/issue-list-args" "--label dependencies --limit 501"
 	return $?
+}
+
+test_existing_issue_election_matches_dispatch_owner() {
+	local existing_url=""
+	local marker='<!-- aidevops:dependabot-pr-intake repo=owner/repo pr=30038 -->'
+
+	# GitHub commonly returns newest-first. Intake and dispatch must still elect
+	# the same oldest idle issue rather than alternating between #43 and #42.
+	OPEN_ISSUES_JSON='[{"number":43,"url":"https://github.com/owner/repo/issues/43","body":"<!-- aidevops:dependabot-pr-intake repo=owner/repo pr=30038 -->","assignees":[],"labels":[{"name":"origin:worker"},{"name":"dependencies"},{"name":"status:available"}]},{"number":42,"url":"https://github.com/owner/repo/issues/42","body":"<!-- aidevops:dependabot-pr-intake repo=owner/repo pr=30038 -->","assignees":[],"labels":[{"name":"origin:worker"},{"name":"dependencies"},{"name":"status:available"}]}]'
+	existing_url=$(_pulse_dependabot_existing_intake_issue "30038" "owner/repo" "$marker")
+	[[ "$existing_url" == "https://github.com/owner/repo/issues/42" ]]
+}
+
+test_reconciles_idle_cross_runner_duplicate() {
+	local marker='<!-- aidevops:dependabot-pr-intake repo=owner/repo pr=30038 -->'
+
+	rm -f "${TEST_ROOT}/issue-close-calls" "${TEST_ROOT}/idempotent-comment-args"
+	OPEN_ISSUES_JSON='[{"number":43,"url":"https://github.com/owner/repo/issues/43","body":"<!-- aidevops:dependabot-pr-intake repo=owner/repo pr=30038 -->","assignees":[],"labels":[{"name":"origin:worker"},{"name":"dependencies"},{"name":"status:available"}]},{"number":42,"url":"https://github.com/owner/repo/issues/42","body":"<!-- aidevops:dependabot-pr-intake repo=owner/repo pr=30038 -->","assignees":[],"labels":[{"name":"origin:worker"},{"name":"dependencies"},{"name":"status:available"}]}]'
+	_pulse_dependabot_reconcile_duplicate_intakes "30038" "owner/repo" "$marker"
+	assert_file_contains "later idle duplicate is closed" "${TEST_ROOT}/issue-close-calls" "issue close 43"
+	assert_file_contains "duplicate rationale names canonical intake" "${TEST_ROOT}/idempotent-comment-args" "canonical=42"
+}
+
+test_reconciliation_preserves_active_newer_owner() {
+	local existing_url=""
+	local marker='<!-- aidevops:dependabot-pr-intake repo=owner/repo pr=30038 -->'
+
+	rm -f "${TEST_ROOT}/issue-close-calls" "${TEST_ROOT}/idempotent-comment-args"
+	OPEN_ISSUES_JSON='[{"number":43,"url":"https://github.com/owner/repo/issues/43","body":"<!-- aidevops:dependabot-pr-intake repo=owner/repo pr=30038 -->","assignees":[{"login":"runner"}],"labels":[{"name":"origin:worker"},{"name":"dependencies"},{"name":"status:in-progress"}]},{"number":42,"url":"https://github.com/owner/repo/issues/42","body":"<!-- aidevops:dependabot-pr-intake repo=owner/repo pr=30038 -->","assignees":[],"labels":[{"name":"origin:worker"},{"name":"dependencies"},{"name":"status:available"}]}]'
+	existing_url=$(_pulse_dependabot_existing_intake_issue "30038" "owner/repo" "$marker")
+	[[ "$existing_url" == "https://github.com/owner/repo/issues/43" ]] || return 1
+	_pulse_dependabot_reconcile_duplicate_intakes "30038" "owner/repo" "$marker"
+	assert_file_contains "idle older duplicate closes around active owner" "${TEST_ROOT}/issue-close-calls" "issue close 42"
+	if grep -qF "issue close 43" "${TEST_ROOT}/issue-close-calls"; then
+		return 1
+	fi
+	return 0
 }
 
 test_target_level_dispatch_dedup() {
@@ -656,6 +698,12 @@ main() {
 	test_scope_read_rejects_unsafe_markdown_path
 	test_reuses_existing_issue
 	printf 'PASS existing intake is idempotent\n'
+	test_existing_issue_election_matches_dispatch_owner
+	printf 'PASS intake lookup matches dispatch owner election\n'
+	test_reconciles_idle_cross_runner_duplicate
+	printf 'PASS idle cross-runner duplicate is reconciled\n'
+	test_reconciliation_preserves_active_newer_owner
+	printf 'PASS active newer intake remains canonical during reconciliation\n'
 	test_rejects_unverified_author
 	printf 'PASS unverified authors fail closed\n'
 	test_classifies_human_modified_bot_branch

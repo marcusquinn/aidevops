@@ -696,10 +696,10 @@ Implement the generated repair.'
 	local rc=0 output=""
 	output=$("$HELPER_SCRIPT" validate "31238" "marcusquinn/aidevops" 2>&1) || rc=$?
 
-	if [[ "$rc" -eq 30 ]] && [[ "$output" == *"brief-defect"* ]] && [[ "$output" == *"Files Scope"* ]]; then
+	if [[ "$rc" -eq 40 ]] && [[ "$output" == *"brief-defect"* ]] && [[ "$output" == *"Files Scope"* ]]; then
 		print_result "generated implementation brief without scope blocks before dispatch" 0
 	else
-		print_result "generated implementation brief without scope blocks before dispatch" 1 "Expected typed exit 30, got ${rc}: ${output}"
+		print_result "generated implementation brief without scope blocks before dispatch" 1 "Expected typed exit 40, got ${rc}: ${output}"
 	fi
 
 	teardown_test_env
@@ -736,10 +736,10 @@ Inspect and repair the dependency update.'
 	local rc=0 output=""
 	output=$("$HELPER_SCRIPT" validate "31652" "marcusquinn/aidevops" 2>&1) || rc=$?
 
-	if [[ "$rc" -eq 30 ]] && [[ "$output" == *"brief-defect"* ]]; then
+	if [[ "$rc" -eq 40 ]] && [[ "$output" == *"brief-defect"* ]]; then
 		print_result "malformed Dependabot intake blocks before worker launch" 0
 	else
-		print_result "malformed Dependabot intake blocks before worker launch" 1 "Expected typed exit 30, got ${rc}: ${output}"
+		print_result "malformed Dependabot intake blocks before worker launch" 1 "Expected typed exit 40, got ${rc}: ${output}"
 	fi
 
 	teardown_test_env
