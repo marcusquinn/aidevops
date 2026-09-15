@@ -1770,10 +1770,12 @@ _find_alternative_opencode_binary() {
 #######################################
 _resolve_headless_opencode_install_binary() {
 	local install_root="$1"
+	local expected_version="${2:-}"
 	local binary_name=""
 	binary_name=$(_headless_opencode_binary_name)
 	local package_binary="$install_root/node_modules/.bin/${binary_name}"
-	if [[ -x "$package_binary" ]]; then
+	if [[ -x "$package_binary" ]] && _validate_opencode_binary "$package_binary" &&
+		[[ -z "$expected_version" || "${_VALIDATE_OC_VERSION#v}" == "$expected_version" ]]; then
 		printf '%s\n' "$package_binary"
 		return 0
 	fi
@@ -1789,22 +1791,32 @@ _resolve_headless_opencode_install_binary() {
 	esac
 
 	local base="opencode-linux-${package_arch}"
+	local suffix_baseline="-baseline"
+	local suffix_musl="-musl"
+	local suffix_baseline_musl="-baseline-musl"
 	local suffixes=("")
+	local has_avx2=1
 	if [[ "$package_arch" == "x64" ]] && ! grep -qE '(^|[[:space:]])avx2([[:space:]]|$)' /proc/cpuinfo 2>/dev/null; then
-		suffixes=("-baseline" "")
+		has_avx2=0
+		suffixes=("$suffix_baseline" "")
 	fi
 	if ldd --version 2>&1 | grep -qi musl; then
 		if [[ "$package_arch" == "x64" ]]; then
-			suffixes=("-musl" "-baseline-musl" "" "-baseline")
+			if [[ "$has_avx2" -eq 1 ]]; then
+				suffixes=("$suffix_musl" "$suffix_baseline_musl" "" "$suffix_baseline")
+			else
+				suffixes=("$suffix_baseline_musl" "$suffix_musl" "$suffix_baseline" "")
+			fi
 		else
-			suffixes=("-musl" "")
+			suffixes=("$suffix_musl" "")
 		fi
 	fi
 
 	local suffix=""
 	for suffix in "${suffixes[@]}"; do
 		local binary="$install_root/node_modules/${base}${suffix}/bin/opencode"
-		if [[ -x "$binary" ]]; then
+		if [[ -x "$binary" ]] && _validate_opencode_binary "$binary" &&
+			[[ -z "$expected_version" || "${_VALIDATE_OC_VERSION#v}" == "$expected_version" ]]; then
 			printf '%s\n' "$binary"
 			return 0
 		fi
@@ -1824,7 +1836,7 @@ _provision_headless_opencode_runtime() {
 	local runtime_root="${STATE_DIR:-${HOME}/.aidevops/.agent-workspace/headless-runtime}/opencode-runtimes"
 	local install_root="$runtime_root/$pin"
 	local existing_bin=""
-	if existing_bin=$(_resolve_headless_opencode_install_binary "$install_root" 2>/dev/null) &&
+	if existing_bin=$(_resolve_headless_opencode_install_binary "$install_root" "$pin" 2>/dev/null) &&
 		_validate_opencode_binary "$existing_bin" && [[ "${_VALIDATE_OC_VERSION#v}" == "$pin" ]]; then
 		HEADLESS_OPENCODE_BIN="$existing_bin"
 		return 0
@@ -1856,9 +1868,9 @@ _provision_headless_opencode_runtime() {
 		return 1
 	fi
 	local candidate_bin=""
-	if ! candidate_bin=$(_resolve_headless_opencode_install_binary "$temp_root/prefix") ||
+	if ! candidate_bin=$(_resolve_headless_opencode_install_binary "$temp_root/prefix" "$pin") ||
 		! _validate_opencode_binary "$candidate_bin" || [[ "${_VALIDATE_OC_VERSION#v}" != "$pin" ]]; then
-		print_error "Isolated OpenCode ${pin} failed exact-version verification"
+		print_error "Isolated OpenCode ${pin} failed exact-version verification (subtype=no-compatible-install-binary)"
 		rm -rf "$temp_root"
 		return 1
 	fi
@@ -1876,7 +1888,7 @@ _provision_headless_opencode_runtime() {
 		return 1
 	fi
 	rm -rf "$temp_root" "$stale_root"
-	HEADLESS_OPENCODE_BIN=$(_resolve_headless_opencode_install_binary "$install_root") || return 1
+	HEADLESS_OPENCODE_BIN=$(_resolve_headless_opencode_install_binary "$install_root" "$pin") || return 1
 	print_info "OpenCode headless runtime ready at pinned version ${pin}"
 	return 0
 }
