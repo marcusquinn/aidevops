@@ -431,6 +431,10 @@ jobs:
       run: |
         echo "Running pulse-wrapper.sh canary test (catches set -e regression class GH#18770)..."
         bash .agents/scripts/tests/test-pulse-wrapper-canary.sh
+        echo "Running candidate-enumeration recovery canary..."
+        bash .agents/scripts/tests/test-pulse-candidate-enumeration-recovery.sh
+        echo "Running unattended large-file dependency lifecycle canary..."
+        bash .agents/scripts/tests/test-large-file-dependency-lifecycle-canary.sh
         echo "Pulse wrapper canary test passed"
 
     - name: Approve Collaborator Author Guard (GH#17671, t2933)

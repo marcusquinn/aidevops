@@ -388,7 +388,7 @@ build_ranked_dispatch_candidates_json() {
 		return 0
 	fi
 
-	local tmp_candidates completeness_file product_complete=true
+	local tmp_candidates completeness_file product_complete=true scan_failed=0
 	tmp_candidates=$(mktemp) || return 1
 	completeness_file=$(mktemp) || { rm -f "$tmp_candidates"; return 1; }
 	: >"$tmp_candidates"
@@ -409,6 +409,7 @@ build_ranked_dispatch_candidates_json() {
 		printf '0\n' >"$completeness_file"
 		repo_candidates_json=$(pulse_campaign_shadow_candidates_json "$repo_slug" "$repo_path" "$per_repo_limit" "$dependency_normalization_mode" "$completeness_file") || {
 			repo_candidates_json='[]'
+			scan_failed=1
 			[[ "$repo_priority" != product ]] || product_complete=false
 		}
 		if [[ "$repo_priority" == product && "$(<"$completeness_file")" != 1 ]]; then
@@ -445,7 +446,8 @@ build_ranked_dispatch_candidates_json() {
 	if [[ ! -s "$tmp_candidates" ]]; then
 		rm -f "$tmp_candidates" "$completeness_file"
 		printf '[]\n'
-		return 0
+		[[ "$scan_failed" -eq 0 ]]
+		return $?
 	fi
 
 	jq -cs --argjson product_complete "$product_complete" 'map(. + {product_discovery_complete:$product_complete}) | sort_by([
