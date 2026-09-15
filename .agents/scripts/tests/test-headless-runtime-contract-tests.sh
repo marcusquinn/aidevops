@@ -265,6 +265,55 @@ test_initial_model_selection_contract() {
 	return 0
 }
 
+test_opencode_v2_run_command_contract() {
+	local -a command=()
+	local arg=""
+	local previous=""
+	local command_model=""
+	local standalone=0
+	local legacy_flag=0
+	local AIDEVOPS_OPENCODE_PROFILE=v2
+	local HEADLESS_OPENCODE_BIN=opencode2
+	while IFS= read -r -d '' arg; do command+=("$arg"); done < <(
+		_build_run_cmd "openai/gpt-5.6" "$TEST_ROOT" "prompt" "title" "high" "build" "session-1"
+	)
+	for arg in "${command[@]}"; do
+		[[ "$previous" != "-m" ]] || command_model="$arg"
+		[[ "$arg" != "--standalone" ]] || standalone=1
+		case "$arg" in
+		--dir | --variant | --attach | --password) legacy_flag=1 ;;
+		esac
+		previous="$arg"
+	done
+
+	if [[ "${command[0]}" == "opencode2" && "$command_model" == "openai/gpt-5.6#high" &&
+		"$standalone" -eq 1 && "$legacy_flag" -eq 0 ]]; then
+		print_result "OpenCode V2 run command uses standalone mode and embedded model variants" 0
+		return 0
+	fi
+
+	print_result "OpenCode V2 run command uses standalone mode and embedded model variants" 1 \
+		"model=$command_model standalone=$standalone legacy_flag=$legacy_flag"
+	return 0
+}
+
+test_opencode_v2_invocation_uses_work_dir() {
+	local work_dir="$TEST_ROOT/opencode-v2-cwd"
+	mkdir -p "$work_dir"
+	if (
+		AIDEVOPS_OPENCODE_PROFILE=v2
+		_invoke_work_dir="$work_dir"
+		exit_code_file="$TEST_ROOT/opencode-v2-cwd.exit"
+		_invoke_opencode_set_working_directory
+		[[ "$PWD" == "$work_dir" ]]
+	); then
+		print_result "OpenCode V2 invocation enters the requested work directory" 0
+	else
+		print_result "OpenCode V2 invocation enters the requested work directory" 1
+	fi
+	return 0
+}
+
 test_launch_helpers_tolerate_unset_state_under_nounset() {
 	local status=0
 	(

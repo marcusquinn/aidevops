@@ -145,16 +145,16 @@ function replaceSystemParts(event, strings) {
   })));
 }
 
-function createCompatibilityClient(ctx, mcpClient) {
+export function createCompatibilityClient(ctx, mcpClient) {
   return {
     auth: { set: async () => ({}) },
     mcp: mcpClient,
     session: {
       async get(input) {
-        return { data: await ctx.session.get(input.path.id) };
+        return { data: await ctx.session.get({ sessionID: input.path.id }) };
       },
       async update(input) {
-        await ctx.session.rename(input.path.id, input.body.title);
+        await ctx.session.rename({ sessionID: input.path.id, title: input.body.title });
         return {};
       },
     },
@@ -197,6 +197,17 @@ function startEventLoop(ctx, handler) {
 export function defineAidevopsV2Adapter(setup) {
   if (typeof setup !== "function") throw new TypeError("OpenCode V2 adapter setup must be a function");
   return Plugin.define({ id: "aidevops", setup });
+}
+
+export function applyV2PermissionEvaluation(permissionBroker, event) {
+  const output = { status: "ask" };
+  permissionBroker.permissionAsk({
+    ...event,
+    type: event.action,
+    patterns: event.resources,
+  }, output);
+  if (output.status === "allow") event.effect = "allow";
+  if (output.status === "deny") event.effect = "deny";
 }
 
 export async function setupAidevopsV2(ctx) {
@@ -261,7 +272,7 @@ export async function setupAidevopsV2(ctx) {
   const shouldInjectGreeting = async (input) => {
     if (isHeadless() || !input.sessionID) return false;
     try {
-      const session = await ctx.session.get(input.sessionID);
+      const session = await ctx.session.get({ sessionID: input.sessionID });
       return !session?.parentID;
     } catch {
       return false;
@@ -327,14 +338,7 @@ export async function setupAidevopsV2(ctx) {
   await register(registrations, ctx.session.hook("http.response", providerAuth.httpResponse));
   await register(registrations, ctx.session.hook("retry", providerAuth.retry));
   await register(registrations, ctx.permission.hook("evaluate", async (event) => {
-    const output = { status: "ask" };
-    permissionBroker.permissionAsk({
-      ...event,
-      type: event.permission,
-      pattern: event.patterns,
-    }, output);
-    if (output.status === "allow") event.decision = "approved";
-    if (output.status === "deny") event.decision = "rejected";
+    applyV2PermissionEvaluation(permissionBroker, event);
   }));
 
   const stopEvents = startEventLoop(ctx, async (input) => {

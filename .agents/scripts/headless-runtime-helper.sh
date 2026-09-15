@@ -46,7 +46,9 @@ fi
 readonly DEFAULT_HEADLESS_MODELS="anthropic/claude-sonnet-4-6"
 readonly STATE_DIR="${AIDEVOPS_HEADLESS_RUNTIME_DIR:-${HOME}/.aidevops/.agent-workspace/headless-runtime}"
 readonly STATE_DB="${STATE_DIR}/state.db"
-readonly OPENCODE_BIN_DEFAULT="${OPENCODE_BIN:-opencode}"
+_opencode_profile_binary=$(aidevops_opencode_profile_value binary 2>/dev/null || printf 'opencode')
+readonly OPENCODE_BIN_DEFAULT="${OPENCODE_BIN:-$_opencode_profile_binary}"
+unset _opencode_profile_binary
 # Linux headless dispatch may bind this to an aidevops-managed exact-version
 # runtime without mutating the general/interactive OpenCode installation.
 HEADLESS_OPENCODE_BIN="$OPENCODE_BIN_DEFAULT"

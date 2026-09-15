@@ -38,5 +38,5 @@ export function profileForOpenCodeVersion(version) {
 
 export function pluginEntryUrl(profile, agentsDir) {
   const root = String(agentsDir || "").replace(/\/$/, "");
-  return `file://${root}/plugins/opencode-aidevops/${profile.pluginEntry}`;
+  return `file://${root}/plugins/opencode-aidevops/${profile.pluginConfigTarget || profile.pluginEntry}`;
 }

@@ -140,6 +140,11 @@ _setup_opencode_help_identifies_opencode() {
 	if [[ "$help_output" =~ run[[:space:]]+opencode[[:space:]]+with[[:space:]]+a[[:space:]]+message ]]; then
 		return 0
 	fi
+	if [[ "$(_setup_opencode_profile_id)" == "v2" ]] &&
+		[[ "$help_output" == *"OpenCode command line interface"* ]] &&
+		[[ "$help_output" == *"Run OpenCode with a message"* ]]; then
+		return 0
+	fi
 
 	return 1
 }
@@ -150,6 +155,35 @@ _setup_opencode_first_line() {
 
 	IFS= read -r first_line <<<"$input" || true
 	printf '%s\n' "$first_line"
+	return 0
+}
+
+_setup_opencode_profile_id() {
+	if declare -F aidevops_opencode_profile_id >/dev/null 2>&1; then
+		aidevops_opencode_profile_id
+		return $?
+	fi
+	case "${AIDEVOPS_OPENCODE_PROFILE:-v1}" in
+		v2) printf 'v2\n' ;;
+		*) printf 'v1\n' ;;
+	esac
+	return 0
+}
+
+_setup_opencode_profile_value() {
+	local field="$1"
+	local profile="${2:-$(_setup_opencode_profile_id)}"
+	if declare -F aidevops_opencode_profile_value >/dev/null 2>&1; then
+		aidevops_opencode_profile_value "$field" "$profile"
+		return $?
+	fi
+	case "$profile:$field" in
+		v2:package) printf '@opencode/cli\n' ;;
+		v2:binary) printf 'opencode2\n' ;;
+		v1:package) printf 'opencode-ai\n' ;;
+		v1:binary) printf 'opencode\n' ;;
+		*) return 1 ;;
+	esac
 	return 0
 }
 
@@ -212,7 +246,9 @@ _setup_opencode_managed_shim_target() {
 _setup_ensure_opencode_stable_shim() {
 	local real_bin="${1:-}"
 	local shim_dir="${HOME}/.local/bin"
-	local shim_path="${shim_dir}/opencode"
+	local binary_name=""
+	binary_name=$(_setup_opencode_profile_value binary) || return 1
+	local shim_path="${shim_dir}/${binary_name}"
 	local resolved_bin=""
 	local wrapper_path=""
 	local wrapper_dir=""
@@ -276,20 +312,22 @@ _setup_find_valid_opencode_binary() {
 	local preferred_bin="${1:-}"
 	local candidate=""
 	local candidate_path=""
-	local shim_path="${HOME}/.local/bin/opencode"
+	local binary_name=""
+	binary_name=$(_setup_opencode_profile_value binary) || return 1
+	local shim_path="${HOME}/.local/bin/${binary_name}"
 	local managed_shim_target=""
 
 	managed_shim_target=$(_setup_opencode_managed_shim_target "$shim_path" 2>/dev/null || true)
 
 	for candidate in \
 		"$preferred_bin" \
-		/opt/homebrew/bin/opencode \
-		/usr/local/bin/opencode \
-		/home/linuxbrew/.linuxbrew/bin/opencode \
-		"${HOME}/.npm-global/bin/opencode" \
-		"${HOME}/.bun/bin/opencode" \
+		"/opt/homebrew/bin/${binary_name}" \
+		"/usr/local/bin/${binary_name}" \
+		"/home/linuxbrew/.linuxbrew/bin/${binary_name}" \
+		"${HOME}/.npm-global/bin/${binary_name}" \
+		"${HOME}/.bun/bin/${binary_name}" \
 		"$managed_shim_target" \
-		opencode; do
+		"$binary_name"; do
 		[[ -n "$candidate" ]] || continue
 		[[ "$candidate" == "$shim_path" ]] && continue
 		candidate_path=$(command -v "$candidate" 2>/dev/null || printf '%s' "$candidate")
@@ -340,6 +378,8 @@ _setup_find_valid_opencode_alternative() {
 # and runnable from `setup.sh --non-interactive` without sourcing the full runtime stack.
 _setup_validate_opencode_binary() {
 	local bin="${1:-}"
+	local profile=""
+	profile=$(_setup_opencode_profile_id)
 	[[ -n "$bin" ]] || return 2
 	command -v "$bin" >/dev/null 2>&1 || return 2
 
@@ -353,11 +393,18 @@ _setup_validate_opencode_binary() {
 	# Anthropic claude CLI signature -- highest-confidence rejection
 	[[ "$version_output" == *"(Claude Code)"* ]] && return 1
 
-	# opencode is at 1.x; any 2.x+ is wrong (claude CLI is 2.1.x)
-	[[ "$version_output" =~ ^[2-9][0-9]*\. ]] && return 1
-
-	# Sanity check: must look like a semver (X.Y.Z)
-	[[ "$version_output" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]] || return 1
+	# V1 prints bare semver while V2 prefixes it with "opencode v".
+	local semantic_version=""
+	if [[ "$version_output" =~ ([0-9]+\.[0-9]+\.[0-9]+) ]]; then
+		semantic_version="${BASH_REMATCH[1]}"
+	else
+		return 1
+	fi
+	if [[ "$profile" == "v2" ]]; then
+		[[ "$semantic_version" =~ ^2\. ]] || return 1
+	else
+		[[ "$semantic_version" =~ ^[2-9][0-9]*\. ]] && return 1
+	fi
 
 	# Positive OpenCode identity check. Qwen and other CLIs can return a
 	# semver-compatible --version (for example 0.2.1), so version shape alone is
@@ -366,6 +413,30 @@ _setup_validate_opencode_binary() {
 	_setup_opencode_help_identifies_opencode "$help_output" || return 1
 
 	return 0
+}
+
+_setup_opencode_install_selected_package() {
+	local package="$1"
+	local install_pkg="$2"
+	local installer=""
+	if command -v bun >/dev/null 2>&1; then
+		installer="bun"
+	elif command -v npm >/dev/null 2>&1; then
+		installer="npm"
+	else
+		print_warning "Neither bun nor npm found -- cannot install $package"
+		print_info "Install Node.js or Bun first, then re-run 'aidevops update'"
+		return 1
+	fi
+
+	local install_timeout="${AIDEVOPS_OPENCODE_INSTALL_TIMEOUT:-180}"
+	if _setup_opencode_timeout_cmd "$install_timeout" "$installer" install -g "$install_pkg" >/dev/null 2>&1; then
+		print_success "$package installed via $installer"
+		return 0
+	fi
+	print_warning "$package install via $installer failed"
+	print_info "Try manually: $installer install -g $install_pkg"
+	return 1
 }
 
 # Setup OpenCode CLI -- install/heal anomalyco/opencode (t2888).
@@ -380,7 +451,7 @@ _setup_validate_opencode_binary() {
 #   1. Resolve current binary via $OPENCODE_BIN, then `command -v opencode`.
 #   2. Validate via _setup_validate_opencode_binary (semver shape, no Claude
 #      Code marker, major <= 1).
-#   3. If invalid/missing: install opencode-ai@latest via bun (preferred)
+#   3. If invalid/missing: install the selected profile package via bun
 #      or npm. The npm install overwrites whatever currently owns the
 #      `opencode` bin symlink, healing wrong-package collisions.
 #   4. Re-validate after install. Persist resolved path to
@@ -390,8 +461,13 @@ _setup_validate_opencode_binary() {
 # (no prompts -- always installs when needed). Fail-open on errors so a
 # missing toolchain (no bun/npm) doesn't block the rest of setup.
 setup_opencode_cli() {
+	local package=""
+	local binary_name=""
+	package=$(_setup_opencode_profile_value package) || return 1
+	binary_name=$(_setup_opencode_profile_value binary) || return 1
+	local install_pkg="${package}@latest"
 	local current_bin="${OPENCODE_BIN:-}"
-	[[ -z "$current_bin" ]] && current_bin=$(command -v opencode 2>/dev/null || echo "")
+	[[ -z "$current_bin" ]] && current_bin=$(command -v "$binary_name" 2>/dev/null || echo "")
 
 	# Validate current state.
 	local validate_rc=0
@@ -427,37 +503,18 @@ setup_opencode_cli() {
 		local wrong_version
 		wrong_version=$(_setup_opencode_first_line "$(_setup_opencode_version_output "$current_bin" 2>/dev/null || printf '<unknown>')")
 		print_warning "OpenCode binary at '$current_bin' is the wrong package ('$wrong_version')"
-		print_info "Forcing reinstall of opencode-ai@latest to heal the bin collision (t2888)..."
+		print_info "Forcing reinstall of $install_pkg to heal the bin collision (t2888)..."
 	else
-		print_info "OpenCode CLI not found -- installing opencode-ai@latest..."
+		print_info "OpenCode CLI not found -- installing $install_pkg..."
 	fi
 
-	# Pick installer. Prefer bun (faster), fall back to npm.
-	local installer=""
-	if command -v bun >/dev/null 2>&1; then
-		installer="bun"
-	elif command -v npm >/dev/null 2>&1; then
-		installer="npm"
-	else
-		print_warning "Neither bun nor npm found -- cannot install opencode-ai"
-		print_info "Install Node.js or Bun first, then re-run 'aidevops update'"
-		return 0
-	fi
-
-	# Install. opencode-ai@latest, global. npm install -g overwrites the
+	# Install the selected profile package globally. V1 npm installs overwrite the
 	# bin symlink even when another package (e.g. @anthropic-ai/claude-code)
 	# previously owned the `opencode` name -- last-installed wins.
-	local install_timeout="${AIDEVOPS_OPENCODE_INSTALL_TIMEOUT:-180}"
-	if _setup_opencode_timeout_cmd "$install_timeout" "$installer" install -g opencode-ai@latest >/dev/null 2>&1; then
-		print_success "opencode-ai installed via $installer"
-	else
-		print_warning "opencode-ai install via $installer failed"
-		print_info "Try manually: $installer install -g opencode-ai@latest"
-		return 0
-	fi
+	_setup_opencode_install_selected_package "$package" "$install_pkg" || return 0
 
 	# Re-resolve and re-validate.
-	current_bin=$(_setup_find_valid_opencode_binary "$(command -v opencode 2>/dev/null || echo "")" 2>/dev/null || echo "")
+	current_bin=$(_setup_find_valid_opencode_binary "$(command -v "$binary_name" 2>/dev/null || echo "")" 2>/dev/null || echo "")
 	validate_rc=0
 	if [[ -n "$current_bin" ]]; then
 		_setup_validate_opencode_binary "$current_bin" || validate_rc=$?

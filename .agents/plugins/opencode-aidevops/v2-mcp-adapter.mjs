@@ -21,6 +21,7 @@ export function createV2McpRuntime(ctx, workspaceDir, options = {}) {
   const runtime = createMcpSessionRuntime(workspaceDir, options);
   const registrations = [];
   const definitions = {};
+  const disabledOverrides = new Map();
 
   async function addTransform(callback) {
     const registration = await ctx.mcp.transform(callback);
@@ -34,18 +35,18 @@ export function createV2McpRuntime(ctx, workspaceDir, options = {}) {
     await addTransform((editor) => {
       for (const [name, definition] of Object.entries(definitions)) {
         if (!editor.get(name)) editor.set(name, toV2McpConfig(definition));
+        if (disabledOverrides.has(name)) {
+          editor.update(name, (server) => {
+            server.disabled = disabledOverrides.get(name);
+          });
+        }
       }
     });
   }
 
   async function setDisabled(name, disabled) {
     if (!definitions[name]) throw new Error(`Unknown managed MCP server: ${name}`);
-    await addTransform((editor) => {
-      if (!editor.get(name)) editor.set(name, toV2McpConfig(definitions[name]));
-      editor.update(name, (config) => {
-        config.disabled = disabled;
-      });
-    });
+    disabledOverrides.set(name, disabled);
     await ctx.mcp.reload();
     return {};
   }

@@ -4,6 +4,7 @@
 import json
 import os
 import sys
+from pathlib import Path
 
 # Add lib directory to path for shared utilities
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'lib'))
@@ -22,6 +23,34 @@ output_format = sys.argv[2]
 
 agents_dir = os.path.expanduser("~/.aidevops/agents")
 
+
+def _load_opencode_profile():
+    """Load the selected OpenCode major from the shared runtime profile."""
+    candidates = [
+        os.environ.get('AIDEVOPS_OPENCODE_PROFILE_FILE'),
+        os.path.join(agents_dir, 'configs', 'opencode-runtime-profiles.json'),
+        str(Path(__file__).resolve().parent.parent / 'configs' / 'opencode-runtime-profiles.json'),
+    ]
+    for candidate in filter(None, candidates):
+        try:
+            with open(candidate, 'r', encoding='utf-8') as handle:
+                document = json.load(handle)
+            profile_id = os.environ.get('AIDEVOPS_OPENCODE_PROFILE', document['default'])
+            profile = document['profiles'][profile_id]
+            return profile_id, profile
+        except (FileNotFoundError, OSError, KeyError, json.JSONDecodeError):
+            continue
+    return 'v1', {
+        'configAgentKey': 'agent',
+        'configPermissionKey': 'permission',
+        'configPluginKey': 'plugin',
+        'pluginEntry': 'index.mjs',
+        'pluginConfigTarget': 'index.mjs',
+    }
+
+
+OPENCODE_PROFILE_ID, OPENCODE_PROFILE = _load_opencode_profile()
+
 # =============================================================================
 # DISCOVER PRIMARY AGENTS
 # =============================================================================
@@ -39,6 +68,169 @@ if missing_refs:
 # =============================================================================
 
 
+def _permission_map_to_rules(permission, tools=None):
+    """Convert V1 permission/tool maps to V2 ordered rules."""
+    rules = []
+    for action, enabled in (tools or {}).items():
+        if isinstance(enabled, bool):
+            rules.append({'action': action, 'resource': '*', 'effect': 'allow' if enabled else 'deny'})
+    for action, value in (permission or {}).items():
+        if isinstance(value, str):
+            rules.append({'action': action, 'resource': '*', 'effect': value})
+        elif isinstance(value, dict):
+            for resource, effect in value.items():
+                rules.append({'action': action, 'resource': resource, 'effect': effect})
+    return rules
+
+
+def _agent_to_v2(agent):
+    result = {
+        key: value for key, value in agent.items()
+        if key not in {'prompt', 'permission', 'tools', 'temperature'}
+    }
+    if agent.get('prompt'):
+        result['system'] = agent['prompt']
+    if agent.get('temperature') is not None:
+        result.setdefault('request', {}).setdefault('body', {})['temperature'] = agent['temperature']
+    rules = _permission_map_to_rules(agent.get('permission'), agent.get('tools'))
+    if rules:
+        result['permissions'] = rules
+    return result
+
+
+def _rules_to_permission_map(rules):
+    permission = {}
+    for rule in rules or []:
+        action = rule.get('action')
+        resource = rule.get('resource', '*')
+        effect = rule.get('effect')
+        if not action or effect not in {'allow', 'deny', 'ask'}:
+            continue
+        if resource == '*':
+            permission[action] = effect
+        else:
+            current = permission.get(action)
+            if not isinstance(current, dict):
+                current = {}
+                permission[action] = current
+            current[resource] = effect
+    return permission
+
+
+def _agent_to_v1(agent):
+    result = {
+        key: value for key, value in agent.items()
+        if key not in {'system', 'permissions', 'request'}
+    }
+    if agent.get('system'):
+        result['prompt'] = agent['system']
+    if agent.get('request', {}).get('body', {}).get('temperature') is not None:
+        result['temperature'] = agent['request']['body']['temperature']
+    permission = _rules_to_permission_map(agent.get('permissions'))
+    if permission:
+        result['permission'] = permission
+    return result
+
+
+def _provider_entry_to_v2(provider):
+    """Convert one V1 provider entry to the V2 config schema."""
+    result = {
+        key: value for key, value in provider.items()
+        if key not in {'npm', 'options', 'models'}
+    }
+    if provider.get('npm'):
+        result['package'] = provider['npm']
+    if provider.get('options'):
+        result['settings'] = provider['options']
+    if isinstance(provider.get('models'), dict):
+        result['models'] = {
+            name: {
+                **{key: value for key, value in model.items() if key != 'options'},
+                **({'settings': model['options']} if model.get('options') else {}),
+            } if isinstance(model, dict) else model
+            for name, model in provider['models'].items()
+        }
+    return result
+
+
+def _provider_entry_to_v1(provider):
+    """Convert one V2 provider entry to the V1 config schema."""
+    result = {
+        key: value for key, value in provider.items()
+        if key not in {'package', 'settings', 'models'}
+    }
+    if provider.get('package'):
+        result['npm'] = provider['package']
+    if provider.get('settings'):
+        result['options'] = provider['settings']
+    if isinstance(provider.get('models'), dict):
+        result['models'] = {
+            name: {
+                **{key: value for key, value in model.items() if key != 'settings'},
+                **({'options': model['settings']} if model.get('settings') else {}),
+            } if isinstance(model, dict) else model
+            for name, model in provider['models'].items()
+        }
+    return result
+
+
+def _update_providers(config):
+    """Normalize providers for the selected runtime while retaining entries."""
+    if OPENCODE_PROFILE_ID == 'v2':
+        providers = config.pop('providers', config.pop('provider', {}))
+        config['providers'] = {
+            name: _provider_entry_to_v2(provider) if isinstance(provider, dict) else provider
+            for name, provider in providers.items()
+        }
+        return
+    providers = config.pop('provider', config.pop('providers', {}))
+    config['provider'] = {
+        name: _provider_entry_to_v1(provider) if isinstance(provider, dict) else provider
+        for name, provider in providers.items()
+    }
+
+
+def _mcp_server_to_v2(server):
+    result = {key: value for key, value in server.items() if key not in {'enabled', 'env'}}
+    if 'enabled' in server:
+        result['disabled'] = not server['enabled']
+    if server.get('env'):
+        result['environment'] = server['env']
+    return result
+
+
+def _mcp_server_to_v1(server):
+    result = {key: value for key, value in server.items() if key not in {'disabled', 'environment'}}
+    if 'disabled' in server:
+        result['enabled'] = not server['disabled']
+    if server.get('environment'):
+        result['env'] = server['environment']
+    return result
+
+
+def _update_mcp(config):
+    """Normalize persisted MCP servers for the selected runtime schema."""
+    existing = config.get('mcp', {})
+    if not isinstance(existing, dict):
+        existing = {}
+    if OPENCODE_PROFILE_ID == 'v2':
+        servers = existing.get('servers', existing)
+        timeout = existing.get('timeout') if 'servers' in existing else None
+        normalized = {
+            name: _mcp_server_to_v2(server) if isinstance(server, dict) else server
+            for name, server in servers.items()
+        }
+        config['mcp'] = {'servers': normalized}
+        if timeout:
+            config['mcp']['timeout'] = timeout
+        return
+    servers = existing.get('servers', existing)
+    config['mcp'] = {
+        name: _mcp_server_to_v1(server) if isinstance(server, dict) else server
+        for name, server in servers.items()
+    }
+
+
 def _update_opencode_agents(config, sorted_agents_local, primary_agents_local):
     """Update agent config in opencode.json, guarding against empty discovery."""
     if not primary_agents_local:
@@ -46,7 +238,29 @@ def _update_opencode_agents(config, sorted_agents_local, primary_agents_local):
         print("  (agents directory may be empty or deploy incomplete)", file=sys.stderr)
         return
     apply_disabled_agents(sorted_agents_local)
-    config['agent'] = {**config.get('agent', {}), **sorted_agents_local}
+    if OPENCODE_PROFILE_ID == 'v2':
+        existing = config.pop('agents', config.pop('agent', {}))
+        existing = {
+            name: _agent_to_v2(agent) if isinstance(agent, dict) and (
+                'permission' in agent or 'tools' in agent or 'prompt' in agent
+            ) else agent
+            for name, agent in existing.items()
+        }
+        converted = {name: _agent_to_v2(agent) for name, agent in sorted_agents_local.items()}
+        config['agents'] = {**existing, **converted}
+    else:
+        existing = config.pop('agent', config.pop('agents', {}))
+        existing = {
+            name: _agent_to_v1(agent) if isinstance(agent, dict) and (
+                'permissions' in agent or 'system' in agent or 'request' in agent
+            ) else agent
+            for name, agent in existing.items()
+        }
+        converted = {
+            name: _agent_to_v1(agent) if 'permissions' in agent else agent
+            for name, agent in sorted_agents_local.items()
+        }
+        config['agent'] = {**existing, **converted}
     config['default_agent'] = "Build+"
 
 
@@ -66,21 +280,27 @@ def _merge_instructions(config):
 def _ensure_plugin_registered(config):
     """Ensure the aidevops plugin is registered in opencode config."""
     aidevops_plugin_url = "file://" + os.path.expanduser(
-        "~/.aidevops/agents/plugins/opencode-aidevops/index.mjs"
+        f"~/.aidevops/agents/plugins/opencode-aidevops/{OPENCODE_PROFILE['pluginConfigTarget']}"
     )
-    plugin_list = config.get('plugin', [])
+    plugin_key = OPENCODE_PROFILE['configPluginKey']
+    other_key = 'plugin' if plugin_key == 'plugins' else 'plugins'
+    plugin_list = config.pop(plugin_key, config.pop(other_key, []))
     if not isinstance(plugin_list, list):
         plugin_list = [plugin_list] if plugin_list else []
+    plugin_list = [entry for entry in plugin_list if not (
+        isinstance(entry, str) and '/plugins/opencode-aidevops/' in entry
+    )]
     if aidevops_plugin_url not in plugin_list:
         plugin_list.append(aidevops_plugin_url)
         print(f"  Re-registered aidevops plugin (was missing from config)", file=sys.stderr)
-    config['plugin'] = plugin_list
+    config[plugin_key] = plugin_list
 
 
 def _enable_prompt_caching(config):
     """Enable Anthropic prompt caching in provider config."""
-    config.setdefault('provider', {}).setdefault('anthropic', {}).setdefault('options', {})
-    config['provider']['anthropic']['options']['setCacheKey'] = True
+    provider_key = 'providers' if OPENCODE_PROFILE_ID == 'v2' else 'provider'
+    settings_key = 'settings' if OPENCODE_PROFILE_ID == 'v2' else 'options'
+    config[provider_key].setdefault('anthropic', {}).setdefault(settings_key, {})['setCacheKey'] = True
 
 
 def _persist_managed_external_directories(config):
@@ -91,6 +311,25 @@ def _persist_managed_external_directories(config):
     agents and lets a running process observe updated policy when config reload
     is available. Keep this list aligned with config-hook.mjs.
     """
+    if OPENCODE_PROFILE_ID == 'v2':
+        legacy = config.pop('permission', {})
+        rules = config.get('permissions', [])
+        if not isinstance(rules, list):
+            rules = []
+        rules.extend(_permission_map_to_rules(legacy, config.pop('tools', {})))
+        managed_paths = managed_external_directories()
+        rules = [rule for rule in rules if not (
+            rule.get('action') == 'external_directory' and rule.get('resource') in managed_paths
+        )]
+        rules.extend({
+            'action': 'external_directory',
+            'resource': path,
+            'effect': 'allow',
+        } for path in managed_paths)
+        config['permissions'] = rules
+        return
+
+    config.pop('permissions', None)
     permission = config.get('permission')
     if isinstance(permission, str):
         permission = {'*': permission, 'external_directory': {'*': permission}}
@@ -128,28 +367,40 @@ def output_opencode_json():
         print(f"Error: Failed to load {config_path}: {e}", file=sys.stderr)
         sys.exit(1)
 
-    # Keep OpenCode updates behind the framework-controlled runtime pin.
-    config['autoupdate'] = False
+    # Keep OpenCode updates behind the framework-controlled runtime profile.
+    if OPENCODE_PROFILE_ID == 'v2':
+        config.pop('autoupdate', None)
+        config['update'] = 'disable'
+    else:
+        config.pop('update', None)
+        config['autoupdate'] = False
     _update_opencode_agents(config, sorted_agents, primary_agents)
     _merge_instructions(config)
     _ensure_plugin_registered(config)
+    _update_providers(config)
     _enable_prompt_caching(config)
     _persist_managed_external_directories(config)
 
-    config.setdefault('mcp', {})
-    config.setdefault('tools', {})
+    _update_mcp(config)
+    if OPENCODE_PROFILE_ID == 'v1':
+        config.setdefault('tools', {})
 
     bun_path = shutil.which('bun')
     npx_path = shutil.which('npx')
     pkg_runner = f"{bun_path} x" if bun_path else (npx_path or "npx")
 
-    apply_mcp_loading_policy(config)
-    remove_deprecated_mcps(config)
-    register_standard_mcps(config, bun_path, pkg_runner)
+    if OPENCODE_PROFILE_ID == 'v1':
+        apply_mcp_loading_policy(config)
+        remove_deprecated_mcps(config)
+        register_standard_mcps(config, bun_path, pkg_runner)
+    else:
+        # V2 MCP registration is owned by the plugin's mcp.transform adapter.
+        # User-defined and previously persisted entries remain under mcp.servers.
+        pass
 
     atomic_json_write(config_path, config)
 
-    print(f"  Updated {len(primary_agents)} primary agents in opencode.json")
+    print(f"  Updated {len(primary_agents)} primary agents in opencode.json ({OPENCODE_PROFILE_ID})")
     if subagent_filtered_count > 0:
         print(f"  Subagent filtering: {subagent_filtered_count} agents have permission.task rules")
     prompt_count = sum(1 for name, cfg in sorted_agents.items() if "prompt" in cfg)

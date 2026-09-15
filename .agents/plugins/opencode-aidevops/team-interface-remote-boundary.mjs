@@ -40,9 +40,10 @@ function requireDirectory(directoryPath, label) {
 }
 
 function validatePinnedPlugin(agentsDir, pluginEntryPath) {
-  const expected = realpathSync(join(resolve(agentsDir), "plugins", "opencode-aidevops", "index.mjs"));
+  const pluginRoot = join(resolve(agentsDir), "plugins", "opencode-aidevops");
+  const expected = ["index.mjs", "v2.mjs"].map((entry) => realpathSync(join(pluginRoot, entry)));
   const actual = realpathSync(pluginEntryPath || "");
-  if (actual !== expected) {
+  if (!expected.includes(actual)) {
     throw new ConversationOverlayError("invalid_environment", "remote interactive plugin is not pinned to the canonical agent bundle");
   }
 }

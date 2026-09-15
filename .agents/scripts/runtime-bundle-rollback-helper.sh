@@ -9,6 +9,7 @@ set -euo pipefail
 _RUNTIME_BUNDLE_ROLLBACK_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly _RUNTIME_BUNDLE_VALUE_UNKNOWN="unknown"
 readonly _RUNTIME_BUNDLE_STATE_ABSENT="absent"
+readonly _RUNTIME_BUNDLE_VALUE_MISSING="missing"
 _RUNTIME_BUNDLE_LAST_ERROR=""
 _RUNTIME_BUNDLE_VALIDATED_ROOT=""
 _RUNTIME_BUNDLE_VALIDATED_ID=""
@@ -173,9 +174,15 @@ _runtime_bundle_validate_plugin_integrity() {
 	local manifest_file="$2"
 	local plugin_sha=""
 	local actual_plugin_sha=""
+	local plugin_v2_sha=""
+	local actual_plugin_v2_sha=""
+	local plugin_v2_loader_sha=""
+	local actual_plugin_v2_loader_sha=""
+	local plugin_v2_loader_package_sha=""
+	local actual_plugin_v2_loader_package_sha=""
 
 	plugin_sha=$(_runtime_bundle_verify_manifest_value "$manifest_file" plugin_entry_sha256 2>/dev/null || printf '%s' 'missing')
-	if [[ "$plugin_sha" == "missing" ]]; then
+	if [[ "$plugin_sha" == "$_RUNTIME_BUNDLE_VALUE_MISSING" ]]; then
 		if [[ -e "$agents_root/plugins/opencode-aidevops/index.mjs" ]]; then
 			_RUNTIME_BUNDLE_LAST_ERROR="target plugin exists without manifest integrity evidence"
 			return 1
@@ -186,6 +193,51 @@ _runtime_bundle_validate_plugin_integrity() {
 	if [[ -z "$actual_plugin_sha" || "$actual_plugin_sha" != "$plugin_sha" ]]; then
 		_RUNTIME_BUNDLE_LAST_ERROR="target plugin integrity verification failed"
 		return 1
+	fi
+	plugin_v2_sha=$(_runtime_bundle_verify_manifest_value "$manifest_file" plugin_v2_entry_sha256 2>/dev/null || true)
+	if [[ -n "$plugin_v2_sha" ]]; then
+		if [[ "$plugin_v2_sha" == "$_RUNTIME_BUNDLE_VALUE_MISSING" ]]; then
+			[[ ! -e "$agents_root/plugins/opencode-aidevops/v2.mjs" ]] || {
+				_RUNTIME_BUNDLE_LAST_ERROR="target V2 plugin exists without manifest integrity evidence"
+				return 1
+			}
+		else
+			actual_plugin_v2_sha=$(_runtime_bundle_verify_sha256_file "$agents_root/plugins/opencode-aidevops/v2.mjs" 2>/dev/null || true)
+			if [[ -z "$actual_plugin_v2_sha" || "$actual_plugin_v2_sha" != "$plugin_v2_sha" ]]; then
+				_RUNTIME_BUNDLE_LAST_ERROR="target V2 plugin integrity verification failed"
+				return 1
+			fi
+		fi
+	fi
+	plugin_v2_loader_sha=$(_runtime_bundle_verify_manifest_value "$manifest_file" plugin_v2_loader_sha256 2>/dev/null || true)
+	if [[ -n "$plugin_v2_loader_sha" ]]; then
+		if [[ "$plugin_v2_loader_sha" == "$_RUNTIME_BUNDLE_VALUE_MISSING" ]]; then
+			[[ ! -e "$agents_root/plugins/opencode-aidevops/v2-plugin/index.mjs" ]] || {
+				_RUNTIME_BUNDLE_LAST_ERROR="target V2 plugin loader exists without manifest integrity evidence"
+				return 1
+			}
+		else
+			actual_plugin_v2_loader_sha=$(_runtime_bundle_verify_sha256_file "$agents_root/plugins/opencode-aidevops/v2-plugin/index.mjs" 2>/dev/null || true)
+			if [[ -z "$actual_plugin_v2_loader_sha" || "$actual_plugin_v2_loader_sha" != "$plugin_v2_loader_sha" ]]; then
+				_RUNTIME_BUNDLE_LAST_ERROR="target V2 plugin loader integrity verification failed"
+				return 1
+			fi
+		fi
+	fi
+	plugin_v2_loader_package_sha=$(_runtime_bundle_verify_manifest_value "$manifest_file" plugin_v2_loader_package_sha256 2>/dev/null || true)
+	if [[ -n "$plugin_v2_loader_package_sha" ]]; then
+		if [[ "$plugin_v2_loader_package_sha" == "$_RUNTIME_BUNDLE_VALUE_MISSING" ]]; then
+			[[ ! -e "$agents_root/plugins/opencode-aidevops/v2-plugin/package.json" ]] || {
+				_RUNTIME_BUNDLE_LAST_ERROR="target V2 plugin loader package exists without manifest integrity evidence"
+				return 1
+			}
+		else
+			actual_plugin_v2_loader_package_sha=$(_runtime_bundle_verify_sha256_file "$agents_root/plugins/opencode-aidevops/v2-plugin/package.json" 2>/dev/null || true)
+			if [[ -z "$actual_plugin_v2_loader_package_sha" || "$actual_plugin_v2_loader_package_sha" != "$plugin_v2_loader_package_sha" ]]; then
+				_RUNTIME_BUNDLE_LAST_ERROR="target V2 plugin loader package integrity verification failed"
+				return 1
+			fi
+		fi
 	fi
 	return 0
 }

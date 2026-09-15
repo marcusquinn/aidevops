@@ -51,6 +51,8 @@ extract_function() {
 		/^_opencode_upgrade_cmd\(\)/, /^}$/ { print; next }
 	' "$TOOL_VERSION_CHECK" >>"$SANDBOX/extract.sh"
 	awk '
+		/^_headless_opencode_profile_is_v2\(\)/, /^}/ { print; next }
+		/^_headless_opencode_binary_name\(\)/, /^}/ { print; next }
 		/^_validate_opencode_binary\(\)/, /^}/ { print; next }
 		/^_resolve_headless_opencode_install_binary\(\)/, /^}/ { print; next }
 		/^_provision_headless_opencode_runtime\(\)/, /^}/ { print; next }
@@ -59,6 +61,8 @@ extract_function() {
 	' "$HEADLESS_RUNTIME_LIB" >>"$SANDBOX/extract.sh"
 	if ! grep -q '^aidevops_opencode_pin_applies()' "$SANDBOX/extract.sh" ||
 		! grep -q '^_opencode_upgrade_cmd()' "$SANDBOX/extract.sh" ||
+		! grep -q '^_headless_opencode_profile_is_v2()' "$SANDBOX/extract.sh" ||
+		! grep -q '^_headless_opencode_binary_name()' "$SANDBOX/extract.sh" ||
 		! grep -q '^_validate_opencode_binary()' "$SANDBOX/extract.sh" ||
 		! grep -q '^_resolve_headless_opencode_install_binary()' "$SANDBOX/extract.sh" ||
 		! grep -q '^_provision_headless_opencode_runtime()' "$SANDBOX/extract.sh" ||
@@ -267,7 +271,49 @@ reuse_rc=0
 assert_eq "existing isolated runtime reuse status" "0" "$reuse_rc"
 assert_eq "existing isolated runtime avoids second install" "1" "$(wc -l <"$SANDBOX/version-guard/calls" | tr -d ' ')"
 
-printf 'Test 4c: stale pin repair locks are cleared after the bounded wait\n'
+printf 'Test 4c: V2 isolated provisioning allows its required postinstall\n'
+mkdir -p "$SANDBOX/version-v2/runtime" "$SANDBOX/version-v2/bin" "$SANDBOX/version-v2/state"
+write_executable "$SANDBOX/version-v2/runtime/opencode2" '#!/usr/bin/env bash
+printf "opencode v2.0.4\n"'
+# shellcheck disable=SC2016 # Literal stub body; quoted SANDBOX segments are expanded by the outer script.
+write_executable "$SANDBOX/version-v2/bin/npm" '#!/usr/bin/env bash
+printf "%s\n" "$*" >>"'"$SANDBOX"'/version-v2/calls"
+prefix=""
+while [[ "$#" -gt 0 ]]; do
+  if [[ "$1" == "--prefix" ]]; then prefix="$2"; shift 2; continue; fi
+  shift
+done
+mkdir -p "$prefix/node_modules/.bin"
+cat >"$prefix/node_modules/.bin/opencode2" <<"BIN"
+#!/usr/bin/env bash
+printf "opencode v2.0.3\n"
+BIN
+chmod +x "$prefix/node_modules/.bin/opencode2"'
+v2_guard_rc=0
+v2_headless_bin=""
+(
+	source_extracted
+	AIDEVOPS_OPENCODE_PROFILE="v2"
+	OPENCODE_BIN_DEFAULT="$SANDBOX/version-v2/runtime/opencode2"
+	HEADLESS_OPENCODE_BIN="$OPENCODE_BIN_DEFAULT"
+	STATE_DIR="$SANDBOX/version-v2/state"
+	AIDEVOPS_OPENCODE_PIN_PLATFORM_OVERRIDE="Linux"
+	print_warning() { return 0; }
+	print_info() { return 0; }
+	print_error() { return 0; }
+	PATH="$SANDBOX/version-v2/bin:$SYSTEM_PATH"
+	_provision_headless_opencode_runtime "2.0.3" || exit $?
+	printf '%s\n' "$HEADLESS_OPENCODE_BIN" >"$SANDBOX/version-v2/headless-bin"
+) || v2_guard_rc=$?
+assert_eq "V2 headless pin repair status" "0" "$v2_guard_rc"
+v2_headless_bin=$(<"$SANDBOX/version-v2/headless-bin")
+assert_eq "V2 isolated headless runtime is pinned" "opencode v2.0.3" "$("$v2_headless_bin")"
+v2_install_call=$(<"$SANDBOX/version-v2/calls")
+[[ "$v2_install_call" == "install --no-audit --no-fund --prefix "*"/opencode-runtimes/.2.0.3.install."*"/prefix @opencode/cli@2.0.3" &&
+	"$v2_install_call" != *"--ignore-scripts"* ]] && v2_install_shape="valid" || v2_install_shape="invalid"
+assert_eq "V2 isolated install runs required postinstall" "valid" "$v2_install_shape"
+
+printf 'Test 4d: stale pin repair locks are cleared after the bounded wait\n'
 mkdir -p "$SANDBOX/version-stale-lock/state/opencode-runtimes" "$SANDBOX/version-stale-lock/bin"
 write_executable "$SANDBOX/version-stale-lock/runtime-opencode" '#!/usr/bin/env bash
 printf "1.18.30\n"'
