@@ -586,10 +586,12 @@ _full_loop_release_record_authorization_gap() {
 }
 
 _full_loop_release_runs_payload_valid() {
-	local runs_json="$1"
-	jq -e --arg array_type "$_FULL_LOOP_RELEASE_JSON_ARRAY_TYPE" \
-		'type == "object" and (.workflow_runs | type == $array_type)' \
-		<<<"$runs_json" >/dev/null
+	local runs_file="$1"
+	[[ -f "$runs_file" ]] || return 1
+	jq -es --arg array_type "$_FULL_LOOP_RELEASE_JSON_ARRAY_TYPE" '
+		length > 0
+		and all(.[]; type == "object" and (.workflow_runs | type == $array_type))
+	' "$runs_file" >/dev/null
 	return $?
 }
 
@@ -597,19 +599,28 @@ _full_loop_release_find_workflow_run() {
 	local repo="$1"
 	local tag_name="$2"
 	local tag_commit="$3"
-	local push_runs=""
-	local recovery_runs=""
+	local push_runs_file=""
+	local recovery_runs_file=""
 	local display_title="Publish ${tag_name}"
 	local selection_mode="${4:-latest}"
+	local selection_rc=0
 	[[ "$selection_mode" == "latest" || "$selection_mode" == "successful" ]] || return 1
 
 	_FULL_LOOP_RELEASE_RUN_JSON=""
-	push_runs=$(gh api --method GET "repos/${repo}/actions/workflows/publish-packages.yml/runs" \
-		-f event=push -F per_page=50 2>/dev/null) || return 1
-	recovery_runs=$(gh api --method GET "repos/${repo}/actions/workflows/publish-packages.yml/runs" \
-		-f event=workflow_dispatch -F per_page=50 2>/dev/null) || return 1
-	_full_loop_release_runs_payload_valid "$push_runs" || return 1
-	_full_loop_release_runs_payload_valid "$recovery_runs" || return 1
+	push_runs_file=$(mktemp) || return 1
+	recovery_runs_file=$(mktemp) || {
+		rm -f "$push_runs_file"
+		return 1
+	}
+	if ! gh api --method GET "repos/${repo}/actions/workflows/publish-packages.yml/runs" \
+		-f event=push -F per_page=100 --paginate >"$push_runs_file" 2>/dev/null ||
+		! gh api --method GET "repos/${repo}/actions/workflows/publish-packages.yml/runs" \
+			-f event=workflow_dispatch -F per_page=100 --paginate >"$recovery_runs_file" 2>/dev/null ||
+		! _full_loop_release_runs_payload_valid "$push_runs_file" ||
+		! _full_loop_release_runs_payload_valid "$recovery_runs_file"; then
+		rm -f "$push_runs_file" "$recovery_runs_file"
+		return 1
+	fi
 	_FULL_LOOP_RELEASE_RUN_JSON=$(jq -cn --arg sha "$tag_commit" --arg tag "$tag_name" --arg title "$display_title" \
 		--arg push_event "$_FULL_LOOP_RELEASE_EVENT_PUSH" \
 		--arg recovery_event "$_FULL_LOOP_RELEASE_EVENT_RECOVERY" \
@@ -617,9 +628,9 @@ _full_loop_release_find_workflow_run() {
 		--arg success "$_FULL_LOOP_RELEASE_CONCLUSION_SUCCESS" \
 		--arg string_type "$_FULL_LOOP_RELEASE_JSON_STRING_TYPE" \
 		--arg sha_regex "$_FULL_LOOP_RELEASE_SHA_REGEX" \
-		--argjson push "$push_runs" --argjson recovery "$recovery_runs" '
-		([($push.workflow_runs[]? | select(.event == $push_event and .head_branch == $tag and .head_sha == $sha))]
-		 + [($recovery.workflow_runs[]?
+		--slurpfile push "$push_runs_file" --slurpfile recovery "$recovery_runs_file" '
+		([($push[]?.workflow_runs[]? | select(.event == $push_event and .head_branch == $tag and .head_sha == $sha))]
+		 + [($recovery[]?.workflow_runs[]?
 			| select(.event == $recovery_event and .head_branch == "main"
 				and ((.head_sha | type) == $string_type)
 				and (.head_sha | test($sha_regex))
@@ -628,7 +639,9 @@ _full_loop_release_find_workflow_run() {
 			map(select(.status == $completed and .conclusion == $success))
 		  else . end
 		| sort_by(.created_at // "") | last // empty
-	') || return 1
+	') || selection_rc=$?
+	rm -f "$push_runs_file" "$recovery_runs_file"
+	[[ "$selection_rc" -eq 0 ]] || return 1
 	[[ -n "$_FULL_LOOP_RELEASE_RUN_JSON" && "$_FULL_LOOP_RELEASE_RUN_JSON" != "null" ]] || return 3
 	jq -e --arg string_type "$_FULL_LOOP_RELEASE_JSON_STRING_TYPE" \
 		--arg sha_regex "$_FULL_LOOP_RELEASE_SHA_REGEX" \
