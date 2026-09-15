@@ -14,14 +14,14 @@
       "configPermissionKey": "permission",
       "minimumVersion": "1.18.29",
       "testedVersion": "1.18.31",
-      "headlessPin": "1.18.29",
+      "headlessPin": "1.18.31",
       "pinReason": "GH#28766 Linux headless bootstrap stalled with isolated XDG_DATA_HOME",
       "pinPlatform": "Linux",
       "pinRuntimeMode": "headless",
       "introducedDate": "2026-07-30",
-      "lastCanaryDate": "2026-09-08",
-      "lastCanaryResult": "pass:1.18.29",
-      "reviewDeadline": "2026-09-15"
+      "lastCanaryDate": "2026-09-15",
+      "lastCanaryResult": "pass:1.18.31",
+      "reviewDeadline": "2026-09-22"
     },
     "v2": {
       "major": 2,

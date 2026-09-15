@@ -52,6 +52,28 @@ test_worker_produced_output_no_commits_returns_noop() {
 	return 0
 }
 
+test_worker_produced_output_manual_issue_no_commits_returns_noop() {
+	local work_dir="${TEST_ROOT}/repo-manual-no-commits"
+	local WORKER_ISSUE_NUMBER="99999"
+	_setup_test_git_repo "$work_dir" 0
+	unset DISPATCH_REPO_SLUG 2>/dev/null || true
+
+	local classification
+	classification=$(_worker_produced_output "manual-cli-99999-1789490308" "$work_dir")
+	if [[ "$classification" == "noop" ]]; then
+		print_result "_worker_produced_output evaluates manual issue dispatches" 0
+	else
+		print_result "_worker_produced_output evaluates manual issue dispatches" 1 \
+			"Expected noop, got $classification"
+	fi
+	return 0
+}
+
+run_worker_no_output_classification_tests() {
+	test_worker_produced_output_no_commits_returns_noop
+	test_worker_produced_output_manual_issue_no_commits_returns_noop
+}
+
 test_worker_produced_output_with_commits_returns_pr_exists_failopen() {
 	# Commits present but no DISPATCH_REPO_SLUG → cannot confirm PR absence → fail-open (pr_exists)
 	local work_dir="${TEST_ROOT}/repo-with-commits"
