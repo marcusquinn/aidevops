@@ -511,14 +511,25 @@ def build_rest_admission(counter_hits, counter_latest, transport_status):
     }
 
 
-def build_policy_holds(counter_hits, counter_latest):
-    counter_name = 'dispatch_candidate_failed_reason_policy_gate'
-    count = counter_hits.get(counter_name, 0)
+def build_policy_holds(counter_events):
+    # Newer dispatchers record policy gates as benign blocks. Retain the former
+    # failure-named counter for mixed-version readers, deduplicating timestamps
+    # where both names describe the same observed policy hold.
+    counter_names = (
+        'dispatch_candidate_blocked_policy_gate',
+        'dispatch_candidate_failed_reason_policy_gate',
+    )
+    observations = {
+        timestamp
+        for counter_name in counter_names
+        for timestamp in counter_events.get(counter_name, [])
+    }
+    count = len(observations)
     return {
         'availability': 'observed' if count else 'not_observed',
         'active_in_window': count > 0,
         'count': count,
-        'last_observed_at': latest_counter_time(counter_latest, [counter_name]),
+        'last_observed_at': max(observations) if observations else None,
         'source': 'pulse-stats',
         'window_seconds': window_s,
     }
@@ -677,6 +688,7 @@ for line in recent_lines(os.path.join(log_dir, 'headless-runtime-metrics.jsonl')
 
 counter_hits = {}
 counter_latest = {}
+counter_events = {}
 gauge_values = {}
 stats_path = os.path.join(log_dir, 'pulse-stats.json')
 if os.path.exists(stats_path):
@@ -689,12 +701,14 @@ if os.path.exists(stats_path):
                 if hits:
                     counter_hits[key] = len(hits)
                     counter_latest[key] = max(hits)
+                    counter_events[key] = hits
         for key, item in (stats.get('gauges') or {}).items():
             if isinstance(item, dict) and float(item.get('ts', 0)) >= since:
                 gauge_values[key] = item.get('value')
     except (OSError, json.JSONDecodeError):
         counter_hits = {}
         counter_latest = {}
+        counter_events = {}
         gauge_values = {}
 
 wrapper_log_lines = recent_lines(os.path.join(log_dir, 'pulse-wrapper.log'), 400)
@@ -772,7 +786,7 @@ graphql_budget = build_graphql_budget(counter_hits, gauge_values)
 rest_admission = build_rest_admission(
     counter_hits, counter_latest, rest_admission_status_from_env()
 )
-policy_holds = build_policy_holds(counter_hits, counter_latest)
+policy_holds = build_policy_holds(counter_events)
 dispatch_pacing = {
     'inter_launch_staggered_count': counter_hits.get('dispatch_inter_launch_staggered', 0),
     'last_inter_launch_delay_seconds': gauge_values.get('dispatch_inter_launch_delay_seconds'),

@@ -51,6 +51,10 @@ json.dump({
         'dispatch_candidate_failed_reason_cost_budget_exceeded': [now, now],
         'dispatch_candidate_failed_reason_dedup_active_claim': [now],
         'dispatch_candidate_failed_reason_graphql_circuit_breaker': [now],
+        # Modern benign and historical failure-named counters may coexist
+        # during an upgrade. The shared observation timestamp must not double
+        # count the same policy hold.
+        'dispatch_candidate_blocked_policy_gate': [now],
         'dispatch_candidate_failed_reason_policy_gate': [now],
         'pulse_rest_core_progress_blocked': [now],
         'pulse_rest_core_progress_blocked_unknown': [now],
@@ -214,6 +218,7 @@ jq -e '.rest_admission.transport.state == "available" and .rest_admission.transp
 jq -e '.rest_admission.remote_rejection_observed == false and .rest_admission.authentication_failure_inferred == false' "$json_output" >/dev/null
 jq -e '.policy_holds.active_in_window == true and .policy_holds.count == 1' "$json_output" >/dev/null
 jq -e '.policy_holds.source == "pulse-stats" and .policy_holds.window_seconds == 900 and .policy_holds.last_observed_at != null' "$json_output" >/dev/null
+
 jq -e '.zero_worker_underutilization.github_read_complete == false and .zero_worker_underutilization.github_read_status == "incomplete"' "$json_output" >/dev/null
 jq -e '.graphql_budget.reserve_mode_count == 1' "$json_output" >/dev/null
 jq -e '.graphql_budget.deferred_stage_count == 2' "$json_output" >/dev/null
@@ -269,6 +274,35 @@ if sqlite3 "$AIDEVOPS_OBS_DB_OVERRIDE" "SELECT payload_json FROM runtime_events 
 	printf 'FAIL runtime state contains private or prose projection fields\n' >&2
 	exit 1
 fi
+python3 - "$TMP_DIR/pulse-stats.json" <<'PY'
+import json, sys, time
+path = sys.argv[1]
+stats = json.load(open(path))
+stats['counters'] = {'dispatch_candidate_failed_reason_policy_gate': [time.time()]}
+json.dump(stats, open(path, 'w'))
+PY
+"$HELPER" --log-dir "$TMP_DIR" --repo-path "$PWD" --window 15m --json >"$json_output"
+jq -e '.policy_holds.active_in_window == true and .policy_holds.count == 1 and .policy_holds.last_observed_at != null' "$json_output" >/dev/null
+
+python3 - "$TMP_DIR/pulse-stats.json" <<'PY'
+import json, sys, time
+path = sys.argv[1]
+stats = json.load(open(path))
+stats['counters'] = {'dispatch_candidate_blocked_policy_gate': [time.time() - 3600]}
+json.dump(stats, open(path, 'w'))
+PY
+"$HELPER" --log-dir "$TMP_DIR" --repo-path "$PWD" --window 15m --json >"$json_output"
+jq -e '.policy_holds.active_in_window == false and .policy_holds.count == 0 and .policy_holds.last_observed_at == null' "$json_output" >/dev/null
+
+python3 - "$TMP_DIR/pulse-stats.json" <<'PY'
+import json, sys
+path = sys.argv[1]
+stats = json.load(open(path))
+stats['counters'] = {}
+json.dump(stats, open(path, 'w'))
+PY
+"$HELPER" --log-dir "$TMP_DIR" --repo-path "$PWD" --window 15m --json >"$json_output"
+jq -e '.policy_holds.availability == "not_observed" and .policy_holds.active_in_window == false and .policy_holds.count == 0 and .policy_holds.last_observed_at == null' "$json_output" >/dev/null
 python3 - "$HELPER" "${SCRIPT_DIR}/../pulse-current-state.py" <<'PY'
 import pathlib
 import sys
