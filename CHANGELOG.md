@@ -10,6 +10,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.33.0] - 2026-09-15
+
+### Added
+
+- prefer bounded advice before user decisions (#31889)
+- add provider-aware image model selection
+
+### Changed
+
+- Maintenance: sync GitHub issue state to TODO.md [skip ci]
+- Performance: reduce PR check pagination
+- Maintenance: add t18433 outcome recording follow-up
+- Maintenance: sync ref:GH#31870 to TODO.md (#31871)
+
+### Fixed
+
+- add privacy-safe ruleset review diagnostics
+- Deduplicate non-issue worker process chains
+- quarantine degraded worktree cleanup
+- keep worker Node tools worktree-local
+- normalize dead preparing retry sources (#31873)
+
 ## [3.32.368] - 2026-09-14
 
 ### Fixed
