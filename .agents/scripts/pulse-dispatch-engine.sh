@@ -390,7 +390,10 @@ build_ranked_dispatch_candidates_json() {
 
 	local tmp_candidates completeness_file product_complete=true scan_failed=0
 	tmp_candidates=$(mktemp) || return 1
-	completeness_file=$(mktemp) || { rm -f "$tmp_candidates"; return 1; }
+	completeness_file=$(mktemp) || {
+		rm -f "$tmp_candidates"
+		return 1
+	}
 	: >"$tmp_candidates"
 
 	while IFS='|' read -r repo_slug repo_path repo_priority ph_start ph_end expires repo_interval; do

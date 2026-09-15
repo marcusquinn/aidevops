@@ -405,8 +405,15 @@ list_dispatchable_issue_candidates_json() {
 	[[ "$limit" =~ ^[0-9]+$ ]] || limit=100
 
 	local issue_json issue_dispatch_err snapshot_source_file
-	issue_dispatch_err=$(mktemp) || { printf '[]\n'; return 1; }
-	snapshot_source_file=$(mktemp) || { rm -f "$issue_dispatch_err"; printf '[]\n'; return 1; }
+	issue_dispatch_err=$(mktemp) || {
+		printf '[]\n'
+		return 1
+	}
+	snapshot_source_file=$(mktemp) || {
+		rm -f "$issue_dispatch_err"
+		printf '[]\n'
+		return 1
+	}
 	if issue_json=$(_pulse_fetch_candidate_issue_snapshot_json \
 		"$repo_slug" "$limit" "$issue_dispatch_err" "$snapshot_source_file"); then
 		snapshot_available=1

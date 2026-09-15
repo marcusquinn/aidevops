@@ -68,7 +68,10 @@ printf 'PASS stale batch cache stays fail-closed\n'
 
 # A failed REST-first wrapper read retries native GraphQL once when that pool has
 # verified headroom, before consulting the cache.
-gh_issue_list() { printf 'REST unavailable\n' >&2; return 1; }
+gh_issue_list() {
+	printf 'REST unavailable\n' >&2
+	return 1
+}
 _pulse_candidate_graphql_retry_available() { return 0; }
 _gh_with_timeout() {
 	shift
@@ -87,9 +90,15 @@ assert_eq "REST failure recovers through one native GraphQL read" "graphql-retry
 # When both live pools are unavailable, a fresh cache returns candidates but
 # cannot authorize lifecycle lock reconciliation or completeness lending.
 _pulse_candidate_graphql_retry_available() { return 1; }
-_pulse_candidate_cached_issue_snapshot_json() { printf '%s\n' "$ISSUE_FIXTURE"; return 0; }
+_pulse_candidate_cached_issue_snapshot_json() {
+	printf '%s\n' "$ISSUE_FIXTURE"
+	return 0
+}
 LOCK_RECONCILE_LOG="${TEST_ROOT}/lock-reconcile.log"
-reconcile_auto_dispatch_issue_locks() { printf 'called\n' >>"$LOCK_RECONCILE_LOG"; return 0; }
+reconcile_auto_dispatch_issue_locks() {
+	printf 'called\n' >>"$LOCK_RECONCILE_LOG"
+	return 0
+}
 SNAPSHOT_STATUS="${TEST_ROOT}/snapshot.status"
 COMPLETENESS="${TEST_ROOT}/snapshot.complete"
 candidate_json=$(list_dispatchable_issue_candidates_json \
@@ -101,7 +110,10 @@ assert_eq "cache recovery does not claim a live snapshot" "0:0" \
 [[ ! -s "$LOCK_RECONCILE_LOG" ]] || fail "cache recovery reconciled lifecycle locks"
 printf 'PASS cache recovery leaves lifecycle authority fail-closed\n'
 
-_pulse_candidate_cached_issue_snapshot_json() { printf '[]\n'; return 0; }
+_pulse_candidate_cached_issue_snapshot_json() {
+	printf '[]\n'
+	return 0
+}
 empty_cache_rc=0
 empty_cache_json=$(list_dispatchable_issue_candidates_json "owner/repo" 100 "" "" skip) || empty_cache_rc=$?
 assert_eq "empty recovery cache cannot prove an empty dispatch queue" "1:[]" \
@@ -109,8 +121,14 @@ assert_eq "empty recovery cache cannot prove an empty dispatch queue" "1:[]" \
 
 # If every source is unavailable, the campaign adapter and ranked builder must
 # return failure instead of caching a successful empty queue.
-list_dispatchable_issue_candidates_json() { printf '[]\n'; return 1; }
-_dispatch_filter_repo_pr_backlog_candidates() { printf '%s\n' "$2"; return 0; }
+list_dispatchable_issue_candidates_json() {
+	printf '[]\n'
+	return 1
+}
+_dispatch_filter_repo_pr_backlog_candidates() {
+	printf '%s\n' "$2"
+	return 0
+}
 export AIDEVOPS_PULSE_CAMPAIGN_SHADOW_ENABLED=0
 if pulse_campaign_shadow_candidates_json "owner/repo" "$TEST_ROOT" 100 skip >/dev/null; then
 	fail "campaign adapter swallowed source unavailability"
