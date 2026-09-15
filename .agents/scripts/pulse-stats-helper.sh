@@ -48,32 +48,139 @@ fi
 
 PULSE_STATS_FILE="${PULSE_STATS_FILE:-${HOME}/.aidevops/logs/pulse-stats.json}"
 LOGFILE="${LOGFILE:-${HOME}/.aidevops/logs/pulse.log}"
+_PULSE_STATS_RECOVERY_FAILURE_REPORTED=""
 
-#######################################
-# Ensure the stats file exists with a valid JSON structure.
-# Idempotent — safe to call multiple times.
-#######################################
-_pulse_stats_ensure_file() {
-	local dir
-	dir="$(dirname "$PULSE_STATS_FILE")"
-	if [[ ! -d "$dir" ]]; then
-		mkdir -p "$dir" 2>/dev/null || return 0
-	fi
-	if [[ ! -f "$PULSE_STATS_FILE" ]]; then
-		printf '{"counters":{}}\n' >"$PULSE_STATS_FILE" 2>/dev/null || return 0
-		return 0
-	fi
+_pulse_stats_acquire_lock() {
+	local output_var="$1"
+	local candidate_lock_dir="${PULSE_STATS_FILE}.lock"
+	local attempts=0 owner_missing_attempts=0 owner_pid=""
+	while (( attempts < 200 )); do
+		if mkdir "$candidate_lock_dir" 2>/dev/null; then
+			chmod 700 "$candidate_lock_dir" 2>/dev/null || true
+			printf '%s\n' "$$" >"${candidate_lock_dir}/owner.pid" 2>/dev/null || true
+			printf -v "$output_var" '%s' "$candidate_lock_dir"
+			return 0
+		fi
+		if [[ -f "${candidate_lock_dir}/owner.pid" ]]; then
+			IFS= read -r owner_pid <"${candidate_lock_dir}/owner.pid" || owner_pid=""
+			if [[ "$owner_pid" =~ ^[0-9]+$ ]]; then
+				owner_missing_attempts=0
+				if ! kill -0 "$owner_pid" 2>/dev/null; then
+					rm -f "${candidate_lock_dir}/owner.pid" 2>/dev/null || true
+					rmdir "$candidate_lock_dir" 2>/dev/null || true
+					continue
+				fi
+			else
+				owner_missing_attempts=$(( owner_missing_attempts + 1 ))
+			fi
+		else
+			owner_missing_attempts=$(( owner_missing_attempts + 1 ))
+		fi
+		if (( owner_missing_attempts >= 100 )); then
+			rm -f "${candidate_lock_dir}/owner.pid" 2>/dev/null || true
+			rmdir "$candidate_lock_dir" 2>/dev/null || true
+			owner_missing_attempts=0
+			continue
+		fi
+		attempts=$(( attempts + 1 ))
+		sleep 0.01
+	done
+	return 1
+}
 
-	# GH#25584/GH#25658: an interrupted writer or external truncation can leave
-	# the stats file empty or obviously malformed. Keep the common valid-file path
-	# pure Bash so every counter/gauge write does not spawn jq just to continue.
-	local first_char=""
-	if [[ ! -s "$PULSE_STATS_FILE" ]] || ! IFS= read -r -n 1 first_char <"$PULSE_STATS_FILE" || [[ "$first_char" != "{" ]]; then
-		printf '{"counters":{}}\n' >"$PULSE_STATS_FILE" || {
-			printf 'Error: Failed to write pulse stats file: %s\n' "$PULSE_STATS_FILE" >&2
+_pulse_stats_release_lock() {
+	local lock_dir="$1"
+	[[ -n "$lock_dir" ]] || return 0
+	rm -f "${lock_dir}/owner.pid" 2>/dev/null || true
+	rmdir "$lock_dir" 2>/dev/null || true
+}
+
+_pulse_stats_report_recovery_failure() {
+	local reason="$1"
+	if [[ -z "$_PULSE_STATS_RECOVERY_FAILURE_REPORTED" ]]; then
+		printf 'Error: Pulse stats recovery failed (%s): %s\n' "$reason" "$PULSE_STATS_FILE" >&2
+		_PULSE_STATS_RECOVERY_FAILURE_REPORTED=1
+	fi
+}
+
+_pulse_stats_recover_locked() {
+	local quarantine tmp_file old_umask
+	if [[ -s "$PULSE_STATS_FILE" ]]; then
+		old_umask=$(umask)
+		umask 077
+		quarantine=$(mktemp "${PULSE_STATS_FILE}.corrupt.$(date +%s 2>/dev/null || printf '0').XXXXXX") || {
+			umask "$old_umask"
+			_pulse_stats_report_recovery_failure "quarantine-file"
+			return 1
+		}
+		if ! cp "$PULSE_STATS_FILE" "$quarantine" 2>/dev/null; then
+			umask "$old_umask"
+			rm -f "$quarantine" 2>/dev/null || true
+			_pulse_stats_report_recovery_failure "quarantine-copy"
+			return 1
+		fi
+		umask "$old_umask"
+		chmod 600 "$quarantine" 2>/dev/null || {
+			rm -f "$quarantine" 2>/dev/null || true
+			_pulse_stats_report_recovery_failure "quarantine-permissions"
 			return 1
 		}
 	fi
+	tmp_file=$(mktemp "${PULSE_STATS_FILE}.repair-XXXXXX") || {
+		_pulse_stats_report_recovery_failure "temporary-file"
+		return 1
+	}
+	chmod 600 "$tmp_file" 2>/dev/null || true
+	printf '{"counters":{}}\n' >"$tmp_file" || {
+		rm -f "$tmp_file"
+		_pulse_stats_report_recovery_failure "initialize"
+		return 1
+	}
+	mv "$tmp_file" "$PULSE_STATS_FILE" 2>/dev/null || {
+		rm -f "$tmp_file"
+		_pulse_stats_report_recovery_failure "replace"
+		return 1
+	}
+	return 0
+}
+
+_pulse_stats_mutate_locked() {
+	local filter="$1"
+	shift
+	local tmp_file
+	tmp_file=$(mktemp "${PULSE_STATS_FILE}.write-XXXXXX") || return 1
+	if jq -e -s --arg object_type object "$@" \
+		'if length == 1 and (.[0] | type == $object_type) and (.[0].counters | type == $object_type) and ((.[0].gauges // {}) | type == $object_type) and ((.[0].invocation_sources // {}) | type == $object_type) then .[0] | '"$filter"' else error("invalid pulse stats document") end' \
+		"$PULSE_STATS_FILE" >"$tmp_file" 2>/dev/null; then
+		mv "$tmp_file" "$PULSE_STATS_FILE" 2>/dev/null || {
+			rm -f "$tmp_file"
+			return 1
+		}
+		return 0
+	fi
+	rm -f "$tmp_file"
+	return 1
+}
+
+#######################################
+# Ensure the stats file exists. Serialized mutations validate its structure.
+# Idempotent — safe to call multiple times.
+#######################################
+_pulse_stats_ensure_dir() {
+	local dir
+	dir="$(dirname "$PULSE_STATS_FILE")"
+	[[ -d "$dir" ]] || mkdir -p "$dir" 2>/dev/null
+}
+
+_pulse_stats_ensure_file() {
+	_pulse_stats_ensure_dir || return 1
+	if [[ ! -f "$PULSE_STATS_FILE" ]]; then
+		printf '{"counters":{}}\n' >"$PULSE_STATS_FILE" 2>/dev/null || return 1
+		return 0
+	fi
+
+	# Existing bytes are validated by the serialized mutation. Never replace an
+	# invalid document here: recovery must quarantine its original evidence first.
 	return 0
 }
 
@@ -92,19 +199,20 @@ pulse_stats_increment() {
 	local now_epoch
 	now_epoch=$(date +%s 2>/dev/null) || now_epoch=0
 
-	_pulse_stats_ensure_file || return 0
-
-	local tmp_file
-	# t2997: drop .json — XXXXXX must be at end for BSD mktemp.
-	tmp_file=$(mktemp "${TMPDIR:-/tmp}/pulse-stats-XXXXXX") || return 0
-
-	# Append timestamp to counter array; create counter if absent.
-	# jq -e fails if the input JSON is invalid → we fall back to no-op.
-	jq --arg name "$counter_name" --argjson ts "$now_epoch" \
-		'.counters[$name] += [$ts]' \
-		"$PULSE_STATS_FILE" >"$tmp_file" 2>/dev/null || { rm -f "$tmp_file"; return 0; }
-
-	mv "$tmp_file" "$PULSE_STATS_FILE" 2>/dev/null || rm -f "$tmp_file"
+	local lock_dir=""
+	_pulse_stats_ensure_dir || { _pulse_stats_report_recovery_failure "stats-directory"; return 0; }
+	_pulse_stats_acquire_lock lock_dir || { _pulse_stats_report_recovery_failure "lock-timeout"; return 0; }
+	_pulse_stats_ensure_file || { _pulse_stats_release_lock "$lock_dir"; return 0; }
+	# shellcheck disable=SC2016 # jq variables are expanded by jq, not Bash.
+	if ! _pulse_stats_mutate_locked '.counters[$name] = ((.counters[$name] // []) + [$ts])' \
+		--arg name "$counter_name" --argjson ts "$now_epoch"; then
+		# shellcheck disable=SC2016 # jq variables are expanded by jq, not Bash.
+		if ! _pulse_stats_recover_locked || ! _pulse_stats_mutate_locked '.counters[$name] = ((.counters[$name] // []) + [$ts])' \
+			--arg name "$counter_name" --argjson ts "$now_epoch"; then
+			_pulse_stats_report_recovery_failure "increment-retry"
+		fi
+	fi
+	_pulse_stats_release_lock "$lock_dir"
 	return 0
 }
 
@@ -232,17 +340,20 @@ pulse_stats_set_gauge() {
 	local now_epoch
 	now_epoch=$(date +%s 2>/dev/null) || now_epoch=0
 
-	_pulse_stats_ensure_file || return 0
-
-	local tmp_file
-	tmp_file=$(mktemp "${TMPDIR:-/tmp}/pulse-stats-XXXXXX") || return 0
-
-	# Overwrite the gauge value. Create .gauges if absent.
-	jq --arg name "$gauge_name" --argjson v "$gauge_value" --argjson ts "$now_epoch" \
-		'.gauges = (.gauges // {}) | .gauges[$name] = {"value": $v, "ts": $ts}' \
-		"$PULSE_STATS_FILE" >"$tmp_file" 2>/dev/null || { rm -f "$tmp_file"; return 0; }
-
-	mv "$tmp_file" "$PULSE_STATS_FILE" 2>/dev/null || rm -f "$tmp_file"
+	local lock_dir=""
+	_pulse_stats_ensure_dir || { _pulse_stats_report_recovery_failure "stats-directory"; return 0; }
+	_pulse_stats_acquire_lock lock_dir || { _pulse_stats_report_recovery_failure "lock-timeout"; return 0; }
+	_pulse_stats_ensure_file || { _pulse_stats_release_lock "$lock_dir"; return 0; }
+	# shellcheck disable=SC2016 # jq variables are expanded by jq, not Bash.
+	if ! _pulse_stats_mutate_locked '.gauges = (.gauges // {}) | .gauges[$name] = {"value": $v, "ts": $ts}' \
+		--arg name "$gauge_name" --argjson v "$gauge_value" --argjson ts "$now_epoch"; then
+		# shellcheck disable=SC2016 # jq variables are expanded by jq, not Bash.
+		if ! _pulse_stats_recover_locked || ! _pulse_stats_mutate_locked '.gauges = (.gauges // {}) | .gauges[$name] = {"value": $v, "ts": $ts}' \
+			--arg name "$gauge_name" --argjson v "$gauge_value" --argjson ts "$now_epoch"; then
+			_pulse_stats_report_recovery_failure "gauge-retry"
+		fi
+	fi
+	_pulse_stats_release_lock "$lock_dir"
 	return 0
 }
 
@@ -285,15 +396,17 @@ pulse_stats_reset() {
 		return 0
 	fi
 
-	local tmp_file
-	# t2997: drop .json — XXXXXX must be at end for BSD mktemp.
-	tmp_file=$(mktemp "${TMPDIR:-/tmp}/pulse-stats-XXXXXX") || return 1
-
-	jq --arg name "$counter_name" \
-		'del(.counters[$name])' \
-		"$PULSE_STATS_FILE" >"$tmp_file" 2>/dev/null || { rm -f "$tmp_file"; return 1; }
-
-	mv "$tmp_file" "$PULSE_STATS_FILE" 2>/dev/null || { rm -f "$tmp_file"; return 1; }
+	local lock_dir=""
+	_pulse_stats_acquire_lock lock_dir || return 1
+	# shellcheck disable=SC2016 # jq variables are expanded by jq, not Bash.
+	if ! _pulse_stats_mutate_locked 'del(.counters[$name])' --arg name "$counter_name"; then
+		# shellcheck disable=SC2016 # jq variables are expanded by jq, not Bash.
+		if ! _pulse_stats_recover_locked || ! _pulse_stats_mutate_locked 'del(.counters[$name])' --arg name "$counter_name"; then
+			_pulse_stats_release_lock "$lock_dir"
+			return 1
+		fi
+	fi
+	_pulse_stats_release_lock "$lock_dir"
 	echo "Counter '${counter_name}' reset."
 	return 0
 }
