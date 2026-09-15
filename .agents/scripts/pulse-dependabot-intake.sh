@@ -52,13 +52,11 @@ _pulse_dependabot_intake_scope_lines() {
 	return 0
 }
 
-_pulse_dependabot_existing_intake_issue() {
-	local pr_number="$1"
-	local repo_slug="$2"
-	local marker="$3"
+_pulse_dependabot_intake_election_rows() {
+	local repo_slug="$1"
+	local marker="$2"
 	local issues_json="[]"
 
-	[[ "$pr_number" =~ ^[0-9]+$ ]] || return 1
 	# Do not use GitHub search for this identity check. Search indexing can lag
 	# issue creation, so two Pulse cycles may both observe an invented absence.
 	# The repository issue list is authoritative and the dependencies label keeps
@@ -66,14 +64,80 @@ _pulse_dependabot_existing_intake_issue() {
 	# a truncation sentinel: a saturated read is unknown, never absence.
 	issues_json=$(gh_issue_list --repo "$repo_slug" --state open \
 		--label dependencies --limit 501 \
-		--json number,body,url,labels 2>/dev/null) || return 1
-	printf '%s' "$issues_json" | jq -r --arg marker "$marker" \
-		'if length >= 501 then error("intake lookup truncated") else [.[]
+		--json number,body,url,labels,assignees 2>/dev/null) || return 1
+	printf '%s' "$issues_json" | jq -r --arg marker "$marker" '
+		if length >= 501 then error("intake lookup truncated") else [.[]
 			| ([.labels[]?.name // ""] | unique) as $labels
 			| select(($labels | index("origin:worker")) != null)
 			| select(($labels | index("dependencies")) != null)
-			| select((.body // "") | contains($marker))][0].url // "" end' 2>/dev/null
+			| select((.body // "") | contains($marker))] as $matches
+		| if ($matches | length) == 0 then empty else
+			(([$matches[]
+				| select(((.assignees // []) | length) > 0 or
+					([.labels[]?.name // ""] | any(. == "status:in-progress" or . == "status:in-review")))]
+				| min_by(.number)) // ($matches | min_by(.number))) as $owner
+			| $matches[]
+			| (((.assignees // []) | length) == 0 and
+				(([.labels[]?.name // ""] | any(. == "status:in-progress" or . == "status:in-review")) | not)) as $idle
+			| [$owner.number, $owner.url, .number, $idle] | @tsv
+		end end' 2>/dev/null
 	return $?
+}
+
+_pulse_dependabot_existing_intake_issue() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local marker="$3"
+	local election_rows=""
+	local canonical_number=""
+	local canonical_url=""
+	local candidate_number=""
+	local candidate_idle=""
+
+	[[ "$pr_number" =~ ^[0-9]+$ ]] || return 1
+	election_rows=$(_pulse_dependabot_intake_election_rows "$repo_slug" "$marker") || return 1
+	while IFS=$'\t' read -r canonical_number canonical_url candidate_number candidate_idle; do
+		if [[ "$canonical_number" =~ ^[0-9]+$ && "$canonical_number" == "$candidate_number" ]]; then
+			printf '%s\n' "$canonical_url"
+			return 0
+		fi
+	done <<<"$election_rows"
+	return 0
+}
+
+# Converge cross-runner search-then-create races on the same owner election used
+# by dispatch. Active work wins; otherwise the oldest exact-marker issue wins.
+# Only idle duplicates are closed, so reconciliation cannot terminate a live
+# worker if two hosts briefly overlap before the dispatch target gate settles.
+_pulse_dependabot_reconcile_duplicate_intakes() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local marker="$3"
+	local election_rows=""
+	local canonical_number=""
+	local canonical_url=""
+	local duplicate_number=""
+	local duplicate_idle=""
+	local comment_marker=""
+	local comment_body=""
+
+	election_rows=$(_pulse_dependabot_intake_election_rows "$repo_slug" "$marker") || return 1
+	while IFS=$'\t' read -r canonical_number canonical_url duplicate_number duplicate_idle; do
+		[[ "$canonical_number" =~ ^[0-9]+$ && "$duplicate_number" =~ ^[0-9]+$ ]] || continue
+		[[ "$duplicate_number" != "$canonical_number" && "$duplicate_idle" == "true" ]] || continue
+		comment_marker="<!-- aidevops:dependabot-intake-duplicate canonical=${canonical_number} source_pr=${pr_number} -->"
+		comment_body="${comment_marker}
+Closing this generated intake as a duplicate of #${canonical_number}. Both issues target the same authenticated Dependabot PR #${pr_number}; Pulse elected the active issue, or otherwise the oldest exact-marker issue, as the canonical worker target."
+		if [[ "${DRY_RUN:-0}" == "1" ]]; then
+			echo "[pulse-dependabot-intake] DRY-RUN: would close duplicate intake #${duplicate_number}; canonical=#${canonical_number} source_pr=#${pr_number}" >>"$LOGFILE"
+			continue
+		fi
+		declare -F _gh_idempotent_comment >/dev/null 2>&1 || return 1
+		_gh_idempotent_comment "$duplicate_number" "$repo_slug" "$comment_marker" "$comment_body" "issue" || return 1
+		gh issue close "$duplicate_number" --repo "$repo_slug" --reason "not planned" >/dev/null 2>&1 || return 1
+		echo "[pulse-dependabot-intake] Closed duplicate intake #${duplicate_number}; canonical=#${canonical_number} source_pr=#${pr_number}" >>"$LOGFILE"
+	done <<<"$election_rows"
+	return 0
 }
 
 _pulse_dependabot_completed_intake_issue() {
@@ -422,6 +486,31 @@ _pulse_dependabot_release_intake_lock() {
 	return 0
 }
 
+_pulse_dependabot_preserve_existing_intake() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local marker="$3"
+	local existing_url="$4"
+
+	_pulse_dependabot_reconcile_duplicate_intakes "$pr_number" "$repo_slug" "$marker" ||
+		echo "[pulse-dependabot-intake] WARN: duplicate intake reconciliation unavailable for PR #${pr_number} in ${repo_slug}; preserving canonical issue" >>"$LOGFILE"
+	echo "[pulse-dependabot-intake] PR #${pr_number} in ${repo_slug}: existing worker issue ${existing_url}" >>"$LOGFILE"
+	return 0
+}
+
+_pulse_dependabot_reconcile_after_create() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local marker="$3"
+
+	# A local mutex cannot serialize separate Pulse hosts. Give the authoritative
+	# issue list a short consistency window, then close any idle later duplicate.
+	sleep "${PULSE_DEPENDABOT_RECONCILE_DELAY_SECONDS:-3}"
+	_pulse_dependabot_reconcile_duplicate_intakes "$pr_number" "$repo_slug" "$marker" ||
+		echo "[pulse-dependabot-intake] WARN: post-create duplicate reconciliation unavailable for PR #${pr_number} in ${repo_slug}; next cycle will retry" >>"$LOGFILE"
+	return 0
+}
+
 _pulse_route_dependabot_pr_to_worker_issue() {
 	local pr_number="$1"
 	local repo_slug="$2"
@@ -449,7 +538,7 @@ _pulse_route_dependabot_pr_to_worker_issue() {
 	marker=$(_pulse_dependabot_intake_marker "$repo_slug" "$pr_number") || return 1
 	existing_url=$(_pulse_dependabot_existing_intake_issue "$pr_number" "$repo_slug" "$marker") || return 1
 	if [[ -n "$existing_url" ]]; then
-		echo "[pulse-dependabot-intake] PR #${pr_number} in ${repo_slug}: existing worker issue ${existing_url}" >>"$LOGFILE"
+		_pulse_dependabot_preserve_existing_intake "$pr_number" "$repo_slug" "$marker" "$existing_url"
 		return 0
 	fi
 	_pulse_dependabot_preflight_route \
@@ -481,7 +570,7 @@ _pulse_route_dependabot_pr_to_worker_issue() {
 	}
 	if [[ -n "$existing_url" ]]; then
 		_pulse_dependabot_release_intake_lock "$lock_dir" || return 1
-		echo "[pulse-dependabot-intake] PR #${pr_number} in ${repo_slug}: existing worker issue ${existing_url}" >>"$LOGFILE"
+		_pulse_dependabot_preserve_existing_intake "$pr_number" "$repo_slug" "$marker" "$existing_url"
 		return 0
 	fi
 	scope_lines=$(_pulse_dependabot_intake_scope_lines \
@@ -517,6 +606,7 @@ _pulse_route_dependabot_pr_to_worker_issue() {
 	}
 	rm -f "$body_file"
 	_pulse_dependabot_release_intake_lock "$lock_dir" || return 1
+	_pulse_dependabot_reconcile_after_create "$pr_number" "$repo_slug" "$marker"
 	echo "[pulse-dependabot-intake] PR #${pr_number} in ${repo_slug}: routed ${reason} to ${issue_output}" >>"$LOGFILE"
 	return 0
 }
