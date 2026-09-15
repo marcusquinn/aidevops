@@ -14,6 +14,7 @@ readonly TEST_RESET='\033[0m'
 TESTS_RUN=0
 TESTS_FAILED=0
 PS_MOCK_OUTPUT=""
+PS_MOCK_UID_AWARE=0
 GH_ISSUE_LIST_JSON="[]"
 GH_ISSUE_LIST_EXIT=0
 GH_ISSUE_LIST_ERR=""
@@ -88,7 +89,11 @@ teardown_test_env() {
 }
 
 ps() {
-	printf '%s\n' "$PS_MOCK_OUTPUT"
+	if [[ "${2:-}" == "uid,pid,stat,etime,command" && "$PS_MOCK_UID_AWARE" -eq 0 ]]; then
+		printf '%s\n' "$PS_MOCK_OUTPUT" | awk -v uid="$(command id -u)" '{ print uid, $0 }'
+	else
+		printf '%s\n' "$PS_MOCK_OUTPUT"
+	fi
 	return 0
 }
 
@@ -114,8 +119,28 @@ gh() {
 
 run_count() {
 	local mock_output="$1"
+	PS_MOCK_UID_AWARE=0
 	PS_MOCK_OUTPUT="$mock_output"
 	count_active_workers
+	return 0
+}
+
+test_foreign_workers_leave_runner_capacity_free() {
+	local own_uid foreign_uid output
+	own_uid=$(command id -u)
+	foreign_uid=$((own_uid + 1))
+	PS_MOCK_UID_AWARE=1
+	PS_MOCK_OUTPUT="${foreign_uid} 501 S 00:30 /opt/bin/.opencode run --session-key issue-6001 --dir /repo-a /full-loop
+${foreign_uid} 502 S 00:20 /opt/bin/.opencode run --session-key issue-6002 --dir /repo-b /full-loop"
+	output=$(count_active_workers)
+	PS_MOCK_UID_AWARE=0
+
+	if [[ "$output" == "0" ]]; then
+		print_result "foreign workers do not consume runner-local capacity" 0
+		return 0
+	fi
+	print_result "foreign workers do not consume runner-local capacity" 1 \
+		"Expected zero owned workers, got '${output}'"
 	return 0
 }
 
@@ -1141,6 +1166,7 @@ main() {
 	_setup_dispatch_stub
 
 	test_counts_workers_and_ignores_supervisor_session
+	test_foreign_workers_leave_runner_capacity_free
 	test_returns_zero_when_no_full_loop_workers
 	test_does_not_exclude_non_supervisor_role_pulse_commands
 	test_prefetch_active_workers_excludes_supervisor

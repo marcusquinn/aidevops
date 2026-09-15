@@ -16,6 +16,7 @@ TESTS_FAILED=0
 
 TEST_ROOT=""
 PS_FIXTURE_FILE=""
+PS_FIXTURE_UID_AWARE=0
 
 print_result() {
 	local test_name="$1"
@@ -86,6 +87,14 @@ restore_function_definitions() {
 
 set_ps_fixture() {
 	local content="$1"
+	PS_FIXTURE_UID_AWARE=0
+	printf '%s\n' "$content" >"$PS_FIXTURE_FILE"
+	return 0
+}
+
+set_uid_ps_fixture() {
+	local content="$1"
+	PS_FIXTURE_UID_AWARE=1
 	printf '%s\n' "$content" >"$PS_FIXTURE_FILE"
 	return 0
 }
@@ -101,8 +110,12 @@ ps() {
 	fi
 
 	# t2190: canonical path — ps axwwo (unlimited width; works on BSD and procps).
-	if [[ "${1:-}" == "axwwo" && "${2:-}" == "pid,stat,etime,command" ]]; then
-		cat "$PS_FIXTURE_FILE"
+	if [[ "${1:-}" == "axwwo" && "${2:-}" == "uid,pid,stat,etime,command" ]]; then
+		if [[ "$PS_FIXTURE_UID_AWARE" -eq 1 ]]; then
+			cat "$PS_FIXTURE_FILE"
+		else
+			awk -v uid="$(command id -u)" '{ print uid, $0 }' "$PS_FIXTURE_FILE"
+		fi
 		return 0
 	fi
 	if [[ "${1:-}" == "axwwo" && "${2:-}" == "pid,etime,command" ]]; then
@@ -311,6 +324,28 @@ test_deduplicates_multiple_workers_with_process_chains() {
 	fi
 
 	print_result "count_active_workers counts 2 logical workers from 6 process-chain entries" 0
+	return 0
+}
+
+test_scopes_workers_to_effective_uid_before_deduplication() {
+	local own_uid foreign_uid count output
+	own_uid=$(command id -u)
+	foreign_uid=$((own_uid + 1))
+	set_uid_ps_fixture "${foreign_uid} 320 S 00:30 bash /home/foreign/.aidevops/agents/scripts/headless-runtime-helper.sh run --role worker --session-key issue-5100 --dir /tmp/aidevops --title Issue #5100 /full-loop
+${foreign_uid} 321 S 00:30 /opt/bin/.opencode run --session-key issue-5101 --dir /tmp/other /full-loop
+${own_uid} 330 S 00:20 bash /home/own/.aidevops/agents/scripts/headless-runtime-helper.sh run --role worker --session-key issue-5100 --dir /tmp/aidevops --title Issue #5100 /full-loop
+${own_uid} 331 S 00:20 /opt/bin/.opencode run --session-key issue-5100 --dir /tmp/aidevops /full-loop
+${own_uid} 340 S 00:10 /opt/bin/.opencode run --session-key local-maintenance --dir /tmp/other /full-loop"
+
+	output=$(list_active_worker_processes)
+	count=$(printf '%s\n' "$output" | grep -c '^[0-9]' || true)
+	if [[ "$count" != "2" || "$output" != *"330 "* || "$output" != *"340 "* || "$output" == *"320 "* || "$output" == *"321 "* ]]; then
+		print_result "worker discovery filters foreign UIDs before chain deduplication" 1 \
+			"Expected owned PIDs 330/340 only, got: ${output}"
+		return 0
+	fi
+
+	print_result "worker discovery filters foreign UIDs before chain deduplication" 0
 	return 0
 }
 
@@ -1652,6 +1687,7 @@ main() {
 	test_counts_plain_and_dot_prefixed_opencode_workers
 	test_deduplicates_process_chain_to_one_logical_worker
 	test_deduplicates_multiple_workers_with_process_chains
+	test_scopes_workers_to_effective_uid_before_deduplication
 	test_repo_issue_detection_uses_filtered_worker_list
 	test_excludes_zombie_and_stopped_processes
 	test_has_worker_for_repo_issue_session_key_fallback

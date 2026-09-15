@@ -123,7 +123,12 @@ OBJECTIVE_EVIDENCE="$FIXTURE_DIR/objective-evidence.jsonl"
 mkdir -p "$MOCK_BIN"
 cat >"$MOCK_BIN/ps" <<'EOF'
 #!/usr/bin/env bash
-/bin/cat "${WAH_TEST_PS_FIXTURE:?}"
+if [[ "${2:-}" == "uid,pid,stat,etime,command" ]]; then
+	uid=$(/usr/bin/id -u)
+	/usr/bin/awk -v uid="$uid" 'NR == 1 { print "UID", $0; next } { print uid, $0 }' "${WAH_TEST_PS_FIXTURE:?}"
+else
+	/bin/cat "${WAH_TEST_PS_FIXTURE:?}"
+fi
 EOF
 chmod +x "$MOCK_BIN/ps"
 
@@ -300,16 +305,34 @@ RC=$?
 assert_rc "1i: worker-count alias exits 0" 0 "$RC"
 assert_eq "1j: live count excludes unrelated processes" "1" "$OUT"
 
+OWN_UID=$(/usr/bin/id -u)
+FOREIGN_UID=$((OWN_UID + 1))
+cat >"$MOCK_BIN/ps" <<'EOF'
+#!/usr/bin/env bash
+/bin/cat "${WAH_TEST_PS_FIXTURE:?}"
+EOF
+chmod +x "$MOCK_BIN/ps"
+cat >"$PS_FIXTURE" <<EOF
+UID PID STAT ELAPSED COMMAND
+${FOREIGN_UID} 201 S 00:10 bash /home/foreign/.aidevops/agents/scripts/headless-runtime-helper.sh run --role worker --session-key issue-2 --dir /tmp/foreign /full-loop
+${FOREIGN_UID} 202 S 00:09 /opt/bin/.opencode run --session-key issue-3 --dir /tmp/foreign-2 /full-loop
+${OWN_UID} 203 S 00:08 bash /home/own/.aidevops/agents/scripts/headless-runtime-helper.sh run --role worker --session-key local-maintenance --dir /tmp/own /full-loop
+EOF
+OUT=$(env PATH="$MOCK_BIN:$PATH" WAH_TEST_PS_FIXTURE="$PS_FIXTURE" "$HELPER" live-workers 2>&1)
+RC=$?
+assert_rc "1k: UID-aware live-workers exits 0" 0 "$RC"
+assert_eq "1l: live-workers counts only effective-UID workers" "1" "$OUT"
+
 # Bad subcommand exits 2.
 OUT=$("$HELPER" frobnicate 2>&1)
 RC=$?
-assert_rc "1k: unknown command exits 2" 2 "$RC"
+assert_rc "1m: unknown command exits 2" 2 "$RC"
 
 # Bad --since exits 2.
 OUT=$(env "${RUN_ENV[@]}" "$HELPER" summary --since 99x --no-pr-check 2>&1)
 RC=$?
-assert_rc "1l: bad --since exits 2" 2 "$RC"
-assert_contains "1m: bad --since explains valid options" "1h|6h|24h|48h|7d" "$OUT"
+assert_rc "1n: bad --since exits 2" 2 "$RC"
+assert_contains "1o: bad --since explains valid options" "1h|6h|24h|48h|7d" "$OUT"
 
 # ---------------------------------------------------------------------------
 # Section 2: 24h aggregation accuracy.
