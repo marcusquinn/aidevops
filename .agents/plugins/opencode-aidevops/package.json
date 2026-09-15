@@ -34,5 +34,11 @@
     "@bufbuild/protobuf": "^2.0.0",
     "@opencode-ai/plugin": "^1.18.29",
     "@opencode/plugin": "2.0.3"
+  },
+  "overrides": {
+    "@opentelemetry/context-async-hooks": "2.8.0",
+    "@opentelemetry/exporter-trace-otlp-http": "0.219.0",
+    "@opentelemetry/sdk-trace-base": "2.8.0",
+    "@opentelemetry/sdk-trace-node": "2.8.0"
   }
 }
