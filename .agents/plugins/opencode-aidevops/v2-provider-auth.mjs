@@ -90,46 +90,36 @@ function cooldownFromResponse(response) {
   return Number.isFinite(date) ? Math.max(date - Date.now(), DEFAULT_COOLDOWN_MS) : DEFAULT_COOLDOWN_MS;
 }
 
-export function createV2ProviderAuthRuntime(dependencies = {}) {
-  const listAccounts = dependencies.getAccounts || getAccounts;
-  const selectAccount = dependencies.selectRuntimePoolAccount || selectRuntimePoolAccount;
-  const updateAccount = dependencies.patchAccount || patchAccount;
-  const rejectAccount = dependencies.markRejectedTokenFailure || markRejectedTokenFailure;
-  const activateProvider = dependencies.ensureProviderActivation || ensureProviderActivation;
-  const requestAccounts = new WeakMap();
-  const retryState = new Map();
-
-  for (const provider of SUPPORTED_PROVIDERS) {
-    if (listAccounts(provider).length > 0) activateProvider(provider);
-  }
-
-  async function httpRequest(event) {
+function createHttpRequestHook(runtime) {
+  return async function httpRequest(event) {
     const provider = event.model?.providerID;
-    if (!SUPPORTED_PROVIDERS.has(provider) || listAccounts(provider).length === 0) return;
+    if (!SUPPORTED_PROVIDERS.has(provider) || runtime.listAccounts(provider).length === 0) return;
     const key = affinityKey(event);
-    const skipEmail = retryState.get(key)?.email || "";
-    const account = await selectAccount(provider, skipEmail);
+    const skipEmail = runtime.retryState.get(key)?.email || "";
+    const account = await runtime.selectAccount(provider, skipEmail);
     if (!account?.access) return;
-    activateProvider(provider);
+    runtime.activateProvider(provider);
     const body = await transformedBody(event.request, provider);
     event.request = provider === "anthropic"
       ? anthropicRequest(event.request, account.access, body)
       : openAIRequest(event.request, account, body);
-    requestAccounts.set(event.request, account);
-    retryState.delete(key);
-    updateAccount(provider, account.email, {
+    runtime.requestAccounts.set(event.request, account);
+    runtime.retryState.delete(key);
+    runtime.updateAccount(provider, account.email, {
       lastUsed: new Date().toISOString(),
       status: "active",
     });
-  }
+  };
+}
 
-  async function httpResponse(event) {
+function createHttpResponseHook(runtime) {
+  return async function httpResponse(event) {
     const provider = event.model?.providerID;
     if (!SUPPORTED_PROVIDERS.has(provider)) return;
     const key = affinityKey(event);
-    const account = requestAccounts.get(event.request);
+    const account = runtime.requestAccounts.get(event.request);
     if (!account) return;
-    requestAccounts.delete(event.request);
+    runtime.requestAccounts.delete(event.request);
     const usageLimited = provider === "openai"
       ? await isOpenAIUsageLimitResponse(event.response)
       : event.response.status === 429;
@@ -138,27 +128,49 @@ export function createV2ProviderAuthRuntime(dependencies = {}) {
       : [401, 403].includes(event.response.status);
     if (usageLimited) {
       const cooldown = provider === "openai" ? parseRetryAfterMs(event.response) : cooldownFromResponse(event.response);
-      updateAccount(provider, account.email, {
+      runtime.updateAccount(provider, account.email, {
         status: "rate-limited",
         cooldownUntil: Date.now() + cooldown,
         lastUsed: new Date().toISOString(),
       });
-      retryState.set(key, { email: account.email, delay: 0 });
+      runtime.retryState.set(key, { email: account.email, delay: 0 });
     } else if (authFailed) {
-      rejectAccount(provider, account);
-      retryState.set(key, { email: account.email, delay: 0 });
+      runtime.rejectAccount(provider, account);
+      runtime.retryState.set(key, { email: account.email, delay: 0 });
     }
     if (provider === "anthropic") event.response = transformResponseStream(event.response);
-  }
+  };
+}
 
-  function retry(event) {
+function createRetryHook(runtime) {
+  return function retry(event) {
     const provider = event.model?.providerID;
-    const state = retryState.get(affinityKey(event));
+    const state = runtime.retryState.get(affinityKey(event));
     if (!state || !SUPPORTED_PROVIDERS.has(provider)) return;
-    const alternatives = listAccounts(provider).filter((account) => account.email !== state.email);
+    const alternatives = runtime.listAccounts(provider).filter((account) => account.email !== state.email);
     if (alternatives.length === 0 || event.attempt > alternatives.length) return;
     event.decision = { retry: true, delay: state.delay };
+  };
+}
+
+export function createV2ProviderAuthRuntime(dependencies = {}) {
+  const runtime = {
+    listAccounts: dependencies.getAccounts || getAccounts,
+    selectAccount: dependencies.selectRuntimePoolAccount || selectRuntimePoolAccount,
+    updateAccount: dependencies.patchAccount || patchAccount,
+    rejectAccount: dependencies.markRejectedTokenFailure || markRejectedTokenFailure,
+    activateProvider: dependencies.ensureProviderActivation || ensureProviderActivation,
+    requestAccounts: new WeakMap(),
+    retryState: new Map(),
+  };
+
+  for (const provider of SUPPORTED_PROVIDERS) {
+    if (runtime.listAccounts(provider).length > 0) runtime.activateProvider(provider);
   }
 
-  return { httpRequest, httpResponse, retry };
+  return {
+    httpRequest: createHttpRequestHook(runtime),
+    httpResponse: createHttpResponseHook(runtime),
+    retry: createRetryHook(runtime),
+  };
 }

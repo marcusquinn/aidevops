@@ -132,46 +132,37 @@ def _agent_to_v1(agent):
     return result
 
 
-def _provider_entry_to_v2(provider):
-    """Convert one V1 provider entry to the V2 config schema."""
+def _convert_provider_entry(provider, package_keys, settings_keys):
+    """Rename provider package/settings fields while retaining model metadata."""
+    source_package, target_package = package_keys
+    source_settings, target_settings = settings_keys
     result = {
         key: value for key, value in provider.items()
-        if key not in {'npm', 'options', 'models'}
+        if key not in {source_package, source_settings, 'models'}
     }
-    if provider.get('npm'):
-        result['package'] = provider['npm']
-    if provider.get('options'):
-        result['settings'] = provider['options']
+    if provider.get(source_package):
+        result[target_package] = provider[source_package]
+    if provider.get(source_settings):
+        result[target_settings] = provider[source_settings]
     if isinstance(provider.get('models'), dict):
         result['models'] = {
             name: {
-                **{key: value for key, value in model.items() if key != 'options'},
-                **({'settings': model['options']} if model.get('options') else {}),
+                **{key: value for key, value in model.items() if key != source_settings},
+                **({target_settings: model[source_settings]} if model.get(source_settings) else {}),
             } if isinstance(model, dict) else model
             for name, model in provider['models'].items()
         }
     return result
+
+
+def _provider_entry_to_v2(provider):
+    """Convert one V1 provider entry to the V2 config schema."""
+    return _convert_provider_entry(provider, ('npm', 'package'), ('options', 'settings'))
 
 
 def _provider_entry_to_v1(provider):
     """Convert one V2 provider entry to the V1 config schema."""
-    result = {
-        key: value for key, value in provider.items()
-        if key not in {'package', 'settings', 'models'}
-    }
-    if provider.get('package'):
-        result['npm'] = provider['package']
-    if provider.get('settings'):
-        result['options'] = provider['settings']
-    if isinstance(provider.get('models'), dict):
-        result['models'] = {
-            name: {
-                **{key: value for key, value in model.items() if key != 'settings'},
-                **({'options': model['settings']} if model.get('settings') else {}),
-            } if isinstance(model, dict) else model
-            for name, model in provider['models'].items()
-        }
-    return result
+    return _convert_provider_entry(provider, ('package', 'npm'), ('settings', 'options'))
 
 
 def _update_providers(config):
