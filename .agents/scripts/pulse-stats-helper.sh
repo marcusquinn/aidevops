@@ -104,7 +104,7 @@ _pulse_stats_report_recovery_failure() {
 }
 
 _pulse_stats_recover_locked() {
-	local quarantine tmp_file old_umask
+	local quarantine="" tmp_file="" old_umask=""
 	if [[ -s "$PULSE_STATS_FILE" ]]; then
 		old_umask=$(umask)
 		umask 077
