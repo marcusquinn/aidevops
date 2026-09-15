@@ -21,7 +21,8 @@ import { homedir, platform } from "os";
 const HOME = homedir();
 
 /** Pool credential file path */
-export const POOL_FILE = join(HOME, ".aidevops", "oauth-pool.json");
+export const POOL_FILE = process.env.AIDEVOPS_OAUTH_POOL_FILE
+  || join(HOME, ".aidevops", "oauth-pool.json");
 
 /** Advisory lock identity shared with oauth-pool-helper.sh (`.lock.d` protocol) */
 export const POOL_LOCK_FILE = POOL_FILE + ".lock";

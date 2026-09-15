@@ -41,13 +41,23 @@ runtime-neutral.
 
 | Profile | CLI package | Binary | Plugin implementation | Config loader | Config keys |
 |---------|-------------|--------|-----------------------|---------------|-------------|
-| `v1` (default) | `opencode-ai` | `opencode` | `index.mjs` | `index.mjs` | `agent`, `plugin`, `permission`, `provider` |
-| `v2` (opt-in) | `@opencode/cli` | `opencode2` | `v2.mjs` | `v2-plugin/` | `agents`, `plugins`, `permissions`, `providers` |
+| `v1` (production default) | `opencode-ai` | `opencode` | `index.mjs` | `index.mjs` | `agent`, `plugin`, `permission`, `provider` |
+| `v2` (isolated preview) | `@opencode/cli` | `opencode2` | `v2.mjs` | `v2-plugin/` | `agents`, `plugins`, `permissions`, `providers` |
 
-Select a profile for setup and generated configuration:
+Setup and update install both binaries by default. V1 keeps its existing config
+and data paths; the `opencode2` shim uses private config, data, cache, state, and
+temporary roots under `~/.aidevops/runtimes/opencode-v2/`. Its default server
+port is `4097`, while an explicit `--port` always wins. This allows V1 and V2
+sessions to run concurrently without sharing configuration or session databases.
+
+Select V2 as the primary profile for setup and headless execution, opt out of
+the preview companion installation, or explicitly roll back:
 
 ```bash
 AIDEVOPS_OPENCODE_PROFILE=v2 ./setup.sh --non-interactive
+
+# Keep a V1-only installation.
+AIDEVOPS_INSTALL_OPENCODE2_PREVIEW=0 ./setup.sh --non-interactive
 
 # Explicit rollback. This converts managed config back to V1 keys and restores
 # the V1 plugin entry without deleting user-defined agents, providers, or MCPs.
@@ -57,6 +67,13 @@ AIDEVOPS_OPENCODE_PROFILE=v1 ./setup.sh --non-interactive
 V2 promotion requires the isolated plugin, security-hook, lifecycle-cleanup,
 OAuth/MCP, headless execution, and V1 rollback gates to pass. Until then, do not
 change the profile document's `default` from `v1`.
+
+The V2 preview does not copy V1's mutable OpenCode auth database or aidevops
+OAuth pool. Authenticate it independently with `opencode2 auth login`. The
+aidevops OAuth callback server serializes concurrent interactive login flows on
+its shared loopback port, while each OAuth pool locks token refresh and rotation
+writes. Normal authenticated sessions may run concurrently. Editing sessions
+must still use separate linked Git worktrees.
 
 ## Authentication
 
@@ -127,7 +144,7 @@ TUI requires restart for config changes. Use CLI for quick iteration:
 opencode run "List your available tools" --agent SEO
 opencode run "Quick test" --agent Build+ --model anthropic/claude-sonnet-4-6
 
-# V2 opt-in uses the profile binary
+# Isolated V2 preview
 opencode2 run "List your available tools" --agent SEO
 
 # Persistent server (keeps MCPs warm)

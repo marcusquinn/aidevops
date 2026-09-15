@@ -1,10 +1,26 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
-import { test } from "node:test";
+import { after, test } from "node:test";
 import assert from "node:assert/strict";
+import {
+  mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync,
+} from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 import { startOAuthCallbackServer } from "../oauth-pool-callback.mjs";
+
+const tempBase = process.env.AIDEVOPS_TEMP_DIR
+  || join(homedir(), ".aidevops", ".agent-workspace", "tmp");
+mkdirSync(tempBase, { recursive: true, mode: 0o700 });
+const testRoot = mkdtempSync(join(tempBase, "oauth-callback-lock-test-"));
+process.env.AIDEVOPS_OPENCODE_OAUTH_LOCK_DIR = join(testRoot, "callback.lock");
+after(() => {
+  delete process.env.AIDEVOPS_OPENCODE_OAUTH_LOCK_DIR;
+  delete process.env.AIDEVOPS_OPENCODE_OAUTH_LOCK_LEASE_MS;
+  rmSync(testRoot, { recursive: true, force: true });
+});
 
 test("callback server preserves the public re-export and captures valid codes", async () => {
   const server = startOAuthCallbackServer("expected-state");
@@ -82,5 +98,63 @@ test("closing the callback server releases the loopback port", async () => {
     assert.equal(await second.ready, true);
   } finally {
     second.close();
+  }
+});
+
+test("concurrent interactive logins serialize on the callback lock", async () => {
+  const first = startOAuthCallbackServer("first-state");
+  const second = startOAuthCallbackServer("second-state");
+
+  try {
+    assert.equal(await first.ready, true);
+    let secondSettled = false;
+    void second.ready.then(() => { secondSettled = true; });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(secondSettled, false);
+
+    first.close();
+    const secondReady = await Promise.race([
+      second.ready,
+      new Promise((_, reject) => setTimeout(() => reject(new Error("callback lock timeout")), 2_000)),
+    ]);
+    assert.equal(secondReady, true);
+  } finally {
+    first.close();
+    second.close();
+  }
+});
+
+test("expired incomplete callback locks are reclaimed", async () => {
+  const lockDir = process.env.AIDEVOPS_OPENCODE_OAUTH_LOCK_DIR;
+  mkdirSync(lockDir, { mode: 0o700 });
+  const old = new Date(Date.now() - 1_000);
+  utimesSync(lockDir, old, old);
+  process.env.AIDEVOPS_OPENCODE_OAUTH_LOCK_LEASE_MS = "20";
+  const server = startOAuthCallbackServer("incomplete-state");
+  try {
+    assert.equal(await server.ready, true);
+  } finally {
+    server.close();
+    delete process.env.AIDEVOPS_OPENCODE_OAUTH_LOCK_LEASE_MS;
+  }
+});
+
+test("expired locks do not trust a reused live PID", async () => {
+  const lockDir = process.env.AIDEVOPS_OPENCODE_OAUTH_LOCK_DIR;
+  mkdirSync(lockDir, { mode: 0o700 });
+  writeFileSync(
+    join(lockDir, "pid"),
+    `${JSON.stringify({ pid: process.pid, token: "former-owner" })}\n`,
+    { mode: 0o600 },
+  );
+  const old = new Date(Date.now() - 1_000);
+  utimesSync(lockDir, old, old);
+  process.env.AIDEVOPS_OPENCODE_OAUTH_LOCK_LEASE_MS = "20";
+  const server = startOAuthCallbackServer("reused-pid-state");
+  try {
+    assert.equal(await server.ready, true);
+  } finally {
+    server.close();
+    delete process.env.AIDEVOPS_OPENCODE_OAUTH_LOCK_LEASE_MS;
   }
 });

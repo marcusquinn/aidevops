@@ -443,13 +443,17 @@ ensure_homebrew() {
 # Returns: path to config file, or empty string if not found
 find_opencode_config() {
 	local candidates=(
+		"${OPENCODE_CONFIG:-}"
+		"${OPENCODE_CONFIG_DIR:+${OPENCODE_CONFIG_DIR}/opencode.json}"
+		"${XDG_CONFIG_HOME:+${XDG_CONFIG_HOME}/opencode/opencode.json}"
 		"$HOME/.config/opencode/opencode.json"                     # XDG standard (Linux, some macOS)
 		"$HOME/.opencode/opencode.json"                            # Alternative location
 		"$HOME/Library/Application Support/opencode/opencode.json" # macOS standard
 	)
 	for candidate in "${candidates[@]}"; do
+		[[ -n "$candidate" ]] || continue
 		if [[ -f "$candidate" ]]; then
-			echo "$candidate"
+			printf '%s\n' "$candidate"
 			return 0
 		fi
 	done

@@ -140,9 +140,9 @@ test_setup_stage_contract() {
 	assert_contains "gui desktop app dir can be configured" "$text" "AIDEVOPS_GUI_DESKTOP_APP_DIR"
 	assert_contains "existing gui desktop app refreshes during update" "$text" "Refreshing existing macOS"
 	assert_contains "gui desktop scoped stage runs installer" "$text" "_time_step \"\$SETUP_STAGE_GUI_DESKTOP\" setup_gui_desktop_app"
-	assert_contains "agents scoped stage registers opencode plugin" "$text" "_time_step \"\$SETUP_STAGE_OPENCODE_PLUGINS\" setup_opencode_plugins"
-	assert_occurrence_count "scoped, ai-session, and noninteractive setup register opencode plugin" "$text" \
-		"_time_step \"\$SETUP_STAGE_OPENCODE_PLUGINS\" setup_opencode_plugins" 3
+	assert_contains "agents scoped stage registers both opencode runtime plugins" "$text" "_time_step \"\$SETUP_STAGE_OPENCODE_PLUGINS\" setup_opencode_runtime_plugins"
+	assert_occurrence_count "scoped, ai-session, and noninteractive setup register both opencode runtime plugins" "$text" \
+		"_time_step \"\$SETUP_STAGE_OPENCODE_PLUGINS\" setup_opencode_runtime_plugins" 3
 	assert_contains "unknown stages print actionable help" "$text" "Unknown setup stage/scope"
 	return 0
 }
