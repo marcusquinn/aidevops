@@ -32,6 +32,13 @@ _classify_ci_failures_by_pattern() {
 	while IFS= read -r cname; do
 		[[ -n "$cname" ]] || continue
 
+		# Runner matrix suffixes are metadata, not job semantics. In particular,
+		# ubuntu-latest must not make a non-test check match *[Tt]est*.
+		local match_name="$cname"
+		if [[ "$match_name" == *" ("*"-latest)" ]]; then
+			match_name="${match_name% (*}"
+		fi
+
 		local matched_class=
 		while IFS='|' read -r class_raw glob_raw _rest; do
 			# Both vars initialised to empty for set -u safety (t2863).
@@ -45,7 +52,7 @@ _classify_ci_failures_by_pattern() {
 			[[ "$class" == \#* ]] && continue
 
 			# shellcheck disable=SC2254  # dynamic glob is intentional
-			case "$cname" in
+			case "$match_name" in
 				$glob)
 					matched_class="$class"
 					break

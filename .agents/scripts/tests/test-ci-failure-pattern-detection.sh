@@ -232,6 +232,20 @@ assert_contains "2m: Vitest → TEST_FAILURE" "TEST_FAILURE" "$vitest_out"
 pnpm_test_out=$(_classify_ci_failures_by_pattern "pnpm test" "$CONF_FILE")
 assert_contains "2n: pnpm test → TEST_FAILURE" "TEST_FAILURE" "$pnpm_test_out"
 
+# 2n2: test semantics survive runner suffix normalization.
+unit_tests_out=$(_classify_ci_failures_by_pattern "Unit Tests (ubuntu-latest)" "$CONF_FILE")
+assert_contains "2n2: Unit Tests with runner suffix → TEST_FAILURE" "TEST_FAILURE" "$unit_tests_out"
+
+# 2n3: runner suffixes do not make non-test jobs match the test fallback.
+build_latest_out=$(_classify_ci_failures_by_pattern "Build (ubuntu-latest)" "$CONF_FILE")
+assert_contains "2n3: Build with runner suffix → OTHER" "OTHER" "$build_latest_out"
+security_latest_out=$(_classify_ci_failures_by_pattern "Security Scan (macos-latest)" "$CONF_FILE")
+assert_contains "2n3: Security Scan with runner suffix → OTHER" "OTHER" "$security_latest_out"
+
+# 2n4: ShellCheck has lint-specific guidance before the generic test fallback.
+shellcheck_out=$(_classify_ci_failures_by_pattern "ShellCheck (ubuntu-latest)" "$CONF_FILE")
+assert_contains "2n4: ShellCheck with runner suffix → LINT_FAILURE" "LINT_FAILURE" "$shellcheck_out"
+
 # 2o: Timeout check name
 timeout_out=$(_classify_ci_failures_by_pattern "CI Timeout" "$CONF_FILE")
 assert_contains "2o: 'CI Timeout' → TIMEOUT_NO_OUTPUT" "TIMEOUT_NO_OUTPUT" "$timeout_out"
@@ -341,6 +355,14 @@ assert_contains "4l: TEST guidance warns against production secrets" \
 assert_contains "4m: TEST guidance mentions stale Vitest mocks" \
 	"vi.mock" "$test_guidance"
 
+# 4m2: ShellCheck guidance is specific and does not prescribe pnpm/Vitest.
+shellcheck_class=$(_classify_ci_failures_by_pattern "ShellCheck (ubuntu-latest)" "$CONF_FILE")
+shellcheck_guidance=$(_emit_ci_failure_guidance_blocks "$shellcheck_class" "$CONF_FILE")
+assert_contains "4m2: ShellCheck guidance mentions affected shell files" \
+	"affected-shell-files" "$shellcheck_guidance"
+assert_not_contains "4m3: ShellCheck guidance avoids pnpm" "pnpm" "$shellcheck_guidance"
+assert_not_contains "4m4: ShellCheck guidance avoids Vitest" "Vitest" "$shellcheck_guidance"
+
 # 4n: TIMEOUT_NO_OUTPUT classification → heartbeat guidance emitted
 timeout_class=$(_classify_ci_failures_by_pattern "CI Timeout" "$CONF_FILE")
 timeout_guidance=$(_emit_ci_failure_guidance_blocks "$timeout_class" "$CONF_FILE")
@@ -415,6 +437,16 @@ assert_contains "5d9: qlty empty SARIF signature keeps shared helper guidance" \
 	"empty SARIF output" "$qlty_signature_section"
 assert_contains "5d10: qlty empty SARIF signature preserves delta-gate caveat" \
 	"delta-based qlty regression gate" "$qlty_signature_section"
+
+# 5d11: rendered ShellCheck feedback preserves the actual check name and advice.
+sample_shellcheck_failing="- **ShellCheck (ubuntu-latest)**: fail — diagnostic at script.sh:52"
+shellcheck_section=$(_build_ci_feedback_section "12345" "$sample_shellcheck_failing" "$shellcheck_class")
+assert_contains "5d11: ShellCheck section preserves original check name" \
+	"ShellCheck (ubuntu-latest)" "$shellcheck_section"
+assert_contains "5d12: ShellCheck section uses shell guidance" \
+	"shellcheck <affected-shell-files>" "$shellcheck_section"
+assert_not_contains "5d13: ShellCheck section avoids test guidance" \
+	"pnpm --filter <package> test" "$shellcheck_section"
 
 # 5e: Without classification arg, section omits pattern guidance (back-compat)
 section_no_classification=$(_build_ci_feedback_section "12345" "$sample_failing")
