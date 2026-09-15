@@ -14,6 +14,7 @@ import v2Plugin, {
   defineAidevopsV2Adapter,
   OPENCODE_V2_CAPABILITIES,
   setupAidevopsV2,
+  startEventLoop,
 } from "../v2.mjs";
 import { createV2McpRuntime, toV2McpConfig } from "../v2-mcp-adapter.mjs";
 import { createV2ProviderAuthRuntime } from "../v2-provider-auth.mjs";
@@ -48,6 +49,35 @@ test("V2 descriptor seam uses the released Plugin.define contract", async () => 
   assert.throws(() => defineAidevopsV2Adapter(), /setup must be a function/);
   assert.equal(OPENCODE_V2_CAPABILITIES.tools, true);
   assert.equal(OPENCODE_V2_CAPABILITIES.textCompletionHook, false);
+});
+
+test("V2 event processing continues after one handler failure", async () => {
+  const events = [{ id: "first" }, { id: "second" }];
+  const seen = [];
+  let resolveProcessed;
+  const processed = new Promise((resolve) => { resolveProcessed = resolve; });
+  const stop = startEventLoop({
+    event: {
+      async subscribe() {
+        return {
+          stream: {
+            async *[Symbol.asyncIterator]() {
+              yield events[0];
+              yield events[1];
+            },
+          },
+        };
+      },
+    },
+  }, async ({ event }) => {
+    seen.push(event.id);
+    if (event.id === "first") throw new Error("synthetic handler failure");
+    resolveProcessed();
+  });
+
+  await processed;
+  await stop();
+  assert.deepEqual(seen, ["first", "second"]);
 });
 
 test("V2 setup registers SDK lifecycle hooks and disposes every registration", async () => {

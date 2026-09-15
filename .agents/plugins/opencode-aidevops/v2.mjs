@@ -167,7 +167,7 @@ async function register(registrations, promise) {
   return registration;
 }
 
-function startEventLoop(ctx, handler) {
+export function startEventLoop(ctx, handler) {
   let iterator;
   let stopped = false;
   const ready = Promise.resolve(ctx.event.subscribe()).then((subscription) => {
@@ -178,7 +178,13 @@ function startEventLoop(ctx, handler) {
       while (!stopped) {
         const next = await iterator.next();
         if (next.done) break;
-        await handler({ event: next.value?.event || next.value });
+        try {
+          await handler({ event: next.value?.event || next.value });
+        } catch (error) {
+          if (process.env.AIDEVOPS_PLUGIN_DEBUG === "1") {
+            console.error(`[aidevops] V2 event handler failed: ${error.message}`);
+          }
+        }
       }
     })().catch((error) => {
       if (!stopped && process.env.AIDEVOPS_PLUGIN_DEBUG === "1") {
