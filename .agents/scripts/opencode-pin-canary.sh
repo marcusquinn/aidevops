@@ -80,13 +80,21 @@ install_isolated_plugin() {
 
 resolve_installed_opencode_binary() {
 	local install_root="$1"
+	local expected_version="${2:-}"
+	[[ -n "$expected_version" ]] || return 1
 	local package_binary="$install_root/node_modules/.bin/${OPENCODE_CANARY_BINARY}"
+	local version_output=""
 	if [[ -x "$package_binary" ]]; then
+		version_output=$("$package_binary" --version 2>/dev/null || true)
+	fi
+	if [[ "$version_output" =~ (^|[^0-9])${expected_version//./\.}([^0-9]|$) ]]; then
 		printf '%s\n' "$package_binary"
 		return 0
 	fi
-	local machine_arch
-	machine_arch=$(uname -m)
+	local machine_arch="${AIDEVOPS_TEST_UNAME_M:-}"
+	if [[ -z "$machine_arch" ]]; then
+		machine_arch=$(uname -m)
+	fi
 	local package_arch=""
 	case "$machine_arch" in
 	x86_64 | amd64) package_arch="x64" ;;
@@ -94,21 +102,34 @@ resolve_installed_opencode_binary() {
 	*) return 1 ;;
 	esac
 	local base="opencode-linux-${package_arch}"
+	local suffix_baseline="-baseline"
+	local suffix_musl="-musl"
+	local suffix_baseline_musl="-baseline-musl"
 	local suffixes=("")
+	local has_avx2=1
 	if [[ "$package_arch" == "x64" ]] && ! grep -qE '(^|[[:space:]])avx2([[:space:]]|$)' /proc/cpuinfo 2>/dev/null; then
-		suffixes=("-baseline" "")
+		has_avx2=0
+		suffixes=("$suffix_baseline" "")
 	fi
 	if ldd --version 2>&1 | grep -qi musl; then
 		if [[ "$package_arch" == "x64" ]]; then
-			suffixes=("-musl" "-baseline-musl" "" "-baseline")
+			if [[ "$has_avx2" -eq 1 ]]; then
+				suffixes=("$suffix_musl" "$suffix_baseline_musl" "" "$suffix_baseline")
+			else
+				suffixes=("$suffix_baseline_musl" "$suffix_musl" "$suffix_baseline" "")
+			fi
 		else
-			suffixes=("-musl" "")
+			suffixes=("$suffix_musl" "")
 		fi
 	fi
 	local suffix
 	for suffix in "${suffixes[@]}"; do
 		local binary="$install_root/node_modules/${base}${suffix}/bin/opencode"
+		version_output=""
 		if [[ -x "$binary" ]]; then
+			version_output=$("$binary" --version 2>/dev/null || true)
+		fi
+		if [[ "$version_output" =~ (^|[^0-9])${expected_version//./\.}([^0-9]|$) ]]; then
 			printf '%s\n' "$binary"
 			return 0
 		fi
@@ -373,8 +394,8 @@ cmd_canary() {
 	fi
 	local baseline_bin=""
 	local candidate_bin=""
-	baseline_bin=$(resolve_installed_opencode_binary "$_CANARY_TEMP_ROOT/baseline" || true)
-	candidate_bin=$(resolve_installed_opencode_binary "$_CANARY_TEMP_ROOT/candidate" || true)
+	baseline_bin=$(resolve_installed_opencode_binary "$_CANARY_TEMP_ROOT/baseline" "$OPENCODE_CANARY_PIN" || true)
+	candidate_bin=$(resolve_installed_opencode_binary "$_CANARY_TEMP_ROOT/candidate" "$candidate" || true)
 	[[ -n "$baseline_bin" && -n "$candidate_bin" ]] || {
 		printf 'RESULT=inconclusive\nINCONCLUSIVE: baseline or candidate binary was not installed\n' >&2
 		return 2

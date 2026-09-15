@@ -27,6 +27,50 @@ assert_eq "last canary is recorded" "2026-09-08" "$OPENCODE_PIN_LAST_CANARY_DATE
 assert_eq "review deadline is recorded" "2026-09-15" "$OPENCODE_PIN_REVIEW_DEADLINE"
 assert_eq "plugin compatibility signal is explicit" "1.18.29" "$OPENCODE_PLUGIN_TESTED_VERSION"
 
+fixture_root=$(mktemp -d "${TMPDIR:-/tmp}/opencode-pin-policy.XXXXXX")
+trap 'rm -rf "$fixture_root"' EXIT INT TERM
+awk '/^resolve_installed_opencode_binary\(\)/, /^}/ { print }' \
+	"$REPO_ROOT/.agents/scripts/opencode-pin-canary.sh" >"$fixture_root/resolver.sh"
+# shellcheck source=/dev/null
+source "$fixture_root/resolver.sh"
+OPENCODE_CANARY_BINARY="opencode"
+AIDEVOPS_TEST_UNAME_M="x86_64"
+mkdir -p "$fixture_root/install/node_modules/.bin" \
+	"$fixture_root/install/node_modules/opencode-linux-x64/bin"
+printf '#!/usr/bin/env bash\nprintf "Error: opencode-ai postinstall was not run\\n"\n' \
+	>"$fixture_root/install/node_modules/.bin/opencode"
+printf '#!/usr/bin/env bash\nprintf "1.18.29\\n"\n' \
+	>"$fixture_root/install/node_modules/opencode-linux-x64/bin/opencode"
+chmod +x "$fixture_root/install/node_modules/.bin/opencode" \
+	"$fixture_root/install/node_modules/opencode-linux-x64/bin/opencode"
+resolved_binary=$(resolve_installed_opencode_binary "$fixture_root/install" "1.18.29" || true)
+assert_eq "canary bypasses failing npm placeholder" \
+	"$fixture_root/install/node_modules/opencode-linux-x64/bin/opencode" "$resolved_binary"
+printf '#!/usr/bin/env bash\nprintf "1.18.28\\n"\n' \
+	>"$fixture_root/install/node_modules/opencode-linux-x64/bin/opencode"
+resolved_binary=$(resolve_installed_opencode_binary "$fixture_root/install" "1.18.29" || true)
+assert_eq "canary rejects placeholder and wrong-version native binary" "" "$resolved_binary"
+mkdir -p "$fixture_root/tools"
+# shellcheck disable=SC2016 # The generated stub must inspect its own positional parameters.
+printf '#!/usr/bin/env bash\nif [[ "${*: -1}" == "/proc/cpuinfo" ]]; then exit 1; fi\nexec /usr/bin/grep "$@"\n' \
+	>"$fixture_root/tools/grep"
+printf '#!/usr/bin/env bash\nprintf "musl libc\\n"\n' >"$fixture_root/tools/ldd"
+chmod +x "$fixture_root/tools/grep" "$fixture_root/tools/ldd"
+printf '#!/usr/bin/env bash\nprintf "1.18.29\\n"\n' \
+	>"$fixture_root/install/node_modules/opencode-linux-x64/bin/opencode"
+mkdir -p "$fixture_root/install/node_modules/opencode-linux-x64-musl/bin" \
+	"$fixture_root/install/node_modules/opencode-linux-x64-baseline-musl/bin"
+cp "$fixture_root/install/node_modules/opencode-linux-x64/bin/opencode" \
+	"$fixture_root/install/node_modules/opencode-linux-x64-musl/bin/opencode"
+cp "$fixture_root/install/node_modules/opencode-linux-x64/bin/opencode" \
+	"$fixture_root/install/node_modules/opencode-linux-x64-baseline-musl/bin/opencode"
+chmod +x "$fixture_root/install/node_modules/opencode-linux-x64-musl/bin/opencode" \
+	"$fixture_root/install/node_modules/opencode-linux-x64-baseline-musl/bin/opencode"
+resolved_binary=$(PATH="$fixture_root/tools:$PATH" \
+	resolve_installed_opencode_binary "$fixture_root/install" "1.18.29" || true)
+assert_eq "canary prefers non-AVX2 musl baseline" \
+	"$fixture_root/install/node_modules/opencode-linux-x64-baseline-musl/bin/opencode" "$resolved_binary"
+
 scope_rc=0
 aidevops_opencode_pin_applies Linux headless || scope_rc=$?
 assert_eq "Linux headless remains fail-closed" "0" "$scope_rc"
@@ -40,7 +84,8 @@ assert_eq "interactive setup is outside observed scope" "1" "$scope_rc"
 status=$(
 	PATH="/usr/bin:/bin" "$REPO_ROOT/.agents/scripts/opencode-pin-canary.sh" status
 )
-[[ "$status" == *"pinned=1.18.29"* && "$status" == *"registry-latest="* && "$status" == *"plugin-tested=1.18.29"* && "$status" == *"last-canary=2026-09-08"* ]] || {
+profile_tested=$(aidevops_opencode_profile_value testedVersion v1)
+[[ "$status" == *"pinned=1.18.29"* && "$status" == *"registry-latest="* && "$status" == *"plugin-tested=${profile_tested}"* && "$status" == *"last-canary=2026-09-08"* ]] || {
 	printf 'FAIL: status omits compatibility evidence: %s\n' "$status" >&2
 	fail=$((fail + 1))
 }
