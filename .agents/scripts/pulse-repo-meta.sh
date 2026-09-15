@@ -431,7 +431,7 @@ list_dispatchable_issue_candidates_json() {
 	fi
 	[[ "$limit" =~ ^[0-9]+$ ]] || limit=100
 
-	local issue_json issue_dispatch_err snapshot_source_file
+	local issue_json="" issue_dispatch_err="" snapshot_source_file=""
 	issue_dispatch_err=$(mktemp) || {
 		printf '[]\n'
 		return 1
