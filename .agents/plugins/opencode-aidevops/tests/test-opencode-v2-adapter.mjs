@@ -404,7 +404,8 @@ test("V1 tool schemas still resolve across stable package layouts", async () => 
       throw new Error("root import must not be reached");
     },
   });
-  assert.equal(selected, helper);
+  assert.equal(typeof selected.schema.boolean, "function");
+  assert.deepEqual(selected({ selected: true }), { selected: true });
   assert.deepEqual(attempts, ["@opencode-ai/plugin/v1"]);
 
   const fallback = await loadV1ToolHelper({
@@ -413,5 +414,13 @@ test("V1 tool schemas still resolve across stable package layouts", async () => 
       return { tool: helper };
     },
   });
-  assert.equal(fallback, helper);
+  assert.equal(typeof fallback.schema.boolean, "function");
+  assert.deepEqual(fallback({ fallback: true }), { fallback: true });
+
+  const unavailable = await loadV1ToolHelper({
+    importer: async () => { throw new Error("package unavailable"); },
+    requirePinnedRuntime: false,
+  });
+  assert.equal(typeof unavailable.schema.boolean, "function");
+  assert.equal(unavailable.schema.boolean().optional().describe("flag"), unavailable.schema.boolean());
 });
