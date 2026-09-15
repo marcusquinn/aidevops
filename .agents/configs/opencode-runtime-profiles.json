@@ -1,0 +1,33 @@
+{
+  "schema": "aidevops-opencode-runtime-profiles/v1",
+  "default": "v1",
+  "profiles": {
+    "v1": {
+      "major": 1,
+      "package": "opencode-ai",
+      "binary": "opencode",
+      "pluginPackage": "@opencode-ai/plugin",
+      "pluginEntry": "index.mjs",
+      "configPluginKey": "plugin",
+      "configAgentKey": "agent",
+      "configPermissionKey": "permission",
+      "minimumVersion": "1.18.29",
+      "testedVersion": "1.18.31",
+      "headlessPin": "1.18.29"
+    },
+    "v2": {
+      "major": 2,
+      "package": "@opencode/cli",
+      "binary": "opencode2",
+      "fallbackBinary": "opencode",
+      "pluginPackage": "@opencode/plugin",
+      "pluginEntry": "v2.mjs",
+      "configPluginKey": "plugins",
+      "configAgentKey": "agents",
+      "configPermissionKey": "permissions",
+      "minimumVersion": "2.0.3",
+      "testedVersion": "2.0.3",
+      "headlessPin": "2.0.3"
+    }
+  }
+}

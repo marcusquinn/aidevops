@@ -68,6 +68,7 @@ import { createOutputSandboxReader, createOutputSandboxRecorder } from "./bounde
 import { createRoutingFeedbackHandler } from "./routing-feedback-handler.mjs";
 import { createSessionBoundaryAdvisory } from "./session-boundary-advisory.mjs";
 import { createProviderErrorHandler } from "./provider-error-diagnostics.mjs";
+import { createObjectiveReceiptTool } from "./objective-receipt-tool.mjs";
 import {
   appendConversationSystemContext,
   applyConversationRootVariant,
@@ -422,40 +423,7 @@ export async function AidevopsPlugin({ directory, client }) {
     managedMcpWorkspaces: mcpRuntime.workspaces,
     boundedOperationManager,
   });
-  baseTools.aidevops_objective_receipt = tool({
-    description: "Record an explicit parent acceptance/repair decision and, only with matching evidence, an objective outcome. This never infers acceptance from child or host completion.",
-    args: {
-      parent_session_id: tool.schema.string().optional(),
-      objective_id: tool.schema.string().optional(),
-      run_id: tool.schema.string().optional(),
-      contribution_id: tool.schema.string().optional(),
-      outcome: tool.schema.enum(["accepted_unchanged", "accepted_repaired", "rejected", "reused", "unknown"]).optional(),
-      repair_contribution_id: tool.schema.string().optional(),
-      intervention_count: tool.schema.number().optional(),
-      objective_outcome: tool.schema.enum(["verified", "accepted_unverified", "failed", "cancelled", "incomplete", "unknown"]).optional(),
-      evidence_kind: tool.schema.string().optional(),
-      evidence_fingerprint: tool.schema.string().optional(),
-      observer: tool.schema.string().optional(),
-      policy_version: tool.schema.string().optional(),
-    },
-    async execute(args) {
-      return recordObjectiveDecision({
-        parentSessionID: args.parent_session_id,
-        objectiveID: args.objective_id,
-        runID: args.run_id,
-        contributionID: args.contribution_id,
-        outcome: args.outcome,
-        repairContributionID: args.repair_contribution_id,
-        interventionCount: args.intervention_count,
-        objectiveOutcome: args.objective_outcome,
-        evidenceKind: args.evidence_kind,
-        evidenceFingerprint: args.evidence_fingerprint,
-        observer: args.observer,
-        policyVersion: args.policy_version || "v1",
-        source: "explicit_parent_decision",
-      });
-    },
-  });
+  baseTools.aidevops_objective_receipt = createObjectiveReceiptTool(tool, recordObjectiveDecision);
 
   // Create hooks from extracted modules
   const modelRouting = loadModelRouting([
