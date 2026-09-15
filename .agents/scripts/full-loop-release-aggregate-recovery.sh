@@ -359,6 +359,40 @@ _full_loop_recovery_resolve_failed_prepublication_evidence() {
 }
 
 #aidevops:trust-boundary
+_full_loop_recovery_validate_snapshot_prepublication_intent() {
+	local source_json="$1"
+	local failed_source_pr="$2"
+	local failed_source_merge="$3"
+	local current_authorization="$4"
+	local manifest_json=""
+	local snapshot_manifest=""
+	[[ "$failed_source_pr" == "$_FULL_LOOP_RESOLVED_SOURCE_PR" &&
+		"$failed_source_merge" == "$_FULL_LOOP_RESOLVED_SOURCE_MERGE" ]] || {
+		_full_loop_recovery_failed_prepublication_refused "recorded release source does not match the immutable snapshot"
+		return 1
+	}
+	manifest_json=$(jq -ce --argjson source_pr "$_FULL_LOOP_RESOLVED_SOURCE_PR" \
+		--arg source_merge "$_FULL_LOOP_RESOLVED_SOURCE_MERGE" '
+		.aggregated_sources
+		| select(type == "array" and length > 0)
+		| select([.[] | select(.pr == $source_pr and .merge == $source_merge)] | length == 1)
+	' <<<"$source_json") || {
+		_full_loop_recovery_failed_prepublication_refused "resolved snapshot manifest is incomplete or malformed"
+		return 1
+	}
+	snapshot_manifest=$(jq -r "$_FULL_LOOP_AGGREGATE_RECOVERY_MANIFEST_JQ" <<<"$manifest_json") || return 1
+	snapshot_manifest=$(release_authorization_manifest_string "$snapshot_manifest") || {
+		_full_loop_recovery_failed_prepublication_refused "resolved snapshot manifest is incomplete or malformed"
+		return 1
+	}
+	release_authorization_compare "$current_authorization" "$snapshot_manifest" || {
+		_full_loop_recovery_failed_prepublication_refused "resolved snapshot manifest conflicts with persisted authorization"
+		return 1
+	}
+	return 0
+}
+
+#aidevops:trust-boundary
 _full_loop_recovery_validate_failed_prepublication_intent() {
 	local repo="$1"
 	local source_pr="$2"
@@ -373,6 +407,7 @@ _full_loop_recovery_validate_failed_prepublication_intent() {
 	local aggregate_sources=""
 	local aggregate_manifest=""
 	local direct_manifest=""
+	local resolved_mode=""
 	_FULL_LOOP_FAILED_PREPUBLICATION_SOURCE_PR=""
 	_FULL_LOOP_FAILED_PREPUBLICATION_SOURCE_MERGE=""
 	_FULL_LOOP_FAILED_PREPUBLICATION_TAG=""
@@ -405,14 +440,15 @@ _full_loop_recovery_validate_failed_prepublication_intent() {
 		_full_loop_recovery_failed_prepublication_refused "recorded release-source PR does not match its immutable merge"
 		return 1
 	}
+	resolved_mode=$(jq -er '.mode' <<<"$_FULL_LOOP_RESOLVED_SOURCE_JSON") || return 1
 	direct_manifest="${source_pr}@${_FULL_LOOP_RESOLVED_REQUESTED_MERGE}"
-	if [[ "$failed_source_pr" == "$source_pr" &&
+	if [[ "$resolved_mode" == "direct" && "$failed_source_pr" == "$source_pr" &&
 		"$failed_source_merge" == "$_FULL_LOOP_RESOLVED_REQUESTED_MERGE" ]]; then
 		release_authorization_compare "$current_authorization" "$direct_manifest" || {
 			_full_loop_recovery_failed_prepublication_refused "direct failure evidence conflicts with persisted authorization"
 			return 1
 		}
-	else
+	elif [[ "$resolved_mode" == "aggregate" ]]; then
 		aggregate_identity=$(_full_loop_recovery_commit_trailer_values "$failed_source_merge" \
 			"Aidevops-Release-Aggregator-PR") || return 1
 		aggregate_sources=$(_full_loop_recovery_commit_trailer_values "$failed_source_merge" \
@@ -429,6 +465,13 @@ _full_loop_recovery_validate_failed_prepublication_intent() {
 			_full_loop_recovery_failed_prepublication_refused "recorded aggregate manifest conflicts with persisted authorization"
 			return 1
 		}
+	elif [[ "$resolved_mode" == "snapshot" ]]; then
+		_full_loop_recovery_validate_snapshot_prepublication_intent \
+			"$_FULL_LOOP_RESOLVED_SOURCE_JSON" "$failed_source_pr" "$failed_source_merge" \
+			"$current_authorization" || return 1
+	else
+		_full_loop_recovery_failed_prepublication_refused "reviewed retry source mode is unsupported"
+		return 1
 	fi
 	_full_loop_recovery_verify_channels_absent "$repo" "$attempted_tag" || {
 		_full_loop_recovery_failed_prepublication_refused "the attempted tag is not absent from every publication channel"
@@ -643,7 +686,7 @@ _full_loop_recovery_prepare_prepublication_source() {
 	_FULL_LOOP_PRESERVE_PREPUBLICATION_FAILURE_EVIDENCE="$previous_preserve_evidence"
 	[[ "$resolve_rc" -eq 0 ]] || return "$resolve_rc"
 	resolved_mode=$(jq -er '.mode' <<<"$_FULL_LOOP_RESOLVED_SOURCE_JSON") || return 1
-	case "$resolved_mode" in direct | aggregate) ;; *) return 1 ;; esac
+	case "$resolved_mode" in direct | aggregate | snapshot) ;; *) return 1 ;; esac
 	_FULL_LOOP_AGGREGATE_RECOVERY_EXPECTED="$_FULL_LOOP_RESOLVED_EXPECTED_SOURCES"
 	return 0
 }
