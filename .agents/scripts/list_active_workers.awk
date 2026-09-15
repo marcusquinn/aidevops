@@ -5,7 +5,7 @@
 # Extracted from list_active_worker_processes() in worker-lifecycle-common.sh
 # to reduce shell nesting depth (GH#17561).
 #
-# Input: ps axwwo pid,stat,etime,command output (t2190: `ww` keeps Linux
+# Input: ps axwwo uid,pid,stat,etime,command output (t2190: `ww` keeps Linux
 # procps from truncating the command column to the terminal width when piped,
 # which would strip --role worker, /full-loop, --session-key issue-NNN, and
 # --dir <path> substrings past position 80 and defeat the patterns below).
@@ -14,6 +14,11 @@
 # Deduplication key: namespaced issue/session identity|worktree_dir
 # Preference: outer launchers (headless-runtime-helper.sh) over child processes.
 {
+    # GH#31934: logical worker inventory is runner-local. Filter on the
+    # effective numeric UID before identity/worktree deduplication so a foreign
+    # process with the same issue/session cannot suppress an owned process.
+    if ($1 != effective_uid) next
+
     is_headless_wrapper = ($0 ~ /(^|[[:space:]\/])headless-runtime-helper\.sh([[:space:]]|$)/ && $0 ~ /(^|[[:space:]])run([[:space:]]|$)/ && $0 ~ /--role[[:space:]]+worker/)
     has_worker_prompt = ($0 ~ /\/full-loop/ || $0 ~ /\/review-issue-pr/)
     has_worker_binary = ($0 ~ /(^|[[:space:]\/])\.?opencode([[:space:]]|$)/ || $0 ~ /(^|[[:space:]\/])headless-runtime-helper\.sh([[:space:]]|$)/)
@@ -23,14 +28,14 @@
     if ($0 ~ /Supervisor Pulse/) next
     if (!has_worker_binary) next
 
-    # $2 is the stat column (e.g., S, SN, Ss, Z, Zs, T, TN)
-    stat = $2
+    # $3 is the stat column (e.g., S, SN, Ss, Z, Zs, T, TN)
+    stat = $3
     # Exclude zombies (Z*) and stopped processes (T*)
     if (stat ~ /^[ZT]/) next
 
     # Build output line: pid, etime, command (skip stat)
-    line = $1 " " $3
-    for (i = 4; i <= NF; i++) line = line " " $i
+    line = $2 " " $4
+    for (i = 5; i <= NF; i++) line = line " " $i
 
     # Extract issue number for dedup (matches "Issue #NNN" or "issue-NNN")
     issue = ""

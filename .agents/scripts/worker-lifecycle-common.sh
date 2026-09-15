@@ -1024,9 +1024,12 @@ _format_duration() {
 # Output: one line per logical worker: "pid etime command..."
 #######################################
 list_active_worker_processes() {
-	local script_dir
+	local script_dir effective_uid
+	local -a pipeline_status
 	script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 	local awk_script="${script_dir}/list_active_workers.awk"
+	effective_uid=$(id -u) || return 1
+	[[ "$effective_uid" =~ ^[0-9]+$ ]] || return 1
 	# Awk logic extracted to list_active_workers.awk (GH#17561)
 	# t2190: use `axww` (unlimited line width) so Linux procps doesn't
 	# truncate the command column to the detected terminal width (~80
@@ -1038,7 +1041,12 @@ list_active_worker_processes() {
 	# unassigns the worker, and every dispatch cycle loops on the same
 	# issue. macOS BSD ps already emits full commands; `ww` is harmless
 	# there (and also supported).
-	ps axwwo pid,stat,etime,command | awk -f "$awk_script"
+	# Include numeric UID in the snapshot rather than relying on usernames or a
+	# platform-specific ps user selector. The parser filters before deduplication,
+	# so an identical foreign-user session cannot hide a runner-owned worker.
+	ps axwwo uid,pid,stat,etime,command | awk -v effective_uid="$effective_uid" -f "$awk_script"
+	pipeline_status=("${PIPESTATUS[@]}")
+	[[ "${pipeline_status[0]}" -eq 0 && "${pipeline_status[1]}" -eq 0 ]] || return 1
 	return 0
 }
 
@@ -1814,8 +1822,13 @@ _emit_stdout_line_safely() {
 # Returns: count via stdout
 #######################################
 count_active_workers() {
-	local count
-	count=$(list_active_worker_processes | wc -l | tr -d ' ') || count=0
+	local count worker_processes
+	worker_processes=$(list_active_worker_processes) || return 1
+	if [[ -z "$worker_processes" ]]; then
+		count=0
+	else
+		count=$(printf '%s\n' "$worker_processes" | wc -l | tr -d ' ') || return 1
+	fi
 	_emit_stdout_line_safely "$count"
 	return 0
 }
