@@ -6,6 +6,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HELPER="$SCRIPT_DIR/../pulse-current-state-helper.sh"
+STATS_HELPER="$SCRIPT_DIR/../pulse-stats-helper.sh"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 export HOME="$TMP_DIR/home"
@@ -303,6 +304,27 @@ json.dump(stats, open(path, 'w'))
 PY
 "$HELPER" --log-dir "$TMP_DIR" --repo-path "$PWD" --window 15m --json >"$json_output"
 jq -e '.policy_holds.availability == "not_observed" and .policy_holds.active_in_window == false and .policy_holds.count == 0 and .policy_holds.last_observed_at == null' "$json_output" >/dev/null
+
+printf '{"counters":{}} malformed-trailing-data\n' >"$TMP_DIR/pulse-stats.json"
+"$HELPER" --log-dir "$TMP_DIR" --repo-path "$PWD" --window 15m --json >"$json_output"
+jq -e '.pulse_stats.availability == "malformed" and .policy_holds.availability == "malformed"
+  and .policy_holds.active_in_window == null and .policy_holds.count == null' "$json_output" >/dev/null
+
+printf '{"counters":{},"gauges":{"bad":{"value":1,"ts":"not-a-time"}}}\n' >"$TMP_DIR/pulse-stats.json"
+"$HELPER" --log-dir "$TMP_DIR" --repo-path "$PWD" --window 15m --json >"$json_output"
+jq -e '.pulse_stats.availability == "malformed" and .pulse_stats.reason == "invalid-json-or-schema"' "$json_output" >/dev/null
+
+printf '{"counters":{}} malformed-trailing-data\n' >"$TMP_DIR/pulse-stats.json"
+PULSE_STATS_FILE="$TMP_DIR/pulse-stats.json" "$STATS_HELPER" increment dispatch_candidate_blocked_policy_gate
+"$HELPER" --log-dir "$TMP_DIR" --repo-path "$PWD" --window 15m --json >"$json_output"
+jq -e '.pulse_stats.availability == "available" and .policy_holds.availability == "observed"
+  and .policy_holds.active_in_window == true and .policy_holds.count == 1
+  and .policy_holds.last_observed_at != null' "$json_output" >/dev/null
+
+rm -f "$TMP_DIR/pulse-stats.json"
+"$HELPER" --log-dir "$TMP_DIR" --repo-path "$PWD" --window 15m --json >"$json_output"
+jq -e '.pulse_stats.availability == "unavailable" and .pulse_stats.reason == "missing"
+  and .policy_holds.availability == "unavailable" and .policy_holds.count == null' "$json_output" >/dev/null
 python3 - "$HELPER" "${SCRIPT_DIR}/../pulse-current-state.py" <<'PY'
 import pathlib
 import sys
