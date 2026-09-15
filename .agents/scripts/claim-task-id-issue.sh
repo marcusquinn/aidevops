@@ -33,6 +33,13 @@
 [[ -n "${_CLAIM_TASK_ID_ISSUE_LIB_LOADED:-}" ]] && return 0
 _CLAIM_TASK_ID_ISSUE_LIB_LOADED=1
 
+# Typed issue-body composition outcomes. Callers use these to distinguish
+# absent author input from a supplied body that failed normalization or later
+# composition. Keep these values stable for sourced consumers and tests.
+CLAIM_COMPOSE_MISSING_INPUT_RC="${CLAIM_COMPOSE_MISSING_INPUT_RC:-10}"
+CLAIM_COMPOSE_NORMALIZE_RC="${CLAIM_COMPOSE_NORMALIZE_RC:-11}"
+CLAIM_COMPOSE_FAILED_RC="${CLAIM_COMPOSE_FAILED_RC:-12}"
+
 # Defensive SCRIPT_DIR fallback (matches issue-sync-lib.sh:35-41 pattern)
 if [[ -z "${SCRIPT_DIR:-}" ]]; then
 	_lib_path="${BASH_SOURCE[0]%/*}"
@@ -467,15 +474,15 @@ _read_brief_what_section() {
 #        refuse to create a stub issue (t1937) when neither description nor
 #        brief is available
 #
-# Echoes the composed body text. Returns 0 on success, 1 when neither a
-# description nor a brief file is available (caller should skip issue creation).
+# Echoes the composed body text. Returns 0 on success or a typed
+# CLAIM_COMPOSE_* status when the caller should skip issue creation.
 _compose_issue_body() {
 	local title="$1"
 	local description="$2"
 	local fmt_helper="${SCRIPT_DIR}/issue-body-format-helper.sh"
 	if [[ -n "$description" && -x "$fmt_helper" ]]; then
 		local normalized_description=""
-		normalized_description=$("$fmt_helper" normalize "$description" 2>/dev/null) || return 1
+		normalized_description=$("$fmt_helper" normalize "$description") || return "$CLAIM_COMPOSE_NORMALIZE_RC"
 		description="$normalized_description"
 	fi
 
@@ -507,8 +514,8 @@ _compose_issue_body() {
 
 		# Inline Worker Guidance (How section) and full Task Brief.
 		# These helpers are sourced from issue-sync-lib.sh at the top of this script.
-		body=$(_compose_issue_worker_guidance "$body" "$brief_file") || return 1
-		body=$(_compose_issue_brief "$body" "$brief_file") || return 1
+		body=$(_compose_issue_worker_guidance "$body" "$brief_file") || return "$CLAIM_COMPOSE_FAILED_RC"
+		body=$(_compose_issue_brief "$body" "$brief_file") || return "$CLAIM_COMPOSE_FAILED_RC"
 		if declare -F _compose_issue_brief_workflow_reference >/dev/null 2>&1; then
 			body=$(_compose_issue_brief_workflow_reference "$body")
 		fi
@@ -544,7 +551,7 @@ _compose_issue_body() {
 		log_error "  issue-sync-helper.sh push ${task_id}"
 		log_error "  OR: gh issue create --title \"${title}\" --body \"<description>\"" # aidevops-allow: raw-gh-wrapper
 		echo ""
-		return 1
+		return "$CLAIM_COMPOSE_MISSING_INPUT_RC"
 	fi
 
 	# t2838: inject Parent: line so _gh_auto_link_sub_issue (when called)
@@ -565,6 +572,34 @@ _compose_issue_body() {
 	fi
 
 	echo "$body"
+	return 0
+}
+
+# Report a typed composition failure without claiming supplied input was absent.
+# The task ID has already been allocated, so diagnostics must preserve its
+# recovery path instead of suggesting allocation rollback or reuse.
+_report_issue_body_compose_failure() {
+	local title="$1"
+	local compose_rc="$2"
+	local task_id=""
+	[[ "$title" =~ ^(t[0-9]+) ]] && task_id="${BASH_REMATCH[1]}"
+
+	case "$compose_rc" in
+	"$CLAIM_COMPOSE_MISSING_INPUT_RC")
+		log_warn "Skipping issue creation — no description or task brief is available. Task ID is secured."
+		;;
+	"$CLAIM_COMPOSE_NORMALIZE_RC")
+		log_warn "Skipping issue creation — supplied description failed canonical body normalization. Task ID is secured."
+		log_warn "Recovery: correct ambiguous Files Scope declarations to use explicit EDIT:/NEW: paths."
+		;;
+	*)
+		log_warn "Skipping issue creation — issue body composition failed (status ${compose_rc}). Task ID is secured."
+		;;
+	esac
+
+	if [[ -n "$task_id" ]]; then
+		log_warn "Then add or update TODO.md and todo/tasks/${task_id}-brief.md, and run: issue-sync-helper.sh push ${task_id}"
+	fi
 	return 0
 }
 

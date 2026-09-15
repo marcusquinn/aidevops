@@ -35,6 +35,8 @@
 #   11. bare fallback recovers partial ref persistence without duplicates
 #   12. delegated creation reports mapping persistence failure
 #   13. long TODO early-match verification is SIGPIPE-safe under pipefail
+#   14. supplied description normalization failures retain a typed cause
+#   15. normalization failures report an actionable secured-ID recovery path
 
 set -u
 
@@ -516,6 +518,58 @@ test_long_todo_early_match_is_pipefail_safe() {
 	return 0
 }
 test_long_todo_early_match_is_pipefail_safe
+
+# ---------------------------------------------------------------------------
+# Test 14 — a supplied non-empty description with ambiguous legacy scope must
+# retain the normalizer failure instead of being classified as missing input.
+# ---------------------------------------------------------------------------
+test_supplied_description_normalization_failure_is_typed() {
+	local name="14: supplied description normalization failure retains typed cause"
+	local tmpdir old_repo body rc=0
+	tmpdir=$(mktemp -d)
+	# shellcheck disable=SC2064
+	trap "rm -rf '$tmpdir'" RETURN
+	old_repo="$REPO_PATH"
+	REPO_PATH="$tmpdir"
+
+	body=$(_compose_issue_body "t9590: typed composition failure" \
+		$'## What\n\nPreserve this non-empty description.\n\n### Files to Modify\n\n- `.agents/scripts/claim-task-id.sh`\n\n## Acceptance Criteria\n\n- [ ] Report the real cause.' \
+		2>"${tmpdir}/compose-error") || rc=$?
+	REPO_PATH="$old_repo"
+
+	if [[ $rc -eq "$CLAIM_COMPOSE_NORMALIZE_RC" && -z "$body" ]] &&
+		grep -q 'Files Scope requires owned author-side repair' "${tmpdir}/compose-error"; then
+		pass "$name"
+	else
+		fail "$name" "rc=${rc} body=${body:-<empty>} error=$(<"${tmpdir}/compose-error")"
+	fi
+	return 0
+}
+test_supplied_description_normalization_failure_is_typed
+
+# ---------------------------------------------------------------------------
+# Test 15 — caller-facing diagnostics name normalization and give the secured
+# task ID a deterministic recovery path.
+# ---------------------------------------------------------------------------
+test_normalization_failure_reports_recovery_path() {
+	local name="15: normalization failure reports secured-ID recovery path"
+	local tmpdir
+	tmpdir=$(mktemp -d)
+	# shellcheck disable=SC2064
+	trap "rm -rf '$tmpdir'" RETURN
+
+	_report_issue_body_compose_failure "t9590: typed composition failure" \
+		"$CLAIM_COMPOSE_NORMALIZE_RC" 2>"${tmpdir}/diagnostic"
+
+	if grep -q 'supplied description failed canonical body normalization' "${tmpdir}/diagnostic" &&
+		grep -q 'issue-sync-helper.sh push t9590' "${tmpdir}/diagnostic"; then
+		pass "$name"
+	else
+		fail "$name" "diagnostic=$(<"${tmpdir}/diagnostic")"
+	fi
+	return 0
+}
+test_normalization_failure_reports_recovery_path
 
 # ---------------------------------------------------------------------------
 # Summary
