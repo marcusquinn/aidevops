@@ -81,6 +81,10 @@ readonly HEADLESS_ROLE_MODEL_REPLAY="model-replay"
 readonly HEADLESS_EGRESS_MODE_AUTO="auto"
 readonly HEADLESS_EGRESS_MODE_REQUIRED="required"
 
+# Shared session-key lock ownership and stale-state reconciliation.
+# shellcheck source=./headless-session-locks.sh
+source "${SCRIPT_DIR}/headless-session-locks.sh"
+
 # Resolve the public-triage whole-process egress posture. Triage always uses at
 # least auto mode: a configured backend becomes fail-closed required mode, while
 # an absent backend retains the no-tools, isolated-runtime boundary. Operators
@@ -973,8 +977,9 @@ Backoff granularity:
 Dedup guard (GH#6538):
   Each 'run' invocation acquires a PID lock file keyed by --session-key.
   If a live process already holds the lock, the second invocation exits
-  immediately (exit 0) without spawning a worker. Stale locks (dead PIDs)
-  are cleaned up automatically. Lock files: $STATE_DIR/locks/<key>.pid
+  immediately (exit 0) without spawning a worker. Stale locks are reclaimed
+  on same-key acquisition and by bounded Pulse preflight maintenance.
+  Lock files: $STATE_DIR/locks/<key>.pid
 
 Defaults:
   Model list is derived from routing table + auth availability (GH#17769).

@@ -59,6 +59,7 @@ STUB
 		cleanup_orphans() { return 0; }
 		cleanup_stale_opencode() { return 0; }
 		cleanup_stalled_workers() { return 0; }
+		cleanup_stale_session_locks() { printf 'session-lock-cleanup\n' >"${TEST_DIR}/session-lock-cleanup-marker"; return 0; }
 		cleanup_worktrees() { return 0; }
 		cleanup_stashes() { sleep 5; return 0; }
 		reap_zombie_workers() { return 0; }
@@ -71,6 +72,9 @@ STUB
 
 	if [[ "$elapsed" -ge 3 ]]; then
 		fail "preflight waited ${elapsed}s for stash cleanup; expected async return under 3s"
+	fi
+	if [[ ! -f "${TEST_DIR}/session-lock-cleanup-marker" ]]; then
+		fail "preflight did not run stale session-lock cleanup"
 	fi
 
 	for _ in 1 2 3 4 5; do
