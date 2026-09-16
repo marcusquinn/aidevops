@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Agent sandbox backend registry",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "default_backend", "receipt_schema", "defaults", "backends"],
+  "properties": {
+    "$schema": {"type": "string"},
+    "schema_version": {"const": 1},
+    "default_backend": {"const": "local"},
+    "receipt_schema": {"const": "aidevops.agent-sandbox.receipt/v1"},
+    "defaults": {
+      "type": "object",
+      "required": ["cpus", "memory", "command_timeout_seconds", "idle_timeout_seconds", "lease_ttl_seconds", "retained_snapshots", "network_mode", "workspace_target"],
+      "properties": {
+        "cpus": {"type": "integer", "minimum": 1},
+        "memory": {"type": "string", "pattern": "^[1-9][0-9]*[MG]$"},
+        "command_timeout_seconds": {"type": "integer", "minimum": 1},
+        "idle_timeout_seconds": {"type": "integer", "minimum": 60},
+        "lease_ttl_seconds": {"type": "integer", "minimum": 60},
+        "retained_snapshots": {"const": 0},
+        "network_mode": {"const": "internal"},
+        "workspace_target": {"const": "/workspace"}
+      },
+      "additionalProperties": false
+    },
+    "backends": {
+      "type": "object",
+      "required": ["local", "apple-container", "bubbles", "cloudron"],
+      "additionalProperties": {
+        "type": "object",
+        "required": ["mode", "executable", "description", "capabilities"],
+        "properties": {
+          "mode": {"enum": ["fallback", "executable", "capability-only"]},
+          "executable": {"type": "boolean"},
+          "description": {"type": "string", "minLength": 1},
+          "requirements": {"type": "object"},
+          "capabilities": {"type": "object", "additionalProperties": {"type": "boolean"}},
+          "foundation_capabilities": {"type": "object", "additionalProperties": {"type": "boolean"}},
+          "unsupported": {"type": "object", "additionalProperties": {"type": "string"}},
+          "evidence": {"type": "object"}
+        },
+        "additionalProperties": false
+      }
+    }
+  }
+}
