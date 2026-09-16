@@ -212,6 +212,38 @@ _maybe_rotate_isolated_auth() {
 }
 
 #######################################
+# Return whether startup output contains an attributable provider failure that
+# should stop a worker before its first model event. Reuse the canonical trusted
+# classifier so IDs, paths, tool output, and other incidental text cannot create
+# provider backoff.
+#
+# Args:
+#   $1 output_file — worker startup output
+#
+# Returns: 0 for trusted rate-limit/quota/server failures, 1 otherwise.
+#######################################
+_output_has_trusted_fast_provider_failure() {
+	local output_file="$1"
+	local classification=""
+	local reason="" provider_type="" provider_status="" classification_source="" classification_pattern=""
+
+	[[ -f "$output_file" ]] || return 1
+	classification=$(_classify_trusted_provider_failure "$output_file" 2>/dev/null) || return 1
+	[[ -n "$classification" ]] || return 1
+	IFS=$'\t' read -r reason provider_type provider_status classification_source classification_pattern <<<"$classification"
+
+	case "$reason" in
+	rate_limit | quota_exceeded)
+		return 0
+		;;
+	provider_error)
+		[[ "$provider_type" == "server_error" ]] && return 0
+		;;
+	esac
+	return 1
+}
+
+#######################################
 # _launch_rate_limit_fast_monitor: background 30s sentinel that detects
 # Anthropic 429 / provider-overload patterns on the FIRST API call and
 # kills the worker cleanly before the 20-min opencode retry zombie forms.
@@ -246,6 +278,7 @@ _launch_rate_limit_fast_monitor() {
 		set +e
 		local elapsed=0
 		local sentinel="${exit_code_file}.rate_limit_fast"
+		local activity_detected=""
 
 		while [[ "$elapsed" -lt "$monitor_window" ]]; do
 			sleep "$poll_interval"
@@ -259,15 +292,13 @@ _launch_rate_limit_fast_monitor() {
 			# Only fire if no LLM activity has been produced yet.
 			# If the model already started working (step_start, tool, etc.),
 			# this is not a dead-on-arrival rate limit — let the watchdog handle it.
-			if [[ -f "$output_file" ]] && grep -q '"type"' "$output_file" 2>/dev/null; then
+			activity_detected=$(output_has_activity "$output_file" 2>/dev/null) || activity_detected="0"
+			if [[ "$activity_detected" == "1" ]]; then
 				return 0
 			fi
 
-			# Check for rate-limit / provider-overload patterns in the output.
-			# Patterns mirror classify_failure_reason() in headless-runtime-lib.sh.
-			if [[ -f "$output_file" ]] && \
-				grep -qiE '(429|rate.?limit|too.many.requests|overloaded|service.unavailable|internal.server.error|50[0-9] )' \
-				"$output_file" 2>/dev/null; then
+			# Only canonical, attributable provider evidence may stop the worker.
+			if _output_has_trusted_fast_provider_failure "$output_file"; then
 				# Kill the worker cleanly — this is a transient API condition.
 				kill -TERM "$worker_pid" 2>/dev/null || true
 				sleep 2
