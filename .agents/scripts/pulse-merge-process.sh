@@ -558,6 +558,27 @@ _pmp_fetch_ready_pr_list() {
 	return $?
 }
 
+# Retire a terminal hint only after claiming its generation and refreshing its
+# state. A reopen/new event during the read must remain eligible for polling.
+_pmp_retire_terminal_queue_target() {
+	local repo_slug="$1" pr_number="$2" target_timeout="$3"
+	local _PULSE_MERGE_QUEUE_CONTEXT="" _PULSE_MERGE_QUEUE_OWNED=0 _PULSE_MERGE_QUEUE_DIRTY=0
+	local terminal_json="" result=1
+	declare -F _pulse_merge_queue_begin >/dev/null 2>&1 || return 1
+	declare -F _pulse_merge_queue_refresh_object >/dev/null 2>&1 || return 1
+	declare -F _pulse_merge_queue_finish >/dev/null 2>&1 || return 1
+	_pulse_merge_queue_begin "$repo_slug" "$pr_number" poll || return 1
+	[[ "$_PULSE_MERGE_QUEUE_OWNED" == 1 ]] || return 1
+	if AIDEVOPS_GH_READ_TIMEOUT="$target_timeout" _pulse_merge_queue_refresh_object "$repo_slug" terminal_json &&
+		printf '%s' "$terminal_json" | jq -e --argjson pr "$pr_number" \
+			'.number == $pr and ((.state // "" | ascii_upcase) | . == "CLOSED" or . == "MERGED")' >/dev/null 2>&1; then
+		result=2
+	fi
+	_pulse_merge_queue_finish "$result"
+	[[ "$result" == 2 ]] || return 1
+	return 0
+}
+
 #######################################
 # Add due queue targets that fell outside the bounded broad PR list. Each
 # target is fetched authoritatively and remains subject to the normal per-PR
@@ -599,6 +620,12 @@ _pmp_include_queued_pr_targets() {
 			gh_pr_view "$pr_number" --repo "$repo_slug" --json "$(_pulse_merge_ready_pr_json_fields)" 2>/dev/null) || target_json=""
 		if ! printf '%s' "$target_json" | jq -e --argjson pr "$pr_number" \
 			'type == "object" and .number == $pr and ((.state // "") | ascii_upcase) == "OPEN"' >/dev/null 2>&1; then
+			if printf '%s' "$target_json" | jq -e --argjson pr "$pr_number" \
+				'.number == $pr and ((.state // "" | ascii_upcase) | . == "CLOSED" or . == "MERGED")' >/dev/null 2>&1 &&
+				_pmp_retire_terminal_queue_target "$repo_slug" "$pr_number" "$target_timeout"; then
+				echo "[pulse-wrapper] Merge pass: terminal retry target PR #${pr_number} in ${repo_slug} rechecked under queue claim; handled generation acknowledged" >>"$LOGFILE"
+				continue
+			fi
 			echo "[pulse-wrapper] Merge pass: due exact retry target PR #${pr_number} in ${repo_slug} was unavailable or no longer open; retaining hint for bounded recovery" >>"$LOGFILE"
 			continue
 		fi
