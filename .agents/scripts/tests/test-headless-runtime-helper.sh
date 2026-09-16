@@ -320,6 +320,9 @@ test_terminal_attempt_evidence_preserves_classification() {
 }
 
 run_failure_evidence_tests() {
+	test_fast_rate_limit_classifier_requires_trusted_provider_evidence
+	test_fast_rate_limit_monitor_ignores_uuid_metadata
+	test_fast_rate_limit_monitor_stops_attributable_429
 	test_failure_classifier_records_provenance
 	test_terminal_attempt_evidence_preserves_classification
 	test_failure_classifier_distinguishes_quota_exhaustion

@@ -918,6 +918,82 @@ test_activity_watchdog_classifiers_detect_rate_limit_and_ci_wait() {
 	return 0
 }
 
+test_fast_rate_limit_classifier_requires_trusted_provider_evidence() {
+	local output_file="${TEST_ROOT}/fast-rate-limit-classifier.out"
+	local failures=0
+
+	printf '%s\n' 'attempt_id=attempt:98810bdf-b2f1-4292-b00b-eed9c88a28fc' >"$output_file"
+	_output_has_trusted_fast_provider_failure "$output_file" && failures=$((failures + 1))
+
+	printf '%s\n' 'SQLiteError: disk I/O error after local worker cleanup' >"$output_file"
+	_output_has_trusted_fast_provider_failure "$output_file" && failures=$((failures + 1))
+
+	printf '%s\n' '{"type":"error","error":{"name":"APIError","data":{"message":"Too Many Requests","statusCode":429,"isRetryable":true}}}' >"$output_file"
+	_output_has_trusted_fast_provider_failure "$output_file" || failures=$((failures + 1))
+
+	printf '%s\n' 'OpenAI HTTP 503 service unavailable' >"$output_file"
+	_output_has_trusted_fast_provider_failure "$output_file" || failures=$((failures + 1))
+
+	if [[ "$failures" -eq 0 ]]; then
+		print_result "fast rate-limit classifier requires trusted provider evidence" 0
+	else
+		print_result "fast rate-limit classifier requires trusted provider evidence" 1 \
+			"classification failures=$failures"
+	fi
+	return 0
+}
+
+test_fast_rate_limit_monitor_ignores_uuid_metadata() {
+	local output_file="${TEST_ROOT}/fast-rate-limit-uuid.out"
+	local exit_code_file="${TEST_ROOT}/fast-rate-limit-uuid.exit"
+	local monitor_pid_file="${TEST_ROOT}/fast-rate-limit-uuid.monitor"
+	local worker_pid="" monitor_pid="" worker_alive=0
+
+	printf '%s\n' 'attempt_id=attempt:98810bdf-b2f1-4292-b00b-eed9c88a28fc' >"$output_file"
+	sleep 20 &
+	worker_pid=$!
+	_launch_rate_limit_fast_monitor "$output_file" "$worker_pid" "$exit_code_file" 1 >"$monitor_pid_file"
+	monitor_pid=$(<"$monitor_pid_file")
+	wait "$monitor_pid" 2>/dev/null || true
+	kill -0 "$worker_pid" 2>/dev/null && worker_alive=1
+	kill -TERM "$worker_pid" 2>/dev/null || true
+	wait "$worker_pid" 2>/dev/null || true
+
+	if [[ "$worker_alive" -eq 1 && ! -e "${exit_code_file}.rate_limit_fast" && ! -e "$exit_code_file" ]]; then
+		print_result "fast rate-limit monitor ignores 429 inside UUID metadata" 0
+	else
+		print_result "fast rate-limit monitor ignores 429 inside UUID metadata" 1 \
+			"worker_alive=$worker_alive sentinel=$([[ -e "${exit_code_file}.rate_limit_fast" ]] && printf yes || printf no)"
+	fi
+	return 0
+}
+
+test_fast_rate_limit_monitor_stops_attributable_429() {
+	local output_file="${TEST_ROOT}/fast-rate-limit-structured.out"
+	local exit_code_file="${TEST_ROOT}/fast-rate-limit-structured.exit"
+	local monitor_pid_file="${TEST_ROOT}/fast-rate-limit-structured.monitor"
+	local worker_pid="" monitor_pid="" exit_value=""
+
+	printf '%s\n' '{"type":"error","error":{"name":"APIError","data":{"message":"Too Many Requests","statusCode":429,"isRetryable":true}}}' >"$output_file"
+	sleep 20 &
+	worker_pid=$!
+	_launch_rate_limit_fast_monitor "$output_file" "$worker_pid" "$exit_code_file" 1 >"$monitor_pid_file"
+	monitor_pid=$(<"$monitor_pid_file")
+	wait "$monitor_pid" 2>/dev/null || true
+	wait "$worker_pid" 2>/dev/null || true
+	[[ -f "$exit_code_file" ]] && exit_value=$(<"$exit_code_file")
+
+	if ! kill -0 "$worker_pid" 2>/dev/null && [[ "$exit_value" == "0" && -f "${exit_code_file}.rate_limit_fast" ]]; then
+		print_result "fast rate-limit monitor stops attributable structured 429" 0
+	else
+		kill -TERM "$worker_pid" 2>/dev/null || true
+		wait "$worker_pid" 2>/dev/null || true
+		print_result "fast rate-limit monitor stops attributable structured 429" 1 \
+			"exit_value=${exit_value:-<empty>} sentinel=$([[ -e "${exit_code_file}.rate_limit_fast" ]] && printf yes || printf no)"
+	fi
+	return 0
+}
+
 test_failure_classifier_records_provenance() {
 	local output_file="${TEST_ROOT}/failure-classifier.out"
 	local reason_file="${TEST_ROOT}/failure-classifier.reason"
