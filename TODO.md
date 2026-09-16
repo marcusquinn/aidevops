@@ -1368,6 +1368,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18438 fix: prevent stale release preflight baselines from blocking releases #bug #quality #release ref:GH#31959
 
+- [ ] t18439 chore(release): aggregate PR #31958 and PR #31960 provenance #interactive #orchestration #release #tier:standard -> [todo/tasks/t18439-brief.md] ref:GH#31962
+
 ## In Progress
 
 - [x] t18430 Update OpenCode GitHub Action pin to v1.18.30 #auto-dispatch #dependencies #github_actions #interactive #tier:simple ref:GH#31828 started:2026-09-12 pr:#31829 completed:2026-09-12
