@@ -1120,7 +1120,14 @@ printf 'PASS failed pre-publication preparation admits only reviewed direct, agg
 		local expected_sources="$3"
 		[[ "$repo" == "test/repo" && "$source_pr" == "42" && -n "$expected_sources" ]] || return 1
 		_FULL_LOOP_AGGREGATE_RECOVERY_EXPECTED="$prepublication_expected"
-		_FULL_LOOP_RESOLVED_SOURCE_JSON="{\"mode\":\"${prepublication_mode}\"}"
+		if [[ "$prepublication_mode" == "snapshot" ]]; then
+			_FULL_LOOP_RESOLVED_SOURCE_JSON=$(jq -cn \
+				--arg merge 5555555555555555555555555555555555555555 \
+				--arg base 1111111111111111111111111111111111111111 \
+				'{mode:"snapshot",source_merge:$merge,snapshot_base:$base}')
+		else
+			_FULL_LOOP_RESOLVED_SOURCE_JSON="{\"mode\":\"${prepublication_mode}\"}"
+		fi
 		printf 'prepare-prepublication\n' >>"$RESERVED_LOG"
 		return 0
 	}
@@ -1232,6 +1239,14 @@ printf 'PASS failed pre-publication preparation admits only reviewed direct, agg
 		_AIDEVOPS_RELEASE_LANE_TOKEN=lane-reopened
 		return 0
 	}
+	release_lane_repin_recovered_snapshot() {
+		local repo="$1" source_pr="$2" expected="$3" snapshot="$4" base="$5"
+		[[ "$repo" == "test/repo" && "$source_pr" == "42" && "$expected" == "$expanded_manifest" &&
+			"$snapshot" == "5555555555555555555555555555555555555555" &&
+			"$base" == "1111111111111111111111111111111111111111" ]] || return 1
+		printf 'repin\n' >>"$RESERVED_LOG"
+		return 0
+	}
 	release_lane_finish_reserved_authorization() {
 		[[ "$authorization" == "$refresh_expected_sources" && "$lane_phase" == "reserved-authorization-refresh" ]] || return 1
 		printf 'finish\n' >>"$RESERVED_LOG"
@@ -1336,6 +1351,20 @@ printf 'PASS failed pre-publication preparation admits only reviewed direct, agg
 	[[ "$(tr '\n' ' ' <"$RESERVED_LOG")" == "prepare-prepublication validate verify-failure acquire reopen " ]]
 	[[ "$authorization" == "$expanded_manifest" && "$lane_phase" == "reserved" ]]
 	printf 'PASS verified same-manifest retry reopens without a redundant authorization write\n'
+
+	: >"$RESERVED_LOG"
+	authorization="$expanded_manifest"
+	lane_phase=reconcile-required
+	test_lane_sources="$expanded_manifest"
+	prepublication_marker=false
+	prepublication_failed_sources="$expanded_manifest"
+	prepublication_mode=snapshot
+	prepublication_expected="$expanded_manifest"
+	_full_loop_recovery_expand_reserved_authorization test/repo 42 42,43 >/dev/null
+	[[ "$(tr '\n' ' ' <"$RESERVED_LOG")" == "prepare-prepublication validate verify-failure acquire reopen repin " ]]
+	[[ "$authorization" == "$expanded_manifest" && "$lane_phase" == "reserved" ]]
+	prepublication_mode=aggregate
+	printf 'PASS verified expanded snapshot retry repins before release preparation\n'
 
 	: >"$RESERVED_LOG"
 	authorization="$old_manifest"
