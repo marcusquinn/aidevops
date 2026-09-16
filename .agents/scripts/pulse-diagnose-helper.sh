@@ -2034,12 +2034,12 @@ _api_budget_cache_decision_count() {
 		printf '0'
 		return 0
 	fi
-	local count=0
-	local log_ts="" caller="" path="" auth="" pool="" route="" budget=""
-	while IFS=$'\t' read -r log_ts caller path auth pool route budget; do
-		[[ "$caller" == "$cache_name" && "$route" == "$decision" ]] && count=$((count + 1))
-	done < "$api_log"
-	printf '%s' "$count"
+	# Count in one streaming process: per-line shell parsing of long-lived API
+	# logs can exceed the pulse-check collector's entire diagnostic budget.
+	awk -F'\t' -v cache="$cache_name" -v decision="$decision" -v cache_field=2 -v decision_field=6 '
+		$cache_field == cache && $decision_field == decision { count++ }
+		END { printf "%d", count + 0 }
+	' "$api_log"
 	return 0
 }
 

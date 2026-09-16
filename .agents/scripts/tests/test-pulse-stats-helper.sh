@@ -68,7 +68,9 @@ quarantines=("$PULSE_STATS_FILE".corrupt.*)
 shopt -u nullglob
 [[ ${#quarantines[@]} -eq 1 ]]
 cmp "$malformed_fixture" "${quarantines[0]}"
-quarantine_mode=$(stat -f '%Lp' "${quarantines[0]}" 2>/dev/null || stat -c '%a' "${quarantines[0]}")
+# GNU stat -f can emit filesystem data before failing on the BSD format.
+# Python is already required by this fixture and reads file modes portably.
+quarantine_mode=$(python3 -c 'import os, stat, sys; print(format(stat.S_IMODE(os.stat(sys.argv[1]).st_mode), "o"))' "${quarantines[0]}")
 [[ "$quarantine_mode" == "600" ]]
 
 printf '{"counters":{}} trailing-invalid\n' >"$PULSE_STATS_FILE"
