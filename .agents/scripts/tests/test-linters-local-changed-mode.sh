@@ -354,6 +354,47 @@ test_help_and_invalid_arguments() {
 	return 0
 }
 
+test_validator_scanners_ignore_heredoc_fixtures() {
+	local fixture=""
+	fixture=$(mktemp)
+	{
+		printf '%s\n' 'outer() {'
+		printf '\t%s\n' "cat <<'MOCK_SCRIPT'"
+		printf '%s\n' 'inner() {'
+		printf '\tcase "\0441" in\n'
+		printf '\t*) printf '\''%%s\\n'\'' "\0442" ;;\n'
+		printf '\tesac\n}\n'
+		printf '%s\n' 'MOCK_SCRIPT'
+		printf '\treturn 0\n}\n'
+		printf '%s\n' 'parse_args() {'
+		printf '\tcase "\0441" in\n'
+		printf '\t--help) return 0 ;;\n'
+		printf '\t*) return 1 ;;\n'
+		printf '\tesac\n}\n'
+	} >"$fixture"
+	local previous_files=("${ALL_SH_FILES[@]}")
+	ALL_SH_FILES=("$fixture")
+	local return_output=""
+	local positional_output=""
+	local return_rc=0
+	local positional_rc=0
+	return_output=$(check_return_statements 2>&1) || return_rc=$?
+	positional_output=$(check_positional_parameters 2>&1) || positional_rc=$?
+	ALL_SH_FILES=("${previous_files[@]}")
+	rm -f "$fixture"
+	if [[ "$return_rc" -eq 0 && "$return_output" == *"Files with violations: 0"* ]]; then
+		print_result "return scanner ignores embedded heredoc scripts" 0
+	else
+		print_result "return scanner ignores embedded heredoc scripts" 1 "$return_output"
+	fi
+	if [[ "$positional_rc" -eq 0 && "$positional_output" == *"Positional parameters: 0 violations"* ]]; then
+		print_result "positional scanner ignores embedded heredoc scripts" 0
+	else
+		print_result "positional scanner ignores embedded heredoc scripts" 1 "$positional_output"
+	fi
+	return 0
+}
+
 main() {
 	test_changed_mode_gate_set
 	test_mode_defaults_and_full_override
@@ -361,6 +402,7 @@ main() {
 	test_explicit_base_override
 	test_main_base_and_missing_ref
 	test_help_and_invalid_arguments
+	test_validator_scanners_ignore_heredoc_fixtures
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
 		return 1

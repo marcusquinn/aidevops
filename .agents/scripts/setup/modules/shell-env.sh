@@ -118,6 +118,7 @@ _omz_offer_shell_change() {
 	fi
 
 	echo ""
+	local change_shell=""
 	setup_prompt change_shell "Change default shell to zsh? [y/N]: " "n"
 	if [[ "$change_shell" =~ ^[Yy]$ ]]; then
 		if chsh -s "$(command -v zsh)"; then
@@ -182,6 +183,7 @@ setup_oh_my_zsh() {
 	echo "  This is optional - plain zsh works fine without it."
 	echo ""
 
+	local install_omz=""
 	setup_prompt install_omz "Install Oh My Zsh? [y/N]: " "n"
 
 	if [[ "$install_omz" =~ ^[Yy]$ ]]; then
@@ -553,6 +555,7 @@ check_optional_deps() {
 		pkg_manager=$(detect_package_manager)
 
 		if [[ "$pkg_manager" != "unknown" ]]; then
+			local install_optional=""
 			setup_prompt install_optional "Install optional dependencies using $pkg_manager? [Y/n]: " "Y"
 
 			if [[ "$install_optional" =~ ^[Yy]?$ ]]; then
@@ -1133,6 +1136,7 @@ setup_aliases() {
 	alias_block_fish=$(_aliases_build_fish_block)
 
 	print_info "Detected default shell: $default_shell"
+	local add_aliases=""
 	setup_prompt add_aliases "Add shell aliases? [Y/n]: " "Y"
 
 	if [[ "$add_aliases" =~ ^[Yy]?$ ]]; then
@@ -1198,6 +1202,7 @@ _terminal_title_prompt_and_install() {
 	local setup_script="$1"
 
 	echo ""
+	local install_title=""
 	setup_prompt install_title "Install terminal title integration? [Y/n]: " "Y"
 
 	if [[ "$install_title" =~ ^[Yy]?$ ]]; then

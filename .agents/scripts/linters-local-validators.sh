@@ -119,31 +119,52 @@ check_return_statements() {
 		[[ -f "$file" ]] || continue
 		((++files_checked))
 
-		# Count multi-line functions (exclude one-liners like: func() { echo "x"; })
-		# One-liners don't need explicit return statements
-		local functions_count
-		functions_count=$(safe_grep_count "^[a-zA-Z_][a-zA-Z0-9_]*() {$" "$file")
-
-		# Count all return patterns: return 0, return 1, return $var, return $((expr))
-		local return_statements
-		return_statements=$(grep -cE "return [0-9]+|return \\\$" "$file" 2>/dev/null || echo "0")
-
-		# Also count exit statements at script level (exit 0, exit $?)
-		local exit_statements
-		exit_statements=$(grep -cE "^exit [0-9]+|^exit \\\$" "$file" 2>/dev/null || echo "0")
+		# Count shell functions and terminal statements while ignoring generated
+		# scripts embedded in arbitrary quoted or unquoted heredocs. Treating mock
+		# fixture bodies as the surrounding file inflated the repository baseline.
+		local counts
+		counts=$(awk '
+            function starts_heredoc(line, token) {
+                if (!match(line, /<<-?[[:space:]]*["\047]?[a-zA-Z_][a-zA-Z0-9_]*["\047]?/)) {
+                    return 0
+                }
+                token = substr(line, RSTART, RLENGTH)
+                heredoc_strips_tabs = (token ~ /^<<-/)
+                sub(/^<<-?[[:space:]]*/, "", token)
+                sub(/^["\047]/, "", token)
+                sub(/["\047]$/, "", token)
+                heredoc_delimiter = token
+                in_heredoc = 1
+                return 1
+            }
+            in_heredoc {
+                candidate = $0
+                if (heredoc_strips_tabs) {
+                    sub(/^\t+/, "", candidate)
+                }
+                if (candidate == heredoc_delimiter) {
+                    in_heredoc = 0
+                    heredoc_delimiter = ""
+                }
+                next
+            }
+            starts_heredoc($0) { next }
+            /^[[:space:]]*#/ { next }
+            /^[a-zA-Z_][a-zA-Z0-9_]*\(\)[[:space:]]*\{$/ { functions++ }
+            /return[[:space:]]+([0-9]+|\$)/ { terminals++ }
+            /^exit[[:space:]]+([0-9]+|\$)/ { terminals++ }
+            END { print functions + 0, terminals + 0 }
+        ' "$file")
+		local functions_count="${counts%% *}"
+		local return_statements="${counts#* }"
 
 		# Ensure variables are numeric
 		functions_count=${functions_count//[^0-9]/}
 		return_statements=${return_statements//[^0-9]/}
-		exit_statements=${exit_statements//[^0-9]/}
 		functions_count=${functions_count:-0}
 		return_statements=${return_statements:-0}
-		exit_statements=${exit_statements:-0}
 
-		# Total returns = return statements + exit statements (for main)
-		local total_returns=$((return_statements + exit_statements))
-
-		if [[ $total_returns -lt $functions_count ]]; then
+		if [[ $return_statements -lt $functions_count ]]; then
 			((++violations))
 			print_warning "Missing return statements in $file"
 		fi
@@ -167,29 +188,44 @@ check_positional_parameters() {
 
 	local violations=0
 
-	# Find direct usage of positional parameters inside functions (not in local assignments)
-	# Exclude: heredocs (<<), awk scripts, main script body, and local assignments
+	# Find direct positional-parameter use inside functions, excluding generated
+	# heredocs, embedded awk/sed, comments, examples, and local assignments.
 	local tmp_file
 	tmp_file=$(mktemp)
 	_save_cleanup_scope
 	trap '_run_cleanups' RETURN
 	push_cleanup "rm -f '${tmp_file}'"
 
-	# Only check inside function bodies, exclude heredocs, awk/sed patterns, and comments
 	for file in "${ALL_SH_FILES[@]}"; do
 		if [[ -f "$file" ]]; then
-			# Use awk to find $1-$9 usage inside functions, excluding:
-			# - local assignments (local var="$1")
-			# - heredocs (<<EOF ... EOF)
-			# - awk/sed scripts (contain $1, $2 for field references)
-			# - comments (lines starting with #)
-			# - echo/print statements showing usage examples
 			awk '
+            function starts_heredoc(line, token) {
+                if (!match(line, /<<-?[[:space:]]*["\047]?[a-zA-Z_][a-zA-Z0-9_]*["\047]?/)) {
+                    return 0
+                }
+                token = substr(line, RSTART, RLENGTH)
+                heredoc_strips_tabs = (token ~ /^<<-/)
+                sub(/^<<-?[[:space:]]*/, "", token)
+                sub(/^["\047]/, "", token)
+                sub(/["\047]$/, "", token)
+                heredoc_delimiter = token
+                in_heredoc = 1
+                return 1
+            }
+            in_heredoc {
+                candidate = $0
+                if (heredoc_strips_tabs) {
+                    sub(/^\t+/, "", candidate)
+                }
+                if (candidate == heredoc_delimiter) {
+                    in_heredoc = 0
+                    heredoc_delimiter = ""
+                }
+                next
+            }
+            starts_heredoc($0) { next }
             /^[a-zA-Z_][a-zA-Z0-9_]*\(\)[[:space:]]*\{/ { in_func=1; next }
             in_func && /^\}$/ { in_func=0; next }
-            /<<.*EOF/ || /<<.*"EOF"/ || /<<-.*EOF/ { in_heredoc=1; next }
-            in_heredoc && /^EOF/ { in_heredoc=0; next }
-            in_heredoc { next }
             # Track multi-line awk scripts (awk ... single-quote opens, closes on later line)
             /awk[[:space:]]+\047[^\047]*$/ { in_awk=1; next }
             in_awk && /\047/ { in_awk=0; next }
@@ -203,6 +239,8 @@ check_positional_parameters() {
             /echo.*\$[1-9]/ { next }
             /print.*\$[1-9]/ { next }
             /Usage:/ { next }
+			# Argument-dispatch case selectors are intentional direct reads.
+			/case[[:space:]]+["\047]?\$[1-9]["\047]?[[:space:]]+in/ { next }
             # Skip currency/pricing patterns: $[1-9] followed by digit, decimal, comma,
             # slash (e.g. $28/mo, $1.99, $1,000), pipe (markdown table), or common
             # currency/pricing unit words (per, mo, month, flat, etc.).

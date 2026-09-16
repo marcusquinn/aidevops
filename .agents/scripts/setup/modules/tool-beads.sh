@@ -160,6 +160,7 @@ setup_beads() {
 # _install_bv_tool: install the bv (beads_viewer) TUI tool.
 # Returns 0 if installed, 1 if skipped or failed.
 _install_bv_tool() {
+	local install_viewer=""
 	setup_prompt install_viewer "  Install bv (TUI with PageRank, critical path, graph analytics)? [Y/n]: " "Y"
 	if [[ ! "$install_viewer" =~ ^[Yy]?$ ]]; then
 		print_info "Install later:"
@@ -186,6 +187,7 @@ _install_bv_tool() {
 		fi
 	else
 		# Offer verified install script (download-then-execute, not piped)
+		local use_script=""
 		setup_prompt use_script "  Install bv via install script? [Y/n]: " "Y"
 		if [[ "$use_script" =~ ^[Yy]?$ ]]; then
 			if verified_install "bv (beads viewer)" "https://raw.githubusercontent.com/Dicklesworthstone/beads_viewer/main/install.sh"; then
@@ -211,6 +213,8 @@ _install_bv_tool() {
 # command-substitution callers receive only the numeric count.
 _install_beads_node_tools() {
 	local count=0
+	local install_web=""
+	local install_bdui=""
 	if ! command -v npm &>/dev/null; then
 		echo "$count"
 		return 0
@@ -236,6 +240,7 @@ _install_beads_node_tools() {
 # _install_perles: install the perles BQL query language TUI via cargo.
 # Returns 0 if installed, 1 if skipped or unavailable.
 _install_perles() {
+	local install_perles=""
 	if ! command -v cargo &>/dev/null; then
 		return 1
 	fi
@@ -251,6 +256,7 @@ _install_perles() {
 }
 
 setup_beads_ui() {
+	local install_beads_ui=""
 	echo ""
 	print_info "Beads UI tools provide enhanced visualization:"
 	echo "  • bv (Go)            - PageRank, critical path, graph analytics TUI"
