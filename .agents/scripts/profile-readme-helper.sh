@@ -35,6 +35,9 @@ PROFILE_UPDATE_LOCK_TOKEN=""
 PROFILE_UPDATE_LOCK_GRACE_SECONDS="${AIDEVOPS_PROFILE_LOCK_GRACE_SECONDS:-30}"
 PROFILE_PUBLICATION_WORKTREE=""
 PROFILE_PUBLICATION_CANONICAL_REPO=""
+PROFILE_PUBLICATION_WORKTREE_BASE=""
+PROFILE_PUBLICATION_CANONICAL_HEAD=""
+PROFILE_PUBLICATION_INTENT_PATH=""
 PROFILE_PUBLICATION_REGISTRY_TASK="profile-readme"
 PROFILE_CONTRIBUTIONS_REFRESHED=false
 
@@ -157,6 +160,83 @@ _profile_publication_registry_update() {
 		*) exit 1 ;;
 		esac
 	)
+}
+
+_profile_publication_intent_path() {
+	local canonical_repo="$1"
+	local worktree_path="$2"
+	local common_dir=""
+	local worktree_name=""
+
+	common_dir=$(git -C "$canonical_repo" rev-parse --path-format=absolute --git-common-dir) || return 1
+	worktree_name=$(basename "$worktree_path")
+	[[ "$worktree_name" == "$(basename "$canonical_repo")-profile-readme-"* ]] || return 1
+	printf '%s/aidevops-profile-publication-intents/%s.json\n' "$common_dir" "$worktree_name"
+	return 0
+}
+
+_profile_write_publication_intent() {
+	local worktree_path="$1"
+	local canonical_repo="$2"
+	local resolved_parent=""
+	local resolved_worktree_path=""
+	local common_dir=""
+	local canonical_head=""
+	local intent_path=""
+	local intent_dir=""
+	local intent_tmp=""
+	local worktree_name=""
+
+	resolved_parent=$(cd "${worktree_path%/*}" 2>/dev/null && pwd -P) || return 1
+	worktree_name=$(basename "$worktree_path")
+	resolved_worktree_path="${resolved_parent}/${worktree_name}"
+	common_dir=$(git -C "$canonical_repo" rev-parse --path-format=absolute --git-common-dir) || return 1
+	canonical_head=$(git -C "$canonical_repo" rev-parse HEAD) || return 1
+	intent_path=$(_profile_publication_intent_path "$canonical_repo" "$resolved_worktree_path") || return 1
+	intent_dir=${intent_path%/*}
+	if [[ -e "$intent_dir" ]]; then
+		[[ -d "$intent_dir" && ! -L "$intent_dir" ]] || return 1
+	else
+		mkdir -p "$intent_dir" || return 1
+	fi
+	chmod 700 "$intent_dir" || return 1
+	[[ ! -e "$intent_path" && ! -L "$intent_path" ]] || return 1
+	intent_tmp=$(mktemp "${intent_path}.XXXXXX") || return 1
+	if ! jq -n \
+		--arg schema "aidevops-profile-publication-intent/v1" \
+		--arg producer "$PROFILE_PUBLICATION_REGISTRY_TASK" \
+		--arg intent_id "$worktree_name" \
+		--arg worktree_path "$resolved_worktree_path" \
+		--arg canonical_common_dir "$common_dir" \
+		--arg canonical_head "$canonical_head" \
+		--argjson created_epoch "$(date +%s)" \
+		'{schema:$schema,producer:$producer,intent_id:$intent_id,worktree_path:$worktree_path,canonical_common_dir:$canonical_common_dir,canonical_head:$canonical_head,created_epoch:$created_epoch}' \
+		>"$intent_tmp" || ! chmod 600 "$intent_tmp" || ! mv "$intent_tmp" "$intent_path"; then
+		rm -f "$intent_tmp"
+		return 1
+	fi
+	PROFILE_PUBLICATION_INTENT_PATH="$intent_path"
+	return 0
+}
+
+_profile_remove_publication_intent() {
+	local intent_path="${PROFILE_PUBLICATION_INTENT_PATH:-}"
+	[[ -n "$intent_path" ]] || return 0
+	if [[ -e "$intent_path" || -L "$intent_path" ]]; then
+		[[ -f "$intent_path" && ! -L "$intent_path" ]] || return 1
+		rm -f "$intent_path" || return 1
+	fi
+	PROFILE_PUBLICATION_INTENT_PATH=""
+	return 0
+}
+
+_profile_clear_publication_state() {
+	PROFILE_PUBLICATION_WORKTREE=""
+	PROFILE_PUBLICATION_CANONICAL_REPO=""
+	PROFILE_PUBLICATION_WORKTREE_BASE=""
+	PROFILE_PUBLICATION_CANONICAL_HEAD=""
+	PROFILE_PUBLICATION_INTENT_PATH=""
+	return 0
 }
 
 _profile_write_publication_marker() {
@@ -288,8 +368,8 @@ _cleanup_profile_publication_worktree() {
 	fi
 	if (cd "$canonical_repo" && "$worktree_helper" remove "$worktree_path" >/dev/null); then
 		_profile_publication_registry_update unregister "$worktree_path" || true
-		PROFILE_PUBLICATION_WORKTREE=""
-		PROFILE_PUBLICATION_CANONICAL_REPO=""
+		_profile_remove_publication_intent || true
+		_profile_clear_publication_state
 		return 0
 	fi
 	if [[ -e "$worktree_path" ]] &&
@@ -298,8 +378,8 @@ _cleanup_profile_publication_worktree() {
 		return 1
 	fi
 	_profile_publication_registry_update unregister "$worktree_path" || true
-	PROFILE_PUBLICATION_WORKTREE=""
-	PROFILE_PUBLICATION_CANONICAL_REPO=""
+	_profile_remove_publication_intent || true
+	_profile_clear_publication_state
 	return 0
 }
 
@@ -1967,24 +2047,31 @@ _profile_run_in_worktree() {
 	local worktree_base="${AIDEVOPS_WORKTREE_BASE_DIR:-${HOME}/Git/_worktrees}"
 	local worktree_name=""
 	worktree_name="$(basename "$canonical_repo")-profile-readme-$(date -u +%Y%m%d%H%M%S)-$$-${RANDOM}"
-	local worktree_path="${worktree_base}/${worktree_name}"
 	mkdir -p "$worktree_base" || return 1
-	if ! git -C "$canonical_repo" worktree add --detach "$worktree_path" HEAD >/dev/null; then
-		echo "Error: could not create profile publication worktree" >&2
-		return 1
-	fi
+	PROFILE_PUBLICATION_WORKTREE_BASE=$(cd "$worktree_base" 2>/dev/null && pwd -P) || return 1
+	local worktree_path="${PROFILE_PUBLICATION_WORKTREE_BASE}/${worktree_name}"
 	PROFILE_PUBLICATION_WORKTREE="$worktree_path"
 	PROFILE_PUBLICATION_CANONICAL_REPO="$canonical_repo"
-	PROFILE_PUBLICATION_WORKTREE_BASE=$(cd "$worktree_base" 2>/dev/null && pwd -P) || return 1
 	PROFILE_PUBLICATION_CANONICAL_HEAD="$canonical_head_before"
-	local owner_session="profile-readme-${PROFILE_UPDATE_LOCK_TOKEN:-$$}"
-	if ! _profile_publication_registry_update register "$worktree_path" "$$" "$owner_session"; then
-		echo "Error: could not register profile publication worktree ownership" >&2
-		_cleanup_profile_publication_worktree || true
+	if ! _profile_write_publication_intent "$worktree_path" "$canonical_repo"; then
+		echo "Error: could not write profile publication intent" >&2
+		_profile_clear_publication_state
+		return 1
+	fi
+	if ! git -C "$canonical_repo" worktree add --detach "$worktree_path" HEAD >/dev/null; then
+		echo "Error: could not create profile publication worktree" >&2
+		_profile_remove_publication_intent || true
+		_profile_clear_publication_state
 		return 1
 	fi
 	if ! _profile_write_publication_marker "$worktree_path" "$canonical_repo"; then
 		echo "Error: could not write profile publication provenance marker" >&2
+		_cleanup_profile_publication_worktree || true
+		return 1
+	fi
+	local owner_session="profile-readme-${PROFILE_UPDATE_LOCK_TOKEN:-$$}"
+	if ! _profile_publication_registry_update register "$worktree_path" "$$" "$owner_session"; then
+		echo "Error: could not register profile publication worktree ownership" >&2
 		_cleanup_profile_publication_worktree || true
 		return 1
 	fi
