@@ -14,7 +14,7 @@ mode: subagent
 - [x] Discovery pass: recent target-file commits and merged PRs #31957, #31958, and #31963 reviewed; no open duplicate PR found
 - [x] File refs verified: `TODO.md`, this brief path, and the release controls history are present at `f34287f5401cb8068458f65736df5ee431a34476`
 - [x] Tier: `tier:standard` — exact metadata is known, but immutable PR allocation and release-lane coordination are stateful
-- [x] Seeded draft PR decision recorded: create after the trailer-free correction commit so its allocated number can bind the final manifest
+- [x] Seeded draft PR decision recorded: draft PR #31965 created from trailer-free commit `38e7b2e6cebfa340a88452c1e02242b765fe8c86`
 
 ## Origin
 
@@ -40,11 +40,11 @@ The release lane authorizes exactly PR #31957 and PR #31958. Git ancestry proves
 
 ## Seeded Draft PR
 
-- **Decision:** Create after the initial trailer-free commit
+- **Decision:** Created draft PR #31965 after the initial trailer-free commit
 - **Rationale:** The allocated PR number is required by the final immutable aggregator identity.
-- **Status:** `not-created`
+- **Status:** `draft`
 - **Freshness evidence:** Local HEAD and `origin/main` both resolved to `f34287f5401cb8068458f65736df5ee431a34476` before editing.
-- **Verification run:** Pre-edit and duplicate/collision discovery passed; remaining checks are listed below.
+- **Verification run:** Initial commit `38e7b2e6cebfa340a88452c1e02242b765fe8c86` pushed with no recognized trailers; PR base/head identities verified through GitHub.
 - **Stale-assumption warning:** If `main` advances before merge, keep this PR immutable and use the canonical aggregate refresh path.
 
 ## How (Approach)

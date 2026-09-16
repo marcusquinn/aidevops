@@ -299,7 +299,7 @@ receipts are irreversible publication boundaries. The exact branch base is
   `a716c1b61a139f89d964a00e0ad9a37737a3a7d7`; exact base is `ae4179a6e6bfbb4051f2434570cc36a26e9946b9`.
 - Aggregation PR #30195 reviews authorized PR #30188 at `21df5823366d2672c7c1a11f625828b3077e78b3` and PR #30191 at `5529ec3b8274a36c958add1cb421d82c7c755de0`; exact base is `5529ec3b8274a36c958add1cb421d82c7c755de0`. Aggregation PR #30207 reviews otherwise-unreleased PRs #30169, #30188, #30191, #30194, #30195, #30196, #30198, #30199, #30200, and #30203 after v3.32.257; exact base is `84abb3ab5e891e32ed8d254e3c9a6b4dd7452460`. Aggregation PR #30238 reviews authorized direct-release receipt fix PR #30231 at `2aecfdaa97421dcb24c3bc2edeac8f5b42a9ed3d` and cross-repository summary isolation PR #30234 at `0d746c92a346e626d88c9340f9e7fe6ced857e17`; exact base is `0d746c92a346e626d88c9340f9e7fe6ced857e17`.
 
-- Aggregation PR #31963 at `f34287f5401cb8068458f65736df5ee431a34476` was rejected before tagging because its manifest omitted retained-lane source PR #31957 and added PR #31960; corrective aggregation task t18440 starts at that exact `main` tip and must equal the persisted PR #31957 and PR #31958 source set.
+- Aggregation PR #31963 at `f34287f5401cb8068458f65736df5ee431a34476` was rejected before tagging because its manifest omitted retained-lane source PR #31957 and added PR #31960; corrective aggregation PR #31965 starts at that exact `main` tip and reviews only PR #31957 at `94baff6cfa3c10cc84e67fd150bbe3c36e0c0a3d` and PR #31958 at `3be82399f6fb3e7a06899acefb43ac1bd0cd4a29`.
 Manual arbitrary-version package publication is intentionally unsupported. A
 recovery operation must use an existing tag that passes the same verifier.
 

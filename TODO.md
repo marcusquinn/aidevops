@@ -1370,7 +1370,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18439 chore(release): aggregate PR #31958 and PR #31960 provenance #interactive #orchestration #release #tier:standard -> [todo/tasks/t18439-brief.md] ref:GH#31962 pr:#31963
 
-- [ ] t18440 chore(release): correct retained lane aggregation provenance #interactive #orchestration #release #tier:standard -> [todo/tasks/t18440-brief.md] ref:GH#31964
+- [ ] t18440 chore(release): correct retained lane aggregation provenance #interactive #orchestration #release #tier:standard -> [todo/tasks/t18440-brief.md] ref:GH#31964 pr:#31965
 
 ## In Progress
 
