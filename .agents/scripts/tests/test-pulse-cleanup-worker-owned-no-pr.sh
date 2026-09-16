@@ -1087,6 +1087,147 @@ test_abandoned_profile_publication_is_archived_recoverably() {
 	return 0
 }
 
+write_profile_publication_intent() {
+	local repo_dir="$1"
+	local wt_path="$2"
+	local recorded_path="${3:-}"
+	local common_dir=""
+	local canonical_head=""
+	local resolved_wt_path=""
+	local intent_dir=""
+	local intent_path=""
+	local intent_id=""
+	common_dir=$(git -C "$repo_dir" rev-parse --path-format=absolute --git-common-dir) || return 1
+	canonical_head=$(git -C "$wt_path" rev-parse HEAD) || return 1
+	resolved_wt_path=$(cd "$wt_path" && pwd -P) || return 1
+	[[ -n "$recorded_path" ]] || recorded_path="$resolved_wt_path"
+	intent_id=$(basename "$wt_path")
+	intent_dir="${common_dir}/aidevops-profile-publication-intents"
+	intent_path="${intent_dir}/${intent_id}.json"
+	mkdir -p "$intent_dir"
+	chmod 700 "$intent_dir"
+	jq -n --arg id "$intent_id" --arg path "${recorded_path:-$resolved_wt_path}" \
+		--arg common "$common_dir" --arg head "$canonical_head" --argjson created "$(date +%s)" '
+		{schema:"aidevops-profile-publication-intent/v1",producer:"profile-readme",intent_id:$id,worktree_path:$path,canonical_common_dir:$common,canonical_head:$head,created_epoch:$created}
+	' >"$intent_path"
+	chmod 600 "$intent_path"
+	return 0
+}
+
+setup_profile_publication_worktree() {
+	local repo_dir="$1"
+	local wt_path="$2"
+	mkdir -p "$repo_dir"
+	git -C "$repo_dir" init -q -b main
+	git -C "$repo_dir" config user.email "test@example.invalid"
+	git -C "$repo_dir" config user.name "Test Profile"
+	printf 'base\n' >"${repo_dir}/README.md"
+	git -C "$repo_dir" add README.md
+	git -C "$repo_dir" commit -q -m init
+	git -C "$repo_dir" worktree add -q --detach "$wt_path" main
+	local old_ts=""
+	old_ts=$(date -u -v-3H +%Y%m%d%H%M 2>/dev/null || date -u -d '3 hours ago' +%Y%m%d%H%M)
+	touch -t "$old_ts" "$wt_path/.git"
+	return 0
+}
+
+test_markerless_profile_publication_intent_is_archived_recoverably() {
+	local repo_dir="${TEST_ROOT}/intent-profile-repo"
+	local wt_path="${TEST_ROOT}/intent-profile-repo-profile-readme-20260901000000-123-456"
+	local recovery_root="${TEST_ROOT}/intent-profile-recovery"
+	setup_profile_publication_worktree "$repo_dir" "$wt_path" || return 1
+	write_profile_publication_intent "$repo_dir" "$wt_path" || return 1
+	printf 'recoverable generated state\n' >"${wt_path}/profile.tmp"
+	AIDEVOPS_WORKTREE_TRASH_ROOT="$recovery_root"
+	ORPHAN_PROFILE_PUBLICATION_ARCHIVE_SECS=7200
+	export AIDEVOPS_WORKTREE_TRASH_ROOT ORPHAN_PROFILE_PUBLICATION_ARCHIVE_SECS
+	source_pulse_cleanup_with_stubs || return 1
+	_PC_PROFILE_PUBLICATION_LEGACY_RECOVERIES=0
+	local now_epoch=""
+	now_epoch=$(date +%s)
+	_cleanup_single_worktree "$repo_dir" "$wt_path" "" "$now_epoch" "testowner/testrepo" "main" >/dev/null 2>&1
+	local cleanup_rc=$?
+	local common_dir=""
+	common_dir=$(git -C "$repo_dir" rev-parse --path-format=absolute --git-common-dir)
+	local rc=0
+	[[ "$cleanup_rc" -eq 0 ]] || rc=1
+	[[ ! -d "$wt_path" && -d "$recovery_root" ]] || rc=1
+	[[ ! -e "${common_dir}/aidevops-profile-publication-intents/$(basename "$wt_path").json" ]] || rc=1
+	grep -q 'provenance=intent' "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
+	print_result "markerless profile publication with durable intent is archived recoverably" "$rc" \
+		"cleanup_rc=$cleanup_rc audit=$(cat "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null) pulse=$(cat "$LOGFILE" 2>/dev/null)"
+	return 0
+}
+
+test_malformed_profile_publication_intent_fails_closed() {
+	local repo_dir="${TEST_ROOT}/malformed-profile-repo"
+	local wt_path="${TEST_ROOT}/malformed-profile-repo-profile-readme-20260901000000-123-456"
+	local recovery_root="${TEST_ROOT}/malformed-profile-recovery"
+	setup_profile_publication_worktree "$repo_dir" "$wt_path" || return 1
+	write_profile_publication_intent "$repo_dir" "$wt_path" "${wt_path}-wrong" || return 1
+	printf 'must remain in place\n' >"${wt_path}/profile.tmp"
+	AIDEVOPS_WORKTREE_TRASH_ROOT="$recovery_root"
+	export AIDEVOPS_WORKTREE_TRASH_ROOT
+	source_pulse_cleanup_with_stubs || return 1
+	_PC_PROFILE_PUBLICATION_LEGACY_RECOVERIES=0
+	local now_epoch=""
+	now_epoch=$(date +%s)
+	_cleanup_single_worktree "$repo_dir" "$wt_path" "" "$now_epoch" "testowner/testrepo" "main" >/dev/null 2>&1
+	local cleanup_rc=$?
+	local rc=0
+	[[ "$cleanup_rc" -ne 0 ]] || rc=1
+	[[ -d "$wt_path" && ! -d "$recovery_root" ]] || rc=1
+	print_result "malformed profile publication intent fails closed without legacy fallback" "$rc" "cleanup_rc=$cleanup_rc"
+	return 0
+}
+
+test_legacy_markerless_profile_publication_is_archived_recoverably() {
+	local repo_dir="${TEST_ROOT}/legacy-profile-repo"
+	local wt_path="${TEST_ROOT}/legacy-profile-repo-profile-readme-20260901000000-123-456"
+	local recovery_root="${TEST_ROOT}/legacy-profile-recovery"
+	setup_profile_publication_worktree "$repo_dir" "$wt_path" || return 1
+	printf 'legacy recoverable state\n' >"${wt_path}/profile.tmp"
+	AIDEVOPS_WORKTREE_TRASH_ROOT="$recovery_root"
+	ORPHAN_PROFILE_PUBLICATION_LEGACY_RECOVERY_CAP=10
+	export AIDEVOPS_WORKTREE_TRASH_ROOT ORPHAN_PROFILE_PUBLICATION_LEGACY_RECOVERY_CAP
+	source_pulse_cleanup_with_stubs || return 1
+	_PC_PROFILE_PUBLICATION_LEGACY_RECOVERIES=0
+	local now_epoch=""
+	now_epoch=$(date +%s)
+	_cleanup_single_worktree "$repo_dir" "$wt_path" "" "$now_epoch" "testowner/testrepo" "main" >/dev/null 2>&1
+	local cleanup_rc=$?
+	local rc=0
+	[[ "$cleanup_rc" -eq 0 ]] || rc=1
+	[[ ! -d "$wt_path" && -d "$recovery_root" ]] || rc=1
+	[[ "$_PC_PROFILE_PUBLICATION_LEGACY_RECOVERIES" -eq 1 ]] || rc=1
+	grep -q 'provenance=legacy' "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
+	print_result "legacy markerless profile publication is bounded and archived recoverably" "$rc" \
+		"cleanup_rc=$cleanup_rc count=$_PC_PROFILE_PUBLICATION_LEGACY_RECOVERIES audit=$(cat "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null) pulse=$(cat "$LOGFILE" 2>/dev/null)"
+	return 0
+}
+
+test_stale_profile_publication_intent_is_removed() {
+	local repo_dir="${TEST_ROOT}/stale-intent-profile-repo"
+	local wt_path="${TEST_ROOT}/stale-intent-profile-repo-profile-readme-20260901000000-123-456"
+	setup_profile_publication_worktree "$repo_dir" "$wt_path" || return 1
+	write_profile_publication_intent "$repo_dir" "$wt_path" || return 1
+	local common_dir=""
+	common_dir=$(git -C "$repo_dir" rev-parse --path-format=absolute --git-common-dir)
+	local intent_path=""
+	intent_path="${common_dir}/aidevops-profile-publication-intents/$(basename "$wt_path").json"
+	git -C "$repo_dir" worktree remove --force "$wt_path"
+	local old_epoch=$(( $(date +%s) - 10800 ))
+	local temporary="${intent_path}.tmp"
+	jq --argjson created "$old_epoch" '.created_epoch = $created' "$intent_path" >"$temporary"
+	mv "$temporary" "$intent_path"
+	source_pulse_cleanup_with_stubs || return 1
+	_pc_cleanup_stale_profile_publication_intents "$repo_dir" "$(date +%s)"
+	local rc=0
+	[[ ! -e "$intent_path" ]] || rc=1
+	print_result "stale profile publication intent without a worktree is removed" "$rc"
+	return 0
+}
+
 TEST_ROOT=$(mktemp -d)
 trap teardown EXIT
 export HOME="${TEST_ROOT}/home"
@@ -1123,6 +1264,10 @@ test_branch_pr_lookup_uses_null_safe_jq_filter
 test_branch_pr_lookup_treats_null_pr_number_as_no_pr
 test_terminal_pr_identity_and_policy_guards
 test_abandoned_profile_publication_is_archived_recoverably
+test_markerless_profile_publication_intent_is_archived_recoverably
+test_malformed_profile_publication_intent_fails_closed
+test_legacy_markerless_profile_publication_is_archived_recoverably
+test_stale_profile_publication_intent_is_removed
 
 echo ""
 echo "Results: $((TESTS_RUN - TESTS_FAILED))/${TESTS_RUN} passed, ${TESTS_FAILED} failed."
