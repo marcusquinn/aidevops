@@ -4932,6 +4932,8 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t18434 Fix snapshot-mode failed pre-publication release retries #auto-dispatch #bug ref:GH#31897 pr:#31901 completed:2026-09-15
 
+- [x] t18440 Correct retained lane aggregation provenance #interactive #orchestration #release tier:standard ref:GH#31964 pr:#31966 completed:2026-09-16
+
 - [x] t18441 Allow snapshot release retries to expand verified authorization #auto-dispatch #bug #release #security #interactive priority:critical tier:thinking ~2h ref:GH#31967 logged:2026-09-16 -> [todo/tasks/t18441-brief.md] pr:#31969 completed:2026-09-16
 
 - [x] t18442 Repin recovered release snapshot after authorization expansion #auto-dispatch #bug #release #security #interactive priority:critical tier:thinking ~2h ref:GH#31971 logged:2026-09-16 -> [todo/tasks/t18442-brief.md] pr:#31973 completed:2026-09-16
