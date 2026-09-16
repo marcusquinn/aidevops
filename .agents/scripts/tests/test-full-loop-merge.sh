@@ -126,15 +126,20 @@ if [[ "\$_gh_cmd" == "pr" && "\$_gh_sub" == "merge" ]]; then
 		exit 124
 	fi
 
-	if [[ "$mode" == "fallback" || "$mode" == "fallback-nmr" || "$mode" == "auto-review-required" ||
+	if [[ "$mode" == "fallback" || "$mode" == "fallback-nmr" || "$mode" == "fallback-native-review" ||
+		"$mode" == "auto-review-required" || "$mode" == "auto-review-required-admin-block" ||
 		"$mode" == "fallback-timeout-merged" || "$mode" == "fallback-timeout-open" ]]; then
 		if [[ "\$_gh_has_admin" -eq 1 ]]; then
 			if [[ "$mode" == "fallback-timeout-merged" || "$mode" == "fallback-timeout-open" ]]; then
 				exit 124
 			fi
+			if [[ "$mode" == "fallback-native-review" || "$mode" == "auto-review-required-admin-block" ]]; then
+				echo "At least 1 approving review is required" >&2
+				exit 1
+			fi
 			echo "Merged PR"
 			exit 0
-		elif [[ "$mode" == "auto-review-required" ]]; then
+		elif [[ "$mode" == "auto-review-required" || "$mode" == "auto-review-required-admin-block" ]]; then
 			echo "At least 1 approving review is required; cannot approve your own pull request" >&2
 			exit 1
 		else
@@ -516,6 +521,37 @@ test_admin_fallback_signals() {
 	return 0
 }
 
+test_admin_fallback_native_review_handoff() {
+	rm -f "${TEST_ROOT}/logs/"*.txt
+	create_gh_stub "fallback-native-review"
+
+	local exit_code=0 output="" merge_calls=0 signaled=0
+	output=$(run_merge_execute "42" "testorg/testrepo" "--squash" "0" "0" 2>&1) || exit_code=$?
+	merge_calls=$(grep -c '^gh pr merge' "${TEST_ROOT}/logs/gh-calls.txt" 2>/dev/null || true)
+	[[ -f "${TEST_ROOT}/logs/pr-comments.txt" || -f "${TEST_ROOT}/logs/audit-log-calls.txt" ||
+		-f "${TEST_ROOT}/logs/pr-edits.txt" ]] && signaled=1
+	print_result "native review handoff: merge remains deferred" "$((exit_code == 0 ? 1 : 0))" "output=$output"
+	print_result "native review handoff: plain and admin attempts are bounded" \
+		"$((merge_calls == 2 ? 0 : 1))" "merge_calls=$merge_calls"
+	print_result "native review handoff: reports Pulse handoff" \
+		"$([[ "$output" == *"native approving review is required; hand off to Pulse"* ]] && printf '0' || printf '1')" \
+		"output=$output"
+	print_result "native review handoff: does not report maintainer authority failure" \
+		"$([[ "$output" != *"maintainer gate or admin rights missing"* ]] && printf '0' || printf '1')" \
+		"output=$output"
+	print_result "native review handoff: emits no admin-merge success signals" "$signaled"
+
+	rm -f "${TEST_ROOT}/logs/"*.txt
+	create_gh_stub "fallback-native-review"
+	exit_code=0
+	FULL_LOOP_HEADLESS=true run_merge_execute "42" "testorg/testrepo" "--squash" "0" "0" >/dev/null 2>&1 || exit_code=$?
+	merge_calls=$(grep -c '^gh pr merge' "${TEST_ROOT}/logs/gh-calls.txt" 2>/dev/null || true)
+	print_result "native review handoff headless: no merge bypass succeeds" "$((exit_code == 0 ? 1 : 0))"
+	print_result "native review handoff headless: no mutation follows the admin rejection" \
+		"$((merge_calls == 2 ? 0 : 1))" "merge_calls=$merge_calls"
+	return 0
+}
+
 test_admin_timeout_reconciles_without_replay() {
 	rm -f "${TEST_ROOT}/logs/"*.txt
 	create_gh_stub "fallback-timeout-merged"
@@ -782,6 +818,25 @@ test_auto_review_required_interactive_admin_fallback() {
 	print_result "auto review-required: --auto attempted first" "$((1 - auto_called))"
 	print_result "auto review-required: --admin fallback attempted" "$((1 - admin_called))"
 
+	return 0
+}
+
+test_auto_review_required_admin_rejection_handoff() {
+	rm -f "${TEST_ROOT}/logs/"*.txt
+	create_gh_stub "auto-review-required-admin-block"
+
+	local exit_code=0 output="" merge_calls=0
+	output=$(run_merge_execute "42" "testorg/testrepo" "--squash" "0" "1" 2>&1) || exit_code=$?
+	merge_calls=$(grep -c '^gh pr merge' "${TEST_ROOT}/logs/gh-calls.txt" 2>/dev/null || true)
+	print_result "auto native review handoff: merge remains deferred" "$((exit_code == 0 ? 1 : 0))" "output=$output"
+	print_result "auto native review handoff: auto and admin attempts are bounded" \
+		"$((merge_calls == 2 ? 0 : 1))" "merge_calls=$merge_calls"
+	print_result "auto native review handoff: reports Pulse handoff" \
+		"$([[ "$output" == *"native approving review is required; hand off to Pulse"* ]] && printf '0' || printf '1')" \
+		"output=$output"
+	print_result "auto native review handoff: does not report maintainer authority failure" \
+		"$([[ "$output" != *"maintainer gate or admin rights missing"* ]] && printf '0' || printf '1')" \
+		"output=$output"
 	return 0
 }
 
@@ -1553,6 +1608,7 @@ main() {
 	echo ""
 
 	test_admin_fallback_signals
+	test_admin_fallback_native_review_handoff
 	test_admin_timeout_reconciles_without_replay
 	test_admin_fallback_blocks_needs_maintainer_review_issue
 	test_explicit_admin_no_signaling
@@ -1565,6 +1621,7 @@ main() {
 	test_cooldown_gate_failure_reports_cooldown
 	test_local_deferral_survives_context_resolution
 	test_auto_review_required_interactive_admin_fallback
+	test_auto_review_required_admin_rejection_handoff
 	test_auto_review_required_headless_no_admin_fallback
 	test_stale_cache_401_retry
 	test_auth_401_detection_avoids_numeric_false_positives
