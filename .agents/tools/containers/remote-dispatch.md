@@ -29,6 +29,10 @@ tools:
 **Use when**: GPU tasks, multi-machine distribution, isolated containers, Tailscale mesh dispatch.
 **Don't use when**: Local tasks, local filesystem access needed, interactive development.
 
+For an explicitly isolated durable per-agent environment with create/start/exec/
+stop/recover/destroy receipts, use `reference/agent-sandbox-lifecycle.md` and
+`agent-sandbox-helper.sh`. Remote dispatch does not imply that sandbox contract.
+
 ## Architecture
 
 `pulse.sh` → `dispatch.sh` → `remote-dispatch-helper.sh` — uploads a dispatch script via SSH stdin, clones the repo, and runs the worker in `/tmp/aidevops-worker/<task-id>/` on the remote host (optionally inside a Docker container via `docker exec`). Pulse Phase 1 detects worker exit (PID gone), collects logs back to the local supervisor, then runs normal evaluation.

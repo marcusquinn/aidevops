@@ -22,6 +22,7 @@
 #   _pick_tier_survivor                — select winner from tier array
 #   _enforce_status_invariant_one_issue — fix multi-status issues
 #   _enforce_tier_invariant_one_issue   — fix multi-tier issues
+#   _enforce_persistent_task_invariant_one_issue — unblock finite tasks
 #   _fetch_label_invariant_rows        — fetch per-repo issue rows for invariant check
 #   _normalize_label_invariants_for_repo — per-repo invariant pass
 #   _write_label_invariants_counter_file — persist cycle counters for t2041
@@ -33,6 +34,9 @@
 # Include guard — prevent double-sourcing.
 [[ -n "${_PULSE_ISSUE_RECONCILE_NORMALIZE_LOADED:-}" ]] && return 0
 _PULSE_ISSUE_RECONCILE_NORMALIZE_LOADED=1
+[[ -n "${_LI_BOOL_TRUE+x}" ]] || _LI_BOOL_TRUE="true"
+[[ -n "${_LI_BOOL_FALSE+x}" ]] || _LI_BOOL_FALSE="false"
+[[ -n "${_LI_PERSISTENT_LABEL+x}" ]] || _LI_PERSISTENT_LABEL="persistent"
 
 #######################################
 # (t2040 Phase 3 helper) Enforce label invariants across all open issues.
@@ -50,6 +54,10 @@ _PULSE_ISSUE_RECONCILE_NORMALIZE_LOADED=1
 #      with the GH Action: rank `reasoning > standard > simple`.
 #      Auto-dispatch issues with no tier receive conservative `tier:standard`
 #      without changing their dispatch, review, or hold labels.
+#
+#   3. Finite publication-backed tasks cannot also be generic persistent
+#      trackers. Remove only `persistent` when publication and lifecycle
+#      evidence coexist, while preserving explicit dashboard/routine identities.
 #
 # Also counts (but does not auto-fix) triage-missing issues — those with
 # `origin:interactive` label AND no `tier:*` AND no `auto-dispatch` AND no
@@ -176,6 +184,19 @@ _enforce_tier_invariant_one_issue() {
 	return 0
 }
 
+# Remove a contradictory generic persistent marker from a finite task.
+# publication:pending remains intact because only the publication reconciler
+# may clear that hold after verifying canonical planning on the default branch.
+_enforce_persistent_task_invariant_one_issue() {
+	local issue_num="$1" slug="$2"
+	if gh issue edit "$issue_num" --repo "$slug" --remove-label "$_LI_PERSISTENT_LABEL" >/dev/null 2>&1; then
+		echo "[pulse-wrapper] label_invariants: removed contradictory persistent label from finite task #${issue_num} in ${slug}" >>"$LOGFILE"
+		return 0
+	fi
+	echo "[pulse-wrapper] label_invariants: failed to remove contradictory persistent label from #${issue_num} in ${slug}" >>"$LOGFILE"
+	return 1
+}
+
 # Helper: fetch issues for a repo and emit '|'-delimited rows per issue.
 # See delimiter note in _normalize_label_invariants_for_repo.
 _fetch_label_invariant_rows() {
@@ -192,16 +213,19 @@ _fetch_label_invariant_rows() {
 	# triage-missing counter correctly ignores issues that are actively
 	# managed via an exception label (needs-info, verify-failed, stale,
 	# needs-testing, orphaned). See CodeRabbit review on PR #18546.
-	printf '%s' "$issues_json" | jq -r '
+	printf '%s' "$issues_json" | jq -r --arg persistent "$_LI_PERSISTENT_LABEL" '
 		.[] | (.labels // []) as $labels | [
 			(.number | tostring),
 			([$labels[].name | select(startswith("status:")) | sub("^status:"; "")] | join(" ")),
 			([$labels[].name | select(startswith("tier:"))   | sub("^tier:";   "")] | join(" ")),
 			(any($labels[].name; . == "origin:interactive") | tostring),
 			(any($labels[].name; . == "auto-dispatch")      | tostring),
-			(any($labels[].name; . == ("supervisor", "contributor", "persistent", "quality-review", "needs-maintainer-review", "routine-tracking", "on hold")) | tostring),
+			(any($labels[].name; . == ("supervisor", "contributor", "quality-review", "needs-maintainer-review", "routine-tracking", "on hold") or . == $persistent) | tostring),
 			(.createdAt | sub("\\.[0-9]+Z$"; "Z") | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime | tostring),
-			(([$labels[].name | select(startswith("status:"))] | length) | tostring)
+			(([$labels[].name | select(startswith("status:"))] | length) | tostring),
+			(any($labels[].name; . == $persistent) | tostring),
+			(any($labels[].name; . == "publication:pending") | tostring),
+			(any($labels[].name; . == ("quality-review", "routine-tracking", "source:health-dashboard", "supervisor", "contributor")) | tostring)
 		] | join("|")
 	' 2>/dev/null
 	return 0
@@ -228,7 +252,9 @@ _normalize_label_invariants_for_repo() {
 	[[ -n "$rows" ]] || return 0
 
 	local issue_num="" status_list="" tier_list="" has_origin_i="" has_auto="" is_non_task="" created_epoch="" all_status_count=""
-	while IFS='|' read -r issue_num status_list tier_list has_origin_i has_auto is_non_task created_epoch all_status_count; do
+	local has_persistent="" has_publication_pending="" has_tracker_identity=""
+	while IFS='|' read -r issue_num status_list tier_list has_origin_i has_auto is_non_task created_epoch all_status_count \
+		has_persistent has_publication_pending has_tracker_identity; do
 		[[ "$issue_num" =~ ^[0-9]+$ ]] || continue
 		_LI_CHECKED=$((_LI_CHECKED + 1))
 
@@ -257,10 +283,21 @@ _normalize_label_invariants_for_repo() {
 		# conservative metadata repair. Do not add auto-dispatch, clear holds, or
 		# alter needs-maintainer-review; this only makes already-authorized work
 		# routable with the framework's default tier before pickup.
-		if [[ "$has_auto" == "true" && "$tier_count" -eq 0 ]]; then
+		if [[ "$has_auto" == "$_LI_BOOL_TRUE" && "$tier_count" -eq 0 ]]; then
 			if gh issue edit "$issue_num" --repo "$slug" --add-label "tier:standard" >/dev/null 2>&1; then
 				_LI_TIER_FIXED=$((_LI_TIER_FIXED + 1))
 				echo "[pulse-wrapper] label_invariants: backfilled tier:standard on auto-dispatch #${issue_num} in ${slug}" >>"$LOGFILE"
+			fi
+		fi
+
+		# A publication-backed issue is finite, and lifecycle labels prove it is a
+		# task. Preserve explicit dashboard/routine identities and ambiguous cases.
+		if [[ "$has_persistent" == "$_LI_BOOL_TRUE" &&
+			"$has_publication_pending" == "$_LI_BOOL_TRUE" &&
+			"$has_tracker_identity" == "$_LI_BOOL_FALSE" ]] &&
+			[[ "$has_auto" == "$_LI_BOOL_TRUE" || "$tier_count" -gt 0 || "$all_status_count" -gt 0 ]]; then
+			if _enforce_persistent_task_invariant_one_issue "$issue_num" "$slug"; then
+				_LI_PERSISTENT_FIXED=$((_LI_PERSISTENT_FIXED + 1))
 			fi
 		fi
 
@@ -271,10 +308,10 @@ _normalize_label_invariants_for_repo() {
 		# no non-task label (routine-tracking/supervisor/etc.) +
 		# created >30min ago = maintainer-intended issue not briefed into
 		# the dispatch pipeline.
-		if [[ "$has_origin_i" == "true" &&
+		if [[ "$has_origin_i" == "$_LI_BOOL_TRUE" &&
 			-z "$tier_list" &&
-			"$has_auto" == "false" &&
-			"$is_non_task" == "false" &&
+			"$has_auto" == "$_LI_BOOL_FALSE" &&
+			"$is_non_task" == "$_LI_BOOL_FALSE" &&
 			"$all_status_count" == "0" &&
 			"$created_epoch" =~ ^[0-9]+$ &&
 			"$created_epoch" -lt "$triage_cutoff" ]]; then
@@ -292,9 +329,9 @@ _write_label_invariants_counter_file() {
 	local counters_file="${counters_dir}/pulse-label-invariants.${hostname_short}.json"
 	mkdir -p "$counters_dir" 2>/dev/null || true
 	{
-		printf '{"timestamp": "%s", "checked": %d, "status_fixed": %d, "tier_fixed": %d, "triage_missing": %d}\n' \
+		printf '{"timestamp": "%s", "checked": %d, "status_fixed": %d, "tier_fixed": %d, "persistent_fixed": %d, "triage_missing": %d}\n' \
 			"$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
-			"$_LI_CHECKED" "$_LI_STATUS_FIXED" "$_LI_TIER_FIXED" "$_LI_TRIAGE_MISSING"
+			"$_LI_CHECKED" "$_LI_STATUS_FIXED" "$_LI_TIER_FIXED" "$_LI_PERSISTENT_FIXED" "$_LI_TRIAGE_MISSING"
 	} >"$counters_file" 2>/dev/null || true
 	return 0
 }
@@ -321,6 +358,7 @@ _normalize_label_invariants() {
 	_LI_CHECKED=0
 	_LI_STATUS_FIXED=0
 	_LI_TIER_FIXED=0
+	_LI_PERSISTENT_FIXED=0
 	_LI_TRIAGE_MISSING=0
 
 	local now_epoch
@@ -333,7 +371,7 @@ _normalize_label_invariants() {
 		_normalize_label_invariants_for_repo "$slug" "$triage_cutoff"
 	done < <(jq -r '.initialized_repos[] | select(.maintenance != false and .pulse == true and (.local_only // false) == false and .slug != "") | .slug // ""' "$repos_json" || true)
 
-	echo "[pulse-wrapper] label_invariants: checked=${_LI_CHECKED} status_fixed=${_LI_STATUS_FIXED} tier_fixed=${_LI_TIER_FIXED} triage_missing=${_LI_TRIAGE_MISSING}" >>"$LOGFILE"
+	echo "[pulse-wrapper] label_invariants: checked=${_LI_CHECKED} status_fixed=${_LI_STATUS_FIXED} tier_fixed=${_LI_TIER_FIXED} persistent_fixed=${_LI_PERSISTENT_FIXED} triage_missing=${_LI_TRIAGE_MISSING}" >>"$LOGFILE"
 
 	_write_label_invariants_counter_file
 	return 0

@@ -1,0 +1,127 @@
+{
+  "$schema": "../schemas/agent-sandbox-backends.schema.json",
+  "schema_version": 1,
+  "default_backend": "local",
+  "receipt_schema": "aidevops.agent-sandbox.receipt/v1",
+  "defaults": {
+    "cpus": 2,
+    "memory": "2G",
+    "command_timeout_seconds": 900,
+    "idle_timeout_seconds": 3600,
+    "lease_ttl_seconds": 900,
+    "retained_snapshots": 0,
+    "network_mode": "internal",
+    "workspace_target": "/workspace"
+  },
+  "backends": {
+    "local": {
+      "mode": "fallback",
+      "executable": false,
+      "description": "Existing local or headless execution without a sandbox backend",
+      "capabilities": {
+        "create": false,
+        "start": false,
+        "attach": false,
+        "exec": false,
+        "stop": false,
+        "status": false,
+        "snapshot": false,
+        "recover": false,
+        "destroy": false
+      }
+    },
+    "apple-container": {
+      "mode": "executable",
+      "executable": true,
+      "description": "Apple container CLI on Apple silicon with macOS 26 or newer",
+      "requirements": {
+        "os": "Darwin",
+        "architecture": "arm64",
+        "minimum_macos_major": 26,
+        "command": "container",
+        "service_probe": ["container", "system", "status", "--format", "json"]
+      },
+      "capabilities": {
+        "create": true,
+        "start": true,
+        "attach": true,
+        "exec": true,
+        "stop": true,
+        "status": true,
+        "snapshot": false,
+        "recover": true,
+        "destroy": true,
+        "cpu_limit": true,
+        "memory_limit": true,
+        "storage_isolation": true,
+        "storage_quota": false,
+        "internal_network": true,
+        "secret_injection": false
+      },
+      "unsupported": {
+        "snapshot": "Filesystem exports can contain workload-created secrets; no redaction-safe snapshot contract is verified",
+        "storage_quota": "The inspected CLI exposes isolated sparse filesystems but no per-container hard storage quota",
+        "secret_injection": "Secrets must be supplied by an approved out-of-band broker, never image, argv, environment, receipt, or snapshot"
+      },
+      "evidence": {
+        "source": "https://github.com/apple/container",
+        "inspected_commit": "57f0b9392bbee1998e6c7f3f25db222fe1dcdd12",
+        "inspected_release": "1.4.1",
+        "inspected_at": "2026-09-16"
+      }
+    },
+    "bubbles": {
+      "mode": "capability-only",
+      "executable": false,
+      "description": "Gonicus Bubbles desktop environments; no stable external lifecycle CLI was verified",
+      "capabilities": {
+        "create": false,
+        "start": false,
+        "attach": false,
+        "exec": false,
+        "stop": false,
+        "status": false,
+        "snapshot": false,
+        "recover": false,
+        "destroy": false
+      },
+      "evidence": {
+        "source": "https://github.com/gonicus/bubbles",
+        "inspected_release": "app-v1.2.1",
+        "inspected_at": "2026-09-16",
+        "finding": "The primary README documents Flatpak GUI lifecycle controls, not a supported non-interactive orchestration API"
+      }
+    },
+    "cloudron": {
+      "mode": "capability-only",
+      "executable": false,
+      "description": "aidevops Cloudron remote worker foundation, not a per-agent sandbox host",
+      "capabilities": {
+        "create": false,
+        "start": false,
+        "attach": false,
+        "exec": false,
+        "stop": false,
+        "status": false,
+        "snapshot": false,
+        "recover": false,
+        "destroy": false
+      },
+      "foundation_capabilities": {
+        "dispatch": true,
+        "worker_list": true,
+        "worker_cancel": true,
+        "worker_logs": true,
+        "persistent_workspace": true,
+        "nested_virtualization": false,
+        "privileged_host_control": false
+      },
+      "evidence": {
+        "source": "https://github.com/marcusquinn/aidevops-cloudron-app",
+        "inspected_version": "0.1.9",
+        "inspected_at": "2026-09-16",
+        "finding": "Cloudron exposes authenticated worker dispatch and process management inside one app container; it does not expose per-agent VM lifecycle or host privileges"
+      }
+    }
+  }
+}
