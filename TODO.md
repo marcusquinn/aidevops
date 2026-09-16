@@ -1366,9 +1366,9 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18436 Install isolated OpenCode V2 preview alongside V1 #auth #auto-dispatch #feat #medium #opencode #plugin #setup ref:GH#31941 pr:#31944 completed:2026-09-15
 
-- [ ] t18438 fix: prevent stale release preflight baselines from blocking releases #bug #quality #release ref:GH#31959
+- [x] t18438 fix: prevent stale release preflight baselines from blocking releases #bug #quality #release ref:GH#31959 pr:#31960 completed:2026-09-16
 
-- [ ] t18439 chore(release): aggregate PR #31958 and PR #31960 provenance #interactive #orchestration #release #tier:standard -> [todo/tasks/t18439-brief.md] ref:GH#31962 pr:#31963
+- [x] t18439 chore(release): aggregate PR #31958 and PR #31960 provenance #interactive #orchestration #release #tier:standard -> [todo/tasks/t18439-brief.md] ref:GH#31962 pr:#31963 pr:#31963 completed:2026-09-16
 
 ## In Progress
 
