@@ -1223,6 +1223,53 @@ release_lane_pin_snapshot() {
 	return $?
 }
 
+#aidevops:trust-boundary
+release_lane_repin_recovered_snapshot() {
+	local repo="$1"
+	local requested_pr="$2"
+	local expected_sources="$3"
+	local snapshot="$4"
+	local base="$5"
+	local state_json=""
+	local write_rc=0
+	[[ "$snapshot" =~ ^[0-9a-f]{40}$ && "$base" =~ ^[0-9a-f]{40}$ ]] || return 1
+	[[ -n "$expected_sources" && -n "$_AIDEVOPS_RELEASE_LANE_TOKEN" ]] || return 1
+	release_lane_read "$repo" || return 1
+	state_json=$(jq -ce --argjson requested "$requested_pr" --arg expected "$expected_sources" \
+		--arg snapshot "$snapshot" --arg base "$base" --arg token "$_AIDEVOPS_RELEASE_LANE_TOKEN" \
+		--arg reserved "$_AIDEVOPS_RELEASE_LANE_PHASE_RESERVED" \
+		--arg now "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" --arg sha_pattern '^[0-9a-f]{40}$' '
+		.prepublication_recovery as $recovery
+		| select(.active == true and .source_pr == $requested and .phase == $reserved
+			and .tag == null and .terminal_receipt == null
+			and (.operation_token as $lane_token | $lane_token == $token)
+			and .expected_sources == $expected)
+		| select(($recovery | type) == "object"
+			and $recovery.current_expected_sources == $expected
+			and ($recovery.failed_source_merge | test($sha_pattern)))
+		| select((.snapshot_sha == $recovery.failed_source_merge or .snapshot_sha == $snapshot)
+			and .snapshot_base == $base
+			and (.snapshot_base_tag | test("^v[0-9]+\\.[0-9]+\\.[0-9]+$"))
+			and (.snapshot_base_object | test($sha_pattern)))
+		| .snapshot_sha=$snapshot | .snapshot_manifest_bound=true | .updated_at=$now
+	' <<<"$_AIDEVOPS_RELEASE_LANE_JSON") || return 1
+	_release_lane_write "$repo" "$state_json" "$_AIDEVOPS_RELEASE_LANE_HEAD" || write_rc=$?
+	if [[ "$write_rc" -ne 0 ]]; then
+		release_lane_read "$repo" || return "$write_rc"
+		jq -e --argjson requested "$requested_pr" --arg expected "$expected_sources" \
+			--arg snapshot "$snapshot" --arg base "$base" --arg token "$_AIDEVOPS_RELEASE_LANE_TOKEN" \
+			--arg reserved "$_AIDEVOPS_RELEASE_LANE_PHASE_RESERVED" '
+			.active == true and .source_pr == $requested and .phase == $reserved
+			and .tag == null and .terminal_receipt == null
+			and (.operation_token as $lane_token | $lane_token == $token)
+			and .expected_sources == $expected and .snapshot_sha == $snapshot
+			and .snapshot_base == $base and .snapshot_manifest_bound == true
+			and .prepublication_recovery.current_expected_sources == $expected
+		' <<<"$_AIDEVOPS_RELEASE_LANE_JSON" >/dev/null || return "$write_rc"
+	fi
+	return 0
+}
+
 release_lane_bind_snapshot() {
 	local repo="$1"
 	local requested_pr="$2"

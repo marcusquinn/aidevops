@@ -208,3 +208,37 @@ if release_lane_bind_snapshot test/repo 1 "$resolved"; then
 	exit 1
 fi
 printf 'PASS: lane pin and manifest are idempotent and reject drift or stale owners\n'
+
+expected_recovery_sources="1@${FIRST},2@${SNAPSHOT},3@${LATER}"
+tag_object=$(git rev-parse refs/tags/v1.0.0)
+lane=$(jq -cn --arg expected "$expected_recovery_sources" --arg failed "$SNAPSHOT" \
+	--arg base "$BASE" --arg object "$tag_object" '
+	{schema_version:1,active:true,source_pr:1,phase:"reserved",tag:null,terminal_receipt:null,
+	 operation_token:"test-token",expected_sources:$expected,snapshot_sha:$failed,
+	 snapshot_base:$base,snapshot_base_tag:"v1.0.0",snapshot_base_object:$object,
+	 prepublication_recovery:{failed_source_pr:2,failed_source_merge:$failed,
+	  current_expected_sources:$expected}}')
+printf -v _AIDEVOPS_RELEASE_LANE_TOKEN %s "test-token"
+release_lane_repin_recovered_snapshot test/repo 1 "$expected_recovery_sources" "$LATER" "$BASE"
+jq -e --arg snapshot "$LATER" '
+	.snapshot_sha == $snapshot and .snapshot_manifest_bound == true
+' <<<"$lane" >/dev/null
+release_lane_repin_recovered_snapshot test/repo 1 "$expected_recovery_sources" "$LATER" "$BASE"
+for mismatch in expected base snapshot; do
+	case "$mismatch" in
+	expected)
+		if release_lane_repin_recovered_snapshot test/repo 1 "1@${FIRST}" "$LATER" "$BASE"; then exit 1; fi
+		;;
+	base)
+		if release_lane_repin_recovered_snapshot test/repo 1 "$expected_recovery_sources" "$LATER" "$FIRST"; then exit 1; fi
+		;;
+	snapshot)
+		if release_lane_repin_recovered_snapshot test/repo 1 "$expected_recovery_sources" "$FIRST" "$BASE"; then exit 1; fi
+		;;
+	esac
+done
+printf -v _AIDEVOPS_RELEASE_LANE_TOKEN %s "stale-token"
+if release_lane_repin_recovered_snapshot test/repo 1 "$expected_recovery_sources" "$LATER" "$BASE"; then
+	exit 1
+fi
+printf 'PASS: recovered snapshot repin is idempotent and rejects manifest, base, snapshot, or owner drift\n'

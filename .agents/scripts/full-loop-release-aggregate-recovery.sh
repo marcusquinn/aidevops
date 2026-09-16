@@ -1049,6 +1049,26 @@ _full_loop_recovery_load_reserved_lane_state() {
 	return 0
 }
 
+_full_loop_recovery_repin_prepublication_snapshot() {
+	local repo="$1"
+	local source_pr="$2"
+	local expected_sources="$3"
+	local resolved_mode=""
+	local resolved_snapshot=""
+	local resolved_base=""
+	resolved_mode=$(jq -er '.mode' <<<"$_FULL_LOOP_RESOLVED_SOURCE_JSON") || return 1
+	[[ "$resolved_mode" == "snapshot" ]] || return 0
+	resolved_snapshot=$(jq -er --arg sha40 "$_FULL_LOOP_AGGREGATE_RECOVERY_SHA40_REGEX" \
+		'.source_merge | select(test($sha40))' \
+		<<<"$_FULL_LOOP_RESOLVED_SOURCE_JSON") || return 1
+	resolved_base=$(jq -er --arg sha40 "$_FULL_LOOP_AGGREGATE_RECOVERY_SHA40_REGEX" \
+		'.snapshot_base | select(test($sha40))' \
+		<<<"$_FULL_LOOP_RESOLVED_SOURCE_JSON") || return 1
+	release_lane_repin_recovered_snapshot "$repo" "$source_pr" "$expected_sources" \
+		"$resolved_snapshot" "$resolved_base"
+	return $?
+}
+
 _full_loop_recovery_expand_reserved_authorization() {
 	local repo="$1"
 	local source_pr="$2"
@@ -1103,6 +1123,10 @@ _full_loop_recovery_expand_reserved_authorization() {
 	fi
 	if [[ "$current_auth" == "$_FULL_LOOP_AGGREGATE_RECOVERY_EXPECTED" &&
 		"$lane_sources" == "$_FULL_LOOP_AGGREGATE_RECOVERY_EXPECTED" ]]; then
+		if [[ "$failed_prepublication" == "true" ]]; then
+			_full_loop_recovery_repin_prepublication_snapshot "$repo" "$source_pr" \
+				"$_FULL_LOOP_AGGREGATE_RECOVERY_EXPECTED" || return 1
+		fi
 		printf 'Pre-publication release authorization already matches the reviewed retry for PR #%s\n' "$source_pr"
 		return 0
 	fi
@@ -1124,6 +1148,10 @@ _full_loop_recovery_expand_reserved_authorization() {
 		"$_FULL_LOOP_AGGREGATE_RECOVERY_EXPECTED"; then
 		printf 'Reserved release lane authorization migration remains fenced for retry for PR #%s\n' "$source_pr" >&2
 		return 1
+	fi
+	if [[ "$failed_prepublication" == "true" ]]; then
+		_full_loop_recovery_repin_prepublication_snapshot "$repo" "$source_pr" \
+			"$_FULL_LOOP_AGGREGATE_RECOVERY_EXPECTED" || return 1
 	fi
 	printf 'Expanded side-effect-free reserved release authorization for reviewed aggregate PR #%s\n' "$source_pr"
 	return 0
