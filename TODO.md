@@ -1366,6 +1366,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18436 Install isolated OpenCode V2 preview alongside V1 #auth #auto-dispatch #feat #medium #opencode #plugin #setup ref:GH#31941 pr:#31944 completed:2026-09-15
 
+- [ ] t18438 fix: prevent stale release preflight baselines from blocking releases #bug #quality #release ref:GH#31959
+
 ## In Progress
 
 - [x] t18430 Update OpenCode GitHub Action pin to v1.18.30 #auto-dispatch #dependencies #github_actions #interactive #tier:simple ref:GH#31828 started:2026-09-12 pr:#31829 completed:2026-09-12

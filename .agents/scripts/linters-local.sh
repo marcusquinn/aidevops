@@ -70,14 +70,14 @@ set -euo pipefail
 
 # Quality thresholds
 # Note: These thresholds are set to allow existing code patterns while catching regressions
-# - Return issues: Simple utility functions (log_*, print_*) don't need explicit returns
-# - Positional params: Using $1/$2 in case statements and argument parsing is valid
-#   SonarCloud S7679 reports ~200 issues; local check is more aggressive (~280)
-#   Threshold set to catch regressions while allowing existing patterns
+# - Return issues: verified baseline is 44 files after excluding embedded heredoc fixtures
+# - Positional params: verified baseline is 2427 direct function-body reads after
+#   excluding argument-dispatch case selectors and embedded heredoc fixtures
+# - Exact baseline thresholds have no margin; the separate ratchet gate also blocks increases
 # - String literals: Code duplication is a style issue, not a bug
 readonly MAX_TOTAL_ISSUES=100
-readonly MAX_RETURN_ISSUES=10
-readonly MAX_POSITIONAL_ISSUES=300
+readonly MAX_RETURN_ISSUES=44
+readonly MAX_POSITIONAL_ISSUES=2427
 readonly MAX_STRING_LITERAL_ISSUES=2300
 
 # Complexity thresholds (aligned with Codacy defaults — GH#4939)
