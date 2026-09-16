@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.34.1] - 2026-09-16
+
+### Changed
+
+- Maintenance: mark t18442 complete (pr:#31973 completed:2026-09-16) (#31974)
+
+### Fixed
+
+- distinguish native review from authority failures
+
 ## [3.34.0] - 2026-09-16
 
 ### Added
