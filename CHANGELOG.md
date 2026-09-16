@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.34.3] - 2026-09-16
+
+### Fixed
+
+- pass ADC quota project in GSC exports
+- bound diagnostics and retire terminal retry hints
+
 ## [3.34.2] - 2026-09-16
 
 ### Fixed
