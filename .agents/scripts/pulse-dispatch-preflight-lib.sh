@@ -188,6 +188,9 @@ _preflight_cleanup_and_ledger() {
 	run_stage_with_timeout "cleanup_orphans" "$PRE_RUN_STAGE_TIMEOUT" cleanup_orphans || true
 	run_stage_with_timeout "cleanup_stale_opencode" "$PRE_RUN_STAGE_TIMEOUT" cleanup_stale_opencode || true
 	run_stage_with_timeout "cleanup_stalled_workers" "$PRE_RUN_STAGE_TIMEOUT" cleanup_stalled_workers || true
+	if declare -F cleanup_stale_session_locks >/dev/null 2>&1; then
+		run_stage_with_timeout "cleanup_stale_session_locks" "$PRE_RUN_STAGE_TIMEOUT" cleanup_stale_session_locks || true
+	fi
 	if declare -F sweep_closed_auto_dispatch_issues >/dev/null 2>&1; then
 		run_stage_with_timeout "sweep_closed_auto_dispatch_issues" "$PRE_RUN_STAGE_TIMEOUT" sweep_closed_auto_dispatch_issues || true
 	fi

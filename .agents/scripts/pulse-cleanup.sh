@@ -66,6 +66,10 @@ if [[ -n "$_PULSE_CLEANUP_SCRIPT_DIR" && -f "$_PULSE_CLEANUP_SCRIPT_DIR/shared-d
 	# shellcheck source=shared-dispatch-label-cleanup.sh
 	source "$_PULSE_CLEANUP_SCRIPT_DIR/shared-dispatch-label-cleanup.sh"
 fi
+if [[ -n "$_PULSE_CLEANUP_SCRIPT_DIR" && -f "$_PULSE_CLEANUP_SCRIPT_DIR/headless-session-locks.sh" ]]; then
+	# shellcheck source=headless-session-locks.sh
+	source "$_PULSE_CLEANUP_SCRIPT_DIR/headless-session-locks.sh"
+fi
 if [[ -n "$_PULSE_CLEANUP_SCRIPT_DIR" && -f "$_PULSE_CLEANUP_SCRIPT_DIR/worktree-paths.sh" ]]; then
 	# shellcheck source=worktree-paths.sh
 	source "$_PULSE_CLEANUP_SCRIPT_DIR/worktree-paths.sh"
