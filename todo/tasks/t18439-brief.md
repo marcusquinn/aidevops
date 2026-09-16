@@ -40,11 +40,11 @@ The fenced tagless recovery correctly rejects an arbitrary descendant of PR #319
 
 ## Seeded Draft PR
 
-- **Decision:** Create after the initial documentation commit
+- **Decision:** Created draft PR #31963
 - **Rationale:** The PR number is required for the immutable aggregator trailer.
-- **Status:** `not-created`
+- **Status:** `draft`
 - **Freshness evidence:** `origin/main` and canonical `main` both resolved to `e66fb1aeb41c5b765e7597dac4fb45563224bfaf` before worktree creation.
-- **Verification run:** Pending initial commit and draft creation.
+- **Verification run:** Initial trailer-free commit `646999eab` pushed before draft PR #31963 was allocated.
 - **Stale-assumption warning:** Any intervening `main` merge requires `aidevops release refresh-aggregate` rather than rewriting this branch.
 
 ### Files to Modify
