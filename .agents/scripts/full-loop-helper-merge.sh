@@ -199,6 +199,21 @@ _merge_output_is_review_policy_block() {
 	return $?
 }
 
+_merge_report_admin_fallback_failure() {
+	local pr_number="$1"
+	local admin_output="$2"
+
+	[[ -n "$admin_output" ]] && printf '%s\n' "$admin_output"
+	#aidevops:trust-boundary -- GitHub error text may select only a safer deferred
+	# outcome; it never grants authority, retries a mutation, or reports success.
+	if _merge_output_is_review_policy_block "$admin_output"; then
+		print_error "Merge deferred for PR #${pr_number}: a native approving review is required; hand off to Pulse."
+		return 0
+	fi
+	print_error "Merge failed for PR #${pr_number} (even with --admin — maintainer gate or admin rights missing)"
+	return 0
+}
+
 _merge_is_headless_session() {
 	case "${FULL_LOOP_HEADLESS:-}${AIDEVOPS_HEADLESS:-}${Claude_HEADLESS:-}${GITHUB_ACTIONS:-}" in
 	*true* | *1*) return 0 ;;
@@ -247,20 +262,19 @@ _merge_try_interactive_admin_auto_fallback() {
 	local subject_flags=()
 	[[ -n "$squash_subject" ]] && subject_flags+=("$FULL_LOOP_MERGE_SUBJECT_FLAG" "$squash_subject")
 	[[ -n "$merge_body_file" ]] && subject_flags+=("$FULL_LOOP_MERGE_BODY_FILE_FLAG" "$merge_body_file")
-	local admin_rc=0
-	if _flm_gh_write gh pr merge "$pr_number" --repo "$repo" "$merge_method" --admin --match-head-commit "$expected_head_sha" ${subject_flags[@]+"${subject_flags[@]}"} 2>&1; then
+	local admin_rc=0 admin_output=""
+	_MERGE_WRITE_OUTPUT=""
+	_merge_run_bounded_write "$pr_number" "$repo" "$expected_head_sha" \
+		gh pr merge "$pr_number" --repo "$repo" "$merge_method" --admin --match-head-commit "$expected_head_sha" ${subject_flags[@]+"${subject_flags[@]}"} || admin_rc=$?
+	admin_output="$_MERGE_WRITE_OUTPUT"
+	if [[ "$admin_rc" -eq 0 ]]; then
+		[[ -n "$admin_output" ]] && printf '%s\n' "$admin_output"
 		print_success "PR #${pr_number} merged with interactive --admin fallback"
-		_signal_admin_merge_fallback "$pr_number" "$repo" "$merge_method" "$merge_output"
-		return 0
-	else
-		admin_rc=$?
-	fi
-	if [[ "$admin_rc" -eq 124 ]] && _merge_reconcile_timed_out_write "$pr_number" "$repo" "$expected_head_sha"; then
 		_signal_admin_merge_fallback "$pr_number" "$repo" "$merge_method" "$merge_output"
 		return 0
 	fi
 
-	print_error "Merge failed for PR #${pr_number} (even with --admin — maintainer gate or admin rights missing)"
+	_merge_report_admin_fallback_failure "$pr_number" "$admin_output"
 	return 2
 }
 
@@ -1335,20 +1349,19 @@ ${_merge_retry_out}"
 			local subject_flags=()
 			[[ -n "$squash_subject" ]] && subject_flags+=("$FULL_LOOP_MERGE_SUBJECT_FLAG" "$squash_subject")
 			[[ -n "$merge_body_file" ]] && subject_flags+=("$FULL_LOOP_MERGE_BODY_FILE_FLAG" "$merge_body_file")
-			local admin_rc=0
-			if _flm_gh_write gh pr merge "$pr_number" --repo "$repo" "$merge_method" --admin --match-head-commit "$match_head_sha" ${subject_flags[@]+"${subject_flags[@]}"} 2>&1; then
+			local admin_rc=0 admin_output=""
+			_MERGE_WRITE_OUTPUT=""
+			_merge_run_bounded_write "$pr_number" "$repo" "$match_head_sha" \
+				gh pr merge "$pr_number" --repo "$repo" "$merge_method" --admin --match-head-commit "$match_head_sha" ${subject_flags[@]+"${subject_flags[@]}"} || admin_rc=$?
+			admin_output="$_MERGE_WRITE_OUTPUT"
+			if [[ "$admin_rc" -eq 0 ]]; then
+				[[ -n "$admin_output" ]] && printf '%s\n' "$admin_output"
 				print_success "PR #${pr_number} merged with --admin fallback"
 				# t2247: Signal fallback through a PR comment, audit entry, and label.
 				_signal_admin_merge_fallback "$pr_number" "$repo" "$merge_method" "$_merge_out"
 				return 0
-			else
-				admin_rc=$?
 			fi
-			if [[ "$admin_rc" -eq 124 ]] && _merge_reconcile_timed_out_write "$pr_number" "$repo" "$match_head_sha"; then
-				_signal_admin_merge_fallback "$pr_number" "$repo" "$merge_method" "$_merge_out"
-				return 0
-			fi
-			print_error "Merge failed for PR #${pr_number} (even with --admin — maintainer gate or admin rights missing)"
+			_merge_report_admin_fallback_failure "$pr_number" "$admin_output"
 			return 1
 		else
 			print_error "Merge failed for PR #${pr_number}"
