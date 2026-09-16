@@ -59,19 +59,86 @@ get_access_token() {
     return 1
 }
 
+# Resolve the quota project required by user Application Default Credentials.
+# Static tokens take precedence over ADC unless an explicit override is set.
+resolve_quota_project() {
+    source "$CONFIG_DIR/credentials.sh" 2>/dev/null || true
+
+    local quota_project="${GSC_QUOTA_PROJECT:-}"
+    if [[ -n "$quota_project" ]]; then
+        if [[ "$quota_project" == *$'\r'* ]] || [[ "$quota_project" == *$'\n'* ]]; then
+            print_error "GSC_QUOTA_PROJECT contains invalid newline characters"
+            return 1
+        fi
+        printf '%s\n' "$quota_project"
+        return 0
+    fi
+
+    if [[ -n "${GSC_ACCESS_TOKEN:-}" ]]; then
+        return 0
+    fi
+
+    if [[ -z "${GOOGLE_APPLICATION_CREDENTIALS:-}" ]] || [[ ! -f "$GOOGLE_APPLICATION_CREDENTIALS" ]]; then
+        return 0
+    fi
+
+    local credential_type
+    credential_type=$(jq -r '.type // empty' "$GOOGLE_APPLICATION_CREDENTIALS" 2>/dev/null) || {
+        print_error "Unable to read GOOGLE_APPLICATION_CREDENTIALS as JSON"
+        return 1
+    }
+
+    if [[ "$credential_type" != "authorized_user" ]]; then
+        return 0
+    fi
+
+    quota_project=$(jq -r '.quota_project_id // empty' "$GOOGLE_APPLICATION_CREDENTIALS" 2>/dev/null) || {
+        print_error "Unable to read quota_project_id from GOOGLE_APPLICATION_CREDENTIALS"
+        return 1
+    }
+
+    if [[ -z "$quota_project" ]]; then
+        print_error "User ADC is missing a quota project"
+        print_error "Run: gcloud auth application-default set-quota-project <project>"
+        print_error "Or set GSC_QUOTA_PROJECT in ~/.config/aidevops/credentials.sh"
+        return 1
+    fi
+
+    if [[ "$quota_project" == *$'\r'* ]] || [[ "$quota_project" == *$'\n'* ]]; then
+        print_error "ADC quota_project_id contains invalid newline characters"
+        return 1
+    fi
+
+    printf '%s\n' "$quota_project"
+    return 0
+}
+
 # Make GSC API request
 gsc_request() {
     local endpoint="$1"
     local data="$2"
     local token
+    local quota_project
+    local -a curl_args
     
     token=$(get_access_token) || return 1
-    
-    curl -s -X POST \
-        "https://searchconsole.googleapis.com/webmasters/v3/$endpoint" \
-        -H "Authorization: Bearer $token" \
-        -H "Content-Type: application/json" \
+    quota_project=$(resolve_quota_project) || return 1
+
+    curl_args=(
+        -sS
+        -X POST
+        "https://searchconsole.googleapis.com/webmasters/v3/$endpoint"
+        -H "Authorization: Bearer $token"
+        -H "Content-Type: application/json"
         -d "$data"
+    )
+    if [[ -n "$quota_project" ]]; then
+        curl_args+=(-H "x-goog-user-project: $quota_project")
+    fi
+
+    if ! curl "${curl_args[@]}"; then
+        return 1
+    fi
     return 0
 }
 
@@ -97,7 +164,9 @@ gsc_search_analytics() {
 EOF
 )
     
-    gsc_request "sites/$encoded_url/searchAnalytics/query" "$data"
+    if ! gsc_request "sites/$encoded_url/searchAnalytics/query" "$data"; then
+        return 1
+    fi
     return 0
 }
 
@@ -161,13 +230,17 @@ export_gsc() {
     
     # Make API request
     local response
-    response=$(gsc_search_analytics "$site_url" "$start_date" "$end_date")
+    if ! response=$(gsc_search_analytics "$site_url" "$start_date" "$end_date"); then
+        return 1
+    fi
     
     # If empty or error, try https:// format
     if [[ -z "$response" ]] || echo "$response" | jq -e '.error' &>/dev/null; then
         print_warning "sc-domain format failed, trying https:// format..."
         site_url="https://$domain/"
-        response=$(gsc_search_analytics "$site_url" "$start_date" "$end_date")
+        if ! response=$(gsc_search_analytics "$site_url" "$start_date" "$end_date"); then
+            return 1
+        fi
     fi
     
     if [[ -z "$response" ]]; then
@@ -239,9 +312,10 @@ Output:
     ~/.aidevops/.agent-workspace/work/seo-data/{domain}/gsc-{start}-{end}.toon
 
 Requirements:
-    - GOOGLE_APPLICATION_CREDENTIALS pointing to service account JSON
+    - GOOGLE_APPLICATION_CREDENTIALS pointing to service-account or user ADC JSON
+    - User ADC must contain quota_project_id, or set GSC_QUOTA_PROJECT
     - Or GSC_ACCESS_TOKEN set in ~/.config/aidevops/credentials.sh
-    - Service account must have access to the GSC property
+    - The authenticated account must have access to the GSC property
 
 EOF
     return 0
