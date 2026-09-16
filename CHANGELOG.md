@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.34.2] - 2026-09-16
+
+### Fixed
+
+- fix fast rate-limit UUID false positives
+
 ## [3.34.1] - 2026-09-16
 
 ### Changed
