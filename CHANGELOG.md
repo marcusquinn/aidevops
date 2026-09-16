@@ -10,6 +10,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.34.0] - 2026-09-16
+
+### Added
+
+- add durable agent sandbox lifecycle
+
+### Changed
+
+- Maintenance: mark t18439 complete (pr:#31963 completed:2026-09-16) (#31961)
+- Documentation: prepare sandbox release aggregation
+
+### Fixed
+
+- repair release preflight baseline
+
 ## [3.33.1] - 2026-09-16
 
 ### Added
