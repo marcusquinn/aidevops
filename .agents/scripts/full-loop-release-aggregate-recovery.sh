@@ -366,16 +366,22 @@ _full_loop_recovery_validate_snapshot_prepublication_intent() {
 	local current_authorization="$4"
 	local manifest_json=""
 	local snapshot_manifest=""
-	[[ "$failed_source_pr" == "$_FULL_LOOP_RESOLVED_SOURCE_PR" &&
-		"$failed_source_merge" == "$_FULL_LOOP_RESOLVED_SOURCE_MERGE" ]] || {
-		_full_loop_recovery_failed_prepublication_refused "recorded release source does not match the immutable snapshot"
+	local failed_source_manifest="${failed_source_pr}@${failed_source_merge}"
+	jq -e --argjson source_pr "$_FULL_LOOP_RESOLVED_SOURCE_PR" \
+		--arg source_merge "$_FULL_LOOP_RESOLVED_SOURCE_MERGE" '
+		.source_pr == $source_pr and .source_merge == $source_merge
+	' <<<"$source_json" >/dev/null || {
+		_full_loop_recovery_failed_prepublication_refused "resolved snapshot source identity conflicts with reviewed resolver state"
 		return 1
 	}
 	manifest_json=$(jq -ce --argjson source_pr "$_FULL_LOOP_RESOLVED_SOURCE_PR" \
-		--arg source_merge "$_FULL_LOOP_RESOLVED_SOURCE_MERGE" '
+		--arg source_merge "$_FULL_LOOP_RESOLVED_SOURCE_MERGE" \
+		--argjson failed_source_pr "$failed_source_pr" \
+		--arg failed_source_merge "$failed_source_merge" '
 		.aggregated_sources
 		| select(type == "array" and length > 0)
 		| select([.[] | select(.pr == $source_pr and .merge == $source_merge)] | length == 1)
+		| select([.[] | select(.pr == $failed_source_pr and .merge == $failed_source_merge)] | length == 1)
 	' <<<"$source_json") || {
 		_full_loop_recovery_failed_prepublication_refused "resolved snapshot manifest is incomplete or malformed"
 		return 1
@@ -385,8 +391,16 @@ _full_loop_recovery_validate_snapshot_prepublication_intent() {
 		_full_loop_recovery_failed_prepublication_refused "resolved snapshot manifest is incomplete or malformed"
 		return 1
 	}
-	release_authorization_compare "$current_authorization" "$snapshot_manifest" || {
-		_full_loop_recovery_failed_prepublication_refused "resolved snapshot manifest conflicts with persisted authorization"
+	release_authorization_compare "$_FULL_LOOP_AGGREGATE_RECOVERY_EXPECTED" "$snapshot_manifest" || {
+		_full_loop_recovery_failed_prepublication_refused "resolved snapshot manifest conflicts with reviewed expected sources"
+		return 1
+	}
+	release_authorization_subset "$current_authorization" "$snapshot_manifest" || {
+		_full_loop_recovery_failed_prepublication_refused "persisted authorization is not a subset of the resolved snapshot manifest"
+		return 1
+	}
+	release_authorization_subset "$failed_source_manifest" "$current_authorization" || {
+		_full_loop_recovery_failed_prepublication_refused "recorded release source is absent from persisted authorization"
 		return 1
 	}
 	return 0

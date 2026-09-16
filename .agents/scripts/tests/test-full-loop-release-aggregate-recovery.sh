@@ -1003,7 +1003,17 @@ printf 'PASS persisted replacement-tag recovery recreates its detached tag workt
 	verified_pr_merge="$failed_merge"
 	write_failure_evidence "$requested_merge" 99 "$failed_merge" v1.2.3 patch
 	snapshot_manifest="${old_manifest},99@${failed_merge}"
+	_FULL_LOOP_AGGREGATE_RECOVERY_EXPECTED="$snapshot_manifest"
 	_full_loop_recovery_validate_failed_prepublication_intent test/repo 42 "$snapshot_manifest" patch
+	verified_pr_merge="$requested_merge"
+	write_failure_evidence "$requested_merge" 42 "$requested_merge" v1.2.3 patch
+	_full_loop_recovery_validate_failed_prepublication_intent test/repo 42 "$old_manifest" patch
+	if _full_loop_recovery_validate_failed_prepublication_intent test/repo 42 \
+		"43@${second_merge}" patch >/dev/null 2>&1; then
+		exit 1
+	fi
+	verified_pr_merge="$failed_merge"
+	write_failure_evidence "$requested_merge" 99 "$failed_merge" v1.2.3 patch
 	for invalid_snapshot in \
 		'.aggregated_sources |= .[:-1]' \
 		'.aggregated_sources += [{pr:100,merge:"6666666666666666666666666666666666666666"}]' \
@@ -1018,6 +1028,12 @@ printf 'PASS persisted replacement-tag recovery recreates its detached tag workt
 		fi
 		_FULL_LOOP_RESOLVED_SOURCE_JSON="$original_source_json"
 	done
+	_FULL_LOOP_AGGREGATE_RECOVERY_EXPECTED="$old_manifest"
+	if _full_loop_recovery_validate_failed_prepublication_intent test/repo 42 "$snapshot_manifest" patch \
+		>/dev/null 2>&1; then
+		exit 1
+	fi
+	_FULL_LOOP_AGGREGATE_RECOVERY_EXPECTED="$snapshot_manifest"
 	_FULL_LOOP_RESOLVED_SOURCE_MERGE="$current_merge"
 	if _full_loop_recovery_validate_failed_prepublication_intent test/repo 42 "$snapshot_manifest" patch \
 		>/dev/null 2>&1; then
