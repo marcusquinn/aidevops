@@ -1428,6 +1428,7 @@ t165,Provider-agnostic task claiming via TODO.md,marcusquinn,orchestration archi
 -->
 
 ## Done
+- [x] t18441 Allow snapshot release retries to expand verified authorization #auto-dispatch #bug #release #security #interactive priority:critical tier:thinking ~2h ref:GH#31967 logged:2026-09-16 -> [todo/tasks/t18441-brief.md] pr:#31969 completed:2026-09-16
 - [x] t18222 Ship owner-reviewed Buzz interactive team runtime #agents #auto-dispatch #feat #framework #reliability #security ~8h tier:thinking ref:GH#29831 assignee:marcusquinn started:2026-08-08 logged:2026-08-09 -> [todo/tasks/t18222-brief.md] pr:#29834 testing:runtime-verified completed:2026-08-09
 - [x] t18208 Generate restricted OpenCode conversation launch overlays #mission:m-20260804-5d06b1 #enhancement #security #framework #agents #interactive #auto-dispatch ~5h tier:thinking parent:t18201 ref:GH#29686 logged:2026-08-06 -> [todo/tasks/t18208-brief.md] pr:#29673 testing:runtime-verified completed:2026-08-07
 - [x] t18207 Refactor Matrix behind the team-interface contracts #mission:m-20260804-5d06b1 #enhancement #security #reliability #framework #interactive #auto-dispatch ~6h tier:thinking parent:t18201 ref:GH#29646 logged:2026-08-06 -> [todo/tasks/t18207-brief.md] pr:#29669 testing:runtime-verified completed:2026-08-07
@@ -4932,4 +4933,3 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t18434 Fix snapshot-mode failed pre-publication release retries #auto-dispatch #bug ref:GH#31897 pr:#31901 completed:2026-09-15
 
-- [ ] t18441 Allow snapshot release retries to expand verified authorization #auto-dispatch #bug #release #security #interactive priority:critical tier:thinking ~2h ref:GH#31967 logged:2026-09-16 -> [todo/tasks/t18441-brief.md]
