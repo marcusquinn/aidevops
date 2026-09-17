@@ -12,6 +12,7 @@ import subprocess
 import sys
 from typing import Any
 
+from capability_browser_probe import playwright_live_evidence
 from capability_readiness_probes import AssessmentContext, assess
 from capability_registry_validation import validate
 
@@ -80,6 +81,8 @@ def parse_args() -> argparse.Namespace:
         child.add_argument("--runtime", choices=["opencode", "claude-code"])
         child.add_argument("--target")
         child.add_argument("--operation", choices=["read", "write", "admin"], default="read")
+        child.add_argument("--transport", choices=["mcp", "playwright"])
+        child.add_argument("--workdir", type=Path)
     sub.add_parser("check")
     generator = sub.add_parser("generate")
     generator.add_argument("--output", type=Path, default=AGENTS_DIR / "reference" / "capability-registry.md")
@@ -110,6 +113,25 @@ def main() -> int:
     fixture = load_json(args.fixture) if args.fixture else None
     live_evidence = None
     evidence_scope = None
+    if args.transport:
+        if not selected or selected["name"] != "browser-automation":
+            print(json.dumps({"error": "transport_requires_browser_capability"}))
+            return 2
+        if args.transport == "playwright":
+            if args.fixture is not None or not args.workdir:
+                print(json.dumps({"error": "live_playwright_requires_workdir_without_fixture"}))
+                return 2
+            transport = selected.get("transports", {}).get("playwright")
+            if not transport:
+                print(json.dumps({"error": "browser_transport_not_registered"}))
+                return 2
+            selected = {**selected, "probes": {**selected["probes"], **transport["probes"]}}
+            if runtime in selected["runtimes"]:
+                try:
+                    live_evidence, evidence_scope = playwright_live_evidence(args.workdir, args.target, args.operation, SCRIPT_DIR)
+                except ValueError as error:
+                    print(json.dumps({"error": "invalid_browser_scope", "detail": str(error)}))
+                    return 2
     if selected and selected["name"] == "github-operations" and args.target:
         try:
             live_evidence, evidence_scope = github_live_evidence(args.target, args.operation)
