@@ -1370,6 +1370,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18439 chore(release): aggregate PR #31958 and PR #31960 provenance #interactive #orchestration #release #tier:standard -> [todo/tasks/t18439-brief.md] ref:GH#31962 pr:#31963 pr:#31963 completed:2026-09-16
 
+- [ ] t18443 Add recommended apps and prioritize Recommended tab #auto-dispatch #enhancement #interactive #tier:standard ~1h ref:GH#32002 logged:2026-09-17 -> [todo/tasks/t18443-brief.md]
+
 ## In Progress
 
 - [x] t18430 Update OpenCode GitHub Action pin to v1.18.30 #auto-dispatch #dependencies #github_actions #interactive #tier:simple ref:GH#31828 started:2026-09-12 pr:#31829 completed:2026-09-12
