@@ -1370,7 +1370,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18439 chore(release): aggregate PR #31958 and PR #31960 provenance #interactive #orchestration #release #tier:standard -> [todo/tasks/t18439-brief.md] ref:GH#31962 pr:#31963 pr:#31963 completed:2026-09-16
 
-- [ ] t18443 Add recommended apps and prioritize Recommended tab #auto-dispatch #enhancement #interactive #tier:standard ~1h ref:GH#32002 logged:2026-09-17 -> [todo/tasks/t18443-brief.md]
+- [x] t18443 Add recommended apps and prioritize Recommended tab #auto-dispatch #enhancement #interactive #tier:standard ~1h ref:GH#32002 logged:2026-09-17 -> [todo/tasks/t18443-brief.md] pr:#32004 completed:2026-09-17
 
 ## In Progress
 
