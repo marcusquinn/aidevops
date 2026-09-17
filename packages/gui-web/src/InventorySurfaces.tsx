@@ -141,9 +141,9 @@ interface TabOption<T extends string> {
   label: string;
 }
 
-const appCollectionTabs: TabOption<AppCollectionId>[] = [
-  { id: "aidevops", label: "AIDevOps" },
+export const appCollectionTabs: TabOption<AppCollectionId>[] = [
   { id: "recommended", label: "Recommended" },
+  { id: "aidevops", label: "AIDevOps" },
 ];
 
 const managedCategoryByExactName: Record<string, ManagedCategoryId> = {
