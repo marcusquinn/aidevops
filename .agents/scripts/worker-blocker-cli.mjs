@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
-import { pathToFileURL } from "node:url";
-
-import { appendWorkerBlockerEvent } from "./worker-blocker-log.mjs";
+import { appendWorkerBlockerEvent, isWorkerBlockerEntrypoint } from "./worker-blocker-log.mjs";
 import {
   listActiveWorkerBlockerIssues,
   resolveStaleSupervisorWorkerBlockers,
@@ -66,6 +64,6 @@ export function runWorkerBlockerCli(argv = process.argv.slice(2)) {
   return handler(event, options);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isWorkerBlockerEntrypoint(import.meta.url)) {
   process.exitCode = runWorkerBlockerCli();
 }

@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -23,6 +23,26 @@ import {
 
 const LOGGER_PATH = fileURLToPath(new URL("../../../scripts/worker-blocker-log.mjs", import.meta.url));
 const CLI_PATH = fileURLToPath(new URL("../../../scripts/worker-blocker-cli.mjs", import.meta.url));
+
+test("deployed symlink entrypoints execute commands and report invalid commands", () => {
+  const root = mkdtempSync(join(tmpdir(), "aidevops-blocker-entry-"));
+  try {
+    const scriptsLink = join(root, "deployed scripts");
+    symlinkSync(dirname(CLI_PATH), scriptsLink, "dir");
+    for (const name of ["worker-blocker-cli.mjs", "worker-blocker-log.mjs"]) {
+      const entry = join(scriptsLink, name);
+      const logPath = join(root, `${name}.jsonl`);
+      const result = spawnSync(process.execPath, [entry, "append", "--log-file", logPath,
+        "--event", "permission_request_captured", "--repo-slug", "owner/repo", "--issue-number", "123"], { encoding: "utf8" });
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(JSON.parse(readFileSync(logPath, "utf8")).event, "permission_request_captured");
+      const invalid = spawnSync(process.execPath, [entry, "unknown-command"], { encoding: "utf8" });
+      assert.equal(invalid.status, 2, invalid.stderr);
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 function appendInSubprocess(logPath, event) {
   return new Promise((resolve, reject) => {

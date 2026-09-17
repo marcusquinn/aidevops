@@ -11,13 +11,13 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
+  realpathSync,
   renameSync,
   statSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 
 import {
   acquireWorkerBlockerLock as acquireLock,
@@ -177,12 +177,22 @@ export function appendWorkerBlockerEvent(input, options = {}) {
   }
 }
 
+export function isWorkerBlockerEntrypoint(moduleUrl) {
+  try {
+    // Deployment symlinks may remain in argv while Node resolves import.meta.url.
+    return Boolean(process.argv[1])
+      && realpathSync(process.argv[1]) === realpathSync(new URL(moduleUrl));
+  } catch {
+    return false;
+  }
+}
+
 async function main() {
   const { runWorkerBlockerCli } = await import("./worker-blocker-cli.mjs");
   return runWorkerBlockerCli(process.argv.slice(2));
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isWorkerBlockerEntrypoint(import.meta.url)) {
   main()
     .then((exitCode) => { process.exitCode = exitCode; })
     .catch(() => { process.exitCode = 1; });
