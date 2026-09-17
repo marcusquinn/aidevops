@@ -12,7 +12,18 @@ import re
 import shutil
 import subprocess
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import SplitResult, urlsplit
+
+
+def is_credential_free_origin(parsed: SplitResult) -> bool:
+    """Keep authority, resource and port checks independently reviewable."""
+    if parsed.scheme not in {"https", "http"} or not parsed.hostname:
+        return False
+    if parsed.username is not None or parsed.password is not None:
+        return False
+    if parsed.path not in {"", "/"} or parsed.query or parsed.fragment:
+        return False
+    return parsed.port is None or 0 < parsed.port <= 65535
 
 
 def validate_browser_target(target: str | None) -> None:
@@ -22,14 +33,8 @@ def validate_browser_target(target: str | None) -> None:
     if re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?", target):
         return
     try:
-        parsed = urlsplit(target)
-        valid = (
-            parsed.scheme in {"https", "http"} and parsed.hostname
-            and parsed.username is None and parsed.password is None
-            and parsed.path in {"", "/"} and not parsed.query and not parsed.fragment
-            and (parsed.port is None or 0 < parsed.port <= 65535)
-            and not any(character.isspace() for character in target)
-        )
+        valid = is_credential_free_origin(urlsplit(target))
+        valid = valid and not any(character.isspace() for character in target)
     except ValueError:
         valid = False
     if not valid:
