@@ -154,6 +154,36 @@ AGENTS_DIR="$TEST_ROOT/no-agents"
 AIDEVOPS_SKIP_PULSE_RESTART=1
 _AIDEVOPS_UPDATE_TRUE=true
 
+# The updater must delegate canonical mutation to the audited boundary. This
+# fixture stands in for that boundary while retaining local-only remotes for
+# the historical preservation tests below. It validates the updater contract
+# and performs the fixture's simulated maintenance outside the updater.
+AUDITED_RECOVERY_HELPER="$TEST_ROOT/audited-recovery-helper.sh"
+cat >"$AUDITED_RECOVERY_HELPER" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "${1:-}" == "fast-forward-current" ]]
+shift
+repo=""
+branch=""
+reason=""
+confirmation=""
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+	--repo) repo="$2"; shift 2 ;;
+	--branch) branch="$2"; shift 2 ;;
+	--reason) reason="$2"; shift 2 ;;
+	--confirm) confirmation="$2"; shift 2 ;;
+	*) exit 2 ;;
+	esac
+done
+[[ "$branch" == "main" && "$reason" == "aidevops-update" && "$confirmation" == "FAST_FORWARD_CANONICAL_BRANCH" ]]
+git -C "$repo" fetch origin main --quiet
+git -C "$repo" merge --ff-only origin/main --quiet
+EOF
+chmod +x "$AUDITED_RECOVERY_HELPER"
+export AIDEVOPS_CANONICAL_RECOVERY_HELPER="$AUDITED_RECOVERY_HELPER"
+
 assert_dirty_change_preserved() {
 	local name="$1"
 	local repo="$2"

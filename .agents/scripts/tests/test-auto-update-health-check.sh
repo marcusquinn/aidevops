@@ -30,6 +30,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 AGENT_SCRIPT_DIR="${SCRIPT_DIR}/.."
 HELPER="${AGENT_SCRIPT_DIR}/auto-update-helper.sh"
+CHECK_LIBRARY="${AGENT_SCRIPT_DIR}/auto-update-helper-check.sh"
 CONFIG_DEFAULTS_SOURCE="${SCRIPT_DIR}/../../configs/aidevops.defaults.jsonc"
 CONFIG_SCHEMA_SOURCE="${SCRIPT_DIR}/../../configs/aidevops-config.schema.json"
 
@@ -158,6 +159,22 @@ if [[ ! -x "$HELPER" ]]; then
 	exit 1
 fi
 print_result "auto-update-helper.sh exists and executable" "PASS"
+
+for updater_source in "$HELPER" "$CHECK_LIBRARY"; do
+	if grep -Fq -- "fast-forward-current --repo \"\$INSTALL_DIR\" --branch main" "$updater_source" &&
+		grep -q -- '--reason aidevops-update --confirm FAST_FORWARD_CANONICAL_BRANCH' "$updater_source"; then
+		print_result "$(basename "$updater_source") delegates canonical maintenance" "PASS"
+	else
+		print_result "$(basename "$updater_source") delegates canonical maintenance" "FAIL"
+	fi
+
+	if grep -Fq -- "git -C \"\$INSTALL_DIR\" fetch origin main" "$updater_source" ||
+		grep -Fq -- "git -C \"\$INSTALL_DIR\" merge --ff-only" "$updater_source"; then
+		print_result "$(basename "$updater_source") avoids direct canonical mutation" "FAIL"
+	else
+		print_result "$(basename "$updater_source") avoids direct canonical mutation" "PASS"
+	fi
+done
 
 if grep -q '^cmd_health_check()' "$HELPER"; then
 	print_result "cmd_health_check function defined" "PASS"

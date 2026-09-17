@@ -350,18 +350,32 @@ _cmd_check_stale_agent_redeploy() {
 #######################################
 _cmd_check_git_update() {
 	local remote="$1"
-
-	# Fetch before evaluating local blockers. A same-version release can still
-	# contain merged script fixes, so VERSION equality is not freshness proof.
-	if ! git -C "$INSTALL_DIR" fetch origin main --quiet 2>>"$LOG_FILE"; then
-		log_error "git fetch failed"
-		update_state "update" "$remote" "fetch_failed"
-		return 1
-	fi
+	local recovery_helper="${AIDEVOPS_CANONICAL_RECOVERY_HELPER:-${SCRIPT_DIR}/canonical-recovery-helper.sh}"
+	local fetch_failure_status="fetch_failed"
 	local local_hash=""
 	local remote_hash=""
+	local remote_tip=""
+
+	# The updater runs against a canonical checkout.  Only the recovery helper
+	# may fetch or advance it: it pins aidevops identity, takes the recovery lock,
+	# audits the authorization, and verifies the resulting worktree state.
+	[[ -x "$recovery_helper" ]] || {
+		log_error "Audited canonical maintenance helper is unavailable"
+		update_state "update" "$remote" "$fetch_failure_status"
+		return 1
+	}
 	local_hash=$(git -C "$INSTALL_DIR" rev-parse HEAD 2>>"$LOG_FILE") || return 1
-	remote_hash=$(git -C "$INSTALL_DIR" rev-parse origin/main 2>>"$LOG_FILE") || return 1
+	remote_tip=$(git -C "$INSTALL_DIR" ls-remote origin refs/heads/main 2>>"$LOG_FILE") || {
+		log_error "Unable to inspect origin/main before audited maintenance"
+		update_state "update" "$remote" "$fetch_failure_status"
+		return 1
+	}
+	remote_hash="${remote_tip%%[[:space:]]*}"
+	[[ -n "$remote_hash" ]] || {
+		log_error "origin/main tip could not be resolved"
+		update_state "update" "$remote" "$fetch_failure_status"
+		return 1
+	}
 	# The install checkout may contain deliberate local fixes or diagnostics.
 	# Preserve them and record that they are blocking activation of upstream.
 	if ! git -C "$INSTALL_DIR" diff --quiet 2>/dev/null || ! git -C "$INSTALL_DIR" diff --cached --quiet 2>/dev/null; then
@@ -381,29 +395,17 @@ _cmd_check_git_update() {
 		update_state "update" "$remote" "runtime_stale_branch"
 		return 1
 	fi
-	if [[ "$local_hash" == "$remote_hash" ]]; then
-		return 0
-	fi
-
-	if git -C "$INSTALL_DIR" merge-base --is-ancestor "$remote_hash" "$local_hash" 2>/dev/null; then
-		log_error "Local commits exist on main; refusing unattended update"
-		update_state "update" "$remote" "runtime_stale_local_commits"
-		return 1
-	fi
-	if ! git -C "$INSTALL_DIR" merge-base --is-ancestor "$local_hash" "$remote_hash" 2>/dev/null; then
-		log_error "Canonical main has diverged from origin/main; refusing unattended update"
-		update_state "update" "$remote" "runtime_stale_diverged"
-		return 1
-	fi
-
-	if ! git -C "$INSTALL_DIR" merge --ff-only "$remote_hash" --quiet 2>>"$LOG_FILE"; then
-		log_error "git merge --ff-only failed; preserving local history"
+	if ! AIDEVOPS_REAL_GIT_BIN="${AIDEVOPS_REAL_GIT_BIN:-/usr/bin/git}" \
+		bash "$recovery_helper" fast-forward-current --repo "$INSTALL_DIR" --branch main \
+		--reason aidevops-update --confirm FAST_FORWARD_CANONICAL_BRANCH >>"$LOG_FILE" 2>&1; then
+		log_error "Audited canonical fast-forward failed; preserving local history"
 		update_state "update" "$remote" "pull_failed"
 		return 1
 	fi
 	local_hash=$(git -C "$INSTALL_DIR" rev-parse HEAD 2>>"$LOG_FILE") || return 1
+	remote_hash=$(git -C "$INSTALL_DIR" rev-parse origin/main 2>>"$LOG_FILE") || return 1
 	if [[ "$local_hash" != "$remote_hash" ]]; then
-		log_error "Updated HEAD does not match fetched origin/main; refusing to run setup"
+		log_error "Audited update HEAD does not match origin/main; refusing to run setup"
 		update_state "update" "$remote" "history_mismatch"
 		return 1
 	fi
