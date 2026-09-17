@@ -134,6 +134,11 @@
       "mcp": "playwright",
       "fallback": "static-web-fetch",
       "required": ["deployed", "enabled", "runtime_compatible", "tool_visible", "reachable"],
+      "transports": {
+        "playwright": {
+          "probes": {"enabled": {"live": "requires explicit package-workdir selection and installed Playwright"}, "tool_visible": {"live": "requires an importable repository Chromium launcher"}, "reachable": {"live": "requires isolated blank-page browser roundtrip and verified close"}}
+        }
+      },
       "probes": {"deployed": {"path": "tools/browser/browser-automation.md"}, "enabled": {"live": "requires runtime MCP configuration"}, "tool_visible": {"tool": "playwright_*"}, "reachable": {"live": "requires MCP handshake"}}
     },
     {

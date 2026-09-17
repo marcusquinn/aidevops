@@ -9,6 +9,26 @@ Dispatch issue-backed workers with `dispatch-single-issue-helper.sh dispatch NUM
 
 Capability cataloguing is not evidence of live usability. Before routing execution that depends on an external tool or service, run `scripts/capability-readiness-helper.py route <capability> --runtime <opencode|claude-code>`. GitHub operations also require `--target OWNER/REPO --operation read|write|admin` so live reachability and repository permission evidence are bound to the intended action. Mandatory dimensions that are false **or unknown** force the declared fallback; the structured response reports the reason, coverage impact, and evidence scope. The canonical contract is `configs/capability-registry.json`; generated inventory: `reference/capability-registry.md`.
 
+For an existing repository Playwright runner, select the actual transport:
+
+```bash
+capability-readiness-helper.py route browser-automation --runtime opencode \
+  --transport playwright --workdir <absolute-package-directory> \
+  --target <origin-or-hostname> --operation read
+```
+
+This live probe imports that package's installed Playwright (including pnpm's
+`@playwright/test` dependency), launches isolated bundled Chromium, checks a blank
+in-memory page and closes it. It installs nothing, loads no project test/config,
+uses no credentials and never visits the target. `reachable` means the selected
+browser driver answered and closed, not that the target is reachable or the user
+is authenticated/authorized. Task/site authority and the repository's normal
+runner, credential and target checks remain mandatory. Do not use this evidence
+for a different package/browser, MCP, existing user profile or provider. Missing
+packages, failed launch/roundtrip/cleanup and unsupported runtimes fail closed.
+Fixture overrides are rejected for this live transport. The default/MCP path and
+its hidden-tool/failure gates remain unchanged.
+
 Conceptual comparison using supplied information needs no service probe. Select
 domain knowledge without claiming installed, authenticated or authorized access.
 Before the first provider-dependent action (including a live read), load the

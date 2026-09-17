@@ -12,6 +12,7 @@ import subprocess
 import sys
 from typing import Any
 
+from capability_browser_probe import playwright_live_evidence
 from capability_readiness_probes import AssessmentContext, assess
 from capability_registry_validation import validate
 
@@ -80,16 +81,72 @@ def parse_args() -> argparse.Namespace:
         child.add_argument("--runtime", choices=["opencode", "claude-code"])
         child.add_argument("--target")
         child.add_argument("--operation", choices=["read", "write", "admin"], default="read")
+        child.add_argument("--transport", choices=["mcp", "playwright"])
+        child.add_argument("--workdir", type=Path)
     sub.add_parser("check")
     generator = sub.add_parser("generate")
     generator.add_argument("--output", type=Path, default=AGENTS_DIR / "reference" / "capability-registry.md")
     return parser.parse_args()
 
 
-def route_output(result: dict[str, Any], evidence_scope: dict[str, str] | None = None) -> tuple[dict[str, Any], int]:
+def route_output(result: dict[str, Any], evidence_scope: dict[str, Any] | None = None) -> tuple[dict[str, Any], int]:
     ready = result["route_ready"]
     payload = {"decision": "route" if ready else "fallback", "capability": result["name"], "owner": result["owner"] if ready else None, "fallback": None if ready else result["fallback"], "reason": None if ready else "mandatory readiness is false or unknown", "coverage_impact": result["missing_required"], "readiness": result["readiness"], "evidence_scope": evidence_scope}
     return payload, 0 if ready else 3
+
+
+def browser_transport_capability(selected: dict[str, Any] | None, args: argparse.Namespace) -> dict[str, Any]:
+    """Select registered probes without granting fixture-based live authority."""
+    if not selected or selected["name"] != "browser-automation":
+        raise ValueError("transport_requires_browser_capability")
+    if args.transport == "mcp":
+        return selected
+    if args.fixture is not None or not args.workdir:
+        raise ValueError("live_playwright_requires_workdir_without_fixture")
+    transport = selected.get("transports", {}).get("playwright")
+    if not transport:
+        raise ValueError("browser_transport_not_registered")
+    return {**selected, "probes": {**selected["probes"], **transport["probes"]}}
+
+
+def probe_selected_capability(
+    selected: dict[str, Any] | None, args: argparse.Namespace, runtime: str,
+) -> tuple[dict[str, str] | None, dict[str, Any] | None]:
+    """Execute only the explicitly selected provider or browser transport."""
+    if not selected:
+        return None, None
+    if selected["name"] == "github-operations" and args.target:
+        return github_live_evidence(args.target, args.operation)
+    if args.transport == "playwright" and runtime in selected["runtimes"]:
+        return playwright_live_evidence(args.workdir, args.target, args.operation, SCRIPT_DIR)
+    return None, None
+
+
+def query_or_route(registry: dict[str, Any], args: argparse.Namespace) -> int:
+    selected = capability_for(registry, args.capability) if args.capability else None
+    if args.capability and not selected:
+        print(json.dumps({"error": "unknown_capability", "requested": args.capability}))
+        return 2
+    runtime = args.runtime or os.environ.get("AIDEVOPS_RUNTIME", "unknown").casefold()
+    fixture = load_json(args.fixture) if args.fixture else None
+    try:
+        if args.transport:
+            selected = browser_transport_capability(selected, args)
+    except ValueError as error:
+        print(json.dumps({"error": str(error)}))
+        return 2
+    try:
+        live_evidence, evidence_scope = probe_selected_capability(selected, args, runtime)
+    except ValueError as error:
+        code = "invalid_browser_scope" if args.transport == "playwright" else "invalid_target"
+        print(json.dumps({"error": code, "detail": str(error)}))
+        return 2
+    capabilities = [selected] if selected else registry["capabilities"]
+    context = AssessmentContext(AGENTS_DIR, fixture, live_evidence)
+    results = [assess(item, registry["dimensions"], runtime, context) for item in capabilities]
+    payload, status = route_output(results[0], evidence_scope) if args.command == "route" else ({"schema_version": registry["schema_version"], "runtime": runtime, "capabilities": results}, 0)
+    print(json.dumps(payload, indent=2))
+    return status
 
 
 def main() -> int:
@@ -102,26 +159,7 @@ def main() -> int:
     if args.command == "generate":
         generate(registry, args.output)
         return 0
-    selected = capability_for(registry, args.capability) if args.capability else None
-    if args.capability and not selected:
-        print(json.dumps({"error": "unknown_capability", "requested": args.capability}))
-        return 2
-    runtime = args.runtime or os.environ.get("AIDEVOPS_RUNTIME", "unknown").casefold()
-    fixture = load_json(args.fixture) if args.fixture else None
-    live_evidence = None
-    evidence_scope = None
-    if selected and selected["name"] == "github-operations" and args.target:
-        try:
-            live_evidence, evidence_scope = github_live_evidence(args.target, args.operation)
-        except ValueError as error:
-            print(json.dumps({"error": "invalid_target", "detail": str(error)}))
-            return 2
-    capabilities = [selected] if selected else registry["capabilities"]
-    context = AssessmentContext(AGENTS_DIR, fixture, live_evidence)
-    results = [assess(item, registry["dimensions"], runtime, context) for item in capabilities]
-    payload, status = route_output(results[0], evidence_scope) if args.command == "route" else ({"schema_version": registry["schema_version"], "runtime": runtime, "capabilities": results}, 0)
-    print(json.dumps(payload, indent=2))
-    return status
+    return query_or_route(registry, args)
 
 
 if __name__ == "__main__":

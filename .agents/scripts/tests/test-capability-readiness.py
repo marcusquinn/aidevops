@@ -4,10 +4,12 @@
 import json
 import os
 from pathlib import Path
+import shlex
 import subprocess
 import sys
 import tempfile
 import unittest
+from urllib.parse import urlunsplit
 
 TEST_DIR = Path(__file__).resolve().parent
 HELPER = TEST_DIR.parent / "capability-readiness-helper.py"
@@ -148,6 +150,101 @@ class CapabilityReadinessTests(unittest.TestCase):
     def test_hidden_tool_falls_back(self) -> None:
         output = self.run_helper("route", "browser", "--runtime", "opencode", expected=3)
         self.assertIn("tool_visible", output["coverage_impact"])
+
+    def run_playwright_transport(self, payload: dict, exit_code: int = 0) -> subprocess.CompletedProcess:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "package.json").write_text('{}')
+            node = root / "node"
+            node.write_text(
+                '#!/bin/sh\n'
+                'if [ -n "$NODE_OPTIONS$PROBE_TEST_CREDENTIAL" ]; then exit 9; fi\n'
+                f"printf '%s\\n' {shlex.quote(json.dumps(payload))}\n"
+                f'exit {exit_code}\n'
+            )
+            node.chmod(0o755)
+            environment = dict(os.environ)
+            environment.update({
+                "PATH": f"{root}{os.pathsep}{environment['PATH']}",
+                "NODE_OPTIONS": "untrusted-preload-placeholder",
+                "PROBE_TEST_CREDENTIAL": "not-a-real-credential",
+                "AIDEVOPS_VISIBLE_TOOLS": "bash",
+            })
+            return subprocess.run(  # nosec B603
+                [sys.executable, str(HELPER), "route", "browser", "--runtime", "opencode",
+                 "--transport", "playwright", "--workdir", directory, "--target", "localhost"],
+                env=environment, text=True, capture_output=True, check=False,
+            )
+
+    def test_repository_transport_uses_live_runner_evidence_without_mcp(self) -> None:
+        result = self.run_playwright_transport({
+            "schema": "aidevops.playwright-readiness/v1", "packageImportable": True,
+            "runnerAvailable": True, "roundTrip": True, "closed": True, "reason": "ready",
+        })
+        self.assertEqual(0, result.returncode, result.stdout)
+        output = json.loads(result.stdout)
+        self.assertEqual("route", output["decision"])
+        self.assertEqual("playwright", output["evidence_scope"]["transport"])
+        self.assertFalse(output["evidence_scope"]["target_contacted"])
+        self.assertFalse(output["evidence_scope"]["authenticated"])
+        self.assertEqual("unknown", output["readiness"]["authorized"])
+
+    def test_repository_transport_fails_closed_on_partial_or_failed_probe(self) -> None:
+        ready = {
+            "schema": "aidevops.playwright-readiness/v1", "packageImportable": True,
+            "runnerAvailable": True, "roundTrip": True, "closed": True, "reason": "ready",
+        }
+        for field in ("packageImportable", "runnerAvailable", "roundTrip", "closed"):
+            with self.subTest(field=field):
+                result = self.run_playwright_transport({**ready, field: False})
+                self.assertEqual(3, result.returncode, result.stdout)
+                self.assertEqual("fallback", json.loads(result.stdout)["decision"])
+        result = self.run_playwright_transport(ready, exit_code=1)
+        self.assertEqual(3, result.returncode, result.stdout)
+
+    def test_repository_transport_does_not_relay_untrusted_diagnostics(self) -> None:
+        for reason in ("private-diagnostic-placeholder", ["private-diagnostic-placeholder"], {}):
+            with self.subTest(reason=reason):
+                result = self.run_playwright_transport({
+                    "schema": "aidevops.playwright-readiness/v1", "reason": reason,
+                })
+                self.assertEqual(3, result.returncode)
+                self.assertNotIn("private-diagnostic-placeholder", result.stdout + result.stderr)
+                self.assertEqual("invalid_probe_result", json.loads(result.stdout)["evidence_scope"]["reason"])
+
+    def test_repository_transport_rejects_fixture_authority(self) -> None:
+        output = self.run_helper(
+            "route", "browser", "--runtime", "opencode", "--transport", "playwright",
+            "--workdir", str(TEST_DIR), "--target", "localhost", expected=2,
+        )
+        self.assertEqual("live_playwright_requires_workdir_without_fixture", output["error"])
+
+    def test_repository_transport_rejects_empty_fixture_authority(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = Path(directory) / "fixture.json"
+            fixture.write_text('{}')
+            output = self.run_helper(
+                "route", "browser", "--runtime", "opencode", "--transport", "playwright",
+                "--workdir", str(TEST_DIR), "--target", "localhost", expected=2, fixture=fixture,
+            )
+        self.assertEqual("live_playwright_requires_workdir_without_fixture", output["error"])
+
+    def test_transport_is_not_a_general_provider_override(self) -> None:
+        output = self.run_helper(
+            "route", "github", "--runtime", "opencode", "--transport", "playwright", expected=2,
+        )
+        self.assertEqual("transport_requires_browser_capability", output["error"])
+
+    def test_repository_transport_rejects_credential_bearing_target_before_launch(self) -> None:
+        target = urlunsplit(("https", "user:private-placeholder@example.test", "/", "", ""))
+        result = subprocess.run(  # nosec B603
+            [sys.executable, str(HELPER), "route", "browser", "--runtime", "opencode",
+             "--transport", "playwright", "--workdir", str(TEST_DIR),
+             "--target", target],
+            text=True, capture_output=True, check=False,
+        )
+        self.assertEqual(2, result.returncode)
+        self.assertNotIn("private-placeholder", result.stdout + result.stderr)
 
     def test_provider_neutral_accounting_routes_without_a_provider(self) -> None:
         output = self.run_helper("route", "accounting", "--runtime", "opencode")
