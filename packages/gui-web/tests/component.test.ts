@@ -11,7 +11,7 @@ import { chatPrimitiveStackDecision, DEFAULT_ACCENT_HUE, DEFAULT_CONTRAST, DEFAU
 import { commandPaletteMatches, commandPaletteShortcutEntries, commandPaletteShortcutQuery, orderCommandItemsByRecency, rememberCommandPaletteItemId } from "../src/CommandPalette";
 import { CommsConversationSurface } from "../src/CommsConversationSurface";
 import { renderDashboardHtml } from "../src/dashboard";
-import { AppsSurface, nextRecommendedFilterValue } from "../src/InventorySurfaces";
+import { appCollectionTabs, AppsSurface, nextRecommendedFilterValue } from "../src/InventorySurfaces";
 import { PulseWorkersSurface } from "../src/PulseWorkersSurface";
 import { recommendedApps } from "../src/RecommendedAppsSurface";
 import { AiProvidersSurface, VaultSurface } from "../src/StatusSurfaces";
@@ -291,6 +291,20 @@ describe("dashboard shell", () => {
     expect(openPanel?.description).toContain("privacy-first dashboards");
   });
 
+  test("includes requested recommended apps without duplicating ONLYOFFICE", () => {
+    expect(recommendedApps.filter((app) => app.name === "ONLYOFFICE")).toHaveLength(1);
+    expect(recommendedApps.filter((app) => ["Buzz", "CaskHub", "Davit", "iA Presenter", "ONLYOFFICE", "OrbStack", "Ulysses", "Vorssaint"].includes(app.name)).map((app) => [app.name, app.websiteUrl])).toEqual([
+      ["Buzz", "https://buzz.xyz/"],
+      ["CaskHub", "https://caskhub.app/"],
+      ["Davit", "https://davit.app/"],
+      ["iA Presenter", "https://ia.net/presenter"],
+      ["ONLYOFFICE", "https://www.onlyoffice.com/download-desktop"],
+      ["OrbStack", "https://orbstack.dev/"],
+      ["Ulysses", "https://ulysses.app/"],
+      ["Vorssaint", "https://vorssaint.com/"],
+    ]);
+  });
+
   test("renders Pulse and Workers detail drawer when drilldown sections are absent", () => {
     const status = mockedStatus().data;
     const [firstEvent, ...remainingEvents] = status.pulse_workers.events;
@@ -487,6 +501,9 @@ describe("dashboard shell", () => {
     ].join("\n");
 
     expect(html).toContain("AIDevOps");
+    expect(html.indexOf("Recommended")).toBeLessThan(html.indexOf("AIDevOps"));
+    expect(appCollectionTabs.map((tab) => tab.label)).toEqual(["Recommended", "AIDevOps"]);
+    expect(html).toContain('aria-selected="true" class="active" role="tab" type="button">AIDevOps');
     expect(html).toContain("These are the apps we use and recommend from our tried &amp; tested toolkit — enabling all the things we can do with AI");
     expect(html).not.toContain("App and CLI inventory for tools installed or updated by aidevops");
     expect(source.indexOf("Recommended app operating system filters")).toBeLessThan(source.indexOf("Recommended app platform filters"));
