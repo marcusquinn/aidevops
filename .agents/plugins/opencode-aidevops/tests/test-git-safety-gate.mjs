@@ -211,6 +211,43 @@ test("uses the plugin repository directory when mutation tools omit workdir", as
   }
 });
 
+test("uses an explicit linked-worktree context without weakening canonical or escape denials", async () => {
+  const { root, repo, linked } = setupRepo();
+  try {
+    const hooks = createQualityHooks({ scriptsDir, logsDir: root, repositoryDir: root });
+    const linkedPatch = `*** Begin Patch\n*** Add File: ${join(linked, "explicit-context.md")}\n+safe\n*** End Patch\n`;
+    await assert.doesNotReject(
+      () => hooks.toolExecuteBefore(
+        { tool: "functions.apply_patch" },
+        { args: { workdir: linked, patchText: linkedPatch } },
+      ),
+    );
+    const canonicalPatch = `*** Begin Patch\n*** Update File: ${join(repo, "README.md")}\n@@\n-seed\n+unsafe\n*** End Patch\n`;
+    await assert.rejects(
+      () => hooks.toolExecuteBefore(
+        { tool: "functions.apply_patch" },
+        { args: { workdir: linked, patchText: canonicalPatch } },
+      ),
+      /canonical write policy.*read-only session mirrors/,
+    );
+    const outside = join(root, "outside");
+    const escape = join(linked, "escape");
+    mkdirSync(outside);
+    writeFileSync(join(outside, "outside.md"), "seed\n");
+    symlinkSync(outside, escape, "dir");
+    const escapedPatch = `*** Begin Patch\n*** Update File: ${join(escape, "outside.md")}\n@@\n-seed\n+unsafe\n*** End Patch\n`;
+    await assert.rejects(
+      () => hooks.toolExecuteBefore(
+        { tool: "functions.apply_patch" },
+        { args: { workdir: linked, patchText: escapedPatch } },
+      ),
+      /symlinked write target escapes/,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("fails closed when canonical policy returns a non-object payload", () => {
   const root = mkdtempSync(join(tmpdir(), "aidevops-canonical-policy-"));
   const isolatedScripts = join(root, "scripts");

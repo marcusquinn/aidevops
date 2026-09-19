@@ -16,8 +16,19 @@ export const BOUNDED_PARENT_GUIDANCE = `1. Directory Verification:
    - These checks do not grant filesystem access or replace pre-edit Git checks, destructive-operation confirmation, or other permission controls.`;
 
 export async function adaptToolDefinition(input, output) {
-  if (input.toolID !== "bash" || typeof output.description !== "string") return;
-  // Exact matching leaves future upstream revisions and other plugins' text
-  // untouched rather than broadly deleting an unknown safety paragraph.
-  output.description = output.description.replace(LEGACY_PARENT_GUIDANCE, BOUNDED_PARENT_GUIDANCE);
+  if (input.toolID === "bash" && typeof output.description === "string") {
+    // Exact matching leaves future upstream revisions and other plugins' text
+    // untouched rather than broadly deleting an unknown safety paragraph.
+    output.description = output.description.replace(LEGACY_PARENT_GUIDANCE, BOUNDED_PARENT_GUIDANCE);
+  }
+  if (input.toolID !== "apply_patch") return;
+
+  const parameters = output.parameters;
+  if (!parameters || typeof parameters !== "object") return;
+  parameters.properties ||= {};
+  if (parameters.properties.workdir) return;
+  parameters.properties.workdir = {
+    type: "string",
+    description: "Optional verified linked-worktree directory for applying the patch. Use absolute patch paths when targeting a different worktree.",
+  };
 }
