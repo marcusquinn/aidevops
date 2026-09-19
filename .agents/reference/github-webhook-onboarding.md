@@ -136,8 +136,10 @@ public ingress service; GitHub is not an enrolled mesh peer. See the
 2. For an external front proxy, the current
    [supported integration](https://docs.netbird.io/selfhosted/external-reverse-proxy)
    for native ingress is Traefik. Nginx/Caddy management-server templates do not
-   prove compatibility with this feature. Cloudron's package does not provide it;
-   use section 3C or Cloudflare Tunnel instead.
+   prove compatibility with this feature. Cloudron's published package support is
+   the core private mesh; a separate package candidate may offer optional bundled
+   proxy ingress, but must be verified as merged, released, and qualified before
+   use. Otherwise use section 3C or Cloudflare Tunnel instead.
 3. Enrol the receiver host. Since the proxy connects to its mesh address, restart
    the receiver with `WEBHOOK_LISTEN_HOST` set to that host's actual NetBird IPv4
    address, not `127.0.0.1` or `0.0.0.0`. Persist this override in its service.
@@ -173,9 +175,10 @@ nginx without the native feature's Traefik requirement.
 
 1. Keep NetBird management where it already runs. The
    [Cloudron NetBird package](https://github.com/marcusquinn/cloudron-netbird-app)
-   supports the core mesh but explicitly excludes native reverse proxy because
-   Cloudron terminates TLS with nginx. Do not change Cloudron's managed nginx,
-   firewall rules, or install an unmanaged proxy alongside it.
+   supports the core mesh; treat any optional bundled proxy as candidate-only
+   until its released package documents the target ingress. Do not change
+   Cloudron's managed nginx, firewall rules, or install an unmanaged competing
+   proxy alongside it.
 2. Provision a **separate** public gateway VPS after approval; choose a compatible
    host using [OS selection](os-selection.md). Install an ordinary maintained
    reverse proxy and enrol this gateway and the receiver into the same NetBird
