@@ -511,6 +511,10 @@ main() {
 		echo "  $0 status cloudron01"
 		echo ""
 		echo "Note: Cloudron servers typically require 'root' user for SSH access"
+		echo "Access recovery: an invalid CLI token is not proof SSH recovery is unavailable."
+		echo "With authorised SSH, inspect cloudron-support --help and installed version first;"
+		echo "preserve active support logins, keep temporary credentials private, and revoke them after use."
+		echo "Do not reset owner passwords, insert raw tokens, bypass auth, or weaken host-key checking."
 		echo "Install Cloudron CLI: npm install -g cloudron"
 		;;
 	*)
