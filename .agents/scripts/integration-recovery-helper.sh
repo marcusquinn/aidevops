@@ -44,6 +44,8 @@ integration_recovery_capture() {
 
 integration_recovery_observe() {
 	local id="$1" record="" repo="" issue="" brief="" comments="" dependencies=""
+	local temp_root="${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}"
+	local observation_dir="" brief_file="" comments_file="" dependencies_file=""
 	record=$(python3 "${_IR_SCRIPT_DIR}/integration_recovery.py" show --id "$id") || return 1
 	repo=$(jq -er '.repo' <<<"$record") || return 1
 	issue=$(jq -er '.issue' <<<"$record") || return 1
@@ -54,10 +56,25 @@ integration_recovery_observe() {
 	source "${_IR_SCRIPT_DIR}/terminal-blocker-circuit.sh"
 	comments=$(terminal_blocker_fetch_trusted_comments "$issue" "$repo") || return 1
 	dependencies=$(_terminal_blocker_dependency_signature "$repo" "$issue") || return 1
-	jq -nc --argjson issue "$brief" --argjson comments "$comments" --argjson dependencies "$dependencies" \
-		'{issue:$issue,comments:$comments,dependencies:$dependencies}' |
+	# Observations can contain trusted threads larger than ARG_MAX. Keep their JSON
+	# out of jq argv while retaining the authenticated filtering above.
+	mkdir -p "$temp_root" || return 1
+	observation_dir=$(mktemp -d "${temp_root%/}/integration-recovery-observe.XXXXXX") || return 1
+	brief_file="${observation_dir}/brief.json"
+	comments_file="${observation_dir}/comments.json"
+	dependencies_file="${observation_dir}/dependencies.json"
+	if ! printf '%s' "$brief" >"$brief_file" || ! printf '%s' "$comments" >"$comments_file" ||
+		! printf '%s' "$dependencies" >"$dependencies_file"; then
+		rm -rf "$observation_dir"
+		return 1
+	fi
+	jq -n --slurpfile issue "$brief_file" --slurpfile comments "$comments_file" \
+		--slurpfile dependencies "$dependencies_file" \
+		'{issue:$issue[0],comments:$comments[0],dependencies:$dependencies[0]}' |
 		python3 "${_IR_SCRIPT_DIR}/integration_recovery.py" observe --id "$id"
-	return $?
+	local result=$?
+	rm -rf "$observation_dir"
+	return "$result"
 }
 
 integration_recovery_pending() {
