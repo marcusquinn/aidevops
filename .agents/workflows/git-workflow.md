@@ -32,6 +32,8 @@ ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/pre-edit-check.sh  # Verifies br
 
 If the gate reports the canonical checkout: STOP and create a safe linked worktree for the task before editing. This technical gate checks both branch and worktree location; `git status` alone cannot prove the checkout is canonical versus linked. For releases, first verify the canonical checkout is clean and synchronized, then create a fresh detached linked worktree at `origin/main`; the version manager refuses canonical execution and requires source-PR merge provenance.
 
+**Same-session recovery:** When a session started outside the repository already owns a verified linked worktree, keep the session. Use absolute target paths and pass that verified path as `workdir` to `apply_patch` and Bash; the unchanged session root is not a reason to relocate the chat. Explicit context does not bypass canonical or escape protections.
+
 **First Actions** (before any code changes):
 
 ```bash

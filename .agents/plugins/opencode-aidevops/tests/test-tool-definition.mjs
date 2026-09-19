@@ -30,9 +30,29 @@ test("other tools and unknown upstream descriptions remain untouched", async () 
   }
 });
 
+test("apply_patch exposes an optional workdir without replacing an upstream definition", async () => {
+  const properties = { patchText: { type: "string" } };
+  const output = { parameters: { type: "object", properties } };
+  await adaptToolDefinition({ toolID: "apply_patch" }, output);
+  assert.equal(output.parameters.properties, properties);
+  assert.deepEqual(properties.workdir, {
+    type: "string",
+    description: "Optional verified linked-worktree directory for applying the patch. Use absolute patch paths when targeting a different worktree.",
+  });
+  await adaptToolDefinition({ toolID: "apply_patch" }, output);
+  assert.equal(Object.keys(properties).filter((key) => key === "workdir").length, 1);
+
+  const upstreamWorkdir = { type: "string", description: "Upstream context" };
+  const upstream = { parameters: { properties: { workdir: upstreamWorkdir } } };
+  await adaptToolDefinition({ toolID: "apply_patch" }, upstream);
+  assert.equal(upstream.parameters.properties.workdir, upstreamWorkdir);
+});
+
 test("both plugin modes register the definition adapter", () => {
   const entry = readFileSync(new URL("../index.mjs", import.meta.url), "utf8");
   assert.equal(entry.split('"tool.definition": adaptToolDefinition').length - 1, 2);
+  const v2 = readFileSync(new URL("../v2.mjs", import.meta.url), "utf8");
+  assert.match(v2, /editor\.update\("apply_patch", \(definition\) => adaptToolDefinition\(\{ toolID: "apply_patch" \}, definition\)\)/);
 });
 
 test("bounded check accepts a high-cardinality parent with spaces without output, and rejects non-directories", () => {
