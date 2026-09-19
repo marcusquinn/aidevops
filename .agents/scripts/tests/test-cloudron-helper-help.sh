@@ -20,6 +20,7 @@ run_help_case() {
 	tests_run=$((tests_run + 1))
 	if [[ "$status" -eq 0 ]] &&
 		[[ "$output" == *"Cloudron Helper Script"* ]] &&
+		[[ "$output" == *"invalid CLI token is not proof SSH recovery is unavailable"* ]] &&
 		[[ "$output" != *"unbound variable"* ]]; then
 		printf 'PASS: %s\n' "$case_name"
 		return 0

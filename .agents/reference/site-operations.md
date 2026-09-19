@@ -51,3 +51,9 @@ Keep WordPress connection definitions in `wordpress-sites.json` and use
 layer; it does not replace `wp-helper.sh` or duplicate secrets. The inventory
 identifies a hostname and mapped child while `wordpress-sites.json` remains the
 source for WP-CLI connection execution.
+
+For Cloudron, an expired local CLI token requires a capability-first check:
+preserve valid scoped access, verify authorised root SSH, and inspect installed
+recovery-tool help/version before requesting browser login. This does not authorise
+credential extraction, password resets, authentication bypass, or destructive
+server operations; see `services/hosting/cloudron.md`.
