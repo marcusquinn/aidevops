@@ -120,6 +120,29 @@ _handle_cmd_run_continuation_attempt
 [[ "$_cmd_run_disposition" == return && "$finish_calls" == 1 ]]
 printf 'PASS: runtime producer resumes once, queues before release and rejects foreign ownership/authority\n'
 
+# Regression: trusted comment threads must never be expanded into jq argv. The
+# fixture exceeds typical ARG_MAX limits but otherwise leaves a decided request
+# unchanged, so pending observation must suppress it without queue mutation.
+recovery_id=$(jq -r '.[0].id' <<<"$records")
+mock_metadata='{"number":31265,"state":"open","author_association":"OWNER","title":"Checkpoint integration","body":"## Files Scope\n- src/caller.sh","assignees":[],"labels":[]}'
+mock_comments=$(python3 -c 'import json; print(json.dumps([{"id":1,"user":{"login":"owner"},"author_association":"OWNER","created_at":"2026-01-01T00:00:00Z","body":"x" * 3000000}]))')
+gh() {
+	case "$*" in
+	*"issues/31265/comments"*) printf '%s\n' "$mock_comments" ;;
+	*"api graphql"*) printf '%s\n' '{"data":{"repository":{"issue":{"blockedBy":{"nodes":[],"pageInfo":{"hasNextPage":false}}}}}}' ;;
+	*"api user"*) printf '%s\n' 'owner' ;;
+	*"collaborators/owner/permission"*) printf '%s\n' 'write' ;;
+	*) printf '%s\n' "$mock_metadata" ;;
+	esac
+	return 0
+}
+integration_recovery_observe "$recovery_id" >/dev/null
+unset WORKER_ISSUE_NUMBER
+printf '%s\n' '{"wake":"owner_change","next_action":"retain pulse ownership","evidence":"fixture decision"}' |
+	integration_recovery_decision "$recovery_id" >/dev/null
+[[ -z "$(integration_recovery_pending)" ]]
+printf 'PASS: oversized trusted threads avoid argv and suppress unchanged decisions\n'
+
 (
 	# shellcheck source=../interactive-session-helper.sh
 	source "${SCRIPT_DIR}/interactive-session-helper.sh"
