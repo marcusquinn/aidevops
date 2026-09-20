@@ -46,6 +46,12 @@ def output(value: Any) -> None:
     print(json.dumps(value, indent=2, sort_keys=True))
 
 
+def required_document(value: dict[str, Any] | None) -> dict[str, Any]:
+    if value is None:
+        raise ProspectingStoreError("this command requires an input document")
+    return value
+
+
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(description=__doc__)
     root.add_argument("--store", type=Path, default=default_root(), help="private store directory")
@@ -81,14 +87,12 @@ def parser() -> argparse.ArgumentParser:
 def run(arguments: argparse.Namespace) -> dict[str, Any]:
     raw = load_document(arguments.input) if hasattr(arguments, "input") else None
     if arguments.command == "import" and arguments.dry_run:
-        assert raw is not None
-        return import_document(None, raw, dry_run=True)
+        return import_document(None, required_document(raw), dry_run=True)
     database = connect(arguments.store)
     try:
         migrate(database)
         if arguments.command in ("init", "import"):
-            assert raw is not None
-            result = import_document(database, raw)
+            result = import_document(database, required_document(raw))
         elif arguments.command == "list":
             result = {"project_id": arguments.project, "leads": list_leads(database, arguments.project, disposition=arguments.disposition, limit=arguments.limit)}
         elif arguments.command == "disposition":

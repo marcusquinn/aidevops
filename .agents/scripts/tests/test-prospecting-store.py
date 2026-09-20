@@ -103,7 +103,7 @@ class ProspectingStoreTest(unittest.TestCase):
         with self.assertRaises(ContractError):
             import_document(self.database, malformed)
         extra = copy.deepcopy(self.beta_document())
-        extra["project"]["profile"]["access_token"] = "not-allowed"
+        extra["project"]["profile"]["unexpected_field"] = "not-allowed"
         with self.assertRaises(ContractError):
             import_document(self.database, extra)
         null_list = copy.deepcopy(self.beta_document())

@@ -17,6 +17,10 @@ from typing import Any, Iterator
 from prospecting_contract import DISPOSITIONS, ImportDocument, ScoreUpdate, validate_project_payload, version
 
 SCHEMA_VERSION = 1
+PROJECT_UPDATE_QUERIES = {
+    "profile": "UPDATE projects SET profile_version=profile_version+1,profile_json=?,updated_at=? WHERE project_id=? AND profile_version=?",
+    "discovery": "UPDATE projects SET discovery_version=discovery_version+1,discovery_json=?,updated_at=? WHERE project_id=? AND discovery_version=?",
+}
 
 
 class ProspectingStoreError(RuntimeError):
@@ -253,14 +257,9 @@ def list_leads(database: sqlite3.Connection, project_id: str, *, disposition: st
     _project(database, project_id)
     if not 1 <= limit <= 1000:
         raise ProspectingStoreError("limit must be between 1 and 1000")
-    parameters: list[Any] = [project_id]
-    predicate = ""
     if disposition is not None:
         if disposition not in DISPOSITIONS:
             raise ProspectingStoreError("unsupported disposition")
-        predicate = " AND d.disposition=?"
-        parameters.append(disposition)
-    parameters.append(limit)
     rows = database.execute(
         "SELECT l.lead_id,l.provider,l.object_id,o.object_type,o.parent_object_id,o.evidence_id,"
         "o.corpus_id,l.score,l.matching_phrase,l.explanation,l.intent,l.stage,l.suitability,"
@@ -268,8 +267,9 @@ def list_leads(database: sqlite3.Connection, project_id: str, *, disposition: st
         "d.disposition,d.version AS disposition_version FROM leads l "
         "JOIN evidence_objects o ON o.project_id=l.project_id AND o.provider=l.provider AND o.object_id=l.object_id "
         "JOIN dispositions d ON d.project_id=l.project_id AND d.lead_id=l.lead_id "
-        "WHERE l.project_id=?" + predicate + " ORDER BY l.score DESC,l.lead_id LIMIT ?",
-        parameters,
+        "WHERE l.project_id=? AND (? IS NULL OR d.disposition=?) "
+        "ORDER BY l.score DESC,l.lead_id LIMIT ?",
+        (project_id, disposition, disposition, limit),
     ).fetchall()
     result = []
     for row in rows:
@@ -315,13 +315,11 @@ def update_project_version(database: sqlite3.Connection, project_id: str, kind: 
         raise ProspectingStoreError("version kind must be profile or discovery")
     version(expected_version, "expected version")
     validate_project_payload(kind, payload)
-    field = f"{kind}_version"
-    payload_field = f"{kind}_json"
     payload_json = _json(payload)
     now = _now()
     with transaction(database):
         cursor = database.execute(
-            f"UPDATE projects SET {field}={field}+1,{payload_field}=?,updated_at=? WHERE project_id=? AND {field}=?",
+            PROJECT_UPDATE_QUERIES[kind],
             (payload_json, now, project_id, expected_version),
         )
         if cursor.rowcount != 1:
