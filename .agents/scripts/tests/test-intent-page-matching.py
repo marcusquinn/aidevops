@@ -15,7 +15,8 @@ SCRIPTS = Path(__file__).resolve().parents[1]
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "marketing-decisions"
 SPEC = importlib.util.spec_from_file_location("intent_page_matching", SCRIPTS / "intent_page_matching.py")
 matching = importlib.util.module_from_spec(SPEC)
-assert SPEC.loader is not None
+if SPEC.loader is None:
+    raise RuntimeError("intent page matcher module is unavailable")
 SPEC.loader.exec_module(matching)
 
 
