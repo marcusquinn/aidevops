@@ -77,7 +77,7 @@ test_time_step_logs_running_before_command() {
 
 test_noninteractive_cli_failure_continues_config_reconciliation() {
 	local snippet=""
-	snippet=$(perl -0ne 'print $1 if /(_setup_run_non_interactive\(\) \{.*?^\})/ms' "$SETUP_SH")
+	snippet=$(perl -0ne 'print $1 if /(_setup_run_noninteractive_migrations\(\) \{.*?^\}\n\n_setup_run_non_interactive\(\) \{.*?^\})/ms' "$SETUP_SH")
 	if [[ -z "$snippet" ]]; then
 		print_result "non-interactive setup extraction succeeds" 1 "setup function block not found"
 		return 0
