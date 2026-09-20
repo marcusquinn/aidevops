@@ -1,0 +1,15 @@
+{
+  "product_name": "Signalboard",
+  "pages": [
+    {
+      "url": "https://example.test/product",
+      "title": "Signalboard",
+      "text": "Signalboard helps support teams track recurring customer problems. Built for teams that need to turn feedback into product work. It does not replace a help desk."
+    },
+    {
+      "url": "https://example.test/compare",
+      "title": "Compare Signalboard",
+      "text": "Compare Signalboard versus spreadsheets when support teams struggle to prioritize feedback. Our community forum shares implementation examples."
+    }
+  ]
+}
