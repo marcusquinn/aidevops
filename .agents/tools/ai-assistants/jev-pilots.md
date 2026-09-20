@@ -147,6 +147,62 @@ cost, human repair time and final task quality are explicitly **unknown**, not z
 until measured in an actual host workflow. No efficiency improvement is claimed
 from the bundled synthetic smoke tests.
 
+### Manual outcome journal
+
+`jev-evaluation.py` is a separate, offline-only journal for a small held-out
+evaluation of retrieval or shadow triage against the actual existing workflow.
+It observes nothing between explicit invocations: it does not read sessions,
+repositories, GitHub, or provider credentials, and it makes no network request.
+Use opaque task IDs rather than task text, paths, identities, or source material.
+
+Create a local JSON file with an operator-reviewed outcome and explicit units.
+`null` means unknown, never zero. `accepted_outcome` and
+`label_provenance` distinguish accepted work, synthetic cases, and unreviewed
+labels; AI-authored labels are not human ground truth.
+
+```json
+{
+  "task_id": "heldout-01",
+  "task_category": "retrieval",
+  "route": "baseline",
+  "accepted_outcome": "accepted",
+  "label_provenance": "operator_reviewed",
+  "corpus_sha256": "<private corpus hash>",
+  "rubric": "<operator rubric version>",
+  "model": "<route/model identity>",
+  "metrics": {
+    "repair_seconds": null,
+    "end_to_end_seconds": 120,
+    "input_tokens": null,
+    "total_cost_usd": null
+  },
+  "missing_evidence": false,
+  "misclassification": false
+}
+```
+
+```bash
+python3 ~/.aidevops/agents/scripts/jev-evaluation.py record --input outcome.json
+python3 ~/.aidevops/agents/scripts/jev-evaluation.py status
+python3 ~/.aidevops/agents/scripts/jev-evaluation.py compare --baseline baseline.json --pilot pilot.json
+```
+
+Pass `--pilot-report /path/to/selected-report.json` only to import the corpus,
+rubric, and model metadata from one explicitly selected local pilot report. The
+journal rejects unknown report schemas, duplicate logical records, unreviewed
+labels, unknown accepted outcomes, and mismatched task/corpus/rubric/model pairs
+for a value comparison. A compatible comparison reports deltas only and always
+states `no_value_claim`: quality, missing evidence, and repair effort come before
+any claimed savings. It never establishes Jev value from offline fixtures.
+
+Records are owner-only files under
+`~/.aidevops/.agent-workspace/work/jev-evaluation/`, outside Git. Stop collection
+by not invoking the command; there is no hook, daemon, upload, API spend, schedule,
+or production integration. Retain or delete records through the approved local-data
+lifecycle. Reverting this optional source leaves records untouched. A separately
+consented live comparison is required before any provider value claim or public
+benchmark; do not publish reports or performance results.
+
 Exit 0: offline/unfiltered report or live results needing no fallback. Exit 2:
 blocked input/storage/scan or live results requiring the established LLM path for
 some/all items. `fallback_required` does not mean an LLM was invoked. Do not change
@@ -161,6 +217,7 @@ From a source worktree:
 ```bash
 python3 .agents/scripts/tests/test-jev-pilot.py
 python3 .agents/scripts/tests/test-jev-example.py
+python3 .agents/scripts/tests/test-jev-evaluation.py
 ```
 
 These offline tests cover reversible selections, abstention, failed/missing access,
