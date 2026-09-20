@@ -171,6 +171,12 @@ protected release merge that combines the pinned release with later ordinary
 merges without downgrading the active runtime. A stale descendant, fetch failure,
 concurrent replacement or unrelated history remains a hard failure.
 
+When the refusal is specifically an older changed-tree descendant of freshly
+fetched protected `main`, reconciliation records a forward-only `stale-runtime/v1`
+deferral for the exact `exact-tag-deployment` lane revision. The reservation and
+all provenance checks remain intact; generic failures, conflicting identity, or
+an intervening lane revision cannot create the deferral.
+
 ## Verification
 
 Run from the repository root:

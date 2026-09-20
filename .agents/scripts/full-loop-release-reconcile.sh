@@ -1111,6 +1111,9 @@ _full_loop_release_finalize_reconciliation() {
 	local tag_commit=""
 	local version_manager=""
 	local deploy_helper=""
+	local deployment_exit=0
+	local attempt_head=""
+	local attempt_owner=""
 
 	source_json=$(_full_loop_release_source_json_from_tag "$tag_name") || return 1
 	source_pr=$(jq -er '.source_pr' <<<"$source_json") || return 1
@@ -1127,6 +1130,8 @@ _full_loop_release_finalize_reconciliation() {
 	if declare -F release_lane_update_if_owned >/dev/null 2>&1; then
 		release_lane_update_if_owned "$repo" "$requested_pr" "exact-tag-deployment" "$tag_name" || return 1
 	fi
+	attempt_head="${_AIDEVOPS_RELEASE_LANE_HEAD:-}"
+	attempt_owner=$(jq -r '.owner // empty' <<<"${_AIDEVOPS_RELEASE_LANE_JSON:-}") || return 1
 	version_manager="${SCRIPT_DIR}/version-manager.sh"
 	deploy_helper="${SCRIPT_DIR}/deploy-agents-on-merge.sh"
 	[[ -f "$version_manager" ]] || return 1
@@ -1141,7 +1146,14 @@ _full_loop_release_finalize_reconciliation() {
 			AIDEVOPS_SYNC_REPO_ROOT="$_FULL_LOOP_RELEASE_PATH" \
 			AIDEVOPS_SYNC_DEPLOY_SCRIPT="$deploy_helper" \
 			bash "$version_manager" post-release
-	) || return 1
+	) || deployment_exit=$?
+	if [[ "$deployment_exit" -ne 0 ]]; then
+		if [[ "$deployment_exit" -eq 76 ]] && declare -F release_lane_defer_stale_runtime_recovery >/dev/null 2>&1; then
+			[[ "$attempt_head" =~ ^[0-9a-f]{40}$ && "$attempt_owner" == "${_AIDEVOPS_RELEASE_LANE_OWNER_PREFIX}"* ]] || return 1
+			release_lane_defer_stale_runtime_recovery "$repo" "$requested_pr" "$tag_name" "$attempt_head" "$attempt_owner" || return 1
+		fi
+		return "$deployment_exit"
+	fi
 	_full_loop_persist_release_success "$repo" "$_FULL_LOOP_RELEASE_PATH" "$source_json" \
 		"$source_pr" "$source_merge" "$_FULL_LOOP_RELEASE_RECONCILE_AUTHORIZED"
 	return $?
