@@ -14,8 +14,9 @@ from pathlib import Path
 SCRIPTS = Path(__file__).resolve().parents[1]
 FIXTURES = Path(__file__).parent / "fixtures" / "marketing-decisions"
 SPEC = importlib.util.spec_from_file_location("community_triage", SCRIPTS / "community_triage.py")
+if SPEC is None or SPEC.loader is None:
+    raise RuntimeError("community triage module is unavailable")
 triage = importlib.util.module_from_spec(SPEC)
-assert SPEC.loader is not None
 SPEC.loader.exec_module(triage)
 
 
