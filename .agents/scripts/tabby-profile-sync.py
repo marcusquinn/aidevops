@@ -45,15 +45,16 @@ from tabby_profile_validation import (
     report_profile_command_issues,
 )
 from tabby_shell_resolver import ShellResolutionError, resolve_login_shell
+from tabby_yaml_recovery import load_yaml_for_sync
 from tabby_yaml_helpers import (
     _parse_block_scalar,
-    load_yaml_simple,
-    save_yaml,
     extract_existing_cwds,
     extract_group_id,
     extract_profile_blocks,
     insert_profiles_block,
+    load_yaml_simple,
     remove_profile_blocks,
+    save_yaml,
     validate_yaml_document,
 )
 
@@ -579,7 +580,9 @@ def sync_profiles(args: argparse.Namespace) -> None:
     """Perform the profile sync: discover new repos and insert their profiles."""
     shell_path = resolve_login_shell()
     repos = get_profile_targets(args.repos_json)
-    config_text = load_yaml_simple(args.tabby_config)
+    config_text, repaired_legacy_yaml = load_yaml_for_sync(args.tabby_config)
+    if repaired_legacy_yaml:
+        print("Repaired legacy Tabby profiles YAML corruption.")
     existing_cwds = extract_existing_cwds(config_text)
 
     # Preserve custom profiles byte-for-byte, but make their invalid runtime
@@ -626,11 +629,10 @@ def main() -> None:
     parser.add_argument("--status-only", action="store_true", help="Show status without modifying")
     args = parser.parse_args()
 
-    repos = get_profile_targets(args.repos_json)
-    config_text = load_yaml_simple(args.tabby_config)
-    existing_cwds = extract_existing_cwds(config_text)
-
     if args.status_only:
+        repos = get_profile_targets(args.repos_json)
+        config_text = load_yaml_simple(args.tabby_config)
+        existing_cwds = extract_existing_cwds(config_text)
         reconciliation = plan_profile_reconciliation(
             config_text, get_registered_paths(args.repos_json)
         )
