@@ -54,7 +54,11 @@ for job_name, output_name in (
     run = next(step["run"] for step in steps if "run" in step)
     (root / output_name).write_text(run)
 PY
+	_write_gh_stub
+	return 0
+}
 
+_write_gh_stub() {
 	cat >"${TEST_ROOT}/bin/gh" <<'GH_STUB'
 #!/usr/bin/env bash
 set -euo pipefail
