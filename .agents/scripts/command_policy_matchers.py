@@ -75,20 +75,18 @@ def _matches_gh_pr_disable_auto(argv: list[str]) -> bool:
 
 
 def _matches_opencode_bare_continue(argv: list[str]) -> bool:
-    run_index = next(
-        (index for index, arg in enumerate(argv[1:], start=1) if arg == "run"), None
+    if not argv or os.path.basename(argv[0]) != "opencode":
+        return False
+    try:
+        run_index = argv.index("run", 1)
+    except ValueError:
+        return False
+    args = argv[run_index + 1 :]
+    has_continue = any(arg in {"-c", "--continue"} for arg in args)
+    has_session = any(
+        arg in {"-s", "--session"} or arg.startswith("--session=") for arg in args
     )
-    args = argv[run_index + 1 :] if run_index is not None else []
-    return (
-        bool(argv)
-        and os.path.basename(argv[0]) == "opencode"
-        and run_index is not None
-        and any(arg in {"-c", "--continue"} for arg in args)
-        and not any(
-            arg in {"-s", "--session"} or arg.startswith("--session=")
-            for arg in args
-        )
-    )
+    return has_continue and not has_session
 
 
 def _rm_operands(args: list[str]) -> list[str]:
@@ -142,17 +140,17 @@ def _is_root_or_home_operand(path: str, cwd: str) -> bool:
 
 def _matches(matcher: str, argv: list[str], cwd: str) -> bool:
     if matcher in {"rm_recursive_force_root", "rm_recursive_force"}:
-        return _matches_rm(matcher, argv, cwd)
-    if matcher == "gh_pr_disable_auto_direct":
-        return _matches_gh_pr_disable_auto(argv)
-    if matcher == "gh_pr_merge_direct":
-        return _matches_gh_pr_merge(argv)
-    if matcher == "opencode_bare_continue":
-        return _matches_opencode_bare_continue(argv)
-    subcommand, git_args = _git_parts(argv)
-    if not subcommand:
-        return False
-    return _matches_git(matcher, subcommand, git_args)
+        result = _matches_rm(matcher, argv, cwd)
+    elif matcher == "gh_pr_disable_auto_direct":
+        result = _matches_gh_pr_disable_auto(argv)
+    elif matcher == "gh_pr_merge_direct":
+        result = _matches_gh_pr_merge(argv)
+    elif matcher == "opencode_bare_continue":
+        result = _matches_opencode_bare_continue(argv)
+    else:
+        subcommand, git_args = _git_parts(argv)
+        result = bool(subcommand) and _matches_git(matcher, subcommand, git_args)
+    return result
 
 
 def _matches_rm(matcher: str, argv: list[str], cwd: str) -> bool:
