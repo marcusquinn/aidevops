@@ -1,0 +1,8 @@
+{
+  "schema": "aidevops.marketing-decision-report/v1",
+  "as_of": "2026-09-20T00:00:00Z",
+  "time_window": {"start": "2026-09-01T00:00:00Z", "end": "2026-09-19T00:00:00Z"},
+  "currency": "USD",
+  "sources": [{"source_id": "source-gsc", "family": "seo"}, {"source_id": "source-ads", "family": "ads"}],
+  "recommendations": [{"recommendation_id": "geo-visibility", "source_id": "source-gsc", "family": "geo", "engine": "chatgpt", "confidence": 0.7, "calibration": "reported", "economics": {"measured": null, "estimated": "10.0", "known_cost": null, "unknown_components": ["review"]}, "assumptions": ["observational"]}]
+}

@@ -47,6 +47,14 @@ evidence, export, and handoff.
 - Treat schema validation as hygiene unless it blocks eligibility or clarity.
 - Record capture dates because AI-search and SERP output changes quickly.
 
+## Decision Evidence and Economics
+
+When joining GEO findings to decision reports, preserve each engine line before any
+aggregate. Use `.agents/scripts/marketing-decision-report-helper.py report` with
+source IDs and explicit as-of windows. Citation share, creative longevity, and
+observed visibility can inform a prioritised recommendation but never establish
+profit, causal impact, or ROI; missing costs remain unknown.
+
 ## Generic and Client-Custom SEO/GEO Reports
 
 - **Generic guidance reports** may combine `seo/llm-visibility-instructional-report.md`,
