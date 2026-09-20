@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.34.11] - 2026-09-21
+
+### Changed
+
+- Maintenance: mark t18449 complete (pr:#32143 completed:2026-09-20) (#32139)
+
+### Fixed
+
+- Fix automatic Homebrew tool-update convergence
+
 ## [3.34.10] - 2026-09-20
 
 ### Added
