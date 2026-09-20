@@ -65,6 +65,10 @@ class ContractTests(unittest.TestCase):
         oversized["limits"]["max_rows"] = contract.MAX_ROWS + 1
         with self.assertRaises(contract.DecisionError):
             contract.validate_input(oversized)
+        fractional_budget = copy.deepcopy(self.input)
+        fractional_budget["limits"]["budget"]["max_input_tokens"] = 1.5
+        with self.assertRaises(contract.DecisionError):
+            contract.validate_input(fractional_budget)
 
     def test_invalid_candidate_and_unsafe_action_are_retained_not_accepted(self):
         for field, value in [
@@ -108,6 +112,9 @@ class ContractTests(unittest.TestCase):
         decisions["cancelled_after_row_id"] = "ad-creative-row"
         report = contract.run(self.request, self.supplied(decisions))
         self.assertEqual(report["results"][1]["reason"], "cancelled")
+        report["status"] = "complete"
+        with self.assertRaises(contract.DecisionError):
+            contract.validate_report(report, self.request)
 
     def test_exceeded_budget_latches_for_following_rows(self):
         request_data = copy.deepcopy(self.input)

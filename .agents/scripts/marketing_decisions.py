@@ -162,7 +162,10 @@ def _validate_limits(value: Any) -> dict[str, Any]:
     budget_fields = {"max_latency_ms", "max_input_tokens", "max_output_tokens", "max_cost_usd"}
     _keys(budget, budget_fields, budget_fields, "limits.budget")
     normalized_budget = {
-        key: _optional_metric(item, f"limits.budget.{key}") for key, item in budget.items()
+        "max_latency_ms": _optional_metric(budget["max_latency_ms"], "limits.budget.max_latency_ms"),
+        "max_input_tokens": _optional_integer(budget["max_input_tokens"], "limits.budget.max_input_tokens"),
+        "max_output_tokens": _optional_integer(budget["max_output_tokens"], "limits.budget.max_output_tokens"),
+        "max_cost_usd": _optional_metric(budget["max_cost_usd"], "limits.budget.max_cost_usd"),
     }
     return {
         "max_rows": _bounded_int(value["max_rows"], "limits.max_rows", 1, MAX_ROWS),
@@ -569,6 +572,8 @@ def _validate_report_request(report: dict[str, Any], request: ValidatedRequest) 
 def _validate_report_summary(report: dict[str, Any]) -> None:
     results = _list(report["results"], "report.results")
     _require(report["status"] in {"complete", "partial"}, "report status is invalid")
+    expected_status = "complete" if all(item.get("status") == "accepted" for item in results) else "partial"
+    _require(report["status"] == expected_status, "report status is inconsistent with results")
     checkpoint = _object(report["checkpoint"], "report.checkpoint")
     checkpoint_fields = {"accepted", "deferred", "failed", "remaining_row_ids"}
     _keys(checkpoint, checkpoint_fields, checkpoint_fields, "report.checkpoint")
