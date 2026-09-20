@@ -621,6 +621,21 @@ Session baseline grew from ~9.5k tokens (Mar 1) to ~21.8k tokens (Mar 27) in pro
 
 ### SEO/GEO Agent Intelligence
 
+- [ ] t18444 Provider-neutral ads, SEO and GEO decision workflows #parent #enhancement #interactive tier:thinking ref:GH#32056 logged:2026-09-20 -> [todo/tasks/t18444-brief.md]
+- [ ] t18445 Shared marketing decision contract and bounded batch runner #enhancement #interactive #auto-dispatch tier:thinking parent:t18444 ref:GH#32057 logged:2026-09-20 -> [todo/tasks/t18445-brief.md]
+- [ ] t18446 Offline marketing and site snapshot importers #enhancement #interactive #auto-dispatch tier:standard parent:t18444 blocked-by:t18445 ref:GH#32058 logged:2026-09-20 -> [todo/tasks/t18446-brief.md]
+- [ ] t18447 Google Ads hygiene and search-term triage #enhancement #interactive #auto-dispatch tier:standard parent:t18444 blocked-by:t18446 ref:GH#32061 logged:2026-09-20 -> [todo/tasks/t18447-brief.md]
+- [ ] t18448 Shared intent-to-page matching and paid-to-organic opportunities #enhancement #interactive #auto-dispatch tier:standard parent:t18444 blocked-by:t18446 ref:GH#32059 logged:2026-09-20 -> [todo/tasks/t18448-brief.md]
+- [ ] t18449 Evidence-backed internal links and cannibalization review #enhancement #interactive #auto-dispatch tier:standard parent:t18444 blocked-by:t18448 ref:GH#32060 logged:2026-09-20 -> [todo/tasks/t18449-brief.md]
+- [ ] t18450 Content disposition, redirect proposals and schema consistency #enhancement #interactive #auto-dispatch tier:standard parent:t18444 blocked-by:t18448 ref:GH#32062 logged:2026-09-20 -> [todo/tasks/t18450-brief.md]
+- [ ] t18451 Creative intelligence, fatigue and UGC policy QA #enhancement #interactive #auto-dispatch tier:standard parent:t18444 blocked-by:t18446 ref:GH#32063 logged:2026-09-20 -> [todo/tasks/t18451-brief.md]
+- [ ] t18452 Engine-specific AI visibility capture and analysis #enhancement #interactive #auto-dispatch tier:standard parent:t18444 blocked-by:t18448 ref:GH#32064 logged:2026-09-20 -> [todo/tasks/t18452-brief.md]
+- [ ] t18453 Comment and forum opportunity triage with safe response routing #enhancement #interactive #auto-dispatch tier:standard parent:t18444 blocked-by:t18446 ref:GH#32065 logged:2026-09-20 -> [todo/tasks/t18453-brief.md]
+- [ ] t18454 Decision reports, calibration and end-to-end ROI evaluation #enhancement #interactive #auto-dispatch tier:standard parent:t18444 blocked-by:t18447,t18449,t18450,t18451,t18452,t18453 ref:GH#32066 logged:2026-09-20 -> [todo/tasks/t18454-brief.md]
+- [ ] t18455 Optional read-only Google Ads and Meta account connectors #enhancement #interactive #auto-dispatch tier:standard parent:t18444 blocked-by:t18447,t18451 ref:GH#32067 logged:2026-09-20 -> [todo/tasks/t18455-brief.md]
+- [ ] t18456 Optional Jev batch adapter with authorized-runtime fallback #enhancement #interactive #auto-dispatch tier:standard parent:t18444 blocked-by:t18455 ref:GH#32068 logged:2026-09-20 -> [todo/tasks/t18456-brief.md]
+- [ ] t18457 Approval-bound local marketing changes and rollback #enhancement #interactive #auto-dispatch tier:thinking parent:t18444 blocked-by:t18454,t18456 ref:GH#32069 logged:2026-09-20 -> [todo/tasks/t18457-brief.md]
+- [ ] t18458 Integrate decision agents, commands and disabled routine templates #enhancement #interactive #auto-dispatch tier:standard parent:t18444 blocked-by:t18457 ref:GH#32070 logged:2026-09-20 -> [todo/tasks/t18458-brief.md]
 
 ### Product Agent Refactoring
 
