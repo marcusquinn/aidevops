@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.34.9] - 2026-09-20
+
+### Added
+
+- add offline marketing snapshot imports (#32107)
+
+### Changed
+
+- Maintenance: mark t18445 complete (pr:#32095 completed:2026-09-20) (#32099)
+
+### Fixed
+
+- keep generic setup available without release-lane API
+
 ## [3.34.8] - 2026-09-20
 
 ### Fixed
