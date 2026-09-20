@@ -9,6 +9,7 @@
 
 | Sub-document | Sections | Lines |
 |---|---|---|
+| [creative-intelligence.md](creative-intelligence.md) | Offline evidence-linked labels, concept groups, fatigue hypotheses, policy/UGC unknowns | 12 |
 | [platform-meta.md](platform-meta.md) | Meta/Facebook ad formats, specs, copy formulas, testing framework | 279 |
 | [platform-google.md](platform-google.md) | Google Search (RSA), Display (RDA), Performance Max, YouTube ads | 275 |
 | [copywriting.md](copywriting.md) | PAS/AIDA/BAB frameworks, headline formulas (curated subset), brand voice | 217 |
