@@ -268,6 +268,27 @@ _issue_prelaunch_failure_summary_json() {
 	return 0
 }
 
+# Summarise typed dirty-worktree evidence-unavailable admission holds.
+# Args: $1=issue_log_lines
+# Outputs compact JSON with bounded, sanitized transport metadata.
+_issue_dirty_worktree_hold_summary_json() {
+	local issue_log_lines="$1"
+	if ! command -v jq >/dev/null 2>&1; then
+		printf '{"observed_count":0,"reason":null,"latest":null}\n'
+		return 0
+	fi
+
+	jq -nc --arg lines "$issue_log_lines" '
+		[$lines | split("\n")[]
+			| capture("DISPATCH_BLOCK_REASON reason=dirty_worktree_evidence_unavailable evidence_kind=(?<evidence_kind>[A-Za-z0-9_.:-]+) attempted=(?<attempted>true|false|unknown) deferred_by=(?<deferred_by>[A-Za-z0-9_.:-]+) retry_at=(?<retry_at>[A-Za-z0-9_.:-]+) exit_code=(?<exit_code>[0-9]+)")?] as $events
+		| {
+			observed_count: ($events | length),
+			reason: (if ($events | length) > 0 then "dirty_worktree_evidence_unavailable" else null end),
+			latest: (($events | last) // null)
+		}' 2>/dev/null || printf '{"observed_count":0,"reason":null,"latest":null}\n'
+	return 0
+}
+
 # Summarise durable zero-attempt releases from the issue audit trail.
 # Args: $1=comments_json
 # Outputs compact JSON with a total and reason counts.
@@ -1850,6 +1871,31 @@ _render_issue_blockers_text() {
 	return 0
 }
 
+# Render dirty-worktree admission evidence separately from worker blockers.
+# Args: dirty_worktree_hold_summary_json
+_render_issue_dirty_worktree_hold_text() {
+	local summary_json="$1"
+	local observed_count="0"
+	observed_count=$(printf '%s' "$summary_json" | jq -r '.observed_count // 0' 2>/dev/null || printf '0')
+	printf 'Dirty-worktree recovery admission:\n'
+	printf '  Evidence-unavailable holds observed: %s\n' "$observed_count"
+	if [[ "$observed_count" =~ ^[0-9]+$ && "$observed_count" -gt 0 ]]; then
+		local details="" reason="" evidence_kind="" attempted="" deferred_by="" retry_at="" exit_code=""
+		details=$(printf '%s' "$summary_json" | jq -r --arg unknown "$_UNKNOWN" \
+			'[.reason // $unknown, .latest.evidence_kind // $unknown, .latest.attempted // $unknown, .latest.deferred_by // "none", .latest.retry_at // $unknown, .latest.exit_code // "0"] | @tsv' \
+			2>/dev/null) || details="${_UNKNOWN}\t${_UNKNOWN}\t${_UNKNOWN}\tnone\t${_UNKNOWN}\t0"
+		IFS=$'\t' read -r reason evidence_kind attempted deferred_by retry_at exit_code <<<"$details"
+		printf '  Reason: %s\n' "$reason"
+		printf '  Evidence kind: %s\n' "$evidence_kind"
+		printf '  Request attempted: %s\n' "$attempted"
+		printf '  Deferred by: %s\n' "$deferred_by"
+		printf '  Retry at: %s\n' "$retry_at"
+		printf '  Exit code: %s\n' "$exit_code"
+	fi
+	printf '\n'
+	return 0
+}
+
 # Render the current or most recent durable footprint-overlap defer.
 # Args: issue_number repo_slug
 _render_issue_footprint_defer_text() {
@@ -1896,6 +1942,7 @@ _render_issue_text() {
 
 	_render_issue_lifecycle_comments "$comments_json"
 	_render_issue_blockers_text "$blocker_summary_json"
+	_render_issue_dirty_worktree_hold_text "$(_issue_dirty_worktree_hold_summary_json "$issue_log_lines")"
 	_render_issue_footprint_defer_text "$issue_number" "$repo_slug"
 	_render_issue_attempts_text "$attempt_summary_json" "$issue_log_lines" "$verbose"
 	_render_issue_linked_prs "$repo_slug" "$pr_numbers" "$logfile" "$logdir" "$verbose"
@@ -1961,6 +2008,9 @@ _render_issue_json() {
 	printf ',\n'
 	printf '  "progress_blockers": '
 	printf '%s' "$blocker_summary_json" | jq -c '.' 2>/dev/null || printf '{}'
+	printf ',\n'
+	printf '  "dirty_worktree_hold": '
+	_issue_dirty_worktree_hold_summary_json "$issue_log_lines"
 	printf ',\n'
 	printf '  "footprint_defer": '
 	if declare -F _footprint_defer_status_json >/dev/null 2>&1; then

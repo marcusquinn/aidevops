@@ -650,6 +650,7 @@ cat >> "$FIXTURE_LOGFILE" <<'ISSUE_FIXTURE'
 2026-04-27T10:06:00Z [dispatch-backoff] BACKOFF_ACTIVE #21860 (marcusquinn/aidevops) count=2 cooldown=1800s wait=1500s next=2026-04-27T10:31:00
 2026-04-27T10:07:00Z [pulse-wrapper] Launch validation failed for issue #21860 (marcusquinn/aidevops) — prelaunch failure reason=worker_worktree_continuation_state_rejected detected in worker.log
 2026-04-27T10:08:00Z [pulse-wrapper] Launch validation failed for issue #21860 (marcusquinn/aidevops) — prelaunch failure reason=worker_worktree_owner_concurrent_mutation detected in worker.log
+2026-04-27T10:09:00Z [pulse-wrapper] Dispatch_max: skipping #21860 (marcusquinn/aidevops) — DISPATCH_BLOCK_REASON reason=dirty_worktree_evidence_unavailable evidence_kind=transport_deferred attempted=false deferred_by=local_admission retry_at=1893456000 exit_code=75
 ISSUE_FIXTURE
 
 now_epoch=$(date +%s)
@@ -677,6 +678,8 @@ assert_contains "shows issue labels" "auto-dispatch" "$output"
 assert_contains "shows lifecycle comments section" "Lifecycle comments:" "$output"
 assert_contains "shows worker progress blockers section" "Worker progress blockers:" "$output"
 assert_contains "shows current blocker count" "Currently active: 0" "$output"
+assert_contains "shows typed dirty-worktree evidence hold" "Reason: dirty_worktree_evidence_unavailable" "$output"
+assert_contains "shows dirty-worktree transport deferral" "Deferred by: local_admission" "$output"
 assert_contains "shows non-grantable blocker reason" "permission_non_grantable" "$output"
 assert_contains "shows terminal blocker lifecycle event" "issue_closed_completed" "$output"
 assert_contains "shows WORKER_BRANCH_ORPHAN comment" "WORKER_BRANCH_ORPHAN" "$output"
@@ -770,6 +773,10 @@ if command -v jq >/dev/null 2>&1; then
 	assert_eq "JSON progress_blockers event_total" "4" "$json_blocker_events"
 	json_active_blockers=$(echo "$output" | jq '.progress_blockers.active_total' 2>/dev/null || echo 0)
 	assert_eq "JSON progress_blockers active_total" "0" "$json_active_blockers"
+	json_dirty_reason=$(echo "$output" | jq -r '.dirty_worktree_hold.reason // ""' 2>/dev/null || echo "")
+	assert_eq "JSON dirty-worktree hold reason" "dirty_worktree_evidence_unavailable" "$json_dirty_reason"
+	json_dirty_deferred_by=$(echo "$output" | jq -r '.dirty_worktree_hold.latest.deferred_by // ""' 2>/dev/null || echo "")
+	assert_eq "JSON dirty-worktree hold transport metadata" "local_admission" "$json_dirty_deferred_by"
 fi
 
 # --- Test 17: issue --verbose shows raw log lines ---
