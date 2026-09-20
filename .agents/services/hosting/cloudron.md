@@ -22,7 +22,8 @@ tools:
 
 - **Type**: Self-hosted app platform (100+ apps), auto-updates/backups/SSL
 - **Host OS**: Vendor-required Ubuntu x64; verify the exact fresh-install release in [Cloudron requirements](https://docs.cloudron.io/installation/) and [OS selection](../../reference/os-selection.md). Do not substitute Rocky/Alpine or assume ARM support
-- **Optional GitHub ingress**: [Webhook onboarding](../../reference/github-webhook-onboarding.md) — Cloudron-hosted NetBird provides mesh management, not native public reverse proxy; use Cloudflare Tunnel or a separate public gateway without modifying Cloudron's managed nginx
+- **NetBird / multiple brands**: [NetBird guidance](../networking/netbird.md) — private mesh apps share the primary IP with unique native/STUN ports; the optional second-IP public proxy helper is single-instance, not repeatable per app without further tooling
+- **Optional GitHub ingress**: [Webhook onboarding](../../reference/github-webhook-onboarding.md) — use verified NetBird optional ingress, Cloudflare Tunnel or a separately reviewed gateway; preserve GitHub signatures and do not replace Cloudron's managed nginx
 - **Auth**: API token from Dashboard > Settings > API Access (9.1+: passkey/OIDC login); an expired CLI token is not proof that authorised server access is unavailable
 - **Config**: `configs/cloudron-config.json`
 - **Commands**: `cloudron-helper.sh [servers|connect|status|apps|install-app|update-app|restart-app|logs|backup-app|domains|add-domain|ssl-status|users|add-user|update-user] [server] [args]`
