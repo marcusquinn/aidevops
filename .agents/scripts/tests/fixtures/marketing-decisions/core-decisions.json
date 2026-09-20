@@ -1,0 +1,29 @@
+{
+  "schema": "aidevops.marketing-decision-supplied/v1",
+  "request_id": "campaign-review-001",
+  "input_digest": "sha256:833260d8c9883483f262316a62e56c2d984ec68b9a005c49174a7a0c186dd415",
+  "decisions": [
+    {
+      "row_id": "ad-creative-row",
+      "kind": "choice",
+      "value": "ad-variant-b",
+      "probability": 0.72,
+      "confidence": 0.68,
+      "calibration": { "provenance": "reported", "reference": null },
+      "abstention_reason": null,
+      "action_proposal": { "kind": "recommendation", "candidate_ids": ["ad-variant-b"], "summary": "Review the observed variant against the campaign brief.", "non_mutating": true },
+      "usage": { "latency_ms": 120, "input_tokens": 180, "output_tokens": 30, "cost_usd": null }
+    },
+    {
+      "row_id": "internal-link-row",
+      "kind": "multi_label",
+      "value": ["page-guide"],
+      "probability": null,
+      "confidence": 0.81,
+      "calibration": { "provenance": "unknown", "reference": null },
+      "abstention_reason": null,
+      "action_proposal": { "kind": "recommendation", "candidate_ids": ["page-guide"], "summary": "Editorially review the observed internal-link candidate.", "non_mutating": true },
+      "usage": { "latency_ms": 95, "input_tokens": 150, "output_tokens": 24, "cost_usd": null }
+    }
+  ]
+}

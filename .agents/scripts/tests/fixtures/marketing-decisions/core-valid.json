@@ -1,0 +1,43 @@
+{
+  "schema": "aidevops.marketing-decision-input/v1",
+  "request_id": "campaign-review-001",
+  "scope": { "project_id": "launch-q3", "account_id": "account-west", "site_id": "example-site" },
+  "captured_at": "2026-09-20T10:00:00Z",
+  "as_of": "2026-09-20T12:00:00Z",
+  "performance_window": { "start": "2026-09-01T00:00:00Z", "end": "2026-09-20T00:00:00Z" },
+  "data_classification": "internal",
+  "rubric": { "id": "marketing-evidence", "version": "1" },
+  "model": { "id": "offline-supplied", "version": "1", "provider": "fixture" },
+  "limits": {
+    "max_rows": 10,
+    "max_candidates_per_row": 5,
+    "max_concurrency": 2,
+    "budget": { "max_latency_ms": 1000, "max_input_tokens": 1000, "max_output_tokens": 500, "max_cost_usd": null }
+  },
+  "batches": [
+    {
+      "batch_id": "paid-search-batch",
+      "domain": "ads",
+      "rows": [
+        {
+          "row_id": "ad-creative-row",
+          "source": { "source_id": "ad-report-17", "span": "rows-4-8" },
+          "decision_kind": "choice",
+          "candidates": ["ad-variant-a", "ad-variant-b"]
+        }
+      ]
+    },
+    {
+      "batch_id": "organic-links-batch",
+      "domain": "seo",
+      "rows": [
+        {
+          "row_id": "internal-link-row",
+          "source": { "source_id": "search-console-09", "span": "queries-20-24" },
+          "decision_kind": "multi_label",
+          "candidates": ["page-guide", "page-pricing", "page-support"]
+        }
+      ]
+    }
+  ]
+}
