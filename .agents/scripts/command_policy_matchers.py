@@ -25,6 +25,7 @@ __all__ = [
     "_matches_gh_command_path",
     "_matches_gh_pr_merge",
     "_matches_git",
+    "_matches_opencode_bare_continue",
     "_matches_rm",
     "_rm_operands",
     "_short_flags",
@@ -71,6 +72,21 @@ def _matches_gh_pr_disable_auto(argv: list[str]) -> bool:
     return _matches_gh_pr_merge(argv) and any(
         arg == "--disable-auto" or arg.startswith("--disable-auto=") for arg in argv
     )
+
+
+def _matches_opencode_bare_continue(argv: list[str]) -> bool:
+    if not argv or os.path.basename(argv[0]) != "opencode":
+        return False
+    try:
+        run_index = argv.index("run", 1)
+    except ValueError:
+        return False
+    args = argv[run_index + 1 :]
+    has_continue = any(arg in {"-c", "--continue"} for arg in args)
+    has_session = any(
+        arg in {"-s", "--session"} or arg.startswith("--session=") for arg in args
+    )
+    return has_continue and not has_session
 
 
 def _rm_operands(args: list[str]) -> list[str]:
@@ -129,6 +145,8 @@ def _matches(matcher: str, argv: list[str], cwd: str) -> bool:
         return _matches_gh_pr_disable_auto(argv)
     if matcher == "gh_pr_merge_direct":
         return _matches_gh_pr_merge(argv)
+    if matcher == "opencode_bare_continue":
+        return _matches_opencode_bare_continue(argv)
     subcommand, git_args = _git_parts(argv)
     if not subcommand:
         return False
