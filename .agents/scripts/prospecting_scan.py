@@ -43,22 +43,45 @@ def load_input(path: str | Path) -> dict[str, Any]:
     return value
 
 
-def scan(value: dict[str, Any]) -> dict[str, Any]:
-    """Triage titles first, preserving every incomplete or unavailable window."""
-    project_id = _id(value.get("project_id"), "project_id")
-    budget = value.get("budget", 0)
-    if isinstance(budget, bool) or not isinstance(budget, int) or budget < 0:
-        raise ScanError("budget must be a non-negative integer")
+def _normalized_capabilities(value: dict[str, Any]) -> dict[str, dict[str, Any]]:
     capabilities = value.get("capabilities")
     if not isinstance(capabilities, dict):
         raise ScanError("capabilities must be an object")
-    normalized = {name: capability_result(name, payload) for name, payload in capabilities.items()}
+    return {name: capability_result(name, payload) for name, payload in capabilities.items()}
+
+
+def _candidate_leads(source: dict[str, Any], rules: dict[Any, dict[str, Any]]) -> list[dict[str, Any]]:
+    provider = _id(source.get("provider", "reddit"), "candidate.provider")
+    object_id = _id(source.get("id"), "candidate.id")
+    community = _id(source.get("community"), "candidate.community")
+    policy = rules.get(community, {"community": community, "status": "unavailable"})
+    leads: list[dict[str, Any]] = []
+    for comment in source.get("comments", []):
+        if not isinstance(comment, dict) or comment.get("deleted"):
+            continue
+        decision = comment.get("decision", {})
+        if not isinstance(decision, dict) or not decision.get("buyer_ask", False):
+            continue
+        comment_id = _id(comment.get("id"), "comment.id")
+        text = _id(comment.get("text"), "comment.text")
+        leads.append({
+            "lead_id": _lead_id(provider, comment_id), "provider": provider,
+            "object_id": comment_id, "parent_object_id": object_id,
+            "quote": _quote(text), "reason": _id(decision.get("reason"), "decision.reason"),
+            "community": community, "community_policy": policy,
+            "thread_status": source.get("status", "available"), "external_action": "prohibited",
+        })
+    return leads
+
+
+def _triage_candidates(normalized: dict[str, dict[str, Any]], budget: int) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int]:
     rules = {item.get("community"): item for item in normalized.get("rules", {}).get("items", []) if isinstance(item, dict)}
     seen: set[tuple[str, str]] = set()
     leads: list[dict[str, Any]] = []
     unread: list[dict[str, Any]] = []
     calls = 0
-    for source in normalized.get("search", {}).get("items", []) + normalized.get("community", {}).get("items", []):
+    candidates = normalized.get("search", {}).get("items", []) + normalized.get("community", {}).get("items", [])
+    for source in candidates:
         if not isinstance(source, dict):
             raise ScanError("candidate must be an object")
         provider = _id(source.get("provider", "reddit"), "candidate.provider")
@@ -75,23 +98,18 @@ def scan(value: dict[str, Any]) -> dict[str, Any]:
             unread.append({"provider": provider, "object_id": object_id, "reason": "budget_exhausted", "title": title})
             continue
         calls += 1
-        community = _id(source.get("community"), "candidate.community")
-        policy = rules.get(community, {"community": community, "status": "unavailable"})
-        for comment in source.get("comments", []):
-            if not isinstance(comment, dict) or comment.get("deleted"):
-                continue
-            comment_id = _id(comment.get("id"), "comment.id")
-            text = _id(comment.get("text"), "comment.text")
-            decision = comment.get("decision", {})
-            if not isinstance(decision, dict) or not decision.get("buyer_ask", False):
-                continue
-            leads.append({
-                "lead_id": _lead_id(provider, comment_id), "provider": provider,
-                "object_id": comment_id, "parent_object_id": object_id,
-                "quote": _quote(text), "reason": _id(decision.get("reason"), "decision.reason"),
-                "community": community, "community_policy": policy,
-                "thread_status": source.get("status", "available"), "external_action": "prohibited",
-            })
+        leads.extend(_candidate_leads(source, rules))
+    return leads, unread, calls
+
+
+def scan(value: dict[str, Any]) -> dict[str, Any]:
+    """Triage titles first, preserving every incomplete or unavailable window."""
+    project_id = _id(value.get("project_id"), "project_id")
+    budget = value.get("budget", 0)
+    if isinstance(budget, bool) or not isinstance(budget, int) or budget < 0:
+        raise ScanError("budget must be a non-negative integer")
+    normalized = _normalized_capabilities(value)
+    leads, unread, calls = _triage_candidates(normalized, budget)
     coverage = []
     for name, result in normalized.items():
         complete = result["status"] == "available" and result["next_cursor"] is None
