@@ -796,6 +796,9 @@ _verify_release_descendant_active_source() {
 	}
 	if [[ "$active_sha" != "$protected_main" ]]; then
 		print_error "Post-release deployment gate rejected active descendant ${active_sha:0:12}: changed tree does not match protected main ${protected_main:0:12}"
+		if git -C "$sync_repo_root" merge-base --is-ancestor "$active_sha" "$protected_main" 2>/dev/null; then
+			return 76
+		fi
 		return 1
 	fi
 	return 0
@@ -929,7 +932,7 @@ run_post_release_agent_sync() {
 	fi
 	if [[ "$active_preservation_exit" -ne 0 ]]; then
 		print_error "Post-release deployment gate could not verify the active runtime before deployment"
-		return 1
+		return "$active_preservation_exit"
 	fi
 	if [[ -n "$_AIDEVOPS_RELEASE_SQUASH_RECOVERY_SHA" ]]; then
 		if ! _acquire_release_runtime_transition_lock; then

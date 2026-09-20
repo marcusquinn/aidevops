@@ -24,6 +24,7 @@ _AIDEVOPS_RELEASE_LANE_PHASE_AGGREGATION_REFRESH="aggregation-recovery-refresh"
 _AIDEVOPS_RELEASE_LANE_PHASE_AGGREGATE_COMMIT="aggregate-publication-committing"
 _AIDEVOPS_RELEASE_LANE_PHASE_RESERVED_REFRESH="reserved-authorization-refresh"
 _AIDEVOPS_RELEASE_LANE_PHASE_RECONCILE_REQUIRED="reconcile-required"
+_AIDEVOPS_RELEASE_LANE_PHASE_EXACT_TAG_DEPLOYMENT="exact-tag-deployment"
 _AIDEVOPS_RELEASE_LANE_PHASE_SUCCESSOR_PREPARING="aggregation-successor-preparing"
 _AIDEVOPS_RELEASE_LANE_PHASE_PREPARING="preparing"
 _AIDEVOPS_RELEASE_LANE_STATE_ABSENT="absent"
@@ -1123,6 +1124,33 @@ release_lane_update_if_owned() {
 		return $?
 	fi
 	jq -e '.active != true' <<<"$_AIDEVOPS_RELEASE_LANE_JSON" >/dev/null
+	return $?
+}
+
+# Defer only the exact published attempt after a proven stale-runtime refusal.
+#aidevops:trust-boundary
+release_lane_defer_stale_runtime_recovery() {
+	local repo="$1"
+	local source_pr="$2"
+	local tag_name="$3"
+	local attempt_head="$4"
+	local state_json=""
+	[[ "$source_pr" =~ ^[0-9]+$ && "$tag_name" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+	[[ "$attempt_head" =~ $_AIDEVOPS_RELEASE_LANE_SHA_PATTERN ]] || return 1
+	release_lane_read "$repo" || return 1
+	[[ "$_AIDEVOPS_RELEASE_LANE_HEAD" == "$attempt_head" ]] || return 2
+	jq -e --argjson source_pr "$source_pr" --arg tag "$tag_name" \
+		--arg phase "$_AIDEVOPS_RELEASE_LANE_PHASE_EXACT_TAG_DEPLOYMENT" '
+		.active == true and .source_pr == $source_pr and .tag == $tag and .phase == $phase
+		and ((.terminal_receipt // null) == null) and ((.stale_runtime_recovery // null) == null)
+	' <<<"$_AIDEVOPS_RELEASE_LANE_JSON" >/dev/null || return 2
+	state_json=$(jq -c --arg phase "$_AIDEVOPS_RELEASE_LANE_PHASE_RECONCILE_REQUIRED" \
+		--arg head "$attempt_head" --arg now "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+		--arg exact_phase "$_AIDEVOPS_RELEASE_LANE_PHASE_EXACT_TAG_DEPLOYMENT" '
+		.phase=$phase | .updated_at=$now
+		| .stale_runtime_recovery={type:"stale-runtime/v1",attempt_head:$head,failed_phase:$exact_phase,deferred_at:$now}
+	' <<<"$_AIDEVOPS_RELEASE_LANE_JSON") || return 1
+	_release_lane_write "$repo" "$state_json" "$attempt_head"
 	return $?
 }
 
