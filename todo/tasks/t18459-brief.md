@@ -15,9 +15,13 @@
 
 2026-09-20 OpenCode interactive. The maintainer explicitly requests native replication of Lurk's offered workflows, not a Lurk integration. General AnyAPI capabilities/site-scraping replication is reserved for another session. Implementation leaves default to auto-dispatch after canonical publication and dependency verification.
 
+Later the same day, the maintainer explicitly requested an automated public-engagement subagent too. t18469/t18470 add a separate optional authority/execution lane; this does not broaden the nine original tasks or authorize any real posting during implementation.
+
 ## What
 
 A native aidevops project-to-conversation prospecting workflow: URL onboarding, evidence-backed buyer-language discovery, incremental Reddit posts/comments/rules, ranked lead inbox, Google-ranked Reddit opportunities, competitor/pain insights, budgeted schedules/digests, scoped read-only REST/MCP, and a self-hostable operator workbench. Feature parity concerns useful outcomes, not vendor branding, pricing tiers, hosted wallets or codebase cloning.
+
+An optional public-engagement extension can draft and execute bounded useful Reddit text posts/replies through the existing social outbox after exact owner approval or an explicit scoped standing grant. It is not a write capability for the discovery collectors or read-only MCP.
 
 ## Why
 
@@ -39,6 +43,8 @@ Source: https://lurk.so/ (including its self-host section) and https://github.co
 
 Current aidevops reuse: `.agents/content/social-reddit.md:71-118`, `.agents/scripts/knowledge_social_reddit.py:16-62`, `.agents/scripts/knowledge_social_store.py`, `.agents/scripts/_knowledge_social_lease.py`, `.agents/seo/serper.md`, `.agents/seo/dataforseo.md`, `.agents/reference/routines.md`, `.agents/aidevops/knowledge-plane/05-social-operations.md`, `DESIGN.md`. Reddit account-history ingestion is not proof that public keyword search/subreddit rules are implemented; the collection child must verify that distinction.
 
+Engagement extension discovery at 8a0372261: `.agents/scripts/_knowledge_social_reddit_outbound_provider.py` already implements guarded publishing. `.agents/scripts/_knowledge_social_outbound_claim.py` and `.agents/scripts/_knowledge_social_outbound_runtime.py` recheck exact approval at claim/provider start. Reuse that queue; scoped delegation is a new explicit authorization kind, never fabricated per-draft human approval.
+
 ## Children and dependencies
 
 | Task | Outcome | Tier | Blocked by |
@@ -52,6 +58,8 @@ Current aidevops reuse: `.agents/content/social-reddit.md:71-118`, `.agents/scri
 | t18466 / #32085 | Scoped service APIs, read-only MCP and operator boundary | thinking | t18465 |
 | t18467 / #32083 | Native operator web workbench | standard | t18465,t18466 |
 | t18468 / #32084 | Self-host packaging, agent routing and parity verification | standard | t18467,t18458 / #32070 |
+| t18469 / #32091 | Optional scoped public-engagement authority on the existing outbox | thinking | t18466 |
+| t18470 / #32090 | Optional public-engagement subagent and disabled Reddit routine | standard | t18469,t18468 |
 
 Roadmap issue: #32076. These are explicitly filed children, not phase-auto-file requests. Native dependencies serialize shared state and final root routing. Siblings after t18462 have disjoint write surfaces; the service waits for delivered job/usage contracts from t18465. Existing t18444 children remain unchanged; #32065 stays a reusable non-contacting analysis component.
 
@@ -60,7 +68,8 @@ Roadmap issue: #32076. These are explicitly filed children, not phase-auto-file 
 - No Lurk package/service/SDK, AnyAPI account/SDK/API, vendor wallet or hosted-auth dependency. Independently implement workflow behavior; do not vendor the reference app, assets or branding.
 - No general scraping engine, proxy fleet, browser-fingerprint/anti-bot bypass, broad platform expansion or replacement for existing collectors. A narrow Reddit/search adapter around existing authorized capabilities is in scope; future scraping work plugs into its versioned interface.
 - Native local/self-hosted operator tool, not a new paid multi-tenant SaaS. Start with Python domain helpers and project-isolated private SQLite/read models; a lightweight web UI is an optional runtime surface, not a mandatory cloud stack. Record deviations and evidence before introducing runtime dependencies.
-- No automatic public posts, replies, DMs, votes, moderation, prospect contact, response drafting or user profiling. Display only minimal source-provided author context needed to distinguish a post/comment. Internal alerts go solely to operator-approved destinations.
+- The nine core tasks t18460-t18468 remain non-contacting: no public posts/replies, response drafting or publishing authority; internal alerts go only to operator-approved destinations. Only optional t18469/t18470 may implement disclosed useful text posts/replies behind exact approval or an owner-authenticated, scoped, expiring/revocable automation grant. Agents cannot issue or broaden their own grants.
+- No DMs, votes/likes, moderation, sockpuppets, coordinated engagement, political influence, sensitive-trait targeting, user profiling or account rotation in the engagement lane. Preserve opt-outs, community permission, hard caps, duplicate suppression and a kill switch. Unknown/stale permission means no send; provider-boundary ambiguity means reconciliation, never blind retry.
 - No service activation, spending, secret acquisition, schedule installation or public deployment during worker verification. Recorded/synthetic transports must prove the paths offline; live reads require existing readiness, data/terms approval and explicit budgets.
 - No guaranteed ranking/citation/leads/revenue claims. Measure observed SERPs separately from actual AI citations (#32064) and financial outcomes (#32066); unknown costs stay unknown.
 
@@ -112,7 +121,8 @@ git diff --check
 
 ## Acceptance Criteria
 
-- [ ] Nine children deliver documented, callable native workflows with a verified offline end-to-end workbench demonstration.
+- [ ] Nine core children deliver documented, callable native workflows with a verified offline end-to-end workbench demonstration.
 - [ ] Product onboarding, discovery, leads, Reddit SEO, insights, alerts, usage, REST/MCP and self-hosting each have implementation evidence and coverage limitations.
-- [ ] No Lurk/AnyAPI integration or general scraping-platform work is included, and no public engagement is automated.
+- [ ] Two optional engagement children demonstrate exact-approved and owner-policy-authorized synthetic publishing through the existing queue, including revocation, suppression, concurrency and ambiguous-result safety.
+- [ ] No Lurk/AnyAPI integration or general scraping-platform work is included. Core/read-only tools cannot publish, optional automation defaults off, and no live public engagement occurs during worker verification.
 - [ ] Parent remains open until all child implementation evidence is reconciled; planning publication alone never completes implementation.
