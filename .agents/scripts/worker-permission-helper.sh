@@ -457,13 +457,40 @@ cmd_request() {
 	return 0
 }
 
+cmd_block() {
+	local issue_number="" repo_slug=""
+	while [[ $# -gt 0 ]]; do
+		local arg="$1"
+		case "$arg" in
+		--issue)
+			issue_number="${2:-}"
+			shift 2
+			;;
+		--repo)
+			repo_slug="${2:-}"
+			shift 2
+			;;
+		*)
+			printf 'Unknown option: %s\n' "$arg" >&2
+			return 1
+			;;
+		esac
+	done
+	[[ "$issue_number" =~ ^[0-9]+$ && "$repo_slug" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 1
+	permission_apply_block "$issue_number" "$repo_slug"
+	return $?
+}
+
 main() {
 	local command="${1:-help}"
 	shift 2>/dev/null || true
 	case "$command" in
 	request) cmd_request "$@" ;;
+	block) cmd_block "$@" ;;
 	*)
-		printf 'Usage: worker-permission-helper.sh request --file FILE --issue N --repo OWNER/REPO --session KEY --work-dir PATH\n' >&2
+		printf '%s\n' \
+			'Usage: worker-permission-helper.sh request --file FILE --issue N --repo OWNER/REPO --session KEY --work-dir PATH' \
+			'       worker-permission-helper.sh block --issue N --repo OWNER/REPO' >&2
 		return 1
 		;;
 	esac

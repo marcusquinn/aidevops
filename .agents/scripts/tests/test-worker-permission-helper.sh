@@ -134,11 +134,21 @@ gh_issue_comment() {
 	return $?
 }
 gh_issue_edit_safe() {
+	printf '%s\n' "$*" >>"$gh_call_log"
 	return 0
 }
+cmd_block --issue 123 --repo owner/repo
+if ! grep -q -- '--add-label needs-maintainer-permissions --add-label status:blocked' "$gh_call_log"; then
+	printf 'terminal permission block omitted maintainer labels\n' >&2
+	exit 1
+fi
+if cmd_block --issue invalid --repo owner/repo >/dev/null 2>&1; then
+	printf 'terminal permission block accepted an invalid issue number\n' >&2
+	exit 1
+fi
 (
 	cd "$test_root"
-	cmd_request --file "$capture_file" --issue 123 --repo owner/repo --session issue-123 --work-dir "$repo_dir"
+	cmd_request --file "$single_capture" --issue 123 --repo owner/repo --session issue-123 --work-dir "$repo_dir"
 )
 if grep -q -- '--slurp' "$gh_call_log"; then
 	printf 'permission comment lookup combined unsupported --slurp with --jq\n' >&2
@@ -176,8 +186,8 @@ if ! jq -e 'select(.issue == 123 and .session == "issue-123" and (.request_id | 
 fi
 jq -e 'select(.event == "permission_awaiting_approval" and .reason == "needs_maintainer_permissions" and .blocking == true
   and .issue_number == 123 and .repo_slug == "owner/repo" and .session_key == "issue-123"
-  and .permission == "external_directory×2" and .tool == "read×2"
-  and .risk_level == "high" and .grantable == false)' \
+  and .permission == "external_directory" and .tool == "read"
+  and .risk_level == "medium" and .grantable == true)' \
 	"$AIDEVOPS_WORKER_BLOCKER_LOG_FILE" >/dev/null
 permission_record_blocker "permission_capability_true_fixture" "blocked" "permission_required" "true" \
 	123 "owner/repo" "issue-123" "perm-true" "Boolean transport fixture" \
@@ -191,10 +201,10 @@ activity_summary=$(WAH_BLOCKER_LOG_FILE="$AIDEVOPS_WORKER_BLOCKER_LOG_FILE" \
 	"${SCRIPT_DIR}/worker-activity-helper.sh" summary --since 24h --json --no-pr-check)
 jq -e '.progress_blockers.active_blockers[] | select(
   .event == "permission_awaiting_approval"
-  and .permission == "external_directory×2"
-  and .tool == "read×2"
-  and .risk_level == "high"
-  and .grantable == false
+  and .permission == "external_directory"
+  and .tool == "read"
+  and .risk_level == "medium"
+  and .grantable == true
 )' <<<"$activity_summary" >/dev/null
 
 printf 'worker permission helper tests passed\n'

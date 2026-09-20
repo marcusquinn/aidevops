@@ -562,11 +562,31 @@ _hrff_prepare_terminal_blocker_release() {
 	return 0
 }
 
+_hrff_apply_terminal_permission_hold() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local blocker_fingerprint="${AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT:-}"
+	local helper="${AIDEVOPS_WORKER_PERMISSION_HELPER:-${BASH_SOURCE[0]%/*}/worker-permission-helper.sh}"
+	[[ "$blocker_fingerprint" =~ ^[a-f0-9]{24}$ ]] || return 0
+	[[ "$(_terminal_blocker_reason "$blocker_fingerprint")" == "permission_required" ]] || return 0
+	if [[ ! -x "$helper" ]]; then
+		print_warning "Permission blocker helper is unavailable; retaining issue lifecycle state for #${issue_number}"
+		return 1
+	fi
+	if ! "$helper" block --issue "$issue_number" --repo "$repo_slug"; then
+		print_warning "Permission blocker labels could not be persisted on #${issue_number}; retaining issue lifecycle state"
+		return 1
+	fi
+	print_info "Projected terminal permission blocker on #${issue_number} as needs-maintainer-permissions + status:blocked"
+	return 0
+}
+
 _hrff_handle_terminal_blocker_release() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local machine_readable_part="$3"
 	_hrff_prepare_terminal_blocker_release "$issue_number" "$repo_slug" "$machine_readable_part"
+	_hrff_apply_terminal_permission_hold "$issue_number" "$repo_slug" || return 11
 	case "${_HRFF_TERMINAL_BLOCKER_MODE:-normal}" in
 	circuit)
 		if ! _hrff_post_claim_released_comment "$issue_number" "$repo_slug" \
