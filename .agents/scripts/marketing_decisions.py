@@ -439,7 +439,7 @@ def _evaluated_result(
     projected = _add_usage(usage, decision["usage"])
     reason = _budget_reason(projected, budget)
     if reason:
-        return {**base, "status": "deferred", "reason": reason, "decision": decision}, usage
+        return {**base, "status": "deferred", "reason": reason, "decision": decision}, projected
     reason = "abstained" if decision["abstention_reason"] is not None else None
     status = "deferred" if reason else "accepted"
     return {**base, "status": status, "reason": reason, "decision": decision}, projected
@@ -566,6 +566,29 @@ def _validate_report_request(report: dict[str, Any], request: ValidatedRequest) 
         _validate_report_result(item, expected_rows[item["row_id"]])
 
 
+def _validate_report_summary(report: dict[str, Any]) -> None:
+    results = _list(report["results"], "report.results")
+    _require(report["status"] in {"complete", "partial"}, "report status is invalid")
+    checkpoint = _object(report["checkpoint"], "report.checkpoint")
+    checkpoint_fields = {"accepted", "deferred", "failed", "remaining_row_ids"}
+    _keys(checkpoint, checkpoint_fields, checkpoint_fields, "report.checkpoint")
+    for status in ("accepted", "deferred", "failed"):
+        count = _bounded_int(checkpoint[status], f"report.checkpoint.{status}", 0, MAX_ROWS)
+        _require(count == sum(item.get("status") == status for item in results), "checkpoint count is inconsistent")
+    remaining = [_opaque(item, "report.checkpoint.remaining_row_ids[]") for item in _list(checkpoint["remaining_row_ids"], "remaining_row_ids")]
+    expected_remaining = [item.get("row_id") for item in results if item.get("status") != "accepted"]
+    _require(remaining == expected_remaining, "checkpoint remaining rows are inconsistent")
+    metrics = _object(report["metrics"], "report.metrics")
+    metric_fields = {"latency_ms", "input_tokens", "output_tokens", "cost_usd", "cost_measurement"}
+    _keys(metrics, metric_fields, metric_fields, "report.metrics")
+    _optional_metric(metrics["latency_ms"], "report.metrics.latency_ms")
+    _optional_integer(metrics["input_tokens"], "report.metrics.input_tokens")
+    _optional_integer(metrics["output_tokens"], "report.metrics.output_tokens")
+    _optional_metric(metrics["cost_usd"], "report.metrics.cost_usd")
+    expected_cost_state = "unknown" if metrics["cost_usd"] is None else "reported"
+    _require(metrics["cost_measurement"] == expected_cost_state, "cost measurement state is inconsistent")
+
+
 def validate_report(value: Any, request: ValidatedRequest | None = None) -> dict[str, Any]:
     """Validate essential consumer-facing report invariants."""
     report = _object(value, "report")
@@ -578,6 +601,7 @@ def validate_report(value: Any, request: ValidatedRequest | None = None) -> dict
     for item in _list(report["results"], "report.results"):
         if item.get("status") not in {"accepted", "deferred", "failed"}:
             raise DecisionError("report result status is invalid")
+    _validate_report_summary(report)
     if request is not None:
         _validate_report_request(report, request)
     return report

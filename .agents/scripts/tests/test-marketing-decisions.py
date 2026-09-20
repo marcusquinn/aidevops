@@ -101,6 +101,8 @@ class ContractTests(unittest.TestCase):
         report = contract.run(request, supplied)
         self.assertEqual(report["results"][0]["reason"], "budget_exceeded")
         self.assertEqual(report["checkpoint"]["accepted"], 0)
+        self.assertEqual(report["metrics"]["input_tokens"], 180)
+        self.assertIsNone(report["metrics"]["cost_usd"])
 
         decisions = copy.deepcopy(self.decisions)
         decisions["cancelled_after_row_id"] = "ad-creative-row"

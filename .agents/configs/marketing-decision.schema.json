@@ -69,6 +69,131 @@
       },
       "additionalProperties": false
     },
+    "budget": {
+      "type": "object",
+      "required": ["max_latency_ms", "max_input_tokens", "max_output_tokens", "max_cost_usd"],
+      "properties": {
+        "max_latency_ms": { "type": ["number", "null"], "minimum": 0 },
+        "max_input_tokens": { "type": ["integer", "null"], "minimum": 0 },
+        "max_output_tokens": { "type": ["integer", "null"], "minimum": 0 },
+        "max_cost_usd": { "type": ["number", "null"], "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "limits": {
+      "type": "object",
+      "required": ["max_rows", "max_candidates_per_row", "max_concurrency", "budget"],
+      "properties": {
+        "max_rows": { "type": "integer", "minimum": 1, "maximum": 1000 },
+        "max_candidates_per_row": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "max_concurrency": { "type": "integer", "minimum": 1, "maximum": 16 },
+        "budget": { "$ref": "#/$defs/budget" }
+      },
+      "additionalProperties": false
+    },
+    "source": {
+      "type": "object",
+      "required": ["source_id", "span"],
+      "properties": {
+        "source_id": { "$ref": "#/$defs/opaque" },
+        "span": { "$ref": "#/$defs/opaque" }
+      },
+      "additionalProperties": false
+    },
+    "row": {
+      "type": "object",
+      "required": ["row_id", "source", "decision_kind", "candidates"],
+      "properties": {
+        "row_id": { "$ref": "#/$defs/opaque" },
+        "source": { "$ref": "#/$defs/source" },
+        "decision_kind": { "enum": ["choice", "score", "multi_label"] },
+        "candidates": { "type": "array", "minItems": 1, "maxItems": 100, "uniqueItems": true, "items": { "$ref": "#/$defs/opaque" } }
+      },
+      "additionalProperties": false
+    },
+    "batch": {
+      "type": "object",
+      "required": ["batch_id", "domain", "rows"],
+      "properties": {
+        "batch_id": { "$ref": "#/$defs/opaque" },
+        "domain": { "$ref": "#/$defs/opaque" },
+        "rows": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/row" } }
+      },
+      "additionalProperties": false
+    },
+    "calibration": {
+      "type": "object",
+      "required": ["provenance", "reference"],
+      "properties": {
+        "provenance": { "enum": ["reported", "calibrated", "unknown"] },
+        "reference": { "anyOf": [{ "$ref": "#/$defs/opaque" }, { "type": "null" }] }
+      },
+      "additionalProperties": false
+    },
+    "action": {
+      "type": ["object", "null"],
+      "required": ["kind", "candidate_ids", "non_mutating"],
+      "properties": {
+        "kind": { "const": "recommendation" },
+        "candidate_ids": { "type": "array", "items": { "$ref": "#/$defs/opaque" } },
+        "summary": { "type": ["string", "null"], "maxLength": 500 },
+        "non_mutating": { "const": true }
+      },
+      "additionalProperties": false
+    },
+    "decisionCommon": {
+      "type": "object",
+      "required": ["row_id", "kind", "value", "probability", "confidence", "calibration", "abstention_reason", "action_proposal", "usage"],
+      "properties": {
+        "row_id": { "$ref": "#/$defs/opaque" },
+        "probability": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "confidence": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "calibration": { "$ref": "#/$defs/calibration" },
+        "abstention_reason": { "anyOf": [{ "$ref": "#/$defs/opaque" }, { "type": "null" }] },
+        "action_proposal": { "$ref": "#/$defs/action" },
+        "usage": { "$ref": "#/$defs/usage" }
+      }
+    },
+    "choiceDecision": {
+      "allOf": [{ "$ref": "#/$defs/decisionCommon" }, { "properties": { "kind": { "const": "choice" }, "value": { "anyOf": [{ "$ref": "#/$defs/opaque" }, { "type": "null" }] } } }],
+      "unevaluatedProperties": false
+    },
+    "scoreDecision": {
+      "allOf": [{ "$ref": "#/$defs/decisionCommon" }, { "properties": { "kind": { "const": "score" }, "value": { "type": ["number", "null"] }, "probability": { "type": "null" } } }],
+      "unevaluatedProperties": false
+    },
+    "multiLabelDecision": {
+      "allOf": [{ "$ref": "#/$defs/decisionCommon" }, { "properties": { "kind": { "const": "multi_label" }, "value": { "anyOf": [{ "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/opaque" } }, { "type": "null" }] } } }],
+      "unevaluatedProperties": false
+    },
+    "decision": {
+      "oneOf": [{ "$ref": "#/$defs/choiceDecision" }, { "$ref": "#/$defs/scoreDecision" }, { "$ref": "#/$defs/multiLabelDecision" }]
+    },
+    "result": {
+      "type": "object",
+      "required": ["batch_id", "domain", "row_id", "source", "status", "reason", "decision"],
+      "properties": {
+        "batch_id": { "$ref": "#/$defs/opaque" },
+        "domain": { "$ref": "#/$defs/opaque" },
+        "row_id": { "$ref": "#/$defs/opaque" },
+        "source": { "$ref": "#/$defs/source" },
+        "status": { "enum": ["accepted", "deferred", "failed"] },
+        "reason": { "anyOf": [{ "$ref": "#/$defs/opaque" }, { "type": "null" }] },
+        "decision": { "anyOf": [{ "$ref": "#/$defs/decision" }, { "type": "null" }] }
+      },
+      "additionalProperties": false
+    },
+    "checkpoint": {
+      "type": "object",
+      "required": ["accepted", "deferred", "failed", "remaining_row_ids"],
+      "properties": {
+        "accepted": { "type": "integer", "minimum": 0 },
+        "deferred": { "type": "integer", "minimum": 0 },
+        "failed": { "type": "integer", "minimum": 0 },
+        "remaining_row_ids": { "type": "array", "items": { "$ref": "#/$defs/opaque" } }
+      },
+      "additionalProperties": false
+    },
     "input": {
       "type": "object",
       "required": ["schema", "request_id", "scope", "captured_at", "as_of", "performance_window", "data_classification", "rubric", "model", "limits", "batches"],
@@ -83,8 +208,8 @@
         "rubric": { "$ref": "#/$defs/rubric" },
         "model": { "$ref": "#/$defs/model" },
         "input_digest": { "$ref": "#/$defs/digest" },
-        "limits": { "type": "object" },
-        "batches": { "type": "array", "minItems": 1 }
+        "limits": { "$ref": "#/$defs/limits" },
+        "batches": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/batch" } }
       },
       "additionalProperties": false
     },
@@ -95,7 +220,7 @@
         "schema": { "const": "aidevops.marketing-decision-supplied/v1" },
         "request_id": { "$ref": "#/$defs/opaque" },
         "input_digest": { "$ref": "#/$defs/digest" },
-        "decisions": { "type": "array" },
+        "decisions": { "type": "array", "items": { "$ref": "#/$defs/decision" } },
         "cancelled_after_row_id": { "type": ["string", "null"] }
       },
       "additionalProperties": false
@@ -114,8 +239,8 @@
         "performance_window": { "$ref": "#/$defs/window" },
         "data_classification": { "enum": ["public", "internal", "confidential"] },
         "status": { "enum": ["complete", "partial"] },
-        "results": { "type": "array" },
-        "checkpoint": { "type": "object" },
+        "results": { "type": "array", "items": { "$ref": "#/$defs/result" } },
+        "checkpoint": { "$ref": "#/$defs/checkpoint" },
         "metrics": { "$ref": "#/$defs/reportMetrics" },
         "authority": { "const": "non_mutating_recommendations_only" }
       },
