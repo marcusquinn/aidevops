@@ -41,6 +41,9 @@ and worth the cost.”
 
 - Load focused guidance only when it is relevant.
 - Match model capability and reasoning effort to the work.
+- Explore optional [Jev structured decisions](.agents/tools/ai-assistants/jev.md)
+  with synthetic examples, privacy-aware fallback guidance and bounded continuation
+  examples; no default routing, runtime hooks or compaction changes.
 - Keep secrets, protected data, and private state out of chat and Git.
 - Let people and agents work in parallel without sharing unsafe mutable state.
 - Preserve tasks, plans, decisions, evidence, and progress in durable sources of truth.
