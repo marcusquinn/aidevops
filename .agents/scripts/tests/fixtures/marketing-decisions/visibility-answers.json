@@ -1,0 +1,8 @@
+{
+  "captures": [
+    {"capture_id": "chatgpt-1", "engine": "ChatGPT", "product": "ChatGPT", "model": "unknown", "mode": "search", "locale": "en-GB", "language": "en", "session_context": "fresh", "prompt": "best analytics platform", "cohort": "unbranded", "captured_at": "2026-09-20T12:00:00Z", "status": "complete", "source_id": "capture-1", "answer": "I recommend Acme Analytics for reliable reporting. See https://reviews.example/review/acme and https://docs.example/acme."},
+    {"capture_id": "chatgpt-2", "engine": "ChatGPT", "product": "ChatGPT", "model": "unknown", "mode": "search", "locale": "en-GB", "language": "en", "session_context": "fresh", "prompt": "best analytics platform", "cohort": "unbranded", "captured_at": "2026-09-20T12:01:00Z", "status": "complete", "source_id": "capture-2", "answer": "Consider Rival Metrics, but Acme Analytics is expensive."},
+    {"capture_id": "gemini-1", "engine": "Gemini", "product": "Gemini", "model": "unknown", "mode": "consumer-ui", "locale": "en-GB", "language": "en", "session_context": "unknown", "prompt": "best analytics platform", "cohort": "unbranded", "captured_at": "2026-09-20T12:02:00Z", "status": "unavailable", "source_id": "capture-3", "failure_reason": "unsupported_surface"},
+    {"capture_id": "perplexity-1", "engine": "Perplexity", "product": "Perplexity", "model": "unknown", "mode": "search", "locale": "en-GB", "language": "en", "session_context": "fresh", "prompt": "best analytics platform", "cohort": "unbranded", "captured_at": "2026-09-20T12:03:00Z", "status": "failed", "source_id": "capture-4", "failure_reason": "rate_limited"}
+  ]
+}
