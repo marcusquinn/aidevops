@@ -16,7 +16,9 @@ both missing and unregistered, or when a later managed profile duplicates an
 earlier managed profile's normalized cwd. It preserves custom profiles,
 custom/managed same-cwd pairs, existing unregistered profiles, and missing paths
 still registered in `repos.json`. The validated write is atomic and a second
-sync must be a no-op.
+sync must be a no-op. Sync also self-repairs the narrowly identified legacy
+corruption where generated list entries were appended beneath `profiles: []`.
+Other invalid YAML remains unchanged and fails visibly.
 
 OpenCode profiles must not launch with `zsh -i -c opencode`. That shape runs an
 interactive zsh startup while executing a command string, which can make

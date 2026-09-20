@@ -20,6 +20,8 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
+import yaml
+
 SCRIPTS_DIR = Path(__file__).parent.parent / ".agents" / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
@@ -30,7 +32,10 @@ tabby_profile_sync = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(tabby_profile_sync)
 
 # Re-import helpers directly so tests exercise the same module the script uses.
-from tabby_yaml_helpers import extract_existing_cwds  # noqa: E402
+from tabby_yaml_helpers import (  # noqa: E402
+    extract_existing_cwds,
+    load_yaml_for_sync,
+)
 from tabby_shell_resolver import ShellResolutionError, resolve_login_shell  # noqa: E402
 
 
@@ -179,6 +184,50 @@ class TestExtractExistingCwds(unittest.TestCase):
 
     def test_config_without_profiles_returns_empty_set(self):
         self.assertEqual(extract_existing_cwds("version: 1\nhotkeys: {}\n"), set())
+
+
+class TestLegacyInlineProfilesRepair(unittest.TestCase):
+    """Recover the exact malformed YAML emitted by the legacy inserter."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.config = Path(self._tmp.name) / "config.yaml"
+
+    def test_sync_load_repairs_inline_empty_profiles_before_list_items(self):
+        self.config.write_text(
+            "version: 8\nprofiles: []\n  - name: aidevops-routines\n"
+            "    icon: fas fa-terminal\n    options: {}\ngroups: []\n"
+        )
+
+        content, repaired = load_yaml_for_sync(str(self.config))
+
+        self.assertTrue(repaired)
+        self.assertIn("profiles:\n  - name: aidevops-routines", content)
+        self.assertNotIn("profiles: []", content)
+        self.assertEqual(
+            yaml.safe_load(content)["profiles"][0]["name"], "aidevops-routines"
+        )
+        self.assertEqual(self.config.read_text(), content)
+
+    def test_sync_load_does_not_rewrite_unrelated_invalid_yaml(self):
+        original = "version: 8\nprofiles: [\n"
+        self.config.write_text(original)
+
+        with self.assertRaises(yaml.YAMLError):
+            load_yaml_for_sync(str(self.config))
+
+        self.assertEqual(self.config.read_text(), original)
+
+    def test_normal_empty_profiles_list_is_not_rewritten(self):
+        original = "version: 8\nprofiles: []\ngroups: []\n"
+        self.config.write_text(original)
+
+        content, repaired = load_yaml_for_sync(str(self.config))
+
+        self.assertFalse(repaired)
+        self.assertEqual(content, original)
+        self.assertEqual(self.config.read_text(), original)
 
 
 class TestIsLinkedWorktree(unittest.TestCase):
