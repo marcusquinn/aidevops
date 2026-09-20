@@ -560,7 +560,11 @@ cmd_get() {
 		return 1
 	fi
 
-	printf '%s' "$value"
+	if [[ -t 1 ]]; then
+		printf '%s\n' "$value"
+	else
+		printf '%s' "$value"
+	fi
 	return 0
 }
 
