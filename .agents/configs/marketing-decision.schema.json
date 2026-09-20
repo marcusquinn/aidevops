@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aidevops.local/schemas/marketing-decision.schema.json",
+  "title": "aidevops marketing decision contracts",
+  "oneOf": [
+    { "$ref": "#/$defs/input" },
+    { "$ref": "#/$defs/supplied" },
+    { "$ref": "#/$defs/report" }
+  ],
+  "$defs": {
+    "opaque": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$" },
+    "digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "scope": {
+      "type": "object",
+      "required": ["project_id", "account_id"],
+      "properties": {
+        "project_id": { "$ref": "#/$defs/opaque" },
+        "account_id": { "$ref": "#/$defs/opaque" },
+        "site_id": { "$ref": "#/$defs/opaque" }
+      },
+      "additionalProperties": false
+    },
+    "versioned": {
+      "type": "object",
+      "required": ["id", "version"],
+      "properties": {
+        "id": { "$ref": "#/$defs/opaque" },
+        "version": { "$ref": "#/$defs/opaque" },
+        "provider": { "$ref": "#/$defs/opaque" }
+      },
+      "additionalProperties": false
+    },
+    "window": {
+      "type": "object",
+      "required": ["start", "end"],
+      "properties": { "start": { "type": "string", "format": "date-time" }, "end": { "type": "string", "format": "date-time" } },
+      "additionalProperties": false
+    },
+    "usage": {
+      "type": "object",
+      "required": ["latency_ms", "input_tokens", "output_tokens", "cost_usd"],
+      "properties": {
+        "latency_ms": { "type": ["number", "null"], "minimum": 0 },
+        "input_tokens": { "type": ["integer", "null"], "minimum": 0 },
+        "output_tokens": { "type": ["integer", "null"], "minimum": 0 },
+        "cost_usd": { "type": ["number", "null"], "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "reportMetrics": {
+      "type": "object",
+      "required": ["latency_ms", "input_tokens", "output_tokens", "cost_usd", "cost_measurement"],
+      "properties": {
+        "latency_ms": { "type": ["number", "null"], "minimum": 0 },
+        "input_tokens": { "type": ["integer", "null"], "minimum": 0 },
+        "output_tokens": { "type": ["integer", "null"], "minimum": 0 },
+        "cost_usd": { "type": ["number", "null"], "minimum": 0 },
+        "cost_measurement": { "enum": ["reported", "unknown"] }
+      },
+      "additionalProperties": false
+    },
+    "input": {
+      "type": "object",
+      "required": ["schema", "request_id", "scope", "captured_at", "as_of", "performance_window", "data_classification", "rubric", "model", "limits", "batches"],
+      "properties": {
+        "schema": { "const": "aidevops.marketing-decision-input/v1" },
+        "request_id": { "$ref": "#/$defs/opaque" },
+        "scope": { "$ref": "#/$defs/scope" },
+        "captured_at": { "type": "string", "format": "date-time" },
+        "as_of": { "type": "string", "format": "date-time" },
+        "performance_window": { "$ref": "#/$defs/window" },
+        "data_classification": { "enum": ["public", "internal", "confidential"] },
+        "rubric": { "$ref": "#/$defs/versioned" },
+        "model": { "$ref": "#/$defs/versioned" },
+        "input_digest": { "$ref": "#/$defs/digest" },
+        "limits": { "type": "object" },
+        "batches": { "type": "array", "minItems": 1 }
+      },
+      "additionalProperties": false
+    },
+    "supplied": {
+      "type": "object",
+      "required": ["schema", "request_id", "input_digest", "decisions"],
+      "properties": {
+        "schema": { "const": "aidevops.marketing-decision-supplied/v1" },
+        "request_id": { "$ref": "#/$defs/opaque" },
+        "input_digest": { "$ref": "#/$defs/digest" },
+        "decisions": { "type": "array" },
+        "cancelled_after_row_id": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "report": {
+      "type": "object",
+      "required": ["schema", "request_id", "scope", "input_digest", "cache_key", "rubric", "model", "performance_window", "data_classification", "status", "results", "checkpoint", "metrics", "authority"],
+      "properties": {
+        "schema": { "const": "aidevops.marketing-decision-report/v1" },
+        "request_id": { "$ref": "#/$defs/opaque" },
+        "scope": { "$ref": "#/$defs/scope" },
+        "input_digest": { "$ref": "#/$defs/digest" },
+        "cache_key": { "$ref": "#/$defs/digest" },
+        "rubric": { "$ref": "#/$defs/versioned" },
+        "model": { "$ref": "#/$defs/versioned" },
+        "performance_window": { "$ref": "#/$defs/window" },
+        "data_classification": { "enum": ["public", "internal", "confidential"] },
+        "status": { "enum": ["complete", "partial"] },
+        "results": { "type": "array" },
+        "checkpoint": { "type": "object" },
+        "metrics": { "$ref": "#/$defs/reportMetrics" },
+        "authority": { "const": "non_mutating_recommendations_only" }
+      },
+      "additionalProperties": false
+    }
+  }
+}
