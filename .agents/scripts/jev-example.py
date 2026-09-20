@@ -200,17 +200,17 @@ class ContinuationBudget:
         if type(self.limit) is not int or not 0 <= self.limit <= MAX_CONTINUATIONS:
             raise ValueError("Continuation limit must be between zero and twelve")
 
-    def reserve(self, probability, *, progress_token, context=None):
+    def reserve(self, probability, *, progress_id, context=None):
         if not isinstance(context, ContinuationContext) or not context.allows_work():
             return False
         if (not bounded_number(probability) or probability < 0.9
                 or self.used >= min(self.limit, MAX_CONTINUATIONS)):
             return False
-        if (not isinstance(progress_token, str) or not progress_token.strip()
-                or progress_token in self.seen_progress):
+        if (not isinstance(progress_id, str) or not progress_id.strip()
+                or progress_id in self.seen_progress):
             return False
         self.used += 1
-        self.seen_progress.add(progress_token)
+        self.seen_progress.add(progress_id)
         return True
 
 

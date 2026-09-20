@@ -142,11 +142,11 @@ class ExampleTests(unittest.TestCase):
 
 
 class ContinuationTests(unittest.TestCase):
-    def reserve(self, budget, token="verified-work-1", **overrides):
+    def reserve(self, budget, progress_id="verified-work-1", **overrides):
         flags = dict(enabled=True, authorised=True, unfinished=True,
                      cancelled=False, blocked=False, choosing=False)
         flags.update(overrides)
-        return budget.reserve(0.99, progress_token=token, context=jev.ContinuationContext(**flags))
+        return budget.reserve(0.99, progress_id=progress_id, context=jev.ContinuationContext(**flags))
 
     def test_twelve_then_stop_even_with_new_progress(self):
         budget = jev.ContinuationBudget()
@@ -175,7 +175,7 @@ class ContinuationTests(unittest.TestCase):
 
     def test_defaults_and_repeat_progress_stop(self):
         budget = jev.ContinuationBudget()
-        self.assertFalse(budget.reserve(1, progress_token="x"))
+        self.assertFalse(budget.reserve(1, progress_id="x"))
         self.assertFalse(self.reserve(budget, ""))
         self.assertTrue(self.reserve(budget, "a"))
         self.assertFalse(self.reserve(budget, "a"))
