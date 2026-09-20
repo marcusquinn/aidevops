@@ -56,6 +56,32 @@ _release_lane_cache_write() {
 	return 0
 }
 
+_release_lane_state_valid() {
+	local repo="$1"
+	local state_json="$2"
+	jq -e --arg repo "$repo" --arg string_type "$_AIDEVOPS_RELEASE_LANE_JSON_STRING_TYPE" '
+		.schema_version == 1 and .repository == $repo
+		and (.active | type == "boolean") and (.source_pr | type == "number")
+		and (.phase | type == $string_type) and (.updated_at | type == $string_type)
+		and (.operation_token | type == $string_type) and (.operation_token | length > 0)
+		and ((.tag == null) or (.tag | type == $string_type))
+	' <<<"$state_json" >/dev/null
+	return $?
+}
+
+_release_lane_cache_read() {
+	local repo="$1"
+	local cache_path=""
+	local state_json=""
+	_AIDEVOPS_RELEASE_LANE_JSON=""
+	cache_path=$(_release_lane_cache_path "$repo") || return 1
+	[[ -f "$cache_path" && ! -L "$cache_path" ]] || return 1
+	IFS= read -r state_json <"$cache_path" || return 1
+	_release_lane_state_valid "$repo" "$state_json" || return 1
+	_AIDEVOPS_RELEASE_LANE_JSON="$state_json"
+	return 0
+}
+
 _release_lane_remote_head() {
 	local repo="$1"
 	local endpoint="repos/${repo}/git/ref/heads/${_AIDEVOPS_RELEASE_LANE_BRANCH}"
@@ -90,13 +116,7 @@ release_lane_read() {
 	[[ "$head" =~ ^[0-9a-f]{40}$ ]] || return 1
 	state_json=$(gh api "repos/${repo}/contents/${_AIDEVOPS_RELEASE_LANE_FILE}?ref=${head}" \
 		--jq '.content | @base64d' 2>/dev/null) || return 1
-	jq -e --arg repo "$repo" --arg string_type "$_AIDEVOPS_RELEASE_LANE_JSON_STRING_TYPE" '
-		.schema_version == 1 and .repository == $repo
-		and (.active | type == "boolean") and (.source_pr | type == "number")
-		and (.phase | type == $string_type) and (.updated_at | type == $string_type)
-		and (.operation_token | type == $string_type) and (.operation_token | length > 0)
-		and ((.tag == null) or (.tag | type == $string_type))
-	' <<<"$state_json" >/dev/null || return 1
+	_release_lane_state_valid "$repo" "$state_json" || return 1
 	_AIDEVOPS_RELEASE_LANE_HEAD="$head"
 	_AIDEVOPS_RELEASE_LANE_JSON="$state_json"
 	_release_lane_cache_write "$repo" "$state_json" || return 1
@@ -1342,15 +1362,27 @@ release_lane_setup_guard() {
 	local tag_name="${AIDEVOPS_RELEASE_LANE_TAG:-}"
 	local active_pr="" active_tag="" phase=""
 	local read_rc=0
+	local remote_verified=1
 	release_lane_read "$repo" || read_rc=$?
 	case "$read_rc" in
 	2) return 0 ;;
 	0) ;;
 	*)
-		printf 'Cannot verify repository release lane; setup deployment is blocked\n' >&2
-		return 75
+		remote_verified=0
+		if ! _release_lane_cache_read "$repo"; then
+			if [[ -n "$source_pr" || -n "$tag_name" ]]; then
+				printf 'Cannot verify repository release lane; exact-tag setup deployment is blocked\n' >&2
+				return 75
+			fi
+			printf 'Cannot verify repository release lane; continuing generic setup without a locally verified active deployment\n' >&2
+			return 0
+		fi
 		;;
 	esac
+	if [[ "$remote_verified" -eq 0 && ( -n "$source_pr" || -n "$tag_name" ) ]]; then
+		printf 'Cannot verify repository release lane; exact-tag setup deployment is blocked\n' >&2
+		return 75
+	fi
 	[[ "$(jq -r '.active' <<<"$_AIDEVOPS_RELEASE_LANE_JSON")" == "$_AIDEVOPS_RELEASE_LANE_TRUE" ]] || return 0
 	phase=$(jq -r '.phase' <<<"$_AIDEVOPS_RELEASE_LANE_JSON") || return 1
 	[[ "$phase" == "exact-tag-deployment" ]] || return 0
