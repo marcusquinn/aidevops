@@ -88,18 +88,20 @@ def run(arguments: argparse.Namespace) -> dict[str, Any]:
         migrate(database)
         if arguments.command in ("init", "import"):
             assert raw is not None
-            return import_document(database, raw)
-        if arguments.command == "list":
-            return {"project_id": arguments.project, "leads": list_leads(database, arguments.project, disposition=arguments.disposition, limit=arguments.limit)}
-        if arguments.command == "disposition":
+            result = import_document(database, raw)
+        elif arguments.command == "list":
+            result = {"project_id": arguments.project, "leads": list_leads(database, arguments.project, disposition=arguments.disposition, limit=arguments.limit)}
+        elif arguments.command == "disposition":
             changed = set_disposition(database, arguments.project, arguments.lead, arguments.value, arguments.expected_version)
-            return {"project_id": arguments.project, "lead_id": arguments.lead, "disposition": arguments.value, "version": changed}
-        if arguments.command == "export":
-            return export_project(database, arguments.project)
-        if arguments.command == "delete":
+            result = {"project_id": arguments.project, "lead_id": arguments.lead, "disposition": arguments.value, "version": changed}
+        elif arguments.command == "export":
+            result = export_project(database, arguments.project)
+        elif arguments.command == "delete":
             backup = delete_project(database, arguments.store, arguments.project, arguments.confirm_name)
-            return {"deleted": arguments.project, "backup": str(backup)}
-        raise ProspectingStoreError("unsupported command")
+            result = {"deleted": arguments.project, "backup": str(backup)}
+        else:
+            raise ProspectingStoreError("unsupported command")
+        return result
     finally:
         database.close()
 

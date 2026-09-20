@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
-from prospecting_contract import DISPOSITIONS, ImportDocument, validate_project_payload
+from prospecting_contract import DISPOSITIONS, ImportDocument, ScoreUpdate, validate_project_payload, version
 
 SCHEMA_VERSION = 1
 
@@ -282,8 +282,7 @@ def list_leads(database: sqlite3.Connection, project_id: str, *, disposition: st
 def set_disposition(database: sqlite3.Connection, project_id: str, lead_id: str, disposition: str, expected_version: int) -> int:
     if disposition not in DISPOSITIONS:
         raise ProspectingStoreError("unsupported disposition")
-    if isinstance(expected_version, bool) or not isinstance(expected_version, int) or expected_version < 1:
-        raise ProspectingStoreError("expected version must be a positive integer")
+    version(expected_version, "expected version")
     now = _now()
     with transaction(database):
         cursor = database.execute(
@@ -301,13 +300,11 @@ def set_disposition(database: sqlite3.Connection, project_id: str, lead_id: str,
     return new_version
 
 
-def rescore(database: sqlite3.Connection, project_id: str, lead_id: str, score: float, rubric_version: str, model_version: str) -> None:
-    if not 0 <= score <= 100:
-        raise ProspectingStoreError("score must be between 0 and 100")
+def rescore(database: sqlite3.Connection, project_id: str, lead_id: str, update: ScoreUpdate) -> None:
     with transaction(database):
         cursor = database.execute(
             "UPDATE leads SET score=?,rubric_version=?,model_version=?,scored_at=? WHERE project_id=? AND lead_id=?",
-            (score, rubric_version, model_version, _now(), project_id, lead_id),
+            (update.score, update.rubric_version, update.model_version, _now(), project_id, lead_id),
         )
         if cursor.rowcount != 1:
             raise ProspectingStoreError("lead does not exist")
@@ -316,8 +313,7 @@ def rescore(database: sqlite3.Connection, project_id: str, lead_id: str, score: 
 def update_project_version(database: sqlite3.Connection, project_id: str, kind: str, expected_version: int, payload: dict[str, Any]) -> int:
     if kind not in ("profile", "discovery"):
         raise ProspectingStoreError("version kind must be profile or discovery")
-    if isinstance(expected_version, bool) or not isinstance(expected_version, int) or expected_version < 1:
-        raise ProspectingStoreError("expected version must be a positive integer")
+    version(expected_version, "expected version")
     validate_project_payload(kind, payload)
     field = f"{kind}_version"
     payload_field = f"{kind}_json"

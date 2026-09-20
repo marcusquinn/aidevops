@@ -48,6 +48,38 @@ def string_list(value: Any, field: str) -> tuple[str, ...]:
     return tuple(value)
 
 
+def validate_budget(name: Any, amount: Any, field: str) -> None:
+    if not isinstance(name, str) or not name:
+        raise ContractError(f"{field} keys must be non-empty strings")
+    if isinstance(amount, bool) or not isinstance(amount, (int, float)):
+        raise ContractError(f"{field} values must be numeric")
+    if not math.isfinite(amount) or amount < 0:
+        raise ContractError(f"{field} values must be non-negative and finite")
+
+
+def validate_payload_lists(kind: str, value: Mapping[str, Any]) -> None:
+    fields = ("facts", "claims", "competitors", "secret_profile_refs")
+    if kind == "discovery":
+        fields = ("keywords", "communities", "source_preferences")
+    for field in fields:
+        if field in value:
+            string_list(value[field], f"project.{kind}.{field}")
+
+
+def validate_payload_limits(kind: str, value: Mapping[str, Any]) -> None:
+    if "budgets" in value:
+        budgets = value["budgets"]
+        if not isinstance(budgets, dict):
+            raise ContractError(f"project.{kind}.budgets must be an object")
+        for name, amount in budgets.items():
+            validate_budget(name, amount, f"project.{kind}.budgets")
+    if kind != "discovery" or "daily_result_limit" not in value:
+        return
+    limit = value["daily_result_limit"]
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit < 0:
+        raise ContractError("project.discovery.daily_result_limit must be a non-negative integer")
+
+
 def validate_project_payload(kind: str, value: Any) -> Mapping[str, Any]:
     if not isinstance(value, dict):
         raise ContractError(f"project.{kind} must be an object")
@@ -55,22 +87,22 @@ def validate_project_payload(kind: str, value: Any) -> Mapping[str, Any]:
     if allowed is None:
         raise ContractError("project payload kind must be profile or discovery")
     exact_fields(value, allowed, f"project.{kind}")
-    list_fields = ("facts", "claims", "competitors", "secret_profile_refs") if kind == "profile" else ("keywords", "communities", "source_preferences")
-    for field in list_fields:
-        if field in value:
-            string_list(value[field], f"project.{kind}.{field}")
-    if "budgets" in value:
-        budgets = value["budgets"]
-        if not isinstance(budgets, dict):
-            raise ContractError(f"project.{kind}.budgets must be an object")
-        for name, amount in budgets.items():
-            if not isinstance(name, str) or not name or isinstance(amount, bool) or not isinstance(amount, (int, float)) or not math.isfinite(amount) or amount < 0:
-                raise ContractError(f"project.{kind}.budgets must contain non-negative numeric values")
-    if kind == "discovery" and "daily_result_limit" in value:
-        limit = value["daily_result_limit"]
-        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 0:
-            raise ContractError("project.discovery.daily_result_limit must be a non-negative integer")
+    validate_payload_lists(kind, value)
+    validate_payload_limits(kind, value)
     return value
+
+
+@dataclass(frozen=True)
+class ScoreUpdate:
+    score: float
+    rubric_version: str
+    model_version: str
+
+    def __post_init__(self) -> None:
+        if isinstance(self.score, bool) or not isinstance(self.score, (int, float)) or not 0 <= self.score <= 100:
+            raise ContractError("score must be between 0 and 100")
+        required_text(self.rubric_version, "rubric_version")
+        required_text(self.model_version, "model_version")
 
 
 @dataclass(frozen=True)

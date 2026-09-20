@@ -15,7 +15,7 @@ from pathlib import Path
 SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
 
-from prospecting_contract import ContractError  # noqa: E402
+from prospecting_contract import ContractError, ScoreUpdate  # noqa: E402
 from prospecting_store import (  # noqa: E402
     ProspectingStoreError,
     StaleVersionError,
@@ -71,7 +71,7 @@ class ProspectingStoreTest(unittest.TestCase):
     def test_disposition_survives_rescore_and_stale_update_fails(self) -> None:
         import_document(self.database, self.alpha)
         self.assertEqual(2, set_disposition(self.database, "project-alpha", "ask-1", "saved", 1))
-        rescore(self.database, "project-alpha", "ask-1", 91, "rubric-2", "model-2")
+        rescore(self.database, "project-alpha", "ask-1", ScoreUpdate(91, "rubric-2", "model-2"))
         lead = list_leads(self.database, "project-alpha")[0]
         self.assertEqual("saved", lead["disposition"])
         self.assertEqual(2, lead["disposition_version"])
