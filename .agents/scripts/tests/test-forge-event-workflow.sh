@@ -7,16 +7,23 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)" || exit 1
 WORKFLOW="${REPO_ROOT}/.github/workflows/issue-sync-reusable.yml"
+MAINTENANCE_WORKFLOW="${REPO_ROOT}/.github/workflows/issue-sync-artifact-maintenance-reusable.yml"
 SELF_CALLER="${REPO_ROOT}/.github/workflows/issue-sync.yml"
 CALLER_TEMPLATE="${REPO_ROOT}/.agents/templates/workflows/issue-sync-caller.yml"
 HELPER="${SCRIPT_DIR}/../forge-event-helper.sh"
 STATE_HELPER="${SCRIPT_DIR}/../forge-coordinator-state-helper.sh"
 PROJECTION_REDUCER="${SCRIPT_DIR}/../task-projection-reducer.mjs"
 
-python3 - "$WORKFLOW" <<'PY'
+python3 - "$WORKFLOW" "$MAINTENANCE_WORKFLOW" "$SELF_CALLER" "$CALLER_TEMPLATE" <<'PY'
 import sys, yaml
 with open(sys.argv[1], encoding="utf-8") as stream:
     workflow = yaml.safe_load(stream)
+with open(sys.argv[2], encoding="utf-8") as stream:
+    maintenance = yaml.safe_load(stream)
+with open(sys.argv[3], encoding="utf-8") as stream:
+    self_caller = yaml.safe_load(stream)
+with open(sys.argv[4], encoding="utf-8") as stream:
+    caller_template = yaml.safe_load(stream)
 jobs = workflow["jobs"]
 assert "forge-event" in jobs
 assert {"sync-on-push", "sync-on-issue", "manual-sync", "sync-on-pr-merge", "label-pr", "check-issue-link", "guard-persistent-issues", "label-closure-reason"} <= set(jobs)
@@ -39,13 +46,23 @@ upload = next(step for step in jobs["forge-event"]["steps"] if step.get("name") 
 assert upload["id"] == "coordinator-upload"
 assert upload["with"]["name"] == "forge-coordinator-${{ github.repository_id }}"
 assert upload["with"]["retention-days"] == 90
-prune = next(step for step in jobs["forge-event"]["steps"] if step.get("name") == "Prune superseded coordinator checkpoints")
-assert jobs["forge-event"]["permissions"]["actions"] == "write"
-assert prune["continue-on-error"] is True
-assert "steps.coordinator-upload.outcome == 'success'" in prune["if"]
-assert prune["env"]["CURRENT_ARTIFACT_ID"] == "${{ steps.coordinator-upload.outputs.artifact-id }}"
-assert '[[ "$artifact_id" != "$CURRENT_ARTIFACT_ID" ]]' in prune["run"]
-assert "--method DELETE" in prune["run"]
+assert jobs["forge-event"]["permissions"]["actions"] == "read"
+assert jobs["forge-event"]["outputs"]["coordinator_artifact_id"] == "${{ steps.coordinator-upload.outputs.artifact-id }}"
+assert workflow[True]["workflow_call"]["outputs"]["coordinator_artifact_id"]["value"] == "${{ jobs.forge-event.outputs.coordinator_artifact_id }}"
+assert not any(step.get("name") == "Prune superseded coordinator checkpoints" for step in jobs["forge-event"]["steps"])
+maintenance_jobs = maintenance["jobs"]
+assert maintenance_jobs["plan"]["permissions"]["actions"] == "read"
+assert maintenance_jobs["apply"]["permissions"]["actions"] == "write"
+assert "cleanup-plan" in maintenance_jobs["plan"]["steps"][-1]["run"]
+assert "cleanup-apply" in maintenance_jobs["apply"]["steps"][-1]["run"]
+for caller in (self_caller, caller_template):
+    caller_jobs = caller["jobs"]
+    assert caller_jobs["sync"]["permissions"]["actions"] == "read"
+    cleanup = caller_jobs["coordinator-artifact-maintenance"]
+    assert cleanup["permissions"]["actions"] == "write"
+    assert cleanup["needs"] == "sync"
+    assert cleanup["with"]["protected_artifact_id"] == "${{ needs.sync.outputs.coordinator_artifact_id }}"
+    assert "AIDEVOPS_COORDINATOR_ARTIFACT_CLEANUP" in cleanup["with"]["mode"]
 persist = next(step for step in jobs["forge-event"]["steps"] if step.get("name") == "Persist durable coordinator state")
 assert persist["id"] == "coordinator-persist"
 assert "steps.coordinator-persist.outcome == 'success'" in upload["if"]
@@ -230,6 +247,44 @@ fi
 grep -q 'Invalid coordinator artifact ID' "${test_root}/restore-error"
 if grep -q '/zip' "${test_root}/api.log"; then
 	printf 'FAIL malformed artifact ID reached the download endpoint\n' >&2
+	exit 1
+fi
+
+# Cleanup plans are read-only. Apply keeps the protected checkpoint and newest
+# fallback, deleting only older exact-name artifacts.
+mkdir -p "${test_root}/cleanup-bin"
+cat >"${test_root}/cleanup-bin/gh" <<'GH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$GH_CALL_LOG"
+if [[ "$*" == *"actions/artifacts?name=forge-coordinator-1&per_page=100"* ]]; then
+	printf '%s\n' '[{"artifacts":[{"id":30,"name":"forge-coordinator-1","created_at":"2026-09-20T03:00:00Z","expired":false,"size_in_bytes":300},{"id":20,"name":"forge-coordinator-1","created_at":"2026-09-20T02:00:00Z","expired":false,"size_in_bytes":200},{"id":10,"name":"forge-coordinator-1","created_at":"2026-09-20T01:00:00Z","expired":false,"size_in_bytes":100},{"id":9,"name":"forge-coordinator-other","created_at":"2026-09-20T00:00:00Z","expired":false,"size_in_bytes":900}]}]'
+	exit 0
+fi
+if [[ "$*" == *"--method DELETE repos/owner/repo/actions/artifacts/10"* ]]; then
+	exit 0
+fi
+exit 64
+GH
+chmod +x "${test_root}/cleanup-bin/gh"
+: >"${test_root}/cleanup-plan.log"
+GH_CALL_LOG="${test_root}/cleanup-plan.log" PATH="${test_root}/cleanup-bin:${jq_dir}:/usr/bin:/bin" \
+	bash "$STATE_HELPER" cleanup-plan owner/repo 1 30 >"${test_root}/cleanup-plan-output"
+grep -q 'total=3 retained=2 candidates=1 bytes=100 protected=30 fallback=20' "${test_root}/cleanup-plan-output"
+if grep -q -- '--method DELETE' "${test_root}/cleanup-plan.log"; then
+	printf 'FAIL cleanup plan performed a deletion\n' >&2
+	exit 1
+fi
+: >"${test_root}/cleanup-apply.log"
+GH_CALL_LOG="${test_root}/cleanup-apply.log" PATH="${test_root}/cleanup-bin:${jq_dir}:/usr/bin:/bin" \
+	bash "$STATE_HELPER" cleanup-apply owner/repo 1 30 >"${test_root}/cleanup-apply-output"
+grep -q -- '--method DELETE repos/owner/repo/actions/artifacts/10' "${test_root}/cleanup-apply.log"
+if grep -qE 'artifacts/(20|30)$' "${test_root}/cleanup-apply.log"; then
+	printf 'FAIL cleanup apply deleted a retained checkpoint\n' >&2
+	exit 1
+fi
+if GH_CALL_LOG="${test_root}/cleanup-invalid.log" PATH="${test_root}/cleanup-bin:${jq_dir}:/usr/bin:/bin" \
+	bash "$STATE_HELPER" cleanup-apply owner/repo 1 99 >/dev/null 2>&1; then
+	printf 'FAIL cleanup accepted a missing protected checkpoint\n' >&2
 	exit 1
 fi
 

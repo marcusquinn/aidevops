@@ -278,17 +278,15 @@ _workflow_reusable_ref_for_slug() {
 _render_template_for_target() {
 	local _template="$1"
 	local _repo="$2"
-	local _reusable_file="$3"
 	local _ref="$4"
-	local _default_repo_escaped _reusable_escaped _repo_repl _ref_repl
+	local _default_repo_escaped _repo_repl _ref_repl
 	_default_repo_escaped=$(_escape_ere "$_DEFAULT_WORKFLOW_REUSABLE_REPO")
-	_reusable_escaped=$(_escape_ere "$_reusable_file")
 	_repo_repl=$(_escape_sed_replacement "$_repo")
 	_ref_repl=$(_escape_sed_replacement "$_ref")
 	local _rendered
 	_rendered=$(sed -E \
-		-e "s|(uses:[[:space:]]*)${_default_repo_escaped}(/\.github/workflows/${_reusable_escaped})@[^[:space:]]+|\1${_repo_repl}\2@${_ref_repl}|" \
-		-e "s|${_default_repo_escaped}(/\.github/workflows/${_reusable_escaped})|${_repo_repl}\1|g" \
+		-e "s|(uses:[[:space:]]*)${_default_repo_escaped}(/\.github/workflows/[^@[:space:]]+)@[^[:space:]]+|\1${_repo_repl}\2@${_ref_repl}|" \
+		-e "s|${_default_repo_escaped}(/\.github/workflows/[^[:space:]]+)|${_repo_repl}\1|g" \
 		-e "s|^(      aidevops_ref:).*$|\1 ${_ref_repl}|" \
 		"$_template")
 	if [[ "$_repo" != "$_DEFAULT_WORKFLOW_REUSABLE_REPO" ]] &&
@@ -305,6 +303,13 @@ _render_template_for_target() {
 
 _inject_mirror_read_secret() {
 	local _content="$1"
+	local _secret_blocks _read_tokens
+	_secret_blocks=$(printf '%s\n' "$_content" | grep -cE '^    secrets:( inherit)?$' || true)
+	_read_tokens=$(printf '%s\n' "$_content" | grep -cE '^      AIDEVOPS_READ_TOKEN:' || true)
+	if ((_secret_blocks > 0 && _read_tokens >= _secret_blocks)); then
+		printf '%s\n' "$_content"
+		return 0
+	fi
 	if printf '%s\n' "$_content" | grep -qE '^    secrets: inherit$'; then
 		printf '%s\n' "$_content" | sed -E \
 			's|^    secrets: inherit$|    secrets:\
@@ -320,16 +325,22 @@ _inject_mirror_read_secret() {
 _caller_helper_provenance_matches() {
 	local _wf="$1"
 	local _target_repo="$2"
-	local _target_escaped="$3"
-	local _uses_ref _helper_ref _helper_repo
-	_uses_ref=$(sed -nE "s|^[[:space:]]*uses:[[:space:]]*${_target_escaped}@([^[:space:]]+).*$|\1|p" "$_wf" | head -n 1)
-	_helper_ref=$(sed -nE 's|^      aidevops_ref:[[:space:]]*([^[:space:]]+).*$|\1|p' "$_wf" | head -n 1)
-	_helper_repo=$(sed -nE 's|^      aidevops_repository:[[:space:]]*([^[:space:]]+).*$|\1|p' "$_wf" | head -n 1)
-	[[ -z "$_helper_repo" ]] && _helper_repo="$_DEFAULT_WORKFLOW_REUSABLE_REPO"
-	if [[ -n "$_uses_ref" && "$_helper_ref" == "$_uses_ref" && "$_helper_repo" == "$_target_repo" ]]; then
+	local _target_repo_escaped="$3"
+	local _uses_refs _helper_refs _helper_repos _helper_repo
+	_uses_refs=$(sed -nE \
+		"s|^[[:space:]]*uses:[[:space:]]*${_target_repo_escaped}/\.github/workflows/[^@[:space:]]+@([^[:space:]]+).*$|\1|p" \
+		"$_wf")
+	_helper_refs=$(sed -nE 's|^      aidevops_ref:[[:space:]]*([^[:space:]]+).*$|\1|p' "$_wf")
+	[[ -n "$_uses_refs" && "$_helper_refs" == "$_uses_refs" ]] || return 1
+	_helper_repos=$(sed -nE 's|^      aidevops_repository:[[:space:]]*([^[:space:]]+).*$|\1|p' "$_wf")
+	if [[ "$_target_repo" == "$_DEFAULT_WORKFLOW_REUSABLE_REPO" && -z "$_helper_repos" ]]; then
 		return 0
 	fi
-	return 1
+	[[ -n "$_helper_repos" ]] || return 1
+	while IFS= read -r _helper_repo; do
+		[[ "$_helper_repo" == "$_target_repo" ]] || return 1
+	done <<<"$_helper_repos"
+	[[ "$(printf '%s\n' "$_helper_repos" | wc -l | tr -d ' ')" == "$(printf '%s\n' "$_helper_refs" | wc -l | tr -d ' ')" ]]
 }
 
 # ─── Classification ─────────────────────────────────────────────────────────
@@ -361,6 +372,7 @@ _normalize_wf_for_compare() {
 	#         Dropping pending at EOF is correct — there is no legitimate scenario
 	#         where a `with:` followed by no children should survive normalisation.
 	sed -E "s|(${_target_escaped})@[^[:space:]]+|\1@REF|g" "$_file" |
+		sed -E 's|(uses:[[:space:]]*[^[:space:]]+/\.github/workflows/[^@[:space:]]+)@[^[:space:]]+|\1@REF|g' |
 		sed -E 's|^([[:space:]]+branches:) \[[^]]+\]$|\1 [BRANCH]|' |
 		sed -E 's|^      aidevops_ref: .+$|      aidevops_ref: REF|' |
 		sed -E '/^      aidevops_repository: /d' |
@@ -388,6 +400,7 @@ _normalize_wf_text_for_compare() {
 	local _target_escaped="$2"
 	printf '%s\n' "$_content" |
 		sed -E "s|(${_target_escaped})@[^[:space:]]+|\1@REF|g" |
+		sed -E 's|(uses:[[:space:]]*[^[:space:]]+/\.github/workflows/[^@[:space:]]+)@[^[:space:]]+|\1@REF|g' |
 		sed -E 's|^([[:space:]]+branches:) \[[^]]+\]$|\1 [BRANCH]|' |
 		sed -E 's|^      aidevops_ref: .+$|      aidevops_ref: REF|' |
 		sed -E '/^      aidevops_repository: /d' |
@@ -458,7 +471,7 @@ _classify_workflow() {
 		# repository/ref tuple as the reusable YAML. Missing or mismatched values
 		# are drift so sync-workflows can repair legacy callers safely.
 		if grep -qE '^      aidevops_ref:' "$_canon" &&
-			! _caller_helper_provenance_matches "$_wf" "$_target_repo" "$_target_escaped"; then
+			! _caller_helper_provenance_matches "$_wf" "$_target_repo" "$(_escape_ere "$_target_repo")"; then
 			printf 'DRIFTED/CALLER\n'
 			return 0
 		fi
@@ -723,7 +736,7 @@ _diff_summary() {
 		local _target_escaped _canon_rendered
 		_target_escaped="$(_escape_ere "$_target_repo")/\.github/workflows/$(_escape_ere "$_reusable_file")"
 		if grep -qE '^      aidevops_ref:' "$_canon" &&
-			! _caller_helper_provenance_matches "$_wf" "$_target_repo" "$_target_escaped"; then
+			! _caller_helper_provenance_matches "$_wf" "$_target_repo" "$(_escape_ere "$_target_repo")"; then
 			printf '  helper provenance mismatch: reusable uses and aidevops_repository/aidevops_ref must identify the same target\n'
 		fi
 		_canon_rendered=$(_render_template_for_target \

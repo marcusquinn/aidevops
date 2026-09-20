@@ -57,6 +57,11 @@ permissions:
 
 jobs:
   sync:
+    permissions:
+      actions: read
+      contents: write
+      issues: write
+      pull-requests: write
     uses: ./.github/workflows/issue-sync-reusable.yml
     secrets: inherit
     with:
@@ -64,3 +69,15 @@ jobs:
       subject_id: ${{ inputs.subject_id || '' }}
       cursor: ${{ inputs.cursor || '' }}
       task_id: ${{ inputs.task_id || '' }}
+
+  coordinator-artifact-maintenance:
+    needs: sync
+    if: ${{ always() && needs.sync.result == 'success' && needs.sync.outputs.coordinator_artifact_id != '' }}
+    permissions:
+      actions: write
+      contents: read
+    uses: ./.github/workflows/issue-sync-artifact-maintenance-reusable.yml
+    secrets: inherit
+    with:
+      mode: ${{ vars.AIDEVOPS_COORDINATOR_ARTIFACT_CLEANUP == 'apply' && 'apply' || 'plan' }}
+      protected_artifact_id: ${{ needs.sync.outputs.coordinator_artifact_id }}

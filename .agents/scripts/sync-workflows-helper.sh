@@ -511,6 +511,13 @@ _render_template_with_target() {
 
 _inject_mirror_read_secret() {
 	local _content="$1"
+	local _secret_blocks _read_tokens
+	_secret_blocks=$(printf '%s\n' "$_content" | grep -cE '^    secrets:( inherit)?$' || true)
+	_read_tokens=$(printf '%s\n' "$_content" | grep -cE '^      AIDEVOPS_READ_TOKEN:' || true)
+	if ((_secret_blocks > 0 && _read_tokens >= _secret_blocks)); then
+		printf '%s\n' "$_content"
+		return 0
+	fi
 	if printf '%s\n' "$_content" | grep -qE '^    secrets: inherit$'; then
 		printf '%s\n' "$_content" | sed -E \
 			's|^    secrets: inherit$|    secrets:\
@@ -528,18 +535,22 @@ _mirror_supports_helper_provenance() {
 	local _workflow_name="$2"
 	local _ref="$3"
 	local _path _reusable_path _reusable_content
+	local -a _reusable_paths
 	_path=$(jq -r --arg s "$_repo" \
 		'.initialized_repos[]? | select(.slug == $s) | .path // empty' \
 		"$REPOS_JSON" 2>/dev/null | head -n 1)
-	_reusable_path=".github/workflows/${_workflow_name}-reusable.yml"
 	[[ -n "$_path" ]] || return 1
 	git -C "$_path" rev-parse --git-dir >/dev/null 2>&1 || return 1
-	_reusable_content=$(git -C "$_path" show "${_ref#@}:${_reusable_path}" 2>/dev/null) || return 1
-	if grep -qE '^      aidevops_repository:' <<<"$_reusable_content" && \
-		grep -qE '^      AIDEVOPS_READ_TOKEN:' <<<"$_reusable_content"; then
-		return 0
+	_reusable_paths=(".github/workflows/${_workflow_name}-reusable.yml")
+	if [[ "$_workflow_name" == "issue-sync" ]]; then
+		_reusable_paths+=(".github/workflows/issue-sync-artifact-maintenance-reusable.yml")
 	fi
-	return 1
+	for _reusable_path in "${_reusable_paths[@]}"; do
+		_reusable_content=$(git -C "$_path" show "${_ref#@}:${_reusable_path}" 2>/dev/null) || return 1
+		grep -qE '^      aidevops_repository:' <<<"$_reusable_content" || return 1
+		grep -qE '^      AIDEVOPS_READ_TOKEN:' <<<"$_reusable_content" || return 1
+	done
+	return 0
 }
 
 # Rewrite `branches: [main]` → `branches: [<default_branch>]` in caller YAML content.

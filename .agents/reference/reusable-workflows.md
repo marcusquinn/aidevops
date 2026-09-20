@@ -103,6 +103,25 @@ Pinned refs are allowed for caller classification, but they do not suppress reus
 
 This pattern also works when aidevops calls its own reusable workflow (same-repo use), at the cost of a ~2s secondary checkout. The uniformity (one code path for all callers) is worth it.
 
+### Coordinator artifact lifecycle
+
+Issue Sync keeps its normal reusable job at the established `actions: read`
+ceiling. A separate maintenance call owns cross-run artifact deletion so cleanup
+authority cannot make existing mutable `@main` callers fail at workflow startup.
+
+Maintenance is fail-safe and opt-in:
+
+1. Every successful checkpoint upload exposes its artifact ID to the caller.
+2. The maintenance workflow defaults to a read-only plan showing count and bytes.
+3. After an owner reviews that plan, setting the repository variable
+   `AIDEVOPS_COORDINATOR_ARTIFACT_CLEANUP=apply` enables deletion.
+4. Apply always retains the artifact produced by the completed run plus one
+   newest fallback. A missing or mismatched protected artifact stops deletion.
+
+Run `aidevops sync-workflows --apply` to install the maintenance job in existing
+callers. Review at least one successful plan before enabling the repository
+variable. Removing the variable returns maintenance to read-only planning.
+
 ## Pinning strategies
 
 The caller declares which version of aidevops to fetch via the `@ref` suffix on `uses:` and repeats that value in `with.aidevops_ref`. `check-workflows` treats a missing or mismatched helper ref as drift, and `sync-workflows` repairs both values together.

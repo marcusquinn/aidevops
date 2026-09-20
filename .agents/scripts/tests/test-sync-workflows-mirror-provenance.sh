@@ -71,6 +71,18 @@ helper_rc=$?
 assert_case "helper-bearing mirror remains fail-closed" 1 "$helper_rc" "$helper_output" \
 	"configured mirror must be registered and updated"
 
+PARTIAL_ROOT="$TEST_ROOT/partial-helper"
+PARTIAL_TARGET="$PARTIAL_ROOT/target"
+mkdir -p "$PARTIAL_TARGET/.github/workflows"
+printf '%s\n' 'name: legacy issue sync' >"$PARTIAL_TARGET/.github/workflows/issue-sync.yml"
+init_mirror "$PARTIAL_ROOT" "issue-sync" $'name: primary helper-bearing reusable\ninputs:\n      aidevops_repository:\nsecrets:\n      AIDEVOPS_READ_TOKEN:'
+write_repos_json "$PARTIAL_ROOT" "owner/partial-helper-target" "$PARTIAL_TARGET"
+partial_output=$(HOME="$PARTIAL_ROOT" bash "$HELPER" \
+	--repo owner/partial-helper-target --workflow issue-sync 2>&1)
+partial_rc=$?
+assert_case "mirror missing artifact maintenance reusable remains fail-closed" 1 "$partial_rc" "$partial_output" \
+	"configured mirror must be registered and updated"
+
 SELF_ROOT="$TEST_ROOT/self-contained"
 SELF_TARGET="$SELF_ROOT/target"
 mkdir -p "$SELF_TARGET/.github/workflows" \

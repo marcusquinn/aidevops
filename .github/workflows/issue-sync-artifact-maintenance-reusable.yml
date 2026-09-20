@@ -1,0 +1,78 @@
+name: Issue Sync coordinator artifact maintenance (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      mode:
+        description: 'Cleanup mode: plan is read-only; apply deletes superseded checkpoints'
+        required: true
+        type: string
+      protected_artifact_id:
+        description: 'Artifact ID uploaded by the completed Issue Sync run'
+        required: true
+        type: string
+      aidevops_repository:
+        description: 'Repository to fetch framework scripts from'
+        required: false
+        type: string
+        default: 'marcusquinn/aidevops'
+      aidevops_ref:
+        description: 'Reviewed aidevops ref containing the maintenance helper'
+        required: false
+        type: string
+        default: 'main'
+      runner:
+        description: 'Runner label override'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+    secrets:
+      AIDEVOPS_READ_TOKEN:
+        required: false
+        description: 'Optional read token for a private configured helper repository'
+
+jobs:
+  plan:
+    if: inputs.mode == 'plan' && inputs.protected_artifact_id != ''
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Checkout coordinator scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: ${{ inputs.aidevops_repository }}
+          ref: ${{ inputs.aidevops_ref }}
+          token: ${{ secrets.AIDEVOPS_READ_TOKEN || secrets.GITHUB_TOKEN }}
+          fetch-depth: 1
+
+      - name: Inventory superseded coordinator checkpoints
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash .agents/scripts/forge-coordinator-state-helper.sh cleanup-plan "${{ github.repository }}" "${{ github.repository_id }}" "${{ inputs.protected_artifact_id }}"
+
+  apply:
+    if: inputs.mode == 'apply' && inputs.protected_artifact_id != ''
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 5
+    permissions:
+      actions: write
+      contents: read
+    concurrency:
+      group: forge-coordinator-maintenance-${{ github.repository_id }}
+      cancel-in-progress: false
+    steps:
+      - name: Checkout coordinator scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: ${{ inputs.aidevops_repository }}
+          ref: ${{ inputs.aidevops_ref }}
+          token: ${{ secrets.AIDEVOPS_READ_TOKEN || secrets.GITHUB_TOKEN }}
+          fetch-depth: 1
+
+      - name: Prune superseded coordinator checkpoints
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash .agents/scripts/forge-coordinator-state-helper.sh cleanup-apply "${{ github.repository }}" "${{ github.repository_id }}" "${{ inputs.protected_artifact_id }}"
