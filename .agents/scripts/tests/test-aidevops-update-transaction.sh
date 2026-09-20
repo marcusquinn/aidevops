@@ -61,13 +61,15 @@ source "$TEST_ROOT/_update_canonical_has_untracked_only.sh"
 source "$TEST_ROOT/_update_fetch_main.sh"
 
 source_access_reconciliation_body=$(declare -f _run_update_source_access_reconciliation)
-if [[ "$source_access_reconciliation_body" == *"AIDEVOPS_DEFERRED_ACTION action=source-access-reconcile"* ]] &&
-	[[ "$source_access_reconciliation_body" != *"sudo"* ]] &&
-	[[ "$source_access_reconciliation_body" != *"--stage source-access"* ]]; then
-	pass "routine update reports source-access repair without privileged reconciliation"
+if [[ "$source_access_reconciliation_body" == *"AIDEVOPS_SOURCE_ACCESS_INTERACTIVE=true"* ]] &&
+	[[ "$source_access_reconciliation_body" == *"\"\$INSTALL_DIR/setup.sh\" --stage source-access"* ]] &&
+	[[ "$source_access_reconciliation_body" == *"next interactive update will retry automatically"* ]] &&
+	[[ "$source_access_reconciliation_body" != *"AIDEVOPS_DEFERRED_ACTION"* ]] &&
+	[[ "$source_access_reconciliation_body" != *"sudo"* ]]; then
+	pass "routine update automatically uses the privilege-safe source-access setup path"
 else
-	fail "routine update reports source-access repair without privileged reconciliation" \
-		"source-access reconciliation can still invoke privileged setup"
+	fail "routine update automatically uses the privilege-safe source-access setup path" \
+		"source-access reconciliation does not own interactive repair and non-TTY retry behavior"
 fi
 
 print_error() {
