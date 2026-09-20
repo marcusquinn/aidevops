@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.34.8] - 2026-09-20
+
+### Fixed
+
+- repair stale NVM launcher during CLI convergence
+
 ## [3.34.7] - 2026-09-20
 
 ### Changed
