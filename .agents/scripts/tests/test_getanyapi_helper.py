@@ -8,6 +8,7 @@ import importlib.util
 import io
 import json
 import os
+import sys
 import tempfile
 import unittest
 import urllib.error
@@ -15,7 +16,12 @@ from decimal import Decimal
 from pathlib import Path
 from unittest.mock import patch
 
-HELPER = Path(__file__).resolve().parents[1] / "getanyapi-helper.py"
+SCRIPTS_DIR = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(SCRIPTS_DIR))
+
+import getanyapi_evidence as EVIDENCE  # noqa: E402
+
+HELPER = SCRIPTS_DIR / "getanyapi-helper.py"
 SPEC = importlib.util.spec_from_file_location("getanyapi_helper", HELPER)
 assert SPEC and SPEC.loader
 MODULE = importlib.util.module_from_spec(SPEC)
@@ -67,11 +73,31 @@ class GetAnyAPIHelperTests(unittest.TestCase):
                         "output": {"secret": "must not persist"},
                     }
                 )
-                path = MODULE.ledger_path()
+                path = EVIDENCE.ledger_path()
                 event = json.loads(path.read_text(encoding="utf-8"))
                 self.assertNotIn("payload", event)
                 self.assertNotIn("output", event)
                 self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            finally:
+                if previous is None:
+                    os.environ.pop("AIDEVOPS_WORKSPACE_DIR", None)
+                else:
+                    os.environ["AIDEVOPS_WORKSPACE_DIR"] = previous
+
+    def test_evidence_rejects_symlink_target(self) -> None:
+        if os.name != "posix":
+            self.skipTest("symlink protection is verified on POSIX")
+        with tempfile.TemporaryDirectory() as directory:
+            previous = os.environ.get("AIDEVOPS_WORKSPACE_DIR")
+            os.environ["AIDEVOPS_WORKSPACE_DIR"] = directory
+            try:
+                path = EVIDENCE.ledger_path()
+                path.parent.mkdir(parents=True)
+                target = Path(directory) / "target.jsonl"
+                target.write_text("", encoding="utf-8")
+                path.symlink_to(target)
+                with self.assertRaises(MODULE.AnyAPIError):
+                    MODULE.append_evidence({"sku": "example.lookup"})
             finally:
                 if previous is None:
                     os.environ.pop("AIDEVOPS_WORKSPACE_DIR", None)
@@ -134,7 +160,11 @@ class GetAnyAPIHelperTests(unittest.TestCase):
         )
         with patch.object(MODULE.urllib.request, "urlopen", side_effect=error):
             with self.assertRaises(MODULE.AnyAPIError) as caught:
-                MODULE.api_request("GET", "/v1/run/example", key="test-key")
+                MODULE.api_request(
+                    "GET",
+                    "/v1/run/example",
+                    MODULE.RequestOptions(key="test-key"),
+                )
         self.assertNotIn("echoed secret", str(caught.exception))
 
     def test_run_stops_before_payload_when_balance_is_below_ceiling(self) -> None:
@@ -202,7 +232,7 @@ class GetAnyAPIHelperTests(unittest.TestCase):
             MODULE.command_run(args)
         call = api_request.call_args
         self.assertEqual(call.args[:2], ("POST", "/v1/run/example.lookup"))
-        self.assertTrue(call.kwargs["headers"]["Idempotency-Key"])
+        self.assertTrue(call.args[2].headers["Idempotency-Key"])
         event = append_evidence.call_args.args[0]
         self.assertEqual(event["charged_cost_usd"], "0.008")
         self.assertEqual(event["request_id"], "req_1")

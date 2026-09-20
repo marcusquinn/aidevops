@@ -6,45 +6,35 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import stat
 import sys
-import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
-from collections import defaultdict
-from datetime import datetime, timezone
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
+
+from getanyapi_evidence import (
+    AnyAPIError,
+    append_evidence,
+    build_study,
+    decimal_value,
+    read_evidence,
+    safe_native_path,
+)
 
 API_BASE = "https://api.getanyapi.com"
-LEDGER_SCHEMA_VERSION = 1
 NATIVE_STATUSES = ("direct", "partial", "missing", "unknown")
 
 
-class AnyAPIError(RuntimeError):
-    """Customer-safe AnyAPI request failure."""
+class RequestOptions(NamedTuple):
+    """Optional request controls kept out of the public call signature."""
 
-    def __init__(self, message: str, status: int = 0, body: Any = None) -> None:
-        super().__init__(message)
-        self.status = status
-        self.body = body
-
-
-def utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-
-
-def ledger_path() -> Path:
-    root = Path(
-        os.environ.get(
-            "AIDEVOPS_WORKSPACE_DIR",
-            str(Path.home() / ".aidevops" / ".agent-workspace"),
-        )
-    )
-    return root / "observability" / "getanyapi-usage.jsonl"
+    key: str | None = None
+    payload: Any = None
+    timeout: int = 120
+    headers: dict[str, str] | None = None
 
 
 def require_api_key() -> str:
@@ -70,24 +60,21 @@ def parse_json_bytes(raw: bytes) -> Any:
 def api_request(
     method: str,
     path: str,
-    *,
-    key: str | None = None,
-    payload: Any = None,
-    timeout: int = 120,
-    headers: dict[str, str] | None = None,
+    options: RequestOptions | None = None,
 ) -> tuple[int, Any, dict[str, str]]:
-    request_headers = {"Accept": "application/json", **(headers or {})}
-    if key:
-        request_headers["Authorization"] = f"Bearer {key}"
+    options = options or RequestOptions()
+    request_headers = {"Accept": "application/json", **(options.headers or {})}
+    if options.key:
+        request_headers["Authorization"] = f"Bearer {options.key}"
     data = None
-    if payload is not None:
-        data = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    if options.payload is not None:
+        data = json.dumps(options.payload, separators=(",", ":")).encode("utf-8")
         request_headers["Content-Type"] = "application/json"
     request = urllib.request.Request(
         f"{API_BASE}{path}", data=data, headers=request_headers, method=method
     )
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with urllib.request.urlopen(request, timeout=options.timeout) as response:
             return (
                 response.status,
                 parse_json_bytes(response.read()),
@@ -107,57 +94,6 @@ def api_request(
 def emit_json(value: Any) -> None:
     json.dump(value, sys.stdout, indent=2, sort_keys=True)
     sys.stdout.write("\n")
-
-
-def append_evidence(event: dict[str, Any]) -> None:
-    path = ledger_path()
-    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    try:
-        path.parent.chmod(0o700)
-    except OSError:
-        pass
-    bounded = {
-        "schema_version": LEDGER_SCHEMA_VERSION,
-        "recorded_at": utc_now(),
-        "sku": str(event.get("sku") or "")[:160],
-        "category": str(event.get("category") or "")[:80],
-        "outcome": str(event.get("outcome") or "unknown")[:40],
-        "request_id": str(event.get("request_id") or "")[:160],
-        "http_status": int(event.get("http_status") or 0),
-        "error_code": str(event.get("error_code") or "")[:120],
-        "quoted_max_usd": str(event.get("quoted_max_usd") or "0")[:40],
-        "observed_cost_usd": str(event.get("observed_cost_usd") or "0")[:40],
-        "charged_cost_usd": str(event.get("charged_cost_usd") or "0")[:40],
-        "items": int(event.get("items") or 0),
-        "replayed": bool(event.get("replayed") or False),
-        "native_status": str(event.get("native_status") or "unknown")[:40],
-        "native_path": safe_native_path(str(event.get("native_path") or "")),
-    }
-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
-    try:
-        os.write(descriptor, (json.dumps(bounded, separators=(",", ":")) + "\n").encode())
-    finally:
-        os.close(descriptor)
-    path.chmod(stat.S_IRUSR | stat.S_IWUSR)
-
-
-def safe_native_path(value: str) -> str:
-    value = value.strip()
-    if not value:
-        return ""
-    if value.startswith(("/", "~")) or ".." in Path(value).parts:
-        raise AnyAPIError("native path must be a repository-relative agent or helper path")
-    return value[:240]
-
-
-def decimal_value(value: Any, field: str) -> Decimal:
-    try:
-        result = Decimal(str(value))
-    except (InvalidOperation, ValueError) as exc:
-        raise AnyAPIError(f"AnyAPI returned an invalid {field}") from exc
-    if result < 0:
-        raise AnyAPIError(f"AnyAPI returned a negative {field}")
-    return result
 
 
 def price_ceiling(detail: dict[str, Any]) -> Decimal:
@@ -213,7 +149,11 @@ def command_search(args: argparse.Namespace) -> None:
 
 
 def get_detail(sku: str, key: str) -> dict[str, Any]:
-    _, body, _ = api_request("GET", f"/v1/apis/{urllib.parse.quote(sku, safe='.')}", key=key)
+    _, body, _ = api_request(
+        "GET",
+        f"/v1/apis/{urllib.parse.quote(sku, safe='.')}",
+        RequestOptions(key=key),
+    )
     if not isinstance(body, dict):
         raise AnyAPIError("AnyAPI detail response was not an object")
     return body
@@ -224,12 +164,14 @@ def command_get(args: argparse.Namespace) -> None:
 
 
 def command_balance(_: argparse.Namespace) -> None:
-    _, body, _ = api_request("GET", "/v1/balance", key=require_api_key())
+    _, body, _ = api_request(
+        "GET", "/v1/balance", RequestOptions(key=require_api_key())
+    )
     emit_json(body)
 
 
 def wallet_balance(key: str) -> Decimal:
-    _, body, _ = api_request("GET", "/v1/balance", key=key)
+    _, body, _ = api_request("GET", "/v1/balance", RequestOptions(key=key))
     if not isinstance(body, dict) or "usd" not in body:
         raise AnyAPIError("AnyAPI balance response did not contain usd")
     return decimal_value(body["usd"], "wallet balance")
@@ -250,16 +192,21 @@ def payment_cost(body: Any) -> Decimal:
     return decimal_value(payment.get("costUsd", 0), "payment costUsd")
 
 
+class UsageContext(NamedTuple):
+    """Stable metadata shared by request evidence events."""
+
+    sku: str
+    category: str
+    ceiling: Decimal
+    native_status: str
+    native_path: str
+
+
 def response_event(
-    *,
-    sku: str,
-    category: str,
     status: int,
     body: Any,
     headers: dict[str, str],
-    ceiling: Decimal,
-    native_status: str,
-    native_path: str,
+    context: UsageContext,
 ) -> dict[str, Any]:
     request_id = headers.get("x-anyapi-request-id", "")
     if isinstance(body, dict):
@@ -274,18 +221,18 @@ def response_event(
         observed_cost = decimal_value(body.get("costUsd", 0), "costUsd")
         items = int(body.get("items") or 0)
     return {
-        "sku": sku,
-        "category": category,
+        "sku": context.sku,
+        "category": context.category,
         "outcome": "pending" if pending else "success",
         "request_id": request_id,
         "http_status": status,
-        "quoted_max_usd": str(ceiling),
+        "quoted_max_usd": str(context.ceiling),
         "observed_cost_usd": str(observed_cost),
         "charged_cost_usd": "0" if replayed else str(observed_cost),
         "items": items,
         "replayed": replayed,
-        "native_status": native_status,
-        "native_path": native_path,
+        "native_status": context.native_status,
+        "native_path": context.native_path,
     }
 
 
@@ -319,10 +266,12 @@ def command_run(args: argparse.Namespace) -> None:
         status, body, headers = api_request(
             "POST",
             run_path,
-            key=key,
-            payload=payload,
-            timeout=args.timeout,
-            headers={"Idempotency-Key": str(uuid.uuid4())},
+            RequestOptions(
+                key=key,
+                payload=payload,
+                timeout=args.timeout,
+                headers={"Idempotency-Key": str(uuid.uuid4())},
+            ),
         )
     except AnyAPIError as exc:
         charged = payment_cost(exc.body)
@@ -343,14 +292,16 @@ def command_run(args: argparse.Namespace) -> None:
         raise
     append_evidence(
         response_event(
-            sku=args.sku,
-            category=str(detail.get("category") or ""),
-            status=status,
-            body=body,
-            headers=headers,
-            ceiling=ceiling,
-            native_status=args.native_status,
-            native_path=native_path,
+            status,
+            body,
+            headers,
+            UsageContext(
+                sku=args.sku,
+                category=str(detail.get("category") or ""),
+                ceiling=ceiling,
+                native_status=args.native_status,
+                native_path=native_path,
+            ),
         )
     )
     emit_json(body)
@@ -370,21 +321,23 @@ def command_request(args: argparse.Namespace) -> None:
     status, body, headers = api_request(
         "GET",
         f"/v1/requests/{urllib.parse.quote(args.request_id, safe='_-')}",
-        key=key,
+        RequestOptions(key=key),
     )
     context = prior_request_context(args.request_id)
     request_status = body.get("status") if isinstance(body, dict) else None
     if request_status == "succeeded" and isinstance(body.get("result"), dict):
         result = body["result"]
         event = response_event(
-            sku=str(body.get("sku") or context["sku"]),
-            category=context["category"],
-            status=200,
-            body=result,
-            headers={**headers, "x-anyapi-request-id": args.request_id},
-            ceiling=Decimal("0"),
-            native_status=context["native_status"],
-            native_path=context["native_path"],
+            200,
+            result,
+            {**headers, "x-anyapi-request-id": args.request_id},
+            UsageContext(
+                sku=str(body.get("sku") or context["sku"]),
+                category=context["category"],
+                ceiling=Decimal("0"),
+                native_status=context["native_status"],
+                native_path=context["native_path"],
+            ),
         )
         append_evidence(event)
     elif request_status in {"failed", "expired"}:
@@ -401,84 +354,6 @@ def command_request(args: argparse.Namespace) -> None:
             }
         )
     emit_json(body)
-
-
-def read_evidence() -> list[dict[str, Any]]:
-    path = ledger_path()
-    if not path.exists():
-        return []
-    events: list[dict[str, Any]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        try:
-            value = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(value, dict) and value.get("schema_version") == LEDGER_SCHEMA_VERSION:
-            events.append(value)
-    return events
-
-
-def build_study(events: list[dict[str, Any]], sku_filter: str = "") -> dict[str, Any]:
-    filtered = [event for event in events if not sku_filter or event.get("sku") == sku_filter]
-    latest_by_request: dict[str, dict[str, Any]] = {}
-    unkeyed: list[dict[str, Any]] = []
-    for event in filtered:
-        request_id = str(event.get("request_id") or "")
-        if request_id:
-            latest_by_request[request_id] = event
-        else:
-            unkeyed.append(event)
-    terminal = list(latest_by_request.values()) + unkeyed
-    grouped: dict[str, dict[str, Any]] = defaultdict(
-        lambda: {
-            "successful_uses": 0,
-            "charged_usd": Decimal("0"),
-            "items": 0,
-            "attempts": 0,
-            "native_statuses": set(),
-            "native_paths": set(),
-        }
-    )
-    for event in terminal:
-        sku = str(event.get("sku") or "unknown")
-        row = grouped[sku]
-        row["attempts"] += 1
-        row["native_statuses"].add(str(event.get("native_status") or "unknown"))
-        if event.get("native_path"):
-            row["native_paths"].add(str(event["native_path"]))
-        row["charged_usd"] += decimal_value(
-            event.get("charged_cost_usd", 0), "ledger cost"
-        )
-        if event.get("outcome") == "success":
-            row["successful_uses"] += 1
-            row["items"] += int(event.get("items") or 0)
-    candidates = []
-    for sku, row in grouped.items():
-        candidates.append(
-            {
-                "sku": sku,
-                "attempts": row["attempts"],
-                "successful_uses": row["successful_uses"],
-                "charged_usd": str(row["charged_usd"]),
-                "items": row["items"],
-                "native_statuses": sorted(row["native_statuses"]),
-                "native_paths": sorted(row["native_paths"]),
-                "next_decision": "assess native aidevops graduation with volume, terms, quality, and maintenance evidence",
-            }
-        )
-    candidates.sort(
-        key=lambda row: (Decimal(row["charged_usd"]), row["successful_uses"], row["items"]),
-        reverse=True,
-    )
-    total_charged = sum((Decimal(row["charged_usd"]) for row in candidates), Decimal("0"))
-    return {
-        "evidence_events": len(filtered),
-        "terminal_uses": len(terminal),
-        "successful_uses": sum(row["successful_uses"] for row in candidates),
-        "charged_usd": str(total_charged),
-        "candidates": candidates,
-        "interpretation": "ranked evidence only; no automatic build threshold",
-    }
 
 
 def command_study(args: argparse.Namespace) -> None:
