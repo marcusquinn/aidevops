@@ -156,6 +156,16 @@ test_native_relationships_use_response_cost() {
 	return 0
 }
 
+test_complete_native_relationships_override_stale_body_numbers() {
+	local entry_json='{"task_ids":[],"issue_nums":["999"],"has_defer_marker":false}'
+	if _refresh_dependency_is_resolved "example/repo" "3" "$entry_json" '{}' '[]' '[999]'; then
+		print_result "complete native relationships override stale body issue numbers" 0
+	else
+		print_result "complete native relationships override stale body issue numbers" 1
+	fi
+	return 0
+}
+
 set_issue_status() {
 	local issue_num="$1"
 	local repo_slug="$2"
@@ -257,6 +267,7 @@ test_label_only_blocker_enters_graph
 test_unvalidated_repository_fails_closed
 test_repository_identity_is_cached
 test_native_relationships_use_response_cost
+test_complete_native_relationships_override_stale_body_numbers
 test_available_issue_stale_label_removed
 test_blocked_issue_label_removed_and_status_available
 test_defer_marker_preserves_label

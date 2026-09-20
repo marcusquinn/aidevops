@@ -69,17 +69,18 @@ candidate() {
 	local title="$3"
 	local body="$4"
 	local labels="$5"
-	printf '%s' "$labels" | jq -Rsc --argjson number "$number" --arg state "$state" --arg title "$title" --arg body "$body" '
+	local repo="${6:-owner/repo}"
+	printf '%s' "$labels" | jq -Rsc --argjson number "$number" --arg state "$state" --arg title "$title" --arg body "$body" --arg repo "$repo" '
       split("\n") | map(select(length > 0) | {name:.})
       | {__typename:"Issue",number:$number,state:$state,title:$title,body:$body,
-          repository:{nameWithOwner:"owner/repo"},labels:{nodes:.,pageInfo:{hasNextPage:false}}}'
+          repository:{nameWithOwner:$repo},labels:{nodes:.,pageInfo:{hasNextPage:false}}}'
 	return 0
 }
 
 _der_fetch_closed_context() {
 	local native='[]'
 	if [[ "$NATIVE_DIRECT" == "true" ]]; then
-		native=$(candidate 20 OPEN "t20: direct" "$BODY20" $'status:blocked\nblocked-by:#10' | jq -sc '.')
+		native=$(candidate 20 OPEN "t20: direct" "$BODY20" $'status:blocked\nblocked-by:#10' "${NATIVE_CANDIDATE_REPO:-owner/repo}" | jq -sc '.')
 	fi
 	jq -cn --arg title "$CLOSED_TITLE" --arg repo "$CONTEXT_REPO" \
 		--arg state "$CONTEXT_STATE" --argjson native "$native" \
@@ -246,7 +247,7 @@ assert_eq 1 "$(blocker_reconcile_count)" "fail-open dependency reconciliation at
 BLOCKER_RECONCILE_FAIL=false
 
 EDIT_COUNT=0 REREAD_LABELS="status:blocked" BODY20="Blocked by #10 and #11"
-assert_eq 0 "$(run_reconcile)" "multiple blockers remain blocked when one is open"
+assert_eq 1 "$(run_reconcile)" "complete closed native relationships override stale body issue numbers"
 
 EDIT_COUNT=0 REREAD_LABELS="status:blocked" BODY20="Blocked by #10" SEARCH_AMBIGUOUS=true
 assert_eq 0 "$(run_reconcile)" "targeted search count or pagination ambiguity fails closed"
@@ -322,9 +323,13 @@ _der_completion_blockers_closed "owner/repo" 20 "- [ ] t20 delivered blocked-by:
 assert_eq "$DER_NOT_READY" "$completion_status" "completion preserves an open cross-repository native blocker"
 NATIVE_REPO="owner/repo" NATIVE_EXTRA_STATE="" NATIVE_EXTRA_REPO=""
 
+EDIT_COUNT=0 REREAD_LABELS="status:blocked" NATIVE_DIRECT=true NATIVE_CANDIDATE_REPO="other/repo" BODY20="Blocked by owner/repo #10"
+assert_eq 1 "$(run_reconcile)" "close-event reconciliation mutates a native cross-repository dependant in its own repository"
+NATIVE_CANDIDATE_REPO="owner/repo"
+
 completion_status=0
 _der_completion_blockers_closed "owner/repo" 20 "- [ ] t20 delivered blocked-by:#10,#11" || completion_status=$?
-assert_eq "$DER_NOT_READY" "$completion_status" "completion preserves a mixed closed and open dependency set"
+assert_eq 0 "$completion_status" "completion ignores stale text when native relationships are complete and closed"
 
 completion_status=0
 _der_completion_blockers_closed "owner/repo" 20 "- [ ] t20 delivered blocked-by:t10,not-a-task" || completion_status=$?
@@ -374,8 +379,8 @@ assert_eq 0 "$EDIT_COUNT" "periodic stale sweep preserves prefixed operational h
 EDIT_COUNT=0 REREAD_LABELS="status:blocked" BODY20="Blocked by #10 and #11"
 stale_sweep_status=0
 reconcile_stale_blocked_issues owner/repo >/dev/null 2>&1 || stale_sweep_status=$?
-assert_eq 0 "$EDIT_COUNT" "periodic stale sweep preserves another open blocker"
-assert_eq 0 "$stale_sweep_status" "periodic stale sweep treats an open blocker as healthy"
+assert_eq 1 "$EDIT_COUNT" "periodic stale sweep ignores stale body blockers after complete native closure"
+assert_eq 0 "$stale_sweep_status" "periodic stale sweep treats complete native closure as healthy"
 
 EDIT_COUNT=0 REREAD_LABELS="status:blocked" BODY20="Blocked by #10" COMMENTS='not-json'
 stale_sweep_status=0
