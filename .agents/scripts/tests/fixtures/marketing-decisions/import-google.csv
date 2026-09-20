@@ -1,0 +1,3 @@
+id,Clicks,Impressions,Cost micros,Conversions,Query coverage
+ad-one,12,100,1234567,,censored
+ad-two,0,0,,1.25,observed
