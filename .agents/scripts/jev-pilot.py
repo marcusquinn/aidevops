@@ -31,10 +31,11 @@ def scan_request(data):
     """A local pattern scan adds defence, not a guarantee against injection/PII."""
     scanner = Path(__file__).resolve().parent / "prompt-guard-helper.sh"
     try:
+        # Only the bundled scanner is executed; corpus content is stdin, never code/argv.
         result = subprocess.run(
-            ["bash", str(scanner), "scan-stdin"], input=json.dumps(pilot.make_request(data)),
+            ["/bin/bash", str(scanner), "scan-stdin"], input=json.dumps(pilot.make_request(data)),
             text=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            timeout=15, check=False)
+            timeout=15, check=False, shell=False)
     except (OSError, subprocess.TimeoutExpired):
         return False
     return result.returncode == 0

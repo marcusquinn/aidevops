@@ -196,6 +196,8 @@ def run(data, key=None, live=False, restore=False):
         "mode": data["mode"], "shadow_only": True,
         "corpus_sha256": hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest(),
         "status": decision["status"], "selection": result, "baseline": control,
+        "reason": decision.get("reason"),
+        "timing_scope": "pilot_core_only; excludes input, scan, secret injection, storage and host LLM",
         "metrics": evaluation(data, result, control), "provider_seconds": provider_seconds,
         "baseline_seconds": baseline_seconds, "total_seconds": time.monotonic() - started,
         "input_tokens": decision.get("input_tokens"), "total_cost_usd": None,

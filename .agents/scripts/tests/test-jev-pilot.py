@@ -146,6 +146,18 @@ class CLITests(unittest.TestCase):
             self.assertEqual(self.invoke("triage", "--live", "--unfiltered")[0], 0)
         fetch.assert_not_called()
 
+    def test_scanner_executes_only_fixed_argv(self):
+        data = pilot.sample_corpus("retrieval")
+        data["items"][0]["text"] = "Untrusted text; $(exit 9)"
+        with patch.object(cli.subprocess, "run") as execute:
+            execute.return_value.returncode = 0
+            self.assertTrue(cli.scan_request(data))
+        args, kwargs = execute.call_args
+        self.assertEqual(args[0], ["/bin/bash", str(SCRIPTS / "prompt-guard-helper.sh"), "scan-stdin"])
+        self.assertFalse(kwargs["shell"])
+        self.assertIn("$(exit 9)", kwargs["input"])
+        self.assertEqual(kwargs["timeout"], 15)
+
     def test_symlink_or_git_report_directory_blocked(self):
         (self.home / ".git").mkdir()
         with self.assertRaises(ValueError):

@@ -137,7 +137,10 @@ Each report records model/rubric versions, corpus hash, a stable lexical-overlap
 ranking baseline (or a deliberately simple keyword triage baseline), fallback
 coverage, labelled errors, relevant evidence deferred, top-three relevance counts,
 original/selected character counts, request bytes, local/provider/total elapsed
-time and input-token usage when provided. The baseline is not the current production
+time and input-token usage when provided. Timings cover the pilot core only, not
+input loading, scanning, secret injection, report storage or the host LLM. Measure
+the enclosing workflow separately for a true end-to-end comparison.
+The baseline is not the current production
 LLM's quality or cost. Compare paired runs on the same corpus and annotate manual
 repair time and accepted final outcomes locally. LLM tokens saved, total dollar
 cost, human repair time and final task quality are explicitly **unknown**, not zero,
