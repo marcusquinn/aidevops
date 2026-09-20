@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.34.5] - 2026-09-20
+
+### Changed
+
+- Documentation: Guide documentation layout and Cloudron integration boundaries
+
+### Fixed
+
+- fix Issue Sync permission regression
+- fix interactive secret output
+- fix permission-blocked issue retries
+
 ## [3.34.4] - 2026-09-20
 
 ### Added
