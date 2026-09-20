@@ -637,6 +637,19 @@ Session baseline grew from ~9.5k tokens (Mar 1) to ~21.8k tokens (Mar 27) in pro
 - [ ] t18457 Approval-bound local marketing changes and rollback #enhancement #interactive #auto-dispatch tier:thinking parent:t18444 blocked-by:t18454,t18456 ref:GH#32069 logged:2026-09-20 -> [todo/tasks/t18457-brief.md]
 - [ ] t18458 Integrate decision agents, commands and disabled routine templates #enhancement #interactive #auto-dispatch tier:standard parent:t18444 blocked-by:t18457 ref:GH#32070 logged:2026-09-20 -> [todo/tasks/t18458-brief.md]
 
+### Native Prospecting and Reddit SEO Workbench
+
+- [ ] t18459 Native conversational prospecting and Reddit SEO workbench #parent #enhancement #interactive tier:thinking ref:GH#32076 logged:2026-09-20 -> [todo/tasks/t18459-brief.md]
+- [ ] t18460 Native prospecting project and lead-store contract #enhancement #interactive #auto-dispatch tier:thinking parent:t18459 blocked-by:t18446 ref:GH#32078 logged:2026-09-20 -> [todo/tasks/t18460-brief.md]
+- [ ] t18461 Product URL onboarding and evidence-backed prospecting discovery plans #enhancement #interactive #auto-dispatch tier:standard parent:t18459 blocked-by:t18460,t18448 ref:GH#32079 logged:2026-09-20 -> [todo/tasks/t18461-brief.md]
+- [ ] t18462 Incremental Reddit discovery and staged community-triage orchestration #enhancement #interactive #auto-dispatch tier:standard parent:t18459 blocked-by:t18461,t18453 ref:GH#32077 logged:2026-09-20 -> [todo/tasks/t18462-brief.md]
+- [ ] t18463 Google-ranked Reddit opportunities and observed position history #enhancement #interactive #auto-dispatch tier:standard parent:t18459 blocked-by:t18462 ref:GH#32081 logged:2026-09-20 -> [todo/tasks/t18463-brief.md]
+- [ ] t18464 Competitor recommendations and evidence-backed pain-theme insights #enhancement #interactive #auto-dispatch tier:standard parent:t18459 blocked-by:t18462 ref:GH#32080 logged:2026-09-20 -> [todo/tasks/t18464-brief.md]
+- [ ] t18465 Budgeted prospecting routines, usage and internal alert delivery #enhancement #interactive #auto-dispatch tier:standard parent:t18459 blocked-by:t18463,t18464 ref:GH#32082 logged:2026-09-20 -> [todo/tasks/t18465-brief.md]
+- [ ] t18466 Scoped prospecting service APIs, read-only MCP and operator boundary #enhancement #interactive #auto-dispatch tier:thinking parent:t18459 blocked-by:t18465 ref:GH#32085 logged:2026-09-20 -> [todo/tasks/t18466-brief.md]
+- [ ] t18467 Native prospecting operator web workbench #enhancement #interactive #auto-dispatch tier:standard parent:t18459 blocked-by:t18465,t18466 ref:GH#32083 logged:2026-09-20 -> [todo/tasks/t18467-brief.md]
+- [ ] t18468 Self-host prospecting packaging, agent routing and parity handoff #enhancement #interactive #auto-dispatch tier:standard parent:t18459 blocked-by:t18467,t18458 ref:GH#32084 logged:2026-09-20 -> [todo/tasks/t18468-brief.md]
+
 ### Product Agent Refactoring
 
 

@@ -120,6 +120,7 @@ maintenance rules live in [DESIGN.md](DESIGN.md#readme-hero-counts).
 | **Infrastructure** | Hosting, DNS, networking, containers, cloud platforms, local development, monitoring, deployment, and object storage guidance |
 | **Product and business** | Product strategy, PRDs, analytics, onboarding, monetisation, accounting, invoices, reports, and operational routines |
 | **Growth and communication** | SEO/GEO, content, PR, email, outreach, paid ads, CRO, social workflows, and communications platforms |
+| **External data** | Native data providers and authorized extraction first, with cost-gated GetAnyAPI fallback access whose usage evidence guides graduation into direct aidevops subagents |
 | **Creative production** | Design systems, UI, browser/mobile verification, images, 3D/CAD, audio, video, animation, documents, and report exports |
 | **Extensibility** | Custom agents, imported skills, private agent sources, MCPs, API helpers, OpenAPI exploration, and project bundles |
 
