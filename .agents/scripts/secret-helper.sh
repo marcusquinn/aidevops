@@ -160,6 +160,7 @@ collect_secret_values() {
 # Redact secret values from a stream
 # Reads stdin, replaces any secret value with [REDACTED]
 redact_stream() {
+	local env_file="${1:-}"
 	local values_file
 	local previous_umask
 	previous_umask=$(umask)
@@ -172,9 +173,17 @@ redact_stream() {
 	umask "$previous_umask"
 	trap 'rm -f "$values_file"' RETURN
 
-	if ! collect_secret_values >"$values_file"; then
-		print_error "$REDACTION_INIT_ERROR" >&2
-		return 1
+	if [[ -n "$env_file" ]]; then
+		while IFS='=' read -r -d '' _key value; do
+			if [[ -n "$value" && ${#value} -ge 4 ]]; then
+				printf '%s\0' "$value"
+			fi
+		done <"$env_file" >"$values_file"
+	else
+		if ! collect_secret_values >"$values_file"; then
+			print_error "$REDACTION_INIT_ERROR" >&2
+			return 1
+		fi
 	fi
 
 	if [[ ! -s "$values_file" ]]; then
@@ -714,7 +723,7 @@ cmd_run() {
 
 		# Execute the command
 		"${cmd_args[@]}"
-	) 2>&1 | redact_stream || exit_code=$?
+	) 2>&1 | redact_stream "$env_file" || exit_code=$?
 
 	# Clean up (also handled by trap on abnormal exit)
 	rm -f "$env_file"
@@ -763,7 +772,7 @@ cmd_run_specific() {
 		done <"$env_file"
 
 		"${cmd_args[@]}"
-	) 2>&1 | redact_stream || exit_code=$?
+	) 2>&1 | redact_stream "$env_file" || exit_code=$?
 
 	rm -f "$env_file"
 	trap - EXIT

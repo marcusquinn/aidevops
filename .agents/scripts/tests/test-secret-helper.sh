@@ -423,17 +423,39 @@ test_run_streams_safe_output_before_child_exit() {
 	setup
 	trap 'teardown' RETURN
 	export AIDEVOPS_TEST_SECRET='PUBLIC_READY_MARKER_IS_A_LONG_SECRET_VALUE'
+	cat >"$TEST_DIR/bin/gopass" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-}" in
+ls)
+	printf '%s\n' 'aidevops/REDACTION_KEY' 'aidevops/SLOW_ONE' 'aidevops/SLOW_TWO' 'aidevops/SLOW_THREE'
+	;;
+show)
+	shift
+	[[ "${1:-}" == "-o" || "${1:-}" == "-n" ]] && shift
+	if [[ "${1:-}" == "aidevops/REDACTION_KEY" ]]; then
+		printf '%s' "${AIDEVOPS_TEST_SECRET:-}"
+	else
+		sleep 0.5
+		printf '%s' 'unrelated-secret-value'
+	fi
+	;;
+*) exit 1 ;;
+esac
+EOF
+	chmod +x "$TEST_DIR/bin/gopass"
 	local result=""
 
 	result=$(
-		HOME="$TEST_DIR/home" HELPER_UNDER_TEST="$HELPER" python3 - <<'PY'
+		HOME="$TEST_DIR/home" HELPER_UNDER_TEST="$HELPER" CHILD_STARTED="$TEST_DIR/child-started" python3 - <<'PY'
 import os
 import select
 import subprocess
 import sys
 
 program = (
-    'import sys, time; '
+    'import os, pathlib, sys, time; '
+    'pathlib.Path(os.environ["CHILD_STARTED"]).write_text("started"); '
     'sys.stdout.write("PUBLIC_READY_MARKER\\n"); '
     'sys.stdout.flush(); '
     'time.sleep(2)'
@@ -454,9 +476,10 @@ process = subprocess.Popen(
 try:
     readable = bool(select.select([process.stdout], [], [], 1.0)[0])
     line = process.stdout.readline() if readable else b""
+    child_started = os.path.exists(os.environ["CHILD_STARTED"])
     child_still_running = process.poll() is None
     process.wait(timeout=4)
-    if readable and line == b"PUBLIC_READY_MARKER\n" and child_still_running and process.returncode == 0:
+    if readable and line == b"PUBLIC_READY_MARKER\n" and child_started and child_still_running and process.returncode == 0:
         print("ok")
     else:
         print("failed")
