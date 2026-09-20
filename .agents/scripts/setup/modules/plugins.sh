@@ -834,7 +834,7 @@ check_tool_updates() {
 	# If the script failed, warn and continue
 	if [[ $check_exit_code -ne 0 ]]; then
 		print_warning "Tool version check encountered an error (exit code: $check_exit_code)"
-		print_info "Run 'aidevops update-tools' manually to check for updates"
+		print_info "Automatic tool maintenance will retry during the next setup or update"
 		return 0
 	fi
 

@@ -310,7 +310,17 @@ _run_update_source_access_reconciliation() {
 		return 0
 	fi
 
-	print_warning "AIDEVOPS_DEFERRED_ACTION action=source-access-reconcile command='aidevops setup --scope source-access'"
+	if [[ -t 0 && -t 1 ]]; then
+		print_info "Reconciling the protected source-access broker..."
+		if AIDEVOPS_SOURCE_ACCESS_INTERACTIVE=true bash "$INSTALL_DIR/setup.sh" --stage source-access; then
+			print_success "Protected source-access broker reconciled"
+			return 0
+		fi
+		print_warning "Source-access broker maintenance was blocked; it will retry during the next interactive update"
+		return 0
+	fi
+
+	print_warning "Source-access broker maintenance requires an attached terminal for privilege confirmation; the next interactive update will retry automatically"
 	return 0
 }
 

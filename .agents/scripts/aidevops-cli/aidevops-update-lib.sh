@@ -278,7 +278,15 @@ _update_check_planning() {
 
 _update_check_tools() {
 	echo ""
-	print_header "Checking Key Tools"
+	print_header "Maintaining Key Tools"
+	local tool_check_script="$AGENTS_DIR/scripts/tool-version-check.sh"
+	if [[ -f "$tool_check_script" ]]; then
+		if ! bash "$tool_check_script" --update; then
+			print_warning "Automatic tool maintenance encountered a blocker; unchanged tools will be reported below"
+		fi
+	else
+		print_warning "Tool maintenance helper is unavailable; framework setup may be incomplete"
+	fi
 	local stale_count=0 stale_tools=""
 	local opencode_profile="${AIDEVOPS_OPENCODE_PROFILE:-v1}"
 	local opencode_binary="opencode"
@@ -350,7 +358,7 @@ _update_check_tools() {
 	else
 		print_warning "$stale_count tool(s) have updates: $stale_tools"
 		echo ""
-		print_info "No global tools were changed; run 'aidevops update-tools --update' to update explicitly"
+		print_warning "Automatic maintenance did not converge these tools; review the update output for permission or package-manager blockers"
 	fi
 	if [[ "$opencode_pin" != "latest" ]]; then
 		local pin_age_days="unknown"

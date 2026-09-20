@@ -59,12 +59,16 @@ with the current checkout, runs the changed deploy stages, verifies `VERSION` an
 is unsafe or fails. The Pulse scope refreshes both the main supervisor and the
 dedicated merge scheduler. Unknown stages fail non-zero and print the valid list.
 
-Normal `aidevops update` remains user-space-only and reports
-`AIDEVOPS_DEFERRED_ACTION action=source-access-reconcile` only when the broker
-bytes or trust files need repair. A human then runs
-`aidevops setup --scope source-access` in an attached terminal. The scoped command
-invalidates inherited sudo before and after repair; non-TTY automation never
-consumes cached sudo and leaves an unavailable broker fail-closed.
+Normal `aidevops update` automatically reconciles stale source-access broker
+bytes and trust files when it runs in an attached terminal. The existing scoped
+setup path requests one explicit sudo confirmation and invalidates inherited
+sudo before and after repair. Non-TTY automation never consumes cached sudo;
+it leaves an unavailable broker fail-closed and the next interactive update
+retries the repair automatically.
+
+`aidevops update` also runs the timeout-bounded tool updater for installed,
+framework-managed tools. Package-manager or privilege failures remain visible as
+blockers, but users do not need to discover or remember a separate update command.
 
 ## Manual Configuration
 

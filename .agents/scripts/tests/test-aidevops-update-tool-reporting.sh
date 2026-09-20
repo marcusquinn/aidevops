@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 #
-# Regression coverage for GH#29712: the default aidevops update path reports
-# key-tool drift without prompting or mutating unrelated global tools.
+# Regression coverage for GH#32137: the default aidevops update path maintains
+# installed tools without prompting, then reports any unresolved drift.
 
 set -euo pipefail
 
@@ -67,18 +67,6 @@ assert_not_contains() {
 	local haystack="$3"
 	if [[ "$haystack" == *"$needle"* ]]; then
 		fail "$name" "unexpected ${needle}"
-	else
-		pass "$name"
-	fi
-	return 0
-}
-
-assert_no_mutation() {
-	local name="$1"
-	local calls=""
-	if [[ -s "$MUTATION_LOG" ]]; then
-		calls=$(<"$MUTATION_LOG")
-		fail "$name" "tool checker was invoked: ${calls}"
 	else
 		pass "$name"
 	fi
@@ -243,7 +231,7 @@ OPENCODE_PLUGIN_TESTED_VERSION="1.18.9"
 
 assert_not_contains "source removes the interactive update prompt" \
 	'read -r -p "Run full tool update check?' "$FUNCTION_SOURCE"
-assert_not_contains "source removes the mutating tool-check call" \
+assert_contains "source invokes the bounded tool updater" \
 	"bash \"\$tool_check_script\" --update" "$FUNCTION_SOURCE"
 
 set_versions "1.18.9" "9.99.9" "2.99.0" "2.99.0"
@@ -253,7 +241,7 @@ assert_contains "registry release remains actionable globally" "opencode (1.18.9
 assert_contains "scoped compatibility pin remains visible" "OpenCode v1 compatibility pin: installed=1.18.9, pinned=1.18.9, registry=9.99.9" "$REPORT_OUTPUT"
 assert_contains "pin canary evidence remains visible" "last-canary=2026-07-30 (pass:1.18.9)" "$REPORT_OUTPUT"
 assert_contains "plugin tested version remains visible" "plugin-tested=1.18.9" "$REPORT_OUTPUT"
-assert_no_mutation "matching compatibility pin does not mutate"
+assert_contains "matching compatibility pin invokes automatic maintenance" "--update" "$(<"$MUTATION_LOG")"
 
 aidevops_opencode_profile_id() { printf 'v2\n'; }
 aidevops_opencode_profile_value() {
@@ -279,25 +267,24 @@ set_versions "1.18.8" "9.99.9" "2.99.0" "2.99.0"
 run_report "y"
 assert_eq "older compatibility drift returns success" "0" "$REPORT_RC"
 assert_contains "older global install reports registry latest" "opencode (1.18.8 -> 9.99.9)" "$REPORT_OUTPUT"
-assert_contains "stale report names explicit update command" "aidevops update-tools --update" "$REPORT_OUTPUT"
-assert_contains "stale report confirms no mutation" "No global tools were changed" "$REPORT_OUTPUT"
+assert_contains "stale report explains unresolved automatic maintenance" "Automatic maintenance did not converge" "$REPORT_OUTPUT"
 assert_not_contains "stale report has no full-update prompt" "Run full tool update check?" "$REPORT_OUTPUT"
-assert_no_mutation "affirmative stdin cannot trigger mutation"
+assert_contains "stale report invokes automatic maintenance" "--update" "$(<"$MUTATION_LOG")"
 
 set_versions "1.19.0" "9.99.9" "2.99.0" "2.99.0"
 run_report "y"
 assert_contains "newer global install reports registry latest" "opencode (1.19.0 -> 9.99.9)" "$REPORT_OUTPUT"
-assert_no_mutation "newer compatibility drift does not mutate"
+assert_contains "newer compatibility drift still invokes maintenance" "--update" "$(<"$MUTATION_LOG")"
 
 set_versions "1.18.9" "9.99.9" "2.98.0" "2.99.0"
 run_report "y"
 assert_contains "GitHub CLI drift remains visible" "gh (2.98.0 -> 2.99.0)" "$REPORT_OUTPUT"
-assert_no_mutation "GitHub CLI drift does not mutate"
+assert_contains "GitHub CLI drift invokes maintenance" "--update" "$(<"$MUTATION_LOG")"
 
 set_versions "1.18.9" "failure" "2.99.0" "failure"
 run_report "y"
 assert_eq "registry lookup failures remain non-fatal" "0" "$REPORT_RC"
-assert_no_mutation "registry lookup failures do not mutate"
+assert_contains "registry lookup failure still invokes maintenance" "--update" "$(<"$MUTATION_LOG")"
 
 printf '%s passed, %s failed\n' "$PASS_COUNT" "$FAIL_COUNT"
 if [[ "$FAIL_COUNT" -ne 0 ]]; then
