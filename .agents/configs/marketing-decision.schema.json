@@ -20,9 +20,19 @@
       },
       "additionalProperties": false
     },
-    "versioned": {
+    "timestamp": { "type": "string", "format": "date-time", "pattern": "Z$" },
+    "rubric": {
       "type": "object",
       "required": ["id", "version"],
+      "properties": {
+        "id": { "$ref": "#/$defs/opaque" },
+        "version": { "$ref": "#/$defs/opaque" }
+      },
+      "additionalProperties": false
+    },
+    "model": {
+      "type": "object",
+      "required": ["id", "version", "provider"],
       "properties": {
         "id": { "$ref": "#/$defs/opaque" },
         "version": { "$ref": "#/$defs/opaque" },
@@ -33,7 +43,7 @@
     "window": {
       "type": "object",
       "required": ["start", "end"],
-      "properties": { "start": { "type": "string", "format": "date-time" }, "end": { "type": "string", "format": "date-time" } },
+      "properties": { "start": { "$ref": "#/$defs/timestamp" }, "end": { "$ref": "#/$defs/timestamp" } },
       "additionalProperties": false
     },
     "usage": {
@@ -66,12 +76,12 @@
         "schema": { "const": "aidevops.marketing-decision-input/v1" },
         "request_id": { "$ref": "#/$defs/opaque" },
         "scope": { "$ref": "#/$defs/scope" },
-        "captured_at": { "type": "string", "format": "date-time" },
-        "as_of": { "type": "string", "format": "date-time" },
+        "captured_at": { "$ref": "#/$defs/timestamp" },
+        "as_of": { "$ref": "#/$defs/timestamp" },
         "performance_window": { "$ref": "#/$defs/window" },
         "data_classification": { "enum": ["public", "internal", "confidential"] },
-        "rubric": { "$ref": "#/$defs/versioned" },
-        "model": { "$ref": "#/$defs/versioned" },
+        "rubric": { "$ref": "#/$defs/rubric" },
+        "model": { "$ref": "#/$defs/model" },
         "input_digest": { "$ref": "#/$defs/digest" },
         "limits": { "type": "object" },
         "batches": { "type": "array", "minItems": 1 }
@@ -99,8 +109,8 @@
         "scope": { "$ref": "#/$defs/scope" },
         "input_digest": { "$ref": "#/$defs/digest" },
         "cache_key": { "$ref": "#/$defs/digest" },
-        "rubric": { "$ref": "#/$defs/versioned" },
-        "model": { "$ref": "#/$defs/versioned" },
+        "rubric": { "$ref": "#/$defs/rubric" },
+        "model": { "$ref": "#/$defs/model" },
         "performance_window": { "$ref": "#/$defs/window" },
         "data_classification": { "enum": ["public", "internal", "confidential"] },
         "status": { "enum": ["complete", "partial"] },

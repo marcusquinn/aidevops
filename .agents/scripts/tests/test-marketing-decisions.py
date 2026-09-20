@@ -41,7 +41,7 @@ class ContractTests(unittest.TestCase):
 
     def test_two_domain_batches_produce_valid_evidence_backed_report(self):
         report = contract.run(self.request, self.supplied())
-        self.assertIs(contract.validate_report(report), report)
+        self.assertIs(contract.validate_report(report, self.request), report)
         self.assertEqual({row["domain"] for row in report["results"]}, {"ads", "seo"})
         self.assertEqual([row["status"] for row in report["results"]], ["accepted", "accepted"])
         self.assertTrue(all(row["source"]["source_id"] for row in report["results"]))
@@ -106,6 +106,29 @@ class ContractTests(unittest.TestCase):
         decisions["cancelled_after_row_id"] = "ad-creative-row"
         report = contract.run(self.request, self.supplied(decisions))
         self.assertEqual(report["results"][1]["reason"], "cancelled")
+
+    def test_exceeded_budget_latches_for_following_rows(self):
+        request_data = copy.deepcopy(self.input)
+        request_data["limits"]["budget"]["max_input_tokens"] = 200
+        request_data["batches"][1]["rows"].append({
+            "row_id": "following-row",
+            "source": {"source_id": "search-console-10", "span": "queries-25-26"},
+            "decision_kind": "choice",
+            "candidates": ["page-support"],
+        })
+        request = contract.validate_input(request_data)
+        decisions = copy.deepcopy(self.decisions)
+        decisions["input_digest"] = request.input_digest
+        decisions["decisions"].append({
+            "row_id": "following-row", "kind": "choice", "value": "page-support",
+            "probability": 0.8, "confidence": 0.8,
+            "calibration": {"provenance": "reported", "reference": None},
+            "abstention_reason": None, "action_proposal": None,
+            "usage": {"latency_ms": 1, "input_tokens": 1, "output_tokens": 1, "cost_usd": None},
+        })
+        report = contract.run(request, contract.validate_supplied(decisions, request))
+        self.assertEqual([row["status"] for row in report["results"]], ["accepted", "deferred", "deferred"])
+        self.assertEqual(report["results"][2]["reason"], "budget_exceeded")
 
     def test_cache_is_scope_window_and_model_aware(self):
         base = self.request.cache_key
@@ -172,6 +195,28 @@ class StorageAndCLITests(unittest.TestCase):
         other_report = {**report, "scope": other.document["scope"], "input_digest": other.input_digest, "cache_key": other.cache_key}
         other_path, _ = contract.store_report(store, other, other_report)
         self.assertNotEqual(path.parent, other_path.parent)
+
+    def test_storage_rejects_report_not_bound_to_request_before_writing(self):
+        request = contract.validate_input(fixture("core-valid.json"))
+        supplied = contract.validate_supplied(fixture("core-decisions.json"), request)
+        report = contract.run(request, supplied)
+        for field, value in [
+            ("scope", {"project_id": "other", "account_id": "other"}),
+            ("input_digest", "sha256:" + "0" * 64),
+            ("cache_key", "sha256:" + "1" * 64),
+        ]:
+            store = self.root / f"rejected-{field}"
+            altered = {**report, field: value}
+            with self.subTest(field=field), self.assertRaises(contract.DecisionError):
+                contract.store_report(store, request, altered)
+            self.assertFalse(store.exists())
+
+        store = self.root / "rejected-decision"
+        altered = copy.deepcopy(report)
+        altered["results"][0]["decision"]["value"] = "candidate-not-observed"
+        with self.assertRaises(contract.DecisionError):
+            contract.store_report(store, request, altered)
+        self.assertFalse(store.exists())
 
     def test_concurrent_identical_replay_is_bounded(self):
         request = contract.validate_input(fixture("core-valid.json"))

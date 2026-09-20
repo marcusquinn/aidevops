@@ -116,6 +116,14 @@ def _optional_metric(value: Any, field: str) -> float | int | None:
     return None if value is None else _number(value, field)
 
 
+def _optional_integer(value: Any, field: str) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise DecisionError(f"{field} must be a non-negative integer or null")
+    return value
+
+
 def _require(condition: bool, message: str) -> None:
     if not condition:
         raise DecisionError(message)
@@ -237,6 +245,9 @@ def validate_input(value: Any) -> ValidatedRequest:
         })
     if not batches or len(seen) > limits["max_rows"]:
         raise DecisionError("request row count exceeds bounds")
+    rubric = _validate_versioned(data["rubric"], "rubric")
+    model = _validate_versioned(data["model"], "model", {"provider"})
+    _require("provider" in model, "model.provider is required")
     normalized = {
         "schema": INPUT_SCHEMA,
         "request_id": _opaque(data["request_id"], "request_id"),
@@ -245,8 +256,8 @@ def validate_input(value: Any) -> ValidatedRequest:
         "as_of": _timestamp(data["as_of"], "as_of"),
         "performance_window": normalized_window,
         "data_classification": classification,
-        "rubric": _validate_versioned(data["rubric"], "rubric"),
-        "model": _validate_versioned(data["model"], "model", {"provider"}),
+        "rubric": rubric,
+        "model": model,
         "limits": limits,
         "batches": batches,
     }
@@ -299,7 +310,12 @@ def _usage(value: Any) -> dict[str, float | int | None]:
     value = _object(value, "decision.usage")
     fields = {"latency_ms", "input_tokens", "output_tokens", "cost_usd"}
     _keys(value, fields, fields, "decision.usage")
-    return {key: _optional_metric(item, f"decision.usage.{key}") for key, item in value.items()}
+    return {
+        "latency_ms": _optional_metric(value["latency_ms"], "decision.usage.latency_ms"),
+        "input_tokens": _optional_integer(value["input_tokens"], "decision.usage.input_tokens"),
+        "output_tokens": _optional_integer(value["output_tokens"], "decision.usage.output_tokens"),
+        "cost_usd": _optional_metric(value["cost_usd"], "decision.usage.cost_usd"),
+    }
 
 
 def _validate_action(value: Any, candidates: set[str]) -> dict[str, Any] | None:
@@ -374,6 +390,7 @@ def _validate_decision(value: dict[str, Any], row: dict[str, Any]) -> dict[str, 
     probability = _unit_interval(value["probability"], "decision.probability")
     _require(row["decision_kind"] != "score" or probability is None, "a score is not a probability")
     return {
+        "row_id": row["row_id"],
         "kind": row["decision_kind"],
         "value": decision_value,
         "probability": probability,
@@ -443,11 +460,14 @@ def _run_row(
         "source": row["source"],
     }
     raw = by_id.get(row["row_id"])
-    if state["cancelled"] or raw is None:
-        reason = "cancelled" if state["cancelled"] else "missing_decision"
+    stopped_reason = "cancelled" if state["cancelled"] else state["budget_stopped"]
+    if stopped_reason is not None or raw is None:
+        reason = stopped_reason or "missing_decision"
         result = {**base, "status": "deferred", "reason": reason, "decision": None}
     else:
         result, state["usage"] = _evaluated_result(base, raw, row, state["usage"], budget)
+        if result["reason"] in {"budget_exceeded", "budget_usage_unknown"}:
+            state["budget_stopped"] = result["reason"]
     state["cancelled"] = state["cancelled"] or row["row_id"] == cancel_after
     return result
 
@@ -458,6 +478,7 @@ def run(request: ValidatedRequest, supplied: dict[str, Any]) -> dict[str, Any]:
     state: dict[str, Any] = {
         "usage": {"latency_ms": 0, "input_tokens": 0, "output_tokens": 0, "cost_usd": 0},
         "cancelled": False,
+        "budget_stopped": None,
     }
     budget = request.document["limits"]["budget"]
     results = [
@@ -490,7 +511,62 @@ def run(request: ValidatedRequest, supplied: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def validate_report(value: Any) -> dict[str, Any]:
+def _expected_rows(request: ValidatedRequest) -> dict[str, tuple[dict[str, Any], dict[str, Any]]]:
+    return {
+        row["row_id"]: (batch, row)
+        for batch in request.document["batches"]
+        for row in batch["rows"]
+    }
+
+
+def _validate_report_result(item: Any, expected: tuple[dict[str, Any], dict[str, Any]]) -> None:
+    item = _object(item, "report.result")
+    required = {"batch_id", "domain", "row_id", "source", "status", "reason", "decision"}
+    _keys(item, required, required, "report.result")
+    batch, row = expected
+    _require(
+        item["batch_id"] == batch["batch_id"]
+        and item["domain"] == batch["domain"]
+        and item["source"] == row["source"],
+        "report result provenance does not match request",
+    )
+    _require(item["status"] in {"accepted", "deferred", "failed"}, "report result status is invalid")
+    decision = item["decision"]
+    if decision is None:
+        _require(item["status"] != "accepted", "accepted report result must contain a decision")
+        return
+    normalized = _validate_decision(decision, row)
+    _require(normalized == decision, "report decision is not normalized")
+    _require(
+        item["status"] != "accepted" or decision["abstention_reason"] is None,
+        "accepted report result cannot be an abstention",
+    )
+
+
+def _validate_report_request(report: dict[str, Any], request: ValidatedRequest) -> None:
+    expected_identity = {
+        "request_id": request.document["request_id"],
+        "scope": request.document["scope"],
+        "input_digest": request.input_digest,
+        "cache_key": request.cache_key,
+        "rubric": request.document["rubric"],
+        "model": request.document["model"],
+        "performance_window": request.document["performance_window"],
+        "data_classification": request.document["data_classification"],
+    }
+    _require(
+        all(report[key] == expected for key, expected in expected_identity.items()),
+        "report identity does not match request",
+    )
+    expected_rows = _expected_rows(request)
+    results = _list(report["results"], "report.results")
+    result_ids = [item.get("row_id") for item in results if isinstance(item, dict)]
+    _require(set(result_ids) == set(expected_rows) and len(result_ids) == len(expected_rows), "report rows do not match request")
+    for item in results:
+        _validate_report_result(item, expected_rows[item["row_id"]])
+
+
+def validate_report(value: Any, request: ValidatedRequest | None = None) -> dict[str, Any]:
     """Validate essential consumer-facing report invariants."""
     report = _object(value, "report")
     required = {"schema", "request_id", "scope", "input_digest", "cache_key", "rubric", "model", "performance_window", "data_classification", "status", "results", "checkpoint", "metrics", "authority"}
@@ -502,6 +578,8 @@ def validate_report(value: Any) -> dict[str, Any]:
     for item in _list(report["results"], "report.results"):
         if item.get("status") not in {"accepted", "deferred", "failed"}:
             raise DecisionError("report result status is invalid")
+    if request is not None:
+        _validate_report_request(report, request)
     return report
 
 
@@ -551,7 +629,7 @@ def _atomic_create_or_replay(path: Path, payload: bytes, conflict: str) -> bool:
 
 def store_report(root: str | Path, request: ValidatedRequest, report: dict[str, Any]) -> tuple[Path, bool]:
     """Atomically create or replay one scope-isolated report."""
-    validate_report(report)
+    validate_report(report, request)
     scope = request.document["scope"]
     directory = _ensure_private_root(Path(root) / scope["project_id"] / scope["account_id"])
     payload = (json.dumps(report, indent=2, sort_keys=True, allow_nan=False) + "\n").encode()

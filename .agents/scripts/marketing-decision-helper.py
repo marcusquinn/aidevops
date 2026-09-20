@@ -39,7 +39,7 @@ def execute(args: argparse.Namespace) -> dict[str, object]:
         }
     supplied = contract.validate_supplied(contract.load_json(args.decisions), request)
     report = contract.run(request, supplied)
-    contract.validate_report(report)
+    contract.validate_report(report, request)
     if args.store:
         path, replayed = contract.store_report(Path(args.store), request, report)
         report["artifact"] = {"path": str(path), "replayed": replayed}
