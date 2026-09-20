@@ -45,13 +45,13 @@ from tabby_profile_validation import (
     report_profile_command_issues,
 )
 from tabby_shell_resolver import ShellResolutionError, resolve_login_shell
+from tabby_yaml_recovery import load_yaml_for_sync
 from tabby_yaml_helpers import (
     _parse_block_scalar,
     extract_existing_cwds,
     extract_group_id,
     extract_profile_blocks,
     insert_profiles_block,
-    load_yaml_for_sync,
     load_yaml_simple,
     remove_profile_blocks,
     save_yaml,

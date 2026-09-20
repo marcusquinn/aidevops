@@ -32,10 +32,8 @@ tabby_profile_sync = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(tabby_profile_sync)
 
 # Re-import helpers directly so tests exercise the same module the script uses.
-from tabby_yaml_helpers import (  # noqa: E402
-    extract_existing_cwds,
-    load_yaml_for_sync,
-)
+from tabby_yaml_helpers import extract_existing_cwds  # noqa: E402
+from tabby_yaml_recovery import load_yaml_for_sync  # noqa: E402
 from tabby_shell_resolver import ShellResolutionError, resolve_login_shell  # noqa: E402
 
 
