@@ -20,6 +20,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 import getanyapi_evidence as EVIDENCE  # noqa: E402
+import getanyapi_client as CLIENT  # noqa: E402
 
 HELPER = SCRIPTS_DIR / "getanyapi-helper.py"
 SPEC = importlib.util.spec_from_file_location("getanyapi_helper", HELPER)
@@ -158,9 +159,9 @@ class GetAnyAPIHelperTests(unittest.TestCase):
             {},
             io.BytesIO(b'{"error":"echoed secret must not leak"}'),
         )
-        with patch.object(MODULE.urllib.request, "urlopen", side_effect=error):
+        with patch.object(CLIENT.urllib.request, "urlopen", side_effect=error):
             with self.assertRaises(MODULE.AnyAPIError) as caught:
-                MODULE.api_request(
+                CLIENT.api_request(
                     "GET",
                     "/v1/run/example",
                     MODULE.RequestOptions(key="test-key"),
