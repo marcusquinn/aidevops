@@ -583,16 +583,73 @@ _pulse_run_issue_sync_stage() {
 
 _pulse_todo_sync_exact_default_snapshot() {
 	local workspace="$1"
-	local default_branch="$2"
+	local cloned_branch="$2"
 	local expected_sha="$3"
-	local head_sha="" remote_sha=""
-	[[ -n "$workspace" && -n "$default_branch" && -n "$expected_sha" ]] || return 1
-	head_sha=$(git -C "$workspace" rev-parse HEAD 2>/dev/null) || return 1
-	[[ "$head_sha" == "$expected_sha" ]] || return 1
-	git -C "$workspace" fetch --quiet origin "$default_branch" >/dev/null 2>&1 || return 1
-	remote_sha=$(git -C "$workspace" rev-parse "refs/remotes/origin/${default_branch}" 2>/dev/null) || return 1
-	[[ "$head_sha" == "$remote_sha" ]]
-	return $?
+	local head_sha="" remote_sha="" remote_snapshot=""
+	local authoritative_branch="" authoritative_sha=""
+	local field1="" field2="" field3=""
+	_PULSE_TODO_SNAPSHOT_CLASS="invalid_metadata"
+	_PULSE_TODO_SNAPSHOT_WAKE="valid_clone_metadata"
+	[[ -n "$workspace" && -n "$cloned_branch" && -n "$expected_sha" ]] || return 20
+	head_sha=$(git -C "$workspace" rev-parse HEAD 2>/dev/null) || return 20
+	if [[ "$head_sha" != "$expected_sha" ]]; then
+		_PULSE_TODO_SNAPSHOT_CLASS="workspace_head_changed"
+		_PULSE_TODO_SNAPSHOT_WAKE="fresh_workspace_at_recorded_head"
+		return 21
+	fi
+
+	# Re-resolve the remote HEAD on every validation attempt. The clone's local
+	# origin/HEAD and fetch refspec are not authoritative after a default-branch
+	# rename, and collapsing this lookup with a real tip advance caused identical
+	# workspace recreations to consume the only retry (GH#32020).
+	if ! remote_snapshot=$(git -C "$workspace" ls-remote --symref origin HEAD 2>/dev/null); then
+		_PULSE_TODO_SNAPSHOT_CLASS="remote_resolution_failed"
+		_PULSE_TODO_SNAPSHOT_WAKE="remote_default_lookup_succeeds"
+		return 22
+	fi
+	while IFS=$'\t ' read -r field1 field2 field3; do
+		if [[ "$field1" == "ref:" && "$field2" == refs/heads/* && "$field3" == "HEAD" ]]; then
+			authoritative_branch="${field2#refs/heads/}"
+		elif [[ "$field2" == "HEAD" && "$field1" =~ ^[0-9a-f]{40}$ ]]; then
+			authoritative_sha="$field1"
+		fi
+	done <<<"$remote_snapshot"
+	if [[ -z "$authoritative_branch" || -z "$authoritative_sha" ]]; then
+		_PULSE_TODO_SNAPSHOT_CLASS="remote_identity_incomplete"
+		_PULSE_TODO_SNAPSHOT_WAKE="remote_default_identity_available"
+		return 22
+	fi
+	if [[ "$cloned_branch" != "$authoritative_branch" ]]; then
+		_PULSE_TODO_SNAPSHOT_CLASS="wrong_branch_binding"
+		_PULSE_TODO_SNAPSHOT_WAKE="clone_binds_authoritative_default"
+		return 23
+	fi
+	if ! git -C "$workspace" fetch --quiet origin \
+		"+refs/heads/${authoritative_branch}:refs/remotes/origin/${authoritative_branch}" \
+		>/dev/null 2>&1; then
+		_PULSE_TODO_SNAPSHOT_CLASS="fetch_failed"
+		_PULSE_TODO_SNAPSHOT_WAKE="authoritative_default_fetch_succeeds"
+		return 22
+	fi
+	remote_sha=$(git -C "$workspace" rev-parse \
+		"refs/remotes/origin/${authoritative_branch}" 2>/dev/null) || {
+		_PULSE_TODO_SNAPSHOT_CLASS="tracking_ref_unavailable"
+		_PULSE_TODO_SNAPSHOT_WAKE="authoritative_tracking_ref_available"
+		return 24
+	}
+	if [[ "$remote_sha" != "$authoritative_sha" ]]; then
+		_PULSE_TODO_SNAPSHOT_CLASS="stale_tracking_ref"
+		_PULSE_TODO_SNAPSHOT_WAKE="tracking_ref_matches_authoritative_tip"
+		return 24
+	fi
+	if [[ "$head_sha" != "$remote_sha" ]]; then
+		_PULSE_TODO_SNAPSHOT_CLASS="remote_advanced"
+		_PULSE_TODO_SNAPSHOT_WAKE="fresh_workspace_at_remote_tip"
+		return 25
+	fi
+	_PULSE_TODO_SNAPSHOT_CLASS="exact"
+	_PULSE_TODO_SNAPSHOT_WAKE="none"
+	return 0
 }
 
 #######################################
@@ -609,7 +666,7 @@ sync_todo_refs_for_repo() (
 	local repo_path="$2"
 	local script_dir="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)}"
 	local workspace="" base_sha="" branch_name="" changed_paths=""
-	local stage="" sync_failed=0 publication_rc=0
+	local stage="" sync_failed=0 publication_rc=0 snapshot_rc=0 retry_action="none"
 	local lifecycle_stage="workspace"
 	local _pulse_todo_sync_exit_rc=0
 	_PULSE_TODO_SYNC_WORKSPACE=""
@@ -658,10 +715,13 @@ sync_todo_refs_for_repo() (
 	if [[ "$sync_failed" -ne 0 ]]; then
 		return 1
 	fi
-	if ! _pulse_todo_sync_exact_default_snapshot "$workspace" "$branch_name" "$base_sha"; then
-		printf '[pulse-wrapper] TODO ref sync status=retryable_refresh stage=snapshot repo=%s base=%s action=recreate\n' \
-			"$repo_slug" "${base_sha:0:12}" >>"$WRAPPER_LOGFILE"
-		return 2
+	_pulse_todo_sync_exact_default_snapshot "$workspace" "$branch_name" "$base_sha" || snapshot_rc=$?
+	if [[ "$snapshot_rc" -ne 0 ]]; then
+		[[ "$snapshot_rc" -eq 25 ]] && retry_action="recreate"
+		printf '[pulse-wrapper] TODO ref sync status=snapshot_mismatch stage=snapshot repo=%s base=%s class=%s wake=%s retry=%s\n' \
+			"$repo_slug" "${base_sha:0:12}" "${_PULSE_TODO_SNAPSHOT_CLASS:-unknown}" \
+			"${_PULSE_TODO_SNAPSHOT_WAKE:-manual_investigation}" "$retry_action" >>"$WRAPPER_LOGFILE"
+		return "$snapshot_rc"
 	fi
 
 	if ! declare -F planning_publish >/dev/null 2>&1; then
@@ -774,7 +834,7 @@ _pulse_sync_todo_repo_bounded() {
 	else
 		sync_todo_refs_for_repo "$repo_slug" "$repo_path" || sync_rc=$?
 	fi
-	if [[ "$sync_rc" -eq 2 ]]; then
+	if [[ "$sync_rc" -eq 25 ]]; then
 		if [[ "$aggregate_deadline" =~ ^[1-9][0-9]*$ ]]; then
 			remaining_timeout=$(_pulse_todo_sync_deadline_remaining "$aggregate_deadline") || {
 				printf '[pulse-wrapper] TODO ref sync status=retry_exhausted reason=aggregate_budget job=%s\n' \
@@ -785,7 +845,7 @@ _pulse_sync_todo_repo_bounded() {
 				retry_timeout="$remaining_timeout"
 			fi
 		fi
-		printf '[pulse-wrapper] TODO ref sync status=retrying repo=%s attempt=2 reason=retryable_snapshot timeout=%ss\n' \
+		printf '[pulse-wrapper] TODO ref sync status=retrying repo=%s attempt=2 reason=remote_advanced timeout=%ss\n' \
 			"$repo_slug" "$retry_timeout" >>"$WRAPPER_LOGFILE"
 		sync_rc=0
 		if declare -F run_stage_with_timeout >/dev/null 2>&1; then
@@ -793,6 +853,10 @@ _pulse_sync_todo_repo_bounded() {
 				sync_todo_refs_for_repo "$repo_slug" "$repo_path" || sync_rc=$?
 		else
 			sync_todo_refs_for_repo "$repo_slug" "$repo_path" || sync_rc=$?
+		fi
+		if [[ "$sync_rc" -eq 25 ]]; then
+			printf '[pulse-wrapper] TODO ref sync status=retry_exhausted repo=%s reason=remote_advanced wake=fresh_workspace_at_remote_tip\n' \
+				"$repo_slug" >>"$WRAPPER_LOGFILE"
 		fi
 	fi
 	return "$sync_rc"

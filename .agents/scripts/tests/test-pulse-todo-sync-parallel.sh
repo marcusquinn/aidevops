@@ -181,7 +181,7 @@ sync_todo_refs_for_repo() {
 	retry_attempt=$((retry_attempt + 1))
 	if [[ "$retry_attempt" -eq 1 ]]; then
 		TEST_NOW=107
-		return 2
+		return 25
 	fi
 	return 0
 }
@@ -198,8 +198,31 @@ if ! grep -qx 'sync_todo_refs_repo_1|5' "$TIMEOUT_LOG" || ! grep -qx 'sync_todo_
 	printf 'FAIL aggregate retry received a fresh per-repo timeout\n' >&2
 	exit 1
 fi
-grep -q 'status=retrying repo=owner/repo-retry attempt=2 reason=retryable_snapshot timeout=3s' "$WRAPPER_LOGFILE" || {
+grep -q 'status=retrying repo=owner/repo-retry attempt=2 reason=remote_advanced timeout=3s' "$WRAPPER_LOGFILE" || {
 	printf 'FAIL aggregate retry omitted remaining-budget diagnostics\n' >&2
+	exit 1
+}
+
+# An unchanged typed mismatch has no safe recreate action. It must remain a
+# truthful child failure without consuming the bounded remote-advance retry.
+: >"$CALL_LOG"
+: >"$TIMEOUT_LOG"
+sync_todo_refs_for_repo() {
+	local repo_slug="$1"
+	local repo_path="$2"
+	: "$repo_path"
+	printf '%s\n' "$repo_slug" >>"$CALL_LOG"
+	return 24
+}
+unchanged_rc=0
+_pulse_sync_todo_repo_bounded owner/repo-unchanged "${TEST_ROOT}/repo-1" 10 1 || unchanged_rc=$?
+eval "$original_sync_definition"
+[[ "$unchanged_rc" -eq 24 ]] || {
+	printf 'FAIL unchanged snapshot mismatch lost its typed result: rc=%s\n' "$unchanged_rc" >&2
+	exit 1
+}
+[[ $(wc -l <"$CALL_LOG" | tr -d ' ') -eq 1 ]] || {
+	printf 'FAIL unchanged snapshot mismatch consumed a useless recreation retry\n' >&2
 	exit 1
 }
 

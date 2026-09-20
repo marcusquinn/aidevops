@@ -329,9 +329,9 @@ fi
 [[ -e "$ADVANCE_REMOTE_MARKER" ]] || fail "stale snapshot fixture did not advance the remote"
 git --git-dir="$remote_snapshot_retry" show main:TODO.md | grep -q '^synced:owner/repo-snapshot-retry$' || \
 	fail "refreshed snapshot was not synced"
-grep -q 'status=retryable_refresh stage=snapshot repo=owner/repo-snapshot-retry' "$WRAPPER_LOGFILE" || \
+grep -q 'status=snapshot_mismatch stage=snapshot repo=owner/repo-snapshot-retry.*class=remote_advanced.*wake=fresh_workspace_at_remote_tip.*retry=recreate' "$WRAPPER_LOGFILE" || \
 	fail "stale snapshot refresh evidence was not logged"
-grep -q 'status=retrying repo=owner/repo-snapshot-retry attempt=2 reason=retryable_snapshot' "$WRAPPER_LOGFILE" || \
+grep -q 'status=retrying repo=owner/repo-snapshot-retry attempt=2 reason=remote_advanced' "$WRAPPER_LOGFILE" || \
 	fail "stale snapshot retry evidence was not logged"
 grep -q 'TODO ref sync batch completed scheduled=1 failures=0' "$WRAPPER_LOGFILE" || \
 	fail "recovered snapshot retry failed the sync batch"
@@ -339,6 +339,47 @@ if only_todo_sync_workspace >/dev/null 2>&1; then
 	fail "stale snapshot retry left an automation workspace behind"
 fi
 unset ADVANCE_REMOTE_ON_PULL ADVANCE_REMOTE_MARKER ADVANCE_REMOTE_WRITER
+
+# A clone whose fetched tracking ref cannot match the authoritative remote HEAD
+# would reproduce the same mismatch after recreation. Preserve the typed wake
+# condition and do not spend the remote-advance retry on unchanged work.
+repo_snapshot_unchanged="${TMP}/repo-snapshot-unchanged"
+remote_snapshot_unchanged="${TMP}/remote-snapshot-unchanged.git"
+setup_sync_repo "$repo_snapshot_unchanged" "$remote_snapshot_unchanged"
+original_git_definition=$(declare -f git)
+refresh_repo_definition=$(declare -f _pulse_refresh_repo)
+git() {
+	local arg=""
+	for arg in "$@"; do
+		if [[ "$arg" == "ls-remote" ]]; then
+			printf 'ref:\trefs/heads/main\tHEAD\n'
+			printf '1111111111111111111111111111111111111111\tHEAD\n'
+			return 0
+		fi
+	done
+	/usr/bin/git "$@"
+	return $?
+}
+_pulse_refresh_repo() {
+	local repo_path="$1"
+	: "$repo_path"
+	return 0
+}
+snapshot_unchanged_rc=0
+_pulse_sync_todo_repo_bounded owner/repo-snapshot-unchanged \
+	"$repo_snapshot_unchanged" 30 1 || snapshot_unchanged_rc=$?
+eval "$original_git_definition"
+eval "$refresh_repo_definition"
+[[ "$snapshot_unchanged_rc" -eq 24 ]] || \
+	fail "unchanged post-clone mismatch lost its stale-tracking classification"
+grep -q 'status=snapshot_mismatch stage=snapshot repo=owner/repo-snapshot-unchanged.*class=stale_tracking_ref.*wake=tracking_ref_matches_authoritative_tip.*retry=none' \
+	"$WRAPPER_LOGFILE" || fail "unchanged post-clone mismatch omitted its wake condition"
+if grep -q 'status=retrying repo=owner/repo-snapshot-unchanged' "$WRAPPER_LOGFILE"; then
+	fail "unchanged post-clone mismatch consumed a useless recreation retry"
+fi
+if only_todo_sync_workspace >/dev/null 2>&1; then
+	fail "unchanged post-clone mismatch left an automation workspace behind"
+fi
 
 # Cleanup failure is observable without replacing the reconciliation result.
 # Use a retryable-conflict result (2) so a cleanup helper failure cannot be
