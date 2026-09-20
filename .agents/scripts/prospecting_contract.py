@@ -59,8 +59,8 @@ def validate_project_payload(kind: str, value: Any) -> Mapping[str, Any]:
     for field in list_fields:
         if field in value:
             string_list(value[field], f"project.{kind}.{field}")
-    budgets = value.get("budgets")
-    if budgets is not None:
+    if "budgets" in value:
+        budgets = value["budgets"]
         if not isinstance(budgets, dict):
             raise ContractError(f"project.{kind}.budgets must be an object")
         for name, amount in budgets.items():
