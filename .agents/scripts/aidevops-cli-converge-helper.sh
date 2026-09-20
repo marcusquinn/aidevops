@@ -326,6 +326,27 @@ _cli_global_dir_writable() {
 	return $?
 }
 
+_cli_repair_resolved_nvm_launcher() {
+	local source_file="$1"
+	local resolved=""
+	local resolved_dir=""
+
+	[[ -n "${HOME:-}" ]] || return 0
+	hash -r 2>/dev/null || true
+	resolved=$(command -v aidevops 2>/dev/null || true)
+	#aidevops:trust-boundary
+	[[ "$resolved" == "$HOME"/.nvm/versions/node/*/bin/aidevops ]] || return 0
+	_cli_files_match "$source_file" "$resolved" && return 0
+	resolved_dir="${resolved%/*}"
+	if [[ ! -w "$resolved_dir" ]]; then
+		_cli_write_warning "Could not replace stale user-owned NVM launcher $resolved. Check its permissions, then re-run setup." || true
+		return 1
+	fi
+	_cli_install_atomic "$source_file" "$resolved" || return 1
+	_cli_log success "Replaced stale user-owned NVM launcher at $resolved"
+	return 0
+}
+
 _cli_verify() {
 	local source_file="$1"
 	local version_file="$2"
@@ -383,8 +404,6 @@ _cli_converge_locked() {
 			else
 				_cli_install_atomic "$source_file" "$user_target" || return 1
 				_cli_log info "sudo -n unavailable; installed current user launcher at $user_target"
-				_cli_verify "$source_file" "$version_file"
-				return $?
 			fi
 		elif _cli_install_atomic "$source_file" "$global_target" sudo; then
 			_cli_log success "Replaced stale privileged launcher at $global_target"
@@ -397,6 +416,7 @@ _cli_converge_locked() {
 		_cli_log success "Installed current user launcher at $user_target"
 	fi
 
+	_cli_repair_resolved_nvm_launcher "$source_file" || return 1
 	_cli_verify "$source_file" "$version_file"
 	return $?
 }

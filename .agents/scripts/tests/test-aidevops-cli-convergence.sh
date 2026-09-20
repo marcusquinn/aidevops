@@ -248,6 +248,30 @@ EOF
 	return 0
 }
 
+test_stale_nvm_launcher_is_repaired() {
+	local fixture="$TEST_ROOT/nvm-shadow"
+	local nvm_bin="$fixture/home/.nvm/versions/node/v25.6.0/bin"
+	make_fixture "$fixture"
+	mkdir -p "$nvm_bin"
+	printf '#!/usr/bin/env bash\nprintf "aidevops 1.0.0\\n"\n' >"$nvm_bin/aidevops"
+	printf '#!/usr/bin/env bash\nprintf "aidevops 1.0.0\\n"\n' >"$fixture/global/aidevops"
+	chmod +x "$nvm_bin/aidevops" "$fixture/global/aidevops"
+	cat >"$fixture/bin/sudo" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+	chmod +x "$fixture/bin/sudo"
+	if AIDEVOPS_TEST_CLI_PATH="$nvm_bin:$fixture/home/.local/bin:$fixture/global" \
+		AIDEVOPS_CLI_FORCE_GLOBAL_UNWRITABLE=1 run_converge "$fixture" env >/dev/null 2>&1 &&
+		cmp -s "$fixture/launcher" "$nvm_bin/aidevops" &&
+		cmp -s "$fixture/launcher" "$fixture/home/.local/bin/aidevops"; then
+		pass "stale active NVM launcher is repaired with the user fallback"
+	else
+		fail "stale active NVM launcher is repaired with the user fallback" "convergence failed"
+	fi
+	return 0
+}
+
 test_non_executable_targets_repaired() {
 	local fixture="$TEST_ROOT/non-executable"
 	make_fixture "$fixture"
@@ -330,6 +354,7 @@ main() {
 	test_writable_global
 	test_stale_global_without_sudo
 	test_sudo_failure_user_launcher_wins
+	test_stale_nvm_launcher_is_repaired
 	test_non_executable_targets_repaired
 	test_lock_contention_and_idempotency
 	test_user_fallback_shadowed
