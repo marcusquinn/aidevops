@@ -75,18 +75,20 @@ def _matches_gh_pr_disable_auto(argv: list[str]) -> bool:
 
 
 def _matches_opencode_bare_continue(argv: list[str]) -> bool:
-    if not argv or os.path.basename(argv[0]) != "opencode":
-        return False
-    try:
-        run_index = argv.index("run", 1)
-    except ValueError:
-        return False
-    args = argv[run_index + 1 :]
-    has_continue = any(arg in {"-c", "--continue"} for arg in args)
-    has_session = any(
-        arg in {"-s", "--session"} or arg.startswith("--session=") for arg in args
+    run_index = next(
+        (index for index, arg in enumerate(argv[1:], start=1) if arg == "run"), None
     )
-    return has_continue and not has_session
+    args = argv[run_index + 1 :] if run_index is not None else []
+    return (
+        bool(argv)
+        and os.path.basename(argv[0]) == "opencode"
+        and run_index is not None
+        and any(arg in {"-c", "--continue"} for arg in args)
+        and not any(
+            arg in {"-s", "--session"} or arg.startswith("--session=")
+            for arg in args
+        )
+    )
 
 
 def _rm_operands(args: list[str]) -> list[str]:
