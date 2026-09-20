@@ -1116,16 +1116,34 @@ _setup_redact_secret_like_command_values() {
 	return 0
 }
 
+_setup_claim_noninteractive_setup_lock() {
+	local lock_dir="$1"
+	shift
+	local lane_rc=0
+
+	SETUP_NONINTERACTIVE_LOCK_DIR="$lock_dir"
+	SETUP_NONINTERACTIVE_LOCK_HELD=true
+	printf '%s\n' "$$" >"$lock_dir/owner.pid" 2>/dev/null || true
+	printf '%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$lock_dir/started_at" 2>/dev/null || true
+	printf '%s\n' "$(date +%s 2>/dev/null || printf '0')" >"$lock_dir/started_at_epoch" 2>/dev/null || true
+	printf '%s\n' "$0 $*" >"$lock_dir/command" 2>/dev/null || true
+	_setup_guard_active_release_lane || lane_rc=$?
+	if [[ "$lane_rc" -ne 0 ]]; then
+		_setup_release_noninteractive_setup_lock
+		return "$lane_rc"
+	fi
+	trap '_setup_cleanup_noninteractive_children; _setup_release_noninteractive_setup_lock' EXIT
+	trap '_setup_noninteractive_signal_exit TERM' TERM
+	trap '_setup_noninteractive_signal_exit INT' INT
+	return 0
+}
+
 _setup_acquire_noninteractive_setup_lock() {
 	local lock_dir="${AIDEVOPS_SETUP_LOCK_DIR:-$HOME/.aidevops/locks/setup-noninteractive.lock.d}"
-	# Max seconds to wait for a live, non-stale owner before timing out.
 	local wait_ceiling="${AIDEVOPS_SETUP_WAIT_TIMEOUT_S:-900}"
-	# Max seconds a live owner may hold the lock before it is treated as
-	# stale and reclaimed (0 disables stale-live reclaim).
 	local stale_ceiling="${AIDEVOPS_SETUP_STALE_TIMEOUT_S:-1800}"
 	local owner_pid="" owner_cmd="" owner_age=0
 	local reclaim_attempts=0 waited=0
-	local lane_rc=0
 	local _diag_stl="$HOME/.aidevops/logs/setup-stage-timings.log"
 	local _diag_interval_s="${AIDEVOPS_SETUP_LOCK_DIAG_INTERVAL_S:-60}"
 	_setup_guard_active_release_lane || return $?
@@ -1133,24 +1151,10 @@ _setup_acquire_noninteractive_setup_lock() {
 	mkdir -p "$(dirname "$lock_dir")" 2>/dev/null || true
 	while true; do
 		if mkdir "$lock_dir" 2>/dev/null; then
-			SETUP_NONINTERACTIVE_LOCK_DIR="$lock_dir"
-			SETUP_NONINTERACTIVE_LOCK_HELD=true
-			printf '%s\n' "$$" >"$lock_dir/owner.pid" 2>/dev/null || true
-			printf '%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$lock_dir/started_at" 2>/dev/null || true
-			printf '%s\n' "$(date +%s 2>/dev/null || printf '0')" >"$lock_dir/started_at_epoch" 2>/dev/null || true
-			printf '%s\n' "$0 $*" >"$lock_dir/command" 2>/dev/null || true
-			_setup_guard_active_release_lane || lane_rc=$?
-			if [[ "$lane_rc" -ne 0 ]]; then
-				_setup_release_noninteractive_setup_lock
-				return "$lane_rc"
-			fi
-			trap '_setup_cleanup_noninteractive_children; _setup_release_noninteractive_setup_lock' EXIT
-			trap '_setup_noninteractive_signal_exit TERM' TERM
-			trap '_setup_noninteractive_signal_exit INT' INT
-			return 0
+			_setup_claim_noninteractive_setup_lock "$lock_dir" "$@"
+			return $?
 		fi
 
-		# Lock exists — inspect owner.
 		owner_pid=""
 		if [[ -r "$lock_dir/owner.pid" ]]; then
 			owner_pid=$(tr -d '[:space:]' <"$lock_dir/owner.pid" 2>/dev/null || true)
@@ -1174,7 +1178,6 @@ _setup_acquire_noninteractive_setup_lock() {
 		fi
 
 		if ! _setup_lock_pid_alive "$owner_pid"; then
-			# Dead owner — reclaim the stale lock.
 			if [[ "$reclaim_attempts" -ge 2 ]]; then
 				print_error "Unable to acquire setup.sh --non-interactive lock at ${lock_dir} after ${reclaim_attempts} stale-lock removals"
 				return 75
@@ -1198,7 +1201,6 @@ _setup_acquire_noninteractive_setup_lock() {
 			continue
 		fi
 
-		# Owner is alive — compute age and read current setup stage.
 		owner_age=$(_setup_lock_owner_age "$lock_dir" "$owner_pid")
 		owner_cmd=""
 		[[ -r "$lock_dir/command" ]] && owner_cmd=$(tr '\n' ' ' <"$lock_dir/command" 2>/dev/null || true)
@@ -1210,7 +1212,6 @@ _setup_acquire_noninteractive_setup_lock() {
 			[[ -n "$_diag_cur_stage" ]] && _diag_stage=", stage: ${_diag_cur_stage}"
 		fi
 
-		# Stale-live reclaim: owner alive but running far too long.
 		if [[ "$stale_ceiling" -gt 0 && "$owner_age" -ge "$stale_ceiling" ]]; then
 			if [[ "$reclaim_attempts" -ge 2 ]]; then
 				print_error "Unable to acquire setup.sh --non-interactive lock: owner (pid ${owner_pid}, age ${owner_age}s) exceeds stale ceiling but reclaim limit reached. Diagnose: ${_diag_stl}"
@@ -1222,13 +1223,11 @@ _setup_acquire_noninteractive_setup_lock() {
 			continue
 		fi
 
-		# Live non-stale owner — check wait ceiling before sleeping.
 		if [[ "$waited" -ge "$wait_ceiling" ]]; then
 			print_error "Timed out waiting ${waited}s for setup.sh --non-interactive lock (owner pid ${owner_pid}, age ${owner_age}s${_diag_stage}${owner_cmd:+, command: ${owner_cmd}}). Increase AIDEVOPS_SETUP_WAIT_TIMEOUT_S (current: ${wait_ceiling}s) or kill pid ${owner_pid} to unblock. Diagnose: ${_diag_stl}"
 			return 75
 		fi
 
-		# Emit diagnostics on first block and every diagnostic interval thereafter.
 		if [[ "$waited" -eq 0 ]]; then
 			print_info "Another setup.sh --non-interactive is running (pid ${owner_pid}, age ${owner_age}s${_diag_stage}${owner_cmd:+, command: ${owner_cmd}}). Waiting up to ${wait_ceiling}s (AIDEVOPS_SETUP_WAIT_TIMEOUT_S). Diagnose: ${_diag_stl}"
 		elif [[ $((waited % _diag_interval_s)) -eq 0 ]]; then
@@ -1543,22 +1542,7 @@ reconcile_buzz_desktop_compatibility() {
 	esac
 }
 
-_setup_run_non_interactive() {
-	print_info "Non-interactive mode: deploying agents and running safe migrations only"
-
-	_setup_init_stage_timing_log
-
-	_time_step "protect_current_setup_worktree" protect_current_setup_worktree
-	_time_step "verify_location" verify_location
-	_time_step "check_requirements" check_requirements
-	# Run quality tool detection in non-interactive mode too (warn-only path).
-	_time_step "check_quality_tools" check_quality_tools
-	# Check setsid availability; auto-install util-linux on macOS if missing
-	# (GH#21102 / t2926: missing setsid kills workers on every pulse restart).
-	_time_step "setup_setsid_advisory" setup_setsid_advisory
-	_time_step "check_python_upgrade_available" check_python_upgrade_available
-	_time_step "setup_vault_python_env" setup_vault_python_env || print_warning "Vault crypto runtime setup encountered issues; Vault status remains metadata-only"
-	_time_step "set_permissions" set_permissions
+_setup_run_noninteractive_migrations() {
 	_time_step "migrate_old_backups" migrate_old_backups
 	_time_step "migrate_loop_state_directories" migrate_loop_state_directories
 	_time_step "migrate_agent_to_agents_folder" migrate_agent_to_agents_folder
@@ -1576,12 +1560,23 @@ _setup_run_non_interactive() {
 	_time_step "cleanup_worktree_entries_in_repos_json" cleanup_worktree_entries_in_repos_json
 	_time_step "_cleanup_legacy_model_config" _cleanup_legacy_model_config
 	_time_step "cleanup_legacy_dashboard_launchagent" cleanup_legacy_dashboard_launchagent
-	# t2888: install/heal opencode-ai. Companion to t2887's runtime canary
-	# fail-fast -- t2887 detects when $OPENCODE_BIN_DEFAULT is wrong, this
-	# one fixes it by reinstalling opencode-ai@latest (overwriting any bin
-	# collision with @anthropic-ai/claude-code or similar). Skipping this
-	# in non-interactive mode is the bug PR #20189 introduced and what
-	# alex-solovyev's runner spam stemmed from.
+	return 0
+}
+
+_setup_run_non_interactive() {
+	print_info "Non-interactive mode: deploying agents and running safe migrations only"
+
+	_setup_init_stage_timing_log
+
+	_time_step "protect_current_setup_worktree" protect_current_setup_worktree
+	_time_step "verify_location" verify_location
+	_time_step "check_requirements" check_requirements
+	_time_step "check_quality_tools" check_quality_tools
+	_time_step "setup_setsid_advisory" setup_setsid_advisory
+	_time_step "check_python_upgrade_available" check_python_upgrade_available
+	_time_step "setup_vault_python_env" setup_vault_python_env || print_warning "Vault crypto runtime setup encountered issues; Vault status remains metadata-only"
+	_time_step "set_permissions" set_permissions
+	_setup_run_noninteractive_migrations
 	_time_step "$SETUP_STAGE_OPENCODE" setup_opencode_runtimes
 	_time_step "validate_opencode_config" validate_opencode_config
 	_time_step "$SETUP_STAGE_AGENTS" deploy_aidevops_agents
@@ -1599,9 +1594,6 @@ _setup_run_non_interactive() {
 	fi
 	_time_step "init_settings_json" init_settings_json
 
-	# Parallelise independent skill operations (t1356: ~84s serial -> ~18s parallel)
-	# generate_agent_skills must complete before create_skill_symlinks (symlinks
-	# depend on generated SKILL.md files). scan_imported_skills is independent.
 	local _pid_symlinks=""
 	if _time_step "generate_agent_skills" generate_agent_skills; then
 		_time_step "create_skill_symlinks" create_skill_symlinks &
