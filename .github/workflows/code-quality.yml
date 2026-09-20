@@ -246,6 +246,10 @@ jobs:
         echo "the 'complexity-bump-ok' label with a '## Complexity Bump Justification' section to override."
         exit 1
 
+  # GH#32046: This job runs the reusable-workflow caller permission-union
+  # contracts and must remain a required main-branch status check. A reusable
+  # workflow permission widening can otherwise break mutable @main callers
+  # even though this job reports the incompatible ceiling after the PR lands.
   framework-validation:
     name: Framework Validation
     runs-on: ubuntu-latest
