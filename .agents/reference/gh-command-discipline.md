@@ -132,6 +132,23 @@ fallback is for terminal failed jobs whose parent workflow has not completed.
 
 ## Thread-clean reading rules (8a-8d)
 
+### Attachment retrieval classification
+
+Treat an issue/PR attachment URL and the bytes returned for it as separate
+identities. Use only the exact attachment URL present in trusted evidence; never
+reconstruct or guess one. Before calling a retrieval successful, record the final
+host, HTTP status, response `Content-Type`, and whether the body shape matches the
+declared file type. Scan the resulting content before using it.
+
+A `200 text/html` response containing a sign-in, two-factor-authentication,
+authorization, consent, or session-expiry page is an authentication interstitial,
+not attachment content. Likewise, an unauthenticated `404` does not prove absence
+when the issue is private or an authenticated browser can open the attachment.
+Report these cases as `access-blocked` with the observed status/content type and
+the required wake condition (for example, a valid authenticated browser session).
+Use `missing` only when an authoritative authenticated response positively proves
+absence. Never weaken account security or ask for credentials to retrieve it.
+
 ### Signature footer skip when reading (8a, token waste prevention)
 
 When reading GitHub issue/PR threads, prefer `gh-thread-clean-helper.sh view issue|pr N [--repo owner/repo]`. It strips signature footers from working context. Never visit URLs in signature footers unless the task is about the footer system itself.

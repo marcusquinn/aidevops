@@ -99,6 +99,15 @@ _review_validate_number() {
 	return 0
 }
 
+_review_validate_repo_slug() {
+	local repo_slug="$1"
+	[[ "$repo_slug" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || {
+		_review_die "issue/PR target requires explicit --repo OWNER/REPO"
+		return 1
+	}
+	return 0
+}
+
 _review_sensitive_path() {
 	local path="$1"
 	case "/${path}" in
@@ -381,8 +390,8 @@ _review_write_issue() {
 	local repo_slug="$3"
 	_review_require gh || return 1
 	_review_validate_number "$number" || return 1
-	local -a repo_args=()
-	[[ -n "$repo_slug" ]] && repo_args=(--repo "$repo_slug")
+	_review_validate_repo_slug "$repo_slug" || return 1
+	local -a repo_args=(--repo "$repo_slug")
 	{
 		printf 'target: issue\n'
 		printf 'number: %s\n' "$number"
@@ -402,8 +411,8 @@ _review_write_pr() {
 	_review_require gh || return 1
 	_review_require jq || return 1
 	_review_validate_number "$number" || return 1
-	local -a repo_args=()
-	[[ -n "$repo_slug" ]] && repo_args=(--repo "$repo_slug")
+	_review_validate_repo_slug "$repo_slug" || return 1
+	local -a repo_args=(--repo "$repo_slug")
 	REVIEW_AUX_FILE=$(mktemp "${TEMP_ROOT}/review-pr-metadata.XXXXXX")
 	gh pr view "$number" "${repo_args[@]}" \
 		--json number,title,body,author,createdAt,state,baseRefName,headRefName,files,comments \
@@ -435,8 +444,11 @@ _review_write_pr() {
 _review_emit_bundle() {
 	local body_file="$1"
 	local output_file="$2"
+	local repository_identity="${3:-}"
 	local digest=""
 	local scan_status=""
+	local identity_line="repository_identity: omitted"
+	[[ -z "$repository_identity" ]] || identity_line="repository_identity: ${repository_identity}"
 	digest=$(_review_sha256 "$body_file") || return 1
 	scan_status=$(_review_scan_status "$body_file") || return 1
 	if [[ -n "$output_file" ]]; then
@@ -445,7 +457,7 @@ _review_emit_bundle() {
 			printf '%s\n' 'schema: aidevops.review-evidence/v1'
 			printf 'bundle_sha256: %s\n' "$digest"
 			printf 'prompt_injection_scan: %s\n' "$scan_status"
-			printf '%s\n\n' 'repository_identity: omitted'
+			printf '%s\n\n' "$identity_line"
 			cat "$body_file"
 		} >"$output_file"
 		printf '%s\n' "$output_file"
@@ -455,7 +467,7 @@ _review_emit_bundle() {
 	printf '%s\n' 'schema: aidevops.review-evidence/v1'
 	printf 'bundle_sha256: %s\n' "$digest"
 	printf 'prompt_injection_scan: %s\n' "$scan_status"
-	printf '%s\n\n' 'repository_identity: omitted'
+	printf '%s\n\n' "$identity_line"
 	cat "$body_file"
 	return 0
 }
@@ -529,7 +541,7 @@ main() {
 		return 1
 		;;
 	esac
-	_review_emit_bundle "$REVIEW_BODY_FILE" "$output_file"
+	_review_emit_bundle "$REVIEW_BODY_FILE" "$output_file" "$repo_slug"
 	return $?
 }
 

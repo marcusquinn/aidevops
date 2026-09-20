@@ -155,6 +155,7 @@ assert_not_contains "$ODD_BUNDLE" 'GIT binary patch' 'unusual binary payload bou
 gh() {
 	local resource="$1"
 	local action="$2"
+	printf '%s\n' "$*" >>"$GH_CALLS"
 	case "${resource}:${action}" in
 	issue:view)
 		printf '%s\n' '{"number":42,"title":"Issue fixture","body":"Observed failure","comments":[]}'
@@ -170,17 +171,28 @@ gh() {
 	return 0
 }
 export -f gh
+export GH_CALLS="${TEST_ROOT}/gh-calls.log"
+: >"$GH_CALLS"
+
+if AIDEVOPS_TEMP_DIR="${TEST_ROOT}/tmp" "$HELPER" bundle issue 42 \
+	--output "${TEST_ROOT}/missing-repo.md" >/dev/null 2>&1; then
+	fail 'unqualified issue target was accepted without an active repository identity'
+fi
 
 ISSUE_BUNDLE="${TEST_ROOT}/issue.md"
 AIDEVOPS_TEMP_DIR="${TEST_ROOT}/tmp" "$HELPER" bundle issue 42 --repo owner/repo --output "$ISSUE_BUNDLE" >/dev/null
 assert_contains "$ISSUE_BUNDLE" 'target: issue' 'issue target'
+assert_contains "$ISSUE_BUNDLE" 'repository_identity: owner/repo' 'issue repository identity'
 assert_contains "$ISSUE_BUNDLE" 'Issue fixture' 'issue metadata'
+grep -Fq 'issue view 42 --repo owner/repo' "$GH_CALLS" || fail 'issue bundle changed repository or object type'
 
 PR_BUNDLE="${TEST_ROOT}/pr.md"
 AIDEVOPS_TEMP_DIR="${TEST_ROOT}/tmp" "$HELPER" bundle pr 43 --repo owner/repo --output "$PR_BUNDLE" >/dev/null
 assert_contains "$PR_BUNDLE" 'target: pr' 'PR target'
+assert_contains "$PR_BUNDLE" 'repository_identity: owner/repo' 'PR repository identity'
 assert_contains "$PR_BUNDLE" 'src/app.sh' 'PR changed path'
 assert_contains "$PR_BUNDLE" '+return 0' 'PR patch'
+grep -Fq 'pr view 43 --repo owner/repo' "$GH_CALLS" || fail 'PR bundle changed repository or object type'
 
 mkdir -p "${REPO}/config"
 printf 'unsafe\n' >"${REPO}/config/.env"
