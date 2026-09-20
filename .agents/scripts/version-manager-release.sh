@@ -654,6 +654,7 @@ validate_release_deployment_readiness() {
 _AIDEVOPS_RELEASE_ACTIVE_PRESERVATION_SHA=""
 _AIDEVOPS_RELEASE_SQUASH_RECOVERY_SHA=""
 _AIDEVOPS_RELEASE_INITIAL_ACTIVE_SHA=""
+_AIDEVOPS_RELEASE_PROTECTED_INTEGRATION_SHA=""
 _AIDEVOPS_RELEASE_TRANSITION_LOCK_DIR=""
 
 _acquire_release_runtime_transition_lock() {
@@ -700,19 +701,13 @@ _release_runtime_transition_lock() {
 	return 0
 }
 
-_verify_squash_integrated_active_source() {
+_verify_exact_tag_release_lane() {
 	local sync_repo_root="$1"
 	local release_sha="$2"
-	local active_sha="$3"
 	local source_pr="${AIDEVOPS_RELEASE_LANE_SOURCE_PR:-}"
 	local tag_name="${AIDEVOPS_RELEASE_LANE_TAG:-}"
 	local tag_sha=""
-	local merge_base=""
 	local repo_slug=""
-	local path_list=""
-	local changed_path=""
-	local paths_match=1
-	local verify_base="${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}"
 
 	[[ "${AIDEVOPS_RELEASE_SQUASH_RECOVERY:-0}" == "1" ]] || return 1
 	[[ "$source_pr" =~ ^[0-9]+$ && "$tag_name" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
@@ -725,6 +720,55 @@ _verify_squash_integrated_active_source() {
 	' <<<"${_AIDEVOPS_RELEASE_LANE_JSON:-}" >/dev/null || return 1
 	tag_sha=$(git -C "$sync_repo_root" rev-parse "refs/tags/${tag_name}^{commit}" 2>/dev/null) || return 1
 	[[ "$tag_sha" == "$release_sha" ]] || return 1
+	return 0
+}
+
+#aidevops:trust-boundary
+_verify_protected_release_integration() {
+	local sync_repo_root="$1"
+	local release_sha="$2"
+	local active_sha="$3"
+	local protected_main=""
+	local candidate=""
+	local parent_line=""
+	local commit_sha=""
+	local parent_one=""
+	local parent_two=""
+	local extra_parent=""
+
+	_verify_exact_tag_release_lane "$sync_repo_root" "$release_sha" || return 1
+	if ! git -C "$sync_repo_root" fetch origin main --quiet; then
+		print_error "Post-release deployment gate cannot refresh protected main for integration verification"
+		return 1
+	fi
+	protected_main=$(git -C "$sync_repo_root" rev-parse "origin/main^{commit}" 2>/dev/null) || return 1
+	git -C "$sync_repo_root" merge-base --is-ancestor "$active_sha" "$protected_main" 2>/dev/null || return 1
+	git -C "$sync_repo_root" merge-base --is-ancestor "$release_sha" "$protected_main" 2>/dev/null || return 1
+	while IFS= read -r candidate; do
+		[[ -n "$candidate" ]] || continue
+		parent_line=$(git -C "$sync_repo_root" rev-list --parents -n 1 "$candidate" 2>/dev/null) || return 1
+		IFS=' ' read -r commit_sha parent_one parent_two extra_parent <<<"$parent_line"
+		[[ "$commit_sha" == "$candidate" && -n "$parent_one" && -n "$parent_two" && -z "$extra_parent" ]] || continue
+		if [[ "$parent_one" == "$active_sha" && "$parent_two" == "$release_sha" ]] ||
+			[[ "$parent_one" == "$release_sha" && "$parent_two" == "$active_sha" ]]; then
+			_AIDEVOPS_RELEASE_PROTECTED_INTEGRATION_SHA="$candidate"
+			return 0
+		fi
+	done < <(git -C "$sync_repo_root" rev-list --ancestry-path --merges "${release_sha}..${protected_main}" 2>/dev/null)
+	return 1
+}
+
+_verify_squash_integrated_active_source() {
+	local sync_repo_root="$1"
+	local release_sha="$2"
+	local active_sha="$3"
+	local merge_base=""
+	local path_list=""
+	local changed_path=""
+	local paths_match=1
+	local verify_base="${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}"
+
+	_verify_exact_tag_release_lane "$sync_repo_root" "$release_sha" || return 1
 	merge_base=$(git -C "$sync_repo_root" merge-base "$active_sha" "$release_sha" 2>/dev/null) || return 1
 	[[ "$merge_base" != "$active_sha" && "$merge_base" != "$release_sha" ]] || return 1
 	mkdir -p "$verify_base" || return 1
@@ -817,10 +861,13 @@ _verify_active_release_preservation_merge() {
 	local verify_root=""
 	local verify_repo=""
 	local verify_exit=0
+	local stale_runtime=0
+	local descendant_exit=0
 
 	_AIDEVOPS_RELEASE_ACTIVE_PRESERVATION_SHA=""
 	_AIDEVOPS_RELEASE_SQUASH_RECOVERY_SHA=""
 	_AIDEVOPS_RELEASE_INITIAL_ACTIVE_SHA=""
+	_AIDEVOPS_RELEASE_PROTECTED_INTEGRATION_SHA=""
 	[[ -e "$active_link" || -L "$active_link" ]] || return 0
 	_runtime_bundle_verify_active_link "$active_link" || return 1
 	active_manifest="$_AIDEVOPS_RUNTIME_VERIFY_ACTIVE_ROOT/.bundle-manifest"
@@ -845,12 +892,19 @@ _verify_active_release_preservation_merge() {
 	fi
 
 	if ! git -C "$sync_repo_root" merge-base --is-ancestor "$release_sha" "$active_sha" 2>/dev/null; then
-		if ! _verify_squash_integrated_active_source "$sync_repo_root" "$release_sha" "$active_sha"; then
+		if _verify_protected_release_integration "$sync_repo_root" "$release_sha" "$active_sha"; then
+			stale_runtime=1
+		elif ! _verify_squash_integrated_active_source "$sync_repo_root" "$release_sha" "$active_sha"; then
 			print_error "Post-release deployment gate rejected active source ${active_sha:0:12}: it is neither ancestry-related nor a lane-authorized squash-integrated source"
 			return 1
 		fi
-	elif ! _verify_release_descendant_active_source "$sync_repo_root" "$release_sha" "$active_sha"; then
-		return 1
+	else
+		_verify_release_descendant_active_source "$sync_repo_root" "$release_sha" "$active_sha" || descendant_exit=$?
+		case "$descendant_exit" in
+		0) ;;
+		76) stale_runtime=1 ;;
+		*) return "$descendant_exit" ;;
+		esac
 	fi
 
 	verify_base="${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}"
@@ -879,6 +933,12 @@ _verify_active_release_preservation_merge() {
 		return 1
 	fi
 	[[ "$verify_exit" -eq 0 ]] || return 1
+	if [[ "$stale_runtime" -eq 1 ]]; then
+		if [[ -n "$_AIDEVOPS_RELEASE_PROTECTED_INTEGRATION_SHA" ]]; then
+			print_error "Post-release deployment gate verified protected integration ${_AIDEVOPS_RELEASE_PROTECTED_INTEGRATION_SHA:0:12}, but active runtime ${active_sha:0:12} is stale; defer for protected-main convergence"
+		fi
+		return 76
+	fi
 
 	if [[ -n "$_AIDEVOPS_RELEASE_SQUASH_RECOVERY_SHA" ]]; then
 		return 0
@@ -996,6 +1056,10 @@ run_post_publication_gates() {
 		_create_hotfix_tag "$version" || hotfix_exit=$?
 	fi
 	run_post_release_agent_sync || deployment_exit=$?
+	if [[ "$hotfix_exit" -eq 0 && "$deployment_exit" -eq 76 ]]; then
+		print_info "Post-publication deployment deferred for protected-main runtime convergence"
+		return 76
+	fi
 
 	if [[ "$hotfix_exit" -ne 0 || "$deployment_exit" -ne 0 ]]; then
 		print_error "PARTIAL RELEASE SUCCESS: GitHub release v$version remains published; post-publication gates failed"

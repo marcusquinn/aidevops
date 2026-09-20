@@ -274,7 +274,11 @@ invoke_release_sync() {
 					"{active:true,source_pr:\$source_pr,tag:\$tag,phase:\"exact-tag-deployment\",terminal_receipt:null}") || return 1
 				return 0
 			}
-			run_post_release_agent_sync
+			if [[ "${RELEASE_SYNC_ENTRYPOINT:-sync}" == "gates" ]]; then
+				run_post_publication_gates 9.9.10 0
+			else
+				run_post_release_agent_sync
+			fi
 		' _ "$VERSION_HELPER"
 	return $?
 }
@@ -318,6 +322,54 @@ prepare_squash_integrated_release() {
 	release_sha=$(PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git -C "$repo_path" rev-parse HEAD) || return 1
 	PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git -C "$repo_path" -c tag.gpgSign=false tag v9.9.10 "$release_sha"
 	printf '%s|%s\n' "$active_sha" "$release_sha"
+	return 0
+}
+
+prepare_protected_integration_release() {
+	local repo_path="$1"
+	local mode="${2:-complete}"
+	local base_sha=""
+	local active_sha=""
+	local release_sha=""
+	local integration_sha=""
+	local protected_main=""
+	local remote_path=""
+
+	base_sha=$(PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git -C "$repo_path" rev-parse HEAD) || return 1
+	remote_path=$(configure_local_aidevops_remote "$repo_path") || return 1
+	PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git -C "$repo_path" checkout -qb active-branch
+	printf 'unique active content\n' >"$repo_path/active-only.txt"
+	PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git -C "$repo_path" add active-only.txt
+	PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git -C "$repo_path" commit -qm "ordinary post-source merge"
+	active_sha=$(PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git -C "$repo_path" rev-parse HEAD) || return 1
+	invoke_release_sync "$repo_path" >/dev/null 2>&1 || return 1
+
+	PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git -C "$repo_path" checkout -qb release-branch "$base_sha"
+	printf '9.9.10\n' >"$repo_path/VERSION"
+	PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git -C "$repo_path" add VERSION
+	PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git -C "$repo_path" commit -qm "publish snapshot release"
+	release_sha=$(PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git -C "$repo_path" rev-parse HEAD) || return 1
+	PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git -C "$repo_path" -c tag.gpgSign=false tag v9.9.10 "$release_sha"
+
+	PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git -C "$repo_path" checkout -q active-branch
+	if [[ "$mode" == "wrong-parent" ]]; then
+		printf 'intervening content\n' >"$repo_path/intervening.txt"
+		PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git -C "$repo_path" add intervening.txt
+		PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git -C "$repo_path" commit -qm "advance active before integration"
+	fi
+	PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git -C "$repo_path" merge -q --no-ff release-branch -m "preserve signed release"
+	integration_sha=$(PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git -C "$repo_path" rev-parse HEAD) || return 1
+	printf 'protected main successor\n' >"$repo_path/protected-successor.txt"
+	PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git -C "$repo_path" add protected-successor.txt
+	PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git -C "$repo_path" commit -qm "advance protected main"
+	protected_main=$(PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git -C "$repo_path" rev-parse HEAD) || return 1
+	if [[ "$mode" == "unreachable" ]]; then
+		PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git -C "$repo_path" push -q "$remote_path" "$active_sha:refs/heads/main"
+	else
+		PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git -C "$repo_path" push -q "$remote_path" "$protected_main:refs/heads/main"
+	fi
+	PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git -C "$repo_path" checkout -q --detach "$release_sha"
+	printf '%s|%s|%s|%s\n' "$active_sha" "$release_sha" "$integration_sha" "$protected_main"
 	return 0
 }
 
@@ -845,6 +897,57 @@ test_release_sync_rejects_unrelated_active_commit() {
 	return 0
 }
 
+test_release_sync_defers_verified_protected_integration() {
+	local repo_path=""
+	local evidence=""
+	local active_sha=""
+	local integration_sha=""
+	local output=""
+	local actual_rc=0
+	repo_path=$(create_fake_repo "release-protected-integration" "https://github.com/marcusquinn/aidevops.git")
+	evidence=$(prepare_protected_integration_release "$repo_path" complete) || {
+		print_result "release sync defers a verified protected integration for main convergence" 1 "Could not prepare protected integration topology"
+		return 0
+	}
+	active_sha="${evidence%%|*}"
+	integration_sha="${evidence#*|*|}"
+	integration_sha="${integration_sha%%|*}"
+	: >"$TEST_DIR/sync.log"
+	output=$(RELEASE_SYNC_ENTRYPOINT=gates AIDEVOPS_RELEASE_SQUASH_RECOVERY=1 AIDEVOPS_RELEASE_LANE_SOURCE_PR=90 \
+		AIDEVOPS_RELEASE_LANE_TAG=v9.9.10 invoke_release_sync "$repo_path" 2>&1) || actual_rc=$?
+	if [[ "$actual_rc" -eq 76 && ! -s "$TEST_DIR/sync.log" ]] &&
+		[[ "$output" == *"verified protected integration ${integration_sha:0:12}"* ]] &&
+		[[ "$output" == *"active runtime ${active_sha:0:12} is stale"* ]]; then
+		print_result "release sync defers a verified protected integration for main convergence" 0
+	else
+		print_result "release sync defers a verified protected integration for main convergence" 1 "Expected verified stale-runtime deferral: $output"
+	fi
+	return 0
+}
+
+test_release_sync_rejects_unverified_protected_integration() {
+	local mode=""
+	local repo_path=""
+	local output=""
+	for mode in wrong-parent unreachable; do
+		repo_path=$(create_fake_repo "release-protected-integration-$mode" "https://github.com/marcusquinn/aidevops.git")
+		prepare_protected_integration_release "$repo_path" "$mode" >/dev/null || {
+			print_result "release sync rejects $mode protected integration" 1 "Could not prepare topology"
+			continue
+		}
+		: >"$TEST_DIR/sync.log"
+		if output=$(AIDEVOPS_RELEASE_SQUASH_RECOVERY=1 AIDEVOPS_RELEASE_LANE_SOURCE_PR=90 \
+			AIDEVOPS_RELEASE_LANE_TAG=v9.9.10 invoke_release_sync "$repo_path" 2>&1); then
+			print_result "release sync rejects $mode protected integration" 1 "Unverified topology was accepted"
+		elif [[ "$output" == *"neither ancestry-related nor a lane-authorized squash-integrated source"* && ! -s "$TEST_DIR/sync.log" ]]; then
+			print_result "release sync rejects $mode protected integration" 0
+		else
+			print_result "release sync rejects $mode protected integration" 1 "$output"
+		fi
+	done
+	return 0
+}
+
 test_release_sync_recovers_verified_squash_integration() {
 	local repo_path
 	local release_sha=""
@@ -1037,6 +1140,8 @@ main() {
 	test_release_sync_accepts_changed_tree_protected_main_descendant
 	test_release_sync_rejects_changed_tree_non_tip_descendant
 	test_release_sync_rejects_unrelated_active_commit
+	test_release_sync_defers_verified_protected_integration
+	test_release_sync_rejects_unverified_protected_integration
 	test_release_sync_recovers_verified_squash_integration
 	test_release_sync_rejects_incomplete_squash_evidence
 	test_release_sync_requires_matching_squash_lane
