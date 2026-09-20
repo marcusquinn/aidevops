@@ -1,0 +1,17 @@
+{
+  "schema": "aidevops.prospecting-scan/v1",
+  "project_id": "project-alpha",
+  "budget": 1,
+  "capabilities": {
+    "search": {"status": "available", "items": [
+      {"provider": "reddit", "id": "thread-1", "community": "saas", "title": "Need an incident tool", "title_relevant": true, "comments": [
+        {"id": "comment-1", "text": "We need a better incident tool", "decision": {"buyer_ask": true, "reason": "explicit purchase need"}},
+        {"id": "comment-2", "text": "I sell one", "decision": {"buyer_ask": false, "reason": "seller promotion"}}
+      ]},
+      {"provider": "reddit", "id": "thread-2", "community": "saas", "title": "Second relevant ask", "title_relevant": true, "comments": []}
+    ]},
+    "community": {"status": "available", "items": []},
+    "rules": {"status": "partial", "items": [{"community": "saas", "status": "stale", "text": "No promotion without approval"}]},
+    "thread": {"status": "unavailable", "items": []}
+  }
+}
