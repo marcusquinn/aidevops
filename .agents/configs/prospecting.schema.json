@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aidevops.sh/schemas/prospecting.schema.json",
+  "title": "Aidevops prospecting import",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "project", "objects", "leads"],
+  "properties": {
+    "schema": {"const": "aidevops.prospecting/v1"},
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project_id", "name", "profile_version", "discovery_version", "profile", "discovery"],
+      "properties": {
+        "project_id": {"type": "string", "minLength": 1},
+        "name": {"type": "string", "minLength": 1},
+        "profile_version": {"type": "integer", "minimum": 1},
+        "discovery_version": {"type": "integer", "minimum": 1},
+        "profile": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "facts": {"type": "array", "items": {"type": "string"}},
+            "claims": {"type": "array", "items": {"type": "string"}},
+            "competitors": {"type": "array", "items": {"type": "string"}},
+            "budgets": {"type": "object", "additionalProperties": {"type": "number", "minimum": 0}},
+            "secret_profile_refs": {"type": "array", "items": {"type": "string"}}
+          }
+        },
+        "discovery": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "keywords": {"type": "array", "items": {"type": "string"}},
+            "communities": {"type": "array", "items": {"type": "string"}},
+            "source_preferences": {"type": "array", "items": {"type": "string"}},
+            "budgets": {"type": "object", "additionalProperties": {"type": "number", "minimum": 0}},
+            "daily_result_limit": {"type": "integer", "minimum": 0}
+          }
+        }
+      }
+    },
+    "objects": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["provider", "object_id", "object_type", "evidence_id", "corpus_id", "canonical_plane", "authority", "observed_at"],
+        "properties": {
+          "provider": {"type": "string", "minLength": 1},
+          "object_id": {"type": "string", "minLength": 1},
+          "object_type": {"enum": ["post", "comment"]},
+          "parent_object_id": {"type": ["string", "null"]},
+          "evidence_id": {"type": "string", "minLength": 1},
+          "corpus_id": {"type": "string", "minLength": 1},
+          "canonical_plane": {"const": "_knowledge"},
+          "authority": {"const": "projection"},
+          "observed_at": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "leads": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["lead_id", "provider", "object_id", "score", "matching_phrase", "explanation", "intent", "stage", "suitability", "unknowns", "rubric_version", "model_version", "evidence_version"],
+        "properties": {
+          "lead_id": {"type": "string", "minLength": 1},
+          "provider": {"type": "string", "minLength": 1},
+          "object_id": {"type": "string", "minLength": 1},
+          "score": {"type": "number", "minimum": 0, "maximum": 100},
+          "matching_phrase": {"type": "string", "minLength": 1},
+          "explanation": {"type": "string", "minLength": 1},
+          "intent": {"type": "string", "minLength": 1},
+          "stage": {"type": "string", "minLength": 1},
+          "suitability": {"type": "string", "minLength": 1},
+          "unknowns": {"type": "array", "items": {"type": "string"}},
+          "rubric_version": {"type": "string", "minLength": 1},
+          "model_version": {"type": "string", "minLength": 1},
+          "evidence_version": {"type": "string", "minLength": 1}
+        }
+      }
+    }
+  }
+}
