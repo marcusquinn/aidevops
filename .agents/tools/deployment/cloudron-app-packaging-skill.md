@@ -48,8 +48,14 @@ cloudron update                  # re-uploads, rebuilds, updates running app
 | Filesystem readonly | Writable: `/tmp`, `/run` (ephemeral), `/app/data` (persisted, requires `localstorage` addon) |
 | Addons for services | Databases, caching, email, auth via addons — env vars injected at runtime, re-read every start |
 | Manifest declares all | `CloudronManifest.json`: metadata, ports, addon requirements |
-| HTTP only | App listens HTTP — platform handles TLS |
+| Web traffic | App listens HTTP — platform handles ordinary web TLS |
 | Memory default | 256 MB (RAM + swap). Set `memoryLimit` in manifest |
+
+For a protocol requiring native TLS, a separately manifest-declared TCP listener
+can use the `tls` addon. Document and qualify that exception; never replace the
+platform's normal HTTPS path. Keep human/operator guides under `docs/` and
+AI-only context under `.agents/`, with conventional root entrypoints linking
+them. See the native packaging guide's **Managed Package Lifecycle** section.
 
 ## Build Methods (9.1+)
 

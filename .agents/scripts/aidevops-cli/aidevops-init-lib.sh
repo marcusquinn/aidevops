@@ -590,6 +590,14 @@ read when working in this repository. Use this for:
 - API design rules, data models, naming conventions
 - Integration details (third-party services, deployment targets)
 
+## Documentation layout
+
+Keep human/operator guides in `docs/` and AI-only instructions in `.agents/`.
+Keep conventional root entrypoints such as README.md, AGENTS.md, SECURITY.md and
+CHANGELOG.md. Link to canonical guides instead of duplicating them. Respect an
+existing documented layout; update links, checks and generators before moving
+files. Generated artifacts require changing their writer, not just their path.
+
 ## Adding Agents
 
 Create `.md` files in this directory for domain-specific context:
@@ -1207,12 +1215,15 @@ _init_root_agents_file() {
 
 - Commits: [Conventional Commits](https://www.conventionalcommits.org/)
 - Branches: \`feature/\`, \`bugfix/\`, \`hotfix/\`, \`refactor/\`, \`chore/\`
+- Documentation: human/operator guides in \`docs/\`, AI-only context in \`.agents/\`;
+  retain conventional root entrypoints and respect existing repository conventions.
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
 | \`.agents/AGENTS.md\` | Project-specific agent instructions |
+| \`docs/\` | Human/operator guides, linked from root entrypoints |
 | \`TODO.md\` | Task tracking |
 | \`CHANGELOG.md\` | Version history |
 
