@@ -1148,6 +1148,7 @@ jobs:
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_AUTHOR_ASSOCIATION: ${{ github.event.pull_request.author_association }}
           ACTOR: ${{ github.actor }}
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -1194,6 +1195,50 @@ jobs:
             return 1
           }
 
+          pr_author_has_maintainer_authority() {
+            local permission=""
+            case "$PR_AUTHOR_ASSOCIATION" in
+              OWNER|MEMBER) return 0 ;;
+              CONTRIBUTOR|COLLABORATOR) ;;
+              *) return 1 ;;
+            esac
+            [[ -n "$PR_AUTHOR" ]] || return 1
+            permission=$(gh api "repos/${REPO}/collaborators/${PR_AUTHOR}/permission" \
+              --jq '.permission' 2>/dev/null) || return 1
+            case "$permission" in
+              admin|maintain|write) return 0 ;;
+            esac
+            return 1
+          }
+
+          pr_nmr_removal_is_verified_normalization() {
+            local events_json=""
+            if ! events_json=$(set -o pipefail; gh api --paginate \
+              "repos/${REPO}/issues/${PR_NUMBER}/events?per_page=100" | jq -s '.'); then
+              return 1
+            fi
+            printf '%s' "$events_json" | jq -e '
+              if type == "array" and all(.[]; type == "array") then
+                [ .[][]
+                  | select(.event == "labeled" or .event == "unlabeled")
+                  | {event, label: (.label.name // ""), actor: (.actor.login // ""),
+                      created_at: (.created_at // "")}
+                ] as $events
+                | ($events | map(select(.event == "labeled" and .label == "needs-maintainer-review")) | last) as $nmr_add
+                | ($events | map(select(.event == "labeled" and .label == "external-contributor")) | last) as $external_add
+                | ($events | map(select(.label == "needs-maintainer-review")) | last) as $nmr_latest
+                | ($nmr_add != null and $external_add != null and $nmr_latest != null
+                  and $nmr_add.actor == "github-actions[bot]"
+                  and $external_add.actor == "github-actions[bot]"
+                  and $nmr_add.created_at != ""
+                  and $nmr_add.created_at == $external_add.created_at
+                  and $nmr_latest.event == "unlabeled"
+                  and $nmr_latest.actor == "github-actions[bot]"
+                  and $nmr_latest.created_at >= $nmr_add.created_at)
+              else error("invalid paginated issue events response") end
+            ' >/dev/null 2>&1
+          }
+
           # Only protect PRs that were labelled external-contributor.
           # Internal PRs (from collaborators) should never have had NMR in
           # the first place — don't fight a manual correction on those.
@@ -1210,6 +1255,18 @@ jobs:
 
           if ! echo "$PR_LABELS" | grep -q 'external-contributor'; then
             echo "ALLOWED: PR #$PR_NUMBER is not an external-contributor PR — label removal accepted"
+            exit 0
+          fi
+
+          #aidevops:trust-boundary GH#17671/GH#31995: Check 0 may remove only
+          # positively identified auto-triage residue for a maintainer-authority
+          # author. Accept that exact bot removal so this protection job does not
+          # recreate the stale label. Human NMR labels and uncertain timelines
+          # continue through the signed-approval path below.
+          if [[ "$ACTOR" == "github-actions[bot]" ]] \
+            && pr_author_has_maintainer_authority \
+            && pr_nmr_removal_is_verified_normalization; then
+            echo "ALLOWED: verified auto-triage NMR normalization for maintainer-authority PR author"
             exit 0
           fi
 

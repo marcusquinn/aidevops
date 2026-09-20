@@ -149,7 +149,9 @@ _ddpr_is_consolidation_task() {
 }
 
 _DDPR_JSON_ARRAY_TYPE="array"
+_DDPR_JSON_BOOLEAN_TYPE='boolean'
 _DDPR_JSON_NUMBER_TYPE='number'
+_DDPR_JSON_STRING_TYPE='string'
 
 _ddpr_closing_keyword_pattern() {
 	local issue_number="$1"
@@ -172,7 +174,8 @@ _ddpr_graphql_open_siblings() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local search_query="repo:${repo_slug} is:pr is:open #${issue_number}"
-	local response="" pr_json=""
+	local response=""
+	local pr_json=""
 
 	# shellcheck disable=SC2016
 	response=$(AIDEVOPS_GH_GRAPHQL_COST_FROM_RESPONSE=1 \
@@ -201,7 +204,9 @@ _ddpr_graphql_open_siblings() {
 	' 2>/dev/null) || return $?
 
 	pr_json=$(printf '%s' "$response" | jq -ce \
-		--arg array_type "$_DDPR_JSON_ARRAY_TYPE" --arg number_type "$_DDPR_JSON_NUMBER_TYPE" '
+		--arg array_type "$_DDPR_JSON_ARRAY_TYPE" \
+		--arg boolean_type "$_DDPR_JSON_BOOLEAN_TYPE" \
+		--arg number_type "$_DDPR_JSON_NUMBER_TYPE" '
 		select(((.errors // []) | type) == $array_type)
 		| select(((.errors // []) | length) == 0)
 		| select((.data.rateLimit.cost | type) == $number_type)
@@ -211,7 +216,7 @@ _ddpr_graphql_open_siblings() {
 		| select(all(.[];
 			.__typename == "PullRequest" and
 			(.number | type) == $number_type and
-			(.isDraft | type) == "boolean" and
+			(.isDraft | type) == $boolean_type and
 			((.files.nodes // []) | type) == $array_type and
 			.files.pageInfo.hasNextPage == false and
 			((.labels.nodes // []) | type) == $array_type and
@@ -264,14 +269,18 @@ _ddpr_graphql_open_commit_page() {
 			rateLimit { cost }
 		}
 	' 2>/dev/null) || return $?
-	printf '%s' "$response" | jq -ce '
+	printf '%s' "$response" | jq -ce \
+		--arg array_type "$_DDPR_JSON_ARRAY_TYPE" \
+		--arg boolean_type "$_DDPR_JSON_BOOLEAN_TYPE" \
+		--arg number_type "$_DDPR_JSON_NUMBER_TYPE" \
+		--arg string_type "$_DDPR_JSON_STRING_TYPE" '
 		select(((.errors // []) | length) == 0)
-		| select((.data.rateLimit.cost | type) == "number" and .data.rateLimit.cost > 0)
+		| select((.data.rateLimit.cost | type) == $number_type and .data.rateLimit.cost > 0)
 		| .data.repository.pullRequest.commits
-		| select((.nodes | type) == "array")
-		| select((.pageInfo.hasNextPage | type) == "boolean")
-		| select((.pageInfo.endCursor == null) or ((.pageInfo.endCursor | type) == "string"))
-		| select(all(.nodes[]; (.commit.messageHeadline | type) == "string"))
+		| select((.nodes | type) == $array_type)
+		| select((.pageInfo.hasNextPage | type) == $boolean_type)
+		| select((.pageInfo.endCursor == null) or ((.pageInfo.endCursor | type) == $string_type))
+		| select(all(.nodes[]; (.commit.messageHeadline | type) == $string_type))
 		| {commits: [.nodes[].commit | {messageHeadline}],
 			hasNextPage: .pageInfo.hasNextPage, endCursor: .pageInfo.endCursor}' 2>/dev/null
 	return $?
@@ -288,7 +297,8 @@ _ddpr_graphql_open_commits() {
 	local repo_slug="$1"
 	local owner="${repo_slug%%/*}"
 	local repo="${repo_slug#*/}"
-	local response="" pr_json="" pr_number="" cursor="" page_json=""
+	local response=""
+	local pr_json="" pr_number="" cursor="" page_json=""
 	local page_count=0 max_pages="${AIDEVOPS_DEDUP_COMMIT_MAX_PAGES:-10}"
 	[[ "$max_pages" =~ ^[1-9][0-9]*$ && "$max_pages" -le 20 ]] || max_pages=10
 	[[ -n "$owner" && -n "$repo" && "$repo_slug" == */* && "$repo" != */* ]] || return 1
@@ -318,7 +328,10 @@ _ddpr_graphql_open_commits() {
 	' 2>/dev/null) || return $?
 
 	pr_json=$(printf '%s' "$response" | jq -ce \
-		--arg array_type "$_DDPR_JSON_ARRAY_TYPE" --arg number_type "$_DDPR_JSON_NUMBER_TYPE" '
+		--arg array_type "$_DDPR_JSON_ARRAY_TYPE" \
+		--arg boolean_type "$_DDPR_JSON_BOOLEAN_TYPE" \
+		--arg number_type "$_DDPR_JSON_NUMBER_TYPE" \
+		--arg string_type "$_DDPR_JSON_STRING_TYPE" '
 		select(((.errors // []) | type) == $array_type)
 		| select(((.errors // []) | length) == 0)
 		| select((.data.rateLimit.cost | type) == $number_type)
@@ -327,11 +340,11 @@ _ddpr_graphql_open_commits() {
 		| select(type == $array_type)
 		| select(all(.[];
 			(.number | type) == $number_type and
-			(.isDraft | type) == "boolean" and
+			(.isDraft | type) == $boolean_type and
 			(.commits.nodes | type) == $array_type and
-			(.commits.pageInfo.hasNextPage | type) == "boolean" and
-			((.commits.pageInfo.endCursor == null) or ((.commits.pageInfo.endCursor | type) == "string")) and
-			all(.commits.nodes[]; (.commit.messageHeadline | type) == "string")
+			(.commits.pageInfo.hasNextPage | type) == $boolean_type and
+			((.commits.pageInfo.endCursor == null) or ((.commits.pageInfo.endCursor | type) == $string_type)) and
+			all(.commits.nodes[]; (.commit.messageHeadline | type) == $string_type)
 		))
 		| map({
 			number,

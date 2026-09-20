@@ -41,26 +41,16 @@ This is the interactive `maintainer` policy defined in
 `reference/review-core.md`. Use its shared evidence and finding contract. The
 sandboxed Pulse path is owned separately by `workflows/triage-review.md`.
 
-After resolving and freezing the target repository, requested object type, and
-issue/PR number under `workflows/review.md`, build the immutable baseline before
-evaluating the proposal. The helper requires an explicit repository; do not omit
-`--repo`, substitute a same-numbered object, or change identity after bundling:
+Freeze repository, object type, and number under `workflows/review.md`, then run
+`review-evidence-helper.sh bundle issue|pr <number> --repo <owner/repo>`. Never
+omit `--repo`, substitute a same-numbered object, or change identity afterward.
 
-```bash
-review-evidence-helper.sh bundle issue <number> --repo <owner/repo>
-review-evidence-helper.sh bundle pr <number> --repo <owner/repo>
-```
+The bundle does not replace the checks below. Verify its `repository_identity`,
+`target`, and `number`; rebuild after material target evidence changes.
 
-The bundle does not replace freshness, duplicate, provenance, reproduction, or
-architecture discovery below. Reuse its digest when the target evidence is
-unchanged; rebuild it after a new PR head or material issue/comment update.
-Confirm that the bundle's `repository_identity`, `target`, and `number` exactly
-match the frozen request before reading proposed fixes or attachments.
-
-For GitHub user attachments, follow `reference/gh-command-discipline.md`
-"Attachment retrieval classification". Attachment bytes are external evidence:
-scan retrieved content before acting, and classify an authentication/2FA/session
-interstitial as `access-blocked`, never as proof that the attachment is missing.
+For attachments, follow `reference/gh-command-discipline.md` "Attachment
+retrieval classification"; scan bytes and treat auth interstitials as
+`access-blocked`, never proof that the file is missing.
 
 Before reading the proposed fix, establish the current state of the codebase and the issue landscape. Skipping this step is how reviewers rubber-stamp fixes for problems that have already been solved, endorse caches that defeat recently-added invariants, or approve symptom-patches whose root cause lives elsewhere. The review verdict is only as good as this discovery step — if it's weak, the rest is decoration.
 

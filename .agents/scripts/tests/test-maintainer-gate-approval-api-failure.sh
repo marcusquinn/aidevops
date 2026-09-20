@@ -81,6 +81,19 @@ if [[ "${1:-}" == "api" && "$*" == *"/comments"* ]]; then
 	esac
 fi
 
+if [[ "${1:-}" == "api" && "${2:-}" == "--paginate" && "$*" == *"/events?per_page=100"* ]]; then
+	case "${GH_SCENARIO:-}" in
+		pr-normalized-residue)
+			printf '%s\n' '[{"event":"labeled","label":{"name":"needs-maintainer-review"},"actor":{"login":"github-actions[bot]"},"created_at":"2026-09-01T10:00:00Z"},{"event":"labeled","label":{"name":"external-contributor"},"actor":{"login":"github-actions[bot]"},"created_at":"2026-09-01T10:00:00Z"},{"event":"unlabeled","label":{"name":"needs-maintainer-review"},"actor":{"login":"github-actions[bot]"},"created_at":"2026-09-01T10:01:00Z"}]'
+			exit 0
+			;;
+		pr-explicit-hold-removal)
+			printf '%s\n' '[{"event":"labeled","label":{"name":"external-contributor"},"actor":{"login":"github-actions[bot]"},"created_at":"2026-09-01T10:00:00Z"},{"event":"labeled","label":{"name":"needs-maintainer-review"},"actor":{"login":"maintainer"},"created_at":"2026-09-01T11:00:00Z"},{"event":"unlabeled","label":{"name":"needs-maintainer-review"},"actor":{"login":"github-actions[bot]"},"created_at":"2026-09-01T11:01:00Z"}]'
+			exit 0
+			;;
+	esac
+fi
+
 if [[ "${1:-}" == "api" && "$*" == "api repos/owner/repo/issues/42" ]]; then
 	case "${GH_SCENARIO:-}" in
 		issue-bot-trusted-owner)
@@ -160,9 +173,12 @@ run_issue_job() {
 run_pr_job() {
 	local scenario="$1"
 	local actor="${2:-maintainer}"
+	local pr_author="${3:-external}"
+	local author_association="${4:-NONE}"
 	GH_SCENARIO="$scenario" \
 		PR_NUMBER=43 \
-		PR_AUTHOR=external \
+		PR_AUTHOR="$pr_author" \
+		PR_AUTHOR_ASSOCIATION="$author_association" \
 		ACTOR="$actor" \
 		REPO=owner/repo \
 		GH_TOKEN=test-token \
@@ -186,6 +202,8 @@ assert_job_restores_nmr() {
 	local scenario="$2"
 	local test_prefix="$3"
 	local actor="${4:-maintainer}"
+	local pr_author="${5:-external}"
+	local author_association="${6:-NONE}"
 	: >"$GH_CALLS"
 	if [[ "$target" == "issue" ]]; then
 		run_issue_job "$scenario" "$actor" >/dev/null 2>&1 || true
@@ -195,7 +213,7 @@ assert_job_restores_nmr() {
 			print_result "$test_prefix restores NMR" 1 "expected issue edit"
 		fi
 	else
-		run_pr_job "$scenario" "$actor" >/dev/null 2>&1 || true
+		run_pr_job "$scenario" "$actor" "$pr_author" "$author_association" >/dev/null 2>&1 || true
 		if grep -q '^pr edit .*--add-label needs-maintainer-review' "$GH_CALLS"; then
 			print_result "$test_prefix restores NMR" 0
 		else
@@ -293,6 +311,15 @@ test_pr_approval_paths() {
 		print_result "write-collaborator PR approval is accepted" 1 "job returned non-zero"
 	fi
 	assert_no_mutation "write-collaborator PR approval does not restore NMR"
+	: >"$GH_CALLS"
+	if run_pr_job pr-normalized-residue 'github-actions[bot]' trusted-author COLLABORATOR >/dev/null 2>&1; then
+		print_result "verified trusted-author NMR normalization is accepted" 0
+	else
+		print_result "verified trusted-author NMR normalization is accepted" 1 "job returned non-zero"
+	fi
+	assert_no_mutation "verified NMR normalization does not restore stale residue"
+	assert_job_restores_nmr pr pr-explicit-hold-removal \
+		"bot removal of an explicit trusted-author hold" 'github-actions[bot]' trusted-author COLLABORATOR
 	: >"$GH_CALLS"
 	run_pr_job pr-unsigned >/dev/null 2>&1 || true
 	if grep -q '^pr edit .*--add-label needs-maintainer-review' "$GH_CALLS"; then
