@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import subprocess
+import sys
 import unittest
 from pathlib import Path
 
@@ -33,7 +34,21 @@ class GoogleAdsTriageTests(unittest.TestCase):
         self.assertTrue(all(item["non_mutating"] for item in report["results"]))
 
     def test_cli_runs_the_synthetic_snapshot(self):
-        result = subprocess.run(["python3", str(SCRIPTS / "google_ads_triage.py"), "analyze", "--input", str(FIXTURES / "google-account.json"), "--decisions", str(FIXTURES / "google-decisions.json"), "--dry-run"], check=True, capture_output=True, text=True)
+        result = subprocess.run(  # nosec B603 - fixed interpreter and repository-controlled fixture paths
+            [
+                sys.executable,
+                str(SCRIPTS / "google_ads_triage.py"),
+                "analyze",
+                "--input",
+                str(FIXTURES / "google-account.json"),
+                "--decisions",
+                str(FIXTURES / "google-decisions.json"),
+                "--dry-run",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
         self.assertEqual(json.loads(result.stdout)["authority"], "non_mutating_recommendations_only")
 
 
