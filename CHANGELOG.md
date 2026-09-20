@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.34.6] - 2026-09-20
+
+### Added
+
+- add private offline evaluation journal (#32051)
+
+### Fixed
+
+- recover stale runtime deployment fence (#32052)
+
 ## [3.34.5] - 2026-09-20
 
 ### Changed
