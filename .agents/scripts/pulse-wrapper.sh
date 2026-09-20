@@ -176,13 +176,14 @@ PULSE_JITTER_MAX="${PULSE_JITTER_MAX:-30}"
 # tight; adding up to 30s jitter would inflate the worst-case merge latency
 # to 90s+, defeating the <=90s PR-landing target (t21247, GH#21247).
 # GH#18614: iterate through all args — not just $1 — so diagnostic
-# flags are detected regardless of their position in the invocation.
+# flags are detected regardless of their position in the invocation. Executable
+# command mode also skips jitter so policy-compatible helper calls stay prompt.
 _pulse_skip_jitter=0
 if [[ "${PULSE_DRY_RUN:-0}" == "1" ]]; then
 	_pulse_skip_jitter=1
 else
 	for _pulse_arg in "$@"; do
-		if [[ "$_pulse_arg" == "--self-check" || "$_pulse_arg" == "--dry-run" || "$_pulse_arg" == "--merge-only" || "$_pulse_arg" == "--refill-only" ]]; then
+		if [[ "$_pulse_arg" == "--self-check" || "$_pulse_arg" == "--dry-run" || "$_pulse_arg" == "--merge-only" || "$_pulse_arg" == "--refill-only" || "$_pulse_arg" == "--command" ]]; then
 			_pulse_skip_jitter=1
 			break
 		fi
@@ -1946,6 +1947,110 @@ ENRICHMENT_MAX_PER_CYCLE="${ENRICHMENT_MAX_PER_CYCLE:-2}"
 # sync_todo_refs_for_repo and _pulse_is_sourced provided by
 # pulse-wrapper-cycle.sh (GH#21311 / t2936-child).
 
+# Policy-compatible command router for supervisor prompts. OpenCode intentionally
+# rejects source-and-function compound commands, so expose only the bounded
+# wrapper operations the pulse workflows need while preserving their existing
+# authority, capacity, sandbox, and dedup implementations.
+_pulse_wrapper_command_usage() {
+	printf '%s\n' 'usage: pulse-wrapper.sh --command <capacity|list-candidates|dispatch|approve-pr|relabel-needs-info|dispatch-foss|repo-cap|count-debt|create-debt-worktree|sync-todo> [args...]' >&2
+	return 2
+}
+
+_pulse_wrapper_run_command() {
+	local command_name="${1:-}"
+	[[ -n "$command_name" ]] || {
+		_pulse_wrapper_command_usage
+		return 2
+	}
+	shift
+
+	case "$command_name" in
+	capacity)
+		[[ "$#" -eq 0 ]] || {
+			_pulse_wrapper_command_usage
+			return 2
+		}
+		local max_workers active_workers available
+		max_workers=$(get_max_workers_target)
+		active_workers=$(count_active_workers)
+		[[ "$max_workers" =~ ^[0-9]+$ ]] || max_workers=1
+		[[ "$active_workers" =~ ^[0-9]+$ ]] || active_workers=0
+		available=$((max_workers - active_workers))
+		[[ "$available" -ge 0 ]] || available=0
+		printf '%s|%s|%s\n' "$max_workers" "$active_workers" "$available"
+		;;
+	list-candidates)
+		[[ "$#" -ge 1 && "$#" -le 2 && -n "${1:-}" && "${2:-100}" =~ ^[0-9]+$ ]] || {
+			_pulse_wrapper_command_usage
+			return 2
+		}
+		list_dispatchable_issue_candidates "$1" "${2:-100}"
+		;;
+	dispatch)
+		[[ "$#" -eq 7 ]] || {
+			_pulse_wrapper_command_usage
+			return 2
+		}
+		dispatch_with_dedup "$@"
+		;;
+	approve-pr)
+		[[ "$#" -eq 3 ]] || {
+			_pulse_wrapper_command_usage
+			return 2
+		}
+		approve_collaborator_pr "$@"
+		;;
+	relabel-needs-info)
+		[[ "$#" -le 1 ]] || {
+			_pulse_wrapper_command_usage
+			return 2
+		}
+		relabel_needs_info_replies "$@"
+		;;
+	dispatch-foss)
+		[[ "$#" -ge 1 && "$#" -le 2 && "${1:-}" =~ ^[0-9]+$ ]] || {
+			_pulse_wrapper_command_usage
+			return 2
+		}
+		dispatch_foss_workers "$@"
+		;;
+	repo-cap)
+		[[ "$#" -eq 1 ]] || {
+			_pulse_wrapper_command_usage
+			return 2
+		}
+		check_repo_worker_cap "$1"
+		;;
+	count-debt)
+		[[ "$#" -eq 2 ]] || {
+			_pulse_wrapper_command_usage
+			return 2
+		}
+		count_debt_workers "$@"
+		;;
+	create-debt-worktree)
+		[[ "$#" -eq 3 ]] || {
+			_pulse_wrapper_command_usage
+			return 2
+		}
+		create_quality_debt_worktree "$@"
+		;;
+	sync-todo)
+		[[ "$#" -eq 2 ]] || {
+			_pulse_wrapper_command_usage
+			return 2
+		}
+		sync_todo_refs_for_repo "$@"
+		;;
+	*)
+		_pulse_wrapper_command_usage
+		return 2
+		;;
+	esac
+
+	return 0
+}
+
 # Only run main when executed directly, not when sourced.
 # The pulse agent sources this file to access helper functions
 # (check_external_contributor_pr, check_permission_failure_pr)
@@ -1965,5 +2070,10 @@ ENRICHMENT_MAX_PER_CYCLE="${ENRICHMENT_MAX_PER_CYCLE:-2}"
 # very file. Keep _pulse_is_sourced() in cycle.sh for callers that need a
 # function-shaped helper.
 if [[ "${BASH_SOURCE[0]:-}" == "${0:-}" ]]; then
-	main "$@"
+	if [[ "${1:-}" == "--command" ]]; then
+		shift
+		_pulse_wrapper_run_command "$@"
+	else
+		main "$@"
+	fi
 fi

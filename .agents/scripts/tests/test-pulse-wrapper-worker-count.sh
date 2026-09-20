@@ -293,6 +293,38 @@ test_counts_review_issue_pr_workers() {
 	return 0
 }
 
+test_policy_compatible_command_router() {
+	local output=""
+	output=$(
+		get_max_workers_target() { printf '8\n'; }
+		count_active_workers() { printf '3\n'; }
+		_pulse_wrapper_run_command capacity
+	)
+	if [[ "$output" == "8|3|5" ]]; then
+		print_result "command router exposes capacity without source-and-function shell control" 0
+	else
+		print_result "command router exposes capacity without source-and-function shell control" 1 "Expected 8|3|5, got '${output}'"
+	fi
+
+	output=$(
+		list_dispatchable_issue_candidates() { printf '%s|%s\n' "$1" "$2"; }
+		_pulse_wrapper_run_command list-candidates owner/repo 25
+	)
+	if [[ "$output" == "owner/repo|25" ]]; then
+		print_result "command router delegates candidate listing to existing guarded implementation" 0
+	else
+		print_result "command router delegates candidate listing to existing guarded implementation" 1 "Unexpected output: '${output}'"
+	fi
+
+	if (_pulse_wrapper_run_command dispatch-foss not-a-number >/dev/null 2>&1); then
+		print_result "command router rejects invalid FOSS capacity" 1
+	else
+		print_result "command router rejects invalid FOSS capacity" 0
+	fi
+
+	return 0
+}
+
 test_list_dispatchable_candidates_default_open_except_needs_labels() {
 	GH_ISSUE_LIST_EXIT=0
 	GH_ISSUE_LIST_ERR=""
@@ -1174,6 +1206,7 @@ main() {
 	test_has_worker_exact_dir_match_no_sibling_false_positive
 	test_has_worker_exact_dir_match_accepts_correct_path
 	test_counts_review_issue_pr_workers
+	test_policy_compatible_command_router
 	test_list_dispatchable_candidates_default_open_except_needs_labels
 	test_list_dispatchable_candidates_logs_cooldown_skip_not_failure
 	test_count_runnable_candidates_counts_default_open_backlog
