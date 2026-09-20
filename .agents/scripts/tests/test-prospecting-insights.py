@@ -9,6 +9,7 @@ import copy
 import importlib.util
 import json
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -48,14 +49,14 @@ class ProspectingInsightsTests(unittest.TestCase):
         bad["decisions"][0]["themes"][0]["target"] = "yes"
         with self.assertRaises(insights.InsightError):
             insights.validate_decisions(bad, {"post-1", "comment-1", "comment-2"})
-        result = subprocess.run(["python3", str(SCRIPTS / "prospecting-insights-helper.py"), "--help"], check=True, capture_output=True, text=True)
+        result = subprocess.run([sys.executable, str(SCRIPTS / "prospecting-insights-helper.py"), "--help"], check=True, capture_output=True, text=True)  # nosec B603: fixed local test helper
         self.assertIn("derive", result.stdout)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             input_path, decisions_path = root / "input.json", root / "decisions.json"
             input_path.write_text(json.dumps(self.fixture["input"]), encoding="utf-8")
             decisions_path.write_text(json.dumps(self.fixture["decisions"]), encoding="utf-8")
-            derived = subprocess.run(["python3", str(SCRIPTS / "prospecting-insights-helper.py"), "derive", "--input", str(input_path), "--decisions", str(decisions_path), "--dry-run"], check=True, capture_output=True, text=True)
+            derived = subprocess.run([sys.executable, str(SCRIPTS / "prospecting-insights-helper.py"), "derive", "--input", str(input_path), "--decisions", str(decisions_path), "--dry-run"], check=True, capture_output=True, text=True)  # nosec B603: fixed local test helper
         self.assertEqual("aidevops.prospecting-insights-report/v1", json.loads(derived.stdout)["schema"])
 
     def test_comparison_requires_matching_rubric_and_exposes_coverage(self):
