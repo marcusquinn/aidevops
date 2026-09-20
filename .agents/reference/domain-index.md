@@ -66,6 +66,7 @@ This index describes what is catalogued, not what is usable now. Query `scripts/
 | Bundles | bundle, preset, project profile, model routing override | `bundles/*.json`, `scripts/bundle-helper.sh`, `tools/context/model-routing.md` |
 | Agent routing | agent, specialist, route, dispatch, primary agent | `reference/agent-routing.md` |
 | Model routing | model, tier, Haiku, Sonnet, Opus, fallback, budget | `tools/context/model-routing.md`, `reference/orchestration.md` |
+| Structured decisions | Jev, TypeSafe, System One, bounded classification, decision probabilities | `tools/ai-assistants/jev.md`, `tools/ai-assistants/jev-decisions.md` |
 | Orchestration | pulse, workers, dashboard, headless, dispatch, supervisor | `reference/orchestration.md`, `tools/ai-assistants/headless-dispatch.md`, `scripts/commands/pulse.md`, `scripts/commands/dashboard.md` |
 | Upstream watch | upstream, dependency watch, release monitor, source tracking | `scripts/upstream-watch-helper.sh`, `configs/upstream-watch.json` |
 | Testing infrastructure | testing setup, install test framework, new harness, fixtures, coverage setup | `scripts/commands/testing-setup.md`, `tools/testing-setup.md`, `scripts/testing-setup-helper.sh` |
