@@ -37,7 +37,9 @@ Data sources: GSC (clicks/impr), Ahrefs/DataForSEO (volume/difficulty), Bing —
 | **Quick Wins** | Position 4–20, Impressions > 100 | Optimize title/meta, internal links, content depth, schema | Impressions + proximity to Position 4 |
 | **Striking Distance** | Position 11–30, Volume > 500 | Expand content, backlinks, CWV, topic clusters | `volume × (31 - position)` |
 | **Low CTR** | CTR < 2%, Impressions > 500, Position ≤ 10 | Rewrite title/meta, CTAs, structured data, SERP features | Potential: `impressions × 5%` |
-| **Cannibalization** | Multiple URLs per query | Merge pages, canonicals, differentiate intent, 301s | Groups by query; flags 2+ URLs |
+| **Cannibalization** | Multiple URLs per query | Differentiate intent or proposal-only merge review | Groups by query; flags 2+ URLs |
+
+Multiple URLs are candidate evidence, not proof of harm. For an offline interpretation that preserves GSC source/metrics and classifies complementary, duplicate, or unknown outcomes, run `python3 .agents/scripts/seo-link-review-helper.py analyze --input pages.json --decisions decisions.json --dry-run`. It only emits recommendations; it never changes pages, canonicals, directives, or redirects.
 
 ## Output Format (TOON)
 
