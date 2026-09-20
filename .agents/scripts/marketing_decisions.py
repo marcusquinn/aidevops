@@ -15,7 +15,8 @@ _SUPPORT_SPEC = importlib.util.spec_from_file_location(
     "_marketing_decision_helper",
     Path(__file__).with_name("marketing-decision-helper.py"),
 )
-assert _SUPPORT_SPEC is not None and _SUPPORT_SPEC.loader is not None
+if _SUPPORT_SPEC is None or _SUPPORT_SPEC.loader is None:
+    raise RuntimeError("marketing decision helper module is unavailable")
 _support = importlib.util.module_from_spec(_SUPPORT_SPEC)
 _SUPPORT_SPEC.loader.exec_module(_support)
 
