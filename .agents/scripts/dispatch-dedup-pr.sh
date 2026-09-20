@@ -235,6 +235,49 @@ _ddpr_graphql_open_siblings() {
 }
 
 #######################################
+# Fetch one additional bounded page of commits for an open PR.
+#
+# Args: $1 = repo slug, $2 = PR number, $3 = cursor
+# Outputs: {commits,hasNextPage,endCursor}
+#######################################
+_ddpr_graphql_open_commit_page() {
+	local repo_slug="$1"
+	local pr_number="$2"
+	local cursor="$3"
+	local owner="${repo_slug%%/*}"
+	local repo="${repo_slug#*/}"
+	local response=""
+	# shellcheck disable=SC2016
+	response=$(AIDEVOPS_GH_GRAPHQL_COST_FROM_RESPONSE=1 \
+		AIDEVOPS_GH_ROUTE_DECISION="dispatch-dedup-open-commit-page-exact-cost" \
+		_ddpr_bounded_gh_read gh api graphql -f owner="$owner" -f name="$repo" \
+		-F number="$pr_number" -f cursor="$cursor" -f query='
+		query($owner: String!, $name: String!, $number: Int!, $cursor: String!) {
+			repository(owner: $owner, name: $name) {
+				pullRequest(number: $number) {
+					commits(first: 100, after: $cursor) {
+						nodes { commit { messageHeadline } }
+						pageInfo { hasNextPage endCursor }
+					}
+				}
+			}
+			rateLimit { cost }
+		}
+	' 2>/dev/null) || return $?
+	printf '%s' "$response" | jq -ce '
+		select(((.errors // []) | length) == 0)
+		| select((.data.rateLimit.cost | type) == "number" and .data.rateLimit.cost > 0)
+		| .data.repository.pullRequest.commits
+		| select((.nodes | type) == "array")
+		| select((.pageInfo.hasNextPage | type) == "boolean")
+		| select((.pageInfo.endCursor == null) or ((.pageInfo.endCursor | type) == "string"))
+		| select(all(.nodes[]; (.commit.messageHeadline | type) == "string"))
+		| {commits: [.nodes[].commit | {messageHeadline}],
+			hasNextPage: .pageInfo.hasNextPage, endCursor: .pageInfo.endCursor}' 2>/dev/null
+	return $?
+}
+
+#######################################
 # Fetch the ten newest open PR commit headlines with response-owned quota cost.
 #
 # Args: $1 = repo slug
@@ -245,7 +288,9 @@ _ddpr_graphql_open_commits() {
 	local repo_slug="$1"
 	local owner="${repo_slug%%/*}"
 	local repo="${repo_slug#*/}"
-	local response="" pr_json=""
+	local response="" pr_json="" pr_number="" cursor="" page_json=""
+	local page_count=0 max_pages="${AIDEVOPS_DEDUP_COMMIT_MAX_PAGES:-10}"
+	[[ "$max_pages" =~ ^[1-9][0-9]*$ && "$max_pages" -le 20 ]] || max_pages=10
 	[[ -n "$owner" && -n "$repo" && "$repo_slug" == */* && "$repo" != */* ]] || return 1
 
 	# shellcheck disable=SC2016
@@ -263,7 +308,7 @@ _ddpr_graphql_open_commits() {
 						number title isDraft
 						commits(first: 100) {
 							nodes { commit { messageHeadline } }
-							pageInfo { hasNextPage }
+							pageInfo { hasNextPage endCursor }
 						}
 					}
 				}
@@ -284,16 +329,43 @@ _ddpr_graphql_open_commits() {
 			(.number | type) == $number_type and
 			(.isDraft | type) == "boolean" and
 			(.commits.nodes | type) == $array_type and
-			.commits.pageInfo.hasNextPage == false and
+			(.commits.pageInfo.hasNextPage | type) == "boolean" and
+			((.commits.pageInfo.endCursor == null) or ((.commits.pageInfo.endCursor | type) == "string")) and
 			all(.commits.nodes[]; (.commit.messageHeadline | type) == "string")
 		))
 		| map({
 			number,
 			title,
 			isDraft,
-			commits: [.commits.nodes[].commit | {messageHeadline}]
+			commits: [.commits.nodes[].commit | {messageHeadline}],
+			hasNextPage: .commits.pageInfo.hasNextPage,
+			endCursor: .commits.pageInfo.endCursor
 		})
 	' 2>/dev/null) || return "$_DDPR_LOOKUP_RC_RESPONSE_INVALID"
+
+	while pr_number=$(printf '%s' "$pr_json" | jq -r '[.[] | select(.hasNextPage == true)][0].number // empty' 2>/dev/null) &&
+		[[ -n "$pr_number" ]]; do
+		page_count=1
+		while [[ "$page_count" -lt "$max_pages" ]]; do
+			cursor=$(printf '%s' "$pr_json" | jq -r --argjson number "$pr_number" '.[] | select(.number == $number) | .endCursor // empty' 2>/dev/null) || return "$_DDPR_LOOKUP_RC_RESPONSE_INVALID"
+			[[ -n "$cursor" ]] || return "$_DDPR_LOOKUP_RC_RESPONSE_INVALID"
+			page_json=$(_ddpr_graphql_open_commit_page "$repo_slug" "$pr_number" "$cursor") || return $?
+			pr_json=$(printf '%s' "$pr_json" | jq -ce --argjson number "$pr_number" --argjson page "$page_json" '
+				map(if .number == $number then
+					.commits += $page.commits
+					| .hasNextPage = $page.hasNextPage
+					| .endCursor = $page.endCursor
+				else . end)' 2>/dev/null) || return "$_DDPR_LOOKUP_RC_RESPONSE_INVALID"
+			page_count=$((page_count + 1))
+			if [[ $(printf '%s' "$page_json" | jq -r '.hasNextPage') == false ]]; then
+				break
+			fi
+		done
+		if printf '%s' "$pr_json" | jq -e --argjson number "$pr_number" '.[] | select(.number == $number) | .hasNextPage == true' >/dev/null 2>&1; then
+			return "$_DDPR_LOOKUP_RC_RESPONSE_INVALID"
+		fi
+	done
+	pr_json=$(printf '%s' "$pr_json" | jq -ce 'map(del(.hasNextPage, .endCursor))' 2>/dev/null) || return "$_DDPR_LOOKUP_RC_RESPONSE_INVALID"
 	printf '%s' "$pr_json"
 	return 0
 }

@@ -56,6 +56,8 @@ if [[ "${1:-}" == "api" && "${2:-}" == "graphql" ]]; then
 	query_string=""
 	query_owner=""
 	query_name=""
+	query_number=""
+	query_cursor=""
 	shift 2
 	for argument in "$@"; do
 		case "$argument" in
@@ -63,6 +65,8 @@ if [[ "${1:-}" == "api" && "${2:-}" == "graphql" ]]; then
 		queryString=*) query_string="${argument#queryString=}" ;;
 		owner=*) query_owner="${argument#owner=}" ;;
 		name=*) query_name="${argument#name=}" ;;
+		number=*) query_number="${argument#number=}" ;;
+		cursor=*) query_cursor="${argument#cursor=}" ;;
 		esac
 	done
 	if [[ -n "${GH_GRAPHQL_CALL_LOG:-}" ]]; then
@@ -132,6 +136,16 @@ EOF
 _append_gh_stub_graphql_tail() {
 	local stub_path="$1"
 	cat >>"$stub_path" <<'EOF'
+	if [[ "$query_text" == *"commits(first: 100, after:"* ]]; then
+		page_json="${GH_OPEN_COMMIT_PAGE_JSON:-}"
+		[[ -n "$page_json" ]] || page_json='{"commits":[],"hasNextPage":false,"endCursor":null}'
+		jq -cn --argjson page "$page_json" --argjson cost "$graphql_cost" '
+			{data:{repository:{pullRequest:{commits:{
+				nodes:[($page.commits // [])[] | {commit:{messageHeadline:(.messageHeadline // "")}}],
+				pageInfo:{hasNextPage:($page.hasNextPage // false),endCursor:($page.endCursor // null)}
+			}}},rateLimit:{cost:$cost}}}'
+		exit 0
+	fi
 	if [[ "$query_text" == *"commits(first: 100)"* ]]; then
 		jq -cn --argjson nodes "${GH_OPEN_COMMITS_JSON:-[]}" --argjson cost "$graphql_cost" '
 			{
@@ -144,7 +158,10 @@ _append_gh_stub_graphql_tail() {
 								isDraft: ($pr.isDraft // false),
 								commits: {
 									nodes: [($pr.commits // [])[] | {commit: {messageHeadline: (.messageHeadline // "")}}],
-									pageInfo: {hasNextPage: false}
+									pageInfo: {
+										hasNextPage: ($pr.hasNextPage // false),
+										endCursor: ($pr.endCursor // null)
+									}
 								}
 							}))
 						}
@@ -349,6 +366,32 @@ test_has_open_pr_detects_response_metered_commit_reference() {
 	unset GH_OPEN_COMMITS_JSON
 	print_result "has-open-pr meters open-commit GraphQL from its response" 1 \
 		"Expected commit evidence for issue #10000"
+	return 0
+}
+
+test_has_open_pr_paginates_only_oversized_pr_commit_evidence() {
+	local output=""
+	export GH_OPEN_COMMITS_JSON='[
+		{"number":1062,"title":"Unrelated oversized PR","isDraft":false,"commits":[{"messageHeadline":"ordinary first page"}],"hasNextPage":true,"endCursor":"cursor-100"},
+		{"number":1063,"title":"Other complete PR","isDraft":false,"commits":[{"messageHeadline":"ordinary complete commit"}]}
+	]'
+	export GH_OPEN_COMMIT_PAGE_JSON='{"commits":[{"messageHeadline":"Fixes #10002 on a later page"}],"hasNextPage":false,"endCursor":null}'
+	printf '' >"$GH_GRAPHQL_CALL_LOG"
+
+	if output=$("$HELPER_SCRIPT" has-open-pr 10002 marcusquinn/aidevops 't10002: bounded commit pagination'); then
+		unset GH_OPEN_COMMITS_JSON GH_OPEN_COMMIT_PAGE_JSON
+		if [[ "$output" == *"open PR #1062 has commits targeting issue #10002"* ]] &&
+			grep -qF '1|dispatch-dedup-open-commit-page-exact-cost|' "$GH_GRAPHQL_CALL_LOG"; then
+			print_result "has-open-pr contains oversized commit evidence to the affected PR" 0
+			return 0
+		fi
+		print_result "has-open-pr contains oversized commit evidence to the affected PR" 1 "output=${output}"
+		return 0
+	fi
+
+	unset GH_OPEN_COMMITS_JSON GH_OPEN_COMMIT_PAGE_JSON
+	print_result "has-open-pr contains oversized commit evidence to the affected PR" 1 \
+		"Expected later-page commit evidence without repository-wide uncertainty"
 	return 0
 }
 
@@ -1017,6 +1060,7 @@ main() {
 	test_has_open_pr_detects_closing_keyword
 	test_has_open_pr_detects_task_id_fallback
 	test_has_open_pr_detects_response_metered_commit_reference
+	test_has_open_pr_paginates_only_oversized_pr_commit_evidence
 	test_has_open_pr_allows_owner_repo_same_name
 	test_has_open_pr_returns_nonzero_without_match
 	test_has_open_pr_ignores_planning_for_reference
