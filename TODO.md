@@ -623,7 +623,7 @@ Session baseline grew from ~9.5k tokens (Mar 1) to ~21.8k tokens (Mar 27) in pro
 
 - [ ] t18444 Provider-neutral ads, SEO and GEO decision workflows #parent #enhancement #interactive tier:thinking ref:GH#32056 logged:2026-09-20 -> [todo/tasks/t18444-brief.md]
 - [x] t18445 Shared marketing decision contract and bounded batch runner #enhancement #interactive #auto-dispatch tier:thinking parent:t18444 ref:GH#32057 logged:2026-09-20 -> [todo/tasks/t18445-brief.md] pr:#32095 completed:2026-09-20
-- [ ] t18446 Offline marketing and site snapshot importers #enhancement #interactive #auto-dispatch tier:standard parent:t18444 blocked-by:t18445 ref:GH#32058 logged:2026-09-20 -> [todo/tasks/t18446-brief.md]
+- [x] t18446 Offline marketing and site snapshot importers #enhancement #interactive #auto-dispatch tier:standard parent:t18444 blocked-by:t18445 ref:GH#32058 logged:2026-09-20 -> [todo/tasks/t18446-brief.md] pr:#32107 completed:2026-09-20
 - [ ] t18447 Google Ads hygiene and search-term triage #enhancement #interactive #auto-dispatch tier:standard parent:t18444 blocked-by:t18446 ref:GH#32061 logged:2026-09-20 -> [todo/tasks/t18447-brief.md]
 - [ ] t18448 Shared intent-to-page matching and paid-to-organic opportunities #enhancement #interactive #auto-dispatch tier:standard parent:t18444 blocked-by:t18446 ref:GH#32059 logged:2026-09-20 -> [todo/tasks/t18448-brief.md]
 - [ ] t18449 Evidence-backed internal links and cannibalization review #enhancement #interactive #auto-dispatch tier:standard parent:t18444 blocked-by:t18448 ref:GH#32060 logged:2026-09-20 -> [todo/tasks/t18449-brief.md]
