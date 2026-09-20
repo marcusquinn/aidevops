@@ -2,7 +2,7 @@
 
 # Capability Registry
 
-Catalogued capabilities: **22**
+Catalogued capabilities: **23**
 
 | Capability | Owner | Runtimes | Mandatory readiness | Fallback |
 |---|---|---|---|---|
@@ -18,6 +18,7 @@ Catalogued capabilities: **22**
 | `browser-automation` | Build+ | opencode, claude-code | deployed, enabled, runtime_compatible, tool_visible, reachable | `static-web-fetch` |
 | `cloudflare-management` | Aidevops | opencode | enabled, authenticated, authorized, reachable, runtime_compatible, tool_visible | `cloudflare-cli-guidance` |
 | `seo-data` | SEO | opencode, claude-code | configured, authenticated, authorized, reachable, tool_visible | `public-search-research` |
+| `getanyapi-data` | Research | opencode, claude-code | deployed, configured, authenticated, authorized, reachable, runtime_compatible, tool_visible, usable | `native-data-provider-or-authorized-browser-extraction` |
 | `campaign-research-dossiers` | Research | opencode, claude-code | deployed, runtime_compatible, tool_visible | `research-unavailable` |
 | `social-provider-readiness` | Content | opencode, claude-code | deployed, runtime_compatible, tool_visible | `gated-no-mutation` |
 | `linkedin-approved-posting` | Content | opencode, claude-code | deployed, configured, authenticated, authorized, reachable, usable | `gated-no-mutation` |

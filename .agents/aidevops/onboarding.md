@@ -82,6 +82,7 @@ The two workflows compose: `/onboarding` first (you need `gh` to be authenticate
 | SEO | DataForSEO | `DATAFORSEO_USERNAME`, `DATAFORSEO_PASSWORD` | https://app.dataforseo.com/api-access |
 | SEO | Serper | `SERPER_API_KEY` | https://serper.dev/api-key |
 | SEO | Outscraper | `OUTSCRAPER_API_KEY` | https://outscraper.com/dashboard |
+| Data | GetAnyAPI | `ANYAPI_API_KEY` | https://getanyapi.com/dashboard |
 | SEO | Google Search Console | OAuth via MCP | https://search.google.com/search-console |
 | Context | Context7 | MCP config only | — |
 | Browser | Playwright | `npx playwright install` | — |
@@ -170,7 +171,7 @@ chmod 600 ~/.config/aidevops/credentials.sh && chmod 700 ~/.config/aidevops
 
 - **Layers**: Main agents (Tab) → subagents (`@name`) → commands (`/name`)
 - **Main**: generated from the canonical roster; currently `Aidevops`, `Automate`, `Build+`, `Business`, `Content`, `Health`, `Legal`, `Marketing-Sales`, `PR`, `Product`, `Reports`, `Research`, `SEO`, `Vault` | **Init**: `cd ~/your-project && aidevops init`
-- **Subagents**: `@hetzner`, `@cloudflare`, `@cloudron`, `@coolify`, `@vercel`, `@github-cli`, `@dataforseo`, `@code-standards`, `@wp-dev`, `@calendar`
+- **Subagents**: `@hetzner`, `@cloudflare`, `@cloudron`, `@coolify`, `@vercel`, `@github-cli`, `@dataforseo`, `@getanyapi`, `@code-standards`, `@wp-dev`, `@calendar`
 - **Commands**: `/create-prd`, `/generate-tasks`, `/feature`, `/bugfix`, `/hotfix`, `/pr`, `/preflight`, `/release`, `/linters-local`, `/keyword-research`
 
 ## Repo Sync & Orchestration

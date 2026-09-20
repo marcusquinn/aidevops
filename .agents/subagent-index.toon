@@ -98,7 +98,7 @@ tools/containers/,tools/containers subagents,orbstack|remote-dispatch
 tools/context/,tools/context subagents,context-builder-agent|context-builder|context-guardrails|context7-cli|context7|dspy|dspyground|github-search|llm-tldr|mcp-discovery|model-routing|openapi-search|pageindex|prompt-optimization|rapidfuzz|toon
 tools/conversion/,tools/conversion subagents,mineru|pandoc
 tools/credentials/,tools/credentials subagents,api-key-management|api-key-setup|auth-troubleshooting|bitwarden|cch-reverse-engineering|encryption-stack|enpass|environment-variables|gocryptfs|gopass|list-keys|multi-tenant|psst|sops|vaultwarden
-tools/data-extraction/,tools/data-extraction subagents,outscraper
+tools/data-extraction/,tools/data-extraction subagents,getanyapi|outscraper
 tools/database/,tools/database subagents,pglite-local-first|vector-search
 tools/database/vector-search/,tools/database/vector-search subagents,per-tenant-rag|zvec
 tools/deployment/,tools/deployment subagents,agent-skills

@@ -166,6 +166,17 @@
       "probes": {"configured": {"env_any": ["DATAFORSEO_USERNAME"]}, "authenticated": {"env_all": ["DATAFORSEO_USERNAME", "DATAFORSEO_PASSWORD"]}, "authorized": {"live": "requires provider permission check"}, "reachable": {"live": "requires MCP handshake"}, "tool_visible": {"tool": "dataforseo_*"}}
     },
     {
+      "name": "getanyapi-data",
+      "aliases": ["getanyapi", "anyapi", "data-api-marketplace", "scraping-api"],
+      "owner": "Research",
+      "description": "Cost-gated fallback access to normalized external data APIs with privacy-minimized native-capability graduation evidence",
+      "runtimes": ["opencode", "claude-code"],
+      "entry_points": ["tools/data-extraction/getanyapi.md", "scripts/getanyapi-helper.py"],
+      "fallback": "native-data-provider-or-authorized-browser-extraction",
+      "required": ["deployed", "configured", "authenticated", "authorized", "reachable", "runtime_compatible", "tool_visible", "usable"],
+      "probes": {"deployed": {"path": "scripts/getanyapi-helper.py"}, "configured": {"env_any": ["ANYAPI_API_KEY"]}, "authenticated": {"env_all": ["ANYAPI_API_KEY"]}, "authorized": {"live": "requires an explicit approved USD ceiling for the logical call"}, "reachable": {"live": "requires AnyAPI catalog or API response"}, "tool_visible": {"tool": "python3"}, "usable": {"live": "requires a live schema, price ceiling within approval, and provider authorization"}}
+    },
+    {
       "name": "campaign-research-dossiers",
       "aliases": ["campaign-research", "research-dossier"],
       "owner": "Research",
