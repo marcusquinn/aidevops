@@ -56,12 +56,13 @@ If `AVAILABLE > 0` and `WORKER_COUNT == 0`, attempt admission for available auth
 export PATH="/bin:/usr/bin:/usr/local/bin:/opt/homebrew/bin:$PATH"
 ~/.aidevops/agents/scripts/circuit-breaker-helper.sh check  # exit 1 = stop
 
-MAX_WORKERS=$(cat ~/.aidevops/logs/pulse-max-workers 2>/dev/null || echo 4)
-source ~/.aidevops/agents/scripts/pulse-wrapper.sh
-WORKER_COUNT=$(list_active_worker_processes | wc -l | tr -d ' ')
-AVAILABLE=$((MAX_WORKERS - WORKER_COUNT))
-RUNNER_USER=$(gh api user --jq '.login' 2>/dev/null || whoami)
+~/.aidevops/agents/scripts/pulse-wrapper.sh --command capacity
+gh api user --jq '.login'
 ```
+
+The capacity command prints `MAX_WORKERS|WORKER_COUNT|AVAILABLE`. Use those
+values in subsequent direct helper invocations; do not source the wrapper or
+compose shell assignments around it.
 
 ### 2. Read pre-fetched state (DO NOT re-fetch)
 
@@ -82,8 +83,7 @@ Most merging is handled by `merge_ready_prs_all_repos()` before the LLM session 
 `REVIEW_REQUIRED` is NOT a merge blocker for collaborator PRs with passing CI. Approve then merge:
 
 ```bash
-source ~/.aidevops/agents/scripts/pulse-wrapper.sh
-approve_collaborator_pr NUMBER SLUG AUTHOR
+~/.aidevops/agents/scripts/pulse-wrapper.sh --command approve-pr NUMBER SLUG AUTHOR
 full-loop-helper.sh merge NUMBER SLUG --squash
 ```
 
@@ -96,12 +96,12 @@ Triage review dispatch is handled deterministically by `dispatch_triage_reviews(
 ### 4. Dispatch workers for open issues
 
 ```bash
-source ~/.aidevops/agents/scripts/pulse-wrapper.sh
-list_dispatchable_issue_candidates SLUG 100
+~/.aidevops/agents/scripts/pulse-wrapper.sh --command list-candidates SLUG 100
 
 # Atomic dispatch — runs all 7 dedup layers, assigns, launches, records ledger
-dispatch_with_dedup NUMBER SLUG "Issue #NUMBER: TITLE" "TASK_ID: TITLE" "$RUNNER_USER" PATH \
-  "/full-loop Implement issue #NUMBER (URL) -- DESCRIPTION" || continue
+~/.aidevops/agents/scripts/pulse-wrapper.sh --command dispatch NUMBER SLUG \
+  "Issue #NUMBER: TITLE" "TASK_ID: TITLE" RUNNER_USER PATH \
+  "/full-loop Implement issue #NUMBER (URL) -- DESCRIPTION"
 ```
 
 Repeat until `AVAILABLE` slots are filled or no dispatchable issues remain.
@@ -111,8 +111,7 @@ Repeat until `AVAILABLE` slots are filled or no dispatchable issues remain.
 Transition replied issues to `needs-maintainer-review`. No worker dispatch, no slots consumed.
 
 ```bash
-source ~/.aidevops/agents/scripts/pulse-wrapper.sh
-relabel_needs_info_replies
+~/.aidevops/agents/scripts/pulse-wrapper.sh --command relabel-needs-info
 ```
 
 ### 4.6. Dispatch FOSS contribution workers when idle capacity exists (t1702)
@@ -120,8 +119,7 @@ relabel_needs_info_replies
 Lowest priority — only when all managed-repo work is dispatched and slots remain. Skip when: managed-repo slots occupied, daily budget exhausted, or no eligible FOSS repos.
 
 ```bash
-source ~/.aidevops/agents/scripts/pulse-wrapper.sh
-AVAILABLE=$(dispatch_foss_workers "$AVAILABLE")
+~/.aidevops/agents/scripts/pulse-wrapper.sh --command dispatch-foss AVAILABLE
 ```
 
 ### 5. Record the initial dispatch outcome
@@ -146,10 +144,7 @@ After initial dispatch, enter a monitoring loop. Each cycle (repeat until exit c
 3. **Check capacity**:
 
    ```bash
-   source ~/.aidevops/agents/scripts/pulse-wrapper.sh
-   MAX_WORKERS=$(cat ~/.aidevops/logs/pulse-max-workers 2>/dev/null || echo 4)
-   WORKER_COUNT=$(list_active_worker_processes | wc -l | tr -d ' ')
-   AVAILABLE=$((MAX_WORKERS - WORKER_COUNT))
+   ~/.aidevops/agents/scripts/pulse-wrapper.sh --command capacity
    ```
 
 4. **If slots open**: check mergeable PRs (free), dispatch workers for highest-priority issues, dispatch triage reviews (step 3.5), scan needs-info replies (step 4.5), dispatch FOSS workers if idle (step 4.6). Re-fetch issue state with targeted `gh` calls only for repos where you need to dispatch.
@@ -288,7 +283,7 @@ Also check bundle overrides: `bundle-helper.sh get agent_routing <repo-path>`.
 
 ### Per-repo worker cap
 
-Default `MAX_WORKERS_PER_REPO=5`. Use `check_repo_worker_cap PATH` from `pulse-wrapper.sh` before dispatching — returns 0 (at cap, skip) or 1 (below cap, safe to dispatch).
+Default `MAX_WORKERS_PER_REPO=5`. Run `~/.aidevops/agents/scripts/pulse-wrapper.sh --command repo-cap PATH` before dispatching — returns 0 (at cap, skip) or 1 (below cap, safe to dispatch).
 
 ### Lineage context for subtasks
 
@@ -303,9 +298,8 @@ Only dispatch workers for repos in the pre-fetched state (`pulse: true`). Worker
 ### Concurrency caps
 
 ```bash
-source ~/.aidevops/agents/scripts/pulse-wrapper.sh
-read -r qd_active qd_queued < <(count_debt_workers SLUG quality-debt)
-read -r sd_active sd_queued < <(count_debt_workers SLUG simplification-debt)
+~/.aidevops/agents/scripts/pulse-wrapper.sh --command count-debt SLUG quality-debt
+~/.aidevops/agents/scripts/pulse-wrapper.sh --command count-debt SLUG simplification-debt
 
 QUALITY_DEBT_MAX=$(( MAX_WORKERS * QUALITY_DEBT_CAP_PCT / 100 ))
 [[ "$QUALITY_DEBT_MAX" -lt 1 ]] && QUALITY_DEBT_MAX=1
@@ -324,15 +318,14 @@ TOTAL_DEBT_MAX=$(( MAX_WORKERS * 30 / 100 ))
 Quality-debt workers MUST use pre-created worktrees to prevent branch conflicts:
 
 ```bash
-source ~/.aidevops/agents/scripts/pulse-wrapper.sh
-
 CANONICAL_BRANCH=$(git -C PATH rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
 [[ "$CANONICAL_BRANCH" == "main" || "$CANONICAL_BRANCH" == "master" ]] || continue
 
-QD_WT_PATH=$(create_quality_debt_worktree PATH NUMBER TITLE) || continue
+~/.aidevops/agents/scripts/pulse-wrapper.sh --command create-debt-worktree PATH NUMBER TITLE
 
-dispatch_with_dedup NUMBER SLUG "Issue #NUMBER: TITLE" "GH#NUMBER: TITLE" "$RUNNER_USER" \
-  "$QD_WT_PATH" "/full-loop Implement issue #NUMBER (URL) -- TITLE" || continue
+~/.aidevops/agents/scripts/pulse-wrapper.sh --command dispatch NUMBER SLUG \
+  "Issue #NUMBER: TITLE" "GH#NUMBER: TITLE" RUNNER_USER QD_WT_PATH \
+  "/full-loop Implement issue #NUMBER (URL) -- TITLE"
 ```
 
 **PR title for debt issues:** `GH#<number>: <description>` — never `qd-`, bare numbers, or `t` prefix.
@@ -362,8 +355,7 @@ absolute threshold.
 ## Cross-Repo TODO Sync
 
 ```bash
-source ~/.aidevops/agents/scripts/pulse-wrapper.sh
-sync_todo_refs_for_repo SLUG PATH
+~/.aidevops/agents/scripts/pulse-wrapper.sh --command sync-todo SLUG PATH
 ```
 
 Issue creation (push) is handled exclusively by CI. The pulse runs pull and close only.
