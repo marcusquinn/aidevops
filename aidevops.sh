@@ -347,19 +347,10 @@ cmd_update_help() {
 }
 
 cmd_update() {
-	# Update is operational, not compositional. Do not let any reachable Git,
-	# package-manager, migration, or setup subprocess inherit an editor or pager.
-	# Local declarations restore the caller's environment when this function exits.
-	local EDITOR=/usr/bin/false
-	local VISUAL=/usr/bin/false
-	local GIT_EDITOR=/usr/bin/false
-	local GIT_SEQUENCE_EDITOR=/usr/bin/false
-	local GIT_PAGER=cat
-	local PAGER=cat
-	local GIT_TERMINAL_PROMPT=0
+	local EDITOR=/usr/bin/false VISUAL=/usr/bin/false GIT_EDITOR=/usr/bin/false
+	local GIT_SEQUENCE_EDITOR=/usr/bin/false GIT_PAGER="cat" PAGER="cat" GIT_TERMINAL_PROMPT=0
 	export EDITOR VISUAL GIT_EDITOR GIT_SEQUENCE_EDITOR GIT_PAGER PAGER GIT_TERMINAL_PROMPT
 	local skip_project_sync=false
-	local reconcile_repo_verify=false
 	local update_output_mode="${AIDEVOPS_OUTPUT_MODE:-auto}"
 	local arg
 	for arg in "$@"; do
@@ -375,122 +366,128 @@ cmd_update() {
 	current_version=$(get_version)
 	print_info "Current version: $current_version"
 	print_info "Fetching latest version..."
+	_AIDEVOPS_UPDATE_RECONCILE_REPO_VERIFY=false
+	_update_install_framework "$current_version" "$update_output_mode" || return 1
+	_update_finish "$skip_project_sync"
+	return 0
+}
 
+_update_install_framework() {
+	local current_version="$1" update_output_mode="$2"
 	if check_dir "$INSTALL_DIR/.git"; then
-		cd "$INSTALL_DIR" || exit 1
-		if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
-			print_error "Refusing to update: tracked local changes exist in $INSTALL_DIR"
-			git status --short
-			print_info "Commit or stash these changes, then rerun aidevops update."
-			return 1
-		fi
-		local current_branch
-		current_branch=$(git branch --show-current 2>/dev/null || echo "")
-		if [[ "$current_branch" != "main" ]]; then
-			print_info "Switching to main branch..."
-			if ! git checkout main --quiet 2>/dev/null && ! git checkout -b main origin/main --quiet 2>/dev/null; then
-				print_error "Failed to switch to main; refusing to update the active '$current_branch' branch."
-				return 1
-			fi
-		fi
-		local local_hash
-		local_hash=$(git rev-parse HEAD) || return 1
-		if ! _update_fetch_main main; then
-			print_error "Failed to fetch origin/main; no update was applied."
-			return 1
-		fi
-		local remote_hash
-		remote_hash=$(git rev-parse origin/main) || return 1
-		if [[ "$local_hash" != "$remote_hash" ]] && git merge-base --is-ancestor "$remote_hash" "$local_hash" 2>/dev/null; then
-			print_error "Refusing to update: local commits exist on main."
-			print_info "Preserve or reconcile the local history in $INSTALL_DIR, then rerun aidevops update."
-			return 1
-		fi
-		if [[ "$local_hash" == "$remote_hash" ]]; then
-			print_success "Framework already up to date!"
-			local repo_version deployed_version
-			repo_version=$(cat "$INSTALL_DIR/VERSION" 2>/dev/null || echo "unknown")
-			deployed_version=$(cat "$HOME/.aidevops/agents/VERSION" 2>/dev/null || echo "none")
-			if [[ "$repo_version" != "$deployed_version" ]]; then
-				print_warning "Deployed agents ($deployed_version) don't match repo ($repo_version)"
-				print_info "Re-running incremental setup to sync agents..."
-				_run_update_setup_transaction "$update_output_mode" "$local_hash" || return 1
-			else
-				# t2706: VERSION matches but .deployed-sha may lag HEAD when
-				# fixes land between releases. Detect and redeploy on framework
-				# code drift (inline so bootstrap doesn't depend on the deployed
-				# aidevops-update-check.sh already carrying the same check).
-				# Docs-only drift is intentionally skipped — no runtime impact.
-				local stamp_file="$HOME/.aidevops/.deployed-sha"
-				if [[ -f "$stamp_file" ]]; then
-					local deployed_sha has_code_drift=0
-					deployed_sha=$(tr -d '[:space:]' <"$stamp_file" 2>/dev/null) || deployed_sha=""
-					if [[ -n "$deployed_sha" && "$deployed_sha" != "$local_hash" ]]; then
-						if _update_repo_verify_files_changed "$deployed_sha" "$local_hash"; then reconcile_repo_verify=true; fi
-						# Per Gemini code-review on PR #20342: use git's path filter +
-						# `grep -q .` to detect drift across the full set of deploy-affecting
-						# paths (not just .agents/ subdirs — also setup.sh, .agents/scripts/setup/modules/,
-						# and aidevops.sh itself, which are deployed/sourced by setup).
-						if git -C "$INSTALL_DIR" diff --name-only "$deployed_sha" "$local_hash" -- \
-							.agents/scripts/ .agents/agents/ .agents/workflows/ .agents/prompts/ .agents/hooks/ \
-							setup.sh .agents/scripts/setup/modules/ aidevops.sh 2>/dev/null | grep -q .; then
-							has_code_drift=1
-						fi
-						if [[ "$has_code_drift" -eq 1 ]]; then
-							print_warning "Deployed scripts drifted (${deployed_sha:0:7}→${local_hash:0:7})"
-							print_info "Re-running incremental setup to deploy latest scripts..."
-							_run_update_setup_transaction "$update_output_mode" "$local_hash" || return 1
-						fi
-						# GH#21735: workflow templates can change between
-						# releases without triggering has_code_drift (templates
-						# live outside the deploy-affecting paths). Check the
-						# template subset separately and surface drift.
-						_update_check_workflow_drift "$deployed_sha" "$local_hash"
-					fi
-				fi
-			fi
-		else
-			print_info "Applying latest changes..."
-			local old_hash
-			old_hash="$local_hash"
-			if [[ "${_AIDEVOPS_UPDATE_CANONICAL_FAST_FORWARDED:-false}" == "true" ]]; then
-				:
-			elif git merge --ff-only "$remote_hash" --quiet; then
-				:
-			else
-				print_error "Fast-forward update failed; preserving local history."
-				print_info "Review $INSTALL_DIR, resolve the divergence, then rerun aidevops update."
-				return 1
-			fi
-			local new_version new_hash
-			new_version=$(get_version)
-			new_hash=$(git rev-parse HEAD)
-			if [[ "$new_hash" != "$remote_hash" ]]; then
-				print_error "Updated HEAD does not match the fetched origin/main commit; refusing to run setup."
-				return 1
-			fi
-			if [[ "$old_hash" != "$new_hash" ]]; then
-				if _update_repo_verify_files_changed "$old_hash" "$new_hash"; then reconcile_repo_verify=true; fi
-				_update_render_changelog "$old_hash" "$new_hash" "$current_version"
-				# GH#21735: surface workflow template drift so the
-				# operator can resync downstream callers before CI bites.
-				_update_check_workflow_drift "$old_hash" "$new_hash"
-			fi
-			echo ""
-			# Verify supply chain integrity before applying changes
-			_update_verify_signature
-			echo ""
-			print_info "Running incremental setup to apply changes (falls back to full setup if needed)..."
-			_run_update_setup_transaction "$update_output_mode" "$new_hash" || return 1
-			print_success "Updated to version $new_version (agents deployed)"
-		fi
+		_update_existing_install "$current_version" "$update_output_mode"
 	else
 		_update_fresh_install || return 1
 	fi
+	return 0
+}
+
+_update_existing_install() {
+	local current_version="$1" update_output_mode="$2"
+	cd "$INSTALL_DIR" || exit 1
+	if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
+		print_error "Refusing to update: tracked local changes exist in $INSTALL_DIR"
+		git status --short
+		print_info "Commit or stash these changes, then rerun aidevops update."
+		return 1
+	fi
+	local current_branch
+	current_branch=$(git branch --show-current 2>/dev/null || echo "")
+	if [[ "$current_branch" != "main" ]]; then
+		print_info "Switching to main branch..."
+		if ! git checkout main --quiet 2>/dev/null && ! git checkout -b main origin/main --quiet 2>/dev/null; then
+			print_error "Failed to switch to main; refusing to update the active '$current_branch' branch."
+			return 1
+		fi
+	fi
+	local local_hash remote_hash
+	local_hash=$(git rev-parse HEAD) || return 1
+	if ! _update_fetch_main main; then
+		print_error "Failed to fetch origin/main; no update was applied."
+		return 1
+	fi
+	remote_hash=$(git rev-parse origin/main) || return 1
+	if [[ "$local_hash" != "$remote_hash" ]] && git merge-base --is-ancestor "$remote_hash" "$local_hash" 2>/dev/null; then
+		print_error "Refusing to update: local commits exist on main."
+		print_info "Preserve or reconcile the local history in $INSTALL_DIR, then rerun aidevops update."
+		return 1
+	fi
+	if [[ "$local_hash" == "$remote_hash" ]]; then
+		_update_already_current "$local_hash" "$update_output_mode"
+	else
+		_update_apply_remote "$local_hash" "$remote_hash" "$current_version" "$update_output_mode"
+	fi
+	return 0
+}
+
+_update_already_current() {
+	local local_hash="$1" update_output_mode="$2"
+	print_success "Framework already up to date!"
+	local repo_version deployed_version
+	repo_version=$(cat "$INSTALL_DIR/VERSION" 2>/dev/null || echo "unknown")
+	deployed_version=$(cat "$HOME/.aidevops/agents/VERSION" 2>/dev/null || echo "none")
+	if [[ "$repo_version" != "$deployed_version" ]]; then
+		print_warning "Deployed agents ($deployed_version) don't match repo ($repo_version)"
+		print_info "Re-running incremental setup to sync agents..."
+		_run_update_setup_transaction "$update_output_mode" "$local_hash"
+		return $?
+	fi
+	local stamp_file="$HOME/.aidevops/.deployed-sha" deployed_sha=""
+	[[ -f "$stamp_file" ]] || return 0
+	deployed_sha=$(tr -d '[:space:]' <"$stamp_file" 2>/dev/null) || deployed_sha=""
+	[[ -n "$deployed_sha" && "$deployed_sha" != "$local_hash" ]] || return 0
+	if _update_repo_verify_files_changed "$deployed_sha" "$local_hash"; then _AIDEVOPS_UPDATE_RECONCILE_REPO_VERIFY=true; fi
+	if git -C "$INSTALL_DIR" diff --name-only "$deployed_sha" "$local_hash" -- .agents/scripts/ .agents/agents/ .agents/workflows/ .agents/prompts/ .agents/hooks/ setup.sh .agents/scripts/setup/modules/ aidevops.sh 2>/dev/null | grep -q .; then
+		print_warning "Deployed scripts drifted (${deployed_sha:0:7}→${local_hash:0:7})"
+		print_info "Re-running incremental setup to deploy latest scripts..."
+		_run_update_setup_transaction "$update_output_mode" "$local_hash" || return 1
+	fi
+	_update_check_workflow_drift "$deployed_sha" "$local_hash"
+	return 0
+}
+
+_update_apply_remote() {
+	local old_hash="$1" remote_hash="$2" current_version="$3" update_output_mode="$4"
+	print_info "Applying latest changes..."
+	if [[ "${_AIDEVOPS_UPDATE_CANONICAL_FAST_FORWARDED:-false}" != "true" ]] && ! git merge --ff-only "$remote_hash" --quiet; then
+		print_error "Fast-forward update failed; preserving local history."
+		print_info "Review $INSTALL_DIR, resolve the divergence, then rerun aidevops update."
+		return 1
+	fi
+	local new_version new_hash
+	new_version=$(get_version)
+	new_hash=$(git rev-parse HEAD)
+	if [[ "$new_hash" != "$remote_hash" ]]; then
+		print_error "Updated HEAD does not match the fetched origin/main commit; refusing to run setup."
+		return 1
+	fi
+	if [[ "$old_hash" != "$new_hash" ]]; then
+		if _update_repo_verify_files_changed "$old_hash" "$new_hash"; then _AIDEVOPS_UPDATE_RECONCILE_REPO_VERIFY=true; fi
+		_update_render_changelog "$old_hash" "$new_hash" "$current_version"
+		_update_check_workflow_drift "$old_hash" "$new_hash"
+	fi
+	echo ""
+	_update_verify_signature
+	echo ""
+	print_info "Running incremental setup to apply changes (falls back to full setup if needed)..."
+	_run_update_setup_transaction "$update_output_mode" "$new_hash" || return 1
+	print_success "Updated to version $new_version (agents deployed)"
+	return 0
+}
+
+_update_start_pulse() {
+	[[ "${AIDEVOPS_SKIP_PULSE_RESTART:-0}" != "1" ]] || return 0
+	local pulse_helper="${AGENTS_DIR}/scripts/pulse-lifecycle-helper.sh"
+	[[ -x "$pulse_helper" ]] && "$pulse_helper" start >/dev/null 2>&1 || print_warning "Pulse start failed (non-fatal)"
+	return 0
+}
+
+_update_finish() {
+	local skip_project_sync="$1"
 
 	_run_update_source_access_reconciliation
 	_update_sync_projects "$skip_project_sync" "$(get_version)"
-	if [[ "$skip_project_sync" != "$_AIDEVOPS_UPDATE_TRUE" && "$reconcile_repo_verify" == "$_AIDEVOPS_UPDATE_TRUE" ]]; then
+	if [[ "$skip_project_sync" != "$_AIDEVOPS_UPDATE_TRUE" && "${_AIDEVOPS_UPDATE_RECONCILE_REPO_VERIFY:-false}" == "$_AIDEVOPS_UPDATE_TRUE" ]]; then
 		_update_reconcile_repo_verify
 	fi
 	_update_check_homebrew
@@ -532,13 +529,7 @@ cmd_update() {
 	# 'start' subcommand does not check it directly — only 'restart' and
 	# 'restart-if-running' do). Non-fatal: a pulse start failure should
 	# not fail the update.
-	if [[ "${AIDEVOPS_SKIP_PULSE_RESTART:-0}" != "1" ]]; then
-		local _pulse_helper="${AGENTS_DIR}/scripts/pulse-lifecycle-helper.sh"
-		if [[ -x "$_pulse_helper" ]]; then
-			"$_pulse_helper" start >/dev/null 2>&1 || print_warning "Pulse start failed (non-fatal)"
-		fi
-	fi
-
+	_update_start_pulse
 	return 0
 }
 
@@ -1180,7 +1171,7 @@ _help_commands() {
 	return 0
 }
 
-_help_detailed_sections() {
+_help_detailed_sections_content() {
 	echo "Security:"
 	echo "  aidevops security            # Run ALL checks (posture + hygiene + supply chain)"
 	echo "  aidevops security posture    # Interactive security posture setup (gopass, gh, SSH)"
@@ -1340,6 +1331,11 @@ _help_detailed_sections() {
 	echo "    aidevops circuit-breaker reset"
 	echo ""
 	_help_management_sections
+	return 0
+}
+
+_help_detailed_sections() {
+	_help_detailed_sections_content
 	return 0
 }
 
@@ -1830,48 +1826,81 @@ _cmd_client_format() {
 }
 
 # Main entry point
+_main_badges() {
+	local subcommand="${1:-}"
+	local sync_helper="badges-sync-helper.sh"
+	case "$subcommand" in
+	render)
+		shift
+		local helper="$HOME/.aidevops/agents/scripts/readme-badges-helper.sh"
+		[[ -f "$helper" ]] || helper="$AGENTS_DIR/scripts/readme-badges-helper.sh"
+		if [[ -f "$helper" ]]; then bash "$helper" render "$@"; else print_error "readme-badges-helper.sh not found. Run: aidevops update"; return 1; fi
+		;;
+	check) shift; _dispatch_helper "badges-check-helper.sh" "badges-check-helper.sh" "$@" ;;
+	sync) shift; _dispatch_helper "$sync_helper" "$sync_helper" "$@" ;;
+	install) shift; _dispatch_helper "$sync_helper" "$sync_helper" --workflow-only "$@" ;;
+	help | --help | -h | "")
+		echo ""
+		echo "aidevops badges — README badge block and repo metrics workflow management (t2975)"
+		echo ""
+		echo "Subcommands:"
+		echo "  render  <slug>                 Print canonical badge block for a repo"
+		echo "  check   [--repo SLUG] [--json]  Detect badge drift across managed repos"
+		echo "  sync    [--repo SLUG] [--apply] Inject badge block + generate metrics + install workflow"
+		echo "  install [--repo SLUG] [--apply] Install repo metrics refresh workflow only"
+		echo ""
+		echo "Options (check/sync/install):"
+		echo "  --repo SLUG    Limit to a single repo"
+		echo "  --apply        Actually perform the sync (default: dry-run)"
+		echo "  --json         Machine-readable output"
+		echo "  --verbose      Show diff summaries (check only)"
+		echo ""
+		echo "Examples:"
+		echo "  aidevops badges check                       # scan all repos for badge drift"
+		echo "  aidevops badges check --json | jq '.[]'    # machine-readable output"
+		echo "  aidevops badges render owner/repo           # print badge block"
+		echo "  aidevops badges sync                        # dry-run sync across all repos"
+		echo "  aidevops badges sync --repo owner/r --apply # apply to a single repo"
+		echo "  aidevops metrics generate [PATH]            # generate local docs/metrics artifacts"
+		echo ""
+		;;
+	*) print_error "Unknown badges subcommand: $subcommand (try render|check|sync|install|help)"; return 1 ;;
+	esac
+	return 0
+}
+
 main() {
 	local command="${1:-help}"
 	local check_workflows_helper="check-workflows-helper.sh"
+	local update_help="help"
 	shift || true
-
-	# Help for inventory commands must bypass repository auto-detection and
-	# version checks. Those startup checks may read the repository registry,
-	# while help must remain bounded and side-effect-free.
-	if [[ "$command" == "check-workflows" || "$command" == "workflows" ]]; then
-		local arg
-		for arg in "$@"; do
-			case "$arg" in
-			-h | --help)
-				_dispatch_helper "$check_workflows_helper" "$check_workflows_helper" "$@"
-				return $?
-				;;
-			esac
-		done
-	fi
-
-	# Update help must return before startup checks or cmd_update(), which can
-	# inspect repositories, fetch remotes, deploy agents, and synchronize projects.
 	if [[ "$command" == "update" || "$command" == "upgrade" || "$command" == "u" ]]; then
 		local arg
 		for arg in "$@"; do
-			case "$arg" in
-			help | -h | --help)
-				cmd_update_help
-				return $?
-				;;
-			esac
+			if [[ "$arg" == "$update_help" || "$arg" == "-h" || "$arg" == "--help" ]]; then cmd_update_help; return $?; fi
 		done
+		_main_check_unregistered "$command"
+		cmd_update "$@"
+		return $?
 	fi
-
-	# Auto-detect unregistered repo on any command (silent check)
+	_main_early_help "$command" "$check_workflows_helper" "$@" && return 0
 	_main_check_unregistered "$command"
+	_main_check_version
+	_main_dispatch "$command" "$check_workflows_helper" "$@"
+}
 
-	# Check if agents need updating (skip for update command itself)
-	if [[ "$command" != "update" && "$command" != "upgrade" && "$command" != "u" ]]; then
-		_main_check_version
-	fi
+_main_early_help() {
+	local command="$1" check_workflows_helper="$2" arg
+	shift 2
+	for arg in "$@"; do
+		if [[ "$command" == "check-workflows" || "$command" == "workflows" ]] && [[ "$arg" == "-h" || "$arg" == "--help" ]]; then _dispatch_helper "$check_workflows_helper" "$check_workflows_helper" "$@"; return $?; fi
+	done
+	return 1
+}
 
+_main_dispatch() {
+	local command="$1" check_workflows_helper="$2"
+	shift 2
 	case "$command" in
 	init | i) cmd_init "$@" ;;
 	setup) cmd_setup "$@" ;;
@@ -1897,76 +1926,7 @@ main() {
 	check-workflows | workflows) _dispatch_helper "$check_workflows_helper" "$check_workflows_helper" "$@" ;;
 	sync-workflows) _dispatch_helper "sync-workflows-helper.sh" "sync-workflows-helper.sh" "$@" ;;
 	metrics) _dispatch_helper "repo-metrics-helper.sh" "repo-metrics-helper.sh" "$@" ;;
-	badges)
-		# Badge management: render | check | sync | install (t2975)
-		# Bare 'aidevops badges' with no subcommand shows a usage summary.
-		# Subcommands:
-		#   render <slug>               — render canonical badge block for a repo
-		#   check  [--repo SLUG] [--json] [--verbose]  — cross-repo drift check
-		#   sync   [--repo SLUG] [--apply]              — inject badge block + generate metrics + install workflow
-		#   install [--repo SLUG] [--apply]             — install repo metrics refresh workflow only
-		local _badges_sub="${1:-help}"
-		local _badges_check_h="badges-check-helper.sh"
-		local _badges_sync_h="badges-sync-helper.sh"
-		case "$_badges_sub" in
-		render)
-			shift
-			local _render_helper
-			_render_helper=$(bash -c '
-				d="$HOME/.aidevops/agents/scripts/readme-badges-helper.sh"
-				l="'"$AGENTS_DIR"'/scripts/readme-badges-helper.sh"
-				[[ -f "$d" ]] && echo "$d" || echo "$l"
-			')
-			if [[ -f "$_render_helper" ]]; then
-				bash "$_render_helper" render "$@"
-			else
-				print_error "readme-badges-helper.sh not found. Run: aidevops update"
-				exit 1
-			fi
-			;;
-		check)
-			shift
-			_dispatch_helper "$_badges_check_h" "$_badges_check_h" "$@"
-			;;
-		sync)
-			shift
-			_dispatch_helper "$_badges_sync_h" "$_badges_sync_h" "$@"
-			;;
-		install)
-			shift
-			_dispatch_helper "$_badges_sync_h" "$_badges_sync_h" --workflow-only "$@"
-			;;
-		help | --help | -h | "")
-			echo ""
-			echo "aidevops badges — README badge block and repo metrics workflow management (t2975)"
-			echo ""
-			echo "Subcommands:"
-			echo "  render  <slug>                 Print canonical badge block for a repo"
-			echo "  check   [--repo SLUG] [--json]  Detect badge drift across managed repos"
-			echo "  sync    [--repo SLUG] [--apply] Inject badge block + generate metrics + install workflow"
-			echo "  install [--repo SLUG] [--apply] Install repo metrics refresh workflow only"
-			echo ""
-			echo "Options (check/sync/install):"
-			echo "  --repo SLUG    Limit to a single repo"
-			echo "  --apply        Actually perform the sync (default: dry-run)"
-			echo "  --json         Machine-readable output"
-			echo "  --verbose      Show diff summaries (check only)"
-			echo ""
-			echo "Examples:"
-			echo "  aidevops badges check                       # scan all repos for badge drift"
-			echo "  aidevops badges check --json | jq '.[]'    # machine-readable output"
-			echo "  aidevops badges render owner/repo           # print badge block"
-			echo "  aidevops badges sync                        # dry-run sync across all repos"
-			echo "  aidevops badges sync --repo owner/r --apply # apply to a single repo"
-			echo "  aidevops metrics generate [PATH]            # generate local docs/metrics artifacts"
-			echo ""
-			;;
-		*)
-			print_error "Unknown badges subcommand: $_badges_sub (try render|check|sync|install|help)"
-			exit 1
-			;;
-		esac
-		;;
+	badges) _main_badges "$@" ;;
 	security) _cmd_security "$@" ;;
 	doctor | doc) _dispatch_helper "doctor-helper.sh" "doctor-helper.sh" "$@" ;;
 	detect | scan) cmd_detect ;;
