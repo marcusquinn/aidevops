@@ -57,6 +57,7 @@ json.dump({
         # count the same policy hold.
         'dispatch_candidate_blocked_policy_gate': [now],
         'dispatch_candidate_failed_reason_policy_gate': [now],
+        'dispatch_candidate_blocked_dirty_worktree_evidence_unavailable': [now],
         'pulse_rest_core_progress_blocked': [now],
         'pulse_rest_core_progress_blocked_unknown': [now],
         'pulse_rest_core_unit_blocked': [now],
@@ -227,6 +228,7 @@ jq -e '.graphql_budget.deferred_stages.dashboard_freshness_check == 1' "$json_ou
 jq -e '.graphql_budget.deferred_stages.evaluate_routines == 1' "$json_output" >/dev/null
 jq -e '.pre_launch_blockers.cost_budget_exceeded == 2' "$json_output" >/dev/null
 jq -e '.pre_launch_blockers.dedup_active_claim == 1' "$json_output" >/dev/null
+jq -e '.pre_launch_blockers.dirty_worktree_evidence_unavailable == 1' "$json_output" >/dev/null
 jq -e '.top_pre_launch_blockers[0].reason == "cost_budget_exceeded"' "$json_output" >/dev/null
 jq -e '.dispatch_stage_timing_ms.worker_launch_total.avg_ms == 123' "$json_output" >/dev/null
 jq -e '.dispatch_stage_events == 3' "$json_output" >/dev/null

@@ -374,6 +374,8 @@ def build_pre_launch_blockers(counter_hits):
     breaker_counters = {
         'graphql_circuit_breaker': 'dispatch_graphql_circuit_blocked',
         'runner_health_circuit_breaker': 'pulse_dispatch_runner_health_breaker_tripped',
+        'dirty_worktree_evidence_unavailable':
+            'dispatch_candidate_blocked_dirty_worktree_evidence_unavailable',
     }
     for reason, counter_name in breaker_counters.items():
         count = counter_hits.get(counter_name, 0)

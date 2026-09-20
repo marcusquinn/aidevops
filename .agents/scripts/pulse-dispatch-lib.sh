@@ -75,7 +75,13 @@ _DISPATCH_OUTCOME_SUCCESS="success"
 _DISPATCH_OUTCOME_FAILED="fail"
 _DISPATCH_PRIORITY_PRODUCT="product"
 _DISPATCH_ELIGIBILITY_INELIGIBLE="ineligible"
-_DISPATCH_ELIGIBILITY_UNKNOWN="unknown"
+_DISPATCH_VALUE_UNKNOWN="unknown"
+_DISPATCH_ELIGIBILITY_UNKNOWN="$_DISPATCH_VALUE_UNKNOWN"
+_DISPATCH_DIRTY_MARKER_EVIDENCE_KIND="not_checked"
+_DISPATCH_DIRTY_MARKER_REQUEST_ATTEMPTED="$_DISPATCH_VALUE_UNKNOWN"
+_DISPATCH_DIRTY_MARKER_DEFERRED_BY="none"
+_DISPATCH_DIRTY_MARKER_RETRY_AT="$_DISPATCH_VALUE_UNKNOWN"
+_DISPATCH_DIRTY_MARKER_EXIT_CODE="0"
 
 _dispatch_cycle_cache_path() {
 	local kind="$1"
@@ -406,30 +412,77 @@ _dispatch_recent_dirty_worktree_marker_active() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local hold_seconds="${DISPATCH_DIRTY_WORKTREE_HOLD_SECONDS:-900}"
-	_DISPATCH_DIRTY_MARKER_STATE="unknown"
+	_DISPATCH_DIRTY_MARKER_STATE="$_DISPATCH_VALUE_UNKNOWN"
+	_DISPATCH_DIRTY_MARKER_EVIDENCE_KIND="local_state_failed"
+	_DISPATCH_DIRTY_MARKER_REQUEST_ATTEMPTED="$_DISPATCH_VALUE_UNKNOWN"
+	_DISPATCH_DIRTY_MARKER_DEFERRED_BY="none"
+	_DISPATCH_DIRTY_MARKER_RETRY_AT="$_DISPATCH_VALUE_UNKNOWN"
+	_DISPATCH_DIRTY_MARKER_EXIT_CODE="0"
 
 	[[ "$hold_seconds" =~ ^[0-9]+$ ]] || hold_seconds="900"
 	if [[ "$hold_seconds" -eq 0 ]]; then
 		_DISPATCH_DIRTY_MARKER_STATE="clear"
+		_DISPATCH_DIRTY_MARKER_EVIDENCE_KIND="verified_clear"
 		return 1
 	fi
 
 	local comments_json="" since_iso="" now_epoch="${AIDEVOPS_DIRTY_WORKTREE_NOW_EPOCH:-}"
+	local transport_error="" transport_error_template="" transport_diagnostic="" diagnostic_line="" gh_rc=0
 	[[ -n "$now_epoch" ]] || now_epoch=$(date +%s) || return 0
 	since_iso=$(python3 "${_PULSE_DISPATCH_LIB_DIR}/pulse-dirty-worktree-marker.py" \
 		--since "$hold_seconds" "$now_epoch") || return 0
 	# Only comments updated within the hold window can contain an active marker
 	# or a later resolution. Still paginate: a busy thread can exceed one page.
+	transport_error_template=$(_dispatch_cycle_cache_path "pulse-dirty-marker-transport" ".XXXXXX") || return 0
+	transport_error=$(mktemp "$transport_error_template" 2>/dev/null) || return 0
 	comments_json=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments?per_page=100&since=${since_iso}" \
-		--paginate --slurp 2>/dev/null) || return 0
+		--paginate --slurp 2>"$transport_error") || gh_rc=$?
+	if [[ "$gh_rc" -ne 0 ]]; then
+		_DISPATCH_DIRTY_MARKER_EVIDENCE_KIND="transport_failed"
+		_DISPATCH_DIRTY_MARKER_EXIT_CODE="$gh_rc"
+		while IFS= read -r diagnostic_line; do
+			case "$diagnostic_line" in
+			*"[gh-transport] error_kind=github-api-read-deferred "*) transport_diagnostic="$diagnostic_line" ;;
+			esac
+		done <"$transport_error"
+		if [[ -n "$transport_diagnostic" ]]; then
+			_DISPATCH_DIRTY_MARKER_EVIDENCE_KIND="transport_deferred"
+			if [[ "$transport_diagnostic" =~ attempted=(true|false) ]]; then
+				_DISPATCH_DIRTY_MARKER_REQUEST_ATTEMPTED="${BASH_REMATCH[1]}"
+			fi
+			if [[ "$transport_diagnostic" =~ deferred_by=([A-Za-z0-9_.:-]+) ]]; then
+				_DISPATCH_DIRTY_MARKER_DEFERRED_BY="${BASH_REMATCH[1]}"
+			fi
+			if [[ "$transport_diagnostic" =~ retry_at=([A-Za-z0-9_.:-]+) ]]; then
+				_DISPATCH_DIRTY_MARKER_RETRY_AT="${BASH_REMATCH[1]}"
+			fi
+		fi
+		rm -f "$transport_error" 2>/dev/null || true
+		return 0
+	fi
+	rm -f "$transport_error" 2>/dev/null || true
+	_DISPATCH_DIRTY_MARKER_REQUEST_ATTEMPTED="true"
 
 	local marker_state=""
 	marker_state=$(printf '%s' "$comments_json" | \
 		python3 "${_PULSE_DISPATCH_LIB_DIR}/pulse-dirty-worktree-marker.py" \
-			"$hold_seconds" "$now_epoch") || return 0
+			"$hold_seconds" "$now_epoch") || {
+		_DISPATCH_DIRTY_MARKER_EVIDENCE_KIND="unparsable"
+		return 0
+	}
 	_DISPATCH_DIRTY_MARKER_STATE="$marker_state"
 
-	case "$marker_state" in clear|expired:*) return 1 ;; esac
+	case "$marker_state" in
+	clear)
+		_DISPATCH_DIRTY_MARKER_EVIDENCE_KIND="verified_clear"
+		return 1
+		;;
+	expired:*)
+		_DISPATCH_DIRTY_MARKER_EVIDENCE_KIND="verified_expired"
+		return 1
+		;;
+	*) _DISPATCH_DIRTY_MARKER_EVIDENCE_KIND="confirmed_marker" ;;
+	esac
 	return 0
 }
 
@@ -1262,6 +1315,11 @@ _dispatch_skip_for_dirty_worktree_recovery() {
 	local repo_slug="$2"
 
 	if _dispatch_recent_dirty_worktree_marker_active "$issue_number" "$repo_slug"; then
+		if [[ "${_DISPATCH_DIRTY_MARKER_STATE:-$_DISPATCH_VALUE_UNKNOWN}" == "$_DISPATCH_VALUE_UNKNOWN" ]]; then
+			echo "[pulse-wrapper] Dispatch_max: skipping #${issue_number} (${repo_slug}) — DISPATCH_BLOCK_REASON reason=dirty_worktree_evidence_unavailable evidence_kind=${_DISPATCH_DIRTY_MARKER_EVIDENCE_KIND:-$_DISPATCH_VALUE_UNKNOWN} attempted=${_DISPATCH_DIRTY_MARKER_REQUEST_ATTEMPTED:-$_DISPATCH_VALUE_UNKNOWN} deferred_by=${_DISPATCH_DIRTY_MARKER_DEFERRED_BY:-none} retry_at=${_DISPATCH_DIRTY_MARKER_RETRY_AT:-$_DISPATCH_VALUE_UNKNOWN} exit_code=${_DISPATCH_DIRTY_MARKER_EXIT_CODE:-0}" >>"$LOGFILE"
+			_dispatch_stats_increment "dispatch_candidate_blocked_dirty_worktree_evidence_unavailable"
+			return 0
+		fi
 		local marker_runner_key=""
 		if [[ "${_DISPATCH_DIRTY_MARKER_STATE:-}" == *":runner_key="* ]]; then
 			marker_runner_key="${_DISPATCH_DIRTY_MARKER_STATE##*runner_key=}"
