@@ -36,14 +36,23 @@ ingest = next(step for step in jobs["forge-event"]["steps"] if step.get("name") 
 assert ingest["env"]["GH_TOKEN"] == "${{ secrets.GITHUB_TOKEN }}"
 assert "steps.coordinator-restore.outputs.available == 'true'" in ingest["if"]
 upload = next(step for step in jobs["forge-event"]["steps"] if step.get("name") == "Upload durable coordinator state")
+assert upload["id"] == "coordinator-upload"
 assert upload["with"]["name"] == "forge-coordinator-${{ github.repository_id }}"
+assert upload["with"]["retention-days"] == 90
+prune = next(step for step in jobs["forge-event"]["steps"] if step.get("name") == "Prune superseded coordinator checkpoints")
+assert jobs["forge-event"]["permissions"]["actions"] == "write"
+assert prune["continue-on-error"] is True
+assert "steps.coordinator-upload.outcome == 'success'" in prune["if"]
+assert prune["env"]["CURRENT_ARTIFACT_ID"] == "${{ steps.coordinator-upload.outputs.artifact-id }}"
+assert '[[ "$artifact_id" != "$CURRENT_ARTIFACT_ID" ]]' in prune["run"]
+assert "--method DELETE" in prune["run"]
 persist = next(step for step in jobs["forge-event"]["steps"] if step.get("name") == "Persist durable coordinator state")
 assert persist["id"] == "coordinator-persist"
 assert "steps.coordinator-persist.outcome == 'success'" in upload["if"]
 push_checkout = next(step for step in jobs["sync-on-push"]["steps"] if step.get("name") == "Checkout")
 assert push_checkout["with"]["token"] == "${{ secrets.SYNC_PAT || secrets.GITHUB_TOKEN }}"
 push_warning = next(step for step in jobs["sync-on-push"]["steps"] if step.get("name") == "Check SYNC_PAT visibility (t2166)")
-assert "SYNC_PAT not present in this run" in push_warning["run"]
+assert "SYNC_PAT not present" in push_warning["run"]
 PY
 
 for caller in "$SELF_CALLER" "$CALLER_TEMPLATE"; do

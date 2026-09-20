@@ -68,7 +68,7 @@ jobs:
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 5
     permissions:
-      actions: read
+      actions: write
       contents: write
       issues: read
       pull-requests: read
@@ -154,6 +154,7 @@ jobs:
         run: node __aidevops/.agents/scripts/task-coordinator.mjs checkpoint
 
       - name: Upload durable coordinator state
+        id: coordinator-upload
         if: always() && steps.coordinator-persist.outcome == 'success'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -161,6 +162,23 @@ jobs:
           path: ${{ runner.temp }}/aidevops-coordinator/tasks.db
           if-no-files-found: error
           retention-days: 90
+
+      - name: Prune superseded coordinator checkpoints
+        if: always() && steps.coordinator-upload.outcome == 'success'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COORDINATOR_ARTIFACT_NAME: forge-coordinator-${{ github.repository_id }}
+          CURRENT_ARTIFACT_ID: ${{ steps.coordinator-upload.outputs.artifact-id }}
+        run: |
+          artifact_ids=$(gh api --paginate \
+            "repos/${{ github.repository }}/actions/artifacts?name=${COORDINATOR_ARTIFACT_NAME}&per_page=100" \
+            --jq '.artifacts[] | select(.expired == false) | .id')
+          while IFS= read -r artifact_id; do
+            [[ "$artifact_id" =~ ^[0-9]+$ ]] || continue
+            [[ "$artifact_id" != "$CURRENT_ARTIFACT_ID" ]] || continue
+            gh api --method DELETE "repos/${{ github.repository }}/actions/artifacts/${artifact_id}"
+          done <<<"$artifact_ids"
 
   sync-on-push:
     name: Sync TODO.md → GitHub Issues
