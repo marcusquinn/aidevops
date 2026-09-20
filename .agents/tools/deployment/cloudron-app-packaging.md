@@ -286,6 +286,17 @@ Track version in `/app/data/.app_version`; compare on start to run per-version m
 
 ## Managed Package Lifecycle
 
+Keep detailed human/operator guides in `docs/`, conventional root entrypoints
+(README, AGENTS, SECURITY, CHANGELOG), and AI-only working context in `.agents/`.
+Root AGENTS should link the canonical architecture and operational contracts.
+When moving guides, update relative links, package-test assertions and generator
+paths; preserve existing repository conventions and do not overwrite custom docs.
+
+Cloudron terminates ordinary web TLS. A manifest-declared dedicated native TCP
+listener may terminate addon TLS inside the app when required by its protocol;
+document the trust boundary and verify the actual native transport. This is not
+permission to replace Cloudron nginx or claim native VPN-provider support.
+
 `aidevops init` detects `CloudronManifest.json`, records
 `app_type: cloudron-package` in local `repos.json`, and installs the thin
 `.github/workflows/cloudron-package-release.yml` caller when no file already

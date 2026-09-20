@@ -111,12 +111,27 @@ test_cloudron_publishing_command_syntax() {
 	return 0
 }
 
+test_documentation_layout_scaffolding() {
+	local repo_dir="${TEST_ROOT}/documentation"
+	mkdir -p "$repo_dir"
+	printf '{}\n' >"${repo_dir}/CloudronManifest.json"
+	scaffold_agents_md "$repo_dir"
+	local guide="${repo_dir}/.agents/AGENTS.md"
+	assert_equal true "$(grep -Fq 'Keep human/operator guides in' "$guide" && printf true || printf false)" "new agent guide separates operator documentation"
+	assert_equal true "$(grep -Fq 'Generated artifacts require changing their writer' "$guide" && printf true || printf false)" "new agent guide preserves generator ownership"
+	printf '\n## Custom project context\n\nCustom project guidance must survive.\n' >>"$guide"
+	scaffold_agents_md "$repo_dir"
+	assert_equal true "$(grep -Fq 'Custom project guidance must survive.' "$guide" && printf true || printf false)" "repeated init preserves custom guide content"
+	return 0
+}
+
 main() {
 	TEST_ROOT=$(mktemp -d)
 	trap cleanup EXIT
 	test_cloudron_workflow_scaffolding
 	test_cloudron_registration_metadata
 	test_cloudron_publishing_command_syntax
+	test_documentation_layout_scaffolding
 	printf '\nRan %d tests, %d failed.\n' "$((PASSED + FAILED))" "$FAILED"
 	[[ "$FAILED" -eq 0 ]] || return 1
 	return 0

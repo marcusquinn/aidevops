@@ -24,6 +24,7 @@ tools:
 - **Host OS**: Vendor-required Ubuntu x64; verify the exact fresh-install release in [Cloudron requirements](https://docs.cloudron.io/installation/) and [OS selection](../../reference/os-selection.md). Do not substitute Rocky/Alpine or assume ARM support
 - **NetBird / multiple brands**: [NetBird guidance](../networking/netbird.md) — private mesh apps share the primary IP with unique native/STUN ports; the optional second-IP public proxy helper is single-instance, not repeatable per app without further tooling
 - **Optional GitHub ingress**: [Webhook onboarding](../../reference/github-webhook-onboarding.md) — use verified NetBird optional ingress, Cloudflare Tunnel or a separately reviewed gateway; preserve GitHub signatures and do not replace Cloudron's managed nginx
+- **VPN-protected apps and ACL sync**: Read [NetBird integration boundaries](../networking/netbird.md#cloudron-identity-and-vpn-protected-apps); Cloudron 10.0.5 only accepts OpenVPN as its native VPN provider. Custom OIDC is not app user/group enforcement
 - **Auth**: API token from Dashboard > Settings > API Access (9.1+: passkey/OIDC login); an expired CLI token is not proof that authorised server access is unavailable
 - **Config**: `configs/cloudron-config.json`
 - **Commands**: `cloudron-helper.sh [servers|connect|status|apps|install-app|update-app|restart-app|logs|backup-app|domains|add-domain|ssl-status|users|add-user|update-user] [server] [args]`
@@ -35,7 +36,7 @@ tools:
 - **Access recovery**: Before requesting `cloudron login`, preserve an existing valid scoped token and check authorised root SSH. On the server, inspect `cloudron-support --help` and the installed version/API paths; use only a documented, version-compatible owner recovery flow. Capture output privately, validate TLS origin and PKCE state, do not replace an active support/ghost login, and revoke any temporary session after use. If SSH, authority, or supported recovery semantics are absent, stop that route and use ordinary login. Never reset an owner password, insert tokens in storage, dump credentials, or weaken host-key checking.
 - **Forum**: [forum.cloudron.io](https://forum.cloudron.io) — search error messages first
 - **Docker**: `docker ps -a` (states), `docker logs <container>`, `docker exec -it <container> /bin/bash`
-- **DB creds**: `docker inspect <container> | grep CLOUDRON_MYSQL` (redact secrets before sharing)
+- **Secrets**: Inspect only needed metadata/key names; never dump container environment or credential values into agent output
 
 <!-- AI-CONTEXT-END -->
 

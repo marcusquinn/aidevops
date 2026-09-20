@@ -107,12 +107,35 @@ The package supports the core private mesh. Do not claim Cloudron SSO is
 configured merely because `optionalSso` is available, and do not treat Cloudron
 TURN as an interchangeable NetBird relay/STUN service. The 2.1.0 source includes
 an optional bundled public proxy with second-IPv4/raw-TLS ingress, documented in
-the package's `REVERSE-PROXY.md`. Source availability, release availability,
+the package's `docs/REVERSE-PROXY.md` (root `REVERSE-PROXY.md` in older releases).
+Source availability, release availability,
 installed configuration and production qualification are distinct: verify each,
 rather than treating a merged feature as tested on every host. Keep normal
 authenticated dashboard/native endpoints separate from public service ingress;
 do not replace Cloudron's managed proxy or publicly expose SSH, desktop sharing,
 SMB or raw administration ports through this feature.
+
+#### Cloudron identity and VPN-protected apps
+
+SSO, app entitlement, peer ownership and protected-app routing are separate.
+Custom OIDC clients do not inherit the app ACL. Cloudron 10.0.5 exposes paginated
+users and `GET /api/v1/users/:userId/apps` for effective direct/group access,
+including administrator/operator privileges. Check active status separately.
+Never promote a Cloudron administrator to NetBird administrator implicitly.
+
+Cloudron OIDC `sub` is the username, not immutable user ID. Bind both to the
+managed connector, retain deletion tombstones and reject username reassignment;
+never merge on email. NetBird 0.79.0 user blocking expires user-owned peers, but
+cannot block its owner and skips setup-key peers. Preserve recovery and approve
+any owner-device SSO re-enrolment; no peer ownership-transfer field is exposed.
+Verify actual traffic denial and report polling/outage limits honestly.
+
+Cloudron 10.0.5 `network.setVpnAccessConfig` accepts only the OpenVPN manifest ID.
+Protected-app ingress trusts that VPN container's addresses; a NetBird management
+server alone is not a routing peer. Do not spoof OpenVPN, patch live platform
+code/database or widen trusted source networks. Generic provider registration
+and a qualified routing path need upstream support. Consult the selected package's
+`docs/CLOUDRON-INTEGRATION.md` when available; do not claim planned support exists.
 
 #### Multiple Cloudron instances
 
@@ -135,8 +158,9 @@ does not make it safe for a second instance. Do not overwrite its configuration,
 rename only a unit, widen trust to the Docker subnet or disable backend guards.
 Multi-instance support needs scoped resources, independent reconciliation/rollback
 and collision/isolation tests. Each proxy must retain its dedicated trusted
-PROXY-v2 source identity. Consult the package's `MULTI-INSTANCE.md` when available
-in the selected release, plus `REVERSE-PROXY.md` and `test/QUALIFICATION.md`.
+PROXY-v2 source identity. Consult `docs/MULTI-INSTANCE.md` and
+`docs/REVERSE-PROXY.md` (root guides in older releases), plus
+`test/QUALIFICATION.md`, in the selected package release.
 
 A shared-IP alternative would require TLS-passthrough SNI routing by approved
 brand domains, ACME TLS-ALPN-01 compatibility, trustworthy client-IP forwarding,
