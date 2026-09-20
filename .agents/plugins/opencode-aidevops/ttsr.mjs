@@ -18,16 +18,17 @@ import { isGreetingCacheUsable, readGreetingCache, REFRESH_TTL_MS } from "./gree
 // ---------------------------------------------------------------------------
 // Injects a synthetic message for interactive sessions when session context
 // exceeds a token threshold, prompting the LLM to advise the user to run
-// /compact. Fires at 300k tokens, then every 50k above that (350k, 400k, ...).
+// /compact. Fires at 400k tokens by default and 500k for larger-context Astra,
+// Grok, and Gemini models, then every 50k above the applicable threshold.
 // Uses the last assistant message's token counts — which represent the full
 // context sent to the model on that turn — so the number tracks real cost, not
 // model capacity.
 //
-// Headless sessions and GPT-5.5+ models are excluded: headless workers should
-// not spend output budget on user-facing cost advice, and GPT-5.5+ models are
-// registered with a 500k context limit so OpenCode auto-compacts around 400k.
+// Headless sessions are excluded because workers should not spend output budget
+// on user-facing cost advice.
 
-const TOKEN_ADVISORY_INITIAL = 300_000;
+const TOKEN_ADVISORY_INITIAL = 400_000;
+const TOKEN_ADVISORY_LONG_CONTEXT_INITIAL = 500_000;
 const TOKEN_ADVISORY_INTERVAL = 50_000;
 
 /**
@@ -45,22 +46,15 @@ function getTokenTotal(tokens) {
 }
 
 /**
- * Check whether the active model is GPT-5.5 or newer.
+ * Resolve the first advisory threshold for the active model.
  * @param {object} input
- * @returns {boolean}
+ * @returns {number}
  */
-function isGpt55OrNewer(input) {
+export function getTokenAdvisoryInitial(input) {
   const modelID = String(input?.model?.modelID || input?.modelID || input?.model || "").toLowerCase();
-  const match = modelID.match(/(?:^|[^a-z0-9])gpt-(\d+)(?:\.(\d+))?/);
-  let result = false;
-
-  if (match) {
-    const major = Number.parseInt(match[1], 10);
-    const minor = Number.parseInt(match[2] || "0", 10);
-    result = major > 5 || (major === 5 && minor >= 5);
-  }
-
-  return result;
+  return /(?:astra|grok|gemini)/.test(modelID)
+    ? TOKEN_ADVISORY_LONG_CONTEXT_INITIAL
+    : TOKEN_ADVISORY_INITIAL;
 }
 
 // ---------------------------------------------------------------------------
@@ -108,20 +102,21 @@ function pruneAdvisoryState(tokenAdvisoryState) {
  * @param {() => boolean} isHeadless
  * @returns {{ sessionID: string, totalK: number, total: number } | null}
  */
-function checkTokenAdvisory(messages, tokenAdvisoryState, input, isHeadless) {
+export function checkTokenAdvisory(messages, tokenAdvisoryState, input, isHeadless) {
   let result = null;
 
-  if (!isHeadless() && !isGpt55OrNewer(input)) {
+  if (!isHeadless()) {
+    const initialThreshold = getTokenAdvisoryInitial(input);
     for (let i = messages.length - 1; i >= 0; i--) {
       const info = messages[i].info;
       if (info?.role !== "assistant" || !info.tokens) continue;
 
       const total = getTokenTotal(info.tokens);
-      if (total >= TOKEN_ADVISORY_INITIAL) {
+      if (total >= initialThreshold) {
         const sessionID = info.sessionID || "";
         const lastWarned = tokenAdvisoryState.get(sessionID) || 0;
-        const stepsAboveInitial = Math.floor((total - TOKEN_ADVISORY_INITIAL) / TOKEN_ADVISORY_INTERVAL);
-        const currentThreshold = TOKEN_ADVISORY_INITIAL + stepsAboveInitial * TOKEN_ADVISORY_INTERVAL;
+        const stepsAboveInitial = Math.floor((total - initialThreshold) / TOKEN_ADVISORY_INTERVAL);
+        const currentThreshold = initialThreshold + stepsAboveInitial * TOKEN_ADVISORY_INTERVAL;
 
         if (currentThreshold > lastWarned) {
           tokenAdvisoryState.set(sessionID, currentThreshold);

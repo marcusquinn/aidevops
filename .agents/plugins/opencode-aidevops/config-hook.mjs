@@ -214,8 +214,8 @@ export function getAstraContextHealth(config) {
 /** Keep Astra at the selected usable input target without changing global reserve. */
 export function registerAstraContextLimits(config) {
   const settings = readContextSettings();
-  const target = settings.astra_compaction_target === ASTRA_COMPACTION_BUDGET_TARGET
-    ? ASTRA_COMPACTION_BUDGET_TARGET : ASTRA_COMPACTION_TARGET;
+  const target = settings.astra_compaction_target === ASTRA_COMPACTION_TARGET
+    ? ASTRA_COMPACTION_TARGET : ASTRA_COMPACTION_BUDGET_TARGET;
   const managed = settings.astra_context_cap !== false;
   const health = { managed, target, auto: config.compaction?.auto !== false };
   astraContextHealth.set(config, health);

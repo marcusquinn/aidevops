@@ -33,10 +33,10 @@ when their trigger applies; never remove them merely to meet a token target.
 
 ## Astra compaction
 
-`registerAstraContextLimits` defaults to 400,000 usable input tokens. To opt into
-a lower budget, run `aidevops astra-context enable`: it persists a 240,000 target
-and enables the managed Astra cap. `aidevops astra-context disable` restores the
-400,000 target, preserving an existing native-metadata opt-out. `status` reports
+`registerAstraContextLimits` defaults to 240,000 usable input tokens, matching
+GPT-5.6. `aidevops astra-context enable` persists that target and enables the
+managed Astra cap. `aidevops astra-context disable` selects the extended 400,000
+target, preserving an existing native-metadata opt-out. `status` reports
 the selection and nonce-bound fresh-process plugin/config evidence; unavailable,
 old or failed probes are not reported as applied. If automatic compaction is
 disabled in OpenCode, status reports that separately.

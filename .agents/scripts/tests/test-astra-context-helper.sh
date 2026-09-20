@@ -51,7 +51,7 @@ assert_contains() {
 }
 
 output=$(bash "$HELPER" status)
-assert_contains "$output" 'target: 400000 (applied)'
+assert_contains "$output" 'target: 240000 (applied)'
 output=$(bash "$HELPER" enable)
 assert_contains "$output" 'target: 240000 (applied)'
 assert_contains "$output" 'input=275000, output=128000, reserve=35000'
@@ -93,7 +93,7 @@ for invalid in '' '{} {}' 'broken-json' '[]' '{"runtime":"invalid"}'; do
 	fi
 	[[ "$(<"$AIDEVOPS_SETTINGS_FILE")" == "$invalid" ]]
 	output=$(bash "$HELPER" status)
-	assert_contains "$output" 'selected compaction target: 400000'
+	assert_contains "$output" 'selected compaction target: 240000'
 done
 if bash "$HELPER" unknown >/dev/null 2>&1; then exit 1; fi
 printf '%s\n' 'PASS: Astra CLI settings, config consumer, persistence, opt-out and health evidence'

@@ -184,58 +184,66 @@ describe("token cost advisory threshold", () => {
     assert.match(output.system[2], /^You are Claude Code, Anthropic's official CLI for Claude\.\n\nbase system prompt/);
   });
 
-  test("does not inject advisory below 300k tokens", async () => {
+  test("does not inject advisory below 400k tokens", async () => {
     const { hooks } = createHooks();
-    const output = outputForTokens(299_999);
+    const output = outputForTokens(399_999);
 
     await hooks.messagesTransformHook({}, output);
 
     assert.equal(advisoryMessages(output).length, 0);
   });
 
-  test("injects first advisory at 300k tokens", async () => {
+  test("injects first advisory at 400k tokens", async () => {
     const { hooks, logs } = createHooks();
-    const output = outputForTokens(300_000);
+    const output = outputForTokens(400_000);
 
     await hooks.messagesTransformHook({}, output);
 
     const advisories = advisoryMessages(output);
     assert.equal(advisories.length, 1);
-    assert.match(advisories[0].parts[0].text, /approximately 300k tokens/);
-    assert.deepEqual(logs, [{ level: "INFO", message: "Token advisory: session token-advisory-test-session at ~300k tokens" }]);
+    assert.match(advisories[0].parts[0].text, /approximately 400k tokens/);
+    assert.deepEqual(logs, [{ level: "INFO", message: "Token advisory: session token-advisory-test-session at ~400k tokens" }]);
   });
 
   test("does not inject advisory in headless sessions", async () => {
     const { hooks } = createHooks({ isHeadless: () => true });
-    const output = outputForTokens(300_000);
+    const output = outputForTokens(500_000);
 
     await hooks.messagesTransformHook({}, output);
 
     assert.equal(advisoryMessages(output).length, 0);
   });
 
-  test("does not inject advisory for GPT-5.5 family models", async () => {
+  test("injects the default advisory for GPT-5.5 and newer ordinary models", async () => {
     const { hooks } = createHooks();
-    const output = outputForTokens(300_000);
+    const gpt55 = outputForTokens(400_000, "gpt55-session");
+    const gpt6 = outputForTokens(400_000, "gpt6-session");
 
-    await hooks.messagesTransformHook({ model: { modelID: "gpt-5.5-fast" } }, output);
+    await hooks.messagesTransformHook({ model: { modelID: "gpt-5.5-fast" } }, gpt55);
+    await hooks.messagesTransformHook({ model: { modelID: "gpt-6" } }, gpt6);
 
-    assert.equal(advisoryMessages(output).length, 0);
+    assert.equal(advisoryMessages(gpt55).length, 1);
+    assert.equal(advisoryMessages(gpt6).length, 1);
   });
 
-  test("does not inject advisory for models newer than GPT-5.5", async () => {
-    const { hooks } = createHooks();
-    const output = outputForTokens(300_000);
+  test("starts Astra, Grok, and Gemini advisories at 500k", async () => {
+    for (const modelID of ["gpt-6-astra", "grok-4", "gemini-3-pro"]) {
+      const { hooks } = createHooks();
+      const below = outputForTokens(499_999, `${modelID}-session`);
+      const atThreshold = outputForTokens(500_000, `${modelID}-session`);
 
-    await hooks.messagesTransformHook({ model: { modelID: "gpt-6" } }, output);
+      await hooks.messagesTransformHook({ model: { modelID } }, below);
+      await hooks.messagesTransformHook({ model: { modelID } }, atThreshold);
 
-    assert.equal(advisoryMessages(output).length, 0);
+      assert.equal(advisoryMessages(below).length, 0);
+      assert.equal(advisoryMessages(atThreshold).length, 1);
+    }
   });
 
   test("does not repeat at the same threshold for a session", async () => {
     const { hooks } = createHooks();
-    const first = outputForTokens(300_000);
-    const second = outputForTokens(325_000);
+    const first = outputForTokens(400_000);
+    const second = outputForTokens(425_000);
 
     await hooks.messagesTransformHook({}, first);
     await hooks.messagesTransformHook({}, second);
@@ -246,14 +254,14 @@ describe("token cost advisory threshold", () => {
 
   test("fires again at the next 50k interval", async () => {
     const { hooks } = createHooks();
-    const first = outputForTokens(300_000);
-    const second = outputForTokens(350_000);
+    const first = outputForTokens(400_000);
+    const second = outputForTokens(450_000);
 
     await hooks.messagesTransformHook({}, first);
     await hooks.messagesTransformHook({}, second);
 
     const advisories = advisoryMessages(second);
     assert.equal(advisories.length, 1);
-    assert.match(advisories[0].parts[0].text, /approximately 350k tokens/);
+    assert.match(advisories[0].parts[0].text, /approximately 450k tokens/);
   });
 });
