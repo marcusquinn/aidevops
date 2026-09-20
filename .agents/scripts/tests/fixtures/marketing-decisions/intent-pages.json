@@ -1,0 +1,9 @@
+{
+  "schema": "aidevops.intent-pages/v1",
+  "rubric": {"id": "intent-page-fit", "version": "1"},
+  "pages": [
+    {"page_id": "pricing", "url": "/pricing", "title": "SEO audit pricing", "h1": "SEO audit pricing", "body": "Compare audit plans and get a report.", "offer": "free trial", "cta": "Start trial", "source": {"source_id": "site-snapshot", "span": "pricing-hero"}},
+    {"page_id": "guide", "url": "/guides/seo-audit", "title": "How to run an SEO audit", "h1": "SEO audit guide", "body": "Learn audit steps, evidence and reporting.", "source": {"source_id": "site-snapshot", "span": "guide-intro"}},
+    {"page_id": "compare", "url": "/compare/seo-audit", "title": "SEO audit comparison", "h1": "Compare SEO audit options", "body": "Compare audit options and plans.", "source": {"source_id": "site-snapshot", "span": "compare-hero"}}
+  ]
+}
