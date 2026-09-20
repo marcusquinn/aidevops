@@ -144,8 +144,8 @@ test("probe-only plugin factory registers config and terminal-title health", () 
     input: 260000,
   });
   assert.deepEqual(result.details.config_applied.astra_context, {
-    managed: true, target: 400000, auto: true, reserve: 20000,
-    limits: { context: 548000, input: 420000, output: 128000 },
+    managed: true, target: 240000, auto: true, reserve: 20000,
+    limits: { context: 388000, input: 260000, output: 128000 },
   });
   rmSync(root, { recursive: true, force: true });
 });

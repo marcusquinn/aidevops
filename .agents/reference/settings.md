@@ -61,10 +61,10 @@
 | Key | Type | Default | Env Var | Description |
 |-----|------|---------|---------|-------------|
 | `runtime.opencode.astra_context_cap` | boolean | `true` | -- | Manage Astra limits; `false` leaves provider/user metadata untouched. |
-| `runtime.opencode.astra_compaction_target` | number | `400000` | -- | Usable input target: `240000` opts into lower-budget compaction; other values fall back to `400000`. |
+| `runtime.opencode.astra_compaction_target` | number | `240000` | -- | Usable input target matching GPT-5.6; `400000` opts into an extended Astra budget and other values fall back to `240000`. |
 
-Use `aidevops astra-context enable` to select 240K and enable the managed cap.
-`disable` restores the 400K target without clearing an existing native-metadata
+Use `aidevops astra-context enable` to select the default 240K target and enable
+the managed cap. `disable` selects the extended 400K target without clearing an existing native-metadata
 opt-out. `status` distinguishes the saved selection from fresh-process config
 evidence. Restart OpenCode after changes. These are file-only preferences, read
 at startup and retained by normal updates; no environment override is defined.

@@ -79,13 +79,13 @@ test("malformed settings fail open to the cost-aware default", () => {
   assert.equal(gpt56ContextCapEnabled(), true);
 });
 
-test("Astra compacts at 400K with the default and an explicit reserve", () => {
+test("Astra defaults to the same 240K compaction target as GPT-5.6", () => {
   settingsFile(undefined);
   for (const reserve of [undefined, 0, 35000]) {
     const config = { compaction: reserve === undefined ? {} : { reserved: reserve } };
     assert.equal(registerAstraContextLimits(config), 1);
     const limits = config.provider.openai.models["gpt-6-astra"].limit;
-    assert.equal(limits.input - (reserve ?? 20000), 400000);
+    assert.equal(limits.input - (reserve ?? 20000), 240000);
     assert.equal(limits.context, limits.input + limits.output);
     assert.equal(limits.output, 128000);
     assert.equal(config.compaction.reserved, reserve);
@@ -100,7 +100,7 @@ test("Astra retains model fields and explicit output limits, independently of GP
   } } } };
   registerAstraContextLimits(config);
   assert.equal(config.provider.openai.models["gpt-6-astra"].name, "Astra");
-  assert.equal(config.provider.openai.models["gpt-6-astra"].limit.input - 4000, 400000);
+  assert.equal(config.provider.openai.models["gpt-6-astra"].limit.input - 4000, 240000);
   assert.deepEqual(config.provider.openai.models["gpt-5.6-sol"], { name: "untouched" });
 });
 
@@ -135,18 +135,18 @@ test("Astra lower budget honours reserves/output and preserves all other models"
   }
 });
 
-test("Astra invalid selections fall back to 400K without changing GPT-5.6", () => {
+test("Astra invalid selections fall back to 240K without changing GPT-5.6", () => {
   for (const target of [undefined, null, "240000", 0, -1, 300000, {}, true]) {
     settingsFile({ runtime: { opencode: { astra_compaction_target: target } } });
     const config = {};
     registerAstraContextLimits(config);
-    assert.equal(getAstraContextHealth(config).target, 400000);
+    assert.equal(getAstraContextHealth(config).target, 240000);
   }
   const file = settingsFile({});
   writeFileSync(file, "not-json");
   const config = {};
   registerAstraContextLimits(config);
-  assert.equal(getAstraContextHealth(config).target, 400000);
+  assert.equal(getAstraContextHealth(config).target, 240000);
 });
 
 test("Astra opt-out overrides a saved low target; receipts reflect the consumed settings", () => {

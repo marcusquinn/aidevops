@@ -84,7 +84,7 @@ _generate_defaults() {
   "runtime": {
     "opencode": {
       "astra_context_cap": true,
-      "astra_compaction_target": 400000
+      "astra_compaction_target": 240000
     }
   },
   "onboarding": {

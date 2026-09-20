@@ -15,11 +15,11 @@ usage() {
 	cat <<'EOF'
 Usage: aidevops astra-context [enable|disable|status]
 
-  enable   Select ~240,000 input tokens before compaction; enable the Astra cap.
-  disable  Restore the 400,000 target, preserving any native-metadata opt-out.
+  enable   Select the default ~240,000 input tokens; enable the Astra cap.
+  disable  Select the extended 400,000 target, preserving any metadata opt-out.
   status   Show the selected target and a fresh-process effective-config probe.
 
-The default remains 400,000. GPT-5.6 and other models are unchanged.
+The default is 240,000, matching GPT-5.6. Other models are unchanged.
 The existing runtime.opencode.astra_context_cap=false opt-out leaves metadata
 untouched; enable explicitly clears it. Preferences survive normal updates.
 Restart OpenCode after changes. A probe cannot update an already running session.
@@ -35,7 +35,7 @@ requested_state() {
 	fi
 	jq -r '(try (.runtime.opencode // {}) catch {}) |
 		if type != "object" then {} else . end |
-		[(if .astra_compaction_target == 240000 then 240000 else 400000 end),
+		[(if .astra_compaction_target == 400000 then 400000 else 240000 end),
 		 (.astra_context_cap != false)] | @tsv' <<<"$settings"
 	return 0
 }
