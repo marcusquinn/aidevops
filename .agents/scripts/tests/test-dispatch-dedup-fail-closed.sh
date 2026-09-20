@@ -98,6 +98,22 @@ STUB
 	chmod +x "${STUB_DIR}/gh"
 }
 
+write_stub_gh_primary_fail_direct_success() {
+	cat >"${STUB_DIR}/gh" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$GH_CALL_LOG"
+if [[ "$1" == "issue" && "$2" == "view" ]]; then
+	exit 1
+fi
+if [[ "$1" == "api" && "$2" == "repos/owner/repo/issues/99996" ]]; then
+	printf '%s\n' '{"state":"open","assignees":[],"labels":[{"name":"pulse"}],"created_at":"2026-09-01T00:00:00Z"}'
+	exit 0
+fi
+exit 1
+STUB
+	chmod +x "${STUB_DIR}/gh"
+}
+
 # write_stub_gh_issue_ok_comments_fail: stub gh that:
 #   - exits 0 for "gh issue view" with a payload containing blocking assignees
 #   - exits 1 for "gh api repos/.../comments" (comments endpoint failure)
@@ -127,6 +143,8 @@ STUB
 
 OLD_PATH="$PATH"
 export PATH="${STUB_DIR}:${PATH}"
+export GH_CALL_LOG="${TEST_ROOT}/gh-calls.log"
+: >"$GH_CALL_LOG"
 
 # run_is_assigned: invokes dispatch-dedup-helper.sh is-assigned, captures
 # both stdout (output) and exit code (rc).
@@ -161,6 +179,24 @@ if [[ "$rc" -eq 0 && "$output" == *"GUARD_UNCERTAIN"* ]]; then
 else
 	print_result "fail-closed: gh empty response → GUARD_UNCERTAIN, exit 0 (block)" 1 \
 		"(rc=$rc output='$output')"
+fi
+
+# =============================================================================
+# Case 2b — primary metadata path fails, bounded direct REST reprobe succeeds
+# =============================================================================
+# A recovered read resumes normal evidence processing. This clean fixture is
+# dispatchable; an assigned fixture would still need the existing positive
+# stale proof before any mutation.
+: >"$GH_CALL_LOG"
+write_stub_gh_primary_fail_direct_success
+run_is_assigned 99996 "owner/repo"
+if [[ "$rc" -eq 1 && "$output" != *"GUARD_UNCERTAIN"* ]] \
+	&& grep -q '^issue view 99996 ' "$GH_CALL_LOG" \
+	&& grep -q '^api repos/owner/repo/issues/99996$' "$GH_CALL_LOG"; then
+	print_result "GH#31996: recovered metadata read resumes guarded dispatch evaluation" 0
+else
+	print_result "GH#31996: recovered metadata read resumes guarded dispatch evaluation" 1 \
+		"(rc=$rc output='$output' calls='$(tr '\n' ';' <"$GH_CALL_LOG")')"
 fi
 
 # =============================================================================
