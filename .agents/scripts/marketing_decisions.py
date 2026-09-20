@@ -116,6 +116,11 @@ def _optional_metric(value: Any, field: str) -> float | int | None:
     return None if value is None else _number(value, field)
 
 
+def _require(condition: bool, message: str) -> None:
+    if not condition:
+        raise DecisionError(message)
+
+
 def load_json(path: str | Path, maximum: int = MAX_INPUT_BYTES) -> Any:
     """Load one bounded JSON document."""
     with Path(path).open("rb") as stream:
@@ -313,52 +318,67 @@ def _validate_action(value: Any, candidates: set[str]) -> dict[str, Any] | None:
     return {"kind": "recommendation", "candidate_ids": ids, "summary": summary, "non_mutating": True}
 
 
+def _choice_value(value: Any, candidates: set[str]) -> Any:
+    _require(value in candidates, "choice is not an observed candidate")
+    return value
+
+
+def _multi_label_value(value: Any, candidates: set[str]) -> list[Any]:
+    labels = _list(value, "decision.value")
+    _require(bool(labels) and set(labels) <= candidates, "multi-label value contains invalid candidates")
+    _require(len(labels) == len(set(labels)), "multi-label value contains duplicate candidates")
+    return labels
+
+
+def _score_value(value: Any, _candidates: set[str]) -> float | int:
+    return _number(value, "decision.value")
+
+
+def _unit_interval(value: Any, field: str) -> float | int | None:
+    if value is None:
+        return None
+    normalized = _number(value, field)
+    _require(normalized <= 1, f"{field} must be between zero and one")
+    return normalized
+
+
+def _calibration(value: Any) -> dict[str, str | None]:
+    calibration = _object(value, "decision.calibration")
+    _keys(calibration, {"provenance", "reference"}, {"provenance", "reference"}, "decision.calibration")
+    provenance = calibration["provenance"]
+    _require(provenance in CONFIDENCE_PROVENANCE, "unsupported calibration provenance")
+    reference = calibration["reference"]
+    normalized_reference = None if reference is None else _opaque(reference, "decision.calibration.reference")
+    return {"provenance": provenance, "reference": normalized_reference}
+
+
+def _decision_value(value: Any, abstention: Any, row: dict[str, Any], candidates: set[str]) -> Any:
+    if abstention is not None:
+        _opaque(abstention, "decision.abstention_reason")
+        _require(value is None, "abstained decisions must have a null value")
+        return None
+    validators = {"choice": _choice_value, "multi_label": _multi_label_value, "score": _score_value}
+    return validators[row["decision_kind"]](value, candidates)
+
+
 def _validate_decision(value: dict[str, Any], row: dict[str, Any]) -> dict[str, Any]:
     required = {"row_id", "kind", "value", "probability", "confidence", "calibration", "abstention_reason", "action_proposal", "usage"}
     _keys(value, required, required, "decision")
-    if value["row_id"] != row["row_id"] or value["kind"] != row["decision_kind"]:
-        raise DecisionError("decision identity or kind does not match row")
+    _require(
+        value["row_id"] == row["row_id"] and value["kind"] == row["decision_kind"],
+        "decision identity or kind does not match row",
+    )
     candidates = set(row["candidates"])
     abstention = value["abstention_reason"]
-    if abstention is not None:
-        _opaque(abstention, "decision.abstention_reason")
-    decision_value = value["value"]
-    if abstention is None:
-        if row["decision_kind"] == "choice" and decision_value not in candidates:
-            raise DecisionError("choice is not an observed candidate")
-        if row["decision_kind"] == "multi_label":
-            labels = _list(decision_value, "decision.value")
-            if not labels or not set(labels) <= candidates or len(labels) != len(set(labels)):
-                raise DecisionError("multi-label value contains invalid candidates")
-        if row["decision_kind"] == "score":
-            _number(decision_value, "decision.value")
-    elif decision_value is not None:
-        raise DecisionError("abstained decisions must have a null value")
-    probability = value["probability"]
-    if probability is not None:
-        probability = _number(probability, "decision.probability")
-        if probability > 1:
-            raise DecisionError("decision.probability must be between zero and one")
-    if row["decision_kind"] == "score" and probability is not None:
-        raise DecisionError("a score is not a probability")
-    confidence = value["confidence"]
-    if confidence is not None:
-        confidence = _number(confidence, "decision.confidence")
-        if confidence > 1:
-            raise DecisionError("decision.confidence must be between zero and one")
-    calibration = _object(value["calibration"], "decision.calibration")
-    _keys(calibration, {"provenance", "reference"}, {"provenance", "reference"}, "decision.calibration")
-    if calibration["provenance"] not in CONFIDENCE_PROVENANCE:
-        raise DecisionError("unsupported calibration provenance")
-    reference = calibration["reference"]
-    if reference is not None:
-        _opaque(reference, "decision.calibration.reference")
+    decision_value = _decision_value(value["value"], abstention, row, candidates)
+    probability = _unit_interval(value["probability"], "decision.probability")
+    _require(row["decision_kind"] != "score" or probability is None, "a score is not a probability")
     return {
         "kind": row["decision_kind"],
         "value": decision_value,
         "probability": probability,
-        "confidence": confidence,
-        "calibration": {"provenance": calibration["provenance"], "reference": reference},
+        "confidence": _unit_interval(value["confidence"], "decision.confidence"),
+        "calibration": _calibration(value["calibration"]),
         "abstention_reason": abstention,
         "action_proposal": _validate_action(value["action_proposal"], candidates),
         "usage": _usage(value["usage"]),
@@ -388,36 +408,64 @@ def _add_usage(total: dict[str, float | int | None], usage: dict[str, float | in
     return result
 
 
+def _evaluated_result(
+    base: dict[str, Any],
+    raw: dict[str, Any],
+    row: dict[str, Any],
+    usage: dict[str, float | int | None],
+    budget: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, float | int | None]]:
+    try:
+        decision = _validate_decision(raw, row)
+    except DecisionError:
+        return {**base, "status": "failed", "reason": "invalid_decision", "decision": None}, usage
+    projected = _add_usage(usage, decision["usage"])
+    reason = _budget_reason(projected, budget)
+    if reason:
+        return {**base, "status": "deferred", "reason": reason, "decision": decision}, usage
+    reason = "abstained" if decision["abstention_reason"] is not None else None
+    status = "deferred" if reason else "accepted"
+    return {**base, "status": status, "reason": reason, "decision": decision}, projected
+
+
+def _run_row(
+    batch: dict[str, Any],
+    row: dict[str, Any],
+    by_id: dict[str, dict[str, Any]],
+    state: dict[str, Any],
+    budget: dict[str, Any],
+    cancel_after: str | None,
+) -> dict[str, Any]:
+    base = {
+        "batch_id": batch["batch_id"],
+        "domain": batch["domain"],
+        "row_id": row["row_id"],
+        "source": row["source"],
+    }
+    raw = by_id.get(row["row_id"])
+    if state["cancelled"] or raw is None:
+        reason = "cancelled" if state["cancelled"] else "missing_decision"
+        result = {**base, "status": "deferred", "reason": reason, "decision": None}
+    else:
+        result, state["usage"] = _evaluated_result(base, raw, row, state["usage"], budget)
+    state["cancelled"] = state["cancelled"] or row["row_id"] == cancel_after
+    return result
+
+
 def run(request: ValidatedRequest, supplied: dict[str, Any]) -> dict[str, Any]:
     """Evaluate supplied decisions without network access or workflow mutation."""
     by_id = {item["row_id"]: item for item in supplied["decisions"]}
-    usage: dict[str, float | int | None] = {"latency_ms": 0, "input_tokens": 0, "output_tokens": 0, "cost_usd": 0}
-    results = []
-    cancelled = False
-    for batch in request.document["batches"]:
-        for row in batch["rows"]:
-            base = {"batch_id": batch["batch_id"], "domain": batch["domain"], "row_id": row["row_id"], "source": row["source"]}
-            raw = by_id.get(row["row_id"])
-            if cancelled or raw is None:
-                reason = "cancelled" if cancelled else "missing_decision"
-                results.append({**base, "status": "deferred", "reason": reason, "decision": None})
-            else:
-                try:
-                    decision = _validate_decision(raw, row)
-                    projected = _add_usage(usage, decision["usage"])
-                    reason = _budget_reason(projected, request.document["limits"]["budget"])
-                    if reason:
-                        results.append({**base, "status": "deferred", "reason": reason, "decision": decision})
-                    elif decision["abstention_reason"] is not None:
-                        usage = projected
-                        results.append({**base, "status": "deferred", "reason": "abstained", "decision": decision})
-                    else:
-                        usage = projected
-                        results.append({**base, "status": "accepted", "reason": None, "decision": decision})
-                except DecisionError:
-                    results.append({**base, "status": "failed", "reason": "invalid_decision", "decision": None})
-            if row["row_id"] == supplied["cancelled_after_row_id"]:
-                cancelled = True
+    state: dict[str, Any] = {
+        "usage": {"latency_ms": 0, "input_tokens": 0, "output_tokens": 0, "cost_usd": 0},
+        "cancelled": False,
+    }
+    budget = request.document["limits"]["budget"]
+    results = [
+        _run_row(batch, row, by_id, state, budget, supplied["cancelled_after_row_id"])
+        for batch in request.document["batches"]
+        for row in batch["rows"]
+    ]
+    usage = state["usage"]
     accepted = sum(item["status"] == "accepted" for item in results)
     return {
         "schema": REPORT_SCHEMA,
