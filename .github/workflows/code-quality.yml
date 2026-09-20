@@ -383,6 +383,7 @@ jobs:
         bash .agents/scripts/tests/test-loc-badge-reusable-install.sh
         bash .agents/scripts/tests/test-reusable-workflow-caller.sh
         bash .agents/scripts/tests/test-reusable-workflow-permission-contracts.sh
+        bash .agents/scripts/tests/test-forge-event-workflow.sh
         bash .agents/scripts/tests/test-repo-maintenance-state.sh
         bash .agents/scripts/tests/test-maintenance-repo-selection.sh
         bash .agents/scripts/tests/test-maintenance-selector-contract.sh

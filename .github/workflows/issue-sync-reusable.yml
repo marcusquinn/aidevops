@@ -11,6 +11,10 @@ name: Issue Sync (reusable) - Bi-directional TODO.md ↔ GitHub Issues
 
 on:
   workflow_call:
+    outputs:
+      coordinator_artifact_id:
+        description: 'Durable coordinator artifact uploaded by this run'
+        value: ${{ jobs.forge-event.outputs.coordinator_artifact_id }}
     inputs:
       aidevops_repository:
         description: 'Repository to fetch framework scripts from (defaults to the canonical aidevops repository)'
@@ -75,6 +79,8 @@ jobs:
     concurrency:
       group: forge-coordinator-${{ github.repository_id }}
       cancel-in-progress: false
+    outputs:
+      coordinator_artifact_id: ${{ steps.coordinator-upload.outputs.artifact-id }}
     steps:
       - name: Checkout repository projection
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -154,6 +160,7 @@ jobs:
         run: node __aidevops/.agents/scripts/task-coordinator.mjs checkpoint
 
       - name: Upload durable coordinator state
+        id: coordinator-upload
         if: always() && steps.coordinator-persist.outcome == 'success'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
