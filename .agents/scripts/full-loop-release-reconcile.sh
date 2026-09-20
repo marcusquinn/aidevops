@@ -15,6 +15,7 @@ _FULL_LOOP_RELEASE_EVENT_PUSH="push"
 _FULL_LOOP_RELEASE_EVENT_RECOVERY="workflow_dispatch"
 _FULL_LOOP_RELEASE_JSON_ARRAY_TYPE="array"
 _FULL_LOOP_RELEASE_JSON_NUMBER_TYPE="number"
+_FULL_LOOP_RELEASE_JSON_OBJECT_TYPE="object"
 _FULL_LOOP_RELEASE_STATUS_COMPLETED="completed"
 _FULL_LOOP_RELEASE_CONCLUSION_FAILURE="failure"
 _FULL_LOOP_RELEASE_CONCLUSION_SKIPPED="skipped"
@@ -588,9 +589,10 @@ _full_loop_release_record_authorization_gap() {
 _full_loop_release_runs_payload_valid() {
 	local runs_file="$1"
 	[[ -f "$runs_file" ]] || return 1
-	jq -es --arg array_type "$_FULL_LOOP_RELEASE_JSON_ARRAY_TYPE" '
+	jq -es --arg array_type "$_FULL_LOOP_RELEASE_JSON_ARRAY_TYPE" \
+		--arg object_type "$_FULL_LOOP_RELEASE_JSON_OBJECT_TYPE" '
 		length > 0
-		and all(.[]; type == "object" and (.workflow_runs | type == $array_type))
+		and all(.[]; type == $object_type and (.workflow_runs | type == $array_type))
 	' "$runs_file" >/dev/null
 	return $?
 }
@@ -667,8 +669,9 @@ _full_loop_release_find_workflow_run() {
 _full_loop_release_run_jobs_payload_valid() {
 	local jobs_json="$1"
 	jq -e --arg array_type "$_FULL_LOOP_RELEASE_JSON_ARRAY_TYPE" \
-		--arg number_type "$_FULL_LOOP_RELEASE_JSON_NUMBER_TYPE" '
-		type == "object" and (.total_count | type == $number_type and . >= 0 and floor == .)
+		--arg number_type "$_FULL_LOOP_RELEASE_JSON_NUMBER_TYPE" \
+		--arg object_type "$_FULL_LOOP_RELEASE_JSON_OBJECT_TYPE" '
+		type == $object_type and (.total_count | type == $number_type and . >= 0 and floor == .)
 		and (.jobs | type == $array_type) and .total_count == (.jobs | length)
 	' <<<"$jobs_json" >/dev/null
 	return $?
@@ -1076,14 +1079,25 @@ _full_loop_release_validate_published_reconciliation_intent() {
 	# Recover only a missing tag bound to the exact modern signed snapshot.
 	#aidevops:trust-boundary
 	jq -e --argjson source_pr "$requested_pr" --arg tag_name "$tag_name" --argjson signed_source "$source_json" \
-		--arg string_type "$_FULL_LOOP_RELEASE_JSON_STRING_TYPE" --arg sha_regex "$_FULL_LOOP_RELEASE_SHA_REGEX" '
+		--arg string_type "$_FULL_LOOP_RELEASE_JSON_STRING_TYPE" --arg object_type "$_FULL_LOOP_RELEASE_JSON_OBJECT_TYPE" \
+		--arg sha_regex "$_FULL_LOOP_RELEASE_SHA_REGEX" --arg timestamp_regex "$_FULL_LOOP_RELEASE_TIMESTAMP_REGEX" \
+		--arg exact_phase "exact-tag-deployment" --arg reconcile_phase "reconcile-required" '
 		.active == true and .source_pr == $source_pr
 		and (.tag == $tag_name or (.tag == null and .snapshot_manifest_bound == true
 			and (.snapshot_sha | type) == $string_type
 			and (.snapshot_sha | test($sha_regex))
 			and .snapshot_sha == $signed_source.source_merge))
 		and (.expected_sources | type) == $string_type
-		and (.phase == "remote-publication" or .phase == "exact-tag-deployment")
+		and (.phase == "remote-publication" or .phase == $exact_phase or (
+			.phase == $reconcile_phase
+			and (.stale_runtime_recovery | type) == $object_type
+			and .stale_runtime_recovery.type == "stale-runtime/v1"
+			and .stale_runtime_recovery.failed_phase == $exact_phase
+			and (.stale_runtime_recovery.attempt_head | type) == $string_type
+			and (.stale_runtime_recovery.attempt_head | test($sha_regex))
+			and (.stale_runtime_recovery.deferred_at | type) == $string_type
+			and (.stale_runtime_recovery.deferred_at | test($timestamp_regex))
+		))
 		and ((.terminal_receipt // null) == null)
 	' <<<"$_AIDEVOPS_RELEASE_LANE_JSON" >/dev/null || {
 		printf 'Published reconciliation refused: lane source/tag/snapshot identity does not match verified release %s for PR #%s.\n' "$tag_name" "$requested_pr" >&2

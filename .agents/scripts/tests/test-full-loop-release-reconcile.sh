@@ -908,6 +908,27 @@ if ! _full_loop_release_validate_published_reconciliation_intent test/repo 90 v1
 	printf 'FAIL published validation mutated equivalent legacy lane intent\n'
 	exit 1
 fi
+lane_patch_json='{"phase":"reconcile-required","stale_runtime_recovery":{"type":"stale-runtime/v1","attempt_head":"2222222222222222222222222222222222222222","failed_phase":"exact-tag-deployment","deferred_at":"2026-09-20T20:58:52Z"}}'
+if ! _full_loop_release_validate_published_reconciliation_intent test/repo 90 v1.2.3 \
+	'{"source_pr":90,"source_merge":"1111111111111111111111111111111111111111","aggregated_sources":[]}'; then
+	printf 'FAIL published reconciliation rejected a validated stale-runtime deferral\n'
+	exit 1
+fi
+for lane_patch_json in \
+	'{"phase":"reconcile-required"}' \
+	'{"phase":"reconcile-required","stale_runtime_recovery":{}}' \
+	'{"phase":"reconcile-required","stale_runtime_recovery":{"type":"other","attempt_head":"2222222222222222222222222222222222222222","failed_phase":"exact-tag-deployment","deferred_at":"2026-09-20T20:58:52Z"}}' \
+	'{"phase":"reconcile-required","stale_runtime_recovery":{"type":"stale-runtime/v1","attempt_head":"invalid","failed_phase":"exact-tag-deployment","deferred_at":"2026-09-20T20:58:52Z"}}' \
+	'{"phase":"reconcile-required","stale_runtime_recovery":{"type":"stale-runtime/v1","attempt_head":"2222222222222222222222222222222222222222","failed_phase":"remote-publication","deferred_at":"2026-09-20T20:58:52Z"}}' \
+	'{"phase":"reconcile-required","stale_runtime_recovery":{"type":"stale-runtime/v1","attempt_head":"2222222222222222222222222222222222222222","failed_phase":"exact-tag-deployment","deferred_at":"not-a-timestamp"}}'; do
+	if _full_loop_release_validate_published_reconciliation_intent test/repo 90 v1.2.3 \
+		'{"source_pr":90,"source_merge":"1111111111111111111111111111111111111111","aggregated_sources":[]}'; then
+		printf 'FAIL published reconciliation accepted invalid stale-runtime recovery: %s\n' "$lane_patch_json"
+		exit 1
+	fi
+done
+lane_patch_json='{}'
+printf 'PASS published reconciliation resumes only validated stale-runtime deferrals\n'
 for lane_expected_sources in \
 	'91' \
 	'90,91' \
