@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import subprocess
+import sys
 import unittest
 from pathlib import Path
 
@@ -41,7 +42,7 @@ class AccountSnapshotTests(unittest.TestCase):
         self.assertIn("additional pages not collected", result["coverage"]["omissions"])
 
     def test_dry_run_makes_no_network_call(self):
-        completed = subprocess.run(["python3", str(SCRIPTS / "marketing-account-snapshot-helper.py"), "collect", "--provider", "meta", "--account-ref", "act_123", "--from", "2026-01-01", "--to", "2026-01-02", "--dry-run"], text=True, capture_output=True, check=True)
+        completed = subprocess.run([sys.executable, str(SCRIPTS / "marketing-account-snapshot-helper.py"), "collect", "--provider", "meta", "--account-ref", "act_123", "--from", "2026-01-01", "--to", "2026-01-02", "--dry-run"], text=True, capture_output=True, check=True)  # nosec B603 -- fixed local test helper and arguments
         self.assertEqual(json.loads(completed.stdout)["network_calls"], 0)
 
     def test_invalid_account_refs_are_rejected(self):

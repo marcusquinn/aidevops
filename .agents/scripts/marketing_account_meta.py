@@ -40,7 +40,9 @@ def collect(
         raise MetaAccountError("Meta live collection requires configured credentials")
     params = urlencode({"fields": "campaign_id,campaign_name,adset_id,ad_id,impressions,clicks,spend,actions", "time_range": json.dumps({"since": start, "until": end}), "limit": MAX_PAGES})
     endpoint = f"https://graph.facebook.com/{META_GRAPH_VERSION}/{account_id}/insights?{params}"
-    opener = request or (lambda item: urlopen(item, timeout=30))
+    if not endpoint.startswith(f"https://graph.facebook.com/{META_GRAPH_VERSION}/"):
+        raise MetaAccountError("Meta endpoint was invalid")
+    opener = request or (lambda item: urlopen(item, timeout=30))  # nosec B310 -- fixed HTTPS endpoint above
     try:
         response = opener(Request(endpoint, headers={"Authorization": f"Bearer {access_token}"}, method="GET"))
         raw = response.read(MAX_RESPONSE_BYTES + 1)
