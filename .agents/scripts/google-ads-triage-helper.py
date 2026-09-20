@@ -60,31 +60,47 @@ def _outcome(kind: str, evidence: dict[str, Any], *, action: str = "review", rea
     }
 
 
-def triage_term(term: dict[str, Any], definitions: dict[str, Any] | None = None) -> list[dict[str, Any]]:
-    """Produce all eight explicit, evidence-backed outcomes for one observed term."""
-    definitions = definitions or {}
+def _term_context(term: dict[str, Any], definitions: dict[str, Any]) -> tuple[dict[str, Any], bool, bool, str, dict[str, Any] | None]:
+    """Collect observed state once for each of the independent triage rubrics."""
     query = normalize_term(term.get("query"))
     metrics = term.get("metrics") if isinstance(term.get("metrics"), dict) else {}
-    conversions = metrics.get("conversions")
-    profitable = metrics.get("profitable") is True
-    protected = conversions not in (None, 0) or profitable
+    protected = metrics.get("conversions") not in (None, 0) or metrics.get("profitable") is True
+    missing = metrics.get("conversions") is None or metrics.get("spend") is None
     aliases = {normalize_term(item) for item in definitions.get("brand_aliases", [])}
     classification = "brand" if query in aliases else ("ambiguous" if not query else "non_brand")
     negatives = term.get("negative_keywords") if isinstance(term.get("negative_keywords"), list) else []
-    matching_negative = next((item for item in negatives if isinstance(item, dict) and negative_blocks(query, item)), None)
-    missing_outcomes = conversions is None or metrics.get("spend") is None
-    base = {"query": query, "term_id": term.get("id"), "scope": term.get("scope"), "metrics": metrics}
-    outcomes = [
-        _outcome("search_intent", base, action="review" if not query else "proposal", reason="missing_query" if not query else None),
-        _outcome("negative_conflict", {**base, "negative": matching_negative}, action="review" if protected or missing_outcomes else ("proposal" if matching_negative else "no_action"), reason="protected_or_missing_outcomes" if protected or missing_outcomes else None),
-        _outcome("keyword_ad_group_fit", base, action="review" if not term.get("ad_group") else "proposal"),
-        _outcome("rsa_relevance", base, action="review" if not term.get("rsa") else "proposal"),
-        _outcome("landing_match", base, action="review" if not term.get("landing_page") else "proposal"),
-        _outcome("recommendation_routing", base, action="review" if missing_outcomes else "proposal"),
-        _outcome("term_classification", {**base, "classification": classification}, action="review" if classification == "ambiguous" else "proposal"),
-        _outcome("policy_routing", {**base, "disapproval": term.get("disapproval")}, action="proposal" if term.get("disapproval") else "no_action"),
+    negative = next((item for item in negatives if isinstance(item, dict) and negative_blocks(query, item)), None)
+    return {"query": query, "term_id": term.get("id"), "scope": term.get("scope"), "metrics": metrics}, protected, missing, classification, negative
+
+
+def _content_outcomes(term: dict[str, Any], context: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return independent search, ad, and landing-page review outcomes."""
+    query = context["query"]
+    return [
+        _outcome("search_intent", context, action="review" if not query else "proposal", reason="missing_query" if not query else None),
+        _outcome("keyword_ad_group_fit", context, action="review" if not term.get("ad_group") else "proposal"),
+        _outcome("rsa_relevance", context, action="review" if not term.get("rsa") else "proposal"),
+        _outcome("landing_match", context, action="review" if not term.get("landing_page") else "proposal"),
     ]
-    return outcomes
+
+
+def _safety_outcomes(term: dict[str, Any], context: dict[str, Any], protected: bool, missing: bool, classification: str, negative: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Keep actions requiring outcome evidence or human review non-mutating."""
+    review_reason = "protected_or_missing_outcomes" if protected or missing else None
+    negative_action = "review" if review_reason else ("proposal" if negative else "no_action")
+    return [
+        _outcome("negative_conflict", {**context, "negative": negative}, action=negative_action, reason=review_reason),
+        _outcome("recommendation_routing", context, action="review" if missing else "proposal"),
+        _outcome("term_classification", {**context, "classification": classification}, action="review" if classification == "ambiguous" else "proposal"),
+        _outcome("policy_routing", {**context, "disapproval": term.get("disapproval")}, action="proposal" if term.get("disapproval") else "no_action"),
+    ]
+
+
+def triage_term(term: dict[str, Any], definitions: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    """Produce all eight explicit, evidence-backed outcomes for one observed term."""
+    definitions = definitions or {}
+    context, protected, missing, classification, negative = _term_context(term, definitions)
+    return _content_outcomes(term, context) + _safety_outcomes(term, context, protected, missing, classification, negative)
 
 
 def analyze(snapshot: dict[str, Any], decisions: dict[str, Any]) -> dict[str, Any]:
