@@ -48,6 +48,8 @@ Use during Technical SEO Audit (`seo-audit-skill.md` → "Tools Referenced > Fre
 
 Complementary: `seo/schema-markup.md` (templates, t092) · `seo/seo-audit-skill.md` · Google Rich Results Test (t084) · `seo/video-schema.md` (VideoObject + Clip validation)
 
+For offline comparisons of structured-data claims and visible canonical facts, use `seo/content-disposition.md`. Its report distinguishes syntax, visible consistency, and unresolved factual verification; it does not publish or remove markup.
+
 ## Troubleshooting
 
 - **"Cannot find module"**: Run `schema-validator-helper.sh status`. Dependencies auto-install on first run.
