@@ -1,0 +1,7 @@
+{
+  "definitions": {"brand_aliases": ["acme"]},
+  "search_terms": [
+    {"id": "term-1", "query": "acme running shoes", "scope": {"campaign": "campaign-1", "ad_group": "group-1"}, "ad_group": "group-1", "rsa": "rsa-1", "landing_page": "page-1", "metrics": {"spend": 20, "conversions": 2, "profitable": true}, "negative_keywords": [{"term": "running shoes", "match_type": "phrase"}]},
+    {"id": "term-2", "query": "free shoe repair", "scope": {"campaign": "campaign-1", "ad_group": "group-1"}, "metrics": {"spend": null, "conversions": null}, "negative_keywords": [{"term": "free repair", "match_type": "broad"}], "disapproval": "destination_not_working"}
+  ]
+}
