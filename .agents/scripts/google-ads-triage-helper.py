@@ -60,7 +60,7 @@ def _outcome(kind: str, evidence: dict[str, Any], *, action: str = "review", rea
     }
 
 
-def _term_context(term: dict[str, Any], definitions: dict[str, Any]) -> tuple[dict[str, Any], bool, bool, str, dict[str, Any] | None]:
+def _term_context(term: dict[str, Any], definitions: dict[str, Any]) -> dict[str, Any]:
     """Collect observed state once for each of the independent triage rubrics."""
     query = normalize_term(term.get("query"))
     metrics = term.get("metrics") if isinstance(term.get("metrics"), dict) else {}
@@ -70,7 +70,10 @@ def _term_context(term: dict[str, Any], definitions: dict[str, Any]) -> tuple[di
     classification = "brand" if query in aliases else ("ambiguous" if not query else "non_brand")
     negatives = term.get("negative_keywords") if isinstance(term.get("negative_keywords"), list) else []
     negative = next((item for item in negatives if isinstance(item, dict) and negative_blocks(query, item)), None)
-    return {"query": query, "term_id": term.get("id"), "scope": term.get("scope"), "metrics": metrics}, protected, missing, classification, negative
+    return {
+        "query": query, "term_id": term.get("id"), "scope": term.get("scope"), "metrics": metrics,
+        "protected": protected, "missing": missing, "classification": classification, "negative": negative,
+    }
 
 
 def _content_outcomes(term: dict[str, Any], context: dict[str, Any]) -> list[dict[str, Any]]:
@@ -84,14 +87,15 @@ def _content_outcomes(term: dict[str, Any], context: dict[str, Any]) -> list[dic
     ]
 
 
-def _safety_outcomes(term: dict[str, Any], context: dict[str, Any], protected: bool, missing: bool, classification: str, negative: dict[str, Any] | None) -> list[dict[str, Any]]:
+def _safety_outcomes(term: dict[str, Any], state: dict[str, Any]) -> list[dict[str, Any]]:
     """Keep actions requiring outcome evidence or human review non-mutating."""
-    review_reason = "protected_or_missing_outcomes" if protected or missing else None
-    negative_action = "review" if review_reason else ("proposal" if negative else "no_action")
+    context = {key: state[key] for key in ("query", "term_id", "scope", "metrics")}
+    review_reason = "protected_or_missing_outcomes" if state["protected"] or state["missing"] else None
+    negative_action = "review" if review_reason else ("proposal" if state["negative"] else "no_action")
     return [
-        _outcome("negative_conflict", {**context, "negative": negative}, action=negative_action, reason=review_reason),
-        _outcome("recommendation_routing", context, action="review" if missing else "proposal"),
-        _outcome("term_classification", {**context, "classification": classification}, action="review" if classification == "ambiguous" else "proposal"),
+        _outcome("negative_conflict", {**context, "negative": state["negative"]}, action=negative_action, reason=review_reason),
+        _outcome("recommendation_routing", context, action="review" if state["missing"] else "proposal"),
+        _outcome("term_classification", {**context, "classification": state["classification"]}, action="review" if state["classification"] == "ambiguous" else "proposal"),
         _outcome("policy_routing", {**context, "disapproval": term.get("disapproval")}, action="proposal" if term.get("disapproval") else "no_action"),
     ]
 
@@ -99,8 +103,9 @@ def _safety_outcomes(term: dict[str, Any], context: dict[str, Any], protected: b
 def triage_term(term: dict[str, Any], definitions: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     """Produce all eight explicit, evidence-backed outcomes for one observed term."""
     definitions = definitions or {}
-    context, protected, missing, classification, negative = _term_context(term, definitions)
-    return _content_outcomes(term, context) + _safety_outcomes(term, context, protected, missing, classification, negative)
+    state = _term_context(term, definitions)
+    context = {key: state[key] for key in ("query", "term_id", "scope", "metrics")}
+    return _content_outcomes(term, context) + _safety_outcomes(term, state)
 
 
 def analyze(snapshot: dict[str, Any], decisions: dict[str, Any]) -> dict[str, Any]:
