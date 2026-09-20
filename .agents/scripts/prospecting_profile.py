@@ -43,11 +43,7 @@ def _unique(items: list[Any]) -> list[Any]:
     return result
 
 
-def generate_profile(snapshot: dict[str, Any]) -> dict[str, Any]:
-    """Generate source-grounded facts and explicitly marked hypotheses.
-
-    No network access occurs here: callers must supply authorized snapshots.
-    """
+def _validated_pages(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
     pages = snapshot.get("pages")
     if not isinstance(pages, list) or not pages:
         raise ProfileError("snapshot requires at least one page")
@@ -61,50 +57,56 @@ def generate_profile(snapshot: dict[str, Any]) -> dict[str, Any]:
         if markers:
             text = text[:min(markers)].rstrip()
         validated.append({**page, "text": text})
+    return validated
+
+
+def _collect_evidence(pages: list[dict[str, Any]]) -> dict[str, list[dict[str, str]]]:
+    result: dict[str, list[dict[str, str]]] = {key: [] for key in ("facts", "limitations", "competitors", "communities", "language")}
+    for page in pages:
+        for sentence in _sentences(page["text"]):
+            lowered = sentence.lower()
+            if any(marker in lowered for marker in LIMITATION_MARKERS):
+                result["limitations"].append(_evidence(page, sentence, "explicit limitation"))
+            elif any(marker in lowered for marker in ("helps", "automate", "manage", "track", "for teams", "built for")):
+                result["facts"].append(_evidence(page, sentence, "product capability or buyer language"))
+            if any(marker in lowered for marker in ("alternative", "compare", "instead of", "versus", " vs. ")):
+                result["competitors"].append(_evidence(page, sentence, "alternative or comparison language"))
+            if any(marker in lowered for marker in COMMUNITY_MARKERS):
+                result["communities"].append({**_evidence(page, sentence, "community hypothesis", "candidate"), "activation": "requires_relevant_thread_evidence"})
+            if any(marker in lowered for marker in ("problem", "challenge", "pain", "struggle", "need to")):
+                result["language"].append(_evidence(page, sentence, "buyer-language candidate"))
+    return result
+
+
+def _query_families(evidence: dict[str, list[dict[str, str]]]) -> list[dict[str, Any]]:
+    candidates = [{"query": item["quote"].rstrip(".!?"), "stage": "problem", "status": "inferred", "evidence": [item]} for item in _unique(evidence["language"] + evidence["facts"])[:8]]
+    candidates += [{"query": item["quote"].rstrip(".!?"), "stage": "comparison", "status": "observed", "evidence": [item]} for item in _unique(evidence["competitors"])[:5]]
+    result = []
+    seen: set[str] = set()
+    for item in candidates:
+        if item["query"] not in seen:
+            seen.add(item["query"])
+            result.append(item)
+    return result
+
+
+def generate_profile(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Generate source-grounded facts and explicitly marked hypotheses."""
+    validated = _validated_pages(snapshot)
 
     product_name = snapshot.get("product_name")
     if not isinstance(product_name, str) or not product_name.strip():
         product_name = next((page.get("title") for page in validated if isinstance(page.get("title"), str) and page["title"].strip()), "Unknown product")
-    facts: list[dict[str, str]] = []
-    limitations: list[dict[str, str]] = []
-    competitors: list[dict[str, str]] = []
-    communities: list[dict[str, str]] = []
-    language: list[dict[str, str]] = []
-    for page in validated:
-        for sentence in _sentences(page["text"]):
-            lowered = sentence.lower()
-            if any(marker in lowered for marker in LIMITATION_MARKERS):
-                limitations.append(_evidence(page, sentence, "explicit limitation"))
-            elif any(marker in lowered for marker in ("helps", "automate", "manage", "track", "for teams", "built for")):
-                facts.append(_evidence(page, sentence, "product capability or buyer language"))
-            if any(marker in lowered for marker in ("alternative", "compare", "instead of", "versus", " vs. ")):
-                competitors.append(_evidence(page, sentence, "alternative or comparison language"))
-            if any(marker in lowered for marker in COMMUNITY_MARKERS):
-                communities.append({**_evidence(page, sentence, "community hypothesis", "candidate"), "activation": "requires_relevant_thread_evidence"})
-            if any(marker in lowered for marker in ("problem", "challenge", "pain", "struggle", "need to")):
-                language.append(_evidence(page, sentence, "buyer-language candidate"))
-
-    query_families = []
-    for evidence in _unique(language + facts)[:8]:
-        phrase = evidence["quote"].rstrip(".!?")
-        query_families.append({"query": phrase, "stage": "problem", "status": "inferred", "evidence": [evidence]})
-    for evidence in _unique(competitors)[:5]:
-        query_families.append({"query": evidence["quote"].rstrip(".!?"), "stage": "comparison", "status": "observed", "evidence": [evidence]})
-    deduplicated_queries = []
-    seen_queries: set[str] = set()
-    for item in query_families:
-        if item["query"] not in seen_queries:
-            seen_queries.add(item["query"])
-            deduplicated_queries.append(item)
+    evidence = _collect_evidence(validated)
     return {
         "schema": "aidevops.prospecting-profile/v1",
         "product": {"name": product_name, "status": "observed" if snapshot.get("product_name") else "inferred"},
         "profile": {
-            "facts": _unique(facts), "explicit_limitations": _unique(limitations),
-            "unsupported_negative_facts": [], "competitor_candidates": _unique(competitors),
+            "facts": _unique(evidence["facts"]), "explicit_limitations": _unique(evidence["limitations"]),
+            "unsupported_negative_facts": [], "competitor_candidates": _unique(evidence["competitors"]),
         },
         "discovery_plan": {
-            "query_families": deduplicated_queries, "community_candidates": _unique(communities),
+            "query_families": _query_families(evidence), "community_candidates": _unique(evidence["communities"]),
             "active_communities": [], "exploration_allocation": {"max_fraction": 0.2, "status": "editable"},
             "controls": {"manual_edit": True, "import": True, "disable": True},
         },
