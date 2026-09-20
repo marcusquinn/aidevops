@@ -902,6 +902,36 @@ SH
 	return 0
 }
 
+test_reconciled_outcome_persistence_has_deadline() {
+	local fake_helper="${TEST_ROOT}/fake-objective-helper-hangs.sh"
+	cat >"$fake_helper" <<'SH'
+#!/usr/bin/env bash
+sleep 20
+SH
+	chmod +x "$fake_helper"
+
+	local started=$SECONDS
+	(
+		export OBJECTIVE_RECONCILIATION_HELPER="$fake_helper"
+		export AIDEVOPS_OBJECTIVE_OUTCOME_WRITE_ATTEMPTS=1
+		export AIDEVOPS_OBJECTIVE_OUTCOME_WRITE_TIMEOUT_SECONDS=1
+		export AIDEVOPS_ATTEMPT_ID="attempt:deadline-test"
+		export WORKER_ISSUE_NUMBER=99999
+		export DISPATCH_REPO_SLUG="owner/repo"
+		_hrw_record_reconciled_outcome "issue-99999" "premature_exit" \
+			"failed" "failed" "persistence_deadline_test"
+	)
+	local elapsed=$((SECONDS - started))
+
+	if [[ "$elapsed" -lt 5 ]]; then
+		print_result "reconciled outcome persistence cannot retain a worker slot indefinitely" 0
+	else
+		print_result "reconciled outcome persistence cannot retain a worker slot indefinitely" 1 \
+			"elapsed=${elapsed}s"
+	fi
+	return 0
+}
+
 test_reconciled_outcome_requires_explicit_issue() {
 	local fake_helper="${TEST_ROOT}/fake-objective-helper-no-issue.sh"
 	local called_file="${TEST_ROOT}/fake-objective-helper-no-issue.called"

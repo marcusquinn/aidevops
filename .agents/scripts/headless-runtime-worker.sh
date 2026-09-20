@@ -1972,7 +1972,9 @@ _hrw_record_reconciled_outcome() {
 	local next_action="narrow_redispatch"
 	local write_attempt=1
 	local max_write_attempts="${AIDEVOPS_OBJECTIVE_OUTCOME_WRITE_ATTEMPTS:-3}"
+	local write_timeout="${AIDEVOPS_OBJECTIVE_OUTCOME_WRITE_TIMEOUT_SECONDS:-10}"
 	[[ "$max_write_attempts" =~ ^[1-5]$ ]] || max_write_attempts=3
+	[[ "$write_timeout" =~ ^[1-9][0-9]*$ && "$write_timeout" -le 60 ]] || write_timeout=10
 
 	case "$outcome" in
 	success)
@@ -1993,7 +1995,7 @@ _hrw_record_reconciled_outcome() {
 	esac
 	[[ -x "$helper" && "$issue_number" =~ ^[1-9][0-9]*$ && -n "$repo_slug" && -n "${AIDEVOPS_ATTEMPT_ID:-}" ]] || return 0
 	while [[ "$write_attempt" -le "$max_write_attempts" ]]; do
-		if "$helper" record-outcome --repo "$repo_slug" --issue "$issue_number" \
+		if timeout_sec "$write_timeout" "$helper" record-outcome --repo "$repo_slug" --issue "$issue_number" \
 			--attempt-id "$AIDEVOPS_ATTEMPT_ID" --run-id "${AIDEVOPS_RUN_ID:-}" \
 			--attempt-started-at "${AIDEVOPS_ATTEMPT_STARTED_AT:-}" \
 			--raw-result "$raw_result" --outcome "$outcome" --status "$status" \
