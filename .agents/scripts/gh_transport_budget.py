@@ -97,7 +97,7 @@ class Budget:
         if self.path.stat().st_uid != os.getuid():
             raise ValueError("transport state file is not owned by this user")
         self.path.chmod(0o600)
-        self.db = sqlite3.connect(self.path, timeout=2, isolation_level=None)
+        self.db = sqlite3.connect(self.path, timeout=5, isolation_level=None)
         requested_scope = scope
         self.scope = scope
         self.credential = credential or scope

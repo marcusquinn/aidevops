@@ -7,7 +7,7 @@ from __future__ import annotations
 import sqlite3
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 SCHEMA_STATEMENTS = (
     """CREATE TABLE IF NOT EXISTS quota (
         scope TEXT NOT NULL, resource TEXT NOT NULL,
@@ -46,6 +46,10 @@ def ensure_schema(db: sqlite3.Connection) -> None:
 
     db.execute("PRAGMA busy_timeout=10000")
     try:
+        if version < 2:
+            journal_mode = db.execute("PRAGMA journal_mode=WAL").fetchone()[0]
+            if str(journal_mode).lower() != "wal":
+                raise sqlite3.OperationalError("failed to enable WAL journal mode")
         db.execute("BEGIN IMMEDIATE")
         version = db.execute("PRAGMA user_version").fetchone()[0]
         if version < SCHEMA_VERSION:
@@ -59,4 +63,4 @@ def ensure_schema(db: sqlite3.Connection) -> None:
         db.rollback()
         raise
     finally:
-        db.execute("PRAGMA busy_timeout=2000")
+        db.execute("PRAGMA busy_timeout=5000")

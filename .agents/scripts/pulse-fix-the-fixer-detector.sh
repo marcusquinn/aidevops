@@ -60,6 +60,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)" || exit 1
 source "${SCRIPT_DIR}/shared-constants.sh"
 
 readonly FIX_THE_FIXER_LABEL="fix-the-fixer"
+readonly FIX_THE_FIXER_LABEL_COLOR="e4e669"
+readonly FIX_THE_FIXER_LABEL_DESCRIPTION="Worker dispatch self-referential task"
 readonly FIX_THE_FIXER_MARKER="<!-- aidevops:fix-the-fixer-detector -->"
 # GH#23594: test override path. Production callers leave the env var unset
 # and pick up the sibling helper; regression tests can point at a stub that
@@ -364,6 +366,28 @@ _classify_via_llm() {
 # ---------------------------------------------------------------------------
 # Apply the label + post advisory comment. Idempotent via marker.
 # ---------------------------------------------------------------------------
+_ensure_fix_the_fixer_label() {
+	local slug="$1"
+	local labels_json=""
+
+	labels_json=$(gh label list --repo "$slug" --limit 100 --json name 2>/dev/null) || {
+		_log_warn "failed to inspect labels in ${slug}; skipping classification"
+		return 1
+	}
+	if printf '%s' "$labels_json" | jq -e --arg label "$FIX_THE_FIXER_LABEL" \
+		'any(.[]?; .name == $label)' >/dev/null 2>&1; then
+		return 0
+	fi
+	if ! gh label create "$FIX_THE_FIXER_LABEL" --repo "$slug" \
+		--color "$FIX_THE_FIXER_LABEL_COLOR" \
+		--description "$FIX_THE_FIXER_LABEL_DESCRIPTION" >/dev/null 2>&1; then
+		_log_warn "failed to create ${FIX_THE_FIXER_LABEL} in ${slug}; skipping classification"
+		return 1
+	fi
+	_log_info "created ${FIX_THE_FIXER_LABEL} label in ${slug}"
+	return 0
+}
+
 _apply_label_and_comment() {
 	local issue_num="$1"
 	local slug="$2"
@@ -378,7 +402,7 @@ _apply_label_and_comment() {
 	gh issue edit "$issue_num" --repo "$slug" \
 		--add-label "$FIX_THE_FIXER_LABEL" >/dev/null 2>&1 || {
 		_log_warn "failed to apply ${FIX_THE_FIXER_LABEL} on ${slug}#${issue_num}"
-		return 0
+		return 1
 	}
 
 	# Idempotency check — skip comment if marker already present.
@@ -427,7 +451,8 @@ _Automated by \`pulse-fix-the-fixer-detector.sh\` (t3077). Idempotent via the \`
 }
 
 # ---------------------------------------------------------------------------
-# Check a single issue. Returns 0 always (non-blocking).
+# Check a single issue. Classification skips remain non-blocking; write
+# prerequisite or label-application failures return 1 for run accounting.
 # ---------------------------------------------------------------------------
 cmd_check() {
 	local issue_num="$1"
@@ -484,6 +509,7 @@ cmd_check() {
 	# Return semantics (t3223 — detector silent failure fix):
 	#   exit 0 + verdict=YES  → classified, label applied
 	#   exit 0 + verdict=NO   → classified, no action
+	#   exit 1 + verdict=YES  → classified, label prerequisite/apply failed
 	#   exit 2 + verdict=SKIP → LLM unavailable, NOT classified — caller
 	#                            must surface this in run summary
 	#   exit 0 (other paths)  → skipped pre-classification (closed,
@@ -506,7 +532,24 @@ cmd_check() {
 	fi
 
 	_log_info "${slug}#${issue_num} verdict=YES ${RATIONALE}"
-	_apply_label_and_comment "$issue_num" "$slug" "$RATIONALE"
+	_ensure_fix_the_fixer_label "$slug" || return 1
+	_apply_label_and_comment "$issue_num" "$slug" "$RATIONALE" || return 1
+	return 0
+}
+
+_log_run_summary() {
+	local processed="$1" classified="$2" apply_failed="$3"
+	local skipped_auth="$4" skipped_llm="$5" repo_count="$6"
+	local counts="processed ${processed} issue(s) across ${repo_count} repo(s) — classified=${classified}, apply-failed=${apply_failed}, skipped:auth-error=${skipped_auth}, skipped:LLM-failure=${skipped_llm}"
+	if [[ "$skipped_auth" -gt 0 ]]; then
+		_log_warn "${counts} (detector observability degraded; ${AUTH_ERROR_REASON})"
+	elif [[ "$skipped_llm" -gt 0 ]]; then
+		_log_warn "${counts} (detector observability degraded; check ai-research-helper.sh / API credentials)"
+	elif [[ "$apply_failed" -gt 0 ]]; then
+		_log_warn "${counts} (detector writes degraded; inspect preceding GitHub label/comment errors)"
+	else
+		_log_info "$counts"
+	fi
 	return 0
 }
 
@@ -562,6 +605,7 @@ cmd_run() {
 	# fix exists to surface (t3223).
 	local processed=0
 	local classified=0
+	local apply_failed=0
 	local skipped_llm=0
 	local skipped_auth=0
 	export AIDEVOPS_FIX_THE_FIXER_DETECTOR_SUPPRESS_AUTH_ITEM_LOGS=1
@@ -581,6 +625,8 @@ cmd_run() {
 		nums=$(printf '%s' "$issues_json" | \
 			jq -r --arg L "$FIX_THE_FIXER_LABEL" \
 			'.[] | select([.labels[].name] | any(. == $L) | not) | .number' 2>/dev/null) || nums=""
+		[[ -n "$nums" ]] || continue
+		_ensure_fix_the_fixer_label "$slug" || continue
 
 		while IFS= read -r issue_num; do
 			[[ -z "$issue_num" ]] && continue
@@ -592,21 +638,15 @@ cmd_run() {
 			case "$rc" in
 				3) skipped_auth=$((skipped_auth + 1)) ;;
 				2) skipped_llm=$((skipped_llm + 1)) ;;
+				1) apply_failed=$((apply_failed + 1)) ;;
 				*) classified=$((classified + 1)) ;;
 			esac
 			processed=$((processed + 1))
 		done <<<"$nums"
 	done
 
-	if [[ "$skipped_auth" -gt 0 ]]; then
-		_log_warn "processed ${processed} issue(s) across ${#target_repos[@]} repo(s) — classified=${classified}, skipped:auth-error=${skipped_auth}, skipped:LLM-failure=${skipped_llm} (detector observability degraded; ${AUTH_ERROR_REASON})"
-	elif [[ "$skipped_llm" -gt 0 ]]; then
-		# Loud signal — the original t3223 incident was a 6h silent LLM
-		# outage. WARN level so it surfaces in the dashboards/log filters.
-		_log_warn "processed ${processed} issue(s) across ${#target_repos[@]} repo(s) — classified=${classified}, skipped:auth-error=0, skipped:LLM-failure=${skipped_llm} (detector observability degraded; check ai-research-helper.sh / API credentials)"
-	else
-		_log_info "processed ${processed} issue(s) across ${#target_repos[@]} repo(s) — classified=${classified}, skipped:auth-error=0, skipped:LLM-failure=0"
-	fi
+	_log_run_summary "$processed" "$classified" "$apply_failed" \
+		"$skipped_auth" "$skipped_llm" "${#target_repos[@]}"
 	return 0
 }
 

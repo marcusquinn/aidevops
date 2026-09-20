@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -57,7 +58,8 @@ class AdmissionTests(unittest.TestCase):
             other.close()
 
     def test_initialized_open_does_not_replay_schema_writes(self):
-        self.assertEqual(self.budget.db.execute("PRAGMA user_version").fetchone()[0], 1)
+        self.assertEqual(self.budget.db.execute("PRAGMA user_version").fetchone()[0], 2)
+        self.assertEqual(self.budget.db.execute("PRAGMA journal_mode").fetchone()[0], "wal")
         self.budget.db.execute("BEGIN IMMEDIATE")
         try:
             other = Budget.__new__(Budget)
@@ -71,7 +73,7 @@ class AdmissionTests(unittest.TestCase):
     def test_future_schema_fails_closed(self):
         self.budget.close()
         connection = sqlite3.connect(self.directory / "admission.sqlite3")
-        connection.execute("PRAGMA user_version=2")
+        connection.execute("PRAGMA user_version=3")
         connection.close()
         with self.assertRaisesRegex(ValueError, "schema is newer"):
             Budget(self.directory, "owner-one")
@@ -80,12 +82,44 @@ class AdmissionTests(unittest.TestCase):
 
     def test_open_budget_fails_closed_after_concurrent_schema_upgrade(self):
         connection = sqlite3.connect(self.directory / "admission.sqlite3")
-        connection.execute("PRAGMA user_version=2")
+        connection.execute("PRAGMA user_version=3")
         connection.close()
         with self.assertRaisesRegex(ValueError, "schema changed"):
             with self.budget.transaction():
                 pass
-        self.budget.db.execute("PRAGMA user_version=1")
+        self.budget.db.execute("PRAGMA user_version=2")
+
+    def test_legacy_schema_migrates_to_wal_once(self):
+        self.budget.close()
+        connection = sqlite3.connect(self.directory / "admission.sqlite3")
+        connection.execute("PRAGMA journal_mode=DELETE")
+        connection.execute("PRAGMA user_version=1")
+        connection.close()
+        self.budget = Budget(self.directory, "owner-one")
+        self.assertEqual(self.budget.db.execute("PRAGMA user_version").fetchone()[0], 2)
+        self.assertEqual(self.budget.db.execute("PRAGMA journal_mode").fetchone()[0], "wal")
+
+    def test_concurrent_legacy_opens_serialize_wal_migration(self):
+        self.budget.close()
+        connection = sqlite3.connect(self.directory / "admission.sqlite3")
+        connection.execute("PRAGMA journal_mode=DELETE")
+        connection.execute("PRAGMA user_version=1")
+        connection.close()
+
+        def open_budget(index):
+            budget = Budget(self.directory, f"owner-{index}")
+            try:
+                return (
+                    budget.db.execute("PRAGMA user_version").fetchone()[0],
+                    budget.db.execute("PRAGMA journal_mode").fetchone()[0],
+                )
+            finally:
+                budget.close()
+
+        with ThreadPoolExecutor(max_workers=6) as executor:
+            results = list(executor.map(open_budget, range(6)))
+        self.assertEqual(results, [(2, "wal")] * 6)
+        self.budget = Budget(self.directory, "owner-one")
 
     def test_stale_and_missing_state_allow_only_one_observation(self):
         self.budget.acquire("core", now=1000)

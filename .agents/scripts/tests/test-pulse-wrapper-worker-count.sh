@@ -583,12 +583,17 @@ _setup_dispatch_stub() {
 		local issue_num="$1"
 		local repo_slug="$2"
 		local repo_path="$3"
+		local result_var="${4:-}"
 		local artifact_dir="${TEST_ROOT}/prompt-artifacts-${issue_num}"
 		local prompt_file="${artifact_dir}/prompt-${repo_slug//\//-}-${repo_path##*/}.md"
 		mkdir -p "$artifact_dir"
 		printf 'test prompt for %s\n' "$issue_num" >"$prompt_file"
-		printf '%s|test-content-%s|%s\n' \
-			"$prompt_file" "$issue_num" "$TRIAGE_TEST_PROMPT_METADATA"
+		local result="${prompt_file}|test-content-${issue_num}|${TRIAGE_TEST_PROMPT_METADATA}"
+		if [[ -n "$result_var" ]]; then
+			printf -v "$result_var" '%s' "$result"
+		else
+			printf '%s\n' "$result"
+		fi
 		return 0
 	}
 
@@ -958,6 +963,32 @@ test_dispatch_triage_reviews_types_infrastructure_failures() {
 	return 0
 }
 
+test_dispatch_triage_reviews_counts_prefetch_infrastructure_failures() {
+	local repos_json="" state_file="" outcome="" original_builder=""
+	repos_json=$(_make_repos_json "owner/repo" "/tmp/repo")
+	state_file=$(_make_state_file "## owner/repo
+
+- Issue #801: Prefetch fails [status: **needs-review**] [created: 2026-01-01T00:00:00Z]
+")
+	STATE_FILE="$state_file"
+	TRIAGE_STATE_FILE="$state_file"
+	original_builder=$(declare -f _build_triage_review_prompt)
+	_build_triage_review_prompt() {
+		_PAD_TRIAGE_LAST_BUILD_OUTCOME="$_PAD_TRIAGE_OUTCOME_INFRASTRUCTURE_FAILED"
+		return 1
+	}
+	outcome=$(dispatch_triage_reviews 1 "$repos_json" 2>/dev/null)
+	eval "$original_builder"
+	if [[ "$(printf '%s' "$outcome" | jq -r '.attempted')" == "0" && \
+		"$(printf '%s' "$outcome" | jq -r '.infrastructure_failed')" == "1" ]]; then
+		print_result "dispatch_triage_reviews counts prompt-build infrastructure failures" 0
+		return 0
+	fi
+	print_result "dispatch_triage_reviews counts prompt-build infrastructure failures" 1 \
+		"Unexpected outcome '${outcome}'"
+	return 0
+}
+
 test_triage_prepass_has_independent_once_per_cycle_budget() {
 	local repos_json="" state_file="" first="" second="" dispatch_count=""
 	local enrichment_definition=""
@@ -1225,6 +1256,7 @@ main() {
 	test_dispatch_triage_reviews_returns_zero_when_no_state_file
 	test_dispatch_triage_reviews_rejects_malformed_metadata
 	test_dispatch_triage_reviews_types_infrastructure_failures
+	test_dispatch_triage_reviews_counts_prefetch_infrastructure_failures
 	test_triage_prepass_has_independent_once_per_cycle_budget
 	test_triage_prepass_rest_gate_blocks_before_review_api
 	test_triage_fallback_outcome_is_valid
