@@ -535,6 +535,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 ## Backlog
 
+- [ ] t18471 docs: generalize stale local dev server and browser-process diagnostics #documentation #debugging #ops #interactive #auto-dispatch ~1h tier:standard ref:GH#32119 logged:2026-09-20 -> [todo/tasks/t18471-brief.md]
+
 - [x] t18309 Fix same-user daemon proc cwd cleanup degradation #bug #framework #cleanup #worktree #interactive ~1h tier:standard ref:GH#30740 logged:2026-08-25 -> [todo/tasks/t18309-brief.md] pr:#30741 completed:2026-08-25
 
 - [x] t18294 Stop approval batches after systemic GitHub transport failure #bug #framework #reliability #interactive #auto-dispatch ~3h tier:standard blocked-by:t18293 ref:GH#30339 logged:2026-08-17 -> [todo/tasks/t18294-brief.md] pr:#30352 completed:2026-08-17
@@ -623,7 +625,7 @@ Session baseline grew from ~9.5k tokens (Mar 1) to ~21.8k tokens (Mar 27) in pro
 
 - [ ] t18444 Provider-neutral ads, SEO and GEO decision workflows #parent #enhancement #interactive tier:thinking ref:GH#32056 logged:2026-09-20 -> [todo/tasks/t18444-brief.md]
 - [x] t18445 Shared marketing decision contract and bounded batch runner #enhancement #interactive #auto-dispatch tier:thinking parent:t18444 ref:GH#32057 logged:2026-09-20 -> [todo/tasks/t18445-brief.md] pr:#32095 completed:2026-09-20
-- [x] t18446 Offline marketing and site snapshot importers #enhancement #interactive #auto-dispatch tier:standard parent:t18444 blocked-by:t18445 ref:GH#32058 logged:2026-09-20 -> [todo/tasks/t18446-brief.md] pr:#32107 completed:2026-09-20
+- [ ] t18446 Offline marketing and site snapshot importers #enhancement #interactive #auto-dispatch tier:standard parent:t18444 blocked-by:t18445 ref:GH#32058 logged:2026-09-20 -> [todo/tasks/t18446-brief.md]
 - [ ] t18447 Google Ads hygiene and search-term triage #enhancement #interactive #auto-dispatch tier:standard parent:t18444 blocked-by:t18446 ref:GH#32061 logged:2026-09-20 -> [todo/tasks/t18447-brief.md]
 - [ ] t18448 Shared intent-to-page matching and paid-to-organic opportunities #enhancement #interactive #auto-dispatch tier:standard parent:t18444 blocked-by:t18446 ref:GH#32059 logged:2026-09-20 -> [todo/tasks/t18448-brief.md]
 - [ ] t18449 Evidence-backed internal links and cannibalization review #enhancement #interactive #auto-dispatch tier:standard parent:t18444 blocked-by:t18448 ref:GH#32060 logged:2026-09-20 -> [todo/tasks/t18449-brief.md]
