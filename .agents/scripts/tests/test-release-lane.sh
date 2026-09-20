@@ -180,6 +180,7 @@ run_http_classification_test() (
 
 run_legacy_and_api_failure_test() (
 	local mode="absent"
+	local output=""
 	local rc=0
 	release_lane_read() {
 		[[ "$mode" == "absent" ]] && return 2
@@ -187,8 +188,34 @@ run_legacy_and_api_failure_test() (
 	}
 	release_lane_update_if_owned test/repo 101 exact-tag-deployment v1.2.3 || return 1
 	mode="failure"
+	rm -f "$(_release_lane_cache_path test/repo)"
+	output=$(release_lane_setup_guard test/repo 2>&1) || rc=$?
+	[[ "$rc" -eq 0 && "$output" == *"continuing generic setup"* ]] || return 1
+	rc=0
+	output=$(AIDEVOPS_RELEASE_LANE_SOURCE_PR=101 AIDEVOPS_RELEASE_LANE_TAG=v1.2.3 \
+		release_lane_setup_guard test/repo 2>&1) || rc=$?
+	[[ "$rc" -eq 75 && "$output" == *"exact-tag setup deployment is blocked"* ]]
+	return $?
+)
+
+run_setup_guard_cache_fallback_test() (
+	local cache_path=""
+	local output=""
+	local rc=0
+	release_lane_read() { return 1; }
+	cache_path=$(_release_lane_cache_path test/repo) || return 1
+	mkdir -p "${cache_path%/*}"
+	printf '%s\n' '{"schema_version":1,"repository":"test/repo","active":true,"source_pr":101,"phase":"exact-tag-deployment","tag":"v1.2.3","updated_at":"2026-09-20T00:00:00Z","operation_token":"token-old"}' >"$cache_path"
 	release_lane_setup_guard test/repo >/dev/null 2>&1 || rc=$?
-	[[ "$rc" -eq 75 ]]
+	[[ "$rc" -eq 75 ]] || return 1
+	rc=0
+	output=$(AIDEVOPS_RELEASE_LANE_SOURCE_PR=101 AIDEVOPS_RELEASE_LANE_TAG=v1.2.3 \
+		release_lane_setup_guard test/repo 2>&1) || rc=$?
+	[[ "$rc" -eq 75 && "$output" == *"exact-tag setup deployment is blocked"* ]] || return 1
+	printf '%s\n' '{"schema_version":1,"repository":"wrong/repo","active":true}' >"$cache_path"
+	rc=0
+	output=$(release_lane_setup_guard test/repo 2>&1) || rc=$?
+	[[ "$rc" -eq 0 && "$output" == *"continuing generic setup"* ]]
 	return $?
 )
 
@@ -792,10 +819,11 @@ if run_competing_source_test; then assert_result 'competing source receives acti
 if run_same_source_adoption_test; then assert_result 'same source adopts durable lane without another bump' true; else assert_result 'same source adopts durable lane without another bump' false; fi
 if run_terminal_lane_reacquire_test; then assert_result 'terminal lane can be atomically reserved by a later source' true; else assert_result 'terminal lane can be atomically reserved by a later source' false; fi
 if run_setup_guard_test; then assert_result 'exact-tag deployment blocks generic setup and permits matching owner' true; else assert_result 'exact-tag deployment blocks generic setup and permits matching owner' false; fi
+if run_setup_guard_cache_fallback_test; then assert_result 'setup uses only valid cached lane state and keeps exact-tag fallback fail-closed' true; else assert_result 'setup uses only valid cached lane state and keeps exact-tag fallback fail-closed' false; fi
 if run_merge_guard_test; then assert_result 'publisher lane never blocks ordinary merges' true; else assert_result 'publisher lane never blocks ordinary merges' false; fi
 if run_merge_guard_api_uncertainty_test; then assert_result 'unavailable publisher lane does not freeze merges' true; else assert_result 'unavailable publisher lane does not freeze merges' false; fi
 if run_http_classification_test; then assert_result 'only verified HTTP 404 is classified as an absent lane' true; else assert_result 'only verified HTTP 404 is classified as an absent lane' false; fi
-if run_legacy_and_api_failure_test; then assert_result 'legacy absent lane remains compatible while API uncertainty blocks setup' true; else assert_result 'legacy absent lane remains compatible while API uncertainty blocks setup' false; fi
+if run_legacy_and_api_failure_test; then assert_result 'legacy absent lane remains compatible while API uncertainty permits only generic setup' true; else assert_result 'legacy absent lane remains compatible while API uncertainty permits only generic setup' false; fi
 if run_default_stale_boundary_and_fencing_test; then assert_result 'default stale recovery adopts at 299s, reclaims at 300s, and fences the prior owner' true; else assert_result 'default stale recovery adopts at 299s, reclaims at 300s, and fences the prior owner' false; fi
 if run_stale_reclamation_guard_test; then assert_result 'preparing, tagged, and receipted lanes remain reconcile-only' true; else assert_result 'preparing, tagged, and receipted lanes remain reconcile-only' false; fi
 if run_aggregate_recovery_rotation_test; then assert_result 'reviewed aggregate recovery rotates and can restore its lane transaction' true; else assert_result 'reviewed aggregate recovery rotates and can restore its lane transaction' false; fi
