@@ -107,6 +107,14 @@ localdev-helper.sh serve --port 3100 \
 - `--lock` is optional and must resolve inside `--root`. It is removed only after the port is confirmed unused and the launch lock is held.
 - An owned but unhealthy listener is not restarted implicitly. Stop it explicitly, diagnose it, then retry.
 
+### Stale-listener evidence and recovery
+
+Before attributing a blank or indefinitely loading page to source code or browser state, establish a read-only baseline for the listener: PID, cwd, PPID/PGID/TTY, elapsed time, RSS, executable and runtime, supervisor, bounded logs, and cold/warm request durations. A successful health URL can coexist with streaming or rendered requests stalled by a degraded long-running development server.
+
+Read the target repository's `packageManager`, `engines.node`, and runtime-version files, then verify the listener's executable/runtime rather than relying on the interactive shell's `node --version`. Extreme uptime, RSS, or multi-minute request duration are investigation signals, not universal restart thresholds. For SSR-specific runtime evidence, see `tools/runtime/node-server-admin.md`.
+
+After obtaining interruption authority, stop only the verified project-owned supervisor or process group gracefully. Relaunch through the repository's supported command under its declared runtime, retain accessible logs and a documented stop path, then repeat a real-browser check and an isolated-browser check. Never kill by process name alone, remove locks before confirming the port is unused, or lead with broad cache deletion, dependency reinstall, or source edits.
+
 ### Saved terminal profiles (Tabby)
 
 Keep saved-profile commands thin: call a versioned project command that delegates
@@ -258,6 +266,8 @@ docker exec local-traefik ls /certs/
 lsof -i :3100 && cat ~/.local-dev-proxy/ports.json | jq '.apps'
 localhost-helper.sh kill-port 3100 && localdev-helper.sh list
 ```
+
+For an owned listener that responds but appears stale, inspect its ownership and runtime before stopping it. Do not use `kill-port` as a diagnosis shortcut: it may interrupt the wrong session when multiple local projects coexist. If ownership, supervisor, runtime, or real-browser evidence cannot be verified, preserve the logs and report the gap rather than escalating to cache deletion or a wider process kill.
 
 **Traefik:**
 

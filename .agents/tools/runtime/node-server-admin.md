@@ -78,6 +78,12 @@ Never read environment values or credential files. Use `reference/secret-handlin
 
 Use platform-appropriate read-only tools (`ps`, `lsof`, `top`, `vmmap`/`memory_pressure` on macOS; `free`, `vmstat`, `systemctl status`, or container stats on Linux). Sample before profiling. RSS is not heap; virtual memory is not physical use; development compiler memory is not production serving memory.
 
+### Local SSR blank-page incidents
+
+For a local SSR page that is blank or indefinitely loading, compare the repository-declared runtime with the listener's actual executable and runtime before changing application code or browser state. Record process uptime, RSS, listener ownership, bounded logs, and cold/warm request durations alongside the real-browser result; a health endpoint or isolated automation success alone does not prove the live development server is healthy.
+
+High uptime, RSS, or request duration is evidence to investigate, never a universal numeric restart rule. With interruption authority, gracefully restart only the verified project-owned supervisor or process group through the repository-supported launcher and declared runtime. Keep logs accessible, retain a documented stop path, and repeat both real-browser and isolated-browser verification. If runtime alignment and restart do not explain the symptom, hand browser-target disambiguation to `tools/browser/chromium-debug-use.md` before inspecting service-worker or origin state.
+
 Heap snapshots, CPU profiles, diagnostic reports, and traces can pause a process, increase memory pressure, consume disk, and capture sensitive application data. Require target confirmation, bounded duration, secure output handling, and production approval.
 
 ## Maintenance and Update Actions

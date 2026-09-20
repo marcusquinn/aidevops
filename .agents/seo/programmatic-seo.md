@@ -65,6 +65,8 @@ Sections:
 
 **Quality gates** — each page MUST have unique, substantive content (not just variable substitution): ≥300 words unique content with real data points per variation; must add value beyond a single parent page.
 
+For existing page inventories, use `seo/content-disposition.md` to generate review-only keep/update/merge proposals; never use a word-count score alone to noindex or remove a page.
+
 ### 3. Data Collection
 
 | Source Type | Examples | Method |

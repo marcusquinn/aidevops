@@ -166,6 +166,14 @@ Chrome/Brave/Edge/Vivaldi require relaunching with the debug flag (profile-level
 
 ## Troubleshooting
 
+### Multi-process browser targeting
+
+Before using AppleScript, Accessibility, CDP, or process evidence for a real-browser incident, list Chromium-family PIDs and command lines. Distinguish the user-owned profile from headless Playwright instances, managed debug browsers, and other profiles. Target the intended browser by Unix PID or an explicit CDP target; never infer ownership from the application name alone.
+
+AppleScript and Accessibility automation can verify focus, window title, address, and navigation state, but they are not DOM evidence. Use CDP or an isolated browser for DOM, console, network, or JavaScript claims. Do not export a full profile, dump page bodies, collect private screenshots, or clear browser data as a default diagnostic step.
+
+When an isolated browser renders while the user profile is blank, verify the listener/runtime separately before modifying browser state. After a verified runtime-aligned restart still leaves evidence pointing to browser state, inspect service-worker/cache state and, only when justified, clear the affected origin rather than broad profile data. See `tools/ui/frontend-debugging.md` for the full decision sequence.
+
 | Problem | Fix |
 |---------|-----|
 | `ECONNREFUSED` on `9222` | Browser was not started with `--remote-debugging-port=9222` |
