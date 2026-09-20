@@ -10,6 +10,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.34.4] - 2026-09-20
+
+### Added
+
+- add private Jev retrieval and shadow triage pilots
+- add optional Jev agents and bounded decision examples
+- add recommended apps (#32004)
+
+### Changed
+
+- Documentation: Align NetBird and Cloudron multi-instance guidance
+- Documentation: update NetBird Cloudron guidance (#32033)
+- Maintenance: mark t18443 complete (pr:#32004 completed:2026-09-17) (#32005)
+
+### Fixed
+
+- harden maintainer and worker recovery paths
+- expose apply patch workdir context (#32031)
+- guide Cloudron SSH access recovery (#32030)
+- avoid recovery observation argv overflow (#32022)
+- trust anyio Dependabot update (#32017)
+- remediate anyio dependency alert (#32016)
+- execute blocker CLIs through deployment symlinks
+
 ## [3.34.3] - 2026-09-16
 
 ### Fixed
