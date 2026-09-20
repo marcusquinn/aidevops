@@ -69,11 +69,11 @@ jobs:
     timeout-minutes: 3
     # t3213 / GH#21947 / GH#22436: cancel-in-progress is INTENTIONALLY true here.
     #
-    # check-pr is a READ-ONLY verdict job — it computes pass/fail from PR state
-    # at runtime (labels, linked issues, assignees) and writes a single status
-    # check. It does not mutate labels (Jobs 2-5 handle that, on different
-    # events and under separate `if:` conditions, with no shared concurrency
-    # block).
+    # check-pr is a verdict job — it computes pass/fail from PR state at runtime
+    # (labels, linked issues, assignees) and writes a single status check. Its
+    # only label mutation is removing a positively identified stale NMR label
+    # left by the PR triage workflow before authenticated maintainer authority
+    # was known. Jobs 2-5 own every other label mutation.
     #
     # Implication: the verdict from an OLDER queued run is always staler than
     # one from a NEWER run on the same PR. Cancelling the older run costs
@@ -209,6 +209,47 @@ jobs:
             esac
           }
 
+          pr_nmr_is_auto_triage_residue() {
+            local events_json=""
+            local provenance=""
+
+            #aidevops:trust-boundary GH#17671/GH#31995: only normalize NMR
+            # when the latest NMR and external-contributor label events form
+            # the same github-actions[bot] triage operation. A human-applied
+            # NMR or an independently re-applied bot label remains an explicit
+            # live hold. API or parse uncertainty fails closed.
+            if ! events_json=$(set -o pipefail; gh api --paginate \
+              "repos/${REPO}/issues/${PR_NUMBER}/events?per_page=100" | jq -s '.'); then
+              echo "::warning::Unable to verify PR label provenance — preserving NMR"
+              return 2
+            fi
+
+            if ! provenance=$(printf '%s' "$events_json" | jq -r '
+              if type == "array" and all(.[]; type == "array") then
+                [ .[][]
+                  | select(.event == "labeled")
+                  | {
+                      label: (.label.name // ""),
+                      actor: (.actor.login // ""),
+                      created_at: (.created_at // "")
+                    }
+                ] as $events
+                | ($events | map(select(.label == "needs-maintainer-review")) | last) as $nmr
+                | ($events | map(select(.label == "external-contributor")) | last) as $external
+                | ($nmr != null and $external != null
+                  and $nmr.actor == "github-actions[bot]"
+                  and $external.actor == "github-actions[bot]"
+                  and $nmr.created_at != ""
+                  and $nmr.created_at == $external.created_at)
+              else error("invalid paginated issue events response") end
+            ' 2>/dev/null); then
+              echo "::warning::Unable to parse PR label provenance — preserving NMR"
+              return 2
+            fi
+
+            [[ "$provenance" == "true" ]]
+          }
+
           # ---------------------------------------------------------------
           # Check 0: Does the PR itself carry needs-maintainer-review?
           # GH#17671 post-mortem: external PRs without linked issues bypassed
@@ -230,6 +271,23 @@ jobs:
           #aidevops:trust-boundary GH#17671/GH#28622: comment bodies are
           # attacker-controlled. The approval command must clear the live hold;
           # copying its marker into a comment can never make this check pass.
+          if echo "$PR_LABELS" | grep -q 'needs-maintainer-review'; then
+            NMR_RESIDUE_RC=1
+            if pr_author_has_maintainer_authority "$PR_AUTHOR_ASSOCIATION" "$PR_AUTHOR"; then
+              NMR_RESIDUE_RC=0
+              pr_nmr_is_auto_triage_residue || NMR_RESIDUE_RC=$?
+              if [[ "$NMR_RESIDUE_RC" -eq 0 ]]; then
+                echo "NORMALIZE: PR #$PR_NUMBER has verified auto-triage NMR residue for a maintainer-authority author"
+                if ! gh pr edit "$PR_NUMBER" --repo "$REPO" --remove-label "needs-maintainer-review"; then
+                  echo "::error::Unable to clear verified auto-triage NMR residue"
+                  post_maintainer_gate_status_with_retry failure "Unable to clear stale maintainer-review label"
+                  exit 1
+                fi
+                PR_LABELS=$(printf '%s\n' "$PR_LABELS" | grep -vx 'needs-maintainer-review' || true)
+              fi
+            fi
+          fi
+
           if echo "$PR_LABELS" | grep -q 'needs-maintainer-review'; then
             echo "BLOCKED: PR #$PR_NUMBER has needs-maintainer-review label"
             echo "blocked=true" >> "$GITHUB_OUTPUT"
@@ -1090,6 +1148,7 @@ jobs:
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_AUTHOR_ASSOCIATION: ${{ github.event.pull_request.author_association }}
           ACTOR: ${{ github.actor }}
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -1136,6 +1195,50 @@ jobs:
             return 1
           }
 
+          pr_author_has_maintainer_authority() {
+            local permission=""
+            case "$PR_AUTHOR_ASSOCIATION" in
+              OWNER|MEMBER) return 0 ;;
+              CONTRIBUTOR|COLLABORATOR) ;;
+              *) return 1 ;;
+            esac
+            [[ -n "$PR_AUTHOR" ]] || return 1
+            permission=$(gh api "repos/${REPO}/collaborators/${PR_AUTHOR}/permission" \
+              --jq '.permission' 2>/dev/null) || return 1
+            case "$permission" in
+              admin|maintain|write) return 0 ;;
+            esac
+            return 1
+          }
+
+          pr_nmr_removal_is_verified_normalization() {
+            local events_json=""
+            if ! events_json=$(set -o pipefail; gh api --paginate \
+              "repos/${REPO}/issues/${PR_NUMBER}/events?per_page=100" | jq -s '.'); then
+              return 1
+            fi
+            printf '%s' "$events_json" | jq -e '
+              if type == "array" and all(.[]; type == "array") then
+                [ .[][]
+                  | select(.event == "labeled" or .event == "unlabeled")
+                  | {event, label: (.label.name // ""), actor: (.actor.login // ""),
+                      created_at: (.created_at // "")}
+                ] as $events
+                | ($events | map(select(.event == "labeled" and .label == "needs-maintainer-review")) | last) as $nmr_add
+                | ($events | map(select(.event == "labeled" and .label == "external-contributor")) | last) as $external_add
+                | ($events | map(select(.label == "needs-maintainer-review")) | last) as $nmr_latest
+                | ($nmr_add != null and $external_add != null and $nmr_latest != null
+                  and $nmr_add.actor == "github-actions[bot]"
+                  and $external_add.actor == "github-actions[bot]"
+                  and $nmr_add.created_at != ""
+                  and $nmr_add.created_at == $external_add.created_at
+                  and $nmr_latest.event == "unlabeled"
+                  and $nmr_latest.actor == "github-actions[bot]"
+                  and $nmr_latest.created_at >= $nmr_add.created_at)
+              else error("invalid paginated issue events response") end
+            ' >/dev/null 2>&1
+          }
+
           # Only protect PRs that were labelled external-contributor.
           # Internal PRs (from collaborators) should never have had NMR in
           # the first place — don't fight a manual correction on those.
@@ -1152,6 +1255,18 @@ jobs:
 
           if ! echo "$PR_LABELS" | grep -q 'external-contributor'; then
             echo "ALLOWED: PR #$PR_NUMBER is not an external-contributor PR — label removal accepted"
+            exit 0
+          fi
+
+          #aidevops:trust-boundary GH#17671/GH#31995: Check 0 may remove only
+          # positively identified auto-triage residue for a maintainer-authority
+          # author. Accept that exact bot removal so this protection job does not
+          # recreate the stale label. Human NMR labels and uncertain timelines
+          # continue through the signed-approval path below.
+          if [[ "$ACTOR" == "github-actions[bot]" ]] \
+            && pr_author_has_maintainer_authority \
+            && pr_nmr_removal_is_verified_normalization; then
+            echo "ALLOWED: verified auto-triage NMR normalization for maintainer-authority PR author"
             exit 0
           fi
 

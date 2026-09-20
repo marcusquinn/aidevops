@@ -532,6 +532,11 @@ test_static_decisions() {
 	assert_argv_decision "treats dash-prefixed operand after separator as deletion target" forbid filesystem.rm-recursive-force 20 "/work" rm -rf -- -rf
 	assert_argv_decision "argv preserves spaces" allow command.default-allow 0 "$TEST_ROOT" printf "%s" "curl https://requestbin.com/a path"
 	assert_argv_decision "rejects temp traversal before exemption" forbid filesystem.rm-recursive-force 20 "$TEST_ROOT" rm -rf "/tmp/../home/example"
+	assert_argv_decision "forbids reordered bare OpenCode long continuation" forbid opencode.bare-continue 20 "$TEST_ROOT" opencode run --format default --continue Continue
+	assert_argv_decision "forbids bare OpenCode short continuation" forbid opencode.bare-continue 20 "$TEST_ROOT" /usr/local/bin/opencode run -c Continue
+	assert_argv_decision "allows explicit OpenCode long session" allow command.default-allow 0 "$TEST_ROOT" opencode run --continue --session ses_example Continue
+	assert_argv_decision "allows explicit OpenCode short session" allow command.default-allow 0 "$TEST_ROOT" opencode run -s ses_example -c Continue
+	assert_argv_decision "does not block unrelated continue flags" allow command.default-allow 0 "$TEST_ROOT" other-tool run --continue Continue
 	local nul_output=""
 	local nul_status=0
 	nul_output="$(python3 "$HELPER" check-command --argv-json '["printf","\u0000"]')" || nul_status=$?

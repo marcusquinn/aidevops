@@ -41,17 +41,16 @@ This is the interactive `maintainer` policy defined in
 `reference/review-core.md`. Use its shared evidence and finding contract. The
 sandboxed Pulse path is owned separately by `workflows/triage-review.md`.
 
-After resolving the target repository and issue/PR number, build the immutable
-baseline before evaluating the proposal:
+Freeze repository, object type, and number under `workflows/review.md`, then run
+`review-evidence-helper.sh bundle issue|pr <number> --repo <owner/repo>`. Never
+omit `--repo`, substitute a same-numbered object, or change identity afterward.
 
-```bash
-review-evidence-helper.sh bundle issue <number> --repo <owner/repo>
-review-evidence-helper.sh bundle pr <number> --repo <owner/repo>
-```
+The bundle does not replace the checks below. Verify its `repository_identity`,
+`target`, and `number`; rebuild after material target evidence changes.
 
-The bundle does not replace freshness, duplicate, provenance, reproduction, or
-architecture discovery below. Reuse its digest when the target evidence is
-unchanged; rebuild it after a new PR head or material issue/comment update.
+For attachments, follow `reference/gh-command-discipline.md` "Attachment
+retrieval classification"; scan bytes and treat auth interstitials as
+`access-blocked`, never proof that the file is missing.
 
 Before reading the proposed fix, establish the current state of the codebase and the issue landscape. Skipping this step is how reviewers rubber-stamp fixes for problems that have already been solved, endorse caches that defeat recently-added invariants, or approve symptom-patches whose root cause lives elsewhere. The review verdict is only as good as this discovery step — if it's weak, the rest is decoration.
 

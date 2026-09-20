@@ -53,8 +53,12 @@ opencode run "Review src/auth.ts for security issues"       # one-shot
 opencode run -m anthropic/claude-sonnet-4-6 "Task"          # model override
 opencode run --agent plan "Analyze the database schema"     # agent override
 opencode run -f ./schema.sql "Generate types"               # file context
-opencode run -c "Continue" | -s ses_abc123 "Add handling"   # resume session
+opencode run --session ses_abc123 "Add handling"             # resume explicit session
 ```
+
+Never use bare `opencode run -c/--continue`: it selects the globally last
+session and can inject the prompt into unrelated concurrent work. Always name
+the intended session with `-s/--session <id>` or use managed dispatch.
 
 **Warm server**: `opencode serve --port 4096` once, then `opencode run --attach http://localhost:4096 "Task"` (avoids MCP cold boot).
 

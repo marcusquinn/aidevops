@@ -513,9 +513,11 @@ _refresh_dependency_is_resolved() {
 	_blocked_by_check_native_relationships "$slug" "$issue_num" || native_rc=$?
 	case "$native_rc" in
 		0) return 1 ;;
+		2) return 0 ;;
 	esac
-	# A positively clear native set may be only a partial repair. Continue through
-	# every declared body/TODO-compatible edge before proving readiness.
+	# A complete, positively clear native set is authoritative. Text and TODO
+	# markers remain repair input only when no native relationship exists or the
+	# lookup is unavailable.
 
 	local open_issues_json="" cache_state=""
 	open_issues_json=$(jq -cn --argjson known "$known_issues_json" --argjson closed "$closed_issues_json" \

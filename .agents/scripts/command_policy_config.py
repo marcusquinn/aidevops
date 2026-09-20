@@ -22,6 +22,7 @@ KNOWN_MATCHERS = {
     "git_stash_delete",
     "gh_pr_disable_auto_direct",
     "gh_pr_merge_direct",
+    "opencode_bare_continue",
 }
 
 

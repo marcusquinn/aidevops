@@ -1108,16 +1108,20 @@ _is_assigned_compute_blocking() {
 #######################################
 # Load issue metadata for assignment checks.
 #
-# Args: $1 = issue number, $2 = repo slug, $3 = gh rc output variable name
-# Outputs: issue metadata JSON on stdout when available
-# Returns: 0 always; caller inspects the named rc variable
+# Args: $1 = issue number, $2 = repo slug
+# Sets: _IS_ASSIGNED_ISSUE_META_JSON, _IS_ASSIGNED_GH_RC,
+#       _IS_ASSIGNED_REPROBE_STATE
+# Returns: 0 always; caller inspects the globals. Globals avoid losing the real
+# gh status through a command-substitution subshell (GH#31996).
 #######################################
 _is_assigned_load_issue_meta() {
 	local issue_number="$1"
 	local repo_slug="$2"
-	local rc_var="$3"
-	local issue_meta_json=""
-	local gh_rc=0
+	local issue_meta_json="" direct_json=""
+	local gh_rc=0 direct_rc=0
+	_IS_ASSIGNED_ISSUE_META_JSON=""
+	_IS_ASSIGNED_GH_RC=0
+	_IS_ASSIGNED_REPROBE_STATE="not-needed"
 
 	if [[ -n "${ISSUE_META_JSON:-}" ]] \
 		&& printf '%s' "$ISSUE_META_JSON" | jq -e '.assignees and .labels' >/dev/null 2>&1; then
@@ -1128,10 +1132,37 @@ _is_assigned_load_issue_meta() {
 		# check (fail-open), which is correct — the primary fix is label sync at creation.
 		issue_meta_json=$(gh_issue_view "$issue_number" --repo "$repo_slug" \
 			--json state,assignees,labels,createdAt 2>/dev/null) || gh_rc=$?
+		if [[ "$gh_rc" -ne 0 || -z "$issue_meta_json" ]]; then
+			# A wrapper/cache/GraphQL-path failure is uncertainty, not stale proof.
+			# Make one bounded, independent REST reprobe now; if it also fails the
+			# caller remains fail-closed and the next Pulse cycle is the backoff/wake
+			# point. A recovered read only restores evidence flow — mutation still
+			# requires _is_stale_assignment's full positive proof below.
+			_IS_ASSIGNED_REPROBE_STATE="attempted"
+			direct_json=$(gh api "repos/${repo_slug}/issues/${issue_number}" 2>/dev/null) || direct_rc=$?
+			if [[ "$direct_rc" -eq 0 && -n "$direct_json" ]]; then
+				issue_meta_json=$(printf '%s' "$direct_json" | jq -c '
+					{
+						state: ((.state // "") | ascii_upcase),
+						assignees: [(.assignees // [])[] | {login: (.login // "")}],
+						labels: [(.labels // [])[] | {name: (.name // "")}],
+						createdAt: (.created_at // "")
+					}
+				' 2>/dev/null) || direct_rc=$?
+			fi
+			if [[ "$direct_rc" -eq 0 && -n "$issue_meta_json" ]]; then
+				gh_rc=0
+				_IS_ASSIGNED_REPROBE_STATE="recovered"
+			else
+				[[ "$direct_rc" -ne 0 ]] || direct_rc=1
+				gh_rc="$direct_rc"
+				issue_meta_json=""
+			fi
+		fi
 	fi
 
-	printf -v "$rc_var" '%s' "$gh_rc"
-	printf '%s' "$issue_meta_json"
+	_IS_ASSIGNED_ISSUE_META_JSON="$issue_meta_json"
+	_IS_ASSIGNED_GH_RC="$gh_rc"
 	return 0
 }
 
@@ -1341,16 +1372,19 @@ _is_assigned_impl() {
 		return 1
 	fi
 
-	local issue_meta_json gh_rc=0
-	issue_meta_json=$(_is_assigned_load_issue_meta "$issue_number" "$repo_slug" gh_rc)
+	local issue_meta_json="" gh_rc=0 reprobe_state=""
+	_is_assigned_load_issue_meta "$issue_number" "$repo_slug"
+	issue_meta_json="$_IS_ASSIGNED_ISSUE_META_JSON"
+	gh_rc="$_IS_ASSIGNED_GH_RC"
+	reprobe_state="$_IS_ASSIGNED_REPROBE_STATE"
 
 	# t2046: fail-closed on gh API failure. When we cannot fetch issue metadata
 	# (network error, auth failure, rate limit, issue not found), we cannot
 	# determine whether dispatch is safe. Block and emit GUARD_UNCERTAIN so the
 	# pulse skips this cycle rather than dispatching blindly.
 	if [[ "$gh_rc" -ne 0 || -z "$issue_meta_json" ]]; then
-		printf 'GUARD_UNCERTAIN (reason=gh-api-failure issue=%s repo=%s rc=%s)\n' \
-			"$issue_number" "$repo_slug" "$gh_rc"
+		printf 'GUARD_UNCERTAIN (reason=gh-api-failure issue=%s repo=%s rc=%s reprobe=%s wake=next-pulse)\n' \
+			"$issue_number" "$repo_slug" "$gh_rc" "$reprobe_state"
 		return 0
 	fi
 

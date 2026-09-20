@@ -165,22 +165,22 @@ _pg_match() {
 
 	case "$cmd" in
 	rg)
-		printf '%s' "$message" | rg -qU -- "$pattern" 2>/dev/null
+		rg -qU -- "$pattern" <<<"$message" 2>/dev/null
 		return $?
 		;;
 	ggrep)
-		printf '%s' "$message" | ggrep -qPz -- "$pattern" 2>/dev/null
+		ggrep -qPz -- "$pattern" <<<"$message" 2>/dev/null
 		return $?
 		;;
 	grep)
-		printf '%s' "$message" | grep -qPz -- "$pattern" 2>/dev/null
+		grep -qPz -- "$pattern" <<<"$message" 2>/dev/null
 		return $?
 		;;
 	grep-ere)
 		# Degrade: convert \s to [[:space:]], \b to word boundary approximation
 		local ere_pattern
 		ere_pattern=$(printf '%s' "$pattern" | sed 's/\\s/[[:space:]]/g; s/\\b//g')
-		printf '%s' "$message" | grep -qEz -- "$ere_pattern" 2>/dev/null
+		grep -qEz -- "$ere_pattern" <<<"$message" 2>/dev/null
 		return $?
 		;;
 	esac
@@ -191,25 +191,26 @@ _pg_match() {
 _pg_extract_match() {
 	local pattern="$1"
 	local message="$2"
-	local cmd
+	local cmd matches=""
 	cmd=$(_pg_grep_cmd)
 
 	case "$cmd" in
 	rg)
-		printf '%s' "$message" | rg -o -- "$pattern" 2>/dev/null | head -1
+		matches=$(rg -o -- "$pattern" <<<"$message" 2>/dev/null) || return $?
 		;;
 	ggrep)
-		printf '%s' "$message" | ggrep -oP -- "$pattern" 2>/dev/null | head -1
+		matches=$(ggrep -oP -- "$pattern" <<<"$message" 2>/dev/null) || return $?
 		;;
 	grep)
-		printf '%s' "$message" | grep -oP -- "$pattern" 2>/dev/null | head -1
+		matches=$(grep -oP -- "$pattern" <<<"$message" 2>/dev/null) || return $?
 		;;
 	grep-ere)
 		local ere_pattern
 		ere_pattern=$(printf '%s' "$pattern" | sed 's/\\s/[[:space:]]/g; s/\\b//g')
-		printf '%s' "$message" | grep -oE -- "$ere_pattern" 2>/dev/null | head -1
+		matches=$(grep -oE -- "$ere_pattern" <<<"$message" 2>/dev/null) || return $?
 		;;
 	esac
+	printf '%s' "${matches%%$'\n'*}"
 	return 0
 }
 

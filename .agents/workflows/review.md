@@ -38,6 +38,15 @@ Follow `workflows/review-issue-pr.md`. That workflow owns problem validation,
 temporal duplicates, root cause, architecture, disposition, and durable comments.
 The legacy `/review-issue-pr` command remains an alias for this policy.
 
+Freeze target identity before any GitHub read. The invocation fixes the object
+kind (`issue` or `pr`) and it must not change because another repository has the
+same number. A URL fixes repository, kind, and number. For a bare number, resolve
+the repository only from the active worktree's `origin` via `gh repo view`; never
+select a repository from conversation context. If that identity is unavailable
+or conflicts with an explicit target, stop and ask rather than guessing. Always
+pass the frozen repository to `review-evidence-helper.sh --repo` and verify its
+`target`, `number`, and `repository_identity` fields before continuing.
+
 ### External PR authority preflight
 
 Before requesting cryptographic approval for an external or fork PR, complete
