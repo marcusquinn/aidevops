@@ -1970,7 +1970,7 @@ _pulse_wrapper_run_command() {
 			_pulse_wrapper_command_usage
 			return 2
 		}
-		local max_workers active_workers available
+		local max_workers="" active_workers="" available=""
 		max_workers=$(get_max_workers_target)
 		active_workers=$(count_active_workers)
 		[[ "$max_workers" =~ ^[0-9]+$ ]] || max_workers=1
