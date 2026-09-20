@@ -10,6 +10,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.34.10] - 2026-09-20
+
+### Added
+
+- add content disposition review proposals (#32132)
+- add AI visibility capture analysis (#32134)
+- add intent page matching (#32126)
+- add creative intelligence analysis (#32124)
+
+### Changed
+
+- Documentation: add stale runtime diagnostics (#32129)
+- Maintenance: mark t18460 complete (pr:#32121 completed:2026-09-20) (#32128)
+- Refactor: reduce aidevops CLI complexity (#32116)
+- Maintenance: mark t18446 complete (pr:#32107 completed:2026-09-20) (#32110)
+
+### Fixed
+
+- Complete safe maintenance during aidevops update
+- expose dirty-worktree evidence gaps
+- Resume validated stale-runtime release reconciliation
+
 ## [3.34.9] - 2026-09-20
 
 ### Added
