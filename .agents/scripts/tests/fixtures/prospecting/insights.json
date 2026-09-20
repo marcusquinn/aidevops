@@ -1,0 +1,21 @@
+{
+  "input": {
+    "schema": "aidevops.prospecting-insights-input/v1",
+    "snapshot_id": "snapshot-1",
+    "as_of": "2026-09-21T00:00:00Z",
+    "rubric_version": "insights-1",
+    "observations": [
+      {"source_id": "post-1", "thread_id": "thread-1", "kind": "post", "observed_at": "2026-09-01", "access_scope": "authorized", "text": "Looking for a better incident tool."},
+      {"source_id": "comment-1", "thread_id": "thread-1", "kind": "comment", "observed_at": "2026-09-02", "access_scope": "authorized", "text": "Acme is great but expensive."},
+      {"source_id": "comment-2", "thread_id": "thread-1", "kind": "comment", "observed_at": "2026-09-03", "access_scope": "authorized", "text": "Someone said Acme breaks often."}
+    ]
+  },
+  "decisions": {
+    "schema": "aidevops.prospecting-insights-decisions/v1",
+    "decisions": [
+      {"source_id": "post-1", "competitors": [], "themes": [{"theme": "incident response", "span": "incident tool", "target": true}], "stage": "considering", "classification_status": "complete"},
+      {"source_id": "comment-1", "competitors": [{"entity": "Acme", "aliases": ["Acme"], "signal": "comparison", "sentiment": "mixed", "target": true, "span": "Acme is great but expensive", "quoted": false}], "themes": [{"theme": "pricing", "span": "expensive", "target": true}], "stage": "evaluating", "classification_status": "complete"},
+      {"source_id": "comment-2", "competitors": [{"entity": "Acme", "aliases": ["Acme"], "signal": "complaint", "sentiment": "negative", "target": false, "span": "Acme breaks often", "quoted": true}], "themes": [], "stage": "unknown", "classification_status": "partial"}
+    ]
+  }
+}
