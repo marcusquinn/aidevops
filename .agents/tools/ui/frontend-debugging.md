@@ -35,6 +35,17 @@ tools:
 
 HTTP status codes do NOT verify frontend functionality. Next.js SSR renders error boundaries with 200 OK — the crash happens during client-side hydration. `curl` will show success while the app is broken.
 
+### When the real browser and isolated automation disagree
+
+When an isolated browser renders but the user's Chromium-family profile is blank or loads indefinitely, keep three hypotheses separate: application code, browser-origin state, and server health. First verify the same route in the real browser; an HTTP response or isolated result does not clear a degraded development server.
+
+1. Capture the real browser's visible URL, title, navigation state, and any safe-to-read error indicator. Use a verified PID or explicit CDP target before attributing this evidence to a browser process.
+2. Establish listener/runtime evidence: owner PID, working directory, executable/runtime, uptime, RSS, bounded logs, and cold/warm request duration. A health URL can succeed while streaming or rendered requests stall.
+3. Compare the running runtime to the repository's declared policy, then restart only the verified project-owned supervisor or process group with interruption authority. Relaunch through the repository command and repeat both real-browser and isolated-browser checks.
+4. Only after restart evidence still points to browser state, inspect service-worker/cache state and clear the affected origin if justified. Do not begin with source edits, broad site-data deletion, build-cache deletion, dependency reinstall, or a name-based process kill.
+
+Preserve browser privacy: do not collect body dumps, full-profile exports, traces, or screenshots containing private data. See `services/hosting/local-hosting.md` for listener evidence, `tools/runtime/node-server-admin.md` for runtime comparison, and `tools/browser/chromium-debug-use.md` for live-browser process targeting.
+
 After ANY frontend fix, verify with actual browser rendering:
 
 ```bash
