@@ -370,7 +370,10 @@ get_brew_latest() {
 	local brew_bin=""
 	brew_bin=$(command -v brew 2>/dev/null || true)
 	if [[ -n "$brew_bin" && -x "$brew_bin" ]]; then
-		timeout_sec "$PKG_QUERY_TIMEOUT" "$brew_bin" info "$pkg" 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "unknown"
+		local stable=""
+		stable=$(timeout_sec "$PKG_QUERY_TIMEOUT" "$brew_bin" info --json=v2 "$pkg" 2>/dev/null |
+			jq -r '.formulae[0].versions.stable // empty' 2>/dev/null) || stable=""
+		printf '%s\n' "${stable:-unknown}"
 	else
 		# No brew — fall back to GitHub Releases API for known tools.
 		# Strip tap prefix (e.g. "max-sixty/worktrunk/wt" → "wt") for matching.
@@ -386,6 +389,30 @@ get_brew_latest() {
 		esac
 	fi
 	return 0
+}
+
+# Return the sudo command selected on this host, if the update needs one.
+# Platform-dispatch commands contain dormant sudo fallbacks even on Homebrew
+# hosts, so scanning the whole command would incorrectly skip safe brew updates.
+_tool_selected_sudo_command() {
+	local update_cmd="$1"
+	local manager=""
+	if [[ "$update_cmd" == if\ command\ -v\ brew* ]]; then
+		command -v brew >/dev/null 2>&1 && return 1
+		if command -v apt-get >/dev/null 2>&1; then
+			manager="apt-get"
+		elif command -v dnf >/dev/null 2>&1; then
+			manager="dnf"
+		elif command -v yum >/dev/null 2>&1; then
+			manager="yum"
+		else
+			return 1
+		fi
+		grep -oE "sudo ${manager}[^;]+" <<<"$update_cmd" | head -1
+		return $?
+	fi
+	grep -oE 'sudo [^;]+' <<<"$update_cmd" | head -1
+	return $?
 }
 
 # Get latest pip version
@@ -709,26 +736,24 @@ _output_summary_and_updates() {
 			# require sudo. Probe for passwordless sudo first; if not available,
 			# skip and print the manual command instead of hanging on an
 			# interactive password prompt during unattended `aidevops update`.
-			if [[ "$update_cmd" == *" sudo "* ]]; then
+			local _manual_cmd=""
+			_manual_cmd=$(_tool_selected_sudo_command "$update_cmd" || true)
+			if [[ -n "$_manual_cmd" ]]; then
 				if ! sudo -n true 2>/dev/null; then
-					local _manual_cmd
-					_manual_cmd=""
-					if command -v apt-get >/dev/null 2>&1; then
-						_manual_cmd=$(grep -oE 'sudo apt-get[^;]+' <<<"$update_cmd" | head -1)
-					elif command -v dnf >/dev/null 2>&1; then
-						_manual_cmd=$(grep -oE 'sudo dnf[^;]+' <<<"$update_cmd" | head -1)
-					elif command -v yum >/dev/null 2>&1; then
-						_manual_cmd=$(grep -oE 'sudo yum[^;]+' <<<"$update_cmd" | head -1)
-					fi
-					echo -e "  ${YELLOW}⊘ Skipped: requires sudo. Run manually:${NC}"
-					if [[ -n "$_manual_cmd" ]]; then
-						echo "    ${_manual_cmd}"
+					if [[ -t 0 && -t 1 ]]; then
+						echo -e "  ${BLUE}Privilege confirmation is required for this system package update.${NC}"
+						if ! sudo -v; then
+							echo -e "  ${YELLOW}⊘ Blocked: privilege confirmation failed; the next interactive update will retry.${NC}"
+							((++SUDO_SKIP_COUNT))
+							echo ""
+							continue
+						fi
 					else
-						echo "    $update_cmd"
+						echo -e "  ${YELLOW}⊘ Deferred: privilege confirmation requires an attached terminal; the next interactive update will retry.${NC}"
+						((++SUDO_SKIP_COUNT))
+						echo ""
+						continue
 					fi
-					((++SUDO_SKIP_COUNT))
-					echo ""
-					continue
 				fi
 			fi
 			# Run update command directly (not via eval for security)
@@ -754,7 +779,7 @@ _output_summary_and_updates() {
 			echo ""
 		done
 		if [[ $SUDO_SKIP_COUNT -gt 0 ]]; then
-			echo -e "${GREEN}Updates complete (${SUDO_SKIP_COUNT} skipped — manual sudo required).${NC}"
+			echo -e "${GREEN}Updates complete (${SUDO_SKIP_COUNT} deferred until interactive privilege confirmation).${NC}"
 		else
 			echo -e "${GREEN}Updates complete. Re-run to verify.${NC}"
 		fi
