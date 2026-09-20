@@ -1,0 +1,78 @@
+{
+  "schema": "aidevops.prospecting/v1",
+  "project": {
+    "project_id": "project-alpha",
+    "name": "Alpha",
+    "profile_version": 1,
+    "discovery_version": 1,
+    "profile": {
+      "facts": ["Privacy-first developer tool"],
+      "claims": ["Reduces repetitive operations"],
+      "competitors": ["manual workflow"],
+      "budgets": {"daily_units": 100},
+      "secret_profile_refs": ["prospecting/reddit-alpha"]
+    },
+    "discovery": {
+      "keywords": ["repetitive devops"],
+      "communities": ["devops"],
+      "source_preferences": ["reddit"],
+      "daily_result_limit": 25
+    }
+  },
+  "objects": [
+    {
+      "provider": "reddit",
+      "object_id": "post-1",
+      "object_type": "post",
+      "parent_object_id": null,
+      "evidence_id": "ev1:corpus-alpha:reddit:sha256:1111",
+      "corpus_id": "corpus-alpha",
+      "canonical_plane": "_knowledge",
+      "authority": "projection",
+      "observed_at": "2026-09-20T12:00:00Z"
+    },
+    {
+      "provider": "reddit",
+      "object_id": "comment-1",
+      "object_type": "comment",
+      "parent_object_id": "post-1",
+      "evidence_id": "ev1:corpus-alpha:reddit:sha256:2222",
+      "corpus_id": "corpus-alpha",
+      "canonical_plane": "_knowledge",
+      "authority": "projection",
+      "observed_at": "2026-09-20T12:05:00Z"
+    }
+  ],
+  "leads": [
+    {
+      "lead_id": "ask-1",
+      "provider": "reddit",
+      "object_id": "post-1",
+      "score": 82,
+      "matching_phrase": "repetitive deployment work",
+      "explanation": "Explicitly asks for a safer automation workflow.",
+      "intent": "solution-seeking",
+      "stage": "research",
+      "suitability": "high",
+      "unknowns": ["team size"],
+      "rubric_version": "rubric-1",
+      "model_version": "model-1",
+      "evidence_version": "evidence-1"
+    },
+    {
+      "lead_id": "ask-2",
+      "provider": "reddit",
+      "object_id": "post-1",
+      "score": 65,
+      "matching_phrase": "audit trail",
+      "explanation": "The same thread contains a separate compliance ask.",
+      "intent": "problem-aware",
+      "stage": "research",
+      "suitability": "medium",
+      "unknowns": ["required retention"],
+      "rubric_version": "rubric-1",
+      "model_version": "model-1",
+      "evidence_version": "evidence-1"
+    }
+  ]
+}
