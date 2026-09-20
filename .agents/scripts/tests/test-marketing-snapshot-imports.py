@@ -32,6 +32,16 @@ class SnapshotImportTests(unittest.TestCase):
             result = snapshot.normalize("site", source)
         self.assertEqual(len(result["row_errors"]), 1)
 
+    def test_every_json_kind_and_context_is_offline_importable(self):
+        for kind in ("meta", "gsc", "site", "ai-capture", "community"):
+            with self.subTest(kind=kind):
+                result = snapshot.normalize(kind, FIXTURES / "import-all.json", {
+                    "scope": "account-1", "date_start": "2026-01-01", "date_end": "2026-01-31",
+                    "timezone": "UTC", "currency": "USD",
+                })
+                self.assertEqual(result["scope"], "account-1")
+                self.assertEqual(result["currency"], "USD")
+
     def test_ambiguous_units_are_row_errors(self):
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory) / "bad.json"

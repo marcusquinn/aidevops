@@ -22,9 +22,17 @@ def main(argv: list[str] | None = None) -> int:
     importer.add_argument("--input", required=True)
     importer.add_argument("--dry-run", action="store_true")
     importer.add_argument("--output", help="Explicit private output path")
+    importer.add_argument("--scope", help="Opaque account or site scope retained with the evidence")
+    importer.add_argument("--date-start", help="Source reporting window start, retained verbatim")
+    importer.add_argument("--date-end", help="Source reporting window end, retained verbatim")
+    importer.add_argument("--timezone", help="Source reporting timezone, retained verbatim")
+    importer.add_argument("--currency", help="Source ISO currency, retained verbatim")
     args = parser.parse_args(argv)
     try:
-        report = normalize(args.kind, args.input)
+        report = normalize(args.kind, args.input, {
+            "scope": args.scope, "date_start": args.date_start, "date_end": args.date_end,
+            "timezone": args.timezone, "currency": args.currency,
+        })
         payload = json.dumps(report, sort_keys=True, separators=(",", ":")) + "\n"
         if args.output and not args.dry_run:
             output = Path(args.output)

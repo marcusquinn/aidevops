@@ -68,7 +68,7 @@ def _read_rows(kind: str, path: Path) -> tuple[list[dict[str, Any]], dict[str, s
     return rows, columns
 
 
-def normalize(kind: str, source: str | Path) -> dict[str, Any]:
+def normalize(kind: str, source: str | Path, context: dict[str, str | None] | None = None) -> dict[str, Any]:
     """Normalize a local CSV/JSON export without mutating its raw evidence."""
     if kind not in SUPPORTED_KINDS:
         raise ImportError("unsupported import kind")
@@ -109,11 +109,17 @@ def normalize(kind: str, source: str | Path) -> dict[str, Any]:
             })
         except ImportError as error:
             errors.append({"row": index, "reason": str(error), "raw": row})
+    context = context or {}
     return {
         "schema": "aidevops.marketing-snapshot-import/v1",
         "kind": kind,
         "source": {"name": path.name, "sha256": _source_hash(path), "column_mapping": column_mapping},
         "captured_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "scope": context.get("scope"),
+        "date_start": context.get("date_start"),
+        "date_end": context.get("date_end"),
+        "timezone": context.get("timezone"),
+        "currency": context.get("currency"),
         "records": records,
         "row_errors": errors,
         "unknown_metrics": sorted({key for row in rows for key in row} - set(column_mapping)),
