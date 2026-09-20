@@ -535,7 +535,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 ## Backlog
 
-- [ ] t18471 docs: generalize stale local dev server and browser-process diagnostics #documentation #debugging #ops #interactive #auto-dispatch ~1h tier:standard ref:GH#32119 logged:2026-09-20 -> [todo/tasks/t18471-brief.md]
+- [x] t18471 docs: generalize stale local dev server and browser-process diagnostics #documentation #debugging #ops #interactive #auto-dispatch ~1h tier:standard ref:GH#32119 logged:2026-09-20 -> [todo/tasks/t18471-brief.md] pr:#32129 completed:2026-09-20
 
 - [x] t18309 Fix same-user daemon proc cwd cleanup degradation #bug #framework #cleanup #worktree #interactive ~1h tier:standard ref:GH#30740 logged:2026-08-25 -> [todo/tasks/t18309-brief.md] pr:#30741 completed:2026-08-25
 
@@ -628,10 +628,10 @@ Session baseline grew from ~9.5k tokens (Mar 1) to ~21.8k tokens (Mar 27) in pro
 - [ ] t18446 Offline marketing and site snapshot importers #enhancement #interactive #auto-dispatch tier:standard parent:t18444 blocked-by:t18445 ref:GH#32058 logged:2026-09-20 -> [todo/tasks/t18446-brief.md]
 - [ ] t18447 Google Ads hygiene and search-term triage #enhancement #interactive #auto-dispatch tier:standard parent:t18444 blocked-by:t18446 ref:GH#32061 logged:2026-09-20 -> [todo/tasks/t18447-brief.md]
 - [x] t18448 Shared intent-to-page matching and paid-to-organic opportunities #enhancement #interactive #auto-dispatch tier:standard parent:t18444 blocked-by:t18446 ref:GH#32059 logged:2026-09-20 -> [todo/tasks/t18448-brief.md] pr:#32126 completed:2026-09-20
-- [ ] t18449 Evidence-backed internal links and cannibalization review #enhancement #interactive #auto-dispatch tier:standard parent:t18444 blocked-by:t18448 ref:GH#32060 logged:2026-09-20 -> [todo/tasks/t18449-brief.md]
+- [x] t18449 Evidence-backed internal links and cannibalization review #enhancement #interactive #auto-dispatch tier:standard parent:t18444 blocked-by:t18448 ref:GH#32060 logged:2026-09-20 -> [todo/tasks/t18449-brief.md] pr:#32143 completed:2026-09-20
 - [ ] t18450 Content disposition, redirect proposals and schema consistency #enhancement #interactive #auto-dispatch tier:standard parent:t18444 blocked-by:t18448 ref:GH#32062 logged:2026-09-20 -> [todo/tasks/t18450-brief.md]
 - [x] t18451 Creative intelligence, fatigue and UGC policy QA #enhancement #interactive #auto-dispatch tier:standard parent:t18444 blocked-by:t18446 ref:GH#32063 logged:2026-09-20 -> [todo/tasks/t18451-brief.md] pr:#32124 completed:2026-09-20
-- [ ] t18452 Engine-specific AI visibility capture and analysis #enhancement #interactive #auto-dispatch tier:standard parent:t18444 blocked-by:t18448 ref:GH#32064 logged:2026-09-20 -> [todo/tasks/t18452-brief.md]
+- [x] t18452 Engine-specific AI visibility capture and analysis #enhancement #interactive #auto-dispatch tier:standard parent:t18444 blocked-by:t18448 ref:GH#32064 logged:2026-09-20 -> [todo/tasks/t18452-brief.md] pr:#32134 completed:2026-09-20
 - [x] t18453 Comment and forum opportunity triage with safe response routing #enhancement #interactive #auto-dispatch tier:standard parent:t18444 blocked-by:t18446 ref:GH#32065 logged:2026-09-20 -> [todo/tasks/t18453-brief.md] pr:#32122 completed:2026-09-20
 - [ ] t18454 Decision reports, calibration and end-to-end ROI evaluation #enhancement #interactive #auto-dispatch tier:standard parent:t18444 blocked-by:t18447,t18449,t18450,t18451,t18452,t18453 ref:GH#32066 logged:2026-09-20 -> [todo/tasks/t18454-brief.md]
 - [ ] t18455 Optional read-only Google Ads and Meta account connectors #enhancement #interactive #auto-dispatch tier:standard parent:t18444 blocked-by:t18447,t18451 ref:GH#32067 logged:2026-09-20 -> [todo/tasks/t18455-brief.md]
@@ -643,7 +643,7 @@ Session baseline grew from ~9.5k tokens (Mar 1) to ~21.8k tokens (Mar 27) in pro
 
 - [ ] t18459 Native conversational prospecting and Reddit SEO workbench #parent #enhancement #interactive tier:thinking ref:GH#32076 logged:2026-09-20 -> [todo/tasks/t18459-brief.md]
 - [x] t18460 Native prospecting project and lead-store contract #enhancement #interactive #auto-dispatch tier:thinking parent:t18459 blocked-by:t18446 ref:GH#32078 logged:2026-09-20 -> [todo/tasks/t18460-brief.md] pr:#32121 completed:2026-09-20
-- [ ] t18461 Product URL onboarding and evidence-backed prospecting discovery plans #enhancement #interactive #auto-dispatch tier:standard parent:t18459 blocked-by:t18460,t18448 ref:GH#32079 logged:2026-09-20 -> [todo/tasks/t18461-brief.md]
+- [x] t18461 Product URL onboarding and evidence-backed prospecting discovery plans #enhancement #interactive #auto-dispatch tier:standard parent:t18459 blocked-by:t18460,t18448 ref:GH#32079 logged:2026-09-20 -> [todo/tasks/t18461-brief.md] pr:#32136 completed:2026-09-20
 - [ ] t18462 Incremental Reddit discovery and staged community-triage orchestration #enhancement #interactive #auto-dispatch tier:standard parent:t18459 blocked-by:t18461,t18453 ref:GH#32077 logged:2026-09-20 -> [todo/tasks/t18462-brief.md]
 - [ ] t18463 Google-ranked Reddit opportunities and observed position history #enhancement #interactive #auto-dispatch tier:standard parent:t18459 blocked-by:t18462 ref:GH#32081 logged:2026-09-20 -> [todo/tasks/t18463-brief.md]
 - [ ] t18464 Competitor recommendations and evidence-backed pain-theme insights #enhancement #interactive #auto-dispatch tier:standard parent:t18459 blocked-by:t18462 ref:GH#32080 logged:2026-09-20 -> [todo/tasks/t18464-brief.md]
