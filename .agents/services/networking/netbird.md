@@ -96,21 +96,54 @@ Dokploy: identical, use `../files/` prefix for bind mount persistence.
 
 ### Cloudron
 
-Package source: https://github.com/marcusquinn/cloudron-netbird-app. Its current
-source manifest declares `postgresql`, `localstorage`, and `tls`; it does **not**
-declare Cloudron OIDC or TURN add-ons. The package combines management, signal,
+Package source: https://github.com/marcusquinn/cloudron-netbird-app. Its baseline
+requires `postgresql`, `localstorage`, and `tls`; inspect the installed manifest
+for optional identity-provider add-ons. The package combines management, signal,
 relay, and STUN, with Cloudron HTTPS for the dashboard plus selected dedicated
 native TCP and STUN UDP ports. Verify the installed package release and selected
 ports rather than copying defaults.
 
-Published package support is the core private mesh. Do not claim Cloudron SSO is
+The package supports the core private mesh. Do not claim Cloudron SSO is
 configured merely because `optionalSso` is available, and do not treat Cloudron
-TURN as an interchangeable NetBird relay/STUN service. A package candidate may
-add an optional bundled public-proxy path using its own native transport and
-second IPv4/raw-TLS ingress; until that candidate is merged, released, and
-qualified for the target Cloudron, describe it as **candidate-only**. Neither
-path authorizes replacing Cloudron's managed proxy or exposing the dashboard,
-management API, SSH, desktop sharing, SMB, or raw admin ports.
+TURN as an interchangeable NetBird relay/STUN service. The 2.1.0 source includes
+an optional bundled public proxy with second-IPv4/raw-TLS ingress, documented in
+the package's `REVERSE-PROXY.md`. Source availability, release availability,
+installed configuration and production qualification are distinct: verify each,
+rather than treating a merged feature as tested on every host. Keep normal
+authenticated dashboard/native endpoints separate from public service ingress;
+do not replace Cloudron's managed proxy or publicly expose SSH, desktop sharing,
+SMB or raw administration ports through this feature.
+
+#### Multiple Cloudron instances
+
+| Use case | Additional public IPv4 | Guidance |
+|----------|------------------------|----------|
+| Another private mesh and dashboard | None per app | Share primary IP; unique app hostname, native TCP port and STUN UDP port |
+| Many public HTTPS services in one mesh | One proxy ingress IP | Service subdomains share that proxy's HTTPS listener |
+| Independent public proxies for several meshes | Separate ingress IPs are the simpler design | Requires multi-instance host tooling first; not supported by rerunning today's helper |
+| Several proxies sharing one ingress IP | Potentially one, with an SNI gateway | Future design, not implemented/qualified support |
+
+Recommend private-only instances first; do not buy Floating IPs for ordinary peer
+access or per published service. On Hetzner Cloud the optional ingress address is
+a Floating IPv4. Each instance needs separate users, keys, policies and backups.
+Shared SSO does not federate meshes. Verify client profile/simultaneous-connection
+capabilities and mesh/LAN address overlap before designing cross-instance access.
+
+The current `scripts/netbird-ingress.py` in the package has fixed config storage,
+nftables table/tag, address label, lock and systemd unit names. Another IP alone
+does not make it safe for a second instance. Do not overwrite its configuration,
+rename only a unit, widen trust to the Docker subnet or disable backend guards.
+Multi-instance support needs scoped resources, independent reconciliation/rollback
+and collision/isolation tests. Each proxy must retain its dedicated trusted
+PROXY-v2 source identity. Consult the package's `MULTI-INSTANCE.md` when available
+in the selected release, plus `REVERSE-PROXY.md` and `test/QUALIFICATION.md`.
+
+A shared-IP alternative would require TLS-passthrough SNI routing by approved
+brand domains, ACME TLS-ALPN-01 compatibility, trustworthy client-IP forwarding,
+unknown-name rejection and cross-instance isolation tests. It adds a shared
+gateway failure/trust boundary; do not present it as a working installation path.
+Separate Cloudron apps still share VPS root control and the host failure domain;
+use separate infrastructure for stronger client isolation or independent ownership.
 
 ### Feature Comparison
 
@@ -119,7 +152,7 @@ management API, SSH, desktop sharing, SMB, or raw admin ports.
 | Mesh VPN + Dashboard + API | Yes | Yes | Yes |
 | SSO (OIDC) | Optional external-provider setup; preserve embedded owner | Any IdP | Any IdP |
 | PostgreSQL | Add-on | Manual | PaaS DB |
-| **Native Reverse Proxy (beta)** | Core package: no published support; candidate-only path must be verified | Compatible proxy deployment required | Compatible Traefik configuration required |
+| **Native Reverse Proxy (beta)** | Optional second-IP host setup; verify installed release and qualification | Compatible proxy deployment required | Compatible Traefik configuration required |
 
 ## Client Installation
 
