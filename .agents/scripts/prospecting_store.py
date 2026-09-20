@@ -8,14 +8,13 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import shutil
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
-from prospecting_contract import DISPOSITIONS, ImportDocument
+from prospecting_contract import DISPOSITIONS, ImportDocument, validate_project_payload
 
 SCHEMA_VERSION = 1
 
@@ -162,14 +161,14 @@ def initialize_project(database: sqlite3.Connection, document: ImportDocument) -
     now = _now()
     with transaction(database):
         existing = database.execute(
-            "SELECT profile_version,discovery_version,profile_json,discovery_json "
+            "SELECT name,profile_version,discovery_version,profile_json,discovery_json "
             "FROM projects WHERE project_id=?", (project.project_id,)
         ).fetchone()
         profile_json = _json(project.profile)
         discovery_json = _json(project.discovery)
         if existing is not None:
-            identity = (project.profile_version, project.discovery_version, profile_json, discovery_json)
-            stored = (existing["profile_version"], existing["discovery_version"], existing["profile_json"], existing["discovery_json"])
+            identity = (project.name, project.profile_version, project.discovery_version, profile_json, discovery_json)
+            stored = (existing["name"], existing["profile_version"], existing["discovery_version"], existing["profile_json"], existing["discovery_json"])
             if identity != stored:
                 raise StaleVersionError("project versions conflict with stored project")
             return
@@ -283,6 +282,8 @@ def list_leads(database: sqlite3.Connection, project_id: str, *, disposition: st
 def set_disposition(database: sqlite3.Connection, project_id: str, lead_id: str, disposition: str, expected_version: int) -> int:
     if disposition not in DISPOSITIONS:
         raise ProspectingStoreError("unsupported disposition")
+    if isinstance(expected_version, bool) or not isinstance(expected_version, int) or expected_version < 1:
+        raise ProspectingStoreError("expected version must be a positive integer")
     now = _now()
     with transaction(database):
         cursor = database.execute(
@@ -315,6 +316,9 @@ def rescore(database: sqlite3.Connection, project_id: str, lead_id: str, score: 
 def update_project_version(database: sqlite3.Connection, project_id: str, kind: str, expected_version: int, payload: dict[str, Any]) -> int:
     if kind not in ("profile", "discovery"):
         raise ProspectingStoreError("version kind must be profile or discovery")
+    if isinstance(expected_version, bool) or not isinstance(expected_version, int) or expected_version < 1:
+        raise ProspectingStoreError("expected version must be a positive integer")
+    validate_project_payload(kind, payload)
     field = f"{kind}_version"
     payload_field = f"{kind}_json"
     payload_json = _json(payload)
@@ -351,20 +355,38 @@ def delete_project(database: sqlite3.Connection, root: Path, project_id: str, ex
     project = _project(database, project_id)
     if project["name"] != expected_name:
         raise ProspectingStoreError("project name confirmation does not match")
-    backup = root / f"prospecting-before-delete-{project_id}.db"
+    project_key = hashlib.sha256(project_id.encode()).hexdigest()[:16]
+    backup = root / f"prospecting-before-delete-{project_key}.db"
     if backup.exists() or backup.is_symlink():
         raise ProspectingStoreError("delete backup already exists")
-    database.execute("PRAGMA wal_checkpoint(FULL)")
-    shutil.copy2(database_path(root), backup)
-    os.chmod(backup, 0o600)
-    check = sqlite3.connect(str(backup))
-    try:
-        if check.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
-            raise ProspectingStoreError("delete backup failed integrity check")
-    finally:
-        check.close()
-    with transaction(database):
+    temporary = backup.with_suffix(".tmp")
+    for _attempt in range(3):
+        if temporary.exists():
+            temporary.unlink()
+        observed_version = database.execute("PRAGMA data_version").fetchone()[0]
+        destination = sqlite3.connect(str(temporary))
+        try:
+            database.backup(destination)
+            if destination.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+                raise ProspectingStoreError("delete backup failed integrity check")
+        finally:
+            destination.close()
+        database.execute("BEGIN IMMEDIATE")
+        locked_version = database.execute("PRAGMA data_version").fetchone()[0]
+        if locked_version != observed_version:
+            database.execute("ROLLBACK")
+            continue
+        os.chmod(temporary, 0o600)
+        temporary.replace(backup)
+        current = _project(database, project_id)
+        if current["name"] != expected_name:
+            database.execute("ROLLBACK")
+            raise ProspectingStoreError("project name changed before deletion")
         database.execute("DELETE FROM leads WHERE project_id=?", (project_id,))
         database.execute("DELETE FROM evidence_objects WHERE project_id=?", (project_id,))
         database.execute("DELETE FROM projects WHERE project_id=?", (project_id,))
-    return backup
+        database.execute("COMMIT")
+        return backup
+    if temporary.exists():
+        temporary.unlink()
+    raise ProspectingStoreError("project changed while creating delete backup")

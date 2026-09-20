@@ -102,6 +102,14 @@ class ProspectingStoreTest(unittest.TestCase):
         malformed["leads"][0]["score"] = 101
         with self.assertRaises(ContractError):
             import_document(self.database, malformed)
+        extra = copy.deepcopy(self.beta_document())
+        extra["project"]["profile"]["access_token"] = "not-allowed"
+        with self.assertRaises(ContractError):
+            import_document(self.database, extra)
+        null_list = copy.deepcopy(self.beta_document())
+        null_list["leads"][0]["unknowns"] = None
+        with self.assertRaises(ContractError):
+            import_document(self.database, null_list)
         self.assertEqual(2, len(list_leads(self.database, "project-alpha")))
 
     def test_dry_run_never_creates_project(self) -> None:

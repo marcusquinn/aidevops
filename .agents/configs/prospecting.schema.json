@@ -16,8 +16,28 @@
         "name": {"type": "string", "minLength": 1},
         "profile_version": {"type": "integer", "minimum": 1},
         "discovery_version": {"type": "integer", "minimum": 1},
-        "profile": {"type": "object"},
-        "discovery": {"type": "object"}
+        "profile": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "facts": {"type": "array", "items": {"type": "string"}},
+            "claims": {"type": "array", "items": {"type": "string"}},
+            "competitors": {"type": "array", "items": {"type": "string"}},
+            "budgets": {"type": "object", "additionalProperties": {"type": "number", "minimum": 0}},
+            "secret_profile_refs": {"type": "array", "items": {"type": "string"}}
+          }
+        },
+        "discovery": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "keywords": {"type": "array", "items": {"type": "string"}},
+            "communities": {"type": "array", "items": {"type": "string"}},
+            "source_preferences": {"type": "array", "items": {"type": "string"}},
+            "budgets": {"type": "object", "additionalProperties": {"type": "number", "minimum": 0}},
+            "daily_result_limit": {"type": "integer", "minimum": 0}
+          }
+        }
       }
     },
     "objects": {

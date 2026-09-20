@@ -5,16 +5,29 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Any, Mapping
 
 SCHEMA = "aidevops.prospecting/v1"
 DISPOSITIONS = frozenset({"new", "saved", "hidden", "not-fit", "reviewed", "responded"})
 OBJECT_TYPES = frozenset({"post", "comment"})
+DOCUMENT_FIELDS = frozenset({"schema", "project", "objects", "leads"})
+PROJECT_FIELDS = frozenset({"project_id", "name", "profile_version", "discovery_version", "profile", "discovery"})
+PROFILE_FIELDS = frozenset({"facts", "claims", "competitors", "budgets", "secret_profile_refs"})
+DISCOVERY_FIELDS = frozenset({"keywords", "communities", "source_preferences", "budgets", "daily_result_limit"})
+OBJECT_FIELDS = frozenset({"provider", "object_id", "object_type", "parent_object_id", "evidence_id", "corpus_id", "canonical_plane", "authority", "observed_at"})
+LEAD_FIELDS = frozenset({"lead_id", "provider", "object_id", "score", "matching_phrase", "explanation", "intent", "stage", "suitability", "unknowns", "rubric_version", "model_version", "evidence_version"})
 
 
 class ContractError(ValueError):
     """Raised when an import violates the prospecting contract."""
+
+
+def exact_fields(value: Mapping[str, Any], allowed: frozenset[str], field: str) -> None:
+    extras = sorted(set(value) - allowed)
+    if extras:
+        raise ContractError(f"{field} contains unsupported fields: {', '.join(extras)}")
 
 
 def required_text(value: Any, field: str) -> str:
@@ -30,11 +43,34 @@ def version(value: Any, field: str) -> int:
 
 
 def string_list(value: Any, field: str) -> tuple[str, ...]:
-    if value is None:
-        return ()
     if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
         raise ContractError(f"{field} must be an array of strings")
     return tuple(value)
+
+
+def validate_project_payload(kind: str, value: Any) -> Mapping[str, Any]:
+    if not isinstance(value, dict):
+        raise ContractError(f"project.{kind} must be an object")
+    allowed = PROFILE_FIELDS if kind == "profile" else DISCOVERY_FIELDS if kind == "discovery" else None
+    if allowed is None:
+        raise ContractError("project payload kind must be profile or discovery")
+    exact_fields(value, allowed, f"project.{kind}")
+    list_fields = ("facts", "claims", "competitors", "secret_profile_refs") if kind == "profile" else ("keywords", "communities", "source_preferences")
+    for field in list_fields:
+        if field in value:
+            string_list(value[field], f"project.{kind}.{field}")
+    budgets = value.get("budgets")
+    if budgets is not None:
+        if not isinstance(budgets, dict):
+            raise ContractError(f"project.{kind}.budgets must be an object")
+        for name, amount in budgets.items():
+            if not isinstance(name, str) or not name or isinstance(amount, bool) or not isinstance(amount, (int, float)) or not math.isfinite(amount) or amount < 0:
+                raise ContractError(f"project.{kind}.budgets must contain non-negative numeric values")
+    if kind == "discovery" and "daily_result_limit" in value:
+        limit = value["daily_result_limit"]
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 0:
+            raise ContractError("project.discovery.daily_result_limit must be a non-negative integer")
+    return value
 
 
 @dataclass(frozen=True)
@@ -50,12 +86,9 @@ class ProjectRecord:
     def from_mapping(cls, value: Any) -> "ProjectRecord":
         if not isinstance(value, dict):
             raise ContractError("project must be an object")
-        profile = value.get("profile")
-        discovery = value.get("discovery")
-        if not isinstance(profile, dict) or not isinstance(discovery, dict):
-            raise ContractError("project profile and discovery must be objects")
-        refs = profile.get("secret_profile_refs", [])
-        string_list(refs, "project.profile.secret_profile_refs")
+        exact_fields(value, PROJECT_FIELDS, "project")
+        profile = validate_project_payload("profile", value.get("profile"))
+        discovery = validate_project_payload("discovery", value.get("discovery"))
         return cls(
             required_text(value.get("project_id"), "project.project_id"),
             required_text(value.get("name"), "project.name"),
@@ -80,6 +113,7 @@ class EvidenceObjectRecord:
     def from_mapping(cls, value: Any, index: int) -> "EvidenceObjectRecord":
         if not isinstance(value, dict):
             raise ContractError(f"objects[{index}] must be an object")
+        exact_fields(value, OBJECT_FIELDS, f"objects[{index}]")
         object_type = required_text(value.get("object_type"), f"objects[{index}].object_type")
         if object_type not in OBJECT_TYPES:
             raise ContractError(f"objects[{index}].object_type is unsupported")
@@ -119,6 +153,7 @@ class LeadRecord:
     def from_mapping(cls, value: Any, index: int) -> "LeadRecord":
         if not isinstance(value, dict):
             raise ContractError(f"leads[{index}] must be an object")
+        exact_fields(value, LEAD_FIELDS, f"leads[{index}]")
         raw_score = value.get("score")
         if isinstance(raw_score, bool) or not isinstance(raw_score, (int, float)):
             raise ContractError(f"leads[{index}].score must be numeric")
@@ -152,6 +187,7 @@ class ImportDocument:
     def from_mapping(cls, value: Any) -> "ImportDocument":
         if not isinstance(value, dict) or value.get("schema") != SCHEMA:
             raise ContractError(f"schema must be {SCHEMA}")
+        exact_fields(value, DOCUMENT_FIELDS, "document")
         raw_objects = value.get("objects")
         raw_leads = value.get("leads")
         if not isinstance(raw_objects, list) or not isinstance(raw_leads, list):

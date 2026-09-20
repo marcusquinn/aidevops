@@ -17,7 +17,9 @@ around stable evidence pointers.
 - Each query and mutation requires an exact `project_id`; there is no global lead
   listing or automatic cross-project sharing.
 - Objects reference `evidence_id`, `corpus_id`, `canonical_plane: "_knowledge"`,
-  and `authority: "projection"`. The store never copies raw post/comment text.
+  and `authority: "projection"`. The store never copies full raw post/comment
+  bodies; it retains only the matching phrase and scoring explanation required
+  to audit a lead judgment.
 - Secret profile **references** may appear in a project profile. Secret values,
   cookies, credentials, provider responses, and filesystem paths may not.
 - Posts and comments are separate provider objects. Multiple `lead_id` records
@@ -41,10 +43,11 @@ project version with different content fails the whole transaction. SQLite's
 busy timeout serializes simultaneous local importers; stale disposition and
 profile/discovery edits are rejected by version checks.
 
-Unknown schema versions fail closed. Schema migration is atomic and owned only
-by this new store. Destructive project deletion first checkpoints SQLite, copies
-the database, validates the backup with `PRAGMA integrity_check`, and requires
-the exact stored project name. External corpora are never rewritten or deleted.
+Unknown schema versions and undeclared fields fail closed. Schema migration is
+atomic and owned only by this new store. Destructive project deletion creates a
+consistent SQLite backup, validates it with `PRAGMA integrity_check`, acquires a
+write lock, confirms no concurrent commit escaped the backup, and requires the
+exact stored project name. External corpora are never rewritten or deleted.
 
 ## Lead and disposition semantics
 
