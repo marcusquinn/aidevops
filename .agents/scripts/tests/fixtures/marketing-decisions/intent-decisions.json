@@ -1,0 +1,8 @@
+{
+  "schema": "aidevops.intent-decisions/v1",
+  "rubric": {"id": "intent-page-fit", "version": "1"},
+  "queries": [
+    {"query_id": "exact", "query": "SEO audit pricing", "source": {"source_id": "gsc", "span": "row-1"}, "evidence_state": "observed", "observed_ranking_url": "/pricing", "conversion_value": 120, "cost": 20, "sample_size": 40, "lag_days": 7},
+    {"query_id": "gap", "query": "enterprise SEO audit procurement", "source": {"source_id": "ads", "span": "row-2"}, "evidence_state": "measured", "conversion_value": 300, "cost": 50, "sample_size": 8, "lag_days": 4}
+  ]
+}
