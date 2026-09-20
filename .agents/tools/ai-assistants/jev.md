@@ -26,6 +26,8 @@ tools:
 - Operational recipes: [structured decisions](jev-decisions.md). Dated sources,
   commercial terms and project comparisons: [research](../../reference/jev-research.md).
   Research is optional context, not always-loaded agent instructions.
+- Opt-in [retrieval and shadow-triage pilots](jev-pilots.md) preserve original
+  evidence and write private evaluation reports; they do not change default routing.
 - Run `python3 ~/.aidevops/agents/scripts/jev-example.py` offline first. Only
   `--live` sends the fixed synthetic example to TypeSafe. It does not read user
   files, sessions, browsers, repositories or arbitrary stdin.
@@ -56,7 +58,9 @@ aidevops secret TYPESAFE_API_KEY -- python3 ~/.aidevops/agents/scripts/jev-examp
 For a suffixed key, replace the name in both the injection and `--key-env` option.
 Do not use `secret get` in an agent-visible terminal. Never infer permission to
 send private data from the presence of a key. There is no registered production
-Jev route yet: `--live` is the explicitly authorised synthetic smoke path only.
+Jev route yet. The example's `--live` is synthetic-only; the separate pilot CLI
+also supports explicitly approved public non-personal corpora, as documented in
+[pilot setup](jev-pilots.md).
 Production activation requires provider/data approval, a readiness contract and
 the application's existing authority checks before any payload leaves the device.
 
