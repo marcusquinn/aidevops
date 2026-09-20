@@ -132,7 +132,7 @@ def accepted(answers):
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
+    def redirect_request(self, *args, **kwargs):
         # Never forward the bearer credential to another location.
         return None
 
@@ -166,6 +166,24 @@ def evaluate(request, key):
     return {"status": "accepted", "model": MODEL, "answers": answers}
 
 
+@dataclass(frozen=True)
+class ContinuationContext:
+    """Trusted host facts, never model-returned authorization; defaults stop."""
+
+    enabled: bool = False
+    authorised: bool = False
+    unfinished: bool = False
+    cancelled: bool = True
+    blocked: bool = True
+    choosing: bool = True
+
+    def allows_work(self):
+        permits = (self.enabled, self.authorised, self.unfinished)
+        stops = (self.cancelled, self.blocked, self.choosing)
+        return (all(value is True for value in permits)
+                and all(value is False for value in stops))
+
+
 @dataclass
 class ContinuationBudget:
     """Single-process example, NOT durable host state or a runtime stop hook.
@@ -182,20 +200,14 @@ class ContinuationBudget:
         if type(self.limit) is not int or not 0 <= self.limit <= MAX_CONTINUATIONS:
             raise ValueError("Continuation limit must be between zero and twelve")
 
-    def reserve(self, probability, *, progress_token, enabled=False,
-                authorised=False, unfinished=False, cancelled=True,
-                blocked=True, choosing=True):
-        # These flags are trusted host facts, never model-returned authorization.
-        if any(value is not True for value in (enabled, authorised, unfinished)):
+    def reserve(self, probability, *, progress_token, context=None):
+        if not isinstance(context, ContinuationContext) or not context.allows_work():
             return False
-        if any(value is not False for value in (cancelled, blocked, choosing)):
-            return False
-        if not bounded_number(probability) or probability < 0.9:
+        if (not bounded_number(probability) or probability < 0.9
+                or self.used >= min(self.limit, MAX_CONTINUATIONS)):
             return False
         if (not isinstance(progress_token, str) or not progress_token.strip()
                 or progress_token in self.seen_progress):
-            return False
-        if self.used >= min(self.limit, MAX_CONTINUATIONS):
             return False
         self.used += 1
         self.seen_progress.add(progress_token)

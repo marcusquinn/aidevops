@@ -146,7 +146,7 @@ class ContinuationTests(unittest.TestCase):
         flags = dict(enabled=True, authorised=True, unfinished=True,
                      cancelled=False, blocked=False, choosing=False)
         flags.update(overrides)
-        return budget.reserve(0.99, progress_token=token, **flags)
+        return budget.reserve(0.99, progress_token=token, context=jev.ContinuationContext(**flags))
 
     def test_twelve_then_stop_even_with_new_progress(self):
         budget = jev.ContinuationBudget()
