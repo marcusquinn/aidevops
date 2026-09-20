@@ -15,7 +15,8 @@ SCRIPTS = Path(__file__).resolve().parents[1]
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "marketing-decisions"
 SPEC = importlib.util.spec_from_file_location("seo_link_review", SCRIPTS / "seo_link_review.py")
 review = importlib.util.module_from_spec(SPEC)
-assert SPEC.loader is not None
+if SPEC.loader is None:
+    raise ImportError("unable to load seo_link_review")
 SPEC.loader.exec_module(review)
 
 
