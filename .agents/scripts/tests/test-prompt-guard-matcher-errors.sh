@@ -23,6 +23,8 @@ VALID_YAML="${TEST_ROOT}/valid-patterns.yaml"
 MALFORMED_YAML="${TEST_ROOT}/malformed-patterns.yaml"
 MISSING_CUSTOM="${TEST_ROOT}/missing-custom-patterns.txt"
 PROBE_FILE="${TEST_ROOT}/probe.txt"
+LARGE_MATCH_PATTERNS="${TEST_ROOT}/large-match-patterns.txt"
+LARGE_MATCH_FILE="${TEST_ROOT}/large-match.txt"
 cat >"$INVALID_PATTERNS" <<'PATTERNS'
 HIGH|test|Invalid regular expression|(
 PATTERNS
@@ -38,6 +40,10 @@ test:
     description: "Missing pattern field"
 YAML
 printf '%s\n' "$PROBE_CONTENT" >"$PROBE_FILE"
+cat >"$LARGE_MATCH_PATTERNS" <<'PATTERNS'
+HIGH|test|Large early match|EARLY_MATCH_SENTINEL
+PATTERNS
+python3 -c 'from pathlib import Path; import sys; Path(sys.argv[1]).write_text("EARLY_MATCH_SENTINEL\n" + ("ordinary content\n" * 131072))' "$LARGE_MATCH_FILE"
 
 run_guard() {
 	PROMPT_GUARD_CUSTOM_PATTERNS="$INVALID_PATTERNS" \
@@ -137,6 +143,27 @@ assert_custom_source_fails_closed() {
 	return 0
 }
 
+assert_large_early_match_is_finding() {
+	local output=""
+	local actual_exit=0
+	output=$(PROMPT_GUARD_CUSTOM_PATTERNS="$LARGE_MATCH_PATTERNS" \
+		PROMPT_GUARD_YAML_PATTERNS="$VALID_YAML" \
+		PROMPT_GUARD_LOG_DIR="${TEST_ROOT}/logs" \
+		PROMPT_GUARD_PERSIST_CONTENT=false \
+		PROMPT_GUARD_QUIET=true \
+		"$PROMPT_GUARD" scan-file "$LARGE_MATCH_FILE" 2>&1) || actual_exit=$?
+	if [[ "$actual_exit" -eq 0 && "$output" == *"EARLY_MATCH_SENTINEL"* && \
+		"$output" != *"Pattern matcher failed"* ]]; then
+		printf 'PASS large early match remains a finding under pipefail\n'
+		passed=$((passed + 1))
+		return 0
+	fi
+	printf 'FAIL large early match classification (actual=%s output=%s)\n' \
+		"$actual_exit" "$output" >&2
+	failed=$((failed + 1))
+	return 0
+}
+
 assert_fails_closed "check blocks matcher errors" 1 check "$PROBE_CONTENT"
 assert_fails_closed "scan rejects matcher errors" 1 scan "$PROBE_CONTENT"
 assert_fails_closed "score rejects matcher errors" 1 score "$PROBE_CONTENT"
@@ -148,6 +175,7 @@ assert_stdin_fails_closed "scan-stdin rejects matcher errors" scan-stdin
 assert_stdin_fails_closed "scan pipeline compatibility rejects matcher errors" scan
 assert_yaml_source_fails_closed "check blocks malformed YAML pattern sources"
 assert_custom_source_fails_closed "check blocks unavailable custom pattern sources"
+assert_large_early_match_is_finding
 
 printf '\nResults: %s passed, %s failed\n' "$passed" "$failed"
 if [[ "$failed" -gt 0 ]]; then
