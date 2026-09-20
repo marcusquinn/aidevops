@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import sys
 from pathlib import Path
 
@@ -20,35 +21,25 @@ PROVENANCE = {"operator_reviewed", "author_synthetic", "unreviewed"}
 METRICS = {"repair_seconds", "end_to_end_seconds", "input_tokens", "total_cost_usd"}
 
 
-def open_component(parent_fd, name):
-    try:
-        os.mkdir(name, mode=0o700, dir_fd=parent_fd)
-    except FileExistsError:
-        pass
-    return os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent_fd)
-
-
-def reject_checkout(directory_fd):
-    try:
-        os.stat(".git", dir_fd=directory_fd, follow_symlinks=False)
-    except FileNotFoundError:
-        return
-    raise ValueError("Private journal records cannot be stored in Git")
-
-
 @contextlib.contextmanager
 def private_directory():
     if os.name != "posix":
         raise ValueError("Private journal storage requires POSIX directory descriptors")
     root = Path.home() / ".aidevops" / ".agent-workspace" / "work" / "jev-evaluation"
-    directory_fd = os.open(root.anchor, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    current = Path(root.anchor)
+    for component in root.parts[1:]:
+        current /= component
+        try:
+            current.mkdir(mode=0o700)
+        except FileExistsError:
+            pass
+        metadata = current.lstat()
+        if not stat.S_ISDIR(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode):
+            raise ValueError("Private journal storage contains a non-directory path")
+        if (current / ".git").exists() or (current / ".git").is_symlink():
+            raise ValueError("Private journal records cannot be stored in Git")
+    directory_fd = os.open(current, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
-        reject_checkout(directory_fd)
-        for name in root.parts[1:]:
-            child_fd = open_component(directory_fd, name)
-            os.close(directory_fd)
-            directory_fd = child_fd
-            reject_checkout(directory_fd)
         os.fchmod(directory_fd, 0o700)
         yield directory_fd, root
     finally:
