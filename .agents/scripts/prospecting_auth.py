@@ -18,13 +18,16 @@ from pathlib import Path
 from typing import Any, Iterator
 
 import prospecting_jobs
+from _public_engagement_policy import change_service_grant
 from prospecting_store import import_document, set_disposition, update_project_version
 
 AUTH_SCHEMA_VERSION = 1
 READ_PERMISSION = "read"
 OWNER_PERMISSION = "owner"
+ENGAGEMENT_EXECUTE_PERMISSION = "engagement.execute"
 TOKEN_PREFIX = "apsr"  # nosec B105: public token type marker, not a credential
 SESSION_PREFIX = "apso"
+EXECUTOR_PREFIX = "apse"
 JOB_KINDS = frozenset({"scan", "seo-refresh", "insights-refresh", "digest-preview"})
 
 
@@ -198,6 +201,18 @@ def issue_owner_session(database: sqlite3.Connection, projects: list[str], *, tt
     return token, csrf
 
 
+def issue_engagement_executor_key(database: sqlite3.Connection, projects: list[str]) -> str:
+    """Issue an executor-only key with no read or grant-administration rights."""
+    spec = CredentialSpec(
+        EXECUTOR_PREFIX,
+        "engagement_executor",
+        _projects(projects),
+        (ENGAGEMENT_EXECUTE_PERMISSION,),
+    )
+    token, _csrf = _issue(database, spec)
+    return token
+
+
 def _authenticate(database: sqlite3.Connection, token: str, prefix: str, kind: str) -> tuple[Principal, sqlite3.Row]:
     parts = token.split("_", 2) if isinstance(token, str) else []
     if len(parts) != 3 or parts[0] != prefix:
@@ -213,9 +228,15 @@ def _authenticate(database: sqlite3.Connection, token: str, prefix: str, kind: s
 
 
 def authenticate_read(database: sqlite3.Connection, authorization: str) -> Principal:
+    return _authenticate_bearer(database, authorization, TOKEN_PREFIX, "read_key")
+
+
+def _authenticate_bearer(
+    database: sqlite3.Connection, authorization: str, prefix: str, kind: str
+) -> Principal:
     if not isinstance(authorization, str) or not authorization.startswith("Bearer "):
         raise AuthError("authentication required")
-    principal, _row = _authenticate(database, authorization[7:], TOKEN_PREFIX, "read_key")
+    principal, _row = _authenticate(database, authorization[7:], prefix, kind)
     return principal
 
 
@@ -224,6 +245,12 @@ def authenticate_owner(database: sqlite3.Connection, cookie_token: str, csrf: st
     if not isinstance(csrf, str) or not row["csrf_hash"] or not hmac.compare_digest(bytes(row["csrf_hash"]), hashlib.sha256(csrf.encode()).digest()):
         raise AuthError("invalid CSRF token")
     return principal
+
+
+def authenticate_engagement_executor(database: sqlite3.Connection, authorization: str) -> Principal:
+    return _authenticate_bearer(
+        database, authorization, EXECUTOR_PREFIX, "engagement_executor"
+    )
 
 
 def revoke(database: sqlite3.Connection, credential_id: str) -> None:
@@ -250,7 +277,7 @@ class OperatorContext:
     principal: Principal
 
     def execute(self, method: str, parts: list[str], value: dict[str, Any]) -> tuple[int, dict[str, Any]]:
-        if method not in {"POST", "PATCH", "PUT"}:
+        if method not in {"POST", "PATCH", "PUT", "DELETE"}:
             raise OperatorError(405, "method_not_allowed", "operator method is not supported")
         if parts == ["v1", "operator", "projects"] and method == "POST":
             return self._create(value)
@@ -264,6 +291,8 @@ class OperatorContext:
             (6, "leads", "PATCH"): self._disposition,
             (5, "jobs", "POST"): self._job,
             (5, "alerts", "PUT"): self._alert,
+            (6, "engagement-grants", "PUT"): self._engagement_grant,
+            (6, "engagement-grants", "DELETE"): self._engagement_grant,
         }
         handler = handlers.get((len(parts), parts[4] if len(parts) > 4 else "", method))
         if handler is None:
@@ -371,6 +400,19 @@ class OperatorContext:
                 (project_id, "alerts", changed, payload, _now()),
             )
         return changed
+
+    def _engagement_grant(
+        self, project_id: str, parts: list[str], value: dict[str, Any]
+    ) -> tuple[int, dict[str, Any]]:
+        """Persist an owner-authenticated grant revision or revocation marker."""
+        return change_service_grant(
+            self.auth_database,
+            owner_id=self.principal.credential_id,
+            project_id=project_id,
+            grant_id=parts[5],
+            value=value,
+            current_time=_now(),
+        )
 
 
 def _exact(value: dict[str, Any], allowed: set[str]) -> None:

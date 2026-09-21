@@ -10,6 +10,10 @@ from dataclasses import dataclass
 
 from _knowledge_social_outbound import ClaimedOperation, _new_id, _verified_operation
 from _knowledge_social_outbound_cooldown import active_connection_cooldown
+from _knowledge_social_outbound_delegation import (
+    delegated_authorization,
+    reserve_delegated_capacity,
+)
 from knowledge_social_store import SocialStoreError, validate_opaque
 
 CLAIM_OPERATION_SQL = """UPDATE outbound_operations
@@ -52,7 +56,9 @@ def _claimable_operation(
             ORDER BY approved_at DESC LIMIT 1""",
         (request.operation_id, principal_id, row["intent_sha256"], request.current_time),
     ).fetchone()
-    if approval is None:
+    if approval is None and delegated_authorization(
+        database, request.operation_id, request.current_time
+    ) is None:
         raise SocialStoreError("operation approval is missing or expired")
     return row
 
@@ -65,6 +71,9 @@ def _persist_claim(
 ) -> tuple[int, str]:
     claim_token = int(row["claim_token"]) + 1
     attempt_id = _new_id("att")
+    reserve_delegated_capacity(
+        database, request.operation_id, attempt_id, request.current_time
+    )
     changed = database.execute(
         CLAIM_OPERATION_SQL,
         (

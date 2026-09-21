@@ -3,6 +3,15 @@
 
 # Social Corpus Operations
 
+## Public engagement authority
+
+Collection and shared-corpus access never confer publishing authority. Exact
+owner approval remains the default. The optional Reddit-only policy lane stores
+grants, authorization hashes, suppressions, and reservations privately and
+exposes only content-free receipts. See
+`reference/public-engagement-policy.md`. Legacy rows are never promoted into
+standing authority.
+
 Social collection is read-only and follows a fixed order: official API, account
 archive, then browser-gap capture. A browser artifact is not accepted merely
 because it is available; an explicit private gap record must first identify a
