@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.34.12] - 2026-09-21
+
+### Changed
+
+- Maintenance: mark t18464 complete (pr:#32154 completed:2026-09-20) (#32151)
+
+### Fixed
+
+- harden pulse failure accounting
+
 ## [3.34.11] - 2026-09-21
 
 ### Changed
