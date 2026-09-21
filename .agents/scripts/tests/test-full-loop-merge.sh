@@ -1320,6 +1320,7 @@ run_prospective_todo_guard() {
 	local fetch_mode="${4:-stub}"
 	local remote_url="${5:-https://github.com/testorg/testrepo.git}"
 	local reported_repo="${6:-testorg/testrepo}"
+	local caller_context="${7:-$fixture_dir}"
 	local scripts_dir="${SCRIPT_DIR}/.."
 	local tmp_runner=""
 	local verification_tmp="${fixture_dir}/verification-tmp"
@@ -1332,7 +1333,7 @@ run_prospective_todo_guard() {
 	local fetch_override=""
 	local validation_override=""
 	if [[ "$fetch_mode" == "stub" ]]; then
-		fetch_override='_merge_fetch_pinned_commit_objects() { return 0; }'
+		fetch_override="_merge_fetch_pinned_commit_objects() { printf '%s\\n' '${fixture_dir}/.git/objects' >\"\$5/objects/info/alternates\"; return 0; }"
 	else
 		validation_override='_merge_validate_target_remote_url() { return 0; }'
 	fi
@@ -1353,8 +1354,8 @@ source '${scripts_dir}/full-loop-helper-merge.sh'
 _merge_fetch_pr_refs_rest() { printf 'main\t%s\t%s\t%s\t%s\n' '${base_sha}' '${head_sha}' '${reported_repo}' '${remote_url}'; return 0; }
 ${fetch_override}
 ${validation_override}
-cd '${fixture_dir}'
-_merge_guard_prospective_todo '42' 'testorg/testrepo'
+	cd '${caller_context}'
+	_merge_guard_prospective_todo '42' 'testorg/testrepo'
 RUNNER_EOF
 	chmod +x "$tmp_runner"
 	local rc=0
@@ -1476,7 +1477,7 @@ create_prospective_fetch_fixture() {
 }
 
 test_prospective_todo_merge_guard() {
-	local fixture_dir="" fixture_root="" base_sha="" head_sha="" remote_url="" output="" rc=0 objects_before="" objects_after=""
+	local fixture_dir="" fixture_root="" base_sha="" head_sha="" remote_url="" supervisor_workspace="" output="" rc=0 objects_before="" objects_after=""
 	local cleanup_rc=0 environment_rc=0 isolation_rc=0 storage_before="" storage_after="" absent_before=0 absent_after=0
 	fixture_dir=$(create_prospective_fixture collision)
 	base_sha=$(<"${fixture_dir}/base.sha")
@@ -1534,7 +1535,9 @@ test_prospective_todo_merge_guard() {
 	/usr/bin/git -C "${fixture_root}/work" push -q origin main || return 0
 	storage_before=$(prospective_git_storage_digest "$fixture_dir")
 	if /usr/bin/git -C "$fixture_dir" cat-file -e "${head_sha}^{commit}" 2>/dev/null; then absent_before=1; fi
-	run_prospective_todo_guard "$fixture_dir" "$base_sha" "$head_sha" live "$remote_url" >/dev/null || rc=$?
+	supervisor_workspace="${fixture_root}/supervisor-workspace"
+	mkdir -p "$supervisor_workspace" || return 0
+	run_prospective_todo_guard "$fixture_dir" "$base_sha" "$head_sha" live "$remote_url" 'testorg/testrepo' "$supervisor_workspace" >/dev/null || rc=$?
 	storage_after=$(prospective_git_storage_digest "$fixture_dir")
 	if /usr/bin/git -C "$fixture_dir" cat-file -e "${head_sha}^{commit}" 2>/dev/null; then absent_after=1; fi
 	prospective_contexts_clean "$fixture_dir" || cleanup_rc=$?
@@ -1542,7 +1545,7 @@ test_prospective_todo_merge_guard() {
 	[[ "$rc" -eq 0 && "$cleanup_rc" -eq 0 && "$environment_rc" -eq 0 &&
 		"$absent_before" -eq 0 && "$absent_after" -eq 0 &&
 		"$storage_before" == "$storage_after" ]] || isolation_rc=1
-	print_result "prospective TODO: explicit target objects fetch from an unrelated caller repository" "$isolation_rc"
+	print_result "prospective TODO: explicit target objects fetch from a non-Git supervisor workspace" "$isolation_rc"
 
 	rc=0
 	output=$(run_prospective_todo_guard "$fixture_dir" "$base_sha" "$head_sha" live "$remote_url" 'otherorg/otherrepo') || rc=$?

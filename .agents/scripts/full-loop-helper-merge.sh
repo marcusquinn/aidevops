@@ -721,19 +721,14 @@ _merge_create_prospective_object_context() {
 	local context_root="$1"
 	local real_git="$2"
 	local object_repo="${context_root}/repository.git"
-	local source_objects=""
-	local object_format=""
 	[[ -x "$real_git" ]] || return 1
 	mkdir -p "${context_root}/home" "${context_root}/xdg" || return 1
-	source_objects=$(_merge_run_config_isolated_git git "$context_root" \
-		rev-parse --path-format=absolute --git-path objects 2>/dev/null) || return 1
-	object_format=$(_merge_run_config_isolated_git git "$context_root" \
-		rev-parse --show-object-format 2>/dev/null || true)
-	[[ -n "$source_objects" && -n "$object_format" ]] || return 1
+	# Do not borrow objects or object-format details from the caller's Git
+	# context. This guard is also called by Pulse from a non-Git workspace.
+	# The pinned target remote below supplies every object required for validation.
 	_merge_run_config_isolated_git "$real_git" "$context_root" -c init.templateDir= \
-		-C "$context_root" init --bare --quiet --object-format="$object_format" repository.git || return 1
+		-C "$context_root" init --bare --quiet repository.git || return 1
 	[[ -d "${object_repo}/objects/info" ]] || return 1
-	printf '%s\n' "$source_objects" >"${object_repo}/objects/info/alternates" || return 1
 	printf '%s\n' "$object_repo"
 	return 0
 }
