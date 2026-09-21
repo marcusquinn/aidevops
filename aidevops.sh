@@ -503,6 +503,7 @@ _update_finish() {
 	_update_check_homebrew
 	_update_check_planning
 	_update_check_tools
+	_update_reconcile_tabby_config
 	_update_sweep_opencode_symlinks
 	# t2926: Re-check setsid on every update (runs even when setup.sh is skipped).
 	_update_check_setsid

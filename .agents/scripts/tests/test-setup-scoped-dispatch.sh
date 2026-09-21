@@ -9,6 +9,7 @@ REPO_ROOT="${SCRIPT_DIR}/../../.."
 SETUP_SH="${REPO_ROOT}/setup.sh"
 AIDEVOPS_SH="${REPO_ROOT}/aidevops.sh"
 RUNTIME_BUNDLE_VERIFIER="${REPO_ROOT}/.agents/scripts/runtime-bundle-verifier.sh"
+POST_SETUP_MODULE="${REPO_ROOT}/.agents/scripts/setup/modules/post-setup.sh"
 PACKAGE_JSON="${REPO_ROOT}/package.json"
 GUI_WEB_PACKAGE_JSON="${REPO_ROOT}/packages/gui-web/package.json"
 
@@ -94,12 +95,17 @@ PY
 test_setup_stage_contract() {
 	local text=""
 	local verifier_text=""
+	local post_setup_text=""
 	text="$(file_text "$SETUP_SH")" || {
 		print_result "setup.sh is readable" 1 "$SETUP_SH"
 		return 0
 	}
 	verifier_text="$(file_text "$RUNTIME_BUNDLE_VERIFIER")" || {
 		print_result "runtime bundle verifier is readable" 1 "$RUNTIME_BUNDLE_VERIFIER"
+		return 0
+	}
+	post_setup_text="$(file_text "$POST_SETUP_MODULE")" || {
+		print_result "post-setup module is readable" 1 "$POST_SETUP_MODULE"
 		return 0
 	}
 
@@ -121,6 +127,17 @@ test_setup_stage_contract() {
 	# shellcheck disable=SC2016 # Match literal setup.sh expressions.
 	assert_contains "ai-session resolves linked worktree common git dir" "$text" 'git -C "$checkout_root" rev-parse --git-common-dir'
 	assert_contains "ai-session verifies deployed sha" "$text" "_setup_ai_session_verify_deploy \"\$current_sha\""
+	# shellcheck disable=SC2016 # Match literal setup.sh expressions.
+	assert_occurrence_count "ai-session and setup paths reconcile Tabby automatically" "$text" \
+		'_time_step "$SETUP_STAGE_TABBY" setup_tabby' 4
+	# shellcheck disable=SC2016 # Match literal post-setup expressions.
+	assert_contains "non-interactive Tabby setup runs transactional sync first" "$post_setup_text" \
+		'if bash "$tabby_helper" sync >/dev/null 2>&1; then'
+	# shellcheck disable=SC2016 # Match literal post-setup expressions.
+	assert_contains "non-interactive Tabby setup applies shell repair after sync" "$post_setup_text" \
+		'bash "$tabby_helper" fix-shell >/dev/null 2>&1 || true'
+	assert_not_contains "non-interactive Tabby failure does not defer manual repair" "$post_setup_text" \
+		'run manually: aidevops tabby sync'
 	assert_contains "setup sources the authoritative runtime bundle verifier" "$text" '.agents/scripts/runtime-bundle-verifier.sh'
 	assert_contains "ai-session delegates to the authoritative verifier" "$text" 'verify_aidevops_runtime_bundle_convergence'
 	# shellcheck disable=SC2016 # Match literal verifier expressions.
