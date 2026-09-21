@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Prospecting workbench</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to workspace</a>
+  <header class="topbar">
+    <div><strong class="mark">&gt;_</strong> <span>Prospecting workbench</span></div>
+    <label>Project <select id="project-select" aria-label="Select project"></select></label>
+    <span id="connection" class="status" role="status">Checking local service…</span>
+  </header>
+  <div class="shell">
+    <nav class="nav" aria-label="Workbench views">
+      <button data-view="onboarding">Onboarding</button><button data-view="leads">Lead inbox</button>
+      <button data-view="seo">Reddit SEO</button><button data-view="insights">Insights</button>
+      <button data-view="sources">Sources</button><button data-view="activity">Activity</button>
+      <button data-view="usage">Usage & budget</button><button data-view="settings">Schedule & alerts</button>
+    </nav>
+    <main id="main" tabindex="-1"><div id="notice" class="notice" hidden></div><section id="view" aria-live="polite"></section></main>
+  </div>
+  <template id="empty"><div class="card empty"><h2>No evidence yet</h2><p>Run an authorized local scan or complete onboarding. This view never invents results.</p></div></template>
+  <script src="app.js"></script>
+</body>
+</html>
