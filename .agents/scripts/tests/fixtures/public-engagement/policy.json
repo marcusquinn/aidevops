@@ -1,0 +1,14 @@
+{
+  "schema": "aidevops.public-engagement-policy/v1",
+  "mode": "policy",
+  "grants": [{
+    "grant_id": "grant_fixture", "revision": 1, "owner_id": "owner_fixture",
+    "project_id": "project_fixture", "corpus_id": "corpus_fixture", "provider": "reddit",
+    "connection_id": "conn_reddit", "account_id": "acct_reddit_42",
+    "communities": ["aidevops_test"], "actions": ["post", "reply"],
+    "not_before": 1, "expires_at": 4102444800, "window_seconds": 3600,
+    "account_cap": 3, "community_cap": 2, "thread_cooldown_seconds": 60,
+    "thread_turn_cap": 2, "disclosure": "[Automated assistant; owner-authorized]",
+    "rules_max_age_seconds": 86400, "enabled": true
+  }]
+}

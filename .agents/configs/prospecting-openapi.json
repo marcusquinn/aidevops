@@ -52,13 +52,21 @@
     },
     "/v1/operator/projects/{project_id}/alerts": {
       "put": {"security": [{"ownerSession": [], "csrf": []}], "operationId": "setAlertConfig", "parameters": [{"$ref": "#/components/parameters/ProjectId"}], "responses": {"200": {"description": "Alert configuration advanced with CAS"}}}
+    },
+    "/v1/operator/projects/{project_id}/engagement-grants/{grant_id}": {
+      "put": {"security": [{"ownerSession": [], "csrf": []}], "operationId": "putEngagementGrant", "description": "Owner-authenticated create or revision of a disabled-by-default bounded engagement grant.", "parameters": [{"$ref": "#/components/parameters/ProjectId"}, {"name": "grant_id", "in": "path", "required": true, "schema": {"type": "string"}}], "responses": {"200": {"description": "Grant revision stored"}, "403": {"$ref": "#/components/responses/Forbidden"}}},
+      "delete": {"security": [{"ownerSession": [], "csrf": []}], "operationId": "revokeEngagementGrant", "parameters": [{"$ref": "#/components/parameters/ProjectId"}, {"name": "grant_id", "in": "path", "required": true, "schema": {"type": "string"}}], "responses": {"200": {"description": "Unstarted delegated work revoked"}}}
+    },
+    "/v1/executor/projects/{project_id}/engagement/evaluate": {
+      "post": {"security": [{"engagementExecutor": []}], "operationId": "evaluateEngagementOperation", "description": "Returns content-free grant selection metadata; the private outbox performs final authorization and reservation.", "parameters": [{"$ref": "#/components/parameters/ProjectId"}], "responses": {"202": {"description": "Eligible for private outbox evaluation"}, "409": {"description": "Grant unavailable"}}}
     }
   },
   "components": {
     "securitySchemes": {
       "readToken": {"type": "http", "scheme": "bearer"},
       "ownerSession": {"type": "apiKey", "in": "cookie", "name": "prospecting_owner"},
-      "csrf": {"type": "apiKey", "in": "header", "name": "X-CSRF-Token"}
+      "csrf": {"type": "apiKey", "in": "header", "name": "X-CSRF-Token"},
+      "engagementExecutor": {"type": "http", "scheme": "bearer", "description": "Project-scoped engagement.execute credential; cannot read projects or administer grants."}
     },
     "parameters": {"ProjectId": {"name": "project_id", "in": "path", "required": true, "schema": {"type": "string", "pattern": "^[A-Za-z0-9._-]+$"}}},
     "responses": {

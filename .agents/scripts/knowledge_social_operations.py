@@ -45,6 +45,11 @@ from _knowledge_social_outbound_provider import (
     ProviderRateLimitError,
     prepare_provider,
 )
+from _knowledge_social_outbound_delegation import (
+    authorize_operation,
+    revoke_owner_grant,
+    store_owner_grant,
+)
 from _knowledge_social_outbound_reconciliation import (
     ReconciliationRequest,
     list_operations,
@@ -369,6 +374,55 @@ def _handle_operation_approve(
     )
 
 
+def _handle_grant_store(
+    args: argparse.Namespace,
+    principal_id: str,
+    database: sqlite3.Connection,
+    current_time: int | None,
+) -> dict[str, Any]:
+    if args.policy_file.is_symlink() or not args.policy_file.is_file():
+        raise OperationsError("grant input must be a regular file")
+    document = json.loads(args.policy_file.read_text(encoding="utf-8"))
+    if not isinstance(document, dict):
+        raise OperationsError("grant input must be an object")
+    return store_owner_grant(
+        database,
+        document,
+        authenticated_owner_id=principal_id,
+        current_time=_required_now(current_time),
+    )
+
+
+def _handle_grant_revoke(
+    args: argparse.Namespace,
+    principal_id: str,
+    database: sqlite3.Connection,
+    current_time: int | None,
+) -> dict[str, Any]:
+    return revoke_owner_grant(
+        database, args.grant_id, principal_id, _required_now(current_time)
+    )
+
+
+def _handle_operation_authorize_policy(
+    args: argparse.Namespace,
+    _principal_id: str,
+    database: sqlite3.Connection,
+    current_time: int | None,
+) -> dict[str, Any]:
+    return authorize_operation(
+        database,
+        args.operation_id,
+        args.grant_id,
+        project_id=args.project_id,
+        corpus_id=args.corpus_id,
+        community=args.community,
+        rules_observed_at=args.rules_observed_at,
+        source_observed_at=args.source_observed_at,
+        current_time=_required_now(current_time),
+    )
+
+
 def _handle_operation_revoke(
     args: argparse.Namespace,
     principal_id: str,
@@ -489,6 +543,9 @@ def _handle_notification_set(
 COMMAND_HANDLERS = {
     "operation-create": _handle_operation_create,
     "operation-approve": _handle_operation_approve,
+    "engagement-grant-store": _handle_grant_store,
+    "engagement-grant-revoke": _handle_grant_revoke,
+    "operation-authorize-policy": _handle_operation_authorize_policy,
     "operation-revoke": _handle_operation_revoke,
     "operation-cancel": _handle_operation_cancel,
     "operation-run": _handle_operation_run,
@@ -558,6 +615,27 @@ def _add_state_commands(commands: Any) -> None:
         _add_operation_id(operation)
         if command == "operation-approve":
             operation.add_argument("--expires-at", type=int, required=True)
+
+    grant_store = commands.add_parser("engagement-grant-store")
+    _add_scope(grant_store)
+    _add_test_clock(grant_store)
+    grant_store.add_argument("--policy-file", type=Path, required=True)
+
+    grant_revoke = commands.add_parser("engagement-grant-revoke")
+    _add_scope(grant_revoke)
+    _add_test_clock(grant_revoke)
+    grant_revoke.add_argument("--grant-id", required=True)
+
+    authorize = commands.add_parser("operation-authorize-policy")
+    _add_scope(authorize)
+    _add_test_clock(authorize)
+    _add_operation_id(authorize)
+    authorize.add_argument("--grant-id", required=True)
+    authorize.add_argument("--project-id", required=True)
+    authorize.add_argument("--corpus-id", required=True)
+    authorize.add_argument("--community", required=True)
+    authorize.add_argument("--rules-observed-at", type=int, required=True)
+    authorize.add_argument("--source-observed-at", type=int, required=True)
 
 
 def _add_run_commands(commands: Any) -> None:

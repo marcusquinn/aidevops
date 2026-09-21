@@ -17,6 +17,11 @@ from urllib.parse import parse_qs, urlsplit
 
 import prospecting_auth
 import prospecting_jobs
+from _public_engagement_policy import (
+    EngagementServiceError,
+    ServiceGrantEvaluation,
+    evaluate_service_grant,
+)
 from prospecting_contract import ContractError
 from prospecting_store import (
     ProspectingStoreError,
@@ -138,9 +143,7 @@ class ProspectingAPI:
         headers = headers or {}
         try:
             response = self._dispatch(method.upper(), target, headers, body)
-        except APIError as error:
-            response = Response(error.status, {"schema": API_SCHEMA, "error": {"code": error.code, "message": error.message}}, {})
-        except prospecting_auth.OperatorError as error:
+        except (APIError, prospecting_auth.OperatorError, EngagementServiceError) as error:
             response = Response(error.status, {"schema": API_SCHEMA, "error": {"code": error.code, "message": error.message}}, {})
         except (ContractError, ProspectingStoreError, StaleVersionError, prospecting_jobs.RoutineError) as error:
             response = Response(409, {"schema": API_SCHEMA, "error": {"code": "conflict", "message": str(error)}}, {})
@@ -187,6 +190,16 @@ class ProspectingAPI:
         self.rate_limiter.check(principal.credential_id)
         return principal
 
+    def _executor_principal(self, headers: Mapping[str, str]) -> prospecting_auth.Principal:
+        try:
+            principal = prospecting_auth.authenticate_engagement_executor(
+                self.auth_database, headers.get("Authorization", "")
+            )
+        except prospecting_auth.AuthError as error:
+            raise APIError(401, "unauthorized", "engagement executor authentication required") from error
+        self.rate_limiter.check(principal.credential_id)
+        return principal
+
     @staticmethod
     def _authorize(principal: prospecting_auth.Principal, project_id: str, permission: str = "read") -> None:
         if not principal.allows(project_id, permission):
@@ -200,6 +213,8 @@ class ProspectingAPI:
             return Response(200, {"schema": API_SCHEMA, "status": "ok", "api_version": 1}, {})
         if path.startswith("/v1/operator/"):
             return self._operator(method, path, headers, body)
+        if path.startswith("/v1/executor/"):
+            return self._engagement_executor(method, path, headers, body)
         principal = self._read_principal(headers)
         if method == "GET" and path == "/v1/projects":
             return self._projects(principal)
@@ -322,3 +337,23 @@ class ProspectingAPI:
             self.database, self.auth_database, principal
         ).execute(method, parts, value)
         return Response(status, {"schema": API_SCHEMA, **result}, {})
+
+    def _engagement_executor(
+        self, method: str, path: str, headers: Mapping[str, str], raw: bytes
+    ) -> Response:
+        """Expose only content-free grant selection to scoped executors."""
+        principal = self._executor_principal(headers)
+        result = evaluate_service_grant(
+            self.auth_database,
+            ServiceGrantEvaluation(
+                method=method,
+                path=path,
+                value=_json_body(raw),
+                allowed_projects=principal.projects,
+                permissions=principal.permissions,
+            ),
+        )
+        return Response(202, {
+            "schema": API_SCHEMA,
+            **result,
+        }, {})

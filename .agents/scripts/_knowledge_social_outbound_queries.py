@@ -9,7 +9,31 @@ import sqlite3
 from typing import Any
 
 from _knowledge_social_outbound import _verified_operation
+from _knowledge_social_outbound_delegation import delegated_authorization
+from _knowledge_social_store_schema import ensure_public_engagement_tables
 from knowledge_social_store import SocialStoreError, validate_opaque
+
+
+def _eligible_operation(
+    database: sqlite3.Connection,
+    row: sqlite3.Row,
+    principal_id: str,
+    current_time: int,
+) -> bool:
+    exact = database.execute(
+        """SELECT 1 FROM outbound_approvals
+             WHERE operation_id=? AND principal_id=? AND intent_sha256=?
+               AND revoked_at IS NULL AND expires_at>? LIMIT 1""",
+        (row["operation_id"], principal_id, row["intent_sha256"], current_time),
+    ).fetchone()
+    if exact is not None:
+        return True
+    try:
+        return delegated_authorization(
+            database, str(row["operation_id"]), current_time
+        ) is not None
+    except SocialStoreError:
+        return False
 
 
 def due_operation_ids(
@@ -22,13 +46,22 @@ def due_operation_ids(
     if limit < 1 or limit > 100:
         raise SocialStoreError("due limit must be between 1 and 100")
     principal_id = validate_opaque(principal_id, "principal_id")
+    ensure_public_engagement_tables(database)
     rows = database.execute(
         """SELECT DISTINCT o.* FROM outbound_operations o
-              JOIN outbound_approvals a ON a.operation_id=o.operation_id
-             WHERE o.state='approved' AND o.scheduled_at<=?
-               AND o.created_by=? AND a.principal_id=?
-               AND a.intent_sha256=o.intent_sha256
-               AND a.revoked_at IS NULL AND a.expires_at>?
+              WHERE o.state='approved' AND o.scheduled_at<=?
+                AND o.created_by=? AND (
+                  EXISTS(SELECT 1 FROM outbound_approvals a
+                    WHERE a.operation_id=o.operation_id AND a.principal_id=?
+                      AND a.intent_sha256=o.intent_sha256
+                      AND a.revoked_at IS NULL AND a.expires_at>?)
+                  OR EXISTS(SELECT 1 FROM public_engagement_authorizations pa
+                    JOIN public_engagement_grants pg ON pg.grant_id=pa.grant_id
+                    WHERE pa.operation_id=o.operation_id
+                      AND pa.intent_sha256=o.intent_sha256
+                      AND pa.grant_revision=pg.revision AND pa.grant_hash=pg.policy_hash
+                      AND pg.state='active' AND pg.revoked_at IS NULL)
+                )
                AND NOT EXISTS(
                    SELECT 1 FROM sync_runs s
                     WHERE s.connection_id=o.connection_id
@@ -43,6 +76,7 @@ def due_operation_ids(
     return [
         str(_verified_operation(database, row["operation_id"])["operation_id"])
         for row in rows
+        if _eligible_operation(database, row, principal_id, current_time)
     ]
 
 

@@ -8,6 +8,37 @@ from __future__ import annotations
 import sqlite3
 
 
+def ensure_public_engagement_tables(connection: sqlite3.Connection) -> None:
+    """Create private additive delegated-authority state without exporting it."""
+    statements = (
+        """CREATE TABLE IF NOT EXISTS public_engagement_grants (
+             grant_id TEXT PRIMARY KEY,revision INTEGER NOT NULL,owner_id TEXT NOT NULL,
+             project_id TEXT NOT NULL,corpus_id TEXT NOT NULL,connection_id TEXT NOT NULL,
+             account_id TEXT NOT NULL,policy_hash TEXT NOT NULL,policy_json TEXT NOT NULL,
+             state TEXT NOT NULL CHECK(state IN ('active','paused','revoked')),
+             created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,revoked_at INTEGER)""",
+        """CREATE TABLE IF NOT EXISTS public_engagement_authorizations (
+             authorization_id TEXT PRIMARY KEY,operation_id TEXT NOT NULL UNIQUE REFERENCES outbound_operations(operation_id),
+             grant_id TEXT NOT NULL REFERENCES public_engagement_grants(grant_id),grant_revision INTEGER NOT NULL,
+             grant_hash TEXT NOT NULL,intent_sha256 TEXT NOT NULL,target_digest TEXT NOT NULL,
+             schedule_digest TEXT NOT NULL,project_id TEXT NOT NULL,corpus_id TEXT NOT NULL,
+             community TEXT NOT NULL,rules_observed_at INTEGER NOT NULL,source_observed_at INTEGER NOT NULL,
+             authorized_at INTEGER NOT NULL)""",
+        """CREATE TABLE IF NOT EXISTS public_engagement_reservations (
+             reservation_id TEXT PRIMARY KEY,operation_id TEXT NOT NULL UNIQUE REFERENCES outbound_operations(operation_id),
+             attempt_id TEXT NOT NULL UNIQUE,grant_id TEXT NOT NULL,account_id TEXT NOT NULL,
+             community TEXT NOT NULL,thread_id TEXT,reserved_at INTEGER NOT NULL,
+             state TEXT NOT NULL CHECK(state IN ('reserved','started','released','unknown','sent')))""",
+        """CREATE TABLE IF NOT EXISTS public_engagement_suppressions (
+             suppression_id TEXT PRIMARY KEY,account_id TEXT,community TEXT,thread_id TEXT,
+             active INTEGER NOT NULL CHECK(active IN (0,1)),reason TEXT NOT NULL,created_at INTEGER NOT NULL,
+             CHECK(account_id IS NOT NULL OR community IS NOT NULL OR thread_id IS NOT NULL))""",
+        "CREATE INDEX IF NOT EXISTS idx_public_engagement_budget ON public_engagement_reservations(account_id,community,reserved_at,state)",
+    )
+    for statement in statements:
+        connection.execute(statement)
+
+
 def add_sync_run_v2_columns(connection: sqlite3.Connection) -> None:
     columns = {
         str(row["name"])

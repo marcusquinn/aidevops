@@ -14,6 +14,15 @@ tools:
 
 # Reddit CLI/API Integration
 
+## Delegated publishing exception
+
+Reddit collection remains read-only. Publishing defaults to exact owner approval.
+An owner may opt into the bounded policy lane documented in
+`reference/public-engagement-policy.md`; it supports only disclosed text
+posts/replies through `knowledge_social_operations.py` and the existing private
+outbox. Never write through direct PRAW/SDK calls, collectors, MCP tools, or read
+tokens.
+
 - **Install**: `pip install praw`
 - **Repo**: https://github.com/praw-dev/praw (4k+ stars, Python, BSD-2)
 - **Docs**: https://praw.readthedocs.io/

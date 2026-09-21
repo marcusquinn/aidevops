@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aidevops.sh/schemas/public-engagement-policy-v1.json",
+  "title": "Aidevops bounded public engagement policy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "mode", "grants"],
+  "properties": {
+    "schema": {"const": "aidevops.public-engagement-policy/v1"},
+    "mode": {"enum": ["disabled", "exact-draft", "policy"], "default": "disabled"},
+    "grants": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["grant_id", "revision", "owner_id", "project_id", "corpus_id", "provider", "connection_id", "account_id", "communities", "actions", "not_before", "expires_at", "window_seconds", "account_cap", "community_cap", "thread_cooldown_seconds", "thread_turn_cap", "disclosure", "rules_max_age_seconds", "enabled"],
+        "properties": {
+          "grant_id": {"type": "string"}, "revision": {"type": "integer", "minimum": 1},
+          "owner_id": {"type": "string"}, "project_id": {"type": "string"}, "corpus_id": {"type": "string"},
+          "provider": {"const": "reddit"}, "connection_id": {"type": "string"}, "account_id": {"type": "string"},
+          "communities": {"type": "array", "minItems": 1, "items": {"type": "string", "not": {"const": "*"}}},
+          "actions": {"type": "array", "minItems": 1, "items": {"enum": ["post", "reply"]}},
+          "not_before": {"type": "integer", "minimum": 0}, "expires_at": {"type": "integer", "minimum": 1},
+          "window_seconds": {"type": "integer", "minimum": 1}, "account_cap": {"type": "integer", "minimum": 1},
+          "community_cap": {"type": "integer", "minimum": 1}, "thread_cooldown_seconds": {"type": "integer", "minimum": 1},
+          "thread_turn_cap": {"type": "integer", "minimum": 1}, "disclosure": {"type": "string", "minLength": 1, "maxLength": 256},
+          "rules_max_age_seconds": {"type": "integer", "minimum": 1, "maximum": 604800}, "enabled": {"type": "boolean"}
+        }
+      }
+    }
+  }
+}

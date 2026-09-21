@@ -302,6 +302,25 @@ def _public_operation(row: sqlite3.Row) -> dict[str, Any]:
     }
 
 
+def authorization_kind(database: sqlite3.Connection, operation_id: str) -> str:
+    """Return the explicit authority lane without conflating policy with review."""
+    delegated_table = database.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' "
+        "AND name='public_engagement_authorizations'"
+    ).fetchone()
+    if delegated_table is not None and database.execute(
+        "SELECT 1 FROM public_engagement_authorizations WHERE operation_id=?",
+        (operation_id,),
+    ).fetchone() is not None:
+        return "delegated_policy"
+    if database.execute(
+        "SELECT 1 FROM outbound_approvals WHERE operation_id=? LIMIT 1",
+        (operation_id,),
+    ).fetchone() is not None:
+        return "exact_owner_approval"
+    return "none"
+
+
 def _existing_public_operation(
     database: sqlite3.Connection, operation_id: str, intent_sha256: str
 ) -> dict[str, Any] | None:
