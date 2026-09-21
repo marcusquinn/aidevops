@@ -19,7 +19,10 @@ def verified_destination(value: dict[str, Any]) -> dict[str, str]:
         raise AlertError("destination must be an explicit supported internal target")
     if kind == "webhook":
         parsed = urlparse(target)
-        if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.hostname.lower() in {"localhost", "127.0.0.1", "::1"}:
+        has_credentials = bool(parsed.username or parsed.password)
+        hostname = parsed.hostname.lower() if parsed.hostname else ""
+        is_local = hostname in {"localhost", "127.0.0.1", "::1"}
+        if parsed.scheme != "https" or not hostname or has_credentials or is_local:
             raise AlertError("webhook destination is not an approved HTTPS target")
     return {"kind": kind, "target": target}
 
