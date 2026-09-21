@@ -84,18 +84,10 @@ def _mark_provider_started_uncommitted(
     started_at = now_epoch() if started_at is None else started_at
     executor_id = validate_opaque(executor_id, "executor_id")
     delegated = delegated_authorization(database, claimed.operation_id, started_at)
-    approval_clause = "" if delegated is not None else """
-                        AND EXISTS(SELECT 1 FROM outbound_approvals a
-                          WHERE a.operation_id=o.operation_id
-                            AND a.principal_id=o.created_by
-                            AND a.intent_sha256=o.intent_sha256
-                            AND a.revoked_at IS NULL AND a.expires_at>?)"""
     parameters: tuple[object, ...] = (
         started_at, claimed.attempt_id, claimed.operation_id, claimed.claim_token,
-        executor_id, executor_id, started_at,
+        executor_id, executor_id, started_at, delegated is not None, started_at,
     )
-    if delegated is None:
-        parameters += (started_at,)
     parameters += (started_at,)
     changed = database.execute(
         """UPDATE outbound_attempts SET provider_started_at=?
@@ -107,7 +99,13 @@ def _mark_provider_started_uncommitted(
                       AND o.state='claimed' AND o.claim_token=outbound_attempts.claim_token
                        AND o.claimed_by=? AND o.last_attempt_id=outbound_attempts.attempt_id
                        AND o.claim_expires_at>?
-                       {approval_clause}
+                        AND (? OR EXISTS(
+                            SELECT 1 FROM outbound_approvals a
+                             WHERE a.operation_id=o.operation_id
+                               AND a.principal_id=o.created_by
+                               AND a.intent_sha256=o.intent_sha256
+                               AND a.revoked_at IS NULL AND a.expires_at>?
+                        ))
                        AND NOT EXISTS(
                            SELECT 1 FROM sync_runs s
                             WHERE s.connection_id=o.connection_id
@@ -117,7 +115,7 @@ def _mark_provider_started_uncommitted(
                               AND s.retry_after NOT GLOB '*[^0-9]*'
                               AND CAST(s.retry_after AS INTEGER)>?
                        )
-                 )""".format(approval_clause=approval_clause),
+                  )""",
         parameters,
     ).rowcount
     if changed != 1:
