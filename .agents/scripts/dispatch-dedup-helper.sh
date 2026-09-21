@@ -389,36 +389,40 @@ normalize_title() {
 
 #######################################
 # List dedup keys for all currently running workers.
-# Scans process list for /full-loop workers and extracts keys from their titles.
+# Reuses the canonical worker-process classifier so orchestration commands that
+# merely carry a /full-loop prompt are not mistaken for launched workers.
 # Returns: one "pid|key" pair per line on stdout
 #######################################
 list_running_keys() {
-	# Get PIDs of running worker processes using portable pgrep -f (no -a flag).
-	# pgrep -f matches against the full command line on both Linux and macOS.
-	# We then resolve the full command line per PID via ps -p <pid> -o args=
-	# which is POSIX-compatible and works on Linux, macOS, and BSD.
-	local worker_pids=""
-	worker_pids=$(pgrep -f '/full-loop|opencode run|claude.*run' || true)
+	local effective_uid=""
+	local worker_lines=""
+	local worker_classifier="${SCRIPT_DIR}/list_active_workers.awk"
+	effective_uid=$(id -u) || return 0
+	[[ "$effective_uid" =~ ^[0-9]+$ ]] || return 0
+	[[ -f "$worker_classifier" ]] || return 0
 
-	if [[ -z "$worker_pids" ]]; then
+	# Keep this scan aligned with list_active_worker_processes(). That classifier
+	# requires an actual OpenCode/headless worker shape and excludes Pulse itself,
+	# while preserving real worker launchers and their process chains.
+	worker_lines=$(ps axwwo uid,pid,stat,etime,command 2>/dev/null |
+		awk -v effective_uid="$effective_uid" -f "$worker_classifier" || true)
+	if [[ -z "$worker_lines" ]]; then
 		return 0
 	fi
 
-	while IFS= read -r pid; do
-		[[ -z "$pid" ]] && continue
-		local cmdline=""
-		# ps -p <pid> -o args= prints only the command line (no header, no PID prefix)
-		cmdline=$(ps -p "$pid" -o args= 2>/dev/null || true)
-		[[ -z "$cmdline" ]] && continue
+	while IFS= read -r worker_line; do
+		[[ -z "$worker_line" ]] && continue
+		local pid="${worker_line%% *}"
+		[[ "$pid" =~ ^[0-9]+$ ]] || continue
 
 		local extracted_keys=""
-		extracted_keys=$(extract_keys "$cmdline")
+		extracted_keys=$(extract_keys "$worker_line")
 		if [[ -n "$extracted_keys" ]]; then
 			while IFS= read -r key; do
 				[[ -n "$key" ]] && printf '%s|%s\n' "$pid" "$key"
 			done <<<"$extracted_keys"
 		fi
-	done <<<"$worker_pids"
+	done <<<"$worker_lines"
 
 	return 0
 }
