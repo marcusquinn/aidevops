@@ -92,7 +92,8 @@ child environment; credentials are never exported to a long-lived parent.
   The shim retries at most once, only for proven unattempted local admission and
   only when the supplied deadline fits a five-second wait. Longer or invalid
   deadlines return rescheduling evidence immediately. Required-context readers
-  and the merge gate retain the reason and deadline, including cached failures;
+  and the merge gate retain the reason and numeric `retry_at` deadline in its
+  terminal output, including cached failures;
   unknown required checks never become a passing result. A successful retry does
   not leak the superseded error into JSON output.
 - Missing/stale observations permit one serialized observation, not an assumed
