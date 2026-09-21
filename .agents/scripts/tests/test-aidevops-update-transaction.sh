@@ -51,6 +51,10 @@ for function_name in _update_verify_deployment_state _run_update_setup_transacti
 	# shellcheck source=/dev/null
 	source "$TEST_ROOT/$function_name.sh"
 done
+extract_function _update_reconcile_tabby_config "$TEST_ROOT/_update_reconcile_tabby_config.sh" \
+	"$REPO_ROOT/.agents/scripts/aidevops-cli/aidevops-update-lib.sh"
+# shellcheck source=/dev/null
+source "$TEST_ROOT/_update_reconcile_tabby_config.sh"
 extract_function _update_fetch_main "$TEST_ROOT/_update_fetch_main.sh" \
 	"$REPO_ROOT/.agents/scripts/aidevops-cli/aidevops-update-lib.sh"
 extract_function _update_canonical_has_untracked_only "$TEST_ROOT/_update_canonical_has_untracked_only.sh" \
@@ -81,6 +85,18 @@ print_error() {
 print_info() {
 	local message="$1"
 	printf 'INFO %s\n' "$message"
+	return 0
+}
+
+print_success() {
+	local message="$1"
+	printf 'SUCCESS %s\n' "$message"
+	return 0
+}
+
+print_warning() {
+	local message="$1"
+	printf 'WARNING %s\n' "$message"
 	return 0
 }
 
@@ -130,6 +146,50 @@ AGENTS_DIR="$HOME/.aidevops/agents"
 mkdir -p "$INSTALL_DIR" "$HOME/.aidevops/agents"
 printf '1.0.0\n' >"$INSTALL_DIR/VERSION"
 printf '1.0.0\n' >"$HOME/.aidevops/agents/VERSION"
+
+TABBY_TEST_CONFIG="$TEST_ROOT/tabby-config.yaml"
+TABBY_SYNC_RECEIPT="$TEST_ROOT/tabby-sync-receipt"
+mkdir -p "$HOME/.aidevops/agents/scripts" "$HOME/.config/aidevops"
+printf 'profiles: []\n  - name: malformed\n' >"$TABBY_TEST_CONFIG"
+printf '{}\n' >"$HOME/.config/aidevops/repos.json"
+cat >"$HOME/.aidevops/agents/scripts/tabby-helper.sh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s|%s\n' "${1:-}" "${TABBY_CONFIG:-}" >>"$TABBY_SYNC_RECEIPT"
+exit "${TABBY_SYNC_RC:-0}"
+EOF
+chmod +x "$HOME/.aidevops/agents/scripts/tabby-helper.sh"
+export TABBY_SYNC_RECEIPT
+
+TABBY_CONFIG="$TABBY_TEST_CONFIG"
+if _update_reconcile_tabby_config >/dev/null &&
+	grep -q "^sync|${TABBY_TEST_CONFIG}$" "$TABBY_SYNC_RECEIPT"; then
+	pass "routine update invokes deployed Tabby reconciliation for an existing config"
+else
+	fail "routine update invokes deployed Tabby reconciliation for an existing config" \
+		"sync receipt missing"
+fi
+
+rm -f "$TABBY_TEST_CONFIG"
+tabby_calls_before=$(wc -l <"$TABBY_SYNC_RECEIPT")
+if _update_reconcile_tabby_config >/dev/null &&
+	[[ "$(wc -l <"$TABBY_SYNC_RECEIPT")" -eq "$tabby_calls_before" ]]; then
+	pass "routine update skips Tabby reconciliation when no config exists"
+else
+	fail "routine update skips Tabby reconciliation when no config exists" \
+		"deployed helper was invoked without a config"
+fi
+
+printf 'profiles: []\n  - name: malformed\n' >"$TABBY_TEST_CONFIG"
+TABBY_SYNC_RC=19
+export TABBY_SYNC_RC
+if tabby_failure_output=$(_update_reconcile_tabby_config) &&
+	[[ "$tabby_failure_output" == *"encountered a blocker"* ]]; then
+	pass "Tabby reconciliation failure warns without failing the framework update"
+else
+	fail "Tabby reconciliation failure warns without failing the framework update" \
+		"$tabby_failure_output"
+fi
+unset TABBY_CONFIG TABBY_SYNC_RC
 
 SETUP_RC=0
 SETUP_SHA=""
