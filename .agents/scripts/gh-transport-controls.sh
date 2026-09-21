@@ -111,6 +111,15 @@ _gh_transport_run_rest() {
 	python3 "${_GHGT_DIR}/gh-transport-governor.py" "$metadata" "$executable" "$@" 2>"$error_file" || rc=$?
 	attempted=$(jq -r '.attempted // false' "$metadata" 2>/dev/null) || attempted=false
 	deferred_by=$(jq -r '.deferred_by // ""' "$metadata" 2>/dev/null) || deferred_by=""
+	# The governor has not executed the native request when durable quota state is
+	# unavailable. Read-only REST calls can safely retain native gh behaviour in
+	# that case; writes never reach this GET-only transport path. Do not treat the
+	# local-state failure as an HTTP failure or invent quota telemetry.
+	if [[ "$rc" -eq 75 && "$attempted" != true && "$deferred_by" == "local_state" ]]; then
+		rm -f -- "$metadata" "$error_file"
+		_gh_transport_capture_errors "$executable" "$@"
+		return $?
+	fi
 	if [[ "$rc" -eq 75 && "$attempted" != true && "$deferred_by" == "local_admission" ]]; then
 		local retry_delay="${AIDEVOPS_GH_LOCAL_ADMISSION_RETRY_DELAY_SECONDS:-1}"
 		[[ "$retry_delay" =~ ^[0-5]([.][0-9]+)?$ ]] || retry_delay=1
