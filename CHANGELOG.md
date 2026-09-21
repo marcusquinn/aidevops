@@ -10,6 +10,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.34.13] - 2026-09-21
+
+### Added
+
+- add scoped prospecting service APIs (#32169)
+- add budgeted prospecting routines (#32166)
+- add decision report evaluation (#32160)
+
+### Changed
+
+- Maintenance: mark t18467 complete (pr:#32174 completed:2026-09-21) (#32170)
+- Maintenance: mark t18465 complete (pr:#32166 completed:2026-09-21) (#32161)
+
+### Fixed
+
+- exclude dispatch orchestration from worker dedup (#32183)
+- remove caller Git dependency from merge validation (#32182)
+- reconcile Tabby configuration during updates
+- trust mcp Dependabot update (#32173)
+- install absent Homebrew formulas (#32167)
+- preserve gh reads on state failure (#32165)
+
 ## [3.34.12] - 2026-09-21
 
 ### Changed
