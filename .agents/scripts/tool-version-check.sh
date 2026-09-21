@@ -87,7 +87,8 @@ _opencode_upgrade_cmd() {
 _oc_upgrade_cmd=$(_opencode_upgrade_cmd "latest")
 
 # Platform-aware brew package upgrade command.
-# On macOS (or any system with brew), use brew upgrade.
+# On macOS (or any system with brew), upgrade installed formulas and install
+# selected formulas supplied by another package manager.
 # On Debian/Ubuntu (apt), use apt-get install --only-upgrade.
 # On Fedora/RHEL/CentOS (dnf/yum), use dnf upgrade.
 # Falls back to brew upgrade if no system package manager is detected.
@@ -100,7 +101,7 @@ _brew_upgrade_cmd() {
 	local sys_pkg="${2:-$1}"
 	# Return a self-contained bash -c string that detects the package manager at runtime.
 	# Uses single quotes so variables are NOT expanded now — they expand inside bash -c.
-	printf '%s' 'if command -v brew >/dev/null 2>&1; then brew upgrade '"${brew_pkg}"'; elif command -v apt-get >/dev/null 2>&1; then sudo apt-get install --only-upgrade -y '"${sys_pkg}"'; elif command -v dnf >/dev/null 2>&1; then sudo dnf upgrade -y '"${sys_pkg}"'; elif command -v yum >/dev/null 2>&1; then sudo yum upgrade -y '"${sys_pkg}"'; else echo "No supported package manager found (brew/apt-get/dnf/yum)" >&2; exit 1; fi'
+	printf '%s' 'if command -v brew >/dev/null 2>&1; then if brew list --formula '"${brew_pkg}"' >/dev/null 2>&1; then brew upgrade '"${brew_pkg}"'; else brew install '"${brew_pkg}"'; fi; elif command -v apt-get >/dev/null 2>&1; then sudo apt-get install --only-upgrade -y '"${sys_pkg}"'; elif command -v dnf >/dev/null 2>&1; then sudo dnf upgrade -y '"${sys_pkg}"'; elif command -v yum >/dev/null 2>&1; then sudo yum upgrade -y '"${sys_pkg}"'; else echo "No supported package manager found (brew/apt-get/dnf/yum)" >&2; exit 1; fi'
 }
 
 # PEP 668-safe pip upgrade command.
@@ -182,6 +183,7 @@ NOT_INSTALLED_COUNT=0
 TIMEOUT_COUNT=0
 UNKNOWN_COUNT=0
 SUDO_SKIP_COUNT=0
+UPDATE_FAILURE_COUNT=0
 declare -a OUTDATED_PACKAGES=()
 declare -a JSON_RESULTS=()
 
@@ -766,6 +768,7 @@ _output_summary_and_updates() {
 			local _update_log
 			if ! _update_log=$(mktemp "${TMPDIR:-/tmp}/tool-update.XXXXXX"); then
 				echo -e "  ${RED}✗ Failed to create temp log${NC}"
+				((++UPDATE_FAILURE_COUNT))
 				continue
 			fi
 			if timeout_sec 120 bash -c "$update_cmd" >"$_update_log" 2>&1; then
@@ -774,11 +777,15 @@ _output_summary_and_updates() {
 			else
 				tail -2 "$_update_log"
 				echo -e "  ${RED}✗ Failed${NC}"
+				((++UPDATE_FAILURE_COUNT))
 			fi
 			rm -f "$_update_log"
 			echo ""
 		done
-		if [[ $SUDO_SKIP_COUNT -gt 0 ]]; then
+		if [[ $UPDATE_FAILURE_COUNT -gt 0 ]]; then
+			echo -e "${RED}Updates finished with ${UPDATE_FAILURE_COUNT} failed action(s). Re-run to verify remaining tools.${NC}"
+			return 1
+		elif [[ $SUDO_SKIP_COUNT -gt 0 ]]; then
 			echo -e "${GREEN}Updates complete (${SUDO_SKIP_COUNT} deferred until interactive privilege confirmation).${NC}"
 		else
 			echo -e "${GREEN}Updates complete. Re-run to verify.${NC}"
