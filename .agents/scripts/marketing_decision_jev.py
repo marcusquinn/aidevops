@@ -87,49 +87,51 @@ def _calibration(answer: dict[str, Any]) -> dict[str, Any]:
     return value
 
 
+def _multi_label_decision(row: dict[str, Any], answers: dict[str, Any]) -> dict[str, Any]:
+    selected = []
+    confidences = []
+    usage = {"latency_ms": 0, "input_tokens": 0, "output_tokens": 0, "cost_usd": 0}
+    for candidate in row["candidates"]:
+        answer = answers[f"{row['row_id']}:{candidate}"]
+        if not isinstance(answer, dict) or answer.get("type") != "noul":
+            raise contract.DecisionError("multi-label answer is invalid")
+        probability = _unit(answer.get("noul"), "provider noul")
+        if probability >= 0.5:
+            selected.append(candidate)
+        confidences.append(probability)
+        for key, value in _usage(answer).items():
+            usage[key] = None if value is None or usage[key] is None else usage[key] + value
+    return {"row_id": row["row_id"], "kind": "multi_label", "value": selected or None, "probability": None, "confidence": max(confidences), "calibration": {"provenance": "unknown", "reference": None}, "abstention_reason": None if selected else "no_label_above_threshold", "action_proposal": None, "usage": usage}
+
+
+def _single_decision(row: dict[str, Any], answer: Any) -> dict[str, Any]:
+    if not isinstance(answer, dict) or answer.get("type") != row["decision_kind"]:
+        raise contract.DecisionError("provider answer type is invalid")
+    confidence = _unit(answer.get("confidence"), "provider confidence")
+    if row["decision_kind"] == "choice":
+        probabilities = answer.get("probabilities")
+        if not isinstance(probabilities, dict) or set(probabilities) != set(row["candidates"]):
+            raise contract.DecisionError("choice probabilities are invalid")
+        probabilities = {key: _unit(value, "choice probability") for key, value in probabilities.items()}
+        if not math.isclose(sum(probabilities.values()), 1, abs_tol=0.001) or answer.get("choice") not in probabilities or probabilities[answer["choice"]] != max(probabilities.values()):
+            raise contract.DecisionError("choice answer is inconsistent")
+        value, probability = answer["choice"], probabilities[answer["choice"]]
+    else:
+        value, probability = _number(answer.get("score"), "provider score"), None
+    return {"row_id": row["row_id"], "kind": row["decision_kind"], "value": value, "probability": probability, "confidence": confidence, "calibration": _calibration(answer), "abstention_reason": None, "action_proposal": None, "usage": _usage(answer)}
+
+
 def supplied_from_response(response: Any, request: contract.ValidatedRequest) -> dict[str, Any]:
     """Translate only typed answers; malformed and drifted responses fail closed."""
     if not isinstance(response, dict) or response.get("model") != MODEL or not isinstance(response.get("answers"), dict):
         raise contract.DecisionError("provider model or answer envelope drifted")
     answers = response["answers"]
-    questions = _questions(request)
-    if set(answers) != set(questions):
+    if set(answers) != set(_questions(request)):
         raise contract.DecisionError("provider answers do not match request")
-    decisions = []
-    for batch in request.document["batches"]:
-        for row in batch["rows"]:
-            if row["decision_kind"] == "multi_label":
-                selected = []
-                confidences = []
-                usage = {"latency_ms": 0, "input_tokens": 0, "output_tokens": 0, "cost_usd": 0}
-                for candidate in row["candidates"]:
-                    answer = answers[f"{row['row_id']}:{candidate}"]
-                    if not isinstance(answer, dict) or answer.get("type") != "noul":
-                        raise contract.DecisionError("multi-label answer is invalid")
-                    probability = _unit(answer.get("noul"), "provider noul")
-                    if probability >= 0.5:
-                        selected.append(candidate)
-                    confidences.append(probability)
-                    answer_usage = _usage(answer)
-                    for key, value in answer_usage.items():
-                        usage[key] = None if value is None or usage[key] is None else usage[key] + value
-                decisions.append({"row_id": row["row_id"], "kind": "multi_label", "value": selected or None, "probability": None, "confidence": max(confidences), "calibration": {"provenance": "unknown", "reference": None}, "abstention_reason": None if selected else "no_label_above_threshold", "action_proposal": None, "usage": usage})
-                continue
-            answer = answers[row["row_id"]]
-            if not isinstance(answer, dict) or answer.get("type") != row["decision_kind"]:
-                raise contract.DecisionError("provider answer type is invalid")
-            confidence = _unit(answer.get("confidence"), "provider confidence")
-            if row["decision_kind"] == "choice":
-                probabilities = answer.get("probabilities")
-                if not isinstance(probabilities, dict) or set(probabilities) != set(row["candidates"]):
-                    raise contract.DecisionError("choice probabilities are invalid")
-                probabilities = {key: _unit(value, "choice probability") for key, value in probabilities.items()}
-                if not math.isclose(sum(probabilities.values()), 1, abs_tol=0.001) or answer.get("choice") not in probabilities or probabilities[answer["choice"]] != max(probabilities.values()):
-                    raise contract.DecisionError("choice answer is inconsistent")
-                value, probability = answer["choice"], probabilities[answer["choice"]]
-            else:
-                value, probability = _number(answer.get("score"), "provider score"), None
-            decisions.append({"row_id": row["row_id"], "kind": row["decision_kind"], "value": value, "probability": probability, "confidence": confidence, "calibration": _calibration(answer), "abstention_reason": None, "action_proposal": None, "usage": _usage(answer)})
+    decisions = [
+        _multi_label_decision(row, answers) if row["decision_kind"] == "multi_label" else _single_decision(row, answers[row["row_id"]])
+        for batch in request.document["batches"] for row in batch["rows"]
+    ]
     return contract.validate_supplied({"schema": contract.DECISIONS_SCHEMA, "request_id": request.document["request_id"], "input_digest": request.input_digest, "decisions": decisions}, request)
 
 
