@@ -67,13 +67,21 @@ def _observation(run: dict[str, Any], item: dict[str, Any], index: int) -> dict[
     }
 
 
-def refresh(value: dict[str, Any]) -> dict[str, Any]:
-    """Return only observed Reddit results; failures and depth limits stay explicit."""
-    if not isinstance(value, dict) or value.get("schema") != INPUT_SCHEMA:
-        raise SeoError(f"input schema must be {INPUT_SCHEMA}")
-    runs = value.get("runs")
-    if not isinstance(runs, list) or not runs:
-        raise SeoError("runs must be a non-empty array")
+def _complete_observations(run: dict[str, Any]) -> list[dict[str, Any]]:
+    results = run.get("results")
+    if not isinstance(results, list):
+        raise SeoError("complete run.results must be an array")
+    observations = []
+    for index, item in enumerate(results, 1):
+        if not isinstance(item, dict):
+            raise SeoError("result must be an object")
+        observation = _observation(run, item, index)
+        if observation:
+            observations.append(observation)
+    return observations
+
+
+def _run_observations(runs: list[Any]) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
     observations: list[dict[str, Any]] = []
     incomplete: list[dict[str, str]] = []
     for run in runs:
@@ -86,15 +94,11 @@ def refresh(value: dict[str, Any]) -> dict[str, Any]:
         if status != "complete":
             incomplete.append({"query_id": query_id, "status": str(status), "reason": "not_compared_as_rank_loss"})
             continue
-        results = run.get("results")
-        if not isinstance(results, list):
-            raise SeoError("complete run.results must be an array")
-        for index, item in enumerate(results, 1):
-            if not isinstance(item, dict):
-                raise SeoError("result must be an object")
-            observation = _observation(run, item, index)
-            if observation:
-                observations.append(observation)
+        observations.extend(_complete_observations(run))
+    return observations, incomplete
+
+
+def _opportunities(observations: list[dict[str, Any]]) -> list[dict[str, Any]]:
     observations.sort(key=lambda item: (item["query_id"], item["observed_at"], item["rank"], item["url"]))
     history: dict[tuple[str, str, str, str], list[dict[str, Any]]] = {}
     for item in observations:
@@ -115,7 +119,18 @@ def refresh(value: dict[str, Any]) -> dict[str, Any]:
             "thread": {"age": thread.get("age", "unknown"), "activity": thread.get("activity", "unknown"), "state": thread.get("state", "unknown"), "competitor_mentions": thread.get("competitor_mentions", [])},
             "claims": {"reply_rank_conversion": "not_measured", "ai_citation": "not_measured", "roi": "not_measured"},
         })
-    return {"schema": REPORT_SCHEMA, "authority": "observed_search_results_only", "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"), "observations": observations, "opportunities": opportunities, "incomplete_runs": incomplete}
+    return opportunities
+
+
+def refresh(value: dict[str, Any]) -> dict[str, Any]:
+    """Return only observed Reddit results; failures and depth limits stay explicit."""
+    if not isinstance(value, dict) or value.get("schema") != INPUT_SCHEMA:
+        raise SeoError(f"input schema must be {INPUT_SCHEMA}")
+    runs = value.get("runs")
+    if not isinstance(runs, list) or not runs:
+        raise SeoError("runs must be a non-empty array")
+    observations, incomplete = _run_observations(runs)
+    return {"schema": REPORT_SCHEMA, "authority": "observed_search_results_only", "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"), "observations": observations, "opportunities": _opportunities(observations), "incomplete_runs": incomplete}
 
 
 def load_input(path: str | Path) -> dict[str, Any]:
