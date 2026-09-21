@@ -2,7 +2,7 @@
 const state = { projectId: null, view: 'onboarding', projects: [], data: {}, offline: false };
 const $ = (selector) => document.querySelector(selector);
 const api = async (path, options = {}) => {
-  const response = await fetch(`/v1${path}`, { headers: { Accept: 'application/json', ...(options.headers || {}) }, ...options });
+  const response = await fetch(`/v1${path}`, { headers: { Accept: 'application/json', ...options.headers }, ...options });
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw Object.assign(new Error(body.error?.message || `Request failed (${response.status})`), { status: response.status, body });
   return body;
