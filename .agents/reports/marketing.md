@@ -82,6 +82,16 @@ or export an audience. `approval_status: not_requested` remains unchanged until 
 separate owner decision exists, and recording that decision still does not
 execute it.
 
+## Decision Evaluation and ROI Boundary
+
+Use `.agents/scripts/marketing-decision-report-helper.py report --input FILE --dry-run`
+for source-linked, aggregate decision inputs and `evaluate` only for independently
+human-labelled holdouts. It distinguishes measured, estimated, and unknown economics;
+unknown collection, inference, generation, retry, or review cost remains null rather
+than becoming savings or ROI. Report confidence as calibrated only with a predeclared
+independent calibration method. Never treat provider-reported confidence, synthetic
+labels, or same-model checks as independent validation.
+
 ## Export Notes
 
 - Use `reports/citations.md` for dashboard snapshots and source tables.

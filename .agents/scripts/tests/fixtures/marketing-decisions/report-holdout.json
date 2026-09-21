@@ -1,0 +1,4 @@
+{
+  "schema": "aidevops.marketing-decision-evaluation/v1",
+  "labels": [{"provenance": "independent_human", "synthetic": false, "model_generated_ground_truth": false, "outcome": "accepted", "total_known_cost": "2.5", "end_to_end_seconds": 30}, {"provenance": "independent_human", "synthetic": false, "model_generated_ground_truth": false, "outcome": "repaired", "total_known_cost": null, "end_to_end_seconds": 60}]
+}
