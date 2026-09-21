@@ -216,14 +216,13 @@ setup_tabby() {
 
 	print_info "Tabby terminal detected"
 
-	# Ensure default local profile uses /bin/zsh (macOS).
-	# After macOS updates, Tabby can fall back to bash when this is unset.
-	bash "$tabby_helper" fix-shell || true
-
 	if [[ "$NON_INTERACTIVE" == "true" ]]; then
-		# Non-interactive: sync silently, warn on failure
-		if ! bash "$tabby_helper" sync; then
-			print_warning "Tabby profile sync failed — run manually: aidevops tabby sync"
+		# Repair and validate the complete config before applying the narrower
+		# default-shell patch. Keep routine updates automatic and non-interactive.
+		if bash "$tabby_helper" sync >/dev/null 2>&1; then
+			bash "$tabby_helper" fix-shell >/dev/null 2>&1 || true
+		else
+			print_warning "Tabby configuration reconciliation encountered a blocker"
 		fi
 		return 0
 	fi
@@ -235,7 +234,10 @@ setup_tabby() {
 	local sync_tabby=""
 	setup_prompt sync_tabby "Sync Tabby profiles and detected workspaces? [Y/n]: " "Y"
 	if [[ "$sync_tabby" =~ ^[Yy]?$ ]]; then
-		bash "$tabby_helper" sync
+		if bash "$tabby_helper" sync; then
+			# After macOS updates, Tabby can fall back to bash when this is unset.
+			bash "$tabby_helper" fix-shell || true
+		fi
 	else
 		print_info "Skipped. Run later: aidevops tabby sync"
 	fi

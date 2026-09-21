@@ -1416,6 +1416,7 @@ _setup_run_ai_session_incremental() {
 
 	if [[ "$deployed_sha" == "$current_sha" ]]; then
 		print_success "AI-session setup: deployed SHA already matches current checkout"
+		_time_step "$SETUP_STAGE_TABBY" setup_tabby
 		_setup_ai_session_verify_deploy "$current_sha" || return $?
 		return 0
 	fi
@@ -1453,6 +1454,7 @@ _setup_run_ai_session_incremental() {
 		_time_step "setup_gui_desktop_app_opt_in" _setup_offer_gui_desktop_app || return $?
 	fi
 
+	_time_step "$SETUP_STAGE_TABBY" setup_tabby
 	_setup_ai_session_verify_deploy "$current_sha" || return $?
 	print_success "AI-session incremental setup complete (${deployed_sha:0:7}→${current_sha:0:7})"
 	return 0

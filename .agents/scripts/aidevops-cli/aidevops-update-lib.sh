@@ -377,6 +377,30 @@ PY
 	return 0
 }
 
+_update_reconcile_tabby_config() {
+	local helper="${HOME}/.aidevops/agents/scripts/tabby-helper.sh"
+	local repos_json="${HOME}/.config/aidevops/repos.json"
+	local tabby_config="${TABBY_CONFIG:-}"
+
+	if [[ -z "$tabby_config" && -n "${TABBY_CONFIG_DIRECTORY:-}" ]]; then
+		tabby_config="${TABBY_CONFIG_DIRECTORY%/}/config.yaml"
+	elif [[ -z "$tabby_config" && "$(uname -s)" == "Darwin" ]]; then
+		tabby_config="${HOME}/Library/Application Support/tabby/config.yaml"
+	elif [[ -z "$tabby_config" ]]; then
+		tabby_config="${XDG_CONFIG_HOME:-${HOME}/.config}/tabby/config.yaml"
+	fi
+
+	[[ -f "$helper" && -f "$repos_json" && -f "$tabby_config" ]] || return 0
+
+	print_info "Reconciling Tabby configuration..."
+	if TABBY_CONFIG="$tabby_config" bash "$helper" sync >/dev/null 2>&1; then
+		print_success "Tabby configuration reconciled"
+	else
+		print_warning "Tabby configuration reconciliation encountered a blocker"
+	fi
+	return 0
+}
+
 # Check for stale Homebrew-installed copy after git update (GH#11470)
 # Self-heal broken OpenCode runtime symlinks (t2172). A single dangling
 # symlink in ~/.config/opencode/{command,agent,skills,tool}/ blocks new
