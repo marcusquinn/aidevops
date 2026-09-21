@@ -1,2 +1,2 @@
 # Optional official MCP SDK. REST service itself uses the Python standard library.
-mcp==1.26.0
+mcp==1.28.1
