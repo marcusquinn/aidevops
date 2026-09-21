@@ -88,6 +88,32 @@ run_setup_guard_test() {
 	return $?
 }
 
+run_setup_guard_pulse_recovery_test() (
+	local state='{"schema_version":1,"repository":"test/repo","active":true,"source_pr":101,"phase":"exact-tag-deployment","tag":"v1.2.3","operation_token":"token-old","stale_runtime_recovery":{"type":"stale-runtime/v1","attempt_head":"1111111111111111111111111111111111111111","failed_phase":"exact-tag-deployment","deferred_at":"2026-09-21T00:20:08Z"}}'
+	local malformed=""
+	release_lane_read() {
+		_AIDEVOPS_RELEASE_LANE_JSON="$state"
+		return 0
+	}
+	AIDEVOPS_PULSE_RUNTIME_RECOVERY_ACTIVE=1 release_lane_setup_guard test/repo || return 1
+	if release_lane_setup_guard test/repo >/dev/null 2>&1; then
+		return 1
+	fi
+	for malformed in \
+		'{}' \
+		'{"type":"other","attempt_head":"1111111111111111111111111111111111111111","failed_phase":"exact-tag-deployment","deferred_at":"2026-09-21T00:20:08Z"}' \
+		'{"type":"stale-runtime/v1","attempt_head":"invalid","failed_phase":"exact-tag-deployment","deferred_at":"2026-09-21T00:20:08Z"}' \
+		'{"type":"stale-runtime/v1","attempt_head":"1111111111111111111111111111111111111111","failed_phase":"remote-publication","deferred_at":"2026-09-21T00:20:08Z"}' \
+		'{"type":"stale-runtime/v1","attempt_head":"1111111111111111111111111111111111111111","failed_phase":"exact-tag-deployment","deferred_at":"invalid"}'; do
+		state=$(jq -cn --argjson recovery "$malformed" \
+			'{schema_version:1,repository:"test/repo",active:true,source_pr:101,phase:"exact-tag-deployment",tag:"v1.2.3",operation_token:"token-old",stale_runtime_recovery:$recovery}') || return 1
+		if AIDEVOPS_PULSE_RUNTIME_RECOVERY_ACTIVE=1 release_lane_setup_guard test/repo >/dev/null 2>&1; then
+			return 1
+		fi
+	done
+	return 0
+)
+
 run_merge_guard_test() (
 	local state='{"schema_version":1,"repository":"test/repo","active":true,"source_pr":101,"phase":"remote-publication","tag":"v1.2.3","operation_token":"token-old"}'
 	local output=""
@@ -819,6 +845,7 @@ if run_competing_source_test; then assert_result 'competing source receives acti
 if run_same_source_adoption_test; then assert_result 'same source adopts durable lane without another bump' true; else assert_result 'same source adopts durable lane without another bump' false; fi
 if run_terminal_lane_reacquire_test; then assert_result 'terminal lane can be atomically reserved by a later source' true; else assert_result 'terminal lane can be atomically reserved by a later source' false; fi
 if run_setup_guard_test; then assert_result 'exact-tag deployment blocks generic setup and permits matching owner' true; else assert_result 'exact-tag deployment blocks generic setup and permits matching owner' false; fi
+if run_setup_guard_pulse_recovery_test; then assert_result 'exact-tag deployment permits only validated dedicated Pulse stale-runtime recovery' true; else assert_result 'exact-tag deployment permits only validated dedicated Pulse stale-runtime recovery' false; fi
 if run_setup_guard_cache_fallback_test; then assert_result 'setup uses only valid cached lane state and keeps exact-tag fallback fail-closed' true; else assert_result 'setup uses only valid cached lane state and keeps exact-tag fallback fail-closed' false; fi
 if run_merge_guard_test; then assert_result 'publisher lane never blocks ordinary merges' true; else assert_result 'publisher lane never blocks ordinary merges' false; fi
 if run_merge_guard_api_uncertainty_test; then assert_result 'unavailable publisher lane does not freeze merges' true; else assert_result 'unavailable publisher lane does not freeze merges' false; fi
