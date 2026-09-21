@@ -15,6 +15,7 @@ _AIDEVOPS_RELEASE_LANE_TOKEN=""
 _AIDEVOPS_RELEASE_LANE_RECOVERY_SNAPSHOT=""
 _AIDEVOPS_RELEASE_LANE_PHASE_RESERVED="reserved"
 _AIDEVOPS_RELEASE_LANE_JSON_STRING_TYPE="string"
+_AIDEVOPS_RELEASE_LANE_JSON_OBJECT_TYPE="object"
 _AIDEVOPS_RELEASE_LANE_RESULT_ACQUIRED="acquired"
 _AIDEVOPS_RELEASE_LANE_TOKEN_PREFIX="lane-"
 _AIDEVOPS_RELEASE_LANE_OWNER_PREFIX="process-"
@@ -870,11 +871,11 @@ release_lane_reopen_failed_prepublication() {
 		--arg failed_expected "$failed_expected_sources" --arg reserved "$_AIDEVOPS_RELEASE_LANE_PHASE_RESERVED" \
 		--arg refresh "$_AIDEVOPS_RELEASE_LANE_PHASE_RESERVED_REFRESH" \
 		--arg reconcile "$_AIDEVOPS_RELEASE_LANE_PHASE_RECONCILE_REQUIRED" \
-		--arg string_type "$_AIDEVOPS_RELEASE_LANE_JSON_STRING_TYPE" \
+		--arg string_type "$_AIDEVOPS_RELEASE_LANE_JSON_STRING_TYPE" --arg object_type "$_AIDEVOPS_RELEASE_LANE_JSON_OBJECT_TYPE" \
 		--argjson failed_source_pr "$failed_source_pr" --arg failed_source_merge "$failed_source_merge" \
 		--arg attempted_tag "$attempted_tag" '
 		(.prepublication_recovery // null) as $recovery
-		| (($recovery != null) and (($recovery | type) == "object")
+		| (($recovery != null) and (($recovery | type) == $object_type)
 			and $recovery.previous_phase == $reconcile
 			and (($recovery.previous_updated_at | type) == $string_type)
 			and (($recovery.recovered_at | type) == $string_type)
@@ -1289,13 +1290,14 @@ release_lane_repin_recovered_snapshot() {
 	state_json=$(jq -ce --argjson requested "$requested_pr" --arg expected "$expected_sources" \
 		--arg snapshot "$snapshot" --arg base "$base" --arg token "$_AIDEVOPS_RELEASE_LANE_TOKEN" \
 		--arg reserved "$_AIDEVOPS_RELEASE_LANE_PHASE_RESERVED" \
+		--arg object_type "$_AIDEVOPS_RELEASE_LANE_JSON_OBJECT_TYPE" \
 		--arg now "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" --arg sha_pattern '^[0-9a-f]{40}$' '
 		.prepublication_recovery as $recovery
 		| select(.active == true and .source_pr == $requested and .phase == $reserved
 			and .tag == null and .terminal_receipt == null
 			and (.operation_token as $lane_token | $lane_token == $token)
 			and .expected_sources == $expected)
-		| select(($recovery | type) == "object"
+		| select(($recovery | type) == $object_type
 			and $recovery.current_expected_sources == $expected
 			and ($recovery.failed_source_merge | test($sha_pattern)))
 		| select((.snapshot_sha == $recovery.failed_source_merge or .snapshot_sha == $snapshot)
@@ -1356,6 +1358,25 @@ release_lane_merge_guard() {
 	return 0
 }
 
+_release_lane_allows_pulse_runtime_recovery() {
+	[[ "${AIDEVOPS_PULSE_RUNTIME_RECOVERY_ACTIVE:-0}" == "1" ]] || return 1
+	[[ -z "${AIDEVOPS_RELEASE_LANE_SOURCE_PR:-}" && -z "${AIDEVOPS_RELEASE_LANE_TAG:-}" ]] || return 1
+	jq -e --arg exact_phase "$_AIDEVOPS_RELEASE_LANE_PHASE_EXACT_TAG_DEPLOYMENT" \
+		--arg object_type "$_AIDEVOPS_RELEASE_LANE_JSON_OBJECT_TYPE" --arg string_type "$_AIDEVOPS_RELEASE_LANE_JSON_STRING_TYPE" \
+		--arg sha_pattern "$_AIDEVOPS_RELEASE_LANE_SHA_PATTERN" \
+		--arg timestamp_pattern '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$' '
+		.phase == $exact_phase
+		and (.stale_runtime_recovery | type) == $object_type
+		and .stale_runtime_recovery.type == "stale-runtime/v1"
+		and .stale_runtime_recovery.failed_phase == $exact_phase
+		and (.stale_runtime_recovery.attempt_head | type) == $string_type
+		and (.stale_runtime_recovery.attempt_head | test($sha_pattern))
+		and (.stale_runtime_recovery.deferred_at | type) == $string_type
+		and (.stale_runtime_recovery.deferred_at | test($timestamp_pattern))
+	' <<<"$_AIDEVOPS_RELEASE_LANE_JSON" >/dev/null
+	return $?
+}
+
 release_lane_setup_guard() {
 	local repo="$1"
 	local source_pr="${AIDEVOPS_RELEASE_LANE_SOURCE_PR:-}"
@@ -1379,7 +1400,7 @@ release_lane_setup_guard() {
 		fi
 		;;
 	esac
-	if [[ "$remote_verified" -eq 0 && ( -n "$source_pr" || -n "$tag_name" ) ]]; then
+	if [[ "$remote_verified" -eq 0 && (-n "$source_pr" || -n "$tag_name") ]]; then
 		printf 'Cannot verify repository release lane; exact-tag setup deployment is blocked\n' >&2
 		return 75
 	fi
@@ -1388,6 +1409,9 @@ release_lane_setup_guard() {
 	[[ "$phase" == "exact-tag-deployment" ]] || return 0
 	active_pr=$(jq -r '.source_pr' <<<"$_AIDEVOPS_RELEASE_LANE_JSON") || return 1
 	active_tag=$(jq -r '.tag // ""' <<<"$_AIDEVOPS_RELEASE_LANE_JSON") || return 1
+	if [[ "$remote_verified" -eq 1 ]] && _release_lane_allows_pulse_runtime_recovery; then
+		return 0
+	fi
 	if [[ "$source_pr" == "$active_pr" && -n "$tag_name" && "$tag_name" == "$active_tag" ]]; then
 		return 0
 	fi

@@ -44,6 +44,7 @@ new_fixture() {
 	cat >"${repo}/setup.sh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
+[[ "${AIDEVOPS_PULSE_RUNTIME_RECOVERY_ACTIVE:-0}" == "1" ]] || exit 75
 repo_dir="$(cd "$(dirname "$0")" && pwd)"
 git -C "$repo_dir" rev-parse HEAD >"$AIDEVOPS_DEPLOYED_SHA_FILE"
 SH
