@@ -1,0 +1,13 @@
+{
+  "schema": "aidevops.marketing-decision-input/v1",
+  "request_id": "jev-marketing-001",
+  "scope": {"project_id": "launch-q3", "account_id": "account-west"},
+  "captured_at": "2026-09-20T10:00:00Z",
+  "as_of": "2026-09-20T12:00:00Z",
+  "performance_window": {"start": "2026-09-01T00:00:00Z", "end": "2026-09-20T00:00:00Z"},
+  "data_classification": "internal",
+  "rubric": {"id": "marketing-evidence", "version": "1"},
+  "model": {"id": "jev-1.13.0", "version": "1.13.0", "provider": "typesafe"},
+  "limits": {"max_rows": 10, "max_candidates_per_row": 5, "max_concurrency": 2, "budget": {"max_latency_ms": 1000, "max_input_tokens": 1000, "max_output_tokens": 500, "max_cost_usd": null}},
+  "batches": [{"batch_id": "decision-batch", "domain": "ads", "rows": [{"row_id": "creative", "source": {"source_id": "report-1", "span": "row-1"}, "decision_kind": "choice", "candidates": ["a", "b"]}, {"row_id": "labels", "source": {"source_id": "report-1", "span": "row-2"}, "decision_kind": "multi_label", "candidates": ["x", "y"]}]}]
+}

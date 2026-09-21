@@ -2,7 +2,7 @@
 
 # Capability Registry
 
-Catalogued capabilities: **23**
+Catalogued capabilities: **24**
 
 | Capability | Owner | Runtimes | Mandatory readiness | Fallback |
 |---|---|---|---|---|
@@ -20,6 +20,7 @@ Catalogued capabilities: **23**
 | `seo-data` | SEO | opencode, claude-code | configured, authenticated, authorized, reachable, tool_visible | `public-search-research` |
 | `getanyapi-data` | Research | opencode, claude-code | deployed, configured, authenticated, authorized, reachable, runtime_compatible, tool_visible, usable | `native-data-provider-or-authorized-browser-extraction` |
 | `campaign-research-dossiers` | Research | opencode, claude-code | deployed, runtime_compatible, tool_visible | `research-unavailable` |
+| `jev-marketing-decisions` | Build+ | opencode, claude-code | deployed, configured, authenticated, authorized, reachable, runtime_compatible, tool_visible | `authorized-runtime-required` |
 | `social-provider-readiness` | Content | opencode, claude-code | deployed, runtime_compatible, tool_visible | `gated-no-mutation` |
 | `linkedin-approved-posting` | Content | opencode, claude-code | deployed, configured, authenticated, authorized, reachable, usable | `gated-no-mutation` |
 | `youtube-approved-upload` | Content | opencode, claude-code | deployed, configured, authenticated, authorized, reachable, usable | `gated-no-mutation` |

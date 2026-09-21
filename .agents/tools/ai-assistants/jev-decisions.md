@@ -22,6 +22,8 @@ advisory: no default provider routing, browser execution or runtime hooks change
 Prefer exact code first, narrow semantic decisions second, and the existing
 approved LLM for generation or unresolved reasoning. Escalation never broadens
 data permissions. Report unresolved results rather than forcing a classification.
+The optional shared marketing batch adapter is documented in [Jev setup and
+privacy](jev.md); it reports fallback-required status and never invokes fallback.
 
 <!-- AI-CONTEXT-END -->
 

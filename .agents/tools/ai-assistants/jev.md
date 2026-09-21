@@ -28,6 +28,9 @@ tools:
   Research is optional context, not always-loaded agent instructions.
 - Opt-in [retrieval and shadow-triage pilots](jev-pilots.md) preserve original
   evidence and write private evaluation reports; they do not change default routing.
+- `marketing-decision-jev-helper.py` is a separate opt-in adapter for prevalidated
+  shared decision batches. Its dry run is offline; `fallback_required` never
+  claims that the existing approved route ran.
 - Run `python3 ~/.aidevops/agents/scripts/jev-example.py` offline first. Only
   `--live` sends the fixed synthetic example to TypeSafe. It does not read user
   files, sessions, browsers, repositories or arbitrary stdin.
@@ -63,6 +66,8 @@ also supports explicitly approved public non-personal corpora, as documented in
 [pilot setup](jev-pilots.md).
 Production activation requires provider/data approval, a readiness contract and
 the application's existing authority checks before any payload leaves the device.
+The batch adapter additionally requires `--live`, `--provider-authorized` and
+`--data-authorized`; a key alone never authorizes transmission.
 
 ## Examples and verification
 
