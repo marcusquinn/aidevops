@@ -163,6 +163,36 @@ fi
 unset -f python3
 unset _governor_retry_at
 
+# A corrupt or incompatible local transport state must not prevent a GET from
+# reaching native gh. The governor records attempted=false before state setup,
+# so the shim can safely fail open without duplicating a remote request.
+unset STUB_TRANSPORT_RESPONSE_FILE
+printf '0\n' >"$_governor_count_file"
+python3() {
+	if [[ "${1:-}" == *gh-transport-governor.py ]]; then
+		local governor_calls=""
+		local metadata="$2"
+		governor_calls=$(<"$_governor_count_file")
+		governor_calls=$((governor_calls + 1))
+		printf '%s\n' "$governor_calls" >"$_governor_count_file"
+		printf '{"attempted":false,"deferred_by":"local_state","reason":"ValueError"}\n' >"$metadata"
+		return 75
+	fi
+	command python3 "$@"
+}
+_governor_rc=0
+_governor_output=$(_gh_transport_run_rest "${TMP}/bin/gh" rest gh_api_rest 0 api user \
+	2>"${TMP}/governor/local-state-error") || _governor_rc=$?
+if [[ "$_governor_rc" -eq 0 && "$_governor_output" == "managed" &&
+	"$(<"$_governor_count_file")" -eq 1 &&
+	! -s "${TMP}/governor/local-state-error" ]]; then
+	_pass "local transport state failure falls back to one native read"
+else
+	_fail "local transport state failure did not preserve native read behaviour" \
+		"rc=${_governor_rc} output=${_governor_output:-<empty>} governor_calls=$(<"$_governor_count_file")"
+fi
+unset -f python3
+
 _governor_rc=0
 AIDEVOPS_GH_EXACT_QUOTA_CAPTURE=1 _gh_transport_run_rest \
 	"${TMP}/bin/gh" rest gh_api_rest 0 api user >/dev/null 2>/dev/null || _governor_rc=$?
