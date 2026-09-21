@@ -450,8 +450,12 @@ _refresh_failure_family_issue() {
 	recent_count=$(printf '%s' "$finding_json" | jq -r '.family_recent_count // 0')
 	[[ -n "$fingerprint" ]] || return 0
 
-	local body=""
-	body=$(gh api "repos/${slug}/issues/${issue_number}" --jq '.body // ""' 2>/dev/null) || return 0
+	local body="" body_read_rc=0
+	body=$(gh api "repos/${slug}/issues/${issue_number}" --jq '.body // ""' 2>/dev/null) || body_read_rc=$?
+	if [[ "$body_read_rc" -ne 0 ]]; then
+		print_warning "pulse-check: failure-family body read failed for #${issue_number} in ${slug} (exit=${body_read_rc})"
+		return "$body_read_rc"
+	fi
 	local current_marker="fingerprint=${fingerprint} count=${count} recent_count=${recent_count} status=${outcome_status}"
 	if [[ "$body" == *"${current_marker}"* ]]; then
 		return 0
@@ -471,10 +475,17 @@ _refresh_failure_family_issue() {
 	local body_file=""
 	body_file=$(mktemp "${TMPDIR:-/tmp}/pulse-check-refresh.XXXXXX") || return 0
 	printf '%s\n' "$updated_body" >"$body_file"
-	if _load_gh_wrappers; then
-		gh_issue_edit_safe "$issue_number" --repo "$slug" --body-file "$body_file" >/dev/null 2>&1 || true
+	local edit_rc=0
+	if ! _load_gh_wrappers; then
+		rm -f "$body_file"
+		return 1
 	fi
+	gh_issue_edit_safe "$issue_number" --repo "$slug" --body-file "$body_file" >/dev/null 2>&1 || edit_rc=$?
 	rm -f "$body_file"
+	if [[ "$edit_rc" -ne 0 ]]; then
+		print_warning "pulse-check: failure-family body update failed for #${issue_number} in ${slug} (exit=${edit_rc})"
+		return "$edit_rc"
+	fi
 	return 0
 }
 
@@ -588,7 +599,7 @@ _apply_finding() {
 		local existing_number=""
 		local existing_url=""
 		IFS=$'\t' read -r existing_number existing_url <<<"$existing"
-		_refresh_failure_family_issue "$slug" "$existing_number" "$finding_json" "$FAILURE_FAMILY_STATUS_RECURRING"
+		_refresh_failure_family_issue "$slug" "$existing_number" "$finding_json" "$FAILURE_FAMILY_STATUS_RECURRING" || return $?
 		print_info "pulse-check: finding=${finding_id} already tracked by #${existing_number} (${existing_url})"
 		return 0
 	fi
@@ -634,7 +645,8 @@ _failure_family_writes_allowed() {
 _reconcile_failure_family_remediations() {
 	local slug="$1"
 	local report_json="$2"
-	_load_gh_wrappers || return 0
+	local refresh_failed=0
+	_load_gh_wrappers || return 1
 	local tracked_json="[]"
 	tracked_json=$(gh issue list --repo "$slug" --state open \
 		--search 'in:body "failure-family-state:start"' --limit 100 \
@@ -685,7 +697,10 @@ _reconcile_failure_family_remediations() {
 		if [[ "$outcome_status" == "recovery-candidate" && "$age_seconds" -ge "$FAILURE_FAMILY_RECOVERY_SECONDS" ]]; then
 			outcome_status="eliminated"
 		fi
-		_refresh_failure_family_issue "$slug" "$issue_number" "$family_json" "$outcome_status"
+		if ! _refresh_failure_family_issue "$slug" "$issue_number" "$family_json" "$outcome_status"; then
+			refresh_failed=$((refresh_failed + 1))
+			continue
+		fi
 
 		if [[ "$outcome_status" == "eliminated" ]]; then
 			gh_issue_close_safe "$issue_number" --repo "$slug" \
@@ -693,6 +708,10 @@ _reconcile_failure_family_remediations() {
 				>/dev/null 2>&1 || true
 		fi
 	done < <(printf '%s' "$tracked_json" | jq -c '.[]')
+	if [[ "$refresh_failed" -gt 0 ]]; then
+		print_warning "pulse-check: ${refresh_failed} failure-family reconciliation update(s) failed"
+		return 1
+	fi
 	return 0
 }
 
@@ -719,17 +738,25 @@ _apply_findings() {
 	fi
 	_repo_owns_framework_write_surface "$slug" || return 1
 
-	local applied_count=0
+	local applied_count=0 failed_count=0
 	while IFS= read -r finding_json; do
 		[[ -n "$finding_json" ]] || continue
-		_apply_finding "$slug" "$finding_json" || true
-		applied_count=$((applied_count + 1))
+		if _apply_finding "$slug" "$finding_json"; then
+			applied_count=$((applied_count + 1))
+		else
+			failed_count=$((failed_count + 1))
+		fi
 	done < <(printf '%s' "$report_json" | jq -c '.findings[] | select(.autofile == true)')
 
-	if [[ "$applied_count" -eq 0 ]]; then
+	if [[ "$applied_count" -eq 0 && "$failed_count" -eq 0 ]]; then
 		print_info "pulse-check: no autofile findings above thresholds"
 	fi
-	_reconcile_failure_family_remediations "$slug" "$report_json"
+	local reconcile_rc=0
+	_reconcile_failure_family_remediations "$slug" "$report_json" || reconcile_rc=$?
+	if [[ "$failed_count" -gt 0 || "$reconcile_rc" -ne 0 ]]; then
+		print_warning "pulse-check: failure-family issue updates failed (autofile=${failed_count}, reconciliation_rc=${reconcile_rc})"
+		return 1
+	fi
 	return 0
 }
 

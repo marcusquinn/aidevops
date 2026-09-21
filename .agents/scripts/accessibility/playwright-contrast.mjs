@@ -46,7 +46,7 @@ Options:
 }
 
 // ============================================================================
-// Browser-context code — injected as a string via context.addInitScript()
+// Browser-context code — evaluated with its invocation in one main-world call.
 // All helpers and the main extraction function run inside the browser.
 // Defined as a string constant so qlty does not count their complexity.
 // ============================================================================
@@ -270,11 +270,10 @@ async function main() {
     if (process.env.AIDEVOPS_PLAYWRIGHT_EXECUTABLE) launchOptions.executablePath = process.env.AIDEVOPS_PLAYWRIGHT_EXECUTABLE;
     browser = await chromium.launch(launchOptions);
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
-    await context.addInitScript(BROWSER_SCRIPT);
     const page = await context.newPage();
     await page.goto(options.url, { waitUntil: 'load', timeout: options.timeout });
     await waitForPageReady(page, options.timeout);
-    const results = await page.evaluate('extractContrastData()');
+    const results = await page.evaluate(`(() => { ${BROWSER_SCRIPT}\nreturn extractContrastData(); })()`);
     let filtered = options.failOnly ? results.filter((r) => isFailingAtLevel(r, options.level)) : results;
     if (options.limit > 0) filtered = filtered.slice(0, options.limit);
     switch (options.format) {

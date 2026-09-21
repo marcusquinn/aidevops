@@ -66,6 +66,10 @@ setup_test_env() {
 	# Force LOGFILE into the test sandbox so log assertions are isolated.
 	LOGFILE="${HOME}/.aidevops/logs/pulse.log"
 	export LOGFILE
+	# These regressions isolate the named skip path from unrelated live-state
+	# checks that otherwise require GitHub transport and persistent stats.
+	_dispatch_recent_dirty_worktree_marker_active() { return 1; }
+	_dispatch_stats_increment() { return 0; }
 	: >"$LOGFILE"
 	return 0
 }
@@ -165,6 +169,27 @@ test_empty_body_skip_logs() {
 	print_result "empty body skip writes per-candidate log line" "$skip_logged" \
 		"LOGFILE contents: $(cat "$LOGFILE" || true)"
 	print_result "empty body skip returns 0 (skip)" $((rc == 0 ? 0 : 1)) "got rc=$rc"
+	return 0
+}
+
+test_issue_body_transport_failure_is_typed() {
+	reset_logfile
+	gh() { return 75; }
+	_dispatch_stats_increment() { printf '%s\n' "$1" >>"${TEST_ROOT}/stats"; }
+
+	local rc=0
+	_dispatch_skip_for_issue_body "34568" "owner/repo" || rc=$?
+	unset -f gh
+	_dispatch_stats_increment() { return 0; }
+
+	local typed_logged=1 placeholder_logged=0 counter_recorded=1
+	grep -q "reason=issue_body_evidence_unavailable exit_code=75" "$LOGFILE" && typed_logged=0
+	grep -q "placeholder/empty issue body" "$LOGFILE" && placeholder_logged=1
+	grep -q "dispatch_candidate_blocked_issue_body_evidence_unavailable" "${TEST_ROOT}/stats" && counter_recorded=0
+	print_result "body transport failure writes typed evidence-unavailable blocker" "$typed_logged"
+	print_result "body transport failure is not reported as empty" "$placeholder_logged"
+	print_result "body transport failure increments typed counter" "$counter_recorded"
+	print_result "body transport failure remains a conservative skip" $((rc == 0 ? 0 : 1)) "got rc=$rc"
 	return 0
 }
 
@@ -351,6 +376,7 @@ main() {
 	test_terminal_blocker_skip_logs
 	test_fast_fail_skip_logs
 	test_empty_body_skip_logs
+	test_issue_body_transport_failure_is_typed
 	test_stub_body_skip_logs
 	test_missing_worker_context_skip_logs
 	test_malformed_candidate_logs_skip

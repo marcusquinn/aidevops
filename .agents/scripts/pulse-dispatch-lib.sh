@@ -1522,9 +1522,14 @@ _dispatch_skip_for_issue_body() {
 	# `gh issue view --json body`: this pre-dedup fast-fail runs once per
 	# candidate, so a GraphQL-backed CLI read can drain the shared GraphQL budget
 	# before workers ever launch.
-	local issue_body
+	local issue_body="" body_read_rc=0
 	declare -F gh_record_call >/dev/null 2>&1 && gh_record_call rest "pulse-dispatch-lib.sh" || true
-	issue_body=$(gh api "repos/${repo_slug}/issues/${issue_number}" --jq '.body // ""' 2>/dev/null) || issue_body=""
+	issue_body=$(gh api "repos/${repo_slug}/issues/${issue_number}" --jq '.body // ""' 2>/dev/null) || body_read_rc=$?
+	if [[ "$body_read_rc" -ne 0 ]]; then
+		echo "[pulse-wrapper] Dispatch_max: skipping #${issue_number} (${repo_slug}) — DISPATCH_BLOCK_REASON reason=issue_body_evidence_unavailable exit_code=${body_read_rc}" >>"$LOGFILE"
+		_dispatch_stats_increment "dispatch_candidate_blocked_issue_body_evidence_unavailable"
+		return 0
+	fi
 	pulse_dispatch_debug_log "#${issue_number}: body length=${#issue_body}"
 	if [[ -z "$issue_body" || "$issue_body" == "Task created via claim-task-id.sh" ]]; then
 		echo "[pulse-wrapper] Dispatch_max: skipping #${issue_number} (${repo_slug}) — placeholder/empty issue body, needs enrichment before dispatch" >>"$LOGFILE"

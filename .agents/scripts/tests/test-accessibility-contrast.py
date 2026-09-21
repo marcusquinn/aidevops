@@ -9,6 +9,7 @@ import unittest
 from pathlib import Path
 
 HELPER = Path(__file__).resolve().parents[1] / "accessibility-helper.sh"
+PLAYWRIGHT_CONTRAST = HELPER.parent / "accessibility/playwright-contrast.mjs"
 
 
 class ContrastTests(unittest.TestCase):
@@ -68,6 +69,43 @@ class ContrastTests(unittest.TestCase):
         self.assertEqual(help_result.returncode, 0)
         self.assertIn("contrast", help_result.stdout)
         self.assertEqual(self.run_cli("unknown-command").returncode, 1)
+
+    def test_playwright_extractor_runs_after_navigation_without_global_binding(self):
+        module_path = Path(self.home.name) / "fake-playwright.mjs"
+        module_path.write_text(
+            """
+const document = { fonts: { ready: Promise.resolve() }, querySelectorAll: () => [] };
+const page = {
+  goto: async () => {},
+  waitForLoadState: async () => {},
+  evaluate: async (value) => {
+    globalThis.document = document;
+    globalThis.requestAnimationFrame = (callback) => { callback(); return 1; };
+    globalThis.cancelAnimationFrame = () => {};
+    if (typeof value === 'function') return value();
+    return eval(value);
+  },
+};
+export const chromium = {
+  launch: async () => ({
+    newContext: async () => ({ newPage: async () => page }),
+    close: async () => {},
+  }),
+};
+""",
+            encoding="utf-8",
+        )
+        result = subprocess.run(
+            ["node", str(PLAYWRIGHT_CONTRAST), "https://example.invalid", "--format", "summary"],
+            env={**os.environ, "AIDEVOPS_PLAYWRIGHT_MODULE": str(module_path)},
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Elements analysed: 0", result.stdout)
+        self.assertNotIn("ReferenceError", result.stderr)
 
 
 if __name__ == "__main__":
