@@ -385,7 +385,11 @@ reconcile_auto_dispatch_issue_locks() {
 		marker=$(_auto_dispatch_lock_marker "$issue_num" "$slug") || continue
 		labels_csv=",${labels},"
 		if _auto_dispatch_lock_required "$labels"; then
-			lock_issue_for_worker "$issue_num" "$slug" || return 1
+			if ! lock_issue_for_worker "$issue_num" "$slug"; then
+				printf '[pulse-wrapper] Reconciliation could not verify conversation lock for #%s in %s; issue remains fail-closed\n' \
+					"$issue_num" "$slug" >>"$LOGFILE"
+				continue
+			fi
 		elif [[ -f "$marker" && "$labels_csv" != *,no-auto-dispatch,* ]]; then
 			gh issue unlock "$issue_num" --repo "$slug" >/dev/null 2>&1 || return 1
 			rm -f "$marker" 2>/dev/null || return 1

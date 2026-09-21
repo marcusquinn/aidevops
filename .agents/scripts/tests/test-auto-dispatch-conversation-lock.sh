@@ -177,6 +177,34 @@ reset_gh_calls
 gh() {
 	printf '%s\n' "$*" >>"$GH_CALLS"
 	if [[ "$1" == "api" ]]; then
+		local api_count
+		api_count=$(<"$GH_API_COUNT_FILE")
+		api_count=$((api_count + 1))
+		printf '%s\n' "$api_count" >"$GH_API_COUNT_FILE"
+		[[ "$api_count" -gt 1 ]] || return 75
+		printf 'true\n'
+	fi
+	return 0
+}
+export -f gh
+snapshot='[
+  {"number":56,"labels":[{"name":"auto-dispatch"}]},
+  {"number":57,"labels":[{"name":"auto-dispatch"}]}
+]'
+if reconcile_auto_dispatch_issue_locks owner/repo "$snapshot" &&
+	[[ "$(grep -c -- '^api ' "$GH_CALLS")" -eq 2 ]] &&
+	[[ ! -f "${AIDEVOPS_AUTO_DISPATCH_LOCK_DIR}/owner--repo-56" ]] &&
+	[[ -f "${AIDEVOPS_AUTO_DISPATCH_LOCK_DIR}/owner--repo-57" ]] &&
+	grep -q -- 'could not verify conversation lock for #56.*issue remains fail-closed' "$LOGFILE"; then
+	pass "reconciliation continues after one deferred lock read"
+else
+	fail "reconciliation continues after one deferred lock read"
+fi
+
+reset_gh_calls
+gh() {
+	printf '%s\n' "$*" >>"$GH_CALLS"
+	if [[ "$1" == "api" ]]; then
 		printf 'auto-dispatch,status:queued\n'
 	fi
 	return 0
