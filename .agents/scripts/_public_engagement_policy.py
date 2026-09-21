@@ -83,6 +83,28 @@ class Grant:
     policy_hash: str
 
 
+@dataclass(frozen=True)
+class ServiceGrantChange:
+    """Owner-authenticated service mutation input."""
+
+    owner_id: str
+    project_id: str
+    grant_id: str
+    value: Mapping[str, Any]
+    current_time: int
+
+
+@dataclass(frozen=True)
+class ServiceGrantEvaluation:
+    """Executor-scoped content-free evaluation input."""
+
+    method: str
+    path: str
+    value: Mapping[str, Any]
+    allowed_projects: frozenset[str]
+    permissions: frozenset[str]
+
+
 def parse_grant(document: Mapping[str, Any]) -> Grant:
     """Validate one exact grant document and return its hash-bound form."""
     expected = {
@@ -190,17 +212,14 @@ def _grant_setting_value(
 
 def change_service_grant(
     database: sqlite3.Connection,
-    *,
-    owner_id: str,
-    project_id: str,
-    grant_id: str,
-    value: Mapping[str, Any],
-    current_time: int,
+    request: ServiceGrantChange,
 ) -> tuple[int, dict[str, Any]]:
     """Persist one owner-authenticated grant revision or revocation marker."""
-    grant_id = _service_identifier(grant_id, "grant_id")
-    payload_value = _grant_setting_value(value, grant_id, project_id, owner_id)
-    expected = value.get("expected_version")
+    grant_id = _service_identifier(request.grant_id, "grant_id")
+    payload_value = _grant_setting_value(
+        request.value, grant_id, request.project_id, request.owner_id
+    )
+    expected = request.value.get("expected_version")
     if isinstance(expected, bool) or not isinstance(expected, int) or expected < 0:
         raise EngagementServiceError(400, "invalid_request", "expected_version is invalid")
     setting_kind = f"engagement-grant:{grant_id}"
@@ -208,7 +227,7 @@ def change_service_grant(
     try:
         existing = database.execute(
             "SELECT version FROM service_settings WHERE project_id=? AND setting_kind=?",
-            (project_id, setting_kind),
+            (request.project_id, setting_kind),
         ).fetchone()
         current = int(existing["version"]) if existing else 0
         if current != expected:
@@ -217,15 +236,15 @@ def change_service_grant(
         payload = json.dumps(payload_value, sort_keys=True, separators=(",", ":"))
         database.execute(
             "INSERT INTO service_settings VALUES(?,?,?,?,?) ON CONFLICT(project_id,setting_kind) DO UPDATE SET version=excluded.version,value_json=excluded.value_json,updated_at=excluded.updated_at",
-            (project_id, setting_kind, changed, payload, current_time),
+            (request.project_id, setting_kind, changed, payload, request.current_time),
         )
         database.execute(
             "INSERT INTO audit(credential_id,action,occurred_at,detail) VALUES(?,?,?,?)",
             (
-                owner_id,
+                request.owner_id,
                 "engagement_grant_changed",
-                current_time,
-                json.dumps({"project_id": project_id, "grant_id": grant_id, "version": changed}),
+                request.current_time,
+                json.dumps({"project_id": request.project_id, "grant_id": grant_id, "version": changed}),
             ),
         )
         database.execute("COMMIT")
@@ -234,7 +253,7 @@ def change_service_grant(
             database.execute("ROLLBACK")
         raise
     return 200, {
-        "project_id": project_id,
+        "project_id": request.project_id,
         "grant_id": grant_id,
         "version": changed,
         "state": payload_value["state"],
@@ -243,25 +262,21 @@ def change_service_grant(
 
 def evaluate_service_grant(
     database: sqlite3.Connection,
-    *,
-    method: str,
-    path: str,
-    value: Mapping[str, Any],
-    allowed_projects: frozenset[str],
-    permissions: frozenset[str],
+    request: ServiceGrantEvaluation,
 ) -> dict[str, Any]:
     """Return a content-free eligibility decision for a scoped executor."""
-    parts = [part for part in path.split("/") if part]
+    parts = [part for part in request.path.split("/") if part]
     route = parts[:3] == ["v1", "executor", "projects"] and parts[4:] == ["engagement", "evaluate"]
     if len(parts) != 6 or not route:
         raise EngagementServiceError(404, "not_found", "resource not found")
     project_id = parts[3]
-    if project_id not in allowed_projects or "engagement.execute" not in permissions:
+    if project_id not in request.allowed_projects or "engagement.execute" not in request.permissions:
         raise EngagementServiceError(404, "not_found", "resource not found")
-    if method != "POST":
+    if request.method != "POST":
         raise EngagementServiceError(405, "method_not_allowed", "executor route accepts only POST")
-    _exact_service_fields(value, {"grant_id", "operation_id"})
-    grant_id, operation_id = value.get("grant_id"), value.get("operation_id")
+    _exact_service_fields(request.value, {"grant_id", "operation_id"})
+    grant_id = request.value.get("grant_id")
+    operation_id = request.value.get("operation_id")
     if not isinstance(grant_id, str) or not isinstance(operation_id, str):
         raise EngagementServiceError(400, "invalid_parameter", "grant_id and operation_id are required")
     row = database.execute(

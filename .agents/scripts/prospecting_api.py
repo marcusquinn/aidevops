@@ -17,7 +17,11 @@ from urllib.parse import parse_qs, urlsplit
 
 import prospecting_auth
 import prospecting_jobs
-from _public_engagement_policy import EngagementServiceError, evaluate_service_grant
+from _public_engagement_policy import (
+    EngagementServiceError,
+    ServiceGrantEvaluation,
+    evaluate_service_grant,
+)
 from prospecting_contract import ContractError
 from prospecting_store import (
     ProspectingStoreError,
@@ -341,11 +345,13 @@ class ProspectingAPI:
         principal = self._executor_principal(headers)
         result = evaluate_service_grant(
             self.auth_database,
-            method=method,
-            path=path,
-            value=_json_body(raw),
-            allowed_projects=principal.projects,
-            permissions=principal.permissions,
+            ServiceGrantEvaluation(
+                method=method,
+                path=path,
+                value=_json_body(raw),
+                allowed_projects=principal.projects,
+                permissions=principal.permissions,
+            ),
         )
         return Response(202, {
             "schema": API_SCHEMA,

@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 import prospecting_jobs
-from _public_engagement_policy import change_service_grant
+from _public_engagement_policy import ServiceGrantChange, change_service_grant
 from prospecting_store import import_document, set_disposition, update_project_version
 
 AUTH_SCHEMA_VERSION = 1
@@ -407,11 +407,13 @@ class OperatorContext:
         """Persist an owner-authenticated grant revision or revocation marker."""
         return change_service_grant(
             self.auth_database,
-            owner_id=self.principal.credential_id,
-            project_id=project_id,
-            grant_id=parts[5],
-            value=value,
-            current_time=_now(),
+            ServiceGrantChange(
+                owner_id=self.principal.credential_id,
+                project_id=project_id,
+                grant_id=parts[5],
+                value=value,
+                current_time=_now(),
+            ),
         )
 
 
