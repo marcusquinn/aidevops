@@ -36,8 +36,16 @@ if [[ "${1:-}" == "info" && "${2:-}" == "--json=v2" ]]; then
 	printf '{"formulae":[{"versions":{"stable":"%s"}}]}\n' "$stable"
 	exit 0
 fi
+if [[ "${1:-}" == "list" && "${2:-}" == "--formula" ]]; then
+	[[ "${3:-}" == "gh" ]]
+	exit $?
+fi
 if [[ "${1:-}" == "upgrade" ]]; then
 	printf '%s\n' "${2:-}" >>"$TOOL_TEST_STATE/brew-upgrades"
+	exit 0
+fi
+if [[ "${1:-}" == "install" ]]; then
+	printf '%s\n' "${2:-}" >>"$TOOL_TEST_STATE/brew-installs"
 	exit 0
 fi
 exit 1
@@ -55,7 +63,8 @@ PATH="$TEST_ROOT/bin:$SYSTEM_PATH" \
 	bash "$REPO_ROOT/.agents/scripts/tool-version-check.sh" --category brew --update --quiet >/dev/null
 
 grep -qx 'gh' "$TEST_ROOT/state/brew-upgrades"
-grep -qx 'jq' "$TEST_ROOT/state/brew-upgrades"
+grep -qx 'jq' "$TEST_ROOT/state/brew-installs"
+[[ ! -e "$TEST_ROOT/state/brew-upgrades" ]] || ! grep -qx 'jq' "$TEST_ROOT/state/brew-upgrades"
 [[ ! -e "$TEST_ROOT/state/sudo-calls" ]]
 
-printf 'PASS: Homebrew stable versions update without dormant sudo fallbacks blocking them\n'
+printf 'PASS: Homebrew updates installed formulas and installs absent selected formulas\n'
