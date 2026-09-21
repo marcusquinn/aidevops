@@ -1,0 +1,9 @@
+{
+  "schema": "aidevops.prospecting-serp/v1",
+  "runs": [
+    {"query_id": "q1", "query": "best project tool", "observed_at": "2026-09-01T00:00:00Z", "provider": "fixture", "engine": "google", "locale": "us", "language": "en", "device": "desktop", "query_mode": "organic", "result_depth": 10, "status": "complete", "results": [{"position": 4, "url": "https://www.reddit.com/r/tools/comments/abc123/example/", "title": "Example", "snippet": "tool discussion"}]},
+    {"query_id": "q1", "query": "best project tool", "observed_at": "2026-09-02T00:00:00Z", "provider": "fixture", "engine": "google", "locale": "us", "language": "en", "device": "desktop", "query_mode": "organic", "result_depth": 10, "status": "complete", "results": [{"position": 2, "url": "https://reddit.com/r/tools/comments/abc123/example/", "thread": {"age": "old", "activity": "locked", "state": "locked", "competitor_mentions": ["Acme", "Other"]}}]},
+    {"query_id": "q2", "query": "site:reddit.com project tool", "observed_at": "2026-09-02T00:00:00Z", "query_mode": "filtered", "status": "complete", "results": [{"position": 1, "url": "https://reddit.com/r/tools/comments/def456/discovery/"}]},
+    {"query_id": "q3", "query": "missing results", "observed_at": "2026-09-02T00:00:00Z", "status": "failed"}
+  ]
+}
