@@ -799,6 +799,32 @@ test_cooldown_gate_failure_reports_cooldown() {
 	return 0
 }
 
+# Test 7aa: A local read-admission deferral preserves its retry deadline at the
+# production cmd_merge reporting boundary rather than collapsing to guidance.
+test_local_admission_gate_failure_reports_retry_deadline() {
+	rm -f "${TEST_ROOT}/logs/"*.txt
+	create_gh_stub "graphql-rate-limit"
+
+	local exit_code=0
+	local output=""
+	output=$(run_cmd_merge_with_gate "42" "testorg/testrepo" "1" \
+		"github-api-read-deferred" "1893456000" 2>&1) || exit_code=$?
+	print_result "local admission gate failure: cmd_merge exits non-zero" "$((exit_code == 0 ? 1 : 0))"
+	print_result "local admission gate failure: preserves numeric retry deadline" \
+		"$([[ "$output" == *"Merge deferred by GitHub read admission; retry_at=1893456000."* ]] && printf '0' || printf '1')" \
+		"output=$output"
+	print_result "local admission gate failure: no review-bot remediation" \
+		"$([[ "$output" != *"Address bot findings"* ]] && printf '0' || printf '1')" \
+		"output=$output"
+
+	local merge_called=0
+	if [[ -f "${TEST_ROOT}/logs/gh-calls.txt" ]] && grep -q "pr merge" "${TEST_ROOT}/logs/gh-calls.txt"; then
+		merge_called=1
+	fi
+	print_result "local admission gate failure: merge is not attempted" "$merge_called"
+	return 0
+}
+
 # Test 7b: Interactive --auto review-required block uses admin fallback when safe.
 test_auto_review_required_interactive_admin_fallback() {
 	rm -f "${TEST_ROOT}/logs/"*.txt
@@ -1622,6 +1648,7 @@ main() {
 	test_graphql_rate_limit_auto_no_rest_fallback
 	test_review_gate_failure_blocks_rest_fallback
 	test_cooldown_gate_failure_reports_cooldown
+	test_local_admission_gate_failure_reports_retry_deadline
 	test_local_deferral_survives_context_resolution
 	test_auto_review_required_interactive_admin_fallback
 	test_auto_review_required_admin_rejection_handoff

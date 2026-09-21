@@ -1903,7 +1903,11 @@ _merge_report_pre_merge_gate_failure() {
 		fi
 		;;
 	github-api-read-deferred)
-		print_error "Merge deferred by GitHub read admission: ${FULL_LOOP_REQUIRED_CHECKS_ERROR_DETAIL:-retry when capacity returns}"
+		if [[ "${FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL:-}" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+			print_error "Merge deferred by GitHub read admission; retry_at=${FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL}. ${FULL_LOOP_REQUIRED_CHECKS_ERROR_DETAIL:-retry when capacity returns}"
+		else
+			print_error "Merge deferred by GitHub read admission: ${FULL_LOOP_REQUIRED_CHECKS_ERROR_DETAIL:-retry when capacity returns}"
+		fi
 		;;
 	review-bot)
 		print_error "Merge blocked by review bot gate. Address bot findings or wait for reviews."
