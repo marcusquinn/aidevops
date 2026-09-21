@@ -22,6 +22,11 @@ from _knowledge_social_outbound_cooldown import (
     defer_claim_for_cooldown,
 )
 from _knowledge_social_outbound_queries import due_operation_ids, outbound_health_rows
+from _knowledge_social_outbound_delegation import (
+    delegated_authorization,
+    finish_delegated_reservation,
+    mark_delegated_started,
+)
 from knowledge_social_import import canonical_json
 from knowledge_social_store import SocialStoreError, validate_opaque
 
@@ -68,7 +73,7 @@ def record_provider_checkpoint(
         raise SocialStoreError("outbound provider checkpoint is stale")
 
 
-def mark_provider_started(
+def _mark_provider_started_uncommitted(
     database: sqlite3.Connection,
     claimed: ClaimedOperation,
     executor_id: str,
@@ -78,19 +83,31 @@ def mark_provider_started(
     """Durably mark the boundary after which failures are always ambiguous."""
     started_at = now_epoch() if started_at is None else started_at
     executor_id = validate_opaque(executor_id, "executor_id")
+    delegated = delegated_authorization(database, claimed.operation_id, started_at)
+    approval_clause = "" if delegated is not None else """
+                        AND EXISTS(SELECT 1 FROM outbound_approvals a
+                          WHERE a.operation_id=o.operation_id
+                            AND a.principal_id=o.created_by
+                            AND a.intent_sha256=o.intent_sha256
+                            AND a.revoked_at IS NULL AND a.expires_at>?)"""
+    parameters: tuple[object, ...] = (
+        started_at, claimed.attempt_id, claimed.operation_id, claimed.claim_token,
+        executor_id, executor_id, started_at,
+    )
+    if delegated is None:
+        parameters += (started_at,)
+    parameters += (started_at,)
     changed = database.execute(
         """UPDATE outbound_attempts SET provider_started_at=?
              WHERE attempt_id=? AND operation_id=? AND claim_token=?
                AND executor_id=? AND status='running' AND provider_started_at IS NULL
                AND EXISTS(
                    SELECT 1 FROM outbound_operations o
-                   JOIN outbound_approvals a ON a.operation_id=o.operation_id
                     WHERE o.operation_id=outbound_attempts.operation_id
                       AND o.state='claimed' AND o.claim_token=outbound_attempts.claim_token
                        AND o.claimed_by=? AND o.last_attempt_id=outbound_attempts.attempt_id
-                       AND o.claim_expires_at>? AND a.principal_id=o.created_by
-                       AND a.intent_sha256=o.intent_sha256 AND a.revoked_at IS NULL
-                       AND a.expires_at>?
+                       AND o.claim_expires_at>?
+                       {approval_clause}
                        AND NOT EXISTS(
                            SELECT 1 FROM sync_runs s
                             WHERE s.connection_id=o.connection_id
@@ -100,21 +117,35 @@ def mark_provider_started(
                               AND s.retry_after NOT GLOB '*[^0-9]*'
                               AND CAST(s.retry_after AS INTEGER)>?
                        )
-                )""",
-        (
-            started_at,
-            claimed.attempt_id,
-            claimed.operation_id,
-            claimed.claim_token,
-            executor_id,
-            executor_id,
-            started_at,
-            started_at,
-            started_at,
-        ),
+                 )""".format(approval_clause=approval_clause),
+        parameters,
     ).rowcount
     if changed != 1:
         raise SocialStoreError("outbound provider boundary is stale or already marked")
+    if delegated is not None:
+        mark_delegated_started(
+            database, claimed.operation_id, claimed.attempt_id, started_at
+        )
+
+
+def mark_provider_started(
+    database: sqlite3.Connection,
+    claimed: ClaimedOperation,
+    executor_id: str,
+    *,
+    started_at: int | None = None,
+) -> None:
+    """Atomically revalidate authority, reservation, and provider start."""
+    database.execute("BEGIN IMMEDIATE")
+    try:
+        _mark_provider_started_uncommitted(
+            database, claimed, executor_id, started_at=started_at
+        )
+        database.execute("COMMIT")
+    except Exception:
+        if database.in_transaction:
+            database.execute("ROLLBACK")
+        raise
 
 
 def _assert_outcome_fields(
@@ -316,6 +347,13 @@ def finalize_operation(
         else:
             _assert_outcome_boundary(provider_started, outcome)
         _persist_outcome(database, claimed, executor_id, outcome, provider_started)
+        finish_delegated_reservation(
+            database,
+            claimed.operation_id,
+            claimed.attempt_id,
+            outcome.status,
+            provider_started,
+        )
         _persist_rate_limit_cooldown(database, claimed, executor_id, outcome)
         database.execute("COMMIT")
     except Exception:

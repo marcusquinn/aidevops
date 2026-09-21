@@ -9,6 +9,23 @@ import sqlite3
 
 from _knowledge_social_store_raw import collector_envelope, read_raw_payload, store_root
 from _knowledge_social_store_support import SHA256_HEX, SocialStoreError
+from _knowledge_social_store_schema import ensure_public_engagement_tables
+
+
+def initialize_public_engagement_migration(connection: sqlite3.Connection) -> None:
+    """Install additive private state without promoting any legacy approval."""
+    ensure_public_engagement_tables(connection)
+    promoted = connection.execute(
+        """SELECT count(*) FROM public_engagement_authorizations pa
+             JOIN outbound_operations o ON o.operation_id=pa.operation_id
+            WHERE NOT EXISTS(
+              SELECT 1 FROM public_engagement_grants pg
+               WHERE pg.grant_id=pa.grant_id
+                 AND pg.revision=pa.grant_revision
+                 AND pg.policy_hash=pa.grant_hash)"""
+    ).fetchone()[0]
+    if promoted:
+        raise SocialStoreError("delegated authorization migration integrity failed")
 
 
 def _canonical_fetch_identity_v6(

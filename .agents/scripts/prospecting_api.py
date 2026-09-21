@@ -187,6 +187,16 @@ class ProspectingAPI:
         self.rate_limiter.check(principal.credential_id)
         return principal
 
+    def _executor_principal(self, headers: Mapping[str, str]) -> prospecting_auth.Principal:
+        try:
+            principal = prospecting_auth.authenticate_engagement_executor(
+                self.auth_database, headers.get("Authorization", "")
+            )
+        except prospecting_auth.AuthError as error:
+            raise APIError(401, "unauthorized", "engagement executor authentication required") from error
+        self.rate_limiter.check(principal.credential_id)
+        return principal
+
     @staticmethod
     def _authorize(principal: prospecting_auth.Principal, project_id: str, permission: str = "read") -> None:
         if not principal.allows(project_id, permission):
@@ -200,6 +210,8 @@ class ProspectingAPI:
             return Response(200, {"schema": API_SCHEMA, "status": "ok", "api_version": 1}, {})
         if path.startswith("/v1/operator/"):
             return self._operator(method, path, headers, body)
+        if path.startswith("/v1/executor/"):
+            return self._engagement_executor(method, path, headers, body)
         principal = self._read_principal(headers)
         if method == "GET" and path == "/v1/projects":
             return self._projects(principal)
@@ -322,3 +334,37 @@ class ProspectingAPI:
             self.database, self.auth_database, principal
         ).execute(method, parts, value)
         return Response(status, {"schema": API_SCHEMA, **result}, {})
+
+    def _engagement_executor(
+        self, method: str, path: str, headers: Mapping[str, str], raw: bytes
+    ) -> Response:
+        """Expose only content-free grant selection to scoped executors."""
+        principal = self._executor_principal(headers)
+        parts = [part for part in path.split("/") if part]
+        if len(parts) != 6 or parts[:2] != ["v1", "executor"] or parts[2] != "projects" or parts[4:] != ["engagement", "evaluate"]:
+            raise APIError(404, "not_found", "resource not found")
+        project_id = parts[3]
+        self._authorize(principal, project_id, prospecting_auth.ENGAGEMENT_EXECUTE_PERMISSION)
+        if method != "POST":
+            raise APIError(405, "method_not_allowed", "executor route accepts only POST")
+        value = _json_body(raw)
+        _exact(value, {"grant_id", "operation_id"})
+        grant_id, operation_id = value.get("grant_id"), value.get("operation_id")
+        if not isinstance(grant_id, str) or not isinstance(operation_id, str):
+            raise APIError(400, "invalid_parameter", "grant_id and operation_id are required")
+        row = self.auth_database.execute(
+            "SELECT version,value_json FROM service_settings WHERE project_id=? AND setting_kind=?",
+            (project_id, f"engagement-grant:{grant_id}"),
+        ).fetchone()
+        setting = json.loads(row["value_json"]) if row else {}
+        if not row or setting.get("state") != "active":
+            raise APIError(409, "grant_unavailable", "engagement grant is unavailable")
+        return Response(202, {
+            "schema": API_SCHEMA,
+            "project_id": project_id,
+            "operation_id": operation_id,
+            "grant_id": grant_id,
+            "grant_version": int(row["version"]),
+            "policy_hash": setting["policy_hash"],
+            "status": "eligible_for_private_outbox_evaluation",
+        }, {})

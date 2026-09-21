@@ -18,13 +18,16 @@ from pathlib import Path
 from typing import Any, Iterator
 
 import prospecting_jobs
+from _public_engagement_policy import PolicyError, parse_grant
 from prospecting_store import import_document, set_disposition, update_project_version
 
 AUTH_SCHEMA_VERSION = 1
 READ_PERMISSION = "read"
 OWNER_PERMISSION = "owner"
+ENGAGEMENT_EXECUTE_PERMISSION = "engagement.execute"
 TOKEN_PREFIX = "apsr"  # nosec B105: public token type marker, not a credential
 SESSION_PREFIX = "apso"
+EXECUTOR_PREFIX = "apse"
 JOB_KINDS = frozenset({"scan", "seo-refresh", "insights-refresh", "digest-preview"})
 
 
@@ -198,6 +201,18 @@ def issue_owner_session(database: sqlite3.Connection, projects: list[str], *, tt
     return token, csrf
 
 
+def issue_engagement_executor_key(database: sqlite3.Connection, projects: list[str]) -> str:
+    """Issue an executor-only key with no read or grant-administration rights."""
+    spec = CredentialSpec(
+        EXECUTOR_PREFIX,
+        "engagement_executor",
+        _projects(projects),
+        (ENGAGEMENT_EXECUTE_PERMISSION,),
+    )
+    token, _csrf = _issue(database, spec)
+    return token
+
+
 def _authenticate(database: sqlite3.Connection, token: str, prefix: str, kind: str) -> tuple[Principal, sqlite3.Row]:
     parts = token.split("_", 2) if isinstance(token, str) else []
     if len(parts) != 3 or parts[0] != prefix:
@@ -226,6 +241,15 @@ def authenticate_owner(database: sqlite3.Connection, cookie_token: str, csrf: st
     return principal
 
 
+def authenticate_engagement_executor(database: sqlite3.Connection, authorization: str) -> Principal:
+    if not isinstance(authorization, str) or not authorization.startswith("Bearer "):
+        raise AuthError("authentication required")
+    principal, _row = _authenticate(
+        database, authorization[7:], EXECUTOR_PREFIX, "engagement_executor"
+    )
+    return principal
+
+
 def revoke(database: sqlite3.Connection, credential_id: str) -> None:
     credential_id = _identifier(credential_id, "credential_id")
     with _transaction(database):
@@ -250,7 +274,7 @@ class OperatorContext:
     principal: Principal
 
     def execute(self, method: str, parts: list[str], value: dict[str, Any]) -> tuple[int, dict[str, Any]]:
-        if method not in {"POST", "PATCH", "PUT"}:
+        if method not in {"POST", "PATCH", "PUT", "DELETE"}:
             raise OperatorError(405, "method_not_allowed", "operator method is not supported")
         if parts == ["v1", "operator", "projects"] and method == "POST":
             return self._create(value)
@@ -264,6 +288,8 @@ class OperatorContext:
             (6, "leads", "PATCH"): self._disposition,
             (5, "jobs", "POST"): self._job,
             (5, "alerts", "PUT"): self._alert,
+            (6, "engagement-grants", "PUT"): self._engagement_grant,
+            (6, "engagement-grants", "DELETE"): self._engagement_grant,
         }
         handler = handlers.get((len(parts), parts[4] if len(parts) > 4 else "", method))
         if handler is None:
@@ -371,6 +397,68 @@ class OperatorContext:
                 (project_id, "alerts", changed, payload, _now()),
             )
         return changed
+
+    def _engagement_grant(
+        self, project_id: str, parts: list[str], value: dict[str, Any]
+    ) -> tuple[int, dict[str, Any]]:
+        """Persist an owner-authenticated grant revision or revocation marker."""
+        grant_id = _identifier(parts[5], "grant_id")
+        setting_kind = f"engagement-grant:{grant_id}"
+        if value.get("operation") == "revoke":
+            _exact(value, {"operation", "expected_version"})
+            payload_value: dict[str, Any] = {"grant_id": grant_id, "state": "revoked"}
+        else:
+            _exact(value, {"expected_version", "grant"})
+            grant_value = value.get("grant")
+            if not isinstance(grant_value, dict):
+                raise OperatorError(400, "invalid_request", "grant must be an object")
+            try:
+                grant = parse_grant(grant_value)
+            except PolicyError as error:
+                raise OperatorError(400, "invalid_request", str(error)) from error
+            if (
+                grant.grant_id != grant_id
+                or grant.project_id != project_id
+                or grant.owner_id != self.principal.credential_id
+            ):
+                raise OperatorError(400, "invalid_request", "grant scope does not match its owner route")
+            payload_value = {
+                "grant": grant_value,
+                "policy_hash": grant.policy_hash,
+                "state": "active",
+            }
+        expected = value.get("expected_version")
+        if isinstance(expected, bool) or not isinstance(expected, int) or expected < 0:
+            raise OperatorError(400, "invalid_request", "expected_version is invalid")
+        payload = json.dumps(payload_value, sort_keys=True, separators=(",", ":"))
+        with _transaction(self.auth_database):
+            existing = self.auth_database.execute(
+                "SELECT version FROM service_settings WHERE project_id=? AND setting_kind=?",
+                (project_id, setting_kind),
+            ).fetchone()
+            current = int(existing["version"]) if existing else 0
+            if current != expected:
+                raise OperatorError(409, "stale_version", "engagement grant version is stale")
+            changed = current + 1
+            self.auth_database.execute(
+                "INSERT INTO service_settings VALUES(?,?,?,?,?) ON CONFLICT(project_id,setting_kind) DO UPDATE SET version=excluded.version,value_json=excluded.value_json,updated_at=excluded.updated_at",
+                (project_id, setting_kind, changed, payload, _now()),
+            )
+            self.auth_database.execute(
+                "INSERT INTO audit(credential_id,action,occurred_at,detail) VALUES(?,?,?,?)",
+                (
+                    self.principal.credential_id,
+                    "engagement_grant_changed",
+                    _now(),
+                    json.dumps({"project_id": project_id, "grant_id": grant_id, "version": changed}),
+                ),
+            )
+        return 200, {
+            "project_id": project_id,
+            "grant_id": grant_id,
+            "version": changed,
+            "state": payload_value["state"],
+        }
 
 
 def _exact(value: dict[str, Any], allowed: set[str]) -> None:
