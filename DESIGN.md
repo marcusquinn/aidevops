@@ -344,6 +344,7 @@ Don't:
 - Button rows may wrap; primary and destructive actions remain visually distinct when wrapped.
 - Generated report handoffs should print cleanly to A4, US Letter, and 16:9 slides without clipped tables.
 - Maintain keyboard and screen-reader access for every control; existing ARIA labels in `.opencode/ui/chat-sidebar/constants.ts` are the naming pattern.
+- Operator workbenches use a compact left navigation rail that becomes a horizontally scrollable tab row below 700px. Evidence tables may scroll horizontally, while long source text wraps inside its card; all view actions retain 44px touch targets and visible cyan focus.
 
 ## Creative model inspector
 
