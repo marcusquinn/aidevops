@@ -16,11 +16,15 @@ PULSE_FEEDBACK_ROUTE_OPEN_STATE="OPEN"
 PULSE_FEEDBACK_ROUTE_AVAILABLE_LABEL="status:available"
 PULSE_FEEDBACK_ROUTE_JSON_ARRAY_TYPE="array"
 PULSE_FEEDBACK_ROUTE_WORKER_TAKEOVER_LABEL="origin:worker-takeover"
+PULSE_FEEDBACK_ROUTE_WORKER_ORIGIN_LABEL="origin:worker"
+PULSE_FEEDBACK_ROUTE_INTERACTIVE_ORIGIN_LABEL="origin:interactive"
+PULSE_FEEDBACK_ROUTE_MARKER_OPEN="<!--"
 PULSE_FEEDBACK_ROUTE_TRUSTED_ASSOCIATIONS='["OWNER","MEMBER","COLLABORATOR"]'
 PULSE_FEEDBACK_ROUTE_REVIEW_STATUS="status:in-review"
 
 _PULSE_FEEDBACK_ROUTE_CONTEXT_KIND=""
 _PULSE_FEEDBACK_ROUTE_CONTEXT_HEAD=""
+_PULSE_FEEDBACK_ROUTE_SUPERSEDE_PRIOR=0
 
 _feedback_route_comments_endpoint() {
 	local linked_issue="$1" repo_slug="$2"
@@ -93,7 +97,7 @@ _feedback_route_labels_block_routing() {
 		&& _feedback_route_labels_include "$labels" "$PULSE_FEEDBACK_ROUTE_HOLD_LABEL"; then
 		return 0
 	fi
-	if _feedback_route_labels_include "$labels" "origin:interactive" \
+	if _feedback_route_labels_include "$labels" "$PULSE_FEEDBACK_ROUTE_INTERACTIVE_ORIGIN_LABEL" \
 		&& ! _feedback_route_labels_include "$labels" "$PULSE_FEEDBACK_ROUTE_WORKER_TAKEOVER_LABEL"; then
 		return 0
 	fi
@@ -105,7 +109,7 @@ _feedback_route_labels_allow_worker_route() {
 	local ignore_hold="${2:-0}"
 
 	_feedback_route_labels_block_routing "$labels" "$ignore_hold" && return 1
-	if _feedback_route_labels_include "$labels" "origin:worker" \
+	if _feedback_route_labels_include "$labels" "$PULSE_FEEDBACK_ROUTE_WORKER_ORIGIN_LABEL" \
 		|| _feedback_route_labels_include "$labels" "$PULSE_FEEDBACK_ROUTE_WORKER_TAKEOVER_LABEL"; then
 		return 0
 	fi
@@ -129,8 +133,8 @@ _feedback_route_body_has_other_head_evidence() {
 	local pr_number="$3"
 	local start_marker="$4"
 	local completion_marker="$5"
-	local start_prefix="<!-- feedback-route:start:${kind}:PR${pr_number}:SHA"
-	local completion_prefix="<!-- feedback-route:complete:${kind}:PR${pr_number}:SHA"
+	local start_prefix="${PULSE_FEEDBACK_ROUTE_MARKER_OPEN} feedback-route:start:${kind}:PR${pr_number}:SHA"
+	local completion_prefix="${PULSE_FEEDBACK_ROUTE_MARKER_OPEN} feedback-route:complete:${kind}:PR${pr_number}:SHA"
 
 	if printf '%s' "$issue_body" | grep -F "$start_prefix" | grep -qvF "$start_marker"; then
 		return 0
@@ -444,6 +448,64 @@ _feedback_route_review_generations_complete() {
 	return 0
 }
 
+# Return success only when every prior non-review route marker is a complete,
+# exact start/completion pair. The current generation may be absent, but a
+# partial, malformed, or evidence-bearing marker remains ambiguous.
+_feedback_route_generations_complete() {
+	local issue_body="$1"
+	local kind="$2"
+	local pr_number="$3"
+	local current_start="$4"
+	local start_prefix="${PULSE_FEEDBACK_ROUTE_MARKER_OPEN} feedback-route:start:${kind}:PR${pr_number}:SHA"
+	local completion_prefix="${PULSE_FEEDBACK_ROUTE_MARKER_OPEN} feedback-route:complete:${kind}:PR${pr_number}:SHA"
+	local marker=""
+	local partner=""
+	local head=""
+
+	while IFS= read -r marker; do
+		[[ -n "$marker" ]] || continue
+		[[ "$marker" == "$current_start" ]] && continue
+		head="${marker#"${start_prefix}"}"
+		head="${head% -->}"
+		[[ "$marker" == "${start_prefix}${head} -->" && "$head" =~ ^[0-9A-Za-z]{7,64}$ ]] || return 1
+		partner="${marker/feedback-route:start:/feedback-route:complete:}"
+		printf '%s' "$issue_body" | grep -qF "$partner" || return 1
+	done < <(printf '%s\n' "$issue_body" | grep -F "$start_prefix" || true)
+
+	while IFS= read -r marker; do
+		[[ -n "$marker" ]] || continue
+		head="${marker#"${completion_prefix}"}"
+		head="${head% -->}"
+		[[ "$marker" == "${completion_prefix}${head} -->" && "$head" =~ ^[0-9A-Za-z]{7,64}$ ]] || return 1
+		partner="${marker/feedback-route:complete:/feedback-route:start:}"
+		printf '%s' "$issue_body" | grep -qF "$partner" || return 1
+	done < <(printf '%s\n' "$issue_body" | grep -F "$completion_prefix" || true)
+	return 0
+}
+
+# A completed old-head generation may be superseded only when the route's
+# terminal/source labels still bind it to the managed worker lifecycle.
+_feedback_route_prior_generation_is_automation_owned() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local linked_issue="$3"
+	local source_label="$4"
+	local terminal_label="$5"
+	local pr_labels="$6"
+	local issue_snapshot=""
+	local issue_labels=""
+	local issue_assignees=""
+
+	_feedback_route_labels_include "$pr_labels" "$terminal_label" || return 1
+	issue_snapshot=$(_feedback_route_issue_snapshot "$linked_issue" "$repo_slug") || return 1
+	IFS=$'\t' read -r issue_labels issue_assignees <<<"$issue_snapshot"
+	: "$pr_number" "$issue_assignees"
+	_feedback_route_labels_include "$issue_labels" "$source_label" || return 1
+	_feedback_route_labels_include "$issue_labels" "$PULSE_FEEDBACK_ROUTE_WORKER_ORIGIN_LABEL" || return 1
+	! _feedback_route_labels_include "$issue_labels" "$PULSE_FEEDBACK_ROUTE_INTERACTIVE_ORIGIN_LABEL" || return 1
+	return 0
+}
+
 _feedback_route_review_evidence_completed() {
 	local issue_body="$1"
 	local pr_number="$2"
@@ -509,8 +571,8 @@ _feedback_route_issue_is_ready() {
 	IFS=$'\t' read -r labels assignees <<<"$snapshot"
 	_feedback_route_labels_include "$labels" "$PULSE_FEEDBACK_ROUTE_AVAILABLE_LABEL" || return 1
 	_feedback_route_labels_include "$labels" "$source_label" || return 1
-	_feedback_route_labels_include "$labels" "origin:worker" || return 1
-	! _feedback_route_labels_include "$labels" "origin:interactive" || return 1
+	_feedback_route_labels_include "$labels" "$PULSE_FEEDBACK_ROUTE_WORKER_ORIGIN_LABEL" || return 1
+	! _feedback_route_labels_include "$labels" "$PULSE_FEEDBACK_ROUTE_INTERACTIVE_ORIGIN_LABEL" || return 1
 	! _feedback_route_labels_include "$labels" "$PULSE_FEEDBACK_ROUTE_WORKER_TAKEOVER_LABEL" || return 1
 	! _feedback_route_labels_include "$labels" "$PULSE_FEEDBACK_ROUTE_HOLD_LABEL" || return 1
 	! _feedback_route_labels_include "$labels" "$PULSE_FEEDBACK_ROUTE_NMR_LABEL" || return 1
@@ -742,7 +804,8 @@ _feedback_route_prepare_start() {
 	if printf '%s' "$issue_body" | grep -qF "$start_marker"; then
 		return 0
 	fi
-	if printf '%s' "$issue_body" | grep -qF "$legacy_match"; then
+	if [[ "${_PULSE_FEEDBACK_ROUTE_SUPERSEDE_PRIOR:-0}" != "1" ]] \
+		&& printf '%s' "$issue_body" | grep -qF "$legacy_match"; then
 		_feedback_route_hold_for_maintainer "$pr_number" "$repo_slug" "$linked_issue" \
 			"legacy ${kind} route marker has no head-bound start evidence"
 		return $?
@@ -1046,9 +1109,19 @@ _feedback_route_existing_evidence_gate() {
 		fi
 	elif _feedback_route_body_has_other_head_evidence "$issue_body" "$kind" "$pr_number" \
 		"$start_marker" "$completion_marker"; then
-		_feedback_route_hold_for_maintainer "$pr_number" "$repo_slug" "$linked_issue" \
-			"existing ${kind} route evidence belongs to a different PR head"
-		return $?
+		if ! _feedback_route_generations_complete "$issue_body" "$kind" "$pr_number" "$start_marker"; then
+			_feedback_route_hold_for_maintainer "$pr_number" "$repo_slug" "$linked_issue" \
+				"existing ${kind} route generation is incomplete or ambiguous"
+			return $?
+		fi
+		if ! _feedback_route_prior_generation_is_automation_owned "$pr_number" "$repo_slug" \
+			"$linked_issue" "$source_label" "$terminal_label" "$labels"; then
+			_feedback_route_hold_for_maintainer "$pr_number" "$repo_slug" "$linked_issue" \
+				"completed old-head ${kind} route lacks trusted automation ownership"
+			return $?
+		fi
+		echo "[pulse-wrapper] feedback finalizer: superseding completed automation-owned ${kind} route generation for PR #${pr_number} with current head ${expected_head}" >>"$LOGFILE"
+		_PULSE_FEEDBACK_ROUTE_SUPERSEDE_PRIOR=1
 	fi
 	return 0
 }
@@ -1135,6 +1208,7 @@ _finalize_feedback_route() {
 	local evidence_gate_rc=0
 	local clear_automation_hold=0
 	local preflight="" preflight_rc=0
+	_PULSE_FEEDBACK_ROUTE_SUPERSEDE_PRIOR=0
 
 	if [[ "${DRY_RUN:-0}" == "1" ]]; then
 		_feedback_route_defer "$pr_number" "$repo_slug" "$linked_issue" "dry-run forbids ${kind} finalization writes"

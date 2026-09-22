@@ -83,17 +83,45 @@ _pulse_pr_list_cache_repo_key() {
 }
 
 #######################################
+# Return the current repository cache generation. Terminal mutations replace
+# this token atomically so an in-flight pre-mutation list read cannot publish a
+# stale open-PR snapshot after invalidation.
+#######################################
+_pulse_pr_list_cache_generation() {
+	local dir="${PULSE_PR_LIST_PROVIDER_CACHE_DIR:-${TMPDIR:-/tmp}/aidevops-pulse-pr-list-provider-${$}}"
+	local repo_key=""
+	local generation_file=""
+	repo_key="$(_pulse_pr_list_cache_repo_key "$@")" || return 1
+	generation_file="${dir}/generation-${repo_key}"
+	if [[ -f "$generation_file" ]]; then
+		printf '%s' "$(<"$generation_file")"
+	else
+		printf '0'
+	fi
+	return 0
+}
+
+#######################################
 # Resolve the cache path for an exact gh_pr_list argv shape.
 #######################################
-_pulse_pr_list_cache_path() {
+_pulse_pr_list_cache_path_for_generation() {
+	local generation="$1"
+	shift
 	local dir="${PULSE_PR_LIST_PROVIDER_CACHE_DIR:-${TMPDIR:-/tmp}/aidevops-pulse-pr-list-provider-${$}}"
 	local repo_key=""
 	local key=""
 	mkdir -p "$dir" 2>/dev/null || return 1
 	repo_key="$(_pulse_pr_list_cache_repo_key "$@")" || return 1
 	key="$(_pulse_pr_list_cache_key "$@")" || return 1
-	printf '%s/pr-list-%s-%s.out' "$dir" "$repo_key" "$key"
+	printf '%s/pr-list-%s-%s-%s.out' "$dir" "$repo_key" "$generation" "$key"
 	return 0
+}
+
+_pulse_pr_list_cache_path() {
+	local generation=""
+	generation="$(_pulse_pr_list_cache_generation "$@")" || return 1
+	_pulse_pr_list_cache_path_for_generation "$generation" "$@"
+	return $?
 }
 
 #######################################
@@ -123,18 +151,31 @@ _pulse_pr_list_cache_get() {
 # not re-hit GitHub; use explicit metadata if corruption ever needs detection.
 # Arguments:
 #   $1 - command output
-#   $@ - original gh_pr_list argv after shifting output
+#   $2 - cache generation captured before the provider read
+#   $@ - original gh_pr_list argv after shifting output and generation
 #######################################
 _pulse_pr_list_cache_put() {
 	local body="$1"
-	shift
+	local expected_generation="$2"
+	shift 2
 	_pulse_pr_list_cache_enabled || return 0
-	local path="" dir="" tmp=""
-	path="$(_pulse_pr_list_cache_path "$@")" || return 0
+	local path="" dir="" tmp="" current_generation=""
+	current_generation="$(_pulse_pr_list_cache_generation "$@")" || return 0
+	[[ "$current_generation" == "$expected_generation" ]] || {
+		_pulse_pr_list_cache_record superseded
+		return 0
+	}
+	path="$(_pulse_pr_list_cache_path_for_generation "$expected_generation" "$@")" || return 0
 	dir="${path%/*}"
 	tmp=$(mktemp "${dir}/.pr-list-provider.XXXXXX" 2>/dev/null) || return 0
 	printf '%s' "$body" >"$tmp" 2>/dev/null || { rm -f "$tmp"; return 0; }
 	mv "$tmp" "$path" 2>/dev/null || rm -f "$tmp"
+	current_generation="$(_pulse_pr_list_cache_generation "$@")" || current_generation=""
+	if [[ "$current_generation" != "$expected_generation" ]]; then
+		rm -f "$path" 2>/dev/null || true
+		_pulse_pr_list_cache_record superseded
+		return 0
+	fi
 	_pulse_pr_list_cache_record store
 	return 0
 }
@@ -151,8 +192,23 @@ pulse_pr_list_cache_invalidate_repo() {
 	local dir="${PULSE_PR_LIST_PROVIDER_CACHE_DIR:-${TMPDIR:-/tmp}/aidevops-pulse-pr-list-provider-${$}}"
 	local repo_key=""
 	local path=""
+	local generation_file=""
+	local generation_tmp=""
+	local generation_token=""
 	local rc=0
 	repo_key="$(_pulse_pr_list_cache_key "$repo_slug")" || return 1
+	mkdir -p "$dir" 2>/dev/null || return 1
+	generation_file="${dir}/generation-${repo_key}"
+	generation_token="$(date +%s 2>/dev/null || printf '0')-${$}-${RANDOM}"
+	generation_tmp=$(mktemp "${dir}/.generation-${repo_key}.XXXXXX" 2>/dev/null) || return 1
+	printf '%s' "$generation_token" >"$generation_tmp" 2>/dev/null || {
+		rm -f "$generation_tmp"
+		return 1
+	}
+	mv "$generation_tmp" "$generation_file" 2>/dev/null || {
+		rm -f "$generation_tmp"
+		return 1
+	}
 	if [[ -d "$dir" ]]; then
 		for path in "${dir}/pr-list-${repo_key}-"*.out; do
 			[[ -f "$path" ]] || continue
@@ -174,15 +230,17 @@ pulse_pr_list_cache_invalidate_repo() {
 #######################################
 pulse_pr_list_get() {
 	local cached_output=""
+	local generation=""
+	generation="$(_pulse_pr_list_cache_generation "$@")" || generation="0"
 	if cached_output="$(_pulse_pr_list_cache_get "$@" 2>/dev/null)"; then
 		printf '%s' "$cached_output"
 		return 0
 	fi
 	local output=""
-	output="$(gh_pr_list "$@")"
+	output="$(AIDEVOPS_GH_PR_LIST_CACHE_DISABLE=1 gh_pr_list "$@")"
 	local rc=$?
 	if [[ "$rc" -eq 0 ]]; then
-		_pulse_pr_list_cache_put "$output" "$@"
+		_pulse_pr_list_cache_put "$output" "$generation" "$@"
 		printf '%s' "$output"
 	fi
 	return "$rc"

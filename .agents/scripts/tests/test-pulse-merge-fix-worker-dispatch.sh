@@ -1453,7 +1453,7 @@ test_dispatch_holds_when_ownership_changes_during_transition() {
 	return 0
 }
 
-test_dispatch_holds_prior_ci_head_evidence() {
+test_dispatch_holds_incomplete_prior_ci_head_evidence() {
 	reset_mock_state
 	cat >"${TEST_ROOT}/issue-body.txt" <<'EOF'
 Original issue body.
@@ -1471,12 +1471,42 @@ EOF
 		|| "$(<"${TEST_ROOT}/pr-state.txt")" != "OPEN" \
 		|| "$(<"${TEST_ROOT}/issue-body.txt")" == *"feedback-route:start:ci:PR100:SHAabc123repairsha"* ]] \
 		|| grep -qF 'gh pr close 100' "$GH_LOG" \
-		|| ! grep -qF 'different PR head' "$LOGFILE"; then
-		print_result "prior CI route evidence blocks a new-head close" 1 \
+		|| ! grep -qF 'existing ci route generation is incomplete or ambiguous' "$LOGFILE"; then
+		print_result "incomplete prior CI route evidence blocks a new-head close" 1 \
 			"rc=${dispatch_rc}; body=$(tr '\n' ';' <"${TEST_ROOT}/issue-body.txt"); events=$(tr '\n' ';' <"$EVENT_LOG")"
 		return 0
 	fi
-	print_result "changed-head CI route evidence is preserved for maintainer review" 0
+	print_result "incomplete changed-head CI route evidence is preserved for maintainer review" 0
+	return 0
+}
+
+test_dispatch_supersedes_completed_automation_ci_head_evidence() {
+	reset_mock_state
+	cat >"${TEST_ROOT}/issue-body.txt" <<'EOF'
+Original issue body.
+
+<!-- feedback-route:start:ci:PR100:SHAold123head -->
+<!-- ci-feedback-fallback:PR100:SHAold123head -->
+Previously routed CI feedback.
+<!-- feedback-route:complete:ci:PR100:SHAold123head -->
+EOF
+	printf '%s\n' "origin:worker,auto-dispatch,ci-feedback-routed" >"${TEST_ROOT}/pr-labels.txt"
+	printf '%s\n' "status:in-review,origin:worker,source:ci-feedback" >"${TEST_ROOT}/issue-labels.txt"
+	local dispatch_rc=0
+	_route_ci_repair_fallback "100" "owner/repo" "42" "abc123repairsha" \
+		"feature/worker" "fingerprint" "retry budget exhausted" \
+		"## CI Failure Feedback" "- **Unit**: failure" || dispatch_rc=$?
+
+	if [[ "$dispatch_rc" -ne 0 \
+		|| "$(<"${TEST_ROOT}/pr-state.txt")" != "CLOSED" \
+		|| "$(<"${TEST_ROOT}/issue-body.txt")" != *"feedback-route:complete:ci:PR100:SHAabc123repairsha"* ]] \
+		|| ! grep -qF 'gh pr close 100' "$GH_LOG" \
+		|| ! grep -qF 'superseding completed automation-owned ci route generation' "$LOGFILE"; then
+		print_result "completed automation CI route can advance to a verified new head" 1 \
+			"rc=${dispatch_rc}; body=$(tr '\n' ';' <"${TEST_ROOT}/issue-body.txt"); events=$(tr '\n' ';' <"$EVENT_LOG")"
+		return 0
+	fi
+	print_result "completed automation-owned CI route is superseded by the current head" 0
 	return 0
 }
 
@@ -1967,7 +1997,8 @@ main() {
 	test_feedback_route_accepts_bot_actor_identity
 	test_dispatch_holds_on_head_drift
 	test_dispatch_holds_when_ownership_changes_during_transition
-	test_dispatch_holds_prior_ci_head_evidence
+	test_dispatch_holds_incomplete_prior_ci_head_evidence
+	test_dispatch_supersedes_completed_automation_ci_head_evidence
 	test_dispatch_does_not_transition_started_merged_route
 	test_terminal_guard_rechecks_current_label
 	test_dispatch_holds_reopened_completed_route

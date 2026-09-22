@@ -488,6 +488,9 @@ _ci_repair_write_state() {
 	local attempt="${10:-1}"
 	local status="${11:-preparing}"
 	local session_key="${12:-}"
+	local stage="${13:-$status}"
+	local failure_reason="${14:-}"
+	local next_action="${15:-}"
 	local tmp_file="${state_file}.tmp.$$"
 	local updated_at="" started_at="" outcome_id=""
 	local prior_state="" prior_attempt="" prior_started_at=""
@@ -506,12 +509,14 @@ _ci_repair_write_state() {
 		--arg repo "$repo_slug" --argjson pr "$pr_number" --arg head "$pr_head_sha" \
 		--arg branch "$pr_head_ref" --arg fingerprint "$failure_fingerprint" \
 		--arg worktree "$worktree_path" --argjson pid "$worker_pid" --arg pid_start "$pid_start" \
-		--argjson attempt "$attempt" --arg status "$status" --arg session "$session_key" --arg outcome_id "$outcome_id" \
+		--argjson attempt "$attempt" --arg status "$status" --arg stage "$stage" \
+		--arg failure_reason "$failure_reason" --arg next_action "$next_action" \
+		--arg session "$session_key" --arg outcome_id "$outcome_id" \
 		--argjson started_at "$started_at" --argjson updated_at "$updated_at" \
 		'{repo:$repo,pr:$pr,head:$head,branch:$branch,fingerprint:$fingerprint,
 		worktree:$worktree,pid:$pid,pid_start:$pid_start,attempt:$attempt,status:$status,session:$session,
 		outcome_id:$outcome_id,started_at:$started_at,updated_at:$updated_at,
-		result:"",failure_reason:"",next_action:""}' \
+		stage:$stage,result:"",failure_reason:$failure_reason,next_action:$next_action}' \
 		>"$tmp_file" 2>/dev/null || {
 		rm -f "$tmp_file"
 		return 1
@@ -562,19 +567,51 @@ _ci_repair_sanitize_outcome_value() {
 }
 
 #######################################
+# Project a missing/invalid runtime outcome from the persisted launch state.
+# Output: stage|result|failure_reason|next_action
+#######################################
+_ci_repair_project_state_failure() {
+	local status="$1" stage="$2" stored_failure_reason="$3" stored_next_action="$4"
+	case "$status" in
+	worktree_failed)
+		printf '%s|launch_failed|%s|%s' "${stage:-worktree_creation}" \
+			"${stored_failure_reason:-worktree_failed}" "${stored_next_action:-retry_launch}"
+		;;
+	launch_failed)
+		printf '%s|launch_failed|%s|%s' "${stage:-worker_launch}" \
+			"${stored_failure_reason:-headless_launch_failed}" \
+			"${stored_next_action:-inspect_headless_launch_log_and_retry}"
+		;;
+	preparing)
+		printf '%s|launch_interrupted|headless_launch_interrupted|retry_launch' "${stage:-worker_launch}"
+		;;
+	*)
+		printf '%s|process_exit|%s|%s' "${stage:-worker_runtime}" \
+			"${stored_failure_reason:-headless_outcome_missing}" \
+			"${stored_next_action:-inspect_terminal_outcome}"
+		;;
+	esac
+	return 0
+}
+
+#######################################
 # Project a trusted headless-runtime outcome into stable CI-repair fields.
-# Output: result|failure_reason|next_action|retry_class|session_count|finished_at
+# Output: stage|result|failure_reason|next_action|retry_class|session_count|finished_at
 #######################################
 _ci_repair_project_outcome() {
 	local state_file="$1"
 	local outcome_file="$2"
 	local status="" reason="" retry_class="" session_count="0" finished_at="0"
+	local stage="" stored_failure_reason="" stored_next_action=""
 	local expected_outcome_id="" expected_session="" started_at="0" observed_outcome_id="" observed_session=""
 	local now="0" outcome_present=0 outcome_valid=0 invalid_reason=""
 	local failed_result="failed"
 	local result="$failed_result" failure_reason="" next_action="inspect_terminal_outcome"
 
 	status=$(jq -r '.status // empty' "$state_file" 2>/dev/null) || status=""
+	stage=$(jq -r '.stage // empty' "$state_file" 2>/dev/null) || stage=""
+	stored_failure_reason=$(jq -r '.failure_reason // empty' "$state_file" 2>/dev/null) || stored_failure_reason=""
+	stored_next_action=$(jq -r '.next_action // empty' "$state_file" 2>/dev/null) || stored_next_action=""
 	expected_outcome_id=$(jq -r '.outcome_id // empty' "$state_file" 2>/dev/null) || expected_outcome_id=""
 	expected_session=$(jq -r '.session // empty' "$state_file" 2>/dev/null) || expected_session=""
 	started_at=$(jq -r '.started_at // .updated_at // 0' "$state_file" 2>/dev/null) || started_at=0
@@ -607,29 +644,16 @@ _ci_repair_project_outcome() {
 	fi
 
 	if [[ -z "$reason" ]]; then
-		case "$status" in
-		worktree_failed)
-			result="launch_failed"
-			failure_reason="worktree_failed"
-			next_action="retry_launch"
-			;;
-		preparing)
-			result="launch_interrupted"
-			failure_reason="headless_launch_interrupted"
-			next_action="retry_launch"
-			;;
-		*)
-			result="process_exit"
-			failure_reason="${invalid_reason:-headless_outcome_missing}"
-			next_action="inspect_terminal_outcome"
-			;;
-		esac
+		[[ -z "$stored_failure_reason" ]] && stored_failure_reason="$invalid_reason"
+		IFS='|' read -r stage result failure_reason next_action \
+			<<<"$(_ci_repair_project_state_failure "$status" "$stage" "$stored_failure_reason" "$stored_next_action")"
 	else
+		stage="worker_runtime"
 		failure_reason="$reason"
 		case "$reason" in
 		worker_complete)
 			result="success"
-			failure_reason=""
+			failure_reason="completed"
 			next_action="monitor_pr"
 			;;
 		worker_draft_checkpoint)
@@ -658,7 +682,10 @@ _ci_repair_project_outcome() {
 			;;
 		esac
 	fi
-	printf '%s|%s|%s|%s|%s|%s' "$result" "$failure_reason" "$next_action" \
+	stage=$(_ci_repair_sanitize_outcome_value "${stage:-unknown_stage}")
+	failure_reason=$(_ci_repair_sanitize_outcome_value "${failure_reason:-unknown_failure}")
+	next_action=$(_ci_repair_sanitize_outcome_value "${next_action:-inspect_terminal_outcome}")
+	printf '%s|%s|%s|%s|%s|%s|%s' "$stage" "$result" "$failure_reason" "$next_action" \
 		"$retry_class" "$session_count" "$finished_at"
 	return 0
 }
@@ -671,17 +698,17 @@ _ci_repair_archive_attempt() {
 	local lease_dir="$2"
 	local attempt="$3"
 	local outcome_file="" archive_file="" projection="" tmp_file=""
-	local result="" failure_reason="" next_action="" retry_class="" session_count="0" finished_at="0"
+	local stage="" result="" failure_reason="" next_action="" retry_class="" session_count="0" finished_at="0"
 
 	[[ -f "$state_file" && "$attempt" =~ ^[0-9]+$ ]] || return 1
 	outcome_file=$(_ci_repair_outcome_file "$lease_dir" "$attempt")
 	archive_file="${lease_dir}/state-attempt-${attempt}.json"
 	projection=$(_ci_repair_project_outcome "$state_file" "$outcome_file") || return 1
-	IFS='|' read -r result failure_reason next_action retry_class session_count finished_at <<<"$projection"
+	IFS='|' read -r stage result failure_reason next_action retry_class session_count finished_at <<<"$projection"
 	tmp_file="${state_file}.archive.tmp.$$"
-	jq --arg result "$result" --arg failure_reason "$failure_reason" --arg next_action "$next_action" \
+	jq --arg stage "$stage" --arg result "$result" --arg failure_reason "$failure_reason" --arg next_action "$next_action" \
 		--arg retry_class "$retry_class" --argjson session_count "$session_count" --argjson finished_at "$finished_at" \
-		'. + {result:$result,failure_reason:$failure_reason,next_action:$next_action,retry_class:$retry_class,
+		'. + {stage:$stage,result:$result,failure_reason:$failure_reason,next_action:$next_action,retry_class:$retry_class,
 		session_count:$session_count,finished_at:$finished_at}' "$state_file" >"$tmp_file" 2>/dev/null || {
 		rm -f "$tmp_file"
 		return 1
@@ -704,7 +731,7 @@ _ci_repair_attempt_summary() {
 		[[ -f "$archived_state" ]] || continue
 		shown=$((shown + 1))
 		[[ "$shown" -le 10 ]] || break
-		jq -r '"- Attempt \(.attempt // "unknown"): result=`\(.result // "unknown")`; failure_reason=`\(.failure_reason // "")`; next_action=`\(.next_action // "inspect_terminal_outcome")`"' \
+		jq -r '"- Attempt \(.attempt // "unknown"): stage=`\(.stage // "unknown")`; result=`\(.result // "unknown")`; failure_reason=`\(.failure_reason // "unknown")`; next_action=`\(.next_action // "inspect_terminal_outcome")`"' \
 			"$archived_state" 2>/dev/null || true
 	done
 	return 0
@@ -1025,6 +1052,21 @@ _ci_repair_claim_lease() {
 }
 
 #######################################
+# Persist one bounded worktree-setup diagnostic for the parent shell. The
+# worktree creator runs in command substitution, so globals cannot carry its
+# failure stage back to the lease writer.
+#######################################
+_ci_repair_record_worktree_failure() {
+	local diagnostic_file="$1"
+	local stage="$2"
+	local failure_reason="$3"
+	local next_action="$4"
+	[[ -n "$diagnostic_file" ]] || return 0
+	printf '%s|%s|%s' "$stage" "$failure_reason" "$next_action" >"$diagnostic_file" 2>/dev/null || true
+	return 0
+}
+
+#######################################
 # Create a linked repair worktree at the exact PR head SHA.
 #
 # Output: absolute worktree path.
@@ -1038,6 +1080,8 @@ _ci_repair_create_worktree() {
 	local pr_head_ref="$6"
 	local failure_fingerprint="$7"
 	local attempt="$8"
+	local diagnostic_file="${9:-}"
+	local refresh_head_action="refresh_pr_head_and_retry"
 	local worktree_helper="${AIDEVOPS_WORKTREE_HELPER:-${_PULSE_MERGE_DIR:-${BASH_SOURCE[0]%/*}}/worktree-helper.sh}"
 	local worktree_base="${AIDEVOPS_CI_REPAIR_WORKTREE_BASE_DIR:-${AIDEVOPS_WORKTREE_BASE_DIR:-${HOME}/Git/_worktrees}}"
 	local repo_name=""
@@ -1046,29 +1090,53 @@ _ci_repair_create_worktree() {
 	local worktree_path=""
 	local actual_head=""
 
-	[[ -x "$worktree_helper" ]] || return 1
-	[[ "$pr_head_sha" =~ ^[0-9a-fA-F]{7,64}$ ]] || return 1
-	[[ -n "$pr_head_ref" ]] || return 1
+	[[ -x "$worktree_helper" ]] || {
+		_ci_repair_record_worktree_failure "$diagnostic_file" "worktree_preflight" \
+			"worktree_helper_unavailable" "restore_worktree_helper_and_retry"
+		return 1
+	}
+	[[ "$pr_head_sha" =~ ^[0-9a-fA-F]{7,64}$ && -n "$pr_head_ref" ]] || {
+		_ci_repair_record_worktree_failure "$diagnostic_file" "head_validation" \
+			"invalid_pr_head_identity" "$refresh_head_action"
+		return 1
+	}
 	if ! git -C "$repo_path" cat-file -e "${pr_head_sha}^{commit}" 2>/dev/null; then
-		git -C "$repo_path" fetch --no-tags --quiet origin "$pr_head_ref" >/dev/null 2>&1 || return 1
+		git -C "$repo_path" fetch --no-tags --quiet origin "$pr_head_ref" >/dev/null 2>&1 || {
+			_ci_repair_record_worktree_failure "$diagnostic_file" "head_fetch" \
+				"pr_head_fetch_failed" "verify_remote_branch_access_and_retry"
+			return 1
+		}
 	fi
-	git -C "$repo_path" cat-file -e "${pr_head_sha}^{commit}" 2>/dev/null || return 1
+	git -C "$repo_path" cat-file -e "${pr_head_sha}^{commit}" 2>/dev/null || {
+		_ci_repair_record_worktree_failure "$diagnostic_file" "head_validation" \
+			"pr_head_commit_unavailable" "$refresh_head_action"
+		return 1
+	}
 
 	repo_name=$(basename "$repo_path")
 	repo_hash=$(_ci_repair_hash_text "$repo_slug") || return 1
 	repair_branch="repair/${repo_hash}-pr-${pr_number}-${pr_head_sha:0:12}-${failure_fingerprint:0:12}-a${attempt}"
 	worktree_path="${worktree_base}/${repo_name}-${repo_hash}-ci-repair-pr${pr_number}-${pr_head_sha:0:12}-${failure_fingerprint:0:12}-a${attempt}"
-	mkdir -p "$worktree_base" 2>/dev/null || return 1
+	mkdir -p "$worktree_base" 2>/dev/null || {
+		_ci_repair_record_worktree_failure "$diagnostic_file" "worktree_base" \
+			"worktree_base_unavailable" "restore_worktree_storage_and_retry"
+		return 1
+	}
 	if ! (cd "$repo_path" && AIDEVOPS_SKIP_AUTO_CLAIM=1 AIDEVOPS_WORKTREE_BASE_DIR="$worktree_base" "$worktree_helper" add "$repair_branch" "$worktree_path" \
 		--base "$pr_head_sha" --issue "$linked_issue") >>"$LOGFILE" 2>&1; then
+		_ci_repair_record_worktree_failure "$diagnostic_file" "worktree_create" \
+			"worktree_helper_failed" "inspect_worktree_helper_log_and_retry"
 		return 1
 	fi
 	actual_head=$(git -C "$worktree_path" rev-parse HEAD 2>/dev/null) || actual_head=""
 	if [[ "$actual_head" != "$pr_head_sha" ]]; then
 		echo "[pulse-wrapper] _dispatch_ci_repair_session: repair worktree head mismatch for PR #${pr_number}: expected ${pr_head_sha}, got ${actual_head:-unknown}" >>"$LOGFILE"
 		(cd "$repo_path" && "$worktree_helper" remove "$worktree_path" --force) >>"$LOGFILE" 2>&1 || true
+		_ci_repair_record_worktree_failure "$diagnostic_file" "head_verification" \
+			"worktree_head_mismatch" "$refresh_head_action"
 		return 1
 	fi
+	rm -f "$diagnostic_file" 2>/dev/null || true
 	printf '%s' "$worktree_path"
 	return 0
 }
@@ -1150,6 +1218,8 @@ _ci_repair_launch_worker() {
 	local process_start=""
 	local session_identity=""
 	local dispatched_status=""
+	local worktree_failure_file="" worktree_failure=""
+	local failure_stage="worktree_create" failure_reason="worktree_failed" failure_next_action="retry_launch"
 	local runner_login=""
 	local wait_count=0
 	local wait_max="${AIDEVOPS_CI_REPAIR_SESSION_LOCK_WAIT_STEPS:-200}"
@@ -1366,12 +1436,20 @@ _dispatch_ci_repair_session() {
 	if [[ -n "$worktree_path" && -d "$worktree_path" ]]; then
 		echo "[pulse-wrapper] _dispatch_ci_repair_session: resuming stale repair worktree ${worktree_path} for ${repo_slug} PR #${pr_number} attempt ${attempt}/${max_attempts}" >>"$LOGFILE"
 	else
+		worktree_failure_file="${lease_dir}/worktree-failure.state"
+		rm -f "$worktree_failure_file" 2>/dev/null || true
 		worktree_path=$(_ci_repair_create_worktree "$repo_path" "$repo_slug" "$linked_issue" "$pr_number" "$pr_head_sha" \
-			"$pr_head_ref" "$failure_fingerprint" "$attempt") || worktree_path=""
+			"$pr_head_ref" "$failure_fingerprint" "$attempt" "$worktree_failure_file") || worktree_path=""
 	fi
 	if [[ -z "$worktree_path" || ! -d "$worktree_path" ]]; then
+		if [[ -f "$worktree_failure_file" ]]; then
+			worktree_failure=$(<"$worktree_failure_file")
+			IFS='|' read -r failure_stage failure_reason failure_next_action <<<"$worktree_failure"
+		fi
 		_ci_repair_write_state "${lease_dir}/state.json" "$repo_slug" "$pr_number" "$pr_head_sha" "$pr_head_ref" \
-			"$failure_fingerprint" "" "0" "" "$attempt" "worktree_failed" "$session_key" || true
+			"$failure_fingerprint" "" "0" "" "$attempt" "worktree_failed" "$session_key" \
+			"${failure_stage:-worktree_create}" "${failure_reason:-worktree_failed}" \
+			"${failure_next_action:-retry_launch}" || true
 		return 1
 	fi
 	_ci_repair_prepare_attempt "${lease_dir}/state.json" "$repo_slug" "$pr_number" "$pr_head_sha" "$pr_head_ref" \
