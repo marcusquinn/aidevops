@@ -3,10 +3,11 @@
 
 # Jev research ledger
 
-Research date: **2026-09-20**. This is evidence and inspiration, not runtime
-instructions or an endorsement of externally supplied code. Recheck mutable
-models, licences, commercial terms and availability before adopting them. No
-private account identity, keys, customer data or live benchmark results belong here.
+Research date: **2026-09-20**, with the Kev entry reviewed **2026-09-22**. This
+is evidence and inspiration, not runtime instructions or an endorsement of
+externally supplied code. Recheck mutable models, licences, commercial terms and
+availability before adopting them. No private account identity, keys, customer
+data or live benchmark results belong here.
 
 ## Primary sources
 
@@ -35,6 +36,7 @@ or any project training from service outputs. This ledger is not legal advice.
 | --- | --- | --- |
 | [simple-jev](https://github.com/featherless-ai/simple-jev) / [demo](https://simple-jev.featherless.ai/) | Shared prefix/KV reuse and constrained token probabilities over other models | Not original Jev; licence unconfirmed in review; never submit private data to the public demo |
 | [jevmlx](https://github.com/bnsd55/jevmlx) | Local Apple Silicon structured classification using MLX | MIT at review; model licences separate; approximate interface, not equivalent calibration |
+| [Kev](https://github.com/jaredpalmer/kev) | Local open-weight decision models with a System One-compatible API and optional independent fine-tuning | Experimental alpha, not Jev; repository is Apache-2.0 but model and dataset terms need separate review; the unauthenticated server is for loopback use only; compatibility and performance claims are not independently verified |
 | [jev-ultrafast](https://github.com/browser-use/jev-ultrafast) | Batched action/target decisions, reduced browser round trips | Real TypeSafe API; MIT at review; task-specific speed evidence, incomplete browser feature coverage |
 | [jev-cdp](https://github.com/kbitgood/jev-cdp) | Bun/TypeScript CDP adaptation | Real API; MIT at review; powerful browser access demands isolation |
 | [fast-jev-compaction](https://github.com/tamaratran/fast-jev-compaction) | Retain/discard decisions for tool history | Not adopted: external conversation-derived state and possible loss of needed evidence |
@@ -45,6 +47,12 @@ security audit. Do not install community hooks from these links automatically.
 Open weights of a base model do not establish a right to copy service behaviour
 using Jev responses; train independent alternatives only on appropriately licensed,
 independently obtained data and review the applicable agreements.
+
+Kev is an awareness-only experimental option: aidevops does not install its
+dependencies, download weights, start its server or route decisions to it. A future
+pilot should pin a release and checksums, remain loopback-only, use approved public
+non-personal fixtures, preserve the existing route and compare accepted outcomes
+through the reversible private evaluation workflow before any integration.
 
 ## Social context
 
