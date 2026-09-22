@@ -332,8 +332,16 @@ _preflight_label_maintenance() {
 	# parent can actually be consolidated instead of sitting forever.
 	_preflight_rest_core_allows_next "label_maintenance_consolidation_backfill" || return 0
 	local _ss1=$SECONDS
-	_backfill_stale_consolidation_labels
-	_log_substage_timing "substage:label_maintenance/backfill_consolidation_labels" "$_ss1" 0
+	local _backfill_rc=0
+	# GH#32259: this sweep spans multiple repos and can block on a stalled gh
+	# transport. Bound the whole optional pass independently of the outer
+	# preflight stage, so simplification and the post-label refill can proceed.
+	run_stage_with_timeout "substage:label_maintenance/backfill_consolidation_labels" 300 \
+		_preflight_backfill_consolidation_bounded || _backfill_rc=$?
+	_log_substage_timing "substage:label_maintenance/backfill_consolidation_labels" "$_ss1" "$_backfill_rc"
+	if [[ "$_backfill_rc" -ne 0 ]]; then
+		echo "[pulse-wrapper] Consolidation backfill incomplete (exit=${_backfill_rc}); continuing label maintenance" >>"$LOGFILE"
+	fi
 
 	_preflight_rest_core_allows_next "label_maintenance_simplification_reevaluate" || return 0
 	local _ss2=$SECONDS
@@ -341,6 +349,18 @@ _preflight_label_maintenance() {
 	_log_substage_timing "substage:label_maintenance/reevaluate_simplification_labels" "$_ss2" 0
 
 	return 0
+}
+
+# Propagate the pass deadline to shared bounded GitHub adapters used by the
+# backfill's callees. The stage watchdog remains the final guard for direct gh
+# calls and other blocking operations in the legacy consolidation helpers.
+_preflight_backfill_consolidation_bounded() {
+	local AIDEVOPS_GH_DEADLINE_EPOCH
+	AIDEVOPS_GH_DEADLINE_EPOCH=$(date +%s) || return 1
+	AIDEVOPS_GH_DEADLINE_EPOCH=$((AIDEVOPS_GH_DEADLINE_EPOCH + 300))
+	export AIDEVOPS_GH_DEADLINE_EPOCH
+	_backfill_stale_consolidation_labels
+	return $?
 }
 
 #######################################
