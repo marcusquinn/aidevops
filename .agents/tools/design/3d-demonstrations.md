@@ -29,10 +29,20 @@ python3 ~/.aidevops/agents/scripts/creative-demo-helper.py build ./kitchen --run
 
 The destination needs an existing parent inside the current workspace. Symlink
 destinations, traversal outside the workspace and existing run names are refused.
-Use `--blender /absolute/executable` or `--freecad /absolute/executable` when PATH
-and the standard macOS app locations do not apply. `--timeout` is a per-app limit
-(1–900 seconds). Blender uses four threads and defaults to 32 Cycles samples;
-`--samples 16|32|64|128` changes that explicit quality/time trade-off.
+On macOS, an empty `command -v blender` or `command -v freecadcmd` does **not**
+prove the app is absent: the helper checks PATH, then the executable inside
+`/Applications/Blender.app/Contents/MacOS/Blender` or
+`/Applications/FreeCAD.app/Contents/Resources/bin/freecadcmd`. Confirm the
+actual executable and its `--version` result before reporting unavailability;
+a silent `test -x` alone is not evidence of failure without its exit status.
+Use `--blender /absolute/executable` or `--freecad /absolute/executable` for
+nonstandard installs. Native CLI availability does not establish MCP bridge
+readiness or code-execution consent; follow `blender.md` or `freecad.md` for
+their separate isolation, approval and connection gates.
+
+`--timeout` is a per-app limit (1–900 seconds). Blender uses four threads and
+defaults to 32 Cycles samples; `--samples 16|32|64|128` changes that explicit
+quality/time trade-off.
 
 Edit `project.json`, then build a **new** named run. The lamp has height, shade
 width, shade tilt and brass/nickel finish parameters. The kitchen has module

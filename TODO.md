@@ -1406,6 +1406,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18472 Improve 3D demo build progress and compact manifests ref:GH#32255 pr:#32256 completed:2026-09-22
 
+- [ ] t18473 Document macOS Blender and FreeCAD native-app discovery ref:GH#32260
+
 ## In Progress
 
 - [x] t18430 Update OpenCode GitHub Action pin to v1.18.30 #auto-dispatch #dependencies #github_actions #interactive #tier:simple ref:GH#31828 started:2026-09-12 pr:#31829 completed:2026-09-12
