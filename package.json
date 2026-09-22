@@ -70,10 +70,10 @@
     "@secretlint/secretlint-rule-preset-recommend": "13.0.5",
     "@types/bun": "1.4.2",
     "@types/react": "19.2.18",
-    "@types/react-dom": "19.2.7",
+    "@types/react-dom": "19.3.0",
     "ajv": "8.20.0",
     "react": "19.2.8",
-    "react-dom": "19.2.8",
+    "react-dom": "19.3.0",
     "secretlint": "13.0.5",
     "typescript": "7.0.2"
   },
