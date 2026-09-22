@@ -6,30 +6,20 @@ import argparse
 import csv
 import hashlib
 import json
-import math
 import os
 import re
 import shutil
 import subprocess
 import struct
 import sys
-import threading
-import time
-from collections import Counter
 from pathlib import Path
 
 from _creative_demo_model import DEFAULTS, model
+from _creative_demo_progress import progress, run_app
+from _creative_demo_summary import scene_summary, verified_summary
 
 SCRIPTS = Path(__file__).resolve().parent
 TEMPLATES = SCRIPTS.parent / "templates"
-APP_STAGES = {
-    "blender": {"geometry", "exported", "rendering", "saved"},
-    "freecad": {"solids", "native-saved", "roundtrip"},
-}
-
-
-def progress(phase):
-    print(f"AIDEVOPS_PROGRESS: {phase}", flush=True)
 
 
 def within_workspace(value):
@@ -73,99 +63,6 @@ def write_parts(out, scene):
         writer.writerow(["part_id", "assembly", "kind", "material", "x_m", "y_m", "z_m", "quantity"])
         for item in scene["parts"]:
             writer.writerow([item["id"], item["assembly"], item["kind"], item["material"], *item["size"], 1])
-
-
-def run_app(command, out, name, timeout):
-    env = {key: value for key, value in os.environ.items() if key in
-           ("PATH", "HOME", "USER", "LANG", "LC_ALL", "SYSTEMROOT", "WINDIR", "DISPLAY", "XDG_RUNTIME_DIR")}
-    env["TMPDIR"] = str(out)
-    progress(f"{name}:started (limit={timeout}s; log={name}.log)")
-    stop = threading.Event()
-    stage_path = out / f"{name}.stage"
-
-    def observe_stages():
-        last = None
-        while True:
-            try:
-                stage = stage_path.read_text(encoding="utf-8").strip()
-            except FileNotFoundError:
-                stage = None
-            if stage in APP_STAGES[name] and stage != last:
-                progress(f"{name}:{stage}")
-                last = stage
-            if stop.wait(0.25):
-                break
-        # An app can finish between polling intervals; retain its last stage.
-        try:
-            stage = stage_path.read_text(encoding="utf-8").strip()
-        except FileNotFoundError:
-            return
-        if stage in APP_STAGES[name] and stage != last:
-            progress(f"{name}:{stage}")
-
-    started = time.monotonic()
-    with (out / f"{name}.log").open("x", encoding="utf-8") as log:
-        watcher = threading.Thread(target=observe_stages, daemon=True)
-        watcher.start()
-        try:
-            result = subprocess.run(command, env=env, stdin=subprocess.DEVNULL, stdout=log,
-                                    stderr=subprocess.STDOUT, timeout=timeout, check=False)
-        finally:
-            stop.set()
-            watcher.join()
-    if result.returncode:
-        raise ValueError(f"{name} failed with exit {result.returncode}; inspect its retained run log")
-    progress(f"{name}:completed (elapsed_s={time.monotonic()-started:.1f})")
-
-
-def scene_summary(scene):
-    return {"schema_version": 1, "demo": scene["demo"], "units": scene["units"],
-            "parameters": scene["parameters"], "source_hash": scene["source_hash"],
-            "recipe_hash": scene["recipe_hash"], "part_count": len(scene["parts"]),
-            "assemblies": dict(sorted(Counter(item["assembly"] for item in scene["parts"]).items())),
-            "details": {"recipe": "scene.json", "parts": "parts.csv"}}
-
-
-def verified_summary(out, scene, exported, cad):
-    def report(name):
-        path = out / name
-        if path.is_symlink() or path.stat().st_size > 2*1024*1024:
-            raise ValueError(f"Invalid {name}; inspect the retained app log")
-        return json.loads(path.read_text(encoding="utf-8"))
-
-    visual = report("verification.json")
-    expected = [item["id"] for item in scene["parts"]]
-    if (visual.get("source_hash") != scene["source_hash"] or visual.get("recipe_hash") != scene["recipe_hash"]
-            or visual.get("units") != scene["units"] or visual.get("part_count") != exported
-            or visual.get("part_ids") != expected or not isinstance(visual.get("blender"), str)):
-        raise ValueError("Blender verification disagrees with the recipe or GLB")
-    result = {"exported_meshes": exported, "blender_version": visual["blender"],
-              "mesh_part_ids_matched": True}
-    if cad:
-        engineering = report("cad-verification.json")
-        solids = engineering.get("parts")
-        solid_ids = [item["id"] for item in scene["parts"] if item["kind"] in ("box", "cylinder", "ring")]
-        excluded_ids = [item["id"] for item in scene["parts"] if item["kind"] not in ("box", "cylinder", "ring")]
-        expected_width = (scene["parameters"]["modules"]*scene["parameters"]["module_width"]+.05)*1000
-        if (engineering.get("source_hash") != scene["source_hash"]
-                or engineering.get("recipe_hash") != scene["recipe_hash"]
-                or engineering.get("units") != "mm" or not isinstance(solids, list)
-                or not all(isinstance(part, dict) for part in solids)
-                or [part.get("part_id") for part in solids] != solid_ids
-                or any(part.get("valid") is not True or not isinstance(part.get("volume_mm3"), (int, float))
-                       or not math.isfinite(part["volume_mm3"]) or part["volume_mm3"] <= 0 for part in solids)
-                or engineering.get("step_reimported_solids") != len(solids)
-                or engineering.get("native_reopened") is not True
-                or engineering.get("excluded_reference_geometry") != excluded_ids
-                or not isinstance(engineering.get("worktop_width_mm"), (int, float))
-                or not math.isclose(engineering["worktop_width_mm"], expected_width, abs_tol=.001)
-                or not isinstance(engineering.get("freecad"), list)):
-            raise ValueError("CAD verification disagrees with the recipe or STEP round trip")
-        result["cad"] = {"valid_solids": len(solids), "step_reimported_solids": len(solids),
-                         "worktop_width_mm": engineering["worktop_width_mm"],
-                         "freecad_version": engineering["freecad"],
-                         "excluded_reference_count": len(engineering["excluded_reference_geometry"])}
-    return result
 
 
 def verify_glb(path, scene):
