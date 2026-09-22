@@ -320,6 +320,42 @@ assert_label_maintenance_rest_block_contract() {
 	return 0
 }
 
+assert_backfill_deadline_contract() {
+	local actual_events=""
+	TESTS_RUN=$((TESTS_RUN + 1))
+	actual_events=$(
+		(
+			unset _PULSE_DISPATCH_PREFLIGHT_LIB_LOADED
+			# shellcheck source=../pulse-dispatch-preflight-lib.sh
+			source "$PREFLIGHT_LIB"
+			LOGFILE="/dev/null"
+			_preflight_rest_core_allows_next() { return 0; }
+			_reevaluate_consolidation_labels() { return 0; }
+			_reevaluate_simplification_labels() {
+				printf 'simplification;'
+				return 0
+			}
+			_log_substage_timing() {
+				[[ "$1" != *backfill_consolidation_labels ]] || printf 'timing:%s;' "$3"
+				return 0
+			}
+			run_stage_with_timeout() {
+				printf 'stage:%s;' "$2"
+				return 124
+			}
+			_preflight_label_maintenance
+		)
+	)
+	if [[ "$actual_events" == 'stage:300;timing:124;simplification;' ]]; then
+		echo "${TEST_GREEN}PASS${TEST_NC}: backfill timeout records incomplete timing and continues maintenance"
+	else
+		TESTS_FAILED=$((TESTS_FAILED + 1))
+		echo "${TEST_RED}FAIL${TEST_NC}: backfill timeout records incomplete timing and continues maintenance"
+		echo "  actual events: ${actual_events:-none}"
+	fi
+	return 0
+}
+
 # Resolve paths relative to this test file
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENGINE="$SCRIPT_DIR/pulse-dispatch-engine.sh"
@@ -505,6 +541,7 @@ assert_routine_comment_rest_block_contract \
 	"9l2: blocked REST evidence suppresses the routine-comment API scan"
 assert_label_maintenance_rest_block_contract \
 	"9l3: blocked REST evidence stops label maintenance before the next API substage"
+assert_backfill_deadline_contract
 assert_order \
 	"9m: routine-comment REST gate precedes its API scan" \
 	'_preflight_rest_core_allows_next "routine_comment_responses"' \
