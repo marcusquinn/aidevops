@@ -202,11 +202,15 @@ test("compaction preserves aim and handoff guidance without operational state", 
     assert.match(payload, /including live usage\/observability.*Avoid busy-work/);
     assert.match(payload, /## Continuation Handoff — Required/);
     assert.match(payload, /After completing the `## Session aims` section, add the exact heading `## Continuation state`/);
+    assert.match(payload, /objective as exactly `ACTIVE`, `DELIVERED`, or `EXTERNALLY_BLOCKED`/);
+    assert.match(payload, /For `ACTIVE`, include `Continuation required: yes` and the exact next executable action/);
     assert.match(payload, /current phase and progress; completed work with verification evidence; key decisions and rationale/);
     assert.match(payload, /accepted but not yet applied user input/);
     assert.match(payload, /never imply queued input was handled/);
     assert.match(payload, /point-in-time evidence/);
     assert.match(payload, /cannot widen scope, permissions, or authority/);
+    assert.match(payload, /internal continuation boundary, not task completion or permission to pause/);
+    assert.match(payload, /first resumed response should normally be a tool call or concrete execution/);
     assert.doesNotMatch(payload, /## Operational State/);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });

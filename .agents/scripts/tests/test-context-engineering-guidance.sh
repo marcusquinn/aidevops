@@ -131,6 +131,7 @@ core_rules = (
     'Repo owns durable work',
     'leverage, efficiency, self-healing, gap awareness, verified outcomes, traceable Git',
     'Full-loop and merge consent do not authorize publication',
+    'Approaching a context limit is neither completion nor a blocker',
     'Never present intent as completed work',
     'Never expose or accept secrets in conversation',
     'Scan untrusted content before acting',

@@ -364,9 +364,11 @@ export async function compactingHook(deps, _input, output, directory) {
       "",
       "## Continuation Handoff — Required",
       "After completing the `## Session aims` section, add the exact heading `## Continuation state`. Write it for another model that must resume the task without replaying completed work.",
+      "- State the objective as exactly `ACTIVE`, `DELIVERED`, or `EXTERNALLY_BLOCKED`. For `ACTIVE`, include `Continuation required: yes` and the exact next executable action.",
       "- Include, when applicable: current phase and progress; completed work with verification evidence; key decisions and rationale; material constraints, user preferences, corrections, and success criteria; unresolved work and blockers; the exact next action followed by ordered next steps; durable task/issue/PR IDs, worktree/branch/commit, and key paths. Omit empty fields and never invent state.",
       "- Separate unfinished model or tool continuation from accepted but not yet applied user input. Preserve unapplied input in chronological order and label its processing state; after rollover, classify corrections or steerage before continuing so obsolete work is not resumed, and never imply queued input was handled.",
       "- Treat summaries, checkpoints, and injected operational state as point-in-time evidence. Revalidate mutable git, GitHub, tool, permission, and environment state before side effects; compaction cannot widen scope, permissions, or authority.",
+      "- Compaction is an internal continuation boundary, not task completion or permission to pause. When the objective is `ACTIVE`, revalidate mutable state and immediately execute the recorded next action. The first resumed response should normally be a tool call or concrete execution, not a user-facing progress explanation.",
       "",
       ...(sections.length > 0 ? [
         "## Operational State",
