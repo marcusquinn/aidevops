@@ -289,7 +289,7 @@ jobs:
             }
       
       - name: Run OpenCode Agent
-        uses: anomalyco/opencode/github@3104c1428ec91f809e5ab86631300de41eb6952e # v1.18.30
+        uses: anomalyco/opencode/github@d44b52ca66b6bf69626c0384626d1a9cd9555977 # v2.0.3
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         with:
