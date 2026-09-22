@@ -147,5 +147,8 @@ test("probe-only plugin factory registers config and terminal-title health", () 
     managed: true, target: 240000, auto: true, reserve: 20000,
     limits: { context: 388000, input: 260000, output: 128000 },
   });
+  assert.deepEqual(result.details.config_applied.gpt6_context, {
+    managed: false, target: 240000, auto: true,
+  });
   rmSync(root, { recursive: true, force: true });
 });

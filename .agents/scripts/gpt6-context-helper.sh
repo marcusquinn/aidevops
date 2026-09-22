@@ -1,0 +1,156 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 Marcus Quinn
+
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+# shellcheck source=shared-constants.sh
+source "${SCRIPT_DIR}/shared-constants.sh"
+
+SETTINGS_FILE="${AIDEVOPS_SETTINGS_FILE:-${HOME}/.config/aidevops/settings.json}"
+OPENCODE_BIN="${OPENCODE_BIN:-opencode}"
+PLUGIN_ENTRY="${AIDEVOPS_PLUGIN_ENTRY:-${HOME}/.aidevops/agents/plugins/opencode-aidevops/index.mjs}"
+
+usage() {
+	cat <<'EOF'
+Usage: aidevops gpt6-context [enable|disable|status]
+
+  enable   Apply a ~240,000 usable-input compaction budget to GPT-6 Sol/Luna.
+  disable  Restore native provider metadata for the managed models (default).
+  status   Show the saved preference and a fresh-process effective-config probe.
+
+The mode covers gpt-6-sol, gpt-6-sol-fast, gpt-6-luna, and gpt-6-luna-fast.
+It preserves model options, variants, and explicit output limits. Other models
+and global compaction settings are unchanged. Preferences survive normal updates.
+Restart OpenCode after changes. A probe cannot update an already running session.
+Earlier compaction is a resource control, not guaranteed subscription savings.
+EOF
+	return 0
+}
+
+requested_state() {
+	local settings='{}'
+	if [[ -f "$SETTINGS_FILE" ]]; then
+		settings=$(jq -sc 'if length == 1 then .[0] else {} end' "$SETTINGS_FILE" 2>/dev/null) || settings='{}'
+	fi
+	jq -r '(try (.runtime.opencode // {}) catch {}) |
+		if type != "object" then {} else . end |
+		if .gpt6_context_cap == true then "true" else "false" end' <<<"$settings"
+	return 0
+}
+
+report_probe() {
+	local receipt="$1" nonce="$2" managed="$3"
+	if ! jq -e --arg nonce "$nonce" --argjson managed "$managed" '
+		.schema == "aidevops.opencode-plugin-health/v1" and .nonce == $nonce and
+		(["imported","factory_initialized","config_applied"] - .stages | length == 0) and
+		(.details.config_applied.gpt6_context |
+		 .target == 240000 and .managed == $managed and (.auto | type == "boolean") and
+		 (if .managed then
+			(["gpt-6-sol","gpt-6-sol-fast","gpt-6-luna","gpt-6-luna-fast"] as $ids |
+			 . as $health |
+			 (.models | type == "object") and
+			 all($ids[]; . as $id | $health.models[$id] |
+				(.reserve | type == "number") and
+				(.limits.input - .reserve == 240000) and
+				(.limits.context == .limits.input + .limits.output)))
+		  else true end))' "$receipt" >/dev/null 2>&1; then
+		printf '%s\n' 'Effective GPT-6 context state: unavailable (missing, stale, or mismatched config evidence)'
+		return 0
+	fi
+	if [[ "$managed" == false ]]; then
+		printf '%s\n' 'Effective GPT-6 context state: native provider metadata confirmed (managed cap disabled)'
+		return 0
+	fi
+	jq -r '.details.config_applied.gpt6_context as $health |
+		($health.models | to_entries[] |
+		"Effective \(.key) limits (new process): context=\(.value.limits.context), input=\(.value.limits.input), output=\(.value.limits.output), reserve=\(.value.reserve)"),
+		(if $health.auto then "Effective GPT-6 compaction target: \($health.target) (applied)"
+		 else "Automatic compaction is disabled; selected limits are applied but no automatic threshold is active" end)' "$receipt"
+	return 0
+}
+
+show_status() (
+	local managed probe_dir nonce
+	managed=$(requested_state)
+	printf 'GPT-6 Sol/Luna ~240K context cap requested: %s\n' "$(if [[ "$managed" == true ]]; then printf enabled; else printf disabled; fi)"
+	printf '%s\n' 'Restart OpenCode after changes; this probe checks a new process, not existing sessions.'
+	if ! command -v "$OPENCODE_BIN" >/dev/null 2>&1; then
+		printf '%s\n' 'Effective GPT-6 context state: unavailable (OpenCode is not installed)'
+		return 0
+	fi
+	local temp_root="${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}"
+	mkdir -p "$temp_root"
+	probe_dir=$(mktemp -d "${temp_root}/gpt6-context.XXXXXX") || return 1
+	trap 'rm -rf "$probe_dir"' EXIT
+	nonce="gpt6-$$-$(date -u '+%Y%m%d%H%M%S')"
+	jq -cn --arg nonce "$nonce" '{nonce:$nonce,stages:[],details:{}}' >"$probe_dir/receipt.json"
+	chmod 600 "$probe_dir/receipt.json"
+	if ! "$OPENCODE_BIN" debug config >"$probe_dir/config.json" 2>"$probe_dir/error.txt" ||
+		! grep -Fq "$PLUGIN_ENTRY" "$probe_dir/config.json" ||
+		[[ ! -f "$PLUGIN_ENTRY" || -L "$PLUGIN_ENTRY" ]]; then
+		printf '%s\n' 'Effective GPT-6 context state: unavailable (managed plugin not discovered)'
+		return 0
+	fi
+	if ! AIDEVOPS_PLUGIN_HEALTH_PROBE_FILE="$probe_dir/receipt.json" \
+		AIDEVOPS_PLUGIN_HEALTH_PROBE_NONCE="$nonce" AIDEVOPS_PLUGIN_HEALTH_PROBE_ONLY=1 \
+		"$OPENCODE_BIN" models openai --verbose >"$probe_dir/models.txt" 2>"$probe_dir/error.txt"; then
+		printf '%s\n' 'Effective GPT-6 context state: unavailable (OpenCode probe failed)'
+		return 0
+	fi
+	report_probe "$probe_dir/receipt.json" "$nonce" "$managed"
+	return 0
+)
+
+set_enabled() (
+	local enabled="$1" settings_dir source_file temp_file
+	settings_dir="${SETTINGS_FILE%/*}"
+	[[ "$settings_dir" != "$SETTINGS_FILE" ]] || settings_dir='.'
+	if [[ -L "$SETTINGS_FILE" || (-e "$SETTINGS_FILE" && ! -f "$SETTINGS_FILE") ]]; then
+		printf '%s\n' 'Error: settings must be a regular, non-symlink file' >&2
+		return 1
+	fi
+	mkdir -p "$settings_dir"
+	temp_file=$(mktemp "${settings_dir}/settings.json.XXXXXX") || return 1
+	trap 'rm -f "$temp_file"' EXIT
+	source_file="$SETTINGS_FILE"
+	[[ -f "$source_file" ]] || source_file=/dev/null
+	if ! jq -s --argjson enabled "$enabled" --arg source "$source_file" '
+		(if length == 0 and $source == "/dev/null" then {} elif length == 1 then .[0] else error("expected one settings document") end) |
+		if type != "object" then error("settings must be an object") else . end |
+		.runtime = (.runtime // {}) | .runtime.opencode = (.runtime.opencode // {}) |
+		.runtime.opencode.gpt6_context_cap = $enabled' "$source_file" >"$temp_file"; then
+		printf '%s\n' 'Error: settings were not changed' >&2
+		return 1
+	fi
+	chmod 600 "$temp_file"
+	mv "$temp_file" "$SETTINGS_FILE"
+	show_status
+	return 0
+)
+
+main() {
+	local action="${1:-status}"
+	case "$action" in
+	help | --help | -h)
+		usage
+		return 0
+		;;
+	esac
+	if ! command -v jq >/dev/null 2>&1; then
+		printf '%s\n' 'Error: jq is required' >&2
+		return 1
+	fi
+	case "$action" in
+	enable | on) set_enabled true ;;
+	disable | off) set_enabled false ;;
+	status) show_status ;;
+	*)
+		usage >&2
+		return 2
+		;;
+	esac
+	return 0
+}
+
+main "$@"

@@ -30,7 +30,7 @@ import { fileURLToPath } from "url";
 import { execSync } from "child_process";
 
 // Extracted modules
-import { createConfigHook, getAstraContextHealth } from "./config-hook.mjs";
+import { createConfigHook, getAstraContextHealth, getGpt6ContextHealth } from "./config-hook.mjs";
 import { adaptToolDefinition } from "./tool-definition.mjs";
 import { createMcpSessionRuntime, getOnDemandMcpAgents } from "./mcp-registry.mjs";
 import { enforceManagedMcpArtifactPath } from "./mcp-activation-tool.mjs";
@@ -371,6 +371,7 @@ export async function AidevopsPlugin({ directory, client }) {
         recordPluginHealthStage("config_applied", {
           gpt56_limits: config.provider?.openai?.models?.["gpt-5.6-sol"]?.limit || null,
           astra_context: getAstraContextHealth(config),
+          gpt6_context: getGpt6ContextHealth(config),
           terminal_title_status: true,
         });
         return result;
@@ -633,6 +634,7 @@ export async function AidevopsPlugin({ directory, client }) {
       recordPluginHealthStage("config_applied", {
         gpt56_limits: config.provider?.openai?.models?.["gpt-5.6-sol"]?.limit || null,
         astra_context: getAstraContextHealth(config),
+        gpt6_context: getGpt6ContextHealth(config),
         terminal_title_status: true,
       });
       return result;

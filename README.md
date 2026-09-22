@@ -216,6 +216,10 @@ bundles, prompt caching, and compaction checkpoints reduce unnecessary context
 without hiding required evidence. Model comparisons and sealed historical replay
 can inform routing, but cannot silently rewrite production policy.
 
+OpenCode users can opt GPT-6 Sol/Luna and their Fast variants into a ~240K
+usable-input budget with `aidevops gpt6-context enable`; `status` verifies the
+saved preference against a fresh process, and `disable` restores native metadata.
+
 See [model routing](.agents/tools/context/model-routing.md),
 [context efficiency](.agents/reference/context-efficiency.md), and
 [model-effort evaluation](.agents/reference/model-effort-evaluation.md).

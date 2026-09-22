@@ -9,8 +9,10 @@ import { tmpdir } from "node:os";
 
 import {
   getAstraContextHealth,
+  getGpt6ContextHealth,
   gpt56ContextCapEnabled,
   registerAstraContextLimits,
+  registerGpt6ContextLimits,
   registerGpt56ContextLimits,
 } from "../config-hook.mjs";
 
@@ -157,4 +159,73 @@ test("Astra opt-out overrides a saved low target; receipts reflect the consumed 
   writeFileSync(file, "{}");
   assert.deepEqual(config, { compaction: { auto: false } });
   assert.deepEqual(getAstraContextHealth(config), { managed: false, target: 240000, auto: false });
+});
+
+test("GPT-6 Sol/Luna cap is opt-in and native metadata is untouched by default", () => {
+  settingsFile(undefined);
+  const config = { provider: { openai: { models: {
+    "gpt-6-sol": { name: "native", limit: { context: 1050000, input: 922000, output: 128000 } },
+  } } } };
+  const before = structuredClone(config);
+  assert.equal(registerGpt6ContextLimits(config), 0);
+  assert.deepEqual(config, before);
+  assert.deepEqual(getGpt6ContextHealth(config), { managed: false, target: 240000, auto: true });
+});
+
+test("GPT-6 Sol/Luna cap covers normal and Fast variants while preserving model fields", () => {
+  settingsFile({ runtime: { opencode: { gpt6_context_cap: true } } });
+  for (const reserved of [undefined, 0, 35000]) {
+    const config = {
+      compaction: reserved === undefined ? {} : { reserved },
+      provider: { openai: { models: {
+        "gpt-6-sol": {
+          name: "Sol custom",
+          variants: { high: { reasoningEffort: "high" } },
+          limit: { context: 1050000, input: 922000, output: 4000 },
+        },
+        "gpt-6-sol-fast": { options: { serviceTier: "priority" } },
+        "gpt-6-luna-fast": { options: { serviceTier: "priority" }, limit: { output: 64000 } },
+        unrelated: { limit: { input: 123 } },
+      } } },
+    };
+    assert.equal(registerGpt6ContextLimits(config), 4);
+    for (const id of ["gpt-6-sol", "gpt-6-sol-fast", "gpt-6-luna", "gpt-6-luna-fast"]) {
+      const limits = config.provider.openai.models[id].limit;
+      const reserve = reserved ?? Math.min(20000, limits.output);
+      assert.equal(limits.input - reserve, 240000);
+      assert.equal(limits.context, limits.input + limits.output);
+    }
+    assert.equal(config.provider.openai.models["gpt-6-sol"].name, "Sol custom");
+    assert.deepEqual(config.provider.openai.models["gpt-6-sol"].variants, { high: { reasoningEffort: "high" } });
+    assert.deepEqual(config.provider.openai.models["gpt-6-sol-fast"].options, { serviceTier: "priority" });
+    assert.deepEqual(config.provider.openai.models["gpt-6-luna-fast"].options, { serviceTier: "priority" });
+    assert.deepEqual(config.provider.openai.models.unrelated, { limit: { input: 123 } });
+    assert.equal(getGpt6ContextHealth(config).managed, true);
+    assert.equal(Object.keys(getGpt6ContextHealth(config).models).length, 4);
+  }
+});
+
+test("GPT-6 Sol/Luna cap fails closed to native metadata for missing or malformed settings", () => {
+  for (const value of [{}, { runtime: { opencode: { gpt6_context_cap: "true" } } }]) {
+    settingsFile(value);
+    const config = {};
+    assert.equal(registerGpt6ContextLimits(config), 0);
+    assert.deepEqual(config, {});
+  }
+  const file = settingsFile({});
+  writeFileSync(file, "not-json");
+  const config = {};
+  assert.equal(registerGpt6ContextLimits(config), 0);
+  assert.deepEqual(config, {});
+});
+
+test("GPT-6 Sol/Luna cap leaves GPT-5.6 and Astra behavior independent", () => {
+  settingsFile({ runtime: { opencode: { gpt6_context_cap: true, gpt56_context_cap: false, astra_context_cap: false } } });
+  const config = { provider: { openai: { models: {
+    "gpt-5.6-sol": { name: "untouched GPT-5.6" },
+    "gpt-6-astra": { name: "untouched Astra" },
+  } } } };
+  registerGpt6ContextLimits(config);
+  assert.deepEqual(config.provider.openai.models["gpt-5.6-sol"], { name: "untouched GPT-5.6" });
+  assert.deepEqual(config.provider.openai.models["gpt-6-astra"], { name: "untouched Astra" });
 });

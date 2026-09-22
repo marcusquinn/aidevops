@@ -62,6 +62,7 @@
 |-----|------|---------|---------|-------------|
 | `runtime.opencode.astra_context_cap` | boolean | `true` | -- | Manage Astra limits; `false` leaves provider/user metadata untouched. |
 | `runtime.opencode.astra_compaction_target` | number | `240000` | -- | Usable input target matching GPT-5.6; `400000` opts into an extended Astra budget and other values fall back to `240000`. |
+| `runtime.opencode.gpt6_context_cap` | boolean | `false` | -- | Opt into a ~240K usable-input budget for GPT-6 Sol/Luna and their Fast variants; `false` leaves native metadata untouched. |
 
 Use `aidevops astra-context enable` to select the default 240K target and enable
 the managed cap. `disable` selects the extended 400K target without clearing an existing native-metadata
@@ -70,6 +71,12 @@ evidence. Restart OpenCode after changes. These are file-only preferences, read
 at startup and retained by normal updates; no environment override is defined.
 The CLI/plugin support `AIDEVOPS_SETTINGS_FILE` for isolated probes and tests.
 Earlier compaction is not a guarantee of subscription savings.
+
+Use `aidevops gpt6-context enable` to opt GPT-6 Sol, Sol Fast, Luna, and
+Luna Fast into a ~240K usable-input compaction budget. `disable` restores native
+provider metadata on the next OpenCode start. `status` reports the saved setting
+and validates nonce-bound fresh-process config evidence without changing global
+compaction settings or unrelated models.
 
 Model routing is configured separately through
 `configs/model-routing-table.json`; the obsolete `settings.json`
