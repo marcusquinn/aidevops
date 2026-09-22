@@ -637,7 +637,7 @@ Session baseline grew from ~9.5k tokens (Mar 1) to ~21.8k tokens (Mar 27) in pro
 - [x] t18455 Optional read-only Google Ads and Meta account connectors #enhancement #interactive #auto-dispatch tier:standard parent:t18444 blocked-by:t18447,t18451 ref:GH#32067 logged:2026-09-20 -> [todo/tasks/t18455-brief.md] pr:#32191 completed:2026-09-21
 - [x] t18456 Optional Jev batch adapter with authorized-runtime fallback #enhancement #interactive #auto-dispatch tier:standard parent:t18444 blocked-by:t18455 ref:GH#32068 logged:2026-09-20 -> [todo/tasks/t18456-brief.md] pr:#32195 completed:2026-09-22
 - [ ] t18457 Approval-bound local marketing changes and rollback #enhancement #interactive #auto-dispatch tier:thinking parent:t18444 blocked-by:t18454,t18456 ref:GH#32069 logged:2026-09-20 -> [todo/tasks/t18457-brief.md]
-- [ ] t18458 Integrate decision agents, commands and disabled routine templates #enhancement #interactive #auto-dispatch tier:standard parent:t18444 blocked-by:t18457 ref:GH#32070 logged:2026-09-20 -> [todo/tasks/t18458-brief.md]
+- [x] t18458 Integrate decision agents, commands and disabled routine templates #enhancement #interactive #auto-dispatch tier:standard parent:t18444 blocked-by:t18457 ref:GH#32070 logged:2026-09-20 -> [todo/tasks/t18458-brief.md] pr:#32203 completed:2026-09-22
 
 ### Native Prospecting and Reddit SEO Workbench
 
