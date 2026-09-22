@@ -65,6 +65,7 @@ subagents:
 - **Off-site experiments**: `youtube-description-link-acquisition` (contextual sponsored placements in already-ranking videos; controlled measurement and link-spam guardrails)
 - **AI search**: `geo-strategy` (criteria extraction, retrieval-first) | `sro-grounding` (snippet selection) | `ai-hallucination-defense` (claim-evidence audits) | `ai-agent-discovery` (discoverability) | `ai-search-readiness` (end-to-end orchestration)
 - **Decision handoff**: `/marketing-decisions` and `workflows/marketing-decisions.md` join imported SEO/GEO evidence to bounded matching, link-review, disposition, visibility, and report proposals. They are offline and non-mutating; provider readiness and action approval remain separate.
+- **Prospecting Reddit SEO**: `/prospecting` routes private, evidence-linked community and SERP observations to `marketing-sales/prospecting.md`; it does not scrape, post, message, or claim ranking outcomes.
 - **Media/debug**: `image-seo` (alt text, Moondream) | `upscale` | `moondream` | `rich-results` (browser automation) | `debug-opengraph` | `debug-favicon`
 - **Export**: `data-export` (GSC, Bing, Ahrefs, DataForSEO → TOON) | `gsc-sitemaps` (Playwright submission)
 

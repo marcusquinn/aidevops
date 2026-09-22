@@ -1,0 +1,6 @@
+{
+  "schema": "aidevops.prospecting-integration/v1",
+  "scenario": "offline",
+  "stages": ["product-evidence", "reviewed-discovery", "capture", "scoring", "disposition", "seo", "insights", "usage-preview", "api-mcp-ui"],
+  "external_messages": false
+}

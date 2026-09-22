@@ -43,6 +43,7 @@ Marketing agent: strategy, campaigns, paid ads (Meta/Google), email, landing pag
 - **Creator link placements**: `seo/youtube-description-link-acquisition.md` owns target selection, experiment design, measurement, disclosure, and search-policy guardrails; Marketing-Sales owns creator outreach and commercial terms.
 - **PR / journalists**: `pr.md` owns earned media, press strategy, journalist research, media lists, newsjacking, and pitch critique. Journalists are not sales leads; do not route them through cold-outreach automation.
 - **Decision handoff**: `/marketing-decisions` joins imported Google/creative/community evidence into offline report and dry-run action proposals. It does not activate providers, schedules, campaigns, accounts, or spending.
+- **Private prospecting**: `/prospecting` coordinates local-first evidence, lead scoring, Reddit SEO, insights, scoped REST/MCP, and the workbench. Start with `marketing-sales/prospecting.md`; it never sends outreach or activates providers/schedules by default.
 
 **Paid Advertising & CRO** ([Indexsy Skills](https://github.com/Indexsy-Skills/skills)):
 
