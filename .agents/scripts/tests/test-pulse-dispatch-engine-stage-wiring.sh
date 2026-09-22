@@ -331,7 +331,10 @@ assert_backfill_deadline_contract() {
 			LOGFILE="/dev/null"
 			_preflight_rest_core_allows_next() { return 0; }
 			_reevaluate_consolidation_labels() { return 0; }
-			_reevaluate_simplification_labels() { printf 'simplification;'; return 0; }
+			_reevaluate_simplification_labels() {
+				printf 'simplification;'
+				return 0
+			}
 			_log_substage_timing() {
 				[[ "$1" != *backfill_consolidation_labels ]] || printf 'timing:%s;' "$3"
 				return 0
