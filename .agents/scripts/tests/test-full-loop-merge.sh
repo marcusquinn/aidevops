@@ -1502,6 +1502,41 @@ create_prospective_fetch_fixture() {
 	return 0
 }
 
+test_todo_duplicate_report_large_baseline() {
+	local baseline="${TEST_ROOT}/large-baseline.todo"
+	local candidate="${TEST_ROOT}/large-candidate.todo"
+	local task_number="1" output="" rc=0 elapsed=0
+
+	while [[ "$task_number" -le 2500 ]]; do
+		printf -- '- [ ] t%s Task %s ref:GH#%s\n' "$task_number" "$task_number" "$task_number" >>"$baseline"
+		task_number=$((task_number + 1))
+	done
+	cp "$baseline" "$candidate"
+	SECONDS=0
+	output=$(source "${SCRIPT_DIR}/../issue-sync-pr-task-resolver.sh" &&
+		todo_duplicate_report "$candidate" "$baseline") || rc=$?
+	elapsed=$SECONDS
+	print_result "prospective TODO: large unique baseline passes within bound" \
+		"$([[ "$rc" -eq 0 && "$elapsed" -lt 5 ]] && printf '0' || printf '1')" \
+		"rc=$rc elapsed=${elapsed}s output=$output"
+
+	rc=0
+	printf -- '- [ ] t2500 Duplicate task ref:GH#2500\n' >>"$candidate"
+	SECONDS=0
+	output=$(source "${SCRIPT_DIR}/../issue-sync-pr-task-resolver.sh" &&
+		todo_duplicate_report "$candidate" "$baseline") || rc=$?
+	elapsed=$SECONDS
+	print_result "prospective TODO: large introduced duplicate is bounded and reported" \
+		"$([[ "$rc" -eq 1 && "$elapsed" -lt 5 && "$output" == *"Duplicate task ID: t2500"* ]] && printf '0' || printf '1')" \
+		"rc=$rc elapsed=${elapsed}s output=$output"
+
+	rc=0
+	output=$(source "${SCRIPT_DIR}/../issue-sync-pr-task-resolver.sh" &&
+		todo_duplicate_report "$candidate" "${TEST_ROOT}/missing-baseline.todo") || rc=$?
+	print_result "prospective TODO: unreadable baseline remains indeterminate" "$([[ "$rc" -eq 2 ]] && printf '0' || printf '1')" "rc=$rc"
+	return 0
+}
+
 test_prospective_todo_merge_guard() {
 	local fixture_dir="" fixture_root="" base_sha="" head_sha="" remote_url="" supervisor_workspace="" output="" rc=0 objects_before="" objects_after=""
 	local cleanup_rc=0 environment_rc=0 isolation_rc=0 storage_before="" storage_after="" absent_before=0 absent_after=0
@@ -1700,6 +1735,7 @@ main() {
 	test_invalid_squash_title_blocks_before_merge
 	test_non_squash_skips_subject_override
 	test_checkout_free_publication_readiness_handoff
+	test_todo_duplicate_report_large_baseline
 	test_prospective_todo_merge_guard
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"

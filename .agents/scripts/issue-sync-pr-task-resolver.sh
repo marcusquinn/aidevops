@@ -9,23 +9,20 @@
 # guards agree about what constitutes a mapping.
 todo_mapping_keys() {
 	local todo_file="$1"
-	local line=""
-	local task_id=""
-	local issue_refs=""
 
 	[[ -f "$todo_file" ]] || return 1
-	while IFS= read -r line; do
-		if ! [[ "$line" =~ ^[[:space:]]*-[[:space:]]\[.\][[:space:]]+(t[0-9]+(\.[0-9]+)*)([[:space:]]|$) ]]; then
-			continue
-		fi
-		task_id="${BASH_REMATCH[1]}"
-		printf 'task:%s\n' "$task_id"
-		issue_refs=$(printf '%s\n' "$line" | grep -oE 'ref:GH#[0-9]+' || true)
-		if [[ -n "$issue_refs" ]]; then
-			printf '%s\n' "$issue_refs" | sed 's/^ref:GH#/issue:/'
-		fi
-	done <"$todo_file"
-	return 0
+	awk '
+		/^[[:space:]]*-[[:space:]]\[[^]]\][[:space:]]+t[0-9]+(\.[0-9]+)*([[:space:]]|$)/ {
+			task = $0
+			sub(/^[[:space:]]*-[[:space:]]\[[^]]\][[:space:]]+/, "", task)
+			split(task, fields, /[[:space:]]+/)
+			print "task:" fields[1]
+			while (match($0, /ref:GH#[0-9]+/)) {
+				print "issue:" substr($0, RSTART + 7, RLENGTH - 7)
+				$0 = substr($0, RSTART + RLENGTH)
+			}
+		}
+	' "$todo_file"
 }
 
 # Report duplicate task IDs and issue mappings introduced relative to a
@@ -37,19 +34,18 @@ todo_duplicate_report() {
 	local temp_dir=""
 	local candidate_keys=""
 	local baseline_keys=""
+	local candidate_counts=""
+	local baseline_counts=""
+	local regressions=""
 	local duplicates=""
-	local key=""
-	local candidate_count="0"
-	local baseline_count="0"
-	local value=""
-	local escaped=""
-	local line_numbers=""
-	local found_regression="0"
 
 	[[ -f "$todo_file" ]] || return 2
 	temp_dir=$(mktemp -d) || return 2
 	candidate_keys="${temp_dir}/candidate-keys"
 	baseline_keys="${temp_dir}/baseline-keys"
+	candidate_counts="${temp_dir}/candidate-counts"
+	baseline_counts="${temp_dir}/baseline-counts"
+	regressions="${temp_dir}/regressions"
 	if ! todo_mapping_keys "$todo_file" >"$candidate_keys"; then
 		rm -rf "$temp_dir"
 		return 2
@@ -62,28 +58,57 @@ todo_duplicate_report() {
 		fi
 	fi
 
-	duplicates=$(sort "$candidate_keys" | uniq -d)
-	while IFS= read -r key; do
-		[[ -n "$key" ]] || continue
-		candidate_count=$(grep -Fxc "$key" "$candidate_keys" || true)
-		baseline_count=$(grep -Fxc "$key" "$baseline_keys" || true)
-		[[ "$candidate_count" -gt "$baseline_count" ]] || continue
-		found_regression="1"
-		value="${key#*:}"
-		if [[ "$key" == task:* ]]; then
-			escaped=$(printf '%s' "$value" | sed 's/\./\\./g')
-			line_numbers=$(grep -nE '^[[:space:]]*- \[.\] '"${escaped}"'([[:space:]]|$)' "$todo_file" \
-				| cut -d: -f1 | tr '\n' ',' | sed 's/,$//')
-			printf '  Duplicate task ID: %s  (TODO.md lines: %s)\n' "$value" "$line_numbers"
-		else
-			line_numbers=$(grep -nE 'ref:GH#'"${value}"'([[:space:]]|$)' "$todo_file" \
-				| cut -d: -f1 | tr '\n' ',' | sed 's/,$//')
-			printf '  Duplicate issue mapping: ref:GH#%s  (TODO.md lines: %s)\n' "$value" "$line_numbers"
-		fi
-	done <<<"$duplicates"
+	sort "$candidate_keys" | uniq -c >"$candidate_counts" || {
+		rm -rf "$temp_dir"
+		return 2
+	}
+	sort "$baseline_keys" | uniq -c >"$baseline_counts" || {
+		rm -rf "$temp_dir"
+		return 2
+	}
+	awk '
+		FNR == NR { baseline[$2] = $1; next }
+		$1 > 1 && $1 > (baseline[$2] + 0) { print $2 }
+	' "$baseline_counts" "$candidate_counts" >"$regressions" || {
+		rm -rf "$temp_dir"
+		return 2
+	}
+
+	# Gather every affected line in one pass; avoid rescanning a large TODO.md for
+	# every duplicate mapping while retaining actionable diagnostics.
+	awk '
+		FNR == NR { order[++count] = $1; wanted[$1] = 1; next }
+		{
+			if ($0 ~ /^[[:space:]]*-[[:space:]]\[[^]]\][[:space:]]+t[0-9]+(\.[0-9]+)*([[:space:]]|$)/) {
+				task = $0
+				sub(/^[[:space:]]*-[[:space:]]\[[^]]\][[:space:]]+/, "", task)
+				split(task, fields, /[[:space:]]+/)
+				key = "task:" fields[1]
+				if (key in wanted) lines[key] = lines[key] (lines[key] ? "," : "") FNR
+			}
+			while (match($0, /ref:GH#[0-9]+/)) {
+				issue = substr($0, RSTART, RLENGTH)
+				key = "issue:" substr(issue, 8)
+				if (key in wanted) lines[key] = lines[key] (lines[key] ? "," : "") FNR
+				$0 = substr($0, RSTART + RLENGTH)
+			}
+		}
+		END {
+			for (position = 1; position <= count; position++) {
+				key = order[position]
+				value = substr(key, index(key, ":") + 1)
+				if (key ~ /^task:/) {
+					printf "  Duplicate task ID: %s  (TODO.md lines: %s)\n", value, lines[key]
+				} else {
+					printf "  Duplicate issue mapping: ref:GH#%s  (TODO.md lines: %s)\n", value, lines[key]
+				}
+			}
+		}
+	' "$regressions" "$todo_file"
+	duplicates=$(<"$regressions")
 
 	rm -rf "$temp_dir"
-	[[ "$found_regression" -eq 1 ]] && return 1
+	[[ -n "$duplicates" ]] && return 1
 	return 0
 }
 

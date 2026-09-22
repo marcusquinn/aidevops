@@ -844,7 +844,7 @@ _merge_guard_prospective_todo() (
 	else
 		: >"${temp_dir}/base"
 	fi
-	report=$(todo_duplicate_report "${temp_dir}/merged" "${temp_dir}/base") || report_rc=$?
+	report=$(todo_duplicate_report "${temp_dir}/merged" "${temp_dir}/base" 2>&1) || report_rc=$?
 	if [[ "$report_rc" -eq 0 ]]; then
 		return 0
 	fi
@@ -853,7 +853,8 @@ _merge_guard_prospective_todo() (
 		printf '%s\n' "$report" >&2
 		return 1
 	fi
-	print_error "Merge blocked: prospective TODO duplicate evidence is indeterminate"
+	print_error "Merge blocked: prospective TODO duplicate evidence is indeterminate (resolver exit ${report_rc})"
+	[[ -n "$report" ]] && printf '%s\n' "$report" >&2
 	return 1
 )
 
