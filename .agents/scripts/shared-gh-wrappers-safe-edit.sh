@@ -470,6 +470,20 @@ _gh_audit_verify_trusted_author_nmr_transition() {
 }
 
 #######################################
+# Return success when an issue edit contains at least one label delta. A failed
+# native edit may have partially converged before rejecting an already-absent
+# removal, so the validated REST delta path is safe to reconcile once.
+_gh_issue_edit_has_label_deltas() {
+	local arg=""
+	for arg in "$@"; do
+		case "${arg%%=*}" in
+		--add-label | --remove-label) return 0 ;;
+		esac
+	done
+	return 1
+}
+
+#######################################
 # gh_issue_edit_safe — drop-in replacement for gh issue edit.
 # Validates --title/--body before delegating. Rejects empty/stub values.
 # Records an audit event to gh-audit.log on success.
@@ -497,10 +511,16 @@ gh_issue_edit_safe() {
 	_before="$(_gh_audit_fetch_issue_state_json "$_num" "$_repo")"
 	gh issue edit "$@"
 	local _exit=$?
-	if [[ $_exit -ne 0 ]] && _rest_should_fallback; then
-		print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to REST for issue edit"
-		_rest_issue_edit "$@"
-		_exit=$?
+	if [[ $_exit -ne 0 ]]; then
+		if _rest_should_fallback; then
+			print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to REST for issue edit"
+			_rest_issue_edit "$@"
+			_exit=$?
+		elif _gh_issue_edit_has_label_deltas "$@"; then
+			print_info "[INFO] gh-wrapper: reconciling failed issue-label edit through validated REST deltas"
+			_rest_issue_edit "$@"
+			_exit=$?
+		fi
 	fi
 	_after="$(_gh_audit_fetch_issue_state_json "$_num" "$_repo")"
 	_gh_audit_record_op "$_GH_AUDIT_ISSUE_EDIT_OP" "$_repo" "$_num" "$_before" "$_after" \

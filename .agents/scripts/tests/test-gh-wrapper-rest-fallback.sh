@@ -709,6 +709,44 @@ fi
 unset STUB_ISSUE_VIEW_FIXTURE
 
 # =============================================================================
+# Test 8i: healthy-budget native label failure reconciles an absent removal as
+# a validated REST no-op instead of surfacing a false validation failure.
+# =============================================================================
+: >"$GH_CALLS"
+: >"$GH_INFO_OUTPUT"
+export STUB_PRIMARY_FAIL=1
+export STUB_RATE_LIMIT_REMAINING=5000
+export STUB_ISSUE_VIEW_FIXTURE='{"labels":[{"name":"no-auto-dispatch"}],"assignees":[]}'
+label_reconcile_rc=0
+gh_issue_edit_safe 51 --repo "owner/repo" \
+	--add-label "no-auto-dispatch" --remove-label "auto-dispatch" >/dev/null 2>&1 || label_reconcile_rc=$?
+if [[ "$label_reconcile_rc" -eq 0 ]] &&
+	grep -qE '^issue edit 51' "$GH_CALLS" 2>/dev/null &&
+	grep -q 'reconciling failed issue-label edit through validated REST deltas' "$GH_INFO_OUTPUT" 2>/dev/null &&
+	! grep -qE '^api -X (PATCH|POST|DELETE).*/repos/owner/repo/issues/51' "$GH_CALLS" 2>/dev/null; then
+	pass "gh_issue_edit_safe reconciles an already-converged label edit at healthy budget"
+else
+	fail "gh_issue_edit_safe reconciles an already-converged label edit at healthy budget" \
+		"rc=${label_reconcile_rc}; GH_CALLS=$(cat "$GH_CALLS"); INFO=$(cat "$GH_INFO_OUTPUT")"
+fi
+
+# Scalar failures must retain the native error and must not broaden into REST
+# writes merely because label reconciliation exists for delta-bearing edits.
+: >"$GH_CALLS"
+: >"$GH_INFO_OUTPUT"
+scalar_reconcile_rc=0
+gh_issue_edit_safe 52 --repo "owner/repo" --title "Native failure" >/dev/null 2>&1 || scalar_reconcile_rc=$?
+if [[ "$scalar_reconcile_rc" -ne 0 ]] &&
+	! grep -q 'reconciling failed issue-label edit' "$GH_INFO_OUTPUT" 2>/dev/null &&
+	! grep -qE '^api -X PATCH.*/repos/owner/repo/issues/52' "$GH_CALLS" 2>/dev/null; then
+	pass "gh_issue_edit_safe does not broaden healthy-budget scalar failures into REST writes"
+else
+	fail "gh_issue_edit_safe does not broaden healthy-budget scalar failures into REST writes" \
+		"rc=${scalar_reconcile_rc}; GH_CALLS=$(cat "$GH_CALLS"); INFO=$(cat "$GH_INFO_OUTPUT")"
+fi
+unset STUB_PRIMARY_FAIL STUB_ISSUE_VIEW_FIXTURE
+
+# =============================================================================
 # Test 9: gh_issue_comment → falls back to REST when primary fails AND exhausted
 # =============================================================================
 : >"$GH_CALLS"
