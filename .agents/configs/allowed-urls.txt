@@ -98,6 +98,7 @@ api.stripe.com
 api.telegram.org
 api.together.ai
 api.together.xyz
+api.typesafe.ai
 api.twilio.com
 api.vultr.com
 api.warmforge.ai

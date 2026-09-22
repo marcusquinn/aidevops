@@ -1,0 +1,8 @@
+{
+  "model": "jev-1.13.0",
+  "answers": {
+    "creative": {"type": "choice", "choice": "b", "confidence": 0.8, "probabilities": {"a": 0.2, "b": 0.8}, "calibration": {"provenance": "reported", "reference": "provider"}, "usage": {"latency_ms": 10, "input_tokens": 20, "output_tokens": 3, "cost_usd": null}},
+    "labels:x": {"type": "noul", "noul": 0.9, "usage": {"latency_ms": 2, "input_tokens": 3, "output_tokens": 1, "cost_usd": null}},
+    "labels:y": {"type": "noul", "noul": 0.1, "usage": {"latency_ms": 2, "input_tokens": 3, "output_tokens": 1, "cost_usd": null}}
+  }
+}

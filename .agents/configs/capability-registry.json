@@ -188,6 +188,17 @@
       "probes": {"deployed": {"path": "scripts/campaign-research-helper.py"}, "tool_visible": {"tool": "python3"}}
     },
     {
+      "name": "jev-marketing-decisions",
+      "aliases": ["jev", "typesafe-jev", "marketing-decision-jev"],
+      "owner": "Build+",
+      "description": "Optional bounded TypeSafe Jev adapter for prevalidated non-mutating marketing decisions",
+      "runtimes": ["opencode", "claude-code"],
+      "entry_points": ["tools/ai-assistants/jev.md", "scripts/marketing-decision-jev-helper.py"],
+      "fallback": "authorized-runtime-required",
+      "required": ["deployed", "configured", "authenticated", "authorized", "reachable", "runtime_compatible", "tool_visible"],
+      "probes": {"deployed": {"path": "scripts/marketing-decision-jev-helper.py"}, "configured": {"env_any": ["TYPESAFE_API_KEY"]}, "authenticated": {"env_all": ["TYPESAFE_API_KEY"]}, "authorized": {"live": "requires explicit provider and data authority plus a bounded input budget"}, "reachable": {"live": "requires fixed-endpoint response without active cooldown"}, "tool_visible": {"tool": "python3"}}
+    },
+    {
       "name": "social-provider-readiness",
       "aliases": ["social-health", "provider-health", "social-readiness"],
       "owner": "Content",
