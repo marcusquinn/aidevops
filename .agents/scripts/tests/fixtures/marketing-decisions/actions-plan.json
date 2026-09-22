@@ -1,0 +1,30 @@
+{
+  "schema": "aidevops.marketing-action-input/v1",
+  "project_root": ".",
+  "owner": "current",
+  "source_evidence": [
+    "aidevops.marketing-decision-report/v1:fixture"
+  ],
+  "actions": [
+    {
+      "id": "fixture-title",
+      "kind": "title",
+      "path": "AGENTS.md",
+      "old": "# AI DevOps Framework - Developer Guide",
+      "new": "# AI DevOps Framework - Contributor Guide",
+      "expected_matches": 1
+    },
+    {"id": "handoff-noindex", "kind": "noindex", "handoff": "Requires SEO owner review."},
+    {"id": "handoff-canonical", "kind": "canonical", "handoff": "Requires SEO owner review."},
+    {"id": "handoff-redirect", "kind": "redirect", "handoff": "Requires deployment owner review."},
+    {"id": "handoff-delete", "kind": "delete", "handoff": "Destructive changes are unsupported."},
+    {"id": "handoff-budget", "kind": "budget", "handoff": "Requires account owner approval."},
+    {"id": "handoff-bid", "kind": "bid", "handoff": "Requires account owner approval."},
+    {"id": "handoff-negative", "kind": "negative_keyword", "handoff": "Requires ads owner review."},
+    {"id": "handoff-campaign", "kind": "campaign", "handoff": "Account mutation is unsupported."},
+    {"id": "handoff-pixel", "kind": "pixel", "handoff": "Tracking mutation is unsupported."},
+    {"id": "handoff-conversion", "kind": "conversion", "handoff": "Tracking mutation is unsupported."},
+    {"id": "handoff-moderation", "kind": "community_moderation", "handoff": "Community action is unsupported."},
+    {"id": "handoff-post", "kind": "community_post", "handoff": "Publishing is unsupported."}
+  ]
+}
