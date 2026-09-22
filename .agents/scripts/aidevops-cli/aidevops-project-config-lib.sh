@@ -5,6 +5,32 @@
 [[ -n "${_AIDEVOPS_PROJECT_CONFIG_LIB_LOADED:-}" ]] && return 0
 _AIDEVOPS_PROJECT_CONFIG_LIB_LOADED=1
 
+_project_config_read_version() {
+	local config_file="$1"
+	jq -er '.version | select(type == "string" and length > 0)' "$config_file" 2>/dev/null
+	return $?
+}
+
+_project_config_write_version() {
+	local config_file="$1"
+	local version="$2"
+	local temp_file=""
+	[[ -f "$config_file" && -n "$version" ]] || return 1
+	command -v jq >/dev/null 2>&1 || return 1
+	temp_file=$(mktemp "${config_file}.tmp.XXXXXX") || return 1
+	if ! cp -p "$config_file" "$temp_file" ||
+		! jq --arg version "$version" 'if type == "object" then .version = $version else error("project config must be an object") end' "$config_file" >"$temp_file" 2>/dev/null ||
+		[[ ! -s "$temp_file" ]]; then
+		rm -f "$temp_file"
+		return 1
+	fi
+	if ! mv "$temp_file" "$config_file"; then
+		rm -f "$temp_file"
+		return 1
+	fi
+	return 0
+}
+
 _project_config_is_tracked() {
 	local repo="$1"
 	git -C "$repo" ls-files --error-unmatch -- .aidevops.json >/dev/null 2>&1
