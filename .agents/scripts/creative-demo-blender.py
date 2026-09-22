@@ -118,10 +118,12 @@ def main():
                 obj.location = pivot + rotation.to_3x3() @ (obj.location-pivot)
                 obj.rotation_euler.x += angle
     bpy.context.view_layer.update()
+    (out / "blender.stage").write_text("geometry", encoding="utf-8")
     verification = {"source_hash": data["source_hash"], "recipe_hash": data.get("recipe_hash"), "blender": bpy.app.version_string,
                     "part_count": len(objects), "part_ids": [obj["part_id"] for obj in objects],
                     "units": "m", "visual_review": "required", "production_certification": False}
     export_meshes(objects, out)
+    (out / "blender.stage").write_text("exported", encoding="utf-8")
     target = studio(data["demo"], mats, data["parameters"])
     scene = bpy.context.scene
     scene.unit_settings.system = "METRIC"
@@ -137,8 +139,10 @@ def main():
     scene.render.filepath = str(out / "render.png")
     bpy.ops.wm.save_as_mainfile(filepath=str(out / "scene.blend"))
     if args.render:
+        (out / "blender.stage").write_text("rendering", encoding="utf-8")
         bpy.ops.render.render(write_still=True)
     (out / "verification.json").write_text(json.dumps(verification, indent=2)+"\n", encoding="utf-8")
+    (out / "blender.stage").write_text("saved", encoding="utf-8")
     print(json.dumps(verification))
 
 
