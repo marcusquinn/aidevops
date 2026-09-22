@@ -64,6 +64,7 @@ subagents:
 - **Content**: `content-analyzer` (readability, keywords, quality) | `seo-optimizer` (on-page audit) | `eeat-score` (7 criteria, 1-10) | `programmatic-seo` (pages at scale)
 - **Off-site experiments**: `youtube-description-link-acquisition` (contextual sponsored placements in already-ranking videos; controlled measurement and link-spam guardrails)
 - **AI search**: `geo-strategy` (criteria extraction, retrieval-first) | `sro-grounding` (snippet selection) | `ai-hallucination-defense` (claim-evidence audits) | `ai-agent-discovery` (discoverability) | `ai-search-readiness` (end-to-end orchestration)
+- **Decision handoff**: `/marketing-decisions` and `workflows/marketing-decisions.md` join imported SEO/GEO evidence to bounded matching, link-review, disposition, visibility, and report proposals. They are offline and non-mutating; provider readiness and action approval remain separate.
 - **Media/debug**: `image-seo` (alt text, Moondream) | `upscale` | `moondream` | `rich-results` (browser automation) | `debug-opengraph` | `debug-favicon`
 - **Export**: `data-export` (GSC, Bing, Ahrefs, DataForSEO → TOON) | `gsc-sitemaps` (Playwright submission)
 
@@ -78,6 +79,8 @@ subagents:
 **Domain opportunities**: For provider-authorized auction inventory, deterministic SQLite scoring, optional Google Ads/Trends evidence, and local CSV/JSON/Markdown reports, use `seo/domain-opportunities.md`. This is separate from backlink-expiry reclamation.
 
 **AI search (GEO/SRO)**: intent evidence → baseline → fanout → GEO → SRO → hallucination defense → agent discovery. Focus: deterministic retrieval signals (clarity, structure, consistency, discoverability). Scorecard: `seo/ai-search-readiness.md`.
+
+**Evidence decisions**: Use `/marketing-decisions` for an imported, evidence-backed batch when intent mapping, internal-link review, content disposition, or AI visibility needs a reportable proposal. Keep unsupported sources explicit, collect first-party conversion evidence before broad citation polling, and route any proposed local edit through `workflows/marketing-actions.md`.
 
 **SERP/backlinks/technical**: SERP via DataForSEO (comprehensive) or Serper (quick) | Backlinks via DataForSEO or Ahrefs | PageSpeed/CWV: `tools/browser/pagespeed.md` | On-page: DataForSEO | Crawling: `seo/site-crawler.md` | Real-time monitoring: `seo/contentking.md`.
 

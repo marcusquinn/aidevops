@@ -68,6 +68,7 @@ Content agent. Domain: blog, video, social, newsletters, podcasts, short-form, A
 - **Multiplier**: One researched story -> 10+ outputs across media types and channels
 - **PR handoff**: `pr.md` owns earned-media judgment, journalist lists, and pitch critique. Content turns approved PR angles into owned-channel assets after PR validates newsworthiness and standing.
 - **Focused creative work**: `3d-modelling.md`, `video.md`, and `audio.md` own editable production work. Use their shared app specialists and `workflows/creative-production.md`; do not copy this whole distribution pipeline into modelling/editing tasks.
+- **Evidence handoff**: `/marketing-decisions` turns imported evidence into bounded content-disposition or creative proposals. It complements this pipeline rather than duplicating strategy, and never publishes or activates a provider.
 
 ```text
                     Research
@@ -153,6 +154,8 @@ For an end-to-end cross-owner campaign lifecycle, use
 `aidevops campaign grow plan --intake <file>` first, then attach the content
 owner's reviewed evidence to the growth checkpoint. The campaign growth workflow
 coordinates state and recovery; it does not bypass creative or publishing approval.
+
+For evidence-backed disposition or creative review, pass the bounded proposal through `workflows/marketing-decisions.md`, then return accepted work to this production pipeline. Reports and dry-run action plans are handoffs, not publication or approval.
 
 ```bash
 content-fanout-helper.sh template default   # Brief template

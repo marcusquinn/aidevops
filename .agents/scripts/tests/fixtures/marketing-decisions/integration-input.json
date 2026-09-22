@@ -1,0 +1,16 @@
+{
+  "schema": "aidevops.marketing-decision-integration/v1",
+  "mode": "offline",
+  "article_jobs": [
+    "article-01", "article-02", "article-03", "article-04", "article-05", "article-06", "article-07", "article-08", "article-09", "article-10", "article-11", "article-12", "article-13", "article-14", "article-15", "article-16", "article-17", "article-18", "article-19", "article-20", "article-21", "article-22", "article-23", "article-24", "article-25", "article-26", "article-27", "article-28", "article-29", "article-30", "article-31", "article-32", "article-33"
+  ],
+  "coverage": {
+    "article-01": "intent-matching", "article-02": "link-review", "article-03": "content-disposition", "article-04": "visibility", "article-05": "creative", "article-06": "community",
+    "article-07": "unsupported:provider-coverage", "article-08": "intent-matching", "article-09": "link-review", "article-10": "content-disposition", "article-11": "visibility", "article-12": "creative", "article-13": "community",
+    "article-14": "unsupported:provider-coverage", "article-15": "intent-matching", "article-16": "link-review", "article-17": "content-disposition", "article-18": "visibility", "article-19": "creative", "article-20": "community",
+    "article-21": "unsupported:provider-coverage", "article-22": "intent-matching", "article-23": "link-review", "article-24": "content-disposition", "article-25": "visibility", "article-26": "creative", "article-27": "community",
+    "article-28": "unsupported:provider-coverage", "article-29": "intent-matching", "article-30": "link-review", "article-31": "content-disposition", "article-32": "visibility", "article-33": "unsupported:provider-coverage",
+    "paid_to_organic_bridge": "report:proposal-only"
+  },
+  "live_activation_prerequisites": ["operator provider authorization", "validated account scope", "trusted action approval"]
+}
