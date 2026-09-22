@@ -320,37 +320,32 @@ assert_label_maintenance_rest_block_contract() {
 	return 0
 }
 
-assert_backfill_deadline_contract() {
-	local actual_events=""
+assert_label_maintenance_cycle_budget_contract() {
+	local actual_events="" expected_events="normal:600;limited:195;exhausted:skip;invalid:skip;"
 	TESTS_RUN=$((TESTS_RUN + 1))
 	actual_events=$(
 		(
 			unset _PULSE_DISPATCH_PREFLIGHT_LIB_LOADED
 			# shellcheck source=../pulse-dispatch-preflight-lib.sh
 			source "$PREFLIGHT_LIB"
-			LOGFILE="/dev/null"
-			_preflight_rest_core_allows_next() { return 0; }
-			_reevaluate_consolidation_labels() { return 0; }
-			_reevaluate_simplification_labels() {
-				printf 'simplification;'
-				return 0
-			}
-			_log_substage_timing() {
-				[[ "$1" != *backfill_consolidation_labels ]] || printf 'timing:%s;' "$3"
-				return 0
-			}
-			run_stage_with_timeout() {
-				printf 'stage:%s;' "$2"
-				return 124
-			}
-			_preflight_label_maintenance
+			PULSE_START_EPOCH=0 PULSE_STALE_THRESHOLD=1800 PRE_RUN_STAGE_TIMEOUT=600
+			date() { printf '%s\n' "$TEST_EPOCH"; }
+			TEST_EPOCH=0
+			printf 'normal:%s;' "$(_preflight_refill_reserved_timeout 600)"
+			TEST_EPOCH=1000
+			printf 'limited:%s;' "$(_preflight_refill_reserved_timeout 600)"
+			TEST_EPOCH=1195
+			printf 'exhausted:%s;' "$(_preflight_refill_reserved_timeout 600 || printf 'skip')"
+			PULSE_START_EPOCH=invalid
+			printf 'invalid:%s;' "$(_preflight_refill_reserved_timeout 600 || printf 'skip')"
 		)
 	)
-	if [[ "$actual_events" == 'stage:300;timing:124;simplification;' ]]; then
-		echo "${TEST_GREEN}PASS${TEST_NC}: backfill timeout records incomplete timing and continues maintenance"
+	if [[ "$actual_events" == "$expected_events" ]]; then
+		echo "${TEST_GREEN}PASS${TEST_NC}: label maintenance preserves the post-label refill budget"
 	else
 		TESTS_FAILED=$((TESTS_FAILED + 1))
-		echo "${TEST_RED}FAIL${TEST_NC}: backfill timeout records incomplete timing and continues maintenance"
+		echo "${TEST_RED}FAIL${TEST_NC}: label maintenance preserves the post-label refill budget"
+		echo "  expected events: $expected_events"
 		echo "  actual events: ${actual_events:-none}"
 	fi
 	return 0
@@ -541,7 +536,7 @@ assert_routine_comment_rest_block_contract \
 	"9l2: blocked REST evidence suppresses the routine-comment API scan"
 assert_label_maintenance_rest_block_contract \
 	"9l3: blocked REST evidence stops label maintenance before the next API substage"
-assert_backfill_deadline_contract
+assert_label_maintenance_cycle_budget_contract
 assert_order \
 	"9m: routine-comment REST gate precedes its API scan" \
 	'_preflight_rest_core_allows_next "routine_comment_responses"' \
