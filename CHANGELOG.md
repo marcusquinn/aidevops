@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.34.17] - 2026-09-22
+
+### Changed
+
+- Maintenance: bump hono from 4.13.5 to 4.13.8 (#32245)
+- Maintenance: bump vite from 8.2.2 to 8.3.0 (#32241)
+
+### Fixed
+
+- isolate task counter CAS from canonical checkout
+- prevent npm recovery republish during propagation (#32244)
+
 ## [3.34.16] - 2026-09-22
 
 ### Changed
