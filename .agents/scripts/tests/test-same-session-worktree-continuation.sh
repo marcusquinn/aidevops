@@ -26,12 +26,20 @@ require_literal() {
 main() {
 	require_literal 'continue through verification in the same session/worktree' \
 		"$AGENTS_DOC" 'always-loaded guidance permits same-session continuation' || return 1
+	require_literal 'Context pressure is not completion: checkpoint, compact or roll over, and continue' \
+		"$AGENTS_DOC" 'always-loaded guidance omits context-limit continuation' || return 1
 	require_literal 'never infer one from the unchanged session root' \
 		"$SESSION_MANAGER_DOC" 'session manager treats an unchanged root as a blocker' || return 1
+	require_literal 'Context pressure is not a handoff or completion signal' \
+		"$SESSION_MANAGER_DOC" 'session manager still permits context-limit handoff' || return 1
 	require_literal '**Same-session default**' \
 		"$WORKTREE_DOC" 'worktree workflow omits same-session continuation' || return 1
 	require_literal 'the unchanged OpenCode session root is not a blocker' \
 		"$SESSION_DOC" 'session reference omits path-aware continuation' || return 1
+	require_literal 'Context pressure changes transport state, not task state' \
+		"$SESSION_DOC" 'session reference omits context-pressure semantics' || return 1
+	require_literal 'Continuation required: yes' \
+		"$SESSION_DOC" 'session reference omits executable post-compaction handoff' || return 1
 
 	if grep -Fq -- '### Worktree + New Session (Recommended)' "$SESSION_MANAGER_DOC"; then
 		printf 'FAIL: session manager still recommends a new chat for ordinary worktree creation\n' >&2
