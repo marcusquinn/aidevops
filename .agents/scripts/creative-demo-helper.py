@@ -15,6 +15,8 @@ import sys
 from pathlib import Path
 
 from _creative_demo_model import DEFAULTS, model
+from _creative_demo_progress import progress, run_app
+from _creative_demo_summary import scene_summary, verified_summary
 
 SCRIPTS = Path(__file__).resolve().parent
 TEMPLATES = SCRIPTS.parent / "templates"
@@ -63,18 +65,6 @@ def write_parts(out, scene):
             writer.writerow([item["id"], item["assembly"], item["kind"], item["material"], *item["size"], 1])
 
 
-def run_app(command, out, name, timeout):
-    env = {key: value for key, value in os.environ.items() if key in
-           ("PATH", "HOME", "USER", "LANG", "LC_ALL", "SYSTEMROOT", "WINDIR", "DISPLAY", "XDG_RUNTIME_DIR")}
-    env["TMPDIR"] = str(out)
-    print(f"Running {name} with a {timeout}s limit; progress is retained in {name}.log", flush=True)
-    with (out / f"{name}.log").open("x", encoding="utf-8") as log:
-        result = subprocess.run(command, env=env, stdin=subprocess.DEVNULL, stdout=log,
-                                stderr=subprocess.STDOUT, timeout=timeout, check=False)
-    if result.returncode:
-        raise ValueError(f"{name} failed with exit {result.returncode}; inspect its retained run log")
-
-
 def verify_glb(path, scene):
     with path.open("rb") as handle:
         header = handle.read(20)
@@ -114,6 +104,8 @@ def build(args):
     out.mkdir()  # Refuse repeat writes to the same native project/export directory.
     write_json(out / "scene.json", scene)
     write_parts(out, scene)
+    write_json(out / "scene-summary.json", scene_summary(scene))
+    progress("scene:prepared (scene-summary.json; detailed recipe in scene.json)")
     blender = executable(args.blender, "blender", "/Applications/Blender.app/Contents/MacOS/Blender")
     command = [blender, "--factory-startup", "--disable-autoexec", "--background", "--threads", "4",
                "--python-exit-code", "1", "--python", str(SCRIPTS / "creative-demo-blender.py"),
@@ -132,12 +124,17 @@ def build(args):
         required.extend(["kitchen.FCStd", "kitchen.step", "cad-verification.json"])
     if any(not (out / name).is_file() or not (out / name).stat().st_size for name in required):
         raise ValueError("App exited without all requested artifacts; inspect the run logs")
-    verify_glb(out / "scene.glb", scene)
+    progress("artifacts:present (checking geometry and provenance)")
+    exported = verify_glb(out / "scene.glb", scene)
+    checks = verified_summary(out, scene, exported, args.cad)
     write_json(out / "run.json", {"source_hash": scene["source_hash"], "recipe_hash": scene["recipe_hash"],
-                                  "artifacts": [*required, "scene.json", "parts.csv"], "state": "generated",
-                                  "visual_review": "required", "production_certification": False})
-    print(json.dumps({"run": str(out), "parts": len(scene["parts"]), "source_hash": scene["source_hash"],
-                      "artifacts": required, "visual_review": "required", "production_certification": False}))
+                                  "artifacts": [*required, "scene.json", "scene-summary.json", "parts.csv"],
+                                  "summary": {"scene": "scene-summary.json", "checks": checks},
+                                  "state": "generated", "visual_review": "required",
+                                  "production_certification": False})
+    progress("manifest:ready (run.json; visual review required)")
+    print(json.dumps({"run": str(out), "summary": "run.json", "checks": checks,
+                       "visual_review": "required", "production_certification": False}))
 
 
 def main():

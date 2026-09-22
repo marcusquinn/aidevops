@@ -44,8 +44,19 @@ module count adds/removes assemblies intentionally.
 
 Each successful run includes recipe JSON, source/recipe hashes, a parts CSV,
 editable `.blend`, a GLB with mesh-backed part IDs, geometry verification and
-`run.json`. `--render` adds a Cycles PNG. Native curves and modifiers remain
-editable while the GLB contains their evaluated geometry.
+`run.json`. `scene-summary.json` is written before the apps start: it gives units,
+parameters, source/recipe hashes, part and assembly counts and paths to full
+recipe/part records. A successful `run.json` points to that summary and carries
+checked mesh counts, app versions and (when requested) CAD round-trip counts.
+Failed or partial runs do not get a success manifest. `--render` adds a Cycles
+PNG. Native curves and modifiers remain editable while the GLB contains their
+evaluated geometry.
+
+The CLI emits bounded `AIDEVOPS_PROGRESS:` lines on real stage transitions while
+retaining full native output in the per-app logs. Use an approved isolated workspace
+and the existing `aidevops_bounded_operation` tool for long builds in OpenCode;
+the tool owns the command lifecycle, cancellation and terminal output. Stages and
+successful artifact generation are not a visual review or manufacturing approval.
 
 The kitchen includes separate carcass panels, drawer components, doors, hardware,
 upper panels, cut worktop, sink, tap and hob references. `--cad` also creates

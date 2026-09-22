@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
 """Offline recipe, export-contract and CLI tests; native apps are checked separately."""
 
+import argparse
 import contextlib
 import importlib.util
 import io
@@ -114,6 +115,116 @@ class ArtifactTests(unittest.TestCase):
         self.assertNotIn("EXAMPLE_API_KEY", run.call_args.kwargs["env"])
         self.assertNotIn("PYTHONPATH", run.call_args.kwargs["env"])
         self.assertTrue((self.root / "blender.log").is_file())
+
+    def test_live_stage_receipts_are_bounded_and_not_app_logs(self):
+        code = ("import pathlib,sys,time; "
+                "p=pathlib.Path(sys.argv[1]); p.write_text('rendering'); "
+                "print('unrelated native output'); time.sleep(.6); p.write_text('saved')")
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            HELPER.run_app([sys.executable, "-c", code, str(self.root / "blender.stage")],
+                           self.root, "blender", 3)
+        self.assertIn("AIDEVOPS_PROGRESS: blender:rendering", output.getvalue())
+        self.assertIn("AIDEVOPS_PROGRESS: blender:saved", output.getvalue())
+        self.assertIn("AIDEVOPS_PROGRESS: blender:completed", output.getvalue())
+        self.assertNotIn("unrelated native output", output.getvalue())
+        self.assertIn("unrelated native output", (self.root / "blender.log").read_text())
+
+    def test_live_timeout_retains_log_without_success_receipt(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), self.assertRaises(subprocess.TimeoutExpired):
+            HELPER.run_app([sys.executable, "-c", "import time; time.sleep(5)"],
+                           self.root, "blender", 1)
+        self.assertTrue((self.root / "blender.log").is_file())
+        self.assertNotIn("blender:completed", output.getvalue())
+
+    def test_manifest_requires_matching_native_evidence(self):
+        scene = model("lamp")
+        scene["recipe_hash"] = "recipe"
+        summary = HELPER.scene_summary(scene)
+        self.assertEqual(summary["part_count"], 28)
+        self.assertNotIn("parts", summary)
+        self.assertEqual(sum(summary["assemblies"].values()), 28)
+        report = {"source_hash": scene["source_hash"], "recipe_hash": "recipe", "units": "m",
+                  "part_count": 28, "part_ids": [item["id"] for item in scene["parts"]],
+                  "blender": "5.2.1"}
+        (self.root / "verification.json").write_text(json.dumps(report))
+        self.assertEqual(HELPER.verified_summary(self.root, scene, 28, False)["exported_meshes"], 28)
+        report["recipe_hash"] = "different"
+        (self.root / "verification.json").write_text(json.dumps(report))
+        with self.assertRaisesRegex(ValueError, "Blender verification disagrees"):
+            HELPER.verified_summary(self.root, scene, 28, False)
+
+    def test_cad_summary_checks_part_identity_and_roundtrip(self):
+        scene = model("kitchen")
+        scene["recipe_hash"] = "recipe"
+        ids = [item["id"] for item in scene["parts"]]
+        visual = {"source_hash": scene["source_hash"], "recipe_hash": "recipe", "units": "m",
+                  "part_count": len(ids), "part_ids": ids, "blender": "5.2.1"}
+        (self.root / "verification.json").write_text(json.dumps(visual))
+        solids = [item["id"] for item in scene["parts"] if item["kind"] != "curve"]
+        cad = {"source_hash": scene["source_hash"], "recipe_hash": "recipe", "units": "mm",
+               "parts": [{"part_id": key, "volume_mm3": 1, "valid": True} for key in solids],
+               "excluded_reference_geometry": [item["id"] for item in scene["parts"] if item["kind"] == "curve"],
+               "step_reimported_solids": len(solids), "native_reopened": True,
+               "worktop_width_mm": 3050, "freecad": [1, 0, 0]}
+        path = self.root / "cad-verification.json"
+        path.write_text(json.dumps(cad))
+        self.assertEqual(HELPER.verified_summary(self.root, scene, len(ids), True)["cad"]["valid_solids"], len(solids))
+        cad["parts"][0]["part_id"] = "other"
+        path.write_text(json.dumps(cad))
+        with self.assertRaisesRegex(ValueError, "CAD verification disagrees"):
+            HELPER.verified_summary(self.root, scene, len(ids), True)
+
+    def test_build_writes_compact_manifest_only_after_checks(self):
+        with mock.patch.object(Path, "cwd", return_value=self.root), contextlib.redirect_stdout(io.StringIO()):
+            HELPER.init_project("lamp", str(self.root / "lamp"))
+        project = self.root / "lamp"
+        args = argparse.Namespace(project=str(project), run="preview", cad=False, render=False,
+                                  blender=None, freecad=None, samples=16, timeout=2)
+
+        def fake_app(_command, out, _name, _timeout):
+            scene = json.loads((out / "scene.json").read_text())
+            self.assertTrue((out / "scene-summary.json").is_file())
+            self.assertFalse((out / "run.json").exists())
+            self.glb([{"mesh": index, "extras": {"part_id": part["id"]}}
+                      for index, part in enumerate(scene["parts"])]).replace(out / "scene.glb")
+            (out / "scene.blend").write_bytes(b"native")
+            report = {"source_hash": scene["source_hash"], "recipe_hash": scene["recipe_hash"],
+                      "units": "m", "part_count": len(scene["parts"]),
+                      "part_ids": [item["id"] for item in scene["parts"]], "blender": "5.2.1"}
+            (out / "verification.json").write_text(json.dumps(report))
+
+        with mock.patch.object(HELPER, "executable", return_value="/installed/blender"), \
+                mock.patch.object(HELPER, "run_app", side_effect=fake_app), \
+                mock.patch.object(Path, "cwd", return_value=self.root), \
+                contextlib.redirect_stdout(io.StringIO()):
+            HELPER.build(args)
+        out = project / "runs" / "preview"
+        run = json.loads((out / "run.json").read_text())
+        self.assertEqual(run["summary"]["checks"]["exported_meshes"], 28)
+        self.assertEqual(run["summary"]["scene"], "scene-summary.json")
+        self.assertEqual(run["visual_review"], "required")
+        self.assertFalse(run["production_certification"])
+
+        with mock.patch.object(Path, "cwd", return_value=self.root), contextlib.redirect_stdout(io.StringIO()):
+            HELPER.init_project("lamp", str(self.root / "bad"))
+        args.project, args.run = str(self.root / "bad"), "tampered"
+
+        def tampered_app(command, out, name, timeout):
+            fake_app(command, out, name, timeout)
+            report_path = out / "verification.json"
+            report = json.loads(report_path.read_text())
+            report["source_hash"] = "wrong"
+            report_path.write_text(json.dumps(report))
+
+        with mock.patch.object(HELPER, "executable", return_value="/installed/blender"), \
+                mock.patch.object(HELPER, "run_app", side_effect=tampered_app), \
+                mock.patch.object(Path, "cwd", return_value=self.root), \
+                contextlib.redirect_stdout(io.StringIO()), \
+                self.assertRaisesRegex(ValueError, "Blender verification disagrees"):
+            HELPER.build(args)
+        self.assertFalse((self.root / "bad" / "runs" / "tampered" / "run.json").exists())
 
     @unittest.skipUnless(shutil.which("node"), "Node is required to check the viewer module")
     def test_viewer_module_syntax(self):

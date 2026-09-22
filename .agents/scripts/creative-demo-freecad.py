@@ -56,8 +56,10 @@ def main():
         checked.append({"part_id": item["id"], "volume_mm3": shape.Volume, "valid": True})
     doc.recompute()
     out = source.parent
+    (out / "freecad.stage").write_text("solids", encoding="utf-8")
     doc.saveAs(str(out / "kitchen.FCStd"))
     Part.export(objects, str(out / "kitchen.step"))
+    (out / "freecad.stage").write_text("native-saved", encoding="utf-8")
     worktop = next(obj for obj in objects if obj.PartId == "kitchen.worktop")
     expected_width = (data["parameters"]["modules"]*data["parameters"]["module_width"]+.05)*1000
     if not math.isclose(worktop.Shape.BoundBox.XLength, expected_width, abs_tol=.001):
@@ -78,6 +80,7 @@ def main():
               "worktop_width_mm": expected_width,
               "production_certification": False}
     (out / "cad-verification.json").write_text(json.dumps(report, indent=2)+"\n", encoding="utf-8")
+    (out / "freecad.stage").write_text("roundtrip", encoding="utf-8")
     print(json.dumps({"valid_solids": len(checked), "excluded": excluded}))
 
 
