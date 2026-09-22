@@ -26,6 +26,9 @@ tools:
 - Operational recipes: [structured decisions](jev-decisions.md). Dated sources,
   commercial terms and project comparisons: [research](../../reference/jev-research.md).
   Research is optional context, not always-loaded agent instructions.
+- Kev is documented there as an experimental local System One-compatible option,
+  not as Jev or an installed fallback. No Kev dependency, model download, server or
+  route is enabled; any future evaluation must remain explicit and reversible.
 - Opt-in [retrieval and shadow-triage pilots](jev-pilots.md) preserve original
   evidence and write private evaluation reports; they do not change default routing.
 - `marketing-decision-jev-helper.py` is a separate opt-in adapter for prevalidated
