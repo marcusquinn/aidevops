@@ -1086,7 +1086,64 @@ test_gh25896_oimp_closes_consolidated_successor() {
 }
 
 # ---------------------------------------------------------------------------
-# Test 15c (GH#27444): recurrent file-size debt uses current outcome
+# Test 15c (GH#32213): superseded evidence requires complete inherited coverage
+# ---------------------------------------------------------------------------
+test_gh32213_oimp_requires_complete_inherited_coverage() {
+	local actions_sh="${SCRIPT_DIR}/../pulse-issue-reconcile-actions.sh"
+	local tmp_dir out_file log_file verify_file verify_log result
+	tmp_dir=$(mktemp -d)
+	out_file="${tmp_dir}/gh.out"
+	log_file="${tmp_dir}/pulse.log"
+	verify_file="${tmp_dir}/verify-close"
+	verify_log="${tmp_dir}/verify.log"
+	cat >"$verify_file" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$VERIFY_LOG"
+exit 0
+EOF
+	chmod +x "$verify_file"
+
+	result=$(bash -c '
+		actions_sh="$1"; out_file="$2"; log_file="$3"; verify_file="$4"; VERIFY_LOG="$5"
+		LOGFILE="$log_file"; export LOGFILE out_file VERIFY_LOG
+		gh() { printf "%s\n" "$*" >>"$out_file"; return 0; }
+		fast_fail_reset() { return 0; }
+		unlock_issue_after_worker() { return 0; }
+		export -f gh fast_fail_reset unlock_issue_after_worker
+		source "$actions_sh"
+		_action_oimp_single "test/repo" "30100" "$verify_file" "|30001=30101|" $'"'"'_Supersedes #30001 — this issue is the consolidated spec._\n\n## What\nImplement remaining successor-only work.'"'"' || printf "scope_rc=%s\n" "$?"
+		_action_oimp_single "test/repo" "30110" "$verify_file" "|30001=30101|" $'"'"'_Supersedes #30001 — this issue is the consolidated spec._\n_Supersedes #30002 — this issue is the consolidated spec._'"'"' || printf "partial_rc=%s\n" "$?"
+		_action_oimp_single "test/repo" "30120" "$verify_file" "|30001=30101|30002=30102|" $'"'"'_Supersedes #30001 — this issue is the consolidated spec._\n_Supersedes #30002 — this issue is the consolidated spec._'"'"'
+		printf "complete_rc=%s\n" "$?"
+	' -- "$actions_sh" "$out_file" "$log_file" "$verify_file" "$verify_log" 2>&1)
+
+	local all_ok=1
+	if [[ "$result" != *"scope_rc=1"* ]] || grep -q 'issue close 30100' "$out_file" 2>/dev/null; then
+		_fail "GH#32213: successor-only scope was treated as complete: ${result}"
+		all_ok=0
+	fi
+	if [[ "$result" != *"partial_rc=1"* ]] || grep -q 'issue close 30110' "$out_file" 2>/dev/null; then
+		_fail "GH#32213: partial superseded coverage closed the successor: ${result}"
+		all_ok=0
+	fi
+	if [[ "$result" != *"complete_rc=0"* ]] || ! grep -q 'issue close 30120 --repo test/repo' "$out_file" 2>/dev/null; then
+		_fail "GH#32213: complete inherited coverage did not close the successor: ${result}"
+		all_ok=0
+	fi
+	if ! grep -q '^check 30001 30101 test/repo$' "$verify_log" 2>/dev/null ||
+		! grep -q '^check 30002 30102 test/repo$' "$verify_log" 2>/dev/null ||
+		grep -q '^check 30120 ' "$verify_log" 2>/dev/null; then
+		_fail "GH#32213: component PRs were not verified against their superseded source issues"
+		all_ok=0
+	fi
+
+	rm -rf "$tmp_dir"
+	[[ "$all_ok" == "1" ]] && _pass "GH#32213: OIMP preserves successor scope and requires verified complete component coverage"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# Test 15d (GH#27444): recurrent file-size debt uses current outcome
 # ---------------------------------------------------------------------------
 test_gh27444_recurrent_file_size_debt_current_outcome() {
 	local actions_sh="${SCRIPT_DIR}/../pulse-issue-reconcile-actions.sh"
@@ -1395,6 +1452,7 @@ test_oimp_uses_merged_adapter_population
 test_t2985_oimp_lookup_no_prefix_collision
 test_t2985_action_oimp_single_signature
 test_gh25896_oimp_closes_consolidated_successor
+test_gh32213_oimp_requires_complete_inherited_coverage
 test_gh27444_recurrent_file_size_debt_current_outcome
 test_available_feedback_worker_issue_not_assigned
 test_feedback_backfill_uses_label_constants

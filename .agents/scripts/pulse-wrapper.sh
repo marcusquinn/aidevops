@@ -1711,8 +1711,12 @@ main() {
 	# applies the `fix-the-fixer` label so the dispatcher can enable extra
 	# observability (verbose lifecycle, tighter watchdog, preflight sentinel)
 	# and avoid the canonical broken-dispatch-can-not-fix-itself trap.
-	# Sentinel-gated hourly. Fail-open: never blocks the pulse cycle.
-	_pulse_run_optional_stage "fix_the_fixer_detector" _pulse_run_fix_the_fixer_detector_if_stale || true
+	# Sentinel-gated hourly. Bound the complete detector stage so one stalled
+	# repository lookup or model call cannot hold the Pulse cycle indefinitely.
+	# Fail-open: timeout/failure is recorded by the stage wrapper, then the next
+	# Pulse stage continues.
+	_pulse_run_optional_stage_with_timeout "fix_the_fixer_detector" "$PRE_RUN_STAGE_TIMEOUT" \
+		_pulse_run_fix_the_fixer_detector_if_stale || true
 
 	# Rotate hot log to cold archive if over cap (t1886)
 	# Run before any log writes so the new cycle starts with a fresh hot log.

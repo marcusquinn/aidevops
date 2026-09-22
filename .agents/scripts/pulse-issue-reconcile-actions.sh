@@ -1195,23 +1195,59 @@ _should_lia() {
 }
 
 #######################################
-# Extract issue numbers from explicit "Supersedes #N" prose.
+# Extract issue numbers from canonical consolidated-spec markers.
 #
-# Kept narrow on purpose: the reconciler should only close a consolidated
-# successor when the successor itself declares that it supersedes an issue
-# already fixed by a merged PR. Generic "see #N"/"related #N" prose is not
-# sufficient terminal evidence.
+# Kept narrow on purpose: arbitrary prose and inlined consolidation
+# instructions are not terminal evidence.
 #
 # Args: $1 = issue body
 # Stdout: newline-delimited issue numbers, deduplicated
 #######################################
 _pir_extract_superseded_issue_nums() {
 	local issue_body="$1"
+	local line="" ref=""
+	local marker_regex='^_Supersedes #([0-9]+) (—|-) this issue is the consolidated spec\._$'
 	[[ -n "$issue_body" ]] || return 0
 
-	printf '%s' "$issue_body" |
-		grep -oiE 'supersedes[[:space:]]+#[0-9]+' 2>/dev/null |
-		grep -oE '[0-9]+' | sort -un
+	while IFS= read -r line; do
+		line="${line%$'\r'}"
+		if [[ "$line" =~ $marker_regex ]]; then
+			ref="${BASH_REMATCH[1]:-}"
+			printf '%s\n' "$ref"
+		fi
+	done <<<"$issue_body" | sort -un
+	return 0
+}
+
+#######################################
+# Check whether a consolidated successor has no independent implementation
+# scope beyond canonical source markers and generated aidevops metadata.
+# Args: $1 = issue body
+# Returns: 0 when all substantive scope is inherited, 1 otherwise
+#######################################
+_pir_successor_scope_is_fully_inherited() {
+	local issue_body="$1"
+	local line="" in_signature=0
+	local marker_regex='^_Supersedes #([0-9]+) (—|-) this issue is the consolidated spec\._$'
+	local origin_regex='^<!--[[:space:]]+aidevops:origin:(interactive|worker)[[:space:]]+-->$'
+	local footer_regex='^\[aidevops\.sh\]\(https://aidevops\.sh\)[[:space:]]'
+
+	while IFS= read -r line; do
+		line="${line%$'\r'}"
+		[[ -z "${line//[[:space:]]/}" ]] && continue
+		if [[ "$in_signature" -eq 1 ]]; then
+			[[ "$line" == "---" ]] && continue
+			[[ "$line" =~ $footer_regex ]] && continue
+			return 1
+		fi
+		[[ "$line" =~ $marker_regex ]] && continue
+		[[ "$line" =~ $origin_regex ]] && continue
+		if [[ "$line" == "<!-- aidevops:sig -->" ]]; then
+			in_signature=1
+			continue
+		fi
+		return 1
+	done <<<"$issue_body"
 	return 0
 }
 
@@ -1426,21 +1462,34 @@ _action_oimp_single() {
 
 	# t2985: lookup PR number locally instead of `gh pr list --search`.
 	# Empty lookup → no merged PR found → return 1 (next-cycle retry).
-	local merged_pr_num=""
-	local close_comment=""
+	local merged_pr_num="" close_comment="" direct_issue_evidence=0
+	local superseded_coverage="" coverage_count=0
 	merged_pr_num=$(_pir_lookup_oimp_pr_for_issue "$issue_num" "$oimp_lookup") || merged_pr_num=""
 	if [[ -n "$merged_pr_num" && "$merged_pr_num" =~ ^[0-9]+$ ]]; then
+		direct_issue_evidence=1
 		close_comment="Closing: linked PR #${merged_pr_num} was already merged. Detected by reconcile pass."
 	else
-		local superseded_num=""
+		_pir_successor_scope_is_fully_inherited "$issue_body" || return 1
+		local superseded_refs="" superseded_num="" component_pr=""
+		superseded_refs=$(_pir_extract_superseded_issue_nums "$issue_body")
+		[[ -n "$superseded_refs" ]] || return 1
 		while IFS= read -r superseded_num; do
 			[[ "$superseded_num" =~ ^[0-9]+$ ]] || continue
-			merged_pr_num=$(_pir_lookup_oimp_pr_for_issue "$superseded_num" "$oimp_lookup") || merged_pr_num=""
-			if [[ -n "$merged_pr_num" && "$merged_pr_num" =~ ^[0-9]+$ ]]; then
-				close_comment="Closing: this consolidated issue supersedes #${superseded_num}, and merged PR #${merged_pr_num} already fixed that superseded issue. Detected by reconcile pass."
-				break
-			fi
-		done < <(_pir_extract_superseded_issue_nums "$issue_body")
+			[[ "$superseded_num" != "$issue_num" ]] || return 1
+			component_pr=$(_pir_lookup_oimp_pr_for_issue "$superseded_num" "$oimp_lookup") || component_pr=""
+			[[ -n "$component_pr" && "$component_pr" =~ ^[0-9]+$ ]] || return 1
+			coverage_count=$((coverage_count + 1))
+			[[ -n "$merged_pr_num" ]] || merged_pr_num="$component_pr"
+			superseded_coverage="${superseded_coverage}${superseded_num}=${component_pr}"$'\n'
+		done <<<"$superseded_refs"
+		[[ "$coverage_count" -gt 0 ]] || return 1
+		if [[ "$coverage_count" -eq 1 ]]; then
+			local only_source=""
+			only_source="${superseded_coverage%%=*}"
+			close_comment="Closing: this consolidated issue supersedes #${only_source}, and merged PR #${merged_pr_num} already fixed that superseded issue. Detected by reconcile pass."
+		else
+			close_comment="Closing: merged PR evidence completely covers all ${coverage_count} superseded sources for this scope-inheriting consolidated issue. Detected by reconcile pass."
+		fi
 	fi
 	[[ -n "$merged_pr_num" && "$merged_pr_num" =~ ^[0-9]+$ ]] || return 1
 
@@ -1463,9 +1512,22 @@ _action_oimp_single() {
 	# is now redundant and removed (t2985).
 
 	if [[ -x "$verify_helper" ]]; then
-		if ! "$verify_helper" check "$issue_num" "$merged_pr_num" "$slug" >/dev/null 2>&1; then
-			echo "[pulse-wrapper] Reconcile merged-PR: skipped close #${issue_num} in ${slug} — PR #${merged_pr_num} does not touch issue files (GH#17372)" >>"$LOGFILE"
-			return 1
+		if [[ "$direct_issue_evidence" -eq 1 ]]; then
+			if ! "$verify_helper" check "$issue_num" "$merged_pr_num" "$slug" >/dev/null 2>&1; then
+				echo "[pulse-wrapper] Reconcile merged-PR: skipped close #${issue_num} in ${slug} — PR #${merged_pr_num} does not touch issue files (GH#17372)" >>"$LOGFILE"
+				return 1
+			fi
+		else
+			local coverage_line="" coverage_issue="" coverage_pr=""
+			while IFS= read -r coverage_line; do
+				[[ "$coverage_line" == *=* ]] || continue
+				coverage_issue="${coverage_line%%=*}"
+				coverage_pr="${coverage_line#*=}"
+				if ! "$verify_helper" check "$coverage_issue" "$coverage_pr" "$slug" >/dev/null 2>&1; then
+					echo "[pulse-wrapper] Reconcile merged-PR: skipped close #${issue_num} in ${slug} — PR #${coverage_pr} does not verify superseded source #${coverage_issue} (GH#32213)" >>"$LOGFILE"
+					return 1
+				fi
+			done <<<"$superseded_coverage"
 		fi
 	fi
 
