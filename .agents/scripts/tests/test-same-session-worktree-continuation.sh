@@ -26,7 +26,7 @@ require_literal() {
 main() {
 	require_literal 'continue through verification in the same session/worktree' \
 		"$AGENTS_DOC" 'always-loaded guidance permits same-session continuation' || return 1
-	require_literal 'Approaching a context limit is neither completion nor a blocker' \
+	require_literal 'Context pressure is not completion: checkpoint, compact or roll over, and continue' \
 		"$AGENTS_DOC" 'always-loaded guidance omits context-limit continuation' || return 1
 	require_literal 'never infer one from the unchanged session root' \
 		"$SESSION_MANAGER_DOC" 'session manager treats an unchanged root as a blocker' || return 1
