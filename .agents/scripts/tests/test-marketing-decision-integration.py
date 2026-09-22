@@ -14,7 +14,13 @@ FIXTURES = Path(__file__).parent / "fixtures" / "marketing-decisions"
 
 class MarketingDecisionIntegrationTests(unittest.TestCase):
     def run_cli(self, script, *args):
-        completed = subprocess.run([sys.executable, str(SCRIPTS / script), *args], cwd=ROOT, text=True, capture_output=True, check=False)
+        completed = subprocess.run(  # nosec B603 -- fixed repository helper and fixture paths
+            [sys.executable, str(SCRIPTS / script), *args],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
         self.assertEqual(0, completed.returncode, completed.stderr)
         return completed.stdout
 
