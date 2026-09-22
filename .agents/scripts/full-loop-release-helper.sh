@@ -605,11 +605,16 @@ _full_loop_release_start_new() {
 	_full_loop_release_guard_competing_lane "$repo" "$source_pr" || return $?
 	# A snapshot retry must not turn an implicit legacy subset into a new exact
 	# CLI assertion. The verified capture migrates compatible prior evidence.
-	if persisted_expected=$(_full_loop_read_release_authorization "$repo" "$source_pr") &&
-		! _full_loop_snapshot_retry_eligible "$repo" "$source_pr"; then
-		_full_loop_release_resolve_persisted_intent "$repo" "$source_pr" "$expected_sources" \
-			"$persisted_expected" "$release_type" || return $?
-		expected_sources="$_FULL_LOOP_RESERVED_RECOVERY_EXPECTED"
+	if persisted_expected=$(_full_loop_read_release_authorization "$repo" "$source_pr"); then
+		if _full_loop_snapshot_retry_eligible "$repo" "$source_pr"; then
+			# Reuse, but never replace, the reviewed snapshot when the retry omitted
+			# its optional assertion. Explicit assertions remain independently checked.
+			expected_sources="${expected_sources:-$persisted_expected}"
+		else
+			_full_loop_release_resolve_persisted_intent "$repo" "$source_pr" "$expected_sources" \
+				"$persisted_expected" "$release_type" || return $?
+			expected_sources="$_FULL_LOOP_RESERVED_RECOVERY_EXPECTED"
+		fi
 	fi
 	_full_loop_release_guard_existing "$repo" "$source_pr" "$expected_sources" || existing_state_rc=$?
 	case "$existing_state_rc" in
