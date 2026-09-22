@@ -10,6 +10,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.34.15] - 2026-09-22
+
+### Added
+
+- add bounded public engagement drafts (#32207)
+- package private prospecting (#32205)
+
+### Changed
+
+- Maintenance: mark t18470 complete (pr:#32207 completed:2026-09-22) (#32206)
+- Maintenance: mark t18458 complete (pr:#32203 completed:2026-09-22) (#32202)
+
+### Fixed
+
+- continue active work across context rollover
+- bound prospective TODO validation (#32215)
+- promote OpenCode 1.18.32 compatibility
+- filter expected permission block audit transitions (#32212)
+- allow matching owner and repository names in lock reads
+
 ## [3.34.14] - 2026-09-22
 
 ### Added
