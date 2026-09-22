@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 #
-# Regression test for GH#23077.
+# Regression tests for GH#23077 and GH#32223.
 #
 # A protected counter branch rejects direct CAS pushes. The allocator must use
 # GitHub's read-only policy API to stop before mutation when available, retain
@@ -35,6 +35,7 @@ fail() {
 
 setup_protected_remote() {
 	local base_dir="$1"
+	local dedicated_state="${2:-valid}"
 	local bare_dir="${base_dir}/remote.git"
 	local seed_dir="${base_dir}/seed"
 	local work_dir="${base_dir}/work"
@@ -50,7 +51,15 @@ setup_protected_remote() {
 	git -C "$seed_dir" add .task-counter .gitignore TODO.md >/dev/null 2>&1 || return 1
 	git -C "$seed_dir" commit -m "chore: seed protected counter" >/dev/null 2>&1 || return 1
 	git -C "$seed_dir" push origin main >/dev/null 2>&1 || return 1
-	git -C "$seed_dir" push origin main:refs/heads/task-id-counter >/dev/null 2>&1 || return 1
+	if [[ "$dedicated_state" != "absent" ]]; then
+		git -C "$seed_dir" push origin main:refs/heads/task-id-counter >/dev/null 2>&1 || return 1
+	fi
+	if [[ "$dedicated_state" == "stale" ]]; then
+		printf '1005\n' >"${seed_dir}/.task-counter"
+		git -C "$seed_dir" add .task-counter >/dev/null 2>&1 || return 1
+		git -C "$seed_dir" commit -m "chore: advance default counter" >/dev/null 2>&1 || return 1
+		git -C "$seed_dir" push origin main >/dev/null 2>&1 || return 1
+	fi
 
 	mkdir -p "${bare_dir}/hooks" || return 1
 	cat >"${bare_dir}/hooks/pre-receive" <<'HOOK'
@@ -298,6 +307,171 @@ test_implicit_dedicated_counter_branch() {
 	return 0
 }
 
+run_canonical_claim() {
+	local work_dir="$1"
+	local bin_dir="$2"
+	local temp_root="$3"
+	shift 3
+	PATH="${bin_dir}:${SCRIPT_DIR}/..:/usr/bin:/bin" \
+		AIDEVOPS_TEMP_DIR="$temp_root" \
+		FAKE_GH_POLICY=classic \
+		CAS_MAX_RETRIES=5 \
+		CAS_WALL_TIMEOUT_S=20 \
+		CAS_SSH_FALLBACK_ENABLED=0 \
+		"$CLAIM_SCRIPT" --no-issue --repo-path "$work_dir" "$@"
+}
+
+assert_canonical_discovery_result() {
+	local state="$1"
+	local name="$2"
+	local case_dir="$3"
+	local output="$4"
+	local rc="$5"
+	local task_id=""
+	local branch_counter=""
+
+	case "$state" in
+	valid)
+		if [[ $rc -ne 0 ]]; then
+			fail "$name" "claim failed with ${rc}: $output"
+			return 1
+		fi
+		task_id=$(printf '%s\n' "$output" | awk -F= '/^task_id=/{print $2; exit}')
+		if [[ "$task_id" != "t1000" ]]; then
+			fail "$name" "expected t1000, got ${task_id:-<empty>}"
+			return 1
+		fi
+		branch_counter=$(/usr/bin/git --git-dir="${case_dir}/remote.git" \
+			show refs/heads/task-id-counter:.task-counter 2>/dev/null | tr -d '[:space:]')
+		if [[ "$branch_counter" != "1001" ]]; then
+			fail "$name" "expected dedicated counter 1001, got ${branch_counter:-<empty>}"
+			return 1
+		fi
+		;;
+	absent)
+		if [[ $rc -ne 4 ]] || ! printf '%s\n' "$output" | grep -Fq 'Dedicated counter branch task-id-counter not present; using main'; then
+			fail "$name" "expected absent-branch fallback and setup exit 4: rc=${rc}: $output"
+			return 1
+		fi
+		;;
+	stale)
+		if [[ $rc -ne 4 ]] || ! printf '%s\n' "$output" | grep -Fq 'COUNTER_BRANCH_STALE'; then
+			fail "$name" "expected stale-branch fallback and setup exit 4: rc=${rc}: $output"
+			return 1
+		fi
+		;;
+	indeterminate)
+		if [[ $rc -ne 4 ]] || ! printf '%s\n' "$output" | grep -Fq 'AIDEVOPS_TASK_COUNTER_STATUS=setup_error detail=counter_branch_discovery_failed'; then
+			fail "$name" "expected typed discovery failure: rc=${rc}: $output"
+			return 1
+		fi
+		if printf '%s\n' "$output" | grep -Fq 'using main'; then
+			fail "$name" "indeterminate discovery silently fell back to main: $output"
+			return 1
+		fi
+		;;
+	esac
+	return 0
+}
+
+test_canonical_implicit_counter_discovery() {
+	local parent_tmpdir="$1"
+	local bin_dir="$2"
+	local state=""
+	local case_dir=""
+	local work_dir=""
+	local temp_root=""
+	local name=""
+	local output=""
+	local rc=0
+	local before_head=""
+	local before_status=""
+	local after_head=""
+	local after_status=""
+
+	for state in valid absent stale indeterminate; do
+		name="canonical implicit discovery handles ${state} dedicated branch with the real Git shim"
+		case_dir="${parent_tmpdir}/canonical-${state}"
+		mkdir -p "$case_dir" || { fail "$name" "fixture directory failed"; continue; }
+		work_dir=$(setup_protected_remote "$case_dir" "$state") || {
+			fail "$name" "repo setup failed"
+			continue
+		}
+		work_dir="${case_dir}/seed"
+		printf '%s\n' '{}' >"${work_dir}/.aidevops.json"
+		temp_root="${case_dir}/contexts"
+		mkdir -p "$temp_root" || { fail "$name" "context root setup failed"; continue; }
+		if [[ "$state" == "indeterminate" ]]; then
+			mv "${case_dir}/remote.git" "${case_dir}/remote-unavailable.git" || {
+				fail "$name" "could not make remote unavailable"
+				continue
+			}
+		fi
+		before_head=$(/usr/bin/git -C "$work_dir" rev-parse HEAD 2>/dev/null)
+		before_status=$(/usr/bin/git -C "$work_dir" status --short 2>/dev/null)
+
+		rc=0
+		output=$(run_canonical_claim "$work_dir" "$bin_dir" "$temp_root" \
+			--title "canonical ${state} discovery" 2>&1) || rc=$?
+		after_head=$(/usr/bin/git -C "$work_dir" rev-parse HEAD 2>/dev/null)
+		after_status=$(/usr/bin/git -C "$work_dir" status --short 2>/dev/null)
+		if [[ "$after_head" != "$before_head" || "$after_status" != "$before_status" ]]; then
+			fail "$name" "canonical source repository changed"
+			continue
+		fi
+		if ! printf '%s\n' "$output" | grep -Fq 'Using isolated Git context for canonical counter discovery and CAS'; then
+			fail "$name" "isolated-context evidence missing: $output"
+			continue
+		fi
+		if find "$temp_root" -mindepth 1 -print -quit 2>/dev/null | grep -q .; then
+			fail "$name" "isolated context was not cleaned up"
+			continue
+		fi
+
+		assert_canonical_discovery_result "$state" "$name" "$case_dir" "$output" "$rc" || continue
+
+		pass "$name"
+	done
+	return 0
+}
+
+test_canonical_context_setup_failure() {
+	local parent_tmpdir="$1"
+	local bin_dir="$2"
+	local name="canonical context setup failure is typed and leaves the source unchanged"
+	local case_dir="${parent_tmpdir}/canonical-context-error"
+	local work_dir=""
+	local temp_root="${case_dir}/blocked-temp-root"
+	local before_head=""
+	local output=""
+	local rc=0
+
+	mkdir -p "$case_dir" || { fail "$name" "fixture directory failed"; return 0; }
+	work_dir=$(setup_protected_remote "$case_dir" valid) || {
+		fail "$name" "repo setup failed"
+		return 0
+	}
+	work_dir="${case_dir}/seed"
+	printf '%s\n' '{}' >"${work_dir}/.aidevops.json"
+	printf '%s\n' 'not a directory' >"$temp_root"
+	before_head=$(/usr/bin/git -C "$work_dir" rev-parse HEAD 2>/dev/null)
+
+	output=$(run_canonical_claim "$work_dir" "$bin_dir" "$temp_root" \
+		--title "canonical context setup failure" 2>&1) || rc=$?
+	if [[ $rc -ne 4 ]] || ! printf '%s\n' "$output" | grep -Fq \
+		'AIDEVOPS_TASK_COUNTER_STATUS=setup_error detail=counter_git_context_temp_root_failed'; then
+		fail "$name" "expected typed setup failure: rc=${rc}: $output"
+		return 0
+	fi
+	if [[ $(/usr/bin/git -C "$work_dir" rev-parse HEAD 2>/dev/null) != "$before_head" ]]; then
+		fail "$name" "canonical source HEAD changed"
+		return 0
+	fi
+
+	pass "$name"
+	return 0
+}
+
 main() {
 	local tmpdir=""
 	local work_dir=""
@@ -327,6 +501,8 @@ main() {
 	test_protected_counter_branch_preflight "$tmpdir" "$work_dir" "$bin_dir"
 	test_protected_counter_branch_push_fallback "$tmpdir" "$work_dir" "$bin_dir"
 	test_implicit_dedicated_counter_branch "$tmpdir" "$work_dir" "$bin_dir"
+	test_canonical_implicit_counter_discovery "$tmpdir" "$bin_dir"
+	test_canonical_context_setup_failure "$tmpdir" "$bin_dir"
 	rm -rf "$tmpdir"
 	printf '%s passed, %s failed\n' "$PASS" "$FAIL"
 	[[ "$FAIL" -eq 0 ]] || return 1

@@ -30,6 +30,12 @@ output=$(~/.aidevops/agents/scripts/planning-commit-helper.sh next-id --title "$
 output=$(~/.aidevops/agents/scripts/claim-task-id.sh --title "$TASK_TITLE" --repo-path "$(git rev-parse --show-toplevel)" "${PARENT_ISSUE_ARGS[@]}")
 ```
 
+`--repo-path` may identify a canonical checkout. The allocator keeps that source
+checkout read-only and performs online counter discovery/CAS in a disposable
+bare Git context under `AIDEVOPS_TEMP_DIR`; source config, TODO state, and
+pre-push hooks still come from the requested repository. Treat exit 4 with
+`counter_branch_discovery_failed` as a setup failure—do not silently use `main`.
+
 ```bash
 # Parse output
 while IFS= read -r line; do

@@ -58,11 +58,11 @@
 #   1  - Error (network failure, git error, etc.)
 #   2  - Offline fallback used (outputs: task_id=tNNN ref=offline)
 #   3  - Invalid --labels argument(s): counter NOT advanced (t2800)
-#   4  - Counter branch requires pull requests: counter NOT advanced
+#   4  - Counter setup/discovery error: counter NOT advanced
 #   10 - User declined claim after duplicate warning (interactive TTY only, t2180)
 #
 # Algorithm (CAS loop — compare-and-swap via git push):
-#   1. git fetch <remote> <counter_branch>
+#   1. Prepare a guard-compatible Git context, then fetch <remote>/<counter_branch>
 #   2. Read <remote>/<counter_branch>:.task-counter → current value (e.g. 1048)
 #   3. Claim IDs: 1048 to 1048+count-1
 #   4. Write 1048+count to .task-counter
@@ -1649,7 +1649,14 @@ main() {
 	[[ "$_CLAIM_NAMESPACED_HANDLED" == "true" ]] && return "$_CLAIM_NAMESPACED_RC"
 
 	load_project_config "$REPO_PATH"
-	resolve_implicit_counter_branch "$REPO_PATH"
+	_save_cleanup_scope
+	trap '_run_cleanups' RETURN
+	push_cleanup _claim_counter_cleanup_git_context
+	local counter_setup_rc=0
+	_claim_counter_prepare_git_context "$REPO_PATH" || counter_setup_rc=$?
+	[[ $counter_setup_rc -eq 0 ]] || return "$counter_setup_rc"
+	resolve_implicit_counter_branch "$REPO_PATH" || counter_setup_rc=$?
+	[[ $counter_setup_rc -eq 0 ]] || return "$counter_setup_rc"
 
 	# GH#20834: detect predecessor refs in description and populate
 	# _CLAIM_BLOCKED_BY_REFS for use by _ensure_todo_entry_written.
