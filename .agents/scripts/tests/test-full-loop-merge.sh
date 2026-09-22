@@ -1629,6 +1629,38 @@ test_local_deferral_survives_context_resolution() {
 	return 0
 }
 
+test_exact_check_deferral_preserves_retry_deadline() {
+	local result=0 output=""
+	output=$(
+		(
+			local scripts_dir="${SCRIPT_DIR}/.." rc=0
+			SCRIPT_DIR="$scripts_dir"
+			# shellcheck source=/dev/null
+			source "$scripts_dir/shared-constants.sh"
+			# shellcheck source=/dev/null
+			source "$scripts_dir/full-loop-helper-commit.sh"
+			# shellcheck source=/dev/null
+			source "$scripts_dir/full-loop-helper-merge.sh"
+			aidevops_log_line() { return 0; }
+			_required_contexts_for_default_branch() { printf '["required-ci"]\n'; }
+			gh_pr_checks_exact_json() {
+				printf '%s\n' 'gh_pr_checks_exact_json: [gh-transport] error_kind=github-api-read-deferred attempted=false deferred_by=local_admission retry_at=1893456000 reason="fixture exact-check wait" operation=required-check-rollup-read' >&2
+				return 2
+			}
+			_full_loop_query_required_checks 42 testorg/testrepo feature/test || rc=$?
+			[[ "$rc" -eq 1 ]] || return 1
+			[[ "$FULL_LOOP_PRE_MERGE_BLOCKER_KIND" == github-api-read-deferred ]] || return 1
+			[[ "$FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL" == 1893456000 ]] || return 1
+			[[ "$FULL_LOOP_REQUIRED_CHECKS_ERROR_DETAIL" == *'reason="fixture exact-check wait"'* ]] || return 1
+			_merge_report_pre_merge_gate_failure
+		) 2>&1
+	) || result=1
+	[[ "$output" == *'Merge deferred by GitHub read admission; retry_at=1893456000.'* ]] || result=1
+	[[ "$output" == *'operation=required-check-rollup-read'* ]] || result=1
+	print_result "exact-check deferral preserves its deadline through merge reporting" "$result" "output=$output"
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -1650,6 +1682,7 @@ main() {
 	test_cooldown_gate_failure_reports_cooldown
 	test_local_admission_gate_failure_reports_retry_deadline
 	test_local_deferral_survives_context_resolution
+	test_exact_check_deferral_preserves_retry_deadline
 	test_auto_review_required_interactive_admin_fallback
 	test_auto_review_required_admin_rejection_handoff
 	test_auto_review_required_headless_no_admin_fallback

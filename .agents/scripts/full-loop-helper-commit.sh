@@ -90,6 +90,14 @@ _full_loop_local_admission_evidence() {
 	local diagnostics="$1" line=""
 	while IFS= read -r line; do
 		case "$line" in
+		'gh_pr_checks_exact_json: [gh-transport] '*)
+			# The exact-check wrapper adds only this bounded trusted prefix. Strip
+			# it before parsing the transport evidence so the deadline survives
+			# without accepting arbitrary text containing a transport marker.
+			line="${line#gh_pr_checks_exact_json: }"
+			;;
+		esac
+		case "$line" in
 		'[gh-transport] error_kind=github-api-read-deferred attempted=false deferred_by=local_admission '*)
 			FULL_LOOP_PRE_MERGE_BLOCKER_KIND="${line#*error_kind=}"
 			FULL_LOOP_PRE_MERGE_BLOCKER_KIND="${FULL_LOOP_PRE_MERGE_BLOCKER_KIND%% *}"
