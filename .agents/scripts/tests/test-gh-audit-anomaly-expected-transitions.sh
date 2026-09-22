@@ -73,6 +73,7 @@ cat >"$LOG_FILE" <<'EOF'
 {"ts":"2026-07-31T00:24:00Z","op":"issue_edit","repo":"example/repo","number":25,"caller_script":"/runtime/agents/scripts/planning-publication-reconcile.sh","caller_function":"_publication_reconcile_one","flags":{"planning_publication_verified":"v1-current-state"},"before":{"capture_status":"ok","title_len":1,"body_len":1,"labels":["no-auto-dispatch"]},"after":{"capture_status":"ok","title_len":1,"body_len":1,"labels":["auto-dispatch"]},"delta":{"comparable":true,"title_delta_pct":0,"body_delta_pct":0,"labels_removed":["no-auto-dispatch"],"labels_added":["auto-dispatch"]},"suspicious":["protected_label_removed:no-auto-dispatch"]}
 {"ts":"2026-07-31T00:25:00Z","op":"issue_edit","repo":"example/repo","number":26,"caller_script":"/runtime/agents/scripts/pulse-merge-feedback.sh","caller_function":"main","flags":{},"before":{"capture_status":"ok","title_len":1,"body_len":1,"labels":["origin:worker","source:ci-feedback","status:in-review"]},"after":{"capture_status":"ok","title_len":1,"body_len":1,"labels":["origin:worker","source:ci-feedback","status:available"]},"delta":{"comparable":true,"title_delta_pct":0,"body_delta_pct":0,"labels_removed":["status:in-review"],"labels_added":["status:available"]},"suspicious":["protected_label_removed:status:in-review"]}
 {"ts":"2026-07-31T00:26:00Z","op":"issue_edit","repo":"example/repo","number":27,"caller_script":"/runtime/agents/scripts/pulse-merge-feedback.sh","caller_function":"main","flags":{},"before":{"capture_status":"ok","title_len":1,"body_len":1,"labels":["origin:worker","status:in-review"]},"after":{"capture_status":"ok","title_len":1,"body_len":1,"labels":["origin:worker","source:ci-feedback","status:available"]},"delta":{"comparable":true,"title_delta_pct":0,"body_delta_pct":0,"labels_removed":["status:in-review"],"labels_added":["status:available","source:ci-feedback"]},"suspicious":["protected_label_removed:status:in-review"]}
+{"ts":"2026-07-31T00:27:00Z","op":"issue_edit","repo":"example/repo","number":28,"caller_script":"/runtime/agents/scripts/worker-permission-helper.sh","caller_function":"permission_apply_block","flags":{},"before":{"capture_status":"ok","title_len":1,"body_len":1,"labels":["status:in-review"]},"after":{"capture_status":"ok","title_len":1,"body_len":1,"labels":["needs-maintainer-permissions","status:blocked"]},"delta":{"comparable":true,"title_delta_pct":0,"body_delta_pct":0,"labels_removed":["status:in-review"],"labels_added":["needs-maintainer-permissions","status:blocked"]},"suspicious":["protected_label_removed:status:in-review"]}
 EOF
 
 output=$(GH_AUDIT_LOG_FILE="$LOG_FILE" GH_ANOMALY_STATE_FILE="${TEST_ROOT}/state.json" \
@@ -102,7 +103,7 @@ output=$(GH_AUDIT_LOG_FILE="$LOG_FILE" GH_ANOMALY_STATE_FILE="${TEST_ROOT}/state
 [[ "$output" != *"| #1 |"* && "$output" != *"| #2 |"* && "$output" != *"| #7 |"* && "$output" != *"| #9 |"* &&
 	"$output" != *"| #12 |"* && "$output" != *"| #14 |"* && "$output" != *"| #17 |"* &&
 	"$output" != *"| #18 |"* && "$output" != *"| #20 |"* && "$output" != *"| #22 |"* &&
-	"$output" != *"| #24 |"* && "$output" != *"| #26 |"* ]] ||
+	"$output" != *"| #24 |"* && "$output" != *"| #26 |"* && "$output" != *"| #28 |"* ]] ||
 	fail "an exact expected transition remained actionable"
 
 MALFORMED_LOG="${TEST_ROOT}/malformed-audit.log"

@@ -38,7 +38,7 @@ def expected_permission_block_transition:
   and (((.delta.labels_removed // []) - [
     "status:queued", "status:claimed", "status:in-progress", "status:in-review"
   ]) | length == 0)
-  and (((.delta.labels_added // []) - [$permission]) | length == 0)
+  and (((.delta.labels_added // []) - [$permission, "status:blocked"]) | length == 0)
   and (.delta.title_delta_pct == 0)
   and (.delta.body_delta_pct == 0)
   and ([.after.labels[]? | select(
