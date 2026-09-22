@@ -177,14 +177,14 @@ _fetch_latest_permission_request_json() {
 	local slug="$2"
 	local pages comments body endpoint
 	endpoint=$(_permission_comments_endpoint "$slug" "$target_number")
-	pages=$(gh api "$endpoint" --paginate --slurp 2>/dev/null) || return 1
-	comments=$(_trusted_permission_comments_json "$pages") || return 1
+	pages=$(gh api "$endpoint" --paginate --slurp 2>/dev/null) || return 2
+	comments=$(_trusted_permission_comments_json "$pages") || return 2
 	body=$(jq -r --arg marker "$PERMISSION_REQUEST_MARKER" '
 		[.[] | select((.body // "") | contains($marker))]
 		| sort_by(.id) | last | .body // ""
-	' <<<"$comments") || return 1
+	' <<<"$comments") || return 2
 	[[ -n "$body" ]] || return 1
-	_extract_tilde_fenced_block "$body"
+	_extract_tilde_fenced_block "$body" || return 3
 	return 0
 }
 
@@ -579,8 +579,14 @@ cmd_verify_permissions() {
 	[[ "$target_type" == "$_PERMISSION_TARGET_ISSUE" || "$target_type" == "pr" ]] || { printf 'MALFORMED_APPROVAL\n'; return 5; }
 	_require_number_arg "$target_number" "$target_type" "$usage" >/dev/null 2>&1 || { printf 'MALFORMED_APPROVAL\n'; return 5; }
 	slug=$(_resolve_slug_or_fail "$slug" "$usage") || { printf 'API_ERROR\n'; return 6; }
-	local request_json request_id grant_body payload
-	request_json=$(_fetch_latest_permission_request_json "$target_number" "$slug") || { printf 'NO_REQUEST\n'; return 1; }
+	local request_json request_id grant_body payload request_rc=0
+	request_json=$(_fetch_latest_permission_request_json "$target_number" "$slug") || request_rc=$?
+	case "$request_rc" in
+	0) ;;
+	1) printf 'NO_REQUEST\n'; return 1 ;;
+	2) printf 'API_ERROR\n'; return 6 ;;
+	*) printf 'MALFORMED_REQUEST\n'; return 5 ;;
+	esac
 	request_id=$(jq -r '.request_id // ""' \
 		<<<"$request_json")
 	_validate_permission_request_json "$request_json" "$target_type" "$target_number" "$slug" "$request_id" || {

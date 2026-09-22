@@ -333,6 +333,9 @@ _dsi_guard_permission_history_verified() {
 		return 1
 	}
 	verification=$("$_DSI_APPROVAL_HELPER" verify-permissions issue "$issue_number" "$repo_slug" 2>/dev/null) || true
+	if [[ "$verification" == "NO_REQUEST" ]]; then
+		return 0
+	fi
 	if [[ "$verification" == "VERIFIED" ]]; then
 		_dsi_err "Issue #${issue_number} in ${repo_slug} has a signed grant bound to its original worker session and worktree; a new manual worker cannot consume it"
 		_dsi_info "  Resume through the original pulse/worker path so the bound pending request can be loaded safely."

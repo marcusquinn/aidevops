@@ -93,6 +93,7 @@ if [[ "$args" == *"/events?"* ]]; then
 	esac
   command cat "$PERMISSION_EVENTS_FILE"
 else
+	[[ "${PERMISSION_GH_MODE:-success}" != "comments-always-fail" ]] || exit 75
   command cat "$PERMISSION_COMMENTS_FILE"
 fi
 STUB
@@ -144,6 +145,24 @@ if _dispatch_permission_history_requires_grant 123 owner/repo; then
 fi
 [[ "$_DISPATCH_PERMISSION_VERIFY_RESULT" == "VERIFIED" ]]
 
+cp "$comments_file" "${comments_file}.with-request"
+jq '.[0] = [.[0][1], .[0][2], .[0][3]]' "$comments_file" >"${comments_file}.pending"
+mv "${comments_file}.pending" "$comments_file"
+if _dispatch_permission_history_requires_grant 123 owner/repo; then
+	printf 'label-only legacy history still required a grant: %s\n' "${_DISPATCH_PERMISSION_VERIFY_RESULT:-}" >&2
+	exit 1
+fi
+[[ "$_DISPATCH_PERMISSION_VERIFY_RESULT" == "NO_REQUEST" ]]
+mv "${comments_file}.with-request" "$comments_file"
+
+export PERMISSION_GH_MODE="comments-always-fail"
+if ! _dispatch_permission_history_requires_grant 123 owner/repo; then
+	printf 'dispatch was allowed when permission-request history could not be read\n' >&2
+	exit 1
+fi
+[[ "$_DISPATCH_PERMISSION_VERIFY_RESULT" == "API_ERROR" ]]
+
+export PERMISSION_GH_MODE="success"
 jq '.[0] = [.[0][0], .[0][2], .[0][3]]' "$comments_file" >"${comments_file}.pending"
 mv "${comments_file}.pending" "$comments_file"
 if ! _dispatch_permission_history_requires_grant 123 owner/repo; then

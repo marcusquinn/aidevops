@@ -828,10 +828,18 @@ test_permission_history_guard_requires_current_grant() {
 	original_helper="$_DSI_APPROVAL_HELPER"
 	_DSI_APPROVAL_HELPER="$helper"
 	MOCK_GH_PERMISSION_EVENTS_JSON='[[{"event":"labeled","label":{"name":"needs-maintainer-permissions"}}]]'
-	export MOCK_PERMISSION_VERIFICATION="STALE_APPROVAL"
+	export MOCK_PERMISSION_VERIFICATION="NO_REQUEST"
 	out=$(_dsi_guard_permission_history_verified 24354 owner/repo 2>&1) || rc=$?
 
 	local check=1
+	[[ "$rc" -eq 0 && -z "$out" ]] && check=0
+	print_result "permission label history without a request does not block manual dispatch" "$check" "rc=$rc output=$out"
+
+	rc=0
+	export MOCK_PERMISSION_VERIFICATION="STALE_APPROVAL"
+	out=$(_dsi_guard_permission_history_verified 24354 owner/repo 2>&1) || rc=$?
+
+	check=1
 	[[ "$rc" -eq 1 && "$out" == *"without a current matching signed grant (STALE_APPROVAL)"* ]] && check=0
 	print_result "permission history guard blocks stale grant" "$check" "rc=$rc output=$out"
 
