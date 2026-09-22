@@ -43,6 +43,8 @@ reset_gh_calls() {
 GH_LOCKED=true
 GH_LOCK_RC=0
 GH_API_RC=0
+GH_BATCH_RC=0
+GH_BATCH_JSON='{"data":{"repository":{}}}'
 gh() {
 	local command="${1:-}"
 	local subcommand="${2:-}"
@@ -51,6 +53,11 @@ gh() {
 		return "$GH_LOCK_RC"
 	fi
 	if [[ "$command" == "api" ]]; then
+		if [[ "${2:-}" == "graphql" ]]; then
+			[[ "$GH_BATCH_RC" -eq 0 ]] || return "$GH_BATCH_RC"
+			printf '%s\n' "$GH_BATCH_JSON"
+			return 0
+		fi
 		local api_count
 		api_count=$(<"$GH_API_COUNT_FILE")
 		api_count=$((api_count + 1))
@@ -159,18 +166,80 @@ snapshot='[
   {"number":53,"labels":[]},
   {"number":55,"labels":[{"name":"no-auto-dispatch"}]}
 ]'
+GH_BATCH_JSON='{"data":{"repository":{"issue_51":{"number":51,"locked":true},"issue_52":{"number":52,"locked":true}}}}'
 mkdir -p "$AIDEVOPS_AUTO_DISPATCH_LOCK_DIR"
 : >"${AIDEVOPS_AUTO_DISPATCH_LOCK_DIR}/owner--repo-53"
 : >"${AIDEVOPS_AUTO_DISPATCH_LOCK_DIR}/owner--repo-55"
 if reconcile_auto_dispatch_issue_locks owner/repo "$snapshot" &&
 	! grep -q -- '^issue lock ' "$GH_CALLS" &&
-	[[ "$(grep -c -- '^api ' "$GH_CALLS")" -eq 2 ]] &&
+	[[ "$(grep -c -- '^api graphql ' "$GH_CALLS")" -eq 1 ]] &&
 	grep -q -- 'issue unlock 53 --repo owner/repo' "$GH_CALLS" &&
 	[[ ! -f "${AIDEVOPS_AUTO_DISPATCH_LOCK_DIR}/owner--repo-53" ]] &&
 	! grep -q -- 'issue unlock 55 --repo owner/repo' "$GH_CALLS"; then
 	pass "reconciliation covers blocked and queued issues without undoing lockdowns"
 else
 	fail "reconciliation covers blocked and queued issues without undoing lockdowns"
+fi
+
+reset_gh_calls
+snapshot=$(jq -nc '[range(1; 81) | {number: ., labels: [{name: "auto-dispatch"}]}]')
+GH_BATCH_JSON=$(jq -nc '{data: {repository: ([range(1; 81) | {key: ("issue_" + tostring), value: {number: ., locked: true}}] | from_entries)}}')
+if reconcile_auto_dispatch_issue_locks owner/repo "$snapshot" &&
+	[[ "$(grep -c -- '^api graphql ' "$GH_CALLS")" -eq 1 ]] &&
+	! grep -q -- '^api repos/' "$GH_CALLS" &&
+	! grep -q -- '^issue lock ' "$GH_CALLS" &&
+	[[ -f "${AIDEVOPS_AUTO_DISPATCH_LOCK_DIR}/owner--repo-1" ]] &&
+	[[ -f "${AIDEVOPS_AUTO_DISPATCH_LOCK_DIR}/owner--repo-80" ]]; then
+	pass "large reconciliation uses one authoritative batch lock read"
+else
+	fail "large reconciliation uses one authoritative batch lock read"
+fi
+
+reset_gh_calls
+snapshot='[
+  {"number":156,"labels":[{"name":"auto-dispatch"}]},
+  {"number":157,"labels":[{"name":"auto-dispatch"}]}
+]'
+GH_BATCH_JSON='{"data":{"repository":{"issue_156":{"number":156,"locked":true}}}}'
+if ! reconcile_auto_dispatch_issue_locks owner/repo "$snapshot" &&
+	[[ "$(grep -c -- '^api graphql ' "$GH_CALLS")" -eq 1 ]] &&
+	! grep -q -- '^issue lock ' "$GH_CALLS" &&
+	[[ ! -f "${AIDEVOPS_AUTO_DISPATCH_LOCK_DIR}/owner--repo-156" ]] &&
+	[[ ! -f "${AIDEVOPS_AUTO_DISPATCH_LOCK_DIR}/owner--repo-157" ]]; then
+	pass "partial batch lock evidence leaves the repository fail-closed"
+else
+	fail "partial batch lock evidence leaves the repository fail-closed"
+fi
+
+reset_gh_calls
+snapshot='[
+  {"number":158,"labels":[{"name":"auto-dispatch"}]},
+  {"number":159,"labels":[{"name":"auto-dispatch"}]}
+]'
+GH_BATCH_JSON='{"data":{"repository":{"issue_158":{"number":159,"locked":false},"issue_159":{"number":158,"locked":true}}}}'
+GH_LOCKED=true
+if reconcile_auto_dispatch_issue_locks owner/repo "$snapshot" &&
+	! grep -q -- '^issue lock 158 ' "$GH_CALLS" &&
+	grep -q -- '^issue lock 159 --repo owner/repo --reason resolved' "$GH_CALLS" &&
+	[[ -f "${AIDEVOPS_AUTO_DISPATCH_LOCK_DIR}/owner--repo-158" ]] &&
+	[[ -f "${AIDEVOPS_AUTO_DISPATCH_LOCK_DIR}/owner--repo-159" ]]; then
+	pass "batch lock state remains bound to the validated returned issue number"
+else
+	fail "batch lock state remains bound to the validated returned issue number"
+fi
+
+reset_gh_calls
+GH_BATCH_JSON='{"data":{"repository":{"issue_58":{"number":58,"locked":false}}}}'
+GH_LOCKED=true
+snapshot='[{"number":58,"labels":[{"name":"auto-dispatch"}]}]'
+if reconcile_auto_dispatch_issue_locks owner/repo "$snapshot" &&
+	[[ "$(grep -c -- '^api graphql ' "$GH_CALLS")" -eq 1 ]] &&
+	[[ "$(grep -c -- '^api repos/owner/repo/issues/58 --jq .locked' "$GH_CALLS")" -eq 1 ]] &&
+	grep -q -- '^issue lock 58 --repo owner/repo --reason resolved' "$GH_CALLS" &&
+	[[ -f "${AIDEVOPS_AUTO_DISPATCH_LOCK_DIR}/owner--repo-58" ]]; then
+	pass "unlocked batch evidence mutates once and verifies the target freshly"
+else
+	fail "unlocked batch evidence mutates once and verifies the target freshly"
 fi
 
 reset_gh_calls

@@ -67,6 +67,10 @@ _PULSE_DISPATCH_FALSE="false"
 _PULSE_DISPATCH_ELIGIBILITY_STAGE="eligibility_gate"
 _PULSE_DISPATCH_NMR_LABEL="needs-maintainer-review"
 _PULSE_DISPATCH_COLLABORATOR_ASSOCIATION="COLLABORATOR"
+_PULSE_DISPATCH_AUTO_LABEL="auto-dispatch"
+_PULSE_DISPATCH_JSON_ARRAY_TYPE="array"
+_PULSE_DISPATCH_UNSIGNED_INTEGER_PATTERN='^[0-9]+$'
+_PULSE_DISPATCH_DEDUP_LABEL_CHECK_STAGE="dedup.label_checks"
 # One Pulse invocation sources this module once. This guard therefore bounds
 # synchronous global disk-pressure recovery to one guarded cleanup per cycle.
 AIDEVOPS_DISPATCH_DISK_PRESSURE_CLEANUP_ATTEMPTED=0
@@ -148,7 +152,7 @@ has_worker_for_repo_issue() {
 	local issue_number="$1"
 	local repo_slug="$2"
 
-	if [[ ! "$issue_number" =~ ^[0-9]+$ ]] || [[ -z "$repo_slug" ]]; then
+	if [[ ! "$issue_number" =~ $_PULSE_DISPATCH_UNSIGNED_INTEGER_PATTERN ]] || [[ -z "$repo_slug" ]]; then
 		return 1
 	fi
 
@@ -171,7 +175,7 @@ has_worker_for_repo_issue() {
 			($0 ~ ("issue-" issue "([^0-9]|$)") || $0 ~ ("Issue #" issue "([^0-9]|$)")) { count++ }
 			END { print count + 0 }
 		') || matches=0
-		[[ "$matches" =~ ^[0-9]+$ ]] || matches=0
+		[[ "$matches" =~ $_PULSE_DISPATCH_UNSIGNED_INTEGER_PATTERN ]] || matches=0
 		if [[ "$matches" -gt 0 ]]; then
 			return 0
 		fi
@@ -190,7 +194,7 @@ has_worker_for_repo_issue() {
 		$0 ~ ("--session-key[[:space:]]+issue-" issue "([^0-9]|$)") { count++ }
 		END { print count + 0 }
 	') || sk_matches=0
-	[[ "$sk_matches" =~ ^[0-9]+$ ]] || sk_matches=0
+	[[ "$sk_matches" =~ $_PULSE_DISPATCH_UNSIGNED_INTEGER_PATTERN ]] || sk_matches=0
 	if [[ "$sk_matches" -gt 0 ]]; then
 		return 0
 	fi
@@ -248,6 +252,61 @@ _read_issue_conversation_lock() {
 }
 
 #######################################
+# Read authoritative conversation-lock state for every auto-dispatch issue in
+# one bounded GraphQL request. Reconciliation may use this repository-level
+# snapshot, while the worker launch path continues to perform its own fresh
+# per-target verification.
+#
+# Args:
+#   $1 = repository slug
+#   $2 = raw open-issue snapshot JSON
+# Returns:
+#   JSON list of {number, locked}; non-zero when any requested issue is absent
+#   or malformed
+#######################################
+_read_issue_conversation_locks_batch() {
+	local slug="$1"
+	local issue_json="$2"
+	local owner="${slug%%/*}"
+	local repo="${slug#*/}"
+	local issue_numbers="" query="" issue_num="" response=""
+
+	[[ -n "$owner" && -n "$repo" && "$owner" != "$repo" ]] || return 1
+	issue_numbers=$(printf '%s' "$issue_json" | jq -ce \
+		--arg auto_dispatch_label "$_PULSE_DISPATCH_AUTO_LABEL" \
+		--arg no_auto_dispatch_label "no-auto-dispatch" '
+		[.[] |
+			([.labels[]? | .name? // .]) as $labels |
+			select(($labels | index($auto_dispatch_label)) != null and ($labels | index($no_auto_dispatch_label)) == null) |
+			.number] |
+		if all(.[]; type == "number" and . >= 1 and floor == .) then unique else error("invalid issue number") end
+	' 2>/dev/null) || return 1
+	[[ "$issue_numbers" != "[]" ]] || {
+		printf '[]\n'
+		return 0
+	}
+
+	# shellcheck disable=SC2016  # GraphQL variables are literal query syntax.
+	query='query($owner:String!,$name:String!){repository(owner:$owner,name:$name){'
+	while IFS= read -r issue_num; do
+		query="${query}issue_${issue_num}:issue(number:${issue_num}){number locked}"
+	done < <(printf '%s' "$issue_numbers" | jq -r '.[]')
+	query="${query}}}"
+
+	response=$(gh api graphql -f "query=${query}" -F "owner=${owner}" -F "name=${repo}" 2>/dev/null) || return 1
+	printf '%s' "$response" | jq -ce --argjson expected "$issue_numbers" '
+		(.data.repository // null) as $repository |
+		if ($repository | type) != "object" then error("missing repository lock snapshot") else
+			[$repository[] | select(type == "object") | {number, locked}] as $locks |
+			if (($locks | map(.number) | sort) == ($expected | sort)) and
+				all($locks[]; (.locked | type) == "boolean")
+			then $locks else error("incomplete repository lock snapshot") end
+		end
+	' 2>/dev/null || return 1
+	return 0
+}
+
+#######################################
 # Verify an issue conversation lock after GitHub accepts the lock mutation.
 # The issue REST read can briefly lag the mutation, so retry boundedly while
 # preserving the fail-closed trust boundary.
@@ -268,7 +327,7 @@ _verify_issue_conversation_lock() {
 
 	[[ "$attempts" =~ ^[1-9][0-9]*$ ]] || attempts=3
 	[[ "$attempts" -le 3 ]] || attempts=3
-	[[ "$retry_delay" =~ ^[0-9]+$ ]] || retry_delay=2
+	[[ "$retry_delay" =~ $_PULSE_DISPATCH_UNSIGNED_INTEGER_PATTERN ]] || retry_delay=2
 	[[ "$retry_delay" -le 5 ]] || retry_delay=2
 
 	while [[ "$attempt" -le "$attempts" ]]; do
@@ -277,7 +336,7 @@ _verify_issue_conversation_lock() {
 		if [[ "$locked_state" == "true" ]]; then
 			return 0
 		fi
-		[[ "$locked_state" == "false" ]] || return 1
+		[[ "$locked_state" == "$_PULSE_DISPATCH_FALSE" ]] || return 1
 		if [[ "$attempt" -lt "$attempts" ]]; then
 			sleep "$retry_delay"
 		fi
@@ -294,18 +353,13 @@ _verify_issue_conversation_lock() {
 # The issue lock is strict and verified. Linked PR conversations remain open so
 # write-access CI can post reviews and status comments during worker execution.
 #######################################
-lock_issue_for_worker() {
+_apply_issue_conversation_lock_state() {
 	local issue_num="$1"
 	local slug="$2"
 	local reason="${3:-resolved}"
+	local locked_state="$4"
 
 	[[ -n "$issue_num" && -n "$slug" ]] || return 1
-
-	# Reconciliation frequently revisits an already-locked issue. Use a fresh
-	# REST read, not a marker or a cached discovery snapshot, to avoid repeated
-	# rejected mutations without weakening the launch-time trust boundary.
-	local locked_state=""
-	locked_state=$(_read_issue_conversation_lock "$issue_num" "$slug") || return 1
 	case "$locked_state" in
 	true)
 		_record_auto_dispatch_lock "$issue_num" "$slug" || return 1
@@ -336,6 +390,22 @@ lock_issue_for_worker() {
 	echo "[pulse-wrapper] Locked #${issue_num} in ${slug} during worker execution (t1934)" >>"$LOGFILE"
 
 	return 0
+}
+
+lock_issue_for_worker() {
+	local issue_num="$1"
+	local slug="$2"
+	local reason="${3:-resolved}"
+	local locked_state=""
+
+	[[ -n "$issue_num" && -n "$slug" ]] || return 1
+
+	# The launch path always uses a fresh per-target read. Repository-level
+	# reconciliation calls _apply_issue_conversation_lock_state directly with a
+	# bounded authoritative batch snapshot and cannot weaken this final gate.
+	locked_state=$(_read_issue_conversation_lock "$issue_num" "$slug") || return 1
+	_apply_issue_conversation_lock_state "$issue_num" "$slug" "$reason" "$locked_state"
+	return $?
 }
 
 _auto_dispatch_lock_marker() {
@@ -377,15 +447,22 @@ _auto_dispatch_lock_required() {
 reconcile_auto_dispatch_issue_locks() {
 	local slug="$1"
 	local issue_json="$2"
-	local issue_num="" marker="" labels="" labels_csv=""
+	local issue_num="" marker="" labels="" labels_csv="" lock_snapshot="" lock_states="" locked_state=""
 	[[ -n "$slug" && -n "$issue_json" ]] || return 1
+	lock_snapshot=$(_read_issue_conversation_locks_batch "$slug" "$issue_json") || return 1
+	lock_states=$(printf '%s' "$lock_snapshot" | jq -ce '
+		map({key: (.number | tostring), value: .locked}) | from_entries
+	' 2>/dev/null) || return 1
 
 	while IFS=$'\t' read -r issue_num labels; do
-		[[ "$issue_num" =~ ^[0-9]+$ ]] || continue
+		[[ "$issue_num" =~ $_PULSE_DISPATCH_UNSIGNED_INTEGER_PATTERN ]] || continue
 		marker=$(_auto_dispatch_lock_marker "$issue_num" "$slug") || continue
 		labels_csv=",${labels},"
 		if _auto_dispatch_lock_required "$labels"; then
-			lock_issue_for_worker "$issue_num" "$slug" || return 1
+			locked_state=$(printf '%s' "$lock_states" | jq -r --arg issue_num "$issue_num" \
+				'if has($issue_num) then .[$issue_num] | tostring else "unknown" end' 2>/dev/null) || return 1
+			[[ "$locked_state" == "true" || "$locked_state" == "$_PULSE_DISPATCH_FALSE" ]] || return 1
+			_apply_issue_conversation_lock_state "$issue_num" "$slug" resolved "$locked_state" || return 1
 		elif [[ -f "$marker" && "$labels_csv" != *,no-auto-dispatch,* ]]; then
 			gh issue unlock "$issue_num" --repo "$slug" >/dev/null 2>&1 || return 1
 			rm -f "$marker" 2>/dev/null || return 1
@@ -723,7 +800,7 @@ _issue_thread_is_trusted_maintainer_only() {
 	[[ -n "$comments_json" && "$comments_json" != "null" ]] || comments_json="[]"
 
 	local untrusted_comment_count
-	untrusted_comment_count=$(printf '%s' "$comments_json" | jq -r --arg array_type "array" \
+	untrusted_comment_count=$(printf '%s' "$comments_json" | jq -r --arg array_type "$_PULSE_DISPATCH_JSON_ARRAY_TYPE" \
 		--arg collaborator_association "$_PULSE_DISPATCH_COLLABORATOR_ASSOCIATION" '
 		(if type == $array_type and (.[0]? | type) == $array_type then [.[][]]
 		elif type == $array_type then .
@@ -736,11 +813,11 @@ _issue_thread_is_trusted_maintainer_only() {
 		) ]
 		| length
 	') || return 1
-	[[ "$untrusted_comment_count" =~ ^[0-9]+$ ]] || return 1
+	[[ "$untrusted_comment_count" =~ $_PULSE_DISPATCH_UNSIGNED_INTEGER_PATTERN ]] || return 1
 	[[ "$untrusted_comment_count" -eq 0 ]] || return 1
 
 	local missing_collaborator_login_count
-	missing_collaborator_login_count=$(printf '%s' "$comments_json" | jq -r --arg array_type "array" \
+	missing_collaborator_login_count=$(printf '%s' "$comments_json" | jq -r --arg array_type "$_PULSE_DISPATCH_JSON_ARRAY_TYPE" \
 		--arg collaborator_association "$_PULSE_DISPATCH_COLLABORATOR_ASSOCIATION" '
 		(if type == $array_type and (.[0]? | type) == $array_type then [.[][]]
 		elif type == $array_type then .
@@ -751,11 +828,11 @@ _issue_thread_is_trusted_maintainer_only() {
 		) ]
 		| length
 	') || return 1
-	[[ "$missing_collaborator_login_count" =~ ^[0-9]+$ ]] || return 1
+	[[ "$missing_collaborator_login_count" =~ $_PULSE_DISPATCH_UNSIGNED_INTEGER_PATTERN ]] || return 1
 	[[ "$missing_collaborator_login_count" -eq 0 ]] || return 1
 
 	local collaborator_comment_logins
-	collaborator_comment_logins=$(printf '%s' "$comments_json" | jq -r --arg array_type "array" \
+	collaborator_comment_logins=$(printf '%s' "$comments_json" | jq -r --arg array_type "$_PULSE_DISPATCH_JSON_ARRAY_TYPE" \
 		--arg collaborator_association "$_PULSE_DISPATCH_COLLABORATOR_ASSOCIATION" '
 		(if type == $array_type and (.[0]? | type) == $array_type then [.[][]]
 		elif type == $array_type then .
@@ -851,7 +928,7 @@ _check_external_issue_author_gate() {
 
 	local issue_author_meta=""
 	issue_author_meta=$(gh api "repos/${repo_slug}/issues/${issue_number}" \
-		--jq 'if (type == "object" and ((.labels | type) == "array") and all(.labels[]; if type == "object" then ((.name | type) == "string" and (.name | length) > 0) else false end)) then [.author_association // "NONE", .user.type // "", .user.login // "", (([.labels[].name] | index("external-contributor") != null) | tostring)] | join("|") else empty end' 2>/dev/null) || issue_author_meta=""
+		--jq 'if (type == "object" and (.labels | arrays) and all(.labels[]; if type == "object" then ((.name | type) == "string" and (.name | length) > 0) else false end)) then [.author_association // "NONE", .user.type // "", .user.login // "", (([.labels[].name] | index("external-contributor") != null) | tostring)] | join("|") else empty end' 2>/dev/null) || issue_author_meta=""
 
 	local author_association="NONE"
 	local author_type=""
@@ -1105,10 +1182,10 @@ _has_committed_to_main_cache_label() {
 _has_consolidated_label() {
 	local issue_meta_json="$1"
 	[[ -n "$issue_meta_json" ]] || return 1
-	if printf '%s' "$issue_meta_json" | jq -e '
+	if printf '%s' "$issue_meta_json" | jq -e --arg auto_dispatch_label "$_PULSE_DISPATCH_AUTO_LABEL" '
 		(.labels | map(.name)) as $labels
 		| (
-			(($labels | index("auto-dispatch")) != null)
+			(($labels | index($auto_dispatch_label)) != null)
 			and ((.body // "") | test("(^|\\n)_Supersedes #[0-9]+ (—|-) this issue is the consolidated spec\\._(\\n|$)"))
 		) as $dispatchable_spec
 		| (($labels | index("consolidated")) != null)
@@ -1233,7 +1310,7 @@ _dispatch_permission_history_requires_grant() {
 	_DISPATCH_PERMISSION_VERIFY_RESULT=""
 	[[ "$attempts" =~ ^[1-9][0-9]*$ ]] || attempts=2
 	[[ "$attempts" -le 3 ]] || attempts=3
-	[[ "$retry_delay" =~ ^[0-9]+$ ]] || retry_delay=1
+	[[ "$retry_delay" =~ $_PULSE_DISPATCH_UNSIGNED_INTEGER_PATTERN ]] || retry_delay=1
 	[[ "$retry_delay" -le 5 ]] || retry_delay=1
 	while [[ "$attempt" -le "$attempts" ]]; do
 		if events_json=$(gh api "repos/${repo_slug}/issues/${issue_number}/events?per_page=100" --paginate --slurp 2>/dev/null); then
@@ -1339,9 +1416,9 @@ _dispatch_has_interactive_hold() {
 	local issue_meta_json="$1"
 	[[ -n "$issue_meta_json" ]] || return 1
 	printf '%s' "$issue_meta_json" |
-		jq -e '
+		jq -e --arg auto_dispatch_label "$_PULSE_DISPATCH_AUTO_LABEL" '
 			([.labels[]?.name]) as $labels |
-			(($labels | index("auto-dispatch")) | not) and
+			(($labels | index($auto_dispatch_label)) | not) and
 			(
 				($labels | index("status:in-review")) or
 				(($labels | index("origin:interactive")) and (((.assignees // []) | length) > 0))
@@ -1389,7 +1466,7 @@ _dispatch_registered_worktree_count() {
 	worktree_list=$(git -C "$repo_path" worktree list 2>/dev/null) || return 1
 	[[ -n "$worktree_list" ]] || return 1
 	count=$(printf '%s\n' "$worktree_list" | wc -l | tr -d ' ')
-	[[ "$count" =~ ^[0-9]+$ ]] || return 1
+	[[ "$count" =~ $_PULSE_DISPATCH_UNSIGNED_INTEGER_PATTERN ]] || return 1
 	printf '%s\n' "$count"
 	return 0
 }
@@ -1417,7 +1494,7 @@ _dispatch_cleanup_worktree_capacity() {
 	local cleanup_rc=0
 	local after_count=""
 
-	[[ "$cleanup_timeout" =~ ^[0-9]+$ ]] || cleanup_timeout=60
+	[[ "$cleanup_timeout" =~ $_PULSE_DISPATCH_UNSIGNED_INTEGER_PATTERN ]] || cleanup_timeout=60
 	[[ "$cleanup_timeout" -ge 1 ]] || cleanup_timeout=1
 	if [[ ! -x "$helper" ]]; then
 		echo "[dispatch_with_dedup] Capacity cleanup unavailable for #${issue_number} in ${repo_slug}: guarded helper not executable (${helper}); count remains ${before_count}/${max_count}" >>"$LOGFILE"
@@ -1435,12 +1512,12 @@ _dispatch_cleanup_worktree_capacity() {
 		echo "[dispatch_with_dedup] Guarded capacity cleanup could not verify the post-cleanup worktree count for #${issue_number} in ${repo_slug} (before ${before_count}, cap ${max_count}, cleanup_rc=${cleanup_rc}); dispatch remains fail-closed" >>"$LOGFILE"
 		return 1
 	fi
-	if [[ "$after_count" =~ ^[0-9]+$ ]] && [[ "$after_count" -lt "$max_count" ]]; then
+	if [[ "$after_count" =~ $_PULSE_DISPATCH_UNSIGNED_INTEGER_PATTERN ]] && [[ "$after_count" -lt "$max_count" ]]; then
 		echo "[dispatch_with_dedup] Guarded capacity cleanup recovered dispatch capacity for #${issue_number} in ${repo_slug}: ${before_count} -> ${after_count} worktrees (cap ${max_count}, cleanup_rc=${cleanup_rc})" >>"$LOGFILE"
 		return 0
 	fi
 
-	[[ "$after_count" =~ ^[0-9]+$ ]] || after_count="$before_count"
+	[[ "$after_count" =~ $_PULSE_DISPATCH_UNSIGNED_INTEGER_PATTERN ]] || after_count="$before_count"
 	echo "[dispatch_with_dedup] Guarded capacity cleanup could not recover dispatch capacity for #${issue_number} in ${repo_slug}: ${before_count} -> ${after_count} worktrees (cap ${max_count}, cleanup_rc=${cleanup_rc}); existing cleanup safety gates preserved remaining worktrees" >>"$LOGFILE"
 	return 1
 }
@@ -1487,7 +1564,7 @@ _dispatch_cleanup_disk_pressure() {
 		return 1
 	fi
 	AIDEVOPS_DISPATCH_DISK_PRESSURE_CLEANUP_ATTEMPTED=1
-	[[ "$cleanup_timeout" =~ ^[0-9]+$ ]] || cleanup_timeout=60
+	[[ "$cleanup_timeout" =~ $_PULSE_DISPATCH_UNSIGNED_INTEGER_PATTERN ]] || cleanup_timeout=60
 	[[ "$cleanup_timeout" -ge 1 ]] || cleanup_timeout=1
 	if ! declare -F cleanup_worktrees >/dev/null 2>&1; then
 		echo "[dispatch_with_dedup] Disk-pressure cleanup unavailable for #${issue_number} in ${repo_slug}: guarded all-repository cleanup missing (before reason=${before_reason}, available=${before_kb}KB/${before_percent}%); dispatch remains fail-closed" >>"$LOGFILE"
@@ -1623,12 +1700,12 @@ _dispatch_dedup_check_layers() {
 	_ds_stage_start "$issue_number" "$repo_slug" "label_checks" "$_dss_t0" _ds_stage_attempt_id
 	if printf '%s' "$issue_meta_json" | jq -e '.labels | map(.name) | index("status:needs-info")' >/dev/null 2>&1; then
 		echo "[dispatch_with_dedup] NEEDS_INFO_BLOCKED for #${issue_number} in ${repo_slug}: status:needs-info label present" >>"$LOGFILE"
-		_ds_record "$issue_number" "$repo_slug" "dedup.label_checks" "$_dss_t0"
+		_ds_record "$issue_number" "$repo_slug" "$_PULSE_DISPATCH_DEDUP_LABEL_CHECK_STAGE" "$_dss_t0"
 		return 1
 	fi
 	if printf '%s' "$issue_meta_json" | jq -e '.labels | map(.name) | (index("supervisor") or index("contributor") or index("persistent") or index("quality-review") or index("on hold") or index("blocked") or index("parent-task") or index("meta"))' >/dev/null 2>&1; then
 		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: non-dispatchable management label present" >>"$LOGFILE"
-		_ds_record "$issue_number" "$repo_slug" "dedup.label_checks" "$_dss_t0"
+		_ds_record "$issue_number" "$repo_slug" "$_PULSE_DISPATCH_DEDUP_LABEL_CHECK_STAGE" "$_dss_t0"
 		return 1
 	fi
 
@@ -1637,10 +1714,10 @@ _dispatch_dedup_check_layers() {
 	# dedup layers) catches these before the more expensive eligibility check fires.
 	if printf '%s' "$issue_meta_json" | jq -e '.labels | map(.name) | (index("status:done") or index("status:resolved"))' >/dev/null 2>&1; then
 		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: status:done or status:resolved label present (t2424)" >>"$LOGFILE"
-		_ds_record "$issue_number" "$repo_slug" "dedup.label_checks" "$_dss_t0"
+		_ds_record "$issue_number" "$repo_slug" "$_PULSE_DISPATCH_DEDUP_LABEL_CHECK_STAGE" "$_dss_t0"
 		return 1
 	fi
-	_ds_record "$issue_number" "$repo_slug" "dedup.label_checks" "$_dss_t0"
+	_ds_record "$issue_number" "$repo_slug" "$_PULSE_DISPATCH_DEDUP_LABEL_CHECK_STAGE" "$_dss_t0"
 
 	# t1894/GH#18648: Cryptographic approval gate (ever-NMR) with
 	# review-followup exemption for bot-generated cleanup issues.
@@ -1840,7 +1917,7 @@ _rollback_prelaunch_ownership() {
 	# authenticated comment author. Body text and bare association values cannot
 	# let an external commenter supersede this runner's exact claim.
 	latest_claim_id=$(printf '%s' "$comments_json" | jq -r --arg self "$self_login" '
-		(if type == "array" and ((.[0]? | type) == "array") then add else . end)
+		flatten(1)
 		| [.[] | select(
 			((.user.login // .author.login // "") | ascii_downcase) == ($self | ascii_downcase)
 			and ((.body // "") | contains("DISPATCH_CLAIM nonce="))
@@ -2622,14 +2699,14 @@ check_terminal_blockers() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local max_comments="${3:-5}"
-	[[ "$max_comments" =~ ^[0-9]+$ ]] || max_comments=5
+	[[ "$max_comments" =~ $_PULSE_DISPATCH_UNSIGNED_INTEGER_PATTERN ]] || max_comments=5
 
 	if [[ -z "$issue_number" || -z "$repo_slug" ]]; then
 		echo "[pulse-wrapper] check_terminal_blockers: missing arguments" >>"$LOGFILE"
 		return 2
 	fi
 
-	if [[ ! "$issue_number" =~ ^[0-9]+$ ]]; then
+	if [[ ! "$issue_number" =~ $_PULSE_DISPATCH_UNSIGNED_INTEGER_PATTERN ]]; then
 		return 2
 	fi
 
