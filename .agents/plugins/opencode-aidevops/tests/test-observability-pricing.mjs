@@ -33,4 +33,6 @@ test("price estimates retain exact, fallback, and unknown quality", () => {
   assert.equal(getPricingProvenance("gpt-5.6-terra").quality, "exact_model");
   assert.equal(getPricingProvenance("unlisted-model").quality, "fallback");
   assert.equal(getPricingProvenance("gpt-5.6-sol-pro").quality, "unknown");
+  assert.equal(getPricingProvenance("gpt-6-sol").quality, "unknown");
+  assert.equal(getPricingProvenance("gpt-6-luna").quality, "unknown");
 });

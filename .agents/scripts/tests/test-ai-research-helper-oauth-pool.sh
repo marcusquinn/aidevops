@@ -258,7 +258,7 @@ test_opencode_tier_models() {
 	standard_model=$(resolve_opencode_model_id standard)
 	standard_variant=$(resolve_opencode_variant standard)
 	thinking_model=$(resolve_opencode_model_id thinking)
-	if [[ "$standard_model" == "openai/gpt-5.6-terra" && "$standard_variant" == "low" && "$thinking_model" == "openai/gpt-5.6-sol" ]] &&
+	if [[ "$standard_model" == "openai/gpt-5.6-terra" && "$standard_variant" == "low" && "$thinking_model" == "openai/gpt-6-sol" ]] &&
 		[[ "$(resolve_opencode_variant thinking)" == "medium" ]] &&
 		[[ -z "$(resolve_opencode_variant thinking openai/unmapped-model)" ]]; then
 		record_result "OpenCode research tiers follow canonical model and effort defaults" 0

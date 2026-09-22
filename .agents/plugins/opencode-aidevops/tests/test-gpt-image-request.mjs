@@ -111,7 +111,7 @@ describe("GPT image provider requests", () => {
     const body = JSON.parse(captured.init.body);
     assert.equal(captured.url, "https://chatgpt.com/backend-api/codex/responses");
     assert.equal(captured.init.headers.Authorization, "Bearer oauth-test-token");
-    assert.equal(body.model, "gpt-5.6-sol");
+    assert.equal(body.model, "gpt-6-sol");
     assert.equal(body.tools[0].type, "image_generation");
     assert.equal(body.tools[0].output_format, "webp");
     assert.equal(body.tools[0].size, "1024x1024");
@@ -156,7 +156,7 @@ describe("GPT image provider requests", () => {
         return new Response(event, { status: 200 });
       },
     );
-    assert.deepEqual(models, ["gpt-5.6-sol", "gpt-5.6-terra"]);
+    assert.deepEqual(models, ["gpt-6-sol", "gpt-5.6-terra"]);
     assert.equal(result.base64, IMAGE_RESULT);
   });
 

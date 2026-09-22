@@ -76,22 +76,22 @@ test_openai_allowlist_selects_standard_tier_model() {
 test_openai_allowlist_selects_simple_tier_model() {
 	local selected=""
 	selected=$(select_model simple)
-	if [[ "$selected" == "openai/gpt-5.6-luna" ]]; then
+	if [[ "$selected" == "openai/gpt-6-luna" ]]; then
 		print_result "OpenAI allowlist selects simple tier from routing table" 0
 		return 0
 	fi
-	print_result "OpenAI allowlist selects simple tier from routing table" 1 "Expected openai/gpt-5.6-luna, got ${selected:-<empty>}"
+	print_result "OpenAI allowlist selects simple tier from routing table" 1 "Expected openai/gpt-6-luna, got ${selected:-<empty>}"
 	return 0
 }
 
 test_openai_allowlist_selects_thinking_tier_model() {
 	local selected=""
 	selected=$(select_model thinking)
-	if [[ "$selected" == "openai/gpt-5.6-sol" ]]; then
+	if [[ "$selected" == "openai/gpt-6-sol" ]]; then
 		print_result "OpenAI allowlist selects thinking tier from routing table" 0
 		return 0
 	fi
-	print_result "OpenAI allowlist selects thinking tier from routing table" 1 "Expected openai/gpt-5.6-sol, got ${selected:-<empty>}"
+	print_result "OpenAI allowlist selects thinking tier from routing table" 1 "Expected openai/gpt-6-sol, got ${selected:-<empty>}"
 	return 0
 }
 

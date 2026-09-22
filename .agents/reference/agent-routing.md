@@ -159,8 +159,8 @@ and estimate limitations live in `tools/context/model-routing.md`.
 ### Specialist advice before avoidable user decisions
 
 Start with the cheapest credible model and reasoning level, not the largest model
-associated with a domain label. The OpenAI daily driver and thinking route use Sol
-medium; simple and standard children use Luna low and Terra low. Pulse and worker
+associated with a domain label. The OpenAI daily driver and thinking route use GPT-6 Sol
+medium; simple and standard children use GPT-6 Luna low and GPT-5.6 Terra low. Pulse and worker
 parents can use the same advisory pattern as interactive parents without allowing
 children to recurse or expanding the worker's dispatched scope.
 
