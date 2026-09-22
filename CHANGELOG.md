@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.34.16] - 2026-09-22
+
+### Changed
+
+- Documentation: add experimental Kev option
+
+### Fixed
+
+- restore implicit snapshot retry manifest (#32221)
+- bound detector and successor completion evidence
+
 ## [3.34.15] - 2026-09-22
 
 ### Added
