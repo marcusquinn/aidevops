@@ -1,0 +1,7 @@
+{
+  "policy": {"mode": "policy", "disclosure": "[Automated assistant; owner-authorized]"},
+  "candidates": [
+    {"source_id": "source_fixture", "thread_id": "thread_fixture", "community": "aidevops_test", "account_id": "acct_reddit_42", "action": "reply", "question": "How can I make this safer?", "answer": "Start with a dry-run and explicit receipts. [Automated assistant; owner-authorized]", "source_url": "https://www.reddit.com/r/aidevops_test/comments/thread_fixture", "community_permission": true},
+    {"source_id": "suppressed_fixture", "thread_id": "thread_fixture", "community": "aidevops_test", "account_id": "acct_reddit_42", "action": "reply", "question": "Please help", "answer": "A useful answer. [Automated assistant; owner-authorized]", "source_url": "https://www.reddit.com/r/aidevops_test/comments/thread_fixture", "community_permission": true, "opted_out": true}
+  ]
+}

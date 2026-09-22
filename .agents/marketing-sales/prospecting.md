@@ -34,6 +34,9 @@ The service binds to `127.0.0.1` by default. `/ui/` is a local workbench and
 4. Preview routines, usage, and digests with their `--dry-run` paths. Schedules,
    providers, alert delivery, and spending remain disabled until the operator
    explicitly configures and activates them.
+5. `marketing-sales/public-engagement.md` is a separate optional lane for bounded,
+   disclosed public-conversation drafts. Prospecting evidence alone never grants
+   permission to contact or publish.
 
 Profiles and rescoring use versioned compare-and-swap edits; disposition history
 survives rescoring. Read `reference/prospecting-contract.md` for transaction,
@@ -45,6 +48,9 @@ Use `/prospecting` for onboarding, scan, leads, Reddit SEO, insights, alerts,
 usage, scoped API/MCP, or workbench guidance. Use `/marketing-decisions` for a
 separate offline report/action-proposal handoff. Do not use AnyAPI, Lurk, or a
 generic scraping platform as a fallback.
+
+Use `/public-engagement` only for the separately authorized drafting lane; it
+cannot activate grants, schedules, providers, or accounts.
 
 ## Parity matrix
 
