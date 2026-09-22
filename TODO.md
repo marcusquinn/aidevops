@@ -650,9 +650,9 @@ Session baseline grew from ~9.5k tokens (Mar 1) to ~21.8k tokens (Mar 27) in pro
 - [x] t18465 Budgeted prospecting routines, usage and internal alert delivery #enhancement #interactive #auto-dispatch tier:standard parent:t18459 blocked-by:t18463,t18464 ref:GH#32082 logged:2026-09-20 -> [todo/tasks/t18465-brief.md] pr:#32166 completed:2026-09-21
 - [ ] t18466 Scoped prospecting service APIs, read-only MCP and operator boundary #enhancement #interactive #auto-dispatch tier:thinking parent:t18459 blocked-by:t18465 ref:GH#32085 logged:2026-09-20 -> [todo/tasks/t18466-brief.md]
 - [x] t18467 Native prospecting operator web workbench #enhancement #interactive #auto-dispatch tier:standard parent:t18459 blocked-by:t18465,t18466 ref:GH#32083 logged:2026-09-20 -> [todo/tasks/t18467-brief.md] pr:#32174 completed:2026-09-21
-- [ ] t18468 Self-host prospecting packaging, agent routing and parity handoff #enhancement #interactive #auto-dispatch tier:standard parent:t18459 blocked-by:t18467,t18458 ref:GH#32084 logged:2026-09-20 -> [todo/tasks/t18468-brief.md]
+- [x] t18468 Self-host prospecting packaging, agent routing and parity handoff #enhancement #interactive #auto-dispatch tier:standard parent:t18459 blocked-by:t18467,t18458 ref:GH#32084 logged:2026-09-20 -> [todo/tasks/t18468-brief.md] pr:#32205 completed:2026-09-22
 - [x] t18469 Scoped public-engagement authority on the existing social outbox #enhancement #interactive #auto-dispatch tier:thinking parent:t18459 blocked-by:t18466 ref:GH#32091 logged:2026-09-20 -> [todo/tasks/t18469-brief.md] pr:#32192 completed:2026-09-21
-- [ ] t18470 Public-engagement subagent and bounded Reddit conversation automation #enhancement #interactive #auto-dispatch tier:standard parent:t18459 blocked-by:t18469,t18468 ref:GH#32090 logged:2026-09-20 -> [todo/tasks/t18470-brief.md]
+- [x] t18470 Public-engagement subagent and bounded Reddit conversation automation #enhancement #interactive #auto-dispatch tier:standard parent:t18459 blocked-by:t18469,t18468 ref:GH#32090 logged:2026-09-20 -> [todo/tasks/t18470-brief.md] pr:#32207 completed:2026-09-22
 
 ### Product Agent Refactoring
 
