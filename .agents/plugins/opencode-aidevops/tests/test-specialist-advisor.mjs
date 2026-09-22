@@ -24,9 +24,9 @@ const envelope = JSON.stringify({
 });
 
 test("shipped routes keep Sol medium in charge and Astra outside automatic escalation", () => {
-  assert.deepEqual(routingProfile(routing, "simple"), { tier: "simple", model: "openai/gpt-5.6-luna", variant: "low" });
+  assert.deepEqual(routingProfile(routing, "simple"), { tier: "simple", model: "openai/gpt-6-luna", variant: "low" });
   assert.deepEqual(routingProfile(routing, "standard"), { tier: "standard", model: "openai/gpt-5.6-terra", variant: "low" });
-  assert.deepEqual(routingProfile(routing, "thinking"), { tier: "thinking", model: "openai/gpt-5.6-sol", variant: "medium" });
+  assert.deepEqual(routingProfile(routing, "thinking"), { tier: "thinking", model: "openai/gpt-6-sol", variant: "medium" });
   assert.equal(nextRoutingTier(routing, "thinking"), "");
   assert.deepEqual(routing.specialistAdvisor, { model: "openai/gpt-6-astra", variant: "low" });
   assert.equal(mergeModelRouting(routing, { specialist_advisor: null }).specialistAdvisor, null);
@@ -53,7 +53,7 @@ test("registration supplies canonical tool-free adviser and defaults without rep
   const state = { tiers: new Map(), pinned: new Set() };
   const config = { agent: { "Build+": { mode: "primary" } } };
   registerAgents(config, agentsDir, routing, state);
-  assert.equal(config.model, "openai/gpt-5.6-sol");
+  assert.equal(config.model, "openai/gpt-6-sol");
   assert.equal(config.agent["Build+"].variant, "medium");
   const advisor = config.agent["specialist-advisor"];
   assert.equal(advisor.model, "openai/gpt-6-astra");

@@ -30,7 +30,8 @@ const FALLBACK_PRICING = {
   "gpt-5.6-luna":  { input: 0.20, output: 1.20, cacheRead: 0.02, cacheWrite: 0.25  },
 };
 const FALLBACK_DEFAULT = { input: 3.0, output: 15.0, cacheRead: 0.30, cacheWrite: 3.75 };
-export const UNKNOWN_PRICING_MODELS = ["gpt-5.6-sol-pro"];
+// Do not attribute pre-release default estimates to newly routed GPT-6 models.
+export const UNKNOWN_PRICING_MODELS = ["gpt-5.6-sol-pro", "gpt-6-sol", "gpt-6-luna"];
 
 /**
  * Load pricing from the shared JSON file.

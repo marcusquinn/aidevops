@@ -31,9 +31,9 @@ model: simple
 
 | Tier | Current ordered mapping | Use When |
 |------|-------|----------|
-| `simple` | openai/gpt-5.6-luna → anthropic/claude-haiku-4-5 | Complete low-consequence execution contracts |
+| `simple` | openai/gpt-6-luna → anthropic/claude-haiku-4-5 | Complete low-consequence execution contracts |
 | `standard` | openai/gpt-5.6-terra → zai-coding-plan/glm-5.2 → anthropic/claude-sonnet-4-6 | Established-pattern implementation with normal judgment and recovery |
-| `thinking` | openai/gpt-5.6-sol → anthropic/claude-opus-4-6 | Daily-driver coordination, consequential decisions and synthesis-heavy work |
+| `thinking` | openai/gpt-6-sol → anthropic/claude-opus-4-6 | Daily-driver coordination, consequential decisions and synthesis-heavy work |
 
 **Model IDs**: Always fully-qualified (`claude-sonnet-4-6`, not `claude-sonnet-4`). Short-form → `ProviderModelNotFoundError`. CLI prefix: `anthropic/`, `google/`, `openai/`.
 
@@ -87,6 +87,7 @@ is always denied because secrets must flow through secret tooling, not prompts.
 - **Local switch**: Set `AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=openai` to force both pulse and workers onto the default OpenAI fallbacks. If you want OpenAI primary but Anthropic fallback, reorder `custom/configs/model-routing-table.json` and omit the allowlist.
 - **Current default mapping**: The active routing table maps `simple` to OpenAI Luna then Anthropic Haiku, `standard` to OpenAI Terra then Z.AI GLM then Anthropic Sonnet, and `thinking` to OpenAI Sol then Anthropic Opus. Availability and provider policy decide the exact model at execution time.
 - **Reasoning mapping**: Luna `low`, Terra `low`, Sol `medium`. Other providers use their provider/runtime defaults unless configured explicitly. OpenCode supplies the thinking model as its default only when no explicit user model exists, and fills missing matching primary-agent effort; existing model/variant pins are preserved.
+- **Generation update (2026-09-22)**: GPT-6 Luna low and GPT-6 Sol medium are the simple and thinking primaries. The standard route stays GPT-5.6 Terra low pending outcome evidence; upgrading it to Luna or Sol on version number alone would change its capability/cost contract. OpenCode's model catalog exposes both GPT-6 IDs, but catalog visibility is not a guarantee of headless OAuth availability: the runtime still probes and follows same-tier fallbacks. New-generation pricing is not yet verified in the shared pricing table; its default estimates are unknown-model estimates, not GPT-5.6 prices.
 - **Capability escalation**: The exact structured marker `BLOCKED: capability limit - <evidence>` advances headless workers through an explicitly configured `reasoning_escalation` ladder before `escalation_order`. No reasoning ladder is shipped by default: thinking stops at Sol medium. Use bounded specialist advice before abandoning a genuinely difficult task, not automatic whole-session Astra promotion. Unknown variants and models never receive guessed reasoning settings. Explicit model pins remain pinned. Interactive OpenCode escalates tiers only when child identity is known and it has attempted no side effects. Generic `BLOCKED` remains terminal. Permission, authentication, provider, rate-limit, secret, policy, trust-boundary, locality, and billing failures never escalate capability to bypass controls.
 - **OpenAI tier rationale**: Luna handles bounded work, Terra established-pattern implementation, and Sol parent coordination and synthesis. The separate `specialist_advisor` route selects Astra low only for explicit bounded advisory requests; it is neither a tier nor an automatic fallback. Request contract and feedback policy: `reference/agent-routing.md` "Specialist advice without promoting the parent".
 - **OpenAI pro caveat**: `openai/gpt-5.6-sol-pro` passed a live OpenCode ChatGPT OAuth smoke test on 2026-07-10, but OpenAI publishes neither an API price nor comparative Sol Pro benchmarks. It remains excluded from automatic workers pending repository-specific completion-rate evidence. Historical `gpt-5.5-pro` and older `*-pro`/`o3-pro` IDs remain excluded.
@@ -116,10 +117,10 @@ fewer tokens per response alone do not establish lower cost. Same-model
 OpenCode children cannot exceed their parent's known reasoning setting; use an
 explicit parent effort change when genuinely needed, not a bypass of that cap.
 
-Pricing source: [OpenAI Standard pricing](https://developers.openai.com/api/docs/pricing?latest-pricing=standard),
+Historical GPT-5.6 pricing source: [OpenAI Standard pricing](https://developers.openai.com/api/docs/pricing?latest-pricing=standard),
 checked 2026-09-05. Per million short-context input/cached-input/output tokens:
-Luna $0.20/$0.02/$1.20; Terra $2/$0.20/$12; Sol $4/$0.40/$20; Astra $10/$1/$50.
-Sol's promotional rates are available at least through 2026-11-21. The shared flat
+GPT-5.6 Luna $0.20/$0.02/$1.20; Terra $2/$0.20/$12; GPT-5.6 Sol $4/$0.40/$20; GPT-6 Astra $10/$1/$50.
+GPT-5.6 Sol's promotional rates are available at least through 2026-11-21. The shared flat
 pricing table provides API-equivalent estimates: it does not model long-context
 rates, Fast mode or regional uplifts. With ChatGPT OAuth, use API prices only as
 directional resource-cost signals, never an exact subscription allowance percentage
@@ -172,7 +173,7 @@ Example custom override for OpenAI-capable headless routing:
 {
   "tiers": {
     "standard": { "models": ["openai/gpt-5.6-terra", "anthropic/claude-sonnet-4-6"] },
-    "thinking": { "models": ["openai/gpt-5.6-sol", "anthropic/claude-opus-4-6"] }
+    "thinking": { "models": ["openai/gpt-6-sol", "anthropic/claude-opus-4-6"] }
   }
 }
 ```

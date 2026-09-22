@@ -1307,7 +1307,7 @@ _route_lookup_models() {
 
 	case "$tier" in
 	simple)
-		primary_model="${primary_model:-openai/gpt-5.6-luna}"
+		primary_model="${primary_model:-openai/gpt-6-luna}"
 		fallback_model="${fallback_model:-anthropic/claude-haiku-4-5}"
 		;;
 	standard)
@@ -1315,7 +1315,7 @@ _route_lookup_models() {
 		fallback_model="${fallback_model:-anthropic/claude-sonnet-4-6}"
 		;;
 	thinking)
-		primary_model="${primary_model:-openai/gpt-5.6-sol}"
+		primary_model="${primary_model:-openai/gpt-6-sol}"
 		fallback_model="${fallback_model:-anthropic/claude-opus-4-6}"
 		;;
 	esac
