@@ -60,3 +60,15 @@ recovery. `cancelled_after_row_id` preserves subsequent rows as deferred. Invali
 candidate IDs, unsafe action proposals, malformed inputs, cross-request decisions,
 and conflicting retries cannot become accepted decisions. Rollback removes only the
 new scripts/schema/workflow; operators retain or delete private evidence explicitly.
+
+## Delivered capability matrix
+
+| Need | Offline path | Output boundary |
+|---|---|---|
+| Imported account/page/answer evidence | `marketing-snapshot-helper.py import` | validates source scope without network access |
+| Matching, links, disposition, creative, community, visibility | `marketing-decision-helper.py run --dry-run` with supplied decisions | accepted/deferred/unsupported rows remain explicit |
+| Shared reporting | `marketing-decision-report-helper.py report --dry-run` | recommendations preserve unknown economics |
+| Optional Jev classification | `marketing-decision-jev-helper.py decide --dry-run` | use only after privacy and readiness checks; no fallback is invoked |
+| Local action proposal | `marketing-action-helper.py plan --dry-run` | proposal only; apply requires trusted approval adapter |
+
+Run one bounded agent review per collected batch, not one worker per row. Cache invalidation follows the existing scope, rubric, model, and performance-window key; calibrate each job before relying on scores. First-party conversion gaps normally take priority over broad citation polling, although operator context can change that cadence. No fixture establishes ROI, live provider readiness, or economics that were not observed.

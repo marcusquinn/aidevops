@@ -42,6 +42,7 @@ Marketing agent: strategy, campaigns, paid ads (Meta/Google), email, landing pag
 - **Content/copy**: `content.md` | **SEO**: `seo.md` | **Sales**: `sales.md`
 - **Creator link placements**: `seo/youtube-description-link-acquisition.md` owns target selection, experiment design, measurement, disclosure, and search-policy guardrails; Marketing-Sales owns creator outreach and commercial terms.
 - **PR / journalists**: `pr.md` owns earned media, press strategy, journalist research, media lists, newsjacking, and pitch critique. Journalists are not sales leads; do not route them through cold-outreach automation.
+- **Decision handoff**: `/marketing-decisions` joins imported Google/creative/community evidence into offline report and dry-run action proposals. It does not activate providers, schedules, campaigns, accounts, or spending.
 
 **Paid Advertising & CRO** ([Indexsy Skills](https://github.com/Indexsy-Skills/skills)):
 
@@ -105,6 +106,8 @@ Marketing agent: strategy, campaigns, paid ads (Meta/Google), email, landing pag
 **Lead handoff**: Apply `lead-mql` tag → automation notifies sales → sales qualifies/accepts → apply `lead-sql` tag → remove from marketing sequences.
 
 ## Analytics & Testing
+
+For bounded Google hygiene, creative, community, and shared reporting proposals, start with `workflows/marketing-decisions.md`. Use the approved model route only after per-job calibration and provider/readiness checks; Jev is optional and remains privacy-gated. Unknown economics remain unknown, and proposed actions require the separate approval-bound workflow.
 
 | Metric | Target | Lever |
 |--------|--------|-------|
