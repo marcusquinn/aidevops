@@ -368,7 +368,7 @@ COMMON_ENV=(
 printf '%s=== pulse-check-helper.sh tests ===%s\n' "$TEST_BLUE" "$TEST_NC"
 
 OUT=$(env "${COMMON_ENV[@]}" "$HELPER" report 2>&1)
-assert_contains "text report shows empty active capacity" "Active workers: 0 / 6" "$OUT"
+assert_contains "text report shows empty local active capacity" "Local active worker processes: 0 / 6" "$OUT"
 assert_contains "text report distinguishes eligible work" "Auto-dispatch queue: 5 available (4 label-eligible; launch admission not verified) / 6 open" "$OUT"
 assert_contains "underfilled finding appears" "pulse-underfilled-auto-dispatch-queue" "$OUT"
 assert_contains "launch accounting finding appears" "pulse-launch-accounting-gap" "$OUT"
@@ -380,7 +380,7 @@ assert_not_contains "text report omits canonical branch detail" "origin/develop"
 BLOCKER_OUT=$(env "${COMMON_ENV[@]}" "PULSE_CHECK_BLOCKER_FIXTURE=retained" "$HELPER" report --since 7d 2>&1)
 assert_contains "healthy idle report exposes retained supervisor blocker advisory" "retained-supervisor-permission-blockers" "$BLOCKER_OUT"
 assert_contains "retained blocker report preserves healthy runner state" "Runner health: HEALTHY" "$BLOCKER_OUT"
-assert_contains "retained blocker report shows zero active workers" "Active workers: 0 / 6" "$BLOCKER_OUT"
+assert_contains "retained blocker report shows zero local active workers" "Local active worker processes: 0 / 6" "$BLOCKER_OUT"
 assert_contains "retained blocker report gives no-source worker count command" "worker-activity-helper.sh live-workers" "$BLOCKER_OUT"
 assert_contains "retained blocker report gives audited reconciliation guidance" "worker-blocker-cli.mjs resolve-stale-supervisor-session" "$BLOCKER_OUT"
 assert_not_contains "retained blocker report omits private blocker slug" "private/repo-one" "$BLOCKER_OUT"
@@ -551,10 +551,34 @@ ACTIVE_COUNT=$(printf '%s' "$JSON_ACTIVE_OUT" | jq -r '.summary.active_workers')
 ACTIVE_AVAILABLE=$(printf '%s' "$JSON_ACTIVE_OUT" | jq -r '.summary.available_slots')
 ACTIVE_IDS=$(printf '%s' "$JSON_ACTIVE_OUT" | jq -r '[.findings[].id] | sort | join(",")')
 assert_eq "json reports process-scan active workers" "2" "$ACTIVE_COUNT"
+assert_eq "json reports local worker processes separately" "2" "$(printf '%s' "$JSON_ACTIVE_OUT" | jq -r '.summary.local_active_worker_processes')"
+assert_eq "json reports fresh cross-runner durable claims separately" "1" "$(printf '%s' "$JSON_ACTIVE_OUT" | jq -r '.summary.fresh_cross_runner_durable_claims')"
+assert_eq "durable cross-runner claim proves fleet activity" "observed" "$(printf '%s' "$JSON_ACTIVE_OUT" | jq -r '.summary.fleet_activity_state')"
 assert_eq "json recomputes available slots from process count" "4" "$ACTIVE_AVAILABLE"
 assert_eq "process-scan active workers suppress underfill finding" "auto-dispatch-missing-tier-labels" "$ACTIVE_IDS"
 assert_eq "live-owner active claim remains non-actionable" "false" "$(printf '%s' "$JSON_ACTIVE_OUT" | jq -r '.summary.zero_worker_active_claim_actionable')"
 assert_eq "live-owner evidence remains visible" "1" "$(printf '%s' "$JSON_ACTIVE_OUT" | jq -r '.current_state.active_claim_state.live_owner_count')"
+
+cat >"${TEST_ROOT}/current-state-cross-runner.sh" <<'SH'
+#!/usr/bin/env bash
+cat <<'JSON'
+{
+  "dispatch_alive": true,
+  "dispatch_stage_events": 4,
+  "active_worker_processes": 0,
+  "pulse_gauges": {"dispatch_capacity_final_max_workers": 6},
+  "worker_outcomes": {"spawned": 0},
+  "worker_terminal_events": 0,
+  "active_claim_state": {"active_workers": 0, "classification_counts": {"durable_launch": 2}, "zero_worker_actionable": false, "live_owner_count": 0, "durable_launch_count": 2},
+  "graphql_budget_status": "OK fixture"
+}
+JSON
+SH
+chmod +x "${TEST_ROOT}/current-state-cross-runner.sh"
+JSON_CROSS_RUNNER_OUT=$(env "${COMMON_ENV[@]}" "PULSE_CHECK_CURRENT_STATE_HELPER=${TEST_ROOT}/current-state-cross-runner.sh" "$HELPER" json 2>&1)
+assert_eq "zero local processes remain distinct from remote fleet activity" "0" "$(printf '%s' "$JSON_CROSS_RUNNER_OUT" | jq -r '.summary.local_active_worker_processes')"
+assert_eq "fresh remote durable claims remain visible" "2" "$(printf '%s' "$JSON_CROSS_RUNNER_OUT" | jq -r '.summary.fresh_cross_runner_durable_claims')"
+assert_eq "remote durable claims prove fleet activity despite zero local processes" "observed" "$(printf '%s' "$JSON_CROSS_RUNNER_OUT" | jq -r '.summary.fleet_activity_state')"
 
 cat >"${TEST_ROOT}/current-state-idle.sh" <<'SH'
 #!/usr/bin/env bash
@@ -615,7 +639,7 @@ JSON_ACTIVE_NO_GAUGE_OUT=$(env "${COMMON_ENV[@]}" "PULSE_CHECK_CURRENT_STATE_HEL
 assert_eq "json preserves unknown maximum when capacity gauge is absent" "null" "$(printf '%s' "$JSON_ACTIVE_NO_GAUGE_OUT" | jq -r '.summary.max_workers')"
 assert_eq "json does not equate unknown capacity with zero free slots" "null" "$(printf '%s' "$JSON_ACTIVE_NO_GAUGE_OUT" | jq -r '.summary.available_slots')"
 assert_eq "json retains the independently observed worker count" "2" "$(printf '%s' "$JSON_ACTIVE_NO_GAUGE_OUT" | jq -r '.summary.active_workers')"
-assert_contains "text explicitly reports unknown capacity" "Active workers: 2 / unknown" "$(env "${COMMON_ENV[@]}" "PULSE_CHECK_CURRENT_STATE_HELPER=${TEST_ROOT}/current-state-active-no-gauge.sh" "$HELPER" report 2>&1)"
+assert_contains "text explicitly reports unknown local capacity" "Local active worker processes: 2 / unknown" "$(env "${COMMON_ENV[@]}" "PULSE_CHECK_CURRENT_STATE_HELPER=${TEST_ROOT}/current-state-active-no-gauge.sh" "$HELPER" report 2>&1)"
 
 jq -n '{workers_active:1,workers_max:2,timestamp:(now | todateiso8601)}' >"${TEST_ROOT}/pulse-health.json"
 cat >"${TEST_ROOT}/current-state-active-health-only.sh" <<'SH'

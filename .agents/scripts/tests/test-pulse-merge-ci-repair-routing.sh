@@ -12,8 +12,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 MERGE_SCRIPT="${SCRIPT_DIR}/../pulse-merge.sh"
 PROCESS_SCRIPT="${SCRIPT_DIR}/../pulse-merge-process.sh"
-FEEDBACK_SCRIPT="${SCRIPT_DIR}/../pulse-merge-feedback.sh"
 FINALIZER_SCRIPT="${SCRIPT_DIR}/../pulse-merge-feedback-finalizer.sh"
+FEEDBACK_REVIEW_SCRIPT="${SCRIPT_DIR}/../pulse-merge-feedback-review.sh"
+FEEDBACK_CI_REPAIR_SCRIPT="${SCRIPT_DIR}/../pulse-merge-feedback-ci-repair.sh"
 
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'
@@ -391,6 +392,15 @@ extract_function() {
 	return 0
 }
 
+extract_feedback_function() {
+	local fn_name="$1"
+	local fn_src=""
+	fn_src=$(extract_function "$fn_name" "$FEEDBACK_CI_REPAIR_SCRIPT")
+	[[ -n "$fn_src" ]] || fn_src=$(extract_function "$fn_name" "$FEEDBACK_REVIEW_SCRIPT")
+	printf '%s' "$fn_src"
+	return 0
+}
+
 extract_merge_gate_functions() {
 	local source_file="$1"
 	local fn_name=""
@@ -477,6 +487,8 @@ define_process_helper() {
 	_pulse_merge_changes_requested_thread_remediation_first_enabled() { return 1; }
 	_pulse_merge_preflight_snapshot_gate() { _PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON="$PREFLIGHT_EVIDENCE"; return "$PREFLIGHT_RC"; }
 	_pulse_merge_final_trust_gate() { _PULSE_FINAL_REQUIRES_SYNCHRONOUS_MERGE=0; _PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON="$PREFLIGHT_EVIDENCE"; return "$PREFLIGHT_RC"; }
+	_pulse_is_trusted_issue_sync_pr() { return 1; }
+	_pmp_approve_issue_sync_action_required_runs() { return 0; }
 	# The extracted merge-gate function calls this shared fence directly. Keep
 	# the harness deterministic while still validating that the dependency is
 	# present rather than allowing a command-not-found false green.
@@ -516,6 +528,7 @@ define_feedback_helpers() {
 		_ci_repair_outcome_file
 		_ci_repair_outcome_value
 		_ci_repair_sanitize_outcome_value
+		_ci_repair_project_state_failure
 		_ci_repair_project_outcome
 		_ci_repair_archive_attempt
 		_ci_repair_attempt_summary
@@ -533,8 +546,7 @@ define_feedback_helpers() {
 		_ci_repair_latest_archive
 		_ci_repair_prepare_attempt
 		_ci_repair_adopt_live_session
-		_ci_repair_claim_lease
-		_ci_repair_create_worktree
+		_ci_repair_claim_lease _ci_repair_record_worktree_failure _ci_repair_create_worktree
 		_ci_repair_session_identity
 		_ci_repair_resolve_runner_login
 		_ci_repair_launch_worker
@@ -598,7 +610,7 @@ EOF
 		esac
 	}
 	for fn in "${fns[@]}"; do
-		fn_src=$(extract_function "$fn" "$FEEDBACK_SCRIPT")
+		fn_src=$(extract_feedback_function "$fn")
 		[[ -n "$fn_src" ]] || return 1
 		# shellcheck disable=SC1090
 		eval "$fn_src"
@@ -622,7 +634,7 @@ define_ci_dispatch_helpers() {
 	)
 	local fn fn_src=""
 	for fn in "${fns[@]}"; do
-		fn_src=$(extract_function "$fn" "$FEEDBACK_SCRIPT")
+		fn_src=$(extract_function "$fn" "$FEEDBACK_CI_REPAIR_SCRIPT")
 		[[ -n "$fn_src" ]] || return 1
 		# shellcheck disable=SC1090
 		eval "$fn_src"
@@ -1211,7 +1223,7 @@ test_ci_repair_archives_trusted_terminal_outcome() {
 		return 0
 	fi
 	summary=$(_ci_repair_attempt_summary "$lease_dir")
-	if ! jq -e '.result == "retryable" and .failure_reason == "rate_limitscript" and .next_action == "retry_infrastructure" and .session_count == 0' \
+	if ! jq -e '.stage == "worker_runtime" and .result == "retryable" and .failure_reason == "rate_limitscript" and .next_action == "retry_infrastructure" and .session_count == 0' \
 		"${lease_dir}/state-attempt-1.json" >/dev/null 2>&1; then
 		print_result "trusted terminal outcome projects sanitized lifecycle fields" 1 "archive=$(<"${lease_dir}/state-attempt-1.json")"
 	elif [[ -f "$state_file" || -f "$outcome_file" ]]; then
@@ -1419,11 +1431,22 @@ test_ci_repair_preserves_pr_until_launch_retries_exhausted() {
 	export TEST_WORKTREE_ADD_FAIL="1"
 	define_feedback_helpers || { print_result "defines feedback helpers for retryable launch failures" 1 "could not extract feedback helpers"; teardown_test_env; return 0; }
 
-	local first_close_count=0 second_close_count=0 final_close_count=0
+	local first_close_count=0 second_close_count=0 final_close_count=0 first_state_file=""
 	local markdown_tick=$'\x60' expected_outcome_line=""
-	expected_outcome_line="result=${markdown_tick}launch_failed${markdown_tick}; failure_reason=${markdown_tick}worktree_failed${markdown_tick}; next_action=${markdown_tick}retry_launch${markdown_tick}"
+	expected_outcome_line="stage=${markdown_tick}worktree_create${markdown_tick}; result=${markdown_tick}launch_failed${markdown_tick}; failure_reason=${markdown_tick}worktree_helper_failed${markdown_tick}; next_action=${markdown_tick}inspect_worktree_helper_log_and_retry${markdown_tick}"
 	_dispatch_ci_fix_worker "100" "owner/repo" "42"
 	first_close_count=$(grep -cF 'gh pr close 100' "$GH_LOG" || true)
+	first_state_file=$(find "$AIDEVOPS_CI_REPAIR_STATE_DIR" -name state.json -type f -print -quit)
+	if [[ -z "$first_state_file" ]] || ! jq -e '
+		.status == "worktree_failed" and .stage == "worktree_create" and
+		.failure_reason == "worktree_helper_failed" and
+		.next_action == "inspect_worktree_helper_log_and_retry"' "$first_state_file" >/dev/null 2>&1; then
+		print_result "terminal worktree failure persists actionable lifecycle fields" 1 \
+			"state=${first_state_file:+$(<"$first_state_file")}"
+		teardown_test_env
+		return 0
+	fi
+	print_result "terminal worktree failure persists actionable lifecycle fields" 0
 	_dispatch_ci_fix_worker "100" "owner/repo" "42"
 	second_close_count=$(grep -cF 'gh pr close 100' "$GH_LOG" || true)
 	_dispatch_ci_fix_worker "100" "owner/repo" "42"

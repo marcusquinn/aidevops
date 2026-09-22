@@ -150,6 +150,20 @@ else
 		"repo_calls=${repo_backend_calls} other_calls=${other_backend_calls} shared_invalidations=${shared_invalidation_calls} calls=$(<"$GH_CALLS")"
 fi
 
+: >"$GH_CALLS"
+stale_generation=$(_pulse_pr_list_cache_generation --repo owner/repo --state open --json number --limit 10)
+pulse_pr_list_cache_invalidate_repo "owner/repo"
+_pulse_pr_list_cache_put '[{"number":99}]' "$stale_generation" --repo owner/repo --state open --json number --limit 10
+post_race_output=$(pulse_pr_list_get --repo owner/repo --state open --json number --limit 10)
+post_race_backend_calls=$(grep -cF -- '--repo owner/repo --state open --json number --limit 10' "$GH_CALLS" 2>/dev/null || true)
+if [[ "$post_race_output" == '[{"number":1,"reviewDecision":"APPROVED","headRefOid":"abc123"}]' \
+	&& "$post_race_backend_calls" == "1" ]]; then
+	pass "terminal invalidation rejects an in-flight stale cache write"
+else
+	fail "terminal invalidation rejects an in-flight stale cache write" \
+		"output=${post_race_output} backend_calls=${post_race_backend_calls} calls=$(<"$GH_CALLS")"
+fi
+
 printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 if [[ "$TESTS_FAILED" -gt 0 ]]; then
 	exit 1

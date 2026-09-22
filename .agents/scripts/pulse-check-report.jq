@@ -69,6 +69,7 @@ end) as $max_workers |
 ($current.canonical_reconciliation.canonical_recovery_advisory_observed // false) as $canonical_recovery_advisory_observed |
 ($current.active_claim_state // {}) as $active_claim_state |
 ($active_claim_state.zero_worker_actionable // false) as $zero_worker_active_claim_actionable |
+($active_claim_state.durable_launch_count // 0 | number_or_zero) as $fresh_cross_runner_claims |
 ([$progress_blockers.retained_unverified[]?
   | select(((.reason // "") | contains("permission"))
     and ((((.session_key // "") | startswith("supervisor-pulse")))
@@ -95,6 +96,9 @@ end) as $max_workers |
   summary: {
     max_workers: $max_workers,
     active_workers: $active_workers,
+    local_active_worker_processes: $active_workers,
+    fresh_cross_runner_durable_claims: $fresh_cross_runner_claims,
+    fleet_activity_state: (if ($active_workers // 0) > 0 or $fresh_cross_runner_claims > 0 then "observed" elif $active_workers == null then "unknown" else "none_observed" end),
     active_workers_source: (if $process_workers != null then "process_scan" elif $health_workers != null then "pulse_health_snapshot" elif $active_workers != null then "capacity_gauge" else "unavailable" end),
     max_workers_source: (if ($current.pulse_gauges.dispatch_capacity_final_max_workers | capacity_number) != null then "capacity_gauge" elif ($current.pulse_health.workers_max | capacity_number) != null then "pulse_health_configured_snapshot" elif $max_workers != null then "inferred_from_observed_slots" else "unavailable" end),
     health_snapshot_fresh: $health_fresh,
