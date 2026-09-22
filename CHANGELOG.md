@@ -10,6 +10,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.34.14] - 2026-09-22
+
+### Added
+
+- add approval-bound marketing actions (#32197)
+
+### Changed
+
+- Maintenance: mark t18456 complete (pr:#32195 completed:2026-09-22) (#32196)
+- Maintenance: mark t18469 complete (pr:#32192 completed:2026-09-21) (#32193)
+
+### Fixed
+
+- preserve exact-check deferral evidence
+- preserve merge deferral deadline (#32190)
+- constrain Google collector inputs (#32191)
+
 ## [3.34.13] - 2026-09-21
 
 ### Added
