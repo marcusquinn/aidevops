@@ -58,6 +58,22 @@ the arithmetic unambiguous. Compaction can occur slightly beyond the target due
 to a completed response/tool step; do not issue synthetic 400K-token paid requests
 merely to verify this arithmetic.
 
+## GPT-6 Sol and Luna compaction
+
+`aidevops gpt6-context enable` opts `gpt-6-sol`, `gpt-6-sol-fast`,
+`gpt-6-luna`, and `gpt-6-luna-fast` into a 240,000-token usable-input target.
+The feature is disabled by default; `disable` leaves native provider metadata
+untouched rather than restoring a hard-coded snapshot. The saved
+`runtime.opencode.gpt6_context_cap` preference survives normal updates.
+
+The managed input limit is the 240K target plus OpenCode's configured reserve;
+managed context is input plus the model's explicit or native output limit.
+Model options, reasoning variants, Fast service-tier options, unrelated models,
+and global compaction settings are preserved. `status` validates nonce-bound
+fresh-process health evidence for all four model IDs and reports disabled
+automatic compaction separately. Restart OpenCode after changing the preference.
+Use the effective-config probe instead of synthetic paid long-context requests.
+
 ## Efficiency scorecard
 
 Run `/report-token-use efficiency --since 7d` or the helper's `efficiency`

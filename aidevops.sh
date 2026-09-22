@@ -1146,6 +1146,7 @@ _help_commands() {
 	echo "  cleanup <cmd>      Cleanup helpers (remote branch audit/delete)"
 	echo "  model-accounts-pool OAuth account pool (list/check/diagnose/add/rotate/reset-cooldowns)"
 	echo "  gpt56-context <cmd> Manage the 300K GPT-5.6 OpenCode context cap (enable/disable/status)"
+	echo "  gpt6-context <cmd> Opt into ~240K GPT-6 Sol/Luna compaction (enable/disable/status)"
 	echo "  astra-context <cmd> Opt into ~240K Astra compaction (enable/disable/status; default 400K)"
 	echo "  client-format      Client request format alignment (extract/check/canary/monitor)"
 	echo "  opencode-db <cmd>  OpenCode SQLite maintenance/session lookup (check/report/sessions/maintain/window/status/install)"
@@ -1411,6 +1412,7 @@ cmd_help() {
 	echo "  aidevops update              # Update framework + check projects"
 	echo "  aidevops runtime-bundle list # List retained validated runtime bundle IDs"
 	echo "  aidevops gpt56-context       # Manage the 300K GPT-5.6 OpenCode context cap"
+	echo "  aidevops gpt6-context enable # Cap GPT-6 Sol/Luna usable input near 240K"
 	echo "  aidevops repos               # List registered projects"
 	echo "  aidevops launch-worker 22259 marcusquinn/aidevops --dry-run"
 	echo "  aidevops repos add           # Register current project"
@@ -1930,6 +1932,7 @@ _main_dispatch() {
 	ip-check | ip_check) _dispatch_helper "ip-reputation-helper.sh" "ip-reputation-helper.sh" "$@" ;;
 	model-accounts-pool | map) _dispatch_helper "oauth-pool-helper.sh" "oauth-pool-helper.sh" "$@" ;;
 	gpt56-context | gpt56_context) _dispatch_helper "gpt56-context-helper.sh" "gpt56-context-helper.sh" "$@" ;;
+	gpt6-context | gpt6_context) _dispatch_helper "gpt6-context-helper.sh" "gpt6-context-helper.sh" "$@" ;;
 	astra-context | astra_context) _dispatch_helper "astra-context-helper.sh" "astra-context-helper.sh" "$@" ;;
 	cleanup) _main_dispatch_cleanup "$@" ;;
 	client-format) _cmd_client_format "$@" ;;
