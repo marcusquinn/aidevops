@@ -201,24 +201,28 @@ jobs:
           EXPECTED_SHASUM: ${{ steps.npm-package.outputs.shasum }}
         run: |
           VIEW_OUTPUT=""
-          if VIEW_OUTPUT=$(npm view "aidevops@${RELEASE_VERSION}" version dist --json 2>&1); then
-            jq -e --arg version "$RELEASE_VERSION" --arg integrity "$EXPECTED_INTEGRITY" \
-              --arg shasum "$EXPECTED_SHASUM" '
-                .version == $version
-                and .dist.integrity == $integrity
-                and .dist.shasum == $shasum
-              ' <<<"$VIEW_OUTPUT" >/dev/null || {
-              echo "::error::Existing npm package does not match the verified tag artifact"
+          for attempt in {1..12}; do
+            if VIEW_OUTPUT=$(npm view "aidevops@${RELEASE_VERSION}" version dist --json 2>&1); then
+              jq -e --arg version "$RELEASE_VERSION" --arg integrity "$EXPECTED_INTEGRITY" \
+                --arg shasum "$EXPECTED_SHASUM" '
+                  .version == $version
+                  and .dist.integrity == $integrity
+                  and .dist.shasum == $shasum
+                ' <<<"$VIEW_OUTPUT" >/dev/null || {
+                echo "::error::Existing npm package does not match the verified tag artifact"
+                exit 1
+              }
+              echo "published=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            if ! grep -qE 'E404|No match found' <<<"$VIEW_OUTPUT"; then
+              echo "::error::Unable to determine npm publication state"
+              printf '%s\n' "$VIEW_OUTPUT" >&2
               exit 1
-            }
-            echo "published=true" >> "$GITHUB_OUTPUT"
-          elif grep -qE 'E404|No match found' <<<"$VIEW_OUTPUT"; then
-            echo "published=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "::error::Unable to determine npm publication state"
-            printf '%s\n' "$VIEW_OUTPUT" >&2
-            exit 1
-          fi
+            fi
+            sleep 5
+          done
+          echo "published=false" >> "$GITHUB_OUTPUT"
 
       # No token needed: npm verifies this workflow and environment through OIDC.
       - name: Publish to npm

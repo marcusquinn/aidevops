@@ -118,6 +118,8 @@ assert_contains "npm verification keeps its executable test selector" \
 	"name: Verify npm publication" "$PACKAGE_WORKFLOW"
 assert_contains "npm publication skips an existing exact version" \
 	"if: steps.npm-state.outputs.published != 'true'" "$PACKAGE_WORKFLOW"
+assert_contains "npm state retries an initially absent registry version before publishing" \
+	"for attempt in {1..12}; do" "$PACKAGE_WORKFLOW"
 assert_contains "npm state binds the locally packed artifact integrity" \
 	"Existing npm package does not match the verified tag artifact" "$PACKAGE_WORKFLOW"
 assert_contains "publication reuses the non-publishing package verifier" \
