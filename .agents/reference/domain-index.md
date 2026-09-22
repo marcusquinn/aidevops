@@ -69,6 +69,7 @@ This index describes what is catalogued, not what is usable now. Query `scripts/
 | Model routing | model, tier, Haiku, Sonnet, Opus, fallback, budget | `tools/context/model-routing.md`, `reference/orchestration.md` |
 | Structured decisions | Jev, TypeSafe, System One, bounded classification, decision probabilities | `tools/ai-assistants/jev.md`, `tools/ai-assistants/jev-decisions.md` |
 | Marketing decisions | imported marketing evidence, Google Ads hygiene, creative review, community triage, content disposition, AI visibility, decision report | `workflows/marketing-decisions.md`, `scripts/commands/marketing-decisions.md`, `workflows/marketing-actions.md` |
+| Private prospecting | prospecting, lead scoring, Reddit SEO, prospect workbench, prospecting API, prospecting MCP, local lead evidence | `marketing-sales/prospecting.md`, `scripts/commands/prospecting.md`, `services/hosting/prospecting-self-host.md` |
 | Orchestration | pulse, workers, dashboard, headless, dispatch, supervisor | `reference/orchestration.md`, `tools/ai-assistants/headless-dispatch.md`, `scripts/commands/pulse.md`, `scripts/commands/dashboard.md` |
 | Upstream watch | upstream, dependency watch, release monitor, source tracking | `scripts/upstream-watch-helper.sh`, `configs/upstream-watch.json` |
 | Testing infrastructure | testing setup, install test framework, new harness, fixtures, coverage setup | `scripts/commands/testing-setup.md`, `tools/testing-setup.md`, `scripts/testing-setup-helper.sh` |

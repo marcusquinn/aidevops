@@ -1,0 +1,37 @@
+services:
+  prospecting-init:
+    build:
+      context: ../../..
+      dockerfile: .agents/templates/prospecting-container/Dockerfile
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c", "mkdir -p /data && chown 10001:10001 /data"]
+    volumes:
+      - prospecting-data:/data
+    restart: "no"
+
+  prospecting:
+    build:
+      context: ../../..
+      dockerfile: .agents/templates/prospecting-container/Dockerfile
+    init: true
+    # Host networking preserves the service's loopback-only listener. This
+    # optional template therefore supports Linux Docker hosts only.
+    network_mode: host
+    environment:
+      AIDEVOPS_PROSPECTING_PROVIDER_SECRET_HANDLE: ${AIDEVOPS_PROSPECTING_PROVIDER_SECRET_HANDLE:-}
+    volumes:
+      - prospecting-data:/data
+    depends_on:
+      prospecting-init:
+        condition: service_completed_successfully
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+
+volumes:
+  prospecting-data:
