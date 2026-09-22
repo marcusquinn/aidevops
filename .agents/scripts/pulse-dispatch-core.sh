@@ -271,7 +271,8 @@ _read_issue_conversation_locks_batch() {
 	local repo="${slug#*/}"
 	local issue_numbers="" query="" issue_num="" response=""
 
-	[[ -n "$owner" && -n "$repo" && "$owner" != "$repo" ]] || return 1
+	# Require two non-empty components, not different names: same/same is valid.
+	[[ "$slug" == */* && -n "$owner" && -n "$repo" && "$repo" != */* ]] || return 1
 	issue_numbers=$(printf '%s' "$issue_json" | jq -ce \
 		--arg auto_dispatch_label "$_PULSE_DISPATCH_AUTO_LABEL" \
 		--arg no_auto_dispatch_label "no-auto-dispatch" '
