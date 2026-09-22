@@ -456,6 +456,39 @@ printf 'PASS persisted intent normalizes PR-only retries and rejects conflicting
 	export FAKE_REPO_ROOT="$ROOT/repo"
 	export AIDEVOPS_WORKTREE_BASE_DIR="$ROOT/worktrees"
 	export AIDEVOPS_FULL_LOOP_REPO=marcusquinn/aidevops
+	source "$SCRIPT_DIR/full-loop-release-helper.sh" help >/dev/null
+	persisted_sources=48@0000000000000000000000000000000000000000
+	recovery_calls=0
+	run_calls=0
+	_full_loop_release_guard_competing_lane() { return 0; }
+	_full_loop_read_release_authorization() { printf '%s\n' "$persisted_sources"; }
+	_full_loop_snapshot_retry_eligible() { return 0; }
+	_full_loop_release_guard_existing() {
+		[[ "$3" == "$persisted_sources" ]] || return 1
+		return 2
+	}
+	_full_loop_recovery_dead_preparing() {
+		[[ "$3" == "$persisted_sources" ]] || return 1
+		recovery_calls=$((recovery_calls + 1))
+		return 0
+	}
+	_full_loop_release_run_new() {
+		[[ "$5" == "$persisted_sources" ]] || return 1
+		run_calls=$((run_calls + 1))
+		return 0
+	}
+	_full_loop_release_start_new marcusquinn/aidevops 48 patch incremental ""
+	[[ "$recovery_calls" -eq 1 && "$run_calls" -eq 1 ]]
+)
+printf 'PASS eligible snapshot retry reuses persisted manifest for fenced recovery\n'
+
+(
+	cd "$ROOT/repo/linked-branch"
+	export PATH="$ROOT/bin:/usr/bin:/bin"
+	export GIT_CALL_LOG="$ROOT/git.log"
+	export FAKE_REPO_ROOT="$ROOT/repo"
+	export AIDEVOPS_WORKTREE_BASE_DIR="$ROOT/worktrees"
+	export AIDEVOPS_FULL_LOOP_REPO=marcusquinn/aidevops
 	export RESOLVER_MODE=blocked
 	source "$SCRIPT_DIR/full-loop-release-helper.sh" help >/dev/null
 	evidence_writes=0
