@@ -135,6 +135,13 @@ if [[ "${1:-}" == "view" ]]; then
 		printf 'npm error code E404\n' >&2
 		exit 1
 		;;
+	npm-state-e404-eventual)
+		if [[ "$count" -lt 2 ]]; then
+			printf 'npm error code E404\n' >&2
+			exit 1
+		fi
+		cat "$EXACT_NPM_JSON"
+		;;
 	npm-state-drift)
 		printf '%s\n' '{"version":"1.2.3","dist":{"integrity":"sha512-drift","shasum":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}'
 		;;
@@ -278,6 +285,9 @@ expect_success "exact npm identity is already published" "npm-state-exact" "npm-
 grep -qxF 'published=true' "$GITHUB_OUTPUT"
 expect_success "npm E404 is an absent publication" "npm-state-e404" "npm-state.sh"
 grep -qxF 'published=false' "$GITHUB_OUTPUT"
+expect_success "npm E404 propagation resolves to an existing exact package" \
+	"npm-state-e404-eventual" "npm-state.sh"
+grep -qxF 'published=true' "$GITHUB_OUTPUT"
 expect_failure "npm identity drift fails closed" "npm-state-drift" "npm-state.sh"
 expect_failure "malformed npm metadata fails closed" "npm-state-malformed" "npm-state.sh"
 expect_failure "npm transport failure is uncertain" "npm-state-transport" "npm-state.sh"
