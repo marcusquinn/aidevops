@@ -158,12 +158,10 @@ _update_sync_projects() {
 					preserved=$((preserved + 1))
 				fi
 			else
-				local temp_file="${repo}/.aidevops.json.tmp"
-				if jq --arg version "$current_ver" '.version = $version' "$repo/.aidevops.json" >"$temp_file" 2>/dev/null && [[ -s "$temp_file" ]]; then
-					mv "$temp_file" "$repo/.aidevops.json"
+				if _project_config_write_version "$repo/.aidevops.json" "$current_ver"; then
 					register_repo "$repo" "$current_ver" "$features"
 					did_sync=true
-				else rm -f "$temp_file"; fi
+				fi
 			fi
 		fi
 		if [[ "$did_sync" != "$_AIDEVOPS_UPDATE_TRUE" ]] && ! _project_config_is_tracked "$repo"; then
