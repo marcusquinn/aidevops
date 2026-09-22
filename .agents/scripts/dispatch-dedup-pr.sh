@@ -132,6 +132,45 @@ _ddpr_superseded_issue_refs() {
 }
 
 #######################################
+# Check whether a consolidated successor adds any scope of its own.
+#
+# Superseded-source PRs can prove complete successor coverage only when the
+# body consists exclusively of canonical supersedes markers and generated
+# aidevops provenance/signature metadata. Any other text may describe new or
+# remaining work, so component PRs must not suppress dispatch.
+#
+# Args: $1 = issue body
+# Returns: 0 when all substantive scope is inherited, 1 otherwise
+#######################################
+_ddpr_successor_scope_is_fully_inherited() {
+	local issue_body="$1"
+	local line="" in_signature=0
+	local marker_regex='^_Supersedes #([0-9]+) (—|-) this issue is the consolidated spec\._$'
+	local origin_regex='^<!--[[:space:]]+aidevops:origin:(interactive|worker)[[:space:]]+-->$'
+	local footer_regex='^\[aidevops\.sh\]\(https://aidevops\.sh\)[[:space:]]'
+
+	while IFS= read -r line; do
+		line="${line%$'\r'}"
+		[[ -z "${line//[[:space:]]/}" ]] && continue
+
+		if [[ "$in_signature" -eq 1 ]]; then
+			[[ "$line" == "---" ]] && continue
+			[[ "$line" =~ $footer_regex ]] && continue
+			return 1
+		fi
+
+		[[ "$line" =~ $marker_regex ]] && continue
+		[[ "$line" =~ $origin_regex ]] && continue
+		if [[ "$line" == "<!-- aidevops:sig -->" ]]; then
+			in_signature=1
+			continue
+		fi
+		return 1
+	done <<<"$issue_body"
+	return 0
+}
+
+#######################################
 # Check whether dispatch metadata identifies an operational consolidation task.
 #
 # Args: none
@@ -721,9 +760,10 @@ _has_open_pr_check_task_id_title() {
 # already landed against that older issue using `For #NNN` (parent/phase style),
 # leaving the new consolidated issue open and dispatchable. When the current
 # issue body explicitly says it supersedes/consolidates another issue, treat a
-# merged, non-planning PR referencing that related issue as dispatch-blocking
-# evidence. This is intentionally a dispatch dedup signal only; issue closers
-# must still run their own verification before closing anything.
+# merged, non-planning PR referencing every related issue as dispatch-blocking
+# evidence, but only when the successor has no substantive scope beyond those
+# canonical markers. This is intentionally a dispatch dedup signal only; issue
+# closers must still run their own verification before closing anything.
 #
 # Args: $1 = issue number, $2 = repo slug
 # Returns: exit 0 if merged related-issue PR evidence exists, exit 1 otherwise
@@ -737,14 +777,21 @@ _has_open_pr_check_superseded_issue_pr() {
 	_ddpr_is_consolidation_task && return 1
 	issue_body=$(_ddpr_issue_body_from_meta)
 	[[ -n "$issue_body" ]] || return 1
+	_ddpr_successor_scope_is_fully_inherited "$issue_body" || return 1
+
+	local related_refs=""
+	related_refs=$(_ddpr_superseded_issue_refs "$issue_body" | sort -un)
+	[[ -n "$related_refs" ]] || return 1
 
 	local related_issue="" pr_json="" match_pr=""
+	local first_issue="" first_pr="" coverage="" coverage_count=0
 	local lookup_rc=0
 	while IFS= read -r related_issue; do
 		[[ "$related_issue" =~ ^[0-9]+$ ]] || continue
-		[[ "$related_issue" != "$issue_number" ]] || continue
+		[[ "$related_issue" != "$issue_number" ]] || return 1
 
 		lookup_rc=0
+		match_pr=""
 		pr_json=$(_ddpr_read_json_array gh pr list --repo "$repo_slug" --state merged \
 			--search "#${related_issue}" --limit 20 \
 			--json number,title,body,author 2>/dev/null) || lookup_rc=$?
@@ -777,14 +824,23 @@ _has_open_pr_check_superseded_issue_pr() {
 			return 0
 		}
 
-		if [[ -n "$match_pr" ]]; then
-			printf 'merged PR #%s references superseded issue #%s for consolidated issue #%s\n' \
-				"$match_pr" "$related_issue" "$issue_number"
-			return 0
-		fi
-	done < <(_ddpr_superseded_issue_refs "$issue_body")
+		# One uncovered component means the successor is still dispatchable.
+		[[ -n "$match_pr" ]] || return 1
+		coverage_count=$((coverage_count + 1))
+		[[ -n "$first_issue" ]] || first_issue="$related_issue"
+		[[ -n "$first_pr" ]] || first_pr="$match_pr"
+		coverage="${coverage}${coverage:+, }PR #${match_pr} for #${related_issue}"
+	done <<<"$related_refs"
 
-	return 1
+	[[ "$coverage_count" -gt 0 ]] || return 1
+	if [[ "$coverage_count" -eq 1 ]]; then
+		printf 'merged PR #%s references superseded issue #%s for consolidated issue #%s\n' \
+			"$first_pr" "$first_issue" "$issue_number"
+	else
+		printf 'merged PR coverage (%s) satisfies all superseded issues for consolidated issue #%s\n' \
+			"$coverage" "$issue_number"
+	fi
+	return 0
 }
 
 #######################################

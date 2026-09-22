@@ -908,7 +908,7 @@ test_has_open_pr_allows_dispatch_on_task_id_collision() {
 
 test_has_open_pr_blocks_superseded_consolidated_issue() {
 	set_gh_fixtures 'marcusquinn/aidevops|merged|#26241|[{"number":26266,"title":"For #26241: split mixed PR view fields","body":"## Summary\n\n- Split mixed gh_pr_view requests into REST and GraphQL subsets.\n\nFor #26241\n\n## Testing\n\n- .agents/scripts/tests/test-gh-wrapper-rest-fallback.sh"}]'
-	export ISSUE_META_JSON='{"body":"_Supersedes #26241 — this issue is the consolidated spec._\n\nImplement the remaining mixed REST/GQL field-split phase."}'
+	export ISSUE_META_JSON='{"body":"_Supersedes #26241 — this issue is the consolidated spec._"}'
 
 	local output=""
 	if output=$("$HELPER_SCRIPT" has-open-pr 26274 marcusquinn/aidevops 'consolidated: split mixed gh_pr_view REST/GQL fields'); then
@@ -931,7 +931,7 @@ test_has_open_pr_blocks_superseded_consolidated_issue() {
 
 test_has_open_pr_blocks_crlf_superseded_consolidated_issue() {
 	set_gh_fixtures 'marcusquinn/aidevops|merged|#26241|[{"number":26266,"title":"For #26241: split mixed PR view fields","body":"For #26241. Implements the fix."}]'
-	export ISSUE_META_JSON='{"body":"_Supersedes #26241 — this issue is the consolidated spec._\r\n\r\nImplement the remaining phase."}'
+	export ISSUE_META_JSON='{"body":"_Supersedes #26241 — this issue is the consolidated spec._\r\n"}'
 
 	local output=""
 	if output=$("$HELPER_SCRIPT" has-open-pr 26274 marcusquinn/aidevops 'consolidated: split mixed gh_pr_view REST/GQL fields'); then
@@ -946,6 +946,61 @@ test_has_open_pr_blocks_crlf_superseded_consolidated_issue() {
 
 	unset ISSUE_META_JSON
 	print_result "has-open-pr accepts CRLF supersedes marker" 1 "Unexpected output: ${output}"
+	return 0
+}
+
+test_has_open_pr_allows_successor_only_scope() {
+	set_gh_fixtures 'marcusquinn/aidevops|merged|#26241|[{"number":26266,"title":"For #26241: split mixed PR view fields","body":"For #26241. Implements the earlier phase."}]'
+	export ISSUE_META_JSON='{"body":"_Supersedes #26241 — this issue is the consolidated spec._\n\n## What\n\nImplement the remaining mixed REST/GQL field-split phase."}'
+
+	if "$HELPER_SCRIPT" has-open-pr 26274 marcusquinn/aidevops 'consolidated: remaining mixed fields'; then
+		unset ISSUE_META_JSON
+		print_result "has-open-pr allows consolidated successor-only scope" 1 \
+			"Expected component PR evidence not to suppress explicit remaining work"
+		return 0
+	fi
+
+	unset ISSUE_META_JSON
+	print_result "has-open-pr allows consolidated successor-only scope" 0
+	return 0
+}
+
+test_has_open_pr_allows_partial_multi_component_coverage() {
+	set_gh_fixtures $'marcusquinn/aidevops|merged|#30001|[{"number":30101,"title":"Fix #30001","body":"Implements #30001."}]\nmarcusquinn/aidevops|merged|#30002|[]'
+	export ISSUE_META_JSON='{"body":"_Supersedes #30001 — this issue is the consolidated spec._\n_Supersedes #30002 — this issue is the consolidated spec._"}'
+
+	if "$HELPER_SCRIPT" has-open-pr 30100 marcusquinn/aidevops 'consolidated: combine two components'; then
+		unset ISSUE_META_JSON
+		print_result "has-open-pr allows partial multi-component coverage" 1 \
+			"Expected one uncovered superseded component to remain dispatchable"
+		return 0
+	fi
+
+	unset ISSUE_META_JSON
+	print_result "has-open-pr allows partial multi-component coverage" 0
+	return 0
+}
+
+test_has_open_pr_blocks_complete_multi_component_coverage() {
+	set_gh_fixtures $'marcusquinn/aidevops|merged|#30001|[{"number":30101,"title":"Fix #30001","body":"Implements #30001."}]\nmarcusquinn/aidevops|merged|#30002|[{"number":30102,"title":"Fix #30002","body":"Implements #30002."}]'
+	export ISSUE_META_JSON='{"body":"_Supersedes #30001 — this issue is the consolidated spec._\n_Supersedes #30002 — this issue is the consolidated spec._\n\n<!-- aidevops:origin:worker -->\n<!-- aidevops:sig -->\n---\n[aidevops.sh](https://aidevops.sh) generated footer"}'
+
+	local output=""
+	if output=$("$HELPER_SCRIPT" has-open-pr 30100 marcusquinn/aidevops 'consolidated: combine two completed components'); then
+		unset ISSUE_META_JSON
+		case "$output" in
+		*'PR #30101 for #30001, PR #30102 for #30002'*'consolidated issue #30100'*)
+			print_result "has-open-pr blocks complete multi-component coverage" 0
+			return 0
+			;;
+		esac
+		print_result "has-open-pr blocks complete multi-component coverage" 1 "Unexpected output: ${output}"
+		return 0
+	fi
+
+	unset ISSUE_META_JSON
+	print_result "has-open-pr blocks complete multi-component coverage" 1 \
+		"Expected complete superseded-component evidence to block dispatch"
 	return 0
 }
 
@@ -1090,6 +1145,9 @@ main() {
 	test_has_open_pr_ignores_adjacent_issue_number_sibling_reference
 	test_has_open_pr_blocks_superseded_consolidated_issue
 	test_has_open_pr_blocks_crlf_superseded_consolidated_issue
+	test_has_open_pr_allows_successor_only_scope
+	test_has_open_pr_allows_partial_multi_component_coverage
+	test_has_open_pr_blocks_complete_multi_component_coverage
 	test_has_open_pr_ignores_planning_only_superseded_reference
 	test_has_open_pr_ignores_dependency_bump_superseded_references
 	test_has_open_pr_preserves_non_bot_bump_implementation
