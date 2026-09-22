@@ -1404,7 +1404,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18443 Add recommended apps and prioritize Recommended tab #auto-dispatch #enhancement #interactive #tier:standard ~1h ref:GH#32002 logged:2026-09-17 -> [todo/tasks/t18443-brief.md] pr:#32004 completed:2026-09-17
 
-- [ ] t18472 Improve 3D demo build progress and compact manifests ref:GH#32255
+- [x] t18472 Improve 3D demo build progress and compact manifests ref:GH#32255 pr:#32256 completed:2026-09-22
 
 ## In Progress
 
