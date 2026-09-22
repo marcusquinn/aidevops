@@ -1406,7 +1406,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18472 Improve 3D demo build progress and compact manifests ref:GH#32255 pr:#32256 completed:2026-09-22
 
-- [ ] t18473 Document macOS Blender and FreeCAD native-app discovery ref:GH#32260
+- [x] t18473 Document macOS Blender and FreeCAD native-app discovery ref:GH#32260 pr:#32261 completed:2026-09-22
 
 ## In Progress
 
