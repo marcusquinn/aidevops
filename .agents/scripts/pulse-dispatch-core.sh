@@ -1338,6 +1338,7 @@ _dispatch_permission_history_requires_grant() {
 	}
 	verification=$($approval_helper verify-permissions issue "$issue_number" "$repo_slug" 2>/dev/null) || true
 	_DISPATCH_PERMISSION_VERIFY_RESULT="${verification:-NO_APPROVAL}"
+	[[ "$verification" == "NO_REQUEST" ]] && return 1
 	[[ "$verification" == "VERIFIED" ]] && return 1
 	return 0
 }

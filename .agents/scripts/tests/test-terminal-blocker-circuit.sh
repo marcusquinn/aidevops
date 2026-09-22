@@ -449,7 +449,7 @@ test_permission_blocker_continuation() {
 	return 0
 }
 
-test_permission_blocker_projects_maintainer_hold() {
+test_permission_blocker_stays_in_generic_lifecycle() {
 	local helper="${TEST_ROOT}/permission-helper-stub.sh"
 	local helper_log="${TEST_ROOT}/permission-helper.log"
 	local status=0
@@ -463,15 +463,14 @@ SH
 	AIDEVOPS_WORKER_PERMISSION_HELPER="$helper" \
 		AIDEVOPS_TEST_PERMISSION_HELPER_LOG="$helper_log" \
 		_hrff_apply_terminal_permission_hold 42 owner/repo || status=1
-	[[ "$(cat "$helper_log")" == 'block --issue 42 --repo owner/repo' ]] || status=1
-	: >"$helper_log"
+	[[ ! -e "$helper_log" ]] || status=1
 	AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT=$(_terminal_blocker_hash 'v2:target_code_blocker')
 	AIDEVOPS_WORKER_PERMISSION_HELPER="$helper" \
 		AIDEVOPS_TEST_PERMISSION_HELPER_LOG="$helper_log" \
 		_hrff_apply_terminal_permission_hold 42 owner/repo || status=1
-	[[ ! -s "$helper_log" ]] || status=1
+	[[ ! -e "$helper_log" ]] || status=1
 	unset AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT
-	print_result "permission terminal blockers project the dedicated maintainer hold before release" "$status"
+	print_result "terminal-only permission blockers do not impersonate scoped permission requests" "$status"
 	return 0
 }
 
@@ -537,7 +536,7 @@ main() {
 	test_legacy_blocked_backoff
 	test_blocked_backoff_trust
 	test_permission_blocker_continuation
-	test_permission_blocker_projects_maintainer_hold
+	test_permission_blocker_stays_in_generic_lifecycle
 	test_same_second_release_ordering
 	test_blocked_backoff_cli
 	printf '\nTests run: %s failed: %s\n' "$TESTS_RUN" "$TESTS_FAILED"
