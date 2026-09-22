@@ -182,6 +182,49 @@ else
 fi
 
 reset_gh_calls
+snapshot='[{"number":61,"labels":[{"name":"auto-dispatch"}]}]'
+GH_BATCH_JSON='{"data":{"repository":{"issue_61":{"number":61,"locked":true}}}}'
+if reconcile_auto_dispatch_issue_locks same/same "$snapshot" &&
+	[[ "$(grep -c -- '^api graphql ' "$GH_CALLS")" -eq 1 ]] &&
+	grep -q -- '-F owner=same -F name=same' "$GH_CALLS" &&
+	! grep -q -- '^issue lock ' "$GH_CALLS" &&
+	[[ -f "${AIDEVOPS_AUTO_DISPATCH_LOCK_DIR}/same--same-61" ]]; then
+	pass "equal owner and repository names use authoritative batch evidence"
+else
+	fail "equal owner and repository names use authoritative batch evidence"
+fi
+
+reset_gh_calls
+if [[ "$(_read_issue_conversation_locks_batch same/same '[]')" == '[]' ]] &&
+	[[ ! -s "$GH_CALLS" ]]; then
+	pass "equal owner and repository names allow an empty snapshot without an API call"
+else
+	fail "equal owner and repository names allow an empty snapshot without an API call"
+fi
+
+for invalid_slug in '' owner /repo owner/ / owner/repo/extra owner//repo; do
+	reset_gh_calls
+	if ! _read_issue_conversation_locks_batch "$invalid_slug" "$snapshot" >/dev/null &&
+		[[ ! -s "$GH_CALLS" ]]; then
+		pass "malformed slug '$invalid_slug' fails before an API call"
+	else
+		fail "malformed slug '$invalid_slug' fails before an API call"
+	fi
+done
+
+reset_gh_calls
+snapshot='[{"number":62,"labels":[{"name":"auto-dispatch"}]}]'
+GH_BATCH_JSON='{"data":{"repository":{}}}'
+if ! reconcile_auto_dispatch_issue_locks same/same "$snapshot" &&
+	[[ "$(grep -c -- '^api graphql ' "$GH_CALLS")" -eq 1 ]] &&
+	! grep -q -- '^issue lock ' "$GH_CALLS" &&
+	[[ ! -f "${AIDEVOPS_AUTO_DISPATCH_LOCK_DIR}/same--same-62" ]]; then
+	pass "equal-name repository still fails closed on missing batch evidence"
+else
+	fail "equal-name repository still fails closed on missing batch evidence"
+fi
+
+reset_gh_calls
 snapshot=$(jq -nc '[range(1; 81) | {number: ., labels: [{name: "auto-dispatch"}]}]')
 GH_BATCH_JSON=$(jq -nc '{data: {repository: ([range(1; 81) | {key: ("issue_" + tostring), value: {number: ., locked: true}}] | from_entries)}}')
 if reconcile_auto_dispatch_issue_locks owner/repo "$snapshot" &&
