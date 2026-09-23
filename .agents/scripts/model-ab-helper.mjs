@@ -16,28 +16,46 @@ const root = join(homedir(), ".aidevops", ".agent-workspace", "work", "model-ab"
 const identifier = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/;
 const repoPattern = /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/;
 const modelPattern = /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_./-]+$/;
+const invalidExperiment = "invalid model A/B experiment: require ID, repository, seed, distinct issues and two model/effort arms";
 
 function digest(value) {
   return createHash("sha256").update(value).digest("hex");
 }
 
+function validIssues(issues) {
+  if (!Array.isArray(issues)) return false;
+  if (issues.length < 2 || new Set(issues).size !== issues.length) return false;
+  return issues.every((issue) => Number.isSafeInteger(issue) && issue > 0);
+}
+
+function validArm(arm) {
+  if (!identifier.test(arm?.name || "")) return false;
+  if (!modelPattern.test(arm?.model || "")) return false;
+  return ["low", "medium", "high", "max"].includes(arm?.variant);
+}
+
+function validArms(arms) {
+  if (!Array.isArray(arms) || arms.length !== 2) return false;
+  if (new Set(arms.map((arm) => arm?.name)).size !== 2) return false;
+  return arms.every(validArm);
+}
+
 export function validateExperiment(value) {
-  if (!value || typeof value !== "object" || !identifier.test(value.id || "")
-    || !repoPattern.test(value.repo || "") || !identifier.test(value.seed || "")
-    || !Array.isArray(value.issues) || value.issues.length < 2
-    || new Set(value.issues).size !== value.issues.length
-    || value.issues.some((issue) => !Number.isSafeInteger(issue) || issue <= 0)
-    || !Array.isArray(value.arms) || value.arms.length !== 2
-    || new Set(value.arms.map((arm) => arm.name)).size !== 2
-    || value.arms.some((arm) => !identifier.test(arm?.name || "")
-      || !modelPattern.test(arm?.model || "")
-      || !["low", "medium", "high", "max"].includes(arm?.variant))) {
-    throw new Error("invalid model A/B experiment: require ID, repository, seed, distinct issues and two model/effort arms");
+  if (!value || typeof value !== "object") {
+    throw new Error(invalidExperiment);
   }
+  if (!identifier.test(value.id || "") || !repoPattern.test(value.repo || "")) {
+    throw new Error(invalidExperiment);
+  }
+  if (!identifier.test(value.seed || "")) throw new Error(invalidExperiment);
+  if (!validIssues(value.issues)) throw new Error(invalidExperiment);
+  if (!validArms(value.arms)) throw new Error(invalidExperiment);
   const start = Date.parse(value.starts_at);
   const end = Date.parse(value.ends_at);
-  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start
-    || end - start > 72 * 60 * 60 * 1000) {
+  if (!Number.isFinite(start) || !Number.isFinite(end)) {
+    throw new Error("model A/B window must be a valid, bounded 72-hour interval");
+  }
+  if (end <= start || end - start > 72 * 60 * 60 * 1000) {
     throw new Error("model A/B window must be a valid, bounded 72-hour interval");
   }
   return value;
@@ -61,6 +79,47 @@ function assignmentPaths(_experiment, repo, issue, directory = root) {
   return { receipt: join(folder, `${issue}.json`), route: join(folder, `${issue}.routing.json`) };
 }
 
+function persistReceipt(paths, receipt, now) {
+  let recorded = { ...receipt, assigned_at: new Date(now).toISOString() };
+  mkdirSync(dirname(paths.receipt), { recursive: true, mode: 0o700 });
+  try {
+    writeFileSync(paths.receipt, `${JSON.stringify(recorded)}\n`, { flag: "wx", mode: 0o600 });
+  } catch (error) {
+    if (error.code !== "EEXIST") throw error;
+    if (!lstatSync(paths.receipt).isFile()) throw new Error("model A/B assignment is not a regular file");
+    const existing = JSON.parse(readFileSync(paths.receipt, "utf8"));
+    if (Object.keys(receipt).some((key) => existing[key] !== receipt[key])) {
+      throw new Error("model A/B assignment changed: refusing to cross arms on retry");
+    }
+    if (!Number.isFinite(Date.parse(existing.assigned_at))) {
+      throw new Error("model A/B assignment changed: refusing to cross arms on retry");
+    }
+    recorded = existing;
+  }
+  return recorded;
+}
+
+function persistRoute(paths, arm) {
+  // Keep the established same-tier availability fallbacks and thinking-tier
+  // capability escalation. The experiment changes only the initial candidate.
+  const shipped = JSON.parse(readFileSync(new URL("../configs/model-routing-table.json", import.meta.url), "utf8"));
+  const standard = shipped.tiers.standard;
+  const route = { tiers: { standard: {
+    models: [arm.model, ...standard.models.filter((model) => model !== arm.model)],
+    reasoning: { ...standard.reasoning, [arm.model]: arm.variant },
+  } } };
+  const content = `${JSON.stringify(route)}\n`;
+  try {
+    writeFileSync(paths.route, content, { flag: "wx", mode: 0o600 });
+  } catch (error) {
+    if (error.code !== "EEXIST") throw error;
+    if (!lstatSync(paths.route).isFile()) throw new Error("model A/B route is not a regular file");
+    if (readFileSync(paths.route, "utf8") !== content) {
+      throw new Error("model A/B route changed: refusing a contaminated assignment");
+    }
+  }
+}
+
 export function assign(experiment, repo, issue, { directory = root, now = Date.now(), continuationOnly = false } = {}) {
   validateExperiment(experiment);
   if (repo !== experiment.repo || !experiment.issues.includes(issue)) {
@@ -75,37 +134,8 @@ export function assign(experiment, repo, issue, { directory = root, now = Date.n
   }
   const receipt = { schema: "aidevops-model-ab/v1", experiment: experiment.id,
     repo, issue, arm: arm.name, model: arm.model, variant: arm.variant, fingerprint };
-  let recorded = { ...receipt, assigned_at: new Date(now).toISOString() };
-  mkdirSync(dirname(paths.receipt), { recursive: true, mode: 0o700 });
-  try {
-    writeFileSync(paths.receipt, `${JSON.stringify(recorded)}\n`, { flag: "wx", mode: 0o600 });
-  } catch (error) {
-    if (error.code !== "EEXIST") throw error;
-    if (!lstatSync(paths.receipt).isFile()) throw new Error("model A/B assignment is not a regular file");
-    const existing = JSON.parse(readFileSync(paths.receipt, "utf8"));
-    if (Object.keys(receipt).some((key) => existing[key] !== receipt[key])
-      || !Number.isFinite(Date.parse(existing.assigned_at))) {
-      throw new Error("model A/B assignment changed: refusing to cross arms on retry");
-    }
-    recorded = existing;
-  }
-  // Keep the established same-tier availability fallbacks and thinking-tier
-  // capability escalation. The experiment changes only the initial candidate.
-  const shipped = JSON.parse(readFileSync(new URL("../configs/model-routing-table.json", import.meta.url), "utf8"));
-  const standard = shipped.tiers.standard;
-  const route = { tiers: { standard: {
-    models: [arm.model, ...standard.models.filter((model) => model !== arm.model)],
-    reasoning: { ...standard.reasoning, [arm.model]: arm.variant },
-  } } };
-  try {
-    writeFileSync(paths.route, `${JSON.stringify(route)}\n`, { flag: "wx", mode: 0o600 });
-  } catch (error) {
-    if (error.code !== "EEXIST") throw error;
-    if (!lstatSync(paths.route).isFile()) throw new Error("model A/B route is not a regular file");
-    if (readFileSync(paths.route, "utf8") !== `${JSON.stringify(route)}\n`) {
-      throw new Error("model A/B route changed: refusing a contaminated assignment");
-    }
-  }
+  const recorded = persistReceipt(paths, receipt, now);
+  persistRoute(paths, arm);
   return { active: true, ...recorded, routing_table: paths.route };
 }
 
@@ -130,14 +160,20 @@ export function report(experiment, { directory = root } = {}) {
     result: "assignment-only: join observed requests, escalations, merged-PR evidence and parent acceptance before comparing outcomes" };
 }
 
+function validAssignInvocation(argv) {
+  if (!repoPattern.test(argv[1] || "")) return false;
+  if (!/^[1-9][0-9]*$/.test(argv[2] || "")) return false;
+  if (argv.length === 3) return true;
+  return argv.length === 4 && argv[3] === "--continuation-only";
+}
+
 function run(argv) {
   const [command, repo, rawIssue] = argv;
   const config = process.env.AIDEVOPS_MODEL_AB_CONFIG;
   if (!config && command === "assign") { process.stdout.write('{"active":false}\n'); return; }
   if (!config) throw new Error("AIDEVOPS_MODEL_AB_CONFIG is required for report");
   const experiment = validateExperiment(JSON.parse(readFileSync(config, "utf8")));
-  if (command === "assign" && repoPattern.test(repo || "") && /^[1-9][0-9]*$/.test(rawIssue || "")
-    && (argv.length === 3 || (argv.length === 4 && argv[3] === "--continuation-only"))) {
+  if (command === "assign" && validAssignInvocation(argv)) {
     process.stdout.write(`${JSON.stringify(assign(experiment, repo, Number(rawIssue),
       { continuationOnly: argv[3] === "--continuation-only" }))}\n`);
   } else if (command === "report" && argv.length === 1) {
