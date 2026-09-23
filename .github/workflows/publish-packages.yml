@@ -238,20 +238,33 @@ jobs:
           EXPECTED_SHASUM: ${{ steps.npm-package.outputs.shasum }}
         run: |
           PUBLISHED_METADATA=""
+          RETRY_DELAYS=(5 5 10 10 15 15 30 30 45 45 60)
           for attempt in {1..12}; do
-            if PUBLISHED_METADATA=$(npm view "aidevops@${RELEASE_VERSION}" version dist --json 2>/dev/null) \
-              && jq -e --arg version "$RELEASE_VERSION" --arg integrity "$EXPECTED_INTEGRITY" \
-                --arg shasum "$EXPECTED_SHASUM" '
-                  .version == $version
-                  and .dist.integrity == $integrity
-                  and .dist.shasum == $shasum
-                  and .dist.attestations.provenance.predicateType == "https://slsa.dev/provenance/v1"
-                  and ((.dist.attestations.url // "") | type == "string" and length > 0)
-                ' <<<"$PUBLISHED_METADATA" >/dev/null; then
+            VIEW_OUTPUT=""
+            if ! VIEW_OUTPUT=$(npm view "aidevops@${RELEASE_VERSION}" version dist --json 2>&1); then
+              if ! grep -qE 'E404|No match found' <<<"$VIEW_OUTPUT"; then
+                echo "::error::Unable to determine npm publication metadata"
+                printf '%s\n' "$VIEW_OUTPUT" >&2
+                exit 1
+              fi
+            elif ! jq -e --arg version "$RELEASE_VERSION" --arg integrity "$EXPECTED_INTEGRITY" \
+              --arg shasum "$EXPECTED_SHASUM" '
+                .version == $version
+                and .dist.integrity == $integrity
+                and .dist.shasum == $shasum
+              ' <<<"$VIEW_OUTPUT" >/dev/null; then
+              echo "::error::npm metadata does not match the verified package identity"
+              exit 1
+            elif jq -e '
+              .dist.attestations.provenance.predicateType == "https://slsa.dev/provenance/v1"
+              and ((.dist.attestations.url // "") | type == "string" and length > 0)
+            ' <<<"$VIEW_OUTPUT" >/dev/null; then
+              PUBLISHED_METADATA="$VIEW_OUTPUT"
               break
             fi
-            PUBLISHED_METADATA=""
-            sleep 5
+            if [[ "$attempt" -lt 12 ]]; then
+              sleep "${RETRY_DELAYS[$((attempt - 1))]}"
+            fi
           done
           [[ -n "$PUBLISHED_METADATA" ]] || {
             echo "::error::npm did not converge to the exact package identity for $RELEASE_VERSION"

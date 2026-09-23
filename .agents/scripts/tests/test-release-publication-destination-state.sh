@@ -154,7 +154,7 @@ if [[ "${1:-}" == "view" ]]; then
 		;;
 	npm-verify-eventual)
 		if [[ "$count" -lt 2 ]]; then
-			printf '%s\n' '{"version":"1.2.3","dist":{"integrity":"sha512-drift"}}'
+			printf '%s\n' '{"version":"1.2.3","dist":{"integrity":"'"$EXPECTED_INTEGRITY"'","shasum":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}'
 		else
 			cat "$EXACT_NPM_JSON"
 		fi
