@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
 
+import argparse
 import importlib.util
 import io
 import json
@@ -70,7 +71,8 @@ class YouTubeTranscriptTest(unittest.TestCase):
 
             run.side_effect = simulate
             with self.assertRaises(ValueError):
-                MODULE.local_asr("https://www.youtube.com/watch?v=dQw4w9WgXcQ", "en", Path(folder), "faster-whisper")
+                MODULE.local_asr("https://www.youtube.com/watch?v=dQw4w9WgXcQ", Path(folder),
+                                 argparse.Namespace(language="en", backend="faster-whisper"))
             command = run.call_args.args[0]
             self.assertEqual(command[command.index("--backend") + 1], "faster-whisper")
 

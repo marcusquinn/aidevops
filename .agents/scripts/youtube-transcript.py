@@ -81,7 +81,7 @@ def local_captions(url, language, temp):
     return None
 
 
-def local_asr(url, language, temp, backend):
+def local_asr(url, temp, options):
     output = temp / "asr.json"
     download = subprocess.run(
         ["yt-dlp", "--no-playlist", "-x", "--audio-format", "wav",
@@ -92,10 +92,10 @@ def local_asr(url, language, temp, backend):
     if download.returncode or not audio.is_file():
         raise ValueError("YouTube audio unavailable for local ASR (check yt-dlp and ffmpeg)")
     helper = Path(__file__).with_name("transcription-helper.sh")
-    command = [str(helper), "transcribe", str(audio), "--backend", backend,
+    command = [str(helper), "transcribe", str(audio), "--backend", options.backend,
                "--format", "json", "--output", str(output)]
-    if language != "all":
-        command.extend(["--language", language])
+    if options.language != "all":
+        command.extend(["--language", options.language])
     result = subprocess.run(command, capture_output=True, text=True, check=False)
     if result.returncode:
         raise ValueError("Local ASR failed (check installed yt-dlp, ffmpeg, and selected local backend)")
@@ -157,7 +157,7 @@ def main():
                 language = args.language
                 source = "captions"
                 if not segments:
-                    segments, language = local_asr(url, args.language, Path(directory), args.backend)
+                    segments, language = local_asr(url, Path(directory), args)
                     source = "local-asr"
         if not segments:
             raise ValueError("No transcript segments available")
