@@ -246,10 +246,10 @@ export function getGpt6ContextHealth(config) {
   return gpt6ContextHealth.get(config) ?? null;
 }
 
-/** Apply the opt-in ~240K usable-input budget to GPT-6 Sol/Luna variants. */
+/** Default GPT-6 Sol/Luna to ~240K usable input unless explicitly customized. */
 export function registerGpt6ContextLimits(config) {
   const settings = readContextSettings();
-  const managed = settings.gpt6_context_cap === true;
+  const managed = settings.gpt6_context_cap !== false;
   const health = {
     managed,
     target: GPT6_COMPACTION_TARGET,
@@ -263,8 +263,16 @@ export function registerGpt6ContextLimits(config) {
   config.provider.openai.models ??= {};
   const models = config.provider.openai.models;
   const applied = {};
+  const customized = [];
   for (const id of GPT6_MODEL_IDS) {
     const existing = models[id] || {};
+    // Config-hook sees user model overrides, not the built-in provider registry.
+    // Preserve an explicit context/input choice unless the user forced this cap on.
+    if (settings.gpt6_context_cap !== true &&
+        (existing.limit?.context !== undefined || existing.limit?.input !== undefined)) {
+      customized.push(id);
+      continue;
+    }
     const output = existing.limit?.output ?? GPT6_OUTPUT_DEFAULT;
     const reserve = config.compaction?.reserved ?? Math.min(20000, output);
     const input = GPT6_COMPACTION_TARGET + reserve;
@@ -275,7 +283,8 @@ export function registerGpt6ContextLimits(config) {
     applied[id] = { reserve, limits: { ...models[id].limit } };
   }
   health.models = applied;
-  return GPT6_MODEL_IDS.length;
+  health.customized = customized;
+  return Object.keys(applied).length;
 }
 
 /**

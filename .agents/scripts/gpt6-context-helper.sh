@@ -15,8 +15,8 @@ usage() {
 	cat <<'EOF'
 Usage: aidevops gpt6-context [enable|disable|status]
 
-  enable   Apply a ~240,000 usable-input compaction budget to GPT-6 Sol/Luna.
-  disable  Restore native provider metadata for the managed models (default).
+  enable   Force a ~240,000 usable-input budget, including explicit model limits.
+  disable  Restore native provider metadata for the managed models.
   status   Show the saved preference and a fresh-process effective-config probe.
 
 The mode covers gpt-6-sol, gpt-6-sol-fast, gpt-6-luna, and gpt-6-luna-fast.
@@ -35,7 +35,7 @@ requested_state() {
 	fi
 	jq -r '(try (.runtime.opencode // {}) catch {}) |
 		if type != "object" then {} else . end |
-		if .gpt6_context_cap == true then "true" else "false" end' <<<"$settings"
+		if .gpt6_context_cap == false then "false" else "true" end' <<<"$settings"
 	return 0
 }
 
@@ -50,10 +50,12 @@ report_probe() {
 			(["gpt-6-sol","gpt-6-sol-fast","gpt-6-luna","gpt-6-luna-fast"] as $ids |
 			 . as $health |
 			 (.models | type == "object") and
-			 all($ids[]; . as $id | $health.models[$id] |
-				(.reserve | type == "number") and
-				(.limits.input - .reserve == 240000) and
-				(.limits.context == .limits.input + .limits.output)))
+			 all($ids[]; . as $id |
+				(($health.customized | index($id)) != null or
+				 ($health.models[$id] |
+				  (.reserve | type == "number") and
+				  (.limits.input - .reserve == 240000) and
+				  (.limits.context == .limits.input + .limits.output)))))
 		  else true end))' "$receipt" >/dev/null 2>&1; then
 		printf '%s\n' 'Effective GPT-6 context state: unavailable (missing, stale, or mismatched config evidence)'
 		return 0
@@ -65,6 +67,7 @@ report_probe() {
 	jq -r '.details.config_applied.gpt6_context as $health |
 		($health.models | to_entries[] |
 		"Effective \(.key) limits (new process): context=\(.value.limits.context), input=\(.value.limits.input), output=\(.value.limits.output), reserve=\(.value.reserve)"),
+		($health.customized[] | "Effective \(.) limits (new process): explicit model limits preserved"),
 		(if $health.auto then "Effective GPT-6 compaction target: \($health.target) (applied)"
 		 else "Automatic compaction is disabled; selected limits are applied but no automatic threshold is active" end)' "$receipt"
 	return 0

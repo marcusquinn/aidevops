@@ -60,11 +60,13 @@ merely to verify this arithmetic.
 
 ## GPT-6 Sol and Luna compaction
 
-`aidevops gpt6-context enable` opts `gpt-6-sol`, `gpt-6-sol-fast`,
-`gpt-6-luna`, and `gpt-6-luna-fast` into a 240,000-token usable-input target.
-The feature is disabled by default; `disable` leaves native provider metadata
-untouched rather than restoring a hard-coded snapshot. The saved
-`runtime.opencode.gpt6_context_cap` preference survives normal updates.
+`gpt-6-sol`, `gpt-6-sol-fast`, `gpt-6-luna`, and `gpt-6-luna-fast` default to
+a 240,000-token usable-input target. Explicit per-model context/input limits
+take precedence unless `aidevops gpt6-context enable` forces the budget.
+`disable` leaves native provider metadata untouched rather than restoring a
+hard-coded snapshot. The saved `runtime.opencode.gpt6_context_cap` preference
+survives normal updates; an unset preference uses the default without overriding
+explicit per-model limits.
 
 The managed input limit is the 240K target plus OpenCode's configured reserve;
 managed context is input plus the model's explicit or native output limit.
