@@ -116,6 +116,12 @@ assert_contains "npm publication state keeps its executable test selector" \
 	"name: Check npm publication state" "$PACKAGE_WORKFLOW"
 assert_contains "npm verification keeps its executable test selector" \
 	"name: Verify npm publication" "$PACKAGE_WORKFLOW"
+assert_contains "npm verification uses a bounded adaptive propagation schedule" \
+	"RETRY_DELAYS=(5 5 10 10 15 15 30 30 45 45 60)" "$PACKAGE_WORKFLOW"
+assert_contains "npm verification fails immediately on a mismatched package identity" \
+	"npm metadata does not match the verified package identity" "$PACKAGE_WORKFLOW"
+assert_contains "npm verification distinguishes registry transport failures" \
+	"Unable to determine npm publication metadata" "$PACKAGE_WORKFLOW"
 assert_contains "npm publication skips an existing exact version" \
 	"if: steps.npm-state.outputs.published != 'true'" "$PACKAGE_WORKFLOW"
 assert_contains "npm state retries an initially absent registry version before publishing" \
