@@ -1408,7 +1408,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18473 Document macOS Blender and FreeCAD native-app discovery ref:GH#32260 pr:#32261 completed:2026-09-22
 
-- [ ] t18474 Add portrait talking-head reel editing recipe ref:GH#32269
+- [x] t18474 Add portrait talking-head reel editing recipe ref:GH#32269 pr:#32270 completed:2026-09-23
 
 ## In Progress
 
