@@ -95,7 +95,7 @@ Target: $ARGUMENTS
 
 2. **Analyze structure:** hook (first 30s), intro (problem setup), body (solution/content), CTA.
 3. **Extract reusable patterns:** title formula, hook formula, content structure, pacing (words/minute).
-4. **If speaker attribution is requested:** follow `tools/voice/transcription.md` for caption-first, original-audio ASR fallback, and evidence limits. Match transcript timestamps to on-screen speaker changes and publisher-supplied affiliations; do not turn organisation labels into personal names. Use `simple` for formatting, `standard` for frame-supported speaker turns, and `thinking` only when identity/evidence remains materially ambiguous. A plain transcript is not diarized.
+4. **If speaker attribution is requested:** follow `tools/voice/transcription.md` for caption-first, original-audio ASR fallback, and evidence limits. For local anonymous turn boundaries, use the opt-in `tools/voice/nemotron-diarization.md` route on the same recording/time base. Match turns to on-screen changes and publisher-supplied affiliations; do not turn organisation labels into personal names or force one speaker across a mixed ASR segment. Use `simple` for formatting, `standard` for frame-supported speaker turns, and `thinking` only when identity/evidence remains materially ambiguous.
 
 ### Step 4: Present Findings
 
