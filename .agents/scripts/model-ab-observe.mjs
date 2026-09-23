@@ -40,6 +40,21 @@ function linkedMerge(repo, issue, assignedAt) {
   }
 }
 
+function consumeAcceptance(events, assignedAt, seen, accepted) {
+  let interventions = 0;
+  for (const event of events) {
+    if (!assignedAt || Date.parse(event.occurred_at) < Date.parse(assignedAt)) continue;
+    const payload = JSON.parse(event.payload_json);
+    if (!payload.contribution_id || seen.has(payload.contribution_id)) continue;
+    seen.add(payload.contribution_id);
+    if (["accepted_unchanged", "accepted_repaired"].includes(payload.contribution_outcome)) {
+      accepted.add(payload.contribution_id);
+      interventions += Number(payload.intervention_count) || 0;
+    }
+  }
+  return interventions;
+}
+
 function parentAcceptance(metrics, assignedAt) {
   const accepted = new Set();
   const seen = new Set();
@@ -48,16 +63,7 @@ function parentAcceptance(metrics, assignedAt) {
   for (const session of metrics?.sessionIDs || []) {
     if (!session.startsWith("ses_")) continue;
     try {
-      for (const event of acceptanceEvents(session)) {
-        if (!assignedAt || Date.parse(event.occurred_at) < Date.parse(assignedAt)) continue;
-        const payload = JSON.parse(event.payload_json);
-        if (!payload.contribution_id || seen.has(payload.contribution_id)) continue;
-        seen.add(payload.contribution_id);
-        if (["accepted_unchanged", "accepted_repaired"].includes(payload.contribution_outcome)) {
-          accepted.add(payload.contribution_id);
-          interventions += Number(payload.intervention_count) || 0;
-        }
-      }
+      interventions += consumeAcceptance(acceptanceEvents(session), assignedAt, seen, accepted);
     } catch { available = false; }
   }
   return { accepted_subagents: available ? accepted.size : null,

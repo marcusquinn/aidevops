@@ -6,11 +6,12 @@
 // worker: the existing availability fallback and capability escalation own
 // recovery, and the observed route must be counted separately from this arm.
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { aggregateObserved } from "./model-ab-report.mjs";
+import { assignmentPaths, persistReceipt, persistRoute } from "./model-ab-store.mjs";
 
 const root = join(homedir(), ".aidevops", ".agent-workspace", "work", "model-ab");
 const identifier = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/;
@@ -70,54 +71,6 @@ export function assignedArm(experiment, repo, issue) {
     return a.localeCompare(b);
   });
   return experiment.arms[shuffled.indexOf(issue) % 2];
-}
-
-function assignmentPaths(_experiment, repo, issue, directory = root) {
-  // The storage key is the issue, not the experiment: overlapping windows may
-  // not silently assign the same live issue to a different experiment.
-  const folder = join(directory, repo.replace("/", "__"));
-  return { receipt: join(folder, `${issue}.json`), route: join(folder, `${issue}.routing.json`) };
-}
-
-function persistReceipt(paths, receipt, now) {
-  let recorded = { ...receipt, assigned_at: new Date(now).toISOString() };
-  mkdirSync(dirname(paths.receipt), { recursive: true, mode: 0o700 });
-  try {
-    writeFileSync(paths.receipt, `${JSON.stringify(recorded)}\n`, { flag: "wx", mode: 0o600 });
-  } catch (error) {
-    if (error.code !== "EEXIST") throw error;
-    if (!lstatSync(paths.receipt).isFile()) throw new Error("model A/B assignment is not a regular file");
-    const existing = JSON.parse(readFileSync(paths.receipt, "utf8"));
-    if (Object.keys(receipt).some((key) => existing[key] !== receipt[key])) {
-      throw new Error("model A/B assignment changed: refusing to cross arms on retry");
-    }
-    if (!Number.isFinite(Date.parse(existing.assigned_at))) {
-      throw new Error("model A/B assignment changed: refusing to cross arms on retry");
-    }
-    recorded = existing;
-  }
-  return recorded;
-}
-
-function persistRoute(paths, arm) {
-  // Keep the established same-tier availability fallbacks and thinking-tier
-  // capability escalation. The experiment changes only the initial candidate.
-  const shipped = JSON.parse(readFileSync(new URL("../configs/model-routing-table.json", import.meta.url), "utf8"));
-  const standard = shipped.tiers.standard;
-  const route = { tiers: { standard: {
-    models: [arm.model, ...standard.models.filter((model) => model !== arm.model)],
-    reasoning: { ...standard.reasoning, [arm.model]: arm.variant },
-  } } };
-  const content = `${JSON.stringify(route)}\n`;
-  try {
-    writeFileSync(paths.route, content, { flag: "wx", mode: 0o600 });
-  } catch (error) {
-    if (error.code !== "EEXIST") throw error;
-    if (!lstatSync(paths.route).isFile()) throw new Error("model A/B route is not a regular file");
-    if (readFileSync(paths.route, "utf8") !== content) {
-      throw new Error("model A/B route changed: refusing a contaminated assignment");
-    }
-  }
 }
 
 export function assign(experiment, repo, issue, { directory = root, now = Date.now(), continuationOnly = false } = {}) {
