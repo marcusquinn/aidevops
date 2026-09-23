@@ -332,16 +332,8 @@ _preflight_label_maintenance() {
 	# parent can actually be consolidated instead of sitting forever.
 	_preflight_rest_core_allows_next "label_maintenance_consolidation_backfill" || return 0
 	local _ss1=$SECONDS
-	local _backfill_rc=0
-	# GH#32259: this sweep spans multiple repos and can block on a stalled gh
-	# transport. Bound the whole optional pass independently of the outer
-	# preflight stage, so simplification and the post-label refill can proceed.
-	run_stage_with_timeout "substage:label_maintenance/backfill_consolidation_labels" 300 \
-		_preflight_backfill_consolidation_bounded || _backfill_rc=$?
-	_log_substage_timing "substage:label_maintenance/backfill_consolidation_labels" "$_ss1" "$_backfill_rc"
-	if [[ "$_backfill_rc" -ne 0 ]]; then
-		echo "[pulse-wrapper] Consolidation backfill incomplete (exit=${_backfill_rc}); continuing label maintenance" >>"$LOGFILE"
-	fi
+	_backfill_stale_consolidation_labels
+	_log_substage_timing "substage:label_maintenance/backfill_consolidation_labels" "$_ss1" 0
 
 	_preflight_rest_core_allows_next "label_maintenance_simplification_reevaluate" || return 0
 	local _ss2=$SECONDS
@@ -351,16 +343,25 @@ _preflight_label_maintenance() {
 	return 0
 }
 
-# Propagate the pass deadline to shared bounded GitHub adapters used by the
-# backfill's callees. The stage watchdog remains the final guard for direct gh
-# calls and other blocking operations in the legacy consolidation helpers.
-_preflight_backfill_consolidation_bounded() {
-	local AIDEVOPS_GH_DEADLINE_EPOCH
-	AIDEVOPS_GH_DEADLINE_EPOCH=$(date +%s) || return 1
-	AIDEVOPS_GH_DEADLINE_EPOCH=$((AIDEVOPS_GH_DEADLINE_EPOCH + 300))
-	export AIDEVOPS_GH_DEADLINE_EPOCH
-	_backfill_stale_consolidation_labels
-	return $?
+# Give optional pre-refill work only the time left before the refill's
+# admission threshold. The watchdog polls every two seconds and needs time to
+# terminate a stalled child, so reserve five seconds beyond the refill budget.
+# An unknown clock/budget fails open to the next stage, never to unbounded work.
+_preflight_refill_reserved_timeout() {
+	local stage_limit="$1"
+	local start_epoch="${PULSE_START_EPOCH:-}"
+	local ceiling="${PULSE_STALE_THRESHOLD:-}"
+	local refill_reserve="${PULSE_POST_LABEL_REFILL_MIN_REMAINING_SECONDS:-${PRE_RUN_STAGE_TIMEOUT:-600}}"
+	local now_epoch=""
+	now_epoch=$(date +%s 2>/dev/null) || return 1
+	[[ "$stage_limit" =~ ^[1-9][0-9]*$ && "$start_epoch" =~ ^[0-9]+$ &&
+		"$ceiling" =~ ^[1-9][0-9]*$ && "$refill_reserve" =~ ^[1-9][0-9]*$ &&
+		"$now_epoch" =~ ^[0-9]+$ && "$now_epoch" -ge "$start_epoch" ]] || return 1
+	local available=$((start_epoch + ceiling - now_epoch - refill_reserve - 5))
+	[[ "$available" -gt 0 ]] || return 1
+	[[ "$available" -lt "$stage_limit" ]] && stage_limit="$available"
+	printf '%s\n' "$stage_limit"
+	return 0
 }
 
 #######################################
@@ -370,7 +371,8 @@ _preflight_backfill_consolidation_bounded() {
 # enter the same-cycle refill without delaying already-eligible work.
 #######################################
 _preflight_trusted_nmr_reconcile() {
-	run_stage_with_timeout "auto_approve_maintainer_issues" "$PRE_RUN_STAGE_TIMEOUT" auto_approve_maintainer_issues || true
+	local stage_timeout="${1:-$PRE_RUN_STAGE_TIMEOUT}"
+	run_stage_with_timeout "auto_approve_maintainer_issues" "$stage_timeout" auto_approve_maintainer_issues || true
 	return 0
 }
 

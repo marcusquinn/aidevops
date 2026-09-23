@@ -1543,9 +1543,19 @@ _run_preflight_stages() {
 	# after the initial fill so already-eligible workers boot in parallel. Then
 	# normalize trusted-author NMR residue and refill once so every newly unblocked
 	# candidate remains dispatchable this cycle.
-	_pulse_run_budget_priority_stage_with_timeout "preflight_label_maintenance" "$_pflt_timeout" \
-		_preflight_label_maintenance || true
-	_pulse_run_budget_priority_stage "preflight_trusted_nmr_reconcile" _preflight_trusted_nmr_reconcile || true
+	local _label_timeout=""
+	if _label_timeout=$(_preflight_refill_reserved_timeout "$_pflt_timeout"); then
+		_pulse_run_budget_priority_stage_with_timeout "preflight_label_maintenance" "$_label_timeout" \
+			_preflight_label_maintenance || true
+	else
+		echo "[pulse-wrapper] preflight_label_maintenance deferred: insufficient wall-clock budget for post-label refill" >>"$LOGFILE"
+	fi
+	local _nmr_timeout=""
+	if _nmr_timeout=$(_preflight_refill_reserved_timeout "$PRE_RUN_STAGE_TIMEOUT"); then
+		_pulse_run_budget_priority_stage "preflight_trusted_nmr_reconcile" _preflight_trusted_nmr_reconcile "$_nmr_timeout" || true
+	else
+		echo "[pulse-wrapper] preflight_trusted_nmr_reconcile deferred: insufficient wall-clock budget for post-label refill" >>"$LOGFILE"
+	fi
 	local _pflt_refill_start=$SECONDS
 	local _pflt_refill_rc=0
 	local _pflt_refill_outcome=""
