@@ -184,7 +184,9 @@ TIMEOUT_COUNT=0
 UNKNOWN_COUNT=0
 SUDO_SKIP_COUNT=0
 UPDATE_FAILURE_COUNT=0
+UPDATE_NOOP_COUNT=0
 declare -a OUTDATED_PACKAGES=()
+declare -a OUTDATED_TOOL_SPECS=()
 declare -a JSON_RESULTS=()
 
 # Timeout for local --version calls (seconds).
@@ -393,6 +395,36 @@ get_brew_latest() {
 	return 0
 }
 
+# Apt is the selected upgrade channel when Homebrew is absent. An upstream
+# release does not imply that the configured apt repository can install it.
+get_apt_candidate() {
+	local pkg="$1"
+	local policy installed candidate
+	policy=$(timeout_sec "$PKG_QUERY_TIMEOUT" apt-cache policy "$pkg" 2>/dev/null) || { printf '%s\n' unknown; return 0; }
+	installed=$(printf '%s\n' "$policy" | awk '$1 == "Installed:" {print $2; exit}')
+	candidate=$(printf '%s\n' "$policy" | awk '$1 == "Candidate:" {print $2; exit}')
+	if [[ -z "$candidate" || "$candidate" == "(none)" ]]; then
+		printf '%s\n' unknown
+	elif [[ "$installed" == "$candidate" ]]; then
+		printf '%s\n' channel_current
+	else
+		printf '%s\n' "$candidate"
+	fi
+	return 0
+}
+
+_tool_normalize_version() {
+	local version="$1"
+	# Accept v1.2.3, jq-1.8.2, and Debian epoch/revision suffixes, but
+	# never turn an empty or failed probe into an actionable update.
+	if [[ "$version" =~ (^|[^0-9])([0-9]+\.[0-9]+(\.[0-9]+)?)($|[^0-9]) ]]; then
+		printf '%s\n' "${BASH_REMATCH[2]}"
+	else
+		printf '%s\n' unknown
+	fi
+	return 0
+}
+
 # Return the sudo command selected on this host, if the update needs one.
 # Platform-dispatch commands contain dormant sudo fallbacks even on Homebrew
 # hosts, so scanning the whole command would incorrectly skip safe brew updates.
@@ -467,8 +499,14 @@ _tool_latest_version() {
 	local installed="$3"
 
 	case "$category" in
-	npm) get_npm_latest "$pkg" ;;
-	brew) get_brew_latest "$pkg" ;;
+	npm)
+		if [[ "$pkg" == playwriter ]]; then printf '%s\n' 0.5.0; else get_npm_latest "$pkg"; fi ;;
+	brew)
+		if ! command -v brew >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
+			get_apt_candidate "${pkg##*/}"
+		else
+			get_brew_latest "$pkg"
+		fi ;;
 	pip) get_pip_latest "$pkg" ;;
 	self) printf '%s\n' "$installed" ;; # Self-updating tools — no registry to check
 	*) printf '%s\n' "unknown" ;;
@@ -500,7 +538,9 @@ _classify_tool_status() {
 		class_color="$RED"
 		effective_latest=">=${AIDEVOPS_GH_MIN_SLURP_VERSION}"
 		((++OUTDATED_COUNT))
-		OUTDATED_PACKAGES+=("$update_cmd")
+		# An unmet CLI prerequisite is real, but apt cannot fix it when the
+		# configured channel has no newer candidate.
+		[[ "$approved_version" != "$installed" && "$approved_version" != unknown ]] && OUTDATED_PACKAGES+=("$update_cmd")
 	elif [[ "$installed" == "not installed" ]]; then
 		class_status="not_installed"
 		class_icon="○"
@@ -511,7 +551,7 @@ _classify_tool_status() {
 		class_icon="⏱"
 		class_color="$RED"
 		((++TIMEOUT_COUNT))
-	elif [[ "$installed" == "unknown" || "$approved_version" == "unknown" ]]; then
+	elif [[ "$installed" == "unknown" || -z "$approved_version" || "$approved_version" == "unknown" ]]; then
 		class_status="unknown"
 		class_icon="?"
 		class_color="$YELLOW"
@@ -581,6 +621,12 @@ _print_tool_status() {
 	unknown)
 		echo -e "${color}${icon}  $name: $installed (could not check latest)${NC}"
 		;;
+	channel_current)
+		echo -e "${color}${icon}  $name: $installed (no newer candidate in selected channel)${NC}"
+		;;
+	metadata_mismatch)
+		echo -e "${color}${icon}  $name: CLI $installed; installed package $latest (version mismatch, not reinstalling)${NC}"
+		;;
 	minimum_required)
 		echo -e "${color}${icon}  $name: $installed (requires >= ${AIDEVOPS_GH_MIN_SLURP_VERSION} for gh api --paginate --slurp)${NC}"
 		;;
@@ -612,11 +658,40 @@ check_tool() {
 
 	local latest="unknown"
 	latest=$(_tool_latest_version "$category" "$pkg" "$installed")
+	local channel_current=false
+	if [[ "$latest" == channel_current ]]; then
+		channel_current=true
+		latest="$installed"
+	elif [[ "$category" == brew ]]; then
+		latest=$(_tool_normalize_version "$latest")
+	fi
 
 	local status="up_to_date"
 	local icon="✓"
 	local color="$GREEN"
 	_classify_tool_status "$cmd" "$installed" "$latest" "$update_cmd" status icon color latest
+	if [[ "$channel_current" == true && "$status" == up_to_date ]]; then status=channel_current; fi
+	# A package already at the approved target with a stale CLI --version is
+	# a mismatch, not a reason to reinstall the same package on every pass.
+	if [[ "$category" == npm && "$installed" != "not installed" ]]; then
+		local package_version=""
+		package_version=$(get_npm_pkg_version "$pkg" || true)
+		if [[ -n "$package_version" && "$package_version" != "$installed" && "$package_version" == "$latest" ]]; then
+			if [[ "$status" == outdated ]]; then
+				OUTDATED_COUNT=$((OUTDATED_COUNT - 1))
+				unset "OUTDATED_PACKAGES[$((${#OUTDATED_PACKAGES[@]} - 1))]"
+			elif [[ "$status" == up_to_date ]]; then
+				INSTALLED_COUNT=$((INSTALLED_COUNT - 1))
+			fi
+			status=metadata_mismatch
+			icon="!"
+			color="$YELLOW"
+			((++UNKNOWN_COUNT))
+		fi
+	fi
+	if [[ "$status" == outdated || ( "$status" == minimum_required && "$channel_current" != true && "$latest" != unknown ) ]]; then
+		OUTDATED_TOOL_SPECS+=("$category|$cmd|$ver_flag|$pkg|$installed|$latest")
+	fi
 
 	# JSON output (escape special characters for valid JSON)
 	if [[ "$JSON_OUTPUT" == "true" ]]; then
@@ -706,6 +781,64 @@ _output_json_results() {
 	return 0
 }
 
+# Execute queued updates and verify the selected binary after each action.
+_run_outdated_tool_updates() {
+	local index spec category cmd ver_flag pkg before target after package_after update_cmd
+	for index in "${!OUTDATED_PACKAGES[@]}"; do
+		update_cmd="${OUTDATED_PACKAGES[index]}"
+		spec="${OUTDATED_TOOL_SPECS[index]}"
+		IFS='|' read -r category cmd ver_flag pkg before target <<<"$spec"
+		echo "  Running: $update_cmd"
+		# Preserve the existing sudo gate for the selected package-manager branch.
+		local _manual_cmd=""
+		_manual_cmd=$(_tool_selected_sudo_command "$update_cmd" || true)
+		if [[ -n "$_manual_cmd" ]] && ! sudo -n true 2>/dev/null; then
+			if [[ -t 0 && -t 1 ]]; then
+				echo -e "  ${BLUE}Privilege confirmation is required for this system package update.${NC}"
+				if ! sudo -v; then
+					echo -e "  ${YELLOW}⊘ Blocked: privilege confirmation failed; the next interactive update will retry.${NC}"
+					((++SUDO_SKIP_COUNT))
+					continue
+				fi
+			else
+				echo -e "  ${YELLOW}⊘ Deferred: privilege confirmation requires an attached terminal; the next interactive update will retry.${NC}"
+				((++SUDO_SKIP_COUNT))
+				continue
+			fi
+		fi
+		# Commands are hardcoded in tool definitions, not external input. A
+		# temporary log avoids macOS timeout fallback pipe hangs.
+		local _update_log
+		if ! _update_log=$(mktemp "${TMPDIR:-/tmp}/tool-update.XXXXXX"); then
+			echo -e "  ${RED}✗ Failed to create temp log${NC}"
+			((++UPDATE_FAILURE_COUNT))
+			continue
+		fi
+		if timeout_sec 120 bash -c "$update_cmd" >"$_update_log" 2>&1; then
+			tail -2 "$_update_log"
+			after=$(_tool_installed_version "$category" "$cmd" "$ver_flag" "$pkg")
+			package_after=""
+			if [[ "$category" == npm ]]; then package_after=$(get_npm_pkg_version "$pkg" || true); fi
+			if [[ "$after" != "$before" && ( "$after" == "$target" || "$target" == '>='* ) ]]; then
+				echo -e "  ${GREEN}✓ Updated and verified ($after)${NC}"
+			elif [[ -n "$package_after" && "$package_after" == "$target" ]]; then
+				echo -e "  ${YELLOW}⊘ Package $package_after installed, but CLI reports $after; check binary ownership${NC}"
+				((++UPDATE_NOOP_COUNT))
+			else
+				echo -e "  ${YELLOW}⊘ No verified update ($before → $after); check selected package channel${NC}"
+				((++UPDATE_NOOP_COUNT))
+			fi
+		else
+			tail -2 "$_update_log"
+			echo -e "  ${RED}✗ Failed${NC}"
+			((++UPDATE_FAILURE_COUNT))
+		fi
+		rm -f "$_update_log"
+		echo ""
+	done
+	return 0
+}
+
 # Print summary counts and handle auto-update or update instructions
 _output_summary_and_updates() {
 	# Summary (skip in quiet mode if nothing outdated)
@@ -729,64 +862,19 @@ _output_summary_and_updates() {
 	fi
 
 	if [[ $OUTDATED_COUNT -gt 0 ]]; then
+		if [[ ${#OUTDATED_PACKAGES[@]} -eq 0 ]]; then
+			printf '%s\n' 'No upgrade is available in the selected channel; resolve any unmet minimum version separately.'
+			return 0
+		fi
 		if [[ "$AUTO_UPDATE" == "true" ]]; then
 			echo -e "${BLUE}Updating outdated tools...${NC}"
 			echo ""
-		for update_cmd in "${OUTDATED_PACKAGES[@]}"; do
-			echo "  Running: $update_cmd"
-			# Sudo safety gate (GH#21734): commands routed through apt-get/dnf/yum
-			# require sudo. Probe for passwordless sudo first; if not available,
-			# skip and print the manual command instead of hanging on an
-			# interactive password prompt during unattended `aidevops update`.
-			local _manual_cmd=""
-			_manual_cmd=$(_tool_selected_sudo_command "$update_cmd" || true)
-			if [[ -n "$_manual_cmd" ]]; then
-				if ! sudo -n true 2>/dev/null; then
-					if [[ -t 0 && -t 1 ]]; then
-						echo -e "  ${BLUE}Privilege confirmation is required for this system package update.${NC}"
-						if ! sudo -v; then
-							echo -e "  ${YELLOW}⊘ Blocked: privilege confirmation failed; the next interactive update will retry.${NC}"
-							((++SUDO_SKIP_COUNT))
-							echo ""
-							continue
-						fi
-					else
-						echo -e "  ${YELLOW}⊘ Deferred: privilege confirmation requires an attached terminal; the next interactive update will retry.${NC}"
-						((++SUDO_SKIP_COUNT))
-						echo ""
-						continue
-					fi
-				fi
-			fi
-			# Run update command directly (not via eval for security)
-			# Commands are hardcoded in tool definitions, not user input
-			# Timeout prevents hangs on slow registries/network issues
-			# Use timeout_sec for macOS compatibility (no native timeout)
-			# NOTE: Do NOT pipe timeout_sec output to tail/head — on macOS the
-			# perl alarm fallback doesn't close the pipe's write end on SIGALRM,
-			# causing tail to block forever. Use a temp file instead.
-			local _update_log
-			if ! _update_log=$(mktemp "${TMPDIR:-/tmp}/tool-update.XXXXXX"); then
-				echo -e "  ${RED}✗ Failed to create temp log${NC}"
-				((++UPDATE_FAILURE_COUNT))
-				continue
-			fi
-			if timeout_sec 120 bash -c "$update_cmd" >"$_update_log" 2>&1; then
-				tail -2 "$_update_log"
-				echo -e "  ${GREEN}✓ Updated${NC}"
-			else
-				tail -2 "$_update_log"
-				echo -e "  ${RED}✗ Failed${NC}"
-				((++UPDATE_FAILURE_COUNT))
-			fi
-			rm -f "$_update_log"
-			echo ""
-		done
+		_run_outdated_tool_updates
 		if [[ $UPDATE_FAILURE_COUNT -gt 0 ]]; then
 			echo -e "${RED}Updates finished with ${UPDATE_FAILURE_COUNT} failed action(s). Re-run to verify remaining tools.${NC}"
 			return 1
-		elif [[ $SUDO_SKIP_COUNT -gt 0 ]]; then
-			echo -e "${GREEN}Updates complete (${SUDO_SKIP_COUNT} deferred until interactive privilege confirmation).${NC}"
+		elif [[ $SUDO_SKIP_COUNT -gt 0 || $UPDATE_NOOP_COUNT -gt 0 ]]; then
+			echo -e "${YELLOW}Maintenance finished (${SUDO_SKIP_COUNT} deferred, ${UPDATE_NOOP_COUNT} not verified as updated).${NC}"
 		else
 			echo -e "${GREEN}Updates complete. Re-run to verify.${NC}"
 		fi
