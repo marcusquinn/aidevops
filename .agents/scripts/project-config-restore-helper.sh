@@ -35,7 +35,13 @@ repo=$(jq -er --arg slug "$selector" '.initialized_repos[] | select(.slug == $sl
 registry_digest=$(cksum <"$registry") || exit 1
 [[ "$repo" == /* && -d "$repo" && ! -L "$repo" ]] || { printf 'Unsafe registered path\n' >&2; exit 1; }
 real_repo=$(cd "$repo" && pwd -P) || exit 1
-[[ "$repo" == "$real_repo" && "$(id -u)" == "$(stat -f %u "$repo" 2>/dev/null || stat -c %u "$repo")" ]] || { printf 'Registered path or owner changed\n' >&2; exit 1; }
+# Capture each platform probe separately: GNU stat -f can print filesystem
+# metadata before failing, which must not contaminate the fallback UID.
+owner=$(stat -c '%u' "$repo" 2>/dev/null) || owner=""
+if [[ ! "$owner" =~ ^[0-9]+$ ]]; then
+	owner=$(stat -f '%u' "$repo" 2>/dev/null) || owner=""
+fi
+[[ "$repo" == "$real_repo" && "$owner" =~ ^[0-9]+$ && "$(id -u)" == "$owner" ]] || { printf 'Registered path or owner changed\n' >&2; exit 1; }
 git_root=$(git -C "$repo" rev-parse --show-toplevel 2>/dev/null) || exit 1
 [[ "$git_root" == "$repo" ]] || { printf 'Registration does not point to repository root\n' >&2; exit 1; }
 common=$(git -C "$repo" rev-parse --path-format=absolute --git-common-dir) || exit 1

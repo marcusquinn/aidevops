@@ -8,6 +8,7 @@ import os
 import pathlib
 import pty
 import select
+import shutil
 import subprocess
 import tempfile
 
@@ -81,6 +82,27 @@ with tempfile.TemporaryDirectory(prefix="aidevops-config-restore-") as directory
     registry.write_text(json.dumps({"initialized_repos": [entry]}))
     env = {**os.environ, "HOME": str(home), "AIDEVOPS_REPOS_FILE": str(registry)}
     target = repo / ".aidevops.json"
+    index = repo / git(repo, "rev-parse", "--git-path", "index")
+    before = (registry.read_bytes(), index.read_bytes(), git(repo, "show-ref"), head)
+
+    # On macOS exercise the real GNU stat behavior too, using the same CLI path.
+    gnu_stat = shutil.which("gstat")
+    if gnu_stat:
+        bin_dir = root / "gnu-bin"
+        bin_dir.mkdir()
+        (bin_dir / "stat").symlink_to(gnu_stat)
+        gnu_env = {**env, "PATH": str(bin_dir) + os.pathsep + env["PATH"]}
+    elif subprocess.run(["stat", "-c", "%u", str(repo)], capture_output=True, check=False).returncode == 0:
+        gnu_env = env
+    else:
+        gnu_env = None
+
+    if gnu_env:
+        preview = run(gnu_env)
+        assert preview.returncode == 0, preview.stderr
+        assert "Source: registration" in preview.stdout and "Preview only" in preview.stdout
+        assert not target.exists()
+        assert (registry.read_bytes(), index.read_bytes(), git(repo, "show-ref"), git(repo, "rev-parse", "HEAD")) == before
 
     preview = run(env)
     assert preview.returncode == 0, preview.stderr
@@ -99,6 +121,10 @@ with tempfile.TemporaryDirectory(prefix="aidevops-config-restore-") as directory
     assert target.stat().st_mode & 0o777 == 0o600
     first = target.read_bytes()
     assert run(env).returncode == 0 and target.read_bytes() == first
+    if gnu_env:
+        existing = run(gnu_env)
+        assert existing.returncode == 0 and "Existing config preserved" in existing.stdout
+        assert target.read_bytes() == first
     assert git(repo, "status", "--porcelain") == "" and git(repo, "rev-parse", "HEAD") == head
 
     target.unlink()
