@@ -131,7 +131,13 @@ launchctl bootout gui/$(id -u)/sh.aidevops.<name> && \
 
 The first healthy model in the selected tier is the primary. Later configured
 models are ordered availability fallbacks when the primary is unavailable or
-backed off; routine dispatch does not round-robin across healthy providers.
+backed off. To opt independent worker dispatches into provider-level rotation
+for a tier, set `"round_robin": true` on that tier in
+`custom/configs/model-routing-table.json`. The default remains priority-first;
+Pulse, pinned models, initial-model preferences and retries keep their existing
+selection rules. Only healthy allowed providers participate; each tier reserves
+its next provider atomically when `select` runs (selection is not proof a worker
+launched). Remove the flag to revert to ordered fallback.
 
 **No manual model configuration required.** Deprecated `PULSE_MODEL` and `AIDEVOPS_HEADLESS_MODELS` env vars are respected one release cycle with deprecation warnings. Remove from `credentials.sh`.
 

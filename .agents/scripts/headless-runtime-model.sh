@@ -262,6 +262,72 @@ _first_healthy_configured_model() {
 	return 1
 }
 
+# Atomically reserve the next healthy provider for an independent worker
+# dispatch. A per-tier key prevents a simple task from moving the standard tier
+# slot; BEGIN IMMEDIATE serializes concurrent selectors on the same state DB.
+_reserve_worker_provider() {
+	local tier_name="$1"
+	shift
+	local -a providers=("$@")
+	local rotation_role=""
+	local selected_provider=""
+	local cases="" index=0 next=0
+	for ((index = 0; index < ${#providers[@]}; index++)); do
+		next=$(((index + 1) % ${#providers[@]}))
+		cases+=" WHEN '$(sql_escape "${providers[$index]}")' THEN '$(sql_escape "${providers[$next]}")'"
+	done
+	rotation_role=$(sql_escape "worker:${tier_name}")
+	selected_provider=$(db_query "
+BEGIN IMMEDIATE;
+INSERT OR IGNORE INTO provider_rotation (role, last_provider)
+VALUES ('${rotation_role}', '$(sql_escape "${providers[${#providers[@]} - 1]}")');
+UPDATE provider_rotation SET
+  last_provider = CASE last_provider ${cases} ELSE '$(sql_escape "${providers[0]}")' END,
+  updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE role = '${rotation_role}';
+SELECT last_provider FROM provider_rotation WHERE role = '${rotation_role}';
+COMMIT;
+") || return 1
+	printf '%s' "$selected_provider"
+	return 0
+}
+
+# Round-robin only across distinct, healthy same-tier providers. Preserve the
+# first model per provider and the existing preference/retry path unchanged.
+_choose_worker_round_robin_model() {
+	local tier_name="$1"
+	local model="" provider="" selected_provider="" existing="" found=false index=0
+	local -a models=() providers=()
+	while IFS= read -r model; do
+		[[ -n "$model" ]] || continue
+		provider=$(extract_provider "$model" 2>/dev/null || true)
+		[[ -n "$provider" ]] || continue
+		provider_auth_available "$provider" || continue
+		provider_oauth_pool_available "$provider" || continue
+		model_backoff_active "$model" && continue
+		found=false
+		for existing in "${providers[@]}"; do
+			[[ "$existing" != "$provider" ]] || found=true
+		done
+		[[ "$found" == false ]] || continue
+		models+=("$model")
+		providers+=("$provider")
+	done < <(get_configured_models "$tier_name")
+	[[ ${#models[@]} -gt 0 ]] || return 1
+	if [[ ${#models[@]} -eq 1 ]]; then
+		printf '%s' "${models[0]}"
+		return 0
+	fi
+	selected_provider=$(_reserve_worker_provider "$tier_name" "${providers[@]}") || return 75
+	for ((index = 0; index < ${#providers[@]}; index++)); do
+		if [[ "$selected_provider" == "${providers[$index]}" ]]; then
+			printf '%s' "${models[$index]}"
+			return 0
+		fi
+	done
+	return 75
+}
+
 # _choose_model_tier_downgrade: check pattern history for a cheaper tier.
 # Prints the downgraded model name if one is recommended; prints nothing otherwise.
 # Non-blocking -- any failure falls through silently.
@@ -305,7 +371,15 @@ _choose_model_auto() {
 	local selection_mode="${3:-adaptive}"
 	local preferred_model="${4:-}"
 	local current_model="" select_status=0
-	current_model=$(_first_healthy_configured_model "$tier_name" "$selection_mode" "$preferred_model") || select_status=$?
+	local rotated=false
+	if [[ "$role" == "worker" && "$selection_mode" == "adaptive" && -z "$preferred_model" && -z "${AIDEVOPS_TIER_DOWNGRADE_TASK_TYPE:-}" ]] &&
+		declare -F model_tier_round_robin_enabled >/dev/null &&
+		model_tier_round_robin_enabled "$tier_name"; then
+		current_model=$(_choose_worker_round_robin_model "$tier_name") || select_status=$?
+		[[ "$select_status" -ne 0 ]] || rotated=true
+	else
+		current_model=$(_first_healthy_configured_model "$tier_name" "$selection_mode" "$preferred_model") || select_status=$?
+	fi
 	if [[ "$select_status" -eq 1 ]]; then
 		print_error "No direct provider models configured for headless runtime"
 		return 1
@@ -331,7 +405,11 @@ _choose_model_auto() {
 	esac
 	local current_provider=""
 	current_provider=$(extract_provider "$current_model")
-	set_last_provider "$role" "$current_provider"
+	# The opt-in slot is reserved atomically above. Legacy role-level telemetry
+	# remains for ordinary priority and explicit-preference selection.
+	if [[ "$rotated" == false ]]; then
+		set_last_provider "$role" "$current_provider"
+	fi
 	printf '%s' "$current_model"
 	return 0
 }
