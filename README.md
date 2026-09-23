@@ -66,6 +66,7 @@ measured result. The canonical purpose and decision criteria are in
 - **Default development agent:** Build+
 - **Routing:** provider-neutral `simple`, `standard`, and `thinking` workload tiers
 - **Core lifecycle:** understand → isolate → implement → verify → PR → authority-aware merge/release
+- **Agent sandbox backends:** [Apple container (opt-in executable); Firecracker Linux KVM (host probe only, not yet executable)](.agents/reference/agent-sandbox-lifecycle.md#backend-matrix)
 - **Primary sources:** [user guide](.agents/AGENTS.md), [domain index](.agents/reference/domain-index.md), [architecture](.agents/aidevops/architecture.md), [configuration](.agents/reference/configuration.md)
 
 ### Essential commands
@@ -327,7 +328,7 @@ See [reports](.agents/reports/general.md) and the versioned
 - **Design:** Google `DESIGN.md` conventions, brand identity, visual concepts, distinctive UI, component guidance, previews, and accessibility verification.
 - **Browser:** Playwright-first automation, reusable browser-operation learning, authenticated-profile boundaries, crawling, screenshots, and performance diagnostics.
 - **Mobile:** Expo, Swift/Xcode, App Store Connect, simulator workflows, device automation, and simulator-backed web previews.
-- **3D/CAD:** Blender and FreeCAD specialists, dimensional truth, editable source models, configurable products, and rendered verification.
+- **3D/CAD:** Blender and FreeCAD specialists, OpenSCAD script-based CAD guidance, dimensional truth, editable source models, configurable products, and rendered verification.
 - **Video:** DaVinci Resolve, conversational editing, Remotion, compositing, colour, audio, and rendered-output checks.
 - **Audio:** Ableton projects, MIDI, arrangement, stems, mixing, voice workflows, loudness, and export verification.
 - **Images:** provider routing, reference editing, dimensions, provenance, and publication checks.

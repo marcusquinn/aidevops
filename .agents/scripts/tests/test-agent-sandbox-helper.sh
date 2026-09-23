@@ -176,6 +176,17 @@ assert_jq "Cloudron does not fabricate sandbox lifecycle support" "$cloudron_jso
 unavailable_json=$(AIDEVOPS_SANDBOX_OS=Linux bash "$HELPER" capabilities --backend apple-container)
 assert_jq "unsupported Apple hosts are reported without fallback" "$unavailable_json" \
 	'.runtime.available == false and .runtime.reason == "requires Darwin"'
+firecracker_json=$(bash "$HELPER" capabilities --backend firecracker)
+assert_jq "Firecracker is visible but not advertised as executable on macOS" "$firecracker_json" \
+	'.runtime.available == false and .runtime.host_ready == false and .definition.executable == false and .definition.capabilities.create == false'
+firecracker_linux_json=$(AIDEVOPS_SANDBOX_OS=Linux AIDEVOPS_SANDBOX_ARCH=aarch64 \
+	bash "$HELPER" capabilities --backend firecracker)
+assert_jq "Linux prerequisites cannot enable an unimplemented Firecracker adapter" "$firecracker_linux_json" \
+	'.runtime.available == false and .definition.executable == false and (.runtime.host_ready | type == "boolean") and (.runtime.reason | length > 0)'
+expect_rc "explicit Firecracker selection never falls back to local" 3 \
+	env AIDEVOPS_SANDBOX_BACKEND=firecracker bash "$HELPER" resolve
+expect_rc "unverified Firecracker create fails before allocating resources" 4 \
+	bash "$HELPER" create --id firecracker-01 --backend firecracker --image fixture/image:1 --worktree "$WORKTREE"
 
 create_args=(create --id agent-01 --backend apple-container --image fixture/image:1
 	--worktree "$WORKTREE" --cpus 2 --memory 2G --command-timeout 1 --idle-timeout 60 --lease-ttl 60)
@@ -254,6 +265,8 @@ jq -e '.default_backend == "local" and .backends["apple-container"].capabilities
 	"$CONFIG" >/dev/null && pass "backend registry is internally consistent" || fail "backend registry is internally consistent" "$CONFIG"
 jq -e '.properties.backends.required | index("apple-container")' "$SCHEMA" >/dev/null &&
 	pass "backend registry schema requires Apple adapter" || fail "backend registry schema requires Apple adapter" "$SCHEMA"
+jq -e '.properties.backends.required | index("firecracker")' "$SCHEMA" >/dev/null &&
+	pass "backend registry schema includes Firecracker" || fail "backend registry schema includes Firecracker" "$SCHEMA"
 
 printf '\nRan %d checks, %d failed.\n' "$((PASS + FAIL))" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

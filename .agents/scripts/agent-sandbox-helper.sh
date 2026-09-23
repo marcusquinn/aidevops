@@ -244,6 +244,33 @@ _sandbox_apple_probe() {
 	return 0
 }
 
+_sandbox_firecracker_probe() {
+	local os_name="${AIDEVOPS_SANDBOX_OS:-$(uname -s)}"
+	local architecture="${AIDEVOPS_SANDBOX_ARCH:-$(uname -m)}"
+	local reason=""
+	if [[ "$os_name" != "Linux" ]]; then
+		reason="requires a Linux KVM host"
+	elif [[ "$architecture" != "x86_64" && "$architecture" != "aarch64" ]]; then
+		reason="requires x86_64 or aarch64"
+	elif [[ ! -c /dev/kvm ]]; then
+		reason="/dev/kvm is not available (nested virtualization is not assumed)"
+	elif [[ ! -r /dev/kvm || ! -w /dev/kvm ]]; then
+		reason="current user needs read and write access to /dev/kvm"
+	elif ! command -v firecracker >/dev/null 2>&1 || ! command -v jailer >/dev/null 2>&1; then
+		reason="firecracker and jailer binaries are required on the host"
+	elif ! _sandbox_run_bounded 10 firecracker --version >/dev/null 2>&1 ||
+		! _sandbox_run_bounded 10 jailer --version >/dev/null 2>&1; then
+		reason="Firecracker binary version probes failed"
+	fi
+	if [[ -n "$reason" ]]; then
+		jq -nc --arg reason "$reason" \
+			'{available:false,host_ready:false,reason:$reason}'
+	else
+		jq -nc '{available:false,host_ready:true,reason:"host prerequisites detected; secure guest lifecycle adapter is not implemented"}'
+	fi
+	return 1
+}
+
 _sandbox_provider_probe() {
 	local backend="$1"
 	case "$backend" in
@@ -253,6 +280,10 @@ _sandbox_provider_probe() {
 		;;
 	apple-container)
 		_sandbox_apple_probe
+		return $?
+		;;
+	firecracker)
+		_sandbox_firecracker_probe
 		return $?
 		;;
 	bubbles)

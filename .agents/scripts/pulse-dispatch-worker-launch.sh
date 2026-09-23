@@ -321,6 +321,39 @@ _dlw_resolve_tier_and_model() {
 	return 0
 }
 
+_dlw_assign_model_ab() {
+	local repo_slug="$1" issue_number="$2" model_override="$3"
+	_DLW_AB_ROUTING_TABLE=""
+	_DLW_AB_EXPERIMENT=""
+	_DLW_AB_ARM=""
+	[[ -n "${AIDEVOPS_MODEL_AB_CONFIG:-}" && -z "$model_override" ]] || return 0
+	local ab_json="" ab_helper="${BASH_SOURCE[0]%/*}/model-ab-helper.mjs"
+	local -a ab_args=(assign "$repo_slug" "$issue_number")
+	[[ "$_DLW_DISPATCH_MODEL_TIER" == "$_DLW_STANDARD_TIER" ]] || ab_args+=(--continuation-only)
+	ab_json=$(node "$ab_helper" "${ab_args[@]}") || return 1
+	[[ "$(jq -r '.active' <<<"$ab_json")" == "true" ]] || return 0
+	_DLW_AB_ROUTING_TABLE=$(jq -r '.routing_table' <<<"$ab_json") || return 1
+	_DLW_AB_EXPERIMENT=$(jq -r '.experiment' <<<"$ab_json") || return 1
+	_DLW_AB_ARM=$(jq -r '.arm' <<<"$ab_json") || return 1
+	# Availability selection follows the arm-first table; a failed primary may
+	# use its existing same-tier fallback without changing the assigned arm.
+	if [[ "$_DLW_DISPATCH_MODEL_TIER" == "$_DLW_STANDARD_TIER" ]]; then
+		_DLW_SELECTED_MODEL=$(AIDEVOPS_MODEL_ROUTING_TABLE="$_DLW_AB_ROUTING_TABLE" \
+			"$HEADLESS_RUNTIME_HELPER" select --role worker --tier "$_DLW_STANDARD_TIER" 2>/dev/null) || _DLW_SELECTED_MODEL=""
+	fi
+	return 0
+}
+
+_dlw_append_model_ab_env() {
+	[[ -n "${_DLW_AB_ROUTING_TABLE:-}" ]] || return 0
+	worker_cmd+=(
+		AIDEVOPS_MODEL_ROUTING_TABLE="$_DLW_AB_ROUTING_TABLE"
+		AIDEVOPS_MODEL_AB_EXPERIMENT="$_DLW_AB_EXPERIMENT"
+		AIDEVOPS_MODEL_AB_ARM="$_DLW_AB_ARM"
+	)
+	return 0
+}
+
 #######################################
 # Check whether labels include an explicit worker tier.
 # _resolve_worker_tier defaults unlabeled issues to tier:standard, so callers
@@ -1805,6 +1838,7 @@ _dlw_nohup_launch() {
 		AIDEVOPS_DISPATCH_TIER="$dispatch_model_tier"
 		AIDEVOPS_DISPATCH_MODEL="$selected_model"
 	)
+	_dlw_append_model_ab_env
 	_dlw_append_node_tool_env "$worker_worktree_path"
 	_dlw_append_trusted_release_env
 	_dlw_append_worktree_transfer_env
@@ -1814,7 +1848,6 @@ _dlw_nohup_launch() {
 			AIDEVOPS_MIN_WORKER_FLOOR_BYPASS_ACTIVE=1
 		)
 	fi
-	# Pass worktree env vars only if pre-creation succeeded
 	if [[ -n "$worker_worktree_path" ]]; then
 		worker_cmd+=(
 			WORKER_WORKTREE_PATH="$worker_worktree_path"
@@ -1897,6 +1930,9 @@ _dispatch_launch_worker() {
 	_dlw_resolve_tier_and_model "$issue_meta_json" "$model_override" "$repo_path" "$issue_title" "$prompt"
 	_ds_record "$issue_number" "$repo_slug" "resolve_tier_model" "$_ds_t0"
 	local dispatch_tier="$_DLW_DISPATCH_TIER" dispatch_model_tier="$_DLW_DISPATCH_MODEL_TIER" selected_model="$_DLW_SELECTED_MODEL"
+	# A/B assigns initial preference only; fallback and tier escalation remain live.
+	_dlw_assign_model_ab "$repo_slug" "$issue_number" "$model_override" || return 1
+	selected_model="$_DLW_SELECTED_MODEL"
 
 	_ds_t0=$(_ds_now_ns)
 	if ! _dlw_canary_preflight "$issue_number" "$repo_slug" "$worker_log" \

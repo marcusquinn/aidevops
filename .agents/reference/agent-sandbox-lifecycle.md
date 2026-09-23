@@ -84,6 +84,57 @@ snapshots, secret injection, or hard storage quotas.
 Primary source inspected 2026-09-16: `apple/container` release 1.4.1 and commit
 `57f0b9392bbee1998e6c7f3f25db222fe1dcdd12`.
 
+### Firecracker microVM (Linux KVM candidate)
+
+`firecracker` is discoverable but **capability-only**, not an executable sandbox.
+On a Linux x86_64/aarch64 host, run
+`agent-sandbox-helper.sh capabilities --backend firecracker` to check `/dev/kvm`
+read/write access and
+working `firecracker` and `jailer` version commands. `host_ready: true` means
+only that these prerequisites were detected; `available` remains `false` and
+all lifecycle operations fail closed. Explicit selection via
+`AIDEVOPS_SANDBOX_BACKEND=firecracker` blocks rather than silently using local
+execution. Neither this probe nor a guest boot is proof of multi-tenant safety.
+
+Firecracker is a Linux KVM VMM, not a Docker host or a remote workspace API.
+An OrbStack isolated Alpine 3.23 VM on Apple silicon was probed on 2026-09-23:
+`stat /dev/kvm` returned "No such file or directory". OrbStack can validate
+the Linux probe/fail-closed route, but not nested Firecracker execution on that
+machine. Do not install Firecracker inside this VM to work around missing KVM.
+
+For later use on Hetzner, Hostinger, or another provider, **first verify the
+specific host**: bare metal or an explicitly supported nested-virtualization
+instance, compatible architecture/kernel, `/dev/kvm` access for a dedicated
+unprivileged operator, cgroups and namespaces for the jailer, and enough RAM,
+disk, I/O and networking capacity. A normal VPS, Cloudron app container, or
+Docker-in-VM is not automatically eligible. Alpine is a lean candidate for
+reviewed guest images; Rocky Linux is a candidate for an operator-managed,
+hardened host. Either distribution needs kernel/KVM and jailer validation on
+the exact machine. Do not provision a server, open network ports, grant KVM
+access, or enable this backend based on documentation alone.
+
+To promote it to executable, implement and verify a separate backend adapter
+behind this registry, including: per-client jailed VMM identity and boot image
+provenance; an isolated per-VM root/workspace disk (Firecracker does not bind
+the host worktree at `/workspace`); an authenticated bounded guest command
+channel, e.g. a reviewed vsock agent that preserves argv and output boundaries;
+private default-deny networking and egress policy; CPU, memory, disk and wall
+clock quotas; crash/restart reconciliation with receipts and lease fencing;
+idempotent teardown; cross-client isolation, secret-handling and backup tests.
+Avoid mounting the host home or sharing client disks. Review snapshot contents
+and retention before enabling snapshots. Verify the normal
+`create → start → exec → stop → recover → destroy` path on a real KVM host and run security review
+before setting `executable: true` or any capability flag to true.
+
+Useful workload shapes after that gate: disposable dependency/CI builds and
+untrusted code evaluation with short-lived VMs; stopped-but-persistent
+per-client workspaces with explicit encrypted disks, backup and access controls;
+and reproducible customer-specific integration tests. An always-on microVM
+still consumes resources and requires patching/monitoring; stop idle compute
+without assuming stopped disks or memory snapshots are safe or free. Managed
+Fly.io Machines are Firecracker-backed but use a **different** provider API:
+see `tools/deployment/fly-io.md`, not this local KVM adapter.
+
 ### Gonicus Bubbles
 
 The inspected `app-v1.2.1` primary README documents a sandboxed Flatpak desktop

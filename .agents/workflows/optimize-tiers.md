@@ -40,6 +40,48 @@ failure reasons by tier. Telemetry is recorded automatically by:
 - `dispatch-ledger-helper.sh record-outcome` — records outcome + escalation reason
 - Append-only log: `~/.aidevops/.agent-workspace/tmp/tier-telemetry.jsonl`
 
+### Opt-in issue-level model A/B observation
+
+`model-ab-helper.mjs` supports a bounded initial-route comparison without
+dispatching two workers for one issue. It is **off by default**. Configure a
+private JSON file and pass its absolute path as `AIDEVOPS_MODEL_AB_CONFIG` to
+the *Pulse process* (not just an interactive shell):
+
+```json
+{
+  "id": "standard-luna-terra", "repo": "OWNER/REPO", "seed": "cohort-1",
+  "starts_at": "2026-09-23T00:00:00Z", "ends_at": "2026-09-25T00:00:00Z",
+  "issues": [101, 102, 103, 104],
+  "arms": [
+    {"name": "luna-max", "model": "openai/gpt-6-luna", "variant": "max"},
+    {"name": "terra-low", "model": "openai/gpt-5.6-terra", "variant": "low"}
+  ]
+}
+```
+
+Only eligible standard-tier issues without an explicit model override are
+assigned. Each issue receives one stable arm across retries. The per-issue
+route table is inherited by its worker and OpenCode subagents; it keeps
+same-tier availability fallbacks and the ordinary thinking-tier capability
+escalation. Arm assignment is an **initial intention**, never a model pin or
+proof of exposure. A report joins local routing telemetry with read-only
+GitHub issue/merged-PR state and parent-recorded subagent acceptance:
+
+```bash
+AIDEVOPS_MODEL_AB_CONFIG=/path/to/private/model-ab.json \
+  node ~/.aidevops/agents/scripts/model-ab-helper.mjs report
+```
+
+The report retains assigned-issue denominators, fallback, retry and escalation
+counts, and separately marks missing observations and pending outcomes. It does
+not declare a winner or equate child completion with acceptance. The cohort
+must be defined before work begins, use issues not already in flight, and run
+on one configured dispatch device: assignment receipts and observations are
+local, not a cross-runner coordinated experiment. Do not use the output for a
+shared-default change without independent outcome verification, repair costs,
+cohort balance, actual model/variant evidence and enough terminal issues in
+both arms. Ending the window stops new assignments, not already running work.
+
 ## Historical replay
 
 Keep corpora, repository catalogs, candidate files, prompts, patches, artifacts,
