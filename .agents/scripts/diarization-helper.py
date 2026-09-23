@@ -39,11 +39,15 @@ def normalize_turns(raw, duration):
         start = row.get("start_sample")
         end = row.get("end_sample")
         confidence = row.get("confidence")
-        if (type(start) is not int or type(end) is not int or start < 0 or
-                end <= start or end > (duration + 0.1) * 16000):
+        if type(start) is not int or type(end) is not int:
             raise ValueError("Invalid speaker turn sample boundaries")
-        if (type(confidence) not in (int, float) or not math.isfinite(confidence) or
-                not 0 <= confidence <= 1):
+        if start < 0 or end <= start:
+            raise ValueError("Invalid speaker turn sample boundaries")
+        if end > (duration + 0.1) * 16000:
+            raise ValueError("Invalid speaker turn sample boundaries")
+        if type(confidence) not in (int, float):
+            raise ValueError("Invalid speaker turn confidence")
+        if not math.isfinite(confidence) or not 0 <= confidence <= 1:
             raise ValueError("Invalid speaker turn confidence")
         turns.append({"speaker_id": row["speaker_id"], "start": start / 16000,
                       "end": end / 16000, "confidence": confidence})
