@@ -149,6 +149,7 @@ source "$HELPER"
 
 WRITTEN_CONFIG=""
 WRITTEN_STATE=""
+CLOSED_UPSTREAM_ISSUE=""
 
 _check_prerequisites() {
 	return 0
@@ -185,6 +186,11 @@ _log_info() {
 	return 0
 }
 
+_close_upstream_update_issue() {
+	CLOSED_UPSTREAM_ISSUE="$1"
+	return 0
+}
+
 gh() {
 	local command="$1"
 	local endpoint="$2"
@@ -193,6 +199,12 @@ gh() {
 	fi
 	if [[ "$endpoint" == */releases/latest ]]; then
 		printf '%s\n' '{"tag_name":"v9","published_at":"2026-07-28T00:00:00Z","name":"v9"}'
+	elif [[ "$endpoint" == */compare/* ]]; then
+		printf '%s\n' 'ahead'
+	elif [[ "$endpoint" == */commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ]]; then
+		printf '%s\n' 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+	elif [[ "$endpoint" == "repos/owner/pinned/commits?per_page=1" ]]; then
+		printf '%s\n' 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
 	elif [[ "$endpoint" == *'/commits?per_page=1' ]]; then
 		printf '%s\n' 'abcdef0123456789'
 	elif [[ "$endpoint" == repos/* ]]; then
@@ -227,6 +239,58 @@ WRITTEN_CONFIG=""
 WRITTEN_STATE=""
 main add owner/shortcut --releases-only >"${TMP}/shortcut.out" 2>&1
 check_equal "CLI releases-only shortcut is supported" "releases" "$(printf '%s' "$WRITTEN_CONFIG" | jq -r '.repos[0].watch_mode')"
+
+# A pinned acknowledgement records the reviewed commit, not the later live tip.
+WRITTEN_STATE=""
+CLOSED_UPSTREAM_ISSUE=""
+_read_config() {
+	printf '%s' '{"repos":[{"slug":"owner/pinned","relevance":"fixture"}],"non_github_upstreams":[]}'
+	return 0
+}
+main ack owner/pinned --commit aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa >"${TMP}/pinned-ack.out" 2>&1
+check_equal "pinned ack records reviewed commit" "aaaaaaa" "$(printf '%s' "$WRITTEN_STATE" | jq -r '.repos["owner/pinned"].last_commit_seen')"
+check_equal "pinned ack leaves later update eligible" "0" "$(printf '%s' "$WRITTEN_STATE" | jq -r '.repos["owner/pinned"].updates_pending')"
+check_equal "pinned ack does not close a potentially newer issue" "" "$CLOSED_UPSTREAM_ISSUE"
+
+# The next producer pass sees the later tip from the pinned baseline.
+: >"$QUEUE_LOG"
+_queue_upstream_update_issue() {
+	local slug="$1"
+	local kind="$2"
+	local old_value="$3"
+	local new_value="$4"
+	local entry_json="$5"
+	entry_json=$(printf '%s' "$entry_json" | jq -c '.')
+	printf '%s|%s|%s|%s|%s\n' "$slug" "$kind" "$old_value" "$new_value" "$entry_json" >>"$QUEUE_LOG"
+	return 0
+}
+_check_state=$(printf '%s' "$WRITTEN_STATE" | jq '.repos["owner/pinned"].last_release_seen = "v1"')
+_check_single_github_repo "owner/pinned" "$(_read_config)" "2026-07-29T00:00:00Z" false >"$OUTPUT_LOG"
+check_equal "later commit queues a new review after pinned ack" "commit" "$(cut -d '|' -f 2 "$QUEUE_LOG")"
+check_equal "later commit is pending after pinned ack" "1" "$(printf '%s' "$_check_state" | jq -r '.repos["owner/pinned"].updates_pending')"
+
+# Invalid pins fail closed before state or issue state changes.
+WRITTEN_STATE=""
+CLOSED_UPSTREAM_ISSUE=""
+if main ack owner/pinned --commit invalid >"${TMP}/invalid-pin.out" 2>&1; then
+	invalid_pin_rc="0"
+else
+	invalid_pin_rc="$?"
+fi
+check_equal "invalid pinned ack fails" "1" "$invalid_pin_rc"
+check_equal "invalid pinned ack leaves state unchanged" "" "$WRITTEN_STATE"
+check_equal "invalid pinned ack does not close issue" "" "$CLOSED_UPSTREAM_ISSUE"
+
+# Non-GitHub acknowledgements retain their existing current-value and close path.
+WRITTEN_STATE=""
+CLOSED_UPSTREAM_ISSUE=""
+_read_config() {
+	printf '%s' '{"repos":[],"non_github_upstreams":[{"name":"fixture-service","check_command":"printf value2","last_seen_commit":"value1"}]}'
+	return 0
+}
+main ack fixture-service >"${TMP}/non-github-ack.out" 2>&1
+check_equal "non-GitHub ack records current value" "value2" "$(printf '%s' "$WRITTEN_STATE" | jq -r '.non_github["fixture-service"].last_seen')"
+check_equal "non-GitHub ack retains issue close path" "fixture-service" "$CLOSED_UPSTREAM_ISSUE"
 
 if [[ "$FAIL" -gt 0 ]]; then
 	printf '%s test(s) failed, %s passed\n' "$FAIL" "$PASS" >&2
