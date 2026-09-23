@@ -284,28 +284,38 @@ async function recordChildRouting(context, {
   });
 }
 
+function applyProtectedChildParams(context, input, output, policy) {
+  const domainName = input?.message?.agent;
+  const creative = context.agentRoutingState?.inheritParentRoute?.has(domainName);
+  // Preserve native explicit model/variant pins on creative executors.
+  if (creative && context.agentRoutingState?.pinned?.has(domainName)) return true;
+  if (policy?.reason?.startsWith("browser_")
+    && childModelFrom(context, input) !== policy.routedModel) {
+    throw new Error("[aidevops] Browser child model changed; verify state before continuing");
+  }
+  if (!["bounded_domain", "creative_parent"].includes(policy?.reason)
+    && !creative && !context.agentRoutingState?.domainDelegation?.profiles?.has(domainName)) return false;
+  if (!policy?.domainVariant || childModelFrom(context, input) !== policy.routedModel) {
+    throw new Error("[aidevops] Domain parent ceiling unavailable or model changed");
+  }
+  applyRequestedVariant(output, policy.domainVariant, policy.domainVariant);
+  return true;
+}
+
+function requestedChildVariant(context, input, policy, effort) {
+  if (policy?.browserVariant) return policy.browserVariant;
+  if (policy?.reason === "specialist_advice") return context.agentRoutingState.specialistAdvisor.variant;
+  return context.resolveTierReasoning(
+    effort, input?.provider?.id, input?.model?.id, context.tierReasoning,
+  );
+}
+
 async function routeChatParams(context, input, output) {
   const sessionID = input?.message?.sessionID;
   if (!sessionID) return;
 
   const domainPolicy = context.policies.get(sessionID);
-  const domainName = input?.message?.agent;
-  const creative = context.agentRoutingState?.inheritParentRoute?.has(domainName);
-  // Preserve the native explicit model/variant override on creative executors.
-  if (creative && context.agentRoutingState?.pinned?.has(domainName)) return;
-  if (domainPolicy?.reason?.startsWith("browser_")
-    && childModelFrom(context, input) !== domainPolicy.routedModel) {
-    throw new Error("[aidevops] Browser child model changed; verify state before continuing");
-  }
-  if (["bounded_domain", "creative_parent"].includes(domainPolicy?.reason)
-    || creative
-    || context.agentRoutingState?.domainDelegation?.profiles?.has(domainName)) {
-    if (!domainPolicy?.domainVariant || childModelFrom(context, input) !== domainPolicy.routedModel) {
-      throw new Error("[aidevops] Domain parent ceiling unavailable or model changed");
-    }
-    applyRequestedVariant(output, domainPolicy.domainVariant, domainPolicy.domainVariant);
-    return;
-  }
+  if (applyProtectedChildParams(context, input, output, domainPolicy)) return;
 
   try {
     const childSession = await context.getSession(context.client, sessionID);
@@ -319,14 +329,7 @@ async function routeChatParams(context, input, output) {
     const policy = context.policies.get(sessionID);
     const desiredEffort = policy?.effort
       ?? context.inferSubagentEffort(input.message.agent ?? childSession.agent);
-    const requestedVariant = policy?.browserVariant || (policy?.reason === "specialist_advice"
-      ? context.agentRoutingState.specialistAdvisor.variant
-      : context.resolveTierReasoning(
-        desiredEffort,
-        input?.provider?.id,
-        input?.model?.id,
-        context.tierReasoning,
-      ));
+    const requestedVariant = requestedChildVariant(context, input, policy, desiredEffort);
     const effectiveVariant = await effectiveChildVariant(
       context,
       childSession,
