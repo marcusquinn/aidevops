@@ -579,6 +579,7 @@ JSON_CROSS_RUNNER_OUT=$(env "${COMMON_ENV[@]}" "PULSE_CHECK_CURRENT_STATE_HELPER
 assert_eq "zero local processes remain distinct from remote fleet activity" "0" "$(printf '%s' "$JSON_CROSS_RUNNER_OUT" | jq -r '.summary.local_active_worker_processes')"
 assert_eq "fresh remote durable claims remain visible" "2" "$(printf '%s' "$JSON_CROSS_RUNNER_OUT" | jq -r '.summary.fresh_cross_runner_durable_claims')"
 assert_eq "remote durable claims prove fleet activity despite zero local processes" "observed" "$(printf '%s' "$JSON_CROSS_RUNNER_OUT" | jq -r '.summary.fleet_activity_state')"
+assert_not_contains "fresh remote durable claims suppress transient underfill" "pulse-underfilled-auto-dispatch-queue" "$JSON_CROSS_RUNNER_OUT"
 
 cat >"${TEST_ROOT}/current-state-idle.sh" <<'SH'
 #!/usr/bin/env bash

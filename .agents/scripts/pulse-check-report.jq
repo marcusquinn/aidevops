@@ -285,7 +285,7 @@ end) as $max_workers |
         true
       )
     else empty end,
-    if ($queue_scan_complete and $dispatch_alive and $eligible_issues >= $threshold and $active_workers == 0) then
+    if ($queue_scan_complete and $dispatch_alive and $eligible_issues >= $threshold and $active_workers == 0 and $fresh_cross_runner_claims == 0) then
       finding(
         "pulse-underfilled-auto-dispatch-queue";
         "high";
