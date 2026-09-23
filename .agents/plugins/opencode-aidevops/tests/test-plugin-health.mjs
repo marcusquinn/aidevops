@@ -147,8 +147,16 @@ test("probe-only plugin factory registers config and terminal-title health", () 
     managed: true, target: 240000, auto: true, reserve: 20000,
     limits: { context: 388000, input: 260000, output: 128000 },
   });
-  assert.deepEqual(result.details.config_applied.gpt6_context, {
-    managed: false, target: 240000, auto: true,
-  });
+  const gpt6 = result.details.config_applied.gpt6_context;
+  assert.equal(gpt6.managed, true);
+  assert.equal(gpt6.target, 240000);
+  assert.equal(gpt6.auto, true);
+  assert.deepEqual(gpt6.customized, []);
+  assert.deepEqual(Object.keys(gpt6.models).sort(), [
+    "gpt-6-luna", "gpt-6-luna-fast", "gpt-6-sol", "gpt-6-sol-fast",
+  ].sort());
+  for (const model of Object.values(gpt6.models)) {
+    assert.equal(model.limits.input - model.reserve, 240000);
+  }
   rmSync(root, { recursive: true, force: true });
 });
