@@ -19,6 +19,7 @@
       "slug": "tddworks/asc-cli-skills",
       "description": "Official agent skills for the asc CLI — per-command-group reference with flags, output schemas, error tables",
       "relevance": "27 skills covering auth, builds, TestFlight, IAP, subscriptions, code signing, reports, Game Center, Xcode Cloud. New skills extend agent capabilities.",
+      "affects": [".agents/tools/mobile/app-store-connect.md"],
       "default_branch": "main",
       "added_at": "2026-03-21"
     },

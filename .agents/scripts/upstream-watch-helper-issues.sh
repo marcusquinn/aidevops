@@ -281,6 +281,8 @@ _queue_upstream_update_issue() {
 #######################################
 _compose_upstream_batch_issue_body() {
 	local queue_file="$1"
+	local scope_section=""
+	scope_section=$(_upstream_watch_batch_scope "$queue_file") || scope_section=""
 
 	printf '## Summary\n\n'
 	printf 'Multiple upstream-watch sources changed in the same scan run. Review this coalesced tracker instead of one issue per upstream.\n\n'
@@ -311,6 +313,7 @@ _compose_upstream_batch_issue_body() {
 	printf '1. Review each upstream source above.\n'
 	printf '2. Decide which changes warrant adoption.\n'
 	printf "3. Acknowledge reviewed sources with \`upstream-watch-helper.sh ack <upstream>\`.\n\n"
+	[[ -z "$scope_section" ]] || printf '### Files Scope\n\n%s\n\n' "$scope_section"
 	printf '<!-- aidevops:generator=upstream-watch batch=true -->\n'
 	return 0
 }
@@ -339,6 +342,8 @@ _file_upstream_batch_update_issue() {
 	local title="upstream: batch review adoption"
 	local body
 	body=$(_compose_upstream_batch_issue_body "$queue_file")
+	local -a dispatch_labels=()
+	[[ "$body" != *'### Files Scope'* ]] || dispatch_labels=(--label "auto-dispatch")
 
 	if ! command -v gh &>/dev/null || ! gh auth status &>/dev/null; then
 		_log_warn "gh unavailable -- writing local upstream-watch batch report"
@@ -380,18 +385,20 @@ ${sig_footer}"
 
 	if [[ -n "$existing_number" ]]; then
 		_log_info "Updating existing upstream-watch batch issue #${existing_number}"
+		_upstream_watch_dispatch_label "$existing_number" "$aidevops_slug" "${#dispatch_labels[@]}" before || return 1
 		gh_issue_edit_safe "$existing_number" --repo "$aidevops_slug" \
 			--title "$title" --body "$body" >/dev/null 2>&1 || {
 			_log_warn "Failed to update upstream-watch batch issue #${existing_number}"
 			return 0
 		}
+		_upstream_watch_dispatch_label "$existing_number" "$aidevops_slug" "${#dispatch_labels[@]}" after || return 1
 		echo -e "  ${BLUE}Updated batch issue #${existing_number}${NC}"
 	else
 		local issue_url=""
 		issue_url=$(gh_create_issue --repo "$aidevops_slug" \
 			--title "$title" \
 			--label "$UPSTREAM_WATCH_LABEL" \
-			--label "auto-dispatch" \
+			"${dispatch_labels[@]}" \
 			--label "tier:standard" \
 			--label "origin:worker" \
 			--body "$body" 2>/dev/null) || {
@@ -401,6 +408,45 @@ ${sig_footer}"
 		[[ -n "$issue_url" ]] && echo -e "  ${BLUE}Filed batch issue: ${issue_url}${NC}"
 	fi
 	return 0
+}
+
+# Drop dispatch before an unscoped body update; add it only after a scoped
+# body is published. A failed label mutation must not publish a new update key
+# that would prevent a later retry through exact-value history deduplication.
+_upstream_watch_dispatch_label() {
+	local issue_number="$1" repo="$2" scoped="$3" phase="$4"
+	if [[ "$scoped" -eq 0 && "$phase" == before ]]; then
+		gh issue edit "$issue_number" --repo "$repo" --remove-label auto-dispatch >/dev/null
+	elif [[ "$scoped" -gt 0 && "$phase" == after ]]; then
+		gh issue edit "$issue_number" --repo "$repo" --add-label auto-dispatch >/dev/null
+	fi
+	return $?
+}
+
+# Configured affects are candidate edit boundaries, not arbitrary upstream text.
+# Refuse missing, broad, or malformed paths rather than manufacturing a scope.
+_upstream_watch_scope_from_entry() {
+	local entry_json="$1" path="" scope=""
+	while IFS= read -r path; do
+		[[ -n "$path" ]] || continue
+		[[ "$path" =~ ^[.a-zA-Z0-9_-]+(/[.a-zA-Z0-9_-]+)*\.[a-zA-Z0-9_-]+$ ]] || return 1
+		[[ "$path" != *'..'* ]] || return 1
+		scope="${scope}- EDIT: \`${path}\`"$'\n'
+	done < <(printf '%s' "$entry_json" | jq -r '.affects // [] | .[]' 2>/dev/null)
+	[[ -n "$scope" ]] || return 1
+	printf '%s' "${scope%$'\n'}"
+}
+
+_upstream_watch_batch_scope() {
+	local queue_file="$1" update_json="" entry_json="" scope="" all_scope=""
+	while IFS= read -r update_json; do
+		[[ -n "$update_json" ]] || continue
+		entry_json=$(printf '%s' "$update_json" | jq -c '.entry') || return 1
+		scope=$(_upstream_watch_scope_from_entry "$entry_json") || return 1
+		all_scope="${all_scope}${scope}"$'\n'
+	done <"$queue_file"
+	[[ -n "$all_scope" ]] || return 1
+	printf '%s' "$all_scope" | sort -u
 }
 
 #######################################
@@ -476,6 +522,8 @@ _compose_upstream_issue_body() {
 	local affects="$6"
 	local compare_url="$7"
 	local update_key="$8"
+	local scope_section=""
+	scope_section=$(_upstream_watch_scope_from_entry "${9:-{}}") || scope_section=""
 
 	# Build affects section using real newlines to avoid printf %b backslash expansion
 	# on user/config-provided data (e.g. Windows paths with \t would be misinterpreted).
@@ -519,6 +567,7 @@ ${affects_section}
 3. If adopting: create a PR with the relevant changes
 4. Mark as reviewed: \`upstream-watch-helper.sh ack ${slug_or_name}\`
 
+$(if [[ -n "$scope_section" ]]; then printf '### Files Scope\n\n%s\n' "$scope_section"; fi)
 <!-- aidevops:generator=upstream-watch upstream_slug=${slug_or_name} -->
 <!-- upstream-watch:slug=${slug_or_name} -->
 <!-- upstream-watch:update-key=${update_key} -->
@@ -553,7 +602,7 @@ _compose_upstream_issue_from_entry() {
 		compare_url="${upstream_url}/compare/${old_value}...${new_value:0:12}"
 	fi
 	_compose_upstream_issue_body "$slug_or_name" "$kind" "${old_value:-none}" \
-		"${new_value:0:12}" "$relevance" "$affects" "$compare_url" "$update_key"
+		"${new_value:0:12}" "$relevance" "$affects" "$compare_url" "$update_key" "$entry_json"
 	return 0
 }
 
@@ -587,15 +636,15 @@ _file_upstream_update_issue() {
 	local aidevops_slug
 	aidevops_slug=$(_get_aidevops_slug)
 
-	local new_value_short="${new_value:0:12}"
-	local update_key=""
-	local title=""
+	local update_key="" title=""
 	update_key=$(_upstream_watch_update_key "$slug_or_name" "$kind" "$new_value") || return 1
 	title=$(_upstream_watch_update_title "$slug_or_name" "$kind" "$new_value")
 
 	local body
 	body=$(_compose_upstream_issue_from_entry "$slug_or_name" "$kind" "$old_value" \
 		"$new_value" "$entry_json" "$update_key")
+	local -a dispatch_labels=()
+	[[ "$body" != *'### Files Scope'* ]] || dispatch_labels=(--label "auto-dispatch")
 	if ! _upstream_watch_issue_creation_authorized "$aidevops_slug"; then
 		local report_file
 		report_file=$(_write_upstream_watch_local_report "$title" "$body")
@@ -639,20 +688,22 @@ ${sig_footer}"
 	if [[ -n "$existing_number" ]]; then
 		# Update existing issue title and body if upstream advanced further
 		_log_info "Updating existing issue #${existing_number} for ${slug_or_name}"
+		_upstream_watch_dispatch_label "$existing_number" "$aidevops_slug" "${#dispatch_labels[@]}" before || return 1
 		gh_issue_edit_safe "$existing_number" --repo "$aidevops_slug" \
 			--title "$title" --body "$body" >/dev/null 2>&1 || {
 			_log_warn "Failed to update issue #${existing_number} for ${slug_or_name}"
 			return 0
 		}
+		_upstream_watch_dispatch_label "$existing_number" "$aidevops_slug" "${#dispatch_labels[@]}" after || return 1
 		echo -e "  ${BLUE}Updated issue #${existing_number}${NC}"
 	else
 		# Create new issue
-		_log_info "Filing issue for upstream update: ${slug_or_name} ${kind} -> ${new_value_short}"
+		_log_info "Filing issue for upstream update: ${slug_or_name} ${kind} -> ${new_value:0:12}"
 		local issue_url=""
 		issue_url=$(gh_create_issue --repo "$aidevops_slug" \
 			--title "$title" \
 			--label "$UPSTREAM_WATCH_LABEL" \
-			--label "auto-dispatch" \
+			"${dispatch_labels[@]}" \
 			--label "tier:standard" \
 			--label "origin:worker" \
 			--body "$body" 2>/dev/null) || {

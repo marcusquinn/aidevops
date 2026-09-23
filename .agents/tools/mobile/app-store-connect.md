@@ -29,7 +29,7 @@ tools:
 - **Context resolution**: explicit `--app-id` > `.asc/project.json` > prompt user to `asc init` (CI must use `--app-id` or pre-run `asc init`)
 - **GitHub**: https://github.com/tddworks/asc-cli (MIT, Swift, 130+ commands; v0.18.2 adds Resolution Center rejection details and attachment downloads through cookie-authenticated iris APIs; reviewed through `030c463` — the post-release change only stabilizes upstream affordance-registry tests and does not alter CLI behavior)
 - **Website**: https://asccli.app | **Web apps**: [Command Center](https://asccli.app/command-center), [Console](https://asccli.app/console), [Screenshot Studio](https://asccli.app/editor)
-- **Skills**: [Official](https://github.com/tddworks/asc-cli-skills) (27 command-group skills, checked at `6465c10feb89`) | [Community](https://github.com/rorkai/app-store-connect-cli-skills) (23 workflow skills for the separate community CLI, checked at `3b567352099e`)
+- **Skills**: [Official](https://github.com/tddworks/asc-cli-skills) (Product Page Optimization experiment skill added; reviewed through `644a85fa723f`) | [Community](https://github.com/rorkai/app-store-connect-cli-skills) (23 workflow skills for the separate community CLI, checked at `3b567352099e`)
 - **Requirements**: macOS 13+, App Store Connect API key, `jq` (workflow scripts use `jq -r`)
 
 **Dependency check**: Before any `asc` command:
@@ -64,6 +64,7 @@ command -v jq >/dev/null || { brew install jq || exit 1; }
 | **users** / **user-invitations** | `list`, `update`, `remove`, `invite`, `cancel` | Team management |
 | **xcode-cloud** | `products`, `workflows`, `builds` | Xcode Cloud CI/CD |
 | **Apple Ads** | `ads auth`, `ads me`, `ads acls`, `ads campaigns`, `ads ad-groups`, `ads reports`, `ads api request` | Apple Ads auth, user profile, org lookup, campaign/ad-group management, reports, and raw v5 API calls |
+| **Product Page Optimization** | `experiments`, `experiment-treatments`, `experiment-treatment-localizations` | Official skill now covers experiment setup and state-aware start/stop; check `asc --help` before use because installed CLI versions may not expose these commands |
 | **Other** | `apps list`, `app-tags`, `game-center`, `perf-metrics`, `diagnostics`, `iris resolution-center`, `plugins`, `search`, `schema`, `capabilities`, `tui`, `web` | Apps, discoverability tags, Game Center, performance, private API, plugins, discovery, TUI, web-session gaps |
 
 **Discover**: `asc --help`, `asc <cmd> --help`, `asc search "upload build"`, `asc schema --pretty "GET /v1/apps"`, `asc capabilities --area release --output table` | **Output**: `--output json` (default), `--output table`, `--output markdown`, `--pretty`
