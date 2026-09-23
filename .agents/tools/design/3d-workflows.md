@@ -14,6 +14,7 @@ mode: subagent
 | --- | --- | --- |
 | Polygon/subdivision/procedural mesh | Organic objects, animation, visual products, real-time assets | Engineering constraints from appearance |
 | Parametric CAD/B-rep solids | Defined dimensions, assemblies, sections, parts | Fabrication readiness without tolerances/validation |
+| Scripted CSG (OpenSCAD) | Reproducible parameterised parts, variants and print meshes | Native B-rep feature history or STEP from STL |
 | Reconstructed mesh | Existing objects/spaces with suitable capture | Reliable scale or hidden surfaces without evidence |
 | Gaussian splats/radiance fields | Captured appearance and novel views | Editable solids, watertight parts or accurate sections |
 
@@ -30,7 +31,8 @@ configuration from the drawing or parts list.
 
 Generate relevant outputs from the same configuration:
 
-- Native CAD and STEP for solids; Blender source for visual refinement.
+- Native CAD and STEP for B-rep solids; `.scad` source for scripted CSG and
+  Blender source for visual refinement. Choose exports by the authoritative model.
 - Plans, sections, elevations and dimensions in supported DXF/SVG/PDF workflows.
 - Parts/BOM with IDs, material, quantity and applicable cut/finish information.
 - GLB/glTF for interactive viewing; USD/USDZ when the target actually supports it.
@@ -59,7 +61,8 @@ production use. Installation/structural/service rules depend on jurisdiction.
 
 ## Adjacent tools and references
 
-- FreeCAD: `tools/design/freecad.md`; Blender: `tools/design/blender.md`.
+- FreeCAD: `tools/design/freecad.md`; OpenSCAD: `tools/design/openscad.md`;
+  Blender: `tools/design/blender.md`.
 - Browser configurators: `tools/design/threejs.md`; capture: `3d-capture.md`.
 - Archicad is a BIM/interchange candidate for building context and coordinated
   documentation, not an installed prerequisite. Use supported APIs/GDL/openBIM

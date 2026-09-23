@@ -29,9 +29,11 @@ mode, reference authority, budget and execution environment before production.
   inherit the observed parent route unless the user explicitly pins the child.
 - Choose a representation using `tools/design/3d-workflows.md`. CAD solids own
   constrained dimensions; visual meshes, drawings and renders are derived outputs.
-- Use `blender` for mesh/material/lighting work and `freecad` for parametric CAD.
-  Read their guides and obtain operator connection approval first. Native scripts
-  may be preferable to GUI interaction; neither is automatically a sandbox.
+- Use `blender` for mesh/material/lighting and `freecad` for native parametric
+  CAD/STEP; read their guides and obtain operator connection approval first.
+  For script-authored, parameterised CSG parts, use the native OpenSCAD CLI and
+  `tools/design/openscad.md` when installed. It has no managed MCP connection;
+  neither native scripts nor app connections are automatically a sandbox.
 - For interactive web/mobile products, hand Build+ the parameter schema, stable
   part IDs, constraints, assets and view/export contract. Use
   `tools/design/threejs.md`; keep app business logic outside the scene recipe.
