@@ -19,6 +19,34 @@ def git(repo, *args):
     return subprocess.check_output(["git", "-C", str(repo), *args], text=True).strip()
 
 
+def wait_for_prompt(master, process):
+    output = b""
+    for _ in range(100):
+        readable, _, _ = select.select([master], [], [], 0.2)
+        if readable:
+            try:
+                output += os.read(master, 4096)
+            except OSError:
+                break
+            if b"Type the exact destination to confirm:" in output:
+                return output
+        if process.poll() is not None:
+            break
+    process.kill()
+    raise AssertionError(f"confirmation prompt missing: {output!r}")
+
+
+def read_remaining(master):
+    os.set_blocking(master, False)
+    output = b""
+    try:
+        while chunk := os.read(master, 4096):
+            output += chunk
+    except (OSError, BlockingIOError):
+        pass
+    return output
+
+
 def run(env, *args, confirm=None):
     command = ["bash", str(CLI), "project-config", "restore", "fixture/repo", *args]
     if confirm is None:
@@ -27,33 +55,10 @@ def run(env, *args, confirm=None):
     try:
         process = subprocess.Popen(command, env=env, stdin=slave, stdout=slave, stderr=slave)
         os.close(slave)
-        output = b""
-        for _ in range(100):
-            readable, _, _ = select.select([master], [], [], 0.2)
-            if readable:
-                try:
-                    output += os.read(master, 4096)
-                except OSError:
-                    break
-                if b"Type the exact destination to confirm:" in output:
-                    os.write(master, (confirm + "\n").encode())
-                    break
-            if process.poll() is not None:
-                break
-        else:
-            process.kill()
-            raise AssertionError(f"confirmation prompt missing: {output!r}")
+        output = wait_for_prompt(master, process)
+        os.write(master, (confirm + "\n").encode())
         process.wait(timeout=20)
-        os.set_blocking(master, False)
-        try:
-            while True:
-                chunk = os.read(master, 4096)
-                if not chunk:
-                    break
-                output += chunk
-        except (OSError, BlockingIOError):
-            pass
-        return process.returncode, output.decode(errors="replace")
+        return process.returncode, (output + read_remaining(master)).decode(errors="replace")
     finally:
         os.close(master)
 
