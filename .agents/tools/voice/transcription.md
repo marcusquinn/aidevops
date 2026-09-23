@@ -39,6 +39,25 @@ transcription-helper.sh transcribe recording.mp3 --model large-v3-turbo    # nat
 
 **Input sources**: YouTube (`yt-dlp -x --audio-format wav`), URL (`curl` + `ffmpeg`), local audio (`.wav .mp3 .flac .ogg .m4a`), local video (`ffmpeg -i input -vn -acodec pcm_s16le output.wav`).
 
+## Mac Dictation Alternatives
+
+- [VoiceInk](https://tryvoiceink.com/) ([source](https://github.com/Beingpax/VoiceInk)) — local-first, system-wide macOS dictation with custom vocabulary and optional cloud text enhancement. Apple Silicon, macOS 14.4+. A practical choice for personal dictation and multilingual workflows; check the selected model's language and translation capabilities separately.
+- [FluidVoice](https://altic.dev/fluid) ([source](https://github.com/altic-dev/FluidVoice)) — free, open-source, local-first system-wide dictation with optional on-device text polishing and selectable Whisper/Parakeet models. macOS 15+; Intel uses Whisper. Language support depends on the model; optional cloud enhancement changes the privacy boundary.
+
+These are user-facing dictation apps, **not** backends of `transcription-helper.sh` or guaranteed replacements for timestamped YouTube transcripts. For translation, distinguish translating speech to another language from transcribing multilingual speech; confirm the selected app/model and output before relying on it. For repeatable file/URL transcription, use the helper above.
+
+## YouTube Transcript Sources
+
+Prefer existing captions with `yt-dlp-helper.sh transcript <url>`; if unavailable and audio is accessible, use the unified transcript helper below for local speech-to-text. `youtube-helper.sh` handles discovery/search separately. Parakeet is listed as a model option above and available in some Mac apps, but is **not** a selectable `transcription-helper.sh` backend today.
+
+For a single timestamped JSON result, use `python3 .agents/scripts/youtube-transcript.py <video-id-or-url> --output transcript.json`. This tries caption tracks first and then local ASR; it never silently calls a paid service. Requires `yt-dlp` for captions; `ffmpeg` and `faster-whisper` for the default ASR fallback. Use `--backend whisper-cpp` or `--backend buzz` when those local backends are installed and can emit compatible segment JSON. Use `--language <code>` to select a caption/ASR language; the default is English. JSON contains `video_id`, `source`, `language`, and `segments` (`start`, `duration`, `text`). Only individual videos are accepted; enumerate playlists/channels with `youtube-helper.sh` before invoking it per video.
+
+[TranscriptAPI](https://transcriptapi.com/) is an optional hosted alternative for transcripts plus YouTube search/channel/playlist browsing (REST and MCP). It uses a paid-credit model after the trial; verify current pricing, API contract, and desired data sharing before use. Store its key with `aidevops secret set`, never in a repo or command history. Do not assume local `yt-dlp` access has the hosted service's reliability.
+
+Once the key is available as `TRANSCRIPTAPI_API_KEY` in the process environment, explicitly select `python3 .agents/scripts/youtube-transcript.py <video-id> --source api --output transcript.json` for a hosted transcript. API-backed search/channel/playlist operations remain available through the provider's REST/MCP documentation; they are not implemented in this helper.
+
+For legitimate access issues, diagnose the error and respect platform terms, rate limits, and access controls. A browser profile or residential egress may be relevant only for an explicitly authorized isolation/geo need, not as an automatic block-bypass fallback; obtain approval and follow `tools/browser/auto-browse.md`, `tools/browser/anti-detect-browser.md`, and `tools/browser/proxy-integration.md`. Browser fingerprint changes do not themselves make `yt-dlp` succeed.
+
 ## Whisper (Local)
 
 ```bash

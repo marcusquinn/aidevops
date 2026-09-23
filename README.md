@@ -138,6 +138,12 @@ maintenance rules live in [DESIGN.md](DESIGN.md#readme-hero-counts).
 | **Creative production** | Design systems, UI, browser/mobile verification, images, 3D/CAD, audio, video, animation, documents, and report exports |
 | **Extensibility** | Custom agents, imported skills, private agent sources, MCPs, API helpers, OpenAPI exploration, and project bundles |
 
+For YouTube transcripts, `python3 .agents/scripts/youtube-transcript.py VIDEO_ID`
+tries captions, then local speech-to-text, and emits timestamped JSON. Hosted
+TranscriptAPI access is opt-in (`--source api`). See the
+[transcription guide](.agents/tools/voice/transcription.md) for setup, Mac
+dictation alternatives, and access boundaries.
+
 The [domain index](.agents/reference/domain-index.md) is the human-readable map
 from user intent to specialist guidance. The generated
 [capability registry](.agents/reference/capability-registry.md) separately records
