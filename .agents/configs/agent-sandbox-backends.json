@@ -70,6 +70,44 @@
         "inspected_at": "2026-09-16"
       }
     },
+    "firecracker": {
+      "mode": "capability-only",
+      "executable": false,
+      "description": "Linux KVM microVM candidate; host probe only until guest workspace, command transport, and jailed lifecycle are verified",
+      "requirements": {
+        "os": "Linux",
+        "architectures": ["x86_64", "aarch64"],
+        "device": "/dev/kvm",
+        "commands": ["firecracker", "jailer"]
+      },
+      "capabilities": {
+        "create": false,
+        "start": false,
+        "attach": false,
+        "exec": false,
+        "stop": false,
+        "status": false,
+        "snapshot": false,
+        "recover": false,
+        "destroy": false,
+        "cpu_limit": false,
+        "memory_limit": false,
+        "storage_isolation": false,
+        "storage_quota": false,
+        "internal_network": false,
+        "secret_injection": false
+      },
+      "unsupported": {
+        "execution": "The current contract requires an existing linked worktree at /workspace and bounded guest argv execution; Firecracker block devices and vsock do not provide either automatically",
+        "lifecycle": "No jailer, guest agent, private networking, rootfs provisioning, lease reconciliation, or cleanup adapter has been verified",
+        "snapshot": "No redaction-safe guest disk and memory snapshot contract has been verified"
+      },
+      "evidence": {
+        "source": "https://github.com/firecracker-microvm/firecracker",
+        "inspected_at": "2026-09-23",
+        "finding": "Firecracker requires Linux KVM; the OrbStack Alpine probe lacked /dev/kvm. A ready host is not evidence of a safe sandbox lifecycle"
+      }
+    },
     "bubbles": {
       "mode": "capability-only",
       "executable": false,

@@ -66,6 +66,7 @@ measured result. The canonical purpose and decision criteria are in
 - **Default development agent:** Build+
 - **Routing:** provider-neutral `simple`, `standard`, and `thinking` workload tiers
 - **Core lifecycle:** understand → isolate → implement → verify → PR → authority-aware merge/release
+- **Agent sandbox backends:** [Apple container (opt-in executable); Firecracker Linux KVM (host probe only, not yet executable)](.agents/reference/agent-sandbox-lifecycle.md#backend-matrix)
 - **Primary sources:** [user guide](.agents/AGENTS.md), [domain index](.agents/reference/domain-index.md), [architecture](.agents/aidevops/architecture.md), [configuration](.agents/reference/configuration.md)
 
 ### Essential commands
