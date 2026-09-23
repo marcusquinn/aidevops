@@ -57,6 +57,27 @@ export function restoreCustomLimit(existing, limit) {
   }
 }
 
+export function restoreConfiguredLimits(config, customized, settings) {
+  for (const [key, limit] of customized) {
+    // Explicit CLI enable is a deliberate override of GPT-6 model limits.
+    if (settings.gpt6_context_cap === true &&
+        /^openai\/gpt-6-(sol|luna)(-fast)?$/.test(key)) continue;
+    const slash = key.indexOf("/");
+    const existing = config.provider?.[key.slice(0, slash)]?.models?.[key.slice(slash + 1)];
+    if (existing?.limit) restoreCustomLimit(existing, limit);
+  }
+}
+
+export function preserveCustomWindow(model, custom) {
+  const limit = model.limit;
+  // The provider merge can reintroduce a native input larger than a user's
+  // context-only override. Keep their context, but enforce its physical input.
+  if (custom.context !== undefined && custom.input === undefined &&
+      limit.input > limit.context - limit.output && limit.context > limit.output) {
+    limit.input = limit.context - limit.output;
+  }
+}
+
 export function capResolvedModel(model, reserve) {
   const limit = model.limit;
   const usable = limit.input !== undefined ? limit.input - reserve : limit.context - limit.output;
