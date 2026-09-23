@@ -12,12 +12,10 @@ import {
 import { loadDelegatedDomainKnowledge } from "./agent-loader.mjs";
 import { SPECIALIST_ADVISOR, validateSpecialistRequest } from "./specialist-advisor.mjs";
 import { loadChildSessionWithParent, routeCreativeMessage } from "./subagent-parent-routing.mjs";
+import { BROWSER_AGENT, routeBrowserDelegate } from "./browser-delegate-routing.mjs";
 
 const DOMAIN_KNOWLEDGE_MARKER = "\n\n[AIDEvOps canonical domain knowledge]";
 const DOMAIN_REQUIRED_FIELDS = ["task", "objective", "scope", "source", "decisions", "evidence", "output"];
-const BROWSER_AGENT = "playwright";
-const BROWSER_MODEL = "openai/gpt-6-luna";
-const BROWSER_VARIANT = "xhigh";
 
 function validDomainEnvelope(envelope) {
   if (!envelope) return false;
@@ -86,44 +84,6 @@ async function applyConnectedRoutingModel(context, route, message, policy) {
   message.model = routingModelIdentity(routedModel);
   policy.routedModel = routedModel;
   policy.candidateIndex = routingCandidateIndex(context.modelRouting, route.effort, routedModel);
-}
-
-async function routeBrowserDelegate(context, childSession, message, policy) {
-  // This is a task-specific route, not a change to the global simple tier.
-  // Respect local routing overrides that remove Luna and explicit agent pins.
-  if (!routingCandidates(context.modelRouting, "simple").includes(BROWSER_MODEL)) return false;
-  const providerState = await context.resolveProviderState();
-  const available = providerState && selectConnectedRoutingCandidate({
-    tiers: { simple: { models: [BROWSER_MODEL] } },
-  }, "simple", providerState);
-  if (available) {
-    message.model = routingModelIdentity(available);
-    policy.routedModel = available;
-    policy.browserVariant = BROWSER_VARIANT;
-    policy.reason = "browser_delegate";
-  } else {
-    const sol = providerState && selectConnectedRoutingCandidate({
-      tiers: { thinking: { models: routingCandidates(context.modelRouting, "thinking")
-        .filter((model) => model === "openai/gpt-6-sol") } },
-    }, "thinking", providerState);
-    const parent = sol ? null : await context.getParentRoute(context.client, childSession);
-    const fallback = sol || parent?.model;
-    if (!fallback || (!sol && !parent?.variant)) {
-      throw new Error("[aidevops] Browser delegate and parent model/effort unavailable");
-    }
-    if (!sol && providerState && !selectConnectedRoutingCandidate({
-      tiers: { thinking: { models: [fallback] } },
-    }, "thinking", providerState)) {
-      throw new Error("[aidevops] Parent browser fallback is not connected");
-    }
-    message.model = routingModelIdentity(fallback);
-    policy.routedModel = fallback;
-    policy.browserVariant = sol ? "medium" : parent.variant;
-    policy.reason = sol ? "browser_sol_fallback" : "browser_parent_fallback";
-  }
-  // Browser actions can change remote state: never auto-escalate/replay them.
-  policy.pinned = true;
-  return true;
 }
 
 function applySpecialistPolicy(context, agentName, text, policy) {
