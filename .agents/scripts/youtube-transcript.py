@@ -6,6 +6,7 @@
 
 import argparse
 import html
+from http.client import HTTPSConnection
 import json
 import os
 from pathlib import Path
@@ -14,7 +15,6 @@ import subprocess
 import sys
 import tempfile
 from urllib.parse import parse_qs, urlencode, urlparse
-from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 
 VIDEO_ID = re.compile(r"^[A-Za-z0-9_-]{11}$")
@@ -109,11 +109,6 @@ def local_asr(url, temp, options):
     return segments, data.get("language")
 
 
-class NoRedirect(HTTPRedirectHandler):
-    def redirect_request(self, request, fp, code, msg, headers, newurl):
-        raise ValueError("TranscriptAPI redirected the authenticated request; refusing to forward the key")
-
-
 def hosted(url, language):
     key = os.environ.get("TRANSCRIPTAPI_API_KEY")
     if not key:
@@ -121,12 +116,16 @@ def hosted(url, language):
     params = {"video_url": url, "format": "json"}
     if language != "all":
         params["language"] = language
-    request = Request(
-        "https://transcriptapi.com/api/v2/youtube/transcript?" + urlencode(params),
-        headers={"Authorization": "Bearer " + key},
-    )
-    with build_opener(NoRedirect()).open(request, timeout=30) as response:
+    connection = HTTPSConnection("transcriptapi.com", timeout=30)
+    try:
+        connection.request("GET", "/api/v2/youtube/transcript?" + urlencode(params),
+                           headers={"Authorization": "Bearer " + key})
+        response = connection.getresponse()
+        if response.status != 200:
+            raise ValueError("TranscriptAPI request failed (HTTP " + str(response.status) + ")")
         data = json.load(response)
+    finally:
+        connection.close()
     segments = data.get("transcript")
     if not isinstance(segments, list) or not segments:
         raise ValueError("TranscriptAPI returned no segments")

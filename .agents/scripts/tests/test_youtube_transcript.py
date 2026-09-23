@@ -36,10 +36,10 @@ class YouTubeTranscriptTest(unittest.TestCase):
             self.assertTrue(run.called)
 
     def test_api_requires_explicit_key_without_network(self):
-        with patch.dict(MODULE.os.environ, {}, clear=True), patch.object(MODULE, "build_opener") as open_url:
+        with patch.dict(MODULE.os.environ, {}, clear=True), patch.object(MODULE, "HTTPSConnection") as connection:
             with self.assertRaises(ValueError):
                 MODULE.hosted("https://www.youtube.com/watch?v=dQw4w9WgXcQ", "en")
-            open_url.assert_not_called()
+            connection.assert_not_called()
 
     def test_main_captions_no_asr_or_api(self):
         output = io.StringIO()
@@ -82,15 +82,25 @@ class YouTubeTranscriptTest(unittest.TestCase):
         output = io.StringIO()
         with patch.dict(MODULE.os.environ, {"TRANSCRIPTAPI_API_KEY": "test-key"}), \
              patch.object(sys, "argv", ["youtube-transcript.py", "dQw4w9WgXcQ", "--source", "api"]), \
-             patch.object(MODULE, "build_opener") as opener, patch.object(MODULE, "local_captions") as local, \
+             patch.object(MODULE, "HTTPSConnection") as connection, patch.object(MODULE, "local_captions") as local, \
              patch.object(sys, "stdout", output):
-            opener.return_value.open.return_value.__enter__.return_value = response
+            connection.return_value.getresponse.return_value.status = 200
+            connection.return_value.getresponse.return_value.read.return_value = response.getvalue()
             self.assertEqual(MODULE.main(), 0)
-            request = opener.return_value.open.call_args.args[0]
-        self.assertEqual(request.host, "transcriptapi.com")
-        self.assertEqual(request.get_header("Authorization"), "Bearer test-key")
+            request = connection.return_value.request.call_args
+        connection.assert_called_once_with("transcriptapi.com", timeout=30)
+        self.assertEqual(request.args[0], "GET")
+        self.assertEqual(request.kwargs["headers"]["Authorization"], "Bearer test-key")
         self.assertEqual(json.loads(output.getvalue())["source"], "transcriptapi")
         local.assert_not_called()
+
+    def test_api_redirect_rejected_without_following(self):
+        with patch.dict(MODULE.os.environ, {"TRANSCRIPTAPI_API_KEY": "test-key"}), \
+             patch.object(MODULE, "HTTPSConnection") as connection:
+            connection.return_value.getresponse.return_value.status = 302
+            with self.assertRaisesRegex(ValueError, "HTTP 302"):
+                MODULE.hosted("https://www.youtube.com/watch?v=dQw4w9WgXcQ", "en")
+            connection.return_value.close.assert_called_once()
 
 
 if __name__ == "__main__":
