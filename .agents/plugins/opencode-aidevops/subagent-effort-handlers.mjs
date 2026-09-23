@@ -15,6 +15,9 @@ import { loadChildSessionWithParent, routeCreativeMessage } from "./subagent-par
 
 const DOMAIN_KNOWLEDGE_MARKER = "\n\n[AIDEvOps canonical domain knowledge]";
 const DOMAIN_REQUIRED_FIELDS = ["task", "objective", "scope", "source", "decisions", "evidence", "output"];
+const BROWSER_AGENT = "playwright";
+const BROWSER_MODEL = "openai/gpt-6-luna";
+const BROWSER_VARIANT = "xhigh";
 
 function validDomainEnvelope(envelope) {
   if (!envelope) return false;
@@ -85,6 +88,44 @@ async function applyConnectedRoutingModel(context, route, message, policy) {
   policy.candidateIndex = routingCandidateIndex(context.modelRouting, route.effort, routedModel);
 }
 
+async function routeBrowserDelegate(context, childSession, message, policy) {
+  // This is a task-specific route, not a change to the global simple tier.
+  // Respect local routing overrides that remove Luna and explicit agent pins.
+  if (!routingCandidates(context.modelRouting, "simple").includes(BROWSER_MODEL)) return false;
+  const providerState = await context.resolveProviderState();
+  const available = providerState && selectConnectedRoutingCandidate({
+    tiers: { simple: { models: [BROWSER_MODEL] } },
+  }, "simple", providerState);
+  if (available) {
+    message.model = routingModelIdentity(available);
+    policy.routedModel = available;
+    policy.browserVariant = BROWSER_VARIANT;
+    policy.reason = "browser_delegate";
+  } else {
+    const sol = providerState && selectConnectedRoutingCandidate({
+      tiers: { thinking: { models: routingCandidates(context.modelRouting, "thinking")
+        .filter((model) => model === "openai/gpt-6-sol") } },
+    }, "thinking", providerState);
+    const parent = sol ? null : await context.getParentRoute(context.client, childSession);
+    const fallback = sol || parent?.model;
+    if (!fallback || (!sol && !parent?.variant)) {
+      throw new Error("[aidevops] Browser delegate and parent model/effort unavailable");
+    }
+    if (!sol && providerState && !selectConnectedRoutingCandidate({
+      tiers: { thinking: { models: [fallback] } },
+    }, "thinking", providerState)) {
+      throw new Error("[aidevops] Parent browser fallback is not connected");
+    }
+    message.model = routingModelIdentity(fallback);
+    policy.routedModel = fallback;
+    policy.browserVariant = sol ? "medium" : parent.variant;
+    policy.reason = sol ? "browser_sol_fallback" : "browser_parent_fallback";
+  }
+  // Browser actions can change remote state: never auto-escalate/replay them.
+  policy.pinned = true;
+  return true;
+}
+
 function applySpecialistPolicy(context, agentName, text, policy) {
   if (agentName !== SPECIALIST_ADVISOR || !context.agentRoutingState?.specialistAdvisor) return;
   validateSpecialistRequest(text);
@@ -100,6 +141,11 @@ async function routeChatMessage(context, output) {
   const now = Date.now();
   context.prunePolicies(context.policies, now);
   const existingPolicy = context.policies.get(sessionID);
+  if (existingPolicy?.reason?.startsWith("browser_") && existingPolicy.routedModel) {
+    existingPolicy.createdAt = now;
+    message.model = routingModelIdentity(existingPolicy.routedModel);
+    return;
+  }
   if (existingPolicy?.awaitingEscalationPrompt) {
     existingPolicy.awaitingEscalationPrompt = false;
     existingPolicy.createdAt = now;
@@ -148,6 +194,7 @@ async function routeTierMessage(context, output, { agentName, text, now }) {
   const childSession = await loadChildSessionWithParent(context, sessionID);
   if (!childSession) return;
   policy.parentSessionID = childSession.parentID;
+  if (agentName === BROWSER_AGENT && await routeBrowserDelegate(context, childSession, message, policy)) return;
   if (nextRoutingTier(context.modelRouting, route.effort)) {
     context.appendCapabilityEscalationContract(output);
   }
@@ -246,6 +293,10 @@ async function routeChatParams(context, input, output) {
   const creative = context.agentRoutingState?.inheritParentRoute?.has(domainName);
   // Preserve the native explicit model/variant override on creative executors.
   if (creative && context.agentRoutingState?.pinned?.has(domainName)) return;
+  if (domainPolicy?.reason?.startsWith("browser_")
+    && childModelFrom(context, input) !== domainPolicy.routedModel) {
+    throw new Error("[aidevops] Browser child model changed; verify state before continuing");
+  }
   if (["bounded_domain", "creative_parent"].includes(domainPolicy?.reason)
     || creative
     || context.agentRoutingState?.domainDelegation?.profiles?.has(domainName)) {
@@ -268,14 +319,14 @@ async function routeChatParams(context, input, output) {
     const policy = context.policies.get(sessionID);
     const desiredEffort = policy?.effort
       ?? context.inferSubagentEffort(input.message.agent ?? childSession.agent);
-    const requestedVariant = policy?.reason === "specialist_advice"
+    const requestedVariant = policy?.browserVariant || (policy?.reason === "specialist_advice"
       ? context.agentRoutingState.specialistAdvisor.variant
       : context.resolveTierReasoning(
         desiredEffort,
         input?.provider?.id,
         input?.model?.id,
         context.tierReasoning,
-      );
+      ));
     const effectiveVariant = await effectiveChildVariant(
       context,
       childSession,
@@ -293,8 +344,11 @@ async function routeChatParams(context, input, output) {
       effectiveVariant,
       policy,
     });
-  } catch {
-    // Fail open: provider requests must continue if session metadata is unavailable.
+  } catch (error) {
+    // A browser route may have acted on a site: never silently lose its model
+    // or effort ceiling when parent/session metadata cannot be verified.
+    if (domainPolicy?.reason?.startsWith("browser_")) throw error;
+    // Other provider requests preserve their existing fail-open behavior.
   }
 }
 
