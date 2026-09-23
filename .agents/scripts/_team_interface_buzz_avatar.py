@@ -20,6 +20,8 @@ BASE_AVATAR_COLORS = {
 }
 AVATAR_HUE_BY_AGENT_ID = {
     "agent.aidevops-guide": None,
+    "agent.3d-modelling": 23,
+    "agent.audio": 304,
     "agent.automate": 318,
     "agent.build-plus": 87,
     "agent.business": 216,
@@ -35,6 +37,7 @@ AVATAR_HUE_BY_AGENT_ID = {
     "agent.research": 165,
     "agent.seo": 293,
     "agent.vault": 62,
+    "agent.video": 177,
 }
 
 

@@ -21,14 +21,14 @@ import { join } from "node:path";
 // plugin runtime. session-rename.ts re-exports these symbols for callers
 // that already import from it.
 const { isDefaultBranchTitle, isTitleOverwritable, purposePreservingTitle } = await import(
-  "../../../.opencode/lib/session-rename-guards.ts"
+  "../../../../.opencode/lib/session-rename-guards.ts"
 );
-const { getDbPath } = await import("../../../.opencode/lib/opencode-db-path.ts");
+const { getDbPath } = await import("../../../../.opencode/lib/opencode-db-path.ts");
 const { getAidevopsVersion, sanitizeSessionTitle, withAidevopsTitleSuffix } = await import(
-  "../../../.opencode/lib/session-title-suffix.ts"
+  "../../../../.opencode/lib/session-title-suffix.ts"
 );
 const { emitTerminalTitle, isTerminalTitleEnabled, sanitizeTerminalTitle, terminalTitleSequence } = await import(
-  "../../../.opencode/lib/terminal-title.ts"
+  "../../../../.opencode/lib/terminal-title.ts"
 );
 
 let pass = 0;

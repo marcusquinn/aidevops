@@ -66,11 +66,12 @@ assert.match(liveSnapshot.team.instructions, /Buzz access policy controls ingres
 assert.deepEqual(
   liveSnapshot.members.map(({profile}) => profile.displayName),
   [
-    "aidevops-test-host-01", "automate-test-host-01", "build-plus-test-host-01",
-    "business-test-host-01", "content-test-host-01", "health-test-host-01",
+    "3d-modelling-test-host-01", "aidevops-test-host-01", "audio-test-host-01",
+    "automate-test-host-01", "build-plus-test-host-01", "business-test-host-01",
+    "content-test-host-01", "health-test-host-01",
     "legal-test-host-01", "marketing-sales-test-host-01", "pr-test-host-01",
     "private-local-ai-test-host-01", "product-test-host-01", "reports-test-host-01",
-    "research-test-host-01", "seo-test-host-01", "vault-test-host-01",
+    "research-test-host-01", "seo-test-host-01", "vault-test-host-01", "video-test-host-01",
   ],
 );
 for (const member of liveSnapshot.members) {
@@ -113,8 +114,8 @@ assert.equal(
   liveSnapshot.members.filter(
     ({definition}) => definition.runtime === "aidevops-interactive-v1",
   ).length,
-  14,
-  "the existing fourteen members must retain the full interactive aidevops runtime",
+  17,
+  "the seventeen primary members must retain the full interactive aidevops runtime",
 );
 assert.equal(
   new Set(liveSnapshot.members.map(({profile}) => profile.avatarDataUrl)).size,
