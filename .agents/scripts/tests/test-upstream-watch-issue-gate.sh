@@ -49,11 +49,13 @@ GH_CREATE_CALLS="${TMP}/gh_create_calls.log"
 GH_EDIT_CALLS="${TMP}/gh_edit_calls.log"
 GH_CLOSE_CALLS="${TMP}/gh_close_calls.log"
 GH_ISSUE_LIST_CALLS="${TMP}/gh_issue_list_calls.log"
+GH_LABEL_CALLS="${TMP}/gh_label_calls.log"
 GH_WARNINGS="${TMP}/warnings.log"
 : >"$GH_CREATE_CALLS"
 : >"$GH_EDIT_CALLS"
 : >"$GH_CLOSE_CALLS"
 : >"$GH_ISSUE_LIST_CALLS"
+: >"$GH_LABEL_CALLS"
 : >"$GH_WARNINGS"
 
 _log_warn() { printf '%s\n' "$*" >>"$GH_WARNINGS"; return 0; }
@@ -85,6 +87,11 @@ gh() {
 		else
 			printf '%s\n' "${GH_OPEN_NUMBER:-}"
 		fi
+		return 0
+	fi
+	if [[ "$command_name" == "issue" && "$subcommand" == "edit" ]]; then
+		printf '%s\n' "$*" >>"$GH_LABEL_CALLS"
+		[[ "${GH_LABEL_FAIL:-0}" != "1" ]] || return 1
 		return 0
 	fi
 	return 0
@@ -132,6 +139,38 @@ _file_upstream_update_issue "owner/repo" "release" "v2" "v3" "$entry_json" >/dev
 create_count=$(grep -c '^--repo ' "$GH_CREATE_CALLS" 2>/dev/null || true)
 [[ "$create_count" == "1" ]] && ok=1 || ok=0
 check "$ok" "repository owner creates upstream-watch issue" "create_count=${create_count}"
+
+# Producer/consumer contract: dispatch only when a configured, safe path is
+# emitted as canonical Files Scope. Unknown paths remain review trackers.
+scoped_body=$(_compose_upstream_issue_from_entry "owner/repo" "release" "v2" "v3" "$entry_json" "key")
+if [[ "$scoped_body" == *'### Files Scope'* && "$scoped_body" == *"- EDIT: \`.agents/example.md\`"* ]] &&
+	grep -q -- '--label auto-dispatch' "$GH_CREATE_CALLS"; then ok=1; else ok=0; fi
+check "$ok" "configured affects produces dispatchable canonical scope"
+
+unscoped_entry='{"slug":"owner/unscoped","relevance":"inspect only"}'
+: >"$GH_CREATE_CALLS"
+_file_upstream_update_issue "owner/unscoped" "commit" "v1" "v2" "$unscoped_entry" >/dev/null
+unscoped_body=$(_compose_upstream_issue_from_entry "owner/unscoped" "commit" "v1" "v2" "$unscoped_entry" "key")
+if [[ "$unscoped_body" != *'### Files Scope'* ]] && ! grep -q -- '--label auto-dispatch' "$GH_CREATE_CALLS"; then ok=1; else ok=0; fi
+check "$ok" "unknown scope publishes review tracker without dispatch"
+
+unsafe_entry='{"slug":"owner/unsafe","affects":["../elsewhere.md"]}'
+unsafe_body=$(_compose_upstream_issue_from_entry "owner/unsafe" "commit" "v1" "v2" "$unsafe_entry" "key")
+if [[ "$unsafe_body" != *'### Files Scope'* ]]; then ok=1; else ok=0; fi
+check "$ok" "unsafe configured affects cannot authorize edits"
+
+export GH_OPEN_NUMBER=88
+: >"$GH_LABEL_CALLS"
+_file_upstream_update_issue "owner/unscoped" "commit" "v2" "v3" "$unscoped_entry" >/dev/null
+if grep -q -- 'issue edit 88 --repo marcusquinn/aidevops --remove-label auto-dispatch' "$GH_LABEL_CALLS"; then ok=1; else ok=0; fi
+check "$ok" "updated unscoped tracker loses stale dispatch label"
+export GH_LABEL_FAIL=1
+: >"$GH_EDIT_CALLS"
+if _file_upstream_update_issue "owner/unscoped" "commit" "v3" "v4" "$unscoped_entry" >/dev/null 2>&1; then ok=0; else ok=1; fi
+[[ ! -s "$GH_EDIT_CALLS" ]] || ok=0
+check "$ok" "label failure cannot publish unscoped body or consume update key"
+unset GH_LABEL_FAIL
+unset GH_OPEN_NUMBER
 
 # Test 3: explicit designated-publisher override authorizes a non-owner.
 export GH_LOGIN="designated-publisher"
@@ -193,6 +232,21 @@ else
 	ok=0
 fi
 check "$ok" "five new queued updates coalesce into one batch issue" "create_count=${create_count}"
+if grep -q -- '### Files Scope' "$GH_CREATE_CALLS" && grep -q -- '--label auto-dispatch' "$GH_CREATE_CALLS"; then ok=1; else ok=0; fi
+check "$ok" "scoped batch preserves worker edit boundary"
+
+: >"$GH_CREATE_CALLS"
+mixed_queue="${TMP}/mixed.ndjson"
+: >"$mixed_queue"
+_UPSTREAM_WATCH_ISSUE_QUEUE_FILE="$mixed_queue"
+_queue_upstream_update_issue "owner/repo" "commit" "old" "new" "$entry_json"
+_queue_upstream_update_issue "owner/unscoped" "commit" "old" "new" "$unscoped_entry"
+unset _UPSTREAM_WATCH_ISSUE_QUEUE_FILE
+_file_upstream_batch_update_issue "$mixed_queue" >/dev/null
+if grep -q -- 'upstream: batch review adoption' "$GH_CREATE_CALLS" &&
+	! grep -q -- '### Files Scope' "$GH_CREATE_CALLS" &&
+	! grep -q -- '--label auto-dispatch' "$GH_CREATE_CALLS"; then ok=1; else ok=0; fi
+check "$ok" "mixed batch cannot dispatch with incomplete scope"
 
 # Test 8: handled values are removed before threshold calculation.
 export GH_HISTORY_JSON='[
