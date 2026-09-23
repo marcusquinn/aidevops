@@ -4,6 +4,7 @@
 // ---------------------------------------------------------------------------
 
 import { existsSync, readFileSync } from "fs";
+import { preserveGpt6Limit } from "./context-budget-policy.mjs";
 import { homedir } from "os";
 import { join } from "path";
 import { applyAgentMcpTools } from "./agent-loader.mjs";
@@ -268,8 +269,7 @@ export function registerGpt6ContextLimits(config) {
     const existing = models[id] || {};
     // Config-hook sees user model overrides, not the built-in provider registry.
     // Preserve an explicit context/input choice unless the user forced this cap on.
-    if (settings.gpt6_context_cap !== true &&
-        (existing.limit?.context !== undefined || existing.limit?.input !== undefined)) {
+    if (preserveGpt6Limit(settings, existing)) {
       customized.push(id);
       continue;
     }
