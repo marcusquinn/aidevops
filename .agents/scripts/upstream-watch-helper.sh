@@ -17,7 +17,9 @@
 #   upstream-watch-helper.sh remove <owner/repo>
 #   upstream-watch-helper.sh check [--verbose]     Check all watched repos for updates
 #   upstream-watch-helper.sh check <owner/repo>    Check a specific repo
-#   upstream-watch-helper.sh ack <owner/repo>      Acknowledge latest release (mark as seen)
+#   upstream-watch-helper.sh ack <owner/repo>      Acknowledge the current upstream state
+#   upstream-watch-helper.sh ack <owner/repo> --commit SHA
+#                                                   Acknowledge a reviewed commit only
 #   upstream-watch-helper.sh status                Show all watched repos and their state
 #   upstream-watch-helper.sh help                  Show usage
 #
@@ -269,6 +271,43 @@ cmd_remove() {
 }
 
 #######################################
+# Verify a reviewed commit exists and is reachable from the current upstream tip.
+# Arguments: slug, requested SHA
+# Outputs: resolved full SHA
+#######################################
+_github_latest_commit() {
+	gh api "repos/${1}/commits?per_page=1" --jq '.[0].sha // empty' 2>/dev/null
+}
+
+_resolve_reviewed_commit() {
+	local slug="$1"
+	local reviewed_commit="$2"
+	local resolved_commit="" latest_commit="" compare_status=""
+
+	if [[ ! "$reviewed_commit" =~ ^[[:xdigit:]]{7,40}$ ]]; then
+		echo -e "${RED}Error: --commit must be a 7-40 character Git commit SHA${NC}" >&2
+		return 1
+	fi
+	resolved_commit=$(gh api "repos/${slug}/commits/${reviewed_commit}" --jq '.sha // empty' 2>/dev/null) || resolved_commit=""
+	if [[ ! "$resolved_commit" =~ ^[[:xdigit:]]{40}$ ]]; then
+		echo -e "${RED}Error: Could not verify reviewed commit ${reviewed_commit} for ${slug}${NC}" >&2
+		return 1
+	fi
+	latest_commit=$(_github_latest_commit "$slug") || latest_commit=""
+	if [[ ! "$latest_commit" =~ ^[[:xdigit:]]{40}$ ]]; then
+		echo -e "${RED}Error: Could not verify the current upstream tip for ${slug}${NC}" >&2
+		return 1
+	fi
+	compare_status=$(gh api "repos/${slug}/compare/${resolved_commit}...${latest_commit}" --jq '.status // empty' 2>/dev/null) || compare_status=""
+	if [[ "$compare_status" != "ahead" && "$compare_status" != "identical" ]]; then
+		echo -e "${RED}Error: Reviewed commit ${reviewed_commit} is not reachable from the current upstream tip${NC}" >&2
+		return 1
+	fi
+	printf '%s' "$resolved_commit"
+	return 0
+}
+
+#######################################
 # Acknowledge the latest release/commit for a watched repo
 # Updates last_release_seen and last_commit_seen to current, clears
 # updates_pending. Validates slug against config watchlist first.
@@ -276,10 +315,12 @@ cmd_remove() {
 # Arguments:
 #   $1 - Repository slug (owner/repo) or non-GitHub upstream name
 #   $2 - Optional note for the close comment (e.g. "adopted in PR #123")
+#   $3 - Optional reviewed GitHub commit SHA to acknowledge instead of the live tip
 #######################################
 cmd_ack() {
 	local slug="$1"
 	local note="${2:-}"
+	local reviewed_commit="${3:-}"
 
 	if [[ -z "$slug" ]]; then
 		echo -e "${RED}Error: Repository slug or upstream name required${NC}" >&2
@@ -334,12 +375,26 @@ cmd_ack() {
 		return 1
 	fi
 
+	if [[ -n "$reviewed_commit" ]]; then
+		local resolved_commit=""
+		resolved_commit=$(_resolve_reviewed_commit "$slug" "$reviewed_commit") || return 1
+
+		state=$(echo "$state" | jq --arg slug "$slug" --arg commit "${resolved_commit:0:7}" --arg now "$now" \
+			'.repos[$slug].last_commit_seen = $commit | .repos[$slug].last_checked = $now | .repos[$slug].updates_pending = 0')
+		_write_state "$state"
+
+		echo -e "${GREEN}Acknowledged reviewed commit: ${slug} at ${resolved_commit:0:7}${NC}"
+		_log_info "Acknowledged reviewed commit: ${slug} at ${resolved_commit:0:7}"
+		# A pin can be behind a newer queued update. Do not close by slug alone.
+		return 0
+	fi
+
 	# Get current latest release
 	local latest_tag
 	latest_tag=$(gh api "repos/${slug}/releases/latest" --jq '.tag_name' 2>/dev/null) || latest_tag=""
 
 	local latest_commit
-	latest_commit=$(gh api "repos/${slug}/commits?per_page=1" --jq '.[0].sha // empty' 2>/dev/null) || latest_commit=""
+	latest_commit=$(_github_latest_commit "$slug") || latest_commit=""
 
 	state=$(echo "$state" | jq --arg slug "$slug" --arg tag "$latest_tag" \
 		--arg commit "${latest_commit:0:7}" --arg now "$now" \
@@ -468,7 +523,9 @@ COMMANDS:
     remove <owner/repo>                     Remove a repo from the watchlist
     check [--verbose]                       Check all repos for new releases/commits
     check <owner/repo>                      Check a specific repo
-    ack <owner/repo> [--note "..."]          Mark latest release as seen
+    ack <owner/repo> [--note "..."]          Mark the current upstream state as seen
+    ack <owner/repo> --commit SHA [--note "..."]
+                                            Mark only a verified reviewed commit as seen
     status                                  Show all watched repos and their state
     help                                    Show this help
 
@@ -488,6 +545,7 @@ EXAMPLES:
     # After reviewing, acknowledge the update
     upstream-watch-helper.sh ack vercel-labs/portless
     upstream-watch-helper.sh ack vercel-labs/portless --note "adopted in PR #123"
+    upstream-watch-helper.sh ack vercel-labs/portless --commit 0123456789abcdef0123456789abcdef01234567
 
     # See what we're watching
     upstream-watch-helper.sh status
@@ -514,9 +572,13 @@ NON-GITHUB UPSTREAMS:
 INTEGRATION:
     The pulse can call 'upstream-watch-helper.sh check' to surface
     updates during supervisor sweeps. When an update is detected
-    (updates_pending transitions 0->1), a GitHub issue is filed
-    automatically with labels source:upstream-watch, auto-dispatch,
-    tier:standard. The 'ack' command closes the matching issue.
+    (updates_pending transitions 0->1), a GitHub issue is filed only when it has
+    a valid Files Scope and is therefore dispatch-eligible. The 'ack' command
+    closes the matching issue only when acknowledging the live state. Use
+    '--commit SHA' after reviewing an earlier commit: the SHA is verified against
+    the current upstream tip and later commits remain eligible for the next check.
+    Eligible issues receive labels source:upstream-watch, auto-dispatch,
+    tier:standard.
     Both GitHub repos and non-GitHub upstreams are checked in a
     single pass.
 
@@ -616,6 +678,7 @@ main() {
 	ack | acknowledge)
 		local ack_slug=""
 		local ack_note=""
+		local ack_commit=""
 		while [[ $# -gt 0 ]]; do
 			local _ack_cur="$1"
 			shift
@@ -630,12 +693,22 @@ main() {
 					return 1
 				fi
 				;;
+			--commit)
+				if [[ $# -ge 1 ]]; then
+					local _commit_val="$1"
+					ack_commit="$_commit_val"
+					shift
+				else
+					echo -e "${RED}Error: --commit requires a value${NC}" >&2
+					return 1
+				fi
+				;;
 			*)
 				[[ -z "$ack_slug" ]] && ack_slug="$_ack_cur"
 				;;
 			esac
 		done
-		cmd_ack "$ack_slug" "$ack_note"
+		cmd_ack "$ack_slug" "$ack_note" "$ack_commit"
 		;;
 	status | list)
 		cmd_status
@@ -649,7 +722,7 @@ main() {
 		return 1
 		;;
 	esac
-	return 0
+	return $?
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
