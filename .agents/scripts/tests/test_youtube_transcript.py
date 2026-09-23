@@ -83,6 +83,30 @@ class YouTubeTranscriptTest(unittest.TestCase):
                                  argparse.Namespace(language="en", backend="faster-whisper"))
             command = run.call_args.args[0]
             self.assertEqual(command[command.index("--backend") + 1], "faster-whisper")
+            download = run.call_args_list[0].args[0]
+            self.assertEqual(download[download.index("-f") + 1],
+                             "ba[language^=en][language_preference>0]/ba[language^=en]/ba[language_preference>0]/ba")
+            self.assertIn("--no-config", download)
+
+    def test_audio_format_is_language_aware_and_has_generic_fallback(self):
+        self.assertEqual(MODULE.preferred_audio_format("fr"),
+                         "ba[language^=fr][language_preference>0]/ba[language^=fr]/ba[language_preference>0]/ba")
+        self.assertEqual(MODULE.preferred_audio_format("all"), "ba[language_preference>0]/ba")
+
+    def test_asr_uses_base_language_for_locale_track(self):
+        with tempfile.TemporaryDirectory() as folder, patch.object(MODULE.subprocess, "run") as run:
+            def simulate(command, **_kwargs):
+                if command[0] == "yt-dlp":
+                    (Path(folder) / "audio.wav").write_bytes(b"audio")
+                    return type("Result", (), {"returncode": 0})()
+                return type("Result", (), {"returncode": 1})()
+
+            run.side_effect = simulate
+            with self.assertRaises(ValueError):
+                MODULE.local_asr("https://www.youtube.com/watch?v=dQw4w9WgXcQ", Path(folder),
+                                 argparse.Namespace(language="en-US", backend="faster-whisper"))
+            command = run.call_args.args[0]
+            self.assertEqual(command[command.index("--language") + 1], "en")
 
     def test_api_selected_only_explicitly_and_sends_bearer_to_fixed_host(self):
         response = io.BytesIO(json.dumps({"language": "en", "transcript": [
