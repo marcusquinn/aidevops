@@ -391,10 +391,12 @@ _update_reconcile_tabby_config() {
 	[[ -f "$helper" && -f "$repos_json" && -f "$tabby_config" ]] || return 0
 
 	print_info "Reconciling Tabby configuration..."
-	if TABBY_CONFIG="$tabby_config" bash "$helper" sync >/dev/null 2>&1; then
+	local result
+	if result=$(TABBY_CONFIG="$tabby_config" bash "$helper" sync 2>&1); then
 		print_success "Tabby configuration reconciled"
 	else
 		print_warning "Tabby configuration reconciliation encountered a blocker"
+		printf '%s\n' "$result" >&2
 	fi
 	return 0
 }

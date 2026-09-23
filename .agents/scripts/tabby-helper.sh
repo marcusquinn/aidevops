@@ -73,21 +73,46 @@ _check_prereqs() {
 	return 0
 }
 
+_tabby_python() {
+	local isolated_python="${HOME}/.aidevops/.agent-workspace/python-env/tabby/bin/python3"
+	if [[ -x "$isolated_python" ]]; then
+		printf '%s\n' "$isolated_python"
+	else
+		printf '%s\n' python3
+	fi
+}
+
+_check_yaml_dependency() {
+	local python_bin="$1"
+	if ! "$python_bin" -c 'import yaml' >/dev/null 2>&1; then
+		_error "PyYAML is unavailable to $python_bin; Tabby profiles were not modified"
+		_info "Create an isolated environment at ~/.aidevops/.agent-workspace/python-env/tabby and install pinned PyYAML==6.0.3 there"
+		return 1
+	fi
+	return 0
+}
+
 # --- Commands ---
 
 cmd_sync() {
 	if ! _check_prereqs; then
 		return 1
 	fi
+	local python_bin
+	python_bin=$(_tabby_python)
+	if ! _check_yaml_dependency "$python_bin"; then
+		return 1
+	fi
 
 	_info "Syncing Tabby profiles from repos.json and detected workspaces..."
 
-	# Back up config before modifying
-	local backup="${TABBY_CONFIG}.backup"
-	cp "$TABBY_CONFIG" "$backup"
+	# Preserve previous backups rather than replacing them on each update.
+	local backup
+	backup="${TABBY_CONFIG}.backup.$(date +%Y%m%d%H%M%S).$$"
+	cp -p "$TABBY_CONFIG" "$backup"
 
 	local result
-	if result=$(python3 "${SCRIPT_DIR}/tabby-profile-sync.py" \
+	if result=$("$python_bin" "${SCRIPT_DIR}/tabby-profile-sync.py" \
 		--repos-json "$REPOS_JSON" \
 		--tabby-config "$TABBY_CONFIG" 2>&1); then
 		echo "$result"
@@ -106,8 +131,13 @@ cmd_status() {
 	if ! _check_prereqs; then
 		return 1
 	fi
+	local python_bin
+	python_bin=$(_tabby_python)
+	if ! _check_yaml_dependency "$python_bin"; then
+		return 1
+	fi
 
-	python3 "${SCRIPT_DIR}/tabby-profile-sync.py" \
+	"$python_bin" "${SCRIPT_DIR}/tabby-profile-sync.py" \
 		--repos-json "$REPOS_JSON" \
 		--tabby-config "$TABBY_CONFIG" \
 		--status-only
