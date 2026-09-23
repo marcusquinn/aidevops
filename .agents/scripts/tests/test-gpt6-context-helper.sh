@@ -57,8 +57,8 @@ assert_contains() {
 }
 
 output=$(bash "$HELPER" status)
-assert_contains "$output" 'requested: disabled'
-assert_contains "$output" 'native provider metadata confirmed'
+assert_contains "$output" 'requested: enabled'
+assert_contains "$output" 'target: 240000 (applied)'
 output=$(bash "$HELPER" enable)
 assert_contains "$output" 'requested: enabled'
 assert_contains "$output" 'gpt-6-sol limits (new process): context=403000, input=275000, output=128000, reserve=35000'
@@ -96,7 +96,7 @@ for invalid in '' '{} {}' 'broken-json' '[]' '{"runtime":"invalid"}'; do
 	fi
 	[[ "$(<"$AIDEVOPS_SETTINGS_FILE")" == "$invalid" ]]
 	output=$(bash "$HELPER" status)
-	assert_contains "$output" 'requested: disabled'
+	assert_contains "$output" 'requested: enabled'
 done
 if bash "$HELPER" unknown >/dev/null 2>&1; then exit 1; fi
-printf '%s\n' 'PASS: GPT-6 Sol/Luna CLI settings, persistence, native opt-out and health evidence'
+printf '%s\n' 'PASS: GPT-6 Sol/Luna default, CLI settings, persistence, native opt-out and health evidence'

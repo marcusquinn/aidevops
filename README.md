@@ -237,9 +237,12 @@ bundles, prompt caching, and compaction checkpoints reduce unnecessary context
 without hiding required evidence. Model comparisons and sealed historical replay
 can inform routing, but cannot silently rewrite production policy.
 
-OpenCode users can opt GPT-6 Sol/Luna and their Fast variants into a ~240K
-usable-input budget with `aidevops gpt6-context enable`; `status` verifies the
-saved preference against a fresh process, and `disable` restores native metadata.
+OpenCode defaults resolved models with larger windows to a ~240K usable-input
+compaction budget, without expanding smaller native windows or overriding
+explicit per-model context/input limits. GPT-6 Sol/Luna and their Fast variants
+also advertise the budget in their model metadata. Run `aidevops gpt6-context
+status` to check those four models in a fresh process, or `disable` to restore
+their native limits. Restart OpenCode after changes.
 
 See [model routing](.agents/tools/context/model-routing.md),
 [context efficiency](.agents/reference/context-efficiency.md), and

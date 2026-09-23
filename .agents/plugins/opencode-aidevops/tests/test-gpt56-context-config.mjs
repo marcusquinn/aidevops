@@ -161,14 +161,33 @@ test("Astra opt-out overrides a saved low target; receipts reflect the consumed 
   assert.deepEqual(getAstraContextHealth(config), { managed: false, target: 240000, auto: false });
 });
 
-test("GPT-6 Sol/Luna cap is opt-in and native metadata is untouched by default", () => {
+test("GPT-6 Sol/Luna default to 240K usable input", () => {
   settingsFile(undefined);
+  const config = {};
+  assert.equal(registerGpt6ContextLimits(config), 4);
+  assert.equal(config.provider.openai.models["gpt-6-sol"].limit.input - 20000, 240000);
+  assert.deepEqual(getGpt6ContextHealth(config).customized, []);
+});
+
+test("GPT-6 default preserves explicit model limits; enable forces the cap", () => {
+  const file = settingsFile(undefined);
   const config = { provider: { openai: { models: {
-    "gpt-6-sol": { name: "native", limit: { context: 1050000, input: 922000, output: 128000 } },
+    "gpt-6-sol": { name: "custom", limit: { context: 1050000, input: 922000, output: 128000 } },
   } } } };
-  const before = structuredClone(config);
+  const original = structuredClone(config.provider.openai.models["gpt-6-sol"]);
+  assert.equal(registerGpt6ContextLimits(config), 3);
+  assert.deepEqual(config.provider.openai.models["gpt-6-sol"], original);
+  assert.deepEqual(getGpt6ContextHealth(config).customized, ["gpt-6-sol"]);
+  writeFileSync(file, JSON.stringify({ runtime: { opencode: { gpt6_context_cap: true } } }));
+  assert.equal(registerGpt6ContextLimits(config), 4);
+  assert.equal(config.provider.openai.models["gpt-6-sol"].limit.input - 20000, 240000);
+});
+
+test("GPT-6 opt-out leaves provider metadata untouched", () => {
+  settingsFile({ runtime: { opencode: { gpt6_context_cap: false } } });
+  const config = {};
   assert.equal(registerGpt6ContextLimits(config), 0);
-  assert.deepEqual(config, before);
+  assert.deepEqual(config, {});
   assert.deepEqual(getGpt6ContextHealth(config), { managed: false, target: 240000, auto: true });
 });
 
@@ -205,18 +224,16 @@ test("GPT-6 Sol/Luna cap covers normal and Fast variants while preserving model 
   }
 });
 
-test("GPT-6 Sol/Luna cap fails closed to native metadata for missing or malformed settings", () => {
+test("GPT-6 Sol/Luna cap defaults on for missing or malformed settings", () => {
   for (const value of [{}, { runtime: { opencode: { gpt6_context_cap: "true" } } }]) {
     settingsFile(value);
     const config = {};
-    assert.equal(registerGpt6ContextLimits(config), 0);
-    assert.deepEqual(config, {});
+    assert.equal(registerGpt6ContextLimits(config), 4);
   }
   const file = settingsFile({});
   writeFileSync(file, "not-json");
   const config = {};
-  assert.equal(registerGpt6ContextLimits(config), 0);
-  assert.deepEqual(config, {});
+  assert.equal(registerGpt6ContextLimits(config), 4);
 });
 
 test("GPT-6 Sol/Luna cap leaves GPT-5.6 and Astra behavior independent", () => {

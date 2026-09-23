@@ -60,19 +60,35 @@ merely to verify this arithmetic.
 
 ## GPT-6 Sol and Luna compaction
 
-`aidevops gpt6-context enable` opts `gpt-6-sol`, `gpt-6-sol-fast`,
-`gpt-6-luna`, and `gpt-6-luna-fast` into a 240,000-token usable-input target.
-The feature is disabled by default; `disable` leaves native provider metadata
-untouched rather than restoring a hard-coded snapshot. The saved
-`runtime.opencode.gpt6_context_cap` preference survives normal updates.
+`gpt-6-sol`, `gpt-6-sol-fast`, `gpt-6-luna`, and `gpt-6-luna-fast` default to
+a 240,000-token usable-input target. Explicit per-model context/input limits
+take precedence unless `aidevops gpt6-context enable` forces the budget.
+`disable` leaves native provider metadata untouched rather than restoring a
+hard-coded snapshot. The saved `runtime.opencode.gpt6_context_cap` preference
+survives normal updates; an unset preference uses the default without overriding
+explicit per-model limits.
 
 The managed input limit is the 240K target plus OpenCode's configured reserve;
 managed context is input plus the model's explicit or native output limit.
-Model options, reasoning variants, Fast service-tier options, unrelated models,
-and global compaction settings are preserved. `status` validates nonce-bound
-fresh-process health evidence for all four model IDs and reports disabled
-automatic compaction separately. Restart OpenCode after changing the preference.
-Use the effective-config probe instead of synthetic paid long-context requests.
+Model options, reasoning variants, Fast service-tier options, and global
+compaction settings are preserved. `status` validates nonce-bound fresh-process
+health evidence for all four model IDs and reports disabled automatic compaction
+separately. Restart OpenCode after changing the preference. Use the effective-
+config probe instead of synthetic paid long-context requests.
+
+## Default budget across resolved models
+
+On the first request for each resolved model, the OpenCode request hook applies
+the same 240K usable-input ceiling to models with larger native windows, including
+built-in and newly discovered provider models absent from the config hook's model
+list. It does not expand smaller windows, modify output limits or variants, or
+override explicit `provider.<name>.models.<id>.limit.context/input` entries.
+Existing GPT-5.6, Astra, and GPT-6 opt-outs/extended-target selections are
+respected. An explicit global `compaction.auto=false` is respected. The limit is
+applied to the resolved model used by OpenCode's subsequent overflow check; it
+does not alter its model catalogue before the first request. A resumed session
+may require one request to register the budget before it can compact; restart
+OpenCode to load plugin changes. A completed response can exceed the budget.
 
 ## Efficiency scorecard
 

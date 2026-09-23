@@ -84,8 +84,7 @@ _generate_defaults() {
   "runtime": {
     "opencode": {
       "astra_context_cap": true,
-      "astra_compaction_target": 240000,
-      "gpt6_context_cap": false
+      "astra_compaction_target": 240000
     }
   },
   "onboarding": {

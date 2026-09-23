@@ -4,6 +4,7 @@
 // ---------------------------------------------------------------------------
 
 import { existsSync, readFileSync } from "fs";
+import { registerGpt6Budget } from "./context-budget-gpt6.mjs";
 import { homedir } from "os";
 import { join } from "path";
 import { applyAgentMcpTools } from "./agent-loader.mjs";
@@ -32,9 +33,6 @@ import {
   ASTRA_COMPACTION_TARGET,
   ASTRA_OUTPUT_DEFAULT,
   CLAUDE_MODEL_LIMITS,
-  GPT6_COMPACTION_TARGET,
-  GPT6_MODEL_IDS,
-  GPT6_OUTPUT_DEFAULT,
   GPT56_CONTEXT_DEFAULT,
   GPT56_INPUT_DEFAULT,
   GPT56_MODEL_IDS,
@@ -42,6 +40,7 @@ import {
 } from "./model-limits.mjs";
 
 export { registerApprovedWorkerPermissions };
+export { getGpt6ContextHealth } from "./context-budget-gpt6.mjs";
 export {
   enforcePublicTriageIsolation,
   enforceTeamInterfaceConversationIsolation,
@@ -239,43 +238,8 @@ export function registerAstraContextLimits(config) {
   return 1;
 }
 
-// Receipts describe the settings actually consumed, not a later settings read.
-const gpt6ContextHealth = new WeakMap();
-
-export function getGpt6ContextHealth(config) {
-  return gpt6ContextHealth.get(config) ?? null;
-}
-
-/** Apply the opt-in ~240K usable-input budget to GPT-6 Sol/Luna variants. */
 export function registerGpt6ContextLimits(config) {
-  const settings = readContextSettings();
-  const managed = settings.gpt6_context_cap === true;
-  const health = {
-    managed,
-    target: GPT6_COMPACTION_TARGET,
-    auto: config.compaction?.auto !== false,
-  };
-  gpt6ContextHealth.set(config, health);
-  if (!managed) return 0;
-
-  config.provider ??= {};
-  config.provider.openai ??= {};
-  config.provider.openai.models ??= {};
-  const models = config.provider.openai.models;
-  const applied = {};
-  for (const id of GPT6_MODEL_IDS) {
-    const existing = models[id] || {};
-    const output = existing.limit?.output ?? GPT6_OUTPUT_DEFAULT;
-    const reserve = config.compaction?.reserved ?? Math.min(20000, output);
-    const input = GPT6_COMPACTION_TARGET + reserve;
-    models[id] = {
-      ...existing,
-      limit: { ...existing.limit, context: input + output, input, output },
-    };
-    applied[id] = { reserve, limits: { ...models[id].limit } };
-  }
-  health.models = applied;
-  return GPT6_MODEL_IDS.length;
+  return registerGpt6Budget(config, readContextSettings());
 }
 
 /**
