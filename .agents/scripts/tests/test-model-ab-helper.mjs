@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 Marcus Quinn
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -60,6 +61,21 @@ test("configuration requires a bounded window and distinct issue population", ()
   assert.throws(() => validateExperiment({ ...experiment, issues: [12, 12] }), /invalid model A\/B/);
   assert.throws(() => validateExperiment({ ...experiment, ends_at: "2026-10-01T00:00:00Z" }), /72-hour/);
   assert.throws(() => validateExperiment({ ...experiment, arms: [{ ...experiment.arms[0] }] }), /invalid model A\/B/);
+});
+
+test("deployed symlink invokes the CLI without running it on module import", () => {
+  const parent = process.env.AIDEVOPS_TEMP_DIR || join(homedir(), ".aidevops", ".agent-workspace", "tmp");
+  const directory = mkdtempSync(join(parent, "model-ab-link-test-"));
+  const link = join(directory, "model-ab-helper.mjs");
+  try {
+    symlinkSync(fileURLToPath(new URL("../model-ab-helper.mjs", import.meta.url)), link);
+    const output = execFileSync(process.execPath, [link, "assign", "example/repo", "12"], {
+      encoding: "utf8", env: { ...process.env, AIDEVOPS_MODEL_AB_CONFIG: "" },
+    });
+    assert.deepEqual(JSON.parse(output), { active: false });
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test("report keeps assigned denominators while counting fallback, escalation and accepted child work separately", () => {
