@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.34.23] - 2026-09-23
+
+### Fixed
+
+- fix Linux project-config restore preview owner probe
+- wait for npm publication metadata convergence (#32291)
+- suppress transient dispatch underfill (#32290)
+
 ## [3.34.22] - 2026-09-23
 
 ### Changed
