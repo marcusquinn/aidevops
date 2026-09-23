@@ -31,6 +31,7 @@ import { execSync } from "child_process";
 
 // Extracted modules
 import { createConfigHook, getAstraContextHealth, getGpt6ContextHealth } from "./config-hook.mjs";
+import { createContextBudget } from "./context-budget.mjs";
 import { adaptToolDefinition } from "./tool-definition.mjs";
 import { createMcpSessionRuntime, getOnDemandMcpAgents } from "./mcp-registry.mjs";
 import { enforceManagedMcpArtifactPath } from "./mcp-activation-tool.mjs";
@@ -433,6 +434,7 @@ export async function AidevopsPlugin({ directory, client }) {
     join(AGENTS_DIR, "configs", "model-routing-table.json"),
   ]);
   const agentRoutingState = { tiers: new Map(), pinned: new Set() };
+  const contextBudget = createContextBudget();
   const configHook = createConfigHook({
     agentsDir: AGENTS_DIR,
     workspaceDir: WORKSPACE_DIR,
@@ -625,11 +627,13 @@ export async function AidevopsPlugin({ directory, client }) {
   return {
     // Config: agent index, MCP registration, OAuth pool injection
     config: async (config) => {
+      contextBudget.capture(config);
       // HOTFIX: run initPoolAuth non-blocking — OpenCode 1.4.8 blocks
       // on client.auth.set() inside the config hook. Fire-and-forget so
       // the config hook can complete and the session becomes responsive.
       initPoolAuth(client).catch(() => {});
       const result = await configHook(config);
+      contextBudget.restore(config);
       applyBoundedOperationPermission(config);
       recordPluginHealthStage("config_applied", {
         gpt56_limits: config.provider?.openai?.models?.["gpt-5.6-sol"]?.limit || null,
@@ -647,6 +651,7 @@ export async function AidevopsPlugin({ directory, client }) {
     // Record routed request identity and select parent-safe child effort.
     "chat.message": subagentEffortHooks.chatMessage,
     "chat.params": async (input, output) => {
+      contextBudget.apply(input);
       const { sessionId, modelId } = sessionModelIdentity(input);
       sessionModels.remember(sessionId, modelId);
       await subagentEffortHooks.chatParams(input, output);
