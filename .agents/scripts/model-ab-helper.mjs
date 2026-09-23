@@ -6,7 +6,7 @@
 // worker: the existing availability fallback and capability escalation own
 // recovery, and the observed route must be counted separately from this arm.
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -136,7 +136,7 @@ function run(argv) {
   }
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+if (process.argv[1] && fileURLToPath(import.meta.url) === realpathSync(process.argv[1])) {
   try { run(process.argv.slice(2)); }
   catch (error) { console.error(error.message); process.exitCode = 1; }
 }
