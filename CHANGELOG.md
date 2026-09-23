@@ -10,6 +10,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.34.20] - 2026-09-23
+
+### Added
+
+- expose Firecracker sandbox host-readiness option
+
+### Changed
+
+- Maintenance: mark t18474 complete (pr:#32270 completed:2026-09-23) (#32275)
+- Documentation: add OpenSCAD CAD workflow guidance
+
+### Fixed
+
+- Fix model A/B CLI through deployed symlink
+
 ## [3.34.19] - 2026-09-23
 
 ### Added
