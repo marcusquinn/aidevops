@@ -507,6 +507,133 @@ test("an explicit thinking marker changes the actual child request model", async
   assert.deepEqual(output.message.model, { providerID: "openai", modelID: "sol" });
 });
 
+test("Playwright delegates browser work to Luna xhigh from a Sol parent", async () => {
+  const client = {
+    provider: { list: async () => ({ data: {
+      connected: ["openai"],
+      all: [{ id: "openai", models: {
+        "gpt-6-luna": { id: "gpt-6-luna" }, "gpt-6-sol": { id: "gpt-6-sol" },
+      } }],
+    } }) },
+    session: {
+      get: async ({ path }) => ({ data: path.id === "parent"
+        ? { model: { providerID: "openai", modelID: "gpt-6-sol" }, variant: "medium" }
+        : { id: "child", parentID: "parent", agent: "playwright" } }),
+    },
+  };
+  const routing = { tiers: {
+    simple: { models: ["openai/gpt-6-luna"] },
+    standard: { models: ["openai/terra"] },
+    thinking: { models: ["openai/gpt-6-sol"] },
+  } };
+  const decisions = [];
+  const hooks = createSubagentEffortHooks(client, {
+    modelRouting: routing,
+    agentRoutingState: { tiers: new Map([["playwright", "standard"]]), pinned: new Set() },
+    onRoutingDecision: async (_sessionID, decision) => decisions.push(decision),
+  });
+  const message = { sessionID: "child", agent: "playwright" };
+  await hooks.chatMessage({}, { message, parts: [{ type: "text", text: "[effort:thinking] inspect page" }] });
+  assert.deepEqual(message.model, { providerID: "openai", modelID: "gpt-6-luna" });
+  const params = { options: {} };
+  await hooks.chatParams({ message, provider: { id: "openai" }, model: { id: "gpt-6-luna" } }, params);
+  assert.equal(params.options.reasoningEffort, "xhigh");
+  assert.equal(decisions.at(-1).reason, "browser_delegate");
+  assert.equal(decisions.at(-1).resolvedVariant, "xhigh");
+  await assert.rejects(hooks.chatParams({
+    message, provider: { id: "openai" }, model: { id: "gpt-6-sol" },
+  }, { options: {} }), /Browser child model changed/);
+});
+
+test("same-model Luna browser child is clamped to the parent effort", async () => {
+  const client = {
+    provider: { list: async () => ({ data: {
+      connected: ["openai"],
+      all: [{ id: "openai", models: { "gpt-6-luna": { id: "gpt-6-luna" } } }],
+    } }) },
+    session: { get: async ({ path }) => ({ data: path.id === "parent"
+      ? { model: { providerID: "openai", modelID: "gpt-6-luna" }, variant: "low" }
+      : { id: "child", parentID: "parent" } }) },
+  };
+  const hooks = createSubagentEffortHooks(client, {
+    modelRouting: { tiers: {
+      simple: { models: ["openai/gpt-6-luna"] },
+      standard: { models: ["openai/terra"] },
+      thinking: { models: ["openai/gpt-6-sol"] },
+    } },
+    agentRoutingState: { tiers: new Map([["playwright", "standard"]]), pinned: new Set() },
+  });
+  const message = { sessionID: "child", agent: "playwright" };
+  await hooks.chatMessage({}, { message, parts: [] });
+  const params = { options: {} };
+  await hooks.chatParams({ message, provider: { id: "openai" }, model: { id: "gpt-6-luna" } }, params);
+  assert.equal(params.options.reasoningEffort, "low");
+});
+
+test("Playwright falls back to Sol medium, preserves its route, and respects pins", async () => {
+  const client = {
+    provider: { list: async () => ({ data: {
+      connected: ["openai"],
+      all: [{ id: "openai", models: { "gpt-6-sol": { id: "gpt-6-sol" } } }],
+    } }) },
+    session: { get: async ({ path }) => ({ data: path.id === "parent"
+      ? { model: { providerID: "openai", modelID: "gpt-6-sol" }, variant: "medium" }
+      : { id: "child", parentID: "parent" } }) },
+  };
+  const routing = { tiers: {
+    simple: { models: ["openai/gpt-6-luna"] },
+    standard: { models: ["openai/terra"] },
+    thinking: { models: ["openai/gpt-6-sol"] },
+  } };
+  const output = () => ({ message: { sessionID: "child", agent: "playwright" }, parts: [] });
+  const hooks = createSubagentEffortHooks(client, {
+    modelRouting: routing,
+    agentRoutingState: { tiers: new Map([["playwright", "standard"]]), pinned: new Set() },
+  });
+  const fallback = output();
+  await hooks.chatMessage({}, fallback);
+  assert.deepEqual(fallback.message.model, { providerID: "openai", modelID: "gpt-6-sol" });
+  const params = { options: {} };
+  await hooks.chatParams({ message: fallback.message, provider: { id: "openai" }, model: { id: "gpt-6-sol" } }, params);
+  assert.equal(params.options.reasoningEffort, "medium");
+  await hooks.chatMessage({}, fallback);
+  assert.deepEqual(fallback.message.model, { providerID: "openai", modelID: "gpt-6-sol" });
+
+  const pinned = createSubagentEffortHooks(client, {
+    modelRouting: routing,
+    agentRoutingState: { tiers: new Map(), pinned: new Set(["playwright"]) },
+  });
+  const override = output();
+  await pinned.chatMessage({}, override);
+  assert.equal(override.message.model, undefined);
+});
+
+test("Playwright inherits the parent route when neither browser candidate is connected", async () => {
+  const client = {
+    provider: { list: async () => ({ data: {
+      connected: ["anthropic"],
+      all: [{ id: "anthropic", models: { "claude-opus-4-6": { id: "claude-opus-4-6" } } }],
+    } }) },
+    session: { get: async ({ path }) => ({ data: path.id === "parent"
+      ? { model: { providerID: "anthropic", modelID: "claude-opus-4-6" }, variant: "high" }
+      : { id: "child", parentID: "parent" } }) },
+  };
+  const hooks = createSubagentEffortHooks(client, {
+    modelRouting: { tiers: {
+      simple: { models: ["openai/gpt-6-luna"] },
+      standard: { models: ["openai/terra"] },
+      thinking: { models: ["openai/gpt-6-sol"] },
+    } },
+    agentRoutingState: { tiers: new Map([["playwright", "standard"]]), pinned: new Set() },
+  });
+  const message = { sessionID: "child", agent: "playwright" };
+  await hooks.chatMessage({}, { message, parts: [] });
+  assert.deepEqual(message.model, { providerID: "anthropic", modelID: "claude-opus-4-6" });
+  const params = { options: {} };
+  await hooks.chatParams({ message, provider: { id: "anthropic" }, model: { id: "claude-opus-4-6" } }, params);
+  assert.equal(params.options.reasoningEffort, "high");
+});
+
 test("an explicitly disabled child tier fails closed", async () => {
   const client = {
     provider: { list: async () => ({ data: { connected: [], all: [] } }) },
