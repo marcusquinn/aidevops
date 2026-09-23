@@ -10,6 +10,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.34.19] - 2026-09-23
+
+### Added
+
+- add GPT-6 Sol/Luna 240K context mode
+
+### Changed
+
+- Maintenance: mark t18473 complete (pr:#32261 completed:2026-09-22) (#32263)
+- Documentation: clarify macOS Blender and FreeCAD discovery
+- Maintenance: mark t18472 complete (pr:#32256 completed:2026-09-22) (#32257)
+
+### Fixed
+
+- Restore scripts validator after agent roster expansion
+- preserve Pulse refill budget after label maintenance
+- bound consolidation backfill substage (#32262)
+- fix repo health project config drift
+
 ## [3.34.18] - 2026-09-22
 
 ### Fixed
