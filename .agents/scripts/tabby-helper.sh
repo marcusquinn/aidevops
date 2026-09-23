@@ -53,11 +53,6 @@ _error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
 # --- Preflight checks ---
 _check_prereqs() {
-	if ! command -v python3 >/dev/null 2>&1; then
-		_error "python3 is required but not found"
-		return 1
-	fi
-
 	if [[ ! -f "$REPOS_JSON" ]]; then
 		_error "repos.json not found at $REPOS_JSON"
 		_info "Run 'aidevops init' in your projects first"
@@ -73,21 +68,50 @@ _check_prereqs() {
 	return 0
 }
 
+_tabby_python() {
+	local isolated_python="${HOME}/.aidevops/.agent-workspace/python-env/tabby/bin/python3"
+	if [[ -x "$isolated_python" ]] && "$isolated_python" -c 'import yaml' >/dev/null 2>&1; then
+		printf '%s\n' "$isolated_python"
+	elif command -v python3 >/dev/null 2>&1; then
+		printf '%s\n' python3
+	else
+		_error "No Python with PyYAML is available for Tabby profiles"
+		return 1
+	fi
+	return 0
+}
+
+_check_yaml_dependency() {
+	local python_bin="$1"
+	if ! "$python_bin" -c 'import yaml' >/dev/null 2>&1; then
+		_error "PyYAML is unavailable to $python_bin; Tabby profiles were not modified"
+		_info "Create an isolated environment at ~/.aidevops/.agent-workspace/python-env/tabby and install pinned PyYAML==6.0.3 there"
+		return 1
+	fi
+	return 0
+}
+
 # --- Commands ---
 
 cmd_sync() {
 	if ! _check_prereqs; then
 		return 1
 	fi
+	local python_bin
+	python_bin=$(_tabby_python) || return 1
+	if ! _check_yaml_dependency "$python_bin"; then
+		return 1
+	fi
 
 	_info "Syncing Tabby profiles from repos.json and detected workspaces..."
 
-	# Back up config before modifying
+	# Retain the existing single-backup behavior instead of accumulating a
+	# separate copy on every optional update.
 	local backup="${TABBY_CONFIG}.backup"
 	cp "$TABBY_CONFIG" "$backup"
 
 	local result
-	if result=$(python3 "${SCRIPT_DIR}/tabby-profile-sync.py" \
+	if result=$("$python_bin" "${SCRIPT_DIR}/tabby-profile-sync.py" \
 		--repos-json "$REPOS_JSON" \
 		--tabby-config "$TABBY_CONFIG" 2>&1); then
 		echo "$result"
@@ -106,8 +130,13 @@ cmd_status() {
 	if ! _check_prereqs; then
 		return 1
 	fi
+	local python_bin
+	python_bin=$(_tabby_python) || return 1
+	if ! _check_yaml_dependency "$python_bin"; then
+		return 1
+	fi
 
-	python3 "${SCRIPT_DIR}/tabby-profile-sync.py" \
+	"$python_bin" "${SCRIPT_DIR}/tabby-profile-sync.py" \
 		--repos-json "$REPOS_JSON" \
 		--tabby-config "$TABBY_CONFIG" \
 		--status-only
