@@ -142,7 +142,8 @@ For YouTube transcripts, `python3 .agents/scripts/youtube-transcript.py VIDEO_ID
 tries captions, then local speech-to-text, and emits timestamped JSON. Hosted
 TranscriptAPI access is opt-in (`--source api`). See the
 [transcription guide](.agents/tools/voice/transcription.md) for setup, Mac
-dictation alternatives, and access boundaries.
+dictation alternatives, access boundaries, and optional [local anonymous
+speaker diarization](.agents/tools/voice/nemotron-diarization.md).
 
 The [domain index](.agents/reference/domain-index.md) is the human-readable map
 from user intent to specialist guidance. The generated
