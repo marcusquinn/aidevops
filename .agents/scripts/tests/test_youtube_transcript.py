@@ -26,6 +26,14 @@ class YouTubeTranscriptTest(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 MODULE.video_id(value)
 
+    def test_rejects_language_before_subprocess_or_hosted_request(self):
+        with patch.object(sys, "argv", ["youtube-transcript.py", "dQw4w9WgXcQ", "--language", "en';exit 1"]), \
+             patch.object(MODULE, "local_captions") as captions, patch.object(MODULE, "hosted") as api, \
+             patch.object(sys, "stderr", io.StringIO()):
+            self.assertEqual(MODULE.main(), 1)
+        captions.assert_not_called()
+        api.assert_not_called()
+
     def test_caption_parsing_and_source_preference(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "video.en.srt"

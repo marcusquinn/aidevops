@@ -18,6 +18,7 @@ from urllib.parse import parse_qs, urlencode, urlparse
 
 
 VIDEO_ID = re.compile(r"^[A-Za-z0-9_-]{11}$")
+LANGUAGE = re.compile(r"^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})?$|^all$")
 TIMING = re.compile(
     r"(?P<start>\d{2}:\d{2}:\d{2}[,.]\d{3})\s*-->\s*"
     r"(?P<end>\d{2}:\d{2}:\d{2}[,.]\d{3})"
@@ -144,6 +145,8 @@ def main():
     args = parser.parse_args()
     try:
         identifier = video_id(args.video)
+        if not LANGUAGE.fullmatch(args.language):
+            raise ValueError("Expected a language code such as en, fr, en-US, or all")
         url = "https://www.youtube.com/watch?v=" + identifier
         if args.source == "api":
             segments, language = hosted(url, args.language)
