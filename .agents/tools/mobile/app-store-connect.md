@@ -29,7 +29,7 @@ tools:
 - **Context resolution**: explicit `--app-id` > `.asc/project.json` > prompt user to `asc init` (CI must use `--app-id` or pre-run `asc init`)
 - **GitHub**: https://github.com/tddworks/asc-cli (MIT, Swift, 130+ commands; v0.18.2 adds Resolution Center rejection details and attachment downloads through cookie-authenticated iris APIs; reviewed through `030c463` — the post-release change only stabilizes upstream affordance-registry tests and does not alter CLI behavior)
 - **Website**: https://asccli.app | **Web apps**: [Command Center](https://asccli.app/command-center), [Console](https://asccli.app/console), [Screenshot Studio](https://asccli.app/editor)
-- **Skills**: [Official](https://github.com/tddworks/asc-cli-skills) (Product Page Optimization experiment skill added; reviewed through `644a85fa723f`) | [Community](https://github.com/rorkai/app-store-connect-cli-skills) (23 workflow skills for the separate community CLI, checked at `3b567352099e`)
+- **Skills**: [Official](https://github.com/tddworks/asc-cli-skills) (Product Page Optimization plus first-time product submission and app pricing/availability guidance; reviewed through `debe0d23f1fd`) | [Community](https://github.com/rorkai/app-store-connect-cli-skills) (23 workflow skills for the separate community CLI, checked at `3b567352099e`)
 - **Requirements**: macOS 13+, App Store Connect API key, `jq` (workflow scripts use `jq -r`)
 
 **Dependency check**: Before any `asc` command:
@@ -69,6 +69,14 @@ command -v jq >/dev/null || { brew install jq || exit 1; }
 
 **Discover**: `asc --help`, `asc <cmd> --help`, `asc search "upload build"`, `asc schema --pretty "GET /v1/apps"`, `asc capabilities --area release --output table` | **Output**: `--output json` (default), `--output table`, `--output markdown`, `--pretty`
 
+### Version-gated first-time product submission
+
+The upstream skills reviewed at `debe0d23f1fd` document `asc versions submit --with-products` for submitting a first in-app purchase or subscription with its app version, plus app price and availability commands. This environment has no installed `asc`, so no CLI release/version or command surface is verified here. Before recommending any of these commands, run `asc --version`, `asc versions submit --help`, and the relevant `asc apps --help` or `asc app-availability --help`; use only flags and groups shown by that installed CLI.
+
+For a CLI that explicitly exposes `--with-products`, keep the first submission safe: run `asc versions check-readiness --version-id VERSION_ID`, then `asc versions submit --version-id VERSION_ID --with-products --dry-run` and inspect the included products. A real submit is an external App Store action and requires explicit authorization; do not run it as part of discovery or validation. If the flag is unavailable, do not substitute an unverified review-submission workflow—use the installed CLI's affordances/help or App Store Connect instead.
+
+Similarly, verify price and availability command support before suggesting changes. These are account mutations, not routine release steps; confirm the intended price, territories, content-rights declaration, and App Privacy prerequisites with the authorized operator.
+
 ## Key Workflows
 
 ### Release Flow
@@ -85,7 +93,7 @@ GROUP_ID=$(asc testflight groups list --app-id APP_ID | jq -r '.data[0].id')
 BUILD_ID=$(asc builds list --app-id APP_ID | jq -r '.data[0].id')
 asc builds add-beta-group --build-id "$BUILD_ID" --beta-group-id "$GROUP_ID"
 
-# 3. Link build to version, update What's New, submit
+# 3. Link build to version, update What's New, check readiness, submit
 VERSION_ID=$(asc versions list --app-id APP_ID | jq -r '.data[0].id')
 asc versions set-build --version-id "$VERSION_ID" --build-id "$BUILD_ID"
 asc versions update --version-id "$VERSION_ID" --copyright "© 2026 Example" --release-type AFTER_APPROVAL
