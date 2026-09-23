@@ -190,6 +190,12 @@ yt-dlp-helper.sh video <url> --cookies
 | Missing audio | Ensure `ffmpeg` is installed (`yt-dlp-helper.sh install`) |
 | Format not available | Use `yt-dlp-helper.sh info <url>` to see available formats |
 | Already downloaded | Check `~/.config/yt-dlp/archive.txt` or use `--no-archive` |
+| Captions return 429 | Stop repeated retries; check audio availability separately. Do not treat a 429 as proof the video or every audio track is blocked |
+| Metadata succeeds but media returns 403 | A format listing is not a download. Check the current `yt-dlp` version, then inspect `yt-dlp -F <url>` and try an authorized original-language track; never hard-code another video's format ID |
+| Dubbed audio selected instead of original | Prefer an original track matching the intended language; `youtube-transcript.py` uses language metadata/preferences before falling back to a generic audio track |
+| `ffmpeg` exists but extraction fails | Run `ffmpeg -version` and a short conversion to check dynamic-library linkage, not just `command -v ffmpeg`; repair the package if needed |
+
+Before a host-wide `yt-dlp` upgrade, inspect `brew upgrade --dry-run yt-dlp`: Python, Deno and other shared dependencies may also change. An update may fix extraction, but does not guarantee caption/media access. Avoid aggressive retries, unapproved proxy rotation, and unauthorized access workarounds; see `tools/voice/transcription.md` for local-first and consent boundaries.
 
 ## Dependencies
 

@@ -82,21 +82,30 @@ def local_captions(url, language, temp):
     return None
 
 
+def preferred_audio_format(language):
+    """Prefer the requested language's original track, never a fixed format ID."""
+    if language == "all":
+        return "ba[language_preference>0]/ba"
+    return (f"ba[language^={language}][language_preference>0]/"
+            f"ba[language^={language}]/ba[language_preference>0]/ba")
+
+
 def local_asr(url, temp, options):
     output = temp / "asr.json"
     download = subprocess.run(
-        ["yt-dlp", "--no-playlist", "-x", "--audio-format", "wav",
+        ["yt-dlp", "--no-config", "--no-playlist", "-f", preferred_audio_format(options.language),
+         "-x", "--audio-format", "wav",
          "-o", str(temp / "audio.%(ext)s"), url],
         capture_output=True, text=True, check=False,
     )
     audio = temp / "audio.wav"
     if download.returncode or not audio.is_file():
-        raise ValueError("YouTube audio unavailable for local ASR (check yt-dlp and ffmpeg)")
+        raise ValueError("YouTube audio unavailable for local ASR (inspect yt-dlp -F, language, and ffmpeg -version)")
     helper = Path(__file__).with_name("transcription-helper.sh")
     command = [str(helper), "transcribe", str(audio), "--backend", options.backend,
                "--format", "json", "--output", str(output)]
     if options.language != "all":
-        command.extend(["--language", options.language])
+        command.extend(["--language", options.language.split("-", 1)[0]])
     result = subprocess.run(command, capture_output=True, text=True, check=False)
     if result.returncode:
         raise ValueError("Local ASR failed (check installed yt-dlp, ffmpeg, and selected local backend)")
