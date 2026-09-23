@@ -10,6 +10,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.34.24] - 2026-09-23
+
+### Added
+
+- default OpenCode usable context to 240K across models
+- add opt-in local Nemotron speaker diarization
+- add local-first YouTube transcripts and optional TranscriptAPI
+
+### Changed
+
+- Documentation: document ASC product submission availability (#32300)
+
+### Fixed
+
+- prefer original-language audio for YouTube transcripts
+- preserve reviewed upstream commit pins (#32301)
+- scope upstream-watch dispatch and review ASC skills
+
 ## [3.34.23] - 2026-09-23
 
 ### Fixed
