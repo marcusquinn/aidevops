@@ -7,7 +7,7 @@
     "test": "tests"
   },
   "scripts": {
-    "test": "node --test tests/*.mjs"
+    "test": "node --test tests/*.mjs && bun run tests/bun/test-session-rename-ts.mjs"
   },
   "keywords": [],
   "author": "",
