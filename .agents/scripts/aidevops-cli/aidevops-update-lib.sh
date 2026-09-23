@@ -396,7 +396,13 @@ _update_reconcile_tabby_config() {
 		print_success "Tabby configuration reconciled"
 	else
 		print_warning "Tabby configuration reconciliation encountered a blocker"
-		printf '%s\n' "$result" >&2
+		# YAML parser exceptions may quote private config values. Report the
+		# known dependency failure without dumping arbitrary helper output.
+		if [[ "$result" == *"PyYAML is unavailable"* || "$result" == *"No Python with PyYAML"* ]]; then
+			print_warning "Tabby profile sync needs Python with PyYAML; use an isolated Tabby environment or run aidevops tabby status"
+		else
+			print_warning "Run aidevops tabby status for the detailed failure"
+		fi
 	fi
 	return 0
 }

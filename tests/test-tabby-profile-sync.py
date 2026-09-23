@@ -897,5 +897,35 @@ class TestTabbyShellResolver(unittest.TestCase):
                 )
 
 
+class TestTabbyHelperDependency(unittest.TestCase):
+    """Missing PyYAML must not create a backup or mutate Tabby configuration."""
+
+    def test_missing_yaml_rejects_sync_before_backup(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            (home / ".config" / "aidevops").mkdir(parents=True)
+            (home / ".config" / "aidevops" / "repos.json").write_text("{}\n")
+            tabby_config = home / "config.yaml"
+            original = "profiles: []\ngroups: []\n"
+            tabby_config.write_text(original)
+            bin_dir = home / "bin"
+            bin_dir.mkdir()
+            python_stub = bin_dir / "python3"
+            python_stub.write_text("#!/bin/sh\nexit 1\n")
+            python_stub.chmod(0o700)
+            result = subprocess.run(
+                ["bash", str(SCRIPTS_DIR / "tabby-helper.sh"), "sync"],
+                env={**os.environ, "HOME": str(home), "TABBY_CONFIG": str(tabby_config),
+                     "PATH": f"{bin_dir}:{os.environ['PATH']}"},
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("PyYAML is unavailable", result.stdout + result.stderr)
+            self.assertEqual(tabby_config.read_text(), original)
+            self.assertFalse((home / "config.yaml.backup").exists())
+
+
 if __name__ == "__main__":
     unittest.main()
