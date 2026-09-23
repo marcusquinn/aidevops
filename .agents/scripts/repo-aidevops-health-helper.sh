@@ -489,7 +489,7 @@ _check_version_bumps() {
 			repo_path="${repo_path/#\~/$HOME}"
 			[[ -z "$repo_path" || ! -d "$repo_path" ]] && continue
 			if [[ ! -f "$repo_path/.aidevops.json" ]]; then
-				log_warn "registered-config-missing: $slug — registered directory has no .aidevops.json; run aidevops init after confirming local feature choices"
+				log_warn "registered-config-missing: $slug — registered directory has no .aidevops.json; preview aidevops project-config restore '$slug' (prefer a verified backup)"
 				_R914_REGISTERED_CONFIG_MISSING=$((_R914_REGISTERED_CONFIG_MISSING + 1))
 				continue
 			fi

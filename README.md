@@ -74,6 +74,7 @@ measured result. The canonical purpose and decision criteria are in
 ```bash
 aidevops status                 # Installation, runtime and storage health
 aidevops init                   # Add aidevops conventions to a repository
+aidevops project-config restore owner/repo   # Preview recovery of missing ignored local config
 aidevops update                 # Update the framework and registered projects
 aidevops features               # Discover framework features
 aidevops repos                  # Manage registered projects
@@ -81,6 +82,18 @@ aidevops skills                 # Discover available workflows and capabilities
 aidevops security               # Security posture, hygiene and supply-chain checks
 aidevops metrics generate       # Refresh local repository metrics
 ```
+
+If a registered repository loses its ignored `.aidevops.json`, first preview
+`aidevops project-config restore owner/repo --backup /path/to/verified-backup.json`.
+Without a verified backup, omit `--backup` to preview only the explicitly enabled
+features and init scope recorded in the local registry; other settings (including
+plugins and `counter_branch`) are **unknown**, not defaults or explicit opt-outs.
+After reviewing the target and settings, rerun with `--apply` in an attached
+terminal and type the exact destination path. This operation writes only a new
+ignored local config in the registered checkout; it refuses tracked configs,
+linked-worktree registrations, symlinks, ambiguous entries, and overwrites.
+For tracked configs, use the existing linked-worktree migration instead. Do not
+run the full `aidevops init` workflow as a config-only repair.
 
 In an AI session:
 

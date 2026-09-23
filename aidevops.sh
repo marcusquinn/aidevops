@@ -1120,6 +1120,7 @@ cmd_setup() {
 _help_commands() {
 	echo "Commands:"
 	echo "  init [features]    Initialize aidevops in current project"
+	echo "  project-config restore <slug> [--backup FILE] [--apply]  Restore missing ignored local config only"
 	echo "  setup --scope <s>  Run scoped setup/deploy (opencode, agents, source-access, hooks, tabby, pulse, gui-desktop, ai-session, full)"
 	echo "  init-routines      Scaffold private routines repo (--org <name> | --local)"
 	echo "  upgrade-planning   Upgrade TODO.md/PLANS.md to latest templates"
@@ -1902,6 +1903,7 @@ _main_dispatch() {
 	shift 2
 	case "$command" in
 	init | i) cmd_init "$@" ;;
+	project-config) _dispatch_helper "project-config-restore-helper.sh" "project-config-restore-helper.sh" "$@" ;;
 	setup) cmd_setup "$@" ;;
 	features | f) cmd_features ;;
 	status | s) cmd_status ;;
