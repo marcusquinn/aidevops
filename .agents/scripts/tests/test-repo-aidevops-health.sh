@@ -173,6 +173,7 @@ assert_equal "ignored local config keeps repository clean" "$(/usr/bin/git -C "$
 assert_equal "tracked config remains byte-identical" "$(cksum <"$TRACKED_REPO/.aidevops.json")" "$TRACKED_BEFORE"
 assert_equal "tracked config emits one migration plan" "$(count_migration_plans)" "1"
 assert_equal "registered missing config is not created" "$(test -e "$REGISTERED_MISSING_REPO/.aidevops.json" && printf yes || printf no)" "no"
+assert_contains "missing config guidance uses config-only recovery" "$(<"$HEALTH_LOG")" "aidevops project-config restore 'test/registered-missing'"
 
 STATUS_OUT=$("$HELPER" status 2>&1)
 assert_contains "status reports bump counters" "$STATUS_OUT" "1 bumped, 2 bump-skipped, 0 bump-failed"
