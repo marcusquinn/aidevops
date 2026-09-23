@@ -274,6 +274,37 @@ _update_check_planning() {
 	return 0
 }
 
+_update_gh_apt_candidate() {
+	local installed="$1" apt_policy apt_installed apt_candidate
+	apt_policy=$(_timeout_cmd 30 apt-cache policy gh 2>/dev/null || true)
+	apt_installed=$(printf '%s\n' "$apt_policy" | awk '$1 == "Installed:" {print $2; exit}')
+	apt_candidate=$(printf '%s\n' "$apt_policy" | awk '$1 == "Candidate:" {print $2; exit}')
+	if [[ -n "$apt_candidate" && "$apt_candidate" != "$apt_installed" && "$apt_candidate" != "(none)" ]]; then
+		printf '%s\n' "$apt_candidate" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1
+	else
+		printf '%s\n' "$installed"
+	fi
+	return 0
+}
+
+_update_warn_gh_minimum() {
+	if declare -F aidevops_gh_slurp_supported >/dev/null 2>&1 && ! aidevops_gh_slurp_supported; then
+		local gh_slurp_message=""
+		if declare -F aidevops_gh_slurp_status_message >/dev/null 2>&1; then
+			gh_slurp_message=$(aidevops_gh_slurp_status_message)
+		else
+			gh_slurp_message="GitHub CLI (gh) is below the aidevops minimum for gh api --paginate --slurp"
+		fi
+		print_warning "$gh_slurp_message"
+		if declare -F aidevops_gh_slurp_remediation_hint >/dev/null 2>&1; then
+			print_info "$(aidevops_gh_slurp_remediation_hint)"
+		else
+			print_info "Run aidevops setup or upgrade gh manually, then rerun aidevops status."
+		fi
+	fi
+	return 0
+}
+
 _update_check_tools() {
 	echo ""
 	print_header "Maintaining Key Tools"
@@ -308,20 +339,7 @@ _update_check_tools() {
 	fi
 	local key_tool_cmds="$opencode_binary gh"
 	local key_tool_pkgs="$opencode_package brew:gh"
-	if declare -F aidevops_gh_slurp_supported >/dev/null 2>&1 && ! aidevops_gh_slurp_supported; then
-		local gh_slurp_message=""
-		if declare -F aidevops_gh_slurp_status_message >/dev/null 2>&1; then
-			gh_slurp_message=$(aidevops_gh_slurp_status_message)
-		else
-			gh_slurp_message="GitHub CLI (gh) is below the aidevops minimum for gh api --paginate --slurp"
-		fi
-		print_warning "$gh_slurp_message"
-		if declare -F aidevops_gh_slurp_remediation_hint >/dev/null 2>&1; then
-			print_info "$(aidevops_gh_slurp_remediation_hint)"
-		else
-			print_info "Run aidevops setup or upgrade gh manually, then rerun aidevops status."
-		fi
-	fi
+	_update_warn_gh_minimum
 	local idx=0
 	local opencode_installed="not installed" opencode_registry="unknown"
 	for cmd_name in $key_tool_cmds; do
@@ -338,6 +356,8 @@ _update_check_tools() {
 			brew_bin=$(command -v brew 2>/dev/null || true)
 			if [[ -n "$brew_bin" && -x "$brew_bin" ]]; then
 				latest=$(_timeout_cmd 30 "$brew_bin" info --json=v2 "$brew_pkg" | jq -r '.formulae[0].versions.stable // empty' || true)
+			elif [[ "$brew_pkg" == "gh" ]] && command -v apt-cache >/dev/null 2>&1; then
+				latest=$(_update_gh_apt_candidate "$installed")
 			elif [[ "$brew_pkg" == "gh" ]] && command -v gh &>/dev/null; then latest=$(get_public_release_tag "cli/cli"); fi
 		else latest=$(_timeout_cmd 30 npm view "$pkg_ref" version || true); fi
 		[[ -z "$latest" ]] && continue

@@ -22,6 +22,11 @@ trap 'rm -rf "$SANDBOX"' EXIT
 extract_function() {
 	awk '
 		/^_classify_tool_status\(\)/, /^}$/ { print; next }
+		/^get_apt_candidate\(\)/, /^}$/ { print; next }
+		/^_tool_normalize_version\(\)/, /^}$/ { print; next }
+		/^_tool_latest_version\(\)/, /^}$/ { print; next }
+		/^check_tool\(\)/, /^}$/ { print; next }
+		/^_run_outdated_tool_updates\(\)/, /^}$/ { print; next }
 	' "$TOOL_VERSION_CHECK" >"$SANDBOX/extract.sh"
 	if ! grep -q '^_classify_tool_status()' "$SANDBOX/extract.sh"; then
 		printf 'FAIL: extraction did not capture _classify_tool_status\n' >&2
@@ -41,6 +46,9 @@ source_extracted() {
 	TIMEOUT_COUNT=0
 	UNKNOWN_COUNT=0
 	OUTDATED_PACKAGES=()
+	OUTDATED_TOOL_SPECS=()
+	JSON_RESULTS=()
+	JSON_OUTPUT=true
 	version_lt() {
 		local left="$1"
 		local right="$2"
@@ -59,6 +67,57 @@ source_extracted() {
 
 extract_function
 source_extracted
+
+PKG_QUERY_TIMEOUT=3
+timeout_sec() { shift; "$@"; }
+apt-cache() {
+	printf 'Installed: %s\nCandidate: %s\n' "${TEST_APT_INSTALLED:-2.100.0-1}" "${TEST_APT_CANDIDATE:-2.100.0-1}"
+}
+get_npm_latest() { printf '%s\n' 0.7.0; }
+get_brew_latest() { printf '%s\n' jq-1.8.2; }
+command() {
+	if [[ "${1:-}" == -v && "${2:-}" == brew ]]; then return 1; fi
+	if [[ "${1:-}" == -v && "${2:-}" == apt-get ]]; then return 0; fi
+	builtin command "$@"
+}
+
+[[ "$(get_apt_candidate gh)" == channel_current ]]
+TEST_APT_CANDIDATE=2.101.0-1
+[[ "$(_tool_normalize_version "$(get_apt_candidate gh)")" == 2.101.0 ]]
+[[ "$(_tool_normalize_version jq-1.8.2)" == 1.8.2 ]]
+[[ "$(_tool_normalize_version '')" == unknown ]]
+[[ "$(_tool_latest_version npm playwriter 0.5.0)" == 0.5.0 ]]
+TEST_APT_CANDIDATE=2.100.0-1
+[[ "$(_tool_latest_version brew gh 2.100.0)" == channel_current ]] || {
+	printf 'FAIL: apt-installed tool incorrectly compared to upstream release\n' >&2
+	exit 1
+}
+
+_tool_installed_version() { printf '%s\n' "${TEST_CLI_VERSION:-0.1.0}"; }
+get_npm_pkg_version() { printf '%s\n' "${TEST_PACKAGE_VERSION:-0.3.10}"; }
+_append_tool_json_result() { JSON_RESULTS+=("$5"); }
+_tool_selected_sudo_command() { return 1; }
+
+# A newer installed package with a stale CLI version is diagnostic, not an
+# endless npm reinstall. Empty probes also must never enqueue an update.
+TEST_CLI_VERSION=0.1.0
+TEST_PACKAGE_VERSION=0.3.10
+get_npm_latest() { printf '%s\n' 0.3.10; }
+check_tool npm DSPyGround dspyground --version dspyground 'true'
+[[ "${JSON_RESULTS[0]}" == metadata_mismatch && ${#OUTDATED_PACKAGES[@]} -eq 0 ]]
+get_npm_latest() { printf '\n'; }
+check_tool npm Unknown unknown --version unknown 'true'
+[[ "${JSON_RESULTS[1]}" == unknown && ${#OUTDATED_PACKAGES[@]} -eq 0 ]]
+
+# A successful command that changes neither binary nor package is not updated.
+OUTDATED_PACKAGES=('true')
+OUTDATED_TOOL_SPECS=('npm|example|--version|example|0.1.0|0.3.10')
+TEST_PACKAGE_VERSION=0.1.0
+UPDATE_NOOP_COUNT=0
+UPDATE_FAILURE_COUNT=0
+SUDO_SKIP_COUNT=0
+result=$(_run_outdated_tool_updates)
+[[ "$result" == *'No verified update'* && "$result" != *'Updated and verified'* ]]
 
 status=""
 icon=""
