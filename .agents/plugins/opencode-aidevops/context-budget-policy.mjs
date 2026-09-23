@@ -27,15 +27,16 @@ export function preserveFamilyPreference(model, settings) {
   const id = model.id;
   const astra = id === "gpt-6-astra" || id?.startsWith("gpt-6-astra-");
   const gpt6 = /^gpt-6-(sol|luna)(-fast)?$/.test(id);
-  return (id?.startsWith("gpt-5.6-") && settings.gpt56_context_cap === false) ||
-    (astra && (settings.astra_context_cap === false || settings.astra_compaction_target === 400000)) ||
-    (gpt6 && settings.gpt6_context_cap === false);
+  if (astra && settings.astra_context_cap === false) return true;
+  if (astra && settings.astra_compaction_target === 400000) return true;
+  if (gpt6 && settings.gpt6_context_cap === false) return true;
+  return id?.startsWith("gpt-5.6-") && settings.gpt56_context_cap === false;
 }
 
 export function preserveOpusOverride(model) {
+  if (model.providerID !== "anthropic" || model.id !== "claude-opus-4-7") return false;
   const value = process.env.AIDEVOPS_OPUS_47_CONTEXT;
-  return model.providerID === "anthropic" && model.id === "claude-opus-4-7" &&
-    value !== undefined && Number.isFinite(Number(value)) && Number(value) > 0;
+  return value !== undefined && Number.isFinite(Number(value)) && Number(value) > 0;
 }
 
 export function validWindow(model) {

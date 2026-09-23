@@ -4,7 +4,7 @@
 // ---------------------------------------------------------------------------
 
 import { existsSync, readFileSync } from "fs";
-import { preserveGpt6Limit } from "./context-budget-policy.mjs";
+import { registerGpt6Budget } from "./context-budget-gpt6.mjs";
 import { homedir } from "os";
 import { join } from "path";
 import { applyAgentMcpTools } from "./agent-loader.mjs";
@@ -33,9 +33,6 @@ import {
   ASTRA_COMPACTION_TARGET,
   ASTRA_OUTPUT_DEFAULT,
   CLAUDE_MODEL_LIMITS,
-  GPT6_COMPACTION_TARGET,
-  GPT6_MODEL_IDS,
-  GPT6_OUTPUT_DEFAULT,
   GPT56_CONTEXT_DEFAULT,
   GPT56_INPUT_DEFAULT,
   GPT56_MODEL_IDS,
@@ -43,6 +40,7 @@ import {
 } from "./model-limits.mjs";
 
 export { registerApprovedWorkerPermissions };
+export { getGpt6ContextHealth } from "./context-budget-gpt6.mjs";
 export {
   enforcePublicTriageIsolation,
   enforceTeamInterfaceConversationIsolation,
@@ -240,51 +238,8 @@ export function registerAstraContextLimits(config) {
   return 1;
 }
 
-// Receipts describe the settings actually consumed, not a later settings read.
-const gpt6ContextHealth = new WeakMap();
-
-export function getGpt6ContextHealth(config) {
-  return gpt6ContextHealth.get(config) ?? null;
-}
-
-/** Default GPT-6 Sol/Luna to ~240K usable input unless explicitly customized. */
 export function registerGpt6ContextLimits(config) {
-  const settings = readContextSettings();
-  const managed = settings.gpt6_context_cap !== false;
-  const health = {
-    managed,
-    target: GPT6_COMPACTION_TARGET,
-    auto: config.compaction?.auto !== false,
-  };
-  gpt6ContextHealth.set(config, health);
-  if (!managed) return 0;
-
-  config.provider ??= {};
-  config.provider.openai ??= {};
-  config.provider.openai.models ??= {};
-  const models = config.provider.openai.models;
-  const applied = {};
-  const customized = [];
-  for (const id of GPT6_MODEL_IDS) {
-    const existing = models[id] || {};
-    // Config-hook sees user model overrides, not the built-in provider registry.
-    // Preserve an explicit context/input choice unless the user forced this cap on.
-    if (preserveGpt6Limit(settings, existing)) {
-      customized.push(id);
-      continue;
-    }
-    const output = existing.limit?.output ?? GPT6_OUTPUT_DEFAULT;
-    const reserve = config.compaction?.reserved ?? Math.min(20000, output);
-    const input = GPT6_COMPACTION_TARGET + reserve;
-    models[id] = {
-      ...existing,
-      limit: { ...existing.limit, context: input + output, input, output },
-    };
-    applied[id] = { reserve, limits: { ...models[id].limit } };
-  }
-  health.models = applied;
-  health.customized = customized;
-  return Object.keys(applied).length;
+  return registerGpt6Budget(config, readContextSettings());
 }
 
 /**
