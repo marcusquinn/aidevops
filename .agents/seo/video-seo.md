@@ -57,9 +57,56 @@ Key Moments schema — add `hasPart` to your `VideoObject`:
 
 See `seo/video-schema.md` for complete VideoObject + Clip schema reference.
 
+## Google AI Overview citations from YouTube
+
+For how-to content supported by an owned YouTube video, treat the spoken answer as
+part of the search asset, not just the title and description. In a one-day study
+of 600 US how-to-oriented questions (1,777 AI Overviews, desktop, September 2026),
+83% of the AI Overviews cited at least one YouTube video; 36% of YouTube citations
+linked to a specific second. In 80% of citations, the displayed video snippet
+matched captions alone, versus 2% matching the description alone. These are
+observations about **Google AI Overviews**, not all answer engines or a guarantee
+of citation.
+
+**Production bets to test**:
+
+- Answer the exact audience question plainly near the start, ideally within the
+  first 30 seconds, without withholding the useful step for a long intro. Among
+  timestamped moments with captions, 58% fell in the first 30 seconds; this does
+  not prove moving an answer earlier increases citations.
+- Say the question's natural terms aloud at the answer, then name the step just
+  before demonstrating it. Review the actual captions for errors; do not stuff
+  scripted keywords. Google-linked moments often matched nearby speech, and the
+  line at the linked second more often introduced the answer than adjacent lines.
+- Make each supporting video answer a specific task completely; include accurate
+  chapter markers around meaningful sections when useful to viewers. Chapters
+  and channel size are not established ranking levers: cited videos often had
+  fewer views than uncited YouTube top-ten videos for the same question, and the
+  linked second was no more likely to land exactly on a chapter boundary.
+- Consider a focused Short when the task can be answered briefly (22% of YouTube
+  citations in the study went to Shorts); retain long-form when explanation needs
+  it. Pair the video with the relevant owned page for user benefit, not on the
+  assumption that a video citation transfers to the page.
+
+**Measurement**: For a small, fixed panel of relevant questions, record the
+locale/device/date, AI Overview presence, cited video and timestamp, snippet,
+Google video-carousel position, owned-page citation, and referral/conversion
+outcomes separately. Capture a baseline before changing a video's script or
+chapters and rerun periodically with untreated comparison queries where practical.
+Compare Google AI Overviews separately from AI Mode and other answer engines;
+neither a citation nor a snippet proves the video supplied the answer text.
+
+Source and limitations: [Ivan Builds, 23 September 2026](https://ivanbuilds.com/youtube-ai-overview-citations.html).
+The sample spans 12 chosen topics on one US desktop day; repeated searches of
+the same questions are not independent experiments, and several transcript
+classifications were checked by other AI models rather than humans. Findings
+are correlational; validate on our topics before treating these bets as policy.
+
 ## LLM Answer Engine Optimisation
 
-LLMs cite video via transcript retrieval — not metadata. Transcript quality is the primary signal.
+For answer-engine retrieval, make the spoken content and its captions accurate and
+accessible alongside useful metadata. Do not infer other engines' citation
+mechanisms from the Google AI Overview study above.
 
 **Checklist**:
 
@@ -82,7 +129,7 @@ YouTube Autocomplete → "how to X", "X tutorial", "X explained". Video SERP fea
 | CTR | >4% | Retest thumbnail/title variants |
 | Avg. view duration | >40% | Improve hook (first 30s) |
 | Key Moments impressions | Rising | Tune chapter timestamps |
-| AI citation rate | Tracked | Improve transcript + Speakable |
+| AI citation rate | Tracked by engine/query | Inspect cited moments and captions; test changes against a baseline |
 
 ## Integration Points
 

@@ -81,6 +81,8 @@ subagents:
 
 **AI search (GEO/SRO)**: intent evidence → baseline → fanout → GEO → SRO → hallucination defense → agent discovery. Focus: deterministic retrieval signals (clarity, structure, consistency, discoverability). Scorecard: `seo/ai-search-readiness.md`.
 
+**Owned YouTube support for how-to pages**: Use `seo/video-seo.md` for Google AI Overview citation observations, spoken-answer production bets, and query-level measurement. Keep Google AI Overviews distinct from AI Mode and other answer engines; do not treat a video citation as a citation of the supporting page.
+
 **Evidence decisions**: Use `/marketing-decisions` for an imported, evidence-backed batch when intent mapping, internal-link review, content disposition, or AI visibility needs a reportable proposal. Keep unsupported sources explicit, collect first-party conversion evidence before broad citation polling, and route any proposed local edit through `workflows/marketing-actions.md`.
 
 **SERP/backlinks/technical**: SERP via DataForSEO (comprehensive) or Serper (quick) | Backlinks via DataForSEO or Ahrefs | PageSpeed/CWV: `tools/browser/pagespeed.md` | On-page: DataForSEO | Crawling: `seo/site-crawler.md` | Real-time monitoring: `seo/contentking.md`.
