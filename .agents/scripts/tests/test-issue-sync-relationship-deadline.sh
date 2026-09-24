@@ -72,6 +72,33 @@ _init_relationship_sync_state || fail "relationship invocation state did not ini
 AIDEVOPS_GH_DEADLINE_EPOCH=$(( $(date +%s) + 30 ))
 DRY_RUN=true
 
+cat >"${TMP_DIR}/legacy-TODO.md" <<'LEGACY_EOF'
+- [x] t007.1 Completed historical parent ref:GH#101 completed:2026-01-01
+- [x] t007.2 Completed historical child blocked-by:t007.1 ref:GH#102 completed:2026-01-02
+- [ ] t7 Canonical blocker ref:GH#103
+- [ ] t8 Canonical dependent blocked-by:t7 ref:GH#104
+LEGACY_EOF
+_relationship_prepare_edge_snapshot "${TMP_DIR}/legacy-TODO.md" 0 || fail "completed isolated padded row aborted graph preparation"
+[[ "$_RELATIONSHIP_EDGE_CACHE" == 't8|t7' ]] || fail "safe active dependency was not retained: $_RELATIONSHIP_EDGE_CACHE"
+pass "isolated completed padded history preserves active graph edges"
+
+printf '%s\n' '- [ ] t9 Active dependent blocked-by:t007.2 ref:GH#105' >>"${TMP_DIR}/legacy-TODO.md"
+if _relationship_prepare_edge_snapshot "${TMP_DIR}/legacy-TODO.md" 0 2>"${TMP_DIR}/legacy.err"; then
+	fail "active dependency on a padded ID was silently omitted"
+fi
+grep -q 'Active dependency references historical noncanonical task ID t007.2' "${TMP_DIR}/legacy.err" || fail "active padded reference lacked specific diagnostic"
+pass "active reference to historical ID fails closed"
+
+cat >"${TMP_DIR}/legacy-TODO.md" <<'LEGACY_EOF'
+- [x] t007.2 Completed historical child blocks:t8 ref:GH#102 completed:2026-01-02
+- [ ] t8 Canonical dependent ref:GH#104
+LEGACY_EOF
+if _relationship_prepare_edge_snapshot "${TMP_DIR}/legacy-TODO.md" 0 2>"${TMP_DIR}/legacy.err"; then
+	fail "historical blocks marker to active work was silently omitted"
+fi
+grep -q 'blocks active task t8' "${TMP_DIR}/legacy.err" || fail "historical blocks marker lacked specific diagnostic"
+pass "completed legacy blocks declaration to active task fails closed"
+
 _cache_issue_sync_repository_id example/repo REPO_NODE
 cached_repository_id=$(resolve_repository_node_id example/repo)
 [[ "$cached_repository_id" == "REPO_NODE" ]] || fail "repository identity was not reused within the invocation"

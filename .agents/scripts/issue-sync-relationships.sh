@@ -670,16 +670,66 @@ _emit_phase_dependency_pairs() {
 _RELATIONSHIP_EDGE_CACHE_FILE=""
 _RELATIONSHIP_EDGE_CACHE=""
 
+# A completed, noncanonical historical row cannot be parsed by the issue-sync
+# codec. Only omit it when neither an active declaration nor its own blocks:
+# marker connects it to active work. Compare whole IDs, never numeric aliases.
+_relationship_active_ids_and_refs() {
+	local stripped="$1"
+	local task_line task_id key value ref
+	_RELATIONSHIP_ACTIVE_IDS='|'
+	_RELATIONSHIP_ACTIVE_REFS='|'
+	while IFS= read -r task_line; do
+		[[ "$task_line" =~ ^[[:space:]]*-[[:space:]]+\[[[:space:]\>-]\][[:space:]]+(t[0-9]+(\.[0-9a-z]+)*)[[:space:]] ]] || continue
+		task_id="${BASH_REMATCH[1]}"
+		_RELATIONSHIP_ACTIVE_IDS+="${task_id}|"
+		for key in blocked-by blocks; do
+			if [[ "$task_line" =~ (^|[[:space:]])${key}:([^[:space:]]+) ]]; then
+				value="${BASH_REMATCH[2]//,/ }"
+				for ref in $value; do
+					_RELATIONSHIP_ACTIVE_REFS+="${ref}|"
+				done
+			fi
+		done
+	done <<<"$stripped"
+	return 0
+}
+
+_relationship_skip_completed_legacy_row() {
+	local task_line="$1" task_id="$2"
+	local ref value
+	[[ "$task_line" =~ ^[[:space:]]*-[[:space:]]+\[x\] ]] || return 1
+	[[ "$task_id" =~ ^t[0-9]{1,18}(\.[0-9]{1,18}){0,8}$ ]] || return 1
+	[[ "$_RELATIONSHIP_ACTIVE_REFS" != *"|${task_id}|"* ]] || {
+		print_error "Active dependency references historical noncanonical task ID ${task_id}; migrate that reference without aliasing task IDs"
+		return 1
+	}
+	if [[ "$task_line" =~ (^|[[:space:]])blocks:([^[:space:]]+) ]]; then
+		value="${BASH_REMATCH[2]//,/ }"
+		for ref in $value; do
+			if [[ "$_RELATIONSHIP_ACTIVE_IDS" == *"|${ref}|"* ]]; then
+				print_error "Historical noncanonical task ID ${task_id} blocks active task ${ref}; migrate the relationship without aliasing task IDs"
+				return 1
+			fi
+		done
+	fi
+	return 0
+}
+
 # Emit declared task dependency edges as blocked-task|blocking-task pairs.
 _relationship_declared_edges() {
 	local todo_file="$1"
 	local task_line="" task_id="" parsed="" key="" value="" stripped=""
 	local blocked_by="" blocks="" dep_task_id="" saved_ifs=""
 	stripped=$(strip_code_fences <"$todo_file") || return 1
+	_relationship_active_ids_and_refs "$stripped" || return 1
 	while IFS= read -r task_line; do
 		[[ "$task_line" == *"blocked-by:"* || "$task_line" == *"blocks:"* ]] || continue
 		[[ "$task_line" =~ ^[[:space:]]*-[[:space:]]+\[.\][[:space:]]+(t[0-9]+(\.[0-9a-z]+)*)[[:space:]] ]] || continue
 		task_id="${BASH_REMATCH[1]}"
+		if ! task_identity_validate "$task_id"; then
+			_relationship_skip_completed_legacy_row "$task_line" "$task_id" || return 1
+			continue
+		fi
 		parsed=$(parse_task_line "$task_line") || return 1
 		blocked_by=""
 		blocks=""
