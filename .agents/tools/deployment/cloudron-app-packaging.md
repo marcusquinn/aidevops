@@ -344,6 +344,15 @@ Applied upstream findings read the package manifest from the target repository's
 remote default branch at a captured commit SHA. The generated schema-v2 brief
 includes a canonical Files Scope; a detected upstream release is only a finding,
 not a prepared, build-verified, or published Cloudron update.
+For upstreams whose desktop release tag is a release-only commit while the
+packaged relay image comes from its immediate parent, configure
+`cloudron_package.upstream_image` as described in
+`reference/repos-json-fields.md`. The optional gate resolves that exact parent,
+requires a qualified multi-architecture index and source-bound upstream
+attestation (plus the signed deployment-eligibility predicate when configured),
+and defers worker dispatch while the image is missing. It can
+re-arm one previously blocked, unclaimed package issue on new positive proof,
+without treating a later `main` image as the released artifact.
 When GitHub reports a primary or secondary rate limit, `r916` stops before the
 next package registration and records a reset-aware deferred attempt. Pulse
 retries after the shared cooldown boundary plus bounded jitter instead of using

@@ -134,6 +134,7 @@ explicit values. Package slugs and paths remain local to `repos.json`.
 | `release_workflow` | `.github/workflows/cloudron-package-release.yml` | Thin tag-triggered caller scaffolded by `aidevops init`; existing files are never overwritten. |
 | `upstream_slug` | unset | Upstream GitHub `owner/repo` used for stable-release comparison. Monitoring stays disabled until this is explicitly configured. |
 | `upstream_tag_prefixes` | `["v", ""]` | Non-empty array of tag-stream prefixes. Each value must be a string; ASCII control characters are rejected, while the empty string allows bare semantic tags. Only tags whose configured prefix leaves a semantic version are candidates. |
+| `upstream_image` | unset | Optional release-parent source gate: `{ "repository": "ghcr.io/owner/image", "signer_workflow": "owner/repo/.github/workflows/docker.yml", "qualification_annotation": "index.annotation.key", "eligibility_predicate_type": "https://example.org/attestations/deployment-eligibility/v1" }`. Requires an exact `sha-<first seven parent-SHA>` tag, a linux/amd64 + linux/arm64 OCI index with parent revision and success annotation, and matching upstream keyless SLSA provenance. The optional eligibility predicate requires an additional signed positive source/build/qualification claim. Use only when the upstream's release tag is a one-parent release-only commit and its Docker workflow publishes qualified images at the parent commit. |
 | `monitor_upstream` | `true` when `upstream_slug` is set; otherwise `false` | Include the package in the daily upstream-release routine. |
 | `monitor_compatibility` | `true` | Include the package in the weekly manifest and pinned-base audit. |
 
@@ -168,6 +169,13 @@ The upstream monitor paginates all GitHub releases, excludes drafts and
 prereleases, and chooses the numerically highest stable semantic version from
 the configured streams. Invalid prefix configuration or no matching stable tag
 fails closed with a diagnostic rather than falling back to another stream.
+With `upstream_image` configured, the monitor waits without filing a worker
+issue when the exact release-parent image or required attestations are unavailable. A
+newer passing `main` image never stands in for that release's parent. When
+qualified proof appears, a previously blocked, unclaimed auto-dispatch issue
+may receive one signed retry for its exact source proof; permission holds are
+never retried. The setting is local to registered `repos.json` and does not
+publish, deploy, or relax the package's own release preflight.
 
 The monitors file deduplicated findings only in the package repository and only
 with `ADMIN` or `MAINTAIN` authority. They never build, tag, publish, deploy, or

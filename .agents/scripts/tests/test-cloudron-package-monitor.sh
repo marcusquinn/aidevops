@@ -107,6 +107,7 @@ if [[ "${1:-}" == "api" && "${2:-}" == "/repos/exampleorg/example-package/conten
     printf '\n'
     exit 0
 fi
+source "${0%/*}/gh-source"
 if [[ "${1:-}" == "repo" && "${2:-}" == "view" ]]; then
     printf '%s\n' 'ADMIN'
     exit 0
@@ -131,6 +132,51 @@ exit 1
 GH
 	write_fake_issue_wrapper "$bin_dir"
 	chmod +x "${bin_dir}/gh"
+}
+
+write_fake_source_commands() {
+	local bin_dir="$1"
+	cat >"${bin_dir}/gh-source" <<'SOURCE'
+if [[ "${1:-}" == "api" && "${2:-}" == "repos/exampleorg/upstream/git/ref/tags/desktop-v2.0.0" ]]; then
+    printf '%s\n' '{"object":{"type":"commit","sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}'
+    exit 0
+fi
+if [[ "${1:-}" == "api" && "${2:-}" == "repos/exampleorg/upstream/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" ]]; then
+    printf '%s\n' '{"parents":[{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]}'
+    exit 0
+fi
+if [[ "${1:-}" == "api" && "${2:-}" == "repos/exampleorg/example-package/issues/101" ]]; then
+    if [[ "${MONITOR_ISSUE_STATE:-}" == claimed ]]; then
+        printf '%s\n' '{"state":"open","assignees":[{"login":"exampleorg"}],"labels":[{"name":"auto-dispatch"},{"name":"status:claimed"}]}'
+    else
+        printf '%s\n' '{"state":"open","assignees":[],"labels":[{"name":"auto-dispatch"},{"name":"status:available"}]}'
+    fi
+    exit 0
+fi
+if [[ "${1:-}" == "api" && "${2:-}" == "repos/exampleorg/example-package/issues/101/comments?per_page=100" ]]; then
+    if [[ -f "${MONITOR_TEST_LOG:-/dev/null}" ]] && grep -Fq 'aidevops:cloudron-source-ready ' "$MONITOR_TEST_LOG"; then
+        printf '%s\n' '[{"body":"<!-- aidevops:cloudron-source-ready desktop-v2.0.0-ghcr.io/exampleorg/upstream:sha-bbbbbbb-sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -->","author_association":"OWNER","user":{"login":"exampleorg"}}]'
+    elif [[ -n "${MONITOR_NEWER_PERMISSION:-}" ]]; then
+        printf '[{"id":1,"created_at":"2026-09-24T01:00:00Z","body":"<!-- aidevops:terminal-blocker-circuit revision=012345678901234567890123 blocker=%s -->","author_association":"OWNER","user":{"login":"exampleorg"}},{"id":2,"created_at":"2026-09-24T02:00:00Z","body":"<!-- aidevops:terminal-blocker-circuit revision=012345678901234567890123 blocker=%s -->","author_association":"OWNER","user":{"login":"exampleorg"}}]\n' "${MONITOR_CIRCUIT_BLOCKER}" "${MONITOR_NEWER_PERMISSION}"
+    elif [[ -n "${MONITOR_EXISTING_RETRY:-}" ]]; then
+        printf '[{"id":1,"created_at":"2026-09-24T01:00:00Z","body":"<!-- aidevops:terminal-blocker-circuit revision=012345678901234567890123 blocker=%s -->","author_association":"OWNER","user":{"login":"exampleorg"}},{"id":2,"created_at":"2026-09-24T02:00:00Z","body":"terminal-blocker-circuit:retry","author_association":"OWNER","user":{"login":"exampleorg"}}]\n' "${MONITOR_CIRCUIT_BLOCKER}"
+    else
+        printf '[{"body":"<!-- aidevops:terminal-blocker-circuit revision=012345678901234567890123 blocker=%s -->","author_association":"OWNER","user":{"login":"exampleorg"}}]\n' "${MONITOR_CIRCUIT_BLOCKER:-none}"
+    fi
+    exit 0
+fi
+if [[ "${1:-}" == "attestation" && "${2:-}" == "verify" ]]; then
+    printf 'ATTEST %s\n' "$*" >>"${MONITOR_API_LOG:-/dev/null}"
+    [[ "${MONITOR_IMAGE_STATE:-}" != unattested ]] || exit 1
+    if [[ "$*" == *deployment-eligibility/v1* ]]; then
+        [[ "${MONITOR_IMAGE_STATE:-}" != ineligible ]] || exit 1
+        printf '%s\n' '[{"verificationResult":{"statement":{"subject":[{"name":"ghcr.io/exampleorg/upstream","digest":{"sha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}}],"predicate":{"eligible":true,"source":{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","repository":"exampleorg/upstream"},"build":{"workflow":".github/workflows/docker.yml"},"qualification":{"conclusion":"success"}}},"signature":{"certificate":{"sourceRepositoryDigest":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}}}]'
+        exit 0
+    fi
+    printf '%s\n' '[{"verificationResult":{"statement":{"subject":[{"name":"ghcr.io/exampleorg/upstream","digest":{"sha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}}]},"signature":{"certificate":{"sourceRepositoryDigest":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}}}]'
+    exit 0
+fi
+SOURCE
 	return 0
 }
 
@@ -156,7 +202,33 @@ while IFS= read -r line || [[ -n "$line" ]]; do
     printf '%s\n' "$line" >>"${MONITOR_TEST_LOG}"
 done <"$body_file"
 WRAPPER
-	chmod +x "${bin_dir}/gh_create_issue"
+	cat >"${bin_dir}/gh_issue_comment" <<'COMMENT'
+#!/usr/bin/env bash
+set -euo pipefail
+body_file=""
+while [[ $# -gt 0 ]]; do
+    if [[ "$1" == "--body-file" ]]; then body_file="$2"; break; fi
+    shift
+done
+printf 'CALL_RETRY\n' >>"${MONITOR_TEST_LOG}"
+cat "$body_file" >>"${MONITOR_TEST_LOG}"
+COMMENT
+	cat >"${bin_dir}/docker" <<'DOCKER'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'INSPECT %s\n' "$*" >>"${MONITOR_API_LOG:-/dev/null}"
+if [[ "${MONITOR_IMAGE_STATE:-missing}" == missing ]]; then
+    printf '%s\n' 'not found' >&2
+    exit 1
+fi
+if [[ "${MONITOR_IMAGE_STATE:-}" == unqualified ]]; then
+    printf '%s\n' '{"mediaType":"application/vnd.oci.image.index.v1+json","digest":"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","annotations":{"org.opencontainers.image.revision":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","qualified":"failure"},"manifests":[{"platform":{"os":"linux","architecture":"amd64"}},{"platform":{"os":"linux","architecture":"arm64"}}]}'
+else
+    printf '%s\n' '{"mediaType":"application/vnd.oci.image.index.v1+json","digest":"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","annotations":{"org.opencontainers.image.revision":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","qualified":"success"},"manifests":[{"platform":{"os":"linux","architecture":"amd64"}},{"platform":{"os":"linux","architecture":"arm64"}}]}'
+fi
+DOCKER
+	write_fake_source_commands "$bin_dir"
+	chmod +x "${bin_dir}/gh_create_issue" "${bin_dir}/gh_issue_comment" "${bin_dir}/docker"
 	return 0
 }
 
@@ -545,6 +617,56 @@ test_monitor_rejects_blank_package_title() {
 	return 0
 }
 
+test_monitor_waits_for_release_parent_image_and_rearms_once() {
+	local case_root="${TEST_ROOT}/source-readiness" home_dir="" repo_dir="" bin_dir="" log_file="" api_log="" releases_file="" config_tmp="" blocker="" blocked_log="" permission_blocker=""
+	home_dir="${case_root}/home"
+	repo_dir="${case_root}/package"
+	bin_dir="${case_root}/bin"
+	log_file="${case_root}/issues.log"
+	api_log="${case_root}/api.log"
+	releases_file="${case_root}/releases.json"
+	config_tmp="${case_root}/repos.tmp.json"
+	blocked_log="${case_root}/blocked-issues.log"
+	write_fake_commands "$bin_dir"
+	write_fixture "$home_dir" "$repo_dir"
+	jq '.initialized_repos[0].cloudron_package += {
+		upstream_tag_prefixes: ["desktop-v"], upstream_image: {
+		repository: "ghcr.io/exampleorg/upstream",
+		signer_workflow: "exampleorg/upstream/.github/workflows/docker.yml",
+		qualification_annotation: "qualified",
+		eligibility_predicate_type: "https://exampleorg.test/attestations/deployment-eligibility/v1"}}' "${home_dir}/.config/aidevops/repos.json" >"$config_tmp"
+	mv "$config_tmp" "${home_dir}/.config/aidevops/repos.json"
+	printf '%s\n' '[{"tag_name":"desktop-v2.0.0","draft":false,"prerelease":false}]' >"$releases_file"
+	blocker=$(printf 'v2:target_code_blocker' | shasum -a 256 | cut -c1-24)
+	HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$log_file" MONITOR_API_LOG="$api_log" MONITOR_RELEASES_FILE="$releases_file" MONITOR_CIRCUIT_BLOCKER="$blocker" MONITOR_IMAGE_STATE=missing CLOUDRON_PACKAGE_ISSUE_WRAPPER="${bin_dir}/gh_create_issue" bash "$HELPER" upstream --apply >/dev/null
+	[[ ! -f "$log_file" ]] && assert_equal true true "missing exact-parent image creates no worker issue" || assert_equal true false "missing exact-parent image creates no worker issue"
+	HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$log_file" MONITOR_API_LOG="$api_log" MONITOR_RELEASES_FILE="$releases_file" MONITOR_CIRCUIT_BLOCKER="$blocker" MONITOR_IMAGE_STATE=unqualified CLOUDRON_PACKAGE_ISSUE_WRAPPER="${bin_dir}/gh_create_issue" bash "$HELPER" upstream --apply >/dev/null
+	[[ ! -f "$log_file" ]] && assert_equal true true "unqualified parent image creates no worker issue" || assert_equal true false "unqualified parent image creates no worker issue"
+	HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$log_file" MONITOR_API_LOG="$api_log" MONITOR_RELEASES_FILE="$releases_file" MONITOR_CIRCUIT_BLOCKER="$blocker" MONITOR_IMAGE_STATE=unattested CLOUDRON_PACKAGE_ISSUE_WRAPPER="${bin_dir}/gh_create_issue" bash "$HELPER" upstream --apply >/dev/null
+	[[ ! -f "$log_file" ]] && assert_equal true true "unattested parent image creates no worker issue" || assert_equal true false "unattested parent image creates no worker issue"
+	HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$log_file" MONITOR_API_LOG="$api_log" MONITOR_RELEASES_FILE="$releases_file" MONITOR_CIRCUIT_BLOCKER="$blocker" MONITOR_IMAGE_STATE=ineligible CLOUDRON_PACKAGE_ISSUE_WRAPPER="${bin_dir}/gh_create_issue" bash "$HELPER" upstream --apply >/dev/null
+	[[ ! -f "$log_file" ]] && assert_equal true true "missing eligibility attestation creates no worker issue" || assert_equal true false "missing eligibility attestation creates no worker issue"
+	HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$log_file" MONITOR_API_LOG="$api_log" MONITOR_RELEASES_FILE="$releases_file" MONITOR_CIRCUIT_BLOCKER="$blocker" MONITOR_IMAGE_STATE=ready CLOUDRON_PACKAGE_ISSUE_WRAPPER="${bin_dir}/gh_create_issue" CLOUDRON_PACKAGE_COMMENT_WRAPPER="${bin_dir}/gh_issue_comment" bash "$HELPER" upstream --apply >/dev/null
+	assert_equal 1 "$(grep -c '^CALL exampleorg/example-package$' "$log_file")" "qualified exact-parent image creates one actionable issue"
+	grep -Fq 'desktop-v2.0.0 ghcr.io/exampleorg/upstream:sha-bbbbbbb sha256:cccc' "$log_file" && assert_equal true true "issue records immutable release-parent source proof" || assert_equal true false "issue records immutable release-parent source proof"
+	cp "$log_file" "$blocked_log"
+	permission_blocker=$(printf 'v2:permission_required' | shasum -a 256 | cut -c1-24)
+	HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$blocked_log" MONITOR_API_LOG="$api_log" MONITOR_RELEASES_FILE="$releases_file" MONITOR_CIRCUIT_BLOCKER="$permission_blocker" MONITOR_IMAGE_STATE=ready CLOUDRON_PACKAGE_ISSUE_WRAPPER="${bin_dir}/gh_create_issue" CLOUDRON_PACKAGE_COMMENT_WRAPPER="${bin_dir}/gh_issue_comment" bash "$HELPER" upstream --apply >/dev/null
+	[[ "$(grep -c '^CALL_RETRY$' "$blocked_log" || true)" == 0 ]] && assert_equal true true "positive image proof does not retry permission circuit" || assert_equal true false "positive image proof does not retry permission circuit"
+	HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$blocked_log" MONITOR_API_LOG="$api_log" MONITOR_RELEASES_FILE="$releases_file" MONITOR_CIRCUIT_BLOCKER="$blocker" MONITOR_NEWER_PERMISSION="$permission_blocker" MONITOR_IMAGE_STATE=ready CLOUDRON_PACKAGE_ISSUE_WRAPPER="${bin_dir}/gh_create_issue" CLOUDRON_PACKAGE_COMMENT_WRAPPER="${bin_dir}/gh_issue_comment" bash "$HELPER" upstream --apply >/dev/null
+	[[ "$(grep -c '^CALL_RETRY$' "$blocked_log" || true)" == 0 ]] && assert_equal true true "newer permission hold wins over older target-code circuit" || assert_equal true false "newer permission hold wins over older target-code circuit"
+	HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$blocked_log" MONITOR_API_LOG="$api_log" MONITOR_RELEASES_FILE="$releases_file" MONITOR_CIRCUIT_BLOCKER="$blocker" MONITOR_EXISTING_RETRY=true MONITOR_IMAGE_STATE=ready CLOUDRON_PACKAGE_ISSUE_WRAPPER="${bin_dir}/gh_create_issue" CLOUDRON_PACKAGE_COMMENT_WRAPPER="${bin_dir}/gh_issue_comment" bash "$HELPER" upstream --apply >/dev/null
+	[[ "$(grep -c '^CALL_RETRY$' "$blocked_log" || true)" == 0 ]] && assert_equal true true "existing trusted retry is not duplicated" || assert_equal true false "existing trusted retry is not duplicated"
+	HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$blocked_log" MONITOR_API_LOG="$api_log" MONITOR_RELEASES_FILE="$releases_file" MONITOR_CIRCUIT_BLOCKER="$blocker" MONITOR_ISSUE_STATE=claimed MONITOR_IMAGE_STATE=ready CLOUDRON_PACKAGE_ISSUE_WRAPPER="${bin_dir}/gh_create_issue" CLOUDRON_PACKAGE_COMMENT_WRAPPER="${bin_dir}/gh_issue_comment" bash "$HELPER" upstream --apply >/dev/null
+	[[ "$(grep -c '^CALL_RETRY$' "$blocked_log" || true)" == 0 ]] && assert_equal true true "claimed issue is never rearmed by the routine" || assert_equal true false "claimed issue is never rearmed by the routine"
+	HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$log_file" MONITOR_API_LOG="$api_log" MONITOR_RELEASES_FILE="$releases_file" MONITOR_CIRCUIT_BLOCKER="$blocker" MONITOR_IMAGE_STATE=ready CLOUDRON_PACKAGE_ISSUE_WRAPPER="${bin_dir}/gh_create_issue" CLOUDRON_PACKAGE_COMMENT_WRAPPER="${bin_dir}/gh_issue_comment" bash "$HELPER" upstream --apply >/dev/null
+	HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$log_file" MONITOR_API_LOG="$api_log" MONITOR_RELEASES_FILE="$releases_file" MONITOR_CIRCUIT_BLOCKER="$blocker" MONITOR_IMAGE_STATE=ready CLOUDRON_PACKAGE_ISSUE_WRAPPER="${bin_dir}/gh_create_issue" CLOUDRON_PACKAGE_COMMENT_WRAPPER="${bin_dir}/gh_issue_comment" bash "$HELPER" upstream --apply >/dev/null
+	assert_equal 1 "$(grep -c '^CALL_RETRY$' "$log_file")" "existing target-code circuit receives one proven-source retry"
+	grep -Fq 'terminal-blocker-circuit:retry' "$log_file" && assert_equal true true "ready source retry carries standalone circuit directive" || assert_equal true false "ready source retry carries standalone circuit directive"
+	grep -Fq -- '--source-digest bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' "$api_log" && assert_equal true true "upstream attestation is bound to release-parent commit" || assert_equal true false "upstream attestation is bound to release-parent commit"
+	return 0
+}
+
 main() {
 	TEST_ROOT=$(mktemp -d)
 	trap cleanup EXIT
@@ -558,6 +680,7 @@ main() {
 	test_monitor_rate_limit_fixtures
 	test_monitor_scheduler_cooldown_integration
 	test_monitor_rejects_blank_package_title
+	test_monitor_waits_for_release_parent_image_and_rearms_once
 	printf '\nRan %d tests, %d failed.\n' "$((PASSED + FAILED))" "$FAILED"
 	[[ "$FAILED" -eq 0 ]] || return 1
 	return 0
