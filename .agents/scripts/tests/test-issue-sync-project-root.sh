@@ -82,6 +82,7 @@ fixture_scripts="${TMP}/scripts"
 mkdir -p "$fixture_scripts"
 cp "$SCRIPTS_DIR/pulse-wrapper-cycle.sh" "$fixture_scripts/pulse-wrapper-cycle.sh"
 cp "$SCRIPTS_DIR/planning-publisher.sh" "$fixture_scripts/planning-publisher.sh"
+cp "$SCRIPTS_DIR/pulse-todo-publication.sh" "$fixture_scripts/pulse-todo-publication.sh"
 cp "$SCRIPTS_DIR/pulse-todo-sync-workspace.sh" "$fixture_scripts/pulse-todo-sync-workspace.sh"
 cat >"${fixture_scripts}/issue-sync-helper.sh" <<'FIXTURE'
 #!/usr/bin/env bash
@@ -100,7 +101,12 @@ done
 [[ -n "$repo" && -n "$root" ]] || exit 3
 printf '%s|%s|%s\n' "$command_name" "$repo" "$root" >>"$CALL_LOG"
 if [[ "$command_name" == "pull" ]]; then
-	printf '%s\n' "synced:${repo}" >>"${root}/TODO.md"
+	if [[ "$repo" == "owner/repo-handoff" ]]; then
+		grep -Fq 'ref:GH#301' "${root}/TODO.md" || \
+			printf '%s\n' '- [x] t301 completed ref:GH#301 pr:#77' >>"${root}/TODO.md"
+	else
+		printf '%s\n' "synced:${repo}" >>"${root}/TODO.md"
+	fi
 fi
 if [[ "$command_name" == "pull" && -n "${ADVANCE_REMOTE_ON_PULL:-}" && ! -e "${ADVANCE_REMOTE_MARKER:-}" ]]; then
 	writer="${ADVANCE_REMOTE_WRITER:-}"
@@ -134,6 +140,15 @@ source "$fixture_scripts/pulse-wrapper-cycle.sh"
 # the same module inside the isolated sync scope when it is not already loaded.
 # shellcheck source=/dev/null
 source "$fixture_scripts/planning-publisher.sh"
+# Normal unprotected publication has no existing Pulse handoff. Keep this
+# fixture entirely offline even though production checks for a pending PR.
+gh() {
+	if [[ "$1 $2" == "pr list" ]]; then
+		printf '%s\n' '[]'
+		return 0
+	fi
+	return 1
+}
 
 # Workspace creation must clone only the remote default branch tip.
 _ptsw_create_workspace "file://${remote_a}" || fail "shallow workspace clone failed"
@@ -195,6 +210,94 @@ sync_todo_refs_for_repo owner/repo-b "$repo_b"
 [[ $(canonical_snapshot "$repo_a") == "$snapshot_a" ]] || fail "repo B invocation changed repo A"
 [[ $(canonical_snapshot "$repo_b") == "$snapshot_b" ]] || fail "repo B canonical checkout changed"
 git --git-dir="$remote_b" show main:TODO.md | grep -q '^synced:owner/repo-b$' || fail "repo B remote was not synced"
+
+# A protected default refuses direct publication once. A deterministic branch
+# and reviewable PR survive workspace cleanup; later cycles wait for merge.
+repo_handoff="${TMP}/repo-handoff"
+remote_handoff="${TMP}/remote-handoff.git"
+setup_sync_repo "$repo_handoff" "$remote_handoff"
+original_gh_definition=$(declare -f gh)
+original_push_definition=$(declare -f _planning_publish_push)
+export TEST_PROTECTED_PR_BODY="${TMP}/protected-pr-body"
+export TEST_PROTECTED_PUSHES="${TMP}/protected-pushes"
+export TEST_PROTECTED_PR_BRANCH="${TMP}/protected-pr-branch"
+gh() {
+	if [[ "$1 $2" == "pr list" ]]; then
+		if [[ -f "$TEST_PROTECTED_PR_BODY" ]]; then
+			jq -n --rawfile body "$TEST_PROTECTED_PR_BODY" --rawfile head "$TEST_PROTECTED_PR_BRANCH" \
+			'[ {url:"https://github.com/owner/repo-handoff/pull/1",state:"OPEN",body:$body,headRefName:($head | rtrimstr("\n"))} ]'
+		else
+			printf '%s\n' '[]'
+		fi
+		return 0
+	fi
+	if [[ "$1 $2" == "repo view" ]]; then
+		printf '%s\n' 'WRITE'
+		return 0
+	fi
+	return 1
+}
+gh_create_pr() {
+	local body_file="" previous="" head_branch="" title=""
+	while [[ $# -gt 0 ]]; do
+		case "$previous" in
+		--body-file) body_file="$1" ;;
+		--head) head_branch="$1" ;;
+		--title) title="$1" ;;
+		esac
+		previous="$1"; shift
+	done
+	[[ -n "$body_file" && -f "$body_file" && -n "$head_branch" && "$title" != *'[skip ci]'* ]] || return 1
+	cp "$body_file" "$TEST_PROTECTED_PR_BODY"
+	printf '%s\n' "$head_branch" >"$TEST_PROTECTED_PR_BRANCH"
+	printf '%s\n' 'https://github.com/owner/repo-handoff/pull/1'
+}
+_planning_publish_push() {
+	local workspace="$1" remote="$2" branch="$3" expected="$4" candidate="$5"
+	if [[ "$branch" == "main" ]]; then
+		printf '%s\n' rejected >>"$TEST_PROTECTED_PUSHES"
+		PLANNING_PUBLISH_RESULT="protected_branch_publication_deferred"
+		return 4
+	fi
+	git -C "$workspace" push -q --force-with-lease="refs/heads/${branch}:${expected}" \
+		"$remote" "${candidate}:refs/heads/${branch}"
+}
+protected_rc=0
+sync_todo_refs_for_repo owner/repo-handoff "$repo_handoff" || protected_rc=$?
+[[ "$protected_rc" -eq 4 && -f "$TEST_PROTECTED_PR_BODY" ]] || fail "protected publication did not create a pending PR"
+[[ $(wc -l <"$TEST_PROTECTED_PUSHES") -eq 1 ]] || fail "protected default push was retried"
+if git --git-dir="$remote_handoff" show main:TODO.md | grep -q 'ref:GH#301'; then
+	fail "unmerged TODO projection reached default"
+fi
+protected_rc=0
+sync_todo_refs_for_repo owner/repo-handoff "$repo_handoff" >/dev/null || protected_rc=$?
+[[ "$protected_rc" -eq 4 && $(wc -l <"$TEST_PROTECTED_PUSHES") -eq 1 ]] ||
+	fail "pending PR allowed another protected-default push"
+grep -q 'status=protected_branch_pr_pending repo=owner/repo-handoff pr=' "$WRAPPER_LOGFILE" ||
+	fail "pending protected PR URL was not logged"
+protected_branch=$(git --git-dir="$remote_handoff" for-each-ref --format='%(refname:short)' 'refs/heads/aidevops/pulse-todo-*')
+[[ -n "$protected_branch" ]] || fail "protected handoff branch did not survive workspace cleanup"
+protected_merge="${TMP}/protected-merge"
+git clone --quiet "$remote_handoff" "$protected_merge"
+git -C "$protected_merge" config user.email test@example.com
+git -C "$protected_merge" config user.name Test
+printf '%s\n' 'unrelated upstream advance' >"${protected_merge}/README.md"
+git -C "$protected_merge" add README.md
+git -C "$protected_merge" commit --quiet -m advance-unrelated
+git -C "$protected_merge" push --quiet origin main
+protected_rc=0
+sync_todo_refs_for_repo owner/repo-handoff "$repo_handoff" >/dev/null || protected_rc=$?
+[[ "$protected_rc" -eq 4 && $(wc -l <"$TEST_PROTECTED_PUSHES") -eq 1 ]] ||
+	fail "default-branch advance created a duplicate handoff"
+git -C "$protected_merge" fetch --quiet origin "$protected_branch"
+git -C "$protected_merge" merge --quiet --no-edit "origin/${protected_branch}" || fail "protected PR fixture could not merge"
+git -C "$protected_merge" push --quiet origin main
+sync_todo_refs_for_repo owner/repo-handoff "$repo_handoff" >/dev/null || fail "post-merge TODO sync did not converge"
+git --git-dir="$remote_handoff" show main:TODO.md | grep -q 'ref:GH#301' || fail "merged PR did not publish TODO state"
+[[ $(wc -l <"$TEST_PROTECTED_PUSHES") -eq 1 ]] || fail "post-merge cycle retried protected push"
+eval "$original_gh_definition"
+eval "$original_push_definition"
+unset -f gh_create_pr
 if only_todo_sync_workspace >/dev/null 2>&1; then
 	fail "successful reconciliation left an automation workspace behind"
 fi
@@ -228,7 +331,7 @@ fi
 [[ $(trap -p EXIT) == "$parent_exit_trap_before" ]] || fail "sync scope replaced the caller EXIT trap"
 [[ $(trap -p TERM) == "$parent_term_trap_before" ]] || fail "sync scope replaced the caller TERM trap"
 
-[[ $(wc -l <"$CALL_LOG" | tr -d ' ') -eq 8 ]] || fail "pulse did not make four bound calls per repository"
+[[ $(wc -l <"$CALL_LOG" | tr -d ' ') -eq 24 ]] || fail "pulse did not make four bound calls per invocation"
 if grep -Fq "|${repo_a}" "$CALL_LOG" || grep -Fq "|${repo_b}" "$CALL_LOG"; then
 	fail "registered canonical root was passed to a mutating issue-sync command"
 fi
