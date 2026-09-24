@@ -951,6 +951,17 @@ Setup shortcuts -- the dispatcher has already done these for you:
   Pre-creation is guaranteed by the dispatcher (GH#21353 / t2983 Fix C). If
   WORKER_WORKTREE_PATH is unset, the headless runtime has already aborted — you
   are not running. Do NOT attempt to create a worktree yourself.
+- For project files, always search and read inside the current worktree. Resolve
+  relative paths against the current directory; when a tool needs an absolute
+  project path, prefix it with $WORKER_WORKTREE_PATH. A canonical checkout path
+  from a registry, issue body, or prior log is NOT your project directory: do
+  not Glob/Read there, even for AGENTS.md or .agents/ files. Locate the
+  corresponding tracked file in your worktree instead. Canonical and worktree
+  ignored, untracked, and in-progress files may differ.
+- Do not search the canonical checkout for .venv or project dependencies. Use
+  only a worktree-local environment, following the repository's documented
+  setup when needed. Never seek a broad external_directory grant for the
+  canonical checkout; genuinely external access still needs exact approval.
 - Do NOT call aidevops-update-check.sh -- it exits immediately for headless workers.
 - Do NOT call session-rename or session-rename_sync_branch -- your session title
   is already set by the dispatcher with the issue marker and issue title first
