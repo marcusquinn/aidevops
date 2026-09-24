@@ -278,20 +278,20 @@ grep -q 'status=protected_branch_pr_pending repo=owner/repo-handoff pr=' "$WRAPP
 protected_branch=$(git --git-dir="$remote_handoff" for-each-ref --format='%(refname:short)' 'refs/heads/aidevops/pulse-todo-*')
 [[ -n "$protected_branch" ]] || fail "protected handoff branch did not survive workspace cleanup"
 protected_merge="${TMP}/protected-merge"
-git clone --quiet "$remote_handoff" "$protected_merge"
-git -C "$protected_merge" config user.email test@example.com
-git -C "$protected_merge" config user.name Test
+/usr/bin/git clone --quiet "$remote_handoff" "$protected_merge"
+/usr/bin/git -C "$protected_merge" config user.email test@example.com
+/usr/bin/git -C "$protected_merge" config user.name Test
 printf '%s\n' 'unrelated upstream advance' >"${protected_merge}/README.md"
-git -C "$protected_merge" add README.md
-git -C "$protected_merge" commit --quiet -m advance-unrelated
-git -C "$protected_merge" push --quiet origin main
+/usr/bin/git -C "$protected_merge" add README.md
+/usr/bin/git -C "$protected_merge" commit --quiet -m advance-unrelated
+/usr/bin/git -C "$protected_merge" push --quiet origin main
 protected_rc=0
 sync_todo_refs_for_repo owner/repo-handoff "$repo_handoff" >/dev/null || protected_rc=$?
 [[ "$protected_rc" -eq 4 && $(wc -l <"$TEST_PROTECTED_PUSHES") -eq 1 ]] ||
 	fail "default-branch advance created a duplicate handoff"
-git -C "$protected_merge" fetch --quiet origin "$protected_branch"
-git -C "$protected_merge" merge --quiet --no-edit "origin/${protected_branch}" || fail "protected PR fixture could not merge"
-git -C "$protected_merge" push --quiet origin main
+/usr/bin/git -C "$protected_merge" fetch --quiet origin "$protected_branch"
+/usr/bin/git -C "$protected_merge" merge --quiet --no-edit "origin/${protected_branch}" || fail "protected PR fixture could not merge"
+/usr/bin/git -C "$protected_merge" push --quiet origin main
 sync_todo_refs_for_repo owner/repo-handoff "$repo_handoff" >/dev/null || fail "post-merge TODO sync did not converge"
 git --git-dir="$remote_handoff" show main:TODO.md | grep -q 'ref:GH#301' || fail "merged PR did not publish TODO state"
 [[ $(wc -l <"$TEST_PROTECTED_PUSHES") -eq 1 ]] || fail "post-merge cycle retried protected push"

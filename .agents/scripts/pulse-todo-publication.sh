@@ -4,6 +4,8 @@
 # Protected-default TODO publication: persist an isolated Pulse projection as
 # a reviewable PR, never as a successful default-branch publication.
 
+_PULSE_TODO_HANDOFF_PENDING="pending"
+
 _pulse_todo_handoff_identity() {
 	local workspace="$1" repo_slug="$2" base_sha="$3" changed_paths="$4"
 	local snapshot="" digest=""
@@ -41,7 +43,7 @@ _pulse_todo_handoff_existing() {
 	if [[ "$count" -eq 1 ]]; then
 		_PULSE_TODO_HANDOFF_URL=$(printf '%s\n' "$matches" | jq -r '.[0].url') || return 1
 		[[ -n "$_PULSE_TODO_HANDOFF_URL" ]] || return 1
-		_PULSE_TODO_HANDOFF_STATE="pending"
+		_PULSE_TODO_HANDOFF_STATE="$_PULSE_TODO_HANDOFF_PENDING"
 		return 0
 	fi
 	existing=$(gh pr list --repo "$repo_slug" --head "$branch" --base "$default_branch" \
@@ -54,7 +56,7 @@ _pulse_todo_handoff_existing() {
 	[[ "$body" == *"<!-- aidevops:pulse-todo-handoff id=${handoff_id} -->"* ]] || return 1
 	_PULSE_TODO_HANDOFF_URL=$(printf '%s\n' "$existing" | jq -r '.[0].url') || return 1
 	case "$state" in
-	OPEN) _PULSE_TODO_HANDOFF_STATE="pending" ;;
+	OPEN) _PULSE_TODO_HANDOFF_STATE="$_PULSE_TODO_HANDOFF_PENDING" ;;
 	*) _PULSE_TODO_HANDOFF_STATE="closed" ;;
 	esac
 	return 0
@@ -84,7 +86,7 @@ pulse_todo_publication_handoff() {
 	_pulse_todo_handoff_identity "$workspace" "$repo_slug" "$base_sha" "$changed_paths" || return 1
 	branch="$_PULSE_TODO_HANDOFF_BRANCH"; handoff_id="$_PULSE_TODO_HANDOFF_ID"
 	_pulse_todo_handoff_existing "$repo_slug" "$default_branch" "$branch" "$handoff_id" || return 1
-	[[ "$_PULSE_TODO_HANDOFF_STATE" != "pending" ]] || return 0
+	[[ "$_PULSE_TODO_HANDOFF_STATE" != "$_PULSE_TODO_HANDOFF_PENDING" ]] || return 0
 	[[ "$_PULSE_TODO_HANDOFF_STATE" != "closed" ]] || return 1
 	[[ "$mode" == "publish" ]] || return 4
 	permission=$(gh repo view "$repo_slug" --json viewerPermission --jq '.viewerPermission') || return 1
@@ -124,10 +126,10 @@ Pulse-TODO-Handoff-ID: ${handoff_id}" origin "$branch" "$changed_paths" || publi
 	rm -f "$body_file"
 	if [[ -z "$pr_url" ]]; then
 		_pulse_todo_handoff_existing "$repo_slug" "$default_branch" "$branch" "$handoff_id" || return 1
-		[[ "$_PULSE_TODO_HANDOFF_STATE" == "pending" ]] || return 1
+		[[ "$_PULSE_TODO_HANDOFF_STATE" == "$_PULSE_TODO_HANDOFF_PENDING" ]] || return 1
 	else
 		_PULSE_TODO_HANDOFF_URL="$pr_url"
-		_PULSE_TODO_HANDOFF_STATE="pending"
+		_PULSE_TODO_HANDOFF_STATE="$_PULSE_TODO_HANDOFF_PENDING"
 	fi
 	return 4
 }
