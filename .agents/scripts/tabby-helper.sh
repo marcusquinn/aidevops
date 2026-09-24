@@ -165,13 +165,11 @@ _fix_shell_check_prereqs() {
 	return 0
 }
 
-_fix_shell_patch_config() {
-	# Parses the Tabby YAML with a targeted state machine and inserts
-	# /bin/zsh as the default shell while preserving the existing file shape.
-	# Prints a single status token: OK, FIXED, SKIP:<shell>, WARN, or INVALID.
+_fix_shell_current_command() {
+	# Print the configured local-profile command or a sentinel for absent YAML nodes.
 	local config_path="$1"
-	local current_cmd=""
-	current_cmd=$(awk '
+
+	awk '
 		function trim(s) { sub(/^[[:space:]]+/, "", s); sub(/[[:space:]]+$/, "", s); return s }
 		function key_is(str, key) { return str ~ ("^" key ":[[:space:]]*($|#)") }
 		BEGIN { state="seek_pd"; found_options=0; found_command=0 }
@@ -191,17 +189,13 @@ _fix_shell_patch_config() {
 			}
 
 			if (state=="in_options") {
-				if (stripped !~ /^($|#)/ && indent <= options_indent) {
-					state="done"
-				}
+				if (stripped !~ /^($|#)/ && indent <= options_indent) { state="done" }
 				if (state=="in_options" && indent == options_indent + 2 && stripped ~ /^command:[[:space:]]*/) {
 					value = stripped
 					sub(/^command:[[:space:]]*/, "", value)
 					sub(/[[:space:]]+#.*$/, "", value)
 					value = trim(value)
-					if ((value ~ /^\047.*\047$/) || (value ~ /^\".*\"$/)) {
-						value = substr(value, 2, length(value)-2)
-					}
+					if ((value ~ /^\047.*\047$/) || (value ~ /^\".*\"$/)) { value = substr(value, 2, length(value)-2) }
 					print value
 					found_command=1
 					exit
@@ -209,16 +203,73 @@ _fix_shell_patch_config() {
 			}
 		}
 		END {
-			if (found_command==1) {
-				exit 0
-			}
-			if (found_options==1) {
-				print "__MISSING__"
-			} else {
-				print "__WARN__"
-			}
+			if (found_command==1) { exit 0 }
+			if (found_options==1) { print "__MISSING__" } else { print "__WARN__" }
 		}
-	' "$config_path" 2>/dev/null || printf '%s\n' "__WARN__")
+	' "$config_path" 2>/dev/null || printf '%s\n' "__WARN__"
+
+	return 0
+}
+
+_fix_shell_write_zsh_config() {
+	# Replace local-profile command and args while preserving unrelated YAML shape.
+	local config_path="$1"
+	local tmp_file="$2"
+
+	awk '
+		function key_is(str, key) { return str ~ ("^" key ":[[:space:]]*($|#)") }
+		BEGIN { state="seek_pd"; inserted=0; skip_args=0 }
+		{
+			line=$0
+			stripped=line
+			sub(/^[[:space:]]+/, "", stripped)
+			indent=length(line)-length(stripped)
+
+			if (skip_args==1) {
+				if (stripped ~ /^($|#)/ || indent > args_indent) { next }
+				skip_args=0
+			}
+			if (state=="seek_pd" && key_is(stripped, "profileDefaults")) {
+				state="seek_local"; print line; next
+			}
+			if (state=="seek_local" && key_is(stripped, "local")) {
+				state="seek_options"; print line; next
+			}
+			if (state=="seek_options" && key_is(stripped, "options")) {
+				state="in_options"
+				options_indent=indent
+				child_indent=sprintf("%*s", indent + 2, "")
+				print line
+				print child_indent "command: /bin/zsh"
+				print child_indent "args:"
+				print child_indent "  - '\''-l'\''"
+				inserted=1
+				next
+			}
+			if (state=="in_options") {
+				if (stripped !~ /^($|#)/ && indent <= options_indent) {
+					state="done"; print line; next
+				}
+				if (indent == options_indent + 2 && stripped ~ /^command:[[:space:]]*/) { next }
+				if (indent == options_indent + 2 && key_is(stripped, "args")) {
+					skip_args=1; args_indent=indent; next
+				}
+			}
+			print line
+		}
+		END { if (inserted != 1) { exit 2 } }
+	' "$config_path" >"$tmp_file"
+
+	return 0
+}
+
+_fix_shell_patch_config() {
+	# Parses the Tabby YAML with a targeted state machine and inserts
+	# /bin/zsh as the default shell while preserving the existing file shape.
+	# Prints a single status token: OK, FIXED, SKIP:<shell>, WARN, or INVALID.
+	local config_path="$1"
+	local current_cmd=""
+	current_cmd=$(_fix_shell_current_command "$config_path")
 
 	case "$current_cmd" in
 	"__WARN__")
@@ -237,74 +288,7 @@ _fix_shell_patch_config() {
 	esac
 
 	local tmp_file="${config_path}.tmp.$$"
-	if ! awk '
-		function key_is(str, key) { return str ~ ("^" key ":[[:space:]]*($|#)") }
-		BEGIN {
-			state="seek_pd"
-			inserted=0
-			skip_args=0
-		}
-		{
-			line=$0
-			stripped=line
-			sub(/^[[:space:]]+/, "", stripped)
-			indent=length(line)-length(stripped)
-
-			if (skip_args==1) {
-				if (stripped ~ /^($|#)/ || indent > args_indent) {
-					next
-				}
-				skip_args=0
-			}
-
-			if (state=="seek_pd" && key_is(stripped, "profileDefaults")) {
-				state="seek_local"
-				print line
-				next
-			}
-
-			if (state=="seek_local" && key_is(stripped, "local")) {
-				state="seek_options"
-				print line
-				next
-			}
-
-			if (state=="seek_options" && key_is(stripped, "options")) {
-				state="in_options"
-				options_indent=indent
-				child_indent=sprintf("%*s", indent + 2, "")
-				print line
-				print child_indent "command: /bin/zsh"
-				print child_indent "args:"
-				print child_indent "  - '\''-l'\''"
-				inserted=1
-				next
-			}
-
-			if (state=="in_options") {
-				if (stripped !~ /^($|#)/ && indent <= options_indent) {
-					state="done"
-					print line
-					next
-				}
-				if (indent == options_indent + 2 && stripped ~ /^command:[[:space:]]*/) {
-					next
-				}
-				if (indent == options_indent + 2 && key_is(stripped, "args")) {
-					skip_args=1
-					args_indent=indent
-					next
-				}
-			}
-
-			print line
-		}
-		END {
-			if (inserted != 1) {
-				exit 2
-			}
-		}
-	' "$config_path" >"$tmp_file"; then
+	if ! _fix_shell_write_zsh_config "$config_path" "$tmp_file"; then
 		rm -f "$tmp_file"
 		echo "WARN"
 		return 0
