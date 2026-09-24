@@ -731,7 +731,25 @@ sync_todo_refs_for_repo() (
 		# shellcheck source=planning-publisher.sh
 		source "${script_dir}/planning-publisher.sh"
 	fi
+	# shellcheck source=pulse-todo-publication.sh
+	source "${script_dir}/pulse-todo-publication.sh"
 	changed_paths=$(_planning_publish_changed_paths "$workspace")
+	if [[ -n "$changed_paths" ]]; then
+		local handoff_rc=0
+		pulse_todo_publication_handoff "$workspace" "$repo_slug" "$branch_name" \
+			"$base_sha" "$changed_paths" check || handoff_rc=$?
+		case "$handoff_rc" in
+		0)
+			printf '[pulse-wrapper] TODO ref sync status=protected_branch_pr_pending repo=%s pr=%s wake=pr_merged_or_default_changes\n' \
+				"$repo_slug" "$_PULSE_TODO_HANDOFF_URL" >>"$WRAPPER_LOGFILE"
+			return 4 ;;
+		4) ;; # No handoff yet; try the normal direct path.
+		*)
+			printf '[pulse-wrapper] TODO ref sync status=retryable_failure stage=handoff_lookup repo=%s\n' \
+				"$repo_slug" >>"$WRAPPER_LOGFILE"
+			return 1 ;;
+		esac
+	fi
 	PLANNING_PUBLISH_RESULT=""
 	PLANNING_PUBLICATION_ID=""
 	PLANNING_PUBLISHED_COMMIT=""
@@ -745,8 +763,17 @@ sync_todo_refs_for_repo() (
 		"${PLANNING_PUBLISH_RESULT:-noop}" "$repo_slug" "${PLANNING_PUBLISHED_COMMIT:0:12}" >>"$WRAPPER_LOGFILE" ;;
 	2) printf '[pulse-wrapper] TODO ref sync status=retryable_conflict repo=%s base=%s\n' \
 		"$repo_slug" "${base_sha:0:12}" >>"$WRAPPER_LOGFILE" ;;
-	4) printf '[pulse-wrapper] TODO ref sync status=protected_branch_publication_deferred repo=%s\n' \
-		"$repo_slug" >>"$WRAPPER_LOGFILE" ;;
+	4)
+		local handoff_rc=0
+		pulse_todo_publication_handoff "$workspace" "$repo_slug" "$branch_name" \
+			"$base_sha" "$changed_paths" publish || handoff_rc=$?
+		if [[ "$handoff_rc" -eq 4 ]]; then
+			printf '[pulse-wrapper] TODO ref sync status=protected_branch_pr_pending repo=%s pr=%s wake=pr_merged_or_default_changes\n' \
+				"$repo_slug" "$_PULSE_TODO_HANDOFF_URL" >>"$WRAPPER_LOGFILE"
+		else
+			printf '[pulse-wrapper] TODO ref sync status=protected_branch_publication_deferred repo=%s wake=handoff_recovery\n' \
+				"$repo_slug" >>"$WRAPPER_LOGFILE"
+		fi ;;
 	*) printf '[pulse-wrapper] TODO ref sync status=retryable_failure stage=publication repo=%s rc=%s\n' \
 		"$repo_slug" "$publication_rc" >>"$WRAPPER_LOGFILE" ;;
 	esac
