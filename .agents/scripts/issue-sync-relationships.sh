@@ -673,12 +673,14 @@ _RELATIONSHIP_EDGE_CACHE=""
 # Emit declared task dependency edges as blocked-task|blocking-task pairs.
 _relationship_declared_edges() {
 	local todo_file="$1"
-	local task_line="" task_id="" parsed="" key="" value=""
+	local task_line="" task_id="" parsed="" key="" value="" stripped=""
 	local blocked_by="" blocks="" dep_task_id="" saved_ifs=""
+	stripped=$(strip_code_fences <"$todo_file") || return 1
 	while IFS= read -r task_line; do
-		task_id=$(printf '%s\n' "$task_line" | grep -oE 't[0-9]+(\.[0-9a-z]+)*' | head -1 || true)
-		[[ -n "$task_id" ]] || continue
-		parsed=$(parse_task_line "$task_line")
+		[[ "$task_line" == *"blocked-by:"* || "$task_line" == *"blocks:"* ]] || continue
+		[[ "$task_line" =~ ^[[:space:]]*-[[:space:]]+\[.\][[:space:]]+(t[0-9]+(\.[0-9a-z]+)*)[[:space:]] ]] || continue
+		task_id="${BASH_REMATCH[1]}"
+		parsed=$(parse_task_line "$task_line") || return 1
 		blocked_by=""
 		blocks=""
 		while IFS='=' read -r key value; do
@@ -700,17 +702,29 @@ _relationship_declared_edges() {
 			printf '%s|%s\n' "$dep_task_id" "$task_id"
 		done
 		IFS="$saved_ifs"
-	done < <(strip_code_fences <"$todo_file" | grep -E '^[[:space:]]*- \[.\] t[0-9]+(\.[0-9a-z]+)* ' || true)
+	done <<<"$stripped"
 	return 0
 }
 
 _relationship_edges_for_file() {
 	local todo_file="$1"
 	if [[ "$_RELATIONSHIP_EDGE_CACHE_FILE" != "$todo_file" ]]; then
-		_RELATIONSHIP_EDGE_CACHE=$(_relationship_declared_edges "$todo_file" | LC_ALL=C sort -u)
+		_RELATIONSHIP_EDGE_CACHE=$(set -o pipefail; _relationship_declared_edges "$todo_file" | LC_ALL=C sort -u) || return 1
 		_RELATIONSHIP_EDGE_CACHE_FILE="$todo_file"
 	fi
-	printf '%s\n' "$_RELATIONSHIP_EDGE_CACHE"
+	return 0
+}
+
+_relationship_prepare_edge_snapshot() {
+	local todo_file="$1"
+	local owns_scope="$2"
+	# Child task subshells inherit the complete graph rather than rescan history.
+	_RELATIONSHIP_EDGE_CACHE_FILE=""
+	if ! _relationship_edges_for_file "$todo_file"; then
+		print_error "Cannot build a complete TODO dependency graph"
+		[[ "$owns_scope" -eq 0 ]] || _end_relationship_sync_scope
+		return 1
+	fi
 	return 0
 }
 
@@ -782,7 +796,8 @@ _dependency_cycle_should_skip_edge() {
 	local blocker_num="$4"
 	local todo_file="$5"
 	local edges=""
-	edges=$(_relationship_edges_for_file "$todo_file")
+	_relationship_edges_for_file "$todo_file" || return 1
+	edges="$_RELATIONSHIP_EDGE_CACHE"
 	_declared_dependency_path_exists "$blocker_task" "$blocked_task" "$edges" "" || return 1
 	if [[ "$blocked_num" =~ ^[0-9]+$ && "$blocker_num" =~ ^[0-9]+$ ]] &&
 		((blocked_num < blocker_num)); then
@@ -1386,6 +1401,7 @@ cmd_relationships() {
 	_relationship_restore_suppressed_tasks
 	candidate_total="$_RELATIONSHIP_CANDIDATE_TOTAL"; total="${#_RELATIONSHIP_WORK_TASKS[@]}"
 	pending_before="$total"
+	_relationship_prepare_edge_snapshot "$todo_file" "$owns_scope" || return 1
 	parse_finished=$(date +%s 2>/dev/null || printf '%s' "$parse_started")
 	print_info "Syncing relationships for $candidate_total task(s) in $repo (pending: $total, resume: $_RELATIONSHIP_RESUME_STATUS)"
 	mutation_started="$parse_finished"
@@ -1403,9 +1419,8 @@ cmd_relationships() {
 		attempted=$((attempted + 1))
 		task_retryable=0
 		_relationship_print_progress "$attempted" "$total"
-		# All nested paths must respect the same absolute deadline. Mapping and
-		# hierarchy helpers otherwise perform local work after a transport call
-		# has consumed the final second of the aggregate budget.
+		# Recheck the absolute deadline after progress; mapping and hierarchy
+		# helpers must not run after transport has consumed the remaining budget.
 		if _relationship_deadline_expired; then
 			deadline_exhausted=true
 			_relationship_record_outcome "$_REL_OUTCOME_DEFERRED_DEADLINE"

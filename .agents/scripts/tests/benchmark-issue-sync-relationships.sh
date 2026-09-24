@@ -84,4 +84,25 @@ if ! _declared_dependency_path_exists "t5" "t5" "$graph_edges" $'t5\n'; then
 	exit 1
 fi
 printf 'Traversal: %s\n' "$traversal_metrics"
+
+# Historical rows without dependencies must not incur full parser cost per
+# edge, and nested cycle checks must inherit a complete, reusable snapshot.
+history_todo="${BENCHMARK_DIR}/history-todo.md"
+for ((node = 1; node <= 800; node++)); do
+	printf '%s\n' "- [x] t${node} completed history" >>"$history_todo"
+done
+printf '%s\n' '- [ ] t901 blocked-by:t902 ref:GH#901' \
+	'- [ ] t902 blocked-by:t901 ref:GH#902' >>"$history_todo"
+_RELATIONSHIP_EDGE_CACHE_FILE=""
+_relationship_edges_for_file "$history_todo"
+[[ "$_RELATIONSHIP_EDGE_CACHE" == *'t901|t902'* && \
+	"$_RELATIONSHIP_EDGE_CACHE" == *'t902|t901'* ]] || {
+	printf 'FAIL: history-heavy snapshot omitted a declared edge\n' >&2
+	exit 1
+}
+if ! _dependency_cycle_should_skip_edge t901 t902 901 902 "$history_todo"; then
+	printf 'FAIL: history-heavy snapshot lost deterministic cycle detection\n' >&2
+	exit 1
+fi
+printf 'PASS: history-heavy graph built once and preserved cycle checks\n'
 printf 'PASS: 800-task relationship benchmark captured resources and progress\n'
