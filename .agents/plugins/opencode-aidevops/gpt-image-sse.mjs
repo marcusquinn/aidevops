@@ -102,14 +102,21 @@ async function enforceSseLimit(reader, exceeded, message) {
   throw new Error(message);
 }
 
-export async function parseImageSse(stream) {
+export async function parseImageSse(stream, onReadError) {
   if (!stream?.getReader) throw new Error("OAuth image response did not include an event stream.");
   const reader = stream.getReader();
   const decoder = new TextDecoder();
   let pending = "";
   let totalBytes = 0;
   while (true) {
-    const { done, value } = await reader.read();
+    let chunk;
+    try {
+      chunk = await reader.read();
+    } catch (error) {
+      if (onReadError) return onReadError(error);
+      throw error;
+    }
+    const { done, value } = chunk;
     totalBytes += value?.byteLength || 0;
     await enforceSseLimit(
       reader,

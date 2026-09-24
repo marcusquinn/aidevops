@@ -19,7 +19,68 @@ function splitStream(text, splitAt) {
   });
 }
 
+function brokenStream() {
+  return new ReadableStream({
+    pull() {
+      throw Object.assign(new Error("private prompt and token"), { code: "ECONNRESET" });
+    },
+  });
+}
+
+function assertSafeTransport(error, route, phase, status) {
+  assert.equal(error.code, "IMAGE_TRANSPORT_FAILURE");
+  assert.equal(error.route, route);
+  assert.equal(error.phase, phase);
+  assert.match(error.message, new RegExp(`route=${route} phase=${phase} elapsed_ms=\\d+`));
+  assert.equal(error.message.includes("status="), status !== null);
+  if (status !== null) assert.match(error.message, new RegExp(`status=${status}`));
+  assert.match(error.message, /code=ECONNRESET; provider outcome unconfirmed/);
+  assert.equal(error.message.includes("private prompt and token"), false);
+  assert.equal(error.cause, undefined);
+  return true;
+}
+
 describe("GPT image provider requests", () => {
+  test("classifies OAuth and API pre-header disconnects without retrying", async () => {
+    for (const [route, request] of [["oauth", requestOAuthImage], ["api", requestApiImage]]) {
+      let calls = 0;
+      await assert.rejects(request(
+        { accessToken: "private token" },
+        { prompt: "private prompt", quality: "auto", size: "auto" },
+        [],
+        async () => {
+          calls += 1;
+          throw Object.assign(new Error("private prompt and token"), { code: "ECONNRESET" });
+        },
+      ), (error) => assertSafeTransport(error, route, "request", null));
+      assert.equal(calls, 1);
+    }
+  });
+
+  test("classifies API response-body disconnect after headers", async () => {
+    let calls = 0;
+    await assert.rejects(requestApiImage(
+      { accessToken: "private token" }, { prompt: "private prompt" }, [],
+      async () => {
+        calls += 1;
+        return new Response(brokenStream(), { status: 200 });
+      },
+    ), (error) => assertSafeTransport(error, "api", "response-body", 200));
+    assert.equal(calls, 1);
+  });
+
+  test("classifies OAuth SSE read disconnect without model fallback", async () => {
+    let calls = 0;
+    await assert.rejects(requestOAuthImage(
+      { accessToken: "private token" }, { prompt: "private prompt" }, [],
+      async () => {
+        calls += 1;
+        return new Response(brokenStream(), { status: 200 });
+      },
+    ), (error) => assertSafeTransport(error, "oauth", "response-body", 200));
+    assert.equal(calls, 1);
+  });
+
   test("parses a completed image from split SSE frames", async () => {
     const event = `data: ${JSON.stringify({
       type: "response.output_item.done",
