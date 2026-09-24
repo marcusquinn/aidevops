@@ -20,7 +20,7 @@ assert_reason() {
 }
 
 assert_reason 'COST_BUDGET_EXCEEDED (spent=123 budget=100)' 'cost_budget_exceeded'
-assert_reason 'DISPATCH_BLOCK_REASON reason=dedup_active_claim signal=assigned to runner' 'dedup_active_claim'
+assert_reason 'DISPATCH_BLOCK_REASON reason=dedup_active_claim signal=assigned to runner' 'dedup_active_claim_unverified'
 assert_reason 'DISPATCH_BLOCK_REASON reason=interactive_review_hold signal=interactive review hold label present' 'interactive_review_hold'
 assert_reason 'Dispatch blocked for #4849 in exampleorg/examplerepo: target is a pull request, not a dispatchable issue (GH#22948)' 'pr_target_not_dispatchable'
 assert_reason 'DISPATCH_BLOCK_REASON reason=renovate_dependency_dashboard signal=renovate_dependency_dashboard issue=#24975 repo=marcusquinn/aidevops' 'renovate_dependency_dashboard'
@@ -36,7 +36,7 @@ assert_reason 'DISPATCH_BLOCK_REASON reason=blocked_by_native_lookup_unavailable
 assert_reason 'PR_LOOKUP_RESULT=uncertain reason=timeout scope=open_siblings' 'pr_lookup_uncertain'
 assert_reason 'pre-dispatch validator failed: missing worker context; needs-brief label present' 'missing_worker_context'
 assert_reason 'dedup.worktree_cap blocked by max worktree count' 'local_capacity_gate'
-assert_reason 'dedup guard blocked #303 in some-org/infrastructure' 'dedup_active_claim'
+assert_reason 'dedup guard blocked #303 in some-org/infrastructure' 'dedup_active_claim_unverified'
 assert_reason 'PARENT_TASK_BLOCKED (label=parent-task)' 'parent_task'
 assert_reason 'PUBLICATION_PENDING_BLOCKED (label=publication:pending)' 'publication_pending'
 assert_reason 'NO_AUTO_DISPATCH_BLOCKED (label=no-auto-dispatch)' 'no_auto_dispatch'

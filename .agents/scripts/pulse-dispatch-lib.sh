@@ -300,7 +300,7 @@ _dispatch_stats_increment() {
 _dispatch_stats_increment_candidate_failed() {
 	local reason="$1"
 	case "$reason" in
-		blocked_by_native_lookup_unavailable | blocked_by_unresolved | canary_failed | consolidated | cooldown_no_worker_process | cost_budget_exceeded | dedup_active_claim | dirty_worktree_recovery | ever_nmr_without_approval | footprint_overlap | graphql_circuit_breaker | healthy_pr_backlog | interactive_review_hold | issue_closed | launch_error | local_capacity_gate | missing_worker_context | no_auto_dispatch | no_dispatchable_evidence | no_recent_log_evidence | parent_task | policy_gate | pr_lookup_uncertain | pr_target_not_dispatchable | provider_rate_limit_pressure | renovate_dependency_dashboard | repeated_failure_pressure | runner_health_circuit_breaker | terminal_blocker_circuit | unclassified_signal)
+		blocked_by_native_lookup_unavailable | blocked_by_unresolved | canary_failed | consolidated | cooldown_no_worker_process | cost_budget_exceeded | dedup_active_claim | dedup_active_claim_live_owner | dedup_active_claim_stale_owner | dedup_active_claim_zero_attempt | dedup_active_claim_current_cycle | dedup_active_claim_durable_launch | dedup_active_claim_unverified | dirty_worktree_recovery | dirty_worktree_evidence_unavailable | ever_nmr_without_approval | footprint_overlap | graphql_circuit_breaker | healthy_pr_backlog | interactive_review_hold | issue_closed | launch_error | local_capacity_gate | missing_worker_context | no_auto_dispatch | no_dispatchable_evidence | no_recent_log_evidence | parent_task | policy_gate | pr_lookup_uncertain | pr_target_not_dispatchable | provider_rate_limit_pressure | publication_pending | renovate_dependency_dashboard | repeated_failure_pressure | rest_core_circuit_breaker | runner_health_circuit_breaker | terminal_blocker_circuit | unclassified_signal)
 			;;
 		*)
 			reason="unclassified_signal"
@@ -312,12 +312,47 @@ _dispatch_stats_increment_candidate_failed() {
 }
 
 #######################################
+# Read only this candidate's bounded log evidence since its latest attempt.
+# Other candidates can run concurrently; old reasons for the same issue must
+# never be attributed to a new attempt that failed before emitting a blocker.
+#######################################
+_dispatch_candidate_recent_lines() {
+	local issue_number="$1" repo_slug="$2"
+	[[ -n "${LOGFILE:-}" && -f "$LOGFILE" ]] || return 0
+	awk -v issue="#${issue_number}" -v repo="$repo_slug" '
+		function exact_token(line, token, kind, offset, pos, previous, following) {
+			offset = 1
+			while ((pos = index(substr(line, offset), token)) > 0) {
+				pos += offset - 1
+				previous = pos == 1 ? "" : substr(line, pos - 1, 1)
+				following = substr(line, pos + length(token), 1)
+				if (kind == "issue" && following !~ /[0-9]/) return 1
+				if (kind == "repo" && previous !~ /[[:alnum:]_.\/-]/ && following !~ /[[:alnum:]_.\/-]/) return 1
+				offset = pos + length(token)
+			}
+			return 0
+		}
+		exact_token($0, issue, "issue") && exact_token($0, repo, "repo") {
+			if (index($0, "DISPATCH_CANDIDATE_ATTEMPT ")) { n = 0; next }
+			lines[++n] = $0
+		}
+		END {
+			start = n - 20
+			if (start < 1) { start = 1 }
+			for (i = start; i <= n; i++) { print lines[i] }
+		}
+	' "$LOGFILE" 2>/dev/null
+	return $?
+}
+
+#######################################
 # Classify a failed dispatch_with_dedup return using recent candidate log lines.
 #
 # Arguments:
 #   $1 - issue number
 #   $2 - repo slug
 #   $3 - dispatch rc
+#   $4 - optional pre-accounting log snapshot (may be empty)
 # Stdout: low-cardinality reason token
 #######################################
 _dispatch_candidate_failure_reason() {
@@ -336,15 +371,10 @@ _dispatch_candidate_failure_reason() {
 		return 0
 	fi
 
-	if [[ -n "${LOGFILE:-}" && -f "$LOGFILE" ]]; then
-		recent_lines=$(awk -v issue="#${issue_number}" -v repo="$repo_slug" '
-			index($0, issue) && index($0, repo) { lines[++n] = $0 }
-			END {
-				start = n - 20
-				if (start < 1) { start = 1 }
-				for (i = start; i <= n; i++) { print lines[i] }
-			}
-		' "$LOGFILE" 2>/dev/null) || recent_lines=""
+	if [[ "${4+x}" == x ]]; then
+		recent_lines="$4"
+	else
+		recent_lines=$(_dispatch_candidate_recent_lines "$issue_number" "$repo_slug") || recent_lines=""
 	fi
 
 	if [[ "$recent_lines" == *"has active dispatch comment"* || "$recent_lines" == *"active claim"* ]]; then
@@ -386,7 +416,7 @@ _dispatch_candidate_failure_reason() {
 _dispatch_candidate_benign_block_reason() {
 	local reason="$1"
 	case "$reason" in
-		blocked_by_unresolved | consolidated | dedup_active_claim | dirty_worktree_recovery | footprint_overlap | interactive_review_hold | issue_closed | no_auto_dispatch | parent_task | policy_gate | pr_target_not_dispatchable | renovate_dependency_dashboard | terminal_blocker_circuit)
+		blocked_by_unresolved | consolidated | dedup_active_claim | dedup_active_claim_live_owner | dedup_active_claim_durable_launch | dirty_worktree_recovery | footprint_overlap | interactive_review_hold | issue_closed | no_auto_dispatch | parent_task | policy_gate | pr_target_not_dispatchable | publication_pending | renovate_dependency_dashboard | terminal_blocker_circuit)
 			return 0
 			;;
 	esac
@@ -1928,17 +1958,8 @@ _dispatch_record_nonzero_dispatch_result() {
 	local dispatch_rc="$3"
 	local recent_lines=""
 
+	recent_lines=$(_dispatch_candidate_recent_lines "$issue_number" "$repo_slug") || recent_lines=""
 	echo "[pulse-wrapper] Dispatch_max: skipping #${issue_number} (${repo_slug}) — dispatch_with_dedup returned rc=${dispatch_rc}" >>"$LOGFILE"
-	if [[ -n "${LOGFILE:-}" && -f "$LOGFILE" ]]; then
-		recent_lines=$(awk -v issue="#${issue_number}" -v repo="$repo_slug" '
-			index($0, issue) && index($0, repo) { lines[++n] = $0 }
-			END {
-				start = n - 20
-				if (start < 1) { start = 1 }
-				for (i = start; i <= n; i++) { print lines[i] }
-			}
-		' "$LOGFILE" 2>/dev/null) || recent_lines=""
-	fi
 	if [[ "$recent_lines" == *"worker_launch_rc_"* ]]; then
 		echo "[pulse-wrapper] Dispatch_max: #${issue_number} (${repo_slug}) launch failed before validation" >>"$LOGFILE"
 		_dispatch_stats_increment "dispatch_worker_launch_failed"
@@ -1956,7 +1977,7 @@ _dispatch_record_nonzero_dispatch_result() {
 	fi
 
 	local failure_reason
-	failure_reason=$(_dispatch_candidate_failure_reason "$issue_number" "$repo_slug" "$dispatch_rc")
+	failure_reason=$(_dispatch_candidate_failure_reason "$issue_number" "$repo_slug" "$dispatch_rc" "$recent_lines")
 	if _dispatch_candidate_benign_block_reason "$failure_reason"; then
 		_DISPATCH_CANDIDATE_ELIGIBILITY="$_DISPATCH_ELIGIBILITY_INELIGIBLE"
 		_dispatch_mark_benign_blocked_candidate "$issue_number" "$repo_slug" "$failure_reason"
@@ -1965,7 +1986,7 @@ _dispatch_record_nonzero_dispatch_result() {
 		return 0
 	fi
 
-	echo "[pulse-wrapper] Dispatch_max: #${issue_number} (${repo_slug}) pre-launch failure reason=${failure_reason}" >>"$LOGFILE"
+	echo "[pulse-wrapper] Dispatch_max: #${issue_number} (${repo_slug}) pre-launch failure stage=dispatch_with_dedup rc=${dispatch_rc} reason=${failure_reason}" >>"$LOGFILE"
 	_dispatch_stats_increment_candidate_failed "$failure_reason"
 	return 0
 }
@@ -2057,6 +2078,7 @@ _dispatch_process_candidate() {
 	# GH#18804 + t2989: dispatch with isolation + per-candidate timeout.
 	# Detail (subshell isolation, hang signature, 30s default rationale):
 	# see _dispatch_with_timeout doc comment above.
+	echo "[pulse-wrapper] DISPATCH_CANDIDATE_ATTEMPT #${issue_number} (${repo_slug})" >>"$LOGFILE"
 	local dispatch_rc=0
 	_dispatch_with_timeout "$issue_number" "$repo_slug" "$dispatch_title" "$issue_title" \
 		"$self_login" "$repo_path" "$prompt" "issue-${issue_number}" "$model_override" || dispatch_rc=$?
