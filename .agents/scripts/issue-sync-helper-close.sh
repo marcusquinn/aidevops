@@ -630,9 +630,13 @@ cmd_close() {
 	local map=""
 	while IFS='|' read -r n t; do
 		[[ -z "$n" ]] && continue
-		local tid
-		tid=$(echo "$t" | grep -oE '^t[0-9]+(\.[0-9]+)*' || echo "")
-		[[ -n "$tid" ]] && map="${map}${tid}|${n}"$'\n'
+		local tid=""
+		if [[ "$t" =~ ^(t[0-9]+(\.[0-9]+)*)([[:space:]:]|$) ]]; then
+			tid="${BASH_REMATCH[1]}"
+			if task_identity_validate "$tid"; then
+				map="${map}${tid}|${n}"$'\n'
+			fi
+		fi
 	done < <(echo "$open_json" | jq -r '.[] | "\(.number)|\(.title)"' 2>/dev/null || true)
 	[[ -z "$map" ]] && {
 		print_info "No open issues to close"
@@ -641,11 +645,14 @@ cmd_close() {
 
 	local closed=0 skipped=0 ref_fixed=0
 	while IFS= read -r line; do
-		local task_id
-		task_id=$(echo "$line" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || echo "")
-		[[ -z "$task_id" ]] && continue
-		local task_id_ere
-		task_id_ere=$(_escape_ere "$task_id")
+		local task_id="" task_id_ere=""
+		[[ "$line" =~ ^[[:space:]]*-[[:space:]]+\[(x|-)\][[:space:]]+([^[:space:]]+) ]] || continue
+		task_id="${BASH_REMATCH[2]}"
+		if ! task_id_ere=$(_escape_ere "$task_id"); then
+			skipped=$((skipped + 1))
+			log_verbose "Skipping completed TODO row with invalid task ID: $task_id"
+			continue
+		fi
 		local mapped
 		mapped=$(echo "$map" | grep -E "^${task_id_ere}\|" | head -1 || echo "")
 		[[ -z "$mapped" ]] && continue

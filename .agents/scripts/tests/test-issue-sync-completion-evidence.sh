@@ -320,6 +320,29 @@ else
 	pass "unresolved dependency blocks automatic terminal reconciliation"
 fi
 
+# Bulk close must never treat a malformed historical ID as a canonical prefix
+# or prevent an unrelated valid task from being reconciled.
+# shellcheck source=../task-identity-lib.sh
+source "${TEST_DIR}/../task-identity-lib.sh"
+_escape_ere() { task_identity_escape_ere "$1"; }
+strip_code_fences() { while IFS= read -r line; do printf '%s\n' "$line"; done; }
+bulk_todo=$(mktemp "${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}/bulk-close.XXXXXX")
+printf '%s\n' '- [x] t074 historical row' '- [x] t75suffix malformed suffix' \
+	'- [x] t75 valid row ref:GH#175' >"$bulk_todo"
+_init_cmd() { _CMD_REPO="owner/repo"; _CMD_TODO="$bulk_todo"; return 0; }
+gh_list_issues() { printf '%s\n' '[{"number":174,"title":"t074: historical"},{"number":176,"title":"t75suffix: invalid"},{"number":175,"title":"t75: valid"}]'; }
+_do_close() { BULK_CLOSED="${BULK_CLOSED:-}${1}|${2}"; return 0; }
+print_info() { BULK_SUMMARY="$1"; return 0; }
+DRY_RUN=true
+BULK_CLOSED=""
+BULK_SUMMARY=""
+if cmd_close && [[ "$BULK_CLOSED" == "t75|175" && "$BULK_SUMMARY" == *"1 closed, 2 skipped"* ]]; then
+	pass "bulk close skips malformed historical IDs without truncation or stopping valid work"
+else
+	fail "bulk close mishandled historical IDs: closed=$BULK_CLOSED summary=$BULK_SUMMARY"
+fi
+rm -f "$bulk_todo"
+
 if [[ "$FAIL" -eq 0 ]]; then
 	printf 'All %d tests passed\n' "$PASS"
 	exit 0
