@@ -390,6 +390,59 @@ test_pr_target_reason_is_classified_as_benign_block() {
 	return 0
 }
 
+test_candidate_reason_uses_current_attempt_only() {
+	reset_guardrail_env
+	printf '%s\n' '[dispatch_with_dedup] DISPATCH_BLOCK_REASON reason=policy_gate issue=#4772 repo=exampleorg/examplerepo' \
+		'[pulse-wrapper] DISPATCH_CANDIDATE_ATTEMPT #4772 (exampleorg/examplerepo)' \
+		'[pulse-wrapper] DISPATCH_CANDIDATE_ATTEMPT #47720 (exampleorg/examplerepo)' \
+		'[dispatch_with_dedup] DISPATCH_BLOCK_REASON reason=policy_gate issue=#47720 repo=exampleorg/examplerepo' \
+		'[pulse-wrapper] DISPATCH_CANDIDATE_ATTEMPT #4772 (exampleorg/examplerepo-extra)' \
+		'[dispatch_with_dedup] DISPATCH_BLOCK_REASON reason=policy_gate issue=#4772 repo=exampleorg/examplerepo-extra' >>"$LOGFILE"
+	_dispatch_record_nonzero_dispatch_result 4772 exampleorg/examplerepo 3
+	if grep -q 'pre-launch failure stage=dispatch_with_dedup rc=3 reason=no_recent_log_evidence' "$LOGFILE" &&
+		grep -q '^dispatch_candidate_failed_reason_no_recent_log_evidence$' "$STATS_COUNTER_FILE" &&
+		! grep -q '^dispatch_candidate_failed_reason_unclassified_signal$' "$STATS_COUNTER_FILE"; then
+		print_result "guardrail: stale blocker and accounting line cannot obscure absent current evidence" 0
+	else
+		print_result "guardrail: stale blocker and accounting line cannot obscure absent current evidence" 1
+	fi
+	return 0
+}
+
+test_candidate_reason_preserves_current_typed_blocker() {
+	reset_guardrail_env
+	printf '%s\n' '[pulse-wrapper] DISPATCH_CANDIDATE_ATTEMPT #4772 (exampleorg/examplerepo)' \
+		'[dispatch_with_dedup] DISPATCH_BLOCK_REASON reason=publication_pending issue=#4772 repo=exampleorg/examplerepo' >>"$LOGFILE"
+	_dispatch_record_nonzero_dispatch_result 4772 exampleorg/examplerepo 3
+	if grep -q 'blocked:publication_pending benign dispatch block' "$LOGFILE" &&
+		! grep -q '^dispatch_candidate_failed_reason_unclassified_signal$' "$STATS_COUNTER_FILE"; then
+		print_result "guardrail: current typed blocker remains candidate-scoped and benign" 0
+	else
+		print_result "guardrail: current typed blocker remains candidate-scoped and benign" 1
+	fi
+	return 0
+}
+
+test_typed_candidate_reasons_survive_accounting() {
+	reset_guardrail_env
+	local reason=""
+	for reason in dedup_active_claim_unverified publication_pending rest_core_circuit_breaker dirty_worktree_evidence_unavailable; do
+		_dispatch_stats_increment_candidate_failed "$reason"
+		if ! grep -q "^dispatch_candidate_failed_reason_${reason}$" "$STATS_COUNTER_FILE"; then
+			print_result "guardrail: typed candidate reasons survive accounting" 1 "reason=${reason}"
+			return 0
+		fi
+	done
+	if _dispatch_candidate_benign_block_reason dedup_active_claim_unverified ||
+		_dispatch_candidate_benign_block_reason dirty_worktree_evidence_unavailable ||
+		! _dispatch_candidate_benign_block_reason publication_pending; then
+		print_result "guardrail: typed candidate reasons survive accounting" 1 "incorrect admission class"
+	else
+		print_result "guardrail: typed candidate reasons survive accounting" 0
+	fi
+	return 0
+}
+
 test_deterministic_block_reasons_are_benign() {
 	reset_guardrail_env
 	local reason failures=0
@@ -752,6 +805,9 @@ test_clean_state_preserves_available_slots
 test_disabled_guardrail_still_updates_available_slots_gauge
 test_interactive_hold_reason_is_classified
 test_pr_target_reason_is_classified_as_benign_block
+test_candidate_reason_uses_current_attempt_only
+test_candidate_reason_preserves_current_typed_blocker
+test_typed_candidate_reasons_survive_accounting
 test_deterministic_block_reasons_are_benign
 test_benign_block_ledger_is_cycle_local_and_cleaned
 test_stale_benign_block_ledgers_are_reaped_safely
