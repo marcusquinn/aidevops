@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.34.27] - 2026-09-24
+
+### Changed
+
+- Maintenance: sync verified TODO refs
+
+### Fixed
+
+- preserve operator OpenCode agents and bounded workers
+- Gate Cloudron package findings on release-parent proof
+- bootstrap Tabby YAML runtime automatically
+
 ## [3.34.26] - 2026-09-24
 
 ### Changed
