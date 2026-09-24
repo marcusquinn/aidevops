@@ -52,6 +52,23 @@ Your agent instructions here.
 
 Custom agents are discoverable by the framework like any other agent.
 
+### Operator-defined OpenCode workers
+
+Keep operator model-pinned agents in `~/.config/opencode/agent/<name>.md` with
+`mode: subagent` in their frontmatter. Aidevops regeneration preserves these
+files and only removes its own marked stubs. To allow Build+ to invoke selected
+operator workers, list their **exact file stems**, one per line, in
+`~/.config/aidevops/opencode-operator-subagents.txt` (blank lines and `#`
+comments are ignored). For example, a file containing `my-worker` permits only
+`my-worker`, not all installed workers. The agent file must exist and be an
+unmarked operator-owned subagent; missing, generated, or primary agents are
+ignored. The allowlist and agent file must be owned by the current user and
+not group- or world-writable. Build+ retains its `"*": "deny"` Task rule, and the operator agent
+retains its own `model:` pin. Regenerate OpenCode configuration with setup and
+restart OpenCode to load the new permissions and agents. If an older installation
+has unmarked aidevops stubs, they are conservatively preserved; inspect and
+remove obsolete stubs manually only after confirming ownership.
+
 ## Draft Agents
 
 `draft/` is for experimental work — agents you're developing or testing before deciding whether to contribute upstream:

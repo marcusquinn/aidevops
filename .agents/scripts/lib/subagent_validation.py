@@ -127,7 +127,7 @@ def _resolve_display_to_filename_fn(fn):
 
 
 def _collect_missing_for_agent(display_name, agent_config, display_to_filename_fn,
-                               all_subagent_files, all_subagent_paths):
+                                all_subagent_files, all_subagent_paths, operator_subagents):
     """Return list of (display_name, subagent_ref) missing refs for one agent."""
     task_perms = agent_config.get('permission', {}).get('task', {})
     if not task_perms:
@@ -137,7 +137,8 @@ def _collect_missing_for_agent(display_name, agent_config, display_to_filename_f
     missing = []
     for subagent_name in task_perms:
         if (subagent_name == '*' or subagent_name in BUILTIN_SUBAGENTS
-                or subagent_name in PLUGIN_SUBAGENTS):
+                or subagent_name in PLUGIN_SUBAGENTS
+                or (display_name == "Build+" and subagent_name in operator_subagents)):
             continue
         if not subagent_ref_exists(display_name, subagent_name, agent_slug,
                                    all_subagent_files, all_subagent_paths):
@@ -145,7 +146,8 @@ def _collect_missing_for_agent(display_name, agent_config, display_to_filename_f
     return missing
 
 
-def validate_subagent_refs(primary_agents, agents_dir, display_to_filename_fn=None):
+def validate_subagent_refs(primary_agents, agents_dir, display_to_filename_fn=None,
+                           operator_subagents=frozenset()):
     """Validate subagent references against actual files.
 
     Args:
@@ -164,5 +166,5 @@ def validate_subagent_refs(primary_agents, agents_dir, display_to_filename_fn=No
     for display_name, agent_config in primary_agents.items():
         missing_refs.extend(_collect_missing_for_agent(
             display_name, agent_config, resolved_fn,
-            all_subagent_files, all_subagent_paths))
+            all_subagent_files, all_subagent_paths, operator_subagents))
     return missing_refs

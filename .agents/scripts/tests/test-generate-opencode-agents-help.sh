@@ -85,6 +85,52 @@ run_observational_case -h 0
 run_observational_case help 0
 run_observational_case --unsupported 2
 
+# The deprecated generator still runs as a setup fallback. Exercise its real
+# entry point in an isolated HOME to catch directory-wide deletion regressions.
+legacy_home="$TEST_ROOT/legacy-generation"
+legacy_agents="$legacy_home/.config/opencode/agent"
+legacy_sources="$legacy_home/.aidevops/agents/tools/workers"
+mkdir -p "$legacy_agents" "$legacy_sources"
+cat >"$legacy_agents/operator-worker.md" <<'EOF_OPERATOR'
+---
+mode: subagent
+model: example-provider/pinned-model
+---
+Operator prompt
+EOF_OPERATOR
+cp "$legacy_agents/operator-worker.md" "$legacy_home/operator-original.md"
+cat >"$legacy_agents/obsolete.md" <<'EOF_STALE'
+---
+mode: subagent
+---
+<!-- aidevops:generated-subagent -->
+Old generated stub
+EOF_STALE
+cat >"$legacy_sources/operator-worker.md" <<'EOF_COLLISION'
+---
+mode: subagent
+---
+Colliding framework source
+EOF_COLLISION
+cat >"$legacy_sources/framework-worker.md" <<'EOF_FRAMEWORK'
+---
+mode: subagent
+---
+Framework worker
+EOF_FRAMEWORK
+for iteration in 1 2; do
+	if HOME="$legacy_home" bash "$GENERATOR" >"$TEST_ROOT/legacy-generator-output" 2>&1 &&
+		cmp -s "$legacy_agents/operator-worker.md" "$legacy_home/operator-original.md" &&
+		[[ ! -e "$legacy_agents/obsolete.md" ]] &&
+		grep -q '^<!-- aidevops:generated-subagent -->$' "$legacy_agents/framework-worker.md"; then
+		printf '%sPASS%s deprecated generator preserves operator definitions on run %s\n' "$GREEN" "$NC" "$iteration"
+		((PASS++))
+	else
+		printf '%sFAIL%s deprecated generator damaged operator definitions on run %s\n' "$RED" "$NC" "$iteration"
+		((FAIL++))
+	fi
+done
+
 printf '\n%s%d passed, %d failed%s\n' "$GREEN" "$PASS" "$FAIL" "$NC"
 if [[ "$FAIL" -eq 0 ]]; then
 	exit 0

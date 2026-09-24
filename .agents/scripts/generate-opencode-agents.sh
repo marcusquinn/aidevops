@@ -25,6 +25,11 @@
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
+# shellcheck source=lib/opencode-agent-ownership.sh
+source "${SCRIPT_DIR}/lib/opencode-agent-ownership.sh"
+# Reuse the unified generators collision resolver for deterministic legacy output.
+# shellcheck source=generate-runtime-config-agents.sh
+source "${SCRIPT_DIR}/generate-runtime-config-agents.sh"
 
 set -euo pipefail
 
@@ -117,13 +122,17 @@ legacy_files=(
 	"plan-plus.md" "aidevops.md" "Browser-Extension-Dev.md" "Mobile-App-Dev.md" "AGENTS.md"
 )
 for f in "${legacy_files[@]}"; do
-	rm -f "$OPENCODE_AGENT_DIR/$f"
+	if _opencode_generated_agent_owned "$OPENCODE_AGENT_DIR/$f"; then
+		rm -f "$OPENCODE_AGENT_DIR/$f"
+	fi
 done
 
 # Remove loop-state files that were incorrectly created as agents
 # These are runtime state files, not agents
 for f in ralph-loop.local.md quality-loop.local.md full-loop.local.md loop-state.md re-anchor.md postflight-loop.md; do
-	rm -f "$OPENCODE_AGENT_DIR/$f"
+	if _opencode_generated_agent_owned "$OPENCODE_AGENT_DIR/$f"; then
+		rm -f "$OPENCODE_AGENT_DIR/$f"
+	fi
 done
 
 # =============================================================================
@@ -151,8 +160,8 @@ echo -e "  ${GREEN}✓${NC} Primary agents configured in opencode.json"
 
 echo -e "${BLUE}Generating subagent markdown files...${NC}"
 
-# Remove existing subagent files (regenerate fresh)
-find "$OPENCODE_AGENT_DIR" -name "*.md" -type f -delete 2>/dev/null || true
+# Remove only aidevops-owned generated files; preserve operator definitions.
+_opencode_clean_generated_agents "$OPENCODE_AGENT_DIR"
 
 # Generate SUBAGENT files from subfolders
 # Some subagents need specific MCP tools enabled
@@ -272,7 +281,10 @@ _write_sandboxed_agent() {
 		fm_delim == 2 { exit }
 	' "$f" 2>/dev/null)
 	if [[ -n "$src_bash_false" ]]; then
-		sed \
+		awk '
+			{ print }
+			$0 == "---" { delimiters++; if (delimiters == 2) print "<!-- aidevops:generated-subagent -->" }
+		' "$f" | sed \
 			-e 's/^model: opus$/model: anthropic\/claude-opus-4-6/' \
 			-e 's/^model: sonnet$/model: anthropic\/claude-sonnet-4-6/' \
 			-e 's/^model: haiku$/model: anthropic\/claude-haiku-4-5/' \
@@ -327,6 +339,7 @@ _write_permissive_stub() {
 		[[ -n "$extra_tools" ]] && printf '%s\n' "$extra_tools"
 		printf '%s\n' \
 			"---" \
+			"<!-- aidevops:generated-subagent -->" \
 			"" \
 			"**MANDATORY**: Your first action MUST be to read ~/.aidevops/agents/${rel_path} and follow ALL rules within it."
 	} >"$OPENCODE_AGENT_DIR/$name.md"
@@ -341,6 +354,7 @@ generate_subagent_stub() {
 	local name
 	name=$(basename "$f" .md)
 	[[ "$name" == "AGENTS" || "$name" == "README" ]] && return 0
+	_opencode_agent_output_available "$OPENCODE_AGENT_DIR/$name.md" || return 0
 
 	local rel_path="${f#"$AGENTS_DIR"/}"
 	local src_desc extra_tools
@@ -354,7 +368,7 @@ generate_subagent_stub() {
 	return 0
 }
 
-export -f generate_subagent_stub _get_subagent_description _get_extra_tools _yaml_quote_scalar _write_sandboxed_agent _write_permissive_stub 2>/dev/null || true
+export -f generate_subagent_stub _get_subagent_description _get_extra_tools _yaml_quote_scalar _write_sandboxed_agent _write_permissive_stub _opencode_generated_agent_owned _opencode_agent_output_available 2>/dev/null || true
 export AGENTS_DIR
 export OPENCODE_AGENT_DIR
 
@@ -362,7 +376,7 @@ export OPENCODE_AGENT_DIR
 # tiny sed+cat, so full CPU parallelism is safe and reduces wall-clock time)
 _ncpu=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 _parallel_jobs=$((_ncpu > 4 ? _ncpu : 4))
-subagent_count=$(find "$AGENTS_DIR" -mindepth 2 -name "*.md" -type f -not -path "*/loop-state/*" -not -name "*-skill.md" -print0 |
+subagent_count=$(_resolve_basename_collisions_for_generate |
 	xargs -0 -P "$_parallel_jobs" -I {} bash -c 'generate_subagent_stub "$@"' _ {} |
 	awk '{sum+=$1} END {print sum+0}')
 
