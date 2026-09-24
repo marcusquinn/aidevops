@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.34.26] - 2026-09-24
+
+### Changed
+
+- Refactor: split Tabby shell patch helpers (#32320)
+
+### Fixed
+
+- classify image transport failures safely
+- preserve active dependency graph with legacy history
+- keep legacy IDs from aborting close and reuse dependency graph
+
 ## [3.34.25] - 2026-09-24
 
 ### Added
