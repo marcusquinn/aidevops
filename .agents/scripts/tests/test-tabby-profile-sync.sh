@@ -387,6 +387,56 @@ else
 	_fail "status missing-command result unexpected: rc=${status_rc} output=${status_output}"
 fi
 
+_info "Test 19: sync bootstraps pinned PyYAML and repairs malformed profiles"
+bootstrap_home="${tmp_root}/bootstrap-home"
+bootstrap_bin="${tmp_root}/bootstrap-bin"
+bootstrap_env="${bootstrap_home}/tabby-python"
+bootstrap_receipt="${tmp_root}/bootstrap-receipt"
+bootstrap_config="${tmp_root}/bootstrap-config.yaml"
+real_python=$(command -v python3)
+mkdir -p "${bootstrap_home}/.config/aidevops" "${bootstrap_bin}"
+cp "${repos_json}" "${bootstrap_home}/.config/aidevops/repos.json"
+printf 'version: 8\nprofiles: []\n  - name: broken\ngroups: []\n' >"${bootstrap_config}"
+cat >"${tmp_root}/venv-python" <<'SH'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "-m" && "${2:-}" == "pip" && "${3:-}" == "install" ]]; then
+	printf '%s\n' "$*" >"${TABBY_TEST_BOOTSTRAP_RECEIPT}"
+	exit 0
+fi
+exec "${TABBY_TEST_REAL_PYTHON}" "$@"
+SH
+cat >"${bootstrap_bin}/python3" <<'SH'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "-c" && "${2:-}" == "import yaml" ]]; then
+	exit 1
+fi
+if [[ "${1:-}" == "-m" && "${2:-}" == "venv" ]]; then
+	env_path="${@: -1}"
+	mkdir -p "${env_path}/bin"
+	cp "${TABBY_TEST_VENV_PYTHON_STUB}" "${env_path}/bin/python3"
+	chmod +x "${env_path}/bin/python3"
+	exit 0
+fi
+exec "${TABBY_TEST_REAL_PYTHON}" "$@"
+SH
+chmod +x "${tmp_root}/venv-python" "${bootstrap_bin}/python3"
+set +e
+bootstrap_output=$(HOME="${bootstrap_home}" PATH="${bootstrap_bin}:${PATH}" \
+	TABBY_CONFIG="${bootstrap_config}" AIDEVOPS_TABBY_PYTHON_ENV="${bootstrap_env}" \
+	TABBY_TEST_REAL_PYTHON="${real_python}" TABBY_TEST_VENV_PYTHON_STUB="${tmp_root}/venv-python" \
+	TABBY_TEST_BOOTSTRAP_RECEIPT="${bootstrap_receipt}" bash "${TABBY_HELPER}" sync 2>&1)
+bootstrap_rc=$?
+set -e
+if [[ "${bootstrap_rc}" -eq 0 ]] &&
+	grep -qF 'PyYAML==6.0.3' "${bootstrap_receipt}" &&
+	[[ "${bootstrap_output}" == *"Isolated Tabby Python environment is ready"* ]] &&
+	[[ "${bootstrap_output}" == *"Repaired legacy Tabby profiles YAML corruption."* ]] &&
+	! grep -qF 'profiles: []' "${bootstrap_config}"; then
+	_pass "sync bootstraps isolated PyYAML and repairs malformed config"
+else
+	_fail "isolated PyYAML bootstrap failed: rc=${bootstrap_rc} output=${bootstrap_output}"
+fi
+
 echo ""
 if ((fail_count == 0)); then
 	printf '%bAll %d tests passed.%b\n' "${TEST_GREEN}" "${pass_count}" "${TEST_NC}"

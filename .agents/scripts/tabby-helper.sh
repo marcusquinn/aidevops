@@ -28,6 +28,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [[ -f "${SCRIPT_DIR}/shared-constants.sh" ]] && source "${SCRIPT_DIR}/shared-constants.sh"
 REPOS_JSON="${HOME}/.config/aidevops/repos.json"
 TABBY_CONFIG_OVERRIDE="${TABBY_CONFIG:-}"
+TABBY_PYTHON_ENV="${AIDEVOPS_TABBY_PYTHON_ENV:-${HOME}/.aidevops/.agent-workspace/python-env/tabby}"
+TABBY_PYYAML_VERSION="6.0.3"
 
 _resolve_tabby_config() {
 	local platform="${1:-$(uname -s)}"
@@ -69,26 +71,51 @@ _check_prereqs() {
 }
 
 _tabby_python() {
-	local isolated_python="${HOME}/.aidevops/.agent-workspace/python-env/tabby/bin/python3"
+	local isolated_python="${TABBY_PYTHON_ENV}/bin/python3"
 	if [[ -x "$isolated_python" ]] && "$isolated_python" -c 'import yaml' >/dev/null 2>&1; then
 		printf '%s\n' "$isolated_python"
-	elif command -v python3 >/dev/null 2>&1; then
+	elif command -v python3 >/dev/null 2>&1 && python3 -c 'import yaml' >/dev/null 2>&1; then
 		printf '%s\n' python3
 	else
-		_error "No Python with PyYAML is available for Tabby profiles"
 		return 1
 	fi
 	return 0
 }
 
-_check_yaml_dependency() {
-	local python_bin="$1"
-	if ! "$python_bin" -c 'import yaml' >/dev/null 2>&1; then
-		_error "PyYAML is unavailable to $python_bin; Tabby profiles were not modified"
-		_info "Create an isolated environment at ~/.aidevops/.agent-workspace/python-env/tabby and install pinned PyYAML==6.0.3 there"
+_bootstrap_tabby_python() {
+	local system_python=""
+	local isolated_python="${TABBY_PYTHON_ENV}/bin/python3"
+	system_python=$(command -v python3 2>/dev/null || true)
+	if [[ -z "$system_python" ]]; then
+		_error "python3 is required to prepare the isolated Tabby environment" >&2
 		return 1
 	fi
+
+	_info "Preparing isolated Tabby Python environment..." >&2
+	if ! (umask 077 && mkdir -p "${TABBY_PYTHON_ENV%/*}" && "$system_python" -m venv --copies "$TABBY_PYTHON_ENV"); then
+		_error "Could not create the isolated Tabby Python environment; Tabby profiles were not modified" >&2
+		return 1
+	fi
+	if ! "$isolated_python" -m pip install --disable-pip-version-check --quiet "PyYAML==${TABBY_PYYAML_VERSION}"; then
+		_error "Could not install pinned PyYAML==${TABBY_PYYAML_VERSION}; Tabby profiles were not modified" >&2
+		return 1
+	fi
+	if ! "$isolated_python" -c 'import yaml' >/dev/null 2>&1; then
+		_error "The isolated Tabby environment could not import PyYAML; Tabby profiles were not modified" >&2
+		return 1
+	fi
+	_success "Isolated Tabby Python environment is ready (PyYAML ${TABBY_PYYAML_VERSION})" >&2
+	printf '%s\n' "$isolated_python"
 	return 0
+}
+
+_ensure_tabby_python() {
+	local python_bin=""
+	if python_bin=$(_tabby_python); then
+		printf '%s\n' "$python_bin"
+		return 0
+	fi
+	_bootstrap_tabby_python
 }
 
 # --- Commands ---
@@ -98,10 +125,7 @@ cmd_sync() {
 		return 1
 	fi
 	local python_bin
-	python_bin=$(_tabby_python) || return 1
-	if ! _check_yaml_dependency "$python_bin"; then
-		return 1
-	fi
+	python_bin=$(_ensure_tabby_python) || return 1
 
 	_info "Syncing Tabby profiles from repos.json and detected workspaces..."
 
@@ -131,8 +155,9 @@ cmd_status() {
 		return 1
 	fi
 	local python_bin
-	python_bin=$(_tabby_python) || return 1
-	if ! _check_yaml_dependency "$python_bin"; then
+	if ! python_bin=$(_tabby_python); then
+		_error "No Python with PyYAML is available for Tabby profile status"
+		_info "Run 'aidevops tabby sync' to prepare the isolated environment and reconcile profiles"
 		return 1
 	fi
 

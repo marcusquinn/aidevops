@@ -161,8 +161,9 @@ chmod +x "$HOME/.aidevops/agents/scripts/tabby-helper.sh"
 export TABBY_SYNC_RECEIPT
 
 TABBY_CONFIG="$TABBY_TEST_CONFIG"
-if _update_reconcile_tabby_config >/dev/null &&
-	grep -q "^sync|${TABBY_TEST_CONFIG}$" "$TABBY_SYNC_RECEIPT"; then
+if tabby_success_output=$(_update_reconcile_tabby_config) &&
+	grep -q "^sync|${TABBY_TEST_CONFIG}$" "$TABBY_SYNC_RECEIPT" &&
+	[[ "$tabby_success_output" == *"Tabby configuration reconciled and verified"* ]]; then
 	pass "routine update invokes deployed Tabby reconciliation for an existing config"
 else
 	fail "routine update invokes deployed Tabby reconciliation for an existing config" \
@@ -183,7 +184,7 @@ printf 'profiles: []\n  - name: malformed\n' >"$TABBY_TEST_CONFIG"
 TABBY_SYNC_RC=19
 export TABBY_SYNC_RC
 if tabby_failure_output=$(_update_reconcile_tabby_config) &&
-	[[ "$tabby_failure_output" == *"encountered a blocker"* ]]; then
+	[[ "$tabby_failure_output" == *"Tabby configuration was not changed"* ]]; then
 	pass "Tabby reconciliation failure warns without failing the framework update"
 else
 	fail "Tabby reconciliation failure warns without failing the framework update" \

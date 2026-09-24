@@ -27,6 +27,7 @@ extract_function() {
 		/^_tool_latest_version\(\)/, /^}$/ { print; next }
 		/^check_tool\(\)/, /^}$/ { print; next }
 		/^_run_outdated_tool_updates\(\)/, /^}$/ { print; next }
+		/^_output_summary_and_updates\(\)/, /^}$/ { print; next }
 	' "$TOOL_VERSION_CHECK" >"$SANDBOX/extract.sh"
 	if ! grep -q '^_classify_tool_status()' "$SANDBOX/extract.sh"; then
 		printf 'FAIL: extraction did not capture _classify_tool_status\n' >&2
@@ -118,6 +119,44 @@ UPDATE_FAILURE_COUNT=0
 SUDO_SKIP_COUNT=0
 result=$(_run_outdated_tool_updates)
 [[ "$result" == *'No verified update'* && "$result" != *'Updated and verified'* ]]
+
+# Summary language must distinguish verified convergence from unknown,
+# deferred, or no-op maintenance outcomes.
+BOLD=""
+BLUE=""
+NC=""
+QUIET=false
+AUTO_UPDATE=true
+OUTDATED_COUNT=0
+UNKNOWN_COUNT=2
+summary_output=$(_output_summary_and_updates)
+[[ "$summary_output" == *'2 installed tool(s) could not be verified'* ]]
+[[ "$summary_output" != *'All installed tools are up to date!'* ]]
+
+OUTDATED_COUNT=1
+UNKNOWN_COUNT=0
+OUTDATED_PACKAGES=('true')
+_run_outdated_tool_updates() {
+	UPDATE_FAILURE_COUNT=0
+	UPDATE_NOOP_COUNT=0
+	SUDO_SKIP_COUNT=0
+	return 0
+}
+summary_output=$(_output_summary_and_updates)
+[[ "$summary_output" == *'Tool updates applied and verified.'* ]]
+[[ "$summary_output" != *'Re-run to verify'* ]]
+
+_run_outdated_tool_updates() {
+	UPDATE_FAILURE_COUNT=0
+	UPDATE_NOOP_COUNT=1
+	SUDO_SKIP_COUNT=0
+	return 0
+}
+set +e
+summary_output=$(_output_summary_and_updates)
+summary_rc=$?
+set -e
+[[ "$summary_rc" -ne 0 && "$summary_output" == *'Tool maintenance incomplete:'* ]]
 
 status=""
 icon=""
