@@ -123,8 +123,8 @@ result=$(_run_outdated_tool_updates)
 # Summary language must distinguish verified convergence from unknown,
 # deferred, or no-op maintenance outcomes.
 BOLD=""
-BLUE=""
-NC=""
+[[ -z "${BLUE+x}" ]] && BLUE=""
+[[ -z "${NC+x}" ]] && NC=""
 QUIET=false
 AUTO_UPDATE=true
 OUTDATED_COUNT=0
