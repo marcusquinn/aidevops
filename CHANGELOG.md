@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.34.28] - 2026-09-25
+
+### Fixed
+
+- keep worker project reads inside the linked worktree
+
 ## [3.34.27] - 2026-09-24
 
 ### Changed
