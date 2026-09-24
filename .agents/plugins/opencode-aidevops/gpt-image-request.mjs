@@ -25,7 +25,7 @@ const MAX_ERROR_RESPONSE_BYTES = 64 * 1024;
 const IMAGE_REQUEST_TIMEOUT_MS = 180_000;
 const TRANSPORT_CODES = new Set(["ECONNRESET", "ETIMEDOUT", "UND_ERR_SOCKET", "UND_ERR_CONNECT_TIMEOUT"]);
 
-function transportFailure(route, phase, started, response, cause, signal) {
+function transportFailure(route, phase, cause, { started, response, signal }) {
   const elapsedMs = Math.min(IMAGE_REQUEST_TIMEOUT_MS, Math.max(0, Math.round(performance.now() - started)));
   const code = signal.aborted ? "timeout" :
     [cause?.code, cause?.cause?.code].find((value) => TRANSPORT_CODES.has(value)) || "unknown";
@@ -41,7 +41,7 @@ async function fetchImageResponse(fetchImpl, endpoint, init, route, started) {
   try {
     return await fetchImpl(endpoint, init);
   } catch (error) {
-    throw transportFailure(route, "request", started, null, error, init.signal);
+    throw transportFailure(route, "request", error, { started, signal: init.signal });
   }
 }
 
@@ -115,7 +115,7 @@ export async function requestOAuthImage(auth, args, images, fetchImpl) {
         return {
           response,
           base64: await parseImageSse(response.body, (error) => {
-            throw transportFailure("oauth", "response-body", started, response, error, signal);
+            throw transportFailure("oauth", "response-body", error, { started, response, signal });
           }),
           requestedModel: null,
           providerModel: null,
@@ -204,7 +204,7 @@ export async function requestApiImage(auth, args, images, fetchImpl) {
       throw new Error("OpenAI Images API response exceeded the safe response limit.");
     }
     const payload = await readBoundedJson(response, MAX_API_RESPONSE_BYTES, "OpenAI Images API response", (error) => {
-      throw transportFailure("api", "response-body", started, response, error, signal);
+      throw transportFailure("api", "response-body", error, { started, response, signal });
     });
     const base64 = payload?.data?.[0]?.b64_json;
     if (typeof base64 !== "string" || !base64) throw new Error("OpenAI Images API response did not contain an image.");
