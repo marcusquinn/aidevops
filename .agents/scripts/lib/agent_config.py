@@ -10,7 +10,6 @@ duplication and reduce file complexity.
 
 import glob
 import os
-import re
 import sys
 import tempfile
 
@@ -155,66 +154,6 @@ SKIP_CUSTOM_PROMPT = set()
 
 # Workload tiers are routing intent, not concrete runtime model IDs.
 WORKLOAD_TIERS = {"simple", "standard", "thinking"}
-
-# Operator-owned names are opted in individually; installing an agent never
-# silently expands Build+'s default-deny Task boundary.
-OPERATOR_SUBAGENT_NAME = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_-]*\Z")
-
-
-def extend_opencode_operator_subagents(primary_agents, config_dir=None):
-    """Allow only opted-in, existing operator-owned OpenCode subagent files.
-
-    The allowlist is a local file, not a frontmatter wildcard or an additional
-    OpenCode config key. A missing file is the normal default-deny case.
-    Returns the accepted names for reference validation.
-    """
-    config_dir = config_dir or os.path.expanduser("~/.config")
-    allowlist = os.path.join(config_dir, "aidevops", "opencode-operator-subagents.txt")
-    agent_dir = os.path.join(config_dir, "opencode", "agent")
-    if os.path.islink(allowlist) or (os.path.exists(allowlist) and
-                                     (os.stat(allowlist).st_uid != os.getuid() or
-                                      os.stat(allowlist).st_mode & 0o022)):
-        print("  Warning: operator subagent allowlist is not owner-controlled", file=sys.stderr)
-        return set()
-    try:
-        with open(allowlist, encoding="utf-8") as handle:
-            lines = handle.readlines()
-    except FileNotFoundError:
-        return set()
-    except OSError as error:
-        print(f"  Warning: cannot read operator subagent allowlist: {error}", file=sys.stderr)
-        return set()
-    accepted = set()
-    for raw in lines:
-        name = raw.strip()
-        if not name or name.startswith("#"):
-            continue
-        if not OPERATOR_SUBAGENT_NAME.fullmatch(name):
-            print(f"  Warning: invalid operator subagent name: {name!r}", file=sys.stderr)
-            continue
-        path = os.path.join(agent_dir, f"{name}.md")
-        if (not os.path.isfile(path) or os.path.islink(path) or
-                os.stat(path).st_uid != os.getuid() or os.stat(path).st_mode & 0o022):
-            print(f"  Warning: operator subagent file missing: {name}", file=sys.stderr)
-            continue
-        try:
-            with open(path, encoding="utf-8") as handle:
-                content = handle.read()
-        except OSError:
-            continue
-        if (parse_frontmatter(path).get("mode") != "subagent" or
-                "<!-- aidevops:generated-subagent -->" in content or
-                "**MANDATORY**: Your first action MUST be to read ~/.aidevops/agents/" in content):
-            print(f"  Warning: not an operator-owned subagent: {name}", file=sys.stderr)
-            continue
-        accepted.add(name)
-    build = primary_agents.get("Build+")
-    if build and accepted:
-        task = build.get("permission", {}).get("task")
-        if isinstance(task, dict) and task.get("*") == "deny":
-            for name in sorted(accepted):
-                task[name] = "allow"
-    return accepted
 
 # Default model tier per agent (overridden by frontmatter 'model:' field)
 AGENT_MODEL_TIERS = {}

@@ -12,7 +12,8 @@ import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
-from agent_config import extend_opencode_operator_subagents, get_agent_config  # noqa: E402
+from agent_config import get_agent_config  # noqa: E402
+from opencode_operator_agents import extend_opencode_operator_subagents  # noqa: E402
 from subagent_validation import validate_subagent_refs  # noqa: E402
 
 

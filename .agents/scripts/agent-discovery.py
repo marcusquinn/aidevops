@@ -13,8 +13,8 @@ from agent_config import (
     discover_primary_agents, validate_subagent_refs,
     apply_disabled_agents, sort_key, display_to_filename,
     managed_external_directories,
-    extend_opencode_operator_subagents,
 )
+from opencode_operator_agents import extend_opencode_operator_subagents
 from mcp_config import (
     apply_mcp_loading_policy, remove_deprecated_mcps,
     register_standard_mcps,

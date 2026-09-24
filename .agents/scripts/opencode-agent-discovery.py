@@ -8,8 +8,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'lib'))
 from discovery_utils import atomic_json_write
 from agent_config import (
     discover_primary_agents, validate_subagent_refs,
-    apply_disabled_agents, display_to_filename, extend_opencode_operator_subagents,
+    apply_disabled_agents, display_to_filename,
 )
+from opencode_operator_agents import extend_opencode_operator_subagents
 from mcp_config import (
     apply_mcp_loading_policy, remove_deprecated_mcps,
     register_standard_mcps, EAGER_MCPS, LAZY_MCPS,
