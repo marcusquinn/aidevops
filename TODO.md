@@ -535,6 +535,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 ## Backlog
 
+- [ ] t18475 Fail closed on public routine comments before Pulse worker launch #bug #security #prompt-injection #interactive #auto-dispatch #priority:high tier:thinking ref:GH#32337 logged:2026-09-24 -> [todo/tasks/t18475-brief.md]
+
 - [x] t18471 docs: generalize stale local dev server and browser-process diagnostics #documentation #debugging #ops #interactive #auto-dispatch ~1h tier:standard ref:GH#32119 logged:2026-09-20 -> [todo/tasks/t18471-brief.md] pr:#32129 completed:2026-09-20
 
 - [x] t18309 Fix same-user daemon proc cwd cleanup degradation #bug #framework #cleanup #worktree #interactive ~1h tier:standard ref:GH#30740 logged:2026-08-25 -> [todo/tasks/t18309-brief.md] pr:#30741 completed:2026-08-25
