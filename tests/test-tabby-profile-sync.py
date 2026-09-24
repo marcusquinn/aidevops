@@ -898,9 +898,9 @@ class TestTabbyShellResolver(unittest.TestCase):
 
 
 class TestTabbyHelperDependency(unittest.TestCase):
-    """Missing PyYAML must not create a backup or mutate Tabby configuration."""
+    """Failed PyYAML bootstrap must not back up or mutate Tabby configuration."""
 
-    def test_missing_yaml_rejects_sync_before_backup(self):
+    def test_failed_yaml_bootstrap_rejects_sync_before_backup(self):
         with tempfile.TemporaryDirectory() as temporary:
             home = Path(temporary)
             (home / ".config" / "aidevops").mkdir(parents=True)
@@ -922,7 +922,10 @@ class TestTabbyHelperDependency(unittest.TestCase):
                 check=False,
             )
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn("PyYAML is unavailable", result.stdout + result.stderr)
+            self.assertIn(
+                "Could not create the isolated Tabby Python environment",
+                result.stdout + result.stderr,
+            )
             self.assertEqual(tabby_config.read_text(), original)
             self.assertFalse((home / "config.yaml.backup").exists())
 

@@ -45,6 +45,6 @@ status=$?
 set -e
 
 [[ "$status" -ne 0 ]]
-grep -q 'Updates finished with 1 failed action' <<<"$output"
+grep -q 'Tool maintenance failed: 1 action' <<<"$output"
 
 printf 'PASS: failed Homebrew actions produce a non-success maintenance summary\n'

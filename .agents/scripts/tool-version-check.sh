@@ -869,15 +869,16 @@ _output_summary_and_updates() {
 		if [[ "$AUTO_UPDATE" == "true" ]]; then
 			echo -e "${BLUE}Updating outdated tools...${NC}"
 			echo ""
-		_run_outdated_tool_updates
-		if [[ $UPDATE_FAILURE_COUNT -gt 0 ]]; then
-			echo -e "${RED}Updates finished with ${UPDATE_FAILURE_COUNT} failed action(s). Re-run to verify remaining tools.${NC}"
-			return 1
-		elif [[ $SUDO_SKIP_COUNT -gt 0 || $UPDATE_NOOP_COUNT -gt 0 ]]; then
-			echo -e "${YELLOW}Maintenance finished (${SUDO_SKIP_COUNT} deferred, ${UPDATE_NOOP_COUNT} not verified as updated).${NC}"
-		else
-			echo -e "${GREEN}Updates complete. Re-run to verify.${NC}"
-		fi
+			_run_outdated_tool_updates
+			if [[ $UPDATE_FAILURE_COUNT -gt 0 ]]; then
+				echo -e "${RED}Tool maintenance failed: ${UPDATE_FAILURE_COUNT} action(s) did not complete or verify.${NC}"
+				return 1
+			elif [[ $SUDO_SKIP_COUNT -gt 0 || $UPDATE_NOOP_COUNT -gt 0 ]]; then
+				echo -e "${YELLOW}Tool maintenance incomplete: ${SUDO_SKIP_COUNT} deferred, ${UPDATE_NOOP_COUNT} not verified as updated.${NC}"
+				return 1
+			else
+				echo -e "${GREEN}Tool updates applied and verified.${NC}"
+			fi
 		else
 			echo "To update all outdated tools, run:"
 			echo "  tool-version-check.sh --update"
@@ -887,6 +888,8 @@ _output_summary_and_updates() {
 				echo "  $update_cmd"
 			done
 		fi
+	elif [[ $UNKNOWN_COUNT -gt 0 ]]; then
+		echo -e "${YELLOW}No verified tool updates are pending; ${UNKNOWN_COUNT} installed tool(s) could not be verified.${NC}"
 	else
 		echo -e "${GREEN}All installed tools are up to date!${NC}"
 	fi
