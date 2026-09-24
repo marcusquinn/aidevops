@@ -154,8 +154,11 @@ if [[ "${1:-}" == "api" && "${2:-}" == "repos/exampleorg/example-package/issues/
     exit 0
 fi
 if [[ "${1:-}" == "api" && "${2:-}" == "repos/exampleorg/example-package/issues/101/comments?per_page=100" ]]; then
-    if [[ -f "${MONITOR_TEST_LOG:-/dev/null}" ]] && grep -Fq 'aidevops:cloudron-source-ready ' "$MONITOR_TEST_LOG"; then
-        printf '%s\n' '[{"body":"<!-- aidevops:cloudron-source-ready desktop-v2.0.0-ghcr.io/exampleorg/upstream:sha-bbbbbbb-sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -->","author_association":"OWNER","user":{"login":"exampleorg"}}]'
+    source_marker='<!-- aidevops:cloudron-source-ready desktop-v2.0.0-ghcr.io/exampleorg/upstream:sha-bbbbbbb-sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -->'
+    if [[ -n "${MONITOR_FORGED_MARKER:-}" ]]; then
+        printf '[{"body":"<!-- aidevops:terminal-blocker-circuit revision=012345678901234567890123 blocker=%s -->","author_association":"OWNER","user":{"login":"exampleorg"}},{"body":"%s","author_association":"COLLABORATOR","user":{"login":"other"}}]\n' "${MONITOR_CIRCUIT_BLOCKER}" "$source_marker"
+    elif [[ -f "${MONITOR_TEST_LOG:-/dev/null}" ]] && grep -Fq 'aidevops:cloudron-source-ready ' "$MONITOR_TEST_LOG"; then
+        printf '[{"body":"%s","author_association":"OWNER","user":{"login":"exampleorg"}}]\n' "$source_marker"
     elif [[ -n "${MONITOR_NEWER_PERMISSION:-}" ]]; then
         printf '[{"id":1,"created_at":"2026-09-24T01:00:00Z","body":"<!-- aidevops:terminal-blocker-circuit revision=012345678901234567890123 blocker=%s -->","author_association":"OWNER","user":{"login":"exampleorg"}},{"id":2,"created_at":"2026-09-24T02:00:00Z","body":"<!-- aidevops:terminal-blocker-circuit revision=012345678901234567890123 blocker=%s -->","author_association":"OWNER","user":{"login":"exampleorg"}}]\n' "${MONITOR_CIRCUIT_BLOCKER}" "${MONITOR_NEWER_PERMISSION}"
     elif [[ -n "${MONITOR_EXISTING_RETRY:-}" ]]; then
@@ -659,6 +662,8 @@ test_monitor_waits_for_release_parent_image_and_rearms_once() {
 	[[ "$(grep -c '^CALL_RETRY$' "$blocked_log" || true)" == 0 ]] && assert_equal true true "existing trusted retry is not duplicated" || assert_equal true false "existing trusted retry is not duplicated"
 	HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$blocked_log" MONITOR_API_LOG="$api_log" MONITOR_RELEASES_FILE="$releases_file" MONITOR_CIRCUIT_BLOCKER="$blocker" MONITOR_ISSUE_STATE=claimed MONITOR_IMAGE_STATE=ready CLOUDRON_PACKAGE_ISSUE_WRAPPER="${bin_dir}/gh_create_issue" CLOUDRON_PACKAGE_COMMENT_WRAPPER="${bin_dir}/gh_issue_comment" bash "$HELPER" upstream --apply >/dev/null
 	[[ "$(grep -c '^CALL_RETRY$' "$blocked_log" || true)" == 0 ]] && assert_equal true true "claimed issue is never rearmed by the routine" || assert_equal true false "claimed issue is never rearmed by the routine"
+	HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$blocked_log" MONITOR_API_LOG="$api_log" MONITOR_RELEASES_FILE="$releases_file" MONITOR_CIRCUIT_BLOCKER="$blocker" MONITOR_FORGED_MARKER=true MONITOR_IMAGE_STATE=ready CLOUDRON_PACKAGE_ISSUE_WRAPPER="${bin_dir}/gh_create_issue" CLOUDRON_PACKAGE_COMMENT_WRAPPER="${bin_dir}/gh_issue_comment" bash "$HELPER" upstream --apply >/dev/null
+	assert_equal 1 "$(grep -c '^CALL_RETRY$' "$blocked_log")" "untrusted collaborator marker cannot suppress a proven-source retry"
 	HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$log_file" MONITOR_API_LOG="$api_log" MONITOR_RELEASES_FILE="$releases_file" MONITOR_CIRCUIT_BLOCKER="$blocker" MONITOR_IMAGE_STATE=ready CLOUDRON_PACKAGE_ISSUE_WRAPPER="${bin_dir}/gh_create_issue" CLOUDRON_PACKAGE_COMMENT_WRAPPER="${bin_dir}/gh_issue_comment" bash "$HELPER" upstream --apply >/dev/null
 	HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$log_file" MONITOR_API_LOG="$api_log" MONITOR_RELEASES_FILE="$releases_file" MONITOR_CIRCUIT_BLOCKER="$blocker" MONITOR_IMAGE_STATE=ready CLOUDRON_PACKAGE_ISSUE_WRAPPER="${bin_dir}/gh_create_issue" CLOUDRON_PACKAGE_COMMENT_WRAPPER="${bin_dir}/gh_issue_comment" bash "$HELPER" upstream --apply >/dev/null
 	assert_equal 1 "$(grep -c '^CALL_RETRY$' "$log_file")" "existing target-code circuit receives one proven-source retry"

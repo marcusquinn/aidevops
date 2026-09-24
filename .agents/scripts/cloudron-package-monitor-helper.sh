@@ -331,7 +331,11 @@ _cloudron_monitor_rearm_ready_issue() {
 	comments=$(terminal_blocker_fetch_trusted_comments "$issue_number" "$slug") || return 1
 	blocker=$(_terminal_blocker_hash 'v2:target_code_blocker') || return 1
 	marker="aidevops:cloudron-source-ready ${proof// /-}"
-	if jq -e --arg marker "$marker" 'any(.[]; .body | contains($marker))' <<<"$comments" >/dev/null; then
+	# aidevops:trust-boundary — an untrusted collaborator cannot suppress the
+	# eventual retry by copying the public source-proof marker into a comment.
+	if jq -e --arg marker "$marker" 'any(.[];
+		(.author_association == "OWNER" or .author_association == "MEMBER") and (.body | contains($marker)))' \
+		<<<"$comments" >/dev/null; then
 		return 0
 	fi
 	# aidevops:trust-boundary — only the latest OWNER/MEMBER circuit may be
