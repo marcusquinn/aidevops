@@ -18,6 +18,33 @@ trap cleanup EXIT
 
 mkdir -p "$AGENTS_DIR/tools/code-review" "$agent_dir"
 
+# An explicitly pinned operator agent must never be cleaned or overwritten,
+# even if a source of the same basename is later added to aidevops.
+cat >"$agent_dir/operator-worker.md" <<'EOF_OPERATOR'
+---
+mode: subagent
+model: example-provider/pinned-model
+---
+
+Operator-owned prompt
+EOF_OPERATOR
+cp "$agent_dir/operator-worker.md" "$TEST_ROOT/operator-original.md"
+cat >"$AGENTS_DIR/tools/code-review/operator-worker.md" <<'EOF_COLLISION'
+---
+mode: subagent
+---
+
+Colliding aidevops source
+EOF_COLLISION
+cat >"$agent_dir/obsolete.md" <<'EOF_OBSOLETE'
+---
+mode: subagent
+---
+<!-- aidevops:generated-subagent -->
+
+Stale generated prompt
+EOF_OBSOLETE
+
 cat >"$AGENTS_DIR/tools/code-review/bounded-review.md" <<'EOF_AGENT'
 ---
 description: Bounded review agent
@@ -155,6 +182,14 @@ if ! _generate_subagents_opencode "$agent_dir" >/dev/null; then
 	exit 1
 fi
 
+cmp "$TEST_ROOT/operator-original.md" "$agent_dir/operator-worker.md"
+[[ ! -e "$agent_dir/obsolete.md" ]]
+grep -q '^<!-- aidevops:generated-subagent -->$' "$agent_dir/bounded-review.md"
+grep -q '^<!-- aidevops:generated-subagent -->$' "$sandboxed_generated"
+grep -q '^<!-- aidevops:generated-subagent -->$' "$research_generated"
+_generate_subagents_opencode "$agent_dir" >/dev/null
+cmp "$TEST_ROOT/operator-original.md" "$agent_dir/operator-worker.md"
+
 [[ -f "$sandboxed_generated" ]]
 grep -q '^  bash: false$' "$sandboxed_generated"
 grep -q '^aidevops_model_tier: thinking$' "$sandboxed_generated"
@@ -168,5 +203,5 @@ grep -q '^  "\*": false$' "$research_generated"
 grep -q '^  bash: false$' "$research_generated"
 grep -q '^  external_directory: deny$' "$research_generated"
 
-printf '%s\n' 'PASS: generated OpenCode subagents preserve guards and request-time routing intent'
+printf '%s\n' 'PASS: generated OpenCode subagents preserve guards, operator files and routing intent'
 exit 0

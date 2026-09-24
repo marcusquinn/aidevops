@@ -22,6 +22,8 @@
 [[ -n "${_GENERATE_RUNTIME_CONFIG_AGENTS_LIB_LOADED:-}" ]] && return 0
 _GENERATE_RUNTIME_CONFIG_AGENTS_LIB_LOADED=1
 _GENERATE_RUNTIME_CONFIG_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/opencode-agent-ownership.sh
+source "${_GENERATE_RUNTIME_CONFIG_SCRIPT_DIR}/lib/opencode-agent-ownership.sh"
 
 # Defensive SCRIPT_DIR fallback
 if [[ -z "${SCRIPT_DIR:-}" ]]; then
@@ -167,12 +169,16 @@ _generate_agents_opencode() {
 	)
 	local f
 	for f in "${legacy_files[@]}"; do
-		rm -f "$opencode_agent_dir/$f"
+		if _opencode_generated_agent_owned "$opencode_agent_dir/$f"; then
+			rm -f "$opencode_agent_dir/$f"
+		fi
 	done
 
 	# Remove loop-state files incorrectly created as agents
 	for f in ralph-loop.local.md quality-loop.local.md full-loop.local.md loop-state.md re-anchor.md postflight-loop.md; do
-		rm -f "$opencode_agent_dir/$f"
+		if _opencode_generated_agent_owned "$opencode_agent_dir/$f"; then
+			rm -f "$opencode_agent_dir/$f"
+		fi
 	done
 
 	# Create minimal config if missing
@@ -308,6 +314,7 @@ _write_restrictive_subagent_source() {
 			next
 		}
 		{ print }
+		$0 == "---" { delimiters++; if (delimiters == 2) print "<!-- aidevops:generated-subagent -->" }
 	' "$source_file" >"$output_file"; then
 		return 1
 	fi
@@ -339,6 +346,7 @@ _write_subagent_stub() {
 	local name
 	name=$(basename "$f" .md)
 	[[ "$name" == "AGENTS" || "$name" == "README" ]] && return 0
+	_opencode_agent_output_available "$agent_dir/$name.md" || return 0
 
 	local rel_path="${f#"$AGENTS_DIR"/}"
 	local runtime_guards src_variant src_steps src_task src_model
@@ -355,11 +363,7 @@ _write_subagent_stub() {
 	*) routed_model="" ;;
 	esac
 
-	# GH#18509: If source frontmatter explicitly sets bash: false, the agent is
-	# security-sandboxed or has its own tool restrictions. Copy source verbatim
-	# (with workload-tier metadata resolved) instead of writing a permissive stub that
-	# grants bash:true and external_directory:allow -- those would override the
-	# source's intent and become an attack surface for prompt-injected content.
+	# GH#18509: Preserve restrictive sources instead of granting bash access.
 	local src_bash_false
 	src_bash_false=$(awk '
 		/^---$/ { fm_delim++; next }
@@ -428,6 +432,7 @@ _write_subagent_stub() {
 		[[ -n "$extra_tools" ]] && printf '%s\n' "$extra_tools"
 		printf '%s\n' \
 			"---" \
+			"<!-- aidevops:generated-subagent -->" \
 			"" \
 			"**MANDATORY**: Your first action MUST be to read ~/.aidevops/agents/${rel_path} and follow ALL rules within it."
 	} >"$agent_dir/$name.md"
@@ -435,12 +440,11 @@ _write_subagent_stub() {
 	return 0
 }
 
-# Remove previously generated subagent files (those with "mode: subagent" frontmatter).
+# Remove only positively identified aidevops-generated subagent files.
 # Arguments: $1 - agent output directory
 _clean_generated_subagents() {
 	local agent_dir="$1"
-	find "$agent_dir" -name "*.md" -type f -exec grep -l "^mode: subagent" {} + 2>/dev/null | while IFS= read -r f; do rm -f "$f"; done
-	return 0
+	_opencode_clean_generated_agents "$agent_dir"
 }
 
 # GH#19399 / t2149: Resolve basename collisions deterministically.
@@ -534,6 +538,7 @@ _generate_subagents_opencode() {
 	export -f _write_restrictive_subagent_source 2>/dev/null || true
 	export -f _validated_worktree_base 2>/dev/null || true
 	export -f _write_subagent_stub 2>/dev/null || true
+	export -f _opencode_generated_agent_owned _opencode_agent_output_available 2>/dev/null || true
 	export AGENTS_DIR
 	export agent_dir
 	export _GENERATE_RUNTIME_CONFIG_SCRIPT_DIR

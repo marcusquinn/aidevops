@@ -14,6 +14,7 @@ from agent_config import (
     apply_disabled_agents, sort_key, display_to_filename,
     managed_external_directories,
 )
+from opencode_operator_agents import extend_opencode_operator_subagents
 from mcp_config import (
     apply_mcp_loading_policy, remove_deprecated_mcps,
     register_standard_mcps,
@@ -56,9 +57,12 @@ OPENCODE_PROFILE_ID, OPENCODE_PROFILE = _load_opencode_profile()
 # =============================================================================
 
 primary_agents, sorted_agents, subagent_filtered_count = discover_primary_agents(agents_dir)
+operator_subagents = (extend_opencode_operator_subagents(primary_agents)
+                      if output_format == 'opencode-json' else set())
 
 # Validate subagent references
-missing_refs = validate_subagent_refs(primary_agents, agents_dir, display_to_filename)
+missing_refs = validate_subagent_refs(primary_agents, agents_dir, display_to_filename,
+                                      operator_subagents)
 if missing_refs:
     for agent, ref in missing_refs:
         print(f"  Warning: {agent} references subagent '{ref}' but no {ref}.md found", file=sys.stderr)

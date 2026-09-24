@@ -10,6 +10,7 @@ from agent_config import (
     discover_primary_agents, validate_subagent_refs,
     apply_disabled_agents, display_to_filename,
 )
+from opencode_operator_agents import extend_opencode_operator_subagents
 from mcp_config import (
     apply_mcp_loading_policy, remove_deprecated_mcps,
     register_standard_mcps, EAGER_MCPS, LAZY_MCPS,
@@ -50,9 +51,11 @@ config['autoupdate'] = False
 # =============================================================================
 
 primary_agents, sorted_agents, subagent_filtered_count = discover_primary_agents(agents_dir)
+operator_subagents = extend_opencode_operator_subagents(primary_agents)
 
 # Validate subagent references
-missing_refs = validate_subagent_refs(primary_agents, agents_dir, display_to_filename)
+missing_refs = validate_subagent_refs(primary_agents, agents_dir, display_to_filename,
+                                      operator_subagents)
 if missing_refs:
     for agent, ref in missing_refs:
         print(f"  Warning: {agent} references subagent '{ref}' but no {ref}.md found", file=sys.stderr)

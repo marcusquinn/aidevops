@@ -145,7 +145,8 @@ def _collect_missing_for_agent(display_name, agent_config, display_to_filename_f
     return missing
 
 
-def validate_subagent_refs(primary_agents, agents_dir, display_to_filename_fn=None):
+def validate_subagent_refs(primary_agents, agents_dir, display_to_filename_fn=None,
+                           operator_subagents=frozenset()):
     """Validate subagent references against actual files.
 
     Args:
@@ -159,6 +160,9 @@ def validate_subagent_refs(primary_agents, agents_dir, display_to_filename_fn=No
     """
     resolved_fn = _resolve_display_to_filename_fn(display_to_filename_fn)
     all_subagent_files, all_subagent_paths = collect_subagent_files(agents_dir)
+    # Only the OpenCode discovery adapter passes opted-in external task names;
+    # other runtimes continue to validate against their own deployed sources.
+    all_subagent_files.update(operator_subagents)
 
     missing_refs = []
     for display_name, agent_config in primary_agents.items():
