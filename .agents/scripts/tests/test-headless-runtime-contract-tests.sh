@@ -95,6 +95,10 @@ test_appends_escalation_contract() {
 	output=$(append_worker_headless_contract "$prompt")
 
 	if [[ "$output" == *'HEADLESS_CONTINUATION_CONTRACT_V9'* ]] &&
+		[[ "$output" == *"prefix it with \$WORKER_WORKTREE_PATH"* ]] &&
+		[[ "$output" == *'not Glob/Read there, even for AGENTS.md or .agents/ files'* ]] &&
+		[[ "$output" == *'Do not search the canonical checkout for .venv or project dependencies'* ]] &&
+		[[ "$output" == *'Never seek a broad external_directory grant'* ]] &&
 		[[ "$output" == *'Read the issue body FIRST'* ]] &&
 		[[ "$output" == *"gh issue view \"\$WORKER_ISSUE_NUMBER\" --repo \"\$WORKER_REPO_SLUG\" --json body --jq"* ]] &&
 		[[ "$output" == *'Look for a "Worker Guidance" or "How" section'* ]] &&
