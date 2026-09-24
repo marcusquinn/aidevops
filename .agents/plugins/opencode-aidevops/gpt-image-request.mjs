@@ -23,6 +23,27 @@ const MODEL_ROUTING_TABLE = new URL("../../configs/model-routing-table.json", im
 const MAX_API_RESPONSE_BYTES = 96 * 1024 * 1024;
 const MAX_ERROR_RESPONSE_BYTES = 64 * 1024;
 const IMAGE_REQUEST_TIMEOUT_MS = 180_000;
+const TRANSPORT_CODES = new Set(["ECONNRESET", "ETIMEDOUT", "UND_ERR_SOCKET", "UND_ERR_CONNECT_TIMEOUT"]);
+
+function transportFailure(route, phase, started, response, cause, signal) {
+  const elapsedMs = Math.min(IMAGE_REQUEST_TIMEOUT_MS, Math.max(0, Math.round(performance.now() - started)));
+  const code = signal.aborted ? "timeout" :
+    [cause?.code, cause?.cause?.code].find((value) => TRANSPORT_CODES.has(value)) || "unknown";
+  const status = response ? ` status=${response.status}` : "";
+  const error = new Error(`OpenAI image transport failure route=${route} phase=${phase} elapsed_ms=${elapsedMs}${status} code=${code}; provider outcome unconfirmed; do not automatically retry.`);
+  error.code = "IMAGE_TRANSPORT_FAILURE";
+  error.phase = phase;
+  error.route = route;
+  return error;
+}
+
+async function fetchImageResponse(fetchImpl, endpoint, init, route, started) {
+  try {
+    return await fetchImpl(endpoint, init);
+  } catch (error) {
+    throw transportFailure(route, "request", started, null, error, init.signal);
+  }
+}
 
 async function withImageRequestTimeout(operation) {
   const controller = new AbortController();
@@ -81,18 +102,21 @@ export async function requestOAuthImage(auth, args, images, fetchImpl) {
   const models = subscriptionRouterModels();
   if (models.length === 0) throw new Error("No OpenAI subscription router model is configured.");
   return withImageRequestTimeout(async (signal) => {
+    const started = performance.now();
     let result;
     for (const model of models) {
-      const response = await fetchImpl(CODEX_RESPONSES_ENDPOINT, {
+      const response = await fetchImageResponse(fetchImpl, CODEX_RESPONSES_ENDPOINT, {
         method: "POST",
         headers: oauthHeaders(auth),
         body: JSON.stringify(oauthRequestBody(args, images, model)),
         signal,
-      });
+      }, "oauth", started);
       if (response.ok) {
         return {
           response,
-          base64: await parseImageSse(response.body),
+          base64: await parseImageSse(response.body, (error) => {
+            throw transportFailure("oauth", "response-body", started, response, error, signal);
+          }),
           requestedModel: null,
           providerModel: null,
         };
@@ -142,13 +166,20 @@ function apiRequest(auth, args, images, signal) {
   };
 }
 
-async function readBoundedJson(response, byteLimit, label) {
+async function readBoundedJson(response, byteLimit, label, onReadError) {
   if (!response.body?.getReader) throw new Error(`${label} did not include a response body.`);
   const reader = response.body.getReader();
   const chunks = [];
   let totalBytes = 0;
   while (true) {
-    const { done, value } = await reader.read();
+    let chunk;
+    try {
+      chunk = await reader.read();
+    } catch (error) {
+      if (onReadError) return onReadError(error);
+      throw error;
+    }
+    const { done, value } = chunk;
     if (done) break;
     totalBytes += value.byteLength;
     if (totalBytes > byteLimit) {
@@ -162,16 +193,19 @@ async function readBoundedJson(response, byteLimit, label) {
 
 export async function requestApiImage(auth, args, images, fetchImpl) {
   return withImageRequestTimeout(async (signal) => {
+    const started = performance.now();
     const requestedModel = args.model || DEFAULT_API_IMAGE_MODEL;
     const request = apiRequest(auth, { ...args, model: requestedModel }, images, signal);
-    const response = await fetchImpl(request.endpoint, request.init);
+    const response = await fetchImageResponse(fetchImpl, request.endpoint, request.init, "api", started);
     if (!response.ok) return { response, base64: "", error: await imageRequestError(response, "api") };
     const contentLength = Number(response.headers.get("content-length") || 0);
     if (contentLength > MAX_API_RESPONSE_BYTES) {
       await response.body?.cancel?.().catch(() => {});
       throw new Error("OpenAI Images API response exceeded the safe response limit.");
     }
-    const payload = await readBoundedJson(response, MAX_API_RESPONSE_BYTES, "OpenAI Images API response");
+    const payload = await readBoundedJson(response, MAX_API_RESPONSE_BYTES, "OpenAI Images API response", (error) => {
+      throw transportFailure("api", "response-body", started, response, error, signal);
+    });
     const base64 = payload?.data?.[0]?.b64_json;
     if (typeof base64 !== "string" || !base64) throw new Error("OpenAI Images API response did not contain an image.");
     const responseModel = payload?.model;
