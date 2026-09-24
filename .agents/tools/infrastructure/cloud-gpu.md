@@ -50,6 +50,18 @@ VRAM: RTX 4090=24GB, L4=24GB, L40S=48GB, A100=80GB, H100=80GB, H200=141GB, B200=
 
 ## Deployment
 
+### Billable deployment contract
+
+Before any billable create or update, record the user-approved model publisher,
+repository, revision and quantization; runtime and image; GPU pool and quoted
+hourly price; storage; and worker minimum, maximum and idle timeout. Treat this
+snapshot as fixed for the deployment, including during provisioning recovery.
+Compare each proposed mutation with the approved snapshot and show the exact
+delta and new price to the user **before** changing a billable resource. Obtain
+explicit approval for every changed property; a cache failure does not authorize
+switching model provenance, GPU pool or pricing. If approval is unavailable,
+stop the mutation and diagnose within the approved configuration instead.
+
 ### 1. Provision
 
 ```bash
@@ -109,6 +121,17 @@ Spot instances (50-80% savings, termination risk) | Off-peak (10-30%) | Smaller 
 ```
 
 ## Monitoring + Troubleshooting
+
+**RunPod Serverless rollout:** `workers.max` describes steady-state autoscaling,
+not an instantaneous limit on worker records or a billable-worker count. During
+updates, reconcile endpoint version with each worker version, stale flag and
+lifecycle state; inspect the queue and live account spend before making worker
+or cost claims. For example, two stale previous-version records and one current
+worker with `max=1` are **not** proof of three concurrently billed workers. If
+spend or worker state is unavailable, report the uncertainty rather than infer
+billing from record count. Poll only for state transitions with a fixed
+cold-start deadline: space out unchanged status/log queries and stop at the
+deadline for diagnosis or an explicit decision, never an unbounded retry loop.
 
 ```bash
 # Health check
