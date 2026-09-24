@@ -17,10 +17,13 @@ optional controls, not prerequisites for learning.
    needs user action; do not narrate routine capture work.
 3. **Classify** evidence, confidence, sensitivity, and the narrowest valid scope:
    session, account, client/case, project/repo, provider, domain, or framework.
-4. **Deduplicate and capture** only concrete, reusable signal. Prefer memory for
-   cross-session context, `_feedback/` for retained qualitative evidence when
-   that plane is initialized, a task for actionable larger work, and repository
-   docs/tests/hooks for verified durable rules.
+4. **Deduplicate and capture** only concrete, reusable signal. Choose the audience
+   and durable destination first: scoped memory for personal cross-session
+   context, `_feedback/` for retained qualitative evidence when initialized,
+   repository docs/tests/hooks for verified shared lessons, and a briefed task
+   for larger work. Local memory alone does not deliver framework knowledge to
+   other users. Use `reference/memory.md` "Choose the Durable Destination Before
+   Storing" to distinguish memory, shared guidance, TODOs, and implementation issues.
 5. **Mitigate and verify** safe, authorized, in-scope defects now. Record the
    observation as unresolved when verification fails; intent is not learning.
 6. **Route, promote, or revoke** the smallest useful summary. Promotion needs
