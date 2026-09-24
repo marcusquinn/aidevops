@@ -10,6 +10,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.34.25] - 2026-09-24
+
+### Added
+
+- Add opt-in provider rotation for worker dispatch
+
+### Changed
+
+- Documentation: Guard billable GPU deployment changes and rollout accounting
+- Documentation: add evidence-qualified YouTube AI Overview guidance
+
+### Fixed
+
+- verify Linux tool update convergence
+
 ## [3.34.24] - 2026-09-23
 
 ### Added
