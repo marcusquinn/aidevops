@@ -211,6 +211,27 @@ model_tier_candidates() {
 }
 
 #######################################
+# Return success only when this tier opts in to provider-level round-robin.
+# A custom tier without this setting inherits the framework default (false).
+#######################################
+model_tier_round_robin_enabled() {
+	local tier="${1:-standard}"
+	local table=""
+	local framework_table=""
+	local value=""
+	command -v jq >/dev/null 2>&1 || return 1
+	table=$(model_routing_table_path 2>/dev/null) || return 1
+	framework_table=$(model_routing_framework_table_path 2>/dev/null) || return 1
+	if [[ "$table" != "$framework_table" ]]; then
+		value=$(jq -r --arg tier "$tier" '.tiers[$tier].round_robin as $value | if ($value | type) == "boolean" then ($value | tostring) else empty end' "$table" 2>/dev/null) || return 1
+	fi
+	if [[ -z "$value" ]]; then
+		value=$(jq -r --arg tier "$tier" '.tiers[$tier].round_robin as $value | if ($value | type) == "boolean" then ($value | tostring) else "false" end' "$framework_table" 2>/dev/null) || return 1
+	fi
+	[[ "$value" == "true" ]]
+}
+
+#######################################
 # Print the zero-based same-tier candidate index for a concrete model.
 #######################################
 model_tier_candidate_index() {

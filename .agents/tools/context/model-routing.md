@@ -74,6 +74,16 @@ at request time. Interactive diagnostics: `compare-models-helper.sh discover`.
 3. **Auth + availability checks** (`headless-runtime-helper.sh`, `model-availability-helper.sh`) → providers/models that can actually run now
 4. **Result**: dispatch selects the first healthy allowed candidate; availability failures move right within the same tier
 
+Optional worker-only balancing: set `"round_robin": true` on an individual tier
+in `custom/configs/model-routing-table.json` to rotate independent worker
+selections across distinct healthy providers. The default is `false` (priority
+first). An explicit or dispatcher-provided initial model, exact-tier retry,
+capability escalation and non-worker selection do not consume a rotation slot.
+Reservation occurs when `select` runs, not when a worker actually launches, so
+selection counts may differ from completed workers. The slot is per worker tier
+and reserved atomically in the headless state DB; unavailable providers are
+excluded before rotation. Disable the flag to restore priority routing.
+
 Before the selected worker launches, `vault-data-policy-helper.sh` evaluates the
 task title/prompt metadata. Remote providers are denied for `local-only` and
 `local-LLM-only`; `confidential` and `client-confidential` require

@@ -247,6 +247,9 @@ their native limits. Restart OpenCode after changes.
 See [model routing](.agents/tools/context/model-routing.md),
 [context efficiency](.agents/reference/context-efficiency.md), and
 [model-effort evaluation](.agents/reference/model-effort-evaluation.md).
+Worker dispatch retains priority-first routing by default. Operators can opt
+individual tiers into provider-level round-robin in the custom model routing
+table; model pins, retries and provider health gates remain unchanged.
 
 ## Primary Agents
 
