@@ -480,6 +480,48 @@ fi
 
 export PATH="$OLD_PATH"
 
+# Release accounting is independent of the status-label contract fixture above.
+# An untrusted forged marker must not erase the historic tick count.
+# shellcheck source=../dispatch-dedup-stale.sh
+source "${TEST_SCRIPTS_DIR}/dispatch-dedup-stale.sh"
+ticks='[[{"created_at":"2026-01-01T00:00:01Z","body":"<!-- stale-recovery-tick:1 -->"},{"created_at":"2026-01-01T00:00:02Z","body":"<!-- stale-recovery-tick:2 -->"},{"created_at":"2026-01-01T00:00:03Z","body":"<!-- stale-recovery-release:verified -->","author_association":"NONE"}]]'
+if [[ "$(_stale_recovery_count_ticks_from_pages "$ticks")" == 2 ]]; then
+	print_result "Untrusted release marker cannot reset ticks" 0
+else
+	print_result "Untrusted release marker cannot reset ticks" 1
+fi
+ticks='[[{"created_at":"2026-01-01T00:00:01Z","body":"<!-- stale-recovery-tick:1 -->"},{"created_at":"2026-01-01T00:00:02Z","body":"<!-- stale-recovery-tick:2 -->"},{"created_at":"2026-01-01T00:00:03Z","body":"<!-- stale-recovery-release:verified -->","author_association":"OWNER"},{"created_at":"2026-01-01T00:00:04Z","body":"<!-- stale-recovery-tick:1 -->"}]]'
+if [[ "$(_stale_recovery_count_ticks_from_pages "$ticks")" == 1 ]]; then
+	print_result "Maintainer release resets only prior ticks" 0
+else
+	print_result "Maintainer release resets only prior ticks" 1
+fi
+
+release_result=$(bash -c '
+	source "$1" help >/dev/null
+	gh() {
+		case "$2" in
+		user) printf "maintainer\n" ;;
+		*/permission) printf "%s\n" "${GH_TEST_PERMISSION:-admin}" ;;
+		*/comments) printf "%s\n" '\''[[{"created_at":"2026-01-01T00:00:02Z","body":"<!-- stale-recovery-tick:escalated -->"}]]'\'' ;;
+		*/issues/99999)
+			if [[ "${GH_TEST_STATE:-blocked}" == available ]]; then
+				printf "%s\n" '\''{"state":"open","labels":[{"name":"status:available"},{"name":"auto-dispatch"}],"assignees":[]}'\''
+			else
+				printf "%s\n" '\''{"state":"open","labels":[{"name":"status:blocked"}],"assignees":[]}'\''
+			fi ;;
+		esac
+	}
+	gh_issue_comment() { printf "COMMENT\n" >&2; return 0; }
+	set_issue_status() { printf "STATUS\n" >&2; GH_TEST_STATE=available; return 0; }
+	_ddh_release_stale_recovery 99999 owner/repo reviewed
+' bash "${TEST_SCRIPTS_DIR}/dispatch-dedup-helper.sh" 2>&1)
+if [[ "$release_result" == *COMMENT* && "$release_result" == *STATUS* ]]; then
+	print_result "Reviewed release posts audit marker before label change" 0
+else
+	print_result "Reviewed release posts audit marker before label change" 1 "$release_result"
+fi
+
 # =============================================================================
 # Summary
 # =============================================================================
