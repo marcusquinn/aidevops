@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.34.32] - 2026-09-25
+
+### Fixed
+
+- Use unconditional operator permission attestation
+- safely inspect protected worktree process CWDs
+
 ## [3.34.31] - 2026-09-25
 
 ### Changed
