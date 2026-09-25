@@ -23,11 +23,9 @@ export function eligibleNewIssue(experiment, { createdAt, labels } = {}) {
   if (!Array.isArray(labels)) return false;
   if (!labels.every((label) => typeof label === "string")) return false;
   const names = new Set(labels);
-  if (!names.has("auto-dispatch") || !names.has("status:available")) return false;
-  if (names.has("tier:simple") || names.has("tier:thinking")) return false;
-  if (names.has("persistent") || names.has("parent-task")) return false;
-  if (names.has("no-auto-dispatch") || names.has("hold-for-review")) return false;
-  return true;
+  const required = ["auto-dispatch", "status:available"];
+  const excluded = ["tier:simple", "tier:thinking", "persistent", "parent-task", "no-auto-dispatch", "hold-for-review"];
+  return required.every((name) => names.has(name)) && excluded.every((name) => !names.has(name));
 }
 
 export function parseAssignmentOptions(args) {

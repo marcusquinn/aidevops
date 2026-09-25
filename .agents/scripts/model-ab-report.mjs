@@ -1,7 +1,38 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 Marcus Quinn
 
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
+import { eligibleCreationDate } from "./model-ab-enrollment.mjs";
 import { observeIssue } from "./model-ab-observe.mjs";
+import { assignedIssueNumbers, assignmentPaths } from "./model-ab-store.mjs";
+
+export function snapshotAssignments(experiment, directory, assignedArm) {
+  const fingerprint = createHash("sha256").update(JSON.stringify(experiment)).digest("hex");
+  const arms = Object.fromEntries(experiment.arms.map((arm) => [arm.name, { assigned: 0, issues: [], assignments: [] }]));
+  const excluded = [];
+  const issues = experiment.issues || assignedIssueNumbers(experiment.repo, directory);
+  for (const issue of issues) {
+    const { receipt } = assignmentPaths(experiment, experiment.repo, issue, directory);
+    if (!existsSync(receipt)) { excluded.push(issue); continue; }
+    const item = JSON.parse(readFileSync(receipt, "utf8"));
+    if (experiment.enrollment && item.experiment !== experiment.id) continue;
+    if (item.fingerprint !== fingerprint || item.arm !== assignedArm(experiment, experiment.repo, issue).name) {
+      throw new Error("model A/B report refused changed assignment evidence");
+    }
+    if (!Number.isFinite(Date.parse(item.assigned_at))) {
+      throw new Error("model A/B report refused changed assignment evidence");
+    }
+    if (experiment.enrollment && !eligibleCreationDate(experiment, item.created_at)) {
+      throw new Error("model A/B report refused ineligible prospective assignment");
+    }
+    arms[item.arm].assigned += 1;
+    arms[item.arm].issues.push(issue);
+    arms[item.arm].assignments.push({ issue, assigned_at: item.assigned_at });
+  }
+  return { experiment: experiment.id, repo: experiment.repo, arms, excluded,
+    result: "assignment-only: join observed requests, escalations, merged-PR evidence and parent acceptance before comparing outcomes" };
+}
 
 function accumulate(arm, issue, outcome) {
   arm.observations.push({ issue, ...outcome });

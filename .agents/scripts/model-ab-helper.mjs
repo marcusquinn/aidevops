@@ -10,10 +10,10 @@ import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { eligibleCreationDate, eligibleNewIssue, parseAssignmentOptions, validEnrollment } from "./model-ab-enrollment.mjs";
-import { aggregateObserved } from "./model-ab-report.mjs";
+import { eligibleNewIssue, parseAssignmentOptions, validEnrollment } from "./model-ab-enrollment.mjs";
+import { aggregateObserved, snapshotAssignments } from "./model-ab-report.mjs";
 import { startProspectiveTrial } from "./model-ab-start.mjs";
-import { assignedIssueNumbers, assignmentPaths, persistReceipt, persistRoute } from "./model-ab-store.mjs";
+import { assignmentPaths, persistReceipt, persistRoute } from "./model-ab-store.mjs";
 
 const root = join(homedir(), ".aidevops", ".agent-workspace", "work", "model-ab");
 const identifier = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/;
@@ -107,28 +107,7 @@ export function assign(experiment, repo, issue, {
 
 export function report(experiment, { directory = root } = {}) {
   validateExperiment(experiment);
-  const arms = Object.fromEntries(experiment.arms.map((arm) => [arm.name, { assigned: 0, issues: [], assignments: [] }]));
-  const excluded = [];
-  const issues = experiment.issues || assignedIssueNumbers(experiment.repo, directory);
-  for (const issue of issues) {
-    const { receipt } = assignmentPaths(experiment, experiment.repo, issue, directory);
-    if (!existsSync(receipt)) { excluded.push(issue); continue; }
-    const item = JSON.parse(readFileSync(receipt, "utf8"));
-    if (experiment.enrollment && item.experiment !== experiment.id) continue;
-    if (item.fingerprint !== digest(JSON.stringify(experiment))
-      || item.arm !== assignedArm(experiment, experiment.repo, issue).name
-      || !Number.isFinite(Date.parse(item.assigned_at))) {
-      throw new Error("model A/B report refused changed assignment evidence");
-    }
-    if (experiment.enrollment && !eligibleCreationDate(experiment, item.created_at)) {
-      throw new Error("model A/B report refused ineligible prospective assignment");
-    }
-    arms[item.arm].assigned += 1;
-    arms[item.arm].issues.push(issue);
-    arms[item.arm].assignments.push({ issue, assigned_at: item.assigned_at });
-  }
-  return { experiment: experiment.id, repo: experiment.repo, arms, excluded,
-    result: "assignment-only: join observed requests, escalations, merged-PR evidence and parent acceptance before comparing outcomes" };
+  return snapshotAssignments(experiment, directory, assignedArm);
 }
 
 function run(argv) {
