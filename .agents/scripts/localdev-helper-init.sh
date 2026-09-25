@@ -63,6 +63,49 @@ cmd_init() {
 	return 0
 }
 
+# Diagnose the macOS .local AAAA/mDNS delay without changing system DNS or hosts.
+# An IPv4-only Traefik listener must not be mapped to ::1 speculatively: that
+# turns a resolvable hostname into a connection failure on affected machines.
+diagnose_local_name_resolution() {
+	local domain="$1"
+	local regular_result=""
+	local ipv4_result=""
+	local regular_lookup=""
+	local ipv4_lookup=""
+
+	if [[ "$OSTYPE" != "darwin"* ]]; then
+		print_info "The .local mDNS/AAAA diagnostic applies to macOS only"
+		return 0
+	fi
+
+	print_info "Checking macOS .local name resolution for $domain (no system changes)..."
+	if command -v scutil >/dev/null 2>&1 && scutil --dns 2>/dev/null | grep -q 'domain[[:space:]]*:[[:space:]]*local'; then
+		print_info "macOS has a .local resolver; mDNS may still precede the unicast resolver"
+	fi
+
+	if ! command -v curl >/dev/null 2>&1; then
+		print_warning "curl is unavailable; compare curl -4 and --resolve manually before changing DNS"
+		return 0
+	fi
+
+	regular_result="$(curl -ksS --connect-timeout 2 --max-time 7 -o /dev/null -w '%{http_code} %{time_namelookup} %{time_total}' "https://$domain/" 2>&1 || true)"
+	ipv4_result="$(curl -4ksS --connect-timeout 2 --max-time 7 -o /dev/null -w '%{http_code} %{time_namelookup} %{time_total}' "https://$domain/" 2>&1 || true)"
+	print_info "Default lookup (HTTP DNS total): $regular_result"
+	print_info "IPv4-only lookup (HTTP DNS total): $ipv4_result"
+	regular_lookup="$(printf '%s\n' "$regular_result" | awk 'NF >= 2 && $1 ~ /^[0-9][0-9][0-9]$/ && $2 ~ /^[0-9]+(\.[0-9]+)?$/ { print $2; exit }')"
+	ipv4_lookup="$(printf '%s\n' "$ipv4_result" | awk 'NF >= 2 && $1 ~ /^[0-9][0-9][0-9]$/ && $2 ~ /^[0-9]+(\.[0-9]+)?$/ { print $2; exit }')"
+
+	if [[ -n "$regular_lookup" && -n "$ipv4_lookup" ]] && awk -v regular="$regular_lookup" -v ipv4="$ipv4_lookup" 'BEGIN { exit !(regular - ipv4 >= 1) }'; then
+		print_warning "Default DNS lookup is at least one second slower than IPv4-only. Keep the existing 127.0.0.1 hosts entry."
+		print_info "Do not add ::1 for this hostname unless the proxy has a verified IPv6 listener."
+		print_info "Bounded CLI mitigation: curl --resolve '$domain:443:127.0.0.1' https://$domain/"
+		print_info "Browser mitigation: use a non-.local development suffix or configure the proxy for verified IPv6; localdev does not alter IPv6 or unrelated hosts entries."
+	else
+		print_success "No material IPv4-only DNS lookup improvement detected; no DNS repair is needed"
+	fi
+	return 0
+}
+
 # Run mkcert without a runtime-isolated XDG data root. OpenCode intentionally
 # redirects XDG_DATA_HOME per session; inheriting it would create a different CA
 # for every project. A caller-provided CAROOT remains the explicit override.
