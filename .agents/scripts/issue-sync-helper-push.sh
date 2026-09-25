@@ -43,6 +43,8 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
 	SCRIPT_DIR="$(cd "$_lib_path" && pwd)"
 	unset _lib_path
 fi
+# shellcheck source=./task-target-repo-lib.sh
+source "${BASH_SOURCE[0]%/*}/task-target-repo-lib.sh"
 
 # =============================================================================
 # Push Helpers
@@ -295,6 +297,18 @@ _push_warn_if_task_id_collides() {
 # cmd_push
 # =============================================================================
 
+_push_validate_targets() {
+	local repo="$1" project_root="$2"
+	shift 2
+	local task_id brief_file declared
+	for task_id in "$@"; do
+		brief_file="$project_root/todo/tasks/${task_id}-brief.md"
+		declared=$(task_brief_target_repo "$brief_file") || return 1
+		task_require_target_repo "$declared" "$repo" "$brief_file" || return 1
+	done
+	return 0
+}
+
 cmd_push() {
 	local target_task="${1:-}"
 	if [[ -z "${AIDEVOPS_PLANNING_PUBLICATION_STATE:-}" ]]; then
@@ -337,6 +351,8 @@ cmd_push() {
 		print_info "No tasks to push"
 		return 0
 	}
+	# Validate every brief before any label, TODO, or issue mutation, even in bulk.
+	_push_validate_targets "$repo" "$project_root" "${tasks[@]}" || return 1
 
 	print_info "Processing ${#tasks[@]} task(s) for push to $repo"
 	gh_create_label "$repo" "$_PUSH_STATUS_AVAILABLE" "0E8A16" "Task is available for claiming"

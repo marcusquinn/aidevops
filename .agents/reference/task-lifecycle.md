@@ -50,6 +50,21 @@ complete only their own leaf and do not manually edit successors.
 
 Task IDs: `/new-task` or `claim-task-id.sh`. NEVER grep TODO.md for next ID.
 
+### Cross-repository child tasks
+
+Declare the brief field `- **Target repository:** owner/repo` when child
+repository ownership is explicit. This is the child's issue and task-ID home;
+`- **Parent:** other-owner/coordination-repo#123` is a relationship, not
+a repository selector. For pre-allocation claims pass the prewritten brief with
+`claim-task-id.sh --brief-file PATH --repo-path PATH`, or pass
+`--target-repo owner/repo` when a brief has not yet been assigned a task ID.
+Both options may be supplied together. The claim compares declarations with
+the selected Git remote before touching the counter; `issue-sync-helper.sh push`
+validates all selected briefs before labels, TODO refs, or issues are
+written. `--repo` and `--project-root` still select the actual publication
+repository. Absent target metadata preserves historical same-repository
+behaviour. Never guess the target from prose or a cross-repo parent.
+
 ## Safety-Stop Recovery
 
 A resource, security, cost, timeout, or process fuse stops only the current
