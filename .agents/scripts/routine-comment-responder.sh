@@ -3,21 +3,19 @@
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 #
 # routine-comment-responder.sh — Detect and respond to user comments on
-# routine-tracking issues. Called by the pulse to dispatch lightweight
-# workers that answer questions and apply change requests.
+# routine-tracking issues. Public comments are never worker instructions.
 #
 # Usage:
 #   routine-comment-responder.sh scan <repo_slug> <repo_path>
 #   routine-comment-responder.sh dispatch <repo_slug> <repo_path> <issue_number> <comment_id>
 #
 # scan:     Finds routine-tracking issues with unanswered user comments.
-#           Outputs one line per actionable comment: issue_number|comment_id|author|body_preview
+#           Outputs one line per unanswered comment: issue_number|comment_id|author|
 #
-# dispatch: Dispatches a lightweight worker to respond to a specific comment.
+# dispatch: Records a content-free handoff; does not launch a worker.
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOGFILE="${ROUTINE_COMMENT_LOGFILE:-${HOME}/.aidevops/.agent-workspace/cron/routine-comments/responder.log}"
 STATE_DIR="${ROUTINE_COMMENT_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/cron/routine-comments}"
 mkdir -p "$STATE_DIR"
@@ -84,31 +82,14 @@ _fetch_comment() {
 	local repo_slug="$1"
 	local issue_number="$2"
 	local comment_id="$3"
-	local responded_file="$4"
-	local comment_json lookup_error lookup_summary err_file
-
-	lookup_error=""
-	err_file=$(mktemp)
-	comment_json=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments/${comment_id}" \
-		2>"$err_file") || {
-		lookup_error=$(<"$err_file")
-		comment_json=""
-	}
-	rm -f "$err_file"
+	local comment_json
+	comment_json=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments/${comment_id}" 2>/dev/null) || comment_json=""
 	if [[ -z "$comment_json" ]]; then
-		lookup_summary="empty response"
-		if [[ -n "$lookup_error" ]]; then
-			lookup_summary="${lookup_error%%$'\n'*}"
-		fi
-		_log "dispatch: comment ${comment_id} on #${issue_number} lookup failed — skipping (${lookup_summary})"
-		_mark_comment_skipped "$responded_file" "$comment_id" "lookup failed"
 		printf '{}\n'
 		return 0
 	fi
 
 	if ! printf '%s\n' "$comment_json" | jq . >/dev/null; then
-		_log "dispatch: comment ${comment_id} on #${issue_number} returned invalid JSON — skipping"
-		_mark_comment_skipped "$responded_file" "$comment_id" "invalid JSON"
 		printf '{}\n'
 		return 0
 	fi
@@ -117,89 +98,27 @@ _fetch_comment() {
 	return 0
 }
 
-_fetch_issue_context() {
+_comment_authority() {
 	local repo_slug="$1"
-	local issue_number="$2"
-	local issue_body
-
-	issue_body=$(gh issue view "$issue_number" --repo "$repo_slug" --json body,title \
-		--jq '"\(.title)\n\n\(.body)"' 2>/dev/null) || issue_body=""
-	printf '%s\n' "$issue_body"
-	return 0
+	local comment_json="$2"
+	local login permission_json permission
+	login=$(printf '%s\n' "$comment_json" | jq -r '.user.login // empty') || return 1
+	[[ "$login" =~ ^[a-zA-Z0-9-]{1,39}$ && "$login" != "unknown" ]] || return 1
+	# aidevops:trust-boundary -- never trust scan previews or author_association as permission.
+	permission_json=$(gh api "repos/${repo_slug}/collaborators/${login}/permission" 2>/dev/null) || return 1
+	permission=$(printf '%s\n' "$permission_json" | jq -r '.permission // empty' 2>/dev/null) || return 1
+	[[ "$permission" == "admin" || "$permission" == "maintain" || "$permission" == "write" ]]
 }
 
-_build_dispatch_prompt() {
-	local repo_slug="$1"
-	local issue_number="$2"
-	local comment_author="$3"
-	local issue_body="$4"
-	local comment_body="$5"
-
-	cat <<PROMPT
-Respond to a user comment on routine tracking issue #${issue_number} in ${repo_slug}.
-
-IMPORTANT: This is a routine-tracking issue — a dashboard for execution metrics.
-You are NOT implementing anything. You are responding to a user's comment.
-
-## Issue context (read-only — do not edit the issue body)
-
-${issue_body}
-
-## User comment from @${comment_author}
-
-${comment_body}
-
-## Instructions
-
-Read the AGENTS.md in this repo for full guidance on handling comments.
-
-Summary:
-1. If it's a QUESTION about the routine: answer using the issue body description,
-   routine logs at ~/.aidevops/.agent-workspace/cron/<routine-id>/, and
-   routine-log-helper.sh status. Post your answer as a comment on issue #${issue_number}.
-
-2. If it's a CHANGE REQUEST (e.g. change schedule, disable, enable):
-   - Edit TODO.md in this repo to apply the change (direct to main, no PR needed)
-   - Post a comment on issue #${issue_number} confirming the change with before/after values
-   - If the change requires modifying framework code, explain that and suggest filing
-     an issue on the main aidevops repo instead
-
-3. If it's a BUG REPORT about the routine itself:
-   - Post a comment acknowledging the report
-   - Create an issue on the main aidevops repo with the bug details
-
-4. Post your response as a comment on issue #${issue_number} using:
-   gh issue comment ${issue_number} --repo ${repo_slug} --body "your response"
-
-5. Keep responses concise and helpful. No signature footers needed for comment responses.
-PROMPT
-	return 0
-}
-
-_dispatch_comment_worker() {
-	local repo_slug="$1"
-	local repo_path="$2"
-	local issue_number="$3"
-	local comment_id="$4"
-	local comment_author="$5"
-	local prompt="$6"
-	local session_key="routine-comment-${issue_number}-${comment_id}"
-
-	_log "dispatch: responding to comment ${comment_id} by @${comment_author} on #${issue_number} in ${repo_slug}"
-
-	if [[ -x "${SCRIPT_DIR:-}/headless-runtime-helper.sh" ]]; then
-		"${SCRIPT_DIR:-}/headless-runtime-helper.sh" run \
-			--role worker \
-			--session-key "$session_key" \
-			--dir "$repo_path" \
-			--title "Routine comment response #${issue_number}" \
-			--prompt "$prompt" \
-			--model "anthropic/claude-haiku-4-5" &
-		return 0
+_record_handoff() {
+	local repo_slug="$1" issue_number="$2" comment_id="$3" reason="$4"
+	local handoff_file="${STATE_DIR}/${repo_slug//\//_}_handoff.txt"
+	# Do not mark answered: recovering isolation later must still see this comment.
+	if ! _comment_already_recorded "$handoff_file" "$comment_id"; then
+		printf '%s\n' "$comment_id" >>"$handoff_file"
+		_log "dispatch: #${issue_number} comment ${comment_id} needs manual routine response (${reason}); no worker launched"
 	fi
-
-	_log "dispatch: headless-runtime-helper.sh not found — cannot dispatch"
-	return 1
+	return 0
 }
 
 # ---------------------------------------------------------------------------
@@ -234,6 +153,7 @@ cmd_scan() {
 	local responded_file
 	responded_file=$(_responded_file_for_repo "$repo_slug")
 	touch "$responded_file"
+	local handoff_file="${STATE_DIR}/${repo_slug//\//_}_handoff.txt"
 
 	local ops_regex
 	ops_regex=$(_routine_ops_comment_regex)
@@ -249,8 +169,8 @@ cmd_scan() {
 
 		[[ -z "$comments_json" ]] && continue
 
-		# Process each comment — find user comments that haven't been responded to
-		echo "$comments_json" | jq -r --arg ops_regex "$ops_regex" 'select(.is_bot == false) | .body |= (. // "") | select(.body | test($ops_regex) | not) | "\(.id)|\(.author)|\(.body | split("\n")[0] | .[0:100])"' |
+		# Do not export public comment text to the caller, even as a preview.
+		echo "$comments_json" | jq -r --arg ops_regex "$ops_regex" 'select(.is_bot == false) | .body |= (. // "") | select(.body | test($ops_regex) | not) | "\(.id)|\(.author)|"' |
 			while IFS='|' read -r comment_id author body_preview; do
 				[[ -z "$comment_id" ]] && continue
 
@@ -268,6 +188,11 @@ cmd_scan() {
 				if _comment_already_recorded "$responded_file" "$comment_id"; then
 					continue
 				fi
+				# Manual handoffs remain recoverable in their own state file,
+				# but do not starve later comments on every Pulse cycle.
+				if _comment_already_recorded "$handoff_file" "$comment_id"; then
+					continue
+				fi
 
 				echo "${issue_number}|${comment_id}|${author}|${body_preview}"
 				found=$((found + 1))
@@ -280,8 +205,7 @@ cmd_scan() {
 
 # ---------------------------------------------------------------------------
 # dispatch <repo_slug> <repo_path> <issue_number> <comment_id>
-# Dispatches a lightweight worker to respond to a specific comment.
-# Uses a focused prompt — NOT /full-loop.
+# Records an observable manual handoff; no public content reaches a worker.
 # ---------------------------------------------------------------------------
 cmd_dispatch() {
 	local repo_slug="$1"
@@ -300,11 +224,12 @@ cmd_dispatch() {
 	fi
 
 	local comment_json comment_body
-	if ! comment_json=$(_fetch_comment "$repo_slug" "$issue_number" "$comment_id" "$responded_file"); then
+	if ! comment_json=$(_fetch_comment "$repo_slug" "$issue_number" "$comment_id"); then
 		return 0
 	fi
 	if [[ "$comment_json" == "{}" ]]; then
-		return 0
+		_record_handoff "$repo_slug" "$issue_number" "$comment_id" "comment lookup unavailable"
+		return 1
 	fi
 	comment_body=$(printf '%s\n' "$comment_json" | jq -r '.body // ""')
 
@@ -314,23 +239,15 @@ cmd_dispatch() {
 		return 0
 	fi
 
-	local comment_author
-	comment_author=$(printf '%s\n' "$comment_json" | jq -r '.user.login // "unknown"')
-
-	local issue_body
-	issue_body=$(_fetch_issue_context "$repo_slug" "$issue_number")
-
-	local prompt
-	prompt=$(_build_dispatch_prompt "$repo_slug" "$issue_number" "$comment_author" "$issue_body" "$comment_body")
-
-	if ! _dispatch_comment_worker "$repo_slug" "$repo_path" "$issue_number" "$comment_id" "$comment_author" "$prompt"; then
-		return 1
+	# aidevops:trust-boundary -- definitive re-fetch and independent permission check.
+	# Until process-tree isolation and egress are guaranteed, even trusted authors
+	# receive a content-free manual handoff, never a privileged worker.
+	if ! _comment_authority "$repo_slug" "$comment_json"; then
+		_record_handoff "$repo_slug" "$issue_number" "$comment_id" "unverified author"
+	else
+		_record_handoff "$repo_slug" "$issue_number" "$comment_id" "worker isolation unavailable"
 	fi
-
-	# Mark as responded immediately (the worker will handle the actual response)
-	printf '%s\n' "$comment_id" >>"$responded_file"
-	_log "dispatch: worker dispatched for comment ${comment_id} on #${issue_number}"
-	return 0
+	return 1
 }
 
 # ---------------------------------------------------------------------------

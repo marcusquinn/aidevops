@@ -951,12 +951,13 @@ dispatch_routine_comment_responses() {
 	local repos_json="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
 	local max_dispatches="${ROUTINE_COMMENT_MAX_PER_CYCLE:-2}"
 	local dispatched=0
+	local attempted=0
 
 	# Iterate pulse-enabled repos
 	local slug repo_path
 	while IFS='|' read -r slug repo_path; do
 		[[ -n "$slug" && -n "$repo_path" ]] || continue
-		[[ "$dispatched" -lt "$max_dispatches" ]] || break
+		[[ "$attempted" -lt "$max_dispatches" ]] || break
 
 		# Scan for unanswered comments
 		local scan_output
@@ -965,11 +966,12 @@ dispatch_routine_comment_responses() {
 
 		while IFS='|' read -r issue_number comment_id author body_preview; do
 			[[ -n "$issue_number" && -n "$comment_id" ]] || continue
-			[[ "$dispatched" -lt "$max_dispatches" ]] || break
+			[[ "$attempted" -lt "$max_dispatches" ]] || break
 
-			echo "[pulse-wrapper] Routine comment response: dispatching for #${issue_number} comment ${comment_id} by @${author} in ${slug}" >>"$LOGFILE"
-			bash "$responder" dispatch "$slug" "$repo_path" "$issue_number" "$comment_id" 2>>"$LOGFILE" || true
-			dispatched=$((dispatched + 1))
+			attempted=$((attempted + 1))
+			if bash "$responder" dispatch "$slug" "$repo_path" "$issue_number" "$comment_id" 2>>"$LOGFILE"; then
+				dispatched=$((dispatched + 1))
+			fi
 		done <<<"$scan_output"
 	done < <(jq -r '.initialized_repos[] | select(.maintenance != false) | select(.pulse == true) | select(.local_only != true) | "\(.slug)|\(.path)"' "$repos_json" 2>/dev/null)
 
