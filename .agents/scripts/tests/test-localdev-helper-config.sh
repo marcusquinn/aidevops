@@ -192,6 +192,21 @@ else
 	record_fail "diagnostic needs no privilege and is repeatable"
 fi
 
+cat >"$TEST_ROOT/bin/curl" <<'CURL'
+#!/usr/bin/env bash
+case "$*" in
+*'-4'*) printf '200 0.002 0.011' ;;
+*) printf '200 0.001 0.010' ;;
+esac
+CURL
+chmod +x "$TEST_ROOT/bin/curl"
+healthy_diagnostic_output="$(OSTYPE=darwin diagnose_local_name_resolution sample.local 2>&1)"
+if [[ "$healthy_diagnostic_output" == *"No material IPv4-only DNS lookup improvement detected"* && "$healthy_diagnostic_output" != *"Keep the existing 127.0.0.1 hosts entry"* ]]; then
+	record_pass "diagnostic ignores normal timing jitter between curl requests"
+else
+	record_fail "diagnostic ignores normal timing jitter between curl requests"
+fi
+
 printf '\nResults: %s passed, %s failed\n' "$PASS" "$FAIL"
 if [[ "$FAIL" -gt 0 ]]; then
 	exit 1
