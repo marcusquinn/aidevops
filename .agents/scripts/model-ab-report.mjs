@@ -7,6 +7,18 @@ import { eligibleCreationDate } from "./model-ab-enrollment.mjs";
 import { observeIssue } from "./model-ab-observe.mjs";
 import { assignedIssueNumbers, assignmentPaths } from "./model-ab-store.mjs";
 
+function verifyAssignment(experiment, issue, item, fingerprint, assignedArm) {
+  if (item.fingerprint !== fingerprint || item.arm !== assignedArm(experiment, experiment.repo, issue).name) {
+    throw new Error("model A/B report refused changed assignment evidence");
+  }
+  if (!Number.isFinite(Date.parse(item.assigned_at))) {
+    throw new Error("model A/B report refused changed assignment evidence");
+  }
+  if (experiment.enrollment && !eligibleCreationDate(experiment, item.created_at)) {
+    throw new Error("model A/B report refused ineligible prospective assignment");
+  }
+}
+
 export function snapshotAssignments(experiment, directory, assignedArm) {
   const fingerprint = createHash("sha256").update(JSON.stringify(experiment)).digest("hex");
   const arms = Object.fromEntries(experiment.arms.map((arm) => [arm.name, { assigned: 0, issues: [], assignments: [] }]));
@@ -17,15 +29,7 @@ export function snapshotAssignments(experiment, directory, assignedArm) {
     if (!existsSync(receipt)) { excluded.push(issue); continue; }
     const item = JSON.parse(readFileSync(receipt, "utf8"));
     if (experiment.enrollment && item.experiment !== experiment.id) continue;
-    if (item.fingerprint !== fingerprint || item.arm !== assignedArm(experiment, experiment.repo, issue).name) {
-      throw new Error("model A/B report refused changed assignment evidence");
-    }
-    if (!Number.isFinite(Date.parse(item.assigned_at))) {
-      throw new Error("model A/B report refused changed assignment evidence");
-    }
-    if (experiment.enrollment && !eligibleCreationDate(experiment, item.created_at)) {
-      throw new Error("model A/B report refused ineligible prospective assignment");
-    }
+    verifyAssignment(experiment, issue, item, fingerprint, assignedArm);
     arms[item.arm].assigned += 1;
     arms[item.arm].issues.push(issue);
     arms[item.arm].assignments.push({ issue, assigned_at: item.assigned_at });
