@@ -10,6 +10,7 @@ WORKFLOWS=(
 	".github/workflows/code-quality.yml"
 	".github/workflows/qlty-new-file-gate.yml"
 	".github/workflows/qlty-regression.yml"
+	".github/workflows/post-merge-verify.yml"
 	".github/workflows/ratchet-post-merge.yml"
 )
 
@@ -18,6 +19,8 @@ for workflow in "${WORKFLOWS[@]}"; do
 	install_count=$(grep -c 'uses: qltysh/qlty-action/install@' "$workflow_path" || true)
 	[[ "$install_count" -gt 0 ]]
 	grep -Fq "QLTY_VERSION: \"${EXPECTED_VERSION}\"" "$workflow_path"
+	pinned_count=$(grep -cF 'uses: qltysh/qlty-action/install@a19242102d17e497f437d7466aa01b528537e899 # v2.2.0' "$workflow_path" || true)
+	[[ "$pinned_count" -eq "$install_count" ]]
 	printf 'PASS %s pins %s Qlty installer step(s) to %s\n' "$workflow" "$install_count" "$EXPECTED_VERSION"
 done
 
