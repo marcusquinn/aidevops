@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import plistlib
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -18,6 +19,10 @@ from unittest.mock import patch
 
 SPEC = importlib.util.spec_from_file_location(
     "opencode_service", Path(__file__).resolve().parents[1] / "opencode-service-helper.py")
+sys.path.insert(0, str(Path(SPEC.origin).parent))
+import opencode_service_lifecycle as lifecycle_module
+import opencode_service_state as state_module
+
 service_module = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(service_module)
 
@@ -31,25 +36,30 @@ class ServiceTests(unittest.TestCase):
         self.home = Path(self.temporary.name)
         self.service = service_module.Service(self.home, "darwin")
         self.args = argparse.Namespace(port=None, shard=None, route_new=False, fresh_default=False)
-        self.data = {"schema": service_module.SCHEMA, "port": 49036, "shard": "managed-default",
+        self.data = {"schema": state_module.SCHEMA, "port": 49036, "shard": "managed-default",
                      "directory": str(self.home), "enabled": True, "route_new": False,
                      "python": "/usr/bin/python3", "opencode": "/usr/local/bin/opencode", "path": "/usr/bin"}
         helper = self.home / ".aidevops/agents/scripts/opencode-service-helper.py"
         helper.parent.mkdir(parents=True)
         helper.write_text("# helper fixture\n")
         helper.with_name("opencode-launcher-helper.sh").write_text("# launcher fixture\n")
-        self.helper_patch = patch.object(service_module, "HELPER", helper)
+        for name in ("opencode_service_state.py", "opencode_service_lifecycle.py"):
+            helper.with_name(name).write_text("# module fixture\n")
+        self.helper_patch = patch.object(lifecycle_module, "HELPER", helper)
         self.helper_patch.start()
         self.addCleanup(self.helper_patch.stop)
-        self.command_patch = patch.object(service_module, "command", return_value=argparse.Namespace(returncode=1, stdout=""))
+        self.command_patch = patch.object(lifecycle_module, "command", return_value=argparse.Namespace(returncode=1, stdout=""))
         self.command_mock = self.command_patch.start()
         self.addCleanup(self.command_patch.stop)
+        state_command = patch.object(state_module, "command", self.command_mock)
+        state_command.start()
+        self.addCleanup(state_command.stop)
 
     def install(self):
         with patch.object(self.service, "supported"), patch.object(self.service, "pid", return_value=0), \
              patch.object(self.service, "listeners", return_value=set()), \
              patch.object(self.service, "start") as start, \
-             patch.object(service_module.shutil, "which", side_effect=lambda name: f"/usr/bin/{name}"):
+             patch.object(lifecycle_module.shutil, "which", side_effect=lambda name: f"/usr/bin/{name}"):
             result = self.service.install(self.args)
         return result, start
 
@@ -69,9 +79,9 @@ class ServiceTests(unittest.TestCase):
         self.assertIn('%%n/$HOME/\\"quote\\"', definition)
         self.assertNotIn('$$HOME', definition)
         self.assertIn("Restart=on-failure", definition)
-        self.assertEqual(service_module.systemd_quote("$HOME", True), '"$$HOME"')
+        self.assertEqual(state_module.systemd_quote("$HOME", True), '"$$HOME"')
         with self.assertRaises(RuntimeError):
-            service_module.systemd_quote("bad\nunit")
+            state_module.systemd_quote("bad\nunit")
 
     def test_native_windows_is_rejected(self):
         with self.assertRaisesRegex(RuntimeError, "Native Windows"):
@@ -92,7 +102,7 @@ class ServiceTests(unittest.TestCase):
 
     def test_linux_without_user_manager_is_rejected(self):
         service = service_module.Service(self.home, "linux")
-        with patch.object(service_module.shutil, "which", return_value=None):
+        with patch.object(state_module.shutil, "which", return_value=None):
             with self.assertRaisesRegex(RuntimeError, "systemd --user"):
                 service.supported()
 
@@ -140,7 +150,7 @@ class ServiceTests(unittest.TestCase):
 
     def test_existing_history_is_retained_without_inspecting_sqlite(self):
         database = self.service.work / "opencode-interactive/project-old/opencode/opencode.db"
-        service_module.atomic_write(database, b"untouched old history")
+        state_module.atomic_write(database, b"untouched old history")
         self.args.fresh_default = True
         data, _ = self.install()
         self.assertFalse(data["route_new"])
@@ -162,13 +172,13 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(self.service.load()["port"], 49036)
 
     def test_foreign_definition_is_not_replaced(self):
-        service_module.atomic_write(self.service.definition, plistlib.dumps({"Label": "other"}))
+        state_module.atomic_write(self.service.definition, plistlib.dumps({"Label": "other"}))
         with self.assertRaisesRegex(RuntimeError, "not aidevops-managed"):
             self.install()
         self.assertFalse(self.service.config.exists())
 
     def test_worktree_service_is_rejected(self):
-        with patch.object(service_module, "HELPER", self.home / "Git/worktree/helper.py"):
+        with patch.object(lifecycle_module, "HELPER", self.home / "Git/worktree/helper.py"):
             with self.assertRaisesRegex(RuntimeError, "Deploy the helper first"):
                 self.install()
 
@@ -176,14 +186,26 @@ class ServiceTests(unittest.TestCase):
         self.install()
         staged = self.service.runtime / "opencode-service-helper.py"
         expected = staged.read_bytes()
-        service_module.HELPER.unlink()
+        lifecycle_module.HELPER.unlink()
         self.assertEqual(staged.read_bytes(), expected)
         self.assertTrue((self.service.runtime / "gh").stat().st_mode & 0o100)
+
+    def test_staged_cli_imports_without_the_deployed_source(self):
+        for name in lifecycle_module.RUNTIME_FILES:
+            lifecycle_module.HELPER.with_name(name).write_bytes(Path(SPEC.origin).with_name(name).read_bytes())
+        self.install()
+        for name in lifecycle_module.RUNTIME_FILES:
+            lifecycle_module.HELPER.with_name(name).unlink()
+        result = subprocess.run(
+            [sys.executable, str(self.service.runtime / "opencode-service-helper.py"), "route"],
+            env=dict(os.environ, HOME=str(self.home)), text=True, capture_output=True, timeout=15, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "direct")
 
     def test_changed_running_definition_is_not_restarted(self):
         self.service.save(self.data)
         with patch.object(self.service, "supported"), patch.object(self.service, "pid", return_value=123), \
-             patch.object(service_module.shutil, "which", return_value="/usr/bin/tool"):
+             patch.object(lifecycle_module.shutil, "which", return_value="/usr/bin/tool"):
             with self.assertRaisesRegex(RuntimeError, "stop the idle owner"):
                 self.service.install(self.args)
 
@@ -215,11 +237,11 @@ class ServiceTests(unittest.TestCase):
 
     def test_healthy_unknown_listener_is_rejected_before_http(self):
         lock = self.service.shard(self.data) / ".aidevops-server-owner/pid"
-        service_module.atomic_write(lock, b"123\n")
+        state_module.atomic_write(lock, b"123\n")
         with patch.object(self.service, "pid", return_value=123), \
              patch.object(self.service, "listeners", return_value={456}), \
              patch.object(self.service, "descendant", return_value=False), \
-             patch.object(service_module.urllib.request, "build_opener") as http:
+             patch.object(state_module.urllib.request, "build_opener") as http:
             with self.assertRaisesRegex(RuntimeError, "not the managed owner"):
                 self.service.health(self.data)
             http.assert_not_called()
@@ -229,7 +251,7 @@ class ServiceTests(unittest.TestCase):
              patch.object(self.service, "listeners", return_value=set()), \
              patch.object(self.service, "start", side_effect=RuntimeError("readiness failed")), \
              patch.object(self.service, "stop") as stop, \
-             patch.object(service_module.shutil, "which", return_value="/usr/bin/tool"):
+             patch.object(lifecycle_module.shutil, "which", return_value="/usr/bin/tool"):
             with self.assertRaisesRegex(RuntimeError, "readiness failed"):
                 self.service.install(self.args)
             stop.assert_called_once()
@@ -265,14 +287,14 @@ class ServiceTests(unittest.TestCase):
         with patch.object(self.service, "stop", side_effect=RuntimeError("stop failed")):
             with self.assertRaisesRegex(RuntimeError, "stop failed"):
                 self.service.disable(self.data)
-        self.command_mock.assert_called_with("systemctl", "--user", "disable", service_module.UNIT)
+        self.command_mock.assert_called_with("systemctl", "--user", "disable", state_module.UNIT)
         self.assertFalse(self.service.load()["enabled"])
 
     def test_recover_dead_lock_never_touches_database(self):
         lock = self.service.shard(self.data) / ".aidevops-server-owner/pid"
         database = self.service.shard(self.data) / "opencode/opencode.db"
-        service_module.atomic_write(lock, b"999999\n")
-        service_module.atomic_write(database, b"history stays here")
+        state_module.atomic_write(lock, b"999999\n")
+        state_module.atomic_write(database, b"history stays here")
         with patch.object(service_module.os, "kill", side_effect=ProcessLookupError):
             self.service.recover_dead_lock(self.data)
         self.assertFalse(lock.parent.exists())
@@ -280,12 +302,12 @@ class ServiceTests(unittest.TestCase):
 
     def test_recovery_refuses_live_pid_and_database_holders(self):
         lock = self.service.shard(self.data) / ".aidevops-server-owner/pid"
-        service_module.atomic_write(lock, b"123\n")
+        state_module.atomic_write(lock, b"123\n")
         with patch.object(service_module.os, "kill"):
             with self.assertRaisesRegex(RuntimeError, "PID is alive"):
                 self.service.recover_dead_lock(self.data)
         database = self.service.shard(self.data) / "opencode/opencode.db"
-        service_module.atomic_write(database, b"history")
+        state_module.atomic_write(database, b"history")
         self.command_mock.return_value.returncode = 0
         with patch.object(service_module.os, "kill", side_effect=ProcessLookupError):
             with self.assertRaisesRegex(RuntimeError, "still has holders"):
