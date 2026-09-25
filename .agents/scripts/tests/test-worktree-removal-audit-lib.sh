@@ -117,7 +117,10 @@ create_git_worktree_fixture() {
 # deterministic complete snapshot so unrelated host processes cannot turn the
 # fixture into a degraded-visibility cleanup path.
 with_complete_cwd_snapshot() (
-	capture_worktree_process_cwds() { printf '/\n'; return 0; }
+	capture_worktree_process_cwds() {
+		printf '/\n'
+		return 0
+	}
 	"$@"
 )
 
@@ -600,7 +603,7 @@ RACE_GIT
 	if REAL_GIT="$GIT_BIN" RACE_MARKER="$marker_path" RACE_REPO="$repo_path" \
 		RACE_WORKTREE="$wt_path" AIDEVOPS_REAL_GIT_BIN="$wrapper_path" \
 		with_complete_cwd_snapshot remove_archived_worktree_path "$wt_path" "$archive_path" "test.sh" \
-			"recoverable-test" "recovery_path=archive-first" "false" "false"; then
+		"recoverable-test" "recovery_path=archive-first" "false" "false"; then
 		rc=1
 	fi
 	metadata=$("$GIT_BIN" -C "$repo_path" worktree list --porcelain) || rc=1
@@ -754,7 +757,7 @@ LATE_WRITE_GIT
 	if REAL_GIT="$GIT_BIN" LATE_WRITE_MARKER="$marker_path" \
 		LATE_WRITE_WORKTREE="$wt_path" AIDEVOPS_REAL_GIT_BIN="$wrapper_path" \
 		with_complete_cwd_snapshot remove_archived_worktree_path "$wt_path" "$archive_path" "test.sh" \
-			"late-write-test" "recovery_path=archive-first" "false" "false"; then
+		"late-write-test" "recovery_path=archive-first" "false" "false"; then
 		rc=1
 	fi
 	[[ -f "$wt_path/late-write.txt" && ! -e "$archive_path/late-write.txt" ]] || rc=1
@@ -1709,6 +1712,108 @@ test_proc_snapshot_marks_same_uid_unreadable_entry_degraded() {
 	return 0
 }
 
+# A protected same-UID process is usable only when the optional read-only
+# inspector returns its actual absolute CWD. The fixture never calls sudo.
+test_proc_snapshot_recovers_protected_same_uid_cwd() {
+	local proc_root="${TEST_DIR}/fake-proc-inspected"
+	local current_uid=""
+	local output=""
+	local rc=0
+	current_uid=$(id -u)
+	mkdir -p "${proc_root}/1" "${proc_root}/2"
+	ln -s /visible-cwd "${proc_root}/1/cwd"
+	ln -s /protected-cwd "${proc_root}/2/cwd"
+	printf 'Uid:\t%s\t%s\t%s\t%s\n' \
+		"$current_uid" "$current_uid" "$current_uid" "$current_uid" >"${proc_root}/2/status"
+
+	output=$(
+		readlink() {
+			[[ "$1" == */1/cwd ]] || return 1
+			printf '/visible-cwd\n'
+		}
+		_worktree_privileged_read_cwd() {
+			[[ "$1" == "$proc_root" && "$2" == "${proc_root}/2" ]] || return 1
+			printf '/protected-cwd\n'
+		}
+		_capture_worktree_proc_cwds "$proc_root"
+	) || rc=1
+	[[ "$output" == $'/visible-cwd\n/protected-cwd' ]] || rc=1
+	_worktree_cwd_snapshot_contains_path /protected-cwd /protected-cwd "$output" || rc=1
+	print_result "proc_snapshot_recovers_protected_same_uid_cwd" "$rc" \
+		"Expected inspected CWD to be captured and eligible for active-path blocking"
+	return 0
+}
+
+test_privileged_inspector_rejects_untrusted_proc_root() {
+	local output=""
+	local rc=0
+	if output=$(
+		sudo() {
+			printf '/should-not-be-used\n'
+			return 0
+		}
+		_worktree_privileged_read_cwd "${TEST_DIR}/fake-proc" "${TEST_DIR}/fake-proc/2"
+	); then
+		rc=1
+	fi
+	[[ -z "$output" ]] || rc=1
+	print_result "privileged_inspector_rejects_untrusted_proc_root" "$rc" \
+		"Expected non-system proc roots to fail before invoking sudo"
+	return 0
+}
+
+test_privileged_inspector_uses_bounded_execution() {
+	local output=""
+	local rc=0
+	output=$(
+		timeout_sec() {
+			[[ "$1" == "5" && "$2" == "sudo" && "$3" == "-n" && "$4" == "--" ]] || return 1
+			[[ "$5" == "/usr/local/libexec/aidevops-worktree-cwd-inspect" && "$6" == "2" ]] || return 1
+			printf '/bounded-cwd\n'
+		}
+		_worktree_privileged_read_cwd /proc /proc/2
+	) || rc=1
+	[[ "$output" == "/bounded-cwd" ]] || rc=1
+	print_result "privileged_inspector_uses_bounded_execution" "$rc" \
+		"Expected the privileged inspector to use the shared five-second timeout"
+	return 0
+}
+
+test_proc_snapshot_rejects_failed_inspector_output() {
+	local proc_root="${TEST_DIR}/fake-proc-failed-inspector"
+	local current_uid=""
+	local output=""
+	local capture_status=0
+	local rc=0
+	current_uid=$(id -u)
+	mkdir -p "${proc_root}/1" "${proc_root}/2"
+	ln -s /visible-cwd "${proc_root}/1/cwd"
+	ln -s /untrusted-cwd "${proc_root}/2/cwd"
+	printf 'Uid:\t%s\t%s\t%s\t%s\n' \
+		"$current_uid" "$current_uid" "$current_uid" "$current_uid" >"${proc_root}/2/status"
+
+	if output=$(
+		readlink() {
+			[[ "$1" == */1/cwd ]] || return 1
+			printf '/visible-cwd\n'
+		}
+		_worktree_privileged_read_cwd() {
+			printf '/untrusted-cwd\n'
+			return 1
+		}
+		_capture_worktree_proc_cwds "$proc_root"
+	); then
+		capture_status=0
+	else
+		capture_status=$?
+	fi
+	[[ "$capture_status" -eq "$_WT_CWD_CAPTURE_DEGRADED_RC" ]] || rc=1
+	[[ "$output" == "/visible-cwd" ]] || rc=1
+	print_result "proc_snapshot_rejects_failed_inspector_output" "$rc" \
+		"Expected plausible output from a failed inspector to stay hidden and fail closed"
+	return 0
+}
+
 # =============================================================================
 # Zombies have no live execution context or working directory. Their cwd link
 # can remain present while readlink returns ENOENT, so they are safe to skip.
@@ -2139,6 +2244,10 @@ test_proc_snapshot_preserves_degraded_visibility
 test_proc_snapshot_skips_foreign_uid_unreadable_entry
 test_proc_snapshot_skips_foreign_uid_when_status_unreadable
 test_proc_snapshot_marks_same_uid_unreadable_entry_degraded
+test_proc_snapshot_recovers_protected_same_uid_cwd
+test_privileged_inspector_rejects_untrusted_proc_root
+test_privileged_inspector_uses_bounded_execution
+test_proc_snapshot_rejects_failed_inspector_output
 test_proc_snapshot_skips_zombie_cwd_denial
 test_proc_snapshot_marks_same_uid_daemon_denial_degraded
 test_degraded_visibility_preserves_positive_candidate_match

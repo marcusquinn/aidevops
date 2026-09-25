@@ -216,6 +216,26 @@ _worktree_proc_entry_is_zombie() {
 	return 1
 }
 
+# Optional, read-only escalation for protected same-UID process CWDs. The
+# installed inspector must be root-owned and sudoers must allow only that
+# executable; neither a failed sudo call nor an untrusted /proc root grants
+# removal permission. See .agents/reference/worktree-cwd-visibility.md.
+_worktree_privileged_read_cwd() {
+	local proc_root="$1"
+	local proc_dir="$2"
+	local pid="${proc_dir##*/}"
+	local timeout_seconds=5
+	[[ "$proc_root" == /proc && "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
+	if declare -F timeout_sec >/dev/null 2>&1; then
+		timeout_sec "$timeout_seconds" sudo -n -- \
+			/usr/local/libexec/aidevops-worktree-cwd-inspect "$pid" 2>/dev/null
+		return $?
+	fi
+	command -v timeout >/dev/null 2>&1 || return 1
+	command timeout "$timeout_seconds" sudo -n -- \
+		/usr/local/libexec/aidevops-worktree-cwd-inspect "$pid" 2>/dev/null
+}
+
 _capture_worktree_proc_cwds() {
 	local proc_root="$1"
 	local cwd_link=""
@@ -239,6 +259,16 @@ _capture_worktree_proc_cwds() {
 			proc_dir="${cwd_link%/cwd}"
 			_worktree_proc_entry_is_zombie "$proc_dir" && continue
 			_worktree_proc_entry_is_provably_foreign_uid "$proc_dir" "$current_uid" && continue
+			# A root-owned inspector may read only this caller's protected CWD.
+			# A denial, a vanished process, or an empty result stays fail-closed.
+			if cwd_target=$(_worktree_privileged_read_cwd "$proc_root" "$proc_dir"); then
+				if [[ "$cwd_target" == /* && "$cwd_target" != *$'\n'* ]]; then
+					printf '%s\n' "$cwd_target"
+					captured_count=$((captured_count + 1))
+					continue
+				fi
+			fi
+			[[ -L "$cwd_link" || -e "$cwd_link" ]] || continue
 			visibility_degraded=1
 			continue
 		fi
