@@ -440,6 +440,13 @@ Setup deploys the framework under `~/.aidevops/agents/`, installs the CLI,
 configures detected supported runtimes, and offers optional tools. Existing
 personal settings and custom agents are preserved.
 
+Setup/update also manages a persistent OpenCode owner on macOS and on Linux/WSL2
+with a systemd user manager. `aidevops opencode managed --dir PATH` attaches a TUI
+to its shared history. Existing databases, routing choices, and disabled services
+are preserved; Desktop's first server/project selection remains manual. See the
+[managed-service guide](.agents/reference/opencode-service.md) for platform
+verification limits, opt-out, and rollback.
+
 ## Quick Start
 
 1. Install aidevops using one of the methods above.

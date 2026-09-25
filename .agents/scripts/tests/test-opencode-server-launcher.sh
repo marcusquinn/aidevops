@@ -92,6 +92,12 @@ fi
 [[ "${FAKE_DB_BUSY:-0}" == "1" ]] && exit 0
 exit 1
 SH
+    cat >"${bin_dir}/nc" <<'SH'
+#!/usr/bin/env bash
+# Keep the fallback port probe hermetic when a real acceptance owner is running.
+[[ "${FAKE_PORT_BUSY:-0}" == "1" ]] && exit 0
+exit 1
+SH
     cat >"${bin_dir}/curl" <<'SH'
 #!/usr/bin/env bash
 set -u
@@ -105,7 +111,7 @@ fi
 printf '%s\n' "${health_json}"
 exit 0
 SH
-    chmod +x "${bin_dir}/opencode" "${bin_dir}/lsof" "${bin_dir}/curl"
+    chmod +x "${bin_dir}/opencode" "${bin_dir}/lsof" "${bin_dir}/nc" "${bin_dir}/curl"
     return 0
 }
 
@@ -138,10 +144,11 @@ output=$(PATH="${fake_bin}:$PATH" HOME="${home_dir}" AIDEVOPS_WORK_DIR="${dry_ru
     FAKE_OPENCODE_LOG="${opencode_log}" FAKE_LSOF_LOG="${lsof_log}" FAKE_CURL_LOG="${curl_log}" \
     "${HELPER}" server --dir "${launch_dir}" --port 49036 --dry-run 2>&1)
 if [[ "${output}" == *"XDG_DATA_HOME=${dry_run_work_dir}/opencode-server/project-repo-"* ]] \
-    && [[ "${output}" == *"AIDEVOPS_OPENCODE_SERVER_OWNER=1 opencode serve --pure --hostname 127.0.0.1 --port 49036 --cors oc://renderer"* ]] \
+    && [[ "${output}" == *"AIDEVOPS_OPENCODE_SERVER_OWNER=1 opencode serve --hostname 127.0.0.1 --port 49036 --cors oc://renderer"* ]] \
+    && [[ "${output}" != *"--pure"* ]] \
     && directory_is_empty "${dry_run_work_dir}" \
     && [[ ! -e "${opencode_log}" && ! -e "${lsof_log}" && ! -e "${curl_log}" ]]; then
-    pass "server dry-run is complete and observational"
+    pass "server dry-run preserves plugins and is observational"
 else
     fail "server dry-run output or state was unexpected: ${output}"
 fi
@@ -174,12 +181,13 @@ for candidate in "${server_work_dir}"/opencode-server/project-repo-*; do
 done
 if [[ "${output}" == *"AIDEVOPS_OPENCODE_SERVER_OWNER=1"* ]] \
     && [[ "${output}" == *"PWD=${launch_dir}"* ]] \
-    && [[ "${output}" == *"ARGS=serve --pure --hostname 127.0.0.1 --port 49036 --cors oc://renderer"* ]] \
+    && [[ "${output}" == *"ARGS=serve --hostname 127.0.0.1 --port 49036 --cors oc://renderer"* ]] \
+    && [[ "${output}" != *"--pure"* ]] \
     && [[ "${server_data_count}" == "1" ]] \
     && [[ -f "${server_data_dir}/opencode/auth.json" ]] \
     && [[ -f "${server_data_dir}/opencode/opencode.db" ]] \
     && [[ ! -e "${server_data_dir}/.aidevops-server-owner" ]]; then
-    pass "server mode prepares one isolated shard and releases its owner lock"
+    pass "server mode preserves plugins, isolates its shard, and releases its owner lock"
 else
     fail "server mode output or shard state was unexpected: ${output}"
 fi

@@ -39,6 +39,7 @@ SETUP_EXPLICIT_NON_INTERACTIVE="${AIDEVOPS_NON_INTERACTIVE:-false}"
 UPDATE_TOOLS_MODE=false
 SETUP_STAGE=""
 SETUP_STAGE_OPENCODE="setup_opencode_cli"
+SETUP_STAGE_OPENCODE_SERVICE="setup_opencode_service"
 SETUP_STAGE_AGENTS="deploy_aidevops_agents"
 SETUP_STAGE_HOOKS="setup_safety_hooks"
 SETUP_STAGE_TABBY="setup_tabby"
@@ -1435,6 +1436,7 @@ _setup_run_ai_session_incremental() {
 	if [[ "$_SETUP_AI_SESSION_NEEDS_AGENTS" -eq 1 ]]; then
 		_time_step "$SETUP_STAGE_AGENTS" deploy_aidevops_agents || return $?
 		_time_step "$SETUP_STAGE_OPENCODE_PLUGINS" setup_opencode_runtime_plugins || return $?
+		_time_step "$SETUP_STAGE_OPENCODE_SERVICE" setup_opencode_service
 		_time_step "$SETUP_STAGE_HOTFIX_CONFIG" _deploy_hotfix_config || return $?
 		_time_step "$SETUP_STAGE_RUNTIME_CONFIG" _setup_reconcile_runtime_config || return $?
 	fi
@@ -1477,11 +1479,13 @@ _setup_run_scoped_stage() {
 	case "$stage" in
 	"$SETUP_STAGE_OPENCODE")
 		_time_step "$SETUP_STAGE_OPENCODE" setup_opencode_runtimes
+		_time_step "$SETUP_STAGE_OPENCODE_SERVICE" setup_opencode_service
 		_time_step "setup_opencode_desktop_launcher" setup_opencode_desktop_launcher
 		;;
 	"$SETUP_STAGE_AGENTS")
 		_time_step "$SETUP_STAGE_AGENTS" deploy_aidevops_agents
 		_time_step "$SETUP_STAGE_OPENCODE_PLUGINS" setup_opencode_runtime_plugins
+		_time_step "$SETUP_STAGE_OPENCODE_SERVICE" setup_opencode_service
 		_time_step "$SETUP_STAGE_HOTFIX_CONFIG" _deploy_hotfix_config
 		;;
 	"$SETUP_STAGE_RUNTIME_CONFIG")
@@ -1583,6 +1587,7 @@ _setup_run_non_interactive() {
 	_time_step "validate_opencode_config" validate_opencode_config
 	_time_step "$SETUP_STAGE_AGENTS" deploy_aidevops_agents
 	_time_step "$SETUP_STAGE_OPENCODE_PLUGINS" setup_opencode_runtime_plugins
+	_time_step "$SETUP_STAGE_OPENCODE_SERVICE" setup_opencode_service
 	_time_step "reconcile_buzz_desktop_compatibility" reconcile_buzz_desktop_compatibility
 	_time_step "_setup_install_pulse_plist_early" _setup_install_pulse_plist_early
 	_time_step "$SETUP_STAGE_HOTFIX_CONFIG" _deploy_hotfix_config
@@ -1685,6 +1690,7 @@ _setup_run_interactive_runtime_tools() {
 	confirm_step "Setup OpenCode V1 and isolated V2 preview CLIs" && setup_opencode_runtimes
 	confirm_step "Install OpenCode AIDevOps Desktop app wrapper" && setup_opencode_desktop_launcher
 	confirm_step "Setup OpenCode plugins" && setup_opencode_runtime_plugins
+	confirm_step "Setup persistent OpenCode owner (preserve existing histories)" && setup_opencode_service
 	confirm_step "Setup Codex CLI (OpenAI AI coding tool)" && setup_codex_cli
 	confirm_step "Setup Droid CLI (Factory.AI coding tool)" && setup_droid_cli
 	return 0
