@@ -1978,6 +1978,50 @@ test_recoverable_archive_honours_shared_producer_lock() {
 	return 0
 }
 
+test_recovery_store_permission_preflight() {
+	local wt_path="${TEST_DIR}/permission-source"
+	local recovery_root="${TEST_DIR}/permission-store"
+	local log_file="${TEST_DIR}/permission-audit.log"
+	local output_file="${TEST_DIR}/permission-error.log"
+	local rc=0
+	local expected=""
+	local probe_mode=""
+	mkdir -p "$wt_path" || rc=1
+	# Execute the real probe with deterministic OS responses, including on root CI.
+	for probe_mode in unwritable privilege; do
+		if (
+			python3() {
+				command python3 -c '
+import os, sys
+from types import SimpleNamespace
+mode = sys.argv.pop(1)
+sys.argv = sys.argv[1:]
+if mode == "unwritable":
+    os.geteuid = lambda: 12345
+    os.access = lambda *args, **kwargs: False
+else:
+    os.geteuid = lambda: 0
+    original_stat = os.stat
+    os.stat = lambda path, *args, **kwargs: SimpleNamespace(st_uid=12345) if path == sys.argv[1] else original_stat(path, *args, **kwargs)
+exec(compile(sys.stdin.read(), "recovery-probe", "exec"))
+' "$probe_mode" "$@"
+			}
+			AIDEVOPS_CLEANUP_LOG="$log_file" AIDEVOPS_WORKTREE_TRASH_ROOT="$recovery_root" \
+				archive_worktree_path_recoverably "$wt_path" "test.sh" "permission-test"
+		) 2>>"$output_file"; then
+			rc=1
+		fi
+	done
+	for expected in recovery-store-not-writable recovery-privilege-mismatch; do
+		assert_file_contains "$log_file" "$expected" || rc=1
+		assert_file_contains "$output_file" "$expected" || rc=1
+	done
+	[[ -d "$wt_path" && ! -e "$recovery_root" ]] || rc=1
+	print_result "recovery_store_permission_preflight" "$rc" \
+		"Expected actionable refusal before creating storage or changing source"
+	return 0
+}
+
 # =============================================================================
 # Main
 # =============================================================================
@@ -2001,6 +2045,7 @@ test_git_lock_parser_rejects_malformed_blocks
 test_missing_worktree_physical_parent_alias
 test_permanent_helper_preserves_lock_acquired_after_guard
 test_recovery_store_selects_platform_semantics
+test_recovery_store_permission_preflight
 test_recovery_inventory_reports_legacy_buckets_fail_closed
 test_recoverable_archive_then_native_remove
 test_recoverable_archive_preserves_late_lock
