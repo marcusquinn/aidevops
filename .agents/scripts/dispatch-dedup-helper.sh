@@ -41,6 +41,10 @@
 #     pause dispatch before another claim/comment is posted.
 #     Exit 0 = threshold reached (do NOT dispatch), exit 1 = no hold.
 #
+#   dispatch-dedup-helper.sh release-stale-recovery <issue> <slug> <reason>
+#     Maintainer-only: release a reviewed stale-recovery escalation without
+#     deleting audit history or bypassing independent review/security holds.
+#
 #   dispatch-dedup-helper.sh is-assigned <issue> <slug> [self-login]
 #     Check if issue is assigned to another runner (not self, owner, or maintainer).
 #     GH#10521: Ignores repo owner (from slug) and maintainer (from repos.json).
@@ -1322,7 +1326,9 @@ Usage:
   dispatch-dedup-helper.sh check-orphan-loop <issue> <slug> <branch> [todo-file] [worktree-path]
                                                        Hold repeated worker_branch_orphan loops or unreconciled remote children
   dispatch-dedup-helper.sh check-recovery-loop <issue> <slug>
-                                                       Hold repeated worker recovery failures across branches before posting a new claim
+                                                        Hold repeated worker recovery failures across branches before posting a new claim
+  dispatch-dedup-helper.sh release-stale-recovery <issue> <slug> <reason>
+                                                        Reviewed maintainer release of stale-recovery escalation (not NMR approval)
   dispatch-dedup-helper.sh has-fix-the-fixer-label <issue> <slug>
                                                        t3077: detect the fix-the-fixer label (exit 0=labeled, 1=unlabeled).
                                                        Used by headless-runtime-helper.sh to enable verbose lifecycle,
@@ -1487,6 +1493,46 @@ _ddh_main_issue_command() {
 	esac
 }
 
+# Release only the stale-recovery hold after a maintainer has reviewed the
+# worker attempts. The marker resets future tick accounting; other safety
+# labels and cryptographic approval requirements remain untouched.
+#aidevops:trust-boundary
+_ddh_release_stale_recovery() {
+	local issue_number="$1" repo_slug="$2" reason="$3"
+	[[ "$issue_number" =~ ^[1-9][0-9]*$ && "$repo_slug" =~ ^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$ ]] || return 1
+	[[ ${#reason} -le 160 && "$reason" =~ ^[a-zA-Z0-9\ ,._:-]+$ ]] || return 1
+	local login="" permission="" issue_json="" comments=""
+	login=$(gh api user --jq '.login' 2>/dev/null) || return 1
+	[[ "$login" =~ ^[a-zA-Z0-9-]+$ ]] || return 1
+	permission=$(gh api "repos/${repo_slug}/collaborators/${login}/permission" --jq '.permission' 2>/dev/null) || return 1
+	case "$permission" in admin | maintain) ;; *) return 1 ;; esac
+	issue_json=$(gh api "repos/${repo_slug}/issues/${issue_number}" 2>/dev/null) || return 1
+	printf '%s' "$issue_json" | jq -e '
+		.state == "open" and ([.labels[].name] | index("status:blocked") != null)
+		and ([.assignees[]] | length == 0) and (.pull_request == null)
+	' >/dev/null || return 1
+	comments=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" --paginate --slurp 2>/dev/null) || return 1
+	printf '%s' "$comments" | jq -e '
+		[.[][] | select((.body // "") | contains("<!-- stale-recovery-tick:escalated"))] | length > 0
+	' >/dev/null || return 1
+	# Do not turn a newer independent circuit breaker into a dispatchable issue.
+	printf '%s' "$comments" | jq -e '
+		[.[][] | select((.body // "") | test("cost-circuit-breaker:fired|worker-recovery-loop:blocked|dispatch-circuit-breaker:worker_recovery_loop"))] | length == 0
+	' >/dev/null || return 1
+	# Commit the reset event first; a failed label transition remains blocked and
+	# can be retried. Never delete historic ticks or remove NMR.
+	gh_issue_comment "$issue_number" --repo "$repo_slug" \
+		--body "<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
+<!-- stale-recovery-release:verified -->
+Stale-recovery dispatch hold reviewed and released by maintainer ${login}.
+Reason: ${reason}
+Other independent dispatch and review gates remain in force.
+<!-- ops:end -->" >/dev/null || return 1
+	set_issue_status "$issue_number" "$repo_slug" available --add-label auto-dispatch || return 1
+	printf 'STALE_RECOVERY_RELEASED: issue #%s in %s\n' "$issue_number" "$repo_slug"
+	return 0
+}
+
 _ddh_main_loop_command() {
 	local command_name="$1"
 	shift || true
@@ -1501,6 +1547,11 @@ _ddh_main_loop_command() {
 		_require_args check-recovery-loop 2 "$#" "issue-number repo-slug" || return 1
 		local recovery_issue="$1" recovery_repo="$2"
 		check_worker_recovery_failure_loop "$recovery_issue" "$recovery_repo"
+		return $?
+		;;
+	release-stale-recovery)
+		_require_args release-stale-recovery 3 "$#" "issue-number repo-slug reason" || return 1
+		_ddh_release_stale_recovery "$1" "$2" "$3"
 		return $?
 		;;
 	test-recover)
@@ -1582,7 +1633,7 @@ main() {
 		_ddh_main_issue_command "$command" "$@"
 		return $?
 		;;
-	check-orphan-loop | check-recovery-loop | test-recover | has-fix-the-fixer-label)
+	check-orphan-loop | check-recovery-loop | release-stale-recovery | test-recover | has-fix-the-fixer-label)
 		_ddh_main_loop_command "$command" "$@"
 		return $?
 		;;

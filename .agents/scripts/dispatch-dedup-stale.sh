@@ -81,7 +81,7 @@ _stale_recovery_load_threshold() {
 }
 
 #######################################
-# Count prior non-reset stale-recovery-tick comments on an issue
+# Count stale-recovery ticks since the latest maintainer release on an issue
 # (cross-runner counter). Fails open: returns 0 on gh failure.
 # Args: $1 = issue number, $2 = repo slug
 # Output: integer count on stdout
@@ -115,7 +115,7 @@ _stale_recovery_fetch_comments_pages() {
 }
 
 #######################################
-# Count non-reset stale recovery ticks from a slurped comments JSON document.
+# Count stale recovery ticks after the latest trusted release marker.
 # Args: $1 = slurped comments pages JSON
 # Output: integer tick count
 #######################################
@@ -123,10 +123,13 @@ _stale_recovery_count_ticks_from_pages() {
 	local comments_pages="$1"
 	local prior_ticks
 	prior_ticks=$(printf '%s' "$comments_pages" | jq \
-		'[
-			.[] | .[]?
-			| select(.body | (test("<!-- stale-recovery-tick:[1-9]") and (test("reset") | not)))
-		] | length' \
+		'([.[] | .[]?] | sort_by(.created_at, .id))
+		| reduce .[] as $comment (0;
+			if (($comment.body // "") | contains("<!-- stale-recovery-release:verified -->"))
+				and (($comment.author_association // "") | IN("OWNER", "MEMBER")) then 0
+			elif (($comment.body // "") | test("<!-- stale-recovery-tick:[1-9]"))
+				and ((($comment.body // "") | contains("reset")) | not) then . + 1
+			else . end)' \
 		2>/dev/null) || prior_ticks=0
 	[[ "$prior_ticks" =~ ^[0-9]+$ ]] || prior_ticks=0
 	printf '%s' "$prior_ticks"
