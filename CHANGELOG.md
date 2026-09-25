@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.34.31] - 2026-09-25
+
+### Changed
+
+- Maintenance: sync verified TODO refs
+
+### Fixed
+
+- Assume trusted-operator asset permissions
+- guard recovery storage permissions before archival
+
 ## [3.34.30] - 2026-09-25
 
 ### Changed
