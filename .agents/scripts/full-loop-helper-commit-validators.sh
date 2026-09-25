@@ -42,7 +42,7 @@ _restore_validator_repo_root() {
 _validator_file_is_node_related() {
 	local changed_file="$1"
 	case "$changed_file" in
-	package.json | package-lock.json | npm-shrinkwrap.json | pnpm-lock.yaml | yarn.lock | bun.lock | bun.lockb | \
+	package.json | package-lock.json | npm-shrinkwrap.json | pnpm-lock.yaml | pnpm-workspace.yaml | yarn.lock | bun.lock | bun.lockb | \
 		*.js | *.jsx | *.mjs | *.cjs | *.ts | *.tsx | *.mts | *.cts | \
 		*.eslintrc.* | eslint.config.* | tsconfig*.json | jsconfig*.json | prettier.config.* | .prettierrc*) return 0 ;;
 	esac
@@ -50,19 +50,60 @@ _validator_file_is_node_related() {
 }
 
 _validator_workspace_patterns() {
+	# pnpm keeps its authoritative workspace declaration outside package.json.
+	# Parse the standard block-list form without executing a package-manager script.
+	if [[ -f pnpm-workspace.yaml ]]; then
+		local line="" pattern="" in_packages=0 count=0
+		while IFS= read -r line || [[ -n "$line" ]]; do
+			if [[ "$line" =~ ^packages:[[:space:]]*(#.*)?$ ]]; then
+				in_packages=1
+				continue
+			fi
+			[[ "$in_packages" -eq 1 ]] || continue
+			[[ "$line" =~ ^[[:space:]]*(#.*)?$ ]] && continue
+			if [[ "$line" =~ ^[[:space:]]+-[[:space:]]+(.+)$ ]]; then
+				pattern="${BASH_REMATCH[1]}"
+				pattern="${pattern%% #*}"
+				pattern="${pattern%\"}"
+				pattern="${pattern#\"}"
+				pattern="${pattern%\'}"
+				pattern="${pattern#\'}"
+				[[ -n "$pattern" ]] || return 1
+				printf '%s\n' "$pattern"
+				count=$((count + 1))
+			elif [[ "$line" != [[:space:]]* ]]; then
+				break
+			else
+				print_error "[validators] unsupported pnpm workspace packages declaration"
+				return 1
+			fi
+		done <pnpm-workspace.yaml
+		if [[ "$count" -eq 0 ]]; then
+			print_error "[validators] pnpm-workspace.yaml has no supported package patterns"
+			return 1
+		fi
+		return 0
+	fi
 	jq -r '.workspaces // empty | if type == "array" then .[] elif type == "object" then (.packages // [])[] else empty end' package.json 2>/dev/null
 }
 
 _validator_workspace_matches() {
 	local scope="$1"
 	local workspace_patterns="$2"
-	local pattern=""
+	local pattern="" included=1
 	while IFS= read -r pattern; do
 		# Workspace declarations are glob patterns (for example packages/*).
 		# shellcheck disable=SC2053
-		[[ -n "$pattern" && "$scope" == $pattern ]] && return 0
+		if [[ "$pattern" == '!'* ]]; then
+			pattern=${pattern#!}
+			# shellcheck disable=SC2053
+			[[ "$scope" == $pattern ]] && return 1
+		else
+			# shellcheck disable=SC2053
+			[[ -n "$pattern" && "$scope" == $pattern ]] && included=0
+		fi
 	done <<<"$workspace_patterns"
-	return 1
+	return "$included"
 }
 
 _validator_all_workspace_scopes() {
@@ -94,7 +135,7 @@ _validator_scopes() {
 	local changed_files="" workspace_patterns="" changed_file=""
 	local scope=""
 	changed_files=$(_validator_changed_files) || return 1
-	workspace_patterns=$(_validator_workspace_patterns)
+	workspace_patterns=$(_validator_workspace_patterns) || return 1
 	if [[ -z "$workspace_patterns" ]]; then
 		printf '.\n'
 		return 0

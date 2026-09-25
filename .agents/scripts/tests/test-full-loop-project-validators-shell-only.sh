@@ -81,6 +81,12 @@ fi
 exit "${NPM_FAKE_RC:-0}"
 EOF
 chmod +x "${FAKE_BIN}/npm"
+cat >"${FAKE_BIN}/pnpm" <<'EOF'
+#!/usr/bin/env bash
+printf '%s|%s\n' "$PWD" "$*" >>"${NPM_CALL_LOG:?}"
+exit "${NPM_FAKE_RC:-0}"
+EOF
+chmod +x "${FAKE_BIN}/pnpm"
 
 make_repo() {
 	local repo_dir="$1"
@@ -179,7 +185,7 @@ else
 fi
 
 make_workspace_repo() {
-	local repo_dir="$1"
+	local repo_dir="$1" workspace_kind="${2:-npm}"
 	mkdir -p "$repo_dir/packages/a" "$repo_dir/packages/b"
 	(
 		cd "$repo_dir" || exit 1
@@ -190,6 +196,17 @@ make_workspace_repo() {
 		cat >package.json <<'EOF'
 {"private":true,"workspaces":["packages/*"],"scripts":{"lint:fix":"unsafe-root-fixer"}}
 EOF
+		if [[ "$workspace_kind" == "pnpm" ]]; then
+			cat >package.json <<'EOF'
+{"private":true,"scripts":{"lint":"eslint ."}}
+EOF
+			cat >pnpm-workspace.yaml <<'EOF'
+packages:
+  - 'packages/*'
+  - '!packages/excluded'
+EOF
+			printf '%s\n' 'lockfileVersion: 9.0' >pnpm-lock.yaml
+		fi
 		printf '%s\n' '{"scripts":{"lint":"eslint .","typecheck":"tsc --noEmit"}}' >packages/a/package.json
 		printf '%s\n' '{"scripts":{"lint":"eslint ."}}' >packages/b/package.json
 		printf '%s\n' 'export const a = 1;' >packages/a/index.ts
@@ -357,6 +374,114 @@ if [[ "$case10_rc" -ne 0 && ! -s "$NPM_CALL_LOG" ]] && grep -q 'NO SCOPED CHECKS
 	print_result "npm placeholder test fails with scoped-check guidance" 0
 else
 	print_result "npm placeholder test fails with scoped-check guidance" 1 "rc=${case10_rc}, calls=$(wc -l <"$NPM_CALL_LOG" 2>/dev/null || printf 0)"
+fi
+
+# Case 11: pnpm-only workspace declarations select changed packages on a
+# non-main base while preserving an unrelated staged and unstaged edit.
+PNPM_REPO="${TEST_ROOT}/pnpm-workspace"
+make_workspace_repo "$PNPM_REPO" pnpm
+NPM_CALL_LOG="${TEST_ROOT}/pnpm-workspace.log"
+export NPM_CALL_LOG NPM_FAKE_ACTION='' NPM_FAKE_RC=0
+(
+	cd "$PNPM_REPO" || exit 1
+	printf '%s\n' 'export const a = 2;' >packages/a/index.ts
+	git add packages/a/index.ts
+	git -c user.name='Test User' -c user.email='test@example.invalid' commit -qm 'change package a'
+	printf '%s\n' 'staged unrelated edit' >>packages/b/index.ts
+	git add packages/b/index.ts
+	printf '%s\n' 'unstaged unrelated edit' >>packages/b/index.ts
+	PATH="${FAKE_BIN}:$PATH" _run_project_validators 0
+)
+case11_rc=$?
+case11_cached=$(git -C "$PNPM_REPO" diff --cached --name-only)
+if [[ "$case11_rc" -eq 0 && "$case11_cached" == 'packages/b/index.ts' ]] &&
+	[[ $(git -C "$PNPM_REPO" show :packages/b/index.ts) == *'staged unrelated edit'* ]] &&
+	[[ $(git -C "$PNPM_REPO" diff -- packages/b/index.ts) == *'unstaged unrelated edit'* ]] &&
+	[[ $(wc -l <"$NPM_CALL_LOG") -eq 2 ]] && grep -q '/packages/a|run lint' "$NPM_CALL_LOG" &&
+	! grep -q '/packages/b|\|/pnpm-workspace|run' "$NPM_CALL_LOG"; then
+	print_result "pnpm-only workspace selects affected package and preserves index" 0
+else
+	print_result "pnpm-only workspace selects affected package and preserves index" 1 "rc=${case11_rc}, cached=${case11_cached}"
+fi
+
+# Case 12: shared root changes broaden across declared packages, not just root.
+PNPM_ROOT_REPO="${TEST_ROOT}/pnpm-root"
+make_workspace_repo "$PNPM_ROOT_REPO" pnpm
+NPM_CALL_LOG="${TEST_ROOT}/pnpm-root.log"
+export NPM_CALL_LOG NPM_FAKE_RC=0
+(
+	cd "$PNPM_ROOT_REPO" || exit 1
+	printf '%s\n' '{"private":true,"engines":{"node":">=20"},"scripts":{"lint":"eslint ."}}' >package.json
+	git add package.json
+	git -c user.name='Test User' -c user.email='test@example.invalid' commit -qm 'change root contract'
+	PATH="${FAKE_BIN}:$PATH" _run_project_validators 0
+)
+case12_rc=$?
+if [[ "$case12_rc" -eq 0 && $(wc -l <"$NPM_CALL_LOG") -eq 4 ]] &&
+	grep -q '/packages/a|run lint' "$NPM_CALL_LOG" && grep -q '/packages/b|run lint' "$NPM_CALL_LOG" &&
+	grep -q '/pnpm-root|run lint' "$NPM_CALL_LOG"; then
+	print_result "pnpm root contract broadens check-only validation" 0
+else
+	print_result "pnpm root contract broadens check-only validation" 1 "rc=${case12_rc}"
+fi
+
+# Case 13: a pnpm workspace validator failure remains a hard failure.
+NPM_CALL_LOG="${TEST_ROOT}/pnpm-failure.log"
+export NPM_CALL_LOG NPM_FAKE_RC=2
+(
+	cd "$PNPM_ROOT_REPO" || exit 1
+	PATH="${FAKE_BIN}:$PATH" _run_project_validators 0
+)
+case13_rc=$?
+if [[ "$case13_rc" -ne 0 && -s "$NPM_CALL_LOG" ]]; then
+	print_result "pnpm validator failure blocks publication" 0
+else
+	print_result "pnpm validator failure blocks publication" 1 "rc=${case13_rc}"
+fi
+
+# Case 14: docs-only branches never launch pnpm validation.
+PNPM_DOCS_REPO="${TEST_ROOT}/pnpm-docs"
+make_workspace_repo "$PNPM_DOCS_REPO" pnpm
+NPM_CALL_LOG="${TEST_ROOT}/pnpm-docs.log"
+export NPM_CALL_LOG NPM_FAKE_RC=2
+(
+	cd "$PNPM_DOCS_REPO" || exit 1
+	printf '%s\n' '# Docs' >README.md
+	git add README.md
+	git -c user.name='Test User' -c user.email='test@example.invalid' commit -qm 'docs only'
+	PATH="${FAKE_BIN}:$PATH" _run_project_validators 0
+)
+case14_rc=$?
+if [[ "$case14_rc" -eq 0 && ! -s "$NPM_CALL_LOG" ]]; then
+	print_result "pnpm docs-only branch skips project validators" 0
+else
+	print_result "pnpm docs-only branch skips project validators" 1 "rc=${case14_rc}"
+fi
+
+# Case 15: a workspace manifest change broadens validation even if root has
+# no scripts or package.json workspaces; the manifest is a shared contract.
+PNPM_MANIFEST_REPO="${TEST_ROOT}/pnpm-manifest"
+make_workspace_repo "$PNPM_MANIFEST_REPO" pnpm
+NPM_CALL_LOG="${TEST_ROOT}/pnpm-manifest.log"
+export NPM_CALL_LOG NPM_FAKE_RC=0
+(
+	cd "$PNPM_MANIFEST_REPO" || exit 1
+	printf '%s\n' '{"private":true}' >package.json
+	git add package.json
+	git -c user.name='Test User' -c user.email='test@example.invalid' commit -qm 'remove root check'
+	git update-ref refs/remotes/origin/develop HEAD
+	printf '%s\n' '# shared workspace change' >>pnpm-workspace.yaml
+	git add pnpm-workspace.yaml
+	git -c user.name='Test User' -c user.email='test@example.invalid' commit -qm 'change workspace declaration'
+	PATH="${FAKE_BIN}:$PATH" _run_project_validators 0
+)
+case15_rc=$?
+if [[ "$case15_rc" -eq 0 && $(wc -l <"$NPM_CALL_LOG") -eq 3 ]] &&
+	grep -q '/packages/a|run lint' "$NPM_CALL_LOG" && grep -q '/packages/b|run lint' "$NPM_CALL_LOG" &&
+	! grep -q '/pnpm-manifest|run' "$NPM_CALL_LOG"; then
+	print_result "pnpm manifest alone triggers shared package checks" 0
+else
+	print_result "pnpm manifest alone triggers shared package checks" 1 "rc=${case15_rc}"
 fi
 
 printf '\n%d tests run, %d failed\n' "$TESTS_RUN" "$TESTS_FAILED"

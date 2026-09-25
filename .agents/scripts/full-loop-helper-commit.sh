@@ -1179,7 +1179,7 @@ _commit_touches_node_files() {
 	local changed_file
 	while IFS= read -r changed_file; do
 		case "$changed_file" in
-		package.json | package-lock.json | npm-shrinkwrap.json | pnpm-lock.yaml | yarn.lock | bun.lock | bun.lockb)
+		package.json | package-lock.json | npm-shrinkwrap.json | pnpm-lock.yaml | pnpm-workspace.yaml | yarn.lock | bun.lock | bun.lockb)
 			return 0
 			;;
 		*.js | *.jsx | *.mjs | *.cjs | *.ts | *.tsx | *.mts | *.cts)
@@ -1222,7 +1222,7 @@ _detect_node_project() {
 		((.workspaces // []) |
 		 if arrays then length > 0 else ((.packages? // []) | length > 0) end)
 	' package.json 2>/dev/null || echo "false")
-	if [[ "$has_relevant_scripts" != "true" ]]; then
+	if [[ "$has_relevant_scripts" != "true" && ! -f pnpm-workspace.yaml ]]; then
 		return 1
 	fi
 	pm="npm"
