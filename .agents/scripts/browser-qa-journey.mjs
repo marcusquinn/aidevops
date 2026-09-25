@@ -4,8 +4,8 @@
 // Authenticated browser QA runner. It accepts only declarative read-only steps.
 
 import fs from 'node:fs/promises';
+import { installNetworkGuard, runSteps } from './browser-qa-journey-steps.mjs';
 
-const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 const VIEWPORTS = {
   desktop: { width: 1440, height: 900 },
   mobile: { width: 375, height: 667 },
@@ -20,16 +20,6 @@ function exactUrl(value, name) {
   try { url = new URL(value); } catch { fail(`${name} must be an absolute URL`); }
   if (!['http:', 'https:'].includes(url.protocol) || url.pathname !== '/' || url.search || url.hash) fail(`${name} must be an exact http(s) origin without path, query or fragment`);
   return url;
-}
-
-function sameOrigin(url, origin) {
-  return new URL(url).origin === origin.origin;
-}
-
-function allowedAuthRequest(request, origin, auth) {
-  if (!auth) return false;
-  const url = new URL(request.url());
-  return url.origin === origin.origin && url.pathname === auth.path && request.method() === auth.method;
 }
 
 function validateConfig(config, environmentName) {
@@ -72,53 +62,15 @@ async function run(configPath, environmentName) {
       const page = await context.newPage();
       const consoleErrors = [];
       page.on('console', message => { if (message.type() === 'error') consoleErrors.push(message.text().slice(0, 160)); });
-      await page.route('**/*', async route => {
-        const request = route.request();
-        const url = new URL(request.url());
-        if (!sameOrigin(url, origin) && request.headers().cookie) return route.abort('blockedbyclient');
-        if (WRITE_METHODS.has(request.method()) && !allowedAuthRequest(request, origin, login) && !allowedAuthRequest(request, origin, logout)) {
-          report.blockedWrites += 1;
-          return route.abort('blockedbyclient');
-        }
-        return route.continue();
-      });
+      await installNetworkGuard(page, origin, login, logout, report);
       const result = { viewport: viewportName, steps: [], consoleErrors: 0 };
       try {
         await page.goto(new URL(login.path, origin).href, { waitUntil: 'domcontentloaded', timeout });
         await page.locator(login.usernameSelector).fill(username, { timeout });
         await page.locator(login.passwordSelector).fill(password, { timeout });
         await page.locator(login.submitSelector).click({ timeout });
-        await page.waitForURL(url => sameOrigin(url, origin) && url.pathname === login.successPath, { timeout });
-        for (const step of config.steps) {
-          const label = typeof step.name === 'string' ? step.name.slice(0, 80) : step.type;
-          try {
-            if (step.type === 'navigate') {
-              if (typeof step.path !== 'string' || !step.path.startsWith('/')) fail('navigate requires an absolute path');
-              await page.goto(new URL(step.path, origin).href, { waitUntil: 'domcontentloaded', timeout });
-            } else if (step.type === 'click') {
-              await page.locator(step.selector).click({ timeout });
-            } else if (step.type === 'visible') {
-              await page.locator(step.selector).waitFor({ state: 'visible', timeout });
-            } else if (step.type === 'count') {
-              if (!Number.isInteger(step.equals)) fail('count requires integer equals');
-              if (await page.locator(step.selector).count() !== step.equals) fail('count assertion failed');
-            } else if (step.type === 'text') {
-              if (typeof step.includes !== 'string') fail('text requires includes');
-              const text = await page.locator(step.selector).innerText({ timeout });
-              if (!text.includes(step.includes)) fail('text assertion failed');
-            } else if (step.type === 'attribute') {
-              const actual = await page.locator(step.selector).getAttribute(step.name, { timeout });
-              if (actual !== step.equals) fail('attribute assertion failed');
-            } else if (step.type === 'no-horizontal-overflow') {
-              if (await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)) fail('horizontal overflow detected');
-            } else fail(`unsupported journey step: ${step.type}`);
-            result.steps.push({ name: label, status: 'passed' }); report.passed += 1;
-          } catch (error) {
-            result.steps.push({ name: label, status: 'failed', error: error.message.slice(0, 160) }); report.failed += 1;
-            journeyError = error;
-            break;
-          }
-        }
+        await page.waitForURL(url => url.origin === origin.origin && url.pathname === login.successPath, { timeout });
+        journeyError = await runSteps(page, config.steps, origin, timeout, result, report);
       } finally {
         result.consoleErrors = consoleErrors.length;
         try {
