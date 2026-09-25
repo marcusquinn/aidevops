@@ -10,6 +10,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/shared-constants.sh"
 # shellcheck source=./issue-sync-lib.sh
 source "${SCRIPT_DIR}/issue-sync-lib.sh"
+# shellcheck source=./issue-sync-ci-context.sh
+source "${SCRIPT_DIR}/issue-sync-ci-context.sh"
 # shellcheck source=./shared-gh-wrappers.sh
 source "${SCRIPT_DIR}/shared-gh-wrappers.sh"
 
@@ -227,6 +229,9 @@ cmd_reconcile() {
 	done
 	[[ "$repo" =~ ^[^/[:space:]]+/[^/[:space:]]+$ ]] || return 2
 	[[ -f TODO.md && ! -L TODO.md ]] || return 2
+	# Each GitHub Actions run step has a fresh process. Establish the narrowly
+	# scoped runner context before wrappers resolve privacy/write-policy inventory.
+	issue_sync_prepare_ci_context || return 1
 	default_branch=$(gh repo view "$repo" --json defaultBranchRef --jq '.defaultBranchRef.name') || return 2
 	_publication_exact_default_snapshot "$expected_sha" "$default_branch" || {
 		print_error "Refusing reconciliation: HEAD is not exact origin/${default_branch} SHA ${expected_sha}"

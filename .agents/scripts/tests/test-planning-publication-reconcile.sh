@@ -41,6 +41,7 @@ printf 'PASS production helpers project and verify intended labels\n'
 
 grep -Fq '_publication_exact_default_snapshot' "$RECONCILER"
 grep -Fq '_publication_validate_mapping' "$RECONCILER"
+grep -Fq 'issue_sync_prepare_ci_context || return 1' "$RECONCILER"
 grep -Fq 'verify-brief-helper.sh" check-readiness' "$RECONCILER"
 grep -Fq -- "$REMOVE_PATTERN" "$RECONCILER"
 grep -Fq -- "$SAFE_EDIT_PATTERN" "$RECONCILER"
@@ -146,3 +147,45 @@ fi
 printf 'PASS exact-SHA mapping validation precedes blocker removal\n'
 printf 'PASS default-branch workflow reconciles publication before maintenance\n'
 printf 'PASS partial batches leave earlier dependencies blocked and later failures pending\n'
+
+ci_tmp=$(mktemp -d)
+if (
+	export HOME="$ci_tmp/reconciler-home" RUNNER_TEMP="$ci_tmp/reconciler-runner"
+	export GITHUB_ACTIONS=true GITHUB_REPOSITORY=example/repo
+	unset PRIVACY_REPOS_CONFIG AIDEVOPS_REPOS_JSON _ISSUE_SYNC_CI_CONTEXT_LOADED
+	mkdir -p "$HOME" "$RUNNER_TEMP"
+	_publication_exact_default_snapshot() { return 0; }
+	_publication_reconcile_one() {
+		[[ "$PRIVACY_REPOS_CONFIG" == "$AIDEVOPS_REPOS_JSON" ]]
+		jq -e '.initialized_repos == [{"slug":"example/repo","role":"maintainer"}]' \
+			"$PRIVACY_REPOS_CONFIG" >/dev/null
+	}
+	gh() {
+		if [[ "$1" == "repo" ]]; then
+			printf 'main\n'
+		else
+			printf '[{"number":77,"title":"t9000: Reconcile publication"}]\n'
+		fi
+	}
+	cmd_reconcile --repo example/repo --sha 0123456789012345678901234567890123456789
+); then
+	printf 'PASS reconciler establishes CI context in its own workflow step\n'
+else
+	printf 'FAIL reconciler did not establish CI context before wrapper operations\n' >&2
+	exit 1
+fi
+
+if (
+	export HOME="$ci_tmp/reconciler-bad-home" RUNNER_TEMP="$ci_tmp/reconciler-bad-runner"
+	export GITHUB_ACTIONS=true GITHUB_REPOSITORY='not-a-slug'
+	unset PRIVACY_REPOS_CONFIG AIDEVOPS_REPOS_JSON _ISSUE_SYNC_CI_CONTEXT_LOADED
+	mkdir -p "$HOME" "$RUNNER_TEMP"
+	_publication_exact_default_snapshot() { return 0; }
+	_publication_reconcile_one() { exit 1; }
+	! cmd_reconcile --repo example/repo --sha 0123456789012345678901234567890123456789
+); then
+	printf 'PASS malformed reconciler CI identity fails before reconciliation\n'
+else
+	printf 'FAIL malformed reconciler CI identity reached reconciliation\n' >&2
+	exit 1
+fi
