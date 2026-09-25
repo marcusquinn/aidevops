@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.34.30] - 2026-09-25
+
+### Changed
+
+- Maintenance: mark t18475 complete (pr:#32348 completed:2026-09-25) (#32350)
+
+### Fixed
+
+- detect pnpm workspace packages in PR validators
+
 ## [3.34.29] - 2026-09-25
 
 ### Changed
