@@ -14,19 +14,9 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { basename, dirname, isAbsolute, join, relative, resolve, win32 } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
-const PLAYWRIGHT_OUTPUT_TOOLS = new Set([
-  "playwright_browser_console_messages",
-  "playwright_browser_evaluate",
-  "playwright_browser_network_request",
-  "playwright_browser_network_requests",
-  "playwright_browser_pdf_save",
-  "playwright_browser_snapshot",
-  "playwright_browser_start_video",
-  "playwright_browser_storage_state",
-  "playwright_browser_take_screenshot",
-]);
+export { enforceManagedMcpArtifactPath } from "./mcp-artifact-path.mjs";
 
 const MCP_DIAGNOSTIC_UNAVAILABLE =
   "diagnostic unavailable; use the documented secure CLI diagnostic path";
@@ -292,27 +282,6 @@ async function executeMcpActivation(args, context, allowed, options) {
   return action === "connect"
     ? `Connected MCP ${name} for the ${expectedAgent} agent. Its tools remain scoped to that agent.`
     : `Disconnected MCP ${name}.`;
-}
-
-/**
- * Reject screenshot filenames that can escape the managed Playwright cwd.
- * @param {object} input
- * @param {object} output
- * @param {object} managedWorkspaces
- */
-export function enforceManagedMcpArtifactPath(input, output, managedWorkspaces) {
-  if (!managedWorkspaces?.playwright || !PLAYWRIGHT_OUTPUT_TOOLS.has(input?.tool)) return;
-  const filename = output?.args?.filename;
-  if (filename === undefined || filename === null || filename === "") return;
-  assert(
-    typeof filename === "string",
-    new Error("Playwright screenshot filename must be a relative path inside managed temporary storage."),
-  );
-  const segments = filename.split(/[\\/]+/);
-  assert(
-    !isAbsolute(filename) && !win32.isAbsolute(filename) && !segments.includes(".."),
-    new Error("Playwright screenshot filename must not be absolute or contain '..' traversal."),
-  );
 }
 
 /**
