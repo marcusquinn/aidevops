@@ -303,6 +303,7 @@ cmd_help() {
 	echo "  db <command>       Shared Postgres management (start, create, list, drop, url)"
 	echo "  list               Dashboard: all projects, URLs, certs, health, LocalWP"
 	echo "  status             Infrastructure health: dnsmasq, Traefik, certs, ports"
+	echo "  diagnose <name>    Compare macOS .local default and IPv4-only HTTPS lookup"
 	echo "  help               Show this help message"
 	echo ""
 	echo "Run performs (zero-config):"
@@ -394,6 +395,14 @@ main() {
 		;;
 	status)
 		cmd_status
+		;;
+	diagnose)
+		shift
+		if [[ -z "${1:-}" ]]; then
+			print_error "Usage: localdev-helper.sh diagnose <name>"
+			exit 1
+		fi
+		diagnose_local_name_resolution "${1}.local"
 		;;
 	infer-name)
 		# Internal: infer project name for a directory (used by worktree-helper.sh)

@@ -158,6 +158,40 @@ assert_file_exists "stable mkcert creates the certificate" "$CERTS_DIR/sample.lo
 assert_file_exists "stable mkcert creates the private key" "$CERTS_DIR/sample.local+1-key.pem"
 assert_file_contains "certificate generation ignores session XDG data" "$mkcert_log" '||sample.local *.sample.local'
 
+cat >"$TEST_ROOT/bin/scutil" <<'SCUTIL'
+#!/usr/bin/env bash
+printf 'domain : local\n'
+SCUTIL
+cat >"$TEST_ROOT/bin/curl" <<'CURL'
+#!/usr/bin/env bash
+case "$*" in
+*'-4'*) printf '200 0.001 0.010' ;;
+*) printf '200 5.001 5.010' ;;
+esac
+CURL
+chmod +x "$TEST_ROOT/bin/scutil" "$TEST_ROOT/bin/curl"
+diagnostic_output="$(OSTYPE=darwin diagnose_local_name_resolution sample.local 2>&1)"
+if [[ "$diagnostic_output" == *"Keep the existing 127.0.0.1 hosts entry"* ]]; then
+	record_pass "IPv4-only diagnostic preserves existing hosts and LocalWP entries"
+else
+	record_fail "IPv4-only diagnostic preserves existing hosts and LocalWP entries"
+fi
+if [[ "$diagnostic_output" == *"Do not add ::1"* && "$diagnostic_output" == *"--resolve 'sample.local:443:127.0.0.1'"* ]]; then
+	record_pass "IPv4-only diagnostic avoids speculative IPv6 and offers bounded mitigation"
+else
+	record_fail "IPv4-only diagnostic avoids speculative IPv6 and offers bounded mitigation"
+fi
+if [[ "$diagnostic_output" != *"sudo"* ]]; then
+	second_diagnostic_output="$(OSTYPE=darwin diagnose_local_name_resolution sample.local 2>&1)"
+	if [[ "$second_diagnostic_output" == *"Keep the existing 127.0.0.1 hosts entry"* ]]; then
+		record_pass "diagnostic needs no privilege and is repeatable"
+	else
+		record_fail "diagnostic needs no privilege and is repeatable"
+	fi
+else
+	record_fail "diagnostic needs no privilege and is repeatable"
+fi
+
 printf '\nResults: %s passed, %s failed\n' "$PASS" "$FAIL"
 if [[ "$FAIL" -gt 0 ]]; then
 	exit 1

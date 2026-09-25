@@ -68,6 +68,20 @@ Browser → /etc/hosts (127.0.0.1 myapp.local)
 
 **DNS:** macOS reserves `.local` for mDNS. Browsers use `/etc/hosts` → mDNS (intercepts resolver, never reached). `localdev add` always writes `/etc/hosts`. dnsmasq handles wildcard subdomains for CLI only. Future: `.test` (RFC 6761) avoids conflict but is breaking.
 
+### macOS IPv4-only proxy lookup delay
+
+Some macOS resolver configurations try the `.local` mDNS/AAAA route for about five seconds before using an IPv4-only local proxy, even when the hostname has a `127.0.0.1` hosts entry and `/etc/resolver/local` points to dnsmasq. Diagnose the actual HTTPS hostname without changing system configuration:
+
+```bash
+localdev-helper.sh diagnose myapp
+# or compare explicitly:
+curl -ksS -o /dev/null -w '%{time_namelookup} %{time_total}\n' https://myapp.local/
+curl -4ksS -o /dev/null -w '%{time_namelookup} %{time_total}\n' https://myapp.local/
+curl --resolve myapp.local:443:127.0.0.1 https://myapp.local/
+```
+
+Keep the existing IPv4 hosts entry and LocalWP entries unchanged. Do not add `::1`, disable IPv6, or rewrite unrelated hosts lines: `::1` is only valid when the real proxy listener is verified on IPv6. For affected CLI calls, `--resolve` is a bounded mitigation. Browser users need either a verified IPv6 proxy listener or a migration to a non-`.local` suffix; HTTP 200 alone does not prove lookup latency is fixed.
+
 ### Port Registry Format
 
 ```json
