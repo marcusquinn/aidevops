@@ -294,6 +294,10 @@ aidevops opencode-desktop status          # show wrapper/source status
 
 ### Opt-in server-backed continuity prototype
 
+For a persistent per-user owner, setup/update behavior, rollback, and platform
+limits, see [Managed OpenCode service](opencode-service.md). The foreground
+commands below remain available for isolated experiments.
+
 Shared Desktop/TUI history uses one foreground server as the only SQLite owner.
 This is an explicit disposable-shard prototype; it does not replace direct
 launches or migrate an existing database.
@@ -313,6 +317,11 @@ shard. Dry-run is observational:
 ```bash
 aidevops opencode server --dir ~/Git/repo --port 49036 --dry-run
 ```
+
+The server loads the normal configured plugins, including aidevops. Do not use
+`--pure` or inherit `OPENCODE_PURE=1` for this workflow: agent definitions can
+remain visible while plugin tools, safety hooks, and provider integration are
+missing. Seeing Build+ in an agent selector alone is not a plugin health check.
 
 Keep that terminal open. In a second terminal, attach the TUI:
 
@@ -334,11 +343,34 @@ separate security-reviewed mode.
 
 To connect Desktop without editing Electron state files:
 
-1. Open OpenCode Desktop and its **Servers** dialog.
+1. Start the server and confirm `/global/health` is healthy before opening
+   Desktop. Then open Desktop and its **Servers** dialog.
 2. Choose **Add server** and enter `http://127.0.0.1:49036`.
-3. Select that endpoint as the **Default server**.
-4. Confirm the same `ses_...` ID is visible through the API, attached TUI, and
+3. Select that endpoint, not **Local Server**. Set it as the **Default server**
+   only if it should be the normal destination while the owner is running.
+4. In the home sidebar, hover over that server row and use its folder-plus
+   **Add project** button to open the exact directory passed to `--dir`.
+   Desktop tracks opened projects separately for each server; its home page
+   filters sessions to those projects even when the API already lists them.
+5. Confirm the same `ses_...` ID is visible through the API, attached TUI, and
    Desktop before treating the prototype as successful.
+6. Send a unique marker in the TUI with Build+ and confirm its completed reply in
+   Desktop. Continue that same session from Desktop and confirm the new reply in
+   the TUI. Verify the project directory and actual request destination; an
+   already-open local Desktop tab may still belong to its local server.
+
+On Desktop 1.18.32, opening the app while a saved server is offline can cache a
+V2 protocol assumption for that connection. Health polling can later turn green
+without rebuilding the protocol context. If `/project` returns the expected
+project but Desktop requests `/api/project` and gets HTML, fully quit Desktop
+and reopen it after the server is healthy. Confirm requests switch to `/project`
+and `/global/event`; then add the project under that server if the view remains
+empty. Do not delete history or reset settings to repair this connection state.
+
+For diagnosis, `/experimental/tool/ids` on the managed endpoint should include
+aidevops plugin tools such as `aidevops_memory` and `aidevops_pre_edit_check`.
+A green health response or a session list does not prove response streaming,
+plugin execution, or bidirectional Desktop/TUI continuity.
 
 Keep Desktop and CLI versions aligned. The launcher validates CLI/server
 compatibility, while Desktop reports its own connection incompatibility through

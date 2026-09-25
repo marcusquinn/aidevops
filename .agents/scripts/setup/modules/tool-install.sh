@@ -2855,6 +2855,24 @@ setup_opencode_runtimes() {
 	return 0
 }
 
+setup_opencode_service() {
+	# Optional user-session service: never block other setup or enable a disabled
+	# installation. Existing histories keep their current default launch route.
+	case "${AIDEVOPS_OPENCODE_SERVICE:-1}" in
+	0 | false | no) return 0 ;;
+	esac
+	local helper="${HOME}/.aidevops/agents/scripts/opencode-service-helper.py"
+	[[ -f "$helper" ]] || return 0
+	command -v opencode >/dev/null 2>&1 || return 0
+	command -v python3 >/dev/null 2>&1 || return 0
+	if python3 "$helper" install --fresh-default; then
+		print_success "OpenCode owner reconciled; existing histories and routing choices preserved"
+	else
+		print_warning "OpenCode service unavailable or needs attention; direct launch is unchanged. See reference/opencode-service.md"
+	fi
+	return 0
+}
+
 setup_opencode_desktop_launcher() {
 	if [[ "$(uname -s)" != "Darwin" ]]; then
 		return 0

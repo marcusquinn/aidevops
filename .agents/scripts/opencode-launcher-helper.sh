@@ -33,6 +33,8 @@ SERVER_LOCK_DIR=""
 usage() {
     cat <<'EOF'
 Usage: aidevops opencode [options] [--] [opencode args...]
+       aidevops opencode service install|status|start|stop|enable|disable [options]
+       aidevops opencode managed --dir PATH [--session ses_...]
        aidevops opencode conversation --overlay FILE --dir PATH [--dry-run]
        aidevops opencode remote-interactive --overlay FILE --dir PATH --session-id ID [--dry-run]
        aidevops opencode server --dir PATH --port PORT [options]
@@ -44,6 +46,7 @@ Usage: aidevops opencode [options] [--] [opencode args...]
 Launch OpenCode with an isolated per-project SQLite DB by default.
 
 Options:
+  --direct             Retain the original per-project history instead of managed routing
   --shared-db          Use OpenCode's normal shared data directory
   --dir PATH           Working directory for OpenCode (default: current dir)
   --session-id ID      Explicit isolated DB name (default: stable per-project shard)
@@ -995,6 +998,15 @@ cmd_desktop_status() {
     return 0
 }
 
+managed_desktop_ready() {
+    # Avoid caching the wrong API protocol after an offline first probe.
+    # Desktop's private preferences and its separate local history stay untouched.
+    if [[ -f "${HOME}/.config/aidevops/opencode-service.json" ]]; then
+        python3 "${SCRIPT_DIR}/opencode-service-helper.py" desktop-ready || return 1
+    fi
+    return 0
+}
+
 cmd_desktop_launch() {
     local dry_run=0
     local launch_dir="$PWD"
@@ -1083,6 +1095,7 @@ cmd_desktop_launch() {
         return 0
     fi
 
+    managed_desktop_ready || return 1
     mkdir -p "${data_dir}/opencode" || return 1
     copy_auth_json "${data_dir}" || true
     prewarm_opencode_data_dir "${data_dir}"
@@ -1127,7 +1140,7 @@ run_server_owner() {
     local port_status=0
     local server_status=0
     local server_url="http://127.0.0.1:${port}"
-    local -a serve_args=(serve --pure --hostname 127.0.0.1 --port "${port}" --cors oc://renderer)
+    local -a serve_args=(serve --hostname 127.0.0.1 --port "${port}" --cors oc://renderer)
 
     if server_port_is_occupied "${port}"; then
         print_error "Port ${port} is already in use; refusing to start an unknown or duplicate owner"
@@ -1228,7 +1241,7 @@ cmd_server() {
         session_id=$(build_project_session_id "${launch_dir}")
     fi
     data_dir=$(build_server_data_dir "${session_id}")
-    serve_args=(serve --pure --hostname 127.0.0.1 --port "${port}" --cors oc://renderer)
+    serve_args=(serve --hostname 127.0.0.1 --port "${port}" --cors oc://renderer)
 
     if ((dry_run == 1)); then
         printf 'cd %q && TMPDIR=%q TMP=%q TEMP=%q XDG_DATA_HOME=%q AIDEVOPS_OPENCODE_ISOLATED_DB=1 AIDEVOPS_OPENCODE_SERVER_OWNER=1 opencode' "${launch_dir}" "${TMPDIR}" "${TMP}" "${TEMP}" "${data_dir}"
@@ -1308,8 +1321,52 @@ cmd_attach() {
     return 1
 }
 
+maybe_managed_tui() {
+    local direct="$1"
+    local shared="$2"
+    local tabby="$3"
+    local shard="$4"
+    local dry_run="$5"
+    local launch_dir="$6"
+    local arg_count="$7"
+    local route=""
+    local -a managed_args=(attach --dir "${launch_dir}")
+
+    # Explicit shards and Tabby recovery stay direct; unsupported flags must not
+    # silently create a conversation in a different database.
+    ((direct == 0 && shared == 0 && tabby == 0)) || return 0
+    [[ -z "${shard}" && -f "${HOME}/.config/aidevops/opencode-service.json" ]] || return 0
+    route=$(python3 "${SCRIPT_DIR}/opencode-service-helper.py" route) || return 1
+    [[ "${route}" == "managed" ]] || return 0
+    if ((arg_count > 0)); then
+        print_error "Managed routing rejects raw flags. Use 'managed --session ID' or --direct for original history."
+        return 1
+    fi
+    ((dry_run == 0)) || managed_args+=(--dry-run)
+    exec python3 "${SCRIPT_DIR}/opencode-service-helper.py" "${managed_args[@]}"
+    return 1
+}
+
+run_shared_tui() {
+    local launch_dir="$1"
+    local dry_run="$2"
+    shift 2
+    if ((dry_run == 1)); then
+        printf 'cd %q && TMPDIR=%q TMP=%q TEMP=%q' "${launch_dir}" "${TMPDIR}" "${TMP}" "${TEMP}"
+        print_terminal_title_environment
+        printf ' opencode'
+        (($# == 0)) || printf ' %q' "$@"
+        printf '\n'
+        return 0
+    fi
+    cd "${launch_dir}" || return 1
+    exec opencode "$@"
+    return 1
+}
+
 cmd_tui_launch() {
     local use_shared_db=0
+    local direct=0
     local tabby_shell=0
     local dry_run=0
     local launch_dir="$PWD"
@@ -1321,6 +1378,10 @@ cmd_tui_launch() {
 
     while (($# > 0)); do
         case "$1" in
+        --direct)
+            direct=1
+            shift
+            ;;
         --shared-db)
             use_shared_db=1
             shift
@@ -1363,6 +1424,8 @@ cmd_tui_launch() {
     require_opencode_cli || return 1
     claim_terminal_title_ownership
     tabby_shell=$(tabby_shell_mode "${tabby_shell}" "${use_shared_db}")
+    maybe_managed_tui "${direct}" "${use_shared_db}" "${tabby_shell}" "${session_id}" \
+        "${dry_run}" "${launch_dir}" "${#opencode_args[@]}" || return 1
     if ((tabby_shell == 1 && use_shared_db == 1)); then
         print_error "--tabby-shell requires aidevops isolated OpenCode storage"
         return 1
@@ -1389,17 +1452,8 @@ cmd_tui_launch() {
     fi
 
     if ((use_shared_db == 1)); then
-        if ((dry_run == 1)); then
-            printf 'cd %q && TMPDIR=%q TMP=%q TEMP=%q' "${launch_dir}" "${TMPDIR}" "${TMP}" "${TEMP}"
-            print_terminal_title_environment
-            printf ' opencode'
-            ((${#opencode_args[@]} == 0)) || printf ' %q' "${opencode_args[@]}"
-            printf '\n'
-            return 0
-        fi
-        cd "${launch_dir}" || return 1
-        exec opencode "${opencode_args[@]}"
-        return 1
+        run_shared_tui "${launch_dir}" "${dry_run}" "${opencode_args[@]}"
+        return $?
     fi
 
     if [[ -z "${data_dir}" ]]; then
@@ -1682,6 +1736,16 @@ main() {
     TEMP="${TEMP:-$TMPDIR}"
     export TMPDIR TMP TEMP
     case "${1:-}" in
+    service)
+        shift
+        python3 "${SCRIPT_DIR}/opencode-service-helper.py" "$@"
+        return $?
+        ;;
+    managed)
+        shift
+        exec python3 "${SCRIPT_DIR}/opencode-service-helper.py" attach "$@"
+        return 1
+        ;;
     conversation)
         shift || true
         cmd_conversation "$@"
