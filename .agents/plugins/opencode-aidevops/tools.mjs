@@ -3,6 +3,7 @@ import { join } from "path";
 import { createHookStatusTool } from "./hook-status-tool.mjs";
 import { createGptImageTool } from "./gpt-image-tool.mjs";
 import { createMcpActivationTool } from "./mcp-activation-tool.mjs";
+import { getOnDemandMcpAgents } from "./mcp-registry.mjs";
 import { createPreEditCheckTool } from "./pre-edit-check-tool.mjs";
 import { BoundedInteractiveOperationManager } from "./bounded-interactive-operation.mjs";
 import { createOutputSandboxReader, createOutputSandboxRecorder } from "./bounded-operation-output.mjs";
@@ -235,6 +236,7 @@ export function createTools(scriptsDir, run, options = {}) {
       client: options.mcpClient,
       directory: options.mcpDirectory,
       allowedNames: options.managedMcpNames,
+      activationAgents: Object.fromEntries(getOnDemandMcpAgents().map(({ name, agentName }) => [name, agentName])),
       managedWorkspaces: options.managedMcpWorkspaces,
     });
   }

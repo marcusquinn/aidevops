@@ -161,7 +161,7 @@ In `opencode.json`, MCP tools are denied globally and granted only to an owning 
 }
 ```
 
-Invoke `@playwright` rather than enabling Playwright globally. Its first step connects only the registry entry named `playwright`; the next step receives `playwright_*` tools. Normal headed/headless work launches a separate isolated browser and prefers Brave when available. Extension mode is an interactive-only exception: it requires `PLAYWRIGHT_MCP_EXTENSION=1`, is blocked by headless-runtime markers, and may receive `PLAYWRIGHT_MCP_EXTENSION_TOKEN` through secure injection. A token alone does not change modes. Use `@playwriter` only when the user explicitly requests a legacy Playwriter setup.
+Select `@playwright` from OpenCode agent autocomplete rather than enabling Playwright globally or pasting a literal `@playwright` string. Its first step connects only the registry entry named `playwright`; the next step receives `playwright_*` tools. A wrong-agent activation request has no MCP lifecycle side effect. Normal headed/headless work launches a separate isolated browser and prefers Brave when available. Extension mode is an interactive-only exception: it requires `PLAYWRIGHT_MCP_EXTENSION=1`, is blocked by headless-runtime markers, and may receive `PLAYWRIGHT_MCP_EXTENSION_TOKEN` through secure injection. A token alone does not change modes. Select `@playwriter` from autocomplete only when the user explicitly requests a legacy Playwriter setup.
 
 ## Future: includeTools Filtering
 
