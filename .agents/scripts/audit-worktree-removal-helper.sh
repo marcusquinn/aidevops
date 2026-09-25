@@ -1326,13 +1326,22 @@ _archive_worktree_path_recoverably_under_lock() {
 	worktree_basename="${worktree_basename##*/}"
 	[[ -n "$worktree_basename" && "$worktree_basename" != "." &&
 		"$worktree_basename" != "$_WT_RECOVERY_DIR_NAME" ]] || return 1
-	recovery_bucket="${recovery_root_real}/aidevops-worktree-cleanup-$(date -u '+%Y%m%dT%H%M%SZ')-$$-${RANDOM}"
+	recovery_bucket=$(_worktree_recovery_cache_policy "reserve" "$wt_path_real" \
+		"$recovery_root_real" "$_WT_ID_REAL_GIT") || return 1
 	archive_path="${recovery_bucket}/${worktree_basename}"
 	recovery_dir="${recovery_bucket}/${_WT_RECOVERY_DIR_NAME}"
 	recovery_admin="${recovery_dir}/admin"
-	mkdir "$recovery_bucket" 2>/dev/null || return 1
-	_worktree_copy_directory_once "$wt_path_real" "$archive_path" || return 1
-	_worktree_prune_regenerable_archive_caches "$wt_path_real" "$archive_path" \
+	# Reuse a completed snapshot only after the existing full identity/content
+	# checks pass. Never overwrite a previous attempt after source data drift.
+	if [[ -e "$archive_path" || -L "$archive_path" ]]; then
+		_worktree_recovery_archive_is_valid "$archive_path" || return 1
+		_worktree_archive_source_matches "$wt_path" "$archive_path" || return 1
+		_worktree_recovery_cache_policy "matching-copy" "$wt_path_real" "$archive_path" \
+			"$_WT_ID_REAL_GIT" || return 1
+		WORKTREE_RECOVERABLE_ARCHIVE_PATH="$archive_path"
+		return 0
+	fi
+	_worktree_recovery_cache_policy "copy" "$wt_path_real" "$archive_path" \
 		"$_WT_ID_REAL_GIT" || return 1
 	mkdir "$recovery_dir" 2>/dev/null || return 1
 	_worktree_copy_directory_once "$_WT_ID_ADMIN_REAL" "$recovery_admin" || return 1
