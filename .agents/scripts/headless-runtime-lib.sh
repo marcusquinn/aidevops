@@ -981,6 +981,9 @@ Implementation approach:
 
 Progressive context loading:
 - Treat the issue body's Worker Guidance / How section as the authoritative plan.
+- For a required issue image, apply full-loop.md "Visual issue references" before
+  image-dependent work. An <img> URL in text is not proof the pixels were seen;
+  report access-blocked with a safe wake condition rather than inventing a preview.
 - Load only referenced workflow/reference docs whose trigger matches your task.
 - Prefer exact sections or line ranges over whole-file reads for large docs/scripts.
 - Use any "Progressive Context Plan" as the read order: Read first, Load only if, Why, Stop when.

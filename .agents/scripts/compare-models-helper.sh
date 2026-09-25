@@ -98,7 +98,7 @@ get_tier_success_rate() {
 model_id_to_tier() {
 	local model_id="$1"
 	case "$model_id" in
-	*opus* | *pro* | o3 | gpt-5.2 | gpt-5.4 | gpt-5.4-*) echo "thinking" ;;
+	*opus* | *pro* | gpt-6-sol | gpt-5.6-sol | qwen3.8-max | o3 | gpt-5.2 | gpt-5.4 | gpt-5.4-*) echo "thinking" ;;
 	*haiku* | *flash* | *terra* | gemini-2.0* | o4-mini | gpt-4.1-mini | gpt-4o-mini | deepseek* | llama* | gpt-4.1-nano) echo "simple" ;;
 	*sonnet* | gpt-5.3-codex | gpt-5.3-codex-* | gpt-4.1 | gpt-4o) echo "standard" ;;
 	*) echo "" ;;
@@ -142,27 +142,36 @@ get_all_tier_patterns() {
 # Model Database (embedded reference data)
 # =============================================================================
 # Format: model_id|provider|display_name|context_window|input_price_per_1m|output_price_per_1m|tier|capabilities|best_for
-# Prices in USD per 1M tokens. Last updated: 2026-04-16.
-# Sources: Anthropic, OpenAI, Google official pricing pages.
+# Offline snapshot checked 2026-09-25 against local OpenCode model metadata.
+# Standard USD/1M token prices only. A dash means unverified, not free.
+# OpenCode local metadata supplies IDs, limits and capabilities, not OpenAI OAuth
+# prices (its zeros are not API prices). Anthropic/Alibaba values reflect the
+# local model cache; gpt-5.6-sol price comes from configs/model-pricing.json.
+# Existing older entries retain their historical prices pending provider revalidation.
+readonly MODEL_DATA_LAST_UPDATED="2026-09-25"
 
-readonly MODEL_DATA="claude-opus-4-6|Anthropic|Claude Opus 4.6|1000000|5.00|25.00|high|code,reasoning,architecture,vision,tools|Architecture decisions, novel problems, complex multi-step reasoning. 1M context, 800K auto-compact. Framework default for tier:thinking and the cascade's penultimate rung.
-claude-opus-4-7|Anthropic|Claude Opus 4.7|250000|5.00|25.00|high|code,reasoning,architecture,vision,tools|Optional thinking-tier mapping candidate. Better at long-running agentic coherence than 4.6; worse at cold long-context retrieval (MRCR 256K 92%->59%, 1M 78%->32%). +20-60% tokenizer cost on English prompts. 250K cap lets OpenCode's 80% auto-compact trigger at the 200K reliability boundary.
-claude-sonnet-4-6|Anthropic|Claude Sonnet 4.6|200000|3.00|15.00|medium|code,reasoning,vision,tools|Code implementation, review, most development tasks
-claude-haiku-4-5|Anthropic|Claude Haiku 4.5|200000|1.00|5.00|low|code,reasoning,vision,tools|Triage, classification, simple transforms, formatting
-gpt-4.1|OpenAI|GPT-4.1|1048576|2.00|8.00|medium|code,reasoning,vision,tools,search|Coding, instruction following, long context
-gpt-4.1-mini|OpenAI|GPT-4.1 Mini|1048576|0.40|1.60|low|code,reasoning,vision,tools|Cost-efficient coding and general tasks
-gpt-4.1-nano|OpenAI|GPT-4.1 Nano|1048576|0.10|0.40|low|code,reasoning,tools|Fast classification, simple transforms
-gpt-4o|OpenAI|GPT-4o|128000|2.50|10.00|medium|code,reasoning,vision,tools,search|General purpose, multimodal
-gpt-4o-mini|OpenAI|GPT-4o Mini|128000|0.15|0.60|low|code,reasoning,vision,tools|Budget general purpose
-o3|OpenAI|o3|200000|10.00|40.00|high|code,reasoning,math,science,tools|Complex reasoning, math, science
-o4-mini|OpenAI|o4-mini|200000|1.10|4.40|medium|code,reasoning,math,tools|Cost-efficient reasoning
-gemini-2.5-pro|Google|Gemini 2.5 Pro|1048576|1.25|10.00|medium|code,reasoning,vision,tools|Large context analysis, complex reasoning
-gemini-2.5-flash|Google|Gemini 2.5 Flash|1048576|0.15|0.60|low|code,reasoning,vision,tools|Fast, cheap, large context
-gemini-2.0-flash|Google|Gemini 2.0 Flash|1048576|0.10|0.40|low|code,reasoning,vision,tools|Budget large context processing
-deepseek-r1|DeepSeek|DeepSeek R1|131072|0.55|2.19|low|code,reasoning,math|Deep reasoning, math, open-source
-deepseek-v3|DeepSeek|DeepSeek V3|131072|0.27|1.10|low|code,reasoning|General purpose, cost-efficient
-llama-4-maverick|Meta|Llama 4 Maverick|1048576|0.20|0.60|low|code,reasoning,vision,tools|Open-source, large context
-llama-4-scout|Meta|Llama 4 Scout|512000|0.15|0.40|low|code,reasoning,vision,tools|Open-source, efficient"
+readonly MODEL_DATA="claude-opus-4-6|Anthropic|Claude Opus 4.6|1000000|5.00|25.00|thinking|code,reasoning,architecture,vision,tools|Architecture decisions, novel problems, complex multi-step reasoning. 1M context, 800K auto-compact. Framework default for tier:thinking and the cascade's penultimate rung.
+claude-opus-5-5|Anthropic|Claude Opus 5.5|1000000|4.00|20.00|thinking|code,reasoning,vision,tools|Complex code and reasoning; model metadata is not independent evidence of aesthetic design quality.
+gpt-6-sol|OpenAI|GPT-6 Sol|388000|-|-|thinking|code,reasoning,vision,tools|Complex implementation and reasoning; standard API price unverified (cached OAuth metadata reports zero).
+gpt-5.6-sol|OpenAI|GPT-5.6 Sol|300000|4.00|20.00|thinking|code,reasoning,vision,tools|Long-running code and reasoning; standard price from local model-pricing.json, not OAuth cache.
+qwen3.8-max|Alibaba|Qwen3.8 Max|1000000|2.00|6.00|thinking|code,reasoning,vision,tools|Large-context reasoning; region and promotional pricing may differ.
+claude-opus-4-7|Anthropic|Claude Opus 4.7|250000|5.00|25.00|thinking|code,reasoning,architecture,vision,tools|Optional thinking-tier mapping candidate. Better at long-running agentic coherence than 4.6; worse at cold long-context retrieval (MRCR 256K 92%->59%, 1M 78%->32%). +20-60% tokenizer cost on English prompts. 250K cap lets OpenCode's 80% auto-compact trigger at the 200K reliability boundary.
+claude-sonnet-4-6|Anthropic|Claude Sonnet 4.6|200000|3.00|15.00|standard|code,reasoning,vision,tools|Code implementation, review, most development tasks
+claude-haiku-4-5|Anthropic|Claude Haiku 4.5|200000|1.00|5.00|simple|code,reasoning,vision,tools|Triage, classification, simple transforms, formatting
+gpt-4.1|OpenAI|GPT-4.1|1048576|2.00|8.00|standard|code,reasoning,vision,tools,search|Coding, instruction following, long context
+gpt-4.1-mini|OpenAI|GPT-4.1 Mini|1048576|0.40|1.60|simple|code,reasoning,vision,tools|Cost-efficient coding and general tasks
+gpt-4.1-nano|OpenAI|GPT-4.1 Nano|1048576|0.10|0.40|simple|code,reasoning,tools|Fast classification, simple transforms
+gpt-4o|OpenAI|GPT-4o|128000|2.50|10.00|standard|code,reasoning,vision,tools,search|General purpose, multimodal
+gpt-4o-mini|OpenAI|GPT-4o Mini|128000|0.15|0.60|simple|code,reasoning,vision,tools|Budget general purpose
+o3|OpenAI|o3|200000|10.00|40.00|thinking|code,reasoning,math,science,tools|Complex reasoning, math, science
+o4-mini|OpenAI|o4-mini|200000|1.10|4.40|standard|code,reasoning,math,tools|Cost-efficient reasoning
+gemini-2.5-pro|Google|Gemini 2.5 Pro|1048576|1.25|10.00|standard|code,reasoning,vision,tools|Large context analysis, complex reasoning
+gemini-2.5-flash|Google|Gemini 2.5 Flash|1048576|0.15|0.60|simple|code,reasoning,vision,tools|Fast, cheap, large context
+gemini-2.0-flash|Google|Gemini 2.0 Flash|1048576|0.10|0.40|simple|code,reasoning,vision,tools|Budget large context processing
+deepseek-r1|DeepSeek|DeepSeek R1|131072|0.55|2.19|simple|code,reasoning,math|Deep reasoning, math, open-source
+deepseek-v3|DeepSeek|DeepSeek V3|131072|0.27|1.10|simple|code,reasoning|General purpose, cost-efficient
+llama-4-maverick|Meta|Llama 4 Maverick|1048576|0.20|0.60|simple|code,reasoning,vision,tools|Open-source, large context
+llama-4-scout|Meta|Llama 4 Scout|512000|0.15|0.40|simple|code,reasoning,vision,tools|Open-source, efficient"
 
 # =============================================================================
 # aidevops Tier Mapping
@@ -174,24 +183,25 @@ standard|claude-sonnet-4-6|Code implementation, review, most development tasks
 thinking|claude-opus-4-6|Architecture decisions, complex multi-step reasoning"
 
 # =============================================================================
-# Task-to-Model Recommendations
+# Task-to-Model Recommendations (every ID must have a catalogue row)
 # =============================================================================
 
-readonly TASK_RECOMMENDATIONS="code review|claude-sonnet-4-6|gpt-5.3-codex|gemini-2.5-flash
-code implementation|claude-sonnet-4-6|gpt-5.3-codex|gemini-2.5-pro
+readonly TASK_RECOMMENDATIONS="code review|claude-sonnet-4-6|gpt-5.6-sol|gemini-2.5-flash
+code implementation|claude-sonnet-4-6|gpt-5.6-sol|gemini-2.5-pro
 architecture design|claude-opus-4-6|o3|gemini-2.5-pro
-bug fixing|claude-sonnet-4-6|gpt-5.3-codex|o4-mini
-refactoring|claude-sonnet-4-6|gpt-5.3-codex|gemini-2.5-pro
+bug fixing|claude-sonnet-4-6|gpt-5.6-sol|o4-mini
+refactoring|claude-sonnet-4-6|gpt-5.6-sol|gemini-2.5-pro
 documentation|claude-sonnet-4-6|gpt-4o|gemini-2.5-flash
-testing|claude-sonnet-4-6|gpt-5.3-codex|o4-mini
+testing|claude-sonnet-4-6|gpt-5.6-sol|o4-mini
 classification|claude-haiku-4-5|gpt-4.1-nano|gemini-2.5-flash
 summarization|gemini-2.5-flash|gpt-4o-mini|claude-haiku-4-5
-large codebase analysis|gemini-2.5-pro|gpt-5.3-codex|claude-sonnet-4-6
-math reasoning|gpt-5.4|deepseek-r1|gemini-2.5-pro
-security audit|claude-opus-4-6|gpt-5.4|claude-sonnet-4-6
+large codebase analysis|gemini-2.5-pro|gpt-5.6-sol|claude-sonnet-4-6
+math reasoning|gpt-6-sol|deepseek-r1|gemini-2.5-pro
+security audit|claude-opus-4-6|gpt-6-sol|claude-sonnet-4-6
 data extraction|gemini-2.5-flash|gpt-4o-mini|claude-haiku-4-5
 commit messages|claude-haiku-4-5|gpt-4.1-nano|gemini-2.5-flash
-pr description|claude-sonnet-4-6|gpt-4o|gemini-2.5-flash"
+pr description|claude-sonnet-4-6|gpt-4o|gemini-2.5-flash
+visually polished responsive website|gpt-6-sol|claude-opus-5-5|qwen3.8-max"
 
 # =============================================================================
 # Helper Functions
@@ -227,6 +237,26 @@ find_model() {
 	return 0
 }
 
+# Refuse a silently stale recommendation or tier mapping before showing it.
+validate_catalogue_references() {
+	local line task recommended runner_up budget tier model purpose
+	while IFS='|' read -r task recommended runner_up budget; do
+		for model in "$recommended" "$runner_up" "$budget"; do
+			if ! printf '%s\n' "$MODEL_DATA" | cut -d'|' -f1 | grep -Fxq "$model"; then
+				print_error "Recommendation references missing model: $model ($task)"
+				return 1
+			fi
+		done
+	done <<<"$TASK_RECOMMENDATIONS"
+	while IFS='|' read -r tier model purpose; do
+		if ! printf '%s\n' "$MODEL_DATA" | cut -d'|' -f1 | grep -Fxq "$model"; then
+			print_error "Tier references missing model: $model ($tier)"
+			return 1
+		fi
+	done <<<"$TIER_MAP"
+	return 0
+}
+
 # Format number with padding
 pad_right() {
 	local str="$1"
@@ -238,7 +268,11 @@ pad_right() {
 # Format price for display
 format_price() {
 	local price="$1"
-	printf "\$%s" "$price"
+	if [[ "$price" == "-" ]]; then
+		printf 'unverified'
+	else
+		printf '$%s' "$price"
+	fi
 	return 0
 }
 
@@ -248,17 +282,19 @@ format_context() {
 	if [[ "$ctx" -ge 1000000 ]]; then
 		echo "1M"
 	elif [[ "$ctx" -ge 500000 ]]; then
-		echo "512K"
+		echo "$((ctx / 1000))K"
 	elif [[ "$ctx" -ge 250000 ]]; then
-		echo "250K"
+		echo "$((ctx / 1000))K"
 	elif [[ "$ctx" -ge 200000 ]]; then
 		echo "200K"
 	elif [[ "$ctx" -ge 131072 ]]; then
 		echo "131K"
 	elif [[ "$ctx" -ge 128000 ]]; then
 		echo "128K"
-	else
+	elif [[ "$ctx" -gt 0 ]]; then
 		echo "${ctx}"
+	else
+		echo "unverified"
 	fi
 	return 0
 }
@@ -291,11 +327,11 @@ cmd_list() {
 		# Truncate best_for for table display
 		local best_short="${best:0:40}"
 		printf "%-22s %-10s %-8s %-12s %-12s %-7s %s\n" \
-			"$model_id" "$provider" "$ctx_fmt" "\$$input" "\$$output" "$tier" "$best_short"
+			"$model_id" "$provider" "$ctx_fmt" "$(format_price "$input")" "$(format_price "$output")" "$tier" "$best_short"
 	done
 
 	echo ""
-	echo "Prices: USD per 1M tokens. Last updated: 2025-02-08."
+	echo "Prices: standard USD per 1M tokens (unverified where marked). Snapshot: $MODEL_DATA_LAST_UPDATED."
 
 	# Pattern data integration (t1098)
 	if has_pattern_data; then
@@ -317,6 +353,36 @@ cmd_list() {
 
 	echo ""
 	echo "Run 'compare-models-helper.sh help' for more commands."
+	return 0
+}
+
+compare_costs() {
+	[[ $# -ge 2 ]] || return 0
+	echo ""
+	echo "Cost Analysis (per 1M tokens):"
+	local cheapest_input="" cheapest_input_price=999999
+	local cheapest_output="" cheapest_output_price=999999
+	local line model_id input output
+	for line in "$@"; do
+		model_id=$(get_field "$line" 1)
+		input=$(get_field "$line" 5)
+		output=$(get_field "$line" 6)
+		[[ "$input" != "-" && "$output" != "-" ]] || continue
+		if awk "BEGIN{exit !($input < $cheapest_input_price)}"; then
+			cheapest_input="$model_id"
+			cheapest_input_price="$input"
+		fi
+		if awk "BEGIN{exit !($output < $cheapest_output_price)}"; then
+			cheapest_output="$model_id"
+			cheapest_output_price="$output"
+		fi
+	done
+	if [[ -n "$cheapest_input" ]]; then
+		echo "  Cheapest priced input:  $cheapest_input (\$$cheapest_input_price/1M)"
+		echo "  Cheapest priced output: $cheapest_output (\$$cheapest_output_price/1M)"
+	else
+		echo "  No priced models available for comparison."
+	fi
 	return 0
 }
 
@@ -369,7 +435,7 @@ cmd_compare() {
 		local ctx_fmt
 		ctx_fmt=$(format_context "$ctx")
 		printf "%-22s %-10s %-8s %-12s %-12s %-7s\n" \
-			"$model_id" "$provider" "$ctx_fmt" "\$$input" "\$$output" "$tier"
+			"$model_id" "$provider" "$ctx_fmt" "$(format_price "$input")" "$(format_price "$output")" "$tier"
 	done
 
 	echo ""
@@ -393,30 +459,7 @@ cmd_compare() {
 		fi
 	done
 
-	# Cost comparison
-	if [[ ${#results[@]} -ge 2 ]]; then
-		echo ""
-		echo "Cost Analysis (per 1M tokens):"
-		local cheapest_input="" cheapest_input_price=999999
-		local cheapest_output="" cheapest_output_price=999999
-		for line in "${results[@]}"; do
-			local model_id input output
-			model_id=$(get_field "$line" 1)
-			input=$(get_field "$line" 5)
-			output=$(get_field "$line" 6)
-			# Use awk for float comparison
-			if awk "BEGIN{exit !($input < $cheapest_input_price)}"; then
-				cheapest_input="$model_id"
-				cheapest_input_price="$input"
-			fi
-			if awk "BEGIN{exit !($output < $cheapest_output_price)}"; then
-				cheapest_output="$model_id"
-				cheapest_output_price="$output"
-			fi
-		done
-		echo "  Cheapest input:  $cheapest_input (\$$cheapest_input_price/1M)"
-		echo "  Cheapest output: $cheapest_output (\$$cheapest_output_price/1M)"
-	fi
+	compare_costs "${results[@]}"
 
 	return 0
 }
@@ -466,7 +509,7 @@ cmd_recommend() {
 					local mapped_tier badge price_line
 					mapped_tier=$(model_id_to_tier "$model")
 					badge=$(format_pattern_badge "$mapped_tier")
-					price_line="  $model: \$$input/\$$output per 1M tokens, ${ctx_fmt} context"
+					price_line="  $model: $(format_price "$input")/$(format_price "$output") per 1M tokens, ${ctx_fmt} context"
 					if [[ -n "$badge" ]]; then
 						price_line="$price_line — ${badge} success"
 					fi
@@ -476,14 +519,18 @@ cmd_recommend() {
 			found=true
 		fi
 	done <<<"$TASK_RECOMMENDATIONS"
+	if [[ "$lower_task" == *"visually polished responsive website"* ]]; then
+		echo "  Evidence: model metadata supports code/tool capability, not aesthetic quality."
+		echo "  Design ranking is a local implementation hypothesis; compare rendered outputs with an independent visual review."
+	fi
 
 	if [[ "$found" != "true" ]]; then
 		echo "No exact task match. Showing general recommendations:"
 		echo ""
-		echo "  High capability: claude-opus-4-6 or gpt-5.4"
-		echo "  Balanced:        claude-sonnet-4-6 or gpt-5.3-codex"
+		echo "  High capability: claude-opus-5-5 or gpt-6-sol"
+		echo "  Balanced:        claude-sonnet-4-6 or gpt-5.6-sol"
 		echo "  Budget:          gemini-2.5-flash or gpt-4.1-nano"
-		echo "  Large context:   gemini-2.5-pro or gpt-5.3-codex"
+		echo "  Large context:   gemini-2.5-pro or qwen3.8-max"
 		echo ""
 		echo "Available task types:"
 		echo "$TASK_RECOMMENDATIONS" | cut -d'|' -f1 | while IFS= read -r t; do
@@ -521,7 +568,9 @@ cmd_pricing() {
 	printf "%-22s %-10s %-12s %-12s %-7s\n" \
 		"-----" "--------" "--------" "---------" "----"
 
-	echo "$MODEL_DATA" | sort -t'|' -k5 -n | while IFS= read -r line; do
+	# Sort unknown prices last; treating '-' as numeric zero would advertise them
+	# as the cheapest model even though the API price is not known.
+	echo "$MODEL_DATA" | awk -F'|' '{print ($5 == "-" ? 999999 : $5) "|" $0}' | sort -t'|' -k1,1n | cut -d'|' -f2- | while IFS= read -r line; do
 		local model_id provider input output tier
 		model_id=$(get_field "$line" 1)
 		provider=$(get_field "$line" 2)
@@ -529,11 +578,11 @@ cmd_pricing() {
 		output=$(get_field "$line" 6)
 		tier=$(get_field "$line" 7)
 		printf "%-22s %-10s %-12s %-12s %-7s\n" \
-			"$model_id" "$provider" "\$$input" "\$$output" "$tier"
+			"$model_id" "$provider" "$(format_price "$input")" "$(format_price "$output")" "$tier"
 	done
 
 	echo ""
-	echo "Last updated: 2025-02-08. Run /compare-models for live pricing check."
+	echo "Snapshot: $MODEL_DATA_LAST_UPDATED. Unverified is not free. Run /compare-models for live pricing."
 	return 0
 }
 
@@ -838,7 +887,7 @@ cmd_help() {
 	echo "  compare-models-helper.sh bench 'What is 2+2?' claude-sonnet-4-6 --dry-run"
 	echo "  compare-models-helper.sh bench --history --limit 10"
 	echo ""
-	echo "Data is embedded in this script. Last updated: 2025-02-08."
+	echo "Data is embedded in this script. Snapshot: $MODEL_DATA_LAST_UPDATED."
 	echo "For live pricing, use /compare-models (with web fetch)."
 	return 0
 }
@@ -851,6 +900,11 @@ cmd_help() {
 main() {
 	local command="${1:-help}"
 	shift || true
+	case "$command" in
+	list | compare | recommend | pricing | context | capabilities | providers | patterns)
+		validate_catalogue_references || return 1
+		;;
+	esac
 
 	case "$command" in
 	list)
