@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.34.29] - 2026-09-25
+
+### Changed
+
+- Documentation: route reusable lessons into shared guidance
+
+### Fixed
+
+- initialize planning publication CI context (#32349)
+
 ## [3.34.28] - 2026-09-25
 
 ### Fixed
