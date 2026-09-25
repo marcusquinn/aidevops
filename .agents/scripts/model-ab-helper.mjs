@@ -10,7 +10,9 @@ import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { aggregateObserved } from "./model-ab-report.mjs";
+import { eligibleNewIssue, parseAssignmentOptions, validEnrollment } from "./model-ab-enrollment.mjs";
+import { aggregateObserved, snapshotAssignments } from "./model-ab-report.mjs";
+import { startProspectiveTrial } from "./model-ab-start.mjs";
 import { assignmentPaths, persistReceipt, persistRoute } from "./model-ab-store.mjs";
 
 const root = join(homedir(), ".aidevops", ".agent-workspace", "work", "model-ab");
@@ -49,7 +51,9 @@ export function validateExperiment(value) {
     throw new Error(invalidExperiment);
   }
   if (!identifier.test(value.seed || "")) throw new Error(invalidExperiment);
-  if (!validIssues(value.issues)) throw new Error(invalidExperiment);
+  if (Object.hasOwn(value, "issues")) {
+    if (!validIssues(value.issues) || Object.hasOwn(value, "enrollment")) throw new Error(invalidExperiment);
+  } else if (!validEnrollment(value)) throw new Error(invalidExperiment);
   if (!validArms(value.arms)) throw new Error(invalidExperiment);
   const start = Date.parse(value.starts_at);
   const end = Date.parse(value.ends_at);
@@ -63,6 +67,10 @@ export function validateExperiment(value) {
 }
 
 export function assignedArm(experiment, repo, issue) {
+  if (experiment.enrollment) {
+    const key = `${experiment.id}\0${experiment.seed}\0${repo}\0${issue}`;
+    return experiment.arms[Number.parseInt(digest(key).slice(0, 8), 16) % 2];
+  }
   // Predeclared cohort is shuffled by a stable seed, then blocked in pairs.
   // This prevents a tiny 48-hour cohort from randomly receiving only one arm.
   const shuffled = [...experiment.issues].sort((left, right) => {
@@ -73,20 +81,25 @@ export function assignedArm(experiment, repo, issue) {
   return experiment.arms[shuffled.indexOf(issue) % 2];
 }
 
-export function assign(experiment, repo, issue, { directory = root, now = Date.now(), continuationOnly = false } = {}) {
+export function assign(experiment, repo, issue, {
+  directory = root, now = Date.now(), continuationOnly = false, createdAt, labels,
+} = {}) {
   validateExperiment(experiment);
-  if (repo !== experiment.repo || !experiment.issues.includes(issue)) {
-    return { active: false };
-  }
+  if (repo !== experiment.repo) return { active: false };
+  if (experiment.issues && !experiment.issues.includes(issue)) return { active: false };
   const arm = assignedArm(experiment, repo, issue);
   const fingerprint = digest(JSON.stringify(experiment));
   const paths = assignmentPaths(experiment, repo, issue, directory);
+  if (!existsSync(paths.receipt) && experiment.enrollment) {
+    if (!eligibleNewIssue(experiment, { createdAt, labels })) return { active: false };
+  }
   if (!existsSync(paths.receipt)
     && (continuationOnly || now < Date.parse(experiment.starts_at) || now >= Date.parse(experiment.ends_at))) {
     return { active: false };
   }
   const receipt = { schema: "aidevops-model-ab/v1", experiment: experiment.id,
     repo, issue, arm: arm.name, model: arm.model, variant: arm.variant, fingerprint };
+  if (experiment.enrollment) receipt.created_at = createdAt;
   const recorded = persistReceipt(paths, receipt, now);
   persistRoute(paths, arm);
   return { active: true, ...recorded, routing_table: paths.route };
@@ -94,45 +107,26 @@ export function assign(experiment, repo, issue, { directory = root, now = Date.n
 
 export function report(experiment, { directory = root } = {}) {
   validateExperiment(experiment);
-  const arms = Object.fromEntries(experiment.arms.map((arm) => [arm.name, { assigned: 0, issues: [], assignments: [] }]));
-  const excluded = [];
-  for (const issue of experiment.issues) {
-    const { receipt } = assignmentPaths(experiment, experiment.repo, issue, directory);
-    if (!existsSync(receipt)) { excluded.push(issue); continue; }
-    const item = JSON.parse(readFileSync(receipt, "utf8"));
-    if (item.fingerprint !== digest(JSON.stringify(experiment))
-      || item.arm !== assignedArm(experiment, experiment.repo, issue).name
-      || !Number.isFinite(Date.parse(item.assigned_at))) {
-      throw new Error("model A/B report refused changed assignment evidence");
-    }
-    arms[item.arm].assigned += 1;
-    arms[item.arm].issues.push(issue);
-    arms[item.arm].assignments.push({ issue, assigned_at: item.assigned_at });
-  }
-  return { experiment: experiment.id, repo: experiment.repo, arms, excluded,
-    result: "assignment-only: join observed requests, escalations, merged-PR evidence and parent acceptance before comparing outcomes" };
-}
-
-function validAssignInvocation(argv) {
-  if (!repoPattern.test(argv[1] || "")) return false;
-  if (!/^[1-9][0-9]*$/.test(argv[2] || "")) return false;
-  if (argv.length === 3) return true;
-  return argv.length === 4 && argv[3] === "--continuation-only";
+  return snapshotAssignments(experiment, directory, assignedArm);
 }
 
 function run(argv) {
   const [command, repo, rawIssue] = argv;
+  if (command === "start" && argv.length === 2) {
+    process.stdout.write(`${JSON.stringify(startProspectiveTrial(repo, { validate: validateExperiment }))}\n`);
+    return;
+  }
   const config = process.env.AIDEVOPS_MODEL_AB_CONFIG;
   if (!config && command === "assign") { process.stdout.write('{"active":false}\n'); return; }
   if (!config) throw new Error("AIDEVOPS_MODEL_AB_CONFIG is required for report");
   const experiment = validateExperiment(JSON.parse(readFileSync(config, "utf8")));
-  if (command === "assign" && validAssignInvocation(argv)) {
+  if (command === "assign" && repoPattern.test(repo || "") && /^[1-9][0-9]*$/.test(rawIssue || "")) {
     process.stdout.write(`${JSON.stringify(assign(experiment, repo, Number(rawIssue),
-      { continuationOnly: argv[3] === "--continuation-only" }))}\n`);
+      parseAssignmentOptions(argv.slice(3))))}\n`);
   } else if (command === "report" && argv.length === 1) {
     process.stdout.write(`${JSON.stringify(aggregateObserved(report(experiment)))}\n`);
   } else {
-    throw new Error("usage: model-ab-helper.mjs assign OWNER/REPO ISSUE [--continuation-only] | report (set AIDEVOPS_MODEL_AB_CONFIG)");
+    throw new Error("usage: model-ab-helper.mjs start OWNER/REPO | assign OWNER/REPO ISSUE [--created-at ISO --labels-json JSON] [--continuation-only] | report");
   }
 }
 
