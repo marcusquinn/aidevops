@@ -17,6 +17,8 @@ tools:
 
 # Stagehand Python AI Browser Automation
 
+**Compatibility note:** This guide and `stagehand-python-helper.sh` describe the existing older Python integration. Stagehand v4 uses `local_browser.launch()` and `await Stagehand.create(browser=...)` with browser-owned pages; these examples are not v4-compatible. The opt-in v4 route currently supports JavaScript only; migrate Python separately after verifying the installed package and exports.
+
 <!-- AI-CONTEXT-START -->
 
 ## Quick Reference

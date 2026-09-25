@@ -15,7 +15,9 @@ tools:
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-# Stagehand MCP Usage Examples
+# Stagehand v3 Usage Examples (Legacy)
+
+These examples use the v3 constructor, `stagehand.page`, and `agent()`. They do **not** describe the v4 API. For the reviewed opt-in v4 local route, use `stagehand-v4-helper.sh setup` and `stagehand-v4-example.mjs`; do not copy v3 patterns into v4.
 
 <!-- AI-CONTEXT-START -->
 - Core methods: `act()`, `extract()`, `observe()`, `agent.execute()`

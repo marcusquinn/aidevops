@@ -45,10 +45,15 @@ Target: `https://the-internet.herokuapp.com`. 3 runs per tool, report median. Ne
 | dev-browser | Full | `dev-browser-helper.sh setup` (server: `dev-browser-helper.sh start-headless`) |
 | agent-browser | Full | `agent-browser-helper.sh setup` (first run slower — discard or note) |
 | Crawl4AI | Navigate + extract only | `python3 -m venv ~/.aidevops/crawl4ai-venv && pip install crawl4ai` |
-| Stagehand | Full (AI-dependent latency) | `npm init -y && npm i @browserbasehq/stagehand` in `~/.aidevops/stagehand-bench/` — needs `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` |
+| Stagehand v3 (historical script) | Full (AI-dependent latency) | Existing `bench-stagehand.mjs` targets the older SDK; keep its result separate from v4. |
+| Stagehand v4.1.0 | Opt-in isolated local browser; AI extraction needs explicit model/key | `bash .agents/scripts/stagehand-v4-helper.sh setup`; a like-for-like v4 benchmark is not yet implemented. |
 | Playwriter (legacy, not recommended) | Full | Retained only for historical comparison; skip unless explicitly benchmarking an existing setup |
 
 ## Running Benchmarks
+
+The existing Stagehand script is v3-only. Do not run it against the isolated v4
+project or report its historical measurements as v4. The v4 route has a verified
+no-model local-browser smoke test, not a billed AI performance comparison.
 
 ```bash
 cd ~/.aidevops/.agent-workspace/work/browser-bench/
@@ -63,9 +68,9 @@ OPENAI_API_KEY=... node bench-stagehand.mjs | tee results-stagehand.json
 
 Update the Performance Benchmarks table in `browser-automation.md`:
 
-1. Median of 3 runs per test; bold fastest time per row
+1. Median of 3 runs per test; bold fastest time per row; label the Stagehand SDK major version
 2. Update "Key insight" section if relative performance changed
-3. Record environment: `date && uname -a && node --version && python3 --version`
+3. Record environment, model/token spend, cache hits and failures; request explicit model-billing consent before running AI benchmarks
 
 ## Adding New Tools
 
