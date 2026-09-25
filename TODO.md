@@ -535,7 +535,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 ## Backlog
 
-- [ ] t18475 Fail closed on public routine comments before Pulse worker launch #bug #security #prompt-injection #interactive #auto-dispatch #priority:high tier:thinking ref:GH#32337 logged:2026-09-24 -> [todo/tasks/t18475-brief.md]
+- [x] t18475 Fail closed on public routine comments before Pulse worker launch #bug #security #prompt-injection #interactive #auto-dispatch #priority:high tier:thinking ref:GH#32337 logged:2026-09-24 -> [todo/tasks/t18475-brief.md] pr:#32348 completed:2026-09-25
 - [ ] t18476 Initialize CI privacy context during planning publication reconciliation #bug #framework #ci #auto-dispatch #interactive #priority:high tier:standard ref:GH#32342 logged:2026-09-24 -> [todo/tasks/t18476-brief.md]
 
 - [x] t18471 docs: generalize stale local dev server and browser-process diagnostics #documentation #debugging #ops #interactive #auto-dispatch ~1h tier:standard ref:GH#32119 logged:2026-09-20 -> [todo/tasks/t18471-brief.md] pr:#32129 completed:2026-09-20
