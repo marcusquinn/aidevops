@@ -281,13 +281,13 @@ JSON
 fi
 if [[ "$*" == *"issue view"*"21860"* ]]; then
   cat <<'JSON'
-{"number":21860,"title":"t3206: worker re-dispatch loops on same branch","state":"OPEN","author":{"login":"marcusquinn"},"createdAt":"2026-04-26T08:00:00Z","closedAt":null,"labels":[{"name":"auto-dispatch"},{"name":"status:queued"}],"assignees":[]}
+{"number":21860,"title":"t3206: worker re-dispatch loops on same branch","state":"OPEN","author":{"login":"marcusquinn"},"createdAt":"2026-04-26T08:00:00Z","closedAt":null,"closedByPullRequestsReferences":[{"number":21876}],"labels":[{"name":"auto-dispatch"},{"name":"status:queued"}],"assignees":[]}
 JSON
   exit 0
 fi
 if [[ "$*" == *"issue view"*"99998"* ]]; then
   cat <<'JSON'
-{"number":99998,"title":"ghost issue","state":"CLOSED","author":{"login":"marcusquinn"},"createdAt":"2026-04-01T00:00:00Z","closedAt":"2026-04-02T00:00:00Z","labels":[],"assignees":[]}
+{"number":99998,"title":"ghost issue","state":"CLOSED","author":{"login":"marcusquinn"},"createdAt":"2026-04-01T00:00:00Z","closedAt":"2026-04-02T00:00:00Z","closedByPullRequestsReferences":[{"number":99999}],"labels":[],"assignees":[]}
 JSON
   exit 0
 fi
@@ -694,6 +694,8 @@ assert_contains "shows dispatch backoff log event" "BACKOFF_ACTIVE #21860" "$out
 assert_contains "shows linked PRs section" "Linked/worker PRs:" "$output"
 assert_contains "shows linked PR number" "PR #21876" "$output"
 assert_contains "shows linked PR branch" "feature/auto-20260427-gh21860" "$output"
+linked_pr_rows=$(printf '%s' "$output" | grep -c '^  PR #21876  ' 2>/dev/null || true)
+assert_eq "deduplicates timeline and closing PR evidence" "1" "$linked_pr_rows"
 
 # --- Test 14: issue pulse log events for linked PR ---
 printf '\nTest 14: issue #21860 — linked PR pulse events\n'
@@ -706,8 +708,8 @@ output=$(PULSE_DIAGNOSE_LOGFILE="$FIXTURE_LOGFILE" \
 assert_contains "shows pulse events for linked PR" "pmc-close-conflicting" "$output"
 assert_contains "shows pulse event count" "pulse events" "$output"
 
-# --- Test 15: issue with no linked PRs or lifecycle comments ---
-printf '\nTest 15: issue #99998 — no linked PRs or lifecycle comments\n'
+# --- Test 15: closed issue discovers its merged closing PR without comments ---
+printf '\nTest 15: issue #99998 — closing PR reference without lifecycle comments\n'
 output=$(PULSE_DIAGNOSE_LOGFILE="$FIXTURE_LOGFILE" \
 	PULSE_DIAGNOSE_LOGDIR="$TMPDIR_TEST" \
 	PATH="${TMPDIR_TEST}:${PATH}" \
@@ -715,7 +717,8 @@ output=$(PULSE_DIAGNOSE_LOGFILE="$FIXTURE_LOGFILE" \
 
 assert_contains "shows issue number" "Issue #99998" "$output"
 assert_contains "no comments found" "no comments found" "$output"
-assert_contains "no linked PRs" "no linked or worker PRs found" "$output"
+assert_contains "shows closing PR reference" "PR #99999" "$output"
+assert_contains "shows merged closing PR state" "MERGED" "$output"
 
 # --- Test 16: issue --json output ---
 printf '\nTest 16: issue --json output\n'

@@ -1205,11 +1205,11 @@ The command collects:
   `WORKER_BRANCH_ORPHAN`, `CLAIM_RELEASED`, `CLAIM_DEFERRED`, `watchdog`,
   `STUCK_WORKER`, `source:ci-failure`, `source:conflict-feedback`, and
   `DISPATCH_CLAIM`. Signature footers and generic ops noise are stripped.
-- **Linked and worker PRs**: discovered via two strategies — (1) timeline
-  cross-references (PRs that reference the issue via closing keywords), and (2) worker
-  branch pattern search (`gh<N> in:head` for worker branches named
-  `feature/auto-*-gh<N>`). For each linked PR, pulse log events are shown using the
-  same rule inventory as the `pr` subcommand.
+- **Linked and worker PRs**: discovered via three deduplicated strategies — (1)
+  GitHub's authoritative `closedByPullRequestsReferences` relationship for merged
+  closing PRs, (2) timeline cross-references, and (3) worker branch pattern search
+  (`gh<N> in:head` for worker branches named `feature/auto-*-gh<N>`). For each linked
+  PR, pulse log events are shown using the same rule inventory as the `pr` subcommand.
 
 #### Worked example — WORKER_BRANCH_ORPHAN cascade
 

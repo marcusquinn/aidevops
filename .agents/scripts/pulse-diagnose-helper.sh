@@ -1572,10 +1572,10 @@ _fetch_issue_metadata() {
 	local meta_json
 	if declare -F _gh_with_timeout >/dev/null 2>&1; then
 		meta_json=$(_gh_with_timeout read gh issue view "$issue_number" --repo "$repo_slug" \
-			--json number,title,state,author,createdAt,closedAt,labels,assignees,body 2>/dev/null) || meta_json="{}"
+			--json number,title,state,author,createdAt,closedAt,closedByPullRequestsReferences,labels,assignees,body 2>/dev/null) || meta_json="{}"
 	else
 		meta_json=$(gh issue view "$issue_number" --repo "$repo_slug" \
-			--json number,title,state,author,createdAt,closedAt,labels,assignees,body 2>/dev/null) || meta_json="{}"
+			--json number,title,state,author,createdAt,closedAt,closedByPullRequestsReferences,labels,assignees,body 2>/dev/null) || meta_json="{}"
 	fi
 	echo "$meta_json"
 	return 0
@@ -1621,13 +1621,14 @@ _fetch_issue_comments() {
 	return 0
 }
 
-# Fetch linked PR numbers for an issue via timeline cross-references and
-# bounded open-PR metadata filtering.
-# Args: $1 = issue number, $2 = repo slug
+# Fetch linked PR numbers for an issue via closing references, timeline
+# cross-references, and bounded open-PR metadata filtering.
+# Args: $1 = issue number, $2 = repo slug, $3 = issue metadata JSON
 # Outputs newline-separated PR numbers to stdout.
 _fetch_issue_linked_prs() {
 	local issue_number="$1"
 	local repo_slug="$2"
+	local issue_json="$3"
 
 	if [[ "${PULSE_DIAGNOSE_GH_OFFLINE:-0}" == "1" ]]; then
 		return 0
@@ -1638,14 +1639,20 @@ _fetch_issue_linked_prs() {
 	local owner="" repo=""
 	owner="${repo_slug%%/*}"
 	repo="${repo_slug##*/}"
-	# Strategy 1: timeline cross-references from PRs that reference this issue
+	# Strategy 1: GitHub's authoritative closing-PR relationship. This survives
+	# timeline omissions after an issue has been closed by a merged PR.
+	local closing_pr_nums=""
+	closing_pr_nums=$(printf '%s' "$issue_json" \
+		| jq -r '[.closedByPullRequestsReferences[]?.number | select(type == "number")] | unique | .[]' \
+		2>/dev/null) || closing_pr_nums=""
+	# Strategy 2: timeline cross-references from PRs that reference this issue
 	# (pipe through jq so the gh stub in tests sees raw JSON)
 	local xref_nums=""
 	xref_nums=$(gh api "repos/${owner}/${repo}/issues/${issue_number}/timeline" \
 		--paginate 2>/dev/null \
 		| jq -r '[.[] | select(.event == "cross-referenced") | select(.source.issue.pull_request != null) | .source.issue.number] | unique | .[]' \
 		2>/dev/null) || xref_nums=""
-	# Strategy 2: locally filter one bounded open-PR snapshot (including drafts).
+	# Strategy 3: locally filter one bounded open-PR snapshot (including drafts).
 	local branch_prs=""
 	branch_prs=$(gh pr list --repo "$repo_slug" --state open \
 		--json number,headRefName --limit 100 2>/dev/null \
@@ -1653,7 +1660,7 @@ _fetch_issue_linked_prs() {
 			'.[] | select((.headRefName // "") | test("(^|[^[:alnum:]])" + $token + "([^0-9]|$)")) | .number' \
 			2>/dev/null) || branch_prs=""
 
-	{ printf '%s\n' "$xref_nums"; printf '%s\n' "$branch_prs"; } \
+	{ printf '%s\n' "$closing_pr_nums"; printf '%s\n' "$xref_nums"; printf '%s\n' "$branch_prs"; } \
 		| grep -E '^[0-9]+$' 2>/dev/null | sort -n | uniq
 	return 0
 }
@@ -2546,7 +2553,7 @@ cmd_issue() {
 	blocker_log=$(_resolve_blocker_log)
 	issue_json=$(_fetch_issue_metadata "$_CMD_ISSUE_NUMBER" "$_CMD_ISSUE_REPO_SLUG")
 	comments_json=$(_fetch_issue_comments "$_CMD_ISSUE_NUMBER" "$_CMD_ISSUE_REPO_SLUG")
-	pr_numbers=$(_fetch_issue_linked_prs "$_CMD_ISSUE_NUMBER" "$_CMD_ISSUE_REPO_SLUG")
+	pr_numbers=$(_fetch_issue_linked_prs "$_CMD_ISSUE_NUMBER" "$_CMD_ISSUE_REPO_SLUG" "$issue_json")
 	attempt_summary_json=$(_issue_attempt_summary_json "$_CMD_ISSUE_NUMBER" "$metrics_file" "$_CMD_ISSUE_REPO_SLUG")
 	issue_log_lines=$(_collect_issue_log_lines "$_CMD_ISSUE_NUMBER" "$logfile" "$logdir")
 	prelaunch_summary_json=$(_issue_prelaunch_failure_summary_json "$issue_log_lines")
