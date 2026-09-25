@@ -202,6 +202,25 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), "direct")
 
+    def test_deployment_symlink_preserves_the_allowed_helper_identity(self):
+        for name in lifecycle_module.RUNTIME_FILES:
+            lifecycle_module.HELPER.with_name(name).write_bytes(Path(SPEC.origin).with_name(name).read_bytes())
+        alias = lifecycle_module.HELPER.parent.parent
+        bundle = self.home / "bundle"
+        alias.rename(bundle)
+        alias.symlink_to(bundle, target_is_directory=True)
+        binary = self.home / "bin/systemctl"
+        binary.parent.mkdir()
+        binary.write_text("#!/bin/sh\nexit 0\n")
+        binary.chmod(0o700)
+        result = subprocess.run(
+            [sys.executable, str(lifecycle_module.HELPER), "install"],
+            env=dict(os.environ, HOME=str(self.home), PATH=str(binary.parent)),
+            text=True, capture_output=True, timeout=15, check=False)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("opencode is required", result.stderr)
+        self.assertFalse(self.service.config.exists(), "Missing prerequisites must stop before writes")
+
     def test_changed_running_definition_is_not_restarted(self):
         self.service.save(self.data)
         with patch.object(self.service, "supported"), patch.object(self.service, "pid", return_value=123), \

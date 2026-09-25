@@ -6,9 +6,13 @@
 import argparse
 import json
 import os
+from pathlib import Path
 import subprocess
 import sys
 
+# Python resolves sys.path[0] through directory symlinks. Keep sibling imports
+# rooted at the invoked deployment alias so the persistent-install guard agrees.
+sys.path.insert(0, str(Path(__file__).absolute().parent))
 from opencode_service_lifecycle import Service
 from opencode_service_state import lifecycle_lock, require
 
