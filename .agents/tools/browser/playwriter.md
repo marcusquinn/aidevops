@@ -28,7 +28,7 @@ mcp:
 - **Purpose**: Browser automation via Chrome extension — full Playwright API
 - **Extension**: [Chrome Web Store](https://chromewebstore.google.com/detail/playwriter-mcp/jfeammnjpkecdekppnclgkkffahnhfhe) (Chrome, Brave, Edge)
 - **MCP**: `npx playwriter@0.5.0` — single `execute` tool runs Playwright code snippets
-- **OpenCode activation**: Invoke `@playwriter`; it connects the disabled MCP on demand through the registry-allowlisted `aidevops_mcp` tool
+- **OpenCode activation**: Select `@playwriter` from agent autocomplete (a structured agent mention); literal pasted text does not switch agents or connect the MCP
 - **Icon**: Gray/Black = disconnected · Green = ready · Orange = connecting · Red = error
 - **Performance**: Navigate 2.95s, form fill 2.24s, reliability 1.96s avg. Always headed.
 
@@ -91,7 +91,7 @@ mcp:
 }
 ```
 
-Use `@playwriter` only for an explicit legacy compatibility request. The agent connects Playwriter before its first operation, receives `playwriter_*` tools on the next step, and disconnects after the requested browser work. The activation tool accepts only MCP names declared by the plugin registry.
+Use `@playwriter` only for an explicit legacy compatibility request. Select the agent from OpenCode autocomplete rather than typing or pasting `@playwriter` as plain prompt text. The selected agent connects Playwriter before its first operation, receives `playwriter_*` tools on the next step, and disconnects after the requested browser work. A call from another agent is refused before MCP lifecycle changes; it cannot acquire Playwriter tools by connecting the server. The activation tool accepts only MCP names declared by the plugin registry.
 
 ### Authenticated Relay and Tab Preflight
 

@@ -23,6 +23,8 @@
 #   --no-issue                 Skip GitHub/GitLab issue creation
 #   --dry-run                  Show what would be allocated without changes
 #   --repo-path PATH           Path to git repository (default: current directory)
+#   --target-repo OWNER/REPO   Explicit intended repository; validated before allocation
+#   --brief-file PATH          Pre-allocation brief with optional Target repository field
 #   --remote NAME              Git remote name for counter branch (default: origin,
 #                              or value from .aidevops.json "remote" key)
 #   --counter-branch BRANCH    Branch holding .task-counter (config value first;
@@ -113,6 +115,8 @@
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
+# shellcheck source=./task-target-repo-lib.sh
+source "${SCRIPT_DIR}/task-target-repo-lib.sh"
 
 # t2063: Source issue-sync-lib.sh for shared body composition helpers
 # (_compose_issue_worker_guidance, _compose_issue_brief, _compose_issue_html_notes_and_footer).
@@ -151,6 +155,9 @@ PARENT_ISSUE_NUM=""
 # GH#20834: populated by _detect_predecessor_refs; read by _ensure_todo_entry_written
 _CLAIM_BLOCKED_BY_REFS=""
 REPO_PATH="$PWD"
+TARGET_REPO=""
+TASK_BRIEF_FILE=""
+CLAIM_VERIFIED_TARGET=""
 ALLOC_COUNT=1
 OFFLINE_OFFSET=100
 CAS_MAX_RETRIES=${CAS_MAX_RETRIES:-30}
@@ -319,6 +326,14 @@ parse_args() {
 			;;
 		--repo-path)
 			REPO_PATH="$2"
+			shift 2
+			;;
+		--target-repo)
+			TARGET_REPO="${2:-}"
+			shift 2
+			;;
+		--brief-file)
+			TASK_BRIEF_FILE="${2:-}"
 			shift 2
 			;;
 		--remote)
@@ -1643,12 +1658,37 @@ _main_handle_namespaced_mode() {
 }
 
 # Main execution
+_claim_validate_target_repo() {
+	local resolved declared=""
+	resolved=$(_extract_github_slug "$REPO_PATH" "$REMOTE_NAME")
+	if [[ -n "$TASK_BRIEF_FILE" ]]; then
+		[[ -f "$TASK_BRIEF_FILE" ]] || {
+			log_error "Brief file not found: $TASK_BRIEF_FILE"
+			return 1
+		}
+		declared=$(task_brief_target_repo "$TASK_BRIEF_FILE") || return 1
+	fi
+	if [[ -n "$TARGET_REPO" && ! "$TARGET_REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+		log_error "--target-repo must be an owner/repo slug"
+		return 1
+	fi
+	task_require_target_repo "$declared" "$resolved" "$TASK_BRIEF_FILE" || return 1
+	task_require_target_repo "$TARGET_REPO" "$resolved" "--target-repo" || return 1
+	[[ -z "$declared" || -z "$TARGET_REPO" ]] || task_require_target_repo "$declared" "$TARGET_REPO" "brief and --target-repo" || return 1
+	if [[ -n "$declared" || -n "$TARGET_REPO" ]]; then
+		CLAIM_VERIFIED_TARGET="$resolved"
+		log_info "Target repository verified: $resolved"
+	fi
+	return 0
+}
+
 main() {
 	parse_args "$@"
+	load_project_config "$REPO_PATH"
+	_claim_validate_target_repo || return 1
 	_main_handle_namespaced_mode
 	[[ "$_CLAIM_NAMESPACED_HANDLED" == "true" ]] && return "$_CLAIM_NAMESPACED_RC"
 
-	load_project_config "$REPO_PATH"
 	_save_cleanup_scope
 	trap '_run_cleanups' RETURN
 	push_cleanup _claim_counter_cleanup_git_context
@@ -1732,6 +1772,7 @@ main() {
 	# Dry-run paths print directly and return early
 	if echo "$alloc_output" | grep -q "^task_id=tDRY_RUN"; then
 		echo "$alloc_output"
+		[[ -z "$CLAIM_VERIFIED_TARGET" ]] || printf 'target_repo=%s\n' "$CLAIM_VERIFIED_TARGET"
 		return $alloc_rc
 	fi
 
@@ -1776,6 +1817,7 @@ main() {
 
 	_main_output_results "$first_id" "$is_offline" \
 		"$_issue_ref_prefix" "$_issue_has_any" "$_issue_first_num" "$_issue_nums_csv"
+	[[ -z "$CLAIM_VERIFIED_TARGET" ]] || printf 'target_repo=%s\n' "$CLAIM_VERIFIED_TARGET"
 
 	if [[ "$is_offline" == "true" ]]; then
 		return 2

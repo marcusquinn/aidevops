@@ -70,6 +70,8 @@ issue_sync_prepare_ci_context
 source "${_issue_sync_script_dir}/shared-constants.sh"
 # shellcheck source=issue-sync-lib.sh
 source "${_issue_sync_script_dir}/issue-sync-lib.sh"
+# shellcheck source=./task-target-repo-lib.sh
+source "${_issue_sync_script_dir}/task-target-repo-lib.sh"
 
 # =============================================================================
 # Sub-library sourcing
@@ -305,7 +307,7 @@ _push_process_task() {
 	_push_warn_if_task_id_collides "$repo" "$task_id"
 
 	if [[ "$DRY_RUN" == "true" ]]; then
-		print_info "[DRY-RUN] Would create: $title"
+		print_info "[DRY-RUN] Would create in $repo: $title"
 		echo "CREATED"
 		return 0
 	fi
