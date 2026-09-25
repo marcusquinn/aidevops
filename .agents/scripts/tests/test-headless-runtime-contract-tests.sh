@@ -109,6 +109,8 @@ test_appends_escalation_contract() {
 		[[ "$output" == *'Incremental WIP commits (GH#23677)'* ]] &&
 		[[ "$output" == *'A first WIP commit makes the worktree cleanup-visible as active real work even before a PR exists'* ]] &&
 		[[ "$output" == *'Progressive context loading'* ]] &&
+		[[ "$output" == *'An <img> URL in text is not proof the pixels were seen'* ]] &&
+		[[ "$output" == *'report access-blocked with a safe wake condition rather than inventing a preview'* ]] &&
 		[[ "$output" == *'Load only referenced workflow/reference docs'* ]] &&
 		[[ "$output" == *'Stop reading once target files, reference pattern, constraints, and verification are clear.'* ]] &&
 		[[ "$output" == *'Never ask for user confirmation, approval, or next steps. No user will respond.'* ]] &&
