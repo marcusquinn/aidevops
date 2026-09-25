@@ -123,12 +123,20 @@ _stale_recovery_count_ticks_from_pages() {
 	local comments_pages="$1"
 	local prior_ticks
 	prior_ticks=$(printf '%s' "$comments_pages" | jq \
+		--arg release_marker '<!-- stale-recovery-release:verified -->' \
 		'([.[] | .[]?] | sort_by(.created_at, .id))
 		| reduce .[] as $comment (0;
-			if (($comment.body // "") | contains("<!-- stale-recovery-release:verified -->"))
-				and (($comment.author_association // "") | IN("OWNER", "MEMBER")) then 0
-			elif (($comment.body // "") | test("<!-- stale-recovery-tick:[1-9]"))
-				and ((($comment.body // "") | contains("reset")) | not) then . + 1
+			if (($comment.body // "")
+				| contains($release_marker))
+				and (($comment.author_association // "")
+				| IN(
+					"OWNER",
+					"MEMBER"
+				)) then 0
+			elif (($comment.body // "")
+				| test("<!-- stale-recovery-tick:[1-9]"))
+				and ((($comment.body // "")
+				| contains("reset")) | not) then . + 1
 			else . end)' \
 		2>/dev/null) || prior_ticks=0
 	[[ "$prior_ticks" =~ ^[0-9]+$ ]] || prior_ticks=0
@@ -522,7 +530,7 @@ Previously assigned to: ${stale_assignees}
 Reason for latest stale: ${reason}
 Recovery count: ${_prior_ticks} (threshold: ${_threshold})
 
-Marked \`status:blocked\`. Investigate why workers keep failing (wrong brief, unimplementable scope, missing dependency, etc.), then return the issue to \`status:available\` when the structural blocker is resolved.
+Marked \`status:blocked\`. Review worker logs, salvageable branches and linked PRs first. Once the root cause is addressed and no worker owns the issue, a maintainer can run \`dispatch-dedup-helper.sh release-stale-recovery ${issue_number} ${repo_slug} 'reviewed reason'\`. The command records an audit marker and restores dispatch eligibility; it does not clear independent security/review holds or replace cryptographic approval.
 
 _This escalation is the \"no-progress fail-safe\" from t2008 (paired with t1986 parent-task guard and t2007 cost circuit breaker)._
 <!-- ops:end -->" \

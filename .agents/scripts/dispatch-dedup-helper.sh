@@ -1325,10 +1325,8 @@ Usage:
                                                        t2007: aggregate token spend (returns "spent|attempts")
   dispatch-dedup-helper.sh check-orphan-loop <issue> <slug> <branch> [todo-file] [worktree-path]
                                                        Hold repeated worker_branch_orphan loops or unreconciled remote children
-  dispatch-dedup-helper.sh check-recovery-loop <issue> <slug>
-                                                        Hold repeated worker recovery failures across branches before posting a new claim
-  dispatch-dedup-helper.sh release-stale-recovery <issue> <slug> <reason>
-                                                        Reviewed maintainer release of stale-recovery escalation (not NMR approval)
+  dispatch-dedup-helper.sh check-recovery-loop <issue> <slug>  Hold repeated worker recovery failures
+  dispatch-dedup-helper.sh release-stale-recovery <issue> <slug> <reason>  Reviewed maintainer release (not NMR approval)
   dispatch-dedup-helper.sh has-fix-the-fixer-label <issue> <slug>
                                                        t3077: detect the fix-the-fixer label (exit 0=labeled, 1=unlabeled).
                                                        Used by headless-runtime-helper.sh to enable verbose lifecycle,
@@ -1501,34 +1499,62 @@ _ddh_release_stale_recovery() {
 	local issue_number="$1" repo_slug="$2" reason="$3"
 	[[ "$issue_number" =~ ^[1-9][0-9]*$ && "$repo_slug" =~ ^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$ ]] || return 1
 	[[ ${#reason} -le 160 && "$reason" =~ ^[a-zA-Z0-9\ ,._:-]+$ ]] || return 1
-	local login="" permission="" issue_json="" comments=""
+	local login="" permission="" issue_json="" comments="" release_state=""
 	login=$(gh api user --jq '.login' 2>/dev/null) || return 1
 	[[ "$login" =~ ^[a-zA-Z0-9-]+$ ]] || return 1
 	permission=$(gh api "repos/${repo_slug}/collaborators/${login}/permission" --jq '.permission' 2>/dev/null) || return 1
 	case "$permission" in admin | maintain) ;; *) return 1 ;; esac
 	issue_json=$(gh api "repos/${repo_slug}/issues/${issue_number}" 2>/dev/null) || return 1
 	printf '%s' "$issue_json" | jq -e '
-		.state == "open" and ([.labels[].name] | index("status:blocked") != null)
+		.state == "open"
+		and ([.labels[].name] | index("status:blocked") != null)
+		and ([.labels[].name] | all(
+			. != "no-auto-dispatch"
+			and . != "hold-for-review"
+			and . != "lockdown"
+			and . != "parent-task"
+		))
 		and ([.assignees[]] | length == 0) and (.pull_request == null)
 	' >/dev/null || return 1
 	comments=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" --paginate --slurp 2>/dev/null) || return 1
-	printf '%s' "$comments" | jq -e '
-		[.[][] | select((.body // "") | contains("<!-- stale-recovery-tick:escalated"))] | length > 0
-	' >/dev/null || return 1
+	release_state=$(printf '%s' "$comments" | jq -r --arg login "$login" --arg owner OWNER --arg member MEMBER '
+		[.[][] | select((.body // "")
+			| test("<!-- stale-recovery-tick:escalated|<!-- stale-recovery-release:verified -->"))]
+		| sort_by(.created_at, .id) | last
+		| if ((.body // "")
+			| contains("<!-- stale-recovery-tick:escalated")) then "escalated"
+		  elif ((.body // "")
+			| contains("<!-- stale-recovery-release:verified -->"))
+			and (.author_association | IN($owner, $member))
+			and .user.login == $login then "retry"
+		  else "invalid" end
+	' 2>/dev/null) || return 1
+	[[ "$release_state" == escalated || "$release_state" == retry ]] || return 1
 	# Do not turn a newer independent circuit breaker into a dispatchable issue.
 	printf '%s' "$comments" | jq -e '
-		[.[][] | select((.body // "") | test("cost-circuit-breaker:fired|worker-recovery-loop:blocked|dispatch-circuit-breaker:worker_recovery_loop"))] | length == 0
+		[.[][] | select((.body // "")
+			| test("cost-circuit-breaker:fired|worker-recovery-loop:blocked|dispatch-circuit-breaker:worker_recovery_loop"))]
+		| length == 0
 	' >/dev/null || return 1
-	# Commit the reset event first; a failed label transition remains blocked and
-	# can be retried. Never delete historic ticks or remove NMR.
-	gh_issue_comment "$issue_number" --repo "$repo_slug" \
-		--body "<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
+	# Commit the reset event first. If the label transition failed, a verified
+	# same-maintainer marker allows an idempotent retry without another comment.
+	if [[ "$release_state" == escalated ]]; then
+		gh_issue_comment "$issue_number" --repo "$repo_slug" \
+			--body "<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
 <!-- stale-recovery-release:verified -->
 Stale-recovery dispatch hold reviewed and released by maintainer ${login}.
 Reason: ${reason}
 Other independent dispatch and review gates remain in force.
 <!-- ops:end -->" >/dev/null || return 1
+	fi
 	set_issue_status "$issue_number" "$repo_slug" available --add-label auto-dispatch || return 1
+	issue_json=$(gh api "repos/${repo_slug}/issues/${issue_number}" 2>/dev/null) || return 1
+	printf '%s' "$issue_json" | jq -e '
+		.state == "open"
+		and ([.labels[].name] | index("status:available") != null)
+		and ([.labels[].name] | index("status:blocked") == null)
+		and ([.labels[].name] | index("auto-dispatch") != null)
+	' >/dev/null || return 1
 	printf 'STALE_RECOVERY_RELEASED: issue #%s in %s\n' "$issue_number" "$repo_slug"
 	return 0
 }
