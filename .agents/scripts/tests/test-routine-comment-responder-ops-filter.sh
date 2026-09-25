@@ -111,9 +111,10 @@ export ROUTINE_COMMENT_LOGFILE="${TMPDIR_TEST}/responder.log"
 mkdir -p "$ROUTINE_COMMENT_STATE_DIR"
 
 scan_output=$(bash "${PARENT_DIR}/routine-comment-responder.sh" scan "owner/repo" "$TMPDIR_TEST")
-assert_contains "real user question emitted" "42|106|user|Can this routine run hourly?" "$scan_output"
+assert_contains "real user question emitted without public preview" "42|106|user|" "$scan_output"
+assert_not_contains "public text not exported" "Can this routine run hourly?" "$scan_output"
 assert_contains "missing body normalized" "42|108|user|" "$scan_output"
-assert_contains "multiline non-ops owner comment emitted" "42|107|maintainer|Can this be clarified?" "$scan_output"
+assert_contains "multiline non-ops owner comment emitted" "42|107|maintainer|" "$scan_output"
 assert_not_contains "CLAIM_RELEASED ignored" "103|" "$scan_output"
 assert_not_contains "cascade escalation ignored" "104|" "$scan_output"
 assert_not_contains "ops marker ignored" "105|" "$scan_output"
@@ -124,15 +125,25 @@ else
 	assert_equals "multiline helper does not match later marker" "non-ops" "non-ops"
 fi
 
-bash "${PARENT_DIR}/routine-comment-responder.sh" dispatch "owner/repo" "$TMPDIR_TEST" 42 999
-bash "${PARENT_DIR}/routine-comment-responder.sh" dispatch "owner/repo" "$TMPDIR_TEST" 42 999
+if bash "${PARENT_DIR}/routine-comment-responder.sh" dispatch "owner/repo" "$TMPDIR_TEST" 42 999; then
+	assert_equals "missing comment cannot dispatch" "blocked" "dispatched"
+else
+	assert_equals "missing comment cannot dispatch" "blocked" "blocked"
+fi
+if bash "${PARENT_DIR}/routine-comment-responder.sh" dispatch "owner/repo" "$TMPDIR_TEST" 42 999; then
+	assert_equals "lookup failure stays recoverable" "blocked" "dispatched"
+else
+	assert_equals "lookup failure stays recoverable" "blocked" "blocked"
+fi
 
 responded_file="${ROUTINE_COMMENT_STATE_DIR}/owner_repo_responded.txt"
 responded_count=$(grep -c '^999$' "$responded_file" || true)
-assert_equals "missing comment recorded once" "1" "$responded_count"
+assert_equals "missing comment remains recoverable" "0" "$responded_count"
 
-already_count=$(grep -c 'already responded to' "$ROUTINE_COMMENT_LOGFILE" || true)
-assert_equals "second dispatch skipped from state" "1" "$already_count"
+failure_count=$(grep -c 'lookup unavailable' "$ROUTINE_COMMENT_LOGFILE" || true)
+assert_equals "failed lookup handed off once" "1" "$failure_count"
+handoff_count=$(grep -c '^999$' "${ROUTINE_COMMENT_STATE_DIR}/owner_repo_handoff.txt" || true)
+assert_equals "failed lookup remains in recoverable handoff state" "1" "$handoff_count"
 
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
