@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 Marcus Quinn
-// This file is copied into the isolated Stagehand v4 project by setup.
+// Template copied to example.mjs in the isolated Stagehand v4 project by setup.
 import { localBrowser, Stagehand } from '@browserbasehq/stagehand';
 import { z } from 'zod/v4';
 

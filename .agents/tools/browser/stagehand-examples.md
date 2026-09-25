@@ -17,7 +17,7 @@ tools:
 
 # Stagehand v3 Usage Examples (Legacy)
 
-These examples use the v3 constructor, `stagehand.page`, and `agent()`. They do **not** describe the v4 API. For the reviewed opt-in v4 local route, use `stagehand-v4-helper.sh setup` and `stagehand-v4-example.mjs`; do not copy v3 patterns into v4.
+These examples use the v3 constructor, `stagehand.page`, and `agent()`. They do **not** describe the v4 API. For the reviewed opt-in v4 local route, use `stagehand-v4-helper.sh setup` and the `stagehand-v4-example.mjs.txt` template (copied to the isolated project as `example.mjs`); do not copy v3 patterns into v4.
 
 <!-- AI-CONTEXT-START -->
 - Core methods: `act()`, `extract()`, `observe()`, `agent.execute()`

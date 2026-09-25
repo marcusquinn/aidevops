@@ -5,7 +5,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HELPER="${SCRIPT_DIR}/../stagehand-v4-helper.sh"
-SOURCE="${SCRIPT_DIR}/../../tools/browser/stagehand-v4-example.mjs"
+SOURCE="${SCRIPT_DIR}/../../tools/browser/stagehand-v4-example.mjs.txt"
 TEMP_BASE="${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}"
 mkdir -p "$TEMP_BASE"
 TEST_HOME="$(mktemp -d "${TEMP_BASE}/stagehand-v4-route.XXXXXX")"

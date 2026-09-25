@@ -12,7 +12,7 @@ readonly STAGEHAND_V4_VERSION="4.1.0"
 readonly STAGEHAND_V4_ZOD_VERSION="4.4.3"
 readonly STAGEHAND_V4_DIR="${HOME}/.aidevops/stagehand-v4"
 readonly STAGEHAND_V4_EXAMPLE="${STAGEHAND_V4_DIR}/example.mjs"
-readonly STAGEHAND_V4_SOURCE="${SCRIPT_DIR}/../tools/browser/stagehand-v4-example.mjs"
+readonly STAGEHAND_V4_SOURCE="${SCRIPT_DIR}/../tools/browser/stagehand-v4-example.mjs.txt"
 
 stagehand_v4_installed() {
 	[[ -f "${STAGEHAND_V4_DIR}/node_modules/@browserbasehq/stagehand/package.json" ]] || return 1
