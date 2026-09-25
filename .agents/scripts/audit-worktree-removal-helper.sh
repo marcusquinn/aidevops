@@ -1370,6 +1370,48 @@ _archive_worktree_path_recoverably_under_lock() {
 	return 0
 }
 
+# Refuse privilege mistakes before mkdir can create a root-owned store in a
+# user's home. Existing stores must be writable by the actual cleanup user;
+# never repair ownership implicitly or bypass recoverable-removal safeguards.
+_worktree_recovery_store_preflight() {
+	local wt_path="$1"
+	local recovery_root="$2"
+	local caller="$3"
+	local reason=""
+
+	if reason=$(python3 - "$wt_path" "$recovery_root" <<'PY'
+import os
+import sys
+
+try:
+    source, store = sys.argv[1:]
+    if os.geteuid() == 0 and os.stat(source).st_uid != 0:
+        print("recovery-privilege-mismatch")
+        raise SystemExit(1)
+    parent = store
+    while not os.path.lexists(parent):
+        previous = parent
+        parent = os.path.dirname(parent)
+        if parent == previous or not parent:
+            raise OSError("No accessible recovery parent")
+    if not os.path.isdir(parent) or not os.access(parent, os.W_OK | os.X_OK):
+        print("recovery-store-not-writable")
+        raise SystemExit(1)
+except OSError:
+    print("recovery-store-inaccessible")
+    raise SystemExit(1)
+PY
+	); then
+		return 0
+	fi
+	reason="${reason:-recovery-store-probe-failed}"
+	log_worktree_removal_event "$_WTAR_SKIPPED" "$caller" "$wt_path" \
+		"$reason" "$_WTAR_MODE_SKIPPED" "recovery_root=$recovery_root"
+	printf 'Recovery refused: %s (%s). Run cleanup as the worktree owner; inspect recovery-directory ownership and permissions. Repair only with explicit operator approval; source preserved.\n' \
+		"$reason" "$recovery_root" >&2
+	return 1
+}
+
 archive_worktree_path_recoverably() {
 	local wt_path="$1"
 	local caller="$2"
@@ -1381,6 +1423,7 @@ archive_worktree_path_recoverably() {
 
 	WORKTREE_RECOVERABLE_ARCHIVE_PATH=""
 	recovery_root=$(_worktree_recovery_store_root) || return 1
+	_worktree_recovery_store_preflight "$wt_path" "$recovery_root" "$caller" || return 1
 	mkdir -p "$recovery_root" 2>/dev/null || return 1
 	recovery_root_real=$(cd "$recovery_root" 2>/dev/null && pwd -P) || return 1
 	_worktree_recovery_acquire_producer_lock "$recovery_root_real" || return 1
