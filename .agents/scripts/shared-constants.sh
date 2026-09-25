@@ -1347,7 +1347,8 @@ _source_shared_module_with_retry "${_SC_SELF%/*}/shared-gh-wrappers.sh"
 #
 # The current exact linked-PR state selects the projection: no linked PR is
 # available, an open draft is blocked, an open non-draft PR is in-review, and
-# a merged PR is done. Unreadable or ambiguous PR metadata is a no-write error.
+# an open PR with requested changes is available for repair, and a merged PR
+# is done. Unreadable or ambiguous PR metadata is a no-write error.
 #
 # Args:
 #   $1 — issue number
@@ -1372,20 +1373,21 @@ clear_active_status_on_release() {
 
 	# The release event alone does not identify a review-ready PR. Read the
 	# current linked PR state before writing: drafts project as blocked partial
-	# work, while only non-draft OPEN PRs project as in-review. A failed or
-	# ambiguous read preserves the prior projection rather than guessing.
+	# work, while non-draft OPEN PRs without requested changes project as
+	# in-review. A failed or ambiguous read preserves the prior projection.
 	local linked_prs_json="" projection=""
 	local -a release_args=()
 	[[ -z "$worker_login" ]] || release_args+=(--remove-assignee "$worker_login")
 	linked_prs_json=$(gh pr list --repo "$repo_slug" --state all \
 		--search "#${issue_num} in:body" \
-		--json number,state,isDraft,body --limit 20 2>/dev/null) || return 1
+		--json number,state,isDraft,reviewDecision,body --limit 20 2>/dev/null) || return 1
 	projection=$(printf '%s' "$linked_prs_json" | jq -r --arg num "$issue_num" '
 		[.[] | select((.body // "") | test("(close[ds]?|fix(es|ed)?|resolve[ds]?)[[:space:]]*#" + $num + "\\b"; "i"))]
 		| if length == 0 then "available"
 		elif ([.[] | select(.state == "OPEN")] | length) != 0 and
 			([.[] | select(.state == "OPEN")] | length) != 1 then "ambiguous"
 		elif any(.state == "OPEN" and .isDraft == true) then "blocked"
+		elif any(.state == "OPEN" and .reviewDecision == "CHANGES_REQUESTED") then "available"
 		elif any(.state == "OPEN" and .isDraft == false) then "in-review"
 		elif any(.state == "MERGED") then "done"
 		else "available" end

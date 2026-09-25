@@ -155,6 +155,16 @@ assert_grep "add-label status:blocked" "projects open draft as blocked partial w
 assert_grep "remove-assignee alice" "releases draft checkpoint owner"
 assert_not_grep "add-label status:in-review" "draft checkpoint is never review-ready"
 
+# A completed worker cannot hold the issue in review after changes are
+# requested. Pulse can then route the feedback to an available fix worker.
+reset_stub
+printf '[{"number":20189,"state":"OPEN","isDraft":false,"reviewDecision":"CHANGES_REQUESTED","body":"Resolves #20156"}]' >"$GH_PR_LIST_JSON"
+clear_active_status_on_release 20156 owner/repo alice
+assert_grep "add-label status:available" "requested changes release issue for repair"
+assert_grep "remove-label status:in-review" "requested changes clear stale review state"
+assert_grep "remove-assignee alice" "requested changes release worker assignment"
+assert_not_grep "add-label status:in-review" "requested changes do not restore review state"
+
 # -------------------------------------------------------------------
 # Case 1c: unavailable PR metadata preserves the prior projection
 # -------------------------------------------------------------------
