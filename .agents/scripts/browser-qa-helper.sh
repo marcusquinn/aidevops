@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # Browser QA Helper — Playwright-based visual testing for milestone validation (t1359)
-# Commands: run | screenshot | links | a11y | smoke | help
+# Commands: run | screenshot | links | a11y | smoke | journey | help
 # Integrates with mission milestone validation pipeline.
 # Uses Playwright (fastest) with fallback guidance for Stagehand (self-healing).
 #
@@ -391,6 +391,7 @@ Examples:
   browser-qa-helper.sh smoke --url http://localhost:3000 --pages "/ /login"
   browser-qa-helper.sh stability --url http://localhost:3000 --pages "/ /dashboard" --reloads 5
   browser-qa-helper.sh stability --url http://localhost:3000 --format markdown --reloads 3
+  browser-qa-helper.sh journey --config journey.json --environment staging
 
 Prerequisites:
   - Node.js and npm installed
@@ -422,6 +423,7 @@ main() {
 	a11y) cmd_a11y "$@" ;;
 	smoke) cmd_smoke "$@" ;;
 	stability) cmd_stability "$@" ;;
+	journey) cmd_journey "$@" ;;
 	help | --help | -h) cmd_help ;;
 	*)
 		log_error "${ERROR_UNKNOWN_COMMAND}: ${command}"
