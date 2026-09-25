@@ -32,6 +32,20 @@ transition and markerless legacy v1 buckets whose original Git recovery
 structure still validates. Partial v2 evidence is never reinterpreted as v1.
 Older readers reject v2 and therefore fail closed without damaging an archive.
 
+Archive producers reserve one attempt per physical source identity before copying.
+An interrupted attempt remains explicitly reserved; retries do not create another
+bucket or erase the partial snapshot. Incomplete reservations require operator
+review, including proof that any discarded data is preserved elsewhere. A completed
+attempt may be reused only after Git identity, current non-cache contents, and index
+comparison succeed. A changed source or unreadable comparison preserves both copies.
+Legacy markerless buckets remain unknown and are never automatically adopted.
+
+Proven ignored, untracked cache roots are excluded before copy IO, including cache
+roots nested below a broader ignored directory. Git evidence failures stop copying
+instead of falling back to a potentially enormous unfiltered copy. Tracked files,
+symlinks, and unknown ignored content remain protected. This prevents a bounded
+cleanup timeout from repeatedly materializing dependency trees before pruning them.
+
 Run `worktree-helper.sh recovery` for a read-only count/byte report with
 protected/unknown reasons. The same producer summary appears as one
 `worktree-recovery` record in shared storage status; `reclaimable_bytes` remains

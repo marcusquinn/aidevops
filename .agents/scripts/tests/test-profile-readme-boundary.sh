@@ -96,6 +96,7 @@ install_helper_with_libs() {
 		"${SOURCE_HELPER%/*}/screen_time_linux_wtmp.py" \
 		"${SOURCE_HELPER%/*}/screen_time_history.py" \
 		"${SOURCE_HELPER%/*}/worktree-recovery-cache-policy.py" \
+		"${SOURCE_HELPER%/*}/worktree_recovery_archive_copy.py" \
 		"${SOURCE_HELPER%/*}/worktree_recovery_cache_policy_common.py" \
 		"${SOURCE_HELPER%/*}/worktree_recovery_cache_policy_operations.py" "$helper_dir/"
 	# Keep this profile-boundary fixture independent of host /proc visibility.

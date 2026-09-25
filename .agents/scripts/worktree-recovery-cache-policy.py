@@ -8,6 +8,7 @@ from pathlib import Path
 import sys
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from worktree_recovery_archive_copy import copy_without_caches, matching_copy, reserve_archive
 from worktree_recovery_cache_policy_common import (
     GIT_OUTPUT_LIMIT_RC,
     GIT_OUTPUT_MAX_BYTES,
@@ -77,7 +78,8 @@ def invoke_mode(
         values = [convert(raw) for convert, raw in zip(converters, arguments[1:])]
         result = operation(*values)
         require(result is not None, "mode operation failed")
-    except ValueError:
+    except ValueError as error:
+        print(str(error), file=sys.stderr)
         return 2
     if serializer is not None:
         print(serializer(result))
@@ -108,6 +110,23 @@ def handle_git_state(arguments: List[str]) -> int:
         (existing_directory, str, optional_deadline),
         bounded_git_state,
     )
+
+
+def handle_copy(arguments: List[str]) -> int:
+    """Copy once with proven cache exclusions, rather than copy then prune."""
+    return invoke_mode(arguments, (existing_directory, Path, str), copy_without_caches)
+
+
+def handle_reserve(arguments: List[str]) -> int:
+    """Reserve an attempt before copy; never multiply interrupted snapshots."""
+    return invoke_mode(
+        arguments, (existing_directory, existing_directory, str), reserve_archive, str
+    )
+
+
+def handle_matching_copy(arguments: List[str]) -> int:
+    """Verify source content before reusing a completed snapshot."""
+    return invoke_mode(arguments, (existing_directory, existing_directory, str), matching_copy)
 
 
 def handle_manifest(arguments: List[str]) -> int:
@@ -160,6 +179,9 @@ def handle_validate_removed(arguments: List[str]) -> int:
 MODE_HANDLERS: Dict[str, Callable[[List[str]], int]] = {
     "status": handle_status,
     "prune": handle_prune,
+    "copy": handle_copy,
+    "reserve": handle_reserve,
+    "matching-copy": handle_matching_copy,
     "git-state": handle_git_state,
     "manifest": handle_manifest,
     "validate-original": handle_validate_original,

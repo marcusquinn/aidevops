@@ -1978,6 +1978,70 @@ test_recoverable_archive_honours_shared_producer_lock() {
 	return 0
 }
 
+test_archive_copy_filters_before_io_and_bounds_retries() {
+	local repo_path="${TEST_DIR}/filtered-copy-repo"
+	local wt_path="${TEST_DIR}/filtered-copy-source"
+	local first_archive=""
+	local rc=0
+	create_git_worktree_fixture "$repo_path" "$wt_path" "feature/filtered-copy" || rc=1
+	python3 - "$SCRIPT_DIR/.." "$wt_path" "$TEST_DIR" "$GIT_BIN" <<'PY' || rc=1
+import pathlib
+import subprocess
+import sys
+sys.path.insert(0, sys.argv[1])
+from worktree_recovery_archive_copy import copy_without_caches, reserve_archive
+
+source, scratch, git = pathlib.Path(sys.argv[2]), pathlib.Path(sys.argv[3]), sys.argv[4]
+(source / '.gitignore').write_text('node_modules/\n.next/\n.env\n')
+(source / 'node_modules').mkdir()
+(source / 'node_modules' / 'regenerable').write_text('cache')
+(source / '.next' / 'cache').mkdir(parents=True)
+(source / '.next' / 'cache' / 'regenerable').write_text('cache')
+(source / '.next' / 'user-note').write_text('preserve unknown ignored content')
+(source / '.env').write_text('fixture data, not a credential')
+destination = scratch / 'filtered-copy'
+copy_without_caches(source, destination, git)
+assert not (destination / 'node_modules').exists()
+assert not (destination / '.next' / 'cache').exists()
+assert (destination / '.next' / 'user-note').read_bytes() == (source / '.next' / 'user-note').read_bytes()
+assert (destination / '.env').read_bytes() == (source / '.env').read_bytes()
+
+# A tracked file makes the entire otherwise recognised directory protected.
+subprocess.run([git, '-C', str(source), 'add', '-f', 'node_modules/regenerable'], check=True)
+protected = scratch / 'protected-copy'
+copy_without_caches(source, protected, git)
+assert (protected / 'node_modules' / 'regenerable').is_file()
+
+store = scratch / 'bounded-attempts'
+store.mkdir()
+bucket = pathlib.Path(reserve_archive(source, store, git))
+for _ in range(3):
+    try:
+        reserve_archive(source, store, git)
+    except ValueError as error:
+        assert 'recovery-archive-incomplete' in str(error)
+    else:
+        raise AssertionError('interrupted attempt must block another copy')
+assert list(store.glob('aidevops-worktree-cleanup-*')) == [bucket]
+assert source.is_dir()
+PY
+	AIDEVOPS_WORKTREE_TRASH_ROOT="${TEST_DIR}/reuse-completed" AIDEVOPS_REAL_GIT_BIN="$GIT_BIN" \
+		archive_worktree_path_recoverably "$wt_path" "test.sh" "reuse-test" || rc=1
+	first_archive="$WORKTREE_RECOVERABLE_ARCHIVE_PATH"
+	AIDEVOPS_WORKTREE_TRASH_ROOT="${TEST_DIR}/reuse-completed" AIDEVOPS_REAL_GIT_BIN="$GIT_BIN" \
+		archive_worktree_path_recoverably "$wt_path" "test.sh" "reuse-test" || rc=1
+	[[ "$first_archive" == "$WORKTREE_RECOVERABLE_ARCHIVE_PATH" ]] || rc=1
+	printf 'new user data\n' >"$wt_path/new-user-note"
+	if AIDEVOPS_WORKTREE_TRASH_ROOT="${TEST_DIR}/reuse-completed" AIDEVOPS_REAL_GIT_BIN="$GIT_BIN" \
+		archive_worktree_path_recoverably "$wt_path" "test.sh" "reuse-test"; then
+		rc=1
+	fi
+	[[ -f "$wt_path/new-user-note" && ! -e "$first_archive/new-user-note" ]] || rc=1
+	print_result "archive_copy_filters_before_io_and_bounds_retries" "$rc" \
+		"Expected cache exclusion before copy, preservation of user/tracked data, and bounded retries"
+	return 0
+}
+
 test_recovery_store_permission_preflight() {
 	local wt_path="${TEST_DIR}/permission-source"
 	local recovery_root="${TEST_DIR}/permission-store"
@@ -2045,6 +2109,7 @@ test_git_lock_parser_rejects_malformed_blocks
 test_missing_worktree_physical_parent_alias
 test_permanent_helper_preserves_lock_acquired_after_guard
 test_recovery_store_selects_platform_semantics
+test_archive_copy_filters_before_io_and_bounds_retries
 test_recovery_store_permission_preflight
 test_recovery_inventory_reports_legacy_buckets_fail_closed
 test_recoverable_archive_then_native_remove
