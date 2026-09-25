@@ -22,23 +22,23 @@ def owner_uid(pid: str) -> int:
 
 
 def main() -> int:
-    if os.geteuid() != 0 or len(sys.argv) != 2:
-        return 1
-    pid = sys.argv[1]
-    sudo_uid = os.environ.get("SUDO_UID", "")
-    if not re.fullmatch(r"[1-9][0-9]*", pid) or not re.fullmatch(r"[1-9][0-9]*", sudo_uid):
-        return 1
     try:
+        if os.geteuid() != 0 or len(sys.argv) != 2:
+            raise ValueError("privileged invocation is required")
+        pid = sys.argv[1]
+        sudo_uid = os.environ.get("SUDO_UID", "")
+        if not re.fullmatch(r"[1-9][0-9]*", pid) or not re.fullmatch(r"[1-9][0-9]*", sudo_uid):
+            raise ValueError("invoking identity is invalid")
         proc_dir = f"/proc/{pid}"
         before = os.stat(proc_dir, follow_symlinks=False)
         if owner_uid(pid) != int(sudo_uid):
-            return 1
+            raise ValueError("process owner does not match the invoking user")
         cwd = os.readlink(f"{proc_dir}/cwd")
         after = os.stat(proc_dir, follow_symlinks=False)
         if before.st_ino != after.st_ino or owner_uid(pid) != int(sudo_uid):
-            return 1
+            raise ValueError("process identity changed during inspection")
         if not cwd.startswith("/") or any(ord(character) < 32 or ord(character) == 127 for character in cwd):
-            return 1
+            raise ValueError("process CWD is not a safe absolute path")
     except (OSError, ValueError):
         return 1
     print(cwd)
