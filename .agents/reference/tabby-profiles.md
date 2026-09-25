@@ -20,6 +20,22 @@ sync must be a no-op. Sync also self-repairs the narrowly identified legacy
 corruption where generated list entries were appended beneath `profiles: []`.
 Other invalid YAML remains unchanged and fails visibly.
 
+For missing-PyYAML failures, use `aidevops tabby sync`, not repeated status
+checks or another YAML repair. Sync first selects a Python interpreter that can
+import PyYAML; if none is usable, it creates the dedicated environment at
+`~/.aidevops/.agent-workspace/python-env/tabby` and installs pinned
+`PyYAML==6.0.3`, then continues reconciliation. It does not install into system
+Python. `aidevops tabby status` remains read-only and cannot bootstrap the
+dependency. If environment creation or dependency installation fails, sync
+stops before backing up or modifying the active config.
+
+When this symptom persists, inspect the deployed `tabby-helper.sh` and its
+actual sync output before modifying recovery logic. Verify valid YAML and a
+successful subsequent status check; an update summary alone is not proof of
+Tabby recovery. Existing regression coverage lives in
+`.agents/scripts/tests/test-tabby-profile-sync.sh` and
+`tests/test-tabby-profile-sync.py` (bootstrap fix: PR #32328).
+
 OpenCode profiles must not launch with `zsh -i -c opencode`. That shape runs an
 interactive zsh startup while executing a command string, which can make
 Powerlevel10k/gitstatus initialize before job control is available and emit

@@ -36,6 +36,29 @@ Cross-session memory using a canonical observation contract with SQLite FTS5 as 
 
 See `scripts/commands/remember.md` and `scripts/commands/recall.md`.
 
+## Choose the Durable Destination Before Storing
+
+Ask who needs the lesson and whether it requires implementation. Local memory
+supports future sessions on this installation; it does not distribute guidance
+to other aidevops users. A memory type such as `WORKING_SOLUTION` does not make
+the solution shared.
+
+| Scope and intent | Primary destination |
+|------------------|---------------------|
+| Personal preference, private environment detail, or provisional observation | Scoped local memory; retain only necessary, permitted information |
+| Verified project convention or reusable domain/framework troubleshooting | Existing repository reference or domain agent, plus tests/hooks where appropriate |
+| Actionable improvement too large for the current task | Deduplicated implementation issue with evidence, target files, reference pattern, and verification; apply existing authority/dispatch rules |
+| User explicitly says later, save, or log without dispatch | Local TODO/plan, not an auto-dispatched issue |
+
+For shared lessons, update the narrowest existing reference when safe and
+authorized; otherwise brief the work rather than leaving it only in memory.
+Do not wait for repeated memory retrieval or scheduled graduation when the
+shared need is already established. A supplemental memory may point to the
+canonical file or issue, but must not replace it. Strip private incident details
+before promoting the general method. Search existing docs, tasks, and merged
+fixes first; extend them instead of duplicating rules or adding always-loaded
+guidance. See `reference/self-improvement.md` for capture and authority rules.
+
 ## Memory Types
 
 | Type | Use For |

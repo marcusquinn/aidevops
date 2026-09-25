@@ -23,6 +23,20 @@ The deployed copy at `~/.aidevops/agents/scripts/FILE` may differ from source at
 - Scope: source-only debugging is fine for design, refactoring, and new code. This rule applies to runtime diagnostics rooted in logs/artifacts.
 - Related: "Pre-implementation discovery (t2046)" — complementary rule for checking git log before WRITING new code. Both check "is the world what I think it is?"; this one fires during investigation, t2046 fires before implementation.
 
+### When an existing repair does not run
+
+Before rewriting or duplicating recovery logic, trace the deployed entry point
+through its caller, prerequisite checks, and repair invocation. Capture the exit
+status and diagnostic output: an unavailable dependency or early return can
+prevent a correct repair from executing. Test through the original user-facing
+command with the failing prerequisite state, then verify the repaired artifact
+and preservation on failure. Distinguish source merged, runtime deployed, and
+affected-environment confirmation; none alone proves the others.
+
+Example: Tabby already had narrow malformed-YAML recovery, but missing PyYAML
+blocked it before invocation. PR #32328 added dependency bootstrap during sync;
+see `reference/tabby-profiles.md` for the operational contract.
+
 ## Attribution before verification (t2204 — MANDATORY before publishing blame)
 
 When an incident appears to match a bug in TODO.md or recent commits, READ the cited function body before publishing attribution. Symptom-level pattern match is a hypothesis. Published wrong attribution creates noise and trains future sessions to trust pattern-matching over code-reading. (Canonical failure: t2190/t2108.)
