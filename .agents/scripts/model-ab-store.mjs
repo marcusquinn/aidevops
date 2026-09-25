@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 Marcus Quinn
 
-import { lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 export function assignmentPaths(_experiment, repo, issue, directory) {
@@ -9,6 +9,15 @@ export function assignmentPaths(_experiment, repo, issue, directory) {
   // the arm of an already-assigned issue.
   const folder = join(directory, repo.replace("/", "__"));
   return { receipt: join(folder, `${issue}.json`), route: join(folder, `${issue}.routing.json`) };
+}
+
+export function assignedIssueNumbers(repo, directory) {
+  const folder = join(directory, repo.replace("/", "__"));
+  if (!existsSync(folder)) return [];
+  return readdirSync(folder, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && /^[1-9][0-9]*\.json$/.test(entry.name))
+    .map((entry) => Number(entry.name.slice(0, -5)))
+    .sort((a, b) => a - b);
 }
 
 export function persistReceipt(paths, receipt, now) {

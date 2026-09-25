@@ -322,13 +322,17 @@ _dlw_resolve_tier_and_model() {
 }
 
 _dlw_assign_model_ab() {
-	local repo_slug="$1" issue_number="$2" model_override="$3"
+	local repo_slug="$1" issue_number="$2" model_override="$3" issue_meta_json="${4:-}"
 	_DLW_AB_ROUTING_TABLE=""
 	_DLW_AB_EXPERIMENT=""
 	_DLW_AB_ARM=""
 	[[ -n "${AIDEVOPS_MODEL_AB_CONFIG:-}" && -z "$model_override" ]] || return 0
 	local ab_json="" ab_helper="${BASH_SOURCE[0]%/*}/model-ab-helper.mjs"
 	local -a ab_args=(assign "$repo_slug" "$issue_number")
+	local created_at="" labels_json=""
+	created_at=$(jq -r '.createdAt // .created_at // empty' <<<"$issue_meta_json") || created_at=""
+	labels_json=$(jq -c '[.labels[]?.name]' <<<"$issue_meta_json") || labels_json="[]"
+	[[ -z "$created_at" ]] || ab_args+=(--created-at "$created_at" --labels-json "$labels_json")
 	[[ "$_DLW_DISPATCH_MODEL_TIER" == "$_DLW_STANDARD_TIER" ]] || ab_args+=(--continuation-only)
 	ab_json=$(node "$ab_helper" "${ab_args[@]}") || return 1
 	[[ "$(jq -r '.active' <<<"$ab_json")" == "true" ]] || return 0
@@ -1931,7 +1935,7 @@ _dispatch_launch_worker() {
 	_ds_record "$issue_number" "$repo_slug" "resolve_tier_model" "$_ds_t0"
 	local dispatch_tier="$_DLW_DISPATCH_TIER" dispatch_model_tier="$_DLW_DISPATCH_MODEL_TIER" selected_model="$_DLW_SELECTED_MODEL"
 	# A/B assigns initial preference only; fallback and tier escalation remain live.
-	_dlw_assign_model_ab "$repo_slug" "$issue_number" "$model_override" || return 1
+	_dlw_assign_model_ab "$repo_slug" "$issue_number" "$model_override" "$issue_meta_json" || return 1
 	selected_model="$_DLW_SELECTED_MODEL"
 
 	_ds_t0=$(_ds_now_ns)

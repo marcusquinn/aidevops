@@ -52,4 +52,31 @@ _dlw_assign_model_ab example/repo 13 ""
 [[ -z "$_DLW_AB_ROUTING_TABLE" && "$_DLW_SELECTED_MODEL" == "openai/gpt-6-sol" ]]
 _dlw_assign_model_ab example/repo 12 "explicit/model"
 [[ -z "$_DLW_AB_ROUTING_TABLE" && "$_DLW_SELECTED_MODEL" == "openai/gpt-6-sol" ]]
+node -e '
+const fs = require("node:fs");
+const now = Date.now();
+fs.writeFileSync(process.argv[1], JSON.stringify({
+  id: "rolling-worker-test", repo: "example/repo", seed: "rolling-cohort",
+  starts_at: new Date(now - 60000).toISOString(),
+  ends_at: new Date(now + 3600000).toISOString(),
+  enrollment: { mode: "new-standard-issues" },
+  arms: [
+    { name: "luna", model: "openai/gpt-6-luna", variant: "max" },
+    { name: "terra", model: "openai/gpt-5.6-terra", variant: "low" },
+  ],
+}));
+' "$AIDEVOPS_MODEL_AB_CONFIG"
+issue_meta=$(node -e 'process.stdout.write(JSON.stringify({
+  createdAt: new Date(Date.now() - 30000).toISOString(),
+  labels: [{name:"auto-dispatch"},{name:"status:available"},{name:"tier:standard"}],
+}))')
+_DLW_DISPATCH_MODEL_TIER=standard
+_dlw_assign_model_ab example/repo 13 "" "$issue_meta"
+[[ -n "$_DLW_AB_ARM" && -f "$_DLW_AB_ROUTING_TABLE" ]]
+_DLW_DISPATCH_MODEL_TIER=thinking
+_DLW_SELECTED_MODEL="openai/gpt-6-sol"
+_dlw_assign_model_ab example/repo 14 "" "$issue_meta"
+[[ -z "$_DLW_AB_ARM" && "$_DLW_SELECTED_MODEL" == "openai/gpt-6-sol" ]]
+_dlw_assign_model_ab example/repo 13 "" "$issue_meta"
+[[ -n "$_DLW_AB_ARM" && "$_DLW_SELECTED_MODEL" == "openai/gpt-6-sol" ]]
 printf 'PASS: issue arm follows worker, but escalation and explicit overrides retain their own model\n'

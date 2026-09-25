@@ -2143,7 +2143,7 @@ dispatch_with_dedup() {
 	_ds_t0=$(_ds_now_ns)
 	local issue_meta_json
 	issue_meta_json=$(gh_issue_view "$issue_number" --repo "$repo_slug" \
-		--json number,title,state,labels,assignees,body,author 2>/dev/null) || issue_meta_json=""
+		--json number,title,state,labels,assignees,body,author,createdAt 2>/dev/null) || issue_meta_json=""
 	_ds_record "$issue_number" "$repo_slug" "gh_issue_view" "$_ds_t0"
 	if [[ -z "$issue_meta_json" ]]; then
 		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: unable to load issue metadata" >>"$LOGFILE"
@@ -2549,7 +2549,7 @@ _refresh_issue_meta_after_tier_policy_checks() {
 
 	local refreshed_issue_meta_json
 	refreshed_issue_meta_json=$(gh_issue_view "$issue_number" --repo "$repo_slug" \
-		--json number,title,state,labels,assignees,body,author 2>/dev/null) || refreshed_issue_meta_json=""
+		--json number,title,state,labels,assignees,body,author,createdAt 2>/dev/null) || refreshed_issue_meta_json=""
 	if [[ -z "$refreshed_issue_meta_json" ]]; then
 		echo "[dispatch_with_dedup] unable to refresh issue metadata after tier policy mutation for #${issue_number} in ${repo_slug}; continuing with original snapshot" >>"$LOGFILE"
 		printf '%s' "$issue_meta_json"

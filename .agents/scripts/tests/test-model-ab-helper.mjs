@@ -9,6 +9,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { assign, assignedArm, report, validateExperiment } from "../model-ab-helper.mjs";
 import { aggregateObserved } from "../model-ab-report.mjs";
+import { startProspectiveTrial } from "../model-ab-start.mjs";
 import { loadModelRouting, routingPrimary, routingVariant } from "../../plugins/opencode-aidevops/model-routing.mjs";
 
 const windowStart = Date.parse("2026-09-23T00:00:00Z");
@@ -61,6 +62,56 @@ test("configuration requires a bounded window and distinct issue population", ()
   assert.throws(() => validateExperiment({ ...experiment, issues: [12, 12] }), /invalid model A\/B/);
   assert.throws(() => validateExperiment({ ...experiment, ends_at: "2026-10-01T00:00:00Z" }), /72-hour/);
   assert.throws(() => validateExperiment({ ...experiment, arms: [{ ...experiment.arms[0] }] }), /invalid model A\/B/);
+});
+
+test("prospective enrollment includes only newly created, available standard work and retains retries", () => {
+  const parent = process.env.AIDEVOPS_TEMP_DIR || join(homedir(), ".aidevops", ".agent-workspace", "tmp");
+  const directory = mkdtempSync(join(parent, "model-ab-prospective-"));
+  const prospective = { ...experiment, enrollment: { mode: "new-standard-issues" } };
+  delete prospective.issues;
+  const labels = ["auto-dispatch", "status:available", "tier:standard"];
+  const createdAt = new Date(windowStart + 1000).toISOString();
+  try {
+    assert.equal(validateExperiment(prospective), prospective);
+    assert.equal(assign(prospective, "example/repo", 100, { directory, now: windowStart + 2000 }).active, false);
+    assert.equal(assign(prospective, "example/repo", 101,
+      { directory, now: windowStart + 2000, createdAt: new Date(windowStart - 1000).toISOString(), labels }).active, false);
+    assert.equal(assign(prospective, "example/repo", 102,
+      { directory, now: windowStart + 2000, createdAt, labels: ["auto-dispatch", "persistent"] }).active, false);
+    assert.equal(assign(prospective, "example/repo", 103,
+      { directory, now: windowStart + 2000, createdAt, labels: ["auto-dispatch", "status:available", "tier:thinking"] }).active, false);
+    const first = assign(prospective, "example/repo", 104, { directory, now: windowStart + 2000, createdAt, labels });
+    assert.equal(first.active, true);
+    assert.equal(first.created_at, createdAt);
+    const retry = assign(prospective, "example/repo", 104,
+      { directory, now: windowStart + 72 * 3600 * 1000, continuationOnly: true, createdAt, labels: [] });
+    assert.deepEqual(retry, first);
+    assert.equal(report(prospective, { directory }).arms[first.arm].assigned, 1);
+    assert.equal(report(prospective, { directory }).excluded.length, 0);
+    assert.equal(assign(prospective, "example/repo", 105,
+      { directory, now: windowStart + 72 * 3600 * 1000, createdAt, labels }).active, false);
+    assert.throws(() => validateExperiment({ ...prospective, issues: [104, 105] }), /invalid model A\/B/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("start creates a bounded private cohort and persistent Pulse env override without dispatch", () => {
+  const parent = process.env.AIDEVOPS_TEMP_DIR || join(homedir(), ".aidevops", ".agent-workspace", "tmp");
+  const directory = mkdtempSync(join(parent, "model-ab-start-"));
+  const configRoot = join(directory, ".config", "aidevops");
+  try {
+    const started = startProspectiveTrial("example/repo", { configRoot, now: windowStart, validate: validateExperiment });
+    const config = JSON.parse(readFileSync(started.config, "utf8"));
+    const overrides = JSON.parse(readFileSync(join(configRoot, "plist-env-overrides.json"), "utf8"));
+    assert.equal(config.enrollment.mode, "new-standard-issues");
+    assert.equal(Date.parse(config.ends_at) - Date.parse(config.starts_at), 48 * 3600 * 1000);
+    assert.equal(overrides["com.aidevops.aidevops-supervisor-pulse"].AIDEVOPS_MODEL_AB_CONFIG, started.config);
+    assert.equal(report(config, { directory }).arms["luna-max"].assigned, 0);
+    assert.throws(() => startProspectiveTrial("example/repo", { configRoot, now: windowStart + 1, validate: validateExperiment }), /already has/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test("deployed symlink invokes the CLI without running it on module import", () => {

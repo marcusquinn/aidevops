@@ -47,17 +47,39 @@ dispatching two workers for one issue. It is **off by default**. Configure a
 private JSON file and pass its absolute path as `AIDEVOPS_MODEL_AB_CONFIG` to
 the *Pulse process* (not just an interactive shell):
 
+```bash
+node ~/.aidevops/agents/scripts/model-ab-helper.mjs start OWNER/REPO
+aidevops setup --scope pulse
+```
+
+`start` creates a private 48-hour prospective configuration and updates the
+user-owned persistent Pulse plist override without changing the running
+scheduler. The scoped setup applies that override; inspect the active Pulse
+environment before counting exposure. A second start refuses to replace an
+existing configured trial, including an expired one, until it is reviewed.
+The generated configuration follows this shape:
+
 ```json
 {
   "id": "standard-luna-terra", "repo": "OWNER/REPO", "seed": "cohort-1",
   "starts_at": "2026-09-23T00:00:00Z", "ends_at": "2026-09-25T00:00:00Z",
-  "issues": [101, 102, 103, 104],
+  "enrollment": {"mode": "new-standard-issues"},
   "arms": [
     {"name": "luna-max", "model": "openai/gpt-6-luna", "variant": "max"},
     {"name": "terra-low", "model": "openai/gpt-5.6-terra", "variant": "low"}
   ]
 }
 ```
+
+Replace the example dates with the actual UTC activation time and its 48-hour
+end. Prospective enrollment requires the issue's trusted `createdAt` to fall
+inside the window and its pre-claim labels to contain `auto-dispatch` and
+`status:available`; persistent, parent, held, simple, and thinking issues are
+excluded. A fixed `"issues": [101, 102, ...]` array remains available instead
+of `enrollment` for a predeclared cohort. The two modes cannot be combined.
+Apply the private config path through the Pulse LaunchAgent's persistent
+environment override (see `reference/plist-env-overrides.md`) and regenerate
+the Pulse scheduler; a shell-only export does not enable unattended workers.
 
 Only eligible standard-tier issues without an explicit model override are
 assigned. Each issue receives one stable arm across retries. The per-issue
@@ -75,7 +97,7 @@ AIDEVOPS_MODEL_AB_CONFIG=/path/to/private/model-ab.json \
 The report retains assigned-issue denominators, fallback, retry and escalation
 counts, and separately marks missing observations and pending outcomes. It does
 not declare a winner or equate child completion with acceptance. The cohort
-must be defined before work begins, use issues not already in flight, and run
+rule must be defined before work begins, use issues not already in flight, and run
 on one configured dispatch device: assignment receipts and observations are
 local, not a cross-runner coordinated experiment. Do not use the output for a
 shared-default change without independent outcome verification, repair costs,
