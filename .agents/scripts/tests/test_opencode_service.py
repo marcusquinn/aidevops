@@ -7,6 +7,7 @@ import argparse
 from contextlib import redirect_stderr
 import importlib.util
 import io
+import json
 import os
 from pathlib import Path
 import plistlib
@@ -15,6 +16,7 @@ import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+from urllib.parse import parse_qs, urlsplit
 
 
 SPEC = importlib.util.spec_from_file_location(
@@ -71,6 +73,94 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(definition["Umask"], 0o077)
         self.assertNotIn("--pure", definition["ProgramArguments"])
         self.assertEqual(definition["ProgramArguments"][1], str(self.service.runtime / "opencode-service-helper.py"))
+
+    def desktop_fixture(self, capabilities=None):
+        binary = self.home / "Desktop.app/Contents/MacOS/OpenCode"
+        binary.parent.mkdir(parents=True)
+        binary.write_text("fixture")
+        manifest = binary.parent.parent / "Resources/capabilities.json"
+        if capabilities is not None:
+            manifest.parent.mkdir()
+            manifest.write_text(json.dumps(capabilities))
+        directory = self.home / "repo with spaces & 项目"
+        directory.mkdir()
+        return argparse.Namespace(desktop_binary=str(binary), dir=str(directory), dry_run=True), manifest
+
+    def test_desktop_link_preview_preserves_directory_without_starting_service(self):
+        args, _ = self.desktop_fixture({"connect-project": 1})
+        with patch.object(self.service, "start") as start:
+            link = service_module.desktop_link(self.service, self.data, args)
+        start.assert_not_called()
+        self.assertEqual(urlsplit(link).netloc, "connect")
+        self.assertEqual(parse_qs(urlsplit(link).query),
+                         {"url": ["http://127.0.0.1:49036"], "directory": [args.dir]})
+        self.assertFalse(self.service.config.exists())
+
+    def test_desktop_link_rejects_missing_or_unknown_capability_before_start(self):
+        args, manifest = self.desktop_fixture()
+        with patch.object(self.service, "start") as start:
+            args.dry_run = False
+            with self.assertRaisesRegex(RuntimeError, "select the server manually"):
+                service_module.desktop_link(self.service, self.data, args)
+            manifest.parent.mkdir()
+            for capabilities in ({"connect-project": 2}, {"connect-project": True}, [], {}):
+                manifest.write_text(json.dumps(capabilities))
+                with self.assertRaisesRegex(RuntimeError, "select the server manually"):
+                    service_module.desktop_link(self.service, self.data, args)
+        start.assert_not_called()
+
+    def test_desktop_link_does_not_enable_a_disabled_owner(self):
+        args, _ = self.desktop_fixture({"connect-project": 1})
+        with patch.object(self.service, "start") as start:
+            with self.assertRaisesRegex(RuntimeError, "disabled"):
+                service_module.desktop_link(self.service, dict(self.data, enabled=False), args)
+            args.dry_run = False
+            self.service.save(dict(self.data, enabled=False))
+            with self.assertRaisesRegex(RuntimeError, "disabled"):
+                service_module.desktop_link(self.service, self.data, args)
+        start.assert_not_called()
+
+    def test_desktop_link_waits_for_owner_before_returning_request(self):
+        args, _ = self.desktop_fixture({"connect-project": 1})
+        args.dry_run = False
+        self.service.save(self.data)
+        with patch.object(self.service, "start") as start:
+            self.assertTrue(service_module.desktop_link(self.service, self.data, args).startswith("opencode://connect?"))
+        start.assert_called_once_with(self.data)
+        with patch.object(self.service, "start", side_effect=RuntimeError("not ready")):
+            with self.assertRaisesRegex(RuntimeError, "not ready"):
+                service_module.desktop_link(self.service, self.data, args)
+
+    def test_desktop_link_rejects_invalid_directory_before_start(self):
+        args, _ = self.desktop_fixture({"connect-project": 1})
+        args.dir = str(self.home / "missing")
+        with patch.object(self.service, "start") as start:
+            with self.assertRaisesRegex(RuntimeError, "directory must exist"):
+                service_module.desktop_link(self.service, self.data, args)
+        start.assert_not_called()
+
+    def test_desktop_wrapper_dry_run_passes_encoded_link_without_launching(self):
+        args, _ = self.desktop_fixture({"connect-project": 1})
+        Path(args.desktop_binary).chmod(0o700)
+        self.service.save(self.data)
+        tools = self.home / "bin"
+        tools.mkdir()
+        uname = tools / "uname"
+        uname.write_text("#!/bin/sh\nprintf 'Darwin\\n'\n")
+        uname.chmod(0o700)
+        work = self.home / "launcher-work"
+        env = dict(os.environ, HOME=str(self.home), AIDEVOPS_WORK_DIR=str(work),
+                   PATH=str(tools) + os.pathsep + os.environ["PATH"])
+        for key in ("OPENCODE_SERVER_PASSWORD", "OPENCODE_SERVER_USERNAME"):
+            env.pop(key, None)
+        command = ["bash", str(Path(SPEC.origin).with_name("opencode-launcher-helper.sh")), "desktop",
+                   "--connect-managed", "--dir", args.dir, "--source-binary", args.desktop_binary, "--dry-run"]
+        result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=15, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("opencode://connect", result.stdout)
+        self.assertIn("%26", result.stdout)
+        self.assertNotIn("--connect-managed", result.stdout)
+        self.assertFalse(work.exists())
 
     def test_systemd_escaping_has_no_environment_dollar_expansion(self):
         self.service.platform = "linux"

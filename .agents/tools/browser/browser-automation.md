@@ -38,7 +38,7 @@ AUTOMATE?
   Parallel sessions: speed → Playwright | CLI → playwright-cli/agent-browser --session
   Persistent login: with extensions → dev-browser | without → playwright-cli/storageState
   Proxy: direct → standalone Playwright/Crawl4AI | interactive use of existing browser's proxy/VPN → Playwright Extension
-  Self-healing/unknown structure → Stagehand (NL, slowest)
+  Self-healing/unknown structure → opt-in Stagehand v4 (model-backed; compare cost first)
   AI agent CLI-first → playwright-cli (Microsoft) or agent-browser (Vercel, Rust)
   Just fast → Playwright direct (0.9s form fill)
 
@@ -71,9 +71,9 @@ const elements = await page.evaluate(() =>
 );
 ```
 
-## Benchmarks (2026-01-24, macOS ARM64, headless, warm daemon — reproduce: `browser-benchmark.md`)
+## Historical Benchmarks (2026-01-24, macOS ARM64, headless, warm daemon — reproduce: `browser-benchmark.md`)
 
-Overhead: dev-browser +0.1-0.4s | agent-browser +0.5-1.5s (cold) | Stagehand +1-5s (AI).
+These Stagehand results predate v4 and are **not a current v4 cost/latency comparison**. Overhead in that run: dev-browser +0.1-0.4s | agent-browser +0.5-1.5s (cold) | older Stagehand +1-5s (AI).
 
 | Test | Playwright | dev-browser | agent-browser | Crawl4AI | Stagehand |
 |------|-----------|-------------|---------------|----------|-----------|
@@ -91,7 +91,7 @@ Overhead: dev-browser +0.1-0.4s | agent-browser +0.5-1.5s (cold) | Stagehand +1-
 | Proxy | Full or existing browser | No | Via args | No | Full | Via args |
 | Extensions | Persistent context or official existing-session extension | No | Yes | No | No | Possible |
 | Self-healing/NL | No | No | No | No | LLM only | Yes |
-| Setup | npm install; extension optional | npm install -g | Server running | npm install | pip/Docker | npm + API key |
+| Setup | npm install; extension optional | npm install -g | Server running | npm install | pip/Docker | Opt-in v4 isolated SDK + local Chrome + model/API key |
 
 ## Inspect First, Then Formalize
 

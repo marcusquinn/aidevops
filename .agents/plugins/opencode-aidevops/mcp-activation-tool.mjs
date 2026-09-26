@@ -14,19 +14,9 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { basename, dirname, isAbsolute, join, relative, resolve, win32 } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
-const PLAYWRIGHT_OUTPUT_TOOLS = new Set([
-  "playwright_browser_console_messages",
-  "playwright_browser_evaluate",
-  "playwright_browser_network_request",
-  "playwright_browser_network_requests",
-  "playwright_browser_pdf_save",
-  "playwright_browser_snapshot",
-  "playwright_browser_start_video",
-  "playwright_browser_storage_state",
-  "playwright_browser_take_screenshot",
-]);
+export { enforceManagedMcpArtifactPath } from "./mcp-artifact-path.mjs";
 
 const MCP_DIAGNOSTIC_UNAVAILABLE =
   "diagnostic unavailable; use the documented secure CLI diagnostic path";
@@ -258,11 +248,20 @@ async function disconnectMcp(name, options, workspace) {
   if (workspace) cleanupManagedWorkspace(workspace);
 }
 
-async function executeMcpActivation(args, allowed, options) {
+async function executeMcpActivation(args, context, allowed, options) {
   const action = String(args.action || "");
   const name = String(args.name || "");
   if (!allowed.has(name) || !["connect", "disconnect"].includes(action)) {
     return "Error: only registry-approved MCP activation requests are allowed.";
+  }
+
+  const expectedAgent = options.activationAgents?.[name] || name;
+  // OpenCode v1.18.32 supplies the executing agent in the trusted tool context.
+  // A literal @mention is only text and cannot change this identity or its tools.
+  if (context?.agent !== expectedAgent) {
+    return `Error: MCP ${name} is scoped to the ${expectedAgent} agent; no lifecycle change was made. `
+      + `Select @${expectedAgent} from OpenCode autocomplete to create a structured agent mention; `
+      + `pasting the text @${expectedAgent} into another agent does not switch agents or grant tools.`;
   }
 
   if (typeof options.client?.[action] !== "function") {
@@ -281,36 +280,15 @@ async function executeMcpActivation(args, allowed, options) {
   }
 
   return action === "connect"
-    ? `Connected MCP ${name}. Lifecycle readiness does not grant its tools to the current agent; continue in the dedicated ${name} agent, where its tool permissions are scoped.`
+    ? `Connected MCP ${name} for the ${expectedAgent} agent. Its tools remain scoped to that agent.`
     : `Disconnected MCP ${name}.`;
-}
-
-/**
- * Reject screenshot filenames that can escape the managed Playwright cwd.
- * @param {object} input
- * @param {object} output
- * @param {object} managedWorkspaces
- */
-export function enforceManagedMcpArtifactPath(input, output, managedWorkspaces) {
-  if (!managedWorkspaces?.playwright || !PLAYWRIGHT_OUTPUT_TOOLS.has(input?.tool)) return;
-  const filename = output?.args?.filename;
-  if (filename === undefined || filename === null || filename === "") return;
-  assert(
-    typeof filename === "string",
-    new Error("Playwright screenshot filename must be a relative path inside managed temporary storage."),
-  );
-  const segments = filename.split(/[\\/]+/);
-  assert(
-    !isAbsolute(filename) && !win32.isAbsolute(filename) && !segments.includes(".."),
-    new Error("Playwright screenshot filename must not be absolute or contain '..' traversal."),
-  );
 }
 
 /**
  * Create the bounded MCP activation tool.
  * @param {function} tool
  * @param {object} z
- * @param {{client: object, directory?: string, allowedNames: string[], managedWorkspaces?: object, connectTimeoutMs?: number, pollIntervalMs?: number, pause?: function}} options
+ * @param {{client: object, directory?: string, allowedNames: string[], activationAgents?: object, managedWorkspaces?: object, connectTimeoutMs?: number, pollIntervalMs?: number, pause?: function}} options
  * @returns {object}
  */
 export function createMcpActivationTool(tool, z, options) {
@@ -325,8 +303,8 @@ export function createMcpActivationTool(tool, z, options) {
       action: z.enum(["connect", "disconnect"]).describe("MCP lifecycle action"),
       name: z.enum(allowedNames).describe("Registry-approved MCP server name"),
     },
-    async execute(args) {
-      return executeMcpActivation(args, allowed, options);
+    async execute(args, context) {
+      return executeMcpActivation(args, context, allowed, options);
     },
   });
 }

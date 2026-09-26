@@ -103,6 +103,7 @@ app does not write to the shared ~/.local/share/opencode/opencode.db hot spot.
 
 Launch options:
   --dir PATH             Working directory for Desktop (default: cwd; app bundle: HOME)
+  --connect-managed      Request managed server/project selection (requires --dir and a capable Desktop)
   --session-id ID        Explicit isolated DB name (default: desktop-default or per-project)
   --data-dir PATH        Explicit XDG_DATA_HOME for Desktop
   ${OPT_DESKTOP_SOURCE_BINARY} PATH   OpenCode.app executable path
@@ -1007,11 +1008,38 @@ managed_desktop_ready() {
     return 0
 }
 
+execute_desktop_launch() {
+    local dry_run="$1"
+    local launch_dir="$2"
+    local data_dir="$3"
+    local desktop_binary="$4"
+    shift 4
+
+    if ((dry_run == 1)); then
+        printf 'cd %q && TMPDIR=%q TMP=%q TEMP=%q XDG_DATA_HOME=%q AIDEVOPS_OPENCODE_ISOLATED_DB=1 %q' "${launch_dir}" "${TMPDIR}" "${TMP}" "${TEMP}" "${data_dir}" "${desktop_binary}"
+        printf ' %q' "$@"
+        printf '\n'
+        return 0
+    fi
+
+    managed_desktop_ready || return 1
+    mkdir -p "${data_dir}/opencode" || return 1
+    copy_auth_json "${data_dir}" || true
+    prewarm_opencode_data_dir "${data_dir}"
+
+    cd "${launch_dir}" || return 1
+    export XDG_DATA_HOME="${data_dir}"
+    export AIDEVOPS_OPENCODE_ISOLATED_DB=1
+    exec "${desktop_binary}" "$@"
+    return 1
+}
+
 cmd_desktop_launch() {
     local dry_run=0
     local launch_dir="$PWD"
     local launch_dir_set=0
     local from_app=0
+    local connect_managed=0
     local session_id=""
     local data_dir="${AIDEVOPS_OPENCODE_DESKTOP_DATA_DIR:-}"
     local source_binary=""
@@ -1042,6 +1070,10 @@ cmd_desktop_launch() {
             ;;
         --from-app)
             from_app=1
+            shift
+            ;;
+        --connect-managed)
+            connect_managed=1
             shift
             ;;
         --dry-run)
@@ -1080,6 +1112,17 @@ cmd_desktop_launch() {
     fi
     validate_launch_directory "${launch_dir}" || return 1
 
+    if ((connect_managed == 1)); then
+        ((launch_dir_set == 1)) || { print_error "--connect-managed requires an explicit --dir"; return 1; }
+        local connection_link=""
+        local -a connection_args=(desktop-link --desktop-binary "${desktop_binary}" --dir "${launch_dir}")
+        if ((dry_run == 1)); then
+            connection_args+=(--dry-run)
+        fi
+        connection_link=$(python3 "${SCRIPT_DIR}/opencode-service-helper.py" "${connection_args[@]}") || return 1
+        desktop_args+=("${connection_link}")
+    fi
+
     if [[ -z "${data_dir}" ]]; then
         if ((launch_dir_set == 1)); then
             data_dir=$(build_desktop_data_dir "${session_id}" "${launch_dir}")
@@ -1088,23 +1131,8 @@ cmd_desktop_launch() {
         fi
     fi
 
-    if ((dry_run == 1)); then
-        printf 'cd %q && TMPDIR=%q TMP=%q TEMP=%q XDG_DATA_HOME=%q AIDEVOPS_OPENCODE_ISOLATED_DB=1 %q' "${launch_dir}" "${TMPDIR}" "${TMP}" "${TEMP}" "${data_dir}" "${desktop_binary}"
-        printf ' %q' "${desktop_args[@]}"
-        printf '\n'
-        return 0
-    fi
-
-    managed_desktop_ready || return 1
-    mkdir -p "${data_dir}/opencode" || return 1
-    copy_auth_json "${data_dir}" || true
-    prewarm_opencode_data_dir "${data_dir}"
-
-    cd "${launch_dir}" || return 1
-    export XDG_DATA_HOME="${data_dir}"
-    export AIDEVOPS_OPENCODE_ISOLATED_DB=1
-    exec "${desktop_binary}" "${desktop_args[@]}"
-    return 1
+    execute_desktop_launch "${dry_run}" "${launch_dir}" "${data_dir}" "${desktop_binary}" "${desktop_args[@]}"
+    return $?
 }
 
 cmd_desktop() {
