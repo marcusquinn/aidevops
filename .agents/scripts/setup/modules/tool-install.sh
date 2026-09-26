@@ -1222,6 +1222,7 @@ setup_android_platform_tools() {
 	if command -v adb >/dev/null 2>&1; then
 		print_success "Android Platform Tools (adb) already installed; device availability is not yet verified"
 		print_info "Before connecting Mobile MCP, check adb devices for an authorized emulator or test device"
+		print_info "A local emulator needs more SDK packages in one SDK root; see tools/mobile/mobile-mcp.md"
 		return 0
 	fi
 
@@ -1240,6 +1241,7 @@ setup_android_platform_tools() {
 		if run_with_spinner "Installing Android SDK Platform Tools" brew install --cask android-platform-tools; then
 			if command -v adb >/dev/null 2>&1; then
 				print_success "Android Platform Tools installed; check adb devices for an authorized emulator or test device"
+				print_info "A local emulator needs more SDK packages in one SDK root; see tools/mobile/mobile-mcp.md"
 			else
 				print_warning "Android Platform Tools installed, but adb is not on PATH; check your Homebrew environment"
 			fi

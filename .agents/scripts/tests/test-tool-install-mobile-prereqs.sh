@@ -50,6 +50,9 @@ command() {
 		printf 'adb\n'
 		return 0
 	fi
+	if [[ "$1" == "-v" && "$2" == "mcp-server-mobile" ]]; then
+		return 1
+	fi
 	builtin command "$@"
 }
 xcrun() { [[ "${SIMCTL_AVAILABLE:-no}" == "yes" ]]; }
@@ -90,6 +93,7 @@ adb() { return 0; }
 output="$(setup_android_platform_tools)"
 assert_no_install
 assert_contains "$output" 'device availability is not yet verified'
+assert_contains "$output" 'local emulator needs more SDK packages in one SDK root'
 unset -f adb
 
 output="$(setup_ios_simulator_prerequisites)"
