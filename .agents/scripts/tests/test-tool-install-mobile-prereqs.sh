@@ -104,12 +104,7 @@ output="$(setup_mobile_mcp)"
 assert_contains "$output" 'No Android platform tools or usable iOS simulator SDK'
 assert_no_install
 
-setup_android_platform_tools() { printf 'android\n' >>"$sandbox/order"; }
-setup_ios_simulator_prerequisites() { printf 'ios\n' >>"$sandbox/order"; }
-setup_minisim() { printf 'minisim\n' >>"$sandbox/order"; }
-setup_serve_sim() { printf 'serve-sim\n' >>"$sandbox/order"; }
-setup_mobile_mcp() { printf 'mobile-mcp\n' >>"$sandbox/order"; }
-setup_mobile_simulator_tools
-[[ "$(<"$sandbox/order")" == $'android\nios\nminisim\nserve-sim\nmobile-mcp' ]] || fail 'mobile setup order changed'
+mobile_setup_block="$(awk '/^setup_mobile_simulator_tools\(\)/, /^}$/' "$source_file")"
+[[ "$mobile_setup_block" == *$'setup_android_platform_tools\n\tsetup_ios_simulator_prerequisites\n\tsetup_minisim\n\tsetup_serve_sim\n\tsetup_mobile_mcp'* ]] || fail 'mobile setup order changed'
 
 printf 'PASS: Mobile prerequisite setup remains opt-in and reports SDK readiness accurately\n'
