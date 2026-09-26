@@ -395,6 +395,42 @@ test_validator_scanners_ignore_heredoc_fixtures() {
 	return 0
 }
 
+test_positional_scanner_distinguishes_option_parsing() {
+	local fixture=""
+	fixture=$(mktemp)
+	{
+		printf '%s\n' 'parse_options() {'
+		printf '\t%s\n' 'while [[ $# -gt 0 ]]; do'
+		printf '\tcase "\0441" in\n'
+		printf '\t%s\n' '--output)'
+		printf '\t\toutput="\0442"\n'
+		printf '\t\t%s\n' 'shift 2' ';;'
+		printf '\t%s\n' '--other)'
+		printf '\t\tsend "\0442"\n'
+		printf '\t\t%s\n' 'shift 2' ';;'
+		printf '\t%s\n' '--without-shift)'
+		printf '\t\tvalue="\0442"\n'
+		printf '\t\t%s\n' ';;'
+		printf '\t%s\n' 'esac' 'done' 'return 0' '}'
+		printf '%s\n' 'not_an_option_parser() {'
+		printf '\tvalue="\0441"\n\tsend "\0442"\n'
+		printf '\t%s\n' 'return 0' '}'
+	} >"$fixture"
+	local previous_files=("${ALL_SH_FILES[@]}")
+	ALL_SH_FILES=("$fixture")
+	local output=""
+	local rc=0
+	output=$(check_positional_parameters 2>&1) || rc=$?
+	ALL_SH_FILES=("${previous_files[@]}")
+	rm -f "$fixture"
+	if [[ "$rc" -eq 0 && "$output" == *"Positional parameters: 4 violations"* ]]; then
+		print_result "only shifted option assignments are allowed; other direct arguments remain reported" 0
+	else
+		print_result "only shifted option assignments are allowed; other direct arguments remain reported" 1 "$output"
+	fi
+	return 0
+}
+
 main() {
 	test_changed_mode_gate_set
 	test_mode_defaults_and_full_override
@@ -403,6 +439,7 @@ main() {
 	test_main_base_and_missing_ref
 	test_help_and_invalid_arguments
 	test_validator_scanners_ignore_heredoc_fixtures
+	test_positional_scanner_distinguishes_option_parsing
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
 		return 1

@@ -183,10 +183,34 @@ check_return_statements() {
 	return 0
 }
 
+_report_positional_parameters() {
+	local tmp_file="$1"
+	local violations=0
+	if [[ -s "$tmp_file" ]]; then
+		violations=$(wc -l <"$tmp_file")
+		violations=${violations//[^0-9]/}
+		violations=${violations:-0}
+
+		if [[ $violations -gt 0 ]]; then
+			print_warning "Found $violations positional parameter violations:"
+			head -10 "$tmp_file"
+			if [[ $violations -gt 10 ]]; then
+				echo "... and $((violations - 10)) more"
+			fi
+		fi
+	fi
+
+	if [[ $violations -le $MAX_POSITIONAL_ISSUES ]]; then
+		print_success "Positional parameters: $violations violations (within threshold)"
+	else
+		print_error "Positional parameters: $violations violations (exceeds threshold of $MAX_POSITIONAL_ISSUES)"
+		return 1
+	fi
+	return 0
+}
+
 check_positional_parameters() {
 	echo -e "${BLUE}Checking Positional Parameters (S7679)...${NC}"
-
-	local violations=0
 
 	# Find direct positional-parameter use inside functions, excluding generated
 	# heredocs, embedded awk/sed, comments, examples, and local assignments.
@@ -224,8 +248,26 @@ check_positional_parameters() {
                 next
             }
             starts_heredoc($0) { next }
-            /^[a-zA-Z_][a-zA-Z0-9_]*\(\)[[:space:]]*\{/ { in_func=1; next }
-            in_func && /^\}$/ { in_func=0; next }
+            /^[a-zA-Z_][a-zA-Z0-9_]*\(\)[[:space:]]*\{/ { in_func=1; in_arg_case=0; next }
+            in_func && /^\}$/ {
+                if (pending_arg != "") print pending_arg
+                pending_arg=""; in_func=0; in_arg_case=0; next
+            }
+            # Only exempt an option assignment immediately followed by shift:
+            # another use or an unshifted branch remains a direct positional read.
+            in_func && /^[[:space:]]*case[[:space:]]+["\047]?\$[1-9]["\047]?[[:space:]]+in[[:space:]]*$/ { in_arg_case=1; next }
+            in_arg_case && /^[[:space:]]*esac[[:space:]]*$/ {
+                if (pending_arg != "") print pending_arg
+                pending_arg=""; in_arg_case=0; next
+            }
+            in_arg_case && /^[[:space:]]*[a-zA-Z_][a-zA-Z0-9_]*=["\047]?\$[1-9]["\047]?[[:space:]]*$/ {
+                if (pending_arg != "") print pending_arg
+                pending_arg=FILENAME ":" NR ": " $0; next
+            }
+            pending_arg != "" {
+                if ($0 !~ /^[[:space:]]*shift[[:space:]]+[1-9][0-9]*[[:space:]]*(;;)?[[:space:]]*$/) print pending_arg
+                pending_arg=""
+            }
             # Track multi-line awk scripts (awk ... single-quote opens, closes on later line)
             /awk[[:space:]]+\047[^\047]*$/ { in_awk=1; next }
             in_awk && /\047/ { in_awk=0; next }
@@ -239,8 +281,6 @@ check_positional_parameters() {
             /echo.*\$[1-9]/ { next }
             /print.*\$[1-9]/ { next }
             /Usage:/ { next }
-			# Argument-dispatch case selectors are intentional direct reads.
-			/case[[:space:]]+["\047]?\$[1-9]["\047]?[[:space:]]+in/ { next }
             # Skip currency/pricing patterns: $[1-9] followed by digit, decimal, comma,
             # slash (e.g. $28/mo, $1.99, $1,000), pipe (markdown table), or common
             # currency/pricing unit words (per, mo, month, flat, etc.).
@@ -251,34 +291,15 @@ check_positional_parameters() {
             in_func && /\$[1-9]/ && !/local.*=.*\$[1-9]/ {
                 print FILENAME ":" NR ": " $0
             }
+            END { if (pending_arg != "") print pending_arg }
             ' "$file" >>"$tmp_file"
 		fi
 	done
 
-	if [[ -s "$tmp_file" ]]; then
-		violations=$(wc -l <"$tmp_file")
-		violations=${violations//[^0-9]/}
-		violations=${violations:-0}
-
-		if [[ $violations -gt 0 ]]; then
-			print_warning "Found $violations positional parameter violations:"
-			head -10 "$tmp_file"
-			if [[ $violations -gt 10 ]]; then
-				echo "... and $((violations - 10)) more"
-			fi
-		fi
-	fi
-
+	local rc=0
+	_report_positional_parameters "$tmp_file" || rc=$?
 	rm -f "$tmp_file"
-
-	if [[ $violations -le $MAX_POSITIONAL_ISSUES ]]; then
-		print_success "Positional parameters: $violations violations (within threshold)"
-	else
-		print_error "Positional parameters: $violations violations (exceeds threshold of $MAX_POSITIONAL_ISSUES)"
-		return 1
-	fi
-
-	return 0
+	return "$rc"
 }
 
 check_string_literals() {

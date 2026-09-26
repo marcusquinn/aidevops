@@ -23,6 +23,7 @@ FAIL=0
 
 cleanup_test() {
 	rm -rf "$TEST_DIR"
+	return $?
 }
 
 trap cleanup_test EXIT
@@ -387,6 +388,7 @@ assert_stale() {
 		echo "FAIL: $test_name (expected STALE, got CURRENT)"
 		FAIL=$((FAIL + 1))
 	fi
+	return 0
 }
 
 assert_uncertain() {
@@ -410,6 +412,7 @@ assert_uncertain() {
 		echo "FAIL: $test_name (expected UNCERTAIN, got CURRENT)"
 		FAIL=$((FAIL + 1))
 	fi
+	return 0
 }
 
 assert_current() {
@@ -431,6 +434,7 @@ assert_current() {
 		[[ -n "$result" ]] && echo "  Reason: $result"
 		FAIL=$((FAIL + 1))
 	fi
+	return 0
 }
 
 # ============================================================

@@ -33,6 +33,7 @@ _labels_to_json_array() {
 		_labels_json+="{\"name\":\"$_l\"},"
 	done
 	printf '[%s]' "${_labels_json%,}"
+	return $?
 }
 
 _maybe_jq() {
@@ -41,6 +42,7 @@ _maybe_jq() {
 	else
 		cat
 	fi
+	return $?
 }
 
 case "$_subcmd" in
