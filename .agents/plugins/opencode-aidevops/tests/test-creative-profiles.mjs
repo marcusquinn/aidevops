@@ -39,7 +39,7 @@ test("creative MCPs stay disconnected and have no unrelated tools or recursive t
     assert.equal(config.tools[entry.toolPattern], false);
     assert.equal(config.agent[name].tools["*"], false);
     assert.equal(config.agent[name].permission["*"], "deny");
-    assert.equal(config.agent[name].tools[entry.toolPattern], name === "affinity" ? false : true);
+    assert.equal(config.agent[name].tools[entry.toolPattern], true);
     assert.doesNotMatch(config.agent[name].prompt, /# Build\+|# Content - Multi-Media/);
   }
   assert.equal(registerOnDemandMcpAgents(config, agentsDir, { tiers: {} }, state), 0);

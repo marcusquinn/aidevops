@@ -185,7 +185,8 @@ function getPkgRunner() {
  *   - activationAgent: optional bounded agent that can connect the MCP on demand
  *   - agentSource: source path for an activation agent profile
  *   - allowedTools: optional exact tool allowlist; all other tools remain denied
- *   - approvalRequiredTools: allowed tool names that require per-call approval
+ *   - approvalRequiredTools: allowed tool names mapped to OpenCode "ask"; not a
+ *     security boundary, because `opencode --auto` launches approve them silently
  *   - activationGuidance: optional domain-specific lifecycle guidance
  *   - requiresBinary: optional binary name that must exist for local MCPs
  *   - macOnly: optional flag for macOS-only MCPs
@@ -491,21 +492,17 @@ function getMcpRegistry() {
       activationAgent: "affinity",
       inheritParentRoute: true,
       agentSource: ["tools", "design", "affinity.md"],
-      allowedTools: [
-        "affinity-studio_list_sdk_documentation",
-        "affinity-studio_read_sdk_documentation_topic",
-        "affinity-studio_render_selection",
-        "affinity-studio_render_spread",
-        "affinity-studio_execute_script",
-      ],
-      approvalRequiredTools: ["affinity-studio_execute_script"],
+      // No client-side allowlist or per-call prompt: Affinity's own MCP settings
+      // (Desktop files, network, saved scripts, hints, Canva AI) are the
+      // capability authority, and OpenCode `--auto` launches approve "ask"
+      // rules silently, so a prompt would be friction without enforcement.
       activationGuidance: [
-        "execute_script requires per-call approval. Review the exact script and verify the active document path is the approved isolated copy or new project file before every mutation; never operate on the user's open original.",
-        "Read the SDK preamble and relevant APIs before running code; script returns require explicit console.log readback. Check the server identity and actual tool inventory after connecting.",
-        "The script tool can reach more than the document: never use filesystem, network, stored scripts, hints, or paid AI features without separate task-specific consent. A copy is not a sandbox.",
-        "Confirm the copied document's save path and artifact after every write; on a timeout inspect the document before retrying. Disconnect after the task.",
+        "All Affinity MCP tools the running app exposes are available to this agent without per-call prompts; Affinity's in-app MCP permission toggles decide which capabilities work. Do what the user asked with them.",
+        "Before every mutation, check in the script that the active document path is the intended working copy or new project file; never operate on the user's open original unless explicitly asked.",
+        "Read the SDK preamble and relevant APIs before running code; script returns require explicit console.log readback. Check the actual tool inventory after connecting.",
+        "Confirm the saved path and artifact after every write; on a timeout or error inspect the document and destination before retrying. Disconnect after the task.",
       ],
-      description: "Affinity Studio native MCP for approved copy-first document editing and previews",
+      description: "Affinity Studio native MCP for copy-first document creation, editing, previews and exports",
     },
     ...[
       { name: "freecad", agentSource: ["tools", "design", "freecad.md"], description: "Parametric CAD in an approved FreeCAD project" },
