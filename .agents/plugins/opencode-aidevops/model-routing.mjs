@@ -46,7 +46,7 @@ export function normalizeModelRouting(value = {}) {
 }
 
 function normalizeModelVariant(value, allowedVariants) {
-  if (!value || typeof value.model !== "string" || !value.model.includes("/")) return null;
+  if (typeof value?.model !== "string" || !value.model.includes("/")) return null;
   if (!allowedVariants.includes(value.variant)) return null;
   return { model: value.model, variant: value.variant };
 }
