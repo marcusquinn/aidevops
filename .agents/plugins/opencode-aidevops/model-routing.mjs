@@ -45,16 +45,18 @@ export function normalizeModelRouting(value = {}) {
   };
 }
 
-function normalizeInteractiveDefault(value) {
+function normalizeModelVariant(value, allowedVariants) {
   if (!value || typeof value.model !== "string" || !value.model.includes("/")) return null;
-  if (!["low", "medium", "high", "xhigh", "max"].includes(value.variant)) return null;
+  if (!allowedVariants.includes(value.variant)) return null;
   return { model: value.model, variant: value.variant };
 }
 
+function normalizeInteractiveDefault(value) {
+  return normalizeModelVariant(value, ["low", "medium", "high", "xhigh", "max"]);
+}
+
 function normalizeSpecialistAdvisor(value) {
-  if (!value || typeof value.model !== "string" || !value.model.includes("/")) return null;
-  if (!["low", "medium", "high"].includes(value.variant)) return null;
-  return { model: value.model, variant: value.variant };
+  return normalizeModelVariant(value, ["low", "medium", "high"]);
 }
 
 export function mergeModelRouting(base, override = {}) {
