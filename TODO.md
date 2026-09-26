@@ -535,6 +535,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 ## Backlog
 
+- [ ] t18480 fix(setup): stop duplicate aidevops plugin registration in OpenCode V2 #bug #framework #setup #interactive tier:standard ref:GH#32422 logged:2026-09-26 -> [todo/tasks/t18480-brief.md]
 - [x] t18475 Fail closed on public routine comments before Pulse worker launch #bug #security #prompt-injection #interactive #auto-dispatch #priority:high tier:thinking ref:GH#32337 logged:2026-09-24 -> [todo/tasks/t18475-brief.md] pr:#32348 completed:2026-09-25
 - [x] t18476 Initialize CI privacy context during planning publication reconciliation #bug #framework #ci #auto-dispatch #interactive #priority:high tier:standard ref:GH#32342 pr:#32343 logged:2026-09-24 -> [todo/tasks/t18476-brief.md] completed:2026-09-25
 

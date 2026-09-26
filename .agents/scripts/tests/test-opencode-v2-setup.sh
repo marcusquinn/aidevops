@@ -26,8 +26,12 @@ config="$SANDBOX/opencode.json"
 cat >"$config" <<'JSON'
 {"plugin":["file:///custom/plugin.mjs","file:///old/plugins/opencode-aidevops/index.mjs"]}
 JSON
-_setup_opencode_plugins_register_file_url "$config" \
-	"$REPO_ROOT/.agents/plugins/opencode-aidevops/v2-plugin" plugins >/dev/null
+# setup.sh's print_* helpers write to stdout; the captured status must stay clean.
+print_success() { printf '[SUCCESS] %s\n' "$1"; }
+registered_status=$(_setup_opencode_plugins_register_file_url "$config" \
+	"$REPO_ROOT/.agents/plugins/opencode-aidevops/v2-plugin" plugins 2>/dev/null)
+print_success() { :; }
+[[ "$registered_status" == "true" ]]
 jq -e '
   (has("plugin") | not)
   and ((.plugins | index("file:///custom/plugin.mjs")) != null)
@@ -85,21 +89,37 @@ grep -Fq "POOL_FILE=\"\${AIDEVOPS_OAUTH_POOL_FILE:-" "$REPO_ROOT/.agents/scripts
 mkdir -p "$HOME/.aidevops/agents/plugins/opencode-aidevops/v2-plugin"
 printf 'export default {};\n' >"$HOME/.aidevops/agents/plugins/opencode-aidevops/v2-plugin/index.mjs"
 find_opencode_config() { printf '%s\n' "${OPENCODE_CONFIG:-$config}"; }
+# Pre-seed the legacy auto-discovered symlink that caused OpenCode V2 to reject
+# the config entry with "Duplicate plugin ID: aidevops"; setup must remove it.
+v2_plugins_dir="$HOME/.aidevops/runtimes/opencode-v2/config/opencode/plugins"
+v2_symlink="$v2_plugins_dir/aidevops-v2"
+mkdir -p "$v2_plugins_dir"
+ln -s "$HOME/.aidevops/agents/plugins/opencode-aidevops/v2-plugin" "$v2_symlink"
+ln -s "$SANDBOX/user-owned-plugin" "$v2_plugins_dir/user-owned"
 PATH="$SANDBOX/bin:$PATH" AIDEVOPS_OPENCODE_PROFILE=v2 setup_opencode_plugins
 v2_config="$HOME/.aidevops/runtimes/opencode-v2/config/opencode/opencode.json"
 jq -e '
   (has("plugin") | not)
   and ([.plugins[] | select(endswith("/v2-plugin"))] | length == 1)
 ' "$v2_config" >/dev/null
-v2_symlink="$HOME/.aidevops/runtimes/opencode-v2/config/opencode/plugins/aidevops-v2"
-[[ -L "$v2_symlink" ]]
-[[ "$(readlink "$v2_symlink")" == "$HOME/.aidevops/agents/plugins/opencode-aidevops/v2-plugin" ]]
+[[ ! -e "$v2_symlink" && ! -L "$v2_symlink" ]]
+[[ -L "$v2_plugins_dir/user-owned" ]]
 jq -e '(.plugins | index("file:///custom/plugin.mjs")) != null' "$config" >/dev/null
 custom_v2_root="$SANDBOX/custom-v2-root"
 PATH="$SANDBOX/bin:$PATH" AIDEVOPS_OPENCODE_PROFILE=v2 \
 	AIDEVOPS_OPENCODE_V2_ROOT="$custom_v2_root" setup_opencode_plugins
 [[ -f "$custom_v2_root/config/opencode/opencode.json" ]]
-[[ -L "$custom_v2_root/config/opencode/plugins/aidevops-v2" ]]
+[[ ! -L "$custom_v2_root/config/opencode/plugins/aidevops-v2" ]]
+jq -e '([.plugins[] | select(endswith("/v2-plugin"))] | length == 1)' \
+	"$custom_v2_root/config/opencode/opencode.json" >/dev/null
+# When the config entry cannot be written, the symlink remains the sole fallback.
+fallback_v2_root="$SANDBOX/fallback-v2-root"
+(
+	_setup_opencode_plugins_register_file_url() { printf 'false\n'; }
+	PATH="$SANDBOX/bin:$PATH" AIDEVOPS_OPENCODE_PROFILE=v2 \
+		AIDEVOPS_OPENCODE_V2_ROOT="$fallback_v2_root" setup_opencode_plugins
+)
+[[ -L "$fallback_v2_root/config/opencode/plugins/aidevops-v2" ]]
 
 printf 'export default {};\n' >"$HOME/.aidevops/agents/plugins/opencode-aidevops/index.mjs"
 aidevops_opencode_profile_id() { printf '%s\n' "${AIDEVOPS_OPENCODE_PROFILE:-v1}"; }
