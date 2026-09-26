@@ -1413,7 +1413,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18474 Add portrait talking-head reel editing recipe ref:GH#32269 pr:#32270 completed:2026-09-23
 
-- [ ] t18477 Add opt-in local Mobile MCP integration ref:GH#32412
+- [x] t18477 Add opt-in local Mobile MCP integration ref:GH#32412 pr:#32413 completed:2026-09-26
 
 ## In Progress
 
