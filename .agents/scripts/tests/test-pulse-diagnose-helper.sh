@@ -291,6 +291,10 @@ if [[ "$*" == *"issue view"*"99998"* ]]; then
 JSON
   exit 0
 fi
+if [[ "$*" == *"issue view"*"99997"* ]]; then
+  echo '{"number":99997,"title":"issue without PR","state":"OPEN","author":{"login":"marcusquinn"},"createdAt":"2026-04-01T00:00:00Z","closedAt":null,"closedByPullRequestsReferences":[],"labels":[],"assignees":[]}'
+  exit 0
+fi
 if [[ "$*" == *"issue view"*"28780"* ]]; then
   echo '{"number":28780,"title":"draft discovery fixture","state":"OPEN","author":{"login":"marcusquinn"},"createdAt":"2026-07-29T00:00:00Z","closedAt":null,"labels":[],"assignees":[]}'
   exit 0
@@ -719,6 +723,13 @@ assert_contains "shows issue number" "Issue #99998" "$output"
 assert_contains "no comments found" "no comments found" "$output"
 assert_contains "shows closing PR reference" "PR #99999" "$output"
 assert_contains "shows merged closing PR state" "MERGED" "$output"
+
+# An empty closing relationship with no timeline or worker branch stays empty.
+output=$(PULSE_DIAGNOSE_LOGFILE="$FIXTURE_LOGFILE" \
+	PULSE_DIAGNOSE_LOGDIR="$TMPDIR_TEST" \
+	PATH="${TMPDIR_TEST}:${PATH}" \
+	"$HELPER" issue 99997 --repo marcusquinn/aidevops 2>&1) || true
+assert_contains "preserves no-linked-PR result" "no linked or worker PRs found" "$output"
 
 # --- Test 16: issue --json output ---
 printf '\nTest 16: issue --json output\n'
