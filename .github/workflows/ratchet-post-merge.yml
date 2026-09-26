@@ -1,6 +1,6 @@
 name: Ratchet Post-Merge
 
-# qlty-action/install otherwise resolves its moving `latest` release.
+# Keep the workflow contract aligned with qlty-install-pinned.sh's verified release.
 env:
   QLTY_VERSION: "0.643.0"
 
@@ -53,7 +53,7 @@ jobs:
           token: ${{ secrets.SYNC_PAT || secrets.GITHUB_TOKEN }}
 
       - name: Install Qlty CLI
-        uses: qltysh/qlty-action/install@a19242102d17e497f437d7466aa01b528537e899 # v2.2.0
+        run: bash .agents/scripts/qlty-install-pinned.sh
 
       - name: Compute smell count and ratchet if reduced
         env:

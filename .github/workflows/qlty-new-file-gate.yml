@@ -1,6 +1,6 @@
 name: Qlty New-File Gate
 
-# qlty-action/install otherwise resolves its moving `latest` release.
+# Keep the workflow contract aligned with qlty-install-pinned.sh's verified release.
 env:
   QLTY_VERSION: "0.643.0"
 
@@ -113,7 +113,7 @@ jobs:
           fetch-depth: 0
 
       - name: Install Qlty CLI
-        uses: qltysh/qlty-action/install@a19242102d17e497f437d7466aa01b528537e899 # v2.2.0
+        run: bash .agents/scripts/qlty-install-pinned.sh
 
       - name: Run new-file gate helper
         id: scan
