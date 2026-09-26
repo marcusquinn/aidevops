@@ -61,6 +61,7 @@ routing; an existing explicit pin must still win.
 
 - `.agents/plugins/opencode-aidevops/provider-auth-body.mjs`
 - `.agents/plugins/opencode-aidevops/model-routing.mjs`
+- `.agents/plugins/opencode-aidevops/model-routing-variant.mjs`
 - `.agents/plugins/opencode-aidevops/specialist-advisor.mjs`
 - `.agents/plugins/opencode-aidevops/tests/test-provider-auth-cch.mjs`
 - `.agents/plugins/opencode-aidevops/tests/test-specialist-advisor.mjs`
@@ -68,3 +69,15 @@ routing; an existing explicit pin must still win.
 - `CHANGELOG.md`
 - `TODO.md`
 - `todo/tasks/t18478-brief.md`
+
+## Completion Evidence
+
+- PR #32417 (head `233b6ec6d`) merged as `bb8da3537` after terminal-success
+  required checks and a clean independent closeout review.
+- Fresh unpinned OpenCode selected local Opus 5.5 medium; separate medium and
+  xhigh runs each completed a structured Read call. Focused tests passed 17/17,
+  the final plugin suite passed 948/948, and changed-file lint passed.
+- Signed v3.36.0 published with source PRs #32411, #32413, and #32417. The
+  release receipt verifies GitHub, npm, Homebrew, postflight, and exact-tag
+  deployment. Deployed provider-auth and routing module hashes match the tag;
+  the per-user routing override remains local and uncommitted.
