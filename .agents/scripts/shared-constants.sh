@@ -1382,15 +1382,16 @@ clear_active_status_on_release() {
 		--search "#${issue_num} in:body" \
 		--json number,state,isDraft,reviewDecision,body --limit 20 2>/dev/null) || return 1
 	projection=$(printf '%s' "$linked_prs_json" | jq -r --arg num "$issue_num" '
+		def available: "available";
 		[.[] | select((.body // "") | test("(close[ds]?|fix(es|ed)?|resolve[ds]?)[[:space:]]*#" + $num + "\\b"; "i"))]
-		| if length == 0 then "available"
+		| if length == 0 then available
 		elif ([.[] | select(.state == "OPEN")] | length) != 0 and
 			([.[] | select(.state == "OPEN")] | length) != 1 then "ambiguous"
 		elif any(.state == "OPEN" and .isDraft == true) then "blocked"
-		elif any(.state == "OPEN" and .reviewDecision == "CHANGES_REQUESTED") then "available"
+		elif any(.state == "OPEN" and .reviewDecision == "CHANGES_REQUESTED") then available
 		elif any(.state == "OPEN" and .isDraft == false) then "in-review"
 		elif any(.state == "MERGED") then "done"
-		else "available" end
+		else available end
 	' 2>/dev/null) || return 1
 	case "$projection" in
 	available)
