@@ -9,6 +9,7 @@ import { isAbsolute, join, relative, resolve, sep } from "path";
 import { loadAgentIndex, registerDelegatedDomainProfiles } from "./agent-loader.mjs";
 import { getOnDemandMcpAgents } from "./mcp-registry.mjs";
 import { DEFAULT_ESCALATION_ORDER, normalizeRoutingTier } from "./model-routing.mjs";
+import { applyOnDemandMcpToolPolicy } from "./on-demand-mcp-tool-policy.mjs";
 import { recordPluginHealthStage } from "./plugin-health.mjs";
 import { primaryDeliveryEvidence } from "./primary-delivery-evidence.mjs";
 import { registerSpecialistAdvisor, applyDailyDriverDefaults } from "./specialist-advisor.mjs";
@@ -110,12 +111,12 @@ function onDemandMcpPrompt(mcp, agentsDir) {
 
 function createOnDemandMcpProfile(mcp, agentsDir) {
   const { parsed, prompt } = onDemandMcpPrompt(mcp, agentsDir);
-  return {
+  const profile = {
     description: parsed?.profile.description || mcp.description,
     mode: "subagent",
     prompt: [
       `Before the first ${mcp.name} operation, call ${MCP_ACTIVATION_TOOL} with action \"connect\" and name \"${mcp.name}\".`,
-      `After it succeeds, continue on the next step with ${mcp.toolPattern} tools.`,
+      `After it succeeds, continue on the next step with ${mcp.allowedTools?.join(", ") || mcp.toolPattern} tools.`,
       `When the requested ${mcp.name} work is complete, call ${MCP_ACTIVATION_TOOL} with action \"disconnect\".`,
       ...(mcp.activationGuidance || []),
       "",
@@ -124,14 +125,14 @@ function createOnDemandMcpProfile(mcp, agentsDir) {
     tools: {
       ...(parsed?.profile.tools || {}),
       [MCP_ACTIVATION_TOOL]: true,
-      [mcp.toolPattern]: true,
     },
     permission: {
       ...parsed?.profile.permission,
       [MCP_ACTIVATION_TOOL]: "allow",
-      [mcp.toolPattern]: "allow",
     },
   };
+  applyOnDemandMcpToolPolicy(profile, mcp);
+  return profile;
 }
 
 function ensureOnDemandMcpAgent(config, mcp, agentsDir) {
@@ -144,12 +145,11 @@ function ensureOnDemandMcpAgent(config, mcp, agentsDir) {
   if (!(MCP_ACTIVATION_TOOL in config.agent[mcp.agentName].tools)) {
     config.agent[mcp.agentName].tools[MCP_ACTIVATION_TOOL] = true;
   }
-  config.agent[mcp.agentName].tools[mcp.toolPattern] = true;
   if (!config.agent[mcp.agentName].permission) config.agent[mcp.agentName].permission = {};
   if (!(MCP_ACTIVATION_TOOL in config.agent[mcp.agentName].permission)) {
     config.agent[mcp.agentName].permission[MCP_ACTIVATION_TOOL] = "allow";
   }
-  config.agent[mcp.agentName].permission[mcp.toolPattern] = "allow";
+  applyOnDemandMcpToolPolicy(config.agent[mcp.agentName], mcp);
   return false;
 }
 

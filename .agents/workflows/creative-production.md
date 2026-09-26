@@ -43,7 +43,7 @@ render quality is independent of dimensional accuracy.
    harness or remove unknown instructions. Switching a primary in an existing
    conversation is not a context reset. Existing Astra compaction policy remains
    in `reference/context-efficiency.md`; no context size guarantees accuracy.
-3. Creative app profiles (`blender`, `freecad`, `davinci-resolve`, `ableton`) are
+3. Creative app profiles (`blender`, `affinity`, `freecad`, `davinci-resolve`, `ableton`) are
    explicitly bounded executors. Within the user's authorised creative task the
    primary may delegate app operations to them; this is not permission for general
    worker dispatch, recursive delegation, installation, spending or publication.

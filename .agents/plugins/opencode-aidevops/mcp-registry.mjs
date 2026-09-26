@@ -184,6 +184,8 @@ function getPkgRunner() {
  *   - globallyEnabled: whether tools are enabled globally (true) or per-agent (false)
  *   - activationAgent: optional bounded agent that can connect the MCP on demand
  *   - agentSource: source path for an activation agent profile
+ *   - allowedTools: optional exact tool allowlist; all other tools remain denied
+ *   - approvalRequiredTools: allowed tool names that require per-call approval
  *   - activationGuidance: optional domain-specific lifecycle guidance
  *   - requiresBinary: optional binary name that must exist for local MCPs
  *   - macOnly: optional flag for macOS-only MCPs
@@ -439,6 +441,33 @@ function getMcpRegistry() {
       modelTier: "standard",
       description: "Official Blender Lab MCP with opt-in isolated provisioning",
     },
+    {
+      name: "affinity-studio",
+      type: "remote",
+      url: "http://[::1]:6767/sse",
+      macOnly: true,
+      eager: false,
+      toolPattern: "affinity-studio_*",
+      globallyEnabled: false,
+      activationAgent: "affinity",
+      inheritParentRoute: true,
+      agentSource: ["tools", "design", "affinity.md"],
+      allowedTools: [
+        "affinity-studio_list_sdk_documentation",
+        "affinity-studio_read_sdk_documentation_topic",
+        "affinity-studio_render_selection",
+        "affinity-studio_render_spread",
+        "affinity-studio_execute_script",
+      ],
+      approvalRequiredTools: ["affinity-studio_execute_script"],
+      activationGuidance: [
+        "execute_script requires per-call approval. Review the exact script and verify the active document path is the approved isolated copy or new project file before every mutation; never operate on the user's open original.",
+        "Read the SDK preamble and relevant APIs before running code; script returns require explicit console.log readback. Check the server identity and actual tool inventory after connecting.",
+        "The script tool can reach more than the document: never use filesystem, network, stored scripts, hints, or paid AI features without separate task-specific consent. A copy is not a sandbox.",
+        "Confirm the copied document's save path and artifact after every write; on a timeout inspect the document before retrying. Disconnect after the task.",
+      ],
+      description: "Affinity Studio native MCP for approved copy-first document editing and previews",
+    },
     ...[
       { name: "freecad", agentSource: ["tools", "design", "freecad.md"], description: "Parametric CAD in an approved FreeCAD project" },
       { name: "ableton", agentSource: ["tools", "audio", "ableton.md"], description: "Music and audio in an approved Ableton Live Set" },
@@ -528,12 +557,15 @@ function getMcpRegistry() {
  */
 export function getOnDemandMcpAgents() {
   return getMcpRegistry()
-    .filter((mcp) => mcp.activationAgent && Array.isArray(mcp.agentSource))
+    .filter((mcp) => mcp.activationAgent && Array.isArray(mcp.agentSource)
+      && (!mcp.macOnly || IS_MACOS))
     .map((mcp) => ({
       name: mcp.name,
       agentName: mcp.activationAgent,
       agentSource: [...mcp.agentSource],
       toolPattern: mcp.toolPattern,
+      ...(mcp.allowedTools ? { allowedTools: [...mcp.allowedTools] } : {}),
+      ...(mcp.approvalRequiredTools ? { approvalRequiredTools: [...mcp.approvalRequiredTools] } : {}),
       modelTier: mcp.modelTier || "standard",
       ...(mcp.inheritParentRoute === true ? { inheritParentRoute: true } : {}),
       activationGuidance: [...(mcp.activationGuidance || [])],

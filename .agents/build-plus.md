@@ -42,6 +42,7 @@ subagents:
   - shadcn
   # Shared creative app specialists
   - blender
+  - affinity
   - freecad
   - ableton
   - davinci-resolve
