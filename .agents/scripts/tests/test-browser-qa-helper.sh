@@ -7,6 +7,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 HELPER="${SCRIPT_DIR}/../browser-qa-helper.sh"
 PLAYWRIGHT_RUNTIME="${SCRIPT_DIR}/../playwright-runtime.mjs"
+JOURNEY_RUNNER="${SCRIPT_DIR}/../browser-qa-journey.mjs"
 
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'
@@ -70,8 +71,13 @@ test_resolve_clamps_to_anthropic_limit() {
 }
 
 test_guardrail_resizes_oversized_images() {
-	local tmp_dir
+	local tmp_dir original_path
 	tmp_dir=$(mktemp -d)
+	mkdir -p "${tmp_dir}/bin"
+	touch "${tmp_dir}/bin/magick"
+	chmod +x "${tmp_dir}/bin/magick"
+	original_path="$PATH"
+	PATH="${tmp_dir}/bin:${PATH}"
 	touch "${tmp_dir}/small.png"
 	touch "${tmp_dir}/large.png"
 
@@ -108,12 +114,18 @@ test_guardrail_resizes_oversized_images() {
 	fi
 
 	rm -rf "$tmp_dir"
+	PATH="$original_path"
 	return 0
 }
 
 test_guardrail_fails_hard_limit_violation() {
-	local tmp_dir
+	local tmp_dir original_path
 	tmp_dir=$(mktemp -d)
+	mkdir -p "${tmp_dir}/bin"
+	touch "${tmp_dir}/bin/magick"
+	chmod +x "${tmp_dir}/bin/magick"
+	original_path="$PATH"
+	PATH="${tmp_dir}/bin:${PATH}"
 	touch "${tmp_dir}/too-large.png"
 
 	get_image_dimensions() {
@@ -141,6 +153,7 @@ test_guardrail_fails_hard_limit_violation() {
 	fi
 
 	rm -rf "$tmp_dir"
+	PATH="$original_path"
 	return 0
 }
 
@@ -188,6 +201,27 @@ test_stability_unknown_option_rejected() {
 		print_result "stability: unknown option rejected" 0
 	else
 		print_result "stability: unknown option rejected" 1 "expected non-zero exit for unknown option"
+	fi
+	return 0
+}
+
+test_journey_requires_config_and_environment() {
+	local output exit_code
+	exit_code=0
+	output=$(cmd_journey --config /definitely/missing.json --environment test 2>&1) || exit_code=$?
+	if [[ "$exit_code" -ne 0 ]] && printf '%s' "$output" | grep -q "requires an existing"; then
+		print_result "journey: missing config is rejected before browser launch" 0
+	else
+		print_result "journey: missing config is rejected before browser launch" 1 "expected missing config error, got exit=${exit_code}"
+	fi
+	return 0
+}
+
+test_journey_runner_syntax() {
+	if node --check "$JOURNEY_RUNNER" >/dev/null 2>&1; then
+		print_result "journey: runner has valid Node syntax" 0
+	else
+		print_result "journey: runner has valid Node syntax" 1 "node --check failed"
 	fi
 	return 0
 }
@@ -344,6 +378,8 @@ main() {
 	test_stability_rejects_invalid_reloads
 	test_stability_rejects_zero_reloads
 	test_stability_unknown_option_rejected
+	test_journey_requires_config_and_environment
+	test_journey_runner_syntax
 	test_stability_script_generation
 	test_format_stability_markdown_stable
 	test_format_stability_markdown_unstable
