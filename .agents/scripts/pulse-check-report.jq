@@ -69,6 +69,8 @@ end) as $max_workers |
 ($current.canonical_reconciliation.canonical_recovery_advisory_observed // false) as $canonical_recovery_advisory_observed |
 ($current.active_claim_state // {}) as $active_claim_state |
 ($active_claim_state.zero_worker_actionable // false) as $zero_worker_active_claim_actionable |
+($current.zero_worker_underutilization // {}) as $zero_worker_underutilization |
+($zero_worker_underutilization.actionable // false) as $sustained_zero_worker_underutilization |
 ($active_claim_state.durable_launch_count // 0 | number_or_zero) as $fresh_cross_runner_claims |
 ([$progress_blockers.retained_unverified[]?
   | select(((.reason // "") | contains("permission"))
@@ -145,6 +147,7 @@ end) as $max_workers |
     runtime_freshness_status: ($runtime_freshness.status // "unknown"),
     runtime_stale: $runtime_stale,
     zero_worker_active_claim_actionable: $zero_worker_active_claim_actionable,
+    sustained_zero_worker_underutilization: $sustained_zero_worker_underutilization,
     recurrent_failure_families: ([$failure_families[] | select((.count // 0) >= $failure_threshold and (.confidence // "low") == "high" and (.family // "") != "other-failure")] | length)
   },
   queue: ($queue.aggregate // {}),
@@ -163,6 +166,7 @@ end) as $max_workers |
     runtime_freshness: $runtime_freshness,
     active_worker_processes: ($current.active_worker_processes // null),
     active_claim_state: $active_claim_state,
+    zero_worker_underutilization: $zero_worker_underutilization,
     top_pre_launch_blockers: ($current.top_pre_launch_blockers // [])
   },
   worker_activity: {
@@ -285,7 +289,7 @@ end) as $max_workers |
         true
       )
     else empty end,
-    if ($queue_scan_complete and $dispatch_alive and $eligible_issues >= $threshold and $active_workers == 0 and $fresh_cross_runner_claims == 0) then
+    if ($queue_scan_complete and $dispatch_alive and $eligible_issues >= $threshold and $active_workers == 0 and $fresh_cross_runner_claims == 0 and $sustained_zero_worker_underutilization) then
       finding(
         "pulse-underfilled-auto-dispatch-queue";
         "high";
@@ -297,13 +301,15 @@ end) as $max_workers |
           ("available_older_than_threshold=" + ($old_available | tostring)),
           "dispatch_alive=true",
           ("dispatch_stage_events=" + (($current.dispatch_stage_events // 0) | tostring)),
+          ("consecutive_no_progress_cycles=" + (($zero_worker_underutilization.consecutive_no_progress_cycles // 0) | tostring)),
+          ("minimum_cycles=" + (($zero_worker_underutilization.minimum_cycles // 0) | tostring)),
           ("zero_worker_active_claim_actionable=" + ($zero_worker_active_claim_actionable | tostring)),
           ("active_claim_classifications=" + (($active_claim_state.classification_counts // {}) | to_entries | map(.key + ":" + (.value | tostring)) | sort | join(",")))
         ];
         (if $zero_worker_active_claim_actionable then
           "Inspect the named zero-worker active-claim state. Preserve live-owner and durable-launch claims; recheck current-cycle suppression or repair the reported infrastructure hold before the next floor refill."
         else
-          "Inspect why the pulse did not retain active workers for visible status:available auto-dispatch issues; start with pulse-current-state-helper, worker-activity-helper, and pulse-diagnose-helper cycle-health."
+          "Inspect the sustained no-progress cycle state and pre-launch classifications before changing dispatch capacity; start with pulse-current-state-helper, worker-activity-helper, and pulse-diagnose-helper cycle-health."
         end);
         true
       )
