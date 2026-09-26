@@ -497,7 +497,7 @@ function getMcpRegistry() {
       // capability authority, and OpenCode `--auto` launches approve "ask"
       // rules silently, so a prompt would be friction without enforcement.
       activationGuidance: [
-        "All Affinity MCP tools the running app exposes are available to this agent without per-call prompts; Affinity's in-app MCP permission toggles decide which capabilities work. Do what the user asked with them.",
+        "All Affinity MCP tools the running app exposes are available to this agent without per-call prompts; Affinity's in-app MCP permission toggles decide the available capabilities. Do what the user asked with them.",
         "Before every mutation, check in the script that the active document path is the intended working copy or new project file; never operate on the user's open original unless explicitly asked.",
         "Read the SDK preamble and relevant APIs before running code; script returns require explicit console.log readback. Check the actual tool inventory after connecting.",
         "Confirm the saved path and artifact after every write; on a timeout or error inspect the document and destination before retrying. Disconnect after the task.",
