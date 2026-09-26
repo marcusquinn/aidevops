@@ -53,7 +53,8 @@ Target: `https://the-internet.herokuapp.com`. 3 runs per tool, report median. Ne
 
 The existing Stagehand script is v3-only. Do not run it against the isolated v4
 project or report its historical measurements as v4. The v4 route has a verified
-no-model local-browser smoke test, not a billed AI performance comparison.
+local-browser smoke test and a narrow, billed public-page AI extraction probe;
+neither is a like-for-like run of the full benchmark matrix.
 
 ### Stagehand v4 public-page probe (2026-09-26; not a full benchmark)
 
@@ -69,22 +70,66 @@ unsuitable as a Stagehand inference-latency estimate.
 Two attempts to route this free model through Stagehand's client-side `generate`
 callback timed out at 90 s and 120 s, respectively. A standalone Node child
 process invoking the same OpenCode CLI also timed out at 60 s, while the direct
-CLI call succeeded. The callback path is **not verified** and the attempted
+CLI call succeeded. This **free-tier callback path** is not verified and the attempted
 calls have no terminal cost receipts. No inference cache/recovery result or
-Stagehand AI success rate can be inferred. An authenticated Playwriter lane
-was not exercised: no selected existing tab or profile-consent boundary was
-established. Keep Playwright as the deterministic default and Playwriter as
-explicit-only legacy until a bounded model transport and consent-safe comparison
-can be verified. Do not compare this probe to the v3 benchmark table.
+Stagehand AI success rate can be inferred from these failed attempts. An
+authenticated Playwriter lane was not exercised: no selected existing tab or
+profile-consent boundary was established. Keep Playwright as the deterministic
+default and Playwriter as explicit-only legacy. Do not compare this probe to
+the v3 benchmark table.
 
 A follow-up client-side `generate` probe through the installed OpenCode SDK
 reached the provider but returned HTTP 403 `FreeTierError`: the free tier is
 restricted to use within OpenCode. A separate direct SDK prompt without the
 Stagehand callback succeeded, but that does **not** authorize using the free
 tier as an embedded model provider. Do not work around this restriction or
-count the denied callback as an inference result. A further Stagehand AI test
-needs an approved provider transport with credentials supplied through secure
-storage and a per-run cost limit; it must not silently fall back to a paid model.
+count the denied callback as an inference result. The later paid NanoGPT probe
+below used the authorized provider instead; it did not bypass the free-tier rule.
+
+### Stagehand v4 NanoGPT public-page AI extraction (2026-09-27; partial comparison)
+
+With the operator's NanoGPT credential already configured in OpenCode (no key
+exported or logged), a local Stagehand v4.1.0 browser used a client-side
+`generate` callback through the OpenCode SDK. The explicit model was
+`nano-gpt/openai/gpt-4o-mini` (provider metadata: $0.15/million input tokens,
+$0.60/million output tokens). The callback capped requests at three and each
+serialized input at 200,000 characters; the bounded process had a 150 s limit.
+The earlier $2 test cap remained in force despite the larger account credit.
+This is a probe, not a persistent provider integration or a provider-enforced
+spend limit.
+
+All three **corrected** runs on `https://example.com` returned `Example Domain`
+from both the deterministic `h1` locator and Stagehand's structured AI
+`extract('Extract the heading of this page', ...)`. Each extraction needed two
+model calls. Timings exclude page navigation; usage/cost below is the OpenCode
+provider's reported sum for those two calls, not an independent account bill.
+
+| Corrected run | Locator after navigation | Stagehand extract after navigation | Model input/output tokens | Reported model cost |
+|---------------|--------------------------|-----------------------------------|---------------------------|---------------------|
+| 1 | 8 ms | 14,307 ms | 395 / 27 | $0.003954 |
+| 2 | 8 ms | 10,021 ms | 399 / 27 | $0.003954 |
+| 3 | 10 ms | 12,978 ms | 655 / 27 | $0.003974 |
+| **Median** | **8 ms** | **12,978 ms** | — | **$0.003954** |
+
+The three successful extractions total $0.011882 reported model cost. A
+separate NanoGPT transport smoke call cost $0.003822. Two earlier callback
+attempts failed before producing a Stagehand result: the first returned text
+instead of the SDK-required `json_schema`/`structuredContent`; the second
+returned fenced JSON and required fence normalization. One of those failures
+did not print a terminal cost receipt. A third diagnostic run succeeded at
+inference but hit an overly strict one-request guard before extraction
+completed ($0.001956 reported). Do not present the successful 3/3 as an
+unqualified success rate across all attempts, or report an exact aggregate
+provider bill from these partial receipts.
+
+This single stable public page tests heading extraction only. OpenCode's
+ambient prompt and caching affect measured model cost and latency; no v4
+act/observe, multi-step workflow, alternate model, or authenticated existing
+tab was compared. The `h1` locator remains much faster for known structure.
+Keep Playwright as the default, retain Stagehand as opt-in for adaptive tasks,
+and do not promote Playwriter beyond explicit legacy compatibility. A
+selected existing tab plus consent-safe profile isolation is still needed to
+evaluate the authenticated lane.
 
 ```bash
 cd ~/.aidevops/.agent-workspace/work/browser-bench/
