@@ -12,8 +12,8 @@
 #   5. install_hook accepts --force-install flag.
 #   6. Validator enumeration finds validate_* functions from pre-commit-hook.sh.
 #
-# These tests validate the preflight and deployed-runtime logic without running actual install
-# (no .git/hooks writes, no settings.json modifications).
+# Full-install tests avoid real installation. The scoped CLI cases install only
+# into disposable repositories with an isolated HOME, never the user's hooks.
 
 set -uo pipefail
 
@@ -289,6 +289,158 @@ HARNESS_EOF
 	return 0
 }
 
+_prepare_pre_commit_fixture() {
+	local fixture="$1"
+	mkdir -p "$fixture/home/.aidevops/agents/scripts" "$fixture/home/.aidevops/hooks" \
+		"$fixture/home/.claude" "$fixture/scripts" "$fixture/repo" || return 1
+	cp "$TEST_SCRIPTS_DIR/install-hooks-helper.sh" "$fixture/scripts/" || return 1
+	# Load the real constants with their complete sibling dependency graph.
+	printf 'source %q\n' "$TEST_SCRIPTS_DIR/shared-constants.sh" >"$fixture/scripts/shared-constants.sh"
+	printf '%s\n' 'user settings sentinel' >"$fixture/home/.claude/settings.json"
+	printf '%s\n' 'user hook sentinel' >"$fixture/home/.aidevops/hooks/existing"
+	cat >"$fixture/home/.aidevops/agents/scripts/pre-commit-hook.sh" <<'HOOK'
+#!/usr/bin/env bash
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/probe-dependency.sh"
+validate_probe() {
+	return "$PROBE_RESULT"
+}
+main() {
+	validate_probe || return 1
+	return "${RUNTIME_RESULT:-0}"
+}
+main "$@"
+HOOK
+	printf '%s\n' 'PROBE_RESULT=0' >"$fixture/home/.aidevops/agents/scripts/probe-dependency.sh"
+	chmod +x "$fixture/home/.aidevops/agents/scripts/pre-commit-hook.sh"
+	# A different adjacent checkout must not be mistaken for the runtime hook.
+	printf '%s\n' 'validate_wrong_checkout() { return 1; }' >"$fixture/scripts/pre-commit-hook.sh"
+	git -C "$fixture/repo" init -q || return 1
+	printf '%s\n' 'fixture' >"$fixture/repo/README.md"
+	git -C "$fixture/repo" add README.md || return 1
+	git -C "$fixture/repo" -c user.name=Fixture -c user.email=fixture@example.invalid \
+		-c commit.gpgSign=false commit -qm fixture || return 1
+	printf '%s\n' '#!/bin/sh' 'exit 0' >"$fixture/repo/.git/hooks/pre-push"
+	cp "$fixture/repo/.git/hooks/pre-push" "$fixture/pre-push-before"
+	return 0
+}
+
+test_pre_commit_only_case() {
+	local mode="$1"
+	local fixture
+	fixture=$(mktemp -d) || return 1
+	# Isolate Git configuration and every potential user-level installation target.
+	local HOME="$fixture/home" GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
+	export HOME GIT_CONFIG_NOSYSTEM GIT_CONFIG_GLOBAL
+	if ! _prepare_pre_commit_fixture "$fixture"; then
+		print_result "scoped CLI fixture: $mode" 1
+		rm -rf "$fixture"
+		return 0
+	fi
+	local cwd="$fixture/repo" hook="$fixture/repo/.git/hooks/pre-commit"
+	local runtime_dir="$HOME/.aidevops/agents/scripts"
+	local expected=0 reason="" args=(install-pre-commit)
+	case "$mode" in
+	linked)
+		git -C "$cwd" worktree add -qb fixture-linked "$fixture/linked" || return 1
+		cwd="$fixture/linked"
+		;;
+	existing | managed)
+		printf '%s\n' '#!/bin/sh' 'exit 7' >"$hook"
+		if [[ "$mode" == "managed" ]]; then
+			printf '%s\n' '# aidevops-pre-commit-hook' '# preserve appended custom checks' >>"$hook"
+		else
+			expected=1
+			reason="Existing pre-commit hook requires manual review"
+		fi
+		chmod +x "$hook"
+		cp "$hook" "$fixture/pre-commit-before"
+		;;
+	symlink)
+		ln -s "$fixture/nonexistent" "$hook"
+		expected=1
+		reason="symlinked pre-commit"
+		;;
+	hooks-path)
+		git -C "$cwd" config core.hooksPath "$fixture/custom-hooks"
+		expected=1
+		reason="core.hooksPath is configured"
+		;;
+	missing-runtime)
+		rm "$runtime_dir/pre-commit-hook.sh"
+		expected=1
+		reason="No executable repository or deployed pre-commit validator"
+		;;
+	bad-validator)
+		printf '%s\n' 'PROBE_RESULT=1' >"$runtime_dir/probe-dependency.sh"
+		expected=1
+		reason="Validator preflight failed"
+		;;
+	bad-runtime)
+		printf '%s\n' 'RUNTIME_RESULT=1' >>"$runtime_dir/probe-dependency.sh"
+		expected=1
+		reason="Pre-commit runtime check failed"
+		;;
+	local-runtime)
+		mkdir -p "$cwd/.agents/scripts"
+		cp "$runtime_dir/"*.sh "$cwd/.agents/scripts/"
+		printf '%s\n' 'PROBE_RESULT=1' >"$runtime_dir/probe-dependency.sh"
+		;;
+	outside)
+		cwd="$fixture"
+		expected=1
+		reason="requires a Git working tree"
+		;;
+	bare)
+		git init -q --bare "$fixture/bare" || return 1
+		cwd="$fixture/bare"
+		expected=1
+		reason="requires a Git working tree"
+		;;
+	force | unknown)
+		args+=("--$mode-install")
+		expected=1
+		reason="accepts no options"
+		;;
+	happy) ;;
+	*) return 1 ;;
+	esac
+	cp -R "$HOME" "$fixture/home-before"
+	local rc=0 output="" result=0
+	output=$(cd "$cwd" && bash "$fixture/scripts/install-hooks-helper.sh" "${args[@]}" 2>&1) || rc=$?
+	_check_pre_commit_only_result "$mode" "$fixture" "$cwd" "$expected" "$reason" "$output" "$rc" || result=$?
+	print_result "install-pre-commit: $mode; preserves pre-push and user settings" "$result" "$output"
+	rm -rf "$fixture"
+	return 0
+}
+
+_check_pre_commit_only_result() {
+	local mode="$1" fixture="$2" cwd="$3" expected="$4" reason="$5" output="$6" rc="$7"
+	local hook="$fixture/repo/.git/hooks/pre-commit" result=0
+	if [[ "$expected" -eq 0 ]]; then
+		[[ "$rc" -eq 0 && -x "$hook" ]] || result=1
+		if [[ "$mode" != "managed" && "$rc" -eq 0 && -x "$hook" ]]; then
+			# Exercise Git's installed entrypoint, then verify a repeat is a no-op.
+			git -C "$cwd" hook run pre-commit >/dev/null 2>&1 || result=1
+			cp "$hook" "$fixture/pre-commit-before"
+			(cd "$cwd" && bash "$fixture/scripts/install-hooks-helper.sh" install-pre-commit) >/dev/null 2>&1 || result=1
+		fi
+	else
+		[[ "$rc" -ne 0 && "$output" == *"$reason"* ]] || result=1
+		if [[ "$mode" == "symlink" ]]; then
+			[[ -L "$hook" && ! -e "$fixture/nonexistent" ]] || result=1
+		elif [[ "$mode" != "existing" ]]; then
+			[[ ! -e "$hook" ]] || result=1
+		fi
+	fi
+	if [[ -f "$fixture/pre-commit-before" ]]; then
+		cmp -s "$fixture/pre-commit-before" "$hook" || result=1
+	fi
+	cmp -s "$fixture/pre-push-before" "$fixture/repo/.git/hooks/pre-push" || result=1
+	diff -rq "$fixture/home-before" "$fixture/home" >/dev/null || result=1
+	return "$result"
+}
+
 # --- Run all tests ---
 main() {
 	echo "=== install-hooks-helper.sh validator preflight tests (t2226) ==="
@@ -304,6 +456,10 @@ main() {
 	test_help_text
 	test_runtime_dependency_preflight
 	test_installed_hook_probe
+	local mode
+	for mode in happy linked managed existing symlink hooks-path missing-runtime bad-validator bad-runtime local-runtime outside bare force unknown; do
+		test_pre_commit_only_case "$mode" || return 1
+	done
 
 	echo ""
 	echo "=== Results: $TESTS_RUN tests, $TESTS_FAILED failures ==="
