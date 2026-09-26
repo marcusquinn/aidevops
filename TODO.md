@@ -535,7 +535,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 ## Backlog
 
-- [ ] t18480 fix(setup): stop duplicate aidevops plugin registration in OpenCode V2 #bug #framework #setup #interactive tier:standard ref:GH#32422 logged:2026-09-26 -> [todo/tasks/t18480-brief.md]
+- [x] t18480 fix(setup): stop duplicate aidevops plugin registration in OpenCode V2 #bug #framework #setup #interactive tier:standard ref:GH#32422 logged:2026-09-26 -> [todo/tasks/t18480-brief.md] pr:#32424 completed:2026-09-26
 - [x] t18475 Fail closed on public routine comments before Pulse worker launch #bug #security #prompt-injection #interactive #auto-dispatch #priority:high tier:thinking ref:GH#32337 logged:2026-09-24 -> [todo/tasks/t18475-brief.md] pr:#32348 completed:2026-09-25
 - [x] t18476 Initialize CI privacy context during planning publication reconciliation #bug #framework #ci #auto-dispatch #interactive #priority:high tier:standard ref:GH#32342 pr:#32343 logged:2026-09-24 -> [todo/tasks/t18476-brief.md] completed:2026-09-25
 
@@ -1414,9 +1414,9 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18474 Add portrait talking-head reel editing recipe ref:GH#32269 pr:#32270 completed:2026-09-23
 
-- [ ] t18477 Add opt-in local Mobile MCP integration ref:GH#32412
+- [x] t18477 Add opt-in local Mobile MCP integration ref:GH#32412 pr:#32413 completed:2026-09-26
 
-- [ ] t18479 Add opt-in Android adb and Xcode simctl readiness to Mobile MCP setup ref:GH#32420
+- [x] t18479 Add opt-in Android adb and Xcode simctl readiness to Mobile MCP setup ref:GH#32420 pr:#32421 completed:2026-09-26
 
 ## In Progress
 
