@@ -2,7 +2,7 @@
 
 # Capability Registry
 
-Catalogued capabilities: **24**
+Catalogued capabilities: **25**
 
 | Capability | Owner | Runtimes | Mandatory readiness | Fallback |
 |---|---|---|---|---|
@@ -10,6 +10,7 @@ Catalogued capabilities: **24**
 | `video-production` | Video | opencode, claude-code | deployed, runtime_compatible, tool_visible | `manual-creative-brief` |
 | `audio-production` | Audio | opencode, claude-code | deployed, runtime_compatible, tool_visible | `manual-creative-brief` |
 | `blender-operations` | 3D Modelling | opencode | deployed, installed, configured, enabled, authorized, reachable, runtime_compatible, tool_visible, usable | `gated-creative-app-guidance` |
+| `affinity-operations` | Content | opencode | deployed, installed, configured, enabled, authorized, reachable, runtime_compatible, tool_visible, usable | `gated-creative-app-guidance` |
 | `freecad-operations` | 3D Modelling | opencode | deployed, installed, configured, enabled, authorized, reachable, runtime_compatible, tool_visible, usable | `gated-creative-app-guidance` |
 | `ableton-operations` | Audio | opencode | deployed, installed, configured, enabled, authorized, reachable, runtime_compatible, tool_visible, usable | `gated-creative-app-guidance` |
 | `resolve-operations` | Video | opencode | deployed, installed, configured, enabled, authorized, reachable, runtime_compatible, tool_visible, usable | `gated-creative-app-guidance` |

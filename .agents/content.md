@@ -12,6 +12,7 @@ subagents:
   - production-audio
   - production-characters
   - blender
+  - affinity
   - freecad
   - ableton
   - davinci-resolve

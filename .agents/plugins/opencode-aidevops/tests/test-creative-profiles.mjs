@@ -9,7 +9,7 @@ import { registerOnDemandMcpAgents } from "../config-agent-profiles.mjs";
 import { createSubagentEffortHooks } from "../subagent-effort.mjs";
 
 const agentsDir = fileURLToPath(new URL("../../..", import.meta.url));
-const creativeNames = ["blender", "freecad", "ableton", "davinci-resolve"];
+const creativeNames = ["blender", ...(process.platform === "darwin" ? ["affinity"] : []), "freecad", "ableton", "davinci-resolve"];
 
 function fixture({ variant = "high", pinned = false } = {}) {
   const state = { tiers: new Map(), pinned: new Set() };
@@ -39,7 +39,7 @@ test("creative MCPs stay disconnected and have no unrelated tools or recursive t
     assert.equal(config.tools[entry.toolPattern], false);
     assert.equal(config.agent[name].tools["*"], false);
     assert.equal(config.agent[name].permission["*"], "deny");
-    assert.equal(config.agent[name].tools[entry.toolPattern], true);
+    assert.equal(config.agent[name].tools[entry.toolPattern], name === "affinity" ? false : true);
     assert.doesNotMatch(config.agent[name].prompt, /# Build\+|# Content - Multi-Media/);
   }
   assert.equal(registerOnDemandMcpAgents(config, agentsDir, { tiers: {} }, state), 0);

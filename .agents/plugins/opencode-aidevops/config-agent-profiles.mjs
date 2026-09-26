@@ -110,12 +110,13 @@ function onDemandMcpPrompt(mcp, agentsDir) {
 
 function createOnDemandMcpProfile(mcp, agentsDir) {
   const { parsed, prompt } = onDemandMcpPrompt(mcp, agentsDir);
+  const exactTools = Object.fromEntries((mcp.allowedTools || []).map((name) => [name, true]));
   return {
     description: parsed?.profile.description || mcp.description,
     mode: "subagent",
     prompt: [
       `Before the first ${mcp.name} operation, call ${MCP_ACTIVATION_TOOL} with action \"connect\" and name \"${mcp.name}\".`,
-      `After it succeeds, continue on the next step with ${mcp.toolPattern} tools.`,
+      `After it succeeds, continue on the next step with ${mcp.allowedTools?.join(", ") || mcp.toolPattern} tools.`,
       `When the requested ${mcp.name} work is complete, call ${MCP_ACTIVATION_TOOL} with action \"disconnect\".`,
       ...(mcp.activationGuidance || []),
       "",
@@ -124,12 +125,16 @@ function createOnDemandMcpProfile(mcp, agentsDir) {
     tools: {
       ...(parsed?.profile.tools || {}),
       [MCP_ACTIVATION_TOOL]: true,
-      [mcp.toolPattern]: true,
+      [mcp.toolPattern]: mcp.allowedTools ? false : true,
+      ...exactTools,
     },
     permission: {
       ...parsed?.profile.permission,
       [MCP_ACTIVATION_TOOL]: "allow",
-      [mcp.toolPattern]: "allow",
+      [mcp.toolPattern]: mcp.allowedTools ? "deny" : "allow",
+      ...Object.fromEntries(Object.keys(exactTools).map((name) => [
+        name, mcp.approvalRequiredTools?.includes(name) ? "ask" : "allow",
+      ])),
     },
   };
 }
@@ -144,12 +149,17 @@ function ensureOnDemandMcpAgent(config, mcp, agentsDir) {
   if (!(MCP_ACTIVATION_TOOL in config.agent[mcp.agentName].tools)) {
     config.agent[mcp.agentName].tools[MCP_ACTIVATION_TOOL] = true;
   }
-  config.agent[mcp.agentName].tools[mcp.toolPattern] = true;
+  config.agent[mcp.agentName].tools[mcp.toolPattern] = mcp.allowedTools ? false : true;
   if (!config.agent[mcp.agentName].permission) config.agent[mcp.agentName].permission = {};
   if (!(MCP_ACTIVATION_TOOL in config.agent[mcp.agentName].permission)) {
     config.agent[mcp.agentName].permission[MCP_ACTIVATION_TOOL] = "allow";
   }
-  config.agent[mcp.agentName].permission[mcp.toolPattern] = "allow";
+  config.agent[mcp.agentName].permission[mcp.toolPattern] = mcp.allowedTools ? "deny" : "allow";
+  for (const name of mcp.allowedTools || []) {
+    config.agent[mcp.agentName].tools[name] = true;
+    config.agent[mcp.agentName].permission[name] = mcp.approvalRequiredTools?.includes(name)
+      ? "ask" : "allow";
+  }
   return false;
 }
 

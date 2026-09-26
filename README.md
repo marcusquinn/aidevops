@@ -351,7 +351,7 @@ See [reports](.agents/reports/general.md) and the versioned
 
 ### Design, browser, mobile, and media
 
-- **Design:** Google `DESIGN.md` conventions, brand identity, visual concepts, distinctive UI, component guidance, previews, and accessibility verification.
+- **Design:** Google `DESIGN.md` conventions, brand identity, visual concepts, distinctive UI, component guidance, previews, and accessibility verification. On macOS, the [Affinity Studio specialist](.agents/tools/design/affinity.md) offers opt-in, copy-first native artwork creation/editing and verified exports through its gated MCP connector.
 - **Browser:** Playwright-first automation with bounded Luna-xhigh browser subagents in OpenCode (Sol-medium/parent fallback), reusable browser-operation learning, authenticated-profile boundaries, crawling, screenshots, and performance diagnostics.
 - **Mobile:** Expo, Swift/Xcode, App Store Connect, simulator workflows, device automation, and simulator-backed web previews.
 - **3D/CAD:** Blender and FreeCAD specialists, OpenSCAD script-based CAD guidance, dimensional truth, editable source models, configurable products, and rendered verification.
