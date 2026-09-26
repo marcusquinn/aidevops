@@ -661,6 +661,7 @@ secrets into the AI session.
 - [Git Workflow](.agents/workflows/git-workflow.md)
 - [Security](.agents/aidevops/security.md)
 - [Browser Automation](.agents/tools/browser/browser-automation.md)
+- [Stagehand v4 (opt-in local browser)](.agents/tools/browser/stagehand.md)
 - [Creative Production](.agents/workflows/creative-production.md)
 - [Reports](.agents/reports/general.md)
 - [Changelog](CHANGELOG.md)
