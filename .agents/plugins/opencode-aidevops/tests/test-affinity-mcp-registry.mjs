@@ -6,7 +6,6 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { applyAgentMcpTools } from "../agent-mcp-tools.mjs";
 import { registerOnDemandMcpAgents } from "../config-agent-profiles.mjs";
-import { createMcpActivationTool } from "../mcp-activation-tool.mjs";
 import { getOnDemandMcpAgents, registerMcpServers } from "../mcp-registry.mjs";
 
 const agentsDir = fileURLToPath(new URL("../../..", import.meta.url));
@@ -75,23 +74,4 @@ test("only Affinity agent receives read tools and per-call-approved script execu
   assert.equal(profile.tools["affinity-studio_*"], false);
   assert.equal(profile.permission["affinity-studio_*"], "deny");
   assert.equal(profile.permission[executeScript], "ask");
-});
-
-test("Affinity is allowlisted for explicit connect and disconnect", { skip: process.platform !== "darwin" }, async () => {
-  const calls = [];
-  const schema = { describe() { return this; } };
-  const activation = createMcpActivationTool((definition) => definition, {
-    enum() { return schema; },
-  }, {
-    allowedNames: getOnDemandMcpAgents().map((entry) => entry.name),
-    activationAgents: Object.fromEntries(getOnDemandMcpAgents().map(({ name, agentName }) => [name, agentName])),
-    client: {
-      async connect(request) { calls.push(["connect", request.path.name]); return {}; },
-      async disconnect(request) { calls.push(["disconnect", request.path.name]); return {}; },
-      async status() { return { data: { "affinity-studio": { status: "connected" } } }; },
-    },
-  });
-  assert.match(await activation.execute({ action: "connect", name: "affinity-studio" }, { agent: "affinity" }), /Connected MCP/);
-  assert.match(await activation.execute({ action: "disconnect", name: "affinity-studio" }, { agent: "affinity" }), /Disconnected MCP/);
-  assert.deepEqual(calls, [["connect", "affinity-studio"], ["disconnect", "affinity-studio"]]);
 });

@@ -39,7 +39,7 @@ const tool = (definition) => ({
 test("plain-text Playwriter mention in another agent never changes MCP lifecycle", async () => {
   const calls = [];
   const activation = createMcpActivationTool(tool, z, {
-    allowedNames: ["playwriter"],
+    allowedNames: ["playwriter", ...(process.platform === "darwin" ? ["affinity-studio"] : [])],
     activationAgents,
     client: {
       async connect() { calls.push("connect"); },
@@ -68,6 +68,17 @@ test("plain-text Playwriter mention in another agent never changes MCP lifecycle
     /Disconnected MCP playwriter/,
   );
   assert.deepEqual(calls, ["connect", "disconnect"]);
+  if (process.platform === "darwin") {
+    assert.match(
+      await activation.execute({ action: "connect", name: "affinity-studio" }, { agent: "affinity" }),
+      /Connected MCP affinity-studio/,
+    );
+    assert.match(
+      await activation.execute({ action: "disconnect", name: "affinity-studio" }, { agent: "affinity" }),
+      /Disconnected MCP affinity-studio/,
+    );
+    assert.deepEqual(calls, ["connect", "disconnect", "connect", "disconnect"]);
+  }
 });
 
 test("registers only the explicit MCP activation profiles", () => {
