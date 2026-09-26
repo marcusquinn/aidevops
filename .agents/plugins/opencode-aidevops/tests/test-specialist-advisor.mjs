@@ -74,6 +74,29 @@ test("registration supplies canonical tool-free adviser and defaults without rep
   assert.equal(registerSpecialistAdvisor({ agent: {} }, "/nonexistent", routing, state), 0);
 });
 
+test("local interactive default can use medium while the thinking tier stays xhigh", () => {
+  const customized = mergeModelRouting(routing, {
+    interactive_default: { model: "anthropic/claude-opus-5-5", variant: "medium" },
+    tiers: { thinking: {
+      models: ["anthropic/claude-opus-5-5", "openai/gpt-6-sol"],
+      reasoning: { "anthropic/claude-opus-5-5": "xhigh" },
+    } },
+  });
+  const config = { agent: { "Build+": { mode: "primary" } } };
+  applyDailyDriverDefaults(config, customized);
+  assert.equal(config.model, "anthropic/claude-opus-5-5");
+  assert.equal(config.agent["Build+"].variant, "medium");
+  assert.deepEqual(routingProfile(customized, "thinking"), {
+    tier: "thinking", model: "anthropic/claude-opus-5-5", variant: "xhigh",
+  });
+
+  const pinned = { model: "openai/gpt-6-sol", agent: { "Build+": { mode: "primary", variant: "high" } } };
+  applyDailyDriverDefaults(pinned, customized);
+  assert.deepEqual(pinned, { model: "openai/gpt-6-sol", agent: { "Build+": { mode: "primary", variant: "high" } } });
+  assert.equal(mergeModelRouting(customized, { interactive_default: null }).interactiveDefault, null);
+  assert.equal(mergeModelRouting(customized, { interactive_default: { model: "invalid", variant: "medium" } }).interactiveDefault, null);
+});
+
 test("specialist request requires evidence and an explicit escalation reason", () => {
   assert.doesNotThrow(() => validateSpecialistRequest(`[effort:thinking] ${envelope}`));
   assert.throws(() => validateSpecialistRequest("audit everything"), /JSON evidence envelope/);

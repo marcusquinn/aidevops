@@ -60,4 +60,23 @@ describe("Anthropic CCH billing header", () => {
     assert.match(parsed.messages[0].content[0].text, /aidevops Quality Rules/);
     assert.equal(parsed.messages[0].content[1].text, "Say hi.");
   });
+
+  test("drops unsupported adaptive metadata while preserving effort and tool calls", () => {
+    const transformed = transformRequestBody(JSON.stringify({
+      model: "claude-opus-5-5",
+      messages: [{ role: "user", content: [{ type: "text", text: "Read README.md." }] }],
+      thinking: { type: "adaptive", block_binding: "upstream-metadata" },
+      output_config: { effort: "medium" },
+      tools: [{ name: "read", input_schema: { type: "object", properties: {} } }],
+      max_tokens: 64,
+      stream: true,
+    }));
+    const parsed = JSON.parse(transformed);
+
+    assert.deepEqual(parsed.thinking, { type: "adaptive" });
+    assert.deepEqual(parsed.output_config, { effort: "medium" });
+    assert.equal(parsed.tools[0].name, "Read");
+    assert.ok(parsed.tools[0].input_schema.properties.agent__intent);
+    assert.ok(!transformed.includes("block_binding"));
+  });
 });
