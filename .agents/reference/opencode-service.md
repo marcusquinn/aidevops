@@ -57,6 +57,28 @@ the service is healthy. A green status alone does not prove correct API routing 
 that the project is open. See the cross-client acceptance procedure in
 [OpenCode maintenance](opencode-maintenance.md).
 
+### Opt-in connection requests for capable Desktop builds
+
+```bash
+aidevops opencode-desktop --connect-managed --dir ~/Git/repo --dry-run
+aidevops opencode-desktop --connect-managed --dir ~/Git/repo
+```
+
+This path requires a Desktop build advertising `connect-project: 1` in its public
+`Contents/Resources/capabilities.json`. Desktop 1.18.32 does not advertise that
+capability and is rejected with manual-selection guidance, including in dry-run.
+The associated OpenCode source change adds an `opencode://connect` request carrying
+only the verified loopback service URL and explicit project directory. It is not a
+claim that released Desktop versions already implement the interface.
+
+Desktop displays the server and folder for confirmation before connecting. Confirming
+opens a draft on that server; cancelling changes nothing. Existing default-server
+choices, saved connections, credentials and histories are preserved. No private
+Desktop preferences are read or edited. The launcher does not silently enable a
+disabled service or install one, and dry-run does not start it. Regular setup/update
+and Desktop launches remain unchanged unless this option is supplied. This is guided
+onboarding, not unattended default-server replacement or proof of live continuity.
+
 ## Lifecycle, updates and rollback
 
 ```bash
