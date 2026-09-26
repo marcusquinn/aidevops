@@ -183,10 +183,34 @@ check_return_statements() {
 	return 0
 }
 
+_report_positional_parameters() {
+	local tmp_file="$1"
+	local violations=0
+	if [[ -s "$tmp_file" ]]; then
+		violations=$(wc -l <"$tmp_file")
+		violations=${violations//[^0-9]/}
+		violations=${violations:-0}
+
+		if [[ $violations -gt 0 ]]; then
+			print_warning "Found $violations positional parameter violations:"
+			head -10 "$tmp_file"
+			if [[ $violations -gt 10 ]]; then
+				echo "... and $((violations - 10)) more"
+			fi
+		fi
+	fi
+
+	if [[ $violations -le $MAX_POSITIONAL_ISSUES ]]; then
+		print_success "Positional parameters: $violations violations (within threshold)"
+	else
+		print_error "Positional parameters: $violations violations (exceeds threshold of $MAX_POSITIONAL_ISSUES)"
+		return 1
+	fi
+	return 0
+}
+
 check_positional_parameters() {
 	echo -e "${BLUE}Checking Positional Parameters (S7679)...${NC}"
-
-	local violations=0
 
 	# Find direct positional-parameter use inside functions, excluding generated
 	# heredocs, embedded awk/sed, comments, examples, and local assignments.
@@ -272,30 +296,10 @@ check_positional_parameters() {
 		fi
 	done
 
-	if [[ -s "$tmp_file" ]]; then
-		violations=$(wc -l <"$tmp_file")
-		violations=${violations//[^0-9]/}
-		violations=${violations:-0}
-
-		if [[ $violations -gt 0 ]]; then
-			print_warning "Found $violations positional parameter violations:"
-			head -10 "$tmp_file"
-			if [[ $violations -gt 10 ]]; then
-				echo "... and $((violations - 10)) more"
-			fi
-		fi
-	fi
-
+	local rc=0
+	_report_positional_parameters "$tmp_file" || rc=$?
 	rm -f "$tmp_file"
-
-	if [[ $violations -le $MAX_POSITIONAL_ISSUES ]]; then
-		print_success "Positional parameters: $violations violations (within threshold)"
-	else
-		print_error "Positional parameters: $violations violations (exceeds threshold of $MAX_POSITIONAL_ISSUES)"
-		return 1
-	fi
-
-	return 0
+	return "$rc"
 }
 
 check_string_literals() {
