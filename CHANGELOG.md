@@ -10,13 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.36.0] - 2026-09-26
+
 ### Added
 
-- allow an opt-in interactive model and effort default independent of thinking-tier routing
-
-### Fixed
-
-- strip unsupported adaptive-thinking metadata from Anthropic OAuth requests
+- Add opt-in local Mobile MCP integration
 
 ## [3.35.0] - 2026-09-26
 
