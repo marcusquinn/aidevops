@@ -55,6 +55,28 @@ The existing Stagehand script is v3-only. Do not run it against the isolated v4
 project or report its historical measurements as v4. The v4 route has a verified
 no-model local-browser smoke test, not a billed AI performance comparison.
 
+### Stagehand v4 public-page probe (2026-09-26; not a full benchmark)
+
+On the public `https://example.com` page, one isolated Stagehand v4.1.0 browser
+run returned `Example Domain` from `page.locator('h1').textContent()` in 9 ms
+**after navigation**. A separate direct OpenCode CLI inference over a short
+excerpt of that page's accessibility snapshot returned `{"heading":"Example Domain"}`. Its bounded
+process ran for 19.5 s and reported $0 in provider cost (27,755 total tokens,
+including 27,648 input tokens). These are single observations, not medians;
+the CLI's large ambient prompt makes its duration
+unsuitable as a Stagehand inference-latency estimate.
+
+Two attempts to route this free model through Stagehand's client-side `generate`
+callback timed out at 90 s and 120 s, respectively. A standalone Node child
+process invoking the same OpenCode CLI also timed out at 60 s, while the direct
+CLI call succeeded. The callback path is **not verified** and the attempted
+calls have no terminal cost receipts. No inference cache/recovery result or
+Stagehand AI success rate can be inferred. An authenticated Playwriter lane
+was not exercised: no selected existing tab or profile-consent boundary was
+established. Keep Playwright as the deterministic default and Playwriter as
+explicit-only legacy until a bounded model transport and consent-safe comparison
+can be verified. Do not compare this probe to the v3 benchmark table.
+
 ```bash
 cd ~/.aidevops/.agent-workspace/work/browser-bench/
 node bench-playwright.mjs | tee results-playwright.json
