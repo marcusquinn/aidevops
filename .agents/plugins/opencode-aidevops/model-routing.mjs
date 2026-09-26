@@ -6,6 +6,7 @@
 // capability failure moves down escalationOrder.
 
 import { existsSync, readFileSync } from "fs";
+import { normalizeInteractiveDefault, normalizeSpecialistAdvisor } from "./model-routing-variant.mjs";
 
 export const DEFAULT_ESCALATION_ORDER = ["simple", "standard", "thinking"];
 
@@ -43,20 +44,6 @@ export function normalizeModelRouting(value = {}) {
     specialistAdvisor: normalizeSpecialistAdvisor(value.specialist_advisor),
     interactiveDefault: normalizeInteractiveDefault(value.interactive_default),
   };
-}
-
-function normalizeModelVariant(value, allowedVariants) {
-  if (typeof value?.model !== "string" || !value.model.includes("/")) return null;
-  if (!allowedVariants.includes(value.variant)) return null;
-  return { model: value.model, variant: value.variant };
-}
-
-function normalizeInteractiveDefault(value) {
-  return normalizeModelVariant(value, ["low", "medium", "high", "xhigh", "max"]);
-}
-
-function normalizeSpecialistAdvisor(value) {
-  return normalizeModelVariant(value, ["low", "medium", "high"]);
 }
 
 export function mergeModelRouting(base, override = {}) {
