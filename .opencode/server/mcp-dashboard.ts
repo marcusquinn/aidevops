@@ -266,49 +266,49 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { 
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: #0d1117; color: #c9d1d9; padding: 20px;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #000000; color: #ffffff; padding: 20px;
     }
-    h1 { margin-bottom: 20px; color: #58a6ff; }
+    h1 { margin-bottom: 20px; color: #66d9f2; }
     .auth-bar {
-      background: #161b22; border: 1px solid #30363d; border-radius: 8px;
+      background: #0b0d0e; border: 1px solid rgba(102,217,242,0.18); border-radius: 8px;
       padding: 12px 16px; margin-bottom: 16px; display: flex; align-items: center; gap: 12px;
     }
     .auth-bar input {
-      flex: 1; padding: 8px 12px; border-radius: 6px; border: 1px solid #30363d;
-      background: #0d1117; color: #c9d1d9; font-size: 14px;
+      flex: 1; padding: 8px 12px; border-radius: 6px; border: 1px solid rgba(102,217,242,0.18);
+      background: #000000; color: #ffffff; font-size: 14px;
     }
     .auth-bar button {
       padding: 8px 16px; border-radius: 6px; border: none;
-      background: #238636; color: #fff; cursor: pointer; font-size: 14px;
+      background: #66d9f2; color: #001014; cursor: pointer; font-size: 14px;
     }
-    .auth-status { font-size: 12px; color: #8b949e; }
-    .auth-status.authenticated { color: #3fb950; }
+    .auth-status { font-size: 12px; color: rgba(255,255,255,0.66); }
+    .auth-status.authenticated { color: #56d364; }
     .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
     .card {
-      background: #161b22; border: 1px solid #30363d; border-radius: 8px;
+      background: #0b0d0e; border: 1px solid rgba(102,217,242,0.18); border-radius: 8px;
       padding: 16px; transition: border-color 0.2s;
     }
-    .card:hover { border-color: #58a6ff; }
+    .card:hover { border-color: #66d9f2; }
     .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
     .card-title { font-size: 18px; font-weight: 600; }
     .status { 
       padding: 4px 8px; border-radius: 12px; font-size: 12px; font-weight: 500;
     }
-    .status.running { background: #238636; color: #fff; }
+    .status.running { background: #56d364; color: #001014; }
     .status.stopped { background: #6e7681; color: #fff; }
     .status.error { background: #da3633; color: #fff; }
     .status.unknown { background: #6e7681; color: #fff; }
-    .card-body { font-size: 14px; color: #8b949e; }
-    .card-body code { background: #0d1117; padding: 2px 6px; border-radius: 4px; font-size: 12px; }
+    .card-body { font-size: 14px; color: rgba(255,255,255,0.66); }
+    .card-body code { background: #000000; padding: 2px 6px; border-radius: 4px; font-size: 12px; }
     .actions { margin-top: 12px; display: flex; gap: 8px; }
     button {
-      padding: 6px 12px; border-radius: 6px; border: 1px solid #30363d;
-      background: #21262d; color: #c9d1d9; cursor: pointer; font-size: 12px;
+      padding: 6px 12px; border-radius: 6px; border: 1px solid rgba(102,217,242,0.18);
+      background: #102327; color: #ffffff; cursor: pointer; font-size: 12px;
     }
-    button:hover { background: #30363d; }
-    button.primary { background: #238636; border-color: #238636; }
-    button.primary:hover { background: #2ea043; }
+    button:hover { background: rgba(102,217,242,0.18); }
+    button.primary { background: #66d9f2; border-color: #66d9f2; color: #001014; }
+    button.primary:hover { background: #8ce8ff; }
     button.danger { background: #da3633; border-color: #da3633; }
     button.danger:hover { background: #f85149; }
     button:disabled { opacity: 0.5; cursor: not-allowed; }

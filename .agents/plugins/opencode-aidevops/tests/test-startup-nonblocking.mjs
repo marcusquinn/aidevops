@@ -81,9 +81,30 @@ test("mcp-registry.mjs resolves binaries without spawning which", () => {
   );
   assert.doesNotMatch(
     src,
-    /execSync|which /,
+    SPAWNS_WHICH,
     "MCP registration must not spawn `which` during the config hook.",
   );
+});
+
+// Match process spawning, not English prose: agent guidance strings in
+// mcp-registry.mjs may legitimately contain the word "which" (GH#32431).
+const SPAWNS_WHICH = /\bexecSync\b|\b(?:exec|execFile|spawn)(?:Sync)?\(\s*["'`]which\b|["'`]which\s+[\w$-]+["'`]/;
+
+test("startup which-spawn scan flags spawns but ignores prose", () => {
+  for (const spawn of [
+    'execSync("which opencode")',
+    "execFileSync('which', ['node'])",
+    'spawnSync("which", [name])',
+    "exec(`which ${name}`)",
+  ]) {
+    assert.match(spawn, SPAWNS_WHICH, spawn);
+  }
+  for (const prose of [
+    '"Affinity toggles decide which capabilities work."',
+    "// pick the server which responds first",
+  ]) {
+    assert.doesNotMatch(prose, SPAWNS_WHICH, prose);
+  }
 });
 
 test("observability.mjs skips heavy cost backfill when no rows need migration", () => {
