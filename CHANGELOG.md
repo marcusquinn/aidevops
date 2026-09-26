@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.36.2] - 2026-09-27
+
+### Changed
+
+- Maintenance: mark t18480 complete (pr:#32424 completed:2026-09-26) (#32423)
+
+### Fixed
+
+- align GUI brand palette (#32433)
+
 ## [3.36.1] - 2026-09-26
 
 ### Fixed
