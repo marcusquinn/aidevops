@@ -240,8 +240,7 @@ _review_feedback_ready_reviewer_evidence() {
 			or (.user.login | type) != $string_type or (.user.login | length) == 0
 			or (.user.type | type) != $string_type
 			or (.author_association | type) != $string_type
-			or (.body | type) != $string_type
-			or (.commit_id | type) != $string_type)
+			or (.body | type) != $string_type)
 		then error("malformed state-changing review evidence")
 		else . end
 		| group_by(.user.login)
@@ -251,7 +250,8 @@ _review_feedback_ready_reviewer_evidence() {
 			and .user.type == "User"
 			and (.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR")
 			and ((.body | gsub("\\s"; "")) | length) > 0))
-		| if any(.[]; (.commit_id | test("^[0-9a-fA-F]{40}$")) == false)
+		| if any(.[]; (.commit_id | type) != $string_type
+			or (.commit_id | test("^[0-9a-fA-F]{40}$")) == false)
 		then error("trusted change request has invalid head identity")
 		else {reviewers: (map(.user.login) | unique), reviewed_heads: (map(.commit_id) | unique)} end
 	' 2>/dev/null

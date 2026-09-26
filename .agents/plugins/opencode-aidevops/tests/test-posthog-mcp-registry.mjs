@@ -69,7 +69,7 @@ test("PostHog is allowlisted for explicit connect and disconnect", async () => {
     },
   });
 
-  assert.match(await activation.execute({ action: "connect", name: "posthog" }), /Connected MCP/);
-  assert.match(await activation.execute({ action: "disconnect", name: "posthog" }), /Disconnected MCP/);
+  assert.match(await activation.execute({ action: "connect", name: "posthog" }, { agent: "posthog" }), /Connected MCP/);
+  assert.match(await activation.execute({ action: "disconnect", name: "posthog" }, { agent: "posthog" }), /Disconnected MCP/);
   assert.deepEqual(calls, [["connect", "posthog"], ["disconnect", "posthog"]]);
 });

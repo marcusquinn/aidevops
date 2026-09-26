@@ -24,13 +24,51 @@ import {
   createMcpActivationTool,
   enforceManagedMcpArtifactPath,
 } from "../mcp-activation-tool.mjs";
-import { createMcpSessionRuntime, registerMcpServers } from "../mcp-registry.mjs";
+import { createMcpSessionRuntime, getOnDemandMcpAgents, registerMcpServers } from "../mcp-registry.mjs";
 
 const TEST_DIR = fileURLToPath(new URL(".", import.meta.url));
 const AGENTS_DIR = join(TEST_DIR, "../../..");
 const schemaNode = { describe() { return this; } };
 const z = { enum() { return schemaNode; } };
-const tool = (definition) => definition;
+const activationAgents = Object.fromEntries(getOnDemandMcpAgents().map(({ name, agentName }) => [name, agentName]));
+const tool = (definition) => ({
+  ...definition,
+  execute: (args, context = { agent: activationAgents[args.name] }) => definition.execute(args, context),
+});
+
+test("plain-text Playwriter mention in another agent never changes MCP lifecycle", async () => {
+  const calls = [];
+  const activation = createMcpActivationTool(tool, z, {
+    allowedNames: ["playwriter"],
+    activationAgents,
+    client: {
+      async connect() { calls.push("connect"); },
+      async disconnect() { calls.push("disconnect"); },
+    },
+  });
+  assert.match(
+    await activation.execute({ action: "connect", name: "playwriter" }, { agent: "SEO" }),
+    /no lifecycle change.*Select @playwriter from OpenCode autocomplete.*pasting the text/,
+  );
+  assert.match(
+    await activation.execute({ action: "disconnect", name: "playwriter" }, { agent: "SEO" }),
+    /no lifecycle change/,
+  );
+  assert.match(
+    await activation.execute({ action: "connect", name: "playwriter" }, {}),
+    /no lifecycle change/,
+  );
+  assert.deepEqual(calls, []);
+  assert.match(
+    await activation.execute({ action: "connect", name: "playwriter" }, { agent: "playwriter" }),
+    /Connected MCP playwriter for the playwriter agent/,
+  );
+  assert.match(
+    await activation.execute({ action: "disconnect", name: "playwriter" }, { agent: "playwriter" }),
+    /Disconnected MCP playwriter/,
+  );
+  assert.deepEqual(calls, ["connect", "disconnect"]);
+});
 
 test("registers only the explicit MCP activation profiles", () => {
   const config = { mcp: {}, tools: {} };
@@ -521,7 +559,7 @@ printf 'named screenshot' >"$output_dir/review-home-desktop.png"
 
   assert.match(
     await activation.execute({ action: "connect", name: "playwright" }),
-    /Connected MCP playwright.*does not grant its tools.*dedicated playwright agent/,
+    /Connected MCP playwright for the playwright agent.*tools remain scoped/,
   );
   const managedDir = runtime.workspaces.playwright.directory;
   assert.deepEqual(readdirSync(canonical), []);

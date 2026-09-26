@@ -44,13 +44,14 @@ test("Blender is allowlisted for explicit connect and disconnect", async () => {
     enum() { return schema; },
   }, {
     allowedNames: getOnDemandMcpAgents().map((entry) => entry.name),
+    activationAgents: Object.fromEntries(getOnDemandMcpAgents().map(({ name, agentName }) => [name, agentName])),
     client: {
       async connect(request) { calls.push(["connect", request.path.name]); return {}; },
       async disconnect(request) { calls.push(["disconnect", request.path.name]); return {}; },
       async status() { return { data: { "blender-lab": { status: "connected" } } }; },
     },
   });
-  assert.match(await activation.execute({ action: "connect", name: "blender-lab" }), /Connected MCP/);
-  assert.match(await activation.execute({ action: "disconnect", name: "blender-lab" }), /Disconnected MCP/);
+  assert.match(await activation.execute({ action: "connect", name: "blender-lab" }, { agent: "blender" }), /Connected MCP/);
+  assert.match(await activation.execute({ action: "disconnect", name: "blender-lab" }, { agent: "blender" }), /Disconnected MCP/);
   assert.deepEqual(calls, [["connect", "blender-lab"], ["disconnect", "blender-lab"]]);
 });

@@ -713,6 +713,30 @@ test_dispatch_routes_when_required_checks_fail() {
 	return 0
 }
 
+test_dispatch_routes_body_only_with_unrelated_missing_commit_id() {
+	reset_mock_state
+	prepare_ready_review_state
+	# REST reviews can include an older, unrelated approval with no commit_id.
+	# Only the latest trusted change request needs a head for ready-PR preservation.
+	cat >"${TEST_ROOT}/reviews.json" <<EOF
+[{"id":2001,"user":{"login":"trusted-maintainer","type":"User"},"author_association":"MEMBER","state":"CHANGES_REQUESTED","body":"Fix CI before merging.","submitted_at":"2026-08-27T10:00:00Z","commit_id":"${TEST_REVIEWED_SHA}"},{"id":2002,"user":{"login":"former-reviewer","type":"User"},"author_association":"MEMBER","state":"APPROVED","body":"Looks good before CI failed.","submitted_at":"2026-08-27T09:00:00Z","commit_id":null}]
+EOF
+	printf '[]\n' >"${TEST_ROOT}/comments.json"
+	export TEST_REQUIRED_CHECKS_JSON='[{"name":"Lint","bucket":"fail","state":"FAILURE"}]'
+	export TEST_REQUIRED_CHECKS_RC=1
+	local dispatch_rc=0
+	_dispatch_pr_fix_worker "100" "owner/repo" "42" || dispatch_rc=$?
+	if [[ "$dispatch_rc" -ne 0 || "$(<"${TEST_ROOT}/pr-state.txt")" != "CLOSED" ||
+		"$(<"${TEST_ROOT}/issue-body.txt")" != *"Fix CI before merging."* ||
+		"$(<"${TEST_ROOT}/issue-body.txt")" != *"### Top-level reviews"* ]]; then
+		print_result "body-only trusted review routes despite unrelated null review head" 1 \
+			"rc=${dispatch_rc}; state=$(<"${TEST_ROOT}/pr-state.txt"); gh=$(tr '\n' ';' <"$GH_LOG")"
+		return 0
+	fi
+	print_result "body-only trusted review routes despite unrelated null review head" 0
+	return 0
+}
+
 test_dispatch_defers_while_required_checks_are_pending() {
 	reset_mock_state
 	prepare_ready_review_state
@@ -1968,6 +1992,7 @@ main() {
 	test_dispatch_preserves_ready_changed_head_and_rerequests_reviewer
 	test_dispatch_routes_when_review_threads_remain_unresolved
 	test_dispatch_routes_when_required_checks_fail
+	test_dispatch_routes_body_only_with_unrelated_missing_commit_id
 	test_dispatch_defers_while_required_checks_are_pending
 	test_dispatch_defers_when_required_checks_are_cancelled
 	test_dispatch_requests_only_missing_trusted_reviewers

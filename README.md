@@ -25,7 +25,7 @@ token efficiency, and quality control built in.**
 [![Maintainability](https://qlty.sh/gh/marcusquinn/projects/aidevops/maintainability.svg)](https://qlty.sh/gh/marcusquinn/projects/aidevops)
 [![Codacy Badge](https://app.codacy.com/project/badge/Grade/2b1adbd66c454dae92234341e801b984)](https://app.codacy.com/gh/marcusquinn/aidevops/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/Version-3.34.32-blue.svg)](https://github.com/marcusquinn/aidevops/releases)
+[![Version](https://img.shields.io/badge/Version-3.34.33-blue.svg)](https://github.com/marcusquinn/aidevops/releases)
 [![npm version](https://img.shields.io/npm/v/aidevops)](https://www.npmjs.com/package/aidevops)
 [![Homebrew](https://img.shields.io/badge/homebrew-marcusquinn%2Ftap-orange)](https://github.com/marcusquinn/homebrew-tap)
 
@@ -447,6 +447,11 @@ are preserved; Desktop's first server/project selection remains manual. See the
 [managed-service guide](.agents/reference/opencode-service.md) for platform
 verification limits, opt-out, and rollback.
 
+For Desktop builds advertising connection-link support, opt in with
+`aidevops opencode-desktop --connect-managed --dir PATH`. Desktop confirms the
+server and folder without replacing saved defaults. Unsupported builds, including
+the released 1.18.32 app, retain the manual flow; this does not install a patched Desktop.
+
 ## Quick Start
 
 1. Install aidevops using one of the methods above.
@@ -661,6 +666,7 @@ secrets into the AI session.
 - [Git Workflow](.agents/workflows/git-workflow.md)
 - [Security](.agents/aidevops/security.md)
 - [Browser Automation](.agents/tools/browser/browser-automation.md)
+- [Stagehand v4 (opt-in local browser)](.agents/tools/browser/stagehand.md)
 - [Creative Production](.agents/workflows/creative-production.md)
 - [Reports](.agents/reports/general.md)
 - [Changelog](CHANGELOG.md)
