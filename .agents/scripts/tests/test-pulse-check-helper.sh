@@ -124,6 +124,7 @@ cat <<'JSON'
   "policy_holds": {"availability": "observed", "active_in_window": true, "count": 1, "last_observed_at": 1, "source": "pulse-stats", "window_seconds": 900},
   "worker_terminal_events": 0,
   "active_claim_state": {"active_workers": 0, "classification_counts": {"zero_worker_infrastructure_hold": 1}, "zero_worker_actionable": true, "live_owner_count": 0, "durable_launch_count": 0},
+  "zero_worker_underutilization": {"actionable": true, "consecutive_no_progress_cycles": 3, "minimum_cycles": 3},
   "canonical_reconciliation": {"refusal_count": 2, "classification": "dirty_or_uncommitted", "canonical_recovery_advisory_observed": true},
   "graphql_budget_status": "OK fixture"
 }
@@ -441,7 +442,9 @@ assert_eq "json reports canonical reconciliation refusal aggregate" "2" "$(print
 assert_eq "json reports canonical reconciliation classification" "dirty_or_uncommitted" "$(printf '%s' "$JSON_OUT" | jq -r '.current_state.canonical_reconciliation.classification')"
 assert_eq "benign policy holds do not inflate worker failures" "0" "$(printf '%s' "$JSON_OUT" | jq -r '.summary.worker_terminal_events_in_window')"
 assert_eq "zero-worker active claim is actionable" "true" "$(printf '%s' "$JSON_OUT" | jq -r '.summary.zero_worker_active_claim_actionable')"
+assert_eq "sustained zero-worker underutilization is actionable" "true" "$(printf '%s' "$JSON_OUT" | jq -r '.summary.sustained_zero_worker_underutilization')"
 assert_contains "underfill preserves named active-claim evidence" "zero_worker_infrastructure_hold:1" "$JSON_OUT"
+assert_contains "underfill preserves sustained-cycle evidence" "consecutive_no_progress_cycles=3" "$JSON_OUT"
 assert_not_contains "json omits canonical branch detail" "origin/develop" "$JSON_OUT"
 
 cat >"${TEST_ROOT}/current-state-stale-runtime.sh" <<'SH'
@@ -580,6 +583,26 @@ assert_eq "zero local processes remain distinct from remote fleet activity" "0" 
 assert_eq "fresh remote durable claims remain visible" "2" "$(printf '%s' "$JSON_CROSS_RUNNER_OUT" | jq -r '.summary.fresh_cross_runner_durable_claims')"
 assert_eq "remote durable claims prove fleet activity despite zero local processes" "observed" "$(printf '%s' "$JSON_CROSS_RUNNER_OUT" | jq -r '.summary.fleet_activity_state')"
 assert_not_contains "fresh remote durable claims suppress transient underfill" "pulse-underfilled-auto-dispatch-queue" "$JSON_CROSS_RUNNER_OUT"
+
+cat >"${TEST_ROOT}/current-state-transient-underfill.sh" <<'SH'
+#!/usr/bin/env bash
+cat <<'JSON'
+{
+  "dispatch_alive": true,
+  "dispatch_stage_events": 0,
+  "active_worker_processes": 0,
+  "pulse_gauges": {"dispatch_capacity_final_max_workers": 6},
+  "worker_outcomes": {"spawned": 0},
+  "worker_terminal_events": 0,
+  "zero_worker_underutilization": {"actionable": false, "consecutive_no_progress_cycles": 0, "minimum_cycles": 3},
+  "graphql_budget_status": "OK fixture"
+}
+JSON
+SH
+chmod +x "${TEST_ROOT}/current-state-transient-underfill.sh"
+JSON_TRANSIENT_UNDERFILL_OUT=$(env "${COMMON_ENV[@]}" "PULSE_CHECK_CURRENT_STATE_HELPER=${TEST_ROOT}/current-state-transient-underfill.sh" "$HELPER" json 2>&1)
+assert_eq "transient zero-worker state stays non-actionable" "false" "$(printf '%s' "$JSON_TRANSIENT_UNDERFILL_OUT" | jq -r '.summary.sustained_zero_worker_underutilization')"
+assert_not_contains "transient zero-worker state cannot trigger underfill" "pulse-underfilled-auto-dispatch-queue" "$JSON_TRANSIENT_UNDERFILL_OUT"
 
 cat >"${TEST_ROOT}/current-state-idle.sh" <<'SH'
 #!/usr/bin/env bash
@@ -756,6 +779,7 @@ cat <<'JSON'
   "pulse_gauges": {"dispatch_capacity_final_max_workers": 6},
   "worker_outcomes": {"spawned": 4, "launch_validation_failed": 4},
   "worker_terminal_events": 0,
+  "zero_worker_underutilization": {"actionable": true, "consecutive_no_progress_cycles": 3, "minimum_cycles": 3},
   "graphql_budget_status": "OK fixture"
 }
 JSON
