@@ -221,6 +221,7 @@ Git is the audit trail. Procedures: see the "## AGENTS.md User Guide Git Workflo
 
 - In managed repos, never use raw `gh pr create` or `gh issue create` directly. Always use the wrappers: `gh_create_pr` and `gh_create_issue` (defined in `shared-constants.sh`, sourced via PATH). The wrappers automatically apply `origin:interactive` or `origin:worker` based on the session context. Raw `gh` calls produce unlabelled PRs that the pulse may auto-close.
 - In managed repos, if `gh_create_pr` is unavailable (e.g. not sourced), pass `--label origin:interactive` explicitly when creating PRs in an interactive session.
+- Where the runtime blocks `source` (OpenCode Bash policy), call the executable wrapper instead: `gh-write-helper.sh issue create|comment` / `gh-write-helper.sh pr create|comment` (see `reference/gh-command-discipline.md`).
 
 **External upstream repos (non-maintainer etiquette):**
 
