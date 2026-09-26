@@ -27,20 +27,6 @@ function assertScrub(input, expected, expectedCount) {
   assert.equal(count, expectedCount);
 }
 
-function fastestBatchAverageMs(input, batches = 5, runsPerBatch = 20) {
-  scrubCredentials(input);
-  let fastestAverageMs = Infinity;
-
-  for (let batch = 0; batch < batches; batch++) {
-    const start = process.hrtime.bigint();
-    for (let run = 0; run < runsPerBatch; run++) scrubCredentials(input);
-    const averageMs = Number(process.hrtime.bigint() - start) / runsPerBatch / 1_000_000;
-    fastestAverageMs = Math.min(fastestAverageMs, averageMs);
-  }
-
-  return fastestAverageMs;
-}
-
 describe("credential transcript scrub boundary", () => {
   test("does not redact credential prefix embedded mid-word", () => {
     assertScrub("module task-syntheticfixture", "module task-syntheticfixture", 0);
@@ -186,7 +172,15 @@ describe("credential transcript scrub boundary", () => {
 
   test("scans adversarial 10KB named-field input within the performance budget", () => {
     const input = "A ".repeat(5_000);
-    const fastestAverageMs = fastestBatchAverageMs(input);
+    const runsPerBatch = 20;
+    const batchAverages = [];
+    scrubCredentials(input);
+    for (let batch = 0; batch < 5; batch++) {
+      const start = process.hrtime.bigint();
+      for (let run = 0; run < runsPerBatch; run++) scrubCredentials(input);
+      batchAverages.push(Number(process.hrtime.bigint() - start) / runsPerBatch / 1_000_000);
+    }
+    const fastestAverageMs = Math.min(...batchAverages);
     assert.ok(
       fastestAverageMs < 50,
       `named-field scan fastest batch averaged ${fastestAverageMs.toFixed(3)}ms per 10KB`,
@@ -209,7 +203,15 @@ describe("credential transcript scrub boundary", () => {
 
   test("scans unmatched PEM headers within the performance budget", () => {
     const input = "-----BEGIN OPENSSH PRIVATE KEY-----\n".repeat(250);
-    const fastestAverageMs = fastestBatchAverageMs(input);
+    const runsPerBatch = 20;
+    const batchAverages = [];
+    scrubCredentials(input);
+    for (let batch = 0; batch < 5; batch++) {
+      const start = process.hrtime.bigint();
+      for (let run = 0; run < runsPerBatch; run++) scrubCredentials(input);
+      batchAverages.push(Number(process.hrtime.bigint() - start) / runsPerBatch / 1_000_000);
+    }
+    const fastestAverageMs = Math.min(...batchAverages);
     assert.ok(
       fastestAverageMs < 50,
       `PEM scan fastest batch averaged ${fastestAverageMs.toFixed(3)}ms per 10KB`,
