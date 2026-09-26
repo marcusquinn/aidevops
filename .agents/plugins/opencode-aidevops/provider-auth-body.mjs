@@ -117,6 +117,10 @@ function applyBodyTransforms(parsed) {
     parsed.tools = injectIntentParameter(parsed.tools);
   }
   if (Array.isArray(parsed.messages)) parsed.messages = normalizeToolUseBlocks(parsed.messages);
+  // OpenCode's newer Claude variants can include adaptive-thinking metadata
+  // (for example block_binding) that the Messages API rejects on the wire.
+  // Effort is carried separately in output_config; keep the wire shape minimal.
+  if (parsed.thinking?.type === "adaptive") parsed.thinking = { type: "adaptive" };
   if (isAdaptiveThinkingModel(parsed.model)) {
     if (!parsed.thinking || parsed.thinking.type !== "adaptive") parsed.thinking = { type: "adaptive" };
     if (parsed.temperature !== undefined && parsed.temperature !== 1) parsed.temperature = 1;

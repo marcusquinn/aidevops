@@ -37,7 +37,18 @@ export function normalizeModelRouting(value = {}) {
   for (const tier of DEFAULT_ESCALATION_ORDER) {
     tiers[tier] = normalizeTierConfig(value?.tiers?.[tier]);
   }
-  return { tiers, escalationOrder, specialistAdvisor: normalizeSpecialistAdvisor(value.specialist_advisor) };
+  return {
+    tiers,
+    escalationOrder,
+    specialistAdvisor: normalizeSpecialistAdvisor(value.specialist_advisor),
+    interactiveDefault: normalizeInteractiveDefault(value.interactive_default),
+  };
+}
+
+function normalizeInteractiveDefault(value) {
+  if (!value || typeof value.model !== "string" || !value.model.includes("/")) return null;
+  if (!["low", "medium", "high", "xhigh", "max"].includes(value.variant)) return null;
+  return { model: value.model, variant: value.variant };
 }
 
 function normalizeSpecialistAdvisor(value) {
@@ -48,6 +59,9 @@ function normalizeSpecialistAdvisor(value) {
 
 export function mergeModelRouting(base, override = {}) {
   const merged = normalizeModelRouting();
+  merged.interactiveDefault = Object.hasOwn(override, "interactive_default")
+    ? normalizeInteractiveDefault(override.interactive_default)
+    : base?.interactiveDefault || null;
   merged.specialistAdvisor = Object.hasOwn(override, "specialist_advisor")
     ? normalizeSpecialistAdvisor(override.specialist_advisor)
     : base?.specialistAdvisor || null;

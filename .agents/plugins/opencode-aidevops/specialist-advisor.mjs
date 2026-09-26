@@ -52,7 +52,7 @@ export function validateSpecialistRequest(text) {
 
 // Defaults only: never migrate an explicit user model/effort pin behind their back.
 export function applyDailyDriverDefaults(config, routing) {
-  const route = routingProfile(routing, "thinking");
+  const route = routing?.interactiveDefault || routingProfile(routing, "thinking");
   if (!route.model) return;
   config.model ||= route.model;
   for (const profile of Object.values(config.agent || {})) {

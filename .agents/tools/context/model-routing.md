@@ -96,7 +96,7 @@ is always denied because secrets must flow through secret tooling, not prompts.
 - **Workers**: Follow configured candidate order within canonical `simple`, `standard`, or `thinking` routes after allowlist filtering and auth checks.
 - **Local switch**: Set `AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=openai` to force both pulse and workers onto the default OpenAI fallbacks. If you want OpenAI primary but Anthropic fallback, reorder `custom/configs/model-routing-table.json` and omit the allowlist.
 - **Current default mapping**: The active routing table maps `simple` to OpenAI Luna then Anthropic Haiku, `standard` to OpenAI Terra then Z.AI GLM then Anthropic Sonnet, and `thinking` to OpenAI Sol then Anthropic Opus. Availability and provider policy decide the exact model at execution time.
-- **Reasoning mapping**: Luna `low`, Terra `low`, Sol `medium`. Other providers use their provider/runtime defaults unless configured explicitly. OpenCode supplies the thinking model as its default only when no explicit user model exists, and fills missing matching primary-agent effort; existing model/variant pins are preserved.
+- **Reasoning mapping**: Luna `low`, Terra `low`, Sol `medium`. Other providers use their provider/runtime defaults unless configured explicitly. OpenCode uses `interactive_default` when configured, otherwise the thinking model, as its default only when no explicit user model exists; existing model/variant pins are preserved.
 - **Generation update (2026-09-22)**: GPT-6 Luna low and GPT-6 Sol medium are the simple and thinking primaries. The standard route stays GPT-5.6 Terra low pending outcome evidence; upgrading it to Luna or Sol on version number alone would change its capability/cost contract. OpenCode's model catalog exposes both GPT-6 IDs, but catalog visibility is not a guarantee of headless OAuth availability: the runtime still probes and follows same-tier fallbacks. New-generation pricing is not yet verified in the shared pricing table; its default estimates are unknown-model estimates, not GPT-5.6 prices.
 - **Capability escalation**: The exact structured marker `BLOCKED: capability limit - <evidence>` advances headless workers through an explicitly configured `reasoning_escalation` ladder before `escalation_order`. No reasoning ladder is shipped by default: thinking stops at Sol medium. Use bounded specialist advice before abandoning a genuinely difficult task, not automatic whole-session Astra promotion. Unknown variants and models never receive guessed reasoning settings. Explicit model pins remain pinned. Interactive OpenCode escalates tiers only when child identity is known and it has attempted no side effects. Generic `BLOCKED` remains terminal. Permission, authentication, provider, rate-limit, secret, policy, trust-boundary, locality, and billing failures never escalate capability to bypass controls.
 - **OpenAI tier rationale**: Luna handles bounded work, Terra established-pattern implementation, and Sol parent coordination and synthesis. The separate `specialist_advisor` route selects Astra low only for explicit bounded advisory requests; it is neither a tier nor an automatic fallback. Request contract and feedback policy: `reference/agent-routing.md` "Specialist advice without promoting the parent".
@@ -176,6 +176,30 @@ Auto-update overwrites `~/.aidevops/agents/configs/*.json` and `~/.aidevops/agen
 - Put persistent model-order overrides in `~/.aidevops/agents/custom/configs/model-routing-table.json`
 - Put the provider pin in `~/.config/aidevops/credentials.sh`
 - Do not rely on `.bashrc`, `.zshrc`, or `.profile` for pulse/worker provider pins; scheduled daemons intentionally do not source interactive shell startup files.
+
+The optional `interactive_default` is independent of the `thinking` tier. It
+sets the model and effort for new unpinned OpenCode primary sessions without
+changing headless worker tiers or overriding existing user model/variant pins.
+For example, after validating Anthropic OAuth and both model variants locally:
+
+```json
+{
+  "interactive_default": { "model": "anthropic/claude-opus-5-5", "variant": "medium" },
+  "tiers": {
+    "simple": { "models": ["anthropic/claude-haiku-4-5", "openai/gpt-6-luna"] },
+    "standard": { "models": ["anthropic/claude-sonnet-5", "openai/gpt-5.6-terra"] },
+    "thinking": {
+      "models": ["anthropic/claude-opus-5-5", "openai/gpt-6-sol"],
+      "reasoning": { "anthropic/claude-opus-5-5": "xhigh" }
+    }
+  }
+}
+```
+
+This is a per-user opt-in, not a new shared default. As with other same-model
+children, an interactive child cannot exceed its known parent's effort ceiling;
+switch the parent to `xhigh` explicitly when deeper interactive work requires it.
+Restart OpenCode after changing the override.
 
 Example custom override for OpenAI-capable headless routing:
 
