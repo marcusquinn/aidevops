@@ -325,7 +325,6 @@ App-specific rules:
 - The YAML front matter is the dark projection: `outline` (`#12272c`), `outline-hover` (`#2b5b66`), `primary-subtle` (`#102327`), `secondary` (`#dbdbdb`), and `muted` (`#a8a8a8`) are the Brand core alpha values pre-composited over black. In CSS, prefer the alpha forms so borders pick up the surface beneath.
 - Status colours: success `#56d364`, warning `#d29922`, error text `#ff7b72`, destructive fill `#da3633` with white text. Use them for state, never for primary actions or decoration.
 - Info notifications use the accent cyan, not GitHub blue.
-- Known drift to migrate: the Secrets/Vault `.primary-action` override in `packages/gui-web/src/styles.css` (green `#238636`) and the MCP dashboard in `.opencode/server/mcp-dashboard.ts` (GitHub-dark palette, blue focus, green primary) predate this system.
 
 ## Typography
 
