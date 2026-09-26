@@ -1410,9 +1410,51 @@ setup_serve_sim() {
 	return 0
 }
 
+_setup_mobile_mcp_node_version_ok() {
+	local version="${1#v}"
+	local major="${version%%.*}"
+	local minor="${version#*.}"
+	minor="${minor%%.*}"
+	[[ "$major" =~ ^[0-9]+$ && "$minor" =~ ^[0-9]+$ ]] || return 1
+	((10#$major > 22 || (10#$major == 22 && 10#$minor >= 12)))
+}
+
+setup_mobile_mcp() {
+	local tool_name="Mobile MCP"
+	if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
+		print_skip "$tool_name" "Node.js/npm unavailable" "Install Node.js 22.12+ first"
+		return 0
+	fi
+	local node_version
+	node_version=$(node --version 2>/dev/null) || return 0
+	if ! _setup_mobile_mcp_node_version_ok "$node_version"; then
+		print_skip "$tool_name" "Node.js ${node_version} is below the effective dependency minimum" "Install Node.js 22.12+"
+		return 0
+	fi
+	if command -v mcp-server-mobile >/dev/null 2>&1; then
+		print_success "Mobile MCP already installed (disabled until explicitly connected)"
+		return 0
+	fi
+	if ! { command -v adb >/dev/null 2>&1 || { command -v xcrun >/dev/null 2>&1 && xcrun simctl list devices >/dev/null 2>&1; }; }; then
+		print_skip "$tool_name" "No Android platform tools or usable iOS simulator SDK" "Install adb or Xcode simulator tools"
+		return 0
+	fi
+	local install_mobile_mcp
+	setup_prompt install_mobile_mcp "Install optional Mobile MCP for local device automation? [y/N]: " "N" || install_mobile_mcp="N"
+	if [[ "${install_mobile_mcp:-}" =~ ^[Yy]$ ]]; then
+		if run_with_spinner "Installing Mobile MCP" npm_global_install "@mobilenext/mobile-mcp@1.0.5"; then
+			print_success "Mobile MCP installed; restart your MCP client, then select @mobile-mcp to connect"
+		else
+			print_warning "Mobile MCP installation failed; no device automation was activated"
+		fi
+	fi
+	return 0
+}
+
 setup_mobile_simulator_tools() {
 	setup_minisim
 	setup_serve_sim
+	setup_mobile_mcp
 	return 0
 }
 

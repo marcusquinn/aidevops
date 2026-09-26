@@ -86,8 +86,8 @@ test("registers only the explicit MCP activation profiles", () => {
   registerMcpServers(config);
   const count = registerOnDemandMcpAgents(config, AGENTS_DIR);
 
-  assert.equal(count, process.platform === "darwin" ? 10 : 9);
-  assert.deepEqual(Object.keys(config.agent), ["playwriter", "posthog", "playwright", "quickfile", "blender", ...(process.platform === "darwin" ? ["affinity"] : []), "freecad", "ableton", "davinci-resolve", "backblaze-b2"]);
+  assert.equal(count, process.platform === "darwin" ? 11 : 10);
+  assert.deepEqual(Object.keys(config.agent), ["playwriter", "posthog", "playwright", "quickfile", "mobile-mcp", "blender", ...(process.platform === "darwin" ? ["affinity"] : []), "freecad", "ableton", "davinci-resolve", "backblaze-b2"]);
   assert.equal(config.tools.aidevops_mcp, false);
   assert.equal(config.agent.playwriter.mode, "subagent");
   assert.equal(config.agent.playwriter.tools.aidevops_mcp, true);
@@ -129,6 +129,29 @@ test("registers only the explicit MCP activation profiles", () => {
   assert.match(config.agent.quickfile.prompt, /# QuickFile Agent/);
   assert.match(config.agent.quickfile.prompt, /business\/accounting\.md/);
   assert.doesNotMatch(config.agent.quickfile.prompt, /browser tab/i);
+  assert.equal(config.agent["mobile-mcp"].tools.aidevops_mcp, true);
+  assert.equal(config.agent["mobile-mcp"].tools["mobile-mcp_*"], false);
+  assert.equal(config.agent["mobile-mcp"].permission["mobile-mcp_*"], "deny");
+  assert.equal(config.agent["mobile-mcp"].tools["mobile-mcp_mobile_list_available_devices"], true);
+  assert.equal(config.agent["mobile-mcp"].tools["mobile-mcp_mobile_batch_commands"], undefined);
+  assert.equal(config.agent["mobile-mcp"].tools["mobile-mcp_mobile_allocate_remote_device"], undefined);
+  assert.match(config.agent["mobile-mcp"].prompt, /Cloud login, allocation, release and batch commands are not available/);
+  if (process.env.PATH?.split(process.platform === "win32" ? ";" : ":").some((dir) => existsSync(join(dir, "mcp-server-mobile")))) {
+    assert.deepEqual(config.mcp["mobile-mcp"], {
+      type: "local",
+      command: [join(homedir(), ".aidevops", "agents", "scripts", "mobile-mcp-launcher.sh")],
+      enabled: false,
+    });
+  } else {
+    assert.equal(config.mcp["mobile-mcp"], undefined);
+  }
+  assert.equal(config.tools["mobile-mcp_*"], false);
+  if (!config.mcp["mobile-mcp"]) {
+    const stale = { mcp: { "mobile-mcp": { type: "remote", url: "https://example.invalid/mcp", enabled: true } }, tools: {} };
+    registerMcpServers(stale);
+    assert.equal(stale.mcp["mobile-mcp"], undefined);
+    assert.equal(stale.tools["mobile-mcp_*"], false);
+  }
   assert.equal(config.agent["backblaze-b2"].mode, "subagent");
   assert.equal(config.agent["backblaze-b2"].tools.aidevops_mcp, true);
   assert.equal(config.agent["backblaze-b2"].tools["backblaze-b2_*"], true);

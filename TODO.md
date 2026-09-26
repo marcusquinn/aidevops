@@ -1413,6 +1413,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18474 Add portrait talking-head reel editing recipe ref:GH#32269 pr:#32270 completed:2026-09-23
 
+- [ ] t18477 Add opt-in local Mobile MCP integration ref:GH#32412
+
 ## In Progress
 
 - [x] t18430 Update OpenCode GitHub Action pin to v1.18.30 #auto-dispatch #dependencies #github_actions #interactive #tier:simple ref:GH#31828 started:2026-09-12 pr:#31829 completed:2026-09-12
