@@ -10,6 +10,7 @@ usage() {
 	printf '%s\n' 'Usage: aidevops project-config restore <registered-slug> [--backup FILE] [--apply]' \
 		'Preview by default. --apply requires an attached terminal and typing the registered path.' \
 		'Without a backup, only explicitly enabled registry features and a valid init_scope are recovered.'
+	return 0
 }
 
 [[ "${1:-}" == "restore" ]] || { usage; exit 2; }
