@@ -1413,11 +1413,11 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18474 Add portrait talking-head reel editing recipe ref:GH#32269 pr:#32270 completed:2026-09-23
 
-- [ ] t18477 Add opt-in local Mobile MCP integration ref:GH#32412
+- [x] t18477 Add opt-in local Mobile MCP integration ref:GH#32412 pr:#32413 completed:2026-09-26
 
 ## In Progress
 
-- [ ] t18478 Repair Anthropic Opus 5.5 OAuth adaptive-thinking request shape and add opt-in local interactive model/effort defaults without changing shared routes. Verify medium/xhigh Read-tool calls, unpinned OpenCode selection, focused plugin tests and changed-file lint; publish the reviewed fix through full-loop release. #bugfix #framework #auth #interactive #auto-dispatch ~2h tier:standard started:2026-09-26 ref:GH#32415 logged:2026-09-26 -> [todo/tasks/t18478-brief.md]
+- [x] t18478 Repair Anthropic Opus 5.5 OAuth adaptive-thinking request shape and add opt-in local interactive model/effort defaults without changing shared routes. Verify medium/xhigh Read-tool calls, unpinned OpenCode selection, focused plugin tests and changed-file lint; publish the reviewed fix through full-loop release. #bugfix #framework #auth #interactive #auto-dispatch ~2h tier:standard started:2026-09-26 ref:GH#32415 logged:2026-09-26 -> [todo/tasks/t18478-brief.md] pr:#32417 completed:2026-09-26
 
 - [x] t18430 Update OpenCode GitHub Action pin to v1.18.30 #auto-dispatch #dependencies #github_actions #interactive #tier:simple ref:GH#31828 started:2026-09-12 pr:#31829 completed:2026-09-12
 
