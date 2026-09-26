@@ -68,10 +68,16 @@ test("only Affinity agent receives read tools and per-call-approved script execu
 
   // Re-registration must not turn the wildcard back on, including after a stale config.
   profile.tools["affinity-studio_*"] = true;
+  profile.tools["affinity-studio_save_script_to_library"] = true;
   profile.permission["affinity-studio_*"] = "allow";
+  profile.permission["affinity-studio_save_script_to_library"] = "allow";
   profile.permission[executeScript] = "allow";
   registerOnDemandMcpAgents(config, agentsDir);
   assert.equal(profile.tools["affinity-studio_*"], false);
   assert.equal(profile.permission["affinity-studio_*"], "deny");
+  assert.equal(profile.tools["affinity-studio_save_script_to_library"], undefined);
+  assert.equal(profile.permission["affinity-studio_save_script_to_library"], undefined);
   assert.equal(profile.permission[executeScript], "ask");
+  assert.ok(Object.keys(profile.permission).indexOf("affinity-studio_*")
+    < Object.keys(profile.permission).indexOf(executeScript));
 });

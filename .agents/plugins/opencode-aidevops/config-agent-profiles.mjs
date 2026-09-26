@@ -9,7 +9,7 @@ import { isAbsolute, join, relative, resolve, sep } from "path";
 import { loadAgentIndex, registerDelegatedDomainProfiles } from "./agent-loader.mjs";
 import { getOnDemandMcpAgents } from "./mcp-registry.mjs";
 import { DEFAULT_ESCALATION_ORDER, normalizeRoutingTier } from "./model-routing.mjs";
-import { onDemandMcpToolPolicy } from "./on-demand-mcp-tool-policy.mjs";
+import { applyOnDemandMcpToolPolicy } from "./on-demand-mcp-tool-policy.mjs";
 import { recordPluginHealthStage } from "./plugin-health.mjs";
 import { primaryDeliveryEvidence } from "./primary-delivery-evidence.mjs";
 import { registerSpecialistAdvisor, applyDailyDriverDefaults } from "./specialist-advisor.mjs";
@@ -111,8 +111,7 @@ function onDemandMcpPrompt(mcp, agentsDir) {
 
 function createOnDemandMcpProfile(mcp, agentsDir) {
   const { parsed, prompt } = onDemandMcpPrompt(mcp, agentsDir);
-  const toolPolicy = onDemandMcpToolPolicy(mcp);
-  return {
+  const profile = {
     description: parsed?.profile.description || mcp.description,
     mode: "subagent",
     prompt: [
@@ -126,14 +125,14 @@ function createOnDemandMcpProfile(mcp, agentsDir) {
     tools: {
       ...(parsed?.profile.tools || {}),
       [MCP_ACTIVATION_TOOL]: true,
-      ...toolPolicy.tools,
     },
     permission: {
       ...parsed?.profile.permission,
       [MCP_ACTIVATION_TOOL]: "allow",
-      ...toolPolicy.permission,
     },
   };
+  applyOnDemandMcpToolPolicy(profile, mcp);
+  return profile;
 }
 
 function ensureOnDemandMcpAgent(config, mcp, agentsDir) {
@@ -150,9 +149,7 @@ function ensureOnDemandMcpAgent(config, mcp, agentsDir) {
   if (!(MCP_ACTIVATION_TOOL in config.agent[mcp.agentName].permission)) {
     config.agent[mcp.agentName].permission[MCP_ACTIVATION_TOOL] = "allow";
   }
-  const toolPolicy = onDemandMcpToolPolicy(mcp);
-  Object.assign(config.agent[mcp.agentName].tools, toolPolicy.tools);
-  Object.assign(config.agent[mcp.agentName].permission, toolPolicy.permission);
+  applyOnDemandMcpToolPolicy(config.agent[mcp.agentName], mcp);
   return false;
 }
 

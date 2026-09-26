@@ -18,3 +18,20 @@ export function onDemandMcpToolPolicy(mcp) {
     },
   };
 }
+
+export function applyOnDemandMcpToolPolicy(profile, mcp) {
+  const policy = onDemandMcpToolPolicy(mcp);
+  const prefix = mcp.allowedTools && mcp.toolPattern.endsWith("*")
+    ? mcp.toolPattern.slice(0, -1) : null;
+  for (const field of ["tools", "permission"]) {
+    profile[field] ||= {};
+    if (prefix !== null) {
+      // Remove stale exact grants, and reinsert the wildcard before approved
+      // exact names. OpenCode applies the last matching rule.
+      for (const name of Object.keys(profile[field])) {
+        if (name.startsWith(prefix)) delete profile[field][name];
+      }
+    }
+    Object.assign(profile[field], policy[field]);
+  }
+}
