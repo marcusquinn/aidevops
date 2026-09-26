@@ -22,6 +22,7 @@ const AGENT_MCP_TOOLS = {
   "macos-automator": IS_MACOS ? ["macos-automator_*"] : [],
   mac: IS_MACOS ? ["macos-automator_*"] : [],
   "ios-simulator-mcp": IS_MACOS ? ["ios-simulator_*"] : [],
+  "mobile-mcp": ["mobile-mcp_*"],
   // Context / search
   context7: ["context7_*"],
   "openapi-search": ["openapi-search_*"],

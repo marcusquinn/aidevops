@@ -420,6 +420,45 @@ function getMcpRegistry() {
       description: "Multi-account QuickFile UK accounting",
     },
     {
+      name: "mobile-mcp",
+      type: "local",
+      command: [join(homedir(), ".aidevops", "agents", "scripts", "mobile-mcp-launcher.sh")],
+      eager: false,
+      toolPattern: "mobile-mcp_*",
+      globallyEnabled: false,
+      activationAgent: "mobile-mcp",
+      agentSource: ["tools", "mobile", "mobile-mcp.md"],
+      requiresBinary: "mcp-server-mobile",
+      removeWhenMissingBinary: true,
+      alwaysOverwrite: true,
+      allowedTools: [
+        "mobile-mcp_mobile_list_available_devices",
+        "mobile-mcp_mobile_list_apps",
+        "mobile-mcp_mobile_get_foreground_app",
+        "mobile-mcp_mobile_launch_app",
+        "mobile-mcp_mobile_terminate_app",
+        "mobile-mcp_mobile_install_app",
+        "mobile-mcp_mobile_get_screen_size",
+        "mobile-mcp_mobile_list_elements_on_screen",
+        "mobile-mcp_mobile_click_on_screen_at_coordinates",
+        "mobile-mcp_mobile_swipe_on_screen",
+        "mobile-mcp_mobile_type_keys",
+        "mobile-mcp_mobile_press_button",
+        "mobile-mcp_mobile_take_screenshot",
+        "mobile-mcp_mobile_get_device_logs",
+        "mobile-mcp_mobile_list_crashes",
+        "mobile-mcp_mobile_get_crash",
+      ],
+      activationGuidance: [
+        "Use a dedicated local simulator or explicitly approved test device; inspect the device ID before acting.",
+        "Cloud login, allocation, release and batch commands are not available through this profile; never enable them as a fallback.",
+        "Avoid real accounts, private data and secrets: upstream logs tool arguments and responses to stderr.",
+        "Disconnect after the test; never expose the server over HTTP.",
+      ],
+      modelTier: "standard",
+      description: "Opt-in local iOS and Android device automation via Mobile MCP",
+    },
+    {
       name: "blender-lab",
       type: "local",
       command: [
@@ -593,6 +632,7 @@ function shouldSkipMcp(mcp, config, runtime) {
     const binaryPath = findExecutable(mcp.requiresBinary);
     if (!binaryPath) {
       if (mcp.toolPattern) config.tools[mcp.toolPattern] = false;
+      if (mcp.removeWhenMissingBinary) delete config.mcp[mcp.name];
       return true;
     }
   }

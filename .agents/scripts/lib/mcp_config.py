@@ -26,7 +26,7 @@ LAZY_MCPS = {
     'MCP_DOCKER', 'ahrefs', 'amazon-order-history',
     'chrome-devtools', 'claude-code-mcp', 'context7', 'dataforseo',
     'google-analytics-mcp', 'grep_app', 'gsc', 'ios-simulator', 'localwp',
-    'macos-automator', 'openapi-search', 'outscraper', 'playwriter', 'quickfile',
+    'macos-automator', 'mobile-mcp', 'openapi-search', 'outscraper', 'playwriter', 'quickfile',
     'sentry', 'shadcn', 'socket', 'websearch',
 }
 
@@ -198,6 +198,16 @@ def _register_macos_mcps(config):
         config['tools']['ios-simulator_*'] = False
 
 
+def _register_mobile_mcp(config):
+    """Offer the locally installed mobile server without starting it at launch."""
+    config['mcp']['mobile-mcp'] = {
+        "type": "local",
+        "command": [os.path.expanduser("~/.aidevops/agents/scripts/mobile-mcp-launcher.sh")],
+        "enabled": False,
+    }
+    config['tools']['mobile-mcp_*'] = False
+
+
 def _register_openapi_search(config):
     """Register openapi-search MCP (remote Cloudflare Worker)."""
     if 'openapi-search' not in config['mcp']:
@@ -227,5 +237,6 @@ def register_standard_mcps(config, bun_path, pkg_runner):
     _register_shadcn(config)
     _register_claude_code_mcp(config)
     _register_macos_mcps(config)
+    _register_mobile_mcp(config)
     _register_openapi_search(config)
     _disable_omo_tools(config)

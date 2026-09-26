@@ -26,6 +26,7 @@ tools:
 
 ```text
 AI-driven exploratory?     -> agent-device (CLI, both platforms)
+MCP-native iOS + Android?  -> mobile-mcp (opt-in, local devices)
 Repeatable E2E flows?      -> maestro (YAML, flakiness tolerance)
 Build/test/deploy iOS?     -> xcodebuild-mcp (Xcode, LLDB)
 iOS simulator interaction? -> ios-simulator-mcp (tap/swipe/type/screenshot)
@@ -114,6 +115,7 @@ Use `playwright-emulation` device presets for web-based testing.
 ## Related
 
 - `tools/mobile/agent-device.md` — AI-driven device automation
+- `tools/mobile/mobile-mcp.md` — opt-in MCP-native local device automation
 - `tools/mobile/xcodebuild-mcp.md` — Xcode build/test
 - `tools/mobile/maestro.md` — E2E test flows
 - `tools/mobile/ios-simulator-mcp.md` — simulator interaction
