@@ -77,6 +77,15 @@ established. Keep Playwright as the deterministic default and Playwriter as
 explicit-only legacy until a bounded model transport and consent-safe comparison
 can be verified. Do not compare this probe to the v3 benchmark table.
 
+A follow-up client-side `generate` probe through the installed OpenCode SDK
+reached the provider but returned HTTP 403 `FreeTierError`: the free tier is
+restricted to use within OpenCode. A separate direct SDK prompt without the
+Stagehand callback succeeded, but that does **not** authorize using the free
+tier as an embedded model provider. Do not work around this restriction or
+count the denied callback as an inference result. A further Stagehand AI test
+needs an approved provider transport with credentials supplied through secure
+storage and a per-run cost limit; it must not silently fall back to a paid model.
+
 ```bash
 cd ~/.aidevops/.agent-workspace/work/browser-bench/
 node bench-playwright.mjs | tee results-playwright.json
