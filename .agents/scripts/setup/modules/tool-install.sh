@@ -1218,6 +1218,52 @@ setup_cursor_cli() {
 	return 0
 }
 
+setup_android_platform_tools() {
+	if command -v adb >/dev/null 2>&1; then
+		print_success "Android Platform Tools (adb) already installed; device availability is not yet verified"
+		print_info "Before connecting Mobile MCP, check adb devices for an authorized emulator or test device"
+		return 0
+	fi
+
+	if [[ "$(uname -s)" != "Darwin" ]]; then
+		print_info "For Android device automation, install Android SDK Platform Tools for this OS, then check adb devices"
+		return 0
+	fi
+	if ! command -v brew >/dev/null 2>&1; then
+		print_info "To add adb on macOS, install Homebrew or Android SDK Platform Tools, then re-run setup"
+		return 0
+	fi
+
+	local install_android_tools
+	setup_prompt install_android_tools "Install optional Android SDK Platform Tools (adb) via Homebrew? [y/N]: " "N" || install_android_tools="N"
+	if [[ "${install_android_tools:-}" =~ ^[Yy]$ ]]; then
+		if run_with_spinner "Installing Android SDK Platform Tools" brew install --cask android-platform-tools; then
+			if command -v adb >/dev/null 2>&1; then
+				print_success "Android Platform Tools installed; check adb devices for an authorized emulator or test device"
+			else
+				print_warning "Android Platform Tools installed, but adb is not on PATH; check your Homebrew environment"
+			fi
+		else
+			print_warning "Android Platform Tools installation failed; no Android device access was enabled"
+		fi
+	fi
+	return 0
+}
+
+setup_ios_simulator_prerequisites() {
+	if [[ "$(uname -s)" != "Darwin" ]]; then
+		return 0
+	fi
+	if command -v xcrun >/dev/null 2>&1 && xcrun simctl list devices >/dev/null 2>&1; then
+		print_success "Xcode simctl available; a booted simulator is still required for device automation"
+		return 0
+	fi
+	print_info "iOS Simulator requires full Xcode and a simulator runtime; Command Line Tools alone do not include simctl"
+	print_info "Install Xcode, select its developer directory in Xcode Settings > Locations, and install a simulator runtime"
+	print_info "Verify with xcrun simctl list devices available, then boot a simulator before connecting Mobile MCP"
+	return 0
+}
+
 setup_minisim() {
 	# Only available on macOS
 	if [[ "$(uname)" != "Darwin" ]]; then
@@ -1452,6 +1498,8 @@ setup_mobile_mcp() {
 }
 
 setup_mobile_simulator_tools() {
+	setup_android_platform_tools
+	setup_ios_simulator_prerequisites
 	setup_minisim
 	setup_serve_sim
 	setup_mobile_mcp

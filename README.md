@@ -353,7 +353,7 @@ See [reports](.agents/reports/general.md) and the versioned
 
 - **Design:** Google `DESIGN.md` conventions, brand identity, visual concepts, distinctive UI, component guidance, previews, and accessibility verification. On macOS, the [Affinity Studio specialist](.agents/tools/design/affinity.md) offers opt-in, copy-first native artwork creation/editing and verified exports through its gated MCP connector.
 - **Browser:** Playwright-first automation with bounded Luna-xhigh browser subagents in OpenCode (Sol-medium/parent fallback), reusable browser-operation learning, authenticated-profile boundaries, crawling, screenshots, and performance diagnostics.
-- **Mobile:** Expo, Swift/Xcode, App Store Connect, simulator workflows, device automation, simulator-backed web previews, and [opt-in Mobile MCP](.agents/tools/mobile/mobile-mcp.md) for local iOS/Android device control.
+- **Mobile:** Expo, Swift/Xcode, App Store Connect, simulator workflows, device automation, simulator-backed web previews, and [opt-in Mobile MCP](.agents/tools/mobile/mobile-mcp.md) for local iOS/Android device control. Interactive setup can offer Android `adb` on macOS and explain full-Xcode simulator prerequisites; updates never silently install host SDKs.
 - **3D/CAD:** Blender and FreeCAD specialists, OpenSCAD script-based CAD guidance, dimensional truth, editable source models, configurable products, and rendered verification.
 - **Video:** DaVinci Resolve, conversational editing, Remotion, compositing, colour, audio, and rendered-output checks.
 - **Audio:** Ableton projects, MIDI, arrangement, stems, mixing, voice workflows, loudness, and export verification.
