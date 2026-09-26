@@ -70,13 +70,13 @@
       "name": "affinity-operations",
       "aliases": ["affinity-studio", "affinity-preview", "affinity-document-editing"],
       "owner": "Content",
-      "description": "Copy-first native Affinity MCP document creation and editing with per-call script approval and bounded previews",
+      "description": "Copy-first native Affinity MCP document creation and editing, previews and exports, gated by Affinity's in-app MCP permissions",
       "runtimes": ["opencode"],
       "entry_points": ["tools/design/affinity.md", "workflows/creative-production.md"],
       "mcp": "affinity-studio",
       "fallback": "gated-creative-app-guidance",
       "required": ["deployed", "installed", "configured", "enabled", "authorized", "reachable", "runtime_compatible", "tool_visible", "usable"],
-      "probes": {"deployed": {"path": "tools/design/affinity.md"}, "installed": {"live": "requires supported Affinity app and enabled native connector"}, "configured": {"live": "requires the observed loopback SSE endpoint and server identity"}, "enabled": {"live": "requires explicit runtime MCP activation"}, "authorized": {"live": "requires approved copy and per-call script consent"}, "reachable": {"live": "requires live Affinity MCP handshake"}, "tool_visible": {"tool": "affinity-studio_execute_script"}, "usable": {"live": "requires saved editable copy readback and representative export"}}
+      "probes": {"deployed": {"path": "tools/design/affinity.md"}, "installed": {"live": "requires supported Affinity app and enabled native connector"}, "configured": {"live": "requires the observed loopback SSE endpoint and server identity"}, "enabled": {"live": "requires explicit runtime MCP activation"}, "authorized": {"live": "requires the needed Affinity MCP permission toggles and a working copy or new file"}, "reachable": {"live": "requires live Affinity MCP handshake"}, "tool_visible": {"tool": "affinity-studio_execute_script"}, "usable": {"live": "requires saved editable copy readback and representative export"}}
     },
     {
       "name": "freecad-operations",
