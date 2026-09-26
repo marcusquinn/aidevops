@@ -64,6 +64,13 @@ AIDEVOPS_INSTALL_OPENCODE2_PREVIEW=0 ./setup.sh --non-interactive
 AIDEVOPS_OPENCODE_PROFILE=v1 ./setup.sh --non-interactive
 ```
 
+V2 rejects duplicate plugin IDs (`Duplicate plugin ID: aidevops`), so setup
+registers the V2 plugin once through the config `plugins` entry and removes the
+legacy managed `plugins/aidevops-v2` symlink. It falls back to the symlink only
+when the config entry cannot be written. To check this, run
+`opencode2 api GET /api/plugin`: it should list exactly one `aidevops` entry
+with `status: active`.
+
 V2 promotion requires the isolated plugin, security-hook, lifecycle-cleanup,
 OAuth/MCP, headless execution, and V1 rollback gates to pass. Until then, do not
 change the profile document's `default` from `v1`.

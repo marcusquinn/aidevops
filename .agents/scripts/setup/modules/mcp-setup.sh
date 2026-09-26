@@ -470,7 +470,8 @@ _setup_opencode_plugins_remove_cursor_oauth() {
 _setup_opencode_plugins_register_file_url() {
 	# Mechanism 1: register aidevops plugin via file:// URL in opencode.json.
 	# Also removes the broken opencode-cursor-oauth plugin if present.
-	# Prints "true" or "false" to indicate registration status.
+	# Prints only "true" or "false" on stdout (callers capture it); progress
+	# messages go to stderr so they cannot corrupt the captured status.
 	local opencode_config="$1"
 	local aidevops_plugin_entrypoint="$2"
 	local plugin_key="${3:-plugin}"
@@ -479,7 +480,7 @@ _setup_opencode_plugins_register_file_url() {
 	local plugin_url="file://${aidevops_plugin_entrypoint}"
 
 	if ! command -v jq &>/dev/null; then
-		print_info "jq not installed — cannot update opencode.json plugin array"
+		print_info "jq not installed — cannot update opencode.json plugin array" >&2
 		echo "false"
 		return 0
 	fi
@@ -498,16 +499,18 @@ _setup_opencode_plugins_register_file_url() {
 			+ [$url] | unique) | del(.[$other])' \
 			"$opencode_config" >"$tmp_config"; then
 			mv "$tmp_config" "$opencode_config"
-			print_success "aidevops plugin registered in opencode.json"
+			print_success "aidevops plugin registered in opencode.json" >&2
 		else
 			rm -f "$tmp_config"
-			print_warning "Failed to update opencode.json plugin array (file: $opencode_config)"
+			print_warning "Failed to update opencode.json plugin array (file: $opencode_config)" >&2
+			echo "false"
+			return 0
 		fi
 	else
-		print_success "aidevops plugin already registered in opencode.json"
+		print_success "aidevops plugin already registered in opencode.json" >&2
 	fi
 
-	_setup_opencode_plugins_remove_cursor_oauth "$opencode_config"
+	_setup_opencode_plugins_remove_cursor_oauth "$opencode_config" >&2
 
 	echo "true"
 	return 0
@@ -527,6 +530,27 @@ _setup_opencode_plugins_register_symlink() {
 		fi
 	elif [[ ! -d "$aidevops_plugin_dst" ]]; then
 		ln -sfn "$aidevops_plugin_src" "$aidevops_plugin_dst"
+	fi
+	return 0
+}
+
+_setup_opencode_plugins_remove_managed_symlink() {
+	# OpenCode V2 rejects a second plugin with the same ID ("Duplicate plugin
+	# ID: aidevops"), so the auto-discovered symlink must not coexist with the
+	# config entry. Remove only symlinks that setup created; never user files.
+	local aidevops_plugin_dst="$1"
+	local link_target=""
+
+	[[ -L "$aidevops_plugin_dst" ]] || return 0
+	link_target=$(readlink "$aidevops_plugin_dst" 2>/dev/null || true)
+	case "$link_target" in
+	*/plugins/opencode-aidevops | */plugins/opencode-aidevops/*) ;;
+	*) return 0 ;;
+	esac
+	if rm -f "$aidevops_plugin_dst"; then
+		print_info "Removed duplicate aidevops plugin symlink: $aidevops_plugin_dst"
+	else
+		print_warning "Could not remove duplicate aidevops plugin symlink: $aidevops_plugin_dst"
 	fi
 	return 0
 }
@@ -659,7 +683,7 @@ setup_opencode_plugins() {
 	# Register aidevops plugin using two complementary mechanisms:
 	#   1. file:// URL in opencode.json "plugin" array (works on all tested versions)
 	#   2. Symlink in ~/.config/opencode/plugins/ (newer OpenCode convention)
-	# Both are idempotent — the plugin's registerPoolProvider() checks before adding.
+	# V1 tolerates both. V2 rejects duplicate plugin IDs, so it uses exactly one.
 	local plugins_dir="${opencode_config_dir}/plugins"
 	local aidevops_plugin_src="$HOME/.aidevops/agents/plugins/opencode-aidevops"
 	local aidevops_plugin_dst="$plugins_dir/opencode-aidevops"
@@ -693,8 +717,13 @@ setup_opencode_plugins() {
 		print_info "opencode.json not found — run 'opencode' once to create it, then re-run setup"
 	fi
 
-	# Mechanism 2: symlink in plugins directory
-	_setup_opencode_plugins_register_symlink "$plugins_dir" "$aidevops_plugin_symlink_src" "$aidevops_plugin_dst"
+	# Mechanism 2: symlink in plugins directory. V2 plugin IDs are unique, so
+	# V2 uses the symlink only when the config entry could not be written.
+	if [[ "$profile" == "v2" && "$pool_plugin_registered" == "true" ]]; then
+		_setup_opencode_plugins_remove_managed_symlink "$aidevops_plugin_dst"
+	else
+		_setup_opencode_plugins_register_symlink "$plugins_dir" "$aidevops_plugin_symlink_src" "$aidevops_plugin_dst"
+	fi
 
 	setup_track_configured "OpenCode plugins"
 
