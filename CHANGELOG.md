@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.35.0] - 2026-09-26
+
+### Added
+
+- add opt-in managed Desktop onboarding
+
+### Fixed
+
+- qualify pulse queue underfill (#32408)
+- release worker issue after requested PR changes
+- refresh offline model catalogue and guard issue images
+- accept body-only review alongside unrelated null head (#32388)
+
 ## [3.34.33] - 2026-09-25
 
 ### Fixed
