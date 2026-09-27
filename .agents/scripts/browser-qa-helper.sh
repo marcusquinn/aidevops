@@ -367,6 +367,7 @@ Commands:
   a11y         Run accessibility checks (contrast, ARIA, structure)
   smoke        Check for console errors and basic rendering
   stability    Reload pages N times and verify DOM/network quiescence
+  journey      Opt-in authenticated read-only journey (--config FILE --environment NAME)
   help         Show this help message
 
 Common Options:

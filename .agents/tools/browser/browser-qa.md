@@ -23,7 +23,7 @@ tools:
 ## Quick Reference
 
 - **Purpose**: Visual and functional QA for mission milestones with UI components
-- **CLI**: `browser-qa-helper.sh run|screenshot|links|a11y|smoke|journey --url URL --pages "/ /about"`
+- **CLI**: `browser-qa-helper.sh run|screenshot|links|a11y|smoke --url URL --pages "/ /about"`; authenticated read-only: `browser-qa-helper.sh journey --config journey.json --environment NAME`
 - **Invoked by**: `workflows/milestone-validation.md` (Phase 3) during mission orchestration
 - **Tool stack**: Playwright (primary, fastest) > Stagehand (fallback, self-healing) > DevTools (companion)
 - **Output**: JSON/markdown reports with screenshots, broken links, accessibility issues, console errors
@@ -51,17 +51,23 @@ tools:
 
 ### Authenticated Read-only Journeys (Opt-in)
 
-Prefer a repository's existing E2E test when it already covers the authenticated path. Otherwise, `journey` accepts a versioned JSON definition and credential *environment-variable names*, never credential values. It creates isolated desktop/mobile contexts, permits only exact-origin login/logout writes, and blocks every other POST/PUT/PATCH/DELETE request. It writes no screenshots, traces, storage state, or raw page data.
+Prefer a repository's existing E2E test when it already covers the authenticated path. Otherwise, `journey` runs a versioned JSON definition (`scripts/browser-qa-journey*.mjs`):
+
+- **Credentials**: the config names environment variables, never values. Inject them from the secret store, e.g. `aidevops secret run browser-qa-helper.sh journey ...`. The runner removes them from its environment before launching the browser.
+- **Lifecycle per viewport**: new isolated context (service workers and downloads blocked) → sign in via the form selectors → wait for the exact `successPath` → steps → sign out through the context's request client (`logout` endpoint, no redirects followed) → close. Sign-out runs after any step failure or timeout.
+- **Write boundary**: only the exact-origin `login` endpoint+method may change state, and only while signing in; its redirects are checked so it cannot leave the origin. Every other non-GET/HEAD/OPTIONS request, including non-`/api/` paths, off-origin page navigation and credential-bearing third-party requests, is aborted and fails the run. No flag relaxes this; write tests need a separate, authorized workflow.
+- **Output**: one JSON report on stdout: per viewport, sign-in/out status, per-step status with a coarse route pattern (`/items/:id`), console/page-error counts and guard counters. No screenshots, traces, recordings, storage state, cookies or page bodies are written; error text is truncated, query strings are stripped and credential values are masked.
+- **Limits**: `timeoutMs` per action (default 15000, max 60000) and `runTimeoutMs` for the whole run (default 180000, max 600000). MFA, CAPTCHA, SSO off-origin sign-in and CSRF-token-protected sign-out are not supported; use the repository's E2E suite for them.
 
 ```json
-{"version":1,"environments":{"staging":{"origin":"https://example.invalid","credentials":{"usernameEnv":"QA_USER","passwordEnv":"QA_PASSWORD"},"login":{"path":"/login","method":"POST","successPath":"/account","usernameSelector":"#email","passwordSelector":"#password","submitSelector":"button[type=submit]"},"logout":{"path":"/logout","method":"POST"},"viewports":["desktop","mobile"]}},"steps":[{"type":"navigate","path":"/account"},{"type":"visible","selector":"[data-testid=account]"},{"type":"no-horizontal-overflow"}]}
+{"version":1,"environments":{"staging":{"origin":"https://staging.example.invalid","credentials":{"usernameEnv":"QA_USER","passwordEnv":"QA_PASSWORD"},"login":{"pagePath":"/login","path":"/session","method":"POST","successPath":"/account","usernameSelector":"#email","passwordSelector":"#password","submitSelector":"button[type=submit]"},"logout":{"path":"/session","method":"DELETE"},"viewports":["desktop","mobile"]}},"steps":[{"type":"navigate","path":"/account"},{"type":"visible","selector":"[data-testid=account]"},{"name":"open media","type":"click","selector":"[data-testid=media-open]"},{"type":"text","selector":"[role=dialog] h2","includes":"Expected title"},{"type":"attribute","selector":"[role=dialog] video","name":"src","equals":"/media/expected.mp4"},{"type":"no-horizontal-overflow"}]}
 ```
 
 ```bash
 browser-qa-helper.sh journey --config journey.json --environment staging
 ```
 
-Supported steps are `navigate`, `click`, `visible`, `count`, `text`, `attribute`, and `no-horizontal-overflow`. The runner rejects unknown schemas, missing credentials, off-origin flows, and unsupported steps before attempting a relaxed fallback.
+Steps: `navigate` (`path`), `click` (`selector`, strict single match), `visible` (`selector`), `count` (`selector`, `equals`), `text` (`selector`, `includes`), `attribute` (`selector`, `name`, `equals`), `no-horizontal-overflow`; each accepts an optional `name`. Assertions re-check until the action timeout. Unknown schema versions, unknown step types, off-origin or protocol-relative paths and missing credentials fail before the browser launches. Tests: `scripts/tests/test-browser-qa-journey.sh`.
 
 ### Step 1: Start the Application
 
