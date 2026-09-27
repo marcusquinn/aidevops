@@ -94,7 +94,8 @@ import {
   recordSubagentCancellationReceipt,
   recordSubagentOutcome,
 } from "./observability.mjs";
-import { createSessionStartGreetingGate, createTtsrHooks } from "./ttsr.mjs";
+import { createTtsrHooks } from "./ttsr.mjs";
+import { createRootSessionGreetingGate, openCodeV1SessionLookup } from "./root-session-greeting-gate.mjs";
 import {
   createPoolAuthHook,
   createPoolTool,
@@ -103,6 +104,7 @@ import {
   rotateOpenAIPoolToken,
   selectOpenAIRequestAccount,
 } from "./oauth-pool.mjs";
+import { DETECTED_OPENCODE_RUNTIME_VERSION } from "./oauth-pool-token-endpoint.mjs";
 import { createProviderAuthHook } from "./provider-auth.mjs";
 import { installOpenAIProviderFetchRotation } from "./openai-provider-auth.mjs";
 import { startCursorProxy, ensureCursorProxyServer } from "./cursor-proxy.mjs";
@@ -488,7 +490,13 @@ export async function AidevopsPlugin({ directory, client }) {
     isHeadless,
     qualityLog,
   });
-  const shouldInjectGreeting = createSessionStartGreetingGate(client, isHeadless);
+  // Same root-session gate as OpenCode 2: an identical greeting on every root
+  // request keeps the prompt-cache prefix stable (GH#32592).
+  const shouldInjectGreeting = createRootSessionGreetingGate({
+    getSession: openCodeV1SessionLookup(client),
+    isHeadless,
+    log: qualityLog,
+  });
   const permissionBroker = createPermissionBroker({ client, isHeadless });
   const compactionContinuation = createCompactionAutoContinueGuard(client, { qualityLog });
   const cancellationReceipt = createSubagentCancellationReceipt(client, {
@@ -514,6 +522,10 @@ export async function AidevopsPlugin({ directory, client }) {
     isHeadless,
     shouldInjectGreeting,
     initializedAtMs,
+    // Resolved versions keep the block deterministic and independent of the
+    // refreshing greeting cache.
+    runtimeName: "OpenCode",
+    runtimeVersion: DETECTED_OPENCODE_RUNTIME_VERSION || undefined,
   });
 
   // Lazy-start dispatch table for local proxies. Keys are OpenCode

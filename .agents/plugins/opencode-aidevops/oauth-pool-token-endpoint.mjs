@@ -36,7 +36,9 @@ function detectCliVersion(binaries, fallback) {
 }
 
 const DETECTED_CLAUDE_VERSION = detectCliVersion(["claude"], FALLBACK_CLAUDE_VERSION);
-const DETECTED_OPENCODE_VERSION = detectCliVersion(["opencode", "oc"], FALLBACK_OPENCODE_VERSION);
+/** Detected OpenCode 1 CLI version, or null; user-facing text must not show the UA fallback. */
+export const DETECTED_OPENCODE_RUNTIME_VERSION = detectCliVersion(["opencode", "oc"], null);
+const DETECTED_OPENCODE_VERSION = DETECTED_OPENCODE_RUNTIME_VERSION || FALLBACK_OPENCODE_VERSION;
 
 /**
  * Auto-detect the @anthropic-ai/sdk package version embedded in the Claude CLI.

@@ -27,17 +27,24 @@ when their trigger applies; never remove them merely to meet a token target.
   `tool.execute.after`, before storage, so replayed history stays byte-stable;
   host `metadata.loaded` dedupe is untouched. OpenCode 2 publishes nearby
   instructions as a separate synthetic message and is not rewritten.
-- The plugin session greeting is off by default in OpenCode 1 (the global
-  AGENTS.md fallback greets) and on in OpenCode 2, whose config AGENTS.md is
-  the framework guide without a greeting fallback, and whose runtime version
-  only the plugin knows.
-  `AIDEVOPS_PLUGIN_SESSION_GREETING=1|0` forces it on or off. The block is
-  appended after durable guidance for every provider with the
-  root-session-only gate unchanged. The system
+- The plugin session greeting is on by default in OpenCode 1 and 2
+  (`AIDEVOPS_PLUGIN_SESSION_GREETING=1|0` forces it on or off). Versions are
+  resolved by the plugin (OpenCode 1: the detected CLI version; OpenCode 2: the
+  service version), so the model needs no VERSION/cache reads. The shared
+  root-session gate keeps the identical block on every request of an
+  interactive root session (stable prefix) and omits it for child and headless
+  sessions. While enabled, the plugin removes the marker-delimited greeting
+  fallback of the generated OpenCode 1 config AGENTS.md
+  (`<!-- aidevops:greeting-fallback:start/end -->`, written by
+  `generate-runtime-config-agents.sh`); with the plugin greeting disabled or
+  absent, that fallback greets as before. The block is appended after durable
+  guidance for every provider. The system
   transform mutates the host array in place so its blocks reach OpenCode 1 as
   well as OpenCode 2. Anthropic OAuth keeps the billing header and the exact
   Claude Code identity block in `system`; provider auth redistributes all other
   system text into the first user message.
+- Per-tool `agent__intent` schemas carry only a pointer description; the full
+  rule is the `## Intent Tracing (observability)` system instruction.
 - Anthropic OAuth `cch` signing targets the billing header's own placeholder via
   a random per-request sentinel, never the first placeholder in serialized
   `messages`, so quoted history cannot change the cached prefix. System text
