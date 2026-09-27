@@ -82,6 +82,7 @@ _compose_consolidation_worker_instructions() {
    - \`## Why\` — the problem and rationale
    - \`## How\` — approach with explicit file paths and line references
    - \`## Acceptance Criteria\` — testable checkboxes
+   - \`### Files Scope\` — the successor's write surface, one repo-relative path per line and nothing else on the line (\`- EDIT: path/to/file\` or \`- NEW: path/to/file\`). Carry over the parent's scope when present. Read-only references belong in \`## How\`, not here. The pulse holds \`auto-dispatch\` briefs whose scope fails \`pre-dispatch-validator-helper.sh scope-check\`, so prose after a path makes the successor undispatchable.
    - \`## Context & Decisions\` — which commenter contributed which insight (attribution matters)
    - \`## Contributors\` — a cc line @-mentioning every author from the list below
 
