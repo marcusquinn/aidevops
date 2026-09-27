@@ -478,6 +478,14 @@ INSERT INTO message (id,session_id,time_created,time_updated,data) VALUES
 	result=$(OPENCODE=1 OPENCODE_SESSION_ID="ses_current" AIDEVOPS_SIG_MODEL="" XDG_DATA_HOME="${tmp_home_19}/.local/share" HOME="$tmp_home_19" "$HELPER" generate --cli "OpenCode")
 	assert_contains "explicit OPENCODE_SESSION_ID model used" "with gpt-5.5" "$result"
 	assert_contains "explicit OPENCODE_SESSION_ID tokens used" "22 tokens on this" "$result"
+
+	sqlite3 "$db_path_19" "INSERT INTO message (id,session_id,time_created,time_updated,data) VALUES ('msg_switched','ses_current',${now_epoch_19}000,${now_epoch_19}000,'{\"providerID\":\"anthropic\",\"modelID\":\"claude-current\",\"role\":\"assistant\"}');"
+	result=$(OPENCODE=1 OPENCODE_SESSION_ID="ses_current" AIDEVOPS_SIG_MODEL="" XDG_DATA_HOME="${tmp_home_19}/.local/share" HOME="$tmp_home_19" "$HELPER" generate --cli "OpenCode")
+	assert_contains "latest message model wins after switch" "with claude-current" "$result"
+
+	sqlite3 "$db_path_19" "ALTER TABLE session ADD COLUMN model TEXT; UPDATE session SET model='{\"id\":\"gpt-session-current\",\"providerID\":\"openai\",\"variant\":\"xhigh\"}' WHERE id='ses_current';"
+	result=$(OPENCODE=1 OPENCODE_SESSION_ID="ses_current" AIDEVOPS_SIG_MODEL="" XDG_DATA_HOME="${tmp_home_19}/.local/share" HOME="$tmp_home_19" "$HELPER" generate --cli "OpenCode")
+	assert_contains "session model takes precedence over messages" "with gpt-session-current" "$result"
 else
 	echo "  SKIP: sqlite3 not available"
 fi
