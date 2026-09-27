@@ -159,6 +159,13 @@ Implements proven patterns from Lance Martin (LangChain), validated across Claud
 1. **Explicit activation agents** (`activationAgent`): a bounded profile can use `aidevops_mcp` to connect its registry-approved MCP. Playwright is the preferred browser implementation; Playwriter remains explicit legacy compatibility.
 2. **Per-agent permission only** (`globallyEnabled: false`): tool patterns stay hidden globally and are exposed only on the owning agent profile.
 
+Stagehand v4 follows a different bounded route: `stagehand-v4-helper.sh` pins an
+isolated local SDK, not a globally registered MCP. It is opt-in for adaptive
+flows after model/data/cost consent; deterministic headless Playwright stays the
+default. The v4 route does not inherit a user-selected tab's consent/profile
+boundary or replace legacy Playwriter. Decision evidence and versioned probes:
+`tools/browser/stagehand.md` and `tools/browser/browser-benchmark.md`.
+
 **How it works:** OpenCode treats `enabled: false` as disconnected, not automatic lazy loading. An explicit activation agent calls the registry-allowlisted `aidevops_mcp` tool, which uses OpenCode's MCP connect API and waits for the asynchronous status to report `connected`. An observed `failed` or `error` status gets one bounded disconnect/reconnect reset; direct API errors, authentication requirements, timeouts, and a second failed status remain terminal. The MCP tools appear on the following model step and can be disconnected when work is complete. There are no idle MCP processes or tool-schema cost in unrelated sessions. The plugin registry is authoritative; do not edit generated `opencode.json` MCP entries directly.
 
 **Adding runtime activation for an MCP requires:**
