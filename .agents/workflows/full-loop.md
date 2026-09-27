@@ -131,6 +131,7 @@ Iterate until emitting `<promise>TASK_COMPLETE</promise>`.
 7. **Pre-close verification gate (GH#17372 — MANDATORY):** NEVER close an issue citing an existing PR unless: (a) the PR was created by this session, OR (b) `verify-issue-close-helper.sh check <issue> <pr> <slug>` returns exit 0. If verification fails, leave the issue open and comment with your analysis.
 8. **Worktree edit verification gate (GH#22816):** After file edits in a linked worktree, verify the worktree still exists and the changes are visible before reporting completion or asking to push. Minimum evidence: `git status --short --branch` from the worktree plus a diff/stat or the intended commit. If the worktree vanished or the files are not visible, stop, reconstruct from evidence, and do not claim the edit succeeded.
 9. **Review evidence gate:** Apply `reference/review-core.md` before PR readiness. Low-risk changes receive direct diff inspection; medium-risk changes receive closeout review when it reduces uncertainty; high/critical changes require independent review. Verify and repair in-scope findings autonomously, reuse unchanged bundle evidence, and route additive findings to follow-up work.
+10. **Interactive close-out:** after merge/handoff, run the Capture Check in `reference/session.md` and end the final reply with its `What next` block (needed from user, left to capture, close readiness).
 
 ### Runtime Testing Gate (t1660.7 — MANDATORY)
 
