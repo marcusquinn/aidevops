@@ -73,5 +73,26 @@ else
 	printf 'PASS: minimum coverage gate fails below threshold\n'
 fi
 
+# Exercise the same atomic solved-label edit used by the close path. The
+# canonical default-branch guard must keep the blocker if the ref is absent.
+close_flags=$(
+	# shellcheck source=../shared-gh-wrappers.sh
+	source "${TEST_DIR}/../shared-gh-wrappers.sh"
+	ensure_solved_labels_exist() { return 0; }
+	gh_publication_default_has_ref() { [[ "$2" == "101" ]]; }
+	gh() { printf '{"state":"CLOSED","labels":[{"name":"publication:pending"}]}\n'; return 0; }
+	_gh_with_timeout() { printf '%s\n' "$*"; return 0; }
+	set_solved_label 101 owner/repo worker
+	set_solved_label 102 owner/repo worker
+)
+assert_contains "canonical closed task clears pending with solved label" '101 --repo owner/repo --add-label solved:worker --remove-label solved:interactive --remove-label publication:pending' "$close_flags"
+if [[ "$close_flags" == *'102 --repo owner/repo --add-label solved:worker --remove-label solved:interactive --remove-label publication:pending'* ]]; then
+	FAIL=$((FAIL + 1))
+	printf 'FAIL: missing default-branch ref lost the reopen fence\n' >&2
+else
+	PASS=$((PASS + 1))
+	printf 'PASS: missing default-branch ref retains the reopen fence\n'
+fi
+
 printf 'Results: %d passed, %d failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
