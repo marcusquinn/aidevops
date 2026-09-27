@@ -61,6 +61,11 @@ _DISPATCH_THROTTLE_FILE=""
 _DISPATCH_CANARY_CACHE=""
 _DISPATCH_BENIGN_BLOCKS_FILE=""
 _DISPATCH_BENIGN_BLOCKS_FILE_OWNED="0"
+# Cross-cycle skip hints are never an admission decision. Only positive ownership
+# evidence in the current ranked snapshot can consume one of these hints.
+_DISPATCH_NEGATIVE_CACHE_TTL_SECONDS="${AIDEVOPS_DISPATCH_NEGATIVE_CACHE_TTL_SECONDS:-1800}"
+[[ "$_DISPATCH_NEGATIVE_CACHE_TTL_SECONDS" =~ ^[0-9]+$ ]] || _DISPATCH_NEGATIVE_CACHE_TTL_SECONDS=1800
+((_DISPATCH_NEGATIVE_CACHE_TTL_SECONDS <= 1800)) || _DISPATCH_NEGATIVE_CACHE_TTL_SECONDS=1800
 _DISPATCH_BENIGN_BLOCKS_SCRATCH_DIR=""
 _DISPATCH_BENIGN_BLOCKS_LEGACY_MIN_AGE_SECONDS="${AIDEVOPS_PULSE_BENIGN_BLOCKS_LEGACY_MIN_AGE_SECONDS:-3600}"
 [[ "$_DISPATCH_BENIGN_BLOCKS_LEGACY_MIN_AGE_SECONDS" =~ ^[0-9]+$ ]] || _DISPATCH_BENIGN_BLOCKS_LEGACY_MIN_AGE_SECONDS=3600
@@ -89,6 +94,128 @@ source "${_PULSE_DISPATCH_LIB_DIR}/pulse-dispatch-lib-capacity.sh"
 # shellcheck source=./pulse-dispatch-lib-candidates.sh
 # shellcheck disable=SC1091  # sibling library resolved at runtime
 source "${_PULSE_DISPATCH_LIB_DIR}/pulse-dispatch-lib-candidates.sh"
+
+# Persist only verified ownership blocks, not uncertain lookups or mutable policy
+# gates. Each record is an atomic per-issue hint; a failed read/write falls through
+# to the full authoritative dispatch ceremony.
+_dispatch_negative_cache_path() {
+	local issue="$1" repo="$2"
+	[[ "$issue" =~ ^[0-9]+$ && "$repo" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || return 1
+	printf '%s/.aidevops/logs/dispatch-negative-cache/%s--%s--%s\n' "$HOME" "${repo%%/*}" "${repo##*/}" "$issue"
+	return 0
+}
+
+# Only a recent complete PR snapshot may keep a draft checkpoint suppressed.
+# A missing/changed PR or a stale prefetch always returns to the live gates.
+_dispatch_negative_pr_fingerprint() {
+	local repo="$1" pr="$2" snapshot=""
+	[[ "$pr" =~ ^[0-9]+$ ]] || return 1
+	snapshot=$("${_PULSE_DISPATCH_LIB_DIR}/pulse-batch-prefetch-helper.sh" read-snapshot --kind prs --slug "$repo" 2>/dev/null) || return 1
+	jq -er --argjson pr "$pr" '
+		select(.complete == true and ((now - (.timestamp | fromdateiso8601)) >= 0)
+			and ((now - (.timestamp | fromdateiso8601)) < 90)) |
+		.items[] | select(.number == $pr) |
+		select((.updatedAt | type) == "string" and (.headRefOid | type) == "string") |
+		select((.updatedAt | length) > 0 and (.headRefOid | length) > 0) |
+		[.updatedAt, .headRefOid] | join("_")
+	' <<<"$snapshot" 2>/dev/null
+	return $?
+}
+
+_dispatch_negative_cache_record() {
+	local candidate="$1" reason="$2" pr="${3:-}" fields="" issue="" repo="" updated="" file="" tmp="" fingerprint=""
+	case "$reason" in dedup_active_claim | dedup_active_claim_live_owner | dedup_active_claim_durable_launch | worker_draft_checkpoint_blocked) ;; *) return 0 ;; esac
+	fields=$(jq -r '[(.number // ""), (.repo_slug // ""), (.updatedAt // "")] | @tsv' <<<"$candidate") || return 0
+	IFS=$'\t' read -r issue repo updated <<<"$fields"
+	[[ "$updated" =~ ^[0-9TZ:.-]+$ ]] || return 0
+	if [[ "$reason" == worker_draft_checkpoint_blocked ]]; then
+		fingerprint=$(_dispatch_negative_pr_fingerprint "$repo" "$pr") || return 0
+	fi
+	file=$(_dispatch_negative_cache_path "$issue" "$repo") || return 0
+	mkdir -p "${file%/*}" 2>/dev/null || return 0
+	tmp=$(mktemp "${file}.XXXXXX") || return 0
+	chmod 600 "$tmp" 2>/dev/null || { rm -f "$tmp"; return 0; }
+	if printf '%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$updated" "$reason" "$pr" "$fingerprint" >"$tmp"; then
+		mv -f "$tmp" "$file" || rm -f "$tmp"
+	else
+		rm -f "$tmp"
+	fi
+	return 0
+}
+
+_dispatch_negative_cache_reason() {
+	local candidate="$1" fields="" issue="" repo="" updated="" file="" stamp="" cached="" reason="" now="" pr="" fingerprint="" current=""
+	# The snapshot must independently still show a claimed owner. No stale cache
+	# can suppress an available/unassigned candidate or permit a launch.
+	jq -e '(.assignees // [] | length) > 0 and
+		([.labels[]? | .name? // .] | any(. == "status:claimed" or . == "status:in-progress" or . == "status:in-review"))' <<<"$candidate" >/dev/null 2>&1 || return 1
+	fields=$(jq -r '[(.number // ""), (.repo_slug // ""), (.updatedAt // "")] | @tsv' <<<"$candidate") || return 1
+	IFS=$'\t' read -r issue repo updated <<<"$fields"
+	[[ "$updated" =~ ^[0-9TZ:.-]+$ ]] || return 1
+	file=$(_dispatch_negative_cache_path "$issue" "$repo") || return 1
+	[[ -f "$file" && ! -L "$file" ]] || return 1
+	IFS=$'\t' read -r stamp cached reason pr fingerprint <"$file" || return 1
+	[[ "$stamp" =~ ^[0-9]+$ && "$cached" == "$updated" ]] || return 1
+	case "$reason" in dedup_active_claim | dedup_active_claim_live_owner | dedup_active_claim_durable_launch)
+		# Empty worker pools must retain the authoritative active-claim recheck.
+		[[ "${_DISPATCH_ACTIVE_WORKERS:-0}" != 0 ]] || return 1
+		;;
+	worker_draft_checkpoint_blocked)
+		[[ -n "$fingerprint" ]] || return 1
+		current=$(_dispatch_negative_pr_fingerprint "$repo" "$pr") || return 1
+		[[ "$current" == "$fingerprint" ]] || return 1
+		;;
+	*) return 1 ;;
+	esac
+	now=$(date +%s)
+	((now >= stamp && now - stamp < _DISPATCH_NEGATIVE_CACHE_TTL_SECONDS)) || return 1
+	printf '%s\n' "$reason"
+	return 0
+}
+
+_dispatch_prefilter_owned_candidate() {
+	local candidate="$1" issue="$2" repo="$3" reason=""
+	if reason=$(_dispatch_negative_cache_reason "$candidate"); then
+		_DISPATCH_CANDIDATE_ELIGIBILITY="$_DISPATCH_ELIGIBILITY_INELIGIBLE"
+		echo "[pulse-wrapper] Dispatch_max: skipping #${issue} (${repo}) — cross-cycle ownership block:${reason}" >>"$LOGFILE"
+		_dispatch_stats_increment "dispatch_candidate_negative_cache_hit"
+		return 0
+	fi
+	# A live exact worker is a safe no-API skip on the very first cycle.
+	if declare -F has_worker_for_repo_issue >/dev/null 2>&1 &&
+		has_worker_for_repo_issue "$issue" "$repo"; then
+		_DISPATCH_CANDIDATE_ELIGIBILITY="$_DISPATCH_ELIGIBILITY_INELIGIBLE"
+		_dispatch_negative_cache_record "$candidate" dedup_active_claim_live_owner
+		_dispatch_stats_increment "dispatch_candidate_live_worker_prefilter"
+		echo "[pulse-wrapper] Dispatch_max: skipping #${issue} (${repo}) — exact live worker prefilter" >>"$LOGFILE"
+		return 0
+	fi
+	return 1
+}
+
+_dispatch_cache_confirmed_block() {
+	local candidate="$1" issue="$2" repo="$3" reason="" lines="" pr=""
+	lines=$(_dispatch_candidate_recent_lines "$issue" "$repo") || lines=""
+	# Only a positively identified worker draft with an unchanged prefetched PR
+	# can bypass the next ceremony. Never cache interactive checkpoint routing.
+	if [[ "$lines" != *"checkpoint_routed"* &&
+		"$lines" =~ WORKER_DRAFT_CHECKPOINT:[[:space:]]draft[[:space:]]PR[[:space:]]#([0-9]+) ]]; then
+		pr="${BASH_REMATCH[1]}"
+		_dispatch_negative_cache_record "$candidate" worker_draft_checkpoint_blocked "$pr"
+		return 0
+	fi
+	[[ "${_DISPATCH_CANDIDATE_ELIGIBILITY:-}" == "$_DISPATCH_ELIGIBILITY_INELIGIBLE" ]] || return 0
+	reason=$(_dispatch_benign_blocked_candidate_reason "$issue" "$repo") || return 0
+	_dispatch_negative_cache_record "$candidate" "$reason"
+	return 0
+}
+
+_dispatch_record_and_cache_block() {
+	local candidate="$1" issue="$2" repo="$3" rc="$4"
+	_dispatch_record_nonzero_dispatch_result "$issue" "$repo" "$rc"
+	_dispatch_cache_confirmed_block "$candidate" "$issue" "$repo"
+	return 0
+}
 
 _dispatch_compute_capacity() {
 	_DISPATCH_MIN_WORKER_FLOOR_ACTIVE=0
@@ -200,6 +327,7 @@ _dispatch_process_candidate() {
 		echo "[pulse-wrapper] Dispatch_max: skipping #${issue_number} — missing repo_slug='${repo_slug}' or repo_path='${repo_path}'" >>"$LOGFILE"
 		return 1
 	fi
+	_dispatch_prefilter_owned_candidate "$candidate_json" "$issue_number" "$repo_slug" && return 1
 
 	pulse_dispatch_debug_log "processing #${issue_number} (${repo_slug}) labels=[${labels_csv}]"
 
@@ -244,7 +372,7 @@ _dispatch_process_candidate() {
 	_dispatch_with_timeout "$issue_number" "$repo_slug" "$dispatch_title" "$issue_title" \
 		"$self_login" "$repo_path" "$prompt" "issue-${issue_number}" "$model_override" || dispatch_rc=$?
 	if [[ "$dispatch_rc" -ne 0 ]]; then
-		_dispatch_record_nonzero_dispatch_result "$issue_number" "$repo_slug" "$dispatch_rc"
+		_dispatch_record_and_cache_block "$candidate_json" "$issue_number" "$repo_slug" "$dispatch_rc"
 		return 1
 	fi
 
