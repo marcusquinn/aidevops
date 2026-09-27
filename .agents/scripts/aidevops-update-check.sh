@@ -24,6 +24,29 @@ get_version() {
 	aidevops_find_version
 }
 
+_detect_opencode_cli_version() {
+	# OpenCode V1 and V2 can be installed side by side; under the V2 profile the
+	# plain `opencode` on PATH may be V1, so prefer the isolated V2 CLI first.
+	local cli
+	local version=""
+	local -a candidates=(opencode)
+	if [[ "${AIDEVOPS_OPENCODE_PROFILE:-}" == "v2" ]]; then
+		candidates=(
+			"${AIDEVOPS_OPENCODE_V2_ROOT:-$HOME/.aidevops/runtimes/opencode-v2}/runtime/node_modules/.bin/opencode2"
+			opencode2
+			opencode
+		)
+	fi
+	for cli in "${candidates[@]}"; do
+		version=$("$cli" --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
+		if [[ -n "$version" ]]; then
+			printf '%s\n' "$version"
+			return 0
+		fi
+	done
+	return 0
+}
+
 detect_app() {
 	# Detect which AI coding assistant is running this script
 	# Returns: "AppName|version" or "AppName" or "unknown"
@@ -33,7 +56,7 @@ detect_app() {
 	if [[ "${OPENCODE:-}" == "1" ]]; then
 		app_name="OpenCode"
 		# Try multiple version detection methods (install path varies: bun, npm, homebrew)
-		app_version=$(opencode --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "")
+		app_version=$(_detect_opencode_cli_version)
 		if [[ -z "$app_version" ]]; then
 			app_version=$(npm list -g opencode-ai --json 2>/dev/null | jq -r '.dependencies["opencode-ai"].version // empty' 2>/dev/null || echo "")
 		fi
@@ -76,7 +99,7 @@ detect_app() {
 		*opencode*)
 			app_name="OpenCode"
 			# Try CLI first, then npm global package.json
-			app_version=$(opencode --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "")
+			app_version=$(_detect_opencode_cli_version)
 			if [[ -z "$app_version" ]]; then
 				app_version=$(npm list -g opencode-ai --json 2>/dev/null | jq -r '.dependencies["opencode-ai"].version // empty' 2>/dev/null || echo "")
 			fi
@@ -257,7 +280,12 @@ _get_runtime_hint() {
 	local runtime_hint=""
 	case "$app_name" in
 	OpenCode)
-		runtime_hint="You are running in OpenCode. Global config: ~/.config/opencode/opencode.json"
+		if [[ "${AIDEVOPS_OPENCODE_PROFILE:-}" == "v2" ]]; then
+			local v2_config="${OPENCODE_CONFIG:-~/.aidevops/runtimes/opencode-v2/config/opencode/opencode.json}"
+			runtime_hint="You are running in OpenCode V2. Global config: ${v2_config/#$HOME/~}"
+		else
+			runtime_hint="You are running in OpenCode. Global config: ~/.config/opencode/opencode.json"
+		fi
 		;;
 	"Claude Code")
 		runtime_hint="You are running in Claude Code. Global config: ~/.config/Claude/Claude.json"

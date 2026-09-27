@@ -1,5 +1,8 @@
 {
   "type": "module",
   "main": "./index.mjs",
-  "exports": "./index.mjs"
+  "exports": "./index.mjs",
+  "scripts": {
+    "test": "node --test ../tests/test-opencode-v2-adapter.mjs ../tests/test-opencode-v2-tui-title.mjs"
+  }
 }

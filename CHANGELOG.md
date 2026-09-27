@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.36.3] - 2026-09-27
+
+### Changed
+
+- Documentation: Document verified Mobile MCP emulator readiness and JSON output
+
+### Fixed
+
+- stabilize credential scrub performance tests
+
 ## [3.36.2] - 2026-09-27
 
 ### Changed

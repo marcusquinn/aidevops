@@ -28,7 +28,6 @@ import { recordPluginHealthStage } from "./plugin-health.mjs";
 import { applyImageSizeGuard } from "./quality-hooks-image.mjs";
 import { createQualityHooks } from "./quality-hooks.mjs";
 import { createSessionContinuationGuard } from "./session-continuation-guard.mjs";
-import { createSessionTitleStatusHandler } from "./session-title-status.mjs";
 import { createSessionModelStore, createShellEnvHook } from "./shell-env.mjs";
 import {
   appendConversationSystemContext,
@@ -112,6 +111,37 @@ function currentAidevopsVersion() {
     readIfExists(join(AGENTS_DIR, "VERSION")),
     process.env.AIDEVOPS_VERSION,
   ].find(Boolean)?.split(/\r?\n/, 1)[0].trim() || "";
+}
+
+const OPENCODE_V2_PACKAGE_NAMES = new Set(["@opencode/cli", "opencode-ai"]);
+
+function packageVersion(path) {
+  try {
+    const manifest = JSON.parse(readFileSync(path, "utf8"));
+    const version = manifest?.version;
+    if (!OPENCODE_V2_PACKAGE_NAMES.has(manifest?.name)) return "";
+    return typeof version === "string" && /^\d+\.\d+\.\d+/.test(version) ? version : "";
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Resolve the OpenCode V2 runtime version from the running binary's package,
+ * falling back to the isolated aidevops V2 runtime. The greeting uses this
+ * instead of the shared V1 greeting cache, which reports the V1 version.
+ */
+export function detectOpenCodeV2RuntimeVersion({ execPath = process.execPath, env = process.env, home = HOME } = {}) {
+  const v2Root = env.AIDEVOPS_OPENCODE_V2_ROOT || join(home, ".aidevops", "runtimes", "opencode-v2");
+  const candidates = [
+    execPath ? resolve(dirname(execPath), "..", "package.json") : "",
+    join(v2Root, "runtime", "node_modules", "@opencode", "cli", "package.json"),
+  ].filter(Boolean);
+  for (const candidate of candidates) {
+    const version = packageVersion(candidate);
+    if (version) return version;
+  }
+  return "";
 }
 
 function v1Model(model) {
@@ -307,10 +337,13 @@ export async function setupAidevopsV2(ctx) {
       isHeadless,
       shouldInjectGreeting,
       initializedAtMs,
+      runtimeName: "OpenCode",
+      runtimeVersion: (typeof ctx.app?.version === "string" && ctx.app.version) || detectOpenCodeV2RuntimeVersion(),
     });
     const permissionBroker = createPermissionBroker({ isHeadless });
     const providerAuth = createV2ProviderAuthRuntime();
-    const titleStatus = createSessionTitleStatusHandler({ isHeadless });
+    // Terminal title status is owned by the V2 TUI entrypoint (v2-plugin/tui.mjs):
+    // this service process has no reliable terminal and must not write titles.
 
     await register(registrations, ctx.tool.transform((editor) => {
       addV1ToolsToV2Editor(editor, baseTools, tool.schema, { directory, worktree });
@@ -365,7 +398,6 @@ export async function setupAidevopsV2(ctx) {
       await Promise.all([
         handleEvent(input, { resolveSessionModel: (sessionID) => sessionModels.resolve(sessionID) }),
         Promise.resolve(boundedOperationManager.handleEvent(input)),
-        titleStatus(input),
         permissionBroker.handleEvent(input),
       ]);
     });

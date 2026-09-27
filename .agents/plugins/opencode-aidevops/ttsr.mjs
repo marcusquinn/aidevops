@@ -11,7 +11,7 @@ import {
 } from "./ttsr-rules.mjs";
 // Prompt injection and the startup toast intentionally share cache provenance
 // and freshness policy so they cannot present contradictory version pairs.
-import { isGreetingCacheUsable, readGreetingCache, REFRESH_TTL_MS } from "./greeting.mjs";
+import { greetingCacheBasename, isGreetingCacheUsable, readGreetingCache, REFRESH_TTL_MS } from "./greeting.mjs";
 
 // ---------------------------------------------------------------------------
 // Token Cost Advisory
@@ -194,7 +194,7 @@ export function buildSessionStartGreetingInstruction(agentsDir, readIfExists, op
   const readCache = options.readGreetingCache ?? readGreetingCache;
   const refreshTtlMs = options.refreshTtlMs ?? REFRESH_TTL_MS;
   const initializedAtMs = options.initializedAtMs ?? Number.NEGATIVE_INFINITY;
-  const cachePath = join(agentsDir, "..", "cache", "session-greeting-opencode.txt");
+  const cachePath = join(agentsDir, "..", "cache", greetingCacheBasename(options.env ?? process.env));
   const cached = readCache(cachePath);
   const cacheLines = isGreetingCacheUsable(cached, now(), refreshTtlMs, initializedAtMs)
     ? cached.output.split("\n").map((line) => line.trim()).filter(Boolean)
@@ -204,8 +204,11 @@ export function buildSessionStartGreetingInstruction(agentsDir, readIfExists, op
   const deployedVersion = (readIfExists(join(agentsDir, "VERSION")) ?? "").trim().split("\n")[0];
   const version = deployedVersion || cacheMatch?.[1] || "X";
   const cacheMatchesDeployedVersion = !deployedVersion || cacheMatch?.[1] === deployedVersion;
-  const runtime = cacheMatch?.[2] || "OpenCode";
-  const runtimeVersion = cacheMatchesDeployedVersion ? cacheMatch?.[3] : undefined;
+  // A runtime that knows its own version (OpenCode V2 service) overrides the
+  // cache so side-by-side runtimes never borrow each other's version.
+  const runtime = options.runtimeName || cacheMatch?.[2] || "OpenCode";
+  const runtimeVersion = options.runtimeVersion
+    || (cacheMatchesDeployedVersion ? cacheMatch?.[3] : undefined);
   const versionLine = runtimeVersion
     ? `We're running aidevops v${version} in ${runtime} v${runtimeVersion}.`
     : `We're running aidevops v${version}.`;
@@ -393,6 +396,8 @@ async function ttsrTextComplete(input, output, state, execDeps, qualityLog) {
  * @param {() => number} [deps.now]
  * @param {number} [deps.refreshTtlMs]
  * @param {number} [deps.initializedAtMs]
+ * @param {string} [deps.runtimeName] Runtime label that overrides the greeting cache
+ * @param {string} [deps.runtimeVersion] Runtime version that overrides the greeting cache
  * @returns {{ loadTtsrRules: Function, systemTransformHook: Function, messagesTransformHook: Function, textCompleteHook: Function }}
  */
 export function createTtsrHooks(deps) {
@@ -407,6 +412,8 @@ export function createTtsrHooks(deps) {
     now: deps.now,
     refreshTtlMs: deps.refreshTtlMs,
     initializedAtMs: deps.initializedAtMs,
+    runtimeName: deps.runtimeName,
+    runtimeVersion: deps.runtimeVersion,
   };
   const systemTransformContext = { state, intentField, shouldInjectGreeting, agentsDir, readIfExists, greetingOptions };
 
