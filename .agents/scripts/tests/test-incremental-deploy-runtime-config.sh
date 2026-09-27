@@ -53,6 +53,7 @@ new_root="$HOME/.aidevops/runtime-bundles/new/agents"
 mkdir -p "$new_root/scripts"
 cp "$repo_root/.agents/scripts/example-helper.sh" "$new_root/scripts/example-helper.sh"
 cp "$repo_root/VERSION" "$new_root/VERSION"
+printf 'git_sha=%s\n' "$(git -C "$repo_root" rev-parse HEAD)" >"$new_root/.bundle-manifest"
 link_tmp="$HOME/.aidevops/agents.tmp.$$"
 rm -f "$link_tmp"
 ln -s "$new_root" "$link_tmp"
@@ -80,6 +81,15 @@ grep -Fxq 'old immutable sentinel' "$OLD_BUNDLE/scripts/example-helper.sh"
 ACTIVE_ROOT=$(cd "$TEST_HOME/.aidevops/agents" && pwd -P)
 [[ "$ACTIVE_ROOT" != "$OLD_BUNDLE" ]]
 grep -Fxq '#!/usr/bin/env bash' "$ACTIVE_ROOT/scripts/example-helper.sh"
+
+SETUP_CALLS_BEFORE=$(<"$SETUP_CALLS")
+rm -f "$MARKER"
+fast_path_output=$(HOME="$TEST_HOME" SETUP_CALLS="$SETUP_CALLS" \
+	bash "$REPO_ROOT/.agents/scripts/deploy-agents-on-merge.sh" \
+	--repo "$FIXTURE_REPO" --expected-sha "$SOURCE_SHA" --scripts-only 2>&1)
+[[ "$fast_path_output" == *"already deployed by active bundle new"* ]]
+[[ ! -e "$MARKER" ]]
+[[ "$(<"$SETUP_CALLS")" == "$SETUP_CALLS_BEFORE" ]]
 
 if bash -c 'source "$1"; runtime_config_changes_detected ".agents/scripts/example-helper.sh"' \
 	_ "$REPO_ROOT/.agents/scripts/deploy-agents-on-merge.sh"; then
