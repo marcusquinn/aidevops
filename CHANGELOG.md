@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.37.4] - 2026-09-27
+
+### Fixed
+
+- report canonical sync without local PR worktree (#32511)
+- warn when pinned approval verifier differs from active bundle (#32508)
+- avoid setup lock waits for active bundles (#32504)
+- restore issue lock diagnostics (#32501)
+- preserve terminal blocker continuity (#32502)
+- clarify full-loop merge gate diagnostics (#32492)
+
 ## [3.37.3] - 2026-09-27
 
 ### Added
