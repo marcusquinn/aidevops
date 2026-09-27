@@ -1,0 +1,91 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: 2026 Marcus Quinn
+// Public-page NanoGPT extraction contract, offline only. Do not add a paid
+// transport without proving worst-case charges including retries and overhead.
+const TARGET = 'https://example.com';
+const MODEL = 'nano-gpt/openai/gpt-4o-mini';
+const MAX_CALLS = 3;
+const MAX_INPUT_CHARS = 200_000;
+const MAX_OUTPUT_TOKENS = 256;
+const TIMEOUT_MS = 150_000;
+
+function receipt(status, reason, details = {}) {
+  return {
+    status, reason, target: TARGET, model: MODEL,
+    navigationMs: null, locatorMs: null, extractionMs: null,
+    callbackCount: details.callbackCount ?? 0,
+    reportedInputTokens: details.reportedInputTokens ?? null,
+    reportedOutputTokens: details.reportedOutputTokens ?? null,
+    reportedCostUsd: details.reportedCostUsd ?? null,
+    unknownSpend: details.unknownSpend ?? false,
+    heading: details.heading ?? null,
+  };
+}
+
+function normalizedJson(value) {
+  if (typeof value !== 'string') throw new Error('malformed_json');
+  const text = value.trim().replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?\s*```$/, '');
+  try { return JSON.parse(text); } catch { throw new Error('malformed_json'); }
+}
+
+// Pure fixture harness exercises the callback format boundary and request fuse.
+// Cost here is a mock receipt, NOT a pricing guarantee or a provider charge.
+function simulate(fixture, cap) {
+  let calls = 0;
+  let input = 0;
+  let output = 0;
+  let cost = 0;
+  let unknownSpend = false;
+  try {
+    if (!Number.isFinite(cap) || cap <= 0) throw new Error('missing_or_invalid_cap');
+    if (fixture === 'timeout') throw new Error('timeout');
+    const steps = fixture === 'extra-request' ? 4 : 2;
+    for (let i = 0; i < steps; i++) {
+      if (calls >= MAX_CALLS) throw new Error('request_limit');
+      const inputChars = fixture === 'oversize' ? MAX_INPUT_CHARS + 1 : 1000;
+      if (inputChars > MAX_INPUT_CHARS) throw new Error('input_limit');
+      // Simulated worst-case charge (deliberately higher than the mock receipt).
+      // This cannot be used to authorize live traffic: provider overhead is unknown.
+      if ((calls + 1) * 0.01 > cap) throw new Error('over_budget_projection');
+      calls++;
+      if (fixture === 'provider-403') { unknownSpend = true; throw new Error('provider_403'); }
+      const response = fixture === 'malformed-json' ? 'not json' : '```json\n{"heading":"Example Domain"}\n```';
+      const parsed = normalizedJson(response);
+      if (parsed.heading !== 'Example Domain') throw new Error('unexpected_heading');
+      input += 120;
+      output += Math.min(8, MAX_OUTPUT_TOKENS);
+      cost += 0.001;
+    }
+    return receipt('ok', 'offline_fixture', {
+      callbackCount: calls, reportedInputTokens: input,
+      reportedOutputTokens: output, reportedCostUsd: cost,
+      heading: 'Example Domain',
+    });
+  } catch (error) {
+    return receipt('failed', error.message, {
+      callbackCount: calls, reportedInputTokens: calls ? input : null,
+      reportedOutputTokens: calls ? output : null,
+      reportedCostUsd: calls && !unknownSpend ? cost : null,
+      unknownSpend,
+    });
+  }
+}
+
+const [mode, fixture] = process.argv.slice(2);
+let result;
+if (mode === 'live') {
+  // Installed Stagehand/OpenCode SDK exports, current NanoGPT pricing, provider
+  // overhead and a pre-inference spend ceiling are not verified on this host.
+  // An HTTP timeout or post-hoc usage receipt cannot enforce a USD cap.
+  result = receipt('failed', 'live_transport_disabled_unverified_hard_cap');
+} else if (mode === 'offline' && [
+  'two-call', 'extra-request', 'oversize', 'provider-403', 'malformed-json',
+  'timeout', 'over-budget',
+].includes(fixture)) {
+  const cap = fixture === 'over-budget' ? 0.005 : Number(process.env.STAGEHAND_PROBE_MAX_USD);
+  result = simulate(fixture, cap);
+} else {
+  result = receipt('failed', 'unknown_fixture_or_mode');
+}
+console.log(JSON.stringify(result));
+if (result.status !== 'ok') process.exitCode = 1;
