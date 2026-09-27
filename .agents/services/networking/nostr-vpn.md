@@ -112,7 +112,14 @@ Then `nvpn reload`. Verify it in three layers:
 2. macOS has registered the resolver: `scutil --dns | grep 'domain   : nvpn'`.
 3. The system resolves the name: `dscacheutil -q host -a name mini.nvpn`.
 
-If layer 1 works but layer 2 is empty, macOS has not reloaded `/etc/resolver`. Run `sudo killall -HUP mDNSResponder`.
+If layer 1 works but layer 2 is empty, macOS has not re-read `/etc/resolver`; `scutil --dns` may still list removed resolvers such as `fips`. `sudo killall -HUP mDNSResponder` does **not** fix this. macOS re-reads the directory on a network change, so cycle the default interface (`route -n get default | grep interface`). For example, if Wi-Fi is `en0`:
+
+```bash
+networksetup -setairportpower en0 off; sleep 3; networksetup -setairportpower en0 on; sleep 15
+scutil --dns | grep -E 'domain   : (nvpn|fips)'   # expect only nvpn
+```
+
+This drops the network for about 15 s; NetBird and nvpn reconnect on their own. If it doesn't help, reboot. Verified on macOS arm64 (GH#23846).
 
 ### Coexisting with NetBird
 
