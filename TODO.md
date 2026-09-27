@@ -1440,7 +1440,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18493 feat: media-qa-helper for rendered video/audio deliverables (streams, loudness, contact sheets, whisper intelligibility) #auto-dispatch #feat #interactive tier:standard ~2h ref:GH#32615 logged:2026-09-27 -> [todo/tasks/t18493-brief.md]
 
-- [ ] t18494 fix: claim-task-id strands IDs on rejected bodies, misleading scope hint, polluted issue-number capture, 30s counter fetch budget #auto-dispatch #bug #interactive tier:standard ~1.5h ref:GH#32617 logged:2026-09-27 -> [todo/tasks/t18494-brief.md]
+- [x] t18494 fix: claim-task-id strands IDs on rejected bodies, misleading scope hint, polluted issue-number capture, 30s counter fetch budget #auto-dispatch #bug #interactive tier:standard ~1.5h ref:GH#32617 logged:2026-09-27 -> [todo/tasks/t18494-brief.md] pr:#32674 completed:2026-09-27
 
 - [x] t18495 fix: guard merged-PR reconcile stages 1-2 against recurrent file-size debt #auto-dispatch #bug #pulse #interactive tier:standard ~1h ref:GH#32640 logged:2026-09-27 -> [todo/tasks/t18495-brief.md] pr:#32642 completed:2026-09-27
 
