@@ -1475,9 +1475,11 @@ migrate_old_backups() {
 	local old_count
 	old_count=$(find "$old_backup_dir" -maxdepth 1 -type d -name "20*" 2>/dev/null | wc -l | tr -d ' ')
 
+	# config-backups/ is also the live home of one-time migration backups
+	# (config-backups/migrations/). Only legacy 20* snapshot directories are
+	# migrated or removed; the parent is removed only once it is empty.
 	if [[ $old_count -eq 0 ]]; then
-		# Empty directory, just remove it
-		rm -rf "$old_backup_dir"
+		rmdir "$old_backup_dir" 2>/dev/null || true
 		return 0
 	fi
 
@@ -1505,8 +1507,9 @@ migrate_old_backups() {
 		fi
 	done
 
-	# Remove remaining old backups and the old directory
-	rm -rf "$old_backup_dir"
+	# Remove remaining legacy snapshots; keep migration backups and other content
+	find "$old_backup_dir" -mindepth 1 -maxdepth 1 -type d -name "20*" -exec rm -rf {} + 2>/dev/null || true
+	rmdir "$old_backup_dir" 2>/dev/null || true
 
 	if [[ $migrated -gt 0 ]]; then
 		print_success "Migrated $migrated recent backups, removed $((old_count - migrated)) old backups"
