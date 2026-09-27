@@ -3,5 +3,8 @@
   "private": true,
   "type": "module",
   "main": "./index.mjs",
-  "exports": "./index.mjs"
+  "exports": "./index.mjs",
+  "scripts": {
+    "lint": "node --check index.mjs && node --check ../capture-common.mjs"
+  }
 }
