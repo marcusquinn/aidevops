@@ -84,6 +84,11 @@ fluent summary. The primary checks the returned terminal evidence once, then
 finalizes its own lifecycle. Reuse existing routing/outcome telemetry for actual
 model, attempts, escalation and cost per verified release; include parent
 integration and repair cost, and label unavailable cost data rather than guessing.
+When publication succeeds but `terminal_receipt` is null, report **published;
+deployment deferred**, never "Release complete". A validated runtime containing
+the exact tag can be finalised by `aidevops release reconcile <source-PR>` after
+auto-update or `aidevops update`. Explicit reconciliation is lower risk than
+triggering publication-state mutations during a runtime bundle swap.
 
 ## Canonical release entry point
 
