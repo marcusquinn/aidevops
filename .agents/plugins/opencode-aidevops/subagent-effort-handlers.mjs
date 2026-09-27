@@ -13,6 +13,7 @@ import { SPECIALIST_ADVISOR, validateSpecialistRequest } from "./specialist-advi
 import { loadChildSessionWithParent, routeCreativeMessage } from "./subagent-parent-routing.mjs";
 import { BROWSER_AGENT, routeBrowserDelegate } from "./browser-delegate-routing.mjs";
 import { routeChatParams } from "./subagent-effort-params.mjs";
+import { subagentArm, armRouting, eligibleSubagentTrial } from "./subagent-ab.mjs";
 
 const DOMAIN_KNOWLEDGE_MARKER = "\n\n[AIDEvOps canonical domain knowledge]";
 const DOMAIN_REQUIRED_FIELDS = ["task", "objective", "scope", "source", "decisions", "evidence", "output"];
@@ -73,8 +74,9 @@ async function applyConnectedRoutingModel(context, route, message, policy) {
     policy.reason = "provider_state_unavailable_inherit";
     return;
   }
+  const routing = policy.armRouting || context.modelRouting;
   const routedModel = selectConnectedRoutingCandidate(
-    context.modelRouting,
+    routing,
     route.effort,
     providerState,
   );
@@ -83,7 +85,7 @@ async function applyConnectedRoutingModel(context, route, message, policy) {
   }
   message.model = routingModelIdentity(routedModel);
   policy.routedModel = routedModel;
-  policy.candidateIndex = routingCandidateIndex(context.modelRouting, route.effort, routedModel);
+  policy.candidateIndex = routingCandidateIndex(routing, route.effort, routedModel);
 }
 
 function applySpecialistPolicy(context, agentName, text, policy) {
@@ -150,11 +152,17 @@ async function routeTierMessage(context, output, { agentName, text, now }) {
   if (candidates.length === 0) {
     throw new Error(`[aidevops] Model routing tier '${route.effort}' is disabled`);
   }
-
   const childSession = await loadChildSessionWithParent(context, sessionID);
   if (!childSession) return;
   policy.parentSessionID = childSession.parentID;
   if (agentName === BROWSER_AGENT && await routeBrowserDelegate(context, childSession, message, policy)) return;
+  if (eligibleSubagentTrial(context.subagentTrial, agentName, context.agentRoutingState, now)) {
+    const arm = subagentArm(context.subagentTrial, sessionID);
+    policy.ab_experiment = context.subagentTrial.id;
+    policy.ab_arm = arm.name;
+    policy.armRouting = armRouting(context.modelRouting, arm);
+    policy.armModels = arm.tiers;
+  }
   if (nextRoutingTier(context.modelRouting, route.effort)) {
     context.appendCapabilityEscalationContract(output);
   }

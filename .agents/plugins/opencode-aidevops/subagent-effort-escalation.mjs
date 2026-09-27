@@ -187,7 +187,7 @@ class InteractiveSubagentEscalator {
     policy.reason = "capability_escalation";
     policy.escalated = true;
     policy.routedModel = model;
-    policy.candidateIndex = routingCandidateIndex(this.context.modelRouting, tier, model);
+    policy.candidateIndex = routingCandidateIndex(policy.armRouting || this.context.modelRouting, tier, model);
     policy.awaitingEscalationPrompt = true;
     policy.createdAt = Date.now();
   }
@@ -235,12 +235,13 @@ class InteractiveSubagentEscalator {
   }
 
   async nextEscalationCandidate(policy) {
-    const tier = nextRoutingTier(this.context.modelRouting, policy.effort);
+    const routing = policy.armRouting || this.context.modelRouting;
+    const tier = nextRoutingTier(routing, policy.effort);
     if (!tier) return null;
     const providerState = await this.context.resolveProviderState();
     if (!providerState) return null;
     const model = selectConnectedRoutingCandidate(
-      this.context.modelRouting,
+      routing,
       tier,
       providerState,
     );

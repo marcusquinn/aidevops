@@ -117,7 +117,8 @@ test("Sol parent can explicitly request Astra advice in interactive and headless
         : { id: "parent", model: { providerID: "openai", modelID: "gpt-5.6-sol" }, variant: "medium" } }),
     } };
     const hooks = createSubagentEffortHooks(client, {
-      modelRouting: routing, tierReasoning: loadTierReasoningPolicies([table]), agentRoutingState: state, isHeadless,
+      modelRouting: routing, tierReasoning: loadTierReasoningPolicies([table]), agentRoutingState: state,
+      isHeadless: () => isHeadless,
     });
     const output = {
       message: { sessionID: "child", agent: "specialist-advisor", variant: "low",
