@@ -1049,5 +1049,11 @@ cleanup_orphans() {
 cleanup_stale_opencode() {
 	# Consolidated into cleanup_orphans(), whose lifecycle and activity proof now
 	# safely covers eligible no-TTY and TTY-attached `opencode run` sessions.
+	# This stage is scheduled by pulse preflight; prune stale agent scratch here
+	# without introducing a second scheduler. The helper is dry-run by default
+	# for manual use; pulse explicitly opts in to recoverable trash moves.
+	if [[ -x "${_PULSE_CLEANUP_SCRIPT_DIR}/system-cleanup.sh" ]]; then
+		"${_PULSE_CLEANUP_SCRIPT_DIR}/system-cleanup.sh" --force >>"${LOGFILE:-/dev/null}" 2>&1 || return 1
+	fi
 	return 0
 }
