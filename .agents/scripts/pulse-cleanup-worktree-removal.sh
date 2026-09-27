@@ -26,6 +26,96 @@ _PC_PROFILE_PUBLICATION_LEGACY_MODE="legacy"
 _PC_PROFILE_PUBLICATION_PRODUCER="profile-readme"
 _PC_PROFILE_PUBLICATION_LEGACY_RECOVERIES=0
 
+# Invalid registrations are a daily diagnostic, not a per-cycle log storm.
+_pc_log_invalid_repo_path_once() {
+	local repo_slug="$1"
+	local day="" marker="" log_dir=""
+	day=$(date -u +%Y-%m-%d) || return 1
+	log_dir="${AIDEVOPS_LOG_DIR:-${HOME}/.aidevops/logs}"
+	# A slug is untrusted configuration; use a fixed marker plus a safe hash.
+	marker="${log_dir}/invalid-repo-path-${day}-$(printf '%s' "$repo_slug" | git hash-object --stdin)"
+	if [[ ! -e "$marker" ]]; then
+		mkdir -p "$log_dir" || return 1
+		if ( set -C; : >"$marker" ) 2>/dev/null; then
+			printf '[pulse-cleanup] stage=merged-pr repo=%s skipping cleanup — invalid repo path configured\n' "$repo_slug" >>"${LOGFILE:-/dev/null}"
+		fi
+	fi
+	return 0
+}
+
+# Resolve only an ordinary, top-level Git linked worktree with a live main
+# checkout. Never follow a symlink or infer a canonical repo from a directory
+# name; missing canonical repositories are human-owned recovery decisions.
+_pc_central_canonical() {
+	local candidate="$1" pointer="" gitdir="" canonical="" common=""
+	[[ -d "$candidate" && ! -L "$candidate" && -f "$candidate/.git" && ! -L "$candidate/.git" ]] || return 1
+	IFS= read -r pointer <"$candidate/.git" || [[ -n "$pointer" ]] || return 1
+	[[ "$pointer" == 'gitdir: /'*/.git/worktrees/* ]] || return 1
+	gitdir="${pointer#gitdir: }"
+	canonical="${gitdir%/.git/worktrees/*}"
+	[[ "$canonical" == /* && "$canonical" != "$candidate" && "$canonical" != *'/../'* && "$canonical" != *'/./'* ]] || return 1
+	if [[ ! -d "$canonical/.git" || ! -d "$gitdir" ]]; then
+		printf '[pulse-cleanup] stage=central-unregistered path=%s skip=orphaned-canonical\n' "$candidate" >>"${LOGFILE:-/dev/null}"
+		return 1
+	fi
+	common=$(git -C "$candidate" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
+	[[ "$common" == "$canonical/.git" ]] || return 1
+	[[ "$(git -C "$canonical" rev-parse --show-toplevel 2>/dev/null)" == "$canonical" ]] || return 1
+	printf '%s\n' "$canonical"
+	return 0
+}
+
+# Bounded, rotating scan of central worktrees independent of repos.json.
+# Discovery uses no API; removal delegates every guard and merge proof to the
+# existing worktree-helper clean path. Recheck identity immediately before use.
+_pc_cleanup_central_unregistered() {
+	local base="" repos_json="${HOME}/.config/aidevops/repos.json" cursor="" last="" candidate="" canonical="" helper="" count=0 total=0 scanned=0
+	local candidates=() processed=() entry="" index=0 start=0 length=0 seen=""
+	base=$(aidevops_worktree_base_dir_configured) || { printf '0\n'; return 0; }
+	[[ -d "$base" && ! -L "$base" ]] || { printf '0\n'; return 0; }
+	helper="${_PULSE_CLEANUP_SCRIPT_DIR}/worktree-helper.sh"
+	[[ -x "$helper" ]] || { printf '0\n'; return 0; }
+	for entry in "$base"/*; do
+		[[ -d "$entry" && ! -L "$entry" ]] && candidates+=("$entry")
+	done
+	length=${#candidates[@]}
+	[[ "$length" -gt 0 ]] || { printf '0\n'; return 0; }
+	cursor="${AIDEVOPS_LOG_DIR:-${HOME}/.aidevops/logs}/central-unregistered-next"
+	[[ ! -f "$cursor" ]] || IFS= read -r last <"$cursor" || true
+	for ((index=0; index<length; index++)); do
+		if [[ "${candidates[$index]}" == "$last" ]]; then
+			start=$(((index + 1) % length))
+			break
+		fi
+	done
+	for ((index=0; index<length && index<8; index++)); do
+		candidate="${candidates[$(((start + index) % length))]}"
+		mkdir -p "${cursor%/*}" || break
+		printf '%s\n' "$candidate" >"$cursor" || break
+		scanned=$((scanned + 1))
+		canonical=$(_pc_central_canonical "$candidate") || continue
+		# A valid registered canonical (including local_only) is owned by the
+		# existing repo policy, never by this pass.
+		if [[ -f "$repos_json" ]] && command -v jq >/dev/null 2>&1 &&
+			jq -e --arg path "$canonical" '.initialized_repos[]? | select(.path == $path)' "$repos_json" >/dev/null 2>&1; then
+			continue
+		fi
+		seen=0
+		for entry in "${processed[@]}"; do
+			[[ "$entry" == "$canonical" ]] && seen=1 && break
+		done
+		[[ "$seen" -eq 0 ]] || continue
+		[[ "$(_pc_central_canonical "$candidate")" == "$canonical" ]] || continue
+		processed+=("$canonical")
+		printf '[pulse-cleanup] stage=central-unregistered path=%s canonical=%s evaluating\n' "$candidate" "$canonical" >>"${LOGFILE:-/dev/null}"
+		count=$(_pc_cleanup_merged_repo "$helper" "$canonical") || count=0
+		[[ "$count" =~ ^[0-9]+$ ]] && total=$((total + count))
+	done
+	printf '[pulse-cleanup] central-unregistered scanned=%s removed=%s\n' "$scanned" "$total" >>"${LOGFILE:-/dev/null}"
+	printf '%s\n' "$total"
+	return 0
+}
+
 if [[ -z "${_PULSE_CLEANUP_SCRIPT_DIR:-}" ]]; then
 	_pulse_cleanup_worktree_removal_path="${BASH_SOURCE[0]%/*}"
 	[[ "$_pulse_cleanup_worktree_removal_path" == "${BASH_SOURCE[0]}" ]] && _pulse_cleanup_worktree_removal_path="."
@@ -1515,6 +1605,14 @@ _pc_cleanup_fixture_passes() {
 	return 0
 }
 
+_pc_cleanup_merged_passes() {
+	local registered=0 central=0
+	registered=$(_cleanup_merged_prs_for_all_repos)
+	central=$(_pc_cleanup_central_unregistered)
+	printf '%s\n' "$((registered + central))"
+	return 0
+}
+
 cleanup_worktrees() {
 	# The caller still owns the hard watchdog. Bounded invocations persist fair
 	# progress before each guarded operation so interruption cannot pin the queue.
@@ -1546,7 +1644,7 @@ cleanup_worktrees() {
 
 	# Pass 1: remove worktrees for merged PRs
 	local merged_removed
-	merged_removed=$(_cleanup_merged_prs_for_all_repos)
+	merged_removed=$(_pc_cleanup_merged_passes)
 	total_removed=$((total_removed + merged_removed))
 
 	# Pass 2: age-based orphan cleanup

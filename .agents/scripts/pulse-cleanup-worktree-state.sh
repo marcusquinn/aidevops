@@ -688,7 +688,7 @@ _cleanup_merged_prs_for_all_repos() {
 		while IFS=$'\t' read -r repo_path repo_slug; do
 			[[ -z "$repo_path" ]] && continue
 			if ! git -C "$repo_path" rev-parse --git-dir >/dev/null 2>&1; then
-				echo "[pulse-cleanup] stage=merged-pr repo=${repo_slug:-unknown} skipping cleanup — invalid repo path configured" >>"${LOGFILE:-/dev/null}"
+				_pc_log_invalid_repo_path_once "${repo_slug:-unknown}"
 				continue
 			fi
 
