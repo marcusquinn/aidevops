@@ -101,7 +101,7 @@ function agentPromptFromSource(source) {
 }
 
 function onDemandMcpPrompt(mcp, agentsDir) {
-  const source = readIfExists(join(agentsDir, ...mcp.agentSource));
+  const source = mcp.agentSource?.length ? readIfExists(join(agentsDir, ...mcp.agentSource)) : "";
   const parsed = source ? parseAgentFrontmatter(source) : null;
   const prompt = parsed?.prompt
     || agentPromptFromSource(source)
