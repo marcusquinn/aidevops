@@ -132,6 +132,9 @@ _routine_update_state() {
 		--argjson deferred_until "$deferred_until" '
 		.[$id] = ((.[$id] // {}) + {"last_attempt": $ts, "last_status": $st})
 		| if $st == $success then .[$id].last_run = $ts else . end
+		| if $st == "failure" then .[$id].consecutive_failures = ((.[$id].consecutive_failures // 0) + 1)
+		  elif $st == $success then del(.[$id].consecutive_failures)
+		  else . end
 		| if $st == $deferred then
 			.[$id].deferred_until = ([.[$id].deferred_until // 0, $deferred_until] | max)
 		  else del(.[$id].deferred_until)
@@ -146,19 +149,27 @@ _routine_update_state() {
 }
 
 #######################################
-# Block duplicate active executions and apply an explicit short failure retry
+# Block duplicate active executions and apply an explicit failure retry
 # cooldown without moving the successful calendar boundary marker.
+#
+# Consecutive failures back off exponentially (retry, 2x, 4x ... capped).
+# Script routines run synchronously ahead of Pulse dispatch, so a
+# persistently failing daily routine retried every 15 minutes re-ran its
+# full cost on nearly every cycle and delayed worker dispatch each time.
 #######################################
 _routine_retry_blocked() {
 	local routine_id="$1"
 	local retry_seconds="${AIDEVOPS_ROUTINE_FAILURE_RETRY_SECONDS:-900}"
+	local retry_max_seconds="${AIDEVOPS_ROUTINE_FAILURE_RETRY_MAX_SECONDS:-21600}"
 	local running_seconds="${AIDEVOPS_ROUTINE_RUNNING_TIMEOUT_SECONDS:-21600}"
 	local status=""
 	local attempt_iso=""
 	local attempt_epoch=0
 	local now_epoch=0
 	local deferred_until=0
+	local failures=0
 	[[ "$retry_seconds" =~ ^[0-9]+$ ]] || retry_seconds=900
+	[[ "$retry_max_seconds" =~ ^[0-9]+$ ]] || retry_max_seconds=21600
 	[[ "$running_seconds" =~ ^[0-9]+$ ]] || running_seconds=21600
 	[[ -f "$ROUTINE_STATE_FILE" ]] || return 1
 	status=$(jq -r --arg id "$routine_id" '.[$id].last_status // empty' "$ROUTINE_STATE_FILE" 2>/dev/null || true)
@@ -168,7 +179,16 @@ _routine_retry_blocked() {
 	now_epoch=$(_routine_now_epoch)
 	case "$status" in
 	running) [[ $((now_epoch - attempt_epoch)) -lt "$running_seconds" ]] ;;
-	failure) [[ $((now_epoch - attempt_epoch)) -lt "$retry_seconds" ]] ;;
+	failure)
+		failures=$(jq -r --arg id "$routine_id" '.[$id].consecutive_failures // 1' "$ROUTINE_STATE_FILE" 2>/dev/null || true)
+		[[ "$failures" =~ ^[0-9]+$ && "$failures" -ge 1 ]] || failures=1
+		while [[ "$failures" -gt 1 && "$retry_seconds" -lt "$retry_max_seconds" ]]; do
+			retry_seconds=$((retry_seconds * 2))
+			failures=$((failures - 1))
+		done
+		[[ "$retry_seconds" -le "$retry_max_seconds" || "$retry_max_seconds" -eq 0 ]] || retry_seconds="$retry_max_seconds"
+		[[ $((now_epoch - attempt_epoch)) -lt "$retry_seconds" ]]
+		;;
 	deferred)
 		deferred_until=$(jq -r --arg id "$routine_id" '.[$id].deferred_until // 0' "$ROUTINE_STATE_FILE" 2>/dev/null || true)
 		[[ "$deferred_until" =~ ^[0-9]+$ && "$now_epoch" -lt "$deferred_until" ]]
