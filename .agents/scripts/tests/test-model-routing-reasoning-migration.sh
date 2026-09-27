@@ -100,6 +100,9 @@ assert_eq "custom/simple" "$(jq -r '.tiers.simple.models[0]' "$custom_table")" "
 assert_eq "keep" "$(jq -r '.tiers.simple.reasoning.other' "$custom_table")" "unrelated reasoning settings are preserved" || true
 assert_eq "preserve" "$(jq -r '.user_setting' "$custom_table")" "unrelated custom configuration is preserved" || true
 assert_eq "low" "$(jq -r '.tiers.simple.reasoning.openai' "$HOME/.aidevops/config-backups/migrations/t18137-model-routing-table.json")" "pre-migration backup is retained" || true
+# Every setup run calls migrate_old_backups first; it must not delete migration backups.
+migrate_old_backups
+assert_eq "low" "$(jq -r '.tiers.simple.reasoning.openai' "$HOME/.aidevops/config-backups/migrations/t18137-model-routing-table.json" 2>/dev/null)" "legacy backup cleanup keeps migration backups" || true
 
 jq '.tiers.simple.reasoning.openai = "high"' "$custom_table" >"${custom_table}.tmp"
 mv "${custom_table}.tmp" "$custom_table"
