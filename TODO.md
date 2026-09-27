@@ -1434,7 +1434,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18490 docs: refresh TTS/music provider guidance (NanoGPT audio route, OpenAI TTS, OAuth scope) and Remotion BT.709 delivery flags #auto-dispatch #documentation #interactive tier:simple ~45m ref:GH#32610 logged:2026-09-27 -> [todo/tasks/t18490-brief.md]
 
-- [ ] t18491 fix: session worktree resolver errors say 'Image workdir' for bounded operations and hide which root failed #auto-dispatch #bug #interactive tier:simple ~30m ref:GH#32612 logged:2026-09-27 -> [todo/tasks/t18491-brief.md]
+- [x] t18491 fix: session worktree resolver errors say 'Image workdir' for bounded operations and hide which root failed #auto-dispatch #bug #interactive tier:simple ~30m ref:GH#32612 logged:2026-09-27 -> [todo/tasks/t18491-brief.md] pr:#32653 completed:2026-09-27
 
 - [ ] t18492 fix: aidevops secret NAME -- cmd redacts short dictionary words (e.g. 'openai') from output #auto-dispatch #bug #interactive tier:standard ~1h ref:GH#32614 logged:2026-09-27 -> [todo/tasks/t18492-brief.md]
 
