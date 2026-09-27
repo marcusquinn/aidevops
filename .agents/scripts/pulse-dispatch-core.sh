@@ -36,6 +36,7 @@
 [[ -n "${_PULSE_DISPATCH_CORE_LOADED:-}" ]] && return 0
 _PULSE_DISPATCH_CORE_LOADED=1
 _PULSE_DISPATCH_FALSE="false"
+_PULSE_DISPATCH_OPEN_STATE="OPEN"
 _PULSE_DISPATCH_ELIGIBILITY_STAGE="eligibility_gate"
 _PULSE_DISPATCH_NMR_LABEL="needs-maintainer-review"
 _PULSE_DISPATCH_COLLABORATOR_ASSOCIATION="COLLABORATOR"
@@ -263,27 +264,18 @@ _dispatch_cleanup_disk_pressure() {
 	return 1
 }
 
-_dispatch_dedup_check_layers() {
+_dispatch_dedup_capacity_gates() {
 	local issue_number="$1"
 	local repo_slug="$2"
-	local dispatch_title="$3"
-	local issue_title="$4"
-	local self_login="$5"
-	local repo_path="$6"
-	local issue_meta_json="$7"
+	local issue_title="$3"
+	local self_login="$4"
+	local repo_path="$5"
+	local issue_meta_json="$6"
 
 	# t3043: per-sub-stage timing inside dedup_check. The outer
 	# dispatch_with_dedup records "dedup_check" as one blob; these
 	# sub-stage records let us identify which gate dominates the 235s avg.
 	local _dss_t0="" _ds_stage_attempt_id=""
-
-	local target_state="" target_title=""
-	# GH#21717: normalize to uppercase — REST fallback returns lowercase "open"/"closed"
-	# while GraphQL returns enum "OPEN"/"CLOSED". The comparison at line 921 is
-	# case-sensitive, so without normalization every issue appears non-OPEN when
-	# GraphQL is exhausted, silently blocking all dispatch for 30+ min.
-	target_state=$(printf '%s' "$issue_meta_json" | jq -r '.state // ""' 2>/dev/null | tr '[:lower:]' '[:upper:]')
-	target_title=$(printf '%s' "$issue_meta_json" | jq -r '.title // ""' 2>/dev/null)
 
 	# GH#22948/GH#22964/GH#29535: interactive/review holds remain independent
 	# of assignee identity. A terminal worker draft checkpoint is the sole narrow
@@ -332,10 +324,18 @@ _dispatch_dedup_check_layers() {
 		return 1
 	fi
 	_ds_record "$issue_number" "$repo_slug" "dedup.worktree_cap" "$_dss_t0"
+	return 0
+}
+
+_dispatch_dedup_state_label_gates() {
+	local issue_number="$1" repo_slug="$2" issue_meta_json="$3"
+	local _dss_t0="" _ds_stage_attempt_id="" target_state=""
+	# REST fallback returns lowercase state while GraphQL returns uppercase.
+	target_state=$(printf '%s' "$issue_meta_json" | jq -r '.state // ""' 2>/dev/null | tr '[:lower:]' '[:upper:]')
 
 	_dss_t0=$(_ds_now_ns)
 	_ds_stage_start "$issue_number" "$repo_slug" "state_check" "$_dss_t0" _ds_stage_attempt_id
-	if [[ "$target_state" != "OPEN" ]]; then
+	if [[ "$target_state" != "$_PULSE_DISPATCH_OPEN_STATE" ]]; then
 		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: issue state is ${target_state:-unknown}" >>"$LOGFILE"
 		_ds_record "$issue_number" "$repo_slug" "dedup.state_check" "$_dss_t0"
 		return 1
@@ -403,6 +403,13 @@ _dispatch_dedup_check_layers() {
 		return 1
 	fi
 	_ds_record "$issue_number" "$repo_slug" "dedup.nmr_gate" "$_dss_t0"
+	return 0
+}
+
+_dispatch_dedup_dependency_gates() {
+	local issue_number="$1" repo_slug="$2" repo_path="$3" issue_meta_json="$4"
+	local _dss_t0="" _ds_stage_attempt_id="" target_title=""
+	target_title=$(printf '%s' "$issue_meta_json" | jq -r '.title // ""' 2>/dev/null)
 
 	if [[ "$target_title" == \[Supervisor:* ]]; then
 		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: supervisor telemetry title" >>"$LOGFILE"
@@ -483,6 +490,20 @@ _dispatch_dedup_check_layers() {
 		return 1
 	fi
 	_ds_record "$issue_number" "$repo_slug" "dedup.footprint" "$_dss_t0"
+	return 0
+}
+
+_dispatch_dedup_check_layers() {
+	local issue_number="$1" repo_slug="$2" dispatch_title="$3" issue_title="$4"
+	local self_login="$5" repo_path="$6" issue_meta_json="$7"
+	local _dss_t0="" _ds_stage_attempt_id="" gate_rc=0
+	_dispatch_dedup_capacity_gates "$issue_number" "$repo_slug" "$issue_title" \
+		"$self_login" "$repo_path" "$issue_meta_json" || gate_rc=$?
+	[[ "$gate_rc" -eq 0 ]] || return "$gate_rc"
+	_dispatch_dedup_state_label_gates "$issue_number" "$repo_slug" "$issue_meta_json" || gate_rc=$?
+	[[ "$gate_rc" -eq 0 ]] || return "$gate_rc"
+	_dispatch_dedup_dependency_gates "$issue_number" "$repo_slug" "$repo_path" "$issue_meta_json" || gate_rc=$?
+	[[ "$gate_rc" -eq 0 ]] || return "$gate_rc"
 
 	# Read-only dedup layers — cannot be skipped.
 	# t2996: ISSUE_META_JSON forwards the canonical bundle to
@@ -608,8 +629,8 @@ _rollback_prelaunch_ownership() {
 	issue_meta_json=$(gh_issue_view "$issue_number" --repo "$repo_slug" \
 		--json state,labels,assignees,locked 2>/dev/null) || return 1
 	local owns_queued=""
-	owns_queued=$(printf '%s' "$issue_meta_json" | jq -r --arg self "$self_login" '
-		(.state == "OPEN") and
+	owns_queued=$(printf '%s' "$issue_meta_json" | jq -r --arg self "$self_login" --arg open_state "$_PULSE_DISPATCH_OPEN_STATE" '
+		(.state == $open_state) and
 		(([.labels[].name] | index("status:queued")) != null) and
 		(([.assignees[].login] | index($self)) != null)
 	' 2>/dev/null) || return 1
@@ -634,8 +655,8 @@ _rollback_prelaunch_ownership() {
 		expected_locked=true
 		lock_summary="required conversation lock retained"
 	fi
-	if ! printf '%s' "$issue_meta_json" | jq -e --arg self "$self_login" '
-		.state == "OPEN" and
+	if ! printf '%s' "$issue_meta_json" | jq -e --arg self "$self_login" --arg open_state "$_PULSE_DISPATCH_OPEN_STATE" '
+		.state == $open_state and
 		(([.labels[].name] | index("status:queued")) == null) and
 		(([.labels[].name] | index("status:available")) != null) and
 		(([.assignees[].login] | index($self)) == null)
@@ -772,6 +793,60 @@ CLAIM_RELEASED reason=dispatch_aborted:${reason} runner=${self_login} ts=$(date 
 #   1 - hard error (metadata unavailable, dedup gate blocked)
 #   2 - explicit launch no-op (canary/precreate/orphan guard; retry later)
 #######################################
+_dispatch_load_and_validate_metadata() {
+	local issue_number="$1" repo_slug="$2"
+	local _ds_t0=""
+	# issue_meta_json is owned by dispatch_with_dedup in the calling scope.
+	# Do not shadow it: the fetched bundle is reused by all later gates.
+	_ds_t0=$(_ds_now_ns)
+	issue_meta_json=$(gh_issue_view "$issue_number" --repo "$repo_slug" \
+		--json number,title,state,labels,assignees,body,author,createdAt 2>/dev/null) || issue_meta_json=""
+	_ds_record "$issue_number" "$repo_slug" "gh_issue_view" "$_ds_t0"
+	if [[ -z "$issue_meta_json" ]]; then
+		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: unable to load issue metadata" >>"$LOGFILE"
+		return 1
+	fi
+	local issue_state
+	issue_state=$(printf '%s' "$issue_meta_json" | jq -r '.state // ""' 2>/dev/null | tr '[:lower:]' '[:upper:]') || issue_state=""
+	if [[ "$issue_state" == "CLOSED" ]]; then
+		echo "[dispatch] Skipping #${issue_number}: state=CLOSED" >>"$LOGFILE"
+		pulse-batch-prefetch-helper.sh evict-issue "$repo_slug" "$issue_number" 2>/dev/null || true
+		return 1
+	fi
+
+	#aidevops:trust-boundary -- a worker permission request is dispatchable only
+	# after the request-specific signed grant flow removes its dedicated label.
+	if _dispatch_waiting_for_maintainer_permission "$issue_meta_json"; then
+		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: waiting for a scoped signed maintainer permission grant" >>"$LOGFILE"
+		echo "[dispatch_with_dedup] DISPATCH_BLOCK_REASON reason=needs_maintainer_permissions signal=needs-maintainer-permissions issue=#${issue_number} repo=${repo_slug}" >>"$LOGFILE"
+		return 1
+	fi
+	if _dispatch_permission_history_requires_grant "$issue_number" "$repo_slug"; then
+		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: permission-request history lacks a current matching signed grant (${_DISPATCH_PERMISSION_VERIFY_RESULT:-unknown})" >>"$LOGFILE"
+		echo "[dispatch_with_dedup] DISPATCH_BLOCK_REASON reason=permission_grant_unverified signal=${_DISPATCH_PERMISSION_VERIFY_RESULT:-unknown} issue=#${issue_number} repo=${repo_slug}" >>"$LOGFILE"
+		return 1
+	fi
+
+	# A PR shares the Issues API number space but must never be dispatched.
+	local _target_pr_rc=0
+	_dispatch_target_is_pull_request "$issue_number" "$repo_slug" || _target_pr_rc=$?
+	if [[ "$_target_pr_rc" -eq 0 ]]; then
+		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: target is a pull request, not a dispatchable issue (GH#22948)" >>"$LOGFILE"
+		echo "[dispatch_with_dedup] DISPATCH_BLOCK_REASON reason=pr_target_not_dispatchable signal=pr_target_not_dispatchable issue=#${issue_number} repo=${repo_slug}" >>"$LOGFILE"
+		return 3
+	fi
+	if [[ "$_target_pr_rc" -ne 1 ]]; then
+		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: unable to verify target is not a pull request (GH#22948, rc=${_target_pr_rc})" >>"$LOGFILE"
+		return 1
+	fi
+	if _is_renovate_dependency_dashboard_issue "$issue_meta_json"; then
+		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: Renovate Dependency Dashboard issues are metadata only" >>"$LOGFILE"
+		echo "[dispatch_with_dedup] DISPATCH_BLOCK_REASON reason=renovate_dependency_dashboard signal=renovate_dependency_dashboard issue=#${issue_number} repo=${repo_slug}" >>"$LOGFILE"
+		return 3
+	fi
+	return 0
+}
+
 dispatch_with_dedup() {
 	local issue_number="$1"
 	local repo_slug="$2"
@@ -813,57 +888,9 @@ dispatch_with_dedup() {
 	# fetch + the large-file labels/title fetches + the brief-freshness body
 	# fetch) with a single call. See .agents/reference/dispatch-architecture.md
 	# "gh API call budget" for the full inventory.
-	_ds_t0=$(_ds_now_ns)
-	local issue_meta_json
-	issue_meta_json=$(gh_issue_view "$issue_number" --repo "$repo_slug" \
-		--json number,title,state,labels,assignees,body,author,createdAt 2>/dev/null) || issue_meta_json=""
-	_ds_record "$issue_number" "$repo_slug" "gh_issue_view" "$_ds_t0"
-	if [[ -z "$issue_meta_json" ]]; then
-		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: unable to load issue metadata" >>"$LOGFILE"
-		return 1
-	fi
-	local issue_state
-	issue_state=$(printf '%s' "$issue_meta_json" | jq -r '.state // ""' 2>/dev/null | tr '[:lower:]' '[:upper:]') || issue_state=""
-	if [[ "$issue_state" == "CLOSED" ]]; then
-		echo "[dispatch] Skipping #${issue_number}: state=CLOSED" >>"$LOGFILE"
-		pulse-batch-prefetch-helper.sh evict-issue "$repo_slug" "$issue_number" 2>/dev/null || true
-		return 1
-	fi
-
-	#aidevops:trust-boundary -- a worker permission request is dispatchable only
-	# after the request-specific signed grant flow removes its dedicated label.
-	if _dispatch_waiting_for_maintainer_permission "$issue_meta_json"; then
-		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: waiting for a scoped signed maintainer permission grant" >>"$LOGFILE"
-		echo "[dispatch_with_dedup] DISPATCH_BLOCK_REASON reason=needs_maintainer_permissions signal=needs-maintainer-permissions issue=#${issue_number} repo=${repo_slug}" >>"$LOGFILE"
-		return 1
-	fi
-	if _dispatch_permission_history_requires_grant "$issue_number" "$repo_slug"; then
-		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: permission-request history lacks a current matching signed grant (${_DISPATCH_PERMISSION_VERIFY_RESULT:-unknown})" >>"$LOGFILE"
-		echo "[dispatch_with_dedup] DISPATCH_BLOCK_REASON reason=permission_grant_unverified signal=${_DISPATCH_PERMISSION_VERIFY_RESULT:-unknown} issue=#${issue_number} repo=${repo_slug}" >>"$LOGFILE"
-		return 1
-	fi
-
-	# GH#22948: hard PR-target guard before any lifecycle mutation. A pull
-	# request shares the Issues API number space, but it is already an
-	# implementation under review; dispatching a worker against it can relabel
-	# origin:interactive to origin:worker and open a competing PR.
-	local _target_pr_rc=0
-	_dispatch_target_is_pull_request "$issue_number" "$repo_slug" || _target_pr_rc=$?
-	if [[ "$_target_pr_rc" -eq 0 ]]; then
-		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: target is a pull request, not a dispatchable issue (GH#22948)" >>"$LOGFILE"
-		echo "[dispatch_with_dedup] DISPATCH_BLOCK_REASON reason=pr_target_not_dispatchable signal=pr_target_not_dispatchable issue=#${issue_number} repo=${repo_slug}" >>"$LOGFILE"
-		return 3
-	fi
-	if [[ "$_target_pr_rc" -ne 1 ]]; then
-		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: unable to verify target is not a pull request (GH#22948, rc=${_target_pr_rc})" >>"$LOGFILE"
-		return 1
-	fi
-
-	if _is_renovate_dependency_dashboard_issue "$issue_meta_json"; then
-		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: Renovate Dependency Dashboard issues are metadata only" >>"$LOGFILE"
-		echo "[dispatch_with_dedup] DISPATCH_BLOCK_REASON reason=renovate_dependency_dashboard signal=renovate_dependency_dashboard issue=#${issue_number} repo=${repo_slug}" >>"$LOGFILE"
-		return 3
-	fi
+	local issue_meta_json="" metadata_rc=0
+	_dispatch_load_and_validate_metadata "$issue_number" "$repo_slug" || metadata_rc=$?
+	[[ "$metadata_rc" -eq 0 ]] || return "$metadata_rc"
 
 	# Run all pre-dispatch validation and dedup check layers (10 gates total).
 	# Each gate logs its own blocked reason to LOGFILE before returning 1.
@@ -882,6 +909,17 @@ dispatch_with_dedup() {
 		return 1
 	fi
 	_ds_record "$issue_number" "$repo_slug" "dedup_check" "$_ds_t0"
+	_dispatch_post_dedup_gates "$issue_number" "$repo_slug" "$repo_path" "$issue_title" "$self_login" || return $?
+	_dispatch_launch_checked_worker "$issue_number" "$repo_slug" "$dispatch_title" "$issue_title" \
+		"$self_login" "$repo_path" "$prompt" "$session_key" "$model_override"
+	return $?
+}
+
+# Runs after dedup has established the claim. issue_meta_json and
+# _claim_comment_id remain dynamically scoped to dispatch_with_dedup.
+_dispatch_post_dedup_gates() {
+	local issue_number="$1" repo_slug="$2" repo_path="$3" issue_title="$4" self_login="$5"
+	local _ds_t0=""
 
 	# t2063: brief-body freshness guard — defence-in-depth.
 	# If a brief file exists for this issue but the issue body lacks the
@@ -957,6 +995,13 @@ dispatch_with_dedup() {
 		return 1
 	fi
 	_ds_record "$issue_number" "$repo_slug" "$_PULSE_DISPATCH_ELIGIBILITY_STAGE" "$_ds_t0"
+	return 0
+}
+
+_dispatch_launch_checked_worker() {
+	local issue_number="$1" repo_slug="$2" dispatch_title="$3" issue_title="$4"
+	local self_login="$5" repo_path="$6" prompt="$7" session_key="$8" model_override="$9"
+	local _ds_t0=""
 
 	# All checks passed — launch the worker.
 	_ds_t0=$(_ds_now_ns)

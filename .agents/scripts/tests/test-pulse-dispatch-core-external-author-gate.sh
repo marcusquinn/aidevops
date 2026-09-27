@@ -331,7 +331,9 @@ test_author_lookup_failure_fails_closed() {
 
 test_dedup_author_gate_integration() {
 	local caller_src
-	caller_src=$(awk '/^_dispatch_dedup_check_layers\(\) \{/,/^}$/ { print }' "$ORCHESTRATOR_SCRIPT")
+	# The orchestrator delegates to three extracted gates. Include their actual
+	# implementations so this isolated integration check exercises the caller chain.
+	caller_src=$(awk '/^_dispatch_dedup_capacity_gates\(\) \{/,/^}$/ { print } /^_dispatch_dedup_state_label_gates\(\) \{/,/^}$/ { print } /^_dispatch_dedup_dependency_gates\(\) \{/,/^}$/ { print } /^_dispatch_dedup_check_layers\(\) \{/,/^}$/ { print }' "$ORCHESTRATOR_SCRIPT")
 	eval "$caller_src"
 	# Isolate unrelated pre-dispatch dependencies; exercise the actual caller,
 	# author gate, JSON validation and GitHub mock together without network I/O.
@@ -339,6 +341,7 @@ test_dedup_author_gate_integration() {
 	_ds_record() { return 0; }
 	_ds_stage_start() { return 0; }
 	_PULSE_DISPATCH_DEDUP_LABEL_CHECK_STAGE="dedup.label_checks"
+	_PULSE_DISPATCH_OPEN_STATE="OPEN"
 	_dispatch_interactive_hold_gate() { return 1; }
 	aidevops_worktree_capacity_check() { return 0; }
 	_dispatch_worktree_capacity_gate() { return 0; }
