@@ -1052,8 +1052,14 @@ cleanup_stale_opencode() {
 	# This stage is scheduled by pulse preflight; prune stale agent scratch here
 	# without introducing a second scheduler. The helper is dry-run by default
 	# for manual use; pulse explicitly opts in to recoverable trash moves.
+	# The scratch backlog can hold tens of thousands of entries; an unbounded
+	# run consumed the full 600s stage timeout every cycle and starved the
+	# stalled-worker, zombie-reap and ledger stages that follow. Bound the
+	# per-cycle budget so the backlog drains incrementally across cycles.
+	local _scratch_budget="${PULSE_SCRATCH_CLEANUP_MAX_SECONDS:-60}"
+	[[ "$_scratch_budget" =~ ^[0-9]+$ ]] || _scratch_budget=60
 	if [[ -x "${_PULSE_CLEANUP_SCRIPT_DIR}/system-cleanup.sh" ]]; then
-		"${_PULSE_CLEANUP_SCRIPT_DIR}/system-cleanup.sh" --force >>"${LOGFILE:-/dev/null}" 2>&1 || return 1
+		"${_PULSE_CLEANUP_SCRIPT_DIR}/system-cleanup.sh" --force --max-seconds "$_scratch_budget" >>"${LOGFILE:-/dev/null}" 2>&1 || return 1
 	fi
 	return 0
 }
