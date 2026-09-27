@@ -21,6 +21,7 @@
 #
 # Usage:
 #   pre-dispatch-validator-helper.sh validate <issue-number> <slug>
+#   pre-dispatch-validator-helper.sh scope-check <issue-number> <body> <auto-dispatch:0|1>
 #   pre-dispatch-validator-helper.sh help
 #
 # Emergency bypass:
@@ -1972,6 +1973,7 @@ EOF
 
 case "${1:-help}" in
 validate) cmd_validate "${2:-}" "${3:-}" ;;
+scope-check) _validate_implementation_brief_scope "${2:-}" "${3:-}" "${4:-0}" ;;
 check-review-supersession) cmd_check_review_supersession "${2:-}" "${3:-}" ;;
 help | --help | -h) _usage ;;
 *)

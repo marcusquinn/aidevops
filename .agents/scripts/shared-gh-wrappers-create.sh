@@ -239,6 +239,55 @@ _gh_ci_prepare_status_label() {
 	return 0
 }
 
+# Fail closed at publication rather than creating a worker-owned issue whose
+# first worker can only report missing_files_scope. Explicit declarations in
+# legacy Files sections need author review before they become write authority.
+_gh_ci_validate_dispatch_scope() {
+	local body="" body_file="" expect="" arg
+	_gh_wrapper_args_have_label "$_GH_CREATE_AUTO_DISPATCH_LABEL" "$@" || return 0
+	for arg in "$@"; do
+		if [[ -n "$expect" ]]; then
+			case "$expect" in
+			body) body="$arg" ;;
+			file) body_file="$arg" ;;
+			esac
+			expect=""
+			continue
+		fi
+		case "$arg" in
+		--body) expect=body ;;
+		--body-file) expect="file" ;;
+		--body=*) body="${arg#--body=}" ;;
+		--body-file=*) body_file="${arg#--body-file=}" ;;
+		esac
+	done
+	if [[ -n "$body_file" ]]; then
+		[[ -r "$body_file" ]] || return 1
+		body=$(<"$body_file")
+	fi
+	if printf '%s\n' "$body" | grep -Eqi '^[[:space:]]*(#{1,3}[[:space:]]*)?(planning-only|pure planning|brief-only|no code changes)(:|[[:space:]]*$)'; then
+		return 0
+	fi
+	# Creation-time repair is limited to explicit file declarations; bodies
+	# without them remain subject to the pre-claim validator.
+	if ! printf '%s\n' "$body" | awk '
+		/^###? (Files to Modify|Files|Relevant Files)[[:space:]]*$/ { section=1; next }
+		/^# / || /^## / || /^### / { section=0 }
+		section && /^[[:space:]]*-[[:space:]]*(EDIT|NEW):[[:space:]]*`?[^`[:space:]]/ { found=1 }
+		END { exit !found }
+	' && ! printf '%s\n' "$body" | grep -Eq '^#{2,3} Files Scope[[:space:]]*$'; then
+		return 0
+	fi
+	# shellcheck source=./pre-dispatch-validator-lib-brief-scope.sh
+	# shellcheck disable=SC1091
+	source "${_GH_WRAPPERS_CREATE_DIR}/pre-dispatch-validator-lib-brief-scope.sh"
+	if _brief_files_scope_has_path "$body"; then
+		return 0
+	fi
+	print_warning 'auto-dispatch implementation brief requires canonical ##/### Files Scope with EDIT/NEW paths; review legacy Files declarations before publication'
+	return 1
+}
+
 # GH#29394/GH#29408: NMR is reserved for external-author trust gates.
 # Wrapper-created issues are authored by the authenticated token actor, so a
 # live write-level permission check can safely remove legacy trusted-author NMR.
@@ -554,6 +603,7 @@ gh_create_issue() {
 	set -- "${_GH_CI_TRUST_NORMALIZED_ARGS[@]}"
 	_todo_label_args=()
 	_gh_ci_prepare_status_label "$@"
+	_gh_ci_validate_dispatch_scope "$@" || return 1
 	if ! _gh_guard_public_write_args "$@"; then
 		return 1
 	fi

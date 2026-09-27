@@ -18,11 +18,17 @@ fi
 
 _brief_requires_files_scope() {
 	local issue_body="$1"
+	local auto_dispatch="${2:-0}"
 
+	if [[ "$auto_dispatch" == "1" ]]; then
+		# Only an explicit planning declaration exempts an interactive brief;
+		# incidental prose mentioning planning-only behavior is not an exemption.
+		printf '%s\n' "$issue_body" | grep -Eqi '^[[:space:]]*(#{1,3}[[:space:]]*)?(planning-only|pure planning|brief-only|no code changes)(:|[[:space:]]*$)' && return 1
+		return 0
+	fi
 	if printf '%s' "$issue_body" | grep -Eqi 'planning-only|pure planning|brief-only|no code changes'; then
 		return 1
 	fi
-
 	printf '%s' "$issue_body" | grep -qE \
 		'<!-- aidevops:generator=[a-z0-9_-]+[^>]* cited_file=[^ >]+|<!-- aidevops:dependabot-pr-intake[[:space:]]'
 	return $?
@@ -44,18 +50,19 @@ _brief_files_scope_has_path() {
 	[[ -n "$scope_section" ]] || return 1
 	# shellcheck disable=SC2016 # literal regular expression anchors
 	printf '%s\n' "$scope_section" |
-		grep -qE '^[[:space:]]*-[[:space:]]*(EDIT|NEW):[[:space:]]*`?[^`[:space:]][^`]*`?[[:space:]]*$'
+		grep -qE '^[[:space:]]*-[[:space:]]*((EDIT|NEW):[[:space:]]*)?`?[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*`?[[:space:]]*$'
 }
 
 _validate_implementation_brief_scope() {
 	local issue_number="$1"
 	local issue_body="$2"
+	local auto_dispatch="${3:-0}"
 
-	_brief_requires_files_scope "$issue_body" || return 0
+	_brief_requires_files_scope "$issue_body" "$auto_dispatch" || return 0
 	if _brief_files_scope_has_path "$issue_body"; then
 		return 0
 	fi
 
-	_log "ERROR" "brief-defect: #${issue_number} generated implementation brief lacks a non-empty canonical Files Scope; add '### Files Scope' with '- EDIT: \`repo-relative/path\`' before dispatch"
+	_log "ERROR" "brief-defect: #${issue_number} implementation brief lacks a non-empty canonical Files Scope; add '### Files Scope' with '- EDIT: \`repo-relative/path\`' before dispatch"
 	return 40
 }

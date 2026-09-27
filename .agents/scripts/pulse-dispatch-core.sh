@@ -847,6 +847,44 @@ _dispatch_load_and_validate_metadata() {
 	return 0
 }
 
+# Fail before dedup posts a claim. The blocked label is the durable cycle gate;
+# do not manufacture an audit observation on every pulse iteration.
+_dispatch_preclaim_brief_scope() {
+	local issue_number="$1" repo_slug="$2" issue_meta_json="$3"
+	local issue_body="" author="" permission="" comment_file="" scope_rc=0
+	printf '%s' "$issue_meta_json" | jq -e '[.labels[]?.name] | index("auto-dispatch") != null' >/dev/null 2>&1 || return 0
+	if printf '%s' "$issue_meta_json" | jq -e '[.labels[]?.name] | index("status:blocked") != null' >/dev/null 2>&1; then
+		return 1
+	fi
+	issue_body=$(printf '%s' "$issue_meta_json" | jq -r '.body // ""') || return 1
+	"${SCRIPT_DIR}/pre-dispatch-validator-helper.sh" scope-check "$issue_number" "$issue_body" 1 >/dev/null 2>&1 || scope_rc=$?
+	[[ "$scope_rc" -eq 0 ]] && return 0
+	[[ "$scope_rc" -eq 40 ]] || return 1
+
+	# aidevops:trust-boundary — only the authenticated runner may hold a trusted
+	# implementation brief; untrusted authors must stay on the normal review path.
+	author=$(printf '%s' "$issue_meta_json" | jq -r '.author.login // ""') || return 1
+	[[ "$author" =~ ^[A-Za-z0-9-]+$ ]] || return 1
+	permission=$(gh api "repos/${repo_slug}/collaborators/${author}/permission" --jq '.permission' 2>/dev/null) || return 1
+	case "$permission" in admin | maintain | write) ;; *) return 1 ;; esac
+	if ! declare -F repo_allows_pulse_write_actions >/dev/null 2>&1 ||
+		! repo_allows_pulse_write_actions "$repo_slug"; then
+		return 1
+	fi
+	comment_file=$(mktemp) || return 1
+	printf 'Brief hold: reason=missing_files_scope owner=brief-author.\nProjected state: status:blocked.\nNext action: Add a canonical ### Files Scope (or legacy ## Files Scope) section listing permitted EDIT/NEW paths in the issue body; verify with pre-dispatch-validator-helper.sh scope-check. The corrected body re-arms dispatch after the blocked label is cleared by the brief owner.\n' >"$comment_file"
+	if ! set_issue_status "$issue_number" "$repo_slug" blocked >/dev/null; then
+		rm -f "$comment_file"
+		return 1
+	fi
+	if ! gh_issue_comment "$issue_number" --repo "$repo_slug" --body-file "$comment_file" >/dev/null; then
+		rm -f "$comment_file"
+		return 1
+	fi
+	rm -f "$comment_file"
+	return 1
+}
+
 dispatch_with_dedup() {
 	local issue_number="$1"
 	local repo_slug="$2"
@@ -891,6 +929,7 @@ dispatch_with_dedup() {
 	local issue_meta_json="" metadata_rc=0
 	_dispatch_load_and_validate_metadata "$issue_number" "$repo_slug" || metadata_rc=$?
 	[[ "$metadata_rc" -eq 0 ]] || return "$metadata_rc"
+	_dispatch_preclaim_brief_scope "$issue_number" "$repo_slug" "$issue_meta_json" || return 1
 
 	# Run all pre-dispatch validation and dedup check layers (10 gates total).
 	# Each gate logs its own blocked reason to LOGFILE before returning 1.
