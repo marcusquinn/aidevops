@@ -679,8 +679,8 @@ _repo_path_is_canonical_checkout() {
 
 	git_dir=$(git -C "$repo_path" rev-parse --path-format=absolute --git-dir 2>/dev/null) || return 1
 	common_dir=$(git -C "$repo_path" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
-	[[ "$git_dir" == "$common_dir" ]]
-	return $?
+	[[ -n "$git_dir" && -n "$common_dir" && "$git_dir" == "$common_dir" ]] && return 0
+	return 1
 }
 
 _ensure_todo_entry_written() {
@@ -786,7 +786,10 @@ _converge_created_issue_ref() {
 	[[ -n "$task_id" && "$issue_num" =~ ^[1-9][0-9]*$ ]] || return 1
 	# The canonical guard prints the exact entry for the caller and is a
 	# successful convergence: it must not retry or make issue creation fail.
-	_repo_path_is_canonical_checkout "$repo_path" && return 0
+	if _repo_path_is_canonical_checkout "$repo_path"; then
+		_ensure_todo_entry_written "$task_id" "$issue_num" "$title" "$labels" "$repo_path"
+		return $?
+	fi
 	repo=$(_extract_github_slug "$repo_path" "${REMOTE_NAME:-origin}" 2>/dev/null || true)
 
 	while [[ $attempt -le 3 ]]; do
