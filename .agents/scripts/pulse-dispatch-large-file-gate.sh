@@ -655,6 +655,16 @@ _large_file_gate_file_new_debt_issue() {
 		--color "D93F0B" \
 		--force 2>/dev/null || true
 
+	# A split creates sibling modules, so the scope must admit them up front;
+	# otherwise the worker stops on files_scope_excluded. Drop a -helper suffix
+	# to follow the helper/lib precedent (issue-sync-helper.sh -> issue-sync-lib.sh).
+	local _split_scope_line=""
+	if [[ "${lf_path##*/}" == *.* ]]; then
+		local _lf_stem="${lf_path%.*}"
+		_split_scope_line="
+- NEW: \`${_lf_stem%-helper}-*.${lf_path##*.}\`"
+	fi
+
 	local _new_num _create_body _create_combined
 	_create_body="<!-- aidevops:generator=large-file-simplification-gate cited_file=${lf_path} threshold=${LARGE_FILE_LINE_THRESHOLD} -->
 
@@ -666,7 +676,7 @@ Issue #${parent_issue} is blocked by the large-file gate. Workers dispatched aga
 
 ### Files Scope
 
-- EDIT: \`${lf_path}\`
+- EDIT: \`${lf_path}\`${_split_scope_line}
 
 ## How
 - Extract cohesive function groups into separate files

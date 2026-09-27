@@ -350,6 +350,29 @@ printf '\n[6a] Brief with ### Files Scope heading → in-scope push allowed\n'
 }
 
 # ---------------------------------------------------------------------------
+# Test 6b: canonical "- EDIT: `path`" / "- NEW: `glob`" lines (the form the
+# pre-dispatch validator requires) are matched without the prefix.
+# ---------------------------------------------------------------------------
+printf '\n[6b] EDIT:/NEW: prefixed scope lines → in-scope push allowed\n'
+{
+	read -r repo base_sha <<< "$(repo_setup t9999)"
+	# shellcheck disable=SC2016 # literal Markdown backticks
+	write_brief "$repo" "t9999" 'EDIT: `todo/tasks/t9999-brief.md`' 'NEW: `.agents/hooks/scope-*.sh`'
+
+	mkdir -p "${repo}/.agents/hooks"
+	printf 'new sibling\n' > "${repo}/.agents/hooks/scope-split.sh"
+	git -C "$repo" add "${repo}/.agents/hooks/scope-split.sh"
+	git -C "$repo" commit -q -m "add in-scope sibling"
+
+	if invoke_hook "$repo" "$base_sha"; then
+		_pass "EDIT:/NEW: prefixed scope lines allow in-scope files"
+	else
+		_fail "EDIT:/NEW: prefixed scope lines allow in-scope files" \
+			"hook treated the EDIT:/NEW: prefix as part of the pattern"
+	fi
+}
+
+# ---------------------------------------------------------------------------
 # Test 6: Branch with no task ID → fail-open (exit 0)
 # ---------------------------------------------------------------------------
 printf '\n[6] Branch with no task ID → fail-open\n'

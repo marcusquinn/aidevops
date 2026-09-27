@@ -150,6 +150,14 @@ _parse_files_scope() {
 			# Strip surrounding whitespace
 			_pattern="${_pattern#"${_pattern%%[![:space:]]*}"}"
 			_pattern="${_pattern%"${_pattern##*[![:space:]]}"}"
+			# Strip the canonical EDIT:/NEW: prefix the dispatch validator requires
+			# (e.g. "- EDIT: `path`"); otherwise the prefix becomes part of the glob.
+			case "$_pattern" in
+			EDIT:* | NEW:*)
+				_pattern="${_pattern#*:}"
+				_pattern="${_pattern#"${_pattern%%[![:space:]]*}"}"
+				;;
+			esac
 			# Strip surrounding backticks (e.g. `path/to/file`)
 			_pattern="${_pattern#\`}"
 			_pattern="${_pattern%\`}"

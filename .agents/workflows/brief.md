@@ -93,6 +93,26 @@ gh issue edit <N> --repo <slug> --remove-assignee <user>
 
 The wrapper currently self-assigns in violation of t2157. Until t2406/GH#19991 merges, manual unassign is required to avoid dispatch-blocking.
 
+### 6. Files Scope for auto-dispatch (GH#32531)
+
+Every `auto-dispatch` implementation issue body needs a canonical scope section,
+or the pulse holds it as `status:blocked` (`missing_files_scope`) before any
+worker starts. `## Files`, `### Files to Modify` or prose file lists do not count.
+
+```markdown
+### Files Scope
+
+- EDIT: `.agents/scripts/example-helper.sh`
+- NEW: `.agents/scripts/example-helper-*.sh`
+```
+
+One path or glob per line, nothing after it; list tests and docs the worker
+must touch, and a sibling glob when the work splits or creates files. Put
+descriptions elsewhere in the body. Verify before publishing:
+`pre-dispatch-validator-helper.sh scope-check <N> "$(cat body.md)" 1` (exit 0).
+Interactive `claim-task-id.sh --labels auto-dispatch` refuses a description
+without it. Planning-only issues start with `Planning-only:` instead.
+
 ## Dispatch Readiness Contract (brief schema v2)
 
 New briefs intended for auto-dispatch use `<!-- aidevops:brief-schema=v2 -->`
