@@ -752,17 +752,16 @@ _protected_integration_mainline_parent() {
 
 #aidevops:trust-boundary
 # A protected integration is a two-parent merge of the exact signed release
-# commit and a mainline parent that contains the active runtime (the parent
-# itself or an ancestor of it, GH#32510), reachable from protected main. The
-# merge therefore contains everything already deployed, so converging on
-# protected main cannot downgrade the runtime.
+# commit, reachable from freshly fetched protected main. The active runtime
+# must also be in that main history but not contain the release commit itself.
+# They need not be related until a later protected-main merge (GH#32569).
+# Deferral deploys nothing; converging on protected main cannot downgrade.
 _verify_protected_release_integration() {
 	local sync_repo_root="$1"
 	local release_sha="$2"
 	local active_sha="$3"
 	local protected_main=""
 	local candidate=""
-	local mainline_parent=""
 
 	_verify_exact_tag_release_lane "$sync_repo_root" "$release_sha" || return 1
 	if ! git -C "$sync_repo_root" fetch origin main --quiet; then
@@ -771,14 +770,18 @@ _verify_protected_release_integration() {
 	fi
 	protected_main=$(git -C "$sync_repo_root" rev-parse "origin/main^{commit}" 2>/dev/null) || return 1
 	git -C "$sync_repo_root" merge-base --is-ancestor "$active_sha" "$protected_main" 2>/dev/null || return 1
+	# A descendant has already incorporated the signed release; it must use
+	# preservation verification, never the stale-runtime deferral.
+	if git -C "$sync_repo_root" merge-base --is-ancestor "$release_sha" "$active_sha" 2>/dev/null; then
+		return 1
+	fi
 	git -C "$sync_repo_root" merge-base --is-ancestor "$release_sha" "$protected_main" 2>/dev/null || return 1
 	while IFS= read -r candidate; do
 		[[ -n "$candidate" ]] || continue
-		mainline_parent=$(_protected_integration_mainline_parent "$sync_repo_root" "$candidate" "$release_sha") || continue
-		if git -C "$sync_repo_root" merge-base --is-ancestor "$active_sha" "$mainline_parent" 2>/dev/null; then
-			_AIDEVOPS_RELEASE_PROTECTED_INTEGRATION_SHA="$candidate"
-			return 0
-		fi
+		_protected_integration_mainline_parent "$sync_repo_root" "$candidate" "$release_sha" >/dev/null || continue
+		git -C "$sync_repo_root" merge-base --is-ancestor "$candidate" "$protected_main" 2>/dev/null || continue
+		_AIDEVOPS_RELEASE_PROTECTED_INTEGRATION_SHA="$candidate"
+		return 0
 	done < <(git -C "$sync_repo_root" rev-list --ancestry-path --merges "${release_sha}..${protected_main}" 2>/dev/null)
 	return 1
 }
