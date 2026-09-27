@@ -28,12 +28,18 @@ main() {
 		"$AGENTS_DOC" 'always-loaded completion guidance omits the session aim and solved outcome' || return 1
 	require_literal 'reconnects the delivered work to the session aim or problem' \
 		"$SESSION_DOC" 'session completion detail omits reader reorientation context' || return 1
-	require_literal 'omit routine-owned cleanup unless user action is required or work is at risk' \
-		"$AGENTS_DOC" 'always-loaded completion guidance does not suppress routine cleanup noise' || return 1
-	require_literal 'Do not attempt or report normal deferred cleanup' \
-		"$SESSION_DOC" 'session lifecycle still asks the owning session to narrate cleanup' || return 1
-	require_literal "A valid routine-owned \`CLEANUP_DEFERRED\` handoff is silent operational bookkeeping" \
-		"$FULL_LOOP_COMMAND" 'full-loop guidance does not classify routine cleanup as silent' || return 1
+	require_literal 'routine-owned cleanup: one no-action line unless user action is required or work is at risk' \
+		"$AGENTS_DOC" 'always-loaded completion guidance does not limit routine cleanup to a no-action note' || return 1
+	require_literal 'Do not attempt that cleanup, and never turn it into a user task' \
+		"$SESSION_DOC" 'session lifecycle may still hand routine cleanup to the user' || return 1
+	require_literal 'is not a reason to ask the user to clean up' \
+		"$SESSION_DOC" 'session lifecycle lets blocked deletions become user cleanup tasks' || return 1
+	require_literal 'after this session closes; no action needed.' \
+		"$SESSION_DOC" 'session lifecycle omits the no-action cleanup explanation' || return 1
+	require_literal "A valid routine-owned \`CLEANUP_DEFERRED\` handoff is operational bookkeeping, not a user task" \
+		"$FULL_LOOP_COMMAND" 'full-loop guidance does not classify routine cleanup as a non-user task' || return 1
+	require_literal 'after this session closes; no action needed.' \
+		"$FULL_LOOP_COMMAND" 'full-loop guidance omits the no-action cleanup explanation' || return 1
 	require_literal 'Do not copy lifecycle promise tokens' \
 		"$FULL_LOOP_COMMAND" 'machine lifecycle tokens may leak into the user-facing summary' || return 1
 	require_literal '**Delivered:** every promised acceptance criterion has verified evidence.' \
