@@ -104,6 +104,21 @@ export function greetingCacheBasename(env = process.env) {
 export function greetingLockBasename(env = process.env) {
   return isOpenCodeV2Profile(env) ? "session-greeting-refresh-v2.lock" : "session-greeting-refresh.lock";
 }
+
+/**
+ * Whether the plugin injects its one-shot greeting block (GH#32444).
+ * `AIDEVOPS_PLUGIN_SESSION_GREETING=1|0` forces it on or off. Otherwise the
+ * runtime default applies: OpenCode 1 relies on the always-loaded AGENTS.md
+ * fallback (its cache carries the V1 version), so a one-shot block would only
+ * change the reusable prompt prefix between the first and second turn.
+ * OpenCode 2 keeps the block on because only the plugin knows the V2 version.
+ */
+export function isPluginGreetingEnabled(env = process.env, defaultEnabled = false) {
+  if (env.AIDEVOPS_PLUGIN_SESSION_GREETING === "1") return true;
+  if (env.AIDEVOPS_PLUGIN_SESSION_GREETING === "0") return false;
+  return defaultEnabled;
+}
+
 // Comprehensive checks run at most once per 15-minute window. The subprocess
 // times out after 15 seconds, so a lock older than 30 seconds is safe to reap
 // after an abrupt plugin-process exit.

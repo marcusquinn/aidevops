@@ -60,49 +60,53 @@ function shortHash(text) {
   return createHash("sha256").update(text).digest("hex").slice(0, 12);
 }
 
-/** Move framework/runtime system blocks into the first user message. */
-function redistributeSystemToMessages(parsed, context = {}) {
-  if (!Array.isArray(parsed.system) || !Array.isArray(parsed.messages)) return;
+/** Only the billing header (first block) and the exact Claude Code identity stay in system. */
+function isKeptSystemBlock(block, index) {
+  if (block.type !== "text") return false;
+  const isBillingHeader = index === 0 && Boolean(block.text?.startsWith("x-anthropic-billing-header:"));
+  return isBillingHeader || block.text === OFFICIAL_CLAUDE_CODE_SYSTEM_PROMPT;
+}
 
-  const kept = [];
-  const overflow = [];
-  for (const [index, block] of parsed.system.entries()) {
-    const isBillingHeader = index === 0 && block.type === "text" && block.text?.startsWith("x-anthropic-billing-header:");
-    const isOfficialClaudeCodePrompt = block.type === "text" && block.text === OFFICIAL_CLAUDE_CODE_SYSTEM_PROMPT;
-    if (isBillingHeader || isOfficialClaudeCodePrompt) {
-      kept.push(block);
-    } else {
-      overflow.push(block);
-    }
-  }
-  if (overflow.length === 0) return;
-
-  const overflowText = overflow
+function joinOverflowText(overflow) {
+  return overflow
     .filter((block) => block.type === "text" && block.text)
     .map((block) => block.text)
     .join("\n\n");
+}
 
-  if (!overflowText) return;
-  parsed.system = kept;
-
-  const prefix = { type: "text", text: overflowText };
-  const firstMsg = parsed.messages[0];
-  if (firstMsg?.role === "user") {
-    if (typeof firstMsg.content === "string") {
-      firstMsg.content = [prefix, { type: "text", text: firstMsg.content }];
-    } else if (Array.isArray(firstMsg.content)) {
-      firstMsg.content = [prefix, ...firstMsg.content];
-    }
-  } else {
-    parsed.messages.unshift({ role: "user", content: [prefix] });
+function prependToFirstUserMessage(messages, prefix) {
+  const firstMsg = messages[0];
+  if (firstMsg?.role !== "user") {
+    messages.unshift({ role: "user", content: [prefix] });
+  } else if (typeof firstMsg.content === "string") {
+    firstMsg.content = [prefix, { type: "text", text: firstMsg.content }];
+  } else if (Array.isArray(firstMsg.content)) {
+    firstMsg.content = [prefix, ...firstMsg.content];
   }
-  const cached = applyRedistributedCacheControl(parsed, prefix, overflow);
-  const session = context.sessionID ? ` session=${context.sessionID}` : "";
+}
+
+function logRedistribution({ overflow, overflowText, kept, cached, sessionID }) {
+  const session = sessionID ? ` session=${sessionID}` : "";
   console.error(
     `[aidevops] provider-auth: redistributed ${overflow.length} system blocks (${overflowText.length} chars) ` +
     `to user message to stay under third-party detection threshold ` +
     `(kept=${kept.length} sha=${shortHash(overflowText)} cache=${cached ? "marked" : "none"}${session})`,
   );
+}
+
+/** Move framework/runtime system blocks into the first user message. */
+function redistributeSystemToMessages(parsed, context = {}) {
+  if (!Array.isArray(parsed.system) || !Array.isArray(parsed.messages)) return;
+  const kept = parsed.system.filter((block, index) => isKeptSystemBlock(block, index));
+  const overflow = parsed.system.filter((block, index) => !isKeptSystemBlock(block, index));
+  const overflowText = joinOverflowText(overflow);
+  if (!overflowText) return;
+  parsed.system = kept;
+
+  const prefix = { type: "text", text: overflowText };
+  prependToFirstUserMessage(parsed.messages, prefix);
+  const cached = applyRedistributedCacheControl(parsed, prefix, overflow);
+  logRedistribution({ overflow, overflowText, kept, cached, sessionID: context.sessionID });
 }
 
 export const INTENT_PARAM_NAME = "agent__intent";
@@ -159,14 +163,19 @@ function applyBodyTransforms(parsed, sentinel, context) {
     parsed.tools = injectIntentParameter(parsed.tools);
   }
   if (Array.isArray(parsed.messages)) parsed.messages = normalizeToolUseBlocks(parsed.messages);
-  // OpenCode's newer Claude variants can include adaptive-thinking metadata
-  // (for example block_binding) that the Messages API rejects on the wire.
-  // Effort is carried separately in output_config; keep the wire shape minimal.
+  normalizeAdaptiveThinking(parsed);
+}
+
+/**
+ * OpenCode's newer Claude variants can include adaptive-thinking metadata
+ * (for example block_binding) that the Messages API rejects on the wire.
+ * Effort is carried separately in output_config; keep the wire shape minimal.
+ */
+function normalizeAdaptiveThinking(parsed) {
   if (parsed.thinking?.type === "adaptive") parsed.thinking = { type: "adaptive" };
-  if (isAdaptiveThinkingModel(parsed.model)) {
-    if (!parsed.thinking || parsed.thinking.type !== "adaptive") parsed.thinking = { type: "adaptive" };
-    if (parsed.temperature !== undefined && parsed.temperature !== 1) parsed.temperature = 1;
-  }
+  if (!isAdaptiveThinkingModel(parsed.model)) return;
+  if (parsed.thinking?.type !== "adaptive") parsed.thinking = { type: "adaptive" };
+  if (parsed.temperature !== undefined && parsed.temperature !== 1) parsed.temperature = 1;
 }
 
 /**

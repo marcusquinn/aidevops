@@ -40,50 +40,61 @@ export function extractInstructionSources(system) {
   return sources;
 }
 
+/** Remember one session's system instruction sources (bounded LRU). */
+function rememberSessionSources(sessions, sessionID, system) {
+  if (!sessionID) return;
+  const sources = extractInstructionSources(system);
+  if (sources.size === 0) return;
+  sessions.delete(sessionID);
+  sessions.set(sessionID, sources);
+  while (sessions.size > MAX_SESSIONS) sessions.delete(sessions.keys().next().value);
+}
+
+/** Return a different loaded source whose body is byte-identical, or null. */
+function findLoadedCopy(sources, path, body, readFile) {
+  for (const source of sources) {
+    if (source !== path && readText(source, readFile) === body) return source;
+  }
+  return null;
+}
+
+/** System sources for an OpenCode 1 Read result that appended instruction reminders. */
+function readReminderSources(sessions, input, output) {
+  const isReadText = input?.tool === "read" && typeof output?.output === "string";
+  const loaded = isReadText ? output.metadata?.loaded : undefined;
+  if (!Array.isArray(loaded) || loaded.length === 0) return null;
+  return sessions.get(input.sessionID) ?? null;
+}
+
+/** Replace one appended reminder document with a pointer; returns 1 when replaced. */
+function compactLoadedDocument(output, path, sources, readFile) {
+  const body = typeof path === "string" ? readText(path, readFile) : null;
+  const document = body ? `Instructions from: ${path}\n${body}` : null;
+  const loadedCopy = document && output.output.includes(document)
+    ? findLoadedCopy(sources, path, body, readFile)
+    : null;
+  if (!loadedCopy) return 0;
+  output.output = output.output.replace(document, () => duplicateInstructionReference(path, loadedCopy));
+  return 1;
+}
+
+/** @returns {number} count of reminder documents replaced by pointers */
+function compactReadOutput(sessions, readFile, input, output) {
+  const sources = readReminderSources(sessions, input, output);
+  if (!sources) return 0;
+  let replaced = 0;
+  for (const path of output.metadata.loaded) replaced += compactLoadedDocument(output, path, sources, readFile);
+  return replaced;
+}
+
 /**
  * @param {{ readFile?: (path: string) => string }} [options]
  */
 export function createInstructionReminderCompactor(options = {}) {
   const readFile = options.readFile ?? ((path) => readFileSync(path, "utf8"));
   const sessions = new Map();
-
-  function rememberSystem(sessionID, system) {
-    if (!sessionID) return;
-    const sources = extractInstructionSources(system);
-    if (sources.size === 0) return;
-    sessions.delete(sessionID);
-    sessions.set(sessionID, sources);
-    while (sessions.size > MAX_SESSIONS) sessions.delete(sessions.keys().next().value);
-  }
-
-  function findLoadedCopy(sources, path, body) {
-    for (const source of sources) {
-      if (source !== path && readText(source, readFile) === body) return source;
-    }
-    return null;
-  }
-
-  /** @returns {number} count of reminder documents replaced by pointers */
-  function compactReadOutput(input, output) {
-    if (input?.tool !== "read" || typeof output?.output !== "string") return 0;
-    const loaded = output.metadata?.loaded;
-    if (!Array.isArray(loaded) || loaded.length === 0) return 0;
-    const sources = sessions.get(input.sessionID);
-    if (!sources) return 0;
-    let replaced = 0;
-    for (const path of loaded) {
-      if (typeof path !== "string") continue;
-      const body = readText(path, readFile);
-      if (!body) continue;
-      const document = `Instructions from: ${path}\n${body}`;
-      if (!output.output.includes(document)) continue;
-      const loadedCopy = findLoadedCopy(sources, path, body);
-      if (!loadedCopy) continue;
-      output.output = output.output.replace(document, () => duplicateInstructionReference(path, loadedCopy));
-      replaced += 1;
-    }
-    return replaced;
-  }
-
-  return { rememberSystem, compactReadOutput };
+  return {
+    rememberSystem: (sessionID, system) => rememberSessionSources(sessions, sessionID, system),
+    compactReadOutput: (input, output) => compactReadOutput(sessions, readFile, input, output),
+  };
 }

@@ -11,7 +11,13 @@ import {
 } from "./ttsr-rules.mjs";
 // Prompt injection and the startup toast intentionally share cache provenance
 // and freshness policy so they cannot present contradictory version pairs.
-import { greetingCacheBasename, isGreetingCacheUsable, readGreetingCache, REFRESH_TTL_MS } from "./greeting.mjs";
+import {
+  greetingCacheBasename,
+  isGreetingCacheUsable,
+  isPluginGreetingEnabled,
+  readGreetingCache,
+  REFRESH_TTL_MS,
+} from "./greeting.mjs";
 
 // ---------------------------------------------------------------------------
 // Token Cost Advisory
@@ -267,20 +273,6 @@ export function createSessionStartGreetingGate(client, isHeadless = () => false)
 }
 
 /**
- * Whether the plugin injects its one-shot greeting block (GH#32444).
- * `AIDEVOPS_PLUGIN_SESSION_GREETING=1|0` forces it on or off. Otherwise the
- * runtime default applies: OpenCode 1 relies on the always-loaded AGENTS.md
- * fallback (its cache carries the V1 version), so a one-shot block would only
- * change the reusable prompt prefix between the first and second turn.
- * OpenCode 2 keeps the block on because only the plugin knows the V2 version.
- */
-export function isPluginGreetingEnabled(env = process.env, defaultEnabled = false) {
-  if (env.AIDEVOPS_PLUGIN_SESSION_GREETING === "1") return true;
-  if (env.AIDEVOPS_PLUGIN_SESSION_GREETING === "0") return false;
-  return defaultEnabled;
-}
-
-/**
  * Replace array contents without reassigning the array. OpenCode 1 keeps its
  * own reference to output.system and ignores reassignment; OpenCode 2's adapter
  * reads the same object back, so in-place mutation serves both runtimes.
@@ -290,6 +282,31 @@ function replaceArrayContents(target, values) {
 }
 
 export const CLAUDE_CODE_IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude.";
+
+/** Prefix the first framework block with the identity, then add the exact identity block. */
+function prependAnthropicIdentity(system) {
+  if (system[0]) system[0] = `${CLAUDE_CODE_IDENTITY}\n\n${system[0]}`;
+  system.unshift(CLAUDE_CODE_IDENTITY);
+}
+
+function buildIntentInstruction(intentField) {
+  return [
+    "## Intent Tracing (observability)",
+    `When calling any tool, include a field named \`${intentField}\` in the tool arguments.`,
+    "Value: one sentence in present participle form describing your intent (e.g., \"Reading the file to understand the existing schema\").",
+    "No trailing period. This field is used for debugging and audit trails — it is stripped before tool execution.",
+  ].join("\n");
+}
+
+function buildQualityRulesInstruction(rules) {
+  const ruleLines = rules.filter((r) => r.systemPrompt).map((r) => `- ${r.systemPrompt}`);
+  if (ruleLines.length === 0) return null;
+  return [
+    "## aidevops Quality Rules (enforced)",
+    "The following rules are actively enforced. Violations will be flagged.",
+    ...ruleLines,
+  ].join("\n");
+}
 
 /**
  * system.transform hook: compact catalogue metadata, add the Anthropic
@@ -304,33 +321,15 @@ async function ttsrSystemTransform(input, output, context) {
   const { state, intentField, shouldInjectGreeting, agentsDir, readIfExists, greetingOptions, greetingEnabled } = context;
   if (!Array.isArray(output.system)) return;
   replaceArrayContents(output.system, compactSystemContext(output.system));
-  if (input.model?.providerID === "anthropic") {
-    output.system.unshift(CLAUDE_CODE_IDENTITY);
-    if (output.system[1]) output.system[1] = `${CLAUDE_CODE_IDENTITY}\n\n${output.system[1]}`;
-  }
+  if (input.model?.providerID === "anthropic") prependAnthropicIdentity(output.system);
 
   const greeting = greetingEnabled() && await shouldInjectGreeting(input)
     ? buildSessionStartGreetingInstruction(agentsDir, readIfExists, greetingOptions)
     : null;
 
-  const rules = loadTtsrRules(state);
-  const ruleLines = rules.filter((r) => r.systemPrompt).map((r) => `- ${r.systemPrompt}`);
-
-  const intentInstruction = [
-    "## Intent Tracing (observability)",
-    `When calling any tool, include a field named \`${intentField}\` in the tool arguments.`,
-    "Value: one sentence in present participle form describing your intent (e.g., \"Reading the file to understand the existing schema\").",
-    "No trailing period. This field is used for debugging and audit trails — it is stripped before tool execution.",
-  ].join("\n");
-
-  output.system.push(intentInstruction);
-  if (ruleLines.length > 0) output.system.push([
-    "## aidevops Quality Rules (enforced)",
-    "The following rules are actively enforced. Violations will be flagged.",
-    ...ruleLines,
-  ].join("\n"));
   // Durable guidance stays ahead of the one-shot greeting for stable prefix reuse.
-  if (greeting) output.system.push(greeting);
+  const appended = [buildIntentInstruction(intentField), buildQualityRulesInstruction(loadTtsrRules(state)), greeting];
+  output.system.push(...appended.filter(Boolean));
 }
 
 /**
@@ -459,3 +458,5 @@ export function createTtsrHooks(deps) {
 
 // Re-export BUILTIN_TTSR_RULES for callers that access it directly.
 export { BUILTIN_TTSR_RULES };
+// Greeting policy lives with the greeting cache; v2.mjs and tests import it here.
+export { isPluginGreetingEnabled };
