@@ -48,16 +48,24 @@ private JSON file and pass its absolute path as `AIDEVOPS_MODEL_AB_CONFIG` to
 the *Pulse process* (not just an interactive shell):
 
 ```bash
-node ~/.aidevops/agents/scripts/model-ab-helper.mjs start OWNER/REPO
+node ~/.aidevops/agents/scripts/model-ab-helper.mjs start OWNER/REPO \
+  [--preset standard-luna-terra|openai-anthropic] [--hours N]
 aidevops setup --scope pulse
 ```
 
-`start` creates a private 48-hour prospective configuration and updates the
+`start` creates a private prospective configuration and updates the
 user-owned persistent Pulse plist override without changing the running
 scheduler. The scoped setup applies that override; inspect the active Pulse
 environment before counting exposure. A second start refuses to replace an
 existing configured trial, including an expired one, until it is reviewed.
-The generated configuration follows this shape:
+Windows are bounded to 168 hours. Presets:
+
+| Preset | Default window | Enrollment | Arms |
+|---|---|---|---|
+| `standard-luna-terra` (default) | 48 h | `new-standard-issues` | standard-tier model/effort only |
+| `openai-anthropic` | 168 h | `new-auto-dispatch-issues` | provider-family routes for every tier, taken from the first OpenAI and first Anthropic model per tier in `configs/model-routing-table.json` |
+
+The standard-only preset generates this shape:
 
 ```json
 {
@@ -71,21 +79,37 @@ The generated configuration follows this shape:
 }
 ```
 
-Replace the example dates with the actual UTC activation time and its 48-hour
-end. Prospective enrollment requires the issue's trusted `createdAt` to fall
+A provider-family arm replaces `model`/`variant` with a route per tier. Omit
+`variant` to keep the provider default (Haiku 4.5 has no low-effort variant).
+Both arms must use the same form.
+
+```json
+{"name": "anthropic", "tiers": {
+  "simple": {"model": "anthropic/claude-haiku-4-5"},
+  "standard": {"model": "anthropic/claude-sonnet-5", "variant": "low"},
+  "thinking": {"model": "anthropic/claude-opus-5-5", "variant": "medium"}
+}}
+```
+
+Prospective enrollment requires the issue's trusted `createdAt` to fall
 inside the window and its pre-claim labels to contain `auto-dispatch` and
-`status:available`; persistent, parent, held, simple, and thinking issues are
-excluded. A fixed `"issues": [101, 102, ...]` array remains available instead
-of `enrollment` for a predeclared cohort. The two modes cannot be combined.
+`status:available`. Persistent, parent, held and `no-auto-dispatch` issues are
+always excluded. `new-standard-issues` also excludes simple and thinking
+issues. `new-auto-dispatch-issues` enrolls every tier and requires
+provider-family arms. A fixed `"issues": [101, 102, ...]` array remains
+available instead of `enrollment` for a predeclared cohort. The two modes
+cannot be combined.
 Apply the private config path through the Pulse LaunchAgent's persistent
 environment override (see `reference/plist-env-overrides.md`) and regenerate
 the Pulse scheduler; a shell-only export does not enable unattended workers.
 
-Only eligible standard-tier issues without an explicit model override are
-assigned. Each issue receives one stable arm across retries. The per-issue
-route table is inherited by its worker and OpenCode subagents; it keeps
-same-tier availability fallbacks and the ordinary thinking-tier capability
-escalation. Arm assignment is an **initial intention**, never a model pin or
+Only eligible issues without an explicit model override are assigned. Each
+issue keeps one arm across retries. The per-issue route table is inherited by
+its worker and the worker's OpenCode subagent delegations. It keeps same-tier
+availability fallbacks. A standard-only arm keeps the ordinary thinking-tier
+escalation. A provider-family arm routes every tier, so escalation and child
+delegations stay with the assigned provider unless it is unavailable.
+Arm assignment is an **initial intention**, never a model pin or
 proof of exposure. A report joins local routing telemetry with read-only
 GitHub issue/merged-PR state and parent-recorded subagent acceptance:
 
@@ -95,7 +119,11 @@ AIDEVOPS_MODEL_AB_CONFIG=/path/to/private/model-ab.json \
 ```
 
 The report retains assigned-issue denominators, fallback, retry and escalation
-counts, and separately marks missing observations and pending outcomes. It does
+counts, and separately marks missing observations and pending outcomes.
+`off_arm_models` lists observed models outside the arm's routes, and
+`off_arm_issues` counts the issues that have any. These cover cross-provider
+fallbacks, legacy-arm escalations and unexplained crossovers. Review them
+before comparing arms. It does
 not declare a winner or equate child completion with acceptance. The cohort
 rule must be defined before work begins, use issues not already in flight, and run
 on one configured dispatch device: assignment receipts and observations are

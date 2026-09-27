@@ -31,7 +31,7 @@ job=$(jq -c '.jobs[0]' "${XDG_CONFIG_HOME}/aidevops/cron-jobs.json")
 	source "${SCRIPTS_DIR}/cron-dispatch.sh"
 	resolve_job_config "$job"
 	[[ "$JOB_TIER" == "standard" ]]
-	[[ "$JOB_MODEL" == "anthropic/claude-sonnet-4-6" ]]
+	[[ "$JOB_MODEL" == "anthropic/claude-sonnet-5" ]]
 )
 
 (
@@ -42,10 +42,10 @@ job=$(jq -c '.jobs[0]' "${XDG_CONFIG_HOME}/aidevops/cron-jobs.json")
 		"${AIDEVOPS_RUNNERS_DIR}/report-runner/config.json" >/dev/null
 	resolve_runner_route thinking anthropic
 	[[ "$RUNNER_ROUTE_TIER" == "thinking" ]]
-	[[ "$RUNNER_ROUTE_MODEL" == "anthropic/claude-opus-4-6" ]]
+	[[ "$RUNNER_ROUTE_MODEL" == "anthropic/claude-opus-5-5" ]]
 	[[ "$RUNNER_ROUTE_CANDIDATE_INDEX" == "1" ]]
 	AIDEVOPS_DISPATCH_BACKEND=claude resolve_runner_route standard ""
-	[[ "$RUNNER_ROUTE_MODEL" == "anthropic/claude-sonnet-4-6" ]]
+	[[ "$RUNNER_ROUTE_MODEL" == "anthropic/claude-sonnet-5" ]]
 )
 
 printf 'PASS: scheduled jobs preserve tier intent and resolve current provider candidates at execution\n'

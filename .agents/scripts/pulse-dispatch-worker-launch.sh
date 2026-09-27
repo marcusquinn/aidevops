@@ -349,7 +349,7 @@ _dlw_assign_model_ab() {
 	_DLW_AB_EXPERIMENT=$(jq -r '.experiment' <<<"$ab_json") || return 1
 	_DLW_AB_ARM=$(jq -r '.arm' <<<"$ab_json") || return 1
 	local ab_scope=""
-	ab_scope=$(jq -r '.scope // "standard"' <<<"$ab_json") || ab_scope="standard"
+	ab_scope=$(jq -r '.scope // empty' <<<"$ab_json") || ab_scope=""
 	[[ "$ab_scope" == "all-tiers" ]] || [[ "$routed_tier" == "$_DLW_STANDARD_TIER" ]] || return 0
 	[[ -n "$routed_tier" ]] || return 0
 	# Availability selection follows the arm-first table; a failed primary may
