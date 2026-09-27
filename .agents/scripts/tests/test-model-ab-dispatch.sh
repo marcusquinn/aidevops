@@ -31,7 +31,7 @@ HEADLESS_RUNTIME_HELPER="${test_root}/select-model.sh"
 cat >"$HEADLESS_RUNTIME_HELPER" <<'HELPER'
 #!/usr/bin/env bash
 [[ "${AIDEVOPS_MODEL_ROUTING_TABLE:-}" == "" ]] && exit 1
-jq -er '.tiers.standard.models[0]' "$AIDEVOPS_MODEL_ROUTING_TABLE"
+jq -er --arg tier "${5:-standard}" '.tiers[$tier].models[0]' "$AIDEVOPS_MODEL_ROUTING_TABLE"
 HELPER
 chmod +x "$HEADLESS_RUNTIME_HELPER"
 
@@ -79,4 +79,31 @@ _dlw_assign_model_ab example/repo 14 "" "$issue_meta"
 [[ -z "$_DLW_AB_ARM" && "$_DLW_SELECTED_MODEL" == "openai/gpt-6-sol" ]]
 _dlw_assign_model_ab example/repo 13 "" "$issue_meta"
 [[ -n "$_DLW_AB_ARM" && "$_DLW_SELECTED_MODEL" == "openai/gpt-6-sol" ]]
+node -e '
+const fs = require("node:fs");
+const now = Date.now();
+const arm = (name, simple, standard, thinking) => ({ name, tiers: {
+  simple: { model: simple }, standard: { model: standard, variant: "low" },
+  thinking: { model: thinking, variant: "medium" } } });
+fs.writeFileSync(process.argv[1], JSON.stringify({
+  id: "provider-worker-test", repo: "example/repo", seed: "provider-cohort",
+  starts_at: new Date(now - 60000).toISOString(),
+  ends_at: new Date(now + 3600000).toISOString(),
+  enrollment: { mode: "new-auto-dispatch-issues" },
+  arms: [
+    arm("openai", "openai/gpt-6-luna", "openai/gpt-5.6-terra", "openai/gpt-6-sol"),
+    arm("anthropic", "anthropic/claude-haiku-4-5", "anthropic/claude-sonnet-5", "anthropic/claude-opus-5-5"),
+  ],
+}));
+' "$AIDEVOPS_MODEL_AB_CONFIG"
+thinking_meta=$(node -e 'process.stdout.write(JSON.stringify({
+  createdAt: new Date(Date.now() - 30000).toISOString(),
+  labels: [{name:"auto-dispatch"},{name:"status:available"},{name:"tier:thinking"}],
+}))')
+_DLW_DISPATCH_MODEL_TIER=thinking
+_DLW_SELECTED_MODEL="openai/gpt-6-sol"
+_dlw_assign_model_ab example/repo 20 "" "$thinking_meta"
+[[ -n "$_DLW_AB_ARM" && "$_DLW_SELECTED_MODEL" == "$(jq -r '.tiers.thinking.models[0]' "$_DLW_AB_ROUTING_TABLE")" ]]
+[[ "$(jq -r '.tiers.simple.models[0]' "$_DLW_AB_ROUTING_TABLE")" == "$_DLW_AB_ARM/"* ]]
 printf 'PASS: issue arm follows worker, but escalation and explicit overrides retain their own model\n'
+printf 'PASS: provider-family arm routes every tier, including thinking-tier issues\n'

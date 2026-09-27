@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { eligibleCreationDate } from "./model-ab-enrollment.mjs";
 import { observeIssue } from "./model-ab-observe.mjs";
-import { assignedIssueNumbers, assignmentPaths } from "./model-ab-store.mjs";
+import { armModels, assignedIssueNumbers, assignmentPaths } from "./model-ab-store.mjs";
 
 function verifyAssignment(experiment, issue, item, fingerprint, assignedArm) {
   if (item.fingerprint !== fingerprint || item.arm !== assignedArm(experiment, experiment.repo, issue).name) {
@@ -21,7 +21,8 @@ function verifyAssignment(experiment, issue, item, fingerprint, assignedArm) {
 
 export function snapshotAssignments(experiment, directory, assignedArm) {
   const fingerprint = createHash("sha256").update(JSON.stringify(experiment)).digest("hex");
-  const arms = Object.fromEntries(experiment.arms.map((arm) => [arm.name, { assigned: 0, issues: [], assignments: [] }]));
+  const arms = Object.fromEntries(experiment.arms.map((arm) => [arm.name,
+    { assigned: 0, issues: [], assignments: [], models: armModels(arm) }]));
   const excluded = [];
   const issues = experiment.issues || assignedIssueNumbers(experiment.repo, directory);
   for (const issue of issues) {
@@ -38,8 +39,17 @@ export function snapshotAssignments(experiment, directory, assignedArm) {
     result: "assignment-only: join observed requests, escalations, merged-PR evidence and parent acceptance before comparing outcomes" };
 }
 
+// Observed models outside the arm's routes: availability fallbacks to another
+// provider, legacy-arm tier escalations, or unexplained crossovers.
+function offArmModels(arm, outcome) {
+  if (!Array.isArray(arm.models)) return [];
+  return (outcome.models || []).filter((model) => !arm.models.includes(model));
+}
+
 function accumulate(arm, issue, outcome) {
-  arm.observations.push({ issue, ...outcome });
+  const offArm = offArmModels(arm, outcome);
+  arm.observations.push({ issue, ...outcome, off_arm_models: offArm });
+  if (offArm.length > 0) arm.off_arm_issues += 1;
   if (outcome.delivery === "verified") arm.verified += 1;
   else if (outcome.delivery === "pending") arm.pending += 1;
   else arm.unknown += 1;
@@ -59,13 +69,13 @@ export function aggregateObserved(assignments, observe = observeIssue) {
     Object.assign(arm, { verified: 0, pending: 0, unknown: 0, escalations: 0,
       fallbacks: 0, retries: 0, failed_attempts: 0, request_errors: 0,
       delegations: 0, accepted_subagents: 0, parent_interventions: 0,
-      incomplete_evidence: 0, observations: [] });
+      incomplete_evidence: 0, off_arm_issues: 0, observations: [] });
     for (const { issue, assigned_at: assignedAt } of arm.assignments
       || arm.issues.map((number) => ({ issue: number, assigned_at: null }))) {
       const outcome = observe(assignments.repo, issue, assignedAt);
       accumulate(arm, issue, outcome);
     }
   }
-  assignments.result = "observational: no automatic winner; compare verified delivery per assigned issue, escalation, fallbacks, retries and parent acceptance only when coverage and cohorts support it";
+  assignments.result = "observational: no automatic winner; compare verified delivery per assigned issue, escalation, fallbacks, retries, off-arm routes and parent acceptance only when coverage and cohorts support it";
   return assignments;
 }
