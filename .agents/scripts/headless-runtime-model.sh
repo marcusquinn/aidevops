@@ -762,10 +762,11 @@ for line in raw.splitlines():
             or state.get("input")
             or {}
         )
-        if isinstance(inp, dict):
-            cmd = inp.get("command", "")
-            if cmd:
-                model_text_parts.append(cmd)
+        cmd = inp.get("command", "") if isinstance(inp, dict) else ""
+        if isinstance(cmd, (list, tuple)):  # argv tools: a list crashed join() -> false premature_exit
+            cmd = " ".join(map(str, cmd))
+        if isinstance(cmd, str) and cmd:
+            model_text_parts.append(cmd)
 
 model_text = "\n".join(model_text_parts)
 

@@ -765,9 +765,28 @@ jobs:
   # =========================================================================
   retrigger-pr-checks:
     name: Re-evaluate PR Gate on Issue Change
+    # Only verdict-relevant issue changes need a runner. Job 1 reads linked
+    # issue assignees plus the needs-maintainer-review, origin:worker,
+    # origin:interactive and source:* labels; status:*/tier:* churn from the
+    # pulse lifecycle cannot change the verdict, yet previously queued one
+    # runner job per label flip and starved PR CI of hosted-runner capacity.
+    # A label event without a readable label name still runs (fail-open to
+    # re-evaluation). Keep this list in sync with Job 1 Check 1/Check 2.
     if: >-
       github.event_name == 'issues' &&
-      (github.event.action == 'labeled' || github.event.action == 'unlabeled' || github.event.action == 'assigned' || github.event.action == 'unassigned')
+      (
+        github.event.action == 'assigned' || github.event.action == 'unassigned' ||
+        (
+          (github.event.action == 'labeled' || github.event.action == 'unlabeled') &&
+          (
+            !github.event.label.name ||
+            contains(github.event.label.name, 'needs-maintainer-review') ||
+            github.event.label.name == 'origin:worker' ||
+            github.event.label.name == 'origin:interactive' ||
+            startsWith(github.event.label.name, 'source:')
+          )
+        )
+      )
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 3
     permissions:
