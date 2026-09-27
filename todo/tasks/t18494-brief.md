@@ -181,7 +181,7 @@ shellcheck .agents/scripts/claim-task-id.sh .agents/scripts/claim-task-id-issue.
 
 ## Dependencies
 
-- **Blocked by:** GH#32605 (template/validator alignment; soft ordering only)
+- **Blocked by:** none (GH#32605 template/validator alignment closed via #32611)
 - **Blocks:** none
 - **External:** none
 
