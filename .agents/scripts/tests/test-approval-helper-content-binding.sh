@@ -574,6 +574,16 @@ test_dispatch_audit_comments_fail_closed() {
 DISPATCH_CLAIM nonce=abc123 runner=runner-a ts=2026-01-01T00:06:00Z max_age_s=600 version=3.32.275 opencode_version=1.0.0 lease_token=abc123 device=device-a session=issue-41 phase=prelaunch expires_at=1760000000
 <!-- ops:end -->
 ${worker_footer}"
+	local terminal_blocker_release="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
+CLAIM_RELEASED reason=blocked runner=runner-a ts=2026-01-01T00:07:00Z issue=41
+<!-- aidevops:terminal-blocker-observation revision=aaaaaaaaaaaaaaaaaaaaaaaa blocker=bbbbbbbbbbbbbbbbbbbbbbbb -->
+
+Terminal blocker: reason=missing_files_scope owner=brief-author task=41 attempt=cccccccccccccccccccc.
+Projected state: status:blocked.
+Next action: Add a canonical ### Files Scope (or legacy ## Files Scope) section listing the permitted paths in the issue body.
+Raw evidence remains in protected worker telemetry.
+<!-- ops:end -->
+${worker_footer}"
 	local dispatch_comments=""
 	reset_and_sign issue 41
 	dispatch_comments=$(jq -c --arg body "$dispatch_claim_audit" '.[0] += [{id:4315,node_id:"IC_4315",user:{id:105,node_id:"U_105",login:"external-author",type:"User"},author_association:"CONTRIBUTOR",created_at:"2026-01-01T00:08:00Z",updated_at:"2026-01-01T00:08:00Z",body:$body}]' "${FIXTURES}/comments-41.json")
@@ -581,10 +591,15 @@ ${worker_footer}"
 	assert_verify "external canonical dispatch audit lookalike remains content-bound" issue 41 STALE_APPROVAL 4
 
 	reset_and_sign issue 41
-	dispatch_comments=$(jq -c --arg body "${dispatch_claim_audit}
+	dispatch_comments=$(jq -c --arg body "$terminal_blocker_release" '.[0] += [{id:4316,node_id:"IC_4316",user:{id:1,node_id:"U_1",login:"maintainer",type:"User"},author_association:"OWNER",created_at:"2026-01-01T00:08:00Z",updated_at:"2026-01-01T00:08:00Z",body:$body}]' "${FIXTURES}/comments-41.json")
+	printf '%s\n' "$dispatch_comments" >"${FIXTURES}/comments-41.json"
+	assert_verify "trusted canonical terminal-blocker release preserves approval" issue 41 VERIFIED 0
+
+	reset_and_sign issue 41
+	dispatch_comments=$(jq -c --arg body "${terminal_blocker_release}
 extra trusted commentary" '.[0] += [{id:4316,node_id:"IC_4316",user:{id:1,node_id:"U_1",login:"maintainer",type:"User"},author_association:"OWNER",created_at:"2026-01-01T00:08:00Z",updated_at:"2026-01-01T00:08:00Z",body:$body}]' "${FIXTURES}/comments-41.json")
 	printf '%s\n' "$dispatch_comments" >"${FIXTURES}/comments-41.json"
-	assert_verify "trusted dispatch audit with extra prose remains content-bound" issue 41 STALE_APPROVAL 4
+	assert_verify "terminal-blocker release with extra prose remains content-bound" issue 41 STALE_APPROVAL 4
 
 	reset_and_sign issue 41
 	dispatch_comments=$(jq -c --arg body "${dispatch_claim_audit/DISPATCH_CLAIM/DISPATCH_UNKNOWN}" '.[0] += [{id:4317,node_id:"IC_4317",user:{id:1,node_id:"U_1",login:"maintainer",type:"User"},author_association:"OWNER",created_at:"2026-01-01T00:08:00Z",updated_at:"2026-01-01T00:08:00Z",body:$body}]' "${FIXTURES}/comments-41.json")
