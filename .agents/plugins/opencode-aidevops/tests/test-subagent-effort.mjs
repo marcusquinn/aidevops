@@ -392,6 +392,11 @@ test("task result carries parent-owned objective identity without inferred accep
     runID: "run:root",
   });
   assert.equal(Object.hasOwn(output.metadata.aidevopsObjective, "acceptance"), false);
+  assert.match(output.output, /\[AIDEvOps parent receipt\]/);
+  assert.match(output.output, /parent_session_id=parent/);
+  assert.match(output.output, /objective_id=objective:root/);
+  assert.match(output.output, /run_id=run:root/);
+  assert.match(output.output, /contribution_id=opencode-child:child-objective/);
 });
 
 test("only provider-neutral workload tiers are recognized", () => {
