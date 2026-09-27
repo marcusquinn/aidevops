@@ -71,6 +71,8 @@ NMR_CLASS_GENUINE_AUTHORITY="genuine-authority"
 NMR_CLASS_TEMPORARY="temporary"
 NMR_SOURCE_DEFAULT="default"
 NMR_STATUS_HUMAN_AUTHORITY="human-authority-required"
+# Labels that keep a revalidation-state entry live on an open issue (GH#32577).
+NMR_STATE_LIVE_GATE_LABELS='["needs-maintainer-review","hold-for-review","status:blocked"]'
 
 _nmr_gh_read() {
 	local rc=0
@@ -1120,6 +1122,7 @@ _nmr_prune_closed_revalidation_state() {
 	local issue_num=""
 	local issue_json=""
 	local state=""
+	local gate_live=""
 	local checked=0
 	while IFS= read -r key; do
 		[[ "$checked" -lt "$limit" ]] || break
@@ -1131,7 +1134,16 @@ _nmr_prune_closed_revalidation_state() {
 		[[ -n "$slug" && "$issue_num" =~ ^[0-9]+$ ]] || continue
 		issue_json=$(gh api "$(_nmr_issue_api_path "$issue_num" "$slug")" 2>/dev/null) || continue
 		state=$(printf '%s' "$issue_json" | jq -r '.state // empty' 2>/dev/null) || continue
-		[[ "$state" == "closed" || "$state" == "CLOSED" ]] || continue
+		[[ -n "$state" ]] || continue
+		if [[ "$state" != "closed" && "$state" != "CLOSED" ]]; then
+			# Open issues stay tracked only while a gate label the entry describes
+			# still exists; missing/unparseable labels fail closed (keep entry).
+			gate_live=$(printf '%s' "$issue_json" | jq -r --argjson gates "$NMR_STATE_LIVE_GATE_LABELS" '
+				if (.labels | type) != "array" then "unknown"
+				else [.labels[] | (.name? // .)] | any(.[]; . as $l | $gates | index($l)) | tostring end
+			' 2>/dev/null) || continue
+			[[ "$gate_live" == "false" ]] || continue
+		fi
 		current=$(printf '%s' "$current" | jq --arg key "$key" 'del(.entries[$key])' 2>/dev/null) || return 0
 	done < <(printf '%s' "$current" | jq -r --arg cursor "$cursor" '
 		.entries | keys as $keys | (($keys | map(select(. > $cursor))) + ($keys | map(select(. <= $cursor))))[]
