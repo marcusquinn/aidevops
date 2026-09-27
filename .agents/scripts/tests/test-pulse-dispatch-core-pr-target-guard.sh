@@ -9,6 +9,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 CORE_SCRIPT="${SCRIPT_DIR}/../pulse-dispatch-core.sh"
+GATES_SCRIPT="${SCRIPT_DIR}/../pulse-dispatch-commit-gates.sh"
 
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'
@@ -17,6 +18,7 @@ readonly TEST_RESET='\033[0m'
 TESTS_RUN=0
 TESTS_FAILED=0
 MOCK_GH_TARGET_IS_PR="0"
+_PULSE_DISPATCH_FALSE="false"
 
 print_result() {
 	local test_name="$1"
@@ -41,7 +43,7 @@ define_helper_under_test() {
 	local helper_src=""
 	helper_src=$(awk '
 		/^_dispatch_target_is_pull_request\(\) \{/,/^}$/ { print }
-	' "$CORE_SCRIPT")
+	' "$GATES_SCRIPT")
 	if [[ -z "$helper_src" ]]; then
 		printf 'ERROR: could not extract _dispatch_target_is_pull_request from %s\n' "$CORE_SCRIPT" >&2
 		return 1

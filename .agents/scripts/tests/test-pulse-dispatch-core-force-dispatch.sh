@@ -12,7 +12,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
-CORE_SCRIPT="${SCRIPT_DIR}/../pulse-dispatch-core.sh"
+CORE_SCRIPT="${SCRIPT_DIR}/../pulse-dispatch-commit-gates.sh"
 
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'
