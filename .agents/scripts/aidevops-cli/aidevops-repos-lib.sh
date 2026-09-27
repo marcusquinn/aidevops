@@ -970,7 +970,7 @@ check_protected_branch() {
 	1)
 		local worktree_dir
 		worktree_dir="$(dirname "$project_root")/${repo_name}-${branch_type}-${branch_suffix}"
-		print_info "Creating worktree at $worktree_dir..."
+		print_info "Creating worktree for $suggested_branch..."
 		_protected_branch_create_worktree "$suggested_branch" "$_PROTECTED_BRANCH_UPSTREAM" "$worktree_dir" || return 1
 		return 0
 		;;
