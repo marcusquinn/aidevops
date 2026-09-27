@@ -1357,25 +1357,30 @@ _full_loop_release_record_stale_deployment() {
 	local manifest=""
 	local now=""
 	local evidence_status=""
+	local verified_sha=""
 
 	evidence_path=$(_full_loop_release_evidence_path "$repo" "$requested_pr" successor) || return 1
 	[[ -f "$evidence_path" ]] || return 1
 	_full_loop_verify_successor_superseded_release_evidence "$evidence_path" "$repo" "$requested_pr" || return 1
+	tag_commit=$(_full_loop_release_resolve_tag_commit "$source_tag") || return 1
+	evidence_status=$(jq -r '.deployment.status // empty' "$evidence_path") || return 1
+	if [[ "$evidence_status" == "deployed" ]]; then
+		verified_sha=$(jq -r '.deployment.active_sha // empty' "$evidence_path") || return 1
+		[[ "$verified_sha" =~ $_FULL_LOOP_RELEASE_SHA_REGEX ]] || return 1
+		jq -e --arg tag "$source_tag" --arg timestamp_regex "$_FULL_LOOP_RELEASE_TIMESTAMP_REGEX" \
+			'.deployment.tag == $tag and (.deployment.verified_at | test($timestamp_regex))' \
+			"$evidence_path" >/dev/null || return 1
+		git -C "$REPO_ROOT" merge-base --is-ancestor "$tag_commit" "$verified_sha" 2>/dev/null
+		return $?
+	fi
+	[[ -z "$evidence_status" ]] || return 1
 	# shellcheck source=./runtime-bundle-verifier.sh
 	source "${SCRIPT_DIR}/runtime-bundle-verifier.sh" || return 1
 	_runtime_bundle_verify_active_link "$HOME/.aidevops/agents" || return 0
 	manifest="$_AIDEVOPS_RUNTIME_VERIFY_ACTIVE_ROOT/.bundle-manifest"
 	active_sha=$(_runtime_bundle_verify_manifest_value "$manifest" git_sha 2>/dev/null) || return 0
 	[[ "$active_sha" =~ $_FULL_LOOP_RELEASE_SHA_REGEX ]] || return 0
-	tag_commit=$(_full_loop_release_resolve_tag_commit "$source_tag") || return 1
 	git -C "$REPO_ROOT" merge-base --is-ancestor "$tag_commit" "$active_sha" 2>/dev/null || return 0
-	evidence_status=$(jq -r '.deployment.status // empty' "$evidence_path") || return 1
-	if [[ "$evidence_status" == "deployed" ]]; then
-		jq -e --arg sha "$active_sha" --arg tag "$source_tag" \
-			'.deployment.tag == $tag and .deployment.active_sha == $sha' "$evidence_path" >/dev/null
-		return $?
-	fi
-	[[ -z "$evidence_status" ]] || return 1
 	_full_loop_release_prepare_tag_worktree "$source_tag" || return 1
 	[[ -f "$version_manager" ]] || return 1
 	(
@@ -1385,6 +1390,10 @@ _full_loop_release_record_stale_deployment() {
 			AIDEVOPS_SYNC_REPO_ROOT="$_FULL_LOOP_RELEASE_PATH" \
 			bash "$version_manager" post-release
 	) || return 1
+	_runtime_bundle_verify_active_link "$HOME/.aidevops/agents" || return 1
+	manifest="$_AIDEVOPS_RUNTIME_VERIFY_ACTIVE_ROOT/.bundle-manifest"
+	verified_sha=$(_runtime_bundle_verify_manifest_value "$manifest" git_sha 2>/dev/null) || return 1
+	[[ "$verified_sha" == "$active_sha" ]] || return 1
 	now=$(date -u '+%Y-%m-%dT%H:%M:%SZ') || return 1
 	jq --arg tag "$source_tag" --arg sha "$active_sha" --arg now "$now" \
 		'.deployment={status:"deployed",tag:$tag,active_sha:$sha,verified_at:$now}' \

@@ -917,7 +917,7 @@ test_release_sync_defers_verified_protected_integration() {
 	output=$(RELEASE_SYNC_ENTRYPOINT=gates AIDEVOPS_RELEASE_SQUASH_RECOVERY=1 AIDEVOPS_RELEASE_LANE_SOURCE_PR=90 \
 		AIDEVOPS_RELEASE_LANE_TAG=v9.9.10 invoke_release_sync "$repo_path" 2>&1) || actual_rc=$?
 	if [[ "$actual_rc" -eq 76 && ! -s "$TEST_DIR/sync.log" ]] &&
-		[[ "$output" == *"verified protected integration ${integration_sha:0:12}"* ]] &&
+		[[ "$output" == *"protected integration ${integration_sha:0:12} is verified"* ]] &&
 		[[ "$output" == *"active runtime ${active_sha:0:12} does not include the release tag"* ]] &&
 		[[ "$output" != *"[ERROR]"* ]]; then
 		print_result "release sync defers a verified protected integration for main convergence" 0

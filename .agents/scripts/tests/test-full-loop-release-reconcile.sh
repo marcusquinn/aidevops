@@ -1797,6 +1797,57 @@ _full_loop_release_claim_preserved_tag() {
 	lane_patch_json='{"phase":"remote-publication","tag":"v1.2.3","reservation_contract":"fenced-prepublication/v1","snapshot_manifest_bound":true}'
 	return 0
 }
+(
+	export HOME="${TEST_ROOT}/deployed-home"
+	export AIDEVOPS_FULL_LOOP_RECEIPT_DIR="${TEST_ROOT}/deployed-receipts"
+	git() { /usr/bin/git "$@"; }
+	# shellcheck source=../full-loop-helper-state.sh
+	source "${SCRIPT_DIR}/full-loop-helper-state.sh"
+	fixture_scripts="${TEST_ROOT}/deployed-scripts"
+	fixture_repo="${TEST_ROOT}/deployed-repo"
+	mkdir -p "$fixture_scripts" "$fixture_repo" "$HOME/.aidevops/agents"
+	git -C "$fixture_repo" init -q
+	git -C "$fixture_repo" -c user.name=Fixture -c user.email=fixture@example.invalid commit -q --allow-empty -m release
+	fixture_tag_commit=$(git -C "$fixture_repo" rev-parse HEAD)
+	git -C "$fixture_repo" tag v1.2.3
+	git -C "$fixture_repo" -c user.name=Fixture -c user.email=fixture@example.invalid commit -q --allow-empty -m runtime
+	fixture_active_sha=$(git -C "$fixture_repo" rev-parse HEAD)
+	REPO_ROOT="$fixture_repo"
+	SCRIPT_DIR="$fixture_scripts"
+	# Literal fixture functions must expand HOME and the SHA when sourced, not here.
+	# shellcheck disable=SC2016
+	printf '%s\n' '_runtime_bundle_verify_active_link() { _AIDEVOPS_RUNTIME_VERIFY_ACTIVE_ROOT="$HOME/.aidevops/agents"; }' \
+		'_runtime_bundle_verify_manifest_value() { printf "%s\\n" "$FIXTURE_ACTIVE_SHA"; }' \
+		>"${fixture_scripts}/runtime-bundle-verifier.sh"
+	printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"${fixture_scripts}/version-manager.sh"
+	FIXTURE_ACTIVE_SHA="$fixture_active_sha"
+	_full_loop_release_resolve_tag_commit() { printf '%s\n' "$fixture_tag_commit"; }
+	_full_loop_release_prepare_tag_worktree() { _FULL_LOOP_RELEASE_PATH="$fixture_repo"; }
+	fixture_evidence=$(_full_loop_release_evidence_path test/repo 90 successor)
+	mkdir -p "${fixture_evidence%/*}"
+	jq -cn --arg source_commit "$fixture_tag_commit" --arg active "$fixture_active_sha" '
+		{schema_version:1,evidence_type:"post-publication-supersession",status:"superseded",
+		repository:"test/repo",pr_number:90,source_pr:90,
+		source_merge:$source_commit,source_release_tag:"v1.2.3",source_release_commit:$source_commit,
+		source_workflow_run:10,successor_pr:91,successor_merge:$active,
+		release_tag:"v1.2.4",release_commit:$active,release_workflow_run:11,
+		recorded_at:"2026-09-27T00:00:00Z"}' >"$fixture_evidence"
+	_full_loop_release_record_stale_deployment test/repo 90 v1.2.3 || {
+		printf 'FAIL converged superseded release did not record deployment proof\n' >&2
+		exit 1
+	}
+	jq -e --arg sha "$fixture_active_sha" '
+		.deployment.status == "deployed" and .deployment.active_sha == $sha
+		and .deployment.tag == "v1.2.3"' "$fixture_evidence" >/dev/null
+	git -C "$fixture_repo" -c user.name=Fixture -c user.email=fixture@example.invalid commit -q --allow-empty -m later
+	_full_loop_release_record_stale_deployment test/repo 90 v1.2.3 || {
+		printf 'FAIL deployed supersession replay rejected a later runtime\n' >&2
+		exit 1
+	}
+	jq -e --arg sha "$fixture_active_sha" '.deployment.active_sha == $sha' "$fixture_evidence" >/dev/null
+)
+printf 'PASS supersession preserves verified deployed bundle SHA across later main movement\n'
+
 _full_loop_release_finalize_stale_supersession() {
 	local repo="$1"
 	local pr_number="$2"
@@ -1805,6 +1856,10 @@ _full_loop_release_finalize_stale_supersession() {
 	printf '%s %s %s %s\n' "$repo" "$pr_number" "$source_tag" "$release_tag" \
 		>"${TEST_ROOT}/stale-finalize.log"
 	return "${STALE_FINALIZE_RC:-0}"
+}
+_full_loop_release_record_stale_deployment() {
+	[[ "$1" == "test/repo" && "$2" == "90" && "$3" == "v1.2.3" ]] || return 1
+	printf '%s %s %s\n' "$1" "$2" "$3" >>"${TEST_ROOT}/stale-deployment.log"
 }
 _full_loop_verify_superseded_release_receipt() {
 	local repo="$1"
@@ -1971,6 +2026,7 @@ AIDEVOPS_FULL_LOOP_REPO=test/repo _full_loop_release_existing_command reconcile 
 	>/dev/null 2>&1 || stale_reconcile_rc=$?
 if [[ "$stale_reconcile_rc" -ne 0 ]] ||
 	! grep -qx 'test/repo 90 v1.2.3 v1.2.4' "${TEST_ROOT}/stale-finalize.log" ||
+	! grep -qx 'test/repo 90 v1.2.3' "${TEST_ROOT}/stale-deployment.log" ||
 	[[ -e "${TEST_ROOT}/dispatch.log" || -e "${TEST_ROOT}/finalize.log" ]]; then
 	printf 'FAIL stale release receipt did not use the no-publication supersession path\n'
 	exit 1
