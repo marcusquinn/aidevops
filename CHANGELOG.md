@@ -10,6 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.37.5] - 2026-09-27
+
+### Added
+
+- prompt parent acceptance receipts (#32514)
+
+### Fixed
+
+- setsid async launch and expire idle deferred post-merge owners
+- bootstrap locked npm validators in fresh worktrees (#32533)
+- on-demand agents for all MCPs, V2 title version suffix, Tabby scrollbar strip
+- fix pulse/worker capacity waste (false premature_exit loops, gate runner churn, stats growth)
+- retain agent scratch with scheduled trash cleanup (#32519)
+- avoid resuming live Tabby sessions from split tabs (#32507)
+- stuck exact-tag lane must not block aidevops update/auto-update
+
 ## [3.37.4] - 2026-09-27
 
 ### Fixed
