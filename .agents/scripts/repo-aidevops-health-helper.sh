@@ -76,6 +76,7 @@ readonly LOCK_DIR="$HOME/.aidevops/locks"
 readonly LOCK_FILE="$LOCK_DIR/repo-aidevops-health.lock"
 readonly LOG_FILE="$HOME/.aidevops/logs/repo-aidevops-health.log"
 readonly STATE_FILE="$HOME/.aidevops/cache/repo-aidevops-health-state.json"
+readonly HEALTH_SYSTEMD_BACKEND="systemd"
 readonly CRON_MARKER="# aidevops-repo-aidevops-health"
 readonly DEFAULT_INTERVAL=1440
 readonly REPO_AIDEVOPS_HEALTH_SCHEDULE='daily(@03:30)'
@@ -920,7 +921,7 @@ cmd_enable() {
 	if [[ "$backend" == "launchd" ]]; then
 		_enable_launchd "$script_path" "$interval"
 		return $?
-	elif [[ "$backend" == "systemd" ]]; then
+	elif [[ "$backend" == "$HEALTH_SYSTEMD_BACKEND" ]]; then
 		_enable_systemd "$script_path" "$interval"
 		return $?
 	fi
@@ -981,7 +982,7 @@ cmd_disable() {
 			print_info "Repo sync was not enabled"
 		fi
 		return 0
-	elif [[ "$backend" == "systemd" ]]; then
+	elif [[ "$backend" == "$HEALTH_SYSTEMD_BACKEND" ]]; then
 		_disable_systemd
 		return $?
 	fi
@@ -1012,6 +1013,74 @@ cmd_disable() {
 #######################################
 # Show status
 #######################################
+# Report persistent repo-sync drift without contacting remotes or rewriting state.
+_status_repo_sync_drift() {
+	local sync_state="$HOME/.aidevops/cache/repo-sync-state.json"
+	[[ -f "$sync_state" ]] && command -v jq >/dev/null 2>&1 || return 0
+	jq -r '
+		(now - 86400 | strftime("%Y-%m-%dT%H:%M:%SZ")) as $cutoff |
+		(.repo_observations // {} | to_entries | sort_by(.key)[]) |
+		if .value.last_result == "FAIL" and (.value.fail_runs // 0) >= 3 then
+			"  Repo sync: FAIL " + .key + " (" + (.value.fail_runs | tostring) + " consecutive runs)"
+		elif .value.last_result == "STALE" and (.value.stale_since // "") < $cutoff then
+			"  Repo sync: STALE " + .key + " (since " + .value.stale_since + ")"
+		else empty end
+	' "$sync_state" 2>/dev/null || true
+	return 0
+}
+
+# A service/program path is missing, or an interpreter's first script is gone.
+_scheduler_program_missing() {
+	local program="$1"
+	local script="$2"
+	if [[ "$program" == /* && ! -e "$program" ]]; then
+		return 0
+	fi
+	if [[ "$program" == */bash || "$program" == */sh || "$program" == */zsh || "$program" == */python3 ]] &&
+		[[ "$script" == /* && ! -e "$script" ]]; then
+		return 0
+	fi
+	return 1
+}
+
+# Check loaded aidevops jobs only; never unload or change a user scheduler.
+_status_missing_scheduler_programs() {
+	local backend="$1"
+	local program script label plist unit unit_file line
+	local launchctl_name='launchctl'
+	local -a argv=()
+	if [[ "$backend" == "launchd" ]] && command -v launchctl >/dev/null 2>&1; then
+		while read -r _ _ label; do
+			[[ "$label" == sh.aidevops.* ]] || continue
+			plist="$HOME/Library/LaunchAgents/$label.plist"
+			if [[ ! -f "$plist" ]]; then
+				printf '  Scheduler: %s has no plist at expected path; remove: %s bootout gui/%s/%s\n' "$label" "$launchctl_name" "$(id -u)" "$label"
+				continue
+			fi
+			command -v plutil >/dev/null 2>&1 || continue
+			program=$(plutil -extract ProgramArguments.0 raw -o - "$plist" 2>/dev/null) || continue
+			script=$(plutil -extract ProgramArguments.1 raw -o - "$plist" 2>/dev/null) || script=""
+			if _scheduler_program_missing "$program" "$script"; then
+				printf '  Scheduler: %s missing program/script; remove: %s bootout gui/%s/%s\n' "$label" "$launchctl_name" "$(id -u)" "$label"
+			fi
+		done < <(launchctl list 2>/dev/null)
+	elif [[ "$backend" == "$HEALTH_SYSTEMD_BACKEND" ]] && command -v systemctl >/dev/null 2>&1; then
+		while read -r unit _; do
+			[[ "$unit" == aidevops-*.service ]] || continue
+			unit_file=$(systemctl --user show "$unit" --property=FragmentPath --value 2>/dev/null) || continue
+			[[ -f "$unit_file" ]] || continue
+			line=$(grep -m1 '^ExecStart=' "$unit_file" 2>/dev/null) || continue
+			read -r -a argv <<<"${line#ExecStart=}"
+			program="${argv[0]:-}"
+			script="${argv[1]:-}"
+			if _scheduler_program_missing "$program" "$script"; then
+				printf '  Scheduler: %s missing program/script; remove: systemctl --user disable --now %s\n' "$unit" "$unit"
+			fi
+		done < <(systemctl --user list-unit-files --no-legend 'aidevops-*.service' 2>/dev/null)
+	fi
+	return 0
+}
+
 cmd_status() {
 	ensure_dirs
 
@@ -1097,6 +1166,8 @@ cmd_status() {
 		echo "                ${last_registered_config_missing} registered-config-missing, ${last_missing_folder} missing-folder, ${last_no_init} no-init"
 		echo "  Lifetime:     ${total_bumped} total bumped, ${total_failed} total failed"
 	fi
+	_status_repo_sync_drift
+	_status_missing_scheduler_programs "$backend"
 
 	# Check env var overrides
 	if [[ "${AIDEVOPS_REPO_HEALTH:-}" == "false" ]]; then
