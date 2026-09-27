@@ -1198,6 +1198,19 @@ set_solved_label_from_merged_pr() {
 #   1 on gh failure
 #   2 on invalid args
 #######################################
+gh_publication_default_has_ref() {
+	local repo="$1" issue_num="$2" branch="" remote_sha="" local_sha=""
+	[[ "$issue_num" =~ ^[0-9]+$ ]] || return 1
+	branch=$(gh repo view "$repo" --json defaultBranchRef --jq '.defaultBranchRef.name') || return 1
+	[[ -n "$branch" ]] || return 1
+	remote_sha=$(gh api "repos/${repo}/git/ref/heads/${branch}" --jq '.object.sha') || return 1
+	local_sha=$(git rev-parse "refs/remotes/origin/${branch}" 2>/dev/null) || return 1
+	[[ "$remote_sha" == "$local_sha" ]] || return 1
+	git show "refs/remotes/origin/${branch}:TODO.md" 2>/dev/null |
+		grep -E "^[[:space:]]*-[[:space:]]+\\[[ x]\\].*ref:GH#${issue_num}([[:space:]]|$)" >/dev/null || return 1
+	return 0
+}
+
 set_solved_label() {
 	local issue_num="$1"
 	local repo_slug="$2"
@@ -1235,6 +1248,15 @@ set_solved_label() {
 		fi
 	done
 	_flags+=("$@")
+	# Closed issues no longer need the publication fence, but a reopened task
+	# without canonical planning could otherwise become dispatchable. Fail closed
+	# when the locally verified default-branch snapshot has no matching ref.
+	local issue_state=""
+	issue_state=$(gh issue view "$issue_num" --repo "$repo_slug" --json state,labels 2>/dev/null) || issue_state=""
+	if [[ -n "$issue_state" ]] && jq -e '.state == "CLOSED" and any(.labels[]?; .name == "publication:pending")' \
+		<<<"$issue_state" >/dev/null 2>&1 && gh_publication_default_has_ref "$repo_slug" "$issue_num"; then
+		_flags+=(--remove-label "publication:pending")
+	fi
 
 	_gh_with_timeout write gh issue edit "$issue_num" --repo "$repo_slug" "${_flags[@]}" 2>/dev/null
 	return $?

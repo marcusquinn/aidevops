@@ -84,6 +84,12 @@ PUBLICATION_FAILED
   issue: publication:pending retained
   default branch: canonical task absent or invalid
   recovery: retry the same publication/mapping; never allocate a replacement ID
+
+CLOSED
+  issue: closed; publication:pending removed only if ref:GH#N exists on the
+    verified default branch (brief readiness is not required for closed work)
+  recovery: if reopened, default-branch mapping exists; normal open-issue
+    reconciliation still validates brief readiness before dispatch
 ```
 
 `publication:pending` is preferable to overloading `status:blocked` because

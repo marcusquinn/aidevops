@@ -1276,6 +1276,8 @@ _repair_pending_planning_publications() {
 		sha=$(git -C "$path" rev-parse HEAD 2>/dev/null) || continue
 		(cd "$path" && AIDEVOPS_PUBLICATION_RECONCILE_LIMIT=10 \
 			"$helper" reconcile --repo "$slug" --sha "$sha") >>"$LOGFILE" 2>&1 || true
+		(cd "$path" && AIDEVOPS_PUBLICATION_RECONCILE_LIMIT=10 \
+			"$helper" sweep-closed --repo "$slug") >>"$LOGFILE" 2>&1 || true
 		[[ "$scanned" -ge "$cap" ]] && break
 	done < <(jq -r '.initialized_repos[] | select(.maintenance != false and .pulse == true and (.local_only // false) == false) | [.path, .slug] | @tsv' "$repos_json" 2>/dev/null || true)
 	return 0
