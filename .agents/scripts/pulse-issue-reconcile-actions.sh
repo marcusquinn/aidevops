@@ -1290,12 +1290,18 @@ _pir_pr_lookup_uncertain() {
 # Stage 1 action: close an issue whose work is done via a merged PR.
 # (Per-issue body of close_issues_with_merged_prs — no slug loop.)
 #
-# Args: $1=slug, $2=issue_num, $3=issue_title, $4=dedup_helper, $5=verify_helper
+# Args: $1=slug, $2=issue_num, $3=issue_title, $4=dedup_helper, $5=verify_helper,
+#       $6=issue_body (optional; enables the recurrent file-size-debt gate)
 # Returns: 0 if issue was closed, 1 otherwise
 #######################################
 _action_ciw_single() {
 	local slug="$1" issue_num="$2" issue_title="$3"
 	local dedup_helper="$4" verify_helper="$5"
+	local issue_body="${6:-}"
+
+	# GH#32640: checked before any API call — regrown debt is never closed on
+	# historical merged-PR evidence, and an unmeasurable outcome defers.
+	_pir_file_size_debt_close_gate "$slug" "$issue_num" "$issue_body" "Auto-close" || return 1
 
 	local dedup_output=""
 	dedup_output=$("$dedup_helper" has-open-pr "$issue_num" "$slug" "$issue_title" 2>/dev/null) || return 1
@@ -1339,13 +1345,27 @@ _action_ciw_single() {
 # Stage 2 action: reconcile a status:done issue.
 # (Per-issue body of reconcile_stale_done_issues — no slug loop.)
 #
-# Args: $1=slug, $2=issue_num, $3=issue_title, $4=dedup_helper, $5=verify_helper
+# Args: $1=slug, $2=issue_num, $3=issue_title, $4=dedup_helper, $5=verify_helper,
+#       $6=issue_body (optional; enables the recurrent file-size-debt gate)
 # Returns: 0 if closed, 2 if reset to status:available, 1 if no action taken
 #######################################
 _action_rsd_single() {
 	local slug="$1" issue_num="$2" issue_title="$3"
 	local dedup_helper="$4" verify_helper="$5"
+	local issue_body="${6:-}"
 	local available_status="available"
+
+	# GH#32640: regrown debt is still open work — return it to the dispatch
+	# queue instead of closing; an unmeasurable outcome leaves state untouched.
+	local debt_gate_rc=0
+	_pir_file_size_debt_close_gate "$slug" "$issue_num" "$issue_body" "Reconcile done" || debt_gate_rc=$?
+	case "$debt_gate_rc" in
+	1)
+		set_issue_status "$issue_num" "$slug" "$available_status" >/dev/null 2>&1 || return 1
+		return 2
+		;;
+	2) return 1 ;;
+	esac
 
 	local dedup_output=""
 	if dedup_output=$("$dedup_helper" has-open-pr "$issue_num" "$slug" "$issue_title" 2>/dev/null); then
@@ -1434,6 +1454,32 @@ _pir_file_size_debt_current_outcome() {
 }
 
 #######################################
+# Shared merged-PR close gate for recurrent file-size debt (GH#27444, GH#32640).
+# Every reconcile stage that closes on merged-PR evidence must consult this
+# before closing, so historical evidence cannot close regrown debt.
+#
+# Args: $1=slug, $2=issue_num, $3=issue body, $4=log label (stage name)
+# Returns: 0=close may proceed, 1=debt still current (keep open),
+#          2=current outcome unmeasurable (defer; caller must not close)
+#######################################
+_pir_file_size_debt_close_gate() {
+	local slug="$1" issue_num="$2" issue_body="$3" stage_label="$4"
+	local current_outcome_rc=0
+	_pir_file_size_debt_current_outcome "$slug" "$issue_body" || current_outcome_rc=$?
+	case "$current_outcome_rc" in
+	0)
+		echo "[pulse-wrapper] ${stage_label}: skipped close #${issue_num} in ${slug} — recurrent file-size debt still exceeds its threshold" >>"$LOGFILE"
+		return 1
+		;;
+	2)
+		echo "[pulse-wrapper] ${stage_label}: deferred close #${issue_num} in ${slug} — recurrent file-size debt outcome unavailable" >>"$LOGFILE"
+		return 2
+		;;
+	esac
+	return 0
+}
+
+#######################################
 # Stage 3 action: close an open issue whose linked PR has already merged.
 # (Per-issue body of reconcile_open_issues_with_merged_prs — no slug loop.)
 #
@@ -1493,18 +1539,7 @@ _action_oimp_single() {
 	fi
 	[[ -n "$merged_pr_num" && "$merged_pr_num" =~ ^[0-9]+$ ]] || return 1
 
-	local current_outcome_rc=0
-	_pir_file_size_debt_current_outcome "$slug" "$issue_body" || current_outcome_rc=$?
-	case "$current_outcome_rc" in
-	0)
-		echo "[pulse-wrapper] Reconcile merged-PR: skipped close #${issue_num} in ${slug} — recurrent file-size debt still exceeds its threshold" >>"$LOGFILE"
-		return 1
-		;;
-	2)
-		echo "[pulse-wrapper] Reconcile merged-PR: deferred close #${issue_num} in ${slug} — recurrent file-size debt outcome unavailable" >>"$LOGFILE"
-		return 1
-		;;
-	esac
+	_pir_file_size_debt_close_gate "$slug" "$issue_num" "$issue_body" "Reconcile merged-PR" || return 1
 
 	# Body keyword check is built into the lookup builder — the jq scan
 	# only emits pairs from PR bodies actually containing

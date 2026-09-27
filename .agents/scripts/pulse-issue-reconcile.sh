@@ -1545,7 +1545,7 @@ reconcile_issues_single_pass() {
 			if [[ "$_ciw_rsd_enabled" == "1" ]] && \
 				[[ "$ciw_per_repo" -lt "$ciw_max_repo" ]] && \
 				_should_ciw "$labels_csv"; then
-				if _action_ciw_single "$slug" "$issue_num" "$issue_title" "$dedup_helper" "$verify_helper"; then
+				if _action_ciw_single "$slug" "$issue_num" "$issue_title" "$dedup_helper" "$verify_helper" "$issue_body"; then
 					ciw_closed=$((ciw_closed + 1))
 					ciw_per_repo=$((ciw_per_repo + 1))
 					continue
@@ -1557,7 +1557,7 @@ reconcile_issues_single_pass() {
 				[[ "$rsd_per_repo" -lt "$rsd_max_repo" ]] && \
 				_should_rsd "$labels_csv"; then
 				local _rsd_rc
-				_action_rsd_single "$slug" "$issue_num" "$issue_title" "$dedup_helper" "$verify_helper"
+				_action_rsd_single "$slug" "$issue_num" "$issue_title" "$dedup_helper" "$verify_helper" "$issue_body"
 				_rsd_rc=$?
 				rsd_per_repo=$((rsd_per_repo + 1))
 				if [[ "$_rsd_rc" -eq 0 ]]; then
