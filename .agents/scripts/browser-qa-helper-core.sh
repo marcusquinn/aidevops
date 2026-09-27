@@ -288,8 +288,10 @@ run_playwright_node() {
 	return $?
 }
 
-# Run an opt-in declarative authenticated journey without exposing credentials.
-# Args: $1=config JSON path, $2=environment name
+# Run an opt-in declarative authenticated read-only journey (GH#32375).
+# Credentials are read from the environment-variable names in the config; the
+# runner prints one redacted JSON report and writes no artifacts.
+# Options: --config <journey.json> --environment <name>
 cmd_journey() {
 	local config_path=""
 	local environment=""
@@ -297,12 +299,16 @@ cmd_journey() {
 		local option="$1"
 		local option_value="${2:-}"
 		case "$option" in
-		--config)
-			config_path="$option_value"
-			shift 2
-			;;
-		--environment)
-			environment="$option_value"
+		--config | --environment)
+			if [[ -z "$option_value" ]]; then
+				log_error "${option} requires a value"
+				return 1
+			fi
+			if [[ "$option" == "--config" ]]; then
+				config_path="$option_value"
+			else
+				environment="$option_value"
+			fi
 			shift 2
 			;;
 		*)
@@ -315,7 +321,8 @@ cmd_journey() {
 		log_error "journey requires an existing --config file and --environment name"
 		return 1
 	fi
-	run_playwright_node "${SCRIPT_DIR}/browser-qa-journey.mjs" "$config_path" "$environment"
+	run_playwright_node "${SCRIPT_DIR}/browser-qa-journey.mjs" "$config_path" "$environment" || return 1
+	return 0
 }
 
 # Wait for a URL to become reachable.

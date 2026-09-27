@@ -1,100 +1,185 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
-// Authenticated browser QA runner. It accepts only declarative read-only steps.
+// Opt-in authenticated read-only browser journey runner (GH#32375).
+// Usage: browser-qa-journey.mjs CONFIG ENVIRONMENT
+// Prints one redacted JSON report on stdout. It never writes screenshots, traces,
+// recordings, storage state, cookies or page bodies. Each viewport runs in its own
+// isolated context: sign in -> declarative steps -> sign out -> close.
 
 import fs from 'node:fs/promises';
-import { installNetworkGuard, runSteps } from './browser-qa-journey-steps.mjs';
+import { SCHEMA_VERSION, VIEWPORTS, validateJourney } from './browser-qa-journey-config.mjs';
+import { assertGuardClean, createGuard, guardViolations, installGuard } from './browser-qa-journey-guard.mjs';
+import { resolvePath, runSteps } from './browser-qa-journey-steps.mjs';
+import { loadPlaywright } from './playwright-runtime.mjs';
 
-const VIEWPORTS = {
-  desktop: { width: 1440, height: 900 },
-  mobile: { width: 375, height: 667 },
-};
+const SIGN_OUT_TIMEOUT_MS = 10000;
+const HARD_FUSE_GRACE_MS = 30000;
+const MAX_ERROR_LENGTH = 160;
+const MIN_REDACTED_SECRET_LENGTH = 3;
 
-function fail(message) {
-  throw new Error(message);
+function firstLine(error) {
+  return String(error?.message ?? error).split('\n')[0];
 }
 
-function exactUrl(value, name) {
-  let url;
-  try { url = new URL(value); } catch { fail(`${name} must be an absolute URL`); }
-  if (!['http:', 'https:'].includes(url.protocol) || url.pathname !== '/' || url.search || url.hash) fail(`${name} must be an exact http(s) origin without path, query or fragment`);
-  return url;
+// Error text keeps only its first line, drops URL query strings and masks credential values.
+function makeRedactor(credentials) {
+  const secrets = [credentials.username, credentials.password].filter((value) => value.length >= MIN_REDACTED_SECRET_LENGTH);
+  return (error) => {
+    let text = firstLine(error).replace(/\?\S*/g, '?[redacted]');
+    for (const secret of secrets) text = text.split(secret).join('[redacted]');
+    return text.slice(0, MAX_ERROR_LENGTH);
+  };
 }
 
-function validateConfig(config, environmentName) {
-  if (config.version !== 1) fail('journey config version must be 1');
-  const environment = config.environments?.[environmentName];
-  if (!environment) fail(`unknown journey environment: ${environmentName}`);
-  const origin = exactUrl(environment.origin, 'environment origin');
-  const login = environment.login;
-  const logout = environment.logout;
-  for (const lifecycle of [login, logout]) {
-    if (!lifecycle || typeof lifecycle.path !== 'string' || !['GET', 'POST'].includes(lifecycle.method)) fail('login and logout require exact path and GET or POST method');
-    if (!lifecycle.path.startsWith('/') || lifecycle.path.includes('?')) fail('login/logout path must be an exact absolute path without query');
-  }
-  if (!login.usernameSelector || !login.passwordSelector || !login.submitSelector || typeof login.successPath !== 'string' || !login.successPath.startsWith('/')) fail('login requires selectors and an exact successPath');
-  if (!environment.credentials?.usernameEnv || !environment.credentials?.passwordEnv) fail('credentials require usernameEnv and passwordEnv');
-  const username = process.env[environment.credentials.usernameEnv];
-  const password = process.env[environment.credentials.passwordEnv];
-  if (!username || !password) fail('required journey credentials are unavailable');
-  if (!Array.isArray(config.steps) || config.steps.length === 0 || config.steps.length > 50) fail('steps must contain 1-50 declarative entries');
-  return { environment, origin, login, logout, username, password };
+// Returns the per-action timeout, bounded by what remains of the whole-run budget.
+function makeBudget(journey) {
+  const deadline = Date.now() + journey.runTimeoutMs;
+  return () => {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw new Error('run timeout exceeded');
+    return Math.min(journey.actionTimeoutMs, remaining);
+  };
 }
 
-async function run(configPath, environmentName) {
-  const config = JSON.parse(await fs.readFile(configPath, 'utf8'));
-  const { environment, origin, login, logout, username, password } = validateConfig(config, environmentName);
-  const playwrightImport = await import(process.env.AIDEVOPS_PLAYWRIGHT_MODULE);
-  const { chromium } = playwrightImport.chromium ? playwrightImport : playwrightImport.default;
-  const launchOptions = { headless: true };
-  if (process.env.AIDEVOPS_PLAYWRIGHT_EXECUTABLE) launchOptions.executablePath = process.env.AIDEVOPS_PLAYWRIGHT_EXECUTABLE;
-  const timeout = Number.isInteger(environment.timeoutMs) && environment.timeoutMs > 0 && environment.timeoutMs <= 60000 ? environment.timeoutMs : 30000;
-  const viewports = Array.isArray(environment.viewports) ? environment.viewports : ['desktop', 'mobile'];
-  if (!viewports.every(viewport => VIEWPORTS[viewport])) fail('viewports must be desktop and/or mobile');
-  const report = { environment: environmentName, origin: origin.origin, passed: 0, failed: 0, blockedWrites: 0, viewports: [] };
-  const browser = await chromium.launch(launchOptions);
-  let cleanupError = null;
-  let journeyError = null;
+function watchDiagnostics(context) {
+  const counts = { consoleErrors: 0, pageErrors: 0, dialogsDismissed: 0 };
+  context.on('console', (message) => {
+    if (message.type() === 'error') counts.consoleErrors += 1;
+  });
+  context.on('weberror', () => {
+    counts.pageErrors += 1;
+  });
+  context.on('dialog', (dialog) => {
+    counts.dialogsDismissed += 1;
+    dialog.dismiss().catch(() => undefined);
+  });
+  return counts;
+}
+
+async function signIn(run, journey) {
+  const { login, credentials } = journey;
+  const { page } = run;
+  run.guard.phase = 'login';
   try {
-    for (const viewportName of viewports) {
-      const context = await browser.newContext({ viewport: VIEWPORTS[viewportName] });
-      const page = await context.newPage();
-      const consoleErrors = [];
-      page.on('console', message => { if (message.type() === 'error') consoleErrors.push(message.text().slice(0, 160)); });
-      await installNetworkGuard(page, origin, login, logout, report);
-      const result = { viewport: viewportName, steps: [], consoleErrors: 0 };
-      try {
-        await page.goto(new URL(login.path, origin).href, { waitUntil: 'domcontentloaded', timeout });
-        await page.locator(login.usernameSelector).fill(username, { timeout });
-        await page.locator(login.passwordSelector).fill(password, { timeout });
-        await page.locator(login.submitSelector).click({ timeout });
-        await page.waitForURL(url => url.origin === origin.origin && url.pathname === login.successPath, { timeout });
-        journeyError = await runSteps(page, config.steps, origin, timeout, result, report);
-      } finally {
-        result.consoleErrors = consoleErrors.length;
-        try {
-          const logoutUrl = new URL(logout.path, origin).href;
-          const response = await page.evaluate(async ({ url, method }) => {
-            const result = await fetch(url, { method, credentials: 'same-origin' });
-            return { ok: result.ok, status: result.status };
-          }, { url: logoutUrl, method: logout.method });
-          if (!response.ok) cleanupError = new Error(`logout returned ${response.status}`);
-        } catch (error) { cleanupError = error; }
-        await context.close();
-      }
+    await page.goto(resolvePath(run.origin, login.pagePath), { waitUntil: 'domcontentloaded', timeout: run.budget() });
+    await page.locator(login.usernameSelector).fill(credentials.username, { timeout: run.budget() });
+    await page.locator(login.passwordSelector).fill(credentials.password, { timeout: run.budget() });
+    run.signInAttempted = true;
+    await page.locator(login.submitSelector).click({ timeout: run.budget() });
+    await page.waitForURL((url) => url.origin === run.origin && url.pathname === login.successPath, { timeout: run.budget() });
+    assertGuardClean(run.guard);
+    return { status: 'passed' };
+  } catch (error) {
+    return { status: 'failed', error: run.redact(error) };
+  } finally {
+    run.guard.phase = 'journey';
+  }
+}
+
+// Sign-out uses the context's own request client (same cookies, no page code, no
+// redirects followed). It always runs once sign-in was attempted, even after a
+// failed step or an exhausted run budget.
+async function signOut(run, journey) {
+  if (!run.signInAttempted) return { status: 'skipped' };
+  try {
+    const response = await run.context.request.fetch(resolvePath(run.origin, journey.logout.path), {
+      method: journey.logout.method,
+      headers: { origin: run.origin },
+      maxRedirects: 0,
+      timeout: SIGN_OUT_TIMEOUT_MS,
+    });
+    const status = response.status();
+    return status < 400 ? { status: 'passed' } : { status: 'failed', error: `sign-out returned HTTP ${status}` };
+  } catch (error) {
+    return { status: 'failed', error: run.redact(error) };
+  }
+}
+
+async function exerciseViewport(run, journey) {
+  let stepsPassed = false;
+  try {
+    run.result.signIn = await signIn(run, journey);
+    stepsPassed = run.result.signIn.status === 'passed' && (await runSteps(run, journey.steps));
+  } finally {
+    run.result.signOut = await signOut(run, journey);
+  }
+  const clean = guardViolations(run.guard) === 0 && run.result.signOut.status !== 'failed';
+  run.result.status = stepsPassed && clean ? 'passed' : 'failed';
+}
+
+async function runViewport(session, viewportName) {
+  const { browser, journey } = session;
+  const context = await browser.newContext({
+    viewport: VIEWPORTS[viewportName],
+    serviceWorkers: 'block',
+    acceptDownloads: false,
+  });
+  const guard = createGuard(journey);
+  const diagnostics = watchDiagnostics(context);
+  const result = { viewport: viewportName, status: 'failed', steps: [] };
+  try {
+    await installGuard(context, guard);
+    const page = await context.newPage();
+    const run = { ...session, context, page, guard, result, origin: journey.origin, signInAttempted: false };
+    await exerciseViewport(run, journey);
+  } finally {
+    await context.close().catch(() => undefined);
+  }
+  return Object.assign(result, diagnostics, guard.counts);
+}
+
+async function launchBrowser() {
+  const playwright = await loadPlaywright(process.env.AIDEVOPS_PLAYWRIGHT_MODULE || null);
+  const executablePath = process.env.AIDEVOPS_PLAYWRIGHT_EXECUTABLE || undefined;
+  return playwright.chromium.launch({ headless: true, executablePath });
+}
+
+async function runJourney(journey) {
+  const report = {
+    schemaVersion: SCHEMA_VERSION,
+    environment: journey.environmentName,
+    origin: journey.origin,
+    status: 'failed',
+    viewports: [],
+  };
+  const browser = await launchBrowser();
+  const session = { browser, journey, budget: makeBudget(journey), redact: makeRedactor(journey.credentials) };
+  try {
+    for (const viewportName of journey.viewports) {
+      const result = await runViewport(session, viewportName);
       report.viewports.push(result);
-      if (journeyError) break;
+      if (result.status !== 'passed') break;
     }
   } finally {
     await browser.close();
   }
-  console.log(JSON.stringify(report));
-  if (cleanupError) fail('logout cleanup could not be confirmed');
-  if (journeyError) fail('journey assertion failed');
-  if (report.blockedWrites) fail('non-allowlisted state-changing request was blocked');
+  const passed = report.viewports.filter((result) => result.status === 'passed').length;
+  report.status = passed === journey.viewports.length ? 'passed' : 'failed';
+  return report;
 }
 
-const [configPath, environmentName] = process.argv.slice(2);
-if (!configPath || !environmentName) fail('usage: browser-qa-journey.mjs CONFIG ENVIRONMENT');
-run(configPath, environmentName).catch(error => { console.error(`Journey failed: ${error.message}`); process.exit(1); });
+// Last-resort fuse in case a browser call ignores its own timeout.
+function armHardFuse(runTimeoutMs) {
+  const timer = setTimeout(() => {
+    process.stderr.write('Journey failed: hard run timeout exceeded\n');
+    process.exit(1);
+  }, runTimeoutMs + HARD_FUSE_GRACE_MS);
+  timer.unref();
+}
+
+async function main(argv) {
+  const [configPath, environmentName] = argv;
+  if (!configPath || !environmentName) throw new Error('usage: browser-qa-journey.mjs CONFIG ENVIRONMENT');
+  const config = JSON.parse(await fs.readFile(configPath, 'utf8'));
+  const journey = validateJourney(config, environmentName);
+  armHardFuse(journey.runTimeoutMs);
+  const report = await runJourney(journey);
+  process.stdout.write(`${JSON.stringify(report)}\n`);
+  if (report.status !== 'passed') throw new Error('journey did not pass; see the JSON report');
+}
+
+main(process.argv.slice(2)).catch((error) => {
+  process.stderr.write(`Journey failed: ${firstLine(error).slice(0, MAX_ERROR_LENGTH)}\n`);
+  process.exitCode = 1;
+});
