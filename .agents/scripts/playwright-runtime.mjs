@@ -245,56 +245,59 @@ export async function playwrightStatus() {
   };
 }
 
+async function ownedChromiumExecutable(runtimeDir) {
+  const ownedModule = await validateModule(resolveFromAnchor(join(runtimeDir, 'package.json')));
+  if (!ownedModule) return null;
+  try {
+    return findExecutable((await loadPlaywright(ownedModule)).chromium.executablePath());
+  } catch {
+    return null;
+  }
+}
+
+// Setup idempotence: the owned prefix holds the pinned version and its Chromium.
+export async function ownedRuntimeStatus() {
+  const runtimeDir = playwrightRuntimeDir();
+  const version = playwrightRuntimeVersion();
+  const installedVersion = installedRuntimeVersion(runtimeDir);
+  const chromiumExecutable = installedVersion === version ? await ownedChromiumExecutable(runtimeDir) : null;
+  return { runtimeDir, version, installedVersion, chromiumExecutable, ready: Boolean(chromiumExecutable) };
+}
+
+function writeLine(value) {
+  process.stdout.write(`${typeof value === 'string' ? value : JSON.stringify(value)}\n`);
+}
+
+async function usableStatus() {
+  const status = await playwrightStatus();
+  if (!status.packageImportable) throw new Error(status.error);
+  if (!status.browserBinaryAvailable) {
+    throw new Error(
+      `Playwright is importable, but no usable standalone browser was found. Install Brave, or run: ${INSTALL_COMMAND}`,
+    );
+  }
+  return status;
+}
+
+const COMMANDS = {
+  resolve: async () => writeLine(await resolvePlaywrightModule({ allowNpx: true })),
+  'resolve-path': async () => writeLine(await resolvePlaywrightModule({ allowNpx: false })),
+  status: async () => writeLine(await playwrightStatus()),
+  check: async () => writeLine((await usableStatus()).module),
+  'browser-executable': async () => writeLine((await usableStatus()).browserExecutable),
+  'runtime-check': async () => {
+    const status = await ownedRuntimeStatus();
+    writeLine(status);
+    if (!status.ready) process.exitCode = 1;
+  },
+  install: async (browsers) => writeLine(installPlaywrightRuntime(browsers.length > 0 ? browsers : ['chromium'])),
+};
+
 async function main() {
   const command = process.argv[2] || 'status';
-  if (command === 'resolve' || command === 'resolve-path') {
-    const resolved = await resolvePlaywrightModule({ allowNpx: command === 'resolve' });
-    process.stdout.write(`${resolved}\n`);
-    return 0;
-  }
-  if (command === 'runtime-check') {
-    const runtimeDir = playwrightRuntimeDir();
-    const version = playwrightRuntimeVersion();
-    const installedVersion = installedRuntimeVersion(runtimeDir);
-    let chromiumExecutable = null;
-    const ownedModule = installedVersion === version
-      ? await validateModule(resolveFromAnchor(join(runtimeDir, 'package.json')))
-      : null;
-    if (ownedModule) {
-      try {
-        chromiumExecutable = findExecutable((await loadPlaywright(ownedModule)).chromium.executablePath());
-      } catch {
-        chromiumExecutable = null;
-      }
-    }
-    process.stdout.write(`${JSON.stringify({ runtimeDir, version, installedVersion, chromiumExecutable })}\n`);
-    if (installedVersion !== version || !chromiumExecutable) process.exitCode = 1;
-    return 0;
-  }
-  if (command === 'install') {
-    const browsers = process.argv.slice(3);
-    const installed = installPlaywrightRuntime(browsers.length > 0 ? browsers : ['chromium']);
-    process.stdout.write(`${JSON.stringify(installed)}\n`);
-    return 0;
-  }
-
-  const status = await playwrightStatus();
-  if (command === 'status') {
-    process.stdout.write(`${JSON.stringify(status)}\n`);
-    return 0;
-  }
-  if (command === 'check' || command === 'browser-executable') {
-    if (!status.packageImportable) throw new Error(status.error);
-    if (!status.browserBinaryAvailable) {
-      throw new Error(
-        `Playwright is importable, but no usable standalone browser was found. Install Brave, or run: ${INSTALL_COMMAND}`,
-      );
-    }
-    process.stdout.write(`${command === 'check' ? status.module : status.browserExecutable}\n`);
-    return 0;
-  }
-
-  throw new Error(`Unknown command: ${command}`);
+  if (!Object.hasOwn(COMMANDS, command)) throw new Error(`Unknown command: ${command}`);
+  await COMMANDS[command](process.argv.slice(3));
+  return 0;
 }
 
 const invokedPath = process.argv[1] ? pathToFileURL(realpathSync(process.argv[1])).href : '';
