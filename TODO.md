@@ -1422,7 +1422,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18482 OpenCode V2 canonical agents and opt-in 240K context budget ref:GH#32447 pr:#32451 completed:2026-09-27
 
-- [ ] t18483 Restart OpenCode V2 background service after agents redeploy #bug ref:GH#32462
+- [x] t18483 Restart OpenCode V2 background service after agents redeploy #bug ref:GH#32462 pr:#32463 completed:2026-09-27
 
 - [ ] t18484 Add forge image-embed helper for PR/issue screenshots without web upload #feature #framework #interactive #auto-dispatch ~1.5h tier:standard ref:GH#32478 logged:2026-09-27 -> [todo/tasks/t18484-brief.md]
 
