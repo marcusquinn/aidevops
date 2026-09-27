@@ -77,13 +77,13 @@ export function createTerminalTitleSync(
 ) {
   let lastTitle = "";
   let lastWriteAt = 0;
+  const isFresh = (title, current) => title === lastTitle && current - lastWriteAt < refreshMs;
   return function syncTerminalTitle() {
-    if (!isTerminalTitleOwnedByAidevops(env)) return false;
-    const title = computeTerminalTitle(api);
-    if (!title) return false;
+    const canWrite =
+      isTerminalTitleOwnedByAidevops(env) && typeof api?.renderer?.setTerminalTitle === "function";
+    const title = canWrite ? computeTerminalTitle(api) : "";
     const current = now();
-    if (title === lastTitle && current - lastWriteAt < refreshMs) return false;
-    if (typeof api?.renderer?.setTerminalTitle !== "function") return false;
+    if (!title || isFresh(title, current)) return false;
     try {
       api.renderer.setTerminalTitle(title);
       lastTitle = title;
