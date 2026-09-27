@@ -18,6 +18,11 @@ NVPN_MAGIC_DNS_PORT="${NVPN_MAGIC_DNS_PORT:-1053}"
 NVPN_NPUB_REGEX='^npub1[02-9ac-hj-np-z]{58}$'
 NVPN_ALIAS_SECTION="[peer_aliases]"
 
+is_macos() {
+	[[ "$(uname -s)" == "Darwin" ]]
+	return $?
+}
+
 # Print the nvpn CLI to drive (PATH CLI, else the app helper), or fail.
 nvpn_cli_required() {
 	local cli=""
@@ -39,7 +44,7 @@ nvpn_config_path() {
 		printf '%s\n' "$NVPN_CONFIG_PATH"
 		return 0
 	fi
-	if [[ "$(uname -s)" == "Darwin" ]]; then
+	if is_macos; then
 		printf '%s\n' "${HOME}/Library/Application Support/nvpn/config.toml"
 		return 0
 	fi
@@ -99,7 +104,7 @@ nvpn_network_id() {
 primary_lan_ipv4() {
 	local iface=""
 	local ip=""
-	if [[ "$(uname -s)" == "Darwin" ]]; then
+	if is_macos; then
 		iface="$(route -n get default 2>/dev/null | awk '/interface:/{print $2; exit}')"
 		[[ -n "$iface" ]] && ip="$(ipconfig getifaddr "$iface" 2>/dev/null || true)"
 	elif has_command ip; then
@@ -317,7 +322,7 @@ cmd_dns_check() {
 		fi
 		printf 'OK   1/3 daemon answers %s -> %s\n' "$fqdn" "$answer"
 	fi
-	if [[ "$(uname -s)" == "Darwin" ]]; then
+	if is_macos; then
 		local resolvers=""
 		# Capture first: grep -q closing the pipe early makes scutil SIGPIPE under pipefail.
 		resolvers="$(scutil --dns 2>/dev/null || true)"
