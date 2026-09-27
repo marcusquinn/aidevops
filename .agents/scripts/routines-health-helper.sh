@@ -16,6 +16,7 @@ readonly LEGACY_DASHBOARD_LABEL="com.aidevops.dashboard"
 readonly DASHBOARD_SYSTEMD_UNIT="sh.aidevops.dashboard"
 readonly LEGACY_DASHBOARD_SYSTEMD_UNIT="aidevops-dashboard"
 readonly DASHBOARD_ROUTINE_ID="r912"
+readonly MEMORY_AUDIT_ROUTINE_ID="r920"
 readonly FORMAT_JSON="json"
 readonly PRINT_LINE_FORMAT="%s\n"
 
@@ -192,13 +193,15 @@ emit_text_report() {
 	local deployed="$3"
 	local source_version="$4"
 	local dashboard_enabled="$5"
-	local scheduler_note="$6"
+	local memory_audit_enabled="$6"
+	local scheduler_note="$7"
 	printf 'Routine scheduler health\n'
 	printf -- '- Platform: %s\n' "$platform"
 	printf -- '- Enabled routines: %s\n' "$enabled_count"
 	printf -- '- Deployed agents version: %s\n' "$deployed"
 	printf -- '- Source version: %s\n' "$source_version"
 	printf -- '- r912 dashboard routine: %s\n' "$dashboard_enabled"
+	printf -- '- r920 memory audit routine: %s\n' "$memory_audit_enabled"
 	printf -- '- Scheduler: %s\n' "$scheduler_note"
 	return 0
 }
@@ -209,13 +212,15 @@ emit_json_report() {
 	local deployed="$3"
 	local source_version="$4"
 	local dashboard_enabled="$5"
-	local scheduler_note="$6"
-	printf '{"platform":"%s","enabled_routines":%s,"deployed_version":"%s","source_version":"%s","r912":"%s","scheduler":"%s"}\n' \
+	local memory_audit_enabled="$6"
+	local scheduler_note="$7"
+	printf '{"platform":"%s","enabled_routines":%s,"deployed_version":"%s","source_version":"%s","r912":"%s","r920":"%s","scheduler":"%s"}\n' \
 		"$(json_escape "$platform")" \
 		"$enabled_count" \
 		"$(json_escape "$deployed")" \
 		"$(json_escape "$source_version")" \
 		"$(json_escape "$dashboard_enabled")" \
+		"$(json_escape "$memory_audit_enabled")" \
 		"$(json_escape "$scheduler_note")"
 	return 0
 }
@@ -256,6 +261,7 @@ run_report() {
 	local deployed
 	local source_version
 	local dashboard_enabled="disabled-or-unmanaged"
+	local memory_audit_enabled="disabled-or-unmanaged"
 	local scheduler_note
 	platform="$(platform_name)"
 	enabled_count="$(count_enabled_routines)"
@@ -265,10 +271,13 @@ run_report() {
 	if routine_enabled "$DASHBOARD_ROUTINE_ID"; then
 		dashboard_enabled="enabled"
 	fi
+	if routine_enabled "$MEMORY_AUDIT_ROUTINE_ID"; then
+		memory_audit_enabled="enabled"
+	fi
 	if [[ "$OUTPUT_FORMAT" == "$FORMAT_JSON" ]]; then
-		emit_json_report "$platform" "$enabled_count" "$deployed" "$source_version" "$dashboard_enabled" "$scheduler_note"
+		emit_json_report "$platform" "$enabled_count" "$deployed" "$source_version" "$dashboard_enabled" "$memory_audit_enabled" "$scheduler_note"
 	else
-		emit_text_report "$platform" "$enabled_count" "$deployed" "$source_version" "$dashboard_enabled" "$scheduler_note"
+		emit_text_report "$platform" "$enabled_count" "$deployed" "$source_version" "$dashboard_enabled" "$memory_audit_enabled" "$scheduler_note"
 	fi
 	if [[ "$MODE" == "explain" && "$OUTPUT_FORMAT" != "$FORMAT_JSON" ]]; then
 		explain_findings
