@@ -134,7 +134,7 @@ memory_audit_freshness() {
 	fi
 
 	local modified now elapsed
-	modified=$(stat -f '%m' "$marker" 2>/dev/null || stat -c '%Y' "$marker" 2>/dev/null || printf '0')
+	modified=$(_file_mtime_epoch "$marker" 2>/dev/null || printf '0')
 	now=$(date +%s)
 	if [[ ! "$modified" =~ ^[0-9]+$ ]] || [[ "$modified" -le 0 ]]; then
 		printf 'unreadable'
