@@ -314,18 +314,31 @@ validate_stable_target() {
 active_bundle_contains_expected_sha() {
 	local stable_target="$HOME/.aidevops/agents"
 	local active_root=""
+	local manifest_file=""
+	local manifest_status=""
+	local manifest_bundle_id=""
 	local manifest_sha=""
+	local stamped_sha=""
 	local resolved_active_sha=""
 
 	ACTIVE_BUNDLE_NAME=""
 	[[ -L "$stable_target" && -n "$EXPECTED_SOURCE_SHA" ]] || return 1
 	active_root=$(cd -P "$stable_target" 2>/dev/null && pwd) || return 1
 	ACTIVE_BUNDLE_NAME=$(basename "$(dirname "$active_root")")
-	[[ -r "$active_root/.bundle-manifest" ]] || return 1
-	manifest_sha=$(awk -F= '$1 == "git_sha" { print $2; exit }' "$active_root/.bundle-manifest" 2>/dev/null || true)
-	[[ "$manifest_sha" =~ ^[0-9a-fA-F]{7,64}$ ]] || return 1
+	manifest_file="$active_root/.bundle-manifest"
+	[[ -r "$manifest_file" && -r "$HOME/.aidevops/.deployed-sha" ]] || return 1
+	manifest_status=$(awk -F= '$1 == "status" { print $2; exit }' "$manifest_file" 2>/dev/null || true)
+	manifest_bundle_id=$(awk -F= '$1 == "bundle_id" { print $2; exit }' "$manifest_file" 2>/dev/null || true)
+	manifest_sha=$(awk -F= '$1 == "git_sha" { print $2; exit }' "$manifest_file" 2>/dev/null || true)
+	stamped_sha=$(tr -d '[:space:]' <"$HOME/.aidevops/.deployed-sha" 2>/dev/null) || return 1
+	# A manifest's ancestry alone cannot attest a deployment: a different stamp
+	# means the active bundle is inconsistent and setup must repair it instead.
+	[[ "$manifest_status" == "validated" && "$manifest_bundle_id" == "$ACTIVE_BUNDLE_NAME" ]] || return 1
+	[[ "$manifest_sha" =~ ^[0-9a-f]{40}$ && "$stamped_sha" == "$manifest_sha" ]] || return 1
 	resolved_active_sha=$(git -C "$REPO_DIR" rev-parse --verify "${manifest_sha}^{commit}" 2>/dev/null) || return 1
+	[[ "$resolved_active_sha" == "$manifest_sha" ]] || return 1
 	git -C "$REPO_DIR" merge-base --is-ancestor "$EXPECTED_SOURCE_SHA" "$resolved_active_sha" 2>/dev/null
+	return $?
 }
 
 log_active_bundle_already_deployed() {
