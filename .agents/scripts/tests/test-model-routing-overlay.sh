@@ -56,3 +56,14 @@ JSON
 [[ "$(model_tier_next simple)" == "thinking" ]]
 
 printf 'PASS: partial shell routing overrides inherit unspecified framework tiers\n'
+
+# A model listed in several tiers keeps the requested tier and its effort.
+printf '{}\n' >"$custom_table"
+[[ "$(model_tier_for_model openai/gpt-6-sol)" == "standard" ]]
+[[ "$(model_tier_for_model openai/gpt-6-sol thinking)" == "thinking" ]]
+[[ "$(model_tier_for_model openai/gpt-6-sol standard)" == "standard" ]]
+[[ "$(model_tier_for_model openai/gpt-6-luna thinking)" == "simple" ]]
+[[ "$(model_tier_variant standard openai/gpt-6-sol)" == "low" ]]
+[[ "$(model_tier_variant thinking openai/gpt-6-sol)" == "medium" ]]
+
+printf 'PASS: multi-tier models keep the requested tier and effort\n'

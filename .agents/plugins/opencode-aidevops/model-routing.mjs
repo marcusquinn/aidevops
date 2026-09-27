@@ -142,11 +142,14 @@ export function routingCandidateIndex(routing, tier, model) {
   return routingCandidates(routing, tier).indexOf(model);
 }
 
-export function routingTierForModel(routing, model) {
-  for (const tier of routing?.escalationOrder || DEFAULT_ESCALATION_ORDER) {
-    if (routingCandidates(routing, tier).includes(model)) return tier;
-  }
-  return "";
+// A model may serve several tiers at different reasoning levels (Sol is
+// standard at low and thinking at medium). Prefer the tier whose configured
+// variant matches the observed one; otherwise the lowest tier listing it.
+export function routingTierForModel(routing, model, variant = "") {
+  const tiers = (routing?.escalationOrder || DEFAULT_ESCALATION_ORDER)
+    .filter((tier) => routingCandidates(routing, tier).includes(model));
+  const matching = variant ? tiers.find((tier) => routingVariant(routing, tier, model) === variant) : "";
+  return matching || tiers[0] || "";
 }
 
 export function nextRoutingTier(routing, tier) {

@@ -18,7 +18,7 @@ function currentVariantFrom(context, input, output) {
 }
 
 async function recordRootRouting(context, sessionID, input, childModel, currentVariant) {
-  const rootTier = routingTierForModel(context.modelRouting, childModel);
+  const rootTier = routingTierForModel(context.modelRouting, childModel, currentVariant);
   const dispatchTier = process.env.AIDEVOPS_DISPATCH_TIER || "";
   const shouldRecord = rootTier && !dispatchTier
     && typeof context.onRoutingDecision === "function";

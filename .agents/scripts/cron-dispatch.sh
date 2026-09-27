@@ -328,7 +328,9 @@ resolve_job_config() {
 	elif [[ -n "$JOB_PROVIDER" && "$JOB_MODEL" == *"/"* ]]; then
 		JOB_MODEL="${JOB_PROVIDER}/${JOB_MODEL#*/}"
 	else
-		JOB_TIER=$(model_tier_for_model "$JOB_MODEL" 2>/dev/null || true)
+		# Bare model pins keep thinking effort when that tier lists the model
+		# (Sol also serves standard at low effort).
+		JOB_TIER=$(model_tier_for_model "$JOB_MODEL" thinking 2>/dev/null || true)
 	fi
 	JOB_VARIANT=""
 	if [[ -n "$JOB_TIER" ]]; then

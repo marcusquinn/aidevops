@@ -38,9 +38,9 @@ SELECT session_id || '|' || printf('%.8f', cost) || '|' || COALESCE(pricing_vers
 FROM llm_requests ORDER BY session_id;
     `);
     assert.equal(first, [
-      "luna-old|0.46700000|2026-09-27.1",
-      "sol-zero|4.00000000|2026-09-27.1",
-      "terra-old|4.67000000|2026-09-27.1",
+      "luna-old|0.46700000|2026-09-27.2",
+      "sol-zero|4.00000000|2026-09-27.2",
+      "terra-old|4.67000000|2026-09-27.2",
       "terra-unverified|1.25000000|legacy-unverified",
     ].join("\n"));
     assert.match(readFileSync(markerPath, "utf8"), /^\d{4}-\d{2}-\d{2}T/);
