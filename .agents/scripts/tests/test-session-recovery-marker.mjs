@@ -46,6 +46,7 @@ assert.deepEqual(resolveSessionRecoveryMarker({ cwd: markerDirectory, workDir })
   directory: realpathSync(directory),
   dataDir: realpathSync(dataDir),
   markerDirectory: realpathSync(markerDirectory),
+  ownerLive: true,
 });
 assert.equal(resolveSessionRecoveryMarker({ cwd: directory, workDir }), null);
 
@@ -59,7 +60,7 @@ const resolvedCli = spawnSync(
   [linkedResolverPath, "resolve", "--cwd", markerDirectory, "--work-dir", workDir],
   { encoding: "utf8" },
 );
-assert.equal(resolvedCli.status, 0, resolvedCli.stderr);
+assert.equal(resolvedCli.status, 3, resolvedCli.stderr);
 assert.equal(
   resolvedCli.stdout,
   `${realpathSync(directory)}\t${realpathSync(dataDir)}\t${sessionID}\n`,

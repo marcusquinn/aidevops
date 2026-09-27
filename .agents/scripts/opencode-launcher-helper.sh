@@ -233,6 +233,14 @@ resolve_tabby_recovery() {
     else
         resolver_status=$?
     fi
+    if ((resolver_status == 3)); then
+        IFS=$'\t' read -r TABBY_RECOVERY_LAUNCH_DIR TABBY_RECOVERY_DATA_DIR TABBY_RECOVERY_SESSION_ID <<<"${resolution}"
+        if [[ -z "${TABBY_RECOVERY_LAUNCH_DIR}" || -z "${TABBY_RECOVERY_DATA_DIR}" || -z "${TABBY_RECOVERY_SESSION_ID}" ]]; then
+            print_error "Tabby session recovery returned incomplete data"
+            return 1
+        fi
+        return 3
+    fi
     ((resolver_status == 2)) && return 2
     print_error "Tabby session recovery marker validation failed"
     return 1
@@ -1458,7 +1466,7 @@ cmd_tui_launch() {
         print_error "--tabby-shell requires aidevops isolated OpenCode storage"
         return 1
     fi
-    if ((tabby_shell == 1)); then
+    if ((use_shared_db == 0)); then
         if resolve_tabby_recovery \
             "${invocation_dir}" \
             "${AIDEVOPS_WORK_DIR:-${HOME}/.aidevops/.agent-workspace/work}"; then
@@ -1468,10 +1476,17 @@ cmd_tui_launch() {
             fi
             launch_dir="${TABBY_RECOVERY_LAUNCH_DIR}"
             data_dir="${TABBY_RECOVERY_DATA_DIR}"
-            opencode_args=(--session "${TABBY_RECOVERY_SESSION_ID}" "${opencode_args[@]}")
+            if ((tabby_shell == 1)); then
+                opencode_args=(--session "${TABBY_RECOVERY_SESSION_ID}" "${opencode_args[@]}")
+            fi
         else
             recovery_status=$?
-            ((recovery_status == 2)) || return 1
+            if ((recovery_status == 3)); then
+                launch_dir="${TABBY_RECOVERY_LAUNCH_DIR}"
+                data_dir="${TABBY_RECOVERY_DATA_DIR}"
+            else
+                ((recovery_status == 2)) || return 1
+            fi
         fi
     fi
     validate_launch_directory "${launch_dir}" || return 1
