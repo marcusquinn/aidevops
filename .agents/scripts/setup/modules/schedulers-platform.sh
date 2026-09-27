@@ -1078,6 +1078,23 @@ setup_repo_sync() {
 	return 0
 }
 
+_mirror_sync_plist_content() {
+	local label="$1" script="$2" log_dir="$3"
+	cat <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- aidevops:mirror-sync -->
+<plist version="1.0"><dict>
+<key>Label</key><string>${label}</string>
+<key>ProgramArguments</key><array><string>$(_xml_escape "$(_resolve_modern_bash)")</string><string>$(_xml_escape "$script")</string><string>sync</string></array>
+<key>StartCalendarInterval</key><dict><key>Hour</key><integer>20</integer><key>Minute</key><integer>0</integer></dict>
+<key>StandardOutPath</key><string>$(_xml_escape "$log_dir/mirror-sync.log")</string>
+<key>StandardErrorPath</key><string>$(_xml_escape "$log_dir/mirror-sync.log")</string>
+<key>RunAtLoad</key><false/>
+</dict></plist>
+EOF
+	return 0
+}
+
 # Install the private mirror sync only for explicit string upstream slugs.
 # A foreign healthy job with the legacy label is never replaced implicitly.
 setup_mirror_sync() {
@@ -1105,19 +1122,7 @@ setup_mirror_sync() {
 			fi
 		fi
 		local content
-		content=$(cat <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!-- aidevops:mirror-sync -->
-<plist version="1.0"><dict>
-<key>Label</key><string>${label}</string>
-<key>ProgramArguments</key><array><string>$(_xml_escape "$(_resolve_modern_bash)")</string><string>$(_xml_escape "$script")</string><string>sync</string></array>
-<key>StartCalendarInterval</key><dict><key>Hour</key><integer>20</integer><key>Minute</key><integer>0</integer></dict>
-<key>StandardOutPath</key><string>$(_xml_escape "$log_dir/mirror-sync.log")</string>
-<key>StandardErrorPath</key><string>$(_xml_escape "$log_dir/mirror-sync.log")</string>
-<key>RunAtLoad</key><false/>
-</dict></plist>
-EOF
-)
+		content=$(_mirror_sync_plist_content "$label" "$script" "$log_dir")
 		_launchd_install_if_changed "$label" "$plist" "$content" || print_warning 'Mirror sync scheduler installation failed'
 	else
 		_install_scheduler_linux 'aidevops-mirror-sync' 'aidevops: mirror-sync' '0 20 * * *' \
