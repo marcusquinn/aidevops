@@ -1472,13 +1472,22 @@ _full_loop_release_existing_command() {
 		return 1
 		;;
 	esac
-	_full_loop_release_find_tag_for_pr "$repo" "$requested_pr" || return $?
-	tag_name="$_FULL_LOOP_RELEASE_FOUND_TAG"
 	if [[ "$receipt_status" == "$_FULL_LOOP_RELEASE_NOT_REQUESTED" ]]; then
-		[[ "$mode" == "$_FULL_LOOP_RELEASE_MODE_RECONCILE" ]] || {
-			printf 'Cannot reconcile terminal release:not-requested evidence for PR #%s\n' "$requested_pr" >&2
-			return 1
-		}
+		if [[ "$mode" == "status" ]]; then
+			release_lane_read "$repo" || return 1
+			if jq -e --argjson source_pr "$requested_pr" '
+				.active == true and .source_pr == $source_pr and .terminal_receipt == null
+			' <<<"$_AIDEVOPS_RELEASE_LANE_JSON" >/dev/null; then
+				printf 'release:queued source_pr=%s phase=%s tag=%s\n' "$requested_pr" \
+					"$(jq -r '.phase' <<<"$_AIDEVOPS_RELEASE_LANE_JSON")" \
+					"$(jq -r '.tag // "pending"' <<<"$_AIDEVOPS_RELEASE_LANE_JSON")"
+				return 8
+			fi
+			printf 'release:not-requested already recorded for PR #%s\n' "$requested_pr"
+			return 0
+		fi
+		_full_loop_release_find_tag_for_pr "$repo" "$requested_pr" || return $?
+		tag_name="$_FULL_LOOP_RELEASE_FOUND_TAG"
 		source_json=$(_full_loop_release_source_json_from_tag "$tag_name") || return 1
 		_full_loop_release_validate_explicit_reconciliation_intent \
 			"$repo" "$requested_pr" "$source_json" || {
@@ -1495,6 +1504,10 @@ _full_loop_release_existing_command() {
 			return 1
 		}
 	fi
+	[[ -n "$tag_name" ]] || {
+		_full_loop_release_find_tag_for_pr "$repo" "$requested_pr" || return $?
+		tag_name="$_FULL_LOOP_RELEASE_FOUND_TAG"
+	}
 	latest_tag=$(_full_loop_release_latest_tag) || return 1
 	if [[ "$tag_name" != "$latest_tag" ]]; then
 		printf 'STALE_RELEASE_TAG=%s\nLATEST_RELEASE_TAG=%s\n' "$tag_name" "$latest_tag"
