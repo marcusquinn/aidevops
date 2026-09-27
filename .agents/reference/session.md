@@ -14,7 +14,9 @@ Full PTY access: run any CLI (`vim`, `psql`, `ssh`, `htop`, dev servers). Long-r
 - Run `/session-review` before ending.
 - Suggest a new session after PR merge, domain switch, or 3+ hours.
 - At completion, lead with one short outcome statement that reconnects the delivered work to the session aim or problem, then list concise, evidence-backed delivery bullets.
-- Leave linked-worktree removal to the guarded post-exit routine. Do not attempt or report normal deferred cleanup; mention only failures requiring user action or putting unpublished work at risk.
+- Leave linked-worktree removal and other deferred cleanup to the guarded post-exit routines. Do not attempt that cleanup, and never turn it into a user task: a guarded-removal refusal or a command-policy block on deletion is not a reason to ask the user to clean up.
+- If cleanup is worth mentioning, use one closing line that explains what happens and makes clear nothing is needed, for example: `Cleanup: the worktree is removed automatically by a routine after this session closes; no action needed.` Omit lifecycle tokens, marker files, and retention details.
+- Present cleanup as a user action only for failures that require it or that put unpublished work at risk; then state the evidence and the exact action.
 - Full docs: `workflows/session-manager.md`.
 
 ## Execution Ownership and Truthful Stops
