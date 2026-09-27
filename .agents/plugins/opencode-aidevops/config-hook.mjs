@@ -15,11 +15,11 @@ import { getGoogleProxyPort, registerGoogleProvider } from "./google-proxy.mjs";
 import { getClaudeProxyPort, registerClaudeProvider } from "./claude-proxy.mjs";
 import { checkOpenCodeVersionDriftAsync } from "./version-tracking.mjs";
 import { registerApprovedWorkerPermissions } from "./config-worker-permissions.mjs";
+import { applyCompactionRouting } from "./compaction-routing.mjs";
 import {
   registerAgentRoutingIntent,
   registerAgents,
   registerResearchOnlyAgent,
-  applyCompactionRouting,
 } from "./config-agent-profiles.mjs";
 import {
   enforcePublicTriageIsolation,
