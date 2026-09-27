@@ -1627,7 +1627,10 @@ _approval_classify_marked_comments() {
 		fi
 		classification=$(_approval_classify_signed_comment "$target_type" "$target_number" "$slug" "$comment_id" "$body" "$pub_key" "$expected_head_sha")
 		case "$classification" in
-		VERIFIED) printf 'VERIFIED\n'; return 0 ;;
+		VERIFIED)
+			printf 'VERIFIED\n'
+			return 0
+			;;
 		API_ERROR) saw_api_error=1 ;;
 		STALE_APPROVAL) saw_stale=1 ;;
 		LEGACY_APPROVAL) saw_legacy=1 ;;
@@ -1635,10 +1638,22 @@ _approval_classify_marked_comments() {
 		esac
 	done <<<"$comment_rows"
 
-	[[ "$saw_api_error" -eq 0 ]] || { printf 'API_ERROR\n'; return 6; }
-	[[ "$saw_stale" -eq 0 ]] || { printf 'STALE_APPROVAL\n'; return 4; }
-	[[ "$saw_legacy" -eq 0 ]] || { printf 'LEGACY_APPROVAL\n'; return 3; }
-	[[ "$saw_untrusted" -eq 0 ]] || { printf 'UNTRUSTED_APPROVAL\n'; return 7; }
+	[[ "$saw_api_error" -eq 0 ]] || {
+		printf 'API_ERROR\n'
+		return 6
+	}
+	[[ "$saw_stale" -eq 0 ]] || {
+		printf 'STALE_APPROVAL\n'
+		return 4
+	}
+	[[ "$saw_legacy" -eq 0 ]] || {
+		printf 'LEGACY_APPROVAL\n'
+		return 3
+	}
+	[[ "$saw_untrusted" -eq 0 ]] || {
+		printf 'UNTRUSTED_APPROVAL\n'
+		return 7
+	}
 	[[ "$saw_malformed" -eq 1 ]] || saw_malformed=1
 	printf 'MALFORMED_APPROVAL\n'
 	return 5
