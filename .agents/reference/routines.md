@@ -213,3 +213,23 @@ It gathers evidence from:
 `<!-- aidevops:generator=pulse-check finding=... -->`; issue bodies must stay
 aggregate-only and must not include private repo names, local paths, issue
 titles, or raw worker examples.
+
+## Private mirror sync (r919)
+
+Register private mirrors in `~/.config/aidevops/repos.json` under
+`initialized_repos` with `slug` (the mirror's `owner/repo`) and
+`mirror_upstream` (a string upstream `owner/repo`). Optional
+`mirror_upstream_url` overrides the upstream fetch URL. Boolean
+`mirror_upstream` is a privacy marker only and is not synchronised. Set
+`"mirror_sync": false` on an entry to opt out.
+
+When eligible entries exist, setup installs a daily 20:00 job with label
+`sh.aidevops.mirror-sync` on macOS (or a systemd/cron equivalent on Linux).
+`mirror-sync-helper.sh check [--repo owner/repo]` inspects without pushing;
+`sync` fetches upstream and mirror in a disposable repository. It pushes only
+to the private mirror: a pure mirror advances by fast-forward; divergence
+creates a dated `sync/upstream-YYYYMMDD` branch and fast-forward pushes the
+clean merge. Conflicts leave the default branch untouched and appear in
+`mirror-sync-helper.sh status`. Neither force pushes, tags nor writes to the
+upstream are performed. Mirror identities and conflict paths remain local;
+do not copy them to public issues or TODOs.

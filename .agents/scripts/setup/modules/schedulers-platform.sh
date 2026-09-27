@@ -1078,6 +1078,52 @@ setup_repo_sync() {
 	return 0
 }
 
+# Install the private mirror sync only for explicit string upstream slugs.
+# A foreign healthy job with the legacy label is never replaced implicitly.
+setup_mirror_sync() {
+	local script="$HOME/.aidevops/agents/scripts/mirror-sync-helper.sh"
+	local config="$HOME/.config/aidevops/repos.json"
+	local label='sh.aidevops.mirror-sync'
+	[[ -f "$config" && -f "$script" ]] || return 0
+	command -v jq >/dev/null 2>&1 || return 0
+	jq -e '.initialized_repos[]? | select((.mirror_upstream | type) == "string" and (.mirror_upstream | test("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")) and .mirror_sync != false)' "$config" >/dev/null || return 0
+	local log_dir="$HOME/.aidevops/logs"
+	mkdir -p "$log_dir"
+	if [[ "$(uname -s)" == Darwin ]]; then
+		local plist="$HOME/Library/LaunchAgents/${label}.plist"
+		if [[ -f "$plist" ]] && ! grep -qF '<!-- aidevops:mirror-sync -->' "$plist"; then
+			# Do not take ownership of a live custom program, even with our label.
+			local existing_program
+			existing_program=$(plutil -extract ProgramArguments.0 raw -o - "$plist" 2>/dev/null) || existing_program=""
+			if [[ -n "$existing_program" && -e "$existing_program" ]]; then
+				print_warning "Mirror sync label collision: existing program is live; leaving it unchanged"
+				return 0
+			fi
+		fi
+		local content
+		content=$(cat <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- aidevops:mirror-sync -->
+<plist version="1.0"><dict>
+<key>Label</key><string>${label}</string>
+<key>ProgramArguments</key><array><string>$(_xml_escape "$(_resolve_modern_bash)")</string><string>$(_xml_escape "$script")</string><string>sync</string></array>
+<key>StartCalendarInterval</key><dict><key>Hour</key><integer>20</integer><key>Minute</key><integer>0</integer></dict>
+<key>StandardOutPath</key><string>$(_xml_escape "$log_dir/mirror-sync.log")</string>
+<key>StandardErrorPath</key><string>$(_xml_escape "$log_dir/mirror-sync.log")</string>
+<key>RunAtLoad</key><false/>
+</dict></plist>
+EOF
+)
+		_launchd_install_if_changed "$label" "$plist" "$content" || print_warning 'Mirror sync scheduler installation failed'
+	else
+		_install_scheduler_linux 'aidevops-mirror-sync' 'aidevops: mirror-sync' '0 20 * * *' \
+			"\"$(_resolve_modern_bash)\" \"${script}\" sync" '86400' \
+			"${log_dir}/mirror-sync.log" '' 'Mirror sync enabled (daily)' \
+			'Mirror sync scheduler installation failed' 'false' 'true'
+	fi
+	return 0
+}
+
 # Setup r914 repo-aidevops-health scheduler if not already installed.
 # Daily drift keeper for repos.json: bumps stale .aidevops.json versions
 # and surfaces missing-folder / no-init drift for human triage.
