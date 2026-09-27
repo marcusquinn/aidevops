@@ -10,20 +10,38 @@ when their trigger applies; never remove them merely to meet a token target.
 
 ## OpenCode loading contract
 
-- `context-catalogue.mjs` shares the identical explicit-request trigger for
-  generated aidevops command-skill wrappers. Every name and source location stays
-  advertised; full skill bodies, discovery and invocation permissions are unchanged.
-  Specialist descriptions, custom triggers, extra metadata and unknown formats
-  stay verbatim. This is deterministic lossless metadata factoring, not a keyword
-  classifier deciding which guidance an agent deserves to see.
+- `context-catalogue.mjs` lists generated aidevops command-skill wrappers
+  (exact description `Run the aidevops X workflow when explicitly requested.`)
+  once by name under one shared trigger; an OpenCode 2 `<id>` that differs from
+  the name is kept inline. Full skill bodies, discovery and invocation permissions
+  are unchanged. Specialist descriptions, custom triggers, extra metadata,
+  non-standard locations and unknown formats stay verbatim. This is deterministic
+  lossless factoring, not a keyword classifier deciding which guidance is shown.
 - Only separately supplied `Instructions from:` system blocks with byte-identical
   bodies share an already loaded copy. Differing scoped instructions remain intact,
   including whitespace differences. Provenance and applicability remain explicit.
-  Native Read reminders are not stripped; their ordering relative to plugin hooks
-  is a separate runtime boundary. No stored conversation history is rewritten.
-- OpenAI/non-Anthropic one-shot startup guidance follows the durable system prefix.
-  The greeting text, authority and root-session-only gate are unchanged. Anthropic
-  compatibility ordering is deliberately untouched.
+- OpenCode 1 Read reminders: `instruction-reminders.mjs` replaces a nearby
+  instruction document in Read output only when its file bytes equal an
+  instruction file already in the session system prompt (for example the repo
+  `.agents/AGENTS.md` copy of the deployed guide). It runs once in
+  `tool.execute.after`, before storage, so replayed history stays byte-stable;
+  host `metadata.loaded` dedupe is untouched. OpenCode 2 publishes nearby
+  instructions as a separate synthetic message and is not rewritten.
+- The plugin session greeting is off by default in OpenCode 1 (the global
+  AGENTS.md fallback greets) and on in OpenCode 2, whose isolated config home
+  has no fallback and whose runtime version only the plugin knows.
+  `AIDEVOPS_PLUGIN_SESSION_GREETING=1|0` forces it on or off. The block is
+  appended after durable guidance for every provider with the
+  root-session-only gate unchanged. The system
+  transform mutates the host array in place so its blocks reach OpenCode 1 as
+  well as OpenCode 2. Anthropic OAuth keeps the billing header and the exact
+  Claude Code identity block in `system`; provider auth redistributes all other
+  system text into the first user message.
+- Anthropic OAuth `cch` signing targets the billing header's own placeholder via
+  a random per-request sentinel, never the first placeholder in serialized
+  `messages`, so quoted history cannot change the cached prefix. System text
+  redistributed into the first user message keeps its `cache_control` marker
+  within the four-breakpoint limit.
 - Keep stable instruction/tool ordering. Do not add timestamps, per-request
   randomness, or quota state ahead of reusable guidance. Do not force cache
   retention parameters onto an OAuth endpoint without validating support.

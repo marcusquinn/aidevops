@@ -39,7 +39,7 @@ import {
 import { enforceConversationPathAccess } from "./team-interface-path-guard.mjs";
 import { adaptToolDefinition } from "./tool-definition.mjs";
 import { createTools, tool } from "./tools.mjs";
-import { createTtsrHooks } from "./ttsr.mjs";
+import { createTtsrHooks, isPluginGreetingEnabled } from "./ttsr.mjs";
 import { isHeadless } from "./proxy-lifecycle.mjs";
 import { createV2McpRuntime } from "./v2-mcp-adapter.mjs";
 import { createV2ProviderAuthRuntime } from "./v2-provider-auth.mjs";
@@ -339,6 +339,9 @@ export async function setupAidevopsV2(ctx) {
       initializedAtMs,
       runtimeName: "OpenCode",
       runtimeVersion: (typeof ctx.app?.version === "string" && ctx.app.version) || detectOpenCodeV2RuntimeVersion(),
+      // The isolated V2 config home has no AGENTS.md greeting fallback, so the
+      // plugin block stays the default greeting source here (GH#32444).
+      greetingEnabled: () => isPluginGreetingEnabled(process.env, true),
     });
     const permissionBroker = createPermissionBroker({ isHeadless });
     const providerAuth = createV2ProviderAuthRuntime();

@@ -267,24 +267,51 @@ export function createSessionStartGreetingGate(client, isHeadless = () => false)
 }
 
 /**
- * system.transform hook: prepend session-start greeting order, identity prefix,
- * and quality rules.
+ * Whether the plugin injects its one-shot greeting block (GH#32444).
+ * `AIDEVOPS_PLUGIN_SESSION_GREETING=1|0` forces it on or off. Otherwise the
+ * runtime default applies: OpenCode 1 relies on the always-loaded AGENTS.md
+ * fallback (its cache carries the V1 version), so a one-shot block would only
+ * change the reusable prompt prefix between the first and second turn.
+ * OpenCode 2 keeps the block on because only the plugin knows the V2 version.
+ */
+export function isPluginGreetingEnabled(env = process.env, defaultEnabled = false) {
+  if (env.AIDEVOPS_PLUGIN_SESSION_GREETING === "1") return true;
+  if (env.AIDEVOPS_PLUGIN_SESSION_GREETING === "0") return false;
+  return defaultEnabled;
+}
+
+/**
+ * Replace array contents without reassigning the array. OpenCode 1 keeps its
+ * own reference to output.system and ignores reassignment; OpenCode 2's adapter
+ * reads the same object back, so in-place mutation serves both runtimes.
+ */
+function replaceArrayContents(target, values) {
+  target.splice(0, target.length, ...values);
+}
+
+export const CLAUDE_CODE_IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude.";
+
+/**
+ * system.transform hook: compact catalogue metadata, add the Anthropic
+ * identity, then append durable intent-tracing and quality rules.
+ *
+ * Anthropic OAuth wire shape: provider-auth-body.mjs keeps the billing header
+ * and this exact identity block in system and redistributes every other block
+ * into the first user message. The identity is added exactly as OpenCode 2 has
+ * always sent it; in-place mutation now gives OpenCode 1 the same shape.
  */
 async function ttsrSystemTransform(input, output, context) {
-  const { state, intentField, shouldInjectGreeting, agentsDir, readIfExists, greetingOptions } = context;
-  output.system = compactSystemContext(output.system);
+  const { state, intentField, shouldInjectGreeting, agentsDir, readIfExists, greetingOptions, greetingEnabled } = context;
+  if (!Array.isArray(output.system)) return;
+  replaceArrayContents(output.system, compactSystemContext(output.system));
   if (input.model?.providerID === "anthropic") {
-    const prefix = "You are Claude Code, Anthropic's official CLI for Claude.";
-    output.system.unshift(prefix);
-    if (output.system[1]) output.system[1] = prefix + "\n\n" + output.system[1];
+    output.system.unshift(CLAUDE_CODE_IDENTITY);
+    if (output.system[1]) output.system[1] = `${CLAUDE_CODE_IDENTITY}\n\n${output.system[1]}`;
   }
 
-  const greeting = await shouldInjectGreeting(input)
+  const greeting = greetingEnabled() && await shouldInjectGreeting(input)
     ? buildSessionStartGreetingInstruction(agentsDir, readIfExists, greetingOptions)
     : null;
-  // Preserve the Anthropic compatibility prefix contract. Other providers keep
-  // all durable guidance ahead of the one-shot greeting for stable prefix reuse.
-  if (greeting && input.model?.providerID === "anthropic") output.system.unshift(greeting);
 
   const rules = loadTtsrRules(state);
   const ruleLines = rules.filter((r) => r.systemPrompt).map((r) => `- ${r.systemPrompt}`);
@@ -302,7 +329,8 @@ async function ttsrSystemTransform(input, output, context) {
     "The following rules are actively enforced. Violations will be flagged.",
     ...ruleLines,
   ].join("\n"));
-  if (greeting && input.model?.providerID !== "anthropic") output.system.push(greeting);
+  // Durable guidance stays ahead of the one-shot greeting for stable prefix reuse.
+  if (greeting) output.system.push(greeting);
 }
 
 /**
@@ -398,6 +426,7 @@ async function ttsrTextComplete(input, output, state, execDeps, qualityLog) {
  * @param {number} [deps.initializedAtMs]
  * @param {string} [deps.runtimeName] Runtime label that overrides the greeting cache
  * @param {string} [deps.runtimeVersion] Runtime version that overrides the greeting cache
+ * @param {() => boolean} [deps.greetingEnabled] - defaults to isPluginGreetingEnabled()
  * @returns {{ loadTtsrRules: Function, systemTransformHook: Function, messagesTransformHook: Function, textCompleteHook: Function }}
  */
 export function createTtsrHooks(deps) {
@@ -415,7 +444,10 @@ export function createTtsrHooks(deps) {
     runtimeName: deps.runtimeName,
     runtimeVersion: deps.runtimeVersion,
   };
-  const systemTransformContext = { state, intentField, shouldInjectGreeting, agentsDir, readIfExists, greetingOptions };
+  const greetingEnabled = deps.greetingEnabled || (() => isPluginGreetingEnabled());
+  const systemTransformContext = {
+    state, intentField, shouldInjectGreeting, agentsDir, readIfExists, greetingOptions, greetingEnabled,
+  };
 
   return {
     loadTtsrRules: () => loadTtsrRules(state),
