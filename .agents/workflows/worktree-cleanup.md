@@ -78,6 +78,30 @@ timestamp-only branch names do not need an embedded issue number. Any open PR
 for the same head vetoes terminal cleanup. PR retention labels and any parsed
 branch issue's retention labels must both permit archival.
 
+## Unregistered and third-party worktrees
+
+The bounded central scan also considers linked worktrees whose canonical repo is
+absent from `repos.json`. It checks registry ownership, open processes and local
+forensics markers before classifying each path. GitHub PRs are looked up against
+`upstream` before `origin`, by head branch; successful lookups are cached per
+worktree for one UTC day. A failed lookup is not treated as a missing PR. The
+pass skips entirely when the GraphQL budget is below the cleanup floor (100).
+
+Open PRs are always retained. Unsent local work on an open PR generates at most
+one `thirdparty-open-pr-unsent-work` row per worktree per day. Closed/merged PRs
+are eligible immediately; branches without a PR become eligible only after
+`WORKTREE_UNREGISTERED_MAX_AGE_DAYS` (default 30), measured from Git HEAD
+reflog, index and last commit, not the enclosing directory timestamp. Unique
+work must be preserved by a verified compact archive before native Git removal.
+Missing canonical repositories use a bounded file-level archive and recoverable
+trash, never permanent deletion. Unreadable state or failed archive/guard leaves
+the directory in place.
+
+Rollout defaults to **report-only** (`WORKTREE_UNREGISTERED_APPLY=0`). Each
+decision emits a `thirdparty` row and the pass emits a summary with eligible,
+candidate_bytes, removed, archived and kept_open_pr counts. Enable apply with
+`WORKTREE_UNREGISTERED_APPLY=1` only after reviewing a clean report cycle.
+
 ## Abandoned central test fixtures
 
 The API-free cleanup pass also recognises legacy `tmp.<random>-feature-auto-*`
