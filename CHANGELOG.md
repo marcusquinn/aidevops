@@ -10,6 +10,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.37.8] - 2026-09-27
+
+### Added
+
+- end interactive turns with a What next block (GH#32628)
+
+### Changed
+
+- Refactor: split pulse-diagnose-helper issue and api-budget modules
+- Maintenance: mark t18487 complete (pr:#32601 completed:2026-09-27) (#32609)
+- Documentation: align brief Files Scope examples with canonical validator (#32611)
+- Documentation: explain direct invocation of hyphenated Python tests (#32597)
+
+### Fixed
+
+- hold unscoped briefs once per body; catch missing Files Scope at creation (GH#32598)
+
 ## [3.37.7] - 2026-09-27
 
 ### Changed
