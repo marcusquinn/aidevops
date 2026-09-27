@@ -17,6 +17,7 @@ readonly DASHBOARD_SYSTEMD_UNIT="sh.aidevops.dashboard"
 readonly LEGACY_DASHBOARD_SYSTEMD_UNIT="aidevops-dashboard"
 readonly DASHBOARD_ROUTINE_ID="r912"
 readonly MEMORY_AUDIT_ROUTINE_ID="r920"
+readonly MEMORY_AUDIT_INTERVAL_SECONDS=86400
 readonly FORMAT_JSON="json"
 readonly PRINT_LINE_FORMAT="%s\n"
 
@@ -125,6 +126,29 @@ systemd_unit_active() {
 	return $?
 }
 
+memory_audit_freshness() {
+	local marker="${AIDEVOPS_MEMORY_DIR:-$HOME/.aidevops/.agent-workspace/memory}/.last_audit_pulse"
+	if [[ ! -f "$marker" ]]; then
+		printf 'never'
+		return 0
+	fi
+
+	local modified now elapsed
+	modified=$(stat -f '%m' "$marker" 2>/dev/null || stat -c '%Y' "$marker" 2>/dev/null || printf '0')
+	now=$(date +%s)
+	if [[ ! "$modified" =~ ^[0-9]+$ ]] || [[ "$modified" -le 0 ]]; then
+		printf 'unreadable'
+		return 0
+	fi
+	elapsed=$((now - modified))
+	if [[ "$elapsed" -le "$MEMORY_AUDIT_INTERVAL_SECONDS" ]]; then
+		printf 'fresh (%dh ago)' "$((elapsed / 3600))"
+	else
+		printf 'stale (%dh ago)' "$((elapsed / 3600))"
+	fi
+	return 0
+}
+
 safe_move_or_remove() {
 	local path="$1"
 	local stamp
@@ -194,7 +218,8 @@ emit_text_report() {
 	local source_version="$4"
 	local dashboard_enabled="$5"
 	local memory_audit_enabled="$6"
-	local scheduler_note="$7"
+	local memory_audit_freshness="$7"
+	local scheduler_note="$8"
 	printf 'Routine scheduler health\n'
 	printf -- '- Platform: %s\n' "$platform"
 	printf -- '- Enabled routines: %s\n' "$enabled_count"
@@ -202,6 +227,7 @@ emit_text_report() {
 	printf -- '- Source version: %s\n' "$source_version"
 	printf -- '- r912 dashboard routine: %s\n' "$dashboard_enabled"
 	printf -- '- r920 memory audit routine: %s\n' "$memory_audit_enabled"
+	printf -- '- r920 memory audit: %s\n' "$memory_audit_freshness"
 	printf -- '- Scheduler: %s\n' "$scheduler_note"
 	return 0
 }
@@ -213,14 +239,16 @@ emit_json_report() {
 	local source_version="$4"
 	local dashboard_enabled="$5"
 	local memory_audit_enabled="$6"
-	local scheduler_note="$7"
-	printf '{"platform":"%s","enabled_routines":%s,"deployed_version":"%s","source_version":"%s","r912":"%s","r920":"%s","scheduler":"%s"}\n' \
+	local memory_audit_freshness="$7"
+	local scheduler_note="$8"
+	printf '{"platform":"%s","enabled_routines":%s,"deployed_version":"%s","source_version":"%s","r912":"%s","r920":"%s","memory_audit":"%s","scheduler":"%s"}\n' \
 		"$(json_escape "$platform")" \
 		"$enabled_count" \
 		"$(json_escape "$deployed")" \
 		"$(json_escape "$source_version")" \
 		"$(json_escape "$dashboard_enabled")" \
 		"$(json_escape "$memory_audit_enabled")" \
+		"$(json_escape "$memory_audit_freshness")" \
 		"$(json_escape "$scheduler_note")"
 	return 0
 }
@@ -262,12 +290,14 @@ run_report() {
 	local source_version
 	local dashboard_enabled="disabled-or-unmanaged"
 	local memory_audit_enabled="disabled-or-unmanaged"
+	local memory_audit_freshness
 	local scheduler_note
 	platform="$(platform_name)"
 	enabled_count="$(count_enabled_routines)"
 	deployed="$(deployed_version)"
 	source_version="$(script_version)"
 	scheduler_note="$(scheduler_summary "$platform")"
+	memory_audit_freshness="$(memory_audit_freshness)"
 	if routine_enabled "$DASHBOARD_ROUTINE_ID"; then
 		dashboard_enabled="enabled"
 	fi
@@ -275,9 +305,9 @@ run_report() {
 		memory_audit_enabled="enabled"
 	fi
 	if [[ "$OUTPUT_FORMAT" == "$FORMAT_JSON" ]]; then
-		emit_json_report "$platform" "$enabled_count" "$deployed" "$source_version" "$dashboard_enabled" "$memory_audit_enabled" "$scheduler_note"
+		emit_json_report "$platform" "$enabled_count" "$deployed" "$source_version" "$dashboard_enabled" "$memory_audit_enabled" "$memory_audit_freshness" "$scheduler_note"
 	else
-		emit_text_report "$platform" "$enabled_count" "$deployed" "$source_version" "$dashboard_enabled" "$memory_audit_enabled" "$scheduler_note"
+		emit_text_report "$platform" "$enabled_count" "$deployed" "$source_version" "$dashboard_enabled" "$memory_audit_enabled" "$memory_audit_freshness" "$scheduler_note"
 	fi
 	if [[ "$MODE" == "explain" && "$OUTPUT_FORMAT" != "$FORMAT_JSON" ]]; then
 		explain_findings
