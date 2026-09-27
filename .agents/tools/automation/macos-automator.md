@@ -26,7 +26,7 @@ tools:
 - **Auth**: None (uses macOS permissions)
 - **MCP Tools**: `execute_script`, `get_scripting_tips`, `accessibility_query`
 - **Docs**: <https://github.com/steipete/macos-automator-mcp>
-- **Enabled for Agents**: None by default — enable via `@mac` subagent
+- **OpenCode**: Delegate to the `macos-automator` subagent, which connects the disabled MCP on demand; tools remain globally disabled
 - **Supported**: OpenCode, Claude Code, Cursor, Windsurf, Zed, GitHub Copilot, Kilo Code, Kiro, Gemini CLI, Droid (Factory.AI)
 
 **Verification**: `Use the macos-automator MCP to get the current Safari URL.`
@@ -36,6 +36,7 @@ tools:
 ## Prerequisites
 
 Node.js 18+. Grant Automation and Accessibility permissions to your terminal/AI tool via System Settings > Privacy & Security.
+For Electron apps with an empty accessibility tree, enable `AXManualAccessibility` on the identified target process before inspecting its native dialogs. Confirm the requested app and dialog; never bypass operating-system consent.
 
 ## Installation
 
@@ -72,9 +73,9 @@ claude mcp add-json macos-automator --scope user \
 **OpenCode** (`~/.config/opencode/opencode.json`) — uses `"type": "local"` and supports per-agent tool gating:
 ```json
 {
-  "mcp": { "macos-automator": { "type": "local", "command": ["npx", "-y", "@steipete/macos-automator-mcp@0.2.0"], "enabled": true } },
+  "mcp": { "macos-automator": { "type": "local", "command": ["npx", "-y", "@steipete/macos-automator-mcp@0.2.0"], "enabled": false } },
   "tools": { "macos-automator_*": false },
-  "agent": { "Build+": { "tools": { "macos-automator_*": true } } }
+  "agent": { "macos-automator": { "tools": { "aidevops_mcp": true, "macos-automator_*": true } } }
 }
 ```
 

@@ -24,7 +24,7 @@ import {
   createMcpActivationTool,
   enforceManagedMcpArtifactPath,
 } from "../mcp-activation-tool.mjs";
-import { createMcpSessionRuntime, getOnDemandMcpAgents, registerMcpServers } from "../mcp-registry.mjs";
+import { createMcpSessionRuntime, getMcpRegistry, getOnDemandMcpAgents, registerMcpServers } from "../mcp-registry.mjs";
 
 const TEST_DIR = fileURLToPath(new URL(".", import.meta.url));
 const AGENTS_DIR = join(TEST_DIR, "../../..");
@@ -81,6 +81,19 @@ test("plain-text Playwriter mention in another agent never changes MCP lifecycle
   }
 });
 
+test("each registry entry has an agent source or an explicit opt-out", () => {
+  for (const mcp of getMcpRegistry()) {
+    if (!mcp.activationAgent) {
+      assert.equal(mcp.activation, "none", mcp.name);
+      assert.ok(mcp.activationReason?.trim(), mcp.name);
+      continue;
+    }
+    assert.ok(Array.isArray(mcp.agentSource) && mcp.agentSource.length > 0, mcp.name);
+    assert.ok(existsSync(join(AGENTS_DIR, ...mcp.agentSource)), mcp.name);
+    assert.ok(mcp.toolPattern, mcp.name);
+  }
+});
+
 test("registers only the explicit MCP activation profiles", () => {
   const config = { mcp: {}, tools: {} };
   registerMcpServers(config);
@@ -90,6 +103,13 @@ test("registers only the explicit MCP activation profiles", () => {
   assert.equal(count, onDemand.length);
   assert.deepEqual(Object.keys(config.agent), onDemand.map((mcp) => mcp.agentName));
   assert.equal(new Set(onDemand.map((mcp) => mcp.agentName)).size, onDemand.length);
+  if (process.platform === "darwin") {
+    assert.equal(config.agent["macos-automator"].tools.aidevops_mcp, true);
+    assert.equal(config.agent["macos-automator"].tools["macos-automator_*"], true);
+    assert.equal(config.mcp["macos-automator"].enabled, false);
+    assert.equal(config.tools["macos-automator_*"], false);
+    assert.match(config.agent["macos-automator"].prompt, /AXManualAccessibility/);
+  }
   // Every registered MCP must be launchable on demand through a bounded agent.
   assert.deepEqual(Object.keys(config.mcp).filter((name) => !onDemand.some((mcp) => mcp.name === name)), []);
   for (const name of ["playwriter", "context7", "posthog", "playwright", "sentry", "shadcn", "cloudflare-mcp", "shopify", "docker-mcp"]) {

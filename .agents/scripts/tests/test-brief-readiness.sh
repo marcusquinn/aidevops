@@ -713,6 +713,16 @@ else
 	fail "T12: substantive schema-v2 brief passes" "got exit $rc, output: $output"
 fi
 
+# The template uses a newer label; existing briefs still use Tests/fixtures.
+BODY_V2_TEMPLATE_LABEL="${BODY_V2_COMPLETE/\*\*Tests\/fixtures:\*\*/\*\*Existing verification\/tests:\*\*}"
+output=$("$HELPER" check --body "$BODY_V2_TEMPLATE_LABEL" 2>/dev/null)
+rc=$?
+if [[ $rc -eq 0 && "$output" == *"WORKER_READY=true"* && "$output" == *"VALIDATION_ERRORS=none"* ]]; then
+	pass "T12a: template verification label passes schema-v2 readiness"
+else
+	fail "T12a: template verification label passes schema-v2 readiness" "got exit $rc, output: $output"
+fi
+
 # --- Test 13: headings-only schema-v2 brief fails ---
 output=$("$HELPER" check --body "$BODY_V2_HEADINGS_ONLY" 2>/dev/null)
 rc=$?

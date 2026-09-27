@@ -156,6 +156,7 @@ function _runDataMigrations(options = {}) {
       ["pricing_version", "TEXT"],
     ]);
   }
+  migrateColumns("llm_requests", [["ab_experiment", "TEXT"], ["ab_arm", "TEXT"]]);
   if (!options.provenanceColumnsReady) {
     migrateColumns("llm_requests", [
       ["requested_effort", "TEXT"], ["resolved_effort", "TEXT"], ["observed_effort", "TEXT"],
@@ -379,6 +380,8 @@ function handleMessageUpdated(event, context = {}) {
     routing_reason: routing.reason || null,
     routing_escalated: routing.escalated === 1,
     routing_population: routing.population,
+    ab_experiment: routing.ab_experiment || null,
+    ab_arm: routing.ab_arm || null,
     aidevops_version: aidevopsVersion || null,
     pricing_version: PRICING_VERSION,
   }, context);
@@ -414,7 +417,7 @@ function handleMessageUpdated(event, context = {}) {
     cost, duration_ms, finish_reason, error_type, error_message,
     tool_call_count, project_path, variant, parent_session_id,
     routing_tier, routing_candidate_index, routing_attempt, routing_reason,
-    routing_escalated, routing_population, aidevops_version, pricing_version,
+    routing_escalated, routing_population, aidevops_version, pricing_version, ab_experiment, ab_arm,
     requested_effort, resolved_effort, observed_effort, effort_source, provider_confirmed_effort,
     requested_model, observed_model, runtime_name, runtime_version, adapter_version,
     policy_fingerprint, billing_mode, cost_source, pricing_quality
@@ -447,6 +450,8 @@ function handleMessageUpdated(event, context = {}) {
     ${sqlEscape(routing.population)},
     ${sqlEscape(aidevopsVersion || null)},
     ${sqlEscape(PRICING_VERSION)},
+    ${sqlEscape(routing.ab_experiment || null)},
+    ${sqlEscape(routing.ab_arm || null)},
     ${sqlEscape(provenance.requested_effort)}, ${sqlEscape(provenance.resolved_effort)},
     ${sqlEscape(provenance.observed_effort)}, ${sqlEscape(provenance.effort_source)},
     ${sqlEscape(provenance.provider_confirmed_effort)}, ${sqlEscape(provenance.requested_model)},

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 Marcus Quinn
 
-import { routingCandidateIndex, routingTierForModel } from "./model-routing.mjs";
+import { routingCandidateIndex, routingTierForModel, routingVariant } from "./model-routing.mjs";
 
 function childModelFrom(context, input) {
   return context.modelIdentity({
@@ -74,6 +74,7 @@ async function recordChildRouting(context, {
     reason: policy?.reason || "agent_default",
     escalated: Boolean(policy?.escalated),
     population: "interactive_child",
+    ...(policy?.ab_arm ? { ab_experiment: policy.ab_experiment, ab_arm: policy.ab_arm } : {}),
   });
 }
 
@@ -98,6 +99,12 @@ function applyProtectedChildParams(context, input, output, policy) {
 function requestedChildVariant(context, input, policy, effort) {
   if (policy?.browserVariant) return policy.browserVariant;
   if (policy?.reason === "specialist_advice") return context.agentRoutingState.specialistAdvisor.variant;
+  if (policy?.armRouting) {
+    const model = childModelFrom(context, input);
+    if (model === policy.armModels?.[effort]?.model) return policy.armModels[effort].variant || "";
+    const variant = routingVariant(policy.armRouting, effort, model);
+    if (variant) return variant;
+  }
   return context.resolveTierReasoning(
     effort, input?.provider?.id, input?.model?.id, context.tierReasoning,
   );

@@ -87,19 +87,46 @@ _repo_registration_maintainer() {
 }
 seed_agent_source_repo_templates() { return 0; }
 
+# The project-config library delegates the collaborator check and GitHub write;
+# make the fixture deterministic without contacting GitHub.
+_project_config_can_file_migration() {
+	[[ "$1" == "example/maintained" ]]
+	return $?
+}
+_project_config_repo_slug() {
+	case "$1" in
+	*tracked) printf 'example/maintained' ;;
+	*) printf 'example/external' ;;
+	esac
+	return 0
+}
+_project_config_migration_exists() {
+	[[ -f "${TEST_ROOT}/migration-created" ]]
+	return $?
+}
+_project_config_write_migration_issue() {
+	touch "${TEST_ROOT}/migration-created"
+	printf '%s\n' "$1" >>"${TEST_ROOT}/migration-writes"
+	return 0
+}
+
 tracked_repo="${TEST_ROOT}/tracked"
 local_repo="${TEST_ROOT}/local"
 linked_repo="${TEST_ROOT}/tracked-linked"
+external_repo="${TEST_ROOT}/external"
 make_repo "$tracked_repo" true
 make_repo "$local_repo" false
+make_repo "$external_repo" true
 tracked_repo="$(cd "$tracked_repo" && pwd -P)"
 local_repo="$(cd "$local_repo" && pwd -P)"
+external_repo="$(cd "$external_repo" && pwd -P)"
 /usr/bin/git -C "$tracked_repo" worktree add -q -b config-migration "$linked_repo"
 
-jq -n --arg tracked "$tracked_repo" --arg local "$local_repo" '{
-	initialized_repos: [
+jq -n --arg tracked "$tracked_repo" --arg local "$local_repo" --arg external "$external_repo" '{
+  initialized_repos: [
 		{path: $tracked, version: "0.0.1", features: ["planning"], agent_source: true},
-		{path: $local, version: "0.0.1", features: ["planning"]}
+		{path: $local, version: "0.0.1", features: ["planning"]},
+		{path: $external, version: "0.0.1", features: ["planning"]}
 	],
 	git_parent_dirs: []
 }' >"$REPOS_FILE"
@@ -112,18 +139,20 @@ get_agent_source_repos() {
 tracked_before=$(cksum <"$tracked_repo/.aidevops.json")
 _update_sync_projects false 9.9.9
 tracked_after=$(cksum <"$tracked_repo/.aidevops.json")
-plans=("${HOME}/.aidevops/.agent-workspace/work"/project-config-migration-*.json)
-plan_count=${#plans[@]}
 
 assert_equal "tracked config remains byte-identical" "$tracked_before" "$tracked_after"
 assert_equal "tracked repository remains clean" "" "$(/usr/bin/git -C "$tracked_repo" status --porcelain)"
-assert_equal "tracked-and-ignored config emits one migration plan" "1" "$plan_count"
+assert_equal "maintained tracked config queues one migration" "true" "$(test -f "${TEST_ROOT}/migration-created" && printf true || printf false)"
+assert_equal "external tracked config performs no GitHub write" "1" "$(wc -l <"${TEST_ROOT}/migration-writes" | tr -d ' ')"
 assert_equal "tracked config does not gain agent-source metadata" "false" "$(jq -r 'has("agent_source")' "$tracked_repo/.aidevops.json")"
 assert_equal "tracked registration advances" "9.9.9" "$(jq -r --arg path "$tracked_repo" '.initialized_repos[] | select(.path == $path) | .version' "$REPOS_FILE")"
 assert_equal "tracked registration preserves features" "planning" "$(jq -r --arg path "$tracked_repo" '.initialized_repos[] | select(.path == $path) | .features | join(",")' "$REPOS_FILE")"
 assert_equal "local config version advances" "9.9.9" "$(jq -r '.version' "$local_repo/.aidevops.json")"
 assert_equal "local registration advances" "9.9.9" "$(jq -r --arg path "$local_repo" '.initialized_repos[] | select(.path == $path) | .version' "$REPOS_FILE")"
 assert_equal "local repository remains clean" "" "$(/usr/bin/git -C "$local_repo" status --porcelain)"
+
+_update_sync_projects false 9.9.9
+assert_equal "second update does not duplicate migration" "1" "$(wc -l <"${TEST_ROOT}/migration-writes" | tr -d ' ')"
 
 linked_before=$(cksum <"$linked_repo/.aidevops.json")
 _project_config_migrate_linked_worktree "$linked_repo"

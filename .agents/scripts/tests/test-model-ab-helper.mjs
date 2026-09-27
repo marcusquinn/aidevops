@@ -9,6 +9,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { assign, assignedArm, report, validateExperiment } from "../model-ab-helper.mjs";
 import { aggregateObserved } from "../model-ab-report.mjs";
+import { reportSubagents } from "../model-ab-subagents.mjs";
 import { startProspectiveTrial } from "../model-ab-start.mjs";
 import { loadModelRouting, routingPrimary, routingVariant } from "../../plugins/opencode-aidevops/model-routing.mjs";
 
@@ -22,6 +23,28 @@ const experiment = {
     { name: "terra-low", model: "openai/gpt-5.6-terra", variant: "low" },
   ],
 };
+
+test("interactive report joins explicit parent receipts by child session only", () => {
+  const parent = process.env.AIDEVOPS_TEMP_DIR || join(homedir(), ".aidevops", ".agent-workspace", "tmp");
+  const directory = mkdtempSync(join(parent, "model-ab-child-report-"));
+  try {
+    const db = join(directory, "requests.db");
+    execFileSync("sqlite3", [db, `CREATE TABLE llm_requests(session_id TEXT, ab_experiment TEXT, ab_arm TEXT, tokens_total INTEGER, cost REAL, routing_population TEXT);
+      CREATE TABLE runtime_events(id INTEGER PRIMARY KEY, event_type TEXT, subject_id TEXT, payload_json TEXT);
+      INSERT INTO llm_requests VALUES('ses_a','trial','openai',10,0.2,'interactive_child');
+      INSERT INTO llm_requests VALUES('ses_a','trial','openai',5,0.1,'interactive_child');
+      INSERT INTO llm_requests VALUES('ses_b','trial','anthropic',8,0.3,'interactive_child');
+      INSERT INTO runtime_events VALUES(1,'subagent.acceptance','opencode-child:ses_a','{"contribution_id":"opencode-child:ses_a","contribution_outcome":"accepted_repaired","intervention_count":2}');
+      INSERT INTO runtime_events VALUES(2,'subagent.acceptance','unrelated','{"contribution_id":"unrelated","contribution_outcome":"accepted_unchanged"}');`]);
+    const result = reportSubagents({ id: "trial", arms: [{ name: "openai" }, { name: "anthropic" }] }, db);
+    assert.equal(result.arms.openai.delegations, 1);
+    assert.equal(result.arms.openai.accepted_repaired, 1);
+    assert.equal(result.arms.openai.interventions, 2);
+    assert.equal(result.arms.openai.tokens, 15);
+    assert.equal(result.arms.anthropic.delegations, 1);
+    assert.equal(result.arms.anthropic.accepted_unchanged, 0);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
 
 test("issue arms persist across retries without changing the fallback or thinking routes", () => {
   const parent = process.env.AIDEVOPS_TEMP_DIR || join(homedir(), ".aidevops", ".agent-workspace", "tmp");
