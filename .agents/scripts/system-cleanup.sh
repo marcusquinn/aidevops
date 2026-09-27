@@ -59,7 +59,8 @@ _sc_trash_batch() {
 }
 
 main() {
-	local mode="dry-run" days="${AIDEVOPS_TMP_RETENTION_DAYS:-7}"
+	local dry_run_mode="dry-run"
+	local mode="$dry_run_mode" days="${AIDEVOPS_TMP_RETENTION_DAYS:-7}"
 	local root="${AIDEVOPS_TEMP_DIR:-${HOME:?}/.aidevops/.agent-workspace/tmp}"
 	local log_dir="${AIDEVOPS_LOG_DIR:-${HOME:?}/.aidevops/logs}"
 	local max_seconds="${AIDEVOPS_TMP_CLEANUP_MAX_SECONDS:-0}"
@@ -70,7 +71,7 @@ main() {
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--force) mode="force" ;;
-		--dry-run) mode="dry-run" ;;
+		--dry-run) mode="$dry_run_mode" ;;
 		--max-seconds)
 			[[ $# -ge 2 ]] || { printf 'Missing value for --max-seconds\n' >&2; return 1; }
 			max_seconds="$2"
@@ -114,7 +115,7 @@ main() {
 			[[ -z "$descendants" ]] || continue
 		fi
 		scanned=$((scanned + 1))
-		if [[ "$mode" == "dry-run" ]]; then
+		if [[ "$mode" == "$dry_run_mode" ]]; then
 			printf '[dry-run] Would trash: %s\n' "$entry" | tee -a "$log_dir/system-cleanup.log"
 			continue
 		fi
