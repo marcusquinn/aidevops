@@ -281,10 +281,17 @@ test_post_pr_handoff_completion_signal_is_exact() {
 	local prose_file="${TEST_ROOT}/post-pr-handoff-prose.jsonl"
 	printf '%s\n' '{"type":"text","text":"POST_PR_HANDOFF"}' >"$exact_file"
 	printf '%s\n' '{"type":"text","text":"I will mention POST_PR_HANDOFF after more work."}' >"$prose_file"
+	# Argv-style tool input (aidevops_bounded_operation) must not crash the
+	# classifier and turn a completed handoff into a premature-exit retry loop.
+	local argv_file="${TEST_ROOT}/post-pr-handoff-argv-tool.jsonl"
+	printf '%s\n' \
+		'{"type":"tool_use","part":{"state":{"input":{"action":"start","command":["gh","pr","checks","42"]}}}}' \
+		'{"type":"text","part":{"text":"Awaiting required CI.\n\nPOST_PR_HANDOFF"}}' >"$argv_file"
 
 	local result=0
 	output_has_post_pr_handoff_signal "$exact_file" || result=1
 	output_has_completion_signal "$exact_file" || result=1
+	output_has_completion_signal "$argv_file" || result=1
 	if output_has_post_pr_handoff_signal "$prose_file" || output_has_completion_signal "$prose_file"; then
 		result=1
 	fi
