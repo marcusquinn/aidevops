@@ -1476,6 +1476,67 @@ _install_canonical_git_guard_shim() {
 	return 0
 }
 
+# Returns 0 when pid $1 is the current shell or one of its ancestors.
+_process_is_self_or_ancestor() {
+	local target_pid="$1"
+	local current_pid="$$"
+	local depth=0
+	while [[ "$current_pid" =~ ^[0-9]+$ ]] && [[ "$current_pid" -gt 1 ]] && [[ "$depth" -lt 64 ]]; do
+		[[ "$current_pid" == "$target_pid" ]] && return 0
+		current_pid=$(ps -o ppid= -p "$current_pid" 2>/dev/null | tr -d '[:space:]')
+		depth=$((depth + 1))
+	done
+	return 1
+}
+
+# OpenCode V2 runs a long-lived background service. After the runtime bundle
+# swaps underneath it, locations that service opens for the first time stop
+# loading the aidevops plugin, so provider OAuth hooks are absent and requests
+# fail with "API key is invalid". Updates are usually run by AI sessions, so a
+# warning alone goes unseen: restart the service while V2 is an isolated preview
+# runtime. Revisit (e.g. defer to idle) when opencode2 becomes the default.
+_restart_opencode_v2_service_after_deploy() {
+	[[ "${AIDEVOPS_SKIP_OPENCODE_V2_SERVICE_RESTART:-0}" == "1" ]] && return 0
+	local v2_root="${AIDEVOPS_OPENCODE_V2_ROOT:-${HOME}/.aidevops/runtimes/opencode-v2}"
+	local state_home="${AIDEVOPS_OPENCODE_V2_STATE_HOME:-${v2_root}/state}"
+	local service_file="${state_home}/opencode/service.json"
+	[[ -f "$service_file" ]] || return 0
+	command -v jq >/dev/null 2>&1 || return 0
+
+	local service_pid=""
+	service_pid=$(jq -r '.pid // empty' "$service_file" 2>/dev/null) || service_pid=""
+	[[ "$service_pid" =~ ^[0-9]+$ ]] || return 0
+	kill -0 "$service_pid" 2>/dev/null || return 0
+
+	# Never kill the service hosting the session that is running this setup.
+	if _process_is_self_or_ancestor "$service_pid"; then
+		print_warning "OpenCode V2 service hosts this session; run 'opencode2 service restart' afterwards to load the new aidevops bundle"
+		return 0
+	fi
+
+	local v2_bin=""
+	local resolved_file="$HOME/.aidevops/.opencode-v2-bin-resolved"
+	[[ -f "$resolved_file" ]] && v2_bin=$(<"$resolved_file")
+	[[ -n "$v2_bin" && -x "$v2_bin" ]] || v2_bin="$HOME/.local/bin/opencode2"
+	if [[ ! -x "$v2_bin" ]]; then
+		print_warning "OpenCode V2 service is running but opencode2 was not found; run 'opencode2 service restart' to load the new aidevops bundle"
+		return 0
+	fi
+
+	local restart_rc=0
+	if declare -F timeout_sec >/dev/null 2>&1; then
+		timeout_sec 60 "$v2_bin" service restart >/dev/null 2>&1 || restart_rc=$?
+	else
+		"$v2_bin" service restart >/dev/null 2>&1 || restart_rc=$?
+	fi
+	if [[ "$restart_rc" -eq 0 ]]; then
+		print_success "Restarted OpenCode V2 background service to load the new aidevops bundle"
+	else
+		print_warning "OpenCode V2 service restart failed (exit $restart_rc); run 'opencode2 service restart' manually"
+	fi
+	return 0
+}
+
 deploy_aidevops_agents() {
 	print_info "Deploying aidevops agents to ~/.aidevops/agents/..."
 
@@ -1509,6 +1570,7 @@ deploy_aidevops_agents() {
 	_sync_agent_bin_shims "$target_dir" || return 1
 
 	_write_deployed_agents_sha "$repo_dir"
+	_restart_opencode_v2_service_after_deploy
 
 	return 0
 }

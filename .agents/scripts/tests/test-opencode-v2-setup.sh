@@ -163,4 +163,36 @@ grep -Eq 'confirm_step .*setup_opencode_runtimes$' "$REPO_ROOT/setup.sh"
 grep -Eq '_time_step .* setup_opencode_runtime_plugins$' "$REPO_ROOT/setup.sh"
 grep -Eq 'confirm_step .*setup_opencode_runtime_plugins$' "$REPO_ROOT/setup.sh"
 
+# A redeploy must restart a running V2 background service (stale plugin
+# resolution drops provider OAuth hooks) but never the service hosting setup.
+# shellcheck source=/dev/null
+source "$REPO_ROOT/.agents/scripts/setup/modules/agent-deploy.sh"
+set +e
+service_state="$SANDBOX/v2-state"
+restart_log="$SANDBOX/v2-restart.log"
+mkdir -p "$service_state/opencode"
+cat >"$SANDBOX/bin/opencode2-service" <<SHIM
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"$restart_log"
+exit 0
+SHIM
+chmod +x "$SANDBOX/bin/opencode2-service"
+printf '%s\n' "$SANDBOX/bin/opencode2-service" >"$HOME/.aidevops/.opencode-v2-bin-resolved"
+sleep 30 &
+fake_service_pid=$!
+printf '{"pid":%s}\n' "$fake_service_pid" >"$service_state/opencode/service.json"
+AIDEVOPS_OPENCODE_V2_STATE_HOME="$service_state" _restart_opencode_v2_service_after_deploy
+grep -Fxq 'service restart' "$restart_log" || { printf 'running V2 service was not restarted\n' >&2; exit 1; }
+: >"$restart_log"
+AIDEVOPS_SKIP_OPENCODE_V2_SERVICE_RESTART=1 AIDEVOPS_OPENCODE_V2_STATE_HOME="$service_state" \
+	_restart_opencode_v2_service_after_deploy
+printf '{"pid":%s}\n' "$$" >"$service_state/opencode/service.json"
+AIDEVOPS_OPENCODE_V2_STATE_HOME="$service_state" _restart_opencode_v2_service_after_deploy
+kill "$fake_service_pid" 2>/dev/null
+wait "$fake_service_pid" 2>/dev/null || true
+printf '{"pid":%s}\n' "$fake_service_pid" >"$service_state/opencode/service.json"
+AIDEVOPS_OPENCODE_V2_STATE_HOME="$service_state" _restart_opencode_v2_service_after_deploy
+[[ ! -s "$restart_log" ]] || { printf 'V2 service restarted when it must be skipped\n' >&2; exit 1; }
+set -e
+
 printf 'OpenCode V2 setup tests passed\n'
