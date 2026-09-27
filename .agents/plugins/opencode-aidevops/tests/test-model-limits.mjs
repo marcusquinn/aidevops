@@ -13,7 +13,7 @@
 
 import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { registerClaudeCliFallbackModels } from "../config-hook.mjs";
+import { registerClaudeCliFallbackModels, removeLegacyAnthropicModelOverrides } from "../config-hook.mjs";
 
 import {
   resolveOpus47Context,
@@ -34,6 +34,17 @@ test("Claude CLI registration leaves native Anthropic model metadata untouched",
   assert.deepEqual(config.provider.anthropic.models, { "claude-opus-5-5": native });
   assert.equal(Object.keys(config.provider.claudecli.models).length, 6);
   assert.equal(registerClaudeCliFallbackModels(config), 0);
+});
+
+test("legacy aidevops Anthropic overrides are dropped while user entries stay", () => {
+  const legacy = { name: "Claude Haiku 4.5 (via aidevops)", family: "claudecli", tool_call: false };
+  const user = { name: "My Sonnet", family: "claudecli", tool_call: true };
+  const config = { provider: { anthropic: { options: { setCacheKey: true },
+    models: { "claude-haiku-4-5": legacy, "claude-sonnet-5": user } } } };
+  assert.equal(removeLegacyAnthropicModelOverrides(config), 1);
+  assert.deepEqual(config.provider.anthropic.models, { "claude-sonnet-5": user });
+  assert.deepEqual(config.provider.anthropic.options, { setCacheKey: true });
+  assert.equal(removeLegacyAnthropicModelOverrides({}), 0);
 });
 
 test("GPT-5.6 context metadata targets 300K for 240K auto-compaction", () => {

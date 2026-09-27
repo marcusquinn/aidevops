@@ -133,6 +133,28 @@ export function registerClaudeCliFallbackModels(config) {
 }
 
 /**
+ * Drop Anthropic model overrides persisted by plugin versions before GH#32447.
+ * Those entries carried Claude CLI proxy metadata (`family: claudecli`,
+ * `tool_call: false`, text-only input, zero cost) and masked OpenCode's native
+ * Anthropic model metadata. Only the exact legacy shape is removed; user-authored
+ * entries are preserved.
+ * @param {object} config - OpenCode Config object (mutable)
+ * @returns {number} number of legacy entries removed
+ */
+export function removeLegacyAnthropicModelOverrides(config) {
+  const models = config?.provider?.anthropic?.models;
+  if (!models || typeof models !== "object") return 0;
+  let removed = 0;
+  for (const [id, def] of Object.entries(models)) {
+    if (def?.family !== "claudecli") continue;
+    if (!String(def?.name || "").endsWith("(via aidevops)")) continue;
+    delete models[id];
+    removed += 1;
+  }
+  return removed;
+}
+
+/**
  * Return whether aidevops should advertise a cost-aware 300K GPT-5.6 window.
  * The feature defaults on; users can opt out with `aidevops gpt56-context
  * disable`, which writes the durable preference consumed here on startup.
@@ -301,6 +323,7 @@ function logConfigSummary(counts) {
     [counts.directories, "managed directory perms"],
     [counts.permissionGrants, "signed worker permission grants"],
     [counts.poolCleaned, `cleaned ${counts.poolCleaned} stale pool provider${counts.poolCleaned === 1 ? "" : "s"}`],
+    [counts.anthropicLegacyCleaned, `cleaned ${counts.anthropicLegacyCleaned} legacy Anthropic model override${counts.anthropicLegacyCleaned === 1 ? "" : "s"}`],
     [counts.openai, "OpenAI context limits"],
     [counts.cursor, "Cursor models"],
     [counts.google, "Google models"],
@@ -386,6 +409,7 @@ export function createConfigHook(deps) {
       modelRouting,
     );
     const poolCleaned = registerPoolProvider(config);
+    const anthropicLegacyCleaned = removeLegacyAnthropicModelOverrides(config);
     const claudeFallback = registerClaudeCliFallbackModels(config);
     const openai = registerGpt56ContextLimits(config) + registerAstraContextLimits(config) +
       registerGpt6ContextLimits(config);
@@ -433,6 +457,7 @@ export function createConfigHook(deps) {
         directories,
         permissionGrants,
         poolCleaned,
+        anthropicLegacyCleaned,
         openai,
         cursor,
         google,
