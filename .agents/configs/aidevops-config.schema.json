@@ -140,9 +140,9 @@
         },
         "max_workers_cap": {
           "type": "integer",
-          "default": 8,
-          "minimum": 1,
-          "description": "Hard ceiling for pulse worker pool size after RAM-based calculation. Env: AIDEVOPS_MAX_WORKERS_CAP"
+          "default": 0,
+          "minimum": 0,
+          "description": "Hard ceiling for pulse worker pool size after RAM-based calculation. 0 = auto (50% of logical CPU cores, bounded by total RAM, min 2, max 64). Env: AIDEVOPS_MAX_WORKERS_CAP"
         },
         "min_worker_concurrency": {
           "type": "integer",
