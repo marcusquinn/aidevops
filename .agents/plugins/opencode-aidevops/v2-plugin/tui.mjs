@@ -6,6 +6,9 @@
 // reach the terminal. The TUI process owns the renderer, so the status-dot
 // terminal title (⚪ busy, 🟡 permission, 🟢 idle) is rendered here instead.
 
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { readAidevopsVersion, withAidevopsTitleSuffix } from "../session-title-suffix.mjs";
 import { sanitizeTerminalTitle, withTerminalTitleStatus } from "../terminal-title.mjs";
 
 // Distinct from the server plugin id so TUI and server registries never collide.
@@ -14,6 +17,29 @@ const DEFAULT_TITLE = "OpenCode";
 const MAX_TITLE_LENGTH = 40;
 const DEFAULT_POLL_MS = 300;
 const DEFAULT_REFRESH_MS = 2000;
+const VERSION_CACHE_MS = 60_000;
+
+// V1 stores `· AIDevOps <version>` in the session title itself; V2 session
+// titles are also V2 tab labels, so the suffix is applied to the terminal
+// title only. The version file is re-read at most once per minute so a
+// long-running TUI picks up `aidevops update` without per-poll file reads.
+export function createVersionReader({
+  agentsDir = join(homedir(), ".aidevops", "agents"),
+  readVersion = readAidevopsVersion,
+  now = Date.now,
+  cacheMs = VERSION_CACHE_MS,
+} = {}) {
+  let cached = "";
+  let readAt = -Infinity;
+  return () => {
+    const current = now();
+    if (current - readAt >= cacheMs) {
+      cached = safeCall(() => readVersion(agentsDir), cached);
+      readAt = current;
+    }
+    return cached;
+  };
+}
 
 export function isTerminalTitleOwnedByAidevops(env = process.env) {
   return (
@@ -58,14 +84,17 @@ function truncateTitle(title) {
 
 // Returns the terminal title for the current route, or "" when the plugin
 // should leave the title to OpenCode (plugin routes, missing data).
-export function computeTerminalTitle(api) {
+export function computeTerminalTitle(api, version = "") {
   const route = safeCall(() => api.ui.router.current(), undefined);
-  if (!route || route.type === "home") return DEFAULT_TITLE;
+  if (!route || route.type === "home") return withAidevopsTitleSuffix(DEFAULT_TITLE, version);
   if (route.type !== "session" || !route.sessionID) return "";
   const { root } = sessionFamily(api.data, route.sessionID);
   const info = safeCall(() => api.data.session.get(root), undefined);
   const baseTitle = truncateTitle(sanitizeTerminalTitle(info?.title) || DEFAULT_TITLE);
-  return withTerminalTitleStatus(baseTitle, resolveSessionTitleStatus(api.data, route.sessionID));
+  return withTerminalTitleStatus(
+    withAidevopsTitleSuffix(baseTitle, version),
+    resolveSessionTitleStatus(api.data, route.sessionID),
+  );
 }
 
 // V2's native TUI title writer (`OC | <title>`) can fire after this plugin for
@@ -73,7 +102,7 @@ export function computeTerminalTitle(api) {
 // elapsed. That bounds any native overwrite to one refresh interval.
 export function createTerminalTitleSync(
   api,
-  { env = process.env, refreshMs = DEFAULT_REFRESH_MS, now = Date.now } = {},
+  { env = process.env, refreshMs = DEFAULT_REFRESH_MS, now = Date.now, getVersion = () => "" } = {},
 ) {
   let lastTitle = "";
   let lastWriteAt = 0;
@@ -81,7 +110,7 @@ export function createTerminalTitleSync(
   return function syncTerminalTitle() {
     const canWrite =
       isTerminalTitleOwnedByAidevops(env) && typeof api?.renderer?.setTerminalTitle === "function";
-    const title = canWrite ? computeTerminalTitle(api) : "";
+    const title = canWrite ? computeTerminalTitle(api, safeCall(getVersion, "")) : "";
     const current = now();
     if (!title || isFresh(title, current)) return false;
     try {
@@ -96,9 +125,12 @@ export function createTerminalTitleSync(
   };
 }
 
-export function setupTerminalTitle(api, { env = process.env, pollMs = DEFAULT_POLL_MS, timers = globalThis } = {}) {
+export function setupTerminalTitle(
+  api,
+  { env = process.env, pollMs = DEFAULT_POLL_MS, timers = globalThis, getVersion = createVersionReader() } = {},
+) {
   if (!isTerminalTitleOwnedByAidevops(env)) return undefined;
-  const sync = createTerminalTitleSync(api, { env });
+  const sync = createTerminalTitleSync(api, { env, getVersion });
   sync();
   // The TUI's own title effect fires on route/title changes; polling the
   // in-memory store re-applies the decorated title right after it and keeps

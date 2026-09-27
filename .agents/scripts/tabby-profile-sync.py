@@ -26,6 +26,7 @@ import uuid
 from pathlib import Path
 from typing import NamedTuple, Optional
 
+from tabby_appearance_css import apply_managed_css_for_sync
 from tabby_colour_utils import generate_tab_colour, find_closest_scheme
 from tabby_profile_repair import (
     _repair_broken_opencode_launch_profile_block,
@@ -567,9 +568,10 @@ def _save_reconciled_config(
     config_text: str,
     repaired_count: int,
     reconciliation: ProfileReconciliation,
+    css_changed: bool = False,
 ) -> bool:
     """Save and report a reconciliation-only update when one exists."""
-    if not any((repaired_count, reconciliation.removals)):
+    if not any((repaired_count, reconciliation.removals, css_changed)):
         return False
     save_yaml(config_path, config_text)
     _report_reconciliation(repaired_count, reconciliation)
@@ -601,11 +603,12 @@ def sync_profiles(args: argparse.Namespace) -> None:
     config_text = remove_profile_blocks(config_text, reconciliation.removals)
     existing_cwds = extract_existing_cwds(config_text)
     config_text, group_id = ensure_group(config_text)
+    config_text, css_changed = apply_managed_css_for_sync(config_text)
     new_profiles = build_new_profiles(repos, existing_cwds, group_id, shell_path)
 
     if not new_profiles:
         if not _save_reconciled_config(
-            args.tabby_config, config_text, repaired_count, reconciliation
+            args.tabby_config, config_text, repaired_count, reconciliation, css_changed
         ):
             print("All profile targets already have Tabby profiles. Nothing to do.")
         return
