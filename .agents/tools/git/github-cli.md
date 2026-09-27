@@ -116,8 +116,10 @@ private repo names and local private paths before publishing
 first ([screenshot limits](../../reference/screenshot-limits.md)). Run
 `forge-image-embed-helper.sh publish --repo OWNER/REPO FILE.png` against your
 push fork for upstream PRs, or the target repo for owned threads. Paste its
-commit-pinned Markdown embeds into the `--body-file` content. Never add images
-to the PR branch. Keep the asset branch while the thread matters; deleting it
+commit-pinned Markdown embeds into the `--body-file` content. It refuses the
+default branch, open PR head branches, non-image files, and private repos unless
+`--allow-private` is passed (private embeds render only for repo readers). Never
+add images to the PR branch. Keep the asset branch while the thread matters; deleting it
 may eventually break embeds. Cleanup when safe:
 `gh api -X DELETE repos/OWNER/REPO/git/refs/heads/aidevops-assets`.
 
