@@ -122,6 +122,11 @@ _pc_archive_missing_canonical() {
 	python3 - "$path" "$archive" <<'PY'
 import hashlib, os, pathlib, stat, sys, tarfile
 source, output = map(pathlib.Path, sys.argv[1:])
+def digest(stream):
+    result = hashlib.sha256()
+    for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+        result.update(chunk)
+    return result.digest()
 files = []
 total = 0
 for parent, dirs, names in os.walk(source, followlinks=False):
@@ -143,8 +148,10 @@ with tarfile.open(output, 'r') as bundle:
     if len(members) != len(files):
         sys.exit(1)
     for item, member in zip(files, members):
+        if not member.isfile() or member.name != str(item.relative_to(source)):
+            sys.exit(1)
         with item.open('rb') as original, bundle.extractfile(member) as saved:
-            if saved is None or hashlib.sha256(original.read()).digest() != hashlib.sha256(saved.read()).digest():
+            if saved is None or digest(original) != digest(saved):
                 sys.exit(1)
 PY
 	[[ "$?" -eq 0 && -f "$archive" ]] || return 1
