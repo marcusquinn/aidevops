@@ -748,8 +748,9 @@ _isc_cmd_release() {
 		return 0
 	fi
 
-	# Idempotency: release only an interactive status:claimed record. `_isc_has_claimed`
-	# has three return states (0 = present, 1 = absent, 2 = lookup failed),
+	# Idempotency: release status:claimed and legacy status:in-review records.
+	# `_isc_has_claimed` and `_isc_has_label` have three return states
+	# (0 = present, 1 = absent, 2 = lookup failed),
 	# so we need the actual rc — but a bare call under `set -e` propagates
 	# non-zero returns before `rc=$?` can capture them. Use `|| rc=$?` which
 	# is a tested condition that `set -e` does not propagate. Default to 0
@@ -757,14 +758,23 @@ _isc_cmd_release() {
 	local has_rc=0
 	_isc_has_claimed "$issue" "$slug" || has_rc=$?
 	if [[ $has_rc -eq 1 ]]; then
-		if [[ $unassign -eq 0 ]]; then
-			_isc_info "release: #$issue not in status:claimed — no-op"
+		local in_review_rc=0
+		_isc_has_label "$issue" "$slug" "status:in-review" || in_review_rc=$?
+		if [[ $in_review_rc -eq 0 ]]; then
+			has_rc=0
+		elif [[ $in_review_rc -eq 2 ]]; then
+			_isc_warn "release: could not read labels for #$issue — preserving ownership state"
+			return 0
+		else
+			if [[ $unassign -eq 0 ]]; then
+				_isc_info "release: #$issue not in an active interactive status — no-op"
+				_isc_delete_stamp "$issue" "$slug"
+				return 0
+			fi
+			_isc_unassign_released_issue "$issue" "$slug" "$user"
 			_isc_delete_stamp "$issue" "$slug"
 			return 0
 		fi
-		_isc_unassign_released_issue "$issue" "$slug" "$user"
-		_isc_delete_stamp "$issue" "$slug"
-		return 0
 	fi
 	if [[ $has_rc -eq 2 ]]; then
 		_isc_warn "release: could not read labels for #$issue — preserving ownership state"
