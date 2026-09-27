@@ -356,6 +356,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENGINE="$SCRIPT_DIR/pulse-dispatch-engine.sh"
 CORE="$SCRIPT_DIR/pulse-dispatch-core.sh"
 DISPATCH_LIB="$SCRIPT_DIR/pulse-dispatch-lib.sh"
+DISPATCH_CAPACITY_LIB="$SCRIPT_DIR/pulse-dispatch-lib-capacity.sh"
+DISPATCH_CANDIDATES_LIB="$SCRIPT_DIR/pulse-dispatch-lib-candidates.sh"
 PREFLIGHT_LIB="$SCRIPT_DIR/pulse-dispatch-preflight-lib.sh"
 ROUTINES="$SCRIPT_DIR/pulse-routines.sh"
 TRIAGE_EVALUATION="$SCRIPT_DIR/pulse-triage-evaluation.sh"
@@ -580,23 +582,23 @@ assert_grep \
 assert_grep \
 	"10a: dispatch stage adapter preserves benign block rc" \
 	'_dispatch_stage_rc_adapter' \
-	"$DISPATCH_LIB"
+	"$DISPATCH_CAPACITY_LIB"
 assert_grep \
 	"10b: interactive review hold is recognized as a benign block" \
 	'interactive_review_hold' \
-	"$DISPATCH_LIB"
+	"$DISPATCH_CAPACITY_LIB"
 assert_grep \
 	"10b1: PR targets are recognized as benign dispatch blocks" \
 	'pr_target_not_dispatchable' \
-	"$DISPATCH_LIB"
+	"$DISPATCH_CAPACITY_LIB"
 assert_grep \
 	"10b1b: Renovate Dependency Dashboard is recognized as a benign dispatch block" \
 	'renovate_dependency_dashboard' \
-	"$DISPATCH_LIB"
+	"$DISPATCH_CAPACITY_LIB"
 assert_grep \
 	"10b2: benign blocks are logged distinctly, not as pre-launch failures" \
 	'blocked:\$\{failure_reason\} benign dispatch block' \
-	"$DISPATCH_LIB"
+	"$DISPATCH_CANDIDATES_LIB"
 assert_grep \
 	"10b3: active claim dedup returns benign rc=3 to suppress Stage failed" \
 	'_dedup_layer6_assignee_and_stale.*&& return 3' \
@@ -604,20 +606,20 @@ assert_grep \
 assert_grep \
 	"10b4: refill skips candidates blocked by active claim in current cycle" \
 	'skip:already_assigned blocked:' \
-	"$DISPATCH_LIB"
+	"$DISPATCH_CANDIDATES_LIB"
 
 assert_grep \
 	"10c: dispatch stage adapter reports rc-file write failures" \
 	'Failed to write dispatch rc to' \
-	"$DISPATCH_LIB"
+	"$DISPATCH_CAPACITY_LIB"
 assert_grep \
 	"10d: dispatch stage adapter propagates raw rc after rc-file write failure" \
 	'return "\$raw_rc"' \
-	"$DISPATCH_LIB"
+	"$DISPATCH_CAPACITY_LIB"
 assert_not_grep \
 	"10e: benign block reasons are not counted as candidate failure reasons" \
 	'dedup_active_claim \| cost_budget_exceeded' \
-	"$DISPATCH_LIB"
+	"$DISPATCH_CAPACITY_LIB"
 assert_grep \
 	"10f: NMR gate entry is recorded before the potentially slow gate" \
 	'_ds_stage_start.*nmr_gate' \
