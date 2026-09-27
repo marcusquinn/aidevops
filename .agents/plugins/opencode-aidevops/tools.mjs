@@ -107,6 +107,23 @@ function createAidevopsTool(run) {
   });
 }
 
+function storeMemory(scriptsDir, memoryHelper, args, run) {
+  const content = args.content.trim();
+  const confidence = args.confidence || "medium";
+  const cmd = `bash "${memoryHelper}" store ${shellEscape(content)} --confidence ${shellEscape(confidence)}`;
+  const result = run(cmd, 10000) || "Memory stored successfully.";
+  const frameworkHelper = join(scriptsDir, "framework-issue-helper.sh");
+
+  if (!existsSync(frameworkHelper)) return result;
+
+  try {
+    run(`bash "${frameworkHelper}" detect ${shellEscape(content)}`, 10000);
+    return `${result}\n\nThis appears to be a framework lesson. Local memory does not reach other users; update the narrowest shared reference or file a worker-ready issue with framework-issue-helper.sh log.`;
+  } catch {
+    return result;
+  }
+}
+
 /**
  * Create the unified memory tool (recall and store in one tool).
  *
@@ -158,21 +175,7 @@ function createMemoryTool(scriptsDir, run) {
       }
 
       if (action === "store") {
-        const content = args.content.trim();
-        const confidence = args.confidence || "medium";
-        const cmd = `bash "${memoryHelper}" store ${shellEscape(content)} --confidence ${shellEscape(confidence)}`;
-        const result = run(cmd, 10000);
-        const frameworkHelper = join(scriptsDir, "framework-issue-helper.sh");
-        if (!existsSync(frameworkHelper)) {
-          return result || "Memory stored successfully.";
-        }
-
-        try {
-          run(`bash "${frameworkHelper}" detect ${shellEscape(content)}`, 10000);
-          return `${result || "Memory stored successfully."}\n\nThis appears to be a framework lesson. Local memory does not reach other users; update the narrowest shared reference or file a worker-ready issue with framework-issue-helper.sh log.`;
-        } catch {
-          return result || "Memory stored successfully.";
-        }
+        return storeMemory(scriptsDir, memoryHelper, args, run);
       }
 
       return validationError;
