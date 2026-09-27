@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.37.3] - 2026-09-27
+
+### Added
+
+- add repository-only pre-commit repair
+
 ## [3.37.2] - 2026-09-27
 
 ### Changed
