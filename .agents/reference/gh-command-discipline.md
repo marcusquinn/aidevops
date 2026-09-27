@@ -22,6 +22,16 @@ fork`, `gh repo create`, and the `gh repo new` alias before execution unless the
 runtime process inherits an authorization digest for that exact parsed argv and
 location binding.
 
+**Workspace repository creation needs no digest.** A direct, unwrapped
+`gh repo create|new <name> --public|--private|--internal` with only allowlisted
+API options (for example `--description`, `--license`, `--add-readme`) is allowed
+when the session's working directory is inside the projects root
+(`AIDEVOPS_ACCOUNT_MUTATION_WORKSPACE_ROOT`, default `~/Git`). Clone the new
+repository with a separate `git clone`. Forks, `--source`, `--clone`, `--push`,
+`--remote`, local templates, shell-launched or privileged-wrapper forms, and
+sessions outside the root still require authorization. Setting the workspace
+root to an empty value disables the exemption.
+
 The location binding is workspace-scoped only for CWD-independent forms:
 
 - `gh repo fork <owner>/<repo> --clone=false`, with only allowlisted remote

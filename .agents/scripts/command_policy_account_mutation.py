@@ -11,13 +11,17 @@ import os
 import re
 import secrets
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 from command_policy_config import _decision
 from command_policy_matchers import _matches_gh_command_path
-
-WORKSPACE_ROOT_ENV = "AIDEVOPS_ACCOUNT_MUTATION_WORKSPACE_ROOT"
+from command_policy_workspace import (
+    WORKSPACE_ROOT_ENV as WORKSPACE_ROOT_ENV,
+    _canonical_workspace_root,
+    _is_direct_invocation,
+    _is_within_workspace,
+    account_mutation_workspace_root_from_environment as account_mutation_workspace_root_from_environment,
+)
 
 
 @dataclass(frozen=True)
@@ -71,13 +75,6 @@ _CREATE_OPTIONS = _RemoteOptionPolicy(
     explicit_remote_value_options=frozenset({"--template", "-p"}),
 )
 _CREATE_VISIBILITY = frozenset({"--internal", "--private", "--public"})
-
-
-def account_mutation_workspace_root_from_environment() -> str:
-    """Return the inherited workspace root, defaulting to the projects directory."""
-    if WORKSPACE_ROOT_ENV in os.environ:
-        return os.environ[WORKSPACE_ROOT_ENV]
-    return str(Path.home() / "Git")
 
 
 def _account_mutation_guard(policy: dict[str, Any]) -> dict[str, Any]:
@@ -180,25 +177,6 @@ def _is_workspace_safe_account_mutation(argv: list[str]) -> bool:
     return False
 
 
-def _canonical_workspace_root(workspace_root: str) -> str:
-    if not workspace_root:
-        return ""
-    root = os.path.realpath(os.path.expanduser(workspace_root))
-    home = os.path.realpath(str(Path.home()))
-    if root in {os.path.abspath(os.sep), home} or not os.path.isdir(root):
-        return ""
-    return root
-
-
-def _is_within_workspace(cwd: str, workspace_root: str) -> bool:
-    if not os.path.isdir(cwd):
-        return False
-    try:
-        return os.path.commonpath([cwd, workspace_root]) == workspace_root
-    except ValueError:
-        return False
-
-
 def _account_mutation_location(
     argv: list[str], cwd: str, workspace_root: str
 ) -> dict[str, str]:
@@ -211,6 +189,31 @@ def _account_mutation_location(
     ):
         return {"kind": "workspace", "path": canonical_root}
     return {"kind": "cwd", "path": canonical_cwd}
+
+
+def _is_workspace_repository_creation(
+    argv: list[str], cwd: str, context: _AccountMutationContext
+) -> bool:
+    """Return whether a remote-only repository creation runs inside the workspace.
+
+    Creating an empty repository from a session inside the projects root is
+    routine and reversible, so it needs no per-command authorization. Wrapped
+    or shell-launched commands, local source, clone, push and remote options,
+    forks, and sessions outside the root (or with the workspace root disabled)
+    stay authorization-gated.
+    """
+    if argv[1:3] not in (["repo", "create"], ["repo", "new"]):
+        return False
+    workspace_root = context.workspace_root
+    if workspace_root is None:
+        workspace_root = account_mutation_workspace_root_from_environment()
+    canonical_root = _canonical_workspace_root(workspace_root)
+    return bool(
+        canonical_root
+        and _is_direct_invocation(argv, context.source)
+        and _is_workspace_safe_create(argv)
+        and _is_within_workspace(os.path.realpath(cwd), canonical_root)
+    )
 
 
 def _authorization_digest(payload: dict[str, Any]) -> str:
@@ -295,6 +298,12 @@ def _evaluate_account_mutation(
         )
     # #aidevops:trust-boundary — only inherited authorization and workspace
     # context can cross this gate; command-local assignments are rejected.
+    if _is_workspace_repository_creation(mutations[0], cwd, context):
+        return _decision(
+            "allow",
+            "github.workspace-repository-creation",
+            "Remote-only repository creation from inside the projects workspace",
+        )
     if _authorization_matches(context, mutations[0], cwd):
         return _decision(
             "allow",
