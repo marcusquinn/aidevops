@@ -67,6 +67,30 @@ _cli_url() {
 # across macOS (Homebrew, npm -g, bun) and Linux (npm -g, bun, nix).
 # Returns version string (e.g., "1.3.5") or empty.
 
+_opencode_host_version() {
+	local host_binary=""
+	if [[ "${OPENCODE_PID:-}" =~ ^[0-9]+$ ]] && kill -0 "$OPENCODE_PID" 2>/dev/null; then
+		host_binary=$(readlink "/proc/${OPENCODE_PID}/exe" 2>/dev/null || true)
+		if [[ "${host_binary##*/}" == opencode* ]] && [[ -x "$host_binary" ]]; then
+			"$host_binary" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true
+		fi
+	fi
+	return 0
+}
+
+_opencode_profile_cache_version() {
+	local profile_cache="session-greeting-opencode.txt"
+	[[ "${AIDEVOPS_OPENCODE_PROFILE:-}" == v2 ]] && profile_cache="session-greeting-opencode-v2.txt"
+	local greeting_file="${HOME}/.aidevops/cache/${profile_cache}"
+	local framework_version=""
+	[[ -r "${SCRIPT_DIR}/../../VERSION" ]] && IFS= read -r framework_version <"${SCRIPT_DIR}/../../VERSION"
+	if [[ -n "$framework_version" ]] && [[ -r "$greeting_file" ]] &&
+		grep -qF "aidevops v${framework_version} running in OpenCode v" "$greeting_file"; then
+		grep -oE 'OpenCode v[0-9]+\.[0-9]+\.[0-9]+' "$greeting_file" 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || true
+	fi
+	return 0
+}
+
 _detect_opencode_version() {
 	local ver=""
 
@@ -80,14 +104,26 @@ _detect_opencode_version() {
 		return 0
 	fi
 
-	# Session-start cache is written by the OpenCode plugin before first turn.
-	local greeting_file="${HOME}/.aidevops/cache/session-greeting.txt"
-	if [[ -r "$greeting_file" ]]; then
-		ver=$(grep -oE 'OpenCode v[0-9]+\.[0-9]+\.[0-9]+' "$greeting_file" 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "")
-		if [[ -n "$ver" ]]; then
-			echo "$ver"
-			return 0
-		fi
+	# On Linux the running host executable is authoritative, unlike PATH (which
+	# may point at OC1 even when the session is hosted by OC2). Reject dead PIDs.
+	ver=$(_opencode_host_version)
+	if [[ -n "$ver" ]]; then
+		echo "$ver"
+		return 0
+	fi
+
+	# Only a profile-specific greeting from this deployed framework revision is
+	# usable. A shared greeting is last-writer-wins across OC1 and OC2.
+	ver=$(_opencode_profile_cache_version)
+	if [[ -n "$ver" ]]; then
+		echo "$ver"
+		return 0
+	fi
+
+	# PATH and global package probes can point to OC1 inside an OC2 session.
+	if [[ "${AIDEVOPS_OPENCODE_PROFILE:-}" == v2 ]]; then
+		echo ""
+		return 0
 	fi
 
 	# Method 1: opencode --version (if in PATH)

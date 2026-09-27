@@ -537,6 +537,24 @@ result=$(HOME="$tmp_home_21" OPENCODE_VERSION="1.14.34" "$HELPER" generate --no-
 assert_contains "OpenCode CLI override still detects version" "plugin for [OpenCode](https://opencode.ai) v1.14.34" "$result"
 rm -rf "$tmp_home_21"
 
+# Profile caches must never be overridden by the shared last-writer cache.
+echo "Test 21b: runtime-specific version precedence"
+tmp_home_21b=$(mktemp -d 2>/dev/null || mktemp -d -t sighelper21b)
+mkdir -p "${tmp_home_21b}/.aidevops/cache"
+framework_version=$(<"${SCRIPT_DIR}/../../../VERSION")
+printf '%s\n' 'aidevops v0.0.0 running in OpenCode v9.9.9' >"${tmp_home_21b}/.aidevops/cache/session-greeting.txt"
+printf 'aidevops v%s running in OpenCode v1.18.32\n' "$framework_version" >"${tmp_home_21b}/.aidevops/cache/session-greeting-opencode.txt"
+printf 'aidevops v%s running in OpenCode v2.0.3\n' "$framework_version" >"${tmp_home_21b}/.aidevops/cache/session-greeting-opencode-v2.txt"
+result=$(env -u OPENCODE_VERSION -u AIDEVOPS_SIG_CLI_VERSION OPENCODE_PID=0 HOME="$tmp_home_21b" "$HELPER" generate --no-session --cli OpenCode)
+assert_contains "OC1 cache wins over shared cache" "OpenCode](https://opencode.ai) v1.18.32" "$result"
+result=$(env -u OPENCODE_VERSION -u AIDEVOPS_SIG_CLI_VERSION OPENCODE_PID=0 AIDEVOPS_OPENCODE_PROFILE=v2 HOME="$tmp_home_21b" "$HELPER" generate --no-session --cli OpenCode)
+assert_contains "OC2 profile selects OC2 cache" "OpenCode](https://opencode.ai) v2.0.3" "$result"
+result=$(OPENCODE_PID=0 OPENCODE_VERSION=3.1.4 AIDEVOPS_SIG_CLI_VERSION=4.1.5 HOME="$tmp_home_21b" "$HELPER" generate --no-session --cli OpenCode)
+assert_contains "signature override wins" "OpenCode](https://opencode.ai) v4.1.5" "$result"
+result=$(OPENCODE_PID=0 OPENCODE_VERSION=3.1.4 AIDEVOPS_SIG_CLI_VERSION='' HOME="$tmp_home_21b" "$HELPER" generate --no-session --cli OpenCode)
+assert_contains "runtime env wins over caches" "OpenCode](https://opencode.ai) v3.1.4" "$result"
+rm -rf "$tmp_home_21b"
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Test 22: footer dedup uses only a standalone canonical marker line
 # ─────────────────────────────────────────────────────────────────────────────
