@@ -66,6 +66,13 @@ _DISPATCH_BENIGN_BLOCKS_FILE_OWNED="0"
 _DISPATCH_NEGATIVE_CACHE_TTL_SECONDS="${AIDEVOPS_DISPATCH_NEGATIVE_CACHE_TTL_SECONDS:-1800}"
 [[ "$_DISPATCH_NEGATIVE_CACHE_TTL_SECONDS" =~ ^[0-9]+$ ]] || _DISPATCH_NEGATIVE_CACHE_TTL_SECONDS=1800
 ((_DISPATCH_NEGATIVE_CACHE_TTL_SECONDS <= 1800)) || _DISPATCH_NEGATIVE_CACHE_TTL_SECONDS=1800
+# A terminal-blocker circuit is keyed to the issue revision: an edit, a retry
+# directive or any new comment bumps updatedAt and invalidates the hint at once.
+# Only target-code revisions can re-arm it silently, so bound that delay. Each
+# re-check costs a full 40-110s dispatch ceremony per runner per cycle.
+_DISPATCH_TERMINAL_CIRCUIT_CACHE_TTL_SECONDS="${AIDEVOPS_DISPATCH_TERMINAL_CIRCUIT_CACHE_TTL_SECONDS:-7200}"
+[[ "$_DISPATCH_TERMINAL_CIRCUIT_CACHE_TTL_SECONDS" =~ ^[0-9]+$ ]] || _DISPATCH_TERMINAL_CIRCUIT_CACHE_TTL_SECONDS=7200
+((_DISPATCH_TERMINAL_CIRCUIT_CACHE_TTL_SECONDS <= 14400)) || _DISPATCH_TERMINAL_CIRCUIT_CACHE_TTL_SECONDS=14400
 _DISPATCH_BENIGN_BLOCKS_SCRATCH_DIR=""
 _DISPATCH_BENIGN_BLOCKS_LEGACY_MIN_AGE_SECONDS="${AIDEVOPS_PULSE_BENIGN_BLOCKS_LEGACY_MIN_AGE_SECONDS:-3600}"
 [[ "$_DISPATCH_BENIGN_BLOCKS_LEGACY_MIN_AGE_SECONDS" =~ ^[0-9]+$ ]] || _DISPATCH_BENIGN_BLOCKS_LEGACY_MIN_AGE_SECONDS=3600
@@ -124,7 +131,7 @@ _dispatch_negative_pr_fingerprint() {
 
 _dispatch_negative_cache_record() {
 	local candidate="$1" reason="$2" pr="${3:-}" fields="" issue="" repo="" updated="" file="" tmp="" fingerprint=""
-	case "$reason" in dedup_active_claim | dedup_active_claim_live_owner | dedup_active_claim_durable_launch | worker_draft_checkpoint_blocked) ;; *) return 0 ;; esac
+	case "$reason" in dedup_active_claim | dedup_active_claim_live_owner | dedup_active_claim_durable_launch | worker_draft_checkpoint_blocked | terminal_blocker_circuit) ;; *) return 0 ;; esac
 	fields=$(jq -r '[(.number // ""), (.repo_slug // ""), (.updatedAt // "")] | @tsv' <<<"$candidate") || return 0
 	IFS=$'\t' read -r issue repo updated <<<"$fields"
 	[[ "$updated" =~ ^[0-9TZ:.-]+$ ]] || return 0
@@ -145,10 +152,7 @@ _dispatch_negative_cache_record() {
 
 _dispatch_negative_cache_reason() {
 	local candidate="$1" fields="" issue="" repo="" updated="" file="" stamp="" cached="" reason="" now="" pr="" fingerprint="" current=""
-	# The snapshot must independently still show a claimed owner. No stale cache
-	# can suppress an available/unassigned candidate or permit a launch.
-	jq -e '(.assignees // [] | length) > 0 and
-		([.labels[]? | .name? // .] | any(. == "status:claimed" or . == "status:in-progress" or . == "status:in-review"))' <<<"$candidate" >/dev/null 2>&1 || return 1
+	local ttl="$_DISPATCH_NEGATIVE_CACHE_TTL_SECONDS"
 	fields=$(jq -r '[(.number // ""), (.repo_slug // ""), (.updatedAt // "")] | @tsv' <<<"$candidate") || return 1
 	IFS=$'\t' read -r issue repo updated <<<"$fields"
 	[[ "$updated" =~ ^[0-9TZ:.-]+$ ]] || return 1
@@ -156,7 +160,20 @@ _dispatch_negative_cache_reason() {
 	[[ -f "$file" && ! -L "$file" ]] || return 1
 	IFS=$'\t' read -r stamp cached reason pr fingerprint <"$file" || return 1
 	[[ "$stamp" =~ ^[0-9]+$ && "$cached" == "$updated" ]] || return 1
-	case "$reason" in dedup_active_claim | dedup_active_claim_live_owner | dedup_active_claim_durable_launch)
+	if [[ "$reason" != terminal_blocker_circuit ]]; then
+		# Ownership hints: the snapshot must independently still show a claimed
+		# owner. No stale cache can suppress an available/unassigned candidate
+		# or permit a launch.
+		jq -e '(.assignees // [] | length) > 0 and
+			([.labels[]? | .name? // .] | any(. == "status:claimed" or . == "status:in-progress" or . == "status:in-review"))' <<<"$candidate" >/dev/null 2>&1 || return 1
+	fi
+	case "$reason" in
+	terminal_blocker_circuit)
+		# The circuit hold applies to unowned available issues by design. An
+		# unchanged updatedAt proves no edit, retry directive or new comment.
+		ttl="$_DISPATCH_TERMINAL_CIRCUIT_CACHE_TTL_SECONDS"
+		;;
+	dedup_active_claim | dedup_active_claim_live_owner | dedup_active_claim_durable_launch)
 		# Empty worker pools must retain the authoritative active-claim recheck.
 		[[ "${_DISPATCH_ACTIVE_WORKERS:-0}" != 0 ]] || return 1
 		;;
@@ -168,7 +185,7 @@ _dispatch_negative_cache_reason() {
 	*) return 1 ;;
 	esac
 	now=$(date +%s)
-	((now >= stamp && now - stamp < _DISPATCH_NEGATIVE_CACHE_TTL_SECONDS)) || return 1
+	((now >= stamp && now - stamp < ttl)) || return 1
 	printf '%s\n' "$reason"
 	return 0
 }
