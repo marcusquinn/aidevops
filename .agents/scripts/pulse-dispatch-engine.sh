@@ -652,6 +652,9 @@ dispatch_max() {
 	fi
 	export _DISPATCH_BENIGN_BLOCKS_FILE
 	_dispatch_recheck_zero_worker_active_claims "$active_workers"
+	# Snapshot-positive ownership is required before any cross-cycle skip.
+	_DISPATCH_ACTIVE_WORKERS="$active_workers"
+	export _DISPATCH_ACTIVE_WORKERS
 
 	# t3015: branch on dispatch path (max = parallel, floor = forced-serial).
 	# t3418/t3558: if the minimum worker floor is active, runtime launch
