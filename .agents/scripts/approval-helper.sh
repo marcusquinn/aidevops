@@ -88,6 +88,19 @@ readonly _APPROVAL_BATCH_FAILURE_SYSTEMIC="systemic-transport"
 readonly _APPROVAL_BATCH_FAILURE_RATE_LIMIT="shared-rate-limit"
 readonly _APPROVAL_BATCH_FAILURE_AUTH="shared-auth-failure"
 
+#aidevops:trust-boundary -- diagnostic only; a bundle mismatch cannot grant authority.
+_approval_warn_pinned_verifier() {
+	local verifier_dir="" active_dir="" verifier_bundle="" active_bundle=""
+	verifier_dir=$(cd -P "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd) || return 0
+	[[ "$verifier_dir" == */runtime-bundles/*/agents/scripts ]] || return 0
+	active_dir=$(cd -P "${_APPROVAL_HOME}/.aidevops/agents/scripts" 2>/dev/null && pwd) || return 0
+	[[ "$active_dir" == */runtime-bundles/*/agents/scripts && "$active_dir" != "$verifier_dir" ]] || return 0
+	verifier_bundle=${verifier_dir%/agents/scripts}
+	active_bundle=${active_dir%/agents/scripts}
+	printf 'APPROVAL_NOTE: verifier bundle %s is older than active bundle %s; re-run with ~/.aidevops/agents/scripts/approval-helper.sh before re-signing\n' "${verifier_bundle##*/}" "${active_bundle##*/}" >&2
+	return 0
+}
+
 _APPROVAL_GH_RATE_LIMIT_RESET=""
 _APPROVAL_GH_AUTH_FAILURE=""
 _APPROVAL_LABEL_SETS_ENSURED=""
@@ -1663,6 +1676,7 @@ _approval_classify_marked_comments() {
 # Legacy syntax (`verify N slug`) remains an issue verification request, but V1
 # signatures return LEGACY_APPROVAL and never authorize an external merge.
 cmd_verify() {
+	_approval_warn_pinned_verifier
 	local target_type="issue"
 	if [[ "${1:-}" == "issue" || "${1:-}" == "pr" ]]; then
 		target_type="$1"
