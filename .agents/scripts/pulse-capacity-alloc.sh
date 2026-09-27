@@ -258,15 +258,19 @@ calculate_max_workers() {
 	local free_mb
 	if [[ "$(uname)" == "Darwin" ]]; then
 		# macOS: use vm_stat for free + inactive (reclaimable) pages
-		local page_size="" free_pages="" inactive_pages=""
+		# Reclaimable = free + inactive + speculative + purgeable pages. The
+		# speculative/purgeable pools are file cache the kernel drops on demand;
+		# omitting them under-reported headroom on busy Macs.
+		local page_size="" vm_out="" reclaimable_pages=""
 		page_size=$(sysctl -n hw.pagesize 2>/dev/null || echo 16384)
-		free_pages=$(vm_stat 2>/dev/null | awk '/Pages free/ {gsub(/\./,"",$3); print $3}')
-		inactive_pages=$(vm_stat 2>/dev/null | awk '/Pages inactive/ {gsub(/\./,"",$3); print $3}')
+		vm_out=$(vm_stat 2>/dev/null) || vm_out=""
+		reclaimable_pages=$(printf '%s\n' "$vm_out" | awk '
+			/^Pages (free|inactive|speculative|purgeable):/ { gsub(/\./, "", $NF); sum += $NF }
+			END { printf "%d", sum }')
 		# Validate integers before arithmetic expansion
 		[[ "$page_size" =~ ^[0-9]+$ ]] || page_size=16384
-		[[ "$free_pages" =~ ^[0-9]+$ ]] || free_pages=0
-		[[ "$inactive_pages" =~ ^[0-9]+$ ]] || inactive_pages=0
-		free_mb=$(((free_pages + inactive_pages) * page_size / 1024 / 1024))
+		[[ "$reclaimable_pages" =~ ^[0-9]+$ ]] || reclaimable_pages=0
+		free_mb=$((reclaimable_pages * page_size / 1024 / 1024))
 	else
 		# Linux: use MemAvailable from /proc/meminfo
 		free_mb=$(awk '/MemAvailable/ {print int($2/1024)}' /proc/meminfo 2>/dev/null || echo 8192)

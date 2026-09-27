@@ -59,20 +59,35 @@ RAM_RESERVE_MB="${RAM_RESERVE_MB:-6144}"                                        
 # Formula: (total_ram_mb - reserve) / ram_per_worker, clamped to [4, 64].
 # This replaces the old static default of 8 which silently throttled capable machines (t1532).
 # t2950: ceiling raised 32→64; on a 64GB runner (64*1024-6144)/512=116 workers fit physically — old clamp left >70% headroom unused.
-MAX_WORKERS_CAP_FLOOR=4
+MAX_WORKERS_CAP_FLOOR=2
 MAX_WORKERS_CAP_CEILING=64                                                                           # t2950: raised from 32; modern 64GB+ runners support far more concurrency
+# GH#32663: auto cap = 50% of logical CPU cores, bounded by total RAM. Worker
+# CPU (opencode, git, tests) scales with cores; a fixed default of 8 left large
+# runners idle and stale per-machine overrides (e.g. 2) starved the fleet.
+# Config value 0 (the shipped default) selects this auto cap.
 _default_cap=8
+_cpu_cores=""
 if [[ "$(uname)" == "Darwin" ]]; then
 	_total_mb=$(sysctl -n hw.memsize 2>/dev/null | awk '{printf "%d", $1/1048576}')
+	_cpu_cores=$(sysctl -n hw.logicalcpu 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || true)
 elif [[ -f /proc/meminfo ]]; then
 	_total_mb=$(awk '/MemTotal/ {printf "%d", $2/1024}' /proc/meminfo 2>/dev/null)
+	_cpu_cores=$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || true)
 fi
-if [[ "${_total_mb:-0}" -gt 0 ]]; then
-	_default_cap=$(((_total_mb - RAM_RESERVE_MB) / RAM_PER_WORKER_MB))
-	[[ "$_default_cap" -lt "$MAX_WORKERS_CAP_FLOOR" ]] && _default_cap="$MAX_WORKERS_CAP_FLOOR"
-	[[ "$_default_cap" -gt "$MAX_WORKERS_CAP_CEILING" ]] && _default_cap="$MAX_WORKERS_CAP_CEILING"
+[[ "$_cpu_cores" =~ ^[1-9][0-9]*$ ]] || _cpu_cores=""
+if [[ -n "$_cpu_cores" ]]; then
+	_default_cap=$((_cpu_cores / 2))
 fi
-MAX_WORKERS_CAP="${MAX_WORKERS_CAP:-$(config_get "orchestration.max_workers_cap" "$_default_cap")}"     # Derived from total RAM; override via config or env
+if [[ "${_total_mb:-0}" =~ ^[0-9]+$ && "${_total_mb:-0}" -gt 0 ]]; then
+	_ram_cap=$(((_total_mb - RAM_RESERVE_MB) / RAM_PER_WORKER_MB))
+	[[ "$_ram_cap" -lt "$_default_cap" ]] && _default_cap="$_ram_cap"
+fi
+[[ "$_default_cap" -lt "$MAX_WORKERS_CAP_FLOOR" ]] && _default_cap="$MAX_WORKERS_CAP_FLOOR"
+[[ "$_default_cap" -gt "$MAX_WORKERS_CAP_CEILING" ]] && _default_cap="$MAX_WORKERS_CAP_CEILING"
+MAX_WORKERS_CAP="${MAX_WORKERS_CAP:-$(config_get "orchestration.max_workers_cap" "0")}" # 0/auto = 50% of cores bounded by RAM; override via config or env
+case "$MAX_WORKERS_CAP" in
+"" | 0 | auto) MAX_WORKERS_CAP="$_default_cap" ;;
+esac
 VAULT_DEVICE_HELPER="${VAULT_DEVICE_HELPER:-${SCRIPT_DIR}/vault-device-helper.sh}"                         # Non-secret Vault fleet status helper; schedulers may call can-dispatch for Vault-sensitive work
 VAULT_DEVICE_DISPATCH_PREFLIGHT="${VAULT_DEVICE_DISPATCH_PREFLIGHT:-0}"                                    # 0=disabled until task metadata requires Vault routing; 1=consult local heartbeat/trust state
 VAULT_DEVICE_DISPATCH_NEEDS_UNLOCKED="${VAULT_DEVICE_DISPATCH_NEEDS_UNLOCKED:-0}"                          # 1=Vault-sensitive work requires a fresh unlocked heartbeat before local dispatch
@@ -293,7 +308,7 @@ ORPHAN_INACTIVITY_AGE=$(_validate_int ORPHAN_INACTIVITY_AGE "$ORPHAN_INACTIVITY_
 ORPHAN_WORKTREE_GRACE_SECS=$(_validate_int ORPHAN_WORKTREE_GRACE_SECS "$ORPHAN_WORKTREE_GRACE_SECS" 1800 60)
 RAM_PER_WORKER_MB=$(_validate_int RAM_PER_WORKER_MB "$RAM_PER_WORKER_MB" 512 1)
 RAM_RESERVE_MB=$(_validate_int RAM_RESERVE_MB "$RAM_RESERVE_MB" 6144)
-MAX_WORKERS_CAP=$(_validate_int MAX_WORKERS_CAP "$MAX_WORKERS_CAP" "${_default_cap:-8}")
+MAX_WORKERS_CAP=$(_validate_int MAX_WORKERS_CAP "$MAX_WORKERS_CAP" "${_default_cap:-8}" 1)
 DAILY_PR_CAP=$(_validate_int DAILY_PR_CAP "$DAILY_PR_CAP" 5 1)
 PRODUCT_RESERVATION_PCT=$(_validate_int PRODUCT_RESERVATION_PCT "$PRODUCT_RESERVATION_PCT" 60 0)
 QUALITY_DEBT_CAP_PCT=$(_validate_int QUALITY_DEBT_CAP_PCT "$QUALITY_DEBT_CAP_PCT" 30 0)

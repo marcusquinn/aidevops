@@ -1855,6 +1855,94 @@ migrate_custom_model_routing_reasoning_defaults() {
 	return 0
 }
 
+# GH#32663: one-time reset of per-machine worker-capacity overrides. Pulse
+# efficiency fixes plus the new auto cap (50% of cores, bounded by RAM) make
+# old hand-tuned ceilings obsolete; stale low values (e.g. 2) were starving
+# runners. Removes the keys from the user config and the Pulse scheduler env
+# overrides, with backups, exactly once. Later explicit settings are honoured.
+_WORKER_CAPACITY_RESET_CONFIG_KEYS=(orchestration.max_workers_cap orchestration.min_worker_concurrency orchestration.provider_account_slot_multiplier)
+_WORKER_CAPACITY_RESET_ENV_KEYS="AIDEVOPS_MAX_WORKERS_CAP,MAX_WORKERS_CAP,AIDEVOPS_MIN_WORKER_CONCURRENCY,PULSE_PROVIDER_ACCOUNT_SLOT_MULTIPLIER,RAM_PER_WORKER_MB,RAM_RESERVE_MB"
+
+_migrate_worker_capacity_reset_config() {
+	local user_config="$1" backup_dir="$2" config_helper="$3"
+	local key="" present=""
+	[[ -f "$user_config" && ! -L "$user_config" ]] || return 0
+	[[ -x "$config_helper" ]] || {
+		print_warning "config-helper.sh unavailable; GH#32663 worker capacity reset will retry"
+		return 1
+	}
+	for key in "${_WORKER_CAPACITY_RESET_CONFIG_KEYS[@]}"; do
+		# Read the raw user override only (not the merged defaults).
+		# shellcheck disable=SC2016 # positional args expand inside the child shell
+		present=$(bash -c 'source "$1" >/dev/null 2>&1 && _jsonc_get_raw "$2" "$3"' _ \
+			"$config_helper" "$user_config" "$key" 2>/dev/null) || present=""
+		[[ -n "$present" ]] || continue
+		if [[ ! -f "$backup_dir/gh32663-config.jsonc" ]]; then
+			cp -p "$user_config" "$backup_dir/gh32663-config.jsonc" || return 1
+		fi
+		JSONC_USER="$user_config" bash "$config_helper" reset "$key" >/dev/null 2>&1 || return 1
+		print_info "Reset ${key} (was ${present}) to the auto default (GH#32663)"
+	done
+	return 0
+}
+
+_migrate_worker_capacity_reset_env_overrides() {
+	local override_file="$1" backup_dir="$2"
+	local keys_json="" temp_file=""
+	[[ -f "$override_file" && ! -L "$override_file" ]] || return 0
+	jq empty "$override_file" >/dev/null 2>&1 || return 0
+	keys_json=$(jq -cn --arg keys "$_WORKER_CAPACITY_RESET_ENV_KEYS" '$keys | split(",")') || return 1
+	jq -e --argjson keys "$keys_json" '
+		any(.[]? | objects; keys | any(. as $k | $keys | index($k)))
+	' "$override_file" >/dev/null 2>&1 || return 0
+	if [[ ! -f "$backup_dir/gh32663-plist-env-overrides.json" ]]; then
+		cp -p "$override_file" "$backup_dir/gh32663-plist-env-overrides.json" || return 1
+	fi
+	temp_file=$(mktemp "${override_file}.gh32663.XXXXXX") || return 1
+	if ! jq --argjson keys "$keys_json" '
+		(.[]? | objects) |= with_entries(select(.key as $k | ($keys | index($k)) | not))
+	' "$override_file" >"$temp_file"; then
+		rm -f "$temp_file"
+		return 1
+	fi
+	chmod 600 "$temp_file"
+	mv "$temp_file" "$override_file" || {
+		rm -f "$temp_file"
+		return 1
+	}
+	print_info "Removed worker-capacity env overrides from $(basename "$override_file") (GH#32663)"
+	return 0
+}
+
+migrate_worker_capacity_reset() {
+	local marker_dir="${HOME:+$HOME/.aidevops/cache/migrations}"
+	local marker_file="${marker_dir:+$marker_dir/gh32663-worker-capacity-reset}"
+	local backup_dir="${HOME:+$HOME/.aidevops/config-backups/migrations}"
+	local user_config="${HOME:+$HOME/.config/aidevops/config.jsonc}"
+	local override_file="${HOME:+$HOME/.config/aidevops/plist-env-overrides.json}"
+	local config_helper="${INSTALL_DIR:-.}/.agents/scripts/config-helper.sh"
+	local credentials_file="${HOME:+$HOME/.config/aidevops/credentials.sh}"
+
+	[[ -n "$marker_file" ]] || return 0
+	[[ -f "$marker_file" ]] && return 0
+	command -v jq >/dev/null 2>&1 || {
+		print_warning "jq unavailable; GH#32663 worker capacity reset will retry"
+		return 0
+	}
+	[[ -x "$config_helper" ]] || config_helper="$HOME/.aidevops/agents/scripts/config-helper.sh"
+	mkdir -p "$marker_dir" "$backup_dir" || return 0
+	_migrate_worker_capacity_reset_config "$user_config" "$backup_dir" "$config_helper" || return 0
+	_migrate_worker_capacity_reset_env_overrides "$override_file" "$backup_dir" || {
+		print_warning "Failed to update plist-env-overrides.json; GH#32663 worker capacity reset will retry"
+		return 0
+	}
+	if [[ -f "$credentials_file" ]] && grep -Eq '^[[:space:]]*(export[[:space:]]+)?(AIDEVOPS_MAX_WORKERS_CAP|MAX_WORKERS_CAP|AIDEVOPS_MIN_WORKER_CONCURRENCY)=' "$credentials_file" 2>/dev/null; then
+		print_warning "credentials.sh exports a worker-capacity override; remove it to use the auto cap (GH#32663)"
+	fi
+	date -u +%Y-%m-%dT%H:%M:%SZ >"$marker_file"
+	return 0
+}
+
 # Remove the obsolete settings.json model_routing section. Runtime routing uses
 # explicit tier labels and the canonical model-routing-table.json instead.
 migrate_obsolete_settings_model_routing() {
