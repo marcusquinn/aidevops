@@ -2,7 +2,9 @@
 // SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { Plugin } from "@opencode/plugin";
 
@@ -12,6 +14,7 @@ import v2Plugin, {
   applyV2PermissionEvaluation,
   createCompatibilityClient,
   defineAidevopsV2Adapter,
+  detectOpenCodeV2RuntimeVersion,
   OPENCODE_V2_CAPABILITIES,
   setupAidevopsV2,
   startEventLoop,
@@ -28,6 +31,27 @@ test("package exposes released V1 and V2 plugin entrypoints", () => {
   assert.equal(v2Plugin.id, "aidevops");
   assert.equal(typeof v2Plugin.setup, "function");
   assert.equal(Plugin.define(v2Plugin), v2Plugin);
+});
+
+test("V2 runtime version comes from the V2 CLI package, never the V1 install", () => {
+  const root = mkdtempSync(join(tmpdir(), "aidevops-v2-version-"));
+  try {
+    const cliDir = join(root, "runtime", "node_modules", "@opencode", "cli");
+    mkdirSync(join(cliDir, "bin"), { recursive: true });
+    writeFileSync(join(cliDir, "package.json"), JSON.stringify({ name: "@opencode/cli", version: "2.0.3" }));
+    const unrelated = join(root, "other", "bin");
+    mkdirSync(unrelated, { recursive: true });
+    writeFileSync(join(root, "other", "package.json"), JSON.stringify({ name: "node", version: "24.1.0" }));
+
+    assert.equal(detectOpenCodeV2RuntimeVersion({ execPath: join(cliDir, "bin", "opencode.exe"), env: {}, home: root }), "2.0.3");
+    assert.equal(
+      detectOpenCodeV2RuntimeVersion({ execPath: join(unrelated, "node"), env: { AIDEVOPS_OPENCODE_V2_ROOT: root }, home: "/missing" }),
+      "2.0.3",
+    );
+    assert.equal(detectOpenCodeV2RuntimeVersion({ execPath: join(unrelated, "node"), env: {}, home: "/missing" }), "");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("V2 directory loader resolves to the released V2 descriptor", async () => {
@@ -275,6 +299,8 @@ test("V2 MCP toggles reuse one transform and apply the latest override", async (
   await runtime.client.connect({ path: { name: "posthog" } });
   transforms[0](editor);
   assert.equal(values.get("posthog").disabled, false);
+  // On-demand servers keep V2 Code Mode (codemode defaults to true when unset).
+  assert.notEqual(values.get("posthog").codemode, false);
   await runtime.client.disconnect({ path: { name: "posthog" } });
   transforms[0](editor);
   assert.equal(values.get("posthog").disabled, true);

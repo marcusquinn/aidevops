@@ -328,6 +328,7 @@ _verify_deployed_core_plugin_freshness() {
 		"plugins/opencode-aidevops/v2.mjs"
 		"plugins/opencode-aidevops/v2-plugin/index.mjs"
 		"plugins/opencode-aidevops/v2-plugin/package.json"
+		"plugins/opencode-aidevops/v2-plugin/tui.mjs"
 		"scripts/canonical_branch_policy.py"
 		"scripts/canonical-write-policy-helper.py"
 	)

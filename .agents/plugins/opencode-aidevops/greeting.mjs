@@ -16,6 +16,7 @@
 //
 // Caching: raw update-check output is written to
 //   ~/.aidevops/cache/session-greeting-opencode.txt
+// (session-greeting-opencode-v2.txt under AIDEVOPS_OPENCODE_PROFILE=v2)
 // so non-Bash agents can read it without re-running the script (t2724 phase 2
 // template change points agents at this file).
 //
@@ -88,8 +89,21 @@ export {
 const execAsync = promisify(exec);
 
 const CACHE_DIR = join(homedir(), ".aidevops", "cache");
-const CACHE_BASENAME = "session-greeting-opencode.txt";
-const LOCK_BASENAME = "session-greeting-refresh.lock";
+
+// OpenCode V1 and V2 run side by side with different runtime versions. A
+// shared cache made V2 sessions greet with the V1 OpenCode version, so each
+// runtime profile owns its own cache and refresh lock.
+function isOpenCodeV2Profile(env = process.env) {
+  return env.AIDEVOPS_OPENCODE_PROFILE === "v2";
+}
+
+export function greetingCacheBasename(env = process.env) {
+  return isOpenCodeV2Profile(env) ? "session-greeting-opencode-v2.txt" : "session-greeting-opencode.txt";
+}
+
+export function greetingLockBasename(env = process.env) {
+  return isOpenCodeV2Profile(env) ? "session-greeting-refresh-v2.lock" : "session-greeting-refresh.lock";
+}
 // Comprehensive checks run at most once per 15-minute window. The subprocess
 // times out after 15 seconds, so a lock older than 30 seconds is safe to reap
 // after an abrupt plugin-process exit.
@@ -258,10 +272,11 @@ export function createGreetingHandler({
   now = Date.now,
   initializedAtMs = now(),
   isHeadless = () => false,
+  env = process.env,
 }) {
   let fired = false;
-  const cacheFile = join(cacheDir, CACHE_BASENAME);
-  const lockDir = join(cacheDir, LOCK_BASENAME);
+  const cacheFile = join(cacheDir, greetingCacheBasename(env));
+  const lockDir = join(cacheDir, greetingLockBasename(env));
 
   return async ({ event }) => {
     if (fired) return;
