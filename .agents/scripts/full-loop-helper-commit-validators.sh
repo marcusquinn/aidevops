@@ -229,6 +229,23 @@ _run_scoped_node_checks() {
 		package_json="$scope/package.json"
 		scope_label="$scope"
 	fi
+	# A linked worktree has no ignored dependencies. Only npm lockfile scopes can
+	# be safely bootstrapped with npm ci; other managers retain their own policy.
+	if [[ "$pm" == "npm" && -f "$scope/package-lock.json" ]] &&
+		{ [[ ! -d "$scope/node_modules" || ! -f "$scope/node_modules/.package-lock.json" ]] ||
+			[[ "$scope/package-lock.json" -nt "$scope/node_modules/.package-lock.json" ]]; }; then
+		print_info "[validators] installing locked dependencies for ${scope_label}"
+		local install_rc=0
+		(
+			cd "$scope" || exit 1
+			timeout_sec "$t" npm ci --ignore-scripts --no-audit --no-fund
+		) >"${snapshot_dir}/install.log" 2>&1 || install_rc=$?
+		if [[ "$install_rc" -ne 0 ]]; then
+			print_error "[validators] ENVIRONMENT FAILURE (exit ${install_rc}): npm ci (${scope_label})"
+			tail -20 "${snapshot_dir}/install.log" >&2
+			return 1
+		fi
+	fi
 	local phase="" script_name="" check_count=0 command_rc=0 check_index=0
 	for phase in format lint typecheck test; do
 		script_name=$(_validator_select_script "$package_json" "$phase") || continue
