@@ -220,11 +220,26 @@ cmd_contributor() {
 		return 1
 	}
 
-	local result=""
-	result=$(REPOS_JSON="$repos_file" "$CONTRIBUTOR_HELPER" file --json "$signals_file" "$slug") || {
+	local result="" contributor_rc=0 target_deferral=""
+	result=$(REPOS_JSON="$repos_file" "$CONTRIBUTOR_HELPER" file --json "$signals_file" "$slug") || contributor_rc=$?
+	if [[ "$contributor_rc" -ne 0 ]]; then
+		# A target-level policy deferral (private, unconfirmed-public or
+		# unregistered contributor target) is stable configuration, not a
+		# transient publication failure. Skip only this target so the daily
+		# miner run succeeds; failing here made the Pulse routine retry the
+		# full multi-minute mining pass every 15 minutes, ahead of dispatch.
+		target_deferral=$(printf '%s' "$result" | jq -r '
+			select(.status == "deferred")
+			| .error_class // ""
+			| select(. == "public_target_unconfirmed" or . == "unknown_or_private_role" or . == "contributor_path_unavailable")
+		' 2>/dev/null | tail -n 1) || target_deferral=""
+		if [[ -n "$target_deferral" ]]; then
+			_sma_emit_result deferred 0 '[]' "$target_deferral"
+			return 0
+		fi
 		_sma_emit_result deferred 0 '[]' "contributor_publication_failed"
 		return 1
-	}
+	fi
 	if ! printf '%s' "$result" | jq -e '.status == "healthy"' >/dev/null 2>&1; then
 		_sma_emit_result deferred 0 '[]' "contributor_publication_unconfirmed"
 		return 1

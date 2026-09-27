@@ -1012,6 +1012,7 @@ has a reusable CI helper.
 | Claim/release loop | Comment history on issue | Stale claims, guard rejections — recreate issue with clean context |
 | Watchdog doesn't fire | `ps aux \| grep watchdog` | Watchdog process died with subshell |
 | `CLAIM_RELEASED reason=launch_recovery:no_worker_process` on multiple issues | `grep "no active worker process" ~/.aidevops/logs/pulse-wrapper.log` | Cluster failure on one runner — retries at same tier (no cascade escalation, t2815); check system load |
+| Few workers despite a full queue | `pulse-stage-timings.log` stages at `600`/exit `124`; `dispatch-stages.tsv` per-stage averages; `rg -o "DISPATCH_BLOCK_REASON reason=[a-z_]+" pulse.log \| sort \| uniq -c`; `pulse-watchdog.log` "pulse dead for"; `auto-update.log` "Requesting Pulse restart" count | Slow preflight or routine stage ahead of dispatch, costly late rejections, or redeploys killing in-flight cycles (GH#32633) |
 
 ## Proving Workers Are Doing Real Work
 
