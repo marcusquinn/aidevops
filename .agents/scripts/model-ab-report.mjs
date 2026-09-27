@@ -41,15 +41,15 @@ export function snapshotAssignments(experiment, directory, assignedArm) {
 
 // Observed models outside the arm's routes: availability fallbacks to another
 // provider, legacy-arm tier escalations, or unexplained crossovers.
-function offArmModels(arm, outcome) {
-  if (!Array.isArray(arm.models)) return [];
-  return (outcome.models || []).filter((model) => !arm.models.includes(model));
+function withOffArmModels(arm, outcome) {
+  const known = Array.isArray(arm.models) ? arm.models : null;
+  const offArm = known ? (outcome.models || []).filter((model) => !known.includes(model)) : [];
+  if (offArm.length > 0) arm.off_arm_issues += 1;
+  return { ...outcome, off_arm_models: offArm };
 }
 
 function accumulate(arm, issue, outcome) {
-  const offArm = offArmModels(arm, outcome);
-  arm.observations.push({ issue, ...outcome, off_arm_models: offArm });
-  if (offArm.length > 0) arm.off_arm_issues += 1;
+  arm.observations.push({ issue, ...outcome });
   if (outcome.delivery === "verified") arm.verified += 1;
   else if (outcome.delivery === "pending") arm.pending += 1;
   else arm.unknown += 1;
@@ -72,8 +72,7 @@ export function aggregateObserved(assignments, observe = observeIssue) {
       incomplete_evidence: 0, off_arm_issues: 0, observations: [] });
     for (const { issue, assigned_at: assignedAt } of arm.assignments
       || arm.issues.map((number) => ({ issue: number, assigned_at: null }))) {
-      const outcome = observe(assignments.repo, issue, assignedAt);
-      accumulate(arm, issue, outcome);
+      accumulate(arm, issue, withOffArmModels(arm, observe(assignments.repo, issue, assignedAt)));
     }
   }
   assignments.result = "observational: no automatic winner; compare verified delivery per assigned issue, escalation, fallbacks, retries, off-arm routes and parent acceptance only when coverage and cohorts support it";
