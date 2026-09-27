@@ -611,6 +611,27 @@ if [[ -f "$COUNTER_FILE" ]]; then
 fi
 
 # =============================================================================
+# Part 4b — terminal PR labels are transitioned on every close event (GH#32627)
+# =============================================================================
+WORKFLOW_FILE="$(cd "${TEST_SCRIPTS_DIR}/../.." && pwd)/.github/workflows/issue-sync-reusable.yml"
+if [[ -f "$WORKFLOW_FILE" ]]; then
+	pr_terminal_block=$(awk '
+		/^  sync-pr-terminal-labels:/ { in_block=1 }
+		in_block { print }
+	' "$WORKFLOW_FILE")
+	if [[ "$pr_terminal_block" == *"github.event.action == 'closed'"* &&
+		"$pr_terminal_block" == *'--add-label "status:done"'* &&
+		"$pr_terminal_block" == *'status:*'* &&
+		"$pr_terminal_block" == *'auto-dispatch'* &&
+		"$pr_terminal_block" == *'needs-maintainer-permissions'* &&
+		"$pr_terminal_block" == *'if gh '* ]]; then
+		print_result "workflow transitions terminal PR labels on close without failing hygiene" 0
+	else
+		print_result "workflow transitions terminal PR labels on close without failing hygiene" 1
+	fi
+fi
+
+# =============================================================================
 # Part 4 — issue-sync-reusable.yml workflow atomicity guard (t2137)
 # =============================================================================
 # The bash helper path (_mark_issue_done) and the GitHub Actions workflow
