@@ -88,11 +88,15 @@ test_registered_parent_worktree_moves_to_central_base() {
 
 	moved=$(_pc_relocate_registered_worktrees "$AIDEVOPS_REPOS_JSON") || rc=1
 
-	[[ "$moved" == "1" ]] || rc=1
-	[[ ! -d "$old_wt" ]] || rc=1
-	[[ -d "$new_wt" ]] || rc=1
-	git -C "$repo_dir" worktree list --porcelain | grep -q "worktree $new_wt" 2>/dev/null || rc=1
-	grep -q 'worktree-removed.*centralized-worktree.*mode=moved' "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
+	if grep -q 'cwd-visibility-degraded.*mode=recoverable-required' "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null; then
+		# A shared runner can hide same-UID /proc cwd entries. The removal
+		# guard must fail closed rather than relocating without visibility.
+		[[ "$moved" == "0" && -d "$old_wt" && ! -d "$new_wt" ]] || rc=1
+	else
+		[[ "$moved" == "1" && ! -d "$old_wt" && -d "$new_wt" ]] || rc=1
+		git -C "$repo_dir" worktree list --porcelain | grep -q "worktree $new_wt" 2>/dev/null || rc=1
+		grep -q 'worktree-removed.*centralized-worktree.*mode=moved' "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
+	fi
 	print_result "registered parent worktree moves to central base" "$rc" \
 		"moved=$moved log=$(cat "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null)"
 	return 0
@@ -126,8 +130,40 @@ test_current_worktree_is_not_moved() {
 	return 0
 }
 
+test_central_unregistered_inventory() {
+	teardown
+	setup_subject || return 1
+	local repo_dir="${TEST_ROOT}/Git/contribution"
+	local wt="${AIDEVOPS_WORKTREE_BASE_DIR}/contribution-feature"
+	local orphan="${AIDEVOPS_WORKTREE_BASE_DIR}/missing-canonical"
+	local rc=0 removed=""
+	mkdir -p "$repo_dir" "$AIDEVOPS_WORKTREE_BASE_DIR" "$orphan" || return 1
+	git -C "$repo_dir" init -q -b main || return 1
+	git -C "$repo_dir" config user.email test@example.invalid
+	git -C "$repo_dir" config user.name 'Aidevops Test'
+	git -C "$repo_dir" commit -q --allow-empty -m init || return 1
+	git -C "$repo_dir" worktree add -q -b feature "$wt" main || return 1
+	printf 'gitdir: %s/.git/worktrees/missing-canonical\n' "${TEST_ROOT}/Git/removed" >"$orphan/.git"
+	printf '{"initialized_repos":[],"worktree_base_dir":"%s"}\n' "$AIDEVOPS_WORKTREE_BASE_DIR" >"$AIDEVOPS_REPOS_JSON"
+	_pc_cleanup_merged_repo() { printf '1\n'; return 0; }
+	removed=$(_pc_cleanup_central_unregistered) || rc=1
+	[[ "$removed" == 1 ]] || rc=1
+	grep -q 'central-unregistered.*evaluating' "$LOGFILE" || rc=1
+	grep -q 'skip=orphaned-canonical' "$LOGFILE" || rc=1
+	# A registered canonical must not be revisited by the extra pass.
+	printf '{"initialized_repos":[{"path":"%s"}]}\n' "$repo_dir" >"$AIDEVOPS_REPOS_JSON"
+	removed=$(_pc_cleanup_central_unregistered) || rc=1
+	[[ "$removed" == 0 ]] || rc=1
+	_pc_log_invalid_repo_path_once 'invalid/entry'
+	_pc_log_invalid_repo_path_once 'invalid/entry'
+	[[ "$(grep -c 'invalid repo path configured' "$LOGFILE")" == 1 ]] || rc=1
+	print_result "central unregistered evaluation, orphan skip, and daily log" "$rc"
+	return 0
+}
+
 test_registered_parent_worktree_moves_to_central_base
 test_current_worktree_is_not_moved
+test_central_unregistered_inventory
 
 printf '\n'
 printf 'Results: %s/%s passed, %s failed.\n' "$((TESTS_RUN - TESTS_FAILED))" "$TESTS_RUN" "$TESTS_FAILED"
