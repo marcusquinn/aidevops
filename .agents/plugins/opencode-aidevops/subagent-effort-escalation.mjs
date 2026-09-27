@@ -172,6 +172,15 @@ class InteractiveSubagentEscalator {
     });
   }
 
+  appendObjectiveReceiptReminder(output, input, identity, objective) {
+    if (!identity.childID || this.context.policies.get(identity.childID)?.pinned) return;
+    const receipt = [
+      "[AIDEvOps parent receipt]",
+      `aidevops_objective_receipt: parent_session_id=${String(input?.sessionID || "")} objective_id=${objective.objectiveID} run_id=${objective.runID} contribution_id=opencode-child:${identity.childID}; record an explicit outcome after review.`,
+    ].join("\n");
+    output.output = [String(output.output || "").trim(), receipt].filter(Boolean).join("\n\n");
+  }
+
   prepareRoute(policy, tier, model) {
     policy.effort = tier;
     policy.attempt = Math.max(1, Number(policy.attempt) || 1) + 1;
@@ -311,6 +320,7 @@ class InteractiveSubagentEscalator {
           runID: objective.runID,
         },
       };
+      this.appendObjectiveReceiptReminder(output, input, identity, objective);
     }
     if (this.enabled() && !identity.childID) {
       output.metadata = {
