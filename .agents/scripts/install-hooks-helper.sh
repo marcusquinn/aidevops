@@ -12,6 +12,7 @@
 # Usage:
 #   install-hooks-helper.sh install              # Install hooks (default)
 #   install-hooks-helper.sh install --force-install  # Install, bypass validator preflight
+#   install-hooks-helper.sh install-pre-commit   # Only the current repo's missing pre-commit hook
 #   install-hooks-helper.sh uninstall            # Remove hooks
 #   install-hooks-helper.sh status               # Check installation status
 #   install-hooks-helper.sh test                 # Run hook self-test
@@ -257,10 +258,15 @@ install_pre_commit_hook() {
 		fi
 	fi
 
-	# Write a dispatcher that prefers the in-repo copy (so script updates
-	# propagate without re-running this installer) and falls back to the
-	# deployed copy when no repo checkout is available.
-	cat >"$hook_path" <<HOOKEOF
+	_pre_commit_dispatcher >"$hook_path" || return 1
+	chmod +x "$hook_path"
+	print_success "installed pre-commit quality hook at $hook_path"
+	return 0
+}
+
+# Prefer the repository validator, falling back to the stable deployed copy.
+_pre_commit_dispatcher() {
+	cat <<HOOKEOF || return 1
 #!/usr/bin/env bash
 $PRE_COMMIT_MARKER
 # Managed by install-hooks-helper.sh — do not edit.
@@ -285,8 +291,71 @@ else
 	printf '[pre-commit-hook][WARN] hook not found — allowing commit\n' >&2
 fi
 HOOKEOF
-	chmod +x "$hook_path"
-	print_success "installed pre-commit quality hook at $hook_path"
+	return 0
+}
+
+# Missing-hook repair only: never refresh, replace, or chain an existing hook.
+# Linked worktrees intentionally share this hook through their common Git dir.
+install_pre_commit_only() {
+	if [[ "$#" -ne 0 ]]; then
+		print_error "install-pre-commit accepts no options (including --force-install)"
+		return 1
+	fi
+	local repo_root common_dir hooks_dir hook_path
+	repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || {
+		print_error "install-pre-commit requires a Git working tree"
+		return 1
+	}
+	common_dir=$(git rev-parse --git-common-dir) || return 1
+	hooks_dir="$common_dir/hooks"
+	hook_path="$hooks_dir/pre-commit"
+	local config_status=0
+	git config --get core.hooksPath >/dev/null 2>&1 || config_status=$?
+	if [[ "$config_status" -ne 1 ]]; then
+		print_error "Cannot use default hooks: core.hooksPath is configured or its lookup failed"
+		return 1
+	fi
+	if [[ -L "$hooks_dir" || (-e "$hooks_dir" && ! -d "$hooks_dir") || -L "$hook_path" ]]; then
+		print_error "Refusing a redirected or non-directory hooks location or symlinked pre-commit"
+		return 1
+	fi
+	if [[ -e "$hook_path" ]]; then
+		if [[ -f "$hook_path" && -x "$hook_path" ]] && grep -Fqx "$PRE_COMMIT_MARKER" "$hook_path"; then
+			print_info "Pre-commit quality hook already present — leaving it unchanged"
+			return 0
+		fi
+		print_error "Existing pre-commit hook requires manual review — leaving it unchanged"
+		return 1
+	fi
+
+	# Validate the hook the dispatcher will actually execute, not the helper's
+	# adjacent source (which may be a different framework checkout/version).
+	local source_hook="$repo_root/.agents/scripts/pre-commit-hook.sh"
+	if [[ ! -f "$source_hook" ]]; then
+		source_hook="$PRE_COMMIT_DEPLOYED"
+	fi
+	if [[ ! -f "$source_hook" || ! -x "$source_hook" ]]; then
+		print_error "No executable repository or deployed pre-commit validator is available"
+		return 1
+	fi
+	_dry_run_validators "$source_hook" false "$source_hook" || return 1
+	if ! HOOK_MODE=pre-commit "$source_hook"; then
+		print_error "Pre-commit runtime check failed — no hook installed"
+		return 1
+	fi
+	# Recheck after preflight rather than overwriting a concurrently added hook.
+	if [[ -e "$hook_path" || -L "$hook_path" || -L "$hooks_dir" ]]; then
+		print_error "Hook location changed during preflight — no hook installed"
+		return 1
+	fi
+	mkdir -p "$hooks_dir" || return 1
+	# Exclusive creation also protects against a file appearing after the recheck.
+	if ! (set -o noclobber; _pre_commit_dispatcher >"$hook_path"); then
+		print_error "Cannot create pre-commit without overwriting existing state"
+		return 1
+	fi
+	chmod +x "$hook_path" || return 1
+	print_success "Installed only the repository pre-commit quality hook"
 	return 0
 }
 
@@ -479,11 +548,11 @@ _dry_run_validators() {
 	print_info "Running pre-install validator dry-run against HEAD..."
 
 	# Find the pre-commit-hook.sh source
-	local pch_source
-	pch_source=$(_find_pre_commit_hook) || {
+	local pch_source="${3:-}"
+	if [[ -z "$pch_source" ]] && ! pch_source=$(_find_pre_commit_hook); then
 		print_warning "pre-commit-hook.sh not found — skipping validator preflight"
 		return 0
-	}
+	fi
 
 	# Enumerate validator functions from the hook source
 	local validators=()
@@ -520,17 +589,19 @@ _dry_run_validators() {
 			# File-arg validator: pass tracked shell files
 			if [[ ${#shell_files[@]} -gt 0 ]]; then
 				(
-					# Source everything except the final main "$@" call
+					# Keep dependencies relative to the selected validator source.
+					SCRIPT_DIR="$(dirname "$pch_source")"
 					# shellcheck disable=SC1090
-					eval "$(sed '$ { /^main "\$@"$/d; }' "$pch_source")"
+					eval "$(sed '/^SCRIPT_DIR=/d; $ { /^main "\$@"$/d; }' "$pch_source")"
 					"$validator" "${shell_files[@]}"
 				) >/dev/null 2>&1 || exit_code=$?
 			fi
 		else
 			# No-arg validator: call directly (nothing staged → trivial pass)
 			(
+				SCRIPT_DIR="$(dirname "$pch_source")"
 				# shellcheck disable=SC1090
-				eval "$(sed '$ { /^main "\$@"$/d; }' "$pch_source")"
+				eval "$(sed '/^SCRIPT_DIR=/d; $ { /^main "\$@"$/d; }' "$pch_source")"
 				"$validator"
 			) >/dev/null 2>&1 || exit_code=$?
 		fi
@@ -1566,12 +1637,17 @@ show_help() {
 	echo "Commands:"
 	echo "  install               Install safety hooks (default)"
 	echo "  install --force-install  Bypass validator preflight check"
+	echo "  install-pre-commit    Preflight and install only a missing repository pre-commit hook"
 	echo "  uninstall             Remove safety hooks"
 	echo "  status                Check installation status"
 	echo "  test                  Run hook self-test"
 	echo "  help                  Show this help"
 	echo ""
-	echo "Installs to:"
+	echo "install-pre-commit leaves pre-push, user settings, and existing hooks unchanged."
+	echo "It uses shared Git hooks for linked worktrees and refuses core.hooksPath overrides."
+	echo "It requires an existing executable repository/deployed validator; no force option."
+	echo ""
+	echo "Full install writes to:"
 	echo "  ~/.aidevops/hooks/git_safety_guard.py"
 	echo "  ~/.claude/settings.json (PreToolUse hook config)"
 	echo "  .git/hooks/pre-push (gh-wrapper-guard t2113, quality-validation t2207)"
@@ -1584,6 +1660,7 @@ cmd="${1:-install}"
 shift || true
 case "$cmd" in
 install) install_hook "$@" ;;
+install-pre-commit) install_pre_commit_only "$@" ;;
 uninstall) uninstall_hook ;;
 status) check_status ;;
 test) test_hook ;;
