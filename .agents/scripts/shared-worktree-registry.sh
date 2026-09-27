@@ -1010,6 +1010,40 @@ worktree_has_exact_owner_contract() {
 	return 0
 }
 
+# GH#32528: Return success when the same live owner generation (PID, process
+# start and session) registered a different worktree after the given UTC
+# timestamp. Interactive runtimes run full-loops in sequence, so a newer claim
+# by the same session proves an older post-merge worktree is no longer its
+# working directory. Callers must not pass generic shared session names.
+# Arguments: $1 worktree path, $2 owner PID, $3 owner session, $4 UTC ISO time
+worktree_owner_session_has_newer_claim() {
+	local wt_path="$1"
+	local owner_pid="$2"
+	local owner_session="$3"
+	local since_utc="$4"
+	local process_start=""
+	local newer=""
+
+	[[ "$owner_pid" =~ ^[0-9]+$ && -n "$owner_session" ]] || return 1
+	[[ "$since_utc" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || return 1
+	process_start=$(_wt_process_start_token_for_pid "$owner_pid") || return 1
+	command -v sqlite3 >/dev/null 2>&1 || return 1
+	[[ -f "$WORKTREE_REGISTRY_DB" ]] || return 1
+	wt_path=$(_wt_registry_lookup_path "$wt_path") || return 1
+	newer=$(_wt_sqlite3 "$WORKTREE_REGISTRY_DB" "
+		SELECT 1
+		FROM worktree_owners
+		WHERE worktree_path != '$(_wt_sql_escape "$wt_path")'
+		  AND owner_pid = ${owner_pid}
+		  AND owner_session = '$(_wt_sql_escape "$owner_session")'
+		  AND COALESCE(owner_process_start, '') = '$(_wt_sql_escape "$process_start")'
+		  AND created_at > '$(_wt_sql_escape "$since_utc")'
+		LIMIT 1;
+	" 2>/dev/null) || return 1
+	[[ "$newer" == "1" ]] || return 1
+	return 0
+}
+
 # Read the complete owner generation in one registry query.
 # Arguments:
 #   $1 - worktree path

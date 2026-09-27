@@ -121,6 +121,45 @@ _clean_legacy_marker_matches_process_generation() {
 	return 1
 }
 
+# GH#32528: Decide whether a live deferred owner's post-merge lease has expired
+# because it aged out or its session registered a newer worktree. On expiry,
+# release only the exact post-merge registry contract written by
+# full-loop-helper.sh merge; any other live registry owner still blocks.
+# Returns 0 when expired, 1 when the owner keeps the worktree.
+_clean_deferred_owner_lease_expired() {
+	local wt_path="$1"
+	local receipt_path="$2"
+	local owner_record=""
+	local owner_pid=""
+	local owner_session=""
+	local deferred_at=""
+	local reason=""
+
+	owner_record=$(jq -r '[(.owner.pid // "" | tostring), (.owner.session // ""), (.created_at // .updated_at // "")] | @tsv' \
+		"$receipt_path" 2>/dev/null) || return 1
+	IFS=$'\t' read -r owner_pid owner_session deferred_at <<<"$owner_record"
+	[[ "$owner_pid" =~ ^[0-9]+$ ]] || return 1
+
+	if declare -F full_loop_cleanup_owner_lease_aged >/dev/null 2>&1 &&
+		full_loop_cleanup_owner_lease_aged "$receipt_path"; then
+		reason="lease-aged"
+	elif [[ -n "$owner_session" && "$owner_session" != "${_FULL_LOOP_OWNER_SESSION_FALLBACK:-full-loop-lifecycle}" ]] &&
+		declare -F worktree_owner_session_has_newer_claim >/dev/null 2>&1 &&
+		worktree_owner_session_has_newer_claim "$wt_path" "$owner_pid" "$owner_session" "$deferred_at"; then
+		reason="session-moved-on"
+	else
+		return 1
+	fi
+
+	if [[ -n "$owner_session" ]] && declare -F unregister_worktree_if_owner_contract >/dev/null 2>&1; then
+		unregister_worktree_if_owner_contract "$wt_path" "$owner_pid" "$owner_session" \
+			"post-merge-cleanup" >/dev/null 2>&1 || true
+	fi
+	printf '[worktree-clean] deferred owner lease expired (%s): %s owner_pid=%s\n' \
+		"$reason" "$wt_path" "$owner_pid" >&2
+	return 0
+}
+
 _clean_deferred_parent_alive() {
 	local wt_path="$1"
 	local marker_path="${wt_path}/${_WT_CLEAN_DEFERRED_MARKER}"
@@ -134,7 +173,9 @@ _clean_deferred_parent_alive() {
 		_WT_CLEAN_DEFERRED_RECEIPT="$receipt_path"
 		if full_loop_cleanup_owner_alive "$receipt_path"; then
 			_WT_CLEAN_DEFERRED_OWNER_PID="${_FULL_LOOP_CLEANUP_OWNER_PID:-}"
-			return 0
+			_clean_deferred_owner_lease_expired "$wt_path" "$receipt_path" || return 0
+			rm -f "$marker_path" 2>/dev/null || true
+			return 2
 		fi
 		_WT_CLEAN_DEFERRED_OWNER_PID="${_FULL_LOOP_CLEANUP_OWNER_PID:-}"
 		rm -f "$marker_path" 2>/dev/null || true
