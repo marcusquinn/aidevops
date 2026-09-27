@@ -350,6 +350,7 @@ _full_loop_verify_pr_readiness() {
 	local pr_json=""
 	local verified_head=""
 	local review_decision=""
+	local readiness_failures=""
 
 	_full_loop_read_pr_readiness "$pr_number" "$repo" || return 1
 	pr_json="$FULL_LOOP_PR_READINESS_JSON"
@@ -360,14 +361,18 @@ _full_loop_verify_pr_readiness() {
 		pr_json="$FULL_LOOP_RECONCILED_PR_JSON"
 	fi
 
-	if ! printf '%s' "$pr_json" | jq -e '
+	readiness_failures=$(printf '%s' "$pr_json" | jq -r --arg pr "$pr_number" --arg repo "$repo" '
 		def up(v): (v // "" | ascii_upcase);
-		(.state == "OPEN")
-		and (.isDraft != true)
-		and (up(.reviewDecision) != "CHANGES_REQUESTED")
-		and ((.headRefOid // "") != "")
-	' >/dev/null; then
-		print_error "PR #${pr_number} is not remotely verified: require OPEN, non-draft, no changes requested, and a stable head"
+		[
+			if .state != "OPEN" then "PR #\($pr) is not open" else empty end,
+			if .isDraft == true then "PR #\($pr) is a draft; mark it ready with: gh pr ready \($pr) --repo \($repo)" else empty end,
+			if up(.reviewDecision) == "CHANGES_REQUESTED" then "PR #\($pr) has changes requested" else empty end,
+			if (.headRefOid // "") == "" then "PR #\($pr) has no stable head" else empty end
+		][]') || return 1
+	if [[ -n "$readiness_failures" ]]; then
+		while IFS= read -r readiness_failure; do
+			print_error "$readiness_failure"
+		done <<<"$readiness_failures"
 		return 1
 	fi
 	verified_head=$(printf '%s' "$pr_json" | jq -r '.headRefOid // empty')
@@ -490,6 +495,8 @@ cmd_pre_merge_gate() {
 	#aidevops:trust-boundary GH#17671/GH#28622 -- resolve every authority target
 	# from the final live PR snapshot. This diagnostic never grants authority; the
 	# merge transport repeats the same evaluation immediately before its write.
+	declare -p FULL_LOOP_EXTERNAL_AUTHORITY_APPROVAL_TARGETS >/dev/null 2>&1 ||
+		FULL_LOOP_EXTERNAL_AUTHORITY_APPROVAL_TARGETS=()
 	if ! _merge_collect_external_authority_gaps "$pr_number" "$repo"; then
 		FULL_LOOP_PRE_MERGE_BLOCKER_KIND="external-authority"
 		FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL="unable to verify external/fork authority"
@@ -506,7 +513,13 @@ cmd_pre_merge_gate() {
 		return 1
 	fi
 
-	print_success "External/fork authority preflight: no approval required for PR #${pr_number}"
+	#aidevops:trust-boundary -- distinguish absent authority targets from verified
+	# targets without changing the fail-closed authority evaluation above.
+	if [[ "${#FULL_LOOP_EXTERNAL_AUTHORITY_APPROVAL_TARGETS[@]}" -gt 0 ]]; then
+		print_success "External/fork authority preflight: verified for ${FULL_LOOP_EXTERNAL_AUTHORITY_APPROVAL_TARGETS[*]} on PR #${pr_number}"
+	else
+		print_success "External/fork authority preflight: no external authority targets for PR #${pr_number}"
+	fi
 	return 0
 }
 

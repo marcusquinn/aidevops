@@ -30,6 +30,7 @@ _FULL_LOOP_MERGE_LIB_LOADED=1
 FULL_LOOP_MERGE_SUBJECT_FLAG="--subject"
 FULL_LOOP_MERGE_BODY_FILE_FLAG="--body-file"
 FULL_LOOP_EXTERNAL_AUTHORITY_TARGETS=()
+FULL_LOOP_EXTERNAL_AUTHORITY_APPROVAL_TARGETS=()
 
 _flm_gh_read() {
 	local rc=0
@@ -468,9 +469,11 @@ _merge_collect_linked_issue_authority_gaps() {
 			print_error "Merge blocked: unable to verify maintainer-review labels on issue #${issue_number}"
 			return 1
 		fi
-		if [[ "$require_crypto" -eq 1 ]] &&
-			! _merge_target_crypto_approved issue "$issue_number" "$repo"; then
-			FULL_LOOP_EXTERNAL_AUTHORITY_TARGETS+=("issue:${issue_number}")
+		if [[ "$require_crypto" -eq 1 ]]; then
+			FULL_LOOP_EXTERNAL_AUTHORITY_APPROVAL_TARGETS+=("issue:${issue_number}")
+			if ! _merge_target_crypto_approved issue "$issue_number" "$repo"; then
+				FULL_LOOP_EXTERNAL_AUTHORITY_TARGETS+=("issue:${issue_number}")
+			fi
 		fi
 	done <<<"$issue_numbers"
 	return 0
@@ -485,6 +488,7 @@ _merge_collect_external_authority_gaps() {
 	local author_rc=0 treat_as_external=0 trusted_dependabot=0 trusted_issue_sync=0
 
 	FULL_LOOP_EXTERNAL_AUTHORITY_TARGETS=()
+	FULL_LOOP_EXTERNAL_AUTHORITY_APPROVAL_TARGETS=()
 	if ! pr_json=$(gh pr view "$pr_number" --repo "$repo" \
 		--json author,labels,isCrossRepository,headRefOid,closingIssuesReferences,body 2>/dev/null); then
 		print_error "Merge blocked: unable to verify PR #${pr_number} authority metadata"
@@ -555,6 +559,7 @@ _merge_collect_external_authority_gaps() {
 		print_error "Merge blocked: external/fork PR #${pr_number} has no linked issue"
 		return 1
 	fi
+	FULL_LOOP_EXTERNAL_AUTHORITY_APPROVAL_TARGETS+=("pr:${pr_number}")
 	if ! _merge_target_crypto_approved pr "$pr_number" "$repo" "$current_head_sha"; then
 		FULL_LOOP_EXTERNAL_AUTHORITY_TARGETS+=("pr:${pr_number}")
 	fi
@@ -571,6 +576,7 @@ _merge_linked_issue_authority_clear() {
 	local target=""
 
 	FULL_LOOP_EXTERNAL_AUTHORITY_TARGETS=()
+	FULL_LOOP_EXTERNAL_AUTHORITY_APPROVAL_TARGETS=()
 	_merge_collect_linked_issue_authority_gaps "$issue_numbers" "$repo" "$require_crypto" || return 1
 	for target in "${FULL_LOOP_EXTERNAL_AUTHORITY_TARGETS[@]}"; do
 		print_error "Merge blocked: external/fork PR linked issue #${target#issue:} lacks current cryptographic development authority"
