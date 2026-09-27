@@ -430,6 +430,37 @@ describe("tryRepairSignature", () => {
     assert.ok(fileContent.includes("unsigned content"), "original preserved");
   });
 
+  test("ignores --body-file text inside a quoted title", () => {
+    const dir = setupStubHelper();
+    const bodyFile = join(dir, "body.md");
+    writeFileSync(bodyFile, "unsigned content\n");
+    const { log } = makeLogger();
+    const cmd = `gh issue create --title "feat: accept --body-file for fingerprints" --body-file ${bodyFile}`;
+    const out = tryRepairSignature(cmd, dir, log);
+    assert.equal(out.status, "ok");
+    assert.ok(readFileSync(bodyFile, "utf-8").includes(SIG_MARKER));
+  });
+
+  test("ignores --body-file text in a quoted title when repairing inline body", () => {
+    const dir = setupStubHelper();
+    const { log } = makeLogger();
+    const cmd = 'gh issue create --title "feat: accept --body-file for fingerprints" --body "text"';
+    const out = tryRepairSignature(cmd, dir, log);
+    assert.equal(out.status, "ok");
+    assert.ok(out.cmd.includes('--body "text'));
+    assert.ok(out.cmd.includes(SIG_MARKER));
+    assert.ok(out.cmd.includes('title "feat: accept --body-file for fingerprints"'));
+  });
+
+  test("does not treat quoted title text as a body argument", () => {
+    const dir = setupStubHelper();
+    const { log } = makeLogger();
+    const cmd = 'gh issue create --title "feat: accept --body-file for fingerprints"';
+    const out = tryRepairSignature(cmd, dir, log);
+    assert.equal(out.status, "fail");
+    assert.equal(out.reason, FAIL_REASON.BODY_ARG_NO_MATCH);
+  });
+
   test("resolves relative --body-file from Bash tool workdir", () => {
     const dir = setupStubHelper();
     const workdir = join(dir, "linked-worktree-cwd");

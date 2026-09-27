@@ -127,11 +127,64 @@ function _generateSignature(helperPath, bodyValue, log, options = {}) {
  * @param {string} cmd
  * @returns {boolean}
  */
+function _unquotedTokens(cmd) {
+  const tokens = [];
+  let text = "";
+  let start = -1;
+  let quote = null;
+
+  const finishToken = () => {
+    if (start !== -1) tokens.push({ text, start });
+    text = "";
+    start = -1;
+  };
+
+  for (let index = 0; index < cmd.length; index += 1) {
+    const char = cmd[index];
+    if (quote) {
+      if (char === quote) {
+        quote = null;
+      } else if (quote === '"' && char === "\\" && index + 1 < cmd.length) {
+        text += cmd[index + 1];
+        index += 1;
+      } else {
+        text += char;
+      }
+      continue;
+    }
+    if (char === "'" || char === '"') {
+      if (start === -1) start = index;
+      quote = char;
+    } else if (char === "\\" && index + 1 < cmd.length) {
+      if (start === -1) start = index;
+      text += cmd[index + 1];
+      index += 1;
+    } else if (/\s/.test(char) || char === ";" || char === "|" || char === "&") {
+      finishToken();
+    } else {
+      if (start === -1) start = index;
+      text += char;
+    }
+  }
+
+  // An unclosed quote is ambiguous; fail closed instead of assigning a body.
+  return quote ? [] : (finishToken(), tokens);
+}
+
+function _bodyToken(cmd) {
+  return _unquotedTokens(cmd).find(({ text }) =>
+    text === "--body" || text.startsWith("--body=") ||
+    text === "--body-file" || text.startsWith("--body-file=") ||
+    text === "--comment" || text.startsWith("--comment=") || text === "-c",
+  );
+}
+
 function _hasUnparseableBody(cmd) {
-  const bodyStart = cmd.search(/(?:--(?:body(?:-file)?|comment)|-c)(?:=|\s)/);
+  const bodyToken = _bodyToken(cmd);
+  const bodyStart = bodyToken ? bodyToken.start : -1;
   const afterBody = bodyStart === -1 ? "" : cmd.slice(bodyStart);
   return (
-    /(?:--(?:body(?:-file)?|comment)|-c)\s*=?\s*(?:<<-?\s*['"]?\w+|<\()/.test(cmd) ||
+    /(?:--(?:body(?:-file)?|comment)|-c)\s*=?\s*(?:<<-?\s*['"]?\w+|<\()/.test(afterBody) ||
     afterBody.includes("$(") ||
     /`[^`]*`/.test(afterBody)
   );
@@ -148,17 +201,20 @@ function _hasUnparseableBody(cmd) {
  * @returns {{ match: RegExpMatchArray, bodyValue: string, quote: string } | null}
  */
 function _matchBodyArg(cmd) {
+  const bodyToken = _bodyToken(cmd);
+  if (!bodyToken) return null;
+  const bodyCmd = cmd.slice(bodyToken.start);
   const patterns = [
     { re: /(?:--(?:body|comment)|-c)\s+"((?:[^"\\]|\\.)*)"/, quote: '"' },
     { re: /(?:--(?:body|comment)|-c)\s+'((?:[^'\\]|\\.)*)'/, quote: "'" },
     { re: /(?:--(?:body|comment)|-c)=(['"])((?:(?!\1).)*)\1/, quote: null },
   ];
   for (const pat of patterns) {
-    const m = cmd.match(pat.re);
+    const m = bodyCmd.match(pat.re);
     if (!m) continue;
     const quote = pat.quote !== null ? pat.quote : m[1];
     const bodyValue = pat.quote !== null ? m[1] : m[2];
-    return { match: m, bodyValue, quote };
+    return { match: m, bodyValue, quote, start: bodyToken.start + m.index };
   }
   return null;
 }
@@ -195,7 +251,10 @@ function _repairBodyArg(cmd, parsed, helperPath, log, options = {}) {
   const fullMatch = match[0];
   const newArg = fullMatch.slice(0, -1) + sig + quote;
   log("INFO", `Auto-appended signature footer to --body arg (t2685)`);
-  return { status: "ok", cmd: cmd.replace(fullMatch, newArg) };
+  return {
+    status: "ok",
+    cmd: cmd.slice(0, parsed.start) + newArg + cmd.slice(parsed.start + fullMatch.length),
+  };
 }
 
 /**
@@ -228,11 +287,19 @@ export function tryRepairSignature(cmd, scriptsDir, log, options = {}) {
   }
 
   // --body-file PATH form: filesystem-side repair.
-  const bodyFileMatch = cmd.match(
-    /--body-file(?:=(['"]?)([^\s'"]+)\1|\s+(['"]?)([^\s'"]+)\3)/,
+  const tokens = _unquotedTokens(cmd);
+  const bodyFileIndex = tokens.findIndex(({ text }) =>
+    text === "--body-file" || text.startsWith("--body-file="),
   );
-  if (bodyFileMatch) {
-    const filePath = bodyFileMatch[2] || bodyFileMatch[4];
+  if (bodyFileIndex !== -1) {
+    const bodyFileToken = tokens[bodyFileIndex];
+    const filePath = bodyFileToken.text === "--body-file"
+      ? tokens[bodyFileIndex + 1]?.text
+      : bodyFileToken.text.slice("--body-file=".length);
+    if (!filePath) {
+      log("WARN", "Could not parse --body-file argument; refusing auto-repair");
+      return { status: "fail", reason: FAIL_REASON.BODY_ARG_NO_MATCH };
+    }
     return repairBodyFile(cmd, filePath, helperPath, log, {
       commandWorkdir: options.commandWorkdir,
       sigMarker: SIG_MARKER,
