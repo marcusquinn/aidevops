@@ -247,6 +247,25 @@ should_cleanup_oh_my_opencode_artifacts() {
 	return 1
 }
 
+# Remove the retired osgrep OpenCode custom tool. It kept advertising ~1K tokens
+# of osgrep skill text in every request's tool list after the CLI was removed
+# (GH#32444). Only the generated osgrep skill tool is removed, never a
+# user-authored file. Returns 0 when a file was removed, 1 otherwise.
+_cleanup_osgrep_opencode_tools() {
+	local config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
+	local tool_file
+	local removed=1
+	for tool_file in "$config_home/opencode/tool/osgrep.ts" "$config_home/opencode/tools/osgrep.ts"; do
+		[[ -f "$tool_file" ]] || continue
+		grep -q '^name: osgrep$' "$tool_file" || continue
+		grep -q '@opencode-ai/plugin' "$tool_file" || continue
+		rm -f "$tool_file"
+		print_info "Removed retired osgrep OpenCode tool: $tool_file"
+		removed=0
+	done
+	return "$removed"
+}
+
 # Remove osgrep completely — one-time cleanup for all aidevops users
 # osgrep consumed 74GB disk (lancedb indexes) and 4 CPU cores on startup.
 # rg + fd + LLM comprehension covers the same ground at zero resource cost.
@@ -297,6 +316,11 @@ cleanup_osgrep() {
 			fi
 			cleaned=true
 		fi
+	fi
+
+	# 3b. Remove the retired osgrep OpenCode custom tool file
+	if _cleanup_osgrep_opencode_tools; then
+		cleaned=true
 	fi
 
 	# 4. Remove osgrep from Claude Code settings

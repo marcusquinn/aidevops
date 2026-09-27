@@ -270,6 +270,21 @@ async function handle400ThirdPartyRecovery(client, response, accessToken, sessio
 }
 
 /**
+ * Diagnostics only: the host session header that attributes redistribution log
+ * lines. Read from the host request because buildRequestHeaders() strips
+ * x-session-affinity before the request leaves the plugin.
+ */
+function hostSessionID(input, init) {
+  try {
+    const headers = new Headers(input instanceof Request ? input.headers : undefined);
+    new Headers(init?.headers ?? undefined).forEach((value, key) => headers.set(key, value));
+    return headers.get("x-session-affinity") || headers.get("x-opencode-session") || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Execute the authenticated fetch with token resolution, body transform, and error recovery.
  */
 async function executeAuthenticatedFetch(client, getAuth, input, init, sessionAccountEmail) {
@@ -280,9 +295,11 @@ async function executeAuthenticatedFetch(client, getAuth, input, init, sessionAc
   const resolved = await resolveAccessToken(client, auth, sessionAccountEmail);
   const accessToken = resolved.accessToken ?? auth.access;
   let currentEmail = resolved.sessionAccountEmail;
+  const requestHeaders = buildRequestHeaders(input, init, accessToken);
+  const sessionID = hostSessionID(input, init);
   const ctx = {
-    requestHeaders: buildRequestHeaders(input, init, accessToken),
-    body: transformRequestBody(init?.body),
+    requestHeaders,
+    body: transformRequestBody(init?.body, { sessionID }),
     requestInput: addBetaQueryParam(input),
     requestInit: init ?? {},
   };

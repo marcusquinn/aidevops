@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.37.0] - 2026-09-27
+
+### Fixed
+
+- stabilize qlty threshold scans (#32452)
+
 ## [3.36.4] - 2026-09-27
 
 ### Fixed

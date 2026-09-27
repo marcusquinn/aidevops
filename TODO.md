@@ -1418,9 +1418,9 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18479 Add opt-in Android adb and Xcode simctl readiness to Mobile MCP setup ref:GH#32420 pr:#32421 completed:2026-09-26
 
-- [ ] t18481 fix(opencode-v2): V2 Tabby tab status dot, V2-aware greeting version, V2 render artifacts #bug ref:GH#32438
+- [x] t18481 fix(opencode-v2): V2 Tabby tab status dot, V2-aware greeting version, V2 render artifacts #bug ref:GH#32438 pr:#32442 completed:2026-09-27
 
-- [ ] t18482 OpenCode V2 canonical agents and opt-in 240K context budget ref:GH#32447
+- [x] t18482 OpenCode V2 canonical agents and opt-in 240K context budget ref:GH#32447 pr:#32451 completed:2026-09-27
 
 ## In Progress
 

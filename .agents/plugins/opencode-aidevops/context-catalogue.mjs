@@ -1,23 +1,43 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 Marcus Quinn
 
-/** Compact advertising, never skill content, permissions, or invocation. */
+// Generated command-skill wrapper entry. OpenCode 1 lists name/description/
+// location; OpenCode 2 lists id/name/description. The location, when present,
+// must be the wrapper's own SKILL.md so custom skills are never factored.
+const GENERATED_WRAPPER_ENTRY = new RegExp(
+  "^\\s*(?:<id>([^<>\\n]+)<\\/id>\\s*)?" +
+  "<name>(aidevops-([a-z0-9-]+))<\\/name>\\s*" +
+  "<description>Run the aidevops \\3 workflow when explicitly requested\\.<\\/description>\\s*" +
+  "(?:<location>[^<>\\n]+\\/\\2\\/SKILL\\.md<\\/location>\\s*)?$",
+);
+
+/**
+ * Compact advertising, never skill content, permissions, or invocation.
+ * Generated wrappers share one trigger and resolve by exact name through the
+ * skill tool, so only their names (plus a differing OpenCode 2 id) are listed.
+ */
 export function compactSkillCatalogue(text) {
   return text.replace(/<available_skills>([\s\S]*?)<\/available_skills>/g, (block, body) => {
     const wrappers = [];
-    const retained = body.replace(/<skill>([\s\S]*?)<\/skill>/g, (entry, fields) => {
+    const retained = body.replace(/[ \t]*<skill>([\s\S]*?)<\/skill>\n?/g, (entry, fields) => {
       // Fail open for custom descriptions, additional fields, or changed formats.
-      const match = fields.match(/^\s*<name>(aidevops-([a-z0-9-]+))<\/name>\s*<description>Run the aidevops \2 workflow when explicitly requested\.<\/description>\s*<location>([^<>\n]+\/\1\/SKILL\.md)<\/location>\s*$/);
+      const match = fields.match(GENERATED_WRAPPER_ENTRY);
       if (!match) return entry;
-      wrappers.push(`- ${match[1]} (${match[3]})`);
+      const [, id, name] = match;
+      wrappers.push(id && id !== name ? `${name} (id: ${id})` : name);
       return "";
     });
     if (wrappers.length < 2) return block;
     return `<available_skills>${retained.trimEnd()}\n\n` +
-      "Generated aidevops workflow skills below all have the same trigger: run the named aidevops workflow ONLY when explicitly requested. " +
-      "Load the full instructions with the skill tool using the exact skill name; all remain available.\n" +
-      wrappers.join("\n") + "\n</available_skills>";
+      `Generated aidevops workflow skills (${wrappers.length}) share one trigger: run the named aidevops workflow ONLY when explicitly requested. ` +
+      "Load the full instructions with the skill tool using the exact skill name; all remain available:\n" +
+      wrappers.join(", ") + "\n</available_skills>";
   });
+}
+
+/** Pointer used when an instruction body is byte-identical to one already loaded. */
+export function duplicateInstructionReference(source, previous) {
+  return `Instructions from: ${source}\nThe complete instruction body is byte-identical to the already loaded instructions from: ${previous}. Apply those instructions here too.`;
 }
 
 /** Only exact, separately supplied instruction bodies may be shared. No history rewriting. */
@@ -29,9 +49,7 @@ export function compactSystemContext(system) {
     if (match) {
       const [, source, body] = match;
       const previous = instructions.get(body);
-      if (previous) {
-        return `Instructions from: ${source}\nThe complete instruction body is byte-identical to the already loaded instructions from: ${previous}. Apply those instructions here too.`;
-      }
+      if (previous) return duplicateInstructionReference(source, previous);
       instructions.set(body, source);
     }
     return compactSkillCatalogue(text);

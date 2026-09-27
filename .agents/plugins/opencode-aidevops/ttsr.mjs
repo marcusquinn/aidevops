@@ -11,7 +11,13 @@ import {
 } from "./ttsr-rules.mjs";
 // Prompt injection and the startup toast intentionally share cache provenance
 // and freshness policy so they cannot present contradictory version pairs.
-import { greetingCacheBasename, isGreetingCacheUsable, readGreetingCache, REFRESH_TTL_MS } from "./greeting.mjs";
+import {
+  greetingCacheBasename,
+  isGreetingCacheUsable,
+  isPluginGreetingEnabled,
+  readGreetingCache,
+  REFRESH_TTL_MS,
+} from "./greeting.mjs";
 
 // ---------------------------------------------------------------------------
 // Token Cost Advisory
@@ -267,42 +273,63 @@ export function createSessionStartGreetingGate(client, isHeadless = () => false)
 }
 
 /**
- * system.transform hook: prepend session-start greeting order, identity prefix,
- * and quality rules.
+ * Replace array contents without reassigning the array. OpenCode 1 keeps its
+ * own reference to output.system and ignores reassignment; OpenCode 2's adapter
+ * reads the same object back, so in-place mutation serves both runtimes.
  */
-async function ttsrSystemTransform(input, output, context) {
-  const { state, intentField, shouldInjectGreeting, agentsDir, readIfExists, greetingOptions } = context;
-  output.system = compactSystemContext(output.system);
-  if (input.model?.providerID === "anthropic") {
-    const prefix = "You are Claude Code, Anthropic's official CLI for Claude.";
-    output.system.unshift(prefix);
-    if (output.system[1]) output.system[1] = prefix + "\n\n" + output.system[1];
-  }
+function replaceArrayContents(target, values) {
+  target.splice(0, target.length, ...values);
+}
 
-  const greeting = await shouldInjectGreeting(input)
-    ? buildSessionStartGreetingInstruction(agentsDir, readIfExists, greetingOptions)
-    : null;
-  // Preserve the Anthropic compatibility prefix contract. Other providers keep
-  // all durable guidance ahead of the one-shot greeting for stable prefix reuse.
-  if (greeting && input.model?.providerID === "anthropic") output.system.unshift(greeting);
+export const CLAUDE_CODE_IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude.";
 
-  const rules = loadTtsrRules(state);
-  const ruleLines = rules.filter((r) => r.systemPrompt).map((r) => `- ${r.systemPrompt}`);
+/** Prefix the first framework block with the identity, then add the exact identity block. */
+function prependAnthropicIdentity(system) {
+  if (system[0]) system[0] = `${CLAUDE_CODE_IDENTITY}\n\n${system[0]}`;
+  system.unshift(CLAUDE_CODE_IDENTITY);
+}
 
-  const intentInstruction = [
+function buildIntentInstruction(intentField) {
+  return [
     "## Intent Tracing (observability)",
     `When calling any tool, include a field named \`${intentField}\` in the tool arguments.`,
     "Value: one sentence in present participle form describing your intent (e.g., \"Reading the file to understand the existing schema\").",
     "No trailing period. This field is used for debugging and audit trails — it is stripped before tool execution.",
   ].join("\n");
+}
 
-  output.system.push(intentInstruction);
-  if (ruleLines.length > 0) output.system.push([
+function buildQualityRulesInstruction(rules) {
+  const ruleLines = rules.filter((r) => r.systemPrompt).map((r) => `- ${r.systemPrompt}`);
+  if (ruleLines.length === 0) return null;
+  return [
     "## aidevops Quality Rules (enforced)",
     "The following rules are actively enforced. Violations will be flagged.",
     ...ruleLines,
-  ].join("\n"));
-  if (greeting && input.model?.providerID !== "anthropic") output.system.push(greeting);
+  ].join("\n");
+}
+
+/**
+ * system.transform hook: compact catalogue metadata, add the Anthropic
+ * identity, then append durable intent-tracing and quality rules.
+ *
+ * Anthropic OAuth wire shape: provider-auth-body.mjs keeps the billing header
+ * and this exact identity block in system and redistributes every other block
+ * into the first user message. The identity is added exactly as OpenCode 2 has
+ * always sent it; in-place mutation now gives OpenCode 1 the same shape.
+ */
+async function ttsrSystemTransform(input, output, context) {
+  const { state, intentField, shouldInjectGreeting, agentsDir, readIfExists, greetingOptions, greetingEnabled } = context;
+  if (!Array.isArray(output.system)) return;
+  replaceArrayContents(output.system, compactSystemContext(output.system));
+  if (input.model?.providerID === "anthropic") prependAnthropicIdentity(output.system);
+
+  const greeting = greetingEnabled() && await shouldInjectGreeting(input)
+    ? buildSessionStartGreetingInstruction(agentsDir, readIfExists, greetingOptions)
+    : null;
+
+  // Durable guidance stays ahead of the one-shot greeting for stable prefix reuse.
+  const appended = [buildIntentInstruction(intentField), buildQualityRulesInstruction(loadTtsrRules(state)), greeting];
+  output.system.push(...appended.filter(Boolean));
 }
 
 /**
@@ -398,6 +425,7 @@ async function ttsrTextComplete(input, output, state, execDeps, qualityLog) {
  * @param {number} [deps.initializedAtMs]
  * @param {string} [deps.runtimeName] Runtime label that overrides the greeting cache
  * @param {string} [deps.runtimeVersion] Runtime version that overrides the greeting cache
+ * @param {() => boolean} [deps.greetingEnabled] - defaults to isPluginGreetingEnabled()
  * @returns {{ loadTtsrRules: Function, systemTransformHook: Function, messagesTransformHook: Function, textCompleteHook: Function }}
  */
 export function createTtsrHooks(deps) {
@@ -415,7 +443,10 @@ export function createTtsrHooks(deps) {
     runtimeName: deps.runtimeName,
     runtimeVersion: deps.runtimeVersion,
   };
-  const systemTransformContext = { state, intentField, shouldInjectGreeting, agentsDir, readIfExists, greetingOptions };
+  const greetingEnabled = deps.greetingEnabled || (() => isPluginGreetingEnabled());
+  const systemTransformContext = {
+    state, intentField, shouldInjectGreeting, agentsDir, readIfExists, greetingOptions, greetingEnabled,
+  };
 
   return {
     loadTtsrRules: () => loadTtsrRules(state),
@@ -427,3 +458,5 @@ export function createTtsrHooks(deps) {
 
 // Re-export BUILTIN_TTSR_RULES for callers that access it directly.
 export { BUILTIN_TTSR_RULES };
+// Greeting policy lives with the greeting cache; v2.mjs and tests import it here.
+export { isPluginGreetingEnabled };
