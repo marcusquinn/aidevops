@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import os
 import re
+import sys
 
 import yaml
 
@@ -125,3 +126,15 @@ def ensure_managed_appearance_css(config_text: str, env: dict | None = None) -> 
     ):
         raise ValueError("Managed Tabby CSS edit changed unrelated configuration")
     return updated, True
+
+
+def apply_managed_css_for_sync(config_text: str) -> tuple[str, bool]:
+    """Apply the managed CSS for profile sync; failures warn but never block sync."""
+    try:
+        config_text, changed = ensure_managed_appearance_css(config_text)
+    except (ValueError, AttributeError, yaml.YAMLError) as error:
+        print(f"Skipped managed Tabby terminal CSS: {error}", file=sys.stderr)
+        return config_text, False
+    if changed:
+        print("Updated managed Tabby terminal CSS (scrollbar track hidden).")
+    return config_text, changed
