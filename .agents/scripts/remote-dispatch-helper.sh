@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
-# remote-dispatch-helper.sh - Remote container dispatch via SSH/Tailscale
+# remote-dispatch-helper.sh - Remote worker dispatch via SSH over any mesh (NetBird, Nostr VPN, WireGuard, Tailscale)
 #
 # Dispatches AI workers to containers on remote hosts with credential
 # forwarding and log collection. Integrates with supervisor dispatch.sh.
@@ -36,6 +36,14 @@ readonly DEFAULT_SSH_OPTS="${REMOTE_DISPATCH_SSH_OPTS:--o ConnectTimeout=10 -o S
 readonly SUPERVISOR_DIR="${SUPERVISOR_DIR:-${HOME}/.aidevops/.agent-workspace/supervisor}"
 readonly REMOTE_LOG_DIR="${REMOTE_DISPATCH_LOG_DIR:-${SUPERVISOR_DIR}/logs/remote}"
 readonly REMOTE_WORK_BASE="/tmp/aidevops-worker"
+# Transports all use SSH; only "tailscale" switches to `tailscale ssh`. Mesh
+# transports (netbird, nvpn, wireguard) are labels for diagnostics (GH#32583).
+readonly REMOTE_TRANSPORTS="ssh tailscale netbird nvpn wireguard"
+# Non-login SSH shells miss nvm/bun/Homebrew installs, so AI CLIs look absent.
+# Prepend common user tool locations and load nvm before detecting or running
+# the worker CLI (GH#32583: nvm-installed opencode was reported missing).
+# shellcheck disable=SC2016 # Expands on the remote host.
+readonly REMOTE_PATH_PREAMBLE='for _d in "$HOME/.local/bin" "$HOME/.bun/bin" "$HOME/.aidevops/bin" /opt/homebrew/bin /usr/local/bin; do if [ -d "$_d" ]; then PATH="$_d:$PATH"; fi; done; if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh" >/dev/null 2>&1; fi; export PATH;'
 
 # --- Colours (reuse shared-constants if available) ---
 readonly _BOLD='\033[1m'
@@ -83,6 +91,8 @@ cmd_hosts() {
 		echo "Examples:"
 		echo "  remote-dispatch-helper.sh add gpu-server 192.168.1.100"
 		echo "  remote-dispatch-helper.sh add build-node user@build.tailnet.ts.net"
+		echo "  remote-dispatch-helper.sh add mini mini.nvpn --user me --transport nvpn"
+		echo "  remote-dispatch-helper.sh add gpu peer.netbird.selfhosted --transport netbird"
 		echo "  remote-dispatch-helper.sh add docker-host ssh://user@host:2222"
 		return 0
 	fi
@@ -97,13 +107,13 @@ cmd_hosts() {
 
 #######################################
 # Add a remote host
-# Args: name address [--transport ssh|tailscale] [--container name] [--user user]
+# Args: name address [--transport ssh|tailscale|netbird|nvpn|wireguard] [--container name] [--user user]
 #######################################
 cmd_add() {
-	local name="" address="" transport="ssh" container="auto" user=""
+	local name="" address="" transport="" container="auto" user=""
 
 	if [[ $# -lt 2 ]]; then
-		_log_error "Usage: remote-dispatch-helper.sh add <name> <address> [--transport ssh|tailscale] [--container name] [--user user]"
+		_log_error "Usage: remote-dispatch-helper.sh add <name> <address> [--transport ${REMOTE_TRANSPORTS// /|}] [--container name] [--user user]"
 		return 1
 	fi
 
@@ -138,9 +148,12 @@ cmd_add() {
 		return 1
 	fi
 
-	# Validate transport
-	if [[ "$transport" != "ssh" && "$transport" != "tailscale" ]]; then
-		_log_error "Invalid transport: '$transport'. Use 'ssh' or 'tailscale'."
+	# Validate transport (auto-detect when omitted)
+	if [[ -z "$transport" ]]; then
+		transport=$(_detect_transport "$address")
+	fi
+	if [[ " ${REMOTE_TRANSPORTS} " != *" ${transport} "* ]]; then
+		_log_error "Invalid transport: '$transport'. Use one of: ${REMOTE_TRANSPORTS}."
 		return 1
 	fi
 
@@ -239,13 +252,57 @@ _resolve_host() {
 	else
 		# Use raw address
 		address="$host"
-		# Detect Tailscale addresses (*.ts.net or 100.x.x.x)
-		if [[ "$address" == *".ts.net"* || "$address" =~ ^100\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-			transport="tailscale"
-		fi
+		transport=$(_detect_transport "$address")
 	fi
 
 	echo "${address}|${transport}|${container}|${user}"
+	return 0
+}
+
+#######################################
+# Classify an address by mesh transport. 100.64.0.0/10 (CGNAT) is shared by
+# Tailscale and NetBird, so a bare 100.x address is only Tailscale when the
+# local tailscale CLI lists it (GH#32583). Unknown addresses use plain SSH.
+# Args: address (optionally user@address)
+# Outputs: transport name
+#######################################
+_detect_transport() {
+	local address="$1"
+	local host="${address##*@}"
+	case "$host" in
+	*.ts.net)
+		printf 'tailscale\n'
+		return 0
+		;;
+	*.nvpn)
+		printf 'nvpn\n'
+		return 0
+		;;
+	*.netbird.selfhosted | *.netbird.cloud)
+		printf 'netbird\n'
+		return 0
+		;;
+	esac
+	if [[ "$host" =~ ^100\.([0-9]+)\.[0-9]+\.[0-9]+$ ]] && ((BASH_REMATCH[1] >= 64 && BASH_REMATCH[1] <= 127)); then
+		# Capture before matching: grep -q closing a pipe early can SIGPIPE the
+		# producer and fail the pipeline under pipefail.
+		local mesh_status=""
+		if command -v tailscale >/dev/null 2>&1; then
+			mesh_status="$(tailscale status 2>/dev/null || true)"
+			if [[ " ${mesh_status//$'\n'/ } " == *" ${host} "* ]]; then
+				printf 'tailscale\n'
+				return 0
+			fi
+		fi
+		if command -v netbird >/dev/null 2>&1; then
+			mesh_status="$(netbird status -d 2>/dev/null || true)"
+			if [[ "$mesh_status" == *"NetBird IP: ${host}"$'\n'* || "$mesh_status" == *"NetBird IP: ${host}" ]]; then
+				printf 'netbird\n'
+				return 0
+			fi
+		fi
+	fi
+	printf 'ssh\n'
 	return 0
 }
 
@@ -291,6 +348,22 @@ _build_ssh_cmd() {
 }
 
 #######################################
+# Print the mesh-specific diagnostic for a failed SSH connection.
+# Args: transport
+#######################################
+_log_transport_hint() {
+	local transport="$1"
+	case "$transport" in
+	tailscale) _log_info "Diagnose: tailscale status && tailscale ping <host>" ;;
+	netbird) _log_info "Diagnose: netbird status -d (peer Connected?) and check NetBird policies allow SSH" ;;
+	nvpn) _log_info "Diagnose: nvpn status (mesh_ready, peer reachable) and nostr-vpn-helper.sh dns-check <name>" ;;
+	wireguard) _log_info "Diagnose: wg show (latest handshake) and AllowedIPs for the peer" ;;
+	*) _log_info "Diagnose: ssh -v <host> echo OK && ssh-add -l" ;;
+	esac
+	return 0
+}
+
+#######################################
 # Check connectivity to a remote host
 # Args: host
 # Returns: 0 if reachable, 1 if not
@@ -319,6 +392,7 @@ cmd_check() {
 	# Test 1: Basic SSH connectivity
 	if ! "${ssh_cmd[@]}" "echo 'SSH_OK'" 2>/dev/null | grep -q 'SSH_OK'; then
 		_log_error "SSH connection failed to $address"
+		_log_transport_hint "$transport"
 		return 1
 	fi
 	_log_success "SSH connectivity: OK"
@@ -341,11 +415,11 @@ cmd_check() {
 
 	# Test 3: Check for AI CLI availability
 	local has_opencode="false" has_claude="false"
-	if "${ssh_cmd[@]}" "command -v opencode" &>/dev/null; then
+	if "${ssh_cmd[@]}" "${REMOTE_PATH_PREAMBLE} command -v opencode" &>/dev/null; then
 		has_opencode="true"
 		_log_success "OpenCode CLI: available"
 	fi
-	if "${ssh_cmd[@]}" "command -v claude" &>/dev/null; then
+	if "${ssh_cmd[@]}" "${REMOTE_PATH_PREAMBLE} command -v claude" &>/dev/null; then
 		has_claude="true"
 		_log_success "Claude CLI: available"
 	fi
@@ -525,7 +599,7 @@ cmd_dispatch() {
 	# Determine AI CLI on remote
 	local remote_ai_cli="opencode"
 	local cli_check
-	cli_check=$("${ssh_cmd[@]}" "command -v opencode 2>/dev/null && echo 'opencode' || (command -v claude 2>/dev/null && echo 'claude') || echo 'none'" 2>/dev/null)
+	cli_check=$("${ssh_cmd[@]}" "${REMOTE_PATH_PREAMBLE} command -v opencode 2>/dev/null && echo 'opencode' || (command -v claude 2>/dev/null && echo 'claude') || echo 'none'" 2>/dev/null)
 	if [[ "$cli_check" == *"claude"* && "$cli_check" != *"opencode"* ]]; then
 		remote_ai_cli="claude"
 	elif [[ "$cli_check" == *"none"* ]]; then
@@ -555,6 +629,11 @@ set -euo pipefail
 
 # Startup sentinel
 echo "WORKER_STARTED task_id=${task_id} pid=\$\$ host=${host} timestamp=\$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+# Tool PATH for non-login SSH shells (nvm, bun, Homebrew); nvm is not set -u safe
+set +u
+${REMOTE_PATH_PREAMBLE}
+set -u
 
 # Credential environment
 ${cred_env_str}

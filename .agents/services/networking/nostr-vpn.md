@@ -78,27 +78,44 @@ Hard limit: full privacy and anonymity cannot be guaranteed by a VPN overlay alo
 
 - **Install (opt-in)**: signed and notarized macOS `.dmg` from https://nostrvpn.org/ or the GitHub releases. The app installs a root LaunchDaemon (`to.nostrvpn.nvpn`) running `/Library/PrivilegedHelperTools/to.nostrvpn.nvpn` with config under `~/Library/Application Support/nvpn/`.
 - **Updates**: the app updates itself through its verified in-app updater. `nostr-vpn-helper.sh update` (run by `aidevops update`) reports app updates, installs or refreshes `/usr/local/bin/nvpn` from the app helper so the CLI matches the running daemon, and uses `nvpn update` (which refuses unverified releases) on CLI-only hosts. It never installs Nostr VPN, replaces the app, writes the root helper, or changes config.
-- **Enrollment**: signed rosters control membership. Keep `connect_to_non_roster_fips_peers: false`. Alternatively use `nvpn join-request` plus approval in the admin app. CLI flow validated on 4.1.16 (GH#23846):
+- **Enrollment**: signed rosters control membership. Keep `connect_to_non_roster_fips_peers: false`. The helper wraps the CLI flow validated on 4.1.16 (GH#23846, GH#32583). Each command prints the next one to run:
 
   ```bash
-  # Every device: CLI matching the app daemon (sudo if /usr/local/bin is not writable), then move off NetBird's port
-  sudo "/Library/PrivilegedHelperTools/to.nostrvpn.nvpn" install-cli --path /usr/local/bin/nvpn --force
-  nvpn set --listen-port 51821
-  nvpn set --endpoint "$(ipconfig getifaddr "$(route -n get default | awk '/interface:/{print $2}')"):51821"
-  # Admin device, once: creates the network and prints network_id=
-  nvpn set --device <admin-npub-from-nvpn-status>
-  # Joining device
-  nvpn join-manual --admin-device-id <admin-npub> --network-id <network_id>
-  # Admin device: approve the joiner (npub from its nvpn status), then verify mesh_ready: true on both
-  nvpn add-device --device <joiner-npub> --publish
-  nvpn reload && nvpn status
+  # Every device, once: CLI matching the app daemon (sudo if /usr/local/bin is not writable)
+  nostr-vpn-helper.sh update
+  # First (admin) device: moves off NetBird's UDP 51820, sets the LAN endpoint, creates the network, names itself
+  nostr-vpn-helper.sh setup-admin macbook
+  # Each joining device (command printed by setup-admin)
+  nostr-vpn-helper.sh join <admin-npub> <network-id> mini --admin-alias macbook
+  # Admin device (command printed by join): approve and name it
+  nostr-vpn-helper.sh approve <joiner-npub> mini
+  # Names on every device: run the printed set-alias lines on each other device, then verify
+  nostr-vpn-helper.sh aliases
+  nostr-vpn-helper.sh dns-check mini
   ```
+
+  Raw equivalents: `nvpn set --listen-port 51821 --endpoint <lan-ip>:51821`, `nvpn set --device <own-npub>` (admin, creates the network), `nvpn join-manual --admin-device-id <npub> --network-id <id>`, `nvpn add-device --device <npub> --publish`. Alternatively use `nvpn join-request` plus approval in the admin app.
+
+### Direct-only mode (no third-party bootstrap or discovery)
+
+nvpn 4.1.16 defaults include upstream bootstrap/transit peers (`fips1.iris.to`, `fips2.iris.to` in `[fips_bootstrap_peers]`) and public Nostr relay discovery. Relays and transit peers cannot read tunnel traffic, but they can see identities, IPs and timing. `nvpn status` shows them as `fips_peers: … other`.
+
+```bash
+nostr-vpn-helper.sh direct-only <peer-npub>=<lan-or-public-host>[:port] [...]   # per device, listing its peers
+nostr-vpn-helper.sh direct-only --off                                            # back to upstream defaults
+```
+
+Validated between two Macs on one LAN: `mesh_ready: true`, `0 other` FIPS peers, and ping/SSH over `.nvpn` names. The trade-off is that peers can only reach each other through the listed endpoints, plus LAN mDNS when `lan_discovery_enabled` is on. Off-LAN you need a reachable public endpoint (port forward or VPS) or the defaults.
+
+**nvpn cannot ride NetBird/Tailscale links.** Endpoint hints reject CGNAT `100.64.0.0/10`. On macOS, a NetBird IPv6 ULA hint fails with `No route to host (os error 65)`, even though `ping6` works, because the daemon pins its underlay to the physical interface (`physical route sample: selected=en0`). Run the meshes side by side and pick one per connection; don't layer them.
+
+A self-hosted transit/bootstrap node you control may replace the upstream seeds (`[fips_bootstrap_peers]` in `config.toml`; the CLI has no flag for it). This is untested in aidevops.
 
 - **Root helper hygiene**: binaries that launchd runs as root should be `root:wheel` and not user-writable (`ls -l /Library/PrivilegedHelperTools/`). Report anomalies privately, never in public issues. The published contact address bounced in September 2026 (mmalmi/nostr-vpn#70); check that issue for the current private channel.
 
 ### MagicDNS (`.nvpn` names)
 
-MagicDNS only serves devices that have an alias. Until then, the daemon logs `magicdns: skipped (no configured alias records)` and writes no `/etc/resolver/nvpn`. Set aliases in the app's device details. On 4.1.16 the CLI has no alias command, and alias-only changes did not propagate through `add-device --publish` (`published_recipients=0`). The equivalent config edit, per device, is the `[peer_aliases]` table in `~/Library/Application Support/nvpn/config.toml`, keyed by npub:
+MagicDNS only serves devices that have an alias. Until then, the daemon logs `magicdns: skipped (no configured alias records)` and writes no `/etc/resolver/nvpn`. On 4.1.16 the CLI has no alias command, and alias-only changes did not propagate through `add-device --publish` (`published_recipients=0`), so every device needs every alias. `nostr-vpn-helper.sh set-alias <npub|self> <alias>` writes the entry (backup: `config.toml.bak-aidevops`) and reloads the daemon. `nostr-vpn-helper.sh aliases` prints the commands to copy to other devices. `nostr-vpn-helper.sh dns-check <alias>` runs the three checks below. It edits the `[peer_aliases]` table in `~/Library/Application Support/nvpn/config.toml` (Linux: `~/.config/nvpn/config.toml`; override with `NVPN_CONFIG_PATH`), keyed by npub:
 
 ```toml
 [peer_aliases]
@@ -131,7 +148,7 @@ This drops the network for about 15 s; NetBird and nvpn reconnect on their own. 
 | DNS | `.netbird.selfhosted` (or custom) | `.nvpn` MagicDNS | Separate suffixes |
 | Exit nodes | Optional | Optional | Enable at most one default-route exit at a time |
 
-`nostr-vpn-helper.sh conflicts` detects the port clash and leftover standalone FIPS files.
+`nostr-vpn-helper.sh conflicts` detects the port clash and leftover standalone FIPS files. For using either mesh to reach OpenCode workers, see `reference/mesh-remote-workers.md`.
 
 Validated on two macOS devices (GH#23846): nvpn on its own `utun` and NetBird on another, both reachable at the same time, with nvpn on UDP `51821`.
 
@@ -252,6 +269,13 @@ Other aidevops-adjacent candidates after SSH is proven: private Git remotes, MCP
 .agents/scripts/nostr-vpn-helper.sh update
 .agents/scripts/nostr-vpn-helper.sh nvpn-status
 .agents/scripts/nostr-vpn-helper.sh conflicts
+.agents/scripts/nostr-vpn-helper.sh setup-admin [alias]
+.agents/scripts/nostr-vpn-helper.sh join <admin-npub> <network-id> [alias] [--admin-alias name]
+.agents/scripts/nostr-vpn-helper.sh approve <device-npub> <alias>
+.agents/scripts/nostr-vpn-helper.sh set-alias <npub|self> <alias>
+.agents/scripts/nostr-vpn-helper.sh aliases
+.agents/scripts/nostr-vpn-helper.sh dns-check <alias>
+.agents/scripts/nostr-vpn-helper.sh direct-only <npub>=<host[:port]>... | --off
 .agents/scripts/nostr-vpn-helper.sh check
 .agents/scripts/nostr-vpn-helper.sh status
 .agents/scripts/nostr-vpn-helper.sh identity
@@ -265,7 +289,7 @@ Other aidevops-adjacent candidates after SSH is proven: private Git remotes, MCP
 .agents/scripts/nostr-vpn-helper.sh opencode-guide
 ```
 
-The helper is read-only except `update`, which only installs or refreshes the user-owned `nvpn` CLI. Privileged, network, roster, and config changes stay explicit operator steps.
+Diagnostics are read-only. `update` only installs or refreshes the user-owned `nvpn` CLI. Enrollment commands change nvpn settings, the roster, or `[peer_aliases]` only when you run them explicitly. None of them install Nostr VPN, need sudo, or touch the root helper.
 
 ## Security Checklist
 
