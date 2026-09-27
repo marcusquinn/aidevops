@@ -13,7 +13,7 @@ import { SPECIALIST_ADVISOR, validateSpecialistRequest } from "./specialist-advi
 import { loadChildSessionWithParent, routeCreativeMessage } from "./subagent-parent-routing.mjs";
 import { BROWSER_AGENT, routeBrowserDelegate } from "./browser-delegate-routing.mjs";
 import { routeChatParams } from "./subagent-effort-params.mjs";
-import { subagentArm, armRouting } from "./subagent-ab.mjs";
+import { subagentArm, armRouting, eligibleSubagentTrial } from "./subagent-ab.mjs";
 
 const DOMAIN_KNOWLEDGE_MARKER = "\n\n[AIDEvOps canonical domain knowledge]";
 const DOMAIN_REQUIRED_FIELDS = ["task", "objective", "scope", "source", "decisions", "evidence", "output"];
@@ -156,11 +156,7 @@ async function routeTierMessage(context, output, { agentName, text, now }) {
   if (!childSession) return;
   policy.parentSessionID = childSession.parentID;
   if (agentName === BROWSER_AGENT && await routeBrowserDelegate(context, childSession, message, policy)) return;
-  if (context.subagentTrial
-    && now >= Date.parse(context.subagentTrial.starts_at)
-    && now < Date.parse(context.subagentTrial.ends_at)
-    && agentName !== SPECIALIST_ADVISOR
-    && agentName !== BROWSER_AGENT && !context.agentRoutingState?.inheritParentRoute?.has(agentName)) {
+  if (eligibleSubagentTrial(context.subagentTrial, agentName, context.agentRoutingState, now)) {
     const arm = subagentArm(context.subagentTrial, sessionID);
     policy.ab_experiment = context.subagentTrial.id;
     policy.ab_arm = arm.name;

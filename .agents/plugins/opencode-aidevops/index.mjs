@@ -58,7 +58,6 @@ import {
   resolveTierReasoning,
 } from "./subagent-effort.mjs";
 import { loadModelRouting } from "./model-routing.mjs";
-import { loadSubagentTrial } from "./subagent-ab.mjs";
 import { createSessionContinuationGuard } from "./session-continuation-guard.mjs";
 import { createSessionRecoveryMarkerHandler } from "./session-recovery-marker.mjs";
 import { createSessionStallRecovery } from "./session-stall-recovery.mjs";
@@ -484,7 +483,6 @@ export async function AidevopsPlugin({ directory, client }) {
     tierReasoning,
     modelRouting,
     agentRoutingState,
-    subagentTrial: isHeadless() ? null : loadSubagentTrial(),
     onRoutingDecision: recordRoutingDecision,
     onSubagentOutcome: objectiveAwareSubagentOutcome,
     isHeadless,

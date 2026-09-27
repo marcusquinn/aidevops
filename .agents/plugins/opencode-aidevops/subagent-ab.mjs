@@ -6,6 +6,8 @@ import { readFileSync } from "node:fs";
 import { validateExperiment } from "../../scripts/model-ab-validate.mjs";
 import { mergeModelRouting } from "./model-routing.mjs";
 
+const EXCLUDED_AGENTS = new Set(["specialist-advisor", "playwright"]);
+
 // Explicit private opt-in. Invalid or expired trials cannot silently change routing.
 export function loadSubagentTrial(path = process.env.AIDEVOPS_SUBAGENT_AB_CONFIG) {
   if (!path || process.env.AIDEVOPS_HEADLESS || process.env.AIDEVOPS_DISPATCH_TIER) return null;
@@ -20,6 +22,12 @@ export function subagentArm(experiment, sessionID) {
   const key = `${experiment.id}\0${experiment.seed}\0${sessionID}`;
   const hash = createHash("sha256").update(key).digest("hex");
   return experiment.arms[Number.parseInt(hash.slice(0, 8), 16) % 2];
+}
+
+export function eligibleSubagentTrial(experiment, agentName, state, now) {
+  if (!experiment || now < Date.parse(experiment.starts_at)
+    || now >= Date.parse(experiment.ends_at)) return false;
+  return !EXCLUDED_AGENTS.has(agentName) && !state?.inheritParentRoute?.has(agentName);
 }
 
 export function armRouting(base, arm) {

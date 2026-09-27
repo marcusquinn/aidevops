@@ -4,6 +4,7 @@
 import { existsSync, readFileSync } from "fs";
 import { withUnambiguousProviderFallbacks } from "./model-routing-reasoning.mjs";
 import { createSubagentEffortHandlers } from "./subagent-effort-handlers.mjs";
+import { loadSubagentTrial } from "./subagent-ab.mjs";
 import {
   appendCapabilityEscalationContract,
   createInteractiveSubagentEscalator,
@@ -211,7 +212,7 @@ export function createSubagentEffortHooks(client, options = {}) {
     policies,
     tierReasoning,
     modelRouting,
-    subagentTrial: options.subagentTrial,
+    subagentTrial: options.subagentTrial ?? (options.isHeadless?.() ? null : loadSubagentTrial()),
     agentRoutingState,
     onRoutingDecision,
     onSubagentOutcome: options.onSubagentOutcome,

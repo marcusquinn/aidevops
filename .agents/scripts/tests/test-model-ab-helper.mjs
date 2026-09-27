@@ -8,7 +8,8 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { assign, assignedArm, report, validateExperiment } from "../model-ab-helper.mjs";
-import { aggregateObserved, reportSubagents } from "../model-ab-report.mjs";
+import { aggregateObserved } from "../model-ab-report.mjs";
+import { reportSubagents } from "../model-ab-subagents.mjs";
 import { startProspectiveTrial } from "../model-ab-start.mjs";
 import { loadModelRouting, routingPrimary, routingVariant } from "../../plugins/opencode-aidevops/model-routing.mjs";
 
