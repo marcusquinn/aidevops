@@ -817,35 +817,9 @@ _verify_release_descendant_active_source() {
 	local sync_repo_root="$1"
 	local release_sha="$2"
 	local active_sha="$3"
-	local release_tree=""
-	local active_tree=""
-	local protected_main=""
-
-	release_tree=$(git -C "$sync_repo_root" rev-parse "${release_sha}^{tree}" 2>/dev/null) || {
-		print_error "Post-release deployment gate cannot resolve the release tree"
-		return 1
-	}
-	active_tree=$(git -C "$sync_repo_root" rev-parse "${active_sha}^{tree}" 2>/dev/null) || {
-		print_error "Post-release deployment gate cannot resolve the active bundle tree"
-		return 1
-	}
-	[[ "$release_tree" != "$active_tree" ]] || return 0
-	if ! git -C "$sync_repo_root" fetch origin main --quiet; then
-		print_error "Post-release deployment gate cannot refresh protected main for active descendant verification"
-		return 1
-	fi
-	protected_main=$(git -C "$sync_repo_root" rev-parse "origin/main^{commit}" 2>/dev/null) || {
-		print_error "Post-release deployment gate cannot resolve protected main for active descendant verification"
-		return 1
-	}
-	if [[ "$active_sha" != "$protected_main" ]]; then
-		print_error "Post-release deployment gate rejected active descendant ${active_sha:0:12}: changed tree does not match protected main ${protected_main:0:12}"
-		if git -C "$sync_repo_root" merge-base --is-ancestor "$active_sha" "$protected_main" 2>/dev/null; then
-			return 76
-		fi
-		return 1
-	fi
-	return 0
+	# The validated active bundle contains this exact release commit. Its tree
+	# may include later merges; moving protected main is not a deployment fence.
+	git -C "$sync_repo_root" merge-base --is-ancestor "$release_sha" "$active_sha" 2>/dev/null
 }
 
 _verify_active_release_preservation_merge() {
@@ -862,7 +836,6 @@ _verify_active_release_preservation_merge() {
 	local verify_repo=""
 	local verify_exit=0
 	local stale_runtime=0
-	local descendant_exit=0
 
 	_AIDEVOPS_RELEASE_ACTIVE_PRESERVATION_SHA=""
 	_AIDEVOPS_RELEASE_SQUASH_RECOVERY_SHA=""
@@ -899,12 +872,7 @@ _verify_active_release_preservation_merge() {
 			return 1
 		fi
 	else
-		_verify_release_descendant_active_source "$sync_repo_root" "$release_sha" "$active_sha" || descendant_exit=$?
-		case "$descendant_exit" in
-		0) ;;
-		76) stale_runtime=1 ;;
-		*) return "$descendant_exit" ;;
-		esac
+		_verify_release_descendant_active_source "$sync_repo_root" "$release_sha" "$active_sha" || return 1
 	fi
 
 	verify_base="${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}"
@@ -935,7 +903,7 @@ _verify_active_release_preservation_merge() {
 	[[ "$verify_exit" -eq 0 ]] || return 1
 	if [[ "$stale_runtime" -eq 1 ]]; then
 		if [[ -n "$_AIDEVOPS_RELEASE_PROTECTED_INTEGRATION_SHA" ]]; then
-			print_error "Post-release deployment gate verified protected integration ${_AIDEVOPS_RELEASE_PROTECTED_INTEGRATION_SHA:0:12}, but active runtime ${active_sha:0:12} is stale; defer for protected-main convergence"
+			print_info "Post-release deployment deferred: protected integration ${_AIDEVOPS_RELEASE_PROTECTED_INTEGRATION_SHA:0:12} is verified, but active runtime ${active_sha:0:12} does not include the release tag"
 		fi
 		return 76
 	fi
@@ -991,6 +959,9 @@ run_post_release_agent_sync() {
 		return 0
 	fi
 	if [[ "$active_preservation_exit" -ne 0 ]]; then
+		if [[ "$active_preservation_exit" -eq 76 ]]; then
+			return 76
+		fi
 		print_error "Post-release deployment gate could not verify the active runtime before deployment"
 		return "$active_preservation_exit"
 	fi
@@ -1057,7 +1028,7 @@ run_post_publication_gates() {
 	fi
 	run_post_release_agent_sync || deployment_exit=$?
 	if [[ "$hotfix_exit" -eq 0 && "$deployment_exit" -eq 76 ]]; then
-		print_info "Post-publication deployment deferred for protected-main runtime convergence"
+		print_info "Published; deployment deferred until the active runtime includes v${version}. Auto-update or aidevops update converges it; then run aidevops release reconcile <source-PR>."
 		return 76
 	fi
 
