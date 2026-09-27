@@ -7,14 +7,13 @@ import { validateExperiment } from "../../scripts/model-ab-validate.mjs";
 import { mergeModelRouting } from "./model-routing.mjs";
 
 // Explicit private opt-in. Invalid or expired trials cannot silently change routing.
-export function loadSubagentTrial(path = process.env.AIDEVOPS_SUBAGENT_AB_CONFIG, now = Date.now()) {
+export function loadSubagentTrial(path = process.env.AIDEVOPS_SUBAGENT_AB_CONFIG) {
   if (!path || process.env.AIDEVOPS_HEADLESS || process.env.AIDEVOPS_DISPATCH_TIER) return null;
   const experiment = validateExperiment(JSON.parse(readFileSync(path, "utf8")));
   if (!experiment.enrollment || experiment.arms.some((arm) => !arm.tiers)) {
     throw new Error("interactive subagent A/B requires two all-tier arms");
   }
-  return now >= Date.parse(experiment.starts_at) && now < Date.parse(experiment.ends_at)
-    ? experiment : null;
+  return experiment;
 }
 
 export function subagentArm(experiment, sessionID) {
