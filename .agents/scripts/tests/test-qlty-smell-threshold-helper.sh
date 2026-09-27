@@ -227,7 +227,8 @@ never_stable_output=$($HELPER "$CONF" 2>&1)
 never_stable_rc=$?
 assert_rc "unstable identities are diagnostic-only" "0" "$never_stable_rc"
 assert_contains "unstable identities return explicit inconclusive state" "Absolute threshold status: inconclusive (unstable normalized identities)" "$never_stable_output"
-assert_contains "unstable identities include attempt diagnostics" "Attempts: 1:rc=0,count=1;2:rc=0,count=1;3:rc=0,count=1" "$never_stable_output"
+assert_contains "unstable identities include post-warm-up attempt diagnostics" "Attempts: warm-up:rc=0,count=1;1:rc=0,count=1;2:rc=0,count=1" "$never_stable_output"
+assert_contains "unstable identities compare only authoritative attempts" "authoritative attempt 1 -> 2" "$never_stable_output"
 assert_not_contains "unstable identities cannot emit threshold remediation" "QLTY_REMEDIATION_EVIDENCE=" "$never_stable_output"
 
 write_stub_qlty topology-sensitive "$BIN_DIR"
