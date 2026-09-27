@@ -179,7 +179,7 @@ _fie_commit_images() {
 	for index in "${!_FIE_FILES[@]}"; do
 		sha=$(_fie_upload_blob "$repo" "${_FIE_FILES[$index]}" "$temp_dir") || return 1
 		# gh starts a new array object whenever an object key repeats.
-		tree_args+=(-f "tree[][path]=${_FIE_NAMES[$index]}" -f 'tree[][mode]=100644' \
+		tree_args+=(-f "tree[][path]=${_FIE_NAMES[$index]}" -f 'tree[][mode]=100644'
 			-f 'tree[][type]=blob' -f "tree[][sha]=$sha")
 	done
 	tree=$(gh api "repos/${repo}/git/trees" "${tree_args[@]}" --jq '.sha') || return 1
