@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.36.4] - 2026-09-27
+
+### Fixed
+
+- Tabby tab status dot via V2 TUI plugin and V2 runtime version in greeting
+
 ## [3.36.3] - 2026-09-27
 
 ### Changed
