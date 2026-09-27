@@ -25,6 +25,17 @@ function deniedTools(source) {
   return denied;
 }
 
+function primaryFromRow(root, row, names) {
+  const match = SOURCE.exec(row.trim());
+  if (!match || names.has(match[1])) return null;
+  const [, name, file, description] = match;
+  const path = join(root, file);
+  if (realpathSync(path) !== path) return null;
+  const system = readFileSync(path, "utf8").trim();
+  const denied = deniedTools(system);
+  return denied && system && description ? { name, description, system, denied } : null;
+}
+
 /** Derive V2 primaries from the same audited index and source files used by V1. */
 export function loadV2PrimaryProfiles(agentsDir) {
   try {
@@ -35,16 +46,10 @@ export function loadV2PrimaryProfiles(agentsDir) {
     const entries = [];
     const names = new Set();
     for (const row of block.trim().split("\n")) {
-      const match = SOURCE.exec(row.trim());
-      if (!match || names.has(match[1])) return [];
-      const [, name, file, description] = match;
-      const path = join(root, file);
-      if (realpathSync(path) !== path) return [];
-      const system = readFileSync(path, "utf8").trim();
-      const denied = deniedTools(system);
-      if (!denied || !system || !description) return [];
-      entries.push({ name, description, system, denied });
-      names.add(name);
+      const profile = primaryFromRow(root, row, names);
+      if (!profile) return [];
+      entries.push(profile);
+      names.add(profile.name);
     }
     return names.has("Build+") ? entries : [];
   } catch {
