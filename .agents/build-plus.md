@@ -3,6 +3,8 @@ name: build-plus
 description: Unified coding agent - planning, implementation, and DevOps with semantic search
 mode: subagent
 subagents:
+  # Catalogued domain entries are progressive-disclosure docs, not necessarily
+  # invokable Task types. Use only runtime-listed types for Task delegation.
   # Core workflows
   - git-workflow
   - branch
@@ -32,6 +34,9 @@ subagents:
   # Browser/testing
   - playwright
   - playwriter
+  - chrome-devtools
+  - macos-automator
+  - ios-simulator
   - stagehand
   - pagespeed
   # Git platforms
