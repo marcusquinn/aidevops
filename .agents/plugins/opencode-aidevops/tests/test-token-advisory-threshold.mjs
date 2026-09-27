@@ -25,6 +25,9 @@ function createHooks(options = {}) {
     intentField: "agent__intent",
     isHeadless: options.isHeadless || (() => false),
     shouldInjectGreeting: options.shouldInjectGreeting,
+    // The plugin greeting is opt-in (AIDEVOPS_PLUGIN_SESSION_GREETING=1);
+    // these cases cover its content once enabled.
+    greetingEnabled: options.greetingEnabled || (() => true),
     readGreetingCache: options.readGreetingCache,
     now: options.now,
     refreshTtlMs: options.refreshTtlMs,
@@ -179,9 +182,19 @@ describe("token cost advisory threshold", () => {
 
     await hooks.systemTransformHook({ model: { providerID: "anthropic" } }, output);
 
-    assert.match(output.system[0], /Session-start greeting order/);
-    assert.equal(output.system[1], "You are Claude Code, Anthropic's official CLI for Claude.");
-    assert.match(output.system[2], /^You are Claude Code, Anthropic's official CLI for Claude\.\n\nbase system prompt/);
+    assert.equal(output.system[0], "You are Claude Code, Anthropic's official CLI for Claude.");
+    assert.match(output.system[1], /^You are Claude Code, Anthropic's official CLI for Claude\.\n\nbase system prompt/);
+    assert.match(output.system.at(-1), /Session-start greeting order/);
+    assert.equal(output.system.filter((entry) => entry.includes("Session-start greeting order")).length, 1);
+  });
+
+  test("injects no plugin greeting unless explicitly enabled", async () => {
+    const { hooks } = createHooks({ greetingEnabled: () => false });
+    const output = { system: ["base system prompt"] };
+
+    await hooks.systemTransformHook({ model: { providerID: "openai" } }, output);
+
+    assert.ok(!output.system.some((entry) => entry.includes("Session-start greeting order")));
   });
 
   test("does not inject advisory below 400k tokens", async () => {

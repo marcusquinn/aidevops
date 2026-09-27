@@ -37,11 +37,13 @@ function requestBodyAllowed(request) {
   return !["GET", "HEAD"].includes(request.method.toUpperCase());
 }
 
-async function transformedBody(request, provider) {
+async function transformedBody(request, provider, sessionID) {
   if (!requestBodyAllowed(request)) return undefined;
   const body = await request.clone().text().catch(() => null);
   if (body === null) return undefined;
-  return provider === "anthropic" ? transformRequestBody(body) : transformOpenAIRequestBody(body);
+  return provider === "anthropic"
+    ? transformRequestBody(body, { sessionID })
+    : transformOpenAIRequestBody(body);
 }
 
 function rebuildRequest(request, url, headers, body) {
@@ -99,7 +101,7 @@ function createHttpRequestHook(runtime) {
     const account = await runtime.selectAccount(provider, skipEmail);
     if (!account?.access) return;
     runtime.activateProvider(provider);
-    const body = await transformedBody(event.request, provider);
+    const body = await transformedBody(event.request, provider, event.sessionID);
     event.request = provider === "anthropic"
       ? anthropicRequest(event.request, account.access, body)
       : openAIRequest(event.request, account, body);

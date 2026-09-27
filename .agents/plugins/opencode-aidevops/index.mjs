@@ -36,6 +36,7 @@ import { adaptToolDefinition } from "./tool-definition.mjs";
 import { createMcpSessionRuntime, getOnDemandMcpAgents } from "./mcp-registry.mjs";
 import { enforceManagedMcpArtifactPath } from "./mcp-activation-tool.mjs";
 import { createQualityHooks } from "./quality-hooks.mjs";
+import { createInstructionReminderCompactor } from "./instruction-reminders.mjs";
 import { createSourceAccessRuntime } from "./source-access-runtime.mjs";
 import {
   createSessionModelStore,
@@ -495,6 +496,9 @@ export async function AidevopsPlugin({ directory, client }) {
     recordReceipt: recordSubagentCancellationReceipt,
   });
 
+  // Duplicate AGENTS.md Read reminders (GH#32444); OpenCode 1 only.
+  const instructionReminders = createInstructionReminderCompactor();
+
   // TTSR hooks
   const {
     systemTransformHook: ttsrSystemTransformHook,
@@ -533,6 +537,7 @@ export async function AidevopsPlugin({ directory, client }) {
   // request — the underlying provider call will surface a clearer error
   // if the proxy is genuinely unreachable.
   const systemTransformHook = async (input, output) => {
+    instructionReminders.rememberSystem(input?.sessionID, output?.system);
     const providerID = input?.model?.providerID;
     if (providerID && !isHeadless()) {
       const starter = proxyStarters[providerID];
@@ -677,6 +682,12 @@ export async function AidevopsPlugin({ directory, client }) {
       return toolExecuteBefore(input, output);
     },
     "tool.execute.after": async (input, output) => {
+      try {
+        const replaced = instructionReminders.compactReadOutput(input, output);
+        if (replaced > 0) qualityLog("INFO", `[instruction-reminders] replaced ${replaced} duplicate instruction reminder(s)`);
+      } catch (err) {
+        qualityLog("WARN", `[instruction-reminders] skipped: ${err?.message ?? err}`);
+      }
       sessionStallRecovery.afterTool(input, output);
       await cancellationReceipt.afterTool(input, output);
       await subagentEffortHooks.afterTool(input, output);
