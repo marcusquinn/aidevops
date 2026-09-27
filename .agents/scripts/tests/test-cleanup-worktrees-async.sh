@@ -580,10 +580,10 @@ test_archive_outcome_summary_is_logged() {
 
 	MOCK_CLEANUP_EXIT=0 MOCK_REMOVED_COUNT=3 MOCK_ARCHIVED_COUNT=2 \
 		MOCK_ARCHIVE_FAILED_COUNT=1 run_helper_in_isolation || true
-	if grep -q 'outcome=success removed=3 archived=2 archive_failed=1' "$cleanup_log" 2>/dev/null; then
-		print_result "archive-summary: async cleanup reports archive/delete outcomes" 0
+	if grep -q 'outcome=success removed=3 archived=2 archive_failed=1 skip_reasons=none' "$cleanup_log" 2>/dev/null; then
+		print_result "archive-summary: async cleanup reports archive/delete outcomes and skip reasons" 0
 	else
-		print_result "archive-summary: async cleanup reports archive/delete outcomes" 1 \
+		print_result "archive-summary: async cleanup reports archive/delete outcomes and skip reasons" 1 \
 			"structured archive outcome summary missing"
 	fi
 	return 0

@@ -20,6 +20,10 @@ CLEANUP_STASHES_ASYNC_CADENCE_MIN="${CLEANUP_STASHES_ASYNC_CADENCE_MIN:-10}"
 CLEANUP_STASHES_ASYNC_CADENCE_MIN="${CLEANUP_STASHES_ASYNC_CADENCE_MIN//[!0-9]/}"
 [[ -n "$CLEANUP_STASHES_ASYNC_CADENCE_MIN" ]] || CLEANUP_STASHES_ASYNC_CADENCE_MIN=10
 
+AIDEVOPS_CLEANUP_LOG_MAX_MB="${AIDEVOPS_CLEANUP_LOG_MAX_MB:-20}"
+AIDEVOPS_CLEANUP_LOG_MAX_MB="${AIDEVOPS_CLEANUP_LOG_MAX_MB//[!0-9]/}"
+[[ "$AIDEVOPS_CLEANUP_LOG_MAX_MB" =~ ^[1-9][0-9]{0,3}$ ]] || AIDEVOPS_CLEANUP_LOG_MAX_MB=20
+
 mkdir -p "$LOG_DIR"
 
 if [[ -f "${SCRIPT_DIR}/shared-constants.sh" ]]; then
@@ -126,13 +130,28 @@ _update_last_run() {
 	return 0
 }
 
-main() {
-	printf '[cleanup-stashes-async] PID=%s starting at %s\n' "$$" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" >>"$LOGFILE"
+_rotate_log_if_oversize() {
+	local log_size=0
+	local max_size=$((AIDEVOPS_CLEANUP_LOG_MAX_MB * 1024 * 1024))
+	local rotated_log="${LOGFILE}.1"
 
+	[[ -f "$LOGFILE" ]] || return 0
+	log_size=$(wc -c <"$LOGFILE" | tr -d '[:space:]') || return 0
+	[[ "$log_size" =~ ^[0-9]+$ && "$log_size" -gt "$max_size" ]] || return 0
+	rm -f "$rotated_log" 2>/dev/null || return 0
+	mv "$LOGFILE" "$rotated_log" 2>/dev/null || return 0
+	printf '[cleanup-stashes-async] rotated log bytes=%s cap_mb=%s\n' \
+		"$log_size" "$AIDEVOPS_CLEANUP_LOG_MAX_MB" >>"$LOGFILE"
+	return 0
+}
+
+main() {
 	if ! _lock_acquire; then
 		printf '[cleanup-stashes-async] Lock held by live instance — skipping this invocation\n' >>"$LOGFILE"
 		return 0
 	fi
+	_rotate_log_if_oversize
+	printf '[cleanup-stashes-async] PID=%s starting at %s\n' "$$" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" >>"$LOGFILE"
 
 	if ! _cadence_ok; then
 		return 0
@@ -145,10 +164,9 @@ main() {
 
 	if [[ "$rc" -eq 0 ]]; then
 		_update_last_run
-		printf '[cleanup-stashes-async] Completed successfully at %s. last-run updated.\n' \
-			"$(date -u '+%Y-%m-%dT%H:%M:%SZ')" >>"$LOGFILE"
+		printf '[cleanup-stashes-async] outcome=success skip_reasons=none last-run=updated\n' >>"$LOGFILE"
 	else
-		printf '[cleanup-stashes-async] cleanup_stashes exited with rc=%s — last-run NOT updated\n' "$rc" >>"$LOGFILE"
+		printf '[cleanup-stashes-async] outcome=failed rc=%s skip_reasons=unavailable last-run=not-updated\n' "$rc" >>"$LOGFILE"
 	fi
 
 	return 0

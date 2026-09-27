@@ -21,6 +21,10 @@ CLEANUP_REMOTE_BRANCHES_ASYNC_CADENCE_MIN="${CLEANUP_REMOTE_BRANCHES_ASYNC_CADEN
 CLEANUP_REMOTE_BRANCHES_ASYNC_CADENCE_MIN="${CLEANUP_REMOTE_BRANCHES_ASYNC_CADENCE_MIN//[!0-9]/}"
 [[ -n "$CLEANUP_REMOTE_BRANCHES_ASYNC_CADENCE_MIN" ]] || CLEANUP_REMOTE_BRANCHES_ASYNC_CADENCE_MIN=360
 
+AIDEVOPS_CLEANUP_LOG_MAX_MB="${AIDEVOPS_CLEANUP_LOG_MAX_MB:-20}"
+AIDEVOPS_CLEANUP_LOG_MAX_MB="${AIDEVOPS_CLEANUP_LOG_MAX_MB//[!0-9]/}"
+[[ "$AIDEVOPS_CLEANUP_LOG_MAX_MB" =~ ^[1-9][0-9]{0,3}$ ]] || AIDEVOPS_CLEANUP_LOG_MAX_MB=20
+
 AIDEVOPS_REMOTE_BRANCH_CLEANUP_MIN_GH_REMAINING="${AIDEVOPS_REMOTE_BRANCH_CLEANUP_MIN_GH_REMAINING:-1000}"
 AIDEVOPS_REMOTE_BRANCH_CLEANUP_MIN_GH_REMAINING="${AIDEVOPS_REMOTE_BRANCH_CLEANUP_MIN_GH_REMAINING//[!0-9]/}"
 [[ -n "$AIDEVOPS_REMOTE_BRANCH_CLEANUP_MIN_GH_REMAINING" ]] || AIDEVOPS_REMOTE_BRANCH_CLEANUP_MIN_GH_REMAINING=1000
@@ -123,6 +127,21 @@ _update_last_run() {
 	return 0
 }
 
+_rotate_log_if_oversize() {
+	local log_size=0
+	local max_size=$((AIDEVOPS_CLEANUP_LOG_MAX_MB * 1024 * 1024))
+	local rotated_log="${LOGFILE}.1"
+
+	[[ -f "$LOGFILE" ]] || return 0
+	log_size=$(wc -c <"$LOGFILE" | tr -d '[:space:]') || return 0
+	[[ "$log_size" =~ ^[0-9]+$ && "$log_size" -gt "$max_size" ]] || return 0
+	rm -f "$rotated_log" 2>/dev/null || return 0
+	mv "$LOGFILE" "$rotated_log" 2>/dev/null || return 0
+	printf '[cleanup-remote-branches-async] rotated log bytes=%s cap_mb=%s\n' \
+		"$log_size" "$AIDEVOPS_CLEANUP_LOG_MAX_MB" >>"$LOGFILE"
+	return 0
+}
+
 _gh_budget_ok() {
 	if [[ "${AIDEVOPS_REMOTE_BRANCH_CLEANUP_SKIP_RATE_LIMIT:-0}" == "1" ]]; then
 		return 0
@@ -194,12 +213,12 @@ _run_cleanup_for_repo() {
 }
 
 main() {
-	printf '[cleanup-remote-branches-async] PID=%s starting at %s\n' "$$" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" >>"$LOGFILE"
-
 	if ! _lock_acquire; then
 		printf '[cleanup-remote-branches-async] Lock held by live instance — skipping this invocation\n' >>"$LOGFILE"
 		return 0
 	fi
+	_rotate_log_if_oversize
+	printf '[cleanup-remote-branches-async] PID=%s starting at %s\n' "$$" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" >>"$LOGFILE"
 
 	if ! _cadence_ok; then
 		return 0
@@ -224,11 +243,11 @@ main() {
 
 	if [[ "$rc" -eq 0 ]]; then
 		_update_last_run
-		printf '[cleanup-remote-branches-async] Completed successfully at %s. repos=%s last-run updated.\n' \
-			"$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$scanned" >>"$LOGFILE"
+		printf '[cleanup-remote-branches-async] outcome=success repos=%s failures=0 skip_reasons=none last-run=updated\n' \
+			"$scanned" >>"$LOGFILE"
 	else
-		printf '[cleanup-remote-branches-async] Completed with failures=%s repos=%s — last-run NOT updated\n' \
-			"$failures" "$scanned" >>"$LOGFILE"
+		printf '[cleanup-remote-branches-async] outcome=failed repos=%s failures=%s skip_reasons=unavailable last-run=not-updated\n' \
+			"$scanned" "$failures" >>"$LOGFILE"
 	fi
 
 	return 0
