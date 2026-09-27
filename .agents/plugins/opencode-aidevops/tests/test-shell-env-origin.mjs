@@ -189,6 +189,17 @@ test("shell env records the effective model against only its session", async () 
   assert.equal(store.resolve("session-missing"), "");
 });
 
+test("shell env uses the latest remembered model when tool input omits it", async () => {
+  const store = createSessionModelStore();
+  const hook = makeHook();
+  store.remember("switched-session", "openai/first-model");
+  store.remember("switched-session", "anthropic/current-model");
+  const output = { env: { PATH: "/usr/bin:/bin" } };
+  await hook({ sessionID: "switched-session" }, output);
+  assert.equal(output.env.AIDEVOPS_SIG_MODEL, "anthropic/current-model");
+  assert.equal(output.env.OPENCODE_SESSION_ID, "switched-session");
+});
+
 test("session model store evicts old entries at its bound", () => {
   const store = createSessionModelStore(2);
   store.remember("session-a", "model-a");
