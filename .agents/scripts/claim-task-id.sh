@@ -409,7 +409,46 @@ _validate_and_normalize_args() {
 	# GH#21991: advisory structural check on --description before issue creation.
 	# Non-blocking by default; set AIDEVOPS_BODY_FORMAT_STRICT=1 to hard-fail.
 	_validate_description_format
+	if ! _validate_interactive_dispatch_scope; then
+		exit 1
+	fi
 	return 0
+}
+
+# _validate_interactive_dispatch_scope — fail before allocation when an
+# interactive session files auto-dispatch work without a canonical Files Scope.
+# Pending publication withholds auto-dispatch from the created issue (GH#30325),
+# so the gh_create_issue scope gate cannot see the intent; the pulse would hold
+# the issue only after publication. Headless generators keep that pre-claim
+# hold so automated findings are never lost.
+_validate_interactive_dispatch_scope() {
+	[[ "$NO_ISSUE" == "true" || "$DRY_RUN" == "true" ]] && return 0
+	[[ -n "$TASK_DESCRIPTION" ]] || return 0
+	[[ "$TASK_LABELS" =~ (^|,)auto-dispatch(,|$) ]] || return 0
+	[[ "$(detect_session_origin 2>/dev/null || true)" == "interactive" ]] || return 0
+
+	local scope_lib="${SCRIPT_DIR}/pre-dispatch-validator-lib-brief-scope.sh"
+	local fmt_helper="${SCRIPT_DIR}/issue-body-format-helper.sh"
+	local body="$TASK_DESCRIPTION" normalized=""
+	[[ -r "$scope_lib" ]] || return 0
+	# shellcheck source=./pre-dispatch-validator-lib-brief-scope.sh
+	# shellcheck disable=SC1091
+	source "$scope_lib"
+	# Normalization derives Files Scope from explicit "Files to Modify" paths.
+	if [[ -x "$fmt_helper" ]]; then
+		normalized=$("$fmt_helper" normalize "$body" 2>/dev/null) && body="$normalized"
+	fi
+	_brief_requires_files_scope "$body" 1 || return 0
+	_brief_files_scope_has_path "$body" && return 0
+
+	log_error "auto-dispatch brief has no canonical Files Scope; add before claiming:"
+	log_error "  ### Files Scope"
+	log_error "  - EDIT: \`repo/relative/existing-file\`"
+	log_error "  - NEW: \`repo/relative/new-file\`"
+	log_error "One path per line with nothing after it (globs allowed as extra lines)."
+	log_error "Planning-only work: start the body with 'Planning-only:' instead."
+	log_error "Without it the pulse holds the issue as status:blocked (missing_files_scope)."
+	return 1
 }
 
 # _dedupe_csv_labels — preserve first occurrence while removing duplicate labels.

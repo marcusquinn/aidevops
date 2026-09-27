@@ -847,11 +847,51 @@ _dispatch_load_and_validate_metadata() {
 	return 0
 }
 
+# Stable identity of the brief body that produced a scope hold. Other pulse
+# paths (and other runners) can move status:blocked back to available, so the
+# label alone cannot prove the brief owner was already told (GH#32531).
+_dispatch_brief_hold_body_hash() {
+	local issue_body="$1"
+	local digest=""
+	if command -v shasum >/dev/null 2>&1; then
+		digest=$(printf '%s' "$issue_body" | shasum -a 256 2>/dev/null | cut -c1-24) || digest=""
+	elif command -v sha256sum >/dev/null 2>&1; then
+		digest=$(printf '%s' "$issue_body" | sha256sum 2>/dev/null | cut -c1-24) || digest=""
+	fi
+	[[ "$digest" =~ ^[a-f0-9]{24}$ ]] || return 1
+	printf '%s\n' "$digest"
+	return 0
+}
+
+# Returns 0 when a trusted comment already records the hold for this exact
+# body, 1 when none exists, 2 when comments cannot be read. A forged marker can
+# only suppress a duplicate comment; the blocked label is still applied.
+_dispatch_brief_hold_recorded() {
+	local issue_number="$1" repo_slug="$2" marker="$3"
+	local comments_json="" state=""
+	comments_json=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments?per_page=100" \
+		--paginate --slurp 2>/dev/null) || return 2
+	# Non-array payloads produce no output and are treated as unreadable.
+	state=$(printf '%s' "$comments_json" | jq -r --arg marker "$marker" '
+		arrays
+		| (if ([.[0]? | arrays] | length) > 0 then add else . end)
+		| if any(.[]?; ((.author_association // "") | IN("OWNER", "MEMBER", "COLLABORATOR"))
+			and ((.body // "") | contains($marker))) then "recorded" else "absent" end
+	' 2>/dev/null) || return 2
+	case "$state" in
+	recorded) return 0 ;;
+	absent) return 1 ;;
+	esac
+	return 2
+}
+
 # Fail before dedup posts a claim. The blocked label is the durable cycle gate;
-# do not manufacture an audit observation on every pulse iteration.
+# the body-hash marker keeps the brief-owner action to one comment per body even
+# when the label is later cleared without a body change.
 _dispatch_preclaim_brief_scope() {
 	local issue_number="$1" repo_slug="$2" issue_meta_json="$3"
 	local issue_body="" author="" permission="" comment_file="" scope_rc=0
+	local body_hash="" hold_marker="" recorded_rc=0
 	printf '%s' "$issue_meta_json" | jq -e '[.labels[]?.name] | index("auto-dispatch") != null' >/dev/null 2>&1 || return 0
 	if printf '%s' "$issue_meta_json" | jq -e '[.labels[]?.name] | index("status:blocked") != null' >/dev/null 2>&1; then
 		return 1
@@ -871,8 +911,19 @@ _dispatch_preclaim_brief_scope() {
 		! repo_allows_pulse_write_actions "$repo_slug"; then
 		return 1
 	fi
+	body_hash=$(_dispatch_brief_hold_body_hash "$issue_body") || return 1
+	hold_marker="<!-- aidevops:brief-hold reason=missing_files_scope body=${body_hash} -->"
+	_dispatch_brief_hold_recorded "$issue_number" "$repo_slug" "$hold_marker" || recorded_rc=$?
+	# Unreadable history: skip dispatch without writing; the next cycle retries.
+	[[ "$recorded_rc" -eq 2 ]] && return 1
+	if [[ "$recorded_rc" -eq 0 ]]; then
+		set_issue_status "$issue_number" "$repo_slug" blocked >/dev/null || true
+		echo "[dispatch_with_dedup] Brief hold for #${issue_number} in ${repo_slug} already recorded for this body; relabelled without a new comment" >>"${LOGFILE:-/dev/null}"
+		return 1
+	fi
 	comment_file=$(mktemp) || return 1
-	printf 'Brief hold: reason=missing_files_scope owner=brief-author.\nProjected state: status:blocked.\nNext action: Add a canonical ### Files Scope (or legacy ## Files Scope) section listing permitted EDIT/NEW paths in the issue body; verify with pre-dispatch-validator-helper.sh scope-check. The corrected body re-arms dispatch after the blocked label is cleared by the brief owner.\n' >"$comment_file"
+	# shellcheck disable=SC2016 # literal Markdown backticks, not expansions
+	printf '%s\nBrief hold: reason=missing_files_scope owner=brief-author.\nProjected state: status:blocked.\nNext action: Add a canonical ### Files Scope (or legacy ## Files Scope) section with one `` - EDIT: `repo/path` `` or `` - NEW: `repo/path` `` line per permitted file (nothing after the path) in the issue body; verify with pre-dispatch-validator-helper.sh scope-check. The corrected body re-arms dispatch after the blocked label is cleared by the brief owner. This body is not held again unless it changes.\n' "$hold_marker" >"$comment_file"
 	if ! set_issue_status "$issue_number" "$repo_slug" blocked >/dev/null; then
 		rm -f "$comment_file"
 		return 1

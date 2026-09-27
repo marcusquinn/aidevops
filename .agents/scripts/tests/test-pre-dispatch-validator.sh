@@ -854,31 +854,66 @@ test_issue_creation_legacy_scope_rejected() {
 }
 
 test_preclaim_hold_once() {
-	local calls="" rc=0
+	local calls="" comments="" rc=0
 	calls=$(mktemp) || return 1
+	comments=$(mktemp) || return 1
+	printf '[[]]\n' >"$comments"
 	(
 		# shellcheck source=../shared-constants.sh
 		source "${SCRIPT_DIR}/../shared-constants.sh" >/dev/null 2>&1
 		# shellcheck source=../pulse-dispatch-core.sh
 		source "${SCRIPT_DIR}/../pulse-dispatch-core.sh" >/dev/null 2>&1
-		gh() { printf 'write\n'; return 0; }
+		gh() {
+			if [[ "$*" == *"/comments"* ]]; then
+				cat "$comments"
+				return 0
+			fi
+			printf 'write\n'
+			return 0
+		}
 		repo_allows_pulse_write_actions() { return 0; }
 		set_issue_status() { printf 'status:%s\n' "$3" >>"$calls"; return 0; }
-		gh_issue_comment() { printf 'comment\n' >>"$calls"; return 0; }
+		gh_issue_comment() {
+			local body_file="$5"
+			printf 'comment\n' >>"$calls"
+			# Record the posted hold as a trusted runner comment.
+			jq -n --rawfile body "$body_file" \
+				'[[{author_association:"COLLABORATOR", body:$body}]]' >"$comments"
+			return 0
+		}
 		# shellcheck disable=SC2016 # literal JSON fixture
 		local meta='{"author":{"login":"maintainer"},"labels":[{"name":"auto-dispatch"}],"body":"## Files\n- EDIT: `src/repair.sh`"}'
 		_dispatch_preclaim_brief_scope 32531 owner/repo "$meta" && exit 1
 		# shellcheck disable=SC2016 # literal JSON fixture
-		meta='{"author":{"login":"maintainer"},"labels":[{"name":"auto-dispatch"},{"name":"status:blocked"}],"body":"## Files\n- EDIT: `src/repair.sh`"}'
+		local blocked='{"author":{"login":"maintainer"},"labels":[{"name":"auto-dispatch"},{"name":"status:blocked"}],"body":"## Files\n- EDIT: `src/repair.sh`"}'
+		_dispatch_preclaim_brief_scope 32531 owner/repo "$blocked" && exit 1
+		[[ "$(wc -l <"$calls")" -eq 2 ]] || exit 2
+		# Another path cleared the label but the body is unchanged: relabel only.
 		_dispatch_preclaim_brief_scope 32531 owner/repo "$meta" && exit 1
-		[[ "$(wc -l <"$calls")" -eq 2 ]]
+		[[ "$(grep -c '^comment$' "$calls")" -eq 1 ]] || exit 3
+		[[ "$(grep -c '^status:blocked$' "$calls")" -eq 2 ]] || exit 4
+		# A changed but still unscoped body gets exactly one new action.
+		# shellcheck disable=SC2016 # literal JSON fixture
+		meta='{"author":{"login":"maintainer"},"labels":[{"name":"auto-dispatch"}],"body":"## Files\n- EDIT: `src/other.sh`"}'
+		_dispatch_preclaim_brief_scope 32531 owner/repo "$meta" && exit 1
+		[[ "$(grep -c '^comment$' "$calls")" -eq 2 ]] || exit 5
+		# Unreadable comment history writes nothing.
+		gh() {
+			[[ "$*" == *"/comments"* ]] && return 1
+			printf 'write\n'
+			return 0
+		}
+		# shellcheck disable=SC2016 # literal JSON fixture
+		meta='{"author":{"login":"maintainer"},"labels":[{"name":"auto-dispatch"}],"body":"## Files\n- EDIT: `src/third.sh`"}'
+		_dispatch_preclaim_brief_scope 32531 owner/repo "$meta" && exit 1
+		[[ "$(wc -l <"$calls")" -eq 5 ]] || exit 6
 	) >/dev/null 2>&1 || rc=$?
 	if [[ "$rc" -eq 0 ]]; then
-		print_result "missing scope holds once without a claim or repeated action" 0
+		print_result "missing scope holds once per body without a claim or repeated action" 0
 	else
-		print_result "missing scope holds once without a claim or repeated action" 1 "rc=${rc}"
+		print_result "missing scope holds once per body without a claim or repeated action" 1 "rc=${rc}"
 	fi
-	rm -f "$calls"
+	rm -f "$calls" "$comments"
 	return 0
 }
 
