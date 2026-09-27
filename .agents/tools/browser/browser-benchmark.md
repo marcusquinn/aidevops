@@ -129,7 +129,40 @@ tab was compared. The `h1` locator remains much faster for known structure.
 Keep Playwright as the default, retain Stagehand as opt-in for adaptive tasks,
 and do not promote Playwriter beyond explicit legacy compatibility. A
 selected existing tab plus consent-safe profile isolation is still needed to
-evaluate the authenticated lane.
+evaluate the *existing-tab* lane; the isolated authenticated case is below.
+
+### Stagehand v4 NanoGPT isolated authenticated probe (2026-09-27; not a benchmark)
+
+With explicit operator consent for the private page and a $2 test ceiling,
+three fresh, separate **headless Brave** contexts logged into an authenticated
+dashboard using scoped injected secrets, then compared `main h1` with a v4.1.0
+structured `extract` result. The site, heading text, credentials, browser
+profile and model prompts are not retained in this document. No user-owned
+browser profile was attached; only the required login submission was performed.
+The one-shot script was removed after use. NanoGPT's OpenAI-compatible API was
+called by a v4 client-side `generate` callback (not OAuth-pool tokens); the
+explicit model was `openai/gpt-4o-mini`. Each run allowed up to three calls,
+200,000 serialized input characters in total, 512 output tokens per call,
+and a 155 s process budget. This is a client-side usage bound, **not** a
+provider-enforced $2 limit. Catalog prices were $0.15/million input and
+$0.60/million output tokens at test time.
+
+| Run | DOM heading match | Locator after login | AI extract after login | Model input/output tokens | Catalog-price estimate |
+|-----|-------------------|--------------------|------------------------|---------------------------|------------------------|
+| 1 | No | 12 ms | 2,843 ms | 581 / 31 | $0.000106 |
+| 2 | No, even after case/whitespace normalization | 11 ms | 3,427 ms | 581 / 33 | $0.000107 |
+| 3 | Yes | 9 ms | 2,764 ms | 1,290 / 21 | $0.000206 |
+
+All three extractions returned structured data and used two model calls each,
+but only **1/3 matched** the contemporaneous DOM heading. The AI text on the
+second run did not match any `h1`. In the matching run both model requests
+included the DOM heading; the serialized requests were ~5,908 characters,
+versus ~3,078 on each mismatch. This suggests snapshot/timing differences,
+but does not establish a root cause. Extract timing excludes login/navigation;
+the three catalog-price estimates total **$0.000419**, not an independently
+verified provider bill. Together with the public-page result, this supports
+keeping deterministic Playwright as default and Stagehand as a bounded opt-in
+for adaptive tasks, not promoting a success-rate or broad v4 benchmark claim.
 
 ```bash
 cd ~/.aidevops/.agent-workspace/work/browser-bench/

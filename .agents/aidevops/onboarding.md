@@ -86,7 +86,7 @@ The two workflows compose: `/onboarding` first (you need `gh` to be authenticate
 | SEO | Google Search Console | OAuth via MCP | https://search.google.com/search-console |
 | Context | Context7 | MCP config only | — |
 | Browser | Playwright | `npx playwright install` | — |
-| Browser | Stagehand | OpenAI/Anthropic key required | — |
+| Browser | Stagehand v4 (opt-in adaptive flows) | Explicit model API key; NanoGPT is an optional provider via a bounded client callback, not OAuth-pool auth | `tools/browser/stagehand.md` |
 | Browser | Chrome DevTools | `--remote-debugging-port=9222` | — |
 | Containers | OrbStack | `brew install orbstack` — docs: `@orbstack` | — |
 | Containers | Tailscale | `brew install tailscale` — docs: `@tailscale` | — |

@@ -17,7 +17,7 @@ tools:
 
 ## Decision Tree
 
-Prefer: fastest tool → ARIA snapshots over screenshots (50-200 tokens vs ~1K) → headless over headed → CLI for AI agents. For normal headed or headless work, use a separate Playwright browser with Brave preferred so automation does not interrupt the user's activity. Microsoft's Playwright Extension is an interactive-only exception when an available user explicitly needs selected tabs from their existing browser.
+Default Playwright automation to a fresh, isolated **headless Brave** browser when installed (bundled Chromium otherwise), including authenticated flows when credentials or an approved session can be provided without using the user's profile. Do not ask for an existing tab just because a page requires login. Use a separate headed browser only when the user must see or assist with the flow (for example, a passkey, MFA, or visual guidance), or when the task itself requires a visible browser. Microsoft's Playwright Extension is an interactive-only exception when an available user explicitly needs selected tabs from their existing browser. Prefer ARIA snapshots over screenshots (50-200 tokens vs ~1K); see `playwright.md` for runtime overrides.
 
 For repeatable browser operations or web data mining that should learn, optimize,
 persist profile state, or graduate into reusable private workflows, start with
@@ -27,18 +27,18 @@ replacing them.
 ```text
 EXTRACT?
   Web search + crawl → WaterCrawl | Bulk CSS/XPath → Crawl4AI | One-off authenticated → curl-copy
-  Need login first → Playwright/dev-browser then extract | Unknown structure → Crawl4AI LLM / Stagehand
+  Need login first → isolated headless Playwright then extract | Unknown structure → opt-in Stagehand v4 after model/data/cost consent
 
 AUTOMATE?
   Password manager/extensions:
     User present + current browser required → Playwright Extension | Unlock once → dev-browser | Programmatic → standalone Playwright + Bitwarden CLI
   Live already-open Chromium/Chrome session:
     Inspect current state / understand workflow first → chromium-debug-use
-    Interactive selected tabs → Playwright Extension | Repeatable isolated flow → standalone Playwright (Brave preferred) / dev-browser / Stagehand
+    Interactive selected tabs → Playwright Extension | Repeatable isolated flow → standalone Playwright (headless Brave preferred) / dev-browser
   Parallel sessions: speed → Playwright | CLI → playwright-cli/agent-browser --session
   Persistent login: with extensions → dev-browser | without → playwright-cli/storageState
   Proxy: direct → standalone Playwright/Crawl4AI | interactive use of existing browser's proxy/VPN → Playwright Extension
-  Self-healing/unknown structure → opt-in Stagehand v4 (model-backed; compare cost first)
+  Changing selectors or unknown structure → opt-in Stagehand v4 when the measured full-flow retry/maintenance cost may exceed model-backed automation
   AI agent CLI-first → playwright-cli (Microsoft) or agent-browser (Vercel, Rust)
   Just fast → Playwright direct (0.9s form fill)
 
@@ -73,14 +73,24 @@ const elements = await page.evaluate(() =>
 
 ## Historical Benchmarks (2026-01-24, macOS ARM64, headless, warm daemon — reproduce: `browser-benchmark.md`)
 
-These Stagehand results predate v4 and are **not a current v4 cost/latency comparison**. Overhead in that run: dev-browser +0.1-0.4s | agent-browser +0.5-1.5s (cold) | older Stagehand +1-5s (AI).
+These Stagehand v3 results predate v4 and are **not a current v4 cost/latency comparison**. Overhead in that run: dev-browser +0.1-0.4s | agent-browser +0.5-1.5s (cold) | older Stagehand +1-5s (AI).
 
-| Test | Playwright | dev-browser | agent-browser | Crawl4AI | Stagehand |
+| Test | Playwright | dev-browser | agent-browser | Crawl4AI | Stagehand v3 (historical) |
 |------|-----------|-------------|---------------|----------|-----------|
 | Navigate + Screenshot | **1.43s** | 1.39s | 1.90s | 2.78s | 7.72s |
 | Form Fill (4 fields) | **0.90s** | 1.34s | 1.37s | N/A | 2.58s |
 | Data Extract (5 items) | 1.33s | **1.08s** | 1.53s | 2.53s | 3.48s |
 | Multi-step (click+nav) | **1.49s** | 1.49s | 3.06s | N/A | 4.48s |
+
+The later v4.1.0 **heading-only** probes are separate: three corrected public-page
+extractions took 10.0–14.3s versus 8–10ms for a locator; on a private
+authenticated dashboard, three extractions took 2.76–3.43s versus 9–12ms,
+but only one matched the DOM. These are not full-flow or comparable Playwriter
+benchmarks. Stagehand may still win *end-to-end* when selectors change often,
+retries and maintenance dominate, and a representative opt-in comparison shows
+higher task success or lower total time. No measured v4 result here establishes
+that win. Check model spend, data-sharing consent, and recovery/cleanup before
+selecting it; see `browser-benchmark.md` for samples and caveats.
 
 ## Feature Matrix
 
