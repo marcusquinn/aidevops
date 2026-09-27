@@ -1422,11 +1422,11 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18482 OpenCode V2 canonical agents and opt-in 240K context budget ref:GH#32447 pr:#32451 completed:2026-09-27
 
-- [ ] t18483 Restart OpenCode V2 background service after agents redeploy #bug ref:GH#32462
+- [x] t18483 Restart OpenCode V2 background service after agents redeploy #bug ref:GH#32462 pr:#32463 completed:2026-09-27
 
 - [ ] t18484 Add forge image-embed helper for PR/issue screenshots without web upload #feature #framework #interactive #auto-dispatch ~1.5h tier:standard ref:GH#32478 logged:2026-09-27 -> [todo/tasks/t18484-brief.md]
 
-- [ ] t18485 docs: record Stagehand v4 deterministic like-for-like benchmark #browser #documentation #interactive tier:simple ~30m ref:GH#32560 logged:2026-09-27 started:2026-09-27
+- [x] t18485 docs: record Stagehand v4 deterministic like-for-like benchmark #browser #documentation #interactive tier:simple ~30m ref:GH#32560 logged:2026-09-27 started:2026-09-27 pr:#32562 completed:2026-09-27
 
 - [ ] t18486 fix: claim-task-id must not write TODO.md into a canonical checkout #auto-dispatch #bug #framework tier:standard ~1h ref:GH#32561 logged:2026-09-27 -> [todo/tasks/t18486-brief.md]
 
