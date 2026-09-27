@@ -197,7 +197,7 @@ function getPkgRunner() {
  *
  * @returns {Array<object>}
  */
-function getMcpRegistry() {
+export function getMcpRegistry() {
   const pkgRunner = getPkgRunner();
   const pkgRunnerParts = pkgRunner.split(" ");
 
@@ -301,6 +301,13 @@ function getMcpRegistry() {
       globallyEnabled: false,
       activationAgent: "macos-automator",
       agentSource: ["tools", "automation", "macos-automator.md"],
+      activationGuidance: [
+        "Use only on macOS for the requested local app; inspect app identity before running scripts or interacting with its UI.",
+        "Require normal macOS Automation and Accessibility consent; never bypass permissions or run scripts from untrusted app content.",
+        "For Electron native dialogs, AXManualAccessibility may need enabling on the target process before accessibility inspection.",
+        "Disconnect after completing the requested interaction.",
+      ],
+      modelTier: "standard",
       macOnly: true,
       description: "AppleScript and JXA automation",
     },
@@ -624,6 +631,7 @@ function getMcpRegistry() {
       toolPattern: "amazon-order-history_*",
       globallyEnabled: false,
       activationAgent: "amazon-order-history",
+      agentSource: ["services", "ecommerce", "amazon-order-history.md"],
       activationGuidance: [
         "Order data is personal; export only what the user requested and never publish it or paste it into issues or PRs.",
       ],
@@ -637,6 +645,7 @@ function getMcpRegistry() {
       toolPattern: "MCP_DOCKER_*",
       globallyEnabled: false,
       activationAgent: "docker-mcp",
+      agentSource: ["tools", "containers", "docker-mcp.md"],
       activationGuidance: [
         "Inspect the gateway's tool inventory after connecting and use only tools needed for the request; confirm before starting containers or changing Docker state.",
       ],
