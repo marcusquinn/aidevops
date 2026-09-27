@@ -116,7 +116,10 @@ status)
 	print_success "Stagehand v${STAGEHAND_V4_VERSION} is installed in the isolated project"
 	;;
 run-example) stagehand_v4_run ;;
-probe) shift; stagehand_v4_nanogpt_probe "$@" ;;
+probe)
+	shift
+	stagehand_v4_nanogpt_probe "$@"
+	;;
 help | --help)
 	printf 'Usage: %s {install|setup|status|run-example|probe offline <fixture>|probe live}\n' "$0"
 	printf 'Opt-in isolated Stagehand v4.1.0; run-example requires OPENAI_API_KEY and STAGEHAND_MODEL.\n'

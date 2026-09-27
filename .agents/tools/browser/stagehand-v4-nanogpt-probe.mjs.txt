@@ -7,7 +7,6 @@ const MODEL = 'nano-gpt/openai/gpt-4o-mini';
 const MAX_CALLS = 3;
 const MAX_INPUT_CHARS = 200_000;
 const MAX_OUTPUT_TOKENS = 256;
-const TIMEOUT_MS = 150_000;
 
 function receipt(status, reason, details = {}) {
   return {
@@ -50,6 +49,7 @@ function simulate(fixture, cap) {
       calls++;
       if (fixture === 'provider-403') { unknownSpend = true; throw new Error('provider_403'); }
       const response = fixture === 'malformed-json' ? 'not json' : '```json\n{"heading":"Example Domain"}\n```';
+      if (fixture === 'malformed-json') unknownSpend = true;
       const parsed = normalizedJson(response);
       if (parsed.heading !== 'Example Domain') throw new Error('unexpected_heading');
       input += 120;
@@ -63,8 +63,8 @@ function simulate(fixture, cap) {
     });
   } catch (error) {
     return receipt('failed', error.message, {
-      callbackCount: calls, reportedInputTokens: calls ? input : null,
-      reportedOutputTokens: calls ? output : null,
+      callbackCount: calls, reportedInputTokens: calls && !unknownSpend ? input : null,
+      reportedOutputTokens: calls && !unknownSpend ? output : null,
       reportedCostUsd: calls && !unknownSpend ? cost : null,
       unknownSpend,
     });
@@ -80,9 +80,10 @@ if (mode === 'live') {
   result = receipt('failed', 'live_transport_disabled_unverified_hard_cap');
 } else if (mode === 'offline' && [
   'two-call', 'extra-request', 'oversize', 'provider-403', 'malformed-json',
-  'timeout', 'over-budget',
+  'timeout',
 ].includes(fixture)) {
-  const cap = fixture === 'over-budget' ? 0.005 : Number(process.env.STAGEHAND_PROBE_MAX_USD);
+  const cap = process.env.STAGEHAND_PROBE_MAX_USD === undefined
+    ? NaN : Number(process.env.STAGEHAND_PROBE_MAX_USD);
   result = simulate(fixture, cap);
 } else {
   result = receipt('failed', 'unknown_fixture_or_mode');
