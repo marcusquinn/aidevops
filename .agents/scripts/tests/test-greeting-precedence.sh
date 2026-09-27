@@ -45,7 +45,8 @@ if grep -Fq 'session-greeting.txt' "$GENERATED_FILE"; then
 	exit 1
 fi
 # shellcheck disable=SC2016
-grep -q 'if the cache file is missing, read `~/.aidevops/agents/VERSION`' "$GENERATED_FILE"
+grep -Fq 'Read `~/.aidevops/agents/VERSION` first' "$GENERATED_FILE"
+grep -Fq "only if the cache's aidevops version matches {X}" "$GENERATED_FILE"
 grep -q 'Never emit both the injected greeting and the fallback greeting' "$GENERATED_FILE"
 grep -q 'first-visible-text requirement does not prevent task tool calls from running first' "$GENERATED_FILE"
 grep -q 'Never emit a greeting-only response' "$GENERATED_FILE"
@@ -66,7 +67,8 @@ if grep -Fq 'session-greeting.txt' "$TEMPLATE_FILE"; then
 	exit 1
 fi
 # shellcheck disable=SC2016
-grep -q 'if the cache file is missing, read `~/.aidevops/agents/VERSION`' "$TEMPLATE_FILE"
+grep -Fq 'Read `~/.aidevops/agents/VERSION` first' "$TEMPLATE_FILE"
+grep -Fq "only if the cache's aidevops version matches {X}" "$TEMPLATE_FILE"
 grep -q 'Never emit both the injected greeting and the fallback greeting' "$TEMPLATE_FILE"
 grep -q 'first-visible-text requirement does not prevent task tool calls from running first' "$TEMPLATE_FILE"
 grep -q 'Never emit a greeting-only response' "$TEMPLATE_FILE"
@@ -79,5 +81,7 @@ if grep -q 'Run .*aidevops-update-check.sh' "$TEMPLATE_FILE"; then
 	exit 1
 fi
 [[ "$(grep -c '^   Hi!$' "$TEMPLATE_FILE")" -eq 1 ]]
+# shellcheck disable=SC2016
+grep -Fq 'read `~/.aidevops/agents/VERSION` first' "${SCRIPT_DIR}/generate-opencode-agents.sh"
 
 printf 'PASS: greeting injection precedence and fallback generation\n'

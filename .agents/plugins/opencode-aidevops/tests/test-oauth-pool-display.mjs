@@ -43,3 +43,24 @@ test("pool remediation uses the supported account-add command", async () => {
     /aidevops model-accounts-pool add openai/,
   );
 });
+
+test("V2 pool remediation stays isolated and never uses V1 OpenAI device login", () => {
+  const oldProfile = process.env.AIDEVOPS_OPENCODE_PROFILE;
+  const oldPool = process.env.AIDEVOPS_OAUTH_POOL_FILE;
+  try {
+    process.env.AIDEVOPS_OPENCODE_PROFILE = "v2";
+    process.env.AIDEVOPS_OAUTH_POOL_FILE = "/isolated/opencode-v2/oauth-pool.json";
+    assert.equal(poolAccountAddCommand("anthropic"),
+      "AIDEVOPS_OAUTH_POOL_FILE='/isolated/opencode-v2/oauth-pool.json' aidevops model-accounts-pool add anthropic");
+    assert.equal(poolAccountAddCommand("openai"),
+      "AIDEVOPS_OAUTH_POOL_FILE='/isolated/opencode-v2/oauth-pool.json' AIDEVOPS_OPENAI_ADD_MODE=callback aidevops model-accounts-pool add openai");
+    assert.match(poolAccountAddCommand("google"), /not connected to provider requests/);
+    delete process.env.AIDEVOPS_OAUTH_POOL_FILE;
+    assert.match(poolAccountAddCommand("openai"), /isolated V2 pool setup/);
+  } finally {
+    if (oldProfile === undefined) delete process.env.AIDEVOPS_OPENCODE_PROFILE;
+    else process.env.AIDEVOPS_OPENCODE_PROFILE = oldProfile;
+    if (oldPool === undefined) delete process.env.AIDEVOPS_OAUTH_POOL_FILE;
+    else process.env.AIDEVOPS_OAUTH_POOL_FILE = oldPool;
+  }
+});

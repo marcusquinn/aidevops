@@ -42,6 +42,8 @@ import { createTools, tool } from "./tools.mjs";
 import { createTtsrHooks } from "./ttsr.mjs";
 import { isHeadless } from "./proxy-lifecycle.mjs";
 import { createV2McpRuntime } from "./v2-mcp-adapter.mjs";
+import { loadV2PrimaryProfiles, registerV2PrimaryProfiles } from "./v2-agent-profiles.mjs";
+import { applyV2ContextBudget, readV2ContextBudget } from "./v2-context-budget.mjs";
 import { createV2ProviderAuthRuntime } from "./v2-provider-auth.mjs";
 import {
   addV1ToolsToV2Editor,
@@ -72,6 +74,8 @@ export const OPENCODE_V2_CAPABILITIES = Object.freeze({
   events: true,
   mcpLifecycle: true,
   oauthRequestRotation: true,
+  primaryAgents: true,
+  optInCatalogCompactionBudget: true,
   textCompletionHook: false,
   compactionAutocontinue: false,
   tuiToast: false,
@@ -344,6 +348,15 @@ export async function setupAidevopsV2(ctx) {
     const providerAuth = createV2ProviderAuthRuntime();
     // Terminal title status is owned by the V2 TUI entrypoint (v2-plugin/tui.mjs):
     // this service process has no reliable terminal and must not write titles.
+
+    const primaryProfiles = loadV2PrimaryProfiles(ACTIVE_AGENTS_DIR);
+    await register(registrations, ctx.agent.transform((editor) => {
+      registerV2PrimaryProfiles(editor, primaryProfiles);
+    }));
+    const budget = readV2ContextBudget();
+    if (budget) await register(registrations, ctx.catalog.transform((editor) => {
+      applyV2ContextBudget(editor, budget);
+    }));
 
     await register(registrations, ctx.tool.transform((editor) => {
       addV1ToolsToV2Editor(editor, baseTools, tool.schema, { directory, worktree });

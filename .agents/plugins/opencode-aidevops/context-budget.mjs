@@ -4,7 +4,7 @@
 import { existsSync, readFileSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
-import { capResolvedModel, customizedModelLimits, preserveFamilyPreference, preserveOpusOverride,
+import { capResolvedModel, contextBudgetForModel, customizedModelLimits, preserveFamilyPreference,
   preserveCustomWindow, restoreConfiguredLimits, validWindow } from "./context-budget-policy.mjs";
 
 const DEFAULT_RESERVE = 20000;
@@ -46,9 +46,9 @@ export function createContextBudget() {
         preserveCustomWindow(model, custom);
         return false;
       }
-      if (preserveFamilyPreference(model, settings) || preserveOpusOverride(model)) return false;
+      if (preserveFamilyPreference(model, settings)) return false;
       const reserve = reserved ?? Math.min(DEFAULT_RESERVE, limit.output);
-      return capResolvedModel(model, reserve);
+      return capResolvedModel(model, reserve, contextBudgetForModel(model));
     },
   };
 }

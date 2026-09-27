@@ -148,6 +148,12 @@ test("V2 setup registers SDK lifecycle hooks and disposes every registration", a
       },
       async reload() {},
     },
+    agent: {
+      transform: (callback) => register("agent", "transform", callback),
+    },
+    catalog: {
+      transform: (callback) => register("catalog", "transform", callback),
+    },
     permission: {
       hook: (name, callback) => register("permission", name, callback),
     },
@@ -171,6 +177,7 @@ test("V2 setup registers SDK lifecycle hooks and disposes every registration", a
   assert.equal(typeof cleanup, "function");
   assert.deepEqual(registered.map(({ domain, name }) => `${domain}:${name}`), [
     "mcp:transform",
+    "agent:transform",
     "tool:transform",
     "tool:execute.before",
     "tool:execute.after",
