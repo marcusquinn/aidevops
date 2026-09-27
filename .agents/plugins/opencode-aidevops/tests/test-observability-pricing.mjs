@@ -20,7 +20,15 @@ test("GPT-6 Astra and GPT-5.6 pricing use published Standard short-context API r
   assert.deepEqual(getPricing("gpt-5.6-luna"), {
     input: 0.20, output: 1.20, cacheRead: 0.02, cacheWrite: 0.25,
   });
-  assert.equal(PRICING_VERSION, "2026-09-05.1");
+  assert.equal(PRICING_VERSION, "2026-09-27.1");
+});
+
+test("specific Anthropic IDs win over generic family keys", () => {
+  assert.equal(getPricing("anthropic/claude-opus-5-5").input, 4.0);
+  assert.equal(getPricing("anthropic/claude-opus-5-5-fast").input, 8.0);
+  assert.equal(getPricing("anthropic/claude-opus-4-6").input, 5.0);
+  assert.equal(getPricing("anthropic/claude-haiku-4-5").input, 1.0);
+  assert.equal(getPricing("anthropic/claude-sonnet-5").output, 10.0);
 });
 
 test("Sol Pro does not inherit unpublished standard Sol pricing", () => {
