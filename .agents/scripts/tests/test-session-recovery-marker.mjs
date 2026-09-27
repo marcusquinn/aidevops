@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
 import assert from "node:assert/strict";
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -41,6 +41,9 @@ assert.equal(
 assert.throws(() => currentDirectorySequence("/unsafe\npath"), /Invalid terminal recovery directory/);
 
 const markerDirectory = writeSessionRecoveryMarker({ sessionID, directory, dataDir, workDir });
+const marker = JSON.parse(readFileSync(join(markerDirectory, "recovery.json"), "utf8"));
+assert.equal(typeof marker.owner_start, "string", "markers must retain a portable owner start token");
+assert.ok(marker.owner_start, "markers must record a non-empty owner start token");
 assert.deepEqual(resolveSessionRecoveryMarker({ cwd: markerDirectory, workDir }), {
   sessionID,
   directory: realpathSync(directory),
