@@ -15,6 +15,8 @@ const GENERATED_WRAPPER_ENTRY = new RegExp(
  * Compact advertising, never skill content, permissions, or invocation.
  * Generated wrappers share one trigger and resolve by exact name through the
  * skill tool, so only their names (plus a differing OpenCode 2 id) are listed.
+ * Every generated name is `aidevops-<suffix>`, so the shared prefix is stated
+ * once with a complete example instead of being repeated for each wrapper.
  */
 export function compactSkillCatalogue(text) {
   return text.replace(/<available_skills>([\s\S]*?)<\/available_skills>/g, (block, body) => {
@@ -23,15 +25,16 @@ export function compactSkillCatalogue(text) {
       // Fail open for custom descriptions, additional fields, or changed formats.
       const match = fields.match(GENERATED_WRAPPER_ENTRY);
       if (!match) return entry;
-      const [, id, name] = match;
-      wrappers.push(id && id !== name ? `${name} (id: ${id})` : name);
+      const [, id, name, suffix] = match;
+      wrappers.push({ name, listed: id && id !== name ? `${suffix} (id: ${id})` : suffix });
       return "";
     });
     if (wrappers.length < 2) return block;
     return `<available_skills>${retained.trimEnd()}\n\n` +
       `Generated aidevops workflow skills (${wrappers.length}) share one trigger: run the named aidevops workflow ONLY when explicitly requested. ` +
-      "Load the full instructions with the skill tool using the exact skill name; all remain available:\n" +
-      wrappers.join(", ") + "\n</available_skills>";
+      "Load the full instructions with the skill tool using the exact skill name `aidevops-<listed name>` " +
+      `(for example \`${wrappers[0].name}\`); all remain available:\n` +
+      wrappers.map((wrapper) => wrapper.listed).join(", ") + "\n</available_skills>";
   });
 }
 

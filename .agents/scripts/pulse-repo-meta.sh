@@ -541,6 +541,10 @@ _filter_dispatchable_issue_candidates_json() {
 			select(($labels | index("parent-task")) == null) |
 			select(($labels | index("no-auto-dispatch")) == null) |
 			select(($labels | index("status:needs-info")) == null) |
+			# hold-for-review is a maintainer hold the dispatch policy gate always
+			# blocks (HOLD_FOR_REVIEW_BLOCKED). Evaluating it cost a 40-110s
+			# ceremony per runner per cycle before that late rejection.
+			select(($labels | index("hold-for-review")) == null) |
 			(($labels | index($auto_dispatch_label)) != null) as $has_auto_dispatch |
 			select((($labels | index("status:in-progress")) == null) or $has_auto_dispatch) |
 			select((($labels | index("status:in-review")) == null) or $has_auto_dispatch) |

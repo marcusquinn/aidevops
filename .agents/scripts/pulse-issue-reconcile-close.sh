@@ -95,7 +95,7 @@ close_issues_with_merged_prs() {
 		else
 			issues_json=$(gh_issue_list --repo "$slug" --state open \
 				--label "$_ciw_lbl" \
-				--json number,title,labels --limit 20 2>/dev/null) || issues_json="[]"
+				--json number,title,labels,body --limit 20 2>/dev/null) || issues_json="[]"
 		fi
 		[[ -n "$issues_json" && "$issues_json" != "$_PIR_NULL" ]] || continue
 
@@ -104,14 +104,15 @@ close_issues_with_merged_prs() {
 
 		local i=0
 		while [[ "$i" -lt "$issue_count" ]]; do
-			local issue_num issue_title
+			local issue_num issue_title issue_body
 			issue_num=$(printf '%s' "$issues_json" | jq -r --argjson i "$i" '.[$i].number // ""') || true
 			issue_title=$(printf '%s' "$issues_json" | jq -r ".[$i].title // empty" 2>/dev/null)
+			issue_body=$(printf '%s' "$issues_json" | jq -r ".[$i].body // empty" 2>/dev/null)
 			i=$((i + 1))
 			[[ "$issue_num" =~ ^[0-9]+$ ]] || continue
 
 			# t2776: delegate per-issue action to shared helper (_action_ciw_single).
-			if _action_ciw_single "$slug" "$issue_num" "$issue_title" "$dedup_helper" "$verify_helper"; then
+			if _action_ciw_single "$slug" "$issue_num" "$issue_title" "$dedup_helper" "$verify_helper" "$issue_body"; then
 				total_closed=$((total_closed + 1))
 			fi
 		done
@@ -161,7 +162,7 @@ reconcile_stale_done_issues() {
 		else
 			issues_json=$(gh_issue_list --repo "$slug" --state open \
 				--label "status:done" \
-				--json number,title --limit 20 2>/dev/null) || issues_json="[]"
+				--json number,title,body --limit 20 2>/dev/null) || issues_json="[]"
 		fi
 		[[ -n "$issues_json" && "$issues_json" != "$_PIR_NULL" ]] || continue
 
@@ -171,15 +172,16 @@ reconcile_stale_done_issues() {
 
 		local i=0
 		while [[ "$i" -lt "$issue_count" ]]; do
-			local issue_num issue_title
+			local issue_num issue_title issue_body
 			issue_num=$(printf '%s' "$issues_json" | jq -r --argjson i "$i" '.[$i].number // ""') || true
 			issue_title=$(printf '%s' "$issues_json" | jq -r ".[$i].title // empty" 2>/dev/null)
+			issue_body=$(printf '%s' "$issues_json" | jq -r ".[$i].body // empty" 2>/dev/null)
 			i=$((i + 1))
 			[[ "$issue_num" =~ ^[0-9]+$ ]] || continue
 
 			# t2776: delegate per-issue action to shared helper (_action_rsd_single).
 			local _rsd_rc
-			_action_rsd_single "$slug" "$issue_num" "$issue_title" "$dedup_helper" "$verify_helper"
+			_action_rsd_single "$slug" "$issue_num" "$issue_title" "$dedup_helper" "$verify_helper" "$issue_body"
 			_rsd_rc=$?
 			if [[ "$_rsd_rc" -eq 0 ]]; then
 				total_closed=$((total_closed + 1))
