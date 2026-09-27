@@ -590,7 +590,7 @@ _report_issue_body_compose_failure() {
 		;;
 	"$CLAIM_COMPOSE_NORMALIZE_RC")
 		log_warn "Skipping issue creation — supplied description failed canonical body normalization. Task ID is secured."
-		log_warn "Recovery: correct ambiguous Files Scope declarations to use explicit EDIT:/NEW: paths."
+		log_warn "Recovery: under an existing Files Scope heading, use bare '- path/to/file' bullets."
 		;;
 	*)
 		log_warn "Skipping issue creation — issue body composition failed (status ${compose_rc}). Task ID is secured."
@@ -746,7 +746,7 @@ _ensure_todo_entry_written() {
 	# successful operations while directing the mutable TODO projection to a
 	# linked worktree.
 	if _repo_path_is_canonical_checkout "$repo_path"; then
-		printf 'TODO.md was not changed in canonical checkout; add this line in a linked worktree:\n%s\n' "$todo_line"
+		printf 'TODO.md was not changed in canonical checkout; add this line in a linked worktree:\n%s\n' "$todo_line" >&2
 		return 0
 	fi
 

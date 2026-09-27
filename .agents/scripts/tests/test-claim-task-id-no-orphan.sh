@@ -37,6 +37,9 @@
 #   13. long TODO early-match verification is SIGPIPE-safe under pipefail
 #   14. supplied description normalization failures retain a typed cause
 #   15. normalization failures report an actionable secured-ID recovery path
+#   16. rejected descriptions fail pre-allocation validation
+#   17. canonical TODO advisory stays out of captured stdout
+#   18. non-numeric issue creator output is not emitted as a reference
 
 set -u
 
@@ -570,6 +573,66 @@ test_normalization_failure_reports_recovery_path() {
 	return 0
 }
 test_normalization_failure_reports_recovery_path
+
+# ---------------------------------------------------------------------------
+# Test 16 — rejected descriptions fail before allocation can run.
+# ---------------------------------------------------------------------------
+test_rejected_description_fails_preallocation_validation() {
+	local name="16: rejected description fails pre-allocation validation"
+	local body rc=0
+	body=$'## What\n\nReject ambiguous scope.\n\n### Files Scope\n\n- EDIT: `bad/path.sh`\n'
+	NO_ISSUE=false
+	DRY_RUN=false
+	OFFLINE_MODE=false
+	TASK_DESCRIPTION="$body"
+
+	_validate_description_scope_before_allocation >/dev/null 2>&1 || rc=$?
+	if [[ $rc -eq 1 ]]; then
+		pass "$name"
+	else
+		fail "$name" "expected validation rc=1, got ${rc}"
+	fi
+	return 0
+}
+test_rejected_description_fails_preallocation_validation
+
+# ---------------------------------------------------------------------------
+# Test 17 — canonical-checkout TODO guidance is advisory stderr, never an
+# issue-number capture contaminant on stdout.
+# ---------------------------------------------------------------------------
+test_canonical_todo_advisory_is_stderr_only() {
+	local name="17: canonical TODO advisory is stderr-only"
+	local issue_lib="${CLAIM_SCRIPT%claim-task-id.sh}claim-task-id-issue.sh"
+	if grep -q 'TODO.md was not changed in canonical checkout.*>&2' "$issue_lib"; then
+		pass "$name"
+	else
+		fail "$name" "canonical advisory is not redirected to stderr"
+	fi
+	return 0
+}
+test_canonical_todo_advisory_is_stderr_only
+
+# ---------------------------------------------------------------------------
+# Test 18 — noisy issue-creation output cannot pollute ref= output.
+# ---------------------------------------------------------------------------
+test_non_numeric_issue_output_is_rejected() {
+	local name="18: non-numeric issue output is rejected"
+	local output
+	TASK_TITLE="capture guard"
+	TASK_DESCRIPTION=""
+	TASK_LABELS=""
+	check_cli() { return 0; }
+	create_github_issue() { printf 'TODO advisory\n123\n'; return 0; }
+
+	output=$(_main_create_issues 9592 github)
+	if [[ "$output" == *'_issue_first_num='* ]] && [[ "$output" != *'_issue_first_num=123'* ]]; then
+		pass "$name"
+	else
+		fail "$name" "output=${output}"
+	fi
+	return 0
+}
+test_non_numeric_issue_output_is_rejected
 
 # ---------------------------------------------------------------------------
 # Summary

@@ -1119,8 +1119,8 @@ read_remote_counter() {
 
 	# GH#21904: wrap with timeout + SSH fallback for credential-helper hangs.
 	if ! _run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" \
-		fetch "$REMOTE_NAME" "$COUNTER_BRANCH" 2>/dev/null; then
-		log_warn "Failed to fetch ${REMOTE_NAME}/${COUNTER_BRANCH}"
+		fetch --depth=1 "$REMOTE_NAME" "$COUNTER_BRANCH" 2>/dev/null; then
+		log_warn "Failed to fetch ${REMOTE_NAME}/${COUNTER_BRANCH}; CAS_HTTPS_TIMEOUT_S=${CAS_HTTPS_TIMEOUT_S:-30}"
 		return 1
 	fi
 
