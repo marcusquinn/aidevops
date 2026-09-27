@@ -179,6 +179,11 @@ if (
 	export GITHUB_ACTIONS=true GITHUB_REPOSITORY=example/repo
 	unset PRIVACY_REPOS_CONFIG AIDEVOPS_REPOS_JSON _ISSUE_SYNC_CI_CONTEXT_LOADED
 	mkdir -p "$HOME" "$RUNNER_TEMP"
+	# Production loads the wrappers before the step prepares context; the
+	# privacy guard then assigns its absent home default at source time.
+	# shellcheck source=../privacy-guard-helper.sh
+	source "$(dirname "$RECONCILER")/privacy-guard-helper.sh"
+	[[ "$PRIVACY_REPOS_CONFIG" == "$HOME/.config/aidevops/repos.json" ]]
 	_publication_exact_default_snapshot() { return 0; }
 	_publication_reconcile_one() {
 		[[ "$PRIVACY_REPOS_CONFIG" == "$AIDEVOPS_REPOS_JSON" ]]
