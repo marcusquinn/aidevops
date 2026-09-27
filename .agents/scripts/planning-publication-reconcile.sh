@@ -22,7 +22,40 @@ PUBLICATION_AUTO_LABEL="auto-dispatch"
 PUBLICATION_LIMIT="${AIDEVOPS_PUBLICATION_RECONCILE_LIMIT:-100}"
 
 _publication_usage() {
-	printf 'Usage: planning-publication-reconcile.sh reconcile --repo owner/repo --sha SHA [--task tNNN]\n'
+	printf 'Usage: planning-publication-reconcile.sh {reconcile --repo owner/repo --sha SHA [--task tNNN] | sweep-closed --repo owner/repo}\n'
+	return 0
+}
+
+# Never clear the last dispatch fence on a task absent from the default branch:
+# a later reopen can reset status:done to status:available.
+_publication_sweep_closed_one() {
+	local repo="$1" issue_num="$2" issue_json=""
+	issue_json=$(gh issue view "$issue_num" --repo "$repo" --json state,labels) || return 1
+	jq -e '.state == "CLOSED" and any(.labels[]?; .name == "publication:pending")' \
+		<<<"$issue_json" >/dev/null || return 0
+	gh_publication_default_has_ref "$repo" "$issue_num" || return 1
+	gh_issue_edit_safe "$issue_num" --repo "$repo" --remove-label "$PUBLICATION_PENDING_LABEL" >/dev/null || return 1
+	return 0
+}
+
+cmd_sweep_closed() {
+	local repo="" issues_json="" issue_num="" failed=0
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--repo) repo="${2:-}"; shift 2 ;;
+		*) _publication_usage >&2; return 2 ;;
+		esac
+	done
+	[[ "$repo" =~ ^[^/[:space:]]+/[^/[:space:]]+$ ]] || return 2
+	[[ "$PUBLICATION_LIMIT" =~ ^[1-9][0-9]*$ ]] || return 2
+	issue_sync_prepare_ci_context || return 1
+	issues_json=$(gh issue list --repo "$repo" --state closed --label "$PUBLICATION_PENDING_LABEL" \
+		--limit "$PUBLICATION_LIMIT" --json number) || return 1
+	while IFS= read -r issue_num; do
+		[[ "$issue_num" =~ ^[0-9]+$ ]] || continue
+		_publication_sweep_closed_one "$repo" "$issue_num" || failed=$((failed + 1))
+	done < <(jq -r '.[].number' <<<"$issues_json")
+	[[ "$failed" -eq 0 ]]
 }
 
 _publication_exact_default_snapshot() {
@@ -254,6 +287,7 @@ cmd_reconcile() {
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
 	case "${1:-}" in
 	reconcile) shift; cmd_reconcile "$@" ;;
+	sweep-closed) shift; cmd_sweep_closed "$@" ;;
 	*) _publication_usage >&2; exit 2 ;;
 	esac
 fi

@@ -51,7 +51,7 @@ fi
 grep -Fq 'Reconcile pending planning publication' "$WORKFLOW"
 grep -Fq -- "$WORKFLOW_PATTERN" "$WORKFLOW"
 
-remove_line=$(grep -n -- "$REMOVE_PATTERN" "$RECONCILER" | cut -d: -f1)
+remove_line=$(grep -n -- "$REMOVE_PATTERN" "$RECONCILER" | cut -d: -f1 | tail -1)
 verify_line=$(grep -n -m1 -- "$VERIFY_PATTERN" "$RECONCILER" | cut -d: -f1)
 [[ "$remove_line" -gt "$verify_line" ]]
 
@@ -147,6 +147,31 @@ fi
 printf 'PASS exact-SHA mapping validation precedes blocker removal\n'
 printf 'PASS default-branch workflow reconciles publication before maintenance\n'
 printf 'PASS partial batches leave earlier dependencies blocked and later failures pending\n'
+
+# A closed sweep must verify the live state and canonical mapping before editing.
+(
+	gh_publication_default_has_ref() { [[ "$2" != "92" ]]; return $?; }
+	gh() {
+		if [[ "$1" == "issue" && "$2" == "list" ]]; then
+			printf '[{"number":90},{"number":91},{"number":92}]\n'
+		elif [[ "$3" == "90" ]] && grep -q '^90 .*--remove-label publication:pending' "$mutation_log"; then
+			printf '{"state":"CLOSED","labels":[]}\n'
+		elif [[ "$3" == "90" ]]; then
+			printf '{"state":"CLOSED","labels":[{"name":"publication:pending"}]}\n'
+		else
+			printf '{"state":"OPEN","labels":[{"name":"publication:pending"}]}\n'
+		fi
+		return 0
+	}
+	_publication_sweep_closed_one example/repo 90
+	_publication_sweep_closed_one example/repo 90
+	_publication_sweep_closed_one example/repo 91
+	_publication_sweep_closed_one example/repo 92
+)
+grep -q '^90 .*--remove-label publication:pending' "$mutation_log"
+[[ "$(grep -c '^90 .*--remove-label publication:pending' "$mutation_log")" -eq 1 ]]
+if grep -Eq '^(91|92) .*--remove-label publication:pending' "$mutation_log"; then exit 1; fi
+printf 'PASS closed sweep only removes a verified closed canonical issue label\n'
 
 ci_tmp=$(mktemp -d)
 if (
