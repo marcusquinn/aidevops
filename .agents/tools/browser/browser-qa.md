@@ -23,7 +23,7 @@ tools:
 ## Quick Reference
 
 - **Purpose**: Visual and functional QA for mission milestones with UI components
-- **CLI**: `browser-qa-helper.sh run|screenshot|links|a11y|smoke --url URL --pages "/ /about"`
+- **CLI**: `browser-qa-helper.sh run|screenshot|links|a11y|smoke|journey --url URL --pages "/ /about"`
 - **Invoked by**: `workflows/milestone-validation.md` (Phase 3) during mission orchestration
 - **Tool stack**: Playwright (primary, fastest) > Stagehand (fallback, self-healing) > DevTools (companion)
 - **Output**: JSON/markdown reports with screenshots, broken links, accessibility issues, console errors
@@ -48,6 +48,20 @@ tools:
 - **Report with evidence.** Every failure includes: what was expected, what was found, and a screenshot or ARIA snapshot proving it.
 
 ## QA Pipeline
+
+### Authenticated Read-only Journeys (Opt-in)
+
+Prefer a repository's existing E2E test when it already covers the authenticated path. Otherwise, `journey` accepts a versioned JSON definition and credential *environment-variable names*, never credential values. It creates isolated desktop/mobile contexts, permits only exact-origin login/logout writes, and blocks every other POST/PUT/PATCH/DELETE request. It writes no screenshots, traces, storage state, or raw page data.
+
+```json
+{"version":1,"environments":{"staging":{"origin":"https://example.invalid","credentials":{"usernameEnv":"QA_USER","passwordEnv":"QA_PASSWORD"},"login":{"path":"/login","method":"POST","successPath":"/account","usernameSelector":"#email","passwordSelector":"#password","submitSelector":"button[type=submit]"},"logout":{"path":"/logout","method":"POST"},"viewports":["desktop","mobile"]}},"steps":[{"type":"navigate","path":"/account"},{"type":"visible","selector":"[data-testid=account]"},{"type":"no-horizontal-overflow"}]}
+```
+
+```bash
+browser-qa-helper.sh journey --config journey.json --environment staging
+```
+
+Supported steps are `navigate`, `click`, `visible`, `count`, `text`, `attribute`, and `no-horizontal-overflow`. The runner rejects unknown schemas, missing credentials, off-origin flows, and unsupported steps before attempting a relaxed fallback.
 
 ### Step 1: Start the Application
 
