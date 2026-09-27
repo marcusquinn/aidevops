@@ -19,6 +19,7 @@ import {
   applyAgentRoutingProfile,
   registerAgentRoutingIntent,
 } from "../config-agent-profiles.mjs";
+import { applyCompactionRouting } from "../compaction-routing.mjs";
 
 test("a model serving several tiers resolves by observed variant", () => {
   const root = mkdtempSync(join(tmpdir(), "aidevops-model-routing-"));
@@ -194,4 +195,26 @@ test("agent routing metadata defers tier selection while preserving explicit mod
   assert.equal(registerAgentRoutingIntent(state, "custom", pinned, "standard", routing), false);
   assert.equal(state.pinned.has("custom"), true);
   assert.deepEqual(pinned, { model: "other/pinned" });
+});
+
+test("compaction uses the simple route only when its input budget fits the managed target", () => {
+  const routing = { tiers: { simple: { models: ["openai/gpt-6-luna"], reasoning: { openai: "low" } } } };
+  const config = { provider: { openai: { models: {
+    "gpt-6-luna": { limit: { input: 260000, output: 128000, context: 388000 } },
+  } } } };
+  assert.equal(applyCompactionRouting(config, routing), true);
+  assert.deepEqual(config.agent.compaction, { model: "openai/gpt-6-luna", variant: "low" });
+
+  const tooSmall = { provider: { openai: { models: {
+    "gpt-6-luna": { limit: { input: 239999 } },
+  } } } };
+  assert.equal(applyCompactionRouting(tooSmall, routing), false);
+  assert.deepEqual(tooSmall.agent.compaction, {});
+});
+
+test("compaction preserves explicit user model and variant pins", () => {
+  const routing = { tiers: { simple: { models: ["openai/gpt-6-luna"] } } };
+  const config = { agent: { compaction: { model: "anthropic/pinned", variant: "high" } } };
+  assert.equal(applyCompactionRouting(config, routing), false);
+  assert.deepEqual(config.agent.compaction, { model: "anthropic/pinned", variant: "high" });
 });

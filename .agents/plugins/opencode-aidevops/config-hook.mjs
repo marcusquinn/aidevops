@@ -15,6 +15,7 @@ import { getGoogleProxyPort, registerGoogleProvider } from "./google-proxy.mjs";
 import { getClaudeProxyPort, registerClaudeProvider } from "./claude-proxy.mjs";
 import { checkOpenCodeVersionDriftAsync } from "./version-tracking.mjs";
 import { registerApprovedWorkerPermissions } from "./config-worker-permissions.mjs";
+import { applyCompactionRouting } from "./compaction-routing.mjs";
 import {
   registerAgentRoutingIntent,
   registerAgents,
@@ -413,6 +414,7 @@ export function createConfigHook(deps) {
     const claudeFallback = registerClaudeCliFallbackModels(config);
     const openai = registerGpt56ContextLimits(config) + registerAstraContextLimits(config) +
       registerGpt6ContextLimits(config);
+    applyCompactionRouting(config, modelRouting);
     // Discover and register proxy provider models only when a proxy listener is
     // already active. The normal startup path intentionally leaves these ports
     // null until first use, so unconditional imports/discovery here made config
