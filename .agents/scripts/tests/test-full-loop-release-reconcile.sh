@@ -1797,12 +1797,19 @@ _full_loop_release_claim_preserved_tag() {
 	lane_patch_json='{"phase":"remote-publication","tag":"v1.2.3","reservation_contract":"fenced-prepublication/v1","snapshot_manifest_bound":true}'
 	return 0
 }
+_full_loop_release_record_stale_deployment() {
+	[[ "$1" == "test/repo" && "$2" == "90" && "$3" == "v1.2.3" ]] || return 1
+	printf '%s %s %s\n' "$1" "$2" "$3" >>"${TEST_ROOT}/stale-deployment.log"
+}
 (
 	export HOME="${TEST_ROOT}/deployed-home"
 	export AIDEVOPS_FULL_LOOP_RECEIPT_DIR="${TEST_ROOT}/deployed-receipts"
 	git() { /usr/bin/git "$@"; }
 	# shellcheck source=../full-loop-helper-state.sh
 	source "${SCRIPT_DIR}/full-loop-helper-state.sh"
+	_FULL_LOOP_RELEASE_RECONCILE_LOADED=""
+	# shellcheck source=../full-loop-release-reconcile.sh
+	source "${SCRIPT_DIR}/full-loop-release-reconcile.sh"
 	fixture_scripts="${TEST_ROOT}/deployed-scripts"
 	fixture_repo="${TEST_ROOT}/deployed-repo"
 	mkdir -p "$fixture_scripts" "$fixture_repo" "$HOME/.aidevops/agents"
@@ -1856,10 +1863,6 @@ _full_loop_release_finalize_stale_supersession() {
 	printf '%s %s %s %s\n' "$repo" "$pr_number" "$source_tag" "$release_tag" \
 		>"${TEST_ROOT}/stale-finalize.log"
 	return "${STALE_FINALIZE_RC:-0}"
-}
-_full_loop_release_record_stale_deployment() {
-	[[ "$1" == "test/repo" && "$2" == "90" && "$3" == "v1.2.3" ]] || return 1
-	printf '%s %s %s\n' "$1" "$2" "$3" >>"${TEST_ROOT}/stale-deployment.log"
 }
 _full_loop_verify_superseded_release_receipt() {
 	local repo="$1"
