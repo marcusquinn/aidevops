@@ -129,7 +129,7 @@ _preflight_launch_systemd_cleanup() {
 # Launch cleanup outside the parent pulse cgroup where systemd is available,
 # retaining the existing nohup behaviour on other platforms or submission
 # failure. Helper-level locks and cadence gates remain authoritative.
-# GH#32528: the fallback starts a new session with setsid when available.
+# GH#32528: the fallback starts a new session (setsid, else perl POSIX::setsid).
 # launchd tears down the job's process group when pulse-wrapper.sh exits, so a
 # plain nohup child was killed mid-run and cleanup never reached most repos.
 # Args: $1=helper path, $2=log path, $3=stable cleanup name
@@ -149,6 +149,10 @@ _preflight_launch_async_cleanup() {
 
 	if command -v setsid >/dev/null 2>&1; then
 		setsid nohup "$helper" </dev/null >>"$log_file" 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
+	elif command -v perl >/dev/null 2>&1; then
+		# Stock macOS lacks setsid(1); perl's POSIX::setsid is always present.
+		perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV or exit 127' nohup "$helper" \
+			</dev/null >>"$log_file" 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
 	else
 		nohup "$helper" </dev/null >>"$log_file" 2>&1 &
 	fi
