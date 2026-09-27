@@ -1221,6 +1221,97 @@ test_gh27444_recurrent_file_size_debt_current_outcome() {
 }
 
 # ---------------------------------------------------------------------------
+# Test 15e (GH#32640): stages 1-2 apply the same recurrent-debt close gate.
+# Observed on #28377: stage 1 closed regrown debt citing an old merged PR.
+# ---------------------------------------------------------------------------
+test_gh32640_ciw_rsd_recurrent_file_size_debt_gate() {
+	local actions_sh="${SCRIPT_DIR}/../pulse-issue-reconcile-actions.sh"
+	local tmp_dir repo_dir repos_json out_file dedup_helper result
+	local debt_body='<!-- aidevops:generator=large-file-simplification-gate cited_file=large.sh threshold=3 -->'
+	tmp_dir=$(mktemp -d)
+	repo_dir="${tmp_dir}/repo"
+	repos_json="${tmp_dir}/repos.json"
+	out_file="${tmp_dir}/mutations.out"
+	dedup_helper="${tmp_dir}/dedup-helper.sh"
+	mkdir -p "$repo_dir"
+	printf '{"initialized_repos":[{"slug":"test/repo","path":"%s"}]}' "$repo_dir" >"$repos_json"
+	printf '#!/usr/bin/env bash\nprintf "%%s\\n" "merged PR #28395 references issue"\nexit 0\n' >"$dedup_helper"
+	chmod +x "$dedup_helper"
+
+	# Runs one stage action with gh/status mutations recorded to $out_file.
+	# Args: stage function, issue number, issue body
+	_gh32640_run() {
+		bash -c '
+			LOGFILE="${6}/pulse.log" REPOS_JSON="$2" GH_TEST_OUT="$3"
+			export LOGFILE REPOS_JSON GH_TEST_OUT
+			# shellcheck disable=SC1090
+			source "$1"
+			gh() { printf "gh:%s\n" "$*" >>"$GH_TEST_OUT"; return 0; }
+			set_issue_status() { printf "status:%s\n" "$*" >>"$GH_TEST_OUT"; return 0; }
+			_pir_pr_merged_at() { printf "2026-07-21T02:31:43Z"; return 0; }
+			set_solved_label_from_merged_pr() { return 0; }
+			fast_fail_reset() { return 0; }
+			unlock_issue_after_worker() { return 0; }
+			rc=0
+			"$4" "test/repo" "$5" "title" "$7" /nonexistent "$8" || rc=$?
+			printf "rc=%s\n" "$rc"
+		' -- "$actions_sh" "$repos_json" "$out_file" "$1" "$2" "$tmp_dir" "$dedup_helper" "$3" 2>&1
+		return 0
+	}
+
+	local all_ok=1
+	# Regrown debt: file at threshold.
+	printf 'one\ntwo\nthree\n' >"${repo_dir}/large.sh"
+	: >"$out_file"
+	result=$(_gh32640_run _action_ciw_single 28377 "$debt_body")
+	if [[ "$result" != *"rc=1"* ]] || [[ -s "$out_file" ]]; then
+		_fail "GH#32640: stage 1 closed or mutated regrown debt: ${result} $(tr '\n' ' ' <"$out_file")"
+		all_ok=0
+	fi
+	: >"$out_file"
+	result=$(_gh32640_run _action_rsd_single 28377 "$debt_body")
+	if [[ "$result" != *"rc=2"* ]] || grep -q '^gh:issue close' "$out_file" ||
+		! grep -q '^status:28377 test/repo available' "$out_file"; then
+		_fail "GH#32640: stage 2 did not reset regrown debt to available: ${result} $(tr '\n' ' ' <"$out_file")"
+		all_ok=0
+	fi
+
+	# Unmeasurable outcome (cited file missing): no mutation from either stage.
+	rm -f "${repo_dir}/large.sh"
+	: >"$out_file"
+	result=$(_gh32640_run _action_ciw_single 28377 "$debt_body")
+	local ciw_missing="$result"
+	result=$(_gh32640_run _action_rsd_single 28377 "$debt_body")
+	if [[ "$ciw_missing" != *"rc=1"* || "$result" != *"rc=1"* ]] || [[ -s "$out_file" ]]; then
+		_fail "GH#32640: unmeasurable debt outcome was not deferred: ${ciw_missing} ${result} $(tr '\n' ' ' <"$out_file")"
+		all_ok=0
+	fi
+
+	# Resolved debt and ordinary issues keep closing on merged-PR evidence.
+	printf 'one\ntwo\n' >"${repo_dir}/large.sh"
+	local stage=""
+	for stage in _action_ciw_single _action_rsd_single; do
+		: >"$out_file"
+		result=$(_gh32640_run "$stage" 28377 "$debt_body")
+		if [[ "$result" != *"rc=0"* ]] || ! grep -q '^gh:issue close 28377' "$out_file"; then
+			_fail "GH#32640: ${stage} did not close resolved debt: ${result}"
+			all_ok=0
+		fi
+		: >"$out_file"
+		result=$(_gh32640_run "$stage" 99 "ordinary issue")
+		if [[ "$result" != *"rc=0"* ]] || ! grep -q '^gh:issue close 99' "$out_file"; then
+			_fail "GH#32640: ${stage} changed ordinary issue behavior: ${result}"
+			all_ok=0
+		fi
+	done
+
+	unset -f _gh32640_run
+	rm -rf "$tmp_dir"
+	[[ "$all_ok" == "1" ]] && _pass "GH#32640: stages 1-2 keep regrown debt open, defer unmeasurable debt, close resolved and ordinary issues"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # Test 16 (GH#22473): status:available feedback-routed worker issues stay
 # unassigned during assignment normalization.
 # ---------------------------------------------------------------------------
@@ -1454,6 +1545,7 @@ test_t2985_action_oimp_single_signature
 test_gh25896_oimp_closes_consolidated_successor
 test_gh32213_oimp_requires_complete_inherited_coverage
 test_gh27444_recurrent_file_size_debt_current_outcome
+test_gh32640_ciw_rsd_recurrent_file_size_debt_gate
 test_available_feedback_worker_issue_not_assigned
 test_feedback_backfill_uses_label_constants
 test_pr_lookup_uncertainty_preserves_issue_state
