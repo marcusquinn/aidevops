@@ -88,6 +88,23 @@ below used the authorized provider instead; it did not bypass the free-tier rule
 
 ### Stagehand v4 NanoGPT public-page AI extraction (2026-09-27; partial comparison)
 
+The reviewed opt-in **offline** harness is
+`STAGEHAND_PROBE_MAX_USD=0.05 bash .agents/scripts/stagehand-v4-helper.sh probe offline two-call`.
+Run `bash .agents/scripts/tests/test-stagehand-v4-route.sh` for missing-cap,
+over-projection, malformed-format, HTTP 403, excess-request and timeout
+fixtures. Its JSON receipt uses synthetic token/cost values and null timings:
+it does **not** navigate, contact NanoGPT, or measure extraction. `probe live`
+is deliberately disabled. The isolated Stagehand project and the configured
+OpenCode NanoGPT SDK transport are not installed/verified in this worker
+worktree; the historical input/output prices are not a proof of a worst-case
+USD ceiling including retries, billing increments and provider overhead.
+Neither a 150 s process timeout nor a post-call provider receipt is a hard
+spend cap. Do not export credentials to work around this fuse or run the
+existing OpenAI `run-example` as a fallback. The live acceptance criterion
+remains open pending a verified pre-inference provider-enforced ceiling (or a
+trusted bounded transport), current SDK response exports and separate trusted
+billing authorization; the offline harness is not a live benchmark.
+
 With the operator's NanoGPT credential already configured in OpenCode (no key
 exported or logged), a local Stagehand v4.1.0 browser used a client-side
 `generate` callback through the OpenCode SDK. The explicit model was
