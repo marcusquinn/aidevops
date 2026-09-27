@@ -669,8 +669,20 @@ _insert_todo_line() {
 # - Labels with status:, tier:, origin:, dispatched:, implemented: prefixes
 #   are skipped — they are not TODO-file-format tags.
 # GH#21473: 3rd arg is TITLE (one-line summary), not DESCRIPTION (full body).
-# Returns 0 only when the target TODO ref is present after the write attempt.
+# Returns 0 when the target TODO ref is present after the write attempt, or
+# when a canonical checkout is deliberately left unchanged.
 # Returns 1 when TODO.md exists but the ref could not be written/verified.
+_repo_path_is_canonical_checkout() {
+	local repo_path="$1"
+	local git_dir=""
+	local common_dir=""
+
+	git_dir=$(git -C "$repo_path" rev-parse --path-format=absolute --git-dir 2>/dev/null) || return 1
+	common_dir=$(git -C "$repo_path" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
+	[[ "$git_dir" == "$common_dir" ]]
+	return $?
+}
+
 _ensure_todo_entry_written() {
 	local task_id="$1"
 	local issue_num="$2"
@@ -681,15 +693,6 @@ _ensure_todo_entry_written() {
 	local todo_file="${repo_path}/TODO.md"
 	[[ -f "$todo_file" ]] || return 0
 	[[ -n "$task_id" && -n "$issue_num" ]] || return 0
-
-	# Fast path: entry already exists — stamp the ref if missing.
-	if grep -qE "^[[:space:]]*- \[.\] ${task_id}( |$)" "$todo_file"; then
-		if declare -F add_gh_ref_to_todo >/dev/null 2>&1; then
-			add_gh_ref_to_todo "$task_id" "$issue_num" "$todo_file" 2>/dev/null || true
-		fi
-		_todo_entry_has_gh_ref "$task_id" "$issue_num" "$todo_file" && return 0
-		return 1
-	fi
 
 	# Build tag suffix from labels (skip reserved-prefix labels applied
 	# server-side by issue-sync / pulse, not authored in TODO).
@@ -738,6 +741,24 @@ _ensure_todo_entry_written() {
 	fi
 	todo_line="${todo_line} ref:GH#${issue_num}"
 
+	# GH#32561: canonical checkouts are read-only service mirrors. Issue
+	# creation and counter CAS already use isolated Git state, so preserve those
+	# successful operations while directing the mutable TODO projection to a
+	# linked worktree.
+	if _repo_path_is_canonical_checkout "$repo_path"; then
+		printf 'TODO.md was not changed in canonical checkout; add this line in a linked worktree:\n%s\n' "$todo_line"
+		return 0
+	fi
+
+	# Fast path: entry already exists — stamp the ref if missing.
+	if grep -qE "^[[:space:]]*- \[.\] ${task_id}( |$)" "$todo_file"; then
+		if declare -F add_gh_ref_to_todo >/dev/null 2>&1; then
+			add_gh_ref_to_todo "$task_id" "$issue_num" "$todo_file" 2>/dev/null || true
+		fi
+		_todo_entry_has_gh_ref "$task_id" "$issue_num" "$todo_file" && return 0
+		return 1
+	fi
+
 	_insert_todo_line "$todo_file" "$todo_line"
 
 	if declare -F log_info >/dev/null 2>&1; then
@@ -763,6 +784,9 @@ _converge_created_issue_ref() {
 
 	[[ -f "$todo_file" ]] || return 0
 	[[ -n "$task_id" && "$issue_num" =~ ^[1-9][0-9]*$ ]] || return 1
+	# The canonical guard prints the exact entry for the caller and is a
+	# successful convergence: it must not retry or make issue creation fail.
+	_repo_path_is_canonical_checkout "$repo_path" && return 0
 	repo=$(_extract_github_slug "$repo_path" "${REMOTE_NAME:-origin}" 2>/dev/null || true)
 
 	while [[ $attempt -le 3 ]]; do
