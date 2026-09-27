@@ -84,6 +84,7 @@ import { enforceConversationPathAccess } from "./team-interface-path-guard.mjs";
 
 // Existing modules
 import { createTools, tool } from "./tools.mjs";
+import { moveToolsOnDemand } from "./on-demand-tools.mjs";
 import {
   initObservability,
   getRoutingFeedback,
@@ -429,6 +430,9 @@ export async function AidevopsPlugin({ directory, client }) {
     boundedOperationManager,
   });
   baseTools.aidevops_objective_receipt = createObjectiveReceiptTool(tool, recordObjectiveDecision);
+  // GH#32592: V1 sends every tool schema on every request, so rarely used
+  // tools sit behind one compact dispatcher. V2's Code Mode already defers them.
+  moveToolsOnDemand(baseTools, tool);
 
   // Create hooks from extracted modules
   const modelRouting = loadModelRouting([

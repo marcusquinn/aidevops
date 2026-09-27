@@ -45,6 +45,18 @@ when their trigger applies; never remove them merely to meet a token target.
   system text into the first user message.
 - Per-tool `agent__intent` schemas carry only a pointer description; the full
   rule is the `## Intent Tracing (observability)` system instruction.
+- OpenCode 1 sends every tool schema on every request, so rarely used plugin
+  tools (`gpt_image_generate`, `model-accounts-pool`,
+  `aidevops_objective_receipt`) sit behind `aidevops_on_demand`
+  (`on-demand-tools.mjs`): one-line signatures in its description, full schema
+  on omitted or invalid `args`. Per-agent gated (`aidevops_mcp`) and frequently
+  used tools stay direct. OpenCode 2 already defers plugin tools into its Code
+  Mode catalogue, so it registers them directly. Project-local `.opencode/tool`
+  descriptions load in every session within this repository; keep them compact.
+- Legacy `~/AGENTS.md` and `~/Git/AGENTS.md` templates are no longer deployed.
+  Setup moves byte-identical historical copies to
+  `~/.aidevops/config-backups/migrations/gh32592-agents-md/` (a home copy stays
+  while a runtime memory file still points at it); edited copies are kept.
 - Anthropic OAuth `cch` signing targets the billing header's own placeholder via
   a random per-request sentinel, never the first placeholder in serialized
   `messages`, so quoted history cannot change the cached prefix. System text

@@ -199,6 +199,10 @@ function createMemoryTool(scriptsDir, run) {
  *   - gpt_image_generate  — OAuth-first GPT Image 2 generation and reference editing
  *   - model-accounts-pool   — OAuth account pool management (added in index.mjs)
  *
+ * OpenCode 1 (index.mjs) then moves gpt_image_generate, model-accounts-pool and
+ * aidevops_objective_receipt behind aidevops_on_demand (on-demand-tools.mjs);
+ * OpenCode 2 registers them directly because Code Mode already defers them.
+ *
  * NOTE: aidevops_quality_check was removed. Quality checks run automatically
  * via the tool.execute.before hook on every Write/Edit operation — an explicit
  * LLM-callable tool is redundant and adds unnecessary context overhead.

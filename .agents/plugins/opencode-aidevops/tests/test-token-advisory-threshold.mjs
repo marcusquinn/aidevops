@@ -11,7 +11,13 @@ import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createSessionStartGreetingGate, createTtsrHooks } from "../ttsr.mjs";
+import { createRootSessionGreetingGate, openCodeV1SessionLookup } from "../root-session-greeting-gate.mjs";
+import { createTtsrHooks } from "../ttsr.mjs";
+
+// OpenCode 1 wiring (index.mjs): the shared root gate over the V1 SDK lookup.
+function createV1GreetingGate(client) {
+  return createRootSessionGreetingGate({ getSession: openCodeV1SessionLookup(client) });
+}
 
 function createHooks(options = {}) {
   const logs = [];
@@ -25,8 +31,8 @@ function createHooks(options = {}) {
     intentField: "agent__intent",
     isHeadless: options.isHeadless || (() => false),
     shouldInjectGreeting: options.shouldInjectGreeting,
-    // The plugin greeting is opt-in (AIDEVOPS_PLUGIN_SESSION_GREETING=1);
-    // these cases cover its content once enabled.
+    // The plugin greeting is on by default (AIDEVOPS_PLUGIN_SESSION_GREETING=0
+    // disables it); cases pass greetingEnabled to cover the disabled path.
     greetingEnabled: options.greetingEnabled || (() => true),
     readGreetingCache: options.readGreetingCache,
     now: options.now,
@@ -150,9 +156,9 @@ describe("token cost advisory threshold", () => {
     assert.equal(output.system[0], "base system prompt");
   });
 
-  test("injects the greeting only on the first request of an interactive root session", async () => {
+  test("keeps the identical greeting on every request of an interactive root session", async () => {
     const client = { session: { get: async () => ({ data: { id: "root-session" } }) } };
-    const shouldInjectGreeting = createSessionStartGreetingGate(client);
+    const shouldInjectGreeting = createV1GreetingGate(client);
     const { hooks } = createHooks({ shouldInjectGreeting });
     const first = { system: ["base system prompt"] };
     const later = { system: ["base system prompt"] };
@@ -160,14 +166,15 @@ describe("token cost advisory threshold", () => {
     await hooks.systemTransformHook({ sessionID: "root-session", model: { providerID: "openai" } }, first);
     await hooks.systemTransformHook({ sessionID: "root-session", model: { providerID: "openai" } }, later);
 
+    // A stable greeting keeps the cached prefix identical across turns (GH#32444).
     assert.match(first.system.at(-1), /Session-start greeting order/);
-    assert.deepEqual(first.system.slice(0, -1), later.system);
+    assert.deepEqual(later.system, first.system);
     assert.equal(later.system[0], "base system prompt");
   });
 
   test("does not inject the greeting into subagent sessions", async () => {
     const client = { session: { get: async () => ({ data: { id: "child-session", parentID: "root-session" } }) } };
-    const shouldInjectGreeting = createSessionStartGreetingGate(client);
+    const shouldInjectGreeting = createV1GreetingGate(client);
     const { hooks } = createHooks({ shouldInjectGreeting });
     const output = { system: ["base system prompt"] };
 

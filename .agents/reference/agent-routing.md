@@ -108,7 +108,8 @@ Expected parent-verifiable evidence is 2% versus 3%, a 1 percentage-point differ
 these counts alone do not establish causality. Host completion is not acceptance.
 Return missing evidence/capability as unavailable and cancellation as cancelled.
 Task results expose parent-owned `aidevopsObjective` metadata. At the actual
-contribution decision point the parent calls `aidevops_objective_receipt` with
+contribution decision point the parent calls `aidevops_objective_receipt`
+(OpenCode 1: through `aidevops_on_demand`) with
 accepted unchanged, accepted with repair, rejected, reused, or unknown; repair
 decisions include the repair contribution identity and observed intervention
 count. The tool may append a distinct objective outcome, but independently
