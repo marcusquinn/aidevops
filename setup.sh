@@ -1629,6 +1629,8 @@ _setup_run_non_interactive() {
 	_time_step "update_codex_config" update_codex_config
 	_time_step "update_cursor_config" update_cursor_config
 	_time_step "disable_ondemand_mcps" disable_ondemand_mcps
+	# Update-if-installed only; never installs Nostr VPN (GH#23846).
+	_time_step "setup_nostr_vpn" _setup_run_noncritical_stage_bounded "Nostr VPN update check" "${AIDEVOPS_SETUP_NOSTR_VPN_TIMEOUT:-120}" setup_nostr_vpn
 	# Scaffold personal routines repo if not already present (idempotent).
 	# Creates local git repo + private GitHub remote for personal repo only.
 	# Org repos require explicit: aidevops init-routines --org <name>
@@ -1722,6 +1724,7 @@ _setup_run_interactive() {
 	confirm_step "Setup PIM tools (Reminders, Calendar, Contacts)" && setup_pim_tools
 	confirm_step "Setup mobile tools (optional adb, Xcode guidance, MiniSim, serve-sim, Mobile MCP)" && setup_mobile_simulator_tools
 	confirm_step "Setup ClaudeBar (AI quota monitor in menu bar)" && setup_claudebar
+	confirm_step "Update Nostr VPN nvpn CLI (only if Nostr VPN is installed)" && setup_nostr_vpn
 	confirm_step "Setup Git CLIs (gh, glab, tea)" && setup_git_clis
 	confirm_step "Setup file discovery tools (fd, ripgrep, ripgrep-all)" && setup_file_discovery_tools
 	confirm_step "Setup rtk (token-optimized CLI output, 60-90% savings)" && setup_rtk

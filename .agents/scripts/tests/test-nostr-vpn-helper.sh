@@ -219,6 +219,69 @@ test_privacy_guide_mentions_limits_and_companions() {
 	return 0
 }
 
+# Stub the app-managed root helper: `install-cli` writes a matching CLI stub.
+write_nvpn_app_helper_stub() {
+	local helper_path="$1"
+	mkdir -p "$(dirname "$helper_path")"
+	cat >"$helper_path" <<'EOF_HELPER'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-}" in
+version) printf '4.1.16\n' ;;
+update) printf '{"available":false,"current_version":"4.1.16","latest_version":"4.1.16"}\n' ;;
+status) printf 'configured_listen_port: 51820\n' ;;
+install-cli)
+	dest="$3"
+	cp "$0" "$dest"
+	chmod +x "$dest"
+	;;
+*) exit 2 ;;
+esac
+EOF_HELPER
+	chmod +x "$helper_path"
+	return 0
+}
+
+run_nvpn_update_sandbox() {
+	local stub_bin="${TEST_ROOT}/bin"
+	mkdir -p "$stub_bin"
+	write_nvpn_app_helper_stub "${TEST_ROOT}/helper/to.nostrvpn.nvpn"
+	cat >"${stub_bin}/netbird" <<'EOF_NETBIRD'
+#!/usr/bin/env bash
+printf 'Wireguard port: 51820\n'
+EOF_NETBIRD
+	chmod +x "${stub_bin}/netbird"
+	PATH="${stub_bin}:/usr/bin:/bin" \
+		NVPN_APP_HELPER="${TEST_ROOT}/helper/to.nostrvpn.nvpn" \
+		NVPN_APP_PATH="${TEST_ROOT}/missing.app" \
+		NVPN_CLI_PATH="${stub_bin}/nvpn" \
+		LEGACY_FIPS_PLIST="${TEST_ROOT}/missing.plist" \
+		bash "$HELPER_SCRIPT" update "$@"
+	return $?
+}
+
+test_update_installs_cli_matching_app_daemon() {
+	local output=""
+	output="$(run_nvpn_update_sandbox 2>&1)" || true
+	if [[ "$output" == *"OK: installed nvpn CLI 4.1.16"* && -x "${TEST_ROOT}/bin/nvpn" && "$output" == *"OK: Nostr VPN app is current"* ]]; then
+		print_result "update installs nvpn CLI matching app daemon" 0
+		return 0
+	fi
+	print_result "update installs nvpn CLI matching app daemon" 1 "$output"
+	return 0
+}
+
+test_update_reports_netbird_port_conflict() {
+	local output=""
+	output="$(run_nvpn_update_sandbox --check 2>&1)" || true
+	if [[ "$output" == *"CONFLICT: nvpn and NetBird both use UDP 51820"* && "$output" == *"--listen-port 51821"* ]]; then
+		print_result "update reports NetBird port conflict" 0
+		return 0
+	fi
+	print_result "update reports NetBird port conflict" 1 "$output"
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -233,6 +296,8 @@ main() {
 	test_safe_posture_mentions_disable_and_default_open
 	test_opencode_guide_mentions_aidevops_services
 	test_privacy_guide_mentions_limits_and_companions
+	test_update_installs_cli_matching_app_daemon
+	test_update_reports_netbird_port_conflict
 
 	printf '\nTests run: %d\n' "$TESTS_RUN"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

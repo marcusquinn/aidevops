@@ -23,9 +23,11 @@ tools:
 
 - **Purpose**: Experimental decentralized mesh VPN for advanced users who want accountless, Nostr-key-based device networking.
 - **Use when**: Connect laptop, workstation, homelab, VPS, and remote compute devices without SaaS coordination.
-- **CLI**: `fips`, `fipsctl`, `fipstop`, `fips-gateway`; aidevops wrapper: `.agents/scripts/nostr-vpn-helper.sh`.
-- **Docs/source**: https://nostrvpn.org/ · https://github.com/jmcorgan/fips · https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/nostr-vpn
-- **Status**: Experimental; upstream says protocol/API are not stable and security audit is pending. macOS `v0.4.0-rc1` packages are available for testing and must pass checksum plus package-structure validation before install.
+- **Recommended stack**: Nostr VPN app + `nvpn` CLI/daemon (https://nostrvpn.org/, https://github.com/mmalmi/nostr-vpn). It embeds an independently evolved FIPS fork, signed rosters, MagicDNS (`.nvpn`), and a verified self-updater.
+- **Legacy CLI**: standalone `fips`, `fipsctl`, `fipstop`, `fips-gateway` from https://github.com/jmcorgan/fips. Do not run it alongside Nostr VPN; keep `com.fips.daemon` disabled or uninstalled.
+- **aidevops wrapper**: `.agents/scripts/nostr-vpn-helper.sh`; `aidevops update` runs `nostr-vpn-helper.sh update` only when Nostr VPN is already installed.
+- **Docs/source**: https://nostrvpn.org/ · https://github.com/mmalmi/nostr-vpn · https://github.com/jmcorgan/fips · https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/nostr-vpn
+- **Status**: Experimental; upstream says protocol/API are not stable and security audit is pending.
 - **Secrets**: Use `aidevops secret set FIPS_NSEC` only for import/recovery; never paste Nostr private keys into chat or commit key files.
 
 **Key concepts**: Nostr keypair identity · npub node address · FIPS mesh · IPv6 `fd00::/8` TUN · `.fips` DNS · Nostr-mediated discovery · peer ACL · optional `fips0` firewall · LAN gateway · WireGuard exit sidecar.
@@ -72,7 +74,26 @@ For stronger privacy, combine FIPS with other aidevops guidance and tools:
 
 Hard limit: full privacy and anonymity cannot be guaranteed by a VPN overlay alone. IP addresses, timing correlation, device fingerprints, writing style, payment trails, relay logs, and compromised endpoints can identify users.
 
-## Setup Pattern
+## Nostr VPN App and nvpn (Recommended)
+
+- **Install (opt-in)**: signed and notarized macOS `.dmg` from https://nostrvpn.org/ or the GitHub releases. The app installs a root LaunchDaemon (`to.nostrvpn.nvpn`) running `/Library/PrivilegedHelperTools/to.nostrvpn.nvpn` with config under `~/Library/Application Support/nvpn/`.
+- **Updates**: the app updates itself through its verified in-app updater. `nostr-vpn-helper.sh update` (run by `aidevops update`) reports app updates, installs or refreshes `/usr/local/bin/nvpn` from the app helper so the CLI matches the running daemon, and uses `nvpn update` (which refuses unverified releases) on CLI-only hosts. It never installs Nostr VPN, replaces the app, writes the root helper, or changes config.
+- **Enrollment**: signed rosters control membership. On the admin device, create the network in the app. On each new device, run `nvpn join-request` and approve it from the admin app, or use `nvpn add-device --device <npub> --publish`. Keep `connect_to_non_roster_fips_peers: false`.
+- **Helper ownership**: observed on 4.1.16: the root-run helper binary was owned by the installing user. Any process running as that user could replace code that launchd runs as root. Check with `ls -l /Library/PrivilegedHelperTools/to.nostrvpn.nvpn`, and report through upstream's private security channel rather than public issues.
+
+### Coexisting with NetBird
+
+| Resource | NetBird | Nostr VPN | Action |
+|----------|---------|-----------|--------|
+| WireGuard UDP port | `51820` default | `51820` default | Clash. Move nvpn: `nvpn set --listen-port 51821 && nvpn reload` |
+| Tunnel IPv4 | `100.64.0.0/10` range | `10.44.x.x` (observed on 4.1.16) | No overlap unless a LAN uses `10.44.x.x`; check `nvpn ip` |
+| IPv6 | `fd07:…/64` per network | FIPS `fd00::/8` host tunnel (`fips_host_tunnel_enabled`, off in observed defaults) | Longest-prefix routing keeps NetBird `/64`s; verify with `route -n get -inet6 <addr>` |
+| DNS | `.netbird.selfhosted` (or custom) | `.nvpn` MagicDNS | Separate suffixes |
+| Exit nodes | Optional | Optional | Enable at most one default-route exit at a time |
+
+`nostr-vpn-helper.sh conflicts` detects the port clash and leftover standalone FIPS daemons.
+
+## Legacy Standalone FIPS Setup Pattern
 
 1. Install FIPS from a pinned upstream release or package; verify checksums first.
 2. On macOS, prefer `v0.4.0-rc1` or later packages over the removed corrupt `v0.3.0` package.
@@ -164,6 +185,10 @@ Other aidevops-adjacent candidates after SSH is proven: private Git remotes, MCP
 ## Helper Commands
 
 ```bash
+.agents/scripts/nostr-vpn-helper.sh update --check
+.agents/scripts/nostr-vpn-helper.sh update
+.agents/scripts/nostr-vpn-helper.sh nvpn-status
+.agents/scripts/nostr-vpn-helper.sh conflicts
 .agents/scripts/nostr-vpn-helper.sh check
 .agents/scripts/nostr-vpn-helper.sh status
 .agents/scripts/nostr-vpn-helper.sh identity
@@ -177,7 +202,7 @@ Other aidevops-adjacent candidates after SSH is proven: private Git remotes, MCP
 .agents/scripts/nostr-vpn-helper.sh opencode-guide
 ```
 
-The helper is intentionally read-only except for printing operator instructions; destructive or privileged changes should be confirmed and implemented in a later, tested phase.
+The helper is read-only except `update`, which only installs or refreshes the user-owned `nvpn` CLI. Privileged, network, roster, and config changes stay explicit operator steps.
 
 ## Security Checklist
 

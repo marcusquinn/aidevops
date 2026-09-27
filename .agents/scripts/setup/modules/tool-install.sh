@@ -1621,6 +1621,23 @@ setup_claudebar() {
 	return 0
 }
 
+# Keep an existing Nostr VPN install current (GH#23846). Never installs Nostr VPN:
+# it adds a root network daemon, so first install stays an explicit user choice.
+setup_nostr_vpn() {
+	local helper="$HOME/.aidevops/agents/scripts/nostr-vpn-helper.sh"
+	if [[ ! -d "/Applications/Nostr VPN.app" && ! -x "/Library/PrivilegedHelperTools/to.nostrvpn.nvpn" ]] &&
+		! command -v nvpn >/dev/null 2>&1; then
+		return 0
+	fi
+	if [[ ! -f "$helper" ]]; then
+		print_warning "nostr-vpn-helper.sh not deployed yet; skipping Nostr VPN update check"
+		return 0
+	fi
+	print_info "Checking Nostr VPN (nvpn) install..."
+	bash "$helper" update || print_warning "Nostr VPN update check encountered issues (non-critical)"
+	return 0
+}
+
 setup_ssh_key() {
 	print_info "Checking SSH key setup..."
 
