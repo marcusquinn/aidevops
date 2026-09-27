@@ -535,7 +535,7 @@ _pc_unregistered_activity_epoch() {
 	done
 	index=$(git -C "$path" rev-parse --git-path index 2>/dev/null) || return 1
 	[[ -f "$index" ]] || return 1
-	value=$(stat -c %Y "$index" 2>/dev/null) || value=$(stat -f %m "$index" 2>/dev/null) || return 1
+	value=$(_file_mtime_epoch "$index") || return 1
 	[[ "$value" =~ ^[0-9]+$ ]] || return 1
 	((value > newest)) && newest="$value"
 	printf '%s\n' "$newest"
