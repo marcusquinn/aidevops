@@ -1012,7 +1012,8 @@ _chatgpt_oauth_denylist_check() {
 	local denied
 	while IFS= read -r denied; do
 		[[ -n "$denied" ]] || continue
-		if [[ "$model_id" == "$denied" ]]; then
+		local snapshot_pattern="^${denied}-[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+		if [[ "$model_id" == "$denied" || "$model_id" =~ $snapshot_pattern ]]; then
 			return 0 # denied
 		fi
 	done < <(_chatgpt_oauth_unsupported_models)
