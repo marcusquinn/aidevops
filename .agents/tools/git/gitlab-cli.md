@@ -70,6 +70,12 @@ Authenticate each instance: `glab auth login [--hostname gitlab.company.com]`
 | `list-branches <account> <project>` | `... list-branches primary my-project` |
 | `create-branch <account> <project> <new_branch> [source]` | `... create-branch primary my-project feature-branch main` |
 
+## Images in issues/MRs
+
+GitLab has a native uploads API: `glab api projects/:id/uploads -F file=@path`
+returns a `markdown` field to paste into an issue or MR. The GitHub asset-branch
+helper is not needed for GitLab.
+
 ## Troubleshooting
 
 - **"GitLab CLI is not authenticated"**: Run `glab auth status` to check login status for the configured hostname.

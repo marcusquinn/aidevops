@@ -108,6 +108,19 @@ YAML issue forms (`.yml`) map each `label:` to a `### Label` header in the body.
 4. PRs: check for signed commits, branch targets, linked issue requirements
 5. If bot closes: read its comment for what's missing; resubmit (don't edit closed issues)
 
+### Screenshots and Images
+
+GitHub has no issue/PR attachment API. Inspect every screenshot for secrets,
+private repo names and local private paths before publishing
+([pre-push guards](../../reference/pre-push-guards.md)). Resize large captures
+first ([screenshot limits](../../reference/screenshot-limits.md)). Run
+`forge-image-embed-helper.sh publish --repo OWNER/REPO FILE.png` against your
+push fork for upstream PRs, or the target repo for owned threads. Paste its
+commit-pinned Markdown embeds into the `--body-file` content. Never add images
+to the PR branch. Keep the asset branch while the thread matters; deleting it
+may eventually break embeds. Cleanup when safe:
+`gh api -X DELETE repos/OWNER/REPO/git/refs/heads/aidevops-assets`.
+
 ## See Also
 
 - `lumen.md` — AI-powered visual diffs, commit messages, PR review
