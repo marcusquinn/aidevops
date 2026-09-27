@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 import { BoundedInteractiveOperationManager } from "../bounded-interactive-operation.mjs";
 import { createOutputSandboxReader, createOutputSandboxRecorder } from "../bounded-operation-output.mjs";
 import { createBoundedInteractiveOperationTool } from "../bounded-operation-tool.mjs";
+import { resolveSessionOwnedWorktreeRoot } from "../gpt-image-worktree.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "aidevops-bounded-operation-"));
 const owner = { sessionID: "ses_owner" };
@@ -182,6 +183,13 @@ describe("bounded interactive operations", () => {
     assert.equal(resolution.options.subject, "Operation");
     assert.equal(resolution.options.allowStartupRoot, true);
     rmSync(linked, { recursive: true, force: true });
+  });
+
+  test("a non-Git session project root reports the Operation subject and failing role", async () => {
+    await assert.rejects(
+      resolveSessionOwnedWorktreeRoot(process.cwd(), root, owner, { subject: "Operation" }),
+      (error) => error.message.startsWith("Operation workdir:") && error.message.includes("session project root"),
+    );
   });
 
   test("failure, timeout, and scoped cancellation cannot appear as success", async () => {

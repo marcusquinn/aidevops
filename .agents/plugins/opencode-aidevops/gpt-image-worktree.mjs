@@ -9,7 +9,7 @@ import { requireProjectRoot } from "./gpt-image-paths.mjs";
 
 const execFileAsync = promisify(execFile);
 
-async function gitPath(root, argument) {
+async function gitPath(root, argument, subject = "Image", role = "requested workdir") {
   try {
     const { stdout } = await execFileAsync("git", ["-C", root, "rev-parse", argument], {
       encoding: "utf8",
@@ -19,16 +19,16 @@ async function gitPath(root, argument) {
     if (!value) throw new Error("missing Git path");
     return realpath(isAbsolute(value) ? value : resolve(root, value));
   } catch {
-    throw new Error("Image workdir must be an existing Git worktree root.");
+    throw new Error(`${subject} workdir: the ${role} is not an existing Git worktree root.`);
   }
 }
 
-async function gitWorktreeIdentity(root) {
-  const topLevel = await gitPath(root, "--show-toplevel");
-  if (topLevel !== root) throw new Error("Image workdir must name the Git worktree root.");
+async function gitWorktreeIdentity(root, subject = "Image", role = "requested workdir") {
+  const topLevel = await gitPath(root, "--show-toplevel", subject, role);
+  if (topLevel !== root) throw new Error(`${subject} workdir must name the Git worktree root.`);
   return {
-    commonDir: await gitPath(root, "--git-common-dir"),
-    gitDir: await gitPath(root, "--git-dir"),
+    commonDir: await gitPath(root, "--git-common-dir", subject, role),
+    gitDir: await gitPath(root, "--git-dir", subject, role),
   };
 }
 
@@ -70,8 +70,8 @@ export async function resolveSessionOwnedWorktreeRoot(requestedWorkdir, projectR
     throw new Error(`${subject} workdir requires a current OpenCode session identity.`);
   }
 
-  const startupIdentity = await gitWorktreeIdentity(await gitPath(startupRoot, "--show-toplevel"));
-  const requestedIdentity = await gitWorktreeIdentity(root);
+  const startupIdentity = await gitWorktreeIdentity(await gitPath(startupRoot, "--show-toplevel", subject, "session project root"), subject, "session project root");
+  const requestedIdentity = await gitWorktreeIdentity(root, subject, "requested workdir");
   if (startupIdentity.commonDir !== requestedIdentity.commonDir) {
     throw new Error(`${subject} workdir belongs to an unrelated Git repository.`);
   }
