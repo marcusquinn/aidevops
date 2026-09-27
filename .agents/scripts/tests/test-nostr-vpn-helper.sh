@@ -229,7 +229,7 @@ set -euo pipefail
 case "${1:-}" in
 version) printf '4.1.16\n' ;;
 update) printf '{"available":false,"current_version":"4.1.16","latest_version":"4.1.16"}\n' ;;
-status) printf 'configured_listen_port: 51820\n' ;;
+status) printf 'endpoint: 192.0.2.10:51820\nlisten_port: 51820\n' ;;
 install-cli)
 	dest="$3"
 	cp "$0" "$dest"
@@ -256,6 +256,8 @@ EOF_NETBIRD
 		NVPN_APP_PATH="${TEST_ROOT}/missing.app" \
 		NVPN_CLI_PATH="${stub_bin}/nvpn" \
 		LEGACY_FIPS_PLIST="${TEST_ROOT}/missing.plist" \
+		LEGACY_FIPS_PREFIX="${TEST_ROOT}/missing-prefix" \
+		LEGACY_FIPS_RESOLVER="${TEST_ROOT}/missing-resolver" \
 		bash "$HELPER_SCRIPT" update "$@"
 	return $?
 }
