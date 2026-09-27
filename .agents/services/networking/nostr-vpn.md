@@ -79,7 +79,7 @@ Hard limit: full privacy and anonymity cannot be guaranteed by a VPN overlay alo
 - **Install (opt-in)**: signed and notarized macOS `.dmg` from https://nostrvpn.org/ or the GitHub releases. The app installs a root LaunchDaemon (`to.nostrvpn.nvpn`) running `/Library/PrivilegedHelperTools/to.nostrvpn.nvpn` with config under `~/Library/Application Support/nvpn/`.
 - **Updates**: the app updates itself through its verified in-app updater. `nostr-vpn-helper.sh update` (run by `aidevops update`) reports app updates, installs or refreshes `/usr/local/bin/nvpn` from the app helper so the CLI matches the running daemon, and uses `nvpn update` (which refuses unverified releases) on CLI-only hosts. It never installs Nostr VPN, replaces the app, writes the root helper, or changes config.
 - **Enrollment**: signed rosters control membership. On the admin device, create the network in the app. On each new device, run `nvpn join-request` and approve it from the admin app, or use `nvpn add-device --device <npub> --publish`. Keep `connect_to_non_roster_fips_peers: false`.
-- **Helper ownership**: observed on 4.1.16: the root-run helper binary was owned by the installing user. Any process running as that user could replace code that launchd runs as root. Check with `ls -l /Library/PrivilegedHelperTools/to.nostrvpn.nvpn`, and report through upstream's private security channel rather than public issues.
+- **Root helper hygiene**: binaries launchd runs as root should be `root:wheel` and not user-writable (`ls -l /Library/PrivilegedHelperTools/`). Report anomalies privately to upstream (`nostrvpn@siriusbusiness.fi`), not in public issues.
 
 ### Coexisting with NetBird
 
