@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.37.6] - 2026-09-27
+
+### Fixed
+
+- reap leaked release-control worktrees from killed helper runs
+
 ## [3.37.5] - 2026-09-27
 
 ### Added
