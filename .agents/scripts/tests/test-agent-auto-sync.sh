@@ -847,7 +847,7 @@ test_release_sync_accepts_changed_tree_protected_main_descendant() {
 	return 0
 }
 
-test_release_sync_rejects_changed_tree_non_tip_descendant() {
+test_release_sync_accepts_changed_tree_non_tip_descendant() {
 	local repo_path
 	local remote_path=""
 	local release_sha=""
@@ -870,12 +870,13 @@ test_release_sync_rejects_changed_tree_non_tip_descendant() {
 	PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git -C "$repo_path" checkout -q --detach "$release_sha"
 	: >"$TEST_DIR/sync.log"
 
-	if output=$(invoke_release_sync "$repo_path" 2>&1); then
-		print_result "release sync rejects a changed-tree non-tip descendant" 1 "Non-tip descendant was reported as converged"
-	elif [[ "$output" == *"changed tree does not match protected main"* && ! -s "$TEST_DIR/sync.log" ]]; then
-		print_result "release sync rejects a changed-tree non-tip descendant" 0
+	if output=$(invoke_release_sync "$repo_path" 2>&1) &&
+		[[ ! -s "$TEST_DIR/sync.log" ]] &&
+		[[ "$output" == *"preservation merge ${active_sha:0:12}"* ]] &&
+		[[ "$output" != *"[ERROR]"* ]]; then
+		print_result "release sync accepts a verified non-tip descendant despite moving main" 0
 	else
-		print_result "release sync rejects a changed-tree non-tip descendant" 1 "Missing fail-closed protected-main evidence: $output"
+		print_result "release sync accepts a verified non-tip descendant despite moving main" 1 "$output"
 	fi
 	return 0
 }
@@ -917,7 +918,8 @@ test_release_sync_defers_verified_protected_integration() {
 		AIDEVOPS_RELEASE_LANE_TAG=v9.9.10 invoke_release_sync "$repo_path" 2>&1) || actual_rc=$?
 	if [[ "$actual_rc" -eq 76 && ! -s "$TEST_DIR/sync.log" ]] &&
 		[[ "$output" == *"verified protected integration ${integration_sha:0:12}"* ]] &&
-		[[ "$output" == *"active runtime ${active_sha:0:12} is stale"* ]]; then
+		[[ "$output" == *"active runtime ${active_sha:0:12} does not include the release tag"* ]] &&
+		[[ "$output" != *"[ERROR]"* ]]; then
 		print_result "release sync defers a verified protected integration for main convergence" 0
 	else
 		print_result "release sync defers a verified protected integration for main convergence" 1 "Expected verified stale-runtime deferral: $output"
@@ -1138,7 +1140,7 @@ main() {
 	test_release_sync_deploys_validated_active_ancestor
 	test_release_sync_accepts_validated_same_tree_descendant
 	test_release_sync_accepts_changed_tree_protected_main_descendant
-	test_release_sync_rejects_changed_tree_non_tip_descendant
+	test_release_sync_accepts_changed_tree_non_tip_descendant
 	test_release_sync_rejects_unrelated_active_commit
 	test_release_sync_defers_verified_protected_integration
 	test_release_sync_rejects_unverified_protected_integration

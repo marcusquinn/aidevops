@@ -1342,6 +1342,57 @@ _full_loop_release_finalize_stale_supersession() {
 	return $?
 }
 
+# Preserve deployment proof separately from the supersession disposition. Only
+# the exact-tag post-release gate can attest the active bundle (manifest, stamp,
+# sentinels and materialized source); ancestry alone must not write evidence.
+#aidevops:trust-boundary
+_full_loop_release_record_stale_deployment() {
+	local repo="$1"
+	local requested_pr="$2"
+	local source_tag="$3"
+	local evidence_path=""
+	local active_sha=""
+	local tag_commit=""
+	local version_manager="${SCRIPT_DIR}/version-manager.sh"
+	local manifest=""
+	local now=""
+	local evidence_status=""
+
+	evidence_path=$(_full_loop_release_evidence_path "$repo" "$requested_pr" successor) || return 1
+	[[ -f "$evidence_path" ]] || return 1
+	_full_loop_verify_successor_superseded_release_evidence "$evidence_path" "$repo" "$requested_pr" || return 1
+	# shellcheck source=./runtime-bundle-verifier.sh
+	source "${SCRIPT_DIR}/runtime-bundle-verifier.sh" || return 1
+	_runtime_bundle_verify_active_link "$HOME/.aidevops/agents" || return 0
+	manifest="$_AIDEVOPS_RUNTIME_VERIFY_ACTIVE_ROOT/.bundle-manifest"
+	active_sha=$(_runtime_bundle_verify_manifest_value "$manifest" git_sha 2>/dev/null) || return 0
+	[[ "$active_sha" =~ $_FULL_LOOP_RELEASE_SHA_REGEX ]] || return 0
+	tag_commit=$(_full_loop_release_resolve_tag_commit "$source_tag") || return 1
+	git -C "$REPO_ROOT" merge-base --is-ancestor "$tag_commit" "$active_sha" 2>/dev/null || return 0
+	evidence_status=$(jq -r '.deployment.status // empty' "$evidence_path") || return 1
+	if [[ "$evidence_status" == "deployed" ]]; then
+		jq -e --arg sha "$active_sha" --arg tag "$source_tag" \
+			'.deployment.tag == $tag and .deployment.active_sha == $sha' "$evidence_path" >/dev/null
+		return $?
+	fi
+	[[ -z "$evidence_status" ]] || return 1
+	_full_loop_release_prepare_tag_worktree "$source_tag" || return 1
+	[[ -f "$version_manager" ]] || return 1
+	(
+		cd "$_FULL_LOOP_RELEASE_PATH" || exit 1
+		AIDEVOPS_RELEASE_INTENT_TRUSTED=1 AIDEVOPS_RELEASE_SQUASH_RECOVERY=1 \
+			AIDEVOPS_RELEASE_LANE_SOURCE_PR="$requested_pr" AIDEVOPS_RELEASE_LANE_TAG="$source_tag" \
+			AIDEVOPS_SYNC_REPO_ROOT="$_FULL_LOOP_RELEASE_PATH" \
+			bash "$version_manager" post-release
+	) || return 1
+	now=$(date -u '+%Y-%m-%dT%H:%M:%SZ') || return 1
+	jq --arg tag "$source_tag" --arg sha "$active_sha" --arg now "$now" \
+		'.deployment={status:"deployed",tag:$tag,active_sha:$sha,verified_at:$now}' \
+		"$evidence_path" >"${evidence_path}.tmp.$$" || return 1
+	mv "${evidence_path}.tmp.$$" "$evidence_path" || return 1
+	_full_loop_verify_successor_superseded_release_evidence "$evidence_path" "$repo" "$requested_pr"
+}
+
 _full_loop_release_reconcile_protected_state() {
 	local repo="$1"
 	local requested_pr="$2"
@@ -1441,6 +1492,7 @@ _full_loop_release_existing_command() {
 		if [[ "$receipt_status" == "$_FULL_LOOP_RELEASE_SUPERSEDED" ]]; then
 			_full_loop_verify_superseded_release_receipt "$repo" "$requested_pr" || return 1
 			if [[ "$mode" == "$_FULL_LOOP_RELEASE_MODE_RECONCILE" ]]; then
+				_full_loop_release_record_stale_deployment "$repo" "$requested_pr" "$tag_name" || return 1
 				_full_loop_update_superseded_cleanup_receipt "$repo" "$requested_pr" || return 1
 			fi
 			printf 'release:superseded already recorded for PR #%s\n' "$requested_pr"
@@ -1450,6 +1502,7 @@ _full_loop_release_existing_command() {
 		[[ -z "$receipt_status" || "$receipt_status" == "$_FULL_LOOP_PHASE_FAILED" ]] || return 1
 		_full_loop_release_finalize_stale_supersession \
 			"$repo" "$requested_pr" "$tag_name" "$latest_tag" || return 1
+		_full_loop_release_record_stale_deployment "$repo" "$requested_pr" "$tag_name" || return 1
 		printf 'release:superseded source_tag=%s successor_tag=%s\n' "$tag_name" "$latest_tag"
 		return 0
 	fi
