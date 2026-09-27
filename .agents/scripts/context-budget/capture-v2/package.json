@@ -1,0 +1,7 @@
+{
+  "name": "aidevops-context-budget-capture",
+  "private": true,
+  "type": "module",
+  "main": "./index.mjs",
+  "exports": "./index.mjs"
+}

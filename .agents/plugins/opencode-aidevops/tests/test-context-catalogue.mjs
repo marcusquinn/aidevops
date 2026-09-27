@@ -19,7 +19,8 @@ test("compact wrapper advertising retains every exact name, trigger and speciali
   const source = `unchanged prefix\n<available_skills>\n${names.map((name) => wrapper(name)).join("\n")}\n${custom}\n</available_skills>\nunchanged suffix`;
   const compact = compactSkillCatalogue(source);
   const advertised = compact.match(/all remain available:\n(.+)\n<\/available_skills>/)?.[1].split(", ");
-  assert.deepEqual(advertised, names.map((name) => `aidevops-${name}`));
+  assert.deepEqual(advertised, names, "each wrapper is listed once by its suffix");
+  assert.match(compact, /exact skill name `aidevops-<listed name>` \(for example `aidevops-full-loop`\)/);
   assert.ok(!compact.includes("/skills/aidevops-seo/SKILL.md"), "wrapper locations are not advertised");
   assert.ok(compact.includes(custom));
   assert.match(compact, /Generated aidevops workflow skills \(6\)/);
@@ -35,7 +36,7 @@ test("OpenCode 2 id/name wrapper entries compact and keep a differing id", () =>
   const custom = "  <skill>\n    <id>custom</id>\n    <name>custom</name>\n    <description>Custom trigger.</description>\n  </skill>";
   const source = `<available_skills>\n${v2Wrapper("seo")}\n${v2Wrapper("review", "global:aidevops-review")}\n${custom}\n</available_skills>`;
   const compact = compactSkillCatalogue(source);
-  assert.match(compact, /all remain available:\naidevops-seo, aidevops-review \(id: global:aidevops-review\)\n/);
+  assert.match(compact, /all remain available:\nseo, review \(id: global:aidevops-review\)\n/);
   assert.ok(compact.includes(custom));
   assert.ok(!compact.includes("<id>aidevops-seo</id>"));
 });
