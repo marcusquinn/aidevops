@@ -845,9 +845,39 @@ test_unclear_archive_attribution_preserves_worktree() {
 	local rc=0
 	[[ "$cleanup_rc" -ne 0 ]] || rc=1
 	[[ -d "$wt_path" ]] || rc=1
-	grep -q 'worktree-skipped.*archive-attribution-unclear.*mode=skipped' "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
-	print_result "unclear archive attribution preserves full worktree" "$rc" \
+	grep -q 'worktree-skipped.*not-age-eligible.*pr_state=unattributed-retention' "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
+	print_result "unattributed worktree waits for long retention" "$rc" \
 		"cleanup_rc=$cleanup_rc log=$(cat "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null)"
+	return 0
+}
+
+test_old_unattributed_worktree_is_archived_and_removed() {
+	local repo_dir="${TEST_ROOT}/repo-old-unattributed"
+	local wt_path="${TEST_ROOT}/aidevops-feature-auto-old-unattributed"
+	local branch_name="feature/auto-old-unattributed"
+	setup_repo_with_worker_worktree "$repo_dir" "$wt_path" "$branch_name" "30 days ago" || return 1
+	local old_ts
+	old_ts=$(date -u -v-30d +%Y%m%d%H%M 2>/dev/null || date -u -d "30 days ago" +%Y%m%d%H%M) || return 1
+	touch -t "$old_ts" "$wt_path/.git" || return 1
+	source_pulse_cleanup_with_stubs || return 1
+
+	local now_epoch
+	now_epoch=$(date +%s)
+	AIDEVOPS_HEADLESS_METRICS_FILE="${TEST_ROOT}/missing-old-unattributed-metrics.jsonl"
+	export AIDEVOPS_HEADLESS_METRICS_FILE
+
+	_cleanup_single_worktree "$repo_dir" "$wt_path" "$branch_name" "$now_epoch" "testowner/testrepo" "main" >/dev/null 2>&1
+	local cleanup_rc=$?
+	local archive_manifest=""
+	for archive_manifest in "$HOME"/.aidevops/recovery/archives/testowner__testrepo/unattributed/*/manifest.json; do
+		[[ -f "$archive_manifest" ]] || archive_manifest=""
+	done
+	local rc=0
+	[[ "$cleanup_rc" -eq 0 && ! -d "$wt_path" && -n "$archive_manifest" ]] || rc=1
+	[[ -z "$archive_manifest" ]] || jq -e '.issue == null and .reason == "unattributed-worktree"' "$archive_manifest" >/dev/null || rc=1
+	grep -q 'worktree-removed.*archived-unattributed-worktree.*mode=compact-archive' "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
+	print_result "old unattributed worktree is compacted and removed" "$rc" \
+		"cleanup_rc=$cleanup_rc archive=$archive_manifest"
 	return 0
 }
 
@@ -1256,6 +1286,7 @@ test_dirty_auto_under_seven_days_is_preserved
 test_dirty_auto_over_seven_days_compacts_and_preserves_branch
 test_preserve_forensics_marker_blocks_compact_cleanup
 test_unclear_archive_attribution_preserves_worktree
+test_old_unattributed_worktree_is_archived_and_removed
 test_security_label_blocks_compact_cleanup
 test_stale_dirty_attributed_worker_archives_before_removal
 test_no_newline_pr_output_blocks_local_commit_cleanup

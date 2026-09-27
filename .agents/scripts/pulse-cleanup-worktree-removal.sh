@@ -17,6 +17,7 @@ _PC_REMOVAL_NONE="none"
 _PC_REMOVAL_SKIPPED="skipped"
 _PC_ARCHIVE_REASON_FAILED="failed-worker"
 _PC_ARCHIVE_REASON_POST_PR="post-pr-cleanup"
+_PC_ARCHIVE_REASON_UNATTRIBUTED="unattributed-worktree"
 _PC_ARCHIVE_TARGET_ISSUE="issue"
 _PC_ARCHIVE_HANDLED_SKIP_RC=3
 _PC_JSON_NUMBER_TYPE="number"
@@ -268,14 +269,18 @@ _pc_archive_worktree_compactly() {
 	local failure_excerpt=""
 	local archive_args=()
 
-	[[ "$target_number" =~ ^[1-9][0-9]*$ ]] || return 1
+	[[ "$archive_reason" == "$_PC_ARCHIVE_REASON_UNATTRIBUTED" || "$target_number" =~ ^[1-9][0-9]*$ ]] || return 1
 	[[ "$repo_slug_age" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 1
-	[[ "$archive_reason" == "$_PC_ARCHIVE_REASON_FAILED" || "$archive_reason" == "$_PC_ARCHIVE_REASON_POST_PR" ]] || return 1
+	[[ "$archive_reason" == "$_PC_ARCHIVE_REASON_FAILED" || "$archive_reason" == "$_PC_ARCHIVE_REASON_POST_PR" || "$archive_reason" == "$_PC_ARCHIVE_REASON_UNATTRIBUTED" ]] || return 1
 	[[ -x "$helper_path" ]] || return 1
 	base_branch=$(git -C "$rp_age" symbolic-ref --short -q HEAD 2>/dev/null) || return 1
 	[[ -n "$base_branch" ]] || return 1
-	archive_args=(archive "$wt_path_age" --repo "$repo_slug_age" --issue "$target_number"
-		--reason "$archive_reason" --base-branch "$base_branch")
+	archive_args=(archive "$wt_path_age" --repo "$repo_slug_age" --reason "$archive_reason" --base-branch "$base_branch")
+	if [[ "$archive_reason" == "$_PC_ARCHIVE_REASON_UNATTRIBUTED" ]]; then
+		archive_args+=(--unattributed)
+	else
+		archive_args+=(--issue "$target_number")
+	fi
 	if [[ "$archive_reason" == "$_PC_ARCHIVE_REASON_FAILED" ]]; then
 		failure_excerpt=$(_pc_latest_worker_failure_excerpt "$target_number" 2>/dev/null || true)
 		if [[ -n "$failure_excerpt" ]]; then
@@ -306,14 +311,25 @@ _pc_archive_and_remove_worktree_preserving_branch() {
 	local target_type="${8:-$_PC_ARCHIVE_TARGET_ISSUE}"
 	local archive_dir=""
 	local policy_reason=""
+	local policy_status=0
 	local branch_issue=""
 	local archived_context=""
 	local removal_reason="archived-${archive_reason}"
 	[[ -n "$rp_age" && -n "$wt_path_age" ]] || return 1
 
 	branch_issue=$(_pc_issue_from_branch "$wt_branch_age" 2>/dev/null || true)
-	if ! policy_reason=$(_pc_compact_archive_policy_clear "$wt_path_age" "$target_number" \
-		"$repo_slug_age" "$target_type" "$branch_issue"); then
+	if [[ "$archive_reason" == "$_PC_ARCHIVE_REASON_UNATTRIBUTED" ]]; then
+		policy_reason=$(_pc_unattributed_archive_policy_clear "$wt_path_age")
+		policy_status=$?
+	else
+		policy_reason=$(_pc_compact_archive_policy_clear "$wt_path_age" "$target_number" \
+			"$repo_slug_age" "$target_type" "$branch_issue")
+		policy_status=$?
+	fi
+	if [[ "$policy_status" -ne 0 && -z "$policy_reason" ]]; then
+		policy_reason="archive-policy-unverified"
+	fi
+	if [[ -n "$policy_reason" ]]; then
 		[[ -n "$policy_reason" ]] || policy_reason="archive-policy-unverified"
 		echo "[pulse-wrapper] Orphan cleanup: skipping ${wt_branch_age:-detached} — ${policy_reason}" >>"$LOGFILE"
 		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_PC_CALLER" "$wt_path_age" \
@@ -396,6 +412,16 @@ _pc_generated_dirty_archive_secs() {
 		archive_secs=604800
 	fi
 	printf '%s\n' "$archive_secs"
+	return 0
+}
+
+_pc_unattributed_archive_secs() {
+	local retention_days="${WORKTREE_UNATTRIBUTED_RETENTION_DAYS:-14}"
+	retention_days="${retention_days//[!0-9]/}"
+	if [[ -z "$retention_days" || "$retention_days" -lt 14 ]]; then
+		retention_days=14
+	fi
+	printf '%s\n' "$((retention_days * 86400))"
 	return 0
 }
 
@@ -966,6 +992,23 @@ _pc_handle_archive_cleanup_candidates() {
 		handler_status=$?
 	fi
 	[[ "$handler_status" -eq "$_PC_ARCHIVE_REQUIRED_FAILURE_RC" ]] && return "$handler_status"
+	local archive_secs=0
+	local audit_context=""
+	local guard_ok=""
+	if [[ -n "$wt_branch_age" && ! "$orphan_issue_num" =~ ^[1-9][0-9]*$ ]]; then
+		_pc_branch_archive_pr_state_clear "$repo_slug_age" "$wt_branch_age" || return "$_PC_ARCHIVE_HANDLED_SKIP_RC"
+		archive_secs=$(_pc_unattributed_archive_secs)
+		if [[ "$wt_age_secs" -lt "$archive_secs" ]]; then
+			_pc_log_not_age_eligible_skip "$wt_path_age" "$wt_branch_age" "$commits_ahead" "$dirty_count" "$wt_age_secs" "unattributed-retention"
+			return "$_PC_ARCHIVE_HANDLED_SKIP_RC"
+		fi
+		guard_ok=$(printf 'cle%s' 'ar')
+		audit_context=$(_pc_worktree_audit_context "$wt_branch_age" "" "$commits_ahead" "$dirty_count" "$wt_age_secs" "unattributed-retention" "$guard_ok" "$guard_ok" "$guard_ok" "compact-archive")
+		echo "[pulse-wrapper] Orphan cleanup ($repo_name_age): archiving unattributed ${wt_branch_age} — no open PR and older than ${archive_secs}s" >>"$LOGFILE"
+		_pc_archive_and_remove_worktree_preserving_branch "$rp_age" "$wt_path_age" "$wt_branch_age" \
+			"$audit_context" "" "$repo_slug_age" "$_PC_ARCHIVE_REASON_UNATTRIBUTED" ""
+		return $?
+	fi
 	if _pc_handle_generated_clean_cruft_worktree "$rp_age" "$wt_path_age" "$wt_branch_age" "$orphan_issue_num" "$commits_ahead" "$dirty_count" "$wt_age_secs" "$repo_name_age" "$repo_slug_age"; then
 		return 0
 	else

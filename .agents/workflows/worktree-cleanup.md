@@ -63,6 +63,11 @@ local commits, dirty patches, bounded untracked state, and available failure
 context remain restorable. Audit rows use `mode=compact-archive`, and async
 cleanup reports removed, archived, and failed-archive totals.
 
+Unattributed worktrees with no open head PR are retained for at least
+`WORKTREE_UNATTRIBUTED_RETENTION_DAYS` (default 14) before verified compact
+archival and removal. Their archives are stored under an `unattributed` target
+rather than being falsely assigned to an issue or PR.
+
 Full worktrees remain required for live owners/sessions/processes, recent worker
 metrics, security or forensics markers/labels, repeated zero-session failures,
 unclear repository/task attribution, remote policy lookup failures, and archive
