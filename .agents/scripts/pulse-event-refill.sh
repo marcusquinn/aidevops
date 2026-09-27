@@ -120,6 +120,21 @@ _pulse_event_refill_wrapper_supports_mode() {
 	return $?
 }
 
+_pulse_event_refill_wrapper_is_active() {
+	local wrapper="$1"
+	local active_agents_link="${AIDEVOPS_ACTIVE_AGENTS_LINK:-${HOME}/.aidevops/agents}"
+	local wrapper_agents_root=""
+	local active_agents_root=""
+
+	wrapper_agents_root=$(cd "${wrapper%/*}/.." 2>/dev/null && pwd -P) || return 0
+	# Only bundle-backed wrappers can become stale across activation. Leave
+	# standalone/test wrappers alone so mixed-version compatibility remains safe.
+	[[ -r "${wrapper_agents_root}/.bundle-manifest" ]] || return 0
+	active_agents_root=$(cd "$active_agents_link" 2>/dev/null && pwd -P) || return 0
+	[[ "$wrapper_agents_root" == "$active_agents_root" ]]
+	return $?
+}
+
 pulse_event_refill_signal() {
 	local issue_number="$1"
 	local worker_pid="$2"
@@ -139,6 +154,10 @@ pulse_event_refill_signal() {
 	fi
 	if ! _pulse_event_refill_wrapper_supports_mode "$wrapper"; then
 		pulse_event_refill_log "action=wrapper_unsupported trigger=retained wrapper=${wrapper}"
+		return 0
+	fi
+	if ! _pulse_event_refill_wrapper_is_active "$wrapper"; then
+		pulse_event_refill_log "action=wake_skipped reason=inactive-bundle trigger=retained wrapper=${wrapper}"
 		return 0
 	fi
 	if ! _pulse_event_refill_acquire_wake_lock "$wake_lock"; then
