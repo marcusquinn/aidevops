@@ -443,9 +443,10 @@ _validate_interactive_dispatch_scope() {
 
 	log_error "auto-dispatch brief has no canonical Files Scope; add before claiming:"
 	log_error "  ### Files Scope"
-	log_error "  - EDIT: \`repo/relative/existing-file\`"
-	log_error "  - NEW: \`repo/relative/new-file\`"
-	log_error "One path per line with nothing after it (globs allowed as extra lines)."
+	log_error "  - \`repo/relative/existing-file\`"
+	log_error "  - \`repo/relative/new-file\`"
+	log_error "One exact path per line: no EDIT:/NEW: prefix, no globs, nothing after it."
+	log_error "Or declare \`EDIT: path[:lines]\` bullets under '### Files to Modify'; they normalize."
 	log_error "Planning-only work: start the body with 'Planning-only:' instead."
 	log_error "Without it the pulse holds the issue as status:blocked (missing_files_scope)."
 	return 1

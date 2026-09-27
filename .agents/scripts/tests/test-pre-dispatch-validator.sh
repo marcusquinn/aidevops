@@ -917,6 +917,77 @@ test_preclaim_hold_once() {
 	return 0
 }
 
+# GH#32689: normalizable briefs are rewritten instead of held, once per body;
+# repaired holds release only while the hold is still the newest blocker.
+test_brief_scope_self_heal_and_release() {
+	local calls="" comments="" rc=0
+	calls=$(mktemp) || return 1
+	comments=$(mktemp) || return 1
+	printf '[[]]\n' >"$comments"
+	(
+		# shellcheck source=../shared-constants.sh
+		source "${SCRIPT_DIR}/../shared-constants.sh" >/dev/null 2>&1
+		# shellcheck source=../pulse-dispatch-core.sh
+		source "${SCRIPT_DIR}/../pulse-dispatch-core.sh" >/dev/null 2>&1
+		gh() {
+			if [[ "$*" == *"/comments"* ]]; then
+				cat "$comments"
+				return 0
+			fi
+			printf 'write\n'
+			return 0
+		}
+		repo_allows_pulse_write_actions() { return 0; }
+		set_issue_status() {
+			printf 'status:%s\n' "$3" >>"$calls"
+			return 0
+		}
+		gh_issue_edit_safe() {
+			printf 'edit\n' >>"$calls"
+			return 0
+		}
+		gh_issue_comment() {
+			local body_file="$5"
+			printf 'comment\n' >>"$calls"
+			jq -n --rawfile body "$body_file" \
+				'[[{author_association:"COLLABORATOR", body:$body}]]' >"$comments"
+			return 0
+		}
+		# shellcheck disable=SC2016 # literal JSON fixture
+		local meta='{"author":{"login":"maintainer"},"labels":[{"name":"auto-dispatch"}],"body":"## What\nx\n\n### Files to Modify\n- `EDIT: src/repair.sh:10-20` — fix"}'
+		_dispatch_preclaim_brief_scope 32689 owner/repo "$meta" && exit 1
+		[[ "$(tr '\n' ' ' <"$calls")" == "edit comment " ]] || exit 2
+		# The same body coming back (external sync) is held, not re-edited.
+		_dispatch_preclaim_brief_scope 32689 owner/repo "$meta" && exit 1
+		[[ "$(grep -c '^edit$' "$calls")" -eq 1 && "$(grep -c '^status:blocked$' "$calls")" -eq 1 ]] || exit 3
+		: >"$calls"
+		# shellcheck disable=SC2016
+		local hold='<!-- aidevops:brief-hold reason=missing_files_scope body=aaaaaaaaaaaaaaaaaaaaaaaa -->'
+		# shellcheck disable=SC2016
+		local scoped=$'## What\nx\n\n### Files Scope\n\n- `src/repair.sh`'
+		jq -n --arg b "$hold" '[[{author_association:"COLLABORATOR", body:$b}]]' >"$comments"
+		_release_repaired_brief_hold owner/repo 32689 "$scoped" maintainer || exit 4
+		[[ "$(tr '\n' ' ' <"$calls")" == "status:available " ]] || exit 5
+		: >"$calls"
+		# A newer blocker after the hold keeps the issue blocked.
+		jq -n --arg b "$hold" '[[{author_association:"COLLABORATOR", body:$b},
+			{author_association:"COLLABORATOR", body:"Worker Watchdog Kill"}]]' >"$comments"
+		_release_repaired_brief_hold owner/repo 32689 "$scoped" maintainer && exit 6
+		# Still-unscoped bodies are skipped without reading comments.
+		printf 'not-json\n' >"$comments"
+		_release_repaired_brief_hold owner/repo 32689 $'## Files\n- src/x.sh' maintainer && exit 7
+		[[ ! -s "$calls" ]] || exit 8
+		exit 0
+	) >/dev/null 2>&1 || rc=$?
+	if [[ "$rc" -eq 0 ]]; then
+		print_result "brief scope self-heals once per body and releases repaired holds" 0
+	else
+		print_result "brief scope self-heals once per body and releases repaired holds" 1 "rc=${rc}"
+	fi
+	rm -f "$calls" "$comments"
+	return 0
+}
+
 test_zero_progress_meta_recovered_blocks_dispatch() {
 	setup_test_env
 	create_gh_stub_zero_progress_body "write"
@@ -1310,6 +1381,7 @@ main() {
 	test_scope_gate_precedes_claim
 	test_issue_creation_legacy_scope_rejected
 	test_preclaim_hold_once
+	test_brief_scope_self_heal_and_release
 	test_zero_progress_meta_recovered_blocks_dispatch
 	test_zero_progress_meta_recovered_readonly_allows_dispatch_without_write
 	test_zero_progress_meta_active_allows_dispatch

@@ -63,6 +63,9 @@ source "${BASH_SOURCE[0]%/*}/renovate-dependency-dashboard-helper.sh"
 source "${BASH_SOURCE[0]%/*}/pulse-dispatch-dedup-layers.sh"
 # shellcheck source=pulse-dispatch-large-file-gate.sh
 source "${BASH_SOURCE[0]%/*}/pulse-dispatch-large-file-gate.sh"
+# GH#32689: brief-scope normalization and repaired-hold release
+# shellcheck source=pulse-dispatch-brief-scope.sh
+source "${BASH_SOURCE[0]%/*}/pulse-dispatch-brief-scope.sh"
 # shellcheck source=pulse-dispatch-worker-launch.sh
 source "${BASH_SOURCE[0]%/*}/pulse-dispatch-worker-launch.sh"
 # t2117/GH#19109: file-footprint overlap throttle
@@ -890,7 +893,7 @@ _dispatch_brief_hold_recorded() {
 # when the label is later cleared without a body change.
 _dispatch_preclaim_brief_scope() {
 	local issue_number="$1" repo_slug="$2" issue_meta_json="$3"
-	local issue_body="" author="" permission="" comment_file="" scope_rc=0
+	local issue_body="" author="" comment_file="" scope_rc=0
 	local body_hash="" hold_marker="" recorded_rc=0
 	printf '%s' "$issue_meta_json" | jq -e '[.labels[]?.name] | index("auto-dispatch") != null' >/dev/null 2>&1 || return 0
 	if printf '%s' "$issue_meta_json" | jq -e '[.labels[]?.name] | index("status:blocked") != null' >/dev/null 2>&1; then
@@ -904,11 +907,10 @@ _dispatch_preclaim_brief_scope() {
 	# aidevops:trust-boundary — only the authenticated runner may hold a trusted
 	# implementation brief; untrusted authors must stay on the normal review path.
 	author=$(printf '%s' "$issue_meta_json" | jq -r '.author.login // ""') || return 1
-	[[ "$author" =~ ^[A-Za-z0-9-]+$ ]] || return 1
-	permission=$(gh api "repos/${repo_slug}/collaborators/${author}/permission" --jq '.permission' 2>/dev/null) || return 1
-	case "$permission" in admin | maintain | write) ;; *) return 1 ;; esac
-	if ! declare -F repo_allows_pulse_write_actions >/dev/null 2>&1 ||
-		! repo_allows_pulse_write_actions "$repo_slug"; then
+	_brief_scope_author_trusted "$repo_slug" "$author" || return 1
+	# GH#32689: explicit Files to Modify declarations normalize to the exact
+	# canonical scope; rewrite once and dispatch next cycle instead of holding.
+	if _dispatch_brief_scope_self_heal "$issue_number" "$repo_slug" "$issue_body"; then
 		return 1
 	fi
 	body_hash=$(_dispatch_brief_hold_body_hash "$issue_body") || return 1
@@ -923,7 +925,7 @@ _dispatch_preclaim_brief_scope() {
 	fi
 	comment_file=$(mktemp) || return 1
 	# shellcheck disable=SC2016 # literal Markdown backticks, not expansions
-	printf '%s\nBrief hold: reason=missing_files_scope owner=brief-author.\nProjected state: status:blocked.\nNext action: Add a canonical ### Files Scope (or legacy ## Files Scope) section with one `` - EDIT: `repo/path` `` or `` - NEW: `repo/path` `` line per permitted file (nothing after the path) in the issue body; verify with pre-dispatch-validator-helper.sh scope-check. The corrected body re-arms dispatch after the blocked label is cleared by the brief owner. This body is not held again unless it changes.\n' "$hold_marker" >"$comment_file"
+	printf '%s\nBrief hold: reason=missing_files_scope owner=brief-author.\nProjected state: status:blocked.\nNext action: Add a canonical ### Files Scope section with one `` - `repo/relative/path` `` line per permitted file (no prefix, nothing after the path) to the issue body, or explicit `` `EDIT: path` `` / `` `NEW: path` `` bullets under ### Files to Modify; verify with pre-dispatch-validator-helper.sh scope-check. The pulse releases this hold automatically once the edited body passes; no label change is needed. This body is not held again unless it changes.\n' "$hold_marker" >"$comment_file"
 	if ! set_issue_status "$issue_number" "$repo_slug" blocked >/dev/null; then
 		rm -f "$comment_file"
 		return 1

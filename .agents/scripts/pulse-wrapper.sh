@@ -1238,6 +1238,10 @@ _pulse_run_deterministic_pipeline() {
 	else
 		_pulse_run_budget_priority_stage_with_timeout "refresh_blocked_status_from_graph" "$PRE_RUN_STAGE_TIMEOUT" \
 			refresh_blocked_status_from_graph || true
+		# GH#32689: release missing_files_scope holds once the brief is scoped,
+		# so repaired briefs never wait on a manual label change.
+		_pulse_run_budget_priority_stage_with_timeout "release_repaired_brief_holds" "$PRE_RUN_STAGE_TIMEOUT" \
+			release_repaired_brief_holds || true
 	fi
 
 	# Dispatch_max runs EVERY cycle — before the LLM session,

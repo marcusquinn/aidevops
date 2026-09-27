@@ -97,7 +97,12 @@ The wrapper currently self-assigns in violation of t2157. Until t2406/GH#19991 m
 
 Every `auto-dispatch` implementation issue body needs a canonical scope section,
 or the pulse holds it as `status:blocked` (`missing_files_scope`) before any
-worker starts. `## Files`, `### Files to Modify` or prose file lists do not count.
+worker starts. `## Files` and prose file lists do not count. Explicit
+`` `EDIT: path[:lines]` `` / `` `NEW: path` `` bullets under `### Files to Modify`
+(including `` and `other/path` `` continuations) are normalized: the pulse appends
+the derived Files Scope to trusted bodies instead of holding them. A held issue
+is released automatically once its edited body passes; do not clear the label
+by hand without fixing the body, or the next cycle re-holds it.
 
 ```markdown
 ### Files Scope
