@@ -18,8 +18,10 @@ _MANAGED_ORIGIN_LABEL_SPECS=(
 	"origin:worker-takeover" "Worker took over from interactive session" "D4C5F9"
 )
 
+# Colours mirror the canonical palette in label-sync-helper.sh
+# (needs-* = attention E4007C; origin:* = pale metadata tints).
 _MANAGED_APPROVAL_HOLD_LABEL_SPECS=(
-	"needs-maintainer-review" "Requires maintainer approval before automated dispatch" "FBCA04"
+	"needs-maintainer-review" "Requires maintainer approval before automated dispatch" "E4007C"
 )
 
 _MANAGED_APPROVAL_ISSUE_LABEL_SPECS=(

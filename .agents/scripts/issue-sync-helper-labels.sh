@@ -353,10 +353,18 @@ ensure_labels_exist() {
 	for lbl in $labels; do
 		if [[ -n "$lbl" ]]; then
 			local _color="EDEDED"
-			if declare -F color_for_tag >/dev/null 2>&1; then
+			local _desc="Auto-created from TODO.md tag"
+			local _canonical_def=""
+			# GH#32654: catalogued labels keep their canonical colour and
+			# description; the forced create otherwise repaints them grey.
+			if declare -F canonical_label_definition >/dev/null 2>&1 &&
+				_canonical_def=$(canonical_label_definition "$lbl"); then
+				_color="${_canonical_def%%|*}"
+				[[ -n "${_canonical_def#*|}" ]] && _desc="${_canonical_def#*|}"
+			elif declare -F color_for_tag >/dev/null 2>&1; then
 				_color=$(color_for_tag "$lbl")
 			fi
-			gh_create_label "$repo" "$lbl" "$_color" "Auto-created from TODO.md tag"
+			gh_create_label "$repo" "$lbl" "$_color" "$_desc"
 		fi
 	done
 	IFS="$_saved_ifs"

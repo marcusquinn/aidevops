@@ -201,7 +201,7 @@ _ensure_consolidation_labels() {
 	gh label create "needs-consolidation" \
 		--repo "$repo_slug" \
 		--description "Issue held from dispatch pending comment consolidation" \
-		--color "FBCA04" --force 2>/dev/null || true
+		--color "E4007C" --force 2>/dev/null || true
 	gh label create "consolidation-task" \
 		--repo "$repo_slug" \
 		--description "Operational task: merge parent issue body + comments into a consolidated child issue" \
@@ -209,7 +209,7 @@ _ensure_consolidation_labels() {
 	gh label create "consolidated" \
 		--repo "$repo_slug" \
 		--description "Issue superseded by a consolidated child" \
-		--color "0E8A16" --force 2>/dev/null || true
+		--color "BFD4F2" --force 2>/dev/null || true
 	# t2151: cross-runner advisory lock for consolidation dispatch. Applied by
 	# `_consolidation_lock_acquire` before child issue creation; treated as an
 	# active-claim signal by `dispatch-dedup-helper.sh is-assigned` so unrelated
