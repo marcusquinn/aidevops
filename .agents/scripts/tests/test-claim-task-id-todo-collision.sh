@@ -17,6 +17,8 @@
 #   6. _allocate_online_with_collision_check: single skip → skips one, returns next
 #   7. _allocate_online_with_collision_check: multi-skip → skips N, returns first clean
 #   8. _allocate_online_with_collision_check: max-skip cap exceeded → returns 1
+#   9. _ensure_todo_entry_written: canonical checkout → prints TODO line, no write
+#  10. _ensure_todo_entry_written: linked worktree → writes TODO line
 
 set -u
 
@@ -329,6 +331,69 @@ test_max_skip_exceeded() {
 	return 0
 }
 
+_make_git_repo_with_linked_worktree() {
+	local canonical_dir="$1"
+	local linked_dir="$2"
+
+	git init -q "$canonical_dir" || return 1
+	_make_todo "$canonical_dir"
+	git -C "$canonical_dir" add TODO.md || return 1
+	git -C "$canonical_dir" -c user.name=test -c user.email=test@example.com commit -qm "initial TODO" || return 1
+	git -C "$canonical_dir" worktree add -q -b linked-test "$linked_dir" || return 1
+	return 0
+}
+
+test_canonical_checkout_does_not_write_todo() {
+	local name="9: _ensure_todo_entry_written — canonical checkout prints line without writing"
+	local tmpdir
+	local canonical_dir
+	local linked_dir
+	local output=""
+	local before=""
+	tmpdir=$(mktemp -d)
+	canonical_dir="${tmpdir}/canonical"
+	linked_dir="${tmpdir}/linked"
+	# shellcheck disable=SC2064
+	trap "rm -rf '$tmpdir'" RETURN
+
+	if ! _make_git_repo_with_linked_worktree "$canonical_dir" "$linked_dir"; then
+		fail "$name" "failed to create test worktrees"
+		return 0
+	fi
+	before=$(<"${canonical_dir}/TODO.md")
+	output=$(_ensure_todo_entry_written "t32561" "32561" "protect canonical TODO" "bug" "$canonical_dir")
+	if [[ "$before" == "$(<"${canonical_dir}/TODO.md")" && "$output" == *"- [ ] t32561 protect canonical TODO #bug ref:GH#32561"* && "$output" == *"linked worktree"* ]]; then
+		pass "$name"
+	else
+		fail "$name" "canonical TODO changed or expected line/hint was absent: $output"
+	fi
+	return 0
+}
+
+test_linked_worktree_writes_todo() {
+	local name="10: _ensure_todo_entry_written — linked worktree writes TODO line"
+	local tmpdir
+	local canonical_dir
+	local linked_dir
+	tmpdir=$(mktemp -d)
+	canonical_dir="${tmpdir}/canonical"
+	linked_dir="${tmpdir}/linked"
+	# shellcheck disable=SC2064
+	trap "rm -rf '$tmpdir'" RETURN
+
+	if ! _make_git_repo_with_linked_worktree "$canonical_dir" "$linked_dir"; then
+		fail "$name" "failed to create test worktrees"
+		return 0
+	fi
+	_ensure_todo_entry_written "t32562" "32562" "write linked TODO" "enhancement" "$linked_dir" >/dev/null
+	if grep -qF -- "- [ ] t32562 write linked TODO #feat ref:GH#32562" "${linked_dir}/TODO.md"; then
+		pass "$name"
+	else
+		fail "$name" "linked worktree TODO entry was not written"
+	fi
+	return 0
+}
+
 # ---------------------------------------------------------------------------
 # Run all tests
 # ---------------------------------------------------------------------------
@@ -344,6 +409,8 @@ main() {
 	test_single_skip
 	test_multi_skip
 	test_max_skip_exceeded
+	test_canonical_checkout_does_not_write_todo
+	test_linked_worktree_writes_todo
 
 	printf '\n'
 	printf 'Results: %s passed, %s failed\n' "$PASS" "$FAIL"
