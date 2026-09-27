@@ -507,6 +507,22 @@ _pc_compact_archive_policy_clear() {
 	return 0
 }
 
+# Verify the local-only vetoes for a worktree with no issue or PR attribution.
+# Remote task labels cannot be consulted without inventing an attribution, so
+# marker files remain the fail-closed forensic protection for this path.
+_pc_unattributed_archive_policy_clear() {
+	local wt_path="$1"
+
+	[[ -n "$wt_path" ]] || return 1
+	if [[ -e "$wt_path/.aidevops-preserve-forensics" ||
+		-e "$wt_path/.preserve-forensics" ||
+		-e "$wt_path/.aidevops-security-incident" ]]; then
+		printf '%s\n' "preserve-forensics"
+		return 1
+	fi
+	return 0
+}
+
 # t2859: Config defaults (ORPHAN_WORKTREE_GRACE_SECS, ORPHAN_MAX_AGE,
 # PULSE_IDLE_CPU_THRESHOLD) are owned by pulse-wrapper-config.sh. When
 # this module is sourced standalone (cleanup-worktrees-async-helper.sh,
