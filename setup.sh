@@ -1700,6 +1700,19 @@ _setup_run_interactive_runtime_tools() {
 	return 0
 }
 
+# Silent one-shot migrations for the interactive path (idempotent, flag-guarded
+# — no prompt needed). The non-interactive path times the same steps in
+# _setup_run_noninteractive_migrations.
+_setup_run_interactive_silent_migrations() {
+	cleanup_stale_health_issue_caches
+	cleanup_legacy_aidevops_temp_artifacts
+	cleanup_worktree_entries_in_repos_json
+	_cleanup_legacy_model_config
+	cleanup_legacy_dashboard_launchagent
+	cleanup_legacy_agents_md_templates
+	return 0
+}
+
 # Interactive path: all optional steps gated behind confirm_step prompts.
 _setup_run_interactive() {
 	# Required steps (always run)
@@ -1754,13 +1767,7 @@ _setup_run_interactive() {
 	confirm_step "Backfill GitHub issue relationships (blocked-by, sub-issues)" && backfill_issue_relationships
 	confirm_step "Cleanup deprecated MCP entries (hetzner, serper, etc.)" && cleanup_deprecated_mcps
 	confirm_step "Cleanup stale bun opencode install" && cleanup_stale_bun_opencode
-	# Silent one-shot migrations (idempotent, flag-guarded — no prompt needed).
-	cleanup_stale_health_issue_caches
-	cleanup_legacy_aidevops_temp_artifacts
-	cleanup_worktree_entries_in_repos_json
-	_cleanup_legacy_model_config
-	cleanup_legacy_dashboard_launchagent
-	cleanup_legacy_agents_md_templates
+	_setup_run_interactive_silent_migrations
 	confirm_step "Validate and repair OpenCode config schema" && validate_opencode_config
 	confirm_step "Extract OpenCode prompts" && extract_opencode_prompts
 	confirm_step "Check OpenCode prompt drift" && check_opencode_prompt_drift
