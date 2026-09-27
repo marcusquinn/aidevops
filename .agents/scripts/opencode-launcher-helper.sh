@@ -233,6 +233,14 @@ resolve_tabby_recovery() {
     else
         resolver_status=$?
     fi
+    if ((resolver_status == 3)); then
+        IFS=$'\t' read -r TABBY_RECOVERY_LAUNCH_DIR TABBY_RECOVERY_DATA_DIR TABBY_RECOVERY_SESSION_ID <<<"${resolution}"
+        if [[ -z "${TABBY_RECOVERY_LAUNCH_DIR}" || -z "${TABBY_RECOVERY_DATA_DIR}" || -z "${TABBY_RECOVERY_SESSION_ID}" ]]; then
+            print_error "Tabby session recovery returned incomplete data"
+            return 1
+        fi
+        return 3
+    fi
     ((resolver_status == 2)) && return 2
     print_error "Tabby session recovery marker validation failed"
     return 1
@@ -1392,6 +1400,38 @@ run_shared_tui() {
     return 1
 }
 
+apply_tabby_recovery() {
+    local invocation_dir="$1"
+    local tabby_shell="$2"
+    local launch_dir_var="$3"
+    local data_dir_var="$4"
+    shift 4
+    local recovery_status=0
+
+    if resolve_tabby_recovery \
+        "${invocation_dir}" \
+        "${AIDEVOPS_WORK_DIR:-${HOME}/.aidevops/.agent-workspace/work}"; then
+        if opencode_args_contain_session "$@"; then
+            print_error "Tabby recovery rejects an additional OpenCode --session argument"
+            return 1
+        fi
+        printf -v "${launch_dir_var}" '%s' "${TABBY_RECOVERY_LAUNCH_DIR}"
+        printf -v "${data_dir_var}" '%s' "${TABBY_RECOVERY_DATA_DIR}"
+        if ((tabby_shell == 1)); then
+            TABBY_RECOVERY_ARGS=(--session "${TABBY_RECOVERY_SESSION_ID}" "$@")
+        fi
+    else
+        recovery_status=$?
+        if ((recovery_status == 3)); then
+            printf -v "${launch_dir_var}" '%s' "${TABBY_RECOVERY_LAUNCH_DIR}"
+            printf -v "${data_dir_var}" '%s' "${TABBY_RECOVERY_DATA_DIR}"
+        else
+            ((recovery_status == 2)) || return 1
+        fi
+    fi
+    return 0
+}
+
 cmd_tui_launch() {
     local use_shared_db=0
     local direct=0
@@ -1401,7 +1441,6 @@ cmd_tui_launch() {
     local invocation_dir="$PWD"
     local session_id=""
     local data_dir=""
-    local recovery_status=0
     local -a opencode_args=()
 
     while (($# > 0)); do
@@ -1458,21 +1497,10 @@ cmd_tui_launch() {
         print_error "--tabby-shell requires aidevops isolated OpenCode storage"
         return 1
     fi
-    if ((tabby_shell == 1)); then
-        if resolve_tabby_recovery \
-            "${invocation_dir}" \
-            "${AIDEVOPS_WORK_DIR:-${HOME}/.aidevops/.agent-workspace/work}"; then
-            if opencode_args_contain_session "${opencode_args[@]}"; then
-                print_error "Tabby recovery rejects an additional OpenCode --session argument"
-                return 1
-            fi
-            launch_dir="${TABBY_RECOVERY_LAUNCH_DIR}"
-            data_dir="${TABBY_RECOVERY_DATA_DIR}"
-            opencode_args=(--session "${TABBY_RECOVERY_SESSION_ID}" "${opencode_args[@]}")
-        else
-            recovery_status=$?
-            ((recovery_status == 2)) || return 1
-        fi
+    if ((use_shared_db == 0)); then
+        TABBY_RECOVERY_ARGS=("${opencode_args[@]}")
+        apply_tabby_recovery "${invocation_dir}" "${tabby_shell}" launch_dir data_dir "${opencode_args[@]}" || return 1
+        opencode_args=("${TABBY_RECOVERY_ARGS[@]}")
     fi
     validate_launch_directory "${launch_dir}" || return 1
     if [[ -z "${session_id}" ]]; then

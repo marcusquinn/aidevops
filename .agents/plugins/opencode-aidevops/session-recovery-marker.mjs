@@ -25,6 +25,17 @@ const SESSION_ID_RE = /^ses_[A-Za-z0-9]{6,128}$/;
 const CONTROL_CHAR_RE = /[\u0000-\u001F\u007F]/;
 const MARKER_BASENAME = "recovery.json";
 
+function processStartToken(pid) {
+  try {
+    // Field 22 follows the command in parentheses; splitting the prefix is unsafe.
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    const fields = stat.slice(stat.lastIndexOf(")") + 2).trim().split(/\s+/);
+    return /^\d+$/.test(fields[19] || "") ? fields[19] : null;
+  } catch {
+    return null;
+  }
+}
+
 function pathIsInside(parent, candidate) {
   const child = relative(parent, candidate);
   return child === "" || (!child.startsWith("..") && !isAbsolute(child));
@@ -116,6 +127,8 @@ export function writeSessionRecoveryMarker({ sessionID, directory, dataDir, work
     session_id: sessionID,
     directory: canonicalDirectory,
     data_dir: canonicalDataDir,
+    owner_pid: process.pid,
+    owner_start: processStartToken(process.pid),
   })}\n`;
 
   try {
@@ -213,11 +226,17 @@ export function resolveSessionRecoveryMarker({ cwd, workDir }) {
   const canonicalDataDir = canonicalRecoveryDataDir(dataDir, workDir, uid);
   validateRecoveryDatabase(canonicalDataDir, marker.session_id, canonicalDirectory, uid);
 
+  const validOwnerPid = Number.isSafeInteger(marker.owner_pid) && marker.owner_pid > 0;
+  const validOwnerStart = typeof marker.owner_start === "string" && marker.owner_start.length > 0;
+  const ownerLive = validOwnerPid && validOwnerStart
+    && processStartToken(marker.owner_pid) === marker.owner_start;
+
   return {
     sessionID: marker.session_id,
     directory: canonicalDirectory,
     dataDir: canonicalDataDir,
     markerDirectory: canonicalCwd,
+    ownerLive,
   };
 }
 
@@ -270,7 +289,7 @@ function runCli(argv) {
   const result = resolveSessionRecoveryMarker({ cwd: parsed.cwd, workDir });
   if (!result) return 2;
   process.stdout.write(`${result.directory}\t${result.dataDir}\t${result.sessionID}\n`);
-  return 0;
+  return result.ownerLive ? 3 : 0;
 }
 
 export function pathsReferenceSameFile(candidatePath, expectedPath, canonicalize = realpathSync) {
