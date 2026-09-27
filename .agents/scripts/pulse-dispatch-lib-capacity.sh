@@ -5,6 +5,7 @@
 [[ "${BASH_SOURCE[0]}" == "${0}" ]] && set -euo pipefail
 [[ -n "${_PULSE_DISPATCH_CAPACITY_LIB_LOADED:-}" ]] && return 0
 _PULSE_DISPATCH_CAPACITY_LIB_LOADED=1
+_DISPATCH_UNCLASSIFIED_SIGNAL="unclassified_signal"
 
 _dispatch_cycle_cache_path() {
 	local kind="$1"
@@ -226,7 +227,7 @@ _dispatch_stats_increment_candidate_failed() {
 		blocked_by_native_lookup_unavailable | blocked_by_unresolved | canary_failed | consolidated | cooldown_no_worker_process | cost_budget_exceeded | dedup_active_claim | dedup_active_claim_live_owner | dedup_active_claim_stale_owner | dedup_active_claim_zero_attempt | dedup_active_claim_current_cycle | dedup_active_claim_durable_launch | dedup_active_claim_unverified | dirty_worktree_recovery | dirty_worktree_evidence_unavailable | ever_nmr_without_approval | footprint_overlap | graphql_circuit_breaker | healthy_pr_backlog | interactive_review_hold | issue_closed | launch_error | local_capacity_gate | missing_worker_context | no_auto_dispatch | no_dispatchable_evidence | no_recent_log_evidence | parent_task | policy_gate | pr_lookup_uncertain | pr_target_not_dispatchable | provider_rate_limit_pressure | publication_pending | renovate_dependency_dashboard | repeated_failure_pressure | rest_core_circuit_breaker | runner_health_circuit_breaker | terminal_blocker_circuit | unclassified_signal)
 			;;
 		*)
-			reason="unclassified_signal"
+			reason="$_DISPATCH_UNCLASSIFIED_SIGNAL"
 			;;
 	esac
 	_dispatch_stats_increment "dispatch_candidate_failed"
@@ -312,15 +313,15 @@ _dispatch_candidate_failure_reason() {
 				sub(/^DISPATCH_BLOCK_REASON reason=/, "", reason)
 			}
 			END { if (reason != "") { print reason } }
-		') || reason="unclassified_signal"
-		[[ -n "$reason" ]] || reason="unclassified_signal"
+		') || reason="$_DISPATCH_UNCLASSIFIED_SIGNAL"
+		[[ -n "$reason" ]] || reason="$_DISPATCH_UNCLASSIFIED_SIGNAL"
 		printf '%s\n' "$reason"
 		return 0
 	fi
 
 	if [[ -x "${SCRIPT_DIR:-}/dispatch-dedup-helper.sh" && -n "$recent_lines" ]]; then
-		reason=$("${SCRIPT_DIR}/dispatch-dedup-helper.sh" classify-blocker "$recent_lines" 2>/dev/null) || reason="unclassified_signal"
-		[[ -n "$reason" ]] || reason="unclassified_signal"
+		reason=$("${SCRIPT_DIR}/dispatch-dedup-helper.sh" classify-blocker "$recent_lines" 2>/dev/null) || reason="$_DISPATCH_UNCLASSIFIED_SIGNAL"
+		[[ -n "$reason" ]] || reason="$_DISPATCH_UNCLASSIFIED_SIGNAL"
 	fi
 
 	printf '%s\n' "$reason"

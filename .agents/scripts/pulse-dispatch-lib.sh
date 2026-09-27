@@ -4,12 +4,11 @@
 # =============================================================================
 # pulse-dispatch-lib.sh -- Fill-floor helpers for dispatch_max
 # =============================================================================
-# Sub-library extracted from pulse-dispatch-engine.sh (GH#21738) so the
-# orchestrator stays under the 1500-line file-size threshold. Contains all
-# `_dispatch_*` helper functions plus the shared debug logger that supports
-# `dispatch_max` (which remains in the orchestrator
+# Sub-library extracted from pulse-dispatch-engine.sh (GH#21738). Sources
+# focused capacity and candidate sub-libraries while retaining the fill-floor
+# round coordinator and shared state. `dispatch_max` remains in the engine
 # because its 110-line body would re-register as a new function-complexity
-# violation if moved).
+# violation if moved.
 #
 # Module-level `_DISPATCH_*` round-state counters are defined here so the helpers
 # and orchestrator share a single source of truth via the `_DISPATCH_` prefix
