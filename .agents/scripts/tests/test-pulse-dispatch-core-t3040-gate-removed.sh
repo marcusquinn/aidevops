@@ -25,6 +25,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 CORE_SCRIPT="${SCRIPT_DIR}/../pulse-dispatch-core.sh"
+GATES_SCRIPT="${SCRIPT_DIR}/../pulse-dispatch-commit-gates.sh"
 
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'
@@ -103,7 +104,7 @@ test_helper_functions_still_defined() {
 		_has_committed_to_main_cache_label \
 		_apply_committed_to_main_cache_label \
 		_has_force_dispatch_label; do
-		if ! grep -qE "^${helper}\(\) \{" "$CORE_SCRIPT"; then
+		if ! grep -qE "^${helper}\(\) \{" "$GATES_SCRIPT"; then
 			printf 'helper missing: %s\n' "$helper"
 			missing=$((missing + 1))
 		fi

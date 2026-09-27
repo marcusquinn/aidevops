@@ -9,6 +9,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 CORE_SCRIPT="${SCRIPT_DIR}/../pulse-dispatch-core.sh"
+GATES_SCRIPT="${SCRIPT_DIR}/../pulse-dispatch-commit-gates.sh"
 LAYERS_SCRIPT="${SCRIPT_DIR}/../pulse-dispatch-dedup-layers.sh"
 
 readonly TEST_RED='\033[0;31m'
@@ -19,6 +20,7 @@ TESTS_RUN=0
 TESTS_FAILED=0
 MOCK_GH_TARGET_IS_PR="0"
 _PULSE_DISPATCH_FALSE="false"
+_PULSE_DISPATCH_AUTO_LABEL="auto-dispatch"
 
 print_result() {
 	local test_name="$1"
@@ -41,13 +43,13 @@ print_result() {
 
 define_helpers_under_test() {
 	local helper_src
-	helper_src=$(python3 - "$CORE_SCRIPT" <<'PY'
+	helper_src=$(python3 - "$CORE_SCRIPT" "$GATES_SCRIPT" <<'PY'
 import pathlib
 import sys
 
-path = pathlib.Path(sys.argv[1])
-text = path.read_text()
 for name in ("_dispatch_target_is_pull_request", "_dispatch_has_interactive_hold"):
+    path = pathlib.Path(sys.argv[2] if name == "_dispatch_target_is_pull_request" else sys.argv[1])
+    text = path.read_text()
     start = text.index(f"{name}() {{")
     depth = 0
     end = None

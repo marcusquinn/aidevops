@@ -8,7 +8,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
-CORE_SCRIPT="${SCRIPT_DIR}/../pulse-dispatch-core.sh"
+CORE_SCRIPT="${SCRIPT_DIR}/../pulse-dispatch-commit-gates.sh"
 
 extract_helper() {
 	awk '/^_has_publication_pending_label\(\) \{/,/^}$/ { print }' "$CORE_SCRIPT"
