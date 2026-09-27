@@ -1913,6 +1913,80 @@ migrate_obsolete_settings_model_routing() {
 	return 0
 }
 
+# GH#32592: setup no longer deploys the legacy home and Git-root AGENTS.md
+# templates. Runtimes that load AGENTS.md from parent directories (OpenCode 2)
+# paid ~3K characters per session for stale text that pointed at the
+# contributor guide. Only byte-identical historical template copies (matched
+# by git blob hash) are moved to a backup; edited copies are user content.
+_LEGACY_AGENTS_TEMPLATE_BLOBS=(
+	# templates/home/git/AGENTS.md history
+	f654c31b7582b9ad7918bef82ce667872dd46e4b 31dcf6bf5ef8dab7a2b16a00f9c7a3bf030411a3
+	0fb77a98504828e8d6ad54ac0dc20e46c43b7829 69c3b68b3edb5e06e8676137401eeee21e7bb0b7
+	11479e3518eb56edd9c37697e593c6536d1bfebf 2821c3c20b0655296ff06b8aa267a9ab2436f7f0
+	1541eddceabbbd3b99b20bda885c30af8c479fa3 726791e0752f6dcac60b27e9cc9bfaa57b45eec0
+	3ec86e1e7d901854ff8f128d1905bf68b7074e3f 0c9a47c6c2b6ddeedf61d688095aa1c6fa99866b
+	656c995b9632de9277a9cc88c8c9f6d5eb350ce0 6c34ba23f190dacb187cef495231abd3d2441d4e
+	be6f2cdc3f30574215ec14cdd6e6da53f2381a8a 0246aa86395201f2862d2e48bd6c4c2bf685fd9e
+	a45136f90932e985ef559df92f650b27874ae74e 361b5c7aa7143bfd2935e1291737cb5f2c04c9db
+	# templates/home/AGENTS.md history
+	8bf4429bf89cb05b459b4c4e3798f412d3bda0bf 87a66259e698b494e95667cb314f3914ffb40d06
+	0a584bfd435b690ccf0cd7a042927aa9309e402d 70c4e4495b74d1649663830765b435575730150b
+	b6e04ee2d74b4a77dc5070d73ac543b90bd47715 ff3b1d8df94ccc6c3cd2adde361c862fafaa3dbd
+	976c754168d046851a4091339cc1c097613b9500 94958695b0460bd7be5005bc1433095fe2b41571
+	de621b7faee9774373fe272e79630b01324d36eb 791e23dbd6df0892d3aa854cd9996a0ab393a942
+	145d6aafcd9d1d69484fa76f398b91d3a4e6018a 7322e36e9a98ef439987626de2bf82837c43e737
+	c2de69c6c9e04ab1e5d1749256bda418eac76e78 db60679d9831c9881d40e1817a96cd45c6ee8645
+	971a5b199ba8ac7de374bf5ad2e4ffbd83d02a41
+)
+
+# Legacy AI CLI memory files told tools to "read ~/AGENTS.md"; keep that file
+# while any of them still points at it.
+_home_agents_md_is_referenced() {
+	local memory_file
+	for memory_file in "$HOME/CLAUDE.md" "$HOME/GEMINI.md" "$HOME/.qwen/QWEN.md" "$HOME/.cursorrules" \
+		"$HOME/.github/copilot-instructions.md" "$HOME/.factory/DROID.md"; do
+		# shellcheck disable=SC2088 # literal pointer text inside memory files, not a path
+		if [[ -f "$memory_file" ]] && grep -Fq '~/AGENTS.md' "$memory_file"; then
+			return 0
+		fi
+	done
+	return 1
+}
+
+_is_legacy_agents_template_blob() {
+	local blob="$1"
+	local known=""
+	for known in "${_LEGACY_AGENTS_TEMPLATE_BLOBS[@]}"; do
+		[[ "$known" == "$blob" ]] && return 0
+	done
+	return 1
+}
+
+cleanup_legacy_agents_md_templates() {
+	[[ -n "${HOME:-}" ]] || return 0
+	command -v git >/dev/null 2>&1 || return 0
+	local backup_dir="$HOME/.aidevops/config-backups/migrations/gh32592-agents-md"
+	local candidate label blob stamp
+	# ~/git and ~/Git may be one directory (case-insensitive filesystems); the
+	# existence check below skips a path already moved via its other spelling.
+	for candidate in "$HOME/AGENTS.md" "$HOME/git/AGENTS.md" "$HOME/Git/AGENTS.md"; do
+		[[ -f "$candidate" && ! -L "$candidate" ]] || continue
+		if [[ "$candidate" == "$HOME/AGENTS.md" ]] && _home_agents_md_is_referenced; then
+			continue
+		fi
+		blob=$(git hash-object --no-filters -- "$candidate" 2>/dev/null) || continue
+		_is_legacy_agents_template_blob "$blob" || continue
+		label="home"
+		[[ "$candidate" == "$HOME/AGENTS.md" ]] || label=$(basename "$(dirname "$candidate")")
+		stamp=$(date -u +%Y%m%d%H%M%S)
+		mkdir -p "$backup_dir" || return 0
+		if mv "$candidate" "$backup_dir/${stamp}-${label}-AGENTS.md"; then
+			print_info "Removed unmodified legacy AGENTS.md template: $candidate (backup: $backup_dir)"
+		fi
+	done
+	return 0
+}
+
 # Backfill GitHub issue relationships from TODO.md metadata (t1889)
 # One-time migration: reads blocked-by:/blocks: and subtask hierarchy from
 # TODO.md in each pulse-enabled repo, and sets the corresponding GitHub

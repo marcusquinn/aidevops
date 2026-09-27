@@ -7,6 +7,7 @@ import {
   routingModelIdentity,
   selectConnectedRoutingCandidate,
 } from "./model-routing.mjs";
+import { ON_DEMAND_TOOL } from "./on-demand-tools.mjs";
 import { SubagentLifecycleTracker } from "./subagent-lifecycle-tracker.mjs";
 import { classifySideEffect, safeToolName } from "./subagent-side-effect-classifier.mjs";
 
@@ -176,7 +177,7 @@ class InteractiveSubagentEscalator {
     if (!identity.childID || this.context.policies.get(identity.childID)?.pinned) return;
     const receipt = [
       "[AIDEvOps parent receipt]",
-      `aidevops_objective_receipt: parent_session_id=${String(input?.sessionID || "")} objective_id=${objective.objectiveID} run_id=${objective.runID} contribution_id=opencode-child:${identity.childID}; record an explicit outcome after review.`,
+      `${ON_DEMAND_TOOL} tool=aidevops_objective_receipt args: parent_session_id=${String(input?.sessionID || "")} objective_id=${objective.objectiveID} run_id=${objective.runID} contribution_id=opencode-child:${identity.childID}; record an explicit outcome after review.`,
     ].join("\n");
     output.output = [String(output.output || "").trim(), receipt].filter(Boolean).join("\n\n");
   }

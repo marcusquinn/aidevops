@@ -17,6 +17,7 @@ import {
   isPluginGreetingEnabled,
   readGreetingCache,
   REFRESH_TTL_MS,
+  stripGreetingFallback,
 } from "./greeting.mjs";
 
 // ---------------------------------------------------------------------------
@@ -219,10 +220,12 @@ export function buildSessionStartGreetingInstruction(agentsDir, readIfExists, op
     ? `We're running aidevops v${version} in ${runtime} v${runtimeVersion}.`
     : `We're running aidevops v${version}.`;
 
+  // Present on every request of a root session (stable prefix), so it stays
+  // compact; the AGENTS.md fallback it replaces is stripped by the caller.
   return [
     "## Session-start greeting order",
-    "This plugin-injected block is the authoritative greeting instruction. The version values are already resolved; do not read the greeting cache or VERSION before responding.",
-    "On the first assistant turn of an interactive session, the first visible text in the assistant response MUST be this exact aidevops greeting:",
+    "This plugin-injected block is the authoritative greeting instruction. The version values are already resolved; do not read the greeting cache or VERSION, and do not run update checks.",
+    "On the first assistant turn of an interactive session, the first visible text MUST be this exact aidevops greeting:",
     "",
     "Hi!",
     "",
@@ -230,46 +233,12 @@ export function buildSessionStartGreetingInstruction(agentsDir, readIfExists, op
     "",
     "What would you like to work on?",
     "",
-    "This greeting constrains the first visible assistant text, not the first assistant action. Tool calls may precede it when needed to start an initial task, especially when the runtime cannot interleave visible text and tool calls.",
-    "Do not include startup status or advisory messages in chat; those are already shown by the OpenCode toast/sidebar surfaces.",
-    "If the user launched the session with an initial message, the greeting is only a required prefix: immediately execute or fully answer that message in the SAME assistant turn.",
-    "A task request already authorises task work. Never emit a greeting-only response or stop after acknowledging, restating, promising, or asking the user to say continue. Call the appropriate tools immediately, before visible text if necessary, unless genuinely blocked.",
+    "Tool calls may precede it when needed to start an initial task; it constrains the first visible text, not the first action.",
+    "If the user launched the session with an initial message, the greeting is only a required prefix: execute or fully answer that message in the SAME assistant turn. A task request already authorises task work. Never emit a greeting-only response or stop after acknowledging, restating, promising, or asking the user to say continue. Call the appropriate tools immediately, before visible text if necessary, unless genuinely blocked.",
     "Do not claim that tool access is unavailable without first attempting an appropriate configured tool and reporting concrete failure evidence.",
-    "If the initial user message is only a greeting/salutation, do not add any additional salutations, greetings, introductory questions, or equivalent help prompts after the exact greeting above.",
-    "Do not repeat the greeting after the first assistant turn, and do not duplicate the framework-status toast/sidebar content.",
+    "If the initial message is only a greeting/salutation, do not add any additional salutations, greetings, introductory questions, or equivalent help prompts after the exact greeting. Never repeat the greeting after the first assistant turn.",
+    "Do not include startup status or advisory messages in chat; the OpenCode toast/sidebar already shows them. If asked about aidevops updates, direct the user to run `aidevops update` in a terminal.",
   ].join("\n");
-}
-
-/**
- * Allow the greeting instruction exactly once for each interactive root
- * session. Child sessions are subagents/subtasks and must never inherit a
- * startup greeting; otherwise a late child request can reproduce the greeting
- * immediately before the parent session's summary.
- */
-export function createSessionStartGreetingGate(client, isHeadless = () => false) {
-  const attemptedSessions = new Set();
-
-  if (typeof client?.session?.get !== "function") {
-    return async () => false;
-  }
-
-  return async function shouldInjectSessionStartGreeting(input) {
-    if (isHeadless()) return false;
-
-    const sessionID = input?.sessionID;
-    if (!sessionID || attemptedSessions.has(sessionID)) return false;
-    // Claim the one startup opportunity before the asynchronous lookup. A
-    // metadata failure must not allow a later turn to inject a stale greeting.
-    attemptedSessions.add(sessionID);
-
-    try {
-      const response = await client.session.get({ path: { id: sessionID } });
-      const session = response?.data ?? response ?? {};
-      return !session.parentID;
-    } catch {
-      return false;
-    }
-  };
 }
 
 /**
@@ -320,14 +289,17 @@ function buildQualityRulesInstruction(rules) {
 async function ttsrSystemTransform(input, output, context) {
   const { state, intentField, shouldInjectGreeting, agentsDir, readIfExists, greetingOptions, greetingEnabled } = context;
   if (!Array.isArray(output.system)) return;
-  replaceArrayContents(output.system, compactSystemContext(output.system));
+  const pluginGreeting = greetingEnabled();
+  const compacted = compactSystemContext(output.system);
+  replaceArrayContents(output.system, pluginGreeting ? compacted.map(stripGreetingFallback) : compacted);
   if (input.model?.providerID === "anthropic") prependAnthropicIdentity(output.system);
 
-  const greeting = greetingEnabled() && await shouldInjectGreeting(input)
+  const greeting = pluginGreeting && await shouldInjectGreeting(input)
     ? buildSessionStartGreetingInstruction(agentsDir, readIfExists, greetingOptions)
     : null;
 
-  // Durable guidance stays ahead of the one-shot greeting for stable prefix reuse.
+  // Durable guidance stays ahead of the root-session-only greeting, so child
+  // sessions share the same prefix up to it.
   const appended = [buildIntentInstruction(intentField), buildQualityRulesInstruction(loadTtsrRules(state)), greeting];
   output.system.push(...appended.filter(Boolean));
 }

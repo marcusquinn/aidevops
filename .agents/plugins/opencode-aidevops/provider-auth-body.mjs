@@ -111,10 +111,11 @@ function redistributeSystemToMessages(parsed, context = {}) {
 
 export const INTENT_PARAM_NAME = "agent__intent";
 
+// Repeated on every tool definition, so it stays a pointer: the full rule is the
+// "## Intent Tracing (observability)" instruction appended by ttsr.mjs.
 export const INTENT_PARAM_SCHEMA = Object.freeze({
   type: "string",
-  description:
-    "Intent tracing: one sentence in present participle form describing your intent for this tool call (no trailing period).",
+  description: "See Intent Tracing.",
 });
 
 /** Inject agent__intent into one object-typed JSON schema without mutation. */

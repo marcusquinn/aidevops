@@ -393,6 +393,8 @@ test("task result carries parent-owned objective identity without inferred accep
   });
   assert.equal(Object.hasOwn(output.metadata.aidevopsObjective, "acceptance"), false);
   assert.match(output.output, /\[AIDEvOps parent receipt\]/);
+  // V1 exposes the receipt tool through the on-demand dispatcher (GH#32592).
+  assert.match(output.output, /aidevops_on_demand tool=aidevops_objective_receipt args:/);
   assert.match(output.output, /parent_session_id=parent/);
   assert.match(output.output, /objective_id=objective:root/);
   assert.match(output.output, /run_id=run:root/);

@@ -58,12 +58,12 @@ describe("TTSR system transform", () => {
     assert.ok(!openai.some((text) => text.includes(CLAUDE_CODE_IDENTITY)));
   });
 
-  test("keeps the plugin greeting off by default and appends it after durable guidance when enabled", async () => {
-    assert.equal(isPluginGreetingEnabled({}), false);
-    assert.equal(isPluginGreetingEnabled({ AIDEVOPS_PLUGIN_SESSION_GREETING: "1" }), true);
-    // OpenCode 2 passes a true runtime default; the env override still wins.
-    assert.equal(isPluginGreetingEnabled({}, true), true);
-    assert.equal(isPluginGreetingEnabled({ AIDEVOPS_PLUGIN_SESSION_GREETING: "0" }, true), false);
+  test("enables the plugin greeting by default and appends it after durable guidance", async () => {
+    // Both runtimes default on (GH#32592); the env override still wins.
+    assert.equal(isPluginGreetingEnabled({}), true);
+    assert.equal(isPluginGreetingEnabled({ AIDEVOPS_PLUGIN_SESSION_GREETING: "1" }, false), true);
+    assert.equal(isPluginGreetingEnabled({}, false), false);
+    assert.equal(isPluginGreetingEnabled({ AIDEVOPS_PLUGIN_SESSION_GREETING: "0" }), false);
 
     const off = ["Agent prompt."];
     await hooks({ greetingEnabled: () => false }).systemTransformHook(
@@ -81,5 +81,46 @@ describe("TTSR system transform", () => {
       assert.ok(on.at(-2).startsWith("## aidevops Quality Rules") || on.at(-2).startsWith("## Intent Tracing"));
       assert.match(on.at(-1), /^## Session-start greeting order/);
     }
+  });
+
+  test("replaces the delimited AGENTS.md greeting fallback only while the plugin greeting is on", async () => {
+    const fallback = [
+      "Instructions from: /cfg/AGENTS.md",
+      "Add the framework guide.",
+      "",
+      "<!-- aidevops:greeting-fallback:start -->",
+      "## aidevops Framework Status",
+      "Read VERSION first, then greet.",
+      "<!-- aidevops:greeting-fallback:end -->",
+      "",
+      "## Pre-Edit Git Check",
+    ].join("\n");
+    const joined = `Agent prompt.\n${fallback}\nInstructions from: /repo/AGENTS.md\nRepo guide.`;
+
+    const root = [joined];
+    await hooks({ greetingEnabled: () => true }).systemTransformHook(
+      { sessionID: "root", model: { providerID: "anthropic" } },
+      { system: root },
+    );
+    assert.ok(!root.some((text) => text.includes("aidevops:greeting-fallback")));
+    assert.ok(!root.some((text) => text.includes("Read VERSION first")));
+    assert.match(root[1], /Add the framework guide\.\n\n## Pre-Edit Git Check\nInstructions from: \/repo\/AGENTS\.md/);
+    assert.match(root.at(-1), /^## Session-start greeting order/);
+
+    // Child/headless sessions get neither the fallback nor the plugin block.
+    const child = [joined];
+    await hooks({ greetingEnabled: () => true, shouldInjectGreeting: async () => false }).systemTransformHook(
+      { sessionID: "child", model: { providerID: "openai" } },
+      { system: child },
+    );
+    assert.ok(!child.some((text) => text.includes("Read VERSION first") || text.includes("Session-start greeting order")));
+
+    // Disabled plugin greeting: the fallback remains the only greeting source.
+    const off = [joined];
+    await hooks({ greetingEnabled: () => false }).systemTransformHook(
+      { sessionID: "root", model: { providerID: "openai" } },
+      { system: off },
+    );
+    assert.equal(off[0], joined);
   });
 });
