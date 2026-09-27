@@ -39,6 +39,11 @@ model: simple
 
 Only `simple`, `standard`, and `thinking` are valid authored tiers. Concrete models and provider reasoning levels are resolved from the active routing table at execution time.
 
+OpenCode's unpinned `agent.compaction` follows the resolved `simple` profile when
+that model has at least the managed 240K compaction input budget. An explicit
+compaction model or variant is preserved; an insufficient or unknown budget
+leaves compaction on OpenCode's parent model.
+
 **Local execution** is a provider/runtime policy, not a workload tier. A local model may be placed in any canonical tier's ordered model list. Privacy policy still fails closed when no approved local runtime is available.
 
 ## Decision Flowchart
