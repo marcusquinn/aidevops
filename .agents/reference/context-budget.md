@@ -21,6 +21,26 @@ to reduce, or might grow, always-loaded context.
 
 ## Workflow
 
+For usage-driven on-demand selection, count distinct sessions with a tool call
+in the last 30 days against all sessions with any recorded tool call in that
+window (not the number of calls). Query the read-only observability SQLite DB
+at `~/.aidevops/.agent-workspace/observability/llm-requests.db`:
+
+```sql
+WITH active AS (
+  SELECT DISTINCT session_id FROM tool_calls
+  WHERE timestamp >= datetime('now', '-30 days')
+), counts AS (
+  SELECT tool_name, count(DISTINCT session_id) AS sessions FROM tool_calls
+  WHERE timestamp >= datetime('now', '-30 days') GROUP BY tool_name
+)
+SELECT tool_name, sessions, (SELECT count(*) FROM active) AS total_sessions,
+  round(100.0 * sessions / (SELECT count(*) FROM active), 3) AS percent
+FROM counts ORDER BY tool_name;
+```
+
+Keep mandatory-guidance and per-agent-gated tools direct even below 2%.
+
 ```bash
 # Control: deployed plugin. Two turns show the prompt-cache read on turn 2.
 context-budget-helper.sh capture oc1 --turns 2 --dir <project>
