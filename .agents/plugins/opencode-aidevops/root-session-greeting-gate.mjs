@@ -29,18 +29,22 @@ export function createRootSessionGreetingGate({ getSession, isHeadless = () => f
     }
     return false;
   };
+  const resolveRoot = async (sessionID) => {
+    if (!rootBySession.has(sessionID)) {
+      const isRoot = !(await getSession(sessionID))?.parentID;
+      if (rootBySession.size >= ROOT_LOOKUP_CACHE_LIMIT) rootBySession.clear();
+      rootBySession.set(sessionID, isRoot);
+    }
+    return rootBySession.get(sessionID);
+  };
 
   return async function shouldInjectRootSessionGreeting(input) {
     const sessionID = input?.sessionID;
     if (!sessionID) return false;
     if (isHeadless()) return skip(sessionID, "headless environment");
-    if (rootBySession.has(sessionID)) return rootBySession.get(sessionID);
     if (typeof getSession !== "function") return skip(sessionID, "no session lookup");
     try {
-      const isRoot = !(await getSession(sessionID))?.parentID;
-      if (rootBySession.size >= ROOT_LOOKUP_CACHE_LIMIT) rootBySession.clear();
-      rootBySession.set(sessionID, isRoot);
-      return isRoot;
+      return await resolveRoot(sessionID);
     } catch (error) {
       return skip(sessionID, `session lookup failed (${error?.message || "unknown error"})`);
     }
