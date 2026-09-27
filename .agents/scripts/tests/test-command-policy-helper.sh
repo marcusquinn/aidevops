@@ -470,6 +470,34 @@ PY
 	return 0
 }
 
+test_workspace_repository_creation() {
+	local workspace="${TEST_ROOT}/create-projects"
+	local repo="${workspace}/repo-a"
+	local outside="${TEST_ROOT}/create-outside"
+	local sibling="${workspace}-sibling"
+	local escape="${workspace}/escape"
+	local allowed='"decision": "allow"'
+
+	mkdir -p "$repo" "$outside" "$sibling"
+	ln -s "$outside" "$escape"
+
+	assert_authorized_decision "workspace session creates a remote-only repository without authorization" "" "gh repo create owner/new-repo --public --add-readme --license mit --description 'New package'" 0 "$allowed" "$repo" "$workspace"
+	assert_authorized_decision "workspace root itself creates a repository without authorization" "" "gh repo create new-repo --private" 0 "$allowed" "$workspace" "$workspace"
+	assert_authorized_decision "workspace session uses the repository new alias without authorization" "" "gh repo new owner/new-alias --private" 0 "$allowed" "$repo" "$workspace"
+	assert_authorized_decision "creation outside the workspace still needs authorization" "" "gh repo create owner/new-repo --public" 20 "github.account-mutation" "$outside" "$workspace"
+	assert_authorized_decision "sibling-prefix directory is outside the workspace" "" "gh repo create owner/new-repo --public" 20 "github.account-mutation" "$sibling" "$workspace"
+	assert_authorized_decision "symlink escape is outside the workspace" "" "gh repo create owner/new-repo --public" 20 "github.account-mutation" "$escape" "$workspace"
+	assert_authorized_decision "local source creation still needs authorization" "" "gh repo create owner/new-repo --public --source=." 20 "github.account-mutation" "$repo" "$workspace"
+	assert_authorized_decision "clone-capable creation still needs authorization" "" "gh repo create owner/new-repo --public --clone" 20 "github.account-mutation" "$repo" "$workspace"
+	assert_authorized_decision "creation without explicit visibility still needs authorization" "" "gh repo create owner/new-repo --public=false" 20 "github.account-mutation" "$repo" "$workspace"
+	assert_authorized_decision "forks still need authorization inside the workspace" "" "gh repo fork owner/source --clone=false" 20 "github.account-mutation" "$repo" "$workspace"
+	assert_authorized_decision "compound creation still needs authorization" "" "gh repo create owner/new-repo --public && printf done" 20 "github.account-mutation" "$repo" "$workspace"
+	assert_authorized_decision "privileged wrapper creation still needs authorization" "" "sudo -n gh repo create owner/new-repo --public" 20 "github.account-mutation" "$repo" "$workspace"
+	assert_authorized_decision "shell-launched creation still needs authorization" "" "bash -lc 'gh repo create owner/new-repo --public'" 20 "github.account-mutation" "$repo" "$workspace"
+	assert_authorized_decision "disabled workspace root keeps creation authorization-gated" "" "gh repo create owner/new-repo --public" 20 "github.account-mutation" "$repo" ""
+	return 0
+}
+
 test_account_mutation_guard_validation() {
 	local malformed_guard="${TEST_ROOT}/malformed-account-guard.json"
 	local output=""
@@ -969,6 +997,7 @@ main() {
 	test_direct_pr_merge_policy
 	test_account_mutation_authorization
 	test_account_mutation_workspace_authorization
+	test_workspace_repository_creation
 	test_account_mutation_guard_validation
 	test_canonical_delegation
 	test_worker_network_policy

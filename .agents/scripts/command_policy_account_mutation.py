@@ -10,6 +10,7 @@ import json
 import os
 import re
 import secrets
+import shlex
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -213,6 +214,47 @@ def _account_mutation_location(
     return {"kind": "cwd", "path": canonical_cwd}
 
 
+def _is_direct_invocation(argv: list[str], source: dict[str, Any] | None) -> bool:
+    """Return whether the submitted command is the bare invocation itself."""
+    if source is None:
+        return True
+    value = source.get("value")
+    if source.get("kind") == "argv":
+        return value == argv
+    if source.get("kind") == "command" and isinstance(value, str):
+        try:
+            return shlex.split(value) == argv
+        except ValueError:
+            return False
+    return False
+
+
+def _is_workspace_repository_creation(
+    argv: list[str], cwd: str, context: _AccountMutationContext
+) -> bool:
+    """Return whether a remote-only repository creation runs inside the workspace.
+
+    Creating an empty repository from a session inside the projects root is
+    routine and reversible, so it needs no per-command authorization. Wrapped
+    or shell-launched commands, local source, clone, push and remote options,
+    forks, and sessions outside the root (or with the workspace root disabled)
+    stay authorization-gated.
+    """
+    if len(argv) < 3 or argv[1] != "repo" or argv[2] not in {"create", "new"}:
+        return False
+    if not _is_direct_invocation(argv, context.source):
+        return False
+    workspace_root = context.workspace_root
+    if workspace_root is None:
+        workspace_root = account_mutation_workspace_root_from_environment()
+    canonical_root = _canonical_workspace_root(workspace_root)
+    return bool(
+        canonical_root
+        and _is_workspace_safe_create(argv)
+        and _is_within_workspace(os.path.realpath(cwd), canonical_root)
+    )
+
+
 def _authorization_digest(payload: dict[str, Any]) -> str:
     canonical = json.dumps(
         payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True
@@ -295,6 +337,12 @@ def _evaluate_account_mutation(
         )
     # #aidevops:trust-boundary — only inherited authorization and workspace
     # context can cross this gate; command-local assignments are rejected.
+    if _is_workspace_repository_creation(mutations[0], cwd, context):
+        return _decision(
+            "allow",
+            "github.workspace-repository-creation",
+            "Remote-only repository creation from inside the projects workspace",
+        )
     if _authorization_matches(context, mutations[0], cwd):
         return _decision(
             "allow",
