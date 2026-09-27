@@ -32,7 +32,9 @@ function processStartToken(pid) {
     const fields = stat.slice(stat.lastIndexOf(")") + 2).trim().split(/\s+/);
     return /^\d+$/.test(fields[19] || "") ? fields[19] : null;
   } catch {
-    return null;
+    // macOS has no /proc; ps lstart remains stable for the lifetime of a PID.
+    const started = spawnSync("ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf8" });
+    return started.status === 0 ? started.stdout.trim() || null : null;
   }
 }
 
