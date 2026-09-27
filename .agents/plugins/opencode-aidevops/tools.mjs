@@ -126,6 +126,7 @@ function createMemoryTool(scriptsDir, run) {
       'limit (string, default "5", for recall), ' +
       'content (non-empty string, for store), confidence ("low"|"medium"|"high", default "medium", for store). ' +
       'A recall query matching a complete mem_... or obs_... ID uses exact lookup; an unknown ID returns no result without semantic fallback. ' +
+      'Stored local memory does not reach other users; for shared framework lessons, update the narrowest reference or use framework-issue-helper.sh log. ' +
       'Do not call with an empty payload; use {action:"recall",query:"...",limit:"5"} or {action:"store",content:"...",confidence:"medium"}.',
     args: {
       action: z.enum(["recall", "store"]).optional().describe('Memory operation to perform; defaults to "recall"'),
@@ -161,7 +162,17 @@ function createMemoryTool(scriptsDir, run) {
         const confidence = args.confidence || "medium";
         const cmd = `bash "${memoryHelper}" store ${shellEscape(content)} --confidence ${shellEscape(confidence)}`;
         const result = run(cmd, 10000);
-        return result || "Memory stored successfully.";
+        const frameworkHelper = join(scriptsDir, "framework-issue-helper.sh");
+        if (!existsSync(frameworkHelper)) {
+          return result || "Memory stored successfully.";
+        }
+
+        try {
+          run(`bash "${frameworkHelper}" detect ${shellEscape(content)}`, 10000);
+          return `${result || "Memory stored successfully."}\n\nThis appears to be a framework lesson. Local memory does not reach other users; update the narrowest shared reference or file a worker-ready issue with framework-issue-helper.sh log.`;
+        } catch {
+          return result || "Memory stored successfully.";
+        }
       }
 
       return validationError;

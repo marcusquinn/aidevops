@@ -77,6 +77,28 @@ describe("aidevops_memory execution", () => {
     assert.match(calls[0], /memory-helper\.sh" store 'Remember this' --confidence 'high'$/);
   });
 
+  test("framework-classified store succeeds and returns a shared-destination hint", async () => {
+    const calls = [];
+    const result = await withMemoryHelper(async (scriptsDir) => {
+      writeFileSync(join(scriptsDir, "framework-issue-helper.sh"), "#!/usr/bin/env bash\n", { mode: 0o755 });
+      const tools = createTools(scriptsDir, (cmd) => {
+        calls.push(cmd);
+        return "stored";
+      });
+
+      return tools.aidevops_memory.execute({
+        action: "store",
+        content: "Fix .agents/reference/memory.md guidance",
+      });
+    });
+
+    assert.equal(calls.length, 2);
+    assert.match(calls[1], /framework-issue-helper\.sh" detect 'Fix \.agents\/reference\/memory\.md guidance'$/);
+    assert.match(result, /^stored/);
+    assert.match(result, /Local memory does not reach other users/);
+    assert.match(result, /framework-issue-helper\.sh log/);
+  });
+
   test("recall action invokes memory-helper.sh recall", async () => {
     const calls = [];
     const result = await withMemoryHelper(async (scriptsDir) => {
