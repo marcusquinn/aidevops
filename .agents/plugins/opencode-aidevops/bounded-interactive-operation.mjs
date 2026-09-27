@@ -29,6 +29,7 @@ import {
   operationStatusVersion,
 } from "./bounded-operation-access.mjs";
 import { resolveSessionOwnedWorktreeRoot } from "./gpt-image-worktree.mjs";
+import { defaultSecretValueRedactor } from "./registered-value-redaction.mjs";
 
 const MAX_OPERATIONS = 24;
 const SUPERVISOR_PATH = fileURLToPath(new URL("./bounded-operation-supervisor.mjs", import.meta.url));
@@ -43,6 +44,7 @@ export class BoundedInteractiveOperationManager {
     this.now = options.now || Date.now;
     this.makeID = options.makeID || (() => `op_${this.now()}_${randomBytes(6).toString("hex")}`);
     this.recordOutput = options.recordOutput || (async () => "");
+    this.secretRedactor = options.secretRedactor || defaultSecretValueRedactor();
     this.readOutput = options.readOutput || (async () => {
       throw new Error("stored output retrieval is unavailable");
     });
@@ -250,7 +252,10 @@ export class BoundedInteractiveOperationManager {
     operation.state = "finalizing";
     this.notifyStatusWaiters(operation);
     try {
-      operation.outputID = await this.recordOutput(Buffer.concat(operation.output), {
+      // GH#32362: redact registered secret values from the complete capture
+      // before storage, so later offset/limit windows cannot split a value.
+      const captured = Buffer.concat(operation.output).toString("utf8");
+      operation.outputID = await this.recordOutput(this.secretRedactor.redactText(captured).text, {
         exitCode: operation.processExit,
         state: finalState,
       });
