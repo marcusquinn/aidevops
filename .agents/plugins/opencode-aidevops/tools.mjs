@@ -113,15 +113,18 @@ function storeMemory(scriptsDir, memoryHelper, args, run) {
   const cmd = `bash "${memoryHelper}" store ${shellEscape(content)} --confidence ${shellEscape(confidence)}`;
   const result = run(cmd, 10000) || "Memory stored successfully.";
   const frameworkHelper = join(scriptsDir, "framework-issue-helper.sh");
+  let hint = "";
 
-  if (!existsSync(frameworkHelper)) return result;
-
-  try {
-    run(`bash "${frameworkHelper}" detect ${shellEscape(content)}`, 10000);
-    return `${result}\n\nThis appears to be a framework lesson. Local memory does not reach other users; update the narrowest shared reference or file a worker-ready issue with framework-issue-helper.sh log.`;
-  } catch {
-    return result;
+  if (existsSync(frameworkHelper)) {
+    try {
+      run(`bash "${frameworkHelper}" detect ${shellEscape(content)}`, 10000);
+      hint = "\n\nThis appears to be a framework lesson. Local memory does not reach other users; update the narrowest shared reference or file a worker-ready issue with framework-issue-helper.sh log.";
+    } catch {
+      // A non-framework classification is expected and does not affect storage.
+    }
   }
+
+  return `${result}${hint}`;
 }
 
 /**
