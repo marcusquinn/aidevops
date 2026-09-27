@@ -1483,6 +1483,18 @@ _merge_current_canonical_dir_for_cleanup() {
 	return 0
 }
 
+_merge_canonical_dir_for_sync() {
+	local porcelain=""
+	local canonical_dir=""
+	porcelain=$(git worktree list --porcelain 2>/dev/null) || return 1
+	canonical_dir="${porcelain%%$'\n'*}"
+	[[ "$canonical_dir" == worktree\ * ]] || return 1
+	canonical_dir="${canonical_dir#worktree }"
+	[[ -d "$canonical_dir" ]] || return 1
+	printf '%s\n' "$canonical_dir"
+	return 0
+}
+
 _merge_current_worktree_cleanup_plan() {
 	local pr_head_ref="$1"
 	local pr_head_oid="$2"
@@ -1616,14 +1628,31 @@ _merge_refresh_canonical_for_cleanup() {
 
 _merge_report_canonical_sync_state() {
 	local canonical_dir="$1"
+	local issue_number="${2:-}"
 	if [[ -z "$canonical_dir" ]]; then
 		print_warning "CANONICAL_SYNC_PENDING=true reason=canonical_path_unavailable"
 		return 1
 	fi
 	local default_branch
 	default_branch=$(_merge_default_branch_for_cleanup "$canonical_dir")
-	_merge_refresh_canonical_for_cleanup "$canonical_dir" "$default_branch"
-	return $?
+	if _merge_refresh_canonical_for_cleanup "$canonical_dir" "$default_branch"; then
+		return 0
+	fi
+	local current_branch=""
+	local clean=""
+	local local_head=""
+	local remote_head=""
+	current_branch=$(git -C "$canonical_dir" branch --show-current 2>/dev/null || true)
+	clean=$(git -C "$canonical_dir" status --porcelain 2>/dev/null || true)
+	local_head=$(git -C "$canonical_dir" rev-parse HEAD 2>/dev/null || true)
+	remote_head=$(git -C "$canonical_dir" rev-parse "origin/${default_branch}" 2>/dev/null || true)
+	if [[ "$current_branch" == "$default_branch" && -z "$clean" && -n "$local_head" && -n "$remote_head" ]] &&
+		git -C "$canonical_dir" merge-base --is-ancestor "$local_head" "$remote_head" 2>/dev/null; then
+		printf 'CANONICAL_SYNC_NEXT=canonical-recovery-helper.sh fast-forward-current --repo %q --branch %q --issue %q --confirm FAST_FORWARD_CANONICAL_BRANCH\n' "$canonical_dir" "$default_branch" "$issue_number"
+	else
+		printf 'CANONICAL_SYNC_NEXT=canonical-recovery-helper.sh sync-mirror --repo %q --issue %q --confirm SYNCHRONIZE_CANONICAL_MIRROR\n' "$canonical_dir" "$issue_number"
+	fi
+	return 1
 }
 
 _merge_resolve_worktree_helper() {
@@ -1982,6 +2011,7 @@ cmd_merge() {
 	local _cleanup_branch=""
 	local _cleanup_delete_remote_branch=""
 	local _canonical_dir=""
+	_canonical_dir=$(_merge_canonical_dir_for_sync 2>/dev/null || true)
 	if [[ "$has_auto" -eq 0 ]]; then
 		_cleanup_target=$(_merge_fresh_worktree_cleanup_target "$pr_number" "$repo" 2>/dev/null || true)
 		if [[ -n "$_cleanup_target" ]]; then
@@ -2013,7 +2043,7 @@ cmd_merge() {
 		return 1
 	fi
 	print_success "LIFECYCLE_STATE=MERGED merge_sha=${FULL_LOOP_MERGE_SHA}"
-	_merge_report_canonical_sync_state "$_canonical_dir" || true
+	_merge_report_canonical_sync_state "$_canonical_dir" "${WORKER_ISSUE_NUMBER:-$pr_number}" || true
 	if declare -F is_loop_active >/dev/null 2>&1 && is_loop_active; then
 		_full_loop_record_phase "postflight" "$pr_number" || return 1
 	fi
