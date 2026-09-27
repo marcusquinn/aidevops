@@ -46,15 +46,52 @@ Target: `https://the-internet.herokuapp.com`. 3 runs per tool, report median. Ne
 | agent-browser | Full | `agent-browser-helper.sh setup` (first run slower — discard or note) |
 | Crawl4AI | Navigate + extract only | `python3 -m venv ~/.aidevops/crawl4ai-venv && pip install crawl4ai` |
 | Stagehand v3 (historical script) | Full (AI-dependent latency) | Existing `bench-stagehand.mjs` targets the older SDK; keep its result separate from v4. |
-| Stagehand v4.1.0 | Opt-in isolated local browser; AI extraction needs explicit model/key | `bash .agents/scripts/stagehand-v4-helper.sh setup`; a like-for-like v4 benchmark is not yet implemented. |
+| Stagehand v4.1.0 | Opt-in isolated local browser; AI extraction needs explicit model/key | `bash .agents/scripts/stagehand-v4-helper.sh setup`; a deterministic like-for-like page-extraction comparison is below; the full test matrix is not yet run on v4. |
 | Playwriter (legacy, not recommended) | Full | Retained only for historical comparison; skip unless explicitly benchmarking an existing setup |
 
 ## Running Benchmarks
 
 The existing Stagehand script is v3-only. Do not run it against the isolated v4
 project or report its historical measurements as v4. The v4 route has a verified
-local-browser smoke test and a narrow, billed public-page AI extraction probe;
-neither is a like-for-like run of the full benchmark matrix.
+local-browser smoke test, narrow billed AI extraction probes and one
+deterministic like-for-like page-extraction comparison; none is a run of the
+full benchmark matrix.
+
+### Stagehand v4 deterministic page extraction vs Playwright (2026-09-27)
+
+This comparison asks whether Stagehand v4.1.0 is more efficient than plain
+Playwright for **deterministic** multi-page content extraction. It used no AI
+calls and no model spend. Method:
+
+- five public award-programme pages from five different sites (events, winners,
+  about and programme pages);
+- three rounds, with engine order alternating each round so neither engine
+  always benefits from warm DNS or CDN caches;
+- a fresh headless Chromium per engine per round: Playwright `chromium.launch`,
+  and for Stagehand the same local browser attached through
+  `await Stagehand.create({ browser })`;
+- identical steps for every visit: `goto` with `domcontentloaded`, a bounded
+  `networkidle` wait, then one identical in-page payload collecting text length,
+  links, images, headings and title.
+
+| Metric (median of 3) | Playwright | Stagehand v4.1.0 |
+|----------------------|-----------:|-----------------:|
+| Launch (plus attach) | **72 ms** | 692 ms |
+| Summed per-page totals, 5 pages | **9.95 s** | 10.35 s |
+| Content parity (text length, link count per page) | 15/15 visits | 15/15 visits, identical to Playwright |
+| Failed visits | 0 | 0 |
+
+Per-page medians favoured different engines on different pages (Stagehand was
+faster on two, Playwright on three). The consistent differences were the
+~620 ms extra launch/attach cost and ~1 ms extra evaluate overhead per page.
+Stagehand adds no deterministic extraction capability over the page object it
+wraps, so it is about 4% slower here with identical output.
+
+Keep Playwright as the default for exhaustive deterministic extraction (for
+example winner and finalist lists), where the AI probes above also showed
+latency and accuracy risk. Reserve Stagehand for adaptive navigation of
+unknown structures. Single environment (one macOS workstation and network),
+public pages only; the v3 table is not comparable.
 
 ### Stagehand v4 public-page probe (2026-09-26; not a full benchmark)
 
