@@ -258,28 +258,40 @@ def _issue_comments(comments: list[dict[str, Any]], excluded_id: int | None) -> 
     return sorted(result, key=lambda item: item["id"])
 
 
-def _issue_reference(event: dict[str, Any]) -> dict[str, Any]:
+_TRUSTED_SOURCE_ASSOCIATIONS = ("OWNER", "MEMBER", "COLLABORATOR")
+
+
+def _issue_reference(event: dict[str, Any], target_repository: str) -> dict[str, Any]:
     result = _issue_fields(event, "event node_id created_at commit_id commit_url", "id")
     result.update(updated_at=event.get("updated_at") or event.get("created_at") or "",
                   actor=_issue_actor(event.get("actor")), source=None)
     source = (event.get("source") or {}).get("issue")
     if source is not None:
-        projection = _issue_fields(source, "node_id title body state", "number id")
+        repository = ((source.get("repository") or {}).get("full_name") or "").lower()
+        association = source.get("author_association") or ""
+        # #aidevops:trust-boundary — mirrors the GH#32455 trusted-sources
+        # profile in approval-snapshot-v2.sh: same-repository sources authored
+        # by write-trusted associations bind identity, not mutable content.
+        if repository == target_repository.lower() and association in _TRUSTED_SOURCE_ASSOCIATIONS:
+            projection = _issue_fields(source, "node_id", "number id")
+            projection.update(author_association=association, content_bound=False)
+        else:
+            projection = _issue_fields(source, "node_id title body state", "number id")
+            projection.update(author_association=association, content_bound=True)
         projection.update(kind="pr" if source.get("pull_request") is not None else "issue",
-                          repository=((source.get("repository") or {}).get("full_name") or "").lower(),
-                          author=_issue_actor(source.get("user")))
+                          repository=repository, author=_issue_actor(source.get("user")))
         result["source"] = projection
     return result
 
 
-def _issue_references(timeline: list[dict[str, Any]], cutoff: str) -> list[dict[str, Any]]:
+def _issue_references(timeline: list[dict[str, Any]], cutoff: str, target_repository: str) -> list[dict[str, Any]]:
     result = []
     for event in timeline:
         if event.get("event") not in ("cross-referenced", "connected", "disconnected", "referenced"):
             continue
         timestamp = _issue_timestamp(event.get("created_at"))
         if timestamp <= cutoff:
-            result.append(_issue_reference(event))
+            result.append(_issue_reference(event, target_repository))
     return sorted(result, key=lambda item: (item["created_at"], item["event"], item["id"] or 0))
 
 
@@ -339,7 +351,7 @@ def build_issue_signing_snapshot(reader: GitHubIssueReader, issued_at: str,
                    "id": issue["id"], "node_id": issue["node_id"]},
         "author": actor, **_issue_fields(issue, "created_at title body"),
         "comments": _issue_comments(comments, excluded_comment_id),
-        "linked_references": _issue_references(timeline, cutoff),
+        "linked_references": _issue_references(timeline, cutoff, reader.repository),
         "lifecycle": _issue_lifecycle(issue, timeline),
     }
 

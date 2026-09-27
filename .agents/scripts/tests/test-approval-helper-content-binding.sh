@@ -115,7 +115,7 @@ append_signed_comment() {
 	local number="$2"
 	local issued_at="$3"
 	local comment_id="${4:-$((number * 100 + 99))}"
-	local source_timestamp_profile="${5:-stable}"
+	local source_timestamp_profile="${5:-$APPROVAL_SNAPSHOT_PROFILE_TRUSTED_SOURCES}"
 	local comments_file="${FIXTURES}/comments-${number}.json"
 	local timeline_file="${FIXTURES}/timeline-${number}.json"
 	local payload="" signature_file="" signature="" body="" updated=""
@@ -884,6 +884,65 @@ test_linked_source_timestamp_profiles() {
 	return 0
 }
 
+set_linked_source() {
+	local number="$1"
+	local filter="$2"
+	jq ".[0][0].source.issue |= (${filter})" "${FIXTURES}/timeline-${number}.json" >"${FIXTURES}/timeline.tmp" && mv "${FIXTURES}/timeline.tmp" "${FIXTURES}/timeline-${number}.json"
+	return $?
+}
+
+rewrite_linked_source_content() {
+	local number="$1"
+	set_linked_source "$number" '.title = "Dashboard refreshed" | .body = "refreshed body" | .state = "closed" | .updated_at = "2026-01-01T00:07:00Z"'
+	return $?
+}
+
+# GH#32455: supervisor dashboards authored by write-trusted accounts rewrite
+# themselves every pulse; they must not stale approvals they merely link to.
+test_trusted_linked_source_profiles() {
+	local association=""
+	for association in OWNER MEMBER COLLABORATOR; do
+		write_baseline_fixtures
+		set_linked_source 42 ".author_association = \"${association}\""
+		append_signed_comment pr 42 "2026-01-01T00:05:00Z"
+		rewrite_linked_source_content 42
+		assert_verify "trusted ${association} linked-source rewrite keeps PR approval" pr 42 VERIFIED 0 "$PR_HEAD"
+	done
+
+	write_baseline_fixtures
+	set_linked_source 41 '.author_association = "COLLABORATOR"'
+	append_signed_comment issue 41 "2026-01-01T00:05:00Z"
+	rewrite_linked_source_content 41
+	assert_verify "trusted linked-source rewrite keeps issue approval" issue 41 VERIFIED 0
+
+	write_baseline_fixtures
+	set_linked_source 42 '.author_association = "CONTRIBUTOR"'
+	append_signed_comment pr 42 "2026-01-01T00:05:00Z"
+	rewrite_linked_source_content 42
+	assert_verify "untrusted linked-source rewrite stales PR approval" pr 42 STALE_APPROVAL 4 "$PR_HEAD"
+
+	write_baseline_fixtures
+	set_linked_source 42 '.author_association = "OWNER" | .repository.full_name = "other/repo"'
+	append_signed_comment pr 42 "2026-01-01T00:05:00Z"
+	rewrite_linked_source_content 42
+	assert_verify "cross-repository linked-source rewrite stales PR approval" pr 42 STALE_APPROVAL 4 "$PR_HEAD"
+
+	write_baseline_fixtures
+	set_linked_source 42 '.author_association = "OWNER"'
+	append_signed_comment pr 42 "2026-01-01T00:05:00Z"
+	set_linked_source 42 '.author_association = "CONTRIBUTOR"'
+	assert_verify "linked-source association drift stales PR approval" pr 42 STALE_APPROVAL 4 "$PR_HEAD"
+
+	write_baseline_fixtures
+	set_linked_source 42 '.author_association = "OWNER"'
+	append_signed_comment pr 42 "2026-01-01T00:05:00Z" 4297 "$APPROVAL_SNAPSHOT_PROFILE_STABLE"
+	assert_verify "pre-GH#32455 stable-profile approval remains verifiable" pr 42 VERIFIED 0 "$PR_HEAD"
+	rewrite_linked_source_content 42
+	assert_verify "pre-GH#32455 stable-profile content drift remains stale" pr 42 STALE_APPROVAL 4 "$PR_HEAD"
+	reset_and_sign pr 42
+	return $?
+}
+
 main() {
 	install_gh_stub
 	write_baseline_fixtures
@@ -904,6 +963,7 @@ main() {
 	reset_and_sign pr 42
 	assert_verify "unchanged PR V2 snapshot verifies exact head" pr 42 VERIFIED 0 "$PR_HEAD"
 	test_linked_source_timestamp_profiles
+	test_trusted_linked_source_profiles
 	local original_digest="" repeated_payload="" repeated_digest=""
 	original_digest=$(jq -r '.snapshot_sha256' "${TEST_ROOT}/payload-42.json")
 	repeated_payload=$(PATH="${TEST_ROOT}/bin:$PATH" FIXTURES="$FIXTURES" approval_snapshot_v2_payload pr 42 owner/repo "2026-01-01T00:06:00Z")

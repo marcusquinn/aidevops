@@ -232,6 +232,9 @@ _approval_verify_locked_issue_continuity() {
 	return 0
 }
 
+# Prints STABLE_MATCH or LEGACY_MATCH when an older linked-source profile
+# reproduces the complete signed digest (the caller then accepts it), otherwise
+# VERIFIED (proven lifecycle continuity), API_ERROR, or STALE_APPROVAL.
 _approval_classify_digest_mismatch() {
 	local target_type="$1"
 	local target_number="$2"
@@ -242,8 +245,22 @@ _approval_classify_digest_mismatch() {
 	local payload="$7"
 	local snapshot_json="$8"
 	local signed_digest="$9"
-	local legacy_snapshot_json="" legacy_digest="" continuity_rc=0
+	local stable_snapshot_json="" stable_digest="" legacy_snapshot_json="" legacy_digest="" continuity_rc=0
 
+	# #aidevops:trust-boundary — approvals issued before GH#32455 bind all
+	# linked-source content (stable profile); accept only an exact match.
+	stable_snapshot_json=$(approval_snapshot_v2_build "$target_type" "$target_number" "$slug" "$comment_id" "$issued_at" "$APPROVAL_SNAPSHOT_PROFILE_STABLE" "$issue_lifecycle_profile") || {
+		printf 'API_ERROR\n'
+		return 0
+	}
+	stable_digest=$(approval_snapshot_v2_digest "$stable_snapshot_json") || {
+		printf 'API_ERROR\n'
+		return 0
+	}
+	if [[ "$stable_digest" == "$signed_digest" ]]; then
+		printf 'STABLE_MATCH\n'
+		return 0
+	fi
 	legacy_snapshot_json=$(approval_snapshot_v2_build "$target_type" "$target_number" "$slug" "$comment_id" "$issued_at" "$APPROVAL_SNAPSHOT_PROFILE_LEGACY" "$issue_lifecycle_profile") || {
 		printf 'API_ERROR\n'
 		return 0
@@ -258,6 +275,12 @@ _approval_classify_digest_mismatch() {
 	fi
 	if [[ "$target_type" == "$APPROVAL_TARGET_ISSUE" ]]; then
 		_approval_verify_locked_issue_continuity "$payload" "$snapshot_json" "$signed_digest" "$slug" "$target_number" "$issued_at" "$comment_id" || continuity_rc=$?
+		# Approvals signed before GH#32455 used the stable linked-source profile;
+		# their lifecycle continuity must be proven against that exact profile.
+		if [[ "$continuity_rc" -eq 1 ]]; then
+			continuity_rc=0
+			_approval_verify_locked_issue_continuity "$payload" "$stable_snapshot_json" "$signed_digest" "$slug" "$target_number" "$issued_at" "$comment_id" || continuity_rc=$?
+		fi
 		if [[ "$continuity_rc" -eq 0 ]]; then
 			printf 'APPROVAL_REASON: proven-locked-continuity\n' >&2
 			printf 'VERIFIED\n'
