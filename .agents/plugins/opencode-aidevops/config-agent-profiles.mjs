@@ -8,8 +8,7 @@ import { homedir } from "os";
 import { isAbsolute, join, relative, resolve, sep } from "path";
 import { loadAgentIndex, registerDelegatedDomainProfiles } from "./agent-loader.mjs";
 import { getOnDemandMcpAgents } from "./mcp-registry.mjs";
-import { DEFAULT_ESCALATION_ORDER, normalizeRoutingTier, routingModelIdentity, routingProfile } from "./model-routing.mjs";
-import { GPT6_COMPACTION_TARGET } from "./model-limits.mjs";
+import { DEFAULT_ESCALATION_ORDER, normalizeRoutingTier } from "./model-routing.mjs";
 import { applyOnDemandMcpToolPolicy } from "./on-demand-mcp-tool-policy.mjs";
 import { recordPluginHealthStage } from "./plugin-health.mjs";
 import { primaryDeliveryEvidence } from "./primary-delivery-evidence.mjs";
@@ -62,38 +61,6 @@ export function registerAgentRoutingIntent(state, name, profile, tier, routing) 
   state.pinned.delete(name);
   state.tiers.set(name, normalizeRoutingTier(authoredTier));
   return applyAgentRoutingProfile(profile, authoredTier, routing);
-}
-
-function modelInputLimit(config, model) {
-  const { providerID, modelID } = routingModelIdentity(model);
-  const limit = config?.provider?.[providerID]?.models?.[modelID]?.limit;
-  if (!limit || typeof limit !== "object") return 0;
-  if (Number.isFinite(limit.input)) return limit.input;
-  if (Number.isFinite(limit.context) && Number.isFinite(limit.output)) {
-    return limit.context - limit.output;
-  }
-  return 0;
-}
-
-/**
- * Route unpinned OpenCode compaction summaries through the simple tier only
- * when its configured model can accept the full managed compaction input.
- * Leaving the agent unmodelled delegates back to OpenCode's parent model.
- * @param {object} config - OpenCode Config object (mutable)
- * @param {object} routing - resolved aidevops routing table
- * @returns {boolean} whether a compaction route was applied
- */
-export function applyCompactionRouting(config, routing) {
-  if (!config || !routing) return false;
-  config.agent ??= {};
-  const compaction = config.agent.compaction ??= {};
-  if (String(compaction.model || "") || String(compaction.variant || "")) return false;
-
-  const profile = routingProfile(routing, "simple");
-  if (!profile.model || modelInputLimit(config, profile.model) < GPT6_COMPACTION_TARGET) return false;
-  compaction.model = profile.model;
-  if (profile.variant) compaction.variant = profile.variant;
-  return true;
 }
 
 function registerConfiguredRoutingIntents(config, routing, state) {

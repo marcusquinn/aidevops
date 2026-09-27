@@ -17,9 +17,9 @@ import {
 import { withUnambiguousProviderFallbacks } from "../model-routing-reasoning.mjs";
 import {
   applyAgentRoutingProfile,
-  applyCompactionRouting,
   registerAgentRoutingIntent,
 } from "../config-agent-profiles.mjs";
+import { applyCompactionRouting } from "../config-hook.mjs";
 
 test("a model serving several tiers resolves by observed variant", () => {
   const root = mkdtempSync(join(tmpdir(), "aidevops-model-routing-"));

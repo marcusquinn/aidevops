@@ -19,8 +19,8 @@ import {
   registerAgentRoutingIntent,
   registerAgents,
   registerResearchOnlyAgent,
-  applyCompactionRouting,
 } from "./config-agent-profiles.mjs";
+import { routingModelIdentity, routingProfile } from "./model-routing.mjs";
 import {
   enforcePublicTriageIsolation,
   enforceTeamInterfaceConversationIsolation,
@@ -38,6 +38,7 @@ import {
   GPT56_INPUT_DEFAULT,
   GPT56_MODEL_IDS,
   GPT56_OUTPUT_DEFAULT,
+  GPT6_COMPACTION_TARGET,
 } from "./model-limits.mjs";
 
 export { registerApprovedWorkerPermissions };
@@ -50,6 +51,31 @@ export {
   registerManagedDirectoryPermissions,
   registerResearchOnlyAgent,
 };
+
+function compactionInputLimit(config, model) {
+  const { providerID, modelID } = routingModelIdentity(model);
+  const limit = config?.provider?.[providerID]?.models?.[modelID]?.limit;
+  if (!limit || typeof limit !== "object") return 0;
+  if (Number.isFinite(limit.input)) return limit.input;
+  if (Number.isFinite(limit.context) && Number.isFinite(limit.output)) {
+    return limit.context - limit.output;
+  }
+  return 0;
+}
+
+/** Apply a safe simple-tier default for OpenCode's built-in compaction agent. */
+export function applyCompactionRouting(config, routing) {
+  if (!config || !routing) return false;
+  config.agent ??= {};
+  const compaction = config.agent.compaction ??= {};
+  if (String(compaction.model || "") || String(compaction.variant || "")) return false;
+
+  const profile = routingProfile(routing, "simple");
+  if (!profile.model || compactionInputLimit(config, profile.model) < GPT6_COMPACTION_TARGET) return false;
+  compaction.model = profile.model;
+  if (profile.variant) compaction.variant = profile.variant;
+  return true;
+}
 
 /**
  * Shared model definition template for Claude models managed by aidevops.
