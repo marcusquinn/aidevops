@@ -810,7 +810,7 @@ _approval_apply_issue_lifecycle_updates() {
 		}
 		return 1
 	fi
-	_print_info "Issue #$target_number lock verified (scope finalized, unlocks after worker completion)"
+	_print_info "Issue #$target_number locked and verified (scope finalized, unlocks after worker completion)"
 
 	# t2057: remove only the local claim stamp after the complete remote state is
 	# verified. Invoking `release` here would perform a second remote status write
@@ -1021,7 +1021,7 @@ _approve_target_after_confirmation() {
 	# authoritative locked snapshot. PR approval semantics remain unchanged.
 	if [[ "$target_type" == "$APPROVAL_TARGET_ISSUE" ]]; then
 		_approval_lock_issue "$target_number" "$slug" >/dev/null 2>&1 || {
-			_print_error "Could not lock issue before building its approval snapshot"
+			_print_error "Approval advisory lock failure: issue #$target_number could not be locked before building its approval snapshot"
 			return 1
 		}
 	fi
