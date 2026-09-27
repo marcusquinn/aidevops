@@ -11,6 +11,7 @@ import {
   loadModelRouting,
   nextRoutingTier,
   routingProfile,
+  routingTierForModel,
   selectConnectedRoutingCandidate,
 } from "../model-routing.mjs";
 import { withUnambiguousProviderFallbacks } from "../model-routing-reasoning.mjs";
@@ -18,6 +19,28 @@ import {
   applyAgentRoutingProfile,
   registerAgentRoutingIntent,
 } from "../config-agent-profiles.mjs";
+
+test("a model serving several tiers resolves by observed variant", () => {
+  const root = mkdtempSync(join(tmpdir(), "aidevops-model-routing-"));
+  const table = join(root, "table.json");
+  try {
+    writeFileSync(table, JSON.stringify({
+      tiers: {
+        standard: { models: ["vendor/shared"], reasoning: { vendor: "low" } },
+        thinking: { models: ["vendor/shared"], reasoning: { vendor: "medium" } },
+      },
+      escalation_order: ["simple", "standard", "thinking"],
+    }));
+    const routing = loadModelRouting([table]);
+    assert.equal(routingTierForModel(routing, "vendor/shared"), "standard");
+    assert.equal(routingTierForModel(routing, "vendor/shared", "low"), "standard");
+    assert.equal(routingTierForModel(routing, "vendor/shared", "medium"), "thinking");
+    assert.equal(routingTierForModel(routing, "vendor/shared", "xhigh"), "standard");
+    assert.equal(routingTierForModel(routing, "vendor/other", "medium"), "");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test("partial higher-precedence routing tables inherit unspecified framework tiers", () => {
   const root = mkdtempSync(join(tmpdir(), "aidevops-model-routing-"));

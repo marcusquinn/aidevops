@@ -25,7 +25,7 @@ const envelope = JSON.stringify({
 
 test("shipped routes keep Sol medium in charge and Astra outside automatic escalation", () => {
   assert.deepEqual(routingProfile(routing, "simple"), { tier: "simple", model: "openai/gpt-6-luna", variant: "low" });
-  assert.deepEqual(routingProfile(routing, "standard"), { tier: "standard", model: "openai/gpt-5.6-terra", variant: "low" });
+  assert.deepEqual(routingProfile(routing, "standard"), { tier: "standard", model: "openai/gpt-6-sol", variant: "low" });
   assert.deepEqual(routingProfile(routing, "thinking"), { tier: "thinking", model: "openai/gpt-6-sol", variant: "medium" });
   assert.equal(nextRoutingTier(routing, "thinking"), "");
   assert.deepEqual(routing.specialistAdvisor, { model: "openai/gpt-6-astra", variant: "low" });

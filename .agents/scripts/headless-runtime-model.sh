@@ -333,11 +333,12 @@ _choose_worker_round_robin_model() {
 # Non-blocking -- any failure falls through silently.
 _choose_model_tier_downgrade() {
 	local current_model="$1"
+	local requested_tier="${2:-}"
 	local downgrade_task_type="${AIDEVOPS_TIER_DOWNGRADE_TASK_TYPE:-}"
 	[[ -n "$downgrade_task_type" ]] || return 0
 
 	local current_tier=""
-	current_tier=$(model_tier_for_model "$current_model" 2>/dev/null || true)
+	current_tier=$(model_tier_for_model "$current_model" "$requested_tier" 2>/dev/null || true)
 	[[ -n "$current_tier" ]] || return 0
 
 	local pattern_helper="${SCRIPT_DIR}/archived/pattern-tracker-helper.sh"
@@ -394,7 +395,7 @@ _choose_model_auto() {
 		# Pattern-driven tier downgrade (t5148): non-blocking initial-dispatch
 		# optimization. Retry and capability-escalation callers use exact-tier mode.
 		local downgraded=""
-		downgraded=$(_choose_model_tier_downgrade "$current_model")
+		downgraded=$(_choose_model_tier_downgrade "$current_model" "$tier_name")
 		[[ -z "$downgraded" ]] || current_model="$downgraded"
 		;;
 	exact-tier) ;;

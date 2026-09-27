@@ -171,7 +171,9 @@ _select_cmd_run_model() {
 	}
 	if [[ -z "${model_override:-$initial_model}" ]]; then
 		local selected_tier=""
-		selected_tier=$(model_tier_for_model "$selected_model" 2>/dev/null || true)
+		# A model can serve several tiers (e.g. Sol: standard low, thinking
+		# medium). Keep the requested tier when it lists the selected model.
+		selected_tier=$(model_tier_for_model "$selected_model" "$tier_override" 2>/dev/null || true)
 		if [[ -n "$selected_tier" && "$selected_tier" != "$tier_override" ]]; then
 			print_info "[routing] adaptive tier selection ${tier_override}->${selected_tier} model=$selected_model"
 			tier_override="$selected_tier"
