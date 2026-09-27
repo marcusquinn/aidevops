@@ -24,7 +24,7 @@ import {
   createMcpActivationTool,
   enforceManagedMcpArtifactPath,
 } from "../mcp-activation-tool.mjs";
-import { createMcpSessionRuntime, getOnDemandMcpAgents, registerMcpServers } from "../mcp-registry.mjs";
+import { createMcpSessionRuntime, getMcpRegistry, getOnDemandMcpAgents, registerMcpServers } from "../mcp-registry.mjs";
 
 const TEST_DIR = fileURLToPath(new URL(".", import.meta.url));
 const AGENTS_DIR = join(TEST_DIR, "../../..");
@@ -81,13 +81,32 @@ test("plain-text Playwriter mention in another agent never changes MCP lifecycle
   }
 });
 
+test("every MCP has a bounded activation profile or an explicit opt-out", () => {
+  for (const mcp of getMcpRegistry()) {
+    if (mcp.activationAgent) {
+      assert.ok(Array.isArray(mcp.agentSource) && mcp.agentSource.length > 0, mcp.name);
+      assert.ok(existsSync(join(AGENTS_DIR, ...mcp.agentSource)), mcp.name);
+      assert.ok(mcp.toolPattern, mcp.name);
+    } else {
+      assert.equal(mcp.activation, "none", mcp.name);
+      assert.ok(mcp.activationReason?.trim(), mcp.name);
+    }
+  }
+});
+
 test("registers only the explicit MCP activation profiles", () => {
   const config = { mcp: {}, tools: {} };
   registerMcpServers(config);
   const count = registerOnDemandMcpAgents(config, AGENTS_DIR);
 
-  assert.equal(count, process.platform === "darwin" ? 11 : 10);
-  assert.deepEqual(Object.keys(config.agent), ["playwriter", "posthog", "playwright", "quickfile", "mobile-mcp", "blender", ...(process.platform === "darwin" ? ["affinity"] : []), "freecad", "ableton", "davinci-resolve", "backblaze-b2"]);
+  assert.equal(count, process.platform === "darwin" ? 17 : 14);
+  assert.deepEqual(Object.keys(config.agent), ["playwriter", ...(process.platform === "darwin" ? ["macos-automator", "ios-simulator"] : []), "sentry", "socket", "posthog", "cloudflare-api", "chrome-devtools", "playwright", "quickfile", "mobile-mcp", "blender", ...(process.platform === "darwin" ? ["affinity"] : []), "freecad", "ableton", "davinci-resolve", "backblaze-b2"]);
+  if (process.platform === "darwin") {
+    assert.equal(config.agent["macos-automator"].tools["macos-automator_*"], true);
+    assert.equal(config.agent["macos-automator"].tools.aidevops_mcp, true);
+    assert.equal(config.mcp["macos-automator"].enabled, false);
+    assert.equal(config.tools["macos-automator_*"], false);
+  }
   assert.equal(config.tools.aidevops_mcp, false);
   assert.equal(config.agent.playwriter.mode, "subagent");
   assert.equal(config.agent.playwriter.tools.aidevops_mcp, true);

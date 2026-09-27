@@ -3,6 +3,8 @@ name: build-plus
 description: Unified coding agent - planning, implementation, and DevOps with semantic search
 mode: subagent
 subagents:
+  # Catalogued domain documents below are progressive-disclosure references, not
+  # necessarily Task agent types. Use Task only for runtime-listed agents.
   # Core workflows
   - git-workflow
   - branch
@@ -32,6 +34,9 @@ subagents:
   # Browser/testing
   - playwright
   - playwriter
+  - chrome-devtools
+  - macos-automator
+  - ios-simulator
   - stagehand
   - pagespeed
   # Git platforms
@@ -55,6 +60,7 @@ subagents:
   - posthog
   - sentry
   - socket
+  - cloudflare-api
   # Runtime operations
   - node-server-admin
   # Architecture review

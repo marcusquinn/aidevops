@@ -54,6 +54,7 @@ not depend on a user remembering to request learning or feedback capture.
 2. If it is clearly code work (`implement`, `fix`, `refactor`, `CI`), use Build+ or omit `--agent`.
 3. Resolve a narrow user-intent match through `reference/domain-index.md` before using a broad primary-agent trigger. Select knowledge without service probes for conceptual work; before provider-dependent execution, apply the Core rule readiness gate above. Execute only when every mandatory dimension is true and task authority permits it; otherwise use the reported fallback.
 4. If uncertain, default to Build+; it can load narrower docs on demand.
+   For native macOS dialog or desktop UI testing, Build+ delegates a bounded task to the macOS-only `macos-automator` agent, which connects its scoped MCP on demand. On other platforms, do not claim the capability exists locally.
 5. **Bundle-aware routing (t1364.6):** project bundles can define `agent_routing` overrides. Check with `bundle-helper.sh get agent_routing <repo-path>`. An explicit `--agent` flag wins.
 
 The selected agent changes the system prompt and domain knowledge loaded for the worker.
