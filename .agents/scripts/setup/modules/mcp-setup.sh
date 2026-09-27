@@ -364,33 +364,36 @@ _setup_browser_tools_dev_browser() {
 }
 
 _setup_browser_tools_playwright() {
-	# Install Playwright MCP browsers (chromium, firefox, webkit).
-	print_info "Setting up Playwright MCP..."
+	# Install the framework-owned Playwright package and browsers (chromium,
+	# firefox, webkit) into ~/.aidevops/runtimes/playwright (GH#32589).
+	# playwright-runtime.mjs owns the version pin and resolves this prefix
+	# without npx, whose --no-install cache reuse goes stale on every release.
+	print_info "Setting up Playwright..."
 
-	# Check if Playwright browsers are installed (--no-install prevents auto-download)
-	if npx --no-install playwright --version &>/dev/null 2>&1; then
-		print_success "Playwright already installed"
+	local runtime_script="${INSTALL_DIR:-.}/.agents/scripts/playwright-runtime.mjs"
+	[[ -f "$runtime_script" ]] || runtime_script="$HOME/.aidevops/agents/scripts/playwright-runtime.mjs"
+	local install_command="node ~/.aidevops/agents/scripts/playwright-runtime.mjs install chromium firefox webkit"
+
+	if node "$runtime_script" runtime-check >/dev/null 2>&1; then
+		print_success "Framework Playwright runtime already installed"
 		print_info "Playwright MCP runs via: npx -y @playwright/mcp@0.0.79 --headless --isolated"
 		return 0
 	fi
 
 	local install_playwright
-	setup_prompt install_playwright "Install Playwright MCP with browsers (chromium, firefox, webkit)? [Y/n]: " "Y"
+	setup_prompt install_playwright "Install Playwright with browsers (chromium, firefox, webkit)? [Y/n]: " "Y"
 
 	if [[ "$install_playwright" =~ ^[Yy]?$ ]]; then
-		print_info "Installing Playwright browsers..."
-		# Use -y to auto-confirm npx install, suppress the "install without dependencies" warning
-		# Use PIPESTATUS to check npx exit code, not grep's exit code
-		npx -y playwright@latest install 2>&1 | grep -v "WARNING: It looks like you are running"
-		if [[ ${PIPESTATUS[0]} -eq 0 ]]; then
-			print_success "Playwright browsers installed"
+		print_info "Installing framework Playwright runtime and browsers..."
+		if node "$runtime_script" install chromium firefox webkit; then
+			print_success "Playwright runtime and browsers installed"
 		else
-			print_warning "Playwright browser installation failed"
-			print_info "Run manually: npx -y playwright@latest install"
+			print_warning "Playwright installation failed"
+			print_info "Run manually: ${install_command}"
 		fi
 	else
 		print_info "Skipped Playwright installation"
-		print_info "Install later with: npx playwright install"
+		print_info "Install later with: ${install_command}"
 	fi
 
 	print_info "Playwright MCP runs via: npx -y @playwright/mcp@0.0.79 --headless --isolated"

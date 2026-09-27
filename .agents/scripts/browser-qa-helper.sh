@@ -394,8 +394,11 @@ Examples:
 
 Prerequisites:
   - Node.js and npm installed
-  - Importable Playwright Node package (CLI presence alone is insufficient)
-  - Brave installed (preferred), or Playwright Chromium: npx playwright install chromium
+  - Importable Playwright Node package (CLI presence alone is insufficient).
+    Setup installs it in ~/.aidevops/runtimes/playwright. If missing, run:
+    node ~/.aidevops/agents/scripts/playwright-runtime.mjs install
+    or set AIDEVOPS_PLAYWRIGHT_MODULE. Do not install ad-hoc duplicate copies.
+  - Brave installed (preferred), or the Chromium installed by the command above
 
 Integration:
   Used by milestone-validation.md (Phase 3: Browser QA) during mission orchestration.

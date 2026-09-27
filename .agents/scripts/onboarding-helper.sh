@@ -346,7 +346,7 @@ check_browser() {
 
 	local playwright_runtime="${SCRIPT_DIR}/playwright-runtime.mjs"
 	local playwright_state="optional"
-	local playwright_detail="Node package not importable"
+	local playwright_detail="Node package not importable; run: node ~/.aidevops/agents/scripts/playwright-runtime.mjs install"
 	if is_installed "node"; then
 		if node "$playwright_runtime" check &>/dev/null; then
 			playwright_state="ready"

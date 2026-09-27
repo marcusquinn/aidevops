@@ -275,6 +275,8 @@ SH
 		PATH="${node_path%/*}:/usr/bin:/bin" node --input-type=module -e "import('playwright')"
 	) >/dev/null 2>&1 || direct_exit=$?
 
+	# Keep the framework-owned runtime prefix out of this npx-fallback case.
+	export AIDEVOPS_PLAYWRIGHT_RUNTIME_DIR="${tmp_dir}/no-owned-runtime"
 	local resolved=""
 	resolved=$(
 		AIDEVOPS_PLAYWRIGHT_MODULE="" \
@@ -316,6 +318,59 @@ SH
 		print_result "runtime resolves npx cache and prefers Brave" 1 "direct_exit=${direct_exit}, resolved=${resolved:-none}, brave_status=${brave_status:-none}, browser_status=${missing_browser_status:-none}"
 	fi
 
+	unset AIDEVOPS_PLAYWRIGHT_RUNTIME_DIR
+	rm -rf "$tmp_dir"
+	return 0
+}
+
+# GH#32589: real `npx --no-install` fails whenever the registry's latest
+# version is not cached, so the setup-owned prefix must resolve without npx.
+test_runtime_resolves_owned_prefix_without_npx() {
+	local tmp_dir
+	tmp_dir=$(mktemp -d)
+	local fake_bin="${tmp_dir}/bin"
+	local runtime_dir="${tmp_dir}/runtimes/playwright"
+	local owned_pkg="${runtime_dir}/node_modules/playwright"
+	local browser_path="${tmp_dir}/chromium"
+	mkdir -p "$fake_bin" "$owned_pkg" "${tmp_dir}/isolated"
+	touch "$browser_path"
+	chmod +x "$browser_path"
+
+	cat >"${owned_pkg}/package.json" <<'JSON'
+{"name":"playwright","version":"9.9.9","type":"module","exports":"./index.mjs"}
+JSON
+	cat >"${owned_pkg}/index.mjs" <<'JS'
+export const chromium = { executablePath: () => process.env.FAKE_PLAYWRIGHT_BROWSER };
+JS
+	printf '#!/usr/bin/env bash\nexit 1\n' >"${fake_bin}/npx"
+	chmod +x "${fake_bin}/npx"
+
+	local node_path
+	node_path=$(command -v node)
+	local runtime_env=(
+		AIDEVOPS_PLAYWRIGHT_MODULE=""
+		AIDEVOPS_PLAYWRIGHT_BROWSER="chromium"
+		AIDEVOPS_PLAYWRIGHT_RUNTIME_DIR="$runtime_dir"
+		FAKE_PLAYWRIGHT_BROWSER="$browser_path"
+		PATH="${fake_bin}:${node_path%/*}:/usr/bin:/bin"
+	)
+	local resolved="" check_ok=0 stale_ok=0
+	resolved=$(cd "${tmp_dir}/isolated" && env "${runtime_env[@]}" node "$PLAYWRIGHT_RUNTIME" check) || true
+	if (cd "${tmp_dir}/isolated" && env "${runtime_env[@]}" AIDEVOPS_PLAYWRIGHT_VERSION="9.9.9" \
+		node "$PLAYWRIGHT_RUNTIME" runtime-check >/dev/null); then
+		check_ok=1
+	fi
+	if ! (cd "${tmp_dir}/isolated" && env "${runtime_env[@]}" AIDEVOPS_PLAYWRIGHT_VERSION="9.9.10" \
+		node "$PLAYWRIGHT_RUNTIME" runtime-check >/dev/null); then
+		stale_ok=1
+	fi
+
+	if [[ "$resolved" == *"${owned_pkg}/index.mjs" && "$check_ok" -eq 1 && "$stale_ok" -eq 1 ]]; then
+		print_result "runtime resolves setup-owned prefix without npx" 0
+	else
+		print_result "runtime resolves setup-owned prefix without npx" 1 "resolved=${resolved:-none}, runtime_check=${check_ok}, stale_detected=${stale_ok}"
+	fi
+
 	rm -rf "$tmp_dir"
 	return 0
 }
@@ -348,6 +403,7 @@ main() {
 	test_format_stability_markdown_stable
 	test_format_stability_markdown_unstable
 	test_runtime_resolves_npx_cached_package
+	test_runtime_resolves_owned_prefix_without_npx
 
 	echo "============================================="
 	echo "  Results: ${TESTS_PASSED}/${TESTS_RUN} passed, ${TESTS_FAILED} failed"
