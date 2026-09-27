@@ -96,7 +96,7 @@ done
 
 **Proceed autonomously** (document in commit): inferable from context/conventions, only affects own task scope, multiple valid approaches (pick simplest), style ambiguity (follow conventions), equivalent patterns (match precedent), minor adjacent issues (note in PR body).
 
-**Exit BLOCKED**: contradicts codebase, breaks public API, task done/obsolete, missing deps/credentials, architectural decisions affecting other tasks, create-vs-modify with data loss risk, multiple interpretations with very different outcomes. Example: `BLOCKED: 'update the auth endpoint' but 3 exist (JWT, OAuth, API key). Need clarification.`
+**Exit BLOCKED**: contradicts codebase, breaks public API, task done/obsolete, missing credentials/external services or dependencies whose lockfile install fails with evidence (a worktree without `node_modules` or project CLIs is not a blocker; install them first), architectural decisions affecting other tasks, create-vs-modify with data loss risk, multiple interpretations with very different outcomes. Example: `BLOCKED: 'update the auth endpoint' but 3 exist (JWT, OAuth, API key). Need clarification.`
 
 **Supervisor**: Proceed → normal PR review. BLOCKED → clarifies/retries or creates prerequisite. Unclear error → diagnostic worker (`-diag-N`).
 
