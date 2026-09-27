@@ -322,9 +322,14 @@ _validate_v2_body() {
 	_has_file_target "$files_to_modify" || errors="${errors}files-to-modify:target;"
 	_has_implementation_step "$implementation_steps" || errors="${errors}implementation-steps:substantive;"
 
-	for field in "Callers/readers" "Writers/mutation paths" "Tests/fixtures" "Schemas/config" "Generated/deployed mirrors" "Migrations/backfills" "Cleanup/rollback paths"; do
+	for field in "Callers/readers" "Writers/mutation paths" "Schemas/config" "Generated/deployed mirrors" "Migrations/backfills" "Cleanup/rollback paths"; do
 		_write_surface_field_is_valid "$write_surface" "$field" || errors="${errors}write-surface:${field};"
 	done
+	# Accept the current template label and the legacy label in existing briefs.
+	if ! _write_surface_field_is_valid "$write_surface" "Existing verification/tests" &&
+		! _write_surface_field_is_valid "$write_surface" "Tests/fixtures"; then
+		errors="${errors}write-surface:Existing verification/tests;"
+	fi
 
 	for field in "Concurrency/atomicity" "Migration/rollback" "Mixed-version/backward compatibility" "Idempotency/retry" "Partial failure/recovery"; do
 		_field_is_substantive "$hazards" "$field" || errors="${errors}hazard:${field};"
