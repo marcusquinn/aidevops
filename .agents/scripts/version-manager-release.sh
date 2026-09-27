@@ -749,8 +749,10 @@ _verify_protected_release_integration() {
 		parent_line=$(git -C "$sync_repo_root" rev-list --parents -n 1 "$candidate" 2>/dev/null) || return 1
 		IFS=' ' read -r commit_sha parent_one parent_two extra_parent <<<"$parent_line"
 		[[ "$commit_sha" == "$candidate" && -n "$parent_one" && -n "$parent_two" && -z "$extra_parent" ]] || continue
-		if [[ "$parent_one" == "$active_sha" && "$parent_two" == "$release_sha" ]] ||
-			[[ "$parent_one" == "$release_sha" && "$parent_two" == "$active_sha" ]]; then
+		if { git -C "$sync_repo_root" merge-base --is-ancestor "$active_sha" "$parent_one" 2>/dev/null &&
+			git -C "$sync_repo_root" merge-base --is-ancestor "$release_sha" "$parent_two" 2>/dev/null; } ||
+			{ git -C "$sync_repo_root" merge-base --is-ancestor "$release_sha" "$parent_one" 2>/dev/null &&
+				git -C "$sync_repo_root" merge-base --is-ancestor "$active_sha" "$parent_two" 2>/dev/null; }; then
 			_AIDEVOPS_RELEASE_PROTECTED_INTEGRATION_SHA="$candidate"
 			return 0
 		fi

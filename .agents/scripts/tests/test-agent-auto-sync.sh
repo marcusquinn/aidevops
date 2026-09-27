@@ -352,7 +352,7 @@ prepare_protected_integration_release() {
 	PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git -C "$repo_path" -c tag.gpgSign=false tag v9.9.10 "$release_sha"
 
 	PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git -C "$repo_path" checkout -q active-branch
-	if [[ "$mode" == "wrong-parent" ]]; then
+	if [[ "$mode" == "advanced-main" ]]; then
 		printf 'intervening content\n' >"$repo_path/intervening.txt"
 		PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git -C "$repo_path" add intervening.txt
 		PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git -C "$repo_path" commit -qm "advance active before integration"
@@ -927,26 +927,48 @@ test_release_sync_defers_verified_protected_integration() {
 	return 0
 }
 
+test_release_sync_defers_advanced_main_integration() {
+	local repo_path=""
+	local evidence=""
+	local active_sha=""
+	local integration_sha=""
+	local output=""
+	local actual_rc=0
+	repo_path=$(create_fake_repo "release-advanced-main-integration" "https://github.com/marcusquinn/aidevops.git")
+	evidence=$(prepare_protected_integration_release "$repo_path" advanced-main) || return 1
+	active_sha="${evidence%%|*}"
+	integration_sha="${evidence#*|*|}"
+	integration_sha="${integration_sha%%|*}"
+	: >"$TEST_DIR/sync.log"
+	output=$(RELEASE_SYNC_ENTRYPOINT=gates AIDEVOPS_RELEASE_SQUASH_RECOVERY=1 AIDEVOPS_RELEASE_LANE_SOURCE_PR=90 \
+		AIDEVOPS_RELEASE_LANE_TAG=v9.9.10 invoke_release_sync "$repo_path" 2>&1) || actual_rc=$?
+	if [[ "$actual_rc" -eq 76 && ! -s "$TEST_DIR/sync.log" ]] &&
+		[[ "$output" == *"protected integration ${integration_sha:0:12} is verified"* ]] &&
+		[[ "$output" == *"active runtime ${active_sha:0:12} does not include the release tag"* ]]; then
+		print_result "release sync accepts publication merge after main advances past active source" 0
+	else
+		print_result "release sync accepts publication merge after main advances past active source" 1 "$output"
+	fi
+	return 0
+}
+
 test_release_sync_rejects_unverified_protected_integration() {
-	local mode=""
 	local repo_path=""
 	local output=""
-	for mode in wrong-parent unreachable; do
-		repo_path=$(create_fake_repo "release-protected-integration-$mode" "https://github.com/marcusquinn/aidevops.git")
-		prepare_protected_integration_release "$repo_path" "$mode" >/dev/null || {
-			print_result "release sync rejects $mode protected integration" 1 "Could not prepare topology"
-			continue
-		}
-		: >"$TEST_DIR/sync.log"
-		if output=$(AIDEVOPS_RELEASE_SQUASH_RECOVERY=1 AIDEVOPS_RELEASE_LANE_SOURCE_PR=90 \
-			AIDEVOPS_RELEASE_LANE_TAG=v9.9.10 invoke_release_sync "$repo_path" 2>&1); then
-			print_result "release sync rejects $mode protected integration" 1 "Unverified topology was accepted"
-		elif [[ "$output" == *"neither ancestry-related nor a lane-authorized squash-integrated source"* && ! -s "$TEST_DIR/sync.log" ]]; then
-			print_result "release sync rejects $mode protected integration" 0
-		else
-			print_result "release sync rejects $mode protected integration" 1 "$output"
-		fi
-	done
+	repo_path=$(create_fake_repo "release-protected-integration-unreachable" "https://github.com/marcusquinn/aidevops.git")
+	prepare_protected_integration_release "$repo_path" unreachable >/dev/null || {
+		print_result "release sync rejects unreachable protected integration" 1 "Could not prepare topology"
+		return 0
+	}
+	: >"$TEST_DIR/sync.log"
+	if output=$(AIDEVOPS_RELEASE_SQUASH_RECOVERY=1 AIDEVOPS_RELEASE_LANE_SOURCE_PR=90 \
+		AIDEVOPS_RELEASE_LANE_TAG=v9.9.10 invoke_release_sync "$repo_path" 2>&1); then
+		print_result "release sync rejects unreachable protected integration" 1 "Unverified topology was accepted"
+	elif [[ "$output" == *"neither ancestry-related nor a lane-authorized squash-integrated source"* && ! -s "$TEST_DIR/sync.log" ]]; then
+		print_result "release sync rejects unreachable protected integration" 0
+	else
+		print_result "release sync rejects unreachable protected integration" 1 "$output"
+	fi
 	return 0
 }
 
@@ -1143,6 +1165,7 @@ main() {
 	test_release_sync_accepts_changed_tree_non_tip_descendant
 	test_release_sync_rejects_unrelated_active_commit
 	test_release_sync_defers_verified_protected_integration
+	test_release_sync_defers_advanced_main_integration
 	test_release_sync_rejects_unverified_protected_integration
 	test_release_sync_recovers_verified_squash_integration
 	test_release_sync_rejects_incomplete_squash_evidence
