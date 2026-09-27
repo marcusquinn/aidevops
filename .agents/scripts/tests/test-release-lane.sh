@@ -88,6 +88,41 @@ run_setup_guard_test() {
 	return $?
 }
 
+run_setup_guard_contained_release_test() (
+	local origin="$TEST_ROOT/lane-origin.git"
+	local source="$TEST_ROOT/lane-source"
+	local git_env=(env GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.invalid GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.invalid)
+	release_lane_read() {
+		_AIDEVOPS_RELEASE_LANE_JSON='{"schema_version":1,"repository":"test/repo","active":true,"source_pr":101,"phase":"exact-tag-deployment","tag":"v1.2.3","operation_token":"token-old"}'
+		return 0
+	}
+	git init -q --bare "$origin" || return 1
+	git init -q "$source" || return 1
+	git -C "$source" remote add origin "$origin" || return 1
+	"${git_env[@]}" git -C "$source" commit -q --allow-empty -m base || return 1
+	local base=""
+	base=$(git -C "$source" rev-parse HEAD) || return 1
+	"${git_env[@]}" git -C "$source" commit -q --allow-empty -m release || return 1
+	git -C "$source" tag v1.2.3 || return 1
+	git -C "$source" push -q origin HEAD:refs/heads/main refs/tags/v1.2.3 || return 1
+	"${git_env[@]}" git -C "$source" commit -q --allow-empty -m later || return 1
+	# Source contains the published tag: generic setup continues.
+	release_lane_setup_guard test/repo "$source" >/dev/null 2>&1 || return 1
+	# A local tag that points elsewhere must not bypass: origin's tag wins.
+	git -C "$source" tag -f v1.2.3 "$base" >/dev/null 2>&1 || return 1
+	release_lane_setup_guard test/repo "$source" >/dev/null 2>&1 || return 1
+	# Source behind the tag stays blocked.
+	git -C "$source" reset -q --hard "$base" || return 1
+	if release_lane_setup_guard test/repo "$source" >/dev/null 2>&1; then
+		return 1
+	fi
+	# No source root keeps the historical fail-closed behaviour.
+	if release_lane_setup_guard test/repo >/dev/null 2>&1; then
+		return 1
+	fi
+	return 0
+)
+
 run_setup_guard_pulse_recovery_test() (
 	local state='{"schema_version":1,"repository":"test/repo","active":true,"source_pr":101,"phase":"exact-tag-deployment","tag":"v1.2.3","operation_token":"token-old","stale_runtime_recovery":{"type":"stale-runtime/v1","attempt_head":"1111111111111111111111111111111111111111","failed_phase":"exact-tag-deployment","deferred_at":"2026-09-21T00:20:08Z"}}'
 	local malformed=""
@@ -845,6 +880,7 @@ if run_competing_source_test; then assert_result 'competing source receives acti
 if run_same_source_adoption_test; then assert_result 'same source adopts durable lane without another bump' true; else assert_result 'same source adopts durable lane without another bump' false; fi
 if run_terminal_lane_reacquire_test; then assert_result 'terminal lane can be atomically reserved by a later source' true; else assert_result 'terminal lane can be atomically reserved by a later source' false; fi
 if run_setup_guard_test; then assert_result 'exact-tag deployment blocks generic setup and permits matching owner' true; else assert_result 'exact-tag deployment blocks generic setup and permits matching owner' false; fi
+if run_setup_guard_contained_release_test; then assert_result 'generic setup continues only when its source contains the published lane tag' true; else assert_result 'generic setup continues only when its source contains the published lane tag' false; fi
 if run_setup_guard_pulse_recovery_test; then assert_result 'exact-tag deployment permits only validated dedicated Pulse stale-runtime recovery' true; else assert_result 'exact-tag deployment permits only validated dedicated Pulse stale-runtime recovery' false; fi
 if run_setup_guard_cache_fallback_test; then assert_result 'setup uses only valid cached lane state and keeps exact-tag fallback fail-closed' true; else assert_result 'setup uses only valid cached lane state and keeps exact-tag fallback fail-closed' false; fi
 if run_merge_guard_test; then assert_result 'publisher lane never blocks ordinary merges' true; else assert_result 'publisher lane never blocks ordinary merges' false; fi
