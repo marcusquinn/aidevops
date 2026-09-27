@@ -280,7 +280,7 @@ _gh_ci_validate_dispatch_scope() {
 		# GH#32531: the pulse will hold this issue as status:blocked before any
 		# worker starts; tell the author while the brief is still in hand.
 		# shellcheck disable=SC2016 # literal Markdown backticks, not expansions
-		print_warning 'auto-dispatch issue has no canonical ### Files Scope; the pulse will hold it as status:blocked (missing_files_scope). Add "- EDIT: `path`" / "- NEW: `path`" lines, then verify with pre-dispatch-validator-helper.sh scope-check. See workflows/brief.md.'
+		print_warning 'auto-dispatch issue has no canonical ### Files Scope; the pulse will hold it as status:blocked (missing_files_scope). Add one "- `repo/relative/path`" line per file (no prefix, nothing after it), then verify with pre-dispatch-validator-helper.sh scope-check. See workflows/brief.md.'
 		return 0
 	fi
 	# shellcheck source=./pre-dispatch-validator-lib-brief-scope.sh

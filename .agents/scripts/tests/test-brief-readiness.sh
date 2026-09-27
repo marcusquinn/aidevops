@@ -952,6 +952,29 @@ else
 	pass "scope: signed content cannot gain permissions"
 fi
 
+# GH#32689: template line ranges and explicit backticked continuations
+# normalize; "and/or" stays ambiguous; a signature footer ends the section.
+# shellcheck disable=SC2016 # Literal declaration syntax under test.
+scope_ranged=$("$HELPER" scope-normalize $'### Files to Modify\n- `EDIT: src/a.sh:45-60` — change\n- `EDIT: src/b.sh:7`: and `src/c.md`\n- `EDIT: src/d.sh` and `docs/e.md`: document both' 2>/dev/null) || scope_ranged=""
+# shellcheck disable=SC2016
+if [[ "$scope_ranged" == *$'## Files Scope\n\n- `src/a.sh`\n- `src/b.sh`\n- `src/d.sh`\n- `docs/e.md`' ]]; then
+	pass "scope: line ranges dropped and explicit continuations kept"
+else
+	fail "scope: line ranges and continuations" "got: $scope_ranged"
+fi
+# shellcheck disable=SC2016
+if "$HELPER" scope-normalize $'### Files to Modify\n- EDIT: `src/a.sh` and/or `src/b.sh`' >/dev/null 2>&1; then
+	fail "scope: and/or continuation stays ambiguous"
+else
+	pass "scope: and/or continuation stays ambiguous"
+fi
+# shellcheck disable=SC2016
+if "$HELPER" scope-check $'## What\nx\n\n### Files Scope\n\n- `src/a.sh`\n\n---\n[aidevops.sh](https://aidevops.sh) signature' >/dev/null 2>&1; then
+	pass "scope: signature footer ends the Files Scope section"
+else
+	fail "scope: signature footer ends the Files Scope section"
+fi
+
 # Exercise the unchanged pre-push consumer against an actual prepared local
 # brief in a disposable linked worktree. No live root or GitHub writes.
 test_scope_local_roundtrip() (
