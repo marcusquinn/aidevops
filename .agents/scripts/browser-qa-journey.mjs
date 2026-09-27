@@ -126,7 +126,7 @@ async function runViewport(session, viewportName) {
   } finally {
     await context.close().catch(() => undefined);
   }
-  return Object.assign(result, diagnostics, guard.counts);
+  return Object.assign(result, diagnostics, guard.counts, { webSocketsBlocked: guard.webSocketsBlocked });
 }
 
 async function launchBrowser() {

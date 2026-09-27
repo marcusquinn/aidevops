@@ -15,6 +15,9 @@ const MAX_TEXT_LENGTH = 500;
 const ACTION_TIMEOUT = { fallback: 15000, max: 60000, label: 'timeoutMs' };
 const RUN_TIMEOUT = { fallback: 180000, max: 600000, label: 'runTimeoutMs' };
 const AUTH_METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']);
+// Sign-in must be a body-carrying write so it takes the no-redirect sign-in path
+// and credentials never travel in a URL query string.
+const LOGIN_METHODS = new Set(['POST', 'PUT', 'PATCH']);
 const ENV_NAME_PATTERN = /^[A-Z_][A-Z0-9_]*$/;
 
 // Declarative step types and their required fields. No step executes config-supplied code.
@@ -69,15 +72,15 @@ function parseOrigin(value) {
   return url.origin;
 }
 
-function validateEndpoint(endpoint, label) {
+function validateEndpoint(endpoint, label, methods = AUTH_METHODS) {
   if (endpoint === null || typeof endpoint !== 'object') fail(`${label} endpoint is required`);
   requireField(endpoint.path, 'exactPath', `${label}.path`);
-  if (!AUTH_METHODS.has(endpoint.method)) fail(`${label}.method must be one of ${[...AUTH_METHODS].join(', ')}`);
+  if (!methods.has(endpoint.method)) fail(`${label}.method must be one of ${[...methods].join(', ')}`);
   return { path: endpoint.path, method: endpoint.method };
 }
 
 function validateLogin(login) {
-  const endpoint = validateEndpoint(login, 'login');
+  const endpoint = validateEndpoint(login, 'login', LOGIN_METHODS);
   const pagePath = login.pagePath ?? login.path;
   requireField(pagePath, 'exactPath', 'login.pagePath');
   requireField(login.successPath, 'exactPath', 'login.successPath');

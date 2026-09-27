@@ -91,6 +91,7 @@ run_validation_tests() {
 	printf '{"version":1,"environments":{"test":{"origin":"https://example.invalid",%s}},"steps":[{"type":"navigate","path":"//evil.invalid/x"}]}' "$env_ok" >"${dir}/protocol-relative.json"
 	printf '{"version":1,"environments":{"test":{"origin":"https://example.invalid",%s}},"steps":[{"type":"evaluate","script":"1"}]}' "$env_ok" >"${dir}/step-type.json"
 	printf '{"version":1,"environments":{"test":{"origin":"https://example.invalid",%s}},"steps":[{"type":"constructor"}]}' "$env_ok" >"${dir}/prototype-step.json"
+	printf '{"version":1,"environments":{"test":{"origin":"https://example.invalid",%s}},"steps":[{"type":"visible","selector":"body"}]}' "${env_ok/\"method\":\"POST\",\"successPath\"/\"method\":\"GET\",\"successPath\"}" >"${dir}/get-login.json"
 
 	assert_rejected "unknown schema version fails before authentication" "${dir}/version.json" "version must be 1"
 	assert_rejected "origin path fails closed" "${dir}/origin.json" "exact http(s) origin"
@@ -98,6 +99,7 @@ run_validation_tests() {
 	QA_USER=u QA_PASSWORD=p assert_rejected "protocol-relative navigate path is rejected" "${dir}/protocol-relative.json" "step 1 path is missing or invalid"
 	QA_USER=u QA_PASSWORD=p assert_rejected "executable/unknown step type is rejected" "${dir}/step-type.json" "unsupported journey step type"
 	QA_USER=u QA_PASSWORD=p assert_rejected "prototype-named step type is rejected" "${dir}/prototype-step.json" "unsupported journey step type"
+	QA_USER=u QA_PASSWORD=p assert_rejected "GET sign-in (credentials in URL) is rejected" "${dir}/get-login.json" "login.method must be one of POST, PUT, PATCH"
 	return 0
 }
 
@@ -119,8 +121,14 @@ const home = (port) => `<!doctype html><title>${title}</title><h1 id="title">${t
 <ul><li class="clip">A</li><li class="clip">B</li></ul>
 <button id="open">Open</button><div id="modal" hidden role="dialog"><h2 id="modal-title">${title} clip</h2><video id="player" src="/media/${title}.mp4"></video></div>
 <button id="save">Save</button><p id="save-result"></p><a id="leave" href="http://localhost:${port}/home">Leave</a>
+<button id="ws">Live</button><p id="ws-result"></p>
 <script>
 document.getElementById('open').onclick = () => { document.getElementById('modal').hidden = false; };
+document.getElementById('ws').onclick = () => {
+  const socket = new WebSocket('ws://' + location.host + '/live');
+  socket.onopen = () => socket.send('write');
+  socket.onclose = () => { document.getElementById('ws-result').textContent = 'ws closed'; };
+};
 document.getElementById('save').onclick = () => fetch('/save', { method: 'POST' })
   .then((r) => 'status ' + r.status, () => 'blocked')
   .then((s) => { document.getElementById('save-result').textContent = 'save: ' + s; });
@@ -159,6 +167,7 @@ const server = http.createServer((req, res) => {
   const handler = routes[`${req.method} ${new URL(req.url, 'http://x').pathname}`];
   return handler ? handler(req, res, port) : send(res, 404, 'not found');
 });
+server.on('upgrade', (req, socket) => { stats.writes += 1; socket.destroy(); });
 server.listen(0, '127.0.0.1', () => { process.stdout.write(`${server.address().port}\n`); });
 FIXTURE
 	return 0
@@ -259,13 +268,13 @@ test_alpha_journey_passes() {
 test_beta_journey_isolated() {
 	local beta_env detail status=0
 	beta_env="\"beta\":{$(environment_json "$BETA_PORT" QA_BETA ',"viewports":["mobile","desktop"]')}"
-	write_journey beta.json "$beta_env" '[{"type":"visible","selector":"#title"},{"type":"text","selector":"h1","includes":"beta"},{"type":"click","selector":"#open"},{"type":"visible","selector":"[role=dialog]"}]'
+	write_journey beta.json "$beta_env" '[{"type":"visible","selector":"#title"},{"type":"text","selector":"h1","includes":"beta"},{"type":"click","selector":"#open"},{"type":"visible","selector":"[role=dialog]"},{"name":"live socket","type":"click","selector":"#ws"},{"type":"text","selector":"#ws-result","includes":"ws closed"}]'
 	run_journey beta.json beta
-	[[ "$RUN_EXIT" -eq 0 && "$RUN_OUTPUT" == *'"status":"passed"'* ]] || status=1
-	check "beta: second environment and journey definition pass" "$status" "exit=${RUN_EXIT} ${RUN_OUTPUT}"
+	[[ "$RUN_EXIT" -eq 0 && "$RUN_OUTPUT" == *'"status":"passed"'* && "$RUN_OUTPUT" == *'"webSocketsBlocked":1'* ]] || status=1
+	check "beta: second environment and journey definition pass; sockets reported" "$status" "exit=${RUN_EXIT} ${RUN_OUTPUT}"
 	status=0
-	detail=$(stats_match "$BETA_PORT" '"logins":2' '"logouts":2' '"foreignCookies":0' '"active":0') || status=1
-	check "beta: no cookies leaked between runs or environments" "$status" "$detail"
+	detail=$(stats_match "$BETA_PORT" '"logins":2' '"logouts":2' '"foreignCookies":0' '"writes":0' '"active":0') || status=1
+	check "beta: no cookies leaked between runs; WebSocket never reached the app" "$status" "$detail"
 	return 0
 }
 

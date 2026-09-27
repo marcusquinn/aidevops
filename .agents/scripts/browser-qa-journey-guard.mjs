@@ -111,7 +111,17 @@ function watchNavigations(guard, page) {
   });
 }
 
+// WebSockets bypass context.route. Never connect them to the server so no frame can
+// write to the app; the page sees a socket that closes. Reported, not a failure,
+// because read-only pages commonly open sockets for live updates.
+function blockWebSocket(guard, webSocket) {
+  guard.webSocketsBlocked += 1;
+  webSocket.close({ code: 1008, reason: 'blocked by read-only journey' }).catch(() => undefined);
+}
+
 export async function installGuard(context, guard) {
+  guard.webSocketsBlocked = 0;
   context.on('page', (page) => watchNavigations(guard, page));
+  await context.routeWebSocket(/.*/, (webSocket) => blockWebSocket(guard, webSocket));
   await context.route('**/*', (route) => handleRoute(guard, route));
 }
