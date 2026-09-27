@@ -1116,7 +1116,9 @@ Investigation only — the fix is operational (reduce runner load, upgrade plan,
 1. Confirm saturation persists (run a few minutes after this issue was filed):
 
 \`\`\`bash
-gh api "repos/${repo_slug}/actions/runs?status=queued&per_page=1" --jq '.total_count'
+	# Add \`&created=>=<UTC now-AIDEVOPS_ACTIONS_QUEUE_SATURATION_WINDOW_HOURS>\`
+	# (default 6h; omit it only when the window is explicitly 0).
+	gh api "repos/${repo_slug}/actions/runs?status=queued&created=>=<UTC-window-start>&per_page=1" --jq '.total_count'
 gh api "repos/${repo_slug}/actions/runs?status=in_progress&per_page=1" --jq '.total_count'
 \`\`\`
 
@@ -1149,7 +1151,7 @@ gh run list --repo ${repo_slug} --status queued --limit 100 \\
 
 ### Verification
 
-- \`gh api "repos/${repo_slug}/actions/runs?status=queued&per_page=1" --jq '.total_count'\` returns ≤ \`${AIDEVOPS_ACTIONS_QUEUE_SATURATION_QUEUED_MIN:-50}\`.
+- The windowed \`gh api "repos/${repo_slug}/actions/runs?status=queued&created=>=<UTC-window-start>&per_page=1" --jq '.total_count'\` query returns ≤ \`${AIDEVOPS_ACTIONS_QUEUE_SATURATION_QUEUED_MIN:-50}\`.
 - The next pulse cycle does NOT re-fire this meta-issue (saturation cleared).
 - Affected PRs above either auto-merge or have their remaining issues triaged individually.
 
