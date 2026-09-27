@@ -1566,6 +1566,7 @@ _setup_run_noninteractive_migrations() {
 	_time_step "cleanup_worktree_entries_in_repos_json" cleanup_worktree_entries_in_repos_json
 	_time_step "_cleanup_legacy_model_config" _cleanup_legacy_model_config
 	_time_step "cleanup_legacy_dashboard_launchagent" cleanup_legacy_dashboard_launchagent
+	_time_step "cleanup_legacy_agents_md_templates" cleanup_legacy_agents_md_templates
 	return 0
 }
 
@@ -1740,7 +1741,7 @@ _setup_run_interactive() {
 	confirm_step "Set secure permissions on config files" && set_permissions
 	confirm_step "Setup shell aliases" && setup_aliases
 	confirm_step "Setup terminal title integration" && setup_terminal_title
-	confirm_step "Deploy AI templates to home directories" && deploy_ai_templates
+	confirm_step "Deploy agent workspace template" && deploy_ai_templates
 	confirm_step "Migrate old backups to new structure" && migrate_old_backups
 	confirm_step "Migrate loop state from .claude/.agent/ to .agents/loop-state/" && migrate_loop_state_directories
 	confirm_step "Migrate .agent -> .agents in user projects" && migrate_agent_to_agents_folder
@@ -1759,6 +1760,7 @@ _setup_run_interactive() {
 	cleanup_worktree_entries_in_repos_json
 	_cleanup_legacy_model_config
 	cleanup_legacy_dashboard_launchagent
+	cleanup_legacy_agents_md_templates
 	confirm_step "Validate and repair OpenCode config schema" && validate_opencode_config
 	confirm_step "Extract OpenCode prompts" && extract_opencode_prompts
 	confirm_step "Check OpenCode prompt drift" && check_opencode_prompt_drift
