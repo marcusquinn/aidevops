@@ -153,9 +153,8 @@ _routine_update_state() {
 # cooldown without moving the successful calendar boundary marker.
 #
 # Consecutive failures back off exponentially (retry, 2x, 4x ... capped).
-# Script routines run synchronously ahead of Pulse dispatch, so a
-# persistently failing daily routine retried every 15 minutes re-ran its
-# full cost on nearly every cycle and delayed worker dispatch each time.
+# Running routines are detached before Pulse dispatch, so this gate prevents
+# the next cycle from launching a second runner while the first is active.
 #######################################
 _routine_retry_blocked() {
 	local routine_id="$1"
@@ -267,9 +266,84 @@ _routine_dispatch_agent() {
 }
 
 #######################################
-# Execute a single routine. Script routines finish synchronously; agent
-# routines detach a wrapper that waits for the headless process before logging
-# a terminal result.
+# Run one validated script routine outside Pulse's process group, then record
+# its terminal lifecycle state. The per-routine mkdir lock protects the small
+# window between recording `running` and a detached child starting.
+#######################################
+_routine_run_detached_script() {
+	local routine_id="$1"
+	local script_path="$2"
+	local repo_path="$3"
+	shift 3
+	local started_epoch="$1"
+	shift
+	local lock_dir="${ROUTINE_STATE_FILE}.${routine_id}.runner"
+	local status="$_ROUTINE_STATUS_SUCCESS"
+	local exit_code=0
+	local deferred_until=0
+
+	if ! mkdir "$lock_dir" 2>/dev/null; then
+		echo "[pulse-wrapper] routine ${routine_id}: detached runner already active" >>"$LOGFILE"
+		return 0
+	fi
+	trap 'rmdir "$lock_dir" 2>/dev/null || true' EXIT
+	if [[ "$#" -gt 0 ]]; then
+		(cd "$repo_path" && "$script_path" "$@") >>"$LOGFILE" 2>&1 || exit_code=$?
+	else
+		(cd "$repo_path" && "$script_path") >>"$LOGFILE" 2>&1 || exit_code=$?
+	fi
+	if [[ "$exit_code" -eq "$_ROUTINE_TEMPFAIL_EXIT" ]]; then
+		status="$_ROUTINE_STATUS_DEFERRED"
+		deferred_until=$(_routine_deferred_until "$routine_id")
+		echo "[pulse-wrapper] routine ${routine_id}: deferred by GitHub API cooldown until epoch ${deferred_until}" >>"$LOGFILE"
+	elif [[ "$exit_code" -ne 0 ]]; then
+		status="$_ROUTINE_STATUS_FAILURE"
+		echo "[pulse-wrapper] routine ${routine_id}: script exited with code ${exit_code}" >>"$LOGFILE"
+	else
+		echo "[pulse-wrapper] routine ${routine_id}: script completed successfully" >>"$LOGFILE"
+	fi
+	_routine_finalize_terminal "$routine_id" "$status" "$started_epoch" "" "$deferred_until"
+	return 0
+}
+
+_routine_dispatch_script() {
+	local routine_id="$1"
+	local script_path="$2"
+	local repo_path="$3"
+	shift 3
+	local started_epoch="$1"
+	shift
+	local module_path="${BASH_SOURCE[0]}"
+	local runner_log="${LOGFILE}.routine-${routine_id}.log"
+
+	_routine_update_state "$routine_id" "running"
+	_routine_record_lifecycle "$routine_id" "running" 0
+	export LOGFILE ROUTINE_STATE_FILE ROUTINE_LOG_HELPER
+	if command -v setsid >/dev/null 2>&1; then
+		# shellcheck disable=SC2016 # The child shell must expand its own positional arguments.
+		setsid nohup bash -c 'source "$1" && shift && _routine_run_detached_script "$@"' \
+			_ "$module_path" "$routine_id" "$script_path" "$repo_path" "$started_epoch" "$@" \
+			</dev/null >>"$runner_log" 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
+	elif command -v perl >/dev/null 2>&1; then
+		perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV or exit 127' nohup bash -c \
+			'source "$1" && shift && _routine_run_detached_script "$@"' \
+			_ "$module_path" "$routine_id" "$script_path" "$repo_path" "$started_epoch" "$@" \
+			</dev/null >>"$runner_log" 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
+	else
+		# shellcheck disable=SC2016 # The child shell must expand its own positional arguments.
+		nohup bash -c 'source "$1" && shift && _routine_run_detached_script "$@"' \
+			_ "$module_path" "$routine_id" "$script_path" "$repo_path" "$started_epoch" "$@" \
+			</dev/null >>"$runner_log" 2>&1 &
+	fi
+	local runner_pid=$!
+	disown "$runner_pid" 2>/dev/null || true
+	echo "[pulse-wrapper] routine ${routine_id}: detached script runner pid ${runner_pid}" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
+# Execute a single routine. Script and agent routines detach wrappers that
+# record their terminal result without delaying Pulse's first dispatch pass.
 #######################################
 _routine_execute() {
 	local routine_id="$1"
@@ -302,23 +376,12 @@ _routine_execute() {
 		# variable. Keep the zero-argument path separate instead of expanding it.
 		if [[ "${#run_parts[@]}" -gt 1 ]]; then
 			local script_args=("${run_parts[@]:1}")
-			echo "[pulse-wrapper] routine ${routine_id}: executing script ${script_path} ${script_args[*]}" >>"$LOGFILE"
-			(cd "$repo_path" && "$script_path" "${script_args[@]}") >>"$LOGFILE" 2>&1 || exit_code=$?
+			echo "[pulse-wrapper] routine ${routine_id}: dispatching script ${script_path} ${script_args[*]}" >>"$LOGFILE"
+			_routine_dispatch_script "$routine_id" "$script_path" "$repo_path" "$started_epoch" "${script_args[@]}"
 		else
-			echo "[pulse-wrapper] routine ${routine_id}: executing script ${script_path}" >>"$LOGFILE"
-			(cd "$repo_path" && "$script_path") >>"$LOGFILE" 2>&1 || exit_code=$?
+			echo "[pulse-wrapper] routine ${routine_id}: dispatching script ${script_path}" >>"$LOGFILE"
+			_routine_dispatch_script "$routine_id" "$script_path" "$repo_path" "$started_epoch"
 		fi
-		if [[ "$exit_code" -eq "$_ROUTINE_TEMPFAIL_EXIT" ]]; then
-			status="$_ROUTINE_STATUS_DEFERRED"
-			deferred_until=$(_routine_deferred_until "$routine_id")
-			echo "[pulse-wrapper] routine ${routine_id}: deferred by GitHub API cooldown until epoch ${deferred_until}" >>"$LOGFILE"
-		elif [[ "$exit_code" -ne 0 ]]; then
-			status="$_ROUTINE_STATUS_FAILURE"
-			echo "[pulse-wrapper] routine ${routine_id}: script exited with code ${exit_code}" >>"$LOGFILE"
-		else
-			echo "[pulse-wrapper] routine ${routine_id}: script completed successfully" >>"$LOGFILE"
-		fi
-		_routine_finalize_terminal "$routine_id" "$status" "$started_epoch" "" "$deferred_until"
 		return 0
 	fi
 

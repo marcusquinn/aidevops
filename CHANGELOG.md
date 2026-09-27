@@ -10,6 +10,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.37.9] - 2026-09-27
+
+### Added
+
+- auto worker cap (50% of cores) with one-time fleet reset of capacity overrides
+- bold attention colour for needs-* labels and grouped label palette
+
+### Changed
+
+- Maintenance: mark t18491 complete (pr:#32653 completed:2026-09-27) (#32660)
+
+### Fixed
+
+- bound prospective TODO guard object transfer
+- deny dated ChatGPT OAuth snapshots (#32655)
+- identify failing session worktree root (GH#32612) (#32653)
+- attribute OpenCode signatures to active runtime (GH#32625) (#32648)
+- restore dispatch throughput — bounded scratch cleanup, cheap candidate rejection, routine failure backoff
+- guard merged-PR reconcile stages 1-2 against recurrent file-size debt (t18495)
+
 ## [3.37.8] - 2026-09-27
 
 ### Added
