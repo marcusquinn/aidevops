@@ -107,6 +107,19 @@ _approval_snapshot_v2_comments_json() {
 				"|CLAIM_RELEASED reason=[A-Za-z0-9._:-]+ runner=[A-Za-z0-9._:-]+ ts=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z(?: [a-z_]+=[A-Za-z0-9._:@/+:-]+)*" +
 				")\\n<!-- ops:end -->" + aidevops_worker_footer + "$"
 			);
+		# #aidevops:trust-boundary — terminal-blocker releases are excluded only
+		# when the complete writer-produced recovery envelope is present. This
+		# leaves copied markers, altered recovery guidance, and extra prose bound.
+		def canonical_terminal_blocker_release:
+			test(
+				"^<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->\\n" +
+				"CLAIM_RELEASED reason=blocked runner=[A-Za-z0-9._:-]+ ts=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z(?: [a-z_]+=[A-Za-z0-9._:@/+:-]+)*\\n" +
+				"<!-- aidevops:terminal-blocker-observation revision=[0-9a-f]{16,64} blocker=[0-9a-f]{16,64} -->\\n\\n" +
+				"Terminal blocker: reason=(?:missing_files_scope owner=brief-author|files_scope_excluded owner=brief-author|target_code_blocker owner=target-maintainer|permission_required owner=permission-maintainer|unknown owner=worker-triage) task=[0-9]+ attempt=[0-9a-f]{16,64}\\.\\n" +
+				"Projected state: status:blocked\\.\\n" +
+				"Next action: (?:Add a canonical ### Files Scope \\(or legacy ## Files Scope\\) section listing the permitted paths in the issue body\\.|The AI brief owner must review the protected integration dossier, check concurrent ownership and correct the permitted paths before resuming the existing checkpoint\\. Preserve explicit hard boundaries and security guarantees; do not retry an unchanged brief\\.|Review the protected blocker dossier and correct the target code or task dependencies before retrying\\.|Resolve the evidenced permission prerequisite through the human-owned approval flow, then post the explicit retry directive\\. Retry is scheduling consent only: the original permission guard must independently verify the exact context\\. Do not regenerate requests or bypass the guard\\.|Interpret the protected dossier and record a known blocker class or repair the brief\\. No global dispatch hold is imposed\\.)\\n" +
+				"Raw evidence remains in protected worker telemetry\\.\\n<!-- ops:end -->" + aidevops_worker_footer + "$"
+			);
 		def canonical_self_hosting_override:
 			test(
 				"^<!-- self-hosting-tier-override -->\\n<!-- provenance:start -->\\n## Self-Hosting Tier Override\\n\\nPre-dispatch self-hosting detector replaced lower workload-tier labels with `tier:thinking` on this issue\\.\\n\\n\\*\\*Matched pattern:\\*\\* `[A-Za-z0-9._-]+` in issue body\\n\\n\\*\\*Rationale:\\*\\* Issues modifying the dispatch path have a self-referential property — workers dispatched to fix them run through the code being fixed\\. Applying the terminal workload tier upfront avoids wasted lower-tier attempts while runtime routing retains control of the exact model and reasoning level\\.\\n\\n\\*\\*Bypass:\\*\\* `AIDEVOPS_SKIP_SELF_HOSTING_DETECTOR=1`\\n\\n_Automated by `pre-dispatch-validator-helper\\.sh` \\(t2819\\)\\. This comment is posted once via the `<!-- self-hosting-tier-override -->` marker; re-runs are no-ops\\._\\n<!-- provenance:end -->" + aidevops_worker_footer + "$"
@@ -161,7 +174,7 @@ _approval_snapshot_v2_comments_json() {
 			((.author_association // $empty) | trusted_association)
 			and ($cutoff != $empty)
 			and ((.created_at // $empty) > $cutoff)
-			and ((.body // $empty) | canonical_dispatch_audit or canonical_self_hosting_override or canonical_no_work_escalation_skip)
+			and ((.body // $empty) | canonical_dispatch_audit or canonical_terminal_blocker_release or canonical_self_hosting_override or canonical_no_work_escalation_skip)
 		) | not)
 		| comment_identity
 		] | sort_by(.source, .id) end
