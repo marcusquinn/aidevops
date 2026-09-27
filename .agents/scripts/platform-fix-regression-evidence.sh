@@ -26,12 +26,36 @@ _platform_fix_triggered() {
 	return $?
 }
 
+_platform_trigger_text() {
+	local title="$1"
+	local body_file="$2"
+	local line=""
+	local skip_section=0
+	printf '%s\n' "$title"
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		[[ "$line" == *'<!-- aidevops:sig -->'* ]] && break
+		if printf '%s\n' "$line" | grep -qiE '^[[:space:]]*#{1,6}[[:space:]]+(Runtime[[:space:]]+Testing|Testing|Test[[:space:]]+Plan|Verification|Regression[[:space:]]+Evidence)[[:space:]]*:?[[:space:]]*$'; then
+			skip_section=1
+			continue
+		fi
+		if printf '%s\n' "$line" | grep -qE '^[[:space:]]*#{1,6}[[:space:]]+'; then
+			skip_section=0
+		fi
+		[[ "$skip_section" -eq 1 ]] && continue
+		case "$line" in
+		*'<!--'*'-->'*) continue ;;
+		esac
+		printf '%s\n' "$line"
+	done <"$body_file"
+	return 0
+}
+
 _platform_changed_test() {
 	local files_file="$1"
 	local path=""
 	while IFS= read -r path; do
 		case "$path" in
-		.agents/scripts/tests/*)
+		.agents/scripts/tests/* | .agents/tests/* | .agents/plugins/*/tests/* | tests/* | packages/*/tests/*)
 			printf '%s\n' "$path"
 			return 0
 			;;
@@ -92,7 +116,7 @@ main() {
 	local title=""
 	local body_file=""
 	local files_file=""
-	local body=""
+	local trigger_text=""
 	local changed_test=""
 	local arg=""
 	local arg_count="${#args[@]}"
@@ -150,8 +174,8 @@ main() {
 		return 1
 	}
 
-	body=$(<"$body_file")
-	if ! _platform_fix_triggered "${title}"$'\n'"${body}"; then
+	trigger_text=$(_platform_trigger_text "$title" "$body_file")
+	if ! _platform_fix_triggered "$trigger_text"; then
 		printf 'platform regression evidence: not required (no platform-fix terms)\n'
 		return 0
 	fi
@@ -168,7 +192,7 @@ main() {
 		return 0
 	fi
 
-	printf '%s\n' '::error::Platform-fix PRs must change a test under .agents/scripts/tests/ or include a non-empty "## Regression Evidence" rationale explaining why automated regression is not possible.' >&2
+	printf '%s\n' '::error::Platform-fix PRs must change a repository test (for example under .agents/scripts/tests/ or .agents/plugins/*/tests/) or include a non-empty "## Regression Evidence" rationale explaining why automated regression is not possible.' >&2
 	printf '%s\n' 'See .agents/reference/bash-compat.md and todo/plans/shell-portability-hardening.md.' >&2
 	return 1
 }
