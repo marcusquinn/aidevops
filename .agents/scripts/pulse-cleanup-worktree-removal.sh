@@ -95,6 +95,9 @@ _pc_thirdparty_pr() {
 		if [[ "$result" != null ]]; then break; fi
 	done
 	[[ -n "$slug" && -n "$result" ]] || return 1
+	if [[ "$result" != null ]]; then
+		result=$(jq -cn --argjson pr "$result" --arg repo "$slug" '$pr + {repo:$repo}') || return 1
+	fi
 	jq -cn --arg day "$day" --arg branch "$branch" --argjson pr "$result" '{day:$day,branch:$branch,verified:true,pr:$pr}' >"$cache" || return 1
 	printf '%s\n' "$result"
 	return 0
@@ -189,6 +192,8 @@ _pc_thirdparty_candidate() {
 	head=$(git -C "$candidate" rev-parse HEAD 2>/dev/null) || return 1
 	# Resolve the actual upstream repository for archive metadata. Missing or
 	# non-GitHub identities are uncertain and cannot authorize removal.
+	slug=$(jq -r '.repo // empty' <<<"$pr") || return 1
+	if [[ -z "$slug" ]]; then
 	for url in "$(git -C "$candidate" remote get-url upstream 2>/dev/null)" "$(git -C "$candidate" remote get-url origin 2>/dev/null)"; do
 		case "$url" in
 		https://github.com/*) slug="${url#https://github.com/}"; break ;;
@@ -196,6 +201,7 @@ _pc_thirdparty_candidate() {
 		esac
 	done
 	slug="${slug%.git}"
+	fi
 	[[ "$slug" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 1
 	if [[ "$unique" == yes ]]; then
 		if [[ "$state" == CLOSED ]]; then
@@ -222,14 +228,21 @@ _pc_cleanup_central_unregistered() {
 	local candidates=() entry="" index=0 start=0 length=0 decision="" cache="" bytes=0 eligible=0 candidate_bytes=0 removed=0 archived=0 kept_open_pr=0 apply="${WORKTREE_UNREGISTERED_APPLY:-0}" budget=""
 	base=$(aidevops_worktree_base_dir_configured) || { printf '0\n'; return 0; }
 	[[ -d "$base" && ! -L "$base" ]] || { printf '0\n'; return 0; }
+	[[ -f "$repos_json" ]] && jq -e '.initialized_repos | type == "array"' "$repos_json" >/dev/null 2>&1 || { printf '0\n'; return 0; }
 	[[ "$apply" == 0 || "$apply" == 1 ]] || { printf '0\n'; return 0; }
 	budget=$(gh api rate_limit --jq '.resources.graphql.remaining' 2>/dev/null) || budget=""
-	[[ "$budget" =~ ^[0-9]+$ && "$budget" -ge 100 ]] || { printf '0\n'; return 0; }
+	[[ "$budget" =~ ^[0-9]+$ && "$budget" -ge 100 ]] || {
+		printf '[pulse-cleanup] thirdparty skip=api-budget\n' >>"${LOGFILE:-/dev/null}"
+		printf '0\n'; return 0;
+	}
 	for entry in "$base"/*; do
 		[[ -d "$entry" && ! -L "$entry" ]] && candidates+=("$entry")
 	done
 	length=${#candidates[@]}
-	[[ "$length" -gt 0 ]] || { printf '0\n'; return 0; }
+	[[ "$length" -gt 0 ]] || {
+		printf '[pulse-cleanup] thirdparty eligible=0 candidate_bytes=0 removed=0 archived=0 kept_open_pr=0 scanned=0\n' >>"${LOGFILE:-/dev/null}"
+		printf '0\n'; return 0;
+	}
 	cursor="${AIDEVOPS_LOG_DIR:-${HOME}/.aidevops/logs}/central-unregistered-next"
 	[[ ! -f "$cursor" ]] || IFS= read -r last <"$cursor" || true
 	for ((index=0; index<length; index++)); do

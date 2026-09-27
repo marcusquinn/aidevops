@@ -220,6 +220,11 @@ test_thirdparty_apply_guards() {
 	worktree_removal_guard() { return 0; }
 	decision=$(_pc_thirdparty_candidate "$wt" "$repo" "${TEST_ROOT}/cache" 1) || rc=1
 	[[ "$decision" == archived-removed && ! -d "$wt" ]] || rc=1
+	git -C "$repo" worktree add -q -b old-feature "$wt" main || rc=1
+	_pc_thirdparty_pr() { printf 'null\n'; return 0; }
+	_pc_unregistered_activity_epoch() { printf '100000\n'; return 0; }
+	decision=$(_pc_thirdparty_candidate "$wt" "$repo" "${TEST_ROOT}/cache" 1) || rc=1
+	[[ "$decision" == archived-removed && ! -d "$wt" ]] || rc=1
 	printf 'gitdir: %s/.git/worktrees/missing-canonical\n' "${TEST_ROOT}/Git/deleted" >"$orphan/.git"
 	printf 'recovery\n' >"$orphan/evidence.txt"
 	decision=$(_pc_thirdparty_candidate "$orphan" "" "${TEST_ROOT}/cache" 0) || rc=1
