@@ -20,6 +20,15 @@ issue_sync_prepare_ci_context() {
 		printf '%s\n' '::error::Issue Sync cannot establish the current GitHub Actions repository context.' >&2
 		return 1
 	fi
+	# privacy-guard-helper.sh assigns its home default when sourced, so callers
+	# that load the GitHub wrappers first would pin an absent runner path. A
+	# missing inventory file is no context; replace it with the scoped inventory.
+	if [[ -n "${PRIVACY_REPOS_CONFIG:-}" && ! -f "$PRIVACY_REPOS_CONFIG" ]]; then
+		PRIVACY_REPOS_CONFIG=""
+	fi
+	if [[ -n "${AIDEVOPS_REPOS_JSON:-}" && ! -f "$AIDEVOPS_REPOS_JSON" ]]; then
+		AIDEVOPS_REPOS_JSON=""
+	fi
 	if [[ -n "${PRIVACY_REPOS_CONFIG:-}" && -n "${AIDEVOPS_REPOS_JSON:-}" ]]; then
 		return 0
 	fi
