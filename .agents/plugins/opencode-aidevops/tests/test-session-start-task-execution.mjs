@@ -68,4 +68,35 @@ const runtimeUpgradeInstruction = buildSessionStartGreetingInstruction("/agents"
 assert.match(runtimeUpgradeInstruction, /We're running aidevops v3\.32\.122\./);
 assert.doesNotMatch(runtimeUpgradeInstruction, /1\.17\.20/);
 
+// OpenCode V2 knows its own runtime version; a fresh V1 cache must not leak in.
+const v2RuntimeInstruction = buildSessionStartGreetingInstruction("/agents", readVersion, {
+  now: () => 10_000,
+  refreshTtlMs: 1_000,
+  initializedAtMs: 9_000,
+  readGreetingCache: () => freshCache,
+  runtimeName: "OpenCode",
+  runtimeVersion: "2.0.3",
+});
+assert.match(v2RuntimeInstruction, /We're running aidevops v3\.32\.122 in OpenCode v2\.0\.3\./);
+assert.doesNotMatch(v2RuntimeInstruction, /1\.18\.1/);
+
+// Each runtime profile reads its own greeting cache.
+let requestedCachePath = "";
+buildSessionStartGreetingInstruction("/agents", readVersion, {
+  env: { AIDEVOPS_OPENCODE_PROFILE: "v2" },
+  readGreetingCache: (path) => {
+    requestedCachePath = path;
+    return null;
+  },
+});
+assert.match(requestedCachePath, /session-greeting-opencode-v2\.txt$/);
+buildSessionStartGreetingInstruction("/agents", readVersion, {
+  env: {},
+  readGreetingCache: (path) => {
+    requestedCachePath = path;
+    return null;
+  },
+});
+assert.match(requestedCachePath, /session-greeting-opencode\.txt$/);
+
 console.log("session-start task execution instruction tests passed");
