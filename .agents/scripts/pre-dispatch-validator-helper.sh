@@ -39,15 +39,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)" || exit 1
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/shared-constants.sh"
 
-_pdv_gh_read() {
-	local rc=0
-	if declare -F _gh_with_timeout >/dev/null 2>&1; then
-		_gh_with_timeout read "$@" || rc=$?
-	else
-		"$@" || rc=$?
-	fi
-	return "$rc"
-}
+# shellcheck source=./pre-dispatch-validator-lib-core.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
+source "${SCRIPT_DIR}/pre-dispatch-validator-lib-core.sh"
+# shellcheck source=./pre-dispatch-validator-lib-brief-scope.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
+source "${SCRIPT_DIR}/pre-dispatch-validator-lib-brief-scope.sh"
 
 : "${REPOS_JSON:=${HOME}/.config/aidevops/repos.json}"
 
@@ -60,27 +57,6 @@ if [[ -f "${SCRIPT_DIR}/pulse-repo-meta.sh" ]]; then
 	# shellcheck source=./pulse-repo-meta.sh
 	source "${SCRIPT_DIR}/pulse-repo-meta.sh"
 fi
-
-# ---------------------------------------------------------------------------
-# Logging
-# ---------------------------------------------------------------------------
-_log() {
-	local level="$1"
-	shift
-	printf '[pre-dispatch-validator] %s: %s\n' "$level" "$*" >&2
-	return 0
-}
-
-_log_error() {
-	_log "ERROR" "$@"
-	return 0
-}
-
-_github_clone_url() {
-	local slug="$1"
-	printf 'https://github.com/%s.git' "$slug"
-	return 0
-}
 
 # ---------------------------------------------------------------------------
 # Registry — maps generator name → validator function name
@@ -147,55 +123,6 @@ _register_validators() {
 	_VALIDATOR_REGISTRY["upstream-watch"]="_validator_upstream_watch"
 	_VALIDATOR_REGISTRY["runtime-audit"]="_validator_runtime_audit"
 	return 0
-}
-
-# Generated implementation work with a cited repository file must declare a
-# non-empty canonical Files Scope before a worker/model attempt. The worker
-# scope guard remains authoritative at edit time; this check prevents a known
-# malformed brief from consuming a dispatch only to fail there. Explicit
-# planning-only briefs remain outside this implementation-only preflight.
-_brief_requires_files_scope() {
-	local issue_body="$1"
-
-	if printf '%s' "$issue_body" | grep -Eqi 'planning-only|pure planning|brief-only|no code changes'; then
-		return 1
-	fi
-
-	printf '%s' "$issue_body" | grep -qE \
-		'<!-- aidevops:generator=[a-z0-9_-]+[^>]* cited_file=[^ >]+|<!-- aidevops:dependabot-pr-intake[[:space:]]'
-	return $?
-}
-
-_brief_files_scope_has_path() {
-	local issue_body="$1"
-	local scope_section=""
-
-	scope_section=$(printf '%s' "$issue_body" |
-		awk '
-			/^## Files Scope[[:space:]]*$/ { found=1; level=2; next }
-			/^### Files Scope[[:space:]]*$/ { found=1; level=3; next }
-			found && level == 2 && /^## / { found=0 }
-			found && level == 3 && (/^# / || /^## / || /^### /) { found=0 }
-			found { print }
-		')
-
-	[[ -n "$scope_section" ]] || return 1
-	# shellcheck disable=SC2016 # literal regular expression anchors
-	printf '%s\n' "$scope_section" |
-		grep -qE '^[[:space:]]*-[[:space:]]*(EDIT|NEW):[[:space:]]*`?[^`[:space:]][^`]*`?[[:space:]]*$'
-}
-
-_validate_implementation_brief_scope() {
-	local issue_number="$1"
-	local issue_body="$2"
-
-	_brief_requires_files_scope "$issue_body" || return 0
-	if _brief_files_scope_has_path "$issue_body"; then
-		return 0
-	fi
-
-	_log "ERROR" "brief-defect: #${issue_number} generated implementation brief lacks a non-empty canonical Files Scope; add '### Files Scope' with '- EDIT: \`repo-relative/path\`' before dispatch"
-	return 40
 }
 
 _load_validated_issue_context() {
