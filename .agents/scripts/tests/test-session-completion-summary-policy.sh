@@ -26,6 +26,15 @@ require_literal() {
 main() {
 	require_literal 'state aim and solved outcome' \
 		"$AGENTS_DOC" 'always-loaded completion guidance omits the session aim and solved outcome' || return 1
+	# shellcheck disable=SC2016 # literal Markdown backticks
+	require_literal 'ends with the `What next` block (needed from user, left to capture, close readiness)' \
+		"$AGENTS_DOC" 'always-loaded guidance omits the end-of-turn What next block' || return 1
+	for field in '**Needed from you:**' '**Left to capture:**' '**Close:**' '### Capture Check'; do
+		require_literal "$field" "$SESSION_DOC" \
+			"session What next block omits: $field" || return 1
+	done
+	require_literal "never write \`None\` while a question" \
+		"$SESSION_DOC" 'What next block may hide an open user question' || return 1
 	require_literal 'reconnects the delivered work to the session aim or problem' \
 		"$SESSION_DOC" 'session completion detail omits reader reorientation context' || return 1
 	require_literal 'routine-owned cleanup: one no-action line unless user action is required or work is at risk' \

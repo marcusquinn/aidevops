@@ -13,11 +13,55 @@ Full PTY access: run any CLI (`vim`, `psql`, `ssh`, `htop`, dev servers). Long-r
 
 - Run `/session-review` before ending.
 - Suggest a new session after PR merge, domain switch, or 3+ hours.
-- At completion, lead with one short outcome statement that reconnects the delivered work to the session aim or problem, then list concise, evidence-backed delivery bullets.
+- At completion, lead with one short outcome statement that reconnects the delivered work to the session aim or problem, then list concise, evidence-backed delivery bullets, and finish with the What Next block below.
 - Leave linked-worktree removal and other deferred cleanup to the guarded post-exit routines. Do not attempt that cleanup, and never turn it into a user task: a guarded-removal refusal or a command-policy block on deletion is not a reason to ask the user to clean up.
 - If cleanup is worth mentioning, use one closing line that explains what happens and makes clear nothing is needed, for example: `Cleanup: the worktree is removed automatically by a routine after this session closes; no action needed.` Omit lifecycle tokens, marker files, and retention details.
 - Present cleanup as a user action only for failures that require it or that put unpublished work at risk; then state the evidence and the exact action.
 - Full docs: `workflows/session-manager.md`.
+
+## What Next Block
+
+Users run many sessions and may not remember a session's purpose or read its
+issues. Every interactive turn that returns control ends with this block, after
+all other content, so the user can triage the session from the bottom of the
+screen alone. Headless workers skip it.
+
+```markdown
+**What next**
+- **Session:** <aim in plain words, ≤15> — <Active | Blocked | Done>
+- **Needed from you:** <None | the exact decision/action, where, and what it unblocks>
+- **Left to capture:** <None | learnings, follow-ups or deferred items not yet in an issue/TODO/doc>
+- **Close:** <Ready to close | Not yet: reason | Suggest `/new` for <next topic>>
+```
+
+Rules:
+
+- **Needed from you** is the only place user attention is requested. Repeat any
+  question asked earlier in the reply here; never write `None` while a question
+  is open. Background work owned by a named executor (pulse, worker, routine) is
+  not a user action; say which executor owns it on the Session line if relevant.
+- **Session** restates the original aim, not the last step, so a user returning
+  after hours can reorient. Keep the runtime title in step with `session-rename`
+  (stable purpose plus current phase).
+- **Left to capture** is filled from the capture check below, not from memory of
+  intent. Name items still owed; items already filed are cited in the body, not here.
+- **Ready to close** only when: no open question to the user; every PR is merged
+  or handed to a named live executor; deferred and follow-up work has an issue or
+  TODO number; evidenced lessons are routed per `reference/self-improvement.md`;
+  and the commitment scan (unfulfilled promises, unnotified parties, displaced
+  requests) is clean. Otherwise say `Not yet` with the concrete reason.
+- Short conversational replies may use one line with the same fields, for
+  example `What next: nothing needed from you; session active (aim: …).`
+
+### Capture Check (after a full loop or before `Ready to close`)
+
+1. Scan the conversation for user aims and directions not yet delivered or tracked.
+2. Confirm each discovered defect, follow-up, or deferred objective has an issue/TODO.
+3. Route reusable lessons: shared framework lessons to the narrowest doc or
+   `framework-issue-helper.sh log`; personal/install lessons to memory.
+4. Offer a reusable-capability TODO when the session invented or adapted tooling.
+5. If anything remains, either do it now (when authorized and safe) or list it
+   under **Left to capture**.
 
 ## Execution Ownership and Truthful Stops
 
