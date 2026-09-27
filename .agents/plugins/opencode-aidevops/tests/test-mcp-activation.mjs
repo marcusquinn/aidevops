@@ -86,8 +86,15 @@ test("registers only the explicit MCP activation profiles", () => {
   registerMcpServers(config);
   const count = registerOnDemandMcpAgents(config, AGENTS_DIR);
 
-  assert.equal(count, process.platform === "darwin" ? 12 : 11);
-  assert.deepEqual(Object.keys(config.agent), ["playwriter", "context7", "posthog", "playwright", "quickfile", "mobile-mcp", "blender", ...(process.platform === "darwin" ? ["affinity"] : []), "freecad", "ableton", "davinci-resolve", "backblaze-b2"]);
+  const onDemand = getOnDemandMcpAgents();
+  assert.equal(count, onDemand.length);
+  assert.deepEqual(Object.keys(config.agent), onDemand.map((mcp) => mcp.agentName));
+  assert.equal(new Set(onDemand.map((mcp) => mcp.agentName)).size, onDemand.length);
+  // Every registered MCP must be launchable on demand through a bounded agent.
+  assert.deepEqual(Object.keys(config.mcp).filter((name) => !onDemand.some((mcp) => mcp.name === name)), []);
+  for (const name of ["playwriter", "context7", "posthog", "playwright", "sentry", "shadcn", "cloudflare-mcp", "shopify", "docker-mcp"]) {
+    assert.ok(config.agent[name], `missing activation agent ${name}`);
+  }
   assert.equal(config.tools.aidevops_mcp, false);
   assert.equal(config.agent.playwriter.mode, "subagent");
   assert.equal(config.agent.playwriter.tools.aidevops_mcp, true);
