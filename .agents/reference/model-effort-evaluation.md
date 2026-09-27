@@ -3,6 +3,24 @@
 
 # Model effort and delegation evaluation
 
+## Compaction routing observation
+
+**2026-09-27: enabled a guarded simple-tier compaction route.** OpenCode 1.18.32
+accepts built-in agent configuration, so unpinned `agent.compaction` now resolves
+from the active `simple` routing profile only when its registered input limit is at
+least the managed 240K target. Explicit user pins and unknown/insufficient limits
+retain the parent model. This is a configuration safety decision, not outcome
+evidence.
+
+The pre-change 14-day local review cited by #32494 found compaction at about 3%
+of API-equivalent spend, $0.30–2.30 per request, and approximately zero cache
+hits. Measure one normal-use week after deployment with `llm_requests` rows whose
+mode is `compaction`: compare request count, input/output tokens, cache-hit rate,
+and API-equivalent cost against that baseline. For each compacted session, record
+whether the first post-compaction turn completes without re-reading summarised
+files or a user correction. Do not claim a cost or continuation-quality improvement
+until that dated comparison has matched rows and outcome evidence.
+
 ## Decision
 
 **2026-09-10: retain the current workload routes.** Keep Luna low for simple
