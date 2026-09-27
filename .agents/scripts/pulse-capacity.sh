@@ -40,6 +40,12 @@ get_max_workers_target() {
 	if [[ "$max_workers" -lt 1 ]]; then
 		max_workers=1
 	fi
+	# The file is only rewritten by the preflight_capacity stage. Clamp to the
+	# live ceiling so a lowered cap (config change, GH#32663 reset) applies to
+	# refill/drain dispatch before the next full preflight recomputes it.
+	if [[ "${MAX_WORKERS_CAP:-}" =~ ^[1-9][0-9]*$ ]] && ((max_workers > MAX_WORKERS_CAP)); then
+		max_workers="$MAX_WORKERS_CAP"
+	fi
 	echo "$max_workers"
 	return 0
 }
