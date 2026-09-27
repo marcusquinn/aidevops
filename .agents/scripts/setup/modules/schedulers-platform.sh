@@ -1093,9 +1093,13 @@ setup_mirror_sync() {
 		local plist="$HOME/Library/LaunchAgents/${label}.plist"
 		if [[ -f "$plist" ]] && ! grep -qF '<!-- aidevops:mirror-sync -->' "$plist"; then
 			# Do not take ownership of a live custom program, even with our label.
-			local existing_program
+			local existing_program existing_script
 			existing_program=$(plutil -extract ProgramArguments.0 raw -o - "$plist" 2>/dev/null) || existing_program=""
-			if [[ -n "$existing_program" && -e "$existing_program" ]]; then
+			existing_script=$(plutil -extract ProgramArguments.1 raw -o - "$plist" 2>/dev/null) || existing_script=""
+			# Unparseable or non-absolute arguments are ambiguous: fail closed.
+			if [[ "$existing_program" != /* ]] ||
+				{ [[ -e "$existing_program" ]] &&
+					{ [[ "$existing_script" != /* ]] || [[ -e "$existing_script" ]]; }; }; then
 				print_warning "Mirror sync label collision: existing program is live; leaving it unchanged"
 				return 0
 			fi

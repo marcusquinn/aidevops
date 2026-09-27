@@ -99,7 +99,11 @@ sync_one() (
 		merge --no-ff --no-edit "$upstream_tip" >/dev/null 2>&1; then
 		paths=$(git -C "$directory" diff --name-only --diff-filter=U | paste -sd ',' -)
 		git -C "$directory" merge --abort >/dev/null 2>&1 || true
-		report "$slug" CONFLICT "${paths:-merge failed}"
+		if [[ -n "$paths" ]]; then
+			report "$slug" CONFLICT "$paths"
+		else
+			report "$slug" FAIL 'merge failed without conflicting paths'
+		fi
 		return 1
 	fi
 	# A pre-existing dated branch must not be overwritten. The merge commit remains
@@ -126,7 +130,9 @@ elif [[ $# -ne 0 ]]; then
 	exit 2
 fi
 if [[ "$MODE" == status ]]; then
-	if [[ -f "$STATE_FILE" ]]; then jq -r 'to_entries[] | "\(.value.state) \(.key) \(.value.detail)"' "$STATE_FILE"; fi
+	if [[ -f "$STATE_FILE" ]]; then
+		jq -r --arg filter "$FILTER" 'to_entries[] | select($filter == "" or .key == $filter) | "\(.value.state) \(.key) \(.value.detail)"' "$STATE_FILE"
+	fi
 	exit 0
 fi
 [[ -f "$CONFIG_FILE" ]] || { printf 'FAIL config unavailable\n' >&2; exit 1; }
@@ -144,7 +150,7 @@ while IFS= read -r entry; do
 		[[ "$(jq -r 'has("mirror_upstream")' <<<"$entry")" == true ]] && printf 'INFO privacy-only mirror marker skipped\n'
 		continue
 	fi
-	[[ "$(jq -r '.mirror_sync // true' <<<"$entry")" == true ]] || continue
+	[[ "$(jq -r '.mirror_sync == false' <<<"$entry")" == false ]] || continue
 	if [[ ! "$slug" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ || ! "$upstream" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
 		report "$slug" FAIL 'invalid mirror or upstream slug'; fail=1; continue
 	fi
