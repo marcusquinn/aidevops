@@ -473,6 +473,49 @@ test("interactive routing selects an authenticated same-tier fallback", async ()
   assert.deepEqual(output.message.model, { providerID: "anthropic", modelID: "sonnet" });
 });
 
+test("opted-in general child uses its stable arm and records the parent decision", async () => {
+  const { subagentArm } = await import("../subagent-ab.mjs");
+  const arms = ["openai", "anthropic"].map((name) => ({ name, tiers: {
+    simple: { model: `${name}/simple` },
+    standard: { model: `${name}/standard`, variant: "high" },
+    thinking: { model: `${name}/thinking` },
+  } }));
+  const trial = { id: "interactive", seed: "stable", arms,
+    starts_at: "2020-01-01T00:00:00Z", ends_at: "2099-01-01T00:00:00Z" };
+  const client = {
+    provider: { list: async () => ({ data: { connected: ["openai", "anthropic"],
+      all: ["openai", "anthropic"].map((id) => ({ id, models: {
+        simple: { id: "simple" }, standard: { id: "standard" },
+      } })),
+    } }) },
+    session: { get: async ({ path }) => ({ data: path.id === "parent"
+      ? { model: { providerID: "openai", modelID: "parent" }, variant: "low" }
+      : { id: path.id, parentID: "parent", agent: "general" } }) },
+  };
+  const base = { tiers: {
+    simple: { models: ["openai/simple"], reasoning: {} },
+    standard: { models: ["openai/standard"], reasoning: {} },
+    thinking: { models: ["openai/thinking"], reasoning: {} },
+  } };
+  const decisions = [];
+  const hooks = createSubagentEffortHooks(client, {
+    modelRouting: base, subagentTrial: trial,
+    agentRoutingState: { tiers: new Map(), pinned: new Set() },
+    onRoutingDecision: async (_id, decision) => decisions.push(decision),
+  });
+  const sessionID = "child-ab";
+  const arm = subagentArm(trial, sessionID);
+  const message = { sessionID, agent: "general" };
+  await hooks.chatMessage({}, { message, parts: [{ type: "text", text: "implement" }] });
+  assert.deepEqual(message.model, { providerID: arm.name, modelID: "standard" });
+  await hooks.chatParams({ message, model: { id: "standard", providerID: arm.name },
+    provider: { id: arm.name } }, { options: {} });
+  assert.equal(decisions[0].ab_experiment, trial.id);
+  assert.equal(decisions[0].ab_arm, arm.name);
+  assert.equal(decisions[0].resolvedVariant, "high");
+  assert.equal(subagentArm(trial, sessionID), arm);
+});
+
 test("an explicit thinking marker changes the actual child request model", async () => {
   const client = {
     provider: {

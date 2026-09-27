@@ -42,6 +42,29 @@ failure reasons by tier. Telemetry is recorded automatically by:
 
 ### Opt-in issue-level model A/B observation
 
+Interactive OpenCode children use a separate **off-by-default** opt-in. Set
+`AIDEVOPS_SUBAGENT_AB_CONFIG` to a user-owned private JSON path in the
+interactive OpenCode process (not Pulse). Reuse the provider-family JSON shape
+below with `"enrollment":{"mode":"new-auto-dispatch-issues"}` as the
+validation marker; interactive assignment does **not** enroll issues. Give it
+a distinct experiment ID, seed, repository, two all-tier arms, and a bounded
+`starts_at`/`ends_at` interval (at most 168 hours). Each child session is
+assigned independently by a stable hash of ID, seed, and session ID. Disabled,
+expired, headless, pinned, domain, creative, browser and specialist-advisor
+routes keep their existing behavior. Connected same-tier shipped models remain
+fallbacks; only same-model parent/child effort is clamped. After collecting
+observations, run:
+
+```bash
+AIDEVOPS_SUBAGENT_AB_CONFIG=/path/to/private/interactive-ab.json \
+  node ~/.aidevops/agents/scripts/model-ab-helper.mjs report-subagents
+```
+
+This reports distinct routed child sessions per arm, tokens/cost from observed
+requests, and only explicit parent acceptance receipts linked by
+`opencode-child:<sessionID>`. Missing receipts remain unknown, not accepted.
+No trial starts merely by running the report.
+
 `model-ab-helper.mjs` supports a bounded initial-route comparison without
 dispatching two workers for one issue. It is **off by default**. Configure a
 private JSON file and pass its absolute path as `AIDEVOPS_MODEL_AB_CONFIG` to

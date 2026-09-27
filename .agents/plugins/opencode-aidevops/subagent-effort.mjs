@@ -211,6 +211,7 @@ export function createSubagentEffortHooks(client, options = {}) {
     policies,
     tierReasoning,
     modelRouting,
+    subagentTrial: options.subagentTrial,
     agentRoutingState,
     onRoutingDecision,
     onSubagentOutcome: options.onSubagentOutcome,

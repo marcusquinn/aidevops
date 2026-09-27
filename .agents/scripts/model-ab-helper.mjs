@@ -14,7 +14,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ROUTED_TIERS, eligibleNewIssue, parseAssignmentOptions } from "./model-ab-enrollment.mjs";
-import { aggregateObserved, snapshotAssignments } from "./model-ab-report.mjs";
+import { aggregateObserved, snapshotAssignments, reportSubagents } from "./model-ab-report.mjs";
 import { parseStartOptions, startProspectiveTrial } from "./model-ab-start.mjs";
 import { assignmentPaths, persistReceipt, persistRoute, tieredArm } from "./model-ab-store.mjs";
 import { repoPattern, validateExperiment } from "./model-ab-validate.mjs";
@@ -82,7 +82,7 @@ export function report(experiment, { directory = root } = {}) {
   return snapshotAssignments(experiment, directory, assignedArm);
 }
 
-const usage = "usage: model-ab-helper.mjs start OWNER/REPO [--preset standard-luna-terra|openai-anthropic] [--hours N] | assign OWNER/REPO ISSUE [--created-at ISO --labels-json JSON] [--tier simple|standard|thinking] [--continuation-only] | report";
+const usage = "usage: model-ab-helper.mjs start OWNER/REPO [--preset standard-luna-terra|openai-anthropic] [--hours N] | assign OWNER/REPO ISSUE [--created-at ISO --labels-json JSON] [--tier simple|standard|thinking] [--continuation-only] | report | report-subagents";
 
 function run(argv) {
   const [command, repo, rawIssue] = argv;
@@ -91,7 +91,8 @@ function run(argv) {
     process.stdout.write(`${JSON.stringify(startProspectiveTrial(repo, { ...options, validate: validateExperiment }))}\n`);
     return;
   }
-  const config = process.env.AIDEVOPS_MODEL_AB_CONFIG;
+  const config = command === "report-subagents"
+    ? process.env.AIDEVOPS_SUBAGENT_AB_CONFIG : process.env.AIDEVOPS_MODEL_AB_CONFIG;
   if (!config && command === "assign") { process.stdout.write('{"active":false}\n'); return; }
   if (!config) throw new Error("AIDEVOPS_MODEL_AB_CONFIG is required for report");
   const experiment = validateExperiment(JSON.parse(readFileSync(config, "utf8")));
@@ -100,6 +101,8 @@ function run(argv) {
       parseAssignmentOptions(argv.slice(3))))}\n`);
   } else if (command === "report" && argv.length === 1) {
     process.stdout.write(`${JSON.stringify(aggregateObserved(report(experiment)))}\n`);
+  } else if (command === "report-subagents" && argv.length === 1) {
+    process.stdout.write(`${JSON.stringify(reportSubagents(experiment))}\n`);
   } else {
     throw new Error(usage);
   }
