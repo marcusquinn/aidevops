@@ -8,11 +8,12 @@
 # Syncs labels across all repos in repos.json (non-local, admin-accessible).
 #
 # Usage:
-#   label-sync-helper.sh sync [--dry-run] [--repo owner/repo]
+#   label-sync-helper.sh sync [--dry-run] [--existing-only] [--repo owner/repo]
 #   label-sync-helper.sh audit [--repo owner/repo]
 #   label-sync-helper.sh color-for-tag <tag-name>
 #
-# The "sync" command applies canonical colors to all managed repos.
+# The "sync" command applies canonical colors to all managed repos
+# (--existing-only recolours existing labels without creating missing ones).
 # The "audit" command reports drift (labels with wrong colors).
 # The "color-for-tag" command returns the canonical color hex for a TODO.md tag.
 
@@ -33,6 +34,26 @@ LOG_PREFIX="LABEL-SYNC"
 #
 # These are the SINGLE SOURCE OF TRUTH for label colors. Every other script
 # that creates labels should either call this helper or use color_for_tag().
+#
+# Palette groups (colour carries meaning; keep new labels inside a group):
+#   Attention  E4007C  bold magenta — a person must act before work continues.
+#                      Reserved: every needs-* / status:needs-* label, plus
+#                      hold-for-review and security-review.
+#   Risk       B60205 / D73A4A — defect or security severity (bug, security,
+#                      critical, priority:critical).
+#   Stalled    D93F0B  orange — automation stopped or debt accrued
+#                      (status:blocked, circuit-breaker, *-debt, failed:*,
+#                      triage-failed). status:* colours must match the
+#                      runtime contract in shared-gh-wrappers-status.sh.
+#   Pending    FBCA04  yellow — queued/waiting, no human action implied.
+#   Ready      0E8A16  green — available, approved, actioned.
+#   Active     1D76DB / 5319E7 / 6F42C1 — in-progress → in-review → done.
+#   Metadata   pale tints (C2E0C6, C5DEF5, BFD4F2, D4C5F9, BFDADC) —
+#                      provenance, origin, tier, bookkeeping.
+#   Closed     EDEDED / CFD3D7 / FFFFFF — opt-outs and closure reasons.
+# The priority ramp (critical → low) intentionally spans Risk → Ready.
+
+LABEL_COLOR_ATTENTION="E4007C"
 
 # --- GitHub Defaults (standard issue triage) ---
 GITHUB_DEFAULT_LABELS=(
@@ -55,22 +76,23 @@ STATUS_LABELS=(
 	"status:in-progress|1D76DB|Worker actively running"
 	"status:in-review|5319E7|Non-draft PR ready for review/merge"
 	"status:done|6F42C1|Task is complete"
-	"status:blocked|D73A4A|Partial work blocked; inspect reason and next action"
+	"status:blocked|D93F0B|Partial work blocked; inspect reason and next action"
 )
 
 # --- Status Exceptions (out-of-band, not managed by set_issue_status) ---
 STATUS_EXCEPTION_LABELS=(
-	"status:needs-testing|FBCA04|Code merged, needs manual or integration testing"
+	"status:needs-testing|${LABEL_COLOR_ATTENTION}|Code merged, needs manual or integration testing"
+	"status:needs-info|${LABEL_COLOR_ATTENTION}|Waiting for requested information"
 	"status:stale|BFD4F2|No activity for 30+ days — needs triage"
-	"status:verify-failed|E4E669|Task verification failed"
-	"status:orphaned|EDEDED|Worker died, issue needs recovery"
+	"status:verify-failed|D93F0B|Task verification failed"
+	"status:orphaned|D93F0B|Worker died, issue needs recovery"
 )
 
-# --- Origin Labels ---
+# --- Origin Labels (metadata: pale, distinct per origin) ---
 ORIGIN_LABELS=(
-	"origin:worker|1D76DB|Created by headless/pulse worker session"
-	"origin:interactive|1D76DB|Created by interactive user session"
-	"origin:worker-takeover|1D76DB|Worker took over work from another origin"
+	"origin:worker|C5DEF5|Created by headless/pulse worker session"
+	"origin:interactive|BFD4F2|Created by interactive user session"
+	"origin:worker-takeover|D4C5F9|Worker took over work from another origin"
 )
 
 # --- Tier Labels (model routing) ---
@@ -82,7 +104,7 @@ TIER_LABELS=(
 
 # --- Priority Labels ---
 PRIORITY_LABELS=(
-	"priority:critical|D73A4A|Critical — stopping work completely, security, or data loss risk"
+	"priority:critical|B60205|Critical — stopping work completely, security, or data loss risk"
 	"priority:high|D93F0B|High — systemic throughput bottleneck or significant quality issue"
 	"priority:medium|FBCA04|Medium severity — moderate quality issue"
 	"priority:low|0E8A16|Low severity — minor quality issue"
@@ -109,8 +131,8 @@ SYSTEM_LABELS=(
 	"auto-dispatch|0E8A16|Eligible for automated worker dispatch"
 	"publication:pending|FBCA04|Block: planning exists locally but is not yet published on the default branch"
 	"no-auto-dispatch|EDEDED|Opt-out: block all auto-dispatch on this issue"
-	"hold-for-review|D73A4A|Opt-out: block issue auto-dispatch or PR auto-merge for maintainer review"
-	"needs-credentials|FBCA04|Opt-out: block auto-dispatch — requires credentials or account access"
+	"hold-for-review|${LABEL_COLOR_ATTENTION}|Opt-out: block issue auto-dispatch or PR auto-merge for maintainer review"
+	"needs-credentials|${LABEL_COLOR_ATTENTION}|Opt-out: block auto-dispatch — requires credentials or account access"
 	"ai-approved|0E8A16|Issue approved for AI agent processing"
 	"persistent|FBCA04|Persistent issue — do not close"
 	"supervisor|1D76DB|Supervisor health dashboard"
@@ -118,10 +140,10 @@ SYSTEM_LABELS=(
 	"critical|D73A4A|Critical human-attention issue"
 	"security|D73A4A|Security-sensitive issue"
 	"security-adjacent|D73A4A|Security-adjacent issue requiring human attention"
-	"needs-review|D73A4A|Flagged for human review by AI supervisor"
-	"needs-maintainer-review|D73A4A|External-author gate requiring maintainer approval before work begins"
-	"needs-maintainer-permissions|B60205|Block: background work paused for a scoped maintainer permission grant"
-	"security-review|D73A4A|Requires security review — suspicious AI request"
+	"needs-review|${LABEL_COLOR_ATTENTION}|Flagged for human review by AI supervisor"
+	"needs-maintainer-review|${LABEL_COLOR_ATTENTION}|External-author gate requiring maintainer approval before work begins"
+	"needs-maintainer-permissions|${LABEL_COLOR_ATTENTION}|Block: background work paused for a scoped maintainer permission grant"
+	"security-review|${LABEL_COLOR_ATTENTION}|Requires security review — suspicious AI request"
 	"parent-task|D4C5F9|Parent/meta task — children implement, not this issue"
 	"quality-debt|D93F0B|Unactioned review feedback from merged PRs"
 	"quality-review|7057FF|Daily code quality review"
@@ -129,20 +151,20 @@ SYSTEM_LABELS=(
 	"code-reviews-actioned|0E8A16|All review feedback has been actioned"
 	"not-planned|FFFFFF|Closed without implementation — not planned"
 	"already-fixed|E4E669|Already fixed by another change"
-	"needs-consolidation|FBCA04|Issue needs comment consolidation before dispatch"
+	"needs-consolidation|${LABEL_COLOR_ATTENTION}|Issue needs comment consolidation before dispatch"
 	"consolidation-task|C5DEF5|Task created from consolidated duplicate issues"
 	"consolidation-in-progress|CFD3D7|Another runner is creating a consolidation child issue (cross-runner advisory lock)"
 	"consolidated|BFD4F2|Original issue consolidated into a task"
-	"needs-simplification|FBCA04|File exceeds complexity threshold"
+	"needs-simplification|${LABEL_COLOR_ATTENTION}|File exceeds complexity threshold"
 	"file-size-debt|D93F0B|File exceeds the line-count threshold and needs splitting before implementation can proceed"
-	"function-complexity-debt|E05D44|Functions exceed complexity threshold and need refactoring before implementation can proceed"
+	"function-complexity-debt|D93F0B|Functions exceed complexity threshold and need refactoring before implementation can proceed"
 	"recheck-simplicity|D4C5F9|File flagged for simplification recheck"
 	"triage-failed|D93F0B|Automated triage could not classify this issue"
 	"review:approve|0E8A16|Advisory automated triage recommendation: approve"
 	"review:feedback|FBCA04|Advisory automated triage recommendation: request changes"
 	"review:decline|D73A4A|Advisory automated triage recommendation: decline"
 	"circuit-breaker|D93F0B|Circuit breaker tripped — automatic retry paused"
-	"needs-review-fixes|D73A4A|PR has unaddressed review comments"
+	"needs-review-fixes|${LABEL_COLOR_ATTENTION}|PR has unaddressed review comments"
 	"coderabbit-pulse|7057FF|Daily CodeRabbit pulse review tracking"
 	"multi-model|E99695|Cross-provider model routing"
 )
@@ -165,6 +187,23 @@ ROUTINE_LABELS=(
 	"core|1D76DB|Framework-managed routine"
 	"routine-tracking|BFDADC|Execution tracking issue — not a task (pulse skips these)"
 )
+
+# Every catalogued definition, used for drift repair of existing labels.
+ALL_CANONICAL_LABELS=(
+	"${GITHUB_DEFAULT_LABELS[@]}"
+	"${STATUS_LABELS[@]}"
+	"${STATUS_EXCEPTION_LABELS[@]}"
+	"${ORIGIN_LABELS[@]}"
+	"${TIER_LABELS[@]}"
+	"${PRIORITY_LABELS[@]}"
+	"${DISPATCH_LABELS[@]}"
+	"${SYSTEM_LABELS[@]}"
+	"${SOURCE_LABELS[@]}"
+	"${ROUTINE_LABELS[@]}"
+)
+
+# Repos with many TODO.md tag labels exceed gh's default page; read them all.
+LABEL_LIST_LIMIT="${LABEL_SYNC_LIST_LIMIT:-1000}"
 
 # =============================================================================
 # Tag-to-Color Category Map
@@ -234,7 +273,31 @@ declare -A TAG_CATEGORY_COLORS=(
 # Functions
 # =============================================================================
 
+# Prints "color|description" for a catalogued label, or "E4007C|" for an
+# uncatalogued needs-* / status:needs-* label. Returns 1 otherwise.
+# Usage: def=$(canonical_label_definition "needs-review") || def=""
+canonical_label_definition() {
+	local label_name="$1"
+	local definition name color desc
+	for definition in "${ALL_CANONICAL_LABELS[@]}"; do
+		IFS='|' read -r name color desc <<<"$definition"
+		if [[ "$name" == "$label_name" ]]; then
+			printf '%s|%s\n' "$color" "$desc"
+			return 0
+		fi
+	done
+	case "$label_name" in
+	needs-* | status:needs-*)
+		printf '%s|\n' "$LABEL_COLOR_ATTENTION"
+		return 0
+		;;
+	esac
+	return 1
+}
+
 # Returns the canonical hex color for a given tag name.
+# Catalogued label names (bug, auto-dispatch, needs-*, ...) keep their
+# catalogue colour so TODO.md tag sync cannot repaint them.
 # Usage: color=$(color_for_tag "security")
 color_for_tag() {
 	local tag="$1"
@@ -246,6 +309,12 @@ color_for_tag() {
 	# Normalise: lowercase, strip leading #
 	tag=$(printf '%s' "$tag" | tr '[:upper:]' '[:lower:]')
 	tag="${tag#\#}"
+
+	local canonical_def=""
+	if canonical_def=$(canonical_label_definition "$tag"); then
+		echo "${canonical_def%%|*}"
+		return 0
+	fi
 
 	# Check each category
 	local word
@@ -366,9 +435,11 @@ _fix_existing_tag_labels() {
 
 	# Get all existing labels with "Auto-created from TODO.md tag" description
 	local existing
-	existing=$(gh label list --repo "$repo" --json name,color,description --limit 200 2>/dev/null || echo "[]")
+	existing=$(gh label list --repo "$repo" --json name,color,description --limit "$LABEL_LIST_LIMIT" 2>/dev/null || echo "[]")
 
 	echo "$existing" | jq -r '.[] | select(.description == "Auto-created from TODO.md tag") | "\(.name)\t\(.color)"' 2>/dev/null | while IFS=$'\t' read -r name color; do
+		# Catalogued and needs-* names are repaired by the later passes.
+		canonical_label_definition "$name" >/dev/null && continue
 		local canonical_color
 		canonical_color=$(color_for_tag "$name")
 
@@ -397,21 +468,10 @@ _fix_drifted_system_labels() {
 	local dry_run="${2:-}"
 
 	local existing
-	existing=$(gh label list --repo "$repo" --json name,color --limit 200 2>/dev/null || echo "[]")
-
-	# Build lookup of canonical labels
-	local all_canonical=()
-	all_canonical+=("${GITHUB_DEFAULT_LABELS[@]}")
-	all_canonical+=("${STATUS_LABELS[@]}")
-	all_canonical+=("${STATUS_EXCEPTION_LABELS[@]}")
-	all_canonical+=("${ORIGIN_LABELS[@]}")
-	all_canonical+=("${TIER_LABELS[@]}")
-	all_canonical+=("${PRIORITY_LABELS[@]}")
-	all_canonical+=("${SYSTEM_LABELS[@]}")
-	all_canonical+=("${SOURCE_LABELS[@]}")
+	existing=$(gh label list --repo "$repo" --json name,color --limit "$LABEL_LIST_LIMIT" 2>/dev/null || echo "[]")
 
 	local definition
-	for definition in "${all_canonical[@]}"; do
+	for definition in "${ALL_CANONICAL_LABELS[@]}"; do
 		local name color desc
 		IFS='|' read -r name color desc <<<"$definition"
 
@@ -438,6 +498,40 @@ _fix_drifted_system_labels() {
 	return 0
 }
 
+# Recolour uncatalogued needs-* / status:needs-* labels (for example
+# needs-design-revision) to the attention colour, preserving descriptions.
+# Catalogued names are handled by _fix_drifted_system_labels.
+_fix_attention_prefix_labels() {
+	local repo="$1"
+	local dry_run="${2:-}"
+
+	local existing
+	existing=$(gh label list --repo "$repo" --json name,color --limit "$LABEL_LIST_LIMIT" 2>/dev/null || echo "[]")
+
+	local catalogued_names=""
+	local definition name color desc
+	for definition in "${ALL_CANONICAL_LABELS[@]}"; do
+		IFS='|' read -r name color desc <<<"$definition"
+		catalogued_names="${catalogued_names}${name}"$'\n'
+	done
+
+	local current_color
+	while IFS=$'\t' read -r name current_color; do
+		[[ -z "$name" ]] && continue
+		[[ "${current_color^^}" == "$LABEL_COLOR_ATTENTION" ]] && continue
+		if printf '%s' "$catalogued_names" | grep -Fqx -- "$name"; then
+			continue
+		fi
+		if [[ "$dry_run" == "--dry-run" ]]; then
+			echo "  [DRIFT] $name: #$current_color → #$LABEL_COLOR_ATTENTION"
+		else
+			gh label edit "$name" --repo "$repo" --color "$LABEL_COLOR_ATTENTION" 2>/dev/null || true
+			echo "  [FIXED] $name: #$current_color → #$LABEL_COLOR_ATTENTION"
+		fi
+	done < <(printf '%s' "$existing" | jq -r '.[] | select(.name | test("^(status:)?needs-")) | "\(.name)\t\(.color)"' 2>/dev/null || true)
+	return 0
+}
+
 # =============================================================================
 # Commands
 # =============================================================================
@@ -445,11 +539,16 @@ _fix_drifted_system_labels() {
 cmd_sync() {
 	local dry_run=""
 	local target_repo=""
+	local existing_only="false"
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--dry-run)
 			dry_run="--dry-run"
+			shift
+			;;
+		--existing-only)
+			existing_only="true"
 			shift
 			;;
 		--repo)
@@ -485,28 +584,31 @@ cmd_sync() {
 			continue
 		fi
 
-		# 1. Apply all canonical system labels
-		echo "  Applying GitHub defaults..."
-		_apply_label_set "$repo" GITHUB_DEFAULT_LABELS "$dry_run"
+		# 1. Apply all canonical system labels (skipped by --existing-only, which
+		#    recolours without creating ~120 labels per repo).
+		if [[ "$existing_only" != "true" ]]; then
+			echo "  Applying GitHub defaults..."
+			_apply_label_set "$repo" GITHUB_DEFAULT_LABELS "$dry_run"
 
-		echo "  Applying status labels..."
-		_apply_label_set "$repo" STATUS_LABELS "$dry_run"
-		_apply_label_set "$repo" STATUS_EXCEPTION_LABELS "$dry_run"
+			echo "  Applying status labels..."
+			_apply_label_set "$repo" STATUS_LABELS "$dry_run"
+			_apply_label_set "$repo" STATUS_EXCEPTION_LABELS "$dry_run"
 
-		echo "  Applying origin labels..."
-		_apply_label_set "$repo" ORIGIN_LABELS "$dry_run"
+			echo "  Applying origin labels..."
+			_apply_label_set "$repo" ORIGIN_LABELS "$dry_run"
 
-		echo "  Applying tier labels..."
-		_apply_label_set "$repo" TIER_LABELS "$dry_run"
+			echo "  Applying tier labels..."
+			_apply_label_set "$repo" TIER_LABELS "$dry_run"
 
-		echo "  Applying priority labels..."
-		_apply_label_set "$repo" PRIORITY_LABELS "$dry_run"
+			echo "  Applying priority labels..."
+			_apply_label_set "$repo" PRIORITY_LABELS "$dry_run"
 
-		echo "  Applying system labels..."
-		_apply_label_set "$repo" SYSTEM_LABELS "$dry_run"
+			echo "  Applying system labels..."
+			_apply_label_set "$repo" SYSTEM_LABELS "$dry_run"
 
-		echo "  Applying source labels..."
-		_apply_label_set "$repo" SOURCE_LABELS "$dry_run"
+			echo "  Applying source labels..."
+			_apply_label_set "$repo" SOURCE_LABELS "$dry_run"
+		fi
 
 		# 2. Fix existing tag labels that have drifted from canonical colors
 		echo "  Fixing drifted TODO.md tag labels..."
@@ -515,6 +617,10 @@ cmd_sync() {
 		# 3. Fix system labels that exist but with wrong colors
 		echo "  Fixing drifted system labels..."
 		_fix_drifted_system_labels "$repo" "$dry_run"
+
+		# 4. Uncatalogued needs-* labels share the attention colour
+		echo "  Fixing drifted needs-* labels..."
+		_fix_attention_prefix_labels "$repo" "$dry_run"
 
 		print_success "Done: $repo"
 	done
@@ -557,26 +663,24 @@ cmd_audit() {
 			continue
 		fi
 
-		local drift_count=0
-
-		# Check system label drift
-		_fix_drifted_system_labels "$repo" "--dry-run" | while read -r line; do
+		# Collect in the current shell: a piped while-loop runs in a subshell
+		# and its counter never reaches total_drift.
+		local drift_lines="" line=""
+		drift_lines=$(
+			_fix_drifted_system_labels "$repo" "--dry-run"
+			_fix_existing_tag_labels "$repo" "--dry-run"
+			_fix_attention_prefix_labels "$repo" "--dry-run"
+		)
+		while IFS= read -r line; do
+			[[ -z "$line" ]] && continue
 			echo "$line"
-			drift_count=$((drift_count + 1))
-		done
-
-		# Check tag label drift
-		_fix_existing_tag_labels "$repo" "--dry-run" | while read -r line; do
-			echo "$line"
-			drift_count=$((drift_count + 1))
-		done
-
-		total_drift=$((total_drift + drift_count))
+			total_drift=$((total_drift + 1))
+		done <<<"$drift_lines"
 	done
 
 	echo ""
 	if [[ $total_drift -gt 0 ]]; then
-		print_warning "Found label drift. Run 'label-sync-helper.sh sync' to fix."
+		print_warning "Found ${total_drift} drifted label(s). Run 'label-sync-helper.sh sync --existing-only' to fix."
 	else
 		print_success "All labels are in sync."
 	fi
@@ -614,8 +718,9 @@ main() {
 		echo "  color-for-tag <tag>                    Return canonical color for a tag"
 		echo ""
 		echo "Options:"
-		echo "  --dry-run    Show what would change without applying"
-		echo "  --repo       Target a specific repo instead of all in repos.json"
+		echo "  --dry-run        Show what would change without applying"
+		echo "  --existing-only  Recolour existing labels only; create nothing"
+		echo "  --repo           Target a specific repo instead of all in repos.json"
 		return 0
 		;;
 	*)

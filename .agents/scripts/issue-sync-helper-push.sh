@@ -229,10 +229,13 @@ _push_prepare_creation_labels() {
 	local status_label="$_PUSH_STATUS_AVAILABLE"
 	if [[ -n "$assignee" ]]; then
 		status_label="status:claimed"
-		gh_create_label "$repo" "$status_label" "D93F0B" "Task is claimed"
+		# Must match _status_label_contract (shared-gh-wrappers-status.sh).
+		gh_create_label "$repo" "$status_label" "F9D0C4" "Interactive implementation is actively claimed"
 	fi
 	_PUSH_CREATION_ORIGIN=$(session_origin_label)
-	gh_create_label "$repo" "$_PUSH_CREATION_ORIGIN" "C5DEF5" \
+	local _origin_color="C5DEF5"
+	[[ "$_PUSH_CREATION_ORIGIN" == "origin:interactive" ]] && _origin_color="BFD4F2"
+	gh_create_label "$repo" "$_PUSH_CREATION_ORIGIN" "$_origin_color" \
 		"Created from ${_PUSH_CREATION_ORIGIN#origin:} session"
 	_PUSH_CREATION_ALL_LABELS="${labels:+${labels},}${_PUSH_CREATION_ORIGIN}"
 	if [[ "$_PUSH_CREATION_STATE" == "$_PUSH_PUBLICATION_CANONICAL" ||
