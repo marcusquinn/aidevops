@@ -204,13 +204,58 @@ HELPER
 	_routine_execute "r777" "sample" "scripts/sample.sh" "" "$TEST_DIR"
 
 	local args=""
-	if [[ -f "$ROUTINE_LOG_CAPTURE" ]]; then
-		args=$(<"$ROUTINE_LOG_CAPTURE")
-	fi
+	local attempts=0
+	while [[ "$attempts" -lt 100 ]]; do
+		[[ ! -f "$ROUTINE_LOG_CAPTURE" ]] || args=$(<"$ROUTINE_LOG_CAPTURE")
+		[[ "$args" == *"--status success"* ]] && break
+		sleep 0.05
+		attempts=$((attempts + 1))
+	done
 	if [[ "$args" == update\ r777\ --status\ success\ --duration\ * ]]; then
 		print_result "pulse routine update passes flags and duration" 0
 	else
 		print_result "pulse routine update passes flags and duration" 1 "$args"
+	fi
+	return 0
+}
+
+test_pulse_script_routine_marks_running_before_terminal_completion() {
+	local fake_home="$TEST_DIR/async-home"
+	local agents_dir="$fake_home/.aidevops/agents"
+	local marker="$TEST_DIR/script-routine.done"
+	local release="$TEST_DIR/script-routine.release"
+	local attempts=0
+	mkdir -p "$agents_dir/scripts" "$TEST_DIR/bin"
+	cat >"$agents_dir/scripts/slow-sample.sh" <<'SCRIPT'
+#!/usr/bin/env bash
+while [[ ! -f "$ROUTINE_SCRIPT_RELEASE" ]]; do
+  sleep 0.05
+done
+: >"$ROUTINE_SCRIPT_DONE"
+SCRIPT
+	printf '#!/usr/bin/env bash\nexit 0\n' >"$TEST_DIR/bin/routine-log-helper.sh"
+	chmod +x "$agents_dir/scripts/slow-sample.sh" "$TEST_DIR/bin/routine-log-helper.sh"
+	HOME="$fake_home"
+	ROUTINE_STATE_FILE="$TEST_DIR/async-state.json"
+	LOGFILE="$TEST_DIR/async-pulse.log"
+	ROUTINE_LOG_HELPER="$TEST_DIR/bin/routine-log-helper.sh"
+	ROUTINE_SCRIPT_DONE="$marker"
+	ROUTINE_SCRIPT_RELEASE="$release"
+	export ROUTINE_SCRIPT_DONE ROUTINE_SCRIPT_RELEASE
+	_routine_execute "r779" "slow sample" "scripts/slow-sample.sh" "" "$TEST_DIR"
+	if [[ "$(jq -r '.r779.last_status' "$ROUTINE_STATE_FILE")" != "running" ]] || ! _routine_retry_blocked r779; then
+		print_result "script routine records running before detached completion" 1
+		return 0
+	fi
+	: >"$release"
+	while [[ "$attempts" -lt 100 && ! -f "$marker" ]]; do
+		sleep 0.05
+		attempts=$((attempts + 1))
+	done
+	if [[ -f "$marker" && "$(jq -r '.r779.last_status' "$ROUTINE_STATE_FILE")" == "success" ]]; then
+		print_result "script routine records running before detached completion" 0
+	else
+		print_result "script routine records running before detached completion" 1
 	fi
 	return 0
 }
@@ -225,6 +270,7 @@ test_pulse_routine_scripts_use_registered_repository() {
 	local original_cwd=""
 	local caller_cwd=""
 	local missing_failed=0
+	local attempts=0
 	mkdir -p "$agents_dir/scripts" "$agents_dir/custom/scripts" "$repo_dir" "$launcher_dir" "$TEST_DIR/bin"
 	cat >"$agents_dir/scripts/record-cwd.sh" <<'SCRIPT'
 #!/usr/bin/env bash
@@ -252,6 +298,10 @@ HELPER
 	caller_cwd=$(pwd)
 	_routine_execute "r-cwd-configured" "configured cwd" "scripts/record-cwd.sh with-argument" "" "$repo_dir"
 	_routine_execute "r-cwd" "custom cwd" "" "" "$repo_dir"
+	while [[ "$attempts" -lt 100 && ! -f "$configured_capture" ]]; do
+		sleep 0.05
+		attempts=$((attempts + 1))
+	done
 	if _routine_execute "r-cwd-missing" "missing cwd" "scripts/record-cwd.sh" "" "$TEST_DIR/missing-repo"; then
 		missing_failed=0
 	else
@@ -545,6 +595,7 @@ main() {
 	test_core_routine_shell_quote_escapes_single_quotes
 	test_linux_core_scheduler_commands_are_logged
 	test_pulse_routine_update_uses_flags_and_duration
+	test_pulse_script_routine_marks_running_before_terminal_completion
 	test_pulse_routine_scripts_use_registered_repository
 	test_agent_routine_waits_for_terminal_result
 	test_opencode_archive_scheduler_is_daily_and_low_priority
