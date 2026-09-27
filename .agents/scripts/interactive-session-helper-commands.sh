@@ -690,6 +690,31 @@ _isc_unassign_released_issue() {
 	return 0
 }
 
+_isc_release_legacy_in_review_or_unassigned() {
+	local issue="$1"
+	local slug="$2"
+	local user="$3"
+	local unassign="$4"
+	local in_review_rc=0
+
+	_isc_has_label "$issue" "$slug" "status:in-review" || in_review_rc=$?
+	if [[ $in_review_rc -eq 0 ]]; then
+		return 2
+	fi
+	if [[ $in_review_rc -eq 2 ]]; then
+		_isc_warn "release: could not read labels for #$issue — preserving ownership state"
+		return 1
+	fi
+	if [[ $unassign -eq 0 ]]; then
+		_isc_info "release: #$issue not in an active interactive status — no-op"
+		_isc_delete_stamp "$issue" "$slug"
+		return 0
+	fi
+	_isc_unassign_released_issue "$issue" "$slug" "$user"
+	_isc_delete_stamp "$issue" "$slug"
+	return 0
+}
+
 # -----------------------------------------------------------------------------
 # Subcommand: release
 # -----------------------------------------------------------------------------
@@ -758,23 +783,12 @@ _isc_cmd_release() {
 	local has_rc=0
 	_isc_has_claimed "$issue" "$slug" || has_rc=$?
 	if [[ $has_rc -eq 1 ]]; then
-		local in_review_rc=0
-		_isc_has_label "$issue" "$slug" "status:in-review" || in_review_rc=$?
-		if [[ $in_review_rc -eq 0 ]]; then
-			has_rc=0
-		elif [[ $in_review_rc -eq 2 ]]; then
-			_isc_warn "release: could not read labels for #$issue — preserving ownership state"
-			return 0
-		else
-			if [[ $unassign -eq 0 ]]; then
-				_isc_info "release: #$issue not in an active interactive status — no-op"
-				_isc_delete_stamp "$issue" "$slug"
-				return 0
-			fi
-			_isc_unassign_released_issue "$issue" "$slug" "$user"
-			_isc_delete_stamp "$issue" "$slug"
-			return 0
-		fi
+		local legacy_rc=0
+		_isc_release_legacy_in_review_or_unassigned "$issue" "$slug" "$user" "$unassign" || legacy_rc=$?
+		case "$legacy_rc" in
+		0 | 1) return 0 ;;
+		2) ;;
+		esac
 	fi
 	if [[ $has_rc -eq 2 ]]; then
 		_isc_warn "release: could not read labels for #$issue — preserving ownership state"
