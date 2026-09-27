@@ -88,7 +88,7 @@ test_missing_gitignore_is_created() {
 	mkdir -p "$repo"
 	_init_update_gitignore "$repo" false
 	assert_equal true "$([[ -f "$repo/.gitignore" ]] && printf true || printf false)" "missing root .gitignore is created"
-	for entry in ".agents/loop-state/" ".agents/tmp/" ".agents/memory/" ".aidevops.json"; do
+	for entry in ".agents/loop-state/" ".agents/tmp/" ".agents/memory/" ".agents/commands" ".windsurf/" ".aidevops.json" ".env" ".env.*" "*.pem" "*.key" "*.p12" "*.pfx" "credentials.json"; do
 		assert_file_count 1 "$entry" "$repo/.gitignore" "new .gitignore contains $entry once"
 	done
 	assert_file_count 0 ".beads" "$repo/.gitignore" "new .gitignore omits .beads when disabled"
@@ -103,12 +103,12 @@ test_existing_gitignore_is_preserved() {
 	local repo="$TEST_ROOT/existing-gitignore"
 	local before after entry
 	mkdir -p "$repo"
-	printf 'node_modules/\n.agents\n.agent\n.agents/tmp/\n' >"$repo/.gitignore"
+	printf 'node_modules/\n.agents\n.agent\n.agents/tmp/\n.env\n' >"$repo/.gitignore"
 	_init_update_gitignore "$repo" true
 	assert_file_count 1 "node_modules/" "$repo/.gitignore" "user-owned ignore entry is preserved"
 	assert_file_count 0 ".agents" "$repo/.gitignore" "legacy bare .agents entry is removed"
 	assert_file_count 0 ".agent" "$repo/.gitignore" "legacy bare .agent entry is removed"
-	for entry in ".agents/loop-state/" ".agents/tmp/" ".agents/memory/" ".aidevops.json" ".beads"; do
+	for entry in ".agents/loop-state/" ".agents/tmp/" ".agents/memory/" ".agents/commands" ".windsurf/" ".aidevops.json" ".env" ".env.*" "*.pem" "*.key" "*.p12" "*.pfx" "credentials.json" ".beads"; do
 		assert_file_count 1 "$entry" "$repo/.gitignore" "existing .gitignore contains $entry once"
 	done
 	before=$(cksum "$repo/.gitignore")

@@ -3,6 +3,45 @@
 
 # Model effort and delegation evaluation
 
+## Primary-session compaction target replay
+
+**2026-09-28: retain the managed 240K target; do not change the default or
+introduce another opt-in target yet.** A read-only replay of local
+`llm_requests` from 2026-09-14 through 2026-09-27 selected top-level `Build+`
+requests on `gpt-5.6-sol` with `routing_population=top_level_profile`
+(1,811 turns, 2 sessions, $136.53 API-equivalent
+request cost). This isolates a model with the managed 240K target rather than
+mixing in newer Anthropic models with a 500K target or headless workers. The
+observed cached input totals 264.96M tokens; its listed cache-read rate is
+$0.40 per million tokens. The 27 recorded `compaction` requests in the window
+have a median cost of $0.47022; this is a mixed-model median, not a forecast
+for the newly routed simple-tier compaction model from #32494.
+
+For each observed turn, the replay caps cached tokens at the candidate target
+and charges the difference at $0.40/M. This is an *optimistic ceiling* on
+cached-input savings: real context builds up again after each additional
+compaction, and repeated turns at the old ceiling need not disappear. For the
+added compactions, positive consecutive cached-token increments within each
+session total 5.44M tokens. Dividing that growth by each candidate target and
+subtracting the 240K count estimates extra cycles, charged at the observed
+median. Reset turns and uncached input/output costs are otherwise held fixed.
+
+| Target | Cached-input saving ceiling | Added compactions (estimate) | Added cost | Net saving ceiling | Share of observed primary request cost |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 240K | $0 | 0 | $0 | $0 | 0% |
+| 200K | $3.84 | 4.5 | $2.13 | $1.71 | 1.3% |
+| 160K | $14.00 | 11.3 | $5.33 | $8.67 | 6.4% |
+
+Fractional counts represent expected cycles, not actual calls. The cap model
+does not simulate changed cache-hit rates, summary length, session lifetimes,
+or quality. Even its optimistic net saving does not reach the issue's >10%
+materiality threshold, so the telemetry does not support shipping another
+selection or lowering the default. The sibling #32494 simple-tier route is
+already merged; its future normal-use compaction costs could change this
+decision. Re-evaluate with model-specific post-route compaction costs and
+continuity evidence (first post-compaction re-reads and user corrections)
+before changing the target. API-equivalent estimates are not billed spend.
+
 ## Compaction routing observation
 
 **2026-09-27: enabled a guarded simple-tier compaction route.** OpenCode 1.18.32

@@ -1246,6 +1246,7 @@ _init_planning_files() {
 		if [[ ! -f "$project_root/TODO.md" ]]; then
 			if [[ -f "$AGENTS_DIR/templates/todo-template.md" ]]; then
 				cp "$AGENTS_DIR/templates/todo-template.md" "$project_root/TODO.md"
+				sed_inplace "s/{{DATE}}/$(date +%Y-%m-%d)/g" "$project_root/TODO.md" || return 1
 				print_success "Created TODO.md"
 			else
 				# Fallback minimal template
@@ -1501,7 +1502,16 @@ _init_update_gitignore() {
 .agents/loop-state/
 .agents/tmp/
 .agents/memory/
+.agents/commands
+.windsurf/
 .aidevops.json
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+credentials.json
 GITIGNOREEOF
 		if [[ "$enable_beads" == "true" ]]; then
 			printf '.beads\n' >>"$gitignore" || return 1
@@ -1526,7 +1536,7 @@ GITIGNOREEOF
 
 	local needs_runtime_entries=false
 	local runtime_entry
-	for runtime_entry in ".agents/loop-state/" ".agents/tmp/" ".agents/memory/"; do
+	for runtime_entry in ".agents/loop-state/" ".agents/tmp/" ".agents/memory/" ".agents/commands" ".windsurf/" ".env" ".env.*" "*.pem" "*.key" "*.p12" "*.pfx" "credentials.json"; do
 		grep -qFx "$runtime_entry" "$gitignore" 2>/dev/null || needs_runtime_entries=true
 	done
 	if [[ "$needs_runtime_entries" == "true" ]]; then
@@ -1535,7 +1545,7 @@ GITIGNOREEOF
 			[[ ! -s "$gitignore" ]] || printf '\n' >>"$gitignore"
 			printf '# aidevops runtime artifacts\n' >>"$gitignore" || return 1
 		fi
-		for runtime_entry in ".agents/loop-state/" ".agents/tmp/" ".agents/memory/"; do
+		for runtime_entry in ".agents/loop-state/" ".agents/tmp/" ".agents/memory/" ".agents/commands" ".windsurf/" ".env" ".env.*" "*.pem" "*.key" "*.p12" "*.pfx" "credentials.json"; do
 			grep -qFx "$runtime_entry" "$gitignore" 2>/dev/null || printf '%s\n' "$runtime_entry" >>"$gitignore" || return 1
 		done
 		print_success "Added .agents/ runtime artifact ignores to .gitignore"
@@ -1793,6 +1803,7 @@ _init_commit_files() {
 	[[ -f "$project_root/LICENCE" ]] && init_files+=("LICENCE")
 	[[ -f "$project_root/CHANGELOG.md" ]] && init_files+=("CHANGELOG.md")
 	[[ -f "$project_root/README.md" ]] && init_files+=("README.md")
+	[[ -f "$project_root/docs/assets/star-history.svg" ]] && init_files+=("docs/assets/star-history.svg")
 	[[ -d "$project_root/docs/metrics" ]] && init_files+=("docs/metrics/")
 	[[ -f "$project_root/.cursorrules" ]] && init_files+=(".cursorrules")
 	[[ -f "$project_root/.windsurfrules" ]] && init_files+=(".windsurfrules")
@@ -1865,7 +1876,7 @@ _init_print_summary() {
 		echo "Your init commit is in the worktree above. To continue:"
 		echo "  cd $WORKTREE_PATH"
 		echo "  git push -u origin ${worktree_branch}"
-		echo "  gh pr create --fill" # aidevops-allow: raw-gh-wrapper
+		echo "  gh_create_pr --label origin:interactive"
 		echo ""
 	fi
 	echo "Next steps:"

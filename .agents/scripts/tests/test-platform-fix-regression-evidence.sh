@@ -56,7 +56,7 @@ run_fail_case() {
 	if output=$("$HELPER" --title "$title" --body-file "${TEST_ROOT}/body.md" --files-file "${TEST_ROOT}/files.txt" 2>&1); then
 		fail "${label}: expected failure, got ${output}"
 	fi
-	assert_contains "$output" 'must change a test under .agents/scripts/tests/' "$label"
+	assert_contains "$output" 'must change a repository test' "$label"
 	return 0
 }
 
@@ -95,5 +95,16 @@ run_pass_case \
 	'Document Linux portability guidance' \
 	'Clarify the supported platforms.' \
 	$'.agents/reference/bash-compat.md\ntodo/plans/shell-portability-hardening.md'
+
+run_pass_case 'testing narrative only' 'Add catalogue helper' $'## Summary\nAdds a helper.\n## Runtime Testing\nmacOS and Linux exercised.' '.agents/scripts/catalogue.sh'
+run_pass_case 'plugin test' 'Fix macOS catalogue' '## Summary' $'.agents/plugins/opencode-aidevops/catalogue.mjs\n.agents/plugins/opencode-aidevops/tests/test-catalogue.mjs'
+run_fail_case 'summary claim without evidence' 'Add catalogue helper' $'## Summary\nFix macOS and Linux handling.\n## Runtime Testing\nTests passed.' '.agents/scripts/catalogue.sh'
+run_pass_case 'signature excluded' 'Add catalogue helper' $'## Summary\nAdds a helper.\n<!-- aidevops:sig -->\nLinux macOS' '.agents/scripts/catalogue.sh'
+
+for test_path in .agents/tests/test-platform.sh tests/test-platform.sh packages/example/tests/test-platform.sh; do
+	run_pass_case "repository test $test_path" 'Fix Linux portability' '## Summary' "${test_path}"$'\n.agents/scripts/catalogue.sh'
+done
+
+run_fail_case 'testing is not regression rationale' 'Fix macOS handling' $'## Runtime Testing\nAutomated coverage is impossible because the host is unavailable.' '.agents/scripts/catalogue.sh'
 
 printf 'PASS platform-fix regression evidence policy cases\n'
