@@ -351,14 +351,23 @@ prepare_protected_integration_release() {
 	release_sha=$(PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git -C "$repo_path" rev-parse HEAD) || return 1
 	PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git -C "$repo_path" -c tag.gpgSign=false tag v9.9.10 "$release_sha"
 
-	PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git -C "$repo_path" checkout -q active-branch
-	if [[ "$mode" == "wrong-parent" ]]; then
+	if [[ "$mode" == "later-merge" ]]; then
+		# The integration mainline lacks the active runtime; it reaches main only afterwards.
+		PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git -C "$repo_path" checkout -qb mainline-branch "$base_sha"
+	else
+		PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git -C "$repo_path" checkout -q active-branch
+	fi
+	if [[ "$mode" == "intervening" ]]; then
+		# GH#32510: ordinary mainline merges land after the deployed runtime.
 		printf 'intervening content\n' >"$repo_path/intervening.txt"
 		PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git -C "$repo_path" add intervening.txt
 		PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git -C "$repo_path" commit -qm "advance active before integration"
 	fi
 	PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git -C "$repo_path" merge -q --no-ff release-branch -m "preserve signed release"
 	integration_sha=$(PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git -C "$repo_path" rev-parse HEAD) || return 1
+	if [[ "$mode" == "later-merge" ]]; then
+		PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git -C "$repo_path" merge -q --no-ff active-branch -m "merge active after integration"
+	fi
 	printf 'protected main successor\n' >"$repo_path/protected-successor.txt"
 	PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git -C "$repo_path" add protected-successor.txt
 	PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git -C "$repo_path" commit -qm "advance protected main"
@@ -899,31 +908,37 @@ test_release_sync_rejects_unrelated_active_commit() {
 }
 
 test_release_sync_defers_verified_protected_integration() {
+	local mode=""
 	local repo_path=""
 	local evidence=""
 	local active_sha=""
 	local integration_sha=""
 	local output=""
 	local actual_rc=0
-	repo_path=$(create_fake_repo "release-protected-integration" "https://github.com/marcusquinn/aidevops.git")
-	evidence=$(prepare_protected_integration_release "$repo_path" complete) || {
-		print_result "release sync defers a verified protected integration for main convergence" 1 "Could not prepare protected integration topology"
-		return 0
-	}
-	active_sha="${evidence%%|*}"
-	integration_sha="${evidence#*|*|}"
-	integration_sha="${integration_sha%%|*}"
-	: >"$TEST_DIR/sync.log"
-	output=$(RELEASE_SYNC_ENTRYPOINT=gates AIDEVOPS_RELEASE_SQUASH_RECOVERY=1 AIDEVOPS_RELEASE_LANE_SOURCE_PR=90 \
-		AIDEVOPS_RELEASE_LANE_TAG=v9.9.10 invoke_release_sync "$repo_path" 2>&1) || actual_rc=$?
-	if [[ "$actual_rc" -eq 76 && ! -s "$TEST_DIR/sync.log" ]] &&
-		[[ "$output" == *"protected integration ${integration_sha:0:12} is verified"* ]] &&
-		[[ "$output" == *"active runtime ${active_sha:0:12} does not include the release tag"* ]] &&
-		[[ "$output" != *"[ERROR]"* ]]; then
-		print_result "release sync defers a verified protected integration for main convergence" 0
-	else
-		print_result "release sync defers a verified protected integration for main convergence" 1 "Expected verified stale-runtime deferral: $output"
-	fi
+	local label=""
+	for mode in complete intervening; do
+		label="release sync defers a verified $mode protected integration for main convergence"
+		actual_rc=0
+		repo_path=$(create_fake_repo "release-protected-integration-$mode" "https://github.com/marcusquinn/aidevops.git")
+		evidence=$(prepare_protected_integration_release "$repo_path" "$mode") || {
+			print_result "$label" 1 "Could not prepare protected integration topology"
+			continue
+		}
+		active_sha="${evidence%%|*}"
+		integration_sha="${evidence#*|*|}"
+		integration_sha="${integration_sha%%|*}"
+		: >"$TEST_DIR/sync.log"
+		output=$(RELEASE_SYNC_ENTRYPOINT=gates AIDEVOPS_RELEASE_SQUASH_RECOVERY=1 AIDEVOPS_RELEASE_LANE_SOURCE_PR=90 \
+			AIDEVOPS_RELEASE_LANE_TAG=v9.9.10 invoke_release_sync "$repo_path" 2>&1) || actual_rc=$?
+		if [[ "$actual_rc" -eq 76 && ! -s "$TEST_DIR/sync.log" ]] &&
+			[[ "$output" == *"protected integration ${integration_sha:0:12} is verified"* ]] &&
+			[[ "$output" == *"active runtime ${active_sha:0:12} does not include the release tag"* ]] &&
+			[[ "$output" != *"[ERROR]"* ]]; then
+			print_result "$label" 0
+		else
+			print_result "$label" 1 "Expected verified stale-runtime deferral: $output"
+		fi
+	done
 	return 0
 }
 
@@ -931,7 +946,7 @@ test_release_sync_rejects_unverified_protected_integration() {
 	local mode=""
 	local repo_path=""
 	local output=""
-	for mode in wrong-parent unreachable; do
+	for mode in later-merge unreachable; do
 		repo_path=$(create_fake_repo "release-protected-integration-$mode" "https://github.com/marcusquinn/aidevops.git")
 		prepare_protected_integration_release "$repo_path" "$mode" >/dev/null || {
 			print_result "release sync rejects $mode protected integration" 1 "Could not prepare topology"
