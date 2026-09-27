@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
-# nostr-vpn-helper.sh — Diagnostics, guidance, and update-if-installed for Nostr VPN/FIPS.
-# Only `update` writes anything: it keeps the user-owned nvpn CLI current. It never
-# installs Nostr VPN, replaces the app, touches its root helper, or changes config.
+# nostr-vpn-helper.sh — Diagnostics, guidance, update-if-installed, and enrollment
+# for Nostr VPN/FIPS. `update` keeps the user-owned nvpn CLI current. Enrollment
+# commands (setup-admin, join, approve, set-alias, direct-only) change nvpn config
+# only when explicitly run. Nothing here installs Nostr VPN, replaces the app, or
+# touches its root helper.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 # shellcheck source=shared-constants.sh
 source "${SCRIPT_DIR}/shared-constants.sh"
+# shellcheck source=nostr-vpn-setup-lib.sh
+source "${SCRIPT_DIR}/nostr-vpn-setup-lib.sh"
 set -euo pipefail
 
 CONFIG_TEMPLATE="${SCRIPT_DIR}/../../configs/nostr-vpn-config.json.txt"
@@ -33,6 +37,18 @@ Commands:
                    with the app daemon, app update report, port-conflict checks)
   nvpn-status      Show nvpn daemon/network status
   conflicts        Check nvpn vs NetBird port clashes and legacy FIPS daemon state
+
+Enrollment (Nostr VPN app or nvpn CLI installed; each prints the next command):
+  setup-admin [alias]                      First device: pick port/endpoint, create network
+  join <admin-npub> <network-id> [alias] [--admin-alias name]
+                                           Other devices: request to join the network
+  approve <device-npub> <alias>            Admin: approve a joined device and name it
+  set-alias <npub|self> <alias>            Name a device for <alias>.nvpn MagicDNS
+  aliases                                  Print set-alias commands to copy to other devices
+  dns-check <alias>                        Verify .nvpn resolution layer by layer
+  direct-only <npub>=<host[:port]>... | --off
+                                           No third-party bootstrap/discovery; dial listed peers
+
   check            Check local FIPS/Nostr VPN tooling availability
   status           Show FIPS status when fipsctl is installed
   identity         Show public identity information when available
@@ -535,6 +551,13 @@ main() {
 		run_nvpn_update "$@"
 		return $?
 		;;
+	setup-admin) cmd_setup_admin "$@" ;;
+	join) cmd_join "$@" ;;
+	approve) cmd_approve "$@" ;;
+	set-alias) cmd_set_alias "$@" ;;
+	aliases) cmd_aliases "$@" ;;
+	dns-check) cmd_dns_check "$@" ;;
+	direct-only) cmd_direct_only "$@" ;;
 	nvpn-status)
 		show_nvpn_status "$@"
 		return $?

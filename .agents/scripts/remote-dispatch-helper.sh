@@ -284,13 +284,22 @@ _detect_transport() {
 		;;
 	esac
 	if [[ "$host" =~ ^100\.([0-9]+)\.[0-9]+\.[0-9]+$ ]] && ((BASH_REMATCH[1] >= 64 && BASH_REMATCH[1] <= 127)); then
-		if command -v tailscale >/dev/null 2>&1 && tailscale status 2>/dev/null | grep -Fqw "$host"; then
-			printf 'tailscale\n'
-			return 0
+		# Capture before matching: grep -q closing a pipe early can SIGPIPE the
+		# producer and fail the pipeline under pipefail.
+		local mesh_status=""
+		if command -v tailscale >/dev/null 2>&1; then
+			mesh_status="$(tailscale status 2>/dev/null || true)"
+			if [[ " ${mesh_status//$'\n'/ } " == *" ${host} "* ]]; then
+				printf 'tailscale\n'
+				return 0
+			fi
 		fi
-		if command -v netbird >/dev/null 2>&1 && netbird status -d 2>/dev/null | grep -Fq "NetBird IP: ${host}"; then
-			printf 'netbird\n'
-			return 0
+		if command -v netbird >/dev/null 2>&1; then
+			mesh_status="$(netbird status -d 2>/dev/null || true)"
+			if [[ "$mesh_status" == *"NetBird IP: ${host}"$'\n'* || "$mesh_status" == *"NetBird IP: ${host}" ]]; then
+				printf 'netbird\n'
+				return 0
+			fi
 		fi
 	fi
 	printf 'ssh\n'
