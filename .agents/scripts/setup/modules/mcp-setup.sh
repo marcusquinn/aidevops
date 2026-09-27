@@ -649,6 +649,35 @@ _setup_opencode_plugins_auth_guidance() {
 	return 0
 }
 
+# OpenCode V1 loads the framework guide through the "instructions" entry that
+# prompt-injection-adapter.sh writes to ~/.config/opencode/opencode.json. The
+# isolated V2 config has no such entry, but V2 loads <config>/opencode/AGENTS.md,
+# so link the guide there for V1/V2 parity (GH#32498). A user-authored file, or
+# a symlink the user pointed elsewhere, is never replaced.
+_setup_opencode_v2_link_framework_guide() {
+	local opencode_config_dir="$1"
+	local guide_src="$HOME/.aidevops/agents/AGENTS.md"
+	local guide_dst="$opencode_config_dir/AGENTS.md"
+	local current_target=""
+
+	[[ -f "$guide_src" ]] || return 0
+	if [[ -L "$guide_dst" ]]; then
+		current_target=$(readlink "$guide_dst" 2>/dev/null || true)
+		[[ "$current_target" == "$guide_src" ]] && return 0
+		if [[ "$current_target" != "$HOME/.aidevops/"* ]]; then
+			print_info "Keeping user-managed OpenCode V2 AGENTS.md link: $guide_dst"
+			return 0
+		fi
+	elif [[ -e "$guide_dst" ]]; then
+		print_info "Keeping user-authored OpenCode V2 AGENTS.md: $guide_dst"
+		return 0
+	fi
+	if ! ln -sfn "$guide_src" "$guide_dst"; then
+		print_warning "Could not link the aidevops framework guide into OpenCode V2: $guide_dst"
+	fi
+	return 0
+}
+
 setup_opencode_plugins() {
 	local profile="${AIDEVOPS_OPENCODE_PROFILE:-v1}"
 	local binary_name="opencode"
@@ -710,6 +739,7 @@ setup_opencode_plugins() {
 		if [[ ! -e "$opencode_config" ]]; then
 			(umask 077 && printf '{}\n' >"$opencode_config") || return 1
 		fi
+		_setup_opencode_v2_link_framework_guide "$opencode_config_dir"
 	fi
 	if [[ -n "$opencode_config" ]] || opencode_config=$(find_opencode_config); then
 		pool_plugin_registered=$(_setup_opencode_plugins_register_file_url "$opencode_config" "$aidevops_plugin_entrypoint" "$plugin_key")

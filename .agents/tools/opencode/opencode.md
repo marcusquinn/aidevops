@@ -71,6 +71,17 @@ when the config entry cannot be written. To check this, run
 `opencode2 api GET /api/plugin`: it should list exactly one `aidevops` entry
 with `status: active`.
 
+V1 loads the framework guide through its config `instructions`. V2 has no such
+entry, so setup links `~/.aidevops/agents/AGENTS.md` to
+`~/.aidevops/runtimes/opencode-v2/config/opencode/AGENTS.md`; a user-authored
+file there is kept. The V2 background service serves every later session, so
+the shim drops caller session identity, headless flags, and bundle pins before
+any command without `--standalone`/`--server` (GH#32498). A TUI started from a
+Tabby recovery marker directory opens that marker's project directory instead.
+Plugin log lines `Session greeting skipped for <session>: <reason>` explain a
+missing greeting. To check parity, compare a fresh session's `core/instructions`
+in the V2 `instruction_state` table with the V1 system prompt.
+
 V2 promotion requires the isolated plugin, security-hook, lifecycle-cleanup,
 OAuth/MCP, headless execution, and V1 rollback gates to pass. Until then, do not
 change the profile document's `default` from `v1`.
