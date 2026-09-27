@@ -333,18 +333,29 @@ _dlw_assign_model_ab() {
 	created_at=$(jq -r '.createdAt // .created_at // empty' <<<"$issue_meta_json") || created_at=""
 	labels_json=$(jq -c '[.labels[]?.name]' <<<"$issue_meta_json") || labels_json="[]"
 	[[ -z "$created_at" ]] || ab_args+=(--created-at "$created_at" --labels-json "$labels_json")
-	[[ "$_DLW_DISPATCH_MODEL_TIER" == "$_DLW_STANDARD_TIER" ]] || ab_args+=(--continuation-only)
+	# The helper decides whether this tier may start an assignment: standard-only
+	# arms treat other tiers as continuation-only; provider-family arms route all.
+	local routed_tier=""
+	case "$_DLW_DISPATCH_MODEL_TIER" in
+	simple | standard | thinking)
+		routed_tier="$_DLW_DISPATCH_MODEL_TIER"
+		ab_args+=(--tier "$routed_tier")
+		;;
+	*) ab_args+=(--continuation-only) ;;
+	esac
 	ab_json=$(node "$ab_helper" "${ab_args[@]}") || return 1
 	[[ "$(jq -r '.active' <<<"$ab_json")" == "true" ]] || return 0
 	_DLW_AB_ROUTING_TABLE=$(jq -r '.routing_table' <<<"$ab_json") || return 1
 	_DLW_AB_EXPERIMENT=$(jq -r '.experiment' <<<"$ab_json") || return 1
 	_DLW_AB_ARM=$(jq -r '.arm' <<<"$ab_json") || return 1
+	local ab_scope=""
+	ab_scope=$(jq -r '.scope // empty' <<<"$ab_json") || ab_scope=""
+	[[ "$ab_scope" == "all-tiers" ]] || [[ "$routed_tier" == "$_DLW_STANDARD_TIER" ]] || return 0
+	[[ -n "$routed_tier" ]] || return 0
 	# Availability selection follows the arm-first table; a failed primary may
 	# use its existing same-tier fallback without changing the assigned arm.
-	if [[ "$_DLW_DISPATCH_MODEL_TIER" == "$_DLW_STANDARD_TIER" ]]; then
-		_DLW_SELECTED_MODEL=$(AIDEVOPS_MODEL_ROUTING_TABLE="$_DLW_AB_ROUTING_TABLE" \
-			"$HEADLESS_RUNTIME_HELPER" select --role worker --tier "$_DLW_STANDARD_TIER" 2>/dev/null) || _DLW_SELECTED_MODEL=""
-	fi
+	_DLW_SELECTED_MODEL=$(AIDEVOPS_MODEL_ROUTING_TABLE="$_DLW_AB_ROUTING_TABLE" \
+		"$HEADLESS_RUNTIME_HELPER" select --role worker --tier "$routed_tier" 2>/dev/null) || _DLW_SELECTED_MODEL=""
 	return 0
 }
 

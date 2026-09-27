@@ -2,10 +2,14 @@
 // SPDX-FileCopyrightText: 2026 Marcus Quinn
 
 export const PROSPECTIVE_MODE = "new-standard-issues";
+// All-tier enrollment for provider-family arms: every eligible auto-dispatch
+// issue, whatever its workload tier, receives one arm route for all tiers.
+export const ALL_TIER_MODE = "new-auto-dispatch-issues";
+export const ROUTED_TIERS = ["simple", "standard", "thinking"];
 
 export function validEnrollment(experiment) {
   if (!experiment.enrollment || typeof experiment.enrollment !== "object") return false;
-  if (experiment.enrollment.mode !== PROSPECTIVE_MODE) return false;
+  if (![PROSPECTIVE_MODE, ALL_TIER_MODE].includes(experiment.enrollment.mode)) return false;
   if (Object.keys(experiment.enrollment).length !== 1) return false;
   return !Object.hasOwn(experiment, "issues");
 }
@@ -24,7 +28,8 @@ export function eligibleNewIssue(experiment, { createdAt, labels } = {}) {
   if (!labels.every((label) => typeof label === "string")) return false;
   const names = new Set(labels);
   const required = ["auto-dispatch", "status:available"];
-  const excluded = ["tier:simple", "tier:thinking", "persistent", "parent-task", "no-auto-dispatch", "hold-for-review"];
+  const excluded = ["persistent", "parent-task", "no-auto-dispatch", "hold-for-review"];
+  if (experiment.enrollment?.mode !== ALL_TIER_MODE) excluded.push("tier:simple", "tier:thinking");
   return required.every((name) => names.has(name)) && excluded.every((name) => !names.has(name));
 }
 
@@ -41,6 +46,7 @@ export function parseAssignmentOptions(args) {
     if (!value) throw new Error(`missing model A/B option value: ${flag}`);
     if (flag === "--created-at") options.createdAt = value;
     else if (flag === "--labels-json") options.labels = JSON.parse(value);
+    else if (flag === "--tier" && ROUTED_TIERS.includes(value)) options.tier = value;
     else throw new Error(`unknown model A/B option: ${flag}`);
   }
   return options;

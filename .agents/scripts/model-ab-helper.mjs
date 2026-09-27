@@ -5,65 +5,26 @@
 // Opt-in, issue-level initial-route assignment. An assignment never pins a
 // worker: the existing availability fallback and capability escalation own
 // recovery, and the observed route must be counted separately from this arm.
+// Arms are either a single standard-tier model/effort (legacy) or a
+// provider-family route covering simple, standard and thinking tiers, so a
+// worker's escalations and OpenCode subagent delegations stay in the arm.
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { eligibleNewIssue, parseAssignmentOptions, validEnrollment } from "./model-ab-enrollment.mjs";
+import { ROUTED_TIERS, eligibleNewIssue, parseAssignmentOptions } from "./model-ab-enrollment.mjs";
 import { aggregateObserved, snapshotAssignments } from "./model-ab-report.mjs";
-import { startProspectiveTrial } from "./model-ab-start.mjs";
-import { assignmentPaths, persistReceipt, persistRoute } from "./model-ab-store.mjs";
+import { parseStartOptions, startProspectiveTrial } from "./model-ab-start.mjs";
+import { assignmentPaths, persistReceipt, persistRoute, tieredArm } from "./model-ab-store.mjs";
+import { repoPattern, validateExperiment } from "./model-ab-validate.mjs";
+
+export { validateExperiment };
 
 const root = join(homedir(), ".aidevops", ".agent-workspace", "work", "model-ab");
-const identifier = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/;
-const repoPattern = /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/;
-const modelPattern = /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_./-]+$/;
-const invalidExperiment = "invalid model A/B experiment: require ID, repository, seed, distinct issues and two model/effort arms";
 
 function digest(value) {
   return createHash("sha256").update(value).digest("hex");
-}
-
-function validIssues(issues) {
-  if (!Array.isArray(issues)) return false;
-  if (issues.length < 2 || new Set(issues).size !== issues.length) return false;
-  return issues.every((issue) => Number.isSafeInteger(issue) && issue > 0);
-}
-
-function validArm(arm) {
-  if (!identifier.test(arm?.name || "")) return false;
-  if (!modelPattern.test(arm?.model || "")) return false;
-  return ["low", "medium", "high", "max"].includes(arm?.variant);
-}
-
-function validArms(arms) {
-  if (!Array.isArray(arms) || arms.length !== 2) return false;
-  if (new Set(arms.map((arm) => arm?.name)).size !== 2) return false;
-  return arms.every(validArm);
-}
-
-export function validateExperiment(value) {
-  if (!value || typeof value !== "object") {
-    throw new Error(invalidExperiment);
-  }
-  if (!identifier.test(value.id || "") || !repoPattern.test(value.repo || "")) {
-    throw new Error(invalidExperiment);
-  }
-  if (!identifier.test(value.seed || "")) throw new Error(invalidExperiment);
-  if (Object.hasOwn(value, "issues")) {
-    if (!validIssues(value.issues) || Object.hasOwn(value, "enrollment")) throw new Error(invalidExperiment);
-  } else if (!validEnrollment(value)) throw new Error(invalidExperiment);
-  if (!validArms(value.arms)) throw new Error(invalidExperiment);
-  const start = Date.parse(value.starts_at);
-  const end = Date.parse(value.ends_at);
-  if (!Number.isFinite(start) || !Number.isFinite(end)) {
-    throw new Error("model A/B window must be a valid, bounded 72-hour interval");
-  }
-  if (end <= start || end - start > 72 * 60 * 60 * 1000) {
-    throw new Error("model A/B window must be a valid, bounded 72-hour interval");
-  }
-  return value;
 }
 
 export function assignedArm(experiment, repo, issue) {
@@ -81,28 +42,39 @@ export function assignedArm(experiment, repo, issue) {
   return experiment.arms[shuffled.indexOf(issue) % 2];
 }
 
+function armReceipt(arm) {
+  if (!tieredArm(arm)) return { model: arm.model, variant: arm.variant };
+  return { routes: ROUTED_TIERS
+    .map((tier) => `${tier}=${arm.tiers[tier].model}@${arm.tiers[tier].variant || "default"}`)
+    .join(",") };
+}
+
 export function assign(experiment, repo, issue, {
-  directory = root, now = Date.now(), continuationOnly = false, createdAt, labels,
+  directory = root, now = Date.now(), continuationOnly = false, createdAt, labels, tier,
 } = {}) {
   validateExperiment(experiment);
   if (repo !== experiment.repo) return { active: false };
   if (experiment.issues && !experiment.issues.includes(issue)) return { active: false };
   const arm = assignedArm(experiment, repo, issue);
+  const scope = tieredArm(arm) ? "all-tiers" : "standard";
+  // Standard-only arms never start a new assignment from another tier; a
+  // capability escalation keeps the issue's existing receipt only.
+  const continuation = continuationOnly || (scope === "standard" && tier !== undefined && tier !== "standard");
   const fingerprint = digest(JSON.stringify(experiment));
   const paths = assignmentPaths(experiment, repo, issue, directory);
   if (!existsSync(paths.receipt) && experiment.enrollment) {
     if (!eligibleNewIssue(experiment, { createdAt, labels })) return { active: false };
   }
   if (!existsSync(paths.receipt)
-    && (continuationOnly || now < Date.parse(experiment.starts_at) || now >= Date.parse(experiment.ends_at))) {
+    && (continuation || now < Date.parse(experiment.starts_at) || now >= Date.parse(experiment.ends_at))) {
     return { active: false };
   }
   const receipt = { schema: "aidevops-model-ab/v1", experiment: experiment.id,
-    repo, issue, arm: arm.name, model: arm.model, variant: arm.variant, fingerprint };
+    repo, issue, arm: arm.name, ...armReceipt(arm), fingerprint };
   if (experiment.enrollment) receipt.created_at = createdAt;
   const recorded = persistReceipt(paths, receipt, now);
   persistRoute(paths, arm);
-  return { active: true, ...recorded, routing_table: paths.route };
+  return { active: true, ...recorded, routing_table: paths.route, scope };
 }
 
 export function report(experiment, { directory = root } = {}) {
@@ -110,10 +82,13 @@ export function report(experiment, { directory = root } = {}) {
   return snapshotAssignments(experiment, directory, assignedArm);
 }
 
+const usage = "usage: model-ab-helper.mjs start OWNER/REPO [--preset standard-luna-terra|openai-anthropic] [--hours N] | assign OWNER/REPO ISSUE [--created-at ISO --labels-json JSON] [--tier simple|standard|thinking] [--continuation-only] | report";
+
 function run(argv) {
   const [command, repo, rawIssue] = argv;
-  if (command === "start" && argv.length === 2) {
-    process.stdout.write(`${JSON.stringify(startProspectiveTrial(repo, { validate: validateExperiment }))}\n`);
+  if (command === "start" && argv.length >= 2) {
+    const options = parseStartOptions(argv.slice(2));
+    process.stdout.write(`${JSON.stringify(startProspectiveTrial(repo, { ...options, validate: validateExperiment }))}\n`);
     return;
   }
   const config = process.env.AIDEVOPS_MODEL_AB_CONFIG;
@@ -126,7 +101,7 @@ function run(argv) {
   } else if (command === "report" && argv.length === 1) {
     process.stdout.write(`${JSON.stringify(aggregateObserved(report(experiment)))}\n`);
   } else {
-    throw new Error("usage: model-ab-helper.mjs start OWNER/REPO | assign OWNER/REPO ISSUE [--created-at ISO --labels-json JSON] [--continuation-only] | report");
+    throw new Error(usage);
   }
 }
 

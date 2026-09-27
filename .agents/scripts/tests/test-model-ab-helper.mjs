@@ -34,7 +34,7 @@ test("issue arms persist across retries without changing the fallback or thinkin
     const route = JSON.parse(readFileSync(first.routing_table, "utf8"));
     assert.equal(route.tiers.standard.models[0], first.model);
     assert.equal(route.tiers.standard.reasoning[first.model], first.variant);
-    assert.ok(route.tiers.standard.models.includes("anthropic/claude-sonnet-4-6"));
+    assert.ok(route.tiers.standard.models.includes("anthropic/claude-sonnet-5"));
     assert.equal(route.tiers.thinking, undefined);
     const shipped = fileURLToPath(new URL("../../configs/model-routing-table.json", import.meta.url));
     const merged = loadModelRouting([first.routing_table, shipped]);
@@ -60,7 +60,7 @@ test("configuration requires a bounded window and distinct issue population", ()
   assert.equal(arms.filter((name) => name === "luna-max").length, 2);
   assert.equal(arms.filter((name) => name === "terra-low").length, 2);
   assert.throws(() => validateExperiment({ ...experiment, issues: [12, 12] }), /invalid model A\/B/);
-  assert.throws(() => validateExperiment({ ...experiment, ends_at: "2026-10-01T00:00:00Z" }), /72-hour/);
+  assert.throws(() => validateExperiment({ ...experiment, ends_at: "2026-10-01T00:00:00Z" }), /168-hour/);
   assert.throws(() => validateExperiment({ ...experiment, arms: [{ ...experiment.arms[0] }] }), /invalid model A\/B/);
 });
 
@@ -109,6 +109,46 @@ test("start creates a bounded private cohort and persistent Pulse env override w
     assert.equal(overrides["com.aidevops.aidevops-supervisor-pulse"].AIDEVOPS_MODEL_AB_CONFIG, started.config);
     assert.equal(report(config, { directory }).arms["luna-max"].assigned, 0);
     assert.throws(() => startProspectiveTrial("example/repo", { configRoot, now: windowStart + 1, validate: validateExperiment }), /already has/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("provider-family trial routes every tier of each enrolled issue to one provider", () => {
+  const parent = process.env.AIDEVOPS_TEMP_DIR || join(homedir(), ".aidevops", ".agent-workspace", "tmp");
+  const directory = mkdtempSync(join(parent, "model-ab-provider-"));
+  const configRoot = join(directory, ".config", "aidevops");
+  try {
+    const started = startProspectiveTrial("example/repo",
+      { configRoot, now: windowStart, validate: validateExperiment, preset: "openai-anthropic" });
+    const config = JSON.parse(readFileSync(started.config, "utf8"));
+    assert.equal(config.enrollment.mode, "new-auto-dispatch-issues");
+    assert.equal(Date.parse(config.ends_at) - Date.parse(config.starts_at), 168 * 3600 * 1000);
+    assert.deepEqual(config.arms.map((arm) => arm.name), ["openai", "anthropic"]);
+    assert.deepEqual(config.arms[1].tiers.thinking, { model: "anthropic/claude-opus-5-5", variant: "medium" });
+    assert.deepEqual(config.arms[1].tiers.simple, { model: "anthropic/claude-haiku-4-5" });
+    const createdAt = new Date(windowStart + 1000).toISOString();
+    const labels = ["auto-dispatch", "status:available", "tier:thinking"];
+    const first = assign(config, "example/repo", 200,
+      { directory, now: windowStart + 2000, createdAt, labels, tier: "thinking" });
+    assert.equal(first.active, true);
+    assert.equal(first.scope, "all-tiers");
+    const arm = config.arms.find((candidate) => candidate.name === first.arm);
+    const route = JSON.parse(readFileSync(first.routing_table, "utf8"));
+    for (const tier of ["simple", "standard", "thinking"]) {
+      assert.equal(route.tiers[tier].models[0], arm.tiers[tier].model);
+    }
+    assert.deepEqual(assign(config, "example/repo", 200,
+      { directory, now: windowStart + 3000, createdAt, labels: [], tier: "standard", continuationOnly: true }), first);
+    assert.throws(() => validateExperiment({ ...config, arms: [config.arms[0], experiment.arms[1]] }), /invalid model A\/B/);
+    const legacy = { ...experiment, enrollment: { mode: "new-auto-dispatch-issues" } };
+    delete legacy.issues;
+    assert.throws(() => validateExperiment(legacy), /invalid model A\/B/);
+    const summary = aggregateObserved(report(config, { directory }), () => ({ delivery: "pending",
+      route_observed: true, models: [arm.tiers.standard.model, "zai-coding-plan/glm-5.2"],
+      model_variants: [], escalations: 0, fallbacks: 1, retries: 0, accepted_subagents: 0, parent_interventions: 0 }));
+    assert.equal(summary.arms[first.arm].off_arm_issues, 1);
+    assert.deepEqual(summary.arms[first.arm].observations[0].off_arm_models, ["zai-coding-plan/glm-5.2"]);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
