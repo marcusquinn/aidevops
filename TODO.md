@@ -1432,6 +1432,10 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18487 Allow remote-only repository creation from sessions inside the projects workspace ref:GH#32600 pr:#32601 completed:2026-09-27
 
+- [ ] t18501 fix: keep pending auto-dispatch issues dispatchable and make priority:critical/high lead dispatch order #bug #framework #pulse #interactive #auto-dispatch #priority:high tier:standard ~1h ref:GH#32703 logged:2026-09-28 -> [todo/tasks/t18501-brief.md]
+
+- [ ] t18502 OpenCode V2 promotion gates: weekly V2 canary, plugin/tool probe, documented gate checks, requalified pin #enhancement #framework #opencode #interactive #auto-dispatch tier:standard ~3.5h ref:GH#32704 logged:2026-09-28 -> [todo/tasks/t18502-brief.md]
+
 - [ ] t18490 docs: refresh TTS/music provider guidance (NanoGPT audio route, OpenAI TTS, OAuth scope) and Remotion BT.709 delivery flags #auto-dispatch #documentation #interactive tier:simple ~45m ref:GH#32610 logged:2026-09-27 -> [todo/tasks/t18490-brief.md]
 
 - [x] t18491 fix: session worktree resolver errors say 'Image workdir' for bounded operations and hide which root failed #auto-dispatch #bug #interactive tier:simple ~30m ref:GH#32612 logged:2026-09-27 -> [todo/tasks/t18491-brief.md] pr:#32653 completed:2026-09-27
@@ -1441,10 +1445,6 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 - [ ] t18493 feat: media-qa-helper for rendered video/audio deliverables (streams, loudness, contact sheets, whisper intelligibility) #auto-dispatch #feat #interactive tier:standard ~2h ref:GH#32615 logged:2026-09-27 -> [todo/tasks/t18493-brief.md]
 
 - [ ] t18494 fix: claim-task-id strands IDs on rejected bodies, misleading scope hint, polluted issue-number capture, 30s counter fetch budget #auto-dispatch #bug #interactive tier:standard ~1.5h ref:GH#32617 logged:2026-09-27 -> [todo/tasks/t18494-brief.md]
-
-- [ ] t18496 fix(dispatch): stop false missing_files_scope holds and auto-release repaired briefs #auto-dispatch #bug #interactive tier:standard ~2h ref:GH#32689 logged:2026-09-28
-
-- [ ] t18497 fix(claim-task-id): shallow counter-branch discovery fetches that time out at the 30s default #auto-dispatch #bug #interactive tier:standard ~45m ref:GH#32692 logged:2026-09-28
 
 - [x] t18495 fix: guard merged-PR reconcile stages 1-2 against recurrent file-size debt #auto-dispatch #bug #pulse #interactive tier:standard ~1h ref:GH#32640 logged:2026-09-27 -> [todo/tasks/t18495-brief.md] pr:#32642 completed:2026-09-27
 
