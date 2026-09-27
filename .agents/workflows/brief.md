@@ -102,13 +102,13 @@ worker starts. `## Files`, `### Files to Modify` or prose file lists do not coun
 ```markdown
 ### Files Scope
 
-- EDIT: `.agents/scripts/example-helper.sh`
-- NEW: `.agents/scripts/example-helper-*.sh`
+- `.agents/scripts/example-helper.sh`
+- `.agents/scripts/example-helper-test.sh`
 ```
 
-One path or glob per line, nothing after it; list tests and docs the worker
-must touch, and a sibling glob when the work splits or creates files. Put
-descriptions elsewhere in the body. Verify before publishing:
+One exact repository-relative path per line (no globs or `EDIT:`/`NEW:` prefixes),
+nothing after it; list tests and docs the worker must touch. Put descriptions,
+hard boundaries and recovery guidance in a sibling section. Verify before publishing:
 `pre-dispatch-validator-helper.sh scope-check <N> "$(cat body.md)" 1` (exit 0).
 Interactive `claim-task-id.sh --labels auto-dispatch` refuses a description
 without it. Planning-only issues start with `Planning-only:` instead.
