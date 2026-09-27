@@ -1432,6 +1432,16 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18487 Allow remote-only repository creation from sessions inside the projects workspace ref:GH#32600
 
+- [ ] t18490 docs: refresh TTS/music provider guidance (NanoGPT audio route, OpenAI TTS, OAuth scope) and Remotion BT.709 delivery flags #auto-dispatch #documentation #interactive tier:simple ~45m ref:GH#32610 logged:2026-09-27 -> [todo/tasks/t18490-brief.md]
+
+- [ ] t18491 fix: session worktree resolver errors say 'Image workdir' for bounded operations and hide which root failed #auto-dispatch #bug #interactive tier:simple ~30m ref:GH#32612 logged:2026-09-27 -> [todo/tasks/t18491-brief.md]
+
+- [ ] t18492 fix: aidevops secret NAME -- cmd redacts short dictionary words (e.g. 'openai') from output #auto-dispatch #bug #interactive tier:standard ~1h ref:GH#32614 logged:2026-09-27 -> [todo/tasks/t18492-brief.md]
+
+- [ ] t18493 feat: media-qa-helper for rendered video/audio deliverables (streams, loudness, contact sheets, whisper intelligibility) #auto-dispatch #feat #interactive tier:standard ~2h ref:GH#32615 logged:2026-09-27 -> [todo/tasks/t18493-brief.md]
+
+- [ ] t18494 fix: claim-task-id strands IDs on rejected bodies, misleading scope hint, polluted issue-number capture, 30s counter fetch budget #auto-dispatch #bug #interactive tier:standard ~1.5h blocked-by:GH#32605 ref:GH#32617 logged:2026-09-27 -> [todo/tasks/t18494-brief.md]
+
 ## In Progress
 
 - [x] t18478 Repair Anthropic Opus 5.5 OAuth adaptive-thinking request shape and add opt-in local interactive model/effort defaults without changing shared routes. Verify medium/xhigh Read-tool calls, unpinned OpenCode selection, focused plugin tests and changed-file lint; publish the reviewed fix through full-loop release. #bugfix #framework #auth #interactive #auto-dispatch ~2h tier:standard started:2026-09-26 ref:GH#32415 logged:2026-09-26 pr:#32417 testing:runtime-verified release:v3.36.0 completed:2026-09-26 -> [todo/tasks/t18478-brief.md]
