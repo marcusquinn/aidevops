@@ -78,6 +78,7 @@ map_tags_to_labels() {
 		local label="$tag"
 		case "$tag" in
 		bugfix | bug) label="bug" ;;
+		ops) label="chore" ;;
 		feat | feature) label="enhancement" ;;
 		hardening) label="quality" ;;
 		sync) label="git" ;;

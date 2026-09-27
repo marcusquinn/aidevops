@@ -1625,6 +1625,52 @@ _merge_canonical_dir_for_sync() {
 	return 0
 }
 
+# Resolve a managed repository's canonical path from its registered slug, not
+# the current worktree. `full-loop-helper.sh merge PR owner/repo` is allowed
+# to run from another repository.
+_merge_repo_path_for_slug() {
+	local repo_slug="$1"
+	local repos_json="${AIDEVOPS_REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
+	local repo_path=""
+	[[ -n "$repo_slug" && -f "$repos_json" ]] || return 1
+	repo_path=$(jq -r --arg slug "$repo_slug" '
+		.initialized_repos[]?
+		| select(((.slug // "") | ascii_downcase) == ($slug | ascii_downcase))
+		| .path // empty
+	' "$repos_json" 2>/dev/null | sed -n '1p') || repo_path=""
+	[[ -n "$repo_path" ]] || return 1
+	repo_path="${repo_path/#\~/$HOME}"
+	[[ -d "$repo_path" ]] || return 1
+	printf '%s\n' "$repo_path"
+	return 0
+}
+
+_merge_reconcile_planning_publication() {
+	local pr_number="$1"
+	local repo="$2"
+	local merge_sha="$3"
+	local repo_path=""
+	local changed_files=""
+	local reconciler="${SCRIPT_DIR}/planning-publication-reconcile.sh"
+
+	[[ -x "$reconciler" && "$merge_sha" =~ ^[0-9a-f]{40}$ ]] || return 0
+	changed_files=$(gh api --paginate "repos/${repo}/pulls/${pr_number}/files" --jq '.[].filename' 2>/dev/null || true)
+	if ! printf '%s\n' "$changed_files" | grep -qE '^(TODO\.md|todo/tasks/)'; then
+		return 0
+	fi
+	repo_path=$(_merge_repo_path_for_slug "$repo" 2>/dev/null || true)
+	if [[ -z "$repo_path" ]]; then
+		print_warning "Planning publication reconcile skipped: canonical path for ${repo} is not registered"
+		return 0
+	fi
+	if (cd "$repo_path" && "$reconciler" reconcile --repo "$repo" --sha "$merge_sha"); then
+		print_success "Planning publication reconciled for merged PR #${pr_number}"
+	else
+		print_warning "Planning publication reconcile deferred for merged PR #${pr_number}"
+	fi
+	return 0
+}
+
 _merge_current_worktree_cleanup_plan() {
 	local pr_head_ref="$1"
 	local pr_head_oid="$2"
@@ -2173,6 +2219,8 @@ cmd_merge() {
 		return 1
 	fi
 	print_success "LIFECYCLE_STATE=MERGED merge_sha=${FULL_LOOP_MERGE_SHA}"
+	_merge_reconcile_planning_publication "$pr_number" "$repo" "$FULL_LOOP_MERGE_SHA"
+	_canonical_dir=$(_merge_repo_path_for_slug "$repo" 2>/dev/null || printf '%s' "$_canonical_dir")
 	_merge_report_canonical_sync_state "$_canonical_dir" "${WORKER_ISSUE_NUMBER:-$pr_number}" || true
 	if declare -F is_loop_active >/dev/null 2>&1 && is_loop_active; then
 		_full_loop_record_phase "postflight" "$pr_number" || return 1

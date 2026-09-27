@@ -501,6 +501,27 @@ _validate_description_format() {
 	return $rc
 }
 
+# _validate_description_scope_before_allocation — reject descriptions that the
+# issue-body composer cannot canonicalize before advancing the CAS counter.
+_validate_description_scope_before_allocation() {
+	[[ "$NO_ISSUE" == "true" || "$DRY_RUN" == "true" || "$OFFLINE_MODE" == "true" ]] && return 0
+	[[ -z "$TASK_DESCRIPTION" ]] && return 0
+
+	local scope_helper="${SCRIPT_DIR}/brief_scope.py"
+	if [[ ! -r "$scope_helper" ]]; then
+		log_warn "brief_scope.py is unavailable; preserving post-allocation body validation"
+		return 0
+	fi
+
+	if ! printf '%s' "$TASK_DESCRIPTION" | python3 "$scope_helper" prepare \
+		"$TASK_DESCRIPTION" "$TASK_DESCRIPTION" >/dev/null; then
+		log_error "Description body cannot be canonicalized before task-ID allocation."
+		log_error "Recovery: under an existing '### Files Scope', use bare '- path/to/file' bullets."
+		return 1
+	fi
+	return 0
+}
+
 # t2436: Scan TODO.md for the task entry matching task_id and derive
 # creation-time labels from its tags. Closes the race window where
 # parent-task (and other protected labels) would otherwise only be applied
@@ -1146,16 +1167,19 @@ _main_create_issues() {
 				issue_title="$(_format_legacy_task_id "$i"): ${TASK_TITLE}"
 				local issue_num=""
 
-				case "$platform" in
-				github)
-					issue_num=$(create_github_issue "$issue_title" "$TASK_DESCRIPTION" "$TASK_LABELS" "$REPO_PATH") || true
+			case "$platform" in
+			github)
+				issue_num=$(create_github_issue "$issue_title" "$TASK_DESCRIPTION" "$TASK_LABELS" "$REPO_PATH") || true
 					;;
 				gitlab)
 					issue_num=$(create_gitlab_issue "$issue_title" "$TASK_DESCRIPTION" "$TASK_LABELS" "$REPO_PATH") || true
 					;;
-				esac
+			esac
 
-				if [[ -n "$issue_num" ]]; then
+			# create_* output is captured for the public ref contract; never log or
+			# parse advisory/noisy output as an issue number.
+			[[ "$issue_num" =~ ^[0-9]+$ ]] || issue_num=""
+			if [[ -n "$issue_num" ]]; then
 					log_success "Created issue: ${ref_prefix}#${issue_num}"
 					issue_nums+=("$issue_num")
 					has_any_issue=true
@@ -1802,6 +1826,12 @@ main() {
 		fi
 	fi
 
+	# Reject body-normalization failures before the monotonic CAS allocation so
+	# a retry after correcting the scope does not leave an unused task ID.
+	if ! _validate_description_scope_before_allocation; then
+		return 3
+	fi
+
 	# --- Allocate the ID(s) first (the critical atomic step) ---
 
 	local _alloc_first_id="" _alloc_is_offline=""
@@ -1849,7 +1879,17 @@ main() {
 	if [[ "$NO_ISSUE" == "false" ]] && [[ "$is_offline" == "false" ]] && [[ "$platform" != "unknown" ]]; then
 		local issue_output
 		issue_output=$(_main_create_issues "$first_id" "$platform")
-		eval "$(echo "$issue_output" | grep -E '^_issue_(ref_prefix|has_any|first_num|nums_csv)=')"
+		local issue_key issue_value
+		while IFS='=' read -r issue_key issue_value; do
+			case "$issue_key" in
+			_issue_ref_prefix) _issue_ref_prefix="$issue_value" ;;
+			_issue_has_any) _issue_has_any="$issue_value" ;;
+			_issue_first_num)
+				[[ "$issue_value" =~ ^[0-9]+$ ]] && _issue_first_num="$issue_value"
+				;;
+			_issue_nums_csv) _issue_nums_csv="$issue_value" ;;
+			esac
+		done <<<"$issue_output"
 	fi
 
 	# --- Output machine-readable results ---
