@@ -21,6 +21,8 @@ NVPN_CLI_PATH="${NVPN_CLI_PATH:-/usr/local/bin/nvpn}"
 NVPN_NETWORK_TIMEOUT="${NVPN_NETWORK_TIMEOUT:-45}"
 NVPN_RELEASES_URL="https://github.com/mmalmi/nostr-vpn/releases/latest"
 LEGACY_FIPS_PLIST="${LEGACY_FIPS_PLIST:-/Library/LaunchDaemons/com.fips.daemon.plist}"
+LEGACY_FIPS_PREFIX="${LEGACY_FIPS_PREFIX:-/usr/local}"
+LEGACY_FIPS_RESOLVER="${LEGACY_FIPS_RESOLVER:-/etc/resolver/fips}"
 
 print_usage() {
 	cat <<'USAGE'
@@ -276,13 +278,17 @@ GUIDE
 
 show_opencode_guide() {
 	cat <<'GUIDE'
-Secure OpenCode remote compute over Nostr VPN/FIPS:
-  1. Start FIPS and verify the client can reach the compute node over .fips/IPv6.
-  2. Bind OpenCode server to loopback or the FIPS interface only, never a public interface.
-  3. Store auth with: aidevops secret set OPENCODE_SERVER_TOKEN
-  4. Allow only the client npub in FIPS peer ACLs and fips0 firewall rules.
-  5. Test SSH first, then test an authenticated OpenCode request over the mesh.
-  6. Disable LAN gateway and exit-node modes unless the trust boundary is reviewed.
+Secure OpenCode remote compute over Nostr VPN (validated with nvpn 4.1.16, GH#23846):
+  1. Enrol both devices in one nvpn network and confirm: nvpn status  (mesh_ready: true)
+  2. Install your SSH key and add an alias (Host <alias> / HostName <peer tunnel IP or name.nvpn>).
+  3. Keep OpenCode on loopback on the compute node; SSH is the auth boundary. Terminal 1:
+       ssh -L 127.0.0.1:14096:127.0.0.1:4096 <alias> "zsh -lic 'cd ~ && opencode serve --hostname 127.0.0.1 --port 4096'"
+  4. Terminal 2 on the client:
+       opencode attach http://127.0.0.1:14096 --dir <remote project path>
+  5. Closing SSH may leave the remote server running; stop it with:
+       ssh <alias> 'pkill -f "opencode serve --hostname 127.0.0.1 --port 4096"'
+  6. Never bind OpenCode to 0.0.0.0 or a tunnel IP without OPENCODE_SERVER_PASSWORD
+     (store with: aidevops secret set OPENCODE_SERVER_TOKEN) and a reviewed trust boundary.
 
 Useful aidevops service candidates after SSH is proven:
   - OpenCode remote server for heavier local or workstation compute.
@@ -425,7 +431,10 @@ check_nvpn_conflicts() {
 	local netbird_output=""
 	local netbird_port=""
 	status_output="$(timeout_sec 15 "$cli" status 2>/dev/null)" || status_output=""
-	nvpn_port="$(nvpn_status_field "$status_output" configured_listen_port)" || nvpn_port=""
+	# nvpn 4.1.16 prints configured_listen_port only while the bound port differs
+	# from config (e.g. bind failed); otherwise only listen_port is present.
+	nvpn_port="$(nvpn_status_field "$status_output" configured_listen_port)" ||
+		nvpn_port="$(nvpn_status_field "$status_output" listen_port)" || nvpn_port=""
 	if has_command netbird; then
 		netbird_output="$(timeout_sec 15 netbird status 2>/dev/null)" || netbird_output=""
 		netbird_port="$(nvpn_status_field "$netbird_output" "Wireguard port")" || netbird_port=""
@@ -434,10 +443,27 @@ check_nvpn_conflicts() {
 		printf 'CONFLICT: nvpn and NetBird both use UDP %s. Move nvpn: nvpn set --listen-port %s && nvpn reload\n' "$nvpn_port" "$((nvpn_port + 1))"
 	elif [[ -n "$nvpn_port" ]]; then
 		printf 'OK: nvpn listen port %s does not clash with NetBird (%s)\n' "$nvpn_port" "${netbird_port:-not running}"
+	else
+		printf 'WARN: could not read the nvpn listen port from: %s status\n' "$cli"
 	fi
-	if [[ -f "$LEGACY_FIPS_PLIST" ]]; then
-		printf 'NOTE: standalone jmcorgan/fips daemon is installed (%s). Nostr VPN embeds its own FIPS fork; keep com.fips.daemon disabled or uninstall it rather than running two FIPS stacks.\n' "$LEGACY_FIPS_PLIST"
+	report_legacy_fips_leftovers
+	return 0
+}
+
+report_legacy_fips_leftovers() {
+	local path=""
+	local found=""
+	for path in "$LEGACY_FIPS_PLIST" "${LEGACY_FIPS_PREFIX}/bin/fips" "${LEGACY_FIPS_PREFIX}/bin/fipsctl" \
+		"${LEGACY_FIPS_PREFIX}/etc/fips" "${LEGACY_FIPS_RESOLVER}"; do
+		if [[ -e "$path" ]]; then
+			found+=" ${path}"
+		fi
+	done
+	if [[ -n "$found" ]]; then
+		printf 'NOTE: standalone jmcorgan/fips leftovers:%s. Nostr VPN embeds its own FIPS fork; see nostr-vpn.md "Removing Legacy Standalone FIPS".\n' "$found"
+		return 0
 	fi
+	printf 'OK: no standalone jmcorgan/fips install found\n'
 	return 0
 }
 
