@@ -1695,6 +1695,7 @@ _setup_run_interactive_runtime_tools() {
 	confirm_step "Setup persistent OpenCode owner (preserve existing histories)" && setup_opencode_service
 	confirm_step "Setup Codex CLI (OpenAI AI coding tool)" && setup_codex_cli
 	confirm_step "Setup Droid CLI (Factory.AI coding tool)" && setup_droid_cli
+	confirm_step "Update Nostr VPN nvpn CLI (only if Nostr VPN is installed)" && setup_nostr_vpn
 	return 0
 }
 
@@ -1724,7 +1725,6 @@ _setup_run_interactive() {
 	confirm_step "Setup PIM tools (Reminders, Calendar, Contacts)" && setup_pim_tools
 	confirm_step "Setup mobile tools (optional adb, Xcode guidance, MiniSim, serve-sim, Mobile MCP)" && setup_mobile_simulator_tools
 	confirm_step "Setup ClaudeBar (AI quota monitor in menu bar)" && setup_claudebar
-	confirm_step "Update Nostr VPN nvpn CLI (only if Nostr VPN is installed)" && setup_nostr_vpn
 	confirm_step "Setup Git CLIs (gh, glab, tea)" && setup_git_clis
 	confirm_step "Setup file discovery tools (fd, ripgrep, ripgrep-all)" && setup_file_discovery_tools
 	confirm_step "Setup rtk (token-optimized CLI output, 60-90% savings)" && setup_rtk

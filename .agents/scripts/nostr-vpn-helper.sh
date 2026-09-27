@@ -341,19 +341,19 @@ nvpn_status_field() {
 report_nvpn_app_update() {
 	local helper="$1"
 	local json=""
-	local available=""
+	local available=0
 	local latest=""
 	if ! json="$(timeout_sec "$NVPN_NETWORK_TIMEOUT" "$helper" update --app --check --json 2>/dev/null)"; then
 		printf 'WARN: could not check Nostr VPN app updates (offline or release source unavailable)\n'
 		return 0
 	fi
-	if has_command jq; then
-		available="$(printf '%s' "$json" | jq -r '.available // empty' 2>/dev/null || true)"
-		latest="$(printf '%s' "$json" | jq -r '.latest_version // empty' 2>/dev/null || true)"
-	elif [[ "$json" == *'"available":true'* ]]; then
-		available="true"
+	if [[ "$json" == *'"available":true'* || "$json" == *'"available": true'* ]]; then
+		available=1
 	fi
-	if [[ "$available" == "true" ]]; then
+	if has_command jq; then
+		latest="$(printf '%s' "$json" | jq -r '.latest_version // empty' 2>/dev/null || true)"
+	fi
+	if ((available)); then
 		printf 'UPDATE: Nostr VPN app %s is available. Open Nostr VPN and accept its verified in-app update; aidevops does not replace the app or its root helper.\n' "${latest:-(newer release)}"
 		return 0
 	fi
@@ -382,7 +382,7 @@ sync_nvpn_cli_with_app() {
 		printf 'OK: nvpn CLI %s at %s matches the Nostr VPN daemon\n' "$cli_version" "$target"
 		return 0
 	fi
-	if [[ "$check_only" == "true" ]]; then
+	if ((check_only)); then
 		printf 'DRIFT: nvpn CLI (%s) does not match daemon %s; run: nostr-vpn-helper.sh update\n' "${cli_version:-not installed}" "$daemon_version"
 		return 0
 	fi
@@ -402,7 +402,7 @@ sync_nvpn_cli_with_app() {
 update_standalone_nvpn_cli() {
 	local check_only="$1"
 	local cli="$2"
-	if [[ "$check_only" == "true" ]]; then
+	if ((check_only)); then
 		timeout_sec "$NVPN_NETWORK_TIMEOUT" "$cli" update --check || printf 'WARN: nvpn update check failed\n'
 		return 0
 	fi
@@ -442,12 +442,12 @@ check_nvpn_conflicts() {
 }
 
 run_nvpn_update() {
-	local check_only="false"
+	local check_only=0
 	local arg=""
 	local cli=""
 	for arg in "$@"; do
 		case "$arg" in
-		--check) check_only="true" ;;
+		--check) check_only=1 ;;
 		*)
 			printf 'Unknown update option: %s\n' "$arg" >&2
 			return 1
