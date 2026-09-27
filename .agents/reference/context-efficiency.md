@@ -28,8 +28,9 @@ when their trigger applies; never remove them merely to meet a token target.
   host `metadata.loaded` dedupe is untouched. OpenCode 2 publishes nearby
   instructions as a separate synthetic message and is not rewritten.
 - The plugin session greeting is off by default in OpenCode 1 (the global
-  AGENTS.md fallback greets) and on in OpenCode 2, whose isolated config home
-  has no fallback and whose runtime version only the plugin knows.
+  AGENTS.md fallback greets) and on in OpenCode 2, whose config AGENTS.md is
+  the framework guide without a greeting fallback, and whose runtime version
+  only the plugin knows.
   `AIDEVOPS_PLUGIN_SESSION_GREETING=1|0` forces it on or off. The block is
   appended after durable guidance for every provider with the
   root-session-only gate unchanged. The system

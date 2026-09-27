@@ -62,6 +62,7 @@ PATH="$SANDBOX/bin:$PATH" AIDEVOPS_OPENCODE_PROFILE=v2 \
 [[ -x "$HOME/.local/bin/opencode2" ]]
 [[ ! -e "$HOME/.local/bin/opencode" ]]
 grep -Fq '# aidevops:opencode-v2-isolation' "$HOME/.local/bin/opencode2"
+grep -Fxq "$(_setup_opencode_v2_shim_version_marker)" "$HOME/.local/bin/opencode2"
 grep -Eq '^exec ".*/opencode2" "\$@"$' "$HOME/.local/bin/opencode2"
 resolved_v2_binary=$(PATH="/usr/bin:/bin" _setup_opencode_plugins_resolve_binary opencode2 v2)
 [[ "$resolved_v2_binary" == "$HOME/.local/bin/opencode2" ]]
@@ -88,6 +89,8 @@ grep -Fq "POOL_FILE=\"\${AIDEVOPS_OAUTH_POOL_FILE:-" "$REPO_ROOT/.agents/scripts
 
 mkdir -p "$HOME/.aidevops/agents/plugins/opencode-aidevops/v2-plugin"
 printf 'export default {};\n' >"$HOME/.aidevops/agents/plugins/opencode-aidevops/v2-plugin/index.mjs"
+framework_guide="$HOME/.aidevops/agents/AGENTS.md"
+printf '# AI DevOps Framework - User Guide\n' >"$framework_guide"
 find_opencode_config() { printf '%s\n' "${OPENCODE_CONFIG:-$config}"; }
 # Pre-seed the legacy auto-discovered symlink that caused OpenCode V2 to reject
 # the config entry with "Duplicate plugin ID: aidevops"; setup must remove it.
@@ -105,21 +108,38 @@ jq -e '
 [[ ! -e "$v2_symlink" && ! -L "$v2_symlink" ]]
 [[ -L "$v2_plugins_dir/user-owned" ]]
 jq -e '(.plugins | index("file:///custom/plugin.mjs")) != null' "$config" >/dev/null
+# V2 loads <config>/opencode/AGENTS.md; setup links the framework guide there.
+v2_guide="$HOME/.aidevops/runtimes/opencode-v2/config/opencode/AGENTS.md"
+[[ -L "$v2_guide" && "$(readlink "$v2_guide")" == "$framework_guide" ]] ||
+	{ printf 'V2 config does not link the framework AGENTS.md\n' >&2; exit 1; }
+ln -sfn "$HOME/.aidevops/agents/stale-guide.md" "$v2_guide"
+PATH="$SANDBOX/bin:$PATH" AIDEVOPS_OPENCODE_PROFILE=v2 setup_opencode_plugins
+[[ "$(readlink "$v2_guide")" == "$framework_guide" ]] ||
+	{ printf 'stale managed V2 AGENTS.md link was not repaired\n' >&2; exit 1; }
 custom_v2_root="$SANDBOX/custom-v2-root"
+mkdir -p "$custom_v2_root/config/opencode"
+printf 'user guide\n' >"$custom_v2_root/config/opencode/AGENTS.md"
 PATH="$SANDBOX/bin:$PATH" AIDEVOPS_OPENCODE_PROFILE=v2 \
 	AIDEVOPS_OPENCODE_V2_ROOT="$custom_v2_root" setup_opencode_plugins
 [[ -f "$custom_v2_root/config/opencode/opencode.json" ]]
+[[ ! -L "$custom_v2_root/config/opencode/AGENTS.md" ]]
+[[ "$(<"$custom_v2_root/config/opencode/AGENTS.md")" == "user guide" ]] ||
+	{ printf 'user-authored V2 AGENTS.md was replaced\n' >&2; exit 1; }
 [[ ! -L "$custom_v2_root/config/opencode/plugins/aidevops-v2" ]]
 jq -e '([.plugins[] | select(endswith("/v2-plugin"))] | length == 1)' \
 	"$custom_v2_root/config/opencode/opencode.json" >/dev/null
 # When the config entry cannot be written, the symlink remains the sole fallback.
 fallback_v2_root="$SANDBOX/fallback-v2-root"
+mkdir -p "$fallback_v2_root/config/opencode"
+ln -s "$SANDBOX/user-guide.md" "$fallback_v2_root/config/opencode/AGENTS.md"
 (
 	_setup_opencode_plugins_register_file_url() { printf 'false\n'; }
 	PATH="$SANDBOX/bin:$PATH" AIDEVOPS_OPENCODE_PROFILE=v2 \
 		AIDEVOPS_OPENCODE_V2_ROOT="$fallback_v2_root" setup_opencode_plugins
 )
 [[ -L "$fallback_v2_root/config/opencode/plugins/aidevops-v2" ]]
+[[ "$(readlink "$fallback_v2_root/config/opencode/AGENTS.md")" == "$SANDBOX/user-guide.md" ]] ||
+	{ printf 'user-managed V2 AGENTS.md link was replaced\n' >&2; exit 1; }
 
 printf 'export default {};\n' >"$HOME/.aidevops/agents/plugins/opencode-aidevops/index.mjs"
 aidevops_opencode_profile_id() { printf '%s\n' "${AIDEVOPS_OPENCODE_PROFILE:-v1}"; }

@@ -75,6 +75,8 @@ extract_functions() {
 		/^_setup_opencode_binary_is_ephemeral\(\)/, /^}$/ { print; next }
 		/^_setup_clear_canary_negative_cache\(\)/, /^}$/ { print; next }
 		/^_setup_opencode_managed_shim_target\(\)/, /^}$/ { print; next }
+		/^_setup_opencode_v2_shim_version_marker\(\)/, /^}$/ { print; next }
+		/^_setup_append_opencode_v2_session_guard\(\)/, /^}$/ { print; next }
 		/^_setup_write_opencode_v2_shim\(\)/, /^}$/ { print; next }
 		/^_setup_write_opencode_v1_shim\(\)/, /^}$/ { print; next }
 		/^_setup_ensure_opencode_stable_shim\(\)/, /^}$/ { print; next }
@@ -831,7 +833,15 @@ env-check)
 		"${XDG_DATA_HOME:-}" "${XDG_CACHE_HOME:-}" "${XDG_STATE_HOME:-}" \
 		"${TMPDIR:-}" "${OPENCODE_CONFIG:-}" "${AIDEVOPS_OAUTH_POOL_FILE:-}"
 	;;
-*) printf '%s\n' "$*" ;;
+"") printf 'pwd=%s\n' "$PWD" ;;
+*)
+	if [[ "$*" == *session-env* ]]; then
+		printf '%s|%s|%s|%s|%s|%s\n' "${AIDEVOPS_HEADLESS:-}" "${OPENCODE_PID:-}" \
+			"${AIDEVOPS_SESSION_ORIGIN:-}" "${AIDEVOPS_AGENTS_DIR:-}" "${GITHUB_ACTIONS:-}" "${OPENAI_API_KEY:-}"
+	else
+		printf '%s\n' "$*"
+	fi
+	;;
 esac
 EOF
 chmod +x "$v2_real_dir/opencode2"
@@ -863,6 +873,28 @@ assert_eq "V2 leading global option preserves an explicit port" \
 	"--print-logs serve --port 4999" "$(HOME="$v2_home" "$v2_shim" --print-logs serve --port 4999)"
 assert_eq "V2 does not treat a run message as the serve subcommand" \
 	"run serve" "$(HOME="$v2_home" "$v2_shim" run serve)"
+v2_caller_env=(AIDEVOPS_HEADLESS=1 OPENCODE_PID=4242 AIDEVOPS_SESSION_ORIGIN=worker
+	AIDEVOPS_AGENTS_DIR=/stale/bundle GITHUB_ACTIONS=true OPENAI_API_KEY=placeholder-key)
+assert_eq "V2 shared-service commands drop caller session and headless env" "||||true|placeholder-key" \
+	"$(env "${v2_caller_env[@]}" HOME="$v2_home" "$v2_shim" service session-env)"
+assert_eq "V2 standalone commands keep the caller env" \
+	"1|4242|worker|/stale/bundle|true|placeholder-key" \
+	"$(env "${v2_caller_env[@]}" HOME="$v2_home" "$v2_shim" run --standalone session-env)"
+v2_marker_root="$v2_home/.aidevops/.agent-workspace/work/opencode-tabby-recovery"
+v2_marker_dir="$v2_marker_root/ses_abcdef123456"
+v2_project_dir="$v2_home/project"
+v2_resolver_dir="$v2_home/.aidevops/agents/plugins/opencode-aidevops"
+mkdir -p "$v2_marker_dir" "$v2_project_dir" "$v2_resolver_dir"
+v2_project_dir=$(cd "$v2_project_dir" && pwd -P)
+printf 'process.stdout.write(%s + "\\t/data\\tses_abcdef123456\\n");\n' "\"$v2_project_dir\"" \
+	>"$v2_resolver_dir/session-recovery-marker.mjs"
+assert_eq "V2 TUI leaves a Tabby recovery marker directory for its project" "pwd=$v2_project_dir" \
+	"$(cd "$v2_marker_dir" && HOME="$v2_home" "$v2_shim" 2>/dev/null)"
+printf 'process.exitCode = 1;\n' >"$v2_resolver_dir/session-recovery-marker.mjs"
+assert_eq "V2 TUI falls back to HOME for an unresolvable recovery marker" "pwd=$v2_home" \
+	"$(cd "$v2_marker_dir" && HOME="$v2_home" "$v2_shim" 2>/dev/null)"
+assert_eq "V2 TUI outside a recovery marker keeps its directory" "pwd=$v2_project_dir" \
+	"$(cd "$v2_project_dir" && HOME="$v2_home" "$v2_shim" 2>/dev/null)"
 for isolated_dir in config data cache state tmp auth; do
 	if [[ -d "$v2_root/$isolated_dir" ]]; then
 		assert_eq "V2 shim creates isolated $isolated_dir directory" "present" "present"

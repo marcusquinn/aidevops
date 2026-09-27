@@ -1497,6 +1497,8 @@ _process_is_self_or_ancestor() {
 # fail with "API key is invalid". Updates are usually run by AI sessions, so a
 # warning alone goes unseen: restart the service while V2 is an isolated preview
 # runtime. Revisit (e.g. defer to idle) when opencode2 becomes the default.
+# Restart through the managed opencode2 shim: it drops the caller's session and
+# headless environment so the restarted service stays interactive (GH#32498).
 _restart_opencode_v2_service_after_deploy() {
 	[[ "${AIDEVOPS_SKIP_OPENCODE_V2_SERVICE_RESTART:-0}" == "1" ]] && return 0
 	local v2_root="${AIDEVOPS_OPENCODE_V2_ROOT:-${HOME}/.aidevops/runtimes/opencode-v2}"

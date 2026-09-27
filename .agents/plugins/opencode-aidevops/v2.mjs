@@ -40,6 +40,7 @@ import { enforceConversationPathAccess } from "./team-interface-path-guard.mjs";
 import { adaptToolDefinition } from "./tool-definition.mjs";
 import { createTools, tool } from "./tools.mjs";
 import { createTtsrHooks, isPluginGreetingEnabled } from "./ttsr.mjs";
+import { createRootSessionGreetingGate } from "./root-session-greeting-gate.mjs";
 import { isHeadless } from "./proxy-lifecycle.mjs";
 import { createV2McpRuntime } from "./v2-mcp-adapter.mjs";
 import { loadV2PrimaryProfiles, registerV2PrimaryProfiles } from "./v2-agent-profiles.mjs";
@@ -322,15 +323,13 @@ export async function setupAidevopsV2(ctx) {
       workspaceDir: WORKSPACE_DIR,
       onSessionIdentity: (sessionID, modelID) => sessionModels.remember(sessionID, modelID),
     });
-    const shouldInjectGreeting = async (input) => {
-      if (isHeadless() || !input.sessionID) return false;
-      try {
-        const session = await ctx.session.get({ sessionID: input.sessionID });
-        return !session?.parentID;
-      } catch {
-        return false;
-      }
-    };
+    const shouldInjectGreeting = createRootSessionGreetingGate({
+      getSession: (sessionID) => ctx.session.get({ sessionID }),
+      isHeadless,
+      log: qualityLog,
+    });
+    const greetingEnabled = () => isPluginGreetingEnabled(process.env, true);
+    if (!greetingEnabled()) qualityLog("INFO", "Session greeting disabled by AIDEVOPS_PLUGIN_SESSION_GREETING");
     const { systemTransformHook, messagesTransformHook } = createTtsrHooks({
       agentsDir: AGENTS_DIR,
       scriptsDir: SCRIPTS_DIR,
@@ -343,9 +342,9 @@ export async function setupAidevopsV2(ctx) {
       initializedAtMs,
       runtimeName: "OpenCode",
       runtimeVersion: (typeof ctx.app?.version === "string" && ctx.app.version) || detectOpenCodeV2RuntimeVersion(),
-      // The isolated V2 config home has no AGENTS.md greeting fallback, so the
-      // plugin block stays the default greeting source here (GH#32444).
-      greetingEnabled: () => isPluginGreetingEnabled(process.env, true),
+      // The V2 config AGENTS.md is the framework guide, not the V1 greeting
+      // fallback, so the plugin block stays the greeting source (GH#32444, GH#32498).
+      greetingEnabled,
     });
     const permissionBroker = createPermissionBroker({ isHeadless });
     const providerAuth = createV2ProviderAuthRuntime();
