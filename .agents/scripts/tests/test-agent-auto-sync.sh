@@ -351,8 +351,12 @@ prepare_protected_integration_release() {
 	release_sha=$(PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git -C "$repo_path" rev-parse HEAD) || return 1
 	PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git -C "$repo_path" -c tag.gpgSign=false tag v9.9.10 "$release_sha"
 
-	if [[ "$mode" == "later-merge" ]]; then
+	if [[ "$mode" == "later-merge" || "$mode" == "missing-active" ]]; then
 		# The integration mainline lacks the active runtime; it reaches main only afterwards.
+		PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git -C "$repo_path" checkout -qb mainline-branch "$base_sha"
+	elif [[ "$mode" == "double-merge" ]]; then
+		# The direct release integration lands on a side branch, while protected
+		# main independently advances past the active runtime before merging it.
 		PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git -C "$repo_path" checkout -qb mainline-branch "$base_sha"
 	else
 		PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git -C "$repo_path" checkout -q active-branch
@@ -367,6 +371,12 @@ prepare_protected_integration_release() {
 	integration_sha=$(PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git -C "$repo_path" rev-parse HEAD) || return 1
 	if [[ "$mode" == "later-merge" ]]; then
 		PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git -C "$repo_path" merge -q --no-ff active-branch -m "merge active after integration"
+	elif [[ "$mode" == "double-merge" ]]; then
+		PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git -C "$repo_path" checkout -q active-branch
+		printf 'main advanced before release integration\n' >"$repo_path/main-before-integration.txt"
+		PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git -C "$repo_path" add main-before-integration.txt
+		PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git -C "$repo_path" commit -qm "advance active main"
+		PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git -C "$repo_path" merge -q --no-ff mainline-branch -m "merge protected release integration"
 	fi
 	printf 'protected main successor\n' >"$repo_path/protected-successor.txt"
 	PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git -C "$repo_path" add protected-successor.txt
@@ -374,6 +384,8 @@ prepare_protected_integration_release() {
 	protected_main=$(PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git -C "$repo_path" rev-parse HEAD) || return 1
 	if [[ "$mode" == "unreachable" ]]; then
 		PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git -C "$repo_path" push -q "$remote_path" "$active_sha:refs/heads/main"
+	elif [[ "$mode" == "missing-active" ]]; then
+		PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git -C "$repo_path" push -q "$remote_path" "$protected_main:refs/heads/main"
 	else
 		PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git -C "$repo_path" push -q "$remote_path" "$protected_main:refs/heads/main"
 	fi
@@ -916,7 +928,7 @@ test_release_sync_defers_verified_protected_integration() {
 	local output=""
 	local actual_rc=0
 	local label=""
-	for mode in complete intervening; do
+	for mode in complete intervening later-merge double-merge; do
 		label="release sync defers a verified $mode protected integration for main convergence"
 		actual_rc=0
 		repo_path=$(create_fake_repo "release-protected-integration-$mode" "https://github.com/marcusquinn/aidevops.git")
@@ -946,7 +958,7 @@ test_release_sync_rejects_unverified_protected_integration() {
 	local mode=""
 	local repo_path=""
 	local output=""
-	for mode in later-merge unreachable; do
+	for mode in unreachable missing-active; do
 		repo_path=$(create_fake_repo "release-protected-integration-$mode" "https://github.com/marcusquinn/aidevops.git")
 		prepare_protected_integration_release "$repo_path" "$mode" >/dev/null || {
 			print_result "release sync rejects $mode protected integration" 1 "Could not prepare topology"
