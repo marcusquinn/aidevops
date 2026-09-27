@@ -108,7 +108,6 @@ SKIP_HELP=(
 	"log-issue-helper.sh"
 	"humanise-update-helper.sh"
 	"dns-helper.sh"
-	"closte-helper.sh"
 	"cloudron-helper.sh"
 	"hetzner-helper.sh"
 	"hostinger-helper.sh"

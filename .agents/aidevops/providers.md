@@ -25,8 +25,7 @@ tools:
 - **Standard commands**: `help | accounts | monitor | audit | status`
 - **Config**: `configs/[service]-config.json`
 - **Debug**: `DEBUG=1 ./[service]-helper.sh [command]`
-- **Services**: hostinger, hetzner, closte, cloudron, coolify, mainwp, vaultwarden, ses, spaceship, 101domains, dns, git-platforms, localhost, code-audit, setup-wizard, toon, crawl4ai
-- **Legacy-only**: Retain `closte` for existing estates, migration, and offboarding; use `aidevops/recommendations.md` for new hosting decisions
+- **Services**: hostinger, hetzner, cloudron, coolify, mainwp, vaultwarden, ses, spaceship, 101domains, dns, git-platforms, localhost, code-audit, setup-wizard, toon, crawl4ai
 - **Security**: credentials from config files only; confirmation required for destructive/purchase ops
 
 <!-- AI-CONTEXT-END -->
@@ -35,7 +34,7 @@ tools:
 
 | Category | Scripts |
 |----------|---------|
-| Infrastructure & Hosting | hostinger, hetzner, cloudron; closte (legacy compatibility) |
+| Infrastructure & Hosting | hostinger, hetzner, cloudron |
 | Deployment | coolify |
 | Content Management | mainwp |
 | Security & Secrets | vaultwarden |

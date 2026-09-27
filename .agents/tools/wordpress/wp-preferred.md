@@ -116,10 +116,6 @@ Also see: `network-plugin-auditor` (Admin).
 
 `ultimate-multisite` Ultimate Multisite
 
-### Hosting-Specific
-
-Legacy Closte estates only: `closte-requirements`, `eos-deactivate-plugins` (Closte variant of Freesoul Deactivate Plugins).
-
 ## Premium Plugin Sources
 
 Slugs marked \* above. Free plugins: `https://wordpress.org/plugins/{slug}/`.

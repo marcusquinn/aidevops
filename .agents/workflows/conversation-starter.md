@@ -42,13 +42,12 @@ For implementation tasks (1-4, 9-10): read `workflows/git-workflow.md` first (br
 > 1. Local project (provide path)
 > 2. Remote services — which service?
 >    1. 101domains (`services/hosting/101domains.md`)
->    2. Closte — legacy operations only (`services/hosting/closte.md`)
->    3. Cloudflare (`services/hosting/cloudflare.md`)
->    4. Cloudron (`services/hosting/cloudron.md`)
->    5. Hetzner (`services/hosting/hetzner.md`)
->    6. Hostinger (`services/hosting/hostinger.md`)
->    7. QuickFile (`services/accounting/quickfile.md`)
->    8. SES (`services/email/ses.md`)
->    9. Spaceship (`services/hosting/spaceship.md`)
+>    2. Cloudflare (`services/hosting/cloudflare.md`)
+>    3. Cloudron (`services/hosting/cloudron.md`)
+>    4. Hetzner (`services/hosting/hetzner.md`)
+>    5. Hostinger (`services/hosting/hostinger.md`)
+>    6. QuickFile (`services/accounting/quickfile.md`)
+>    7. SES (`services/email/ses.md`)
+>    8. Spaceship (`services/hosting/spaceship.md`)
 
 After selection, read the relevant service subagent.

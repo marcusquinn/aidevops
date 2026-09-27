@@ -3325,12 +3325,6 @@
       "passes": 1,
       "pr": 11633
     },
-    ".agents/services/hosting/closte.md": {
-      "at": "2026-07-20T04:18:28Z",
-      "hash": "42bd5e20e00defb0495d8585e9400db1404eb50b",
-      "passes": 2,
-      "pr": 12219
-    },
     ".agents/services/hosting/cloudflare-platform-skill.md": {
       "at": "2026-05-04T14:44:59Z",
       "hash": "77f699555ee6341966caef87349050342b8b6519",

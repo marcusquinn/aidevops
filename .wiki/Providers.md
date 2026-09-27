@@ -167,26 +167,6 @@ Manage Cloudron server and application platform.
 
 ---
 
-### Closte
-
-**File**: `.agents/scripts/closte-helper.sh`
-
-Manage Closte managed hosting and application deployment.
-
-**Commands**:
-
-```bash
-# List sites
-./.agents/scripts/closte-helper.sh list
-
-# Site management
-./.agents/scripts/closte-helper.sh info [site-name]
-```
-
-**Configuration**: `configs/closte-config.json`
-
----
-
 ## Domain & DNS Providers
 
 ### Cloudflare (DNS Helper)
