@@ -226,8 +226,9 @@ export function resolveSessionRecoveryMarker({ cwd, workDir }) {
   const canonicalDataDir = canonicalRecoveryDataDir(dataDir, workDir, uid);
   validateRecoveryDatabase(canonicalDataDir, marker.session_id, canonicalDirectory, uid);
 
-  const ownerLive = Number.isSafeInteger(marker.owner_pid) && marker.owner_pid > 0
-    && typeof marker.owner_start === "string" && marker.owner_start.length > 0
+  const validOwnerPid = Number.isSafeInteger(marker.owner_pid) && marker.owner_pid > 0;
+  const validOwnerStart = typeof marker.owner_start === "string" && marker.owner_start.length > 0;
+  const ownerLive = validOwnerPid && validOwnerStart
     && processStartToken(marker.owner_pid) === marker.owner_start;
 
   return {
