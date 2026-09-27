@@ -724,17 +724,45 @@ _verify_exact_tag_release_lane() {
 }
 
 #aidevops:trust-boundary
+# Print the mainline parent of a two-parent merge whose other parent is exactly
+# release_sha. Fails for octopus/non-merge commits or any other topology.
+_protected_integration_mainline_parent() {
+	local sync_repo_root="$1"
+	local candidate="$2"
+	local release_sha="$3"
+	local parent_line=""
+	local commit_sha=""
+	local parent_one=""
+	local parent_two=""
+	local extra_parent=""
+
+	parent_line=$(git -C "$sync_repo_root" rev-list --parents -n 1 "$candidate" 2>/dev/null) || return 1
+	IFS=' ' read -r commit_sha parent_one parent_two extra_parent <<<"$parent_line"
+	[[ "$commit_sha" == "$candidate" && -n "$parent_one" && -n "$parent_two" && -z "$extra_parent" ]] || return 1
+	if [[ "$parent_two" == "$release_sha" && "$parent_one" != "$release_sha" ]]; then
+		printf '%s\n' "$parent_one"
+		return 0
+	fi
+	if [[ "$parent_one" == "$release_sha" && "$parent_two" != "$release_sha" ]]; then
+		printf '%s\n' "$parent_two"
+		return 0
+	fi
+	return 1
+}
+
+#aidevops:trust-boundary
+# A protected integration is a two-parent merge of the exact signed release
+# commit and a mainline parent that contains the active runtime (the parent
+# itself or an ancestor of it, GH#32510), reachable from protected main. The
+# merge therefore contains everything already deployed, so converging on
+# protected main cannot downgrade the runtime.
 _verify_protected_release_integration() {
 	local sync_repo_root="$1"
 	local release_sha="$2"
 	local active_sha="$3"
 	local protected_main=""
 	local candidate=""
-	local parent_line=""
-	local commit_sha=""
-	local parent_one=""
-	local parent_two=""
-	local extra_parent=""
+	local mainline_parent=""
 
 	_verify_exact_tag_release_lane "$sync_repo_root" "$release_sha" || return 1
 	if ! git -C "$sync_repo_root" fetch origin main --quiet; then
@@ -746,11 +774,8 @@ _verify_protected_release_integration() {
 	git -C "$sync_repo_root" merge-base --is-ancestor "$release_sha" "$protected_main" 2>/dev/null || return 1
 	while IFS= read -r candidate; do
 		[[ -n "$candidate" ]] || continue
-		parent_line=$(git -C "$sync_repo_root" rev-list --parents -n 1 "$candidate" 2>/dev/null) || return 1
-		IFS=' ' read -r commit_sha parent_one parent_two extra_parent <<<"$parent_line"
-		[[ "$commit_sha" == "$candidate" && -n "$parent_one" && -n "$parent_two" && -z "$extra_parent" ]] || continue
-		if [[ "$parent_one" == "$active_sha" && "$parent_two" == "$release_sha" ]] ||
-			[[ "$parent_one" == "$release_sha" && "$parent_two" == "$active_sha" ]]; then
+		mainline_parent=$(_protected_integration_mainline_parent "$sync_repo_root" "$candidate" "$release_sha") || continue
+		if git -C "$sync_repo_root" merge-base --is-ancestor "$active_sha" "$mainline_parent" 2>/dev/null; then
 			_AIDEVOPS_RELEASE_PROTECTED_INTEGRATION_SHA="$candidate"
 			return 0
 		fi
