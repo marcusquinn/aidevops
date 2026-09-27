@@ -321,6 +321,7 @@ _verify_deployed_core_plugin_freshness() {
 		"plugins/opencode-aidevops/quality-hooks-output-scrub.mjs"
 		"plugins/opencode-aidevops/quality-hooks.mjs"
 		"plugins/opencode-aidevops/registered-value-redaction.mjs"
+		"plugins/opencode-aidevops/registered-value-sources.mjs"
 		"plugins/opencode-aidevops/runtime-profile.mjs"
 		"plugins/opencode-aidevops/tool-schema.mjs"
 		"plugins/opencode-aidevops/v2-mcp-adapter.mjs"
