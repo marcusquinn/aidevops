@@ -495,6 +495,17 @@ cmd_pre_merge_gate() {
 	#aidevops:trust-boundary GH#17671/GH#28622 -- resolve every authority target
 	# from the final live PR snapshot. This diagnostic never grants authority; the
 	# merge transport repeats the same evaluation immediately before its write.
+	#aidevops:trust-boundary -- advisory only; never grants merge authority.
+	local verifier_dir="" active_dir="" verifier_bundle="" active_bundle=""
+	verifier_dir=$(cd -P "$_FULL_LOOP_COMMIT_DIR" 2>/dev/null && pwd) || verifier_dir=""
+	if [[ "$verifier_dir" == */runtime-bundles/*/agents/scripts ]]; then
+		active_dir=$(cd -P "$HOME/.aidevops/agents/scripts" 2>/dev/null && pwd) || active_dir=""
+		if [[ "$active_dir" == */runtime-bundles/*/agents/scripts && "$active_dir" != "$verifier_dir" ]]; then
+			verifier_bundle=${verifier_dir%/agents/scripts}
+			active_bundle=${active_dir%/agents/scripts}
+			printf 'APPROVAL_NOTE: verifier bundle %s is older than active bundle %s; re-run with ~/.aidevops/agents/scripts/approval-helper.sh before re-signing\n' "${verifier_bundle##*/}" "${active_bundle##*/}" >&2
+		fi
+	fi
 	declare -p FULL_LOOP_EXTERNAL_AUTHORITY_APPROVAL_TARGETS >/dev/null 2>&1 ||
 		FULL_LOOP_EXTERNAL_AUTHORITY_APPROVAL_TARGETS=()
 	if ! _merge_collect_external_authority_gaps "$pr_number" "$repo"; then
