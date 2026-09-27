@@ -51,6 +51,16 @@ new test assets are separate decisions:
    when material new evidence appears, and report any remaining uncertainty.
    Passing tests alone do not prove the user-visible outcome.
 
+### Running Python tests
+
+Run a hyphenated unittest file directly from the repository root:
+`python3 .agents/scripts/tests/<file>.py [-v] [-k pattern]` (for example,
+`python3 .agents/scripts/tests/test-source-access-helper.py -k trusted`).
+Do not pass its path to `python3 -m unittest`: hyphenated names cannot be
+imported that way. `pytest` is not a framework dependency. Some `test-*.py`
+files instead run script-style assertions under `__main__` or at top level;
+run those directly too, without `-k` (they do not provide unittest filtering).
+
 ## Default policy
 
 | Target | Required gates | E2E role | Merge posture |
