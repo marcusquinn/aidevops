@@ -278,6 +278,11 @@ _dispatch_compute_capacity() {
 	if ! [[ "$min_worker_floor" =~ ^[0-9]+$ ]]; then
 		min_worker_floor=6
 	fi
+	# The floor refills toward a target; it must never exceed the host ceiling
+	# (auto cap = 50% of cores), or small runners would be pushed past it.
+	if [[ "${MAX_WORKERS_CAP:-}" =~ ^[1-9][0-9]*$ ]] && ((min_worker_floor > MAX_WORKERS_CAP)); then
+		min_worker_floor="$MAX_WORKERS_CAP"
+	fi
 	if declare -F pulse_apply_provider_load_capacity_cap >/dev/null 2>&1; then
 		local capacity_cap_line=""
 		capacity_cap_line=$(pulse_apply_provider_load_capacity_cap "$max_workers" "$active_workers" "$min_worker_floor") || capacity_cap_line="${max_workers} 0"
