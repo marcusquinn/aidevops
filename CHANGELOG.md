@@ -10,6 +10,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.37.7] - 2026-09-27
+
+### Changed
+
+- Maintenance: remove Closte hosting integration (#32587)
+- Performance: skip unchanged benign dispatch blocks across pulse cycles (#32580)
+- Refactor: reduce pulse dispatch gate complexity (#32578)
+- Refactor: split pulse dispatch core into focused libraries (#32575)
+- Maintenance: mark t18486 complete (pr:#32564 completed:2026-09-27) (#32565)
+- Maintenance: mark t18485 complete (pr:#32562 completed:2026-09-27) (#32466)
+
+### Fixed
+
+- require canonical Files Scope in consolidation successor briefs
+- retain inactive bundle refill triggers (#32581)
+- hold unscoped auto-dispatch briefs before claim (#32579)
+- archive old unattributed worktrees (#32573)
+- cap async cleanup logs (#32567)
+- filter stale Actions queue runs (#32563)
+- evaluate unregistered central worktrees during pulse cleanup (#32559)
+- accept template verification label in brief readiness (#32556)
+- queue tracked project config migrations (#32550)
+
 ## [3.37.6] - 2026-09-27
 
 ### Fixed
