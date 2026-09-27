@@ -5,7 +5,7 @@
  * Normalise bounded, source-qualified request evidence for SQLite storage.
  * Runtime configuration is never represented as provider confirmation.
  */
-export function requestProvenance(msg, routing, pricing) {
+export function requestProvenance(msg, routing, pricing, runtime = {}) {
   const observedEffort = stringOrNull(msg?.variant);
   const requestedEffort = stringOrNull(routing?.requestedVariant);
   const resolvedEffort = stringOrNull(routing?.resolvedVariant || routing?.variant);
@@ -18,8 +18,8 @@ export function requestProvenance(msg, routing, pricing) {
     requested_model: stringOrNull(routing?.model),
     observed_model: stringOrNull(msg?.modelID),
     runtime_name: "opencode",
-    runtime_version: stringOrNull(process.env.OPENCODE_VERSION),
-    adapter_version: null,
+    runtime_version: stringOrNull(runtime.runtimeVersion || process.env.OPENCODE_VERSION),
+    adapter_version: stringOrNull(runtime.adapterVersion),
     policy_fingerprint: null,
     billing_mode: null,
     cost_source: "local_estimate",
