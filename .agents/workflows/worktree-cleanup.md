@@ -34,6 +34,24 @@ git branch -D "$BRANCH_NAME" 2>/dev/null || true
 
 Cleanup failures are non-fatal — the PR is already merged.
 
+Deferred ownership expires even while the owning runtime lives (GH#32528):
+interactive TUIs host many sequential full-loops for hours or days. A live
+owner's post-merge lease ends after `WORKTREE_DEFERRED_OWNER_MAX_HOURS`
+(default 4) or as soon as the same session registers a newer worktree. Expiry
+releases only the exact `post-merge-cleanup` registry claim; active-cwd,
+dirty-content, open-PR, and merge-proof guards still decide removal. On macOS
+the async cleanup helper starts under `setsid` so launchd's process-group
+teardown at pulse exit cannot kill a run midway.
+
+Deferred ownership expires even while the owning runtime lives (GH#32528):
+interactive TUIs host many sequential full-loops for hours or days. A live
+owner's post-merge lease ends after `WORKTREE_DEFERRED_OWNER_MAX_HOURS`
+(default 4) or as soon as the same session registers a newer worktree. Expiry
+releases only the exact `post-merge-cleanup` registry claim; active-cwd,
+dirty-content, open-PR, and merge-proof guards still decide removal. On macOS
+the async cleanup helper starts under `setsid` so launchd's process-group
+teardown at pulse exit cannot kill a run midway.
+
 ## Compact Recovery Archives
 
 Use [`../scripts/worktree-archive-helper.md`](../scripts/worktree-archive-helper.md) for the standalone archive, restore, list, verify, and retention commands. The helper preserves local commits, tracked/staged changes, bounded untracked files, and exact base metadata under `~/.aidevops/recovery/archives/`.
