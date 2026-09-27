@@ -133,39 +133,86 @@ else
 		"(got: ${ISSUE_TIER_LABEL_RANK[*]:-})"
 fi
 
+# GH#32654: human-action labels share one bold colour that no other group uses.
 attention_labels=(
-	"SYSTEM_LABELS:needs-maintainer-review"
-	"SYSTEM_LABELS:security"
-	"SYSTEM_LABELS:security-adjacent"
-	"SYSTEM_LABELS:critical"
-	"PRIORITY_LABELS:priority:critical"
-	"STATUS_LABELS:status:blocked"
 	"SYSTEM_LABELS:hold-for-review"
 	"SYSTEM_LABELS:security-review"
-	"SYSTEM_LABELS:needs-review"
-	"SYSTEM_LABELS:needs-review-fixes"
 )
+for canonical_def in "${ALL_CANONICAL_LABELS[@]}"; do
+	IFS='|' read -r canonical_name _ _ <<<"$canonical_def"
+	if [[ "$canonical_name" == needs-* || "$canonical_name" == status:needs-* ]]; then
+		attention_labels+=("ALL_CANONICAL_LABELS:$canonical_name")
+	fi
+done
 
 for attention_spec in "${attention_labels[@]}"; do
 	attention_array="${attention_spec%%:*}"
 	attention_name="${attention_spec#*:}"
 	attention_color=$(find_label_color "$attention_array" "$attention_name" 2>/dev/null || true)
-	if [[ "$attention_color" == "D73A4A" ]]; then
-		print_result "canonical human-attention label $attention_name is red" 0
+	if [[ "$attention_color" == "$LABEL_COLOR_ATTENTION" ]]; then
+		print_result "canonical human-action label $attention_name uses attention colour" 0
 	else
-		print_result "canonical human-attention label $attention_name is red" 1 "(got: '${attention_color:-missing}')"
+		print_result "canonical human-action label $attention_name uses attention colour" 1 "(got: '${attention_color:-missing}')"
 	fi
 done
 
-origin_labels=(origin:interactive origin:worker origin:worker-takeover)
-for origin_name in "${origin_labels[@]}"; do
-	origin_color=$(find_label_color "ORIGIN_LABELS" "$origin_name" 2>/dev/null || true)
-	if [[ "$origin_color" == "1D76DB" ]]; then
-		print_result "canonical origin label $origin_name is blue" 0
+attention_misuse=""
+for canonical_def in "${ALL_CANONICAL_LABELS[@]}"; do
+	IFS='|' read -r canonical_name canonical_color _ <<<"$canonical_def"
+	[[ "$canonical_color" == "$LABEL_COLOR_ATTENTION" ]] || continue
+	case "$canonical_name" in
+	needs-* | status:needs-* | hold-for-review | security-review) ;;
+	*) attention_misuse="${attention_misuse} ${canonical_name}" ;;
+	esac
+done
+if [[ -z "$attention_misuse" ]]; then
+	print_result "attention colour is reserved for human-action labels" 0
+else
+	print_result "attention colour is reserved for human-action labels" 1 "(misused by:${attention_misuse})"
+fi
+
+risk_labels=(
+	"SYSTEM_LABELS:security|D73A4A"
+	"SYSTEM_LABELS:security-adjacent|D73A4A"
+	"SYSTEM_LABELS:critical|D73A4A"
+	"PRIORITY_LABELS:priority:critical|B60205"
+	"STATUS_LABELS:status:blocked|D93F0B"
+)
+for risk_spec in "${risk_labels[@]}"; do
+	risk_expected="${risk_spec##*|}"
+	risk_spec="${risk_spec%|*}"
+	risk_array="${risk_spec%%:*}"
+	risk_name="${risk_spec#*:}"
+	risk_color=$(find_label_color "$risk_array" "$risk_name" 2>/dev/null || true)
+	if [[ "$risk_color" == "$risk_expected" ]]; then
+		print_result "canonical label $risk_name has expected colour" 0
 	else
-		print_result "canonical origin label $origin_name is blue" 1 "(got: '${origin_color:-missing}')"
+		print_result "canonical label $risk_name has expected colour" 1 "(got: '${risk_color:-missing}')"
 	fi
 done
+
+# Origin labels are pale metadata and must match managed-label-provisioning-lib.sh.
+# shellcheck source=/dev/null
+source "${TEST_SCRIPTS_DIR}/managed-label-provisioning-lib.sh"
+origin_idx=0
+while [[ $origin_idx -lt ${#_MANAGED_ORIGIN_LABEL_SPECS[@]} ]]; do
+	origin_name="${_MANAGED_ORIGIN_LABEL_SPECS[$origin_idx]}"
+	origin_expected="${_MANAGED_ORIGIN_LABEL_SPECS[$((origin_idx + 2))]}"
+	origin_color=$(find_label_color "ORIGIN_LABELS" "$origin_name" 2>/dev/null || true)
+	if [[ "$origin_color" == "$origin_expected" ]]; then
+		print_result "canonical origin label $origin_name matches provisioning colour" 0
+	else
+		print_result "canonical origin label $origin_name matches provisioning colour" 1 "(got: '${origin_color:-missing}', want '$origin_expected')"
+	fi
+	origin_idx=$((origin_idx + 3))
+done
+
+nmr_provision_color="${_MANAGED_APPROVAL_HOLD_LABEL_SPECS[2]:-}"
+if [[ "$nmr_provision_color" == "$LABEL_COLOR_ATTENTION" ]]; then
+	print_result "provisioned needs-maintainer-review uses attention colour" 0
+else
+	print_result "provisioned needs-maintainer-review uses attention colour" 1 "(got: '${nmr_provision_color:-missing}')"
+fi
 
 review_labels=(
 	"review:approve|0E8A16"
