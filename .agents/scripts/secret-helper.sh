@@ -328,6 +328,20 @@ build_secret_env() {
 	return 0
 }
 
+# Register keyed digests of injected values so the OpenCode plugin can redact
+# them from tool output, such as provider argv in process listings (GH#32362).
+# Stores no plaintext; a registry failure never blocks the command.
+register_redaction_digests() {
+	local env_file="$1"
+	local registry_helper="${SCRIPT_DIR}/redaction-digest-registry.py"
+	[[ -s "$env_file" && -f "$registry_helper" ]] || return 0
+	command -v python3 >/dev/null 2>&1 || return 0
+	if ! python3 "$registry_helper" register <"$env_file" >/dev/null 2>&1; then
+		print_warning "Secret redaction registry update failed; exact-value tool-output redaction may be incomplete" >&2
+	fi
+	return 0
+}
+
 # --- Commands ---
 
 # Read and validate a secret value from stdin/tty
@@ -715,6 +729,7 @@ cmd_run() {
 	trap "rm -f '$env_file'" EXIT
 
 	build_secret_env >"$env_file"
+	register_redaction_digests "$env_file"
 
 	# Execute command with secrets in environment, redact output
 	local exit_code=0
@@ -766,6 +781,7 @@ cmd_run_specific() {
 	trap "rm -f '$env_file'" EXIT
 
 	build_secret_env "${secret_names[@]}" >"$env_file"
+	register_redaction_digests "$env_file"
 
 	# Execute command with secrets in environment, redact output
 	local exit_code=0

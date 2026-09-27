@@ -48,6 +48,7 @@ import {
   scrubCredentials,
   scrubToolOutput,
 } from "./quality-hooks-output-scrub.mjs";
+import { defaultSecretValueRedactor } from "./registered-value-redaction.mjs";
 
 export { scrubCredentials } from "./quality-hooks-output-scrub.mjs";
 
@@ -328,7 +329,21 @@ async function handleToolBefore(ctx, log, input, output) {
   enforceReadAndFileQuality(ctx, log, input, output, { sessionId, sourceContextForPath });
 }
 
-function scrubObservedToolOutput(log, toolName, output) {
+function scrubObservedToolOutput(ctx, log, toolName, output) {
+  // GH#32362: exact registered secret values first (bare values in process
+  // command lines evade pattern scrubbing), then known credential patterns.
+  // Title and metadata are persisted with the tool part, so scrub them too.
+  const registered = ctx.secretRedactor.redactValue({
+    output: output.output,
+    title: output.title,
+    metadata: output.metadata,
+  });
+  if (registered.count > 0) {
+    for (const field of ["output", "title", "metadata"]) {
+      if (output[field] !== undefined) output[field] = registered.value[field];
+    }
+    log("WARN", `[credential-scrub] redacted registered secret value(s) from ${toolName} output`);
+  }
   const rawOutput = output.output;
   if (rawOutput === undefined) return;
   const { output: scrubbedOutput, redacted } = scrubToolOutput(rawOutput);
@@ -374,7 +389,7 @@ async function handleToolAfter(ctx, log, scriptsDir, input, output) {
   // CLIs, or runtime error backtraces, not just framework helpers.
   const rawOutput = output.output;
   const bashOutputWasVerbose = isBashTool(toolName) && isVerboseBashOutput(rawOutput);
-  scrubObservedToolOutput(log, toolName, output);
+  scrubObservedToolOutput(ctx, log, toolName, output);
   trackObservedToolEffects(ctx, log, toolName, input, output);
 
   // Consume timing before output compaction so the receipt can report runtime.
@@ -434,6 +449,7 @@ export function createQualityHooks(deps) {
     detailMaxBytes,
     repositoryDir: deps.repositoryDir,
     continuationGuard,
+    secretRedactor: deps.secretRedactor || defaultSecretValueRedactor(),
     sourceAccessProvenance,
     sourceAccessReason: SOURCE_ACCESS_REASON,
     verifySourceAccessReceipt: deps.verifySourceAccessReceipt,
