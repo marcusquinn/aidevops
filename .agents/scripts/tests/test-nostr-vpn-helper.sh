@@ -284,8 +284,8 @@ test_update_reports_netbird_port_conflict() {
 	return 0
 }
 
-SELF_NPUB="npub1nf27f0vy9ewvw7jr47phdmdf9pxaj8jzz4ev6zaae7fe84pzm2pqngvlny"
-PEER_NPUB="npub15hdthzk56jnsejrx69pvat7eq76vgapcqzzs7c9dlrz5djjkxp9s373j5t"
+SELF_NPUB="npub1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
+PEER_NPUB="npub1pppppppppppppppppppppppppppppppppppppppppppppppppppppppppp"
 
 # Enrollment sandbox: stub nvpn records its argv; config lives in TEST_ROOT.
 run_enroll() {
@@ -361,10 +361,10 @@ test_direct_only_rejects_cgnat_and_sets_flags() {
 	local rc=0
 	local args=""
 	write_enroll_config "x"
-	run_enroll direct-only "${PEER_NPUB}=100.75.13.55:51821" >/dev/null 2>&1 || rc=$?
-	run_enroll direct-only "${PEER_NPUB}=192.168.50.192:51821" >/dev/null 2>&1 || true
+	run_enroll direct-only "${PEER_NPUB}=100.64.0.10:51821" >/dev/null 2>&1 || rc=$?
+	run_enroll direct-only "${PEER_NPUB}=192.168.1.20:51821" >/dev/null 2>&1 || true
 	args="$(cat "${TEST_ROOT}/enroll/nvpn-args.log" 2>/dev/null || true)"
-	if [[ "$rc" -ne 0 && "$args" == *"--fips-bootstrap-enabled false --fips-nostr-discovery-enabled false --fips-peer-endpoint ${PEER_NPUB}=192.168.50.192:51821"* && "$args" != *"100.75.13.55"* ]]; then
+	if [[ "$rc" -ne 0 && "$args" == *"--fips-bootstrap-enabled false --fips-nostr-discovery-enabled false --fips-peer-endpoint ${PEER_NPUB}=192.168.1.20:51821"* && "$args" != *"100.64.0.10"* ]]; then
 		print_result "direct-only rejects CGNAT hints and disables bootstrap/discovery" 0
 		return 0
 	fi

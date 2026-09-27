@@ -60,7 +60,7 @@ This index describes what is catalogued, not what is usable now. Query `scripts/
 | Backblaze B2 object storage | Backblaze B2, B2 cloud storage, b2-mcp, B2 bucket, B2 application key | `services/hosting/backblaze-b2.md` |
 | Wasabi object storage | Wasabi, Wasabi cloud storage, Wasabi MCP, Wasabi bucket, Wasabi IAM | `services/hosting/wasabi.md` |
 | Site operations | website access, app access, site inventory, mapped domain, multisite child, hosting account | `reference/site-operations.md`, `scripts/site-context-helper.sh` |
-| Networking/VPN | VPN, mesh, WireGuard, NetBird, Tailscale, Nostr VPN, Obscura, MPR, multi-party relay, Mullvad, QUIC obfuscation, FIPS, remote compute network | `services/networking/netbird.md`, `services/networking/tailscale.md`, `services/networking/nostr-vpn.md`, `services/networking/obscuravpn.md` |
+| Networking/VPN | VPN, mesh, WireGuard, NetBird, Tailscale, Nostr VPN, Obscura, MPR, multi-party relay, Mullvad, QUIC obfuscation, FIPS, remote compute network, remote OpenCode workers, Headscale | `reference/mesh-remote-workers.md`, `services/networking/netbird.md`, `services/networking/tailscale.md`, `services/networking/nostr-vpn.md`, `services/networking/obscuravpn.md`, `tools/containers/remote-dispatch.md` |
 | Infrastructure | GPU, containers, agent sandbox, durable compute session, OrbStack, remote dispatch, servers | `reference/agent-sandbox-lifecycle.md`, `tools/infrastructure/cloud-gpu.md`, `tools/containers/orbstack.md`, `tools/containers/remote-dispatch.md` |
 | Accessibility | accessibility, WCAG, a11y, contrast, screen reader | `tools/accessibility/accessibility-audit.md` |
 | OpenAPI exploration | OpenAPI, API spec, endpoint search, schema discovery | `tools/context/openapi-search.md` |
