@@ -78,17 +78,27 @@ config probe instead of synthetic paid long-context requests.
 
 ## Default budget across resolved models
 
-On the first request for each resolved model, the OpenCode request hook applies
-the same 240K usable-input ceiling to models with larger native windows, including
+On the first request for each resolved model, the OpenCode 1 request hook applies
+a 240K usable-input ceiling to models with larger native windows, including
 built-in and newly discovered provider models absent from the config hook's model
-list. It does not expand smaller windows, modify output limits or variants, or
-override explicit `provider.<name>.models.<id>.limit.context/input` entries.
+list. Native Anthropic Opus 5.5+, Fable 5.1+, and Sonnet 5+ instead target 500K
+usable input. Haiku 4.5 is capped at its 200K physical context and targets
+180K usable input. When the output limit and compaction reserve require more
+than 20K headroom, the effective trigger is earlier (for a 32K output limit,
+no later than 168K before considering any extra reserve). The policy does not
+expand smaller windows, modify output limits or variants, or override explicit
+`provider.<name>.models.<id>.limit.context/input` entries.
 Existing GPT-5.6, Astra, and GPT-6 opt-outs/extended-target selections are
-respected. An explicit global `compaction.auto=false` is respected. The limit is
-applied to the resolved model used by OpenCode's subsequent overflow check; it
+respected. Native Anthropic Opus 4.7 retains a 200K usable-input reliability
+target (or its explicit `AIDEVOPS_OPUS_47_CONTEXT` override). An explicit global
+`compaction.auto=false` is respected. The limit is applied to the resolved
+model used by OpenCode's subsequent overflow check; it
 does not alter its model catalogue before the first request. A resumed session
 may require one request to register the budget before it can compact; restart
 OpenCode to load plugin changes. A completed response can exceed the budget.
+This request-time cap is implemented by the OpenCode 1 plugin; OpenCode 2
+uses a separate adapter and must be qualified independently before claiming
+the same compaction threshold.
 
 ## Efficiency scorecard
 

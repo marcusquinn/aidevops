@@ -28,6 +28,16 @@ const POOL_PROVIDERS = new Set(["anthropic", "openai", "cursor", "google"]);
 
 export function poolAccountAddCommand(provider) {
   const selected = POOL_PROVIDERS.has(provider) ? provider : "anthropic";
+  if (process.env.AIDEVOPS_OPENCODE_PROFILE === "v2") {
+    if (selected !== "anthropic" && selected !== "openai") {
+      return `the V2 ${selected} pool is not connected to provider requests`;
+    }
+    const poolFile = process.env.AIDEVOPS_OAUTH_POOL_FILE;
+    if (!poolFile) return `the isolated V2 pool setup in .agents/tools/opencode/opencode.md`;
+    const quotedFile = `'${poolFile.replaceAll("'", "'\\''")}'`;
+    const mode = selected === "openai" ? "AIDEVOPS_OPENAI_ADD_MODE=callback " : "";
+    return `AIDEVOPS_OAUTH_POOL_FILE=${quotedFile} ${mode}aidevops model-accounts-pool add ${selected}`;
+  }
   return `aidevops model-accounts-pool add ${selected}`;
 }
 

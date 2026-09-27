@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 Marcus Quinn
 
+import { describeOpus47Override, OPUS_47_CONTEXT_DEFAULT } from "./model-limits.mjs";
+
 export function preserveGpt6Limit(settings, model) {
   const explicit = model.limit?.context !== undefined || model.limit?.input !== undefined;
   return settings.gpt6_context_cap !== true && explicit;
@@ -33,10 +35,31 @@ export function preserveFamilyPreference(model, settings) {
   return id?.startsWith("gpt-5.6-") && settings.gpt56_context_cap === false;
 }
 
-export function preserveOpusOverride(model) {
-  if (model.providerID !== "anthropic" || model.id !== "claude-opus-4-7") return false;
-  const value = process.env.AIDEVOPS_OPUS_47_CONTEXT;
-  return value !== undefined && Number.isFinite(Number(value)) && Number(value) > 0;
+export function opus47UsableTarget(model) {
+  if (model.providerID !== "anthropic" || model.id !== "claude-opus-4-7") return null;
+  // The old picker entry advertised 250K context for a ~200K reliability
+  // boundary. Express that as usable input in the current request-time policy;
+  // the CLI proxy retains its independent historical context metadata.
+  const override = describeOpus47Override();
+  return Math.floor((override?.kind === "applied" || override?.kind === "clamped"
+    ? override.resolved : OPUS_47_CONTEXT_DEFAULT) * 0.8);
+}
+
+export function contextBudgetForModel(model) {
+  if (model?.providerID !== "anthropic") return { target: 240000 };
+  if (model.id === "claude-haiku-4-5") return { target: 180000, maxContext: 200000 };
+  const opus47 = opus47UsableTarget(model);
+  if (opus47 !== null) return { target: opus47 };
+  // Only the named native families have the newer long-context policy. A
+  // version may have a short release-date suffix; match its numeric major and
+  // minor rather than matching every future Anthropic model by substring.
+  const version = /^claude-(opus|fable|sonnet)-(\d+)(?:-(\d{1,2}))?(?:-|$)/.exec(model.id || "");
+  if (!version) return { target: 240000 };
+  const [, family, majorText, minorText] = version;
+  const major = Number(majorText);
+  const minor = Number(minorText ?? 0);
+  const floor = family === "opus" ? 5 : family === "fable" ? 1 : 0;
+  return { target: major > 5 || (major === 5 && minor >= floor) ? 500000 : 240000 };
 }
 
 export function validWindow(model) {
@@ -78,12 +101,18 @@ export function preserveCustomWindow(model, custom) {
   }
 }
 
-export function capResolvedModel(model, reserve) {
+export function capResolvedModel(model, reserve, { target = 240000, maxContext } = {}) {
   const limit = model.limit;
+  let changed = false;
+  if (maxContext !== undefined && limit.context > maxContext) {
+    limit.context = maxContext;
+    if (limit.input !== undefined) limit.input = Math.min(limit.input, Math.max(0, limit.context - limit.output));
+    changed = true;
+  }
   const usable = limit.input !== undefined ? limit.input - reserve : limit.context - limit.output;
   const physicalInput = limit.context - limit.output;
-  if (!Number.isFinite(usable) || usable <= 240000 || physicalInput <= 0) return false;
-  limit.input = Math.min(240000 + reserve, physicalInput);
+  if (!Number.isFinite(usable) || usable <= target || physicalInput <= 0) return changed;
+  limit.input = Math.min(target + reserve, physicalInput);
   limit.context = Math.min(limit.context, limit.input + limit.output);
   return true;
 }

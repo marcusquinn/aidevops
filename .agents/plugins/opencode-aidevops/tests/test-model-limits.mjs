@@ -13,6 +13,7 @@
 
 import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
+import { registerClaudeCliFallbackModels } from "../config-hook.mjs";
 
 import {
   resolveOpus47Context,
@@ -25,6 +26,15 @@ import {
   GPT56_MODEL_IDS,
   GPT56_OUTPUT_DEFAULT,
 } from "../model-limits.mjs";
+
+test("Claude CLI registration leaves native Anthropic model metadata untouched", () => {
+  const native = { name: "Claude Opus 5.5", tool_call: true, limit: { context: 1000000 } };
+  const config = { provider: { anthropic: { models: { "claude-opus-5-5": native } } } };
+  assert.equal(registerClaudeCliFallbackModels(config), 6);
+  assert.deepEqual(config.provider.anthropic.models, { "claude-opus-5-5": native });
+  assert.equal(Object.keys(config.provider.claudecli.models).length, 6);
+  assert.equal(registerClaudeCliFallbackModels(config), 0);
+});
 
 test("GPT-5.6 context metadata targets 300K for 240K auto-compaction", () => {
   assert.equal(GPT56_CONTEXT_DEFAULT, 300000);
@@ -219,6 +229,6 @@ describe("CLAUDE_MODEL_LIMITS table", () => {
     // Sanity: the env var is opus-4-7-specific. Other models keep their
     // hard-coded limits regardless.
     assert.equal(CLAUDE_MODEL_LIMITS["claude-opus-4-6"].context, 1000000);
-    assert.equal(CLAUDE_MODEL_LIMITS["claude-haiku-4-5"].context, 1000000);
+    assert.equal(CLAUDE_MODEL_LIMITS["claude-haiku-4-5"].context, 200000);
   });
 });
