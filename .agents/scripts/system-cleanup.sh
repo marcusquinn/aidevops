@@ -9,7 +9,7 @@ main() {
 	local mode="dry-run" days="${AIDEVOPS_TMP_RETENTION_DAYS:-7}"
 	local root="${AIDEVOPS_TEMP_DIR:-${HOME:?}/.aidevops/.agent-workspace/tmp}"
 	local log_dir="${AIDEVOPS_LOG_DIR:-${HOME:?}/.aidevops/logs}"
-	local entry="" minutes=0
+	local entry="" descendants="" minutes=0
 	case "${1:-}" in
 	--force) mode="force" ;;
 	--dry-run | "") ;;
@@ -18,7 +18,7 @@ main() {
 	esac
 	[[ $# -le 1 && "$days" =~ ^[1-9][0-9]*$ ]] || return 1
 	# Never follow a redirected root, or operate on a broad/relative path.
-	[[ "$root" == /* && "$root" != / && "$root" != "$HOME" && ! -L "$root" ]] || return 1
+	[[ "$root" == /*/tmp && "$root" != /tmp && ! -L "$root" ]] || return 1
 	[[ -d "$root" ]] || return 0
 	minutes=$((days * 1440))
 	mkdir -p "$log_dir" || return 1
@@ -31,7 +31,9 @@ main() {
 		# directory old while refreshing files inside it.
 		[[ ! -L "$entry" ]] || continue
 		if [[ -d "$entry" ]]; then
-			[[ -z "$(find "$entry" -mindepth 1 \( -mmin "-${minutes}" -o -name '*.lock' -o -name '*.lease' \) -print -quit 2>/dev/null)" ]] || continue
+			# A failed scan cannot establish that a directory is inactive.
+			descendants=$(find "$entry" -mindepth 1 \( -mmin "-${minutes}" -o -name '*.lock' -o -name '*.lease' \) -print -quit) || return 1
+			[[ -z "$descendants" ]] || continue
 		fi
 		if [[ "$mode" == "dry-run" ]]; then
 			printf '[dry-run] Would trash: %s\n' "$entry" | tee -a "$log_dir/system-cleanup.log"
