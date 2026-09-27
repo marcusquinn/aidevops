@@ -349,6 +349,19 @@ class SourceAccessHelperTests(unittest.TestCase):
                 snapshot = core.build_issue_signing_snapshot(reader, cutoff, excluded)
                 expected = self._issue_snapshot_oracle(evidence, "" if excluded is None else str(excluded), cutoff)
                 self.assertEqual(core.issue_snapshot_bytes(snapshot), expected)
+        # GH#32455: trusted same-repo sources omit mutable content; untrusted or
+        # cross-repository sources keep it. Both must match the shell oracle.
+        linked = evidence["timeline"][1]["source"]["issue"]
+        trusted_source = core.build_issue_signing_snapshot(reader, cutoff)["linked_references"][0]["source"]
+        self.assertFalse(trusted_source["content_bound"])
+        self.assertNotIn("body", trusted_source)
+        for variant in ({"author_association": "CONTRIBUTOR"}, {"repository": {"full_name": "other/repo"}}):
+            with self.subTest(variant=variant):
+                evidence["timeline"][1]["source"]["issue"] = {**linked, **variant}
+                snapshot = core.build_issue_signing_snapshot(reader, cutoff)
+                self.assertTrue(snapshot["linked_references"][0]["source"]["content_bound"])
+                self.assertEqual(core.issue_snapshot_bytes(snapshot), self._issue_snapshot_oracle(evidence, "", cutoff))
+        evidence["timeline"][1]["source"]["issue"] = linked
         reader.issue.side_effect = [evidence["issue"], {**evidence["issue"], "body": "changed"}]
         with self.assertRaisesRegex(HELPER.SourceAccessError, "changed while collecting"):
             core.build_issue_signing_snapshot(reader, cutoff)

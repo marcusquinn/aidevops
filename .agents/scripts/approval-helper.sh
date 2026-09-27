@@ -1379,7 +1379,7 @@ _approval_classify_signed_comment() {
 	if [[ "$target_type" == "$APPROVAL_TARGET_ISSUE" ]] && ! jq -e --arg object "$APPROVAL_JSON_OBJECT" '.issue.lifecycle | type == $object' <<<"$payload" >/dev/null 2>&1; then
 		issue_lifecycle_profile="$APPROVAL_SNAPSHOT_PROFILE_LEGACY"
 	fi
-	snapshot_json=$(approval_snapshot_v2_build "$target_type" "$target_number" "$slug" "$comment_id" "$issued_at" "stable" "$issue_lifecycle_profile") || {
+	snapshot_json=$(approval_snapshot_v2_build "$target_type" "$target_number" "$slug" "$comment_id" "$issued_at" "$APPROVAL_SNAPSHOT_PROFILE_TRUSTED_SOURCES" "$issue_lifecycle_profile") || {
 		printf 'API_ERROR\n'
 		return 0
 	}
@@ -1389,20 +1389,17 @@ _approval_classify_signed_comment() {
 	}
 	signed_digest=$(jq -r '.snapshot_sha256' <<<"$payload") || signed_digest=""
 	if [[ "$current_digest" != "$signed_digest" ]]; then
-		# #aidevops:trust-boundary — V2 approvals issued before GH#29009
-		# included mutable linked-source updated_at metadata. Accept that profile
-		# only when its complete current digest still matches the signed digest;
-		# new approvals always use the stable profile above.
+		# #aidevops:trust-boundary — older V2 approvals used the stable
+		# (pre-GH#32455) or legacy (pre-GH#29009) linked-source profiles. Accept
+		# those only on a complete exact digest match; new approvals always use
+		# the trusted-sources profile above. Profiles differ only in linked
+		# references, so the head/base check below is profile-independent.
 		mismatch_classification=$(_approval_classify_digest_mismatch "$target_type" "$target_number" "$slug" "$comment_id" "$issued_at" \
 			"$issue_lifecycle_profile" "$payload" "$snapshot_json" "$signed_digest")
-		if [[ "$mismatch_classification" != "LEGACY_MATCH" ]]; then
+		if [[ "$mismatch_classification" != "STABLE_MATCH" && "$mismatch_classification" != "LEGACY_MATCH" ]]; then
 			printf '%s\n' "$mismatch_classification"
 			return 0
 		fi
-		snapshot_json=$(approval_snapshot_v2_build "$target_type" "$target_number" "$slug" "$comment_id" "$issued_at" "$APPROVAL_SNAPSHOT_PROFILE_LEGACY" "$issue_lifecycle_profile") || {
-			printf 'API_ERROR\n'
-			return 0
-		}
 	fi
 
 	if [[ "$target_type" == "pr" ]]; then
