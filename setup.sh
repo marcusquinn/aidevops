@@ -833,7 +833,7 @@ _setup_guard_active_release_lane() {
 	[[ "$repo_slug" == "marcusquinn/aidevops" ]] || return 0
 	# shellcheck source=.agents/scripts/release-lane-helper.sh
 	source "$lane_helper"
-	release_lane_setup_guard "$repo_slug"
+	release_lane_setup_guard "$repo_slug" "${BASH_SOURCE[0]%/*}"
 	return $?
 }
 
