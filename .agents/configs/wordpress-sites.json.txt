@@ -83,18 +83,6 @@
       "mainwp_connected": true,
       "mainwp_site_id": 456,
       "category": "lead-gen"
-    },
-    "closte-site": {
-      "name": "Closte Site",
-      "type": "closte",
-      "url": "https://closte.example.com",
-      "ssh_host": "closte.example.com",
-      "ssh_port": 22,
-      "ssh_user": "closte_user",
-      "wp_path": "/var/www/html",
-      "password_file": "~/.ssh/closte_password",
-      "mainwp_connected": false,
-      "category": "client"
     }
   },
 
@@ -103,7 +91,6 @@
     "hostinger": "Hostinger - sshpass with password file, custom port 65002",
     "hetzner": "Hetzner VPS - SSH key auth",
     "cloudways": "Cloudways - SSH key auth, home dir is always /home/master/ regardless of ssh_user",
-    "closte": "Closte - sshpass with password file",
     "cloudron": "Cloudron - SSH key auth or Cloudron CLI"
   },
 

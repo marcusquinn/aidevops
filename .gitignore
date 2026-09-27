@@ -21,7 +21,6 @@ _config/*.json
 # Password files and credentials
 *.password
 *_password
-closte_*
 hostinger
 hostinger.*
 hostinger_*

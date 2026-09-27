@@ -110,7 +110,6 @@ apireq.enhancor.ai
 apiv2.ahrefs.com
 app.ahrefs.com
 app.au.snyk.io
-app.closte.com
 app.codacy.com
 app.coderabbit.ai
 app.contentkingapp.com
@@ -194,7 +193,6 @@ cli.coderabbit.ai
 cli.github.com
 client-mainwp.yourdomain.com
 clifford.io
-closte.com
 cloud-api.near.ai
 cloud.browser-use.com
 cloud.digitalocean.com
@@ -301,7 +299,6 @@ docs.aws.amazon.com
 docs.bluebubbles.app
 docs.browser-use.com
 docs.capsolver.com
-docs.closte.com
 docs.cloudron.io
 docs.codacy.com
 docs.codefactor.io

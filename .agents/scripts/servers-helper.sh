@@ -32,9 +32,6 @@ get_server_config() {
 	"hetzner")
 		echo "hetzner-helper none hetzner"
 		;;
-	"closte")
-		echo "closte-helper none closte"
-		;;
 	"cloudron")
 		echo "cloudron-helper none cloudron"
 		;;
@@ -74,7 +71,6 @@ list_servers() {
 	echo "  - development (dev.example.com) - Development server"
 	echo "  - hostinger (multiple sites) - Hostinger shared hosting"
 	echo "  - hetzner (multiple servers) - Hetzner Cloud VPS servers"
-	echo "  - closte (multiple servers) - Closte.com VPS servers"
 	echo "  - cloudron (multiple servers) - Cloudron server management"
 	echo "  - coolify (multiple servers) - Coolify self-hosted deployment platform"
 	echo "  - dns (multiple providers) - DNS management across providers"
@@ -126,7 +122,6 @@ get_provider_connect_message() {
 	case "$auth_type" in
 	"hostinger") echo "Use Hostinger helper for site management..." ;;
 	"hetzner") echo "Use Hetzner helper for server management..." ;;
-	"closte") echo "Use Closte helper for server management..." ;;
 	"cloudron") echo "Use Cloudron helper for server management..." ;;
 	"dns") echo "Use DNS helper for domain management..." ;;
 	"localhost") echo "Use Localhost helper for local development..." ;;
@@ -200,7 +195,7 @@ is_provider_server() {
 	local server="$1"
 
 	case "$server" in
-	"hostinger" | "hetzner" | "closte" | "cloudron" | "dns" | "localhost" | "aws" | "github" | "gitlab" | "gitea")
+	"hostinger" | "hetzner" | "cloudron" | "dns" | "localhost" | "aws" | "github" | "gitlab" | "gitea")
 		return 0
 		;;
 	*)
@@ -236,7 +231,6 @@ show_help() {
 	echo "Provider-Specific Helpers:"
 	echo "  ./.agents/scripts/hostinger-helper.sh      - Hostinger shared hosting"
 	echo "  ./.agents/scripts/hetzner-helper.sh        - Hetzner Cloud VPS"
-	echo "  ./.agents/scripts/closte-helper.sh         - Closte.com VPS servers"
 	echo "  ./.agents/scripts/cloudron-helper.sh       - Cloudron server management"
 	echo "  ./.agents/scripts/dns-helper.sh            - DNS management across providers"
 	echo "  ./.agents/scripts/localhost-helper.sh      - Local development with .local domains"

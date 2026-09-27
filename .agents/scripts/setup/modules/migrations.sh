@@ -182,6 +182,9 @@ cleanup_deprecated_paths() {
 		"$agents_dir/scripts/objective-runner-helper.sh"
 		"$agents_dir/scripts/ralph-loop-helper.sh"
 		"$agents_dir/scripts/stale-pr-helper.sh"
+		# GH#32585: Closte integration removed
+		"$agents_dir/scripts/closte-helper.sh"
+		"$agents_dir/services/hosting/closte.md"
 	)
 
 	for path in "${deprecated_paths[@]}"; do

@@ -66,7 +66,6 @@ Shared helper: `git-platforms-helper.sh`.
 |---------|------|-------|
 | Hostinger | API Token | VPS, domains, hosting plans |
 | Hetzner Cloud | API Token | Servers, networking, snapshots, load balancers |
-| Closte (legacy) | API Key | Existing managed WordPress estates and migration only |
 | Coolify | API Token | Self-hosted PaaS, Docker, service management |
 
 ### Domain & DNS
