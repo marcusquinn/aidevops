@@ -1505,9 +1505,10 @@ _worktree_recovery_lifecycle_usage() {
 }
 
 # Manual, read-only diagnostic for process-evidence-unavailable (GH#32853).
-# Lists same-user processes whose CWD cannot be read as "<pid>\t<comm>". This
-# is the only recovery surface that names processes; automatic maintenance,
-# advisories, logs, and plans never call it. Exit 3 where /proc is unavailable.
+# Lists same-user processes whose CWD cannot be read as "<pid>\t<comm>\t<remedy>"
+# (remedy: inspector | stop-only, GH#32871). This is the only recovery surface
+# that names processes; automatic maintenance, advisories, logs, and plans
+# never call it. Exit 3 where /proc is unavailable.
 worktree_recovery_unreadable_processes() {
 	local listing=""
 
@@ -1520,7 +1521,8 @@ worktree_recovery_unreadable_processes() {
 		printf '%s\n' 'No same-user processes with unreadable CWDs were found; process visibility is currently complete.'
 		return 0
 	fi
-	printf 'PID\t%s\n' 'COMM (same-user processes whose CWD is unreadable; stop them through their normal controls or install the opt-in inspector in reference/worktree-cwd-visibility.md)'
+	printf '%s\n' 'Same-user processes whose CWD is unreadable. REMEDY "inspector": install or repair the opt-in inspector in reference/worktree-cwd-visibility.md. REMEDY "stop-only": stop the process through its normal controls.'
+	printf 'PID\tCOMM\tREMEDY\n'
 	printf '%s\n' "$listing"
 	return 0
 }

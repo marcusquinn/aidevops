@@ -2753,6 +2753,11 @@ test_automatic_maintenance_advisory_tracks_escalation() {
 		rc=1
 	}
 	grep -qF 'worktree-helper.sh recovery plan --output <absolute-new-path>' "$advisory_path" || rc=1
+	grep -qF 'recovery unreadable-processes' "$advisory_path" && rc=1
+	# GH#32871: a process-visibility escalation names the diagnostic command.
+	AIDEVOPS_ADVISORIES_DIR="$advisory_dir" _worktree_recovery_maintenance_update_advisory \
+		"$(printf '%s\n' "$result" | jq -c '.outcome = "operator-intervention-required"')" || rc=1
+	grep -qF 'worktree-helper.sh recovery unreadable-processes' "$advisory_path" || rc=1
 	AIDEVOPS_ADVISORIES_DIR="$advisory_dir" \
 		_worktree_recovery_maintenance_update_advisory '{"escalation":{"required":false}}' || rc=1
 	[[ ! -e "$advisory_path" ]] || rc=1
@@ -2788,18 +2793,23 @@ test_maintenance_help_does_not_run_maintenance() {
 
 # GH#32853: the manual diagnostic names exactly the entries that degrade
 # process visibility: same-UID, live, non-zombie, unreadable CWD.
+# $3 is one UID for all four Uid: fields, or four space-separated fields
+# (real effective saved filesystem) for mixed-UID processes (GH#32871).
 make_fake_proc_entry() {
 	local proc_root="$1"
 	local pid="$2"
-	local uid="$3"
+	local uid_fields="$3"
 	local state="$4"
 	local comm="$5"
 	local cwd_kind="$6"
 	local entry="${proc_root}/${pid}"
+	local real_uid="" effective_uid="" saved_uid="" filesystem_uid=""
 
+	read -r real_uid effective_uid saved_uid filesystem_uid <<<"$uid_fields"
 	mkdir -p "$entry" || return 1
 	printf 'Name:\t%s\nState:\t%s\nUid:\t%s\t%s\t%s\t%s\n' \
-		"$comm" "$state" "$uid" "$uid" "$uid" "$uid" >"${entry}/status" || return 1
+		"$comm" "$state" "$real_uid" "${effective_uid:-$real_uid}" \
+		"${saved_uid:-$real_uid}" "${filesystem_uid:-$real_uid}" >"${entry}/status" || return 1
 	printf '%s\n' "$comm" >"${entry}/comm" || return 1
 	if [[ "$cwd_kind" == readable ]]; then
 		ln -s "$proc_root" "${entry}/cwd" || return 1
@@ -2826,9 +2836,18 @@ test_unreadable_process_listing_matches_degraded_visibility() {
 	make_fake_proc_entry "$proc_root" 103 "$uid" 'Z (zombie)' 'defunct' unreadable || rc=1
 	make_fake_proc_entry "$proc_root" 104 "$foreign_uid" 'S (sleeping)' 'sshd' unreadable || rc=1
 	make_fake_proc_entry "$proc_root" 105 "$uid" 'S (sleeping)' $'bad\033name' unreadable || rc=1
+	# GH#32871: same-user setuid-root helper (fusermount3 auto_unmount, sudo)
+	# is inspector-readable; a foreign effective UID or a root real UID is
+	# still not provably foreign, but only stopping the process clears it.
+	make_fake_proc_entry "$proc_root" 106 "$uid 0 0 0" 'S (sleeping)' 'fusermount3' unreadable || rc=1
+	make_fake_proc_entry "$proc_root" 107 "$uid $foreign_uid $foreign_uid $foreign_uid" 'S (sleeping)' 'setuid-other' unreadable || rc=1
+	make_fake_proc_entry "$proc_root" 108 "0 $uid $uid $uid" 'S (sleeping)' 'root-real' unreadable || rc=1
 	listing=$(list_worktree_unreadable_proc_cwds "$proc_root") || rc=1
-	expected=$(printf '101\tgpg-agent\n105\tbadname')
-	[[ "$listing" == "$expected" ]] || rc=1
+	expected=$(printf '101\tgpg-agent\tinspector\n105\tbadname\tinspector\n106\tfusermount3\tinspector\n107\tsetuid-other\tstop-only\n108\troot-real\tstop-only')
+	[[ "$listing" == "$expected" ]] || {
+		printf '  listing:\n%s\n' "$listing"
+		rc=1
+	}
 	# The degraded capture agrees on the same fixture.
 	_capture_worktree_proc_cwds "$proc_root" >/dev/null 2>&1 || capture_rc=$?
 	[[ "$capture_rc" -eq "$_WT_CWD_CAPTURE_DEGRADED_RC" ]] || rc=1
