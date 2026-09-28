@@ -230,6 +230,7 @@ _normalize_health_issue_labels() {
 			or . == "origin:interactive"
 			or . == "origin:worker-takeover"
 			or startswith("status:")
+			or startswith("tier:")
 		)')
 
 	[[ ${#edit_args[@]} -eq 0 ]] && return 0
@@ -587,9 +588,10 @@ _create_health_issue() {
 	gh label create "$_HEALTH_PERSISTENT_LABEL" --repo "$repo_slug" --color "FBCA04" \
 		--description "Persistent issue — do not close" --force 2>/dev/null || true
 
-	local aliases_csv
-	aliases_csv=$(printf '%s\n' "$identity_aliases" | paste -sd ', ' -)
-	local health_body="Live ${runner_role} status for **${runner_user}**. Canonical operator: **${canonical_identity}**. Identity aliases: ${aliases_csv}. Updated each pulse. Pin this issue for at-a-glance monitoring."
+	# Aliases are dedup metadata and may include local OS account names; keep
+	# them out of the public body (GH#32730).
+	: "$identity_aliases"
+	local health_body="Live ${runner_role} status for **${runner_user}** (canonical operator: **${canonical_identity}**). Updated by the stats process; this issue is a status surface, not a task."
 	local sig_footer=""
 	sig_footer=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer --body "$health_body" 2>/dev/null || true)
 	health_body="${health_body}${sig_footer}"
@@ -956,5 +958,123 @@ _unpin_health_issue() {
 			}
 		}" >/dev/null 2>&1 || true
 
+	return 0
+}
+
+#######################################
+# Convert an ISO8601 UTC timestamp (YYYY-MM-DDTHH:MM:SSZ) to epoch seconds.
+# Output: epoch, or empty on parse failure
+#######################################
+_health_iso_to_epoch() {
+	local iso="$1"
+	[[ "$iso" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || return 0
+	if [[ "$OSTYPE" == darwin* ]]; then
+		date -j -u -f '%Y-%m-%dT%H:%M:%SZ' "$iso" +%s 2>/dev/null || true
+	else
+		date -u -d "$iso" +%s 2>/dev/null || true
+	fi
+	return 0
+}
+
+#######################################
+# Select open health dashboards whose operator has stopped refreshing them.
+#
+# Pure filter over `gh issue list --json number,body,labels` output. A
+# dashboard is stale when its `last_refresh:` freshness marker is older than
+# the threshold. Dashboards of the current canonical operator, and dashboards
+# without a parseable marker, are never selected (fail-safe).
+#
+# Arguments:
+#   $1 - issues JSON array
+#   $2 - current canonical identity
+#   $3 - now epoch
+#   $4 - threshold seconds
+# Output: "number|last_refresh" lines
+#######################################
+_select_stale_operator_dashboards() {
+	local issues_json="$1"
+	local canonical_identity="$2"
+	local now_epoch="$3"
+	local threshold="$4"
+	local own_label="${_HEALTH_OPERATOR_LABEL_PREFIX}${canonical_identity}"
+	local number last_refresh refreshed_epoch
+
+	while IFS='|' read -r number last_refresh; do
+		[[ "$number" =~ ^[0-9]+$ ]] || continue
+		refreshed_epoch=$(_health_iso_to_epoch "$last_refresh")
+		[[ "$refreshed_epoch" =~ ^[0-9]+$ ]] || continue
+		[[ $((now_epoch - refreshed_epoch)) -gt "$threshold" ]] || continue
+		printf '%s|%s\n' "$number" "$last_refresh"
+	done < <(printf '%s' "$issues_json" | jq -r --arg own "$own_label" '
+		.[]
+		| select(((.labels // []) | map(.name) | index($own)) | not)
+		| ((.body // "") | capture("last_refresh: (?<ts>[0-9T:Z-]+)")? | .ts) as $ts
+		| select($ts != null)
+		| "\(.number)|\($ts)"
+	' 2>/dev/null)
+	return 0
+}
+
+#######################################
+# Close health dashboards of operators who stopped refreshing them.
+#
+# Persistent dashboards from inactive operators keep publishing stale queue
+# counts to collaborators and the public indefinitely. The supervisor closes
+# them after two weeks of silence (dashboards refresh at least hourly while the
+# operator's stats process runs); the operator's own stats process recreates a
+# fresh dashboard automatically if it runs again, because cached lookups drop
+# CLOSED issues. The persistent label is stripped first so the issue-sync
+# "Reopen Persistent Issues" workflow does not revive them.
+#
+# Arguments:
+#   $1 - repo slug
+#   $2 - current canonical identity (its own dashboards are never touched)
+# Env:
+#   HEALTH_STALE_DASHBOARD_SECONDS  - staleness threshold (default 1209600,
+#                                     minimum 604800)
+#   HEALTH_STALE_DASHBOARD_INTERVAL - seconds between scans (default 86400)
+# Returns: 0 always (best-effort)
+#######################################
+_archive_stale_operator_dashboards() {
+	local repo_slug="$1"
+	local canonical_identity="$2"
+	[[ -n "$repo_slug" && -n "$canonical_identity" ]] || return 0
+
+	local threshold="${HEALTH_STALE_DASHBOARD_SECONDS:-1209600}"
+	local interval="${HEALTH_STALE_DASHBOARD_INTERVAL:-86400}"
+	[[ "$threshold" =~ ^[0-9]+$ && "$threshold" -ge 604800 ]] || threshold=1209600
+	[[ "$interval" =~ ^[0-9]+$ ]] || interval=86400
+
+	local state_file="${HOME}/.aidevops/logs/health-stale-archive-last-scan-${repo_slug//\//-}"
+	if [[ -f "$state_file" ]]; then
+		local last_scan now_check
+		last_scan=$(_file_mtime_epoch "$state_file")
+		now_check=$(date +%s)
+		[[ $((now_check - last_scan)) -lt "$interval" ]] && return 0
+	fi
+
+	local issues_json rc=0
+	issues_json=$(gh_issue_list --repo "$repo_slug" \
+		--label "$_HEALTH_PERSISTENT_LABEL" --label "source:health-dashboard" \
+		--state open --json number,body,labels --limit 100 2>/dev/null) || rc=$?
+	if [[ $rc -ne 0 ]]; then
+		echo "[stats] Health issue: stale dashboard scan failed for ${repo_slug} (rc=${rc}) — will retry" >>"${LOGFILE:-/dev/null}"
+		return 0
+	fi
+
+	local now_epoch number last_refresh threshold_days=$((threshold / 86400))
+	now_epoch=$(date +%s)
+	while IFS='|' read -r number last_refresh; do
+		[[ -n "$number" ]] || continue
+		_unpin_health_issue "$number" "$repo_slug"
+		_strip_persistent_label_before_close "$number" "$repo_slug"
+		gh issue close "$number" --repo "$repo_slug" --reason "not planned" \
+			--comment "Archiving this health dashboard: its operator has not refreshed it since ${last_refresh} (more than ${threshold_days} days), so its figures no longer describe the repository. If that operator's stats process runs again it creates a fresh dashboard automatically." \
+			>/dev/null 2>&1 || true
+		echo "[stats] Health issue: archived stale dashboard #${number} in ${repo_slug} (last_refresh=${last_refresh})" >>"${LOGFILE:-/dev/null}"
+	done < <(_select_stale_operator_dashboards "${issues_json:-[]}" "$canonical_identity" "$now_epoch" "$threshold")
+
+	mkdir -p "${state_file%/*}" 2>/dev/null || true
+	touch "$state_file" 2>/dev/null || true
 	return 0
 }

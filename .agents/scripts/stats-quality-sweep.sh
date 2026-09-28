@@ -918,6 +918,9 @@ _quality_sweep_for_repo() {
 
 	if [[ "$comment_posted" == true ]]; then
 		echo "[stats] Quality sweep: upserted findings on #${issue_number} in ${repo_slug} (${tool_count} tools)" >>"$LOGFILE"
+		# Only after the rolling comment exists, so the newest sweep comment is
+		# never the one hidden (GH#32730).
+		_minimize_superseded_dashboard_comments "$issue_number" "$repo_slug"
 	fi
 	return 0
 }
@@ -1265,6 +1268,8 @@ _build_quality_issue_body() {
 
 	cat <<BODY
 ## Code Audit Routines
+
+_Automated code-quality snapshot for this repository. Actionable findings are filed as separate \`quality-debt\` issues; this dashboard is a status surface, not a task._
 
 **Last sweep**: \`${sweep_time}\`
 **Repo**: \`${repo_slug}\`

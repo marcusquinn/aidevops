@@ -348,25 +348,27 @@ test_health_dashboard_slow_cross_repo_rates_are_bounded_once() {
 			>"$HOME/.aidevops/logs/worker-success-rates-tester.json"
 		body=$(_assemble_health_issue_body owner/repo "$HOME" tester owner-repo \
 			2026-09-08T00:00:00Z Supervisor supervisor '' '' '' tester tester) || exit 3
-		[[ "$body" == *'| 24h | — |'* && "$body" == *'last_refresh: 2026-09-08T00:00:00Z'* ]] || exit 4
+		# GH#32730: untrustworthy rates omit the section rather than render stale
+		# values or placeholder rows.
+		[[ "$body" != *'80% (4/5)'* && "$body" == *'last_refresh: 2026-09-08T00:00:00Z'* ]] || exit 4
 		[[ "$(wc -l <"$HOME/rate-attempts" | tr -d ' ')" -eq 1 ]] || exit 5
 		jq -n '{rate24:"80% (4/5)",total24:"5",rate7:"90% (9/10)",total7:"10"}' \
 			>"$HOME/.aidevops/logs/worker-success-rates-tester.json"
 		body=$(_assemble_health_issue_body owner/repo "$HOME" tester owner-repo \
 			2026-09-08T00:00:00Z Supervisor supervisor '' '' '' tester tester) || exit 6
-		[[ "$body" == *'| 24h | — |'* ]] || exit 7
+		[[ "$body" != *'80% (4/5)'* ]] || exit 7
 		jq -n --arg refreshed_at 'not-a-timestamp' \
 			'{rate24:"80% (4/5)",total24:"5",rate7:"90% (9/10)",total7:"10",refreshed_at:$refreshed_at}' \
 			>"$HOME/.aidevops/logs/worker-success-rates-tester.json"
 		body=$(_assemble_health_issue_body owner/repo "$HOME" tester owner-repo \
 			2026-09-08T00:00:00Z Supervisor supervisor '' '' '' tester tester) || exit 8
-		[[ "$body" == *'| 24h | — |'* ]] || exit 9
+		[[ "$body" != *'80% (4/5)'* ]] || exit 9
 		jq -n --arg refreshed_at '2999-01-01T00:00:00Z' \
 			'{rate24:"80% (4/5)",total24:"5",rate7:"90% (9/10)",total7:"10",refreshed_at:$refreshed_at}' \
 			>"$HOME/.aidevops/logs/worker-success-rates-tester.json"
 		body=$(_assemble_health_issue_body owner/repo "$HOME" tester owner-repo \
 			2026-09-08T00:00:00Z Supervisor supervisor '' '' '' tester tester) || exit 10
-		[[ "$body" == *'| 24h | — |'* ]] || exit 11
+		[[ "$body" != *'80% (4/5)'* ]] || exit 11
 		jq -n --arg refreshed_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
 			'{rate24:"80% (4/5)",total24:"5",rate7:"90% (9/10)",total7:"10",refreshed_at:$refreshed_at}' \
 			>"$HOME/.aidevops/logs/worker-success-rates-tester.json"
