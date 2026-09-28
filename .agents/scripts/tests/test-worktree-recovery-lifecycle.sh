@@ -2688,6 +2688,7 @@ test_automatic_maintenance_reports_unsupported_process_visibility() {
 		.unsupported_condition.blocked_archive_observations == 3 and
 		(.unsupported_condition.guidance | length) == 4 and
 		any(.unsupported_condition.guidance[]; contains("reference/worktree-cwd-visibility.md")) and
+		any(.unsupported_condition.guidance[]; contains("recovery unreadable-processes")) and
 		.escalation.required == true and .escalation.reason == "unsupported-process-visibility" and
 		.escalation.dominant_reason == "process_evidence_unavailable" and
 		.escalation.authority == "read-only" and
@@ -2782,6 +2783,58 @@ test_maintenance_help_does_not_run_maintenance() {
 	[[ -z "$(find "$home_path" -mindepth 1 -print -quit 2>/dev/null)" ]] || rc=1
 	print_result "maintenance_help_does_not_run_maintenance" "$rc" \
 		"Expected help and unknown arguments to print usage without acquiring the maintenance lock"
+	return 0
+}
+
+# GH#32853: the manual diagnostic names exactly the entries that degrade
+# process visibility: same-UID, live, non-zombie, unreadable CWD.
+make_fake_proc_entry() {
+	local proc_root="$1"
+	local pid="$2"
+	local uid="$3"
+	local state="$4"
+	local comm="$5"
+	local cwd_kind="$6"
+	local entry="${proc_root}/${pid}"
+
+	mkdir -p "$entry" || return 1
+	printf 'Name:\t%s\nState:\t%s\nUid:\t%s\t%s\t%s\t%s\n' \
+		"$comm" "$state" "$uid" "$uid" "$uid" "$uid" >"${entry}/status" || return 1
+	printf '%s\n' "$comm" >"${entry}/comm" || return 1
+	if [[ "$cwd_kind" == readable ]]; then
+		ln -s "$proc_root" "${entry}/cwd" || return 1
+	else
+		# A regular file makes readlink fail while the entry still exists.
+		: >"${entry}/cwd" || return 1
+	fi
+	return 0
+}
+
+test_unreadable_process_listing_matches_degraded_visibility() {
+	local proc_root="${TEST_DIR}/fake-proc"
+	local uid=''
+	local foreign_uid=''
+	local listing=''
+	local expected=''
+	local capture_rc=0
+	local rc=0
+
+	uid=$(id -u) || rc=1
+	foreign_uid=$((uid + 1))
+	make_fake_proc_entry "$proc_root" 101 "$uid" 'S (sleeping)' 'gpg-agent' unreadable || rc=1
+	make_fake_proc_entry "$proc_root" 102 "$uid" 'S (sleeping)' 'bash' readable || rc=1
+	make_fake_proc_entry "$proc_root" 103 "$uid" 'Z (zombie)' 'defunct' unreadable || rc=1
+	make_fake_proc_entry "$proc_root" 104 "$foreign_uid" 'S (sleeping)' 'sshd' unreadable || rc=1
+	make_fake_proc_entry "$proc_root" 105 "$uid" 'S (sleeping)' $'bad\033name' unreadable || rc=1
+	listing=$(list_worktree_unreadable_proc_cwds "$proc_root") || rc=1
+	expected=$(printf '101\tgpg-agent\n105\tbadname')
+	[[ "$listing" == "$expected" ]] || rc=1
+	# The degraded capture agrees on the same fixture.
+	_capture_worktree_proc_cwds "$proc_root" >/dev/null 2>&1 || capture_rc=$?
+	[[ "$capture_rc" -eq "$_WT_CWD_CAPTURE_DEGRADED_RC" ]] || rc=1
+	list_worktree_unreadable_proc_cwds "${TEST_DIR}/missing-proc" >/dev/null 2>&1 && rc=1
+	print_result "unreadable_process_listing_matches_degraded_visibility" "$rc" \
+		"Expected only live same-UID unreadable-CWD processes, with sanitized comm"
 	return 0
 }
 
@@ -3029,6 +3082,7 @@ run_all_tests() {
 	test_automatic_maintenance_reports_unsupported_process_visibility
 	test_automatic_maintenance_advisory_tracks_escalation
 	test_maintenance_help_does_not_run_maintenance
+	test_unreadable_process_listing_matches_degraded_visibility
 	test_automatic_maintenance_resumes_interrupted_apply
 	test_automatic_maintenance_rejects_symlink_cursor
 	test_automatic_maintenance_rejects_symlink_cycle_state

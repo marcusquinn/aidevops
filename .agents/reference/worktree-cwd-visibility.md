@@ -6,6 +6,11 @@ directory inside the candidate. On Linux, same-user `gpg-agent`, `sshd`, and
 parent, or apparent daemon role is not proof of their working directory. The
 guard therefore fails closed with `cwd-visibility-degraded`.
 
+To see which processes currently cause this, run
+`worktree-helper.sh recovery unreadable-processes`. It lists the PID and `comm`
+of each process that still blocks visibility after the inspector below has been
+tried. The listing is read-only and is for manual review only.
+
 ## Optional privileged read-only inspector
 
 `.agents/scripts/worktree-cwd-inspect.py` reads **one** process CWD. It accepts
