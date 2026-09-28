@@ -507,6 +507,20 @@ test_data_only_completion_requires_receipt_and_clean_branch() {
 		print_result "closed issue without receipt is not completion" 0
 	fi
 	STUB_DATA_COMMENTS='[{"author_association":"MEMBER","body":"<!-- aidevops:data-only-completion:v1 -->\n{\"repository\":\"owner/repo\",\"issue\":123,\"status\":\"published\",\"verified\":true,\"evidence_url\":\"https://example.org/result\"}"}]'
+	STUB_DATA_ISSUE='{"state":"closed","author_association":"CONTRIBUTOR","body":"<!-- aidevops:completion-contract:data-only/v1 -->"}'
+	if _worker_external_terminal_complete "issue-123" "$WORK_DIR" >/dev/null 2>&1; then
+		print_result "untrusted issue opt-in cannot waive PR" 1
+	else
+		print_result "untrusted issue opt-in cannot waive PR" 0
+	fi
+	STUB_DATA_ISSUE='{"state":"closed","author_association":"OWNER","body":"<!-- aidevops:completion-contract:data-only/v1 -->"}'
+	printf '%s\n' 'unfinished' >"${WORK_DIR}/uncommitted.txt"
+	if _worker_external_terminal_complete "issue-123" "$WORK_DIR" >/dev/null 2>&1; then
+		print_result "closed issue with dirty worktree is not completion" 1
+	else
+		print_result "closed issue with dirty worktree is not completion" 0
+	fi
+	rm "${WORK_DIR}/uncommitted.txt"
 	git -C "$WORK_DIR" commit --allow-empty -q -m orphan
 	git -C "$WORK_DIR" push -q origin feature/data-only
 	if _worker_external_terminal_complete "issue-123" "$WORK_DIR" >/dev/null 2>&1; then
