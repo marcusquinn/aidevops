@@ -65,6 +65,41 @@ _dlw_zero_output_failure_count() {
 	return 0
 }
 
+# Shared jq prelude for zero-output evidence (GH#32928).
+# - #aidevops:trust-boundary — bare COLLABORATOR is ambiguous (read/triage
+#   access also receives it). A pure comment scan cannot perform the required
+#   permission lookup, so only authoritative OWNER/MEMBER comments may fuse or
+#   reset the hold.
+# - breaker_notice: the hold's own "dispatch-infrastructure-failure" notice
+#   mentions "zero-output"; counting it made every hold feed the next one.
+# - evidence_comments: evidence before the latest authoritative reset
+#   (signed approval or explicit reset marker) belongs to a fixed failure
+#   family and must not keep the issue held forever.
+# shellcheck disable=SC2016  # jq program is intentionally single-quoted.
+_DLW_ZERO_OUTPUT_EVIDENCE_JQ_DEFS='
+		def comments:
+			if type != "array" then []
+			elif length == 0 then []
+			elif all(.[]; type == "array") then add
+			else .
+			end;
+		def body_text: .body // "";
+		def authoritative_association:
+			(.author_association // "") as $association
+			| ["OWNER", "MEMBER"] | index($association) != null;
+		def breaker_notice: body_text | test("<!--\\s*dispatch-infrastructure-failure"; "i");
+		def comment_key: [(.created_at // ""), ((.id | tonumber?) // 0)];
+		def reset_notice:
+			authoritative_association
+			and (body_text | test("aidevops-signed-approval|<!--\\s*dispatch-infrastructure-reset\\s*-->"; "i"));
+		def evidence_comments:
+			. as $all
+			| ([$all[] | select(reset_notice) | comment_key] | max) as $reset_key
+			| if $reset_key == null then $all
+			else [$all[] | select(comment_key > $reset_key)]
+			end;
+'
+
 _dlw_zero_output_comment_count() {
 	local issue_number="$1"
 	local repo_slug="$2"
@@ -74,14 +109,15 @@ _dlw_zero_output_comment_count() {
 	[[ "$issue_number" =~ ^[0-9]+$ ]] || { printf '0'; return 0; }
 	[[ -n "$repo_slug" ]] || { printf '0'; return 0; }
 
-	local count=""
-	# #aidevops:trust-boundary — bare COLLABORATOR is ambiguous (read/triage
-	# access also receives it). This pure comment scan cannot perform the required
-	# permission lookup, so only authoritative OWNER/MEMBER evidence may fuse.
+	local raw_comments="" count=""
+	raw_comments=$(gh api --paginate --slurp \
+		"repos/${repo_slug}/issues/${issue_number}/comments?per_page=100" 2>/dev/null) || raw_comments="[]"
 	# shellcheck disable=SC2016  # jq program is intentionally single-quoted.
-	count=$(gh api --paginate "repos/${repo_slug}/issues/${issue_number}/comments?per_page=100" \
-		--jq 'def authoritative_association: (.author_association // "") as $a | ["OWNER", "MEMBER"] | index($a) != null; [.[] | select(authoritative_association and ((.body // "") | test("'"${zero_output_pattern}"'"; "i")))] | length' 2>/dev/null | \
-		awk '{ if ($1 ~ /^[0-9]+$/) { total += $1 } } END { printf "%d", total + 0 }') || count=0
+	count=$(printf '%s' "$raw_comments" | jq -r --arg zero_output_pattern "$zero_output_pattern" \
+		"${_DLW_ZERO_OUTPUT_EVIDENCE_JQ_DEFS}"'
+		[comments | evidence_comments | .[]
+			| select(authoritative_association and (breaker_notice | not) and (body_text | test($zero_output_pattern; "i")))]
+		| length' 2>/dev/null) || count=0
 	[[ "$count" =~ ^[0-9]+$ ]] || count=0
 	printf '%s' "$count"
 	return 0
@@ -107,24 +143,15 @@ _dlw_comment_bloat_metrics_from_json() {
 		--argjson orphan_grace "$orphan_grace" \
 		--arg zero_output_pattern "$zero_output_pattern" \
 		--arg zero_attempt_pattern "$zero_attempt_pattern" '
-		def comments:
-			if type != "array" then []
-			elif length == 0 then []
-			elif all(.[]; type == "array") then add
-			else .
-			end;
-		def body_text: .body // "";
+'"${_DLW_ZERO_OUTPUT_EVIDENCE_JQ_DEFS}"'
 		def marker_value($name):
 			try (body_text | capture($name + "=(?<value>[^ ]+)").value) catch "";
-		# Bare COLLABORATOR cannot authorize evidence without a permission lookup.
-		def authoritative_association:
-			(.author_association // "") as $association
-			| ["OWNER", "MEMBER"] | index($association) != null;
 		comments as $comments |
+		($comments | evidence_comments) as $evidence |
 		([$comments[] | select(body_text | test("ops:start|DISPATCH_CLAIM|CLAIM_RELEASED|dispatch-cooldown|Worker Watchdog Kill"; "i"))] | length) as $ops |
-		([$comments[] | select(authoritative_association and (body_text | test($zero_output_pattern; "i")))] | length) as $explicit_zero |
-		([$comments[] | select(authoritative_association and (body_text | test($zero_attempt_pattern; "i")) and (body_text | test("session_count=0"; "i")))] | length) as $explicit_zero_attempt |
-		([$comments[]
+		([$evidence[] | select(authoritative_association and (breaker_notice | not) and (body_text | test($zero_output_pattern; "i")))] | length) as $explicit_zero |
+		([$evidence[] | select(authoritative_association and (breaker_notice | not) and (body_text | test($zero_attempt_pattern; "i")) and (body_text | test("session_count=0"; "i")))] | length) as $explicit_zero_attempt |
+		([$evidence[]
 			| select(authoritative_association)
 			| select(body_text | test("DISPATCH_CLAIM nonce="; "i"))
 			| select(body_text | contains("lease_token="))
@@ -503,6 +530,6 @@ _dlw_hold_repeated_zero_output() {
 
 This issue has accumulated ${zero_count} zero-output or zero-attempt worker failures. The brief may still be valid; repeated setup/runtime failures must be diagnosed before another automatic dispatch.
 
-Next action: fix or wait out the worker/runtime failure family, then approve and requeue the issue so pulse can reconsider it afresh." >/dev/null 2>&1 || true
+Next action: fix or wait out the worker/runtime failure family, then approve and requeue the issue so pulse can reconsider it afresh. After the fix ships, a maintainer comment containing \`<!-- dispatch-infrastructure-reset -->\` (or a signed approval) clears earlier failure evidence; hold notices never count as evidence." >/dev/null 2>&1 || true
 	return 0
 }
