@@ -60,10 +60,12 @@ write_fixture() {
 
 run_fixture_wait() {
 	local fixture_dir="$1"
+	local required_contexts="${AIDEVOPS_GH_CHECKS_TEST_REQUIRED_CONTEXTS-}"
 	shift
 	AIDEVOPS_GH_CHECKS_FIXTURE_DIR="$fixture_dir" \
 		AIDEVOPS_GH_CHECKS_TEST_NO_SLEEP=1 \
 		AIDEVOPS_GH_SINGLEFLIGHT_DISABLE=1 \
+		AIDEVOPS_GH_CHECKS_TEST_REQUIRED_CONTEXTS="$required_contexts" \
 		AIDEVOPS_GH_CHECKS_TEST_HEAD="${AIDEVOPS_GH_CHECKS_TEST_HEAD_OVERRIDE-fixture-head}" \
 		"$HELPER" wait 123 --repo example/repo --initial-interval 1 --max-interval 4 "$@"
 	return $?
@@ -85,6 +87,13 @@ empty_dir="${TMPDIR_TEST}/empty"
 write_fixture "$empty_dir" 1 '[]'
 empty_output=$(run_fixture_wait "$empty_dir")
 assert_contains "no required checks is explicit terminal success" "PASS: verified no required checks; optional checks were not evaluated (use --all to wait for all checks)" "$empty_output"
+
+set +e
+configured_missing_output=$(AIDEVOPS_GH_CHECKS_TEST_REQUIRED_CONTEXTS=$'Format\nLint' run_fixture_wait "$empty_dir" --timeout 0 2>&1)
+configured_missing_rc=$?
+set -e
+[[ "$configured_missing_rc" -eq 8 ]] && pass "configured but unreported required checks remain pending" || fail "configured but unreported required checks remain pending" "got ${configured_missing_rc}"
+assert_contains "configured but unreported required checks time out as pending" "TIMEOUT: required checks remain non-terminal" "$configured_missing_output"
 
 all_checks_dir="${TMPDIR_TEST}/all-checks"
 write_fixture "$all_checks_dir" 1 '[{"name":"Preview","workflow":"Deploy","state":"PENDING","bucket":"pending","link":""}]'
