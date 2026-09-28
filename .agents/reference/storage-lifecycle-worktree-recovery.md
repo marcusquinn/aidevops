@@ -310,7 +310,15 @@ scan-observation count and fixed guidance: inspect the read-only plan locally,
 stop affected same-user processes through their normal process or service
 controls, optionally install the opt-in read-only inspector described in
 `reference/worktree-cwd-visibility.md`, and rerun planning. It never reports process names, command lines,
-CWDs, usernames, or archive paths. If complete visibility remains unavailable,
+CWDs, usernames, or archive paths. The one operator-invoked exception is
+`worktree-helper.sh recovery unreadable-processes` (GH#32853): run manually on
+a `/proc` host, it prints `<pid>\t<comm>` for each live, non-zombie process
+that is not provably foreign-UID and whose CWD neither a direct read nor the
+opt-in inspector can read. These are exactly the entries that make visibility
+degraded. It is read-only, prints to the terminal only, and is never called by
+automatic maintenance, advisories, logs, or plans. Names are identification
+aids, never exemptions. Platforms without `/proc` exit 3 because `lsof` does not
+identify denied processes. If complete visibility remains unavailable,
 automatic permanent deletion is explicitly unsupported and the archives remain
 retained. This diagnostic outcome grants no deletion authority, does not trust
 process names, and does not require root access or weaker kernel process

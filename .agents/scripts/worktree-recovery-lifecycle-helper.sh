@@ -1500,7 +1500,28 @@ if [[ -f "$WORKTREE_RECOVERY_LIFECYCLE_DIR/worktree-recovery-apply-helper.sh" ]]
 fi
 
 _worktree_recovery_lifecycle_usage() {
-	printf '%s\n' 'Usage: worktree-recovery-lifecycle-helper.sh [status|json|plan --output <absolute-path>|apply --plan <absolute-path> --receipt <absolute-new-path> --confirm <manifest-token>]'
+	printf '%s\n' 'Usage: worktree-recovery-lifecycle-helper.sh [status|json|plan --output <absolute-path>|apply --plan <absolute-path> --receipt <absolute-new-path> --confirm <manifest-token>|unreadable-processes]'
+	return 0
+}
+
+# Manual, read-only diagnostic for process-evidence-unavailable (GH#32853).
+# Lists same-user processes whose CWD cannot be read as "<pid>\t<comm>". This
+# is the only recovery surface that names processes; automatic maintenance,
+# advisories, logs, and plans never call it. Exit 3 where /proc is unavailable.
+worktree_recovery_unreadable_processes() {
+	local listing=""
+
+	if [[ ! -d /proc ]] || ! declare -F list_worktree_unreadable_proc_cwds >/dev/null 2>&1; then
+		printf '%s\n' 'Unreadable-process listing requires /proc; this platform reports degraded visibility through lsof without process identities.' >&2
+		return 3
+	fi
+	listing=$(list_worktree_unreadable_proc_cwds /proc) || return 1
+	if [[ -z "$listing" ]]; then
+		printf '%s\n' 'No same-user processes with unreadable CWDs were found; process visibility is currently complete.'
+		return 0
+	fi
+	printf 'PID\t%s\n' 'COMM (same-user processes whose CWD is unreadable; stop them through their normal controls or install the opt-in inspector in reference/worktree-cwd-visibility.md)'
+	printf '%s\n' "$listing"
 	return 0
 }
 
@@ -1523,6 +1544,13 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
 		worktree_recovery_apply "$3" "$5" "$7"
 		;;
 	status) worktree_recovery_lifecycle_status ;;
+	unreadable-processes)
+		[[ "$#" -eq 1 ]] || {
+			_worktree_recovery_lifecycle_usage >&2
+			exit 1
+		}
+		worktree_recovery_unreadable_processes
+		;;
 	help | --help | -h) _worktree_recovery_lifecycle_usage ;;
 	*)
 		_worktree_recovery_lifecycle_usage >&2

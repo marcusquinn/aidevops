@@ -1344,7 +1344,7 @@ _worktree_recovery_maintenance_no_candidates_json() {
 			blocked_archive_observations:process_visibility_count,
 			guidance:[
 				"Run the read-only recovery plan and inspect process-evidence-unavailable entries locally.",
-				"Stop affected same-user processes through their normal process or service controls, then rerun the plan.",
+				"Identify affected same-user processes locally with worktree-helper.sh recovery unreadable-processes, stop them through their normal process or service controls, then rerun the plan.",
 				"Where protected same-user processes hide their CWDs, an administrator may install the opt-in read-only inspector described in reference/worktree-cwd-visibility.md.",
 				"If complete process visibility cannot be restored, retain the archives; automatic permanent deletion is unsupported in this environment."
 			]
