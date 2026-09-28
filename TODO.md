@@ -1488,9 +1488,9 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18528 feat(seo): keywords routine refreshes GSC/Bing exports before import #feature #seo #auto-dispatch tier:standard ~1h ref:GH#32877 logged:2026-09-28 -> [todo/tasks/t18528-brief.md]
 
-- [ ] t18529 fix(recovery): opt-in CWD inspector reads same-user setuid-root helpers; advisory names unreadable-processes diagnostic #bug #framework #recovery #interactive #auto-dispatch tier:standard ~1h ref:GH#32871 logged:2026-09-28 -> [todo/tasks/t18529-brief.md]
+- [x] t18529 fix(recovery): opt-in CWD inspector reads same-user setuid-root helpers; advisory names unreadable-processes diagnostic #bug #framework #recovery #interactive #auto-dispatch tier:standard ~1h ref:GH#32871 logged:2026-09-28 -> [todo/tasks/t18529-brief.md] pr:#32890 completed:2026-09-28
 
-- [ ] t18530 fix(pulse): classify Actions billing-blocked checks as capability failures in CI repair #bug #framework #pulse #interactive #auto-dispatch tier:standard ~1h ref:GH#32869 logged:2026-09-28 -> [todo/tasks/t18530-brief.md]
+- [x] t18530 fix(pulse): classify Actions billing-blocked checks as capability failures in CI repair #bug #framework #pulse #interactive #auto-dispatch tier:standard ~1h ref:GH#32869 logged:2026-09-28 -> [todo/tasks/t18530-brief.md] pr:#32891 completed:2026-09-28
 
 ## In Progress
 
