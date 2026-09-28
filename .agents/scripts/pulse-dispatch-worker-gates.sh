@@ -24,6 +24,9 @@ source "${BASH_SOURCE[0]%/*}/shared-constants.sh"
 # Reuse the launcher's effort precedence without triggering model selection.
 # shellcheck source=headless-runtime-model.sh
 source "${BASH_SOURCE[0]%/*}/headless-runtime-model.sh"
+# Names-only admission shared with the early candidate filter.
+# shellcheck source=pulse-dispatch-lib-candidates.sh
+source "${BASH_SOURCE[0]%/*}/pulse-dispatch-lib-candidates.sh"
 
 #######################################
 # Transition a durably registered live worker from queued to in-progress.
@@ -305,6 +308,14 @@ _dlw_claim_lock_after_canary() {
 	local repo_slug="$2"
 	local self_login="$3"
 	local _ds_t0
+	local current_issue="" missing=""
+	# Re-read declarations immediately before the first persistent claim write.
+	current_issue=$(gh api "repos/${repo_slug}/issues/${issue_number}" 2>/dev/null) || return 0
+	missing=$(_dispatch_secret_missing_names "$current_issue") || return 0
+	if [[ -n "$missing" ]]; then
+		echo "[dispatch_with_dedup] #${issue_number}: secret admission changed before claim; yielding" >>"$LOGFILE"
+		return 0
+	fi
 
 	# t3549: acquire the cross-runner GitHub claim only after the canary proves
 	# this runtime can start. Otherwise canary timeout storms publish persistent
