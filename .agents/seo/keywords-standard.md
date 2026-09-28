@@ -124,7 +124,7 @@ Clustering uses SERP overlap first: `aidevops keywords cluster --serps serps.jso
 | DataForSEO ranked keywords | `track --source dataforseo [--domain D]` | Budget-gated; pre-checked with `keywords.dataforseo_estimate_usd` (conservative default 0.05), ledger stores the provider-reported `cost` |
 | AI answers | `track --source ai --file captures.json` | Imports approved captures only (`seo/ai-visibility-monitor.md`) |
 
-`rollup` writes last/best position, trend and ranking URL to targets and mention/citation rates to queries; `report` lists striking distance, movers and spend. Verify current provider pricing before raising budgets.
+`rollup` writes last/best position, trend and ranking URL to targets (from the target's own site platform: `website`→Google, `github`→GitHub search, `npm`→npm; else Google, Bing, GitHub, npm order) and mention/citation rates to queries; `report` lists striking distance, movers and spend. Verify current provider pricing before raising budgets.
 
 **Routines** (`aidevops keywords routines` prints lines for `TODO.md` `## Routines`): weekly free tracking, monthly budgeted paid tracking plus AI capture import, and a disabled-by-default quarterly review. Routines write only to the hub/local store, never to repository checkouts; maintainers pull changes into a worktree with `sync`.
 
