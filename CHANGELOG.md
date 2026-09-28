@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.37.21] - 2026-09-28
+
+### Added
+
+- Add Cloudflare cf CLI guidance and routing
+- provision continuation reminder labels on issue creation (#32840)
+
+### Fixed
+
+- allow one keyword target per phrase per site
+- reclaim published detached recovery archives and fix recovery escalation attribution
+- share DataForSEO credential resolver (#32839)
+
 ## [3.37.20] - 2026-09-28
 
 ### Fixed
