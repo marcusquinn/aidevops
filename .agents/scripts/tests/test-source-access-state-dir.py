@@ -12,7 +12,8 @@ from pathlib import Path
 
 CORE_PATH = Path(__file__).resolve().parents[1] / "source_access_core.py"
 SPEC = importlib.util.spec_from_file_location("source_access_core_state_dir_test", CORE_PATH)
-assert SPEC and SPEC.loader
+if SPEC is None or SPEC.loader is None:
+    raise ImportError(f"cannot load {CORE_PATH}")
 CORE = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = CORE
 SPEC.loader.exec_module(CORE)
