@@ -1463,7 +1463,11 @@ else: sys.exit(1)
         self.assertFalse(outside_target.exists())
 
     def test_privileged_bootstrap_rejects_unsafe_core_and_ignores_bytecode(self) -> None:
-        broker = self.root / "broker"
+        # macOS temp paths can start with /var, a symlink to /private/var.
+        # Keep the fixture's trust boundary and both broker paths on the same
+        # canonical ancestry so the test exercises bytecode, not that alias.
+        trust_root = self.root.resolve(strict=True)
+        broker = trust_root / "broker"
         broker.mkdir(mode=0o755)
         broker.chmod(0o755)
         helper_path = broker / "source-access-helper.py"
@@ -1483,7 +1487,7 @@ else: sys.exit(1)
             with mock.patch.object(HELPER, "__file__", str(helper_path)), mock.patch.object(
                 HELPER, "_ROOT_BROKER_PATH", helper_path
             ), mock.patch.object(HELPER, "_SOURCE_CORE_PATH", core_path), mock.patch.object(
-                HELPER, "_BOOTSTRAP_TRUST_ROOT", self.root
+                HELPER, "_BOOTSTRAP_TRUST_ROOT", trust_root
             ), mock.patch.object(HELPER, "_BOOTSTRAP_TRUST_UID", self.uid), mock.patch.object(
                 HELPER.os, "geteuid", return_value=0
             ):
