@@ -1482,7 +1482,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18520 fix(seo): shared DataForSEO credential resolver for MCP, export and research helpers #bug #seo #framework #auto-dispatch tier:standard ~2h ref:GH#32821 logged:2026-09-28 -> [todo/tasks/t18520-brief.md] pr:#32839 completed:2026-09-28
 
-- [ ] t18521 fix(seo): public-repo keywords backfill issues need hub access, not auto-dispatch #bug #seo #framework #auto-dispatch tier:standard ~1h ref:GH#32836 logged:2026-09-28 -> [todo/tasks/t18521-brief.md]
+- [x] t18521 fix(seo): public-repo keywords backfill issues need hub access, not auto-dispatch #bug #seo #framework #auto-dispatch tier:standard ~1h ref:GH#32836 logged:2026-09-28 -> [todo/tasks/t18521-brief.md] pr:#32872 completed:2026-09-28
 
 - [x] t18522 fix(seo): GSC export token lacks webmasters scope; use documented gsc-credentials.json #bug #seo #auto-dispatch tier:standard ~45m ref:GH#32843 logged:2026-09-28 -> [todo/tasks/t18522-brief.md] pr:#32866 completed:2026-09-28
 
@@ -5024,7 +5024,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t18506 Persistent dashboard issues: accuracy, privacy and public meaningfulness #enhancement ref:GH#32730
 - [ ] t18513 Quality dashboard comment hygiene silently no-ops on large threads #bug ref:GH#32752
 
-- [ ] t18526 Fix stale OpenCode pin assertion in test-tool-version-check-opencode.sh #auto-dispatch #bug ref:GH#32864
+- [x] t18526 Fix stale OpenCode pin assertion in test-tool-version-check-opencode.sh #auto-dispatch #bug ref:GH#32864 pr:#32874 completed:2026-09-28
 - [ ] t18527 fix(seo): keywords rollup uses the target's own site platform #bug #seo ref:GH#32867
 - [ ] t18525 Install and update Cloudflare cf CLI via setup and update-tools #enhancement ref:GH#32862
 - [ ] t18524 fix(seo): keywords allow one target per phrase per site #bug #seo ref:GH#32854
