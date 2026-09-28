@@ -224,6 +224,7 @@ _interactive_start_prepare_sources() {
 	}
 	local worktree_path=""
 	worktree_path=$(_interactive_start_resolve_worktree "$pre_edit_output") || return 1
+	_interactive_start_reclaim_dead_owner "$worktree_path" "$session_id" || return 1
 	local proposal_args=(propose --session "$session_id" --repo "$_INTERACTIVE_START_REPO" --issue "$_INTERACTIVE_START_ISSUE"
 		--reason 'secret-bearing basename' --context-socket "$AIDEVOPS_SOURCE_CONTEXT_SOCKET")
 	local candidate=""
@@ -240,6 +241,50 @@ _interactive_start_prepare_sources() {
 	printf 'Human terminal: aidevops approve issue %q %q --source-proposal %q\n' \
 		"$_INTERACTIVE_START_ISSUE" "$_INTERACTIVE_START_REPO" "$proposal_id"
 	return 0
+}
+
+# Reuse after an OpenCode restart: repair only this session's dead owner.
+# Never roll a live lease or adopt a different session's worktree.
+_interactive_start_reclaim_dead_owner() {
+	local worktree_path="$1"
+	local session_id="$2"
+	# shellcheck source=shared-worktree-registry.sh
+	source "${SCRIPT_DIR}/shared-worktree-registry.sh"
+	local owner="" old_pid="" old_session="" old_batch="" old_task="" old_created="" old_start=""
+	owner=$(check_worktree_owner_snapshot "$worktree_path") || {
+		printf 'ERROR: source worktree has no registered owner\n' >&2
+		return 1
+	}
+	IFS='|' read -r old_pid old_session old_batch old_task old_created old_start <<<"$owner"
+	# aidevops:trust-boundary: a supplied session string alone cannot claim a lease.
+	if [[ -z "${OPENCODE_SESSION_ID:-}" || "$session_id" != "$OPENCODE_SESSION_ID" ||
+		"$old_session" != "$session_id" || ! "$old_pid" =~ ^[0-9]+$ ]]; then
+		printf 'ERROR: source worktree belongs to another session\n' >&2
+		return 1
+	fi
+	local live_pid=""
+	live_pid=$(_resolve_worktree_owner_pid "") || return 1
+	[[ "$live_pid" =~ ^[0-9]+$ ]] || return 1
+	if [[ "$old_pid" == "$live_pid" ]]; then
+		return 0
+	fi
+	if kill -0 "$old_pid" 2>/dev/null; then
+		printf 'ERROR: source worktree has a live owner; refusing takeover\n' >&2
+		return 1
+	fi
+	local branch=""
+	branch=$(git -C "$worktree_path" symbolic-ref --quiet --short HEAD) || return 1
+	# Atomic compare-and-swap prevents a concurrent owner change after inspection.
+	if [[ -n "$old_task" && -n "$old_start" ]] &&
+		transfer_worktree_ownership_if_expected "$worktree_path" "$branch" \
+			--owner-pid "$live_pid" --session "$session_id" --task "$old_task" --batch "$old_batch" \
+			--expected-owner-pid "$old_pid" --expected-session "$old_session" \
+			--expected-task "$old_task" --expected-batch "$old_batch" \
+			--expected-created-at "$old_created" --expected-process-start "$old_start"; then
+		return 0
+	fi
+	printf 'ERROR: source worktree owner changed or has no transferable task lease\n' >&2
+	return 1
 }
 
 main() {
