@@ -10,6 +10,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.37.11] - 2026-09-28
+
+### Added
+
+- refresh generated issue bodies safely (#32717)
+- add media QA helper (#32709)
+
+### Changed
+
+- Tests: isolate brief-scope pulse tests from the live pulse.log
+
+### Fixed
+
+- report active lane for not-requested status (#32719)
+- defer cycle-entry refill dispatch (#32720)
+- restore exact V2 sessions in restored Tabby tabs
+- show resolved effort in worker dispatch comments (#32706)
+
 ## [3.37.10] - 2026-09-28
 
 ### Added
