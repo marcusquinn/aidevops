@@ -23,6 +23,7 @@ on:
       - '.agents/scripts/tests/test-source-access-helper.py'
       - '.agents/scripts/tests/test-source-access-helper.sh'
       - '.agents/scripts/tests/test-source-access-state-dir.py'
+      - '.agents/scripts/tests/test-source-access-bundle-acl.py'
       - 'aidevops.sh'
       - 'setup.sh'
       - '.github/workflows/plugin-import-check.yml'
