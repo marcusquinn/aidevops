@@ -202,13 +202,24 @@ _write_surface_field_is_valid() {
 	return 1
 }
 
-_has_unfilled_placeholder() {
+_first_unfilled_placeholder() {
 	local -a _args=("$@")
 	local body="${_args[0]}"
 	local prose=""
+	local match=""
 
 	prose=$(_brief_prose_text "$body")
-	if printf '%s\n' "$prose" | grep -qiE '<[[:alpha:]][^>]*>|\{[^{}]*(command|path|purpose|criterion|rationale|summary|deliverable|problem|evidence|task|title)[^{}]*\}'; then
+	match=$(printf '%s\n' "$prose" | grep -oiE '<[[:alpha:]][^>]*>|\{[^{}]*(command|path|purpose|criterion|rationale|summary|deliverable|problem|evidence|task|title)[^{}]*\}' | head -n 1 || true)
+	[[ -n "$match" ]] || return 1
+	printf '%.80s\n' "$match"
+	return 0
+}
+
+_has_unfilled_placeholder() {
+	local -a _args=("$@")
+	local body="${_args[0]}"
+
+	if _first_unfilled_placeholder "$body" >/dev/null; then
 		return 0
 	fi
 	return 1
@@ -306,6 +317,7 @@ _validate_v2_body() {
 	local acceptance=""
 	local errors=""
 	local field=""
+	local placeholder_match=""
 	local checkbox_count=0
 	local checkbox_pattern='^[[:space:]]*-[[:space:]]+\[[ xX]\]'
 	local negative_pattern='regression|never|must not|does not|do not|without|rejects?|preserves?|no [[:alnum:]]'
@@ -342,9 +354,11 @@ _validate_v2_body() {
 	[[ "$checkbox_count" -ge 2 ]] || errors="${errors}acceptance:multiple-observable-criteria;"
 	printf '%s\n' "$acceptance" | grep -E "$checkbox_pattern" | grep -qiE "$negative_pattern" || errors="${errors}acceptance:negative-regression;"
 	printf '%s\n' "$acceptance" | grep -E "$checkbox_pattern" | grep -viE "$negative_pattern" | grep -q . || errors="${errors}acceptance:positive;"
-	_has_unfilled_placeholder "$visible" && errors="${errors}placeholder:unfilled;"
+	placeholder_match=$(_first_unfilled_placeholder "$visible" || true)
+	[[ -n "$placeholder_match" ]] && errors="${errors}placeholder:unfilled;"
 
 	if [[ -n "$errors" ]]; then
+		[[ -n "$placeholder_match" ]] && printf 'PLACEHOLDER_MATCH=%s\n' "$placeholder_match"
 		printf 'VALIDATION_ERRORS=%s\n' "$errors"
 		return 1
 	fi

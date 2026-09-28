@@ -527,20 +527,44 @@ main() {
 		# Check if an identical issue was filed within the dedup window.
 		# Prints "OK" (exit 0) or "DUPLICATE:<number>:<seconds_ago>" (exit 1).
 		local title="${2:-}"
-		local body="${3:-}"
+		local body=""
+		local body_file=""
 		if [[ -z "$title" ]]; then
-			echo "Usage: log-issue-helper.sh check-fingerprint \"title\" \"body\"" >&2
+			echo "Usage: log-issue-helper.sh check-fingerprint \"title\" \"body\" | --body-file \"path\"" >&2
 			return 1
+		fi
+		if [[ "${3:-}" == "--body-file" ]]; then
+			body_file="${4:-}"
+			if [[ ! -f "$body_file" ]] || [[ ! -r "$body_file" ]]; then
+				echo "ERROR: --body-file requires a readable regular file" >&2
+				return 1
+			fi
+			body=$(<"$body_file")
+		else
+			body="${3:-}"
 		fi
 		check_recent_filing "$title" "$body"
 		;;
 	record-fingerprint)
 		# Record a fingerprint after a successful issue creation.
 		local title="${2:-}"
-		local body="${3:-}"
-		local issue_number="${4:-}"
+		local body=""
+		local body_file=""
+		local issue_number=""
+		if [[ "${3:-}" == "--body-file" ]]; then
+			body_file="${4:-}"
+			issue_number="${5:-}"
+			if [[ ! -f "$body_file" ]] || [[ ! -r "$body_file" ]]; then
+				echo "ERROR: --body-file requires a readable regular file" >&2
+				return 1
+			fi
+			body=$(<"$body_file")
+		else
+			body="${3:-}"
+			issue_number="${4:-}"
+		fi
 		if [[ -z "$title" ]] || [[ -z "$issue_number" ]]; then
-			echo "Usage: log-issue-helper.sh record-fingerprint \"title\" \"body\" \"issue_number\"" >&2
+			echo "Usage: log-issue-helper.sh record-fingerprint \"title\" \"body\" \"issue_number\" | --body-file \"path\" \"issue_number\"" >&2
 			return 1
 		fi
 		record_filing "$title" "$body" "$issue_number"
@@ -557,8 +581,10 @@ Commands:
   search "query"                       Search existing issues for duplicates
   prompt-reproducer                    Output the reproducer section template for framework bugs
   validate-brief <file>                Validate that a brief body contains required sections
-  check-fingerprint "title" "body"     Dedup check: prints OK or DUPLICATE:<num>:<secs_ago>
-  record-fingerprint "title" "body" N  Record fingerprint after issue #N was created
+	check-fingerprint "title" "body" | --body-file "path"
+	                                     Dedup check: prints OK or DUPLICATE:<num>:<secs_ago>
+	record-fingerprint "title" "body" N | --body-file "path" N
+	                                     Record fingerprint after issue #N was created
   help                                 Show this help message
 
 Examples:
@@ -567,9 +593,11 @@ Examples:
   log-issue-helper.sh check-auth
   log-issue-helper.sh search "update check"
   log-issue-helper.sh prompt-reproducer
-  log-issue-helper.sh validate-brief /tmp/issue-body.md
-  log-issue-helper.sh check-fingerprint "bug: foo" "\$body_text"
-  log-issue-helper.sh record-fingerprint "bug: foo" "\$body_text" 20312
+	log-issue-helper.sh validate-brief /tmp/issue-body.md
+	log-issue-helper.sh check-fingerprint "bug: foo" "\$body_text"
+	log-issue-helper.sh check-fingerprint "bug: foo" --body-file /tmp/issue-body.md
+	log-issue-helper.sh record-fingerprint "bug: foo" "\$body_text" 20312
+	log-issue-helper.sh record-fingerprint "bug: foo" --body-file /tmp/issue-body.md 20312
 EOF
 		;;
 	*)

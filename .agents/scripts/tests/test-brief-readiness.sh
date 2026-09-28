@@ -861,7 +861,7 @@ fi
 
 # --- Test 30: unknown path placeholders remain rejectable prose ---
 output=$("$HELPER" check --body "$BODY_V2_WITH_PATH_PLACEHOLDER" 2>/dev/null)
-if [[ "$output" == *"WORKER_READY=false"* && "$output" == *"placeholder:unfilled"* ]]; then
+if [[ "$output" == *"WORKER_READY=false"* && "$output" == *"placeholder:unfilled"* && "$output" == *"PLACEHOLDER_MATCH=<path>"* ]]; then
 	pass "T30: unknown <path> placeholder remains rejected"
 else
 	fail "T30: unknown path placeholder rejection" "output: $output"
@@ -869,7 +869,7 @@ fi
 
 # --- Test 31: generated wrappers preserve unknown placeholders in inner prose ---
 output=$("$HELPER" check --body "$BODY_V2_WITH_COMMAND_PLACEHOLDER" 2>/dev/null)
-if [[ "$output" == *"WORKER_READY=false"* && "$output" == *"placeholder:unfilled"* ]]; then
+if [[ "$output" == *"WORKER_READY=false"* && "$output" == *"placeholder:unfilled"* && "$output" == *"PLACEHOLDER_MATCH=<command>"* ]]; then
 	pass "T31: generated wrappers preserve and reject inner <command> placeholders"
 else
 	fail "T31: generated wrapper inner-text preservation" "output: $output"
