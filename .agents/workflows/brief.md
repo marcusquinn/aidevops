@@ -118,6 +118,13 @@ hard boundaries and recovery guidance in a sibling section. Verify before publis
 Interactive `claim-task-id.sh --labels auto-dispatch` refuses a description
 without it. Planning-only issues start with `Planning-only:` instead.
 
+For work requiring runner-local credentials during verification or publication,
+declare **names only** with one `needs-secret:NAME` label per name. Alternatively
+put `<!-- aidevops:needs-secrets NAME1 NAME2 -->` in the issue body when labels
+are impractical. Labels take precedence when both are present. Never include
+secret values; names in either form remain visible to issue readers. A runner
+without every named secret silently yields before claiming.
+
 ## Dispatch Readiness Contract (brief schema v2)
 
 New briefs intended for auto-dispatch use `<!-- aidevops:brief-schema=v2 -->`
