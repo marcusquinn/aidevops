@@ -29,6 +29,7 @@ import {
   createSourceAccessMutationProvenance,
   verifySourceAccessReceipt,
 } from "../source-access-approval.mjs";
+import { DEFAULT_STATE_DIR } from "../source-access-manifest-approval.mjs";
 import { createQualityHooks } from "../quality-hooks.mjs";
 import { createSourceAccessRuntime } from "../source-access-runtime.mjs";
 
@@ -251,6 +252,28 @@ test("direct reads of root-managed snapshots are denied", () => {
       }),
     /direct reads of approval snapshots are denied/,
   );
+});
+
+test("platform default state root matches the broker and its snapshots are denied (GH#32834)", () => {
+  assert.equal(DEFAULT_STATE_DIR, process.platform === "darwin"
+    ? "/private/var/db/aidevops/source-access"
+    : "/var/run/aidevops/source-access");
+  for (const directory of ["snapshots", "bundles"]) {
+    assert.throws(
+      () =>
+        checkSecretReadWithApproval({
+          ...BASE,
+          args: { filePath: join(DEFAULT_STATE_DIR, directory, "501", "example.source") },
+          verify: () => {
+            throw new Error("verifier must not run");
+          },
+          requestRun: () => {
+            throw new Error("request helper must not run");
+          },
+        }),
+      /direct reads of approval snapshots are denied/,
+    );
+  }
 });
 
 test("a stale root broker fails closed without creating an approval request", () => {
