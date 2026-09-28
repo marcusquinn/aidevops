@@ -1256,6 +1256,9 @@ def _validated_context_reply(
     reply: Any, query: dict[str, Any], pid: int, uid: int
 ) -> dict[str, Any]:
     _require_source(isinstance(reply, dict), "invalid source context response")
+    # Never surface peer-controlled error text; an error reply has no challenge proof.
+    _require_source("error" not in reply,
+                    "source context unavailable: worktree owner/session not verified; retry source preflight to reclaim a dead owner")
     expected = {"schema": "aidevops-source-context-reply/v1", "authority": "none",
                 "nonce": query["nonce"], "session_id": query["session_id"],
                 "repo_root": query["repo_root"], "runtime_pid": pid, "uid": uid}
