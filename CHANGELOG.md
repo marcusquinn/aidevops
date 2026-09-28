@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.37.14] - 2026-09-28
+
+### Changed
+
+- Maintenance: mark t18510 complete (pr:#32740 completed:2026-09-28) (#32731)
+
+### Fixed
+
+- keep V1 plugin pass out of the live OpenCode V2 config
+
 ## [3.37.13] - 2026-09-28
 
 ### Changed
