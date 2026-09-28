@@ -2127,7 +2127,16 @@ for _ in range(3):
         assert 'recovery-archive-incomplete' in str(error)
     else:
         raise AssertionError('interrupted attempt must block another copy')
-assert list(store.glob('aidevops-worktree-cleanup-*')) == [bucket]
+# reserve_archive resolves the store, but glob retains the caller's path spelling
+# (e.g. /var vs /private/var on macOS). Compare identities, not spellings.
+buckets = list(store.glob('aidevops-worktree-cleanup-*'))
+assert [path.resolve() for path in buckets] == [bucket.resolve()], (buckets, bucket)
+# Exercise the same alias discrepancy on Linux, where /var is not a symlink.
+alias = scratch / 'bounded-attempts-alias'
+alias.symlink_to(store, target_is_directory=True)
+alias_buckets = list(alias.glob('aidevops-worktree-cleanup-*'))
+assert alias_buckets != [bucket], (alias_buckets, bucket)
+assert [path.resolve() for path in alias_buckets] == [bucket.resolve()], (alias_buckets, bucket)
 assert source.is_dir()
 PY
 	AIDEVOPS_WORKTREE_TRASH_ROOT="${TEST_DIR}/reuse-completed" AIDEVOPS_REAL_GIT_BIN="$GIT_BIN" \
