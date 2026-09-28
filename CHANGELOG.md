@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.37.12] - 2026-09-28
+
+### Added
+
+- monitor tag-only Cloudron upstreams (#32715)
+
+### Changed
+
+- Maintenance: mark t18503 complete (pr:#32712 completed:2026-09-28) (#32708)
+
 ## [3.37.11] - 2026-09-28
 
 ### Added
