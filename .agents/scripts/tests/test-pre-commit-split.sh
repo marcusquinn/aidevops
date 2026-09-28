@@ -352,6 +352,146 @@ test_arbitrary_root_artifact_not_allowlisted() {
 	return 0
 }
 
+# --- GH#32805 fixture helpers: consumer vs framework root file modes ---
+# Creates a git repo with the hook copied in; prints the fixture dir.
+# Arguments: $1=framework (1 adds aidevops.sh so the repo is the framework repo)
+_root_mode_fixture() {
+	local framework="$1"
+	local fixture_dir
+	fixture_dir=$(mktemp -d)
+	local hook_dir="${fixture_dir}/.agents/scripts"
+	mkdir -p "$hook_dir"
+	cp "$TEST_SCRIPTS_DIR/pre-commit-hook.sh" "$hook_dir/pre-commit-hook.sh"
+	if ! _test_copy_shared_deps "$TEST_SCRIPTS_DIR" "$hook_dir"; then
+		rm -rf "$fixture_dir"
+		return 1
+	fi
+	git -C "$fixture_dir" init --quiet
+	if [[ "$framework" == "1" ]]; then
+		printf '%s\n' '#!/usr/bin/env bash' >"${fixture_dir}/aidevops.sh"
+	fi
+	printf '%s\n' "$fixture_dir"
+	return 0
+}
+
+# Stage only the given files (fresh index) and run the pre-commit hook.
+# ROOT_MODE_CONFIG (optional JSON) is written to .aidevops.json only after
+# staging and removed afterwards, so local canonical-Git guards that treat a
+# repo containing .aidevops.json as managed never see an index mutation there.
+# Arguments: $1=fixture dir, then file names. Sets ROOT_HOOK_RC / ROOT_HOOK_OUTPUT.
+_root_mode_run() {
+	local fixture_dir="$1"
+	shift
+	local file
+	rm -f "${fixture_dir}/.aidevops.json"
+	git -C "$fixture_dir" read-tree --empty
+	for file in "$@"; do
+		[[ -f "${fixture_dir}/${file}" ]] || printf '%s\n' 'fixture' >"${fixture_dir}/${file}"
+		git -C "$fixture_dir" add -- "$file"
+	done
+	if [[ -n "${ROOT_MODE_CONFIG:-}" ]]; then
+		printf '%s\n' "$ROOT_MODE_CONFIG" >"${fixture_dir}/.aidevops.json"
+	fi
+	ROOT_HOOK_RC=0
+	ROOT_HOOK_OUTPUT=$(cd "$fixture_dir" && HOOK_MODE=pre-commit bash .agents/scripts/pre-commit-hook.sh 2>&1) || ROOT_HOOK_RC=$?
+	rm -f "${fixture_dir}/.aidevops.json"
+	return 0
+}
+
+# Arguments: $1=test name, $2=fixture dir, then files expected to be rejected together.
+_root_mode_expect_reject() {
+	local name="$1"
+	local fixture_dir="$2"
+	shift 2
+	local file missing=""
+	_root_mode_run "$fixture_dir" "$@"
+	for file in "$@"; do
+		[[ "$ROOT_HOOK_OUTPUT" == *"  - ${file}"* ]] || missing="${missing} ${file}"
+	done
+	if [[ "$ROOT_HOOK_RC" -ne 0 && -z "$missing" ]]; then
+		print_result "$name" 0
+	else
+		print_result "$name" 1 "rc=${ROOT_HOOK_RC} not-rejected:${missing} ${ROOT_HOOK_OUTPUT}"
+	fi
+	return 0
+}
+
+# Arguments: $1=test name, $2=fixture dir, then files expected to be accepted.
+_root_mode_expect_accept() {
+	local name="$1"
+	local fixture_dir="$2"
+	shift 2
+	_root_mode_run "$fixture_dir" "$@"
+	if [[ "$ROOT_HOOK_RC" -eq 0 ]]; then
+		print_result "$name" 0
+	else
+		print_result "$name" 1 "$ROOT_HOOK_OUTPUT"
+	fi
+	return 0
+}
+
+# --- Test 16: consumer repos use the artifact guard (GH#32805) ---
+test_consumer_root_artifact_guard() {
+	local fixture_dir
+	if ! fixture_dir=$(_root_mode_fixture 0); then
+		print_result "consumer root fixture copies shared dependencies" 1
+		return 0
+	fi
+	_root_mode_expect_accept "consumer repo accepts standard root config files" "$fixture_dir" \
+		tsconfig.json vite.config.ts Dockerfile pyproject.toml ARCHITECTURE.md requirements-dev.txt
+	_root_mode_expect_reject "consumer repo rejects report and scratch root files" "$fixture_dir" \
+		TEST-REPORT.md VERIFY-x.md PR_AUDIT_REPORT.md results.json notes.md plan.toon debug.log
+	if [[ "$ROOT_HOOK_OUTPUT" == *"todo/research/"* && "$ROOT_HOOK_OUTPUT" == *"AIDEVOPS_TEMP_DIR"* &&
+		"$ROOT_HOOK_OUTPUT" == *"root_files.allow"* && "$ROOT_HOOK_OUTPUT" != *".agents/scripts/"* ]]; then
+		print_result "consumer rejection names temp dir, todo/research/ and root_files.allow" 0
+	else
+		print_result "consumer rejection names temp dir, todo/research/ and root_files.allow" 1 "$ROOT_HOOK_OUTPUT"
+	fi
+	rm -rf "$fixture_dir"
+	return 0
+}
+
+# --- Test 17: framework repo keeps the strict allowlist (GH#32805) ---
+test_framework_root_strict_allowlist() {
+	local fixture_dir
+	if ! fixture_dir=$(_root_mode_fixture 1); then
+		print_result "framework root fixture copies shared dependencies" 1
+		return 0
+	fi
+	_root_mode_expect_reject "framework repo keeps strict root allowlist" "$fixture_dir" tsconfig.json
+	rm -rf "$fixture_dir"
+	return 0
+}
+
+# --- Test 18: .aidevops.json root_files overrides (GH#32805) ---
+test_root_files_config_overrides() {
+	local fixture_dir
+	if ! fixture_dir=$(_root_mode_fixture 0); then
+		print_result "config root fixture copies shared dependencies" 1
+		return 0
+	fi
+	if ! command -v jq >/dev/null 2>&1; then
+		print_result "root_files config overrides (skipped: jq missing)" 0
+		rm -rf "$fixture_dir"
+		return 0
+	fi
+	ROOT_MODE_CONFIG='{"root_files":{"allow":["notes.md"],"deny":["*.csv"]}}'
+	_root_mode_expect_accept "root_files.allow accepts notes.md" "$fixture_dir" notes.md
+	_root_mode_expect_reject "root_files.deny rejects matching globs" "$fixture_dir" data.csv
+	ROOT_MODE_CONFIG='{"root_files":{"mode":"strict"}}'
+	_root_mode_expect_reject "root_files.mode strict restores the strict allowlist" "$fixture_dir" tsconfig.json
+	ROOT_MODE_CONFIG='{ invalid'
+	_root_mode_expect_accept "invalid .aidevops.json falls back to artifact-guard" "$fixture_dir" tsconfig.json
+	if [[ "$ROOT_HOOK_OUTPUT" == *"not a valid JSON object"* ]]; then
+		print_result "invalid .aidevops.json prints a fallback warning" 0
+	else
+		print_result "invalid .aidevops.json prints a fallback warning" 1 "$ROOT_HOOK_OUTPUT"
+	fi
+	ROOT_MODE_CONFIG=""
+	rm -rf "$fixture_dir"
+	return 0
+}
+
 # --- Run all tests ---
 echo "=== t2207: pre-commit/pre-push split regression test ==="
 echo ""
@@ -372,6 +512,9 @@ test_eslint_flat_config_root_allowlist
 test_vitest_config_root_allowlist
 test_node_package_root_validation
 test_arbitrary_root_artifact_not_allowlisted
+test_consumer_root_artifact_guard
+test_framework_root_strict_allowlist
+test_root_files_config_overrides
 
 echo ""
 echo "=== Results: $TESTS_RUN tests, $TESTS_FAILED failed ==="
