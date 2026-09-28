@@ -197,10 +197,13 @@ def _property_dirs() -> list[Path]:
 
 
 def _insert(connection: sqlite3.Connection, prop: str, name: str, rows: list[dict]) -> None:
+    if name not in INDEX_TABLES:
+        raise ValueError(f"unknown index table: {name}")
     fields = _columns(name)
     marks = ", ".join("?" for _ in range(len(fields) + 1))
-    connection.executemany(f'INSERT INTO "{name}" VALUES ({marks})',
-                           [[prop] + [row.get(field, "") for field in fields] for row in rows])
+    # Table name is checked against the fixed INDEX_TABLES list; values are bound parameters.
+    statement = f'INSERT INTO "{name}" VALUES ({marks})'  # nosec B608
+    connection.executemany(statement, [[prop] + [row.get(field, "") for field in fields] for row in rows])
 
 
 def build_index(db_path: Path | None = None) -> dict[str, int]:

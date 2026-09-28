@@ -109,8 +109,11 @@ def github(registry: dict, slug: str, surfaces: list[str], limit: int = 20, paus
 
 
 def _http_json(url: str, data: bytes | None = None, headers: dict | None = None) -> dict:
+    if urllib.parse.urlsplit(url).scheme != "https":
+        raise ValueError(f"refusing non-https tracker URL: {url}")
     request = urllib.request.Request(url, data=data, headers=headers or {})
-    with urllib.request.urlopen(request, timeout=60) as response:  # noqa: S310 - fixed https endpoints
+    # Scheme is restricted to https above.
+    with urllib.request.urlopen(request, timeout=60) as response:  # nosec B310
         return json.loads(response.read().decode("utf-8"))
 
 
