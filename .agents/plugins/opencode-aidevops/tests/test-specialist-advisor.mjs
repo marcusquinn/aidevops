@@ -32,6 +32,11 @@ test("shipped routes keep Sol medium in charge and Astra outside automatic escal
   assert.equal(mergeModelRouting(routing, { specialist_advisor: null }).specialistAdvisor, null);
   assert.equal(mergeModelRouting(routing, { specialist_advisor: { model: "invalid", variant: "low" } }).specialistAdvisor, null);
   assert.deepEqual(mergeModelRouting(routing, { tiers: {} }).specialistAdvisor, routing.specialistAdvisor);
+  const partial = mergeModelRouting(routing, { tiers: { standard: { models: ["openai/gpt-5.6-terra"], reasoning: {} } } });
+  assert.deepEqual(routingProfile(partial, "standard"), {
+    tier: "standard", model: "openai/gpt-5.6-terra", variant: "medium",
+  });
+  assert.deepEqual(routingProfile(routing, "simple"), { tier: "simple", model: "openai/gpt-6-luna", variant: "medium" });
 });
 
 test("policy requires one bounded highest-capability consultation before an avoidable user decision", () => {

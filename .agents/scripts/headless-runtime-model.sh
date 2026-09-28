@@ -511,8 +511,15 @@ resolve_headless_variant() {
 	# Explicit effort below the framework floor is raised, never silently omitted.
 	case "$variant" in
 	low | minimal | none)
-		printf 'Warning: headless reasoning %s is below minimum; using medium\n' "$variant" >&2
-		variant="medium"
+		local configured_variant=""
+		configured_variant=$(_headless_routed_variant "$canonical_tier" "$selected_model")
+		if [[ -z "$configured_variant" ]]; then
+			printf 'Warning: headless reasoning %s is below minimum; unknown model uses provider default\n' "$variant" >&2
+			variant=""
+		else
+			printf 'Warning: headless reasoning %s is below minimum; using %s\n' "$variant" "$configured_variant" >&2
+			variant="$configured_variant"
+		fi
 		;;
 	esac
 
