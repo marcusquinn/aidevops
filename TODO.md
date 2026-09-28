@@ -1476,9 +1476,9 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18517 fix(seo): keywords DataForSEO credentials fall back to gopass #bug #seo #framework #interactive tier:standard ~20m ref:GH#32803 logged:2026-09-28 -> [todo/tasks/t18517-brief.md] pr:#32804 completed:2026-09-28
 
-- [ ] t18518 fix(seo): keywords read DATAFORSEO_API_LOGIN/API_PASSWORD from gopass #bug #seo #framework #interactive tier:standard ~20m ref:GH#32813 logged:2026-09-28 -> [todo/tasks/t18518-brief.md]
+- [x] t18518 fix(seo): keywords read DATAFORSEO_API_LOGIN/API_PASSWORD from gopass #bug #seo #framework #interactive tier:standard ~20m ref:GH#32813 logged:2026-09-28 -> [todo/tasks/t18518-brief.md] pr:#32814 completed:2026-09-28
 
-- [ ] t18519 docs(seo): DataForSEO subagent credential and connection guidance #docs #seo #interactive tier:standard ~20m ref:GH#32822 logged:2026-09-28 -> [todo/tasks/t18519-brief.md]
+- [x] t18519 docs(seo): DataForSEO subagent credential and connection guidance #docs #seo #interactive tier:standard ~20m ref:GH#32822 logged:2026-09-28 -> [todo/tasks/t18519-brief.md] pr:#32823 completed:2026-09-28
 
 - [ ] t18520 fix(seo): shared DataForSEO credential resolver for MCP, export and research helpers #bug #seo #framework #auto-dispatch tier:standard ~2h ref:GH#32821 logged:2026-09-28 -> [todo/tasks/t18520-brief.md]
 
