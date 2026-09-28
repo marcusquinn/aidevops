@@ -239,6 +239,16 @@ _gh_ci_prepare_status_label() {
 	return 0
 }
 
+# GH#32880: agent sessions (interactive and headless workers) create issues
+# through the `gh_create_issue` PATH shim, which sets
+# AIDEVOPS_STRICT_DISPATCH_SCOPE=1. Those callers can repair a brief the moment
+# creation fails but do not act on warnings. Scripted/routine callers source
+# the library directly and keep warn-only, so scheduled findings are never lost.
+_gh_ci_dispatch_scope_strict() {
+	[[ "${AIDEVOPS_STRICT_DISPATCH_SCOPE:-0}" == "1" ]] && return 0
+	return 1
+}
+
 # Fail closed at publication rather than creating a worker-owned issue whose
 # first worker can only report missing_files_scope. Explicit declarations in
 # legacy Files sections need author review before they become write authority.
@@ -269,8 +279,8 @@ _gh_ci_validate_dispatch_scope() {
 		return 0
 	fi
 	# Creation-time repair is limited to explicit file declarations; bodies
-	# without them remain subject to the pre-claim validator. Routine callers
-	# often run without headless markers, so undeclared scope only warns here.
+	# without them remain subject to the pre-claim validator. Deterministic
+	# routine callers only warn here; the agent-facing shim fails closed (GH#32880).
 	if ! printf '%s\n' "$body" | awk '
 		/^###? (Files to Modify|Files|Relevant Files)[[:space:]]*$/ { section=1; next }
 		/^# / || /^## / || /^### / { section=0 }
@@ -280,7 +290,12 @@ _gh_ci_validate_dispatch_scope() {
 		# GH#32531: the pulse will hold this issue as status:blocked before any
 		# worker starts; tell the author while the brief is still in hand.
 		# shellcheck disable=SC2016 # literal Markdown backticks, not expansions
-		print_warning 'auto-dispatch issue has no canonical ### Files Scope; the pulse will hold it as status:blocked (missing_files_scope). Add one "- `repo/relative/path`" line per file (no prefix, nothing after it), then verify with pre-dispatch-validator-helper.sh scope-check. See workflows/brief.md.'
+		local scope_hint='Add a "### Files Scope" section with one "- `repo/relative/path`" line per file (no prefix, nothing after it), then verify with pre-dispatch-validator-helper.sh scope-check <N> "<body>" 1. See workflows/brief.md section 6.'
+		if _gh_ci_dispatch_scope_strict; then
+			print_error "auto-dispatch issue not created: body has no canonical Files Scope, so the pulse would hold it as status:blocked (missing_files_scope). ${scope_hint} Or drop auto-dispatch / mark it planning-only."
+			return 1
+		fi
+		print_warning "auto-dispatch issue has no canonical ### Files Scope; the pulse will hold it as status:blocked (missing_files_scope). ${scope_hint}"
 		return 0
 	fi
 	# shellcheck source=./pre-dispatch-validator-lib-brief-scope.sh

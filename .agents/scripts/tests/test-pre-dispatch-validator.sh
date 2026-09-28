@@ -853,6 +853,74 @@ test_issue_creation_legacy_scope_rejected() {
 	return 0
 }
 
+# GH#32880: agents ignored the warning and published unscoped briefs that the
+# pulse then held. The agent-facing PATH shim fails closed; scripted/routine
+# callers that source the library keep warn-only.
+_run_scope_gate() {
+	local strict="$1"
+	local label="$2"
+	local body="$3"
+	# shellcheck source=../shared-constants.sh
+	source "${SCRIPT_DIR}/../shared-constants.sh" >/dev/null 2>&1
+	AIDEVOPS_STRICT_DISPATCH_SCOPE="$strict" \
+		_gh_ci_validate_dispatch_scope --label "$label" --body "$body"
+	return $?
+}
+
+test_issue_creation_unscoped_strict_fails_closed() {
+	local unscoped=$'## What\nFix it.\n\nFiles to modify:\n- EDIT: `src/repair.sh` (explain)'
+	local rc_strict=0 rc_routine=0 rc_scoped=0 rc_manual=0 rc_shim=0
+	local fake_bin="" gh_log=""
+	(_run_scope_gate 1 auto-dispatch "$unscoped") >/dev/null 2>&1 || rc_strict=$?
+	(_run_scope_gate 0 auto-dispatch "$unscoped") >/dev/null 2>&1 || rc_routine=$?
+	(_run_scope_gate 1 auto-dispatch $'### Files Scope\n\n- `src/repair.sh`') >/dev/null 2>&1 || rc_scoped=$?
+	(_run_scope_gate 1 no-auto-dispatch "$unscoped") >/dev/null 2>&1 || rc_manual=$?
+	if [[ "$rc_strict" -eq 1 && "$rc_routine" -eq 0 && "$rc_scoped" -eq 0 && "$rc_manual" -eq 0 ]]; then
+		print_result "strict issue creation rejects only unscoped auto-dispatch briefs" 0
+	else
+		print_result "strict issue creation rejects only unscoped auto-dispatch briefs" 1 \
+			"strict=${rc_strict} routine=${rc_routine} scoped=${rc_scoped} manual=${rc_manual}"
+	fi
+	# End to end through the agent-facing shim with a recording gh stub.
+	fake_bin=$(mktemp -d) || return 1
+	gh_log="${fake_bin}/gh.log"
+	cat >"${fake_bin}/gh" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"${gh_log}"
+case "\$*" in
+*".private"*) printf 'true\n' ;;
+"api user"*) printf 'testuser\n' ;;
+"issue create"*) printf 'https://github.com/owner/repo/issues/9991\n' ;;
+esac
+exit 0
+EOF
+	chmod +x "${fake_bin}/gh"
+	: >"$gh_log"
+	PATH="${fake_bin}:${PATH}" AIDEVOPS_SESSION_ORIGIN=interactive \
+		"${SCRIPT_DIR}/../../bin/gh_create_issue" --repo owner/repo --title "t0: unscoped" \
+		--label auto-dispatch --body "$unscoped" >/dev/null 2>"${fake_bin}/err" || rc_shim=$?
+	if [[ "$rc_shim" -ne 0 ]] && grep -q 'auto-dispatch issue not created' "${fake_bin}/err" &&
+		! grep -Eq 'issue create|createIssue' "$gh_log"; then
+		print_result "gh_create_issue shim refuses unscoped auto-dispatch before publishing" 0
+	else
+		print_result "gh_create_issue shim refuses unscoped auto-dispatch before publishing" 1 \
+			"rc=${rc_shim} err=$(tr '\n' ';' <"${fake_bin}/err")"
+	fi
+	# Control: the explicit opt-out passes the scope gate with a warning only.
+	PATH="${fake_bin}:${PATH}" AIDEVOPS_SESSION_ORIGIN=interactive AIDEVOPS_STRICT_DISPATCH_SCOPE=0 \
+		"${SCRIPT_DIR}/../../bin/gh_create_issue" --repo owner/repo --title "t0: unscoped" \
+		--label auto-dispatch --body "$unscoped" >/dev/null 2>"${fake_bin}/err" || true
+	if grep -q 'auto-dispatch issue has no canonical' "${fake_bin}/err" &&
+		! grep -q 'auto-dispatch issue not created' "${fake_bin}/err"; then
+		print_result "gh_create_issue shim opt-out keeps warn-only creation" 0
+	else
+		print_result "gh_create_issue shim opt-out keeps warn-only creation" 1 \
+			"err=$(tr '\n' ';' <"${fake_bin}/err")"
+	fi
+	rm -rf "$fake_bin"
+	return 0
+}
+
 test_preclaim_hold_once() {
 	local calls="" comments="" rc=0
 	calls=$(mktemp) || return 1
@@ -1424,6 +1492,7 @@ main() {
 	test_auto_dispatch_preclaim_scope_contract
 	test_scope_gate_precedes_claim
 	test_issue_creation_legacy_scope_rejected
+	test_issue_creation_unscoped_strict_fails_closed
 	test_preclaim_hold_once
 	test_brief_scope_self_heal_and_release
 	test_brief_hold_release_is_body_bound
