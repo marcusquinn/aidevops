@@ -5,9 +5,11 @@
 // `opencode serve --service` process, so the V1 /dev/tty title writer cannot
 // reach the terminal. The TUI process owns the renderer, so the status-dot
 // terminal title (⚪ busy, 🟡 permission, 🟢 idle) is rendered here instead.
+// For the same reason, Tabby session-recovery markers are written from here.
 
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { writeCurrentDirectory, writeSessionRecoveryMarker } from "../session-recovery-marker.mjs";
 import { readAidevopsVersion, withAidevopsTitleSuffix } from "../session-title-suffix.mjs";
 import { sanitizeTerminalTitle, withTerminalTitleStatus } from "../terminal-title.mjs";
 
@@ -235,10 +237,69 @@ export function setupVersionSlots(
   return cleanup;
 }
 
+const DEFAULT_RECOVERY_POLL_MS = 1000;
+
+// Tabby restores a tab in the directory last reported with OSC 1337. The V2
+// shim resumes the session recorded in a marker directory, so the TUI reports
+// a private marker for the routed root session. The shim sets
+// AIDEVOPS_TABBY_V2_RECOVERY=1 only for interactive TUIs inside Tabby, and
+// XDG_DATA_HOME is the V2 data home it exports.
+export function isTabbyRecoveryEnabled(env = process.env) {
+  return env.AIDEVOPS_TABBY_V2_RECOVERY === "1" && Boolean(env.XDG_DATA_HOME);
+}
+
+export function createTabbyRecoverySync(
+  api,
+  {
+    env = process.env,
+    workDir = env.AIDEVOPS_WORK_DIR || join(homedir(), ".aidevops", ".agent-workspace", "work"),
+    writeMarker = writeSessionRecoveryMarker,
+    writeDirectory = writeCurrentDirectory,
+  } = {},
+) {
+  let recordedRoot = "";
+  return function syncTabbyRecovery() {
+    const route = safeCall(() => api.ui.router.current(), undefined);
+    if (route?.type !== "session" || !route.sessionID) return false;
+    const { root } = sessionFamily(api.data, route.sessionID);
+    if (!root || root === recordedRoot) return false;
+    const directory = safeCall(() => api.data.session.get(root), undefined)?.location?.directory;
+    // Session data may not be synced yet; the next poll retries.
+    if (!directory) return false;
+    // Record the attempt first so a failing write is not retried every poll.
+    recordedRoot = root;
+    try {
+      const markerDirectory = writeMarker({
+        sessionID: root,
+        directory,
+        dataDir: env.XDG_DATA_HOME,
+        workDir,
+        runtime: "v2",
+      });
+      return writeDirectory(markerDirectory) !== false;
+    } catch {
+      // Recovery is best-effort and must never affect the session.
+      return false;
+    }
+  };
+}
+
+export function setupTabbyRecovery(
+  api,
+  { env = process.env, pollMs = DEFAULT_RECOVERY_POLL_MS, timers = globalThis, ...options } = {},
+) {
+  if (!isTabbyRecoveryEnabled(env)) return undefined;
+  const sync = createTabbyRecoverySync(api, { env, ...options });
+  sync();
+  const timer = timers.setInterval(sync, pollMs);
+  timer?.unref?.();
+  return () => timers.clearInterval(timer);
+}
+
 export default {
   id: AIDEVOPS_V2_TUI_PLUGIN_ID,
   setup(api) {
-    const cleanups = [setupTerminalTitle(api), setupVersionSlots(api)].filter(Boolean);
+    const cleanups = [setupTerminalTitle(api), setupVersionSlots(api), setupTabbyRecovery(api)].filter(Boolean);
     return () => {
       for (const cleanup of cleanups) cleanup();
     };

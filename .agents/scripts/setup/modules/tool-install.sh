@@ -2444,7 +2444,7 @@ _setup_opencode_managed_shim_target() {
 
 # Bump when the generated V2 shim changes so existing shims regenerate.
 _setup_opencode_v2_shim_version_marker() {
-	printf '%s\n' '# aidevops:opencode-v2-shim-version=2'
+	printf '%s\n' '# aidevops:opencode-v2-shim-version=3'
 	return 0
 }
 
@@ -2452,14 +2452,19 @@ _setup_opencode_v2_shim_version_marker() {
 # every later session. Invocations that use or may start it (anything without
 # --standalone/--server) drop caller-session identity, headless flags, and
 # bundle pins first, so a restart from a worker or another OpenCode session
-# cannot make interactive V2 sessions headless (GH#32498). A TUI launched from
-# a Tabby recovery marker directory opens the marker's project directory; V2
-# never resumes the V1 session the marker belongs to.
+# cannot make interactive V2 sessions headless (GH#32498).
+#
+# Tabby restoration (GH#32700): an interactive TUI in Tabby exports
+# AIDEVOPS_TABBY_V2_RECOVERY=1 so the V2 TUI plugin reports a private marker
+# directory for the active session. Launching from a valid V2 marker resumes
+# that session unless its owner is still live (split tab) or the caller chose
+# a session. V1 markers only open their project directory.
 _setup_append_opencode_v2_session_guard() {
 	local temp_shim="$1"
 	cat >>"$temp_shim" <<'EOF' || return 1
 _aidevops_v2_subcommand=""
 _aidevops_v2_private_server=0
+_aidevops_v2_session_arg=0
 _aidevops_v2_skip_value=0
 for _aidevops_v2_arg in "$@"; do
 	if [[ "$_aidevops_v2_skip_value" -eq 1 ]]; then
@@ -2472,7 +2477,12 @@ for _aidevops_v2_arg in "$@"; do
 		_aidevops_v2_private_server=1
 		_aidevops_v2_skip_value=1
 		;;
-	--log-level | --hostname | --mdns-domain | --cors | -m | --model | -s | --session | --prompt | --agent | --replay-limit | --config | --cwd | --directory | --port)
+	-s | --session)
+		_aidevops_v2_session_arg=1
+		_aidevops_v2_skip_value=1
+		;;
+	--session=* | -c | --continue) _aidevops_v2_session_arg=1 ;;
+	--log-level | --hostname | --mdns-domain | --cors | -m | --model | --prompt | --agent | --replay-limit | --config | --cwd | --directory | --port)
 		_aidevops_v2_skip_value=1
 		;;
 	-*) ;;
@@ -2491,15 +2501,41 @@ if [[ "$_aidevops_v2_private_server" -eq 0 ]]; then
 		AIDEVOPS_AGENTS_DIR AIDEVOPS_ACTIVE_AGENTS_DIR AIDEVOPS_ACTIVE_BUNDLE_ROOT AIDEVOPS_RUNTIME_BUNDLE_LEASE_FILE \
 		AIDEVOPS_VERSION
 fi
+if [[ -z "$_aidevops_v2_subcommand" && "${TERM_PROGRAM:-}" == "Tabby" && -n "${TABBY_CONFIG_DIRECTORY:-}" \
+	&& "${AIDEVOPS_TABBY_V2_RECOVERY:-1}" != "0" ]]; then
+	export AIDEVOPS_TABBY_V2_RECOVERY=1
+else
+	export AIDEVOPS_TABBY_V2_RECOVERY=0
+fi
 _aidevops_v2_work_dir="${AIDEVOPS_WORK_DIR:-${HOME}/.aidevops/.agent-workspace/work}"
+_aidevops_v2_resume_session=""
 if [[ -z "$_aidevops_v2_subcommand" && "$PWD" == "${_aidevops_v2_work_dir}/opencode-tabby-recovery/"* ]]; then
 	_aidevops_v2_launch_dir="$HOME"
 	_aidevops_v2_resolver="${HOME}/.aidevops/agents/plugins/opencode-aidevops/session-recovery-marker.mjs"
-	if command -v node >/dev/null 2>&1 && _aidevops_v2_recovery=$(node "$_aidevops_v2_resolver" resolve --cwd "$PWD" --work-dir "$_aidevops_v2_work_dir" 2>/dev/null); then
-		_aidevops_v2_launch_dir="${_aidevops_v2_recovery%%$'\t'*}"
+	_aidevops_v2_recovery=""
+	_aidevops_v2_recovery_status=2
+	if command -v node >/dev/null 2>&1; then
+		if _aidevops_v2_recovery=$(node "$_aidevops_v2_resolver" resolve --cwd "$PWD" --work-dir "$_aidevops_v2_work_dir" \
+			--runtime v2 --data-dir "$XDG_DATA_HOME" 2>/dev/null); then
+			_aidevops_v2_recovery_status=0
+		else
+			_aidevops_v2_recovery_status=$?
+		fi
 	fi
-	printf 'opencode2: leaving the Tabby recovery marker directory for %s\n' "$_aidevops_v2_launch_dir" >&2
+	# 0 resumable, 3 owner still live, 4 V1 marker: all name a project directory.
+	case "$_aidevops_v2_recovery_status" in
+	0 | 3 | 4) [[ -z "$_aidevops_v2_recovery" ]] || _aidevops_v2_launch_dir="${_aidevops_v2_recovery%%$'\t'*}" ;;
+	esac
+	if [[ "$_aidevops_v2_recovery_status" -eq 0 && "$_aidevops_v2_session_arg" -eq 0 ]]; then
+		_aidevops_v2_resume_session="${_aidevops_v2_recovery##*$'\t'}"
+		printf 'opencode2: restoring Tabby session %s in %s\n' "$_aidevops_v2_resume_session" "$_aidevops_v2_launch_dir" >&2
+	else
+		printf 'opencode2: leaving the Tabby recovery marker directory for %s\n' "$_aidevops_v2_launch_dir" >&2
+	fi
 	cd "$_aidevops_v2_launch_dir" || exit 1
+fi
+if [[ -n "$_aidevops_v2_resume_session" ]]; then
+	set -- --session "$_aidevops_v2_resume_session" "$@"
 fi
 EOF
 	return 0
@@ -2575,6 +2611,17 @@ if [[ "\$_aidevops_v2_has_port" -eq 0 ]]; then
 		_aidevops_v2_args+=("\${_aidevops_v2_arg}")
 	done
 	set -- "\${_aidevops_v2_args[@]}"
+fi
+if [[ "\$AIDEVOPS_TABBY_V2_RECOVERY" == "1" ]]; then
+	# A normal exit returns the Tabby tab to its project directory. A hangup
+	# (Tabby quit or crash) ends this shim too, so the session marker remains
+	# the tab's saved directory and the next launch restores that session.
+	"$wrapper_path" "\$@"
+	_aidevops_v2_status=\$?
+	if [[ "\$PWD" != *[[:cntrl:]]* ]]; then
+		printf '\\033]1337;CurrentDir=%s\\007' "\$PWD" 2>/dev/null >/dev/tty || true
+	fi
+	exit "\$_aidevops_v2_status"
 fi
 exec "$wrapper_path" "\$@"
 EOF
