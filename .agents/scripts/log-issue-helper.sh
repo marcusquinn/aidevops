@@ -458,8 +458,8 @@ validate_brief_has_reproducer() {
 		echo "ERROR: Brief is missing ## Reproducer" >&2
 		return 1
 	fi
-	if ! grep -Eqi '\*\*Symptom command\*\*' <<<"$body" || ! grep -Eqi '\*\*Actual output\*\*' <<<"$body"; then
-		echo "ERROR: Reproducer requires **Symptom command** and **Actual output**" >&2
+	if ! grep -Eqi '\*\*Symptom command:?\*\*' <<<"$body" || ! grep -Eqi '\*\*Actual output:?\*\*' <<<"$body"; then
+		echo "ERROR: Reproducer requires **Symptom command** and **Actual output** (for example, **Symptom command:** <command>)" >&2
 		return 1
 	fi
 	if _brief_has_placeholder "$body"; then
