@@ -1598,27 +1598,37 @@ else: sys.exit(1)
                 HELPER._require_root_tty(self.config)
 
 
-    def test_root_broker_git_trusts_only_inspected_owner(self) -> None:
-        """GH#32816: as root, git needs SUDO_UID for user-owned worktrees."""
+    def test_root_broker_git_drops_to_authenticated_user(self) -> None:
+        """GH#32816: root broker runs Git as the requester, never as root on user repos."""
         core = HELPER._SOURCE_CORE
-        captured: list[dict[str, str] | None] = []
+        captured: list[dict[str, object]] = []
 
         def fake_run(command, **kwargs):
-            captured.append(kwargs.get("env"))
+            captured.append(kwargs)
             return subprocess.CompletedProcess(command, 0, b"", b"")
 
+        requester = os.getuid()
         with mock.patch.object(core.os, "geteuid", return_value=0), \
+                mock.patch.object(core, "real_user", return_value=(requester, Path.home())), \
                 mock.patch.object(core.subprocess, "run", side_effect=fake_run):
             core._run([core.GIT, "-C", str(self.repo), "rev-parse", "--show-toplevel"])
-            core._run([core.GIT, "rev-parse", "--show-toplevel"])
-        self.assertEqual(captured[0]["SUDO_UID"], str(os.stat(self.repo).st_uid))
-        self.assertNotIn("SUDO_UID", captured[1])
+        self.assertEqual(captured[0]["user"], requester)
+        self.assertEqual(captured[0]["extra_groups"], [])
+        self.assertEqual(captured[0]["cwd"], "/")
+        self.assertNotIn("SUDO_UID", captured[0]["env"])
+        # No authenticated non-root requester: legacy root identity, no drop.
+        with mock.patch.object(core.os, "geteuid", return_value=0), \
+                mock.patch.object(core, "real_user", return_value=(0, Path("/"))), \
+                mock.patch.object(core.subprocess, "run", side_effect=fake_run):
+            core._run([core.GIT, "-C", str(self.repo), "rev-parse", "--show-toplevel"])
+        self.assertNotIn("user", captured[1])
+        # Unprivileged caller: unchanged.
         with mock.patch.object(core.subprocess, "run", side_effect=fake_run):
             core._run([core.GIT, "-C", str(self.repo), "rev-parse", "--show-toplevel"])
-        self.assertNotIn("SUDO_UID", captured[2])
-        with mock.patch.object(core.os, "geteuid", return_value=0), \
-                mock.patch.object(core.os, "stat", return_value=os.stat_result((0,) * 10)):
-            self.assertIsNone(core._git_directory_owner_uid([core.GIT, "-C", "/"]))
+        self.assertNotIn("user", captured[2])
+        # The dropped identity must still resolve a real linked-worktree toplevel.
+        result = core._run([core.GIT, "-C", str(self.repo), "rev-parse", "--show-toplevel"])
+        self.assertEqual(result.returncode, 0)
 
 
 if __name__ == "__main__":
