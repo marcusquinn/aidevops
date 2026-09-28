@@ -35,8 +35,24 @@ def _observation(target: dict, platform: str, source: str, **values: str) -> dic
     return row
 
 
+WEB_SURFACES = {"", "website"}
+
+
 def _phrase_index(registry: dict) -> dict[str, dict]:
-    return {reg.normalise_phrase(row["phrase"]): row for row in registry["targets"] if row.get("status") != "retired"}
+    """Phrase -> target for web-search data (GSC/Bing/DataForSEO).
+
+    A phrase may have one target per site; web-search rows belong to the
+    website (or unspecified) target, falling back to the first live row.
+    """
+    index: dict[str, dict] = {}
+    for row in registry["targets"]:
+        if row.get("status") == "retired":
+            continue
+        key = reg.normalise_phrase(row["phrase"])
+        if key not in index or (row.get("surface", "") in WEB_SURFACES
+                                and index[key].get("surface", "") not in WEB_SURFACES):
+            index[key] = row
+    return index
 
 
 def read_export(path: Path) -> tuple[str, list[dict]]:
