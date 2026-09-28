@@ -18,7 +18,7 @@ tools:
 
 # Internal Linker
 
-**Input**: Article content, `context/internal-links-map.md`, `context/target-keywords.md`, sitemap/crawl data
+**Input**: Article content, `context/internal-links-map.md`, `context/keywords/` targets and clusters (`target_url`, `anchors`, `parent_id`; legacy `context/target-keywords.md`), sitemap/crawl data
 
 ## Link Types
 
@@ -40,7 +40,7 @@ tools:
 
 ## Workflow
 
-1. **Gather context** — `context/internal-links-map.md`, `context/target-keywords.md`, sitemap/crawl data
+1. **Gather context** — `context/internal-links-map.md`, `aidevops keywords brief --url <page>` (long-tail pages link up to their `parent_id` head with head-term anchors), sitemap/crawl data
 2. **Analyse content** — identify topics, anchor opportunities, user journey
 3. **Evidence review** — run `python3 .agents/scripts/seo-link-review-helper.py analyze --input pages.json --decisions decisions.json --dry-run` before proposing a batch. Use only proposals with an observed anchor, source location, canonical/status evidence and an evidence ID; do not modify HTML or CMS state.
 4. **Output**:

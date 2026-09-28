@@ -25,6 +25,8 @@ model: standard
 
 **Relationship to DESIGN.md**: Brand identity is the **strategic upstream** -- it captures _who you are_ (voice, positioning, brand archetype). DESIGN.md is the **tactical downstream** -- it captures _how to build it_ (exact hex values, font sizes, component specs). After completing a brand identity, generate a DESIGN.md to give coding agents implementation-ready tokens. See `tools/design/design-md.md` for the format and generation workflow.
 
+**Relationship to search targets**: `context/keywords.md` (`seo/keywords-standard.md`) owns what people search for and the brand's canonical entity names/`sameAs`; brand identity owns how the brand sounds. Keep canonical names identical in both; do not copy keyword lists into this profile.
+
 **Brand/style guide creation rule:** before creating a reusable brand folder or
 DESIGN.md template, consult the design stack in `tools/design/design-md.md`:
 `brand-identity.md`, `colour-palette.md`, `design-md-from-links.md`,

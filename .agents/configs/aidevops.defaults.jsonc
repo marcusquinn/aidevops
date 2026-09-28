@@ -201,6 +201,32 @@
   },
 
   // ---------------------------------------------------------------------------
+  // keywords — context/keywords.md search-targets data (seo/keywords-standard.md)
+  // ---------------------------------------------------------------------------
+  "keywords": {
+    // Default paid-provider spend cap per property per calendar month (USD).
+    // Per-repo override: repos.json keywords.budget_usd_month or the
+    // budget_usd_month front matter in context/keywords.md.
+    // Env override: AIDEVOPS_KEYWORDS_MONTHLY_BUDGET_USD
+    "monthly_budget_usd": 1,
+
+    // Private team hub repository (owner/repo) that stores registries,
+    // history and spend for every property. Local only — never committed.
+    // Empty keeps data in ~/.aidevops/.agent-workspace/keywords/local.
+    // Env override: AIDEVOPS_KEYWORDS_HUB_SLUG
+    "hub_slug": "",
+
+    // Optional explicit hub checkout path. Empty uses the workspace clone.
+    // Env override: AIDEVOPS_KEYWORDS_HUB_PATH
+    "hub_path": "",
+
+    // Conservative pre-call estimate for one DataForSEO ranked-keywords call.
+    // The ledger records the provider-reported cost when the response has one.
+    // Env override: AIDEVOPS_KEYWORDS_DATAFORSEO_ESTIMATE_USD
+    "dataforseo_estimate_usd": 0.05
+  },
+
+  // ---------------------------------------------------------------------------
   // safety — Security hooks, verification, and protective measures
   // ---------------------------------------------------------------------------
   "safety": {

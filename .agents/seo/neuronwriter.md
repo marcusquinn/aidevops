@@ -24,6 +24,7 @@ tools:
 - **Plan**: Gold or higher required
 - **Docs**: https://neuronwriter.com/faq/
 - **No MCP required** — uses curl directly
+- **Project registry**: create queries from `context/keywords.md` targets (`aidevops keywords list targets --status targeted`) and store the accepted NLP terms in the cluster `terms` column (`aidevops keywords set clusters <id> "terms=a;b;c"`) so copy agents reuse them without another paid query (`seo/keywords-standard.md`)
 
 **API requests consume monthly limits** (same cost as using the NeuronWriter UI).
 

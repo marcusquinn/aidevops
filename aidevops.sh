@@ -1144,6 +1144,7 @@ _help_commands() {
 	echo "  repos [cmd]        Manage registered projects (list/add/remove/clean)"
 	echo "  lint [cmd]         Audit/configure native repo lint, format, typecheck, and hooks"
 	echo "  design <cmd>       DESIGN.md detection, scaffolding, and brand guideline exports"
+	echo "  keywords <cmd>     context/keywords.md search targets: scaffold, brief, sync, track, budget"
 	echo "  cleanup <cmd>      Cleanup helpers (remote branch audit/delete)"
 	echo "  model-accounts-pool OAuth account pool (list/check/diagnose/add/rotate/reset-cooldowns)"
 	echo "  gpt56-context <cmd> Manage the 300K GPT-5.6 OpenCode context cap (enable/disable/status)"
@@ -1275,6 +1276,13 @@ _help_detailed_sections_content() {
 	echo "  aidevops design guidelines [path] --pdf # Generate brand guideline HTML/PDF exports"
 	echo "  aidevops design survey [--json]        # Audit owned initialized GUI repos"
 	echo "  aidevops design issues --apply         # File auto-dispatch issues for missing design artifacts"
+	echo ""
+	echo "Search Targets (context/keywords.md):"
+	echo "  aidevops keywords scaffold [path]      # Create strategy + registry, gitignore data for public repos"
+	echo "  aidevops keywords brief --asset image  # Slice targets/entities/rules for one job"
+	echo "  aidevops keywords sync                 # Merge registry with the private team hub"
+	echo "  aidevops keywords track --source github # Record rank observations (budget-gated paid sources)"
+	echo "  aidevops keywords survey | issues --apply # Backfill registered repos"
 	echo ""
 	echo "Campaign Plane:"
 	echo "  aidevops campaign init [<path>]          # Provision _campaigns/ directory contract (P1)"
@@ -1917,6 +1925,7 @@ _main_dispatch() {
 	upgrade-planning | up) cmd_upgrade_planning "$@" ;;
 	repos | projects) cmd_repos "$@" ;;
 	design) _dispatch_helper "design-guidelines-helper.sh" "design-guidelines-helper.sh" "$@" ;;
+	keywords | kw) _dispatch_helper "keywords-helper.sh" "keywords-helper.sh" "$@" ;;
 	skill) cmd_skill "$@" ;;
 	skills) cmd_skills "$@" ;;
 	sources | agent-sources) _dispatch_helper "agent-sources-helper.sh" "agent-sources-helper.sh" "$@" ;;

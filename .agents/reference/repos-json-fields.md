@@ -49,6 +49,18 @@ configuration on canonical `main`/`master`; tracked changes require a linked-wor
 
 `aidevops init` records this field in `.aidevops.json` and mirrors it into `repos.json` during registration. When absent, design helpers infer it from UI markers such as Next/Vite/Nuxt/Astro/Svelte config, React/Vue/Svelte entry files, view templates, frontend/client/web directories, or UI dependencies. Minimal-scope repos with `has_interface: true` still receive a root `DESIGN.md`; standard/public scopes continue to seed it by default.
 
+### `keywords` object
+
+Search-targets standard (`seo/keywords-standard.md`). `aidevops init` scaffolds `context/keywords.md` for standard/public scopes; minimal scope only when `.aidevops.json` sets `"keywords": {"enabled": true}`.
+
+| Key | Where | Description |
+|-----|-------|-------------|
+| `data` | `.aidevops.json` or `repos.json` | `tracked` (commit registry) or `ignored` (gitignore it; share via the private hub). Absent → public scope or public GitHub repo resolves to `ignored`, otherwise `tracked`. |
+| `enabled` | `.aidevops.json` | `true` opts a minimal-scope repo into scaffolding. |
+| `budget_usd_month` | `repos.json` | Per-repo paid-provider cap; overrides config `keywords.monthly_budget_usd` (default 1). An explicit front matter `budget_usd_month` in `context/keywords.md` (shared team cap) wins over both. |
+
+The hub slug is global local config (`keywords.hub_slug`), never a repo field, so private hub names stay out of repositories.
+
 ### `agent_source` detail
 
 Set `"agent_source": true` on private repos that store aidevops agent packs. `"role": "agent-source"` is also accepted for compatibility, but the boolean field is preferred because it does not overload maintainer/contributor scanner role semantics.

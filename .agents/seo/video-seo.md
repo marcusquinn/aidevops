@@ -120,7 +120,7 @@ See `seo/transcript-seo.md` for transcript production and optimisation workflow.
 
 ## Keyword Research for Video
 
-YouTube Autocomplete → "how to X", "X tutorial", "X explained". Video SERP features appear for: tutorials, reviews, recipes, "how to" queries, news. Use `seo/keyword-research.md` to validate search volume before production.
+Start from the project registry: `aidevops keywords brief --cluster <id> --asset video` gives the target phrase, sibling phrases for chapters and the questions to answer on screen (`seo/keywords-standard.md`). Record new video targets there with `surface=youtube`. YouTube Autocomplete → "how to X", "X tutorial", "X explained". Video SERP features appear for: tutorials, reviews, recipes, "how to" queries, news. Use `seo/keyword-research.md` to validate search volume before production.
 
 ## Performance Metrics
 

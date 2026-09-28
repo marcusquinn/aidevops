@@ -105,6 +105,7 @@ generate_pointer_files() {
 	source "$REPO_ROOT/.agents/scripts/aidevops-cli/aidevops-init-lib.sh"
 	_scope_includes() { return 0; }
 	_init_scaffold_design_md() { return 0; }
+	_init_scaffold_keywords() { return 0; }
 	scaffold_repo_courtesy_files() { return 0; }
 
 	_init_scaffold_scope_gated_files "$output_root" standard fixture false
