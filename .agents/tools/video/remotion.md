@@ -69,7 +69,11 @@ npx remotion studio                                    # Dev studio
 npx remotion render src/index.ts MyComp out/video.mp4  # Render video
 npx remotion still src/index.ts MyStill out/thumb.png  # Render still
 npx remotion render src/index.ts MyComp out/video.mp4 --props='{"title":"Custom"}'
+npx remotion render src/index.ts MyComp out/video.mp4 --codec=h264 --crf=15 --pixel-format=yuv420p --color-space=bt709 # BT.709 delivery
+ffprobe -v error -select_streams v:0 -show_entries stream=pix_fmt,color_range,color_space -of default=noprint_wrappers=1 out/video.mp4
 ```
+
+For H.264 delivery, confirm the probe reports `yuv420p` and `bt709` (TV/limited range). Remotion 4.0.529 default output was observed as full-range `yuvj420p`/`bt470bg`; verify the rendered file rather than assuming defaults.
 
 ## Context7
 
