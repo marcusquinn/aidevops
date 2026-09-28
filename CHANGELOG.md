@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.37.19] - 2026-09-28
+
+### Added
+
+- Align compaction guidance with OpenCode 1/2 host summary templates
+- select project Node for validators and workers (#32819)
+
+### Changed
+
+- Maintenance: mark t18519 complete (pr:#32823 completed:2026-09-28) (#32818)
+
 ## [3.37.18] - 2026-09-28
 
 ### Fixed
