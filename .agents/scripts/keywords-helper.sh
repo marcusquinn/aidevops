@@ -397,7 +397,8 @@ _kw_survey_rows() {
 	local login
 	login=$(_kw_current_login)
 	local repo_path slug maintainer role local_only maintenance
-	while IFS=$'\t' read -r repo_path slug maintainer role local_only maintenance; do
+	# A non-whitespace separator preserves empty maintainer/role fields.
+	while IFS=$'\x1f' read -r repo_path slug maintainer role local_only maintenance; do
 		[[ -n "$repo_path" && -d "$repo_path" && -f "$repo_path/.aidevops.json" ]] || continue
 		[[ "$local_only" == "$KW_TRUE" || "$maintenance" == "$KW_FALSE" ]] && continue
 		_kw_repo_is_owned "$slug" "$maintainer" "$role" "$login" || continue
@@ -411,7 +412,7 @@ _kw_survey_rows() {
 		[[ -f "$repo_path/$LEGACY_REL" ]] && has_legacy="$KW_TRUE"
 		printf '%s\t%s\t%s\t%s\n' "$slug" "$repo_path" "$has_keywords" "$has_legacy"
 	done < <(jq -r '.initialized_repos // [] | .[] | [.path // "", .slug // "", .maintainer // "", .role // "",
-		(.local_only // false | tostring), (.maintenance // true | tostring)] | @tsv' "$REPOS_FILE")
+		(.local_only // false | tostring), (.maintenance // true | tostring)] | join("\u001f")' "$REPOS_FILE")
 	return 0
 }
 
@@ -469,7 +470,17 @@ aidevops now standardises search targets per repository (`~/.aidevops/agents/seo
 3. Add 10-30 targets from existing evidence first (README, docs, GSC/Bing exports, package keywords, GitHub topics); set `business_value` 1-5. Paid research must stay inside the monthly budget (`aidevops keywords budget`).
 4. Add 5-15 AI-answer questions (`queries`) people ask where this project should be recommended.
 5. `aidevops keywords score --apply` then `aidevops keywords validate`.
+EOF
+	if [[ "$mode" == "$KW_IGNORED" ]]; then
+		cat >>"$body_file" <<'EOF'
 6. Public repos: run `aidevops keywords sync` to publish the registry to the team hub; commit only `.gitignore` and `AGENTS.md`.
+EOF
+	else
+		cat >>"$body_file" <<'EOF'
+6. Public repos: run `aidevops keywords sync` to publish the registry to the team hub; commit only `.gitignore` and `AGENTS.md`. If no hub is configured, say so in the PR body.
+EOF
+	fi
+	cat >>"$body_file" <<'EOF'
 
 ### Verification
 
@@ -637,4 +648,6 @@ main() {
 	return $?
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+	main "$@"
+fi

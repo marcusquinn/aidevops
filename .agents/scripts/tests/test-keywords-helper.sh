@@ -210,6 +210,69 @@ test_public_repo_ignores_data() {
 	check "scaffold ignored data" "$HELPER" scaffold "$public_repo" --data ignored
 	check "gitignore covers registry" contains "$public_repo/.gitignore" "context/keywords/"
 	check "git ignores strategy file" git -C "$public_repo" check-ignore -q context/keywords.md
+	rm -f "$public_repo/context/keywords.md"
+	# Exercise survey, dry-run and issue creation without contacting GitHub.
+	git -C "$public_repo" remote add origin "https://github.com/example/public.git"
+	printf '{"init_scope":"public"}\n' >"$public_repo/.aidevops.json"
+	printf '{"initialized_repos":[{"path":"%s","slug":"example/public","role":"maintainer"}]}\n' "$public_repo" >"$AIDEVOPS_REPOS_FILE"
+	# A local-only store and a configured hub use the same property resolution.
+	mkdir -p "$AIDEVOPS_KEYWORDS_STORE_DIR/local/example__public"
+	local survey_file="$TEST_ROOT/survey.json" issues_file="$TEST_ROOT/issues.txt"
+	"$HELPER" survey --json >"$survey_file"
+	check "local-store property counts as populated" contains "$survey_file" '"has_keywords": true'
+	export AIDEVOPS_KEYWORDS_HUB_PATH="$TEST_ROOT/hub"
+	mkdir -p "$AIDEVOPS_KEYWORDS_HUB_PATH/example__public"
+	"$HELPER" survey --json >"$survey_file"
+	check "hub-only property counts as populated" contains "$survey_file" '"has_keywords": true'
+	gh() { return 0; }
+	export -f gh
+	"$HELPER" issues >"$issues_file"
+	check "populated property is not re-filed" contains "$issues_file" 'dry_run=0'
+	rm -rf "$AIDEVOPS_KEYWORDS_STORE_DIR/local/example__public"
+	rm -rf "$AIDEVOPS_KEYWORDS_HUB_PATH/example__public"
+	export AIDEVOPS_KEYWORDS_HUB_PATH=""
+	"$HELPER" issues >"$issues_file"
+	check "public issue dry run identifies ignored mode" contains "$issues_file" 'mode=ignored'
+	# Call the same label/body path with a stubbed create wrapper, no network or issue writes.
+	(
+		# shellcheck source=/dev/null
+		source "$HELPER"
+		gh_create_issue() {
+			local previous="" arg=""
+			for arg in "$@"; do
+				if [[ "$previous" == "--body-file" ]]; then cp "$arg" "$TEST_ROOT/public-body.md"; fi
+				if [[ "$previous" == "--label" ]]; then printf '%s\n' "$arg" >"$TEST_ROOT/public-labels"; fi
+				previous="$arg"
+			done
+			return 0
+		}
+		_kw_file_issue example/public "$public_repo"
+	)
+	check "public issue cannot auto-dispatch" contains "$TEST_ROOT/public-labels" 'no-auto-dispatch,tier:standard,enhancement'
+	check "public body explains hub access" contains "$TEST_ROOT/public-body.md" 'Interactive/maintainer only: registry data is written only to the private team hub, which workers cannot access'
+	check "public body requires published sync evidence" contains "$TEST_ROOT/public-body.md" 'published: true'
+	check "public body keeps canonical scope" contains "$TEST_ROOT/public-body.md" '### Files Scope'
+	check "public body passes scope-check" "$REPO_ROOT/.agents/scripts/pre-dispatch-validator-helper.sh" scope-check 32836 "$(<"$TEST_ROOT/public-body.md")" 0
+	(
+		# shellcheck source=/dev/null
+		source "$HELPER"
+		_kw_issue_body "$TEST_ROOT/private-body.md" tracked
+		gh_create_issue() {
+			local previous="" arg=""
+			for arg in "$@"; do
+				if [[ "$previous" == "--label" ]]; then printf '%s\n' "$arg" >"$TEST_ROOT/private-labels"; fi
+				previous="$arg"
+			done
+			return 0
+		}
+		_kw_file_issue example/widget "$REPO_DIR"
+	)
+	check "private issue remains auto-dispatched" contains "$TEST_ROOT/private-labels" 'auto-dispatch,tier:standard,enhancement'
+	check "private issue retains original acceptance" contains "$TEST_ROOT/private-body.md" 'the PR body records hub sync status'
+	check "private issue retains original step" contains "$TEST_ROOT/private-body.md" 'If no hub is configured, say so in the PR body.'
+	check_fails "private issue has no maintainer-only dispatch section" contains "$TEST_ROOT/private-body.md" '## Dispatch'
+	check "private body passes scope-check" "$REPO_ROOT/.agents/scripts/pre-dispatch-validator-helper.sh" scope-check 32836 "$(<"$TEST_ROOT/private-body.md")" 1
+	unset -f gh
 	return 0
 }
 
