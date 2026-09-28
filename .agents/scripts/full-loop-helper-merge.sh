@@ -1410,6 +1410,26 @@ _merge_prepare_verified_head_aggregation_body() {
 	return 0
 }
 
+# Re-read required-check state immediately before an implicit admin fallback.
+# An empty PR rollup is not proof that the base branch has no required contexts.
+_merge_admin_fallback_required_checks_clear() {
+	local pr_number="$1"
+	local repo="$2"
+	local checks_rc=0
+	"${SCRIPT_DIR}/gh-checks-wait-helper.sh" wait "$pr_number" --repo "$repo" --timeout 0 --initial-interval 1 --max-interval 1 || checks_rc=$?
+	case "$checks_rc" in
+	0) return 0 ;;
+	8)
+		print_error "LIFECYCLE_STATE=CHECKS_PENDING required checks are not terminal on the verified PR head; refusing admin fallback"
+		return 8
+		;;
+	*)
+		print_error "Could not re-verify required checks before admin fallback; refusing admin fallback"
+		return 1
+		;;
+	esac
+}
+
 _merge_execute() {
 	local pr_number="$1" repo="$2" merge_method="$3"
 	local has_admin="$4" has_auto="$5" squash_subject=""
@@ -1476,6 +1496,11 @@ ${_merge_retry_out}"
 		# Only fall back to --admin when caller passed neither --admin nor --auto.
 		elif [[ $has_admin -eq 0 && $has_auto -eq 0 ]] &&
 			printf '%s' "$_merge_out" | grep -qE 'base branch policy prohibits|Required status checks? (is|are) expected|At least [0-9]+ approving review'; then
+			_merge_admin_fallback_required_checks_clear "$pr_number" "$repo" || return $?
+			if ! printf '%s' "$_merge_out" | grep -qE 'At least [0-9]+ approving review'; then
+				print_error "Merge remains blocked by branch policy after required checks passed; refusing admin fallback without a review-only block"
+				return 1
+			fi
 			_merge_revalidate_transport_authority "$pr_number" "$repo" "$match_head_sha" || return 1
 			print_info "Branch protection blocked plain merge; retrying with --admin (workers share the maintainer's gh auth per GH#18538)..."
 			local subject_flags=()
