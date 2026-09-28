@@ -1430,6 +1430,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18486 fix: claim-task-id must not write TODO.md into a canonical checkout #auto-dispatch #bug #framework tier:standard ~1h ref:GH#32561 logged:2026-09-27 -> [todo/tasks/t18486-brief.md] pr:#32564 completed:2026-09-27
 
+- [ ] t18498 docs: get code diagnostics from project lint, typecheck, or compiler commands, not LSP #documentation #framework #opencode #interactive #auto-dispatch tier:standard ~20m ref:GH#32694 logged:2026-09-28 -> [todo/tasks/t18498-brief.md]
+
 - [x] t18487 Allow remote-only repository creation from sessions inside the projects workspace ref:GH#32600 pr:#32601 completed:2026-09-27
 
 - [ ] t18490 docs: refresh TTS/music provider guidance (NanoGPT audio route, OpenAI TTS, OAuth scope) and Remotion BT.709 delivery flags #auto-dispatch #documentation #interactive tier:simple ~45m ref:GH#32610 logged:2026-09-27 -> [todo/tasks/t18490-brief.md]
