@@ -742,6 +742,23 @@ assert_eq "8k: empty attempt identities never reconcile with each other" "1" \
 assert_eq "8l: nonzero post-PR handoff remains a failure" "1" \
 	"$(printf '%s' "$JSON" | jq -r '[.metrics.failure_groups[] | select(.issue_number == 608)] | length')"
 
+# The pulse readers use separate projections of the same ledger. Neither may
+# turn the sentinel into a terminal success or a current issue attempt.
+FUTURE_METRICS="$FIXTURE_DIR/future-health.jsonl"
+{
+	printf '{"ts":%d,"role":"worker","result":"success","exit_code":0}\n' "$NOW"
+	printf '{"ts":%d,"role":"worker","result":"success","exit_code":0}\n' "$T_FUTURE_SENTINEL"
+	printf '{"ts":%d,"role":"worker","result":"rate_limit","exit_code":1}\n' "$((NOW + 600))"
+} >"$FUTURE_METRICS"
+assert_eq "8m: pulse capacity and pressure ignore future successes and failures" "1 0 0 0 0 0" \
+	"$(python3 "$SCRIPT_DIR/worker-terminal-health.py" "$FUTURE_METRICS" "$OBJECTIVE_EVIDENCE" 3600 2000)"
+ISSUE_FUTURE=$(bash -c 'source "$1"; _UNKNOWN=unknown; _BOOL_FALSE=false; _issue_attempt_summary_json 9 "$2"' \
+	_ "$SCRIPT_DIR/pulse-diagnose-issue.sh" "$METRICS")
+assert_eq "8n: issue diagnosis excludes the year-2100 attempt" "0" \
+	"$(printf '%s' "$ISSUE_FUTURE" | jq -r '.attempt_count')"
+assert_eq "8o: issue diagnosis reports quarantined attempts" "1" \
+	"$(printf '%s' "$ISSUE_FUTURE" | jq -r '.future_dated_ignored')"
+
 # ---------------------------------------------------------------------------
 # Summary.
 # ---------------------------------------------------------------------------
