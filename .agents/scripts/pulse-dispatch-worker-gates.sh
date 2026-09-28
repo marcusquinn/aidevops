@@ -21,6 +21,9 @@ fi
 # shellcheck source=shared-constants.sh
 # shellcheck disable=SC1091  # This module's directory is resolved at runtime.
 source "${BASH_SOURCE[0]%/*}/shared-constants.sh"
+# Reuse the launcher's effort precedence without triggering model selection.
+# shellcheck source=headless-runtime-model.sh
+source "${BASH_SOURCE[0]%/*}/headless-runtime-model.sh"
 
 #######################################
 # Transition a durably registered live worker from queued to in-progress.
@@ -118,6 +121,11 @@ _dlw_post_launch_hooks() {
 
 	local dispatch_comment_body
 	local display_model="${selected_model:-auto-select (ordered fallback)}"
+	local display_effort="resolved at launch"
+	if [[ -n "$selected_model" ]]; then
+		display_effort=$(resolve_headless_variant worker "$dispatch_tier" "$selected_model")
+		display_effort="${display_effort:-runtime default}"
+	fi
 	local aidevops_version="$AIDEVOPS_UNKNOWN_VERSION" opencode_version="$AIDEVOPS_UNKNOWN_VERSION"
 	if declare -F aidevops_find_version >/dev/null 2>&1; then
 		aidevops_version=$(aidevops_find_version 2>/dev/null || printf '%s' "$AIDEVOPS_UNKNOWN_VERSION")
@@ -132,6 +140,7 @@ Dispatching worker (deterministic).
 - **Worker PID**: ${worker_pid}
 - **Model**: ${display_model}
 - **Tier**: ${dispatch_tier}
+- **Effort**: ${display_effort}
 - **Runner**: ${self_login}
 - **aidevops**: $(_dlw_display_version_or_unknown "$aidevops_version")
 - **OpenCode**: $(_dlw_display_version_or_unknown "$opencode_version")
