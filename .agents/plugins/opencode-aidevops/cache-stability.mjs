@@ -18,6 +18,7 @@ import { createHash } from "node:crypto";
 const DEFAULT_MAX_SESSIONS = 64;
 const SNIPPET_CHARS = 80;
 const BILLING_HEADER_PREFIX = "x-anthropic-billing-header:";
+const PRUNED_TOOL_RESULT = /^(?:\[[^\]]{1,80}\]|<[^>]{1,80}>|…|\.\.\.|(?:tool )?(?:output|result) (?:was )?(?:pruned|omitted|removed|truncated)|pruned\b)/i;
 
 const withoutCacheControl = (key, value) => (key === "cache_control" ? undefined : value);
 
@@ -48,30 +49,31 @@ function prefixText(messages) {
 }
 
 function blockText(block) {
-  if (typeof block === "string") return block;
-  if (typeof block?.text === "string") return block.text;
-  if (typeof block?.content === "string") return block.content;
+  const text = typeof block === "string" ? block : block?.text ?? block?.content;
+  if (typeof text === "string") return text;
   return JSON.stringify(block, withoutCacheControl) ?? "";
+}
+
+function fingerprintBlock(block) {
+  const text = blockText(block);
+  const type = typeof block === "string" ? "text" : String(block?.type ?? "unknown");
+  return {
+    hash: hash(block),
+    type,
+    chars: text.length,
+    preview: snippet(text),
+    pruningCandidate: type === "tool_result" && PRUNED_TOOL_RESULT.test(text),
+  };
 }
 
 function messageBlocks(message) {
   const content = message?.content;
   const blocks = Array.isArray(content) ? content : [typeof content === "string" ? { type: "text", text: content } : content];
-  return blocks.filter((block) => block != null).map((block) => {
-    const text = blockText(block);
-    const type = typeof block === "string" ? "text" : String(block?.type ?? "unknown");
-    return {
-      hash: hash(block),
-      type,
-      chars: text.length,
-      preview: snippet(text),
-      pruningCandidate: type === "tool_result" && /^(?:\[[^\]]{1,80}\]|<[^>]{1,80}>|…|\.\.\.|(?:tool )?(?:output|result) (?:was )?(?:pruned|omitted|removed|truncated)|pruned\b)/i.test(text),
-    };
-  });
+  return blocks.filter((block) => block != null).map(fingerprintBlock);
 }
 
 function requestFamily(parsed) {
-  const family = Array.isArray(parsed?.tools) && parsed.tools.length > 0 ? "agent" : "aux";
+  const family = parsed?.tools?.length ? "agent" : "aux";
   return { family, key: `${parsed?.model ?? ""}\u0000${family}` };
 }
 
@@ -114,34 +116,31 @@ function diffPrefix(previous, current) {
   return `segment=prefix chars=${previous.length}->${current.length} line=${line + 1} was=${snippet(before[line])} now=${snippet(after[line])}`;
 }
 
+function changedHistoryIndexes(previous, current) {
+  const shared = previous.messages.slice(0, current.messages.length);
+  return shared.flatMap((message, index) => (hash(message) === hash(current.messages[index]) ? [] : [index]));
+}
+
+function describeHistoryChange(previous, current, index, count) {
+  const before = previous.messages[index];
+  const after = current.messages[index];
+  const shared = Math.min(before.length, after.length);
+  const block = before.slice(0, shared).findIndex((entry, position) => entry.hash !== after[position].hash);
+  const position = block < 0 ? shared : block;
+  const beforeBlock = before[position];
+  const afterBlock = after[position];
+  const change = !beforeBlock ? "added" : !afterBlock ? "removed" : "modified";
+  const target = afterBlock ?? beforeBlock;
+  const tail = index >= previous.messages.length - 1 ? " tail=true" : "";
+  const messagesChanged = count > 1 ? ` messages_changed=${count}` : "";
+  const now = target.type === "tool_result" && change === "modified" && afterBlock?.pruningCandidate ? ` now=${afterBlock.preview}` : "";
+  return `segment=history index=${index}/${previous.messages.length} role=${current.roles[index]} block=${position}/${Math.max(before.length, after.length)} type=${target.type} change=${change} chars=${beforeBlock?.chars ?? 0}->${afterBlock?.chars ?? 0}${tail}${messagesChanged}${now}`;
+}
+
 function diffHistory(previous, current) {
-  // Only messages that existed in the previous request are expected to be byte-stable.
-  const shared = Math.min(previous.messages.length, current.messages.length);
-  const changed = [];
-  for (let index = 0; index < shared; index += 1) {
-    if (hash(previous.messages[index]) === hash(current.messages[index])) continue;
-    changed.push(index);
-  }
-  for (const index of changed) {
-    const before = previous.messages[index];
-    const after = current.messages[index];
-    const blocks = Math.min(before.length, after.length);
-    let block = 0;
-    while (block < blocks && before[block].hash === after[block].hash) block += 1;
-    const beforeBlock = before[block];
-    const afterBlock = after[block];
-    const change = !beforeBlock ? "added" : !afterBlock ? "removed" : "modified";
-    const target = afterBlock ?? beforeBlock;
-    const tail = index >= previous.messages.length - 1 ? " tail=true" : "";
-    const messagesChanged = changed.length > 1 ? ` messages_changed=${changed.length}` : "";
-    const pruningCandidate = target.type === "tool_result" && change === "modified" && afterBlock?.pruningCandidate;
-    const now = pruningCandidate ? ` now=${afterBlock.preview}` : "";
-    return `segment=history index=${index}/${previous.messages.length} role=${current.roles[index]} block=${block}/${Math.max(before.length, after.length)} type=${target.type} change=${change} chars=${beforeBlock?.chars ?? 0}->${afterBlock?.chars ?? 0}${tail}${messagesChanged}${now}`;
-  }
-  if (current.messages.length < previous.messages.length) {
-    return `segment=history shrink=${previous.messages.length}->${current.messages.length}`;
-  }
-  return null;
+  const changed = changedHistoryIndexes(previous, current);
+  if (changed.length > 0) return describeHistoryChange(previous, current, changed[0], changed.length);
+  return current.messages.length < previous.messages.length ? `segment=history shrink=${previous.messages.length}->${current.messages.length}` : null;
 }
 
 /** Describe every stable segment that changed between two consecutive fingerprints. */
