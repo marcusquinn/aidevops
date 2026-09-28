@@ -863,6 +863,8 @@ test_preclaim_hold_once() {
 		source "${SCRIPT_DIR}/../shared-constants.sh" >/dev/null 2>&1
 		# shellcheck source=../pulse-dispatch-core.sh
 		source "${SCRIPT_DIR}/../pulse-dispatch-core.sh" >/dev/null 2>&1
+		# Fixture decisions must never reach the live pulse.log (GH#32689).
+		LOGFILE=/dev/null
 		gh() {
 			if [[ "$*" == *"/comments"* ]]; then
 				cat "$comments"
@@ -929,6 +931,7 @@ test_brief_scope_self_heal_and_release() {
 		source "${SCRIPT_DIR}/../shared-constants.sh" >/dev/null 2>&1
 		# shellcheck source=../pulse-dispatch-core.sh
 		source "${SCRIPT_DIR}/../pulse-dispatch-core.sh" >/dev/null 2>&1
+		LOGFILE=/dev/null
 		gh() {
 			if [[ "$*" == *"/comments"* ]]; then
 				cat "$comments"
