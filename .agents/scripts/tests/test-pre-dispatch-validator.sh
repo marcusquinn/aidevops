@@ -991,6 +991,47 @@ test_brief_scope_self_heal_and_release() {
 	return 0
 }
 
+test_brief_hold_release_is_body_bound() {
+	local rc=0
+	(
+		# shellcheck source=../shared-constants.sh
+		source "${SCRIPT_DIR}/../shared-constants.sh" >/dev/null 2>&1
+		local body='## What
+Unscoped brief'
+		local digest="" comments=""
+		digest=$(_dispatch_brief_hold_body_hash "$body") || {
+			# Core is not required to load the shared predicate.
+			digest=$(printf '%s' "$body" | sha256sum | cut -c1-24)
+		}
+		comments=$(jq -cn --arg marker "<!-- aidevops:brief-hold reason=missing_files_scope body=${digest} -->" \
+			'[[{author_association:"COLLABORATOR",body:$marker}]]')
+		issue_has_active_brief_hold "$comments" "$body" || exit 1
+		issue_has_active_brief_hold "$comments" "${body} edited" && exit 2
+		local untrusted=""
+		untrusted=$(printf '%s' "$comments" | jq '.[0][0].author_association="NONE"')
+		issue_has_active_brief_hold "$untrusted" "$body" && exit 3
+		gh() {
+			if [[ "$*" == *'/comments?'* ]]; then
+				printf '%s\n' "$comments"
+			else
+				jq -cn --arg body "$body" '{body:$body,labels:[{name:"status:blocked"}]}'
+			fi
+			return 0
+		}
+		issue_brief_hold_blocks_auto_release 42 owner/repo || exit 4
+		body='## What
+Edited brief'
+		issue_brief_hold_blocks_auto_release 42 owner/repo && exit 5
+		exit 0
+	) >/dev/null 2>&1 || rc=$?
+	if [[ "$rc" -eq 0 ]]; then
+		print_result "brief hold blocks only trusted exact-body releases" 0
+	else
+		print_result "brief hold blocks only trusted exact-body releases" 1 "rc=${rc}"
+	fi
+	return 0
+}
+
 test_zero_progress_meta_recovered_blocks_dispatch() {
 	setup_test_env
 	create_gh_stub_zero_progress_body "write"
@@ -1385,6 +1426,7 @@ main() {
 	test_issue_creation_legacy_scope_rejected
 	test_preclaim_hold_once
 	test_brief_scope_self_heal_and_release
+	test_brief_hold_release_is_body_bound
 	test_zero_progress_meta_recovered_blocks_dispatch
 	test_zero_progress_meta_recovered_readonly_allows_dispatch_without_write
 	test_zero_progress_meta_active_allows_dispatch

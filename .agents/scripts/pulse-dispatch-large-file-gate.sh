@@ -565,6 +565,13 @@ _large_file_gate_normalize_debt_issue() {
 	local issue_number="$1"
 	local repo_slug="$2"
 
+	# The simplification gate runs independently of dispatch and must not
+	# undo a brief-owner hold for the same body on each pulse cycle.
+	if declare -F issue_brief_hold_blocks_auto_release >/dev/null 2>&1 &&
+		issue_brief_hold_blocks_auto_release "$issue_number" "$repo_slug"; then
+		echo "[pulse-wrapper] large-file-gate: preserving brief hold for #${issue_number} in ${repo_slug}" >>"${LOGFILE:-/dev/null}"
+		return 0
+	fi
 	# Route the complete transition through the canonical lifecycle helper so
 	# sibling status labels converge atomically and repeated calls are no-ops.
 	set_issue_status "$issue_number" "$repo_slug" "available" \
