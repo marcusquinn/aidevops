@@ -24,6 +24,9 @@ on:
       - '.agents/scripts/tests/test-source-access-helper.sh'
       - '.agents/scripts/tests/test-source-access-state-dir.py'
       - '.agents/scripts/tests/test-source-access-bundle-acl.py'
+      - '.agents/scripts/tests/test-tracked-source-read-exemption.sh'
+      - '.agents/hooks/secret_file_read_guard.py'
+      - '.gitignore'
       - 'aidevops.sh'
       - 'setup.sh'
       - '.github/workflows/plugin-import-check.yml'
@@ -120,3 +123,4 @@ jobs:
           set -euo pipefail
           bash .agents/scripts/tests/test-source-access-helper.sh
           bash .agents/scripts/tests/test-setup-source-access-broker.sh
+          bash .agents/scripts/tests/test-tracked-source-read-exemption.sh
