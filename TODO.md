@@ -1482,6 +1482,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18520 fix(seo): shared DataForSEO credential resolver for MCP, export and research helpers #bug #seo #framework #auto-dispatch tier:standard ~2h ref:GH#32821 logged:2026-09-28 -> [todo/tasks/t18520-brief.md]
 
+- [ ] t18521 fix(seo): public-repo keywords backfill issues need hub access, not auto-dispatch #bug #seo #framework #auto-dispatch tier:standard ~1h ref:GH#32836 logged:2026-09-28 -> [todo/tasks/t18521-brief.md]
+
 ## In Progress
 
 - [x] t18478 Repair Anthropic Opus 5.5 OAuth adaptive-thinking request shape and add opt-in local interactive model/effort defaults without changing shared routes. Verify medium/xhigh Read-tool calls, unpinned OpenCode selection, focused plugin tests and changed-file lint; publish the reviewed fix through full-loop release. #bugfix #framework #auth #interactive #auto-dispatch ~2h tier:standard started:2026-09-26 ref:GH#32415 logged:2026-09-26 pr:#32417 testing:runtime-verified release:v3.36.0 completed:2026-09-26 -> [todo/tasks/t18478-brief.md]
