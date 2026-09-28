@@ -1841,3 +1841,61 @@ jobs:
           else
             echo "No closure reason label needed for issue #$ISSUE_NUMBER"
           fi
+
+  # PRs are issues in GitHub's label model, but their terminal lifecycle is
+  # independent from the issue(s) a merged PR may close. This job deliberately
+  # runs on every close so an unmerged close never runs issue completion hygiene.
+  sync-pr-terminal-labels:
+    name: Sync PR Terminal Labels
+    if: (github.event_name == 'pull_request_target' || github.event_name == 'pull_request') && github.event.action == 'closed'
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 2
+    permissions:
+      pull-requests: write
+
+    steps:
+      - name: Apply terminal PR labels atomically
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_MERGED: ${{ github.event.pull_request.merged }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_LABELS=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json labels \
+            --jq '.labels[].name' 2>/dev/null || true)
+          if [[ -z "$PR_LABELS" ]]; then
+            echo "No labels found for closed PR #$PR_NUMBER — skipping terminal label transition"
+            exit 0
+          fi
+
+          edit_args=(pr edit "$PR_NUMBER" --repo "$REPO")
+          if [[ "$PR_MERGED" == "true" ]]; then
+            gh label create "status:done" --color "6F42C1" --description "Task is complete" --repo "$REPO" --force 2>/dev/null || true
+            edit_args+=(--add-label "status:done")
+          fi
+
+          while IFS= read -r label; do
+            [[ -n "$label" ]] || continue
+            if [[ "$label" == status:* ]]; then
+              if [[ "$PR_MERGED" != "true" || "$label" != "status:done" ]]; then
+                edit_args+=(--remove-label "$label")
+              fi
+            elif [[ "$label" == "auto-dispatch" || "$label" == "needs-maintainer-permissions" ]]; then
+              edit_args+=(--remove-label "$label")
+            fi
+          done <<<"$PR_LABELS"
+
+          if [[ "${#edit_args[@]}" -le 5 ]]; then
+            echo "Closed PR #$PR_NUMBER has no terminal labels to transition"
+            exit 0
+          fi
+
+          if gh "${edit_args[@]}"; then
+            if [[ "$PR_MERGED" == "true" ]]; then
+              echo "Marked merged PR #$PR_NUMBER status:done and removed active labels"
+            else
+              echo "Removed active labels from unmerged closed PR #$PR_NUMBER"
+            fi
+          else
+            echo "Warning: terminal label transition failed for PR #$PR_NUMBER; continuing without failing close hygiene"
+          fi

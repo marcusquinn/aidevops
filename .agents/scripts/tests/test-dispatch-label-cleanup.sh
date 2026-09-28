@@ -79,6 +79,12 @@ install_gh_stub() {
 		if [[ "$command_name" == "issue" && "$subcommand_name" == "edit" && "${GH_STUB_FAIL_EDIT:-0}" == "1" ]]; then
 			return 7
 		fi
+		if [[ "$command_name" == "pr" && "$subcommand_name" == "list" ]]; then
+			[[ "$*" == *"--repo owner/repo"* ]] || return 0
+			printf '201\ttrue\tauto-dispatch|status:in-review\n'
+			printf '202\tfalse\tstatus:in-review\n'
+			return 0
+		fi
 		return 0
 	}
 	return 0
@@ -245,11 +251,35 @@ test_clear_terminal_labels_propagates_edit_failures() {
 	return 0
 }
 
+test_sweep_transitions_closed_pr_labels() {
+	setup_env
+	install_gh_stub
+	# shellcheck source=../shared-dispatch-label-cleanup.sh
+	source "$HELPER"
+	sweep_closed_auto_dispatch_issues
+	local merged_edit unmerged_edit
+	merged_edit=$(grep 'pr edit 201 ' "${TEST_ROOT}/gh.log" || true)
+	unmerged_edit=$(grep 'pr edit 202 ' "${TEST_ROOT}/gh.log" || true)
+	if [[ "$merged_edit" == *"--add-label status:done"* &&
+		"$merged_edit" == *"--remove-label status:in-review"* &&
+		"$merged_edit" == *"--remove-label auto-dispatch"* &&
+		"$unmerged_edit" != *"--add-label status:done"* &&
+		"$unmerged_edit" == *"--remove-label status:in-review"* ]] &&
+		grep -q 'pr_checked=2 pr_updated=2 pr_failed=0' "$LOGFILE"; then
+		print_result "closed PR sweep marks merges done and only clears unmerged active labels" 0
+	else
+		print_result "closed PR sweep marks merges done and only clears unmerged active labels" 1
+	fi
+	teardown_env
+	return 0
+}
+
 test_clear_terminal_labels_removes_dispatch_labels
 test_sweep_reconciles_closed_active_blocker_candidates
 test_sweep_preserves_blockers_on_api_ambiguity
 test_sweep_preserves_blockers_on_logger_failure
 test_clear_terminal_labels_propagates_edit_failures
+test_sweep_transitions_closed_pr_labels
 
 printf 'Tests run: %s\n' "$TESTS_RUN"
 printf 'Tests failed: %s\n' "$TESTS_FAILED"
