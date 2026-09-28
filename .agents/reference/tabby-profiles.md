@@ -93,6 +93,34 @@ the OpenCode session ID and local directory references, use owner-only
 permissions, and are inert unless Tabby starts the launcher from that exact
 marker directory.
 
+## OpenCode V2 (`opencode2`)
+
+V2 server plugins run in the tty-less background service, so the V2 TUI plugin
+(`plugins/opencode-aidevops/v2-plugin/tui.mjs`) writes the marker instead. When
+the `opencode2` shim starts an interactive TUI inside Tabby, it exports
+`AIDEVOPS_TABBY_V2_RECOVERY=1`. The TUI then records a schema-2 `runtime: "v2"`
+marker for the routed root session and reports it with `OSC 1337`. Switching
+sessions rewrites the marker.
+
+Launching `opencode2` from a marker directory, whether Tabby re-runs the
+profile command or you type it in a restored shell tab, resolves the marker
+against the V2 data home and the `session_v2` table, then runs
+`--session <id>` in the session's directory. The shim only opens the project
+directory, without resuming, when:
+
+- the marker's owner TUI is still live (a split or duplicated tab);
+- the caller passed `--session` or `--continue`;
+- the marker belongs to V1.
+
+The V1 launcher likewise opens a V2 marker's directory without resuming it.
+Owner liveness uses `/proc` on Linux and `ps -o lstart=` on macOS.
+
+After a normal TUI exit, the shim reports the project directory back to Tabby.
+When Tabby quits or crashes, the marker remains the tab's saved directory, so
+the next launch restores that session. Set `AIDEVOPS_TABBY_V2_RECOVERY=0` to
+opt out. With V2's own tab strip disabled (`"tabs": {"mode": "off"}` in V2
+`cli.json`), each Tabby tab maps to one session.
+
 For manual one-off profiles that should run OpenCode and then leave a shell open,
 use the same non-interactive login command instead of mixing `-i` and `-c`:
 
