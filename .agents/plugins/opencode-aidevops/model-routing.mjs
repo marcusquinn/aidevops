@@ -47,6 +47,21 @@ export function normalizeModelRouting(value = {}) {
   };
 }
 
+function mergeTier(baseTier, tierOverride) {
+  const merged = {
+    models: [...(baseTier?.models || [])],
+    reasoning: { ...(baseTier?.reasoning || {}) },
+  };
+  if (!tierOverride || typeof tierOverride !== "object") return merged;
+  if (Array.isArray(tierOverride.models)) {
+    merged.models = tierOverride.models.filter((model) => typeof model === "string" && model.includes("/"));
+  }
+  if (tierOverride.reasoning && typeof tierOverride.reasoning === "object") {
+    merged.reasoning = { ...merged.reasoning, ...tierOverride.reasoning };
+  }
+  return merged;
+}
+
 export function mergeModelRouting(base, override = {}) {
   const merged = normalizeModelRouting();
   merged.minimumReasoning = reasoningFloor(override?.settings?.minimum_reasoning ?? base?.minimumReasoning);
@@ -57,22 +72,7 @@ export function mergeModelRouting(base, override = {}) {
     ? normalizeSpecialistAdvisor(override.specialist_advisor)
     : base?.specialistAdvisor || null;
   for (const tier of DEFAULT_ESCALATION_ORDER) {
-    merged.tiers[tier] = {
-      models: [...(base?.tiers?.[tier]?.models || [])],
-      reasoning: { ...(base?.tiers?.[tier]?.reasoning || {}) },
-    };
-    const tierOverride = override?.tiers?.[tier];
-    if (!tierOverride || typeof tierOverride !== "object") continue;
-    if (Object.hasOwn(tierOverride, "models") && Array.isArray(tierOverride.models)) {
-      merged.tiers[tier].models = tierOverride.models
-        .filter((model) => typeof model === "string" && model.includes("/"));
-    }
-    if (tierOverride.reasoning && typeof tierOverride.reasoning === "object") {
-      merged.tiers[tier].reasoning = {
-        ...merged.tiers[tier].reasoning,
-        ...tierOverride.reasoning,
-      };
-    }
+    merged.tiers[tier] = mergeTier(base?.tiers?.[tier], override?.tiers?.[tier]);
   }
   merged.escalationOrder = Array.isArray(override?.escalation_order)
     ? normalizeModelRouting(override).escalationOrder
