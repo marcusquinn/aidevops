@@ -428,9 +428,7 @@ _dispatch_dedup_dependency_gates() {
 	# Checks GitHub's native blockedBy relationship field first, then falls back
 	# to issue-body markers such as "blocked-by:tNNN" or "Blocked by #NNN".
 	# t2996: body now travels in $issue_meta_json (`,body` was added at the
-	# canonical gh call); extract once and reuse for the consolidation,
-	# large-file, and footprint gates below — eliminating 1-2 extra gh calls
-	# per dispatch candidate.
+	# canonical gh call), so no gate re-fetches it.
 	_dss_t0=$(_ds_now_ns)
 	_ds_stage_start "$issue_number" "$repo_slug" "blocked_by" "$_dss_t0" _ds_stage_attempt_id
 	local _dispatch_issue_body
@@ -446,6 +444,19 @@ _dispatch_dedup_dependency_gates() {
 		return 1
 	fi
 	_ds_record "$issue_number" "$repo_slug" "dedup.blocked_by" "$_dss_t0"
+	return 0
+}
+
+# t18505/GH#32729: costly scope gates run only after the read-only dedup
+# layers confirm no other owner, PR or terminal-blocker circuit. Measured on
+# a live runner, ~75% of candidates reaching these gates were rejected by the
+# dedup layers anyway, so running them first spent ~7h/day of candidate
+# evaluation (consolidation p50 16.5s) and could fire consolidation or
+# simplification side effects for issues another runner owns.
+_dispatch_dedup_scope_gates() {
+	local issue_number="$1" repo_slug="$2" repo_path="$3" issue_meta_json="$4"
+	local _dss_t0="" _ds_stage_attempt_id="" _dispatch_issue_body=""
+	_dispatch_issue_body=$(printf '%s' "$issue_meta_json" | jq -r '.body // ""' 2>/dev/null) || _dispatch_issue_body=""
 
 	# Pre-dispatch: issue consolidation check. If an issue has accumulated
 	# multiple substantive comments that change scope (not dispatch/approval
@@ -539,6 +550,9 @@ _dispatch_dedup_check_layers() {
 		return 1
 	fi
 	_ds_record "$issue_number" "$repo_slug" "dedup.7_layers" "$_dss_t0"
+
+	_dispatch_dedup_scope_gates "$issue_number" "$repo_slug" "$repo_path" "$issue_meta_json" || gate_rc=$?
+	[[ "$gate_rc" -eq 0 ]] || return "$gate_rc"
 
 	# GH#22399/GH#31404: fail closed before launch, but only after dedup
 	# confirms eligibility. Never mutate author-gate labels on an active PR.

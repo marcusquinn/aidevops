@@ -35,6 +35,14 @@ pulse-dispatch-worker-launch.sh    — launch sub-stages instrumented
 | `worker_launch_total` | Full `_dispatch_launch_worker` call                 |
 | `ceremony_total`     | End-to-end `dispatch_with_dedup` from metadata fetch to launch |
 
+Gate order inside `dedup_check` is cheapest-rejection first: capacity, state/label,
+NMR and blocked-by gates, then the read-only `7_layers` dedup (active claims, PR
+evidence, terminal-blocker circuit), then the costly scope gates
+(`consolidation`, `large_file`, `footprint`), then the external-author gate.
+Most candidates are rejected by `7_layers`; running scope gates first spent hours
+per day per runner and could fire consolidation or simplification side effects
+for issues another runner owns (GH#32729). Keep new costly gates after `7_layers`.
+
 ### Launch sub-stages (in `_dispatch_launch_worker`)
 
 | Stage name            | What it covers                                     |
