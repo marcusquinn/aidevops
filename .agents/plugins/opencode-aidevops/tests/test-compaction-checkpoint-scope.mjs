@@ -198,6 +198,9 @@ test("compaction preserves aim and handoff guidance without operational state", 
     assert.match(payload, /Begin the compaction summary with exactly `## Session aims`/);
     assert.match(payload, /initiating user aim plus every later added, clarified, corrected, or adapted aim/);
     assert.match(payload, /Do not substitute the most recent task for the session aim/);
+    assert.match(payload, /initiating request and each later correction.*verbatim/);
+    assert.match(payload, /earlier compaction summary, carry forward its aims.*Later conversation wins conflicts/);
+    assert.match(payload, /Preserve exact file paths, symbols, commands, error strings/);
     assert.match(payload, /methods or evidence—not standalone aims/);
     assert.match(payload, /including live usage\/observability.*Avoid busy-work/);
     assert.match(payload, /## Continuation Handoff — Required/);

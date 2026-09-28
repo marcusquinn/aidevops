@@ -111,8 +111,8 @@ The "via aidevops" Anthropic 4.x picker entries were OpenCode 1 config-hook
 injections, not a separate OAuth transport; its native Anthropic models still
 use the pool auth hook. OpenCode 2 uses its own provider-request auth adapter,
 and does not call the OpenCode 1 picker config hook. The OpenCode 1 request-time
-budget (240K generally, 500K for specified newer Anthropic families, 180K
-target for Haiku 4.5) is independent of the optional V2 policy below. OpenCode
+budget (240K for all models, 180K target for Haiku 4.5, ~200K for Opus 4.7)
+is independent of the V2 policy below. OpenCode
 2.0.3's
 `session.context` exposes only a model reference; its automatic compaction
 uses `min(input - buffer, context - max(min(output, 32K), buffer))` when input
@@ -120,7 +120,7 @@ is set; without input, only the second term applies. The SDK
 allows `catalog.transform` to edit model limits, but this mutates picker
 metadata and cannot distinguish native from explicit user limits. Its optional
 compaction threshold only works in provider-compaction mode; enabling that
-mode changes compaction behavior. The opt-in V2 policy deliberately caps larger
+mode changes compaction behavior. The V2 policy deliberately caps larger
 input limits instead, without changing the compaction mechanism. Do not claim
 the V1 per-family targets apply to V2. If the launcher is not on `PATH`, use the
 managed
@@ -156,28 +156,29 @@ plus the existing V1 agent generator checks. After deployment, restart each
 runtime and inspect both agent selectors and the resolved Build+ prompt. Do not
 infer V2 parity from a successful built-in Build session or a plugin import.
 
-### Optional V2 240K local compaction target
+### V2 240K local compaction target
 
-V2 keeps its native limits by default. To opt into a 240,000-token usable-input
-target across models with larger windows, merge this into
+V2 targets 240,000 tokens of usable input on models with larger windows by
+default (GH#32807; it was opt-in before). To keep native limits, merge this into
 `~/.config/aidevops/settings.json` (do not replace other settings):
 
 ```json
 {
   "runtime": {
-    "opencode": { "v2_compaction_target": 240000 }
+    "opencode": { "v2_compaction_target": false }
   }
 }
 ```
 
 Restart the **V2 background service and client** to apply the change. OpenCode
-2.0.3 uses a 20K local-compaction buffer by default, so the opt-in catalogue
+2.0.3 uses a 20K local-compaction buffer by default, so the catalogue
 transform caps a large model's `limit.input` at 260K; the local threshold then
 becomes 240K. The model's context, output, name, and variants stay native. Models
 whose smaller native input or physical context already triggers earlier are not
 expanded. This is an explicit policy override: it also caps any larger
 user-supplied model input limit, because V2's catalogue transform does not expose
-the limit's provenance. Remove `v2_compaction_target` to restore native limits.
+the limit's provenance. Set `v2_compaction_target` to `false` to restore native
+limits; any value other than `240000` opts out.
 If the host's `compaction.buffer` differs from 20K, set
 `runtime.opencode.v2_compaction_buffer` to the same integer; a mismatch changes
 the effective trigger. The option does not take effect when the host has disabled

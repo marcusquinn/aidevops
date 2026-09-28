@@ -361,6 +361,8 @@ source "${SETUP_IMPL_MODULES_DIR}/core.sh"
 # shellcheck disable=SC1091
 source "${SETUP_IMPL_MODULES_DIR}/migrations.sh"
 # shellcheck disable=SC1091
+source "${SETUP_IMPL_MODULES_DIR}/migration-compaction-target.sh"
+# shellcheck disable=SC1091
 source "${SETUP_IMPL_MODULES_DIR}/shell-env.sh"
 # shellcheck disable=SC1091
 source "${SETUP_IMPL_MODULES_DIR}/tool-install.sh"
@@ -1559,6 +1561,7 @@ _setup_run_noninteractive_migrations() {
 	_time_step "migrate_custom_model_routing_reasoning_defaults" migrate_custom_model_routing_reasoning_defaults
 	_time_step "migrate_obsolete_settings_model_routing" migrate_obsolete_settings_model_routing
 	_time_step "migrate_worker_capacity_reset" migrate_worker_capacity_reset
+	_time_step "migrate_compaction_target_240k" migrate_compaction_target_240k
 	_time_step "backfill_issue_relationships" backfill_issue_relationships
 	_time_step "cleanup_deprecated_mcps" cleanup_deprecated_mcps
 	_time_step "cleanup_stale_bun_opencode" cleanup_stale_bun_opencode
@@ -1766,6 +1769,7 @@ _setup_run_interactive() {
 	migrate_custom_model_routing_reasoning_defaults
 	migrate_obsolete_settings_model_routing
 	migrate_worker_capacity_reset
+	migrate_compaction_target_240k
 	confirm_step "Backfill GitHub issue relationships (blocked-by, sub-issues)" && backfill_issue_relationships
 	confirm_step "Cleanup deprecated MCP entries (hetzner, serper, etc.)" && cleanup_deprecated_mcps
 	confirm_step "Cleanup stale bun opencode install" && cleanup_stale_bun_opencode
