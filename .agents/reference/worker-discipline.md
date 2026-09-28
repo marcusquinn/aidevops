@@ -153,6 +153,35 @@ runner. Pulse on that runner owns its intake; public terminal-blocker observatio
 remain the cross-runner suppression/audit surface. An unavailable forge observation
 does not discard a request, clear a hold or authorize another executor.
 
+#### Terminal-blocker recovery
+
+An open `TERMINAL_BLOCKER_CIRCUIT` stops redispatch but is not an owner. The
+runner that opened it queues the issue (`terminal-blocker-recovery-helper.sh`;
+circuits it authored are backfilled every 6h) and its pulse supervisor runs
+when entries are pending (`trigger=blocker_recovery`, at most every
+`PULSE_LLM_RECOVERY_INTERVAL`, default 3h). `pending` re-verifies each entry on
+GitHub and retires closed or re-armed ones. For each entry the supervisor is the
+AI brief owner:
+
+1. Read the public observation and the entry's `local_excerpts` (protected
+   evidence; excerpts are matched by issue number, so confirm the repository).
+   Classify the real cause; the reported class is often a symptom.
+2. **Brief defect** (missing/wrong Files Scope, stale verification, impossible
+   acceptance): make the minimal issue-body revision under brief-author
+   authority. A relevant revision re-arms the circuit; no retry directive needed.
+3. **Environment defect** (pinned runtime, dependencies, validator timeouts,
+   push transport, a guard blocking its own fix): fix it when in scope, or
+   deduplicate/file a worker-ready framework issue and link it with
+   `blocked-by`. Post `terminal-blocker-circuit:retry` only after the fix is live.
+4. **Permission, secret, spend or trust boundary**: never grant or work around.
+   Name the smallest human input on the issue (for example an interactive
+   `aidevops setup --scope source-access`) and record `wake: human_decision`.
+5. Record exactly one decision per entry: `terminal-blocker-recovery-helper.sh
+   record <repo> <issue>` with stdin `{"wake","next_action","evidence"}`
+   (`wake`: `brief_revision`, `environment_fix`, `owner_change`,
+   `dependency_change` or `human_decision`). A decision suppresses
+   re-assessment for 24h; unchanged blockers are not retried blindly.
+
 ## PR auto-approval defense-in-depth (GH#17671, t2933)
 
 Helpers in the auto-merge cascade that approve, merge, or otherwise privilege a PR based on author identity (`approve_collaborator_pr`, `_check_pr_merge_gates`, anything new in the same neighbourhood) MUST self-validate the property their name claims — even when upstream gates already do so. Trusting an upstream check is documentation, not enforcement; a future refactor can remove the upstream check silently and re-open a supply-chain hole. Approval-body strings, audit log lines, and success messages must describe the checks actually performed in the current invocation, never the property the function is named for.
