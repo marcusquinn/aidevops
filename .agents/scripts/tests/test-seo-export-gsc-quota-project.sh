@@ -15,6 +15,7 @@ export HOME="$TMP_HOME"
 export GOOGLE_APPLICATION_CREDENTIALS="${TMP_HOME}/adc.json"
 export REQUEST_LOG="${TMP_HOME}/requests.log"
 export OUTPUT_LOG="${TMP_HOME}/output.log"
+export GCLOUD_LOG="${TMP_HOME}/gcloud.log"
 export GCLOUD_TOKEN="test-adc-token"
 export CURL_EXIT_CODE=0
 mkdir -p "${HOME}/.config/aidevops"
@@ -23,6 +24,7 @@ PASS=0
 FAIL=0
 
 gcloud() {
+	printf 'credentials=%s args=%s\n' "${GOOGLE_APPLICATION_CREDENTIALS:-}" "$*" >>"$GCLOUD_LOG"
 	printf '%s\n' "$GCLOUD_TOKEN"
 	return 0
 }
@@ -87,6 +89,7 @@ assert_occurrence_count() {
 reset_case() {
 	: >"$REQUEST_LOG"
 	: >"$OUTPUT_LOG"
+	: >"$GCLOUD_LOG"
 	: >"${HOME}/.config/aidevops/credentials.sh"
 	unset GSC_ACCESS_TOKEN GSC_QUOTA_PROJECT
 	CURL_EXIT_CODE=0
@@ -101,6 +104,24 @@ reset_case
 printf '%s\n' '{"type":"authorized_user","quota_project_id":"quota-project-123"}' >"$GOOGLE_APPLICATION_CREDENTIALS"
 run_export
 assert_contains "user ADC sends quota project" "$REQUEST_LOG" "x-goog-user-project: quota-project-123"
+assert_contains "ADC token requests GSC scope" "$GCLOUD_LOG" "--scopes=https://www.googleapis.com/auth/webmasters.readonly"
+
+reset_case
+unset GOOGLE_APPLICATION_CREDENTIALS
+printf '%s\n' '{"type":"authorized_user","quota_project_id":"default-project"}' >"${HOME}/.config/aidevops/gsc-credentials.json"
+run_export
+assert_contains "default ADC path used for token" "$GCLOUD_LOG" "credentials=${HOME}/.config/aidevops/gsc-credentials.json"
+assert_contains "default ADC quota project sent" "$REQUEST_LOG" "x-goog-user-project: default-project"
+assert_contains "default ADC token scoped" "$GCLOUD_LOG" "--scopes=https://www.googleapis.com/auth/webmasters.readonly"
+assert_not_contains "token omitted from exporter output" "$OUTPUT_LOG" "$GCLOUD_TOKEN"
+export GOOGLE_APPLICATION_CREDENTIALS="${TMP_HOME}/adc.json"
+
+reset_case
+printf '%s\n' '{"type":"service_account"}' >"${HOME}/.config/aidevops/gsc-credentials.json"
+printf '%s\n' '{"type":"authorized_user","quota_project_id":"explicit-adc-project"}' >"$GOOGLE_APPLICATION_CREDENTIALS"
+run_export
+assert_contains "explicit ADC path takes precedence" "$GCLOUD_LOG" "credentials=$GOOGLE_APPLICATION_CREDENTIALS"
+assert_contains "explicit ADC quota project takes precedence" "$REQUEST_LOG" "x-goog-user-project: explicit-adc-project"
 
 reset_case
 printf '%s\n' '{"type":"authorized_user"}' >"$GOOGLE_APPLICATION_CREDENTIALS"
@@ -124,6 +145,7 @@ printf '%s\n' 'GSC_ACCESS_TOKEN="static-test-token"' >"${HOME}/.config/aidevops/
 printf '%s\n' '{"type":"authorized_user","quota_project_id":"ignored-project"}' >"$GOOGLE_APPLICATION_CREDENTIALS"
 run_export
 assert_not_contains "static token does not inherit ADC quota project" "$REQUEST_LOG" "x-goog-user-project"
+assert_not_contains "static token skips gcloud" "$GCLOUD_LOG" "print-access-token"
 
 reset_case
 printf '%s\n' 'GSC_ACCESS_TOKEN="static-test-token"' 'GSC_QUOTA_PROJECT="explicit-project"' >"${HOME}/.config/aidevops/credentials.sh"
