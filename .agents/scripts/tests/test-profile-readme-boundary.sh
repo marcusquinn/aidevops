@@ -1168,14 +1168,17 @@ test_model_usage_renders_activity_metrics_without_costs() {
 	# shellcheck source=../profile-readme-render-lib.sh
 	source "$SOURCE_RENDER_LIB"
 	local model_json token_totals output_file
-	model_json='[{"model":"model-a","requests":2,"input_tokens":100,"output_tokens":900,"cache_read_tokens":900,"cache_write_tokens":100,"session_count":2,"total_session_count":2,"session_hours":1.5,"cost_total":0}]'
+	# GH#32744: cache writes count as prompt tokens, and a dated model ID merges
+	# into its undated display name instead of rendering a duplicate row.
+	model_json='[{"model":"model-a","requests":2,"input_tokens":100,"output_tokens":900,"cache_read_tokens":850,"cache_write_tokens":100,"session_count":2,"total_session_count":3,"session_hours":1.5,"cost_total":0},{"model":"model-a-20250610","requests":1,"input_tokens":0,"output_tokens":0,"cache_read_tokens":50,"cache_write_tokens":0,"session_count":1,"total_session_count":3,"session_hours":0.5,"cost_total":0}]'
 	token_totals=$(_token_totals_from_model_usage "$model_json")
 	output_file="${TEST_DIR}/model-usage.md"
 	_render_model_usage_table "AI Model Usage" "$model_json" "$token_totals" >"$output_file"
 
-	if ! grep -Fq '| Model | Requests | Input | Output | Cache read | Cache Hit-Rate % | Session Count | Session Hours |' "$output_file" ||
-		! grep -Fq '| model-a | 2 | 100 | 900 | 900 | 90.0% | 2 | 1.5h |' "$output_file" ||
-		! grep -Fq '| **Total** | **2** | **100** | **900** | **900** | **90%** | **2** | **1.5h** |' "$output_file"; then
+	if ! grep -Fq '| Model | Requests | Input | Output | Cache read | Cache write | Cache Hit-Rate % | Session Count | Session Hours |' "$output_file" ||
+		! grep -Fq '| model-a | 3 | 100 | 900 | 900 | 100 | 81.8% | 3 | 2.0h |' "$output_file" ||
+		! grep -Fq '| **Total** | **3** | **100** | **900** | **900** | **100** | **81.8%** | **3** | **2.0h** |' "$output_file" ||
+		[[ "$(grep -c '^| model-a' "$output_file")" != "1" ]]; then
 		print_result "$test_name" 1 "activity metric columns or values are missing"
 		return 0
 	fi
