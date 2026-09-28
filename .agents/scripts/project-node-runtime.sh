@@ -20,7 +20,6 @@ _project_node_requirement() {
 		value="${value//[[:space:]]/}"
 		[[ -n "$value" ]] || continue
 		printf '%s\n' "$value"
-		return 0
 	done
 	if [[ -f "$dir/package.json" ]]; then
 		jq -r '.engines.node // empty' "$dir/package.json" || return 1

@@ -308,9 +308,18 @@ _run_project_validators() {
 	local validator_timeout
 	# Project configuration takes precedence over the environment override.
 	if [[ -f .aidevops.json ]]; then
-		validator_timeout=$(jq -er '.validator_timeout_seconds // empty' .aidevops.json 2>/dev/null) || validator_timeout=""
+		if ! jq -e 'type == "object"' .aidevops.json >/dev/null 2>&1; then
+			print_error "[validators] invalid .aidevops.json configuration"
+			return 1
+		fi
+		if jq -e 'has("validator_timeout_seconds")' .aidevops.json >/dev/null; then
+			validator_timeout=$(jq -r '.validator_timeout_seconds | tostring' .aidevops.json) || return 1
+		else
+			validator_timeout="${AIDEVOPS_VALIDATOR_TIMEOUT-300}"
+		fi
+	else
+		validator_timeout="${AIDEVOPS_VALIDATOR_TIMEOUT-300}"
 	fi
-	validator_timeout="${validator_timeout:-${AIDEVOPS_VALIDATOR_TIMEOUT:-300}}"
 	if ! [[ "$validator_timeout" =~ ^[1-9][0-9]*$ ]]; then
 		print_error "[validators] validator_timeout_seconds / AIDEVOPS_VALIDATOR_TIMEOUT must be a positive integer"
 		return 1
