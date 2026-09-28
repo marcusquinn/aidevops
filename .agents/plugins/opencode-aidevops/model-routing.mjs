@@ -6,7 +6,7 @@
 // capability failure moves down escalationOrder.
 
 import { existsSync, readFileSync } from "fs";
-import { normalizeInteractiveDefault, normalizeSpecialistAdvisor } from "./model-routing-variant.mjs";
+import { floorReasoning, reasoningFloor, normalizeInteractiveDefault, normalizeSpecialistAdvisor } from "./model-routing-variant.mjs";
 
 export const DEFAULT_ESCALATION_ORDER = ["simple", "standard", "thinking"];
 
@@ -43,11 +43,13 @@ export function normalizeModelRouting(value = {}) {
     escalationOrder,
     specialistAdvisor: normalizeSpecialistAdvisor(value.specialist_advisor),
     interactiveDefault: normalizeInteractiveDefault(value.interactive_default),
+    minimumReasoning: reasoningFloor(value?.settings?.minimum_reasoning),
   };
 }
 
 export function mergeModelRouting(base, override = {}) {
   const merged = normalizeModelRouting();
+  merged.minimumReasoning = reasoningFloor(override?.settings?.minimum_reasoning ?? base?.minimumReasoning);
   merged.interactiveDefault = Object.hasOwn(override, "interactive_default")
     ? normalizeInteractiveDefault(override.interactive_default)
     : base?.interactiveDefault || null;
@@ -135,7 +137,7 @@ export function routingPrimary(routing, tier) {
 export function routingVariant(routing, tier, model) {
   const policy = routing?.tiers?.[normalizeRoutingTier(tier)]?.reasoning || {};
   const provider = String(model || "").split("/", 1)[0];
-  return policy[model] ?? policy[provider] ?? policy.default ?? "";
+  return floorReasoning(policy[model] ?? policy[provider] ?? policy.default ?? "", routing?.minimumReasoning);
 }
 
 export function routingCandidateIndex(routing, tier, model) {
@@ -143,7 +145,7 @@ export function routingCandidateIndex(routing, tier, model) {
 }
 
 // A model may serve several tiers at different reasoning levels (Sol is
-// standard at low and thinking at medium). Prefer the tier whose configured
+// standard and thinking at medium). Prefer the tier whose configured
 // variant matches the observed one; otherwise the lowest tier listing it.
 export function routingTierForModel(routing, model, variant = "") {
   const tiers = (routing?.escalationOrder || DEFAULT_ESCALATION_ORDER)

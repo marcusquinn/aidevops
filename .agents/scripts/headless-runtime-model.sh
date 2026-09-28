@@ -439,24 +439,6 @@ choose_model() {
 
 # --- Cmd Builders ---
 
-_headless_variant_should_omit_gpt55_standard() {
-	local role="$1"
-	local tier_upper="$2"
-	local selected_model="$3"
-	local variant="$4"
-
-	[[ "$role" == "worker" ]] || return 1
-	[[ -n "$variant" ]] || return 1
-	case "$tier_upper" in
-	STANDARD) ;;
-	*) return 1 ;;
-	esac
-	case "$selected_model" in
-	openai/gpt-5.5 | openai/gpt-5.5-*) return 0 ;;
-	*) return 1 ;;
-	esac
-}
-
 _headless_tier_variant() {
 	local requested_tier="$1"
 	local canonical_tier="$2"
@@ -488,7 +470,6 @@ resolve_headless_variant() {
 	local tier="${2:-}"
 	local selected_model="${3:-}"
 	local variant="${AIDEVOPS_HEADLESS_VARIANT:-}"
-	local tier_upper=""
 	local canonical_tier=""
 	# Replay cells with requested effort "default" must not inherit ambient or
 	# routed effort. Explicit --variant values bypass this resolver.
@@ -498,7 +479,6 @@ resolve_headless_variant() {
 
 	if [[ -n "$tier" ]]; then
 		canonical_tier=$(_normalize_headless_tier "$tier")
-		tier_upper=$(printf '%s' "$canonical_tier" | tr '[:lower:]-' '[:upper:]_')
 		local tier_variant
 		tier_variant=$(_headless_tier_variant "$tier" "$canonical_tier")
 		[[ -n "$tier_variant" ]] && variant="$tier_variant"
@@ -527,13 +507,14 @@ resolve_headless_variant() {
 		variant=$(_headless_routed_variant "$canonical_tier" "$selected_model")
 	fi
 
-	# GPT-5.5 currently benchmarks fastest for standard worker dispatch when
-	# OpenCode sends no explicit reasoning-effort variant. Keep explicit CLI
-	# --variant untouched (caller bypasses this resolver when provided), but
-	# ignore env-derived high/xhigh defaults for non-thinking worker tiers.
-	if _headless_variant_should_omit_gpt55_standard "$role" "$tier_upper" "$selected_model" "$variant"; then
-		variant=""
-	fi
+	# Unknown models without a configured variant keep their provider default.
+	# Explicit effort below the framework floor is raised, never silently omitted.
+	case "$variant" in
+	low | minimal | none)
+		printf 'Warning: headless reasoning %s is below minimum; using medium\n' "$variant" >&2
+		variant="medium"
+		;;
+	esac
 
 	printf '%s' "$variant"
 	return 0

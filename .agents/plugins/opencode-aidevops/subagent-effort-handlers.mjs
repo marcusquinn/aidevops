@@ -57,7 +57,7 @@ async function routeDomainMessage(context, output, registry, agentName) {
   const effort = light ? "simple" : envelope.effort;
   // Keep the exact parent model: cross-model effort names are not compute ceilings.
   output.message.model = routingModelIdentity(parent.model);
-  const variant = context.clampReasoningVariant(effort === "simple" ? "low" : "medium", parent.variant);
+  const variant = context.clampReasoningVariant("medium", parent.variant);
   context.policies.set(output.message.sessionID, {
     effort, reason: "bounded_domain", pinned: true, attempt: 1, createdAt: Date.now(),
     parentSessionID: child.parentID, routedModel: parent.model, domainVariant: variant,
