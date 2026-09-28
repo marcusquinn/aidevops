@@ -87,7 +87,7 @@ run_ai_scoring() {
 
 	case "$ai_cli" in
 	opencode)
-		timeout_sec 120 opencode run --format json \
+		timeout_sec 120 env AIDEVOPS_HEADLESS=1 opencode run --format json \
 			--model "$model" \
 			--prompt "$prompt" \
 			>"$output_file" 2>/dev/null || true
