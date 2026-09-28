@@ -31,6 +31,8 @@ print_result() {
 setup() {
 	TEST_DIR=$(mktemp -d)
 	trap teardown EXIT
+	# Maintenance runs must never write session advisories outside the fixture.
+	export AIDEVOPS_ADVISORIES_DIR="${TEST_DIR}/advisories"
 	return 0
 }
 
@@ -658,6 +660,222 @@ test_profile_publication_detached_archive_plans_without_apply() {
 		! -e "$worktree_path" && ! -e "$dirty_worktree_path" ]] || rc=1
 	print_result "profile_publication_detached_archive_plans_without_apply" "$rc" \
 		"Expected only the clean published archive to become a read-only candidate while unique unpublished data remains protected"
+	return 0
+}
+
+generic_detached_classification() {
+	local identity="$1"
+	local evidence_path="$2"
+	local result=""
+
+	result=$(_worktree_recovery_plan_classification_json "$identity" "$(<"$evidence_path")" true) || return 1
+	printf '%s\n' "$result" | jq -r '.disposition + ":" + .reasons[0]'
+	return $?
+}
+
+# Runs the real evidence pipeline for a generic detached identity with local
+# probes stubbed. Modes: age (elapsed|young|invalid), git, process, compare.
+generic_detached_evidence() {
+	local identity="$1"
+	local evidence_path="$2"
+	local age_mode="$3"
+	local git_mode="$4"
+	local process_mode="$5"
+	local compare_mode="$6"
+	local probe_marker="$7"
+
+	(
+		_worktree_recovery_plan_git_state() { printf '%s\n' "$git_mode"; }
+		_worktree_recovery_plan_worktree_reference_state() { printf 'clear\n'; }
+		_worktree_recovery_plan_registry_state() { printf 'clear\n'; }
+		_worktree_recovery_plan_claim_state() { printf 'not-applicable\n'; }
+		_worktree_recovery_plan_process_state() {
+			printf 'process\n' >>"$probe_marker"
+			printf '%s\n' "$process_mode"
+		}
+		_worktree_recovery_plan_external_evidence_json() {
+			_worktree_recovery_plan_detached_retention_evidence_json "$1"
+		}
+		_worktree_recovery_plan_created_age_seconds() {
+			case "$age_mode" in
+			elapsed) printf '%s\n' 864000 ;;
+			young) printf '%s\n' 60 ;;
+			*) return 1 ;;
+			esac
+			return 0
+		}
+		_worktree_recovery_plan_repo_slug() { printf '%s\n' 'example/detached'; }
+		gh() {
+			printf 'remote\n' >>"$probe_marker"
+			case "$2" in
+			'repos/example/detached') printf '%s\n' 'main' ;;
+			'repos/example/detached/compare/abc123...main')
+				case "$compare_mode" in
+				published) printf 'ahead\tabc123\n' ;;
+				unpublished) printf 'diverged\tdef456\n' ;;
+				*) return 1 ;;
+				esac
+				;;
+			*) return 1 ;;
+			esac
+			return 0
+		}
+		AIDEVOPS_WORKTREE_RECOVERY_MAINTENANCE_RETENTION_DAYS=7 \
+			_worktree_recovery_plan_evidence_json "$identity" >"$evidence_path"
+	)
+	return $?
+}
+
+test_generic_detached_retention_publication_is_fail_closed() {
+	local identity='' outcome='' mode='' rc=0
+	local evidence_path="${TEST_DIR}/generic-detached-evidence.json"
+	local probe_marker="${TEST_DIR}/generic-detached-probes"
+
+	identity=$(jq -cn \
+		'{format:"aidevops-worktree-recovery-v2",archive_path:"/recovery/generic",source_path:"/worktrees/generic",head:"abc123",branch:"detached",created_at:"2026-01-01T00:00:00Z",producer:"worktree-helper.sh",producer_context:"recovery_path=test",source_removal_outcome:"removed"}') || rc=1
+	for mode in \
+		'elapsed clear clear published candidate:detached-head-published-retention-elapsed' \
+		'elapsed clear clear unpublished protected:exact-commit-not-published' \
+		'elapsed clear clear unavailable unknown:commit-evidence-unavailable' \
+		'elapsed clear unavailable published unknown:process-evidence-unavailable' \
+		'elapsed clear active published protected:active-process-reference' \
+		'elapsed dirty clear published protected:archive-worktree-dirty' \
+		'young clear clear published protected:detached-within-retention' \
+		'invalid clear clear published unknown:retention-evidence-unavailable'; do
+		# shellcheck disable=SC2086 # intentional word splitting of fixed case rows
+		set -- $mode
+		: >"$probe_marker"
+		generic_detached_evidence "$identity" "$evidence_path" "$1" "$2" "$3" "$4" "$probe_marker" || rc=1
+		outcome=$(generic_detached_classification "$identity" "$evidence_path") || rc=1
+		[[ "$outcome" == "$5" ]] || {
+			printf '  generic detached %s: got %s\n' "$mode" "$outcome"
+			rc=1
+		}
+		# Young or undatable archives are retained before process or remote probes.
+		if [[ "$1" != elapsed ]] && [[ -s "$probe_marker" ]]; then rc=1; fi
+	done
+	generic_detached_evidence "$identity" "$evidence_path" elapsed clear clear published "$probe_marker" || rc=1
+	# Legacy detached identity without creation evidence keeps the old protection.
+	outcome=$(generic_detached_classification \
+		"$(printf '%s\n' "$identity" | jq -c 'del(.created_at)')" "$evidence_path") || rc=1
+	[[ "$outcome" == 'protected:detached-or-unresolved-branch' ]] || rc=1
+	outcome=$(generic_detached_classification \
+		"$(printf '%s\n' "$identity" | jq -c '.source_removal_outcome = "pending"')" "$evidence_path") || rc=1
+	[[ "$outcome" == 'protected:source-removal-not-complete' ]] || rc=1
+	# Evidence from another provenance can never satisfy the generic contract.
+	jq -c '.external.provenance = "profile-publication"' "$evidence_path" >"${evidence_path}.tmp" || rc=1
+	outcome=$(generic_detached_classification "$identity" "${evidence_path}.tmp") || rc=1
+	[[ "$outcome" == 'unknown:unrecognised-evidence-state' ]] || rc=1
+	print_result "generic_detached_retention_publication_is_fail_closed" "$rc" \
+		"Expected only aged, clean, clear, published detached archives to become candidates"
+	return 0
+}
+
+# Plans and applies with local probes stubbed clear and a GitHub stub that
+# reports only the given HEAD as published on the default branch.
+run_generic_detached_plan_apply() {
+	local home_path="$1"
+	local recovery_root="$2"
+	local plan_path="$3"
+	local receipt_path="$4"
+	local published_head="$5"
+
+	(
+		_worktree_recovery_plan_git_state() { printf 'clear\n'; }
+		_worktree_recovery_plan_worktree_reference_state() { printf 'clear\n'; }
+		_worktree_recovery_plan_registry_state() { printf 'clear\n'; }
+		_worktree_recovery_plan_claim_state() { printf 'not-applicable\n'; }
+		_worktree_recovery_plan_process_state() { printf 'clear\n'; }
+		_worktree_recovery_plan_external_evidence_json() {
+			_worktree_recovery_plan_detached_retention_evidence_json "$1"
+		}
+		_worktree_recovery_plan_created_age_seconds() { printf '%s\n' 864000; }
+		_worktree_recovery_plan_repo_slug() { printf '%s\n' 'example/detached'; }
+		gh() {
+			local compare_head=''
+			case "$2" in
+			'repos/example/detached') printf '%s\n' 'main' ;;
+			repos/example/detached/compare/*)
+				compare_head="${2#repos/example/detached/compare/}"
+				compare_head="${compare_head%...main}"
+				if [[ "$compare_head" == "$published_head" ]]; then
+					printf 'ahead\t%s\n' "$published_head"
+				else
+					printf 'diverged\t%s\n' "$published_head"
+				fi
+				;;
+			*) return 1 ;;
+			esac
+			return 0
+		}
+		local confirmation=''
+		HOME="$home_path" AIDEVOPS_WORKTREE_TRASH_ROOT="$recovery_root" \
+			cmd_recovery plan --output "$plan_path" >/dev/null || exit 1
+		confirmation=$(jq -r '.confirmation_token' "$plan_path") || exit 1
+		HOME="$home_path" AIDEVOPS_WORKTREE_TRASH_ROOT="$recovery_root" \
+			cmd_recovery apply --plan "$plan_path" --receipt "$receipt_path" \
+			--confirm "$confirmation" >/dev/null || exit 1
+	)
+	return $?
+}
+
+test_generic_detached_archive_plans_and_applies() {
+	local home_path="${TEST_DIR}/generic-detached-home"
+	local repo_path="${TEST_DIR}/generic-detached-repo"
+	local worktree_path="${TEST_DIR}/generic-detached-worktree"
+	local unpublished_path="${TEST_DIR}/generic-detached-unpublished"
+	local recovery_root="${home_path}/recovery"
+	local plan_path="${TEST_DIR}/generic-detached-plan.json"
+	local receipt_path="${TEST_DIR}/generic-detached-receipt.json"
+	local archive_path='' unpublished_archive='' published_head=''
+	local path=''
+	local rc=0
+
+	mkdir -p "$home_path" "$recovery_root" || rc=1
+	"$GIT_BIN" init -q -b main "$repo_path" || rc=1
+	"$GIT_BIN" -C "$repo_path" config user.email test@example.invalid || rc=1
+	"$GIT_BIN" -C "$repo_path" config user.name 'Aidevops Test' || rc=1
+	"$GIT_BIN" -C "$repo_path" config commit.gpgsign false || rc=1
+	printf 'detached\n' >"${repo_path}/README.md" || rc=1
+	"$GIT_BIN" -C "$repo_path" add README.md || rc=1
+	"$GIT_BIN" -C "$repo_path" commit -q -m init || rc=1
+	"$GIT_BIN" -C "$repo_path" remote add origin 'https://github.com/example/detached.git' || rc=1
+	published_head=$("$GIT_BIN" -C "$repo_path" rev-parse HEAD) || rc=1
+	"$GIT_BIN" -C "$repo_path" worktree add -q --detach "$worktree_path" HEAD || rc=1
+	"$GIT_BIN" -C "$repo_path" worktree add -q --detach "$unpublished_path" HEAD || rc=1
+	printf 'local only\n' >"${unpublished_path}/local.txt" || rc=1
+	"$GIT_BIN" -C "$unpublished_path" add local.txt || rc=1
+	"$GIT_BIN" -C "$unpublished_path" commit -q -m 'unpublished detached work' || rc=1
+	for path in "$worktree_path" "$unpublished_path"; do
+		AIDEVOPS_WORKTREE_TRASH_ROOT="$recovery_root" AIDEVOPS_REAL_GIT_BIN="$GIT_BIN" \
+			archive_worktree_path_recoverably "$path" 'worktree-helper.sh' \
+			'recovery_path=test-detached' || rc=1
+		if [[ "$path" == "$worktree_path" ]]; then
+			archive_path="$WORKTREE_RECOVERABLE_ARCHIVE_PATH"
+		else
+			unpublished_archive="$WORKTREE_RECOVERABLE_ARCHIVE_PATH"
+		fi
+		AIDEVOPS_REAL_GIT_BIN="$GIT_BIN" remove_archived_worktree_path \
+			"$path" "$WORKTREE_RECOVERABLE_ARCHIVE_PATH" 'worktree-helper.sh' 'test-cleanup' \
+			'recovery_path=test-detached' 'true' 'true' || rc=1
+	done
+	run_generic_detached_plan_apply "$home_path" "$recovery_root" "$plan_path" \
+		"$receipt_path" "$published_head" || rc=1
+	jq -e --arg archive "$archive_path" --arg unpublished "$unpublished_archive" '
+		.candidate_count == 1 and .protected_count == 1 and
+		(.entries[] | select(.archive_path == $archive) |
+			.disposition == "candidate" and
+			.evidence.external.provenance == "published-detached-head" and
+			.evidence.external.retention == "elapsed" and
+			.reasons == ["detached-head-published-retention-elapsed"]) and
+		(.entries[] | select(.archive_path == $unpublished) |
+			.disposition == "protected" and .reasons == ["exact-commit-not-published"])
+	' "$plan_path" >/dev/null || rc=1
+	jq -e '.complete == true and .candidate_count == 1 and .entries[0].outcome == "removed"' \
+		"$receipt_path" >/dev/null 2>&1 || rc=1
+	[[ ! -e "$archive_path" && -d "$unpublished_archive" ]] || rc=1
+	print_result "generic_detached_archive_plans_and_applies" "$rc" \
+		"Expected an aged published detached archive to be applied while unpublished detached work is preserved"
 	return 0
 }
 
@@ -2468,8 +2686,10 @@ test_automatic_maintenance_reports_unsupported_process_visibility() {
 		.unsupported_condition.code == "unsupported-process-visibility" and
 		.unsupported_condition.deletion_authority == false and
 		.unsupported_condition.blocked_archive_observations == 3 and
-		(.unsupported_condition.guidance | length) == 3 and
+		(.unsupported_condition.guidance | length) == 4 and
+		any(.unsupported_condition.guidance[]; contains("reference/worktree-cwd-visibility.md")) and
 		.escalation.required == true and .escalation.reason == "unsupported-process-visibility" and
+		.escalation.dominant_reason == "process_evidence_unavailable" and
 		.escalation.authority == "read-only" and
 		.escalation.command == ["worktree-helper.sh","recovery","plan","--output","<absolute-new-path>"]
 	' >/dev/null || rc=1
@@ -2490,8 +2710,78 @@ test_automatic_maintenance_reports_unsupported_process_visibility() {
 		.escalation.required == true and
 		.escalation.reason == "pressure-sustained-no-candidates"
 	' >/dev/null || rc=1
+	# A minority of process-visibility observations must not be blamed when
+	# detached protection dominates (GH#32832 reporter sample: 80/10/10).
+	diagnostics=$(jq -cn '
+		{classification_reason_counts:{detached_or_unresolved_branch:8,
+			archive_worktree_dirty:1,process_evidence_unavailable:1},
+		zero_candidate_cycle:{reason_counts:{detached_or_unresolved_branch:80,
+			archive_worktree_dirty:10,process_evidence_unavailable:10}},
+		sustained_non_reclamation:{escalation_threshold_reached:true}}') || rc=1
+	output=$(_worktree_recovery_maintenance_no_candidates_json "$policy" "$diagnostics") || rc=1
+	printf '%s\n' "$output" | jq -e '
+		.outcome == "no-candidates" and .unsupported_condition == null and
+		.escalation.required == true and
+		.escalation.reason == "pressure-sustained-no-candidates" and
+		.escalation.dominant_reason == "detached_or_unresolved_branch" and
+		.escalation.dominant_reason_count == 80
+	' >/dev/null || rc=1
 	print_result "automatic_maintenance_reports_unsupported_process_visibility" "$rc" \
-		"Expected sustained process-visibility blockers to require read-only operator intervention without deletion authority"
+		"Expected escalation to follow the dominant retained reason and only blame dominant process visibility"
+	return 0
+}
+
+test_automatic_maintenance_advisory_tracks_escalation() {
+	local advisory_dir="${TEST_DIR}/maintenance-advisories"
+	local advisory_path="${advisory_dir}/worktree-recovery-retention.advisory"
+	local result=''
+	local first_line=''
+	local rc=0
+
+	result=$(jq -cn '{outcome:"no-candidates",policy:{pressure_active:true,store_bytes:113816633344},
+		diagnostics:{inventory_count:1717},
+		escalation:{required:true,reason:"pressure-sustained-no-candidates",
+			dominant_reason:"detached_or_unresolved_branch",dominant_reason_count:80,
+			command:["worktree-helper.sh","recovery","plan","--output","<absolute-new-path>"]}}') || rc=1
+	AIDEVOPS_ADVISORIES_DIR="$advisory_dir" \
+		_worktree_recovery_maintenance_update_advisory "$result" || rc=1
+	[[ -f "$advisory_path" ]] || rc=1
+	first_line=$(head -n 1 "$advisory_path" 2>/dev/null) || rc=1
+	[[ "$first_line" == '[WARN] Worktree recovery store is not reclaiming space under pressure (1717 archives, 106 GiB; dominant blocker: detached-or-unresolved-branch)' ]] || {
+		printf '  advisory first line: %s\n' "$first_line"
+		rc=1
+	}
+	grep -qF 'worktree-helper.sh recovery plan --output <absolute-new-path>' "$advisory_path" || rc=1
+	AIDEVOPS_ADVISORIES_DIR="$advisory_dir" \
+		_worktree_recovery_maintenance_update_advisory '{"escalation":{"required":false}}' || rc=1
+	[[ ! -e "$advisory_path" ]] || rc=1
+	print_result "automatic_maintenance_advisory_tracks_escalation" "$rc" \
+		"Expected a path-free session advisory while escalation holds and automatic clearing afterwards"
+	return 0
+}
+
+test_maintenance_help_does_not_run_maintenance() {
+	local home_path="${TEST_DIR}/maintenance-help-home"
+	local output=''
+	local argument=''
+	local status=0
+	local rc=0
+
+	mkdir -p "$home_path" || rc=1
+	for argument in help --help; do
+		status=0
+		output=$(HOME="$home_path" AIDEVOPS_WORKTREE_TRASH_ROOT='' \
+			bash "${SCRIPTS_DIR}/worktree-recovery-maintenance-helper.sh" "$argument" 2>&1) || status=$?
+		[[ "$status" -eq 0 && "$output" == Usage:* ]] || rc=1
+	done
+	status=0
+	output=$(HOME="$home_path" AIDEVOPS_WORKTREE_TRASH_ROOT='' \
+		bash "${SCRIPTS_DIR}/worktree-recovery-maintenance-helper.sh" --bogus 2>&1) || status=$?
+	[[ "$status" -eq 2 && "$output" == *'Unknown argument: --bogus'* ]] || rc=1
+	# No maintenance state, lock, or recovery root may be created.
+	[[ -z "$(find "$home_path" -mindepth 1 -print -quit 2>/dev/null)" ]] || rc=1
+	print_result "maintenance_help_does_not_run_maintenance" "$rc" \
+		"Expected help and unknown arguments to print usage without acquiring the maintenance lock"
 	return 0
 }
 
@@ -2695,6 +2985,8 @@ run_all_tests() {
 	test_detached_claim_does_not_invent_active_owner
 	test_profile_publication_detached_evidence_is_exact_and_fail_closed
 	test_profile_publication_detached_archive_plans_without_apply
+	test_generic_detached_retention_publication_is_fail_closed
+	test_generic_detached_archive_plans_and_applies
 	test_recovery_issue_attribution_uses_archived_source_path
 	test_unlinked_merged_pr_is_terminal_task_evidence
 	test_dirty_recovery_short_circuits_expensive_probes
@@ -2735,6 +3027,8 @@ run_all_tests() {
 	test_automatic_maintenance_escalates_completed_zero_candidate_cycle
 	test_automatic_maintenance_escalates_sustained_churn
 	test_automatic_maintenance_reports_unsupported_process_visibility
+	test_automatic_maintenance_advisory_tracks_escalation
+	test_maintenance_help_does_not_run_maintenance
 	test_automatic_maintenance_resumes_interrupted_apply
 	test_automatic_maintenance_rejects_symlink_cursor
 	test_automatic_maintenance_rejects_symlink_cycle_state

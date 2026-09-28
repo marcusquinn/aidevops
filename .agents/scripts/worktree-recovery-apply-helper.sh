@@ -169,7 +169,9 @@ _worktree_recovery_apply_validate_plan_shape() {
 			($entry.identity | type != $object_type) or ($entry.evidence | type != $object_type) or
 			($entry.identity.bucket_path != $entry.path) or
 			($entry.identity.archive_path != $entry.archive_path) or
-			($entry.reasons != ["all-required-evidence-clear"]) or
+			(($entry.reasons | IN(["all-required-evidence-clear"],
+				["producer-published-detached-evidence-clear"],
+				["detached-head-published-retention-elapsed"])) | not) or
 			($entry.identity.identity_digest | test("^sha256:[0-9a-f]{64}$") | not))] | length == 0) and
 		($source_roots == ([$entries[] | .path as $entry_path |
 			$entry_path[0:($entry_path | rindex("/"))]] | unique)) and

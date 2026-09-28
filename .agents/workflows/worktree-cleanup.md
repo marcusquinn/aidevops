@@ -126,10 +126,10 @@ cd "$CANONICAL_DIR"
 git fetch origin main
 
 # Remove merged worktrees
-wt prune
+worktree-helper.sh clean
 ```
 
-`wt prune` removes worktrees whose branches have been merged and deleted on the remote. Run from the canonical repo (on `main`). If unavailable: `git worktree prune` then delete the worktree directory manually.
+`worktree-helper.sh clean` removes worktrees whose branches have been merged, archiving them recoverably first; add `--auto` to skip the confirmation prompt. Run from the canonical repo (on `main`). If unavailable: `git worktree prune` only removes stale metadata; never delete worktree directories manually.
 
 ## Bulk Remote Branch Cleanup
 
