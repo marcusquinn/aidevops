@@ -1434,7 +1434,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18487 Allow remote-only repository creation from sessions inside the projects workspace ref:GH#32600 pr:#32601 completed:2026-09-27
 
-- [ ] t18501 fix: keep pending auto-dispatch issues dispatchable and make priority:critical/high lead dispatch order #bug #framework #pulse #interactive #auto-dispatch #priority:high tier:standard ~1h ref:GH#32703 logged:2026-09-28 -> [todo/tasks/t18501-brief.md]
+- [x] t18501 fix: keep pending auto-dispatch issues dispatchable and make priority:critical/high lead dispatch order #bug #framework #pulse #interactive #auto-dispatch #priority:high tier:standard ~1h ref:GH#32703 logged:2026-09-28 -> [todo/tasks/t18501-brief.md] pr:#32707 completed:2026-09-28
 
 - [ ] t18502 OpenCode V2 promotion gates: weekly V2 canary, plugin/tool probe, documented gate checks, requalified pin #enhancement #framework #opencode #interactive #auto-dispatch tier:standard ~3.5h ref:GH#32704 logged:2026-09-28 -> [todo/tasks/t18502-brief.md]
 
@@ -1444,7 +1444,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18492 fix: aidevops secret NAME -- cmd redacts short dictionary words (e.g. 'openai') from output #auto-dispatch #bug #interactive tier:standard ~1h ref:GH#32614 logged:2026-09-27 -> [todo/tasks/t18492-brief.md]
 
-- [ ] t18493 feat: media-qa-helper for rendered video/audio deliverables (streams, loudness, contact sheets, whisper intelligibility) #auto-dispatch #feat #interactive tier:standard ~2h ref:GH#32615 logged:2026-09-27 -> [todo/tasks/t18493-brief.md]
+- [x] t18493 feat: media-qa-helper for rendered video/audio deliverables (streams, loudness, contact sheets, whisper intelligibility) #auto-dispatch #feat #interactive tier:standard ~2h ref:GH#32615 logged:2026-09-27 -> [todo/tasks/t18493-brief.md] pr:#32709 completed:2026-09-28
 
 - [x] t18494 fix: claim-task-id strands IDs on rejected bodies, misleading scope hint, polluted issue-number capture, 30s counter fetch budget #auto-dispatch #bug #interactive tier:standard ~1.5h ref:GH#32617 logged:2026-09-27 -> [todo/tasks/t18494-brief.md] pr:#32674 completed:2026-09-27
 
@@ -1452,13 +1452,13 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18497 fix(claim-task-id): shallow counter-branch discovery fetches that time out at the 30s default #auto-dispatch #bug #interactive tier:standard ~45m ref:GH#32692 logged:2026-09-28
 
-- [ ] t18503 test: isolate brief-scope pulse tests from the live pulse.log #bug #interactive tier:simple ~15m ref:GH#32710 logged:2026-09-28
+- [x] t18503 test: isolate brief-scope pulse tests from the live pulse.log #bug #interactive tier:simple ~15m ref:GH#32710 logged:2026-09-28 pr:#32712 completed:2026-09-28
 
 - [ ] t18504 fix(planning-publisher): 3-way merge TODO.md instead of overwriting concurrent entries #auto-dispatch #bug #interactive tier:thinking ~2h ref:GH#32714 logged:2026-09-28
 
 - [x] t18495 fix: guard merged-PR reconcile stages 1-2 against recurrent file-size debt #auto-dispatch #bug #pulse #interactive tier:standard ~1h ref:GH#32640 logged:2026-09-27 -> [todo/tasks/t18495-brief.md] pr:#32642 completed:2026-09-27
 
-- [ ] t18500 Show AIDevOps and OpenCode versions in OpenCode V2 TUI slots #feat ref:GH#32698
+- [x] t18500 Show AIDevOps and OpenCode versions in OpenCode V2 TUI slots #feat ref:GH#32698 pr:#32699 completed:2026-09-28
 
 ## In Progress
 
