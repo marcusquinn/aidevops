@@ -20,6 +20,9 @@ new test assets are separate decisions:
 1. Start with the production-facing behaviour through the existing app, API,
    CLI, integration, or deployment path. Prefer standard logs, telemetry,
    framework diagnostics, and existing targeted checks over synthetic machinery.
+   Get code diagnostics from the project's lint, typecheck, or compiler
+   commands; do not depend on editor or runtime LSP diagnostics (OpenCode 2
+   does not run language servers).
 2. Run explicit repository-required gates directly. Before adding or broadening
    test code, or running a non-required broad suite, identify what decision its
    result can change or what material uncertainty it reduces. Do not create a

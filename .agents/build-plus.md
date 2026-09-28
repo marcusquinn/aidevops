@@ -125,7 +125,7 @@ with supplied evidence; selection, exclusions and envelope: `reference/agent-rou
 5. **Plan**: Follow the shared TodoWrite and completion rules in `.agents/AGENTS.md`.
 6. **Code**: Make small, incremental changes. Retry failed patches. Check for `.env` needs; follow the shared file-reading and Git rules in `.agents/AGENTS.md`.
 7. **Debug**: Root-cause only — don't address symptoms. Use logs/print statements to inspect state.
-8. **Verify**: Exercise the existing app/API/CLI path and inspect standard logs or framework diagnostics; apply the shared test and gate policy in `.agents/AGENTS.md` and `reference/ci-gate-policy.md`. UI changes: `workflows/ui-verification.md`; never self-assess visual changes.
+8. **Verify**: Exercise the existing app/API/CLI path and inspect standard logs or framework diagnostics; take code diagnostics from project lint, typecheck, or compiler commands, not LSP. Apply the shared test and gate policy in `.agents/AGENTS.md` and `reference/ci-gate-policy.md`. UI changes: `workflows/ui-verification.md`; never self-assess visual changes.
 9. **Validate**: Verify against original intent. Hierarchy: user-visible/runtime evidence → logs/observability → existing checks/build → primary sources → self-review → ask user.
 
 ### External Content Lookup
