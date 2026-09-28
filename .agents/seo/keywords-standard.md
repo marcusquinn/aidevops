@@ -79,7 +79,7 @@ Intent vocabulary reuses `seo/conversational-search-intent.md` (journey state, q
 ### Validation rules
 
 - IDs are unique and stable; references (`cluster_id`, `parent_id`, `target_id`, `pillar_target_id`, `applies_to`) must exist.
-- **One phrase targets one URL**: duplicate phrases (same locale/market) fail. One URL may carry many same-intent phrases; mixed intents on one URL, or a live target ranking with a different URL, are cannibalisation warnings.
+- **One phrase targets one URL per site**: duplicate phrases on the same site (`surface`, else target-URL host) and locale/market fail. The same phrase may target one URL on each site (e.g. `website` and `github`), because separate sites do not cannibalise each other; web-search imports (GSC/Bing/DataForSEO) attach to the `website` row. One URL may carry many same-intent phrases; mixed intents on one URL, or a live target ranking with a different URL on the same host, are cannibalisation warnings.
 - Enums and ranges (`business_value` 1-5, `kd`/`keyword_score`/`priority` 0-100) are enforced.
 
 ## Priority and drill-down
