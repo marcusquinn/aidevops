@@ -271,6 +271,31 @@ test_eslint_flat_config_root_allowlist() {
 	return 0
 }
 
+# --- Test 13b: Vitest config root files are allowlisted (GH#32799) ---
+test_vitest_config_root_allowlist() {
+	local hook_file="$TEST_SCRIPTS_DIR/pre-commit-hook.sh"
+	local rc=0
+	local config_file
+
+	for config_file in \
+		"vitest.config.js" \
+		"vitest.config.mjs" \
+		"vitest.config.cjs" \
+		"vitest.config.ts" \
+		"vitest.config.mts" \
+		"vitest.config.cts"; do
+		if ! grep -q "\"${config_file}\"" "$hook_file"; then
+			print_result "root allowlist permits ${config_file}" 1
+			rc=1
+		fi
+	done
+
+	if [[ "$rc" -eq 0 ]]; then
+		print_result "root allowlist permits Vitest config variants" 0
+	fi
+	return 0
+}
+
 # --- Test 14: Node package metadata files pass staged root validation ---
 test_node_package_root_validation() {
 	local fixture_dir
@@ -290,13 +315,14 @@ test_node_package_root_validation() {
 	printf '%s\n' '{"name":"root-allowlist-fixture"}' >"${fixture_dir}/package.json"
 	printf '%s\n' '{"name":"root-allowlist-fixture","lockfileVersion":3,"packages":{}}' >"${fixture_dir}/package-lock.json"
 	printf '%s\n' '22' >"${fixture_dir}/.nvmrc"
-	git -C "$fixture_dir" add .nvmrc package.json package-lock.json
+	printf '%s\n' "export default { test: { projects: ['packages/*'] } }" >"${fixture_dir}/vitest.config.ts"
+	git -C "$fixture_dir" add .nvmrc package.json package-lock.json vitest.config.ts
 
 	hook_output=$(cd "$fixture_dir" && HOOK_MODE=pre-commit bash "$hook_dir/pre-commit-hook.sh" 2>&1) || hook_rc=$?
 	if [[ "$hook_rc" -eq 0 ]]; then
-		print_result "root validation permits .nvmrc with npm package metadata" 0
+		print_result "root validation permits .nvmrc, vitest.config.ts and npm package metadata" 0
 	else
-		print_result "root validation permits .nvmrc with npm package metadata" 1 "$hook_output"
+		print_result "root validation permits .nvmrc, vitest.config.ts and npm package metadata" 1 "$hook_output"
 	fi
 
 	printf '%s\n' 'fixture artifact' >"${fixture_dir}/VERIFY-ROOT-ARTIFACT.md"
@@ -343,6 +369,7 @@ test_status_reports_pre_push
 test_pre_commit_dispatcher_sets_mode
 test_pre_push_dispatcher_sets_mode
 test_eslint_flat_config_root_allowlist
+test_vitest_config_root_allowlist
 test_node_package_root_validation
 test_arbitrary_root_artifact_not_allowlisted
 
