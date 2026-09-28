@@ -476,8 +476,6 @@ gh() {
 	return 0
 }
 export -f gh
-jq() { command jq "$@"; }
-export -f jq
 
 QUALITY_DASHBOARD_MINIMIZE_MAX=200 _minimize_superseded_dashboard_comments 24670 "test/repo"
 minimized_count=$(grep -c 'minimizeComment(input' "$MINIMIZED")
