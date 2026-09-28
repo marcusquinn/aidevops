@@ -942,6 +942,8 @@ _consolidation_filter_substantive_comments() {
 			+ "|^Worker failed: orphan worktree"
 			+ "|sudo aidevops approve"
 			+ "|^_Automated by"
+			+ "|^<!-- aidevops:brief-(hold|scope-normalized)"
+			+ "|^Brief (repaired|scope normalized):"
 		) as $patterns |
 		[$comments[] | select(
 			(significant_body | length) >= $min

@@ -1821,7 +1821,7 @@ _merge_refresh_canonical_for_cleanup() {
 	local default_branch="$2"
 	[[ -d "$canonical_dir" && -n "$default_branch" ]] || return 1
 
-	if ! git fetch --quiet origin "$default_branch" >/dev/null 2>&1; then
+	if ! git -C "$canonical_dir" fetch --quiet origin "$default_branch" >/dev/null 2>&1; then
 		print_warning "CANONICAL_SYNC_PENDING=true reason=origin_fetch_failed"
 		return 1
 	fi
@@ -1830,7 +1830,7 @@ _merge_refresh_canonical_for_cleanup() {
 	local canonical_head=""
 	canonical_head=$(git -C "$canonical_dir" rev-parse HEAD 2>/dev/null || true)
 	local remote_head=""
-	remote_head=$(git rev-parse "origin/${default_branch}" 2>/dev/null || true)
+	remote_head=$(git -C "$canonical_dir" rev-parse "origin/${default_branch}" 2>/dev/null || true)
 	if [[ "$current_canonical_branch" == "$default_branch" && -n "$remote_head" && "$canonical_head" == "$remote_head" ]]; then
 		print_success "LIFECYCLE_STATE=CANONICAL_SYNCED sha=${remote_head}"
 		return 0

@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.37.24] - 2026-09-28
+
+### Changed
+
+- Maintenance: mark t18530 complete (pr:#32891 completed:2026-09-28) (#32894)
+
+### Fixed
+
+- gate publication readiness on auto-dispatch only
+- stop brief-hold/repair comments triggering consolidation
+- accept same-major Node when version-file pin patch differs
+- publish partial quality sweep within repo budget (#32902)
+
 ## [3.37.23] - 2026-09-28
 
 ### Changed
