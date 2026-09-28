@@ -203,7 +203,7 @@ model_tier_candidates() {
 
 	case "$tier" in
 	simple) printf '%s\n' "openai/gpt-6-luna" "anthropic/claude-haiku-4-5" ;;
-	standard) printf '%s\n' "openai/gpt-6-sol" "openai/gpt-5.6-terra" "zai-coding-plan/glm-5.2" "anthropic/claude-sonnet-5" ;;
+	standard) printf '%s\n' "openai/gpt-6-sol" "openai/gpt-5.6-terra" "zai-coding-plan/glm-5.2" "anthropic/claude-sonnet-5-5" ;;
 	thinking) printf '%s\n' "openai/gpt-6-sol" "anthropic/claude-opus-5-5" ;;
 	*) return 1 ;;
 	esac

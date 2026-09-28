@@ -50,10 +50,10 @@ chain until a healthy approved provider is found.
 
 ```yaml
 fallback-chain:
-  - anthropic/claude-sonnet-4-6
+  - anthropic/claude-sonnet-5-5
   - openai/gpt-5.4
   - google/gemini-2.5-pro
-  - openrouter/anthropic/claude-sonnet-4-6
+  - openrouter/anthropic/claude-sonnet-5-5
 ```
 
 > **Note:** codex/code-completion models (gpt-5.3-codex, gpt-5.4-codex) are NOT agentic and must never appear in fallback chains. See `configs/model-routing-table.json` for the canonical tier→model mappings.

@@ -1,14 +1,14 @@
 ---
 description: Balanced model for code implementation, review, and most development tasks
 mode: subagent
-model: anthropic/claude-sonnet-4-6
+model: anthropic/claude-sonnet-5-5
 model-tier: standard
 model-fallback: openai/gpt-5.4
 fallback-chain:
-  - anthropic/claude-sonnet-4-6
+  - anthropic/claude-sonnet-5-5
   - openai/gpt-5.4
   - google/gemini-2.5-pro
-  - openrouter/anthropic/claude-sonnet-4-6
+  - openrouter/anthropic/claude-sonnet-5-5
 tools:
   read: true
   write: true
@@ -46,16 +46,25 @@ work. Task and agent authors request a workload tier, never this provider family
 
 - Do not use for work classified as `simple` when a cheaper routed model is reliable.
 - Do not use for `thinking` work unless the active routing table selects it.
+- Sonnet 5.5 with thinking off needs Anthropic's `between_tools` thinking
+  setting; the old thinking-off form does not carry over. See Anthropic's
+  Sonnet 5.5 migration guide.
+- Higher-risk cybersecurity requests visibly fall back to Sonnet 5 under
+  Anthropic's cyber safeguards; routine software work is unaffected.
 
 ## Model Details
 
 | Field | Value |
 |-------|-------|
 | Provider | Anthropic |
-| Model | claude-sonnet-4-6 |
-| Context | 200K tokens (1M beta) |
-| Max output | 64K tokens |
-| Training cutoff | January 2026 |
-| Input cost | $3.00/1M tokens |
-| Output cost | $15.00/1M tokens |
+| Model | claude-sonnet-5-5 (released 2026-09-28) |
+| Context | 1M tokens (Sonnet 5 catalog value; confirm when models.dev lists 5.5) |
+| Max output | 128K tokens (Sonnet 5 catalog value) |
+| Input cost | $2.00/1M tokens |
+| Output cost | $10.00/1M tokens |
+| Cache read / write | $0.20 / $2.50 per 1M tokens |
+| Effort defaults | Medium in Claude Code/apps, High on the Claude Platform |
 | Workload tier | Candidate for `standard` |
+
+Source: Anthropic launch announcement (`anthropic.com/claude-sonnet-5-5`).
+Same price as Sonnet 5, 30%+ faster output, and up to 30% lower cost per task.

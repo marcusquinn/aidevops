@@ -48,7 +48,7 @@ export STUB_LOG_FILE="$TEST_TMP_DIR/opencode-args.log"
 # the user's environment. Includes two providers for rotation/fallback tests.
 # GH#17769: AIDEVOPS_HEADLESS_MODELS is deprecated but respected as override
 # for backward compat. Using agentic models only (codex models removed).
-export AIDEVOPS_HEADLESS_MODELS="anthropic/claude-sonnet-4-6,openai/gpt-5.4"
+export AIDEVOPS_HEADLESS_MODELS="anthropic/claude-sonnet-5-5,openai/gpt-5.4"
 unset AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST
 # Disable sandbox for tests — the sandbox strips env vars (STUB_*) needed
 # by the opencode stub, causing test failures.
@@ -98,7 +98,7 @@ fi
 section "Selection Defaults"
 first_model=$(bash "$HELPER" select --role worker 2>/dev/null || true)
 second_model=$(bash "$HELPER" select --role worker 2>/dev/null || true)
-if [[ "$first_model" == "anthropic/claude-sonnet-4-6" ]]; then
+if [[ "$first_model" == "anthropic/claude-sonnet-5-5" ]]; then
 	pass "first selection uses anthropic default"
 else
 	fail "first selection uses anthropic default" "got: $first_model"
@@ -125,7 +125,7 @@ no_auth_model=$(
 	AIDEVOPS_HEADLESS_AUTH_SIGNATURE_OPENAI="" \
 		bash "$HELPER" select --role worker 2>/dev/null || true
 )
-if [[ "$no_auth_model" == "anthropic/claude-sonnet-4-6" ]]; then
+if [[ "$no_auth_model" == "anthropic/claude-sonnet-5-5" ]]; then
 	pass "no OpenAI auth: Codex skipped silently, Anthropic selected"
 else
 	fail "no OpenAI auth: Codex skipped silently, Anthropic selected" "got: $no_auth_model"
@@ -242,16 +242,16 @@ unset STUB_EMIT_ACTIVITY
 section "Model-Level Backoff"
 # Clear all backoff state for a clean test
 bash "$HELPER" backoff clear anthropic >/dev/null 2>&1 || true
-bash "$HELPER" backoff clear anthropic/claude-sonnet-4-6 >/dev/null 2>&1 || true
+bash "$HELPER" backoff clear anthropic/claude-sonnet-5-5 >/dev/null 2>&1 || true
 bash "$HELPER" backoff clear anthropic/claude-opus-4-6 >/dev/null 2>&1 || true
 bash "$HELPER" backoff clear openai >/dev/null 2>&1 || true
 
 # Configure two Anthropic models: sonnet + opus
 # Back off sonnet (rate limit) — opus should still be available
-AIDEVOPS_HEADLESS_MODELS="anthropic/claude-sonnet-4-6,anthropic/claude-opus-4-6" \
-	bash "$HELPER" backoff set anthropic/claude-sonnet-4-6 rate_limit 3600 >/dev/null
+AIDEVOPS_HEADLESS_MODELS="anthropic/claude-sonnet-5-5,anthropic/claude-opus-4-6" \
+	bash "$HELPER" backoff set anthropic/claude-sonnet-5-5 rate_limit 3600 >/dev/null
 model_after_sonnet_backoff=$(
-	AIDEVOPS_HEADLESS_MODELS="anthropic/claude-sonnet-4-6,anthropic/claude-opus-4-6" \
+	AIDEVOPS_HEADLESS_MODELS="anthropic/claude-sonnet-5-5,anthropic/claude-opus-4-6" \
 		bash "$HELPER" select --role worker 2>/dev/null || true
 )
 if [[ "$model_after_sonnet_backoff" == "anthropic/claude-opus-4-6" ]]; then
@@ -261,10 +261,10 @@ else
 fi
 
 # Back off opus too — now all models should be backed off
-AIDEVOPS_HEADLESS_MODELS="anthropic/claude-sonnet-4-6,anthropic/claude-opus-4-6" \
+AIDEVOPS_HEADLESS_MODELS="anthropic/claude-sonnet-5-5,anthropic/claude-opus-4-6" \
 	bash "$HELPER" backoff set anthropic/claude-opus-4-6 rate_limit 3600 >/dev/null
 all_backed_off=$(
-	AIDEVOPS_HEADLESS_MODELS="anthropic/claude-sonnet-4-6,anthropic/claude-opus-4-6" \
+	AIDEVOPS_HEADLESS_MODELS="anthropic/claude-sonnet-5-5,anthropic/claude-opus-4-6" \
 		bash "$HELPER" select --role worker 2>/dev/null || true
 )
 if [[ -z "$all_backed_off" ]]; then
@@ -274,13 +274,13 @@ else
 fi
 
 # Clear sonnet backoff — sonnet should be available again
-AIDEVOPS_HEADLESS_MODELS="anthropic/claude-sonnet-4-6,anthropic/claude-opus-4-6" \
-	bash "$HELPER" backoff clear anthropic/claude-sonnet-4-6 >/dev/null
+AIDEVOPS_HEADLESS_MODELS="anthropic/claude-sonnet-5-5,anthropic/claude-opus-4-6" \
+	bash "$HELPER" backoff clear anthropic/claude-sonnet-5-5 >/dev/null
 model_after_clear=$(
-	AIDEVOPS_HEADLESS_MODELS="anthropic/claude-sonnet-4-6,anthropic/claude-opus-4-6" \
+	AIDEVOPS_HEADLESS_MODELS="anthropic/claude-sonnet-5-5,anthropic/claude-opus-4-6" \
 		bash "$HELPER" select --role worker 2>/dev/null || true
 )
-if [[ "$model_after_clear" == "anthropic/claude-sonnet-4-6" ]]; then
+if [[ "$model_after_clear" == "anthropic/claude-sonnet-5-5" ]]; then
 	pass "cleared sonnet backoff: sonnet available again"
 else
 	fail "cleared sonnet backoff: sonnet available again" "got: $model_after_clear"
@@ -289,14 +289,14 @@ fi
 section "Auth Error Backs Off Provider"
 # Clear all backoff state
 bash "$HELPER" backoff clear anthropic >/dev/null 2>&1 || true
-bash "$HELPER" backoff clear anthropic/claude-sonnet-4-6 >/dev/null 2>&1 || true
+bash "$HELPER" backoff clear anthropic/claude-sonnet-5-5 >/dev/null 2>&1 || true
 bash "$HELPER" backoff clear anthropic/claude-opus-4-6 >/dev/null 2>&1 || true
 
 # Auth error should back off at provider level, blocking all models
-AIDEVOPS_HEADLESS_MODELS="anthropic/claude-sonnet-4-6,anthropic/claude-opus-4-6" \
+AIDEVOPS_HEADLESS_MODELS="anthropic/claude-sonnet-5-5,anthropic/claude-opus-4-6" \
 	bash "$HELPER" backoff set anthropic auth_error 3600 >/dev/null
 auth_backoff_model=$(
-	AIDEVOPS_HEADLESS_MODELS="anthropic/claude-sonnet-4-6,anthropic/claude-opus-4-6" \
+	AIDEVOPS_HEADLESS_MODELS="anthropic/claude-sonnet-5-5,anthropic/claude-opus-4-6" \
 		bash "$HELPER" select --role worker 2>/dev/null || true
 )
 if [[ -z "$auth_backoff_model" ]]; then
@@ -330,10 +330,10 @@ fi
 no_auth_gateway=$(
 	HOME="$TEST_TMP_DIR/no-auth-home" \
 		ANTHROPIC_API_KEY="test-key" \
-		AIDEVOPS_HEADLESS_MODELS="opencode/minimax-m2.5-free,anthropic/claude-sonnet-4-6" \
+		AIDEVOPS_HEADLESS_MODELS="opencode/minimax-m2.5-free,anthropic/claude-sonnet-5-5" \
 		bash "$HELPER" select --role worker 2>/dev/null || true
 )
-if [[ "$no_auth_gateway" == "anthropic/claude-sonnet-4-6" ]]; then
+if [[ "$no_auth_gateway" == "anthropic/claude-sonnet-5-5" ]]; then
 	pass "opencode/* skipped when no auth, falls back to next provider"
 else
 	fail "opencode/* skipped when no auth, falls back to next provider" "got: $no_auth_gateway"
@@ -502,7 +502,7 @@ METRICS_PATH="$HOME/.aidevops/logs"
 mkdir -p "$METRICS_PATH"
 cat >"$METRICS_PATH/headless-runtime-metrics.jsonl" <<'JSONL'
 {"ts":4102444800,"role":"worker","model":"openai/gpt-5.4","result":"success","activity":true,"duration_ms":45000,"exit_code":0}
-{"ts":4102444800,"role":"worker","model":"anthropic/claude-sonnet-4-6","result":"success","activity":true,"duration_ms":240000,"exit_code":0}
+{"ts":4102444800,"role":"worker","model":"anthropic/claude-sonnet-5-5","result":"success","activity":true,"duration_ms":240000,"exit_code":0}
 JSONL
 metrics_output=$(bash "$HELPER" metrics --role worker --hours 24 2>/dev/null || true)
 if [[ "$metrics_output" == *"fast_productive=1 (<=120s)"* && "$metrics_output" == *"Review candidates:"* && "$metrics_output" == *"openai/gpt-5.4"* ]]; then

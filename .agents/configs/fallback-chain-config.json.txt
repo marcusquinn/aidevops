@@ -12,27 +12,27 @@
       "anthropic/claude-haiku-4-5"
     ],
     "sonnet": [
-      "anthropic/claude-sonnet-4-6"
+      "anthropic/claude-sonnet-5-5"
     ],
     "pro": [
-      "anthropic/claude-sonnet-4-6"
+      "anthropic/claude-sonnet-5-5"
     ],
     "opus": [
       "anthropic/claude-opus-4-6"
     ],
     "coding": [
       "anthropic/claude-opus-4-6",
-      "anthropic/claude-sonnet-4-6"
+      "anthropic/claude-sonnet-5-5"
     ],
     "eval": [
-      "anthropic/claude-sonnet-4-6"
+      "anthropic/claude-sonnet-5-5"
     ],
     "health": [
-      "anthropic/claude-sonnet-4-6"
+      "anthropic/claude-sonnet-5-5"
     ],
 
     "default": [
-      "anthropic/claude-sonnet-4-6"
+      "anthropic/claude-sonnet-5-5"
     ]
   },
 

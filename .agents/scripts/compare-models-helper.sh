@@ -94,7 +94,7 @@ get_tier_success_rate() {
 }
 
 # Map a model_id to its aidevops tier for pattern lookup
-# Usage: model_id_to_tier "claude-sonnet-4-6" -> "standard"
+# Usage: model_id_to_tier "claude-sonnet-5-5" -> "standard"
 model_id_to_tier() {
 	local model_id="$1"
 	case "$model_id" in
@@ -148,7 +148,7 @@ get_all_tier_patterns() {
 # prices (its zeros are not API prices). Anthropic/Alibaba values reflect the
 # local model cache; gpt-5.6-sol price comes from configs/model-pricing.json.
 # Existing older entries retain their historical prices pending provider revalidation.
-readonly MODEL_DATA_LAST_UPDATED="2026-09-25"
+readonly MODEL_DATA_LAST_UPDATED="2026-09-28"
 
 readonly MODEL_DATA="claude-opus-4-6|Anthropic|Claude Opus 4.6|1000000|5.00|25.00|thinking|code,reasoning,architecture,vision,tools|Architecture decisions, novel problems, complex multi-step reasoning. 1M context, 800K auto-compact. Framework default for tier:thinking and the cascade's penultimate rung.
 claude-opus-5-5|Anthropic|Claude Opus 5.5|1000000|4.00|20.00|thinking|code,reasoning,vision,tools|Complex code and reasoning; model metadata is not independent evidence of aesthetic design quality.
@@ -156,7 +156,8 @@ gpt-6-sol|OpenAI|GPT-6 Sol|388000|-|-|thinking|code,reasoning,vision,tools|Compl
 gpt-5.6-sol|OpenAI|GPT-5.6 Sol|300000|4.00|20.00|thinking|code,reasoning,vision,tools|Long-running code and reasoning; standard price from local model-pricing.json, not OAuth cache.
 qwen3.8-max|Alibaba|Qwen3.8 Max|1000000|2.00|6.00|thinking|code,reasoning,vision,tools|Large-context reasoning; region and promotional pricing may differ.
 claude-opus-4-7|Anthropic|Claude Opus 4.7|250000|5.00|25.00|thinking|code,reasoning,architecture,vision,tools|Optional thinking-tier mapping candidate. Better at long-running agentic coherence than 4.6; worse at cold long-context retrieval (MRCR 256K 92%->59%, 1M 78%->32%). +20-60% tokenizer cost on English prompts. 250K cap lets OpenCode's 80% auto-compact trigger at the 200K reliability boundary.
-claude-sonnet-4-6|Anthropic|Claude Sonnet 4.6|200000|3.00|15.00|standard|code,reasoning,vision,tools|Code implementation, review, most development tasks
+claude-sonnet-5-5|Anthropic|Claude Sonnet 5.5|1000000|2.00|10.00|standard|code,reasoning,vision,tools|Code implementation, review, bug fixing, most development tasks. Price from Anthropic's 2026-09-28 launch post; context mirrors Sonnet 5 until catalogued.
+claude-sonnet-4-6|Anthropic|Claude Sonnet 4.6|200000|3.00|15.00|standard|code,reasoning,vision,tools|Previous Sonnet; superseded by claude-sonnet-5-5
 claude-haiku-4-5|Anthropic|Claude Haiku 4.5|200000|1.00|5.00|simple|code,reasoning,vision,tools|Triage, classification, simple transforms, formatting
 gpt-4.1|OpenAI|GPT-4.1|1048576|2.00|8.00|standard|code,reasoning,vision,tools,search|Coding, instruction following, long context
 gpt-4.1-mini|OpenAI|GPT-4.1 Mini|1048576|0.40|1.60|simple|code,reasoning,vision,tools|Cost-efficient coding and general tasks
@@ -179,28 +180,28 @@ llama-4-scout|Meta|Llama 4 Scout|512000|0.15|0.40|simple|code,reasoning,vision,t
 # Maps aidevops internal tiers to recommended models
 
 readonly TIER_MAP="simple|claude-haiku-4-5|Triage, classification, search, simple transforms
-standard|claude-sonnet-4-6|Code implementation, review, most development tasks
+standard|claude-sonnet-5-5|Code implementation, review, most development tasks
 thinking|claude-opus-4-6|Architecture decisions, complex multi-step reasoning"
 
 # =============================================================================
 # Task-to-Model Recommendations (every ID must have a catalogue row)
 # =============================================================================
 
-readonly TASK_RECOMMENDATIONS="code review|claude-sonnet-4-6|gpt-5.6-sol|gemini-2.5-flash
-code implementation|claude-sonnet-4-6|gpt-5.6-sol|gemini-2.5-pro
+readonly TASK_RECOMMENDATIONS="code review|claude-sonnet-5-5|gpt-5.6-sol|gemini-2.5-flash
+code implementation|claude-sonnet-5-5|gpt-5.6-sol|gemini-2.5-pro
 architecture design|claude-opus-4-6|o3|gemini-2.5-pro
-bug fixing|claude-sonnet-4-6|gpt-5.6-sol|o4-mini
-refactoring|claude-sonnet-4-6|gpt-5.6-sol|gemini-2.5-pro
-documentation|claude-sonnet-4-6|gpt-4o|gemini-2.5-flash
-testing|claude-sonnet-4-6|gpt-5.6-sol|o4-mini
+bug fixing|claude-sonnet-5-5|gpt-5.6-sol|o4-mini
+refactoring|claude-sonnet-5-5|gpt-5.6-sol|gemini-2.5-pro
+documentation|claude-sonnet-5-5|gpt-4o|gemini-2.5-flash
+testing|claude-sonnet-5-5|gpt-5.6-sol|o4-mini
 classification|claude-haiku-4-5|gpt-4.1-nano|gemini-2.5-flash
 summarization|gemini-2.5-flash|gpt-4o-mini|claude-haiku-4-5
-large codebase analysis|gemini-2.5-pro|gpt-5.6-sol|claude-sonnet-4-6
+large codebase analysis|gemini-2.5-pro|gpt-5.6-sol|claude-sonnet-5-5
 math reasoning|gpt-6-sol|deepseek-r1|gemini-2.5-pro
-security audit|claude-opus-4-6|gpt-6-sol|claude-sonnet-4-6
+security audit|claude-opus-4-6|gpt-6-sol|claude-sonnet-5-5
 data extraction|gemini-2.5-flash|gpt-4o-mini|claude-haiku-4-5
 commit messages|claude-haiku-4-5|gpt-4.1-nano|gemini-2.5-flash
-pr description|claude-sonnet-4-6|gpt-4o|gemini-2.5-flash
+pr description|claude-sonnet-5-5|gpt-4o|gemini-2.5-flash
 visually polished responsive website|gpt-6-sol|claude-opus-5-5|qwen3.8-max"
 
 # =============================================================================
@@ -528,7 +529,7 @@ cmd_recommend() {
 		echo "No exact task match. Showing general recommendations:"
 		echo ""
 		echo "  High capability: claude-opus-5-5 or gpt-6-sol"
-		echo "  Balanced:        claude-sonnet-4-6 or gpt-5.6-sol"
+		echo "  Balanced:        claude-sonnet-5-5 or gpt-5.6-sol"
 		echo "  Budget:          gemini-2.5-flash or gpt-4.1-nano"
 		echo "  Large context:   gemini-2.5-pro or qwen3.8-max"
 		echo ""
@@ -849,9 +850,9 @@ cmd_help() {
 	echo ""
 	echo "Scoring examples:"
 	echo "  compare-models-helper.sh score --task 'fix React bug' --type code \\"
-	echo "    --model claude-sonnet-4-6 --correctness 9 --completeness 8 --quality 8 --clarity 9 --adherence 9 \\"
+	echo "    --model claude-sonnet-5-5 --correctness 9 --completeness 8 --quality 8 --clarity 9 --adherence 9 \\"
 	echo "    --model gpt-5.3-codex --correctness 8 --completeness 7 --quality 7 --clarity 8 --adherence 8 \\"
-	echo "    --winner claude-sonnet-4-6"
+	echo "    --winner claude-sonnet-5-5"
 	echo "  compare-models-helper.sh score --task 'review code' --prompt-file prompts/build.txt \\"
 	echo "    --model standard --correctness 9 --completeness 8 --quality 8 --clarity 9 --adherence 9"
 	echo "  compare-models-helper.sh results"
@@ -869,7 +870,7 @@ cmd_help() {
 	echo "    # defaults to all configured standard-tier models"
 	echo "  compare-models-helper.sh cross-review \\"
 	echo "    --prompt 'Audit the architecture of this project' \\"
-	echo "    --models 'openai/gpt-5.6-sol,anthropic/claude-sonnet-4-6' --timeout 900"
+	echo "    --models 'openai/gpt-5.6-sol,anthropic/claude-sonnet-5-5' --timeout 900"
 	echo "  compare-models-helper.sh cross-review \\"
 	echo "    --prompt 'Review this PR diff' \\"
 	echo "    --score                          # auto-score via judge model (default: thinking)"
@@ -881,10 +882,10 @@ cmd_help() {
 	echo "    --prompt-file prompts/build.txt   # track prompt version in results"
 	echo ""
 	echo "Bench examples (t1393):"
-	echo "  compare-models-helper.sh bench 'What is 2+2?' claude-sonnet-4-6 gpt-4o"
-	echo "  compare-models-helper.sh bench 'Explain quicksort' claude-sonnet-4-6 gpt-5.3-codex gemini-2.5-pro --judge"
-	echo "  compare-models-helper.sh bench --dataset prompts.jsonl claude-sonnet-4-6 gpt-4o --judge"
-	echo "  compare-models-helper.sh bench 'What is 2+2?' claude-sonnet-4-6 --dry-run"
+	echo "  compare-models-helper.sh bench 'What is 2+2?' claude-sonnet-5-5 gpt-4o"
+	echo "  compare-models-helper.sh bench 'Explain quicksort' claude-sonnet-5-5 gpt-5.3-codex gemini-2.5-pro --judge"
+	echo "  compare-models-helper.sh bench --dataset prompts.jsonl claude-sonnet-5-5 gpt-4o --judge"
+	echo "  compare-models-helper.sh bench 'What is 2+2?' claude-sonnet-5-5 --dry-run"
 	echo "  compare-models-helper.sh bench --history --limit 10"
 	echo ""
 	echo "Data is embedded in this script. Snapshot: $MODEL_DATA_LAST_UPDATED."

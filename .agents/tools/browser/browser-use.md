@@ -83,13 +83,13 @@ if __name__ == "__main__":
 from browser_use import Agent, ChatAnthropic, ChatBrowserUse, ChatGoogle
 
 # Browser Use API key can route provider-prefixed model IDs.
-agent = Agent(task="...", llm=ChatBrowserUse(model="anthropic/claude-sonnet-4-6"))
+agent = Agent(task="...", llm=ChatBrowserUse(model="anthropic/claude-sonnet-5-5"))
 
 # Google Gemini
 agent = Agent(task="...", llm=ChatGoogle(model="gemini-3-flash-preview"))
 
 # Anthropic Claude
-agent = Agent(task="...", llm=ChatAnthropic(model="claude-sonnet-4-6"))
+agent = Agent(task="...", llm=ChatAnthropic(model="claude-sonnet-5-5"))
 ```
 
 ## CLI 3.0

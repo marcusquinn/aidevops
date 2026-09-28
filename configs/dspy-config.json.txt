@@ -25,10 +25,10 @@
         "base_url": "https://api.anthropic.com",
         "models": {
           "claude-opus-4-6": "claude-opus-4-6",
-          "claude-sonnet-4-6": "claude-sonnet-4-6",
+          "claude-sonnet-5-5": "claude-sonnet-5-5",
           "claude-haiku-4-5": "claude-haiku-4-5"
         },
-        "default_model": "claude-sonnet-4-6"
+        "default_model": "claude-sonnet-5-5"
       },
       "local": {
         "base_url": "http://localhost:11434/v1",

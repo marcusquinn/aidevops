@@ -86,7 +86,7 @@ opencode:
       }
       EOF
   script:
-    # Override model with --model (e.g., anthropic/claude-sonnet-4-6)
+    # Override model with --model (e.g., anthropic/claude-sonnet-5-5)
     - opencode run "$AI_FLOW_INPUT"
     - |
       if [ -n "$(git status --porcelain)" ]; then

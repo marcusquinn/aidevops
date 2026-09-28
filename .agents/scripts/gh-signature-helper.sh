@@ -587,10 +587,10 @@ Examples:
   gh-signature-helper.sh record-child --child ses_abc123 --tokens 1500
 
   # With issue ref for total time (queries GitHub API)
-  gh-signature-helper.sh footer --model anthropic/claude-sonnet-4-6 --issue owner/repo#42
+  gh-signature-helper.sh footer --model anthropic/claude-sonnet-5-5 --issue owner/repo#42
 
   # Use in a gh issue comment
-  FOOTER=$(gh-signature-helper.sh footer --model anthropic/claude-sonnet-4-6 --issue owner/repo#42)
+  FOOTER=$(gh-signature-helper.sh footer --model anthropic/claude-sonnet-5-5 --issue owner/repo#42)
   gh issue comment 42 --repo owner/repo --body "Comment body${FOOTER}"
 EOF
 	return 0

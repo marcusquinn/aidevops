@@ -479,7 +479,7 @@ PY
 
 test_extract_provider_from_cmd_anthropic() {
 	reset_fixture
-	local cmd='opencode run --model anthropic/claude-sonnet-4-6 --title "Issue #5650: Fix watchdog" --dir /tmp/aidevops "/full-loop Implement issue #5650"'
+	local cmd='opencode run --model anthropic/claude-sonnet-5-5 --title "Issue #5650: Fix watchdog" --dir /tmp/aidevops "/full-loop Implement issue #5650"'
 	local provider
 	provider=$(extract_provider_from_cmd "$cmd")
 
@@ -528,7 +528,7 @@ test_check_provider_backoff_detects_active_backoff() {
 	HEADLESS_RUNTIME_DB="$backoff_db"
 	seed_backoff_fixture "$backoff_db" "anthropic" "auth_error" "future"
 
-	local cmd='opencode run --model anthropic/claude-sonnet-4-6 --title "Issue #5650: Fix watchdog" --dir /tmp/aidevops "/full-loop Implement issue #5650"'
+	local cmd='opencode run --model anthropic/claude-sonnet-5-5 --title "Issue #5650: Fix watchdog" --dir /tmp/aidevops "/full-loop Implement issue #5650"'
 
 	if check_provider_backoff "9999" "$cmd" 600; then
 		if [[ "$BACKOFF_PROVIDER" == "anthropic" && "$BACKOFF_REASON" == "auth_error" ]]; then
@@ -549,7 +549,7 @@ test_check_provider_backoff_ignores_expired_backoff() {
 	HEADLESS_RUNTIME_DB="$backoff_db"
 	seed_backoff_fixture "$backoff_db" "anthropic" "auth_error" "past"
 
-	local cmd='opencode run --model anthropic/claude-sonnet-4-6 --title "Issue #5650: Fix watchdog" --dir /tmp/aidevops "/full-loop Implement issue #5650"'
+	local cmd='opencode run --model anthropic/claude-sonnet-5-5 --title "Issue #5650: Fix watchdog" --dir /tmp/aidevops "/full-loop Implement issue #5650"'
 
 	if check_provider_backoff "9998" "$cmd" 600; then
 		print_result "check_provider_backoff ignores expired backoff" 1 "Expected expired backoff to be ignored"
@@ -566,7 +566,7 @@ test_check_provider_backoff_skips_grace_period() {
 	HEADLESS_RUNTIME_DB="$backoff_db"
 	seed_backoff_fixture "$backoff_db" "anthropic" "auth_error" "future"
 
-	local cmd='opencode run --model anthropic/claude-sonnet-4-6 --title "Issue #5650: Fix watchdog" --dir /tmp/aidevops "/full-loop Implement issue #5650"'
+	local cmd='opencode run --model anthropic/claude-sonnet-5-5 --title "Issue #5650: Fix watchdog" --dir /tmp/aidevops "/full-loop Implement issue #5650"'
 
 	# elapsed < 300 — should skip check (grace period)
 	if check_provider_backoff "9997" "$cmd" 60; then

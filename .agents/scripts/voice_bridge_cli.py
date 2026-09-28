@@ -96,8 +96,8 @@ Examples:
     )
     parser.add_argument(
         "--model",
-        default="opencode/claude-sonnet-4-6",
-        help="OpenCode model (default: opencode/claude-sonnet-4-6)",
+        default="opencode/claude-sonnet-5-5",
+        help="OpenCode model (default: opencode/claude-sonnet-5-5)",
     )
     parser.add_argument(
         "--cwd",

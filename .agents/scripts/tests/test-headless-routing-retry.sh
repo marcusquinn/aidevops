@@ -106,7 +106,7 @@ trap 'rm -rf "$fixture_dir"' EXIT
 		local requested_tier="${1:-standard}"
 		case "$requested_tier" in
 		simple) printf '%s\n' "openai/gpt-5.6-luna" ;;
-		standard) printf '%s\n' "openai/gpt-5.6-luna" "openai/gpt-5.6-terra" "anthropic/claude-sonnet-4-6" ;;
+		standard) printf '%s\n' "openai/gpt-5.6-luna" "openai/gpt-5.6-terra" "anthropic/claude-sonnet-5-5" ;;
 		*) return 1 ;;
 		esac
 		return 0
@@ -148,7 +148,7 @@ trap 'rm -rf "$fixture_dir"' EXIT
 	}
 	_cmd_run_prepare_retry worker issue-1 "" 1 6 openai/gpt-5.6-terra 81 standard
 	[[ "$cmd_run_action" == "switch" ]]
-	[[ "$cmd_run_next_model" == "anthropic/claude-sonnet-4-6" ]]
+	[[ "$cmd_run_next_model" == "anthropic/claude-sonnet-5-5" ]]
 )
 
 (

@@ -89,7 +89,7 @@ mail-helper.sh check --type status_report
       "workdir": "/Users/me/projects/example-site",
       "timeout": 300,
       "notify": "mail",
-      "model": "anthropic/claude-sonnet-4-6",
+      "model": "anthropic/claude-sonnet-5-5",
       "status": "active",
       "created": "2024-01-10T10:00:00Z",
       "lastRun": "2024-01-15T09:00:00Z",

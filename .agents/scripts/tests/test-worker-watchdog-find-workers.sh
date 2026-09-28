@@ -67,7 +67,7 @@ write_ps_stub() {
 # PIDs picked to be mutually non-substring (no "1000" inside "41000")
 # so simple glob assertions cannot false-positive.
 printf '%s\n' \
-	'81234 bash /Users/u/.aidevops/agents/scripts/headless-runtime-helper.sh run --role worker /full-loop Implement issue #1 --model anthropic/claude-sonnet-4-6' \
+	'81234 bash /Users/u/.aidevops/agents/scripts/headless-runtime-helper.sh run --role worker /full-loop Implement issue #1 --model anthropic/claude-sonnet-5-5' \
 	'82345 node /opt/homebrew/bin/opencode run --print-logs /full-loop Implement issue #2' \
 	'83456 /opt/homebrew/lib/node_modules/opencode-ai/bin/.opencode run /full-loop Implement issue #3' \
 	'84567 /opt/homebrew/bin/claude run /full-loop Implement issue #4' \

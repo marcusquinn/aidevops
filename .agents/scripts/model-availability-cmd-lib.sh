@@ -634,7 +634,7 @@ cmd_help() {
 	echo ""
 	echo "Examples:"
 	echo "  model-availability-helper.sh check anthropic"
-	echo "  model-availability-helper.sh check anthropic/claude-sonnet-4-6"
+	echo "  model-availability-helper.sh check anthropic/claude-sonnet-5-5"
 	echo "  model-availability-helper.sh check sonnet"
 	echo "  model-availability-helper.sh probe --all"
 	echo "  model-availability-helper.sh resolve thinking --json"

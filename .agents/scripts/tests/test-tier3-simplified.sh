@@ -311,7 +311,7 @@ test_budget_tracker_helper() {
 
 	# Test: record a spend event
 	local output
-	if output=$("$helper" record --provider anthropic --model anthropic/claude-sonnet-4-6 \
+	if output=$("$helper" record --provider anthropic --model anthropic/claude-sonnet-5-5 \
 		--input-tokens 1000 --output-tokens 500 --task t1337.3 2>&1); then
 		print_result "budget: record spend event" 0
 	else
@@ -475,7 +475,7 @@ test_observability_helper() {
 
 	# Test: record a metric
 	local output
-	if output=$("$helper" record --model anthropic/claude-sonnet-4-6 \
+	if output=$("$helper" record --model anthropic/claude-sonnet-5-5 \
 		--input-tokens 5000 --output-tokens 2000 \
 		--cache-read 1000 --cache-write 500 \
 		--session test-session --project test-project 2>&1); then

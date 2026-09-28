@@ -43,7 +43,7 @@ if [[ -f "$HOME/.ssh/agent.env" ]]; then
 fi
 
 # Absolute fallback when both pool and routing table are unavailable (GH#17769)
-readonly DEFAULT_HEADLESS_MODELS="anthropic/claude-sonnet-4-6"
+readonly DEFAULT_HEADLESS_MODELS="anthropic/claude-sonnet-5-5"
 readonly STATE_DIR="${AIDEVOPS_HEADLESS_RUNTIME_DIR:-${HOME}/.aidevops/.agent-workspace/headless-runtime}"
 readonly STATE_DB="${STATE_DIR}/state.db"
 _opencode_profile_binary=$(aidevops_opencode_profile_value binary 2>/dev/null || printf 'opencode')
@@ -970,7 +970,7 @@ Private workloads:
   after exit.
 
 Backoff granularity:
-  Rate limits and provider errors are recorded per model (e.g. anthropic/claude-sonnet-4-6).
+  Rate limits and provider errors are recorded per model (e.g. anthropic/claude-sonnet-5-5).
   Auth errors are recorded per provider (e.g. anthropic) since credentials are shared.
   This allows fallback from sonnet to opus when only sonnet is rate-limited.
 
@@ -983,7 +983,7 @@ Dedup guard (GH#6538):
 
 Defaults:
   Model list is derived from routing table + auth availability (GH#17769).
-  Fallback: anthropic/claude-sonnet-4-6 if routing resolution fails.
+  Fallback: anthropic/claude-sonnet-5-5 if routing resolution fails.
   AIDEVOPS_HEADLESS_MODELS is deprecated — respected as override for one release cycle.
   AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST can restrict selection to providers like: openai
   AIDEVOPS_HEADLESS_VARIANT_STANDARD / AIDEVOPS_HEADLESS_VARIANT_THINKING can set tier defaults.

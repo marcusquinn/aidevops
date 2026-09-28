@@ -80,7 +80,7 @@ assert_contains "contains formatted tokens" "1,234 tokens on this" "$result"
 # ─────────────────────────────────────────────────────────────────────────────
 echo ""
 echo "Test 2: explicit --tokens 0 omits tokens"
-result=$("$HELPER" generate --cli "Claude Code" --cli-version "2.0.1" --model "anthropic/claude-sonnet-4-6" --tokens 0)
+result=$("$HELPER" generate --cli "Claude Code" --cli-version "2.0.1" --model "anthropic/claude-sonnet-5-5" --tokens 0)
 assert_contains "contains Claude Code" "plugin for [Claude Code](https://claude.ai/code) v2.0.1" "$result"
 assert_not_contains "no tokens field" "tokens" "$result"
 
@@ -110,7 +110,7 @@ assert_contains "contains aidevops" "aidevops.sh" "$result"
 # ─────────────────────────────────────────────────────────────────────────────
 echo ""
 echo "Test 5: footer includes --- separator and HTML marker"
-result=$("$HELPER" footer --cli "OpenCode" --cli-version "1.0.0" --model "anthropic/claude-sonnet-4-6" --tokens 5000)
+result=$("$HELPER" footer --cli "OpenCode" --cli-version "1.0.0" --model "anthropic/claude-sonnet-5-5" --tokens 5000)
 assert_contains "contains HTML sig marker" "<!-- aidevops:sig -->" "$result"
 assert_contains "contains ---" "---" "$result"
 assert_contains "contains signature" "plugin for [OpenCode](https://opencode.ai) v1.0.0" "$result"

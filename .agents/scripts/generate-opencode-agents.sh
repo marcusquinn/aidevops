@@ -286,7 +286,7 @@ _write_sandboxed_agent() {
 			$0 == "---" { delimiters++; if (delimiters == 2) print "<!-- aidevops:generated-subagent -->" }
 		' "$f" | sed \
 			-e 's/^model: opus$/model: anthropic\/claude-opus-4-6/' \
-			-e 's/^model: sonnet$/model: anthropic\/claude-sonnet-4-6/' \
+			-e 's/^model: sonnet$/model: anthropic\/claude-sonnet-5-5/' \
 			-e 's/^model: haiku$/model: anthropic\/claude-haiku-4-5/' \
 			"$f" >"$OPENCODE_AGENT_DIR/$name.md"
 		echo 1

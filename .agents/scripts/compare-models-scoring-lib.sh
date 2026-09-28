@@ -442,7 +442,7 @@ SQL
 
 # Record a comparison result
 # Usage: cmd_score --task "description" --type "code" --evaluator "claude-opus-4-6" \
-#        --model "claude-sonnet-4-6" --correctness 9 --completeness 8 --quality 7 \
+#        --model "claude-sonnet-5-5" --correctness 9 --completeness 8 --quality 7 \
 #        --clarity 8 --adherence 9 --latency 1200 --tokens 500 \
 #        --strengths "Fast, accurate" --weaknesses "Verbose" \
 #        [--model "gpt-4.1" --correctness 8 ...]

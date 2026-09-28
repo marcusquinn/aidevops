@@ -276,7 +276,7 @@ run_cmd=$(bash -c "
     source '$SUPERVISOR_DIR_MODULE/dispatch.sh'
     # Use array output mode for readable verification
     build_cli_cmd --cli claude --action run --output array \
-        --model 'anthropic/claude-sonnet-4-6' \
+        --model 'anthropic/claude-sonnet-5-5' \
         --prompt 'Test prompt here'
 ")
 
@@ -299,7 +299,7 @@ else
 fi
 
 # Verify model prefix stripping (anthropic/ prefix removed)
-if echo "$run_cmd" | grep -q "claude-sonnet-4-6" && ! echo "$run_cmd" | grep -q "anthropic/"; then
+if echo "$run_cmd" | grep -q "claude-sonnet-5-5" && ! echo "$run_cmd" | grep -q "anthropic/"; then
 	pass "build_cli_cmd run: strips provider prefix from model"
 else
 	fail "build_cli_cmd run: should strip 'anthropic/' prefix" "Got: $run_cmd"
@@ -331,7 +331,7 @@ probe_cmd=$(bash -c "
     source '$SUPERVISOR_DIR_MODULE/_common.sh'
     source '$SUPERVISOR_DIR_MODULE/dispatch.sh'
     build_cli_cmd --cli claude --action probe --output array \
-        --model 'anthropic/claude-sonnet-4-6'
+        --model 'anthropic/claude-sonnet-5-5'
 ")
 
 if echo "$probe_cmd" | grep -q "output-format.*text\|text.*output-format"; then
@@ -378,7 +378,7 @@ dispatch_output=$(bash -c "
     source '$SHARED_CONSTANTS'
     source '$SUPERVISOR_DIR_MODULE/_common.sh'
     source '$SUPERVISOR_DIR_MODULE/dispatch.sh'
-    build_dispatch_cmd 'claude-spawn-t1' '$wt_spawn' '/tmp/test.log' 'claude' '' 'anthropic/claude-sonnet-4-6' 'Test dispatch'
+    build_dispatch_cmd 'claude-spawn-t1' '$wt_spawn' '/tmp/test.log' 'claude' '' 'anthropic/claude-sonnet-5-5' 'Test dispatch'
 " 2>/dev/null | tr '\0' '\n')
 
 if echo "$dispatch_output" | grep -q "^claude$"; then
@@ -1369,7 +1369,7 @@ MOCK_SETTINGS
     source '$SUPERVISOR_DIR_MODULE/_common.sh'
     source '$SUPERVISOR_DIR_MODULE/dispatch.sh'
     build_cli_cmd --cli claude --action run --output array \
-        --model 'anthropic/claude-sonnet-4-6' \
+        --model 'anthropic/claude-sonnet-5-5' \
         --mcp-config '$TEST_DIR/test-mcp-config.json' \
         --prompt 'Test prompt'
 ")
@@ -1402,7 +1402,7 @@ MOCK_SETTINGS
     source '$SUPERVISOR_DIR_MODULE/_common.sh'
     source '$SUPERVISOR_DIR_MODULE/dispatch.sh'
     build_cli_cmd --cli claude --action run --output array \
-        --model 'anthropic/claude-sonnet-4-6' \
+        --model 'anthropic/claude-sonnet-5-5' \
         --prompt 'Test prompt without MCP'
 ")
 
@@ -1421,7 +1421,7 @@ MOCK_SETTINGS
     source '$SUPERVISOR_DIR_MODULE/_common.sh'
     source '$SUPERVISOR_DIR_MODULE/dispatch.sh'
     build_cli_cmd --cli opencode --action run --output array \
-        --model 'anthropic/claude-sonnet-4-6' \
+        --model 'anthropic/claude-sonnet-5-5' \
         --mcp-config '$TEST_DIR/test-mcp-config.json' \
         --prompt 'Test prompt'
 ")
