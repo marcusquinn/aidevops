@@ -27,6 +27,7 @@ ISSUE_TITLE="Populate context/keywords.md search targets"
 
 KW_TRUE=true
 KW_FALSE=false
+KW_IGNORED=ignored
 
 _kw_info() {
 	local message="$1"
@@ -392,6 +393,7 @@ _kw_repo_is_owned() {
 }
 
 _kw_survey_rows() {
+	_kw_export_env
 	local login
 	login=$(_kw_current_login)
 	local repo_path slug maintainer role local_only maintenance
@@ -401,6 +403,11 @@ _kw_survey_rows() {
 		_kw_repo_is_owned "$slug" "$maintainer" "$role" "$login" || continue
 		local has_keywords="$KW_FALSE" has_legacy="$KW_FALSE"
 		[[ -f "$repo_path/$STRATEGY_REL" ]] && has_keywords="$KW_TRUE"
+		if [[ "$has_keywords" != "$KW_TRUE" ]]; then
+			local property_store=""
+			property_store=$(_kw_py property --root "$repo_path" 2>/dev/null | jq -r '.store // empty') || property_store=""
+			[[ -n "$property_store" && -d "$property_store" ]] && has_keywords="$KW_TRUE"
+		fi
 		[[ -f "$repo_path/$LEGACY_REL" ]] && has_legacy="$KW_TRUE"
 		printf '%s\t%s\t%s\t%s\n' "$slug" "$repo_path" "$has_keywords" "$has_legacy"
 	done < <(jq -r '.initialized_repos // [] | .[] | [.path // "", .slug // "", .maintainer // "", .role // "",
@@ -426,6 +433,7 @@ cmd_survey() {
 
 _kw_issue_body() {
 	local body_file="$1"
+	local mode="$2"
 	cat >"$body_file" <<'EOF'
 ## What
 
@@ -461,7 +469,7 @@ aidevops now standardises search targets per repository (`~/.aidevops/agents/seo
 3. Add 10-30 targets from existing evidence first (README, docs, GSC/Bing exports, package keywords, GitHub topics); set `business_value` 1-5. Paid research must stay inside the monthly budget (`aidevops keywords budget`).
 4. Add 5-15 AI-answer questions (`queries`) people ask where this project should be recommended.
 5. `aidevops keywords score --apply` then `aidevops keywords validate`.
-6. Public repos: run `aidevops keywords sync` to publish the registry to the team hub; commit only `.gitignore` and `AGENTS.md`. If no hub is configured, say so in the PR body.
+6. Public repos: run `aidevops keywords sync` to publish the registry to the team hub; commit only `.gitignore` and `AGENTS.md`.
 
 ### Verification
 
@@ -475,8 +483,18 @@ aidevops keywords brief
 - [ ] `aidevops keywords validate` passes.
 - [ ] At least one `role=self` entity, 10 targets and 5 questions exist with evidence notes.
 - [ ] Naming and metadata rules in `context/keywords.md` contain no template placeholders.
-- [ ] Public repos commit no registry data; the PR body records hub sync status.
 EOF
+	if [[ "$mode" == "$KW_IGNORED" ]]; then
+		cat >>"$body_file" <<'EOF'
+- [ ] Public repos commit no registry data; `aidevops keywords sync` output showing `published: true` is recorded as evidence.
+
+## Dispatch
+
+Interactive/maintainer only: registry data is written only to the private team hub, which workers cannot access. Do not auto-dispatch this issue.
+EOF
+	else
+		printf '%s\n' '- [ ] Public repos commit no registry data; the PR body records hub sync status.' >>"$body_file"
+	fi
 	return 0
 }
 
@@ -492,12 +510,16 @@ _kw_ensure_gh_create_issue() {
 
 _kw_file_issue() {
 	local slug="$1"
+	local repo_path="$2"
+	local mode labels="auto-dispatch,tier:standard,enhancement"
+	mode=$(_kw_data_mode "$repo_path")
+	[[ "$mode" == "$KW_IGNORED" ]] && labels="no-auto-dispatch,tier:standard,enhancement"
 	local body_file
 	body_file=$(mktemp)
-	_kw_issue_body "$body_file"
+	_kw_issue_body "$body_file" "$mode"
 	local status=0
 	gh_create_issue --repo "$slug" --title "$ISSUE_TITLE" --body-file "$body_file" \
-		--label "auto-dispatch,tier:standard,enhancement" || status=1
+		--label "$labels" || status=1
 	rm -f "$body_file"
 	return "$status"
 }
@@ -514,15 +536,17 @@ cmd_issues() {
 	local slug repo_path has_keywords has_legacy
 	while IFS=$'\t' read -r slug repo_path has_keywords has_legacy; do
 		[[ -n "$slug" && "$has_keywords" != "$KW_TRUE" ]] || continue
+		local mode
+		mode=$(_kw_data_mode "$repo_path")
 		local existing=""
 		existing=$(gh issue list --repo "$slug" --state open --search "${ISSUE_TITLE} in:title" --json number --jq '.[0].number // empty' 2>/dev/null || true)
 		if [[ -n "$existing" ]]; then
 			printf 'skip existing %s #%s\n' "$slug" "$existing"
 			skipped=$((skipped + 1))
 		elif [[ "$apply" != "$KW_TRUE" ]]; then
-			printf 'would-create %s %s (legacy=%s)\n' "$slug" "$ISSUE_TITLE" "$has_legacy"
+			printf 'would-create %s %s (legacy=%s mode=%s)\n' "$slug" "$ISSUE_TITLE" "$has_legacy" "$mode"
 			dry=$((dry + 1))
-		elif _kw_file_issue "$slug"; then
+		elif _kw_file_issue "$slug" "$repo_path"; then
 			created=$((created + 1))
 		else
 			_kw_warn "Issue creation failed for $slug"

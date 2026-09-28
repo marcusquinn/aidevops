@@ -132,4 +132,5 @@ Clustering uses SERP overlap first: `aidevops keywords cluster --serps serps.jso
 
 - `aidevops init` scaffolds the standard for standard/public scopes (minimal scope only with `.aidevops.json` `keywords.enabled: true`) and adds a Search targets pointer to the project `AGENTS.md`.
 - Existing repos: `aidevops keywords survey --json`, then `aidevops keywords issues --apply` files worker-ready backfill issues.
+- Public-repo backfill is maintainer-only: private hub access is required to publish and verify registry data; generated issues are not auto-dispatched.
 - Legacy `context/target-keywords.md` and `context/competitor-analysis.md` migrate on scaffold (`aidevops keywords migrate --apply`); sources are kept.
