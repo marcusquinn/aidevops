@@ -805,16 +805,19 @@ _run_sweep_tools() {
 	}
 	[[ -n "$review_scan_section" ]] && tool_count=$((tool_count + 1))
 
-	local sections_dir
-	sections_dir=$(_write_sweep_sections_dir \
+	_quality_sweep_output_sections "$skipped_tools" \
 		"$tool_count" "$shellcheck_section" "$qlty_section" "$qlty_smell_count" \
 		"$qlty_grade" "$qlty_smell_delta" "$prev_qlty_smells" "$sonar_section" \
 		"$sweep_gate_status" "$sweep_total_issues" "$sweep_high_critical" \
-		"$sweep_sev_inline" "$codacy_section" "$coderabbit_section" "$review_scan_section") || return 1
-	printf '%s' "$skipped_tools" >"${sections_dir}/skipped_tools"
+		"$sweep_sev_inline" "$codacy_section" "$coderabbit_section" "$review_scan_section" || return 1
+	return 0
+}
 
-	# Single-line handshake: just the directory path. The caller reads each
-	# section by `cat`ing one file at a time.
+_quality_sweep_output_sections() {
+	local skipped_tools="$1" sections_dir
+	shift
+	sections_dir=$(_write_sweep_sections_dir "$@") || return 1
+	printf '%s' "$skipped_tools" >"${sections_dir}/skipped_tools"
 	printf '%s\n' "$sections_dir"
 	return 0
 }
