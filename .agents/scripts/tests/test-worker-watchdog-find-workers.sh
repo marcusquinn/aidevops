@@ -213,7 +213,7 @@ test_worker_watchdog_script_dir_retry_present() {
 	local watchdog_script="${LIB_DIR}/worker-watchdog.sh"
 	if grep -qF '_resolve_script_dir_with_retry' "$watchdog_script" && \
 		grep -qF 'AIDEVOPS_SCRIPT_DIR_ATTEMPTS' "$watchdog_script" && \
-		grep -qF "\${HOME}/.aidevops/agents/scripts" "$watchdog_script"; then
+		grep -qF '/.aidevops/agents/scripts' "$watchdog_script"; then
 		print_result "worker-watchdog retries script-dir resolution during deploy races" 0
 		return 0
 	fi

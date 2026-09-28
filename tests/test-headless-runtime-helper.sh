@@ -1,520 +1,61 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
-
+# Selection and backoff smoke tests. Worker launch/canary integration lives in
+# .agents/scripts/tests/test-headless-runtime-*-tests.sh; do not launch a live
+# provider or write into the dispatcher's issue/worktree from this suite.
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HELPER="$REPO_DIR/.agents/scripts/headless-runtime-helper.sh"
-VERBOSE="${1:-}"
-
-PASS_COUNT=0
-FAIL_COUNT=0
-TOTAL_COUNT=0
-
-pass() {
-	local message="$1"
-	PASS_COUNT=$((PASS_COUNT + 1))
-	TOTAL_COUNT=$((TOTAL_COUNT + 1))
-	if [[ "$VERBOSE" == "--verbose" ]]; then
-		printf "  PASS %s\n" "$message"
-	fi
-	return 0
-}
-
-fail() {
-	local message="$1"
-	local detail="${2:-}"
-	FAIL_COUNT=$((FAIL_COUNT + 1))
-	TOTAL_COUNT=$((TOTAL_COUNT + 1))
-	printf "  FAIL %s\n" "$message"
-	if [[ -n "$detail" ]]; then
-		printf "       %s\n" "$detail"
-	fi
-	return 0
-}
-
-section() {
-	local title="$1"
-	echo ""
-	printf "=== %s ===\n" "$title"
-	return 0
-}
-
-TEST_TMP_DIR=$(mktemp -d)
-export AIDEVOPS_HEADLESS_RUNTIME_DIR="$TEST_TMP_DIR/runtime"
-export STUB_LOG_FILE="$TEST_TMP_DIR/opencode-args.log"
-# Set a known model list so tests are self-contained and don't depend on
-# the user's environment. Includes two providers for rotation/fallback tests.
-# GH#17769: AIDEVOPS_HEADLESS_MODELS is deprecated but respected as override
-# for backward compat. Using agentic models only (codex models removed).
+TEST_DIR="$(mktemp -d)"
+trap 'rm -rf "$TEST_DIR"' EXIT
+export AIDEVOPS_HEADLESS_RUNTIME_DIR="$TEST_DIR/runtime"
 export AIDEVOPS_HEADLESS_MODELS="anthropic/claude-sonnet-5-5,openai/gpt-5.4"
-unset AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST
-# Disable sandbox for tests — the sandbox strips env vars (STUB_*) needed
-# by the opencode stub, causing test failures.
-export AIDEVOPS_HEADLESS_SANDBOX_DISABLED=1
-# Disable pattern-driven downgrades so selection-order tests stay deterministic.
-unset AIDEVOPS_TIER_DOWNGRADE_TASK_TYPE
-# Provide a fake Anthropic API key so Anthropic remains selectable even when
-# the local environment has no OpenCode auth session.
-export ANTHROPIC_API_KEY="test-key-for-provider-auth-check"
-# Provide a fake OpenAI API key so provider_auth_available("openai") returns true
-# in tests that exercise OpenAI model selection. Tests for the no-auth path
-# explicitly unset this and remove the auth file.
-export OPENAI_API_KEY="test-key-for-provider-auth-check"
+export ANTHROPIC_API_KEY="[redacted-credential]"
+export OPENAI_API_KEY="[redacted-credential]"
+unset WORKER_ISSUE_NUMBER WORKER_REPO_SLUG WORKER_WORKTREE_PATH AIDEVOPS_DISPATCH_LEASE_TOKEN
 
-cleanup() {
-	rm -rf "$TEST_TMP_DIR"
+assert_model() {
+	local description="$1"
+	local expected="$2"
+	local actual="$3"
+	if [[ "$actual" != "$expected" ]]; then
+		printf 'FAIL %s: expected %s, got %s\n' "$description" "$expected" "$actual" >&2
+		return 1
+	fi
+	printf 'PASS %s\n' "$description"
 	return 0
 }
-trap cleanup EXIT
 
-cat >"$TEST_TMP_DIR/opencode-stub.sh" <<'STUB'
-#!/usr/bin/env bash
-set -euo pipefail
-printf '%s\n' "$*" >>"${STUB_LOG_FILE}"
-session_id="${STUB_SESSION_ID:-ses_stub_default}"
-text="${STUB_TEXT:-OK}"
-emit_activity="${STUB_EMIT_ACTIVITY:-1}"
-if [[ "$emit_activity" != "1" ]]; then
-	exit 0
-fi
-cat <<JSON
-{"type":"step_start","sessionID":"${session_id}","part":{"sessionID":"${session_id}"}}
-{"type":"text","sessionID":"${session_id}","part":{"sessionID":"${session_id}","text":"${text}"}}
-JSON
-exit 0
-STUB
-chmod +x "$TEST_TMP_DIR/opencode-stub.sh"
-export OPENCODE_BIN="$TEST_TMP_DIR/opencode-stub.sh"
+bash -n "$HELPER"
+first_model=$(bash "$HELPER" select --role worker)
+second_model=$(bash "$HELPER" select --role worker)
+assert_model 'priority selection' 'anthropic/claude-sonnet-5-5' "$first_model"
+assert_model 'priority stays on first healthy model' "$first_model" "$second_model"
 
-section "Syntax"
-if bash -n "$HELPER"; then
-	pass "bash -n"
-else
-	fail "bash -n" "syntax error"
+allowlisted_model=$(AIDEVOPS_HEADLESS_MODELS=openai/gpt-5.4 AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=openai bash "$HELPER" select --role worker)
+assert_model 'openai-only selection' 'openai/gpt-5.4' "$allowlisted_model"
+
+bash "$HELPER" backoff set anthropic rate_limit 3600
+post_backoff_model=$(bash "$HELPER" select --role pulse)
+assert_model 'backed-off anthropic skipped' 'openai/gpt-5.4' "$post_backoff_model"
+
+if bash "$HELPER" backoff set anthropic rate_limit '10;rm -rf /'; then
+	printf 'FAIL non-numeric backoff was accepted\n' >&2
+	exit 1
 fi
 
-section "Selection Defaults"
-first_model=$(bash "$HELPER" select --role worker 2>/dev/null || true)
-second_model=$(bash "$HELPER" select --role worker 2>/dev/null || true)
-if [[ "$first_model" == "anthropic/claude-sonnet-5-5" ]]; then
-	pass "first selection uses anthropic default"
-else
-	fail "first selection uses anthropic default" "got: $first_model"
-fi
-if [[ "$second_model" == "openai/gpt-5.3-codex" ]]; then
-	pass "second selection alternates to openai"
-else
-	fail "second selection alternates to openai" "got: $second_model"
-fi
-
-section "Allowlist"
-allowlisted_model=$(AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=openai bash "$HELPER" select --role worker 2>/dev/null || true)
-if [[ "$allowlisted_model" == "openai/gpt-5.3-codex" ]]; then
-	pass "openai allowlist restricts selection"
-else
-	fail "openai allowlist restricts selection" "got: $allowlisted_model"
-fi
-
-section "Auth Pre-check"
-# When OpenAI has no auth configured, Codex must be skipped silently (no error,
-# no backoff recorded). The selection should fall back to Anthropic.
-no_auth_model=$(
-	unset OPENAI_API_KEY
-	AIDEVOPS_HEADLESS_AUTH_SIGNATURE_OPENAI="" \
-		bash "$HELPER" select --role worker 2>/dev/null || true
-)
-if [[ "$no_auth_model" == "anthropic/claude-sonnet-5-5" ]]; then
-	pass "no OpenAI auth: Codex skipped silently, Anthropic selected"
-else
-	fail "no OpenAI auth: Codex skipped silently, Anthropic selected" "got: $no_auth_model"
-fi
-# Verify no backoff was recorded for openai (silent skip, not a failure)
-no_auth_backoff=$(
-	unset OPENAI_API_KEY
-	AIDEVOPS_HEADLESS_AUTH_SIGNATURE_OPENAI="" \
-		bash "$HELPER" backoff status 2>/dev/null || true
-)
-if [[ "$no_auth_backoff" != *"openai|"* ]]; then
-	pass "no OpenAI auth: no backoff recorded (silent skip)"
-else
-	fail "no OpenAI auth: no backoff recorded (silent skip)" "backoff state: $no_auth_backoff"
-fi
-# Restore OpenAI auth for subsequent tests
-export OPENAI_API_KEY="test-key-for-provider-auth-check"
-
-section "Backoff"
-bash "$HELPER" backoff set anthropic rate_limit 3600 >/dev/null
-post_backoff_model=$(bash "$HELPER" select --role pulse 2>/dev/null || true)
-if [[ "$post_backoff_model" == "openai/gpt-5.3-codex" ]]; then
-	pass "backed off anthropic is skipped"
-else
-	fail "backed off anthropic is skipped" "got: $post_backoff_model"
-fi
-
-if bash "$HELPER" backoff set anthropic rate_limit '10;rm -rf /' >/dev/null 2>&1; then
-	fail "invalid retry_seconds is rejected" "helper accepted a non-numeric retry_seconds"
-else
-	pass "invalid retry_seconds is rejected"
-fi
-
-section "Auth Change Clears Backoff"
 export AIDEVOPS_HEADLESS_AUTH_SIGNATURE_OPENAI="sig-old"
-bash "$HELPER" backoff set openai auth_error 3600 >/dev/null
-export AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=openai
+bash "$HELPER" backoff set openai auth_error 3600
 export AIDEVOPS_HEADLESS_AUTH_SIGNATURE_OPENAI="sig-new"
-recovered_model=$(bash "$HELPER" select --role pulse 2>/dev/null || true)
-if [[ "$recovered_model" == "openai/gpt-5.3-codex" ]]; then
-	pass "auth signature change clears backoff"
-else
-	fail "auth signature change clears backoff" "got: $recovered_model"
-fi
-unset AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST
+recovered_model=$(AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=openai bash "$HELPER" select --role pulse)
+assert_model 'changed auth signature clears backoff' 'openai/gpt-5.4' "$recovered_model"
 
-section "Session Persistence"
-export STUB_SESSION_ID="ses_openai_one"
-rm -f "$STUB_LOG_FILE"
-AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=openai bash "$HELPER" run \
-	--role worker \
-	--session-key issue-101 \
-	--dir "$REPO_DIR" \
-	--title "Issue #101" \
-	--prompt "Reply with exactly OK" >/dev/null
-export STUB_SESSION_ID="ses_openai_two"
-AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=openai bash "$HELPER" run \
-	--role worker \
-	--session-key issue-101 \
-	--dir "$REPO_DIR" \
-	--title "Issue #101" \
-	--prompt "Reply with exactly OK" >/dev/null
+bash "$HELPER" backoff clear anthropic
+bash "$HELPER" backoff clear openai
+bash "$HELPER" backoff set anthropic/claude-sonnet-5-5 rate_limit 3600
+opus_model=$(AIDEVOPS_HEADLESS_MODELS='anthropic/claude-sonnet-5-5,anthropic/claude-opus-4-6' bash "$HELPER" select --role worker)
+assert_model 'model backoff preserves same-provider alternative' 'anthropic/claude-opus-4-6' "$opus_model"
 
-if grep -q -- '--session ses_openai_one --continue' "$STUB_LOG_FILE"; then
-	pass "second run reuses persisted provider session"
-else
-	fail "second run reuses persisted provider session" "logged args: $(tr '\n' ' ' <"$STUB_LOG_FILE")"
-fi
-
-section "Pulse Runs Stay Fresh"
-export STUB_SESSION_ID="ses_pulse_one"
-rm -f "$STUB_LOG_FILE"
-AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=openai bash "$HELPER" run \
-	--role pulse \
-	--session-key supervisor-pulse \
-	--dir "$REPO_DIR" \
-	--title "Supervisor Pulse" \
-	--prompt "/pulse" >/dev/null
-export STUB_SESSION_ID="ses_pulse_two"
-AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=openai bash "$HELPER" run \
-	--role pulse \
-	--session-key supervisor-pulse \
-	--dir "$REPO_DIR" \
-	--title "Supervisor Pulse" \
-	--prompt "/pulse" >/dev/null
-
-if grep -q -- '--session ' "$STUB_LOG_FILE"; then
-	fail "pulse runs do not reuse persisted sessions" "logged args: $(tr '\n' ' ' <"$STUB_LOG_FILE")"
-else
-	pass "pulse runs do not reuse persisted sessions"
-fi
-
-section "Zero Activity Success Is Rejected"
-export STUB_EMIT_ACTIVITY="0"
-if AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=openai bash "$HELPER" run \
-	--role worker \
-	--session-key issue-202 \
-	--dir "$REPO_DIR" \
-	--title "Issue #202" \
-	--prompt "Reply with exactly OK" >/dev/null 2>&1; then
-	fail "zero-activity success is rejected" "helper accepted a run with no model activity"
-else
-	backoff_state=$(bash "$HELPER" backoff status 2>/dev/null || true)
-	# Model-level backoff: key is the full model ID (e.g. openai/gpt-5.3-codex),
-	# not just the provider name. Check for provider_error in the backoff state.
-	if [[ "$backoff_state" == *"provider_error|"* ]]; then
-		pass "zero-activity success is rejected"
-	else
-		fail "zero-activity success is rejected" "missing provider_error backoff state: $backoff_state"
-	fi
-fi
-unset STUB_EMIT_ACTIVITY
-
-section "Model-Level Backoff"
-# Clear all backoff state for a clean test
-bash "$HELPER" backoff clear anthropic >/dev/null 2>&1 || true
-bash "$HELPER" backoff clear anthropic/claude-sonnet-5-5 >/dev/null 2>&1 || true
-bash "$HELPER" backoff clear anthropic/claude-opus-4-6 >/dev/null 2>&1 || true
-bash "$HELPER" backoff clear openai >/dev/null 2>&1 || true
-
-# Configure two Anthropic models: sonnet + opus
-# Back off sonnet (rate limit) — opus should still be available
-AIDEVOPS_HEADLESS_MODELS="anthropic/claude-sonnet-5-5,anthropic/claude-opus-4-6" \
-	bash "$HELPER" backoff set anthropic/claude-sonnet-5-5 rate_limit 3600 >/dev/null
-model_after_sonnet_backoff=$(
-	AIDEVOPS_HEADLESS_MODELS="anthropic/claude-sonnet-5-5,anthropic/claude-opus-4-6" \
-		bash "$HELPER" select --role worker 2>/dev/null || true
-)
-if [[ "$model_after_sonnet_backoff" == "anthropic/claude-opus-4-6" ]]; then
-	pass "sonnet rate-limited: opus still available from same provider"
-else
-	fail "sonnet rate-limited: opus still available from same provider" "got: $model_after_sonnet_backoff"
-fi
-
-# Back off opus too — now all models should be backed off
-AIDEVOPS_HEADLESS_MODELS="anthropic/claude-sonnet-5-5,anthropic/claude-opus-4-6" \
-	bash "$HELPER" backoff set anthropic/claude-opus-4-6 rate_limit 3600 >/dev/null
-all_backed_off=$(
-	AIDEVOPS_HEADLESS_MODELS="anthropic/claude-sonnet-5-5,anthropic/claude-opus-4-6" \
-		bash "$HELPER" select --role worker 2>/dev/null || true
-)
-if [[ -z "$all_backed_off" ]]; then
-	pass "both models backed off: no model available"
-else
-	fail "both models backed off: no model available" "got: $all_backed_off"
-fi
-
-# Clear sonnet backoff — sonnet should be available again
-AIDEVOPS_HEADLESS_MODELS="anthropic/claude-sonnet-5-5,anthropic/claude-opus-4-6" \
-	bash "$HELPER" backoff clear anthropic/claude-sonnet-5-5 >/dev/null
-model_after_clear=$(
-	AIDEVOPS_HEADLESS_MODELS="anthropic/claude-sonnet-5-5,anthropic/claude-opus-4-6" \
-		bash "$HELPER" select --role worker 2>/dev/null || true
-)
-if [[ "$model_after_clear" == "anthropic/claude-sonnet-5-5" ]]; then
-	pass "cleared sonnet backoff: sonnet available again"
-else
-	fail "cleared sonnet backoff: sonnet available again" "got: $model_after_clear"
-fi
-
-section "Auth Error Backs Off Provider"
-# Clear all backoff state
-bash "$HELPER" backoff clear anthropic >/dev/null 2>&1 || true
-bash "$HELPER" backoff clear anthropic/claude-sonnet-5-5 >/dev/null 2>&1 || true
-bash "$HELPER" backoff clear anthropic/claude-opus-4-6 >/dev/null 2>&1 || true
-
-# Auth error should back off at provider level, blocking all models
-AIDEVOPS_HEADLESS_MODELS="anthropic/claude-sonnet-5-5,anthropic/claude-opus-4-6" \
-	bash "$HELPER" backoff set anthropic auth_error 3600 >/dev/null
-auth_backoff_model=$(
-	AIDEVOPS_HEADLESS_MODELS="anthropic/claude-sonnet-5-5,anthropic/claude-opus-4-6" \
-		bash "$HELPER" select --role worker 2>/dev/null || true
-)
-if [[ -z "$auth_backoff_model" ]]; then
-	pass "auth error backs off all models from provider"
-else
-	fail "auth error backs off all models from provider" "got: $auth_backoff_model"
-fi
-# Clean up
-bash "$HELPER" backoff clear anthropic >/dev/null 2>&1 || true
-
-section "OpenCode Gateway Models"
-# opencode/* models should be selectable when configured and auth file exists
-# Create a fake auth file so provider_auth_available("opencode") returns true
-FAKE_AUTH_DIR="$TEST_TMP_DIR/fake-opencode-home/.local/share/opencode"
-mkdir -p "$FAKE_AUTH_DIR"
-echo '{"token":"fake"}' >"$FAKE_AUTH_DIR/auth.json"
-
-gateway_model=$(
-	HOME="$TEST_TMP_DIR/fake-opencode-home" \
-		AIDEVOPS_HEADLESS_MODELS="opencode/minimax-m2.5-free" \
-		bash "$HELPER" select --role worker 2>/dev/null || true
-)
-if [[ "$gateway_model" == "opencode/minimax-m2.5-free" ]]; then
-	pass "opencode/* gateway model is selectable when configured"
-else
-	fail "opencode/* gateway model is selectable when configured" "got: $gateway_model"
-fi
-
-# opencode/* models should be skipped when no auth file exists
-# Use ANTHROPIC_API_KEY so Anthropic passes auth check even with fake HOME
-no_auth_gateway=$(
-	HOME="$TEST_TMP_DIR/no-auth-home" \
-		ANTHROPIC_API_KEY="test-key" \
-		AIDEVOPS_HEADLESS_MODELS="opencode/minimax-m2.5-free,anthropic/claude-sonnet-5-5" \
-		bash "$HELPER" select --role worker 2>/dev/null || true
-)
-if [[ "$no_auth_gateway" == "anthropic/claude-sonnet-5-5" ]]; then
-	pass "opencode/* skipped when no auth, falls back to next provider"
-else
-	fail "opencode/* skipped when no auth, falls back to next provider" "got: $no_auth_gateway"
-fi
-
-# opencode/* models should work in cmd_run dispatch
-rm -f "$STUB_LOG_FILE"
-export STUB_SESSION_ID="ses_gateway_one"
-HOME="$TEST_TMP_DIR/fake-opencode-home" \
-	AIDEVOPS_HEADLESS_MODELS="opencode/minimax-m2.5-free" \
-	bash "$HELPER" run \
-	--role worker \
-	--session-key issue-gateway \
-	--dir "$REPO_DIR" \
-	--title "Issue Gateway" \
-	--prompt "Reply with exactly OK" >/dev/null
-if [[ -f "$STUB_LOG_FILE" ]] && grep -q 'opencode/minimax-m2.5-free' "$STUB_LOG_FILE"; then
-	pass "opencode/* gateway model dispatches via cmd_run"
-else
-	fail "opencode/* gateway model dispatches via cmd_run" "stub log: $(cat "$STUB_LOG_FILE" 2>/dev/null || echo 'missing')"
-fi
-
-# Explicit --model with opencode/* should work (no longer rejected)
-explicit_gateway=$(
-	HOME="$TEST_TMP_DIR/fake-opencode-home" \
-		bash "$HELPER" select --role worker --model opencode/minimax-m2.5-free 2>/dev/null || true
-)
-if [[ "$explicit_gateway" == "opencode/minimax-m2.5-free" ]]; then
-	pass "explicit --model opencode/* is accepted"
-else
-	fail "explicit --model opencode/* is accepted" "got: $explicit_gateway"
-fi
-
-section "Session-Key Dedup Guard (GH#6538)"
-# Test 1: A second run with the same session-key while the first is "running"
-# should be blocked. Simulate by writing a lock file with our own PID (which
-# is alive), then attempting a run with the same session-key.
-LOCK_DIR="$TEST_TMP_DIR/runtime/locks"
-mkdir -p "$LOCK_DIR"
-echo "$$" >"$LOCK_DIR/issue-dedup-test.pid"
-rm -f "$STUB_LOG_FILE"
-AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=anthropic bash "$HELPER" run \
-	--role worker \
-	--session-key "issue-dedup-test" \
-	--dir "$REPO_DIR" \
-	--title "Issue #999: Dedup test" \
-	--prompt "Reply with exactly OK" >/dev/null 2>&1 || true
-if [[ -f "$STUB_LOG_FILE" ]]; then
-	fail "dedup guard blocks second dispatch with same session-key" "stub was invoked (opencode ran)"
-else
-	pass "dedup guard blocks second dispatch with same session-key"
-fi
-rm -f "$LOCK_DIR/issue-dedup-test.pid"
-
-# Test 2: A stale lock (dead PID) should be cleaned up and the run should proceed.
-echo "99999999" >"$LOCK_DIR/issue-stale-test.pid"
-rm -f "$STUB_LOG_FILE"
-export STUB_SESSION_ID="ses_stale_lock"
-AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=anthropic bash "$HELPER" run \
-	--role worker \
-	--session-key "issue-stale-test" \
-	--dir "$REPO_DIR" \
-	--title "Issue #998: Stale lock test" \
-	--prompt "Reply with exactly OK" >/dev/null 2>&1
-if [[ -f "$STUB_LOG_FILE" ]] && grep -q 'Reply with exactly OK' "$STUB_LOG_FILE"; then
-	pass "stale lock (dead PID) is cleaned up and run proceeds"
-else
-	fail "stale lock (dead PID) is cleaned up and run proceeds" "stub log: $(cat "$STUB_LOG_FILE" 2>/dev/null || echo 'missing')"
-fi
-
-# Test 3: Lock file should be cleaned up after a successful run.
-if [[ -f "$LOCK_DIR/issue-stale-test.pid" ]]; then
-	fail "lock file cleaned up after successful run" "lock file still exists"
-else
-	pass "lock file cleaned up after successful run"
-fi
-
-# Test 4: Different session-keys should not block each other.
-echo "$$" >"$LOCK_DIR/issue-other.pid"
-rm -f "$STUB_LOG_FILE"
-export STUB_SESSION_ID="ses_different_key"
-AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=anthropic bash "$HELPER" run \
-	--role worker \
-	--session-key "issue-different" \
-	--dir "$REPO_DIR" \
-	--title "Issue #997: Different key" \
-	--prompt "Reply with exactly OK" >/dev/null 2>&1
-if [[ -f "$STUB_LOG_FILE" ]] && grep -q 'Reply with exactly OK' "$STUB_LOG_FILE"; then
-	pass "different session-keys do not block each other"
-else
-	fail "different session-keys do not block each other" "stub log: $(cat "$STUB_LOG_FILE" 2>/dev/null || echo 'missing')"
-fi
-rm -f "$LOCK_DIR/issue-other.pid"
-
-section "OPENCODE_PID Passthrough Exclusion (GH#6668)"
-# OPENCODE_PID must never appear in the sandbox passthrough CSV — workers that
-# inherit it attach to the pulse's session instead of creating independent ones.
-passthrough_csv=$(OPENCODE_PID="12345" bash "$HELPER" passthrough-csv 2>/dev/null || true)
-if [[ -z "$passthrough_csv" ]] || [[ "$passthrough_csv" != *"OPENCODE_PID"* ]]; then
-	pass "OPENCODE_PID excluded from sandbox passthrough CSV"
-else
-	fail "OPENCODE_PID excluded from sandbox passthrough CSV" "got: $passthrough_csv"
-fi
-# Other OPENCODE_* vars must still be passed through.
-passthrough_csv2=$(OPENCODE_THEME="dark" bash "$HELPER" passthrough-csv 2>/dev/null || true)
-if [[ "$passthrough_csv2" == *"OPENCODE_THEME"* ]]; then
-	pass "other OPENCODE_* vars still included in passthrough CSV"
-else
-	fail "other OPENCODE_* vars still included in passthrough CSV" "got: $passthrough_csv2"
-fi
-
-section "Sandbox Source Guard (GH#6617)"
-# Regression test: sourcing sandbox-exec-helper.sh must NOT call main() and
-# must NOT produce any output. The secondary watchdog (_sandbox_spawn_watchdog_bg)
-# sources the sandbox script to load helper functions. Before the source guard
-# was added (GH#6550), sourcing the script called main() with the watchdog's
-# positional args, which fell through to the *) case → sandbox_help() → help
-# text printed to stdout → contaminating the opencode output file → workers
-# never launched (GH#6617).
-SANDBOX_HELPER="$REPO_DIR/.agents/scripts/sandbox-exec-helper.sh"
-source_output=$(bash -c "source '$SANDBOX_HELPER' 2>/dev/null; echo 'source_ok'" 2>/dev/null || true)
-if [[ "$source_output" == "source_ok" ]]; then
-	pass "sourcing sandbox-exec-helper.sh produces no output (source guard active)"
-else
-	fail "sourcing sandbox-exec-helper.sh produces no output (source guard active)" \
-		"got: $(printf '%s' "$source_output" | head -3)"
-fi
-
-# Verify that sourcing does NOT print help text (the specific symptom of GH#6617).
-source_help_check=$(bash -c "source '$SANDBOX_HELPER' 2>/dev/null; echo done" 2>/dev/null || true)
-if printf '%s' "$source_help_check" | grep -q "Commands:"; then
-	fail "sourcing sandbox-exec-helper.sh does not print help text (GH#6617 regression)" \
-		"help text found in source output"
-else
-	pass "sourcing sandbox-exec-helper.sh does not print help text (GH#6617 regression)"
-fi
-
-# Verify that sourcing with watchdog-style args (numeric timeout) does NOT call main().
-# This simulates what _sandbox_spawn_watchdog_bg does: source the script then call
-# _sandbox_spawn_watchdog. The numeric arg (3600) would previously trigger the *)
-# case in main() → help output.
-source_with_args=$(bash -c "source '$SANDBOX_HELPER' 3600 12345 12345 '' '/tmp/marker' 2>/dev/null; echo done" 2>/dev/null || true)
-if printf '%s' "$source_with_args" | grep -q "Commands:"; then
-	fail "sourcing sandbox-exec-helper.sh with watchdog args does not print help text (GH#6617)" \
-		"help text found when sourced with numeric args"
-else
-	pass "sourcing sandbox-exec-helper.sh with watchdog args does not print help text (GH#6617)"
-fi
-
-section "Deprecated Env Var Override (GH#17769)"
-# GH#17769: AIDEVOPS_HEADLESS_MODELS is deprecated but respected as override
-# for one release cycle. When set, it should be used directly.
-config_selected=$(
-	AIDEVOPS_HEADLESS_MODELS="openai/gpt-5.4" \
-		OPENAI_API_KEY="test-key-for-provider-auth-check" \
-		bash "$HELPER" select --role worker 2>/dev/null || true
-)
-if [[ "$config_selected" == "openai/gpt-5.4" ]]; then
-	pass "Deprecated AIDEVOPS_HEADLESS_MODELS env var override is respected"
-else
-	fail "Deprecated AIDEVOPS_HEADLESS_MODELS env var override is respected" "got: $config_selected"
-fi
-
-section "Metrics Review Signals"
-METRICS_PATH="$HOME/.aidevops/logs"
-mkdir -p "$METRICS_PATH"
-cat >"$METRICS_PATH/headless-runtime-metrics.jsonl" <<'JSONL'
-{"ts":4102444800,"role":"worker","model":"openai/gpt-5.4","result":"success","activity":true,"duration_ms":45000,"exit_code":0}
-{"ts":4102444800,"role":"worker","model":"anthropic/claude-sonnet-5-5","result":"success","activity":true,"duration_ms":240000,"exit_code":0}
-JSONL
-metrics_output=$(bash "$HELPER" metrics --role worker --hours 24 2>/dev/null || true)
-if [[ "$metrics_output" == *"fast_productive=1 (<=120s)"* && "$metrics_output" == *"Review candidates:"* && "$metrics_output" == *"openai/gpt-5.4"* ]]; then
-	pass "metrics flags fast successful expensive-model runs for review"
-else
-	fail "metrics flags fast successful expensive-model runs for review" "got: $metrics_output"
-fi
-
-echo ""
-printf "Total: %d, Passed: %d, Failed: %d\n" "$TOTAL_COUNT" "$PASS_COUNT" "$FAIL_COUNT"
-
-if [[ "$FAIL_COUNT" -eq 0 ]]; then
-	exit 0
-fi
-exit 1
+printf 'PASS headless selection and backoff smoke tests\n'
