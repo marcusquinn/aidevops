@@ -86,3 +86,7 @@ From `.agents/tools/build-agent/build-agent.md`:
 - **Triggers**: Observable failure, user correction, contradiction, staleness, repeated friction, reusable success
 - **Process**: Preserve the outcome, cite evidence, classify scope/sensitivity, check duplicates, then fix and verify or route
 - **Duplicates**: Always `rg "pattern" .agents/` before adding instructions
+
+## Search targets
+
+Search keywords, AI-answer questions and search entities live in `context/keywords.md` and `context/keywords/` (standard: `~/.aidevops/agents/seo/keywords-standard.md`). Read them, or run `aidevops keywords brief`, before naming, copy, metadata, schema, media, social or PR work. If the files are missing in a clone, run `aidevops keywords sync`.
