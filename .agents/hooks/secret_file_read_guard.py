@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import stat
 import subprocess  # nosec B404 - fixed git argv, no shell
 import sys
@@ -73,10 +74,12 @@ def _has_loose_secret_source_name(absolute: str) -> bool:
 def _git_tracked_regular_file(absolute: str) -> bool:
     info = os.lstat(absolute)
     directory = os.path.realpath(os.path.dirname(absolute))
-    eligible = stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and not SECRET_PATH_RE.search(directory)
+    git = shutil.which("git") or ""
+    single_regular = stat.S_ISREG(info.st_mode) and info.st_nlink == 1
+    eligible = single_regular and bool(git) and not SECRET_PATH_RE.search(directory)
     if eligible:
         result = subprocess.run(  # nosec B603 - fixed git argv, no shell
-            ["git", "-c", "core.fsmonitor=false", "-C", directory, "ls-files", "--error-unmatch", "--",
+            [git, "-c", "core.fsmonitor=false", "-C", directory, "ls-files", "--error-unmatch", "--",
              os.path.basename(absolute)],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
