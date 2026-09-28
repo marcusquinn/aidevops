@@ -384,6 +384,39 @@ else
 fi
 
 # =============================================================================
+# Test 11 (GH#32723): gh_create_issue under /bin/bash (3.2 on macOS) with
+# nounset and no TODO-derived labels must not abort on empty array expansion.
+# On bash 4.4+ this is a plain smoke test; on 3.2 it reproduces the bug.
+# =============================================================================
+NOUNSET_CALLS="${TMP}/nounset_calls.log"
+: >"$NOUNSET_CALLS"
+nounset_out=$(/bin/bash -uc "
+gh() {
+    printf '%s\n' \"\$*\" >>'${NOUNSET_CALLS}'
+    if [[ \"\$1\" == 'issue' && \"\$2\" == 'create' ]]; then
+        printf 'https://github.com/owner/repo/issues/1\n'
+    fi
+    return 0
+}
+source '${WRAPPERS_FILE}'
+_ensure_origin_labels_for_args() { return 0; }
+_gh_validate_edit_args() { return 0; }
+_gh_guard_public_write_args() { return 0; }
+_rest_should_fallback() { return 1; }
+session_origin_label() { printf 'origin:worker'; return 0; }
+detect_session_origin() { printf 'worker'; return 0; }
+_gh_wrapper_auto_sig() { _GH_WRAPPER_SIG_MODIFIED_ARGS=(\"\$@\"); return 0; }
+_gh_ci_prepare_parent_contract_and_signature --repo owner/repo --title 'nounset smoke' --body 'body'
+gh_create_issue --repo owner/repo --title 'nounset smoke' --body 'body' --label bug
+" 2>&1) || true
+if [[ "$nounset_out" != *"unbound variable"* && "$nounset_out" == *"https://github.com/owner/repo/issues/1"* ]]; then
+	pass "11: gh_create_issue survives nounset with empty arrays under /bin/bash"
+else
+	fail "11: gh_create_issue survives nounset with empty arrays under /bin/bash" \
+		"output: $(printf '%q' "$nounset_out")"
+fi
+
+# =============================================================================
 # Summary
 # =============================================================================
 printf '\n'
