@@ -18,6 +18,7 @@ import {
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { DEFAULT_STATE_DIR, validatedManifestReceipt } from "./source-access-manifest-approval.mjs";
+import { sourceAccessVersionChanged } from "./source-access-guidance.mjs";
 import { MAX_SOURCE_BYTES, hasSymlinkComponent, isGitTrackedFile, sourceDigestMatches,
   trackedFileIdentity, trustedSourceSnapshot } from "./source-access-files.mjs";
 import {
@@ -386,6 +387,7 @@ export function checkSecretReadWithApproval({
   callId = "",
   provenance,
   sourceContext,
+  loadedVersion,
 }) {
   const filePath = readPath(args);
   // Fail closed before tool-name classification. OpenCode hook identities can
@@ -406,7 +408,8 @@ export function checkSecretReadWithApproval({
     return;
   }
 
-  const brokerCurrent = brokerMatchesCurrentRelease(brokerMatches, scriptsDir);
+  const staleVersion = sourceAccessVersionChanged(scriptsDir, loadedVersion);
+  const brokerCurrent = !staleVersion && brokerMatchesCurrentRelease(brokerMatches, scriptsDir);
   const continuedApproval = brokerCurrent
     ? provenance?.authorizeRead({ sessionId, callId, filePath, reason, args, sourceContext })
     : false;
@@ -426,6 +429,7 @@ export function checkSecretReadWithApproval({
     filePath,
     log,
     requestId,
+    staleVersion,
     denialReason: provenance?.denialReason(sessionId, filePath) || "missing",
     tool,
   });
