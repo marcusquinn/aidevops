@@ -7,6 +7,9 @@ set -euo pipefail
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HELPER="$REPO_DIR/.agents/scripts/headless-runtime-helper.sh"
 VERBOSE="${1:-}"
+# A nested test dispatch is not the parent worker's issue; keep the identity
+# guard enabled in production but remove the inherited worker identity here.
+unset WORKER_ISSUE_NUMBER WORKER_REPO_SLUG WORKER_WORKTREE_PATH
 
 PASS_COUNT=0
 FAIL_COUNT=0
@@ -103,7 +106,7 @@ if [[ "$first_model" == "anthropic/claude-sonnet-5-5" ]]; then
 else
 	fail "first selection uses anthropic default" "got: $first_model"
 fi
-if [[ "$second_model" == "openai/gpt-5.3-codex" ]]; then
+if [[ "$second_model" == "openai/gpt-5.4" ]]; then
 	pass "second selection alternates to openai"
 else
 	fail "second selection alternates to openai" "got: $second_model"
@@ -111,7 +114,7 @@ fi
 
 section "Allowlist"
 allowlisted_model=$(AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=openai bash "$HELPER" select --role worker 2>/dev/null || true)
-if [[ "$allowlisted_model" == "openai/gpt-5.3-codex" ]]; then
+if [[ "$allowlisted_model" == "openai/gpt-5.4" ]]; then
 	pass "openai allowlist restricts selection"
 else
 	fail "openai allowlist restricts selection" "got: $allowlisted_model"
@@ -147,7 +150,7 @@ export OPENAI_API_KEY="test-key-for-provider-auth-check"
 section "Backoff"
 bash "$HELPER" backoff set anthropic rate_limit 3600 >/dev/null
 post_backoff_model=$(bash "$HELPER" select --role pulse 2>/dev/null || true)
-if [[ "$post_backoff_model" == "openai/gpt-5.3-codex" ]]; then
+if [[ "$post_backoff_model" == "openai/gpt-5.4" ]]; then
 	pass "backed off anthropic is skipped"
 else
 	fail "backed off anthropic is skipped" "got: $post_backoff_model"
@@ -165,7 +168,7 @@ bash "$HELPER" backoff set openai auth_error 3600 >/dev/null
 export AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=openai
 export AIDEVOPS_HEADLESS_AUTH_SIGNATURE_OPENAI="sig-new"
 recovered_model=$(bash "$HELPER" select --role pulse 2>/dev/null || true)
-if [[ "$recovered_model" == "openai/gpt-5.3-codex" ]]; then
+if [[ "$recovered_model" == "openai/gpt-5.4" ]]; then
 	pass "auth signature change clears backoff"
 else
 	fail "auth signature change clears backoff" "got: $recovered_model"

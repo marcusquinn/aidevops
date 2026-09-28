@@ -314,8 +314,18 @@ test_post_kill_marks_thrash_as_blocked() {
 		return 0
 	}
 
+	gh_issue_comment() {
+		printf 'comment %s\n' "$*" >>"$gh_calls_file"
+		return 0
+	}
+	set_issue_status() {
+		printf 'status %s\n' "$*" >>"$gh_calls_file"
+		return 0
+	}
+	_watchdog_unlock_issue() { return 0; }
+	_watchdog_record_failure_and_escalate() { return 0; }
 	gh() {
-		printf '%s\n' "$*" >>"$gh_calls_file"
+		printf 'gh %s\n' "$*" >>"$gh_calls_file"
 		return 0
 	}
 
@@ -324,7 +334,7 @@ test_post_kill_marks_thrash_as_blocked() {
 	local captured_calls=""
 	captured_calls=$(<"$gh_calls_file")
 
-	if [[ "$captured_calls" != *"--add-label status:blocked"* ]]; then
+	if [[ "$captured_calls" != *"status 4187 marcusquinn/aidevops blocked"* ]]; then
 		print_result "thrash kills relabel issues as blocked" 1 "Expected status:blocked label on thrash kill"
 		return 0
 	fi
@@ -353,8 +363,18 @@ test_post_kill_marks_runtime_as_available() {
 		return 0
 	}
 
+	gh_issue_comment() {
+		printf 'comment %s\n' "$*" >>"$gh_calls_file"
+		return 0
+	}
+	set_issue_status() {
+		printf 'status %s\n' "$*" >>"$gh_calls_file"
+		return 0
+	}
+	_watchdog_unlock_issue() { return 0; }
+	_watchdog_record_failure_and_escalate() { return 0; }
 	gh() {
-		printf '%s\n' "$*" >>"$gh_calls_file"
+		printf 'gh %s\n' "$*" >>"$gh_calls_file"
 		return 0
 	}
 
@@ -363,7 +383,7 @@ test_post_kill_marks_runtime_as_available() {
 	local captured_calls=""
 	captured_calls=$(<"$gh_calls_file")
 
-	if [[ "$captured_calls" != *"--add-label status:available"* ]]; then
+	if [[ "$captured_calls" != *"status 4188 marcusquinn/aidevops available"* ]]; then
 		print_result "runtime kills keep issues dispatchable" 1 "Expected status:available label for runtime kill"
 		return 0
 	fi
@@ -593,8 +613,18 @@ test_post_kill_marks_backoff_as_available() {
 		return 0
 	}
 
+	gh_issue_comment() {
+		printf 'comment %s\n' "$*" >>"$gh_calls_file"
+		return 0
+	}
+	set_issue_status() {
+		printf 'status %s\n' "$*" >>"$gh_calls_file"
+		return 0
+	}
+	_watchdog_unlock_issue() { return 0; }
+	_watchdog_record_failure_and_escalate() { return 0; }
 	gh() {
-		printf '%s\n' "$*" >>"$gh_calls_file"
+		printf 'gh %s\n' "$*" >>"$gh_calls_file"
 		return 0
 	}
 
@@ -603,12 +633,12 @@ test_post_kill_marks_backoff_as_available() {
 	local captured_calls=""
 	captured_calls=$(<"$gh_calls_file")
 
-	if [[ "$captured_calls" != *"--add-label status:available"* ]]; then
+	if [[ "$captured_calls" != *"status 5650 marcusquinn/aidevops available"* ]]; then
 		print_result "backoff kills re-queue issues as available" 1 "Expected status:available label for backoff kill"
 		return 0
 	fi
 
-	if [[ "$captured_calls" == *"--add-label status:blocked"* ]]; then
+	if [[ "$captured_calls" == *"status 5650 marcusquinn/aidevops blocked"* ]]; then
 		print_result "backoff kills re-queue issues as available" 1 "Backoff kills should NOT set status:blocked"
 		return 0
 	fi
