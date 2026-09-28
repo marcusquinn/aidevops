@@ -104,7 +104,14 @@ test("V2 event processing continues after one handler failure", async () => {
   assert.deepEqual(seen, ["first", "second"]);
 });
 
-test("V2 setup registers SDK lifecycle hooks and disposes every registration", async () => {
+for (const budgetEnabled of [false, true]) test(`V2 setup registers SDK lifecycle hooks and disposes every registration (240K budget ${budgetEnabled ? "enabled" : "disabled"})`, async () => {
+  const previousSettingsFile = process.env.AIDEVOPS_SETTINGS_FILE;
+  const settingsDir = mkdtempSync(join(tmpdir(), "aidevops-v2-adapter-"));
+  process.env.AIDEVOPS_SETTINGS_FILE = join(settingsDir, "settings.json");
+  try {
+    if (budgetEnabled) {
+      writeFileSync(process.env.AIDEVOPS_SETTINGS_FILE, JSON.stringify({ runtime: { opencode: { v2_compaction_target: 240000 } } }));
+    }
   const registered = [];
   const disposed = [];
   const eventState = { returned: false };
@@ -178,6 +185,7 @@ test("V2 setup registers SDK lifecycle hooks and disposes every registration", a
   assert.deepEqual(registered.map(({ domain, name }) => `${domain}:${name}`), [
     "mcp:transform",
     "agent:transform",
+    ...(budgetEnabled ? ["catalog:transform"] : []),
     "tool:transform",
     "tool:execute.before",
     "tool:execute.after",
@@ -206,6 +214,11 @@ test("V2 setup registers SDK lifecycle hooks and disposes every registration", a
   context.event.subscribe = async () => { throw new Error("synthetic subscription failure"); };
   await assert.rejects(() => setupAidevopsV2(context), /synthetic subscription failure/);
   assert.deepEqual(disposed.sort(), registered.map(({ domain, name }) => `${domain}:${name}`).sort());
+  } finally {
+    if (previousSettingsFile === undefined) delete process.env.AIDEVOPS_SETTINGS_FILE;
+    else process.env.AIDEVOPS_SETTINGS_FILE = previousSettingsFile;
+    rmSync(settingsDir, { recursive: true, force: true });
+  }
 });
 
 test("V2 compatibility client translates V1 session request shapes", async () => {
