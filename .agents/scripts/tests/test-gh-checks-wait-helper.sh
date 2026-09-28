@@ -60,10 +60,12 @@ write_fixture() {
 
 run_fixture_wait() {
 	local fixture_dir="$1"
+	local required_contexts="${AIDEVOPS_GH_CHECKS_TEST_REQUIRED_CONTEXTS-}"
 	shift
 	AIDEVOPS_GH_CHECKS_FIXTURE_DIR="$fixture_dir" \
 		AIDEVOPS_GH_CHECKS_TEST_NO_SLEEP=1 \
 		AIDEVOPS_GH_SINGLEFLIGHT_DISABLE=1 \
+		AIDEVOPS_GH_CHECKS_TEST_REQUIRED_CONTEXTS="$required_contexts" \
 		AIDEVOPS_GH_CHECKS_TEST_HEAD="${AIDEVOPS_GH_CHECKS_TEST_HEAD_OVERRIDE-fixture-head}" \
 		"$HELPER" wait 123 --repo example/repo --initial-interval 1 --max-interval 4 "$@"
 	return $?
@@ -86,6 +88,13 @@ write_fixture "$empty_dir" 1 '[]'
 empty_output=$(run_fixture_wait "$empty_dir")
 assert_contains "no required checks is explicit terminal success" "PASS: verified no required checks; optional checks were not evaluated (use --all to wait for all checks)" "$empty_output"
 
+set +e
+configured_missing_output=$(AIDEVOPS_GH_CHECKS_TEST_REQUIRED_CONTEXTS=$'Format\nLint' run_fixture_wait "$empty_dir" --timeout 0 2>&1)
+configured_missing_rc=$?
+set -e
+[[ "$configured_missing_rc" -eq 8 ]] && pass "configured but unreported required checks remain pending" || fail "configured but unreported required checks remain pending" "got ${configured_missing_rc}"
+assert_contains "configured but unreported required checks time out as pending" "TIMEOUT: required checks remain non-terminal" "$configured_missing_output"
+
 all_checks_dir="${TMPDIR_TEST}/all-checks"
 write_fixture "$all_checks_dir" 1 '[{"name":"Preview","workflow":"Deploy","state":"PENDING","bucket":"pending","link":""}]'
 write_fixture "$all_checks_dir" 2 '[{"name":"Preview","workflow":"Deploy","state":"SUCCESS","bucket":"pass","link":""}]'
@@ -106,6 +115,10 @@ if [[ "${1:-}" == "pr" && "${2:-}" == "view" ]]; then
 	exit 0
 fi
 if [[ "${1:-}" == "api" && "${2:-}" == "repos/example/repo/pulls/123" ]]; then
+	if [[ "${3:-}" == "--jq" ]]; then
+		printf '%s\n' main
+		exit 0
+	fi
 	if [[ "${GH_TEST_MODE:-no-required}" == "local-deferral" || "${GH_TEST_MODE:-no-required}" == "local-deferral-once" ]]; then
 		count=0
 		[[ ! -s "${GH_TEST_CALL_COUNT:-}" ]] || count=$(<"$GH_TEST_CALL_COUNT")
@@ -117,6 +130,22 @@ if [[ "${1:-}" == "api" && "${2:-}" == "repos/example/repo/pulls/123" ]]; then
 		fi
 	fi
 	printf '%s\n' '{"number":123,"node_id":"PR_fixture","head":{"ref":"feature/test","sha":"0123456789abcdef0123456789abcdef01234567"}}'
+	exit 0
+fi
+if [[ "${1:-}" == "api" && "${2:-}" == "repos/example/repo/branches/main/protection/required_status_checks" ]]; then
+	if [[ "${GH_TEST_MODE:-}" == "required-protection" ]]; then
+		printf '%s\n' '{"contexts":["Format"]}'
+	else
+		printf '%s\n' '{"contexts":[],"checks":[]}'
+	fi
+	exit 0
+fi
+if [[ "${1:-}" == "api" && "${2:-}" == "repos/example/repo/rules/branches/main" ]]; then
+	if [[ "${GH_TEST_MODE:-}" == "required-ruleset" ]]; then
+		printf '%s\n' '[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"Lint"}]}}]'
+	else
+		printf '%s\n' '[]'
+	fi
 	exit 0
 fi
 if [[ "${1:-}" == "api" && "${2:-}" == "graphql" ]]; then
@@ -134,6 +163,15 @@ chmod +x "${live_bin}/gh"
 live_no_required_output=$(PATH="${live_bin}:$PATH" AIDEVOPS_GH_CHECKS_TEST_NO_SLEEP=1 AIDEVOPS_GH_SINGLEFLIGHT_DISABLE=1 \
 	"$HELPER" wait 123 --repo example/repo --timeout 0 2>&1)
 assert_contains "canonical no-required message is explicit terminal success" "PASS: verified no required checks; optional checks were not evaluated" "$live_no_required_output"
+
+for policy_mode in required-protection required-ruleset; do
+	set +e
+	policy_output=$(PATH="${live_bin}:$PATH" GH_TEST_MODE="$policy_mode" AIDEVOPS_GH_CHECKS_TEST_NO_SLEEP=1 AIDEVOPS_GH_SINGLEFLIGHT_DISABLE=1 \
+		"$HELPER" wait 123 --repo example/repo --timeout 0 2>&1)
+	policy_rc=$?
+	set -e
+	[[ "$policy_rc" -eq 8 ]] && pass "$policy_mode: unreported context remains pending" || fail "$policy_mode: unreported context remains pending" "got ${policy_rc}"
+done
 
 set +e
 live_api_error_output=$(PATH="${live_bin}:$PATH" GH_TEST_MODE=api-error AIDEVOPS_GH_CHECKS_TEST_NO_SLEEP=1 AIDEVOPS_GH_SINGLEFLIGHT_DISABLE=1 \

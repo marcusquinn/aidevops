@@ -18,6 +18,7 @@ readonly _GCW_BUCKET_PASS="pass" _GCW_BUCKET_PENDING="pending" _GCW_BUCKET_SKIPP
 _GCW_ACTIVE_DEFERRAL=""
 _GCW_API_ERROR_VISIBLE=0
 _GCW_NEXT_INTERVAL=""
+_GCW_EMPTY_REQUIRED_SETTLE_SECONDS="${AIDEVOPS_GH_CHECKS_EMPTY_SETTLE_SECONDS:-90}"
 
 usage() {
 	cat <<'EOF'
@@ -278,11 +279,61 @@ emit_transitions() {
 	return 0
 }
 
+configured_required_contexts() {
+	local pr_number="$1"
+	local repo="$2"
+	local base_branch="" protection_json="" rules_json=""
+	if [[ -n "${AIDEVOPS_GH_CHECKS_TEST_REQUIRED_CONTEXTS+x}" ]]; then
+		printf '%s\n' "$AIDEVOPS_GH_CHECKS_TEST_REQUIRED_CONTEXTS"
+		return 0
+	fi
+	base_branch=$(gh api "repos/${repo}/pulls/${pr_number}" --jq '.base.ref // empty' 2>/dev/null) || return 1
+	[[ -n "$base_branch" ]] || return 1
+	protection_json=$(gh api "repos/${repo}/branches/${base_branch}/protection/required_status_checks" 2>/dev/null) || return 1
+	rules_json=$(gh api "repos/${repo}/rules/branches/${base_branch}" 2>/dev/null) || return 1
+	printf '%s\n%s\n' "$protection_json" "$rules_json" | jq -sr '
+		if length != 2 or (.[0] | type) != "object" or (.[1] | type) != "array" then
+			error("invalid required-check policy")
+		else
+			(.[0] | (.contexts // [])[], (.checks // [])[].context? // empty),
+			(.[1][] | select(.type == "required_status_checks") | (.parameters.required_status_checks // [])[] | (.context // .name // empty))
+		end
+	' | sort -u || return 1
+	return 0
+}
+
+configured_context_missing_from_checks() {
+	local configured_contexts="$1"
+	local checks="$2"
+	local context=""
+	while IFS= read -r context; do
+		[[ -z "$context" ]] && continue
+		printf '%s' "$checks" | jq -e --arg context "$context" 'any(.[]; .name == $context)' >/dev/null || return 0
+	done <<<"$configured_contexts"
+	return 1
+}
+
 classify_state() {
 	local checks="$1"
 	local required_only="$2"
+	local pr_number="$3"
+	local repo="$4"
+	local elapsed="$5"
 	local count=""
 	count=$(printf '%s' "$checks" | jq 'length')
+	if [[ "$required_only" -eq 1 ]]; then
+		local configured_contexts="" configured_rc=0
+		configured_contexts=$(configured_required_contexts "$pr_number" "$repo") || configured_rc=$?
+		if [[ "$configured_rc" -eq 0 && -n "$configured_contexts" ]] &&
+			configured_context_missing_from_checks "$configured_contexts" "$checks"; then
+			printf 'pending\n'
+			return 0
+		fi
+		if [[ "$count" -eq 0 && "$configured_rc" -ne 0 && "$elapsed" -lt "$_GCW_EMPTY_REQUIRED_SETTLE_SECONDS" ]]; then
+			printf 'pending\n'
+			return 0
+		fi
+	fi
 	if [[ "$count" -eq 0 ]]; then
 		if [[ "$required_only" -eq 1 ]]; then
 			printf 'no-required\n'
@@ -439,7 +490,7 @@ wait_for_checks() {
 			next_heartbeat=$((now_epoch + heartbeat_interval))
 		fi
 
-		classification=$(classify_state "$current" "$required_only")
+		classification=$(classify_state "$current" "$required_only" "$pr_number" "$repo" "$elapsed")
 		case "$classification" in
 		failure)
 			emit_failure_details "$current"
