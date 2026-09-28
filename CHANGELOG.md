@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.37.20] - 2026-09-28
+
+### Fixed
+
+- macOS broker state under /private/var/db
+- replace consumer-repo root allowlist with artifact guard and document work-notes location
+
 ## [3.37.19] - 2026-09-28
 
 ### Added
