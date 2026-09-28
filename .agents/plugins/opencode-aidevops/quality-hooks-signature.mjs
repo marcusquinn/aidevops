@@ -119,6 +119,45 @@ function _generateSignature(helperPath, bodyValue, log, options = {}) {
   }
 }
 
+// Preserve source offsets for surgical rewrites while ignoring flags inside
+// quoted argument values. Incomplete quoting fails closed.
+function _unquotedTokens(cmd) {
+  const tokens = [];
+  let text = "";
+  let start = -1;
+  let quote = "";
+  const flush = () => {
+    if (start !== -1) tokens.push({ text, start });
+    text = "";
+    start = -1;
+  };
+  for (let i = 0; i < cmd.length; i++) {
+    const ch = cmd[i];
+    if (!quote && (/\s/.test(ch) || ch === ";" || ch === "|" || ch === "&")) {
+      flush();
+      continue;
+    }
+    if (start === -1) start = i;
+    if (ch === "'" && quote !== '"') {
+      quote = quote === "'" ? "" : "'";
+    } else if (ch === '"' && quote !== "'") {
+      quote = quote === '"' ? "" : '"';
+    } else if (ch === "\\" && quote !== "'") {
+      if (++i >= cmd.length) return [];
+      text += cmd[i];
+    } else {
+      text += ch;
+    }
+  }
+  if (quote) return [];
+  flush();
+  return tokens;
+}
+
+function _bodyToken(token) {
+  return /^(?:--body(?:-file)?|--comment|-c)(?:=|$)/.test(token.text);
+}
+
 /**
  * Check if the command uses unparseable body syntax (heredoc, process
  * substitution, or command substitution in the body argument). These forms
@@ -127,11 +166,11 @@ function _generateSignature(helperPath, bodyValue, log, options = {}) {
  * @param {string} cmd
  * @returns {boolean}
  */
-function _hasUnparseableBody(cmd) {
-  const bodyStart = cmd.search(/(?:--(?:body(?:-file)?|comment)|-c)(?:=|\s)/);
+function _hasUnparseableBody(cmd, tokens) {
+  const bodyStart = tokens.find(_bodyToken)?.start ?? -1;
   const afterBody = bodyStart === -1 ? "" : cmd.slice(bodyStart);
   return (
-    /(?:--(?:body(?:-file)?|comment)|-c)\s*=?\s*(?:<<-?\s*['"]?\w+|<\()/.test(cmd) ||
+    (bodyStart !== -1 && /^(?:--(?:body(?:-file)?|comment)|-c)\s*=?\s*(?:<<-?\s*['"]?\w+|<\()/.test(afterBody)) ||
     afterBody.includes("$(") ||
     /`[^`]*`/.test(afterBody)
   );
@@ -147,15 +186,18 @@ function _hasUnparseableBody(cmd) {
  * @param {string} cmd
  * @returns {{ match: RegExpMatchArray, bodyValue: string, quote: string } | null}
  */
-function _matchBodyArg(cmd) {
+function _matchBodyArg(cmd, tokens) {
+  const token = tokens.find(({ text }) => /^(?:--body|--comment|-c)(?:=|$)/.test(text));
+  if (!token) return null;
   const patterns = [
     { re: /(?:--(?:body|comment)|-c)\s+"((?:[^"\\]|\\.)*)"/, quote: '"' },
     { re: /(?:--(?:body|comment)|-c)\s+'((?:[^'\\]|\\.)*)'/, quote: "'" },
     { re: /(?:--(?:body|comment)|-c)=(['"])((?:(?!\1).)*)\1/, quote: null },
   ];
   for (const pat of patterns) {
-    const m = cmd.match(pat.re);
+    const m = cmd.slice(token.start).match(new RegExp(`^${pat.re.source}`));
     if (!m) continue;
+    m.index = token.start;
     const quote = pat.quote !== null ? pat.quote : m[1];
     const bodyValue = pat.quote !== null ? m[1] : m[2];
     return { match: m, bodyValue, quote };
@@ -195,7 +237,7 @@ function _repairBodyArg(cmd, parsed, helperPath, log, options = {}) {
   const fullMatch = match[0];
   const newArg = fullMatch.slice(0, -1) + sig + quote;
   log("INFO", `Auto-appended signature footer to --body arg (t2685)`);
-  return { status: "ok", cmd: cmd.replace(fullMatch, newArg) };
+  return { status: "ok", cmd: cmd.slice(0, match.index) + newArg + cmd.slice(match.index + fullMatch.length) };
 }
 
 /**
@@ -222,17 +264,18 @@ export function tryRepairSignature(cmd, scriptsDir, log, options = {}) {
   }
 
   const helperPath = join(scriptsDir, "gh-signature-helper.sh");
-  if (_hasUnparseableBody(cmd)) {
+  const tokens = _unquotedTokens(cmd);
+  if (_hasUnparseableBody(cmd, tokens)) {
     log("WARN", "Command has unparseable body (heredoc/command-sub); refusing auto-repair (t2685)");
     return { status: "fail", reason: FAIL_REASON.UNPARSEABLE_BODY };
   }
 
   // --body-file PATH form: filesystem-side repair.
-  const bodyFileMatch = cmd.match(
-    /--body-file(?:=(['"]?)([^\s'"]+)\1|\s+(['"]?)([^\s'"]+)\3)/,
-  );
-  if (bodyFileMatch) {
-    const filePath = bodyFileMatch[2] || bodyFileMatch[4];
+  const fileIndex = tokens.findIndex(({ text }) => text === "--body-file" || text.startsWith("--body-file="));
+  if (fileIndex !== -1) {
+    const flag = tokens[fileIndex].text;
+    const filePath = flag === "--body-file" ? tokens[fileIndex + 1]?.text : flag.slice("--body-file=".length);
+    if (!filePath) return { status: "fail", reason: FAIL_REASON.BODY_ARG_NO_MATCH };
     return repairBodyFile(cmd, filePath, helperPath, log, {
       commandWorkdir: options.commandWorkdir,
       sigMarker: SIG_MARKER,
@@ -244,7 +287,7 @@ export function tryRepairSignature(cmd, scriptsDir, log, options = {}) {
 
   // --body VALUE form: command-side repair.
   const helperAvailable = existsSync(helperPath);
-  const parsed = helperAvailable ? _matchBodyArg(cmd) : null;
+  const parsed = helperAvailable ? _matchBodyArg(cmd, tokens) : null;
   if (!helperAvailable || !parsed) {
     const reason = helperAvailable ? FAIL_REASON.BODY_ARG_NO_MATCH : FAIL_REASON.HELPER_MISSING;
     const detail = helperAvailable ? undefined : helperPath;
