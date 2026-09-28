@@ -71,8 +71,9 @@ when the config entry cannot be written. To check this, run
 `opencode2 api GET /api/plugin`: it should list exactly one `aidevops` entry
 with `status: active`.
 
-V1 loads the framework guide through its config `instructions`. V2 has no such
-entry, so setup links `~/.aidevops/agents/AGENTS.md` to
+V1 loads the framework guide through its config `instructions`. V2's upstream
+migration guide says `instructions` requires no migration, but aidevops setup
+also links `~/.aidevops/agents/AGENTS.md` to
 `~/.aidevops/runtimes/opencode-v2/config/opencode/AGENTS.md`; a user-authored
 file there is kept. The V2 background service serves every later session, so
 the shim drops caller session identity, headless flags, and bundle pins before
@@ -82,9 +83,21 @@ Plugin log lines `Session greeting skipped for <session>: <reason>` explain a
 missing greeting. To check parity, compare a fresh session's `core/instructions`
 in the V2 `instruction_state` table with the V1 system prompt.
 
-V2 promotion requires the isolated plugin, security-hook, lifecycle-cleanup,
-OAuth/MCP, headless execution, and V1 rollback gates to pass. Until then, do not
+V2 promotion requires all six gates below. The weekly Linux canary checks both
+profiles but does not substitute for the other gates. Until all pass, do not
 change the profile document's `default` from `v1`.
+
+| Gate | Check before promotion |
+|------|------------------------|
+| Plugin loaded and tools present | `AIDEVOPS_OPENCODE_PROFILE=v2 .agents/scripts/opencode-pin-canary.sh canary latest` (plugin health marker and aidevops tools); inspect the native tool diff. |
+| Security hooks | `node --test .agents/plugins/opencode-aidevops/tests/test-permission-broker.mjs` and manually deny an unsafe edit in a V2 session. |
+| Lifecycle cleanup | Manually start then exit a standalone V2 session and verify the event subscription and MCP connections close without residual processes. |
+| OAuth/MCP | Manually check a V2 OAuth-backed model and connect/disconnect one configured MCP server using the isolated profile. |
+| Headless execution | The `OpenCode Pin Canary` workflow runs isolated baseline/candidate probes for both profiles; inspect the V2 artifact and result. |
+| V1 rollback | `bash .agents/scripts/tests/test-opencode-runtime-profile.sh` then `AIDEVOPS_OPENCODE_PROFILE=v1 ./setup.sh --non-interactive` on an isolated installation and confirm V1 config and plugin are restored. |
+
+The V2 pin remains 2.0.3 until a passing current-release V2 canary qualifies
+the new version. Do not infer compatibility from the V1 result.
 
 The "via aidevops" Anthropic 4.x picker entries were OpenCode 1 config-hook
 injections, not a separate OAuth transport; its native Anthropic models still
