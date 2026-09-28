@@ -1436,7 +1436,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18501 fix: keep pending auto-dispatch issues dispatchable and make priority:critical/high lead dispatch order #bug #framework #pulse #interactive #auto-dispatch #priority:high tier:standard ~1h ref:GH#32703 logged:2026-09-28 -> [todo/tasks/t18501-brief.md] pr:#32707 completed:2026-09-28
 
-- [ ] t18502 OpenCode V2 promotion gates: weekly V2 canary, plugin/tool probe, documented gate checks, requalified pin #enhancement #framework #opencode #interactive #auto-dispatch tier:standard ~3.5h ref:GH#32704 logged:2026-09-28 -> [todo/tasks/t18502-brief.md]
+- [x] t18502 OpenCode V2 promotion gates: weekly V2 canary, plugin/tool probe, documented gate checks, requalified pin #enhancement #framework #opencode #interactive #auto-dispatch tier:standard ~3.5h ref:GH#32704 logged:2026-09-28 -> [todo/tasks/t18502-brief.md] pr:#32759 completed:2026-09-28
 
 - [ ] t18490 docs: refresh TTS/music provider guidance (NanoGPT audio route, OpenAI TTS, OAuth scope) and Remotion BT.709 delivery flags #auto-dispatch #documentation #interactive tier:simple ~45m ref:GH#32610 logged:2026-09-27 -> [todo/tasks/t18490-brief.md]
 
@@ -1460,17 +1460,17 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18510 fix(setup): V1 plugin pass must not write OpenCode V2 live config from ambient V2 env #bug #interactive tier:standard ~1h ref:GH#32738 logged:2026-09-28 pr:#32740 completed:2026-09-28
 
-- [ ] t18514 feat(pulse): runner-local AI owner for terminal-blocker circuits #enhancement #interactive tier:thinking ~3h ref:GH#32754 logged:2026-09-28
+- [x] t18514 feat(pulse): runner-local AI owner for terminal-blocker circuits #enhancement #interactive tier:thinking ~3h ref:GH#32754 logged:2026-09-28 pr:#32758 completed:2026-09-28
 
-- [ ] t18515 Re-measure dispatch stage timings 24h after the gate reorder (GH#32729, deployed v3.37.12 at 2026-09-28T02:52Z): compare `dedup.consolidation` calls per `dedup.dedup_check` (baseline 0.99) and `dedup.dedup_check` p50 (baseline 44s) in `~/.aidevops/logs/dispatch-stages.tsv` for the 24h before vs after; also count `trigger=blocker_recovery` supervisor runs and recorded decisions under `~/.aidevops/.agent-workspace/terminal-blocker-recovery/decisions/` #interactive #chore ~20m logged:2026-09-28 start:2026-09-29T03:00Z
+- [ ] t18515 Re-measure dispatch stage timings 24h after the gate reorder (GH#32729, deployed v3.37.12 at 2026-09-28T02:52Z): compare `dedup.consolidation` calls per `dedup.dedup_check` (baseline 0.99) and `dedup.dedup_check` p50 (baseline 44s) in `~/.aidevops/logs/dispatch-stages.tsv` for the 24h before vs after; also count `trigger=blocker_recovery` supervisor runs and recorded decisions under `~/.aidevops/.agent-workspace/terminal-blocker-recovery/decisions/` #interactive #chore ~20m ref:GH#32765 logged:2026-09-28 start:2026-09-29T03:00Z
 
 - [x] t18495 fix: guard merged-PR reconcile stages 1-2 against recurrent file-size debt #auto-dispatch #bug #pulse #interactive tier:standard ~1h ref:GH#32640 logged:2026-09-27 -> [todo/tasks/t18495-brief.md] pr:#32642 completed:2026-09-27
 
 - [x] t18500 Show AIDevOps and OpenCode versions in OpenCode V2 TUI slots #feat ref:GH#32698 pr:#32699 completed:2026-09-28
 
-- [ ] t18509 feat(seo): search targets standard — context/keywords.md registry, team hub sync, budgeted rank/AI tracking, ecommerce drill-down, init scaffold and repo backfill #feature #seo #framework #interactive tier:thinking ~6h ref:GH#32739 logged:2026-09-28 -> [todo/tasks/t18509-brief.md]
+- [x] t18509 feat(seo): search targets standard — context/keywords.md registry, team hub sync, budgeted rank/AI tracking, ecommerce drill-down, init scaffold and repo backfill #feature #seo #framework #interactive tier:thinking ~6h ref:GH#32739 logged:2026-09-28 -> [todo/tasks/t18509-brief.md] pr:#32746 completed:2026-09-28
 
-- [ ] t18511 fix(design): make the brand-identity.toon template valid TOON #bug #design #interactive tier:standard ~45m ref:GH#32741 logged:2026-09-28 -> [todo/tasks/t18511-brief.md]
+- [x] t18511 fix(design): make the brand-identity.toon template valid TOON #bug #design #interactive tier:standard ~45m ref:GH#32741 logged:2026-09-28 -> [todo/tasks/t18511-brief.md] pr:#32750 completed:2026-09-28
 
 ## In Progress
 
@@ -5006,3 +5006,4 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t18508 Quality sweep: publish partial results when a large repo exceeds the per-repo budget #auto-dispatch #bug ref:GH#32737
 - [ ] t18507 test(dispatch): repair four structural tests stale after pulse-dispatch-core split #auto-dispatch #bug ref:GH#32733
 - [ ] t18506 Persistent dashboard issues: accuracy, privacy and public meaningfulness #enhancement ref:GH#32730
+- [ ] t18513 Quality dashboard comment hygiene silently no-ops on large threads #bug ref:GH#32752
