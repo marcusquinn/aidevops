@@ -581,10 +581,10 @@ Commands:
   search "query"                       Search existing issues for duplicates
   prompt-reproducer                    Output the reproducer section template for framework bugs
   validate-brief <file>                Validate that a brief body contains required sections
-	check-fingerprint "title" "body" | --body-file "path"
-	                                     Dedup check: prints OK or DUPLICATE:<num>:<secs_ago>
-	record-fingerprint "title" "body" N | --body-file "path" N
-	                                     Record fingerprint after issue #N was created
+  check-fingerprint "title" "body" | --body-file "path"
+                                     Dedup check: prints OK or DUPLICATE:<num>:<secs_ago>
+  record-fingerprint "title" "body" N | --body-file "path" N
+                                     Record fingerprint after issue #N was created
   help                                 Show this help message
 
 Examples:
@@ -593,11 +593,11 @@ Examples:
   log-issue-helper.sh check-auth
   log-issue-helper.sh search "update check"
   log-issue-helper.sh prompt-reproducer
-	log-issue-helper.sh validate-brief /tmp/issue-body.md
-	log-issue-helper.sh check-fingerprint "bug: foo" "\$body_text"
-	log-issue-helper.sh check-fingerprint "bug: foo" --body-file /tmp/issue-body.md
-	log-issue-helper.sh record-fingerprint "bug: foo" "\$body_text" 20312
-	log-issue-helper.sh record-fingerprint "bug: foo" --body-file /tmp/issue-body.md 20312
+  log-issue-helper.sh validate-brief /tmp/issue-body.md
+  log-issue-helper.sh check-fingerprint "bug: foo" "\$body_text"
+  log-issue-helper.sh check-fingerprint "bug: foo" --body-file /tmp/issue-body.md
+  log-issue-helper.sh record-fingerprint "bug: foo" "\$body_text" 20312
+  log-issue-helper.sh record-fingerprint "bug: foo" --body-file /tmp/issue-body.md 20312
 EOF
 		;;
 	*)

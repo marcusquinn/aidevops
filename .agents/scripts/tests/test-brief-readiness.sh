@@ -789,10 +789,11 @@ else
 fi
 
 # --- Test 21: legitimate shell, generic, and object syntax in code is accepted ---
-if "$HELPER" check --body "$BODY_V2_WITH_CODE_SYNTAX" >/dev/null 2>&1; then
+output=$("$HELPER" check --body "$BODY_V2_WITH_CODE_SYNTAX" 2>/dev/null)
+if [[ "$output" == *"WORKER_READY=true"* && "$output" != *"PLACEHOLDER_MATCH="* ]]; then
 	pass "T21: placeholder-like syntax inside code remains valid"
 else
-	fail "T21: code syntax false-positive guard" "readiness check failed"
+	fail "T21: code syntax false-positive guard" "output: $output"
 fi
 
 # --- Test 22: fenced examples cannot populate genuine readiness sections ---
