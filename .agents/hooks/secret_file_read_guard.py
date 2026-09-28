@@ -55,23 +55,29 @@ def is_tracked_source_with_loose_secret_name(path: str) -> bool:
     #aidevops:trust-boundary - tracked status comes from git in the file's own
     repository, never from path text; symlinks and hard links are refused.
     """
-    if not path:
-        return False
-    absolute = os.path.abspath(os.path.normpath(path))
-    base = os.path.basename(absolute)
-    if not LOOSE_SECRET_BASENAME_RE.search(base) or STRONG_SECRET_HINT_RE.search(base):
-        return False
-    if not TRACKED_SOURCE_EXTENSION_RE.search(base) or SECRET_PATH_RE.search(absolute):
-        return False
+    absolute = os.path.abspath(os.path.normpath(path)) if path else ""
     try:
-        info = os.lstat(absolute)
-        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
-            return False
-        directory = os.path.realpath(os.path.dirname(absolute))
-        if SECRET_PATH_RE.search(directory):
-            return False
+        tracked = bool(absolute) and _has_loose_secret_source_name(absolute) and _git_tracked_regular_file(absolute)
+    except (OSError, subprocess.SubprocessError):
+        tracked = False
+    return tracked
+
+
+def _has_loose_secret_source_name(absolute: str) -> bool:
+    base = os.path.basename(absolute)
+    loose_only = bool(LOOSE_SECRET_BASENAME_RE.search(base)) and not STRONG_SECRET_HINT_RE.search(base)
+    source_outside_stores = bool(TRACKED_SOURCE_EXTENSION_RE.search(base)) and not SECRET_PATH_RE.search(absolute)
+    return loose_only and source_outside_stores
+
+
+def _git_tracked_regular_file(absolute: str) -> bool:
+    info = os.lstat(absolute)
+    directory = os.path.realpath(os.path.dirname(absolute))
+    eligible = stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and not SECRET_PATH_RE.search(directory)
+    if eligible:
         result = subprocess.run(  # nosec B603 - fixed git argv, no shell
-            ["git", "-c", "core.fsmonitor=false", "-C", directory, "ls-files", "--error-unmatch", "--", base],
+            ["git", "-c", "core.fsmonitor=false", "-C", directory, "ls-files", "--error-unmatch", "--",
+             os.path.basename(absolute)],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -79,9 +85,8 @@ def is_tracked_source_with_loose_secret_name(path: str) -> bool:
             env=_git_environment(),
             check=False,
         )
-    except (OSError, subprocess.SubprocessError):
-        return False
-    return result.returncode == 0
+        eligible = result.returncode == 0
+    return eligible
 
 
 def extract_path(tool_input: dict) -> str:
@@ -97,19 +102,19 @@ def extract_path(tool_input: dict) -> str:
 
 def secret_read_block_reason(path: str) -> str:
     """Return a deny reason for high-risk secret paths, or empty string."""
-    if not path:
-        return ""
-    normalized = os.path.normpath(path)
+    normalized = os.path.normpath(path) if path else ""
     base = os.path.basename(normalized)
-    if PUBLIC_KEY_RE.search(base):
+    if not normalized or PUBLIC_KEY_RE.search(base):
         return ""
-    if SECRET_BASENAME_RE.search(base) and not is_tracked_source_with_loose_secret_name(normalized):
-        return "secret-bearing basename"
-    if SECRET_EXTENSION_RE.search(base):
-        return "secret-bearing file extension"
-    if SECRET_PATH_RE.search(normalized):
-        return "credential-store path"
-    return ""
+    rules = (
+        (
+            "secret-bearing basename",
+            lambda: SECRET_BASENAME_RE.search(base) and not is_tracked_source_with_loose_secret_name(normalized),
+        ),
+        ("secret-bearing file extension", lambda: SECRET_EXTENSION_RE.search(base)),
+        ("credential-store path", lambda: SECRET_PATH_RE.search(normalized)),
+    )
+    return next((reason for reason, matches in rules if matches()), "")
 
 
 def deny(path: str, reason: str) -> dict:

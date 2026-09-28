@@ -34,23 +34,33 @@ function gitEnvironment() {
  * @returns {boolean}
  */
 export function isTrackedSourceWithLooseSecretName(filePath) {
-  if (!filePath || typeof filePath !== "string") return false;
-  const absolute = resolve(normalize(filePath));
-  const base = basename(absolute);
-  if (!LOOSE_SECRET_BASENAME_RE.test(base) || STRONG_SECRET_HINT_RE.test(base)) return false;
-  if (!TRACKED_SOURCE_EXTENSION_RE.test(base) || SECRET_PATH_RE.test(absolute)) return false;
+  let tracked = false;
   try {
-    const stat = lstatSync(absolute);
-    if (!stat.isFile() || stat.nlink !== 1) return false;
-    const directory = realpathSync(dirname(absolute));
-    if (SECRET_PATH_RE.test(directory)) return false;
-    execFileSync("git", ["-c", "core.fsmonitor=false", "-C", directory, "ls-files", "--error-unmatch", "--", base], {
-      stdio: "ignore", timeout: 3000, env: gitEnvironment(),
-    });
-    return true;
+    const absolute = typeof filePath === "string" && filePath ? resolve(normalize(filePath)) : "";
+    tracked = Boolean(absolute) && hasLooseSecretSourceName(absolute) && isGitTrackedRegularFile(absolute);
   } catch {
-    return false;
+    tracked = false;
   }
+  return tracked;
+}
+
+function hasLooseSecretSourceName(absolute) {
+  const base = basename(absolute);
+  const looseOnly = LOOSE_SECRET_BASENAME_RE.test(base) && !STRONG_SECRET_HINT_RE.test(base);
+  const sourceOutsideStores = TRACKED_SOURCE_EXTENSION_RE.test(base) && !SECRET_PATH_RE.test(absolute);
+  return looseOnly && sourceOutsideStores;
+}
+
+// Throws when git does not list the file; callers treat any error as untracked.
+function isGitTrackedRegularFile(absolute) {
+  const stat = lstatSync(absolute);
+  const directory = realpathSync(dirname(absolute));
+  const eligible = stat.isFile() && stat.nlink === 1 && !SECRET_PATH_RE.test(directory);
+  if (eligible) {
+    execFileSync("git", ["-c", "core.fsmonitor=false", "-C", directory, "ls-files", "--error-unmatch", "--",
+      basename(absolute)], { stdio: "ignore", timeout: 3000, env: gitEnvironment() });
+  }
+  return eligible;
 }
 
 /**
@@ -93,16 +103,18 @@ export function secretReadBlockReason(filePath) {
 }
 
 function blockReason(filePath, allowTrackedSource) {
-  if (!filePath || typeof filePath !== "string") return "";
-  const normalized = normalize(filePath);
+  const normalized = typeof filePath === "string" && filePath ? normalize(filePath) : "";
   const base = basename(normalized);
-  if (PUBLIC_KEY_RE.test(base)) return "";
-  if (SECRET_BASENAME_RE.test(base)
-    && !(allowTrackedSource && isTrackedSourceWithLooseSecretName(normalized))) return "secret-bearing basename";
-  if (SECRET_EXTENSION_RE.test(base)) return "secret-bearing file extension";
-  if (HOST_RUNTIME_CONFIG_RE.test(normalized)) return "host runtime config path";
-  if (SECRET_PATH_RE.test(normalized)) return "credential-store path";
-  return "";
+  if (!normalized || PUBLIC_KEY_RE.test(base)) return "";
+  const exemptSource = () => allowTrackedSource && isTrackedSourceWithLooseSecretName(normalized);
+  const rules = [
+    ["secret-bearing basename", () => SECRET_BASENAME_RE.test(base) && !exemptSource()],
+    ["secret-bearing file extension", () => SECRET_EXTENSION_RE.test(base)],
+    ["host runtime config path", () => HOST_RUNTIME_CONFIG_RE.test(normalized)],
+    ["credential-store path", () => SECRET_PATH_RE.test(normalized)],
+  ];
+  const match = rules.find(([, test]) => test());
+  return match ? match[0] : "";
 }
 
 /**
