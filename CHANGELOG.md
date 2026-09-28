@@ -10,6 +10,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.37.10] - 2026-09-28
+
+### Added
+
+- show AIDevOps and OpenCode versions in OpenCode V2 TUI slots
+
+### Changed
+
+- Maintenance: mark t18494 complete (pr:#32674 completed:2026-09-27) (#32678)
+
+### Fixed
+
+- clamp cached dispatch target to live MAX_WORKERS_CAP
+- transition terminal PR labels (#32697)
+- load issue-sync task selector for independent mapping checks (#32691)
+- stop false missing_files_scope holds and auto-release repaired briefs (GH#32689)
+- keep migration backups when cleaning legacy config-backups
+- refuse canonical task completion before editing TODO (#32680)
+- scope platform evidence to claims and repository tests (#32675)
+- make aidevops init scaffold portable (#32676)
+- preserve claim task ID allocation (#32674)
+- repair managed repository planning lifecycle (#32670)
+- detach due script routines (#32668)
+
 ## [3.37.9] - 2026-09-27
 
 ### Added
