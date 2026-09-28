@@ -291,10 +291,14 @@ configured_required_contexts() {
 	[[ -n "$base_branch" ]] || return 1
 	protection_json=$(gh api "repos/${repo}/branches/${base_branch}/protection/required_status_checks" 2>/dev/null) || return 1
 	rules_json=$(gh api "repos/${repo}/rules/branches/${base_branch}" 2>/dev/null) || return 1
-	{
-		jq -r '(.contexts // [])[], (.checks // [])[].context? // empty' <<<"$protection_json"
-		jq -r '.rules[]? | select(.type == "required_status_checks") | (.parameters.required_status_checks // [])[] | (.context // .name // empty)' <<<"$rules_json"
-	} | sort -u
+	printf '%s\n%s\n' "$protection_json" "$rules_json" | jq -sr '
+		if length != 2 or (.[0] | type) != "object" or (.[1] | type) != "array" then
+			error("invalid required-check policy")
+		else
+			(.[0] | (.contexts // [])[], (.checks // [])[].context? // empty),
+			(.[1][] | select(.type == "required_status_checks") | (.parameters.required_status_checks // [])[] | (.context // .name // empty))
+		end
+	' | sort -u || return 1
 	return 0
 }
 
