@@ -1294,6 +1294,9 @@ _worker_external_terminal_complete() {
 	local issue_state=""
 	issue_state=$(gh issue view "$issue_number" --repo "$repo_slug" --json state --jq '.state // empty' 2>/dev/null || true)
 	[[ "$issue_state" == "CLOSED" ]] || return 1
+	if _hrw_data_only_terminal_complete "$session_key" "$work_dir" "$issue_number" "$repo_slug"; then
+		return 0
+	fi
 
 	local branch_name="${WORKER_TARGET_BRANCH:-}"
 	if [[ -n "$work_dir" && -d "$work_dir" ]]; then
@@ -1324,6 +1327,57 @@ _worker_external_terminal_complete() {
 	done <<<"$branch_pr_numbers"
 
 	return 1
+}
+
+# A PR-less terminal state is valid only for an explicitly authorized data-only
+# objective with a trusted, issue-bound publication receipt. This is evidence
+# classification, never authority to perform the publication itself.
+_hrw_data_only_terminal_complete() {
+	local session_key="$1"
+	local work_dir="$2"
+	local issue_number="$3"
+	local repo_slug="$4"
+	[[ "$issue_number" =~ ^[1-9][0-9]*$ && "$repo_slug" == */* ]] || return 1
+	[[ "${WORKER_ISSUE_NUMBER:-$issue_number}" == "$issue_number" ]] || return 1
+	[[ -d "$work_dir" ]] || return 1
+	local issue_json="" comments="" default_branch="" default_ref="" branch="" remote_tip="" local_head="" pr_count="" task_status=""
+	issue_json=$(gh api "repos/${repo_slug}/issues/${issue_number}" 2>/dev/null) || return 1
+	jq -e --arg marker '<!-- aidevops:completion-contract:data-only/v1 -->' \
+		'.state == "closed" and (.author_association == "OWNER" or .author_association == "MEMBER") and ((.body // "") | contains($marker))' \
+		<<<"$issue_json" >/dev/null 2>&1 || return 1
+	comments=$(gh api --paginate "repos/${repo_slug}/issues/${issue_number}/comments?per_page=100" 2>/dev/null) || return 1
+	jq -se --arg repo "$repo_slug" --argjson issue "$issue_number" '
+		any(.[][];
+			(.author_association == "OWNER" or .author_association == "MEMBER")
+			and ((.body // "") | startswith("<!-- aidevops:data-only-completion:v1 -->\n"))
+			and ((.body | split("\n") | .[1]) as $receipt
+				| (try ($receipt | fromjson) catch {}) as $r
+				| $r.repository == $repo and $r.issue == $issue and $r.status == "published" and $r.verified == true
+				and ($r.evidence_url | type == "string" and test("^https://[^/[:space:]]+/[^[:space:]]+$"))))
+	' <<<"$comments" >/dev/null 2>&1 || return 1
+	default_branch=$(_hrw_resolve_default_branch "$work_dir") || return 1
+	[[ -n "$default_branch" ]] || return 1
+	branch=$(git -C "$work_dir" branch --show-current 2>/dev/null) || return 1
+	[[ -n "$branch" && "$branch" != "$default_branch" ]] || return 1
+	task_status=$(git -C "$work_dir" status --porcelain --untracked-files=all 2>/dev/null) || return 1
+	[[ -z "$task_status" ]] || return 1
+	local_head=$(git -C "$work_dir" rev-parse HEAD 2>/dev/null) || return 1
+	default_ref="refs/heads/${default_branch}"
+	remote_tip=$(git -C "$work_dir" ls-remote origin "$default_ref" 2>/dev/null) || return 1
+	remote_tip="${remote_tip%%[[:space:]]*}"
+	[[ "$remote_tip" =~ ^[0-9a-f]{40}$ ]] || return 1
+	# Do not trust a stale origin/default tracking ref; fetch the exact live tip.
+	git -C "$work_dir" fetch -q origin "$default_ref" 2>/dev/null || return 1
+	[[ "$(git -C "$work_dir" rev-parse FETCH_HEAD 2>/dev/null)" == "$remote_tip" ]] || return 1
+	[[ "$(git -C "$work_dir" rev-list --count "${remote_tip}..${local_head}" 2>/dev/null)" == "0" ]] || return 1
+	# A pushed orphan (even if the local branch is clean) must never be waived.
+	local remote_branch=""
+	remote_branch=$(git -C "$work_dir" ls-remote origin "refs/heads/${branch}" 2>/dev/null) || return 1
+	[[ -z "$remote_branch" || "${remote_branch%%[[:space:]]*}" == "$local_head" ]] || return 1
+	pr_count=$(gh pr list --repo "$repo_slug" --head "$branch" --state all --json number --jq 'length' 2>/dev/null) || return 1
+	[[ "$pr_count" == "0" ]] || return 1
+	print_info "[lifecycle] worker_data_only_terminal complete session=${session_key} issue=${issue_number}"
+	return 0
 }
 
 #######################################
@@ -2116,7 +2170,9 @@ _hrw_finish_success_run() {
 	# Fail-open semantics are preserved: when signals cannot be evaluated (no git
 	# repo, no gh, no remote) the classification is "pr_exists", so false-negatives
 	# (legit work misclassified) are impossible.
-	if [[ "$release_needed" -eq 1 && -n "$work_dir" ]]; then
+	if [[ "$release_needed" -eq 1 && -n "$work_dir" ]] && \
+		! _hrw_data_only_terminal_complete "$session_key" "$work_dir" \
+		"$(_hrw_issue_number_for_session "$session_key")" "${DISPATCH_REPO_SLUG:-}"; then
 		local output_class="pr_exists"
 		output_class=$(_worker_produced_output "$session_key" "$work_dir")
 		case "$output_class" in
