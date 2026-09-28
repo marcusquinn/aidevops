@@ -140,9 +140,107 @@ export function setupTerminalTitle(
   return () => timers.clearInterval(timer);
 }
 
+// V2 UI slots that show version labels. `prompt.footer.status` covers both the
+// home and session prompts; `sidebar.footer` pairs the OpenCode and AIDevOps
+// versions. Other slots stay available for AIDEVOPS_TUI_VERSION_SLOTS (comma
+// list, or "none" to disable).
+export const DEFAULT_VERSION_SLOTS = ["prompt.footer.status", "sidebar.footer"];
+export const VERSION_SLOT_CANDIDATES = [
+  ...DEFAULT_VERSION_SLOTS,
+  "sidebar.content",
+  "home.footer.status",
+];
+const SLOTS_WITH_OPENCODE_VERSION = new Set(["sidebar.footer"]);
+const VERSION_SLOT_POLL_MS = 5000;
+
+export function resolveVersionSlots(env = process.env) {
+  const raw = String(env.AIDEVOPS_TUI_VERSION_SLOTS ?? "").trim();
+  if (!raw) return [...DEFAULT_VERSION_SLOTS];
+  if (raw === "none" || raw === "false") return [];
+  return raw
+    .split(",")
+    .map((slot) => slot.trim())
+    .filter((slot) => VERSION_SLOT_CANDIDATES.includes(slot));
+}
+
+export function formatVersionLabel(version, opencodeVersion = "") {
+  const aidevops = version ? `AIDevOps ${version}` : "";
+  const opencode = opencodeVersion ? `OpenCode ${String(opencodeVersion).replace(/^v/i, "")}` : "";
+  return [opencode, aidevops].filter(Boolean).join(" · ");
+}
+
+export function formatSlotLabel(slot, version, opencodeVersion = "") {
+  return formatVersionLabel(version, SLOTS_WITH_OPENCODE_VERSION.has(slot) ? opencodeVersion : "");
+}
+
+function themeColor(theme) {
+  return safeCall(() => theme?.text?.muted ?? theme?.text?.base, undefined);
+}
+
+// Builds `<text fg={muted}>AIDevOps x.y.z</text>` with the @opentui/solid
+// universal renderer API, so this .mjs entrypoint needs no JSX transform.
+export function renderVersionText(solid, label, theme) {
+  const el = solid.createElement("text");
+  solid.effect(() => {
+    const color = themeColor(theme);
+    if (color !== undefined) solid.setProp(el, "fg", color);
+  });
+  solid.insert(el, label);
+  return el;
+}
+
+// Registers the version label in each configured slot. The label is a Solid
+// signal refreshed from the cached version reader, so `aidevops update`
+// appears in running sessions without a TUI restart.
+export function setupVersionSlots(
+  api,
+  {
+    env = process.env,
+    timers = globalThis,
+    getVersion = createVersionReader(),
+    loadSolid = () => import("@opentui/solid"),
+    loadSolidJs = () => import("solid-js"),
+    pollMs = VERSION_SLOT_POLL_MS,
+  } = {},
+) {
+  const slots = resolveVersionSlots(env);
+  if (slots.length === 0 || typeof api?.ui?.slot !== "function") return undefined;
+  const disposers = [];
+  let disposed = false;
+  const ready = Promise.all([loadSolid(), loadSolidJs()])
+    .then(([solid, solidJs]) => {
+      if (disposed) return;
+      const [version, setVersion] = solidJs.createSignal(safeCall(getVersion, ""));
+      const timer = timers.setInterval(() => setVersion(safeCall(getVersion, "")), pollMs);
+      timer?.unref?.();
+      disposers.push(() => timers.clearInterval(timer));
+      const opencodeVersion = () => safeCall(() => api.app?.version, "");
+      for (const slot of slots) {
+        const label = () => formatSlotLabel(slot, version(), opencodeVersion());
+        const unregister = safeCall(
+          () => api.ui.slot({ append: slot, render: () => renderVersionText(solid, label, api.theme) }),
+          undefined,
+        );
+        if (typeof unregister === "function") disposers.push(unregister);
+      }
+    })
+    .catch(() => {
+      // Version display is cosmetic; a missing renderer must not affect the TUI.
+    });
+  const cleanup = () => {
+    disposed = true;
+    for (const dispose of disposers.splice(0)) safeCall(dispose, undefined);
+  };
+  cleanup.ready = ready;
+  return cleanup;
+}
+
 export default {
   id: AIDEVOPS_V2_TUI_PLUGIN_ID,
   setup(api) {
-    return setupTerminalTitle(api);
+    const cleanups = [setupTerminalTitle(api), setupVersionSlots(api)].filter(Boolean);
+    return () => {
+      for (const cleanup of cleanups) cleanup();
+    };
   },
 };
