@@ -287,3 +287,8 @@ _inbox/*
 !_inbox/README.md
 !_inbox/.gitignore
 !_inbox/triage.log
+
+# aidevops keywords: search-target data lives in the private team hub (aidevops keywords sync)
+context/keywords.md
+context/keywords.md.hub
+context/keywords/
