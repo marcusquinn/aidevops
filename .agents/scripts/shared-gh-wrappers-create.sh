@@ -557,6 +557,18 @@ _gh_finish_created_issue() {
 	return 0
 }
 
+_gh_ci_ensure_requested_reminder_label() {
+	local target_repo="$1"
+	shift
+	_gh_wrapper_args_have_label "continuation-reminder" "$@" || return 0
+	[[ -n "$target_repo" ]] || target_repo=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || true)
+	if [[ -z "$target_repo" ]] || ! ensure_continuation_reminder_label_exists "$target_repo"; then
+		printf 'gh_create_issue: could not ensure continuation-reminder label on target repo; issue not created\n' >&2
+		return 1
+	fi
+	return 0
+}
+
 gh_create_issue() {
 	_gh_wrapper_enter_cleanup_scope
 	gh_record_call graphql gh_create_issue 2>/dev/null || true
@@ -629,13 +641,7 @@ gh_create_issue() {
 	# but keep durable creation independent from the best-effort assignment.
 	local issue_output rc auto_assignee="" target_repo=""
 	target_repo=$(_gh_extract_repo_from_args "$@" 2>/dev/null || true)
-	if _gh_wrapper_args_have_label "continuation-reminder" "$@"; then
-		[[ -n "$target_repo" ]] || target_repo=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || true)
-		if [[ -z "$target_repo" ]] || ! ensure_continuation_reminder_label_exists "$target_repo"; then
-			printf 'gh_create_issue: could not ensure continuation-reminder label on target repo; issue not created\n' >&2
-			return 1
-		fi
-	fi
+	_gh_ci_ensure_requested_reminder_label "$target_repo" "$@" || return 1
 	if ! _gh_wrapper_args_have_assignee "$@"; then
 		if [[ "${AIDEVOPS_GH_SKIP_AUTO_ASSIGNMENT:-0}" == 1 ]]; then
 			# GH#30325: pending publication withholds auto-dispatch from the

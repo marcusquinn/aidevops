@@ -49,6 +49,7 @@ source "${SCRIPTS_DIR}/shared-gh-wrappers.sh"
 
 TEST_LABEL_SNAPSHOT=""
 TEST_INVENTORY_RC=0
+TEST_WRITE_RC=0
 _gh_with_timeout() {
 	local op_class="$1"
 	shift
@@ -57,6 +58,7 @@ _gh_with_timeout() {
 		[[ "$TEST_INVENTORY_RC" -eq 0 ]] || return "$TEST_INVENTORY_RC"
 		printf '%s\n' "$TEST_LABEL_SNAPSHOT"
 	fi
+	[[ "$op_class" != "write" ]] || return "$TEST_WRITE_RC"
 	return 0
 }
 
@@ -101,6 +103,26 @@ ensure_continuation_reminder_label_exists owner/repo
 assert_count "missing reminder label is created once" 1 'gh label create continuation-reminder --repo owner/repo'
 ensure_continuation_reminder_label_exists owner/repo
 assert_count "created reminder label is cached" 1 'gh label create continuation-reminder --repo owner/repo'
+
+: >"$CALL_LOG"
+_CONTINUATION_REMINDER_LABEL_ENSURED=""
+_gh_ci_ensure_requested_reminder_label owner/repo --label bug
+assert_count "ordinary issues skip reminder inventory" 0 'read route=managed-label-inventory-rest'
+_gh_ci_ensure_requested_reminder_label owner/repo --label 'bug,continuation-reminder'
+assert_count "comma-separated reminder request provisions label" 1 'gh label create continuation-reminder --repo owner/repo'
+
+: >"$CALL_LOG"
+_CONTINUATION_REMINDER_LABEL_ENSURED=""
+TEST_WRITE_RC=1
+if _gh_ci_ensure_requested_reminder_label owner/repo --label=continuation-reminder 2>/dev/null; then
+	fail "failed reminder creation stops issue path" "expected non-zero status"
+else
+	pass "failed reminder creation stops issue path"
+fi
+assert_count "failed reminder creation attempted once" 1 'gh label create continuation-reminder --repo owner/repo'
+TEST_WRITE_RC=0
+ensure_continuation_reminder_label_exists owner/repo
+assert_count "failed reminder creation is not cached" 2 'gh label create continuation-reminder --repo owner/repo'
 
 # Tracking creation reuses the canonical origin set and adds its own labels.
 : >"$CALL_LOG"
