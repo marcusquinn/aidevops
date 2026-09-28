@@ -109,11 +109,17 @@ _kw_config_get() {
 	return 0
 }
 
+# Credential order: environment, credentials.sh, then gopass (`aidevops secret set`).
+# Pulse routines run this script directly, so gopass must be read here.
 _kw_load_credentials() {
 	local credentials="$HOME/.config/aidevops/credentials.sh"
 	if [[ -z "${DATAFORSEO_USERNAME:-}" && -f "$credentials" ]]; then
 		# shellcheck source=/dev/null
 		source "$credentials" 2>/dev/null || true
+	fi
+	if [[ -z "${DATAFORSEO_USERNAME:-}" ]] && command -v gopass >/dev/null 2>&1; then
+		DATAFORSEO_USERNAME=$(gopass show -o "aidevops/DATAFORSEO_USERNAME" 2>/dev/null || true)
+		DATAFORSEO_PASSWORD=$(gopass show -o "aidevops/DATAFORSEO_PASSWORD" 2>/dev/null || true)
 	fi
 	if [[ -n "${DATAFORSEO_USERNAME:-}" ]]; then
 		export DATAFORSEO_USERNAME DATAFORSEO_PASSWORD

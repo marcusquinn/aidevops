@@ -34,6 +34,7 @@ tools:
 - **Ownership**: `DESIGN.md` = visual rules; `context/brand-identity.toon` = voice and positioning; this standard = what people search for, which page answers it, and how the brand is named as a search entity. Link, never copy.
 - **Public repos**: registry data is gitignored and shared through the private team hub (`aidevops keywords hub set owner/repo`, then `sync`). Private repos track it in Git (PR-reviewed) and may also sync.
 - **Paid spend**: DataForSEO calls are refused beyond `budget_usd_month` (default `$1` per property per month; config `keywords.monthly_budget_usd`, per-repo `repos.json` `keywords.budget_usd_month`).
+- **DataForSEO credentials**: `aidevops secret set DATAFORSEO_USERNAME` and `DATAFORSEO_PASSWORD` (gopass); read in order from the environment, `credentials.sh`, then gopass, so scheduled routines work without `aidevops secret run`.
 - **Related**: `seo/keyword-research.md`, `seo/conversational-search-intent.md`, `seo/ranking-opportunities.md`, `seo/ai-visibility-monitor.md`, `seo/ecommerce-seo.md`, `seo/entity-evidence-audit.md`, `tools/context/toon.md`.
 
 <!-- AI-CONTEXT-END -->
