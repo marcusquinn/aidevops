@@ -22,6 +22,7 @@ on:
       - '.agents/scripts/tests/test-setup-source-access-broker.sh'
       - '.agents/scripts/tests/test-source-access-helper.py'
       - '.agents/scripts/tests/test-source-access-helper.sh'
+      - '.agents/scripts/tests/test-source-access-state-dir.py'
       - 'aidevops.sh'
       - 'setup.sh'
       - '.github/workflows/plugin-import-check.yml'

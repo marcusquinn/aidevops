@@ -1597,19 +1597,6 @@ else: sys.exit(1)
             with self.assertRaisesRegex(HELPER.SourceAccessError, "root-owned source-access broker"):
                 HELPER._require_root_tty(self.config)
 
-    def test_default_state_dir_ancestry_is_trusted_on_host(self) -> None:
-        """GH#32834: every existing ancestor of the default state root passes the broker rule."""
-        core = HELPER._SOURCE_CORE
-        self.assertEqual(core.Config().state_dir, core.DEFAULT_STATE_DIR)
-        if sys.platform == "darwin":
-            self.assertEqual(str(core.DEFAULT_STATE_DIR), "/private/var/db/aidevops/source-access")
-        existing = core.DEFAULT_STATE_DIR.parent.resolve(strict=False)
-        while not existing.exists():
-            existing = existing.parent
-        for ancestor in (existing, *existing.parents):
-            metadata = ancestor.stat()
-            self.assertIn(metadata.st_uid, (0,), str(ancestor))
-            self.assertEqual(metadata.st_mode & 0o022, 0, str(ancestor))
 
     def test_root_broker_git_drops_to_authenticated_user(self) -> None:
         """GH#32816: root broker runs Git as the requester, never as root on user repos."""
