@@ -60,8 +60,28 @@ Rules:
 3. Route reusable lessons: shared framework lessons to the narrowest doc or
    `framework-issue-helper.sh log`; personal/install lessons to memory.
 4. Offer a reusable-capability TODO when the session invented or adapted tooling.
-5. If anything remains, either do it now (when authorized and safe) or list it
+5. If session aims wait on issues handed to pulse/workers, file a continuation
+   reminder (below) so the session can close.
+6. If anything remains, either do it now (when authorized and safe) or list it
    under **Left to capture**.
+
+### Continuation Reminders
+
+When remaining session aims can only continue or be tested after background
+issues land, close the session instead of holding it open:
+
+- Create one issue with `gh_create_issue`, self-assigned, labelled
+  `continuation-reminder` (create it if missing) and `no-auto-dispatch` (a human
+  resumes it; workers never do).
+- Title: `Continue: <aim>`; add `(check <YYYY-MM-DD HH:MM>)` when a check-back time
+  is known, so attention is reserved until then.
+- Body: session aim, delivered evidence (PRs/issues), outstanding aims, the
+  resume action, worktree/branch if still relevant, and the verification that
+  proves the aim delivered.
+- Add a `blocked-by:#N` body marker and a native edge (GraphQL `addBlockedBy`)
+  for every issue it waits on; the reminder is actionable once the last closes.
+- Cite it on the **Session** line (`Blocked on #A, #B; resume via #R`) and treat
+  the session as `Ready to close`.
 
 ## Execution Ownership and Truthful Stops
 
