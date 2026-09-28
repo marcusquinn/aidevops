@@ -567,9 +567,13 @@ _get_profile_model_usage_bundle() {
 # =============================================================================
 
 # --- Token totals: shared jq expression for computing total_all and cache_hit_pct ---
+# Hit rate = cache reads / all prompt tokens (uncached input + cache writes +
+# cache reads). Anthropic reports cache writes separately from input (GH#32744).
 _token_totals_jq_expr() {
 	echo '. + {total_all: (.total_input + .total_output + .total_cache_read + .total_cache_write)}
-		| . + {cache_hit_pct: (if (.total_cache_read + .total_input) > 0 then ((.total_cache_read / (.total_cache_read + .total_input) * 1000 | round) / 10) else 0 end)}'
+		| . + {prompt_tokens: (.total_input + (.total_cache_write // 0) + .total_cache_read)}
+		| . + {cache_hit_pct: (if .prompt_tokens > 0 then ((.total_cache_read / .prompt_tokens * 1000 | round) / 10) else 0 end)}
+		| del(.prompt_tokens)'
 	return 0
 }
 

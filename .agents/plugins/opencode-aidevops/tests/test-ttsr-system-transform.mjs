@@ -123,4 +123,23 @@ describe("TTSR system transform", () => {
     );
     assert.equal(off[0], joined);
   });
+
+  test("pins the greeting per session so a mid-session deploy keeps the cached prefix (GH#32744)", async () => {
+    let version = "3.37.11";
+    const { systemTransformHook } = hooks({
+      greetingEnabled: () => true,
+      readIfExists: (path) => (path.endsWith("VERSION") ? `${version}\n` : null),
+    });
+    const greetingFor = async (sessionID) => {
+      const system = ["Agent prompt."];
+      await systemTransformHook({ sessionID, model: { providerID: "anthropic" } }, { system });
+      return system.at(-1);
+    };
+
+    const first = await greetingFor("ses_long");
+    assert.match(first, /aidevops v3\.37\.11/);
+    version = "3.37.12";
+    assert.equal(await greetingFor("ses_long"), first, "an open session must replay identical bytes");
+    assert.match(await greetingFor("ses_new"), /aidevops v3\.37\.12/, "new sessions resolve the deployed version");
+  });
 });

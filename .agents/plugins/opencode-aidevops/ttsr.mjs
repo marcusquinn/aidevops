@@ -84,7 +84,32 @@ function createTtsrState(ttsrRulesPath, readIfExists) {
     ttsrFiredState: new Map(),
     /** @type {Map<string, number>} Maps sessionID → highest threshold warned about. */
     tokenAdvisoryState: new Map(),
+    /** @type {Map<string, string>} Maps root sessionID → greeting block pinned at first use. */
+    pinnedGreetings: new Map(),
   };
+}
+
+const MAX_PINNED_GREETINGS = 500;
+
+/**
+ * Resolve the greeting block once per session and replay the same bytes on
+ * every later request (GH#32744). The block sits inside the cached framework
+ * prefix, so re-reading VERSION after a mid-session deploy would otherwise
+ * rewrite that prefix for every open session. Requests without a session ID
+ * are resolved fresh and never cached.
+ * @param {Map<string, string>} pinned
+ * @param {string | undefined} sessionID
+ * @param {() => string} build
+ * @returns {string}
+ */
+export function pinSessionGreeting(pinned, sessionID, build) {
+  if (!sessionID) return build();
+  const existing = pinned.get(sessionID);
+  if (existing !== undefined) return existing;
+  const greeting = build();
+  pinned.set(sessionID, greeting);
+  if (pinned.size > MAX_PINNED_GREETINGS) pinned.delete(pinned.keys().next().value);
+  return greeting;
 }
 
 // ---------------------------------------------------------------------------
@@ -295,7 +320,8 @@ async function ttsrSystemTransform(input, output, context) {
   if (input.model?.providerID === "anthropic") prependAnthropicIdentity(output.system);
 
   const greeting = pluginGreeting && await shouldInjectGreeting(input)
-    ? buildSessionStartGreetingInstruction(agentsDir, readIfExists, greetingOptions)
+    ? pinSessionGreeting(state.pinnedGreetings, input?.sessionID,
+      () => buildSessionStartGreetingInstruction(agentsDir, readIfExists, greetingOptions))
     : null;
 
   // Durable guidance stays ahead of the root-session-only greeting, so child

@@ -65,6 +65,17 @@ when their trigger applies; never remove them merely to meet a token target.
 - Keep stable instruction/tool ordering. Do not add timestamps, per-request
   randomness, or quota state ahead of reusable guidance. Do not force cache
   retention parameters onto an OAuth endpoint without validating support.
+- The resolved greeting block is pinned per session (GH#32744): a deploy that
+  changes `VERSION` no longer rewrites the cached framework prefix of every
+  open session. Framework instruction files that a deploy actually changes still
+  do.
+- `cache-stability.mjs` fingerprints each Anthropic request per session and logs
+  `[aidevops] cache-stability: session=… segment=<account|tools|system|thinking|prefix|history> …`
+  to the plugin log when a stable segment changes. Read it with
+  `rg 'cache-stability' ~/.aidevops/logs/opencode-plugin.log` next to
+  `llm_requests` rows where `tokens_cache_read` dropped below the previous turn's
+  `tokens_cache_read + tokens_cache_write`. `tail=true` history changes are
+  expected synthetic advisories. `AIDEVOPS_CACHE_STABILITY_LOG=0` disables it.
 - Successful verbose test/build receipts already use `output-compaction.mjs`.
   Do not discard failure diagnostics or blindly summarise source files. Read
   targeted ranges and load retained evidence when needed.
