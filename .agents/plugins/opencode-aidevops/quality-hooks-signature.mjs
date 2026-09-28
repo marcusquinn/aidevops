@@ -121,6 +121,12 @@ function _generateSignature(helperPath, bodyValue, log, options = {}) {
 
 // Preserve source offsets for surgical rewrites while ignoring flags inside
 // quoted argument values. Incomplete quoting fails closed.
+function _nextQuote(quote, ch) {
+  if (ch === "'" && quote !== '"') return quote === "'" ? "" : "'";
+  if (ch === '"' && quote !== "'") return quote === '"' ? "" : '"';
+  return quote;
+}
+
 function _unquotedTokens(cmd) {
   const tokens = [];
   let text = "";
@@ -138,11 +144,12 @@ function _unquotedTokens(cmd) {
       continue;
     }
     if (start === -1) start = i;
-    if (ch === "'" && quote !== '"') {
-      quote = quote === "'" ? "" : "'";
-    } else if (ch === '"' && quote !== "'") {
-      quote = quote === '"' ? "" : '"';
-    } else if (ch === "\\" && quote !== "'") {
+    const next = _nextQuote(quote, ch);
+    if (next !== quote) {
+      quote = next;
+      continue;
+    }
+    if (ch === "\\" && quote !== "'") {
       if (++i >= cmd.length) return [];
       text += cmd[i];
     } else {
