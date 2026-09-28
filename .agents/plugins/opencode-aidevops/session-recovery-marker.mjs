@@ -19,7 +19,7 @@ import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
-import { isOwnerProcessLive, processStartToken } from "./process-start-token.mjs";
+import { isOwnerProcessLive, processStartToken } from "./process-liveness.mjs";
 import { pathIsInside, validateRecoveryData } from "./session-recovery-data.mjs";
 
 const SESSION_ID_RE = /^ses_[A-Za-z0-9]{6,128}$/;
