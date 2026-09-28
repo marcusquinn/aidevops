@@ -83,7 +83,7 @@ class DarwinBundleAclTests(unittest.TestCase):
         target.mkdir(mode=0o700)
         try:
             principal = CORE._darwin_acl_principal(os.getuid())
-            result = subprocess.run(
+            result = subprocess.run(  # nosec B603 -- fixed system binary on a test-owned temp directory
                 ["/bin/chmod", "-E", str(target)],
                 input=f"user:{principal} allow list,search\n".encode("ascii"),
                 capture_output=True, check=False, env={"PATH": "/usr/bin:/bin", "LC_ALL": "C"},
