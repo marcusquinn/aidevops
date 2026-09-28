@@ -5,6 +5,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+# Re-exec under modern Bash before creating a PID-named control worktree:
+# exec preserves $$ but does not run the EXIT cleanup trap.
+# shellcheck source=./shared-constants.sh
+source "${SCRIPT_DIR}/shared-constants.sh"
 
 _full_loop_release_valid_repo_root() {
 	local candidate_root="$1"
