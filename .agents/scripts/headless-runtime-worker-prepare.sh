@@ -22,6 +22,8 @@
 # Include guard
 [[ -n "${_HEADLESS_RUNTIME_WORKER_PREPARE_LIB_LOADED:-}" ]] && return 0
 _HEADLESS_RUNTIME_WORKER_PREPARE_LIB_LOADED=1
+# shellcheck source=./project-node-runtime.sh
+source "${BASH_SOURCE[0]%/*}/project-node-runtime.sh"
 : "${_HRW_ROLE_WORKER:=worker}"
 _HRW_PR_REPAIR_OWNERSHIP_LINKED_ISSUE="linked-issue"
 
@@ -382,6 +384,13 @@ _cmd_run_prepare() {
 		WORKER_TARGET_BRANCH=$(git -C "$work_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
 		export WORKER_TARGET_BRANCH
 		_hrw_claim_worker_worktree "$session_key" "$work_dir" || return 1
+		local node_bin="" node_rc=0
+		node_bin=$(_project_node_bin "$work_dir" ".") || node_rc=$?
+		if [[ "$node_rc" -eq 1 ]]; then
+			_WORKER_PRELAUNCH_FAILURE_REASON="project_node_environment_failure"
+			return 1
+		fi
+		[[ -n "$node_bin" ]] && export PATH="${node_bin}:$PATH"
 	else
 		unset _WORKER_WORKTREE_PATH WORKER_TARGET_BRANCH 2>/dev/null || true
 	fi
