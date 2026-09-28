@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.37.22] - 2026-09-28
+
+### Added
+
+- Install and update Cloudflare cf CLI via setup and update-tools
+- manual diagnostic listing unreadable processes by PID and comm
+
+### Fixed
+
+- keywords rollup uses the target's own site platform
+- macOS bundle ACL uses account name, not numeric uid
+- scope GSC ADC tokens and resolve default credentials (#32866)
+- canonicalize privileged bootstrap bytecode fixture (#32857)
+
 ## [3.37.21] - 2026-09-28
 
 ### Added
