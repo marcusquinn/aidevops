@@ -38,7 +38,7 @@ always preserved.
 - `standard`: adds DESIGN.md, MODELS.md, collaborator pointers, README.md
 - `public`: adds LICENCE, CHANGELOG.md, CONTRIBUTING.md, SECURITY.md, CODE_OF_CONDUCT.md
 
-Auto-inferred when absent: `local_only`/no-remote → `minimal`; others → `standard`. Stored in `.aidevops.json` per project. Preserved on re-registration.
+Auto-inferred when absent: `local_only`/no-remote → `minimal`; a GitHub remote reporting `PUBLIC` via `gh repo view` → `public`; private or unknown visibility → `standard`. An explicit scope on the canonical main-worktree entry in `repos.json` also applies in linked worktrees. Stored in `.aidevops.json` per project. Preserved on re-registration.
 
 Repository-native verification policy lives in `.aidevops.json.features.code_quality`
 and `.aidevops.json.verify`. `aidevops lint audit` reports registration/config

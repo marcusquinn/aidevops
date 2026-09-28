@@ -218,6 +218,9 @@ _infer_init_scope() {
 		local repos_file="${REPOS_FILE:-$HOME/.config/aidevops/repos.json}"
 		local canonical_path
 		canonical_path=$(cd "$project_root" 2>/dev/null && pwd -P) || canonical_path="$project_root"
+		local main_wt
+		main_wt=$(git -C "$project_root" worktree list --porcelain 2>/dev/null | awk '/^worktree / {sub(/^worktree /, ""); print; exit}')
+		[[ -n "$main_wt" ]] && canonical_path=$(cd "$main_wt" 2>/dev/null && pwd -P) || true
 		local repo_data
 		repo_data=$(jq -r --arg path "$canonical_path" \
 			'.initialized_repos[] | select(.path == $path) | "\(.init_scope // "")|\(.local_only // "false")"' \
@@ -246,7 +249,17 @@ _infer_init_scope() {
 		return 0
 	fi
 
-	# Default: standard (backward compatible)
+	# A public GitHub remote gets the public courtesy and security files.
+	local remote_url visibility
+	remote_url=$(git -C "$project_root" remote get-url origin 2>/dev/null || true)
+	if [[ "$remote_url" == *github.com[:/]* ]] && command -v gh &>/dev/null; then
+		visibility=$(gh repo view "$remote_url" --json visibility --jq '.visibility' 2>/dev/null || true)
+		if [[ "$visibility" == "PUBLIC" ]]; then
+			echo "public"
+			return 0
+		fi
+	fi
+	# Unknown/private visibility retains the standard default.
 	echo "standard"
 	return 0
 }
