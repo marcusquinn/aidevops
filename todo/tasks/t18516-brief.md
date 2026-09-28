@@ -20,6 +20,7 @@ Keyword hub cloning works from any working directory, and exported `AIDEVOPS_KEY
 
 1. `keywords_hub.ensure_hub` ran `gh repo clone` / `git clone` with the caller's cwd. When that cwd is a canonical checkout (a Pulse routine or an interactive session), the canonical Git guard blocks the clone (exit 42).
 2. `keywords-helper.sh` `_kw_export_env` always read local config, ignoring exported values. With a hub configured, `tests/test-keywords-helper.sh` cloned the real hub and pushed `example__widget` fixture commits to it (cleaned up manually).
+3. `aidevops keywords issues --apply` filed auto-dispatch issues without a canonical `### Files Scope`, so Pulse would hold every backfill issue as `status:blocked (missing_files_scope)`. The body now lists bare paths; `pre-dispatch-validator-helper.sh scope-check` returns 0 (was 40).
 
 ## How (Approach)
 
@@ -52,3 +53,4 @@ AIDEVOPS_KEYWORDS_STORE_DIR=<scratch> .agents/scripts/keywords-helper.sh routine
 - [ ] `routine-run` from a canonical checkout clones the hub without a guard block.
 - [ ] The test suite passes with a hub configured and pushes nothing to it.
 - [ ] Exported empty `AIDEVOPS_KEYWORDS_HUB_SLUG` disables the configured hub.
+- [ ] The backfill issue body passes `pre-dispatch-validator-helper.sh scope-check <n> <body> 1`.

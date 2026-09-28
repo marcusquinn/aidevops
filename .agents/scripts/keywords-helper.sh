@@ -447,6 +447,17 @@ aidevops now standardises search targets per repository (`~/.aidevops/agents/seo
 - `context/keywords/*.toon` — rows added with `aidevops keywords add|set` (never hand-edit row counts).
 - `.gitignore` and `AGENTS.md` — updated by the scaffold (public repos keep registry data out of Git).
 
+### Files Scope
+
+- context/keywords.md
+- context/keywords/targets.toon
+- context/keywords/queries.toon
+- context/keywords/clusters.toon
+- context/keywords/modifiers.toon
+- context/keywords/entities.toon
+- .gitignore
+- AGENTS.md
+
 ### Implementation Steps
 
 1. `aidevops keywords scaffold .` — detects surfaces, migrates any `context/target-keywords.md`, and picks tracked vs ignored data.
