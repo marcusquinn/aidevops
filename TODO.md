@@ -1456,6 +1456,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18504 fix(planning-publisher): 3-way merge TODO.md instead of overwriting concurrent entries #auto-dispatch #bug #interactive tier:thinking ~2h ref:GH#32714 logged:2026-09-28
 
+- [ ] t18505 perf(dispatch): run read-only dedup layers before costly scope gates #enhancement #interactive tier:standard ~1h ref:GH#32729 logged:2026-09-28
+
 - [x] t18495 fix: guard merged-PR reconcile stages 1-2 against recurrent file-size debt #auto-dispatch #bug #pulse #interactive tier:standard ~1h ref:GH#32640 logged:2026-09-27 -> [todo/tasks/t18495-brief.md] pr:#32642 completed:2026-09-27
 
 - [x] t18500 Show AIDevOps and OpenCode versions in OpenCode V2 TUI slots #feat ref:GH#32698 pr:#32699 completed:2026-09-28
