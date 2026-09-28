@@ -5,8 +5,12 @@
 [[ -n "${_PROJECT_NODE_RUNTIME_LOADED:-}" ]] && return 0
 _PROJECT_NODE_RUNTIME_LOADED=1
 
+# Prints "hard <expression>" and "pref <version>" lines. engines.node is hard.
+# A numeric version-file pin requires its major and prefers its exact value, so
+# patch drift between maintainer machines does not block workers (GH#32897).
+# Aliases such as lts/* or node need a network lookup and are ignored.
 _project_node_requirement() {
-	local dir="$1" file="" value=""
+	local dir="$1" file="" value="" engines=""
 	for file in .nvmrc .node-version .tool-versions; do
 		[[ -f "$dir/$file" ]] || continue
 		if [[ "$file" == .tool-versions ]]; then
@@ -18,11 +22,12 @@ _project_node_requirement() {
 		value="${value#v}"
 		value="${value%$'\r'}"
 		value="${value//[[:space:]]/}"
-		[[ -n "$value" ]] || continue
-		printf '%s\n' "$value"
+		[[ "$value" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]] || continue
+		printf 'hard %s\npref %s\n' "${value%%.*}" "$value"
 	done
 	if [[ -f "$dir/package.json" ]]; then
-		jq -r '.engines.node // empty' "$dir/package.json" || return 1
+		engines=$(jq -r '.engines.node // empty' "$dir/package.json") || return 1
+		[[ -n "$engines" ]] && printf 'hard %s\n' "$engines"
 	fi
 	return 0
 }
@@ -71,11 +76,17 @@ except ValueError:
 
 # Prints selected bin path. Caller exports PATH in its own process/subshell.
 _project_node_bin() {
-	local root="$1" scope="${2:-.}" requirements="" line="" candidate="" version="" bin="" current=""
+	local root="$1" scope="${2:-.}" requirements="" preferred="" found="" line="" candidate="" version="" bin="" current=""
+	local pass="" wanted=""
 	local -a candidates=()
 	for candidate in "$root" "$root/$scope"; do
-		line=$(_project_node_requirement "$candidate") || return 1
-		[[ -n "$line" ]] && requirements="${requirements}${requirements:+$'\n'}${line}"
+		found=$(_project_node_requirement "$candidate") || return 1
+		while IFS= read -r line; do
+			case "$line" in
+			"pref "*) preferred="${preferred}${preferred:+$'\n'}${line#pref }" ;;
+			"hard "*) requirements="${requirements}${requirements:+$'\n'}${line#hard }" ;;
+			esac
+		done <<<"$found"
 	done
 	[[ -n "$requirements" ]] || return 2
 	current=$(command -v node 2>/dev/null || true)
@@ -88,19 +99,34 @@ _project_node_bin() {
 	candidates+=("${NVM_DIR:-$HOME/.nvm}"/versions/node/*/bin/node)
 	candidates+=("$HOME"/.volta/tools/image/node/*/bin/node)
 	candidates+=("${MISE_DATA_DIR:-$HOME/.local/share/mise}"/installs/node/*/bin/node)
-	candidates+=(/opt/homebrew/opt/node@*/bin/node /usr/local/opt/node@*/bin/node)
+	# Homebrew prefixes: macOS arm64/x86_64 and Linux; overridable for hermetic tests.
+	local brew_prefix=""
+	for brew_prefix in ${AIDEVOPS_NODE_BREW_PREFIXES:-/opt/homebrew /usr/local ${HOMEBREW_PREFIX:-/home/linuxbrew/.linuxbrew}}; do
+		candidates+=("$brew_prefix"/opt/node@*/bin/node)
+	done
 	candidates+=("${N_PREFIX:-/usr/local}"/n/versions/node/*/bin/node "$HOME"/n/versions/node/*/bin/node)
 	[[ -n "$nullglob_before" ]] || shopt -u nullglob
-	for candidate in "${candidates[@]}"; do
-		[[ -x "$candidate" ]] || continue
-		version=$("$candidate" --version 2>/dev/null) || continue
-		if _project_node_satisfies "$version" "$requirements"; then
+	# Pass 1 honours exact version-file pins; pass 2 accepts any hard-compatible runtime.
+	for pass in preferred hard; do
+		wanted="$requirements"
+		if [[ "$pass" == preferred ]]; then
+			[[ -n "$preferred" ]] || continue
+			wanted="${requirements}"$'\n'"${preferred}"
+		fi
+		for candidate in "${candidates[@]}"; do
+			[[ -x "$candidate" ]] || continue
+			version=$("$candidate" --version 2>/dev/null) || continue
+			_project_node_satisfies "$version" "$wanted" || continue
+			if [[ "$pass" == hard && -n "$preferred" ]]; then
+				printf 'WARNING: project pins node %s; using installed %s, which satisfies "%s". Install the pinned version to match exactly.\n' \
+					"${preferred//$'\n'/ and }" "$version" "${requirements//$'\n'/ and }" >&2
+			fi
 			# Preserve package-manager shims when the active runtime already matches.
 			[[ "$candidate" == "$current" ]] && return 0
 			bin="${candidate%/*}"
 			printf '%s\n' "$bin"
 			return 0
-		fi
+		done
 	done
 	version=$(node --version 2>/dev/null || printf unknown)
 	printf 'ENVIRONMENT FAILURE: node %s does not satisfy engines "%s" (root/scope requirements). Install a matching Node or select it with fnm, nvm, volta, mise, Homebrew node@<major>, or n; then rerun.\n' "$version" "${requirements//$'\n'/ and }" >&2

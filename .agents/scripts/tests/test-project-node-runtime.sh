@@ -7,6 +7,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 source "$SCRIPT_DIR/project-node-runtime.sh"
 root=$(mktemp -d)
 trap 'rm -rf "$root"' EXIT
+# Keep host runtimes (for example Homebrew node@24) out of the candidate set.
+export AIDEVOPS_NODE_BREW_PREFIXES="$root/missing" NVM_DIR="$root/missing" MISE_DATA_DIR="$root/missing" N_PREFIX="$root/missing"
 mkdir -p "$root/project/packages/app" "$root/active" "$root/fnm/node-versions/v24.18.0/installation/bin"
 # A fake active runtime lets the test run regardless of the host Node version.
 printf '#!/bin/sh\nprintf "v26.0.0\\n"\n' >"$root/active/node"
@@ -35,6 +37,27 @@ if PATH="$root/active:$PATH" FNM_DIR="$root/fnm" _project_node_bin "$root/projec
 fi
 printf '%s\n' '24.18' >"$root/project/packages/app/.node-version"
 printf 'PASS conflicting scoped pin fails closed\n'
+
+# GH#32897: a patch pin is a preference; the same major with engines is accepted.
+mkdir -p "$root/drift/node-versions/v24.11.0/installation/bin"
+printf '#!/bin/sh\nprintf "v24.11.0\\n"\n' >"$root/drift/node-versions/v24.11.0/installation/bin/node"
+chmod +x "$root/drift/node-versions/v24.11.0/installation/bin/node"
+drift_bin="$root/drift/node-versions/v24.11.0/installation/bin"
+actual=$(PATH="$root/active:$PATH" FNM_DIR="$root/drift" _project_node_bin "$root/project" packages/app 2>"$root/error")
+[[ "$actual" == "$drift_bin" ]] || { printf 'FAIL same-major patch drift rejected: %s\n' "$actual"; exit 1; }
+rg -q 'WARNING: project pins node .*24\.18\.0.*using installed v24\.11\.0' "$root/error" || { printf 'FAIL missing pin drift warning\n'; exit 1; }
+printf 'PASS same-major patch drift resolves with a warning\n'
+cp -R "$root/fnm/node-versions/v24.18.0" "$root/drift/node-versions/v24.18.0"
+actual=$(PATH="$root/active:$PATH" FNM_DIR="$root/drift" _project_node_bin "$root/project" packages/app 2>"$root/error")
+[[ "$actual" == "$root/drift/node-versions/v24.18.0/installation/bin" ]] || { printf 'FAIL exact pin not preferred: %s\n' "$actual"; exit 1; }
+[[ ! -s "$root/error" ]] || { printf 'FAIL exact pin match warned\n'; exit 1; }
+printf 'PASS exact pinned patch preferred over same-major drift\n'
+mkdir -p "$root/alias"
+printf '%s\n' 'lts/*' >"$root/alias/.nvmrc"
+alias_rc=0
+PATH="$root/active:$PATH" _project_node_bin "$root/alias" . >"$root/output" 2>"$root/error" || alias_rc=$?
+[[ "$alias_rc" -eq 2 ]] || { printf 'FAIL alias pin should mean no requirement, rc=%s\n' "$alias_rc"; exit 1; }
+printf 'PASS alias pin is not treated as an unsatisfiable requirement\n'
 
 # Exercise the worker preparation path without a live dispatch claim.
 # shellcheck source=../headless-runtime-worker-prepare.sh
