@@ -308,7 +308,9 @@ run_prompt_opencode_cli() {
 	local timeout="$4"
 	local command="${5:-}"
 
-	local cmd=(opencode run --format json)
+	# Automated harness runs must not inherit interactive greetings, advisories,
+	# or subagent A/B assignments from the OpenCode plugin.
+	local cmd=(env AIDEVOPS_HEADLESS=1 opencode run --format json)
 
 	if [[ -n "$command" ]]; then
 		cmd+=(--command "$command")
