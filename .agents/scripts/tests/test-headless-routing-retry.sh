@@ -527,4 +527,56 @@ fi
 	[[ "$_cmd_run_return_status" -eq 1 ]]
 )
 
+# GH#32929: tiers that share a model and reasoning (standard and thinking both
+# start at Sol medium) must never re-run the identical route on a capability
+# block. The next distinct healthy candidate wins; no distinct route is terminal.
+(
+	get_configured_models() {
+		local requested_tier="${1:-standard}"
+		case "$requested_tier" in
+		standard) printf '%s\n' "openai/gpt-6-sol" ;;
+		thinking) printf '%s\n' "openai/gpt-6-sol" "anthropic/claude-opus-5-5" ;;
+		*) return 1 ;;
+		esac
+		return 0
+	}
+	anthropic_available=1
+	provider_auth_available() {
+		local provider_name="$1"
+		[[ "$provider_name" != "anthropic" || "$anthropic_available" -eq 1 ]]
+	}
+	provider_oauth_pool_available() {
+		local provider_name="$1"
+		: "$provider_name"
+		return 0
+	}
+	model_backoff_active() {
+		local model_name="$1"
+		: "$model_name"
+		return 1
+	}
+	extract_provider() {
+		local model_name="$1"
+		printf '%s\n' "${model_name%%/*}"
+		return 0
+	}
+	set_last_provider() {
+		local role_name="$1"
+		local provider_name="$2"
+		: "$role_name" "$provider_name"
+		return 0
+	}
+
+	_resolve_capability_escalation worker standard openai/gpt-6-sol medium
+	[[ "$_capability_escalation_tier" == "thinking" ]]
+	[[ "$_capability_escalation_model" == "anthropic/claude-opus-5-5" ]]
+	[[ "$_capability_escalation_variant" == "medium" ]]
+
+	anthropic_available=0
+	if _resolve_capability_escalation worker standard openai/gpt-6-sol medium; then
+		printf 'FAIL: capability escalation re-ran the identical Sol medium route\n' >&2
+		exit 1
+	fi
+)
+
 printf 'PASS: headless routing exhausts bounded same-tier provider candidates\n'

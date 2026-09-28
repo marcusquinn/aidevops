@@ -233,9 +233,13 @@ _first_healthy_configured_model() {
 	local tier_name="${1:-standard}"
 	local selection_mode="${2:-adaptive}"
 	local preferred_model="${3:-}"
+	# GH#32929: capability escalation excludes the route that just failed so a
+	# tier sharing that model can offer its next distinct healthy candidate.
+	local excluded_model="${4:-}"
 	local current_model="" current_provider="" configured_count=0 fallback_model=""
 	while IFS= read -r current_model; do
 		[[ -n "$current_model" ]] || continue
+		[[ -z "$excluded_model" || "$current_model" != "$excluded_model" ]] || continue
 		if [[ "$selection_mode" == "exact-tier" ]] &&
 			! model_tier_candidate_index "$tier_name" "$current_model" >/dev/null 2>&1; then
 			continue
