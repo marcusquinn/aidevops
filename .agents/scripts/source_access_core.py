@@ -611,9 +611,30 @@ def canonical_json(value: Any) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
+def _git_user_identity() -> dict[str, Any]:
+    """Subprocess identity for Git: the authenticated requester when running as root.
+
+    #aidevops:trust-boundary — GH#32816: root Git rejects user-owned
+    repositories as "dubious ownership", and trusting them as root would let
+    repository-local config (include/includeIf, extensions) steer a root
+    process. Git therefore runs with the requesting user's uid/gid and no
+    supplementary groups, exactly like the gh credential read. A root caller
+    without an authenticated non-root requester keeps the legacy root identity,
+    for which Git still refuses non-root-owned repositories.
+    """
+    if os.geteuid() != 0:
+        return {}
+    uid, _home = real_user()
+    if uid <= 0:
+        return {}
+    account = pwd.getpwuid(uid)
+    return {"user": uid, "group": account.pw_gid, "extra_groups": []}
+
+
 def _run(command: list[str], *, input_bytes: bytes | None = None) -> subprocess.CompletedProcess[bytes]:
     _require_source(bool(command) and command[0] in (GIT, SSH_KEYGEN), "required command is not approved")
     environment = None
+    identity: dict[str, Any] = {}
     if command and command[0] == GIT:
         # #aidevops:trust-boundary — even ls-files runs core.fsmonitor. Never
         # execute repository hooks or inherit a caller's Git scope as the broker.
@@ -621,11 +642,14 @@ def _run(command: list[str], *, input_bytes: bytes | None = None) -> subprocess.
                    "-c", "core.hooksPath=/dev/null", *command[1:]]
         environment = {"PATH": "/usr/bin:/bin", "LC_ALL": "C", "GIT_CONFIG_NOSYSTEM": "1",
                        "GIT_CONFIG_GLOBAL": os.devnull, "GIT_OPTIONAL_LOCKS": "0"}
+        identity = _git_user_identity()
     try:
-        return subprocess.run(  # nosec B603 -- fixed system binary allowlist, argv only, Git hooks disabled
+        return subprocess.run(  # nosec B603 -- fixed system binary allowlist, argv only, Git hooks disabled; privileges dropped first
             command,
             input=input_bytes,
             env=environment,
+            cwd="/" if identity else None,
+            **identity,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             check=False,
