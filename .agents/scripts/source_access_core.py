@@ -827,6 +827,22 @@ def root_data_directory(path: Path, owner_uid: int, mode: int = 0o700) -> Path:
     return path
 
 
+def _darwin_acl_principal(uid: int) -> str:
+    """GH#32858: Darwin chmod -E accepts a user name or UUID, never a numeric uid.
+
+    The name must round-trip to the same uid so an aliased or malformed account
+    cannot redirect the grant; macOS binds the ACE to that account's UUID.
+    """
+    try:
+        name = pwd.getpwuid(uid).pw_name
+        round_trip = pwd.getpwnam(name).pw_uid
+    except KeyError:
+        raise SourceAccessError("bundle owner has no local account") from None
+    _require_source(re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,254}", name) is not None and round_trip == uid,
+                    "bundle owner account name is unsafe for an ACL entry")
+    return name
+
+
 def private_bundle_parent(config: Config, uid: int) -> Path:
     _require_source(type(uid) is int and uid > 0, "bundle requires a non-root owner")
     parent = root_data_directory(config.state_dir / "bundles" / str(uid), config.trust_uid, 0o755)
@@ -835,7 +851,8 @@ def private_bundle_parent(config: Config, uid: int) -> Path:
         return parent
     if sys.platform == "darwin":
         command = ["/bin/chmod", "-E", str(parent)]
-        content = f"user:{uid} allow list,search,readattr,readextattr,readsecurity\n".encode("ascii")
+        principal = _darwin_acl_principal(uid)
+        content = f"user:{principal} allow list,search,readattr,readextattr,readsecurity\n".encode("ascii")
     else:
         _require_source(sys.platform.startswith("linux"), "private bundle ACLs are unsupported on this platform")
         command = ["/usr/bin/setfacl", "--set", f"u::rwx,u:{uid}:r-x,g::---,m::r-x,o::---", "--", str(parent)]
@@ -843,7 +860,7 @@ def private_bundle_parent(config: Config, uid: int) -> Path:
     executable = Path(command[0]).resolve(strict=True)
     _require_source(_trusted_file(executable, 0) and all(_trusted_directory(item, 0) for item in executable.parents),
                     "private publication requires a trusted system ACL tool")
-    result = subprocess.run(  # nosec B603 -- fixed platform ACL executable and numeric UID; no caller command
+    result = subprocess.run(  # nosec B603 -- fixed platform ACL executable; uid or round-tripped name; no caller command
         command, input=content, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         env={"PATH": "/usr/bin:/bin", "LC_ALL": "C"}, check=False, timeout=5,
     )

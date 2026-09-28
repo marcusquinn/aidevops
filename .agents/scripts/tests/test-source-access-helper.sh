@@ -6,4 +6,5 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 python3 "${SCRIPT_DIR}/test-source-access-state-dir.py"
+python3 "${SCRIPT_DIR}/test-source-access-bundle-acl.py"
 exec python3 "${SCRIPT_DIR}/test-source-access-helper.py"
