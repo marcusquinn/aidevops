@@ -43,15 +43,15 @@ describe("cache stability monitor", () => {
     const { lines, observe } = monitor();
     observe(body({ turns: 1 }), { sessionID: "s", account: "a@example.test" });
     observe(body({ turns: 2, tools: ["read", "edit", "mcp_x"] }), { sessionID: "s", account: "a@example.test" });
-    assert.match(lines.at(-1), /segment=tools added=\[mcp_x\]/);
+    assert.match(lines.at(-1), /family=agent segment=tools added=\[mcp_x\]/);
 
     observe(body({ turns: 3, tools: ["read", "edit", "mcp_x"], prefix: "framework v1\nWe're running v2" }), { sessionID: "s", account: "a@example.test" });
     assert.match(lines.at(-1), /segment=prefix .*line=2 was="" now="We're running v2"/);
 
     const mutated = body({ turns: 4, tools: ["read", "edit", "mcp_x"], prefix: "framework v1\nWe're running v2" });
-    mutated.messages[2].content[0].content = "pruned";
+    mutated.messages[2].content[0].content = "[pruned tool output]";
     observe(mutated, { sessionID: "s", account: "a@example.test" });
-    assert.match(lines.at(-1), /segment=history index=2\/7 role=user$/);
+    assert.match(lines.at(-1), /segment=history index=2\/7 role=user block=0\/1 type=tool_result change=modified chars=5->20 now="\[pruned tool output\]"$/);
 
     observe(body({ turns: 5, tools: ["read", "edit", "mcp_x"], prefix: "framework v1\nWe're running v2" }), { sessionID: "s", account: "b@example.test" });
     assert.match(lines.at(-1), /segment=account from=\w+ to=\w+$/);
@@ -67,5 +67,20 @@ describe("cache stability monitor", () => {
     on.observe(body(), {});
     on.observe(body({ tools: ["other"] }), {});
     assert.deepEqual(lines, []);
+  });
+
+  test("separates auxiliary requests and attributes block removals", () => {
+    const { lines, observe } = monitor();
+    observe(body({ tools: [], turns: 1 }), { sessionID: "s" });
+    observe(body({ turns: 1 }), { sessionID: "s" });
+    observe(body({ tools: [], turns: 2 }), { sessionID: "s" });
+    assert.deepEqual(lines, []);
+
+    const first = body({ turns: 2 });
+    first.messages[1].content.push({ type: "thinking", thinking: "private thought" });
+    observe(first, { sessionID: "thinking" });
+    const second = body({ turns: 3 });
+    observe(second, { sessionID: "thinking" });
+    assert.match(lines.at(-1), /family=agent segment=history index=1\/5 role=assistant block=1\/2 type=thinking change=removed chars=48->0/);
   });
 });
