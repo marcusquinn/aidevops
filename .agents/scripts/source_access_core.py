@@ -611,6 +611,18 @@ def canonical_json(value: Any) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
+def _git_directory_owner_uid(command: list[str]) -> int | None:
+    """Non-root owner of the `-C` directory when the broker runs as root, else None."""
+    if os.geteuid() != 0:
+        return None
+    try:
+        directory = command[command.index("-C") + 1]
+        owner_uid = os.stat(directory).st_uid
+    except (ValueError, IndexError, OSError):
+        return None
+    return owner_uid if owner_uid > 0 else None
+
+
 def _run(command: list[str], *, input_bytes: bytes | None = None) -> subprocess.CompletedProcess[bytes]:
     _require_source(bool(command) and command[0] in (GIT, SSH_KEYGEN), "required command is not approved")
     environment = None
@@ -621,6 +633,15 @@ def _run(command: list[str], *, input_bytes: bytes | None = None) -> subprocess.
                    "-c", "core.hooksPath=/dev/null", *command[1:]]
         environment = {"PATH": "/usr/bin:/bin", "LC_ALL": "C", "GIT_CONFIG_NOSYSTEM": "1",
                        "GIT_CONFIG_GLOBAL": os.devnull, "GIT_OPTIONAL_LOCKS": "0"}
+        owner_uid = _git_directory_owner_uid(command)
+        if owner_uid is not None:
+            # #aidevops:trust-boundary — GH#32816: as root, git rejects every
+            # user-owned repository as "dubious ownership". Git's own sudo
+            # exception trusts only repositories whose worktree AND gitdir are
+            # owned by SUDO_UID; derive it from the inspected directory, never
+            # from the caller's environment. Root-owned or foreign gitdirs still
+            # fail closed, and no safe.directory wildcard is introduced.
+            environment["SUDO_UID"] = str(owner_uid)
     try:
         return subprocess.run(  # nosec B603 -- fixed system binary allowlist, argv only, Git hooks disabled
             command,

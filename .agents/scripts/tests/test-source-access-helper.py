@@ -1598,5 +1598,28 @@ else: sys.exit(1)
                 HELPER._require_root_tty(self.config)
 
 
+    def test_root_broker_git_trusts_only_inspected_owner(self) -> None:
+        """GH#32816: as root, git needs SUDO_UID for user-owned worktrees."""
+        core = HELPER._SOURCE_CORE
+        captured: list[dict[str, str] | None] = []
+
+        def fake_run(command, **kwargs):
+            captured.append(kwargs.get("env"))
+            return subprocess.CompletedProcess(command, 0, b"", b"")
+
+        with mock.patch.object(core.os, "geteuid", return_value=0), \
+                mock.patch.object(core.subprocess, "run", side_effect=fake_run):
+            core._run([core.GIT, "-C", str(self.repo), "rev-parse", "--show-toplevel"])
+            core._run([core.GIT, "rev-parse", "--show-toplevel"])
+        self.assertEqual(captured[0]["SUDO_UID"], str(os.stat(self.repo).st_uid))
+        self.assertNotIn("SUDO_UID", captured[1])
+        with mock.patch.object(core.subprocess, "run", side_effect=fake_run):
+            core._run([core.GIT, "-C", str(self.repo), "rev-parse", "--show-toplevel"])
+        self.assertNotIn("SUDO_UID", captured[2])
+        with mock.patch.object(core.os, "geteuid", return_value=0), \
+                mock.patch.object(core.os, "stat", return_value=os.stat_result((0,) * 10)):
+            self.assertIsNone(core._git_directory_owner_uid([core.GIT, "-C", "/"]))
+
+
 if __name__ == "__main__":
     unittest.main()
