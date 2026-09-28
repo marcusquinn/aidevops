@@ -257,6 +257,18 @@ test_defer_marker_preserves_label() {
 	return 0
 }
 
+test_brief_hold_preserves_dependency_labels() {
+	local entry_json='{"task_ids":[],"issue_nums":["2"],"has_defer_marker":false}'
+	GH_LABELS_CSV='status:blocked,auto-dispatch,blocked-by:#2'
+	issue_brief_hold_blocks_auto_release() { return 0; }
+	reset_logs
+	_refresh_try_unblock_issue "example/repo" "3" "$entry_json" '{}' >/dev/null || true
+	assert_log_not_contains "brief hold preserves dependency label" "$GH_LOG" "--remove-label blocked-by:#2"
+	assert_log_not_contains "brief hold preserves blocked status" "$STATUS_LOG" "set_issue_status"
+	unset -f issue_brief_hold_blocks_auto_release
+	return 0
+}
+
 setup_test
 trap teardown_test EXIT
 
@@ -271,6 +283,7 @@ test_complete_native_relationships_override_stale_body_numbers
 test_available_issue_stale_label_removed
 test_blocked_issue_label_removed_and_status_available
 test_defer_marker_preserves_label
+test_brief_hold_preserves_dependency_labels
 
 printf '\nTests run: %s\n' "$TESTS_RUN"
 if [[ "$TESTS_FAILED" -ne 0 ]]; then
