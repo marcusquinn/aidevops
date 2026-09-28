@@ -340,6 +340,7 @@ test_stdin_body_normalization() {
 	printf 'ordinary body\n' >"$ordinary_body_file"
 	normalization_out=$(printf 'stdin body\n' | AIDEVOPS_TEMP_DIR="$TMP" "$shell_path" -c "
 source '${WRAPPERS_FILE}'
+typeset -f _gh_primary_cooldown_preflight >/dev/null 2>&1 || exit 1
 push_cleanup() { return 0; }
 
 _gh_wrapper_normalize_stdin_body_file --repo owner/repo --body-file - --label managed
