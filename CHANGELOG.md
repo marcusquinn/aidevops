@@ -10,6 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.37.23] - 2026-09-28
+
+### Changed
+
+- Maintenance: plan: add t18529 and t18530 briefs for GH#32871 and GH#32869
+- Maintenance: mark t18526 complete (pr:#32874 completed:2026-09-28) (#32879)
+- Maintenance: sync ref:GH#32867 to TODO.md (#32847)
+
+### Fixed
+
+- allow reads of tracked code/doc files with loose secret names; un-ignore .agents secret/credential source
+- classify Actions billing-blocked checks as capability failures in CI repair
+- let opt-in CWD inspector read same-user setuid-root helpers
+- guard empty create-wrapper arrays under nounset (#32768)
+- derive OpenCode test fixtures from headless pin (#32874)
+
 ## [3.37.22] - 2026-09-28
 
 ### Added
