@@ -12,7 +12,9 @@ not a disclosed search-engine algorithm.
 ## Entity register
 
 Map priority user questions to concepts, entities, existing pages, and evidence.
-For each entity, record:
+Persist the accepted register in the project's `context/keywords/entities.toon`
+and questions in `queries.toon` (`seo/keywords-standard.md`) so later audits,
+schema and PR work reuse it instead of rebuilding it. For each entity, record:
 
 | Field | Required evidence |
 |-------|-------------------|

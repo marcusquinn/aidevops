@@ -1464,6 +1464,10 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18500 Show AIDevOps and OpenCode versions in OpenCode V2 TUI slots #feat ref:GH#32698 pr:#32699 completed:2026-09-28
 
+- [ ] t18509 feat(seo): search targets standard — context/keywords.md registry, team hub sync, budgeted rank/AI tracking, ecommerce drill-down, init scaffold and repo backfill #feature #seo #framework #interactive tier:thinking ~6h ref:GH#32739 logged:2026-09-28 -> [todo/tasks/t18509-brief.md]
+
+- [ ] t18511 fix(design): make the brand-identity.toon template valid TOON #bug #design #interactive tier:standard ~45m ref:GH#32741 logged:2026-09-28 -> [todo/tasks/t18511-brief.md]
+
 ## In Progress
 
 - [x] t18478 Repair Anthropic Opus 5.5 OAuth adaptive-thinking request shape and add opt-in local interactive model/effort defaults without changing shared routes. Verify medium/xhigh Read-tool calls, unpinned OpenCode selection, focused plugin tests and changed-file lint; publish the reviewed fix through full-loop release. #bugfix #framework #auth #interactive #auto-dispatch ~2h tier:standard started:2026-09-26 ref:GH#32415 logged:2026-09-26 pr:#32417 testing:runtime-verified release:v3.36.0 completed:2026-09-26 -> [todo/tasks/t18478-brief.md]

@@ -172,6 +172,7 @@ Config (`~/.config/aidevops/keyword-research.json`): `default_locale`, `default_
 6. **Analysis**: `/keyword-research-extended` — full SERP data on top candidates
 7. **Cluster**: merge metrics with the intent ledger while retaining provenance
 8. **Export**: `--csv` — content planning spreadsheets
+9. **Record**: add accepted targets to the project registry (`aidevops keywords add targets phrase=... volume=... kd=... keyword_score=... business_value=...`), then `aidevops keywords score --apply` (`seo/keywords-standard.md`). CSVs are session artifacts; the registry is the durable record
 
 ```bash
 /keyword-research "dog training" --min-volume 1000 --max-difficulty 40 --csv

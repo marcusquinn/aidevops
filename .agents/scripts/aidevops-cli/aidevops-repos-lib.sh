@@ -438,6 +438,27 @@ _init_scaffold_design_md() {
 	return 0
 }
 
+_init_scaffold_keywords() {
+	local project_root="$1"
+	local init_scope="${2:-standard}"
+	local helper="$AGENTS_DIR/scripts/keywords-helper.sh"
+	[[ -x "$helper" ]] || helper="$INSTALL_DIR/.agents/scripts/keywords-helper.sh"
+	if [[ ! -x "$helper" ]]; then
+		print_warning "keywords helper not found; run aidevops update, then: aidevops keywords scaffold ."
+		return 0
+	fi
+	if [[ -f "$project_root/context/keywords.md" ]]; then
+		print_info "context/keywords.md already exists, skipping"
+		return 0
+	fi
+	if "$helper" scaffold "$project_root" --init-scope "$init_scope" >/dev/null; then
+		print_success "Created context/keywords.md search targets (populate with seo/keywords-standard.md)"
+	else
+		print_warning "context/keywords.md scaffolding failed (retry: aidevops keywords scaffold .)"
+	fi
+	return 0
+}
+
 _repo_registration_maintainer() {
 	local maintainer=""
 	if command -v gh &>/dev/null; then

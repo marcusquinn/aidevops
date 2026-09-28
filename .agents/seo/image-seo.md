@@ -17,6 +17,8 @@ tools:
 
 Coordinates `seo/moondream.md` (vision) + `seo/upscale.md` (quality). Input: image URL, local path, or base64. Output: filename, alt text, tags, optional upscale.
 
+**Project targets first**: when the repo has `context/keywords.md`, run `aidevops keywords brief --url <page> --asset image` (or `--cluster <id>`) and use its primary phrase, entity names and naming rules for file names, titles/captions, tags and IPTC/XMP keywords. Vision output describes what is visible; the registry decides which true phrase to use (`seo/keywords-standard.md`).
+
 ## Workflow
 
 ```bash

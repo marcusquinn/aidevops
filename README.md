@@ -475,6 +475,9 @@ Depending on selected features and existing files, initialization can add:
 - `.agents/AGENTS.md` for project-specific AI guidance.
 - `TODO.md` and `todo/` for tasks, plans, PRDs, and verification state.
 - `DESIGN.md` for repositories with a detected interface.
+- `context/keywords.md` search targets (keywords, AI-answer questions, entities)
+  for standard-scope repositories; public repositories keep the data in a
+  private team hub ([standard](.agents/seo/keywords-standard.md)).
 - Deployment and WordPress context manifests when explicitly selected.
 - Standard project courtesy files only when they do not already exist.
 

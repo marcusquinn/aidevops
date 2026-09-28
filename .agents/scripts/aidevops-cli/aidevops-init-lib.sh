@@ -915,6 +915,12 @@ EOF
 		print_info "DESIGN.md skipped (init_scope: $init_scope, interface: $has_interface)"
 	fi
 
+	# context/keywords.md — search targets; every standard/public repo is a search
+	# property (GitHub, registries, AI answers). Minimal scope only via explicit opt-in.
+	if _scope_includes "$init_scope" "standard" || [[ "$(jq -r '.keywords.enabled // false' "$project_root/.aidevops.json" 2>/dev/null)" == "true" ]]; then
+		_init_scaffold_keywords "$project_root" "$init_scope"
+	fi
+
 	# Courtesy files (README, LICENCE, CHANGELOG, etc.) — scope handled internally
 	scaffold_repo_courtesy_files "$project_root" "$init_scope"
 
@@ -1797,6 +1803,10 @@ _init_commit_files() {
 	[[ -f "$project_root/.aidevops/wordpress.yaml" ]] && init_files+=(".aidevops/wordpress.yaml")
 	[[ -f "$project_root/AGENTS.md" ]] && init_files+=("AGENTS.md")
 	[[ -f "$project_root/DESIGN.md" ]] && init_files+=("DESIGN.md")
+	# Public repos gitignore keywords data; only stage it when Git tracks it.
+	if [[ -d "$project_root/context/keywords" ]] && ! git -C "$project_root" check-ignore -q context/keywords/ 2>/dev/null; then
+		init_files+=("context/keywords.md" "context/keywords/")
+	fi
 	[[ -f "$project_root/TODO.md" ]] && init_files+=("TODO.md")
 	[[ -d "$project_root/todo" ]] && init_files+=("todo/")
 	[[ -f "$project_root/MODELS.md" ]] && init_files+=("MODELS.md")

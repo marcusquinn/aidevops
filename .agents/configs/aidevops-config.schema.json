@@ -259,6 +259,36 @@
       "additionalProperties": false
     },
 
+    "keywords": {
+      "type": "object",
+      "description": "Search-targets registry (context/keywords.md) hub and paid-provider budget settings.",
+      "properties": {
+        "monthly_budget_usd": {
+          "type": "number",
+          "default": 1,
+          "minimum": 0,
+          "description": "Default paid-provider spend cap per property per month (USD). Env: AIDEVOPS_KEYWORDS_MONTHLY_BUDGET_USD"
+        },
+        "hub_slug": {
+          "type": "string",
+          "default": "",
+          "description": "Private team hub repository (owner/repo); local only. Env: AIDEVOPS_KEYWORDS_HUB_SLUG"
+        },
+        "hub_path": {
+          "type": "string",
+          "default": "",
+          "description": "Optional explicit hub checkout path. Env: AIDEVOPS_KEYWORDS_HUB_PATH"
+        },
+        "dataforseo_estimate_usd": {
+          "type": "number",
+          "default": 0.05,
+          "minimum": 0,
+          "description": "Pre-call estimate for one DataForSEO ranked-keywords call. Env: AIDEVOPS_KEYWORDS_DATAFORSEO_ESTIMATE_USD"
+        }
+      },
+      "additionalProperties": false
+    },
+
     "safety": {
       "type": "object",
       "description": "Security hooks, verification, and protective measures.",

@@ -12,6 +12,8 @@ model: simple
 
 Optional project-level `context/*.md` files for SEO content creation. Adapted from [TheCraigHewitt/seomachine](https://github.com/TheCraigHewitt/seomachine) (MIT License). Setup: `mkdir -p context`, copy the templates you need — auto-detected by `seo-writer.md`, `editor.md`, and `internal-linker.md`.
 
+**Search targets have moved to the standard**: `context/keywords.md` + `context/keywords/*.toon` (`seo/keywords-standard.md`, `aidevops keywords scaffold`). The `target-keywords.md` and `competitor-analysis.md` templates below are legacy: `aidevops keywords migrate --apply` imports them (sources kept), and agents read them only when `context/keywords.md` is absent. Internal link anchors can come from cluster `anchors`/`target_url` rows; keep `internal-links-map.md` for hand-curated overrides. On-page rules from `seo-guidelines.md` belong in the keywords.md "Naming and metadata rules" section.
+
 ### context/brand-voice.md
 
 ```markdown
@@ -60,7 +62,7 @@ Optional project-level `context/*.md` files for SEO content creation. Adapted fr
 - Conclusion: [Summary + CTA]
 ```
 
-### context/target-keywords.md
+### context/target-keywords.md (legacy)
 
 ```markdown
 # Target Keywords
@@ -99,7 +101,7 @@ Repeat structure per cluster.
 - Cluster: /blog/topic-a-subtopic-1, /blog/topic-a-subtopic-2
 ```
 
-### context/competitor-analysis.md
+### context/competitor-analysis.md (competitors migrate to `entities.toon`)
 
 ```markdown
 # Competitor Analysis
