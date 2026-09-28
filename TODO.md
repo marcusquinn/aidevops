@@ -1476,6 +1476,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18517 fix(seo): keywords DataForSEO credentials fall back to gopass #bug #seo #framework #interactive tier:standard ~20m ref:GH#32803 logged:2026-09-28 -> [todo/tasks/t18517-brief.md] pr:#32804 completed:2026-09-28
 
+- [ ] t18518 fix(seo): keywords read DATAFORSEO_API_LOGIN/API_PASSWORD from gopass #bug #seo #framework #interactive tier:standard ~20m ref:GH#32813 logged:2026-09-28 -> [todo/tasks/t18518-brief.md]
+
 ## In Progress
 
 - [x] t18478 Repair Anthropic Opus 5.5 OAuth adaptive-thinking request shape and add opt-in local interactive model/effort defaults without changing shared routes. Verify medium/xhigh Read-tool calls, unpinned OpenCode selection, focused plugin tests and changed-file lint; publish the reviewed fix through full-loop release. #bugfix #framework #auth #interactive #auto-dispatch ~2h tier:standard started:2026-09-26 ref:GH#32415 logged:2026-09-26 pr:#32417 testing:runtime-verified release:v3.36.0 completed:2026-09-26 -> [todo/tasks/t18478-brief.md]
