@@ -1448,6 +1448,12 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18494 fix: claim-task-id strands IDs on rejected bodies, misleading scope hint, polluted issue-number capture, 30s counter fetch budget #auto-dispatch #bug #interactive tier:standard ~1.5h ref:GH#32617 logged:2026-09-27 -> [todo/tasks/t18494-brief.md] pr:#32674 completed:2026-09-27
 
+- [x] t18496 fix(dispatch): stop false missing_files_scope holds and auto-release repaired briefs #auto-dispatch #bug #interactive tier:standard ~2h ref:GH#32689 logged:2026-09-28 pr:#32690 completed:2026-09-28
+
+- [ ] t18497 fix(claim-task-id): shallow counter-branch discovery fetches that time out at the 30s default #auto-dispatch #bug #interactive tier:standard ~45m ref:GH#32692 logged:2026-09-28
+
+- [ ] t18503 test: isolate brief-scope pulse tests from the live pulse.log #bug #interactive tier:simple ~15m ref:GH#32710 logged:2026-09-28
+
 - [x] t18495 fix: guard merged-PR reconcile stages 1-2 against recurrent file-size debt #auto-dispatch #bug #pulse #interactive tier:standard ~1h ref:GH#32640 logged:2026-09-27 -> [todo/tasks/t18495-brief.md] pr:#32642 completed:2026-09-27
 
 - [ ] t18500 Show AIDevOps and OpenCode versions in OpenCode V2 TUI slots #feat ref:GH#32698
