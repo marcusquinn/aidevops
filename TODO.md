@@ -1472,7 +1472,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18511 fix(design): make the brand-identity.toon template valid TOON #bug #design #interactive tier:standard ~45m ref:GH#32741 logged:2026-09-28 -> [todo/tasks/t18511-brief.md] pr:#32750 completed:2026-09-28
 
-- [ ] t18516 fix(seo): keywords hub clone from canonical cwd; exported env overrides config #bug #seo #framework #interactive tier:standard ~30m ref:GH#32791 logged:2026-09-28 -> [todo/tasks/t18516-brief.md]
+- [x] t18516 fix(seo): keywords hub clone from canonical cwd; exported env overrides config #bug #seo #framework #interactive tier:standard ~30m ref:GH#32791 logged:2026-09-28 -> [todo/tasks/t18516-brief.md] pr:#32792 completed:2026-09-28
 
 ## In Progress
 
