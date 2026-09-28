@@ -5023,7 +5023,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t18441 Allow snapshot release retries to expand verified authorization #auto-dispatch #bug #release #security #interactive priority:critical tier:thinking ~2h ref:GH#31967 logged:2026-09-16 -> [todo/tasks/t18441-brief.md] pr:#31969 completed:2026-09-16
 
 - [x] t18442 Repin recovered release snapshot after authorization expansion #auto-dispatch #bug #release #security #interactive priority:critical tier:thinking ~2h ref:GH#31971 logged:2026-09-16 -> [todo/tasks/t18442-brief.md] pr:#31973 completed:2026-09-16
-- [ ] t18508 Quality sweep: publish partial results when a large repo exceeds the per-repo budget #auto-dispatch #bug ref:GH#32737
+- [x] t18508 Quality sweep: publish partial results when a large repo exceeds the per-repo budget #auto-dispatch #bug ref:GH#32737 pr:#32902 completed:2026-09-28
 - [x] t18507 test(dispatch): repair four structural tests stale after pulse-dispatch-core split #auto-dispatch #bug ref:GH#32733 pr:#32783 completed:2026-09-28
 - [ ] t18506 Persistent dashboard issues: accuracy, privacy and public meaningfulness #enhancement ref:GH#32730
 - [ ] t18513 Quality dashboard comment hygiene silently no-ops on large threads #bug ref:GH#32752
