@@ -355,6 +355,7 @@ assert_label_maintenance_cycle_budget_contract() {
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENGINE="$SCRIPT_DIR/pulse-dispatch-engine.sh"
 CORE="$SCRIPT_DIR/pulse-dispatch-core.sh"
+DISPATCH_LOCKS="$SCRIPT_DIR/pulse-dispatch-locks.sh"
 DISPATCH_LIB="$SCRIPT_DIR/pulse-dispatch-lib.sh"
 DISPATCH_CAPACITY_LIB="$SCRIPT_DIR/pulse-dispatch-lib-capacity.sh"
 DISPATCH_CANDIDATES_LIB="$SCRIPT_DIR/pulse-dispatch-lib-candidates.sh"
@@ -602,7 +603,7 @@ assert_grep \
 assert_grep \
 	"10b3: active claim dedup returns benign rc=3 to suppress Stage failed" \
 	'_dedup_layer6_assignee_and_stale.*&& return 3' \
-	"$CORE"
+	"$DISPATCH_LOCKS"
 assert_grep \
 	"10b4: refill skips candidates blocked by active claim in current cycle" \
 	'skip:already_assigned blocked:' \

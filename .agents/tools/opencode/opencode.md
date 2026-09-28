@@ -128,6 +128,16 @@ managed
 `~/.aidevops/runtimes/opencode-v2/runtime/node_modules/.bin/` bypasses its
 private config/data/auth isolation.
 
+### Language servers (LSP)
+
+OpenCode 2 accepts and preserves `lsp` configuration, but does not run
+language servers, expose LSP tools, or produce LSP diagnostics; its sidebar
+has no LSP panel. Upstream directs users to the project's lint, typecheck, or
+compiler commands instead (V2 migration guide, `migrate-v1.mdx`). Aidevops
+follows the same rule on every runtime (`reference/ci-gate-policy.md`), and
+headless profiles already set `lsp: false`. OpenCode 1 still supports
+language servers, but framework verification never depends on them.
+
 ### Maintaining agent parity
 
 The canonical main-agent roster is `.agents/subagent-index.toon` and its root
