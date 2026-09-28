@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.37.15] - 2026-09-28
+
+### Added
+
+- route credential-dependent dispatch to equipped runners (#32748)
+- context/keywords.md search targets standard with hub sync, tracking and ecommerce drill-down
+
+### Fixed
+
+- make the brand-identity.toon template valid TOON
+
 ## [3.37.14] - 2026-09-28
 
 ### Changed
