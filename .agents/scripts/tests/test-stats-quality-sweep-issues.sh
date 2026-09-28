@@ -446,6 +446,48 @@ else
 fi
 
 # =============================================================================
+# Test (h): large comment bodies do not abort hygiene (GH#32752)
+# 150 automation comments x 20 KB bodies exceed the argument-size limit when
+# full bodies are merged through jq --argjson.
+# =============================================================================
+printf '\n%s[h] large-thread-comment-hygiene%s\n' "$TEST_BLUE" "$TEST_NC"
+
+LARGE_PAGE="${TMP}/large-page.json"
+MINIMIZED="${TMP}/minimized.log"
+true >"$MINIMIZED"
+command jq -n '{data:{repository:{issue:{comments:{
+	pageInfo:{hasNextPage:false,endCursor:null},
+	nodes:[range(0;150) | {id:"c\(.)", isMinimized:false, createdAt:"2026-07-01T00:00:00Z",
+		body:("<!-- nmr-decision-packet reason=authority -->\n" + ("x" * 20000))}]
+}}}}}' >"$LARGE_PAGE"
+
+gh() {
+	case "$*" in
+	*"minimizeComment"*)
+		printf '%s\n' "$*" >>"$MINIMIZED"
+		printf '{"data":{"minimizeComment":{"clientMutationId":null}}}\n'
+		return 0
+		;;
+	*"api graphql"*)
+		cat "$LARGE_PAGE"
+		return 0
+		;;
+	esac
+	return 0
+}
+export -f gh
+jq() { command jq "$@"; }
+export -f jq
+
+QUALITY_DASHBOARD_MINIMIZE_MAX=200 _minimize_superseded_dashboard_comments 24670 "test/repo"
+minimized_count=$(grep -c 'minimizeComment(input' "$MINIMIZED")
+if [[ "$minimized_count" == "150" ]]; then
+	pass "large-thread-minimizes-all-superseded-comments"
+else
+	fail "large-thread-minimizes-all-superseded-comments" "minimized=${minimized_count}; log=$(tail -3 "$LOGFILE" 2>/dev/null)"
+fi
+
+# =============================================================================
 # Summary
 # =============================================================================
 printf '\n'
