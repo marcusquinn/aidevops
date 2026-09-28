@@ -17,6 +17,7 @@ REPOS_FILE="${AIDEVOPS_REPOS_FILE:-${HOME}/.config/aidevops/repos.json}"
 _CLOUDRON_MONITOR_JSON_TYPE_ARRAY=array
 _CLOUDRON_MONITOR_JSON_TYPE_STRING=string
 _CLOUDRON_MONITOR_JSON_TYPE_OBJECT=object
+_CLOUDRON_MONITOR_SOURCE_TAGS=tags
 _CLOUDRON_MONITOR_GH_TIMEOUT_DEFAULT=90
 
 _cloudron_monitor_error() {
@@ -49,7 +50,8 @@ _cloudron_monitor_response_bodies() {
 
 _cloudron_monitor_fetch_releases() {
 	local upstream_slug="$1"
-	local endpoint="/repos/${upstream_slug}/releases?per_page=100"
+	local source="${2:-releases}"
+	local endpoint="/repos/${upstream_slug}/${source}?per_page=100"
 	local read_timeout="${AIDEVOPS_CLOUDRON_MONITOR_GH_TIMEOUT:-$_CLOUDRON_MONITOR_GH_TIMEOUT_DEFAULT}"
 	local response=""
 	local api_rc=0
@@ -63,7 +65,7 @@ _cloudron_monitor_fetch_releases() {
 		return $?
 	fi
 	if [[ "$api_rc" -ne 0 ]]; then
-		_cloudron_monitor_error "Could not fetch paginated GitHub releases for $upstream_slug."
+		_cloudron_monitor_error "Could not fetch paginated GitHub $source for $upstream_slug."
 		return 1
 	fi
 	if ! _cloudron_monitor_response_bodies "$response" | jq -sc '
@@ -73,7 +75,7 @@ _cloudron_monitor_fetch_releases() {
 			error("expected release page arrays")
 		end
 	'; then
-		_cloudron_monitor_error "Could not normalize paginated GitHub releases for $upstream_slug."
+		_cloudron_monitor_error "Could not normalize paginated GitHub $source for $upstream_slug."
 		return 1
 	fi
 	return 0
@@ -172,24 +174,26 @@ _cloudron_monitor_latest_release_version() {
 	local releases_json="$1"
 	local prefixes_json="$2"
 	local upstream_slug="$3"
+	local source="${4:-releases}"
 	local stable_tags=""
 	local tag=""
 	local version=""
 	local latest_version=""
 
-	[[ -n "$releases_json" ]] || _cloudron_monitor_error "GitHub returned an empty releases response for $upstream_slug." || return 1
+	[[ -n "$releases_json" ]] || _cloudron_monitor_error "GitHub returned an empty $source response for $upstream_slug." || return 1
 	if ! stable_tags=$(jq -r \
 		--arg array_type "$_CLOUDRON_MONITOR_JSON_TYPE_ARRAY" \
-		--arg string_type "$_CLOUDRON_MONITOR_JSON_TYPE_STRING" '
+		--arg string_type "$_CLOUDRON_MONITOR_JSON_TYPE_STRING" --arg source "$source" --arg tags_source "$_CLOUDRON_MONITOR_SOURCE_TAGS" '
 		if type != $array_type then
 			error("expected a release array")
 		else
 			.[]
-			| select(type == "object" and .draft != true and .prerelease != true and (.tag_name | type == $string_type))
-			| .tag_name
+			| select(type == "object" and ($source == $tags_source or (.draft != true and .prerelease != true)))
+			| (if $source == $tags_source then .name else .tag_name end)
+			| select(type == $string_type)
 		end
 	' <<<"$releases_json"); then
-		_cloudron_monitor_error "GitHub releases response for $upstream_slug was not a valid release array." || return 1
+		_cloudron_monitor_error "GitHub $source response for $upstream_slug was not a valid array." || return 1
 	fi
 
 	while IFS= read -r tag; do
@@ -200,7 +204,7 @@ _cloudron_monitor_latest_release_version() {
 		fi
 	done <<<"$stable_tags"
 
-	[[ -n "$latest_version" ]] || _cloudron_monitor_error "No stable semantic release tag for $upstream_slug matches cloudron_package.upstream_tag_prefixes ${prefixes_json}; configure the tag streams or publish a matching stable release." || return 1
+	[[ -n "$latest_version" ]] || _cloudron_monitor_error "No stable semantic $source tag for $upstream_slug matches cloudron_package.upstream_tag_prefixes ${prefixes_json}; configure the tag streams or publish a matching stable release." || return 1
 	printf '%s\n' "$latest_version"
 	return 0
 }
@@ -209,7 +213,7 @@ _cloudron_monitor_latest_release_version() {
 # qualified. Only an explicitly configured release-parent image can gate work;
 # a successful image built from a later commit is NOT the released source.
 _cloudron_monitor_upstream_image_ready() {
-	local entry="$1" upstream_slug="$2" releases_json="$3" prefixes_json="$4" version="$5"
+	local entry="$1" upstream_slug="$2" releases_json="$3" prefixes_json="$4" version="$5" source="${6:-releases}"
 	local image="" signer="" annotation="" eligibility_type="" tag="" candidate="" release_ref="" release_sha=""
 	local object_type="" commit="" source_sha="" image_ref="" manifest="" digest="" proof="" depth=0
 	image=$(jq -r '.cloudron_package.upstream_image.repository // empty' <<<"$entry") || return 1
@@ -228,7 +232,7 @@ _cloudron_monitor_upstream_image_ready() {
 		candidate=$(_cloudron_monitor_tag_version "$tag" "$prefixes_json") || continue
 		[[ "$candidate" == "$version" ]] && break
 	done < <(jq -r --arg object_type "$_CLOUDRON_MONITOR_JSON_TYPE_OBJECT" \
-		'.[] | select(type == $object_type and .draft != true and .prerelease != true) | .tag_name | select(type == "string")' <<<"$releases_json")
+		--arg source "$source" --arg tags_source "$_CLOUDRON_MONITOR_SOURCE_TAGS" '.[] | select(type == $object_type and ($source == $tags_source or (.draft != true and .prerelease != true))) | (if $source == $tags_source then .name else .tag_name end) | select(type == "string")' <<<"$releases_json")
 	[[ "$candidate" == "$version" && "$tag" =~ ^[A-Za-z0-9_.-]+$ ]] || _cloudron_monitor_error "No stable tag resolves upstream v$version." || return 1
 	release_ref=$(gh api "repos/${upstream_slug}/git/ref/tags/${tag}") || return 1
 	object_type=$(jq -r '.object.type // empty' <<<"$release_ref") || return 1
@@ -458,12 +462,15 @@ _cloudron_monitor_upstream_entry() {
 	local upstream_slug=""
 	local monitor_enabled=""
 	local tag_prefixes=""
+	local upstream_source=""
 	slug=$(jq -r '.slug // empty' <<<"$entry")
 	repo_path=$(jq -r '.path // empty' <<<"$entry")
 	manifest_rel=$(jq -r '.cloudron_package.manifest // "CloudronManifest.json"' <<<"$entry")
 	upstream_slug=$(jq -r '.cloudron_package.upstream_slug // empty' <<<"$entry")
 	monitor_enabled=$(jq -r '.cloudron_package.monitor_upstream // ((.cloudron_package.upstream_slug // "") != "")' <<<"$entry")
 	[[ "$monitor_enabled" == true ]] || return 0
+	upstream_source=$(jq -r '.cloudron_package.upstream_source // "releases"' <<<"$entry") || return 1
+	[[ "$upstream_source" == releases || "$upstream_source" == "$_CLOUDRON_MONITOR_SOURCE_TAGS" ]] || _cloudron_monitor_error "cloudron_package.upstream_source for $slug must be releases or tags." || return 1
 	[[ "$slug" == */* && "$upstream_slug" == */* ]] || _cloudron_monitor_error "Cloudron upstream monitoring requires target and upstream slugs." || return 1
 	[[ "$manifest_rel" != /* && "$manifest_rel" != *..* ]] || _cloudron_monitor_error "Unsafe manifest path configured for $slug." || return 1
 	repo_path="${repo_path/#\~/$HOME}"
@@ -483,9 +490,9 @@ _cloudron_monitor_upstream_entry() {
 		'type == $array_type and length > 0 and all(.[]; type == $string_type and all(explode[]; . >= 32 and . != 127))' <<<"$tag_prefixes" >/dev/null 2>&1 ||
 		_cloudron_monitor_error "cloudron_package.upstream_tag_prefixes for $slug must be a non-empty array of strings; control characters are forbidden." || return 1
 	local releases_json=""
-	releases_json=$(_cloudron_monitor_fetch_releases "$upstream_slug") || return $?
+	releases_json=$(_cloudron_monitor_fetch_releases "$upstream_slug" "$upstream_source") || return $?
 	local latest_version=""
-	latest_version=$(_cloudron_monitor_latest_release_version "$releases_json" "$tag_prefixes" "$upstream_slug") || return 1
+	latest_version=$(_cloudron_monitor_latest_release_version "$releases_json" "$tag_prefixes" "$upstream_slug" "$upstream_source") || return 1
 	local current_version=""
 	current_version=$(jq -r '.upstreamVersion // empty' <<<"$remote_manifest") || return 1
 	if [[ -n "$current_version" ]] && ! _cloudron_monitor_version_newer "$latest_version" "$current_version"; then
@@ -493,7 +500,7 @@ _cloudron_monitor_upstream_entry() {
 	fi
 	local source_proof="" ready_rc=0
 	if jq -e '.cloudron_package.upstream_image != null' <<<"$entry" >/dev/null; then
-		source_proof=$(_cloudron_monitor_upstream_image_ready "$entry" "$upstream_slug" "$releases_json" "$tag_prefixes" "$latest_version") || ready_rc=$?
+		source_proof=$(_cloudron_monitor_upstream_image_ready "$entry" "$upstream_slug" "$releases_json" "$tag_prefixes" "$latest_version" "$upstream_source") || ready_rc=$?
 		[[ "$ready_rc" -ne 3 ]] || return 0
 		[[ "$ready_rc" -eq 0 ]] || return "$ready_rc"
 	fi
