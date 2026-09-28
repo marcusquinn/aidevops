@@ -50,8 +50,16 @@ _refresh_hash() {
 	# The common canonicalizer deliberately drops the signature and everything
 	# after it. Verify those preserved bytes separately, ignoring final blank lines.
 	suffix=$(printf '%s' "$body" | awk '/^<!-- aidevops:sig -->/ {seen=1} seen {lines[NR]=$0; if ($0 !~ /^[[:space:]]*$/) last=NR} END {for (i=1;i<=last;i++) if (i in lines) print lines[i]}') || return 1
-	printf '%s\n%s' "$canonical" "$suffix" | sha256sum | cut -d' ' -f1
-	return $?
+	if command -v shasum >/dev/null 2>&1; then
+		printf '%s\n%s' "$canonical" "$suffix" | shasum -a 256 | cut -d' ' -f1
+		return $?
+	fi
+	if command -v sha256sum >/dev/null 2>&1; then
+		printf '%s\n%s' "$canonical" "$suffix" | sha256sum | cut -d' ' -f1
+		return $?
+	fi
+	print_error "Issue body refresh requires a SHA-256 tool"
+	return 1
 }
 
 cmd_refresh_body() {
