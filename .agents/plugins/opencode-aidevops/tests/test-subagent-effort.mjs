@@ -100,6 +100,17 @@ test("focused and light domain captures deliver canonical knowledge with parent 
   assert.equal(Object.keys(fixture.config.agent).length, 3);
 });
 
+test("domain-light uses medium under a high parent and stays clamped under low", async (t) => {
+  for (const [parent, expected] of [["high", "medium"], ["low", "low"]]) {
+    const fixture = domainFixture(t, parent);
+    const output = fixture.output("domain-light");
+    await fixture.hooks.chatMessage({}, output);
+    const params = { options: {} };
+    await fixture.hooks.chatParams({ message: output.message, model: output.message.model }, params);
+    assert.equal(params.options.reasoningEffort, expected);
+  }
+});
+
 test("domain registration preserves user profiles and isolates canonical source registries", (t) => {
   const fixture = domainFixture(t);
   const custom = { prompt: "User-owned", disable: true };

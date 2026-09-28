@@ -24,11 +24,11 @@ const envelope = JSON.stringify({
 });
 
 test("shipped routes keep Sol medium in charge and Astra outside automatic escalation", () => {
-  assert.deepEqual(routingProfile(routing, "simple"), { tier: "simple", model: "openai/gpt-6-luna", variant: "low" });
-  assert.deepEqual(routingProfile(routing, "standard"), { tier: "standard", model: "openai/gpt-6-sol", variant: "low" });
+  assert.deepEqual(routingProfile(routing, "simple"), { tier: "simple", model: "openai/gpt-6-luna", variant: "medium" });
+  assert.deepEqual(routingProfile(routing, "standard"), { tier: "standard", model: "openai/gpt-6-sol", variant: "medium" });
   assert.deepEqual(routingProfile(routing, "thinking"), { tier: "thinking", model: "openai/gpt-6-sol", variant: "medium" });
   assert.equal(nextRoutingTier(routing, "thinking"), "");
-  assert.deepEqual(routing.specialistAdvisor, { model: "openai/gpt-6-astra", variant: "low" });
+  assert.deepEqual(routing.specialistAdvisor, { model: "openai/gpt-6-astra", variant: "medium" });
   assert.equal(mergeModelRouting(routing, { specialist_advisor: null }).specialistAdvisor, null);
   assert.equal(mergeModelRouting(routing, { specialist_advisor: { model: "invalid", variant: "low" } }).specialistAdvisor, null);
   assert.deepEqual(mergeModelRouting(routing, { tiers: {} }).specialistAdvisor, routing.specialistAdvisor);
@@ -57,7 +57,7 @@ test("registration supplies canonical tool-free adviser and defaults without rep
   assert.equal(config.agent["Build+"].variant, "medium");
   const advisor = config.agent["specialist-advisor"];
   assert.equal(advisor.model, "openai/gpt-6-astra");
-  assert.equal(advisor.variant, "low");
+  assert.equal(advisor.variant, "medium");
   assert.deepEqual(advisor.tools, { "*": false });
   assert.deepEqual(advisor.permission, { "*": "deny" });
   assert.match(advisor.prompt, /no tools, network, credentials/);
@@ -129,7 +129,7 @@ test("Sol parent can explicitly request Astra advice in interactive and headless
     assert.equal(output.message.model.modelID, "gpt-6-astra");
     const params = { options: {} };
     await hooks.chatParams({ message: output.message, provider: { id: "openai" }, model: { id: "gpt-6-astra" } }, params);
-    assert.equal(params.options.reasoningEffort, "low");
+    assert.equal(params.options.reasoningEffort, "medium");
     output.parts[0].text = "Use Astra for no stated reason";
     await assert.rejects(hooks.chatMessage({}, output), /JSON evidence envelope/);
   }

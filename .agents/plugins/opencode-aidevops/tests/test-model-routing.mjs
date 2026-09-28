@@ -28,14 +28,15 @@ test("a model serving several tiers resolves by observed variant", () => {
     writeFileSync(table, JSON.stringify({
       tiers: {
         standard: { models: ["vendor/shared"], reasoning: { vendor: "low" } },
-        thinking: { models: ["vendor/shared"], reasoning: { vendor: "medium" } },
+        thinking: { models: ["vendor/shared"], reasoning: { vendor: "high" } },
       },
       escalation_order: ["simple", "standard", "thinking"],
     }));
     const routing = loadModelRouting([table]);
     assert.equal(routingTierForModel(routing, "vendor/shared"), "standard");
     assert.equal(routingTierForModel(routing, "vendor/shared", "low"), "standard");
-    assert.equal(routingTierForModel(routing, "vendor/shared", "medium"), "thinking");
+    assert.equal(routingTierForModel(routing, "vendor/shared", "medium"), "standard");
+    assert.equal(routingTierForModel(routing, "vendor/shared", "high"), "thinking");
     assert.equal(routingTierForModel(routing, "vendor/shared", "xhigh"), "standard");
     assert.equal(routingTierForModel(routing, "vendor/other", "medium"), "");
   } finally {
@@ -64,7 +65,7 @@ test("partial higher-precedence routing tables inherit unspecified framework tie
 
     const routing = loadModelRouting([custom, framework]);
     assert.deepEqual(routingProfile(routing, "simple"), {
-      tier: "simple", model: "vendor/simple", variant: "low",
+      tier: "simple", model: "vendor/simple", variant: "medium",
     });
     assert.deepEqual(routingProfile(routing, "standard"), {
       tier: "standard", model: "custom/standard", variant: "max",
@@ -203,7 +204,7 @@ test("compaction uses the simple route only when its input budget fits the manag
     "gpt-6-luna": { limit: { input: 260000, output: 128000, context: 388000 } },
   } } } };
   assert.equal(applyCompactionRouting(config, routing), true);
-  assert.deepEqual(config.agent.compaction, { model: "openai/gpt-6-luna", variant: "low" });
+  assert.deepEqual(config.agent.compaction, { model: "openai/gpt-6-luna", variant: "medium" });
 
   const tooSmall = { provider: { openai: { models: {
     "gpt-6-luna": { limit: { input: 239999 } },
