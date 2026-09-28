@@ -217,6 +217,7 @@ fi
 GHEOF
 	_append_gh_auth_mock_routes
 	_append_gh_mock_routes
+	_append_gh_annotation_mock_routes
 	_append_gh_ownership_mock_routes
 	chmod +x "${TEST_ROOT}/bin/gh"
 	return 0
@@ -326,6 +327,18 @@ if [[ "${1:-} ${2:-}" == "issue edit" ]]; then
 	exit 0
 fi
 
+if [[ "${1:-}" == "api" && "${2:-}" == "repos/owner/repo/pulls/100" ]]; then
+	printf '%s\t%s\t%s\n' "$(<"${TEST_ROOT}/pr-state.txt")" "$TEST_PR_HEAD_SHA" \
+		"$(<"${TEST_ROOT}/pr-labels.txt")"
+	exit 0
+fi
+GHEOF
+	return 0
+}
+
+# GH#32869: check-run annotations for the Actions billing classifier.
+_append_gh_annotation_mock_routes() {
+	cat >>"${TEST_ROOT}/bin/gh" <<'GHEOF'
 if [[ "${1:-}" == "api" && "${2:-}" == "repos/owner/repo/check-runs/456/annotations" ]]; then
 	printf 'annotations %s\n' "${2:-}" >>"${TEST_ROOT}/gh-annotations.log"
 	case "${TEST_CHECK_SCENARIO:-terminal_failure}" in
@@ -336,12 +349,6 @@ if [[ "${1:-}" == "api" && "${2:-}" == "repos/owner/repo/check-runs/456/annotati
 		printf '[]\n'
 		;;
 	esac
-	exit 0
-fi
-
-if [[ "${1:-}" == "api" && "${2:-}" == "repos/owner/repo/pulls/100" ]]; then
-	printf '%s\t%s\t%s\n' "$(<"${TEST_ROOT}/pr-state.txt")" "$TEST_PR_HEAD_SHA" \
-		"$(<"${TEST_ROOT}/pr-labels.txt")"
 	exit 0
 fi
 GHEOF
