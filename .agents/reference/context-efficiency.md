@@ -148,8 +148,10 @@ config probe instead of synthetic paid long-context requests.
 On the first request for each resolved model, the OpenCode 1 request hook applies
 a 240K usable-input ceiling to models with larger native windows, including
 built-in and newly discovered provider models absent from the config hook's model
-list. Native Anthropic Opus 5.5+, Fable 5.1+, and Sonnet 5+ instead target 500K
-usable input. Haiku 4.5 is capped at its 200K physical context and targets
+list. This includes native Anthropic Opus 5.5+, Fable 5.1+, and Sonnet 5+, which
+targeted 500K before GH#32807: a replay of 42 Opus 5.5 main sessions found 240K
+about 14% cheaper, because every turn re-reads the cached context and every pause
+over five minutes rewrites it. Haiku 4.5 is capped at its 200K physical context and targets
 180K usable input. When the output limit and compaction reserve require more
 than 20K headroom, the effective trigger is earlier (for a 32K output limit,
 no later than 168K before considering any extra reserve). The policy does not

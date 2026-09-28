@@ -63,6 +63,14 @@
 | `runtime.opencode.astra_context_cap` | boolean | `true` | -- | Manage Astra limits; `false` leaves provider/user metadata untouched. |
 | `runtime.opencode.astra_compaction_target` | number | `240000` | -- | Usable input target matching GPT-5.6; `400000` opts into an extended Astra budget and other values fall back to `240000`. |
 | `runtime.opencode.gpt6_context_cap` | boolean | `true` | -- | Default GPT-6 Sol/Luna and their Fast variants to ~240K usable input; explicit model limits are preserved unless this is set to `true`. `false` leaves native metadata untouched. |
+| `runtime.opencode.v2_compaction_target` | number/false | `240000` | -- | OpenCode 2 usable-input compaction target on models with larger windows; `false` (or any value other than `240000`) keeps native limits. |
+
+All models target 240K usable input unless their native window is smaller
+(GH#32807). The next `aidevops update` after that release resets raised values
+of these keys (`astra_compaction_target: 400000`, `astra_context_cap`/`gpt6_context_cap`/
+`gpt56_context_cap: false`, non-240K `v2_compaction_target`) to the defaults
+once, with a backup under `~/.aidevops/config-backups/migrations/`. Opt-outs set
+after that are kept.
 
 Use `aidevops astra-context enable` to select the default 240K target and enable
 the managed cap. `disable` selects the extended 400K target without clearing an existing native-metadata
