@@ -107,6 +107,31 @@ _resolve_current_gh_login_or_fallback() {
 }
 
 #######################################
+# Resolve the identity a health dashboard is published under.
+#
+# Prefers the GitHub login the scheduler already verified for this cycle.
+# Re-resolving per repository can fall back to a local OS account name when a
+# single `gh api user` call times out, which previously published dashboards,
+# labels and roles under private local usernames (GH#32730).
+#
+# Arguments:
+#   $1 - repo slug (diagnostics only)
+# Output: runner identity
+# Returns: 1 when no publishable identity exists
+#######################################
+_resolve_health_runner_user() {
+	local repo_slug="$1"
+	local runner_user="${_HEALTH_SCHEDULE_RUNNER:-}"
+	[[ -n "$runner_user" ]] || runner_user=$(_resolve_current_gh_login_or_fallback)
+	if [[ -z "$runner_user" || "$runner_user" == "unknown-runner" ]]; then
+		echo "[stats] Health issue: skipping ${repo_slug} — no verified runner identity" >>"${LOGFILE:-/dev/null}"
+		return 1
+	fi
+	printf '%s' "$runner_user"
+	return 0
+}
+
+#######################################
 # Activity guard — returns 0 to proceed, 1 to skip.
 # Active repositories refresh on the hourly stats cadence. Idle repositories
 # publish their transition to idle immediately, then refresh every hour by
@@ -313,6 +338,7 @@ _run_health_issue_maintenance() {
 		"$runner_role" "$canonical_identity"
 	if [[ "$runner_role" == "supervisor" ]]; then
 		_ensure_health_issue_pinned "$health_issue_number" "$repo_slug" "$runner_user"
+		_archive_stale_operator_dashboards "$repo_slug" "$canonical_identity"
 	fi
 	return 0
 }
@@ -354,7 +380,10 @@ _update_health_issue_for_repo() {
 
 	_record_health_repo_stage "$stage_file" "identity-and-role"
 	local runner_user
-	runner_user=$(_resolve_current_gh_login_or_fallback)
+	runner_user=$(_resolve_health_runner_user "$repo_slug") || {
+		_record_health_repo_stage "$stage_file" "skipped-unverified-identity"
+		return 0
+	}
 
 	local runner_role
 	runner_role=$(_get_runner_role "$runner_user" "$repo_slug")

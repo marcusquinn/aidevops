@@ -35,6 +35,11 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
 	unset _lib_path
 fi
 
+# Dashboard provenance label, shared by creation and label normalization.
+_QUALITY_DASHBOARD_SOURCE_LABEL="source:quality-sweep"
+# Sentinel for unavailable gate/grade/badge signals.
+_QUALITY_SIGNAL_UNKNOWN="UNKNOWN"
+
 # --- Functions ---
 
 #######################################
@@ -166,7 +171,7 @@ _ensure_quality_issue() {
 	# Label constants — used for search, create, and attach
 	local lbl_review="quality-review"
 	local lbl_persist="persistent"
-	local lbl_source="source:quality-sweep"
+	local lbl_source="$_QUALITY_DASHBOARD_SOURCE_LABEL"
 
 	mkdir -p "${HOME}/.aidevops/logs"
 
@@ -398,7 +403,7 @@ _load_sweep_state() {
 #######################################
 _compute_qlty_grade_from_count() {
 	local smell_count="$1"
-	local grade_fallback="UNKNOWN"
+	local grade_fallback="$_QUALITY_SIGNAL_UNKNOWN"
 
 	# Validate input — non-numeric values degrade to the fallback rather than
 	# silently bucketing to A (which a straight comparison would do for
@@ -626,7 +631,8 @@ _compute_debt_stats() {
 #   $1 - repo slug
 #   $2 - gate_status (OK/ERROR/WARN/UNKNOWN)
 #   $3 - qlty_grade (A/B/C/D/F/UNKNOWN)
-# Output: newline-delimited fields:
+# Output: NUL-delimited fields (bot_coverage_section is multi-line markdown,
+#   so newline delimiting shifted every later field — GH#32730):
 #   debt_open, debt_closed, debt_total, debt_resolution_pct,
 #   prs_scanned_lifetime, issues_created_lifetime,
 #   bot_coverage_section, badge_indicator, simplified_count
@@ -679,11 +685,56 @@ _gather_quality_issue_stats() {
 	if [[ -f "$state_file" ]]; then
 		simplified_count=$(jq '.files | length' "$state_file" 2>/dev/null) || simplified_count=0
 	fi
+	[[ "$simplified_count" =~ ^[0-9]+$ ]] || simplified_count=0
 
-	printf '%s\n' \
+	printf '%s\0' \
 		"$debt_open" "$debt_closed" "$debt_total" "$debt_resolution_pct" \
 		"$prs_scanned_lifetime" "$issues_created_lifetime" \
 		"$bot_coverage_section" "$badge_indicator" "$simplified_count"
+	return 0
+}
+
+#######################################
+# Build the quality dashboard title from public headline signals.
+#
+# The title is the only part most readers see in the issue list, so it carries
+# the grade, gate and backlog rather than internal state-file counters. The
+# "Code Audit Routines" prefix is invariant: dedup title searches depend on it.
+#
+# Arguments:
+#   $1 - debt_open
+#   $2 - debt_closed
+#   $3 - qlty_grade (A-F or UNKNOWN)
+#   $4 - qlty_smell_count
+#   $5 - gate_status (OK/ERROR/WARN/UNKNOWN)
+# Output: title string
+#######################################
+_build_quality_issue_title() {
+	local debt_open="$1"
+	local debt_closed="$2"
+	local qlty_grade="${3:-UNKNOWN}"
+	local qlty_smell_count="${4:-0}"
+	local gate_status="${5:-UNKNOWN}"
+	local unknown="$_QUALITY_SIGNAL_UNKNOWN"
+	local -a parts=()
+
+	[[ "$debt_open" =~ ^[0-9]+$ ]] || debt_open=0
+	[[ "$debt_closed" =~ ^[0-9]+$ ]] || debt_closed=0
+	[[ "$qlty_smell_count" =~ ^[0-9]+$ ]] || qlty_smell_count=0
+
+	if [[ "$qlty_grade" =~ ^[A-F]$ ]]; then
+		parts+=("Qlty ${qlty_grade} (${qlty_smell_count} smells)")
+	fi
+	if [[ -n "$gate_status" && "$gate_status" != "$unknown" ]]; then
+		parts+=("Sonar ${gate_status}")
+	fi
+	parts+=("quality debt: ${debt_open} open, ${debt_closed} closed")
+
+	local joined="" part
+	for part in "${parts[@]}"; do
+		joined="${joined:+${joined} · }${part}"
+	done
+	printf 'Code Audit Routines — %s' "$joined"
 	return 0
 }
 
@@ -698,16 +749,22 @@ _gather_quality_issue_stats() {
 #   $2 - repo_slug
 #   $3 - debt_open
 #   $4 - debt_closed
-#   $5 - simplified_count
+#   $5 - qlty_grade
+#   $6 - qlty_smell_count
+#   $7 - gate_status
 #######################################
 _update_quality_issue_title() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local debt_open="$3"
 	local debt_closed="$4"
-	local simplified_count="$5"
+	local qlty_grade="${5:-UNKNOWN}"
+	local qlty_smell_count="${6:-0}"
+	local gate_status="${7:-UNKNOWN}"
 
-	local quality_title="Code Audit Routines — Open: ${debt_open} | Closed: ${debt_closed} | Simplified: ${simplified_count}"
+	local quality_title
+	quality_title=$(_build_quality_issue_title "$debt_open" "$debt_closed" \
+		"$qlty_grade" "$qlty_smell_count" "$gate_status")
 	local current_title
 	current_title=$(gh issue view "$issue_number" --repo "$repo_slug" --json title --jq '.title' 2>>"$LOGFILE" || echo "")
 	if [[ "$current_title" != "$quality_title" ]]; then
@@ -788,17 +845,18 @@ _update_quality_issue_body() {
 	local prs_scanned_lifetime issues_created_lifetime
 	local bot_coverage_section badge_indicator simplified_count
 	{
-		IFS= read -r debt_open
-		IFS= read -r debt_closed
-		IFS= read -r debt_total
-		IFS= read -r debt_resolution_pct
-		IFS= read -r prs_scanned_lifetime
-		IFS= read -r issues_created_lifetime
-		IFS= read -r bot_coverage_section
-		IFS= read -r badge_indicator
-		IFS= read -r simplified_count
+		IFS= read -r -d '' debt_open
+		IFS= read -r -d '' debt_closed
+		IFS= read -r -d '' debt_total
+		IFS= read -r -d '' debt_resolution_pct
+		IFS= read -r -d '' prs_scanned_lifetime
+		IFS= read -r -d '' issues_created_lifetime
+		IFS= read -r -d '' bot_coverage_section
+		IFS= read -r -d '' badge_indicator
+		IFS= read -r -d '' simplified_count
 	} <"$stats_tmp"
 	rm -f "$stats_tmp"
+	[[ -n "$badge_indicator" ]] || badge_indicator="$_QUALITY_SIGNAL_UNKNOWN"
 
 	local body
 	body=$(_build_quality_issue_body \
@@ -817,8 +875,149 @@ _update_quality_issue_body() {
 	}
 
 	_update_quality_issue_title "$issue_number" "$repo_slug" \
-		"$debt_open" "$debt_closed" "$simplified_count"
+		"$debt_open" "$debt_closed" "$qlty_grade" "$qlty_smell_count" "$gate_status"
+	_normalize_quality_issue_labels "$issue_number" "$repo_slug"
 
 	echo "[stats] Quality sweep: updated dashboard on #${issue_number} in ${repo_slug}" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
+# Converge quality dashboard labels. The dashboard is a reporting surface,
+# never a work item: task lifecycle labels (auto-dispatch, status:*, tier:*)
+# make it look dispatchable, and historically drew dispatch claims, NMR
+# decision packets and terminal-blocker comments onto the pinned issue.
+#
+# #aidevops:trust-boundary -- needs-maintainer-review is deliberately left in
+# place; persistent blocks dispatch but never authorizes NMR removal.
+#
+# Arguments:
+#   $1 - issue number
+#   $2 - repo slug
+# Returns: 0 always (best-effort)
+#######################################
+_normalize_quality_issue_labels() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local labels_json label_names
+
+	labels_json=$(gh issue view "$issue_number" --repo "$repo_slug" --json labels 2>/dev/null) || return 0
+	label_names=$(printf '%s' "$labels_json" | jq -r '(.labels // []) | map(.name) | .[]' 2>/dev/null) || return 0
+
+	local -a edit_args=()
+	local expected_label stale_label
+	for expected_label in "quality-review" "persistent" "$_QUALITY_DASHBOARD_SOURCE_LABEL"; do
+		printf '%s\n' "$label_names" | grep -Fxq -- "$expected_label" ||
+			edit_args+=(--add-label "$expected_label")
+	done
+	while IFS= read -r stale_label; do
+		[[ -n "$stale_label" ]] && edit_args+=(--remove-label "$stale_label")
+	done < <(printf '%s\n' "$label_names" | grep -E '^(auto-dispatch|no-auto-dispatch|status:.+|tier:.+)$' || true)
+
+	[[ ${#edit_args[@]} -eq 0 ]] && return 0
+	if gh_issue_edit_safe "$issue_number" --repo "$repo_slug" "${edit_args[@]}" >/dev/null 2>&1; then
+		echo "[stats] Quality sweep: normalized dashboard labels on #${issue_number} in ${repo_slug}: ${edit_args[*]}" >>"${LOGFILE:-/dev/null}"
+	else
+		echo "[stats] Quality sweep: failed to normalize dashboard labels on #${issue_number} in ${repo_slug}" >>"${LOGFILE:-/dev/null}"
+	fi
+	return 0
+}
+
+#######################################
+# Select superseded automation comments on a persistent dashboard.
+#
+# Pure filter over a GraphQL comments array ({id,isMinimized,createdAt,body}).
+# Selects unminimized automation output that no longer carries information:
+# every quality-sweep comment except the newest (the rolling upsert target),
+# NMR decision packets / hold guidance, dispatch ops audit comments and worker
+# launch notes. Human comments, signed approvals and review-bot replies are
+# never selected.
+#
+# Arguments:
+#   $1 - JSON array of comment nodes
+# Output: newline-delimited comment node IDs
+#######################################
+_select_superseded_dashboard_comments() {
+	local comments_json="$1"
+	printf '%s' "$comments_json" | jq -r '
+		def body: (.body // "");
+		def is_sweep: (body | contains("<!-- quality-sweep-latest -->") or startswith("## Daily Code Quality Sweep"));
+		def is_noise:
+			(body | startswith("<!-- nmr-decision-packet"))
+			or (body | startswith("<!-- nmr-hold-guidance"))
+			or (body | startswith("<!-- ops:start"))
+			or (body | startswith("Worker launch terminated"));
+		(map(select(is_sweep)) | sort_by(.createdAt // "") | last | .id // "") as $latest_sweep
+		| .[]
+		| select((.isMinimized // false) | not)
+		| select((is_sweep and .id != $latest_sweep) or is_noise)
+		| .id
+	' 2>/dev/null || true
+	return 0
+}
+
+#######################################
+# Hide superseded automation comments on the quality dashboard as OUTDATED.
+#
+# Persistent dashboards are read by collaborators and the public; hundreds of
+# stale automation comments bury the current state. Minimizing is reversible
+# and keeps the audit trail available ("show comment"). Bounded per run so a
+# large backlog drains across daily sweeps without spending the API budget.
+#
+# Arguments:
+#   $1 - issue number
+#   $2 - repo slug
+# Env:
+#   QUALITY_DASHBOARD_MINIMIZE_MAX - max comments hidden per run (default 50)
+# Returns: 0 always (best-effort)
+#######################################
+_minimize_superseded_dashboard_comments() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local max_per_run="${QUALITY_DASHBOARD_MINIMIZE_MAX:-50}"
+	[[ "$max_per_run" =~ ^[0-9]+$ ]] || max_per_run=50
+	[[ "$max_per_run" -gt 0 ]] || return 0
+	[[ "$issue_number" =~ ^[0-9]+$ ]] || return 0
+
+	local owner="${repo_slug%%/*}" name="${repo_slug##*/}"
+	local all_comments="[]" cursor="" page_json page_nodes has_next pages=0
+	while [[ "$pages" -lt 10 ]]; do
+		pages=$((pages + 1))
+		local -a cursor_args=()
+		[[ -n "$cursor" ]] && cursor_args=(-f cursor="$cursor")
+		page_json=$(gh api graphql -F owner="$owner" -F name="$name" -F number="$issue_number" \
+			${cursor_args[@]+"${cursor_args[@]}"} -f query="
+			query(\$owner: String!, \$name: String!, \$number: Int!, \$cursor: String) {
+				repository(owner: \$owner, name: \$name) {
+					issue(number: \$number) {
+						comments(first: 100, after: \$cursor) {
+							pageInfo { hasNextPage endCursor }
+							nodes { id isMinimized createdAt body }
+						}
+					}
+				}
+			}" 2>/dev/null) || return 0
+		page_nodes=$(printf '%s' "$page_json" | jq -c '.data.repository.issue.comments.nodes // []' 2>/dev/null) || return 0
+		all_comments=$(jq -cn --argjson a "$all_comments" --argjson b "$page_nodes" '$a + $b' 2>/dev/null) || return 0
+		has_next=$(printf '%s' "$page_json" | jq -r '.data.repository.issue.comments.pageInfo.hasNextPage // false' 2>/dev/null)
+		[[ "$has_next" == "true" ]] || break
+		cursor=$(printf '%s' "$page_json" | jq -r '.data.repository.issue.comments.pageInfo.endCursor // empty' 2>/dev/null)
+		[[ -n "$cursor" ]] || break
+	done
+
+	local comment_id hidden=0
+	while IFS= read -r comment_id; do
+		[[ -n "$comment_id" ]] || continue
+		[[ "$hidden" -ge "$max_per_run" ]] && break
+		gh api graphql -F id="$comment_id" -f query="
+			mutation(\$id: ID!) {
+				minimizeComment(input: {subjectId: \$id, classifier: OUTDATED}) { clientMutationId }
+			}" >/dev/null 2>&1 || break
+		hidden=$((hidden + 1))
+	done < <(_select_superseded_dashboard_comments "$all_comments")
+
+	if [[ "$hidden" -gt 0 ]]; then
+		echo "[stats] Quality sweep: minimized ${hidden} superseded automation comment(s) on #${issue_number} in ${repo_slug}" >>"${LOGFILE:-/dev/null}"
+	fi
 	return 0
 }

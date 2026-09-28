@@ -384,6 +384,68 @@ else
 fi
 
 # =============================================================================
+# Test (f): multi-line bot coverage does not shift later dashboard fields
+# GH#32730: newline-delimited transport rendered an empty badge row and the
+# title "Simplified: | Metric | Count |".
+# =============================================================================
+printf '\n%s[f] quality-stats-multiline-transport%s\n' "$TEST_BLUE" "$TEST_NC"
+
+_compute_debt_stats() { printf '1|2039|2040|99'; return 0; }
+_compute_bot_coverage() { printf '### Bot Review Coverage\n\n| Metric | Count |\n| --- | --- |\n| Open PRs | 3 |\n'; return 0; }
+_compute_badge_indicator() { printf 'GREEN (all badges passing)'; return 0; }
+
+export HOME="$TMP"
+stats_file="${TMP}/quality-stats.bin"
+_gather_quality_issue_stats "test/repo" "OK" "A" >"$stats_file"
+export HOME="$_original_home"
+fields=()
+while IFS= read -r -d '' field; do
+	fields+=("$field")
+done <"$stats_file"
+
+if [[ "${#fields[@]}" -eq 9 && "${fields[7]}" == "GREEN (all badges passing)" && "${fields[8]}" == "0" && "${fields[6]}" == *"| Open PRs | 3 |"* ]]; then
+	pass "multi-line-coverage-keeps-badge-and-simplified-fields"
+else
+	fail "multi-line-coverage-keeps-badge-and-simplified-fields" "count=${#fields[@]} badge='${fields[7]:-}' simplified='${fields[8]:-}'"
+fi
+
+title=$(_build_quality_issue_title "1" "2039" "C" "82" "OK")
+if [[ "$title" == "Code Audit Routines — Qlty C (82 smells) · Sonar OK · quality debt: 1 open, 2039 closed" ]]; then
+	pass "quality-title-carries-grade-gate-and-backlog"
+else
+	fail "quality-title-carries-grade-gate-and-backlog" "title='${title}'"
+fi
+
+title=$(_build_quality_issue_title "0" "0" "UNKNOWN" "0" "UNKNOWN")
+if [[ "$title" == "Code Audit Routines — quality debt: 0 open, 0 closed" ]]; then
+	pass "quality-title-omits-unknown-signals"
+else
+	fail "quality-title-omits-unknown-signals" "title='${title}'"
+fi
+
+# =============================================================================
+# Test (g): superseded automation comments are selected; humans are not
+# =============================================================================
+printf '\n%s[g] superseded-dashboard-comment-selection%s\n' "$TEST_BLUE" "$TEST_NC"
+
+comments_json='[
+ {"id":"legacy","isMinimized":false,"createdAt":"2026-06-01T00:00:00Z","body":"## Daily Code Quality Sweep\nold"},
+ {"id":"sweep-old","isMinimized":false,"createdAt":"2026-07-01T00:00:00Z","body":"<!-- quality-sweep-latest -->\n## Daily Code Quality Sweep"},
+ {"id":"sweep-new","isMinimized":false,"createdAt":"2026-08-01T00:00:00Z","body":"<!-- quality-sweep-latest -->\n## Daily Code Quality Sweep"},
+ {"id":"nmr","isMinimized":false,"createdAt":"2026-07-02T00:00:00Z","body":"<!-- nmr-decision-packet reason=authority -->\n## Maintainer decision required"},
+ {"id":"ops","isMinimized":false,"createdAt":"2026-07-03T00:00:00Z","body":"<!-- ops:start — workers: skip -->\nDISPATCH_CLAIM"},
+ {"id":"hidden","isMinimized":true,"createdAt":"2026-07-04T00:00:00Z","body":"<!-- nmr-decision-packet reason=secret -->"},
+ {"id":"human","isMinimized":false,"createdAt":"2026-07-05T00:00:00Z","body":"Thanks, looks good."},
+ {"id":"approval","isMinimized":false,"createdAt":"2026-07-06T00:00:00Z","body":"<!-- aidevops-signed-approval -->\napproved"}
+]'
+selected=$(_select_superseded_dashboard_comments "$comments_json" | sort | tr '\n' ' ')
+if [[ "$selected" == "legacy nmr ops sweep-old " ]]; then
+	pass "selects-superseded-automation-only"
+else
+	fail "selects-superseded-automation-only" "selected='${selected}'"
+fi
+
+# =============================================================================
 # Summary
 # =============================================================================
 printf '\n'
