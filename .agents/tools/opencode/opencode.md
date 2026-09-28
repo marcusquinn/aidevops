@@ -49,6 +49,9 @@ and data paths; the `opencode2` shim uses private config, data, cache, state, an
 temporary roots under `~/.aidevops/runtimes/opencode-v2/`. Its default server
 port is `4097`, while an explicit `--port` always wins. This allows V1 and V2
 sessions to run concurrently without sharing configuration or session databases.
+Upstream's V2 curl installer replaces a V1 installation; the managed side-by-side
+setup above uses separately installed npm packages and the isolated shim, not
+that installer.
 
 Select V2 as the primary profile for setup and headless execution, opt out of
 the preview companion installation, or explicitly roll back:
@@ -96,8 +99,13 @@ change the profile document's `default` from `v1`.
 | Headless execution | The `OpenCode Pin Canary` workflow runs isolated baseline/candidate probes for both profiles; inspect the V2 artifact and result. |
 | V1 rollback | `bash .agents/scripts/tests/test-opencode-runtime-profile.sh` then `AIDEVOPS_OPENCODE_PROFILE=v1 ./setup.sh --non-interactive` on an isolated installation and confirm V1 config and plugin are restored. |
 
-The V2 pin remains 2.0.3 until a passing current-release V2 canary qualifies
-the new version. Do not infer compatibility from the V1 result.
+The V2 pin remains 2.0.3: on 2026-09-28 an isolated local V2 canary against
+`@opencode/cli` 2.0.18 reached the mock provider and recorded the plugin's
+`factory_initialized` health stage, but the pinned 2.0.3 `build` request offered
+native tools only, missing `aidevops_pre_edit_check` and `aidevops_memory`.
+That baseline is inconclusive under the stricter gate, so it cannot qualify the
+candidate or justify advancing the pin. Diagnose the V2 agent/tool registration
+separately, then rerun both profiles. Do not infer compatibility from V1.
 
 The "via aidevops" Anthropic 4.x picker entries were OpenCode 1 config-hook
 injections, not a separate OAuth transport; its native Anthropic models still

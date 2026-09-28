@@ -66,8 +66,10 @@ install_isolated_plugin() {
 	local isolated_home="$2"
 	local isolated_cache="$3"
 	local source_root="$SCRIPT_DIR/../plugins/opencode-aidevops"
-	mkdir -p "$install_root" "$isolated_home" "$isolated_cache"
+	# Preserve the plugin's ../../scripts relative imports inside the isolated tree.
+	mkdir -p "$install_root" "$isolated_home" "$isolated_cache" "$install_root/../../scripts"
 	cp -R "$source_root/." "$install_root/" || return 1
+	cp "$SCRIPT_DIR/"*.mjs "$install_root/../../scripts/" || return 1
 	env -i \
 		HOME="$isolated_home" PATH="$PATH" \
 		GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
@@ -261,6 +263,42 @@ verify_probe_plugin_tools() {
 	[[ "$tools_present" -eq 1 ]]
 }
 
+report_probe_failure() {
+	local label="$1"
+	local probe_rc="$2"
+	local request_count_before="$3"
+	local request_count_after="$4"
+	local tools_file="$5"
+	local health_file="$6"
+	local output_file="$7"
+	local probe_root="$8"
+	printf 'FAIL: %s isolated probe exited %s (provider requests: %s -> %s)\n' \
+		"$label" "$probe_rc" "$request_count_before" "$request_count_after" >&2
+	printf 'Probe tools: ' >&2
+	if [[ -f "$tools_file" ]]; then
+		jq -c -s '.[-1] // []' "$tools_file" >&2 || true
+	else
+		printf '[]\n' >&2
+	fi
+	printf 'Plugin health stages: ' >&2
+	jq -c '.stages' "$health_file" >&2 || true
+	python3 - "$output_file" <<'PY' >&2
+import sys
+with open(sys.argv[1], encoding='utf-8', errors='replace') as source:
+    for line in source:
+        if ('plugin' in line.lower() and ('error' in line.lower() or 'fail' in line.lower())):
+            print(line[:500].rstrip())
+PY
+	command tail -n 20 "$output_file" >&2 || true
+	local log_file
+	for log_file in "$probe_root/data/opencode/log/"*.log; do
+		[[ -f "$log_file" ]] || continue
+		printf '%s\n' "OpenCode log: $log_file" >&2
+		command tail -n 80 "$log_file" >&2 || true
+	done
+	return 0
+}
+
 run_isolated_probe() {
 	local label="$1"
 	local binary="$2"
@@ -297,13 +335,13 @@ run_isolated_probe() {
 			+ (if $plugin == "" then {} else {plugins:[$plugin]} end)' \
 			>"$probe_root/config/opencode/opencode.json"
 	else
-	jq -n --arg api "http://127.0.0.1:${port}/v1" --arg plugin "$plugin_url" \
-		--arg provider "$provider_id" --arg model "$model_id" --arg model_ref "$model_ref" --arg provider_name "$OPENCODE_CANARY_PROVIDER_NAME" \
-		'{model:$model_ref,small_model:$model_ref,
+		jq -n --arg api "http://127.0.0.1:${port}/v1" --arg plugin "$plugin_url" \
+			--arg provider "$provider_id" --arg model "$model_id" --arg model_ref "$model_ref" --arg provider_name "$OPENCODE_CANARY_PROVIDER_NAME" \
+			'{model:$model_ref,small_model:$model_ref,
 		provider:{($provider):{npm:"@ai-sdk/openai-compatible@3.0.31",name:$provider_name,
 		options:{baseURL:$api,apiKey:"canary-local-only"},models:{($model):{name:"Canary"}}}}}
 		+ (if $plugin == "" then {} else {plugin:[$plugin]} end)' \
-		>"$probe_root/config/opencode/opencode.json"
+			>"$probe_root/config/opencode/opencode.json"
 	fi
 	local routing_file="$probe_root/config/model-routing.json"
 	jq -n --arg model "$model_ref" \
@@ -316,7 +354,7 @@ run_isolated_probe() {
 		timeout_command=(perl -e "alarm ${probe_timeout_seconds}; exec @ARGV" --)
 	fi
 	local probe_rc=0
-	local -a probe_args=(run "What is two plus two? Answer with the single word: Four" \
+	local -a probe_args=(run "What is two plus two? Answer with the single word: Four"
 		-m "$model_ref" --agent build --print-logs)
 	if [[ "$OPENCODE_CANARY_PROFILE" == "v2" ]]; then
 		probe_args+=(--standalone --log-level debug)
@@ -343,15 +381,8 @@ run_isolated_probe() {
 		printf 'PASS: %s completed the isolated Linux-headless probe\n' "$label"
 		return 0
 	fi
-	printf 'FAIL: %s isolated probe exited %s (provider requests: %s -> %s)\n' \
-		"$label" "$probe_rc" "$request_count_before" "$request_count_after" >&2
-	command tail -n 20 "$output_file" >&2 || true
-	local log_file
-	for log_file in "$probe_root/data/opencode/log/"*.log; do
-		[[ -f "$log_file" ]] || continue
-		printf '%s\n' "OpenCode log: $log_file" >&2
-		command tail -n 80 "$log_file" >&2 || true
-	done
+	report_probe_failure "$label" "$probe_rc" "$request_count_before" "$request_count_after" \
+		"$tools_file" "$health_file" "$output_file" "$probe_root"
 	return 1
 }
 
@@ -430,7 +461,7 @@ cmd_canary() {
 		printf 'RESULT=inconclusive\nINCONCLUSIVE: candidate installation failed\n' >&2
 		return 2
 	fi
-	if ! install_isolated_plugin "$_CANARY_TEMP_ROOT/plugin" \
+	if ! install_isolated_plugin "$_CANARY_TEMP_ROOT/agents/plugins/opencode-aidevops" \
 		"$_CANARY_TEMP_ROOT/install-home-plugin" "$_CANARY_TEMP_ROOT/npm-cache-plugin"; then
 		printf 'RESULT=inconclusive\nINCONCLUSIVE: locked plugin installation failed\n' >&2
 		return 2
@@ -455,12 +486,9 @@ cmd_canary() {
 
 	printf 'Evaluating pinned baseline %s and candidate %s at repository revision %s\n' \
 		"$OPENCODE_CANARY_PIN" "$candidate" "$revision"
-	if ! run_isolated_probe "baseline-$OPENCODE_CANARY_PIN" "$baseline_bin" "$_CANARY_TEMP_ROOT" \
-		"$mock_provider_port" "$mock_provider_request_file" "$mock_provider_tools_file"; then
-		printf 'RESULT=inconclusive\nINCONCLUSIVE: pinned baseline failed; retaining %s\n' \
-			"$OPENCODE_CANARY_PIN" >&2
-		return 2
-	fi
+	local baseline_rc=0
+	run_isolated_probe "baseline-$OPENCODE_CANARY_PIN" "$baseline_bin" "$_CANARY_TEMP_ROOT" \
+		"$mock_provider_port" "$mock_provider_request_file" "$mock_provider_tools_file" || baseline_rc=$?
 	local candidate_rc=0
 	run_isolated_probe "candidate-$candidate" "$candidate_bin" "$_CANARY_TEMP_ROOT" \
 		"$mock_provider_port" "$mock_provider_request_file" "$mock_provider_tools_file" || candidate_rc=$?
@@ -468,6 +496,11 @@ cmd_canary() {
 	diff -u \
 		<(grep -v '^aidevops_' "$_CANARY_TEMP_ROOT/baseline-$OPENCODE_CANARY_PIN.tools" || true) \
 		<(grep -v '^aidevops_' "$_CANARY_TEMP_ROOT/candidate-$candidate.tools" || true) || true
+	if [[ "$baseline_rc" -ne 0 ]]; then
+		printf 'RESULT=inconclusive\nINCONCLUSIVE: pinned baseline failed; retaining %s\n' \
+			"$OPENCODE_CANARY_PIN" >&2
+		return 2
+	fi
 	if [[ "$candidate_rc" -ne 0 ]]; then
 		printf 'RESULT=fail\nFAIL: candidate failed while the same-revision pinned baseline passed; retaining %s\n' \
 			"$OPENCODE_CANARY_PIN" >&2
