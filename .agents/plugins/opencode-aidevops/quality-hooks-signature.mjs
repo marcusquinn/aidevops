@@ -132,10 +132,12 @@ function _unquotedTokens(cmd) {
   let text = "";
   let start = -1;
   let quote = "";
+  let flag = false;
   const flush = () => {
-    if (start !== -1) tokens.push({ text, start });
+    if (start !== -1) tokens.push({ text, start, flag });
     text = "";
     start = -1;
+    flag = false;
   };
   for (let i = 0; i < cmd.length; i++) {
     const ch = cmd[i];
@@ -143,7 +145,10 @@ function _unquotedTokens(cmd) {
       flush();
       continue;
     }
-    if (start === -1) start = i;
+    if (start === -1) {
+      start = i;
+      flag = ch === "-";
+    }
     const next = _nextQuote(quote, ch);
     if (next !== quote) {
       quote = next;
@@ -162,7 +167,7 @@ function _unquotedTokens(cmd) {
 }
 
 function _bodyToken(token) {
-  return /^(?:--body(?:-file)?|--comment|-c)(?:=|$)/.test(token.text);
+  return token.flag && /^(?:--body(?:-file)?|--comment|-c)(?:=|$)/.test(token.text);
 }
 
 /**
@@ -194,7 +199,7 @@ function _hasUnparseableBody(cmd, tokens) {
  * @returns {{ match: RegExpMatchArray, bodyValue: string, quote: string } | null}
  */
 function _matchBodyArg(cmd, tokens) {
-  const token = tokens.find(({ text }) => /^(?:--body|--comment|-c)(?:=|$)/.test(text));
+  const token = tokens.find(({ text, flag }) => flag && /^(?:--body|--comment|-c)(?:=|$)/.test(text));
   if (!token) return null;
   const patterns = [
     { re: /(?:--(?:body|comment)|-c)\s+"((?:[^"\\]|\\.)*)"/, quote: '"' },
@@ -278,7 +283,7 @@ export function tryRepairSignature(cmd, scriptsDir, log, options = {}) {
   }
 
   // --body-file PATH form: filesystem-side repair.
-  const fileIndex = tokens.findIndex(({ text }) => text === "--body-file" || text.startsWith("--body-file="));
+  const fileIndex = tokens.findIndex(({ text, flag }) => flag && (text === "--body-file" || text.startsWith("--body-file=")));
   if (fileIndex !== -1) {
     const flag = tokens[fileIndex].text;
     const filePath = flag === "--body-file" ? tokens[fileIndex + 1]?.text : flag.slice("--body-file=".length);
