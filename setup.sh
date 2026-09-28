@@ -1697,6 +1697,7 @@ _setup_run_interactive_runtime_tools() {
 	confirm_step "Setup AI orchestration frameworks info" && setup_ai_orchestration
 	confirm_step "Setup Ollama (local LLM for knowledge plane pii/sensitive/privileged tiers)" && setup_ollama_for_knowledge
 	confirm_step "Setup Google Workspace CLI (Gmail, Calendar, Drive)" && setup_google_workspace_cli
+	confirm_step "Setup Cloudflare cf CLI (full Cloudflare API)" && setup_cloudflare_cf_cli
 	confirm_step "Setup OpenCode V1 and isolated V2 preview CLIs" && setup_opencode_runtimes
 	confirm_step "Install OpenCode AIDevOps Desktop app wrapper" && setup_opencode_desktop_launcher
 	confirm_step "Setup OpenCode plugins" && setup_opencode_runtime_plugins
