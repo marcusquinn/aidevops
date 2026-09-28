@@ -39,6 +39,24 @@ _publication_task_has_dependency "$blocked_task_line"
 [[ -z "$(_publication_status_label "$desired_labels" 1 '{"labels":[{"name":"status:in-progress"}]}')" ]]
 printf 'PASS production helpers project and verify intended labels\n'
 
+# GH#32904: readiness gates only auto-dispatch projection, before any mutation.
+(
+	_publication_brief_ready() { return 1; }
+	_publication_dispatch_ready t9003 "$held_labels"
+	_publication_dispatch_ready t9001 ''
+	if _publication_dispatch_ready t9000 "$desired_labels"; then exit 1; fi
+	_publication_brief_ready() { return 0; }
+	_publication_dispatch_ready t9000 "$desired_labels"
+)
+reconcile_body=$(sed -n '/^_publication_reconcile_one()/,/^}/p' "$RECONCILER")
+readiness_line=$(grep -n -m1 '_publication_dispatch_ready ' <<<"$reconcile_body" | cut -d: -f1)
+first_edit_line=$(grep -n -m1 'gh_issue_edit_safe ' <<<"$reconcile_body" | cut -d: -f1)
+[[ -n "$readiness_line" && -n "$first_edit_line" && "$readiness_line" -lt "$first_edit_line" ]]
+if sed -n '/^_publication_validate_mapping()/,/^}/p' "$RECONCILER" | grep -Fq 'check-readiness'; then
+	exit 1
+fi
+printf 'PASS held and untagged tasks publish without worker readiness; auto-dispatch stays gated\n'
+
 grep -Fq '_publication_exact_default_snapshot' "$RECONCILER"
 grep -Fq '_publication_validate_mapping' "$RECONCILER"
 grep -Fq 'issue_sync_prepare_ci_context || return 1' "$RECONCILER"
@@ -84,6 +102,10 @@ _publication_validate_mapping() {
 	local task_id="$1"
 	local issue_num="$2"
 	printf -- '- [ ] %s Partial batch #auto-dispatch #bug blocked-by:t9000 ref:GH#%s\n' "$task_id" "$issue_num"
+	return 0
+}
+
+_publication_brief_ready() {
 	return 0
 }
 
