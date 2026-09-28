@@ -16,7 +16,7 @@ import { createHash } from "node:crypto";
 // billing header are excluded from fingerprints because they change by design.
 
 const DEFAULT_MAX_SESSIONS = 64;
-const SNIPPET_CHARS = 120;
+const SNIPPET_CHARS = 80;
 const BILLING_HEADER_PREFIX = "x-anthropic-billing-header:";
 
 const withoutCacheControl = (key, value) => (key === "cache_control" ? undefined : value);
@@ -47,16 +47,47 @@ function prefixText(messages) {
   return block?.type === "text" && typeof block.text === "string" ? block.text : "";
 }
 
+function blockText(block) {
+  if (typeof block === "string") return block;
+  if (typeof block?.text === "string") return block.text;
+  if (typeof block?.content === "string") return block.content;
+  return JSON.stringify(block, withoutCacheControl) ?? "";
+}
+
+function messageBlocks(message) {
+  const content = message?.content;
+  const blocks = Array.isArray(content) ? content : [typeof content === "string" ? { type: "text", text: content } : content];
+  return blocks.filter((block) => block != null).map((block) => {
+    const text = blockText(block);
+    const type = typeof block === "string" ? "text" : String(block?.type ?? "unknown");
+    return {
+      hash: hash(block),
+      type,
+      chars: text.length,
+      preview: snippet(text),
+      pruningCandidate: type === "tool_result" && /^(?:\[[^\]]{1,80}\]|<[^>]{1,80}>|…|\.\.\.|(?:tool )?(?:output|result) (?:was )?(?:pruned|omitted|removed|truncated)|pruned\b)/i.test(text),
+    };
+  });
+}
+
+function requestFamily(parsed) {
+  const family = Array.isArray(parsed?.tools) && parsed.tools.length > 0 ? "agent" : "aux";
+  return { family, key: `${parsed?.model ?? ""}\u0000${family}` };
+}
+
 /** Fingerprint the cache-relevant segments of a parsed Anthropic request body. */
 export function fingerprintRequest(parsed, account) {
   const messages = Array.isArray(parsed?.messages) ? parsed.messages : [];
+  const family = requestFamily(parsed);
   return {
+    family: family.family,
+    familyKey: family.key,
     account: account ? hash(String(account)).slice(0, 8) : "",
     tools: toolFingerprints(parsed?.tools),
     system: systemFingerprint(parsed?.system),
     thinking: hash({ thinking: parsed?.thinking ?? null, tool_choice: parsed?.tool_choice ?? null }),
     prefix: prefixText(messages),
-    messages: messages.map((message) => hash(message)),
+    messages: messages.map(messageBlocks),
     roles: messages.map((message) => message?.role ?? "?"),
   };
 }
@@ -86,10 +117,26 @@ function diffPrefix(previous, current) {
 function diffHistory(previous, current) {
   // Only messages that existed in the previous request are expected to be byte-stable.
   const shared = Math.min(previous.messages.length, current.messages.length);
+  const changed = [];
   for (let index = 0; index < shared; index += 1) {
-    if (previous.messages[index] === current.messages[index]) continue;
+    if (hash(previous.messages[index]) === hash(current.messages[index])) continue;
+    changed.push(index);
+  }
+  for (const index of changed) {
+    const before = previous.messages[index];
+    const after = current.messages[index];
+    const blocks = Math.min(before.length, after.length);
+    let block = 0;
+    while (block < blocks && before[block].hash === after[block].hash) block += 1;
+    const beforeBlock = before[block];
+    const afterBlock = after[block];
+    const change = !beforeBlock ? "added" : !afterBlock ? "removed" : "modified";
+    const target = afterBlock ?? beforeBlock;
     const tail = index >= previous.messages.length - 1 ? " tail=true" : "";
-    return `segment=history index=${index}/${previous.messages.length} role=${current.roles[index]}${tail}`;
+    const messagesChanged = changed.length > 1 ? ` messages_changed=${changed.length}` : "";
+    const pruningCandidate = target.type === "tool_result" && change === "modified" && afterBlock?.pruningCandidate;
+    const now = pruningCandidate ? ` now=${afterBlock.preview}` : "";
+    return `segment=history index=${index}/${previous.messages.length} role=${current.roles[index]} block=${block}/${Math.max(before.length, after.length)} type=${target.type} change=${change} chars=${beforeBlock?.chars ?? 0}->${afterBlock?.chars ?? 0}${tail}${messagesChanged}${now}`;
   }
   if (current.messages.length < previous.messages.length) {
     return `segment=history shrink=${previous.messages.length}->${current.messages.length}`;
@@ -127,15 +174,20 @@ export function createCacheStabilityMonitor(options = {}) {
   return {
     /** Record one outgoing request; returns the logged change descriptors. */
     observe(parsed, { sessionID, account } = {}) {
-      if (!sessionID || !enabled()) return [];
-      const current = fingerprintRequest(parsed, account);
-      const previous = sessions.get(sessionID);
-      sessions.delete(sessionID);
-      sessions.set(sessionID, current);
-      while (sessions.size > maxSessions) sessions.delete(sessions.keys().next().value);
-      const changes = describeCacheChanges(previous, current);
-      for (const change of changes) log(`[aidevops] cache-stability: session=${sessionID} ${change}`);
-      return changes;
+      try {
+        if (!sessionID || !enabled()) return [];
+        const current = fingerprintRequest(parsed, account);
+        const sessionKey = `${sessionID}\u0000${current.familyKey}`;
+        const previous = sessions.get(sessionKey);
+        sessions.delete(sessionKey);
+        sessions.set(sessionKey, current);
+        while (sessions.size > maxSessions) sessions.delete(sessions.keys().next().value);
+        const changes = describeCacheChanges(previous, current);
+        for (const change of changes) log(`[aidevops] cache-stability: session=${sessionID} family=${current.family} ${change}`);
+        return changes;
+      } catch {
+        return [];
+      }
     },
   };
 }
