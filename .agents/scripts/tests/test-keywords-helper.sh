@@ -103,6 +103,8 @@ EOF
 	export AIDEVOPS_AGENTS_DIR="$TEST_ROOT/no-agents"
 	export AIDEVOPS_KEYWORDS_HUB_SLUG=""
 	export AIDEVOPS_KEYWORDS_HUB_PATH=""
+	# Never read the operator's config: a configured hub must not receive fixtures.
+	export JSONC_USER="$TEST_ROOT/config.jsonc"
 	return 0
 }
 

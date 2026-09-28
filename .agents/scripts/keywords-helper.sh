@@ -121,11 +121,25 @@ _kw_load_credentials() {
 	return 0
 }
 
+# Exported environment wins over local config, even when set to empty
+# (an empty AIDEVOPS_KEYWORDS_HUB_SLUG deliberately disables the hub).
+_kw_env_or_config() {
+	local name="$1"
+	local dotpath="$2"
+	local default="$3"
+	if printenv "$name" >/dev/null 2>&1; then
+		printenv "$name"
+		return 0
+	fi
+	_kw_config_get "$dotpath" "$default"
+	return 0
+}
+
 _kw_export_env() {
-	AIDEVOPS_KEYWORDS_HUB_SLUG=$(_kw_config_get keywords.hub_slug "")
-	AIDEVOPS_KEYWORDS_HUB_PATH=$(_kw_config_get keywords.hub_path "")
-	AIDEVOPS_KEYWORDS_MONTHLY_BUDGET_USD=$(_kw_config_get keywords.monthly_budget_usd "1")
-	AIDEVOPS_KEYWORDS_DATAFORSEO_ESTIMATE_USD=$(_kw_config_get keywords.dataforseo_estimate_usd "0.05")
+	AIDEVOPS_KEYWORDS_HUB_SLUG=$(_kw_env_or_config AIDEVOPS_KEYWORDS_HUB_SLUG keywords.hub_slug "")
+	AIDEVOPS_KEYWORDS_HUB_PATH=$(_kw_env_or_config AIDEVOPS_KEYWORDS_HUB_PATH keywords.hub_path "")
+	AIDEVOPS_KEYWORDS_MONTHLY_BUDGET_USD=$(_kw_env_or_config AIDEVOPS_KEYWORDS_MONTHLY_BUDGET_USD keywords.monthly_budget_usd "1")
+	AIDEVOPS_KEYWORDS_DATAFORSEO_ESTIMATE_USD=$(_kw_env_or_config AIDEVOPS_KEYWORDS_DATAFORSEO_ESTIMATE_USD keywords.dataforseo_estimate_usd "0.05")
 	export AIDEVOPS_KEYWORDS_HUB_SLUG AIDEVOPS_KEYWORDS_HUB_PATH
 	export AIDEVOPS_KEYWORDS_MONTHLY_BUDGET_USD AIDEVOPS_KEYWORDS_DATAFORSEO_ESTIMATE_USD
 	export AIDEVOPS_REPOS_FILE="$REPOS_FILE"

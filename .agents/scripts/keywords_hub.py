@@ -79,10 +79,14 @@ def ensure_hub() -> Path | None:
     if not slug:
         raise RuntimeError(f"hub path {path} is not a git checkout and no hub slug is configured")
     path.parent.mkdir(parents=True, exist_ok=True)
+    # Clone from the hub's parent: routines may start inside a canonical checkout,
+    # where the canonical Git guard blocks clones that inherit that cwd.
+    cwd = str(path.parent)
     cloned = shutil.which("gh") and subprocess.run(
-        ["gh", "repo", "clone", slug, str(path), "--", "--quiet"], capture_output=True, check=False).returncode == 0
+        ["gh", "repo", "clone", slug, str(path), "--", "--quiet"],
+        capture_output=True, check=False, cwd=cwd).returncode == 0
     if not cloned:
-        subprocess.run(["git", "clone", "--quiet", f"https://github.com/{slug}.git", str(path)], check=True)
+        subprocess.run(["git", "clone", "--quiet", f"https://github.com/{slug}.git", str(path)], check=True, cwd=cwd)
     return path
 
 
