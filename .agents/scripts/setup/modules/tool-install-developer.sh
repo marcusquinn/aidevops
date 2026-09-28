@@ -9,6 +9,14 @@
 # Include guard
 [[ -n "${_TOOL_INSTALL_DEVELOPER_LOADED:-}" ]] && return 0
 _TOOL_INSTALL_DEVELOPER_LOADED=1
+TOOL_INSTALL_EMPTY=${TOOL_INSTALL_EMPTY-}
+TOOL_INSTALL_OS_DARWIN=${TOOL_INSTALL_OS_DARWIN-Darwin}
+TOOL_INSTALL_OS_LINUX=${TOOL_INSTALL_OS_LINUX-Linux}
+TOOL_INSTALL_BOOL_TRUE=${TOOL_INSTALL_BOOL_TRUE-true}
+TOOL_INSTALL_BOOL_FALSE=${TOOL_INSTALL_BOOL_FALSE-false}
+TOOL_INSTALL_UNKNOWN=${TOOL_INSTALL_UNKNOWN-unknown}
+TOOL_INSTALL_TABBY_DOWNLOAD=${TOOL_INSTALL_TABBY_DOWNLOAD-https://github.com/Eugeny/tabby/releases/latest}
+TOOL_INSTALL_TABBY_MANUAL_DOWNLOAD=${TOOL_INSTALL_TABBY_MANUAL_DOWNLOAD-"  Download manually: https://github.com/Eugeny/tabby/releases/latest"}
 
 # SCRIPT_DIR fallback for direct sourcing and test harnesses.
 if [[ -z "${SCRIPT_DIR:-}" ]]; then
@@ -20,7 +28,7 @@ fi
 
 setup_rosetta_audit() {
 	# Skip on non-Apple-Silicon or non-macOS
-	if [[ "$(uname)" != "Darwin" ]] || [[ "$(uname -m)" != "$TOOL_INSTALL_ARCH_ARM64" ]]; then
+	if [[ "$(uname)" != "${TOOL_INSTALL_OS_DARWIN}" ]] || [[ "$(uname -m)" != "$TOOL_INSTALL_ARCH_ARM64" ]]; then
 		print_info "Rosetta audit: not applicable (Intel Mac or non-macOS)"
 		return 0
 	fi
@@ -50,7 +58,7 @@ setup_rosetta_audit() {
 
 	print_warning "Found $total x86 Homebrew packages ($x86_only_count x86-only, $dup_count duplicates)"
 	echo "  These run under Rosetta 2 emulation with ~30% performance overhead"
-	echo ""
+	echo "${TOOL_INSTALL_EMPTY}"
 	echo "  To audit:   rosetta-audit-helper.sh scan"
 	echo "  To migrate: rosetta-audit-helper.sh migrate --dry-run"
 	echo "  To fix:     rosetta-audit-helper.sh migrate"
@@ -82,7 +90,7 @@ _check_worktrunk_shell_integration() {
 		fi
 	done < <(get_all_shell_rcs)
 
-	if [[ "$wt_integrated" == "false" ]]; then
+	if [[ "$wt_integrated" == "${TOOL_INSTALL_BOOL_FALSE}" ]]; then
 		print_info "Shell integration not detected"
 		local install_shell
 		setup_prompt install_shell "Install Worktrunk shell integration (enables 'wt switch' to change directories)? [Y/n]: " "Y"
@@ -103,12 +111,12 @@ _install_worktrunk_brew() {
 	if [[ "$install_wt" =~ ^[Yy]?$ ]]; then
 		if run_with_spinner "Installing Worktrunk via Homebrew" brew install max-sixty/worktrunk/wt; then
 			_setup_worktrunk_shell_integration
-			echo ""
+			echo "${TOOL_INSTALL_EMPTY}"
 			print_info "Quick start:"
 			echo "  wt switch feature/my-feature  # Create/switch to worktree"
 			echo "  wt list                       # List all worktrees"
 			echo "  wt merge                      # Merge and cleanup"
-			echo ""
+			echo "${TOOL_INSTALL_EMPTY}"
 			print_info "Documentation: ~/.aidevops/agents/tools/git/worktrunk.md"
 		else
 			print_warning "Homebrew installation failed"
@@ -145,7 +153,7 @@ setup_worktrunk() {
 	# Check if worktrunk (wt) is already installed
 	if command -v wt >/dev/null 2>&1; then
 		local wt_version
-		wt_version=$(wt --version 2>/dev/null | head -1 || echo "unknown")
+		wt_version=$(wt --version 2>/dev/null | head -1 || echo "${TOOL_INSTALL_UNKNOWN}")
 		print_success "Worktrunk already installed: $wt_version"
 		_check_worktrunk_shell_integration
 		return 0
@@ -157,9 +165,9 @@ setup_worktrunk() {
 	echo "  • wt list            - List worktrees with CI status"
 	echo "  • wt merge           - Squash/rebase/merge + cleanup"
 	echo "  • Hooks for automated setup (npm install, etc.)"
-	echo ""
+	echo "${TOOL_INSTALL_EMPTY}"
 	echo "  Note: aidevops also includes worktree-helper.sh as a fallback"
-	echo ""
+	echo "${TOOL_INSTALL_EMPTY}"
 
 	local pkg_manager
 	pkg_manager=$(detect_package_manager)
@@ -170,14 +178,14 @@ setup_worktrunk() {
 		_install_worktrunk_cargo
 	else
 		print_warning "Worktrunk not installed"
-		echo ""
+		echo "${TOOL_INSTALL_EMPTY}"
 		echo "  Install options:"
 		echo "    macOS/Linux (Homebrew): brew install max-sixty/worktrunk/wt"
 		echo "    Cargo:                  cargo install worktrunk"
 		echo "    Windows:                winget install max-sixty.worktrunk"
-		echo ""
+		echo "${TOOL_INSTALL_EMPTY}"
 		echo "  After install: wt config shell install"
-		echo ""
+		echo "${TOOL_INSTALL_EMPTY}"
 		print_info "Fallback available: ~/.aidevops/agents/scripts/worktree-helper.sh"
 	fi
 
@@ -190,11 +198,11 @@ _install_opencode_ext_for_zed() {
 	setup_prompt install_opencode_ext "Install OpenCode extension for Zed? [Y/n]: " "Y"
 	if [[ "$install_opencode_ext" =~ ^[Yy]?$ ]]; then
 		print_info "Installing OpenCode extension..."
-		if [[ "$(uname)" == "Darwin" ]]; then
+		if [[ "$(uname)" == "${TOOL_INSTALL_OS_DARWIN}" ]]; then
 			open "zed://extension/opencode" 2>/dev/null
 			print_success "OpenCode extension install triggered"
 			print_info "Zed will open and prompt to install the extension"
-		elif [[ "$(uname)" == "Linux" ]]; then
+		elif [[ "$(uname)" == "${TOOL_INSTALL_OS_LINUX}" ]]; then
 			xdg-open "zed://extension/opencode" 2>/dev/null ||
 				print_info "Open Zed and install 'opencode' from Extensions (Cmd+Shift+X)"
 		fi
@@ -218,7 +226,7 @@ _install_tabby_linux() {
 			sudo apt-get update -qq 2>/dev/null || true
 		fi
 		print_warning "Tabby packages are not available for ARM64 Linux via package manager"
-		echo "  Download ARM64 .deb from: https://github.com/Eugeny/tabby/releases/latest"
+		echo "  Download ARM64 .deb from: ${TOOL_INSTALL_TABBY_DOWNLOAD}"
 		echo "  Or skip Tabby - it's optional (a modern terminal emulator)"
 		return 0
 	fi
@@ -229,21 +237,21 @@ _install_tabby_linux() {
 	apt)
 		# Add packagecloud repo for Tabby (verified download, not piped to sudo)
 		# shellcheck disable=SC2034  # Read by verified_install() in setup.sh
-		VERIFIED_INSTALL_SUDO="true"
+		VERIFIED_INSTALL_SUDO="${TOOL_INSTALL_BOOL_TRUE}"
 		if verified_install "Tabby repository (apt)" "https://packagecloud.io/install/repositories/eugeny/tabby/script.deb.sh"; then
 			if ! sudo apt-get install -y tabby-terminal; then
 				print_warning "Tabby package not found for this architecture"
-				echo "  Download from: https://github.com/Eugeny/tabby/releases/latest"
+				echo "  Download from: ${TOOL_INSTALL_TABBY_DOWNLOAD}"
 			fi
 		fi
 		;;
 	dnf | yum)
 		# shellcheck disable=SC2034  # Read by verified_install() in setup.sh
-		VERIFIED_INSTALL_SUDO="true"
+		VERIFIED_INSTALL_SUDO="${TOOL_INSTALL_BOOL_TRUE}"
 		if verified_install "Tabby repository (rpm)" "https://packagecloud.io/install/repositories/eugeny/tabby/script.rpm.sh"; then
 			if ! sudo "$pkg_manager" install -y tabby-terminal; then
 				print_warning "Tabby package not found for this architecture"
-				echo "  Download from: https://github.com/Eugeny/tabby/releases/latest"
+				echo "  Download from: ${TOOL_INSTALL_TABBY_DOWNLOAD}"
 			fi
 		fi
 		;;
@@ -253,7 +261,7 @@ _install_tabby_linux() {
 		echo "  Install with: yay -S tabby-bin"
 		;;
 	*)
-		echo "  Download manually: https://github.com/Eugeny/tabby/releases/latest"
+		echo "${TOOL_INSTALL_TABBY_MANUAL_DOWNLOAD}"
 		;;
 	esac
 	return 0
@@ -265,19 +273,19 @@ _install_tabby() {
 	setup_prompt install_tabby "Install Tabby terminal? [Y/n]: " "Y"
 
 	if [[ "$install_tabby" =~ ^[Yy]?$ ]]; then
-		if [[ "$(uname)" == "Darwin" ]]; then
+		if [[ "$(uname)" == "${TOOL_INSTALL_OS_DARWIN}" ]]; then
 			if command -v brew >/dev/null 2>&1; then
 				if run_with_spinner "Installing Tabby" brew install --cask tabby; then
 					: # Success message handled by spinner
 				else
 					print_warning "Failed to install Tabby via Homebrew"
-					echo "  Download manually: https://github.com/Eugeny/tabby/releases/latest"
+					echo "${TOOL_INSTALL_TABBY_MANUAL_DOWNLOAD}"
 				fi
 			else
 				print_warning "Homebrew not found"
-				echo "  Download manually: https://github.com/Eugeny/tabby/releases/latest"
+				echo "${TOOL_INSTALL_TABBY_MANUAL_DOWNLOAD}"
 			fi
-		elif [[ "$(uname)" == "Linux" ]]; then
+		elif [[ "$(uname)" == "${TOOL_INSTALL_OS_LINUX}" ]]; then
 			_install_tabby_linux
 		fi
 	else
@@ -293,7 +301,7 @@ _install_zed_and_opencode_ext() {
 
 	if [[ "$install_zed" =~ ^[Yy]?$ ]]; then
 		local zed_installed=false
-		if [[ "$(uname)" == "Darwin" ]]; then
+		if [[ "$(uname)" == "${TOOL_INSTALL_OS_DARWIN}" ]]; then
 			if command -v brew >/dev/null 2>&1; then
 				if run_with_spinner "Installing Zed" brew install --cask zed; then
 					zed_installed=true
@@ -305,7 +313,7 @@ _install_zed_and_opencode_ext() {
 				print_warning "Homebrew not found"
 				echo "  Download manually: https://zed.dev/download"
 			fi
-		elif [[ "$(uname)" == "Linux" ]]; then
+		elif [[ "$(uname)" == "${TOOL_INSTALL_OS_LINUX}" ]]; then
 			# Zed provides an install script for Linux (verified download)
 			# shellcheck disable=SC2034  # Read by verified_install() in setup.sh
 			VERIFIED_INSTALL_SHELL="sh"
@@ -317,7 +325,7 @@ _install_zed_and_opencode_ext() {
 			fi
 		fi
 
-		if [[ "$zed_installed" == "true" ]]; then
+		if [[ "$zed_installed" == "${TOOL_INSTALL_BOOL_TRUE}" ]]; then
 			_install_opencode_ext_for_zed
 		fi
 	else
@@ -328,10 +336,10 @@ _install_zed_and_opencode_ext() {
 
 # Check for OpenCode extension in an existing Zed installation and offer to install.
 _check_opencode_ext_existing_zed() {
-	local zed_extensions_dir=""
-	if [[ "$(uname)" == "Darwin" ]]; then
+	local zed_extensions_dir="${TOOL_INSTALL_EMPTY}"
+	if [[ "$(uname)" == "${TOOL_INSTALL_OS_DARWIN}" ]]; then
 		zed_extensions_dir="$HOME/Library/Application Support/Zed/extensions/installed"
-	elif [[ "$(uname)" == "Linux" ]]; then
+	elif [[ "$(uname)" == "${TOOL_INSTALL_OS_LINUX}" ]]; then
 		zed_extensions_dir="$HOME/.local/share/zed/extensions/installed"
 	fi
 
@@ -352,7 +360,7 @@ setup_recommended_tools() {
 	local missing_names=()
 
 	# Check for Tabby terminal
-	if [[ "$(uname)" == "Darwin" ]]; then
+	if [[ "$(uname)" == "${TOOL_INSTALL_OS_DARWIN}" ]]; then
 		# macOS - check Applications folder
 		if [[ ! -d "/Applications/Tabby.app" ]]; then
 			missing_tools+=("tabby")
@@ -360,7 +368,7 @@ setup_recommended_tools() {
 		else
 			print_success "Tabby terminal found"
 		fi
-	elif [[ "$(uname)" == "Linux" ]]; then
+	elif [[ "$(uname)" == "${TOOL_INSTALL_OS_LINUX}" ]]; then
 		# Linux - check if tabby command exists
 		if ! command -v tabby >/dev/null 2>&1; then
 			missing_tools+=("tabby")
@@ -372,7 +380,7 @@ setup_recommended_tools() {
 
 	# Check for Zed editor
 	local zed_exists=false
-	if [[ "$(uname)" == "Darwin" ]]; then
+	if [[ "$(uname)" == "${TOOL_INSTALL_OS_DARWIN}" ]]; then
 		# macOS - check Applications folder
 		if [[ ! -d "/Applications/Zed.app" ]]; then
 			missing_tools+=("zed")
@@ -381,7 +389,7 @@ setup_recommended_tools() {
 			print_success "Zed editor found"
 			zed_exists=true
 		fi
-	elif [[ "$(uname)" == "Linux" ]]; then
+	elif [[ "$(uname)" == "${TOOL_INSTALL_OS_LINUX}" ]]; then
 		# Linux - check if zed command exists
 		if ! command -v zed >/dev/null 2>&1; then
 			missing_tools+=("zed")
@@ -393,7 +401,7 @@ setup_recommended_tools() {
 	fi
 
 	# Check for OpenCode extension in existing Zed installation
-	if [[ "$zed_exists" == "true" ]]; then
+	if [[ "$zed_exists" == "${TOOL_INSTALL_BOOL_TRUE}" ]]; then
 		_check_opencode_ext_existing_zed
 	fi
 
@@ -402,7 +410,7 @@ setup_recommended_tools() {
 		print_warning "Missing recommended tools: ${missing_names[*]}"
 		echo "  Tabby - Modern terminal with profiles, SSH manager, split panes"
 		echo "  Zed   - High-performance AI-native code editor"
-		echo ""
+		echo "${TOOL_INSTALL_EMPTY}"
 
 		# Install Tabby if missing
 		if [[ " ${missing_tools[*]} " =~ " tabby " ]]; then
@@ -429,7 +437,7 @@ setup_cursor_cli() {
 
 	if command -v agent >/dev/null 2>&1; then
 		local cursor_version
-		cursor_version=$(agent --version 2>/dev/null || echo "unknown")
+		cursor_version=$(agent --version 2>/dev/null || echo "${TOOL_INSTALL_UNKNOWN}")
 		print_success "Cursor CLI found: $cursor_version"
 		return 0
 	fi
@@ -437,7 +445,7 @@ setup_cursor_cli() {
 	# Check ~/.local/bin specifically (may not be in PATH yet)
 	if [[ -x "$HOME/.local/bin/agent" ]]; then
 		local cursor_version
-		cursor_version=$("$HOME/.local/bin/agent" --version 2>/dev/null || echo "unknown")
+		cursor_version=$("$HOME/.local/bin/agent" --version 2>/dev/null || echo "${TOOL_INSTALL_UNKNOWN}")
 		print_success "Cursor CLI found at ~/.local/bin/agent: $cursor_version"
 		print_info "Ensure ~/.local/bin is in your PATH"
 		return 0
@@ -446,7 +454,7 @@ setup_cursor_cli() {
 	echo "  Cursor CLI provides access to Cursor's AI models (including Composer 2)"
 	echo "  from the terminal. Also usable as an OpenCode provider via the"
 	echo "  opencode-cursor plugin for OAuth-based model access."
-	echo ""
+	echo "${TOOL_INSTALL_EMPTY}"
 
 	local install_cursor
 	setup_prompt install_cursor "Install Cursor CLI? [Y/n]: " "Y"
@@ -460,7 +468,7 @@ setup_cursor_cli() {
 				print_info "Added ~/.local/bin to PATH for this session"
 			fi
 			print_success "Cursor CLI installed"
-			echo ""
+			echo "${TOOL_INSTALL_EMPTY}"
 			echo "  Next steps:"
 			echo "    agent login     # Authenticate with your Cursor account"
 			echo "    agent models    # List available models"
@@ -479,7 +487,7 @@ setup_cursor_cli() {
 
 setup_minisim() {
 	# Only available on macOS
-	if [[ "$(uname)" != "Darwin" ]]; then
+	if [[ "$(uname)" != "${TOOL_INSTALL_OS_DARWIN}" ]]; then
 		return 0
 	fi
 
@@ -504,18 +512,18 @@ setup_minisim() {
 		has_android=true
 	fi
 
-	if [[ "$has_xcode" == "false" && "$has_android" == "false" ]]; then
+	if [[ "$has_xcode" == "${TOOL_INSTALL_BOOL_FALSE}" && "$has_android" == "${TOOL_INSTALL_BOOL_FALSE}" ]]; then
 		print_info "MiniSim requires Xcode (iOS) or Android Studio (Android)"
 		print_info "Install one of these first, then re-run setup to install MiniSim"
 		return 0
 	fi
 
 	# Show what's available
-	local available_for=""
-	if [[ "$has_xcode" == "true" ]]; then
+	local available_for="${TOOL_INSTALL_EMPTY}"
+	if [[ "$has_xcode" == "${TOOL_INSTALL_BOOL_TRUE}" ]]; then
 		available_for="iOS simulators"
 	fi
-	if [[ "$has_android" == "true" ]]; then
+	if [[ "$has_android" == "${TOOL_INSTALL_BOOL_TRUE}" ]]; then
 		if [[ -n "$available_for" ]]; then
 			available_for="$available_for and Android emulators"
 		else
@@ -530,7 +538,7 @@ setup_minisim() {
 	echo "    - Copy device UDID/ADB ID"
 	echo "    - Cold boot Android emulators"
 	echo "    - Run Android emulators without audio (saves Bluetooth battery)"
-	echo ""
+	echo "${TOOL_INSTALL_EMPTY}"
 
 	# Check if Homebrew is available
 	if ! command -v brew >/dev/null 2>&1; then
@@ -561,8 +569,8 @@ setup_minisim() {
 setup_claudebar_needs_upgrade() {
 	local installed_version="$1"
 	local target_version="$2"
-	local installed_major="" installed_minor="" installed_patch=""
-	local target_major="" target_minor="" target_patch=""
+	local installed_major="${TOOL_INSTALL_EMPTY}" installed_minor="${TOOL_INSTALL_EMPTY}" installed_patch="${TOOL_INSTALL_EMPTY}"
+	local target_major="${TOOL_INSTALL_EMPTY}" target_minor="${TOOL_INSTALL_EMPTY}" target_patch="${TOOL_INSTALL_EMPTY}"
 
 	installed_version="${installed_version#v}"
 	target_version="${target_version#v}"
@@ -598,7 +606,7 @@ setup_claudebar() {
 	local claudebar_release_url="https://github.com/tddworks/ClaudeBar/releases/latest"
 	local claudebar_target_version="0.4.66"
 	# Only available on macOS (native Swift menu bar app)
-	if [[ "$(uname)" != "Darwin" ]]; then
+	if [[ "$(uname)" != "${TOOL_INSTALL_OS_DARWIN}" ]]; then
 		return 0
 	fi
 
@@ -607,7 +615,7 @@ setup_claudebar() {
 	# Check if ClaudeBar is already installed
 	if [[ -d "/Applications/ClaudeBar.app" ]]; then
 		local claudebar_info_plist="/Applications/ClaudeBar.app/Contents/Info.plist"
-		local installed_version=""
+		local installed_version="${TOOL_INSTALL_EMPTY}"
 
 		if [[ -f "$claudebar_info_plist" ]]; then
 			installed_version="$(defaults read "$claudebar_info_plist" CFBundleShortVersionString 2>/dev/null || true)"
@@ -650,7 +658,7 @@ setup_claudebar() {
 	echo "  Supports: Claude, Codex, Gemini, Copilot, Antigravity, Kimi, Kiro, Amp"
 	echo "  Features: live menu-bar refresh, quota probe suppression, real-time quota tracking, provider process detection, status notifications, multiple themes"
 	echo "  Requires: macOS 15+, CLI tools for providers you want to monitor"
-	echo ""
+	echo "${TOOL_INSTALL_EMPTY}"
 
 	local install_claudebar
 	setup_prompt install_claudebar "Install ClaudeBar? [Y/n]: " "Y"
@@ -695,7 +703,7 @@ setup_ssh_key() {
 		print_warning "Ed25519 SSH key not found"
 
 		# SSH key generation requires email input — skip in non-interactive mode
-		if [[ "${NON_INTERACTIVE:-false}" == "true" ]] || [[ ! -t 0 ]]; then
+		if [[ "${NON_INTERACTIVE:-false}" == "${TOOL_INSTALL_BOOL_TRUE}" ]] || [[ ! -t 0 ]]; then
 			print_info "Skipping SSH key generation (non-interactive mode)"
 			return 0
 		fi
@@ -705,7 +713,7 @@ setup_ssh_key() {
 
 		if [[ "$generate_key" =~ ^[Yy]?$ ]]; then
 			local email
-			setup_prompt email "Enter your email address: " ""
+			setup_prompt email "Enter your email address: " "${TOOL_INSTALL_EMPTY}"
 			if [[ -z "$email" ]]; then
 				print_warning "No email provided — skipping SSH key generation"
 				return 0

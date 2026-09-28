@@ -9,6 +9,11 @@
 # Include guard
 [[ -n "${_TOOL_INSTALL_ENVIRONMENTS_LOADED:-}" ]] && return 0
 _TOOL_INSTALL_ENVIRONMENTS_LOADED=1
+TOOL_INSTALL_EMPTY=${TOOL_INSTALL_EMPTY-}
+TOOL_INSTALL_BOOL_TRUE=${TOOL_INSTALL_BOOL_TRUE-true}
+TOOL_INSTALL_NODE_LABEL=${TOOL_INSTALL_NODE_LABEL-Node.js}
+TOOL_INSTALL_DSPY_ACTIVATE=${TOOL_INSTALL_DSPY_ACTIVATE-python-env/dspy-env/bin/activate}
+TOOL_INSTALL_UPGRADE_COMMAND=${TOOL_INSTALL_UPGRADE_COMMAND-"  Upgrade command:"}
 
 # SCRIPT_DIR fallback for direct sourcing and test harnesses.
 if [[ -z "${SCRIPT_DIR:-}" ]]; then
@@ -25,9 +30,9 @@ check_python_upgrade_available() {
 	local python3_bin
 	if ! python3_bin=$(find_python3); then
 		print_warning "Python 3 not found"
-		echo ""
+		echo "${TOOL_INSTALL_EMPTY}"
 		echo "  Install options:"
-		if [[ "$PLATFORM_MACOS" == "true" ]]; then
+		if [[ "$PLATFORM_MACOS" == "${TOOL_INSTALL_BOOL_TRUE}" ]]; then
 			echo "    brew install python3"
 		elif command -v apt-get >/dev/null 2>&1; then
 			echo "    sudo apt install python3"
@@ -36,7 +41,7 @@ check_python_upgrade_available() {
 		else
 			echo "    Install Python 3 via your system package manager"
 		fi
-		echo ""
+		echo "${TOOL_INSTALL_EMPTY}"
 		return 0
 	fi
 
@@ -47,21 +52,21 @@ check_python_upgrade_available() {
 	installed_minor=$(echo "$installed_version" | cut -d. -f2)
 
 	# 2. Determine latest stable version from package manager
-	local latest_version=""
+	local latest_version="${TOOL_INSTALL_EMPTY}"
 
-	if [[ "$PLATFORM_MACOS" == "true" ]] && command -v brew >/dev/null 2>&1; then
+	if [[ "$PLATFORM_MACOS" == "${TOOL_INSTALL_BOOL_TRUE}" ]] && command -v brew >/dev/null 2>&1; then
 		# Homebrew: `brew info python3` outputs "python@3.X: 3.X.Y" on the first line
 		latest_version=$(brew info --json=v2 python3 2>/dev/null |
-			python3 -c "import sys,json; d=json.load(sys.stdin); print(d['formulae'][0]['versions']['stable'])" 2>/dev/null) || latest_version=""
+			python3 -c "import sys,json; d=json.load(sys.stdin); print(d['formulae'][0]['versions']['stable'])" 2>/dev/null) || latest_version="${TOOL_INSTALL_EMPTY}"
 	elif command -v apt-cache >/dev/null 2>&1; then
 		# Debian/Ubuntu: get candidate version from apt-cache
 		latest_version=$(apt-cache policy python3 2>/dev/null |
 			awk '/Candidate:/{print $2}' |
-			grep -oE '[0-9]+\.[0-9]+\.[0-9]+') || latest_version=""
+			grep -oE '[0-9]+\.[0-9]+\.[0-9]+') || latest_version="${TOOL_INSTALL_EMPTY}"
 	elif command -v dnf >/dev/null 2>&1; then
 		# Fedora/RHEL: get available version from dnf
 		latest_version=$(dnf info python3 2>/dev/null |
-			awk '/^Version/{print $3}') || latest_version=""
+			awk '/^Version/{print $3}') || latest_version="${TOOL_INSTALL_EMPTY}"
 	fi
 
 	# 3. Compare versions and advise
@@ -79,21 +84,21 @@ check_python_upgrade_available() {
 	if [[ "$installed_major" -lt "$latest_major" ]] ||
 		{ [[ "$installed_major" -eq "$latest_major" ]] && [[ "$installed_minor" -lt "$latest_minor" ]]; }; then
 		print_warning "Python $installed_version installed, but $latest_version is available"
-		echo ""
+		echo "${TOOL_INSTALL_EMPTY}"
 		echo "  Some tools and skills require Python 3.10+."
 		echo "  Upgrade is recommended but not required."
-		echo ""
-		if [[ "$PLATFORM_MACOS" == "true" ]]; then
-			echo "  Upgrade command:"
+		echo "${TOOL_INSTALL_EMPTY}"
+		if [[ "$PLATFORM_MACOS" == "${TOOL_INSTALL_BOOL_TRUE}" ]]; then
+			echo "${TOOL_INSTALL_UPGRADE_COMMAND}"
 			echo "    brew upgrade python3"
 		elif command -v apt-get >/dev/null 2>&1; then
-			echo "  Upgrade command:"
+			echo "${TOOL_INSTALL_UPGRADE_COMMAND}"
 			echo "    sudo apt update && sudo apt install python3"
 		elif command -v dnf >/dev/null 2>&1; then
-			echo "  Upgrade command:"
+			echo "${TOOL_INSTALL_UPGRADE_COMMAND}"
 			echo "    sudo dnf upgrade python3"
 		fi
-		echo ""
+		echo "${TOOL_INSTALL_EMPTY}"
 	else
 		print_success "Python $installed_version found (latest stable: $latest_version)"
 	fi
@@ -105,7 +110,7 @@ _vault_runtime_path_safe() {
 	local env_dir="$1"
 	local expected_dir="${HOME}/.aidevops/.agent-workspace/python-env/vault"
 	[[ "$env_dir" == "$expected_dir" ]] || return 1
-	local component=""
+	local component="${TOOL_INSTALL_EMPTY}"
 	for component in \
 		"${HOME}/.aidevops" \
 		"${HOME}/.aidevops/.agent-workspace" \
@@ -119,7 +124,7 @@ _vault_runtime_path_safe() {
 _vault_runtime_marker_valid() {
 	local marker_path="$1"
 	[[ -f "$marker_path" && ! -L "$marker_path" && -O "$marker_path" ]] || return 1
-	local marker_value=""
+	local marker_value="${TOOL_INSTALL_EMPTY}"
 	marker_value=$(<"$marker_path")
 	[[ "$marker_value" == "aidevops-vault-runtime-v1" || "$marker_value" == "managed by aidevops setup" ]]
 	return $?
@@ -127,12 +132,12 @@ _vault_runtime_marker_valid() {
 
 setup_vault_python_env() {
 	print_info "Setting up isolated Python crypto runtime for Vault..."
-	local python3_bin=""
+	local python3_bin="${TOOL_INSTALL_EMPTY}"
 	if ! python3_bin=$(find_python3); then
 		print_warning "Python 3 not found - Vault crypto runtime unavailable"
 		return 1
 	fi
-	local module_dir=""
+	local module_dir="${TOOL_INSTALL_EMPTY}"
 	module_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || return 1
 	local source_root="${INSTALL_DIR:-}"
 	[[ -z "$source_root" ]] && source_root="$(cd "${module_dir}/../../../.." && pwd)"
@@ -241,11 +246,11 @@ setup_python_env() {
 	fi
 
 	# Create Python virtual environment
-	if [[ ! -d "python-env/dspy-env" ]] || [[ ! -f "python-env/dspy-env/bin/activate" ]]; then
+	if [[ ! -d "python-env/dspy-env" ]] || [[ ! -f "${TOOL_INSTALL_DSPY_ACTIVATE}" ]]; then
 		print_info "Creating Python virtual environment for DSPy..."
 		mkdir -p python-env
 		# Remove corrupted venv if directory exists but activate script is missing
-		if [[ -d "python-env/dspy-env" ]] && [[ ! -f "python-env/dspy-env/bin/activate" ]]; then
+		if [[ -d "python-env/dspy-env" ]] && [[ ! -f "${TOOL_INSTALL_DSPY_ACTIVATE}" ]]; then
 			rm -rf python-env/dspy-env
 		fi
 		if "$python3_bin" -m venv python-env/dspy-env; then
@@ -266,7 +271,7 @@ setup_python_env() {
 		print_warning "DSPy cache could not be restricted to an owner-only directory - DSPy setup skipped"
 		return 0
 	fi
-	if ! aidevops_persist_dspy_cache_env "python-env/dspy-env/bin/activate"; then
+	if ! aidevops_persist_dspy_cache_env "${TOOL_INSTALL_DSPY_ACTIVATE}"; then
 		print_warning "DSPy cache environment could not be persisted - DSPy setup skipped"
 		return 0
 	fi
@@ -274,7 +279,7 @@ setup_python_env() {
 	# Install DSPy dependencies
 	print_info "Installing DSPy dependencies..."
 	# shellcheck source=/dev/null
-	if [[ -f "python-env/dspy-env/bin/activate" ]]; then
+	if [[ -f "${TOOL_INSTALL_DSPY_ACTIVATE}" ]]; then
 		source python-env/dspy-env/bin/activate
 	else
 		print_warning "Python venv activate script not found - DSPy setup skipped"
@@ -347,30 +352,30 @@ _install_nodejs_apt() {
 	print_info "Installing Node.js (via NodeSource for latest LTS)..."
 	if command -v curl >/dev/null 2>&1; then
 		# shellcheck disable=SC2034  # Read by verified_install() in setup.sh
-		VERIFIED_INSTALL_SUDO="true"
+		VERIFIED_INSTALL_SUDO="${TOOL_INSTALL_BOOL_TRUE}"
 		if verified_install "NodeSource repository" "https://deb.nodesource.com/setup_22.x"; then
 			# Install nodejs (NodeSource bundles npm, but distro fallback may not)
 			# Include npm explicitly in case NodeSource setup failed silently
 			# and apt falls back to the distro nodejs package (which lacks npm)
 			if sudo apt-get install -y nodejs npm 2>/dev/null || sudo apt-get install -y nodejs; then
-				print_success "Node.js installed: $(node --version)"
+				print_success "${TOOL_INSTALL_NODE_LABEL} installed: $(node --version)"
 			else
-				print_warning "Node.js installation failed"
+				print_warning "${TOOL_INSTALL_NODE_LABEL} installation failed"
 			fi
 		else
 			# Fallback to distro package
 			print_info "Falling back to distro Node.js package..."
 			if sudo apt-get install -y nodejs npm; then
-				print_success "Node.js installed: $(node --version)"
+				print_success "${TOOL_INSTALL_NODE_LABEL} installed: $(node --version)"
 			else
-				print_warning "Node.js installation failed"
+				print_warning "${TOOL_INSTALL_NODE_LABEL} installation failed"
 			fi
 		fi
 	else
 		if sudo apt-get install -y nodejs npm; then
-			print_success "Node.js installed: $(node --version)"
+			print_success "${TOOL_INSTALL_NODE_LABEL} installed: $(node --version)"
 		else
-			print_warning "Node.js installation failed"
+			print_warning "${TOOL_INSTALL_NODE_LABEL} installation failed"
 		fi
 	fi
 	return 0
@@ -414,9 +419,9 @@ setup_nodejs() {
 		setup_prompt install_node "Install Node.js via Homebrew? [Y/n]: " "Y"
 		if [[ "$install_node" =~ ^[Yy]?$ ]]; then
 			if run_with_spinner "Installing Node.js" brew install node; then
-				print_success "Node.js installed: $(node --version)"
+				print_success "${TOOL_INSTALL_NODE_LABEL} installed: $(node --version)"
 			else
-				print_warning "Node.js installation failed"
+				print_warning "${TOOL_INSTALL_NODE_LABEL} installation failed"
 			fi
 		fi
 		;;
@@ -430,9 +435,9 @@ setup_nodejs() {
 		setup_prompt install_node "Install Node.js via $pkg_manager? [Y/n]: " "Y"
 		if [[ "$install_node" =~ ^[Yy]?$ ]]; then
 			if sudo "$pkg_manager" install -y nodejs npm; then
-				print_success "Node.js installed: $(node --version)"
+				print_success "${TOOL_INSTALL_NODE_LABEL} installed: $(node --version)"
 			else
-				print_warning "Node.js installation failed"
+				print_warning "${TOOL_INSTALL_NODE_LABEL} installation failed"
 			fi
 		fi
 		;;
@@ -440,9 +445,9 @@ setup_nodejs() {
 		setup_prompt install_node "Install Node.js via pacman? [Y/n]: " "Y"
 		if [[ "$install_node" =~ ^[Yy]?$ ]]; then
 			if sudo pacman -S --noconfirm nodejs npm; then
-				print_success "Node.js installed: $(node --version)"
+				print_success "${TOOL_INSTALL_NODE_LABEL} installed: $(node --version)"
 			else
-				print_warning "Node.js installation failed"
+				print_warning "${TOOL_INSTALL_NODE_LABEL} installation failed"
 			fi
 		fi
 		;;
@@ -450,9 +455,9 @@ setup_nodejs() {
 		setup_prompt install_node "Install Node.js via apk? [Y/n]: " "Y"
 		if [[ "$install_node" =~ ^[Yy]?$ ]]; then
 			if sudo apk add nodejs npm; then
-				print_success "Node.js installed: $(node --version)"
+				print_success "${TOOL_INSTALL_NODE_LABEL} installed: $(node --version)"
 			else
-				print_warning "Node.js installation failed"
+				print_warning "${TOOL_INSTALL_NODE_LABEL} installation failed"
 			fi
 		fi
 		;;
