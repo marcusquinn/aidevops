@@ -91,7 +91,7 @@ _quality_sweep_attempt() {
 _quality_sweep_batch() {
 	local entries="$1" runner="$2" deadline="$3"
 	local cursor="${QUALITY_SWEEP_STATE_DIR}/cursor.json" state pending entry slug path
-	local result=0 attempted=0 remaining=0 repo_timeout next_state observed
+	local result=0 attempted=0 published=0 remaining=0 repo_timeout next_state observed
 	mkdir -p "$QUALITY_SWEEP_STATE_DIR" || return 1
 	state=$(jq -ce --arg runner "$runner" '
 		select(.version == 1 and .runner == $runner and .complete == false) |
@@ -131,12 +131,18 @@ _quality_sweep_batch() {
 		attempted=$((attempted + 1))
 		if [[ "$result" -ne 0 ]]; then
 			echo "[stats] Quality sweep attempt deferred/failed for ${slug} (rc=${result}); advancing cursor" >>"$LOGFILE"
+		else
+			published=$((published + 1))
 		fi
 	done <<<"$pending"
 	# Mark closed before the timestamp: interruption can repeat work, never
 	# reuse a completed visited set to skip tomorrow's sweep entirely.
 	state=$(jq -c '.complete=true' <<<"$state")
 	_quality_sweep_save_cursor "$cursor" "$state" || return 1
+	if [[ "$published" -eq 0 ]]; then
+		echo "[stats] Quality sweep: no repository published in this batch; last-run unchanged" >>"$LOGFILE"
+		return 0
+	fi
 	date +%s >"$QUALITY_SWEEP_LAST_RUN" || return 1
 	echo "[stats] Quality sweep complete: $attempted repo(s) attempted this batch; all eligible repositories visited" >>"$LOGFILE"
 	return 0
@@ -714,17 +720,29 @@ _run_sweep_tools() {
 	local sweep_total_issues=0
 	local sweep_high_critical=0
 	local sweep_sev_inline=""
+	local skipped_tools="" tool_rc=0
+	# Reserve time for body and rolling-comment publication after all tools.
+	local tool_deadline="${AIDEVOPS_GH_DEADLINE_EPOCH:-$(($(date +%s) + 120))}"
+	tool_deadline=$((tool_deadline - 35))
 
 	local prev_qlty_smells
 	prev_qlty_smells=$(_previous_qlty_smell_count "$repo_slug")
 
 	local shellcheck_section=""
-	shellcheck_section=$(_sweep_shellcheck "$repo_slug" "$repo_path")
+	shellcheck_section=$(_quality_sweep_timed_tool 15 "$tool_deadline" ShellCheck _sweep_shellcheck "$repo_slug" "$repo_path") || {
+		tool_rc=$?
+		skipped_tools="ShellCheck (rc=${tool_rc})"
+		shellcheck_section=""
+	}
 	[[ -n "$shellcheck_section" ]] && tool_count=$((tool_count + 1))
 
 	local qlty_section="" qlty_smell_count=0 qlty_grade="UNKNOWN"
 	local qlty_result
-	qlty_result=$(_run_qlty_sweep_tool "$repo_slug" "$repo_path")
+	qlty_result=$(_quality_sweep_timed_tool 30 "$tool_deadline" Qlty _run_qlty_sweep_tool "$repo_slug" "$repo_path") || {
+		tool_rc=$?
+		skipped_tools="${skipped_tools:+${skipped_tools}, }Qlty (rc=${tool_rc})"
+		qlty_result='|0|UNKNOWN'
+	}
 	qlty_section="${qlty_result%%|*}"
 	local qlty_remainder="${qlty_result#*|}"
 	qlty_smell_count="${qlty_remainder%%|*}"
@@ -745,7 +763,11 @@ _run_sweep_tools() {
 	# read(1) fills missing fields as empty, providing 4-field back-compat.
 	local sonar_section=""
 	local sonar_raw
-	sonar_raw=$(_sweep_sonarcloud "$repo_path")
+	sonar_raw=$(_quality_sweep_timed_tool 15 "$tool_deadline" SonarCloud _sweep_sonarcloud "$repo_path") || {
+		tool_rc=$?
+		skipped_tools="${skipped_tools:+${skipped_tools}, }SonarCloud (rc=${tool_rc})"
+		sonar_raw=""
+	}
 	if [[ -n "$sonar_raw" ]]; then
 		sonar_section="${sonar_raw%%|*}"
 		IFS='|' read -r sweep_gate_status sweep_total_issues sweep_high_critical sweep_sev_inline <<<"${sonar_raw#*|}"
@@ -754,16 +776,33 @@ _run_sweep_tools() {
 	fi
 
 	local codacy_section=""
-	codacy_section=$(_sweep_codacy "$repo_slug" "$repo_path")
+	codacy_section=$(_quality_sweep_timed_tool 12 "$tool_deadline" Codacy _sweep_codacy "$repo_slug" "$repo_path") || {
+		tool_rc=$?
+		skipped_tools="${skipped_tools:+${skipped_tools}, }Codacy (rc=${tool_rc})"
+		codacy_section=""
+	}
 	[[ -n "$codacy_section" ]] && tool_count=$((tool_count + 1))
 
 	local coderabbit_section=""
-	coderabbit_section=$(_sweep_coderabbit "$repo_slug" "$sweep_gate_status" "$sweep_total_issues")
-	_save_sweep_state "$repo_slug" "$sweep_gate_status" "$sweep_total_issues" "$sweep_high_critical" "$qlty_smell_count" "$qlty_grade"
-	tool_count=$((tool_count + 1))
+	coderabbit_section=$(_quality_sweep_timed_tool 4 "$tool_deadline" CodeRabbit _sweep_coderabbit "$repo_slug" "$sweep_gate_status" "$sweep_total_issues") || {
+		tool_rc=$?
+		skipped_tools="${skipped_tools:+${skipped_tools}, }CodeRabbit (rc=${tool_rc})"
+		coderabbit_section=""
+	}
+	if [[ -n "$coderabbit_section" ]]; then
+		tool_count=$((tool_count + 1))
+		# Incomplete telemetry must not overwrite the next run's comparison baseline.
+		if [[ -z "$skipped_tools" ]]; then
+			_save_sweep_state "$repo_slug" "$sweep_gate_status" "$sweep_total_issues" "$sweep_high_critical" "$qlty_smell_count" "$qlty_grade"
+		fi
+	fi
 
 	local review_scan_section=""
-	review_scan_section=$(_sweep_review_scanner "$repo_slug")
+	review_scan_section=$(_quality_sweep_timed_tool 10 "$tool_deadline" 'review scan' _sweep_review_scanner "$repo_slug") || {
+		tool_rc=$?
+		skipped_tools="${skipped_tools:+${skipped_tools}, }review scan (rc=${tool_rc})"
+		review_scan_section=""
+	}
 	[[ -n "$review_scan_section" ]] && tool_count=$((tool_count + 1))
 
 	local sections_dir
@@ -772,11 +811,21 @@ _run_sweep_tools() {
 		"$qlty_grade" "$qlty_smell_delta" "$prev_qlty_smells" "$sonar_section" \
 		"$sweep_gate_status" "$sweep_total_issues" "$sweep_high_critical" \
 		"$sweep_sev_inline" "$codacy_section" "$coderabbit_section" "$review_scan_section") || return 1
+	printf '%s' "$skipped_tools" >"${sections_dir}/skipped_tools"
 
 	# Single-line handshake: just the directory path. The caller reads each
 	# section by `cat`ing one file at a time.
 	printf '%s\n' "$sections_dir"
 	return 0
+}
+
+_quality_sweep_timed_tool() {
+	local seconds="$1" deadline="$2" name="$3" start rc=0
+	shift 3
+	start=$(date +%s)
+	_stats_run_bounded "$seconds" "$deadline" "$@" || rc=$?
+	printf '[stats] Quality sweep tool %s: %ss rc=%s\n' "$name" "$(($(date +%s) - start))" "$rc" >>"$LOGFILE"
+	return "$rc"
 }
 
 _previous_qlty_smell_count() {
@@ -857,7 +906,7 @@ _quality_sweep_for_repo() {
 	# used `IFS= read -r` chains which only handled single-line values and
 	# silently truncated every multi-line markdown section.
 	local sections_dir
-	sections_dir=$(_run_sweep_tools "$repo_slug" "$repo_path")
+	sections_dir=$(_run_sweep_tools "$repo_slug" "$repo_path") || return 1
 	if [[ -z "$sections_dir" || ! -d "$sections_dir" ]]; then
 		echo "[stats] Quality sweep: _run_sweep_tools produced no sections dir for ${repo_slug}" >>"$LOGFILE"
 		[[ -n "$sections_dir" && -e "$sections_dir" ]] && rm -rf "$sections_dir"
@@ -888,11 +937,13 @@ _quality_sweep_for_repo() {
 	codacy_section=$(cat "${sections_dir}/codacy" 2>/dev/null || echo "")
 	coderabbit_section=$(cat "${sections_dir}/coderabbit" 2>/dev/null || echo "")
 	review_scan_section=$(cat "${sections_dir}/review_scan" 2>/dev/null || echo "")
+	local QUALITY_SWEEP_SKIPPED_TOOLS
+	QUALITY_SWEEP_SKIPPED_TOOLS=$(cat "${sections_dir}/skipped_tools" 2>/dev/null || echo "")
 	rm -rf "$sections_dir"
 
 	if [[ "${tool_count:-0}" -eq 0 ]]; then
 		echo "[stats] Quality sweep: no tools available for ${repo_slug}" >>"$LOGFILE"
-		return 0
+		return 1
 	fi
 
 	# Update issue body dashboard first (best-effort — comment is secondary)
@@ -922,6 +973,7 @@ _quality_sweep_for_repo() {
 		# never the one hidden (GH#32730).
 		_minimize_superseded_dashboard_comments "$issue_number" "$repo_slug"
 	fi
+	[[ "$comment_posted" == true ]] || return 1
 	return 0
 }
 
@@ -1274,6 +1326,7 @@ _Automated code-quality snapshot for this repository. Actionable findings are fi
 **Last sweep**: \`${sweep_time}\`
 **Repo**: \`${repo_slug}\`
 **Tools run**: ${tool_count}
+**Skipped tools**: ${QUALITY_SWEEP_SKIPPED_TOOLS:-none}
 **Badge status**: ${badge_indicator}
 
 ### Quality
