@@ -92,7 +92,7 @@ _der_labels_have_hold() {
 _der_text_has_strong_hold() {
 	local text="$1"
 	printf '%s\n' "$text" |
-		grep -qiE 'HUMAN_UNBLOCK_REQUIRED|Worker Watchdog Kill|Terminal[_ -]blocker([_ -]detected)?|ACTION REQUIRED|worker[_ -]blocked' && return 0
+		grep -qiE 'HUMAN_UNBLOCK_REQUIRED|Worker Watchdog Kill|Terminal[_ -]blocker([_ -]detected)?|ACTION REQUIRED|worker[_ -]blocked|aidevops:brief-hold' && return 0
 	if printf '%s\n' "$text" | grep -qiE '\*\*BLOCKED\*\*' &&
 		printf '%s\n' "$text" | grep -qiE 'cannot proceed'; then
 		return 0
@@ -215,6 +215,12 @@ _der_has_hold() {
 	local body="$1"
 	local comments="$2"
 	local labels="$3"
+	local comments_json="${4:-}"
+	if [[ -n "$comments_json" ]] && declare -F issue_has_active_brief_hold >/dev/null 2>&1 &&
+		! issue_has_active_brief_hold "$comments_json" "$body"; then
+		# Historical markers refer to an older body, not the current hold.
+		comments="${comments//aidevops:brief-hold/expired-brief-hold}"
+	fi
 	local text="${body}"$'\n'"${comments}"
 	_der_labels_have_hold "$labels" || _der_text_has_strong_hold "$text" || _der_text_has_operational_hold "$text"
 	return $?
@@ -492,8 +498,9 @@ _der_try_unblock() {
 	_der_has_active_status "$labels" && return 0
 	comments_json=$(gh api --paginate --slurp "repos/${repo}/issues/${issue_number}/comments?per_page=100" 2>/dev/null) || return 1
 	_der_json_pages_valid "$comments_json" || return 1
-	comments=$(printf '%s' "$comments_json" | jq -r '.[][] | .body // ""' 2>/dev/null) || return 1
-	_der_has_hold "$body" "$comments" "$labels" && return 0
+	# aidevops:trust-boundary — external comments cannot assert a hold.
+	comments=$(printf '%s' "$comments_json" | jq -r '.[][] | select((.author_association // "") | IN("OWNER", "MEMBER", "COLLABORATOR")) | .body // ""' 2>/dev/null) || return 1
+	_der_has_hold "$body" "$comments" "$labels" "$comments_json" && return 0
 	_der_native_blockers_closed "$repo" "$issue_number" || return $?
 	if [[ "$_DER_NATIVE_BLOCKERS_PRESENT" != true ]]; then
 		_der_all_declared_blockers_closed "$repo" "$candidate_json" || return $?

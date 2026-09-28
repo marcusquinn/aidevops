@@ -324,6 +324,14 @@ assert_eq \
 	"normalization avoids ad hoc issue-edit mutations" \
 	"0" \
 	"$(grep -cF 'gh issue edit' "$GH_CALLS_LOG" || true)"
+issue_brief_hold_blocks_auto_release() { return 0; }
+: >"$GH_CALLS_LOG"
+_large_file_gate_normalize_debt_issue "18706" "owner/repo"
+assert_eq \
+	"active brief hold prevents large-file normalization from flipping status" \
+	"0" \
+	"$(grep -cF 'set_issue_status' "$GH_CALLS_LOG" || true)"
+unset -f issue_brief_hold_blocks_auto_release
 assert_contains \
 	"validator closure text describes durable canonical issue reuse" \
 	"next pulse cycle may reopen the canonical issue" \
