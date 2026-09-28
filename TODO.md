@@ -1474,7 +1474,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18516 fix(seo): keywords hub clone from canonical cwd; exported env overrides config #bug #seo #framework #interactive tier:standard ~30m ref:GH#32791 logged:2026-09-28 -> [todo/tasks/t18516-brief.md] pr:#32792 completed:2026-09-28
 
-- [ ] t18517 fix(seo): keywords DataForSEO credentials fall back to gopass #bug #seo #framework #interactive tier:standard ~20m ref:GH#32803 logged:2026-09-28 -> [todo/tasks/t18517-brief.md]
+- [x] t18517 fix(seo): keywords DataForSEO credentials fall back to gopass #bug #seo #framework #interactive tier:standard ~20m ref:GH#32803 logged:2026-09-28 -> [todo/tasks/t18517-brief.md] pr:#32804 completed:2026-09-28
 
 ## In Progress
 
