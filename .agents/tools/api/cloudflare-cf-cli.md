@@ -20,7 +20,8 @@ tools:
 
 ## Quick Reference
 
-- **Install**: `npm i -g cf` (Node.js >= 22; binaries `cf` and `cloudflare`). Open beta; verified with `1.0.0-beta.5`.
+- **Install**: offered by interactive `setup.sh` (step "Setup Cloudflare cf CLI"), or `npm i -g cf` (Node.js >= 22; binaries `cf` and `cloudflare`). Open beta; verified with `1.0.0-beta.5`.
+- **Updates**: tracked by `aidevops update-tools` and the auto-updater (`tool-version-check.sh`, prerelease-aware).
 - **Coverage**: generated from Cloudflare's public OpenAPI surface; shape `cf <product> [group…] <operation>`.
 - **Discover commands**: `cf cli search "<action + resource type>"` returns five JSON matches. Do not walk nested `--help`.
 - **Inspect a request**: `cf schema <command…>` (method, path, params, body fields); `--dry-run` prints the resolved request without sending it.
@@ -47,7 +48,7 @@ Detect the project type before choosing: `cloudflare.config.ts` means `cf`; `wra
 
 ## Agent Workflow
 
-1. `command -v cf` — if missing, fall back to Code Mode MCP or ask before installing globally.
+1. `command -v cf` — if missing, fall back to Code Mode MCP, or suggest re-running `setup.sh` / `npm i -g cf`.
 2. `cf cli search "list DNS records for a zone"` — pick the best match; don't repeat near-identical searches.
 3. `cf <command> --help` for flags, `cf schema <command>` for the exact API request.
 4. For writes, run with `--dry-run` first, then execute and re-read the resource to verify.
@@ -79,7 +80,7 @@ Interactive users can instead run `cf auth login` (OAuth device flow) and bind p
 - `cf dev` cannot forward extra arguments (for example `--port`) to Vite yet; set them in `vite.config.ts` or run `npx vite` directly.
 - `--dry-run` does not resolve a domain passed to `--zone` into a zone ID; the preview URL contains the domain verbatim.
 - npm reports that the `workerd` postinstall script was not approved; `cf build`, `cf deploy --dry-run` and `cf dev` still worked. Approve it (`npm approve-scripts workerd`) only if local runtime errors point to it.
-- The binary name `cf` collides with the Cloud Foundry CLI. If `cf --version` does not print the Cloudflare banner, use the `cloudflare` alias.
+- The binary name `cf` collides with the Cloud Foundry CLI. If `cf --version` does not print the Cloudflare banner, use the `cloudflare` alias. Setup and update-tools detect Cloud Foundry (`cf version 8.x`) and never replace it.
 - Generated delete commands decline by default when non-interactive and point to `--force`; pass it only after a `--dry-run` and explicit authorization.
 - Beta surface changes with each pinned OpenAPI release. Generator/CLI issues are recorded under `test_bugs/` in the `cloudflare/cf` repo, each with a `status:` field (open or fixed); check there before debugging odd behaviour.
 - Wrangler stays maintained for 18 months after the beta ends; don't rewrite working Wrangler projects without a reason.

@@ -260,6 +260,64 @@ setup_google_workspace_cli() {
 	return 0
 }
 
+# Cloudflare cf CLI (npm `cf`): full Cloudflare API, JSON output, Workers
+# projects. Guide: .agents/tools/api/cloudflare-cf-cli.md. Updates are handled
+# by tool-version-check.sh (aidevops update-tools / auto-update).
+setup_cloudflare_cf_cli() {
+	print_info "Setting up Cloudflare cf CLI..."
+
+	local install_pkg="cf@latest"
+	if command -v cf >/dev/null 2>&1; then
+		local cf_version
+		cf_version=$(cf --version 2>/dev/null | head -1 || echo "${TOOL_INSTALL_UNKNOWN}")
+		if [[ "$cf_version" == "cf version "* ]]; then
+			# Cloud Foundry CLI owns the `cf` name; don't clobber it.
+			print_warning "A different 'cf' command is installed (Cloud Foundry CLI: $cf_version)"
+			print_info "Skipped Cloudflare cf CLI to avoid replacing it"
+			print_info "Install manually if wanted: npm install -g $install_pkg (then use the 'cloudflare' alias)"
+			return 0
+		fi
+		print_success "Cloudflare cf CLI already installed: $cf_version"
+		return 0
+	fi
+
+	if ! command -v npm >/dev/null 2>&1 && ! command -v bun >/dev/null 2>&1; then
+		print_warning "Neither bun nor npm found - cannot install Cloudflare cf CLI"
+		print_info "Install Node.js 22+ first, then re-run setup"
+		return 0
+	fi
+
+	local node_major=""
+	node_major=$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo "")
+	if [[ ! "$node_major" =~ ^[0-9]+$ ]] || ((node_major < 22)); then
+		print_warning "Cloudflare cf CLI requires Node.js 22+ (found: ${node_major:-none})"
+		print_info "Upgrade Node.js, then install: npm install -g $install_pkg"
+		return 0
+	fi
+
+	print_info "Cloudflare cf CLI covers the full Cloudflare API (DNS, WAF, Workers, R2, ...) with JSON output"
+	echo "  Used by Cloudflare hosting and build agents; falls back to Code Mode MCP when absent."
+	echo "${TOOL_INSTALL_EMPTY}"
+
+	local install_cf
+	setup_prompt install_cf "Install Cloudflare cf CLI? [Y/n]: " "Y"
+	if [[ "$install_cf" =~ ^[Yy]?$ ]]; then
+		if run_with_spinner "Installing Cloudflare cf CLI" npm_global_install "$install_pkg"; then
+			print_success "Cloudflare cf CLI installed"
+			print_info "Authenticate with 'cf auth login', or set CLOUDFLARE_API_TOKEN for headless use"
+			print_info "Optional: 'cf cli telemetry disable' to opt out of usage telemetry"
+		else
+			print_warning "Cloudflare cf CLI installation failed"
+			print_info "Try manually: npm install -g $install_pkg"
+		fi
+	else
+		print_info "Skipped Cloudflare cf CLI installation"
+		print_info "Install later: npm install -g $install_pkg"
+	fi
+
+	return 0
+}
+
 setup_orbstack_vm() {
 	# Only available on macOS
 	if [[ "$(uname)" != "${TOOL_INSTALL_OS_DARWIN}" ]]; then

@@ -133,6 +133,7 @@ NPM_TOOLS=(
 	"npm|macOS Automator MCP|macos-automator-mcp|--version|@steipete/macos-automator-mcp|npm install -g @steipete/macos-automator-mcp@latest"
 	"npm|Claude Code MCP|claude-code-mcp|--version|@steipete/claude-code-mcp|npm install -g @steipete/claude-code-mcp@latest"
 	"npm|Google Workspace CLI|gws|--version|@googleworkspace/cli|npm install -g @googleworkspace/cli@latest"
+	"npm|Cloudflare cf CLI|cf|--version|cf|npm install -g cf@latest"
 )
 
 BREW_TOOLS=(
@@ -260,6 +261,10 @@ get_python_installed_version() {
 	return 0
 }
 
+# npm versions are semver, so a hyphen suffix is a prerelease. Other package
+# channels (apt revisions such as 1.7.1-1) must keep using the plain pattern.
+readonly _NPM_SEMVER_PATTERN='[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?'
+
 # Get installed version from npm global package.json
 # Fallback for tools where --version starts a server instead of printing a version
 get_npm_pkg_version() {
@@ -269,8 +274,10 @@ get_npm_pkg_version() {
 	[[ -n "$npm_root" ]] || return 1
 	local pkg_json="${npm_root}/${pkg}/package.json"
 	if [[ -f "$pkg_json" ]]; then
-		grep -oE '"version"\s*:\s*"[0-9]+\.[0-9]+\.[0-9]+"' "$pkg_json" |
-			grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1
+		# Keep semver prereleases (1.0.0-beta.5) so they compare against the
+		# npm registry version instead of a truncated 1.0.0.
+		grep -oE '"version"[[:space:]]*:[[:space:]]*"[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?"' "$pkg_json" |
+			grep -oE "$_NPM_SEMVER_PATTERN" | head -1
 		return 0
 	fi
 	return 1
@@ -317,7 +324,11 @@ get_installed_version() {
 		local ver_output
 		ver_output=$(head -1 "$_ver_log")
 		rm -f "$_ver_log"
-		version=$(echo "$ver_output" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+		if [[ -n "$pkg" ]]; then
+			version=$(echo "$ver_output" | grep -oE "$_NPM_SEMVER_PATTERN" | head -1)
+		else
+			version=$(echo "$ver_output" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+		fi
 		if [[ -z "$version" ]]; then
 			version=$(echo "$ver_output" | grep -oE '[0-9]+\.[0-9]+' | head -1)
 		fi
@@ -465,10 +476,36 @@ version_lt() {
 		return 1
 	fi
 
+	# Semver: a release ranks above its own prereleases (1.0.0-beta.5 < 1.0.0),
+	# which sort -V orders the other way round.
+	local base1="${v1%%-*}" base2="${v2%%-*}"
+	if [[ "$base1" == "$base2" ]]; then
+		if [[ "$v1" == *-* && "$v2" != *-* ]]; then
+			return 0
+		fi
+		if [[ "$v1" != *-* && "$v2" == *-* ]]; then
+			return 1
+		fi
+	fi
+
 	# Use sort -V for version comparison
 	local lowest
 	lowest=$(printf '%s\n%s' "$v1" "$v2" | sort -V | head -1)
 	[[ "$lowest" == "$v1" ]]
+}
+
+# Return 0 when the `cf` on PATH is the Cloud Foundry CLI ("cf version 8.x"),
+# not Cloudflare's npm `cf` package. Uses a temp file rather than a pipe for
+# the same macOS timeout reason documented in get_installed_version.
+_cf_binary_is_cloud_foundry() {
+	command -v cf &>/dev/null || return 1
+	local ver_log="" first_line=""
+	ver_log=$(mktemp "${TMPDIR:-/tmp}/tool-ver.XXXXXX") || return 1
+	timeout_sec "$VERSION_TIMEOUT" cf --version >"$ver_log" 2>/dev/null || true
+	first_line=$(head -1 "$ver_log")
+	rm -f "$ver_log"
+	[[ "$first_line" == "cf version "* ]] && return 0
+	return 1
 }
 
 # Detect the installed version for a tool specification.
@@ -483,6 +520,12 @@ _tool_installed_version() {
 		get_python_installed_version "$pkg"
 		;;
 	npm)
+		# The Cloud Foundry CLI also installs a `cf` binary ("cf version 8.x");
+		# never report it as the Cloudflare npm package or offer to replace it.
+		if [[ "$pkg" == cf ]] && _cf_binary_is_cloud_foundry; then
+			echo "not installed"
+			return 0
+		fi
 		get_installed_version "$cmd" "$ver_flag" "$pkg"
 		;;
 	*)
