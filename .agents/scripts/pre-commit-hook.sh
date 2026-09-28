@@ -792,6 +792,10 @@ _init_root_file_allowlist() {
 		"biome.json"
 		"eslint.config.js" "eslint.config.mjs" "eslint.config.cjs"
 		"eslint.config.ts" "eslint.config.mts" "eslint.config.cts"
+		# Vitest resolves vitest.config.{ts,mts,cts,js,mjs,cjs}; Vitest 4
+		# test.projects lives here (GH#32799).
+		"vitest.config.js" "vitest.config.mjs" "vitest.config.cjs"
+		"vitest.config.ts" "vitest.config.mts" "vitest.config.cts"
 		# Build/package files
 		"package.json" "package-lock.json" "npm-shrinkwrap.json"
 		"pnpm-lock.yaml" "yarn.lock" "bun.lock" "bun.lockb"
