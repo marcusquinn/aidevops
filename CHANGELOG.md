@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.37.18] - 2026-09-28
+
+### Fixed
+
+- broker git rejects user-owned worktrees as dubious ownership
+- keywords read DATAFORSEO_API_LOGIN/API_PASSWORD from gopass
+
 ## [3.37.17] - 2026-09-28
 
 ### Changed
