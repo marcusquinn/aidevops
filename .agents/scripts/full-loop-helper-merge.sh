@@ -1430,6 +1430,35 @@ _merge_admin_fallback_required_checks_clear() {
 	esac
 }
 
+# Only a review-count failure after a fresh required-check read permits an
+# implicit admin retry. A generic branch-policy error is not review evidence.
+_merge_try_review_only_admin_fallback() {
+	local pr_number="$1" repo="$2" merge_method="$3" match_head_sha="$4"
+	local squash_subject="$5" merge_body_file="$6" merge_output="$7"
+	if ! printf '%s' "$merge_output" | grep -qE 'At least [0-9]+ approving review'; then
+		print_error "Merge remains blocked by branch policy; refusing admin fallback without a review-only block"
+		return 1
+	fi
+	_merge_admin_fallback_required_checks_clear "$pr_number" "$repo" || return $?
+	_merge_revalidate_transport_authority "$pr_number" "$repo" "$match_head_sha" || return 1
+	print_info "Review count blocked plain merge; retrying with --admin (workers share the maintainer's gh auth per GH#18538)..."
+	local subject_flags=() admin_rc=0 admin_output=""
+	[[ -n "$squash_subject" ]] && subject_flags+=("$FULL_LOOP_MERGE_SUBJECT_FLAG" "$squash_subject")
+	[[ -n "$merge_body_file" ]] && subject_flags+=("$FULL_LOOP_MERGE_BODY_FILE_FLAG" "$merge_body_file")
+	_MERGE_WRITE_OUTPUT=""
+	_merge_run_bounded_write "$pr_number" "$repo" "$match_head_sha" \
+		gh pr merge "$pr_number" --repo "$repo" "$merge_method" --admin --match-head-commit "$match_head_sha" ${subject_flags[@]+"${subject_flags[@]}"} || admin_rc=$?
+	admin_output="$_MERGE_WRITE_OUTPUT"
+	if [[ "$admin_rc" -eq 0 ]]; then
+		[[ -n "$admin_output" ]] && printf '%s\n' "$admin_output"
+		print_success "PR #${pr_number} merged with --admin fallback"
+		_signal_admin_merge_fallback "$pr_number" "$repo" "$merge_method" "$merge_output"
+		return 0
+	fi
+	_merge_report_admin_fallback_failure "$pr_number" "$admin_output"
+	return 1
+}
+
 _merge_execute() {
 	local pr_number="$1" repo="$2" merge_method="$3"
 	local has_admin="$4" has_auto="$5" squash_subject=""
@@ -1495,30 +1524,13 @@ ${_merge_retry_out}"
 			return 1
 		# Only fall back to --admin when caller passed neither --admin nor --auto.
 		elif [[ $has_admin -eq 0 && $has_auto -eq 0 ]] &&
-			printf '%s' "$_merge_out" | grep -qE 'base branch policy prohibits|Required status checks? (is|are) expected|At least [0-9]+ approving review'; then
+			printf '%s' "$_merge_out" | grep -qE 'At least [0-9]+ approving review'; then
+			_merge_try_review_only_admin_fallback "$pr_number" "$repo" "$merge_method" "$match_head_sha" "$squash_subject" "$merge_body_file" "$_merge_out" || return $?
+			return 0
+		elif [[ $has_admin -eq 0 && $has_auto -eq 0 ]] &&
+			printf '%s' "$_merge_out" | grep -qE 'base branch policy prohibits|Required status checks? (is|are) expected'; then
 			_merge_admin_fallback_required_checks_clear "$pr_number" "$repo" || return $?
-			if ! printf '%s' "$_merge_out" | grep -qE 'At least [0-9]+ approving review'; then
-				print_error "Merge remains blocked by branch policy after required checks passed; refusing admin fallback without a review-only block"
-				return 1
-			fi
-			_merge_revalidate_transport_authority "$pr_number" "$repo" "$match_head_sha" || return 1
-			print_info "Branch protection blocked plain merge; retrying with --admin (workers share the maintainer's gh auth per GH#18538)..."
-			local subject_flags=()
-			[[ -n "$squash_subject" ]] && subject_flags+=("$FULL_LOOP_MERGE_SUBJECT_FLAG" "$squash_subject")
-			[[ -n "$merge_body_file" ]] && subject_flags+=("$FULL_LOOP_MERGE_BODY_FILE_FLAG" "$merge_body_file")
-			local admin_rc=0 admin_output=""
-			_MERGE_WRITE_OUTPUT=""
-			_merge_run_bounded_write "$pr_number" "$repo" "$match_head_sha" \
-				gh pr merge "$pr_number" --repo "$repo" "$merge_method" --admin --match-head-commit "$match_head_sha" ${subject_flags[@]+"${subject_flags[@]}"} || admin_rc=$?
-			admin_output="$_MERGE_WRITE_OUTPUT"
-			if [[ "$admin_rc" -eq 0 ]]; then
-				[[ -n "$admin_output" ]] && printf '%s\n' "$admin_output"
-				print_success "PR #${pr_number} merged with --admin fallback"
-				# t2247: Signal fallback through a PR comment, audit entry, and label.
-				_signal_admin_merge_fallback "$pr_number" "$repo" "$merge_method" "$_merge_out"
-				return 0
-			fi
-			_merge_report_admin_fallback_failure "$pr_number" "$admin_output"
+			print_error "Merge remains blocked by branch policy; refusing admin fallback without a review-only block"
 			return 1
 		else
 			print_error "Merge failed for PR #${pr_number}"
