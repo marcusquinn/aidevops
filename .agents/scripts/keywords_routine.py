@@ -13,6 +13,7 @@ import datetime as _dt
 import json
 import os
 import shutil
+import subprocess
 from pathlib import Path
 
 import keywords_detect as detect
@@ -62,6 +63,39 @@ def _context(root: Path) -> tuple[str, dict, dict, Path]:
     return prop, front, registry, pdir
 
 
+EXPORT_DAYS = 28
+EXPORT_TIMEOUT = 300
+
+
+def _refresh_one(helper: Path, source: str, domain: str) -> str:
+    """Run one exporter; drop any partial file it left behind on failure."""
+    folder = SEO_DATA / domain
+    before = set(folder.glob(f"{source}-*.toon")) if folder.is_dir() else set()
+    try:
+        result = subprocess.run([str(helper), source, domain, "--days", str(EXPORT_DAYS)], timeout=EXPORT_TIMEOUT,
+                                check=False, capture_output=True, text=True)
+        code, reason = result.returncode, "no data or credentials"
+    except subprocess.TimeoutExpired:
+        code, reason = 1, "timeout"
+    except OSError:
+        code, reason = 1, "helper unavailable"
+    created = (set(folder.glob(f"{source}-*.toon")) if folder.is_dir() else set()) - before
+    if code == 0 and created:
+        return "refreshed"
+    for path in created:
+        path.unlink(missing_ok=True)
+    return f"skipped:{reason}"
+
+
+def _refresh_exports(domains: list[str]) -> dict[str, str]:
+    """Export fresh GSC/Bing data per domain; never raises, never prints credentials."""
+    helper = Path(__file__).parent / "seo-export-helper.sh"
+    if os.environ.get("AIDEVOPS_KEYWORDS_OFFLINE") or not helper.is_file():
+        return {}
+    return {f"{source}:{domain}": _refresh_one(helper, source, domain)
+            for domain in domains for source in ("gsc", "bing")}
+
+
 def _latest_exports(domains: list[str], since: float) -> list[Path]:
     files = []
     for domain in domains:
@@ -72,9 +106,9 @@ def _latest_exports(domains: list[str], since: float) -> list[Path]:
     return files
 
 
-def _free_sources(root: Path, prop: str, front: dict, registry: dict) -> dict[str, int]:
+def _free_sources(root: Path, prop: str, front: dict, registry: dict) -> dict[str, int | str]:
     surfaces = strategy.as_list(front.get("surfaces"))
-    counts: dict[str, int] = {}
+    counts: dict[str, int | str] = {}
     slug = detect.github_slug(root)
     if "github" in surfaces and slug and shutil.which("gh"):
         rows = track.github(registry, slug, surfaces)
@@ -87,7 +121,9 @@ def _free_sources(root: Path, prop: str, front: dict, registry: dict) -> dict[st
         store.write_observations(prop, rows, "npm")
     marker = hub.store_dir() / "state" / f"{prop}.exports"
     since = marker.stat().st_mtime if marker.is_file() else 0.0
-    for path in _latest_exports(strategy.as_list(front.get("domains")), since):
+    domains = strategy.as_list(front.get("domains"))
+    counts.update(_refresh_exports(domains))
+    for path in _latest_exports(domains, since):
         matched, _unmatched = track.from_export(registry, path)
         counts[path.name] = len(matched)
         store.write_observations(prop, matched, path.name.split("-", 1)[0])
