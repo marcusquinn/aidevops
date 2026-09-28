@@ -7,9 +7,11 @@ set -euo pipefail
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HELPER="$REPO_DIR/.agents/scripts/headless-runtime-helper.sh"
 VERBOSE="${1:-}"
-# A nested test dispatch is not the parent worker's issue; keep the identity
-# guard enabled in production but remove the inherited worker identity here.
-unset WORKER_ISSUE_NUMBER WORKER_REPO_SLUG WORKER_WORKTREE_PATH
+# Nested fixtures use their own issue identity, never the parent worker's.
+unset WORKER_ISSUE_NUMBER AIDEVOPS_DISPATCH_LEASE_TOKEN AIDEVOPS_DISPATCH_CLAIM_ATTEMPT_ID
+WORKER_REPO_SLUG="$(git -C "$REPO_DIR" remote get-url origin | sed 's|.*github\.com[:/]||;s|\.git$||')"
+export WORKER_REPO_SLUG
+export WORKER_WORKTREE_PATH="$REPO_DIR"
 
 PASS_COUNT=0
 FAIL_COUNT=0
@@ -106,14 +108,14 @@ if [[ "$first_model" == "anthropic/claude-sonnet-5-5" ]]; then
 else
 	fail "first selection uses anthropic default" "got: $first_model"
 fi
-if [[ "$second_model" == "openai/gpt-5.4" ]]; then
-	pass "second selection alternates to openai"
+if [[ "$second_model" == "anthropic/claude-sonnet-5-5" ]]; then
+	pass "priority selection remains on first healthy model"
 else
-	fail "second selection alternates to openai" "got: $second_model"
+	fail "priority selection remains on first healthy model" "got: $second_model"
 fi
 
 section "Allowlist"
-allowlisted_model=$(AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=openai bash "$HELPER" select --role worker 2>/dev/null || true)
+allowlisted_model=$(AIDEVOPS_HEADLESS_MODELS=openai/gpt-5.4 AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=openai bash "$HELPER" select --role worker 2>/dev/null || true)
 if [[ "$allowlisted_model" == "openai/gpt-5.4" ]]; then
 	pass "openai allowlist restricts selection"
 else
@@ -176,6 +178,7 @@ fi
 unset AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST
 
 section "Session Persistence"
+export WORKER_ISSUE_NUMBER=101
 export STUB_SESSION_ID="ses_openai_one"
 rm -f "$STUB_LOG_FILE"
 AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=openai bash "$HELPER" run \
@@ -222,6 +225,7 @@ else
 fi
 
 section "Zero Activity Success Is Rejected"
+export WORKER_ISSUE_NUMBER=202
 export STUB_EMIT_ACTIVITY="0"
 if AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=openai bash "$HELPER" run \
 	--role worker \
@@ -343,6 +347,7 @@ else
 fi
 
 # opencode/* models should work in cmd_run dispatch
+export WORKER_ISSUE_NUMBER=203
 rm -f "$STUB_LOG_FILE"
 export STUB_SESSION_ID="ses_gateway_one"
 HOME="$TEST_TMP_DIR/fake-opencode-home" \
@@ -371,6 +376,7 @@ else
 fi
 
 section "Session-Key Dedup Guard (GH#6538)"
+export WORKER_ISSUE_NUMBER=999
 # Test 1: A second run with the same session-key while the first is "running"
 # should be blocked. Simulate by writing a lock file with our own PID (which
 # is alive), then attempting a run with the same session-key.
@@ -392,6 +398,7 @@ fi
 rm -f "$LOCK_DIR/issue-dedup-test.pid"
 
 # Test 2: A stale lock (dead PID) should be cleaned up and the run should proceed.
+export WORKER_ISSUE_NUMBER=998
 echo "99999999" >"$LOCK_DIR/issue-stale-test.pid"
 rm -f "$STUB_LOG_FILE"
 export STUB_SESSION_ID="ses_stale_lock"
@@ -415,6 +422,7 @@ else
 fi
 
 # Test 4: Different session-keys should not block each other.
+export WORKER_ISSUE_NUMBER=997
 echo "$$" >"$LOCK_DIR/issue-other.pid"
 rm -f "$STUB_LOG_FILE"
 export STUB_SESSION_ID="ses_different_key"

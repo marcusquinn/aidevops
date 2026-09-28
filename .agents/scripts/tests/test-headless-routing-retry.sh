@@ -155,7 +155,7 @@ trap 'rm -rf "$fixture_dir"' EXIT
 	get_configured_models() {
 		local requested_tier="${1:-standard}"
 		case "$requested_tier" in
-		simple) printf '%s\n' "openai/gpt-5.6-luna" ;;
+		simple) printf '%s\n' "openai/gpt-6-luna" ;;
 		standard) printf '%s\n' "openai/gpt-5.6-terra" ;;
 		thinking) printf '%s\n' "openai/gpt-5.6-sol" ;;
 		*) return 1 ;;
@@ -180,7 +180,7 @@ trap 'rm -rf "$fixture_dir"' EXIT
 	_choose_model_tier_downgrade() {
 		local current_model="$1"
 		: "$current_model"
-		printf '%s\n' "openai/gpt-5.6-luna"
+		printf '%s\n' "openai/gpt-6-luna"
 		return 0
 	}
 	extract_provider() {
@@ -198,8 +198,8 @@ trap 'rm -rf "$fixture_dir"' EXIT
 	_resolve_capability_escalation worker simple
 	[[ "$_capability_escalation_tier" == "standard" ]]
 	[[ "$_capability_escalation_model" == "openai/gpt-5.6-terra" ]]
-	[[ "$_capability_escalation_variant" == "low" ]]
-	[[ "$(model_tier_candidate_index "$_capability_escalation_tier" "$_capability_escalation_model")" == "0" ]]
+	[[ "$_capability_escalation_variant" == "medium" ]]
+	[[ "$(model_tier_candidate_index "$_capability_escalation_tier" "$_capability_escalation_model")" == "1" ]]
 )
 
 # Exercise the real result handler, preserving the session and model while
@@ -210,12 +210,12 @@ trap 'rm -rf "$fixture_dir"' EXIT
 		exit 1
 	fi
 	export AIDEVOPS_MODEL_ROUTING_TABLE="${fixture_dir}/reasoning-ladder.json"
-	printf '%s\n' '{"tiers":{"thinking":{"models":["openai/gpt-6-astra"],"reasoning_escalation":{"openai/gpt-6-astra":["low","medium","high"]}}}}' >"$AIDEVOPS_MODEL_ROUTING_TABLE"
+	printf '%s\n' '{"tiers":{"thinking":{"models":["openai/gpt-6-astra"],"reasoning_escalation":{"openai/gpt-6-astra":["medium","high"]}}}}' >"$AIDEVOPS_MODEL_ROUTING_TABLE"
 	role="worker"
 	model_override=""
 	tier_override="thinking"
 	selected_model="openai/gpt-6-astra"
-	variant_override="low"
+	variant_override="medium"
 	session_key="reasoning-escalation"
 	work_dir="/work"
 	completion_state="blocked"
@@ -228,22 +228,19 @@ trap 'rm -rf "$fixture_dir"' EXIT
 	_run_classification_pattern="capability_limit"
 	_cmd_run_finish() { return 0; }
 	_handle_cmd_run_terminal_attempt
-	[[ "$_cmd_run_disposition" == "continue" && "$variant_override" == "medium" ]]
+	[[ "$_cmd_run_disposition" == "continue" && "$variant_override" == "high" ]]
 	[[ "$attempt" -eq 2 && "$max_attempts" -eq 4 ]]
 	[[ "$selected_model" == "openai/gpt-6-astra" && "$tier_override" == "thinking" ]]
 	_handle_cmd_run_terminal_attempt
-	[[ "$_cmd_run_disposition" == "continue" && "$variant_override" == "high" ]]
-	[[ "$attempt" -eq 3 && "$max_attempts" -eq 4 ]]
-	_handle_cmd_run_terminal_attempt
 	[[ "$_cmd_run_disposition" == "return" && "$variant_override" == "high" ]]
-	variant_override="low"
+	variant_override="medium"
 	_run_classification_pattern="permission_required"
 	_handle_cmd_run_terminal_attempt
-	[[ "$_cmd_run_disposition" == "return" && "$variant_override" == "low" ]]
+	[[ "$_cmd_run_disposition" == "return" && "$variant_override" == "medium" ]]
 	_run_classification_pattern="capability_limit"
 	model_override="$selected_model"
 	_handle_cmd_run_terminal_attempt
-	[[ "$_cmd_run_disposition" == "return" && "$variant_override" == "low" ]]
+	[[ "$_cmd_run_disposition" == "return" && "$variant_override" == "medium" ]]
 	# Revisited default effort after availability fallback cannot renew budget.
 	model_override=""
 	attempt=4
@@ -272,7 +269,7 @@ routing_capture="${fixture_dir}/adaptive-routing.txt"
 	get_configured_models() {
 		local requested_tier="${1:-standard}"
 		case "$requested_tier" in
-		simple) printf '%s\n' "openai/gpt-5.6-luna" ;;
+		simple) printf '%s\n' "openai/gpt-6-luna" ;;
 		standard) printf '%s\n' "openai/gpt-5.6-terra" ;;
 		*) return 1 ;;
 		esac
@@ -296,7 +293,7 @@ routing_capture="${fixture_dir}/adaptive-routing.txt"
 	_choose_model_tier_downgrade() {
 		local current_model="$1"
 		: "$current_model"
-		printf '%s\n' "openai/gpt-5.6-luna"
+		printf '%s\n' "openai/gpt-6-luna"
 		return 0
 	}
 	extract_provider() {
@@ -339,11 +336,11 @@ routing_capture="${fixture_dir}/adaptive-routing.txt"
 
 	_select_cmd_run_model
 	[[ "$tier_override" == "simple" ]]
-	[[ "$selected_model" == "openai/gpt-5.6-luna" ]]
+	[[ "$selected_model" == "openai/gpt-6-luna" ]]
 	variant_override=$(resolve_headless_variant "$role" "$tier_override" "$selected_model")
 	_cmd_run_attempt_loop
 )
-[[ "$(<"$routing_capture")" == "simple|0|low|openai/gpt-5.6-luna|low" ]]
+[[ "$(<"$routing_capture")" == "simple|0|medium|openai/gpt-6-luna|medium" ]]
 
 (
 	attempt_exit=81
