@@ -62,6 +62,8 @@ Paths below are relative to the active agent root (`~/.aidevops/agents/` by defa
 
 ## CLI Commands
 
+After rendering, run `media-qa-helper.sh probe out/video.mp4` to verify colour metadata alongside the stream details.
+
 ```bash
 npx remotion studio                                    # Dev studio
 npx remotion render src/index.ts MyComp out/video.mp4  # Render video
