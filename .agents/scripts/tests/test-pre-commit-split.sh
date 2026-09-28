@@ -375,23 +375,23 @@ _root_mode_fixture() {
 }
 
 # Stage only the given files (fresh index) and run the pre-commit hook.
-# ROOT_MODE_CONFIG (optional JSON) is written to .aidevops.json only after
-# staging and removed afterwards, so local canonical-Git guards that treat a
-# repo containing .aidevops.json as managed never see an index mutation there.
+# ROOT_MODE_CONFIG (optional JSON) is written before staging; the fixture is
+# unregistered and inside the system temp directory.
 # Arguments: $1=fixture dir, then file names. Sets ROOT_HOOK_RC / ROOT_HOOK_OUTPUT.
 _root_mode_run() {
 	local fixture_dir="$1"
 	shift
 	local file
-	rm -f "${fixture_dir}/.aidevops.json"
+	if [[ -n "${ROOT_MODE_CONFIG:-}" ]]; then
+		printf '%s\n' "$ROOT_MODE_CONFIG" >"${fixture_dir}/.aidevops.json"
+	else
+		rm -f "${fixture_dir}/.aidevops.json"
+	fi
 	git -C "$fixture_dir" read-tree --empty
 	for file in "$@"; do
 		[[ -f "${fixture_dir}/${file}" ]] || printf '%s\n' 'fixture' >"${fixture_dir}/${file}"
 		git -C "$fixture_dir" add -- "$file"
 	done
-	if [[ -n "${ROOT_MODE_CONFIG:-}" ]]; then
-		printf '%s\n' "$ROOT_MODE_CONFIG" >"${fixture_dir}/.aidevops.json"
-	fi
 	ROOT_HOOK_RC=0
 	ROOT_HOOK_OUTPUT=$(cd "$fixture_dir" && HOOK_MODE=pre-commit bash .agents/scripts/pre-commit-hook.sh 2>&1) || ROOT_HOOK_RC=$?
 	rm -f "${fixture_dir}/.aidevops.json"
