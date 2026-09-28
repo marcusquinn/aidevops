@@ -16,52 +16,18 @@ import {
   writeSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { spawnSync } from "node:child_process";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
+import { isOwnerProcessLive, processStartToken } from "./process-start-token.mjs";
+import { pathIsInside, validateRecoveryData } from "./session-recovery-data.mjs";
 
 const SESSION_ID_RE = /^ses_[A-Za-z0-9]{6,128}$/;
 const CONTROL_CHAR_RE = /[\u0000-\u001F\u007F]/;
 const MARKER_BASENAME = "recovery.json";
 const RUNTIMES = new Set(["v1", "v2"]);
-// V1 isolates each project under opencode-interactive/*; V2 shares one data
-// home whose sessions live in the session_v2 table.
-const SESSION_TABLES = { v1: "session", v2: "session_v2" };
 export const FOREIGN_RUNTIME_STATUS = 4;
-
-function procStartToken(pid) {
-  try {
-    // Field 22 follows the command in parentheses; splitting the prefix is unsafe.
-    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
-    const fields = stat.slice(stat.lastIndexOf(")") + 2).trim().split(/\s+/);
-    return /^\d+$/.test(fields[19] || "") ? fields[19] : null;
-  } catch {
-    return null;
-  }
-}
-
-// macOS has no /proc; `ps -o lstart=` gives a stable per-process start time,
-// so a recycled PID never looks like the original live owner.
-function psStartToken(pid) {
-  const result = spawnSync("ps", ["-o", "lstart=", "-p", String(pid)], {
-    encoding: "utf8",
-    env: { ...process.env, LC_ALL: "C" },
-    timeout: 2000,
-  });
-  const token = result.status === 0 ? result.stdout.trim().replace(/\s+/g, " ") : "";
-  return token ? `ps:${token}` : null;
-}
-
-export function processStartToken(pid) {
-  if (!Number.isSafeInteger(pid) || pid <= 0) return null;
-  return procStartToken(pid) || psStartToken(pid);
-}
-
-function pathIsInside(parent, candidate) {
-  const child = relative(parent, candidate);
-  return child === "" || (!child.startsWith("..") && !isAbsolute(child));
-}
+export { processStartToken };
 
 function assertSafeText(value, label) {
   if (typeof value !== "string" || !value || CONTROL_CHAR_RE.test(value)) {
@@ -168,20 +134,6 @@ export function writeSessionRecoveryMarker({ sessionID, directory, dataDir, work
   return markerDirectory;
 }
 
-function querySessionDirectory(databasePath, sessionID, runtime) {
-  // The table name is a fixed constant and sessionID matched SESSION_ID_RE.
-  const table = SESSION_TABLES[runtime];
-  const sql = `SELECT directory FROM ${table} WHERE id='${sessionID}' AND parent_id IS NULL LIMIT 2;`;
-  const result = spawnSync("sqlite3", ["-readonly", databasePath, sql], {
-    encoding: "utf8",
-    timeout: 5000,
-  });
-  if (result.error || result.status !== 0) throw new Error("Could not validate OpenCode recovery database");
-  const rows = result.stdout.trimEnd().split("\n").filter(Boolean);
-  if (rows.length !== 1) throw new Error("OpenCode recovery session was not found");
-  return rows[0];
-}
-
 function canonicalMarkerDirectory(cwd, workDir, uid) {
   const root = recoveryRoot(resolve(workDir));
   if (!existsSync(root)) return null;
@@ -210,61 +162,6 @@ function readRecoveryMarker(canonicalCwd, uid) {
   return { ...marker, runtime: isV2 ? "v2" : "v1" };
 }
 
-function canonicalRecoveryDataDir(dataDir, workDir, uid) {
-  const dataDirStat = lstatSync(dataDir);
-  if (!dataDirStat.isDirectory() || dataDirStat.isSymbolicLink() || dataDirStat.uid !== uid) {
-    throw new Error("Unsafe OpenCode recovery data directory");
-  }
-  const canonicalDataDir = realpathSync(dataDir);
-  const isolatedRootPath = join(resolve(workDir), "opencode-interactive");
-  const isolatedRootStat = lstatSync(isolatedRootPath);
-  if (!isolatedRootStat.isDirectory() || isolatedRootStat.isSymbolicLink() || isolatedRootStat.uid !== uid) {
-    throw new Error("Unsafe OpenCode isolated storage root");
-  }
-  const isolatedRoot = realpathSync(isolatedRootPath);
-  if (!pathIsInside(isolatedRoot, canonicalDataDir) || canonicalDataDir === isolatedRoot) {
-    throw new Error("Recovery marker data directory is outside isolated storage");
-  }
-  return canonicalDataDir;
-}
-
-// V2 has one shared data home, so the marker must name exactly the data home
-// the caller's V2 shim is using; anything else fails closed.
-function canonicalV2DataDir(dataDir, expectedDataDir, uid) {
-  if (!expectedDataDir || !isAbsolute(assertSafeText(expectedDataDir, "OpenCode V2 data directory"))) {
-    throw new Error("OpenCode V2 recovery requires an absolute V2 data directory");
-  }
-  for (const path of [dataDir, expectedDataDir]) {
-    const stat = lstatSync(path);
-    if (!stat.isDirectory() || stat.isSymbolicLink() || stat.uid !== uid) {
-      throw new Error("Unsafe OpenCode recovery data directory");
-    }
-  }
-  const canonicalDataDir = realpathSync(dataDir);
-  if (canonicalDataDir !== realpathSync(expectedDataDir)) {
-    throw new Error("Recovery marker data directory is not the OpenCode V2 data directory");
-  }
-  return canonicalDataDir;
-}
-
-function validateRecoveryDatabase(canonicalDataDir, sessionID, canonicalDirectory, uid, runtime) {
-  const databasePath = join(canonicalDataDir, "opencode", "opencode.db");
-  const databaseStat = lstatSync(databasePath);
-  if (!databaseStat.isFile() || databaseStat.isSymbolicLink() || databaseStat.uid !== uid) {
-    throw new Error("Unsafe OpenCode recovery database");
-  }
-  const databaseDirectory = querySessionDirectory(databasePath, sessionID, runtime);
-  if (realpathSync(databaseDirectory) !== canonicalDirectory) {
-    throw new Error("Recovery marker directory does not match the OpenCode session");
-  }
-}
-
-function markerOwnerLive(marker) {
-  const validOwnerPid = Number.isSafeInteger(marker.owner_pid) && marker.owner_pid > 0;
-  const validOwnerStart = typeof marker.owner_start === "string" && marker.owner_start.length > 0;
-  return validOwnerPid && validOwnerStart && processStartToken(marker.owner_pid) === marker.owner_start;
-}
-
 // `runtime` names the caller. A marker from the other runtime yields only its
 // project directory (`foreignRuntime`) so the caller can leave the marker
 // directory without resuming a session it cannot open.
@@ -287,12 +184,17 @@ export function resolveSessionRecoveryMarker({ cwd, workDir, runtime = "v1", dat
     return { ...base, dataDir: "", ownerLive: false, foreignRuntime: true };
   }
 
-  const canonicalDataDir = runtime === "v2"
-    ? canonicalV2DataDir(dataDir, expectedDataDir, uid)
-    : canonicalRecoveryDataDir(dataDir, workDir, uid);
-  validateRecoveryDatabase(canonicalDataDir, marker.session_id, canonicalDirectory, uid, runtime);
+  const canonicalDataDir = validateRecoveryData({
+    runtime,
+    dataDir,
+    expectedDataDir,
+    workDir,
+    uid,
+    sessionID: marker.session_id,
+    canonicalDirectory,
+  });
 
-  return { ...base, dataDir: canonicalDataDir, ownerLive: markerOwnerLive(marker), foreignRuntime: false };
+  return { ...base, dataDir: canonicalDataDir, ownerLive: isOwnerProcessLive(marker.owner_pid, marker.owner_start), foreignRuntime: false };
 }
 
 function eventSessionInfo(event) {
