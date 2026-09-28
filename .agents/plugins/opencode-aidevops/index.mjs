@@ -765,6 +765,7 @@ export async function AidevopsPlugin({ directory, client }) {
         input,
         output,
         directory,
+        { host: "opencode1" },
       ),
     "experimental.compaction.autocontinue": compactionContinuation.autoContinue,
   };
