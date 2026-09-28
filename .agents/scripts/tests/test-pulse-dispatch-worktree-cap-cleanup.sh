@@ -7,6 +7,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 CORE_SCRIPT="${SCRIPT_DIR}/../pulse-dispatch-core.sh"
+# The extracted helpers reference the module-level numeric guard. Load only
+# its literal assignment, not the entire dispatch module and its dependencies.
+eval "$(awk '/^_PULSE_DISPATCH_UNSIGNED_INTEGER_PATTERN=/ { print; exit }' "$CORE_SCRIPT")"
 TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "$TEST_ROOT"' EXIT
 LOGFILE="${TEST_ROOT}/pulse.log"
