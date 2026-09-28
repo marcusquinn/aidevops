@@ -1465,7 +1465,9 @@ _worktree_recovery_maintenance_update_advisory() {
 		"Review the read-only plan (it grants no deletion authority):\n\n" +
 		"  " + (.escalation.command | join(" ")) + "\n\n" +
 		(if .outcome == "operator-intervention-required"
-		then "Process visibility is incomplete; see reference/worktree-cwd-visibility.md for the opt-in inspector.\n\n"
+		then "Process visibility is incomplete. List the blocking processes and their remedy with:\n\n" +
+			"  worktree-helper.sh recovery unreadable-processes\n\n" +
+			"See reference/worktree-cwd-visibility.md for the opt-in inspector.\n\n"
 		else "" end) +
 		"Details: reference/storage-lifecycle-worktree-recovery.md\n" +
 		"This advisory clears automatically once maintenance reclaims space or pressure ends."

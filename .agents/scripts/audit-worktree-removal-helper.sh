@@ -187,6 +187,32 @@ _worktree_proc_entry_is_provably_foreign_uid() {
 	return 1
 }
 
+# Mirror of uid_fields_accepted() in worktree-cwd-inspect.py (GH#32871): the
+# opt-in inspector can read a process whose real UID is the caller and whose
+# effective, saved and filesystem UIDs are the caller or root. Used only to
+# label the operator diagnostic; the installed inspector alone decides reads.
+_worktree_proc_entry_is_inspectable_uid() {
+	local proc_dir="$1"
+	local current_uid="$2"
+	local field=""
+	local real_uid=""
+	local effective_uid=""
+	local saved_uid=""
+	local filesystem_uid=""
+	local process_uid=""
+
+	[[ "$current_uid" =~ ^[1-9][0-9]*$ && -r "$proc_dir/status" ]] || return 1
+	while IFS=$' \t' read -r field real_uid effective_uid saved_uid filesystem_uid _; do
+		[[ "$field" == "Uid:" ]] || continue
+		[[ "$real_uid" == "$current_uid" ]] || return 1
+		for process_uid in "$effective_uid" "$saved_uid" "$filesystem_uid"; do
+			[[ "$process_uid" == "$current_uid" || "$process_uid" == "0" ]] || return 1
+		done
+		return 0
+	done <"$proc_dir/status"
+	return 1
+}
+
 _worktree_proc_entry_owner_uid() {
 	local proc_dir="$1"
 
@@ -334,12 +360,15 @@ capture_worktree_process_cwds() {
 	return 1
 }
 
-# Operator-invoked diagnostic only (GH#32853). Print "<pid>\t<comm>" for each
-# process that makes _capture_worktree_proc_cwds report degraded visibility,
-# applying the same vanished, zombie, provably-foreign-UID, and opt-in inspector
-# rules. Automatic maintenance output must never call this: its results stay
-# free of process names under the #31690 contract. Returns 0 on a completed
-# scan (even when nothing is listed) and 1 when proc_root is not a directory.
+# Operator-invoked diagnostic only (GH#32853). Print "<pid>\t<comm>\t<remedy>"
+# for each process that makes _capture_worktree_proc_cwds report degraded
+# visibility, applying the same vanished, zombie, provably-foreign-UID, and
+# opt-in inspector rules. <remedy> is "inspector" when the opt-in inspector's
+# UID rule accepts the process (install or repair it) and "stop-only" when only
+# stopping the process clears it (GH#32871). Automatic maintenance output must
+# never call this: its results stay free of process names under the #31690
+# contract. Returns 0 on a completed scan (even when nothing is listed) and 1
+# when proc_root is not a directory.
 list_worktree_unreadable_proc_cwds() {
 	local proc_root="${1:-/proc}"
 	local cwd_link=""
@@ -348,6 +377,7 @@ list_worktree_unreadable_proc_cwds() {
 	local pid=""
 	local comm=""
 	local current_uid=""
+	local remedy=""
 
 	[[ -d "$proc_root" ]] || return 1
 	current_uid=$(id -u 2>/dev/null) || current_uid=""
@@ -368,7 +398,9 @@ list_worktree_unreadable_proc_cwds() {
 			IFS= read -r comm <"$proc_dir/comm" 2>/dev/null || comm=""
 		fi
 		comm=$(printf '%s' "$comm" | LC_ALL=C tr -cd '[:print:]' | cut -c1-32)
-		printf '%s\t%s\n' "$pid" "${comm:-unknown}"
+		remedy="stop-only"
+		_worktree_proc_entry_is_inspectable_uid "$proc_dir" "$current_uid" && remedy="inspector"
+		printf '%s\t%s\t%s\n' "$pid" "${comm:-unknown}" "$remedy"
 	done
 	return 0
 }
