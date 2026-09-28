@@ -1430,7 +1430,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18486 fix: claim-task-id must not write TODO.md into a canonical checkout #auto-dispatch #bug #framework tier:standard ~1h ref:GH#32561 logged:2026-09-27 -> [todo/tasks/t18486-brief.md] pr:#32564 completed:2026-09-27
 
-- [ ] t18498 docs: get code diagnostics from project lint, typecheck, or compiler commands, not LSP #documentation #framework #opencode #interactive #auto-dispatch tier:standard ~20m ref:GH#32694 logged:2026-09-28 -> [todo/tasks/t18498-brief.md]
+- [x] t18498 docs: get code diagnostics from project lint, typecheck, or compiler commands, not LSP #documentation #framework #opencode #interactive #auto-dispatch tier:standard ~20m ref:GH#32694 logged:2026-09-28 -> [todo/tasks/t18498-brief.md] pr:#32784 completed:2026-09-28
 
 - [x] t18487 Allow remote-only repository creation from sessions inside the projects workspace ref:GH#32600 pr:#32601 completed:2026-09-27
 
@@ -1438,7 +1438,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18502 OpenCode V2 promotion gates: weekly V2 canary, plugin/tool probe, documented gate checks, requalified pin #enhancement #framework #opencode #interactive #auto-dispatch tier:standard ~3.5h ref:GH#32704 logged:2026-09-28 -> [todo/tasks/t18502-brief.md] pr:#32759 completed:2026-09-28
 
-- [ ] t18490 docs: refresh TTS/music provider guidance (NanoGPT audio route, OpenAI TTS, OAuth scope) and Remotion BT.709 delivery flags #auto-dispatch #documentation #interactive tier:simple ~45m ref:GH#32610 logged:2026-09-27 -> [todo/tasks/t18490-brief.md]
+- [x] t18490 docs: refresh TTS/music provider guidance (NanoGPT audio route, OpenAI TTS, OAuth scope) and Remotion BT.709 delivery flags #auto-dispatch #documentation #interactive tier:simple ~45m ref:GH#32610 logged:2026-09-27 -> [todo/tasks/t18490-brief.md] pr:#32775 completed:2026-09-28
 
 - [x] t18491 fix: session worktree resolver errors say 'Image workdir' for bounded operations and hide which root failed #auto-dispatch #bug #interactive tier:simple ~30m ref:GH#32612 logged:2026-09-27 -> [todo/tasks/t18491-brief.md] pr:#32653 completed:2026-09-27
 
@@ -5004,6 +5004,6 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t18442 Repin recovered release snapshot after authorization expansion #auto-dispatch #bug #release #security #interactive priority:critical tier:thinking ~2h ref:GH#31971 logged:2026-09-16 -> [todo/tasks/t18442-brief.md] pr:#31973 completed:2026-09-16
 - [ ] t18508 Quality sweep: publish partial results when a large repo exceeds the per-repo budget #auto-dispatch #bug ref:GH#32737
-- [ ] t18507 test(dispatch): repair four structural tests stale after pulse-dispatch-core split #auto-dispatch #bug ref:GH#32733
+- [x] t18507 test(dispatch): repair four structural tests stale after pulse-dispatch-core split #auto-dispatch #bug ref:GH#32733 pr:#32783 completed:2026-09-28
 - [ ] t18506 Persistent dashboard issues: accuracy, privacy and public meaningfulness #enhancement ref:GH#32730
 - [ ] t18513 Quality dashboard comment hygiene silently no-ops on large threads #bug ref:GH#32752
