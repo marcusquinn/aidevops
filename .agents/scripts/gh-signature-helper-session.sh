@@ -429,27 +429,33 @@ _detect_session_model() {
 		return 0
 	fi
 
-	# Extract provider/model from the first message that has model data
-	local provider model_id
-	provider=$(sqlite3 "$db_path" "
+	# Prefer the current session model when supported by the installed schema.
+	local provider="" model_id=""
+	if [[ "$(sqlite3 "$db_path" "SELECT count(*) FROM pragma_table_info('session') WHERE name='model';" 2>/dev/null)" == "1" ]]; then
+		provider=$(sqlite3 "$db_path" "SELECT json_extract(model, '\$.providerID') FROM session WHERE id='${session_id}' AND json_valid(model);" 2>/dev/null || true)
+		model_id=$(sqlite3 "$db_path" "SELECT json_extract(model, '\$.id') FROM session WHERE id='${session_id}' AND json_valid(model);" 2>/dev/null || true)
+	fi
+	if [[ -z "$model_id" ]]; then
+		provider=$(sqlite3 "$db_path" "
 		SELECT COALESCE(json_extract(data, '\$.providerID'),
 		                json_extract(data, '\$.model.providerID'))
 		FROM message
 		WHERE session_id='${session_id}'
 		  AND COALESCE(json_extract(data, '\$.modelID'),
 		               json_extract(data, '\$.model.modelID')) IS NOT NULL
-		LIMIT 1
+		ORDER BY time_created DESC, id DESC LIMIT 1
 	" 2>/dev/null || echo "")
 
-	model_id=$(sqlite3 "$db_path" "
+		model_id=$(sqlite3 "$db_path" "
 		SELECT COALESCE(json_extract(data, '\$.modelID'),
 		                json_extract(data, '\$.model.modelID'))
 		FROM message
 		WHERE session_id='${session_id}'
 		  AND COALESCE(json_extract(data, '\$.modelID'),
 		               json_extract(data, '\$.model.modelID')) IS NOT NULL
-		LIMIT 1
+		ORDER BY time_created DESC, id DESC LIMIT 1
 	" 2>/dev/null || echo "")
+	fi
 
 	if [[ -n "$provider" ]] && [[ -n "$model_id" ]]; then
 		echo "${provider}/${model_id}"

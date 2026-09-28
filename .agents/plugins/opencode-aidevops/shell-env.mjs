@@ -109,10 +109,12 @@ export function sessionModelIdentity(input) {
  * @param {number} maxEntries
  * @returns {{ remember: Function, resolve: Function }}
  */
+let defaultSessionModels;
 export function createSessionModelStore(maxEntries = 128) {
+  if (arguments.length === 0 && defaultSessionModels) return defaultSessionModels;
   const models = new Map();
   const limit = Math.max(1, Number(maxEntries) || 128);
-  return {
+  const store = {
     remember(sessionId, modelId) {
       if (!sessionId || !modelId) return;
       models.delete(sessionId);
@@ -123,6 +125,8 @@ export function createSessionModelStore(maxEntries = 128) {
       return sessionId ? models.get(sessionId) || "" : "";
     },
   };
+  if (arguments.length === 0) defaultSessionModels = store;
+  return store;
 }
 
 /**
@@ -229,7 +233,8 @@ function projectSessionIdentity(input, env, onSessionIdentity) {
     env.AIDEVOPS_OPENCODE_SESSION_ID = sessionId;
   }
 
-  if (modelId && !env.AIDEVOPS_SIG_MODEL) env.AIDEVOPS_SIG_MODEL = modelId;
+  const currentModel = modelId || createSessionModelStore().resolve(sessionId);
+  if (currentModel && !env.AIDEVOPS_SIG_MODEL) env.AIDEVOPS_SIG_MODEL = currentModel;
   if (sessionId && env.AIDEVOPS_SIG_MODEL) {
     onSessionIdentity(sessionId, env.AIDEVOPS_SIG_MODEL);
   }
