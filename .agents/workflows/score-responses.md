@@ -28,7 +28,7 @@ Scores auto-sync to the pattern tracker (t1099), feeding `/route` and `/patterns
 ## Examples
 
 ```bash
-/score-responses --prompt "Write a Python function to merge two sorted lists" --models "claude-sonnet-4-6,gpt-4o,gemini-2.5-pro"
+/score-responses --prompt "Write a Python function to merge two sorted lists" --models "claude-sonnet-5-5,gpt-4o,gemini-2.5-pro"
 /score-responses --leaderboard
 /score-responses --export --csv
 ```

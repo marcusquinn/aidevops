@@ -24,7 +24,7 @@ class OpenCodeBridge:
     opencode run if no server is available.
     """
 
-    def __init__(self, model="opencode/claude-sonnet-4-6", cwd=None, server_port=4096):
+    def __init__(self, model="opencode/claude-sonnet-5-5", cwd=None, server_port=4096):
         self.model = model
         self.session_id = None
         self.cwd = cwd or os.getcwd()

@@ -3,10 +3,10 @@ description: Frontier-level coding model via Cursor Composer 2 — complex multi
 mode: subagent
 model: cursor/composer-2
 model-tier: standard
-model-fallback: anthropic/claude-sonnet-4-6
+model-fallback: anthropic/claude-sonnet-5-5
 fallback-chain:
   - cursor/composer-2
-  - anthropic/claude-sonnet-4-6
+  - anthropic/claude-sonnet-5-5
   - openai/gpt-5.3-codex
 tools:
   read: true

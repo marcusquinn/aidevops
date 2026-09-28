@@ -35,6 +35,9 @@ test("specific Anthropic IDs win over generic family keys", () => {
   assert.equal(getPricing("anthropic/claude-opus-4-6").input, 5.0);
   assert.equal(getPricing("anthropic/claude-haiku-4-5").input, 1.0);
   assert.equal(getPricing("anthropic/claude-sonnet-5").output, 10.0);
+  assert.deepEqual(getPricing("anthropic/claude-sonnet-5-5"), {
+    input: 2.0, output: 10.0, cacheRead: 0.20, cacheWrite: 2.50,
+  });
 });
 
 test("Sol Pro does not inherit unpublished standard Sol pricing", () => {

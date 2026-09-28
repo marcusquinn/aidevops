@@ -32,10 +32,10 @@ model: simple
 | Tier | Current ordered mapping | Use When |
 |------|-------|----------|
 | `simple` | openai/gpt-6-luna → anthropic/claude-haiku-4-5 | Complete low-consequence execution contracts |
-| `standard` | openai/gpt-6-sol (medium) → openai/gpt-5.6-terra → zai-coding-plan/glm-5.2 → anthropic/claude-sonnet-5 | Established-pattern implementation with normal judgment and recovery |
+| `standard` | openai/gpt-6-sol (medium) → openai/gpt-5.6-terra → zai-coding-plan/glm-5.2 → anthropic/claude-sonnet-5-5 | Established-pattern implementation with normal judgment and recovery |
 | `thinking` | openai/gpt-6-sol → anthropic/claude-opus-5-5 | Daily-driver coordination, consequential decisions and synthesis-heavy work |
 
-**Model IDs**: Always fully-qualified (`claude-sonnet-4-6`, not `claude-sonnet-4`). Short-form → `ProviderModelNotFoundError`. CLI prefix: `anthropic/`, `google/`, `openai/`.
+**Model IDs**: Always fully-qualified (`claude-sonnet-5-5`, not `claude-sonnet-4`). Short-form → `ProviderModelNotFoundError`. CLI prefix: `anthropic/`, `google/`, `openai/`.
 
 Only `simple`, `standard`, and `thinking` are valid authored tiers. Concrete models and provider reasoning levels are resolved from the active routing table at execution time.
 
@@ -100,8 +100,9 @@ is always denied because secrets must flow through secret tooling, not prompts.
 - **Pulse**: Resolves `thinking` through `model-availability-helper.sh resolve thinking`, so it follows routing-table order, health checks, local routing-table overrides, and `AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST`.
 - **Workers**: Follow configured candidate order within canonical `simple`, `standard`, or `thinking` routes after allowlist filtering and auth checks.
 - **Local switch**: Set `AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=openai` to force both pulse and workers onto the default OpenAI fallbacks. If you want OpenAI primary but Anthropic fallback, reorder `custom/configs/model-routing-table.json` and omit the allowlist.
-- **Current default mapping**: The active routing table maps `simple` to OpenAI Luna then Anthropic Haiku 4.5, `standard` to OpenAI Sol then Terra then Z.AI GLM then Anthropic Sonnet 5, and `thinking` to OpenAI Sol then Anthropic Opus 5.5. Availability and provider policy decide the exact model at execution time.
-- **Reasoning mapping**: `medium` is the minimum selected variant (including custom-table overrides and headless environment overrides). Luna, Sol, Terra, Sonnet 5, Opus 5.5 and specialist Astra use `medium`; Haiku 4.5 has only budget variants (`high`, `max`), so its lowest thinking-enabled setting is `high`. GLM-5.2 has no known variant and retains its provider default; never guess one. The same model can serve two tiers: tier lookup keeps the requested tier (headless) or the tier whose variant matches (OpenCode telemetry) rather than the first tier listing the model.
+- **Current default mapping**: The active routing table maps `simple` to OpenAI Luna then Anthropic Haiku 4.5, `standard` to OpenAI Sol then Terra then Z.AI GLM then Anthropic Sonnet 5.5, and `thinking` to OpenAI Sol then Anthropic Opus 5.5. Availability and provider policy decide the exact model at execution time.
+- **Reasoning mapping**: `medium` is the minimum selected variant (including custom-table overrides and headless environment overrides). Luna, Sol, Terra, Sonnet 5.5, Opus 5.5 and specialist Astra use `medium`; Haiku 4.5 has only budget variants (`high`, `max`), so its lowest thinking-enabled setting is `high`. GLM-5.2 has no known variant and retains its provider default; never guess one. The same model can serve two tiers: tier lookup keeps the requested tier (headless) or the tier whose variant matches (OpenCode telemetry) rather than the first tier listing the model.
+- **Sonnet 5.5 update (2026-09-28, GH#32848)**: Sonnet references moved from Sonnet 4.6 / Sonnet 5 to `anthropic/claude-sonnet-5-5`. It costs the same as Sonnet 5 ($2/$0.20/$10), is 30%+ faster, and uses fewer tokens per task. A live OpenCode headless run succeeded at the default and `medium` variants. Until models.dev lists it, `anthropic-catalog-bridge.mjs` registers the ID from the Sonnet 5 catalog metadata; the native entry wins once published. Setup migrates provider-prefixed user pins once (`migration-sonnet-5-5.sh`: config.jsonc, settings.json, custom routing table, opencode.json, `*_MODEL(S)` lines in credentials.sh), with backups under `~/.aidevops/config-backups/migrations/`. Claude Code accepts the ID with an unknown-catalog warning and assumes a 200K window until it updates.
 - **Anthropic generation update (2026-09-27)**: Anthropic OAuth is available again. The fallbacks moved from Sonnet 4.6 / Opus 4.6 to Sonnet 5 / Opus 5.5 after live headless smoke tests, including tool calls. OpenAI stays primary; the provider-family A/B in `workflows/optimize-tiers.md` (`--preset openai-anthropic`) supplies evidence before any primary change. Plugin config load drops legacy `(via aidevops)` Anthropic model overrides left by versions before GH#32447, because they masked native tool-call, attachment and cost metadata. OpenCode uses `interactive_default` when configured, otherwise the thinking model, as its default only when no explicit user model exists; existing model/variant pins are preserved.
 - **Standard update (2026-09-27)**: `standard` moved from GPT-5.6 Terra to GPT-6 Sol, with Terra kept as the first same-tier fallback. OpenAI's Standard pricing lists Sol at $2/$0.20/$10 (input/cached/output per 1M) versus Terra's $2/$0.20/$12. Both now run at medium. Standard and thinking therefore share Sol medium as primary, with different fallbacks; whether thinking should move to high is a follow-up decision, not part of the minimum-effort change. Watch the 800K per-issue breaker in `configs/dispatch-cost-budgets.conf` for trips during the first week.
 - **Generation update (2026-09-22)**: GPT-6 Luna and GPT-6 Sol became the simple and thinking primaries. Both now use medium. Catalog visibility is not a guarantee of headless OAuth availability: the runtime still probes and follows same-tier fallbacks.
@@ -195,7 +196,7 @@ For example, after validating Anthropic OAuth and both model variants locally:
   "interactive_default": { "model": "anthropic/claude-opus-5-5", "variant": "medium" },
   "tiers": {
     "simple": { "models": ["anthropic/claude-haiku-4-5", "openai/gpt-6-luna"] },
-    "standard": { "models": ["anthropic/claude-sonnet-5", "openai/gpt-5.6-terra"] },
+    "standard": { "models": ["anthropic/claude-sonnet-5-5", "openai/gpt-5.6-terra"] },
     "thinking": {
       "models": ["anthropic/claude-opus-5-5", "openai/gpt-6-sol"],
       "reasoning": { "anthropic/claude-opus-5-5": "xhigh" }
@@ -214,7 +215,7 @@ Example custom override for OpenAI-capable headless routing:
 ```json
 {
   "tiers": {
-    "standard": { "models": ["openai/gpt-5.6-terra", "anthropic/claude-sonnet-5"] },
+    "standard": { "models": ["openai/gpt-5.6-terra", "anthropic/claude-sonnet-5-5"] },
     "thinking": { "models": ["openai/gpt-6-sol", "anthropic/claude-opus-5-5"] }
   }
 }

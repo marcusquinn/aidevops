@@ -92,7 +92,7 @@ fs.writeFileSync(process.argv[1], JSON.stringify({
   enrollment: { mode: "new-auto-dispatch-issues" },
   arms: [
     arm("openai", "openai/gpt-6-luna", "openai/gpt-5.6-terra", "openai/gpt-6-sol"),
-    arm("anthropic", "anthropic/claude-haiku-4-5", "anthropic/claude-sonnet-5", "anthropic/claude-opus-5-5"),
+    arm("anthropic", "anthropic/claude-haiku-4-5", "anthropic/claude-sonnet-5-5", "anthropic/claude-opus-5-5"),
   ],
 }));
 ' "$AIDEVOPS_MODEL_AB_CONFIG"

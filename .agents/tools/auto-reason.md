@@ -73,7 +73,7 @@ simple
 standard
 thinking
 openai/gpt-5.6-terra
-anthropic/claude-sonnet-4-6
+anthropic/claude-sonnet-5-5
 google/gemini-pro
 openrouter/deepseek-r1
 local/ollama-qwen3

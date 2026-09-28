@@ -57,7 +57,7 @@ test("issue arms persist across retries without changing the fallback or thinkin
     const route = JSON.parse(readFileSync(first.routing_table, "utf8"));
     assert.equal(route.tiers.standard.models[0], first.model);
     assert.equal(route.tiers.standard.reasoning[first.model], first.variant);
-    assert.ok(route.tiers.standard.models.includes("anthropic/claude-sonnet-5"));
+    assert.ok(route.tiers.standard.models.includes("anthropic/claude-sonnet-5-5"));
     assert.equal(route.tiers.thinking, undefined);
     const shipped = fileURLToPath(new URL("../../configs/model-routing-table.json", import.meta.url));
     const merged = loadModelRouting([first.routing_table, shipped]);

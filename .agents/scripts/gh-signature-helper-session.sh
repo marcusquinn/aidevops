@@ -403,7 +403,7 @@ _detect_issue_scoped_tokens() {
 # Queries the OpenCode session DB for the model used in the current session,
 # but ONLY when running in OpenCode. For Claude Code and other runtimes, falls
 # back to environment variables (ANTHROPIC_MODEL, CLAUDE_MODEL).
-# Returns "provider/model" (e.g., "anthropic/claude-sonnet-4-6") or empty.
+# Returns "provider/model" (e.g., "anthropic/claude-sonnet-5-5") or empty.
 # This eliminates the need for callers to pass --model explicitly (GH#12965).
 
 _detect_session_model() {

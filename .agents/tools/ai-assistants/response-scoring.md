@@ -55,7 +55,7 @@ response-scoring-helper.sh prompt add \
 
 ```bash
 response-scoring-helper.sh record \
-  --prompt 1 --model claude-sonnet-4-6 \
+  --prompt 1 --model claude-sonnet-5-5 \
   --text "def fizzbuzz():..." \
   --time 2.3 --tokens 150 --cost 0.0005
 # Or: --file responses/gpt4o-output.txt
@@ -93,7 +93,7 @@ Scores feed the shared pattern tracker:
 - **On score**: `SUCCESS_PATTERN` (weighted avg >= 3.5) or `FAILURE_PATTERN` (< 3.5), tagged with model tier + category
 - **On compare**: Winner → `SUCCESS_PATTERN` with comparison metadata
 - **Bulk sync**: `response-scoring-helper.sh sync` (`--dry-run` to preview). Disable: `SCORING_NO_PATTERN_SYNC=1`
-- **Tier mapping**: Full model names (for example, `claude-sonnet-4-6`) map to
+- **Tier mapping**: Full model names (for example, `claude-sonnet-5-5`) map to
   canonical workload tiers (`simple`, `standard`, or `thinking`) for comparable
   result grouping
 

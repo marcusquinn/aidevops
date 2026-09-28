@@ -1188,7 +1188,7 @@ _test_capacity_model_for_labels() {
 	local labels="$1"
 	case ",${labels}," in
 	*,tier:thinking,*) printf '%s\n' "anthropic/claude-opus-4-6" ;;
-	*,tier:standard,*) printf '%s\n' "anthropic/claude-sonnet-4-6" ;;
+	*,tier:standard,*) printf '%s\n' "anthropic/claude-sonnet-5-5" ;;
 	*,tier:simple,*) printf '%s\n' "anthropic/claude-haiku-4-5" ;;
 	*) printf '\n' ;;
 	esac

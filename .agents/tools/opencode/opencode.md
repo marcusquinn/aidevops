@@ -279,7 +279,7 @@ TUI requires restart for config changes. Use CLI for quick iteration:
 
 ```bash
 opencode run "List your available tools" --agent SEO
-opencode run "Quick test" --agent Build+ --model anthropic/claude-sonnet-4-6
+opencode run "Quick test" --agent Build+ --model anthropic/claude-sonnet-5-5
 
 # Isolated V2 preview
 opencode2 run "List your available tools" --agent SEO

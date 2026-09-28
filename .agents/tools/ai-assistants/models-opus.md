@@ -7,7 +7,7 @@ model-fallback: openai/gpt-5.4
 fallback-chain:
   - anthropic/claude-opus-4-6
   - openai/gpt-5.4
-  - anthropic/claude-sonnet-4-6
+  - anthropic/claude-sonnet-5-5
   - openrouter/anthropic/claude-opus-4-6
 tools:
   read: true

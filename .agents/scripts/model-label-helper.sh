@@ -58,7 +58,7 @@ ACTIONS:
     planned, researched, implemented, reviewed, verified, documented, failed, retried
 
 MODELS:
-    simple, standard, thinking (or concrete model names like claude-sonnet-4-6)
+    simple, standard, thinking (or concrete model names like claude-sonnet-5-5)
 
 EXAMPLES:
     # Add label when dispatching a task
@@ -94,7 +94,7 @@ EOF
 #######################################
 # Normalize model name to tier
 # Arguments:
-#   $1 - Model name (e.g., claude-sonnet-4-6, standard, gpt-4)
+#   $1 - Model name (e.g., claude-sonnet-5-5, standard, gpt-4)
 # Returns:
 #   Normalized tier name (simple, standard, thinking)
 #######################################

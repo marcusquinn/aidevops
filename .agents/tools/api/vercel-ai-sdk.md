@@ -207,7 +207,7 @@ Swap the `model:` argument — same `streamText` API for all providers:
 
 ```tsx
 import { anthropic } from "@ai-sdk/anthropic";
-// model: anthropic("claude-sonnet-4-6")  or  openai("gpt-4o")  or  any @ai-sdk/* adapter
+// model: anthropic("claude-sonnet-5-5")  or  openai("gpt-4o")  or  any @ai-sdk/* adapter
 ```
 
 ### Structured Output

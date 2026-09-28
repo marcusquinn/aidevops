@@ -365,13 +365,13 @@ export HOME=\$mock_home
 mkdir -p "\$mock_home/.claude"
 echo '{"hasCompletedOnboarding":true}' > "\$mock_home/.claude/settings.json"
 rm -f '$TEST_DIR/supervisor/health/claude-oauth'
-resolve_ai_cli 'anthropic/claude-sonnet-4-6'
+resolve_ai_cli 'anthropic/claude-sonnet-5-5'
 rm -rf "\$mock_home"
 OAUTH_TEST2
 )
 
 if [[ "$oauth_sonnet_cli" == "opencode" ]]; then
-	pass "CLI routing: anthropic/claude-sonnet-4-6 -> opencode (PR #2173: opencode is sole worker CLI)"
+	pass "CLI routing: anthropic/claude-sonnet-5-5 -> opencode (PR #2173: opencode is sole worker CLI)"
 else
 	fail "CLI routing: sonnet should route to opencode" "Got: '$oauth_sonnet_cli'"
 fi

@@ -427,7 +427,7 @@ fi
 # Test: opencode probe command
 oc_probe_cmd=$(run_in_supervisor_env "
     build_cli_cmd --cli opencode --action probe --output array \
-        --model 'anthropic/claude-sonnet-4-6'
+        --model 'anthropic/claude-sonnet-5-5'
 ")
 
 if echo "$oc_probe_cmd" | grep -q "health-check"; then
@@ -450,7 +450,7 @@ section "3. build_cli_cmd for Claude (deprecated fallback path)"
 # Test: claude run command
 cl_run_cmd=$(run_in_supervisor_env "
     build_cli_cmd --cli claude --action run --output array \
-        --model 'anthropic/claude-sonnet-4-6' \
+        --model 'anthropic/claude-sonnet-5-5' \
         --prompt 'Test prompt'
 ")
 
@@ -473,7 +473,7 @@ else
 fi
 
 # Verify model prefix stripping (anthropic/ prefix removed for claude CLI)
-if echo "$cl_run_cmd" | grep -q "claude-sonnet-4-6" && ! echo "$cl_run_cmd" | grep -q "anthropic/"; then
+if echo "$cl_run_cmd" | grep -q "claude-sonnet-5-5" && ! echo "$cl_run_cmd" | grep -q "anthropic/"; then
 	pass "Claude run: strips provider prefix from model"
 else
 	fail "Claude run: should strip 'anthropic/' prefix" "Got: $cl_run_cmd"
@@ -500,7 +500,7 @@ fi
 # Test: claude probe uses text format (not json)
 cl_probe_cmd=$(run_in_supervisor_env "
     build_cli_cmd --cli claude --action probe --output array \
-        --model 'anthropic/claude-sonnet-4-6'
+        --model 'anthropic/claude-sonnet-5-5'
 ")
 
 if echo "$cl_probe_cmd" | grep -q "output-format.*text\|text.*output-format"; then
@@ -562,10 +562,10 @@ else
 	fail "Model resolution: opus -> expected anthropic/claude-opus-4-6" "Got: $opus_model"
 fi
 
-if [[ "$sonnet_model" == "anthropic/claude-sonnet-4-6" ]]; then
-	pass "Model resolution: sonnet -> anthropic/claude-sonnet-4-6"
+if [[ "$sonnet_model" == "anthropic/claude-sonnet-5-5" ]]; then
+	pass "Model resolution: sonnet -> anthropic/claude-sonnet-5-5"
 else
-	fail "Model resolution: sonnet -> expected anthropic/claude-sonnet-4-6" "Got: $sonnet_model"
+	fail "Model resolution: sonnet -> expected anthropic/claude-sonnet-5-5" "Got: $sonnet_model"
 fi
 
 if [[ "$haiku_model" == "anthropic/claude-haiku-4-5" ]]; then
@@ -581,8 +581,8 @@ else
 fi
 
 # Test: resolve_model with full model string (passthrough)
-full_model=$(run_in_supervisor_env "resolve_model 'anthropic/claude-sonnet-4-6' opencode")
-if [[ "$full_model" == "anthropic/claude-sonnet-4-6" ]]; then
+full_model=$(run_in_supervisor_env "resolve_model 'anthropic/claude-sonnet-5-5' opencode")
+if [[ "$full_model" == "anthropic/claude-sonnet-5-5" ]]; then
 	pass "Model resolution: full model string passes through unchanged"
 else
 	fail "Model resolution: full model string should pass through" "Got: $full_model"
@@ -745,7 +745,7 @@ health_result=$(bash -c "
     mkdir -p '$TEST_DIR/supervisor/health'
     # check_model_health should succeed for opencode even without ANTHROPIC_API_KEY
     # because opencode manages auth internally (OAuth)
-    check_model_health 'opencode' 'anthropic/claude-sonnet-4-6'
+    check_model_health 'opencode' 'anthropic/claude-sonnet-5-5'
     echo \"exit:\$?\"
 " 2>/dev/null | tail -1)
 
@@ -862,7 +862,7 @@ done
 section "9. Escalation Chain (get_next_tier)"
 
 next_from_haiku=$(run_in_supervisor_env "get_next_tier 'anthropic/claude-haiku-4-5'")
-next_from_sonnet=$(run_in_supervisor_env "get_next_tier 'anthropic/claude-sonnet-4-6'")
+next_from_sonnet=$(run_in_supervisor_env "get_next_tier 'anthropic/claude-sonnet-5-5'")
 next_from_opus=$(run_in_supervisor_env "get_next_tier 'anthropic/claude-opus-4-6'")
 
 if [[ "$next_from_haiku" == "sonnet" ]]; then

@@ -1096,7 +1096,7 @@ test_private_workload_arguments_are_fail_closed() {
 
 	local invalid_provider_status=0
 	prompt="$PRIVATE_WORKLOAD_PROMPT"
-	model_override="anthropic/claude-sonnet-4-6"
+	model_override="anthropic/claude-sonnet-5-5"
 	_validate_private_workload_args >/dev/null 2>&1 || invalid_provider_status=$?
 
 	local missing_allowlist_status=0
@@ -1463,7 +1463,7 @@ test_startup_no_activity_can_rotate_after_continuation_budget() {
 		_run_should_retry=0
 		_HRW_STATUS_FAIL="fail"
 		print_warning() { return 0; }
-		choose_model() { printf '%s' 'anthropic/claude-sonnet-4-6'; return 0; }
+		choose_model() { printf '%s' 'anthropic/claude-sonnet-5-5'; return 0; }
 		_cmd_run_finish() { return 0; }
 		local retry_status=0
 		_cmd_run_prepare_retry "worker" "issue-24949" "" 1 3 "openai/gpt-5.5" 78 || retry_status=$?
@@ -1471,7 +1471,7 @@ test_startup_no_activity_can_rotate_after_continuation_budget() {
 	)
 	IFS='|' read -r status action next_model <<<"$result"
 
-	if [[ "$status" -eq 0 && "$action" == "switch" && "$next_model" == "anthropic/claude-sonnet-4-6" ]]; then
+	if [[ "$status" -eq 0 && "$action" == "switch" && "$next_model" == "anthropic/claude-sonnet-5-5" ]]; then
 		print_result "startup no-activity can rotate after continuation budget" 0
 		return 0
 	fi
@@ -1576,7 +1576,7 @@ test_dispatcher_initial_model_can_rotate_after_rate_limit() {
 		_run_should_retry=0
 		_HRW_STATUS_FAIL="fail"
 		print_warning() { return 0; }
-		choose_model() { printf '%s' 'anthropic/claude-sonnet-4-6'; return 0; }
+		choose_model() { printf '%s' 'anthropic/claude-sonnet-5-5'; return 0; }
 		_cmd_run_finish() { return 0; }
 		local retry_status=0
 		_cmd_run_prepare_retry "worker" "issue-22862" "" 1 3 "openai/gpt-5.5" 124 || retry_status=$?
@@ -1584,7 +1584,7 @@ test_dispatcher_initial_model_can_rotate_after_rate_limit() {
 	)
 	IFS='|' read -r status action next_model <<<"$result"
 
-	if [[ "$status" -eq 0 && "$action" == "switch" && "$next_model" == "anthropic/claude-sonnet-4-6" ]]; then
+	if [[ "$status" -eq 0 && "$action" == "switch" && "$next_model" == "anthropic/claude-sonnet-5-5" ]]; then
 		print_result "dispatcher-selected initial model can rotate after rate limit" 0
 		return 0
 	fi

@@ -453,7 +453,7 @@ _generate_python_analyzer_llm_backends() {
             "anthropic-version": "2023-06-01"
         }
         payload = {
-            "model": self.model if "claude" in self.model else "claude-sonnet-4-6",
+            "model": self.model if "claude" in self.model else "claude-sonnet-5-5",
             "max_tokens": 500,
             "messages": [{"role": "user", "content": f"{prompt}\n\nAnalyze this content:\n\n{content}"}]
         }
