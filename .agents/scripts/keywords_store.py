@@ -19,6 +19,8 @@ OBS_FIELDS = ["observed_at", "target_id", "query_id", "phrase", "platform", "sur
               "position", "url", "mentioned", "recommended", "cited", "source", "status"]
 SPEND_FIELDS = ["at", "provider", "operation", "estimate_usd", "cost_usd", "note"]
 PLATFORM_ORDER = ["google", "bing", "github", "npm", "pypi", "youtube"]
+# A target's own site decides which platform's positions it reports.
+SURFACE_PLATFORMS = {"website": "google", "github": "github", "npm": "npm", "pypi": "pypi", "youtube": "youtube"}
 
 
 def now() -> str:
@@ -108,8 +110,10 @@ def _trend(previous: float | None, latest: float) -> str:
     return "up" if 0 < latest < previous or previous <= 0 < latest else "down"
 
 
-def _target_rollup(rows: list[dict]) -> dict[str, str]:
-    platform = min(rows, key=_platform_rank)["platform"]
+def _target_rollup(rows: list[dict], surface: str = "") -> dict[str, str]:
+    """Roll up one target: its own site's platform first, else PLATFORM_ORDER."""
+    own = SURFACE_PLATFORMS.get(surface, "")
+    platform = own if any(row["platform"] == own for row in rows) else min(rows, key=_platform_rank)["platform"]
     series = [row for row in rows if row["platform"] == platform]
     positions = [float(row["position"]) for row in series]
     ranked = [value for value in positions if value > 0]
@@ -140,7 +144,8 @@ def rollup(prop: str, registry: dict) -> int:
     for target_id, rows in _latest_by_target(history).items():
         row = reg.find(registry["targets"], target_id)
         if row is not None:
-            row.update({key: value for key, value in _target_rollup(rows).items() if value or key != "ranking_url"})
+            values = _target_rollup(rows, row.get("surface", ""))
+            row.update({key: value for key, value in values.items() if value or key != "ranking_url"})
             changed += 1
     for query_id, values in _query_rollup(history).items():
         row = reg.find(registry["queries"], query_id)
