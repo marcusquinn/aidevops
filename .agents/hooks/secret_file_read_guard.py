@@ -24,6 +24,7 @@ SECRET_PATH_RE = re.compile(
     re.IGNORECASE,
 )
 READ_TOOLS = {"Read", "read", "Glob", "glob", "NotebookRead", "notebook_read"}
+READ_PATH_KEYS = ("filePath", "file_path", "path", "pattern")
 # GH#32526: loose name hints (secret/password/passwd) are routine in framework
 # source and docs. Tracked code/doc files carrying only these hints are
 # readable; strong credential names and every other extension stay blocked.
@@ -94,13 +95,7 @@ def _git_tracked_regular_file(absolute: str) -> bool:
 
 def extract_path(tool_input: dict) -> str:
     """Extract a path-like argument from a Claude Code read tool payload."""
-    return str(
-        tool_input.get("filePath")
-        or tool_input.get("file_path")
-        or tool_input.get("path")
-        or tool_input.get("pattern")
-        or ""
-    )
+    return str(next((tool_input[key] for key in READ_PATH_KEYS if tool_input.get(key)), ""))
 
 
 def secret_read_block_reason(path: str) -> str:

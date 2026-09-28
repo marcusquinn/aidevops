@@ -17,6 +17,7 @@ const SECRET_PATH_RE = /(^|[/\\])(\.ssh|\.gnupg|\.aws|\.azure|\.config[/\\]gclou
 const LOOSE_SECRET_BASENAME_RE = /(secret|password|passwd)/i;
 const STRONG_SECRET_HINT_RE = /(^\.env|^id_(rsa|dsa|ecdsa|ed25519)|credential|service-account|kubeconfig|op-vault)/i;
 const TRACKED_SOURCE_EXTENSION_RE = /\.(sh|mjs|js|ts|py|md)$/i;
+const READ_PATH_KEYS = ["filePath", "file_path", "path", "pattern"];
 const GIT_ENV_OVERRIDES = ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_CEILING_DIRECTORIES"];
 
 function gitEnvironment() {
@@ -78,7 +79,8 @@ export function isReadTool(tool) {
  * @returns {string}
  */
 export function extractReadPath(args = {}) {
-  return args.filePath || args.file_path || args.path || args.pattern || "";
+  const key = READ_PATH_KEYS.find((name) => args?.[name]);
+  return key ? args[key] : "";
 }
 
 /**
