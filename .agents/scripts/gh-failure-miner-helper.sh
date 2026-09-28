@@ -9,6 +9,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)" || exit 1
 # shellcheck source=shared-constants.sh
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/shared-constants.sh" 2>/dev/null || true
+# shellcheck source=ci-infra-signature-lib.sh
+source "${SCRIPT_DIR}/ci-infra-signature-lib.sh" || exit 1
 
 readonly DEFAULT_SINCE_HOURS=24
 readonly DEFAULT_LIMIT=100
@@ -234,18 +236,10 @@ select_failed_job_json() {
 job_annotations_indicate_billing_outage() {
 	local repo_slug="$1"
 	local check_run_id="$2"
-	local annotations_json
 
-	if [[ -z "$check_run_id" ]]; then
-		return 1
-	fi
-
-	annotations_json=$(gh api "repos/${repo_slug}/check-runs/${check_run_id}/annotations" 2>/dev/null || printf '[]')
-	if printf '%s\n' "$annotations_json" | jq -e 'any(.[]; ([.message // "", .title // "", .raw_details // ""] | join(" ") | ascii_downcase | test("account payments have failed|spending limit needs to be increased")))' >/dev/null; then
-		return 0
-	fi
-
-	return 1
+	# Shared with pulse CI repair routing (ci-infra-signature-lib.sh, GH#32869).
+	ci_check_run_indicates_billing_outage "$repo_slug" "$check_run_id"
+	return $?
 }
 
 classify_failed_job_signature() {
@@ -312,7 +306,7 @@ extract_failure_signature() {
 	# Log text is weaker evidence than a structured annotation or all-checks-failed
 	# correlation, so preserve its provenance for the advisory corroboration gate.
 	local infra_line
-	infra_line=$(printf '%s\n' "$filtered_logs" | grep -iE "recent account payments have failed|spending limit needs to be increased" | head -1 || true)
+	infra_line=$(printf '%s\n' "$filtered_logs" | grep -iE "$CI_BILLING_OUTAGE_PATTERN" | head -1 || true)
 	if [[ -n "$infra_line" ]]; then
 		printf '%s' "infra:billing_log"
 		return 0
