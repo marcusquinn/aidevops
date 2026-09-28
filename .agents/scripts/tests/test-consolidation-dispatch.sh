@@ -543,6 +543,18 @@ JSON
 	return 0
 }
 
+# GH#32905: a missing-scope brief hold followed by its repair note (shapes from
+# GH#32849) is operational lifecycle, not scope discussion.
+fixture_brief_hold_and_repair_comments() {
+	cat <<'JSON'
+[
+  {"user": {"login": "maintainer-one", "type": "User"}, "created_at": "2026-09-28T18:50:00Z", "body": "<!-- aidevops:brief-hold reason=missing_files_scope body=f92f02a1d7ecbc037cccab11 -->\nBrief hold: reason=missing_files_scope. This operational body is intentionally long enough to clear the consolidation threshold."},
+  {"user": {"login": "maintainer-one", "type": "User"}, "created_at": "2026-09-28T21:01:00Z", "body": "Brief repaired: added a canonical Files Scope so the pre-claim scope gate passes. This operational body is intentionally long enough to clear the consolidation threshold."}
+]
+JSON
+	return 0
+}
+
 # Operational workflow comments reproduced from GH#28564-#28566. Both are
 # user-authored and exceed the production length threshold, but neither changes
 # issue scope and neither belongs in consolidation decisions or child bodies.
@@ -693,6 +705,26 @@ test_cost_circuit_breaker_comments_are_filtered() {
 	else
 		print_result "cost-circuit-breaker comments are excluded from consolidation body input" 1 \
 			"(substantive_json=$substantive_json)"
+	fi
+
+	teardown_gh_stub
+	return 0
+}
+
+test_brief_hold_and_repair_comments_are_filtered() {
+	setup_gh_stub
+	GH_ISSUE_VIEW_LABELS="bug,tier:standard"
+	GH_API_COMMENTS_JSON=$(fixture_brief_hold_and_repair_comments)
+	GH_ISSUE_LIST_CHILD_JSON="[]"
+	GH_ISSUE_LIST_CHILD_CLOSED_JSON="[]"
+	export GH_ISSUE_VIEW_LABELS GH_API_COMMENTS_JSON
+	export GH_ISSUE_LIST_CHILD_JSON GH_ISSUE_LIST_CHILD_CLOSED_JSON
+
+	if _issue_needs_consolidation 32849 "marcusquinn/aidevops"; then
+		print_result "GH#32905: brief hold and repair comments are filtered" 1 \
+			"_issue_needs_consolidation returned 0 despite only brief-hold lifecycle noise"
+	else
+		print_result "GH#32905: brief hold and repair comments are filtered" 0
 	fi
 
 	teardown_gh_stub
@@ -1504,6 +1536,7 @@ main() {
 	test_worker_superseded_comments_are_filtered
 	test_stale_recovery_tick_comments_are_filtered
 	test_cost_circuit_breaker_comments_are_filtered
+	test_brief_hold_and_repair_comments_are_filtered
 	test_operational_review_comments_are_filtered
 	test_review_feedback_markers_are_filtered
 	test_expired_dispatch_comment_releases_parent
