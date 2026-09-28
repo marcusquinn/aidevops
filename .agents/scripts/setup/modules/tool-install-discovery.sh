@@ -9,6 +9,9 @@
 # Include guard
 [[ -n "${_TOOL_INSTALL_DISCOVERY_LOADED:-}" ]] && return 0
 _TOOL_INSTALL_DISCOVERY_LOADED=1
+TOOL_INSTALL_EMPTY=${TOOL_INSTALL_EMPTY-}
+TOOL_INSTALL_BOOL_TRUE=${TOOL_INSTALL_BOOL_TRUE-true}
+TOOL_INSTALL_UNKNOWN=${TOOL_INSTALL_UNKNOWN-unknown}
 
 # SCRIPT_DIR fallback for direct sourcing and test harnesses.
 if [[ -z "${SCRIPT_DIR:-}" ]]; then
@@ -19,7 +22,7 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
 fi
 
 _print_gh_slurp_manual_upgrade() {
-	echo ""
+	echo "${TOOL_INSTALL_EMPTY}"
 	echo "📋 GitHub CLI upgrade guidance:"
 	echo "  Required: gh >= ${AIDEVOPS_GH_MIN_SLURP_VERSION:-2.51.0} for gh api --paginate --slurp"
 	echo "  Linux: install or upgrade gh from the official GitHub CLI package source for your distribution; on Ubuntu/Debian avoid the older Ubuntu universe gh package"
@@ -29,7 +32,7 @@ _print_gh_slurp_manual_upgrade() {
 }
 _offer_gh_slurp_upgrade() {
 	local pkg_manager="$1"
-	local os_name=""
+	local os_name="${TOOL_INSTALL_EMPTY}"
 	os_name=$(uname -s 2>/dev/null || printf 'unknown')
 
 	if [[ "$os_name" != "Linux" ]]; then
@@ -37,9 +40,9 @@ _offer_gh_slurp_upgrade() {
 		return 1
 	fi
 
-	echo ""
+	echo "${TOOL_INSTALL_EMPTY}"
 	print_warning "Linux GitHub CLI is below the aidevops minimum. Old distro packages can break pulse dispatch."
-	if [[ "$pkg_manager" == "unknown" ]]; then
+	if [[ "$pkg_manager" == "${TOOL_INSTALL_UNKNOWN}" ]]; then
 		print_warning "No supported package manager detected for an automatic gh upgrade attempt"
 		_print_gh_slurp_manual_upgrade
 		return 1
@@ -83,7 +86,7 @@ setup_git_clis() {
 		local gh_slurp_message
 		gh_slurp_message=$(aidevops_gh_slurp_status_message)
 		print_warning "$gh_slurp_message"
-		gh_needs_slurp_upgrade="true"
+		gh_needs_slurp_upgrade="${TOOL_INSTALL_BOOL_TRUE}"
 	else
 		cli_tools+=("GitHub CLI")
 	fi
@@ -104,7 +107,7 @@ setup_git_clis() {
 	local pkg_manager
 	pkg_manager=$(detect_package_manager)
 
-	if [[ "$gh_needs_slurp_upgrade" == "true" ]]; then
+	if [[ "$gh_needs_slurp_upgrade" == "${TOOL_INSTALL_BOOL_TRUE}" ]]; then
 		if _offer_gh_slurp_upgrade "$pkg_manager"; then
 			gh_needs_slurp_upgrade="false"
 		fi
@@ -115,8 +118,8 @@ setup_git_clis() {
 		print_warning "Missing Git CLI tools: ${missing_names[*]}"
 		echo "  These provide enhanced Git platform integration (repos, PRs, issues)"
 
-		if [[ "$pkg_manager" != "unknown" ]]; then
-			echo ""
+		if [[ "$pkg_manager" != "${TOOL_INSTALL_UNKNOWN}" ]]; then
+			echo "${TOOL_INSTALL_EMPTY}"
 			setup_prompt install_git_clis "Install Git CLI tools (${missing_packages[*]}) using $pkg_manager? [Y/n]: " "Y"
 
 			# shellcheck disable=SC2154  # set indirectly by setup_prompt via read
@@ -124,7 +127,7 @@ setup_git_clis() {
 				print_info "Installing ${missing_packages[*]}..."
 				if install_packages "$pkg_manager" "${missing_packages[@]}"; then
 					print_success "Git CLI tools installed"
-					echo ""
+					echo "${TOOL_INSTALL_EMPTY}"
 					echo "📋 Next steps - authenticate each CLI:"
 					for pkg in "${missing_packages[@]}"; do
 						case "$pkg" in
@@ -137,20 +140,20 @@ setup_git_clis() {
 				fi
 			else
 				print_info "Skipped Git CLI tools installation"
-				echo ""
+				echo "${TOOL_INSTALL_EMPTY}"
 				echo "📋 Manual installation:"
 				echo "  macOS: brew install ${missing_packages[*]}"
 				echo "  Ubuntu: sudo apt install ${missing_packages[*]} (Note: for gh >= 2.51.0, use the GitHub CLI apt repository)"
 				echo "  Fedora: sudo dnf install ${missing_packages[*]}"
 			fi
 		else
-			echo ""
+			echo "${TOOL_INSTALL_EMPTY}"
 			echo "📋 Manual installation:"
 			echo "  macOS: brew install ${missing_packages[*]}"
 			echo "  Ubuntu: sudo apt install ${missing_packages[*]} (Note: for gh >= 2.51.0, use the GitHub CLI apt repository)"
 			echo "  Fedora: sudo dnf install ${missing_packages[*]}"
 		fi
-	elif [[ "$gh_needs_slurp_upgrade" != "true" ]]; then
+	elif [[ "$gh_needs_slurp_upgrade" != "${TOOL_INSTALL_BOOL_TRUE}" ]]; then
 		print_success "All Git CLI tools installed and ready!"
 	fi
 
@@ -167,7 +170,7 @@ setup_git_clis() {
 }
 
 _print_file_discovery_manual_install() {
-	echo ""
+	echo "${TOOL_INSTALL_EMPTY}"
 	echo "  Manual installation:"
 	echo "    macOS:        brew install fd ripgrep ripgrep-all"
 	echo "    Ubuntu/Debian: sudo apt install fd-find ripgrep  # rga: cargo install ripgrep_all"
@@ -227,10 +230,10 @@ setup_file_discovery_tools() {
 
 	local fd_version
 	if command -v fd >/dev/null 2>&1; then
-		fd_version=$(fd --version 2>/dev/null | head -1 || echo "unknown")
+		fd_version=$(fd --version 2>/dev/null | head -1 || echo "${TOOL_INSTALL_UNKNOWN}")
 		print_success "fd found: $fd_version"
 	elif command -v fdfind >/dev/null 2>&1; then
-		fd_version=$(fdfind --version 2>/dev/null | head -1 || echo "unknown")
+		fd_version=$(fdfind --version 2>/dev/null | head -1 || echo "${TOOL_INSTALL_UNKNOWN}")
 		if aidevops_ensure_fd_command; then
 			print_success "fd compatibility command installed for fdfind: $fd_version"
 		else
@@ -251,7 +254,7 @@ setup_file_discovery_tools() {
 		missing_names+=("ripgrep (fast content search)")
 	else
 		local rg_version
-		rg_version=$(rg --version 2>/dev/null | head -1 || echo "unknown")
+		rg_version=$(rg --version 2>/dev/null | head -1 || echo "${TOOL_INSTALL_UNKNOWN}")
 		print_success "ripgrep found: $rg_version"
 	fi
 
@@ -262,26 +265,26 @@ setup_file_discovery_tools() {
 		missing_names+=("ripgrep-all (search inside PDFs/docs/archives)")
 	else
 		local rga_version
-		rga_version=$(rga --version 2>/dev/null | head -1 || echo "unknown")
+		rga_version=$(rga --version 2>/dev/null | head -1 || echo "${TOOL_INSTALL_UNKNOWN}")
 		print_success "ripgrep-all found: $rga_version"
 	fi
 
 	# Offer to install missing tools
 	if [[ ${#missing_tools[@]} -gt 0 ]]; then
 		print_warning "Missing file discovery tools: ${missing_names[*]}"
-		echo ""
+		echo "${TOOL_INSTALL_EMPTY}"
 		echo "  These tools provide 10x faster file discovery than built-in glob:"
 		echo "    fd          - Fast alternative to 'find', respects .gitignore"
 		echo "    ripgrep     - Fast alternative to 'grep', respects .gitignore"
 		echo "    ripgrep-all - Extends ripgrep to search inside PDFs, DOCX, SQLite, archives"
-		echo ""
+		echo "${TOOL_INSTALL_EMPTY}"
 		echo "  AI agents use these for efficient codebase navigation."
-		echo ""
+		echo "${TOOL_INSTALL_EMPTY}"
 
 		local pkg_manager
 		pkg_manager=$(detect_package_manager)
 
-		if [[ "$pkg_manager" != "unknown" ]]; then
+		if [[ "$pkg_manager" != "${TOOL_INSTALL_UNKNOWN}" ]]; then
 			setup_prompt install_fd_tools "Install file discovery tools (${missing_packages[*]}) using $pkg_manager? [Y/n]: " "Y"
 
 			# shellcheck disable=SC2154  # set indirectly by setup_prompt via read
@@ -311,16 +314,16 @@ setup_shell_linting_tools() {
 	# Check shellcheck
 	if command -v shellcheck >/dev/null 2>&1; then
 		local sc_version sc_rosetta=false
-		sc_version=$(shellcheck --version 2>/dev/null | grep 'version:' | awk '{print $2}' || echo "unknown")
+		sc_version=$(shellcheck --version 2>/dev/null | grep 'version:' | awk '{print $2}' || echo "${TOOL_INSTALL_UNKNOWN}")
 		# Rosetta detection (macOS Apple Silicon only, requires `file` command)
-		if [[ "$PLATFORM_MACOS" == "true" ]] && [[ "$PLATFORM_ARM64" == "true" ]] && command -v file >/dev/null 2>&1; then
+		if [[ "$PLATFORM_MACOS" == "${TOOL_INSTALL_BOOL_TRUE}" ]] && [[ "$PLATFORM_ARM64" == "${TOOL_INSTALL_BOOL_TRUE}" ]] && command -v file >/dev/null 2>&1; then
 			local sc_file_output
-			sc_file_output=$(file "$(command -v shellcheck)" 2>/dev/null || echo "")
+			sc_file_output=$(file "$(command -v shellcheck)" 2>/dev/null || echo "${TOOL_INSTALL_EMPTY}")
 			if [[ "$sc_file_output" == *"x86_64"* ]] && [[ "$sc_file_output" != *"$TOOL_INSTALL_ARCH_ARM64"* ]]; then
 				sc_rosetta=true
 			fi
 		fi
-		if [[ "$sc_rosetta" == "true" ]]; then
+		if [[ "$sc_rosetta" == "${TOOL_INSTALL_BOOL_TRUE}" ]]; then
 			print_warning "shellcheck found but running under Rosetta (x86_64)"
 			print_info "  Run 'rosetta-audit-helper.sh migrate' to fix"
 		else
@@ -342,7 +345,7 @@ setup_shell_linting_tools() {
 		echo "  shellcheck - static analysis for shell scripts"
 		echo "  shfmt      - shell script formatter (fast syntax checks)"
 
-		if [[ "$pkg_manager" != "unknown" ]]; then
+		if [[ "$pkg_manager" != "${TOOL_INSTALL_UNKNOWN}" ]]; then
 			local install_linters
 			setup_prompt install_linters "Install missing shell linting tools using $pkg_manager? [Y/n]: " "Y"
 
@@ -392,7 +395,7 @@ setup_setsid_advisory() {
 				# util-linux is keg-only: binary lives under the keg, not in /opt/homebrew/bin.
 				# Symlink setsid into a standard PATH directory so 'command -v setsid' works.
 				local brew_prefix
-				brew_prefix="$(brew --prefix 2>/dev/null || echo "")"
+				brew_prefix="$(brew --prefix 2>/dev/null || echo "${TOOL_INSTALL_EMPTY}")"
 				local keg_setsid="${brew_prefix}/opt/util-linux/bin/setsid"
 				local link_target="${brew_prefix}/bin/setsid"
 				if [[ -x "$keg_setsid" && ! -e "$link_target" ]]; then
@@ -428,7 +431,7 @@ setup_setsid_advisory() {
 		echo "          sudo pacman -S util-linux       # Arch"
 		echo "          sudo apk add util-linux         # Alpine"
 	fi
-	echo ""
+	echo "${TOOL_INSTALL_EMPTY}"
 
 	return 0
 }
@@ -526,7 +529,7 @@ setup_qlty_cli() {
 	# Check if already installed
 	if [[ -x "$qlty_bin" ]]; then
 		local qlty_version
-		qlty_version=$("$qlty_bin" --version 2>/dev/null | head -1 || echo "unknown")
+		qlty_version=$("$qlty_bin" --version 2>/dev/null | head -1 || echo "${TOOL_INSTALL_UNKNOWN}")
 		print_success "Qlty CLI already installed: $qlty_version"
 		return 0
 	fi
@@ -534,7 +537,7 @@ setup_qlty_cli() {
 	# Also check PATH in case it's installed elsewhere
 	if command -v qlty >/dev/null 2>&1; then
 		local qlty_version
-		qlty_version=$(qlty --version 2>/dev/null | head -1 || echo "unknown")
+		qlty_version=$(qlty --version 2>/dev/null | head -1 || echo "${TOOL_INSTALL_UNKNOWN}")
 		print_success "Qlty CLI found in PATH: $qlty_version"
 		return 0
 	fi
@@ -543,7 +546,7 @@ setup_qlty_cli() {
 	echo "  - Runs 70+ static analysis tools (ShellCheck, ESLint, etc.)"
 	echo "  - Detects code smells and maintainability issues"
 	echo "  - Used by the daily code quality sweep (pulse-wrapper.sh)"
-	echo ""
+	echo "${TOOL_INSTALL_EMPTY}"
 
 	local install_qlty
 	setup_prompt install_qlty "Install Qlty CLI? [Y/n]: " "Y"
@@ -554,7 +557,7 @@ setup_qlty_cli() {
 				# Verify installation
 				if [[ -x "$qlty_bin" ]]; then
 					local qlty_version
-					qlty_version=$("$qlty_bin" --version 2>/dev/null | head -1 || echo "unknown")
+					qlty_version=$("$qlty_bin" --version 2>/dev/null | head -1 || echo "${TOOL_INSTALL_UNKNOWN}")
 					print_success "Qlty CLI installed: $qlty_version"
 					print_info "Ensure ~/.qlty/bin is in your PATH"
 					print_info "Documentation: ~/.aidevops/agents/tools/code-review/qlty.md"

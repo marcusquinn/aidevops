@@ -9,6 +9,10 @@
 # Include guard
 [[ -n "${_TOOL_INSTALL_OPENCODE_SERVICES_LOADED:-}" ]] && return 0
 _TOOL_INSTALL_OPENCODE_SERVICES_LOADED=1
+TOOL_INSTALL_EMPTY=${TOOL_INSTALL_EMPTY-}
+TOOL_INSTALL_OS_DARWIN=${TOOL_INSTALL_OS_DARWIN-Darwin}
+TOOL_INSTALL_BOOL_TRUE=${TOOL_INSTALL_BOOL_TRUE-true}
+TOOL_INSTALL_UNKNOWN=${TOOL_INSTALL_UNKNOWN-unknown}
 
 # SCRIPT_DIR fallback for direct sourcing and test harnesses.
 if [[ -z "${SCRIPT_DIR:-}" ]]; then
@@ -37,7 +41,7 @@ setup_opencode_service() {
 }
 
 setup_opencode_desktop_launcher() {
-	if [[ "$(uname -s)" != "Darwin" ]]; then
+	if [[ "$(uname -s)" != "${TOOL_INSTALL_OS_DARWIN}" ]]; then
 		return 0
 	fi
 
@@ -69,7 +73,7 @@ setup_codex_cli() {
 	# Check if Codex is already installed
 	if command -v codex >/dev/null 2>&1; then
 		local codex_version
-		codex_version=$(codex --version 2>/dev/null | head -1 || echo "unknown")
+		codex_version=$(codex --version 2>/dev/null | head -1 || echo "${TOOL_INSTALL_UNKNOWN}")
 		print_success "Codex already installed: $codex_version"
 		# Fix broken MCP_DOCKER if present
 		_fix_codex_docker_mcp
@@ -77,7 +81,7 @@ setup_codex_cli() {
 	fi
 
 	# Need either bun or npm to install
-	local installer=""
+	local installer="${TOOL_INSTALL_EMPTY}"
 	local install_pkg="@openai/codex@latest"
 
 	if command -v bun >/dev/null 2>&1; then
@@ -92,17 +96,17 @@ setup_codex_cli() {
 
 	print_info "Codex is OpenAI's AI coding CLI (terminal-based, agentic)"
 	echo "  It provides an AI-powered terminal interface using OpenAI models."
-	echo ""
+	echo "${TOOL_INSTALL_EMPTY}"
 
 	local install_codex
 	setup_prompt install_codex "Install Codex via $installer? [Y/n]: " "Y"
 	if [[ "$install_codex" =~ ^[Yy]?$ ]]; then
 		if run_with_spinner "Installing Codex" npm_global_install "$install_pkg"; then
 			print_success "Codex installed"
-			echo ""
+			echo "${TOOL_INSTALL_EMPTY}"
 			print_info "Codex needs OpenAI authentication."
 			print_info "Run 'codex' and follow the auth prompts."
-			echo ""
+			echo "${TOOL_INSTALL_EMPTY}"
 			# Fix broken MCP_DOCKER if Codex created a default config
 			_fix_codex_docker_mcp
 		else
@@ -148,10 +152,10 @@ _fix_codex_docker_mcp() {
 			continue
 		fi
 		# If we hit another section header, stop commenting
-		if [[ "$in_mcp_docker" == "true" ]] && [[ "$line" == "["* ]]; then
+		if [[ "$in_mcp_docker" == "${TOOL_INSTALL_BOOL_TRUE}" ]] && [[ "$line" == "["* ]]; then
 			in_mcp_docker=false
 		fi
-		if [[ "$in_mcp_docker" == "true" ]]; then
+		if [[ "$in_mcp_docker" == "${TOOL_INSTALL_BOOL_TRUE}" ]]; then
 			printf '# %s\n' "$line" >>"$tmp_config"
 		else
 			printf '%s\n' "$line" >>"$tmp_config"
@@ -168,7 +172,7 @@ setup_droid_cli() {
 	# Check if Droid is already installed
 	if command -v droid >/dev/null 2>&1; then
 		local droid_version
-		droid_version=$(droid --version 2>/dev/null | head -1 || echo "unknown")
+		droid_version=$(droid --version 2>/dev/null | head -1 || echo "${TOOL_INSTALL_UNKNOWN}")
 		print_success "Droid already installed: $droid_version"
 		return 0
 	fi
@@ -176,7 +180,7 @@ setup_droid_cli() {
 	# Droid uses its own installer — not available via npm/brew
 	print_info "Droid (Factory.AI) is an AI coding agent CLI"
 	echo "  It provides autonomous coding capabilities with Factory.AI models."
-	echo ""
+	echo "${TOOL_INSTALL_EMPTY}"
 
 	local install_droid
 	setup_prompt install_droid "Install Droid CLI? [Y/n]: " "Y"
@@ -185,9 +189,9 @@ setup_droid_cli() {
 		if command -v curl >/dev/null 2>&1; then
 			if curl -fsSL https://app.factory.ai/install.sh | bash 2>/dev/null; then
 				print_success "Droid installed"
-				echo ""
+				echo "${TOOL_INSTALL_EMPTY}"
 				print_info "Run 'droid auth login' to authenticate with Factory.AI."
-				echo ""
+				echo "${TOOL_INSTALL_EMPTY}"
 			else
 				print_warning "Droid installation failed"
 				print_info "Install manually from: https://docs.factory.ai/cli/installation"
@@ -210,13 +214,13 @@ setup_google_workspace_cli() {
 	# Check if gws is already installed
 	if command -v gws >/dev/null 2>&1; then
 		local gws_version
-		gws_version=$(gws --version 2>/dev/null | head -1 || echo "unknown")
+		gws_version=$(gws --version 2>/dev/null | head -1 || echo "${TOOL_INSTALL_UNKNOWN}")
 		print_success "Google Workspace CLI already installed: $gws_version"
 		return 0
 	fi
 
 	# Need either bun or npm to install
-	local installer=""
+	local installer="${TOOL_INSTALL_EMPTY}"
 	local install_pkg="@googleworkspace/cli@latest"
 
 	if command -v bun >/dev/null 2>&1; then
@@ -231,7 +235,7 @@ setup_google_workspace_cli() {
 
 	print_info "Google Workspace CLI provides Gmail, Calendar, Drive, and all Workspace APIs"
 	echo "  Used by Email, Business, and Accounts agents for Google Workspace integration."
-	echo ""
+	echo "${TOOL_INSTALL_EMPTY}"
 
 	local install_gws
 	setup_prompt install_gws "Install Google Workspace CLI via $installer? [Y/n]: " "Y"
@@ -239,11 +243,11 @@ setup_google_workspace_cli() {
 		if run_with_spinner "Installing Google Workspace CLI" npm_global_install "$install_pkg"; then
 			print_success "Google Workspace CLI installed"
 
-			echo ""
+			echo "${TOOL_INSTALL_EMPTY}"
 			print_info "Authentication required before use."
 			print_info "Run 'gws auth setup' to authenticate with your Google account."
 			print_info "For headless use: set GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE"
-			echo ""
+			echo "${TOOL_INSTALL_EMPTY}"
 		else
 			print_warning "Google Workspace CLI installation failed"
 			print_info "Try manually: sudo npm install -g $install_pkg"
@@ -258,7 +262,7 @@ setup_google_workspace_cli() {
 
 setup_orbstack_vm() {
 	# Only available on macOS
-	if [[ "$(uname)" != "Darwin" ]]; then
+	if [[ "$(uname)" != "${TOOL_INSTALL_OS_DARWIN}" ]]; then
 		return 0
 	fi
 
@@ -271,7 +275,7 @@ setup_orbstack_vm() {
 	print_info "OrbStack provides fast, lightweight Linux VMs on macOS"
 	echo "  You can run aidevops in an isolated Linux environment."
 	echo "  This is optional - aidevops works natively on macOS too."
-	echo ""
+	echo "${TOOL_INSTALL_EMPTY}"
 
 	if ! command -v brew >/dev/null 2>&1; then
 		print_info "OrbStack available at: https://orbstack.dev/"
@@ -301,7 +305,7 @@ setup_ai_orchestration() {
 
 	# Check Python — uses check_python_version from _common.sh to avoid
 	# duplicating find_python3 → parse → compare → offer_python_brew_install logic.
-	if ! check_python_version "" "AI orchestration" >/dev/null; then
+	if ! check_python_version "${TOOL_INSTALL_EMPTY}" "AI orchestration" >/dev/null; then
 		return 0
 	fi
 
@@ -313,12 +317,12 @@ setup_ai_orchestration() {
 	echo "  - Langflow: Visual flow builder (localhost:7860)"
 	echo "  - CrewAI: Multi-agent teams (localhost:8501)"
 	echo "  - AutoGen: Microsoft agentic AI (localhost:8081)"
-	echo ""
+	echo "${TOOL_INSTALL_EMPTY}"
 	print_info "Setup individual frameworks with:"
 	echo "  bash .agents/scripts/langflow-helper.sh setup"
 	echo "  bash .agents/scripts/crewai-helper.sh setup"
 	echo "  bash .agents/scripts/autogen-helper.sh setup"
-	echo ""
+	echo "${TOOL_INSTALL_EMPTY}"
 	print_info "See .agents/tools/ai-orchestration/overview.md for comparison"
 
 	return 0
@@ -336,11 +340,11 @@ setup_ollama_for_knowledge() {
 	# Check if Ollama is already installed
 	if command -v ollama >/dev/null 2>&1; then
 		local version
-		version=$(ollama --version 2>/dev/null | grep -o '[0-9][0-9.]*' | head -1) || version="unknown"
+		version=$(ollama --version 2>/dev/null | grep -o '[0-9][0-9.]*' | head -1) || version="${TOOL_INSTALL_UNKNOWN}"
 		print_success "Ollama already installed (version: ${version})"
 	else
 		print_info "Ollama not found."
-		if [[ "$(uname -s)" == "Darwin" ]] && command -v brew >/dev/null 2>&1; then
+		if [[ "$(uname -s)" == "${TOOL_INSTALL_OS_DARWIN}" ]] && command -v brew >/dev/null 2>&1; then
 			print_info "Installing Ollama via Homebrew..."
 			if brew install ollama 2>/dev/null; then
 				print_success "Ollama installed via Homebrew"
@@ -400,10 +404,10 @@ setup_ollama_for_knowledge() {
 		print_warning "Failed to pull nomic-embed-text. Run manually: ollama pull nomic-embed-text"
 	fi
 
-	print_info ""
+	print_info "${TOOL_INSTALL_EMPTY}"
 	print_info "Optional: pull the reasoning model for tier:privileged (~39 GB, requires 48+ GB RAM):"
 	print_info "  ollama pull llama3.1:70b"
-	print_info ""
+	print_info "${TOOL_INSTALL_EMPTY}"
 	print_info "Verify: ollama-helper.sh health"
 
 	return 0
