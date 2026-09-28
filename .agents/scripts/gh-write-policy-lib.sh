@@ -746,7 +746,11 @@ _shim_normalize_interactive_tracking_issue_create() {
 	_SHIM_MANAGED_LABEL_SET="tracking"
 
 	_shim_issue_create_has_label_prefix "origin:" || _modified_args+=(--label "$_SHIM_ORIGIN_INTERACTIVE_LABEL")
-	_shim_issue_create_has_label_prefix "status:" || _modified_args+=(--label "status:in-review")
+	# GH#32703: publication:pending issues intentionally carry no status until
+	# planning-publication-reconcile.sh projects one; an injected active status
+	# would permanently block dispatch of auto-dispatch tasks.
+	_shim_issue_create_has_label_prefix "status:" || _shim_issue_create_has_label "publication:pending" ||
+		_modified_args+=(--label "status:in-review")
 	_shim_issue_create_has_type_label || _modified_args+=(--label "bug")
 	return 0
 }

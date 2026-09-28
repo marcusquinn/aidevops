@@ -355,6 +355,10 @@ _append_ranked_repo_candidates() {
 			repo_slug: $slug,
 			repo_path: $path,
 			repo_priority: $priority,
+			# GH#32703: urgent labels lead strictly, matching the urgent phase
+			# of _dispatch_priority_loop, so tier/age bonuses cannot outrank them.
+			priority_rank: (if ($labels | index("priority:critical")) != null then 2
+				elif ($labels | index("priority:high")) != null then 1 else 0 end),
 			base_score: $base_score,
 			age_days: $age_days,
 			age_bonus: $age_bonus,
@@ -454,6 +458,7 @@ build_ranked_dispatch_candidates_json() {
 	fi
 
 	jq -cs --argjson product_complete "$product_complete" 'map(. + {product_discovery_complete:$product_complete}) | sort_by([
+		-(.priority_rank // 0),
 		-.score,
 		(if (.createdAt // "") == "" then "9999-12-31T23:59:59Z" else .createdAt end),
 		(if (.updatedAt // "") == "" then "9999-12-31T23:59:59Z" else .updatedAt end),

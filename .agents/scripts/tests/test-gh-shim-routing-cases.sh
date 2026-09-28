@@ -403,6 +403,16 @@ else
 fi
 
 _reset_log
+"$SHIM_RUN" issue create --repo owner/repo --title "t3565: Pending publication" \
+	--label "tier:standard,publication:pending,origin:interactive" --body "tracking body" 2>/dev/null
+argv=$(_read_argv)
+if [[ "$argv" != *"status:in-review"* ]]; then
+	_pass "publication:pending issue creation gets no injected active status (GH#32703)"
+else
+	_fail "pending publication status injection" "argv: $argv"
+fi
+
+_reset_log
 touch "$TMP/literal-status-star"
 "$SHIM_RUN" issue create --repo owner/repo -t "t3565: Short title flag" --label "status:*, origin:worker" --body "tracking body" 2>/dev/null
 argv=$(_read_argv)
