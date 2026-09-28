@@ -181,6 +181,7 @@ OWNER_PROCESS_START=$(_test_process_start_token "$$")
 	printf '{"ts":%d,"role":"worker","session_key":"issue-7","result":"success","exit_code":0}\n' "$T_25H_AGO"
 	printf '{"ts":%d,"role":"worker","session_key":"issue-8","result":"watchdog_stall_continue","exit_code":124}\n' "$T_2H_AGO"
 	printf '{"ts":%d,"role":"worker","session_key":"issue-9","result":"success","exit_code":0}\n' "$T_FUTURE_SENTINEL"
+	printf '{"ts":%d,"role":"worker","session_key":"issue-too-future","result":"success","exit_code":0}\n' "$((NOW + 600))"
 	printf '{"role":"worker","session_key":"issue-10","result":"success","exit_code":0}\n'
 	printf '{"ts":%d,"role":"worker","session_key":"issue-11","model":"openai/gpt-5.5","provider":"openai","result":"service_interruption_continue","failure_reason":"provider_error","provider_error_type":"server_error","provider_status":"503","exit_code":81}\n' "$T_2H_AGO"
 	printf '{"ts":%d,"role":"worker","session_key":"issue-12","model":"openai/gpt-5.5","provider":"openai","result":"service_interruption_exhausted","failure_reason":"local_error","runtime_error_type":"sigterm","launch_failure_cause":"local_runtime_error","next_action":"inspect_failure_excerpt_and_retry_if_transient","exit_code":81}\n' "$T_2H_AGO"
@@ -359,6 +360,7 @@ fi
 # issue-8 (watchdog_stall_continue with exit_code=124) tests the t3215
 # regression case — must count as wc, not of, despite non-zero exit.
 assert_eq "2c: raw event total retains post-PR handoff evidence" "19" "$(printf '%s' "$JSON" | jq -r '.metrics.total')"
+assert_eq "2c0: quarantined future worker rows are counted" "2" "$(printf '%s' "$JSON" | jq -r '.metrics.future_dated_ignored')"
 assert_eq "2c1: reporting window is observation-only" "historical_observation_only" \
 	"$(printf '%s' "$JSON" | jq -r '.window.semantics')"
 assert_eq "2c2: terminal session outcomes = 14" "14" "$(printf '%s' "$JSON" | jq -r '.metrics.terminal_session_total')"
