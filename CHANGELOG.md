@@ -10,6 +10,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.37.16] - 2026-09-28
+
+### Added
+
+- accept body-file fingerprints and report matched placeholders (#32781)
+- gate OpenCode V2 promotion on profile canaries (#32759)
+- runner-local AI owner for terminal-blocker circuits
+
+### Changed
+
+- Maintenance: mark t18516 complete (pr:#32792 completed:2026-09-28) (#32795)
+- Documentation: add private search target registry pointer (#32797)
+- Refactor: split tool installation modules (#32789)
+- Maintenance: mark t18498 complete (pr:#32784 completed:2026-09-28) (#32780)
+- Documentation: use project commands for code diagnostics (#32784)
+- Tests: repair structural tests after core split (#32783)
+- Documentation: refresh TTS music and BT.709 delivery guidance (#32775)
+- Tests: keep dispatch concurrency reset fresh and name unexpected failures (#32769)
+- Maintenance: mark t18502 complete (pr:#32759 completed:2026-09-28) (#32753)
+- Tests: track current update drift owners (GH#32726) (#32757)
+
+### Fixed
+
+- keep V2 session profile out of the shared V1 config (#32802)
+- keywords DataForSEO credentials fall back to gopass
+- allow Vitest config files in root-file validation
+- keywords rollout fixes — hub clone cwd, env over config, dispatchable backfill issues
+- preserve gh authentication in OpenCode V2 (#32790)
+- accept coloned reproducer labels (#32785)
+- mark automated OpenCode harness runs headless (#32782)
+- preserve exact-body missing-scope holds (#32778)
+- retire stale supervisor and deployment references (#32779)
+- correct init defaults and worktree scope inference (#32767)
+- re-exec bash before creating control worktree (#32766)
+
 ## [3.37.15] - 2026-09-28
 
 ### Added
