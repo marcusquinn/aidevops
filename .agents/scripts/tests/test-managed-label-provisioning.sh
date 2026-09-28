@@ -84,6 +84,24 @@ assert_count "missing solved label is created once" 1 'gh label create solved:in
 assert_count "present origin labels are not recreated" 0 'gh label create origin:worker --repo'
 assert_count "present solved labels are not recreated" 0 'gh label create solved:worker --repo'
 
+# Reminder provisioning is opt-in and caches only successful repository checks.
+: >"$CALL_LOG"
+_CONTINUATION_REMINDER_LABEL_ENSURED=""
+TEST_LABEL_SNAPSHOT=$'origin:interactive\ncontinuation-reminder'
+ensure_continuation_reminder_label_exists owner/repo
+assert_count "present reminder label needs inventory only" 1 'read route=managed-label-inventory-rest'
+assert_count "present reminder label causes no write" 0 'write route=managed-label-create-rest'
+ensure_continuation_reminder_label_exists owner/repo
+assert_count "reminder label is cached per repo" 1 'read route=managed-label-inventory-rest'
+
+: >"$CALL_LOG"
+_CONTINUATION_REMINDER_LABEL_ENSURED=""
+TEST_LABEL_SNAPSHOT='origin:interactive'
+ensure_continuation_reminder_label_exists owner/repo
+assert_count "missing reminder label is created once" 1 'gh label create continuation-reminder --repo owner/repo'
+ensure_continuation_reminder_label_exists owner/repo
+assert_count "created reminder label is cached" 1 'gh label create continuation-reminder --repo owner/repo'
+
 # Tracking creation reuses the canonical origin set and adds its own labels.
 : >"$CALL_LOG"
 TEST_LABEL_SNAPSHOT=$'origin:worker\norigin:interactive\norigin:worker-takeover'
@@ -130,6 +148,12 @@ if ensure_solved_labels_exist owner/repo; then
 	fail "solved inventory failure propagates" "expected non-zero status"
 else
 	pass "solved inventory failure propagates"
+fi
+_CONTINUATION_REMINDER_LABEL_ENSURED=""
+if ensure_continuation_reminder_label_exists owner/repo; then
+	fail "reminder inventory failure propagates" "expected non-zero status"
+else
+	pass "reminder inventory failure propagates"
 fi
 assert_count "failed inventory performs zero creates" 0 'write route=managed-label-create-rest gh label create'
 

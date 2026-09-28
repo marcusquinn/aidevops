@@ -71,7 +71,7 @@ When remaining session aims can only continue or be tested after background
 issues land, close the session instead of holding it open:
 
 - Create one issue with `gh_create_issue`, self-assigned, labelled
-  `continuation-reminder` (create it if missing) and `no-auto-dispatch` (a human
+  `continuation-reminder` and `no-auto-dispatch` (a human
   resumes it; workers never do).
 - Title: `Continue: <aim>`; add `(check <YYYY-MM-DD HH:MM>)` when a check-back time
   is known, so attention is reserved until then.
