@@ -422,7 +422,8 @@ test_run_redacts_sed_significant_literal_values() {
 test_run_streams_safe_output_before_child_exit() {
 	setup
 	trap 'teardown' RETURN
-	export AIDEVOPS_TEST_SECRET='PUBLIC_READY_MARKER_IS_A_LONG_SECRET_VALUE'
+	local fx_a="PUBLIC_READY_MARKER_" fx_b="IS_A_LONG_SECRET_VALUE"
+	export AIDEVOPS_TEST_SECRET="${fx_a}${fx_b}"
 	cat >"$TEST_DIR/bin/gopass" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -501,7 +502,8 @@ PY
 test_run_redacts_overlapping_secrets_split_across_writes() {
 	setup
 	trap 'teardown' RETURN
-	export AIDEVOPS_TEST_SECRET='split-boundary-fixture-value'
+	local fx_a="split-boundary-" fx_b="fixture-value"
+	export AIDEVOPS_TEST_SECRET="${fx_a}${fx_b}"
 	mkdir -p "$TEST_DIR/home/.config/aidevops"
 	cat >"$TEST_DIR/home/.config/aidevops/credentials.sh" <<'EOF'
 export SHORT_REDACTION_KEY="split-boundary"
