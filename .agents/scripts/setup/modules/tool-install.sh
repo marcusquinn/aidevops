@@ -857,7 +857,7 @@ _setup_opencode_managed_shim_target() {
 
 # Bump when the generated V2 shim changes so existing shims regenerate.
 _setup_opencode_v2_shim_version_marker() {
-	printf '%s\n' '# aidevops:opencode-v2-shim-version=3'
+	printf '%s\n' '# aidevops:opencode-v2-shim-version=4'
 	return 0
 }
 
@@ -972,6 +972,9 @@ export AIDEVOPS_TERMINAL_TITLE_OWNER="\${AIDEVOPS_TERMINAL_TITLE_OWNER:-aidevops
 export OPENCODE_DISABLE_AUTOUPDATE="\${OPENCODE_DISABLE_AUTOUPDATE:-1}"
 export OPENCODE_DISABLE_TERMINAL_TITLE="\${OPENCODE_DISABLE_TERMINAL_TITLE:-1}"
 _aidevops_v2_root="\${AIDEVOPS_OPENCODE_V2_ROOT:-\${HOME}/.aidevops/runtimes/opencode-v2}"
+_aidevops_v2_caller_config_home="\${XDG_CONFIG_HOME:-\${HOME}/.config}"
+# gh must retain the caller's auth location, including in a shared V2 service.
+export GH_CONFIG_DIR="\${GH_CONFIG_DIR:-\${_aidevops_v2_caller_config_home}/gh}"
 export XDG_CONFIG_HOME="\${AIDEVOPS_OPENCODE_V2_CONFIG_HOME:-\${_aidevops_v2_root}/config}"
 export XDG_DATA_HOME="\${AIDEVOPS_OPENCODE_V2_DATA_HOME:-\${_aidevops_v2_root}/data}"
 export XDG_CACHE_HOME="\${AIDEVOPS_OPENCODE_V2_CACHE_HOME:-\${_aidevops_v2_root}/cache}"
