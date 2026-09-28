@@ -535,10 +535,19 @@ def github_issue_action(uid: int, reader: GitHubIssueReader, action: str, body: 
         process.wait(timeout=2)
 
 
+# GH#32834: macOS ships /private/var/run as 0775 root:daemon, which the strict
+# root_data_directory() ancestry rule correctly refuses. /private/var/db is
+# 0755 root:wheel. Keep this in sync with DEFAULT_STATE_DIR in
+# plugins/opencode-aidevops/source-access-{approval,manifest-approval}.mjs.
+DEFAULT_STATE_DIR = Path(
+    "/private/var/db/aidevops/source-access" if sys.platform == "darwin" else "/var/run/aidevops/source-access"
+)
+
+
 @dataclass(frozen=True)
 class Config:
     config_dir: Path = Path("/etc/aidevops/source-access")
-    state_dir: Path = Path("/var/run/aidevops/source-access")
+    state_dir: Path = DEFAULT_STATE_DIR
     request_root: Path | None = None
     trust_uid: int = 0
 

@@ -17,7 +17,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
-import { validatedManifestReceipt } from "./source-access-manifest-approval.mjs";
+import { DEFAULT_STATE_DIR, validatedManifestReceipt } from "./source-access-manifest-approval.mjs";
 import { MAX_SOURCE_BYTES, hasSymlinkComponent, isGitTrackedFile, sourceDigestMatches,
   trackedFileIdentity, trustedSourceSnapshot } from "./source-access-files.mjs";
 import {
@@ -35,7 +35,6 @@ const PAYLOAD_SCHEMA = "aidevops-source-access-approval/v1";
 const SIGNATURE_NAMESPACE = "aidevops-source-access-v1";
 const SIGNER_IDENTITY = "source-access@aidevops.sh";
 const MAX_TTL_SECONDS = 12 * 60 * 60;
-const DEFAULT_STATE_DIR = "/var/run/aidevops/source-access";
 const DEFAULT_PUBLIC_KEY = "/etc/aidevops/source-access/source-access.pub";
 const ROOT_BROKER_CORE = "/etc/aidevops/source-access/source_access_core.py";
 
@@ -140,16 +139,19 @@ function verificationTempRoot() {
   return process.env.AIDEVOPS_TEMP_DIR || join(homedir(), ".aidevops", ".agent-workspace", "tmp");
 }
 
+// GH#32834: also deny the pre-move /var/run root so any leftover snapshots stay unreadable.
+const MANAGED_STATE_ROOTS = [...new Set([DEFAULT_STATE_DIR, "/var/run/aidevops/source-access"])];
+
 function isManagedSnapshotPath(filePath) {
   if (!isAbsolute(filePath)) return false;
-  return ["snapshots", "bundles"].some((directory) => {
-    const snapshotRoot = join(DEFAULT_STATE_DIR, directory);
-    try {
-      return realpathSync(filePath).startsWith(`${realpathSync(snapshotRoot)}${sep}`);
-    } catch {
-      return resolve(filePath).startsWith(`${resolve(snapshotRoot)}${sep}`);
-    }
-  });
+  return MANAGED_STATE_ROOTS.flatMap((root) => ["snapshots", "bundles"].map((directory) => join(root, directory)))
+    .some((snapshotRoot) => {
+      try {
+        return realpathSync(filePath).startsWith(`${realpathSync(snapshotRoot)}${sep}`);
+      } catch {
+        return resolve(filePath).startsWith(`${resolve(snapshotRoot)}${sep}`);
+      }
+    });
 }
 
 function requireValidReceipt(condition) {
