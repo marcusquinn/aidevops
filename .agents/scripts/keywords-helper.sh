@@ -109,32 +109,11 @@ _kw_config_get() {
 	return 0
 }
 
-# Credential order: environment, credentials.sh, then gopass (`aidevops secret set`):
-# DATAFORSEO_API_LOGIN + DATAFORSEO_API_PASSWORD (the API password, not the
-# dashboard password), else legacy DATAFORSEO_USERNAME + DATAFORSEO_PASSWORD.
-# Pulse routines run this script directly, so gopass must be read here.
+# Pulse routines run this script directly; use the shared resolver.
 _kw_load_credentials() {
-	local credentials="$HOME/.config/aidevops/credentials.sh"
-	if [[ -z "${DATAFORSEO_USERNAME:-}" && -f "$credentials" ]]; then
-		# shellcheck source=/dev/null
-		source "$credentials" 2>/dev/null || true
-	fi
-	if [[ -z "${DATAFORSEO_USERNAME:-}" ]] && command -v gopass >/dev/null 2>&1; then
-		local api_login="" api_secret=""
-		api_login=$(gopass show -o "aidevops/DATAFORSEO_API_LOGIN" 2>/dev/null || true)
-		api_secret=$(gopass show -o "aidevops/DATAFORSEO_API_PASSWORD" 2>/dev/null || true)
-		if [[ -n "$api_login" && -n "$api_secret" ]]; then
-			DATAFORSEO_USERNAME="$api_login"
-			DATAFORSEO_PASSWORD="$api_secret"
-		fi
-	fi
-	if [[ -z "${DATAFORSEO_USERNAME:-}" ]] && command -v gopass >/dev/null 2>&1; then
-		DATAFORSEO_USERNAME=$(gopass show -o "aidevops/DATAFORSEO_USERNAME" 2>/dev/null || true)
-		DATAFORSEO_PASSWORD=$(gopass show -o "aidevops/DATAFORSEO_PASSWORD" 2>/dev/null || true)
-	fi
-	if [[ -n "${DATAFORSEO_USERNAME:-}" ]]; then
-		export DATAFORSEO_USERNAME DATAFORSEO_PASSWORD
-	fi
+	# shellcheck source=dataforseo-credentials.sh
+	source "$SCRIPT_DIR/dataforseo-credentials.sh"
+	dataforseo_load_credentials || true
 	return 0
 }
 

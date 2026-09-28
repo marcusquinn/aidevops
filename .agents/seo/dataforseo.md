@@ -43,14 +43,13 @@ tools:
 
 ## Credential sources
 
-Tools receive credentials as the environment variables `DATAFORSEO_USERNAME` (API login) and `DATAFORSEO_PASSWORD` (API password). Where each tool looks:
+Tools receive credentials as the environment variables `DATAFORSEO_USERNAME` (API login) and `DATAFORSEO_PASSWORD` (API password). The shared `scripts/dataforseo-credentials.sh` resolver supplies all listed consumers:
 
-| Consumer | Reads |
-|----------|-------|
-| `aidevops keywords` (`keywords-helper.sh`, incl. Pulse routines) | env → `credentials.sh` → gopass `DATAFORSEO_API_LOGIN`/`DATAFORSEO_API_PASSWORD` → legacy gopass `DATAFORSEO_USERNAME`/`DATAFORSEO_PASSWORD` |
-| DataForSEO MCP server, `seo-export-dataforseo.sh`, `keyword-research-helper-providers.sh` | env → `credentials.sh` only |
+| Consumers | Resolution order |
+|-----------|------------------|
+| `aidevops keywords` (incl. Pulse), DataForSEO MCP server, `seo-export-dataforseo.sh`, `keyword-research-helper-providers.sh` | env → `credentials.sh` → gopass `DATAFORSEO_API_LOGIN`/`DATAFORSEO_API_PASSWORD` → legacy gopass `DATAFORSEO_USERNAME`/`DATAFORSEO_PASSWORD` |
 
-For tools that do not read gopass yet, inject the secrets for one command instead of copying them into plaintext `credentials.sh`. Map the names inside the injected shell (single quotes keep expansion inside the subprocess; output is redacted):
+The resolver exports the pair for each consumer without displaying values. To inject credentials into an unrelated command without copying them to plaintext `credentials.sh`, map the names inside an injected shell:
 
 ```bash
 aidevops secret DATAFORSEO_API_LOGIN DATAFORSEO_API_PASSWORD -- bash -c \
@@ -129,7 +128,7 @@ export DATAFORSEO_SIMPLE_FILTER="false"
 
 ## MCP Server (Optional)
 
-For MCP-based access instead of curl, see repo `configs/dataforseo-config.json.txt` for runtime-specific configuration (Claude Desktop, Cursor, OpenCode). The generated OpenCode entry currently sources `credentials.sh`, so it has no credentials when they live only in gopass. Install: `npm install -g dataforseo-mcp-server` or `npx dataforseo-mcp-server`.
+For MCP-based access instead of curl, see repo `configs/dataforseo-config.json.txt` for runtime-specific configuration (Claude Desktop, Cursor, OpenCode). The generated OpenCode entry uses the shared resolver. Install: `npm install -g dataforseo-mcp-server` or `npx dataforseo-mcp-server`.
 
 - **GitHub**: <https://github.com/dataforseo/mcp-server-typescript>
 - **npm**: <https://www.npmjs.com/package/dataforseo-mcp-server>
