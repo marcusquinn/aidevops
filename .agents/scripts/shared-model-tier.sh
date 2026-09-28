@@ -287,6 +287,12 @@ model_tier_variant() {
 	local variant_result=""
 	local table=""
 	local previous_table=""
+	local minimum='medium'
+	local floor="$minimum"
+	if [[ -n "$routing_table" && -r "$routing_table" ]]; then
+		floor=$(jq -r --arg minimum "$minimum" '.settings.minimum_reasoning // $minimum' "$routing_table" 2>/dev/null) || floor="$minimum"
+	fi
+	case "$floor" in high | xhigh | max) ;; *) floor="$minimum" ;; esac
 	for table in "$routing_table" "$framework_table"; do
 		[[ -n "$table" && -r "$table" && "$table" != "$previous_table" ]] || continue
 		previous_table="$table"
@@ -306,6 +312,10 @@ model_tier_variant() {
 		' "$table" 2>/dev/null) || variant_result=""
 		if [[ "$variant_result" == "found"$'\t'* ]]; then
 			variant="${variant_result#*$'\t'}"
+			case "$variant" in
+			low | minimal | none) variant="$floor" ;;
+			medium) [[ "$floor" == "$minimum" ]] || variant="$floor" ;;
+			esac
 			[[ -z "$variant" ]] || printf '%s\n' "$variant"
 			return 0
 		fi
@@ -332,7 +342,7 @@ model_tier_next_variant() {
 		if jq -e --arg tier "$tier" --arg model "$model" \
 			'.tiers[$tier].reasoning_escalation | type == "object" and has($model)' "$table" >/dev/null 2>&1; then
 			jq -er --arg tier "$tier" --arg model "$model" --arg current "$current" '
-				["low", "medium", "high"] as $levels
+				["medium", "high", "xhigh", "max"] as $levels
 				| .tiers[$tier].reasoning_escalation[$model] as $ladder
 				| select(($ladder | type) == "array")
 				| [$ladder[] | . as $level | $levels | index($level)] as $ranks

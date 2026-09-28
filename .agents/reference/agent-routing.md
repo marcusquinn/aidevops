@@ -126,8 +126,8 @@ and no parent transcript or repo content is loaded automatically. Supply any
 essential decisions or additional domain evidence in the envelope; if a required
 section is absent, use the focused role rather than claiming the light role read it.
 
-The exact parent model is inherited. Focused reasoning is capped at medium (low for
-simple requests), light reasoning at low, and both are clamped to the observed
+The exact parent model is inherited. Focused and light reasoning are capped at
+medium, and both are clamped to the observed
 parent variant. Unknown parent model/variant, changed model, missing source, source
 drift or malformed envelope fails closed. These are reasoning ceilings, not claims
 of exact token/cost caps. No provider fallback or escalation can enlarge the bound.
