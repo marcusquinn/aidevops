@@ -20,6 +20,7 @@ PUBLICATION_AVAILABLE_LABEL="status:available"
 PUBLICATION_BLOCKED_LABEL="status:blocked"
 PUBLICATION_AUTO_LABEL="auto-dispatch"
 PUBLICATION_LIMIT="${AIDEVOPS_PUBLICATION_RECONCILE_LIMIT:-100}"
+PUBLICATION_STALE_HOURS="${AIDEVOPS_PUBLICATION_STALE_HOURS:-24}"
 
 _publication_usage() {
 	printf 'Usage: planning-publication-reconcile.sh {reconcile --repo owner/repo --sha SHA [--task tNNN] | sweep-closed --repo owner/repo}\n'
@@ -165,7 +166,7 @@ _publication_issue_has_labels() {
 _publication_validate_mapping() {
 	local task_id="$1" issue_num="$2"
 	local task_line="" brief_path="todo/tasks/${task_id}-brief.md"
-	task_line=$(_publication_task_line "$task_id") || return 1
+	task_line=$(_publication_task_line "$task_id") || return 3
 	[[ "$task_line" =~ (^|[[:space:]])ref:GH#${issue_num}($|[[:space:]]) ]] || return 1
 	[[ -f "$brief_path" && ! -L "$brief_path" ]] || return 1
 	printf '%s\n' "$task_line"
@@ -188,8 +189,13 @@ _publication_dispatch_ready() {
 
 _publication_reconcile_one() {
 	local repo="$1" task_id="$2" issue_num="$3"
-	local task_line="" desired_labels="" status_label="" projected_labels="" issue_json="" has_dependency=0
+	local task_line="" desired_labels="" status_label="" projected_labels="" issue_json="" has_dependency=0 mapping_rc=0
 	task_line=$(_publication_validate_mapping "$task_id" "$issue_num") || {
+		mapping_rc=$?
+		if [[ "$mapping_rc" -eq 3 ]]; then
+			print_warning "${task_id}/#${issue_num}: task absent from default-branch snapshot; publication deferred"
+			return 3
+		fi
 		print_warning "${task_id}/#${issue_num}: canonical task, ref, or brief validation failed; retaining ${PUBLICATION_PENDING_LABEL}"
 		return 1
 	}
@@ -268,6 +274,18 @@ _publication_reconcile_one() {
 	return 0
 }
 
+_publication_issue_age_hours() {
+	local created_at="$1" created_epoch="" now_epoch=""
+	[[ "$created_at" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || return 1
+	created_epoch=$(date -u -d "$created_at" +%s 2>/dev/null) || \
+		created_epoch=$(date -j -u -f '%Y-%m-%dT%H:%M:%SZ' "$created_at" +%s 2>/dev/null) || return 1
+	now_epoch=$(date -u +%s) || return 1
+	[[ "$created_epoch" =~ ^[0-9]+$ && "$now_epoch" =~ ^[0-9]+$ ]] || return 1
+	((created_epoch <= now_epoch)) || return 1
+	printf '%s\n' "$(((now_epoch - created_epoch) / 3600))"
+	return 0
+}
+
 cmd_reconcile() {
 	local repo="" expected_sha="" task_filter="" default_branch=""
 	while [[ $# -gt 0 ]]; do
@@ -280,6 +298,7 @@ cmd_reconcile() {
 	done
 	[[ "$repo" =~ ^[^/[:space:]]+/[^/[:space:]]+$ ]] || return 2
 	[[ -f TODO.md && ! -L TODO.md ]] || return 2
+	[[ "$PUBLICATION_LIMIT" =~ ^[1-9][0-9]*$ && "$PUBLICATION_STALE_HOURS" =~ ^[1-9][0-9]*$ ]] || return 2
 	# Each GitHub Actions run step has a fresh process. Establish the narrowly
 	# scoped runner context before wrappers resolve privacy/write-policy inventory.
 	issue_sync_prepare_ci_context || return 1
@@ -289,17 +308,37 @@ cmd_reconcile() {
 		return 1
 	}
 
-	local issues_json="" issue_num="" title="" task_id="" failed=0
+	local issues_json="" issue_num="" title="" task_id="" created_at="" age_hours="" rc=0
+	local reconciled=0 deferred=0 stale=0 failed=0
 	issues_json=$(gh issue list --repo "$repo" --state open --label "$PUBLICATION_PENDING_LABEL" \
-		--limit "$PUBLICATION_LIMIT" --json number,title) || return 1
-	while IFS=$'\t' read -r issue_num title; do
+		--limit "$PUBLICATION_LIMIT" --json number,title,createdAt) || return 1
+	while IFS=$'\t' read -r issue_num title created_at; do
 		[[ -n "$issue_num" ]] || continue
 		task_id=$(printf '%s\n' "$title" | grep -oE '^t[0-9]+(\.[0-9]+)*' || true)
 		[[ -n "$task_id" ]] || { failed=$((failed + 1)); continue; }
 		[[ -z "$task_filter" || "$task_id" == "$task_filter" ]] || continue
-		_publication_reconcile_one "$repo" "$task_id" "$issue_num" || failed=$((failed + 1))
-	done < <(jq -r '.[] | [.number, .title] | @tsv' <<<"$issues_json")
-	[[ "$failed" -eq 0 ]]
+		rc=0
+		_publication_reconcile_one "$repo" "$task_id" "$issue_num" || rc=$?
+		case "$rc" in
+		0) reconciled=$((reconciled + 1)) ;;
+		3)
+			age_hours=$(_publication_issue_age_hours "$created_at") || age_hours=""
+			if [[ -n "$age_hours" && "$age_hours" -lt "$PUBLICATION_STALE_HOURS" ]]; then
+				deferred=$((deferred + 1))
+			else
+				stale=$((stale + 1))
+				if [[ "${GITHUB_ACTIONS:-}" == true ]]; then
+					printf '::warning::%s/#%s: absent task is stale or createdAt is invalid; retaining %s\n' "$task_id" "$issue_num" "$PUBLICATION_PENDING_LABEL"
+				else
+					print_warning "${task_id}/#${issue_num}: absent task is stale or createdAt is invalid; retaining ${PUBLICATION_PENDING_LABEL}"
+				fi
+			fi
+			;;
+		*) failed=$((failed + 1)) ;;
+		esac
+	done < <(jq -r '.[] | [.number, .title, (.createdAt // "")] | @tsv' <<<"$issues_json")
+	printf 'PUBLICATION_RECONCILE_SUMMARY reconciled=%s deferred=%s stale=%s failed=%s\n' "$reconciled" "$deferred" "$stale" "$failed"
+	[[ $((stale + failed)) -eq 0 ]]
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
