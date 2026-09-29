@@ -26,27 +26,7 @@ const INHERITED_FIELDS = [
  * capabilities the new model shares; `def` holds verified launch facts.
  * Remove an entry once every supported OpenCode catalog includes it.
  */
-export const PENDING_ANTHROPIC_MODELS = {
-  "claude-sonnet-5-5": {
-    base: "claude-sonnet-5",
-    def: {
-      name: "Claude Sonnet 5.5",
-      release_date: "2026-09-28",
-      // Anthropic launch post: same rates as Sonnet 5.
-      cost: { input: 2, output: 10, cache_read: 0.2, cache_write: 2.5 },
-    },
-    // Used only when the host catalog also lacks the base model.
-    fallback: {
-      family: "claude-sonnet",
-      attachment: true,
-      reasoning: true,
-      tool_call: true,
-      temperature: false,
-      modalities: { input: ["text", "image", "pdf"], output: ["text"] },
-      limit: { context: 1000000, output: 128000 },
-    },
-  },
-};
+export const PENDING_ANTHROPIC_MODELS = {};
 
 /**
  * Read OpenCode's cached models.dev catalog.
