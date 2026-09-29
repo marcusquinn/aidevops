@@ -10,6 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.37.30] - 2026-09-29
+
+### Changed
+
+- docs(dispatch): correct fail-closed claim, cap, tier-routing and supervisor drift
+- Maintenance: mark t18542 complete (pr:#32987 completed:2026-09-29) (#32980)
+- fix(worker): recognise completed consolidation children instead of worker_noop
+- fix(pulse): break consolidation/Dependabot-target dispatch deadlock and log silent brief-scope blocks
+- Maintenance: mark t18539 complete (pr:#32970 completed:2026-09-29) (#32976)
+
+### Fixed
+
+- accept validated descendant runtime after post-publication deploy (#32985)
+- guide todo fallback and tool search (#32981)
+- defer recovery until publish propagation grace expires (#32974)
+
 ## [3.37.29] - 2026-09-29
 
 ### Added
