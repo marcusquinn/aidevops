@@ -591,6 +591,16 @@ _normalize_clear_stale_feedback_rows() {
 	return 0
 }
 
+# Standalone reconcile tests do not source the Pulse watchdog. In production
+# that module supplies the structured timing writer before this module runs.
+_normalize_log_timing() {
+	local stage="$1" start="$2" status="$3"
+	if declare -F _log_substage_timing >/dev/null 2>&1; then
+		_log_substage_timing "$stage" "$start" "$status"
+	fi
+	return 0
+}
+
 _normalize_reassign_self() {
 	local runner_user="$1"
 	local repos_json="$2"
@@ -602,16 +612,20 @@ _normalize_reassign_self() {
 
 	while IFS= read -r slug; do
 		[[ -n "$slug" ]] || continue
+		local _repo_start=$SECONDS _repo_gh_calls=0
+		local _repo_timing="substage:normalize/reassign_self/repo:${slug//\//-}:direct_gh_calls="
 
 		local issue_rows issue_rows_json issue_rows_err
 		issue_rows_err=$(mktemp)
 		# t2773: route through gh_issue_list wrapper (REST fallback on rate-limit exhaustion)
+		_repo_gh_calls=$((_repo_gh_calls + 1))
 		issue_rows_json=$(gh_issue_list --repo "$slug" --state open --json number,assignees,labels --limit "$PULSE_QUEUED_SCAN_LIMIT" 2>"$issue_rows_err") || issue_rows_json=""
 		if [[ -z "$issue_rows_json" || "$issue_rows_json" == "null" ]]; then
 			local _issue_rows_err_msg
 			_issue_rows_err_msg=$(cat "$issue_rows_err" 2>/dev/null || echo "unknown error")
 			echo "[pulse-wrapper] normalize_active_issue_assignments: gh_issue_list FAILED for ${slug}: ${_issue_rows_err_msg}" >>"$LOGFILE"
 			rm -f "$issue_rows_err"
+			_normalize_log_timing "${_repo_timing}${_repo_gh_calls}" "$_repo_start" 1
 			continue
 		fi
 		rm -f "$issue_rows_err"
@@ -644,7 +658,10 @@ _normalize_reassign_self() {
 		# claim path transitions them back to status:queued/status:in-progress.
 		local all_rows=""
 		all_rows=$(printf '%s\n' "$issue_rows" | grep -E '^[0-9]+$' | sort -u -n) || all_rows=""
-		[[ -n "$all_rows" ]] || continue
+		if [[ -z "$all_rows" ]]; then
+			_normalize_log_timing "${_repo_timing}${_repo_gh_calls}" "$_repo_start" 0
+			continue
+		fi
 
 		while IFS= read -r issue_number; do
 			[[ "$issue_number" =~ ^[0-9]+$ ]] || continue
@@ -660,10 +677,12 @@ _normalize_reassign_self() {
 				fi
 			fi
 
+			_repo_gh_calls=$((_repo_gh_calls + 1))
 			if gh issue edit "$issue_number" --repo "$slug" --add-assignee "$runner_user" >/dev/null 2>&1; then
 				total_assigned=$((total_assigned + 1))
 			fi
 		done <<<"$all_rows"
+		_normalize_log_timing "${_repo_timing}${_repo_gh_calls}" "$_repo_start" 0
 	done < <(jq -r '.initialized_repos[] | select(.maintenance != false and .pulse == true and (.local_only // false) == false and .slug != "") | .slug // ""' "$repos_json" || true)
 
 	if [[ "$total_checked" -gt 0 ]]; then
@@ -860,11 +879,13 @@ _normalize_unassign_stampless_interactive() {
 #######################################
 normalize_active_issue_assignments() {
 	local repos_json="$REPOS_JSON"
+	local _phase_start=$SECONDS
 
 	# Pass 0 (GH#28211): scan the authoritative local stamp index directly.
 	# Run before repos.json and GitHub-user gates so recovery does not depend on
 	# repository registration, origin labels, assignees, or issue-list results.
 	_normalize_reap_dead_stamps
+	_normalize_log_timing "substage:normalize/reap_dead_stamps" "$_phase_start" 0
 
 	[[ -f "$repos_json" ]] || return 0
 
@@ -882,10 +903,14 @@ normalize_active_issue_assignments() {
 	local cross_runner_max_runtime="${WORKER_MAX_RUNTIME:-10800}"
 
 	# Pass 1: assign runner to orphaned active issues (active label, no assignee)
+	_phase_start=$SECONDS
 	_normalize_reassign_self "$runner_user" "$repos_json" "$dedup_helper"
+	_normalize_log_timing "substage:normalize/reassign_self" "$_phase_start" 0
 
 	# Pass 2: reset stale assignments (active label, assignee present, no running worker)
+	_phase_start=$SECONDS
 	_normalize_unassign_stale "$runner_user" "$repos_json" "$now_epoch" "$cross_runner_max_runtime"
+	_normalize_log_timing "substage:normalize/unassign_stale" "$_phase_start" 0
 
 	# Pass 2b (t2148): recover aged stampless origin:interactive claims.
 	# Closes the leak where `claim-task-id.sh` auto-assigns on creation
@@ -900,13 +925,17 @@ normalize_active_issue_assignments() {
 	# Override via STAMPLESS_INTERACTIVE_AGE_THRESHOLD
 	# (set to 86400 to restore the original 24h behaviour from t2148).
 	local stampless_age_threshold="${STAMPLESS_INTERACTIVE_AGE_THRESHOLD:-3600}"
+	_phase_start=$SECONDS
 	_normalize_unassign_stampless_interactive "$runner_user" "$repos_json" "$now_epoch" "$stampless_age_threshold"
+	_normalize_log_timing "substage:normalize/unassign_stampless_interactive" "$_phase_start" 0
 
 	# Pass 3 (t2040): enforce label invariants (at most one status:*, at most one tier:*).
 	# Runs unconditionally on every cycle — the cost is bounded by
 	# PULSE_QUEUED_SCAN_LIMIT per repo, and a clean backlog is a no-op
 	# beyond the single gh issue list call.
+	_phase_start=$SECONDS
 	_normalize_label_invariants "$runner_user" "$repos_json"
+	_normalize_log_timing "substage:normalize/label_invariants" "$_phase_start" 0
 
 	return 0
 }
