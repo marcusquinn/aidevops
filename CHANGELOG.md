@@ -10,6 +10,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.37.25] - 2026-09-29
+
+### Changed
+
+- Maintenance: mark t18508 complete (pr:#32902 completed:2026-09-28) (#32912)
+- Maintenance: build credential-shaped fixtures at runtime (GH#32841) (#32918)
+- Refactor: split release reconciliation regression tests (#32910)
+
+### Fixed
+
+- stop infra hold self-counting; add reset boundary
+- restore only verified OpenCode runtime lockfile drift before rebase (#32926)
+- support trusted PR-less data-only completion (#32920)
+- source primary cooldown under zsh (#32921)
+- return host-compatible objective receipt text (#32917)
+- bind canonical cleanup fetch to canonical repository (#32914)
+
 ## [3.37.24] - 2026-09-28
 
 ### Changed
