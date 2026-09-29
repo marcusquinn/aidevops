@@ -556,7 +556,7 @@ fi
 # Conservative direct REST GET fast path. Accept only one endpoint and the
 # output-only jq selector used by high-frequency reads. Every other shape keeps
 # the full policy path, including implicit POST from fields or input files.
-if [[ "${1:-}" == api && "${2:-}" != graphql && "${2:-}" != -* && "${2:-}" != "" ]]; then
+if [[ "${1:-}" == api && "${2:-}" != graphql && "${2:-}" != graphql/* && "${2:-}" != -* && "${2:-}" != "" ]]; then
 	_SHIM_PLAIN_READ=0
 	case "$#" in
 	2) _SHIM_PLAIN_READ=1 ;;
