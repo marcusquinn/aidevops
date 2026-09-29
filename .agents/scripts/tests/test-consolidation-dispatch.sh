@@ -711,6 +711,31 @@ test_cost_circuit_breaker_comments_are_filtered() {
 	return 0
 }
 
+# New automated comment kinds need no per-shape regex. Exercise the production
+# 500-character gate and both classification and child composition paths.
+test_structural_ops_marker_filters_unknown_comment_kind() {
+	setup_gh_stub
+	export ISSUE_CONSOLIDATION_COMMENT_MIN_CHARS=500
+	local comments_json substantive_json section
+	comments_json=$(jq -n --arg pad "$(printf '%0600d' 0)" '[range(2) | {user:{login:"maintainer",type:"User"},created_at:"2026-09-29T00:00:00Z",body:("Unrecognized lifecycle note " + $pad + "\n<!-- aidevops:ops kind=future-workflow -->")}]')
+	GH_API_COMMENTS_JSON="$comments_json"
+	export GH_API_COMMENTS_JSON
+	if _issue_needs_consolidation 32924 "marcusquinn/aidevops"; then
+		print_result "structural ops marker blocks consolidation classification" 1
+	else
+		print_result "structural ops marker blocks consolidation classification" 0
+	fi
+	substantive_json=$(_consolidation_substantive_comments 32924 "marcusquinn/aidevops")
+	section=$(_format_consolidation_comments_section "$substantive_json")
+	if [[ "$substantive_json" == "[]" && "$section" != *"Unrecognized lifecycle note"* ]]; then
+		print_result "structural ops marker excludes child composition" 0
+	else
+		print_result "structural ops marker excludes child composition" 1
+	fi
+	teardown_gh_stub
+	return 0
+}
+
 test_brief_hold_and_repair_comments_are_filtered() {
 	setup_gh_stub
 	GH_ISSUE_VIEW_LABELS="bug,tier:standard"
@@ -1536,6 +1561,7 @@ main() {
 	test_worker_superseded_comments_are_filtered
 	test_stale_recovery_tick_comments_are_filtered
 	test_cost_circuit_breaker_comments_are_filtered
+	test_structural_ops_marker_filters_unknown_comment_kind
 	test_brief_hold_and_repair_comments_are_filtered
 	test_operational_review_comments_are_filtered
 	test_review_feedback_markers_are_filtered

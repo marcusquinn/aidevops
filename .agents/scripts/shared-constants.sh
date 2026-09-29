@@ -1341,6 +1341,15 @@ _source_shared_module_with_retry "${_SC_SELF%/*}/managed-label-provisioning-lib.
 # shellcheck disable=SC1091  # sub-library resolved at runtime via _SC_SELF
 _source_shared_module_with_retry "${_SC_SELF%/*}/shared-gh-wrappers.sh"
 
+# Machine-readable provenance for automated issue comments. Kind is an
+# identifier, never free-form issue content; callers prepend this to the body.
+aidevops_ops_marker() {
+	local kind="$1"
+	[[ "$kind" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || return 1
+	printf '<!-- aidevops:ops kind=%s -->\n' "$kind"
+	return 0
+}
+
 # A brief hold belongs to the exact body that produced it, not merely to a
 # status label. Only collaborator-authored comments can assert the marker.
 # Returns 0 for a matching hold, 1 for no matching hold, 2 for bad evidence.

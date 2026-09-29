@@ -948,6 +948,7 @@ _consolidation_filter_substantive_comments() {
 		[$comments[] | select(
 			(significant_body | length) >= $min
 			and (.user.type != "Bot")
+			and ((.body // "") | contains("<!-- aidevops:ops") | not)
 			and ((.body // "") | test($patterns) | not)
 		) | {login: .user.login, created_at: .created_at, body: .body}]
 	' 2>/dev/null || printf '[]'

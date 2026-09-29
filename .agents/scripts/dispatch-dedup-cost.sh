@@ -238,7 +238,7 @@ _apply_cost_breaker_side_effects() {
 
 	if [[ "$already_commented" != "true" ]]; then
 		gh_issue_comment "$issue_number" --repo "$repo_slug" \
-			--body "<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
+			--body "$(aidevops_ops_marker cost-circuit-breaker)"$'\n'"<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
 <!-- cost-circuit-breaker:fired tier=${tier} spent=${spent} budget=${budget} -->
 🛑 **Cost circuit breaker fired** (t2007)
 
