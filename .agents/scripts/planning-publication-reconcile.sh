@@ -168,8 +168,22 @@ _publication_validate_mapping() {
 	task_line=$(_publication_task_line "$task_id") || return 1
 	[[ "$task_line" =~ (^|[[:space:]])ref:GH#${issue_num}($|[[:space:]]) ]] || return 1
 	[[ -f "$brief_path" && ! -L "$brief_path" ]] || return 1
-	"${SCRIPT_DIR}/verify-brief-helper.sh" check-readiness "$brief_path" >/dev/null 2>&1 || return 1
 	printf '%s\n' "$task_line"
+}
+
+_publication_brief_ready() {
+	local brief_path="$1"
+	"${SCRIPT_DIR}/verify-brief-helper.sh" check-readiness "$brief_path" >/dev/null 2>&1 || return 1
+	return 0
+}
+
+# GH#32904: worker readiness gates dispatch, not publication. Held and untagged
+# tasks publish with a lightweight brief; only auto-dispatch projection needs it.
+_publication_dispatch_ready() {
+	local task_id="$1" desired_labels="$2"
+	[[ ",${desired_labels}," == *",${PUBLICATION_AUTO_LABEL},"* ]] || return 0
+	_publication_brief_ready "todo/tasks/${task_id}-brief.md" || return 1
+	return 0
 }
 
 _publication_reconcile_one() {
@@ -180,6 +194,10 @@ _publication_reconcile_one() {
 		return 1
 	}
 	desired_labels=$(_publication_desired_labels "$task_line") || return 1
+	_publication_dispatch_ready "$task_id" "$desired_labels" || {
+		print_warning "${task_id}/#${issue_num}: auto-dispatch brief is not worker-ready; retaining ${PUBLICATION_PENDING_LABEL}"
+		return 1
+	}
 	_publication_task_has_dependency "$task_line" && has_dependency=1
 	issue_json=$(gh issue view "$issue_num" --repo "$repo" --json number,title,state,labels) || return 1
 	jq -e --arg task_prefix "${task_id}:" \

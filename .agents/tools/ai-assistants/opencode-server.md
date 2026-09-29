@@ -63,7 +63,7 @@ import { createOpencode, createOpencodeClient } from "@opencode-ai/sdk"
 // Option A: Start server + client together
 const { client, server } = await createOpencode({
   port: 4096, hostname: "127.0.0.1",
-  config: { model: "anthropic/claude-sonnet-4-6" },
+  config: { model: "anthropic/claude-sonnet-5-5" },
 })
 // Option B: Connect to existing server
 const client = createOpencodeClient({ baseUrl: "http://localhost:4096" })
@@ -77,7 +77,7 @@ await client.session.delete({ path: { id: session.data.id } })
 const result = await client.session.prompt({
   path: { id: session.data.id },
   body: {
-    model: { providerID: "anthropic", modelID: "claude-sonnet-4-6" },
+    model: { providerID: "anthropic", modelID: "claude-sonnet-5-5" },
     parts: [{ type: "text", text: "Explain this codebase structure" }],
   },
 })
@@ -119,7 +119,7 @@ curl -X POST http://localhost:4096/session \
 # Send prompt (sync)
 curl -X POST http://localhost:4096/session/{session_id}/message \
   -H "Content-Type: application/json" \
-  -d '{"model":{"providerID":"anthropic","modelID":"claude-sonnet-4-6"},"parts":[{"type":"text","text":"Hello!"}]}'
+  -d '{"model":{"providerID":"anthropic","modelID":"claude-sonnet-5-5"},"parts":[{"type":"text","text":"Hello!"}]}'
 
 # Send prompt (async — returns 204 immediately)
 curl -X POST http://localhost:4096/session/{session_id}/prompt_async \

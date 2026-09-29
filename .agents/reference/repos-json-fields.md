@@ -38,7 +38,7 @@ always preserved.
 - `standard`: adds DESIGN.md, MODELS.md, collaborator pointers, README.md
 - `public`: adds LICENCE, CHANGELOG.md, CONTRIBUTING.md, SECURITY.md, CODE_OF_CONDUCT.md
 
-Auto-inferred when absent: `local_only`/no-remote → `minimal`; others → `standard`. Stored in `.aidevops.json` per project. Preserved on re-registration.
+Auto-inferred when absent: `local_only`/no-remote → `minimal`; a GitHub remote reporting `PUBLIC` via `gh repo view` → `public`; private or unknown visibility → `standard`. An explicit scope on the canonical main-worktree entry in `repos.json` also applies in linked worktrees. Stored in `.aidevops.json` per project. Preserved on re-registration.
 
 Repository-native verification policy lives in `.aidevops.json.features.code_quality`
 and `.aidevops.json.verify`. `aidevops lint audit` reports registration/config
@@ -48,6 +48,18 @@ configuration on canonical `main`/`master`; tracked changes require a linked-wor
 ### `has_interface` detail
 
 `aidevops init` records this field in `.aidevops.json` and mirrors it into `repos.json` during registration. When absent, design helpers infer it from UI markers such as Next/Vite/Nuxt/Astro/Svelte config, React/Vue/Svelte entry files, view templates, frontend/client/web directories, or UI dependencies. Minimal-scope repos with `has_interface: true` still receive a root `DESIGN.md`; standard/public scopes continue to seed it by default.
+
+### `keywords` object
+
+Search-targets standard (`seo/keywords-standard.md`). `aidevops init` scaffolds `context/keywords.md` for standard/public scopes; minimal scope only when `.aidevops.json` sets `"keywords": {"enabled": true}`.
+
+| Key | Where | Description |
+|-----|-------|-------------|
+| `data` | `.aidevops.json` or `repos.json` | `tracked` (commit registry) or `ignored` (gitignore it; share via the private hub). Absent → public scope or public GitHub repo resolves to `ignored`, otherwise `tracked`. |
+| `enabled` | `.aidevops.json` | `true` opts a minimal-scope repo into scaffolding. |
+| `budget_usd_month` | `repos.json` | Per-repo paid-provider cap; overrides config `keywords.monthly_budget_usd` (default 1). An explicit front matter `budget_usd_month` in `context/keywords.md` (shared team cap) wins over both. |
+
+The hub slug is global local config (`keywords.hub_slug`), never a repo field, so private hub names stay out of repositories.
 
 ### `agent_source` detail
 

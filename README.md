@@ -25,7 +25,7 @@ token efficiency, and quality control built in.**
 [![Maintainability](https://qlty.sh/gh/marcusquinn/projects/aidevops/maintainability.svg)](https://qlty.sh/gh/marcusquinn/projects/aidevops)
 [![Codacy Badge](https://app.codacy.com/project/badge/Grade/2b1adbd66c454dae92234341e801b984)](https://app.codacy.com/gh/marcusquinn/aidevops/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/Version-3.37.13-blue.svg)](https://github.com/marcusquinn/aidevops/releases)
+[![Version](https://img.shields.io/badge/Version-3.37.27-blue.svg)](https://github.com/marcusquinn/aidevops/releases)
 [![npm version](https://img.shields.io/npm/v/aidevops)](https://www.npmjs.com/package/aidevops)
 [![Homebrew](https://img.shields.io/badge/homebrew-marcusquinn%2Ftap-orange)](https://github.com/marcusquinn/homebrew-tap)
 
@@ -475,6 +475,9 @@ Depending on selected features and existing files, initialization can add:
 - `.agents/AGENTS.md` for project-specific AI guidance.
 - `TODO.md` and `todo/` for tasks, plans, PRDs, and verification state.
 - `DESIGN.md` for repositories with a detected interface.
+- `context/keywords.md` search targets (keywords, AI-answer questions, entities)
+  for standard-scope repositories; public repositories keep the data in a
+  private team hub ([standard](.agents/seo/keywords-standard.md)).
 - Deployment and WordPress context manifests when explicitly selected.
 - Standard project courtesy files only when they do not already exist.
 

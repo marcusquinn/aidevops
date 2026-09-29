@@ -35,7 +35,7 @@ Present results as a structured comparison table:
 ## Examples
 
 ```bash
-/compare-models-free claude-sonnet-4-6 gpt-4o   # compare specific models
+/compare-models-free claude-sonnet-5-5 gpt-4o   # compare specific models
 /compare-models-free --task "summarization"      # task recommendation
 /compare-models-free --pricing                   # all pricing
 /compare-models-free --capabilities              # capabilities matrix

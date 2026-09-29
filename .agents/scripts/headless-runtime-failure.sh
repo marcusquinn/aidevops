@@ -576,6 +576,24 @@ _hrff_apply_terminal_permission_hold() {
 	return 0
 }
 
+# t18514/GH#32754: hand a newly opened circuit to this runner's pulse
+# supervisor, which owns AI brief/environment recovery. Best-effort: the queue
+# grants nothing and a missed enqueue is backfilled by the helper's seed pass.
+_hrff_enqueue_blocker_recovery() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local helper="${SCRIPT_DIR:-${BASH_SOURCE[0]%/*}}/terminal-blocker-recovery-helper.sh"
+	local reason=""
+	[[ -f "$helper" ]] || return 0
+	if declare -F _terminal_blocker_reason >/dev/null 2>&1; then
+		reason=$(_terminal_blocker_reason "${AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT:-}") || reason=""
+	fi
+	# The helper normalises an empty or unrecognised reason to its unknown class.
+	bash "$helper" enqueue "$repo_slug" "$issue_number" "$reason" >/dev/null 2>&1 ||
+		print_warning "Blocker recovery enqueue failed for #${issue_number} (seed pass will backfill)"
+	return 0
+}
+
 _hrff_handle_terminal_blocker_release() {
 	local issue_number="$1"
 	local repo_slug="$2"
@@ -590,6 +608,7 @@ _hrff_handle_terminal_blocker_release() {
 			return 11
 		fi
 		print_info "Opened unchanged terminal-blocker circuit on #${issue_number}"
+		_hrff_enqueue_blocker_recovery "$issue_number" "$repo_slug"
 		_hrff_release_rate_limit_circuit_cleanup "$issue_number" "$repo_slug"
 		return 10
 		;;

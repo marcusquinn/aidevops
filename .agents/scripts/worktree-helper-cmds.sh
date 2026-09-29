@@ -720,6 +720,10 @@ COMMANDS
                  --confirm <manifest-token>
                          Apply only exact candidates from a supported plan after
                          locked revalidation, staging, and receipt publication.
+  recovery unreadable-processes
+                         Read-only: list same-user processes whose CWD cannot be
+                         read (PID and name) to explain
+                         process-evidence-unavailable. Requires /proc.
 
   registry [list|prune]  View or prune the ownership registry (t189, t197)
                          list: Show all registered worktrees with ownership info
@@ -906,6 +910,12 @@ cmd_recovery() {
 	apply)
 		shift
 		_cmd_recovery_apply "$@" || return 1
+		;;
+	unreadable-processes)
+		[[ "$#" -eq 1 ]] || return 1
+		declare -F worktree_recovery_unreadable_processes >/dev/null 2>&1 || return 1
+		worktree_recovery_unreadable_processes
+		return $?
 		;;
 	*) return 1 ;;
 	esac

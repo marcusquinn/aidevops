@@ -38,6 +38,10 @@ gh() {
 	if [[ "$command_name" == "api" ]]; then
 		printf '%s\n' "$command_name $*" >>"${TMP}/gh-api-calls.log"
 	fi
+	if [[ "$command_name" == "api" && "$*" == *"--slurp"* && -n "${GH_RAW_COMMENTS:-}" ]]; then
+		printf '%s\n' "$GH_RAW_COMMENTS"
+		return 0
+	fi
 	if [[ "$command_name" == "api" && "$*" == *"--slurp"* ]]; then
 		# The real API returns comment pages, not precomputed TSV metrics.
 		local comments=0 ops=0 zero=0 chars=0
@@ -270,6 +274,55 @@ else
 	fail "preserved dirty work does not trigger brief-rewrite zero-output count" \
 		"count=${preserved_dirty_count}"
 fi
+
+# GH#32928: hold notices mention "zero-output" and must not count as evidence.
+hold_notice='<!-- dispatch-infrastructure-failure -->\n## Dispatch infrastructure failure detected\n\nThis issue has accumulated 12 zero-output or zero-attempt worker failures.'
+self_count_json=$(jq -nc --arg notice "$hold_notice" '[[
+	{id:1, created_at:"2026-09-28T21:00:00Z", body:$notice, author_association:"MEMBER", user:{login:"runner"}},
+	{id:2, created_at:"2026-09-28T22:00:00Z", body:$notice, author_association:"MEMBER", user:{login:"runner"}}
+]]')
+self_count_metrics=$(_dlw_comment_bloat_metrics_from_json "$self_count_json" 1790640000 120 \
+	"$_DLW_ZERO_OUTPUT_EVIDENCE_PATTERN" "$_DLW_ZERO_ATTEMPT_EVIDENCE_PATTERN")
+IFS=$'\t' read -r _sc_comments _sc_ops self_count_zero _sc_chars self_count_attempt <<<"$self_count_metrics"
+GH_RAW_COMMENTS="$self_count_json"
+self_comment_count=$(_dlw_zero_output_comment_count 123 owner/repo)
+if [[ "$self_count_zero" == "0" && "$self_count_attempt" == "0" && "$self_comment_count" == "0" ]]; then
+	pass "infrastructure hold notices do not count as zero-output evidence"
+else
+	fail "infrastructure hold notices do not count as zero-output evidence" \
+		"metrics=${self_count_metrics}; comment_count=${self_comment_count}"
+fi
+
+# GH#32928: evidence before the latest authoritative reset is ignored.
+reset_json=$(jq -nc '[[
+	{id:1, created_at:"2026-09-28T20:00:00Z", body:"CLAIM_RELEASED reason=worker_noop_zero_output", author_association:"MEMBER", user:{login:"runner"}},
+	{id:2, created_at:"2026-09-28T20:10:00Z", body:"CLAIM_RELEASED reason=worker_noop_zero_output", author_association:"MEMBER", user:{login:"runner"}},
+	{id:3, created_at:"2026-09-28T23:30:00Z", body:"Fixed upstream. <!-- dispatch-infrastructure-reset -->", author_association:"OWNER", user:{login:"maintainer"}},
+	{id:4, created_at:"2026-09-28T23:40:00Z", body:"CLAIM_RELEASED reason=worker_noop_zero_output", author_association:"MEMBER", user:{login:"runner"}}
+]]')
+reset_metrics=$(_dlw_comment_bloat_metrics_from_json "$reset_json" 1790640000 120 \
+	"$_DLW_ZERO_OUTPUT_EVIDENCE_PATTERN" "$_DLW_ZERO_ATTEMPT_EVIDENCE_PATTERN")
+IFS=$'\t' read -r _rs_comments _rs_ops reset_zero _rs_chars _rs_attempt <<<"$reset_metrics"
+GH_RAW_COMMENTS="$reset_json"
+reset_comment_count=$(_dlw_zero_output_comment_count 123 owner/repo)
+if [[ "$reset_zero" == "1" && "$reset_comment_count" == "1" ]]; then
+	pass "authoritative reset marker clears earlier zero-output evidence"
+else
+	fail "authoritative reset marker clears earlier zero-output evidence" \
+		"metrics=${reset_metrics}; comment_count=${reset_comment_count}"
+fi
+
+# A reset marker from a non-authoritative commenter must not clear evidence.
+untrusted_reset_json=$(printf '%s' "$reset_json" | jq -c '.[0][2].author_association = "NONE" | .')
+untrusted_metrics=$(_dlw_comment_bloat_metrics_from_json "$untrusted_reset_json" 1790640000 120 \
+	"$_DLW_ZERO_OUTPUT_EVIDENCE_PATTERN" "$_DLW_ZERO_ATTEMPT_EVIDENCE_PATTERN")
+IFS=$'\t' read -r _ur_comments _ur_ops untrusted_zero _ur_chars _ur_attempt <<<"$untrusted_metrics"
+if [[ "$untrusted_zero" == "3" ]]; then
+	pass "non-authoritative reset marker is ignored"
+else
+	fail "non-authoritative reset marker is ignored" "metrics=${untrusted_metrics}"
+fi
+GH_RAW_COMMENTS=""
 
 printf '\n'
 if [[ "$TESTS_FAILED" -eq 0 ]]; then

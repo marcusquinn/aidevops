@@ -1112,6 +1112,26 @@ ensure_solved_labels_exist() {
 	return 0
 }
 
+# Provision the opt-in session reminder label only when issue creation requests it.
+_CONTINUATION_REMINDER_LABEL_ENSURED=""
+ensure_continuation_reminder_label_exists() {
+	local repo="$1"
+	[[ -n "$repo" ]] || return 1
+	case ",${_CONTINUATION_REMINDER_LABEL_ENSURED:-}," in
+	*",$repo,"*) return 0 ;;
+	esac
+	local labels_snapshot=""
+	labels_snapshot=$(_gh_managed_label_names_snapshot "$repo") || return 1
+	if ! _gh_managed_label_snapshot_has "$labels_snapshot" "continuation-reminder"; then
+		AIDEVOPS_GH_ROUTE_DECISION="$_GH_MANAGED_LABEL_CREATE_ROUTE" \
+			_gh_with_timeout write gh label create "continuation-reminder" --repo "$repo" \
+			--description "Self-assigned reminder to resume a closed session once blockers land" \
+			--color "C5DEF5" || return 1
+	fi
+	_CONTINUATION_REMINDER_LABEL_ENSURED="${_CONTINUATION_REMINDER_LABEL_ENSURED:+$_CONTINUATION_REMINDER_LABEL_ENSURED,}$repo"
+	return 0
+}
+
 #######################################
 # Resolve completion attribution from a merged PR's origin labels.
 # Unknown or contradictory provenance is deliberately not guessed.

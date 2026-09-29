@@ -842,16 +842,19 @@ setup_seo_mcps() {
 	# Subagents: serper.md, dataforseo.md, ahrefs.md, google-search-console.md
 	print_info "SEO uses curl-based subagents (zero context cost until invoked)"
 
-	# Check if credentials are configured
+	# Resolve DataForSEO independently of the other providers' config file.
+	# shellcheck source=../../dataforseo-credentials.sh
+	source "${INSTALL_DIR}/.agents/scripts/dataforseo-credentials.sh"
+	if dataforseo_load_credentials; then
+		print_success "DataForSEO credentials configured"
+	else
+		print_info "DataForSEO: aidevops secret set DATAFORSEO_API_LOGIN and DATAFORSEO_API_PASSWORD"
+	fi
+
+	# Check other SEO providers' credentials.
 	if [[ -f "$HOME/.config/aidevops/credentials.sh" ]]; then
 		# shellcheck source=/dev/null
 		source "$HOME/.config/aidevops/credentials.sh"
-
-		if [[ -n "${DATAFORSEO_USERNAME:-}" ]]; then
-			print_success "DataForSEO credentials configured"
-		else
-			print_info "DataForSEO: set DATAFORSEO_USERNAME and DATAFORSEO_PASSWORD in credentials.sh"
-		fi
 
 		if [[ -n "${SERPER_API_KEY:-}" ]]; then
 			print_success "Serper API key configured"

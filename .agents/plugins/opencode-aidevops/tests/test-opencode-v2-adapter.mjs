@@ -109,8 +109,9 @@ for (const budgetEnabled of [false, true]) test(`V2 setup registers SDK lifecycl
   const settingsDir = mkdtempSync(join(tmpdir(), "aidevops-v2-adapter-"));
   process.env.AIDEVOPS_SETTINGS_FILE = join(settingsDir, "settings.json");
   try {
-    if (budgetEnabled) {
-      writeFileSync(process.env.AIDEVOPS_SETTINGS_FILE, JSON.stringify({ runtime: { opencode: { v2_compaction_target: 240000 } } }));
+    // GH#32807: the budget is on by default; the disabled case is an explicit opt-out.
+    if (!budgetEnabled) {
+      writeFileSync(process.env.AIDEVOPS_SETTINGS_FILE, JSON.stringify({ runtime: { opencode: { v2_compaction_target: false } } }));
     }
   const registered = [];
   const disposed = [];

@@ -50,6 +50,19 @@ function setupRepo({ managed = true } = {}) {
   return { root, repo, linked };
 }
 
+// GH#32849 exempts unregistered temp marker repositories from the canonical
+// Git guard, so fixtures asserting a canonical block must be registered.
+function registerRepo(root, repo) {
+  const reposFile = join(root, "repos.json");
+  writeFileSync(reposFile, `${JSON.stringify({ initialized_repos: [{ path: repo }] })}\n`);
+  const previous = process.env.AIDEVOPS_REPOS_FILE;
+  process.env.AIDEVOPS_REPOS_FILE = reposFile;
+  return () => {
+    if (previous === undefined) delete process.env.AIDEVOPS_REPOS_FILE;
+    else process.env.AIDEVOPS_REPOS_FILE = previous;
+  };
+}
+
 test("classifies built-in and namespaced direct file mutation tools", () => {
   for (const tool of ["Write", "write_file", "edit", "edit_file", "write", "functions.apply_patch", "namespace/Edit", "tools::apply-patch"]) {
     assert.equal(isDirectFileMutationTool(tool), true, tool);
@@ -404,6 +417,7 @@ test("allows cross-repository linked writes only inside the trusted Git workspac
 
 test("blocks canonical branch mutation before execution", () => {
   const { root, repo } = setupRepo();
+  const restoreRepos = registerRepo(root, repo);
   try {
     assert.throws(
       () => checkCommandSafetyGate("git branch -m main safety/example", scriptsDir, repo),
@@ -411,6 +425,7 @@ test("blocks canonical branch mutation before execution", () => {
     );
     assert.equal(execFileSync(realGit, ["symbolic-ref", "--short", "HEAD"], { cwd: repo, encoding: "utf8" }).trim(), "main");
   } finally {
+    restoreRepos();
     rmSync(root, { recursive: true, force: true });
   }
 });
@@ -432,6 +447,7 @@ test("allows the repository full-loop commit-and-pr wrapper only from a linked w
   const { root, repo, linked } = setupRepo();
   const wrapperCommand = "PR_NUMBER=$(full-loop-helper.sh commit-and-pr --issue 123 --testing 'git tests pass')";
   const activeScriptsDir = join(root, "active", "agents", "scripts");
+  const restoreRepos = registerRepo(root, repo);
   try {
     mkdirSync(join(repo, ".agents", "scripts"), { recursive: true });
     writeFileSync(join(repo, ".agents", "scripts", "full-loop-helper.sh"), "#!/bin/sh\n");
@@ -536,6 +552,7 @@ test("allows the repository full-loop commit-and-pr wrapper only from a linked w
       /unclassified nested Git invocation/,
     );
   } finally {
+    restoreRepos();
     rmSync(root, { recursive: true, force: true });
   }
 });

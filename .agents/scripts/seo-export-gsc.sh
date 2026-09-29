@@ -36,6 +36,16 @@ readonly ROW_LIMIT=25000
 # GSC API Functions
 # =============================================================================
 
+# Use an explicit ADC file when set; otherwise use the documented GSC file.
+_gsc_credential_file() {
+    if [[ -n "${GOOGLE_APPLICATION_CREDENTIALS:-}" ]]; then
+        printf '%s\n' "$GOOGLE_APPLICATION_CREDENTIALS"
+    elif [[ -f "$CONFIG_DIR/gsc-credentials.json" ]]; then
+        printf '%s\n' "$CONFIG_DIR/gsc-credentials.json"
+    fi
+    return 0
+}
+
 # Get access token from service account or environment
 get_access_token() {
     source "$CONFIG_DIR/credentials.sh" 2>/dev/null || true
@@ -45,9 +55,11 @@ get_access_token() {
         return 0
     fi
     
-    if [[ -n "${GOOGLE_APPLICATION_CREDENTIALS:-}" ]] && [[ -f "$GOOGLE_APPLICATION_CREDENTIALS" ]]; then
+    local cred_file
+    cred_file=$(_gsc_credential_file)
+    if [[ -n "$cred_file" && -f "$cred_file" ]]; then
         local token
-        token=$(gcloud auth application-default print-access-token 2>/dev/null || echo "")
+        token=$(GOOGLE_APPLICATION_CREDENTIALS="$cred_file" gcloud auth application-default print-access-token --scopes=https://www.googleapis.com/auth/webmasters.readonly 2>/dev/null || echo "")
         if [[ -n "$token" ]]; then
             echo "$token"
             return 0
@@ -55,7 +67,7 @@ get_access_token() {
     fi
     
     print_error "GSC credentials not configured"
-    print_error "Set GOOGLE_APPLICATION_CREDENTIALS or GSC_ACCESS_TOKEN in ~/.config/aidevops/credentials.sh"
+    print_error "Use ~/.config/aidevops/gsc-credentials.json, GOOGLE_APPLICATION_CREDENTIALS, or GSC_ACCESS_TOKEN in ~/.config/aidevops/credentials.sh"
     return 1
 }
 
@@ -78,12 +90,14 @@ resolve_quota_project() {
         return 0
     fi
 
-    if [[ -z "${GOOGLE_APPLICATION_CREDENTIALS:-}" ]] || [[ ! -f "$GOOGLE_APPLICATION_CREDENTIALS" ]]; then
+    local cred_file
+    cred_file=$(_gsc_credential_file)
+    if [[ -z "$cred_file" || ! -f "$cred_file" ]]; then
         return 0
     fi
 
     local credential_type
-    credential_type=$(jq -r '.type // empty' "$GOOGLE_APPLICATION_CREDENTIALS" 2>/dev/null) || {
+    credential_type=$(jq -r '.type // empty' "$cred_file" 2>/dev/null) || {
         print_error "Unable to read GOOGLE_APPLICATION_CREDENTIALS as JSON"
         return 1
     }
@@ -92,7 +106,7 @@ resolve_quota_project() {
         return 0
     fi
 
-    quota_project=$(jq -r '.quota_project_id // empty' "$GOOGLE_APPLICATION_CREDENTIALS" 2>/dev/null) || {
+    quota_project=$(jq -r '.quota_project_id // empty' "$cred_file" 2>/dev/null) || {
         print_error "Unable to read quota_project_id from GOOGLE_APPLICATION_CREDENTIALS"
         return 1
     }
@@ -312,7 +326,8 @@ Output:
     ~/.aidevops/.agent-workspace/work/seo-data/{domain}/gsc-{start}-{end}.toon
 
 Requirements:
-    - GOOGLE_APPLICATION_CREDENTIALS pointing to service-account or user ADC JSON
+    - Service-account or user ADC JSON at ~/.config/aidevops/gsc-credentials.json
+      (or set GOOGLE_APPLICATION_CREDENTIALS to an alternate JSON file)
     - User ADC must contain quota_project_id, or set GSC_QUOTA_PROJECT
     - Or GSC_ACCESS_TOKEN set in ~/.config/aidevops/credentials.sh
     - The authenticated account must have access to the GSC property

@@ -36,7 +36,7 @@
 #     "name": "build-agent-tests",
 #     "description": "Tests for build-agent subagent",
 #     "agent": "Build+",
-#     "model": "anthropic/claude-sonnet-4-6",
+#     "model": "anthropic/claude-sonnet-5-5",
 #     "timeout": 120,
 #     "tests": [
 #       {
@@ -256,7 +256,7 @@ run_prompt_opencode_server() {
 	# Build prompt payload with optional model override
 	local prompt_json
 	if [[ -n "$model" ]]; then
-		# Parse provider/model format (e.g., "anthropic/claude-sonnet-4-6")
+		# Parse provider/model format (e.g., "anthropic/claude-sonnet-5-5")
 		local provider_id model_id
 		provider_id="${model%%/*}"
 		model_id="${model#*/}"
@@ -308,7 +308,9 @@ run_prompt_opencode_cli() {
 	local timeout="$4"
 	local command="${5:-}"
 
-	local cmd=(opencode run --format json)
+	# Automated harness runs must not inherit interactive greetings, advisories,
+	# or subagent A/B assignments from the OpenCode plugin.
+	local cmd=(env AIDEVOPS_HEADLESS=1 opencode run --format json)
 
 	if [[ -n "$command" ]]; then
 		cmd+=(--command "$command")
@@ -1354,7 +1356,7 @@ TEST SUITE FORMAT (JSON):
     "name": "suite-name",
     "description": "What this tests",
     "agent": "Build+",
-    "model": "anthropic/claude-sonnet-4-6",
+    "model": "anthropic/claude-sonnet-5-5",
     "timeout": 120,
     "tests": [
       {

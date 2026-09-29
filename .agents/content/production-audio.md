@@ -123,6 +123,8 @@ voice-helper.sh benchmark                   # Test component speeds
 | Local ffmpeg | Noise reduction, high-pass, de-essing, loudness normalization | `voice-pipeline-helper.sh cleanup <audio> [output] [target-lufs]` |
 | Edge TTS (free) | 400+ voices, 100+ languages, no API key | Used by `voice-helper.sh` |
 
+**AI music beds:** NanoGPT offers ElevenLabs Music, Lyria 3 Pro, MiniMax Music, Stable Audio 3, ACE-Step, Sonilo and Mureka through one key. Discover live IDs, prices and model-specific fields first; see `tools/voice/cloud-tts-apis.md`. Generated beds are not cut to picture: edit and re-time them to scene changes, then mix under dialogue.
+
 ## See Also
 
 - `content/media-generation-providers.md` — Hosted/local media provider routing

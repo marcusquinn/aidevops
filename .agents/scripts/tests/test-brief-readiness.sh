@@ -789,10 +789,11 @@ else
 fi
 
 # --- Test 21: legitimate shell, generic, and object syntax in code is accepted ---
-if "$HELPER" check --body "$BODY_V2_WITH_CODE_SYNTAX" >/dev/null 2>&1; then
+output=$("$HELPER" check --body "$BODY_V2_WITH_CODE_SYNTAX" 2>/dev/null)
+if [[ "$output" == *"WORKER_READY=true"* && "$output" != *"PLACEHOLDER_MATCH="* ]]; then
 	pass "T21: placeholder-like syntax inside code remains valid"
 else
-	fail "T21: code syntax false-positive guard" "readiness check failed"
+	fail "T21: code syntax false-positive guard" "output: $output"
 fi
 
 # --- Test 22: fenced examples cannot populate genuine readiness sections ---
@@ -861,7 +862,7 @@ fi
 
 # --- Test 30: unknown path placeholders remain rejectable prose ---
 output=$("$HELPER" check --body "$BODY_V2_WITH_PATH_PLACEHOLDER" 2>/dev/null)
-if [[ "$output" == *"WORKER_READY=false"* && "$output" == *"placeholder:unfilled"* ]]; then
+if [[ "$output" == *"WORKER_READY=false"* && "$output" == *"placeholder:unfilled"* && "$output" == *"PLACEHOLDER_MATCH=<path>"* ]]; then
 	pass "T30: unknown <path> placeholder remains rejected"
 else
 	fail "T30: unknown path placeholder rejection" "output: $output"
@@ -869,7 +870,7 @@ fi
 
 # --- Test 31: generated wrappers preserve unknown placeholders in inner prose ---
 output=$("$HELPER" check --body "$BODY_V2_WITH_COMMAND_PLACEHOLDER" 2>/dev/null)
-if [[ "$output" == *"WORKER_READY=false"* && "$output" == *"placeholder:unfilled"* ]]; then
+if [[ "$output" == *"WORKER_READY=false"* && "$output" == *"placeholder:unfilled"* && "$output" == *"PLACEHOLDER_MATCH=<command>"* ]]; then
 	pass "T31: generated wrappers preserve and reject inner <command> placeholders"
 else
 	fail "T31: generated wrapper inner-text preservation" "output: $output"

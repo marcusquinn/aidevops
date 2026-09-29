@@ -4,7 +4,7 @@
 import {existsSync, lstatSync, readdirSync, realpathSync} from "node:fs";
 import {isAbsolute, join, relative, resolve, sep} from "node:path";
 
-import {secretReadBlockReason} from "./quality-hooks-secret-read.mjs";
+import {secretPathBlockReason} from "./quality-hooks-secret-read.mjs";
 
 const CONVERSATION_PATH_TOOLS = new Set(["glob", "grep", "read"]);
 const MAX_SEARCH_ENTRIES = 50_000;
@@ -29,7 +29,7 @@ function requestedPath(tool, args, projectRoot) {
 }
 
 function rejectCredentialPath(candidate) {
-  if (secretReadBlockReason(candidate)) {
+  if (secretPathBlockReason(candidate)) {
     throw new Error("[conversation-path-guard] credential-like paths are denied");
   }
 }

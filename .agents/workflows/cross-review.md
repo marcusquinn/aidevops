@@ -51,7 +51,7 @@ boundary itself, and label that result as non-like-for-like.
 
 # Explicit same-tier concrete-model comparison with custom timeout
 /cross-review "Summarize the key changes in this diff" \
-  --models openai/gpt-5.6-sol,anthropic/claude-sonnet-4-6 --timeout 120
+  --models openai/gpt-5.6-sol,anthropic/claude-sonnet-5-5 --timeout 120
 
 # View scoring results after a cross-review
 /score-responses --leaderboard

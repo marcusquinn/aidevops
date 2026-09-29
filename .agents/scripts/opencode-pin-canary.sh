@@ -66,8 +66,10 @@ install_isolated_plugin() {
 	local isolated_home="$2"
 	local isolated_cache="$3"
 	local source_root="$SCRIPT_DIR/../plugins/opencode-aidevops"
-	mkdir -p "$install_root" "$isolated_home" "$isolated_cache"
+	# Preserve the plugin's ../../scripts relative imports inside the isolated tree.
+	mkdir -p "$install_root" "$isolated_home" "$isolated_cache" "$install_root/../../scripts"
 	cp -R "$source_root/." "$install_root/" || return 1
+	cp "$SCRIPT_DIR/"*.mjs "$install_root/../../scripts/" || return 1
 	env -i \
 		HOME="$isolated_home" PATH="$PATH" \
 		GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
@@ -140,13 +142,14 @@ start_mock_provider() {
 	local canary_root="$1"
 	local port_file="$canary_root/mock-provider.port"
 	local request_file="$canary_root/mock-provider.requests"
-	python3 - "$port_file" "$request_file" <<'PY' &
+	local tools_file="$canary_root/mock-provider.tools"
+	python3 - "$port_file" "$request_file" "$tools_file" <<'PY' &
 import json
 import sys
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-port_file, request_file = sys.argv[1:]
+port_file, request_file, tools_file = sys.argv[1:]
 CANARY = "canary"
 CONTENT_LENGTH = "Content-Length"
 CREATED = "created"
@@ -175,9 +178,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         length = int(self.headers.get("Content-Length", "0"))
-        self.rfile.read(length)
+        body = json.loads(self.rfile.read(length))
         with open(request_file, "a", encoding="utf-8") as requests:
             requests.write(self.path + "\n")
+        with open(tools_file, 'a', encoding='utf-8') as tools:
+            tools.write(json.dumps([tool.get('name') or tool.get('function', {}).get('name')
+                                    for tool in body.get('tools', [])]) + '\n')
         now = int(time.time())
         if self.path.endswith("/responses"):
             chunks = [
@@ -225,6 +231,72 @@ PY
 	[[ -s "$port_file" ]] || return 1
 	MOCK_PROVIDER_PORT=$(<"$port_file")
 	MOCK_PROVIDER_REQUEST_FILE="$request_file"
+	MOCK_PROVIDER_TOOLS_FILE="$tools_file"
+	return 0
+}
+
+verify_probe_plugin_tools() {
+	local label="$1"
+	local canary_root="$2"
+	local tools_file="$3"
+	local request_count_before="$4"
+	local health_file="$5"
+	local health_nonce="$6"
+	local captured_tools="$canary_root/$label.tools"
+	if [[ -f "$tools_file" ]]; then
+		jq -r -s --argjson start "$request_count_before" '.[ $start : ] | .[][] | select(type == "string")' "$tools_file" | LC_ALL=C sort -u >"$captured_tools"
+	else
+		: >"$captured_tools"
+	fi
+	local expected_tool
+	local tools_present=1
+	for expected_tool in aidevops_pre_edit_check aidevops_memory; do
+		if ! grep -qx "$expected_tool" "$captured_tools"; then
+			printf 'FAIL: %s missing aidevops tool %s\n' "$label" "$expected_tool" >&2
+			tools_present=0
+		fi
+	done
+	if ! jq -e --arg nonce "$health_nonce" '.nonce == $nonce and (.stages | index("factory_initialized") != null)' "$health_file" >/dev/null; then
+		printf 'FAIL: %s plugin initialization marker absent\n' "$label" >&2
+		tools_present=0
+	fi
+	[[ "$tools_present" -eq 1 ]]
+}
+
+report_probe_failure() {
+	local label="$1"
+	local probe_rc="$2"
+	local request_count_before="$3"
+	local request_count_after="$4"
+	local tools_file="$5"
+	local health_file="$6"
+	local output_file="$7"
+	local probe_root="$8"
+	printf 'FAIL: %s isolated probe exited %s (provider requests: %s -> %s)\n' \
+		"$label" "$probe_rc" "$request_count_before" "$request_count_after" >&2
+	printf 'Probe tools: ' >&2
+	if [[ -f "$tools_file" ]]; then
+		jq -c -s '.[-1] // []' "$tools_file" >&2 || true
+	else
+		printf '[]\n' >&2
+	fi
+	printf 'Plugin health stages: ' >&2
+	jq -c '.stages' "$health_file" >&2 || true
+	python3 - "$output_file" <<'PY' >&2
+import sys
+with open(sys.argv[1], encoding='utf-8', errors='replace') as source:
+    for line in source:
+        if ('plugin' in line.lower() and ('error' in line.lower() or 'fail' in line.lower())):
+            print(line[:500].rstrip())
+PY
+	command tail -n 20 "$output_file" >&2 || true
+	local log_file
+	for log_file in "$probe_root/data/opencode/log/"*.log; do
+		[[ -f "$log_file" ]] || continue
+		printf '%s\n' "OpenCode log: $log_file" >&2
+		command tail -n 80 "$log_file" >&2 || true
+	done
+	return 0
 }
 
 run_isolated_probe() {
@@ -233,8 +305,11 @@ run_isolated_probe() {
 	local canary_root="$3"
 	local port="$4"
 	local request_file="$5"
+	local tools_file="$6"
 	local probe_root="$canary_root/probe-$label"
 	local output_file="$canary_root/$label.output"
+	local health_file="$probe_root/plugin-health.json"
+	local health_nonce=""
 	local plugin_path="${_CANARY_PLUGIN_PATH:-$SCRIPT_DIR/../plugins/opencode-aidevops/${OPENCODE_CANARY_PLUGIN_TARGET}}"
 	local plugin_url=""
 	local canary_id="canary"
@@ -246,6 +321,9 @@ run_isolated_probe() {
 	local request_count_after=0
 	local probe_timeout_seconds=120
 	mkdir -p "$probe_root/home" "$probe_root/config/opencode" "$probe_root/data" "$probe_root/cache"
+	health_nonce=$(python3 -c 'import secrets; print(secrets.token_hex(16))')
+	jq -n --arg nonce "$health_nonce" '{nonce:$nonce,stages:[]}' >"$health_file"
+	chmod 600 "$health_file"
 	if [[ -e "$plugin_path" ]]; then
 		plugin_url=$(python3 -c 'import pathlib, sys; print(pathlib.Path(sys.argv[1]).resolve().as_uri())' "$plugin_path")
 	fi
@@ -257,13 +335,13 @@ run_isolated_probe() {
 			+ (if $plugin == "" then {} else {plugins:[$plugin]} end)' \
 			>"$probe_root/config/opencode/opencode.json"
 	else
-	jq -n --arg api "http://127.0.0.1:${port}/v1" --arg plugin "$plugin_url" \
-		--arg provider "$provider_id" --arg model "$model_id" --arg model_ref "$model_ref" --arg provider_name "$OPENCODE_CANARY_PROVIDER_NAME" \
-		'{model:$model_ref,small_model:$model_ref,
+		jq -n --arg api "http://127.0.0.1:${port}/v1" --arg plugin "$plugin_url" \
+			--arg provider "$provider_id" --arg model "$model_id" --arg model_ref "$model_ref" --arg provider_name "$OPENCODE_CANARY_PROVIDER_NAME" \
+			'{model:$model_ref,small_model:$model_ref,
 		provider:{($provider):{npm:"@ai-sdk/openai-compatible@3.0.31",name:$provider_name,
 		options:{baseURL:$api,apiKey:"canary-local-only"},models:{($model):{name:"Canary"}}}}}
 		+ (if $plugin == "" then {} else {plugin:[$plugin]} end)' \
-		>"$probe_root/config/opencode/opencode.json"
+			>"$probe_root/config/opencode/opencode.json"
 	fi
 	local routing_file="$probe_root/config/model-routing.json"
 	jq -n --arg model "$model_ref" \
@@ -276,7 +354,7 @@ run_isolated_probe() {
 		timeout_command=(perl -e "alarm ${probe_timeout_seconds}; exec @ARGV" --)
 	fi
 	local probe_rc=0
-	local -a probe_args=(run "What is two plus two? Answer with the single word: Four" \
+	local -a probe_args=(run "What is two plus two? Answer with the single word: Four"
 		-m "$model_ref" --agent build --print-logs)
 	if [[ "$OPENCODE_CANARY_PROFILE" == "v2" ]]; then
 		probe_args+=(--standalone --log-level debug)
@@ -289,25 +367,22 @@ run_isolated_probe() {
 			HOME="$probe_root/home" PATH="$PATH" \
 			XDG_CONFIG_HOME="$probe_root/config" XDG_DATA_HOME="$probe_root/data" \
 			XDG_CACHE_HOME="$probe_root/cache" AIDEVOPS_HEADLESS=1 AIDEVOPS_PLUGIN_DEBUG=1 \
+			AIDEVOPS_TEMP_DIR="$canary_root" AIDEVOPS_PLUGIN_HEALTH_PROBE_FILE="$health_file" \
+			AIDEVOPS_PLUGIN_HEALTH_PROBE_NONCE="$health_nonce" \
 			AIDEVOPS_OPENCODE_PROFILE="$OPENCODE_CANARY_PROFILE" \
 			AIDEVOPS_MODEL_ROUTING_TABLE="$routing_file" \
 			GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
 			"${timeout_command[@]}" "$binary" "${probe_args[@]}"
 	) >"$output_file" 2>&1 || probe_rc=$?
 	[[ -f "$request_file" ]] && request_count_after=$(wc -l <"$request_file" | tr -d ' ')
-	if [[ "$probe_rc" -eq 0 && "$request_count_after" -gt "$request_count_before" ]] && grep -q 'Four' "$output_file"; then
+	local tools_present=1
+	verify_probe_plugin_tools "$label" "$canary_root" "$tools_file" "$request_count_before" "$health_file" "$health_nonce" || tools_present=0
+	if [[ "$probe_rc" -eq 0 && "$request_count_after" -gt "$request_count_before" && "$tools_present" -eq 1 ]] && grep -q 'Four' "$output_file"; then
 		printf 'PASS: %s completed the isolated Linux-headless probe\n' "$label"
 		return 0
 	fi
-	printf 'FAIL: %s isolated probe exited %s (provider requests: %s -> %s)\n' \
-		"$label" "$probe_rc" "$request_count_before" "$request_count_after" >&2
-	command tail -n 20 "$output_file" >&2 || true
-	local log_file
-	for log_file in "$probe_root/data/opencode/log/"*.log; do
-		[[ -f "$log_file" ]] || continue
-		printf '%s\n' "OpenCode log: $log_file" >&2
-		command tail -n 80 "$log_file" >&2 || true
-	done
+	report_probe_failure "$label" "$probe_rc" "$request_count_before" "$request_count_after" \
+		"$tools_file" "$health_file" "$output_file" "$probe_root"
 	return 1
 }
 
@@ -386,7 +461,7 @@ cmd_canary() {
 		printf 'RESULT=inconclusive\nINCONCLUSIVE: candidate installation failed\n' >&2
 		return 2
 	fi
-	if ! install_isolated_plugin "$_CANARY_TEMP_ROOT/plugin" \
+	if ! install_isolated_plugin "$_CANARY_TEMP_ROOT/agents/plugins/opencode-aidevops" \
 		"$_CANARY_TEMP_ROOT/install-home-plugin" "$_CANARY_TEMP_ROOT/npm-cache-plugin"; then
 		printf 'RESULT=inconclusive\nINCONCLUSIVE: locked plugin installation failed\n' >&2
 		return 2
@@ -405,19 +480,28 @@ cmd_canary() {
 	}
 	local mock_provider_port="$MOCK_PROVIDER_PORT"
 	local mock_provider_request_file="$MOCK_PROVIDER_REQUEST_FILE"
+	local mock_provider_tools_file="$MOCK_PROVIDER_TOOLS_FILE"
 	local revision="unknown"
 	revision=$(git -C "$SCRIPT_DIR/../.." rev-parse HEAD 2>/dev/null || printf 'unknown')
 
 	printf 'Evaluating pinned baseline %s and candidate %s at repository revision %s\n' \
 		"$OPENCODE_CANARY_PIN" "$candidate" "$revision"
-	if ! run_isolated_probe "baseline-$OPENCODE_CANARY_PIN" "$baseline_bin" "$_CANARY_TEMP_ROOT" \
-		"$mock_provider_port" "$mock_provider_request_file"; then
+	local baseline_rc=0
+	run_isolated_probe "baseline-$OPENCODE_CANARY_PIN" "$baseline_bin" "$_CANARY_TEMP_ROOT" \
+		"$mock_provider_port" "$mock_provider_request_file" "$mock_provider_tools_file" || baseline_rc=$?
+	local candidate_rc=0
+	run_isolated_probe "candidate-$candidate" "$candidate_bin" "$_CANARY_TEMP_ROOT" \
+		"$mock_provider_port" "$mock_provider_request_file" "$mock_provider_tools_file" || candidate_rc=$?
+	printf 'Native tool diff (baseline -> candidate; aidevops tools excluded):\n'
+	diff -u \
+		<(grep -v '^aidevops_' "$_CANARY_TEMP_ROOT/baseline-$OPENCODE_CANARY_PIN.tools" || true) \
+		<(grep -v '^aidevops_' "$_CANARY_TEMP_ROOT/candidate-$candidate.tools" || true) || true
+	if [[ "$baseline_rc" -ne 0 ]]; then
 		printf 'RESULT=inconclusive\nINCONCLUSIVE: pinned baseline failed; retaining %s\n' \
 			"$OPENCODE_CANARY_PIN" >&2
 		return 2
 	fi
-	if ! run_isolated_probe "candidate-$candidate" "$candidate_bin" "$_CANARY_TEMP_ROOT" \
-		"$mock_provider_port" "$mock_provider_request_file"; then
+	if [[ "$candidate_rc" -ne 0 ]]; then
 		printf 'RESULT=fail\nFAIL: candidate failed while the same-revision pinned baseline passed; retaining %s\n' \
 			"$OPENCODE_CANARY_PIN" >&2
 		return 1

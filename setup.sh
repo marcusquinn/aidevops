@@ -17,7 +17,7 @@ fi
 # AI Assistant Server Access Framework Setup Script
 # Helps developers set up the framework for their infrastructure
 #
-# Version: 3.37.13
+# Version: 3.37.27
 #
 # Quick Install:
 #   npm install -g aidevops && aidevops update          (recommended)
@@ -360,6 +360,10 @@ source "${INSTALL_DIR}/.agents/scripts/pulse-runtime-pin.sh"
 source "${SETUP_IMPL_MODULES_DIR}/core.sh"
 # shellcheck disable=SC1091
 source "${SETUP_IMPL_MODULES_DIR}/migrations.sh"
+# shellcheck disable=SC1091
+source "${SETUP_IMPL_MODULES_DIR}/migration-compaction-target.sh"
+# shellcheck disable=SC1091
+source "${SETUP_IMPL_MODULES_DIR}/migration-sonnet-5-5.sh"
 # shellcheck disable=SC1091
 source "${SETUP_IMPL_MODULES_DIR}/shell-env.sh"
 # shellcheck disable=SC1091
@@ -1559,6 +1563,8 @@ _setup_run_noninteractive_migrations() {
 	_time_step "migrate_custom_model_routing_reasoning_defaults" migrate_custom_model_routing_reasoning_defaults
 	_time_step "migrate_obsolete_settings_model_routing" migrate_obsolete_settings_model_routing
 	_time_step "migrate_worker_capacity_reset" migrate_worker_capacity_reset
+	_time_step "migrate_compaction_target_240k" migrate_compaction_target_240k
+	_time_step "migrate_sonnet_5_5_settings" migrate_sonnet_5_5_settings
 	_time_step "backfill_issue_relationships" backfill_issue_relationships
 	_time_step "cleanup_deprecated_mcps" cleanup_deprecated_mcps
 	_time_step "cleanup_stale_bun_opencode" cleanup_stale_bun_opencode
@@ -1691,6 +1697,7 @@ _setup_run_interactive_runtime_tools() {
 	confirm_step "Setup AI orchestration frameworks info" && setup_ai_orchestration
 	confirm_step "Setup Ollama (local LLM for knowledge plane pii/sensitive/privileged tiers)" && setup_ollama_for_knowledge
 	confirm_step "Setup Google Workspace CLI (Gmail, Calendar, Drive)" && setup_google_workspace_cli
+	confirm_step "Setup Cloudflare cf CLI (full Cloudflare API)" && setup_cloudflare_cf_cli
 	confirm_step "Setup OpenCode V1 and isolated V2 preview CLIs" && setup_opencode_runtimes
 	confirm_step "Install OpenCode AIDevOps Desktop app wrapper" && setup_opencode_desktop_launcher
 	confirm_step "Setup OpenCode plugins" && setup_opencode_runtime_plugins
@@ -1766,6 +1773,8 @@ _setup_run_interactive() {
 	migrate_custom_model_routing_reasoning_defaults
 	migrate_obsolete_settings_model_routing
 	migrate_worker_capacity_reset
+	migrate_compaction_target_240k
+	migrate_sonnet_5_5_settings
 	confirm_step "Backfill GitHub issue relationships (blocked-by, sub-issues)" && backfill_issue_relationships
 	confirm_step "Cleanup deprecated MCP entries (hetzner, serper, etc.)" && cleanup_deprecated_mcps
 	confirm_step "Cleanup stale bun opencode install" && cleanup_stale_bun_opencode

@@ -65,6 +65,35 @@ when their trigger applies; never remove them merely to meet a token target.
 - Keep stable instruction/tool ordering. Do not add timestamps, per-request
   randomness, or quota state ahead of reusable guidance. Do not force cache
   retention parameters onto an OAuth endpoint without validating support.
+- The resolved greeting block is pinned per session (GH#32744): a deploy that
+  changes `VERSION` no longer rewrites the cached framework prefix of every
+  open session. Framework instruction files that a deploy actually changes still
+  do.
+- `cache-stability.mjs` fingerprints each Anthropic request per session, model,
+  and `family=<agent|aux>` (tool-bearing vs no-tool) and logs
+  `[aidevops] cache-stability: session=… family=… segment=<account|tools|system|thinking|prefix|history> …`
+  to the plugin log when a stable segment changes. History lines identify the
+  changed `block=`, `type=`, `change=`, and `chars=`; pruned tool results may add
+  an 80-character `now=` snippet. Read it with
+  `rg 'cache-stability' ~/.aidevops/logs/opencode-plugin.log` next to
+  `llm_requests` rows where `tokens_cache_read` dropped below the previous turn's
+  `tokens_cache_read + tokens_cache_write`. `tail=true` history changes are
+  expected synthetic advisories. `AIDEVOPS_CACHE_STABILITY_LOG=0` disables it.
+  Evaluate warm cache breaks with:
+
+  ```sql
+  with r as (
+    select session_id, timestamp, aidevops_version, tokens_input, tokens_cache_read, tokens_cache_write,
+           lag(timestamp) over (partition by session_id order by timestamp) as prev_ts
+    from llm_requests where provider_id = 'anthropic'
+  )
+  select aidevops_version, count(*) as requests, count(distinct session_id) as sessions,
+    sum(prev_ts is not null and (julianday(timestamp) - julianday(prev_ts)) * 86400 < 300
+        and tokens_cache_read = 0 and tokens_cache_write >= 10000) as warm_breaks,
+    round(100.0 * sum(tokens_cache_read) / nullif(sum(tokens_input + tokens_cache_write + tokens_cache_read), 0), 1) as hit_pct
+  from r group by aidevops_version order by min(timestamp);
+  ```
+
 - Successful verbose test/build receipts already use `output-compaction.mjs`.
   Do not discard failure diagnostics or blindly summarise source files. Read
   targeted ranges and load retained evidence when needed.
@@ -119,8 +148,10 @@ config probe instead of synthetic paid long-context requests.
 On the first request for each resolved model, the OpenCode 1 request hook applies
 a 240K usable-input ceiling to models with larger native windows, including
 built-in and newly discovered provider models absent from the config hook's model
-list. Native Anthropic Opus 5.5+, Fable 5.1+, and Sonnet 5+ instead target 500K
-usable input. Haiku 4.5 is capped at its 200K physical context and targets
+list. This includes native Anthropic Opus 5.5+, Fable 5.1+, and Sonnet 5+, which
+targeted 500K before GH#32807: a replay of 42 Opus 5.5 main sessions found 240K
+about 14% cheaper, because every turn re-reads the cached context and every pause
+over five minutes rewrites it. Haiku 4.5 is capped at its 200K physical context and targets
 180K usable input. When the output limit and compaction reserve require more
 than 20K headroom, the effective trigger is earlier (for a 32K output limit,
 no later than 168K before considering any extra reserve). The policy does not

@@ -45,21 +45,19 @@ export function opus47UsableTarget(model) {
     ? override.resolved : OPUS_47_CONTEXT_DEFAULT) * 0.8);
 }
 
+// One usable-input compaction target for every model (GH#32807). A replay of
+// 42 Opus 5.5 main sessions found 240K cheaper than the former 500K Anthropic
+// target: cache re-reads and post-pause rewrites grow with context length.
+// Models whose native window is smaller keep their own lower target.
+export const DEFAULT_COMPACTION_TARGET = 240000;
+
 export function contextBudgetForModel(model) {
-  if (model?.providerID !== "anthropic") return { target: 240000 };
-  if (model.id === "claude-haiku-4-5") return { target: 180000, maxContext: 200000 };
-  const opus47 = opus47UsableTarget(model);
+  if (model?.providerID === "anthropic" && model.id === "claude-haiku-4-5") {
+    return { target: 180000, maxContext: 200000 };
+  }
+  const opus47 = opus47UsableTarget(model ?? {});
   if (opus47 !== null) return { target: opus47 };
-  // Only the named native families have the newer long-context policy. A
-  // version may have a short release-date suffix; match its numeric major and
-  // minor rather than matching every future Anthropic model by substring.
-  const version = /^claude-(opus|fable|sonnet)-(\d+)(?:-(\d{1,2}))?(?:-|$)/.exec(model.id || "");
-  if (!version) return { target: 240000 };
-  const [, family, majorText, minorText] = version;
-  const major = Number(majorText);
-  const minor = Number(minorText ?? 0);
-  const floor = family === "opus" ? 5 : family === "fable" ? 1 : 0;
-  return { target: major > 5 || (major === 5 && minor >= floor) ? 500000 : 240000 };
+  return { target: DEFAULT_COMPACTION_TARGET };
 }
 
 export function validWindow(model) {
@@ -101,7 +99,7 @@ export function preserveCustomWindow(model, custom) {
   }
 }
 
-export function capResolvedModel(model, reserve, { target = 240000, maxContext } = {}) {
+export function capResolvedModel(model, reserve, { target = DEFAULT_COMPACTION_TARGET, maxContext } = {}) {
   const limit = model.limit;
   let changed = false;
   if (maxContext !== undefined && limit.context > maxContext) {

@@ -37,7 +37,7 @@ readonly MAX_OUTPUT_TOKENS=500
 # =============================================================================
 
 # Detect the provider from a model ID string.
-# Arguments: $1 — model ID (e.g., "claude-sonnet-4-6", "gemini-2.5-flash")
+# Arguments: $1 — model ID (e.g., "claude-sonnet-5-5", "gemini-2.5-flash")
 # Output: provider name on stdout (anthropic|google|openai|unknown)
 detect_provider() {
 	local model="$1"
@@ -512,7 +512,7 @@ _cmd_verify_select_verifier() {
 	local branch="$6"
 
 	local primary_provider
-	primary_provider=$(detect_provider "${primary_model:-claude-sonnet-4-6}")
+	primary_provider=$(detect_provider "${primary_model:-claude-sonnet-5-5}")
 
 	local verifier_entry verifier_provider verifier_model
 	verifier_entry=$(select_verifier "$primary_provider") || {
@@ -647,7 +647,7 @@ cmd_verify() {
 	prompt=$(_build_verification_prompt "$operation" "$op_type" "$risk_tier" "$repo" "$branch" "$details")
 
 	local primary_provider
-	primary_provider=$(detect_provider "${primary_model:-claude-sonnet-4-6}")
+	primary_provider=$(detect_provider "${primary_model:-claude-sonnet-5-5}")
 
 	local raw_response
 	raw_response=$(_call_verifier "$prompt" "$model_short") || {

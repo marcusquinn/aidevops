@@ -430,7 +430,7 @@ _stale_recovery_escalate_pr_checkpoint() {
 	fi
 
 	gh_issue_comment "$issue_number" --repo "$repo_slug" \
-		--body "<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
+		--body "$(aidevops_ops_marker stale-pr-checkpoint)"$'\n'"<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
 <!-- stale-pr-checkpoint:escalated pr=${pr_number} kind=${checkpoint_kind} -->
 **PR checkpoint requires structural repair**
 
@@ -520,7 +520,7 @@ _stale_recovery_escalate() {
 
 	# Post escalation comment explaining the suspension
 	gh_issue_comment "$issue_number" --repo "$repo_slug" \
-		--body "<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
+		--body "$(aidevops_ops_marker stale-recovery-escalated)"$'\n'"<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
 <!-- stale-recovery-tick:escalated (threshold=${_threshold}) -->
 **Stale recovery threshold reached** (t2008)
 
@@ -630,7 +630,7 @@ _stale_recovery_apply_blocked_by_hold() {
 	local _now_ts=""
 	_now_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 	gh_issue_comment "$issue_number" --repo "$repo_slug" \
-		--body "<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
+		--body "$(aidevops_ops_marker stale-recovery-tick)"$'\n'"<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
 <!-- WORKER_SUPERSEDED runners=${stale_assignees} ts=${_now_ts} -->
 <!-- stale-recovery-blocked-by-unresolved -->
 **Stale assignment recovered, but re-dispatch remains blocked** (GH#23932)
@@ -708,7 +708,7 @@ _stale_recovery_apply() {
 	local _now_ts
 	_now_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 	gh_issue_comment "$issue_number" --repo "$repo_slug" \
-		--body "<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
+		--body "$(aidevops_ops_marker stale-recovery-tick)"$'\n'"<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
 <!-- WORKER_SUPERSEDED runners=${stale_assignees} ts=${_now_ts} -->
 <!-- stale-recovery-tick:${recovery_tick:-1} -->
 **Stale assignment recovered** (GH#15060)

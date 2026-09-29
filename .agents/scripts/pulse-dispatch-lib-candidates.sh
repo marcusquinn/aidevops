@@ -6,6 +6,69 @@
 [[ -n "${_PULSE_DISPATCH_CANDIDATES_LIB_LOADED:-}" ]] && return 0
 _PULSE_DISPATCH_CANDIDATES_LIB_LOADED=1
 
+# Names-only credential admission. Return 0 only when every declared name is
+# present; 1 means this runner must yield. The issue JSON is never evaluated.
+_dispatch_secret_missing_names() {
+	local issue_json="$1"
+	local declared="" listing="" name="" missing="" line=""
+	declared=$(printf '%s' "$issue_json" | jq -r '
+		. as $issue | [.labels[]? | if type == "object" then .name else . end |
+		 select(type == "string" and startswith("needs-secret:")) |
+		 sub("^needs-secret:"; "")] | if length > 0 then .[]
+		 else ($issue.body // "" | capture("<!-- aidevops:needs-secrets (?<names>[A-Za-z_0-9 ]+) -->")? | .names // "" | split(" ")[]) end
+	' 2>/dev/null) || return 1
+	[[ -n "$declared" ]] || return 0
+	# Fail closed on malformed declarations or an unavailable local name store.
+	listing=$(aidevops secret list 2>/dev/null) || return 1
+	while IFS= read -r name; do
+		[[ "$name" =~ ^[A-Za-z_][A-Za-z_0-9]*$ ]] || return 1
+		local found=0
+		while IFS= read -r line; do
+			line="${line#"${line%%[![:space:]]*}"}"
+			[[ "$line" == "$name" ]] && found=1
+		done <<<"$listing"
+		[[ "$found" -eq 1 ]] || missing="${missing:+$missing }$name"
+	done <<<"$declared"
+	printf '%s' "$missing"
+	return 0
+}
+
+_dispatch_skip_for_secrets() {
+	local issue_number="$1" repo_slug="$2" issue_json="" missing="" created="" age=0 threshold=""
+	issue_json=$(gh api "repos/${repo_slug}/issues/${issue_number}" 2>/dev/null) || return 0
+	missing=$(_dispatch_secret_missing_names "$issue_json") || {
+		echo "[pulse-wrapper] #${issue_number}: secret name evidence unavailable; yielding" >>"$LOGFILE"
+		return 0
+	}
+	[[ -n "$missing" ]] || return 1
+	echo "[pulse-wrapper] #${issue_number}: runner lacks declared secret names; yielding" >>"$LOGFILE"
+	threshold="${AIDEVOPS_SECRET_STARVATION_SECONDS:-86400}"
+	[[ "$threshold" =~ ^[0-9]+$ ]] || threshold=86400
+	created=$(printf '%s' "$issue_json" | jq -r '.updated_at // .created_at // ""')
+	created=$(date -u -d "$created" +%s 2>/dev/null) || \
+		created=$(date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$created" +%s 2>/dev/null) || created=0
+	[[ "$created" -gt 0 ]] || return 0
+	age=$(($(date -u +%s) - created))
+	if [[ "$age" -ge "$threshold" ]]; then
+		_dispatch_secret_starvation_notice "$issue_number" "$repo_slug" "$missing" "$issue_json" || true
+	fi
+	return 0
+}
+
+_dispatch_secret_starvation_notice() {
+	local issue_number="$1" repo_slug="$2" missing="$3" issue_json="$4" comments="" marker="<!-- aidevops:secret-starvation -->"
+	local comments_endpoint="repos/${repo_slug}/issues/${issue_number}/comments"
+	comments=$(gh api "$comments_endpoint" --paginate --jq '.[].body' 2>/dev/null) || return 1
+	if [[ "$comments" != *"$marker"* ]]; then
+		gh api "$comments_endpoint" --method POST \
+			--field body="$(printf '%s\n%s' "$marker" "Dispatch has waited for a runner with these required secret names: ${missing}. No secret values were accessed.")" >/dev/null || return 1
+	fi
+	if ! printf '%s' "$issue_json" | jq -e '.labels[]? | (if type == "object" then .name else . end) == "status:blocked"' >/dev/null; then
+		gh issue edit "$issue_number" --repo "$repo_slug" --add-label status:blocked >/dev/null || return 1
+	fi
+	return 0
+}
+
 _dispatch_run_prepasses() {
 	local available_slots="$1"
 
@@ -111,6 +174,9 @@ _dispatch_should_skip_candidate() {
 	local repo_slug="$2"
 
 	pulse_dispatch_debug_log "evaluating skip checks for #${issue_number} (${repo_slug})"
+	if _dispatch_skip_for_secrets "$issue_number" "$repo_slug"; then
+		return 0
+	fi
 
 	if _dispatch_skip_for_benign_block "$issue_number" "$repo_slug"; then
 		return 0

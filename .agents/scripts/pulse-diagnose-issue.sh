@@ -95,8 +95,9 @@ _issue_attempt_summary_json() {
 		return 0
 	fi
 
-	local summary=""
-	summary=$(jq -rs --arg sk "$session_key" --arg issue "$issue_number" --arg repo "$repo_slug" --arg unknown "$_UNKNOWN" '
+	local summary="" now_epoch=""
+	now_epoch=$(date +%s)
+	summary=$(jq -rs --arg sk "$session_key" --arg issue "$issue_number" --arg repo "$repo_slug" --arg unknown "$_UNKNOWN" --argjson future_limit "$((now_epoch + 300))" '
 		def is_issue:
 			((.session_key // "") == $sk) or (((.issue_number // "") | tostring) == $issue);
 		def is_repo:
@@ -106,10 +107,13 @@ _issue_attempt_summary_json() {
 			or .result == "rate_limit_fast"
 			or .provider_error_type == "rate_limit"
 			or ((.provider_status // "") | tostring) == "429";
-		[.[] | select(is_issue and is_repo)] as $attempts
+		[.[] | select(is_issue and is_repo)] as $matching
+		| ($matching | map(select((.ts | type) == "number" and .ts > $future_limit)) | length) as $future_ignored
+		| ($matching | map(select((.ts | type) != "number" or .ts <= $future_limit))) as $attempts
 		| ($attempts | map(select(is_rate_limit))) as $rl
 		| {
 			attempt_count: ($attempts | length),
+			future_dated_ignored: $future_ignored,
 			rate_limit_count: ($rl | length),
 			last_attempt_ts: (($attempts | map(.ts // 0) | max) // 0),
 			last_rate_limit_ts: (($rl | map(.ts // 0) | max) // 0),

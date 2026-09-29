@@ -109,7 +109,7 @@ Both arms must use the same form.
 ```json
 {"name": "anthropic", "tiers": {
   "simple": {"model": "anthropic/claude-haiku-4-5"},
-  "standard": {"model": "anthropic/claude-sonnet-5", "variant": "low"},
+  "standard": {"model": "anthropic/claude-sonnet-5-5", "variant": "low"},
   "thinking": {"model": "anthropic/claude-opus-5-5", "variant": "medium"}
 }}
 ```

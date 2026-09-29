@@ -257,7 +257,7 @@ export function getMcpRegistry() {
       command: [
         "/bin/bash",
         "-c",
-        `source ~/.config/aidevops/credentials.sh && DATAFORSEO_USERNAME=$DATAFORSEO_USERNAME DATAFORSEO_PASSWORD=$DATAFORSEO_PASSWORD ${pkgRunner} dataforseo-mcp-server`,
+        `source "$HOME/.aidevops/agents/scripts/dataforseo-credentials.sh" && dataforseo_load_credentials && exec ${pkgRunner} dataforseo-mcp-server`,
       ],
       eager: false,
       toolPattern: "dataforseo_*",

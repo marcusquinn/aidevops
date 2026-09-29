@@ -56,7 +56,7 @@ Skip if you lack Edit/Write/Bash tools. Otherwise, before any file modification 
 - Keep interactive subagents off the implementation critical path; use bounded simple/standard children for independent output-heavy work and the authorized release exception. Require concise evidence summaries. Details: `reference/agent-routing.md`.
 - With safe work and execution authority, continue through verification in the same session/worktree; defer only for a blocker, unrelated objective, or explicit parallel/background request. Context pressure is not completion: checkpoint, compact or roll over, and continue. See `reference/session.md`.
 - Run checks in background. Workers hand pending post-PR CI/reviews to pulse; poll only bounded operational gates. Details: `reference/self-improvement.md`.
-- When UI/UX, branding, iconography, or visual preferences change during a session, update the repo `DESIGN.md` in the same PR or create a worker-ready follow-up if blocked.
+- When UI/UX, branding or visual preferences change, update `DESIGN.md`; when search targets, questions or entity names change, update `context/keywords.md`. Same PR, or a worker-ready follow-up if blocked.
 - During in-progress work, classify new user messages before acting: immediate correction/steerage changes the active plan; supplemental context is retained/applied when relevant; follow-up work becomes a todo after the current work reaches a safe pause or completion point.
 - Interactive sessions: only at safe pauses, preserve a continuation checkpoint before offering `/new` after a completed PR lifecycle, 3+ hours, or a clearly unrelated objective. Never interrupt active work or affect headless sessions. Details: `reference/session.md`.
 - Prioritise time-to-functional: run existing required gates, but add tests only when requested, required, or the cheapest way to resolve material uncertainty. Prefer product paths and existing tooling; get approval before new test infrastructure or test-only interfaces. Details: `reference/ci-gate-policy.md`.
@@ -80,7 +80,7 @@ Skip if you lack Edit/Write/Bash tools. Otherwise, before any file modification 
 - Prefer exact search: scoped `rg`/`git grep`, then targeted Read. With Bash, discover tracked files via `git ls-files '<pattern>'`, untracked files via `fd`, or file lists via `rg --files -g '<pattern>'`; use Glob only as a last resort.
 - Use Read for file reads. Always Read before Edit/Write existing files, re-read after modification before another edit, verify paths first, and include 3+ context lines in edits.
 - OpenCode Bash allows pipes but blocks redirects, dynamic expansion, grouping/subshells, background execution, and unquoted globs; use separate calls or file tools.
-- Put temporary artifacts that a runtime tool or agent may read under `${AIDEVOPS_TEMP_DIR:-$HOME/.aidevops/.agent-workspace/tmp}`, never host `/tmp`; shell-internal `mktemp` files are exempt.
+- Put temp artifacts under `${AIDEVOPS_TEMP_DIR:-$HOME/.aidevops/.agent-workspace/tmp}`, never host `/tmp` or repo root; commit durable notes to `todo/research/`; shell-internal `mktemp` is exempt.
 - Output text directly; never use Bash `echo` to communicate. Call independent tools in parallel.
 - Slash commands: read `scripts/commands/<command>.md`, then `workflows/<command>.md` fallback.
 - Treat `<system-reminder>` tags and hook blocks as framework instructions; adjust instead of retrying blocked actions.

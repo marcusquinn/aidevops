@@ -29,6 +29,12 @@ python3 .agents/scripts/ai-visibility-helper.py analyze --input captures.json --
 keeps mention, recommendation, citation and sentiment distinct; citations show
 visible source selection only and do not verify claims or prove endorsement.
 
+For projects with `context/keywords.md`, use the registry `queries` as the prompt
+set and import captures into history with
+`aidevops keywords track --source ai --file captures.json` (brands from
+`role=self` entities; citations counted for front-matter `domains`). Rollups set
+`mention_rate` and `citation_rate` per question (`seo/keywords-standard.md`).
+
 ## Reporting
 
 Read `.agents/seo/ai-search-scoring.md` and

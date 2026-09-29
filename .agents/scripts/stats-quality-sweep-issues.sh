@@ -979,8 +979,57 @@ _minimize_superseded_dashboard_comments() {
 	[[ "$max_per_run" -gt 0 ]] || return 0
 	[[ "$issue_number" =~ ^[0-9]+$ ]] || return 0
 
+	local all_comments
+	all_comments=$(_fetch_dashboard_comment_heads "$issue_number" "$repo_slug") || {
+		echo "[stats] Quality sweep: comment hygiene skipped on #${issue_number} in ${repo_slug}: comment fetch failed" >>"${LOGFILE:-/dev/null}"
+		return 0
+	}
+
+	local comment_id hidden=0 failed=0
+	while IFS= read -r comment_id; do
+		[[ -n "$comment_id" ]] || continue
+		[[ "$hidden" -ge "$max_per_run" ]] && break
+		if ! gh api graphql -F id="$comment_id" -f query="
+			mutation(\$id: ID!) {
+				minimizeComment(input: {subjectId: \$id, classifier: OUTDATED}) { clientMutationId }
+			}" >/dev/null 2>&1; then
+			failed=1
+			break
+		fi
+		hidden=$((hidden + 1))
+	done < <(_select_superseded_dashboard_comments "$all_comments")
+
+	if [[ "$hidden" -gt 0 ]]; then
+		echo "[stats] Quality sweep: minimized ${hidden} superseded automation comment(s) on #${issue_number} in ${repo_slug}" >>"${LOGFILE:-/dev/null}"
+	fi
+	if [[ "$failed" -eq 1 ]]; then
+		echo "[stats] Quality sweep: comment hygiene stopped on #${issue_number} in ${repo_slug}: minimizeComment failed" >>"${LOGFILE:-/dev/null}"
+	fi
+	return 0
+}
+
+#######################################
+# Fetch every comment on an issue as compact heads for hygiene selection.
+#
+# Each page is projected to {id,isMinimized,createdAt,body[0:200]} before it is
+# accumulated: automation markers sit at the start of the body, and full sweep
+# reports (several KB each) otherwise exceed the argument-size limit when merged
+# across a 200-comment thread (GH#32752). Pages are merged from a temp file via
+# stdin, never through command-line arguments.
+#
+# Arguments:
+#   $1 - issue number
+#   $2 - repo slug
+# Output: JSON array of comment heads
+# Returns: 1 when a page cannot be fetched or parsed
+#######################################
+_fetch_dashboard_comment_heads() {
+	local issue_number="$1"
+	local repo_slug="$2"
 	local owner="${repo_slug%%/*}" name="${repo_slug##*/}"
-	local all_comments="[]" cursor="" page_json page_nodes has_next pages=0
+	local heads_file cursor="" page_json has_next pages=0 rc=0
+	heads_file=$(mktemp) || return 1
+
 	while [[ "$pages" -lt 10 ]]; do
 		pages=$((pages + 1))
 		local -a cursor_args=()
@@ -996,28 +1045,20 @@ _minimize_superseded_dashboard_comments() {
 						}
 					}
 				}
-			}" 2>/dev/null) || return 0
-		page_nodes=$(printf '%s' "$page_json" | jq -c '.data.repository.issue.comments.nodes // []' 2>/dev/null) || return 0
-		all_comments=$(jq -cn --argjson a "$all_comments" --argjson b "$page_nodes" '$a + $b' 2>/dev/null) || return 0
+			}" 2>/dev/null) || { rc=1; break; }
+		printf '%s' "$page_json" | jq -c '
+			(.data.repository.issue.comments.nodes // [])
+			| map({id, isMinimized, createdAt, body: ((.body // "")[0:200])})
+		' >>"$heads_file" 2>/dev/null || { rc=1; break; }
 		has_next=$(printf '%s' "$page_json" | jq -r '.data.repository.issue.comments.pageInfo.hasNextPage // false' 2>/dev/null)
 		[[ "$has_next" == "true" ]] || break
 		cursor=$(printf '%s' "$page_json" | jq -r '.data.repository.issue.comments.pageInfo.endCursor // empty' 2>/dev/null)
 		[[ -n "$cursor" ]] || break
 	done
 
-	local comment_id hidden=0
-	while IFS= read -r comment_id; do
-		[[ -n "$comment_id" ]] || continue
-		[[ "$hidden" -ge "$max_per_run" ]] && break
-		gh api graphql -F id="$comment_id" -f query="
-			mutation(\$id: ID!) {
-				minimizeComment(input: {subjectId: \$id, classifier: OUTDATED}) { clientMutationId }
-			}" >/dev/null 2>&1 || break
-		hidden=$((hidden + 1))
-	done < <(_select_superseded_dashboard_comments "$all_comments")
-
-	if [[ "$hidden" -gt 0 ]]; then
-		echo "[stats] Quality sweep: minimized ${hidden} superseded automation comment(s) on #${issue_number} in ${repo_slug}" >>"${LOGFILE:-/dev/null}"
+	if [[ "$rc" -eq 0 ]]; then
+		jq -cs 'add // []' "$heads_file" 2>/dev/null || rc=1
 	fi
-	return 0
+	rm -f "$heads_file"
+	return "$rc"
 }

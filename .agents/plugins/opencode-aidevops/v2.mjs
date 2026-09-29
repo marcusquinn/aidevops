@@ -399,7 +399,7 @@ export async function setupAidevopsV2(ctx) {
     }));
     await register(registrations, ctx.session.hook("compaction", async (event) => {
       const output = { context: [] };
-      await compactingHook({ workspaceDir: WORKSPACE_DIR, scriptsDir: SCRIPTS_DIR }, event, output, directory);
+      await compactingHook({ workspaceDir: WORKSPACE_DIR, scriptsDir: SCRIPTS_DIR }, event, output, directory, { host: "opencode2" });
       event.system.push(...output.context.map((text) => ({ type: "text", text })));
     }));
     await register(registrations, ctx.session.hook("http.request", providerAuth.httpRequest));

@@ -43,7 +43,7 @@ if [[ -f "$HOME/.ssh/agent.env" ]]; then
 fi
 
 # Absolute fallback when both pool and routing table are unavailable (GH#17769)
-readonly DEFAULT_HEADLESS_MODELS="anthropic/claude-sonnet-4-6"
+readonly DEFAULT_HEADLESS_MODELS="anthropic/claude-sonnet-5-5"
 readonly STATE_DIR="${AIDEVOPS_HEADLESS_RUNTIME_DIR:-${HOME}/.aidevops/.agent-workspace/headless-runtime}"
 readonly STATE_DB="${STATE_DIR}/state.db"
 _opencode_profile_binary=$(aidevops_opencode_profile_value binary 2>/dev/null || printf 'opencode')
@@ -810,6 +810,126 @@ _discover_actual_worktree_dir() {
 }
 
 # =============================================================================
+# OpenCode runtime lockfile drift (GH#32903)
+# =============================================================================
+# OpenCode rewrites tracked .opencode/package-lock.json / .opencode/bun.lock
+# in every checkout to match the runner's @opencode-ai/* versions. That drift
+# is runtime-owned only when stripping @opencode-ai/* versions, specs and
+# integrity hashes makes the worktree file identical to the committed file.
+# Anything else (other packages, added dependencies, staged edits) is treated
+# as a real change and is never restored.
+
+# Normalize @opencode-ai/* versions/specs/integrity in an npm lockfile.
+_opencode_lockfile_normalize_npm() {
+	local file="$1"
+	jq -S '
+		def strip:
+			if type == "object" then
+				with_entries(
+					if (.key | test("^(node_modules/)?@opencode-ai/[^/]+$")) then
+						if (.value | type) == "object" then
+							.value |= del(.version, .resolved, .integrity)
+						else .value = "@opencode-ai-spec" end
+					else . end)
+				| map_values(strip)
+			elif type == "array" then map(strip)
+			else . end;
+		strip' "$file"
+	return $?
+}
+
+# Normalize @opencode-ai/* versions/specs/integrity in a Bun text lockfile.
+_opencode_lockfile_normalize_bun() {
+	local file="$1"
+	sed -E \
+		-e 's#(@opencode-ai/[A-Za-z0-9._-]+)@[^"]*"#\1@V"#g' \
+		-e 's#("@opencode-ai/[A-Za-z0-9._-]+": )"[^"]*"#\1"V"#g' \
+		-e '/^[[:space:]]*"@opencode-ai\/[A-Za-z0-9._-]+": \[/ s#"sha(256|384|512)-[A-Za-z0-9+/=]+"#"H"#g' \
+		"$file"
+	return $?
+}
+
+# Classify one lockfile. Prints: clean | absent | runtime-only | preserved:<reason>
+_opencode_lockfile_drift_classify() {
+	local repo_dir="$1"
+	local rel_path="$2"
+	if ! git -C "$repo_dir" ls-files --error-unmatch -- "$rel_path" >/dev/null 2>&1; then
+		printf 'absent\n'
+		return 0
+	fi
+	if git -C "$repo_dir" diff --quiet -- "$rel_path" &&
+		git -C "$repo_dir" diff --cached --quiet -- "$rel_path"; then
+		printf 'clean\n'
+		return 0
+	fi
+	if ! git -C "$repo_dir" diff --cached --quiet -- "$rel_path"; then
+		printf 'preserved:staged-change\n'
+		return 0
+	fi
+	[[ -f "${repo_dir}/${rel_path}" ]] || {
+		printf 'preserved:deleted\n'
+		return 0
+	}
+	local tmp_dir="" committed="" normalizer="_opencode_lockfile_normalize_bun"
+	[[ "$rel_path" == *.json ]] && normalizer="_opencode_lockfile_normalize_npm"
+	tmp_dir=$(mktemp -d) || return 1
+	committed="${tmp_dir}/committed"
+	local verdict="preserved:non-opencode-change"
+	if git -C "$repo_dir" show ":${rel_path}" >"$committed" 2>/dev/null &&
+		"$normalizer" "$committed" >"${tmp_dir}/a" 2>/dev/null &&
+		"$normalizer" "${repo_dir}/${rel_path}" >"${tmp_dir}/b" 2>/dev/null &&
+		cmp -s "${tmp_dir}/a" "${tmp_dir}/b"; then
+		verdict="runtime-only"
+	fi
+	rm -rf "$tmp_dir"
+	printf '%s\n' "$verdict"
+	return 0
+}
+
+# Usage: opencode-lockfile-drift [--dir PATH] [--restore]
+# Exit: 0 no ambiguous drift remains, 1 a lockfile change was preserved, 2 usage.
+cmd_opencode_lockfile_drift() {
+	local repo_dir="$PWD" restore=0
+	while [[ $# -gt 0 ]]; do
+		local arg="$1"
+		local value="${2:-}"
+		case "$arg" in
+		--dir)
+			[[ -n "$value" ]] || {
+				print_error "--dir requires a path"
+				return 2
+			}
+			repo_dir="$value"
+			shift 2
+			;;
+		--restore)
+			restore=1
+			shift
+			;;
+		*)
+			print_error "Unknown option: $arg"
+			return 2
+			;;
+		esac
+	done
+	repo_dir=$(git -C "$repo_dir" rev-parse --show-toplevel 2>/dev/null) || {
+		print_error "not a git worktree: ${repo_dir}"
+		return 2
+	}
+	local rel_path="" verdict="" status=0
+	for rel_path in .opencode/package-lock.json .opencode/bun.lock; do
+		verdict=$(_opencode_lockfile_drift_classify "$repo_dir" "$rel_path") || return 2
+		if [[ "$verdict" == "runtime-only" && "$restore" -eq 1 ]]; then
+			git -C "$repo_dir" checkout -- "$rel_path" || return 2
+			verdict="restored"
+		fi
+		[[ "$verdict" == preserved:* ]] && status=1
+		printf '%s\t%s\n' "$rel_path" "$verdict"
+	done
+	return "$status"
+}
+
+# =============================================================================
 # Stall cap helper (GH#20681)
 # =============================================================================
 
@@ -953,7 +1073,14 @@ Usage:
   headless-runtime-helper.sh backoff [status|set MODEL-OR-PROVIDER REASON [SECONDS]|clear MODEL-OR-PROVIDER]
   headless-runtime-helper.sh session [status|clear PROVIDER SESSION_KEY]
   headless-runtime-helper.sh metrics [--role pulse|worker|triage] [--hours N] [--model SUBSTRING] [--fast-threshold N]
+  headless-runtime-helper.sh opencode-lockfile-drift [--dir PATH] [--restore]
   headless-runtime-helper.sh help
+
+OpenCode lockfile drift (GH#32903):
+  Classifies tracked .opencode/package-lock.json and .opencode/bun.lock changes.
+  runtime-only = the only difference is @opencode-ai/* versions, specs, or
+  integrity hashes; --restore checks out just those files. Any other change is
+  reported as preserved:<reason>, left untouched, and exits 1.
 
 Runtime selection:
   Default runtime is OpenCode. Use --runtime claude to dispatch via Claude CLI.
@@ -970,7 +1097,7 @@ Private workloads:
   after exit.
 
 Backoff granularity:
-  Rate limits and provider errors are recorded per model (e.g. anthropic/claude-sonnet-4-6).
+  Rate limits and provider errors are recorded per model (e.g. anthropic/claude-sonnet-5-5).
   Auth errors are recorded per provider (e.g. anthropic) since credentials are shared.
   This allows fallback from sonnet to opus when only sonnet is rate-limited.
 
@@ -983,7 +1110,7 @@ Dedup guard (GH#6538):
 
 Defaults:
   Model list is derived from routing table + auth availability (GH#17769).
-  Fallback: anthropic/claude-sonnet-4-6 if routing resolution fails.
+  Fallback: anthropic/claude-sonnet-5-5 if routing resolution fails.
   AIDEVOPS_HEADLESS_MODELS is deprecated — respected as override for one release cycle.
   AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST can restrict selection to providers like: openai
   AIDEVOPS_HEADLESS_VARIANT_STANDARD / AIDEVOPS_HEADLESS_VARIANT_THINKING can set tier defaults.
@@ -1002,6 +1129,11 @@ EOF
 main() {
 	local command="${1:-help}"
 	shift || true
+	if [[ "$command" == "opencode-lockfile-drift" ]]; then
+		# Pure git/worktree inspection: no runtime state DB side effects.
+		cmd_opencode_lockfile_drift "$@"
+		return $?
+	fi
 	init_state_db
 	case "$command" in
 	select)

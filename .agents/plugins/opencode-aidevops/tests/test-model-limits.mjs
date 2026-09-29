@@ -14,6 +14,7 @@
 import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { registerClaudeCliFallbackModels, removeLegacyAnthropicModelOverrides } from "../config-hook.mjs";
+import { PENDING_ANTHROPIC_MODELS, registerPendingAnthropicModels } from "../anthropic-catalog-bridge.mjs";
 
 import {
   resolveOpus47Context,
@@ -30,10 +31,33 @@ import {
 test("Claude CLI registration leaves native Anthropic model metadata untouched", () => {
   const native = { name: "Claude Opus 5.5", tool_call: true, limit: { context: 1000000 } };
   const config = { provider: { anthropic: { models: { "claude-opus-5-5": native } } } };
-  assert.equal(registerClaudeCliFallbackModels(config), 6);
+  const expected = Object.keys(CLAUDE_MODEL_LIMITS).length;
+  assert.equal(registerClaudeCliFallbackModels(config), expected);
   assert.deepEqual(config.provider.anthropic.models, { "claude-opus-5-5": native });
-  assert.equal(Object.keys(config.provider.claudecli.models).length, 6);
+  assert.equal(Object.keys(config.provider.claudecli.models).length, expected);
   assert.equal(registerClaudeCliFallbackModels(config), 0);
+});
+
+test("catalogued Sonnet 5.5 is never bridged, even with an old catalog", () => {
+  assert.equal(PENDING_ANTHROPIC_MODELS["claude-sonnet-5-5"], undefined);
+  const catalog = { anthropic: { models: { "claude-sonnet-5": { id: "claude-sonnet-5" } } } };
+  const config = {};
+  assert.equal(registerPendingAnthropicModels(config, catalog), 0);
+  assert.equal(config.provider, undefined);
+
+  const user = { name: "Mine" };
+  const userConfig = { provider: { anthropic: { models: { "claude-sonnet-5-5": user } } } };
+  assert.equal(registerPendingAnthropicModels(userConfig, catalog), 0);
+  assert.equal(userConfig.provider.anthropic.models["claude-sonnet-5-5"], user);
+
+  const shipped = { anthropic: { models: { "claude-sonnet-5-5": { id: "claude-sonnet-5-5" } } } };
+  const nativeConfig = {};
+  assert.equal(registerPendingAnthropicModels(nativeConfig, shipped), 0);
+  assert.equal(nativeConfig.provider, undefined);
+
+  const bare = {};
+  assert.equal(registerPendingAnthropicModels(bare, null), 0);
+  assert.equal(bare.provider, undefined);
 });
 
 test("legacy aidevops Anthropic overrides are dropped while user entries stay", () => {
@@ -205,11 +229,12 @@ describe("describeOpus47Override", () => {
 // ---------------------------------------------------------------------------
 
 describe("CLAUDE_MODEL_LIMITS table", () => {
-  test("contains all six expected Claude model ids", () => {
+  test("contains all expected Claude model ids", () => {
     const expected = [
       "claude-haiku-4-5",
       "claude-sonnet-4-5",
       "claude-sonnet-4-6",
+      "claude-sonnet-5-5",
       "claude-opus-4-5",
       "claude-opus-4-6",
       "claude-opus-4-7",

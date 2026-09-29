@@ -212,8 +212,9 @@ _wah_objective_outcomes_json() {
 		printf '[]'
 		return 0
 	fi
+	# GH#32938: per-line parse so one torn append cannot blank every outcome.
 	tail -n "$evidence_limit" "$WAH_OBJECTIVE_EVIDENCE_FILE" 2>/dev/null |
-		jq -sc '[.[] | select(.record_type == "attempt_outcome")]' 2>/dev/null || printf '[]'
+		jq -Rsc '[split("\n")[] | fromjson? | select(type == "object" and .record_type == "attempt_outcome")]' 2>/dev/null || printf '[]'
 	return 0
 }
 
@@ -316,6 +317,17 @@ _wah_metric_details_json() {
 	objective_outcomes=$(_wah_objective_outcomes_json)
 	jq -rn --argjson cutoff "$cutoff_epoch" --argjson now "$now_epoch" --argjson objective_outcomes "$objective_outcomes" --arg worker_role "$WAH_RUNTIME_ROLE" --arg outcome_failed "$WAH_DELIVERY_FAILED" --arg watchdog_killed_result "$WAH_RESULT_WATCHDOG_STALL_KILLED" --arg local_kill_result "$WAH_RESULT_LOCAL_KILL" --arg repo_slug "$repo_slug" "$WAH_METRIC_DETAILS_JQ" <"$metrics" 2>/dev/null ||
 		printf '{"event_total":0,"unscoped_event_total":0,"excluded_event_total":0,"result_counts":{},"diagnostic_focus":{},"timing_ms":{"avg":0,"max":0,"samples":0},"recent_examples":[],"failure_groups":[],"failure_families":[]}'
+	return 0
+}
+
+# Count quarantined worker rows irrespective of the requested rolling cutoff.
+_wah_future_dated_count() {
+	local now_epoch="$1" repo_slug="${2:-}"
+	[[ -f "$WAH_METRICS_FILE" ]] || { printf '0\n'; return 0; }
+	jq -rn --argjson limit "$((now_epoch + 300))" --arg repo "$repo_slug" '
+		[inputs | select(.role == "worker" and (.ts | type) == "number" and .ts > $limit
+			and ($repo == "" or ((.repo_slug // "" | ascii_downcase) == ($repo | ascii_downcase))))] | length
+	' <"$WAH_METRICS_FILE" 2>/dev/null || printf '0\n'
 	return 0
 }
 
@@ -678,6 +690,7 @@ _wah_emit_human() {
 	printf '\n'
 	printf 'headless-runtime-metrics.jsonl (canonical worker outcomes; scope: %s):\n' "$(if [[ -n "$repo_label" ]]; then printf 'repository'; else printf 'global'; fi)"
 	printf '  Raw attempt/events:          %d\n' "$total"
+	printf '  Future-dated ignored:        %s\n' "$(printf '%s' "$details_json" | jq -r '.future_dated_ignored // 0' 2>/dev/null || printf '0')"
 	printf '  Terminal session outcomes:   %d\n' "$terminal_total"
 	printf '  Runtime handoffs:            %d  (%s of terminal)\n' "$succ" "$handoff_rate_pct"
 	printf '  Watchdog stall-killed:       %d\n' "$wk"
@@ -802,6 +815,7 @@ _wah_emit_json() {
 				terminal_session_total: $terminal_total,
 				event_total: ($details.event_total // $total),
 				unscoped_event_total: ($details.unscoped_event_total // 0),
+				future_dated_ignored: ($details.future_dated_ignored // 0),
 				excluded_event_total: ($details.excluded_event_total // 0),
 				continuation_events: ($details.continuation_events // 0),
 				runtime_handoffs: $succ,
@@ -893,6 +907,7 @@ cmd_summary() {
 	agg=$(_wah_aggregate_metrics "$cutoff_epoch" "$now_epoch" "$repo_label")
 	read -r total terminal_total succ wk wc sic rl of <<<"$agg"
 	details_json=$(_wah_metric_details_json "$cutoff_epoch" "$now_epoch" "$repo_label")
+	details_json=$(printf '%s' "$details_json" | jq --argjson future "$(_wah_future_dated_count "$now_epoch" "$repo_label")" '. + {future_dated_ignored:$future}')
 	live_blocker_sessions_json=$(_wah_live_blocker_sessions_json "$repo_label")
 	blocker_json=$(_wah_blocker_details_json "$cutoff_epoch" "$now_epoch" "$repo_label" "$live_blocker_sessions_json")
 

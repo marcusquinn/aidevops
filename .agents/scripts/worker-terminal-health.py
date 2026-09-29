@@ -123,7 +123,8 @@ def terminal_counts(item, outcomes, result):
 
 def project_health(metrics_path, evidence_path, window_seconds, evidence_limit):
     """Return terminal success/failure and raw provider-health counters."""
-    since = time.time() - window_seconds
+    now = time.time()
+    since = now - window_seconds
     outcomes = outcome_index(evidence_path, evidence_limit)
     totals = [0, 0, 0, 0, 0, 0]
     for item in recent_json_rows(metrics_path, 2000):
@@ -131,7 +132,7 @@ def project_health(metrics_path, evidence_path, window_seconds, evidence_limit):
             timestamp = float(item.get('ts') or 0)
         except (TypeError, ValueError):
             timestamp = 0
-        if timestamp < since or str(item.get('role') or '') != 'worker':
+        if not math.isfinite(timestamp) or timestamp < since or timestamp > now + 300 or str(item.get('role') or '') != 'worker':
             continue
         result = str(item.get('result') or '')
         rate_limits, service_interruptions, provider_5xx, progress = provider_signals(item, result)

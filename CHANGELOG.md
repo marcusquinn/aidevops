@@ -10,6 +10,190 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.37.27] - 2026-09-29
+
+### Added
+
+- refresh GSC and Bing exports before routine import (#32937)
+
+### Fixed
+
+- prune vanished worktree metadata across managed repos; count only live worktrees at dispatch cap
+- retire native Sonnet 5.5 catalog bridge (#32944)
+- keep orphan-recovery PRs from closing incomplete issues (#32940)
+- t18534: restore retry context lost to torn objective-evidence lines; add sanitised failure signals
+
+## [3.37.26] - 2026-09-29
+
+### Changed
+
+- cap compaction effort; route compaction to first fitting simple candidate
+
+### Fixed
+
+- re-validate auth-error accounts once cooldown expires
+- t18531: capability escalation skips identical model routes
+
+## [3.37.25] - 2026-09-29
+
+### Changed
+
+- Maintenance: mark t18508 complete (pr:#32902 completed:2026-09-28) (#32912)
+- Maintenance: build credential-shaped fixtures at runtime (GH#32841) (#32918)
+- Refactor: split release reconciliation regression tests (#32910)
+
+### Fixed
+
+- stop infra hold self-counting; add reset boundary
+- restore only verified OpenCode runtime lockfile drift before rebase (#32926)
+- support trusted PR-less data-only completion (#32920)
+- source primary cooldown under zsh (#32921)
+- return host-compatible objective receipt text (#32917)
+- bind canonical cleanup fetch to canonical repository (#32914)
+
+## [3.37.24] - 2026-09-28
+
+### Changed
+
+- Maintenance: mark t18530 complete (pr:#32891 completed:2026-09-28) (#32894)
+
+### Fixed
+
+- gate publication readiness on auto-dispatch only
+- stop brief-hold/repair comments triggering consolidation
+- accept same-major Node when version-file pin patch differs
+- publish partial quality sweep within repo budget (#32902)
+
+## [3.37.23] - 2026-09-28
+
+### Changed
+
+- Maintenance: plan: add t18529 and t18530 briefs for GH#32871 and GH#32869
+- Maintenance: mark t18526 complete (pr:#32874 completed:2026-09-28) (#32879)
+- Maintenance: sync ref:GH#32867 to TODO.md (#32847)
+
+### Fixed
+
+- allow reads of tracked code/doc files with loose secret names; un-ignore .agents secret/credential source
+- classify Actions billing-blocked checks as capability failures in CI repair
+- let opt-in CWD inspector read same-user setuid-root helpers
+- guard empty create-wrapper arrays under nounset (#32768)
+- derive OpenCode test fixtures from headless pin (#32874)
+
+## [3.37.22] - 2026-09-28
+
+### Added
+
+- Install and update Cloudflare cf CLI via setup and update-tools
+- manual diagnostic listing unreadable processes by PID and comm
+
+### Fixed
+
+- keywords rollup uses the target's own site platform
+- macOS bundle ACL uses account name, not numeric uid
+- scope GSC ADC tokens and resolve default credentials (#32866)
+- canonicalize privileged bootstrap bytecode fixture (#32857)
+
+## [3.37.21] - 2026-09-28
+
+### Added
+
+- Add Cloudflare cf CLI guidance and routing
+- provision continuation reminder labels on issue creation (#32840)
+
+### Fixed
+
+- allow one keyword target per phrase per site
+- reclaim published detached recovery archives and fix recovery escalation attribution
+- share DataForSEO credential resolver (#32839)
+
+## [3.37.20] - 2026-09-28
+
+### Fixed
+
+- macOS broker state under /private/var/db
+- replace consumer-repo root allowlist with artifact guard and document work-notes location
+
+## [3.37.19] - 2026-09-28
+
+### Added
+
+- Align compaction guidance with OpenCode 1/2 host summary templates
+- select project Node for validators and workers (#32819)
+
+### Changed
+
+- Maintenance: mark t18519 complete (pr:#32823 completed:2026-09-28) (#32818)
+
+## [3.37.18] - 2026-09-28
+
+### Fixed
+
+- broker git rejects user-owned worktrees as dubious ownership
+- keywords read DATAFORSEO_API_LOGIN/API_PASSWORD from gopass
+
+## [3.37.17] - 2026-09-28
+
+### Changed
+
+- Maintenance: mark t18517 complete (pr:#32804 completed:2026-09-28) (#32806)
+
+## [3.37.16] - 2026-09-28
+
+### Added
+
+- accept body-file fingerprints and report matched placeholders (#32781)
+- gate OpenCode V2 promotion on profile canaries (#32759)
+- runner-local AI owner for terminal-blocker circuits
+
+### Changed
+
+- Maintenance: mark t18516 complete (pr:#32792 completed:2026-09-28) (#32795)
+- Documentation: add private search target registry pointer (#32797)
+- Refactor: split tool installation modules (#32789)
+- Maintenance: mark t18498 complete (pr:#32784 completed:2026-09-28) (#32780)
+- Documentation: use project commands for code diagnostics (#32784)
+- Tests: repair structural tests after core split (#32783)
+- Documentation: refresh TTS music and BT.709 delivery guidance (#32775)
+- Tests: keep dispatch concurrency reset fresh and name unexpected failures (#32769)
+- Maintenance: mark t18502 complete (pr:#32759 completed:2026-09-28) (#32753)
+- Tests: track current update drift owners (GH#32726) (#32757)
+
+### Fixed
+
+- keep V2 session profile out of the shared V1 config (#32802)
+- keywords DataForSEO credentials fall back to gopass
+- allow Vitest config files in root-file validation
+- keywords rollout fixes — hub clone cwd, env over config, dispatchable backfill issues
+- preserve gh authentication in OpenCode V2 (#32790)
+- accept coloned reproducer labels (#32785)
+- mark automated OpenCode harness runs headless (#32782)
+- preserve exact-body missing-scope holds (#32778)
+- retire stale supervisor and deployment references (#32779)
+- correct init defaults and worktree scope inference (#32767)
+- re-exec bash before creating control worktree (#32766)
+
+## [3.37.15] - 2026-09-28
+
+### Added
+
+- route credential-dependent dispatch to equipped runners (#32748)
+- context/keywords.md search targets standard with hub sync, tracking and ecommerce drill-down
+
+### Fixed
+
+- make the brand-identity.toon template valid TOON
+
+## [3.37.14] - 2026-09-28
+
+### Changed
+
+- Maintenance: mark t18510 complete (pr:#32740 completed:2026-09-28) (#32731)
+
+### Fixed
+
+- keep V1 plugin pass out of the live OpenCode V2 config
+
 ## [3.37.13] - 2026-09-28
 
 ### Changed

@@ -76,6 +76,21 @@ authorized_keys
 # Exception for secret handling reference doc (guidance, not actual secrets)
 !.agents/reference/secret-handling.md
 
+# GH#32526: framework code/docs under .agents/ may name secrets/credentials/
+# tokens without containing them. Data/config formats stay ignored.
+!.agents/**/*secret*.sh
+!.agents/**/*secret*.mjs
+!.agents/**/*secret*.js
+!.agents/**/*secret*.ts
+!.agents/**/*secret*.py
+!.agents/**/*secret*.md
+!.agents/**/*credential*.sh
+!.agents/**/*credential*.mjs
+!.agents/**/*credential*.js
+!.agents/**/*credential*.ts
+!.agents/**/*credential*.py
+!.agents/**/*credential*.md
+
 # Environment files
 .env*
 *.env
@@ -287,3 +302,8 @@ _inbox/*
 !_inbox/README.md
 !_inbox/.gitignore
 !_inbox/triage.log
+
+# aidevops keywords: search-target data lives in the private team hub (aidevops keywords sync)
+context/keywords.md
+context/keywords.md.hub
+context/keywords/

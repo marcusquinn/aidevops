@@ -227,7 +227,7 @@ _sync_subagent_file() {
 	model_tier=$(echo "$frontmatter" | grep '^model_tier=' | cut -d= -f2-)
 	model_fallback=$(echo "$frontmatter" | grep '^model_fallback=' | cut -d= -f2-)
 
-	# Extract short model_id from full ID (e.g., anthropic/claude-sonnet-4-6 -> claude-sonnet-4-6)
+	# Extract short model_id from full ID (e.g., anthropic/claude-sonnet-5-5 -> claude-sonnet-5-5)
 	local model_short
 	model_short="${model_full#*/}"
 	# Strip trailing date suffix (e.g., -20250514)
@@ -1312,7 +1312,7 @@ _route_lookup_models() {
 		;;
 	standard)
 		primary_model="${primary_model:-openai/gpt-5.6-terra}"
-		fallback_model="${fallback_model:-anthropic/claude-sonnet-4-6}"
+		fallback_model="${fallback_model:-anthropic/claude-sonnet-5-5}"
 		;;
 	thinking)
 		primary_model="${primary_model:-openai/gpt-6-sol}"

@@ -42,7 +42,7 @@ SCORING_DB="${HOME}/.aidevops/.agent-workspace/response-scoring.db"
 [[ -z "${BOLD+x}" ]] && BOLD='\033[1m'
 
 # Default contest models — top 3 from different providers for diversity
-DEFAULT_CONTEST_MODELS="anthropic/claude-opus-4-6,anthropic/claude-sonnet-4-6,google/gemini-2.5-pro"
+DEFAULT_CONTEST_MODELS="anthropic/claude-opus-4-6,anthropic/claude-sonnet-5-5,google/gemini-2.5-pro"
 
 # Scoring weights (match response-scoring-helper.sh)
 WEIGHT_CORRECTNESS=30
@@ -87,7 +87,7 @@ run_ai_scoring() {
 
 	case "$ai_cli" in
 	opencode)
-		timeout_sec 120 opencode run --format json \
+		timeout_sec 120 env AIDEVOPS_HEADLESS=1 opencode run --format json \
 			--model "$model" \
 			--prompt "$prompt" \
 			>"$output_file" 2>/dev/null || true

@@ -60,7 +60,11 @@ def db_paths(home, explicit):
         return [path] if path.is_file() else []
     paths = [home / ".local/share/opencode/opencode.db", home / ".local/share/opencode/opencode-archive.db"]
     work = Path(os.environ.get("AIDEVOPS_WORK_DIR", home / ".aidevops/.agent-workspace/work"))
-    paths.extend(Path(item) for item in glob.glob(str(work / "opencode-interactive/*/opencode/opencode.db")))
+    # opencode-launcher-helper.sh isolates each TUI, desktop and server launch in
+    # its own OpenCode 1 data home (GH#32744); each may also carry an archive.
+    for launcher in ("opencode-interactive", "opencode-desktop", "opencode-server"):
+        for name in ("opencode.db", "opencode-archive.db"):
+            paths.extend(Path(item) for item in sorted(glob.glob(str(work / launcher / "*" / "opencode" / name))))
     return [item for item in paths if item.is_file()]
 
 

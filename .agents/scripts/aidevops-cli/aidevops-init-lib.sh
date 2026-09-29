@@ -196,8 +196,16 @@ _init_repo_verify_hook_integrity() {
 
 _init_run_beads_init() {
 	local project_root="$1"
+	local repo_name remote_url main_wt init_args=()
+	remote_url=$(git -C "$project_root" remote get-url origin 2>/dev/null || true)
+	main_wt=$(git -C "$project_root" worktree list --porcelain 2>/dev/null | awk '/^worktree / {sub(/^worktree /, ""); print; exit}')
+	repo_name=$(basename "${remote_url:-${main_wt:-$project_root}}" .git)
+	init_args=(--prefix "$repo_name")
+	if bd init --help 2>&1 | grep -q -- '--skip-agents'; then
+		init_args+=(--skip-agents)
+	fi
 	if bd init --help 2>&1 | grep -q -- '--skip-hooks'; then
-		(cd "$project_root" && bd init --skip-hooks 2>/dev/null)
+		(cd "$project_root" && bd init "${init_args[@]}" --skip-hooks 2>/dev/null)
 		return $?
 	fi
 
@@ -209,7 +217,7 @@ _init_run_beads_init() {
 		hook_backup=$(mktemp "${hook_file}.aidevops-init.XXXXXX") || return 1
 		cp -p "$hook_file" "$hook_backup" || return 1
 	fi
-	(cd "$project_root" && bd init 2>/dev/null) || beads_status=$?
+	(cd "$project_root" && bd init "${init_args[@]}" 2>/dev/null) || beads_status=$?
 	if [[ -n "$hook_backup" ]]; then
 		mv "$hook_backup" "$hook_file" || return 1
 	fi
@@ -383,7 +391,10 @@ scaffold_repo_courtesy_files() {
 	local scope="${2:-standard}" # Default to standard for backward compatibility
 	local created=0
 	local repo_name
-	repo_name=$(basename "$project_root")
+	local remote_url main_wt
+	remote_url=$(git -C "$project_root" remote get-url origin 2>/dev/null || true)
+	main_wt=$(git -C "$project_root" worktree list --porcelain 2>/dev/null | awk '/^worktree / {sub(/^worktree /, ""); print; exit}')
+	repo_name=$(basename "${remote_url:-${main_wt:-$project_root}}" .git)
 	local author_name
 	author_name=$(git -C "$project_root" config user.name 2>/dev/null || echo "")
 	local current_year
@@ -721,10 +732,21 @@ _update_agents_md_security() {
 }
 
 # Init helpers (extracted for complexity reduction)
+_init_has_database_signals() {
+	local project_root="$1"
+	local marker
+	for marker in schema.prisma prisma/schema.prisma drizzle.config.ts drizzle.config.js knexfile.js knexfile.ts ormconfig.json alembic.ini manage.py db/schema.rb migrations schemas; do
+		[[ -e "$project_root/$marker" ]] && return 0
+	done
+	# Limit traversal to tracked project files, excluding dependencies and generated output.
+	git -C "$project_root" ls-files -- '*.sql' '**/*.sql' | grep -q . && return 0
+	return 1
+}
+
 _init_parse_features() {
 	local features="$1"
 	case "$features" in
-	all) echo "planning git_workflow code_quality time_tracking database beads security" ;;
+	all) echo "planning git_workflow code_quality time_tracking security" ;;
 	planning) echo "planning" ;; git-workflow) echo "git_workflow" ;; code-quality) echo "code_quality" ;;
 	time-tracking) echo "time_tracking planning" ;; database) echo "database" ;;
 	beads) echo "beads planning" ;; sops) echo "sops" ;; security) echo "security" ;;
@@ -915,6 +937,12 @@ EOF
 		print_info "DESIGN.md skipped (init_scope: $init_scope, interface: $has_interface)"
 	fi
 
+	# context/keywords.md — search targets; every standard/public repo is a search
+	# property (GitHub, registries, AI answers). Minimal scope only via explicit opt-in.
+	if _scope_includes "$init_scope" "standard" || [[ "$(jq -r '.keywords.enabled // false' "$project_root/.aidevops.json" 2>/dev/null)" == "true" ]]; then
+		_init_scaffold_keywords "$project_root" "$init_scope"
+	fi
+
 	# Courtesy files (README, LICENCE, CHANGELOG, etc.) — scope handled internally
 	scaffold_repo_courtesy_files "$project_root" "$init_scope"
 
@@ -1050,6 +1078,11 @@ _init_run_workflow() {
 		wordpress_context) enable_wordpress_context=true ;;
 		esac
 	done
+	# The default set includes database scaffolding only for projects with evidence
+	# of a database. Explicit `database` remains available for empty repositories.
+	if [[ "$features" == "all" ]] && _init_has_database_signals "$project_root"; then
+		enable_database=true
+	fi
 
 	# Determine init_scope: minimal | standard | public
 	# Infer from context when not set; user can override via repos.json or .aidevops.json
@@ -1797,6 +1830,10 @@ _init_commit_files() {
 	[[ -f "$project_root/.aidevops/wordpress.yaml" ]] && init_files+=(".aidevops/wordpress.yaml")
 	[[ -f "$project_root/AGENTS.md" ]] && init_files+=("AGENTS.md")
 	[[ -f "$project_root/DESIGN.md" ]] && init_files+=("DESIGN.md")
+	# Public repos gitignore keywords data; only stage it when Git tracks it.
+	if [[ -d "$project_root/context/keywords" ]] && ! git -C "$project_root" check-ignore -q context/keywords/ 2>/dev/null; then
+		init_files+=("context/keywords.md" "context/keywords/")
+	fi
 	[[ -f "$project_root/TODO.md" ]] && init_files+=("TODO.md")
 	[[ -d "$project_root/todo" ]] && init_files+=("todo/")
 	[[ -f "$project_root/MODELS.md" ]] && init_files+=("MODELS.md")

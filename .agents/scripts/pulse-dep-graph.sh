@@ -374,7 +374,7 @@ build_dependency_graph_cache() {
 #   - `HUMAN_UNBLOCK_REQUIRED`      — explicit machine-readable hold marker
 #   - `CLAIM_RELEASED reason=blocked` — terminal worker blocker lifecycle event
 #######################################
-_PULSE_DEP_GRAPH_NON_DEP_BLOCK_MARKERS='\*\*BLOCKED\*\*.*cannot proceed|Worker Watchdog Kill|Terminal blocker detected|ACTION REQUIRED|HUMAN_UNBLOCK_REQUIRED|CLAIM_RELEASED reason=blocked([[:space:]]|$)'
+_PULSE_DEP_GRAPH_NON_DEP_BLOCK_MARKERS='\*\*BLOCKED\*\*.*cannot proceed|Worker Watchdog Kill|Terminal blocker detected|ACTION REQUIRED|HUMAN_UNBLOCK_REQUIRED|CLAIM_RELEASED reason=blocked([[:space:]]|$)|aidevops:brief-hold'
 
 #######################################
 # Decide whether to defer auto-unblock for an issue (t2031)
@@ -408,6 +408,11 @@ _should_defer_auto_unblock() {
 	local repo_slug="$1"
 	local issue_num="$2"
 	local has_defer_flag="$3"
+	if declare -F issue_brief_hold_blocks_auto_release >/dev/null 2>&1 &&
+		issue_brief_hold_blocks_auto_release "$issue_num" "$repo_slug"; then
+		printf 'brief-hold\n'
+		return 0
+	fi
 
 	# (a) Body defer marker — cached at build time, free to consult.
 	if [[ "$has_defer_flag" == "true" ]]; then
@@ -430,7 +435,7 @@ _should_defer_auto_unblock() {
 				. == "OWNER" or . == "MEMBER" or . == "COLLABORATOR";
 			(if (type == "array" and ((.[0]? | type) == "array")) then add else . end)
 			| .[-10:]
-			| map(select((.author_association // "") | trusted_association) | (.body // ""))
+			| map(select((.author_association // "") | trusted_association) | (.body // "") | gsub("aidevops:brief-hold"; "expired-brief-hold"))
 			| join("\n---\n")
 		') || recent_bodies=""
 

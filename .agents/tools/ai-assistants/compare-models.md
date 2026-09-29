@@ -36,7 +36,7 @@ model: standard
 ### `/compare-models [models...] [--task TASK]`
 
 ```bash
-/compare-models claude-sonnet-4-6 gpt-4o gemini-2.5-pro
+/compare-models claude-sonnet-5-5 gpt-4o gemini-2.5-pro
 /compare-models --task "code review"   # --tier low|medium|high
 /compare-models --pricing              # --context --capabilities --providers --free
 ```
@@ -51,7 +51,7 @@ Offline comparison using only embedded reference data. No web fetches, no API ca
 
 ```bash
 ~/.aidevops/agents/scripts/compare-models-helper.sh list
-~/.aidevops/agents/scripts/compare-models-helper.sh compare claude-sonnet-4-6 gpt-4o
+~/.aidevops/agents/scripts/compare-models-helper.sh compare claude-sonnet-5-5 gpt-4o
 ~/.aidevops/agents/scripts/compare-models-helper.sh recommend "code review"
 ~/.aidevops/agents/scripts/compare-models-helper.sh pricing
 ```
@@ -68,7 +68,7 @@ Offline comparison using only embedded reference data. No web fetches, no API ca
 | Model | Provider | Context | Input $/1M | Output $/1M | Tier | Best For |
 |-------|----------|---------|-----------|------------|------|----------|
 | claude-opus-4-6 | Anthropic | 200K | $15.00 | $75.00 | high | Architecture, novel problems |
-| claude-sonnet-4-6 | Anthropic | 200K | $3.00 | $15.00 | medium | Code, review, most tasks |
+| claude-sonnet-5-5 | Anthropic | 200K | $3.00 | $15.00 | medium | Code, review, most tasks |
 | gpt-4o | OpenAI | 128K | $2.50 | $10.00 | medium | General purpose, multimodal |
 | gemini-2.5-pro | Google | 1M | $1.25 | $10.00 | medium | Large context analysis |
 
@@ -95,7 +95,7 @@ sonnet: $3.00/$15.00 per 1M tokens, 200K context — 85% (n=47) success
 
 ```bash
 ~/.aidevops/agents/scripts/observability-helper.sh record \
-  --model claude-sonnet-4-6 --input-tokens 150 --output-tokens 320 \
+  --model claude-sonnet-5-5 --input-tokens 150 --output-tokens 320 \
   --prompt-file prompts/build.txt
 
 ~/.aidevops/agents/scripts/compare-models-helper.sh score \
@@ -134,10 +134,10 @@ Key lookup order: env vars → gopass secrets → `~/.config/aidevops/credential
 ## Live Model Benchmarking (t1393)
 
 ```bash
-~/.aidevops/agents/scripts/compare-models-helper.sh bench "Explain quicksort" claude-sonnet-4-6 gpt-4o
-~/.aidevops/agents/scripts/compare-models-helper.sh bench "Explain quicksort" claude-sonnet-4-6 gpt-4o gemini-2.5-pro --judge
-~/.aidevops/agents/scripts/compare-models-helper.sh bench --dataset prompts.jsonl claude-sonnet-4-6 gpt-4.1 --judge
-~/.aidevops/agents/scripts/compare-models-helper.sh bench "What is 2+2?" claude-sonnet-4-6 gpt-4o --dry-run
+~/.aidevops/agents/scripts/compare-models-helper.sh bench "Explain quicksort" claude-sonnet-5-5 gpt-4o
+~/.aidevops/agents/scripts/compare-models-helper.sh bench "Explain quicksort" claude-sonnet-5-5 gpt-4o gemini-2.5-pro --judge
+~/.aidevops/agents/scripts/compare-models-helper.sh bench --dataset prompts.jsonl claude-sonnet-5-5 gpt-4.1 --judge
+~/.aidevops/agents/scripts/compare-models-helper.sh bench "What is 2+2?" claude-sonnet-5-5 gpt-4o --dry-run
 ~/.aidevops/agents/scripts/compare-models-helper.sh bench --history --limit 10
 ```
 
@@ -146,7 +146,7 @@ Output format:
 ```text
 | Model                  | Latency | Tokens (in/out) | Cost    | Judge Score |
 |------------------------|---------|-----------------|---------|-------------|
-| claude-sonnet-4-6      | 1.2s    | 150/320         | $0.0062 | 0.92        |
+| claude-sonnet-5-5      | 1.2s    | 150/320         | $0.0062 | 0.92        |
 | gpt-4o                 | 0.9s    | 150/290         | $0.0048 | 0.88        |
 | gemini-2.5-pro         | 1.8s    | 150/350         | $0.0071 | 0.90        |
 ```

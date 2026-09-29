@@ -862,6 +862,12 @@ _should_run_llm_supervisor() {
 		return 0
 	fi
 
+	# 1b. t18514: circuit-held issues owned by this runner need the AI brief
+	# owner. Rate-limit the (GitHub-verified) pending count by interval.
+	if _pulse_blocker_recovery_due "$now_epoch" "$last_llm_success_epoch" "$last_llm_attempt_epoch"; then
+		return 0
+	fi
+
 	# 2. Backlog stall: check if issue+PR count has changed
 	local snapshot_file="${PULSE_DIR}/backlog_snapshot.txt"
 	if [[ ! -f "$snapshot_file" ]]; then
@@ -915,6 +921,37 @@ _should_run_llm_supervisor() {
 
 	# Stalled but not long enough yet
 	return 1
+}
+
+#######################################
+# t18514/GH#32754: decide whether pending terminal-blocker recovery entries
+# warrant an LLM supervisor run. Checks at most once per interval so the
+# GitHub-verified count never runs on every pulse cycle.
+# Args: now_epoch last_success_epoch last_attempt_epoch
+# Returns: 0 when a recovery run should start (trigger mode written), 1 otherwise
+#######################################
+_pulse_blocker_recovery_due() {
+	local now_epoch="$1"
+	local last_success_epoch="$2"
+	local last_attempt_epoch="$3"
+	local interval="${PULSE_LLM_RECOVERY_INTERVAL:-10800}"
+	local stamp="${PULSE_DIR}/last_blocker_recovery_check_epoch"
+	local helper="${SCRIPT_DIR:-${BASH_SOURCE[0]%/*}}/terminal-blocker-recovery-helper.sh"
+	local last_check=0 pending=0
+	[[ "$interval" =~ ^[0-9]+$ && "$interval" -gt 0 ]] || return 1
+	[[ -f "$helper" ]] || return 1
+	[[ -f "$stamp" ]] && read -r last_check <"$stamp"
+	[[ "$last_check" =~ ^[0-9]+$ ]] || last_check=0
+	[[ $((now_epoch - last_check)) -ge "$interval" ]] || return 1
+	printf '%s\n' "$now_epoch" >"$stamp" 2>/dev/null || return 1
+	pending=$(bash "$helper" pending --count 2>/dev/null) || pending=0
+	[[ "$pending" =~ ^[0-9]+$ && "$pending" -gt 0 ]] || return 1
+	if _pulse_llm_failure_cooldown_active "$now_epoch" "$last_success_epoch" "$last_attempt_epoch"; then
+		return 1
+	fi
+	echo "[pulse-wrapper] LLM supervisor: ${pending} terminal-blocker recovery entr$([[ "$pending" -eq 1 ]] && printf 'y' || printf 'ies') pending (t18514)" >>"$LOGFILE"
+	_pulse_write_trigger_mode "blocker_recovery" || return 1
+	return 0
 }
 
 _update_backlog_snapshot() {

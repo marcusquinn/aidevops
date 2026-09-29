@@ -118,10 +118,33 @@ test("valid args execute the sub-tool with context and without nested intent", {
 
   assert.equal(await dispatcher.execute({
     tool: "aidevops_objective_receipt",
-    args: { parent_session_id: "ses_1", objective_id: "objective:root", outcome: "accepted_unchanged" },
+    args: { parent_session_id: "ses_1", objective_id: "objective:root", run_id: "run:root", contribution_id: "opencode-child:child", outcome: "accepted_unchanged" },
   }, context), "recorded");
   assert.equal(decisions[0].objectiveID, "objective:root");
   assert.equal(decisions[0].outcome, "accepted_unchanged");
+});
+
+test("parent-receipt hint args return host-compatible text and reject missing identity", { skip: zodSkip }, async () => {
+  const decisions = [];
+  const receipt = createObjectiveReceiptTool(tool, (decision) => {
+    decisions.push(decision);
+    return { recorded: true, objectiveID: decision.objectiveID };
+  });
+  const dispatcher = createOnDemandTool(tool, { aidevops_objective_receipt: receipt });
+  const args = {
+    parent_session_id: "parent", objective_id: "objective:root", run_id: "run:root",
+    contribution_id: "opencode-child:child-objective", outcome: "accepted_unchanged",
+  };
+  const invoke = (input) => dispatcher.execute({ tool: "aidevops_objective_receipt", args: input }, {});
+  assert.deepEqual(JSON.parse(await invoke(args)), { recorded: true, objectiveID: "objective:root" });
+  assert.equal(decisions[0].repairContributionID, undefined);
+  assert.equal(decisions[0].policyVersion, "v1");
+  assert.deepEqual(JSON.parse(await invoke({
+    ...args, objective_outcome: "verified", evidence_kind: "release-tag",
+    evidence_fingerprint: "v3.37.14", observer: "parent",
+  })), { recorded: true, objectiveID: "objective:root" });
+  await assert.rejects(invoke({ ...args, contribution_id: "" }), /requires contribution_id/);
+  assert.equal(decisions.length, 2);
 });
 
 test("dispatcher stays compact relative to the production tools it replaces", { skip: zodSkip }, () => {

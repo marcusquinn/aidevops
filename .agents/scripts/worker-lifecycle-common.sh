@@ -239,7 +239,41 @@ _emit_objective_recovery_evidence() {
 		verification_preserved:$verification_preserved,subsequent_action_at:$evidence_timestamp,
 		pr_repair:(if $repair_pr_number == "" then null else {pr_number:($repair_pr_number|tonumber),
 		head_sha:$repair_head_sha,head_ref:$repair_head_ref,failure_fingerprint:$repair_fingerprint} end)}') || evidence_record=""
-	[[ -n "$evidence_record" ]] && printf '%s\n' "$evidence_record" >>"$evidence_file" 2>/dev/null || true
+	[[ -n "$evidence_record" ]] || return 0
+	_objective_evidence_locked_append "$evidence_file" "$evidence_record"
+	return 0
+}
+
+# GH#32938: concurrent unlocked `>>` appends of >1KB records tore ledger lines.
+# Shares objective-reconciliation-helper.sh's `<file>.lockdir` so both writers
+# serialise. Lock contention past ~5s falls back to the previous best-effort append.
+_objective_evidence_locked_append() {
+	local evidence_file="$1"
+	local record="$2"
+	local lock_dir="${evidence_file}.lockdir"
+	local attempts=0
+	local owner_pid=""
+	local locked=0
+	while [[ "$attempts" -lt 100 ]]; do
+		if mkdir "$lock_dir" 2>/dev/null; then
+			locked=1
+			printf '%s\n' "$$" >"${lock_dir}/owner.pid" 2>/dev/null || true
+			break
+		fi
+		attempts=$((attempts + 1))
+		owner_pid=$(tr -d '[:space:]' <"${lock_dir}/owner.pid" 2>/dev/null || true)
+		if [[ "$owner_pid" =~ ^[0-9]+$ ]] && ! kill -0 "$owner_pid" 2>/dev/null; then
+			rm -f "${lock_dir}/owner.pid" 2>/dev/null || true
+			rmdir "$lock_dir" 2>/dev/null || true
+			continue
+		fi
+		sleep 0.05
+	done
+	printf '%s\n' "$record" >>"$evidence_file" 2>/dev/null || true
+	if [[ "$locked" -eq 1 ]]; then
+		rm -f "${lock_dir}/owner.pid" 2>/dev/null || true
+		rmdir "$lock_dir" 2>/dev/null || true
+	fi
 	return 0
 }
 
@@ -1701,9 +1735,9 @@ _post_tier_escalation() {
 **Reason:** ${safe_reason}
 ${crash_type_label:+${crash_type_label}
 }
-Previous attempts at \`tier:${current_tier}\` failed to produce a PR. Escalating to a more capable model with accumulated context from prior attempts.
+Previous attempts at \`tier:${current_tier}\` failed to produce a PR. Escalating to a more capable model.
 
-The next worker should review prior attempt comments on this issue for context on what was tried and where it got stuck.
+The next worker receives validated prior-attempt state and sanitised failure signals in its dispatch prompt; it should work from the issue body and current repository state, not from operational comments like this one.
 
 _Automated by \`escalate_issue_tier()\` cascade dispatch in worker-lifecycle-common.sh_"
 

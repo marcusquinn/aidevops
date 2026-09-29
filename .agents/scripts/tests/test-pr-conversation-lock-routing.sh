@@ -36,6 +36,7 @@ pass() {
 
 reset_calls() {
 	: >"$CALL_LOG"
+	STUB_LOCKED=false
 	return 0
 }
 
@@ -89,9 +90,13 @@ gh() {
 		printf 'Resolves #42\n'
 		return 0
 	fi
+	if [[ "$group" == "issue" && "$action" == "lock" ]]; then
+		STUB_LOCKED=true
+		return 0
+	fi
 	if [[ "$group" == "api" ]]; then
-		if [[ "$*" == *'.locked == true'* ]]; then
-			printf 'true\n'
+		if [[ "$*" == *'--jq .locked'* ]]; then
+			printf '%s\n' "$STUB_LOCKED"
 			return 0
 		fi
 		printf '%s\n' "${STUB_ISSUE_LABELS:-bug}"

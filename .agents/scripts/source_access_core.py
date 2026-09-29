@@ -535,10 +535,19 @@ def github_issue_action(uid: int, reader: GitHubIssueReader, action: str, body: 
         process.wait(timeout=2)
 
 
+# GH#32834: macOS ships /private/var/run as 0775 root:daemon, which the strict
+# root_data_directory() ancestry rule correctly refuses. /private/var/db is
+# 0755 root:wheel. Keep this in sync with DEFAULT_STATE_DIR in
+# plugins/opencode-aidevops/source-access-{approval,manifest-approval}.mjs.
+DEFAULT_STATE_DIR = Path(
+    "/private/var/db/aidevops/source-access" if sys.platform == "darwin" else "/var/run/aidevops/source-access"
+)
+
+
 @dataclass(frozen=True)
 class Config:
     config_dir: Path = Path("/etc/aidevops/source-access")
-    state_dir: Path = Path("/var/run/aidevops/source-access")
+    state_dir: Path = DEFAULT_STATE_DIR
     request_root: Path | None = None
     trust_uid: int = 0
 
@@ -611,9 +620,30 @@ def canonical_json(value: Any) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
+def _git_user_identity() -> dict[str, Any]:
+    """Subprocess identity for Git: the authenticated requester when running as root.
+
+    #aidevops:trust-boundary — GH#32816: root Git rejects user-owned
+    repositories as "dubious ownership", and trusting them as root would let
+    repository-local config (include/includeIf, extensions) steer a root
+    process. Git therefore runs with the requesting user's uid/gid and no
+    supplementary groups, exactly like the gh credential read. A root caller
+    without an authenticated non-root requester keeps the legacy root identity,
+    for which Git still refuses non-root-owned repositories.
+    """
+    if os.geteuid() != 0:
+        return {}
+    uid, _home = real_user()
+    if uid <= 0:
+        return {}
+    account = pwd.getpwuid(uid)
+    return {"user": uid, "group": account.pw_gid, "extra_groups": []}
+
+
 def _run(command: list[str], *, input_bytes: bytes | None = None) -> subprocess.CompletedProcess[bytes]:
     _require_source(bool(command) and command[0] in (GIT, SSH_KEYGEN), "required command is not approved")
     environment = None
+    identity: dict[str, Any] = {}
     if command and command[0] == GIT:
         # #aidevops:trust-boundary — even ls-files runs core.fsmonitor. Never
         # execute repository hooks or inherit a caller's Git scope as the broker.
@@ -621,11 +651,14 @@ def _run(command: list[str], *, input_bytes: bytes | None = None) -> subprocess.
                    "-c", "core.hooksPath=/dev/null", *command[1:]]
         environment = {"PATH": "/usr/bin:/bin", "LC_ALL": "C", "GIT_CONFIG_NOSYSTEM": "1",
                        "GIT_CONFIG_GLOBAL": os.devnull, "GIT_OPTIONAL_LOCKS": "0"}
+        identity = _git_user_identity()
     try:
-        return subprocess.run(  # nosec B603 -- fixed system binary allowlist, argv only, Git hooks disabled
+        return subprocess.run(  # nosec B603 -- fixed system binary allowlist, argv only, Git hooks disabled; privileges dropped first
             command,
             input=input_bytes,
             env=environment,
+            cwd="/" if identity else None,
+            **identity,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             check=False,
@@ -794,6 +827,22 @@ def root_data_directory(path: Path, owner_uid: int, mode: int = 0o700) -> Path:
     return path
 
 
+def _darwin_acl_principal(uid: int) -> str:
+    """GH#32858: Darwin chmod -E accepts a user name or UUID, never a numeric uid.
+
+    The name must round-trip to the same uid so an aliased or malformed account
+    cannot redirect the grant; macOS binds the ACE to that account's UUID.
+    """
+    try:
+        name = pwd.getpwuid(uid).pw_name
+        round_trip = pwd.getpwnam(name).pw_uid
+    except KeyError:
+        raise SourceAccessError("bundle owner has no local account") from None
+    _require_source(re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,254}", name) is not None and round_trip == uid,
+                    "bundle owner account name is unsafe for an ACL entry")
+    return name
+
+
 def private_bundle_parent(config: Config, uid: int) -> Path:
     _require_source(type(uid) is int and uid > 0, "bundle requires a non-root owner")
     parent = root_data_directory(config.state_dir / "bundles" / str(uid), config.trust_uid, 0o755)
@@ -802,7 +851,8 @@ def private_bundle_parent(config: Config, uid: int) -> Path:
         return parent
     if sys.platform == "darwin":
         command = ["/bin/chmod", "-E", str(parent)]
-        content = f"user:{uid} allow list,search,readattr,readextattr,readsecurity\n".encode("ascii")
+        principal = _darwin_acl_principal(uid)
+        content = f"user:{principal} allow list,search,readattr,readextattr,readsecurity\n".encode("ascii")
     else:
         _require_source(sys.platform.startswith("linux"), "private bundle ACLs are unsupported on this platform")
         command = ["/usr/bin/setfacl", "--set", f"u::rwx,u:{uid}:r-x,g::---,m::r-x,o::---", "--", str(parent)]
@@ -810,7 +860,7 @@ def private_bundle_parent(config: Config, uid: int) -> Path:
     executable = Path(command[0]).resolve(strict=True)
     _require_source(_trusted_file(executable, 0) and all(_trusted_directory(item, 0) for item in executable.parents),
                     "private publication requires a trusted system ACL tool")
-    result = subprocess.run(  # nosec B603 -- fixed platform ACL executable and numeric UID; no caller command
+    result = subprocess.run(  # nosec B603 -- fixed platform ACL executable; uid or round-tripped name; no caller command
         command, input=content, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         env={"PATH": "/usr/bin:/bin", "LC_ALL": "C"}, check=False, timeout=5,
     )
@@ -1206,6 +1256,9 @@ def _validated_context_reply(
     reply: Any, query: dict[str, Any], pid: int, uid: int
 ) -> dict[str, Any]:
     _require_source(isinstance(reply, dict), "invalid source context response")
+    # Never surface peer-controlled error text; an error reply has no challenge proof.
+    _require_source("error" not in reply,
+                    "source context unavailable: worktree owner/session not verified; retry source preflight to reclaim a dead owner")
     expected = {"schema": "aidevops-source-context-reply/v1", "authority": "none",
                 "nonce": query["nonce"], "session_id": query["session_id"],
                 "repo_root": query["repo_root"], "runtime_pid": pid, "uid": uid}

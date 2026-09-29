@@ -17,6 +17,10 @@ jobs:
   linux-headless-canary:
     runs-on: ubuntu-latest
     timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [v1, v2]
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -28,6 +32,7 @@ jobs:
         continue-on-error: true
         env:
           CANDIDATE: ${{ inputs.candidate || 'latest' }}
+          AIDEVOPS_OPENCODE_PROFILE: ${{ matrix.profile }}
         run: |
           set -o pipefail
           : > canary-result.txt
@@ -38,7 +43,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: opencode-pin-canary-evidence
+          name: opencode-pin-canary-evidence-${{ matrix.profile }}
           path: |
             pin-status.txt
             canary-result.txt
@@ -49,36 +54,42 @@ jobs:
     needs: linux-headless-canary
     if: always()
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [v1, v2]
     permissions:
       contents: read
       issues: write
     steps:
       - name: Download canary evidence
+        continue-on-error: true
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: opencode-pin-canary-evidence
+          name: opencode-pin-canary-evidence-${{ matrix.profile }}
 
       - name: Record actionable compatibility review
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
+          PROFILE: ${{ matrix.profile }}
         run: |
           if grep -q '^RESULT=pass$' canary-result.txt 2>/dev/null; then
-            title="Promote passing OpenCode compatibility candidate"
+            title="Promote passing OpenCode ${PROFILE} compatibility candidate"
             summary="The scheduled isolated Linux-headless OpenCode candidate canary passed."
           else
-            title="OpenCode compatibility pin review is due"
+            title="OpenCode ${PROFILE} compatibility pin review is due"
             summary="The scheduled isolated Linux-headless OpenCode candidate canary did not pass."
           fi
           existing=$(gh api "repos/${REPO}/issues?state=open&per_page=100" \
             --jq ".[] | select(.title == \"${title}\") | .number" | command head -n 1)
           [[ -n "$existing" ]] && exit 0
-          status=$(<pin-status.txt)
-          result=$(<canary-result.txt)
+          status=$(<pin-status.txt) || status="status artifact unavailable"
+          result=$(<canary-result.txt) || result="canary artifact unavailable"
           body=$(printf '%s\n\n%s\n\n%s\n\n%s\n' \
             "$summary" \
             "Status: ${status}" "Result: ${result}" \
-            'Files: `.agents/scripts/shared-constants.sh`, `.agents/plugins/opencode-aidevops/package.json`, and `.agents/plugins/opencode-aidevops/package-lock.json`. Retain the current fail-closed pin after failed or inconclusive results; after a passing rerun, advance the tested version, dates, result, and plugin lock together. Verify with `.agents/scripts/tests/test-opencode-pin-policy.sh` and the workflow canary.')
+            'Files: `.agents/scripts/opencode-pin-canary.sh`, `.agents/configs/opencode-runtime-profiles.json`, and (only when necessary) `.agents/plugins/opencode-aidevops/`. Investigate missing plugin tools and compare the native tool diff. Retain the current fail-closed pin after failed or inconclusive results; only after a passing rerun advance the profile tested version, pin, dates and result together. Verify with `.agents/scripts/tests/test-opencode-pin-policy.sh`, `.agents/scripts/tests/test-opencode-runtime-profile.sh`, and the workflow canary.')
           gh api --method POST "repos/${REPO}/issues" -f title="$title" -f body="$body" \
             -f 'labels[]=origin:worker' -f 'labels[]=auto-dispatch' \
             -f 'labels[]=tier:standard' -f 'labels[]=status:available' >/dev/null

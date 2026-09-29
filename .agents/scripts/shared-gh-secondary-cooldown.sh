@@ -31,8 +31,18 @@ _GH_SECONDARY_COOLDOWN_ACTION_CREATED="created"
 _GH_SECONDARY_COOLDOWN_UNKNOWN="unknown"
 _GH_SECONDARY_COOLDOWN_GRAPHQL="graphql"
 
+# The wrappers already resolved their own directory; standalone sourcing must
+# resolve this file under both bash and zsh (where BASH_SOURCE is empty).
+_gh_secondary_lib_dir="${_SHARED_GH_WRAPPERS_DIR:-}"
+if [[ -z "$_gh_secondary_lib_dir" && -n "${BASH_SOURCE[0]:-}" ]]; then
+	_gh_secondary_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || return 1
+elif [[ -z "$_gh_secondary_lib_dir" && -n "${ZSH_VERSION:-}" ]]; then
+	_gh_secondary_lib_self="$0"
+	[[ -f "$_gh_secondary_lib_self" ]] || return 1
+	_gh_secondary_lib_dir="$(cd "$(dirname "$_gh_secondary_lib_self")" && pwd)" || return 1
+fi
 # shellcheck source=./shared-gh-primary-cooldown.sh
-source "${BASH_SOURCE[0]%/*}/shared-gh-primary-cooldown.sh"
+source "${_gh_secondary_lib_dir}/shared-gh-primary-cooldown.sh"
 
 _gh_secondary_cooldown_now() {
 	date +%s

@@ -248,7 +248,16 @@ _dlw_restore_worktree_deps "$2" "$3"
             [sys.executable, str(SCRIPTS / "worktree-dependency-provision.py"),
                                  str(self.repo), str(self.wt), "."], capture_output=True, text=True)
         self.assertEqual(result.returncode, 1)
-        self.assertEqual(result.stderr, "dependency-provision-rejected\n")
+        self.assertEqual(result.stderr, "dependency-provision-rejected reason=invalid-object-metadata\n")
+
+    def test_unexpected_os_error_reports_errno_without_path(self):
+        (self.wt / "package-lock.json").unlink()
+        # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+        result = subprocess.run(  # nosec B603 -- current interpreter, fixed helper and fixture-owned arguments.
+            [sys.executable, str(SCRIPTS / "worktree-dependency-provision.py"),
+                                 str(self.repo), str(self.wt), "."], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stderr, "dependency-provision-rejected reason=os-error-ENOENT\n")
 
     def test_atomic_promotion_does_not_replace_existing_directory(self):
         stage = self.wt / ".aidevops-deps-fixture" / "node_modules"

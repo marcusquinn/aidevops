@@ -41,7 +41,7 @@ tools:
 {
   "name": "build-agent-tests",
   "agent": "Build+",
-  "model": "anthropic/claude-sonnet-4-6",
+  "model": "anthropic/claude-sonnet-5-5",
   "timeout": 120,
   "tests": [
     {
@@ -77,7 +77,7 @@ agent-test-helper.sh run path/to/suite.json
 agent-test-helper.sh run smoke-test
 agent-test-helper.sh run-one "What is your primary purpose?"
 agent-test-helper.sh run-one "List your tools" --expect "bash"
-agent-test-helper.sh run-one "Explain git workflow" --agent "Build+" --model "anthropic/claude-sonnet-4-6" --timeout 60
+agent-test-helper.sh run-one "Explain git workflow" --agent "Build+" --model "anthropic/claude-sonnet-5-5" --timeout 60
 agent-test-helper.sh baseline smoke-test
 agent-test-helper.sh compare smoke-test
 agent-test-helper.sh create my-new-tests

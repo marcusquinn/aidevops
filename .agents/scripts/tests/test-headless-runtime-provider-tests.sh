@@ -1123,7 +1123,7 @@ test_service_interruption_candidate_uses_separate_path() {
 	_run_result_label=""
 	_run_failure_reason=""
 	status=0
-	_handle_run_result 1 "$auth_refresh_output_file" "worker" "anthropic" "issue-23037" "anthropic/claude-sonnet-4-6" || status=$?
+	_handle_run_result 1 "$auth_refresh_output_file" "worker" "anthropic" "issue-23037" "anthropic/claude-sonnet-5-5" || status=$?
 
 	if [[ "$status" -eq 81 && "$_run_result_label" == "service_interruption_continue" && "$_run_failure_reason" == "auth_error" && -f "$auth_refresh_output_file" ]]; then
 		print_result "token refresh 401 with session evidence resumes as service interruption" 0
@@ -1238,7 +1238,7 @@ EOF
 			AIDEVOPS_HEADLESS_RUNTIME_DIR="${canary_root}/runtime" \
 			CANARY_CACHE_TTL_SECONDS=0 \
 			CANARY_TIMEOUT_SECONDS=5 \
-			bash -c 'source "$1" help >/dev/null 2>&1; _run_canary_test "anthropic/claude-sonnet-4-6"' _ "$HELPER_SCRIPT"
+			bash -c 'source "$1" help >/dev/null 2>&1; _run_canary_test "anthropic/claude-sonnet-5-5"' _ "$HELPER_SCRIPT"
 	) && [[ -f "$args_file" && -f "$env_file" ]]; then
 		local args
 		args=$(<"$args_file")

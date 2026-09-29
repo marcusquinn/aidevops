@@ -1341,6 +1341,58 @@ _source_shared_module_with_retry "${_SC_SELF%/*}/managed-label-provisioning-lib.
 # shellcheck disable=SC1091  # sub-library resolved at runtime via _SC_SELF
 _source_shared_module_with_retry "${_SC_SELF%/*}/shared-gh-wrappers.sh"
 
+# Machine-readable provenance for automated issue comments. Kind is an
+# identifier, never free-form issue content; callers prepend this to the body.
+aidevops_ops_marker() {
+	local kind="$1"
+	[[ "$kind" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || return 1
+	printf '<!-- aidevops:ops kind=%s -->\n' "$kind"
+	return 0
+}
+
+# A brief hold belongs to the exact body that produced it, not merely to a
+# status label. Only collaborator-authored comments can assert the marker.
+# Returns 0 for a matching hold, 1 for no matching hold, 2 for bad evidence.
+issue_has_active_brief_hold() {
+	local comments_json="$1"
+	local issue_body="$2"
+	local body_hash="" verdict=""
+	if command -v shasum >/dev/null 2>&1; then
+		body_hash=$(printf '%s' "$issue_body" | shasum -a 256 | cut -c1-24) || return 2
+	else
+		body_hash=$(printf '%s' "$issue_body" | sha256sum | cut -c1-24) || return 2
+	fi
+	[[ "$body_hash" =~ ^[a-f0-9]{24}$ ]] || return 2
+	verdict=$(printf '%s' "$comments_json" | jq -r --arg marker "<!-- aidevops:brief-hold reason=missing_files_scope body=${body_hash} -->" '
+		arrays
+		| (if ([.[0]? | arrays] | length) > 0 then add else . end)
+		| if any(.[]?; ((.author_association // "") | IN("OWNER", "MEMBER", "COLLABORATOR"))
+			and ((.body // "") | contains($marker))) then "held" else "absent" end
+	' 2>/dev/null) || return 2
+	case "$verdict" in
+	held) return 0 ;;
+	absent) return 1 ;;
+	esac
+	return 2
+}
+
+# Use before an automated blocked → available transition. An unreadable body
+# or comment history must not silently release a hold.
+issue_brief_hold_blocks_auto_release() {
+	local issue_num="$1"
+	local repo_slug="$2"
+	local issue_json="" comments_json="" issue_body="" held_rc=0
+	issue_json=$(gh api "repos/${repo_slug}/issues/${issue_num}" 2>/dev/null) || return 0
+	# Avoid a comments lookup on ordinary issues that are not blocked.
+	if ! printf '%s' "$issue_json" | jq -e '[.labels[]?.name] | index("status:blocked") != null' >/dev/null 2>&1; then
+		return 1
+	fi
+	issue_body=$(printf '%s' "$issue_json" | jq -r '.body // ""') || return 0
+	comments_json=$(gh api "repos/${repo_slug}/issues/${issue_num}/comments?per_page=100" --paginate --slurp 2>/dev/null) || return 0
+	issue_has_active_brief_hold "$comments_json" "$issue_body" || held_rc=$?
+	[[ "$held_rc" -ne 1 ]]
+}
+
 
 #######################################
 # Project an authoritative lifecycle label on dispatch claim release (t2420).
@@ -1395,6 +1447,10 @@ clear_active_status_on_release() {
 	' 2>/dev/null) || return 1
 	case "$projection" in
 	available)
+		if issue_brief_hold_blocks_auto_release "$issue_num" "$repo_slug"; then
+			printf 'clear_active_status_on_release: preserving brief hold on #%s in %s\n' "$issue_num" "$repo_slug" >&2
+			return 0
+		fi
 		set_issue_status "$issue_num" "$repo_slug" available \
 			${release_args[@]+"${release_args[@]}"} >/dev/null 2>&1
 		;;

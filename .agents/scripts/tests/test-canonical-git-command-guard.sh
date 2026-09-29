@@ -8,11 +8,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" || exit 1
 GUARD="${SCRIPT_DIR}/canonical-git-command-guard.py"
 SHIM="${SCRIPT_DIR}/git"
 TEST_ROOT=$(mktemp -d)
-trap 'rm -rf "$TEST_ROOT"' EXIT
+trap 'rm -rf "$TEST_ROOT" "$NON_TEMP_ROOT"' EXIT
 REPO="${TEST_ROOT}/repo"
 LINKED="${TEST_ROOT}/linked"
 PASSWORD_REPO="${TEST_ROOT}/password-store"
 MARKED_REPO="${TEST_ROOT}/marked-repo"
+NON_TEMP_ROOT=$(mktemp -d "${HOME}/canonical-git-guard.XXXXXX")
+NON_TEMP_MARKED_REPO="${NON_TEMP_ROOT}/marked-repo"
 SEPARATE_REPO="${TEST_ROOT}/separate-repo"
 SEPARATE_GIT_DIR="${TEST_ROOT}/separate-repo-git"
 SNAPSHOT_REPO="${TEST_ROOT}/snapshot.git"
@@ -48,8 +50,8 @@ git -C "$REPO" add README.md
 git -C "$REPO" commit -q -m seed
 INITIAL_HEAD=$(git -C "$REPO" rev-parse HEAD)
 REPOS_FILE="${TEST_ROOT}/repos.json"
-printf '{"initialized_repos":[{"path":"%s"},{"path":"%s"}]}\n' \
-	"$REPO" "$SEPARATE_REPO" >"$REPOS_FILE"
+printf '{"initialized_repos":[{"path":"%s"},{"path":"%s"},{"path":"%s"}]}\n' \
+	"$REPO" "$SEPARATE_REPO" "$MARKED_REPO" >"$REPOS_FILE"
 export AIDEVOPS_REPOS_FILE="$REPOS_FILE"
 
 mkdir -p "$PASSWORD_REPO"
@@ -60,6 +62,15 @@ mkdir -p "$MARKED_REPO"
 git -C "$MARKED_REPO" init -q -b main
 printf '{}\n' >"${MARKED_REPO}/.aidevops.json"
 printf 'managed fixture\n' >"${MARKED_REPO}/managed.txt"
+mkdir -p "$NON_TEMP_MARKED_REPO"
+git -C "$NON_TEMP_MARKED_REPO" init -q -b main
+printf '{}\n' >"${NON_TEMP_MARKED_REPO}/.aidevops.json"
+printf 'managed fixture\n' >"${NON_TEMP_MARKED_REPO}/managed.txt"
+UNREGISTERED_REPO="${TEST_ROOT}/unregistered-repo"
+mkdir -p "$UNREGISTERED_REPO"
+git -C "$UNREGISTERED_REPO" init -q -b main
+printf '{}\n' >"${UNREGISTERED_REPO}/.aidevops.json"
+printf 'disposable fixture\n' >"${UNREGISTERED_REPO}/disposable.txt"
 
 mkdir -p "$SEPARATE_REPO"
 git init -q -b main --separate-git-dir "$SEPARATE_GIT_DIR" "$SEPARATE_REPO"
@@ -160,6 +171,16 @@ assert_blocked "blocks canonical global non-credential config write" \
 	"git config --global include.path '$TEST_ROOT/unsafe.gitconfig'"
 assert_blocked "blocks mutation in a repository with an aidevops project marker" \
 	"git -C '$MARKED_REPO' add managed.txt"
+assert_allowed "allows git add in an unregistered temp repo with a project marker" "$REPO" \
+	"git -C '$UNREGISTERED_REPO' add disposable.txt"
+if (cd "$UNREGISTERED_REPO" && PATH="${SCRIPT_DIR}:/usr/bin:/bin" "$SHIM" add disposable.txt) &&
+	! git -C "$UNREGISTERED_REPO" diff --cached --quiet -- disposable.txt; then
+	pass "PATH shim stages files in an unregistered temp marker repo"
+else
+	fail "PATH shim stages files in an unregistered temp marker repo"
+fi
+assert_blocked "blocks marker repository outside temp roots" \
+	"git -C '$NON_TEMP_MARKED_REPO' add managed.txt"
 assert_blocked "blocks git-dir-only mutation targeting a managed canonical repository" \
 	"git -C '$PASSWORD_REPO' --git-dir='$REPO/.git' update-ref refs/heads/blocked '$INITIAL_HEAD'"
 assert_blocked "blocks git-dir-only mutation targeting a registered separate Git directory" \
@@ -185,8 +206,8 @@ assert_allowed "malformed managed-repository registry does not intercept unrelat
 printf '{"initialized_repos":[{"path":"~aidevops-user-that-does-not-exist/repo"}]}\n' >"$REPOS_FILE"
 assert_allowed "invalid managed-repository path does not intercept unrelated Git" "$REPO" \
 	"git -C '$PASSWORD_REPO' add test-secret.gpg"
-printf '{"initialized_repos":[{"path":"%s"},{"path":"%s"}]}\n' \
-	"$REPO" "$SEPARATE_REPO" >"$REPOS_FILE"
+printf '{"initialized_repos":[{"path":"%s"},{"path":"%s"},{"path":"%s"}]}\n' \
+	"$REPO" "$SEPARATE_REPO" "$MARKED_REPO" >"$REPOS_FILE"
 
 if [[ "$(git -C "$REPO" symbolic-ref --short HEAD)" == "main" ]] &&
 	[[ "$(git -C "$REPO" rev-parse HEAD)" == "$INITIAL_HEAD" ]] &&

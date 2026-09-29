@@ -57,12 +57,13 @@ test("issue arms persist across retries without changing the fallback or thinkin
     const route = JSON.parse(readFileSync(first.routing_table, "utf8"));
     assert.equal(route.tiers.standard.models[0], first.model);
     assert.equal(route.tiers.standard.reasoning[first.model], first.variant);
-    assert.ok(route.tiers.standard.models.includes("anthropic/claude-sonnet-5"));
+    assert.ok(route.tiers.standard.models.includes("anthropic/claude-sonnet-5-5"));
     assert.equal(route.tiers.thinking, undefined);
     const shipped = fileURLToPath(new URL("../../configs/model-routing-table.json", import.meta.url));
     const merged = loadModelRouting([first.routing_table, shipped]);
     assert.equal(routingPrimary(merged, "standard"), first.model);
-    assert.equal(routingVariant(merged, "standard", first.model), first.variant);
+    // The shipped minimum reasoning level is medium even for a low-variant trial arm.
+    assert.equal(routingVariant(merged, "standard", first.model), first.variant === "low" ? "medium" : first.variant);
     assert.equal(routingPrimary(merged, "thinking"), "openai/gpt-6-sol");
     assert.equal(report(experiment, { directory }).arms[first.arm].assigned, 1);
     assert.equal(report(experiment, { directory }).excluded.length, 3);
@@ -149,7 +150,7 @@ test("provider-family trial routes every tier of each enrolled issue to one prov
     assert.equal(Date.parse(config.ends_at) - Date.parse(config.starts_at), 168 * 3600 * 1000);
     assert.deepEqual(config.arms.map((arm) => arm.name), ["openai", "anthropic"]);
     assert.deepEqual(config.arms[1].tiers.thinking, { model: "anthropic/claude-opus-5-5", variant: "medium" });
-    assert.deepEqual(config.arms[1].tiers.simple, { model: "anthropic/claude-haiku-4-5" });
+    assert.deepEqual(config.arms[1].tiers.simple, { model: "anthropic/claude-haiku-4-5", variant: "high" });
     const createdAt = new Date(windowStart + 1000).toISOString();
     const labels = ["auto-dispatch", "status:available", "tier:thinking"];
     const first = assign(config, "example/repo", 200,

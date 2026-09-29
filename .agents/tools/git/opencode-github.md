@@ -86,7 +86,7 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         with:
-          model: anthropic/claude-sonnet-4-6
+          model: anthropic/claude-sonnet-5-5
 ```
 
 3. **Add secrets** (Settings > Secrets and variables > Actions):
@@ -97,7 +97,7 @@ jobs:
 ```yaml
 - uses: anomalyco/opencode/github@latest
   with:
-    model: anthropic/claude-sonnet-4-6  # Required
+    model: anthropic/claude-sonnet-5-5  # Required
     agent: build                                # Optional: agent to use
     share: true                                 # Optional: share session (default: true for public repos)
     prompt: |                                   # Optional: custom prompt
