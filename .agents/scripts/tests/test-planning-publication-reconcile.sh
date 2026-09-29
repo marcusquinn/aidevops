@@ -170,6 +170,38 @@ printf 'PASS exact-SHA mapping validation precedes blocker removal\n'
 printf 'PASS default-branch workflow reconciles publication before maintenance\n'
 printf 'PASS partial batches leave earlier dependencies blocked and later failures pending\n'
 
+# Exercise the real mapping gate and batch classification without GitHub edits.
+(
+	# shellcheck source=../planning-publication-reconcile.sh
+	source "$RECONCILER"
+	issue_sync_prepare_ci_context() { return 0; }
+	_publication_exact_default_snapshot() { return 0; }
+	gh_issue_edit_safe() { printf 'unexpected label edit\n' >&2; return 1; }
+	gh() {
+		if [[ "$1" == repo ]]; then
+			printf 'main\n'
+		else
+			printf '[{"number":77,"title":"t9000: unpublished","createdAt":"%s"}]\n' "$fixture_created_at"
+		fi
+		return 0
+	}
+	_publication_task_line() { return 1; }
+	fixture_created_at=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+	output=$(cmd_reconcile --repo example/repo --sha 0123456789012345678901234567890123456789)
+	[[ "$output" == *'PUBLICATION_RECONCILE_SUMMARY reconciled=0 deferred=1 stale=0 failed=0'* ]]
+	fixture_created_at='2020-01-01T00:00:00Z'
+	if output=$(cmd_reconcile --repo example/repo --sha 0123456789012345678901234567890123456789); then exit 1; fi
+	[[ "$output" == *'PUBLICATION_RECONCILE_SUMMARY reconciled=0 deferred=0 stale=1 failed=0'* ]]
+	fixture_created_at='invalid'
+	if output=$(cmd_reconcile --repo example/repo --sha 0123456789012345678901234567890123456789); then exit 1; fi
+	[[ "$output" == *'PUBLICATION_RECONCILE_SUMMARY reconciled=0 deferred=0 stale=1 failed=0'* ]]
+	_publication_task_line() { printf '%s\n' '- [ ] t9000 unpublished ref:GH#77'; return 0; }
+	fixture_created_at=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+	if output=$(cmd_reconcile --repo example/repo --sha 0123456789012345678901234567890123456789); then exit 1; fi
+	[[ "$output" == *'PUBLICATION_RECONCILE_SUMMARY reconciled=0 deferred=0 stale=0 failed=1'* ]]
+)
+printf 'PASS young absent tasks defer; stale, malformed timestamp and missing brief fail without edits\n'
+
 # A closed sweep must verify the live state and canonical mapping before editing.
 (
 	gh_publication_default_has_ref() { [[ "$2" != "92" ]]; return $?; }
