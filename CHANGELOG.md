@@ -10,6 +10,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.37.31] - 2026-09-29
+
+### Added
+
+- audit and lease merged local branch deletion (#33042)
+
+### Changed
+
+- Maintenance: mark t18497 complete (pr:#33053 completed:2026-09-29) (#33056)
+- Maintenance: replace Dependabot Actions update (#33059) (#33060)
+- Maintenance: mark t18504 complete (pr:#33047 completed:2026-09-29) (#33050)
+- Refactor: extract dispatch_max stages (#33051)
+- Maintenance: mark t18553 complete (pr:#33041 completed:2026-09-29) (#33043)
+- Maintenance: mark t18492 complete (pr:#33023 completed:2026-09-29) (#33027)
+- Maintenance: add t18552 local-branch cleanup and t18553 claim shallow-fetch fix with worker-ready briefs
+- Maintenance: add t18551 planning publication deferral; restore t18512 entry
+- Maintenance: mark t18550 complete (pr:#33022 completed:2026-09-29) (#33020)
+- Maintenance: add t18546 and t18547 follow-ups with worker-ready briefs
+- Maintenance: add worker-ready briefs for t18544 and t18545
+- Maintenance: mark t18541 complete (pr:#32983); add t18544 and t18545 follow-ups
+- Maintenance: sync GitHub issue state to TODO.md [skip ci]
+- Refactor: simplify dispatch blocker classification (#32995)
+
+### Fixed
+
+- bound counter tip fetch and explain timeout (#33053)
+- merge concurrent planning TODO changes (#33047)
+- cache unchanged worker draft checkpoints (#33044)
+- allow npm publication fifteen minutes to converge (#33045)
+- keep counter depth fetches isolated (#33041)
+- defer young unpublished planning tasks (#33039)
+- promote OpenCode 1.18.33 compatibility
+- verify plugin tools via Code Mode execute gateway in pin canary (GH#32762)
+- avoid masking short secret values in command output (#33023)
+- audited canonical fast-forward before planning reconcile (#33022)
+- wait for npm attestation propagation (#33021)
+- retry transient permission lookups (#33019)
+- accept nested brief readiness field evidence (#33018)
+- finish cycles before lock reclaim (#33015)
+- align tier guard model and A/B defaults (#33012)
+- provision dependencies label before intake issue creation and log gh error (t18546) (#33011)
+
 ## [3.37.30] - 2026-09-29
 
 ### Changed
