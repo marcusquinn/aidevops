@@ -206,19 +206,57 @@ save_pool() {
 	return 0
 }
 
-# Open URL in browser (best-effort, never fatal — cascades on failure)
+# Prompt and read one line of interactive input; prints the line to stdout.
+# Prefers the controlling terminal (/dev/tty) so nested command substitutions,
+# wrappers, or browser launchers cannot swallow stdin or hide the prompt.
+# Falls back to stderr/stdin when no controlling terminal exists (headless).
+oauth_prompt_read() {
+	local prompt_text="$1"
+	local line=""
+	if { : </dev/tty >/dev/tty; } 2>/dev/null; then
+		printf '%s' "$prompt_text" >/dev/tty
+		IFS= read -r line </dev/tty || true
+	else
+		printf '%s' "$prompt_text" >&2
+		IFS= read -r line || true
+	fi
+	printf '%s' "$line"
+	return 0
+}
+
+# Return 0 when a graphical browser can plausibly be launched.
+# Linux consoles/SSH sessions without DISPLAY/WAYLAND_DISPLAY make xdg-open
+# fall back to text browsers (lynx/w3m/links), which hijack the terminal.
+_oauth_can_open_gui_browser() {
+	case "$(uname -s)" in
+	Darwin) return 0 ;;
+	esac
+	if [[ -n "${DISPLAY:-}" || -n "${WAYLAND_DISPLAY:-}" || -n "${WSL_DISTRO_NAME:-}" ]]; then
+		return 0
+	fi
+	return 1
+}
+
+# Open URL in browser (best-effort, never fatal).
+# The URL is always printed first so console-only sessions can copy it.
+# Launchers get detached stdio: callers run inside $(...), and an inherited
+# stdout pipe would capture the browser's output (and the auth prompt would
+# never appear) or keep the command substitution open.
 open_browser() {
 	local url="$1"
 	local cmd
+	print_info "Open this URL in a browser to authorize:"
+	printf '%s\n' "$url" >&2
+	if ! _oauth_can_open_gui_browser; then
+		print_info "No graphical display detected; open the URL above manually."
+		return 0
+	fi
 	for cmd in open xdg-open wslview; do
-		if command -v "$cmd" &>/dev/null && "$cmd" "$url" 2>/dev/null; then
+		if command -v "$cmd" &>/dev/null && "$cmd" "$url" </dev/null >/dev/null 2>&1; then
 			return 0
 		fi
 	done
-	print_warning "Cannot open browser automatically."
-	# Always print URL so user can open manually if browser launch failed
-	print_info "If the browser didn't open, visit this URL:"
-	printf '%s\n' "$url" >&2
+	print_warning "Cannot open browser automatically; open the URL above manually."
 	return 0
 }
 
