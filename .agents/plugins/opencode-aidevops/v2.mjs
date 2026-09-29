@@ -202,6 +202,53 @@ async function register(registrations, promise) {
   return registration;
 }
 
+function v2EventData(event) {
+  return event?.data || event?.properties || null;
+}
+
+/**
+ * Translate OpenCode V2 step events into the V1 `message.updated` contract that
+ * observability records (GH#32619). V2 never emits `message.updated`; a completed
+ * assistant step is `session.next.step.ended`, with agent/model on the matching
+ * `session.next.step.started`. Returns the synthetic event, or null.
+ */
+export function createV2CompletionNormalizer() {
+  const started = new Map();
+  return (event) => {
+    const data = v2EventData(event);
+    const messageID = data?.assistantMessageID;
+    if (!messageID || typeof event?.type !== "string") return null;
+    if (event.type === "session.next.step.started") {
+      started.set(messageID, data);
+      if (started.size > 1000) started.delete(started.keys().next().value);
+      return null;
+    }
+    if (event.type !== "session.next.step.ended") return null;
+    const begin = started.get(messageID) || {};
+    started.delete(messageID);
+    const model = begin.model || {};
+    const ended = Number(data.timestamp) || Date.now();
+    return {
+      type: "message.updated",
+      properties: {
+        info: {
+          id: messageID,
+          role: "assistant",
+          sessionID: data.sessionID,
+          providerID: model.providerID,
+          modelID: model.id,
+          agent: begin.agent,
+          variant: model.variant,
+          finish: data.finish,
+          cost: data.cost,
+          tokens: data.tokens,
+          time: { created: Number(begin.timestamp) || ended, completed: ended },
+        },
+      },
+    };
+  };
+}
+
 export async function startEventLoop(ctx, handler) {
   let iterator;
   let stopped = false;
@@ -410,9 +457,13 @@ export async function setupAidevopsV2(ctx) {
       applyV2PermissionEvaluation(permissionBroker, event);
     }));
 
+    const normalizeCompletion = createV2CompletionNormalizer();
     stopEvents = await startEventLoop(ctx, async (input) => {
+      const observeContext = { resolveSessionModel: (sessionID) => sessionModels.resolve(sessionID) };
+      const completed = normalizeCompletion(input.event);
       await Promise.all([
-        handleEvent(input, { resolveSessionModel: (sessionID) => sessionModels.resolve(sessionID) }),
+        handleEvent(input, observeContext),
+        completed ? handleEvent({ event: completed }, observeContext) : undefined,
         Promise.resolve(boundedOperationManager.handleEvent(input)),
         permissionBroker.handleEvent(input),
       ]);

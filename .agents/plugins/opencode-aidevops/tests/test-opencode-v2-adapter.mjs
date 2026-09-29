@@ -13,6 +13,7 @@ import { loadV1ToolHelper, tool } from "../tools.mjs";
 import v2Plugin, {
   applyV2PermissionEvaluation,
   createCompatibilityClient,
+  createV2CompletionNormalizer,
   defineAidevopsV2Adapter,
   detectOpenCodeV2RuntimeVersion,
   OPENCODE_V2_CAPABILITIES,
@@ -102,6 +103,31 @@ test("V2 event processing continues after one handler failure", async () => {
   await processed;
   await stop();
   assert.deepEqual(seen, ["first", "second"]);
+});
+
+test("V2 step events normalise to a recordable completed assistant message (GH#32619)", () => {
+  const normalize = createV2CompletionNormalizer();
+  const tokens = { input: 10, output: 2, reasoning: 0, cache: { read: 5, write: 1 } };
+  assert.equal(normalize({ type: "session.next.step.started", data: {
+    timestamp: 1000, sessionID: "ses_1", assistantMessageID: "msg_1", agent: "Build+",
+    model: { id: "claude-haiku-4-5", providerID: "anthropic" },
+  } }), null);
+  const mapped = normalize({ type: "session.next.step.ended", data: {
+    timestamp: 1500, sessionID: "ses_1", assistantMessageID: "msg_1", finish: "stop", cost: 0, tokens,
+  } });
+  const info = mapped.properties.info;
+  assert.equal(mapped.type, "message.updated");
+  assert.deepEqual(
+    [info.id, info.role, info.sessionID, info.providerID, info.modelID, info.agent, info.tokens, info.time],
+    ["msg_1", "assistant", "ses_1", "anthropic", "claude-haiku-4-5", "Build+", tokens, { created: 1000, completed: 1500 }],
+  );
+  // properties-shaped payloads (SDK Event union) map identically; unrelated events are ignored
+  const viaProperties = normalize({ type: "session.next.step.ended", properties: {
+    timestamp: 2000, sessionID: "ses_1", assistantMessageID: "msg_2", finish: "stop", cost: 0, tokens,
+  } });
+  assert.equal(viaProperties.properties.info.id, "msg_2");
+  assert.equal(normalize({ type: "session.next.text.delta", data: { assistantMessageID: "msg_2" } }), null);
+  assert.equal(normalize({ id: "no-type" }), null);
 });
 
 for (const budgetEnabled of [false, true]) test(`V2 setup registers SDK lifecycle hooks and disposes every registration (240K budget ${budgetEnabled ? "enabled" : "disabled"})`, async () => {
