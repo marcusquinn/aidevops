@@ -29,17 +29,27 @@ screen alone. Headless workers skip it.
 ```markdown
 **What next**
 - **Session:** <aim in plain words, ≤15> — <Active | Blocked | Done>
-- **Needed from you:** <None | the exact decision/action, where, and what it unblocks>
+- **Needed from you:** <None | numbered asks below>
+  1. <yes/no question>? **y**/n — y: <effect>; n: <effect>
+  2. <choice>: **a)** <option> · b) <option> · c) <option>
+  3. <value needed>: reply `3: <value>` (explicit)
 - **Left to capture:** <None | learnings, follow-ups or deferred items not yet in an issue/TODO/doc>
 - **Close:** <Ready to close | Not yet: reason | Suggest `/new` for <next topic>>
+- **Reply:** e.g. `1y 2b 3: <value>` · `ok` = all bold defaults · or plain text
 ```
 
 Rules:
 
 - **Needed from you** is the only place user attention is requested. Repeat any
-  question asked earlier in the reply here; never write `None` while a question
-  is open. Background work owned by a named executor (pulse, worker, routine) is
-  not a user action; say which executor owns it on the Session line if relevant.
+  question asked earlier in the reply here as a numbered ask;
+  never write `None` while a question is open. Background work owned by a named
+  executor (pulse, worker, routine) is not a user action; say which executor
+  owns it on the Session line if relevant. Omit the **Reply** line when there
+  are no asks.
+- Ask only for taste, authority, inaccessible context, consequential ambiguity,
+  or unknown secrets; already-authorized safe work is done, not asked about.
+  Any choice in **Left to capture** or **Close** that the user must make (file a
+  follow-up, start `/new`) becomes a numbered ask too.
 - **Session** restates the original aim, not the last step, so a user returning
   after hours can reorient. Keep the runtime title in step with `session-rename`
   (stable purpose plus current phase).
@@ -51,7 +61,29 @@ Rules:
   and the commitment scan (unfulfilled promises, unnotified parties, displaced
   requests) is clean. Otherwise say `Not yet` with the concrete reason.
 - Short conversational replies may use one line with the same fields, for
-  example `What next: nothing needed from you; session active (aim: …).`
+  example `What next: nothing needed from you; session active (aim: …).` or
+  `What next: 1. Merge PR #123? **y**/n; session active (aim: …).`
+
+### Numbered Asks (least typing, no ambiguity)
+
+- Number asks `1..N` in one sequence per block, at most 5, most-unblocking
+  first. Numbers refer only to the latest block; each block renumbers.
+- One decision per ask, one answer type per ask: binary `y/n`; choice `a/b/c`
+  (at most 4 mutually exclusive, self-contained options of ≤10 words; add a
+  lettered "both"/"neither" option instead of expecting prose); value
+  `N: <value>` with a concrete placeholder.
+- Name the concrete object (`PR #123`, `issue #45`, file path), never "this" or
+  "the above", and state the effect of each answer when it is not obvious.
+- **Bold** the recommended option so `ok` accepts every bold default. Mark asks
+  that publish, release, delete, spend, change security/permissions or need a
+  secret `(explicit)`: they have no default and `ok` never answers them.
+- Accept compact forms (`1y 2b`, `1 y, 2 b`, `y` or `b` alone when only one ask
+  is open, `all n`) and plain-language answers that clearly map to one ask.
+- Before acting on a reply, echo one line of what was confirmed, for example
+  `Confirmed: 1=y (merge PR #123), 2=b (defer docs). Still open: 3.`
+  Unanswered or unclear asks stay open and are re-asked with the same wording in
+  the next block; never infer consent from silence, from an answer to another
+  ask, or from a guess.
 
 ### Capture Check (after a full loop or before `Ready to close`)
 
