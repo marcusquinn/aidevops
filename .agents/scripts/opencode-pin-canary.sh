@@ -250,12 +250,26 @@ verify_probe_plugin_tools() {
 	fi
 	local expected_tool
 	local tools_present=1
-	for expected_tool in aidevops_pre_edit_check aidevops_memory; do
-		if ! grep -qx "$expected_tool" "$captured_tools"; then
-			printf 'FAIL: %s missing aidevops tool %s\n' "$label" "$expected_tool" >&2
+	if [[ "$OPENCODE_CANARY_PROFILE" == "v2" ]]; then
+		# OpenCode 2 exposes plugin tools through the Code Mode `execute` gateway
+		# rather than as named provider tools, so verify the gateway is offered and
+		# the plugin reported registering its tools in the health marker.
+		if ! grep -qx 'execute' "$captured_tools"; then
+			printf 'FAIL: %s missing Code Mode execute gateway\n' "$label" >&2
 			tools_present=0
 		fi
-	done
+		if ! jq -e '(.details.factory_initialized.tools // 0) >= 2' "$health_file" >/dev/null 2>&1; then
+			printf 'FAIL: %s plugin reported fewer than 2 registered aidevops tools\n' "$label" >&2
+			tools_present=0
+		fi
+	else
+		for expected_tool in aidevops_pre_edit_check aidevops_memory; do
+			if ! grep -qx "$expected_tool" "$captured_tools"; then
+				printf 'FAIL: %s missing aidevops tool %s\n' "$label" "$expected_tool" >&2
+				tools_present=0
+			fi
+		done
+	fi
 	if ! jq -e --arg nonce "$health_nonce" '.nonce == $nonce and (.stages | index("factory_initialized") != null)' "$health_file" >/dev/null; then
 		printf 'FAIL: %s plugin initialization marker absent\n' "$label" >&2
 		tools_present=0
