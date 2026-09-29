@@ -1514,6 +1514,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18552 feat(worktree-cleanup): audited local-branch cleanup so merged branches do not accumulate after worktree removal #auto-dispatch #feat tier:standard ref:GH#33030 logged:2026-09-29 -> [todo/tasks/t18552-brief.md] pr:#33042 completed:2026-09-29
 - [x] t18553 fix(claim-task-id): keep depth-1 counter fetches in the isolated context so linked-worktree claims stop truncating shared repo history #auto-dispatch #bug tier:standard ref:GH#33033 logged:2026-09-29 -> [todo/tasks/t18553-brief.md] pr:#33041 completed:2026-09-29
+- [ ] t18554 fix(release): unshallow the release control worktree before lane reservation so a shallow store cannot strand the release lane #auto-dispatch #bug tier:standard ref:GH#33069 logged:2026-09-29 -> [todo/tasks/t18554-brief.md]
+- [ ] t18556 fix(release): look up the tag-push publish run by exact head_sha and skip recovery dispatch when channels are already published #auto-dispatch #bug tier:standard ref:GH#33073 logged:2026-09-29 -> [todo/tasks/t18556-brief.md]
 
 ## In Progress
 
