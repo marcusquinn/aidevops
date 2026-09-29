@@ -70,7 +70,8 @@ EXPORT_TIMEOUT = 300
 def _refresh_one(helper: Path, source: str, domain: str) -> str:
     """Run one exporter; drop any partial file it left behind on failure."""
     folder = SEO_DATA / domain
-    before = set(folder.glob(f"{source}-*.toon")) if folder.is_dir() else set()
+    before = ({path: path.stat().st_mtime_ns for path in folder.glob(f"{source}-*.toon")}
+              if folder.is_dir() else {})
     try:
         result = subprocess.run([str(helper), source, domain, "--days", str(EXPORT_DAYS)], timeout=EXPORT_TIMEOUT,
                                 check=False, capture_output=True, text=True)
@@ -79,11 +80,13 @@ def _refresh_one(helper: Path, source: str, domain: str) -> str:
         code, reason = 1, "timeout"
     except OSError:
         code, reason = 1, "helper unavailable"
-    created = (set(folder.glob(f"{source}-*.toon")) if folder.is_dir() else set()) - before
-    if code == 0 and created:
+    changed = ({path for path in folder.glob(f"{source}-*.toon")
+                if path.stat().st_mtime_ns != before.get(path)} if folder.is_dir() else set())
+    if code == 0 and changed:
         return "refreshed"
-    for path in created:
-        path.unlink(missing_ok=True)
+    if code != 0:
+        for path in changed:
+            path.unlink(missing_ok=True)
     return f"skipped:{reason}"
 
 
