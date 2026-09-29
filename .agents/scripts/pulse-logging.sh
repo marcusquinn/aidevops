@@ -729,7 +729,7 @@ write_pulse_health_file() {
 	# backoff_active_for_key treats as active (GH#32979).
 	local models_backed_off=0
 	if [[ -x "$HEADLESS_RUNTIME_HELPER" ]]; then
-		local _backoff_rows _backoff_now
+		local _backoff_rows="0" _backoff_now=""
 		_backoff_now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 		_backoff_rows=$("$HEADLESS_RUNTIME_HELPER" backoff status 2>/dev/null |
 			awk -F'|' -v now="$_backoff_now" 'NF >= 3 && ($3 == "" || $3 > now) { n++ } END { print n + 0 }') || _backoff_rows=0
