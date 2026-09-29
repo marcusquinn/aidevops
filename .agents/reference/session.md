@@ -30,9 +30,12 @@ screen alone. Headless workers skip it.
 **What next**
 - **Session:** <aim in plain words, ≤15> — <Active | Blocked | Done>
 - **Needed from you:** <None | numbered asks below>
-  1. <yes/no question>? **y**/n — y: <effect>; n: <effect>
-  2. <choice>: **a)** <option> · b) <option> · c) <option>
-  3. <value needed>: reply `3: <value>` (explicit)
+  1. <yes/no question about a named object>?
+     - **y** = <effect> · n = <effect>
+  2. <choice question>?
+     - **a)** <option> · b) <option> · c) <option>
+  3. <value only you know> (explicit)
+     - reply `3: <value>`
 - **Left to capture:** <None | learnings, follow-ups or deferred items not yet in an issue/TODO/doc>
 - **Close:** <Ready to close | Not yet: reason | Suggest `/new` for <next topic>>
 - **Reply:** e.g. `1y 2b 3: <value>` · `ok` = all bold defaults · or plain text
@@ -46,10 +49,18 @@ Rules:
   executor (pulse, worker, routine) is not a user action; say which executor
   owns it on the Session line if relevant. Omit the **Reply** line when there
   are no asks.
-- Ask only for taste, authority, inaccessible context, consequential ambiguity,
-  or unknown secrets; already-authorized safe work is done, not asked about.
-  Any choice in **Left to capture** or **Close** that the user must make (file a
-  follow-up, start `/new`) becomes a numbered ask too.
+- Ask only for what the agent cannot do or decide itself: permission or
+  authority it lacks (publish, release, merge where not authorized, delete,
+  spend, security/permission changes), taste, context it cannot access, a
+  consequential ambiguity, an unknown secret, or a human-only physical/account
+  action. Before listing an ask, apply the test: "Can I do this with my tools
+  and existing authority, safely and reversibly?" If yes, do it now and report
+  the result instead of asking. Never ask the user to run a command, deploy,
+  file an issue, add a follow-up, or check something the agent can do; never
+  ask "shall I…?" about safe in-scope work. Decide scope/policy questions the
+  repo already answers (for example the test policy) instead of asking.
+- Any choice in **Left to capture** or **Close** that genuinely needs the user
+  (for example starting `/new`) becomes a numbered ask too.
 - **Session** restates the original aim, not the last step, so a user returning
   after hours can reorient. Keep the runtime title in step with `session-rename`
   (stable purpose plus current phase).
@@ -60,9 +71,9 @@ Rules:
   TODO number; evidenced lessons are routed per `reference/self-improvement.md`;
   and the commitment scan (unfulfilled promises, unnotified parties, displaced
   requests) is clean. Otherwise say `Not yet` with the concrete reason.
-- Short conversational replies may use one line with the same fields, for
-  example `What next: nothing needed from you; session active (aim: …).` or
-  `What next: 1. Merge PR #123? **y**/n; session active (aim: …).`
+- Short conversational replies with no asks may use one line with the same
+  fields, for example `What next: nothing needed from you; session active (aim: …).`
+  Any open ask uses the full block so its options get their own line.
 
 ### Numbered Asks (least typing, no ambiguity)
 
@@ -72,6 +83,10 @@ Rules:
   (at most 4 mutually exclusive, self-contained options of ≤10 words; add a
   lettered "both"/"neither" option instead of expecting prose); value
   `N: <value>` with a concrete placeholder.
+- Put the question on the numbered line and the answer options on their own
+  nested bullet directly below it, never inline at the end of a long sentence.
+  Pair each option with its effect (`**y** = merge now · n = leave open`);
+  keep the question to one short sentence.
 - Name the concrete object (`PR #123`, `issue #45`, file path), never "this" or
   "the above", and state the effect of each answer when it is not obvious.
 - **Bold** the recommended option so `ok` accepts every bold default. Mark asks
