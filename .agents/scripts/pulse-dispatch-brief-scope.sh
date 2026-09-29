@@ -96,9 +96,10 @@ _dispatch_brief_scope_self_heal() {
 	fi
 	rm -f "$body_file"
 	note_file=$(mktemp) || return 0
+	aidevops_ops_marker brief-scope-normalized >"$note_file" || return 1
 	# shellcheck disable=SC2016 # literal Markdown backticks, not expansions
 	printf '%s\nBrief scope normalized: appended a canonical Files Scope derived from the explicit `EDIT:`/`NEW:` declarations in Files to Modify (line ranges dropped). Edit that section if the intended write surface differs.\n' \
-		"$marker" >"$note_file"
+		"$marker" >>"$note_file"
 	gh_issue_comment "$issue_number" --repo "$repo_slug" --body-file "$note_file" >/dev/null 2>&1 || true
 	rm -f "$note_file"
 	echo "[dispatch_with_dedup] Brief scope normalized for #${issue_number} in ${repo_slug}; dispatch resumes next cycle (GH#32689)" >>"${LOGFILE:-/dev/null}"
