@@ -328,3 +328,4 @@ git commit -m "fix: resolve critical issue"
 | Published tag is older than the latest release | Never republish or deploy the older tag. Reconcile it only through verified post-publication supersession; uncertain evidence remains `release:failed`. |
 | GitHub CLI not authenticated | `gh auth login` (token needs `repo` scope) |
 | Version mismatch | `./.agents/scripts/version-manager.sh validate` — see `version-bump.md` |
+| `fatal: No tags can describe` / `RELEASE_SHALLOW_STORE` | The release control worktree's shared object store is shallow. `aidevops release` self-heals with a bounded `git fetch --unshallow --tags origin` in that disposable control worktree before reserving the lane; a `RELEASE_SHALLOW_STORE action=disabled|failed` error means auto-unshallow is off (`AIDEVOPS_SHALLOW_UNSHALLOW=0`) or the fetch failed. Run `git fetch --unshallow --tags origin` from a linked worktree, never the canonical checkout, then retry. |
