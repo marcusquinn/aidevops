@@ -1494,6 +1494,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 - [x] t18531 fix(routing): capability escalation re-runs the identical Sol medium route when standard and thinking share a model #auto-dispatch #bug ref:GH#32929 pr:#32931 logged:2026-09-29 completed:2026-09-29
 - [x] t18532 fix(compaction): cap compaction effort and route to first fitting simple-tier candidate #auto-dispatch #bug ref:GH#32934 pr:#32935 logged:2026-09-29 completed:2026-09-29
 - [ ] t18534 fix(pulse): restore retry context lost to torn objective-evidence lines; add sanitised failure signals #auto-dispatch #bug ref:GH#32938 logged:2026-09-29
+- [ ] t18538 feat(pulse): auto-refresh and alert when capacity is zero only from auth-error OAuth accounts #enhancement #framework #pulse #interactive #auto-dispatch tier:standard ~2h ref:GH#32960 logged:2026-09-29 -> [todo/tasks/t18538-brief.md]
 
 ## In Progress
 
