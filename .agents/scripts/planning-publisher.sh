@@ -16,6 +16,7 @@ PLANNING_PUBLICATION_SOURCE_HEAD=""
 PLANNING_PUBLICATION_RECEIPT=""
 PLANNING_SNAPSHOT_FILE_OPERATION="file"
 PLANNING_BRANCH_REF_PREFIX="refs/heads/"
+PLANNING_ABSENT_BLOB="-"
 _PLANNING_PUBLISH_TEMP_DIR=""
 _PLANNING_PUBLISH_SNAPSHOT_FILE=""
 _PLANNING_PUBLISH_INDEX_FILE=""
@@ -48,6 +49,12 @@ _planning_publish_log_retryable_conflict() {
 	_planning_publish_log warning \
 		"AIDEVOPS_PLANNING_PUBLISH_STATUS=retryable_conflict publication_id=${publication_id}"
 	return 0
+}
+
+_planning_publish_valid_blob_ref() {
+	local blob="$1"
+	[[ "$blob" == "$PLANNING_ABSENT_BLOB" || "$blob" =~ ^[0-9a-fA-F]{40,64}$ ]]
+	return $?
 }
 
 _planning_publish_path_allowed_for_scope() {
@@ -113,6 +120,9 @@ _planning_publish_snapshot() {
 	local external_source="${4:-}"
 	local path=""
 	local source_file=""
+	local origin_sha=""
+	local source_head=""
+	source_head=$(_planning_git -C "$repo_path" rev-parse HEAD) || return 1
 	: >"$snapshot_file" || return 1
 	while IFS= read -r path; do
 		[[ -n "$path" ]] || continue
@@ -121,6 +131,7 @@ _planning_publish_snapshot() {
 			return 1
 		}
 		source_file=$(_planning_publish_source_file "$repo_path" "$path" "$external_source") || return 1
+		origin_sha=$(_planning_git -C "$repo_path" rev-parse "${source_head}:${path}" 2>/dev/null) || origin_sha="-"
 		if [[ -L "$source_file" ]] || [[ -d "$source_file" ]]; then
 			_planning_publish_log error "Publication paths must be regular files: $path"
 			return 1
@@ -128,9 +139,9 @@ _planning_publish_snapshot() {
 		if [[ -f "$source_file" ]]; then
 			local blob_sha=""
 			blob_sha=$(_planning_git -C "$repo_path" hash-object -w -- "$source_file") || return 1
-			printf '%s\t%s\t%s\n' "$PLANNING_SNAPSHOT_FILE_OPERATION" "$blob_sha" "$path" >>"$snapshot_file" || return 1
+			printf '%s\t%s\t%s\t%s\n' "$PLANNING_SNAPSHOT_FILE_OPERATION" "$origin_sha" "$blob_sha" "$path" >>"$snapshot_file" || return 1
 		else
-			printf 'delete\t-\t%s\n' "$path" >>"$snapshot_file" || return 1
+			printf 'delete\t%s\t-\t%s\n' "$origin_sha" "$path" >>"$snapshot_file" || return 1
 		fi
 	done <<<"$paths"
 	return 0
@@ -145,18 +156,21 @@ _planning_publish_snapshot_readonly() {
 	local scope="${4:-planning}"
 	local path=""
 	local blob_sha=""
+	local origin_sha=""
+	local source_head="${5:-HEAD}"
 	: >"$snapshot_file" || return 1
 	while IFS= read -r path; do
 		[[ -n "$path" ]] || continue
 		_planning_publish_path_allowed_for_scope "$scope" "$path" || return 1
+		origin_sha=$(_planning_git -C "$repo_path" rev-parse "${source_head}:${path}" 2>/dev/null) || origin_sha="-"
 		if [[ -L "${repo_path}/${path}" ]] || [[ -d "${repo_path}/${path}" ]]; then
 			return 1
 		fi
 		if [[ -f "${repo_path}/${path}" ]]; then
 			blob_sha=$(_planning_git -C "$repo_path" hash-object -- "${repo_path}/${path}") || return 1
-			printf '%s\t%s\t%s\n' "$PLANNING_SNAPSHOT_FILE_OPERATION" "$blob_sha" "$path" >>"$snapshot_file" || return 1
+			printf '%s\t%s\t%s\t%s\n' "$PLANNING_SNAPSHOT_FILE_OPERATION" "$origin_sha" "$blob_sha" "$path" >>"$snapshot_file" || return 1
 		else
-			printf 'delete\t-\t%s\n' "$path" >>"$snapshot_file" || return 1
+			printf 'delete\t%s\t-\t%s\n' "$origin_sha" "$path" >>"$snapshot_file" || return 1
 		fi
 	done <<<"$paths"
 	return 0
@@ -270,7 +284,7 @@ _planning_publish_write_receipt() {
 	(
 		umask 077
 		{
-			printf 'format=aidevops-planning-publication-v2\n'
+			printf 'format=aidevops-planning-publication-v3\n'
 			printf 'repository_id=%s\n' "$repository_id"
 			printf 'scope=%s\n' "$scope"
 			printf 'remote=%s\n' "$remote_name"
@@ -346,10 +360,13 @@ _planning_publish_verify_receipt_snapshot() {
 	local published_commit="$4"
 	local published_parent="$5"
 	local temp_dir="$6"
+	local source_head="$7"
 	local paths_file="${temp_dir}/paths"
 	local current_snapshot="${temp_dir}/current-snapshot"
 	local operation=""
+	local origin_sha=""
 	local blob_sha=""
+	local merged_sha="" parent_blob="" expected_merge=""
 	local path=""
 	local current_blob=""
 	local changed_path=""
@@ -357,8 +374,10 @@ _planning_publish_verify_receipt_snapshot() {
 	local current_changed_paths=""
 	local paths=""
 	local snapshot_digest=""
+	local base_file="${temp_dir}/base" ours_file="${temp_dir}/ours" theirs_file="${temp_dir}/theirs" merged_file="${temp_dir}/merged"
+	local merge_rc=0
 	: >"$paths_file" || return 1
-	while IFS=$'\t' read -r operation blob_sha path; do
+	while IFS=$'\t' read -r operation origin_sha blob_sha merged_sha path; do
 		[[ -n "$path" ]] || return 1
 		_planning_publish_path_allowed_for_scope planning "$path" || return 1
 		case "$operation" in
@@ -366,6 +385,8 @@ _planning_publish_verify_receipt_snapshot() {
 		delete) [[ "$blob_sha" == "-" ]] || return 1 ;;
 		*) return 1 ;;
 		esac
+		_planning_publish_valid_blob_ref "$origin_sha" || return 1
+		_planning_publish_valid_blob_ref "$merged_sha" || return 1
 		grep -Fqx -- "$path" "$paths_file" 2>/dev/null && return 1
 		printf '%s\n' "$path" >>"$paths_file" || return 1
 	done <"$snapshot_file"
@@ -374,12 +395,32 @@ _planning_publish_verify_receipt_snapshot() {
 	paths=$(<"$paths_file")
 	current_changed_paths=$(_planning_publish_changed_paths "$repo_path") || return 1
 	[[ "$current_changed_paths" == "$paths" ]] || return 1
-	_planning_publish_snapshot_readonly "$repo_path" "$paths" "$current_snapshot" planning || return 1
-	cmp -s "$snapshot_file" "$current_snapshot" || return 1
-	while IFS=$'\t' read -r operation blob_sha path; do
-		if [[ "$operation" == "$PLANNING_SNAPSHOT_FILE_OPERATION" ]]; then
+	_planning_publish_snapshot_readonly "$repo_path" "$paths" "$current_snapshot" planning "$source_head" || return 1
+	while IFS=$'\t' read -r operation origin_sha blob_sha merged_sha path; do
+		grep -Fqx -- "${operation}"$'\t'"${origin_sha}"$'\t'"${blob_sha}"$'\t'"${path}" "$current_snapshot" || return 1
+		parent_blob=$(_planning_git -C "$repo_path" rev-parse "${published_parent}:${path}" 2>/dev/null) || parent_blob="-"
+		expected_merge="$blob_sha"
+		if [[ "$parent_blob" != "$origin_sha" ]]; then
+			if [[ "$blob_sha" == "$origin_sha" ]]; then
+				expected_merge="$parent_blob"
+			elif [[ "$parent_blob" == "$blob_sha" ]]; then
+				expected_merge="$blob_sha"
+			elif [[ "$origin_sha" == "-" ]] || [[ "$blob_sha" == "-" ]] || [[ "$parent_blob" == "-" ]]; then
+				return 1
+			else
+				_planning_git -C "$repo_path" cat-file blob "$origin_sha" >"$base_file" || return 1
+				_planning_git -C "$repo_path" cat-file blob "$blob_sha" >"$ours_file" || return 1
+				_planning_git -C "$repo_path" cat-file blob "$parent_blob" >"$theirs_file" || return 1
+				merge_rc=0
+				_planning_git -C "$repo_path" merge-file -p --diff3 "$ours_file" "$base_file" "$theirs_file" >"$merged_file" || merge_rc=$?
+				[[ "$merge_rc" -eq 0 ]] || return 1
+				expected_merge=$(_planning_git -C "$repo_path" hash-object "$merged_file") || return 1
+			fi
+		fi
+		[[ "$expected_merge" == "$merged_sha" ]] || return 1
+		if [[ "$merged_sha" != "-" ]]; then
 			current_blob=$(_planning_git -C "$repo_path" rev-parse "${published_commit}:${path}" 2>/dev/null) || return 1
-			[[ "$current_blob" == "$blob_sha" ]] || return 1
+			[[ "$current_blob" == "$merged_sha" ]] || return 1
 		elif _planning_git -C "$repo_path" cat-file -e "${published_commit}:${path}" 2>/dev/null; then
 			return 1
 		fi
@@ -423,7 +464,7 @@ planning_verify_publication_receipt() {
 	publication_id=$(_planning_publish_receipt_value "$receipt_path" publication_id) || return 1
 	handoff_id=$(_planning_publish_receipt_value "$receipt_path" handoff_id) || return 1
 	expected_repository_id=$(_planning_publish_repository_id "$repo_path") || return 1
-	[[ "$format" == "aidevops-planning-publication-v2" && "$repository_id" == "$expected_repository_id" && \
+	[[ "$format" == "aidevops-planning-publication-v3" && "$repository_id" == "$expected_repository_id" && \
 		"$scope" == "planning" && "$receipt_remote" == "$remote_name" && "$receipt_branch" == "$branch_name" ]] || return 1
 	[[ "$source_head" =~ ^[0-9a-fA-F]{40,64}$ && "$published_commit" =~ ^[0-9a-fA-F]{40,64}$ && \
 		"$published_parent" =~ ^[0-9a-fA-F]{40,64}$ && "$publication_id" =~ ^[0-9a-fA-F]{40,64}$ && \
@@ -448,7 +489,7 @@ planning_verify_publication_receipt() {
 	snapshot_file="${temp_dir}/snapshot"
 	if ! _planning_publish_extract_receipt_snapshot "$receipt_path" "$snapshot_file" || \
 		! _planning_publish_verify_receipt_snapshot "$repo_path" "$snapshot_file" "$publication_id" \
-			"$published_commit" "$published_parent" "$temp_dir"; then
+			"$published_commit" "$published_parent" "$temp_dir" "$source_head"; then
 		rm -rf "$temp_dir"
 		return 1
 	fi
@@ -463,14 +504,54 @@ _planning_publish_build_index() {
 	local parent_sha="$2"
 	local snapshot_file="$3"
 	local index_file="$4"
-	local operation="" blob_sha="" path=""
+	local resolved_file="$5"
+	local operation=""
+	local origin_sha=""
+	local blob_sha=""
+	local path="" parent_blob="" merged_sha=""
+	local base_file="${index_file}.base" ours_file="${index_file}.ours" theirs_file="${index_file}.theirs" merged_file="${index_file}.merged"
+	local merge_rc=0
+	: >"$resolved_file" || return 1
 	rm -f "$index_file" || return 1
 	GIT_INDEX_FILE="$index_file" _planning_git -C "$repo_path" read-tree "$parent_sha" || return 1
-	while IFS=$'\t' read -r operation blob_sha path; do
-		[[ -n "$path" ]] || continue
+	while IFS=$'\t' read -r operation origin_sha blob_sha path; do
+		[[ -n "$path" ]] || return 1
+		_planning_publish_valid_blob_ref "$origin_sha" || return 1
+		_planning_publish_valid_blob_ref "$blob_sha" || return 1
+		_planning_publish_path_allowed "$path" || return 1
+		parent_blob=$(_planning_git -C "$repo_path" rev-parse "${parent_sha}:${path}" 2>/dev/null) || parent_blob="-"
+		merged_sha="$blob_sha"
+		if [[ "$parent_blob" != "$origin_sha" ]]; then
+			if [[ "$blob_sha" == "$origin_sha" ]]; then
+				merged_sha="$parent_blob"
+			elif [[ "$parent_blob" == "$blob_sha" ]]; then
+				merged_sha="$blob_sha"
+			elif [[ "$origin_sha" == "-" ]] || [[ "$blob_sha" == "-" ]] || [[ "$parent_blob" == "-" ]]; then
+				_planning_publish_log_retryable_conflict "$PLANNING_PUBLICATION_ID"
+				return 2
+			else
+				_planning_git -C "$repo_path" cat-file blob "$origin_sha" >"$base_file" || return 1
+				_planning_git -C "$repo_path" cat-file blob "$blob_sha" >"$ours_file" || return 1
+				_planning_git -C "$repo_path" cat-file blob "$parent_blob" >"$theirs_file" || return 1
+				merge_rc=0
+				_planning_git -C "$repo_path" merge-file -p --diff3 "$ours_file" "$base_file" "$theirs_file" >"$merged_file" || merge_rc=$?
+				if [[ "$merge_rc" -ne 0 ]]; then
+					[[ "$merge_rc" -eq 1 ]] || return 1
+					_planning_publish_log_retryable_conflict "$PLANNING_PUBLICATION_ID"
+					return 2
+				fi
+				merged_sha=$(_planning_git -C "$repo_path" hash-object -w "$merged_file") || return 1
+			fi
+		fi
+		printf '%s\t%s\t%s\t%s\t%s\n' "$operation" "$origin_sha" "$blob_sha" "$merged_sha" "$path" >>"$resolved_file" || return 1
 		if [[ "$operation" == "$PLANNING_SNAPSHOT_FILE_OPERATION" ]]; then
-			GIT_INDEX_FILE="$index_file" _planning_git -C "$repo_path" update-index --add --cacheinfo "100644,${blob_sha},${path}" || return 1
+			if [[ "$merged_sha" == "-" ]]; then
+				GIT_INDEX_FILE="$index_file" _planning_git -C "$repo_path" update-index --force-remove -- "$path" || return 1
+			else
+				GIT_INDEX_FILE="$index_file" _planning_git -C "$repo_path" update-index --add --cacheinfo "100644,${merged_sha},${path}" || return 1
+			fi
 		else
+			[[ "$merged_sha" == "-" ]] || return 2
 			GIT_INDEX_FILE="$index_file" _planning_git -C "$repo_path" update-index --force-remove -- "$path" || return 1
 		fi
 	done <"$snapshot_file"
@@ -482,13 +563,15 @@ _planning_publish_verify_index() {
 	local parent_sha="$2"
 	local snapshot_file="$3"
 	local index_file="$4"
-	local changed_path="" operation="" expected_sha="" path="" staged_sha=""
+	local changed_path="" operation="" local_sha="" expected_sha="" staged_sha=""
+	local origin_sha=""
+	local path=""
 	while IFS= read -r changed_path; do
 		[[ -n "$changed_path" ]] || continue
 		_planning_publish_path_allowed "$changed_path" || return 1
 	done < <(GIT_INDEX_FILE="$index_file" _planning_git -C "$repo_path" diff --cached --name-only "$parent_sha")
-	while IFS=$'\t' read -r operation expected_sha path; do
-		if [[ "$operation" == "$PLANNING_SNAPSHOT_FILE_OPERATION" ]]; then
+	while IFS=$'\t' read -r operation origin_sha local_sha expected_sha path; do
+		if [[ "$expected_sha" != "-" ]]; then
 			staged_sha=$(GIT_INDEX_FILE="$index_file" _planning_git -C "$repo_path" rev-parse ":${path}" 2>/dev/null) || return 1
 			[[ "$staged_sha" == "$expected_sha" ]] || return 1
 		elif GIT_INDEX_FILE="$index_file" _planning_git -C "$repo_path" rev-parse ":${path}" >/dev/null 2>&1; then
@@ -534,8 +617,11 @@ _planning_publish_parent_conflicts() {
 	local old_parent="$2"
 	local new_parent="$3"
 	local snapshot_file="$4"
-	local operation="" blob_sha="" path=""
-	while IFS=$'\t' read -r operation blob_sha path; do
+	local operation=""
+	local origin_sha=""
+	local blob_sha=""
+	local path=""
+	while IFS=$'\t' read -r operation origin_sha blob_sha path; do
 		if ! _planning_git -C "$repo_path" diff --quiet "$old_parent" "$new_parent" -- "$path"; then
 			return 0
 		fi
@@ -793,14 +879,7 @@ _planning_publish_resolve_attempt() {
 		_planning_publish_log_retryable_conflict "$publication_id"
 		return 2
 	fi
-	if [[ -n "${AIDEVOPS_PLANNING_PARENT_BRANCH:-}" && "$attempt" -gt 1 &&
-		"$target_sha" != "$previous_target_sha" ]]; then
-		if [[ -z "$previous_target_sha" || -z "$target_sha" ]] || \
-			_planning_publish_parent_conflicts "$repo_path" "$previous_target_sha" "$target_sha" "$snapshot_file"; then
-			_planning_publish_log_retryable_conflict "$publication_id"
-			return 2
-		fi
-	fi
+	# A changed parent is resolved against each path's recorded origin in build_index.
 	printf '%s|%s|%s\n' "$latest_sha" "$expected_sha" "$target_sha"
 	return 0
 }
@@ -842,8 +921,8 @@ planning_publish() {
 	local branch_name="${4:-}"
 	local paths="${5:-}"
 	local external_source="${6:-}"
-	local temp_dir="" snapshot_file="" index_file="" parent_sha="" tree_sha="" candidate_sha=""
-	local publication_id="" handoff_id="" attempt=0 push_rc=0 latest_sha="" expected_sha="" target_sha="" previous_target_sha=""
+	local temp_dir="" snapshot_file="" resolved_file="" index_file="" parent_sha="" tree_sha="" candidate_sha=""
+	local publication_id="" handoff_id="" attempt=0 push_rc=0 latest_sha="" expected_sha="" target_sha="" previous_target_sha="" build_rc=0
 	local parent_resolution="" resolution_tail="" base_sha="${AIDEVOPS_PLANNING_BASE_SHA:-}" guard_rc=0 resolve_rc=0 noop_rc=1 source_head=""
 	[[ -n "$branch_name" ]] || branch_name=$(_planning_git -C "$repo_path" symbolic-ref --short HEAD 2>/dev/null) || return 1
 	_planning_publish_reset_result
@@ -857,6 +936,7 @@ planning_publish() {
 	_planning_publish_prepare_snapshot "$repo_path" "$paths" "$external_source" || return 1
 	temp_dir="$_PLANNING_PUBLISH_TEMP_DIR"
 	snapshot_file="$_PLANNING_PUBLISH_SNAPSHOT_FILE"
+	resolved_file="${temp_dir}/resolved-snapshot"
 	index_file="$_PLANNING_PUBLISH_INDEX_FILE"
 	publication_id="$PLANNING_PUBLICATION_ID"
 	while [[ $attempt -lt $PLANNING_PUBLISH_MAX_RETRIES ]]; do
@@ -873,11 +953,15 @@ planning_publish() {
 		expected_sha="${resolution_tail%%|*}"
 		target_sha="${resolution_tail#*|}"
 		previous_target_sha="$target_sha"
-		_planning_publish_build_index "$repo_path" "$latest_sha" "$snapshot_file" "$index_file" || {
+		build_rc=0
+		_planning_publish_build_index "$repo_path" "$latest_sha" "$snapshot_file" "$index_file" "$resolved_file" || build_rc=$?
+		if [[ "$build_rc" -ne 0 ]]; then
 			rm -rf "$temp_dir"
-			return 1
-		}
-		_planning_publish_verify_index "$repo_path" "$latest_sha" "$snapshot_file" "$index_file" || {
+			return "$build_rc"
+		fi
+		publication_id=$(_planning_git -C "$repo_path" hash-object "$resolved_file") || return 1
+		PLANNING_PUBLICATION_ID="$publication_id"
+		_planning_publish_verify_index "$repo_path" "$latest_sha" "$resolved_file" "$index_file" || {
 			rm -rf "$temp_dir"
 			return 1
 		}
@@ -887,21 +971,10 @@ planning_publish() {
 		}
 		noop_rc=0
 		_planning_publish_finish_noop_if_current "$repo_path" "$remote_name" "$branch_name" "$source_head" \
-			"$latest_sha" "$target_sha" "$tree_sha" "$publication_id" "$snapshot_file" || noop_rc=$?
+			"$latest_sha" "$target_sha" "$tree_sha" "$publication_id" "$resolved_file" || noop_rc=$?
 		if [[ "$noop_rc" -ne 1 ]]; then
 			rm -rf "$temp_dir"
 			return "$noop_rc"
-		fi
-		if [[ -z "$parent_sha" && -n "$base_sha" && "$base_sha" != "$latest_sha" ]] && \
-			_planning_publish_parent_conflicts "$repo_path" "$base_sha" "$latest_sha" "$snapshot_file"; then
-			_planning_publish_log_retryable_conflict "$publication_id"
-			rm -rf "$temp_dir"
-			return 2
-		fi
-		if [[ -n "$parent_sha" ]] && _planning_publish_parent_conflicts "$repo_path" "$parent_sha" "$latest_sha" "$snapshot_file"; then
-			_planning_publish_log_retryable_conflict "$publication_id"
-			rm -rf "$temp_dir"
-			return 2
 		fi
 		parent_sha="$latest_sha"
 		_planning_publish_build_candidate "$repo_path" "$remote_name" "$branch_name" "$source_head" \
@@ -922,7 +995,7 @@ planning_publish() {
 		_planning_publish_push "$repo_path" "$remote_name" "$branch_name" "$expected_sha" "$candidate_sha" || push_rc=$?
 		if [[ $push_rc -eq 0 ]]; then
 			if ! _planning_publish_record_pushed_receipt "$repo_path" "$remote_name" "$branch_name" "$source_head" \
-				"$candidate_sha" "$parent_sha" "$publication_id" "$handoff_id" "$snapshot_file"; then
+				"$candidate_sha" "$parent_sha" "$publication_id" "$handoff_id" "$resolved_file"; then
 				_planning_publish_log error "Remote branch advanced to ${candidate_sha}, but the publication handoff receipt could not be persisted; retry safely to reconstruct it"
 				rm -rf "$temp_dir"
 				return 3

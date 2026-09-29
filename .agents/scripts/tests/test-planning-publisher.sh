@@ -241,7 +241,7 @@ test_publication_receipt_revalidates_exact_handoff() {
 	if [[ -f "$receipt" && "$before" == "$after" && "$valid_rc" -eq 0 && "$replay_rc" -eq 0 && \
 		"$changed_rc" -ne 0 && "$added_rc" -ne 0 && "$forged_rc" -ne 0 && "$remote_head" == "$published_commit" && \
 		"$replayed_commit" == "$published_commit" && "$source_head" == "$(/usr/bin/git -C "$repo" rev-parse HEAD)" ]] && \
-		grep -q '^format=aidevops-planning-publication-v2$' "$receipt" &&
+		grep -q '^format=aidevops-planning-publication-v3$' "$receipt" &&
 		grep -q '^handoff_id=[0-9a-fA-F]\{40,64\}$' "$receipt"; then
 		pass "$name"
 	else
@@ -832,6 +832,79 @@ test_parent_branch_replay_is_idempotent() {
 	return 0
 }
 
+test_parent_todo_merge_and_conflict() {
+	local name="merges unrelated parent TODO additions and aborts same-line conflicts"
+	local root="" repo="" rival="" branch="plan/concurrent" receipt_dir="" output="" commit="" before="" after="" rc=0
+	root=$(mktemp -d) || return 0
+	setup_repo "$root" || { fail "$name" setup; return 0; }
+	repo="${root}/work"
+	rival="${root}/rival"
+	receipt_dir="${root}/receipts"
+	printf 'alpha\nbase middle\nomega\n' >"${repo}/TODO.md"
+	git -C "$repo" add TODO.md
+	GIT_AUTHOR_NAME=Test GIT_AUTHOR_EMAIL=test@example.invalid GIT_COMMITTER_NAME=Test GIT_COMMITTER_EMAIL=test@example.invalid \
+		git -C "$repo" -c commit.gpgsign=false commit -qm 'seed distinct hunks'
+	git -C "$repo" push -q origin main
+	git -C "$repo" switch -q -c "$branch"
+	git clone -q "${root}/remote.git" "$rival"
+	printf 'alpha\nbase middle\nomega\nlocal addition\n' >"${repo}/TODO.md"
+	printf 'parent addition\nbase middle\nomega\n' >"${rival}/TODO.md"
+	git -C "$rival" add TODO.md
+	GIT_AUTHOR_NAME=Rival GIT_AUTHOR_EMAIL=rival@example.invalid GIT_COMMITTER_NAME=Rival GIT_COMMITTER_EMAIL=rival@example.invalid \
+		git -C "$rival" -c commit.gpgsign=false commit -qm 'parent planning addition'
+	git -C "$rival" push -q origin main
+	output=$(AIDEVOPS_PLANNING_PARENT_BRANCH=main run_publish_with_receipt "$repo" "$receipt_dir" "$branch") || {
+		fail "$name" merge
+		rm -rf "$root"
+		return 0
+	}
+	commit=$(printf '%s\n' "$output" | sed -n 's/^commit=//p')
+	if ! git --git-dir="${root}/remote.git" show "${branch}:TODO.md" | grep -q 'parent addition' ||
+		! git --git-dir="${root}/remote.git" show "${branch}:TODO.md" | grep -q 'local addition' ||
+		! run_receipt_verify "$repo" "$receipt_dir" "$branch" "$commit"; then
+		fail "$name" merged-receipt
+		rm -rf "$root"
+		return 0
+	fi
+	before=$(git --git-dir="${root}/remote.git" rev-parse "$branch")
+	AIDEVOPS_PLANNING_PARENT_BRANCH=main run_publish_with_receipt "$repo" "$receipt_dir" "$branch" >/dev/null || rc=$?
+	after=$(git --git-dir="${root}/remote.git" rev-parse "$branch")
+	if [[ "$rc" -ne 0 || "$before" != "$after" ]]; then
+		fail "$name" replay
+		rm -rf "$root"
+		return 0
+	fi
+	rm -rf "$root"
+	root=$(mktemp -d) || return 0
+	setup_repo "$root" || { fail "$name" conflict-setup; return 0; }
+	repo="${root}/work"
+	rival="${root}/rival"
+	printf 'same line\n' >"${repo}/TODO.md"
+	git -C "$repo" add TODO.md
+	GIT_AUTHOR_NAME=Test GIT_AUTHOR_EMAIL=test@example.invalid GIT_COMMITTER_NAME=Test GIT_COMMITTER_EMAIL=test@example.invalid \
+		git -C "$repo" -c commit.gpgsign=false commit -qm 'seed shared line'
+	git -C "$repo" push -q origin main
+	git clone -q "${root}/remote.git" "$rival"
+	printf 'local line\n' >"${repo}/TODO.md"
+	printf 'parent line\n' >"${rival}/TODO.md"
+	git -C "$rival" add TODO.md
+	GIT_AUTHOR_NAME=Rival GIT_AUTHOR_EMAIL=rival@example.invalid GIT_COMMITTER_NAME=Rival GIT_COMMITTER_EMAIL=rival@example.invalid \
+		git -C "$rival" -c commit.gpgsign=false commit -qm 'conflicting parent'
+	git -C "$rival" push -q origin main
+	before=$(git --git-dir="${root}/remote.git" rev-parse main)
+	rc=0
+	run_publish "$repo" || rc=$?
+	after=$(git --git-dir="${root}/remote.git" rev-parse main)
+	if [[ "$rc" -eq 2 && "$before" == "$after" ]] &&
+		[[ "$(git --git-dir="${root}/remote.git" show main:TODO.md)" == "parent line" ]]; then
+		pass "$name"
+	else
+		fail "$name" "conflict rc=$rc"
+	fi
+	rm -rf "$root"
+	return 0
+}
+
 test_explicit_git_capability_preserves_guarded_checkout() {
 	local name="explicit Git capability publishes planning paths while canonical guard remains active"
 	local root="" repo="" shim_dir="" before="" after="" guard_rc=0 guard_output="" count="" real_git="" real_true=""
@@ -916,6 +989,7 @@ main() {
 	test_absent_remote_branch_uses_safe_parent
 	test_absent_remote_branch_creation_contention
 	test_parent_branch_replay_is_idempotent
+	test_parent_todo_merge_and_conflict
 	test_explicit_git_capability_preserves_guarded_checkout
 	printf '%s passed, %s failed\n' "$PASS" "$FAIL"
 	[[ $FAIL -eq 0 ]] || return 1
