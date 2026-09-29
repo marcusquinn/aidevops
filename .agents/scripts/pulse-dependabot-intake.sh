@@ -594,14 +594,28 @@ _pulse_route_dependabot_pr_to_worker_issue() {
 		_pulse_dependabot_release_intake_lock "$lock_dir" || true
 		return 1
 	}
+	# The dependencies label is load-bearing for intake dedup; repos without it
+	# would reject gh issue create --label. Provision it (idempotent) first.
+	if ! declare -F managed_labels_ensure_dependabot_intake_set >/dev/null 2>&1 ||
+		! declare -F _gh_managed_label_names_snapshot >/dev/null 2>&1 ||
+		! declare -F _gh_managed_label_create_runner >/dev/null 2>&1 ||
+		! managed_labels_ensure_dependabot_intake_set "$repo_slug" \
+			_gh_managed_label_names_snapshot _gh_managed_label_create_runner; then
+		rm -f "$body_file"
+		_pulse_dependabot_release_intake_lock "$lock_dir" || true
+		echo "[pulse-dependabot-intake] PR #${pr_number} in ${repo_slug}: dependencies label unavailable; worker issue not created" >>"$LOGFILE"
+		return 1
+	fi
 	issue_output=$(gh_create_issue --repo "$repo_slug" \
 		--title "Dependabot PR #${pr_number} requires worker resolution" \
 		--body-file "$body_file" \
 		--label "auto-dispatch,origin:worker,tier:standard,dependencies" 2>&1) || {
 		local create_rc=$?
+		local create_reason=""
+		create_reason=$(printf '%s' "$issue_output" | head -n 1 | tr -c '[:print:]' ' ' | cut -c 1-200)
 		rm -f "$body_file"
 		_pulse_dependabot_release_intake_lock "$lock_dir" || true
-		echo "[pulse-dependabot-intake] PR #${pr_number} in ${repo_slug}: worker issue creation failed" >>"$LOGFILE"
+		echo "[pulse-dependabot-intake] PR #${pr_number} in ${repo_slug}: worker issue creation failed: ${create_reason}" >>"$LOGFILE"
 		return "$create_rc"
 	}
 	rm -f "$body_file"
