@@ -302,6 +302,16 @@ _pmp_prepare_enriched_pr_backlog "org/repo" "$reconcile_fresh" reconciled_backlo
 assert_eq "reordered and changed fresh items all receive advisory enrichment" "true" "$(printf '%s' "$reconciled_backlog" | jq -r 'all(.[]; has("mergeable") and has("reviewDecision") and has("statusCheckRollup"))')"
 _pmp_clear_merge_enrichment_state
 
+# A cycle deadline earlier than the merge-pass grace budget pauses the same
+# cursor machinery before the instance lock can be reclaimed.
+# shellcheck source=../pulse-watchdog.sh
+source "${SCRIPTS_DIR}/pulse-watchdog.sh"
+PULSE_START_EPOCH=0 PULSE_STALE_THRESHOLD=1800 PULSE_LOCK_MAX_AGE_S=1100
+date() { [[ "${1:-}" == '+%s' ]] && printf '1000\n'; }
+assert_eq "merge-pass deadline capped at cycle budget" "1010" "$(_pmp_merge_pass_budget_deadline 1000)"
+unset -f date
+unset PULSE_START_EPOCH PULSE_STALE_THRESHOLD PULSE_LOCK_MAX_AGE_S
+
 if [[ "$TESTS_FAILED" -eq 0 ]]; then
 	printf '\n%sAll %d PR cursor resume tests passed.%s\n' "$TEST_GREEN" "$TESTS_RUN" "$TEST_NC"
 	exit 0
