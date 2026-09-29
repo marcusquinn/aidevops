@@ -1355,12 +1355,23 @@ _ruleset_required_review_policy_for_default_branch() {
 	local repo_slug="$1"
 	local default_branch="$2"
 	local rulesets_json="${3:-}"
+	local rulesets_rc=0
 
 	if [[ -z "$rulesets_json" ]]; then
-		rulesets_json=$(_pmrc_gh_read gh api "repos/${repo_slug}/rulesets" 2>/dev/null) || {
+		rulesets_json=$(_pmrc_gh_read gh api "repos/${repo_slug}/rulesets" 2>&1) || rulesets_rc=$?
+		if [[ "$rulesets_rc" -ne 0 ]]; then
+			_pmrc_emit_local_deferral "$rulesets_json"
+			# GH#32951: private repos on plans without rulesets cannot carry a
+			# ruleset approval policy, so the plan-unsupported 403 is a
+			# definitive "none", matching the required-contexts path (GH#29484).
+			if _pmrc_private_plan_feature_unavailable "$rulesets_json"; then
+				aidevops_log_line "[pulse-merge] _ruleset_required_review_policy_for_default_branch: rulesets unavailable for ${repo_slug} on the private plan (HTTP 403) — no ruleset approval policy (GH#32951)"
+				printf '0\t0'
+				return 0
+			fi
 			aidevops_log_line "[pulse-merge] _ruleset_required_review_policy_for_default_branch: rulesets list failed for ${repo_slug} — caller will fail closed (GH#24577)"
 			return 1
-		}
+		fi
 	fi
 	if ! _pmrc_rulesets_list_schema_valid "$rulesets_json"; then
 		aidevops_log_line "[pulse-merge] _ruleset_required_review_policy_for_default_branch: rulesets list parse failed for ${repo_slug} — caller will fail closed (GH#30638)"
