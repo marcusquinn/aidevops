@@ -1315,6 +1315,40 @@ _repair_pending_planning_publications() {
 	return 0
 }
 
+_pir_reconcile_parent_stage() {
+	local slug="$1" issue_num="$2" issue_title="$3" issue_body="$4" labels_csv="$5"
+	local _can_close=0 _can_nudge=0 _can_escalate=0
+	[[ "$cpt_total_closed" -lt "$cpt_max_closes" ]] && _can_close=1
+	[[ "$cpt_total_nudged" -lt "$cpt_max_nudges" ]] && _can_nudge=1
+	[[ "$cpt_total_escalated" -lt "$cpt_max_escalations" ]] && _can_escalate=1
+	if [[ $((_can_close + _can_nudge + _can_escalate)) -gt 0 ]]; then
+		_action_cpt_single "$slug" "$issue_num" "$issue_title" "$issue_body" \
+			"$_can_close" "$_can_nudge" "$_can_escalate" "$cpt_esc_hours" "OPEN" "$labels_csv"
+		[[ "$_SP_CPT_CLOSED" -eq 1 ]] && cpt_total_closed=$((cpt_total_closed + 1))
+		[[ "$_SP_CPT_NUDGED" -eq 1 ]] && cpt_total_nudged=$((cpt_total_nudged + 1))
+		[[ "$_SP_CPT_ESCALATED" -eq 1 ]] && cpt_total_escalated=$((cpt_total_escalated + 1))
+	fi
+	if [[ "$_pbf_this_cycle" -eq 1 ]] && \
+		[[ "$pbf_total_run" -lt "$pbf_max_per_cycle" ]] && \
+		[[ "${_SP_CPT_CLOSED:-0}" -ne 1 ]] && \
+		_pir_parent_mutation_is_allowed "$slug" "$issue_num"; then
+		if "$issue_sync_helper" backfill-sub-issues --repo "$slug" \
+			--issue "$issue_num" >/dev/null 2>&1; then
+			pbf_total_run=$((pbf_total_run + 1))
+		fi
+	fi
+	if [[ "$_cbb_this_cycle" -eq 1 ]] && \
+		[[ "$cbb_total_run" -lt "$cbb_max_per_cycle" ]] && \
+		[[ "${_SP_CPT_CLOSED:-0}" -ne 1 ]] && \
+		_pir_parent_mutation_is_allowed "$slug" "$issue_num"; then
+		if "$issue_sync_helper" backfill-cross-phase-blocked-by \
+			--repo "$slug" --issue "$issue_num" >/dev/null 2>&1; then
+			cbb_total_run=$((cbb_total_run + 1))
+		fi
+	fi
+	return 0
+}
+
 reconcile_issues_single_pass() {
 	local repos_json="$REPOS_JSON"
 	[[ -f "$repos_json" ]] || return 0
@@ -1611,47 +1645,8 @@ reconcile_issues_single_pass() {
 
 			# Stage 4: reconcile parent-task issues (close/nudge/escalate)
 			if _should_cpt "$labels_csv"; then
-				local _can_close=0 _can_nudge=0 _can_escalate=0
-				[[ "$cpt_total_closed" -lt "$cpt_max_closes" ]] && _can_close=1
-				[[ "$cpt_total_nudged" -lt "$cpt_max_nudges" ]] && _can_nudge=1
-				[[ "$cpt_total_escalated" -lt "$cpt_max_escalations" ]] && _can_escalate=1
-				# Use arithmetic to check any-cap; avoids repeated == "1" pattern
-				# across both this function and reconcile_completed_parent_tasks
-				if [[ $((_can_close + _can_nudge + _can_escalate)) -gt 0 ]]; then
-					_action_cpt_single "$slug" "$issue_num" "$issue_title" "$issue_body" \
-						"$_can_close" "$_can_nudge" "$_can_escalate" "$cpt_esc_hours" "OPEN" "$labels_csv"
-					[[ "$_SP_CPT_CLOSED" -eq 1 ]] && cpt_total_closed=$((cpt_total_closed + 1))
-					[[ "$_SP_CPT_NUDGED" -eq 1 ]] && cpt_total_nudged=$((cpt_total_nudged + 1))
-					[[ "$_SP_CPT_ESCALATED" -eq 1 ]] && cpt_total_escalated=$((cpt_total_escalated + 1))
-				fi
-			# t2838: periodic sub-issue backfill — only if cycle-gate fired
-			# AND parent didn't just close (no point linking to closed parent).
-			# Idempotent and silent on no-op (already-linked children).
-			# Counter increments only on success — failed backfills (rate
-			# limit, network error) leave the gate state for next cycle's
-			# retry rather than advancing the clock on broken work.
-			if [[ "$_pbf_this_cycle" -eq 1 ]] && \
-				[[ "$pbf_total_run" -lt "$pbf_max_per_cycle" ]] && \
-				[[ "${_SP_CPT_CLOSED:-0}" -ne 1 ]] && \
-				_pir_parent_mutation_is_allowed "$slug" "$issue_num"; then
-				if "$issue_sync_helper" backfill-sub-issues --repo "$slug" \
-					--issue "$issue_num" >/dev/null 2>&1; then
-					pbf_total_run=$((pbf_total_run + 1))
-				fi
-			fi
-			# t2877: periodic cross-phase blocked-by backfill — mirrors t2838
-			# gate pattern. Only runs if the parent didn't just close and the
-			# cycle-gate fired. Idempotent (addBlockedBy swallows duplicates).
-			if [[ "$_cbb_this_cycle" -eq 1 ]] && \
-				[[ "$cbb_total_run" -lt "$cbb_max_per_cycle" ]] && \
-				[[ "${_SP_CPT_CLOSED:-0}" -ne 1 ]] && \
-				_pir_parent_mutation_is_allowed "$slug" "$issue_num"; then
-				if "$issue_sync_helper" backfill-cross-phase-blocked-by \
-					--repo "$slug" --issue "$issue_num" >/dev/null 2>&1; then
-					cbb_total_run=$((cbb_total_run + 1))
-				fi
-			fi
-			continue  # parent-task issues do not flow to stage 5
+				_pir_reconcile_parent_stage "$slug" "$issue_num" "$issue_title" "$issue_body" "$labels_csv"
+				continue  # parent-task issues do not flow to stage 5
 			fi
 
 			# Stage 5: backfill labelless aidevops-shaped issues (per-repo cap)
