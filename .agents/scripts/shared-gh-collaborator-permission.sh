@@ -253,7 +253,9 @@ _gh_collaborator_permission_lookup() {
 		return 2
 	fi
 
-	api_response=$(_gh_collaborator_permission_request "$auth_route" "$perm_url" 2>&1)
+	# stdout only: stderr diagnostics (e.g. "[gh-cooldown] ...") start with "["
+	# and would be parsed as body, turning a 200 into malformed-response.
+	api_response=$(_gh_collaborator_permission_request "$auth_route" "$perm_url" 2>/dev/null)
 	rc=$?
 	while IFS= read -r line; do
 		line="${line%$'\r'}"
