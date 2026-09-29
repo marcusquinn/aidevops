@@ -722,11 +722,17 @@ write_pulse_health_file() {
 		fi
 	fi
 
-	# models_backed_off: count active backoff entries in provider_backoff DB
+	# models_backed_off: count active backoff entries in provider_backoff DB.
+	# Rows are key|reason|retry_after|updated_at (ISO-8601 UTC). Expired rows
+	# are only cleared when their exact key is re-checked, so retired-model keys
+	# linger forever. Count future retry_after values plus empty ones, which
+	# backoff_active_for_key treats as active (GH#32979).
 	local models_backed_off=0
 	if [[ -x "$HEADLESS_RUNTIME_HELPER" ]]; then
-		local _backoff_rows
-		_backoff_rows=$("$HEADLESS_RUNTIME_HELPER" backoff status 2>/dev/null | grep -c '|' || echo "0")
+		local _backoff_rows="0" _backoff_now=""
+		_backoff_now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+		_backoff_rows=$("$HEADLESS_RUNTIME_HELPER" backoff status 2>/dev/null |
+			awk -F'|' -v now="$_backoff_now" 'NF >= 3 && ($3 == "" || $3 > now) { n++ } END { print n + 0 }') || _backoff_rows=0
 		[[ "$_backoff_rows" =~ ^[0-9]+$ ]] && models_backed_off="$_backoff_rows"
 	fi
 
