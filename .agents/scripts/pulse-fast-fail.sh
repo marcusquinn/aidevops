@@ -845,7 +845,8 @@ _fast_fail_age_out_locked() {
 
 	# Post an issue comment so operators see when auto-recovery fires.
 	local comment_body
-	comment_body=$(printf '<!-- fast-fail-age-out:%s -->\nFast-fail counter auto-reset after %sh quiet period (auto-reset #%s of max %s); pulse will retry dispatch.' \
+	comment_body="$(aidevops_ops_marker fast-fail-age-out)"$'\n'
+	comment_body+=$(printf '<!-- fast-fail-age-out:%s -->\nFast-fail counter auto-reset after %sh quiet period (auto-reset #%s of max %s); pulse will retry dispatch.' \
 		"$new_reset_count" "$hours" "$new_reset_count" "$max_resets")
 	gh issue comment "$issue_number" --repo "$repo_slug" --body "$comment_body" >>"$LOGFILE" 2>&1 || true
 	return 0

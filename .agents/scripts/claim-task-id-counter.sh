@@ -493,8 +493,12 @@ resolve_implicit_counter_branch() {
 	[[ "${OFFLINE_MODE:-false}" == "false" ]] || return 0
 	[[ "$COUNTER_BRANCH" == "${DEFAULT_BRANCH:-main}" ]] || return 0
 	[[ -n "$candidate" && "$candidate" != "$COUNTER_BRANCH" ]] || return 0
+	# The isolated bare context has no object reuse. Fetching an unshallowed
+	# branch transfers its entire history even though only .task-counter is read.
+	# An explicit refspec retains the remote-tracking ref used by the reads below.
 	_run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" \
-		fetch -q "$REMOTE_NAME" "$candidate" >/dev/null || fetch_rc=$?
+		fetch -q --depth=1 --no-tags "$REMOTE_NAME" \
+		"+refs/heads/${candidate}:refs/remotes/${REMOTE_NAME}/${candidate}" >/dev/null || fetch_rc=$?
 	if [[ $fetch_rc -ne 0 ]]; then
 		_run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" \
 			ls-remote --exit-code --heads "$REMOTE_NAME" "refs/heads/${candidate}" \
@@ -514,7 +518,8 @@ resolve_implicit_counter_branch() {
 	fi
 
 	if ! _run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" \
-		fetch -q "$REMOTE_NAME" "${DEFAULT_BRANCH:-main}" >/dev/null; then
+		fetch -q --depth=1 --no-tags "$REMOTE_NAME" \
+		"+refs/heads/${DEFAULT_BRANCH:-main}:refs/remotes/${REMOTE_NAME}/${DEFAULT_BRANCH:-main}" >/dev/null; then
 		log_error "COUNTER_BRANCH_DISCOVERY_ERROR: unable to validate ${candidate} against ${REMOTE_NAME}/${DEFAULT_BRANCH:-main}"
 		_task_counter_status "$TASK_COUNTER_SETUP_STATUS" "counter_branch_discovery_failed"
 		return "$CAS_PROTECTED_BRANCH_RC"

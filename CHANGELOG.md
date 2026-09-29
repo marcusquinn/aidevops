@@ -10,6 +10,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.37.28] - 2026-09-29
+
+### Fixed
+
+- unblock merges wedged by never-reported required checks and private-plan ruleset 403
+- t18536: log dependency provisioning reason codes; skip package dirs without a supported lockfile
+- t18535: resolve default git remote for bare push/fetch/pull; classify pushurl and --multiple remotes
+
+## [3.37.27] - 2026-09-29
+
+### Added
+
+- refresh GSC and Bing exports before routine import (#32937)
+
+### Fixed
+
+- prune vanished worktree metadata across managed repos; count only live worktrees at dispatch cap
+- retire native Sonnet 5.5 catalog bridge (#32944)
+- keep orphan-recovery PRs from closing incomplete issues (#32940)
+- t18534: restore retry context lost to torn objective-evidence lines; add sanitised failure signals
+
 ## [3.37.26] - 2026-09-29
 
 ### Changed

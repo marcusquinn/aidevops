@@ -952,8 +952,9 @@ _dispatch_preclaim_brief_scope() {
 		return 1
 	fi
 	comment_file=$(mktemp) || return 1
+	aidevops_ops_marker brief-hold >"$comment_file" || return 1
 	# shellcheck disable=SC2016 # literal Markdown backticks, not expansions
-	printf '%s\nBrief hold: reason=missing_files_scope owner=brief-author.\nProjected state: status:blocked.\nNext action: Add a canonical ### Files Scope section with one `` - `repo/relative/path` `` line per permitted file (no prefix, nothing after the path) to the issue body, or explicit `` `EDIT: path` `` / `` `NEW: path` `` bullets under ### Files to Modify; verify with pre-dispatch-validator-helper.sh scope-check. The pulse releases this hold automatically once the edited body passes; no label change is needed. This body is not held again unless it changes.\n' "$hold_marker" >"$comment_file"
+	printf '%s\nBrief hold: reason=missing_files_scope owner=brief-author.\nProjected state: status:blocked.\nNext action: Add a canonical ### Files Scope section with one `` - `repo/relative/path` `` line per permitted file (no prefix, nothing after the path) to the issue body, or explicit `` `EDIT: path` `` / `` `NEW: path` `` bullets under ### Files to Modify; verify with pre-dispatch-validator-helper.sh scope-check. The pulse releases this hold automatically once the edited body passes; no label change is needed. This body is not held again unless it changes.\n' "$hold_marker" >>"$comment_file"
 	if ! set_issue_status "$issue_number" "$repo_slug" blocked >/dev/null; then
 		rm -f "$comment_file"
 		return 1
