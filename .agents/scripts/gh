@@ -81,6 +81,20 @@
 # =============================================================================
 
 _SHIM_SOURCE="${BASH_SOURCE[0]:-$0}"
+# Opt-in wall-clock diagnostics. Never include arguments, endpoint, or credentials.
+if [[ "${AIDEVOPS_GH_SHIM_TIMING:-0}" == 1 ]]; then
+	_SHIM_TIMING_START=$(perl -MTime::HiRes=time -e 'printf "%.6f", time')
+	_shim_timing() {
+		local phase="$1" now="" elapsed=""
+		now=$(perl -MTime::HiRes=time -e 'printf "%.6f", time')
+		elapsed=$(perl -e 'printf "%.1f", ($ARGV[1] - $ARGV[0]) * 1000' "$_SHIM_TIMING_START" "$now")
+		printf '[gh-shim-timing] phase=%s elapsed_ms=%s\n' "$phase" "$elapsed" >&2
+		_SHIM_TIMING_START="$now"
+		return 0
+	}
+else
+	_shim_timing() { return 0; }
+fi
 while [[ -L "$_SHIM_SOURCE" ]]; do
 	_SHIM_LINK_DIR="$(cd "$(dirname "$_SHIM_SOURCE")" 2>/dev/null && pwd)" || exit 127
 	_SHIM_SOURCE=$(readlink "$_SHIM_SOURCE") || exit 127
@@ -88,6 +102,7 @@ while [[ -L "$_SHIM_SOURCE" ]]; do
 done
 _SHIM_DIR="$(cd "$(dirname "$_SHIM_SOURCE")" 2>/dev/null && pwd)" || _SHIM_DIR=""
 _SHIM_SOURCE="${_SHIM_DIR}/$(basename "$_SHIM_SOURCE")"
+_shim_timing path_resolution
 
 # shellcheck source=./gh-native-transport-lib.sh
 # shellcheck disable=SC1091  # sibling library resolved at runtime via $_SHIM_DIR
@@ -101,11 +116,13 @@ source "${_SHIM_DIR}/managed-label-provisioning-lib.sh"
 # shellcheck source=./gh-write-policy-lib.sh
 # shellcheck disable=SC1091  # sibling library resolved at runtime via $_SHIM_DIR
 source "${_SHIM_DIR}/gh-write-policy-lib.sh"
+_shim_timing libraries
 
 if [[ -f "${_SHIM_DIR}/gh-transport-controls.sh" ]]; then
 	# shellcheck source=./gh-transport-controls.sh
 	source "${_SHIM_DIR}/gh-transport-controls.sh"
 fi
+_shim_timing transport_library
 
 # Reject recursive entry rather than forwarding to another shim generation.
 # The resolver below prevents normal cross-generation selection; this sentinel
@@ -200,6 +217,7 @@ if ! type gh_run_transport_attempt >/dev/null 2>&1; then
 	}
 fi
 unset _cand _INST_LOADED
+_shim_timing instrumentation_source
 
 # Direct REST calls have documented fixed primary-rate costs, with a documented
 # zero-cost exception for GET /rate_limit. Keep the parser separate from this
@@ -218,6 +236,7 @@ if [[ $_GHQA_LOADED -eq 0 ]]; then
 	_ghqa_exact_success_cost() { return 1; }
 fi
 unset _cand _GHQA_LOADED
+_shim_timing quota_source
 
 # One ID follows the complete wrapper invocation, including REST translation,
 # each explicit page, and any GraphQL fallback retry.
@@ -249,6 +268,7 @@ for _cand in \
 	fi
 done
 unset _cand
+_shim_timing pagination_source
 
 
 # -----------------------------------------------------------------------------

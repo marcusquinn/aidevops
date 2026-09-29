@@ -39,10 +39,6 @@ _shim_canonical_path() {
 	local candidate_dir=""
 	local candidate_name=""
 	local link_dir=""
-	if command -v python3 >/dev/null 2>&1; then
-		python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$candidate" 2>/dev/null
-		return $?
-	fi
 	while [[ -L "$candidate" ]]; do
 		link_dir=$(cd "$(dirname "$candidate")" 2>/dev/null && pwd -P) || return 1
 		candidate=$(readlink "$candidate") || return 1
@@ -71,6 +67,7 @@ _find_real_gh() {
 		[[ "$candidate_real" -ef "$_SHIM_SOURCE" ]] && continue
 		_shim_is_aidevops_gh "$candidate_real" && continue
 		printf '%s\n' "$candidate_real"
+		_shim_timing native_resolution
 		return 0
 	done
 	for candidate in /opt/homebrew/bin/gh /usr/local/bin/gh /usr/bin/gh; do

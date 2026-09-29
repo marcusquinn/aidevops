@@ -203,6 +203,16 @@ def _finish_budget(budget, reservation: str, resource: str, headers: dict[str, s
 
 
 def run(metadata: Path, executable: str, args: list[str]) -> int:
+    timing = os.environ.get("AIDEVOPS_GH_SHIM_TIMING") == "1"
+    tick = time.monotonic()
+
+    def phase(name: str) -> None:
+        nonlocal tick
+        if timing:
+            now = time.monotonic()
+            print(f"[gh-shim-timing] phase={name} elapsed_ms={(now - tick) * 1000:.1f}", file=sys.stderr)
+            tick = now
+
     shape = request_shape(args)
     if shape is None or sys.stdout.isatty():
         return 125
@@ -223,22 +233,27 @@ def run(metadata: Path, executable: str, args: list[str]) -> int:
         metadata.write_text('{"attempted":false}', encoding="utf-8")
         private_directory(temp_dir)
         credential, authenticated, environment = credential_identity(executable, host)
+        phase("credential_identity")
         if not authenticated:
             # Do not mix anonymous-IP and authenticated-user allowances or
             # trust an identity which could change before native execution.
             return 125
         owner, attributed = quota_owner()
         budget = Budget(directory, scope_key(host, owner), credential, attributed=attributed)
+        phase("sqlite_open")
         reservation = _acquire(budget, resource)
+        phase("sqlite_admission_and_pacing")
         with tempfile.TemporaryFile(dir=temp_dir) as output:
             native_args = args if include else [*args, "--include"]
             metadata.write_text('{"attempted":true}', encoding="utf-8")
             rc = execute(executable, native_args, output, environment)
+            phase("native_gh")
             status, headers, body_offset = included_headers(output)
             framing_rc = _copy_response(output, include, silent, status, body_offset)
             rc = rc or framing_rc
             result = _response_metadata(status, headers, authenticated)
             metadata.write_text(json.dumps(result), encoding="utf-8")
+            phase("response_framing")
             return _exit_status(rc)
     except Deferred as exc:
         metadata.write_text(json.dumps({"attempted": False, "deferred_by": "local_admission",
@@ -263,6 +278,7 @@ def run(metadata: Path, executable: str, args: list[str]) -> int:
         return _exit_status(rc) if rc is not None else 75
     finally:
         _finish_budget(budget, reservation, resource, headers, started)
+        phase("sqlite_finish")
 
 
 if __name__ == "__main__":

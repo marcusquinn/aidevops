@@ -108,7 +108,9 @@ _gh_transport_run_rest() {
 		return 75
 	}
 	start_ms=$(_gh_now_ms)
+	_shim_timing rest_setup
 	python3 "${_GHGT_DIR}/gh-transport-governor.py" "$metadata" "$executable" "$@" 2>"$error_file" || rc=$?
+	_shim_timing governor_total
 	attempted=$(jq -r '.attempted // false' "$metadata" 2>/dev/null) || attempted=false
 	deferred_by=$(jq -r '.deferred_by // ""' "$metadata" 2>/dev/null) || deferred_by=""
 	# The governor has not executed the native request when durable quota state is
@@ -169,6 +171,7 @@ _gh_transport_run_rest() {
 		_gh_transport_record_error "$rc" "$error_file" "$response"
 	fi
 	rm -f -- "$metadata" "$error_file"
+	_shim_timing rest_metadata_and_log
 	return "$rc"
 }
 
