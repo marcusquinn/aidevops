@@ -581,7 +581,9 @@ _large_file_gate_normalize_debt_issue() {
 		--remove-label "simplification-incomplete" \
 		--remove-label "duplicate" \
 		--remove-label "already-fixed" \
-		--remove-label "wontfix" >/dev/null 2>&1
+		--remove-label "wontfix" \
+		--remove-label "solved:worker" \
+		--remove-label "solved:interactive" >/dev/null 2>&1
 	return $?
 }
 

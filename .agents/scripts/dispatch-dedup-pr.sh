@@ -90,6 +90,52 @@ _ddpr_read_json_array() {
 }
 
 #######################################
+# Print the latest `reopened` event time for an issue (GH#33071).
+#
+# Args: $1 = issue number, $2 = repo slug
+# Outputs: ISO-8601 UTC timestamp, or nothing when the issue was never reopened
+# Returns: 0 on a completed lookup; the lookup rc otherwise
+#######################################
+_ddpr_latest_reopen_at() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local events=""
+	local rc=0
+	events=$(_ddpr_bounded_gh_read gh api --paginate \
+		"repos/${repo_slug}/issues/${issue_number}/events?per_page=100" \
+		--jq '.[] | select(.event == "reopened") | .created_at' 2>/dev/null) || rc=$?
+	[[ "$rc" -eq 0 ]] || return "$rc"
+	printf '%s\n' "$events" | { grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z$' || true; } | sort | tail -n 1
+	return 0
+}
+
+#######################################
+# From merged PRs that close an issue, pick the first one that still proves
+# the current issue lifecycle is solved (GH#33071). A PR merged before the
+# issue's latest reopen describes an earlier lifecycle and is ignored; a PR
+# with no mergedAt is kept (fail toward blocking).
+#
+# Args: $1 = issue number, $2 = repo slug, $3 = JSON array of {number, mergedAt}
+# Outputs: first blocking PR number, or nothing when every match predates reopen
+# Returns: 0 on a completed decision; the reopen lookup rc otherwise
+#######################################
+_ddpr_first_merge_after_reopen() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local matches_json="$3"
+	local reopen_at=""
+	local rc=0
+	printf '%s' "$matches_json" | jq -e 'type == "array" and length > 0' >/dev/null 2>&1 ||
+		return "$_DDPR_LOOKUP_RC_RESPONSE_INVALID"
+	reopen_at=$(_ddpr_latest_reopen_at "$issue_number" "$repo_slug") || rc=$?
+	[[ "$rc" -eq 0 ]] || return "$rc"
+	printf '%s' "$matches_json" | jq -r --arg reopen "$reopen_at" '
+		[.[] | select($reopen == "" or ((.mergedAt // "") == "") or (.mergedAt >= $reopen))]
+		| .[0].number // empty' 2>/dev/null || return "$_DDPR_LOOKUP_RC_RESPONSE_INVALID"
+	return 0
+}
+
+#######################################
 # Read the current issue body from the canonical dispatch metadata bundle.
 #
 # Args: none
@@ -647,7 +693,7 @@ _has_open_pr_check_merged_keywords() {
 	# included in this single request to avoid separate gh pr view calls.
 	pr_json=$(_ddpr_read_json_array gh pr list --repo "$repo_slug" --state merged \
 		--search "#${issue_number} in:body" --limit 20 \
-		--json number,body 2>/dev/null) || lookup_rc=$?
+		--json number,body,mergedAt 2>/dev/null) || lookup_rc=$?
 	if [[ "$lookup_rc" -ne 0 ]]; then
 		_ddpr_emit_lookup_uncertain "merged_body" "$issue_number" "$repo_slug" "$lookup_rc"
 		return 0
@@ -655,20 +701,32 @@ _has_open_pr_check_merged_keywords() {
 
 	# Match: closing keyword + optional whitespace + #NNN or owner/repo#NNN
 	# followed by a non-word char or end-of-string (GH#18641 semantics).
-	local close_pattern
+	local close_pattern matches_json
 	close_pattern=$(_ddpr_closing_keyword_pattern "$issue_number")
 
-	match_pr=$(printf '%s' "$pr_json" | jq -r --arg pattern "$close_pattern" \
-		'[.[] | select(.body // "" | test($pattern; "i"))] | .[0].number // empty' \
+	matches_json=$(printf '%s' "$pr_json" | jq -c --arg pattern "$close_pattern" \
+		'[.[] | select(.body // "" | test($pattern; "i")) | {number, mergedAt}]' \
 		2>/dev/null) || {
 		_ddpr_emit_lookup_uncertain "merged_body" "$issue_number" "$repo_slug" "$_DDPR_LOOKUP_RC_RESPONSE_INVALID"
 		return 0
 	}
+	[[ "$matches_json" != "[]" ]] || return 1
+
+	# GH#33071: a merge before the issue's latest reopen belongs to an earlier
+	# lifecycle (for example a file-size-debt issue reopened by the large-file
+	# gate) and must not block the reopened work forever.
+	match_pr=$(_ddpr_first_merge_after_reopen "$issue_number" "$repo_slug" "$matches_json") || lookup_rc=$?
+	if [[ "$lookup_rc" -ne 0 ]]; then
+		_ddpr_emit_lookup_uncertain "merged_body_reopen" "$issue_number" "$repo_slug" "$lookup_rc"
+		return 0
+	fi
 
 	if [[ -n "$match_pr" ]]; then
 		printf 'merged PR #%s references issue #%s via keyword\n' "$match_pr" "$issue_number"
 		return 0
 	fi
+	printf 'REOPENED_AFTER_MERGE: merged closing PRs for issue #%s predate its latest reopen — allowing dispatch\n' \
+		"$issue_number" >&2
 	return 1
 }
 
@@ -708,7 +766,7 @@ _has_open_pr_check_task_id_title() {
 	local lookup_rc=0
 	query="${task_id} in:title"
 	# Fetch number+body in one request to avoid a separate gh pr view call (GH#19124)
-	pr_json=$(_ddpr_read_json_array gh pr list --repo "$repo_slug" --state merged --search "$query" --limit 1 --json number,body 2>/dev/null) || lookup_rc=$?
+	pr_json=$(_ddpr_read_json_array gh pr list --repo "$repo_slug" --state merged --search "$query" --limit 1 --json number,body,mergedAt 2>/dev/null) || lookup_rc=$?
 	if [[ "$lookup_rc" -ne 0 ]]; then
 		_ddpr_emit_lookup_uncertain "$_DDPR_LOOKUP_SCOPE_TASK_ID_TITLE" "$issue_number" "$repo_slug" "$lookup_rc"
 		return 0
@@ -739,8 +797,21 @@ _has_open_pr_check_task_id_title() {
 	local close_pattern_check3=""
 	close_pattern_check3=$(_ddpr_closing_keyword_pattern "$issue_number")
 	if printf '%s' "$merged_pr_body" | grep -iqE "$close_pattern_check3"; then
-		printf 'merged PR #%s found by task id %s in title\n' "$pr_number" "$task_id"
-		return 0
+		# GH#33071: same reopen-lifecycle rule as Check 2.
+		local blocking_pr=""
+		blocking_pr=$(_ddpr_first_merge_after_reopen "$issue_number" "$repo_slug" \
+			"$(printf '%s' "$pr_json" | jq -c '[.[0] | {number, mergedAt}]' 2>/dev/null)") || lookup_rc=$?
+		if [[ "$lookup_rc" -ne 0 ]]; then
+			_ddpr_emit_lookup_uncertain "$_DDPR_LOOKUP_SCOPE_TASK_ID_TITLE" "$issue_number" "$repo_slug" "$lookup_rc"
+			return 0
+		fi
+		if [[ -n "$blocking_pr" ]]; then
+			printf 'merged PR #%s found by task id %s in title\n' "$pr_number" "$task_id"
+			return 0
+		fi
+		printf 'REOPENED_AFTER_MERGE: merged PR #%s (task id %s) predates the latest reopen of issue #%s — allowing dispatch\n' \
+			"$pr_number" "$task_id" "$issue_number" >&2
+		return 1
 	fi
 
 	# The merged PR has the same task ID but does NOT close issue
