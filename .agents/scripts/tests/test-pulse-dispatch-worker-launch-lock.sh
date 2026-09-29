@@ -84,6 +84,7 @@ fi
 	for package in one two three four; do
 		mkdir -p "${restore_repo}/${package}/node_modules" "${restore_wt}/${package}"
 		printf '{}\n' >"${restore_wt}/${package}/package.json"
+		printf '{}\n' >"${restore_wt}/${package}/package-lock.json"
 	done
 	_provision_worktree_node_modules() {
 		restore_calls=$((restore_calls + 1))
@@ -105,8 +106,23 @@ fi
 			[[ ! -d "$(_dlw_node_modules_restore_lock_dir)" ]] || fail "restore left its lock behind"
 		done
 	done
+
+	# Lockless package directories (bun.lock, pnpm workspace members whose
+	# lock is at the root) are guaranteed validator rejections: never attempt.
+	lockless_repo="${TEST_TMP}/lockless-repo"
+	lockless_wt="${TEST_TMP}/lockless-worktree"
+	for package in bun-managed workspace-member; do
+		mkdir -p "${lockless_repo}/${package}/node_modules" "${lockless_wt}/${package}"
+		printf '{}\n' >"${lockless_wt}/${package}/package.json"
+	done
+	printf '\n' >"${lockless_wt}/bun-managed/bun.lock"
+	restore_mode=success
+	restore_calls=0
+	LOGFILE="${TEST_TMP}/restore.log" AIDEVOPS_WORKSPACE_DIR="$TEST_TMP" \
+		_dlw_restore_worktree_deps "$lockless_wt" "$lockless_repo" || fail "lockless restore failed instead of continuing safely"
+	[[ "$restore_calls" -eq 0 ]] || fail "lockless package directories spent ${restore_calls} provisioning attempts"
 ) || exit 1
-printf 'PASS: rejected, mixed and successful provisioning respect directory attempt budgets\n'
+printf 'PASS: rejected, mixed and successful provisioning respect directory attempt budgets; lockless directories are skipped\n'
 
 if ! declare -F _dlw_append_node_tool_env >/dev/null 2>&1; then
 	fail "worker launch does not provide a local command path for worktree Node tools"
