@@ -180,7 +180,9 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", "0"))
         body = json.loads(self.rfile.read(length))
         with open(request_file, "a", encoding="utf-8") as requests:
-            requests.write(self.path + "\n")
+            requests.write(json.dumps({"path": self.path,
+                                       "tool_count": len(body.get('tools', [])),
+                                       "keys": sorted(body.keys())}) + "\n")
         with open(tools_file, 'a', encoding='utf-8') as tools:
             tools.write(json.dumps([tool.get('name') or tool.get('function', {}).get('name')
                                     for tool in body.get('tools', [])]) + '\n')
@@ -282,6 +284,12 @@ report_probe_failure() {
 	fi
 	printf 'Plugin health stages: ' >&2
 	jq -c '.stages' "$health_file" >&2 || true
+	printf 'Registered plugin tools: ' >&2
+	jq -c '.details.factory_initialized.tools // null' "$health_file" >&2 || true
+	printf 'Provider request shapes: ' >&2
+	if [[ -f "$probe_root/../mock-provider.requests" ]]; then
+		jq -c -s '.[-2:]' "$probe_root/../mock-provider.requests" >&2 || true
+	fi
 	python3 - "$output_file" <<'PY' >&2
 import sys
 with open(sys.argv[1], encoding='utf-8', errors='replace') as source:
