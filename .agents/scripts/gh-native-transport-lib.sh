@@ -136,26 +136,22 @@ _shim_framework_caller_label() {
 	return 0
 }
 
-_shim_parent_framework_caller() {
-	local parent_command=""
+# Resolve a framework script from one process command line: either the command
+# itself or the first script operand of a shell/env launcher.
+_shim_command_framework_caller() {
 	local word=""
-	local executable_name=""
 	local caller=""
-	local -a parent_words=()
-	parent_command=$(ps -p "$PPID" -o command= 2>/dev/null) || parent_command=""
-	[[ -n "$parent_command" ]] || return 1
-	read -r -a parent_words <<<"$parent_command"
-	[[ ${#parent_words[@]} -gt 0 ]] || return 1
-	if caller=$(_shim_framework_caller_label "${parent_words[0]}"); then
+	local -a words=("$@")
+	[[ ${#words[@]} -gt 0 ]] || return 1
+	if caller=$(_shim_framework_caller_label "${words[0]}"); then
 		printf '%s' "$caller"
 		return 0
 	fi
-	executable_name="${parent_words[0]##*/}"
-	case "$executable_name" in
+	case "${words[0]##*/}" in
 	env | bash | dash | ksh | sh | zsh) ;;
 	*) return 1 ;;
 	esac
-	for word in "${parent_words[@]:1}"; do
+	for word in "${words[@]:1}"; do
 		case "$word" in
 		-* | *=*) continue ;;
 		esac
@@ -170,6 +166,55 @@ _shim_parent_framework_caller() {
 	return 1
 }
 
+# GH#33068: process wrappers whose argv names only the wrapped command. Framework
+# scripts commonly run `timeout 30 gh api ...`; without walking past the wrapper
+# ~44% of REST-core attempts were logged under the generic gh_api_rest label.
+_shim_is_transparent_process_wrapper() {
+	case "${1##*/}" in
+	timeout | gtimeout | nice | nohup | stdbuf | caffeinate) return 0 ;;
+	esac
+	return 1
+}
+
+_shim_parent_framework_caller() {
+	local pid="$PPID"
+	local depth=0
+	local line=""
+	local next_pid=""
+	local parent_command=""
+	local -a parent_words=()
+	# Bounded walk: the direct parent plus at most two wrapper levels.
+	while [[ "$depth" -lt 3 ]]; do
+		[[ "$pid" =~ ^[0-9]+$ && "$pid" -gt 1 ]] || return 1
+		line=$(ps -p "$pid" -o ppid=,command= 2>/dev/null) || return 1
+		read -r next_pid parent_command <<<"$line"
+		[[ -n "$parent_command" ]] || return 1
+		read -r -a parent_words <<<"$parent_command"
+		[[ ${#parent_words[@]} -gt 0 ]] || return 1
+		if _shim_is_transparent_process_wrapper "${parent_words[0]}"; then
+			pid="$next_pid"
+			depth=$((depth + 1))
+			continue
+		fi
+		_shim_command_framework_caller "${parent_words[@]}"
+		return $?
+	done
+	return 1
+}
+
+# GH#33068: bounded session-role label for model-driven or ad-hoc calls whose
+# parent is a runtime shell, not a framework script. Values come only from this
+# allowlist, never verbatim from the environment, so telemetry cannot be injected.
+_shim_session_caller_label() {
+	case "${AIDEVOPS_SESSION_ORIGIN:-}" in
+	worker | interactive | pulse | routine | conversation)
+		printf 'session-%s' "$AIDEVOPS_SESSION_ORIGIN"
+		return 0
+		;;
+	esac
+	return 1
+}
+
 _shim_transport_caller_label() {
 	local sub1="${1:-}"
 	local sub2="${2:-}"
@@ -179,6 +224,10 @@ _shim_transport_caller_label() {
 		return 0
 	fi
 	if caller=$(_shim_parent_framework_caller); then
+		printf '%s' "$caller"
+		return 0
+	fi
+	if caller=$(_shim_session_caller_label); then
 		printf '%s' "$caller"
 		return 0
 	fi
