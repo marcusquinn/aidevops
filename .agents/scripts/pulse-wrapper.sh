@@ -1668,6 +1668,7 @@ main() {
 	_pulse_set_rest_core_budget_priority
 	local _cycle_dispatch_before
 	_cycle_dispatch_before=$(_pulse_capture_dispatch_total)
+	_PULSE_CYCLE_DISPATCH_BEFORE="$_cycle_dispatch_before"
 	if [[ "${PULSE_DRY_RUN:-0}" != "1" ]]; then
 		pulse_event_refill_drain "cycle-entry" || true
 	fi

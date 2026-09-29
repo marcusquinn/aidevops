@@ -399,6 +399,7 @@ _pulse_cycle_state_write_terminal_if_current() {
 
 _pulse_cycle_state_finish_if_needed() {
 	local outcome="${1:-interrupted}"
+	local progress_kinds="[]" dispatch_after=""
 	[[ "${_PULSE_CYCLE_STATE_INITIALIZED:-0}" == "1" ]] || return 0
 	_pulse_cycle_state_executor_is_owner || return 0
 	[[ "${_PULSE_CYCLE_STATE_TERMINAL:-0}" != "1" ]] || return 0
@@ -406,7 +407,13 @@ _pulse_cycle_state_finish_if_needed() {
 		&& "${_PULSE_CYCLE_BLOCKER_KIND:-$PULSE_CYCLE_STATE_BLOCKER_NONE}" == "$PULSE_CYCLE_STATE_BLOCKER_NONE" ]]; then
 		_pulse_cycle_state_note_blocker interrupted pulse-wrapper exit || true
 	fi
-	_pulse_cycle_state_finalize "$outcome" "[]" || return 0
+	if [[ "${_PULSE_CYCLE_DISPATCH_BEFORE:-}" =~ ^[0-9]+$ ]] && declare -F _pulse_capture_dispatch_total >/dev/null 2>&1; then
+		dispatch_after=$(_pulse_capture_dispatch_total) || dispatch_after=""
+		if [[ "$dispatch_after" =~ ^[0-9]+$ && "$dispatch_after" -gt "$_PULSE_CYCLE_DISPATCH_BEFORE" ]]; then
+			progress_kinds='["worker-dispatched"]'
+		fi
+	fi
+	_pulse_cycle_state_finalize "$outcome" "$progress_kinds" || return 0
 	_pulse_cycle_state_write_terminal_if_current || true
 	return 0
 }

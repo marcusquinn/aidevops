@@ -912,6 +912,10 @@ sync_todo_refs_all_repos() {
 	aggregate_started=$(date +%s) || return 1
 	[[ "$aggregate_started" =~ ^[1-9][0-9]*$ ]] || return 1
 	aggregate_deadline=$((aggregate_started + stage_timeout))
+	local cycle_remaining=""
+	if declare -F _pulse_cycle_remaining_seconds >/dev/null 2>&1 && cycle_remaining=$(_pulse_cycle_remaining_seconds "${AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S:-90}"); then
+		[[ "$((aggregate_started + cycle_remaining))" -lt "$aggregate_deadline" ]] && aggregate_deadline=$((aggregate_started + cycle_remaining))
+	fi
 	while IFS='|' read -r repo_slug repo_path; do
 		[[ -n "$repo_slug" && -n "$repo_path" ]] || continue
 		repo_path="${repo_path/#\~/$HOME}"

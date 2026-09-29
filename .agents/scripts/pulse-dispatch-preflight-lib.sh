@@ -360,15 +360,10 @@ _preflight_label_maintenance() {
 # An unknown clock/budget fails open to the next stage, never to unbounded work.
 _preflight_refill_reserved_timeout() {
 	local stage_limit="$1"
-	local start_epoch="${PULSE_START_EPOCH:-}"
-	local ceiling="${PULSE_STALE_THRESHOLD:-}"
 	local refill_reserve="${PULSE_POST_LABEL_REFILL_MIN_REMAINING_SECONDS:-${PRE_RUN_STAGE_TIMEOUT:-600}}"
-	local now_epoch=""
-	now_epoch=$(date +%s 2>/dev/null) || return 1
-	[[ "$stage_limit" =~ ^[1-9][0-9]*$ && "$start_epoch" =~ ^[0-9]+$ &&
-		"$ceiling" =~ ^[1-9][0-9]*$ && "$refill_reserve" =~ ^[1-9][0-9]*$ &&
-		"$now_epoch" =~ ^[0-9]+$ && "$now_epoch" -ge "$start_epoch" ]] || return 1
-	local available=$((start_epoch + ceiling - now_epoch - refill_reserve - 5))
+	[[ "$stage_limit" =~ ^[1-9][0-9]*$ && "$refill_reserve" =~ ^[1-9][0-9]*$ ]] || return 1
+	local available=""
+	available=$(_pulse_cycle_remaining_seconds "$((refill_reserve + 5))") || return 1
 	[[ "$available" -gt 0 ]] || return 1
 	[[ "$available" -lt "$stage_limit" ]] && stage_limit="$available"
 	printf '%s\n' "$stage_limit"
@@ -428,16 +423,12 @@ _preflight_early_dispatch() {
 # prevents a second full dispatch pass from starting near the cycle ceiling.
 #######################################
 _preflight_post_label_refill_wall_clock_allows() {
-	local start_epoch="${PULSE_START_EPOCH:-}"
-	local ceiling_seconds="${PULSE_STALE_THRESHOLD:-}"
 	local required_seconds="${PULSE_POST_LABEL_REFILL_MIN_REMAINING_SECONDS:-${PRE_RUN_STAGE_TIMEOUT:-600}}"
-	local now_epoch=""
-	now_epoch=$(date +%s 2>/dev/null) || now_epoch=""
+	local remaining_seconds=""
+	remaining_seconds=$(_pulse_cycle_remaining_seconds 0) || remaining_seconds=""
 
-	if [[ ! "$start_epoch" =~ ^[0-9]+$ || ! "$ceiling_seconds" =~ ^[1-9][0-9]*$ ||
-		! "$required_seconds" =~ ^[1-9][0-9]*$ || ! "$now_epoch" =~ ^[0-9]+$ ||
-		"$now_epoch" -lt "$start_epoch" ]]; then
-		echo "[pulse-wrapper] Post-label dispatch_max skipped: wall-clock budget unavailable (start=${start_epoch:-?}, now=${now_epoch:-?}, ceiling=${ceiling_seconds:-?}, required=${required_seconds:-?})" >>"$LOGFILE"
+	if [[ ! "$required_seconds" =~ ^[1-9][0-9]*$ || -z "$remaining_seconds" ]]; then
+		echo "[pulse-wrapper] Post-label dispatch_max skipped: wall-clock budget unavailable (required=${required_seconds:-?})" >>"$LOGFILE"
 		if declare -F pulse_stats_increment >/dev/null 2>&1; then
 			pulse_stats_increment "pulse_post_label_refill_wall_clock_skipped" 2>/dev/null || true
 		fi
@@ -445,11 +436,9 @@ _preflight_post_label_refill_wall_clock_allows() {
 		return 1
 	fi
 
-	local elapsed_seconds=$((now_epoch - start_epoch))
-	local remaining_seconds=$((ceiling_seconds - elapsed_seconds))
 	[[ "$remaining_seconds" -lt 0 ]] && remaining_seconds=0
 	if [[ "$remaining_seconds" -lt "$required_seconds" ]]; then
-		echo "[pulse-wrapper] Post-label dispatch_max skipped: insufficient wall-clock budget (remaining=${remaining_seconds}s, required=${required_seconds}s, elapsed=${elapsed_seconds}s, ceiling=${ceiling_seconds}s)" >>"$LOGFILE"
+		echo "[pulse-wrapper] Post-label dispatch_max skipped: insufficient wall-clock budget (remaining=${remaining_seconds}s, required=${required_seconds}s)" >>"$LOGFILE"
 		if declare -F pulse_stats_increment >/dev/null 2>&1; then
 			pulse_stats_increment "pulse_post_label_refill_wall_clock_skipped" 2>/dev/null || true
 		fi
