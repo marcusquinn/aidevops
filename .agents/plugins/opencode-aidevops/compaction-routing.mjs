@@ -68,23 +68,31 @@ function compactionEffortCeiling(input, routing, env) {
  * variant, or to COMPACTION_EFFORT_CEILING on the parent model. Covers
  * Anthropic adaptive `effort`, OpenAI `reasoningEffort`/`reasoning_effort`,
  * and nested `reasoning.effort`/`output_config.effort` shapes.
+ * @param {object} [opts] - `env` for the ceiling override, `log(level, msg)`
  * @returns {{from: string, to: string}[]} applied clamps
  */
-export function capCompactionEffort(input, output, routing, env = process.env) {
+export function capCompactionEffort(input, output, routing, { env = process.env, log } = {}) {
   if (compactionAgent(input) !== "compaction" || !output?.options) return [];
   const ceiling = compactionEffortCeiling(input, routing, env);
-  const options = output.options;
+  const { options } = output;
+  const applied = [options, options.reasoning, options.output_config]
+    .flatMap((target) => clampEffortKeys(target, ceiling));
+  const model = input?.model?.id ?? input?.model?.modelID ?? "unknown model";
+  for (const { from, to } of applied) {
+    log?.("INFO", `[compaction] effort capped ${from} -> ${to} (${model})`);
+  }
+  return applied;
+}
+
+function clampEffortKeys(target, ceiling) {
+  if (!target || typeof target !== "object") return [];
   const applied = [];
-  for (const target of [options, options.reasoning, options.output_config]) {
-    if (!target || typeof target !== "object") continue;
-    for (const key of EFFORT_KEYS) {
-      const current = target[key];
-      if (typeof current !== "string") continue;
-      const next = clampReasoningVariant(current, ceiling);
-      if (next === current) continue;
-      target[key] = next;
-      applied.push({ from: current, to: next });
-    }
+  for (const key of EFFORT_KEYS) {
+    const current = target[key];
+    const next = typeof current === "string" ? clampReasoningVariant(current, ceiling) : current;
+    if (next === current) continue;
+    target[key] = next;
+    applied.push({ from: current, to: next });
   }
   return applied;
 }

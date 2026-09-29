@@ -688,9 +688,7 @@ export async function AidevopsPlugin({ directory, client }) {
         },
       );
       // GH#32934: last, so no earlier hook can restore a max/xhigh summary.
-      for (const { from, to } of capCompactionEffort(input, output, modelRouting)) {
-        qualityLog("INFO", `[compaction] effort capped ${from} -> ${to} (${modelId || "unknown model"})`);
-      }
+      capCompactionEffort(input, output, modelRouting, { log: qualityLog });
       return applied;
     },
 

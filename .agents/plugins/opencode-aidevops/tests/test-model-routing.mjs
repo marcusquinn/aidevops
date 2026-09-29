@@ -230,22 +230,25 @@ test("compaction effort is clamped down, never raised, and only for the compacti
   const routing = { tiers: { simple: { models: ["openai/gpt-6-luna"], reasoning: { "openai/gpt-6-luna": "medium" } } } };
   const opus = { providerID: "anthropic", id: "claude-opus-5-5" };
   const maxed = { options: { thinking: { type: "adaptive" }, effort: "max" } };
-  assert.deepEqual(capCompactionEffort({ agent: "compaction", model: opus }, maxed, routing, {}), [{ from: "max", to: "high" }]);
+  const logs = [];
+  const log = (level, message) => logs.push(`${level} ${message}`);
+  assert.deepEqual(capCompactionEffort({ agent: "compaction", model: opus }, maxed, routing, { env: {}, log }), [{ from: "max", to: "high" }]);
   assert.equal(maxed.options.effort, "high");
+  assert.deepEqual(logs, ["INFO [compaction] effort capped max -> high (claude-opus-5-5)"]);
 
   const luna = { providerID: "openai", id: "gpt-6-luna" };
   const lunaXhigh = { options: { reasoningEffort: "xhigh" } };
-  capCompactionEffort({ agent: "compaction", model: luna }, lunaXhigh, routing, {});
+  capCompactionEffort({ agent: "compaction", model: luna }, lunaXhigh, routing, { env: {} });
   assert.equal(lunaXhigh.options.reasoningEffort, "medium");
 
   const low = { options: { effort: "low" } };
-  assert.deepEqual(capCompactionEffort({ agent: "compaction", model: opus }, low, routing, {}), []);
+  assert.deepEqual(capCompactionEffort({ agent: "compaction", model: opus }, low, routing, { env: {} }), []);
   const primary = { options: { effort: "max" } };
-  assert.deepEqual(capCompactionEffort({ agent: "build-plus", model: opus }, primary, routing, {}), []);
+  assert.deepEqual(capCompactionEffort({ agent: "build-plus", model: opus }, primary, routing, { env: {} }), []);
   assert.equal(primary.options.effort, "max");
 
   const override = { options: { reasoning: { effort: "xhigh" } } };
-  capCompactionEffort({ agent: "compaction", model: opus }, override, routing, { AIDEVOPS_COMPACTION_MAX_EFFORT: "medium" });
+  capCompactionEffort({ agent: "compaction", model: opus }, override, routing, { env: { AIDEVOPS_COMPACTION_MAX_EFFORT: "medium" } });
   assert.equal(override.options.reasoning.effort, "medium");
 });
 
