@@ -309,6 +309,11 @@ assert_contains \
 	"reopened canonical issue removes already-fixed label" \
 	"--remove-label already-fixed" \
 	"$(cat "$GH_CALLS_LOG")"
+# GH#33071: a stale solved:* label misattributes the reopened lifecycle.
+assert_contains \
+	"reopened canonical issue removes stale solved labels" \
+	"--remove-label solved:worker --remove-label solved:interactive" \
+	"$(cat "$GH_CALLS_LOG")"
 assert_contains \
 	"reopened canonical issue restores active lifecycle labels" \
 	"--add-label file-size-debt --add-label auto-dispatch" \
