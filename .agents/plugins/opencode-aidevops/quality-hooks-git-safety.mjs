@@ -6,6 +6,13 @@ import { existsSync } from "fs";
 import { homedir } from "os";
 import { join, resolve } from "path";
 import { classifyFullLoopCommitAndPr } from "./quality-hooks-full-loop-trust.mjs";
+import {
+  isPolicyHelperTimeout,
+  parsePolicyPayload,
+  policyExecutionFailure,
+  runPolicyHelper,
+  transientPolicyTimeoutError,
+} from "./quality-hooks-policy-runner.mjs";
 
 export { bindActiveScriptsDir } from "./quality-hooks-full-loop-trust.mjs";
 
@@ -111,49 +118,6 @@ export function expectedSimpleMutationContent(state, mutation) {
   return updated === undefined || updated === false ? updated : Buffer.from(updated);
 }
 
-function parsePolicyPayload(raw) {
-  const result = JSON.parse(raw);
-  if (!result || typeof result !== "object" || Array.isArray(result)) {
-    throw new TypeError("policy returned a non-object payload");
-  }
-  return result;
-}
-
-const DEFAULT_POLICY_HELPER_TIMEOUT_MS = 10000;
-const POLICY_HELPER_RETRY_TIMEOUT_MULTIPLIER = 3;
-
-function policyHelperTimeoutMs() {
-  const raw = String(process.env.AIDEVOPS_POLICY_HELPER_TIMEOUT_MS ?? "").trim();
-  return /^[1-9]\d{0,6}$/.test(raw) ? Number(raw) : DEFAULT_POLICY_HELPER_TIMEOUT_MS;
-}
-
-function isPolicyHelperTimeout(error) {
-  return error?.code === "ETIMEDOUT";
-}
-
-// Policy helpers are read-only evaluations, so one retry with a larger budget
-// is safe. Host load (spawned jq/network helpers at load average > ncpu)
-// routinely pushes a normal evaluation past the base budget (GH#32955).
-function runPolicyHelper(helperArgs, execOptions) {
-  const timeout = policyHelperTimeoutMs();
-  const options = { ...execOptions, encoding: "utf8" };
-  try {
-    return execFileSync("python3", helperArgs, { ...options, timeout });
-  } catch (error) {
-    if (!isPolicyHelperTimeout(error)) throw error;
-  }
-  return execFileSync("python3", helperArgs, {
-    ...options,
-    timeout: timeout * POLICY_HELPER_RETRY_TIMEOUT_MULTIPLIER,
-  });
-}
-
-function transientPolicyTimeoutError(policyName) {
-  return new Error(
-    `BLOCKED: ${policyName} policy timed out under host load (transient infrastructure timeout, not a policy decision); retry the same command`,
-  );
-}
-
 export function checkCanonicalWriteSafetyGate(
   filePath,
   scriptsDir,
@@ -180,9 +144,7 @@ export function checkCanonicalWriteSafetyGate(
       stdio: ["pipe", "pipe", "pipe"],
     });
   } catch (error) {
-    if (isPolicyHelperTimeout(error)) throw transientPolicyTimeoutError("canonical-write");
-    const detail = error?.stderr?.toString().trim() || error?.message || "policy check failed";
-    throw new Error(`BLOCKED: canonical-write policy failed closed: ${detail}`);
+    throw policyExecutionFailure("canonical-write", error);
   }
   let result;
   try {
