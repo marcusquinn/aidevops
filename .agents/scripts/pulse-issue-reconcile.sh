@@ -591,6 +591,16 @@ _normalize_clear_stale_feedback_rows() {
 	return 0
 }
 
+# Standalone reconcile tests do not source the Pulse watchdog. In production
+# that module supplies the structured timing writer before this module runs.
+_normalize_log_timing() {
+	local stage="$1" start="$2" status="$3"
+	if declare -F _log_substage_timing >/dev/null 2>&1; then
+		_log_substage_timing "$stage" "$start" "$status"
+	fi
+	return 0
+}
+
 _normalize_reassign_self() {
 	local runner_user="$1"
 	local repos_json="$2"
@@ -603,6 +613,7 @@ _normalize_reassign_self() {
 	while IFS= read -r slug; do
 		[[ -n "$slug" ]] || continue
 		local _repo_start=$SECONDS _repo_gh_calls=0
+		local _repo_timing="substage:normalize/reassign_self/repo:${slug//\//-}:direct_gh_calls="
 
 		local issue_rows issue_rows_json issue_rows_err
 		issue_rows_err=$(mktemp)
@@ -614,7 +625,7 @@ _normalize_reassign_self() {
 			_issue_rows_err_msg=$(cat "$issue_rows_err" 2>/dev/null || echo "unknown error")
 			echo "[pulse-wrapper] normalize_active_issue_assignments: gh_issue_list FAILED for ${slug}: ${_issue_rows_err_msg}" >>"$LOGFILE"
 			rm -f "$issue_rows_err"
-			_log_substage_timing "substage:normalize/reassign_self/repo:${slug//\//-}" "$_repo_start" 1
+			_normalize_log_timing "${_repo_timing}${_repo_gh_calls}" "$_repo_start" 1
 			continue
 		fi
 		rm -f "$issue_rows_err"
@@ -648,7 +659,7 @@ _normalize_reassign_self() {
 		local all_rows=""
 		all_rows=$(printf '%s\n' "$issue_rows" | grep -E '^[0-9]+$' | sort -u -n) || all_rows=""
 		if [[ -z "$all_rows" ]]; then
-			_log_substage_timing "substage:normalize/reassign_self/repo:${slug//\//-}:gh_calls=${_repo_gh_calls}" "$_repo_start" 0
+			_normalize_log_timing "${_repo_timing}${_repo_gh_calls}" "$_repo_start" 0
 			continue
 		fi
 
@@ -671,7 +682,7 @@ _normalize_reassign_self() {
 				total_assigned=$((total_assigned + 1))
 			fi
 		done <<<"$all_rows"
-		_log_substage_timing "substage:normalize/reassign_self/repo:${slug//\//-}:gh_calls=${_repo_gh_calls}" "$_repo_start" 0
+		_normalize_log_timing "${_repo_timing}${_repo_gh_calls}" "$_repo_start" 0
 	done < <(jq -r '.initialized_repos[] | select(.maintenance != false and .pulse == true and (.local_only // false) == false and .slug != "") | .slug // ""' "$repos_json" || true)
 
 	if [[ "$total_checked" -gt 0 ]]; then
@@ -874,7 +885,7 @@ normalize_active_issue_assignments() {
 	# Run before repos.json and GitHub-user gates so recovery does not depend on
 	# repository registration, origin labels, assignees, or issue-list results.
 	_normalize_reap_dead_stamps
-	_log_substage_timing "substage:normalize/reap_dead_stamps" "$_phase_start" 0
+	_normalize_log_timing "substage:normalize/reap_dead_stamps" "$_phase_start" 0
 
 	[[ -f "$repos_json" ]] || return 0
 
@@ -894,12 +905,12 @@ normalize_active_issue_assignments() {
 	# Pass 1: assign runner to orphaned active issues (active label, no assignee)
 	_phase_start=$SECONDS
 	_normalize_reassign_self "$runner_user" "$repos_json" "$dedup_helper"
-	_log_substage_timing "substage:normalize/reassign_self" "$_phase_start" 0
+	_normalize_log_timing "substage:normalize/reassign_self" "$_phase_start" 0
 
 	# Pass 2: reset stale assignments (active label, assignee present, no running worker)
 	_phase_start=$SECONDS
 	_normalize_unassign_stale "$runner_user" "$repos_json" "$now_epoch" "$cross_runner_max_runtime"
-	_log_substage_timing "substage:normalize/unassign_stale" "$_phase_start" 0
+	_normalize_log_timing "substage:normalize/unassign_stale" "$_phase_start" 0
 
 	# Pass 2b (t2148): recover aged stampless origin:interactive claims.
 	# Closes the leak where `claim-task-id.sh` auto-assigns on creation
@@ -916,7 +927,7 @@ normalize_active_issue_assignments() {
 	local stampless_age_threshold="${STAMPLESS_INTERACTIVE_AGE_THRESHOLD:-3600}"
 	_phase_start=$SECONDS
 	_normalize_unassign_stampless_interactive "$runner_user" "$repos_json" "$now_epoch" "$stampless_age_threshold"
-	_log_substage_timing "substage:normalize/unassign_stampless_interactive" "$_phase_start" 0
+	_normalize_log_timing "substage:normalize/unassign_stampless_interactive" "$_phase_start" 0
 
 	# Pass 3 (t2040): enforce label invariants (at most one status:*, at most one tier:*).
 	# Runs unconditionally on every cycle — the cost is bounded by
@@ -924,7 +935,7 @@ normalize_active_issue_assignments() {
 	# beyond the single gh issue list call.
 	_phase_start=$SECONDS
 	_normalize_label_invariants "$runner_user" "$repos_json"
-	_log_substage_timing "substage:normalize/label_invariants" "$_phase_start" 0
+	_normalize_log_timing "substage:normalize/label_invariants" "$_phase_start" 0
 
 	return 0
 }
