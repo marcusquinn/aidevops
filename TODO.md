@@ -1496,6 +1496,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 - [x] t18534 fix(pulse): restore retry context lost to torn objective-evidence lines; add sanitised failure signals #auto-dispatch #bug ref:GH#32938 pr:#32942 logged:2026-09-29 completed:2026-09-29
 - [ ] t18535 fix(command-policy): resolve default git remote for bare push/fetch/pull; classify pushurl and --multiple remotes #auto-dispatch #bug ref:GH#32943 logged:2026-09-29
 - [ ] t18538 feat(pulse): auto-refresh and alert when capacity is zero only from auth-error OAuth accounts #enhancement #framework #pulse #interactive #auto-dispatch tier:standard ~2h ref:GH#32960 logged:2026-09-29 -> [todo/tasks/t18538-brief.md]
+- [ ] t18539 fix(telemetry): keep tier/model on attempt-matched outcomes; window tier-report with model@variant and first-dispatch pass rates #auto-dispatch #bug ref:GH#32964 logged:2026-09-29
 
 ## In Progress
 
