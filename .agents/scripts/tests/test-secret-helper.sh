@@ -419,6 +419,35 @@ test_run_redacts_sed_significant_literal_values() {
 	return 0
 }
 
+test_run_skips_short_value_and_masks_long_value() {
+	setup
+	trap 'teardown' RETURN
+	local short_value='openai'
+	local long_value='abcdefghijklmnopqrstuvwx'
+	export AIDEVOPS_TEST_SECRET="$short_value"
+	local output="" warning=""
+	output=$(HOME="$TEST_DIR/home" bash "$HELPER" REDACTION_KEY -- bash -c \
+		'printf "stdout:%s %s\n" "$REDACTION_KEY" "$REDACTION_KEY"; printf "stderr:%s\n" "$REDACTION_KEY" >&2' 2>"$TEST_DIR/warning")
+	warning=$(<"$TEST_DIR/warning")
+	if [[ "$output" == $'stdout:openai openai\nstderr:openai' &&
+		"$warning" == 'WARN: secret REDACTION_KEY value too short to redact safely; not masked' ]]; then
+		print_result "short value passes through with one names-only warning" 0
+	else
+		print_result "short value passes through with one names-only warning" 1 "Short-value output or warning mismatch"
+	fi
+
+	export AIDEVOPS_TEST_SECRET="$long_value"
+	output=$(HOME="$TEST_DIR/home" bash "$HELPER" REDACTION_KEY -- bash -c \
+		'printf "stdout:%s\n" "$REDACTION_KEY"; printf "stderr:%s\n" "$REDACTION_KEY" >&2' 2>"$TEST_DIR/warning")
+	warning=$(<"$TEST_DIR/warning")
+	if [[ "$output" == $'stdout:[REDACTED]\nstderr:[REDACTED]' && -z "$warning" ]]; then
+		print_result "24-character value remains masked on stdout and stderr" 0
+	else
+		print_result "24-character value remains masked on stdout and stderr" 1 "Long-value redaction or warning mismatch"
+	fi
+	return 0
+}
+
 test_run_streams_safe_output_before_child_exit() {
 	setup
 	trap 'teardown' RETURN
@@ -556,6 +585,7 @@ main() {
 	test_fallback_set_creates_credentials_store
 	test_concurrent_fallback_sets_preserve_all_credentials
 	test_run_redacts_sed_significant_literal_values
+	test_run_skips_short_value_and_masks_long_value
 	test_run_streams_safe_output_before_child_exit
 	test_run_redacts_overlapping_secrets_split_across_writes
 	test_run_fails_closed_when_redactor_cannot_start
