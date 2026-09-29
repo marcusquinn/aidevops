@@ -122,8 +122,7 @@ export const CLAUDE_MODEL_LIMITS = {
   "claude-haiku-4-5":  { context:  200000, output: 32000 },
   "claude-sonnet-4-5": { context:  200000, output: 64000 },
   "claude-sonnet-4-6": { context: 1000000, output: 64000 },
-  // Sonnet 5.5 (2026-09-28): limits mirror Sonnet 5 in the models.dev catalog
-  // until Anthropic's model page or models.dev publishes its own entry.
+  // Sonnet 5.5: models.dev publishes 1M context / 128K output.
   "claude-sonnet-5-5": { context: 1000000, output: 128000 },
   "claude-opus-4-5":   { context:  200000, output: 64000 },
   "claude-opus-4-6":   { context: 1000000, output: 64000 },

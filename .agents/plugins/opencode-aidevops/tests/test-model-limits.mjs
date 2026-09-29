@@ -14,7 +14,7 @@
 import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { registerClaudeCliFallbackModels, removeLegacyAnthropicModelOverrides } from "../config-hook.mjs";
-import { registerPendingAnthropicModels } from "../anthropic-catalog-bridge.mjs";
+import { PENDING_ANTHROPIC_MODELS, registerPendingAnthropicModels } from "../anthropic-catalog-bridge.mjs";
 
 import {
   resolveOpus47Context,
@@ -38,19 +38,12 @@ test("Claude CLI registration leaves native Anthropic model metadata untouched",
   assert.equal(registerClaudeCliFallbackModels(config), 0);
 });
 
-test("pending Anthropic models bridge only uncatalogued, user-free IDs", () => {
-  const sonnet5 = { id: "claude-sonnet-5", name: "Claude Sonnet 5", family: "claude-sonnet",
-    tool_call: true, limit: { context: 1000000, output: 128000 }, knowledge: "2026-01-31" };
-  const catalog = { anthropic: { models: { "claude-sonnet-5": sonnet5 } } };
+test("catalogued Sonnet 5.5 is never bridged, even with an old catalog", () => {
+  assert.equal(PENDING_ANTHROPIC_MODELS["claude-sonnet-5-5"], undefined);
+  const catalog = { anthropic: { models: { "claude-sonnet-5": { id: "claude-sonnet-5" } } } };
   const config = {};
-  assert.equal(registerPendingAnthropicModels(config, catalog), 1);
-  const bridged = config.provider.anthropic.models["claude-sonnet-5-5"];
-  assert.equal(bridged.name, "Claude Sonnet 5.5");
-  assert.equal(bridged.family, "claude-sonnet");
-  assert.deepEqual(bridged.limit, { context: 1000000, output: 128000 });
-  assert.equal(bridged.cost.input, 2);
-  assert.equal(bridged.knowledge, undefined, "catalog-only fields are not copied");
-  assert.equal(removeLegacyAnthropicModelOverrides(config), 0, "bridge entries are not legacy overrides");
+  assert.equal(registerPendingAnthropicModels(config, catalog), 0);
+  assert.equal(config.provider, undefined);
 
   const user = { name: "Mine" };
   const userConfig = { provider: { anthropic: { models: { "claude-sonnet-5-5": user } } } };
@@ -63,8 +56,8 @@ test("pending Anthropic models bridge only uncatalogued, user-free IDs", () => {
   assert.equal(nativeConfig.provider, undefined);
 
   const bare = {};
-  assert.equal(registerPendingAnthropicModels(bare, null), 1);
-  assert.equal(bare.provider.anthropic.models["claude-sonnet-5-5"].tool_call, true);
+  assert.equal(registerPendingAnthropicModels(bare, null), 0);
+  assert.equal(bare.provider, undefined);
 });
 
 test("legacy aidevops Anthropic overrides are dropped while user entries stay", () => {

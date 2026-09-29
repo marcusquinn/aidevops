@@ -156,7 +156,7 @@ gpt-6-sol|OpenAI|GPT-6 Sol|388000|-|-|thinking|code,reasoning,vision,tools|Compl
 gpt-5.6-sol|OpenAI|GPT-5.6 Sol|300000|4.00|20.00|thinking|code,reasoning,vision,tools|Long-running code and reasoning; standard price from local model-pricing.json, not OAuth cache.
 qwen3.8-max|Alibaba|Qwen3.8 Max|1000000|2.00|6.00|thinking|code,reasoning,vision,tools|Large-context reasoning; region and promotional pricing may differ.
 claude-opus-4-7|Anthropic|Claude Opus 4.7|250000|5.00|25.00|thinking|code,reasoning,architecture,vision,tools|Optional thinking-tier mapping candidate. Better at long-running agentic coherence than 4.6; worse at cold long-context retrieval (MRCR 256K 92%->59%, 1M 78%->32%). +20-60% tokenizer cost on English prompts. 250K cap lets OpenCode's 80% auto-compact trigger at the 200K reliability boundary.
-claude-sonnet-5-5|Anthropic|Claude Sonnet 5.5|1000000|2.00|10.00|standard|code,reasoning,vision,tools|Code implementation, review, bug fixing, most development tasks. Price from Anthropic's 2026-09-28 launch post; context mirrors Sonnet 5 until catalogued.
+claude-sonnet-5-5|Anthropic|Claude Sonnet 5.5|1000000|2.00|10.00|standard|code,reasoning,vision,tools|Code implementation, review, bug fixing, most development tasks. Price and context match the models.dev Anthropic catalog.
 claude-sonnet-4-6|Anthropic|Claude Sonnet 4.6|200000|3.00|15.00|standard|code,reasoning,vision,tools|Previous Sonnet; superseded by claude-sonnet-5-5
 claude-haiku-4-5|Anthropic|Claude Haiku 4.5|200000|1.00|5.00|simple|code,reasoning,vision,tools|Triage, classification, simple transforms, formatting
 gpt-4.1|OpenAI|GPT-4.1|1048576|2.00|8.00|standard|code,reasoning,vision,tools,search|Coding, instruction following, long context
