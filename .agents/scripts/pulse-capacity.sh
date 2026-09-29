@@ -294,7 +294,7 @@ pulse_apply_provider_load_capacity_cap() {
 	[[ "$provider_5xx" =~ ^[0-9]+$ ]] || provider_5xx=0
 	[[ "$progress_heartbeats" =~ ^[0-9]+$ ]] || progress_heartbeats=0
 
-	local account_multiplier account_multiplier_source
+	local account_multiplier="" account_multiplier_source=""
 	read -r account_multiplier account_multiplier_source <<<"$(_pulse_capacity_account_multiplier)"
 	local account_cap=-1
 	if ((account_available >= 0)); then

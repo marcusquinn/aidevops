@@ -635,7 +635,7 @@ append_cycle_index() {
 
 _pulse_health_auth_error_alert_json() {
 	local provider="" state_dir="" stamp="" cycles=0 threshold="${PULSE_AUTH_ERROR_ALERT_CYCLES:-3}"
-	local total available limited errors
+	local total="" available="" limited="" errors=""
 	declare -F _pulse_capacity_selected_provider >/dev/null 2>&1 || return 0
 	provider=$(_pulse_capacity_selected_provider)
 	[[ "$provider" =~ ^[a-zA-Z0-9_-]+$ ]] || return 0
