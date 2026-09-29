@@ -1094,6 +1094,96 @@ This comment is idempotent; the HTML sentinel prevents duplicates on subsequent 
 # Args: $1=slug, $2=issue_num, $3=issue_title, $4=issue_body, $5=issue_sync_helper
 # Returns: 0 if labels were applied, 1 otherwise
 #######################################
+_lia_author_authority() {
+	local slug="$1" issue_num="$2" issue_body="$3"
+	local issue_json="" author_type="" author_login="" is_pull_request=""
+	issue_json=$(gh api "repos/${slug}/issues/${issue_num}" 2>/dev/null || echo '{}')
+	is_pull_request=$(printf '%s' "$issue_json" | jq -r 'has("pull_request")' 2>/dev/null || echo "false")
+	if [[ "$is_pull_request" == "true" ]]; then
+		echo "[pulse-wrapper] Labelless backfill: skipped PR #${issue_num} in ${slug} — pull_request marker present" >>"$LOGFILE"
+		return 1
+	fi
+	assoc=$(printf '%s' "$issue_json" | jq -r '.author_association // "NONE"' 2>/dev/null || echo "NONE")
+	author_type=$(printf '%s' "$issue_json" | jq -r '.user.type // ""' 2>/dev/null || echo "")
+	author_login=$(printf '%s' "$issue_json" | jq -r '.user.login // ""' 2>/dev/null || echo "")
+	if printf '%s\n' "$issue_body" | grep -Fqx '<!-- aidevops:origin:interactive -->'; then
+		reported_origin="$origin_interactive"
+	elif printf '%s\n' "$issue_body" | grep -Fqx '<!-- aidevops:origin:worker -->'; then
+		reported_origin="$origin_worker"
+	fi
+	if [[ "$author_type" == "Bot" ]]; then
+		is_external="$_PIR_BOOL_FALSE"
+	else
+		case "$assoc" in
+		OWNER | MEMBER) is_external="$_PIR_BOOL_FALSE" ;;
+		COLLABORATOR)
+			local authority_rc=0
+			if declare -F _gh_actor_has_repo_write_authority >/dev/null 2>&1; then
+				_gh_actor_has_repo_write_authority "$slug" "$author_login" "$assoc" || authority_rc=$?
+			else
+				authority_rc=2
+			fi
+			[[ "$authority_rc" -eq 0 ]] && is_external="$_PIR_BOOL_FALSE"
+			;;
+		esac
+	fi
+	return 0
+}
+
+_lia_apply_labels() {
+	local slug="$1" issue_num="$2" body_tags="$3"
+	local is_external="$4" reported_origin="$5"
+	local origin_interactive="origin:interactive" origin_worker="origin:worker"
+	local -a add_args
+	if [[ "$is_external" == "$_PIR_BOOL_TRUE" ]]; then
+		add_args=("$_PIR_ADD_LABEL_FLAG" "$_PIR_NMR_LABEL"
+			"$_PIR_ADD_LABEL_FLAG" "external-contributor")
+		labels_csv_lia="$_PIR_NMR_LABEL,external-contributor"
+		if [[ -n "$reported_origin" ]]; then
+			add_args+=("$_PIR_ADD_LABEL_FLAG" "$reported_origin")
+			labels_csv_lia="${labels_csv_lia},${reported_origin}"
+		fi
+		comment_template_use="$external_comment_template"
+	else
+		local internal_origin="${reported_origin:-$origin_worker}"
+		local opposite_origin="$origin_interactive"
+		[[ "$internal_origin" == "$origin_interactive" ]] && opposite_origin="$origin_worker"
+		add_args=("$_PIR_ADD_LABEL_FLAG" "$internal_origin"
+			"$_PIR_REMOVE_LABEL_FLAG" "$opposite_origin"
+			"$_PIR_REMOVE_LABEL_FLAG" "origin:worker-takeover"
+			"$_PIR_ADD_LABEL_FLAG" "$_PIR_TIER_STANDARD")
+		labels_csv_lia="${internal_origin},$_PIR_TIER_STANDARD"
+		comment_template_use="$comment_template"
+	fi
+	if [[ -n "$body_tags" ]]; then
+		local _saved_ifs="$IFS"
+		IFS=','
+		local _t
+		for _t in $body_tags; do
+			[[ -z "$_t" ]] && continue
+			add_args+=("$_PIR_ADD_LABEL_FLAG" "$_t")
+		done
+		IFS="$_saved_ifs"
+		labels_csv_lia="${labels_csv_lia},${body_tags}"
+	fi
+	ensure_origin_labels_exist "$slug" 2>/dev/null || true
+	local _saved_ifs="$IFS"
+	IFS=','
+	local _lbl
+	for _lbl in $labels_csv_lia; do
+		[[ -z "$_lbl" ]] && continue
+		gh label create "$_lbl" --repo "$slug" --color "EDEDED" \
+			--description "Auto-created by pulse labelless backfill (t2112)" \
+			--force >/dev/null 2>&1 || true
+	done
+	IFS="$_saved_ifs"
+	if ! gh issue edit "$issue_num" --repo "$slug" "${add_args[@]}" >/dev/null 2>&1; then
+		echo "[pulse-wrapper] Labelless backfill: failed to apply labels on #${issue_num} in ${slug}" >>"$LOGFILE"
+		return 1
+	fi
+	return 0
+}
+
 _action_lia_single() {
 	local slug="$1" issue_num="$2" issue_title="$3" issue_body="$4"
 	local issue_sync_helper="${5:-}"
@@ -1129,40 +1219,11 @@ This comment is idempotent; the HTML sentinel prevents duplicates on subsequent 
 	# t2450/GH#29394). A bare COLLABORATOR association is not sufficient because
 	# it may represent read/triage access.
 	# GitHub PRs share the Issues API namespace; labelless backfill must never bless them as origin:worker/tier:standard.
-	local issue_json="" assoc="" author_type="" author_login="" is_pull_request=""
-	issue_json=$(gh api "repos/${slug}/issues/${issue_num}" 2>/dev/null || echo '{}')
-	is_pull_request=$(printf '%s' "$issue_json" | jq -r 'has("pull_request")' 2>/dev/null || echo "false")
-	if [[ "$is_pull_request" == "true" ]]; then
-		echo "[pulse-wrapper] Labelless backfill: skipped PR #${issue_num} in ${slug} — pull_request marker present" >>"$LOGFILE"
-		return 1
-	fi
-	assoc=$(printf '%s' "$issue_json" | jq -r '.author_association // "NONE"' 2>/dev/null || echo "NONE")
-	author_type=$(printf '%s' "$issue_json" | jq -r '.user.type // ""' 2>/dev/null || echo "")
-	author_login=$(printf '%s' "$issue_json" | jq -r '.user.login // ""' 2>/dev/null || echo "")
+	local assoc=""
 	local origin_interactive="origin:interactive" origin_worker="origin:worker"
 	local reported_origin=""
-	if printf '%s\n' "$issue_body" | grep -Fqx '<!-- aidevops:origin:interactive -->'; then
-		reported_origin="$origin_interactive"
-	elif printf '%s\n' "$issue_body" | grep -Fqx '<!-- aidevops:origin:worker -->'; then
-		reported_origin="$origin_worker"
-	fi
 	local is_external="$_PIR_BOOL_TRUE"
-	if [[ "$author_type" == "Bot" ]]; then
-		is_external="$_PIR_BOOL_FALSE"
-	else
-		case "$assoc" in
-		OWNER | MEMBER) is_external="$_PIR_BOOL_FALSE" ;;
-		COLLABORATOR)
-			local authority_rc=0
-			if declare -F _gh_actor_has_repo_write_authority >/dev/null 2>&1; then
-				_gh_actor_has_repo_write_authority "$slug" "$author_login" "$assoc" || authority_rc=$?
-			else
-				authority_rc=2
-			fi
-			[[ "$authority_rc" -eq 0 ]] && is_external="$_PIR_BOOL_FALSE"
-			;;
-		esac
-	fi
+	_lia_author_authority "$slug" "$issue_num" "$issue_body" || return 1
 
 	# Choose sentinel for idempotency check
 	local check_sentinel="$sentinel"
@@ -1189,58 +1250,8 @@ This comment is idempotent; the HTML sentinel prevents duplicates on subsequent 
 		sed 's/,$//' || echo "")
 
 	# Compose label-add args (internal vs external path, t2450)
-	local -a add_args
 	local labels_csv_lia comment_template_use
-	if [[ "$is_external" == "$_PIR_BOOL_TRUE" ]]; then
-		add_args=("$_PIR_ADD_LABEL_FLAG" "$_PIR_NMR_LABEL"
-			"$_PIR_ADD_LABEL_FLAG" "external-contributor")
-		labels_csv_lia="$_PIR_NMR_LABEL,external-contributor"
-		if [[ -n "$reported_origin" ]]; then
-			add_args+=("$_PIR_ADD_LABEL_FLAG" "$reported_origin")
-			labels_csv_lia="${labels_csv_lia},${reported_origin}"
-		fi
-		comment_template_use="$external_comment_template"
-	else
-		local internal_origin="${reported_origin:-$origin_worker}"
-		local opposite_origin="$origin_interactive"
-		[[ "$internal_origin" == "$origin_interactive" ]] && opposite_origin="$origin_worker"
-		add_args=("$_PIR_ADD_LABEL_FLAG" "$internal_origin"
-			"$_PIR_REMOVE_LABEL_FLAG" "$opposite_origin"
-			"$_PIR_REMOVE_LABEL_FLAG" "origin:worker-takeover"
-			"$_PIR_ADD_LABEL_FLAG" "$_PIR_TIER_STANDARD")
-		labels_csv_lia="${internal_origin},$_PIR_TIER_STANDARD"
-		comment_template_use="$comment_template"
-	fi
-	if [[ -n "$body_tags" ]]; then
-		local _saved_ifs="$IFS"
-		IFS=','
-		local _t
-		for _t in $body_tags; do
-			[[ -z "$_t" ]] && continue
-			add_args+=("$_PIR_ADD_LABEL_FLAG" "$_t")
-		done
-		IFS="$_saved_ifs"
-		labels_csv_lia="${labels_csv_lia},${body_tags}"
-	fi
-
-	# Ensure all labels exist on the repo
-	ensure_origin_labels_exist "$slug" 2>/dev/null || true
-	local _saved_ifs="$IFS"
-	IFS=','
-	local _lbl
-	for _lbl in $labels_csv_lia; do
-		[[ -z "$_lbl" ]] && continue
-		gh label create "$_lbl" --repo "$slug" --color "EDEDED" \
-			--description "Auto-created by pulse labelless backfill (t2112)" \
-			--force >/dev/null 2>&1 || true
-	done
-	IFS="$_saved_ifs"
-
-	# Apply labels
-	if ! gh issue edit "$issue_num" --repo "$slug" "${add_args[@]}" >/dev/null 2>&1; then
-		echo "[pulse-wrapper] Labelless backfill: failed to apply labels on #${issue_num} in ${slug}" >>"$LOGFILE"
-		return 1
-	fi
+	_lia_apply_labels "$slug" "$issue_num" "$body_tags" "$is_external" "$reported_origin" || return 1
 
 	# Wire sub-issue parent link (t2114)
 	if [[ -n "$issue_sync_helper" ]]; then
