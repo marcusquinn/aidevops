@@ -112,15 +112,16 @@ _dispatch_negative_cache_path() {
 	return 0
 }
 
-# Only a recent complete PR snapshot may keep a draft checkpoint suppressed.
-# A missing/changed PR or a stale prefetch always returns to the live gates.
+# Prefetch runs before dispatch and can take several minutes. Bound snapshot age
+# to 15 minutes (rather than 90 seconds) so this cycle's PR evidence survives
+# the prefetch lane; missing/changed PRs and older snapshots fall through.
 _dispatch_negative_pr_fingerprint() {
 	local repo="$1" pr="$2" snapshot=""
 	[[ "$pr" =~ ^[0-9]+$ ]] || return 1
 	snapshot=$("${_PULSE_DISPATCH_LIB_DIR}/pulse-batch-prefetch-helper.sh" read-snapshot --kind prs --slug "$repo" 2>/dev/null) || return 1
 	jq -er --argjson pr "$pr" '
 		select(.complete == true and ((now - (.timestamp | fromdateiso8601)) >= 0)
-			and ((now - (.timestamp | fromdateiso8601)) < 90)) |
+			and ((now - (.timestamp | fromdateiso8601)) < 900)) |
 		.items[] | select(.number == $pr) |
 		select((.updatedAt | type) == "string" and (.headRefOid | type) == "string") |
 		select((.updatedAt | length) > 0 and (.headRefOid | length) > 0) |
@@ -135,6 +136,12 @@ _dispatch_negative_cache_record() {
 	fields=$(jq -r '[(.number // ""), (.repo_slug // ""), (.updatedAt // "")] | @tsv' <<<"$candidate") || return 0
 	IFS=$'\t' read -r issue repo updated <<<"$fields"
 	[[ "$updated" =~ ^[0-9TZ:.-]+$ ]] || return 0
+	# Unassigned/available claim hints cannot pass the reader's owner gate.
+	# Do not repeatedly write records that can never be used.
+	if [[ "$reason" == dedup_active_claim* ]] && ! jq -e '(.assignees // [] | length) > 0 and
+		([.labels[]? | .name? // .] | any(. == "status:claimed" or . == "status:in-progress" or . == "status:in-review"))' <<<"$candidate" >/dev/null 2>&1; then
+		return 0
+	fi
 	if [[ "$reason" == worker_draft_checkpoint_blocked ]]; then
 		fingerprint=$(_dispatch_negative_pr_fingerprint "$repo" "$pr") || return 0
 	fi
@@ -160,10 +167,10 @@ _dispatch_negative_cache_reason() {
 	[[ -f "$file" && ! -L "$file" ]] || return 1
 	IFS=$'\t' read -r stamp cached reason pr fingerprint <"$file" || return 1
 	[[ "$stamp" =~ ^[0-9]+$ && "$cached" == "$updated" ]] || return 1
-	if [[ "$reason" != terminal_blocker_circuit ]]; then
+	if [[ "$reason" != terminal_blocker_circuit && "$reason" != worker_draft_checkpoint_blocked ]]; then
 		# Ownership hints: the snapshot must independently still show a claimed
-		# owner. No stale cache can suppress an available/unassigned candidate
-		# or permit a launch.
+		# owner. The worker-draft exception uses a complete, bounded-age PR
+		# snapshot and exact fingerprint instead; neither path permits a launch.
 		jq -e '(.assignees // [] | length) > 0 and
 			([.labels[]? | .name? // .] | any(. == "status:claimed" or . == "status:in-progress" or . == "status:in-review"))' <<<"$candidate" >/dev/null 2>&1 || return 1
 	fi

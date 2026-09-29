@@ -205,6 +205,81 @@ else
 	print_result "live worker keeps checkpoint under genuine interactive hold" 1
 fi
 
+# Exercise the real log filter, recorder and reader with a complete PR envelope.
+# The snapshot is deliberately older than the former 90-second cutoff but within
+# the bounded prefetch-to-dispatch window.
+# shellcheck source=../pulse-dispatch-lib.sh
+source "${TEST_SCRIPT_DIR}/../pulse-dispatch-lib.sh"
+export HOME="${TEST_ROOT}/home" SNAPSHOT_FILE="${TEST_ROOT}/pr-snapshot.json"
+cat >"${SCRIPT_DIR}/pulse-batch-prefetch-helper.sh" <<'PREFETCH_STUB'
+#!/usr/bin/env bash
+[[ "$*" == 'read-snapshot --kind prs --slug owner/repo' ]] || exit 1
+printf '%s\n' "$(<"$SNAPSHOT_FILE")"
+PREFETCH_STUB
+chmod +x "${SCRIPT_DIR}/pulse-batch-prefetch-helper.sh"
+_PULSE_DISPATCH_LIB_DIR="$SCRIPT_DIR"
+write_pr_snapshot() {
+	local age="$1" oid="$2" pr="${3:-29519}" complete="${4:-true}" updated="${5:-2026-09-29T12:00:00Z}"
+	jq -n --arg ts "$(date -u -d "${age} seconds ago" +%Y-%m-%dT%H:%M:%SZ)" \
+		--arg oid "$oid" --arg updated "$updated" --argjson pr "$pr" --argjson complete "$complete" \
+		'{complete:$complete,timestamp:$ts,items:[{number:$pr,updatedAt:$updated,headRefOid:$oid}]}' >"$SNAPSHOT_FILE"
+	return 0
+}
+candidate='{"number":29507,"repo_slug":"owner/repo","updatedAt":"2026-09-29T12:01:00Z","assignees":[],"labels":["status:available"]}'
+cache_file="${HOME}/.aidevops/logs/dispatch-negative-cache/owner--repo--29507"
+write_pr_snapshot 430 first-head
+: >"$LOGFILE"
+printf '%s\n' '[pulse-wrapper] DISPATCH_CANDIDATE_ATTEMPT #29507 (owner/repo)' >>"$LOGFILE"
+_dispatch_revised_checkpoint() { return 1; }
+_dedup_layer4_pr_evidence "29507" "owner/repo" "Fixture" >/dev/null || true
+_DISPATCH_CANDIDATE_ELIGIBILITY="$_DISPATCH_ELIGIBILITY_INELIGIBLE"
+_dispatch_cache_confirmed_block "$candidate" 29507 owner/repo
+if [[ -f "$cache_file" ]] && grep -q $'\tworker_draft_checkpoint_blocked\t29519\t' "$cache_file" &&
+	[[ "$(_dispatch_negative_cache_reason "$candidate")" == worker_draft_checkpoint_blocked ]]; then
+	print_result "unassigned worker draft logs and caches across cycles" 0
+else
+	print_result "unassigned worker draft logs and caches across cycles" 1
+fi
+
+write_pr_snapshot 430 new-head
+if ! _dispatch_negative_cache_reason "$candidate" >/dev/null; then
+	print_result "new PR head invalidates the checkpoint" 0
+else
+	print_result "new PR head invalidates the checkpoint" 1
+fi
+write_pr_snapshot 430 first-head 29519 true 2026-09-29T12:01:00Z
+if ! _dispatch_negative_cache_reason "$candidate" >/dev/null; then
+	print_result "new PR revision invalidates the checkpoint" 0
+else
+	print_result "new PR revision invalidates the checkpoint" 1
+fi
+write_pr_snapshot 430 first-head 12345
+if ! _dispatch_negative_cache_reason "$candidate" >/dev/null; then
+	print_result "missing PR invalidates the checkpoint" 0
+else
+	print_result "missing PR invalidates the checkpoint" 1
+fi
+write_pr_snapshot 901 first-head
+if ! _dispatch_negative_cache_reason "$candidate" >/dev/null; then
+	print_result "stale snapshot cannot suppress dispatch" 0
+else
+	print_result "stale snapshot cannot suppress dispatch" 1
+fi
+write_pr_snapshot 430 first-head
+if ! _dispatch_negative_cache_reason "${candidate/12:01:00/12:02:00}" >/dev/null; then
+	print_result "edited issue invalidates the checkpoint" 0
+else
+	print_result "edited issue invalidates the checkpoint" 1
+fi
+
+rm -f "$cache_file"
+_dispatch_negative_cache_record "$candidate" dedup_active_claim
+if [[ ! -f "$cache_file" ]]; then
+	print_result "available unassigned claim does not write an unusable hint" 0
+else
+	print_result "available unassigned claim does not write an unusable hint" 1
+fi
+
 if [[ "$TESTS_FAILED" -eq 0 ]]; then
 	printf 'All %d tests passed\n' "$TESTS_RUN"
 	exit 0
