@@ -64,12 +64,96 @@ def _config_is_read_only(args: list[str]) -> bool:
         "--rename-section",
         "--remove-section",
         "--replace-all",
+        "--edit",
+        "-e",
     }
-    return _config_is_allowed_global_auth_write(args) or (
-        bool(args)
-        and any(arg in read_flags for arg in args)
-        and not any(arg in write_flags for arg in args)
+    return (
+        _config_is_allowed_global_auth_write(args)
+        or _config_is_bare_read(args)
+        or (
+            bool(args)
+            and any(arg in read_flags for arg in args)
+            and not any(arg in write_flags for arg in args)
+        )
     )
+
+
+# GH#33066: options that never write when combined with a single-key read.
+_CONFIG_VALUE_OPTIONS = {"--type", "--file", "-f", "--blob", "--default"}
+_CONFIG_VALUE_OPTION_PREFIXES = ("--type=", "--file=", "--blob=", "--default=")
+_CONFIG_NEUTRAL_OPTIONS = {
+    "--global",
+    "--system",
+    "--local",
+    "--worktree",
+    "--includes",
+    "--no-includes",
+    "--null",
+    "-z",
+    "--show-origin",
+    "--show-scope",
+    "--name-only",
+    "--bool",
+    "--int",
+    "--bool-or-int",
+    "--path",
+    "--expiry-date",
+    "--no-type",
+}
+# Only valid after the Git 2.46+ `get` subcommand.
+_CONFIG_GET_OPTIONS = {"--all", "--regexp", "--fixed-value", "--show-names"}
+_CONFIG_GET_OPTION_PREFIXES = ("--value=", "--url=")
+# Read subcommand -> number of positionals it takes after itself.
+_CONFIG_READ_SUBCOMMANDS = {"get": 1, "list": 0}
+
+
+def _config_read_positionals(args: list[str]) -> tuple[list[str], bool] | None:
+    """Return (positionals, saw_get_option), or None for unknown/write options.
+
+    Fail closed: any option not known to be read-neutral (including every write
+    flag and `-e`) rejects the command, and a value option missing its value is
+    rejected rather than guessed.
+    """
+    positionals: list[str] = []
+    saw_get_option = False
+    expect_value = False
+    for arg in args:
+        if expect_value:
+            expect_value = False
+        elif arg in _CONFIG_VALUE_OPTIONS:
+            expect_value = True
+        elif arg in _CONFIG_NEUTRAL_OPTIONS or arg.startswith(_CONFIG_VALUE_OPTION_PREFIXES):
+            continue
+        elif arg in _CONFIG_GET_OPTIONS or arg.startswith(_CONFIG_GET_OPTION_PREFIXES):
+            saw_get_option = True
+        elif arg.startswith("-"):
+            return None
+        else:
+            positionals.append(arg)
+    if expect_value:
+        return None
+    return positionals, saw_get_option
+
+
+def _config_is_bare_read(args: list[str]) -> bool:
+    """Allow `git config [scope] <section.key>` and `git config get|list`.
+
+    A single positional key is a read; a second positional is a value (write).
+    Keys must contain a section separator so write subcommands such as `set`
+    can never be mistaken for a legacy key read.
+    """
+    parsed = _config_read_positionals(args)
+    if parsed is None:
+        return False
+    positionals, saw_get_option = parsed
+    if not positionals:
+        return False
+    head = positionals[0]
+    if head in _CONFIG_READ_SUBCOMMANDS:
+        if saw_get_option and head != "get":
+            return False
+        return len(positionals) - 1 == _CONFIG_READ_SUBCOMMANDS[head]
+    return not saw_get_option and len(positionals) == 1 and "." in head
 
 
 def _config_is_allowed_global_auth_write(args: list[str]) -> bool:
