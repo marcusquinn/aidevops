@@ -1450,7 +1450,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18496 fix(dispatch): stop false missing_files_scope holds and auto-release repaired briefs #auto-dispatch #bug #interactive tier:standard ~2h ref:GH#32689 logged:2026-09-28 pr:#32690 completed:2026-09-28
 
-- [ ] t18497 fix(claim-task-id): shallow counter-branch discovery fetches that time out at the 30s default #auto-dispatch #bug #interactive tier:standard ~45m ref:GH#32692 logged:2026-09-28
+- [x] t18497 fix(claim-task-id): shallow counter-branch discovery fetches that time out at the 30s default #auto-dispatch #bug #interactive tier:standard ~45m ref:GH#32692 logged:2026-09-28 pr:#33053 completed:2026-09-29
 
 - [x] t18503 test: isolate brief-scope pulse tests from the live pulse.log #bug #interactive tier:simple ~15m ref:GH#32710 logged:2026-09-28 pr:#32712 completed:2026-09-28
 
