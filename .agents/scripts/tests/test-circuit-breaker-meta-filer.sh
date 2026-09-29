@@ -44,7 +44,9 @@ print_result() {
 TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "$TEST_ROOT"' EXIT
 export HOME="${TEST_ROOT}/home"
-mkdir -p "${HOME}/.aidevops/logs"
+mkdir -p "${HOME}/.aidevops/logs" "${HOME}/.config/aidevops"
+# Public-write privacy guard fails closed without a readable repo inventory.
+printf '{"initialized_repos":[]}\n' >"${HOME}/.config/aidevops/repos.json"
 
 # =============================================================================
 # Stub harness — fake `gh` CLI that returns canned responses and logs all
@@ -98,11 +100,11 @@ if [[ "\$1" == "api" ]]; then
 		/repos/*/labels*)
 			printf 'status:available\t0e8a16\tTask is available for claiming\n'
 			printf 'status:queued\tfbca04\tWorker dispatched, not yet started\n'
-			printf 'status:claimed\tf9d0c4\tInteractive session claimed this task\n'
+			printf 'status:claimed\tf9d0c4\tInteractive implementation is actively claimed\n'
 			printf 'status:in-progress\t1d76db\tWorker actively running\n'
-			printf 'status:in-review\t5319e7\tPR open, awaiting review/merge\n'
+			printf 'status:in-review\t5319e7\tNon-draft PR ready for review/merge\n'
 			printf 'status:done\t6f42c1\tTask is complete\n'
-			printf 'status:blocked\td93f0b\tWaiting on blocker task\n'
+			printf 'status:blocked\td93f0b\tPartial work blocked; inspect reason and next action\n'
 			exit 0 ;;
 		/repos/*/issues/*)
 			exit 1 ;;
@@ -117,6 +119,12 @@ if [[ "\$1" == "api" ]]; then
 			cat "${FIXTURE_COMMENTS_JSON}" 2>/dev/null || echo '[]'
 			exit 0 ;;
 		repos/*/issues/*)
+			# Creation-time auto-dispatch conversation lock read-back
+			# (_gh_lock_created_auto_dispatch_issue); gh issue lock exits 0 below.
+			if [[ "\$*" == *".locked"* ]]; then
+				echo 'true'
+				exit 0
+			fi
 			# gh api repos/SLUG/issues/N --jq '.body'
 			cat "${FIXTURE_META_BODY}" 2>/dev/null || echo ''
 			exit 0 ;;

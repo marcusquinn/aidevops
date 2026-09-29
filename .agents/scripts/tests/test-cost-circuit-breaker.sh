@@ -90,11 +90,11 @@ if [[ "\$1" == "api" ]]; then
 		printf '%s\n' \\
 			\$'status:available\t0e8a16\tTask is available for claiming' \\
 			\$'status:queued\tfbca04\tWorker dispatched, not yet started' \\
-			\$'status:claimed\tf9d0c4\tInteractive session claimed this task' \\
+			\$'status:claimed\tf9d0c4\tInteractive implementation is actively claimed' \\
 			\$'status:in-progress\t1d76db\tWorker actively running' \\
-			\$'status:in-review\t5319e7\tPR open, awaiting review/merge' \\
+			\$'status:in-review\t5319e7\tNon-draft PR ready for review/merge' \\
 			\$'status:done\t6f42c1\tTask is complete' \\
-			\$'status:blocked\td93f0b\tWaiting on blocker task'
+			\$'status:blocked\td93f0b\tPartial work blocked; inspect reason and next action'
 		exit 0
 	fi
 	# Keep this circuit-breaker test focused on its historical native mutation

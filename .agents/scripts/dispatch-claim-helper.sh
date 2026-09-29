@@ -16,14 +16,15 @@
 #   1. Post claim: DISPATCH_CLAIM nonce=UUID runner=LOGIN ts=ISO max_age_s=SECONDS
 #   2. Sleep consensus window (DISPATCH_CLAIM_WINDOW, default 8s)
 #   3. Re-read paginated comments, find all DISPATCH_CLAIM within the window
-#   4. Oldest active claim wins — others back off and retain audit comments
+#   4. Oldest active claim wins — others back off and delete their losing
+#      claim comments; CLAIM_DEFERRED contention stays in runner logs
 #
 # Usage:
 #   dispatch-claim-helper.sh claim <issue-number> <repo-slug> [runner-login]
 #     Attempt to claim an issue for dispatch.
 #     Exit 0 = claim won (safe to dispatch)
 #     Exit 1 = claim lost (another runner was first — do NOT dispatch)
-#     Exit 2 = error (fail-open — caller should proceed with dispatch)
+#     Exit 2 = coordination error (fail closed — do NOT dispatch this cycle)
 #
 #   dispatch-claim-helper.sh check <issue-number> <repo-slug>
 #     Check if any active claim exists on this issue.

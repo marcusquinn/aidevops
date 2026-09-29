@@ -335,6 +335,10 @@ _choose_worker_round_robin_model() {
 # _choose_model_tier_downgrade: check pattern history for a cheaper tier.
 # Prints the downgraded model name if one is recommended; prints nothing otherwise.
 # Non-blocking -- any failure falls through silently.
+# Dormant hook: it acts only when AIDEVOPS_TIER_DOWNGRADE_TASK_TYPE is set and an
+# executable scripts/archived/pattern-tracker-helper.sh provides
+# tier-downgrade-check. Neither ships with aidevops; routing tests stub this
+# function to keep the adaptive/exact-tier telemetry contract.
 _choose_model_tier_downgrade() {
 	local current_model="$1"
 	local requested_tier="${2:-}"

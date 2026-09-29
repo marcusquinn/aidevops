@@ -790,9 +790,10 @@ _dispatch_check_model_concurrency_cap() {
 	local opus_cap="${AIDEVOPS_OPUS_CONCURRENCY_CAP:-${OPUS_CONCURRENCY_CAP}}"
 
 	# Count in-flight opus workers from the process list.
-	# opencode is launched with '-m anthropic/claude-opus-4-6' (or -4-7) by
-	# _build_run_cmd in headless-runtime-model.sh:412. pgrep -f matches the
-	# full cmdline so it catches both 4-6 and 4-7 variants in one probe.
+	# opencode is launched with '-m anthropic/claude-opus-<version>' by
+	# _build_run_cmd in headless-runtime-model.sh. pgrep -f matches the full
+	# cmdline, so one probe counts every opus version, including opus workers
+	# chosen by auto-routing (only explicitly pinned candidates are deferred).
 	#
 	# pgrep exits 1 with no output when no processes match — perfectly normal.
 	# Assign to a variable first with || true to avoid triggering set -o pipefail.

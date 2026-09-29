@@ -1738,8 +1738,11 @@ _find_qualifying_pr_for_stale_recovery() {
 # t3049: Post a one-shot notification when a stale-recovery NMR is resolved
 # by a subsequent worker producing an APPROVED PR.
 #
-# When stale-recovery applies NMR (via stale-recovery-tick:escalated), a
-# subsequent worker may still produce a clean PR. If that PR is APPROVED with
+# Legacy stale-recovery escalations applied NMR (stale-recovery-tick:escalated).
+# Current escalation (dispatch-dedup-stale.sh _stale_recovery_escalate) applies
+# status:blocked instead, so this notice now serves only those legacy NMR
+# issues. After such an NMR, a subsequent worker may still produce a clean PR.
+# If that PR is APPROVED with
 # all non-maintainer-gate CI green and authored by OWNER/MEMBER with
 # origin:worker or origin:interactive, the maintainer only needs to run
 # `sudo aidevops approve issue N` to unblock the merge — but has no signal.
