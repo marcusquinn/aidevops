@@ -220,6 +220,9 @@ oauth_prompt_read() {
 		printf '%s' "$prompt_text" >&2
 		IFS= read -r line || true
 	fi
+	# Trim pasted surrounding whitespace, including a CRLF carriage return.
+	line="${line#"${line%%[![:space:]]*}"}"
+	line="${line%"${line##*[![:space:]]}"}"
 	printf '%s' "$line"
 	return 0
 }
@@ -251,7 +254,10 @@ open_browser() {
 		print_info "No graphical display detected; open the URL above manually."
 		return 0
 	fi
-	for cmd in open xdg-open wslview; do
+	# macOS uses open(1); on Linux 'open' is often openvt(1), so never try it.
+	local -a launchers=(wslview xdg-open)
+	[[ "$(uname -s)" == "Darwin" ]] && launchers=(open)
+	for cmd in "${launchers[@]}"; do
 		if command -v "$cmd" &>/dev/null && "$cmd" "$url" </dev/null >/dev/null 2>&1; then
 			return 0
 		fi
