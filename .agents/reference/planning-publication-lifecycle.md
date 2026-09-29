@@ -74,6 +74,8 @@ LOCAL_ONLY
 PUBLISHING
   issue: publication:pending; no auto-dispatch/status:available projection
   publication: direct push in progress OR planning PR open
+  reconcile: absent task younger than AIDEVOPS_PUBLICATION_STALE_HOURS
+    (default 24) is deferred without label edits and does not fail the run
 
 PUBLISHED
   issue: publication:pending removed
@@ -82,7 +84,9 @@ PUBLISHED
 
 PUBLICATION_FAILED
   issue: publication:pending retained
-  default branch: canonical task absent or invalid
+  default branch: canonical task absent beyond the stale window (or invalid
+    creation timestamp), or present with an invalid mapping/brief/readiness
+  reconcile: stale and failed counts make the run fail; deferred alone does not
   recovery: retry the same publication/mapping; never allocate a replacement ID
 
 CLOSED
