@@ -11,6 +11,9 @@
 
 [[ -n "${_GH_NATIVE_TRANSPORT_LIB_LOADED:-}" ]] && return 0
 _GH_NATIVE_TRANSPORT_LIB_LOADED=1
+if ! declare -F _shim_timing >/dev/null 2>&1; then
+	_shim_timing() { return 0; }
+fi
 
 if [[ -z "${_SHIM_DIR:-}" ]]; then
 	_gh_native_transport_path="${BASH_SOURCE[0]%/*}"
@@ -39,10 +42,6 @@ _shim_canonical_path() {
 	local candidate_dir=""
 	local candidate_name=""
 	local link_dir=""
-	if command -v python3 >/dev/null 2>&1; then
-		python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$candidate" 2>/dev/null
-		return $?
-	fi
 	while [[ -L "$candidate" ]]; do
 		link_dir=$(cd "$(dirname "$candidate")" 2>/dev/null && pwd -P) || return 1
 		candidate=$(readlink "$candidate") || return 1
@@ -414,6 +413,7 @@ _shim_run_single_transport() {
 	if declare -F _gh_transport_preflight >/dev/null 2>&1; then
 		_gh_transport_preflight "$@" || return $?
 	fi
+	_shim_timing transport_preflight
 	if declare -F _gh_transport_run_rest >/dev/null 2>&1; then
 		local governed_rc=0
 		_gh_transport_run_rest "$executable" "$path" "$caller" "$retry" "$@" || governed_rc=$?

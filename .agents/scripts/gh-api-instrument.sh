@@ -389,8 +389,10 @@ _gh_append_record() {
 	[[ ${#record} -le 4000 ]] || return 0
 	[[ "$GH_API_LOG" == */* ]] && mkdir -p "${GH_API_LOG%/*}" 2>/dev/null || true
 	_gh_log_lock_acquire || return 0
+	if declare -F _shim_timing >/dev/null 2>&1; then _shim_timing log_lock_acquire; fi
 	printf '%s\n' "$record" >>"$GH_API_LOG" 2>/dev/null || true
 	_gh_log_lock_release
+	if declare -F _shim_timing >/dev/null 2>&1; then _shim_timing log_append_release; fi
 	return 0
 }
 
