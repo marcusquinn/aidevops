@@ -47,6 +47,13 @@ assert_reason 'dispatch candidate skipped: consolidated into #25279' 'consolidat
 assert_reason 'INFRASTRUCTURE_BLOCKED (label=infrastructure)' 'policy_gate'
 assert_reason 'HOLD_FOR_REVIEW_BLOCKED (label=hold-for-review)' 'policy_gate'
 assert_reason 'external_author_gate blocked no-auto-dispatch policy' 'policy_gate'
+# GH#32979: Dependabot-target and pre-claim brief-scope blocks.
+assert_reason 'Dispatch blocked for #181 in owner/repo: another issue owns the same Dependabot PR target' 'dependabot_target_owned'
+assert_reason '[pulse-wrapper] Dedup: Dependabot PR #30038 intake #43 blocked by target owner #42' 'dependabot_target_owned'
+assert_reason 'DISPATCH_BLOCK_REASON reason=dependabot_target_unverified signal=dependabot_target_lookup_unavailable' 'dependabot_target_unverified'
+assert_reason '[pulse-wrapper] Dedup: authoritative Dependabot intake lookup unavailable for #43; blocking dispatch' 'dependabot_target_unverified'
+assert_reason 'DISPATCH_BLOCK_REASON reason=brief_scope_hold signal=brief_scope_hold_recorded' 'brief_scope_hold'
+assert_reason 'DISPATCH_BLOCK_REASON reason=missing_worker_context signal=brief_scope_untrusted_author' 'missing_worker_context'
 assert_reason '' 'no_recent_log_evidence'
 assert_reason 'new blocker shape not yet classified' 'unclassified_signal'
 

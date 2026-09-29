@@ -276,6 +276,21 @@ test_untrusted_marker_does_not_own_target() {
 	return 0
 }
 
+# GH#32979: a consolidation-task child inlines the parent's marker verbatim but
+# never works the Dependabot PR; the parent's ownership must not block it.
+test_consolidation_child_not_blocked_by_parent_target() {
+	local child_body=$'## Consolidation target: #171\n\n## Parent body (verbatim)\n\n<!-- aidevops:dependabot-pr-intake repo=owner/repo pr=30038 -->'
+	local child_meta='{"labels":[{"name":"consolidation-task"},{"name":"auto-dispatch"},{"name":"origin:worker"}]}'
+	OPEN_ISSUES_JSON='[{"number":171,"body":"<!-- aidevops:dependabot-pr-intake repo=owner/repo pr=30038 -->","assignees":[],"labels":[{"name":"origin:worker"},{"name":"dependencies"},{"name":"needs-consolidation"}]}]'
+	if _dedup_dependabot_intake_target "181" "owner/repo" "$child_body" "$child_meta"; then
+		return 1
+	fi
+	# Without the label evidence the same body is still blocked by the owner.
+	_dedup_dependabot_intake_target "181" "owner/repo" "$child_body" || return 1
+	[[ "$_DEDUP_DEPENDABOT_BLOCK" == "owned" ]]
+	return $?
+}
+
 test_target_lookup_failure_blocks_dispatch() {
 	gh_issue_list() { return 1; }
 	_dedup_dependabot_intake_target "43" "owner/repo" \
@@ -731,6 +746,8 @@ main() {
 	printf 'PASS same-target intake dispatch elects one live owner\n'
 	test_untrusted_marker_does_not_own_target
 	printf 'PASS untrusted marker cannot own an intake target\n'
+	test_consolidation_child_not_blocked_by_parent_target
+	printf 'PASS consolidation child is not blocked by its parent target owner\n'
 	test_target_lookup_failure_blocks_dispatch
 	printf 'PASS unknown target lookup fails closed\n'
 	test_saturated_target_lookup_blocks_dispatch

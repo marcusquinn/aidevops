@@ -1249,8 +1249,20 @@ classify_dispatch_blocker_reason() {
 			printf 'launch_error\n'
 			return 0
 			;;
+		*brief_scope_hold*)
+			printf 'brief_scope_hold\n'
+			return 0
+			;;
 		*missing*worker*context* | *needs-brief* | *missing*implementation*context*)
 			printf 'missing_worker_context\n'
+			return 0
+			;;
+		*dependabot_target_unverified* | *dependabot*intake*lookup*unavailable* | *invalid*dependabot*intake*evidence* | *dependabot*intake*repository*mismatch*)
+			printf 'dependabot_target_unverified\n'
+			return 0
+			;;
+		*dependabot_target_owned* | *owns*the*same*dependabot*pr*target* | *dependabot*blocked*by*target*owner*)
+			printf 'dependabot_target_owned\n'
 			return 0
 			;;
 		*renovate*dependency*dashboard*)

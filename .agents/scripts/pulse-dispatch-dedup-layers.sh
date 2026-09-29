@@ -152,19 +152,32 @@ _stale_recovery_has_worker_evidence() {
 # Intake creation is locally serialized, but separate Pulse hosts can still
 # create issues concurrently. Elect an existing live owner first, otherwise the
 # lowest issue number. Unknown repository reads fail closed.
-# Arguments: issue_number, repo_slug, issue_body
+# GH#32979: a consolidation-task child inlines its parent's body verbatim, so
+# it carries the parent's intake marker without being an intake. It rewrites
+# the parent issue and never works the Dependabot PR; gating it on the parent's
+# target ownership deadlocked both (the parent waits for the consolidation).
+# Arguments: issue_number, repo_slug, issue_body, [issue_meta_json]
 # Exit: 0 = blocked, 1 = current issue owns the target or is not an intake
+# Sets _DEDUP_DEPENDABOT_BLOCK on block: owned | repo_mismatch |
+#   lookup_unavailable | invalid_evidence (empty when not blocked).
 #######################################
+_DEDUP_DEPENDABOT_BLOCK=""
 _dedup_dependabot_intake_target() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local issue_body="$3"
+	local issue_meta_json="${4:-}"
 	local target_repo=""
 	local target_pr=""
 	local marker=""
 	local issues_json=""
 	local owner_issue=""
 
+	_DEDUP_DEPENDABOT_BLOCK=""
+	if [[ -n "$issue_meta_json" ]] && printf '%s' "$issue_meta_json" |
+		jq -e '[.labels[]?.name] | index("consolidation-task") != null' >/dev/null 2>&1; then
+		return 1
+	fi
 	if [[ "$issue_body" =~ aidevops:dependabot-pr-intake[[:space:]]repo=([^[:space:]]+)[[:space:]]pr=([0-9]+) ]]; then
 		target_repo="${BASH_REMATCH[1]}"
 		target_pr="${BASH_REMATCH[2]}"
@@ -173,12 +186,14 @@ _dedup_dependabot_intake_target() {
 	fi
 	[[ "$target_repo" == "$repo_slug" ]] || {
 		echo "[pulse-wrapper] Dedup: Dependabot intake #${issue_number} target repository mismatch; blocking dispatch" >>"$LOGFILE"
+		_DEDUP_DEPENDABOT_BLOCK="repo_mismatch"
 		return 0
 	}
 	marker="<!-- aidevops:dependabot-pr-intake repo=${target_repo} pr=${target_pr} -->"
 	issues_json=$(gh_issue_list --repo "$repo_slug" --state open --label dependencies \
 		--limit 501 --json number,body,labels,assignees 2>/dev/null) || {
 		echo "[pulse-wrapper] Dedup: authoritative Dependabot intake lookup unavailable for #${issue_number}; blocking dispatch" >>"$LOGFILE"
+		_DEDUP_DEPENDABOT_BLOCK="lookup_unavailable"
 		return 0
 	}
 	owner_issue=$(printf '%s' "$issues_json" | jq -er --arg marker "$marker" '
@@ -194,10 +209,12 @@ _dedup_dependabot_intake_target() {
 				| .number] | min) // ([$matches[].number] | min)
 		end end' 2>/dev/null) || {
 		echo "[pulse-wrapper] Dedup: invalid Dependabot intake evidence for #${issue_number}; blocking dispatch" >>"$LOGFILE"
+		_DEDUP_DEPENDABOT_BLOCK="invalid_evidence"
 		return 0
 	}
 	if [[ "$owner_issue" != "$issue_number" ]]; then
 		echo "[pulse-wrapper] Dedup: Dependabot PR #${target_pr} intake #${issue_number} blocked by target owner #${owner_issue}" >>"$LOGFILE"
+		_DEDUP_DEPENDABOT_BLOCK="owned"
 		return 0
 	fi
 	return 1
