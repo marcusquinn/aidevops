@@ -1502,13 +1502,13 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 - [x] t18541 fix(pulse): break consolidation/Dependabot-target dispatch deadlock and log silent brief-scope blocks #auto-dispatch #bug ref:GH#32979 logged:2026-09-29 pr:#32983 completed:2026-09-29
 - [x] t18542 fix(worker): recognise completed consolidation children instead of worker_noop #auto-dispatch #bug ref:GH#32984 logged:2026-09-29 pr:#32987 completed:2026-09-29
 - [x] t18543 docs(dispatch): correct fail-closed claim, cap, tier-routing and supervisor drift #auto-dispatch #bug ref:GH#32989 logged:2026-09-29 pr:#32994 completed:2026-09-29
-- [ ] t18544 fix(release): retry npm attestation verification through registry propagation lag #auto-dispatch #bug tier:standard ref:GH#32999 logged:2026-09-29 -> [todo/tasks/t18544-brief.md]
+- [x] t18544 fix(release): retry npm attestation verification through registry propagation lag #auto-dispatch #bug tier:standard ref:GH#32999 logged:2026-09-29 -> [todo/tasks/t18544-brief.md] pr:#33021 completed:2026-09-29
 - [ ] t18545 fix(pulse-merge): retry transient author permission lookups and stop manual-merge comments for them #auto-dispatch #bug tier:standard ref:GH#33000 logged:2026-09-29 -> [todo/tasks/t18545-brief.md]
 - [ ] t18546 fix(pulse-dependabot): provision the dependencies label before creating intake issues and log the gh error #auto-dispatch #bug tier:standard ref:GH#33003 logged:2026-09-29 -> [todo/tasks/t18546-brief.md]
 - [ ] t18547 fix(pulse-dispatch): re-resolve worker model after tier guard and stop tier-derived defaults bypassing model A/B #auto-dispatch #bug tier:thinking ref:GH#33004 logged:2026-09-29 -> [todo/tasks/t18547-brief.md]
 - [ ] t18548 fix(pulse): clamp stage timeouts to the cycle deadline so full cycles finish before lock force-reclaim kills them #auto-dispatch #bug tier:thinking ref:GH#33007 logged:2026-09-29 -> [todo/tasks/t18548-brief.md]
 - [x] t18549 fix(brief-readiness): read indented continuation lines so nested sub-bullet fields are not reported empty #auto-dispatch #bug tier:standard ref:GH#33009 logged:2026-09-29 pr:#33018 completed:2026-09-29 -> [todo/tasks/t18549-brief.md]
-- [ ] t18550 fix(full-loop-merge): sync canonical through the audited fast-forward and reconcile planning after it, not before #auto-dispatch #bug tier:thinking ref:GH#33013 logged:2026-09-29 -> [todo/tasks/t18550-brief.md]
+- [x] t18550 fix(full-loop-merge): sync canonical through the audited fast-forward and reconcile planning after it, not before #auto-dispatch #bug tier:thinking ref:GH#33013 logged:2026-09-29 -> [todo/tasks/t18550-brief.md] pr:#33022 completed:2026-09-29
 
 ## In Progress
 
