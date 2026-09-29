@@ -447,8 +447,12 @@ _dispatch_dedup_dependency_gates() {
 	_ds_stage_start "$issue_number" "$repo_slug" "blocked_by" "$_dss_t0" _ds_stage_attempt_id
 	local _dispatch_issue_body
 	_dispatch_issue_body=$(printf '%s' "$issue_meta_json" | jq -r '.body // ""' 2>/dev/null) || _dispatch_issue_body=""
-	if _dedup_dependabot_intake_target "$issue_number" "$repo_slug" "$_dispatch_issue_body"; then
-		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: another issue owns the same Dependabot PR target" >>"$LOGFILE"
+	if _dedup_dependabot_intake_target "$issue_number" "$repo_slug" "$_dispatch_issue_body" "$issue_meta_json"; then
+		# GH#32979: owned = another intake legitimately holds the target
+		# (benign); anything else is a fail-closed read or evidence failure.
+		local _dependabot_reason="dependabot_target_unverified"
+		[[ "${_DEDUP_DEPENDABOT_BLOCK:-}" == "owned" ]] && _dependabot_reason="dependabot_target_owned"
+		echo "[dispatch_with_dedup] DISPATCH_BLOCK_REASON reason=${_dependabot_reason} signal=dependabot_target_${_DEDUP_DEPENDABOT_BLOCK:-unknown} issue=#${issue_number} repo=${repo_slug}" >>"$LOGFILE"
 		_ds_record "$issue_number" "$repo_slug" "dedup.dependabot_target" "$_dss_t0"
 		return 1
 	fi
@@ -919,38 +923,61 @@ _dispatch_brief_hold_recorded() {
 # Fail before dedup posts a claim. The blocked label is the durable cycle gate;
 # the body-hash marker keeps the brief-owner action to one comment per body even
 # when the label is later cleared without a body change.
+# GH#32979: every rc=1 logs exactly one DISPATCH_BLOCK_REASON naming the step
+# (recorded as the _brief_scope_block breadcrumb), so blocked candidates are
+# never metered as no_recent_log_evidence and untrusted unscoped briefs stay
+# visible instead of retrying silently every cycle.
 _dispatch_preclaim_brief_scope() {
+	local issue_number="$1" repo_slug="$2" issue_meta_json="$3"
+	local _brief_scope_block="" verdict_rc=0
+	_dispatch_preclaim_brief_scope_verdict "$issue_number" "$repo_slug" "$issue_meta_json" || verdict_rc=$?
+	[[ "$verdict_rc" -eq 0 ]] && return 0
+	_brief_scope_log_block "$issue_number" "$repo_slug" "${_brief_scope_block:-unknown}"
+	return 1
+}
+
+# Sets the caller's _brief_scope_block before each step that can return 1.
+_dispatch_preclaim_brief_scope_verdict() {
 	local issue_number="$1" repo_slug="$2" issue_meta_json="$3"
 	local issue_body="" author="" comment_file="" scope_rc=0
 	local body_hash="" hold_marker="" recorded_rc=0
 	printf '%s' "$issue_meta_json" | jq -e '[.labels[]?.name] | index("auto-dispatch") != null' >/dev/null 2>&1 || return 0
+	_brief_scope_block="status_blocked"
 	if printf '%s' "$issue_meta_json" | jq -e '[.labels[]?.name] | index("status:blocked") != null' >/dev/null 2>&1; then
 		return 1
 	fi
+	_brief_scope_block="body_unreadable"
 	issue_body=$(printf '%s' "$issue_meta_json" | jq -r '.body // ""') || return 1
 	"${SCRIPT_DIR}/pre-dispatch-validator-helper.sh" scope-check "$issue_number" "$issue_body" 1 >/dev/null 2>&1 || scope_rc=$?
 	[[ "$scope_rc" -eq 0 ]] && return 0
+	_brief_scope_block="validator_error"
 	[[ "$scope_rc" -eq 40 ]] || return 1
 
 	# aidevops:trust-boundary — only the authenticated runner may hold a trusted
 	# implementation brief; untrusted authors must stay on the normal review path.
+	_brief_scope_block="untrusted_author"
 	author=$(printf '%s' "$issue_meta_json" | jq -r '.author.login // ""') || return 1
 	_brief_scope_author_trusted "$repo_slug" "$author" || return 1
 	# GH#32689: explicit Files to Modify declarations normalize to the exact
 	# canonical scope; rewrite once and dispatch next cycle instead of holding.
+	_brief_scope_block="self_heal_rewritten"
 	if _dispatch_brief_scope_self_heal "$issue_number" "$repo_slug" "$issue_body"; then
 		return 1
 	fi
+	_brief_scope_block="hold_marker_unavailable"
 	body_hash=$(_dispatch_brief_hold_body_hash "$issue_body") || return 1
 	hold_marker="<!-- aidevops:brief-hold reason=missing_files_scope body=${body_hash} -->"
 	_dispatch_brief_hold_recorded "$issue_number" "$repo_slug" "$hold_marker" || recorded_rc=$?
 	# Unreadable history: skip dispatch without writing; the next cycle retries.
+	_brief_scope_block="history_unreadable"
 	[[ "$recorded_rc" -eq 2 ]] && return 1
 	if [[ "$recorded_rc" -eq 0 ]]; then
+		_brief_scope_block="hold_recorded"
 		set_issue_status "$issue_number" "$repo_slug" blocked >/dev/null || true
 		echo "[dispatch_with_dedup] Brief hold for #${issue_number} in ${repo_slug} already recorded for this body; relabelled without a new comment" >>"${LOGFILE:-/dev/null}"
 		return 1
 	fi
+	_brief_scope_block="hold_write_failed"
 	comment_file=$(mktemp) || return 1
 	aidevops_ops_marker brief-hold >"$comment_file" || return 1
 	# shellcheck disable=SC2016 # literal Markdown backticks, not expansions
@@ -964,6 +991,7 @@ _dispatch_preclaim_brief_scope() {
 		return 1
 	fi
 	rm -f "$comment_file"
+	_brief_scope_block="hold_posted"
 	return 1
 }
 

@@ -84,12 +84,21 @@ jobs:
           existing=$(gh api "repos/${REPO}/issues?state=open&per_page=100" \
             --jq ".[] | select(.title == \"${title}\") | .number" | command head -n 1)
           [[ -n "$existing" ]] && exit 0
-          status=$(<pin-status.txt) || status="status artifact unavailable"
-          result=$(<canary-result.txt) || result="canary artifact unavailable"
-          body=$(printf '%s\n\n%s\n\n%s\n\n%s\n' \
-            "$summary" \
-            "Status: ${status}" "Result: ${result}" \
-            'Files: `.agents/scripts/opencode-pin-canary.sh`, `.agents/configs/opencode-runtime-profiles.json`, and (only when necessary) `.agents/plugins/opencode-aidevops/`. Investigate missing plugin tools and compare the native tool diff. Retain the current fail-closed pin after failed or inconclusive results; only after a passing rerun advance the profile tested version, pin, dates and result together. Verify with `.agents/scripts/tests/test-opencode-pin-policy.sh`, `.agents/scripts/tests/test-opencode-runtime-profile.sh`, and the workflow canary.')
+          # GH#32979: auto-dispatch bodies need a canonical Files Scope (exact
+          # repo-relative files) or the pulse pre-claim gate rejects them every
+          # cycle; raw canary output stays fenced and bounded.
+          status=$(command head -n 60 pin-status.txt) || status="status artifact unavailable"
+          result=$(command head -n 60 canary-result.txt) || result="canary artifact unavailable"
+          guidance='Investigate missing plugin tools and compare the native tool diff. Retain the current fail-closed pin after failed or inconclusive results; only after a passing rerun advance the profile tested version, pin, dates and result together. Change the plugin package files only when necessary.'
+          scope=$(printf '%s\n' '### Files Scope' '' \
+            '- .agents/scripts/opencode-pin-canary.sh' \
+            '- .agents/configs/opencode-runtime-profiles.json' \
+            '- .agents/scripts/shared-constants.sh' \
+            '- .agents/plugins/opencode-aidevops/package.json' \
+            '- .agents/plugins/opencode-aidevops/package-lock.json')
+          verify='Verify with `.agents/scripts/tests/test-opencode-pin-policy.sh`, `.agents/scripts/tests/test-opencode-runtime-profile.sh`, and the workflow canary.'
+          body=$(printf '%s\n\nEvidence (first 60 lines of each canary artifact):\n\n~~~text\nStatus:\n%s\n\nResult:\n%s\n~~~\n\n%s\n\n%s\n\n%s\n' \
+            "$summary" "$status" "$result" "$guidance" "$scope" "$verify")
           gh api --method POST "repos/${REPO}/issues" -f title="$title" -f body="$body" \
             -f 'labels[]=origin:worker' -f 'labels[]=auto-dispatch' \
             -f 'labels[]=tier:standard' -f 'labels[]=status:available' >/dev/null

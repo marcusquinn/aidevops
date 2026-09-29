@@ -17,6 +17,7 @@
 # _dispatch_brief_hold_recorded.
 #
 # Functions in this module (in source order):
+#   - _brief_scope_log_block
 #   - _brief_scope_author_trusted
 #   - _brief_scope_passes
 #   - _brief_scope_normalized_body
@@ -35,6 +36,22 @@ _BRIEF_SCOPE_HOLD_MARKER='aidevops:brief-hold reason=missing_files_scope'
 # the blocked state (dispatch attempts, worker/watchdog/stale/breaker blocks,
 # permission or human holds). Any match after the hold keeps the issue blocked.
 _BRIEF_SCOPE_LATER_BLOCKERS='ops:start|status:blocked|Dispatching worker|CLAIM_|Worker Watchdog Kill|Terminal blocker|ACTION REQUIRED|HUMAN_UNBLOCK_REQUIRED|STALE_'
+
+# GH#32979: one reason line per pre-claim block. A durable hold (label present,
+# hold comment recorded/posted, body rewritten for next cycle) is an expected
+# benign block; everything else is an unscoped brief the pulse cannot hold —
+# untrusted author, validator/read/write failure — and needs brief repair.
+_brief_scope_log_block() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local block="$3"
+	local reason="missing_worker_context"
+	case "$block" in
+	status_blocked | self_heal_rewritten | hold_recorded | hold_posted) reason="brief_scope_hold" ;;
+	esac
+	echo "[dispatch_with_dedup] DISPATCH_BLOCK_REASON reason=${reason} signal=brief_scope_${block} issue=#${issue_number} repo=${repo_slug}" >>"${LOGFILE:-/dev/null}"
+	return 0
+}
 
 # aidevops:trust-boundary — only briefs authored by write-capable collaborators
 # may be held, rewritten or released by the pulse; everything else stays on the
