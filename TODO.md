@@ -1454,7 +1454,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18503 test: isolate brief-scope pulse tests from the live pulse.log #bug #interactive tier:simple ~15m ref:GH#32710 logged:2026-09-28 pr:#32712 completed:2026-09-28
 
-- [ ] t18504 fix(planning-publisher): 3-way merge TODO.md instead of overwriting concurrent entries #auto-dispatch #bug #interactive tier:thinking ~2h ref:GH#32714 logged:2026-09-28
+- [x] t18504 fix(planning-publisher): 3-way merge TODO.md instead of overwriting concurrent entries #auto-dispatch #bug #interactive tier:thinking ~2h ref:GH#32714 logged:2026-09-28 pr:#33047 completed:2026-09-29
 
 - [x] t18505 perf(dispatch): run read-only dedup layers before costly scope gates #enhancement #interactive tier:standard ~1h ref:GH#32729 logged:2026-09-28 pr:#32732 completed:2026-09-28
 
@@ -1471,7 +1471,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 - [x] t18509 feat(seo): search targets standard — context/keywords.md registry, team hub sync, budgeted rank/AI tracking, ecommerce drill-down, init scaffold and repo backfill #feature #seo #framework #interactive tier:thinking ~6h ref:GH#32739 logged:2026-09-28 -> [todo/tasks/t18509-brief.md] pr:#32746 completed:2026-09-28
 
 - [x] t18511 fix(design): make the brand-identity.toon template valid TOON #bug #design #interactive tier:standard ~45m ref:GH#32741 logged:2026-09-28 -> [todo/tasks/t18511-brief.md] pr:#32750 completed:2026-09-28
-- [ ] t18512 fix(release): npm publication verify window shorter than npm async processing lag #auto-dispatch #bug #interactive ref:GH#32749 logged:2026-09-28
+- [x] t18512 fix(release): npm publication verify window shorter than npm async processing lag #auto-dispatch #bug #interactive ref:GH#32749 logged:2026-09-28 pr:#33045 completed:2026-09-29
 
 - [x] t18516 fix(seo): keywords hub clone from canonical cwd; exported env overrides config #bug #seo #framework #interactive tier:standard ~30m ref:GH#32791 logged:2026-09-28 -> [todo/tasks/t18516-brief.md] pr:#32792 completed:2026-09-28
 
@@ -1512,7 +1512,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 - [x] t18550 fix(full-loop-merge): sync canonical through the audited fast-forward and reconcile planning after it, not before #auto-dispatch #bug tier:thinking ref:GH#33013 logged:2026-09-29 -> [todo/tasks/t18550-brief.md] pr:#33022 completed:2026-09-29
 - [x] t18551 fix(planning-publication): defer not-yet-landed tasks instead of failing every main Issue Sync; repair stranded publication:pending issues #auto-dispatch #bug #framework #interactive tier:standard ~2h ref:GH#33031 logged:2026-09-29 -> [todo/tasks/t18551-brief.md] pr:#33039 completed:2026-09-29
 
-- [ ] t18552 feat(worktree-cleanup): audited local-branch cleanup so merged branches do not accumulate after worktree removal #auto-dispatch #feat tier:standard ref:GH#33030 logged:2026-09-29 -> [todo/tasks/t18552-brief.md]
+- [x] t18552 feat(worktree-cleanup): audited local-branch cleanup so merged branches do not accumulate after worktree removal #auto-dispatch #feat tier:standard ref:GH#33030 logged:2026-09-29 -> [todo/tasks/t18552-brief.md] pr:#33042 completed:2026-09-29
 - [x] t18553 fix(claim-task-id): keep depth-1 counter fetches in the isolated context so linked-worktree claims stop truncating shared repo history #auto-dispatch #bug tier:standard ref:GH#33033 logged:2026-09-29 -> [todo/tasks/t18553-brief.md] pr:#33041 completed:2026-09-29
 
 ## In Progress
