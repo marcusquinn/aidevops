@@ -24,6 +24,7 @@
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
+source "${SCRIPT_DIR}/portable-stat.sh"
 
 set -euo pipefail
 
@@ -112,8 +113,24 @@ get_gopass_entry_value() {
 }
 
 # Collect all secret values for redaction as NUL-delimited literal data.
+redaction_value_usable() {
+	local value="$1"
+	[[ ${#value} -ge 8 ]] || return 1
+	case "$value" in
+	'***' | '[redacted]' | '[REDACTED]' | 'not set' | 'none' | 'null' | 'undefined' | 'changeme') return 1 ;;
+	esac
+	return 0
+}
+
+warn_short_redaction_value() {
+	local name="$1"
+	printf 'WARN: secret %s value too short to redact safely; not masked\n' "$name" >&2
+	return 0
+}
+
 collect_secret_values() {
 	local -a values=()
+	local -a warned_names=()
 
 	if has_gopass; then
 		local secrets
@@ -124,11 +141,18 @@ collect_secret_values() {
 			local entry_val=""
 			scalar_val=$(gopass show -o "$secret_path" 2>/dev/null || true)
 			entry_val=$(get_gopass_entry_value "$secret_path")
-			if [[ -n "$scalar_val" && ${#scalar_val} -ge 4 ]]; then
+			local name="${secret_path#"${GOPASS_PREFIX}"/}"
+			if redaction_value_usable "$scalar_val"; then
 				values+=("$scalar_val")
+			elif [[ -n "$scalar_val" && ${#scalar_val} -lt 8 ]] && ! secret_env_name_emitted "$name" "${warned_names[@]}"; then
+				warn_short_redaction_value "$name"
+				warned_names+=("$name")
 			fi
-			if [[ -n "$entry_val" && ${#entry_val} -ge 4 && "$entry_val" != "$scalar_val" ]]; then
+			if [[ "$entry_val" != "$scalar_val" ]] && redaction_value_usable "$entry_val"; then
 				values+=("$entry_val")
+			elif [[ -n "$entry_val" && ${#entry_val} -lt 8 ]] && ! secret_env_name_emitted "$name" "${warned_names[@]}"; then
+				warn_short_redaction_value "$name"
+				warned_names+=("$name")
 			fi
 		done <<<"$secrets"
 	fi
@@ -144,8 +168,13 @@ collect_secret_values() {
 				val="${val%\"}"
 				val="${val#\'}"
 				val="${val%\'}"
-				if [[ -n "$val" && ${#val} -ge 4 ]]; then
+				local name="${line%%=*}"
+				name="${name##* }"
+				if redaction_value_usable "$val"; then
 					values+=("$val")
+				elif [[ -n "$val" && ${#val} -lt 8 ]] && ! secret_env_name_emitted "$name" "${warned_names[@]}"; then
+					warn_short_redaction_value "$name"
+					warned_names+=("$name")
 				fi
 			fi
 		done <"$cred_file"
@@ -174,9 +203,13 @@ redact_stream() {
 	trap 'rm -f "$values_file"' RETURN
 
 	if [[ -n "$env_file" ]]; then
+		local -a warned_names=()
 		while IFS='=' read -r -d '' _key value; do
-			if [[ -n "$value" && ${#value} -ge 4 ]]; then
+			if redaction_value_usable "$value"; then
 				printf '%s\0' "$value"
+			elif [[ -n "$value" && ${#value} -lt 8 ]] && ! secret_env_name_emitted "$_key" "${warned_names[@]}"; then
+				warn_short_redaction_value "$_key"
+				warned_names+=("$_key")
 			fi
 		done <"$env_file" >"$values_file"
 	else
@@ -666,7 +699,7 @@ cmd_inventory() (
 			return 1
 		fi
 		local permissions=""
-		permissions=$(stat -f '%Lp' "$credential_file" 2>/dev/null || stat -c '%a' "$credential_file" 2>/dev/null || true)
+		permissions=$(_file_perms "$credential_file" 2>/dev/null || true)
 		if [[ ! "$permissions" =~ ^[046]00$ ]]; then
 			print_error "Credentials inventory source must be owner-only" >&2
 			return 1
