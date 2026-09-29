@@ -1995,6 +1995,20 @@ _merge_report_canonical_sync_state() {
 	return 1
 }
 
+# Sync canonical first (audited fast-forward when eligible) so planning
+# reconcile sees the exact merged snapshot (GH#33013).
+_merge_sync_canonical_then_reconcile() {
+	local pr_number="$1"
+	local repo="$2"
+	local canonical_dir="${3:-}"
+	local canonical_synced=0
+	canonical_dir=$(_merge_repo_path_for_slug "$repo" 2>/dev/null || printf '%s' "$canonical_dir")
+	_merge_report_canonical_sync_state "$canonical_dir" "${WORKER_ISSUE_NUMBER:-$pr_number}" \
+		"${FULL_LOOP_MERGE_SHA:-}" && canonical_synced=1
+	_merge_reconcile_planning_publication "$pr_number" "$repo" "${FULL_LOOP_MERGE_SHA:-}" "$canonical_synced"
+	return 0
+}
+
 _merge_resolve_worktree_helper() {
 	if [[ -x "${SCRIPT_DIR}/worktree-helper.sh" ]]; then
 		printf '%s\n' "${SCRIPT_DIR}/worktree-helper.sh"
@@ -2383,13 +2397,7 @@ cmd_merge() {
 		return 1
 	fi
 	print_success "LIFECYCLE_STATE=MERGED merge_sha=${FULL_LOOP_MERGE_SHA}"
-	_canonical_dir=$(_merge_repo_path_for_slug "$repo" 2>/dev/null || printf '%s' "$_canonical_dir")
-	# Sync canonical first (audited fast-forward when eligible) so planning
-	# reconcile sees the exact merged snapshot (GH#33013).
-	local _canonical_synced=0
-	_merge_report_canonical_sync_state "$_canonical_dir" "${WORKER_ISSUE_NUMBER:-$pr_number}" \
-		"$FULL_LOOP_MERGE_SHA" && _canonical_synced=1
-	_merge_reconcile_planning_publication "$pr_number" "$repo" "$FULL_LOOP_MERGE_SHA" "$_canonical_synced"
+	_merge_sync_canonical_then_reconcile "$pr_number" "$repo" "$_canonical_dir"
 	if declare -F is_loop_active >/dev/null 2>&1 && is_loop_active; then
 		_full_loop_record_phase "postflight" "$pr_number" || return 1
 	fi
