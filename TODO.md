@@ -1506,6 +1506,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 - [ ] t18545 fix(pulse-merge): retry transient author permission lookups and stop manual-merge comments for them #auto-dispatch #bug tier:standard ref:GH#33000 logged:2026-09-29 -> [todo/tasks/t18545-brief.md]
 - [ ] t18546 fix(pulse-dependabot): provision the dependencies label before creating intake issues and log the gh error #auto-dispatch #bug tier:standard ref:GH#33003 logged:2026-09-29 -> [todo/tasks/t18546-brief.md]
 - [ ] t18547 fix(pulse-dispatch): re-resolve worker model after tier guard and stop tier-derived defaults bypassing model A/B #auto-dispatch #bug tier:thinking ref:GH#33004 logged:2026-09-29 -> [todo/tasks/t18547-brief.md]
+- [ ] t18548 fix(pulse): clamp stage timeouts to the cycle deadline so full cycles finish before lock force-reclaim kills them #auto-dispatch #bug tier:thinking ref:GH#33007 logged:2026-09-29 -> [todo/tasks/t18548-brief.md]
 
 ## In Progress
 
