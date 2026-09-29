@@ -117,7 +117,9 @@ assert_contains "npm publication state keeps its executable test selector" \
 assert_contains "npm verification keeps its executable test selector" \
 	"name: Verify npm publication" "$PACKAGE_WORKFLOW"
 assert_contains "npm verification uses a bounded adaptive propagation schedule" \
-	"RETRY_DELAYS=(5 5 10 10 15 15 30 30 45 45 60)" "$PACKAGE_WORKFLOW"
+	"RETRY_DELAYS=(5 5 10 10 15 15 30 30 45 45 60 60 90)" "$PACKAGE_WORKFLOW"
+assert_contains "npm metadata propagation loop matches its delay budget" \
+	"for attempt in {1..14}; do" "$PACKAGE_WORKFLOW"
 assert_contains "npm verification fails immediately on a mismatched package identity" \
 	"npm metadata does not match the verified package identity" "$PACKAGE_WORKFLOW"
 assert_contains "npm verification distinguishes registry transport failures" \
@@ -135,6 +137,19 @@ assert_contains "publication publishes the exact verified archive" \
 	'npm publish "$NPM_PACKAGE_ARCHIVE" --ignore-scripts' "$PACKAGE_WORKFLOW"
 assert_contains "npm provenance signatures are cryptographically audited" \
 	"audit signatures --json --include-attestations" "$PACKAGE_WORKFLOW"
+# shellcheck disable=SC2016 # Match literal workflow shell variables.
+assert_contains "attestation fetch retries are bounded to six attempts" \
+	'ATTESTATION_RETRY_DELAYS=(15 30 45 90 120)' "$PACKAGE_WORKFLOW"
+assert_contains "attestation fetch has a bounded attempt loop" \
+	'for attempt in {1..6}; do' "$PACKAGE_WORKFLOW"
+# shellcheck disable=SC2016 # Match literal workflow shell variables.
+assert_contains "attestation retries require an endpoint 404 for this release" \
+	'"$AUDIT_JSON" != *E404* || "$AUDIT_JSON" != *"404 Not Found"*' "$PACKAGE_WORKFLOW"
+# shellcheck disable=SC2016 # Match literal workflow shell variables.
+assert_contains "attestation retries require the exact package version endpoint" \
+	'"$AUDIT_JSON" != *"/-/npm/v1/attestations/aidevops@${RELEASE_VERSION}"*' "$PACKAGE_WORKFLOW"
+assert_order "attestation retries finish before provenance assertions" \
+	'ATTESTATION_RETRY_DELAYS=' '(.invalid | type == "array" and length == 0)' "$PACKAGE_WORKFLOW"
 assert_contains "npm provenance binds the canonical workflow path" \
 	'.github/workflows/publish-packages.yml' "$PACKAGE_WORKFLOW"
 # shellcheck disable=SC2016 # Match the literal jq variable in the workflow.
