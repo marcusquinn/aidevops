@@ -231,12 +231,7 @@ _gh_collaborator_permission_lookup() {
 	local user="$2"
 	local out_var="${3:-}"
 	local perm_url="/repos/${repo_slug}/collaborators/${user}/permission"
-	local api_response=""
-	local rc=0
-	local http_status=""
-	local line=""
-	local body=""
-	local in_body=0
+	local api_response="" rc=0 http_status="" line="" body="" in_body=0
 	local auth_route="${4:-$_AIDEVOPS_GH_COLLAB_APP_PREFERRED_ROUTE}"
 	# Keep the internal value distinct from caller-selected output names. Bash
 	# uses dynamic scope, so a local named permission_value would shadow the
