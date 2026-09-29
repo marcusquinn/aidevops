@@ -288,7 +288,7 @@ _dedup_layer4_pr_evidence() {
 	if [[ -x "$dedup_helper" ]]; then
 		dedup_helper_output=$("$dedup_helper" has-open-pr "$issue_number" "$repo_slug" "$issue_title" 2>>"$LOGFILE") || dedup_helper_rc=$?
 		if [[ "$dedup_helper_output" == *"PR_LOOKUP_RESULT=uncertain"* ]]; then
-			echo "[pulse-wrapper] Dedup: ${dedup_helper_output}" >>"$LOGFILE"
+			echo "[pulse-wrapper] Dedup: ${dedup_helper_output} issue=#${issue_number} repo=${repo_slug}" >>"$LOGFILE"
 			printf 'pr_lookup_uncertain\n'
 			return 0
 		fi
@@ -299,7 +299,7 @@ _dedup_layer4_pr_evidence() {
 				return 0
 			fi
 			if [[ -n "$dedup_helper_output" ]]; then
-				echo "[pulse-wrapper] Dedup: ${dedup_helper_output}" >>"$LOGFILE"
+				echo "[pulse-wrapper] Dedup: ${dedup_helper_output} issue=#${issue_number} repo=${repo_slug}" >>"$LOGFILE"
 			else
 				echo "[pulse-wrapper] Dedup: PR evidence already exists for #${issue_number} in ${repo_slug}" >>"$LOGFILE"
 			fi
