@@ -82,6 +82,9 @@ issue_meta=$(node -e 'process.stdout.write(JSON.stringify({
   labels: [{name:"auto-dispatch"},{name:"status:available"},{name:"tier:standard"}],
 }))')
 _DLW_DISPATCH_MODEL_TIER=standard
+_DLW_SELECTED_MODEL="anthropic/claude-sonnet-5-5"
+_dlw_assign_model_ab example/repo 15 "anthropic/claude-sonnet-5-5" "$issue_meta"
+[[ -n "$_DLW_AB_ARM" && "$_DLW_SELECTED_MODEL" == "$(jq -r '.tiers.standard.models[0]' "$_DLW_AB_ROUTING_TABLE")" ]]
 _dlw_assign_model_ab example/repo 13 "" "$issue_meta"
 [[ -n "$_DLW_AB_ARM" && -f "$_DLW_AB_ROUTING_TABLE" ]]
 assigned_arm="$_DLW_AB_ARM"
@@ -91,6 +94,12 @@ _dlw_assign_model_ab example/repo 13 "anthropic/claude-sonnet-5-5" "$issue_meta"
 _DLW_SELECTED_MODEL="explicit/model"
 _dlw_assign_model_ab example/repo 13 "explicit/model" "$issue_meta"
 [[ -z "$_DLW_AB_ARM" && "$_DLW_SELECTED_MODEL" == "explicit/model" ]]
+saved_ab_config="$AIDEVOPS_MODEL_AB_CONFIG"
+unset AIDEVOPS_MODEL_AB_CONFIG
+_DLW_SELECTED_MODEL="anthropic/claude-sonnet-5-5"
+_dlw_assign_model_ab example/repo 13 "anthropic/claude-sonnet-5-5" "$issue_meta"
+[[ -z "$_DLW_AB_ARM" && "$_DLW_SELECTED_MODEL" == "anthropic/claude-sonnet-5-5" ]]
+export AIDEVOPS_MODEL_AB_CONFIG="$saved_ab_config"
 _DLW_DISPATCH_MODEL_TIER=thinking
 _DLW_SELECTED_MODEL="openai/gpt-6-sol"
 _dlw_assign_model_ab example/repo 14 "" "$issue_meta"
