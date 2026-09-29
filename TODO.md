@@ -1486,14 +1486,14 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18522 fix(seo): GSC export token lacks webmasters scope; use documented gsc-credentials.json #bug #seo #auto-dispatch tier:standard ~45m ref:GH#32843 logged:2026-09-28 -> [todo/tasks/t18522-brief.md] pr:#32866 completed:2026-09-28
 
-- [ ] t18528 feat(seo): keywords routine refreshes GSC/Bing exports before import #feature #seo #auto-dispatch tier:standard ~1h ref:GH#32877 logged:2026-09-28 -> [todo/tasks/t18528-brief.md]
+- [x] t18528 feat(seo): keywords routine refreshes GSC/Bing exports before import #feature #seo #auto-dispatch tier:standard ~1h ref:GH#32877 logged:2026-09-28 -> [todo/tasks/t18528-brief.md] pr:#32937 completed:2026-09-29
 
 - [x] t18529 fix(recovery): opt-in CWD inspector reads same-user setuid-root helpers; advisory names unreadable-processes diagnostic #bug #framework #recovery #interactive #auto-dispatch tier:standard ~1h ref:GH#32871 logged:2026-09-28 -> [todo/tasks/t18529-brief.md] pr:#32890 completed:2026-09-28
 
 - [x] t18530 fix(pulse): classify Actions billing-blocked checks as capability failures in CI repair #bug #framework #pulse #interactive #auto-dispatch tier:standard ~1h ref:GH#32869 logged:2026-09-28 -> [todo/tasks/t18530-brief.md] pr:#32891 completed:2026-09-28
 - [x] t18531 fix(routing): capability escalation re-runs the identical Sol medium route when standard and thinking share a model #auto-dispatch #bug ref:GH#32929 pr:#32931 logged:2026-09-29 completed:2026-09-29
 - [x] t18532 fix(compaction): cap compaction effort and route to first fitting simple-tier candidate #auto-dispatch #bug ref:GH#32934 pr:#32935 logged:2026-09-29 completed:2026-09-29
-- [ ] t18534 fix(pulse): restore retry context lost to torn objective-evidence lines; add sanitised failure signals #auto-dispatch #bug ref:GH#32938 logged:2026-09-29
+- [x] t18534 fix(pulse): restore retry context lost to torn objective-evidence lines; add sanitised failure signals #auto-dispatch #bug ref:GH#32938 logged:2026-09-29 pr:#32942 completed:2026-09-29
 
 ## In Progress
 
