@@ -481,6 +481,11 @@ _preflight_post_label_refill() {
 # stuck states. Trusted NMR reconciliation runs before the refill instead.
 #######################################
 _preflight_ownership_reconcile() {
+	local outer_budget="${1:-${PRE_RUN_STAGE_TIMEOUT:-600}}"
+	[[ "$outer_budget" =~ ^[1-9][0-9]*$ ]] || outer_budget=600
+	local ownership_start=$SECONDS reserve=8 reconcile_budget remaining
+	# Leave room for the outer wrapper's two-second watchdog cadence and cleanup.
+	[[ "$outer_budget" -gt 16 ]] || reserve=2
 	# GH#21470: per-substage timing for the unwrapped prefetch_contribution_watch
 	# call. The three run_stage_with_timeout calls below are already individually
 	# timed by that wrapper; prefetch_contribution_watch was the blind spot.
@@ -489,15 +494,27 @@ _preflight_ownership_reconcile() {
 	prefetch_contribution_watch
 	_log_substage_timing "substage:ownership_reconcile/prefetch_contribution_watch" "$_ss0" 0
 
-	# Ensure active labels reflect ownership to prevent multi-worker overlap.
-	run_stage_with_timeout "normalize_active_issue_assignments" "$PRE_RUN_STAGE_TIMEOUT" normalize_active_issue_assignments || true
-
 	# t2776: single-pass reconcile — iterates the issue list ONCE per repo and
 	# applies all five reconcile checks in sub-stage order (close-merged-PR,
 	# stale-done, open-with-merged-PR, parent-task, labelless backfill).
 	# Replaces the five sequential stage calls that each had their own per-repo
 	# fetch loop; now 5N → N iterations per cycle.
-	run_stage_with_timeout "reconcile_issues_single_pass" "$PRE_RUN_STAGE_TIMEOUT" reconcile_issues_single_pass || true
+	# Run the shorter, higher-value pass first. The 360s internal budget gets a
+	# watchdog allowance; normalization receives only the time actually left.
+	remaining=$((outer_budget - (SECONDS - ownership_start) - reserve))
+	if [[ "$remaining" -gt 0 ]]; then
+		reconcile_budget=$remaining
+		[[ "$reconcile_budget" -le 380 ]] || reconcile_budget=380
+		run_stage_with_timeout "reconcile_issues_single_pass" "$reconcile_budget" reconcile_issues_single_pass || true
+	fi
+
+	# Ensure active labels reflect ownership to prevent multi-worker overlap.
+	remaining=$((outer_budget - (SECONDS - ownership_start) - reserve))
+	if [[ "$remaining" -gt 0 ]]; then
+		run_stage_with_timeout "normalize_active_issue_assignments" "$remaining" normalize_active_issue_assignments || true
+	else
+		echo "[pulse-wrapper] Assignment normalization deferred: ownership budget exhausted" >>"$LOGFILE"
+	fi
 
 	return 0
 }

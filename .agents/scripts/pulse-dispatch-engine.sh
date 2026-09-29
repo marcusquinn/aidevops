@@ -1103,7 +1103,7 @@ _pulse_run_post_dispatch_housekeeping_stages() {
 	_pulse_run_optional_stage_with_timeout "dedup_cleanup" "$stage_timeout" run_simplification_dedup_cleanup || true
 	_pulse_run_optional_stage_with_timeout "fast_fail_prune_expired" "$stage_timeout" fast_fail_prune_expired || true
 	run_stage_with_timeout "preflight_ownership_reconcile" "$stage_timeout" \
-		_preflight_ownership_reconcile || true
+		_preflight_ownership_reconcile "$stage_timeout" || true
 	echo "[pulse-wrapper] Async post-dispatch housekeeping: complete" >>"$LOGFILE"
 
 	_pulse_release_post_dispatch_housekeeping_lock "$lockdir"
