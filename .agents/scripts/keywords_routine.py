@@ -9,6 +9,7 @@ the hub (or local store) copy, which maintainers merge back with `sync`.
 
 from __future__ import annotations
 
+import asyncio
 import datetime as _dt
 import json
 import os
@@ -62,6 +63,54 @@ def _context(root: Path) -> tuple[str, dict, dict, Path]:
     return prop, front, registry, pdir
 
 
+EXPORT_DAYS = 28
+EXPORT_TIMEOUT = 300
+
+
+async def _export_status(helper: Path, source: str, domain: str) -> int:
+    """Bound the exporter without retaining its potentially sensitive output."""
+    process = await asyncio.create_subprocess_exec(
+        str(helper), source, domain, "--days", str(EXPORT_DAYS),
+        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+    )
+    try:
+        return await asyncio.wait_for(process.wait(), EXPORT_TIMEOUT)
+    except TimeoutError:
+        process.kill()
+        await process.wait()
+        raise
+
+
+def _refresh_one(helper: Path, source: str, domain: str) -> str:
+    """Run one exporter; drop any partial file it left behind on failure."""
+    folder = SEO_DATA / domain
+    before = ({path: path.stat().st_mtime_ns for path in folder.glob(f"{source}-*.toon")}
+              if folder.is_dir() else {})
+    try:
+        code, reason = asyncio.run(_export_status(helper, source, domain)), "no data or credentials"
+    except TimeoutError:
+        code, reason = 1, "timeout"
+    except OSError:
+        code, reason = 1, "helper unavailable"
+    changed = ({path for path in folder.glob(f"{source}-*.toon")
+                if path.stat().st_mtime_ns != before.get(path)} if folder.is_dir() else set())
+    if code == 0 and changed:
+        return "refreshed"
+    if code != 0:
+        for path in changed:
+            path.unlink(missing_ok=True)
+    return f"skipped:{reason}"
+
+
+def _refresh_exports(domains: list[str]) -> dict[str, str]:
+    """Export fresh GSC/Bing data per domain; never raises, never prints credentials."""
+    helper = Path(__file__).parent / "seo-export-helper.sh"
+    if os.environ.get("AIDEVOPS_KEYWORDS_OFFLINE") or not helper.is_file():
+        return {}
+    return {f"{source}:{domain}": _refresh_one(helper, source, domain)
+            for domain in domains for source in ("gsc", "bing")}
+
+
 def _latest_exports(domains: list[str], since: float) -> list[Path]:
     files = []
     for domain in domains:
@@ -72,9 +121,9 @@ def _latest_exports(domains: list[str], since: float) -> list[Path]:
     return files
 
 
-def _free_sources(root: Path, prop: str, front: dict, registry: dict) -> dict[str, int]:
+def _free_sources(root: Path, prop: str, front: dict, registry: dict) -> dict[str, int | str]:
     surfaces = strategy.as_list(front.get("surfaces"))
-    counts: dict[str, int] = {}
+    counts: dict[str, int | str] = {}
     slug = detect.github_slug(root)
     if "github" in surfaces and slug and shutil.which("gh"):
         rows = track.github(registry, slug, surfaces)
@@ -87,7 +136,9 @@ def _free_sources(root: Path, prop: str, front: dict, registry: dict) -> dict[st
         store.write_observations(prop, rows, "npm")
     marker = hub.store_dir() / "state" / f"{prop}.exports"
     since = marker.stat().st_mtime if marker.is_file() else 0.0
-    for path in _latest_exports(strategy.as_list(front.get("domains")), since):
+    domains = strategy.as_list(front.get("domains"))
+    counts.update(_refresh_exports(domains))
+    for path in _latest_exports(domains, since):
         matched, _unmatched = track.from_export(registry, path)
         counts[path.name] = len(matched)
         store.write_observations(prop, matched, path.name.split("-", 1)[0])

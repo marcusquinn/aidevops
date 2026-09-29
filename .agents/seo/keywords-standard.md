@@ -126,7 +126,7 @@ Clustering uses SERP overlap first: `aidevops keywords cluster --serps serps.jso
 
 `rollup` writes last/best position, trend and ranking URL to targets (from the target's own site platform: `website`→Google, `github`→GitHub search, `npm`→npm; else Google, Bing, GitHub, npm order) and mention/citation rates to queries; `report` lists striking distance, movers and spend. Verify current provider pricing before raising budgets.
 
-**Routines** (`aidevops keywords routines` prints lines for `TODO.md` `## Routines`): weekly free tracking, monthly budgeted paid tracking plus AI capture import, and a disabled-by-default quarterly review. Routines write only to the hub/local store, never to repository checkouts; maintainers pull changes into a worktree with `sync`.
+**Routines** (`aidevops keywords routines` prints lines for `TODO.md` `## Routines`): weekly free tracking, monthly budgeted paid tracking plus AI capture import, and a disabled-by-default quarterly review. `routine-run` first refreshes GSC and Bing exports (28 days) for each property domain when credentials exist, then imports the newest export; missing credentials or no data are reported as `skipped:<reason>` in the summary, not errors (`AIDEVOPS_KEYWORDS_OFFLINE=1` disables refresh). Routines write only to the hub/local store, never to repository checkouts; maintainers pull changes into a worktree with `sync`.
 
 ## Setup and backfill
 
