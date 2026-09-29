@@ -66,7 +66,7 @@ git() {
 	case "$GIT_MODE" in
 	nonzero) return 2 ;;
 	empty) return 0 ;;
-	valid) printf '/repo/main\n/repo/linked\n' ;;
+	valid) printf 'worktree /repo/main\nHEAD abc\nbranch refs/heads/main\n\nworktree /repo/linked\nHEAD def\ndetached\n\nworktree /tmp/tmp.gone\nHEAD 123\ndetached\nprunable gitdir file points to non-existent location\n\n' ;;
 	*) return 3 ;;
 	esac
 }
@@ -184,9 +184,9 @@ test_production_count_probe_validation() {
 	GIT_MODE="valid"
 	count=$(_production_dispatch_registered_worktree_count "$TEST_ROOT") || count="failed"
 	if [[ "$count" == "2" ]]; then
-		print_result "production counter counts verified Git inventory" 0
+		print_result "production counter counts live Git inventory, excluding prunable entries" 0
 	else
-		print_result "production counter counts verified Git inventory" 1
+		print_result "production counter counts live Git inventory, excluding prunable entries" 1
 	fi
 	GIT_MODE="empty"
 	if _production_dispatch_registered_worktree_count "$TEST_ROOT" >/dev/null; then

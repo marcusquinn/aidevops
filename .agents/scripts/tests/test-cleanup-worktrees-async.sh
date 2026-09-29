@@ -597,11 +597,26 @@ test_missing_metadata_prune_runs_after_success() {
 
 	MOCK_CLEANUP_EXIT=0 MOCK_PRUNABLE_TARGET="$prunable_target" run_helper_in_isolation || true
 	if [[ -f "$metadata_prune_ran" ]] && grep -q "METADATA_PRUNE_RAN" "$metadata_prune_ran" 2>/dev/null &&
-		grep -q 'pruned missing worktree metadata from current repo' "$cleanup_log" 2>/dev/null; then
+		grep -q "pruned missing worktree metadata repo=${TEST_DIR}/repo" "$cleanup_log" 2>/dev/null; then
 		print_result "metadata-prune: async cleanup prunes stale gitdir entries after success" 0
 	else
 		print_result "metadata-prune: async cleanup prunes stale gitdir entries after success" 1 \
 			"metadata prune marker or log entry missing"
+	fi
+	return 0
+}
+
+# GH#32913: the API-free prune must not depend on the GitHub-bound cleanup.
+test_missing_metadata_prune_runs_when_cleanup_skipped() {
+	local metadata_prune_ran="${TEST_DIR}/metadata-prune-ran"
+	rm -f "$metadata_prune_ran"
+
+	MOCK_CLEANUP_SKIPPED=1 MOCK_PRUNABLE_TARGET="${TEST_DIR}/missing-worktree" run_helper_in_isolation || true
+	if grep -q "METADATA_PRUNE_RAN" "$metadata_prune_ran" 2>/dev/null; then
+		print_result "metadata-prune: runs even when GitHub-bound cleanup is skipped" 0
+	else
+		print_result "metadata-prune: runs even when GitHub-bound cleanup is skipped" 1 \
+			"metadata prune did not run on a safety-skipped cleanup cycle"
 	fi
 	return 0
 }
@@ -681,6 +696,10 @@ main() {
 	teardown
 	setup
 	test_missing_metadata_prune_runs_after_success
+
+	teardown
+	setup
+	test_missing_metadata_prune_runs_when_cleanup_skipped
 
 	echo ""
 	echo "Results: ${TESTS_PASSED}/${TESTS_RUN} passed, ${TESTS_FAILED} failed"

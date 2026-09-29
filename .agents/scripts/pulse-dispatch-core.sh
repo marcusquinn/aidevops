@@ -138,13 +138,27 @@ _dispatch_has_interactive_hold() {
 #   1 - blocked (reason logged to LOGFILE by the failing gate)
 #   3 - expected benign dispatch block with structured DISPATCH_BLOCK_REASON
 #######################################
+# Count live registered worktrees. Git marks entries whose directory vanished
+# outside aidevops (for example a reboot wiping /tmp) as `prunable`; they hold
+# no disk and must not consume dispatch capacity (GH#32913). Locked entries are
+# never marked prunable, so they remain counted and the gate stays fail-closed.
 _dispatch_registered_worktree_count() {
 	local repo_path="$1"
 	local worktree_list=""
+	local line=""
+	local total=0
+	local prunable=0
 	local count=""
-	worktree_list=$(git -C "$repo_path" worktree list 2>/dev/null) || return 1
+	worktree_list=$(git -C "$repo_path" worktree list --porcelain 2>/dev/null) || return 1
 	[[ -n "$worktree_list" ]] || return 1
-	count=$(printf '%s\n' "$worktree_list" | wc -l | tr -d ' ')
+	while IFS= read -r line; do
+		case "$line" in
+		"worktree "*) total=$((total + 1)) ;;
+		prunable | "prunable "*) prunable=$((prunable + 1)) ;;
+		esac
+	done <<<"$worktree_list"
+	[[ "$total" -ge 1 && "$prunable" -lt "$total" ]] || return 1
+	count=$((total - prunable))
 	[[ "$count" =~ $_PULSE_DISPATCH_UNSIGNED_INTEGER_PATTERN ]] || return 1
 	printf '%s\n' "$count"
 	return 0
@@ -184,7 +198,7 @@ _dispatch_cleanup_worktree_capacity() {
 		return 1
 	fi
 
-	echo "[dispatch_with_dedup] Worktree count ${before_count} >= cap ${max_count} for #${issue_number} in ${repo_slug}; attempting guarded cleanup (timeout ${cleanup_timeout}s)" >>"$LOGFILE"
+	echo "[dispatch_with_dedup] Live worktree count ${before_count} >= cap ${max_count} for #${issue_number} in ${repo_slug}; attempting guarded cleanup (timeout ${cleanup_timeout}s)" >>"$LOGFILE"
 	run_stage_with_timeout "dispatch_worktree_capacity_cleanup" "$cleanup_timeout" \
 		_dispatch_run_guarded_worktree_cleanup "$repo_path" "$helper" || cleanup_rc=$?
 	if ! after_count=$(_dispatch_registered_worktree_count "$repo_path"); then
