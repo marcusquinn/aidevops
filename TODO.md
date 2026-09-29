@@ -1494,7 +1494,9 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 - [x] t18531 fix(routing): capability escalation re-runs the identical Sol medium route when standard and thinking share a model #auto-dispatch #bug ref:GH#32929 pr:#32931 logged:2026-09-29 completed:2026-09-29
 - [x] t18532 fix(compaction): cap compaction effort and route to first fitting simple-tier candidate #auto-dispatch #bug ref:GH#32934 pr:#32935 logged:2026-09-29 completed:2026-09-29
 - [x] t18534 fix(pulse): restore retry context lost to torn objective-evidence lines; add sanitised failure signals #auto-dispatch #bug ref:GH#32938 pr:#32942 logged:2026-09-29 completed:2026-09-29
-- [ ] t18535 fix(command-policy): resolve default git remote for bare push/fetch/pull; classify pushurl and --multiple remotes #auto-dispatch #bug ref:GH#32943 logged:2026-09-29
+- [x] t18535 fix(command-policy): resolve default git remote for bare push/fetch/pull; classify pushurl and --multiple remotes #auto-dispatch #bug ref:GH#32943 pr:#32947 logged:2026-09-29 completed:2026-09-29
+- [x] t18536 fix(worktree): log dependency provisioning reason codes; skip package dirs without a supported lockfile #auto-dispatch #bug ref:GH#32950 pr:#32952 logged:2026-09-29 completed:2026-09-29
+- [ ] t18537 fix(plugin): retry policy helper once on ETIMEDOUT under host load; label second timeout as transient #auto-dispatch #bug ref:GH#32955 logged:2026-09-29
 
 ## In Progress
 
