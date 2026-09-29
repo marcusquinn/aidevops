@@ -164,7 +164,27 @@ _field_line() {
 	local section="${_args[0]}"
 	local field="${_args[1]}"
 
-	printf '%s\n' "$section" | grep -iF -m 1 "**${field}:**" || true
+	printf '%s\n' "$section" | awk -v field="$field" '
+		BEGIN { label = tolower("**" field ":**") }
+		!found {
+			if (index(tolower($0), label)) {
+				found = 1
+				base = match($0, /[^ \t]/) - 1
+				value = $0
+			}
+			next
+		}
+		{
+			if ($0 ~ /^[[:space:]]*$/ || $0 ~ /^[[:space:]]*#/ || match($0, /[^ \t]/) - 1 <= base) {
+				exit
+			}
+			continuation = $0
+			sub(/^[ \t]+/, "", continuation)
+			sub(/[ \t]+$/, "", continuation)
+			value = value " " continuation
+		}
+		END { if (found) print value }
+	'
 	return 0
 }
 
