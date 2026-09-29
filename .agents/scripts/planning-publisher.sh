@@ -536,6 +536,7 @@ _planning_publish_build_index() {
 				merge_rc=0
 				_planning_git -C "$repo_path" merge-file -p --diff3 "$ours_file" "$base_file" "$theirs_file" >"$merged_file" || merge_rc=$?
 				if [[ "$merge_rc" -ne 0 ]]; then
+					[[ "$merge_rc" -eq 1 ]] || return 1
 					_planning_publish_log_retryable_conflict "$PLANNING_PUBLICATION_ID"
 					return 2
 				fi
@@ -921,7 +922,7 @@ planning_publish() {
 	local paths="${5:-}"
 	local external_source="${6:-}"
 	local temp_dir="" snapshot_file="" resolved_file="" index_file="" parent_sha="" tree_sha="" candidate_sha=""
-	local publication_id="" handoff_id="" attempt=0 push_rc=0 latest_sha="" expected_sha="" target_sha="" previous_target_sha=""
+	local publication_id="" handoff_id="" attempt=0 push_rc=0 latest_sha="" expected_sha="" target_sha="" previous_target_sha="" build_rc=0
 	local parent_resolution="" resolution_tail="" base_sha="${AIDEVOPS_PLANNING_BASE_SHA:-}" guard_rc=0 resolve_rc=0 noop_rc=1 source_head=""
 	[[ -n "$branch_name" ]] || branch_name=$(_planning_git -C "$repo_path" symbolic-ref --short HEAD 2>/dev/null) || return 1
 	_planning_publish_reset_result
@@ -952,10 +953,12 @@ planning_publish() {
 		expected_sha="${resolution_tail%%|*}"
 		target_sha="${resolution_tail#*|}"
 		previous_target_sha="$target_sha"
-		_planning_publish_build_index "$repo_path" "$latest_sha" "$snapshot_file" "$index_file" "$resolved_file" || {
+		build_rc=0
+		_planning_publish_build_index "$repo_path" "$latest_sha" "$snapshot_file" "$index_file" "$resolved_file" || build_rc=$?
+		if [[ "$build_rc" -ne 0 ]]; then
 			rm -rf "$temp_dir"
-			return 2
-		}
+			return "$build_rc"
+		fi
 		publication_id=$(_planning_git -C "$repo_path" hash-object "$resolved_file") || return 1
 		PLANNING_PUBLICATION_ID="$publication_id"
 		_planning_publish_verify_index "$repo_path" "$latest_sha" "$resolved_file" "$index_file" || {
