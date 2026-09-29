@@ -270,7 +270,8 @@ assert_routine_comment_rest_block_contract() {
 assert_label_maintenance_rest_block_contract() {
 	local label="$1"
 	local expected_events="gate:deferrable:label_maintenance_consolidation_reevaluate;reevaluate;gate:deferrable:label_maintenance_consolidation_backfill;"
-	local actual_events=""
+	local actual_events="" test_root=""
+	test_root=$(mktemp -d "${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}/pulse-label-order-XXXXXX") || return 1
 	TESTS_RUN=$((TESTS_RUN + 1))
 	actual_events=$(
 		(
@@ -279,6 +280,7 @@ assert_label_maintenance_rest_block_contract() {
 			source "$PREFLIGHT_LIB"
 			REST_EVENTS=""
 			LOGFILE="/dev/null"
+			AIDEVOPS_LABEL_MAINTENANCE_STATE_FILE="$test_root/epochs"
 
 			pulse_rest_core_priority_allows_next() {
 				local priority="$1"
@@ -309,6 +311,7 @@ assert_label_maintenance_rest_block_contract() {
 			printf '%s\n' "$REST_EVENTS"
 		)
 	)
+	rm -rf "$test_root"
 	if [[ "$actual_events" == "$expected_events" ]]; then
 		echo "${TEST_GREEN}PASS${TEST_NC}: $label"
 	else
@@ -317,6 +320,69 @@ assert_label_maintenance_rest_block_contract() {
 		echo "  expected events: $expected_events"
 		echo "  actual events:   ${actual_events:-none}"
 	fi
+	return 0
+}
+
+assert_label_maintenance_stalest_contract() {
+	local label="$1" test_root="" actual_events="" next_order="" fallback_order="" corrupt_order=""
+	local expected_events="gate:deferrable:label_maintenance_simplification_reevaluate;simplification;gate:deferrable:label_maintenance_consolidation_reevaluate;"
+	test_root=$(mktemp -d "${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}/pulse-label-order-XXXXXX") || return 1
+	printf 'consolidation 200\nbackfill 300\nsimplification 1\n' >"$test_root/epochs"
+	TESTS_RUN=$((TESTS_RUN + 1))
+	actual_events=$(
+		(
+			unset _PULSE_DISPATCH_PREFLIGHT_LIB_LOADED
+			# shellcheck source=../pulse-dispatch-preflight-lib.sh
+			source "$PREFLIGHT_LIB"
+			AIDEVOPS_LABEL_MAINTENANCE_STATE_FILE="$test_root/epochs"
+			LOGFILE="/dev/null" REST_EVENTS=""
+			pulse_rest_core_priority_allows_next() {
+				local priority="$1" context="$2"
+				REST_EVENTS="${REST_EVENTS}gate:${priority}:${context};"
+				[[ "$context" != "label_maintenance_consolidation_reevaluate" ]]
+			}
+			_reevaluate_consolidation_labels() { REST_EVENTS="${REST_EVENTS}reevaluate;"; return 0; }
+			_backfill_stale_consolidation_labels() { REST_EVENTS="${REST_EVENTS}backfill;"; return 0; }
+			_reevaluate_simplification_labels() { REST_EVENTS="${REST_EVENTS}simplification;"; return 0; }
+			_log_substage_timing() { return 0; }
+			_preflight_label_maintenance
+			printf '%s\n' "$REST_EVENTS"
+		)
+	)
+	next_order=$(
+		unset _PULSE_DISPATCH_PREFLIGHT_LIB_LOADED
+		# shellcheck source=../pulse-dispatch-preflight-lib.sh
+		source "$PREFLIGHT_LIB"
+		AIDEVOPS_LABEL_MAINTENANCE_STATE_FILE="$test_root/epochs"
+		_preflight_label_maintenance_order
+	)
+	fallback_order=$(
+		unset _PULSE_DISPATCH_PREFLIGHT_LIB_LOADED
+		# shellcheck source=../pulse-dispatch-preflight-lib.sh
+		source "$PREFLIGHT_LIB"
+		AIDEVOPS_LABEL_MAINTENANCE_STATE_FILE="$test_root/missing"
+		_preflight_label_maintenance_order
+	)
+	printf 'corrupt content\n' >"$test_root/corrupt"
+	corrupt_order=$(
+		unset _PULSE_DISPATCH_PREFLIGHT_LIB_LOADED
+		# shellcheck source=../pulse-dispatch-preflight-lib.sh
+		source "$PREFLIGHT_LIB"
+		AIDEVOPS_LABEL_MAINTENANCE_STATE_FILE="$test_root/corrupt"
+		_preflight_label_maintenance_order
+	)
+	if [[ "$actual_events" == "$expected_events" ]] &&
+		grep -qE '^simplification [0-9]+$' "$test_root/epochs" &&
+		grep -q '^consolidation 200$' "$test_root/epochs" &&
+		[[ "$next_order" == $'consolidation\nbackfill\nsimplification' ]] &&
+		[[ "$fallback_order" == $'consolidation\nbackfill\nsimplification' ]] &&
+		[[ "$corrupt_order" == "$fallback_order" ]]; then
+		echo "${TEST_GREEN}PASS${TEST_NC}: $label"
+	else
+		TESTS_FAILED=$((TESTS_FAILED + 1))
+		echo "${TEST_RED}FAIL${TEST_NC}: $label (${actual_events:-none})"
+	fi
+	rm -rf "$test_root"
 	return 0
 }
 
@@ -569,9 +635,9 @@ assert_grep \
 	'^_preflight_label_maintenance\(\)' \
 	"$PREFLIGHT_LIB"
 assert_match_count \
-	"9c2: every label-maintenance substage has a fresh REST launch gate" \
-	'^[[:space:]]*_preflight_rest_core_allows_next "label_maintenance_' \
-	3 \
+	"9c2: every label-maintenance iteration checks REST before the substage" \
+	'^[[:space:]]*_preflight_rest_core_allows_next "\$context" \|\| return 0' \
+	1 \
 	"$PREFLIGHT_LIB"
 assert_grep \
 	"9d: post-label refill has a dedicated helper" \
@@ -632,6 +698,8 @@ assert_routine_comment_rest_block_contract \
 	"9l2: blocked REST evidence suppresses the routine-comment API scan"
 assert_label_maintenance_rest_block_contract \
 	"9l3: blocked REST evidence stops label maintenance before the next API substage"
+assert_label_maintenance_stalest_contract \
+	"9l4: stalest simplification runs first and a refused REST gate stops the stage"
 assert_label_maintenance_cycle_budget_contract
 assert_order \
 	"9m: routine-comment REST gate precedes its API scan" \
