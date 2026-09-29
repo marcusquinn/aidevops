@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.37.26] - 2026-09-29
+
+### Changed
+
+- cap compaction effort; route compaction to first fitting simple candidate
+
+### Fixed
+
+- re-validate auth-error accounts once cooldown expires
+- t18531: capability escalation skips identical model routes
+
 ## [3.37.25] - 2026-09-29
 
 ### Changed
