@@ -1498,6 +1498,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 - [x] t18536 fix(worktree): log dependency provisioning reason codes; skip package dirs without a supported lockfile #auto-dispatch #bug ref:GH#32950 pr:#32952 logged:2026-09-29 completed:2026-09-29
 - [ ] t18537 fix(plugin): retry policy helper once on ETIMEDOUT under host load; label second timeout as transient #auto-dispatch #bug ref:GH#32955 logged:2026-09-29
 - [ ] t18538 feat(pulse): auto-refresh and alert when capacity is zero only from auth-error OAuth accounts #enhancement #framework #pulse #interactive #auto-dispatch tier:standard ~2h ref:GH#32960 logged:2026-09-29 -> [todo/tasks/t18538-brief.md]
+- [ ] t18539 fix(telemetry): keep tier/model on attempt-matched outcomes; window tier-report with model@variant and first-dispatch pass rates #auto-dispatch #bug ref:GH#32964 logged:2026-09-29
 
 ## In Progress
 

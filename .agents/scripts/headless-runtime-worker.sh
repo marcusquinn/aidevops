@@ -2009,6 +2009,10 @@ _hrw_record_terminal_outcome() {
 		--attempt-id "${AIDEVOPS_ATTEMPT_ID:-}" \
 		--issue "${WORKER_ISSUE_NUMBER:-}" \
 		--repo "${DISPATCH_REPO_SLUG:-${WORKER_REPO_SLUG:-}}" \
+		--tier "${AIDEVOPS_DISPATCH_TIER:-}" \
+		--model "${AIDEVOPS_ROUTING_MODEL:-}" \
+		--variant "${AIDEVOPS_ROUTING_VARIANT:-}" \
+		--routing-attempts "${AIDEVOPS_ROUTING_ATTEMPT:-}" \
 		--outcome "$outcome" \
 		--reason "$reason" 2>/dev/null || true
 	return 0

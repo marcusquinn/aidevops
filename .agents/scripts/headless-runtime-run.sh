@@ -542,6 +542,7 @@ _cmd_run_attempt_loop() {
 		export AIDEVOPS_ROUTING_REASON="$routing_reason"
 		export AIDEVOPS_ROUTING_ESCALATED="$routing_escalated"
 		export AIDEVOPS_ROUTING_VARIANT="$variant_override"
+		export AIDEVOPS_ROUTING_MODEL="$selected_model"
 		_run_failure_reason="" _run_should_retry=0 _run_result_label="failed" _run_activity_detected="0"
 		local attempt_exit=0
 		if _execute_run_attempt "$role" "$session_key" "$work_dir" "$title" "$prompt" \
