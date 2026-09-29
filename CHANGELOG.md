@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.37.27] - 2026-09-29
+
+### Added
+
+- refresh GSC and Bing exports before routine import (#32937)
+
+### Fixed
+
+- prune vanished worktree metadata across managed repos; count only live worktrees at dispatch cap
+- retire native Sonnet 5.5 catalog bridge (#32944)
+- keep orphan-recovery PRs from closing incomplete issues (#32940)
+- t18534: restore retry context lost to torn objective-evidence lines; add sanitised failure signals
+
 ## [3.37.26] - 2026-09-29
 
 ### Changed
