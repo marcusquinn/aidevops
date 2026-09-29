@@ -1956,109 +1956,11 @@ ENRICHMENT_MAX_PER_CYCLE="${ENRICHMENT_MAX_PER_CYCLE:-2}"
 # sync_todo_refs_for_repo and _pulse_is_sourced provided by
 # pulse-wrapper-cycle.sh (GH#21311 / t2936-child).
 
-# Policy-compatible command router for supervisor prompts. OpenCode intentionally
-# rejects source-and-function compound commands, so expose only the bounded
-# wrapper operations the pulse workflows need while preserving their existing
-# authority, capacity, sandbox, and dedup implementations.
-_pulse_wrapper_command_usage() {
-	printf '%s\n' 'usage: pulse-wrapper.sh --command <capacity|list-candidates|dispatch|approve-pr|relabel-needs-info|dispatch-foss|repo-cap|count-debt|create-debt-worktree|sync-todo> [args...]' >&2
-	return 2
-}
-
-_pulse_wrapper_run_command() {
-	local command_name="${1:-}"
-	[[ -n "$command_name" ]] || {
-		_pulse_wrapper_command_usage
-		return 2
-	}
-	shift
-
-	case "$command_name" in
-	capacity)
-		[[ "$#" -eq 0 ]] || {
-			_pulse_wrapper_command_usage
-			return 2
-		}
-		local max_workers="" active_workers="" available=""
-		max_workers=$(get_max_workers_target)
-		active_workers=$(count_active_workers)
-		[[ "$max_workers" =~ ^[0-9]+$ ]] || max_workers=1
-		[[ "$active_workers" =~ ^[0-9]+$ ]] || active_workers=0
-		available=$((max_workers - active_workers))
-		[[ "$available" -ge 0 ]] || available=0
-		printf '%s|%s|%s\n' "$max_workers" "$active_workers" "$available"
-		;;
-	list-candidates)
-		[[ "$#" -ge 1 && "$#" -le 2 && -n "${1:-}" && "${2:-100}" =~ ^[0-9]+$ ]] || {
-			_pulse_wrapper_command_usage
-			return 2
-		}
-		list_dispatchable_issue_candidates "$1" "${2:-100}"
-		;;
-	dispatch)
-		[[ "$#" -eq 7 ]] || {
-			_pulse_wrapper_command_usage
-			return 2
-		}
-		dispatch_with_dedup "$@"
-		;;
-	approve-pr)
-		[[ "$#" -eq 3 ]] || {
-			_pulse_wrapper_command_usage
-			return 2
-		}
-		approve_collaborator_pr "$@"
-		;;
-	relabel-needs-info)
-		[[ "$#" -le 1 ]] || {
-			_pulse_wrapper_command_usage
-			return 2
-		}
-		relabel_needs_info_replies "$@"
-		;;
-	dispatch-foss)
-		[[ "$#" -ge 1 && "$#" -le 2 && "${1:-}" =~ ^[0-9]+$ ]] || {
-			_pulse_wrapper_command_usage
-			return 2
-		}
-		dispatch_foss_workers "$@"
-		;;
-	repo-cap)
-		[[ "$#" -eq 1 ]] || {
-			_pulse_wrapper_command_usage
-			return 2
-		}
-		check_repo_worker_cap "$1"
-		;;
-	count-debt)
-		[[ "$#" -eq 2 ]] || {
-			_pulse_wrapper_command_usage
-			return 2
-		}
-		count_debt_workers "$@"
-		;;
-	create-debt-worktree)
-		[[ "$#" -eq 3 ]] || {
-			_pulse_wrapper_command_usage
-			return 2
-		}
-		create_quality_debt_worktree "$@"
-		;;
-	sync-todo)
-		[[ "$#" -eq 2 ]] || {
-			_pulse_wrapper_command_usage
-			return 2
-		}
-		sync_todo_refs_for_repo "$@"
-		;;
-	*)
-		_pulse_wrapper_command_usage
-		return 2
-		;;
-	esac
-
-	return 0
-}
+# Policy-compatible command router for supervisor prompts. Keep this source
+# before the inline entrypoint gate: a sourced wrapper exposes the same functions.
+# shellcheck source=./pulse-wrapper-commands.sh
+# shellcheck disable=SC1091  # sibling library resolved at runtime via $SCRIPT_DIR
+source "${SCRIPT_DIR}/pulse-wrapper-commands.sh"
 
 # Only run main when executed directly, not when sourced.
 # The pulse agent sources this file to access helper functions
