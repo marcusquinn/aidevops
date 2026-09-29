@@ -697,7 +697,8 @@ _dispatch_rest_core_requires_serial() {
 #
 # Returns:
 #   0 — budget is sufficient, unavailable, or checker is not loaded
-#   1 — budget is below threshold; caller should stop the loop
+#   1 — cycle wall-clock budget is below the per-candidate floor (logged here)
+#   2 — GraphQL budget is below threshold; caller should stop the loop
 #######################################
 _dispatch_graphql_budget_allows_next() {
 	# Both serial and parallel candidate loops call this before any candidate
@@ -706,7 +707,7 @@ _dispatch_graphql_budget_allows_next() {
 	[[ "$floor_seconds" =~ ^[1-9][0-9]*$ ]] || floor_seconds=600
 	if declare -F _pulse_cycle_remaining_seconds >/dev/null 2>&1 && cycle_remaining=$(_pulse_cycle_remaining_seconds "${AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S:-90}"); then
 		if [[ "$cycle_remaining" -lt "$floor_seconds" ]]; then
-			echo "[pulse-wrapper] Dispatch_max: cycle budget exhausted" >>"$LOGFILE"
+			echo "[pulse-wrapper] Dispatch_max stopping early: cycle wall-clock budget below per-candidate floor (remaining=${cycle_remaining}s floor=${floor_seconds}s)" >>"$LOGFILE"
 			return 1
 		fi
 	fi
@@ -719,7 +720,7 @@ _dispatch_graphql_budget_allows_next() {
 	if [[ "$_budget_rc" -eq 1 ]]; then
 		_dispatch_stats_increment "dispatch_graphql_circuit_blocked"
 		_dispatch_stats_increment_candidate_failed "graphql_circuit_breaker"
-		return 1
+		return 2
 	fi
 	return 0
 }

@@ -533,8 +533,12 @@ _dispatch_floor_loop() {
 			echo "[pulse-wrapper] Dispatch_max stopping early: stop flag appeared" >>"$LOGFILE"
 			break
 		fi
-		if ! _dispatch_graphql_budget_allows_next; then
-			echo "[pulse-wrapper] Dispatch_max stopping early: GraphQL circuit breaker tripped during serial loop" >>"$LOGFILE"
+		local budget_rc=0
+		_dispatch_graphql_budget_allows_next || budget_rc=$?
+		if [[ "$budget_rc" -ne 0 ]]; then
+			if [[ "$budget_rc" -eq 2 ]]; then
+				echo "[pulse-wrapper] Dispatch_max stopping early: GraphQL circuit breaker tripped during serial loop" >>"$LOGFILE"
+			fi
 			break
 		fi
 		if ! _dispatch_rest_core_progress_allows_next "dispatch_serial_candidate"; then
@@ -728,8 +732,12 @@ _dispatch_max_should_stop() {
 		echo "[pulse-wrapper] Dispatch_max stopping early: stop flag appeared" >>"$LOGFILE"
 		return 0
 	fi
-	if ! _dispatch_graphql_budget_allows_next; then
-		echo "[pulse-wrapper] Dispatch_max stopping early: GraphQL circuit breaker tripped during parallel loop" >>"$LOGFILE"
+	local budget_rc=0
+	_dispatch_graphql_budget_allows_next || budget_rc=$?
+	if [[ "$budget_rc" -ne 0 ]]; then
+		if [[ "$budget_rc" -eq 2 ]]; then
+			echo "[pulse-wrapper] Dispatch_max stopping early: GraphQL circuit breaker tripped during parallel loop" >>"$LOGFILE"
+		fi
 		return 0
 	fi
 	if ! _dispatch_rest_core_progress_allows_next "dispatch_parallel_candidate"; then
