@@ -322,6 +322,49 @@ EOF
 	return 0
 }
 
+# GH#33069 (t18554): the disposable release control worktree can inherit a
+# shallow object store from the canonical repo (older deployed copies,
+# --depth clones, or other tools). `git describe --tags` then fails inside
+# _full_loop_release_prepare_new AFTER the lane has been reserved, stranding
+# it for the five-minute recovery window. Self-heal in the control worktree —
+# never the canonical checkout — before any lane write. Modeled on
+# _check_and_handle_shallow_clone in full-loop-helper-commit.sh.
+#
+# Behaviour:
+#   AIDEVOPS_SHALLOW_UNSHALLOW=0  → print RELEASE_SHALLOW_STORE action=disabled, return 1
+#   otherwise                     → attempt `git fetch --unshallow --tags origin`
+#
+# Returns: 0 if REPO_ROOT is full-depth or was successfully unshallowed
+#          1 if shallow and auto-unshallow is disabled or failed
+_full_loop_release_ensure_full_history() {
+	local is_shallow=""
+	is_shallow=$(git -C "$REPO_ROOT" rev-parse --is-shallow-repository 2>/dev/null || echo "false")
+	if [[ "$is_shallow" != "true" ]]; then
+		return 0
+	fi
+
+	local opt="${AIDEVOPS_SHALLOW_UNSHALLOW:-1}"
+	if [[ "$opt" == "0" ]]; then
+		printf 'RELEASE_SHALLOW_STORE action=disabled\n' >&2
+		printf 'Run: git fetch --unshallow --tags origin\n' >&2
+		printf 'See .agents/reference/git-hygiene.md for recovery steps.\n' >&2
+		return 1
+	fi
+
+	if timeout_sec "${AIDEVOPS_RELEASE_UNSHALLOW_TIMEOUT_S:-600}" \
+		git -C "$REPO_ROOT" fetch --unshallow --tags origin >/dev/null 2>&1; then
+		is_shallow=$(git -C "$REPO_ROOT" rev-parse --is-shallow-repository 2>/dev/null || echo "false")
+		if [[ "$is_shallow" != "true" ]]; then
+			printf 'RELEASE_SHALLOW_STORE action=healed\n' >&2
+			return 0
+		fi
+	fi
+	printf 'RELEASE_SHALLOW_STORE action=failed\n' >&2
+	printf 'Run: git fetch --unshallow --tags origin\n' >&2
+	printf 'See .agents/reference/git-hygiene.md for recovery steps.\n' >&2
+	return 1
+}
+
 _full_loop_release_prepare_new() {
 	local repo="$1"
 	local source_pr="$2"
@@ -333,6 +376,7 @@ _full_loop_release_prepare_new() {
 	local base=""
 	local base_tag=""
 	local base_object=""
+	local shallow_state=""
 
 	phase_started=$(_full_loop_release_timing_start release-run-fetch-main)
 	if ! git -C "$REPO_ROOT" fetch origin main >/dev/null; then
@@ -343,7 +387,12 @@ _full_loop_release_prepare_new() {
 	snapshot=$(jq -r '.snapshot_sha // ""' <<<"${_AIDEVOPS_RELEASE_LANE_JSON:-null}") || return 1
 	if [[ -z "$snapshot" ]]; then
 		snapshot=$(git -C "$REPO_ROOT" rev-parse 'origin/main^{commit}') || return 1
-		base_tag=$(git -C "$REPO_ROOT" describe --tags --match 'v[0-9]*' --abbrev=0 "$snapshot") || return 1
+		if ! base_tag=$(git -C "$REPO_ROOT" describe --tags --match 'v[0-9]*' --abbrev=0 "$snapshot" 2>/dev/null); then
+			shallow_state=$(git -C "$REPO_ROOT" rev-parse --is-shallow-repository 2>/dev/null || echo "unknown")
+			printf 'RELEASE_BASE_TAG_UNRESOLVED snapshot=%s shallow=%s\n' "$snapshot" "$shallow_state" >&2
+			printf 'Run: git fetch --unshallow --tags origin\n' >&2
+			return 1
+		fi
 		base=$(git -C "$REPO_ROOT" rev-parse "refs/tags/${base_tag}^{commit}") || return 1
 		base_object=$(git -C "$REPO_ROOT" rev-parse "refs/tags/${base_tag}") || return 1
 	else
@@ -631,6 +680,7 @@ _full_loop_release_start_new() {
 	local preparing_recovery_rc=0
 	_FULL_LOOP_RESERVED_RECOVERY_COMPLETED=false
 	_FULL_LOOP_RESERVED_RECOVERY_FAILED_PREPUBLICATION=false
+	_full_loop_release_ensure_full_history || return 1
 	_full_loop_release_guard_competing_lane "$repo" "$source_pr" || return $?
 	# A snapshot retry must not turn an implicit legacy subset into a new exact
 	# CLI assertion. The verified capture migrates compatible prior evidence.
