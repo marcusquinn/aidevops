@@ -115,6 +115,12 @@ REPOS_JSON="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
 BATCH_CACHE_DIR="${PULSE_BATCH_PREFETCH_CACHE_DIR:-${HOME}/.aidevops/logs/batch-prefetch}"
 PULSE_BATCH_PREFETCH_ENABLED="${PULSE_BATCH_PREFETCH_ENABLED:-1}"
 PULSE_PREFETCH_FULL_SWEEP_INTERVAL="${PULSE_PREFETCH_FULL_SWEEP_INTERVAL:-14400}"
+# GH#33074: an events-ETag 304 may keep an owner's snapshots unrefreshed only
+# while they are younger than this. Org event feeds omit private-repo activity,
+# so an unbounded skip froze private-org snapshots for weeks. 900s matches the
+# dispatch negative-cache PR fingerprint bound in pulse-dispatch-lib.sh.
+PULSE_EVENTS_TICKLE_MAX_CACHE_AGE="${PULSE_EVENTS_TICKLE_MAX_CACHE_AGE:-900}"
+[[ "$PULSE_EVENTS_TICKLE_MAX_CACHE_AGE" =~ ^[0-9]+$ ]] || PULSE_EVENTS_TICKLE_MAX_CACHE_AGE=900
 BATCH_SEARCH_LIMIT="${PULSE_BATCH_SEARCH_LIMIT:-200}"
 LOGFILE="${LOGFILE:-${HOME}/.aidevops/logs/pulse-wrapper.log}"
 PULSE_BATCH_CONDITIONAL_REST_ENABLED="${PULSE_BATCH_CONDITIONAL_REST_ENABLED:-1}"
@@ -1034,6 +1040,35 @@ _record_events_tickle_stats() {
 	return 0
 }
 
+# Return 0 when every slug's issues and PR snapshots are fresh within
+# PULSE_EVENTS_TICKLE_MAX_CACHE_AGE. Arguments: $1=comma-separated slugs.
+_owner_snapshots_recent() {
+	local slugs="$1"
+	local slug="" kind=""
+	local -a slug_list=()
+	IFS=',' read -r -a slug_list <<<"$slugs"
+	[[ "${#slug_list[@]}" -gt 0 ]] || return 1
+	for slug in "${slug_list[@]}"; do
+		[[ -n "$slug" ]] || return 1
+		for kind in "$_KIND_ISSUES" "$_KIND_PRS"; do
+			_resolve_cache_snapshot "$kind" "$slug" "$PULSE_EVENTS_TICKLE_MAX_CACHE_AGE" || return 1
+		done
+	done
+	return 0
+}
+
+# Decide whether an events_tickle 0 may skip this owner's refresh (GH#33074).
+# Cooldown skips always hold: fanout must not run while rate-limited. ETag
+# skips hold only while snapshots are recent, because org event feeds list
+# public events only and cannot prove private-repo issues/PRs are unchanged.
+# Arguments: $1=comma-separated slugs.
+_events_tickle_skip_is_safe() {
+	local slugs="$1"
+	[[ "${_PULSE_EVENTS_TICKLE_LAST_REASON:-}" == "cooldown" ]] && return 0
+	_owner_snapshots_recent "$slugs"
+	return $?
+}
+
 # =============================================================================
 # Subcommand: refresh
 # =============================================================================
@@ -1100,8 +1135,14 @@ _cmd_refresh() {
 		local _tickle_rc=0
 		events_tickle "$owner" || _tickle_rc=$?
 		if [[ "$_tickle_rc" -eq 0 ]]; then
-			_log "events tickle fresh for owner=${owner} — skipping search calls"
-			continue
+			if _events_tickle_skip_is_safe "$slugs"; then
+				_log "events tickle fresh for owner=${owner} — skipping search calls"
+				continue
+			fi
+			# GH#33074: the owner was not skipped, so count it as stale.
+			_PULSE_EVENTS_TICKLE_FRESH=$((_PULSE_EVENTS_TICKLE_FRESH - 1))
+			_PULSE_EVENTS_TICKLE_STALE=$((_PULSE_EVENTS_TICKLE_STALE + 1))
+			_log "events tickle fresh for owner=${owner} but snapshots older than ${PULSE_EVENTS_TICKLE_MAX_CACHE_AGE}s — refreshing"
 		fi
 
 		_refresh_owner_issues "$owner" "$slugs" "$_graphql_remaining" || true
@@ -1135,9 +1176,11 @@ _cmd_refresh() {
 
 # Resolve a cache snapshot to one canonical state without printing payload data.
 # Sets _CACHE_SNAPSHOT_STATE and _CACHE_SNAPSHOT_PATH for Bash 3.2 callers.
+# Optional $3 overrides the maximum fresh age in seconds.
 _resolve_cache_snapshot() {
 	local kind="$1"
 	local slug="$2"
+	local max_age="${3:-$PULSE_PREFETCH_FULL_SWEEP_INTERVAL}"
 	local cache_file=""
 	local cache_ts=""
 	local cache_epoch=0
@@ -1195,7 +1238,7 @@ _resolve_cache_snapshot() {
 		_CACHE_SNAPSHOT_STATE="$_CACHE_STATE_MALFORMED"
 		return 1
 	fi
-	if [[ "$age" -ge "$PULSE_PREFETCH_FULL_SWEEP_INTERVAL" ]]; then
+	if [[ "$age" -ge "$max_age" ]]; then
 		_CACHE_SNAPSHOT_STATE="stale"
 		return 1
 	fi
