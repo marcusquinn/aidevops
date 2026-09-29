@@ -172,6 +172,12 @@ _counter_git() {
 	return $?
 }
 
+_counter_context_is_isolated() {
+	[[ -n "${_CLAIM_COUNTER_CONTEXT_ROOT:-}" && \
+		"${CAS_GIT_CONTEXT_PATH:-}" == "${_CLAIM_COUNTER_CONTEXT_ROOT}/repository.git" ]] || return 1
+	return 0
+}
+
 _counter_source_git() {
 	if [[ -n "${CAS_SOURCE_REPO_PATH:-}" ]]; then
 		git -C "$CAS_SOURCE_REPO_PATH" "$@"
@@ -488,16 +494,18 @@ resolve_implicit_counter_branch() {
 	local todo_seed="0"
 	local fetch_rc=0
 	local probe_rc=0
+	local depth_args=()
 
 	[[ "${_COUNTER_BRANCH_SET:-false}" == "false" ]] || return 0
 	[[ "${OFFLINE_MODE:-false}" == "false" ]] || return 0
 	[[ "$COUNTER_BRANCH" == "${DEFAULT_BRANCH:-main}" ]] || return 0
 	[[ -n "$candidate" && "$candidate" != "$COUNTER_BRANCH" ]] || return 0
-	# The isolated bare context has no object reuse. Fetching an unshallowed
-	# branch transfers its entire history even though only .task-counter is read.
-	# An explicit refspec retains the remote-tracking ref used by the reads below.
+	# Limit depth to the isolated bare context: a shallow file in the shared
+	# object store truncates history for the canonical checkout and all worktrees.
+	# The explicit refspec retains the remote-tracking ref used below.
+	_counter_context_is_isolated && depth_args=(--depth=1)
 	_run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" \
-		fetch -q --depth=1 --no-tags "$REMOTE_NAME" \
+		fetch -q "${depth_args[@]}" --no-tags "$REMOTE_NAME" \
 		"+refs/heads/${candidate}:refs/remotes/${REMOTE_NAME}/${candidate}" >/dev/null || fetch_rc=$?
 	if [[ $fetch_rc -ne 0 ]]; then
 		_run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" \
@@ -518,7 +526,7 @@ resolve_implicit_counter_branch() {
 	fi
 
 	if ! _run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" \
-		fetch -q --depth=1 --no-tags "$REMOTE_NAME" \
+		fetch -q "${depth_args[@]}" --no-tags "$REMOTE_NAME" \
 		"+refs/heads/${DEFAULT_BRANCH:-main}:refs/remotes/${REMOTE_NAME}/${DEFAULT_BRANCH:-main}" >/dev/null; then
 		log_error "COUNTER_BRANCH_DISCOVERY_ERROR: unable to validate ${candidate} against ${REMOTE_NAME}/${DEFAULT_BRANCH:-main}"
 		_task_counter_status "$TASK_COUNTER_SETUP_STATUS" "counter_branch_discovery_failed"
@@ -1120,11 +1128,13 @@ bootstrap_remote_counter() {
 # Read .task-counter from <remote>/<counter_branch> (fetches first)
 read_remote_counter() {
 	local repo_path="$1"
+	local depth_args=()
 	[[ -n "$repo_path" ]] || return 1
 
 	# GH#21904: wrap with timeout + SSH fallback for credential-helper hangs.
+	_counter_context_is_isolated && depth_args=(--depth=1)
 	if ! _run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" \
-		fetch --depth=1 "$REMOTE_NAME" "$COUNTER_BRANCH" 2>/dev/null; then
+		fetch "${depth_args[@]}" "$REMOTE_NAME" "$COUNTER_BRANCH" 2>/dev/null; then
 		log_warn "Failed to fetch ${REMOTE_NAME}/${COUNTER_BRANCH}; CAS_HTTPS_TIMEOUT_S=${CAS_HTTPS_TIMEOUT_S:-30}"
 		return 1
 	fi
