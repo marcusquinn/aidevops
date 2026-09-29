@@ -1508,6 +1508,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 - [ ] t18547 fix(pulse-dispatch): re-resolve worker model after tier guard and stop tier-derived defaults bypassing model A/B #auto-dispatch #bug tier:thinking ref:GH#33004 logged:2026-09-29 -> [todo/tasks/t18547-brief.md]
 - [ ] t18548 fix(pulse): clamp stage timeouts to the cycle deadline so full cycles finish before lock force-reclaim kills them #auto-dispatch #bug tier:thinking ref:GH#33007 logged:2026-09-29 -> [todo/tasks/t18548-brief.md]
 - [ ] t18549 fix(brief-readiness): read indented continuation lines so nested sub-bullet fields are not reported empty #auto-dispatch #bug tier:standard ref:GH#33009 logged:2026-09-29 -> [todo/tasks/t18549-brief.md]
+- [ ] t18550 fix(full-loop-merge): sync canonical through the audited fast-forward and reconcile planning after it, not before #auto-dispatch #bug tier:thinking ref:GH#33013 logged:2026-09-29 -> [todo/tasks/t18550-brief.md]
 
 ## In Progress
 
