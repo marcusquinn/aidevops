@@ -63,13 +63,13 @@ main() {
 		"${REPO_ROOT}/.agents/scripts/pulse-issue-reconcile.sh" \
 		"sudo aidevops approve issue \${issue_num} \${slug}"
 	assert_contains \
-		"knowledge review template includes repo slug placeholder" \
+		"knowledge review template uses promotion after review" \
 		"${REPO_ROOT}/.agents/templates/knowledge-review-nmr-body.md" \
-		'sudo aidevops approve issue <this-issue-number> {{REPO_SLUG}}'
+		'knowledge-review-helper.sh promote {{SOURCE_ID}}'
 	assert_contains \
-		"knowledge review fallback includes repo slug" \
+		"knowledge review fallback uses promotion after review" \
 		"${REPO_ROOT}/.agents/scripts/knowledge-review-helper.sh" \
-		"sudo aidevops approve issue <this-issue-number> \${repo_slug}"
+		"knowledge-review-helper.sh promote \${source_id}"
 	assert_contains \
 		"approval setup output recommends explicit repo slug" \
 		"${REPO_ROOT}/.agents/scripts/approval-helper.sh" \
