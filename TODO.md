@@ -1462,7 +1462,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18514 feat(pulse): runner-local AI owner for terminal-blocker circuits #enhancement #interactive tier:thinking ~3h ref:GH#32754 logged:2026-09-28 pr:#32758 completed:2026-09-28
 
-- [ ] t18515 Re-measure dispatch stage timings 24h after the gate reorder (GH#32729, deployed v3.37.12 at 2026-09-28T02:52Z): compare `dedup.consolidation` calls per `dedup.dedup_check` (baseline 0.99) and `dedup.dedup_check` p50 (baseline 44s) in `~/.aidevops/logs/dispatch-stages.tsv` for the 24h before vs after; also count `trigger=blocker_recovery` supervisor runs and recorded decisions under `~/.aidevops/.agent-workspace/terminal-blocker-recovery/decisions/` #interactive #chore ~20m ref:GH#32765 logged:2026-09-28 start:2026-09-29T03:00Z
+- [x] t18515 Re-measure dispatch stage timings 24h after the gate reorder (GH#32729, deployed v3.37.12 at 2026-09-28T02:52Z): compare `dedup.consolidation` calls per `dedup.dedup_check` (baseline 0.99) and `dedup.dedup_check` p50 (baseline 44s) in `~/.aidevops/logs/dispatch-stages.tsv` for the 24h before vs after; also count `trigger=blocker_recovery` supervisor runs and recorded decisions under `~/.aidevops/.agent-workspace/terminal-blocker-recovery/decisions/` #interactive #chore ~20m ref:GH#32765 logged:2026-09-28 start:2026-09-29T03:00Z verified:2026-09-28 completed:2026-09-29
 
 - [x] t18495 fix: guard merged-PR reconcile stages 1-2 against recurrent file-size debt #auto-dispatch #bug #pulse #interactive tier:standard ~1h ref:GH#32640 logged:2026-09-27 -> [todo/tasks/t18495-brief.md] pr:#32642 completed:2026-09-27
 
@@ -1486,7 +1486,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18522 fix(seo): GSC export token lacks webmasters scope; use documented gsc-credentials.json #bug #seo #auto-dispatch tier:standard ~45m ref:GH#32843 logged:2026-09-28 -> [todo/tasks/t18522-brief.md] pr:#32866 completed:2026-09-28
 
-- [ ] t18528 feat(seo): keywords routine refreshes GSC/Bing exports before import #feature #seo #auto-dispatch tier:standard ~1h ref:GH#32877 logged:2026-09-28 -> [todo/tasks/t18528-brief.md]
+- [x] t18528 feat(seo): keywords routine refreshes GSC/Bing exports before import #feature #seo #auto-dispatch tier:standard ~1h ref:GH#32877 pr:#32878 logged:2026-09-28 -> [todo/tasks/t18528-brief.md] completed:2026-09-29
 
 - [x] t18529 fix(recovery): opt-in CWD inspector reads same-user setuid-root helpers; advisory names unreadable-processes diagnostic #bug #framework #recovery #interactive #auto-dispatch tier:standard ~1h ref:GH#32871 logged:2026-09-28 -> [todo/tasks/t18529-brief.md] pr:#32890 completed:2026-09-28
 
@@ -1494,7 +1494,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 - [x] t18531 fix(routing): capability escalation re-runs the identical Sol medium route when standard and thinking share a model #auto-dispatch #bug ref:GH#32929 pr:#32931 logged:2026-09-29 completed:2026-09-29
 - [x] t18532 fix(compaction): cap compaction effort and route to first fitting simple-tier candidate #auto-dispatch #bug ref:GH#32934 pr:#32935 logged:2026-09-29 completed:2026-09-29
 - [x] t18534 fix(pulse): restore retry context lost to torn objective-evidence lines; add sanitised failure signals #auto-dispatch #bug ref:GH#32938 pr:#32942 logged:2026-09-29 completed:2026-09-29
-- [ ] t18535 fix(command-policy): resolve default git remote for bare push/fetch/pull; classify pushurl and --multiple remotes #auto-dispatch #bug ref:GH#32943 logged:2026-09-29
+- [x] t18535 fix(command-policy): resolve default git remote for bare push/fetch/pull; classify pushurl and --multiple remotes #auto-dispatch #bug ref:GH#32943 pr:#32947 logged:2026-09-29 completed:2026-09-29
 
 ## In Progress
 
@@ -5029,11 +5029,11 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t18442 Repin recovered release snapshot after authorization expansion #auto-dispatch #bug #release #security #interactive priority:critical tier:thinking ~2h ref:GH#31971 logged:2026-09-16 -> [todo/tasks/t18442-brief.md] pr:#31973 completed:2026-09-16
 - [x] t18508 Quality sweep: publish partial results when a large repo exceeds the per-repo budget #auto-dispatch #bug ref:GH#32737 pr:#32902 completed:2026-09-28
 - [x] t18507 test(dispatch): repair four structural tests stale after pulse-dispatch-core split #auto-dispatch #bug ref:GH#32733 pr:#32783 completed:2026-09-28
-- [ ] t18506 Persistent dashboard issues: accuracy, privacy and public meaningfulness #enhancement ref:GH#32730
-- [ ] t18513 Quality dashboard comment hygiene silently no-ops on large threads #bug ref:GH#32752
+- [x] t18506 Persistent dashboard issues: accuracy, privacy and public meaningfulness #enhancement ref:GH#32730 pr:#32735 completed:2026-09-29
+- [x] t18513 Quality dashboard comment hygiene silently no-ops on large threads #bug ref:GH#32752 pr:#32755 completed:2026-09-29
 
 - [x] t18526 Fix stale OpenCode pin assertion in test-tool-version-check-opencode.sh #auto-dispatch #bug ref:GH#32864 pr:#32874 completed:2026-09-28
-- [ ] t18527 fix(seo): keywords rollup uses the target's own site platform #bug #seo ref:GH#32867
-- [ ] t18525 Install and update Cloudflare cf CLI via setup and update-tools #enhancement ref:GH#32862
-- [ ] t18524 fix(seo): keywords allow one target per phrase per site #bug #seo ref:GH#32854
-- [ ] t18523 Add Cloudflare cf CLI guidance and routing #enhancement ref:GH#32850
+- [x] t18527 fix(seo): keywords rollup uses the target's own site platform #bug #seo ref:GH#32867 pr:#32868 completed:2026-09-29
+- [x] t18525 Install and update Cloudflare cf CLI via setup and update-tools #enhancement ref:GH#32862 pr:#32863 completed:2026-09-29
+- [x] t18524 fix(seo): keywords allow one target per phrase per site #bug #seo ref:GH#32854 pr:#32856 completed:2026-09-29
+- [x] t18523 Add Cloudflare cf CLI guidance and routing #enhancement ref:GH#32850 pr:#32851 completed:2026-09-29
