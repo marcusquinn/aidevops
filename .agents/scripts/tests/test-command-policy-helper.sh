@@ -821,6 +821,55 @@ test_worker_network_policy() {
 	return 0
 }
 
+assert_worker_git() {
+	local label="$1"
+	local expected_status="$2"
+	local argv_json="$3"
+	local expected_text="${4:-}"
+	local output=""
+	local status=0
+	output="$(python3 "$HELPER" check-command --worker --worker-id test --cwd "${TEST_ROOT}/linked" --argv-json "$argv_json")" || status=$?
+	if [[ "$status" -eq "$expected_status" && "$output" == *"$expected_text"* ]]; then
+		pass "$label"
+	else
+		fail "$label" "status=${status} output=${output}"
+	fi
+	return 0
+}
+
+test_worker_git_default_remote() {
+	local repo="${TEST_ROOT}/repo"
+	git -C "$repo" remote set-url origin https://github.com/example/repo.git
+	assert_worker_git "worker resolves bare git push to origin" 0 '["git","push"]'
+	assert_worker_git "worker resolves bare git fetch to origin" 0 '["git","fetch"]'
+	assert_worker_git "worker resolves bare git pull to origin" 0 '["git","pull","--rebase"]'
+	assert_worker_git "worker blocks fetch of all remotes" 20 '["git","fetch","--all"]' git-fetch-all-remotes
+	assert_worker_git "worker blocks git clone without repository" 20 '["git","clone"]' git-clone-destination-missing
+	assert_worker_git "worker blocks remote URL config override" 20 '["git","-c","remote.origin.url=https://requestbin.com/x.git","push","origin"]' git-network-config-override
+	assert_worker_git "worker blocks ssh command config override" 20 '["git","-c","core.sshCommand=ssh","push","origin"]' git-network-config-override
+	assert_worker_git "worker blocks git-dir override" 20 '["git","--git-dir=/nonexistent/.git","push","origin"]' git-repository-override
+
+	git -C "$repo" config remote.origin.pushurl https://requestbin.com/example/repo.git
+	assert_worker_git "worker classifies origin push URL for bare git push" 20 '["git","push"]' requestbin.com
+	assert_worker_git "worker classifies push URL for named git push" 20 '["git","push","origin","HEAD"]' requestbin.com
+	assert_worker_git "worker ignores push URL for git fetch" 0 '["git","fetch"]'
+	git -C "$repo" config --unset remote.origin.pushurl
+
+	git -C "$repo" remote add other https://requestbin.com/example/repo.git
+	assert_worker_git "worker classifies every --multiple remote" 20 '["git","fetch","--multiple","origin","other"]' requestbin.com
+	git -C "$repo" config remote.pushDefault other
+	assert_worker_git "worker honours remote.pushDefault for bare push" 20 '["git","push"]' requestbin.com
+	assert_worker_git "worker ignores remote.pushDefault for fetch" 0 '["git","fetch"]'
+	git -C "$repo" config branch.feature/test.remote other
+	assert_worker_git "worker honours branch remote for bare fetch" 20 '["git","fetch"]' requestbin.com
+	git -C "$repo" config branch.feature/test.pushRemote origin
+	assert_worker_git "worker honours branch pushRemote over pushDefault" 0 '["git","push"]'
+	git -C "$repo" config --remove-section branch.feature/test
+	git -C "$repo" config --unset remote.pushDefault
+	git -C "$repo" remote remove other
+	return 0
+}
+
 test_secondary_layers() {
 	if python3 - \
 		"${SCRIPT_DIR}/update-claude-settings.py" \
@@ -1001,6 +1050,7 @@ main() {
 	test_account_mutation_guard_validation
 	test_canonical_delegation
 	test_worker_network_policy
+	test_worker_git_default_remote
 	test_policy_fail_closed
 	test_secondary_layers
 	printf '\nTests: %d, Failures: %d\n' "$TESTS" "$FAILURES"

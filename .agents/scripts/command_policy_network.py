@@ -70,23 +70,33 @@ def _add_destination(result: dict[str, Any], value: str, label: str) -> None:
         result["unclassified"].append(f"{label}:{value}")
 
 
-def _resolve_git_remote(cwd: str, remote: str) -> list[str]:
+def _run_git_query(
+    cwd: str, args: list[str], ok_codes: tuple[int, ...] = (0,)
+) -> list[str] | None:
+    """Run a read-only git query; return stdout lines, or None when it fails."""
     git_binary = "/usr/bin/git" if Path("/usr/bin/git").is_file() else "git"
     try:
         resolved = subprocess.run(  # nosec B603 -- argv is fixed except validated cwd/remote data; shell execution is disabled.
-            [git_binary, "-C", cwd, "remote", "get-url", "--all", remote],
+            [git_binary, "-C", cwd, *args],
             capture_output=True,
             text=True,
             timeout=5,
             check=False,
         )
     except (OSError, subprocess.SubprocessError):
-        return []
-    return (
-        [line for line in resolved.stdout.splitlines() if line]
-        if resolved.returncode == 0
-        else []
-    )
+        return None
+    if resolved.returncode not in ok_codes:
+        return None
+    return [line for line in resolved.stdout.splitlines() if line]
+
+
+def _resolve_git_remote(cwd: str, remote: str, include_push: bool = False) -> list[str]:
+    """Return a remote's URLs; with include_push, push URLs too or nothing."""
+    urls = _run_git_query(cwd, ["remote", "get-url", "--all", remote]) or []
+    if not urls or not include_push:
+        return urls
+    push_urls = _run_git_query(cwd, ["remote", "get-url", "--all", "--push", remote])
+    return urls + push_urls if push_urls else []
 
 
 def _git_effective_cwd(argv: list[str], cwd: str) -> str:
