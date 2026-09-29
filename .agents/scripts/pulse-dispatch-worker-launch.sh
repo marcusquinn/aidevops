@@ -1726,16 +1726,11 @@ _dispatch_launch_worker() {
 	local _ds_t0
 
 	local worker_log
-	_ds_t0=$(_ds_now_ns)
 	worker_log=$(_dlw_setup_worker_log "$repo_slug" "$issue_number")
-	_ds_record "$issue_number" "$repo_slug" "worker_log_setup" "$_ds_t0"
 
-	_ds_t0=$(_ds_now_ns)
 	if ! _dlw_prebootstrap_gates "$issue_number" "$repo_slug" "$issue_meta_json" "$repo_path"; then
-		_ds_record "$issue_number" "$repo_slug" "prebootstrap_gates" "$_ds_t0"
 		_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "prebootstrap_gate" 2 || return $?
 	fi
-	_ds_record "$issue_number" "$repo_slug" "prebootstrap_gates" "$_ds_t0"
 
 	_ds_t0=$(_ds_now_ns)
 	_dlw_resolve_tier_and_model "$issue_meta_json" "$model_override" "$repo_path" "$issue_title" "$prompt"
@@ -1762,9 +1757,7 @@ _dispatch_launch_worker() {
 	_ds_record "$issue_number" "$repo_slug" "begin_prelaunch" "$_ds_t0"
 
 	local zero_output_comment_metrics=""
-	_ds_t0=$(_ds_now_ns)
 	zero_output_comment_metrics=$(_dlw_comment_bloat_metrics "$issue_number" "$repo_slug")
-	_ds_record "$issue_number" "$repo_slug" "comment_bloat_metrics" "$_ds_t0"
 	if _dlw_hold_repeated_zero_output "$issue_number" "$repo_slug" "$zero_output_comment_metrics"; then
 		_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "repeated_zero_output_hold" 2 || return $?
 	fi
@@ -1787,9 +1780,7 @@ _dispatch_launch_worker() {
 	_ds_record "$issue_number" "$repo_slug" "final_spawn_gates" "$_ds_t0"
 
 	local launch_prompt=""
-	_ds_t0=$(_ds_now_ns)
 	launch_prompt=$(_dlw_prepare_prompt_for_launch "$issue_number" "$repo_slug" "$issue_title" "$prompt" "$zero_output_comment_metrics")
-	_ds_record "$issue_number" "$repo_slug" "launch_prompt" "$_ds_t0"
 
 	# Freeze the worker-readable instruction surface before queued ownership is
 	# published. A lock failure must not create assignment/status notifications.
