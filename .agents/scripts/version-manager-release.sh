@@ -948,6 +948,7 @@ run_post_release_agent_sync() {
 	local remote_url
 	local release_sha=""
 	local active_preservation_exit=0
+	local post_deploy_preservation_exit=0
 	local transition_locked=0
 	local inner_transition_lock=""
 	local -a deploy_env=(env -u AIDEVOPS_AGENTS_DIR -u AGENTS_DIR)
@@ -1030,6 +1031,19 @@ run_post_release_agent_sync() {
 		"$release_sha" \
 		"$HOME/.aidevops/agents" \
 		"$HOME/.aidevops/.deployed-sha"; then
+		# A concurrent auto-update can activate a newer, validated descendant
+		# after the exact-tag deployment. Reverify that active source and accept
+		# only the fully materialized preservation result (exit 2), never an
+		# unverified exact-tag bundle or a stale/unrelated runtime.
+		_verify_active_release_preservation_merge \
+			"$sync_repo_root" \
+			"$release_sha" \
+			"$HOME/.aidevops/agents" \
+			"$HOME/.aidevops/.deployed-sha" || post_deploy_preservation_exit=$?
+		if [[ "$post_deploy_preservation_exit" -eq 2 ]]; then
+			print_success "Post-release aidevops runtime already contains release ${release_sha:0:12} through validated preservation merge ${_AIDEVOPS_RELEASE_ACTIVE_PRESERVATION_SHA:0:12} (verified no-op)"
+			return 0
+		fi
 		print_error "Post-release deployment helper exited successfully, but runtime bundle provenance did not converge"
 		return 1
 	fi

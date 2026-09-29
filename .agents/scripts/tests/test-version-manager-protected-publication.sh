@@ -205,6 +205,66 @@ fi
 
 : >"$route_log"
 release_source_pr_required() { return 0; }
+# A concurrent auto-update may replace the exact-tag bundle after deployment.
+# Exercise the real preservation gate against a validated descendant and its
+# materialized source, not merely the reported SHA.
+descendant_commit=$(git commit-tree "${TAG_COMMIT}^{tree}" -p "$TAG_COMMIT" -m 'later protected main')
+git worktree add --quiet --detach "${TEST_ROOT}/release" "$TAG_COMMIT"
+mkdir -p "${HOME}/.aidevops" "${TEST_ROOT}/tag-bundle" "${TEST_ROOT}/descendant-bundle"
+printf 'status=validated\ngit_sha=%s\n' "$TAG_COMMIT" >"${TEST_ROOT}/tag-bundle/.bundle-manifest"
+printf 'status=validated\ngit_sha=%s\n' "$descendant_commit" >"${TEST_ROOT}/descendant-bundle/.bundle-manifest"
+ln -s "${TEST_ROOT}/tag-bundle" "${HOME}/.aidevops/agents"
+printf '#!/usr/bin/env bash\nexit 0\n' >"${TEST_ROOT}/deploy.sh"
+validate_release_deployment_readiness() { return 0; }
+_runtime_bundle_verify_active_link() {
+	_AIDEVOPS_RUNTIME_VERIFY_ACTIVE_ROOT=$(realpath "$1") || return 1
+	return 0
+}
+_runtime_bundle_verify_manifest_value() {
+	local key="$2"
+	local item=""
+	local value=""
+	while IFS='=' read -r item value; do
+		if [[ "$item" == "$key" ]]; then
+			printf '%s\n' "$value"
+			return 0
+		fi
+	done <"$1"
+	return 1
+}
+verify_calls=0
+verify_aidevops_runtime_bundle_convergence() {
+	verify_calls=$((verify_calls + 1))
+	if [[ "$2" == "$TAG_COMMIT" ]]; then
+		# The exact-tag deployment finished, then auto-update took the link.
+		ln -sfn "${TEST_ROOT}/descendant-bundle" "${HOME}/.aidevops/agents"
+		return 1
+	fi
+	[[ "$2" == "$descendant_commit" && "$3" == "${HOME}/.aidevops/agents" &&
+		"$(realpath "$3")" == "${TEST_ROOT}/descendant-bundle" ]] || return 1
+	return 0
+}
+rc=0
+sync_output=$(AIDEVOPS_SYNC_REPO_ROOT="${TEST_ROOT}/release" \
+	AIDEVOPS_SYNC_DEPLOY_SCRIPT="${TEST_ROOT}/deploy.sh" run_post_release_agent_sync 2>&1) || rc=$?
+if [[ "$rc" -eq 0 && "$sync_output" == *"through validated preservation merge ${descendant_commit:0:12} (verified no-op)"* ]]; then
+	print_result 'post-deploy descendant activation converges on first reconcile' true
+else
+	print_result 'post-deploy descendant activation converges on first reconcile' false "rc=${rc} output=${sync_output}"
+fi
+
+rm -f "${HOME}/.aidevops/agents"
+ln -s "${TEST_ROOT}/tag-bundle" "${HOME}/.aidevops/agents"
+printf 'status=unvalidated\ngit_sha=%s\n' "$descendant_commit" >"${TEST_ROOT}/descendant-bundle/.bundle-manifest"
+rc=0
+AIDEVOPS_SYNC_REPO_ROOT="${TEST_ROOT}/release" \
+	AIDEVOPS_SYNC_DEPLOY_SCRIPT="${TEST_ROOT}/deploy.sh" run_post_release_agent_sync >/dev/null 2>&1 || rc=$?
+if [[ "$rc" -ne 0 ]]; then
+	print_result 'unvalidated concurrent bundle cannot satisfy release convergence' true
+else
+	print_result 'unvalidated concurrent bundle cannot satisfy release convergence' false
+fi
+
 run_post_release_agent_sync() {
 	printf 'deploy\n' >>"$route_log"
 	return 0
