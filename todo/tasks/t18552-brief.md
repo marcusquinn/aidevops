@@ -38,6 +38,7 @@ A dry-run-by-default `local-branch-cleanup-helper.sh` deletes only local branche
 - `EDIT: .agents/scripts/worktree-clean-lib.sh:1591-1594` — replace the raw `git branch -D` with the same single-branch helper call, keeping `localdev_auto_branch_rm`.
 - `EDIT: aidevops.sh:2010-2033` — add `local-branches` to `_main_dispatch_cleanup` via `_dispatch_helper "local-branch-cleanup-helper.sh"`, and extend the help text.
 - `EDIT: .agents/workflows/worktree-cleanup.md:134-144` — add a "Local Branch Cleanup" subsection next to the remote-branch one.
+- `EDIT: .agents/scripts/audit-log-helper.sh` — required adjacent integration: register `local-branch-delete` in the audit event allowlist; the requested `audit-log-helper.sh log local-branch-delete` currently rejects the event as invalid. Verify via `test-local-branch-cleanup-helper.sh` and audit validation.
 
 ### Complete Write Surface
 

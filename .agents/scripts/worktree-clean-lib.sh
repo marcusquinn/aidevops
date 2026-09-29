@@ -1590,7 +1590,12 @@ _clean_remove_classified_worktree() {
 	_clean_release_removal_lease "$worktree_path" || true
 	if [[ "$preserve_branch" != "$_WT_CLEAN_BOOL_TRUE" ]]; then
 		localdev_auto_branch_rm "$worktree_branch"
-		git branch -D "$worktree_branch" 2>/dev/null || true
+		if [[ -f "${SCRIPT_DIR}/local-branch-cleanup-helper.sh" ]]; then
+			bash "${SCRIPT_DIR}/local-branch-cleanup-helper.sh" --repo "$repo_context" --branch "$worktree_branch" --apply ||
+				printf 'branch preserved: local branch cleanup failed for %s\n' "$worktree_branch" >&2
+		else
+			printf 'branch preserved: local branch cleanup helper unavailable for %s\n' "$worktree_branch" >&2
+		fi
 	fi
 	log_worktree_removal_event "$_WTAR_REMOVED" "$_WTAR_WH_CALLER" "$worktree_path" "$audit_reason" "$completed_mode" "$audit_context"
 	if declare -F full_loop_mark_cleanup_cleaned_for_worktree >/dev/null 2>&1; then

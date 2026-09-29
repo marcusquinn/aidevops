@@ -2014,20 +2014,26 @@ _main_dispatch_cleanup() {
 		shift || true
 		_dispatch_helper "remote-branch-cleanup-helper.sh" "remote-branch-cleanup-helper.sh" "$cleanup_subcommand" "$@"
 		;;
+	local-branches)
+		shift || true
+		_dispatch_helper "local-branch-cleanup-helper.sh" "local-branch-cleanup-helper.sh" "$@"
+		;;
 	help | --help | -h | "")
-		echo "Usage: aidevops cleanup <branches|remote-branches> [options]"
+		echo "Usage: aidevops cleanup <branches|remote-branches|local-branches> [options]"
 		echo ""
 		echo "Cleanup commands:"
 		echo "  branches          Audit stale remote branches (dry-run default)"
 		echo "  remote-branches   Alias for branches"
+		echo "  local-branches    Audit merged local branches (dry-run default)"
 		echo ""
 		echo "Options:"
 		echo "  --repo PATH       Repository path (default: current directory)"
 		echo "  --remote NAME     Remote to audit (default: origin)"
+		echo "  --branch NAME     Single local branch (local-branches only)"
 		echo "  --apply           Delete safe candidates"
 		echo ""
 		;;
-	*) print_error "Unknown cleanup subcommand: $cleanup_subcommand (try branches|remote-branches|help)"; return 1 ;;
+	*) print_error "Unknown cleanup subcommand: $cleanup_subcommand (try branches|remote-branches|local-branches|help)"; return 1 ;;
 	esac
 	return 0
 }
