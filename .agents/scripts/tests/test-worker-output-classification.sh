@@ -146,6 +146,10 @@ case "${1:-}" in
 			printf '%s\n' "${STUB_DATA_COMMENTS:-[]}"
 		elif [[ "$*" == *"/issues/123"* ]]; then
 			printf '%s\n' "${STUB_DATA_ISSUE:-"{}"}"
+		elif [[ "$*" == *"/issues/88"* ]]; then
+			printf '%s\n' "${STUB_PARENT_ISSUE:-"{}"}"
+		elif [[ "$*" == *"/issues/99"* ]]; then
+			printf '%s\n' "${STUB_SUCCESSOR_ISSUE:-"{}"}"
 		# `_gh_wrapper_auto_sig` and friends call `gh api user --jq .login`.
 		# Emit a merge summary for the ready-PR fixture and a JSON object for
 		# source-time identity probes.
@@ -532,6 +536,52 @@ test_data_only_completion_requires_receipt_and_clean_branch() {
 	return 0
 }
 
+_assert_consolidation_terminal() {
+	local name="$1"
+	local expected_rc="$2"
+	local rc=0
+	_worker_external_terminal_complete "issue-123" "$WORK_DIR" >/dev/null 2>&1 || rc=1
+	if [[ "$rc" -eq "$expected_rc" ]]; then
+		print_result "$name" 0
+	else
+		print_result "$name" 1 "rc=${rc}"
+	fi
+	return 0
+}
+
+# GH#32984: consolidation children complete without a PR. Every evidence link
+# (child, trusted comment, closed parent, successor) must agree.
+test_consolidation_completion_requires_linked_evidence() {
+	make_repo_pair "consolidation" || {
+		print_result "consolidation completion fixture" 1
+		return 0
+	}
+	git -C "$WORK_DIR" checkout -q -b feature/consolidation || return 1
+	local done_comment='[{"author_association":"OWNER","body":"Consolidation complete. Parent: #88 → New: #99. Contributors @-mentioned: @a."}]'
+	local parent_closed='{"state":"closed","labels":[{"name":"consolidated"}]}'
+	local successor_ok='{"author_association":"OWNER","labels":[],"body":"_Supersedes #88 — this issue is the consolidated spec._"}'
+	export STUB_ISSUE_STATE=CLOSED STUB_PR_NUMBERS=''
+	export STUB_DATA_ISSUE='{"state":"closed","state_reason":"completed","author_association":"COLLABORATOR","labels":[{"name":"consolidation-task"}],"body":"## Consolidation target: #88\n\n## Parent body (verbatim)"}'
+	export STUB_DATA_COMMENTS="$done_comment" STUB_PARENT_ISSUE="$parent_closed" STUB_SUCCESSOR_ISSUE="$successor_ok"
+	_assert_consolidation_terminal "linked consolidation evidence completes without PR" 0
+	STUB_DATA_COMMENTS='[{"author_association":"CONTRIBUTOR","body":"Consolidation complete. Parent: #88 → New: #99."}]'
+	_assert_consolidation_terminal "untrusted consolidation comment is not completion" 1
+	STUB_DATA_COMMENTS='[{"author_association":"OWNER","body":"Consolidation complete. Parent: #87 → New: #99."}]'
+	_assert_consolidation_terminal "consolidation comment for another parent is not completion" 1
+	STUB_DATA_COMMENTS="$done_comment"
+	STUB_PARENT_ISSUE='{"state":"open","labels":[{"name":"consolidated"}]}'
+	_assert_consolidation_terminal "open consolidation parent is not completion" 1
+	STUB_PARENT_ISSUE="$parent_closed"
+	STUB_SUCCESSOR_ISSUE='{"author_association":"OWNER","labels":[],"body":"_Supersedes #880 — another spec._"}'
+	_assert_consolidation_terminal "successor superseding another issue is not completion" 1
+	STUB_SUCCESSOR_ISSUE="$successor_ok"
+	printf '%s\n' 'unfinished' >"${WORK_DIR}/uncommitted.txt"
+	_assert_consolidation_terminal "consolidation with dirty worktree is not completion" 1
+	rm "${WORK_DIR}/uncommitted.txt"
+	unset STUB_DATA_ISSUE STUB_DATA_COMMENTS STUB_PARENT_ISSUE STUB_SUCCESSOR_ISSUE STUB_ISSUE_STATE STUB_PR_NUMBERS
+	return 0
+}
+
 test_dirty_feature_worktree_preserved() {
 	make_repo_pair "case9" || {
 		print_result "case 9: dirty feature worktree is preserved" 1 "fixture setup failed"
@@ -667,6 +717,7 @@ test_feature_branch_without_default_ref_returns_branch_orphan
 test_external_terminal_complete_uses_trailing_issue_digits
 test_external_terminal_complete_guards_before_github_calls
 test_data_only_completion_requires_receipt_and_clean_branch
+test_consolidation_completion_requires_linked_evidence
 test_dirty_feature_worktree_preserved
 test_develop_zero_diff_local_branch_returns_noop
 test_develop_zero_diff_pushed_branch_returns_noop

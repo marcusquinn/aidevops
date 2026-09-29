@@ -1294,7 +1294,7 @@ _worker_external_terminal_complete() {
 	local issue_state=""
 	issue_state=$(gh issue view "$issue_number" --repo "$repo_slug" --json state --jq '.state // empty' 2>/dev/null || true)
 	[[ "$issue_state" == "CLOSED" ]] || return 1
-	if _hrw_data_only_terminal_complete "$session_key" "$work_dir" "$issue_number" "$repo_slug"; then
+	if _hrw_pr_less_terminal_complete "$session_key" "$work_dir" "$issue_number" "$repo_slug"; then
 		return 0
 	fi
 
@@ -1329,10 +1329,10 @@ _worker_external_terminal_complete() {
 	return 1
 }
 
-# A PR-less terminal state is valid only for an explicitly authorized data-only
-# objective with a trusted, issue-bound publication receipt. This is evidence
-# classification, never authority to perform the publication itself.
-_hrw_data_only_terminal_complete() {
+# PR-less objectives with a trusted terminal contract: explicit data-only work
+# (GH#32826) and pulse consolidation children (GH#32984). The issue is fetched
+# once and shared so ordinary open-issue finishes cost a single API read.
+_hrw_pr_less_terminal_complete() {
 	local session_key="$1"
 	local work_dir="$2"
 	local issue_number="$3"
@@ -1340,21 +1340,20 @@ _hrw_data_only_terminal_complete() {
 	[[ "$issue_number" =~ ^[1-9][0-9]*$ && "$repo_slug" == */* ]] || return 1
 	[[ "${WORKER_ISSUE_NUMBER:-$issue_number}" == "$issue_number" ]] || return 1
 	[[ -d "$work_dir" ]] || return 1
-	local issue_json="" comments="" default_branch="" default_ref="" branch="" remote_tip="" local_head="" pr_count="" task_status=""
+	local issue_json=""
 	issue_json=$(gh api "repos/${repo_slug}/issues/${issue_number}" 2>/dev/null) || return 1
-	jq -e --arg marker '<!-- aidevops:completion-contract:data-only/v1 -->' \
-		'.state == "closed" and (.author_association == "OWNER" or .author_association == "MEMBER") and ((.body // "") | contains($marker))' \
-		<<<"$issue_json" >/dev/null 2>&1 || return 1
-	comments=$(gh api --paginate "repos/${repo_slug}/issues/${issue_number}/comments?per_page=100" 2>/dev/null) || return 1
-	jq -se --arg repo "$repo_slug" --argjson issue "$issue_number" '
-		any(.[][];
-			(.author_association == "OWNER" or .author_association == "MEMBER")
-			and ((.body // "") | startswith("<!-- aidevops:data-only-completion:v1 -->\n"))
-			and ((.body | split("\n") | .[1]) as $receipt
-				| (try ($receipt | fromjson) catch {}) as $r
-				| $r.repository == $repo and $r.issue == $issue and $r.status == "published" and $r.verified == true
-				and ($r.evidence_url | type == "string" and test("^https://[^/[:space:]]+/[^[:space:]]+$"))))
-	' <<<"$comments" >/dev/null 2>&1 || return 1
+	jq -e '.state == "closed"' <<<"$issue_json" >/dev/null 2>&1 || return 1
+	_hrw_data_only_terminal_complete "$session_key" "$work_dir" "$issue_number" "$repo_slug" "$issue_json" && return 0
+	_hrw_consolidation_terminal_complete "$session_key" "$work_dir" "$issue_number" "$repo_slug" "$issue_json" && return 0
+	return 1
+}
+
+# A PR-less completion must leave nothing unpublished: a clean non-default
+# branch at or behind the live default tip, no pushed orphan and no PR.
+_hrw_pr_less_worktree_clean() {
+	local work_dir="$1"
+	local repo_slug="$2"
+	local default_branch="" default_ref="" branch="" remote_tip="" local_head="" pr_count="" task_status=""
 	default_branch=$(_hrw_resolve_default_branch "$work_dir") || return 1
 	[[ -n "$default_branch" ]] || return 1
 	branch=$(git -C "$work_dir" branch --show-current 2>/dev/null) || return 1
@@ -1376,7 +1375,92 @@ _hrw_data_only_terminal_complete() {
 	[[ -z "$remote_branch" || "${remote_branch%%[[:space:]]*}" == "$local_head" ]] || return 1
 	pr_count=$(gh pr list --repo "$repo_slug" --head "$branch" --state all --json number --jq 'length' 2>/dev/null) || return 1
 	[[ "$pr_count" == "0" ]] || return 1
+	return 0
+}
+
+# A PR-less terminal state is valid only for an explicitly authorized data-only
+# objective with a trusted, issue-bound publication receipt. This is evidence
+# classification, never authority to perform the publication itself.
+# Args: session_key work_dir issue_number repo_slug [prefetched issue JSON]
+_hrw_data_only_terminal_complete() {
+	local session_key="$1"
+	local work_dir="$2"
+	local issue_number="$3"
+	local repo_slug="$4"
+	local issue_json="${5:-}"
+	[[ "$issue_number" =~ ^[1-9][0-9]*$ && "$repo_slug" == */* ]] || return 1
+	[[ "${WORKER_ISSUE_NUMBER:-$issue_number}" == "$issue_number" ]] || return 1
+	[[ -d "$work_dir" ]] || return 1
+	local comments=""
+	if [[ -z "$issue_json" ]]; then
+		issue_json=$(gh api "repos/${repo_slug}/issues/${issue_number}" 2>/dev/null) || return 1
+	fi
+	jq -e --arg marker '<!-- aidevops:completion-contract:data-only/v1 -->' \
+		'.state == "closed" and (.author_association == "OWNER" or .author_association == "MEMBER") and ((.body // "") | contains($marker))' \
+		<<<"$issue_json" >/dev/null 2>&1 || return 1
+	comments=$(gh api --paginate "repos/${repo_slug}/issues/${issue_number}/comments?per_page=100" 2>/dev/null) || return 1
+	jq -se --arg repo "$repo_slug" --argjson issue "$issue_number" '
+		any(.[][];
+			(.author_association == "OWNER" or .author_association == "MEMBER")
+			and ((.body // "") | startswith("<!-- aidevops:data-only-completion:v1 -->\n"))
+			and ((.body | split("\n") | .[1]) as $receipt
+				| (try ($receipt | fromjson) catch {}) as $r
+				| $r.repository == $repo and $r.issue == $issue and $r.status == "published" and $r.verified == true
+				and ($r.evidence_url | type == "string" and test("^https://[^/[:space:]]+/[^[:space:]]+$"))))
+	' <<<"$comments" >/dev/null 2>&1 || return 1
+	_hrw_pr_less_worktree_clean "$work_dir" "$repo_slug" || return 1
 	print_info "[lifecycle] worker_data_only_terminal complete session=${session_key} issue=${issue_number}"
+	return 0
+}
+
+# Consolidation children (pulse-triage-dispatch.sh) are operational tasks whose
+# completion is a successor issue, a closed parent and a self-close, never a PR.
+# Every link is cross-checked against trusted GitHub state; this classifies
+# evidence only and grants no authority to write (GH#32984). Peer pulse runners
+# with write access author these artifacts as COLLABORATOR, so write-access
+# associations are trusted here (the data-only opt-in stays OWNER/MEMBER).
+# Args: session_key work_dir issue_number repo_slug [prefetched issue JSON]
+_hrw_consolidation_terminal_complete() {
+	local session_key="$1"
+	local work_dir="$2"
+	local issue_number="$3"
+	local repo_slug="$4"
+	local issue_json="${5:-}"
+	[[ "$issue_number" =~ ^[1-9][0-9]*$ && "$repo_slug" == */* ]] || return 1
+	[[ "${WORKER_ISSUE_NUMBER:-$issue_number}" == "$issue_number" ]] || return 1
+	[[ -d "$work_dir" ]] || return 1
+	local comments="" parent_num="" successor_num="" parent_json="" successor_json=""
+	local writer_def='def writer: .author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR";'
+	if [[ -z "$issue_json" ]]; then
+		issue_json=$(gh api "repos/${repo_slug}/issues/${issue_number}" 2>/dev/null) || return 1
+	fi
+	parent_num=$(jq -r "${writer_def}"'
+		select(.state == "closed" and .state_reason == "completed" and writer
+			and any(.labels[]?; .name == "consolidation-task"))
+		| [(.body // "") | split("\n")[]
+			| capture("^## Consolidation target: #(?<n>[1-9][0-9]*)\\s*$") | .n] | first // empty
+	' <<<"$issue_json" 2>/dev/null) || return 1
+	[[ "$parent_num" =~ ^[1-9][0-9]*$ && "$parent_num" != "$issue_number" ]] || return 1
+	comments=$(gh api --paginate "repos/${repo_slug}/issues/${issue_number}/comments?per_page=100" 2>/dev/null) || return 1
+	successor_num=$(jq -rs --arg parent "$parent_num" "${writer_def}"'
+		[.[][] | select(writer)
+			| (.body // "")
+			| capture("^Consolidation complete\\. Parent: #(?<p>[1-9][0-9]*) (?:→|->) New: #(?<n>[1-9][0-9]*)")
+			| select(.p == $parent) | .n] | last // empty
+	' <<<"$comments" 2>/dev/null) || return 1
+	[[ "$successor_num" =~ ^[1-9][0-9]*$ && "$successor_num" != "$issue_number" && "$successor_num" != "$parent_num" ]] || return 1
+	parent_json=$(gh api "repos/${repo_slug}/issues/${parent_num}" 2>/dev/null) || return 1
+	jq -e '.state == "closed" and any(.labels[]?; .name == "consolidated")' \
+		<<<"$parent_json" >/dev/null 2>&1 || return 1
+	successor_json=$(gh api "repos/${repo_slug}/issues/${successor_num}" 2>/dev/null) || return 1
+	# The successor's own lifecycle may later drop its `consolidated` label, so
+	# bind it by author and the template's `Supersedes #P` line instead.
+	jq -e --arg parent "$parent_num" "${writer_def}"'
+		(.pull_request | not) and writer
+		and ((.body // "") | test("Supersedes #" + $parent + "([^0-9]|$)"))
+	' <<<"$successor_json" >/dev/null 2>&1 || return 1
+	_hrw_pr_less_worktree_clean "$work_dir" "$repo_slug" || return 1
+	print_info "[lifecycle] worker_consolidation_terminal complete session=${session_key} issue=${issue_number} parent=#${parent_num} successor=#${successor_num}"
 	return 0
 }
 
@@ -2175,7 +2259,7 @@ _hrw_finish_success_run() {
 	# repo, no gh, no remote) the classification is "pr_exists", so false-negatives
 	# (legit work misclassified) are impossible.
 	if [[ "$release_needed" -eq 1 && -n "$work_dir" ]] && \
-		! _hrw_data_only_terminal_complete "$session_key" "$work_dir" \
+		! _hrw_pr_less_terminal_complete "$session_key" "$work_dir" \
 		"$(_hrw_issue_number_for_session "$session_key")" "${DISPATCH_REPO_SLUG:-}"; then
 		local output_class="pr_exists"
 		output_class=$(_worker_produced_output "$session_key" "$work_dir")
