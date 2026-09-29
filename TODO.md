@@ -5060,3 +5060,4 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t18525 Install and update Cloudflare cf CLI via setup and update-tools #enhancement ref:GH#32862
 - [ ] t18524 fix(seo): keywords allow one target per phrase per site #bug #seo ref:GH#32854
 - [ ] t18523 Add Cloudflare cf CLI guidance and routing #enhancement ref:GH#32850
+- [ ] t18558 fix(prefetch): events tickle 304 must not skip owners whose snapshots are stale (private-org public events feed) #bug ref:GH#33074
