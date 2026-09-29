@@ -62,6 +62,18 @@ source "${SCRIPT_DIR}/release-authorization-manifest-helper.sh"
 	_full_loop_release_inspect_remote test/repo v1.2.3 >/dev/null || rc=$?
 	[[ "$rc" -eq 8 && "$(wc -l <"${TEST_ROOT}/grace-dispatch.log")" -eq 1 ]] || exit 1
 	printf 'PASS queued recovery does not redispatch\n'
+	_full_loop_release_find_workflow_run() { _FULL_LOOP_RELEASE_RUN_JSON=""; return 3; }
+	_full_loop_release_verify_channels() { return 0; }
+	rc=0
+	_full_loop_release_inspect_remote test/repo v1.2.3 >"${TEST_ROOT}/lookup-output" || rc=$?
+	[[ "$rc" -eq 8 && "$(wc -l <"${TEST_ROOT}/grace-dispatch.log")" -eq 1 ]] || exit 1
+	grep -qx 'WORKFLOW_LOOKUP=uncorroborated' "${TEST_ROOT}/lookup-output" || exit 1
+	printf 'PASS absent run with published channels is pending without dispatch\n'
+	_full_loop_release_verify_channels() { return 1; }
+	rc=0
+	_full_loop_release_inspect_remote test/repo v1.2.3 >/dev/null || rc=$?
+	[[ "$rc" -eq 3 ]] || exit 1
+	printf 'PASS absent run with unpublished channels still reports absent\n'
 )
 
 # shellcheck source=test-full-loop-release-reconcile-proof.sh
