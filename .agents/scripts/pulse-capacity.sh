@@ -81,7 +81,7 @@ _pulse_capacity_selected_provider() {
 _pulse_capacity_provider_account_counts() {
 	local provider="$1"
 	local unavailable_counts='0 -1 0 0'
-	local pool_file="${PULSE_DISPATCH_OAUTH_POOL_FILE:-${HOME}/.aidevops/oauth-pool.json}"
+	local pool_file="${PULSE_DISPATCH_OAUTH_POOL_FILE:-${AIDEVOPS_OAUTH_POOL_FILE:-${HOME}/.aidevops/oauth-pool.json}}"
 	if [[ -z "$provider" || ! -f "$pool_file" ]] || ! command -v jq >/dev/null 2>&1; then
 		printf '%s\n' "$unavailable_counts"
 		return 0
@@ -169,6 +169,12 @@ _pulse_capacity_auth_error_recovery() {
 	[[ "$provider" =~ ^[a-zA-Z0-9_-]+$ ]] || return 1
 	_pulse_capacity_auth_error_only "$total" "$available" "$auth_errors" || return 1
 	local state_dir stamp lock now last=0 throttle="${PULSE_AUTH_ERROR_REFRESH_THROTTLE_SECONDS:-300}"
+	local pool_file="${PULSE_DISPATCH_OAUTH_POOL_FILE:-${AIDEVOPS_OAUTH_POOL_FILE:-$HOME/.aidevops/oauth-pool.json}}"
+	# An unexpired backoff is not an attempt: do not consume the throttle
+	# window before the pool's refresh eligibility can recover.
+	jq -e --arg provider "$provider" --argjson now "$(($(date +%s) * 1000))" \
+		'([.[$provider][]? | select(.status == "auth-error" and ((.cooldownUntil // 0 | tonumber? // 0) <= $now))] | length) > 0' \
+		"$pool_file" >/dev/null 2>&1 || return 1
 	state_dir=$(_pulse_capacity_auth_error_state_dir)
 	stamp="${state_dir}/${provider}.last-refresh"
 	lock="${state_dir}/${provider}.refresh-lock"
@@ -194,7 +200,7 @@ _pulse_capacity_auth_error_recovery() {
 	local helper="${BASH_SOURCE[0]%/*}/oauth-pool-helper.sh"
 	# Refresh is serialized by the pool's own lock. Never let a token endpoint
 	# stall the dispatch cycle; the pool helper owns credential transitions.
-	if ! AIDEVOPS_OAUTH_POOL_FILE="${PULSE_DISPATCH_OAUTH_POOL_FILE:-${AIDEVOPS_OAUTH_POOL_FILE:-$HOME/.aidevops/oauth-pool.json}}" timeout 20 "$helper" refresh "$provider" >>"${LOGFILE:-/dev/null}" 2>&1; then
+	if ! AIDEVOPS_OAUTH_POOL_FILE="$pool_file" timeout_sec 20 "$helper" refresh "$provider" >>"${LOGFILE:-/dev/null}" 2>&1; then
 		printf '[pulse-wrapper] auth-error refresh failed or timed out: provider=%s\n' "$provider" >>"${LOGFILE:-/dev/null}" 2>/dev/null || true
 	fi
 	return 0
@@ -202,7 +208,7 @@ _pulse_capacity_auth_error_recovery() {
 
 _pulse_capacity_auth_error_cycles() {
 	local provider="$1" total="$2" available="$3" auth_errors="$4"
-	local state_dir stamp cycles=0
+	local state_dir stamp cycles=0 previous_cycle="" cycle_id="${_PULSE_CYCLE_ID:-}"
 	[[ "$provider" =~ ^[a-zA-Z0-9_-]+$ ]] || { printf '0\n'; return 0; }
 	state_dir=$(_pulse_capacity_auth_error_state_dir)
 	stamp="${state_dir}/${provider}.cycles"
@@ -213,11 +219,13 @@ _pulse_capacity_auth_error_cycles() {
 	fi
 	mkdir -p "$state_dir" 2>/dev/null || { printf '0\n'; return 0; }
 	if [[ -f "$stamp" ]]; then
-		IFS= read -r cycles <"$stamp" || true
+		read -r cycles previous_cycle <"$stamp" || true
 	fi
 	[[ "$cycles" =~ ^[0-9]+$ ]] || cycles=0
-	cycles=$((cycles + 1))
-	printf '%s\n' "$cycles" >"$stamp" || true
+	if [[ -z "$cycle_id" || "$previous_cycle" != "$cycle_id" ]]; then
+		cycles=$((cycles + 1))
+	fi
+	printf '%s %s\n' "$cycles" "$cycle_id" >"$stamp" || true
 	printf '%s\n' "$cycles"
 	return 0
 }
