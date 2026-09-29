@@ -211,6 +211,17 @@ end) as $max_workers |
     cadence_api_risk: ($api.cadence_api_risk // "unknown")
   },
   findings: ([
+    if ($health_fresh and ($current.pulse_health.auth_error_capacity_zero // null) != null) then
+      finding(
+        "auth-error-capacity-zero";
+        "high";
+        "Provider dispatch capacity is zero from auth-error accounts";
+        ["provider=" + ($current.pulse_health.auth_error_capacity_zero.provider // "unknown"),
+         "consecutive_cycles=" + (($current.pulse_health.auth_error_capacity_zero.cycles // 0) | tostring)];
+        ($current.pulse_health.auth_error_capacity_zero.remedy // "oauth-pool-helper.sh reset-cooldowns <provider>");
+        false
+      )
+    else empty end,
     if (["reserve", "cooldown"] | index($api.rest_admission.state // "unknown")) != null then
       finding(
         "github-rest-admission-held";

@@ -1,0 +1,55 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+
+import { execFileSync } from "child_process";
+
+const DEFAULT_POLICY_HELPER_TIMEOUT_MS = 10000;
+const POLICY_HELPER_RETRY_TIMEOUT_MULTIPLIER = 3;
+
+export function parsePolicyPayload(raw) {
+  const result = JSON.parse(raw);
+  if (!result || typeof result !== "object" || Array.isArray(result)) {
+    throw new TypeError("policy returned a non-object payload");
+  }
+  return result;
+}
+
+function policyHelperTimeoutMs() {
+  const raw = String(process.env.AIDEVOPS_POLICY_HELPER_TIMEOUT_MS ?? "").trim();
+  return /^[1-9]\d{0,6}$/.test(raw) ? Number(raw) : DEFAULT_POLICY_HELPER_TIMEOUT_MS;
+}
+
+export function isPolicyHelperTimeout(error) {
+  return error?.code === "ETIMEDOUT";
+}
+
+// Policy helpers are read-only evaluations, so one retry with a larger budget
+// is safe. Host load (spawned jq/network helpers at load average > ncpu)
+// routinely pushes a normal evaluation past the base budget (GH#32955).
+// A second timeout propagates; callers map it with transientPolicyTimeoutError.
+export function runPolicyHelper(helperArgs, execOptions) {
+  const timeout = policyHelperTimeoutMs();
+  const options = { ...execOptions, encoding: "utf8" };
+  try {
+    return execFileSync("python3", helperArgs, { ...options, timeout });
+  } catch (error) {
+    if (!isPolicyHelperTimeout(error)) throw error;
+  }
+  return execFileSync("python3", helperArgs, {
+    ...options,
+    timeout: timeout * POLICY_HELPER_RETRY_TIMEOUT_MULTIPLIER,
+  });
+}
+
+export function transientPolicyTimeoutError(policyName) {
+  return new Error(
+    `BLOCKED: ${policyName} policy timed out under host load (transient infrastructure timeout, not a policy decision); retry the same command`,
+  );
+}
+
+// Map a failed helper execution to the fail-closed error a gate throws.
+export function policyExecutionFailure(policyName, error) {
+  if (isPolicyHelperTimeout(error)) return transientPolicyTimeoutError(policyName);
+  const detail = error?.stderr?.toString().trim() || error?.message || "policy check failed";
+  return new Error(`BLOCKED: ${policyName} policy failed closed: ${detail}`);
+}

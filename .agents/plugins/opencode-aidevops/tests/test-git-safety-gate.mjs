@@ -918,3 +918,55 @@ test("fails closed when command policy exits nonzero with an allow payload", () 
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+function withPolicyHelperTimeout(timeoutMs, callback) {
+  const previous = process.env.AIDEVOPS_POLICY_HELPER_TIMEOUT_MS;
+  process.env.AIDEVOPS_POLICY_HELPER_TIMEOUT_MS = String(timeoutMs);
+  try {
+    return callback();
+  } finally {
+    if (previous === undefined) delete process.env.AIDEVOPS_POLICY_HELPER_TIMEOUT_MS;
+    else process.env.AIDEVOPS_POLICY_HELPER_TIMEOUT_MS = previous;
+  }
+}
+
+test("retries a policy helper once after a host-load timeout", () => {
+  const root = mkdtempSync(join(tmpdir(), "aidevops-command-policy-timeout-"));
+  const isolatedScripts = join(root, "scripts");
+  const marker = join(root, "first-attempt");
+  mkdirSync(isolatedScripts);
+  try {
+    writeFileSync(
+      join(isolatedScripts, "command-policy-helper.py"),
+      `import os, time\nmarker = ${JSON.stringify(marker)}\nif not os.path.exists(marker):\n    open(marker, "w").close()\n    time.sleep(10)\nprint('{"decision":"allow"}')\n`,
+    );
+    withPolicyHelperTimeout(500, () => assert.doesNotThrow(
+      () => checkCommandSafetyGate("printf safe", isolatedScripts, process.cwd()),
+    ));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("labels a repeated policy helper timeout as transient infrastructure", () => {
+  const root = mkdtempSync(join(tmpdir(), "aidevops-command-policy-timeout-"));
+  const isolatedScripts = join(root, "scripts");
+  mkdirSync(isolatedScripts);
+  try {
+    for (const helper of ["command-policy-helper.py", "canonical-write-policy-helper.py"]) {
+      writeFileSync(join(isolatedScripts, helper), "import time\ntime.sleep(10)\n");
+    }
+    withPolicyHelperTimeout(300, () => {
+      assert.throws(
+        () => checkCommandSafetyGate("printf safe", isolatedScripts, process.cwd()),
+        /BLOCKED: command policy timed out under host load \(transient infrastructure timeout, not a policy decision\)/,
+      );
+      assert.throws(
+        () => checkCanonicalWriteSafetyGate(join(root, "file.txt"), isolatedScripts, root),
+        /BLOCKED: canonical-write policy timed out under host load/,
+      );
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

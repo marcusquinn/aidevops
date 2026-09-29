@@ -30,14 +30,28 @@ Topic: $ARGUMENTS
 Show current tier dispatch telemetry from production data:
 
 ```bash
-~/.aidevops/agents/scripts/dispatch-ledger-helper.sh tier-report
+~/.aidevops/agents/scripts/dispatch-ledger-helper.sh tier-report [--days N] [--json]
 ```
 
-Outputs include dispatches, outcomes, escalation counts, pass rates, and dominant
-failure reasons by tier. Telemetry is recorded automatically by:
+The report covers attempts dispatched in the last 30 days by default; `--days 0`
+reads all history and `--json` prints the raw summary. Terminal outcomes count
+in the window of their dispatch. Sections:
+
+- Dispatches, outcomes, and escalation reasons, with dispatch counts by tier
+- Pass rate by tier: success over terminal outcomes
+- First-dispatch pass rate: only the first attempt per issue, the best measure
+  of solving on the first attempt
+- Pass rate by tier and `model@variant`, with deferred outcomes excluded from
+  the denominator and shown separately, so provider deferrals do not read as
+  model failures
+
+Telemetry is recorded automatically by:
 
 - `dispatch-ledger-helper.sh register` — records tier + model at dispatch time
-- `dispatch-ledger-helper.sh record-outcome` — records outcome + escalation reason
+- `dispatch-ledger-helper.sh record-outcome` — records outcome + escalation
+  reason, plus the model, variant, and route-attempt count that last ran. The
+  dispatch row owns tier and model; worker values only fill launches that
+  registered before routing
 - Append-only log: `~/.aidevops/.agent-workspace/tmp/tier-telemetry.jsonl`
 
 ### Opt-in issue-level model A/B observation

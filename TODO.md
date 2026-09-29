@@ -1486,7 +1486,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18522 fix(seo): GSC export token lacks webmasters scope; use documented gsc-credentials.json #bug #seo #auto-dispatch tier:standard ~45m ref:GH#32843 logged:2026-09-28 -> [todo/tasks/t18522-brief.md] pr:#32866 completed:2026-09-28
 
-- [ ] t18528 feat(seo): keywords routine refreshes GSC/Bing exports before import #feature #seo #auto-dispatch tier:standard ~1h ref:GH#32877 logged:2026-09-28 -> [todo/tasks/t18528-brief.md]
+- [x] t18528 feat(seo): keywords routine refreshes GSC/Bing exports before import #feature #seo #auto-dispatch tier:standard ~1h ref:GH#32877 logged:2026-09-28 -> [todo/tasks/t18528-brief.md] pr:#32937 completed:2026-09-29
 
 - [x] t18529 fix(recovery): opt-in CWD inspector reads same-user setuid-root helpers; advisory names unreadable-processes diagnostic #bug #framework #recovery #interactive #auto-dispatch tier:standard ~1h ref:GH#32871 logged:2026-09-28 -> [todo/tasks/t18529-brief.md] pr:#32890 completed:2026-09-28
 
@@ -1494,8 +1494,11 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 - [x] t18531 fix(routing): capability escalation re-runs the identical Sol medium route when standard and thinking share a model #auto-dispatch #bug ref:GH#32929 pr:#32931 logged:2026-09-29 completed:2026-09-29
 - [x] t18532 fix(compaction): cap compaction effort and route to first fitting simple-tier candidate #auto-dispatch #bug ref:GH#32934 pr:#32935 logged:2026-09-29 completed:2026-09-29
 - [x] t18534 fix(pulse): restore retry context lost to torn objective-evidence lines; add sanitised failure signals #auto-dispatch #bug ref:GH#32938 pr:#32942 logged:2026-09-29 completed:2026-09-29
-- [ ] t18535 fix(command-policy): resolve default git remote for bare push/fetch/pull; classify pushurl and --multiple remotes #auto-dispatch #bug ref:GH#32943 logged:2026-09-29
+- [x] t18535 fix(command-policy): resolve default git remote for bare push/fetch/pull; classify pushurl and --multiple remotes #auto-dispatch #bug ref:GH#32943 pr:#32947 logged:2026-09-29 completed:2026-09-29
+- [x] t18536 fix(worktree): log dependency provisioning reason codes; skip package dirs without a supported lockfile #auto-dispatch #bug ref:GH#32950 pr:#32952 logged:2026-09-29 completed:2026-09-29
+- [x] t18537 fix(plugin): retry policy helper once on ETIMEDOUT under host load; label second timeout as transient #auto-dispatch #bug ref:GH#32955 logged:2026-09-29 pr:#32962 completed:2026-09-29
 - [ ] t18538 feat(pulse): auto-refresh and alert when capacity is zero only from auth-error OAuth accounts #enhancement #framework #pulse #interactive #auto-dispatch tier:standard ~2h ref:GH#32960 logged:2026-09-29 -> [todo/tasks/t18538-brief.md]
+- [x] t18539 fix(telemetry): keep tier/model on attempt-matched outcomes; window tier-report with model@variant and first-dispatch pass rates #auto-dispatch #bug ref:GH#32964 logged:2026-09-29 pr:#32970 completed:2026-09-29
 
 ## In Progress
 

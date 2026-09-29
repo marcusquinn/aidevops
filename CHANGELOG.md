@@ -10,6 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.37.29] - 2026-09-29
+
+### Added
+
+- prune expired GitHub read caches older than 8 days (GH#32957) (#32966)
+
+### Changed
+
+- retry policy helper once on ETIMEDOUT under host load; label second timeout as transient
+- Tests: restore pulse merge regression suites (#32967)
+
+### Fixed
+
+- t18539: fix(telemetry): keep tier/model on attempt-matched outcomes; window tier-report with model@variant and first-dispatch pass rates
+- bound isolated counter discovery fetches (#32963)
+
 ## [3.37.28] - 2026-09-29
 
 ### Fixed

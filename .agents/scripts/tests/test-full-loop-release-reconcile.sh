@@ -23,6 +23,47 @@ source "${SCRIPT_DIR}/full-loop-release-reconcile.sh"
 # shellcheck source=../release-authorization-manifest-helper.sh
 source "${SCRIPT_DIR}/release-authorization-manifest-helper.sh"
 
+# Exercise the real inspect/dispatch boundary before the command fixtures replace it.
+(
+	sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+	_FULL_LOOP_RELEASE_RUN_JSON=""
+	_full_loop_release_resolve_tag_commit() { printf '%s\n' "$sha"; return 0; }
+	_full_loop_release_verify_channels() { return 1; }
+	_full_loop_release_find_workflow_run() {
+		local repo="$1" tag="$2" commit="$3"
+		[[ "$repo" == test/repo && "$tag" == v1.2.3 && "$commit" == "$sha" ]] || return 1
+		_FULL_LOOP_RELEASE_RUN_JSON="$fixture_run"
+		return 0
+	}
+	gh() {
+		[[ "$1 $2 $3" == 'workflow run publish-packages.yml' ]] || return 1
+		printf 'dispatch\n' >>"${TEST_ROOT}/grace-dispatch.log"
+		return 0
+	}
+	SCRIPT_DIR="${TEST_ROOT}/bin"
+	fixture_run=$(jq -cn --arg sha "$sha" --arg updated "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+		'{event:"push",head_sha:$sha,status:"completed",conclusion:"success",updated_at:$updated}')
+	rc=0
+	_full_loop_release_inspect_remote test/repo v1.2.3 >"${TEST_ROOT}/grace-output" || rc=$?
+	[[ "$rc" -eq 8 && ! -e "${TEST_ROOT}/grace-dispatch.log" ]] || exit 1
+	grep -qx 'WORKFLOW_STATUS=completed' "${TEST_ROOT}/grace-output" || exit 1
+	printf 'PASS recent successful publish waits for channels without dispatch\n'
+	fixture_run=$(jq -cn --arg sha "$sha" --arg updated "$(jq -nr --argjson epoch "$(date -u +%s)" '$epoch - 1200 | todateiso8601')" \
+		'{event:"push",head_sha:$sha,status:"completed",conclusion:"success",updated_at:$updated}')
+	rc=0
+	_full_loop_release_inspect_remote test/repo v1.2.3 >/dev/null || rc=$?
+	[[ "$rc" -eq 5 ]] || exit 1
+	rc=0
+	_full_loop_release_dispatch_recovery test/repo v1.2.3 >/dev/null || rc=$?
+	[[ "$rc" -eq 8 && "$(wc -l <"${TEST_ROOT}/grace-dispatch.log")" -eq 1 ]] || exit 1
+	printf 'PASS expired grace dispatches once\n'
+	fixture_run=$(jq -cn --arg sha "$sha" '{event:"workflow_dispatch",head_sha:$sha,status:"queued",conclusion:null}')
+	rc=0
+	_full_loop_release_inspect_remote test/repo v1.2.3 >/dev/null || rc=$?
+	[[ "$rc" -eq 8 && "$(wc -l <"${TEST_ROOT}/grace-dispatch.log")" -eq 1 ]] || exit 1
+	printf 'PASS queued recovery does not redispatch\n'
+)
+
 # shellcheck source=test-full-loop-release-reconcile-proof.sh
 source "${SCRIPT_DIR}/tests/test-full-loop-release-reconcile-proof.sh"
 # shellcheck source=test-full-loop-release-reconcile-discovery.sh

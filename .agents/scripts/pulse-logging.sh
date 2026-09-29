@@ -633,6 +633,29 @@ append_cycle_index() {
 	return 0
 }
 
+_pulse_health_auth_error_alert_json() {
+	local provider="" state_dir="" stamp="" cycles=0 threshold="${PULSE_AUTH_ERROR_ALERT_CYCLES:-3}"
+	local total="" available="" limited="" errors=""
+	declare -F _pulse_capacity_selected_provider >/dev/null 2>&1 || return 0
+	provider=$(_pulse_capacity_selected_provider)
+	[[ "$provider" =~ ^[a-zA-Z0-9_-]+$ ]] || return 0
+	state_dir=$(_pulse_capacity_auth_error_state_dir)
+	stamp="${state_dir}/${provider}.cycles"
+	[[ -f "$stamp" ]] || return 0
+	read -r total available limited errors <<<"$(_pulse_capacity_provider_account_counts "$provider")"
+	if ! _pulse_capacity_auth_error_only "$total" "$available" "$errors"; then
+		rm -f "$stamp"
+		return 0
+	fi
+	read -r cycles _ <"$stamp" || true
+	[[ "$cycles" =~ ^[0-9]+$ ]] || return 0
+	[[ "$threshold" =~ ^[1-9][0-9]*$ ]] || threshold=3
+	((cycles >= threshold)) || return 0
+	jq -cn --arg provider "$provider" --argjson cycles "$cycles" \
+		'{auth_error_capacity_zero: {provider: $provider, cycles: $cycles, remedy: ("oauth-pool-helper.sh reset-cooldowns " + $provider)}} | to_entries[0] | "\(.key | tojson):\(.value | tojson),"' -r
+	return 0
+}
+
 #######################################
 # Write pulse-health.json — structured status snapshot for instant diagnosis.
 #
@@ -666,6 +689,8 @@ write_pulse_health_file() {
 	local cycle_state_json=null
 	cycle_state_json=$(_pulse_cycle_state_json) || cycle_state_json=null
 	printf '%s' "$cycle_state_json" | jq empty >/dev/null 2>&1 || cycle_state_json=null
+	local auth_error_alert_json=""
+	auth_error_alert_json=$(_pulse_health_auth_error_alert_json) || auth_error_alert_json=""
 
 	# t3032: declare ledger helper once — used for both workers reconciliation
 	# and issues_dispatched. The ledger is written synchronously at dispatch
@@ -740,6 +765,7 @@ write_pulse_health_file() {
   "prefetch_conditional_misses": ${_PULSE_HEALTH_CONDITIONAL_MISSES:-0},
   "prefetch_throttled": ${_PULSE_HEALTH_PREFETCH_THROTTLED:-0},
   "idle_cycle_skipped": ${_PULSE_HEALTH_IDLE_CYCLE_SKIPPED:-0},
+  ${auth_error_alert_json}
   "cycle_state": ${cycle_state_json}
 }
 EOF
