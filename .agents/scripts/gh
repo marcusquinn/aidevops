@@ -107,16 +107,7 @@ _shim_timing path_resolution
 # shellcheck source=./gh-native-transport-lib.sh
 # shellcheck disable=SC1091  # sibling library resolved at runtime via $_SHIM_DIR
 source "${_SHIM_DIR}/gh-native-transport-lib.sh"
-# shellcheck source=./gh-api-guards-lib.sh
-# shellcheck disable=SC1091  # sibling library resolved at runtime via $_SHIM_DIR
-source "${_SHIM_DIR}/gh-api-guards-lib.sh"
-# shellcheck source=./managed-label-provisioning-lib.sh
-# shellcheck disable=SC1091  # sibling library resolved at runtime via $_SHIM_DIR
-source "${_SHIM_DIR}/managed-label-provisioning-lib.sh"
-# shellcheck source=./gh-write-policy-lib.sh
-# shellcheck disable=SC1091  # sibling library resolved at runtime via $_SHIM_DIR
-source "${_SHIM_DIR}/gh-write-policy-lib.sh"
-_shim_timing libraries
+_shim_timing native_library
 
 if [[ -f "${_SHIM_DIR}/gh-transport-controls.sh" ]]; then
 	# shellcheck source=./gh-transport-controls.sh
@@ -362,6 +353,9 @@ gh() {
 # -----------------------------------------------------------------------------
 
 if [[ "${1:-}:${2:-}" == "api:graphql" ]]; then
+	# shellcheck source=./gh-api-guards-lib.sh
+	# shellcheck disable=SC1091
+	source "${_SHIM_DIR}/gh-api-guards-lib.sh"
 	_shim_graphql_guard_literal_fields "$@" || exit 1
 fi
 
@@ -556,9 +550,39 @@ if [[ -n "$_SHIM_READ_REWRITE" ]]; then
 	fi
 fi
 
+# Conservative direct REST GET fast path. Accept only one endpoint and the
+# output-only jq selector used by high-frequency reads. Every other shape keeps
+# the full policy path, including implicit POST from fields or input files.
+if [[ "${1:-}" == api && "${2:-}" != graphql && "${2:-}" != -* && "${2:-}" != "" ]]; then
+	_SHIM_PLAIN_READ=0
+	case "$#" in
+	2) _SHIM_PLAIN_READ=1 ;;
+	4) [[ "${3:-}" == --jq || "${3:-}" == -q ]] && _SHIM_PLAIN_READ=1 ;;
+	esac
+	if [[ "$_SHIM_PLAIN_READ" -eq 1 ]]; then
+		_transport_caller=$(_shim_transport_caller_label "${1:-}" "${2:-}")
+		gh_record_call rest "$_transport_caller" 2>/dev/null || true
+		_shim_timing logical_log
+		_shim_run_transport "$REAL_GH" rest "$_transport_caller" 0 "$@"
+		exit $?
+	fi
+fi
+
 # -----------------------------------------------------------------------------
 # Locate signature helper.
 # -----------------------------------------------------------------------------
+# Read-only REST and GraphQL paths exit above. Load write-policy and label
+# provisioning only after routing, without weakening any write checks.
+# shellcheck source=./gh-api-guards-lib.sh
+# shellcheck disable=SC1091
+source "${_SHIM_DIR}/gh-api-guards-lib.sh"
+# shellcheck source=./managed-label-provisioning-lib.sh
+# shellcheck disable=SC1091
+source "${_SHIM_DIR}/managed-label-provisioning-lib.sh"
+# shellcheck source=./gh-write-policy-lib.sh
+# shellcheck disable=SC1091
+source "${_SHIM_DIR}/gh-write-policy-lib.sh"
+_shim_timing write_libraries
 SIG_HELPER=""
 for _cand in \
 	"$_SHIM_DIR/gh-signature-helper.sh" \

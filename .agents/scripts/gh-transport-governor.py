@@ -143,14 +143,30 @@ def _acquire(budget: Budget, resource: str) -> str:
     timeout = os.environ.get("AIDEVOPS_GH_READ_TIMEOUT", "15")
     timeout = int(timeout) if timeout.isdecimal() else 15
     deadline = time.monotonic() + min(10, max(0, timeout - 5))
-    while True:
-        try:
-            return budget.acquire(resource)
-        except Deferred as pause:
-            wait = max(0.1, pause.retry_at - time.time()) if pause.retry_at else 0.1
-            if not pause.retryable or wait > deadline - time.monotonic():
-                raise
-            time.sleep(wait)
+    timing = os.environ.get("AIDEVOPS_GH_SHIM_TIMING") == "1"
+    sqlite_ms = 0.0
+    pacing_ms = 0.0
+    try:
+        while True:
+            acquired_at = time.monotonic() if timing else 0.0
+            wait_started = 0.0
+            try:
+                return budget.acquire(resource)
+            except Deferred as pause:
+                wait = max(0.1, pause.retry_at - time.time()) if pause.retry_at else 0.1
+                if not pause.retryable or wait > deadline - time.monotonic():
+                    raise
+                wait_started = time.monotonic()
+                time.sleep(wait)
+                if timing:
+                    pacing_ms += (time.monotonic() - wait_started) * 1000
+            finally:
+                if timing:
+                    sqlite_ms += ((wait_started or time.monotonic()) - acquired_at) * 1000
+    finally:
+        if timing:
+            print(f"[gh-shim-timing] phase=sqlite_admission elapsed_ms={sqlite_ms:.1f} "
+                  f"pacing_ms={pacing_ms:.1f}", file=sys.stderr)
 
 
 def _copy_response(output, include: bool, silent: bool, status: int, body_offset: int) -> int:

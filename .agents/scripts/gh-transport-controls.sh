@@ -6,6 +6,10 @@
 [[ -n "${_GH_TRANSPORT_CONTROLS_LOADED:-}" ]] && return 0
 _GH_TRANSPORT_CONTROLS_LOADED=1
 _GHGT_DIR="${BASH_SOURCE[0]%/*}"
+# The transport library is also sourced directly by the hermetic case harness.
+if ! declare -F _shim_timing >/dev/null 2>&1; then
+	_shim_timing() { return 0; }
+fi
 # shellcheck source=./shared-gh-secondary-cooldown.sh
 source "${_GHGT_DIR}/shared-gh-secondary-cooldown.sh"
 
@@ -107,12 +111,16 @@ _gh_transport_run_rest() {
 		rm -f "$metadata"
 		return 75
 	}
+	_shim_timing rest_tempfiles
 	start_ms=$(_gh_now_ms)
-	_shim_timing rest_setup
+	_shim_timing rest_clock
 	python3 "${_GHGT_DIR}/gh-transport-governor.py" "$metadata" "$executable" "$@" 2>"$error_file" || rc=$?
 	_shim_timing governor_total
-	attempted=$(jq -r '.attempted // false' "$metadata" 2>/dev/null) || attempted=false
-	deferred_by=$(jq -r '.deferred_by // ""' "$metadata" 2>/dev/null) || deferred_by=""
+	# Parse only the bounded governor metadata; reuse it for the final log.
+	IFS='|' read -r attempted deferred_by status resource remaining reset retry_after cost < <(jq -r \
+		'[.attempted,.deferred_by,.status,.resource,.remaining,.reset,.retry_after,.cost] |
+		map(if . == null then "x" else tostring end) | join("|")' "$metadata" 2>/dev/null)
+	[[ "$attempted" == true || "$attempted" == false ]] || attempted=false
 	# The governor has not executed the native request when durable quota state is
 	# unavailable. Read-only REST calls can safely retain native gh behaviour in
 	# that case; writes never reach this GET-only transport path. Do not treat the
@@ -131,6 +139,10 @@ _gh_transport_run_rest() {
 			: >"$error_file"
 			rc=0
 			python3 "${_GHGT_DIR}/gh-transport-governor.py" "$metadata" "$executable" "$@" 2>"$error_file" || rc=$?
+			IFS='|' read -r attempted deferred_by status resource remaining reset retry_after cost < <(jq -r \
+				'[.attempted,.deferred_by,.status,.resource,.remaining,.reset,.retry_after,.cost] |
+				map(if . == null then "x" else tostring end) | join("|")' "$metadata" 2>/dev/null)
+			[[ "$attempted" == true || "$attempted" == false ]] || attempted=false
 		fi
 	fi
 	end_ms=$(_gh_now_ms)
@@ -138,16 +150,13 @@ _gh_transport_run_rest() {
 	if [[ "$rc" -eq 75 ]]; then
 		_gh_transport_emit_local_deferral "$metadata" || true
 	fi
-	attempted=$(jq -r '.attempted // false' "$metadata" 2>/dev/null) || attempted=false
 	if [[ "$rc" -eq 125 && "$attempted" != true ]]; then
 		rm -f -- "$metadata" "$error_file"
 		return 125
 	fi
 	_GHGT_HANDLED=1
 	if [[ "$attempted" == true ]]; then
-		# Use explicit sentinels: IFS whitespace collapses empty TSV columns.
-		IFS='|' read -r status resource remaining reset retry_after cost < <(jq -r \
-			'[.status,.resource,.remaining,.reset,.retry_after,.cost] | map(if . == null then "x" else tostring end) | join("|")' "$metadata")
+		_shim_timing rest_metadata_parse
 		pool=$(_ghqa_pool_for_resource "$resource")
 		[[ "$resource" != code_search ]] || pool=rest-search
 		[[ "$pool" != unknown ]] || pool=rest-core
@@ -157,6 +166,7 @@ _gh_transport_run_rest() {
 			gh_record_attempt "$path" "$caller" "$AIDEVOPS_GH_LOGICAL_ID" "" \
 			"$(_shim_transport_page "$@")" "$retry" "$outcome" "$status" "$elapsed" "$cost" \
 			"${AIDEVOPS_GH_AUTH_MODE:-}" "$pool" "${AIDEVOPS_GH_ROUTE_DECISION:-rest-response-owned}" "$remaining"
+		_shim_timing rest_attempt_log
 		[[ "$status" == x ]] || response="HTTP/1.1 ${status}"$'\n'
 		[[ "$resource" == x ]] || response="${response}x-ratelimit-resource: ${resource}"$'\n'
 		[[ "$remaining" == x ]] || response="${response}x-ratelimit-remaining: ${remaining}"$'\n'
