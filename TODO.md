@@ -1515,6 +1515,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 - [x] t18552 feat(worktree-cleanup): audited local-branch cleanup so merged branches do not accumulate after worktree removal #auto-dispatch #feat tier:standard ref:GH#33030 logged:2026-09-29 -> [todo/tasks/t18552-brief.md] pr:#33042 completed:2026-09-29
 - [x] t18553 fix(claim-task-id): keep depth-1 counter fetches in the isolated context so linked-worktree claims stop truncating shared repo history #auto-dispatch #bug tier:standard ref:GH#33033 logged:2026-09-29 -> [todo/tasks/t18553-brief.md] pr:#33041 completed:2026-09-29
 
+- [ ] t18555 fix(dispatch-dedup): merged-PR keyword check ignores issue reopen, permanently blocking reopened issues #auto-dispatch #bug ref:GH#33071
+
 ## In Progress
 
 - [x] t18478 Repair Anthropic Opus 5.5 OAuth adaptive-thinking request shape and add opt-in local interactive model/effort defaults without changing shared routes. Verify medium/xhigh Read-tool calls, unpinned OpenCode selection, focused plugin tests and changed-file lint; publish the reviewed fix through full-loop release. #bugfix #framework #auth #interactive #auto-dispatch ~2h tier:standard started:2026-09-26 ref:GH#32415 logged:2026-09-26 pr:#32417 testing:runtime-verified release:v3.36.0 completed:2026-09-26 -> [todo/tasks/t18478-brief.md]
