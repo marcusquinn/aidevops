@@ -1510,10 +1510,10 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 - [ ] t18548 fix(pulse): clamp stage timeouts to the cycle deadline so full cycles finish before lock force-reclaim kills them #auto-dispatch #bug tier:thinking ref:GH#33007 logged:2026-09-29 -> [todo/tasks/t18548-brief.md]
 - [x] t18549 fix(brief-readiness): read indented continuation lines so nested sub-bullet fields are not reported empty #auto-dispatch #bug tier:standard ref:GH#33009 logged:2026-09-29 pr:#33018 completed:2026-09-29 -> [todo/tasks/t18549-brief.md]
 - [x] t18550 fix(full-loop-merge): sync canonical through the audited fast-forward and reconcile planning after it, not before #auto-dispatch #bug tier:thinking ref:GH#33013 logged:2026-09-29 -> [todo/tasks/t18550-brief.md] pr:#33022 completed:2026-09-29
-- [ ] t18551 fix(planning-publication): defer not-yet-landed tasks instead of failing every main Issue Sync; repair stranded publication:pending issues #auto-dispatch #bug #framework #interactive tier:standard ~2h ref:GH#33031 logged:2026-09-29 -> [todo/tasks/t18551-brief.md]
+- [x] t18551 fix(planning-publication): defer not-yet-landed tasks instead of failing every main Issue Sync; repair stranded publication:pending issues #auto-dispatch #bug #framework #interactive tier:standard ~2h ref:GH#33031 logged:2026-09-29 -> [todo/tasks/t18551-brief.md] pr:#33039 completed:2026-09-29
 
 - [ ] t18552 feat(worktree-cleanup): audited local-branch cleanup so merged branches do not accumulate after worktree removal #auto-dispatch #feat tier:standard ref:GH#33030 logged:2026-09-29 -> [todo/tasks/t18552-brief.md]
-- [ ] t18553 fix(claim-task-id): keep depth-1 counter fetches in the isolated context so linked-worktree claims stop truncating shared repo history #auto-dispatch #bug tier:standard ref:GH#33033 logged:2026-09-29 -> [todo/tasks/t18553-brief.md]
+- [x] t18553 fix(claim-task-id): keep depth-1 counter fetches in the isolated context so linked-worktree claims stop truncating shared repo history #auto-dispatch #bug tier:standard ref:GH#33033 logged:2026-09-29 -> [todo/tasks/t18553-brief.md] pr:#33041 completed:2026-09-29
 
 ## In Progress
 
