@@ -199,7 +199,10 @@ _publication_reconcile_one() {
 		print_warning "${task_id}/#${issue_num}: canonical task, ref, or brief validation failed; retaining ${PUBLICATION_PENDING_LABEL}"
 		return 1
 	}
-	desired_labels=$(_publication_desired_labels "$task_line") || return 1
+	desired_labels=$(_publication_desired_labels "$task_line") || {
+		print_warning "${task_id}/#${issue_num}: task line parse failed; retaining ${PUBLICATION_PENDING_LABEL}"
+		return 1
+	}
 	_publication_dispatch_ready "$task_id" "$desired_labels" || {
 		print_warning "${task_id}/#${issue_num}: auto-dispatch brief is not worker-ready; retaining ${PUBLICATION_PENDING_LABEL}"
 		return 1
