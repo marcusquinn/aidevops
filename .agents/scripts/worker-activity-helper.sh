@@ -212,8 +212,9 @@ _wah_objective_outcomes_json() {
 		printf '[]'
 		return 0
 	fi
+	# GH#32938: per-line parse so one torn append cannot blank every outcome.
 	tail -n "$evidence_limit" "$WAH_OBJECTIVE_EVIDENCE_FILE" 2>/dev/null |
-		jq -sc '[.[] | select(.record_type == "attempt_outcome")]' 2>/dev/null || printf '[]'
+		jq -Rsc '[split("\n")[] | fromjson? | select(type == "object" and .record_type == "attempt_outcome")]' 2>/dev/null || printf '[]'
 	return 0
 }
 
