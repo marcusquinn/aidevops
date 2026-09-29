@@ -974,6 +974,43 @@ normalize_active_issue_assignments() {
 # Hard cap: 10 issues per repo per cycle to limit API calls. Idempotent —
 # re-running does not re-label already-blessed issues or duplicate comments.
 #######################################
+_reconcile_labelless_slug() {
+	local slug="$1" issue_sync_helper="$2"
+	local issues_json _cache_issues_lia
+	if _cache_issues_lia=$(_read_cache_issues_for_slug "$slug" 2>/dev/null); then
+		issues_json=$(printf '%s' "$_cache_issues_lia" | jq -c '.[0:50]' 2>/dev/null) || issues_json="[]"
+	else
+		issues_json=$(gh_issue_list --repo "$slug" --state open \
+			--json number,title,body,labels --limit 50 2>/dev/null) || issues_json="[]"
+	fi
+	[[ -n "$issues_json" && "$issues_json" != "null" ]] || return 0
+	local candidates
+	candidates=$(printf '%s' "$issues_json" | jq -c '
+		[.[] |
+		 select(((.title | test("^(t[0-9]+(\\.[0-9]+)*|GH#[0-9]+): ")) or
+		         ((.body // "") | test("(^|\\n)<!-- aidevops:origin:(interactive|worker) -->(\\n|$)"))) and
+		        ((.labels // []) | map(.name) |
+		         map(select(test("^(origin:|tier:|status:)"))) | length == 0))
+		] | .[0:10]
+	' 2>/dev/null) || candidates="[]"
+	local cand_count
+	cand_count=$(printf '%s' "$candidates" | jq 'length' 2>/dev/null) || cand_count=0
+	[[ "$cand_count" -gt 0 ]] || return 0
+	local i=0
+	while [[ "$i" -lt "$cand_count" ]]; do
+		local num title body
+		num=$(printf '%s' "$candidates" | jq -r --argjson i "$i" '.[$i].number // ""')
+		title=$(printf '%s' "$candidates" | jq -r --argjson i "$i" '.[$i].title // ""')
+		body=$(printf '%s' "$candidates" | jq -r --argjson i "$i" '.[$i].body // ""')
+		i=$((i + 1))
+		[[ -z "$num" ]] && continue
+		if _action_lia_single "$slug" "$num" "$title" "$body" "$issue_sync_helper"; then
+			total_fixed=$((total_fixed + 1))
+		fi
+	done
+	return 0
+}
+
 reconcile_labelless_aidevops_issues() {
 	local repos_json="$REPOS_JSON"
 	[[ -f "$repos_json" ]] || return 0
@@ -1031,52 +1068,7 @@ This comment is idempotent; the HTML sentinel prevents duplicates on subsequent 
 
 	while IFS= read -r slug; do
 		[[ -n "$slug" ]] || continue
-
-		# Fetch up to 50 open issues per repo — the per-repo cap keeps API
-		# usage bounded. The filter below further narrows by title shape and
-		# empty-label set.
-		# t2773: prefer prefetch cache (now includes body field); fall back to gh_issue_list.
-		local issues_json _cache_issues_lia
-		if _cache_issues_lia=$(_read_cache_issues_for_slug "$slug" 2>/dev/null); then
-			issues_json=$(printf '%s' "$_cache_issues_lia" | jq -c '.[0:50]' 2>/dev/null) || issues_json="[]"
-		else
-			issues_json=$(gh_issue_list --repo "$slug" --state open \
-				--json number,title,body,labels --limit 50 2>/dev/null) || issues_json="[]"
-		fi
-		[[ -n "$issues_json" && "$issues_json" != "null" ]] || continue
-
-		# A task-shaped title or signed aidevops origin marker qualifies when no
-		# origin/tier/status label has already established provenance/lifecycle.
-		local candidates
-		candidates=$(printf '%s' "$issues_json" | jq -c '
-			[.[] |
-			 select(((.title | test("^(t[0-9]+(\\.[0-9]+)*|GH#[0-9]+): ")) or
-			         ((.body // "") | test("(^|\\n)<!-- aidevops:origin:(interactive|worker) -->(\\n|$)"))) and
-			        ((.labels // []) |
-			         map(.name) |
-			         map(select(test("^(origin:|tier:|status:)"))) |
-			         length == 0))
-			] | .[0:10]
-		' 2>/dev/null) || candidates="[]"
-
-		local cand_count
-		cand_count=$(printf '%s' "$candidates" | jq 'length' 2>/dev/null) || cand_count=0
-		[[ "$cand_count" -gt 0 ]] || continue
-
-		local i=0
-		while [[ "$i" -lt "$cand_count" ]]; do
-			local num title body
-			num=$(printf '%s' "$candidates" | jq -r --argjson i "$i" '.[$i].number // ""')
-			title=$(printf '%s' "$candidates" | jq -r --argjson i "$i" '.[$i].title // ""')
-			body=$(printf '%s' "$candidates" | jq -r --argjson i "$i" '.[$i].body // ""')
-			i=$((i + 1))
-			[[ -z "$num" ]] && continue
-
-			# t2776: delegate per-issue action to shared helper (_action_lia_single).
-			if _action_lia_single "$slug" "$num" "$title" "$body" "$issue_sync_helper"; then
-				total_fixed=$((total_fixed + 1))
-			fi
-		done
+		_reconcile_labelless_slug "$slug" "$issue_sync_helper"
 	done < <(jq -r '.initialized_repos[] | select(.maintenance != false and .pulse == true and (.local_only // false) == false and .slug != "") | .slug // ""' "$repos_json" || true)
 
 	if [[ "$((total_fixed + total_skipped))" -gt 0 ]]; then
