@@ -1058,7 +1058,19 @@ dispatch_with_dedup() {
 		return 1
 	fi
 	_ds_record "$issue_number" "$repo_slug" "dedup_check" "$_ds_t0"
+	local original_labels_csv="" original_tier_model=""
+	original_labels_csv=$(jq -r '[.labels[]?.name] | join(",")' <<<"$issue_meta_json")
+	original_tier_model=$(resolve_dispatch_model_for_labels "$original_labels_csv")
 	_dispatch_post_dedup_gates "$issue_number" "$repo_slug" "$repo_path" "$issue_title" "$self_login" || return $?
+	if [[ "${_TIER_LABELS_MUTATED:-0}" -eq 1 && "$model_override" == "$original_tier_model" ]]; then
+		local refreshed_labels_csv="" refreshed_model=""
+		refreshed_labels_csv=$(jq -r '[.labels[]?.name] | join(",")' <<<"$issue_meta_json")
+		refreshed_model=$(resolve_dispatch_model_for_labels "$refreshed_labels_csv")
+		if [[ "$refreshed_labels_csv" != "$original_labels_csv" ]]; then
+			echo "[dispatch_with_dedup] #${issue_number}: tier labels ${original_labels_csv} → ${refreshed_labels_csv}; model ${model_override:-<auto>} → ${refreshed_model:-<auto>}" >>"$LOGFILE"
+			model_override="$refreshed_model"
+		fi
+	fi
 	_dispatch_launch_checked_worker "$issue_number" "$repo_slug" "$dispatch_title" "$issue_title" \
 		"$self_login" "$repo_path" "$prompt" "$session_key" "$model_override"
 	return $?

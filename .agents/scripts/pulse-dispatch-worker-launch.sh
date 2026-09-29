@@ -326,7 +326,17 @@ _dlw_assign_model_ab() {
 	_DLW_AB_ROUTING_TABLE=""
 	_DLW_AB_EXPERIMENT=""
 	_DLW_AB_ARM=""
-	[[ -n "${AIDEVOPS_MODEL_AB_CONFIG:-}" && -z "$model_override" ]] || return 0
+	[[ -n "${AIDEVOPS_MODEL_AB_CONFIG:-}" ]] || return 0
+	# Candidate dispatch supplies a tier default as an override. Only a model
+	# differing from the current labels' default is an explicit A/B bypass.
+	if [[ -n "$model_override" ]]; then
+		local labels_csv="" tier_default=""
+		labels_csv=$(jq -r '[.labels[]?.name] | join(",")' <<<"$issue_meta_json")
+		if declare -F resolve_dispatch_model_for_labels >/dev/null; then
+			tier_default=$(resolve_dispatch_model_for_labels "$labels_csv")
+		fi
+		[[ -n "$tier_default" && "$model_override" == "$tier_default" ]] || return 0
+	fi
 	local ab_json="" ab_helper="${BASH_SOURCE[0]%/*}/model-ab-helper.mjs"
 	local -a ab_args=(assign "$repo_slug" "$issue_number")
 	local created_at="" labels_json=""
