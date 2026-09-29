@@ -331,6 +331,10 @@ _dedup_layer5_dispatch_comment() {
 	local self_login="$3"
 	local dedup_helper="${SCRIPT_DIR}/dispatch-dedup-helper.sh"
 	if [[ -x "$dedup_helper" ]] && [[ "$issue_number" =~ ^[0-9]+$ ]]; then
+		# Private, attempt-local snapshot is only for takeover annotation. The
+		# post-consensus claim read must always fetch the live GitHub timeline.
+		local claim_snapshot=""
+		claim_snapshot=$(umask 077; mktemp "${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}/dispatch-claim.XXXXXX") || claim_snapshot=""
 		local _claim_started_ns=""
 		_claim_started_ns=$(_ds_now_ns)
 		local dispatch_comment_output=""
@@ -601,21 +605,25 @@ _dedup_layer7_claim_lock() {
 		# cluttering the issue. The pre-check is cheap (read-only) and
 		# catches the common case where another runner already claimed.
 		local _precheck_output="" _precheck_exit=0
-		_precheck_output=$("$dedup_helper" check-claim "$issue_number" "$repo_slug") || _precheck_exit=$?
+		_precheck_output=$(AIDEVOPS_DISPATCH_CLAIM_CALL_LOG="$LOGFILE" DISPATCH_CLAIM_SNAPSHOT_FILE="$claim_snapshot" "$dedup_helper" check-claim "$issue_number" "$repo_slug") || _precheck_exit=$?
 		_ds_record "$issue_number" "$repo_slug" "claim_precheck" "$_claim_started_ns"
 		if [[ "$_precheck_exit" -eq 0 ]]; then
+			[[ -z "$claim_snapshot" ]] || rm -f "$claim_snapshot"
 			# Active claim exists from another runner — skip claim entirely
 			echo "[pulse-wrapper] Dedup: pre-check found active claim on #${issue_number} in ${repo_slug} — skipping (${_precheck_output})" >>"$LOGFILE"
 			return 0
 		fi
 		if [[ "$_precheck_exit" -eq 2 ]]; then
+			[[ -z "$claim_snapshot" ]] || rm -f "$claim_snapshot"
 			echo "[pulse-wrapper] Dedup: claim pre-check error for #${issue_number} in ${repo_slug} — blocking dispatch for this cycle (fail-closed)" >>"$LOGFILE"
 			return 0
 		fi
 		# No active claim found (exit 1) — proceed to claim.
 		local claim_exit=0 claim_output=""
 		_claim_started_ns=$(_ds_now_ns)
-		claim_output=$("$dedup_helper" claim "$issue_number" "$repo_slug" "$self_login" 2>>"$LOGFILE") || claim_exit=$?
+		# shellcheck disable=SC2094 # LOGFILE is an output-only diagnostic sink, not an input.
+		claim_output=$(AIDEVOPS_DISPATCH_CLAIM_CALL_LOG="$LOGFILE" DISPATCH_CLAIM_SNAPSHOT_FILE="$claim_snapshot" "$dedup_helper" claim "$issue_number" "$repo_slug" "$self_login" 2>>"$LOGFILE") || claim_exit=$?
+		[[ -z "$claim_snapshot" ]] || rm -f "$claim_snapshot"
 		_ds_record "$issue_number" "$repo_slug" "claim_consensus" "$_claim_started_ns"
 		echo "$claim_output" >>"$LOGFILE"
 		if [[ "$claim_exit" -eq 1 ]]; then

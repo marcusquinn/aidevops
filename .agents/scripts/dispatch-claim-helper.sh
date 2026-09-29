@@ -194,9 +194,19 @@ _dch_timed() {
 	local stage="$1" started="$SECONDS" rc=0
 	shift
 	"$@" || rc=$?
-	printf '[dispatch-claim] stage=%s elapsed_s=%s rc=%s\n' \
-		"$stage" "$((SECONDS - started))" "$rc" >&2
+	if [[ -n "${AIDEVOPS_DISPATCH_CLAIM_CALL_LOG:-}" ]]; then
+		printf '[dispatch-claim] stage=%s elapsed_s=%s rc=%s\n' \
+			"$stage" "$((SECONDS - started))" "$rc" >>"$AIDEVOPS_DISPATCH_CLAIM_CALL_LOG"
+	else
+		printf '[dispatch-claim] stage=%s elapsed_s=%s rc=%s\n' \
+			"$stage" "$((SECONDS - started))" "$rc" >&2
+	fi
 	return "$rc"
+}
+
+_dch_snapshot_valid() {
+	local path="${DISPATCH_CLAIM_SNAPSHOT_FILE:-}"
+	[[ -n "$path" && "$path" == "${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}/dispatch-claim."* && -f "$path" && ! -L "$path" && -O "$path" ]]
 }
 
 _resolve_device_id() {
@@ -359,13 +369,18 @@ ${machine_readable_part}
 		retry_delay=2
 	fi
 
-	local comment_id="" attempt=1 post_err_file="" post_error_summary=""
+	local comment_id="" attempt=1 post_err_file="" post_error_summary="" post_started=0
 	post_err_file=$(mktemp 2>/dev/null || _claim_post_error_fallback_path) || return 1
 	while [[ "$attempt" -le "$attempts" ]]; do
-		comment_id=$(_dch_timed claim_post gh api "$(_issue_comments_endpoint "$repo_slug" "$issue_number")" \
+		post_started=$SECONDS
+		if comment_id=$(gh api "$(_issue_comments_endpoint "$repo_slug" "$issue_number")" \
 			--method POST \
 			--field body="$body" \
-			--jq '.id' 2>"$post_err_file") && break
+			--jq '.id' 2>"$post_err_file"); then
+			printf '[dispatch-claim] stage=claim_post elapsed_s=%s rc=0 attempt=%s\n' "$((SECONDS - post_started))" "$attempt" >&2
+			break
+		fi
+		printf '[dispatch-claim] stage=claim_post elapsed_s=%s rc=1 attempt=%s\n' "$((SECONDS - post_started))" "$attempt" >&2
 
 		post_error_summary=$(tr '\n' ' ' <"$post_err_file" | cut -c1-240 2>/dev/null || printf '%s' "unknown")
 		if [[ "$attempt" -lt "$attempts" ]]; then
@@ -410,12 +425,16 @@ _detect_stale_worker_takeover_reason() {
 	[[ "$active_worker_max_age" =~ ^[0-9]+$ ]] || active_worker_max_age=7200
 
 	local raw_comments comments_json
-	raw_comments=$(_dch_timed takeover_comments gh api "repos/${repo_slug}/issues/${issue_number}/comments?per_page=${DISPATCH_CLAIM_COMMENT_FETCH_PER_PAGE}" \
+	if _dch_snapshot_valid && [[ -s "$DISPATCH_CLAIM_SNAPSHOT_FILE" ]]; then
+		raw_comments=$(<"$DISPATCH_CLAIM_SNAPSHOT_FILE")
+	else
+		raw_comments=$(_dch_timed takeover_comments gh api "repos/${repo_slug}/issues/${issue_number}/comments?per_page=${DISPATCH_CLAIM_COMMENT_FETCH_PER_PAGE}" \
 		--paginate --slurp \
 		2>/dev/null) || {
 		printf '%s' ""
 		return 0
 	}
+	fi
 	comments_json=$(printf '%s' "$raw_comments" | jq -c --arg array_type array '[ (
 		if (type == $array_type and ((.[0]? | type) == $array_type)) then
 			.[]
@@ -523,6 +542,11 @@ _fetch_claim_marker_comments() {
 		echo "Error: failed to fetch comments for #${issue_number} in ${repo_slug}" >&2
 		return 1
 	}
+	# Snapshot reuse is for takeover annotation only. Every consensus read still
+	# fetches the live timeline after posting the new claim.
+	if _dch_snapshot_valid; then
+		printf '%s' "$raw_comments" >"$DISPATCH_CLAIM_SNAPSHOT_FILE" || return 1
+	fi
 
 	printf '%s' "$raw_comments" | jq -c --arg marker "${CLAIM_MARKER}" --arg array_type array '
 		[ (
@@ -1096,7 +1120,7 @@ _guard_no_active_assignment_before_claim() {
 	fi
 
 	local guard_output="" guard_rc=0
-	guard_output=$("$dedup_helper" is-assigned "$issue_number" "$repo_slug" "$runner" 2>&1) || guard_rc=$?
+	guard_output=$(_dch_timed assignment_guard "$dedup_helper" is-assigned "$issue_number" "$repo_slug" "$runner" 2>&1) || guard_rc=$?
 	case "$guard_rc" in
 	0)
 		printf 'CLAIM_BLOCKED: active_assignment issue=#%s repo=%s runner=%s signal=%s\n' \
@@ -1133,7 +1157,7 @@ _guard_no_active_assignment_read_only() {
 
 	local guard_output=""
 	local guard_rc=0
-	guard_output=$("$dedup_helper" is-assigned-read-only "$issue_number" "$repo_slug" "$runner" 2>&1) || guard_rc=$?
+	guard_output=$(_dch_timed final_assignment_guard "$dedup_helper" is-assigned-read-only "$issue_number" "$repo_slug" "$runner" 2>&1) || guard_rc=$?
 	case "$guard_rc" in
 	0)
 		printf 'CLAIM_BLOCKED: active_assignment issue=#%s repo=%s runner=%s signal=%s\n' \

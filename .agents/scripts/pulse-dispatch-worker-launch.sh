@@ -1726,11 +1726,16 @@ _dispatch_launch_worker() {
 	local _ds_t0
 
 	local worker_log
+	_ds_t0=$(_ds_now_ns)
 	worker_log=$(_dlw_setup_worker_log "$repo_slug" "$issue_number")
+	_ds_record "$issue_number" "$repo_slug" "worker_log_setup" "$_ds_t0"
 
+	_ds_t0=$(_ds_now_ns)
 	if ! _dlw_prebootstrap_gates "$issue_number" "$repo_slug" "$issue_meta_json" "$repo_path"; then
+		_ds_record "$issue_number" "$repo_slug" "prebootstrap_gates" "$_ds_t0"
 		_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "prebootstrap_gate" 2 || return $?
 	fi
+	_ds_record "$issue_number" "$repo_slug" "prebootstrap_gates" "$_ds_t0"
 
 	_ds_t0=$(_ds_now_ns)
 	_dlw_resolve_tier_and_model "$issue_meta_json" "$model_override" "$repo_path" "$issue_title" "$prompt"
@@ -1748,18 +1753,18 @@ _dispatch_launch_worker() {
 	fi
 	_ds_record "$issue_number" "$repo_slug" "$DLW_STAGE_CANARY_PREFLIGHT" "$_ds_t0"
 
-	if ! _dlw_preclaim_state_refresh_or_skip "$issue_number" "$repo_slug"; then
-		_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "preclaim_state_changed" 2 || return $?
-	fi
-
 	if ! _dlw_claim_lock_after_canary "$issue_number" "$repo_slug" "$self_login"; then
 		_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "claim_lock_failed" 2 || return $?
 	fi
 	local worker_pid attempt_id="" attempt_started_at="" prelaunch_deadline=0
+	_ds_t0=$(_ds_now_ns)
 	_dlw_begin_prelaunch "$issue_number" "$repo_slug" "$session_key" "$worker_log" || return $?
+	_ds_record "$issue_number" "$repo_slug" "begin_prelaunch" "$_ds_t0"
 
 	local zero_output_comment_metrics=""
+	_ds_t0=$(_ds_now_ns)
 	zero_output_comment_metrics=$(_dlw_comment_bloat_metrics "$issue_number" "$repo_slug")
+	_ds_record "$issue_number" "$repo_slug" "comment_bloat_metrics" "$_ds_t0"
 	if _dlw_hold_repeated_zero_output "$issue_number" "$repo_slug" "$zero_output_comment_metrics"; then
 		_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "repeated_zero_output_hold" 2 || return $?
 	fi
@@ -1776,11 +1781,15 @@ _dispatch_launch_worker() {
 	fi
 	_ds_record "$issue_number" "$repo_slug" "precreate_worktree" "$_ds_t0"
 	local worker_worktree_path="$_DLW_WORKTREE_PATH" worker_worktree_branch="$_DLW_WORKTREE_BRANCH" worker_worktree_reused="${_DLW_WORKTREE_REUSED:-0}"
+	_ds_t0=$(_ds_now_ns)
 	_dlw_final_worker_spawn_gates "$issue_number" "$repo_slug" "$worker_worktree_branch" "$worker_worktree_reused" \
 		"${repo_path}/TODO.md" "$worker_worktree_path" "$issue_meta_json" "$repo_path" || return $?
+	_ds_record "$issue_number" "$repo_slug" "final_spawn_gates" "$_ds_t0"
 
 	local launch_prompt=""
+	_ds_t0=$(_ds_now_ns)
 	launch_prompt=$(_dlw_prepare_prompt_for_launch "$issue_number" "$repo_slug" "$issue_title" "$prompt" "$zero_output_comment_metrics")
+	_ds_record "$issue_number" "$repo_slug" "launch_prompt" "$_ds_t0"
 
 	# Freeze the worker-readable instruction surface before queued ownership is
 	# published. A lock failure must not create assignment/status notifications.

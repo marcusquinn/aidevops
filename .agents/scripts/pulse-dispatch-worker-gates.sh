@@ -308,9 +308,16 @@ _dlw_claim_lock_after_canary() {
 	local repo_slug="$2"
 	local self_login="$3"
 	local _ds_t0
-	local current_issue="" missing=""
+	local current_issue="" missing="" refreshed_state=""
 	# Re-read declarations immediately before the first persistent claim write.
+	_ds_t0=$(_ds_now_ns)
 	current_issue=$(gh api "repos/${repo_slug}/issues/${issue_number}" 2>/dev/null) || return 0
+	_ds_record "$issue_number" "$repo_slug" "preclaim_issue_read" "$_ds_t0"
+	refreshed_state=$(printf '%s' "$current_issue" | jq -r '(.state // "") | ascii_downcase' 2>/dev/null) || refreshed_state=""
+	if [[ -n "$refreshed_state" && "$refreshed_state" != "open" ]]; then
+		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: refreshed issue state before claim is ${refreshed_state}" >>"$LOGFILE"
+		return 1
+	fi
 	missing=$(_dispatch_secret_missing_names "$current_issue") || return 0
 	if [[ -n "$missing" ]]; then
 		echo "[dispatch_with_dedup] #${issue_number}: secret admission changed before claim; yielding" >>"$LOGFILE"
