@@ -199,9 +199,24 @@ for (const budgetEnabled of [false, true]) test(`V2 setup registers SDK lifecycl
     "permission:evaluate",
   ]);
 
+  const contextHook = registered.find(({ domain, name }) => domain === "session" && name === "context").callback;
+  const request = { sessionID: "v2-parity", model: { providerID: "anthropic", id: "test" }, system: [], messages: [] };
+  await contextHook(request);
+  const instructions = request.system.map(({ text }) => text).join("\n");
+  assert.match(instructions, /if TodoWrite is unavailable, keep a short numbered task list/);
+  assert.match(instructions, /search\(\{ namespace: "aidevops" \}\)/);
+
   await cleanup();
   assert.equal(eventState.returned, true);
   assert.deepEqual(disposed.sort(), registered.map(({ domain, name }) => `${domain}:${name}`).sort());
+
+  // Newer V2 hosts may omit the catalogue transform; tool/context hooks still work.
+  registered.length = 0;
+  disposed.length = 0;
+  delete context.catalog;
+  const withoutCatalog = await setupAidevopsV2(context);
+  assert.equal(registered.some(({ domain }) => domain === "catalog"), false);
+  await withoutCatalog();
 
   registered.length = 0;
   disposed.length = 0;

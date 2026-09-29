@@ -356,7 +356,7 @@ export async function setupAidevopsV2(ctx) {
       registerV2PrimaryProfiles(editor, primaryProfiles);
     }));
     const budget = readV2ContextBudget();
-    if (budget) await register(registrations, ctx.catalog.transform((editor) => {
+    if (budget && typeof ctx.catalog?.transform === "function") await register(registrations, ctx.catalog.transform((editor) => {
       applyV2ContextBudget(editor, budget);
     }));
 
@@ -388,6 +388,7 @@ export async function setupAidevopsV2(ctx) {
       const legacy = { system: systemStrings(event.system), messages: event.messages };
       await systemTransformHook(input, legacy);
       await messagesTransformHook(input, legacy).catch((error) => qualityLog("WARN", `V2 message transform skipped: ${error.message}`));
+      legacy.system.push("OpenCode 2: if TodoWrite is unavailable, keep a short numbered task list in your responses and update it as work progresses. The Code Mode catalogue is partial; find unlisted aidevops tools with search({ namespace: \"aidevops\" }) before concluding they are unavailable.");
       try {
         applyImageSizeGuard(legacy, qualityLog);
       } catch (error) {
