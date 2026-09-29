@@ -319,37 +319,98 @@ _preflight_rest_core_allows_next() {
 }
 
 #######################################
+# Oldest completed substage first; equal/missing epochs retain historical order.
+#######################################
+_preflight_label_maintenance_order() {
+	local state_file="${AIDEVOPS_LABEL_MAINTENANCE_STATE_FILE:-${PULSE_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/pulse}/label-maintenance-epochs}"
+	local key epoch line extra
+	local consolidation=0 backfill=0 simplification=0
+	if [[ -r "$state_file" && -f "$state_file" ]]; then
+		while read -r key epoch extra; do
+			[[ -z "$extra" && "$epoch" =~ ^[0-9]+$ ]] || continue
+			case "$key" in
+				consolidation) consolidation="$epoch" ;;
+				backfill) backfill="$epoch" ;;
+				simplification) simplification="$epoch" ;;
+			esac
+		done <"$state_file"
+	fi
+	printf '%s consolidation\n%s backfill\n%s simplification\n' "$consolidation" "$backfill" "$simplification" |
+		sort -s -n -k1,1 | cut -d' ' -f2
+	return 0
+}
+
+#######################################
+# Persist only successful completions, without exposing a partially written file.
+#######################################
+_preflight_label_maintenance_completed() {
+	local completed_key="$1"
+	local state_file="${AIDEVOPS_LABEL_MAINTENANCE_STATE_FILE:-${PULSE_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/pulse}/label-maintenance-epochs}"
+	local key epoch extra tmp
+	mkdir -p "${state_file%/*}" || return 1
+	tmp=$(mktemp "${state_file}.XXXXXX") || return 1
+	if [[ -r "$state_file" && -f "$state_file" ]]; then
+		while read -r key epoch extra; do
+			[[ "$key" != "$completed_key" && -z "$extra" && "$epoch" =~ ^[0-9]+$ ]] || continue
+			case "$key" in consolidation|backfill|simplification) printf '%s %s\n' "$key" "$epoch" >>"$tmp" ;; esac
+		done <"$state_file"
+	fi
+	printf '%s %s\n' "$completed_key" "$(date +%s)" >>"$tmp"
+	mv -f "$tmp" "$state_file" || return 1
+	return 0
+}
+
+# Count attempts at the first substage before it starts, so a timeout does not
+# erase the evidence. Reset only after that substage actually completes.
+_preflight_label_maintenance_first_attempt() {
+	local key="$1"
+	local state_file="${AIDEVOPS_LABEL_MAINTENANCE_STATE_FILE:-${PULSE_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/pulse}/label-maintenance-epochs}.first-attempt"
+	local previous="" count=0 tmp
+	if [[ -r "$state_file" ]]; then
+		read -r previous count <"$state_file" || true
+	fi
+	[[ "$previous" == "$key" && "$count" =~ ^[0-9]+$ ]] || count=0
+	count=$((count + 1))
+	mkdir -p "${state_file%/*}" || return 1
+	tmp=$(mktemp "${state_file}.XXXXXX") || return 1
+	printf '%s %s\n' "$key" "$count" >"$tmp"
+	mv -f "$tmp" "$state_file" || return 1
+	if [[ "$count" -ge 3 ]]; then
+		echo "[pulse-wrapper] Label maintenance: $key first for $count attempts without completion" >>"$LOGFILE"
+	fi
+	return 0
+}
+
+#######################################
 # Cross-repository needs-* label maintenance. Runs after the first dispatch so
 # already-eligible work can boot while these idempotent sweeps expose additional
 # candidates for the post-maintenance refill.
 #######################################
 _preflight_label_maintenance() {
-	# GH#21470: preserve per-substage timing while separating these potentially
-	# slow GitHub/repository sweeps from the capacity-critical dispatch path.
-
-	# Re-evaluate needs-consolidation labels before the refill. Issues labeled
-	# by an earlier (less precise) filter may no longer trigger under the
-	# current filter. Auto-clearing here makes them dispatchable in this cycle
-	# instead of stuck forever behind a label that list_dispatchable_issue_candidates_json
-	# filters out (needs-* exclusion at line 6703).
-	_preflight_rest_core_allows_next "label_maintenance_consolidation_reevaluate" || return 0
-	local _ss0=$SECONDS
-	_reevaluate_consolidation_labels
-	_log_substage_timing "substage:label_maintenance/reevaluate_consolidation_labels" "$_ss0" 0
-
-	# t1982: Backfill pass for stuck needs-consolidation issues that never
-	# got a consolidation-task child created (pre-t1982 dispatches just
-	# labelled and returned). Dispatches a child retroactively so the
-	# parent can actually be consolidated instead of sitting forever.
-	_preflight_rest_core_allows_next "label_maintenance_consolidation_backfill" || return 0
-	local _ss1=$SECONDS
-	_backfill_stale_consolidation_labels
-	_log_substage_timing "substage:label_maintenance/backfill_consolidation_labels" "$_ss1" 0
-
-	_preflight_rest_core_allows_next "label_maintenance_simplification_reevaluate" || return 0
-	local _ss2=$SECONDS
-	_reevaluate_simplification_labels
-	_log_substage_timing "substage:label_maintenance/reevaluate_simplification_labels" "$_ss2" 0
+	local key context fn timing started rc first=1
+	while IFS= read -r key; do
+		case "$key" in
+			consolidation) context="label_maintenance_consolidation_reevaluate"; fn="_reevaluate_consolidation_labels"; timing="reevaluate_consolidation_labels" ;;
+			backfill) context="label_maintenance_consolidation_backfill"; fn="_backfill_stale_consolidation_labels"; timing="backfill_consolidation_labels" ;;
+			simplification) context="label_maintenance_simplification_reevaluate"; fn="_reevaluate_simplification_labels"; timing="reevaluate_simplification_labels" ;;
+			*) continue ;;
+		esac
+		_preflight_rest_core_allows_next "$context" || return 0
+		if [[ "$first" -eq 1 ]]; then
+			_preflight_label_maintenance_first_attempt "$key" || true
+			first=0
+		fi
+		started=$SECONDS
+		rc=0
+		"$fn" || rc=$?
+		_log_substage_timing "substage:label_maintenance/${timing}" "$started" "$rc"
+		[[ "$rc" -eq 0 ]] || return "$rc"
+		_preflight_label_maintenance_completed "$key" || echo "[pulse-wrapper] Could not persist label-maintenance completion: $key" >>"$LOGFILE"
+		if [[ "$first" -eq 0 ]]; then
+			rm -f "${AIDEVOPS_LABEL_MAINTENANCE_STATE_FILE:-${PULSE_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/pulse}/label-maintenance-epochs}.first-attempt"
+			first=2
+		fi
+	done < <(_preflight_label_maintenance_order)
 
 	return 0
 }

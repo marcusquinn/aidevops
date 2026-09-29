@@ -623,17 +623,17 @@ _reevaluate_simplification_labels() {
 		local issues_json
 		issues_json=$(gh_issue_list --repo "$slug" --state open \
 			--label "needs-simplification" \
-			--json number --limit 50 2>/dev/null) || issues_json="[]"
+			--json number,body --limit 50 2>/dev/null) || issues_json="[]"
 
-		while IFS= read -r num; do
+		local issue num body
+		while IFS= read -r issue; do
+			num=$(jq -r '.number // ""' <<<"$issue")
 			[[ "$num" =~ ^[0-9]+$ ]] || continue
 			if ! _pte_rest_core_deferrable_allows_next "simplification_issue:${slug}#${num}"; then
 				rest_deferred=1
 				break
 			fi
-			local body
-			body=$(gh issue view "$num" --repo "$slug" \
-				--json body --jq '.body // ""' 2>/dev/null) || body=""
+			body=$(jq -r '.body // ""' <<<"$issue")
 			# _issue_targets_large_files returns 1 (no large files) AND
 			# auto-clears the label when was_already_labeled.
 			# t1998: pass force_recheck=true to bypass the
@@ -656,7 +656,7 @@ _reevaluate_simplification_labels() {
 					total_cleared=$((total_cleared + 1))
 				fi
 			fi
-		done < <(printf '%s' "$issues_json" | jq -r '.[]?.number // ""')
+		done < <(printf '%s' "$issues_json" | jq -c '.[]?')
 		[[ "$rest_deferred" -eq 0 ]] || break
 	done < <(jq -r '.initialized_repos[] | select(.maintenance != false and .pulse == true and (.local_only // false) == false and .slug != "" and .path != "") | "\(.slug)|\(.path)"' "$repos_json" 2>/dev/null)
 
