@@ -255,6 +255,12 @@ query the authoritative current state with
 state from local `sudo` availability, an earlier label snapshot, or a failed
 attempt to invoke the signing command.
 
+Approval durability (GH#33089): signing locks an issue, and on a continuously
+locked issue, comments posted after the approval by users with live
+write/maintain/admin permission do not stale it, so maintainers can reply late.
+Title/body edits, edits to pre-approval comments, lower-permission comments,
+unlock/relock, and PR head changes still require re-approval.
+
 Do not expose an approval command as the next action merely because a dispatch helper reports `needs-maintainer-review`; that gate identifies missing authority, not review quality. If review evidence is incomplete, recommend investigation rather than approval.
 
 Assessment language describes a recommendation, not an exercised authority action. Use `Recommendation: Approve`, never `Approved`, until a trusted maintainer actually performs the approval step. Apply the same distinction in the task-tool result and user-facing summary.

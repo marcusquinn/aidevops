@@ -150,6 +150,46 @@ _approval_continuity_self_hosting_audit() {
 	return $?
 }
 
+# #aidevops:trust-boundary — GH#33089: the approval locks the issue, so only
+# collaborators can comment after it. A comment created after the approval
+# comment (higher ID) by a User whose live repository permission is
+# admin/maintain/write is authority-equivalent: that author could file the same
+# text as a maintainer issue needing no approval. Drop only those comments from
+# the continuity candidate. Pre-approval comments (including later edits),
+# read/triage or unverifiable authors, and author_association alone stay bound.
+# Prints the filtered snapshot; returns 2 on permission API uncertainty.
+_approval_continuity_drop_trusted_comments() {
+	local current_snapshot="$1"
+	local slug="$2"
+	local approval_comment_id="$3"
+	local logins="" login="" trusted_logins="" login_rc=0
+	[[ "$approval_comment_id" =~ ^[0-9]+$ ]] || return 1
+	logins=$(jq -r --argjson anchor "$approval_comment_id" '
+		[.comments[]? | select((.id | type) == "number" and .id > $anchor and .author.type == "User") | .author.login]
+		| unique | .[]
+	' <<<"$current_snapshot") || return 1
+	while IFS= read -r login; do
+		[[ -n "$login" ]] || continue
+		login_rc=0
+		_approval_continuity_actor_authorized "$slug" "$login" || login_rc=$?
+		case "$login_rc" in
+		0) trusted_logins="${trusted_logins}${login}"$'\n' ;;
+		1) ;;
+		*) return 2 ;;
+		esac
+	done <<<"$logins"
+	jq -cS --argjson anchor "$approval_comment_id" --arg trusted "$trusted_logins" '
+		($trusted | split("\n") | map(select(length > 0))) as $trusted_logins
+		| if has("comments") then
+			.comments |= map(select(
+				(.id | type) == "number" and .id > $anchor and .author.type == "User"
+				and (.author.login as $login | any($trusted_logins[]; . == $login))
+				| not))
+		else . end
+	' <<<"$current_snapshot"
+	return $?
+}
+
 _approval_verify_locked_issue_continuity() {
 	local payload="$1"
 	local current_snapshot="$2"
@@ -158,7 +198,7 @@ _approval_verify_locked_issue_continuity() {
 	local target_number="$5"
 	local issued_at="$6"
 	local approval_comment_id="$7"
-	local signed_lifecycle="" current_anchor="" signed_anchor="" candidate="" candidate_digest=""
+	local signed_lifecycle="" current_anchor="" signed_anchor="" candidate="" candidate_digest="" filtered_snapshot=""
 	local timeline_pages="" mutation_rows="" event="" actor="" subject="" actor_id="" actor_type="" actor_rc=0
 	local signed_has_status=0 auto_dispatch_active=0 current_auto_dispatch=0 saw_status_mutation=0 saw_status_default=0
 
@@ -185,20 +225,24 @@ _approval_verify_locked_issue_continuity() {
 		return 1
 	fi
 
-	# Replacing only lifecycle metadata must recreate the signed digest. This
-	# proves title, body, comments, references, identity, and all scope-bearing
-	# bytes remain exactly as reviewed.
-	candidate=$(jq -cS --argjson lifecycle "$signed_lifecycle" '.lifecycle = $lifecycle' <<<"$current_snapshot") || return 1
+	# Replacing only lifecycle metadata and removing authority-equivalent
+	# post-approval comments must recreate the signed digest. This proves title,
+	# body, pre-approval comments, references, identity, and all other
+	# scope-bearing bytes remain exactly as reviewed.
+	filtered_snapshot=$(_approval_continuity_drop_trusted_comments "$current_snapshot" "$slug" "$approval_comment_id") || return $?
+	candidate=$(jq -cS --argjson lifecycle "$signed_lifecycle" '.lifecycle = $lifecycle' <<<"$filtered_snapshot") || return 1
 	candidate_digest=$(approval_snapshot_v2_digest "$candidate") || return 2
 	[[ "$candidate_digest" == "$signed_digest" ]] || return 1
 	timeline_pages=$(_approval_snapshot_v2_fetch_pages "repos/${slug}/issues/${target_number}/timeline?per_page=100") || return 2
 	mutation_rows=$(_approval_continuity_ordered_mutation_rows "$timeline_pages" "$issued_at" "$approval_comment_id" 2>/dev/null) || return 2
-	[[ -n "$mutation_rows" ]] || return 1
-	if ! _approval_continuity_lifecycle_change_allowed "$signed_lifecycle" "$current_snapshot"; then
-		# Only the existing canonical self-hosting escalation can replace a
-		# signed workload tier; arbitrary tier changes remain approval-bound.
-		_approval_continuity_lifecycle_change_allowed "$signed_lifecycle" "$current_snapshot" true || return 1
-		_approval_continuity_self_hosting_audit "$slug" "$target_number" "$issued_at" "$timeline_pages" || return $?
+	if ! jq -e --argjson signed "$signed_lifecycle" '.lifecycle == $signed' <<<"$current_snapshot" >/dev/null 2>&1; then
+		[[ -n "$mutation_rows" ]] || return 1
+		if ! _approval_continuity_lifecycle_change_allowed "$signed_lifecycle" "$current_snapshot"; then
+			# Only the existing canonical self-hosting escalation can replace a
+			# signed workload tier; arbitrary tier changes remain approval-bound.
+			_approval_continuity_lifecycle_change_allowed "$signed_lifecycle" "$current_snapshot" true || return 1
+			_approval_continuity_self_hosting_audit "$slug" "$target_number" "$issued_at" "$timeline_pages" || return $?
+		fi
 	fi
 
 	while IFS=$'\t' read -r event actor subject actor_id actor_type; do

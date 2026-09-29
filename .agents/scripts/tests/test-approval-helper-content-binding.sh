@@ -799,6 +799,73 @@ test_locked_issue_stable_ordering() {
 	return 0
 }
 
+append_issue_comment() {
+	local comment_id="$1"
+	local login="$2"
+	local association="$3"
+	local body="$4"
+	local user_id="${5:-1}"
+	jq --argjson id "$comment_id" --arg login "$login" --arg association "$association" --arg body "$body" --argjson user_id "$user_id" \
+		'.[0] += [{id:$id,node_id:("IC_" + ($id|tostring)),user:{id:$user_id,node_id:("U_" + ($user_id|tostring)),login:$login,type:"User"},author_association:$association,created_at:"2026-01-01T00:07:00Z",updated_at:"2026-01-01T00:07:00Z",body:$body}]' \
+		"${FIXTURES}/comments-41.json" >"${FIXTURES}/comments.tmp" && mv "${FIXTURES}/comments.tmp" "${FIXTURES}/comments-41.json"
+	return 0
+}
+
+# GH#33089: comments from live write-authorized users after the approval anchor
+# on a continuously locked issue are authority-equivalent and must not stale it.
+test_locked_issue_trusted_comment_continuity() {
+	local output="" rc=0
+	write_locked_issue_fixture
+	append_issue_comment 4400 maintainer OWNER "Maintainer review: implement option B, keep scope to the helper."
+	assert_verify "write-authorized post-approval prose preserves locked issue approval" issue 41 VERIFIED 0
+
+	write_locked_issue_fixture
+	append_issue_comment 4401 contributor CONTRIBUTOR "Please also change the release workflow." 2
+	assert_verify "read-permission post-approval comment stales locked issue approval" issue 41 STALE_APPROVAL 4
+
+	write_locked_issue_fixture
+	append_issue_comment 4402 maintainer OWNER "Trusted note"
+	append_issue_comment 4403 contributor CONTRIBUTOR "Untrusted addition" 2
+	assert_verify "trusted comment cannot mask an untrusted sibling comment" issue 41 STALE_APPROVAL 4
+
+	write_locked_issue_fixture
+	jq '.[0] |= map(if .id == 411 then .body = "Edited reviewed comment" | .updated_at = "2026-01-01T00:08:00Z" else . end)' "${FIXTURES}/comments-41.json" >"${FIXTURES}/comments.tmp" && mv "${FIXTURES}/comments.tmp" "${FIXTURES}/comments-41.json"
+	assert_verify "edited pre-approval comment stays bound" issue 41 STALE_APPROVAL 4
+
+	write_locked_issue_fixture
+	append_issue_comment 4100 maintainer OWNER "Comment ordered before the approval anchor"
+	assert_verify "trusted comment ordered before the approval anchor stays bound" issue 41 STALE_APPROVAL 4
+
+	write_locked_issue_fixture
+	jq '.title = "Retitled after approval"' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp" && mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
+	append_issue_comment 4404 maintainer OWNER "Trusted note"
+	assert_verify "trusted comment does not relax title binding" issue 41 STALE_APPROVAL 4
+
+	write_locked_issue_fixture
+	jq '.assignees = [{id:1,node_id:"U_1",login:"maintainer",type:"User"}] | .labels += [{id:10,node_id:"L_10",name:"status:in-progress"}]' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp" && mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
+	append_issue_timeline_event '{"id":4405,"node_id":"EV_4405","event":"assigned","created_at":"2026-01-01T00:06:00Z","actor":{"id":1,"login":"maintainer","type":"User"},"assignee":{"id":1,"login":"maintainer","type":"User"}}'
+	append_issue_timeline_event '{"id":4406,"node_id":"EV_4406","event":"labeled","created_at":"2026-01-01T00:06:01Z","actor":{"id":1,"login":"maintainer","type":"User"},"label":{"name":"status:in-progress"}}'
+	append_issue_comment 4407 maintainer OWNER "Starting implementation."
+	assert_verify "trusted comment plus authorized lifecycle transition verifies" issue 41 VERIFIED 0
+
+	write_locked_issue_fixture
+	append_issue_comment 4408 maintainer OWNER "Trusted note"
+	rm -f "${FIXTURES}/gh-fail-count"
+	output=$(GH_FAIL_ENDPOINT="collaborators/maintainer/permission" run_verify issue 41) || rc=$?
+	rm -f "${FIXTURES}/gh-fail-count"
+	if [[ "$output" == "API_ERROR" && "$rc" -eq 6 ]]; then
+		print_result "trusted comment permission uncertainty fails closed" 0
+	else
+		print_result "trusted comment permission uncertainty fails closed" 1 "expected=API_ERROR/6, actual=${output}/${rc}"
+	fi
+
+	# Continuity requires the approval lock; unlocked issues stay exact-bound.
+	reset_and_sign issue 41
+	append_issue_comment 4409 maintainer OWNER "Trusted note on an unlocked issue"
+	assert_verify "trusted comment on an unlocked issue remains stale" issue 41 STALE_APPROVAL 4
+	return 0
+}
+
 test_locked_issue_continuity() {
 	# Production regression from the first #30153 signature: approval-helper
 	# performed the trusted handoff, then the narrowly scoped repository workflow
@@ -996,6 +1063,7 @@ main() {
 	test_dispatch_audit_comments_fail_closed
 	test_post_approval_linked_references
 	test_locked_issue_continuity
+	test_locked_issue_trusted_comment_continuity
 	test_locked_issue_tier_backfill_continuity
 	test_signed_tier_self_hosting_continuity
 
