@@ -84,8 +84,9 @@ mine_failure_groups_json() {
 	local evidence_limit="${AIDEVOPS_OBJECTIVE_EVIDENCE_LIMIT:-2000}"
 	[[ "$evidence_limit" =~ ^[1-9][0-9]*$ ]] || evidence_limit=2000
 	if [[ -s "$evidence_file" ]]; then
+		# GH#32938: per-line parse; one torn append must not drop all dispositions.
 		dispositions=$(tail -n "$evidence_limit" "$evidence_file" 2>/dev/null | \
-			jq -sc '[.[] | select(.record_type == "attempt_outcome")]') || dispositions='[]'
+			jq -Rsc '[split("\n")[] | fromjson? | select(type == "object" and .record_type == "attempt_outcome")]' 2>/dev/null) || dispositions='[]'
 	fi
 	jq -s --argjson cutoff "$cutoff_epoch" --argjson threshold "$threshold" --argjson dispositions "$dispositions" '
 	def evidence_timestamp: (.evidence_timestamp // .timestamp // .ts // 0) | tonumber? // 0;
