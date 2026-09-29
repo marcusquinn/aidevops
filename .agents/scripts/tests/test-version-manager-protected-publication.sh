@@ -265,10 +265,10 @@ else
 	print_result 'unvalidated concurrent bundle cannot satisfy release convergence' false
 fi
 
-run_post_release_agent_sync() {
-	printf 'deploy\n' >>"$route_log"
-	return 0
-}
+# Install the post-publication stub only after the real sync regression cases.
+# A later function declaration would make static analyzers mistake the earlier
+# calls for calls to a function defined too late.
+eval 'run_post_release_agent_sync() { printf "deploy\n" >>"$route_log"; return 0; }'
 rc=0
 run_post_publication_gates '1.2.4' 0 >/dev/null 2>&1 || rc=$?
 if [[ "$rc" -eq 0 && "$(tr '\n' ',' <"$route_log")" == 'deploy,' ]]; then
