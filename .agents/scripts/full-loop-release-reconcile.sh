@@ -935,6 +935,18 @@ _full_loop_release_resolve_tag_commit() {
 	return 0
 }
 
+_full_loop_release_success_grace_expired() {
+	local run_json="$1"
+	local completed_at="" completed_epoch="" now_epoch=""
+	completed_at=$(jq -er '.updated_at | select(type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))' <<<"$run_json") || return 8
+	completed_epoch=$(jq -nr --arg completed_at "$completed_at" '$completed_at | try fromdateiso8601 catch empty') || return 8
+	[[ "$completed_epoch" =~ ^[0-9]+$ ]] || return 8
+	now_epoch=$(date -u +%s) || return 8
+	[[ "$now_epoch" -ge "$completed_epoch" ]] || return 8
+	[[ $((now_epoch - completed_epoch)) -ge 900 ]] || return 8
+	return 0
+}
+
 _full_loop_release_inspect_remote() {
 	local repo="$1"
 	local tag_name="$2"
@@ -967,11 +979,19 @@ _full_loop_release_inspect_remote() {
 				printf 'RELEASE_REMOTE_STATE=published\n'
 				return 0
 			fi
+			# A successful sibling is evidence of publication; a failed newer
+			# recovery must not trigger another dispatch during propagation.
+			return 8
 		fi
 		printf 'WORKFLOW_CONCLUSION=%s\n' "${run_conclusion:-unknown}"
 		return 4
 	fi
-	_full_loop_release_verify_channels "$repo" "$tag_name" || return 5
+	if ! _full_loop_release_verify_channels "$repo" "$tag_name"; then
+		# One recovery per correlation: never loop on a successful dispatch run.
+		[[ "$(jq -r '.event' <<<"$_FULL_LOOP_RELEASE_RUN_JSON")" == "workflow_dispatch" ]] && return 8
+		_full_loop_release_success_grace_expired "$_FULL_LOOP_RELEASE_RUN_JSON" || return 8
+		return 5
+	fi
 	printf 'RELEASE_REMOTE_STATE=published\n'
 	return 0
 }
