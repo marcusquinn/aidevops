@@ -9,11 +9,11 @@ the hub (or local store) copy, which maintainers merge back with `sync`.
 
 from __future__ import annotations
 
+import asyncio
 import datetime as _dt
 import json
 import os
 import shutil
-import subprocess
 from pathlib import Path
 
 import keywords_detect as detect
@@ -67,16 +67,28 @@ EXPORT_DAYS = 28
 EXPORT_TIMEOUT = 300
 
 
+async def _export_status(helper: Path, source: str, domain: str) -> int:
+    """Bound the exporter without retaining its potentially sensitive output."""
+    process = await asyncio.create_subprocess_exec(
+        str(helper), source, domain, "--days", str(EXPORT_DAYS),
+        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+    )
+    try:
+        return await asyncio.wait_for(process.wait(), EXPORT_TIMEOUT)
+    except TimeoutError:
+        process.kill()
+        await process.wait()
+        raise
+
+
 def _refresh_one(helper: Path, source: str, domain: str) -> str:
     """Run one exporter; drop any partial file it left behind on failure."""
     folder = SEO_DATA / domain
     before = ({path: path.stat().st_mtime_ns for path in folder.glob(f"{source}-*.toon")}
               if folder.is_dir() else {})
     try:
-        result = subprocess.run([str(helper), source, domain, "--days", str(EXPORT_DAYS)], timeout=EXPORT_TIMEOUT,
-                                check=False, capture_output=True, text=True)
-        code, reason = result.returncode, "no data or credentials"
-    except subprocess.TimeoutExpired:
+        code, reason = asyncio.run(_export_status(helper, source, domain)), "no data or credentials"
+    except TimeoutError:
         code, reason = 1, "timeout"
     except OSError:
         code, reason = 1, "helper unavailable"
