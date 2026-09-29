@@ -137,36 +137,60 @@ def execute(executable: str, args: list[str], output, environment: dict[str, str
                 child.wait()
 
 
+class _AdmissionTimer:
+    """Count only SQLite admission time; leave the budget decision untouched."""
+
+    def __init__(self, budget: Budget):
+        self.budget = budget
+        self.sqlite_ms = 0.0
+
+    def acquire(self, resource: str) -> str:
+        started = time.monotonic()
+        try:
+            return self.budget.acquire(resource)
+        finally:
+            self.sqlite_ms += (time.monotonic() - started) * 1000
+
+
+class _PhaseTimer:
+    def __init__(self):
+        self.enabled = os.environ.get("AIDEVOPS_GH_SHIM_TIMING") == "1"
+        self.tick = time.monotonic() if self.enabled else 0.0
+
+    def phase(self, name: str) -> None:
+        if self.enabled:
+            now = time.monotonic()
+            print(f"[gh-shim-timing] phase={name} elapsed_ms={(now - self.tick) * 1000:.1f}",
+                  file=sys.stderr)
+            self.tick = now
+
+    def admit(self, budget: Budget, resource: str) -> str:
+        if not self.enabled:
+            return _acquire(budget, resource)
+        timed = _AdmissionTimer(budget)
+        started = time.monotonic()
+        try:
+            return _acquire(timed, resource)
+        finally:
+            total_ms = (time.monotonic() - started) * 1000
+            print(f"[gh-shim-timing] phase=sqlite_admission elapsed_ms={timed.sqlite_ms:.1f} "
+                  f"pacing_ms={max(0.0, total_ms - timed.sqlite_ms):.1f}", file=sys.stderr)
+
+
 def _acquire(budget: Budget, resource: str) -> str:
     # Admission waits are not failed HTTP attempts. Fit pacing inside the normal
     # read timeout while leaving five seconds for transport and response handling.
     timeout = os.environ.get("AIDEVOPS_GH_READ_TIMEOUT", "15")
     timeout = int(timeout) if timeout.isdecimal() else 15
     deadline = time.monotonic() + min(10, max(0, timeout - 5))
-    timing = os.environ.get("AIDEVOPS_GH_SHIM_TIMING") == "1"
-    sqlite_ms = 0.0
-    pacing_ms = 0.0
-    try:
-        while True:
-            acquired_at = time.monotonic() if timing else 0.0
-            wait_started = 0.0
-            try:
-                return budget.acquire(resource)
-            except Deferred as pause:
-                wait = max(0.1, pause.retry_at - time.time()) if pause.retry_at else 0.1
-                if not pause.retryable or wait > deadline - time.monotonic():
-                    raise
-                wait_started = time.monotonic()
-                time.sleep(wait)
-                if timing:
-                    pacing_ms += (time.monotonic() - wait_started) * 1000
-            finally:
-                if timing:
-                    sqlite_ms += ((wait_started or time.monotonic()) - acquired_at) * 1000
-    finally:
-        if timing:
-            print(f"[gh-shim-timing] phase=sqlite_admission elapsed_ms={sqlite_ms:.1f} "
-                  f"pacing_ms={pacing_ms:.1f}", file=sys.stderr)
+    while True:
+        try:
+            return budget.acquire(resource)
+        except Deferred as pause:
+            wait = max(0.1, pause.retry_at - time.time()) if pause.retry_at else 0.1
+            if not pause.retryable or wait > deadline - time.monotonic():
+                raise
+            time.sleep(wait)
 
 
 def _copy_response(output, include: bool, silent: bool, status: int, body_offset: int) -> int:
@@ -219,16 +243,8 @@ def _finish_budget(budget, reservation: str, resource: str, headers: dict[str, s
 
 
 def run(metadata: Path, executable: str, args: list[str]) -> int:
-    timing = os.environ.get("AIDEVOPS_GH_SHIM_TIMING") == "1"
-    tick = time.monotonic()
-
-    def phase(name: str) -> None:
-        nonlocal tick
-        if timing:
-            now = time.monotonic()
-            print(f"[gh-shim-timing] phase={name} elapsed_ms={(now - tick) * 1000:.1f}", file=sys.stderr)
-            tick = now
-
+    phase_timer = _PhaseTimer()
+    phase = phase_timer.phase
     shape = request_shape(args)
     if shape is None or sys.stdout.isatty():
         return 125
@@ -257,7 +273,7 @@ def run(metadata: Path, executable: str, args: list[str]) -> int:
         owner, attributed = quota_owner()
         budget = Budget(directory, scope_key(host, owner), credential, attributed=attributed)
         phase("sqlite_open")
-        reservation = _acquire(budget, resource)
+        reservation = phase_timer.admit(budget, resource)
         phase("sqlite_admission_and_pacing")
         with tempfile.TemporaryFile(dir=temp_dir) as output:
             native_args = args if include else [*args, "--include"]
