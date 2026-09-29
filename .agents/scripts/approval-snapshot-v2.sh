@@ -494,6 +494,26 @@ approval_snapshot_v2_digest() {
 	return 0
 }
 
+# #aidevops:trust-boundary — GH#33097: per-component digests for issue
+# snapshots. `frame` covers every scope-bearing byte except the title and body
+# (comments, linked references, identity, lifecycle), so a verifier can prove
+# that only the title/body changed and then authenticate those edits separately.
+# Prints compact JSON {title, body, frame}. Snapshot bytes pass through
+# here-strings, not argv, so large issues stay within argument limits.
+approval_snapshot_v2_content_digests() {
+	local snapshot_json="$1"
+	local title_json="" body_json="" frame_json="" title_digest="" body_digest="" frame_digest=""
+	title_json=$(jq -cS '.title // ""' <<<"$snapshot_json") || return 1
+	body_json=$(jq -cS '.body // ""' <<<"$snapshot_json") || return 1
+	frame_json=$(jq -cS 'del(.title, .body)' <<<"$snapshot_json") || return 1
+	title_digest=$(approval_snapshot_v2_digest "$title_json") || return 1
+	body_digest=$(approval_snapshot_v2_digest "$body_json") || return 1
+	frame_digest=$(approval_snapshot_v2_digest "$frame_json") || return 1
+	jq -cS -n --arg title "$title_digest" --arg body "$body_digest" --arg frame "$frame_digest" \
+		'{title: $title, body: $body, frame: $frame}'
+	return $?
+}
+
 approval_snapshot_v2_payload() (
 	local target_type="$1"
 	local target_number="$2"
@@ -501,17 +521,20 @@ approval_snapshot_v2_payload() (
 	local issued_at="$4"
 	local excluded_comment_id="${5:-}"
 	local source_timestamp_profile="${6:-$APPROVAL_SNAPSHOT_PROFILE_TRUSTED_SOURCES}"
-	local snapshot_json="" digest="" normalized_slug=""
+	local snapshot_json="" digest="" normalized_slug="" content_digests="null"
 	local temp_dir=""
 
 	snapshot_json=$(approval_snapshot_v2_build "$target_type" "$target_number" "$slug" "$excluded_comment_id" "$issued_at" "$source_timestamp_profile") || return 1
 	digest=$(approval_snapshot_v2_digest "$snapshot_json") || return 1
+	if [[ "$target_type" == "$APPROVAL_TARGET_ISSUE" ]]; then
+		content_digests=$(approval_snapshot_v2_content_digests "$snapshot_json") || return 1
+	fi
 	normalized_slug=$(printf '%s' "$slug" | tr '[:upper:]' '[:lower:]')
 	temp_dir=$(_approval_snapshot_v2_create_temp_dir) || return 1
 	trap 'rm -rf "$temp_dir"' EXIT
 	_approval_snapshot_v2_write_json_file "$temp_dir/snapshot.json" "$snapshot_json" || return 1
 	jq -cS -n --arg type "$target_type" --arg repo "$normalized_slug" --arg issue_kind "$APPROVAL_TARGET_ISSUE" --argjson number "$target_number" \
-		--arg issued "$issued_at" --arg digest "$digest" --slurpfile snapshot_input "$temp_dir/snapshot.json" '
+		--arg issued "$issued_at" --arg digest "$digest" --argjson content_digests "$content_digests" --slurpfile snapshot_input "$temp_dir/snapshot.json" '
 		($snapshot_input[0]) as $snapshot |
 		{
 			schema: "aidevops-approval/v2",
@@ -526,7 +549,7 @@ approval_snapshot_v2_payload() (
 				base_ref: $snapshot.base.ref,
 				base_repository: $snapshot.base.repository
 			} else null end),
-			issue: (if $type == $issue_kind then {lifecycle: $snapshot.lifecycle} else null end)
+			issue: (if $type == $issue_kind then {lifecycle: $snapshot.lifecycle, content_digests: $content_digests} else null end)
 		}
 	'
 	return $?

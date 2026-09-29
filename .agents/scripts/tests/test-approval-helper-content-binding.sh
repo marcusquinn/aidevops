@@ -54,6 +54,10 @@ if [[ -n "${GH_FAIL_ENDPOINT:-}" && "$endpoint" == *"${GH_FAIL_ENDPOINT}"* ]]; t
 fi
 case "$endpoint" in
 	user) printf '%s\n' "${GH_AUTH_USER:-maintainer}" ;;
+graphql)
+	[[ -f "${FIXTURES}/graphql-edits-41.json" ]] || exit 1
+	cat "${FIXTURES}/graphql-edits-41.json"
+	;;
 repos/owner/repo/collaborators/trusted-collab/permission | repos/owner/repo/collaborators/maintainer/permission) printf '%s\n' "${GH_PERMISSION:-write}" ;;
 repos/owner/repo/collaborators/contributor/permission) printf '%s\n' "read" ;;
 repos/owner/repo/collaborators/github-actions%5Bbot%5D/permission | repos/owner/repo/collaborators/github-actions\[bot\]/permission) printf '%s\n' "none" ;;
@@ -75,6 +79,7 @@ EOF
 }
 
 write_baseline_fixtures() {
+	rm -f "${FIXTURES}/graphql-edits-41.json"
 	cat >"${FIXTURES}/issue-41.json" <<'EOF'
 {"id":4100,"node_id":"I_41","number":41,"user":{"id":101,"node_id":"U_101","login":"external-author","type":"User"},"author_association":"CONTRIBUTOR","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","title":"Reviewed issue","body":"Issue body with https://example.invalid/opaque"}
 EOF
@@ -120,6 +125,10 @@ append_signed_comment() {
 	local timeline_file="${FIXTURES}/timeline-${number}.json"
 	local payload="" signature_file="" signature="" body="" updated=""
 	payload=$(PATH="${TEST_ROOT}/bin:$PATH" FIXTURES="$FIXTURES" approval_snapshot_v2_payload "$kind" "$number" owner/repo "$issued_at" "" "$source_timestamp_profile") || return 1
+	# Simulate a pre-GH#33097 signature that carries no component digests.
+	if [[ "${STRIP_CONTENT_DIGESTS:-0}" == "1" ]]; then
+		payload=$(jq -cS 'del(.issue.content_digests)' <<<"$payload") || return 1
+	fi
 	signature_file="${TEST_ROOT}/signature-${number}.txt"
 	sign_payload "$payload" "$signature_file" || return 1
 	signature=$(<"$signature_file")
@@ -866,6 +875,94 @@ test_locked_issue_trusted_comment_continuity() {
 	return 0
 }
 
+write_body_edit_history() {
+	local editor_json="$1"
+	local has_next="${2:-false}"
+	jq -nc --argjson editor "$editor_json" --argjson has_next "$has_next" '
+		{data:{repository:{issue:{userContentEdits:{pageInfo:{hasNextPage:$has_next},nodes:[
+			{editedAt:"2026-01-01T00:08:00Z",editor:$editor},
+			{editedAt:"2026-01-01T00:00:30Z",editor:{__typename:"User",login:"contributor"}}
+		]}}}}}' >"${FIXTURES}/graphql-edits-41.json"
+	return 0
+}
+
+edit_issue_41() {
+	local filter="$1"
+	jq "$filter" "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp" && mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
+	return 0
+}
+
+# GH#33097: write-authorized title/body edits after the approval anchor on a
+# continuously locked issue do not stale approvals that carry component digests.
+test_locked_issue_trusted_content_edits() {
+	local maintainer_editor='{"__typename":"User","login":"maintainer"}'
+	write_locked_issue_fixture
+	edit_issue_41 '.body += "\n\n### Files Scope\n\n- src/helper.sh"'
+	write_body_edit_history "$maintainer_editor"
+	assert_verify "trusted post-approval body edit preserves locked issue approval" issue 41 VERIFIED 0
+
+	write_locked_issue_fixture
+	edit_issue_41 '.body += "\n\nUntrusted scope"'
+	write_body_edit_history '{"__typename":"User","login":"contributor"}'
+	assert_verify "untrusted post-approval body editor stales locked issue approval" issue 41 STALE_APPROVAL 4
+
+	write_locked_issue_fixture
+	edit_issue_41 '.body += "\n\nGhost scope"'
+	write_body_edit_history '{"__typename":"User","login":"ghost"}'
+	assert_verify "ghost body editor fails closed" issue 41 API_ERROR 6
+
+	write_locked_issue_fixture
+	edit_issue_41 '.body += "\n\nDeleted editor"'
+	write_body_edit_history 'null'
+	assert_verify "missing body editor fails closed" issue 41 API_ERROR 6
+
+	write_locked_issue_fixture
+	edit_issue_41 '.body += "\n\nNo history"'
+	assert_verify "missing body edit history fails closed" issue 41 API_ERROR 6
+
+	write_locked_issue_fixture
+	edit_issue_41 '.body += "\n\nPaged history"'
+	write_body_edit_history "$maintainer_editor" true
+	assert_verify "paginated body edit history fails closed" issue 41 API_ERROR 6
+
+	write_locked_issue_fixture
+	edit_issue_41 '.body += "\n\nTrusted scope"'
+	write_body_edit_history "$maintainer_editor"
+	append_issue_comment 4410 contributor CONTRIBUTOR "Untrusted addition" 2
+	assert_verify "trusted body edit cannot mask an untrusted comment" issue 41 STALE_APPROVAL 4
+
+	write_baseline_fixtures
+	edit_issue_41 '.locked = true | .active_lock_reason = "resolved"'
+	jq '.[0] += [{id:418,node_id:"EV_418",event:"locked",created_at:"2026-01-01T00:04:00Z",actor:{id:1,node_id:"U_1",login:"maintainer",type:"User"}}]' "${FIXTURES}/timeline-41.json" >"${FIXTURES}/timeline.tmp" && mv "${FIXTURES}/timeline.tmp" "${FIXTURES}/timeline-41.json"
+	STRIP_CONTENT_DIGESTS=1 append_signed_comment issue 41 "2026-01-01T00:05:00Z" 4199
+	edit_issue_41 '.body += "\n\nLegacy payload scope"'
+	write_body_edit_history "$maintainer_editor"
+	assert_verify "legacy payload without component digests stays body-bound" issue 41 STALE_APPROVAL 4
+
+	reset_and_sign issue 41
+	edit_issue_41 '.body += "\n\nUnlocked scope"'
+	write_body_edit_history "$maintainer_editor"
+	assert_verify "trusted body edit on an unlocked issue remains stale" issue 41 STALE_APPROVAL 4
+
+	write_locked_issue_fixture
+	edit_issue_41 '.title = "Retitled by maintainer"'
+	append_issue_timeline_event '{"id":4420,"node_id":"EV_4420","event":"renamed","created_at":"2026-01-01T00:08:00Z","actor":{"id":1,"login":"maintainer","type":"User"},"rename":{"from":"Reviewed issue","to":"Retitled by maintainer"}}'
+	assert_verify "trusted post-approval rename preserves locked issue approval" issue 41 VERIFIED 0
+
+	write_locked_issue_fixture
+	edit_issue_41 '.title = "Retitled by contributor"'
+	append_issue_timeline_event '{"id":4421,"node_id":"EV_4421","event":"renamed","created_at":"2026-01-01T00:08:00Z","actor":{"id":2,"login":"contributor","type":"User"},"rename":{"from":"Reviewed issue","to":"Retitled by contributor"}}'
+	assert_verify "untrusted post-approval rename stales locked issue approval" issue 41 STALE_APPROVAL 4
+
+	# A body edit by a trusted editor cannot carry an untrusted rename with it.
+	write_locked_issue_fixture
+	edit_issue_41 '.title = "Retitled by contributor" | .body += "\n\nTrusted scope"'
+	write_body_edit_history "$maintainer_editor"
+	append_issue_timeline_event '{"id":4422,"node_id":"EV_4422","event":"renamed","created_at":"2026-01-01T00:08:00Z","actor":{"id":2,"login":"contributor","type":"User"},"rename":{"from":"Reviewed issue","to":"Retitled by contributor"}}'
+	assert_verify "trusted body edit cannot mask an untrusted rename" issue 41 STALE_APPROVAL 4
+	return 0
+}
+
 test_locked_issue_continuity() {
 	# Production regression from the first #30153 signature: approval-helper
 	# performed the trusted handoff, then the narrowly scoped repository workflow
@@ -1064,6 +1161,7 @@ main() {
 	test_post_approval_linked_references
 	test_locked_issue_continuity
 	test_locked_issue_trusted_comment_continuity
+	test_locked_issue_trusted_content_edits
 	test_locked_issue_tier_backfill_continuity
 	test_signed_tier_self_hosting_continuity
 
