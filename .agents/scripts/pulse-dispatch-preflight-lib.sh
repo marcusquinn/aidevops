@@ -323,7 +323,7 @@ _preflight_rest_core_allows_next() {
 #######################################
 _preflight_label_maintenance_order() {
 	local state_file="${AIDEVOPS_LABEL_MAINTENANCE_STATE_FILE:-${PULSE_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/pulse}/label-maintenance-epochs}"
-	local key epoch line extra
+	local key="" epoch="" extra=""
 	local consolidation=0 backfill=0 simplification=0
 	if [[ -r "$state_file" && -f "$state_file" ]]; then
 		while read -r key epoch extra; do
@@ -346,7 +346,7 @@ _preflight_label_maintenance_order() {
 _preflight_label_maintenance_completed() {
 	local completed_key="$1"
 	local state_file="${AIDEVOPS_LABEL_MAINTENANCE_STATE_FILE:-${PULSE_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/pulse}/label-maintenance-epochs}"
-	local key epoch extra tmp
+	local key="" epoch="" extra="" tmp=""
 	mkdir -p "${state_file%/*}" || return 1
 	tmp=$(mktemp "${state_file}.XXXXXX") || return 1
 	if [[ -r "$state_file" && -f "$state_file" ]]; then

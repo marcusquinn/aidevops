@@ -625,7 +625,7 @@ _reevaluate_simplification_labels() {
 			--label "needs-simplification" \
 			--json number,body --limit 50 2>/dev/null) || issues_json="[]"
 
-		local issue num body
+		local issue="" num="" body=""
 		while IFS= read -r issue; do
 			num=$(jq -r '.number // ""' <<<"$issue")
 			[[ "$num" =~ ^[0-9]+$ ]] || continue
