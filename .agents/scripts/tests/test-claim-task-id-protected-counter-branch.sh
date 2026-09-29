@@ -50,6 +50,9 @@ setup_protected_remote() {
 	printf '# Tasks\n\n' >"${seed_dir}/TODO.md"
 	git -C "$seed_dir" add .task-counter .gitignore TODO.md >/dev/null 2>&1 || return 1
 	git -C "$seed_dir" commit -m "chore: seed protected counter" >/dev/null 2>&1 || return 1
+	printf '%s\n' 'fixture history' >"${seed_dir}/history.txt"
+	git -C "$seed_dir" add history.txt >/dev/null 2>&1 || return 1
+	git -C "$seed_dir" commit -m "chore: retain parent history" >/dev/null 2>&1 || return 1
 	git -C "$seed_dir" push origin main >/dev/null 2>&1 || return 1
 	if [[ "$dedicated_state" != "absent" ]]; then
 		git -C "$seed_dir" push origin main:refs/heads/task-id-counter >/dev/null 2>&1 || return 1
@@ -307,6 +310,58 @@ test_implicit_dedicated_counter_branch() {
 	return 0
 }
 
+test_linked_worktree_preserves_history() {
+	local parent_tmpdir="$1"
+	local bin_dir="$2"
+	local mode=""
+	local case_dir=""
+	local work_dir=""
+	local name=""
+	local output=""
+	local rc=0
+	local history_count=""
+
+	for mode in explicit implicit; do
+		name="linked worktree ${mode} counter claim preserves shared history"
+		case_dir="${parent_tmpdir}/linked-${mode}"
+		mkdir -p "$case_dir" || { fail "$name" "fixture directory failed"; continue; }
+		work_dir=$(setup_protected_remote "$case_dir") || {
+			fail "$name" "repo setup failed"
+			continue
+		}
+		if [[ "$mode" == "implicit" ]]; then
+			printf '%s\n' '{}' >"${work_dir}/.aidevops.json"
+		fi
+		rc=0
+		output=$(PATH="${bin_dir}:${PATH}" FAKE_GH_POLICY=unavailable \
+			CAS_MAX_RETRIES=5 CAS_WALL_TIMEOUT_S=20 CAS_SSH_FALLBACK_ENABLED=0 "$CLAIM_SCRIPT" \
+			--title "${mode} linked history" --no-issue --repo-path "$work_dir" 2>&1) || rc=$?
+		if [[ "$mode" == "implicit" && $rc -ne 0 ]] || \
+			[[ "$mode" == "explicit" && $rc -ne 4 ]]; then
+			fail "$name" "unexpected claim exit ${rc}: $output"
+			continue
+		fi
+		if [[ "$mode" == "implicit" ]] && ! printf '%s\n' "$output" | grep -Fq \
+			'counter branch auto-selected from validated dedicated branch: task-id-counter'; then
+			fail "$name" "implicit discovery was not exercised: $output"
+			continue
+		fi
+		if [[ "$mode" == "explicit" ]] && ! printf '%s\n' "$output" | grep -Fq \
+			'PROTECTED_COUNTER_BRANCH'; then
+			fail "$name" "explicit main counter fetch was not exercised: $output"
+			continue
+		fi
+		history_count=$(git -C "${case_dir}/seed" rev-list --count origin/main 2>/dev/null) || history_count=0
+		if [[ $(git -C "${case_dir}/seed" rev-parse --is-shallow-repository) != "false" ]] || \
+			((history_count < 2)); then
+			fail "$name" "shared repository became shallow or origin/main lost history (${history_count} commits)"
+			continue
+		fi
+		pass "$name"
+	done
+	return 0
+}
+
 run_canonical_claim() {
 	local work_dir="$1"
 	local bin_dir="$2"
@@ -501,6 +556,7 @@ main() {
 	test_protected_counter_branch_preflight "$tmpdir" "$work_dir" "$bin_dir"
 	test_protected_counter_branch_push_fallback "$tmpdir" "$work_dir" "$bin_dir"
 	test_implicit_dedicated_counter_branch "$tmpdir" "$work_dir" "$bin_dir"
+	test_linked_worktree_preserves_history "$tmpdir" "$bin_dir"
 	test_canonical_implicit_counter_discovery "$tmpdir" "$bin_dir"
 	test_canonical_context_setup_failure "$tmpdir" "$bin_dir"
 	rm -rf "$tmpdir"
