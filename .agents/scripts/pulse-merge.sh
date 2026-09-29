@@ -482,8 +482,8 @@ _pm_gate_author_trust() {
 	printf -v "$trusted_dest" '%s' "$trusted"
 	printf -v "$permission_dest" '%s' "$permission"
 	if [[ "$trusted" -eq 0 && "$author_collab_rc" -eq 2 ]]; then
-		[[ "${DRY_RUN:-0}" == "1" ]] || check_permission_failure_pr "$pr_number" "$repo_slug" "$pr_author" "${_PULSE_AUTHOR_PERMISSION_HTTP:-unknown}" || true
-		echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — permission check failed for author ${pr_author} (HTTP ${_PULSE_AUTHOR_PERMISSION_HTTP:-unknown})" >>"$LOGFILE"
+		[[ "${DRY_RUN:-0}" == "1" ]] || check_permission_failure_pr "$pr_number" "$repo_slug" "$pr_author" "${_PULSE_AUTHOR_PERMISSION_HTTP:-unknown}" "${_PULSE_AUTHOR_PERMISSION_REASON:-unknown}" || true
+		echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — permission check failed for author ${pr_author} (HTTP ${_PULSE_AUTHOR_PERMISSION_HTTP:-unknown}, reason ${_PULSE_AUTHOR_PERMISSION_REASON:-unknown})" >>"$LOGFILE"
 		return 1
 	fi
 	if [[ "$trusted" -eq 0 && "$author_collab_rc" -ne 0 ]]; then
