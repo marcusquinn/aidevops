@@ -1442,7 +1442,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18491 fix: session worktree resolver errors say 'Image workdir' for bounded operations and hide which root failed #auto-dispatch #bug #interactive tier:simple ~30m ref:GH#32612 logged:2026-09-27 -> [todo/tasks/t18491-brief.md] pr:#32653 completed:2026-09-27
 
-- [ ] t18492 fix: aidevops secret NAME -- cmd redacts short dictionary words (e.g. 'openai') from output #auto-dispatch #bug #interactive tier:standard ~1h ref:GH#32614 logged:2026-09-27 -> [todo/tasks/t18492-brief.md]
+- [x] t18492 fix: aidevops secret NAME -- cmd redacts short dictionary words (e.g. 'openai') from output #auto-dispatch #bug #interactive tier:standard ~1h ref:GH#32614 logged:2026-09-27 -> [todo/tasks/t18492-brief.md] pr:#33023 completed:2026-09-29
 
 - [x] t18493 feat: media-qa-helper for rendered video/audio deliverables (streams, loudness, contact sheets, whisper intelligibility) #auto-dispatch #feat #interactive tier:standard ~2h ref:GH#32615 logged:2026-09-27 -> [todo/tasks/t18493-brief.md] pr:#32709 completed:2026-09-28
 
