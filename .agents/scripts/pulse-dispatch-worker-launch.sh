@@ -677,7 +677,11 @@ _dlw_restore_worktree_deps() {
 		fi
 		local _src_nm="${repo_path}${_rel_dir}/node_modules"
 		local _dst_nm="${worktree_path}${_rel_dir}/node_modules"
-		if [[ -d "$_src_nm" && ! -d "$_dst_nm" ]]; then
+		# The validator accepts only a package-local package-lock.json or
+		# pnpm-lock.yaml (not bun.lock, nor a workspace member whose lock is at
+		# the root); skip guaranteed rejections before they spend the budget.
+		if [[ -d "$_src_nm" && ! -d "$_dst_nm" ]] &&
+			[[ -f "${_dir}/package-lock.json" || -f "${_dir}/pnpm-lock.yaml" ]]; then
 			# Rejections also spend preparation time and must not exhaust the
 			# prelaunch lease by retrying every package in a large worktree.
 			_attempted=$((_attempted + 1))
