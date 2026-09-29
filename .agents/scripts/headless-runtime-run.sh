@@ -255,11 +255,32 @@ _resolve_capability_escalation() {
 		_capability_escalation_label="${current_tier} capability limit — increasing ${current_model} reasoning from ${current_variant} to ${_capability_escalation_variant}"
 		return 0
 	fi
-	_capability_escalation_tier=$(model_tier_next "$current_tier" 2>/dev/null) || return 1
-	_capability_escalation_model=$(choose_model "$role" "" "$_capability_escalation_tier" "exact-tier") || return 1
-	_capability_escalation_variant=$(resolve_headless_variant "$role" "$_capability_escalation_tier" "$_capability_escalation_model")
-	_capability_escalation_label="${current_tier} tier reported BLOCKED — escalating to ${_capability_escalation_tier} (${_capability_escalation_model}${_capability_escalation_variant:+ ${_capability_escalation_variant}})"
-	return 0
+	# GH#32929: never re-run the identical route. Tiers may share a model and
+	# reasoning (standard and thinking both start at Sol medium), so an identical
+	# next-tier route tries that tier's explicit ladder, then its next healthy
+	# distinct candidate, then the following tier. Nothing distinct is terminal.
+	local target_tier="$current_tier" target_model="" target_variant="" next_route=""
+	while target_tier=$(model_tier_next "$target_tier" 2>/dev/null); do
+		target_model=$(choose_model "$role" "" "$target_tier" "exact-tier") || return 1
+		target_variant=$(resolve_headless_variant "$role" "$target_tier" "$target_model")
+		if [[ "$target_model" == "$current_model" && "$target_variant" == "$current_variant" ]]; then
+			if [[ -n "$target_variant" ]] &&
+				next_route=$(model_tier_next_variant "$target_tier" "$target_model" "$target_variant"); then
+				target_variant="$next_route"
+			elif next_route=$(_first_healthy_configured_model "$target_tier" "exact-tier" "" "$current_model"); then
+				target_model="$next_route"
+				target_variant=$(resolve_headless_variant "$role" "$target_tier" "$target_model")
+			else
+				continue
+			fi
+		fi
+		_capability_escalation_tier="$target_tier"
+		_capability_escalation_model="$target_model"
+		_capability_escalation_variant="$target_variant"
+		_capability_escalation_label="${current_tier} tier reported BLOCKED — escalating to ${_capability_escalation_tier} (${_capability_escalation_model}${_capability_escalation_variant:+ ${_capability_escalation_variant}})"
+		return 0
+	done
+	return 1
 }
 
 # Handle attempt results that always terminate or immediately escalate.
