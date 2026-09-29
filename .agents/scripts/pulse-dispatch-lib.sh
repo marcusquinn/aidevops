@@ -536,7 +536,7 @@ _dispatch_floor_loop() {
 		local budget_rc=0
 		_dispatch_graphql_budget_allows_next || budget_rc=$?
 		if [[ "$budget_rc" -ne 0 ]]; then
-			if [[ "$budget_rc" -eq 1 ]]; then
+			if [[ "$budget_rc" -eq 2 ]]; then
 				echo "[pulse-wrapper] Dispatch_max stopping early: GraphQL circuit breaker tripped during serial loop" >>"$LOGFILE"
 			fi
 			break
@@ -735,7 +735,7 @@ _dispatch_max_should_stop() {
 	local budget_rc=0
 	_dispatch_graphql_budget_allows_next || budget_rc=$?
 	if [[ "$budget_rc" -ne 0 ]]; then
-		if [[ "$budget_rc" -eq 1 ]]; then
+		if [[ "$budget_rc" -eq 2 ]]; then
 			echo "[pulse-wrapper] Dispatch_max stopping early: GraphQL circuit breaker tripped during parallel loop" >>"$LOGFILE"
 		fi
 		return 0
