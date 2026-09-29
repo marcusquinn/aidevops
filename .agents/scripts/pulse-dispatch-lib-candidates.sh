@@ -700,6 +700,16 @@ _dispatch_rest_core_requires_serial() {
 #   1 — budget is below threshold; caller should stop the loop
 #######################################
 _dispatch_graphql_budget_allows_next() {
+	# Both serial and parallel candidate loops call this before any candidate
+	# API work. Keep the 600s ceremony floor; defer instead of shrinking it.
+	local cycle_remaining="" floor_seconds="${DISPATCH_PER_CANDIDATE_TIMEOUT_FLOOR:-600}"
+	[[ "$floor_seconds" =~ ^[1-9][0-9]*$ ]] || floor_seconds=600
+	if declare -F _pulse_cycle_remaining_seconds >/dev/null 2>&1 && cycle_remaining=$(_pulse_cycle_remaining_seconds "${AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S:-90}"); then
+		if [[ "$cycle_remaining" -lt "$floor_seconds" ]]; then
+			echo "[pulse-wrapper] Dispatch_max: cycle budget exhausted" >>"$LOGFILE"
+			return 1
+		fi
+	fi
 	if ! declare -F is_graphql_budget_sufficient >/dev/null 2>&1; then
 		return 0
 	fi

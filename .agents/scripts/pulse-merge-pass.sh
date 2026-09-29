@@ -170,11 +170,17 @@ _pmp_merge_pass_budget_deadline() {
 		fi
 	fi
 	[[ "$budget_seconds" =~ ^[0-9]+$ ]] || budget_seconds=0
+	local deadline=0 remaining="" now=""
 	if [[ "$budget_seconds" -gt 0 && "$pass_start" -gt 0 ]]; then
-		printf '%s' "$((pass_start + budget_seconds))"
-	else
-		printf '0'
+		deadline=$((pass_start + budget_seconds))
 	fi
+	if declare -F _pulse_cycle_remaining_seconds >/dev/null 2>&1 && remaining=$(_pulse_cycle_remaining_seconds "${AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S:-90}"); then
+		now=$(date +%s) || return 1
+		if [[ "$deadline" -eq 0 || "$((now + remaining))" -lt "$deadline" ]]; then
+			deadline=$((now + remaining))
+		fi
+	fi
+	printf '%s' "$deadline"
 	return 0
 }
 

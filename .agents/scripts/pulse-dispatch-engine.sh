@@ -1128,6 +1128,7 @@ _pulse_start_post_dispatch_housekeeping() {
 
 	(
 		trap - EXIT INT TERM
+		AIDEVOPS_PULSE_STAGE_CYCLE_CLAMP=0
 		_pulse_run_post_dispatch_housekeeping_stages "$stage_timeout"
 	) >>"$LOGFILE" 2>&1 &
 	local housekeeping_pid=$!

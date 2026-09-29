@@ -360,6 +360,10 @@ DISPATCH_LIB="$SCRIPT_DIR/pulse-dispatch-lib.sh"
 DISPATCH_CAPACITY_LIB="$SCRIPT_DIR/pulse-dispatch-lib-capacity.sh"
 DISPATCH_CANDIDATES_LIB="$SCRIPT_DIR/pulse-dispatch-lib-candidates.sh"
 PREFLIGHT_LIB="$SCRIPT_DIR/pulse-dispatch-preflight-lib.sh"
+# The wrapper loads the shared cycle clock before sourcing preflight helpers.
+# Mirror that order for the standalone runtime contracts below.
+# shellcheck source=../pulse-watchdog.sh
+source "$SCRIPT_DIR/pulse-watchdog.sh"
 ROUTINES="$SCRIPT_DIR/pulse-routines.sh"
 TRIAGE_EVALUATION="$SCRIPT_DIR/pulse-triage-evaluation.sh"
 TRIAGE_DISPATCH="$SCRIPT_DIR/pulse-triage-dispatch.sh"
