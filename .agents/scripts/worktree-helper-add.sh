@@ -442,7 +442,10 @@ _restore_worktree_node_modules() {
 		_rel="${_pdir#"$wt_path"}"
 		local _src="${repo_root}${_rel}/node_modules"
 		local _dst="${wt_path}${_rel}/node_modules"
-		if [[ -d "$_src" && ! -d "$_dst" ]]; then
+		# Only a package-local package-lock.json or pnpm-lock.yaml can pass the
+		# validator; skip guaranteed rejections instead of holding the lock.
+		if [[ -d "$_src" && ! -d "$_dst" ]] &&
+			[[ -f "${_pdir}/package-lock.json" || -f "${_pdir}/pnpm-lock.yaml" ]]; then
 			if _provision_worktree_node_modules "$wt_path" "$repo_root" "${_rel#/}"; then
 				_restored=$((_restored + 1))
 			fi

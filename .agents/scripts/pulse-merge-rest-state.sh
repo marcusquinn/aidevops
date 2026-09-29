@@ -352,6 +352,126 @@ _pmp_update_branch_rest() {
 }
 
 #######################################
+# Resolve (and opportunistically prune) the per-PR missing-check state file.
+# Lines: "<head_sha> <epoch> <ok|failed|exhausted>".
+# Args: $1=repo slug, $2=PR number
+#######################################
+_pmrs_missing_checks_state_file() {
+	local repo_slug="$1"
+	local pr_number="$2"
+	local state_dir="${AIDEVOPS_PULSE_MISSING_CHECKS_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/pulse-missing-required-checks}"
+	local safe_slug=""
+
+	mkdir -p "$state_dir" 2>/dev/null || return 1
+	find "$state_dir" -type f -mtime +7 -delete 2>/dev/null || true
+	safe_slug=$(printf '%s' "$repo_slug" | tr -c '[:alnum:]._-' '_')
+	printf '%s/%s-%s' "$state_dir" "$safe_slug" "$pr_number"
+	return 0
+}
+
+#######################################
+# True when every non-passing required context is absent from the exact-head
+# rollup and no check is in flight. Reads the globals that
+# _check_required_checks_passing sets in the same shell; unset = unknown.
+#######################################
+_pmrs_missing_checks_applicable() {
+	local nonpass="${_PULSE_REQUIRED_CHECKS_NONPASS_COUNT:-}"
+	local missing="${_PULSE_REQUIRED_CHECKS_MISSING_COUNT:-}"
+	local in_flight="${_PULSE_CHECKS_IN_FLIGHT_COUNT:-}"
+
+	[[ "$nonpass" =~ ^[0-9]+$ && "$missing" =~ ^[0-9]+$ && "$in_flight" =~ ^[0-9]+$ ]] || return 1
+	[[ "$missing" -gt 0 && "$missing" -eq "$nonpass" && "$in_flight" -eq 0 ]] || return 1
+	return 0
+}
+
+#######################################
+# Age of the head commit from its committer timestamp.
+# Args: $1=repo slug, $2=head SHA
+# Stdout: age in seconds
+#######################################
+_pmrs_head_commit_age_seconds() {
+	local repo_slug="$1"
+	local head_sha="$2"
+	local committed_at="" committed_epoch="" now_epoch=""
+
+	committed_at=$(AIDEVOPS_GH_ROUTE_DECISION="pulse-missing-checks-head-age-rest" \
+		_pmrs_gh_call read gh api "repos/${repo_slug}/commits/${head_sha}" \
+		--jq '.commit.committer.date // empty' 2>/dev/null) || return 1
+	[[ -n "$committed_at" ]] || return 1
+	committed_epoch=$(date -u -d "$committed_at" +%s 2>/dev/null \
+		|| TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$committed_at" +%s 2>/dev/null) || return 1
+	[[ "$committed_epoch" =~ ^[0-9]+$ ]] || return 1
+	now_epoch=$(date -u +%s)
+	printf '%s' "$((now_epoch - committed_epoch))"
+	return 0
+}
+
+#######################################
+# Remediate required contexts that will never report on the current head
+# (GH#32951). GitHub can drop a workflow run for a PR event; the required
+# context then stays "expected" forever, native auto-merge can never finish,
+# and re-arming it every cycle only churns writes (other runners may disarm
+# it again). Request one expected-head update-branch to retrigger CI instead.
+# Bounded per head by a cooldown and per PR by an attempt cap so a
+# paths-filtered required workflow that never reports cannot loop.
+#
+# Caller must have passed all merge gates and stopped DRY_RUN, and must call
+# _check_required_checks_passing for the same PR immediately before.
+# Args: $1=PR number, $2=repo slug, $3=gated head SHA
+# Returns: 0=handled (update requested, cooling down, failed, or attempts
+#          exhausted) — caller must not arm native auto-merge;
+#          1=not applicable, head too young, or state unavailable
+#######################################
+_pmp_remediate_missing_required_checks() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local head_sha="${3:-}"
+	local threshold="${AIDEVOPS_PULSE_MISSING_REQUIRED_CHECK_SECONDS:-1800}"
+	local max_attempts="${AIDEVOPS_PULSE_MISSING_REQUIRED_CHECK_MAX_UPDATES:-2}"
+	local state_file="" now_epoch="" head_entry="" head_epoch="" head_result=""
+	local attempts=0 age="" ub_output="" ub_rc=0
+	local missing="${_PULSE_REQUIRED_CHECKS_MISSING_COUNT:-0}"
+
+	[[ -n "$head_sha" ]] || return 1
+	_pmrs_missing_checks_applicable || return 1
+	[[ "$threshold" =~ ^[0-9]+$ ]] || threshold=1800
+	[[ "$max_attempts" =~ ^[0-9]+$ ]] || max_attempts=2
+	state_file=$(_pmrs_missing_checks_state_file "$repo_slug" "$pr_number") || return 1
+	now_epoch=$(date -u +%s)
+
+	if [[ -f "$state_file" ]]; then
+		head_entry=$(awk -v sha="$head_sha" '$1 == sha { e = $2 " " $3 } END { print e }' "$state_file" 2>/dev/null) || head_entry=""
+		attempts=$(awk '$3 == "ok" { n++ } END { print n + 0 }' "$state_file" 2>/dev/null) || attempts=0
+		[[ "$attempts" =~ ^[0-9]+$ ]] || attempts=0
+	fi
+	read -r head_epoch head_result <<<"$head_entry"
+	[[ "$head_result" == "exhausted" ]] && return 0
+	if [[ "$head_epoch" =~ ^[0-9]+$ ]] && ((now_epoch - head_epoch < threshold)); then
+		return 0
+	fi
+
+	age=$(_pmrs_head_commit_age_seconds "$repo_slug" "$head_sha") || return 1
+	[[ "$age" =~ ^[0-9]+$ && "$age" -ge "$threshold" ]] || return 1
+
+	if [[ "$attempts" -ge "$max_attempts" ]]; then
+		printf '%s %s exhausted\n' "$head_sha" "$now_epoch" >>"$state_file"
+		echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: ${missing} required context(s) never reported on head ${head_sha:0:12} after ${attempts} update-branch attempt(s); native auto-merge not re-armed — check required workflow triggers/path filters or re-run CI (GH#32951)" >>"$LOGFILE"
+		return 0
+	fi
+
+	ub_output=$(_pmp_update_branch_rest "$pr_number" "$repo_slug" "$head_sha" 2>&1) || ub_rc=$?
+	if [[ "$ub_rc" -eq 0 ]]; then
+		printf '%s %s ok\n' "$head_sha" "$now_epoch" >>"$state_file"
+		echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: ${missing} required context(s) never reported on head ${head_sha:0:12} (${age}s old, no checks in flight) — update-branch requested to retrigger CI instead of arming native auto-merge (GH#32951)" >>"$LOGFILE"
+		return 0
+	fi
+	printf '%s %s failed\n' "$head_sha" "$now_epoch" >>"$state_file"
+	ub_output=$(printf '%s' "$ub_output" | tr '\n' ' ' | cut -c1-300)
+	echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: ${missing} required context(s) never reported on head ${head_sha:0:12}; update-branch failed, holding native auto-merge for ${threshold}s (GH#32951): ${ub_output}" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
 # Read auto-merge enablement time through a fixed-cost GraphQL query when the
 # REST representation omits auto_merge.enabled_at. The operation reports its
 # own cost and fails closed if GitHub changes the calibrated one-point shape.
