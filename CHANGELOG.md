@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.37.32] - 2026-09-29
+
+### Changed
+
+- Maintenance: add t18554 release shallow-store preflight and t18556 reconcile exact publish-run lookup with worker-ready briefs
+
+### Fixed
+
+- make merged-PR checks reopen-aware (GH#33071)
+- bound events-tickle skip by snapshot age (GH#33074)
+
 ## [3.37.31] - 2026-09-29
 
 ### Added
