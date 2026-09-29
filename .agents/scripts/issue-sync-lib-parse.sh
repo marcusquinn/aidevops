@@ -274,6 +274,12 @@ _task_parent_value() {
 		[[ ! "$remainder" =~ (^|[[:space:]])parent: ]] || return 1
 	fi
 	[[ -n "$value" ]] || return 0
+	# Issue-first parents (parent:GH#NNN) have no task ID to link; drop the
+	# parent field with a warning instead of rejecting the whole task line.
+	if [[ "$value" =~ ^GH#[1-9][0-9]*$ ]]; then
+		printf '%s\n' "warning: parent:${value} has no task ID; ignoring parent hierarchy metadata" >&2
+		return 0
+	fi
 	task_identity_validate "$value" || return 1
 	printf '%s\n' "$value"
 	return 0
