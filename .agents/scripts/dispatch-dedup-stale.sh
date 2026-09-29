@@ -21,7 +21,7 @@
 # 28 min of dispatch capacity per crash.
 #######################################
 STALE_ASSIGNMENT_THRESHOLD_SECONDS="${STALE_ASSIGNMENT_THRESHOLD_SECONDS:-${DISPATCH_COMMENT_MAX_AGE:-600}}"
-_DDS_NMR_LABEL="needs-maintainer-review"
+# Stale-recovery escalation applies a structural block, never NMR.
 _DDS_STRUCTURAL_BLOCK_LABEL="status:blocked"
 _DDS_STATUS_BLOCKED="blocked"
 _DDS_KIND_DRAFT="draft_checkpoint"
