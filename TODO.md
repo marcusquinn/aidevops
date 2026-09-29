@@ -1514,11 +1514,11 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18552 feat(worktree-cleanup): audited local-branch cleanup so merged branches do not accumulate after worktree removal #auto-dispatch #feat tier:standard ref:GH#33030 logged:2026-09-29 -> [todo/tasks/t18552-brief.md] pr:#33042 completed:2026-09-29
 - [x] t18553 fix(claim-task-id): keep depth-1 counter fetches in the isolated context so linked-worktree claims stop truncating shared repo history #auto-dispatch #bug tier:standard ref:GH#33033 logged:2026-09-29 -> [todo/tasks/t18553-brief.md] pr:#33041 completed:2026-09-29
-- [ ] t18554 fix(release): unshallow the release control worktree before lane reservation so a shallow store cannot strand the release lane #auto-dispatch #bug tier:standard ref:GH#33069 logged:2026-09-29 -> [todo/tasks/t18554-brief.md]
+- [x] t18554 fix(release): unshallow the release control worktree before lane reservation so a shallow store cannot strand the release lane #auto-dispatch #bug tier:standard ref:GH#33069 logged:2026-09-29 -> [todo/tasks/t18554-brief.md] pr:#33081 completed:2026-09-29
 - [ ] t18556 fix(release): look up the tag-push publish run by exact head_sha and skip recovery dispatch when channels are already published #auto-dispatch #bug tier:standard ref:GH#33073 logged:2026-09-29 -> [todo/tasks/t18556-brief.md]
 - [ ] t18559 perf(worktree-cleanup): list open PRs once per local-branch scan and cap per-run GitHub lookups #auto-dispatch #bug tier:standard ref:GH#33077 logged:2026-09-29 -> [todo/tasks/t18559-brief.md]
 
-- [ ] t18555 fix(dispatch-dedup): merged-PR keyword check ignores issue reopen, permanently blocking reopened issues #auto-dispatch #bug ref:GH#33071
+- [x] t18555 fix(dispatch-dedup): merged-PR keyword check ignores issue reopen, permanently blocking reopened issues #auto-dispatch #bug ref:GH#33071 pr:#33080 completed:2026-09-29
 
 ## In Progress
 
@@ -5061,4 +5061,4 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t18525 Install and update Cloudflare cf CLI via setup and update-tools #enhancement ref:GH#32862
 - [ ] t18524 fix(seo): keywords allow one target per phrase per site #bug #seo ref:GH#32854
 - [ ] t18523 Add Cloudflare cf CLI guidance and routing #enhancement ref:GH#32850
-- [ ] t18558 fix(prefetch): events tickle 304 must not skip owners whose snapshots are stale (private-org public events feed) #bug ref:GH#33074
+- [x] t18558 fix(prefetch): events tickle 304 must not skip owners whose snapshots are stale (private-org public events feed) #bug ref:GH#33074 pr:#33076 completed:2026-09-29
