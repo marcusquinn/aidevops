@@ -556,6 +556,94 @@ _dispatch_record_zero_worker_active_claim_hold() {
 	return 0
 }
 
+# Parse the prepass result in the caller's scope so slot and triage accounting
+# remain available for the final dispatch summary. Bash locals are dynamically
+# scoped; this helper is only called by dispatch_max.
+_dispatch_prepare_prepasses() {
+	local prepass_line=""
+	local initial_slots="$1"
+	if ! prepass_line=$(_dispatch_run_prepasses "$initial_slots" 2>>"$LOGFILE"); then
+		echo "[pulse-wrapper] Dispatch_max: _dispatch_run_prepasses returned non-zero — assuming 0 triage/enrichment, full slot budget" >>"$LOGFILE"
+		prepass_line="${initial_slots} 0 1"
+	fi
+	read -r available_slots triage_attempted triage_infrastructure_failed <<<"$prepass_line"
+	[[ "$available_slots" =~ ^[0-9]+$ ]] || available_slots=0
+	[[ "$triage_attempted" =~ ^[0-9]+$ ]] || triage_attempted=0
+	[[ "$triage_infrastructure_failed" =~ ^[0-9]+$ ]] || triage_infrastructure_failed=0
+	pulse_dispatch_debug_log "post-prepasses available_slots=${available_slots} triage_attempted=${triage_attempted} triage_infrastructure_failed=${triage_infrastructure_failed}"
+	return 0
+}
+
+# Establish round state and choose the floor or parallel path. The path, slot,
+# parallelism and cycle-ownership variables belong to dispatch_max's scope.
+_dispatch_prepare_round() {
+	local active_count="$1"
+	local ranked_candidates="$2"
+	local ranked_count="$3"
+	_DISPATCH_ROUND_DISPATCHED=0
+	_DISPATCH_ROUND_NO_WORKER_FAILURES=0
+	_DISPATCH_CONSECUTIVE_NO_WORKER=0
+	_DISPATCH_THROTTLE_FILE="${HOME}/.aidevops/logs/dispatch-throttle"
+	_DISPATCH_CANARY_CACHE="${AIDEVOPS_HEADLESS_RUNTIME_DIR:-${HOME}/.aidevops/.agent-workspace/headless-runtime}/canary-last-pass"
+	if [[ -z "${_DISPATCH_BENIGN_BLOCKS_FILE:-}" ]]; then
+		_dispatch_begin_benign_blocks_cycle >/dev/null
+		_dispatch_owns_benign_blocks_cycle=1
+	fi
+	export _DISPATCH_BENIGN_BLOCKS_FILE
+	_dispatch_recheck_zero_worker_active_claims "$active_count"
+	_DISPATCH_ACTIVE_WORKERS="$active_count"
+	export _DISPATCH_ACTIVE_WORKERS
+
+	if [[ -n "${_DISPATCH_FORCE_FLOOR:-}" ]] || { _dispatch_should_use_floor_path && [[ "${_DISPATCH_MIN_WORKER_FLOOR_ACTIVE:-0}" != "1" ]]; }; then
+		_effective_slots=1
+		_dispatch_path="floor"
+		if [[ -f "$_DISPATCH_THROTTLE_FILE" ]]; then
+			echo "[pulse-wrapper] Dispatch floor path engaged (throttle file present): limiting implementation batch to 1 (runtime degraded)" >>"$LOGFILE"
+		elif [[ -n "${_DISPATCH_FORCE_FLOOR:-}" ]]; then
+			echo "[pulse-wrapper] Dispatch floor path engaged (forced via _DISPATCH_FORCE_FLOOR — explicit dispatch_floor() caller)" >>"$LOGFILE"
+		fi
+	fi
+	_dispatch_max_parallel=$(_dispatch_max_compute_parallel "$_effective_slots")
+	echo "[pulse-wrapper] Dispatch_max: entering candidate loop with effective_slots=${_effective_slots}, max_parallel=${_dispatch_max_parallel}, candidates=${ranked_count}" >>"$LOGFILE"
+	local first_candidate_preview
+	first_candidate_preview=$(printf '%s' "$ranked_candidates" | jq -c '.[0]' 2>/dev/null || echo "<jq error>")
+	echo "[pulse-wrapper] Dispatch_max: first candidate preview (240 bytes): ${first_candidate_preview:0:240}" >>"$LOGFILE"
+	return 0
+}
+
+# Run the selected candidate loop without a subshell: aggregation must update
+# the round counters in the caller's scope for the subsequent throttle decision.
+_dispatch_execute_candidate_loop() {
+	local candidate_file="$1"
+	local ranked_candidates="$2"
+	local worker_limit="$3"
+	local active_count="$4"
+	local login="$5"
+	local loop_output="" outcomes_file="" product_reserved=0 product_complete=false
+	product_reserved=$(_dispatch_product_reservation_slots "$worker_limit" "$active_count" "$_effective_slots")
+	product_complete=$(jq -r 'all(.[]; .product_discovery_complete == true)' <<<"$ranked_candidates")
+	if ((product_reserved > 0)); then
+		outcomes_file=$(mktemp) || return 1
+		loop_output=$(_dispatch_priority_loop "$candidate_file" "$_effective_slots" "$login" \
+			"$_dispatch_max_parallel" "$outcomes_file" "$product_reserved" "$product_complete") || loop_output=""
+		_dispatch_max_aggregate_outcomes "$outcomes_file"
+		rm -f "$outcomes_file"
+	elif ((_dispatch_max_parallel <= 1)); then
+		loop_output=$(_dispatch_floor_loop "$candidate_file" "$_effective_slots" "$available_slots" "$login")
+	else
+		outcomes_file=$(mktemp 2>/dev/null || echo "/tmp/aidevops-dispatch-outcomes.$$")
+		: >"$outcomes_file"
+		loop_output=$(_dispatch_max_loop "$candidate_file" "$_effective_slots" "$available_slots" "$login" "$_dispatch_max_parallel" "$outcomes_file")
+		_dispatch_max_aggregate_outcomes "$outcomes_file"
+		rm -f "$outcomes_file"
+	fi
+	read -r dispatched_count processed_count <<<"$loop_output"
+	[[ "$dispatched_count" =~ ^[0-9]+$ ]] || dispatched_count=0
+	[[ "$processed_count" =~ ^[0-9]+$ ]] || processed_count=0
+	_dispatch_record_zero_worker_active_claim_hold "$active_count" "$dispatched_count"
+	return 0
+}
+
 #######################################
 # Dispatch_max for obvious backlog.
 #
@@ -626,17 +714,8 @@ dispatch_max() {
 
 	echo "[pulse-wrapper] Dispatch_max: available=${available_slots}, candidates=${candidate_count}" >>"$LOGFILE"
 
-	local prepass_line=""
 	local triage_attempted=0 triage_infrastructure_failed=0
-	if ! prepass_line=$(_dispatch_run_prepasses "$available_slots" 2>>"$LOGFILE"); then
-		echo "[pulse-wrapper] Dispatch_max: _dispatch_run_prepasses returned non-zero — assuming 0 triage/enrichment, full slot budget" >>"$LOGFILE"
-		prepass_line="${available_slots} 0 1"
-	fi
-	read -r available_slots triage_attempted triage_infrastructure_failed <<<"$prepass_line"
-	[[ "$available_slots" =~ ^[0-9]+$ ]] || available_slots=0
-	[[ "$triage_attempted" =~ ^[0-9]+$ ]] || triage_attempted=0
-	[[ "$triage_infrastructure_failed" =~ ^[0-9]+$ ]] || triage_infrastructure_failed=0
-	pulse_dispatch_debug_log "post-prepasses available_slots=${available_slots} triage_attempted=${triage_attempted} triage_infrastructure_failed=${triage_infrastructure_failed}"
+	_dispatch_prepare_prepasses "$available_slots"
 	if ! _dispatch_rest_core_progress_allows_next "dispatch_post_prepasses"; then
 		echo "[pulse-wrapper] Dispatch_max stopped after prepasses: REST-core launch headroom is unavailable" >>"$LOGFILE"
 		echo 0
@@ -644,52 +723,11 @@ dispatch_max() {
 	fi
 	candidates_json=$(_dispatch_order_idle_borrowing_candidates "$candidates_json" "$available_slots")
 
-	# Reset module-level round state before the dispatch loop (t1959).
-	_DISPATCH_ROUND_DISPATCHED=0
-	_DISPATCH_ROUND_NO_WORKER_FAILURES=0
-	_DISPATCH_CONSECUTIVE_NO_WORKER=0
-	_DISPATCH_THROTTLE_FILE="${HOME}/.aidevops/logs/dispatch-throttle"
-	_DISPATCH_CANARY_CACHE="${AIDEVOPS_HEADLESS_RUNTIME_DIR:-${HOME}/.aidevops/.agent-workspace/headless-runtime}/canary-last-pass"
 	local _dispatch_owns_benign_blocks_cycle=0
-	if [[ -z "${_DISPATCH_BENIGN_BLOCKS_FILE:-}" ]]; then
-		_dispatch_begin_benign_blocks_cycle >/dev/null
-		_dispatch_owns_benign_blocks_cycle=1
-	fi
-	export _DISPATCH_BENIGN_BLOCKS_FILE
-	_dispatch_recheck_zero_worker_active_claims "$active_workers"
-	# Snapshot-positive ownership is required before any cross-cycle skip.
-	_DISPATCH_ACTIVE_WORKERS="$active_workers"
-	export _DISPATCH_ACTIVE_WORKERS
-
-	# t3015: branch on dispatch path (max = parallel, floor = forced-serial).
-	# t3418/t3558: if the minimum worker floor is active, runtime launch
-	# throttling is a soft signal and must not collapse dispatch below the
-	# floor. Explicit dispatch_floor() callers still force the floor path.
-	# _dispatch_should_use_floor_path returns 0 when the runtime is degraded
-	# (throttle file present) OR when an explicit caller invoked dispatch_floor
-	# (which sets _DISPATCH_FORCE_FLOOR=1). The floor path preserves the
-	# legacy "test the waters" behaviour as a regression escape hatch.
 	local _effective_slots="$available_slots"
 	local _dispatch_path="max"
-	if [[ -n "${_DISPATCH_FORCE_FLOOR:-}" ]] || { _dispatch_should_use_floor_path && [[ "${_DISPATCH_MIN_WORKER_FLOOR_ACTIVE:-0}" != "1" ]]; }; then
-		_effective_slots=1
-		_dispatch_path="floor"
-		if [[ -f "$_DISPATCH_THROTTLE_FILE" ]]; then
-			echo "[pulse-wrapper] Dispatch floor path engaged (throttle file present): limiting implementation batch to 1 (runtime degraded)" >>"$LOGFILE"
-		elif [[ -n "${_DISPATCH_FORCE_FLOOR:-}" ]]; then
-			echo "[pulse-wrapper] Dispatch floor path engaged (forced via _DISPATCH_FORCE_FLOOR — explicit dispatch_floor() caller)" >>"$LOGFILE"
-		fi
-	fi
-
-	# t3005/t3014: pick parallelism level (1 = serial, >1 = parallel via wait -n).
-	# In floor mode _effective_slots is already 1 → parallelism resolves to 1.
 	local _dispatch_max_parallel
-	_dispatch_max_parallel=$(_dispatch_max_compute_parallel "$_effective_slots")
-
-	echo "[pulse-wrapper] Dispatch_max: entering candidate loop with effective_slots=${_effective_slots}, max_parallel=${_dispatch_max_parallel}, candidates=${candidate_count}" >>"$LOGFILE"
-	local _dispatch_first_candidate_preview
-	_dispatch_first_candidate_preview=$(printf '%s' "$candidates_json" | jq -c '.[0]' 2>/dev/null || echo "<jq error>")
-	echo "[pulse-wrapper] Dispatch_max: first candidate preview (240 bytes): ${_dispatch_first_candidate_preview:0:240}" >>"$LOGFILE"
+	_dispatch_prepare_round "$active_workers" "$candidates_json" "$candidate_count"
 
 	# GH#18804 follow-up: feed candidates from a tempfile rather than process substitution.
 	local _dispatch_candidate_file=""
@@ -709,33 +747,8 @@ dispatch_max() {
 	_dispatch_line_count=$(wc -l <"$_dispatch_candidate_file" 2>/dev/null | tr -d ' ' || echo 0)
 	echo "[pulse-wrapper] Dispatch_max: candidate enumeration produced ${_dispatch_line_count} lines in ${_dispatch_candidate_file}" >>"$LOGFILE"
 
-	# Branch: floor path (serial; throttle / forced) vs max path (parallel).
-	# _dispatch_max_parallel <= 1 implies floor mode (effective_slots was clamped to 1
-	# OR DISPATCH_MAX_PARALLEL=1 set explicitly as a regression escape hatch).
-	local dispatched_count=0 processed_count=0 loop_output=""
-	local _dispatch_outcomes_file=""
-	local product_reserved=0 product_complete=false
-	product_reserved=$(_dispatch_product_reservation_slots "$max_workers" "$active_workers" "$_effective_slots")
-	product_complete=$(jq -r 'all(.[]; .product_discovery_complete == true)' <<<"$candidates_json")
-	if ((product_reserved > 0)); then
-		_dispatch_outcomes_file=$(mktemp) || return 1
-		loop_output=$(_dispatch_priority_loop "$_dispatch_candidate_file" "$_effective_slots" "$self_login" \
-			"$_dispatch_max_parallel" "$_dispatch_outcomes_file" "$product_reserved" "$product_complete") || loop_output=""
-		_dispatch_max_aggregate_outcomes "$_dispatch_outcomes_file"
-		rm -f "$_dispatch_outcomes_file"
-	elif ((_dispatch_max_parallel <= 1)); then
-		loop_output=$(_dispatch_floor_loop "$_dispatch_candidate_file" "$_effective_slots" "$available_slots" "$self_login")
-	else
-		_dispatch_outcomes_file=$(mktemp 2>/dev/null || echo "/tmp/aidevops-dispatch-outcomes.$$")
-		: >"$_dispatch_outcomes_file"
-		loop_output=$(_dispatch_max_loop "$_dispatch_candidate_file" "$_effective_slots" "$available_slots" "$self_login" "$_dispatch_max_parallel" "$_dispatch_outcomes_file")
-		_dispatch_max_aggregate_outcomes "$_dispatch_outcomes_file"
-		rm -f "$_dispatch_outcomes_file"
-	fi
-	read -r dispatched_count processed_count <<<"$loop_output"
-	[[ "$dispatched_count" =~ ^[0-9]+$ ]] || dispatched_count=0
-	[[ "$processed_count" =~ ^[0-9]+$ ]] || processed_count=0
-	_dispatch_record_zero_worker_active_claim_hold "$active_workers" "$dispatched_count"
+	local dispatched_count=0 processed_count=0
+	_dispatch_execute_candidate_loop "$_dispatch_candidate_file" "$candidates_json" "$max_workers" "$active_workers" "$self_login" || return 1
 	rm -f "$_dispatch_candidate_file"
 	if [[ "$_dispatch_owns_benign_blocks_cycle" == "1" ]]; then
 		_dispatch_cleanup_benign_blocks_cycle
