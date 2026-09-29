@@ -40,6 +40,8 @@
 #   16. rejected descriptions fail pre-allocation validation
 #   17. canonical TODO advisory stays out of captured stdout
 #   18. non-numeric issue creator output is not emitted as a reference
+#   19. tip-only reconcile reads shallow only in isolated Git contexts
+#   20. discovery failures expose the configured HTTPS timeout budget
 
 set -u
 
@@ -633,6 +635,66 @@ test_non_numeric_issue_output_is_rejected() {
 	return 0
 }
 test_non_numeric_issue_output_is_rejected
+
+# A default-branch reconcile read needs the tip's file, unlike the counter
+# branch's CAS parent. The shallow flag must not leak into a shared worktree.
+test_reconcile_tip_fetch_depth() {
+	local name="19: default-counter reconcile fetch is shallow only when isolated"
+	local tmpdir
+	tmpdir=$(mktemp -d) || return 1
+	# shellcheck disable=SC2064
+	trap "rm -rf '$tmpdir'" RETURN
+	(
+		REMOTE_NAME=origin
+		COUNTER_BRANCH=task-id-counter
+		COUNTER_FILE=.task-counter
+		_CLAIM_COUNTER_CONTEXT_ROOT="$tmpdir"
+		CAS_GIT_CONTEXT_PATH="$tmpdir/repository.git"
+		_run_git_with_ssh_fallback() { printf '%s\n' "$*" >>"$tmpdir/fetches"; return 0; }
+		_counter_git() { printf '23\n'; return 0; }
+		_cas_read_default_counter_for_reconcile main >/dev/null
+		CAS_GIT_CONTEXT_PATH=""
+		_cas_read_default_counter_for_reconcile main >/dev/null
+	)
+	if [[ $(<"$tmpdir/fetches") == *$'fetch -q --depth=1 origin main\n'* ]] &&
+		[[ $(<"$tmpdir/fetches") == *'fetch -q origin main'* ]]; then
+		pass "$name"
+	else
+		fail "$name" "fetches=$(<"$tmpdir/fetches")"
+	fi
+	return 0
+}
+test_reconcile_tip_fetch_depth
+
+test_discovery_timeout_diagnostic() {
+	local name="20: failed discovery names the HTTPS timeout budget"
+	local tmpdir
+	tmpdir=$(mktemp -d) || return 1
+	# shellcheck disable=SC2064
+	trap "rm -rf '$tmpdir'" RETURN
+	(
+		_COUNTER_BRANCH_SET=false
+		OFFLINE_MODE=false
+		COUNTER_BRANCH=main
+		DEFAULT_BRANCH=main
+		REMOTE_NAME=origin
+		CAS_HTTPS_TIMEOUT_S=30
+		_run_git_with_ssh_fallback() {
+			[[ " $* " == *' ls-remote '* ]] && return 1
+			return 124
+		}
+		log_error() { printf '%s\n' "$*" >>"$tmpdir/diagnostic"; return 0; }
+		_task_counter_status() { return 0; }
+		resolve_implicit_counter_branch "$tmpdir" >/dev/null
+	) || true
+	if grep -q 'COUNTER_BRANCH_DISCOVERY_ERROR:.*fetch_rc=124, probe_rc=1, CAS_HTTPS_TIMEOUT_S=30' "$tmpdir/diagnostic"; then
+		pass "$name"
+	else
+		fail "$name" "diagnostic=$(<"$tmpdir/diagnostic")"
+	fi
+	return 0
+}
+test_discovery_timeout_diagnostic
 
 # ---------------------------------------------------------------------------
 # Summary

@@ -515,7 +515,7 @@ resolve_implicit_counter_branch() {
 			log_info "Dedicated counter branch ${candidate} not present; using ${DEFAULT_BRANCH:-main}"
 			return 0
 		fi
-		log_error "COUNTER_BRANCH_DISCOVERY_ERROR: unable to fetch or classify ${REMOTE_NAME}/${candidate} (fetch_rc=${fetch_rc}, probe_rc=${probe_rc})"
+		log_error "COUNTER_BRANCH_DISCOVERY_ERROR: unable to fetch or classify ${REMOTE_NAME}/${candidate} (fetch_rc=${fetch_rc}, probe_rc=${probe_rc}, CAS_HTTPS_TIMEOUT_S=${CAS_HTTPS_TIMEOUT_S:-30})"
 		_task_counter_status "$TASK_COUNTER_SETUP_STATUS" "counter_branch_discovery_failed"
 		return "$CAS_PROTECTED_BRANCH_RC"
 	fi
@@ -528,7 +528,7 @@ resolve_implicit_counter_branch() {
 	if ! _run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" \
 		fetch -q "${depth_args[@]}" --no-tags "$REMOTE_NAME" \
 		"+refs/heads/${DEFAULT_BRANCH:-main}:refs/remotes/${REMOTE_NAME}/${DEFAULT_BRANCH:-main}" >/dev/null; then
-		log_error "COUNTER_BRANCH_DISCOVERY_ERROR: unable to validate ${candidate} against ${REMOTE_NAME}/${DEFAULT_BRANCH:-main}"
+		log_error "COUNTER_BRANCH_DISCOVERY_ERROR: unable to validate ${candidate} against ${REMOTE_NAME}/${DEFAULT_BRANCH:-main}; CAS_HTTPS_TIMEOUT_S=${CAS_HTTPS_TIMEOUT_S:-30}"
 		_task_counter_status "$TASK_COUNTER_SETUP_STATUS" "counter_branch_discovery_failed"
 		return "$CAS_PROTECTED_BRANCH_RC"
 	fi
@@ -739,10 +739,14 @@ _cas_read_default_counter_for_reconcile() {
 	local default_branch="$1"
 	local default_counter="0"
 	local default_ref=""
+	local depth_args=()
 
 	if [[ -n "$default_branch" && "$default_branch" != "$COUNTER_BRANCH" ]]; then
+		# Only the tip's counter file is read. Never shallow a shared object store:
+		# its shallow boundary would also affect the checkout and other worktrees.
+		_counter_context_is_isolated && depth_args=(--depth=1)
 		_run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" \
-			fetch -q "$REMOTE_NAME" "$default_branch" >/dev/null || true
+			fetch -q "${depth_args[@]}" "$REMOTE_NAME" "$default_branch" >/dev/null || true
 		default_ref="${REMOTE_NAME}/${default_branch}"
 		default_counter=$(_counter_git show "${default_ref}:${COUNTER_FILE}" 2>/dev/null | tr -d '[:space:]' || true)
 		if [[ -z "$default_counter" ]] || ! [[ "$default_counter" =~ ^[0-9]+$ ]]; then
