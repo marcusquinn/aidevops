@@ -331,6 +331,8 @@ _dedup_layer5_dispatch_comment() {
 	local self_login="$3"
 	local dedup_helper="${SCRIPT_DIR}/dispatch-dedup-helper.sh"
 	if [[ -x "$dedup_helper" ]] && [[ "$issue_number" =~ ^[0-9]+$ ]]; then
+		local _claim_started_ns=""
+		_claim_started_ns=$(_ds_now_ns)
 		local dispatch_comment_output=""
 		if dispatch_comment_output=$(ISSUE_META_JSON="${ISSUE_META_JSON:-}" \
 			DISPATCH_REPO_PATH="${DISPATCH_REPO_PATH:-}" \
@@ -600,6 +602,7 @@ _dedup_layer7_claim_lock() {
 		# catches the common case where another runner already claimed.
 		local _precheck_output="" _precheck_exit=0
 		_precheck_output=$("$dedup_helper" check-claim "$issue_number" "$repo_slug") || _precheck_exit=$?
+		_ds_record "$issue_number" "$repo_slug" "claim_precheck" "$_claim_started_ns"
 		if [[ "$_precheck_exit" -eq 0 ]]; then
 			# Active claim exists from another runner — skip claim entirely
 			echo "[pulse-wrapper] Dedup: pre-check found active claim on #${issue_number} in ${repo_slug} — skipping (${_precheck_output})" >>"$LOGFILE"
@@ -611,7 +614,9 @@ _dedup_layer7_claim_lock() {
 		fi
 		# No active claim found (exit 1) — proceed to claim.
 		local claim_exit=0 claim_output=""
+		_claim_started_ns=$(_ds_now_ns)
 		claim_output=$("$dedup_helper" claim "$issue_number" "$repo_slug" "$self_login" 2>>"$LOGFILE") || claim_exit=$?
+		_ds_record "$issue_number" "$repo_slug" "claim_consensus" "$_claim_started_ns"
 		echo "$claim_output" >>"$LOGFILE"
 		if [[ "$claim_exit" -eq 1 ]]; then
 			echo "[pulse-wrapper] Dedup: claim lost for #${issue_number} in ${repo_slug} — another runner claimed first (GH#11086)" >>"$LOGFILE"

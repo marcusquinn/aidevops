@@ -189,6 +189,16 @@ _now_epoch() {
 	return 0
 }
 
+# Emit per-call latency to runner diagnostics without exposing response bodies.
+_dch_timed() {
+	local stage="$1" started="$SECONDS" rc=0
+	shift
+	"$@" || rc=$?
+	printf '[dispatch-claim] stage=%s elapsed_s=%s rc=%s\n' \
+		"$stage" "$((SECONDS - started))" "$rc" >&2
+	return "$rc"
+}
+
 _resolve_device_id() {
 	local device_id="${AIDEVOPS_DEVICE_ID:-}"
 	if [[ -n "$device_id" && ! "$device_id" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$ ]]; then
@@ -352,7 +362,7 @@ ${machine_readable_part}
 	local comment_id="" attempt=1 post_err_file="" post_error_summary=""
 	post_err_file=$(mktemp 2>/dev/null || _claim_post_error_fallback_path) || return 1
 	while [[ "$attempt" -le "$attempts" ]]; do
-		comment_id=$(gh api "$(_issue_comments_endpoint "$repo_slug" "$issue_number")" \
+		comment_id=$(_dch_timed claim_post gh api "$(_issue_comments_endpoint "$repo_slug" "$issue_number")" \
 			--method POST \
 			--field body="$body" \
 			--jq '.id' 2>"$post_err_file") && break
@@ -400,7 +410,7 @@ _detect_stale_worker_takeover_reason() {
 	[[ "$active_worker_max_age" =~ ^[0-9]+$ ]] || active_worker_max_age=7200
 
 	local raw_comments comments_json
-	raw_comments=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments?per_page=${DISPATCH_CLAIM_COMMENT_FETCH_PER_PAGE}" \
+	raw_comments=$(_dch_timed takeover_comments gh api "repos/${repo_slug}/issues/${issue_number}/comments?per_page=${DISPATCH_CLAIM_COMMENT_FETCH_PER_PAGE}" \
 		--paginate --slurp \
 		2>/dev/null) || {
 		printf '%s' ""
@@ -508,7 +518,7 @@ _fetch_claim_marker_comments() {
 	local repo_slug="$2"
 
 	local raw_comments
-	raw_comments=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments?per_page=${DISPATCH_CLAIM_COMMENT_FETCH_PER_PAGE}" \
+	raw_comments=$(_dch_timed claim_comments gh api "repos/${repo_slug}/issues/${issue_number}/comments?per_page=${DISPATCH_CLAIM_COMMENT_FETCH_PER_PAGE}" \
 		--paginate --slurp 2>/dev/null) || {
 		echo "Error: failed to fetch comments for #${issue_number} in ${repo_slug}" >&2
 		return 1
@@ -617,7 +627,7 @@ _filter_orphan_prelaunch_claims() {
 	fi
 
 	local assignee_count
-	assignee_count=$(gh api "repos/${repo_slug}/issues/${issue_number}" --jq '.assignees | length' 2>/dev/null) || {
+		assignee_count=$(_dch_timed orphan_assignment gh api "repos/${repo_slug}/issues/${issue_number}" --jq '.assignees | length' 2>/dev/null) || {
 		printf '%s' "$parsed_claims"
 		return 0
 	}
