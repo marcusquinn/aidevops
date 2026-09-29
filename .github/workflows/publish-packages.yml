@@ -238,8 +238,8 @@ jobs:
           EXPECTED_SHASUM: ${{ steps.npm-package.outputs.shasum }}
         run: |
           PUBLISHED_METADATA=""
-          RETRY_DELAYS=(5 5 10 10 15 15 30 30 45 45 60)
-          for attempt in {1..12}; do
+          RETRY_DELAYS=(5 5 10 10 15 15 30 30 45 45 60 60 90)
+          for attempt in {1..14}; do
             VIEW_OUTPUT=""
             if ! VIEW_OUTPUT=$(npm view "aidevops@${RELEASE_VERSION}" version dist --json 2>&1); then
               if ! grep -qE 'E404|No match found' <<<"$VIEW_OUTPUT"; then
@@ -262,7 +262,7 @@ jobs:
               PUBLISHED_METADATA="$VIEW_OUTPUT"
               break
             fi
-            if [[ "$attempt" -lt 12 ]]; then
+            if [[ "$attempt" -lt 14 ]]; then
               sleep "${RETRY_DELAYS[$((attempt - 1))]}"
             fi
           done
@@ -279,7 +279,25 @@ jobs:
           trap cleanup_audit EXIT
           npm install --prefix "$AUDIT_DIR" --ignore-scripts --no-audit --no-fund --save-exact \
             "aidevops@${RELEASE_VERSION}" >/dev/null
-          AUDIT_JSON=$(npm --prefix "$AUDIT_DIR" audit signatures --json --include-attestations)
+          ATTESTATION_RETRY_DELAYS=(15 30 45 90 120)
+          AUDIT_JSON=""
+          for attempt in {1..6}; do
+            if AUDIT_JSON=$(npm --prefix "$AUDIT_DIR" audit signatures --json --include-attestations 2>&1); then
+              break
+            fi
+            if [[ "$AUDIT_JSON" != *E404* || "$AUDIT_JSON" != *"404 Not Found"* || \
+              "$AUDIT_JSON" != *"/-/npm/v1/attestations/aidevops@${RELEASE_VERSION}"* ]]; then
+              echo "::error::Unable to audit npm provenance signatures"
+              printf '%s\n' "$AUDIT_JSON" >&2
+              exit 1
+            fi
+            if [[ "$attempt" -eq 6 ]]; then
+              echo "::error::npm attestation bundle did not propagate for $RELEASE_VERSION"
+              printf '%s\n' "$AUDIT_JSON" >&2
+              exit 1
+            fi
+            sleep "${ATTESTATION_RETRY_DELAYS[$((attempt - 1))]}"
+          done
           jq -e --arg version "$RELEASE_VERSION" '
             (.invalid | type == "array" and length == 0)
             and (.missing | type == "array" and length == 0)
