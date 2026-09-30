@@ -871,12 +871,10 @@ _dlw_precreate_worktree() {
 	# is dispatched repeatedly (GH#19042). Matches branch names containing
 	# gh<N> or gh-<N> (the pattern used by this function and cleanup regex).
 	local _existing_path="" _existing_branch=""
-	local _wt_line=""
+	local _wt_line="" _wt_p="" _wt_b=""
 	while IFS= read -r _wt_line; do
-		local _wt_p="" _wt_b=""
 		_wt_p=$(printf '%s' "$_wt_line" | awk '{print $1}') || _wt_p=""
 		_wt_b=$(printf '%s' "$_wt_line" | awk '{print $3}' | sed 's/^\[//;s/\]$//') || _wt_b=""
-		# Match branches with embedded issue number: gh19014 or gh-19014
 		if [[ "$_wt_b" =~ gh-?${issue_number}([^0-9]|$) && -d "$_wt_p" ]]; then
 			_existing_path="$_wt_p"
 			_existing_branch="$_wt_b"
