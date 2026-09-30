@@ -933,6 +933,8 @@ test_preclaim_hold_once() {
 		source "${SCRIPT_DIR}/../pulse-dispatch-core.sh" >/dev/null 2>&1
 		# Fixture decisions must never reach the live pulse.log (GH#32689).
 		LOGFILE=/dev/null
+		# GH#33243: the hold is now the opt-out path.
+		AIDEVOPS_BRIEF_SCOPE_WORKER_DISCOVERY=0
 		gh() {
 			if [[ "$*" == *"/comments"* ]]; then
 				cat "$comments"
@@ -1000,6 +1002,8 @@ test_brief_scope_self_heal_and_release() {
 		# shellcheck source=../pulse-dispatch-core.sh
 		source "${SCRIPT_DIR}/../pulse-dispatch-core.sh" >/dev/null 2>&1
 		LOGFILE=/dev/null
+		# GH#33243: exercise the opt-out hold path.
+		AIDEVOPS_BRIEF_SCOPE_WORKER_DISCOVERY=0
 		gh() {
 			if [[ "$*" == *"/comments"* ]]; then
 				cat "$comments"
@@ -1054,6 +1058,55 @@ test_brief_scope_self_heal_and_release() {
 		print_result "brief scope self-heals once per body and releases repaired holds" 0
 	else
 		print_result "brief scope self-heals once per body and releases repaired holds" 1 "rc=${rc}"
+	fi
+	rm -f "$calls" "$comments"
+	return 0
+}
+
+# GH#33243: by default trusted unscoped briefs dispatch for worker-owned scope
+# discovery, untrusted ones stay blocked, and existing holds are released.
+test_brief_scope_worker_discovery() {
+	local calls="" comments="" rc=0
+	calls=$(mktemp) || return 1
+	comments=$(mktemp) || return 1
+	(
+		# shellcheck source=../shared-constants.sh
+		source "${SCRIPT_DIR}/../shared-constants.sh" >/dev/null 2>&1
+		# shellcheck source=../pulse-dispatch-core.sh
+		source "${SCRIPT_DIR}/../pulse-dispatch-core.sh" >/dev/null 2>&1
+		LOGFILE=/dev/null
+		unset AIDEVOPS_BRIEF_SCOPE_WORKER_DISCOVERY
+		# Not named "permission": _brief_scope_author_trusted declares that local.
+		local fixture_permission="write"
+		gh() {
+			if [[ "$*" == *"/comments"* ]]; then
+				cat "$comments"
+				return 0
+			fi
+			printf '%s\n' "$fixture_permission"
+			return 0
+		}
+		repo_allows_pulse_write_actions() { return 0; }
+		set_issue_status() { printf 'status:%s\n' "$3" >>"$calls"; return 0; }
+		gh_issue_edit_safe() { printf 'edit\n' >>"$calls"; return 0; }
+		gh_issue_comment() { printf 'comment\n' >>"$calls"; return 0; }
+		local meta='{"author":{"login":"maintainer"},"labels":[{"name":"auto-dispatch"}],"body":"## What\nUnscoped brief"}'
+		_dispatch_preclaim_brief_scope 33243 owner/repo "$meta" || exit 1
+		[[ ! -s "$calls" ]] || exit 2
+		fixture_permission="read"
+		_dispatch_preclaim_brief_scope 33243 owner/repo "$meta" && exit 3
+		[[ ! -s "$calls" ]] || exit 4
+		fixture_permission="write"
+		local hold='<!-- aidevops:brief-hold reason=missing_files_scope body=aaaaaaaaaaaaaaaaaaaaaaaa -->'
+		jq -n --arg b "$hold" '[[{author_association:"COLLABORATOR", body:$b}]]' >"$comments"
+		_release_repaired_brief_hold owner/repo 33243 $'## What\nUnscoped brief' maintainer || exit 5
+		[[ "$(tr '\n' ' ' <"$calls")" == "status:available " ]] || exit 6
+		exit 0
+	) >/dev/null 2>&1 || rc=$?
+	if [[ "$rc" -eq 0 ]]; then
+		print_result "trusted unscoped briefs dispatch for worker scope discovery and holds release" 0
+	else
+		print_result "trusted unscoped briefs dispatch for worker scope discovery and holds release" 1 "rc=${rc}"
 	fi
 	rm -f "$calls" "$comments"
 	return 0
@@ -1495,6 +1548,7 @@ main() {
 	test_issue_creation_unscoped_strict_fails_closed
 	test_preclaim_hold_once
 	test_brief_scope_self_heal_and_release
+	test_brief_scope_worker_discovery
 	test_brief_hold_release_is_body_bound
 	test_zero_progress_meta_recovered_blocks_dispatch
 	test_zero_progress_meta_recovered_readonly_allows_dispatch_without_write

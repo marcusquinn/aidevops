@@ -418,9 +418,9 @@ _validate_and_normalize_args() {
 # _validate_interactive_dispatch_scope — fail before allocation when an
 # interactive session files auto-dispatch work without a canonical Files Scope.
 # Pending publication withholds auto-dispatch from the created issue (GH#30325),
-# so the gh_create_issue scope gate cannot see the intent; the pulse would hold
-# the issue only after publication. Headless generators keep that pre-claim
-# hold so automated findings are never lost.
+# so the gh_create_issue scope gate cannot see the intent. The author has the
+# most context, so ask now; unscoped briefs from other paths are dispatched with
+# worker-owned scope discovery (GH#33243) so findings are never lost.
 _validate_interactive_dispatch_scope() {
 	[[ "$NO_ISSUE" == "true" || "$DRY_RUN" == "true" ]] && return 0
 	[[ -n "$TASK_DESCRIPTION" ]] || return 0
@@ -448,7 +448,7 @@ _validate_interactive_dispatch_scope() {
 	log_error "One exact path per line: no EDIT:/NEW: prefix, no globs, nothing after it."
 	log_error "Or declare \`EDIT: path[:lines]\` bullets under '### Files to Modify'; they normalize."
 	log_error "Planning-only work: start the body with 'Planning-only:' instead."
-	log_error "Without it the pulse holds the issue as status:blocked (missing_files_scope)."
+	log_error "You hold the most context now; without it the worker must rediscover the scope (GH#33243)."
 	return 1
 }
 
