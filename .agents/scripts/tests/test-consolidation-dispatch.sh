@@ -1052,15 +1052,30 @@ fixture_open_pr_resolving() {
 	'
 }
 
-# Helper: PR list payload with one open PR that REFERENCES the parent
-# but does NOT use a closing keyword (e.g. "For #N", "Ref #N", bare `#N`).
+# Helper: PR list payload with one open PR that only MENTIONS the parent
+# (bare `#N`, or a keyword pointing at a longer issue number).
 fixture_open_pr_non_closing() {
 	local parent_num="$1"
 	jq -n --arg n "$parent_num" '
 		[
 			{
 				"number": 19467,
-				"body": ("## Summary\n\nDocs-only follow-up that mentions #" + $n + " for context.\n\nFor #" + $n + "\n\n## Testing\n...")
+				"body": ("## Summary\n\nDocs-only follow-up that mentions #" + $n + " for context.\n\nFor #" + $n + "1\n\n## Testing\n...")
+			}
+		]
+	'
+}
+
+# Helper: PR list payload with one open PR that references the parent with a
+# non-closing in-flight keyword (GH#33284: `For #N` / `Ref #N`).
+fixture_open_pr_inflight_keyword() {
+	local parent_num="$1"
+	local keyword="$2"
+	jq -n --arg n "$parent_num" --arg k "$keyword" '
+		[
+			{
+				"number": 19468,
+				"body": ("## Summary\n\nData for a held parent.\n\n" + $k + " #" + $n + "\n\n## Testing\n...")
 			}
 		]
 	'
@@ -1083,21 +1098,35 @@ test_resolving_pr_helper_detects_closing_keyword() {
 	return 0
 }
 
-# t2161 A1 regression: helper returns 1 when only non-closing references exist.
-# `For #N`, `Ref #N`, and bare `#N` mentions must NOT be treated as resolving.
+# t2161 A1 regression: helper returns 1 when only bare mentions exist.
+# Bare `#N` and `For #N1` (a different issue) must NOT count as in-flight.
 test_resolving_pr_helper_ignores_non_closing_reference() {
 	setup_gh_stub
 	GH_PR_LIST_RESOLVING_JSON=$(fixture_open_pr_non_closing 19448)
 	export GH_PR_LIST_RESOLVING_JSON
 
 	if _consolidation_resolving_pr_exists 19448 "marcusquinn/aidevops"; then
-		print_result "t2161: helper ignores 'For #N' / bare '#N' references" 1 \
-			"_consolidation_resolving_pr_exists returned 0 for non-closing reference"
+		print_result "t2161: helper ignores bare '#N' and 'For #N1' references" 1 \
+			"_consolidation_resolving_pr_exists returned 0 for a bare mention"
 	else
-		print_result "t2161: helper ignores 'For #N' / bare '#N' references" 0
+		print_result "t2161: helper ignores bare '#N' and 'For #N1' references" 0
 	fi
 
 	teardown_gh_stub
+	return 0
+}
+
+# GH#33284: `For #N` / `Ref #N` open PRs are in-flight work on a held parent.
+test_resolving_pr_helper_detects_for_ref_keywords() {
+	local keyword="" result=0
+	for keyword in "For" "Ref" "for"; do
+		setup_gh_stub
+		GH_PR_LIST_RESOLVING_JSON=$(fixture_open_pr_inflight_keyword 19448 "$keyword")
+		export GH_PR_LIST_RESOLVING_JSON
+		_consolidation_resolving_pr_exists 19448 "marcusquinn/aidevops" || result=1
+		teardown_gh_stub
+	done
+	print_result "GH#33284: helper treats open 'For #N' / 'Ref #N' PRs as in-flight" "$result"
 	return 0
 }
 
@@ -1599,6 +1628,7 @@ main() {
 	# t2161 regression suite
 	test_resolving_pr_helper_detects_closing_keyword
 	test_resolving_pr_helper_ignores_non_closing_reference
+	test_resolving_pr_helper_detects_for_ref_keywords
 	test_needs_consolidation_skips_with_inflight_resolving_pr
 	test_dispatch_skips_with_inflight_resolving_pr
 	test_live_interactive_claim_blocks_classification_and_clears_stale_label

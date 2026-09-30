@@ -650,8 +650,16 @@ _build_claude_cmd() {
 	return 0
 }
 
+# GH#33274: terminal BLOCKED must start a model-text line, optionally after
+# blockquote or emphasis markup (`BLOCKED:`, `**BLOCKED**`, `> BLOCKED -`).
+# Quoted instructions such as "stop only at `FULL_LOOP_COMPLETE` or `BLOCKED`"
+# are prose mentions, not a terminal state.
+# shellcheck disable=SC2016 # literal backticks are Python regex syntax, not expansion
+_HEADLESS_BLOCKED_LINE_PATTERN='^[ \t]*(?:>[ \t]*)?(?:\*\*|__|`)?BLOCKED(?:\*\*|__|`)?(?=$|[ \t:.,;!\-])'
+
 # output_has_completion_signal: check if a worker run produced a meaningful
-# completion signal (FULL_LOOP_COMPLETE, exact POST_PR_HANDOFF, BLOCKED, or PR creation).
+# completion signal (FULL_LOOP_COMPLETE, exact POST_PR_HANDOFF, anchored
+# BLOCKED, or PR creation).
 # Workers that produce tool calls but exit without these signals stopped
 # prematurely -- typically after investigation/setup but before implementation.
 #
@@ -660,8 +668,8 @@ _build_claude_cmd() {
 output_has_completion_signal() {
 	local file_path="$1"
 	[[ -f "$file_path" ]] || return 1
-	python3 - "$file_path" <<'PY'
-import sys, json
+	python3 - "$file_path" "$_HEADLESS_BLOCKED_LINE_PATTERN" <<'PY'
+import sys, json, re
 from pathlib import Path
 
 # GH#17549: Only check the MODEL'S OWN text output, not tool call results.
@@ -674,7 +682,10 @@ from pathlib import Path
 # check only those. Fall back to raw grep for non-JSON output (claude CLI).
 
 raw = Path(sys.argv[1]).read_text(errors='ignore')
-blocked_marker = chr(66) + chr(76) + chr(79) + chr(67) + chr(75) + chr(69) + chr(68)
+# GH#33274: completion markers count bare or as <promise>MARKER</promise>,
+# not when quoted or backticked as a mention.
+blocked_line = re.compile(sys.argv[2], re.MULTILINE)
+completion_marker = re.compile(r"(?<![`'\"\w])(?:FULL_LOOP_COMPLETE|TASK_COMPLETE)(?![`'\"\w])")
 
 # Extract model text from JSON stream (OpenCode format)
 model_text_parts = []
@@ -692,11 +703,10 @@ for line in raw.splitlines():
     event_type = obj.get("type", "")
     if event_type == "text":
         part = obj.get("part", {})
-        text = (
-            obj.get("text")
-            or part.get("text")
-            or ""
-        )
+        # GH#33274: runtime-injected parts are not model output.
+        if part.get("synthetic") is True:
+            continue
+        text = obj.get("text") or part.get("text") or ""
         if text:
             model_text_parts.append(text)
     # Also check tool calls where the MODEL invoked gh pr create/merge
@@ -724,11 +734,10 @@ def has_post_pr_handoff(text):
 
 # If we extracted model text, use it exclusively
 if model_text.strip():
-    if has_post_pr_handoff(model_text):
+    if has_post_pr_handoff(model_text) or blocked_line.search(model_text):
         sys.exit(0)
-    for marker in ("FULL_LOOP_COMPLETE", blocked_marker, "TASK_COMPLETE"):
-        if marker in model_text:
-            sys.exit(0)
+    if completion_marker.search(model_text):
+        sys.exit(0)
     # GH#17596 (HIGH): verify both model intent AND actual success signal in raw.
     # Checking model_text alone may match commands the model merely mentioned
     # or invoked but that failed. Requiring a success signal in raw (same as
@@ -741,12 +750,11 @@ if model_text.strip():
         sys.exit(0)
     sys.exit(1)
 
-# Fallback for non-JSON output (claude CLI, plain text)
-if has_post_pr_handoff(raw):
+# Fallback for non-JSON output (claude CLI, plain text). Escaped newlines and
+# JSON text/result value starts count as line starts for anchored BLOCKED.
+raw_lines = re.sub(r'\\n|"(?:text|result)":\s*"', "\n", raw)
+if has_post_pr_handoff(raw) or blocked_line.search(raw_lines) or completion_marker.search(raw):
     sys.exit(0)
-for marker in ("FULL_LOOP_COMPLETE", blocked_marker, "TASK_COMPLETE"):
-    if marker in raw:
-        sys.exit(0)
 if "gh pr create" in raw and ("pull/" in raw or "Created pull request" in raw.lower()):
     sys.exit(0)
 if "gh pr merge" in raw and ("Merged" in raw or "merged" in raw):
@@ -806,16 +814,16 @@ output_has_post_pr_handoff_signal() {
 # successful implementation and must not inflate PR-throughput success metrics.
 #
 # Args: $1 = output file path
-# Returns: 0 if the model emitted BLOCKED, 1 otherwise
+# Returns: 0 if a non-synthetic model-text line starts with BLOCKED, 1 otherwise
 output_has_blocked_signal() {
 	local file_path="$1"
 	[[ -f "$file_path" ]] || return 1
-	python3 - "$file_path" <<'PY'
-import sys, json
+	python3 - "$file_path" "$_HEADLESS_BLOCKED_LINE_PATTERN" <<'PY'
+import sys, json, re
 from pathlib import Path
 
 raw = Path(sys.argv[1]).read_text(errors="ignore")
-blocked_marker = chr(66) + chr(76) + chr(79) + chr(67) + chr(75) + chr(69) + chr(68)
+blocked_line = re.compile(sys.argv[2], re.MULTILINE)
 model_text_parts = []
 for line in raw.splitlines():
     line = line.strip()
@@ -825,17 +833,21 @@ for line in raw.splitlines():
         obj = json.loads(line)
     except (json.JSONDecodeError, ValueError):
         continue
-    if obj.get("type", "") != "text":
+    if not isinstance(obj, dict) or obj.get("type", "") != "text":
         continue
     part = obj.get("part", {})
+    # GH#33274: runtime-injected parts are not model output.
+    if isinstance(part, dict) and part.get("synthetic") is True:
+        continue
     text = obj.get("text") or part.get("text") or ""
     if text:
         model_text_parts.append(text)
 
 model_text = "\n".join(model_text_parts)
-if model_text.strip():
-    sys.exit(0 if blocked_marker in model_text else 1)
-sys.exit(0 if blocked_marker in raw else 1)
+# Fallback (claude CLI stream-json, plain text): treat escaped newlines and
+# JSON text/result value starts as line starts for the anchored match.
+candidate = model_text if model_text.strip() else re.sub(r'\\n|"(?:text|result)":\s*"', "\n", raw)
+sys.exit(0 if blocked_line.search(candidate) else 1)
 PY
 	return $?
 }
@@ -899,12 +911,12 @@ PY
 output_has_missing_context_blocked_signal() {
 	local file_path="$1"
 	[[ -f "$file_path" ]] || return 1
-	python3 - "$file_path" <<'PY'
+	python3 - "$file_path" "$_HEADLESS_BLOCKED_LINE_PATTERN" <<'PY'
 import sys, json, re
 from pathlib import Path
 
 error_mode = "ign" "ore"
-blocked_marker = chr(66) + chr(76) + chr(79) + chr(67) + chr(75) + chr(69) + chr(68)
+blocked_line = re.compile(sys.argv[2], re.MULTILINE)
 raw = Path(sys.argv[1]).read_text(errors=error_mode)
 model_text_parts = []
 for line in raw.splitlines():
@@ -915,16 +927,19 @@ for line in raw.splitlines():
         obj = json.loads(line)
     except (json.JSONDecodeError, ValueError):
         continue
-    if obj.get("type", "") != "text":
+    if not isinstance(obj, dict) or obj.get("type", "") != "text":
         continue
     part = obj.get("part", {})
+    # GH#33274: runtime-injected parts are not model output.
+    if isinstance(part, dict) and part.get("synthetic") is True:
+        continue
     text = obj.get("text") or part.get("text") or ""
     if text:
         model_text_parts.append(text)
 
 model_text = "\n".join(model_text_parts)
 text = model_text if model_text.strip() else raw
-has_blocked = blocked_marker in text
+has_blocked = blocked_line.search(text) is not None
 has_missing_context = re.search(r"missing[ -]implementation[ -]context", text, re.IGNORECASE) is not None
 sys.exit(0 if has_blocked and has_missing_context else 1)
 PY
