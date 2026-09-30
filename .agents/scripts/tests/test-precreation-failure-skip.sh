@@ -270,8 +270,9 @@ _dlw_exec_detached() {
 STUB_REFRESH_STATE="OPEN"
 
 gh() {
-	if [[ "${1:-}" == "issue" && "${2:-}" == "view" ]]; then
-		printf '%s\n' "$STUB_REFRESH_STATE"
+	# The pre-claim refresh reads the REST issue object, not a scalar state.
+	if [[ "${1:-}" == "api" && "${2:-}" == repos/owner/repo/issues/* ]]; then
+		printf '{"state":"%s","body":""}\n' "$STUB_REFRESH_STATE"
 		return 0
 	fi
 
@@ -748,7 +749,7 @@ else
 	fail "closed pre-claim refresh does not spawn worker" "setsid was called"
 fi
 
-if grep -q "refreshed issue state before claim is CLOSED" "$LOGFILE" 2>/dev/null; then
+if grep -q "refreshed issue state before claim is closed" "$LOGFILE" 2>/dev/null; then
 	pass "closed pre-claim refresh logs blocked state"
 else
 	fail "closed pre-claim refresh logs blocked state" "LOGFILE: $(cat "$LOGFILE")"
