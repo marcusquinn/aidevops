@@ -374,7 +374,7 @@ ensure_homebrew() {
 
 	echo ""
 	print_info "Homebrew (Linuxbrew) is not installed."
-	print_info "Several optional tools (Beads CLI, Worktrunk, bv) install via Homebrew taps."
+	print_info "Some optional tools (such as Worktrunk) install via Homebrew taps."
 	echo ""
 	# Declare before setup_prompt so shellcheck can track it (SC2154).
 	# setup_prompt assigns via `printf -v $var_name`, which shellcheck
