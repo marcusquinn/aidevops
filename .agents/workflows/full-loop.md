@@ -211,6 +211,8 @@ External contributions use the target's fork/branch, PR template, title, issue-l
 
 **Managed signature footer (GH#12805 — MANDATORY):** `commit-and-pr` appends this automatically. For managed manual PRs: append `gh-signature-helper.sh footer` output. Verify: `gh pr view --json body | jq -e '.body | (contains("aidevops.sh") and (contains("spent") or contains("Overall,")))'`.
 
+For post-creation PR body changes, use `gh-write-helper.sh pr edit` instead of raw `gh pr edit --body-file`; the wrapper preserves the managed signature footer.
+
 **4.2.1 Managed Merge Summary Comment (MANDATORY):** `commit-and-pr` posts automatically. Managed manual PRs — post immediately after PR creation:
 
 Create and sign the merge-summary body in one Bash tool call, then post it with
