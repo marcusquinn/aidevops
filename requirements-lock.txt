@@ -81,7 +81,7 @@ typer==0.25.1
 typing-inspection==0.4.2
 typing_extensions==4.15.0
 tzdata==2026.2
-urllib3==2.7.0
+urllib3==2.8.0
 xxhash==3.7.1
 yarl==1.24.2
 zipp==4.1.0
