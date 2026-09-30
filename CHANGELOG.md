@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.37.36] - 2026-09-30
+
+### Fixed
+
+- read dependencies only from structured fields (GH#33166) (#33174)
+- scope-guard compares against origin/main, not stale local main
+
 ## [3.37.35] - 2026-09-30
 
 ### Changed
