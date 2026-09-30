@@ -25,7 +25,7 @@ On session start: check `git branch --show-current`. Run `memory-helper.sh recal
 > 1. Feature Development (`workflows/feature-development.md`, `workflows/branch/feature.md`)
 > 2. Bug Fixing (`workflows/bug-fixing.md`, `workflows/branch/bugfix.md`)
 > 3. Hotfix (`workflows/branch/hotfix.md`)
-> 4. Refactoring (`workflows/branch/refactor.md`)
+> 4. Refactoring (`workflows/branch.md`, "Chore, Refactor, Release, Experiment")
 > 5. Preflight Checks (`workflows/preflight.md`)
 > 6. Pull/Merge Request (`workflows/pr.md`)
 > 7. Release (`workflows/release.md`)
