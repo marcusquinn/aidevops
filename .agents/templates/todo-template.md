@@ -102,4 +102,5 @@ Format: `- [ ] tNNN Description @owner #tag ~estimate risk:level logged:date`
 <!-- Format: parent_id|child_ids (comma-separated) -->
 <!--/TOON:subtasks-->
 
-<!-- Counts are derived from the task sections above; do not cache a static summary. -->
+<!-- Counts are derived from the task sections above. -->
+<!-- Do not cache a static summary. -->

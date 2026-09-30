@@ -135,7 +135,9 @@ _model_cost_rates() {
 	*gpt-5.1-chat*) echo "$PROFILE_RATE_GPT" ;;
 	*gpt-4.1-mini*) echo "0.40|1.60|0.10" ;;
 	*gpt-4.1*) echo "2.0|8.0|0.50" ;;
-	*o3*) echo "10.0|40.0|2.50" ;;
+	*o3-pro*) echo "20.0|80.0|0" ;;
+	*o3-mini*) echo "1.10|4.40|0.55" ;;
+	*o3*) echo "2.0|8.0|0.50" ;;
 	*o4-mini*) echo "1.10|4.40|0.275" ;;
 	*gemini-2.5-pro* | *gemini-3-pro*) echo "1.25|10.0|0.3125" ;;
 	*gemini-2.5-flash* | *gemini-3-flash*) echo "0.15|0.60|0.0375" ;;
