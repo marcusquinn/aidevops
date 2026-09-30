@@ -1358,6 +1358,8 @@ _worker_failure_reason_is_launch_preflight() {
 	case "$reason" in
 	worker_launch_rc_2 | \
 	worker_worktree_live_owner | \
+	worktree_live_owner_refused | \
+	*":worktree_live_owner_refused" | \
 	worker_worktree_continuation_* | \
 	worker_worktree_owner_concurrent_mutation | \
 	worker_runtime_not_invoked | \
