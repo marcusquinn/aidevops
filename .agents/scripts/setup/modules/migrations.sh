@@ -429,6 +429,21 @@ cleanup_osgrep() {
 	return 0
 }
 
+# GH#33249: return 0 when agents_dir is a symlink to an owner-controlled
+# directory inside the owner-controlled $HOME/.aidevops/runtime-bundles root.
+_retired_prompt_tooling_agents_is_bundle() {
+	local agents_dir="$1"
+	local bundles_root="$HOME/.aidevops/runtime-bundles"
+	local bundles_real=""
+	local resolved=""
+	[[ -L "$agents_dir" ]] || return 1
+	[[ -d "$bundles_root" && ! -L "$bundles_root" && -O "$bundles_root" ]] || return 1
+	bundles_real=$(cd -P -- "$bundles_root" 2>/dev/null && pwd -P) || return 1
+	resolved=$(cd -P -- "$agents_dir" 2>/dev/null && pwd -P) || return 1
+	[[ -n "$bundles_real" && "$resolved" == "$bundles_real"/* && -d "$resolved" && -O "$resolved" ]] || return 1
+	return 0
+}
+
 # GH#33141: retire the aidevops-managed DSPy integration once per installation.
 # User projects, configs and caches remain untouched. The cache env line was
 # persisted only in python-env/dspy-env/bin/activate, removed with that venv.
@@ -442,14 +457,27 @@ cleanup_retired_prompt_tooling() {
 	local path
 	local mode
 	local cleaned=false
+	local bundle_agents=false
 
 	# HOME and INSTALL_DIR ancestry comes from trusted setup configuration.
 	# Refuse redirected/non-owned managed roots before deleting anything.
 	[[ "$HOME" == /* && "$install_dir" == /* && -d "$install_dir/.agents" ]] || return 1
-	for path in "$install_dir" "$install_dir/python-env" "$HOME/.aidevops" \
-		"$HOME/.aidevops/cache" "$state_dir" "$agents_dir" \
-		"$agents_dir/scripts" "$agents_dir/scripts/tests" \
-		"$agents_dir/tools" "$agents_dir/tools/context"; do
+	# GH#33249: runtime-bundle installs make agents/ a symlink to the active
+	# bundle. Accept only an owner-controlled target inside runtime-bundles/;
+	# bundles are built from the repo, which no longer ships DSPy files, so
+	# nothing is deleted there.
+	if _retired_prompt_tooling_agents_is_bundle "$agents_dir"; then
+		bundle_agents=true
+	fi
+	local managed_paths=("$install_dir" "$install_dir/python-env" "$HOME/.aidevops" \
+		"$HOME/.aidevops/cache" "$state_dir")
+	if [[ "$bundle_agents" == true ]]; then
+		managed_paths+=("$HOME/.aidevops/runtime-bundles")
+	else
+		managed_paths+=("$agents_dir" "$agents_dir/scripts" "$agents_dir/scripts/tests" \
+			"$agents_dir/tools" "$agents_dir/tools/context")
+	fi
+	for path in "${managed_paths[@]}"; do
 		if [[ -L "$path" ]] || { [[ -e "$path" ]] && [[ ! -d "$path" || ! -O "$path" ]]; }; then
 			print_warning "Skipping retired DSPy cleanup: managed path is not an owner-controlled directory"
 			return 1
@@ -483,6 +511,7 @@ cleanup_retired_prompt_tooling() {
 	for path in scripts/dspy-helper.sh scripts/dspyground-helper.sh \
 		scripts/dspy-cache-security.sh scripts/tests/test-dspy-cache-security.sh \
 		tools/context/dspy.md tools/context/dspyground.md tools/context/prompt-optimization.md; do
+		[[ "$bundle_agents" == true ]] && break
 		if [[ -e "$agents_dir/$path" || -L "$agents_dir/$path" ]]; then
 			rm -f -- "$agents_dir/$path" || return 1
 			cleaned=true

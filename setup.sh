@@ -1541,6 +1541,12 @@ reconcile_buzz_desktop_compatibility() {
 	esac
 }
 
+# GH#33249: best-effort one-shot cleanup; a refusal must not abort deployment.
+_setup_cleanup_retired_prompt_tooling_nonfatal() {
+	cleanup_retired_prompt_tooling || print_warning "Retired prompt tooling cleanup incomplete; setup will retry next time"
+	return 0
+}
+
 _setup_run_noninteractive_migrations() {
 	_time_step "migrate_old_backups" migrate_old_backups
 	_time_step "migrate_loop_state_directories" migrate_loop_state_directories
@@ -1548,7 +1554,7 @@ _setup_run_noninteractive_migrations() {
 	_time_step "migrate_mcp_env_to_credentials" migrate_mcp_env_to_credentials
 	_time_step "migrate_pulse_repos_to_repos_json" migrate_pulse_repos_to_repos_json
 	_time_step "cleanup_deprecated_paths" cleanup_deprecated_paths
-	_time_step "cleanup_retired_prompt_tooling" cleanup_retired_prompt_tooling
+	_time_step "cleanup_retired_prompt_tooling" _setup_cleanup_retired_prompt_tooling_nonfatal
 	_time_step "migrate_orphaned_supervisor" migrate_orphaned_supervisor
 	_time_step "migrate_custom_model_routing_reasoning_defaults" migrate_custom_model_routing_reasoning_defaults
 	_time_step "migrate_obsolete_settings_model_routing" migrate_obsolete_settings_model_routing
@@ -1700,7 +1706,7 @@ _setup_run_interactive_runtime_tools() {
 # — no prompt needed). The non-interactive path times the same steps in
 # _setup_run_noninteractive_migrations.
 _setup_run_interactive_silent_migrations() {
-	cleanup_retired_prompt_tooling || print_warning "Retired prompt tooling cleanup incomplete; setup will retry next time"
+	_setup_cleanup_retired_prompt_tooling_nonfatal
 	cleanup_stale_health_issue_caches
 	cleanup_legacy_aidevops_temp_artifacts
 	cleanup_worktree_entries_in_repos_json
