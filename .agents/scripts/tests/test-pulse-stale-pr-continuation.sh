@@ -231,7 +231,14 @@ write_pr_snapshot 430 first-head
 : >"$LOGFILE"
 printf '%s\n' '[pulse-wrapper] DISPATCH_CANDIDATE_ATTEMPT #29507 (owner/repo)' >>"$LOGFILE"
 _dispatch_revised_checkpoint() { return 1; }
-_dedup_layer4_pr_evidence "29507" "owner/repo" "Fixture" >/dev/null || true
+rm -f "$ROUTE_ARGS_FILE"
+LAYER4_RC=0
+_dedup_layer4_pr_evidence "29507" "owner/repo" "Fixture" >/dev/null || LAYER4_RC=$?
+if [[ "$LAYER4_RC" -eq 2 && "$(<"$ROUTE_ARGS_FILE")" == "blocked-attention owner/repo 29507 29519" ]]; then
+	print_result "GH#33132 worker draft checkpoint requests blocked attention and still blocks" 0
+else
+	print_result "GH#33132 worker draft checkpoint requests blocked attention and still blocks" 1
+fi
 _DISPATCH_CANDIDATE_ELIGIBILITY="$_DISPATCH_ELIGIBILITY_INELIGIBLE"
 _dispatch_cache_confirmed_block "$candidate" 29507 owner/repo
 if [[ -f "$cache_file" ]] && grep -q $'\tworker_draft_checkpoint_blocked\t29519\t' "$cache_file" &&

@@ -43,6 +43,12 @@ if [[ "$1" == "api" && "$2" == "repos/owner/repo/issues/123/comments?per_page=10
 	printf '%s\n' "${STUB_COMMENTS_JSON:-[]}"
 	exit 0
 fi
+if [[ "$1" == "api" && "$2" == "repos/owner/repo/issues/123/comments" && "$3" == "--method" && "$4" == "POST" ]]; then
+	[[ -n "${STUB_POST_DIR:-}" ]] || exit 1
+	post_count=$(find "$STUB_POST_DIR" -type f | wc -l | tr -d ' ')
+	printf '%s' "${6#body=}" >"${STUB_POST_DIR}/post-$((post_count + 1))"
+	exit 0
+fi
 exit 1
 GH_STUB
 chmod +x "${TEST_ROOT}/bin/gh"
@@ -427,6 +433,79 @@ if run_checkpoint_preparation ''; then
 else
 	print_result "worker preparation retains legacy same-runner author fallback" 1
 fi
+
+# GH#33132: a worker that released as blocked after opening a draft must get
+# one durable attention record instead of a silent WORKER_DRAFT_CHECKPOINT stall.
+export STUB_POST_DIR="${TEST_ROOT}/posts"
+mkdir -p "$STUB_POST_DIR"
+blocked_head="1111111111111111111111111111111111111111"
+blocked_comments() {
+	local extra="${1:-}"
+	printf '[[
+  {"id":20,"created_at":"2026-09-30T01:00:00Z","author_association":"COLLABORATOR","user":{"login":"worker-bot"},"body":"DISPATCH_LEASE phase=ready attempt_id=attempt:abc123 lease_token=[redacted-credential] session=s1"},
+  {"id":21,"created_at":"2026-09-30T01:10:00Z","author_association":"COLLABORATOR","user":{"login":"worker-bot"},"body":"<!-- ops:start -->\\nCLAIM_RELEASED reason=blocked runner=worker-bot ts=2026-09-30T01:10:00Z\\n<!-- ops:end -->"}%s
+]]\n' "$extra"
+	return 0
+}
+post_count() {
+	find "$STUB_POST_DIR" -type f | wc -l | tr -d ' '
+	return 0
+}
+STUB_PR_JSON="$(valid_pr_json)"
+STUB_COMMENTS_JSON="$(blocked_comments)"
+if output=$(_pcc_blocked_attention owner/repo 123 42) &&
+	[[ "$output" == BLOCKED_CHECKPOINT_ATTENTION_POSTED:* && "$(post_count)" == 1 ]] &&
+	grep -Fq "<!-- aidevops:blocked-checkpoint-attention pr=42 head=${blocked_head} release=21 -->" "${STUB_POST_DIR}/post-1" &&
+	grep -Fq 'approval-template owner/repo 42 123 21 attempt:abc123' "${STUB_POST_DIR}/post-1"; then
+	print_result "blocked release plus worker draft posts one actionable attention record" 0
+else
+	print_result "blocked release plus worker draft posts one actionable attention record" 1 "output=${output:-missing} posts=$(post_count)"
+fi
+
+# The record must not look like a coordination event, or it would invalidate the
+# release/successor chain a later revision-bound approval is validated against.
+if ! grep -Eq '^(DISPATCH_CLAIM |DISPATCH_LEASE |CLAIM_RELEASED |Dispatching worker|Interactive session claimed|CHECKPOINT_CONTINUATION_APPROVED |terminal-blocker-circuit:retry)' \
+	"${STUB_POST_DIR}/post-1"; then
+	print_result "attention record never forges coordination or approval events" 0
+else
+	print_result "attention record never forges coordination or approval events" 1
+fi
+
+posted_body="$(<"${STUB_POST_DIR}/post-1")"
+STUB_COMMENTS_JSON="$(blocked_comments ",
+  $(jq -nc --arg body "$posted_body" '{id:22,created_at:"2026-09-30T01:20:00Z",author_association:"OWNER",user:{login:"pulse-runner"},body:$body}')")"
+if output=$(_pcc_blocked_attention owner/repo 123 42) &&
+	[[ "$output" == BLOCKED_CHECKPOINT_ATTENTION_EXISTS:* && "$(post_count)" == 1 ]]; then
+	print_result "later pulse cycles deduplicate the attention record" 0
+else
+	print_result "later pulse cycles deduplicate the attention record" 1 "output=${output:-missing} posts=$(post_count)"
+fi
+
+STUB_COMMENTS_JSON="$(blocked_comments ',
+  {"id":23,"created_at":"2026-09-30T01:30:00Z","author_association":"COLLABORATOR","user":{"login":"worker-bot"},"body":"DISPATCH_CLAIM nonce=n1 runner=worker-bot"}')"
+if ! _pcc_blocked_attention owner/repo 123 42 >/dev/null && [[ "$(post_count)" == 1 ]]; then
+	print_result "newer ownership evidence suppresses attention" 0
+else
+	print_result "newer ownership evidence suppresses attention" 1 "posts=$(post_count)"
+fi
+
+STUB_COMMENTS_JSON="$(valid_checkpoint_comments)"
+if ! _pcc_blocked_attention owner/repo 123 42 >/dev/null && [[ "$(post_count)" == 1 ]]; then
+	print_result "non-blocked draft checkpoint keeps its existing lifecycle" 0
+else
+	print_result "non-blocked draft checkpoint keeps its existing lifecycle" 1 "posts=$(post_count)"
+fi
+
+STUB_COMMENTS_JSON="$(blocked_comments)"
+STUB_PR_JSON="$(valid_pr_json)"
+STUB_PR_JSON="${STUB_PR_JSON/\"isDraft\":true/\"isDraft\":false}"
+if ! _pcc_blocked_attention owner/repo 123 42 >/dev/null && [[ "$(post_count)" == 1 ]]; then
+	print_result "ready PR is not treated as a blocked draft checkpoint" 0
+else
+	print_result "ready PR is not treated as a blocked draft checkpoint" 1 "posts=$(post_count)"
+fi
+STUB_PR_JSON="$(valid_pr_json)"
+unset STUB_POST_DIR
 
 if python3 "${TEST_SCRIPT_DIR}/test-pr-checkpoint-revision.py"; then
 	print_result "revised checkpoint claims, worker lease lifecycle and durable progress" 0
