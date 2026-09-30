@@ -221,7 +221,7 @@ _PULSE_DISPATCH_LIB_DIR="$SCRIPT_DIR"
 write_pr_snapshot() {
 	local age="$1" oid="$2" pr="${3:-29519}" complete="${4:-true}" updated="${5:-2026-09-29T12:00:00Z}"
 	local epoch timestamp
-	epoch=$(( $(date +%s) - age ))
+	epoch=$(($(date +%s) - age))
 	# BSD date accepts epoch seconds with -r; GNU date requires -d @epoch.
 	timestamp=$(date -u -r "$epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null ||
 		date -u -d "@${epoch}" +%Y-%m-%dT%H:%M:%SZ) || return 1
