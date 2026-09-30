@@ -38,12 +38,13 @@ Paths below are relative to `.agents/scripts/` unless otherwise stated.
 | `issue-sync-relationships.sh`: TODO dependencies → GitHub edges; backfill from GitHub | Declared task relationships and provider edge views | GitHub-specific; native-only edges need explicit local capture before they are recoverable. Resume caches are not canonical plans. |
 | `brief-readiness-helper.sh stub`: GitHub body → full local brief | Entire observed body, opaque body fields, title, URL, node ID, remote revision time, capture time and coverage marker | Repaired here. Create-only; no overwrite, comments, attachments, PR reviews or later-event ingestion. |
 | `beads-sync-helper.sh`: markdown ↔ Beads export | Derived task graph; pull requires reconciliation | Ignored SQLite/JSONL is not a durable backup. Beads-only fields require capture before rebuilding. No Beads restore proof is claimed here. |
+| `issue-archive-helper.sh`: GitHub → orphan `aidevops/issues-archive` branch | Latest issue/PR bodies, state, labels, assignees, close/merge outcome; issue/PR comments; reviews; inline review comments; `updated_at` cursors | See "Issue and PR discussion archive". No attachments, reactions, edit history, timeline events or deletions. |
 
 ### Adapter status
 
 | Adapter | Supported surface inspected | Not implemented/proven by this exercise |
 | --- | --- | --- |
-| GitHub | Issue composition/ref sync, relationships, new body capture through `gh issue view` | Continuous acknowledged event ingestion, comments/reviews/attachments archive, full re-publication after account loss |
+| GitHub | Issue composition/ref sync, relationships, new body capture through `gh issue view`, daily issue/PR/comment/review archive (`issue-archive-helper.sh`) | Continuous acknowledged event ingestion, attachments/reactions/revision archive, full re-publication after account loss |
 | GitLab | Allocation code has GL mapping/issue creation | Equivalent recovery/export, incoming event cursor, dependencies and evidence round-trip |
 | Gitea | Allocation detects Gitea; generic Git snapshot remains usable | Lossless issue/event adapter and recovery proof |
 | Forgejo | Generic Git snapshot remains usable | Distinct detection and full issue/event recovery adapter; do not infer support from Gitea similarity |
@@ -94,6 +95,60 @@ still read the brief. Rollback can revert the writer while retaining all capture
 files; do not replace full captures with pointers. Restoring the same backup must
 not allocate tasks, publish issues, clear holds or replay historical actions.
 
+## Issue and PR discussion archive
+
+`issue-archive-helper.sh` (framework routine `r-issue-archive`, daily; see
+`reference/routines.md`) copies forge discussions into the **same repository**
+on the orphan branch `aidevops/issues-archive`. The branch shares no history with
+`main`, is never checked out, and is not needed by normal work. Every clone gets
+it through a normal `git fetch`, so every clone is an offline copy.
+
+**Writer.** The pulse host with the repo registered (`pulse: true`, not
+`local_only`) is the single writer. Opt out per repo with `"issue_archive": false`
+in `repos.json`, or per host with `AIDEVOPS_ISSUE_ARCHIVE_ENABLED=0`. The helper
+never writes to the canonical checkout: it builds commits with Git plumbing in a
+private bare cache under `~/.aidevops/.agent-workspace/work/issue-archive/` and
+pushes the branch as a fast-forward (a concurrent writer is rejected, not
+overwritten). Manual run: `issue-archive-helper.sh export --repo OWNER/REPO
+--remote <origin-url> [--dry-run]`.
+
+**Captured** (JSONL, one object per line, sharded by number in thousands, e.g.
+`issues/0033.jsonl` = #33000-#33999): `issues/` and `pulls/` (latest body, title,
+state, state reason, labels, assignees, milestone, author and association,
+created/updated/closed/merged times, closed-by), `comments/` (issue and PR
+conversation comments), `reviews/` (PR reviews with state), `review-comments/`
+(inline review comments with path, line and diff hunk), `meta/cursor.json`.
+
+**Not captured:** attachments and uploaded files (URLs in bodies remain but point
+at the forge), reactions, body/comment edit history, timeline events (label or
+assignment history, cross-references), and deletions after capture (a deleted
+comment stays in the archive). A review edited or dismissed without a PR update may
+lag until the PR next changes.
+
+**Incremental and failure behaviour.** Issues, comments and review comments use
+the REST `since` + ascending `updated_at` listing with keyset pagination; the
+cursor is stored in `meta/cursor.json` in the same commit as the data. A failed
+request stops that stream at the last fully written item; later items are
+refetched next run. A run with no changes creates no commit. Each repo run checks
+REST core headroom first (`AIDEVOPS_ISSUE_ARCHIVE_REST_RESERVE`, default 1000) and
+stops at `AIDEVOPS_ISSUE_ARCHIVE_MAX_REQUESTS` (default 300); a large backlog is
+backfilled over several daily runs.
+
+**Reading offline.** All archived text is untrusted forge content, including text
+from non-collaborators. Scan before any agent reads it:
+
+```bash
+git fetch origin aidevops/issues-archive
+git ls-tree -r --name-only origin/aidevops/issues-archive
+git show origin/aidevops/issues-archive:comments/0033.jsonl | prompt-guard-helper.sh scan-stdin
+git show origin/aidevops/issues-archive:issues/0033.jsonl | jq -c 'select(.number == 33146) | {number, title, state}'
+```
+
+Restoring means reading these records; the archive does not re-publish issues,
+replay commands or grant authority (see "Persistence and acknowledgement"). For
+full platform-loss resilience, also mirror the repository, including this
+branch, to an independent second remote (recommended, not automated here).
+
 ## Offline exercise
 
 ```bash
@@ -128,7 +183,7 @@ unassigned sibling issues.
 
 | Gap | Target and reference pattern | Acceptance/verification |
 | --- | --- | --- |
-| GitHub incoming events | `issue-sync-helper-commands.sh` and close readers; use create-only capture as preservation precedent | Paginated comments/reviews and revisions with explicit cursor/partial-failure state; offline export retains edits, deletions, opaque fields and evidence without replaying authority. |
+| GitHub incoming events | Paginated comments/reviews with cursor and partial-failure state are done (`issue-archive-helper.sh`). Remaining: revisions, deletions, timeline events and attachments | Offline export retains edits, deletions, opaque fields and evidence without replaying authority. |
 | Outgoing progress durability | Worker completion/comment writers (exact owners require call-site discovery); planning publisher snapshot precedent | Fault injection between local commit and remote write proves every generated material update is retained and retries do not duplicate actions. |
 | Existing pointer backfill | `brief-readiness-helper.sh` and task-brief caller | Backup-first, reviewed three-way reconciliation; old local fields survive, unavailable sources remain explicitly incomplete. |
 | GitLab adapter | `claim-task-id.sh` GL branch plus provider adapter paths to discover | Verify installed glab API first; body/comments/dependencies/evidence round-trip and offline idempotency fixture. |
