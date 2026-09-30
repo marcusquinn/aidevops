@@ -419,6 +419,27 @@ EOF
 }
 
 #######################################
+# Thin wrapper: run the stranded-draft detector and publish its count to the
+# pulse-stats gauge. Extracted so the caller (pulse_merge_stuck_run_pass)
+# stays under the function-complexity line-count gate — mirrors how
+# _pms_classify_stuck_prs_within_budget keeps the stuck-classifier loop out
+# of the same caller.
+#
+# Args: $1=repo_slug, $2=pr_json, $3=pr_count, $4=now_epoch
+#######################################
+_pms_run_stranded_draft_detection() {
+	local repo_slug="$1"
+	local pr_json="$2"
+	local pr_count="$3"
+	local now_epoch="$4"
+	local stranded_draft_count=0
+	stranded_draft_count=$(_pms_detect_stranded_interactive_drafts "$repo_slug" "$pr_json" "$pr_count" "$now_epoch")
+	[[ "$stranded_draft_count" =~ ^[0-9]+$ ]] || stranded_draft_count=0
+	pulse_stats_set_gauge "$_PMS_GAUGE_STRANDED_DRAFT_COUNT" "$stranded_draft_count"
+	return 0
+}
+
+#######################################
 # Drive the stranded-draft detector over the already-fetched open-PR list.
 # Runs as a SEPARATE pass from the stuck/merge classifier — drafts remain
 # unconditionally skipped there (_pms_is_eligible_stuck,
@@ -1977,15 +1998,8 @@ pulse_merge_stuck_run_pass() {
 
 	# Update the gauge for this cycle's count.
 	pulse_stats_set_gauge "pulse_merge_eligible_stuck_pr_count" "$eligible_stuck_count"
-
-	# Stranded interactive drafts (GH#33229) — separate detector, reuses the
-	# same open-PR list already fetched above. The gauge makes the count
-	# visible in the existing pulse-stats digest (pulse_stats_gauge_status)
-	# alongside the stuck-PR count, without opening GitHub.
-	local stranded_draft_count=0
-	stranded_draft_count=$(_pms_detect_stranded_interactive_drafts "$repo_slug" "$pr_json" "$pr_count" "$now_epoch")
-	[[ "$stranded_draft_count" =~ ^[0-9]+$ ]] || stranded_draft_count=0
-	pulse_stats_set_gauge "$_PMS_GAUGE_STRANDED_DRAFT_COUNT" "$stranded_draft_count"
+	# Stranded drafts (GH#33229) — separate detector, same open-PR list.
+	_pms_run_stranded_draft_detection "$repo_slug" "$pr_json" "$pr_count" "$now_epoch"
 
 	# File the runner-queue-saturation meta-issue if measured saturation was detected
 	# AND at least one stuck PR was classified into that bucket. The
