@@ -540,8 +540,10 @@ _hrff_prepare_terminal_blocker_release() {
 	comments_json=$(terminal_blocker_fetch_trusted_comments "$issue_number" "$repo_slug") || return 0
 	task_revision=$(terminal_blocker_task_revision \
 		"$issue_json" "$repo_slug" "$issue_number" "$repo_path") || return 0
-	mode=$(terminal_blocker_release_mode \
-		"$comments_json" "$task_revision" "$blocker_fingerprint") || return 0
+	# GH#33025: the login that authors this runner's releases also recognises
+	# its own earlier observations when GitHub reports it as a collaborator.
+	mode=$(TERMINAL_BLOCKER_SELF_LOGIN="$(_hrff_resolve_release_runner_login)" \
+		terminal_blocker_release_mode "$comments_json" "$task_revision" "$blocker_fingerprint") || return 0
 	case "$mode" in
 	first)
 		_HRFF_TERMINAL_BLOCKER_FRAGMENT=$(terminal_blocker_observation_fragment \

@@ -206,9 +206,16 @@ tbr_pending() {
 	local mode="${1:-}"
 	_tbr_init_dirs || return 1
 	tbr_seed || true
-	local file="" count=0
+	local file="" count=0 self_resolved=0
 	for file in "${TBR_ROOT}"/queue/*.json; do
 		[[ -f "$file" ]] || continue
+		# GH#33025: resolve once, only when work exists, so this runner's own
+		# collaborator-authored circuits stay recognised during recovery.
+		if [[ "$self_resolved" -eq 0 && -z "${TERMINAL_BLOCKER_SELF_LOGIN:-}" ]]; then
+			TERMINAL_BLOCKER_SELF_LOGIN=$(_tbr_self_login 2>/dev/null) || TERMINAL_BLOCKER_SELF_LOGIN=""
+			export TERMINAL_BLOCKER_SELF_LOGIN
+		fi
+		self_resolved=1
 		if [[ "$mode" == "--count" ]]; then
 			_tbr_check_entry "$file" >/dev/null && count=$((count + 1))
 		else
