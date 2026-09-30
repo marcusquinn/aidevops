@@ -2,8 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Marcus Quinn
 
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, test } from "node:test";
@@ -177,7 +178,7 @@ describe("bounded interactive operations", () => {
       budgetMs: 1000,
     }, owner);
     assert.equal((await terminal(instance, started.operation_id)).state, "succeeded");
-    assert.equal(resolution.requested, realpathSync(linked));
+    assert.equal(realpathSync(resolution.requested), realpathSync(linked));
     assert.equal(resolution.projectRoot, realpathSync(root));
     assert.equal(resolution.context, owner);
     assert.equal(resolution.options.subject, "Operation");
@@ -185,11 +186,41 @@ describe("bounded interactive operations", () => {
     rmSync(linked, { recursive: true, force: true });
   });
 
-  test("a non-Git session project root reports the Operation subject and failing role", async () => {
-    await assert.rejects(
-      resolveSessionOwnedWorktreeRoot(process.cwd(), root, owner, { subject: "Operation" }),
-      (error) => error.message.startsWith("Operation workdir:") && error.message.includes("session project root"),
-    );
+  test("non-Git parent accepts owned child worktree but rejects unrelated, canonical and symlink paths", async () => {
+    const parent = mkdtempSync(join(tmpdir(), "aidevops-org-parent-"));
+    const repo = join(parent, "child");
+    const linked = join(tmpdir(), `aidevops-linked-${process.pid}-${Date.now()}`);
+    const unrelated = join(tmpdir(), `aidevops-unrelated-${process.pid}-${Date.now()}`);
+    const alias = join(parent, "alias");
+    let verified = 0;
+    const options = {
+      subject: "Operation",
+      verifyWorktreeOwnership: async () => { verified++; },
+    };
+    try {
+      mkdirSync(repo);
+      execFileSync("git", ["init", "-q", repo]);
+      execFileSync("git", ["-C", repo, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-q", "--allow-empty", "-m", "fixture"]);
+      execFileSync("git", ["-C", repo, "worktree", "add", "-q", "--detach", linked]);
+      mkdirSync(unrelated);
+      execFileSync("git", ["init", "-q", unrelated]);
+      symlinkSync(linked, alias);
+      assert.deepEqual(await resolveSessionOwnedWorktreeRoot(linked, parent, owner, options), { root: realpathSync(linked), linked: true });
+      assert.equal(verified, 1);
+      await assert.rejects(resolveSessionOwnedWorktreeRoot(unrelated, parent, owner, options), /unrelated Git repository|linked Git worktree/);
+      await assert.rejects(resolveSessionOwnedWorktreeRoot(repo, parent, owner, options), /linked Git worktree/);
+      await assert.rejects(resolveSessionOwnedWorktreeRoot(alias, parent, owner, options), /unsafe/);
+      const instance = manager({ projectRoot: parent, resolveWorktreeRoot: (cwd, project, context) =>
+        resolveSessionOwnedWorktreeRoot(cwd, project, context, options) });
+      const started = await instance.start({ command: [process.execPath, "-e", "process.exit(0)"], cwd: linked, budgetMs: 1000 }, owner);
+      assert.equal((await terminal(instance, started.operation_id)).state, "succeeded");
+      await assert.rejects(instance.start({ command: [process.execPath], cwd: alias }, owner), /unsafe/);
+      await assert.rejects(instance.start({ command: [process.execPath], cwd: repo }, owner), /linked Git worktree/);
+    } finally {
+      execFileSync("git", ["-C", repo, "worktree", "remove", "--force", linked]);
+      rmSync(unrelated, { recursive: true, force: true });
+      rmSync(parent, { recursive: true, force: true });
+    }
   });
 
   test("failure, timeout, and scoped cancellation cannot appear as success", async () => {
