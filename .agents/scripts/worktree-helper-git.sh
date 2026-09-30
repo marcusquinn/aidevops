@@ -343,42 +343,38 @@ _handle_stale_merged() {
 }
 
 # Handle an unmerged stale remote branch (interactive or headless).
+# GH#33194: an unmerged remote ref (e.g. an open PR head) must never be
+# deleted here — the "stale, offer to delete" prompt applies only to
+# already-merged remotes (_handle_stale_merged). The caller (cmd_add) checks
+# out the branch directly on this remote ref instead of basing a new local
+# branch on origin/<default>, so there is no divergence to warn about.
 # Args: $1=branch, $2=stale_remote, $3=remote_commit
-# Returns 0 to proceed, 1 to abort.
+# Returns 0 to proceed (always — informational only).
 _handle_stale_unmerged() {
 	local branch="$1"
 	local stale_remote="$2"
 	local remote_commit="$3"
 
-	echo -e "${RED}Stale remote branch detected: ${stale_remote}/$branch (NOT merged)${NC}"
+	echo -e "${BLUE}Unmerged remote branch detected: ${stale_remote}/$branch${NC}"
 	echo -e "  Last commit: $remote_commit"
+	echo -e "${BLUE}Worktree will be checked out on ${stale_remote}/$branch${NC}"
 
-	if [[ -t 0 ]]; then
-		echo ""
-		echo -e "Options:"
-		echo -e "  1) Delete stale remote ref and continue (${RED}unmerged changes will be lost on remote${NC})"
-		echo -e "  2) Continue without deleting (new branch will diverge from stale remote)"
-		echo -e "  3) Abort"
-		read -rp "Choice [3]: " choice
-		choice="${choice:-3}"
-		case "$choice" in
-		1) _delete_stale_remote_ref "$branch" "Deleting stale remote ref..." "$stale_remote" ;;
-		2) echo -e "${YELLOW}Proceeding without deleting stale remote${NC}" ;;
-		3)
-			echo -e "${RED}Aborted${NC}"
-			return 1
-			;;
-		*)
-			echo -e "${RED}Invalid choice, aborting${NC}"
-			return 1
-			;;
-		esac
-	else
-		# Headless: warn but proceed — don't delete unmerged work
-		echo -e "${YELLOW}Headless mode: proceeding without deleting (unmerged remote preserved)${NC}"
-		echo -e "${YELLOW}New local branch will diverge from stale remote ref${NC}"
-	fi
+	return 0
+}
 
+# Resolve the ref for an unmerged remote branch (GH#33194) so cmd_add can
+# check it out directly instead of basing a new local branch on
+# origin/<default> and diverging from an open PR head. Outputs
+# "<remote>/<branch>" on success. Returns 1 when no remote ref exists or it
+# is already merged (the existing origin/<default> base path applies then).
+_unmerged_remote_branch_ref() {
+	local branch="$1"
+	local stale_result=""
+	stale_result=$(check_stale_remote_branch "$branch") || return 1
+	local stale_remote="${stale_result%%|*}"
+	local stale_status="${stale_result##*|}"
+	[[ "$stale_status" == "unmerged" ]] || return 1
+	printf '%s/%s\n' "$stale_remote" "$branch"
 	return 0
 }
 
