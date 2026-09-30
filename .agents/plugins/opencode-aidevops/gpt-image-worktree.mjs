@@ -64,6 +64,25 @@ async function registeredCanonicalRoot(canonicalRoot) {
   return false;
 }
 
+async function verifyRepositoryRelation(startupRoot, requestedIdentity, subject) {
+  let startupIdentity;
+  try {
+    startupIdentity = await gitWorktreeIdentity(await gitPath(startupRoot, "--show-toplevel", subject, "session project root"), subject, "session project root");
+  } catch {
+    // A parent directory containing repositories is a valid session root.
+  }
+  if (startupIdentity) {
+    if (startupIdentity.commonDir !== requestedIdentity.commonDir) {
+      throw new Error(`${subject} workdir belongs to an unrelated Git repository.`);
+    }
+    return;
+  }
+  const canonicalRoot = dirname(requestedIdentity.commonDir);
+  if (!pathIsWithin(startupRoot, canonicalRoot) && !await registeredCanonicalRoot(canonicalRoot)) {
+    throw new Error(`${subject} workdir belongs to an unrelated Git repository; start inside the repo or use a registered repo worktree.`);
+  }
+}
+
 export async function resolveSessionOwnedWorktreeRoot(requestedWorkdir, projectRoot, context, options = {}) {
   const subject = options.subject || "Requested";
   const startupRoot = await requireProjectRoot(projectRoot);
@@ -93,22 +112,7 @@ export async function resolveSessionOwnedWorktreeRoot(requestedWorkdir, projectR
     throw new Error(`${subject} workdir must be a linked Git worktree, not a canonical checkout.`);
   }
 
-  let startupIdentity;
-  try {
-    startupIdentity = await gitWorktreeIdentity(await gitPath(startupRoot, "--show-toplevel", subject, "session project root"), subject, "session project root");
-  } catch {
-    // A parent directory containing repositories is a valid session root.
-  }
-  if (startupIdentity) {
-    if (startupIdentity.commonDir !== requestedIdentity.commonDir) {
-      throw new Error(`${subject} workdir belongs to an unrelated Git repository.`);
-    }
-  } else {
-    const canonicalRoot = dirname(requestedIdentity.commonDir);
-    if (!pathIsWithin(startupRoot, canonicalRoot) && !await registeredCanonicalRoot(canonicalRoot)) {
-      throw new Error(`${subject} workdir belongs to an unrelated Git repository; start inside the repo or use a registered repo worktree.`);
-    }
-  }
+  await verifyRepositoryRelation(startupRoot, requestedIdentity, subject);
 
   const verifyOwnership = options.verifyWorktreeOwnership || verifyRegisteredOwnership;
   await verifyOwnership({ root, sessionID, scriptsDir: options.scriptsDir, subject });
