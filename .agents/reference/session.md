@@ -56,15 +56,8 @@ Rules:
   executor (pulse, worker, routine) is not a user action; say which executor
   owns it on the Session line if relevant. Omit the **Reply** line when there
   are no asks.
-- **Check live Git state before writing `None`.** In every repository or
-  worktree touched by the session, inspect current status before returning
-  control. Session-owned modified, staged, or untracked files are uncaptured
-  work even when they exist safely in a linked worktree. If commit authority is
-  already present, commit them before replying. If the runtime requires explicit
-  commit approval and it has not been given, name the exact worktree and changes
-  under **Left to capture**, ask for that approval under **Needed from you**, and
-  set **Close** to `Not yet`. Never report those changes as delivered, captured,
-  or ready to close merely because the files were written and verified.
+- **Check live Git state before writing `None`** under Left to capture or
+  Close; see Capture Check step 2.
 - **Close is a recommendation, never an ask.** Starting `/new` is the user's
   call; state it (`Ready to close — start /new for your next task`) and never
   number it or ask `y/n`. When asks are open, Close says which ones block
@@ -151,10 +144,12 @@ Example (work merged; only a publication decision remains):
 
 1. Scan the conversation for user aims and directions not yet delivered or tracked.
 2. Inspect live Git status in every touched repository and linked worktree.
-   Treat session-owned modified, staged, or untracked files as uncaptured until
-   committed. If commit approval is required but absent, put the approval under
-   **Needed from you**, the exact worktree and files under **Left to capture**,
-   and keep **Close** at `Not yet`. Do not rely on an earlier status snapshot.
+   Session-owned modified, staged, or untracked files are uncaptured until
+   committed, even when they exist safely in a linked worktree. With commit
+   authority, commit them before replying. If commit approval is required but
+   absent, ask for that approval under **Needed from you**, name the exact
+   worktree and changes under **Left to capture**, and keep **Close** at
+   `Not yet`. Do not rely on an earlier status snapshot.
 3. Confirm each discovered defect, follow-up, or deferred objective has an issue/TODO.
 4. Route reusable lessons: shared framework lessons to the narrowest doc or
    `framework-issue-helper.sh log`; personal/install lessons to memory.
