@@ -325,6 +325,33 @@ _relationship_skip_completed_legacy_row() {
 	return 0
 }
 
+# Report a dependency parse failure naming the row and invalid reference(s).
+# Completed rows with historical noncanonical targets are skipped (return 0);
+# open rows fail (return 1).
+_relationship_report_parse_failure() {
+	local task_line="$1"
+	local task_id="$2"
+	local key="" value="" ref="" invalid=""
+	for key in blocked-by blocks; do
+		value=""
+		if [[ "$task_line" =~ (^|[[:space:]])${key}:([^[:space:]]+) ]]; then
+			value="${BASH_REMATCH[2]}"
+		fi
+		[[ -n "$value" ]] || continue
+		while IFS= read -r ref; do
+			[[ "$ref" =~ ^(GH)?#[1-9][0-9]*$ ]] && continue
+			task_identity_validate "$ref" && continue
+			invalid="${invalid:+${invalid}, }${key}:${ref}"
+		done < <(printf '%s\n' "$value" | tr ',' '\n')
+	done
+	if [[ "$task_line" =~ ^[[:space:]]*-[[:space:]]+\[[xX]\] ]]; then
+		print_info "Skipping completed task ${task_id}: dependency metadata not parseable (${invalid:-unknown reference})"
+		return 0
+	fi
+	print_error "Cannot parse dependencies for task ${task_id}: invalid reference ${invalid:-unknown}"
+	return 1
+}
+
 # Emit declared task dependency edges as blocked-task|blocking-task pairs.
 _relationship_declared_edges() {
 	local todo_file="$1"
@@ -340,7 +367,10 @@ _relationship_declared_edges() {
 			_relationship_skip_completed_legacy_row "$task_line" "$task_id" || return 1
 			continue
 		fi
-		parsed=$(parse_task_line "$task_line") || return 1
+		if ! parsed=$(parse_task_line "$task_line"); then
+			_relationship_report_parse_failure "$task_line" "$task_id" || return 1
+			continue
+		fi
 		blocked_by=""
 		blocks=""
 		while IFS='=' read -r key value; do

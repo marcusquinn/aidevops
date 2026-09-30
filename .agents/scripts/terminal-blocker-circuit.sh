@@ -104,7 +104,7 @@ _terminal_blocker_hash() {
 _terminal_blocker_reason() {
 	local fingerprint="$1"
 	local reason=""
-	for reason in missing_files_scope files_scope_excluded target_code_blocker permission_required unknown; do
+	for reason in missing_files_scope files_scope_excluded target_code_blocker external_trigger_pending permission_required unknown; do
 		if [[ "$fingerprint" == "$(_terminal_blocker_hash "v2:${reason}")" ]]; then
 			printf '%s\n' "$reason"
 			return 0
@@ -152,7 +152,7 @@ if not marker.search(candidate):
     raise SystemExit(1)
 
 reasons = re.findall(r"^TERMINAL_BLOCKER_REASON=(.*)$", candidate, re.M)
-allowed = {'missing_files_scope', 'files_scope_excluded', 'target_code_blocker', 'permission_required'}
+allowed = {'missing_files_scope', 'files_scope_excluded', 'target_code_blocker', 'external_trigger_pending', 'permission_required'}
 print(reasons[0] if len(reasons) == 1 and reasons[0] in allowed else 'unknown')
 PY
 	) || normalized=""
@@ -237,6 +237,15 @@ terminal_blocker_task_revision() {
 		return $?
 	fi
 	dependency_signature=$(_terminal_blocker_dependency_signature "$repo_slug" "$issue_number") || return 1
+	# An external publication or other trigger is not changed by unrelated merges.
+	# Keep dependency changes and brief corrections as independent wake conditions.
+	if [[ "$reason" == "external_trigger_pending" ]]; then
+		canonical=$(jq -nc --arg reason "$reason" --argjson task "$task_json" \
+			--argjson dependencies "$dependency_signature" \
+			'{reason: $reason, task: $task, dependencies: $dependencies}') || return 1
+		_terminal_blocker_hash "$canonical"
+		return $?
+	fi
 	target_revision=$(_terminal_blocker_target_revision "$repo_path") || return 1
 	canonical=$(jq -nc --argjson task "$task_json" --argjson dependencies "$dependency_signature" \
 		--arg target "$target_revision" '{task: $task, dependencies: $dependencies, target_revision: $target}') || return 1
@@ -359,6 +368,10 @@ _terminal_blocker_recovery() {
 	target_code_blocker)
 		owner="target-maintainer"
 		action='Review the protected blocker dossier and correct the target code or task dependencies before retrying.'
+		;;
+	external_trigger_pending)
+		owner="dependency-owner"
+		action='Wait for the specified external trigger. When it is verified, correct the brief or post an authorized retry directive; unrelated repository merges do not clear this hold.'
 		;;
 	permission_required)
 		owner="permission-maintainer"
