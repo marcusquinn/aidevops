@@ -1662,6 +1662,14 @@ test_hook() {
 	test_root=$(cd "$test_root" && pwd -P) || return 1
 	_test_hook_create_repo "$test_root"
 
+	# Marker-only repositories under temp roots are intentionally unmanaged.
+	# Register only the canonical fixture, without touching the user's registry;
+	# the linked and unmanaged fixtures must retain their distinct policy results.
+	local AIDEVOPS_REPOS_FILE="${test_root}/hook-test-repos.json"
+	export AIDEVOPS_REPOS_FILE
+	python3 -c 'import json, sys; print(json.dumps({"initialized_repos": [{"path": sys.argv[1]}]}))' \
+		"$test_root" >"$AIDEVOPS_REPOS_FILE" || return 1
+
 	local linked_worktree="${test_root}/linked-wt"
 	local real_git="${AIDEVOPS_REAL_GIT_BIN:-/usr/bin/git}"
 	"$real_git" -C "$test_root" worktree add "$linked_worktree" -b feature/hook-linked-test >/dev/null 2>&1
