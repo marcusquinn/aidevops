@@ -740,6 +740,16 @@ ${machine_readable_part}${terminal_blocker_fragment}
 		print_info "Projected draft checkpoint #${issue_number} as blocked partial work"
 		return 0
 	fi
+	# GH#33287: ready-PR handoffs have already projected and verified
+	# status:in-review with the runner assigned. The generic projection counts
+	# only closing keywords, so a deliberate `For #N` PR would reset the issue
+	# to status:available and orphan the open PR. Keep that state; only unlock.
+	if [[ "$reason" == "${_HRW_REASON_READY_MISSING_LINKAGE:-worker_ready_missing_linkage}" ||
+		"$reason" == "${_HRW_REASON_READY_MISSING_SUMMARY:-worker_ready_missing_summary}" ]]; then
+		_unlock_issue_after_dispatch_release "$issue_number" "$repo_slug"
+		print_info "Preserved in-review handoff on #${issue_number} (reason: ${reason})"
+		return 0
+	fi
 
 	# t2420: clear active-lifecycle status labels + worker assignment so the
 	# pulse's combined-signal dedup guard (t1996) doesn't treat the issue
