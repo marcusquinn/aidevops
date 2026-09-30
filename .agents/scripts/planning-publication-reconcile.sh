@@ -95,10 +95,19 @@ _publication_desired_labels() {
 
 _publication_task_has_dependency() {
 	local task_line="$1"
+	local issue_json="${2:-null}"
 	local parsed="" blocked_by=""
 	parsed=$(parse_task_line "$task_line") || return 1
 	blocked_by=$(printf '%s\n' "$parsed" | grep '^blocked_by=' | cut -d= -f2-)
-	[[ -n "$blocked_by" ]] || return 1
+	[[ -n "$blocked_by" ]] && return 0
+	# Issue-only refs are deliberately omitted from native relationship sync,
+	# but remain dependency evidence for publication of the canonical task.
+	[[ "$task_line" =~ (^|[[:space:]])blocked-by:([^[:space:]]+) ]] && return 0
+	# Dependency-event reconciliation owns removal of resolved blocker labels.
+	# Publication must not override them (or an existing blocked status).
+	jq -e 'any(.labels[]?.name;
+		. == "status:blocked" or test("^blocked-by:(GH)?#[1-9][0-9]*$"))' \
+		<<<"$issue_json" >/dev/null || return 1
 	return 0
 }
 
@@ -207,8 +216,8 @@ _publication_reconcile_one() {
 		print_warning "${task_id}/#${issue_num}: auto-dispatch brief is not worker-ready; retaining ${PUBLICATION_PENDING_LABEL}"
 		return 1
 	}
-	_publication_task_has_dependency "$task_line" && has_dependency=1
 	issue_json=$(gh issue view "$issue_num" --repo "$repo" --json number,title,state,labels) || return 1
+	_publication_task_has_dependency "$task_line" "$issue_json" && has_dependency=1
 	jq -e --arg task_prefix "${task_id}:" \
 		'.state == "OPEN" and (.title | startswith($task_prefix))' \
 		<<<"$issue_json" >/dev/null || return 1
