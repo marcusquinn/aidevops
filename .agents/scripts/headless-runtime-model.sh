@@ -332,46 +332,6 @@ _choose_worker_round_robin_model() {
 	return 75
 }
 
-# _choose_model_tier_downgrade: check pattern history for a cheaper tier.
-# Prints the downgraded model name if one is recommended; prints nothing otherwise.
-# Non-blocking -- any failure falls through silently.
-# Dormant hook: it acts only when AIDEVOPS_TIER_DOWNGRADE_TASK_TYPE is set and an
-# executable scripts/archived/pattern-tracker-helper.sh provides
-# tier-downgrade-check. Neither ships with aidevops; routing tests stub this
-# function to keep the adaptive/exact-tier telemetry contract.
-_choose_model_tier_downgrade() {
-	local current_model="$1"
-	local requested_tier="${2:-}"
-	local downgrade_task_type="${AIDEVOPS_TIER_DOWNGRADE_TASK_TYPE:-}"
-	[[ -n "$downgrade_task_type" ]] || return 0
-
-	local current_tier=""
-	current_tier=$(model_tier_for_model "$current_model" "$requested_tier" 2>/dev/null || true)
-	[[ -n "$current_tier" ]] || return 0
-
-	local pattern_helper="${SCRIPT_DIR}/archived/pattern-tracker-helper.sh"
-	if [[ ! -x "$pattern_helper" ]]; then
-		pattern_helper="${HOME}/.aidevops/agents/scripts/archived/pattern-tracker-helper.sh"
-	fi
-	[[ -x "$pattern_helper" ]] || return 0
-
-	local lower_tier
-	lower_tier=$("$pattern_helper" tier-downgrade-check \
-		--requested-tier "$current_tier" \
-		--task-type "$downgrade_task_type" \
-		--min-samples "${AIDEVOPS_TIER_DOWNGRADE_MIN_SAMPLES:-3}" \
-		2>/dev/null || true)
-	[[ -n "$lower_tier" ]] || return 0
-
-	local lower_model
-	lower_model=$(_first_healthy_configured_model "$lower_tier" 2>/dev/null || true)
-	if [[ -n "$lower_model" && "$lower_model" != "$current_model" ]]; then
-		print_info "Model for dispatch: pattern data recommends ${lower_tier} over ${current_tier} (TIER_DOWNGRADE_OK, task_type=${downgrade_task_type})"
-		printf '%s' "$lower_model"
-	fi
-	return 0
-}
-
 # _choose_model_auto: select the first available model in configured order.
 # Skips models that are backed off or have no auth. Returns 75 if all are backed off.
 _choose_model_auto() {
@@ -381,7 +341,7 @@ _choose_model_auto() {
 	local preferred_model="${4:-}"
 	local current_model="" select_status=0
 	local rotated=false
-	if [[ "$role" == "worker" && "$selection_mode" == "adaptive" && -z "$preferred_model" && -z "${AIDEVOPS_TIER_DOWNGRADE_TASK_TYPE:-}" ]] &&
+ if [[ "$role" == "worker" && "$selection_mode" == "adaptive" && -z "$preferred_model" ]] &&
 		declare -F model_tier_round_robin_enabled >/dev/null &&
 		model_tier_round_robin_enabled "$tier_name"; then
 		current_model=$(_choose_worker_round_robin_model "$tier_name") || select_status=$?
@@ -399,14 +359,7 @@ _choose_model_auto() {
 	fi
 
 	case "$selection_mode" in
-	adaptive)
-		# Pattern-driven tier downgrade (t5148): non-blocking initial-dispatch
-		# optimization. Retry and capability-escalation callers use exact-tier mode.
-		local downgraded=""
-		downgraded=$(_choose_model_tier_downgrade "$current_model" "$tier_name")
-		[[ -z "$downgraded" ]] || current_model="$downgraded"
-		;;
-	exact-tier) ;;
+ adaptive | exact-tier) ;;
 	*)
 		print_error "Unknown model selection mode: $selection_mode"
 		return 1
