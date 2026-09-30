@@ -10,6 +10,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.37.35] - 2026-09-30
+
+### Changed
+
+- Tests: update V2 shim Tabby recovery assertion to the session-resume contract (GH#33129) (#33162)
+- Maintenance: use task-ID blocked-by for t18572 and t18574
+- Maintenance: add briefs for framework value audit tasks t18563-t18574
+- Maintenance: add framework value audit tasks t18563-t18574
+- Maintenance: mark t18562 complete (pr:#33118 completed:2026-09-30) (#33126)
+
+### Fixed
+
+- seed counter reconcile from remote TODO.md and fail on foreign-title task ID collision (#33168)
+- project status:blocked for open terminal-blocker circuits and release on re-arm (#33170)
+- surface one approval-ready attention record when a blocked worker leaves a draft checkpoint
+- shallow --no-tags counter-branch fetches in isolated claim-task-id context (#33164)
+- validate planning publication against remote base in pre-commit hook (#33163)
+- authenticate GitHub lookups and route non-GitHub sources (#33161)
+- reserve declared file footprints atomically within each Pulse refill batch
+- project trusted approvals into clean-room briefs and let collaborator runners open terminal-blocker circuits
+- stop pulse retrying issues whose reused worktree has an unchanged live owner
+- reject OpenCode Grep regular-file paths that silently search siblings
+
 ## [3.37.34] - 2026-09-30
 
 ### Fixed
