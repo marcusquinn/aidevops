@@ -870,6 +870,48 @@ test_worker_git_default_remote() {
 	return 0
 }
 
+# GH#33065: workers must not disable or redirect commit signing.
+test_worker_signing_overrides() {
+	local denied="git.worker-signing-override"
+	assert_worker_git "worker blocks -c commit.gpgsign=false" 20 '["git","-c","commit.gpgsign=false","commit","-m","x"]' "$denied"
+	assert_worker_git "worker blocks mixed-case -c commit.gpgSign=0" 20 '["git","-c","commit.gpgSign=0","commit","-m","x"]' "$denied"
+	assert_worker_git "worker blocks -c tag.gpgsign=off" 20 '["git","-c","tag.gpgsign=off","tag","-a","v1","-m","x"]' "$denied"
+	assert_worker_git "worker blocks -c gpg.format override" 20 '["git","-c","gpg.format=openpgp","commit","-m","x"]' "$denied"
+	assert_worker_git "worker blocks -c user.signingkey override" 20 '["git","-c","user.signingkey=/tmp/k.pub","commit","-m","x"]' "$denied"
+	assert_worker_git "worker blocks -c gpg.ssh.program override" 20 '["git","-c","gpg.ssh.program=/usr/bin/true","commit","-m","x"]' "$denied"
+	assert_worker_git "worker blocks --config-env signing toggle" 20 '["git","--config-env=commit.gpgsign=SIGN","commit","-m","x"]' "$denied"
+	assert_worker_git "worker blocks commit --no-gpg-sign" 20 '["git","commit","--no-gpg-sign","-m","x"]' "$denied"
+	assert_worker_git "worker blocks abbreviated --no-gpg" 20 '["git","commit","--no-gpg","-m","x"]' "$denied"
+	local subcommand
+	for subcommand in merge rebase cherry-pick revert am pull; do
+		assert_worker_git "worker blocks ${subcommand} --no-gpg-sign" 20 "[\"git\",\"${subcommand}\",\"--no-gpg-sign\",\"HEAD\"]" "$denied"
+	done
+	assert_worker_git "worker blocks tag --no-sign" 20 '["git","tag","--no-sign","v1"]' "$denied"
+	assert_worker_git "worker blocks git config commit.gpgsign false" 20 '["git","config","commit.gpgsign","false"]' "$denied"
+	assert_worker_git "worker blocks git config --global commit.gpgsign no" 20 '["git","config","--global","commit.gpgsign","no"]' "$denied"
+	assert_worker_git "worker blocks git config set commit.gpgsign false" 20 '["git","config","set","commit.gpgsign","false"]' "$denied"
+	assert_worker_git "worker blocks git config --unset commit.gpgsign" 20 '["git","config","--unset","commit.gpgsign"]' "$denied"
+	assert_worker_git "worker blocks git config user.signingkey write" 20 '["git","config","user.signingkey","/tmp/k.pub"]' "$denied"
+	assert_worker_git "worker blocks git config --remove-section gpg" 20 '["git","config","--remove-section","gpg"]' "$denied"
+
+	assert_worker_git "worker allows commit -S" 0 '["git","commit","-S","-m","x"]'
+	assert_worker_git "worker allows commit --gpg-sign" 0 '["git","commit","--gpg-sign","-m","x"]'
+	assert_worker_git "worker allows -c commit.gpgsign=true" 0 '["git","-c","commit.gpgsign=true","commit","-m","x"]'
+	assert_worker_git "worker allows reading commit.gpgsign" 0 '["git","config","--bool","commit.gpgsign"]'
+	assert_worker_git "worker allows --get user.signingkey" 0 '["git","config","--get","user.signingkey"]'
+	assert_worker_git "worker allows --no-gpg-sign text after separator" 0 '["git","log","--","--no-gpg-sign"]'
+	assert_worker_git "worker allows unrelated -c override" 0 '["git","-c","color.ui=never","status"]'
+
+	local output="" status=0
+	output="$(python3 "$HELPER" check-command --cwd "${TEST_ROOT}/linked" --argv-json '["git","commit","--no-gpg-sign","-m","x"]')" || status=$?
+	if [[ "$status" -eq 0 && "$output" != *"$denied"* ]]; then
+		pass "interactive sessions keep signing overrides available"
+	else
+		fail "interactive sessions keep signing overrides available" "status=${status} output=${output}"
+	fi
+	return 0
+}
+
 test_secondary_layers() {
 	if python3 - \
 		"${SCRIPT_DIR}/update-claude-settings.py" \
@@ -1051,6 +1093,7 @@ main() {
 	test_canonical_delegation
 	test_worker_network_policy
 	test_worker_git_default_remote
+	test_worker_signing_overrides
 	test_policy_fail_closed
 	test_secondary_layers
 	printf '\nTests: %d, Failures: %d\n' "$TESTS" "$FAILURES"
