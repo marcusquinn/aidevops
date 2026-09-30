@@ -1028,8 +1028,13 @@ Terminal blocker reason protocol (GH#31239):
 When genuinely blocked, put BLOCKED: <evidence> and exactly one standalone
 reason line in the SAME final assistant text message (not a tool result):
 TERMINAL_BLOCKER_REASON=missing_files_scope
-Use that reason only when the canonical ## Files Scope or ### Files Scope
-heading is absent; the runtime independently verifies the current issue body.
+A missing canonical Files Scope is not by itself a blocker (GH#33243): scope
+discovery is your first step. Choose the minimal repository-relative paths,
+add a canonical ### Files Scope section (one "- `repo/relative/path`" line per file) to the
+dispatched issue body with gh-write-helper.sh issue edit before editing code,
+re-read it, then continue. Use that reason only when that write fails or the
+brief is too ambiguous to choose paths safely, and only while the canonical
+heading is still absent; the runtime independently verifies the issue body.
 When the heading exists but a directly necessary integration file is excluded:
 TERMINAL_BLOCKER_REASON=files_scope_excluded
 Scope exclusion re-arms only on a corrected brief or an authorized explicit retry,
