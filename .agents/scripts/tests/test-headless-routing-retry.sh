@@ -322,7 +322,7 @@ routing_capture="${fixture_dir}/adaptive-routing.txt"
 	variant_override=$(resolve_headless_variant "$role" "$tier_override" "$selected_model")
 	_cmd_run_attempt_loop
 )
-[[ "$(<"$routing_capture")" == "standard|0|medium|openai/gpt-5.6-terra|medium" ]]
+[[ "$(<"$routing_capture")" == "standard|1|medium|openai/gpt-5.6-terra|medium" ]]
 
 (
 	attempt_exit=81

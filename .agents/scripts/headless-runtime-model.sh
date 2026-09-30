@@ -341,7 +341,7 @@ _choose_model_auto() {
 	local preferred_model="${4:-}"
 	local current_model="" select_status=0
 	local rotated=false
- if [[ "$role" == "worker" && "$selection_mode" == "adaptive" && -z "$preferred_model" ]] &&
+	if [[ "$role" == "worker" && "$selection_mode" == "adaptive" && -z "$preferred_model" ]] &&
 		declare -F model_tier_round_robin_enabled >/dev/null &&
 		model_tier_round_robin_enabled "$tier_name"; then
 		current_model=$(_choose_worker_round_robin_model "$tier_name") || select_status=$?
@@ -359,7 +359,7 @@ _choose_model_auto() {
 	fi
 
 	case "$selection_mode" in
- adaptive | exact-tier) ;;
+	adaptive | exact-tier) ;;
 	*)
 		print_error "Unknown model selection mode: $selection_mode"
 		return 1
