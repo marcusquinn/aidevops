@@ -55,6 +55,8 @@ source "${SCRIPT_DIR}/pulse-capacity.sh"
 source "${SCRIPT_DIR}/pulse-dispatch-engine.sh"
 # shellcheck source=../pulse-dispatch-worker-launch.sh
 source "${SCRIPT_DIR}/pulse-dispatch-worker-launch.sh"
+# shellcheck source=../pulse-capacity-alloc.sh
+source "${SCRIPT_DIR}/pulse-capacity-alloc.sh"
 
 get_max_workers_target() {
 	printf '%s\n' "${TEST_MAX_WORKERS:-1}"
@@ -911,6 +913,122 @@ test_soft_canary_bypass_reason_propagates_to_worker_env() {
 	return 0
 }
 
+# GH#33137: per-class dispatch cap fixtures. Workers are stubbed through the
+# shared discovery function so the cap counts exactly what the pulse sees.
+CLASS_REPO_SLUG="example-owner/example-repo"
+CLASS_REPO_PATH="${TEST_ROOT}/repos/example-repo"
+CLASS_WORKER_ISSUES=""
+
+setup_class_cap_fixture() {
+	export PULSE_DIR="${TEST_ROOT}/pulse-class"
+	export REPOS_JSON="${TEST_ROOT}/repos-class.json"
+	rm -rf "$PULSE_DIR"
+	mkdir -p "$PULSE_DIR" "$CLASS_REPO_PATH"
+	jq -n --arg slug "$CLASS_REPO_SLUG" --arg path "$CLASS_REPO_PATH" \
+		'{initialized_repos: [{slug: $slug, path: $path, dispatch_classes: {"award-enrichment": {max_share_pct: 50}}}]}' >"$REPOS_JSON"
+	CLASS_WORKER_ISSUES=""
+	_DISPATCH_CLASS_CAP_TARGET=8
+	# Stub installed only for the class-cap tests (they run last).
+	list_active_worker_processes() {
+		local issue pid=700
+		for issue in $CLASS_WORKER_ISSUES; do
+			pid=$((pid + 1))
+			printf '%s 00:10 headless-runtime-helper.sh run --session-key issue-%s --dir %s --title Issue #%s\n' \
+				"$pid" "$issue" "$CLASS_REPO_PATH" "$issue"
+		done
+		return 0
+	}
+	return 0
+}
+
+# Simulate a launched class worker: live process plus its reservation marker.
+launch_class_worker() {
+	local issue="$1"
+	local rc=0
+	_dispatch_check_class_cap "$issue" "$CLASS_REPO_SLUG" "$CLASS_REPO_PATH" "auto-dispatch,dispatch-class:award-enrichment" >>"$LOGFILE" 2>&1 || rc=$?
+	if [[ "$rc" -eq 0 ]]; then
+		CLASS_WORKER_ISSUES="${CLASS_WORKER_ISSUES} ${issue}"
+	fi
+	return "$rc"
+}
+
+test_class_cap_value_arithmetic() {
+	local share_only floor_min explicit_min
+	share_only=$(_dispatch_class_cap_value 8 50 0)
+	floor_min=$(_dispatch_class_cap_value 1 50 0)
+	explicit_min=$(_dispatch_class_cap_value 8 50 3)
+	if [[ "$share_only" == "4" && "$floor_min" == "1" && "$explicit_min" == "3" ]]; then
+		print_result "class cap: floor(target*pct/100), minimum 1, max_workers lowers cap" 0
+	else
+		print_result "class cap: floor(target*pct/100), minimum 1, max_workers lowers cap" 1 \
+			"share_only=${share_only} floor_min=${floor_min} explicit_min=${explicit_min}"
+	fi
+	return 0
+}
+
+test_class_cap_limits_class_to_half_of_target() {
+	setup_class_cap_fixture
+	: >"$LOGFILE"
+	local issue launched=0 deferred=0
+	for issue in 101 102 103 104 105 106; do
+		if launch_class_worker "$issue"; then
+			launched=$((launched + 1))
+		else
+			deferred=$((deferred + 1))
+		fi
+	done
+	local unlabelled_rc=0 other_rc=0
+	_dispatch_check_class_cap 200 "$CLASS_REPO_SLUG" "$CLASS_REPO_PATH" "auto-dispatch,bug" >>"$LOGFILE" 2>&1 || unlabelled_rc=$?
+	_dispatch_check_class_cap 201 "$CLASS_REPO_SLUG" "$CLASS_REPO_PATH" "dispatch-class:unconfigured" >>"$LOGFILE" 2>&1 || other_rc=$?
+	if [[ "$launched" -eq 4 && "$deferred" -eq 2 && "$unlabelled_rc" -eq 0 && "$other_rc" -eq 0 ]] &&
+		grep -q 'deferred — dispatch_class_cap: class=award-enrichment active=4 cap=4 target=8' "$LOGFILE" &&
+		[[ ! -e "$(_dispatch_class_state_dir "$CLASS_REPO_SLUG")/200" ]]; then
+		print_result "class cap: 50% of target=8 allows 4 class workers; other issues still dispatch" 0
+	else
+		print_result "class cap: 50% of target=8 allows 4 class workers; other issues still dispatch" 1 \
+			"launched=${launched} deferred=${deferred} unlabelled_rc=${unlabelled_rc} other_rc=${other_rc} log=$(tail -3 "$LOGFILE")"
+	fi
+	return 0
+}
+
+test_class_cap_frees_slot_when_worker_exits() {
+	setup_class_cap_fixture
+	: >"$LOGFILE"
+	local issue
+	for issue in 101 102 103 104; do
+		launch_class_worker "$issue" || true
+	done
+	# Worker 101 exits; its marker ages past the reservation grace window.
+	CLASS_WORKER_ISSUES=" 102 103 104"
+	printf 'award-enrichment 1\n' >"$(_dispatch_class_state_dir "$CLASS_REPO_SLUG")/101"
+	local rc=0
+	launch_class_worker 105 || rc=$?
+	if [[ "$rc" -eq 0 && ! -e "$(_dispatch_class_state_dir "$CLASS_REPO_SLUG")/101" ]]; then
+		print_result "class cap: exited worker frees its slot and stale marker is pruned" 0
+	else
+		print_result "class cap: exited worker frees its slot and stale marker is pruned" 1 "rc=${rc}"
+	fi
+	return 0
+}
+
+test_class_cap_releases_reservation_on_launch_failure() {
+	setup_class_cap_fixture
+	: >"$LOGFILE"
+	local rc=0 marker
+	_dispatch_check_class_cap 301 "$CLASS_REPO_SLUG" "$CLASS_REPO_PATH" "dispatch-class:award-enrichment" >>"$LOGFILE" 2>&1 || rc=$?
+	marker="$(_dispatch_class_state_dir "$CLASS_REPO_SLUG")/301"
+	local reserved_before="no"
+	[[ -f "$marker" ]] && reserved_before="yes"
+	_dispatch_class_release_reservation "$CLASS_REPO_SLUG" 301
+	if [[ "$rc" -eq 0 && "$reserved_before" == "yes" && ! -e "$marker" ]]; then
+		print_result "class cap: failed launch releases its reservation marker" 0
+	else
+		print_result "class cap: failed launch releases its reservation marker" 1 \
+			"rc=${rc} reserved_before=${reserved_before}"
+	fi
+	return 0
+}
+
 for test_name in \
 	test_capacity_raises_soft_cap_to_floor \
 	test_capacity_reads_min_floor_from_config_default \
@@ -937,7 +1055,11 @@ for test_name in \
 	test_hard_canary_failure_blocks_despite_recent_worker_evidence \
 	test_local_error_canary_failure_stays_hard_under_minimum_floor \
 	test_soft_canary_failure_bypasses_under_minimum_floor_without_recent_evidence \
-	test_soft_canary_bypass_reason_propagates_to_worker_env; do
+	test_soft_canary_bypass_reason_propagates_to_worker_env \
+	test_class_cap_value_arithmetic \
+	test_class_cap_limits_class_to_half_of_target \
+	test_class_cap_frees_slot_when_worker_exits \
+	test_class_cap_releases_reservation_on_launch_failure; do
 	if "$test_name"; then
 		:
 	else

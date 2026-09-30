@@ -482,6 +482,19 @@ When active workers are below the floor:
 
 Set `orchestration.min_worker_concurrency=0` (or `AIDEVOPS_MIN_WORKER_CONCURRENCY=0`) to disable the floor, or set a higher/lower integer for a runner-specific target.
 
+### Per-Class Dispatch Cap (GH#33137)
+
+Cap how much of one machine's worker capacity a labelled issue class may use, so a large batch cannot starve feature and bug work in the same repo. Label issues `dispatch-class:<name>` and configure the class on the repo entry in `repos.json` (fallback: the repo's `.aidevops.json`):
+
+```json
+"dispatch_classes": { "award-enrichment": { "max_share_pct": 50, "max_workers": 3 } }
+```
+
+- Cap = `floor(simultaneous_target_final * max_share_pct / 100)`, minimum 1; with `max_workers` also set, the lower value wins. Example: target 8 and 50% → at most 4 class workers; other issues fill the remaining slots.
+- Enforced per candidate in `_dispatch_process_candidate` (`pulse-dispatch-lib.sh`) via `_dispatch_check_class_cap` (`pulse-capacity-alloc.sh`). Active count = local reservation markers under `$PULSE_DIR/dispatch-classes/<owner>__<repo>/` whose issue has a live worker in `list_active_worker_processes`, plus reservations younger than `PULSE_DISPATCH_CLASS_RESERVATION_GRACE` (default 300s) so parallel launches cannot overshoot. Orphan markers are pruned; failed launches release their marker.
+- Deferred candidates are retried next cycle, never penalised. `pulse.log`: `deferred — dispatch_class_cap: class=<name> active=<n> cap=<n> target=<n> ...`; stats counter `dispatch_candidate_deferred_class_cap`.
+- Unlabelled issues, and class labels without config, dispatch exactly as before (`Dispatch_class_cap: ... has no dispatch_classes config — uncapped`). Workers started outside the pulse dispatch loop are not counted.
+
 ### Adaptive Worker Launch Staggering (t3482)
 
 Pulse staggers worker launches inside the parallel `dispatch_max` loop when provider, failure, or API-budget signals show that a back-to-back batch is likely to waste capacity. The first launch in a clean round is immediate; subsequent launches remain near-zero delay unless one or more pressure signals are active.

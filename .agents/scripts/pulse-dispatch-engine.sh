@@ -673,6 +673,9 @@ dispatch_max() {
 	}
 	local max_workers active_workers available_slots
 	read -r max_workers active_workers available_slots <<<"$capacity_line"
+	# GH#33137: per-class dispatch caps are a share of this round's final
+	# simultaneous worker target (inherited by parallel candidate subshells).
+	_DISPATCH_CLASS_CAP_TARGET="$max_workers"
 	# _dispatch_compute_capacity owns the pressure-aware floor decision so the
 	# launch-throttle path cannot re-enable the floor after provider/load caps.
 	[[ "${_DISPATCH_MIN_WORKER_FLOOR_ACTIVE:-0}" =~ ^[0-9]+$ ]] || _DISPATCH_MIN_WORKER_FLOOR_ACTIVE=0
