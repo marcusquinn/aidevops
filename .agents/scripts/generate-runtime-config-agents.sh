@@ -455,7 +455,7 @@ _clean_generated_subagents() {
 # GH#19399 / t2149: Resolve basename collisions deterministically.
 #
 # Multiple source files with the same basename (e.g. `aidevops/architecture.md`
-# vs `tools/diagrams/mermaid-diagrams-skill/architecture.md`) previously fed
+# vs `tools/design/library/brands/claude/architecture.md`) previously fed
 # the parallel `xargs -P` write loop, where whichever subshell won the race
 # wrote the deployed stub. When the permissive sibling won, the sandboxed
 # source's `bash: false` / `webfetch: false` intent was silently lost.
