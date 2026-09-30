@@ -15,10 +15,10 @@ When `claim-task-id.sh` auto-detects a predecessor (GH#20834), the TODO line it 
 
 Observed on 2026-09-30 with t18572 (GH#33148) and t18574 (GH#33150):
 
-- `claim-task-id.sh` logged `auto-emitting blocked-by:GH#33135` and suggested `- [ ] t18574 ... blocked-by:GH#33135 ref:GH#33150`.
+- `claim-task-id.sh` auto-detected GH#33135 as the predecessor of t18574 and suggested a TODO line whose dependency field used the `GH#NNN` form.
 - After that line merged, `full-loop-helper.sh merge` reported `t18574/#33150: task line parse failed; retaining publication:pending`. t18572 failed the same way.
 - Every other task in the same PR reconciled.
-- Rewriting the lines to `blocked-by:t18563` and `blocked-by:t18571` made `parse_task_line` succeed.
+- Rewriting the dependency fields to the task IDs t18563 and t18571 made `parse_task_line` succeed.
 
 Root cause:
 
