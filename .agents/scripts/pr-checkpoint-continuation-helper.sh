@@ -29,6 +29,7 @@ PCC_ORIGINAL_STATUS=""
 PCC_OWNERSHIP_TRANSFERRED=0
 PCC_REVISION_APPROVAL=0
 PCC_PREVIOUS_ASSIGNEE=""
+_PCC_ATTENTION_MARKER="aidevops:blocked-checkpoint-attention"
 
 _prrts_checkpoint_lease() {
 	if [[ "$PCC_REVISION_APPROVAL" != 0 ]]; then
@@ -163,7 +164,12 @@ _prrts_prelaunch_target_fence() {
 }
 
 _pcc_usage() {
-	printf 'Usage: %s dispatch <repo_slug> <repo_path> <pr_number> <linked_issue> <current_assignee> <authenticated_login>\n' "$(basename "$0")"
+	local name=""
+	name="$(basename "$0")"
+	printf 'Usage: %s dispatch <repo_slug> <repo_path> <pr_number> <linked_issue> <current_assignee> <authenticated_login>\n' "$name"
+	printf '       %s dispatch-approved <repo_slug> <repo_path> <linked_issue> <authenticated_login>\n' "$name"
+	printf '       %s approval-template <repo_slug> <pr_number> <linked_issue> <release_comment_id> attempt:<id>\n' "$name"
+	printf '       %s blocked-attention <repo_slug> <linked_issue> <draft_pr_number>\n' "$name"
 	return 0
 }
 
@@ -478,6 +484,106 @@ _pcc_approval_template() {
 	return $?
 }
 
+#######################################
+# Find the blocked release that owns an open worker draft (GH#33132).
+# The newest trusted CLAIM_RELEASED must be reason=blocked, posted by the PR
+# author, with no later coordination event (claim, lease, dispatch, release or
+# interactive claim) that would mean someone already owns the objective.
+# Args: $1=comments JSON (paginated or flat), $2=runner login, $3=dedup key
+# Output: release_id<TAB>attempt<TAB>already_posted(true|false)
+# Returns: 0 when a blocked checkpoint release owns the draft, 1 otherwise
+#######################################
+_pcc_blocked_release_evidence() {
+	local comments="$1" runner="$2" key="$3"
+	jq -er --arg runner "$runner" --arg key "$key" '
+		def trusted: (.author_association // "") as $a |
+			($a == "OWNER" or $a == "MEMBER" or $a == "COLLABORATOR");
+		def login: .user.login // .author // "";
+		def body_lines: (.body // "") | split("\n")[];
+		def field($k): (capture("(^| )" + $k + "=(?<v>[^ ]+)") | .v) // "";
+		def coordination: any(body_lines; startswith("DISPATCH_CLAIM ") or
+			startswith("DISPATCH_LEASE ") or startswith("CLAIM_RELEASED ") or
+			startswith("Dispatching worker") or startswith("Interactive session claimed"));
+		[flatten[] | select(type == "object" and trusted and ((.id | type) == "number"))]
+		| sort_by(.id) as $c
+		| ([$c[] | select(any(body_lines; startswith("CLAIM_RELEASED ")))] | last) as $release
+		| select($release != null)
+		| ([$release | body_lines | select(startswith("CLAIM_RELEASED "))] | first) as $line
+		| select(($line | field("reason")) == "blocked" and ($line | field("runner")) == $runner and
+			($release | login) == $runner)
+		| select([$c[] | select(.id > $release.id and coordination)] | length == 0)
+		| ([$c[] | select(.id < $release.id and login == $runner) | body_lines
+			| select(startswith("DISPATCH_LEASE ") and (field("phase") == "ready"))
+			| field("attempt_id") | select(startswith("attempt:"))] | last // "") as $attempt
+		| [($release.id | tostring), $attempt,
+			(any($c[]; (.body // "") | contains($key + " release=" + ($release.id | tostring))) | tostring)]
+		| @tsv
+	' <<<"$comments"
+	return $?
+}
+
+#######################################
+# Replace a silent WORKER_DRAFT_CHECKPOINT stall with one durable, actionable
+# record when the draft's worker released as `blocked` (GH#33132).
+#
+# A blocked checkpoint intentionally never auto-continues: resuming requires the
+# revision-bound approval validated by dispatch-approved (GH#31265). Without an
+# owner signal, nothing prompts that approval and the objective stalls. This
+# posts one comment per PR head and blocked release naming both exits. The body
+# never starts a line with a coordination-event prefix, so release/successor
+# validation for a later approval is unaffected. It grants nothing, changes no
+# labels or assignees, and never dispatches.
+#
+# Args: $1=repo slug, $2=linked issue, $3=draft PR number
+# Returns: 0 posted or already present, 1 not a blocked checkpoint or API error,
+#          2 invalid arguments
+#######################################
+_pcc_blocked_attention() {
+	local repo="$1" issue="$2" pr="$3"
+	local pr_json="" head="" runner="" comments="" evidence="" key=""
+	local release_id="" attempt="" posted="" attempt_arg="" body=""
+	[[ "$repo" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ && "$issue" =~ ^[1-9][0-9]*$ &&
+		"$pr" =~ ^[1-9][0-9]*$ ]] || return 2
+	pr_json=$(gh pr view "$pr" --repo "$repo" --json state,isDraft,headRefOid,author) || return 1
+	head=$(jq -er 'select(.state == "OPEN" and .isDraft == true) | .headRefOid |
+		select(test("^[0-9a-fA-F]{40,64}$"))' <<<"$pr_json") || return 1
+	runner=$(jq -er '.author.login' <<<"$pr_json") || return 1
+	_pcc_login_is_safe "$runner" || return 1
+	comments=$(gh api "repos/${repo}/issues/${issue}/comments?per_page=100" --paginate --slurp) || return 1
+	key="${_PCC_ATTENTION_MARKER} pr=${pr} head=${head}"
+	evidence=$(_pcc_blocked_release_evidence "$comments" "$runner" "$key") || {
+		printf 'BLOCKED_CHECKPOINT_ATTENTION_SKIPPED: PR #%s in %s has no current blocked release\n' "$pr" "$repo"
+		return 1
+	}
+	IFS=$'\t' read -r release_id attempt posted <<<"$evidence"
+	[[ "$release_id" =~ ^[1-9][0-9]*$ ]] || return 1
+	if [[ "$posted" == "true" ]]; then
+		printf 'BLOCKED_CHECKPOINT_ATTENTION_EXISTS: PR #%s in %s head=%s release=%s\n' \
+			"$pr" "$repo" "$head" "$release_id"
+		return 0
+	fi
+	attempt_arg="${attempt:-attempt:<ORIGINAL_ID>}"
+	body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
+<!-- ${key} release=${release_id} -->
+BLOCKED_CHECKPOINT_ATTENTION pr=${pr} head=${head} release_comment=${release_id} attempt=${attempt:-unknown}
+
+A worker released this issue as \`blocked\` and left draft PR #${pr} as a durable checkpoint. Ordinary redispatch stays held while the draft exists, and a blocked checkpoint is never continued without a revision-bound approval.
+
+Next action for the brief owner (write access required), one of:
+
+1. Resolve the blocker, usually by correcting this issue body, then publish the single line printed by
+   \`pr-checkpoint-continuation-helper.sh approval-template ${repo} ${pr} ${issue} ${release_id} ${attempt_arg}\`
+   Generate it after the body edit: the approval binds the corrected brief. Pulse then continues the exact head.
+2. Close draft PR #${pr} to discard the checkpoint; ordinary dispatch then restarts from the current brief.
+
+See \`reference/checkpoint-revision-recovery.md\`. Posted once per PR head and blocked release.
+<!-- ops:end -->"
+	gh api "repos/${repo}/issues/${issue}/comments" --method POST --raw-field body="$body" >/dev/null || return 1
+	printf 'BLOCKED_CHECKPOINT_ATTENTION_POSTED: PR #%s in %s head=%s release=%s\n' \
+		"$pr" "$repo" "$head" "$release_id"
+	return 0
+}
+
 main() {
 	local command="${1:-}"
 	case "$command" in
@@ -491,6 +597,10 @@ main() {
 		;;
 	approval-template)
 		_pcc_approval_template "${2:-}" "${3:-}" "${4:-}" "${5:-}" "${6:-}"
+		return $?
+		;;
+	blocked-attention)
+		_pcc_blocked_attention "${2:-}" "${3:-}" "${4:-}"
 		return $?
 		;;
 	-h | --help | help)

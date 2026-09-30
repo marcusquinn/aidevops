@@ -17,6 +17,7 @@
 #   - _dedup_layer3_title_match
 #   - _dedup_layer4_pr_evidence
 #   - _dedup_layer5_dispatch_comment
+#   - _dispatch_blocked_checkpoint_attention
 #   - _dispatch_interactive_hold_gate
 #   - _dedup_layer6_assignee_and_stale
 #   - _dedup_layer7_claim_lock
@@ -304,6 +305,7 @@ _dedup_layer4_pr_evidence() {
 				echo "[pulse-wrapper] Dedup: PR evidence already exists for #${issue_number} in ${repo_slug}" >>"$LOGFILE"
 			fi
 			if [[ "$dedup_helper_output" == WORKER_DRAFT_CHECKPOINT:* ]]; then
+				_dispatch_blocked_checkpoint_attention "$issue_number" "$repo_slug" "$dedup_helper_output"
 				return 2
 			fi
 			return 0
@@ -416,6 +418,26 @@ _dispatch_revised_checkpoint() {
 	"${SCRIPT_DIR}/pr-checkpoint-continuation-helper.sh" dispatch-approved \
 		"$repo" "$path" "$issue" "$login" >>"$LOGFILE" 2>&1
 	return $?
+}
+
+#######################################
+# GH#33132: a worker that released as `blocked` after opening a draft leaves
+# the objective held here by WORKER_DRAFT_CHECKPOINT with no approval prompt.
+# Ask the continuation helper for one deduplicated attention record per PR
+# head and blocked release. Best-effort: it never dispatches, relabels or
+# reassigns, and the draft remains a hard duplicate-dispatch block.
+# Arguments: issue_number, repo_slug, WORKER_DRAFT_CHECKPOINT output
+#######################################
+_dispatch_blocked_checkpoint_attention() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local checkpoint_output="$3"
+	local pr_number=""
+	[[ "$checkpoint_output" =~ WORKER_DRAFT_CHECKPOINT:[[:space:]]draft[[:space:]]PR[[:space:]]#([0-9]+) ]] || return 0
+	pr_number="${BASH_REMATCH[1]}"
+	"${SCRIPT_DIR}/pr-checkpoint-continuation-helper.sh" blocked-attention \
+		"$repo_slug" "$issue_number" "$pr_number" >>"$LOGFILE" 2>&1 || true
+	return 0
 }
 
 _dispatch_interactive_worker_checkpoint_continuation() {
