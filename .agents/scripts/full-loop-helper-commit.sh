@@ -1136,6 +1136,49 @@ _finalize_wip_history() {
 	return 0
 }
 
+# GH#33253: _finalize_wip_history (above) and _rebase_for_push both rewrite
+# branch history, which defeats issue_open_pr_guard_check's require_ancestry
+# proof if that check runs afterward on the rewritten HEAD. Validate an
+# explicit --replace-pr's ancestry now, against the pre-finalization,
+# pre-rebase HEAD, while the replaced PR's head commit is still reachable.
+# Sets REPLACEMENT_PR_ANCESTRY_VALIDATED=1 when this call proved ancestry, so
+# the final guard call downstream can skip its now-defeated ancestry check.
+# Args: $1=issue_number $2=repo $3=branch $4=replacement_pr $5=replacement_reason
+REPLACEMENT_PR_ANCESTRY_VALIDATED=0
+_validate_replacement_pr_ancestry() {
+	local issue_number="$1"
+	local repo="$2"
+	local branch="$3"
+	local replacement_pr="$4"
+	local replacement_reason="$5"
+
+	REPLACEMENT_PR_ANCESTRY_VALIDATED=0
+	[[ -n "$replacement_pr" ]] || return 0
+
+	local guard_rc=0
+	issue_open_pr_guard_check "$issue_number" "$repo" "$branch" \
+		"$replacement_pr" "$replacement_reason" 1 || guard_rc=$?
+	case "$guard_rc" in
+	0)
+		REPLACEMENT_PR_ANCESTRY_VALIDATED=1
+		return 0
+		;;
+	3)
+		# Continuing the same branch/author as the open PR; no separate
+		# replacement-ancestry proof is required.
+		return 0
+		;;
+	1)
+		print_error "Aborting duplicate PR creation: open PR #${replacement_pr}'s head is not contained in this branch"
+		return 1
+		;;
+	*)
+		print_error "Aborting PR creation: replacement-PR ancestry evidence is unavailable or ambiguous"
+		return 1
+		;;
+	esac
+}
+
 # --- Project Validators (t2842) ---
 # Closes the worker-CI-failure gap where workers ship code that fails
 # project CI checks (Format/Lint/Typecheck) because no pre-push

@@ -204,6 +204,14 @@ _finalize_wip_history() {
 	return 0
 }
 
+# GH#33253: no fixture in this suite exercises --replace-pr, so ancestry is
+# always a no-op skip (mirrors the real helper's behavior without a replacement).
+REPLACEMENT_PR_ANCESTRY_VALIDATED=0
+_validate_replacement_pr_ancestry() {
+	REPLACEMENT_PR_ANCESTRY_VALIDATED=0
+	return 0
+}
+
 _run_project_validators() {
 	local skip_hooks="$1"
 	[[ "$skip_hooks" -ge 0 ]] || return 1
