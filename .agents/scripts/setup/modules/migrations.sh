@@ -391,12 +391,15 @@ cleanup_osgrep() {
 cleanup_retired_prompt_tooling() {
 	local install_dir="${INSTALL_DIR:-}"
 	local state_dir="$HOME/.aidevops/cache/migrations"
-	local marker="$state_dir/gh33141-retired-dspy"
+	local install_key
+	install_key=$(printf '%s' "$install_dir" | cksum | cut -d' ' -f1) || return 1
+	local marker="$state_dir/gh33141-retired-dspy-$install_key"
 	local agents_dir="$HOME/.aidevops/agents"
 	local path
 	local mode
 	local cleaned=false
 
+	# HOME and INSTALL_DIR ancestry comes from trusted setup configuration.
 	# Refuse redirected/non-owned managed roots before deleting anything.
 	[[ "$HOME" == /* && "$install_dir" == /* && -d "$install_dir/.agents" ]] || return 1
 	for path in "$install_dir" "$install_dir/python-env" "$HOME/.aidevops" \
@@ -410,7 +413,7 @@ cleanup_retired_prompt_tooling() {
 		if [[ -d "$path" ]]; then
 			mode=$(_file_perms "$path") || return 1
 			[[ "$mode" =~ ^[0-7]{3,4}$ ]] || return 1
-			if (( (8#$mode & 0022) != 0 )); then
+			if (((8#$mode & 0022) != 0)); then
 				print_warning "Skipping retired DSPy cleanup: managed directory is writable by other users"
 				return 1
 			fi
