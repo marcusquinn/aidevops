@@ -893,10 +893,20 @@ _check_signing() {
 		return 0
 	fi
 
-	local signing_format
-	signing_format=$(git config --global gpg.format 2>/dev/null || echo "")
-	local signing_enabled
-	signing_enabled=$(git config --global commit.gpgsign 2>/dev/null || echo "")
+	# GH#33066: exit 1 means unset; any other failure (for example a command
+	# guard block) is unknown state and must not produce a false setup nag.
+	local signing_format="" signing_enabled="" read_rc=0
+	signing_format=$(git config --global --get gpg.format 2>/dev/null) || read_rc=$?
+	[[ "$read_rc" -le 1 ]] || {
+		echo ""
+		return 0
+	}
+	read_rc=0
+	signing_enabled=$(git config --global --get commit.gpgsign 2>/dev/null) || read_rc=$?
+	[[ "$read_rc" -le 1 ]] || {
+		echo ""
+		return 0
+	}
 
 	if [[ "$signing_format" != "ssh" || "$signing_enabled" != "true" ]]; then
 		echo "Commit signing not configured. Run: aidevops signing setup"

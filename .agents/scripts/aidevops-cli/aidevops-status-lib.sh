@@ -322,9 +322,9 @@ cmd_status() {
 	echo ""
 	print_header "Commit Signing"
 	local signing_format signing_key signing_enabled
-	signing_format=$(git config --global gpg.format 2>/dev/null || echo "")
-	signing_key=$(git config --global user.signingkey 2>/dev/null || echo "")
-	signing_enabled=$(git config --global commit.gpgsign 2>/dev/null || echo "")
+	signing_format=$(git config --global --get gpg.format 2>/dev/null || echo "")
+	signing_key=$(git config --global --get user.signingkey 2>/dev/null || echo "")
+	signing_enabled=$(git config --global --get commit.gpgsign 2>/dev/null || echo "")
 	if [[ "$signing_format" == "ssh" && -n "$signing_key" && "$signing_enabled" == "true" ]]; then
 		print_success "SSH commit signing enabled"
 		if check_file "$HOME/.ssh/allowed_signers"; then
