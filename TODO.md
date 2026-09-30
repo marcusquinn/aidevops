@@ -1518,18 +1518,18 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 - [ ] t18556 fix(release): look up the tag-push publish run by exact head_sha and skip recovery dispatch when channels are already published #auto-dispatch #bug tier:standard ref:GH#33073 logged:2026-09-29 -> [todo/tasks/t18556-brief.md]
 - [x] t18559 perf(worktree-cleanup): list open PRs once per local-branch scan and cap per-run GitHub lookups #auto-dispatch #bug tier:standard ref:GH#33077 logged:2026-09-29 -> [todo/tasks/t18559-brief.md] pr:#33102 completed:2026-09-29
 - [ ] t18560 fix(pulse): run label-maintenance substages stalest-first so needs-simplification re-evaluation cannot starve #auto-dispatch #bug tier:standard ref:GH#33086 logged:2026-09-29 -> [todo/tasks/t18560-brief.md]
-- [ ] t18563 fix(skill-update): authenticate GitHub lookups and route non-GitHub skill sources #auto-dispatch #bug tier:standard ref:GH#33135 logged:2026-09-30
-- [ ] t18564 Framework value audit: retire obsolete scaffolding and keep the ideas worth keeping #parent-task #framework #interactive tier:thinking ref:GH#33139 logged:2026-09-30
-- [ ] t18565 chore: retire code-search leftovers, llm-tldr, context-builder/repomix and rapidfuzz #auto-dispatch #chore tier:standard ref:GH#33140 logged:2026-09-30
-- [ ] t18566 chore: retire DSPy and DSPyGround from setup, docs and status checks #auto-dispatch #chore tier:standard ref:GH#33141 logged:2026-09-30
-- [ ] t18567 feat(hooks): Claude Code keep-going Stop hook matching the OpenCode session-continuation guard #auto-dispatch #feat tier:thinking ref:GH#33143 logged:2026-09-30
-- [ ] t18568 chore: retire Ralph loop commands, workflow and state readers #auto-dispatch #chore tier:standard ref:GH#33142 logged:2026-09-30
-- [ ] t18569 refactor: remove dead pattern-tracker callers and route rule-violation counts to observability #auto-dispatch #refactor tier:standard ref:GH#33144 logged:2026-09-30
-- [ ] t18570 refactor(models): retire contest and response-scoring chain, keep /cross-review, route model comparison to model-replay and model-ab #auto-dispatch #refactor tier:standard ref:GH#33145 logged:2026-09-30
-- [ ] t18571 feat(backup): archive issue and PR discussions to a same-repo orphan branch via pulse routine #auto-dispatch #feat tier:thinking ref:GH#33146 logged:2026-09-30
-- [ ] t18572 chore: retire Beads integration and todo-ready.sh after the issue archive lands #auto-dispatch #chore tier:standard blocked-by:GH#33146 ref:GH#33148 logged:2026-09-30
-- [ ] t18573 docs: trim textbook skills, fold minor branch-type docs, merge best-practices, retire mission-skill-learner #auto-dispatch #chore tier:standard ref:GH#33149 logged:2026-09-30
-- [ ] t18574 docs: re-sync and restructure Remotion and Cloudflare platform skills #auto-dispatch #chore tier:standard blocked-by:GH#33135 ref:GH#33150 logged:2026-09-30
+- [ ] t18563 fix(skill-update): authenticate GitHub lookups and route non-GitHub skill sources #auto-dispatch #bug tier:standard ref:GH#33135 logged:2026-09-30 -> [todo/tasks/t18563-brief.md]
+- [ ] t18564 Framework value audit: retire obsolete scaffolding and keep the ideas worth keeping #parent-task #framework #interactive tier:thinking ref:GH#33139 logged:2026-09-30 -> [todo/tasks/t18564-brief.md]
+- [ ] t18565 chore: retire code-search leftovers, llm-tldr, context-builder/repomix and rapidfuzz #auto-dispatch #chore tier:standard ref:GH#33140 logged:2026-09-30 -> [todo/tasks/t18565-brief.md]
+- [ ] t18566 chore: retire DSPy and DSPyGround from setup, docs and status checks #auto-dispatch #chore tier:standard ref:GH#33141 logged:2026-09-30 -> [todo/tasks/t18566-brief.md]
+- [ ] t18567 feat(hooks): Claude Code keep-going Stop hook matching the OpenCode session-continuation guard #auto-dispatch #feat tier:thinking ref:GH#33143 logged:2026-09-30 -> [todo/tasks/t18567-brief.md]
+- [ ] t18568 chore: retire Ralph loop commands, workflow and state readers #auto-dispatch #chore tier:standard ref:GH#33142 logged:2026-09-30 -> [todo/tasks/t18568-brief.md]
+- [ ] t18569 refactor: remove dead pattern-tracker callers and route rule-violation counts to observability #auto-dispatch #refactor tier:standard ref:GH#33144 logged:2026-09-30 -> [todo/tasks/t18569-brief.md]
+- [ ] t18570 refactor(models): retire contest and response-scoring chain, keep /cross-review, route model comparison to model-replay and model-ab #auto-dispatch #refactor tier:standard ref:GH#33145 logged:2026-09-30 -> [todo/tasks/t18570-brief.md]
+- [ ] t18571 feat(backup): archive issue and PR discussions to a same-repo orphan branch via pulse routine #auto-dispatch #feat tier:thinking ref:GH#33146 logged:2026-09-30 -> [todo/tasks/t18571-brief.md]
+- [ ] t18572 chore: retire Beads integration and todo-ready.sh after the issue archive lands #auto-dispatch #chore tier:standard blocked-by:GH#33146 ref:GH#33148 logged:2026-09-30 -> [todo/tasks/t18572-brief.md]
+- [ ] t18573 docs: trim textbook skills, fold minor branch-type docs, merge best-practices, retire mission-skill-learner #auto-dispatch #chore tier:standard ref:GH#33149 logged:2026-09-30 -> [todo/tasks/t18573-brief.md]
+- [ ] t18574 docs: re-sync and restructure Remotion and Cloudflare platform skills #auto-dispatch #chore tier:standard blocked-by:GH#33135 ref:GH#33150 logged:2026-09-30 -> [todo/tasks/t18574-brief.md]
 
 - [x] t18555 fix(dispatch-dedup): merged-PR keyword check ignores issue reopen, permanently blocking reopened issues #auto-dispatch #bug ref:GH#33071 pr:#33080 completed:2026-09-29
 
