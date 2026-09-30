@@ -333,12 +333,6 @@ _dedup_layer5_dispatch_comment() {
 	local self_login="$3"
 	local dedup_helper="${SCRIPT_DIR}/dispatch-dedup-helper.sh"
 	if [[ -x "$dedup_helper" ]] && [[ "$issue_number" =~ ^[0-9]+$ ]]; then
-		# Private, attempt-local snapshot is only for takeover annotation. The
-		# post-consensus claim read must always fetch the live GitHub timeline.
-		local claim_snapshot=""
-		claim_snapshot=$(umask 077; mktemp "${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}/dispatch-claim.XXXXXX") || claim_snapshot=""
-		local _claim_started_ns=""
-		_claim_started_ns=$(_ds_now_ns)
 		local dispatch_comment_output=""
 		if dispatch_comment_output=$(ISSUE_META_JSON="${ISSUE_META_JSON:-}" \
 			DISPATCH_REPO_PATH="${DISPATCH_REPO_PATH:-}" \
@@ -626,6 +620,14 @@ _dedup_layer7_claim_lock() {
 		# comment is left on the issue, wasting a GitHub API call and
 		# cluttering the issue. The pre-check is cheap (read-only) and
 		# catches the common case where another runner already claimed.
+		# Private, attempt-local snapshot is only for takeover annotation. The
+		# post-consensus claim read must always fetch the live GitHub timeline.
+		# GH#33202: these must stay in this function; set -u aborts dispatch
+		# when they are declared anywhere else.
+		local claim_snapshot=""
+		claim_snapshot=$(umask 077; mktemp "${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}/dispatch-claim.XXXXXX") || claim_snapshot=""
+		local _claim_started_ns=""
+		_claim_started_ns=$(_ds_now_ns)
 		local _precheck_output="" _precheck_exit=0
 		_precheck_output=$(AIDEVOPS_DISPATCH_CLAIM_CALL_LOG="$LOGFILE" DISPATCH_CLAIM_SNAPSHOT_FILE="$claim_snapshot" "$dedup_helper" check-claim "$issue_number" "$repo_slug") || _precheck_exit=$?
 		_ds_record "$issue_number" "$repo_slug" "claim_precheck" "$_claim_started_ns"
