@@ -150,9 +150,30 @@ _full_loop_capture_release_authorization() {
 	local expected_sources="${5:-}"
 	local authorization_json=""
 	local expected_intent=""
+	local attempt=0
+	local resolver_rc=0
 	local resolver_args=(resolve-authorization --snapshot --source-pr "$source_pr" --repo "$repo" --branch main)
 	[[ -n "$expected_sources" ]] && resolver_args+=(--expected-sources "$expected_sources")
-	authorization_json=$(cd "$release_path" && bash "$resolver" "${resolver_args[@]}") || return 1
+	# gh can fail inside the resolver with an empty JSON read, or a successful
+	# resolver can emit an empty/truncated document. Neither proves authorization.
+	for attempt in 1 2 3; do
+		resolver_rc=0
+		authorization_json=$(cd "$release_path" && bash "$resolver" "${resolver_args[@]}" 2>&1) || resolver_rc=$?
+		if [[ "$resolver_rc" -eq 0 ]] && jq -e 'type == "object" and (.expected_sources | type == "array")' \
+			<<<"$authorization_json" >/dev/null 2>&1; then
+			break
+		fi
+		if [[ "$resolver_rc" -ne 0 && "$authorization_json" != *'unexpected end of JSON input'* ]]; then
+			printf '%s\n' "$authorization_json" >&2
+			return 1
+		fi
+	done
+	if [[ "$attempt" -eq 3 && "$resolver_rc" -ne 0 ]] ||
+		! jq -e 'type == "object" and (.expected_sources | type == "array")' \
+			<<<"$authorization_json" >/dev/null 2>&1; then
+		printf 'Release authorization read is indeterminate; pinned lane remains fenced.\n' >&2
+		return 8
+	fi
 	if [[ -n "$expected_sources" ]]; then
 		expected_intent=$(release_authorization_intent_json "$expected_sources") || return 1
 		#aidevops:trust-boundary
@@ -420,9 +441,11 @@ _full_loop_release_prepare_new() {
 	trap 'cleanup_release_worktree' EXIT
 
 	phase_started=$(_full_loop_release_timing_start release-run-capture-authorization)
-	if ! _full_loop_capture_release_authorization "$repo" "$source_pr" "$release_path" "$resolver" "$expected_sources"; then
+	local authorization_rc=0
+	_full_loop_capture_release_authorization "$repo" "$source_pr" "$release_path" "$resolver" "$expected_sources" || authorization_rc=$?
+	if [[ "$authorization_rc" -ne 0 ]]; then
 		_full_loop_release_timing_finish release-run-capture-authorization "$phase_started" failed
-		return 1
+		return "$authorization_rc"
 	fi
 	_full_loop_release_timing_finish release-run-capture-authorization "$phase_started" ok
 	phase_started=$(_full_loop_release_timing_start release-run-resolve-source)
@@ -461,15 +484,24 @@ _full_loop_release_run_new() {
 	local evidence_release_type=""
 	local run_started=""
 	local phase_started=""
+	local preparation_rc=0
+	local resume_command=""
 	run_started=$(_full_loop_release_timing_start release-run-new)
 	if [[ ! -d "$worktree_base" ]]; then
 		_full_loop_release_timing_finish release-run-new "$run_started" failed
 		return 1
 	fi
 	resolver="${AIDEVOPS_FULL_LOOP_SOURCE_RESOLVER:-$release_path/.agents/scripts/release-provenance-helper.sh}"
-	if ! _full_loop_release_prepare_new "$repo" "$source_pr" "$release_path" "$resolver" "$expected_sources"; then
+	_full_loop_release_prepare_new "$repo" "$source_pr" "$release_path" "$resolver" "$expected_sources" || preparation_rc=$?
+	if [[ "$preparation_rc" -ne 0 ]]; then
 		_full_loop_release_timing_finish release-run-new "$run_started" failed
-		return 1
+		if [[ "$preparation_rc" -eq 8 ]]; then
+			resume_command="aidevops release $release_type $source_pr $deployment_scope"
+			[[ -z "$expected_sources" ]] || resume_command+=" --expected-sources $expected_sources"
+			printf 'After the guarded dead-executor window, resume with:\n  aidevops release recover-reservation %s\n  %s\n' \
+				"$source_pr" "$resume_command" >&2
+		fi
+		return "$preparation_rc"
 	fi
 
 	version_manager="${AIDEVOPS_FULL_LOOP_VERSION_MANAGER:-$release_path/.agents/scripts/version-manager.sh}"
