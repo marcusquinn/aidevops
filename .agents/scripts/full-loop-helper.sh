@@ -84,6 +84,9 @@ source "${SCRIPT_DIR}/full-loop-helper-merge.sh"
 # --skip-hooks: pass --no-verify to git push (bypasses pre-push hooks). Use for doc-only PRs
 #   after manually verifying no secrets/private-slugs in the diff. See GH#20138.
 # --no-rebase: explicit recovery mode after a failed rebase; requires clean git state and commits ahead of the detected base branch.
+# --replace-pr <N> --replacement-reason <text>: explicit audited replacement of open PR <N>.
+#   Ancestry (PR <N>'s head reachable from HEAD) is proven before WIP finalization/rebase
+#   rewrite history, since both discard that ancestry (GH#33253). Works with or without --no-rebase.
 #
 # On rebase conflict: returns 1 with instructions. Caller must resolve and retry.
 # On push failure: returns 1. Caller should check remote state.
@@ -137,6 +140,12 @@ cmd_commit_and_pr() {
 	fi
 
 	_stage_and_commit "$commit_message" || return 1
+	# GH#33253: prove an explicit --replace-pr's ancestry now, before WIP
+	# finalization or rebase rewrite HEAD and defeat the final guard's ancestry
+	# check below. REPLACEMENT_PR_ANCESTRY_VALIDATED is consulted at that call.
+	_validate_replacement_pr_ancestry "$issue_number" "$repo" "$branch" \
+		"$replacement_pr" "$replacement_reason" || return 1
+	local replacement_pr_head_sha="${ISSUE_OPEN_PR_HEAD_SHA:-}"
 	# GH#27902: WIP commits are durable checkpoints, not publishable history.
 	# If any exist on the branch, replace the branch range with one final commit
 	# before validators inspect HEAD and before rebase/push can publish it.
@@ -198,6 +207,7 @@ cmd_commit_and_pr() {
 	local replacement_note=""
 	if [[ -n "$replacement_pr" ]]; then
 		replacement_note="This explicitly justified replacement preserves open PR #${replacement_pr}. Rationale: ${replacement_reason}"
+		[[ -n "$replacement_pr_head_sha" ]] && replacement_note="${replacement_note} Verified ancestor before WIP finalization: ${replacement_pr_head_sha}."
 	fi
 	pr_body=$(_build_pr_body "$issue_number" "$summary_what" "$summary_testing" "$files_changed" "$sig_footer" "$closing_keyword" "$runtime_risk" "$testing_level" "$base_ref" "$replacement_note") || return 1
 
@@ -267,8 +277,14 @@ Worker aborted PR creation: issue #${issue_number} was already closed by the tim
 	local continuation_pr=""
 	if [[ "$parent_issue" -eq 0 ]]; then
 		local final_open_pr_guard_rc=0
+		# GH#33253: an already-validated replacement's ancestry proof cannot be
+		# re-checked here — WIP finalization/rebase have rewritten HEAD since
+		# _validate_replacement_pr_ancestry ran. Skip the redundant, now-defeated
+		# ancestry check for that case; otherwise require it as before.
+		local final_require_ancestry=1
+		[[ "$REPLACEMENT_PR_ANCESTRY_VALIDATED" -eq 1 ]] && final_require_ancestry=0
 		issue_open_pr_guard_check "$issue_number" "$repo" "$branch" \
-			"$replacement_pr" "$replacement_reason" 1 || final_open_pr_guard_rc=$?
+			"$replacement_pr" "$replacement_reason" "$final_require_ancestry" || final_open_pr_guard_rc=$?
 		case "$final_open_pr_guard_rc" in
 		0) ;;
 		3) continuation_pr="$ISSUE_OPEN_PR_NUMBER" ;;
