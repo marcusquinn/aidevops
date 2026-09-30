@@ -698,12 +698,25 @@ _task_counter_status() {
 	return 0
 }
 
+# Fetch the counter branch with transport timeouts. In the isolated bare context
+# use --depth=1 --no-tags so large repos do not transfer full history; never
+# add depth otherwise (a shallow file would truncate the shared object store).
+# Any leading arguments are passed through as git global options (e.g. -c k=v).
+_cas_fetch_counter_branch() {
+	local -a git_opts=("$@")
+	local -a depth_args=()
+
+	_counter_context_is_isolated && depth_args=(--depth=1 --no-tags)
+	_run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" \
+		${git_opts[@]+"${git_opts[@]}"} \
+		fetch -q ${depth_args[@]+"${depth_args[@]}"} "$REMOTE_NAME" "$COUNTER_BRANCH" >/dev/null
+}
+
 _cas_fetch_counter_branch_for_reconcile() {
 	local repo_path="$1"
 
 	cd "$repo_path" || return 1
-	_run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" \
-		fetch -q "$REMOTE_NAME" "$COUNTER_BRANCH" >/dev/null || {
+	_cas_fetch_counter_branch || {
 		log_error "UNRECOVERABLE_COUNTER_DESYNC: cannot fetch ${REMOTE_NAME}/${COUNTER_BRANCH} for reconciliation"
 		_task_counter_status "unrecoverable_desync" "fetch_failed"
 		return 1
@@ -848,7 +861,7 @@ _cas_push_reconciliation_commit() {
 		fi
 		log_warn "Counter reconciliation push raced with another allocator; retrying allocation from refreshed branch"
 		_task_counter_status "recovered_contention" "reconcile_raced"
-		_run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" fetch -q "$REMOTE_NAME" "$COUNTER_BRANCH" >/dev/null || true
+		_cas_fetch_counter_branch || true
 		return 2
 	fi
 	return 0
@@ -903,7 +916,7 @@ _cas_reconcile_counter_branch() {
 	_cas_push_reconciliation_commit "$commit_sha" || return $?
 
 	_task_counter_status "recovered_contention" "counter=${reconciled_counter}"
-	_run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" fetch -q "$REMOTE_NAME" "$COUNTER_BRANCH" >/dev/null || true
+	_cas_fetch_counter_branch || true
 	return 0
 }
 
@@ -1203,9 +1216,8 @@ _cas_fetch_and_pin() {
 	# GH#21904: wrap with `timeout_sec` + SSH fallback to defeat credential-helper
 	# hangs that fire BEFORE bytes flow (osxkeychain etc.) and so bypass
 	# http.lowSpeedTime.
-	if ! _run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" \
-		-c http.lowSpeedLimit=1000 -c http.lowSpeedTime="$CAS_GIT_CMD_TIMEOUT_S" \
-		fetch -q "$REMOTE_NAME" "$COUNTER_BRANCH" >/dev/null; then
+	if ! _cas_fetch_counter_branch \
+		-c http.lowSpeedLimit=1000 -c http.lowSpeedTime="$CAS_GIT_CMD_TIMEOUT_S"; then
 		log_warn "Failed to fetch ${REMOTE_NAME}/${COUNTER_BRANCH}"
 	fi
 
@@ -1222,9 +1234,8 @@ _cas_fetch_and_pin() {
 		log_info "Counter missing/invalid — attempting auto-bootstrap (GH#6569)"
 		local bootstrap_result
 		bootstrap_result=$(bootstrap_remote_counter "$repo_path") || true
-		_run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" \
-			-c http.lowSpeedLimit=1000 -c http.lowSpeedTime="$CAS_GIT_CMD_TIMEOUT_S" \
-			fetch -q "$REMOTE_NAME" "$COUNTER_BRANCH" >/dev/null || true
+		_cas_fetch_counter_branch \
+			-c http.lowSpeedLimit=1000 -c http.lowSpeedTime="$CAS_GIT_CMD_TIMEOUT_S" || true
 		pinned_sha=$(_counter_git rev-parse "${REMOTE_NAME}/${COUNTER_BRANCH}" 2>/dev/null) || {
 			log_error "BOOTSTRAP_COUNTER_FAILED: cannot resolve ref after bootstrap"
 			return 1
@@ -1317,18 +1328,16 @@ _cas_build_and_push() {
 		fi
 		if _cas_push_rejection_is_non_fast_forward "$push_stderr"; then
 			log_warn "Push failed (conflict — another session claimed an ID)"
-			_run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" \
-				-c http.lowSpeedLimit=1000 -c http.lowSpeedTime="$CAS_GIT_CMD_TIMEOUT_S" \
-				fetch -q "$REMOTE_NAME" "$COUNTER_BRANCH" >/dev/null || true
+			_cas_fetch_counter_branch \
+				-c http.lowSpeedLimit=1000 -c http.lowSpeedTime="$CAS_GIT_CMD_TIMEOUT_S" || true
 			return 2
 		fi
 		log_error "Push failed with rc=${push_rc} before the CAS update; failure is not a retriable conflict"
 		return 1
 	fi
 
-	_run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" \
-		-c http.lowSpeedLimit=1000 -c http.lowSpeedTime="$CAS_GIT_CMD_TIMEOUT_S" \
-		fetch -q "$REMOTE_NAME" "$COUNTER_BRANCH" >/dev/null || true
+	_cas_fetch_counter_branch \
+		-c http.lowSpeedLimit=1000 -c http.lowSpeedTime="$CAS_GIT_CMD_TIMEOUT_S" || true
 	return 0
 }
 
