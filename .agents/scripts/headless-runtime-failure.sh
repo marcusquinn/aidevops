@@ -596,6 +596,31 @@ _hrff_enqueue_blocker_recovery() {
 	return 0
 }
 
+#######################################
+# Project exactly one status:blocked while a terminal-blocker circuit holds
+# dispatch (GH#33138), remove the runner assignee and unlock. The matching
+# release to status:available is owned by terminal-blocker-recovery-helper.sh
+# when the circuit re-arms (trusted retry or relevant revision).
+#
+# Args: $1 = issue_number, $2 = repo_slug
+#######################################
+_hrff_hold_terminal_blocker_circuit() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local runner_name=""
+	local -a hold_args=()
+
+	runner_name=$(_hrff_resolve_release_runner_login)
+	[[ -z "$runner_name" ]] || hold_args+=(--remove-assignee "$runner_name")
+	if declare -F set_issue_status >/dev/null 2>&1; then
+		set_issue_status "$issue_number" "$repo_slug" blocked \
+			${hold_args[@]+"${hold_args[@]}"} >/dev/null 2>&1 ||
+			print_warning "Failed to project status:blocked on #${issue_number} (non-fatal)"
+	fi
+	_unlock_issue_after_dispatch_release "$issue_number" "$repo_slug"
+	return 0
+}
+
 _hrff_handle_terminal_blocker_release() {
 	local issue_number="$1"
 	local repo_slug="$2"
@@ -611,12 +636,12 @@ _hrff_handle_terminal_blocker_release() {
 		fi
 		print_info "Opened unchanged terminal-blocker circuit on #${issue_number}"
 		_hrff_enqueue_blocker_recovery "$issue_number" "$repo_slug"
-		_hrff_release_rate_limit_circuit_cleanup "$issue_number" "$repo_slug"
+		_hrff_hold_terminal_blocker_circuit "$issue_number" "$repo_slug"
 		return 10
 		;;
 	open)
 		print_info "Unchanged terminal-blocker circuit already active on #${issue_number}; suppressing duplicate release diagnostics"
-		_hrff_release_rate_limit_circuit_cleanup "$issue_number" "$repo_slug"
+		_hrff_hold_terminal_blocker_circuit "$issue_number" "$repo_slug"
 		return 10
 		;;
 	esac

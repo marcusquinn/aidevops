@@ -192,6 +192,11 @@ test_release_integration_bounds_comments() {
 		cleanup_count=$((cleanup_count + 1))
 		return 0
 	}
+	set_issue_status() {
+		[[ "$3" == "blocked" ]] || return 1
+		cleanup_count=$((cleanup_count + 1))
+		return 0
+	}
 	_unlock_issue_after_dispatch_release() {
 		cleanup_count=$((cleanup_count + 1))
 		return 0
@@ -555,6 +560,7 @@ test_collaborator_runner_release_opens_circuit() {
 		return 0
 	}
 	clear_active_status_on_release() { return 0; }
+	set_issue_status() { return 0; }
 	_unlock_issue_after_dispatch_release() { return 0; }
 	gh() {
 		if [[ "$1" == "api" && "$2" == "repos/owner/repo/issues/42" ]]; then
@@ -586,6 +592,45 @@ test_collaborator_runner_release_opens_circuit() {
 	print_result "collaborator runner opens one circuit for repeated identical blockers (attempt=${attempt}, posts=${posted_count})" "$status"
 	unset DISPATCH_REPO_SLUG WORKER_ISSUE_NUMBER AIDEVOPS_TERMINAL_BLOCKER_REPO_PATH \
 		AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT
+	return 0
+}
+
+test_circuit_hold_projects_blocked_and_releases() {
+	local status=1 projected=""
+	set_issue_status() {
+		projected="${projected}${3};"
+		return 0
+	}
+	_hrff_resolve_release_runner_login() {
+		printf 'runner-one\n'
+		return 0
+	}
+	_unlock_issue_after_dispatch_release() { return 0; }
+	_hrff_hold_terminal_blocker_circuit 42 owner/repo
+	[[ "$projected" == "blocked;" ]] || status=1
+	[[ "$projected" == "blocked;" ]] && status=0
+	print_result "open circuit projects status:blocked, never available" "$status"
+
+	# shellcheck source=../terminal-blocker-recovery-helper.sh
+	source "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh"
+	local circuit='[{"body":"TERMINAL_BLOCKER_CIRCUIT active=true observations=2"}]'
+	projected=""
+	_tbr_release_circuit_hold owner/repo 42 '{"body":"b","labels":[{"name":"status:blocked"}]}' "$circuit"
+	status=1
+	[[ "$projected" == "available;" ]] && status=0
+	print_result "re-armed circuit releases plain status:blocked to available" "$status"
+
+	local label=""
+	projected=""
+	for label in needs-maintainer-permissions hold-for-review status:in-review; do
+		_tbr_release_circuit_hold owner/repo 42 \
+			"{\"body\":\"b\",\"labels\":[{\"name\":\"status:blocked\"},{\"name\":\"${label}\"}]}" "$circuit"
+	done
+	_tbr_release_circuit_hold owner/repo 42 '{"body":"b","labels":[{"name":"bug"}]}' "$circuit"
+	_tbr_release_circuit_hold owner/repo 42 '{"body":"b","labels":[{"name":"status:blocked"}]}' '[{"body":"unrelated"}]'
+	status=1
+	[[ -z "$projected" ]] && status=0
+	print_result "other holds and non-circuit blocks are never released" "$status"
 	return 0
 }
 
@@ -642,6 +687,7 @@ main() {
 	test_same_second_release_ordering
 	test_self_authored_collaborator_evidence
 	test_collaborator_runner_release_opens_circuit
+	test_circuit_hold_projects_blocked_and_releases
 	test_blocked_backoff_cli
 	printf '\nTests run: %s failed: %s\n' "$TESTS_RUN" "$TESTS_FAILED"
 	[[ "$TESTS_FAILED" -eq 0 ]]
