@@ -160,6 +160,30 @@ cleanup_retired_context_tooling() {
 	return 0
 }
 
+# Remove the retired workflow and generated slash commands from existing installs.
+# Like other deprecated path cleanup, this runs even when the source is gone.
+cleanup_retired_ralph_commands() {
+	local agents_dir="$1"
+	local removed=0
+	local command=""
+	local path=""
+	path="$agents_dir/workflows/ralph-loop.md"
+	if [[ -e "$path" ]]; then
+		rm -f "$path"
+		removed=$((removed + 1))
+	fi
+	for command in ralph-loop ralph-task cancel-ralph ralph-status; do
+		for path in "$HOME/.claude/commands/$command.md" "$HOME/.config/opencode/command/$command.md"; do
+			if [[ -e "$path" ]]; then
+				rm -f "$path"
+				removed=$((removed + 1))
+			fi
+		done
+	done
+	printf '%s\n' "$removed"
+	return 0
+}
+
 cleanup_deprecated_paths() {
 	local agents_dir="$HOME/.aidevops/agents"
 	local cleaned=0
@@ -203,16 +227,6 @@ cleanup_deprecated_paths() {
 		"$agents_dir/scripts/finding-to-task-helper.sh"
 		"$agents_dir/scripts/objective-runner-helper.sh"
 		"$agents_dir/scripts/ralph-loop-helper.sh"
-		"$agents_dir/workflows/ralph-loop.md"
-		# Retired slash commands are generated outside the deployed agent tree.
-		"$HOME/.claude/commands/ralph-loop.md"
-		"$HOME/.claude/commands/ralph-task.md"
-		"$HOME/.claude/commands/cancel-ralph.md"
-		"$HOME/.claude/commands/ralph-status.md"
-		"$HOME/.config/opencode/command/ralph-loop.md"
-		"$HOME/.config/opencode/command/ralph-task.md"
-		"$HOME/.config/opencode/command/cancel-ralph.md"
-		"$HOME/.config/opencode/command/ralph-status.md"
 		"$agents_dir/scripts/stale-pr-helper.sh"
 		# GH#32585: Closte integration removed
 		"$agents_dir/scripts/closte-helper.sh"
@@ -227,6 +241,7 @@ cleanup_deprecated_paths() {
 	done
 
 	cleaned=$((cleaned + $(cleanup_retired_context_tooling "$agents_dir")))
+	cleaned=$((cleaned + $(cleanup_retired_ralph_commands "$agents_dir")))
 
 	if [[ $cleaned -gt 0 ]]; then
 		print_info "Cleaned up $cleaned deprecated agent path(s)"
