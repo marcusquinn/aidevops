@@ -381,6 +381,18 @@ _dispatch_compute_capacity() {
 	return 0
 }
 
+# GH#32977: drop the same-cycle footprint reservation written by this attempt
+# (created at or after attempt_epoch) when a later gate, timeout or launch
+# failure means the worker did not launch, so it cannot block other candidates.
+_dispatch_release_footprint_reservation() {
+	local repo_slug="$1"
+	local issue_number="$2"
+	local attempt_epoch="$3"
+	declare -F footprint_release_reservation >/dev/null 2>&1 || return 0
+	footprint_release_reservation "$repo_slug" "$issue_number" "$attempt_epoch" || true
+	return 0
+}
+
 #######################################
 # Run triage under one cumulative Pulse-cycle budget, refreshing stale triage
 # state at bounded intervals while unspent attempts remain. Typed outcomes never
@@ -437,9 +449,7 @@ _dispatch_process_candidate() {
 	model_override=$(resolve_dispatch_model_for_labels "$labels_csv")
 	pulse_dispatch_debug_log "#${issue_number}: model_override=${model_override:-<auto>} — calling dispatch_with_dedup"
 
-	# t3022: Defer opus candidates when the per-model concurrency cap is reached.
-	# Prevents 429 cascades from simultaneous opus worker launches. Sonnet/haiku
-	# candidates are unaffected. Deferred candidates retry next pulse cycle.
+	# t3022: defer opus candidates at the per-model concurrency cap (429 cascade guard; retried next cycle).
 	local _concurrency_cap_rc=0
 	_dispatch_check_model_concurrency_cap "$issue_number" "$repo_slug" "$model_override" >>"$LOGFILE" 2>&1 || _concurrency_cap_rc=$?
 	if [[ "$_concurrency_cap_rc" -ne 0 ]]; then
@@ -453,14 +463,14 @@ _dispatch_process_candidate() {
 	# within a single dispatch_max subshell execution.
 	_pulse_refresh_repo "$repo_path"
 
-	# GH#18804 + t2989: dispatch with isolation + per-candidate timeout.
-	# Detail (subshell isolation, hang signature, 30s default rationale):
-	# see _dispatch_with_timeout doc comment above.
+	# GH#18804 + t2989: isolated dispatch with per-candidate timeout (see _dispatch_with_timeout).
 	echo "[pulse-wrapper] DISPATCH_CANDIDATE_ATTEMPT #${issue_number} (${repo_slug})" >>"$LOGFILE"
-	local dispatch_rc=0
+	local dispatch_rc=0 attempt_epoch=""
+	attempt_epoch=$(date +%s)
 	_dispatch_with_timeout "$issue_number" "$repo_slug" "$dispatch_title" "$issue_title" \
 		"$self_login" "$repo_path" "$prompt" "issue-${issue_number}" "$model_override" || dispatch_rc=$?
 	if [[ "$dispatch_rc" -ne 0 ]]; then
+		_dispatch_release_footprint_reservation "$repo_slug" "$issue_number" "$attempt_epoch"
 		_dispatch_record_and_cache_block "$candidate_json" "$issue_number" "$repo_slug" "$dispatch_rc"
 		return 1
 	fi
@@ -473,6 +483,7 @@ _dispatch_process_candidate() {
 	check_worker_launch "$issue_number" "$repo_slug" >/dev/null 2>&1 || launch_rc=$?
 	if [[ "$launch_rc" -ne 0 ]]; then
 		echo "[pulse-wrapper] Dispatch_max: #${issue_number} (${repo_slug}) launch validation failed (rc=${launch_rc}, last_failure='${_PULSE_LAST_LAUNCH_FAILURE}')" >>"$LOGFILE"
+		_dispatch_release_footprint_reservation "$repo_slug" "$issue_number" "$attempt_epoch"
 		_dispatch_stats_increment "dispatch_worker_launch_failed"
 		_dispatch_record_launch_failure
 		return 1
