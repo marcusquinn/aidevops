@@ -2236,22 +2236,30 @@ _hrw_preserve_blocked_outcome() {
 # assigned, auto-dispatch removed) so they neither escalate the tier nor return
 # the issue to the dispatch queue while the PR exists (GH#33115).
 #
+# Every other class (including fail-open `pr_exists`) keeps the unverified
+# handoff failure path: release, fast-fail as overwhelmed, failed terminal.
+#
 # Args: $1=session key, $2=work dir
-# Returns: 0 when a durable checkpoint handler ran, 1 when the caller must keep
-#          the unverified-handoff failure path.
+# Returns: 0 when a durable checkpoint handler ran, 1 when the run was routed
+#          as an unverified-handoff failure.
 #######################################
-_hrw_route_unverified_post_pr_handoff() {
+_hrw_handle_unverified_post_pr_handoff() {
 	local session_key="$1"
 	local work_dir="$2"
 	local output_class=""
 
-	[[ -n "$work_dir" ]] || return 1
-	output_class=$(_worker_produced_output "$session_key" "$work_dir")
+	[[ -n "$work_dir" ]] && output_class=$(_worker_produced_output "$session_key" "$work_dir")
 	case "$output_class" in
 	draft_checkpoint) _hrw_preserve_draft_checkpoint_handoff "$session_key" "$output_class" ;;
 	ready_missing_summary) _hrw_preserve_ready_missing_summary_handoff "$session_key" "$output_class" ;;
 	ready_missing_linkage) _hrw_preserve_ready_missing_linkage_handoff "$session_key" "$output_class" ;;
-	*) return 1 ;;
+	*)
+		print_warning "[lifecycle] ${_HRW_REASON_UNVERIFIED_HANDOFF} session=${session_key} — exact-head non-draft PR handoff could not be verified; routing as failure"
+		_hrw_release_dispatch_claim "$session_key" "$_HRW_REASON_UNVERIFIED_HANDOFF"
+		_report_failure_to_fast_fail "$session_key" "$_HRW_REASON_UNVERIFIED_HANDOFF" "$_HRW_CRASH_OVERWHELMED"
+		_hrw_mark_failed_terminal_state "$_HRW_STATUS_FAILED" "$_HRW_REASON_UNVERIFIED_HANDOFF"
+		return 1
+		;;
 	esac
 	print_info "[lifecycle] unverified post_pr_handoff session=${session_key} routed to exact-head checkpoint state=${output_class}"
 	return 0
@@ -2270,13 +2278,8 @@ _hrw_finish_success_run() {
 	if [[ "${_run_result_label:-}" == "post_pr_handoff" ]] &&
 		(! declare -F _worker_post_pr_handoff_confirmed >/dev/null 2>&1 ||
 			! _worker_post_pr_handoff_confirmed "$session_key" "$work_dir"); then
-		_hrw_route_unverified_post_pr_handoff "$session_key" "$work_dir" && return 0
-		print_warning "[lifecycle] ${_HRW_REASON_UNVERIFIED_HANDOFF} session=${session_key} — exact-head non-draft PR handoff could not be verified; routing as failure"
-		_hrw_release_dispatch_claim "$session_key" "$_HRW_REASON_UNVERIFIED_HANDOFF"
-		_report_failure_to_fast_fail "$session_key" "$_HRW_REASON_UNVERIFIED_HANDOFF" "$_HRW_CRASH_OVERWHELMED"
-		release_needed=0
-		finish_status=1
-		_hrw_mark_failed_terminal_state "$_HRW_STATUS_FAILED" "$_HRW_REASON_UNVERIFIED_HANDOFF"
+		_hrw_handle_unverified_post_pr_handoff "$session_key" "$work_dir" && return 0
+		return 1
 	fi
 
 	# GH#20721 + GH#20819: Classify worker output quality.
