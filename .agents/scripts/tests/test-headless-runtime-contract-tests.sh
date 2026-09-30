@@ -623,6 +623,62 @@ test_worker_signing_config_rejects_unusable_existing_signing() {
 	return 0
 }
 
+# GH#33064: a signer reachable only through the launcher's ssh-agent must not
+# pass the probe when the worker will run in the sandbox, which never receives
+# SSH_AUTH_SOCK. The git stub signs only when an agent socket is visible.
+_run_agent_only_signing_probe() {
+	local sandbox_disabled="$1"
+	local record_file="$2"
+	: >"$record_file"
+	(
+		git() {
+			case "$*" in
+			*"config --bool commit.gpgsign"*) printf 'true\n' ;;
+			*"rev-parse"*) printf '%s\n' 4b825dc642cb6eb9a060e54bf8d69288fbee4904 ;;
+			*"commit-tree"*)
+				printf 'sock=%s pid=%s\n' "${SSH_AUTH_SOCK:-<unset>}" "${SSH_AGENT_PID:-<unset>}" >>"$record_file"
+				[[ -n "${SSH_AUTH_SOCK:-}" ]] || return 1
+				;;
+			esac
+			return 0
+		}
+		unset _AIDEVOPS_HEADLESS_SIGNING_ENV_CONFIGURED 2>/dev/null || true
+		export SSH_AUTH_SOCK="${TEST_ROOT}/launcher-agent.sock" SSH_AGENT_PID=4242
+		AIDEVOPS_HEADLESS_SANDBOX_DISABLED="$sandbox_disabled" \
+			AIDEVOPS_HEADLESS_SIGNING_PUBLIC_KEY="${TEST_ROOT}/missing-worker-signing-key.pub" \
+			_configure_headless_worker_signing_env "$TEST_ROOT"
+	)
+	return $?
+}
+
+test_worker_signing_probe_ignores_launcher_agent_when_sandboxed() {
+	local record_file="${TEST_ROOT}/signing-probe-sandboxed" status=0
+	_run_agent_only_signing_probe 0 "$record_file" || status=$?
+	local record=""
+	record=$(<"$record_file")
+	if [[ "$status" -eq 1 && "$record" == "sock=<unset> pid=<unset>" ]]; then
+		print_result "worker signing probe ignores the launcher ssh-agent for sandboxed workers" 0
+	else
+		print_result "worker signing probe ignores the launcher ssh-agent for sandboxed workers" 1 \
+			"status=$status record=${record:-<empty>}"
+	fi
+	return 0
+}
+
+test_worker_signing_probe_keeps_agent_when_sandbox_disabled() {
+	local record_file="${TEST_ROOT}/signing-probe-unsandboxed" status=0
+	_run_agent_only_signing_probe 1 "$record_file" || status=$?
+	local record=""
+	record=$(<"$record_file")
+	if [[ "$status" -eq 0 && "$record" == "sock=${TEST_ROOT}/launcher-agent.sock pid=4242" ]]; then
+		print_result "worker signing probe honours the ssh-agent when the sandbox is disabled" 0
+	else
+		print_result "worker signing probe honours the ssh-agent when the sandbox is disabled" 1 \
+			"status=$status record=${record:-<empty>}"
+	fi
+	return 0
+}
+
 test_worker_signing_preflight_self_heals_agent_once() {
 	local signing_root="${TEST_ROOT}/signing-self-heal"
 	local signing_helper="${signing_root}/signing-helper.sh"
@@ -690,6 +746,8 @@ run_worker_signing_contract_tests() {
 	test_worker_signing_preflight_accepts_proven_existing_signing
 	test_worker_signing_sandbox_preserves_proven_existing_config
 	test_worker_signing_config_rejects_unusable_existing_signing
+	test_worker_signing_probe_ignores_launcher_agent_when_sandboxed
+	test_worker_signing_probe_keeps_agent_when_sandbox_disabled
 	test_worker_signing_preflight_self_heals_agent_once
 	test_worker_signing_preflight_fails_before_runtime_attempt
 	return 0
