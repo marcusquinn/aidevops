@@ -609,17 +609,3 @@ setup_localwp_mcp() {
 	:
 	return 0
 }
-
-# Setup Beads (task management)
-setup_beads() {
-	# TODO: Extract from setup.sh lines 4364-4419
-	:
-	return 0
-}
-
-# Setup Beads UI
-setup_beads_ui() {
-	# TODO: Extract from setup.sh lines 4422-4524
-	:
-	return 0
-}

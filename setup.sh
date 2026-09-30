@@ -364,8 +364,6 @@ source "${SETUP_IMPL_MODULES_DIR}/agent-deploy.sh"
 # shellcheck disable=SC1091
 source "${SETUP_IMPL_MODULES_DIR}/agent-runtime.sh"
 # shellcheck disable=SC1091
-source "${SETUP_IMPL_MODULES_DIR}/tool-beads.sh"
-# shellcheck disable=SC1091
 source "${SETUP_IMPL_MODULES_DIR}/config.sh"
 # shellcheck disable=SC1091
 source "${SETUP_IMPL_MODULES_DIR}/source-access.sh"
@@ -1683,7 +1681,6 @@ _setup_run_interactive_runtime_tools() {
 	confirm_step "Setup isolated Vault crypto runtime" && setup_vault_python_env
 	confirm_step "Install MCP packages globally (fast startup)" && install_mcp_packages
 	confirm_step "Setup LocalWP MCP server" && setup_localwp_mcp
-	confirm_step "Setup Beads task management" && setup_beads
 	confirm_step "Setup SEO integrations (curl subagents)" && setup_seo_mcps
 	confirm_step "Setup Google Analytics MCP" && setup_google_analytics_mcp
 	confirm_step "Setup QuickFile MCP (UK accounting)" && setup_quickfile_mcp
