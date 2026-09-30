@@ -727,6 +727,28 @@ ${machine_readable_part}${terminal_blocker_fragment}
 		return 1
 	fi
 	print_info "Released claim on #${issue_number} (reason: ${reason})"
+	_hrff_project_post_release_state "$issue_number" "$repo_slug" "$runner_name" "$reason"
+	return 0
+}
+
+#######################################
+# Project issue lifecycle state after a persisted CLAIM_RELEASED comment.
+# Reason-specific paths preserve state that authoritative handoffs already
+# projected; the default path clears active status so re-dispatch is not
+# blocked. Always non-fatal.
+#
+# Args:
+#   $1 = issue_number
+#   $2 = repo_slug
+#   $3 = runner_name
+#   $4 = reason
+#######################################
+_hrff_project_post_release_state() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local runner_name="$3"
+	local reason="$4"
+
 	if [[ "$reason" == "${_HRW_REASON_OWNERSHIP_LOST:-worker_ownership_lost}" ]]; then
 		print_info "Preserving live issue ownership for #${issue_number} after worker ownership loss"
 		return 0
