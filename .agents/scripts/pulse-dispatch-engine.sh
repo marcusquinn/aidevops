@@ -1091,6 +1091,59 @@ _pulse_release_post_dispatch_housekeeping_lock() {
 }
 
 #######################################
+# Return 0 when blocked-status maintenance has been starved (GH#33246).
+#
+# The in-cycle dependency-graph build, blocked refresh and brief-hold release
+# run late in the deterministic pipeline and are deferred whenever preflight
+# consumes the cycle budget. The cache mtime is their shared success marker:
+# a missing or old cache means none of them has completed recently.
+# AIDEVOPS_PULSE_BLOCKER_REFRESH_MAX_AGE_S=0 disables the catch-up.
+#######################################
+_pulse_blocker_refresh_starved() {
+	local max_age="${AIDEVOPS_PULSE_BLOCKER_REFRESH_MAX_AGE_S:-1800}"
+	local cache_file="${DEP_GRAPH_CACHE_FILE:-}"
+	[[ "$max_age" =~ ^[0-9]+$ ]] || max_age=1800
+	[[ "$max_age" -gt 0 && -n "$cache_file" ]] || return 1
+	[[ -f "$cache_file" ]] || return 0
+	local now="" mtime=""
+	now=$(date +%s 2>/dev/null) || return 1
+	mtime=$(date -r "$cache_file" +%s 2>/dev/null) || return 0
+	[[ "$now" =~ ^[0-9]+$ && "$mtime" =~ ^[0-9]+$ ]] || return 1
+	[[ $((now - mtime)) -ge "$max_age" ]] && return 0
+	return 1
+}
+
+#######################################
+# Catch up starved blocked-status maintenance outside the cycle clamp.
+#
+# Reuses the in-cycle stage names so GraphQL/REST budget priority still
+# classifies them as deferrable. Runs graph rebuild -> blocked refresh ->
+# repaired brief-hold release, matching the deterministic pipeline order.
+#
+# Args:
+#   $1 - per-stage timeout seconds
+# Returns 0 always.
+#######################################
+_pulse_run_blocker_refresh_catchup() {
+	local stage_timeout="${1:-${PRE_RUN_STAGE_TIMEOUT:-600}}"
+	[[ "$stage_timeout" =~ ^[0-9]+$ ]] || stage_timeout=600
+	_pulse_blocker_refresh_starved || return 0
+	declare -F build_dependency_graph_cache >/dev/null 2>&1 || return 0
+	echo "[pulse-wrapper] Blocker refresh catch-up: dependency graph cache stale or missing — running starved stages (GH#33246)" >>"$LOGFILE"
+	PULSE_DEP_GRAPH_FORCE_REBUILD=1 _pulse_run_budget_priority_stage_with_timeout "build_dependency_graph_cache" "$stage_timeout" \
+		build_dependency_graph_cache || true
+	if declare -F refresh_blocked_status_from_graph >/dev/null 2>&1; then
+		_pulse_run_budget_priority_stage_with_timeout "refresh_blocked_status_from_graph" "$stage_timeout" \
+			refresh_blocked_status_from_graph || true
+	fi
+	if declare -F release_repaired_brief_holds >/dev/null 2>&1; then
+		_pulse_run_budget_priority_stage_with_timeout "release_repaired_brief_holds" "$stage_timeout" \
+			release_repaired_brief_holds || true
+	fi
+	return 0
+}
+
+#######################################
 # Run non-dispatch post-dispatch housekeeping stages.
 #
 # These stages are intentionally after early dispatch and do not protect the
@@ -1118,6 +1171,7 @@ _pulse_run_post_dispatch_housekeeping_stages() {
 	_pulse_run_optional_stage_with_timeout "auto_decomposer_scanner" "$stage_timeout" _run_auto_decomposer_scanner || true
 	_pulse_run_optional_stage_with_timeout "dedup_cleanup" "$stage_timeout" run_simplification_dedup_cleanup || true
 	_pulse_run_optional_stage_with_timeout "fast_fail_prune_expired" "$stage_timeout" fast_fail_prune_expired || true
+	_pulse_run_blocker_refresh_catchup "$stage_timeout" || true
 	run_stage_with_timeout "preflight_ownership_reconcile" "$stage_timeout" \
 		_preflight_ownership_reconcile "$stage_timeout" || true
 	echo "[pulse-wrapper] Async post-dispatch housekeeping: complete" >>"$LOGFILE"
