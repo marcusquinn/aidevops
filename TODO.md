@@ -1532,7 +1532,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 - [ ] t18574 docs: re-sync and restructure Remotion and Cloudflare platform skills #auto-dispatch #chore tier:standard blocked-by:t18563 ref:GH#33150 logged:2026-09-30 -> [todo/tasks/t18574-brief.md]
 - [ ] t18575 fix(claim-task-id): write auto-detected GH# predecessors as task IDs in the TODO line so publication can parse it #auto-dispatch #bug tier:standard ref:GH#33159 logged:2026-09-30 -> [todo/tasks/t18575-brief.md]
 - [ ] t18576 fix(pulse-dep-graph): read dependencies only from structured fields, not prose or code spans in issue bodies #auto-dispatch #bug tier:standard ref:GH#33166 logged:2026-09-30 -> [todo/tasks/t18576-brief.md]
-- [ ] t18577 feat: add Rank Math MCP support for WordPress SEO #enhancement #interactive tier:standard ref:GH#33175 logged:2026-09-30 -> [todo/tasks/t18577-brief.md]
+- [x] t18577 feat: add Rank Math MCP support for WordPress SEO #enhancement #interactive tier:standard ref:GH#33175 logged:2026-09-30 pr:#33179 completed:2026-09-30 -> [todo/tasks/t18577-brief.md]
+- [ ] t18579 fix(wordpress): resolve config-http/test-http Application Passwords from secret names, not argv or config #auto-dispatch #bug #security #interactive tier:standard ref:GH#33195 logged:2026-09-30 -> [todo/tasks/t18579-brief.md]
 
 - [x] t18555 fix(dispatch-dedup): merged-PR keyword check ignores issue reopen, permanently blocking reopened issues #auto-dispatch #bug ref:GH#33071 pr:#33080 completed:2026-09-29
 
