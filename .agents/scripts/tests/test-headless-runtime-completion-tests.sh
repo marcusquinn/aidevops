@@ -453,6 +453,8 @@ test_cmd_run_finish_rejects_unverified_post_pr_handoff() {
 		_hrw_record_terminal_outcome() { return 0; }
 		_emit_worker_runtime_event() { return 0; }
 		_worker_post_pr_handoff_confirmed() { return 1; }
+		# Fail-open classification is not durable PR evidence (GH#33115).
+		_worker_produced_output() { printf 'pr_exists'; return 0; }
 		_hrw_record_reconciled_outcome() {
 			local session_key="$1"
 			local raw_result="$2"
