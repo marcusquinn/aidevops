@@ -727,6 +727,28 @@ ${machine_readable_part}${terminal_blocker_fragment}
 		return 1
 	fi
 	print_info "Released claim on #${issue_number} (reason: ${reason})"
+	_hrff_project_post_release_state "$issue_number" "$repo_slug" "$runner_name" "$reason"
+	return 0
+}
+
+#######################################
+# Project issue lifecycle state after a persisted CLAIM_RELEASED comment.
+# Reason-specific paths preserve state that authoritative handoffs already
+# projected; the default path clears active status so re-dispatch is not
+# blocked. Always non-fatal.
+#
+# Args:
+#   $1 = issue_number
+#   $2 = repo_slug
+#   $3 = runner_name
+#   $4 = reason
+#######################################
+_hrff_project_post_release_state() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local runner_name="$3"
+	local reason="$4"
+
 	if [[ "$reason" == "${_HRW_REASON_OWNERSHIP_LOST:-worker_ownership_lost}" ]]; then
 		print_info "Preserving live issue ownership for #${issue_number} after worker ownership loss"
 		return 0
@@ -738,6 +760,16 @@ ${machine_readable_part}${terminal_blocker_fragment}
 		fi
 		_unlock_issue_after_dispatch_release "$issue_number" "$repo_slug"
 		print_info "Projected draft checkpoint #${issue_number} as blocked partial work"
+		return 0
+	fi
+	# GH#33287: ready-PR handoffs have already projected and verified
+	# status:in-review with the runner assigned. The generic projection counts
+	# only closing keywords, so a deliberate `For #N` PR would reset the issue
+	# to status:available and orphan the open PR. Keep that state; only unlock.
+	if [[ "$reason" == "${_HRW_REASON_READY_MISSING_LINKAGE:-worker_ready_missing_linkage}" ||
+		"$reason" == "${_HRW_REASON_READY_MISSING_SUMMARY:-worker_ready_missing_summary}" ]]; then
+		_unlock_issue_after_dispatch_release "$issue_number" "$repo_slug"
+		print_info "Preserved in-review handoff on #${issue_number} (reason: ${reason})"
 		return 0
 	fi
 
