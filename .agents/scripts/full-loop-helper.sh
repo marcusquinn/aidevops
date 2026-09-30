@@ -345,9 +345,20 @@ Commands:
   cancel                        Cancel active loop
   logs [N]                      Show last N log lines (default: 50)
   commit-and-pr|create-pr --issue N --message "msg"
-                                 Stage, commit, rebase, push, create PR, post merge summary
-				 [--completion-bookkeeping --proof-pr N --task-id tNNN]
-				                            Allow audited metadata-only PR for a terminal issue
+                                  Stage, commit, rebase, push, create PR, post merge summary
+                [--title TEXT]            Set the PR title (default: commit message)
+                [--summary TEXT]          Fill the PR Summary section
+                [--testing TEXT]          Fill the PR Runtime Testing evidence section
+                [--risk-level critical|high|medium|low]
+                                          Set the runtime risk classification
+                [--testing-level runtime-verified|self-assessed]
+                                          Set the runtime testing evidence level
+                [--decisions TEXT]        Record notable decisions in the PR body
+                [--label NAME]            Add a PR label (repeatable)
+                [--replace-pr N --replacement-reason TEXT]
+                                          Audited replacement of an open PR (reason: 20+ characters)
+                [--completion-bookkeeping --proof-pr N --task-id tNNN]
+                                          Allow audited metadata-only PR for a terminal issue
                 [--skip-hooks]             Pass --no-verify to git push (doc-only PRs, GH#20138)
                 [--no-rebase]              Explicit recovery mode after a failed/aborted rebase
   pre-merge-gate <PR> [REPO]    Check review bot gate before merge (GH#17541)

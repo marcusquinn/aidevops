@@ -899,25 +899,20 @@ _stale_assignment_has_live_interactive_claim() {
 
 # The audit marker alone is not ownership: require a matching comment author,
 # status:claimed and the claimant as the sole assignee. A released claim loses
-# that status/assignment; an abandoned one ages out after the extended window.
+# that status/assignment. Keep the interactive threshold even after the claim
+# ages out; the normal activity check then recovers a genuinely quiet session
+# at the interactive threshold, never at the worker threshold.
 _stale_assignment_has_owned_interactive_claim() {
 	local issue_meta_json="$1"
 	local comments_json="$2"
-	local now_epoch="$3"
-	local claim_record="" claim_timestamp="" claim_author="" claim_epoch=0
+	local claim_record="" claim_author=""
 	claim_record=$(printf '%s' "$comments_json" | jq -r '
 		[.[] | select((.body_start // "") | contains("aidevops-interactive-claim/v1"))
 		| select(. as $comment | ($comment.body_start // "") | contains("Interactive session claimed by @" + ($comment.author // "")))]
-		| first | if . == null then empty else [.created_at, .author] | @tsv end
+		| first | if . == null then empty else .author end
 	' 2>/dev/null) || return 1
 	[[ -n "$claim_record" ]] || return 1
-	IFS=$'\t' read -r claim_timestamp claim_author <<<"$claim_record"
-	[[ -n "$claim_timestamp" && -n "$claim_author" ]] || return 1
-	claim_epoch=$(_ts_to_epoch "$claim_timestamp")
-	[[ "$claim_epoch" -gt 0 ]] || return 1
-	if [[ "$((now_epoch - claim_epoch))" -lt 0 || "$((now_epoch - claim_epoch))" -ge "$INTERACTIVE_CLAIM_STALE_THRESHOLD_SECONDS" ]]; then
-		return 1
-	fi
+	claim_author="$claim_record"
 	printf '%s' "$issue_meta_json" | jq -e --arg claimant "$claim_author" '
 		(.state | ascii_downcase) == "open" and
 		([.labels[]?.name] | index("status:claimed") != null) and
@@ -944,7 +939,7 @@ _resolve_stale_threshold() {
 	local created_at=''
 	local updated_at=''
 
-	if _stale_assignment_has_owned_interactive_claim "$_issue_meta_json" "$comments_json" "$now_epoch"; then
+	if _stale_assignment_has_owned_interactive_claim "$_issue_meta_json" "$comments_json"; then
 		is_interactive='true'
 		threshold="$INTERACTIVE_CLAIM_STALE_THRESHOLD_SECONDS"
 	elif printf '%s' "$_issue_meta_json" | jq -e '.labels | map(.name) | index("origin:interactive")' >/dev/null 2>&1 ||

@@ -306,9 +306,21 @@ expired_comments="${claimed_comments//$claimed_iso/$expired_iso}"
 write_stub_gh_age_floor "${claimed_meta//$claimed_iso/$expired_iso}" "$expired_comments"
 run_is_assigned 99710 "owner/repo"
 if [[ "$rc" -eq 1 && "$output" != *"ASSIGNED"* ]]; then
-	print_result "Abandoned interactive claim past extended window recovers" 0
+	print_result "Abandoned interactive claim past extended window recovers at interactive threshold" 0
 else
-	print_result "Abandoned interactive claim past extended window recovers" 1 "(rc=$rc output='$output')"
+	print_result "Abandoned interactive claim past extended window recovers at interactive threshold" 1 "(rc=$rc output='$output')"
+fi
+
+# A claimed session can have recent GitHub activity after its initial claim.
+# Crossing the claim-age window must not switch back to the 600s worker rule.
+recent_iso=$(iso_minus_seconds 1800)
+write_stub_gh_age_floor "${claimed_meta//$claimed_iso/$recent_iso}" "$expired_comments"
+run_is_assigned 99711 "owner/repo"
+if [[ "$rc" -eq 0 && "$output" == *"ASSIGNED"* && "$output" != *"WORKER_SUPERSEDED"* ]] &&
+	! grep -q '^issue edit' "$GH_CALLS_FILE"; then
+	print_result "Old owned claim with recent activity stays assigned past claim-age window" 0
+else
+	print_result "Old owned claim with recent activity stays assigned past claim-age window" 1 "(rc=$rc output='$output')"
 fi
 
 export PATH="$OLD_PATH"
