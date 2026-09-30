@@ -35,12 +35,14 @@ CREDENTIAL_SCRUB_SCRIPT="$HOOKS_DIR/credential-transcript-scrub.py"
 STRUCTURED_TEXT_PARSER_SCRIPT="$HOOKS_DIR/structured_text_parser.py"
 SECRET_READ_GUARD_SCRIPT="$HOOKS_DIR/secret_file_read_guard.py"
 COMPLEXITY_ADVISORY_SCRIPT="$HOOKS_DIR/complexity_advisory_pre_edit.py"
+STOP_HOOK_SCRIPT="$HOOKS_DIR/session_continuation_stop.py"
 CLAUDE_SETTINGS="$HOME/.claude/settings.json"
 HOOK_COMMAND="\$HOME/.aidevops/hooks/git_safety_guard.py"
 POST_HOOK_COMMAND="\$HOME/.aidevops/hooks/mcp_task_post_hook.py"
 CREDENTIAL_SCRUB_COMMAND="\$HOME/.aidevops/hooks/credential-transcript-scrub.py"
 SECRET_READ_GUARD_COMMAND="\$HOME/.aidevops/hooks/secret_file_read_guard.py"
 COMPLEXITY_ADVISORY_COMMAND="\$HOME/.aidevops/hooks/complexity_advisory_pre_edit.py"
+STOP_HOOK_COMMAND="\$HOME/.aidevops/hooks/session_continuation_stop.py"
 
 # gh-wrapper-guard pre-push hook (t2113)
 GH_WRAPPER_GUARD_MARKER="# aidevops-gh-wrapper-guard"
@@ -748,6 +750,8 @@ install_hook() {
 	source_secret_read_guard_hook=$(find_source_hook "secret_file_read_guard.py") || return 1
 	local source_complexity_advisory_hook
 	source_complexity_advisory_hook=$(find_source_hook "complexity_advisory_pre_edit.py") || return 1
+	local source_stop_hook
+	source_stop_hook=$(find_source_hook "session_continuation_stop.py") || return 1
 
 	# Pre-install validator dry-run (t2226): abort if validators fail HEAD state
 	_dry_run_validators "$source_hook" "$force_install" || return 1
@@ -776,6 +780,9 @@ install_hook() {
 	cp "$source_complexity_advisory_hook" "$COMPLEXITY_ADVISORY_SCRIPT"
 	chmod +x "$COMPLEXITY_ADVISORY_SCRIPT"
 	print_success "Installed $COMPLEXITY_ADVISORY_SCRIPT"
+	cp "$source_stop_hook" "$STOP_HOOK_SCRIPT"
+	chmod +x "$STOP_HOOK_SCRIPT"
+	print_success "Installed $STOP_HOOK_SCRIPT"
 	_probe_hook_runtime "$HOOK_SCRIPT" || return 1
 
 	# Configure Claude Code settings.json
@@ -871,6 +878,16 @@ settings = {
                     }
                 ]
             }
+        ],
+        'Stop': [
+            {
+                'hooks': [
+                    {
+                        'type': 'command',
+                        'command': '$STOP_HOOK_COMMAND'
+                    }
+                ]
+            }
         ]
     }
 }
@@ -923,7 +940,10 @@ for h in hooks.get('PostToolUse', []):
         if 'credential-transcript-scrub' in sub.get('command', ''):
             has_scrub = True
 
-if has_guard_bash and has_guard_edit_write and has_complexity and has_secret_read_guard and has_post and has_scrub:
+has_stop = any('session_continuation_stop' in sub.get('command', '')
+               for h in hooks.get('Stop', []) for sub in h.get('hooks', []))
+
+if has_guard_bash and has_guard_edit_write and has_complexity and has_secret_read_guard and has_post and has_scrub and has_stop:
     sys.exit(0)
 sys.exit(1)
 " 2>/dev/null; then
@@ -1044,6 +1064,11 @@ else:
     if not has_hook(settings['hooks']['PostToolUse'], 'credential-transcript-scrub'):
         settings['hooks']['PostToolUse'].append(credential_scrub_entry)
 
+# Stop hook: keep going while tracked todos remain open (GH#33143)
+stop_entries = settings['hooks'].setdefault('Stop', [])
+if not has_hook(stop_entries, 'session_continuation_stop'):
+    stop_entries.append({'hooks': [{'type': 'command', 'command': '$STOP_HOOK_COMMAND'}]})
+
 path = '$CLAUDE_SETTINGS'
 fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), suffix='.tmp')
 with os.fdopen(fd, 'w') as f:
@@ -1057,6 +1082,39 @@ os.rename(tmp, path)
 		return 1
 	}
 	print_success "Updated $CLAUDE_SETTINGS with hook configuration"
+	return 0
+}
+
+# Remove the session-continuation Stop hook script and its settings entry
+# (GH#33143). Runs before the Stop-agnostic cleanup in uninstall_hook, which
+# drops the whole 'hooks' key once every framework entry is gone.
+_uninstall_stop_hook() {
+	if [[ -f "$STOP_HOOK_SCRIPT" ]]; then
+		rm "$STOP_HOOK_SCRIPT"
+		print_success "Removed $STOP_HOOK_SCRIPT"
+	fi
+	[[ -f "$CLAUDE_SETTINGS" ]] || return 0
+	python3 - "$CLAUDE_SETTINGS" <<'PY' 2>/dev/null || print_warning "Could not remove Stop hook from $CLAUDE_SETTINGS"
+import json, os, sys, tempfile
+path = sys.argv[1]
+with open(path) as f:
+    settings = json.load(f)
+hooks = settings.get('hooks', {})
+kept = []
+for rule in hooks.get('Stop', []):
+    rule['hooks'] = [s for s in rule.get('hooks', []) if 'session_continuation_stop' not in s.get('command', '')]
+    if rule['hooks']:
+        kept.append(rule)
+if kept:
+    hooks['Stop'] = kept
+else:
+    hooks.pop('Stop', None)
+fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), suffix='.tmp')
+with os.fdopen(fd, 'w') as f:
+    json.dump(settings, f, indent=2)
+    f.write('\n')
+os.rename(tmp, path)
+PY
 	return 0
 }
 
@@ -1094,6 +1152,7 @@ uninstall_hook() {
 	else
 		print_info "Complexity advisory hook not found (already removed)"
 	fi
+	_uninstall_stop_hook
 
 	# Remove from Claude settings
 	if [[ -f "$CLAUDE_SETTINGS" ]]; then
