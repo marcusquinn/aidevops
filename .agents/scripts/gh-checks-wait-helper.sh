@@ -398,6 +398,17 @@ read_head_sha() {
 	return $?
 }
 
+read_draft_state() {
+	local pr_number="$1"
+	local repo="$2"
+	if [[ -n "${AIDEVOPS_GH_CHECKS_TEST_DRAFT+x}" ]]; then
+		printf '%s\n' "$AIDEVOPS_GH_CHECKS_TEST_DRAFT"
+		return 0
+	fi
+	gh pr view "$pr_number" --repo "$repo" --json isDraft --jq '.isDraft' 2>/dev/null
+	return $?
+}
+
 write_runtime_heartbeat() {
 	local heartbeat_file="${AIDEVOPS_FULL_LOOP_HEARTBEAT_FILE:-}"
 	[[ -n "$heartbeat_file" ]] || return 0
@@ -441,6 +452,11 @@ wait_for_checks() {
 	if [[ -z "$initial_head" ]]; then
 		printf 'INDETERMINATE: PR head could not be verified before required-check observation\n' >&2
 		return 2
+	fi
+	local is_draft=""
+	is_draft=$(read_draft_state "$pr_number" "$repo" 2>/dev/null || true)
+	if [[ "$is_draft" == "true" ]]; then
+		printf 'NOTE: PR is draft; review bots (e.g. CodeRabbit) may skip drafts and still report pass. Run gh pr ready, then wait again for review evidence.\n'
 	fi
 	local poll_number=0 valid_state_seen=0
 	_GCW_ACTIVE_DEFERRAL=""

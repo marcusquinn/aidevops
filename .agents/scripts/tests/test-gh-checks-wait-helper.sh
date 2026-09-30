@@ -67,6 +67,7 @@ run_fixture_wait() {
 		AIDEVOPS_GH_SINGLEFLIGHT_DISABLE=1 \
 		AIDEVOPS_GH_CHECKS_TEST_REQUIRED_CONTEXTS="$required_contexts" \
 		AIDEVOPS_GH_CHECKS_TEST_HEAD="${AIDEVOPS_GH_CHECKS_TEST_HEAD_OVERRIDE-fixture-head}" \
+		AIDEVOPS_GH_CHECKS_TEST_DRAFT="${AIDEVOPS_GH_CHECKS_TEST_DRAFT_OVERRIDE-false}" \
 		"$HELPER" wait 123 --repo example/repo --initial-interval 1 --max-interval 4 "$@"
 	return $?
 }
@@ -77,6 +78,12 @@ write_fixture "$transition_dir" 2 '[{"name":"Complexity","workflow":"CI","state"
 write_fixture "$transition_dir" 3 '[{"name":"Complexity","workflow":"CI","state":"SUCCESS","bucket":"pass","link":"https://example.invalid/1"},{"name":"maintainer-gate","workflow":"CI","state":"SUCCESS","bucket":"pass","link":""}]'
 
 transition_output=$(run_fixture_wait "$transition_dir")
+draft_output=$(AIDEVOPS_GH_CHECKS_TEST_DRAFT_OVERRIDE=true run_fixture_wait "$transition_dir")
+assert_contains "draft PR warns about skipped review" "NOTE: PR is draft; review bots (e.g. CodeRabbit) may skip drafts and still report pass. Run gh pr ready, then wait again for review evidence." "$draft_output"
+draft_note_count=$(printf '%s\n' "$draft_output" | grep -c '^NOTE: PR is draft;' || true)
+assert_eq "draft warning prints once" "1" "$draft_note_count"
+assert_contains "draft checks still pass" "PASS: required checks completed" "$draft_output"
+[[ "$transition_output" != *'NOTE: PR is draft;'* ]] && pass "non-draft PR has no warning" || fail "non-draft PR has no warning"
 assert_contains "wait prints initial state once" "CI wait started: pass=1 pending=1" "$transition_output"
 assert_contains "wait prints state transition" "+ Complexity: pending -> pass" "$transition_output"
 assert_contains "wait prints terminal success" "PASS: required checks completed" "$transition_output"
