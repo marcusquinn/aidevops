@@ -249,6 +249,7 @@ _task_dependency_value() {
 	local line="$1"
 	local key="$2"
 	local value=""
+	local dependency="" task_dependencies=""
 	case "$key" in
 	blocked-by | blocks) ;;
 	*) return 1 ;;
@@ -257,8 +258,21 @@ _task_dependency_value() {
 		value="${BASH_REMATCH[2]}"
 	fi
 	[[ -n "$value" ]] || return 0
-	task_identity_parse_list "$value" >/dev/null || return 1
-	printf '%s\n' "$value"
+	# Relationship sync resolves task IDs only. Keep valid task dependencies in
+	# mixed lists, but do not reject a task for an issue-first dependency.
+	# Validate the complete list first so malformed separators still fail.
+	[[ "$value" != ,* && "$value" != *, && "$value" != *,,* ]] || return 1
+	while IFS= read -r dependency; do
+		if [[ "$dependency" =~ ^(GH)?#[1-9][0-9]*$ ]]; then
+			printf '%s\n' "warning: ${key}:${dependency} has no task ID; ignoring native relationship metadata" >&2
+			continue
+		fi
+		task_identity_validate "$dependency" || return 1
+		task_dependencies="${task_dependencies:+${task_dependencies},}${dependency}"
+	done < <(printf '%s\n' "$value" | tr ',' '\n')
+	[[ -n "$task_dependencies" ]] || return 0
+	task_identity_parse_list "$task_dependencies" >/dev/null || return 1
+	printf '%s\n' "$task_dependencies"
 	return 0
 }
 
