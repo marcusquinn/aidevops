@@ -377,7 +377,18 @@ _try_issue_sync_delegation() {
 	return 1
 }
 
+# Compare two issue titles ignoring case and whitespace differences (GH#33157).
+_titles_equivalent() {
+	local a="$1"
+	local b="$2"
+	a=$(printf '%s' "$a" | tr '[:upper:]' '[:lower:]' | tr -s '[:space:]' ' ' | sed -e 's/^ //' -e 's/ $//')
+	b=$(printf '%s' "$b" | tr '[:upper:]' '[:lower:]' | tr -s '[:space:]' ' ' | sed -e 's/^ //' -e 's/ $//')
+	[[ "$a" == "$b" ]]
+}
+
 # t1446: Broader dedup check before bare issue creation.
+# Returns 2 (TASK_ID_COLLISION) when the tNNN prefix belongs to a differently
+# titled open issue (GH#33157).
 # GitHub search matches across the full title (not just prefix), catching
 # duplicates with different title formats (e.g., "t1344:" vs "coderabbit:").
 # Echoes the existing issue number if found, returns 1 if no duplicate.
@@ -415,15 +426,23 @@ _check_duplicate_issue() {
 
 	# Exact tNNN: prefix match, case-sensitive; use jq --arg to avoid embedding
 	# the variable in the filter string (defense-in-depth, GH#18550)
-	local existing_issue
-	existing_issue=$(gh issue list --repo "$repo_slug" \
+	local existing_issue existing_title match=""
+	match=$(gh issue list --repo "$repo_slug" \
 		--state open --search "${task_id_prefix}: in:title" \
 		--json number,title --limit 10 |
 		jq -r --arg prefix "${task_id_prefix}: " \
-			'.[] | select(.title | startswith($prefix)) | .number // ""' |
+			'[.[] | select(.title | startswith($prefix))][0] // empty | "\(.number)\t\(.title)"' |
 		head -1)
+	existing_issue="${match%%$'\t'*}"
+	existing_title="${match#*$'\t'}"
 
 	if [[ -n "$existing_issue" ]]; then
+		# GH#33157: same prefix but a different title is another session's
+		# issue (ID collision), not an idempotent retry of this request.
+		if ! _titles_equivalent "$title" "$existing_title"; then
+			log_error "TASK_ID_COLLISION: ${task_id_prefix} is already used by open issue #${existing_issue} with a different title; refusing to report it as recovered"
+			return 2
+		fi
 		log_info "Found existing OPEN issue #$existing_issue with exact ${task_id_prefix} prefix, skipping duplicate creation"
 		echo "$existing_issue"
 		return 0

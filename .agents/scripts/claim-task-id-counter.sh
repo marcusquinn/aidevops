@@ -757,14 +757,54 @@ _cas_read_default_counter_for_reconcile() {
 	return 0
 }
 
+# Seed (highest TODO.md task ID + 1) from a git ref's TODO.md. Echoes 0 when
+# the ref or file is unavailable (GH#33157).
+_cas_todo_seed_from_ref() {
+	local ref="$1"
+	local todo_content=""
+	local highest="0"
+
+	todo_content=$(_counter_git show "${ref}:TODO.md" 2>/dev/null || true)
+	if [[ -n "$todo_content" ]]; then
+		highest=$(get_highest_task_id "$todo_content")
+		if [[ "$highest" =~ ^[0-9]+$ ]] && ((10#$highest > 0)); then
+			printf '%s\n' "$((10#$highest + 1))"
+			return 0
+		fi
+	fi
+	printf '0\n'
+	return 0
+}
+
+# Highest TODO.md-derived seed across the remote counter branch and default
+# branch tips. Never reads the local working tree (GH#33157).
+_cas_todo_seed_from_remote_refs() {
+	local default_branch="${1:-}"
+	local best="0"
+	local candidate=""
+	local refs=("${REMOTE_NAME}/${COUNTER_BRANCH}")
+	local ref
+
+	[[ -n "$default_branch" ]] && refs+=("${REMOTE_NAME}/${default_branch}")
+	for ref in "${refs[@]}"; do
+		candidate=$(_cas_todo_seed_from_ref "$ref")
+		((10#$candidate > 10#$best)) && best="$candidate"
+	done
+	printf '%s\n' "$best"
+	return 0
+}
+
 _cas_reconciled_counter_value() {
 	local repo_path="$1"
 	local branch_counter="$2"
 	local default_counter="$3"
+	local default_branch="${4:-}"
 	local todo_seed=""
 	local reconciled_counter="$branch_counter"
 
-	todo_seed=$(_compute_counter_seed "$repo_path")
+	# GH#33157: seed from remote refs only; the local working tree may be a
+	# stale mirror that misses recently published IDs.
+	todo_seed=$(_cas_todo_seed_from_remote_refs "$default_branch")
 	((10#$default_counter > 10#$reconciled_counter)) && reconciled_counter="$default_counter"
 	((10#$todo_seed > 10#$reconciled_counter)) && reconciled_counter="$todo_seed"
 	printf '%s\n' "$reconciled_counter"
@@ -888,7 +928,7 @@ _cas_reconcile_counter_branch() {
 	default_counter=$(_cas_read_default_counter_for_reconcile "$default_branch")
 
 	local reconciled_counter=""
-	reconciled_counter=$(_cas_reconciled_counter_value "$repo_path" "$branch_counter" "$default_counter")
+	reconciled_counter=$(_cas_reconciled_counter_value "$repo_path" "$branch_counter" "$default_counter" "$default_branch")
 
 	if [[ "$reconciled_counter" == "$branch_counter" ]]; then
 		_task_counter_status "recovered_contention" "refetched"
