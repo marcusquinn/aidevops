@@ -165,28 +165,60 @@ parse_github_url() {
 	return 0
 }
 
-# Get latest commit from GitHub API
+# Get latest commit from GitHub API.
+# Prefers authenticated `gh api` (avoids the 60/hour anonymous rate limit);
+# falls back to curl with GH_TOKEN/GITHUB_TOKEN only when gh is unavailable.
 get_latest_commit() {
 	local owner_repo="$1"
+	local commit=""
 
-	local api_url="https://api.github.com/repos/$owner_repo/commits?per_page=1"
-	local response
-
-	response=$(curl -s --connect-timeout 10 --max-time 30 \
-		-H "Accept: application/vnd.github.v3+json" "$api_url" 2>/dev/null)
-
-	if [[ -z "$response" ]]; then
-		return 1
+	if command -v gh &>/dev/null; then
+		commit=$(gh api "repos/${owner_repo}/commits?per_page=1" --jq '.[0].sha // empty' 2>/dev/null) || commit=""
+	else
+		local api_url="https://api.github.com/repos/${owner_repo}/commits?per_page=1"
+		local token="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
+		local curl_args=(-s --connect-timeout 10 --max-time 30
+			-H "Accept: application/vnd.github.v3+json")
+		if [[ -n "$token" ]]; then
+			curl_args+=(-H "Authorization: Bearer ${token}")
+		fi
+		local response
+		response=$(curl "${curl_args[@]}" "$api_url" 2>/dev/null) || response=""
+		if [[ -n "$response" ]]; then
+			commit=$(echo "$response" | jq -r '.[0].sha // empty' 2>/dev/null) || commit=""
+		fi
 	fi
-
-	local commit
-	commit=$(echo "$response" | jq -r '.[0].sha // empty' 2>/dev/null)
 
 	if [[ -z "$commit" || "$commit" == "null" ]]; then
 		return 1
 	fi
 
 	echo "$commit"
+	return 0
+}
+
+# Return 0 if the URL points at github.com.
+is_github_url() {
+	local url="$1"
+	case "$url" in
+	https://github.com/* | http://github.com/* | github.com/*) return 0 ;;
+	esac
+	return 1
+}
+
+# Get HEAD commit of a non-GitHub git repository via git ls-remote.
+# Returns 1 when the URL is not a reachable git repository.
+get_git_remote_head() {
+	local url="$1"
+	local out sha
+
+	command -v git &>/dev/null || return 1
+	out=$(GIT_TERMINAL_PROMPT=0 timeout 30 git ls-remote "$url" HEAD 2>/dev/null) || return 1
+	sha=$(echo "$out" | awk 'NR==1 {print $1}')
+	if [[ -z "$sha" ]]; then
+		return 1
+	fi
+	echo "$sha"
 	return 0
 }
 
@@ -505,18 +537,22 @@ _check_github_skill() {
 	local upstream_url="$2"
 	local current_commit="$3"
 
-	local owner_repo
-	owner_repo=$(parse_github_url "$upstream_url")
-	owner_repo=$(echo "$owner_repo" | cut -d'/' -f1-2)
-
-	if [[ -z "$owner_repo" || "$owner_repo" == "/" ]]; then
-		log_warning "Could not parse URL for $name: $upstream_url"
-		return 1
-	fi
-
 	local latest_commit
-	if ! latest_commit=$(get_latest_commit "$owner_repo"); then
-		log_warning "Could not fetch latest commit for $name ($owner_repo)"
+	if is_github_url "$upstream_url"; then
+		local owner_repo
+		owner_repo=$(parse_github_url "$upstream_url")
+		owner_repo=$(echo "$owner_repo" | cut -d'/' -f1-2)
+
+		if [[ -z "$owner_repo" || "$owner_repo" == "/" ]]; then
+			log_warning "Could not parse URL for $name: $upstream_url"
+			return 1
+		fi
+		if ! latest_commit=$(get_latest_commit "$owner_repo"); then
+			log_warning "Could not fetch latest commit for $name ($owner_repo)"
+			return 1
+		fi
+	elif ! latest_commit=$(get_git_remote_head "$upstream_url"); then
+		log_warning "Could not fetch latest commit for $name ($upstream_url)"
 		return 1
 	fi
 
@@ -636,6 +672,15 @@ cmd_check() {
 		current_commit=$(echo "$skill_json" | jq -r '.upstream_commit // empty')
 
 		if is_url_skill "$skill_json"; then
+			if ! _check_url_skill "$skill_json" "$name" "$upstream_url"; then
+				((++check_failed))
+			fi
+			continue
+		fi
+
+		# Non-GitHub sources: git hosts use ls-remote, everything else uses
+		# the content-hash path (never the GitHub API).
+		if ! is_github_url "$upstream_url" && ! get_git_remote_head "$upstream_url" >/dev/null; then
 			if ! _check_url_skill "$skill_json" "$name" "$upstream_url"; then
 				((++check_failed))
 			fi
