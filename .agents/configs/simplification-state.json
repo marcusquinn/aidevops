@@ -6574,12 +6574,6 @@
       "passes": 1,
       "pr": 15777
     },
-    ".agents/tools/task-management/beads.md": {
-      "at": "2026-05-10T22:12:58Z",
-      "hash": "e5f63a0340e700aebc966e4644a8d3fba2b6741d",
-      "passes": 2,
-      "pr": 12830
-    },
     ".agents/tools/terminal/terminal-optimization.md": {
       "at": "2026-07-13T01:30:40Z",
       "hash": "8e9a7da1c776c1cfbe886a651ff952fa97308e08",

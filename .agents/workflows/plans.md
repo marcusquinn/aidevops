@@ -19,7 +19,7 @@ tools:
 
 ## Quick Reference
 
-- **Commands**: `/save-todo` (auto-detects complexity), `/ready` (show unblocked), `/sync-beads` (sync to Beads)
+- **Commands**: `/save-todo` (auto-detects complexity), `/list-todo` (review tasks)
 - **Principle**: Don't make user think about where to save
 
 | File | Purpose |
@@ -28,7 +28,6 @@ tools:
 | `todo/PLANS.md` | Complex execution plans with context |
 | `todo/tasks/prd-{name}.md` | Product requirement documents |
 | `todo/tasks/tasks-{name}.md` | Implementation task lists |
-| `.beads/` | Beads database (synced from TODO.md) |
 
 **Task ID Format**: `tNNN` (top-level), `tNNN.N` (subtask), `tNNN.N.N` (sub-subtask)
 
@@ -146,17 +145,9 @@ Use calibrated tiers from `reference/planning-detail.md` (based on 340 completed
 
 **TOON machine-readable format**: `<!--TOON:dependencies[N]{from_id,to_id,type}: t019.2,t019.1,blocked-by -->`
 
-**`/ready` command**: `~/.aidevops/agents/scripts/todo-ready.sh` — shows tasks with no open blockers and lists blocked tasks with their dependencies.
-
-## Beads Integration
-
-`/sync-beads push` (TODO→Beads) | `/sync-beads pull` (Beads→TODO) | `/sync-beads` (two-way with conflict detection). Script: `beads-sync-helper.sh [push|pull|sync]`. Guarantees: lock file, checksum verification, audit trail in `.beads/sync.log`, command-led only.
-
-**Beads UIs**: `bv` (graph analytics), `npx beads-ui start` (web dashboard), `bdui` (terminal), `perles` (BQL queries), `M-x beads-list` (Emacs).
-
 ## Time Tracking Configuration
 
-Configure per-repo in `.aidevops.json`: `{ "time_tracking": "prompt", "features": ["planning", "time-tracking", "beads"] }`. Values: `true` = always prompt | `false` = never | `prompt` = ask once per session. Use `/log-time-spent` to manually log time.
+Configure per-repo in `.aidevops.json`: `{ "time_tracking": "prompt", "features": ["planning", "time-tracking"] }`. Values: `true` = always prompt | `false` = never | `prompt` = ask once per session. Use `/log-time-spent` to manually log time.
 
 ## Distributed Task Claiming (t164/t165)
 

@@ -9,9 +9,7 @@ mode: subagent
 Complex, multi-session work requiring research, design decisions, and detailed tracking.
 
 Based on [OpenAI's PLANS.md](https://cookbook.openai.com/articles/codex_exec_plans)
-with TOON-enhanced parsing and
-[Beads](https://github.com/steveyegge/beads) integration
-for dependency visualization.
+with TOON-enhanced parsing for dependency tracking.
 
 <!--TOON:meta{version,format,updated}:
 1.0,plans-md+toon,{{DATE}}

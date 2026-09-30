@@ -145,7 +145,6 @@ tools/research/providers/,tools/research/providers subagents,crft-lookup|openexp
 tools/research/,tools/research subagents,tech-stack-lookup
 tools/runtime/,tools/runtime subagents,node-server-admin
 tools/security/,tools/security subagents,cdn-origin-ip|content-provenance|ip-reputation|local-permissions-check|opsec|privacy-filter|prompt-injection-defender|security-analysis|security-audit|security-deps|security-history|security-review|security-scan|shannon|tamper-evident-audit|tirith
-tools/task-management/,tools/task-management subagents,beads
 tools/terminal/,tools/terminal subagents,optimise-linux-indexing-backups|optimise-macos-indexing-backups|optimise-windows-indexing-backups|terminal-optimization|terminal-title
 tools/,tools subagents,testing-setup
 tools/ui/,tools/ui subagents,ai-chat-sidebar|frontend-debugging|i18next|nextjs-layouts
@@ -240,8 +239,6 @@ finding-to-task-helper.sh,Convert quality findings into grouped TODO tasks with 
 secretlint-helper.sh,Secret detection
 security-helper.sh,Security analysis (OSV Ferret history full-scan)
 ip-reputation-helper.sh,IP reputation checker - multi-provider risk scoring for VPS/server/proxy IPs (check batch report providers cache-stats cache-clear)
-beads-sync-helper.sh,Sync TODO.md/PLANS.md with Beads graph
-todo-ready.sh,Show tasks with no open blockers
 full-loop-helper.sh,End-to-end development loop (task to PR to deploy)
 milestone-validation-worker.sh,Milestone validation for missions — exercise product paths and run configured or repository-required checks with optional existing browser tests
 session-review-helper.sh,Gather session context for review

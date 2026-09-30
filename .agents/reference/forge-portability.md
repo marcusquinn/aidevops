@@ -20,7 +20,7 @@ reachable commit and a verified independent repository backup. A forge-hosted Gi
 remote alone is not independent of losing that forge/account. Preserve the task
 counter branch and all required refs in the backup before allocating new IDs.
 Uncommitted files and dangling Git objects are not the durable acknowledgement
-point. Runtime/session databases and generated Beads caches are not required for
+point. Runtime/session databases and generated caches are not required for
 the bounded recovery below, nor substitutes for missing source records.
 
 ## Write paths and coverage matrix
@@ -37,7 +37,6 @@ Paths below are relative to `.agents/scripts/` unless otherwise stated.
 | `issue-sync-helper-close.sh`: completion observations ↔ TODO/issue state | Selected completion evidence interpreted into local state/remote close | Source comment bodies and all revisions are not automatically retained. A checked box is not a full evidence archive. |
 | `issue-sync-relationships.sh`: TODO dependencies → GitHub edges; backfill from GitHub | Declared task relationships and provider edge views | GitHub-specific; native-only edges need explicit local capture before they are recoverable. Resume caches are not canonical plans. |
 | `brief-readiness-helper.sh stub`: GitHub body → full local brief | Entire observed body, opaque body fields, title, URL, node ID, remote revision time, capture time and coverage marker | Repaired here. Create-only; no overwrite, comments, attachments, PR reviews or later-event ingestion. |
-| `beads-sync-helper.sh`: markdown ↔ Beads export | Derived task graph; pull requires reconciliation | Ignored SQLite/JSONL is not a durable backup. Beads-only fields require capture before rebuilding. No Beads restore proof is claimed here. |
 | `issue-archive-helper.sh`: GitHub → orphan `aidevops/issues-archive` branch | Latest issue/PR bodies, state, labels, assignees, close/merge outcome; issue/PR comments; reviews; inline review comments; `updated_at` cursors | See "Issue and PR discussion archive". No attachments, reactions, edit history, timeline events or deletions. |
 
 ### Adapter status
@@ -189,7 +188,6 @@ unassigned sibling issues.
 | GitLab adapter | `claim-task-id.sh` GL branch plus provider adapter paths to discover | Verify installed glab API first; body/comments/dependencies/evidence round-trip and offline idempotency fixture. |
 | Gitea adapter | Allocation detection plus provider adapter paths to discover | Preserve host-qualified refs, paginated events and opaque fields; offline restore twice with no identity churn. |
 | Forgejo adapter | Detection/allocation and provider adapter paths to discover | Explicit support instead of inferred parity; same loss fixture plus cross-host numeric-ID collision case. |
-| Beads-only records | `beads-sync-helper.sh`, `tools/task-management/beads.md` | Verify installed bd export schema; preserve unmapped fields before rebuilding and prove round-trip without force-overwrite. |
 
 All adapter follow-ups require collision discovery and their own write-surface and
 verification contract. Do not broaden this repair into a general state engine.
