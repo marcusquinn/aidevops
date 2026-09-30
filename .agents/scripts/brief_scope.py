@@ -26,7 +26,7 @@ def fail():
 
 
 def exact(path):
-    return bool(re.fullmatch(r"[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*", path)) and all(
+    return bool(re.fullmatch(r"[A-Za-z0-9_.()\[\]-]+(?:/[A-Za-z0-9_.()\[\]-]+)*", path)) and all(
         part not in (".", "..", ".git") for part in path.split("/")
     )
 
