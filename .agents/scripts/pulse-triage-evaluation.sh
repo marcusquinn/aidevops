@@ -863,13 +863,17 @@ _consolidation_child_exists() {
 # Closing-keyword regex sourced from `_extract_linked_issue` in
 # pulse-merge.sh:1173 — matches GitHub's full close keyword list:
 # close/closes/closed, fix/fixes/fixed, resolve/resolves/resolved
-# (case-insensitive). Bare `#NNN` references and `For #NNN` / `Ref #NNN`
-# references do NOT match — those are intentionally non-closing.
+# (case-insensitive). GH#33284: `For #NNN` / `Ref #NNN` also count here.
+# They are non-closing for GitHub, but briefs that keep an issue open
+# (held or blocked parents) direct workers to use them, so an open PR with
+# them is still in-flight work on the parent. Bare `#NNN` mentions do NOT
+# match. This helper only gates consolidation; closure semantics elsewhere
+# are unchanged.
 #
 # Args: $1=parent_num $2=repo_slug
-# Returns: 0 if an open PR with a closing keyword referencing the parent
-#          exists, 1 otherwise (including network/parse errors — fail open
-#          so a misbehaving search never blocks legitimate consolidation).
+# Returns: 0 if an open PR with a closing or For/Ref keyword referencing the
+#          parent exists, 1 otherwise (including network/parse errors — fail
+#          open so a misbehaving search never blocks legitimate consolidation).
 #######################################
 _consolidation_resolving_pr_exists() {
 	local parent_num="$1"
@@ -886,15 +890,14 @@ _consolidation_resolving_pr_exists() {
 		--json number,body --limit 10 2>/dev/null) || prs_json="[]"
 	[[ -n "$prs_json" ]] || prs_json="[]"
 
-	# Filter for GitHub-native closing keyword + #N (case-insensitive).
-	# Word boundary on the trailing # is enforced via the look-ahead
-	# `[^0-9]` (or end of string) so #${parent_num} does not match
+	# Filter for a closing or For/Ref keyword + #N (case-insensitive).
+	# The trailing `\b` keeps #${parent_num} from matching
 	# #${parent_num}1 / #${parent_num}99 etc.
 	local match_count
 	match_count=$(printf '%s' "$prs_json" | jq --arg n "$parent_num" '
 		[.[] | select(
 			(.body // "")
-			| test("(?i)\\b(close[ds]?|fix(es|ed)?|resolve[ds]?)[ \\t]+#" + $n + "\\b")
+			| test("(?i)\\b(close[ds]?|fix(es|ed)?|resolve[ds]?|for|ref)[ \\t]+#" + $n + "\\b")
 		)] | length
 	' 2>/dev/null) || match_count=0
 	[[ "$match_count" =~ ^[0-9]+$ ]] || match_count=0
