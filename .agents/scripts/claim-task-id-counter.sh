@@ -482,6 +482,164 @@ _cas_run_pre_push_hook() {
 	return 0
 }
 
+# Resolve the remote's actual default branch via its HEAD symref, without
+# assuming "main". Args: none (uses REMOTE_NAME / CAS_GIT_CONTEXT_PATH).
+# Stdout: the branch name (e.g. "develop") on success.
+# Returns: 0 on success, 1 when the remote HEAD symref cannot be resolved.
+_counter_detect_remote_default_branch() {
+	local output=""
+	local branch=""
+
+	output=$(_run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" \
+		ls-remote --symref "$REMOTE_NAME" HEAD 2>/dev/null) || return 1
+	branch=$(printf '%s\n' "$output" | awk '/^ref:/{print $2}' | sed 's#^refs/heads/##')
+	[[ -n "$branch" ]] || return 1
+	printf '%s\n' "$branch"
+	return 0
+}
+
+# Align DEFAULT_BRANCH (and, when also unset, COUNTER_BRANCH) with the
+# remote's actual default branch instead of the historical "main" literal
+# (GH#33152). Only runs when .aidevops.json did not set "default_branch" —
+# an explicit config value always wins. Fail-open: on detection failure the
+# "main" fallback already assigned at variable declaration is kept, and the
+# existing protected-branch / stale-branch diagnostics still apply downstream.
+_claim_apply_detected_default_branch() {
+	local detected=""
+
+	[[ "${OFFLINE_MODE:-false}" == "false" ]] || return 0
+	[[ "${_DEFAULT_BRANCH_SET:-false}" == "false" ]] || return 0
+
+	detected=$(_counter_detect_remote_default_branch) || {
+		log_warn "Unable to detect ${REMOTE_NAME} default branch (ls-remote failed); DEFAULT_BRANCH remains ${DEFAULT_BRANCH:-main}"
+		return 0
+	}
+	[[ -n "$detected" ]] || return 0
+
+	if [[ "$detected" != "$DEFAULT_BRANCH" ]]; then
+		log_info "Default branch detected from ${REMOTE_NAME}: ${detected}"
+	fi
+	DEFAULT_BRANCH="$detected"
+
+	# COUNTER_BRANCH still carries its literal "main" declaration default —
+	# only realign it when nothing (CLI, config, or a prior implicit-branch
+	# selection) has already chosen a value.
+	if [[ "${_COUNTER_BRANCH_SET:-false}" == "false" && "$COUNTER_BRANCH" == "main" ]]; then
+		COUNTER_BRANCH="$detected"
+	fi
+	return 0
+}
+
+# Explicit, audited fast-forward catch-up for a counter branch (GH#33152 gap
+# 4): sets it to max(its own counter, the default branch's counter, the
+# TODO.md seed) instead of resolve_implicit_counter_branch's silent refusal
+# when it is behind. Never rewrites history — the new commit's parent is the
+# branch's current tip, so the push is fast-forward-only.
+# Args: $1 repo_path, $2 target counter branch, $3 default branch.
+# Stdout: "COUNTER_BRANCH_SYNCED branch=<branch> value=<N>" on success/no-op.
+# Returns: 0 on success or already-current no-op, 1 on hard failure,
+#          CAS_PROTECTED_BRANCH_RC when the target branch rejects direct pushes.
+sync_counter_branch() {
+	local repo_path="$1"
+	local target_branch="$2"
+	local default_branch="${3:-main}"
+	local depth_args=()
+	local target_counter="0"
+	local default_counter="0"
+	local todo_seed="0"
+	local sync_target=""
+
+	_counter_context_is_isolated && depth_args=(--depth=1 --no-tags)
+
+	if ! _run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" \
+		fetch -q "${depth_args[@]}" "$REMOTE_NAME" \
+		"+refs/heads/${target_branch}:refs/remotes/${REMOTE_NAME}/${target_branch}" >/dev/null; then
+		log_error "COUNTER_BRANCH_SYNC_ERROR: unable to fetch ${REMOTE_NAME}/${target_branch}"
+		return 1
+	fi
+	if ! _run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" \
+		fetch -q "${depth_args[@]}" "$REMOTE_NAME" \
+		"+refs/heads/${default_branch}:refs/remotes/${REMOTE_NAME}/${default_branch}" >/dev/null; then
+		log_error "COUNTER_BRANCH_SYNC_ERROR: unable to fetch ${REMOTE_NAME}/${default_branch}"
+		return 1
+	fi
+
+	target_counter=$(_counter_git show "${REMOTE_NAME}/${target_branch}:${COUNTER_FILE}" 2>/dev/null | tr -d '[:space:]' || true)
+	[[ "$target_counter" =~ ^[0-9]+$ ]] || target_counter="0"
+	default_counter=$(_counter_git show "${REMOTE_NAME}/${default_branch}:${COUNTER_FILE}" 2>/dev/null | tr -d '[:space:]' || true)
+	[[ "$default_counter" =~ ^[0-9]+$ ]] || default_counter="0"
+	todo_seed=$(_compute_counter_seed "$repo_path")
+
+	sync_target="$target_counter"
+	((10#$default_counter > 10#$sync_target)) && sync_target="$default_counter"
+	((10#$todo_seed > 10#$sync_target)) && sync_target="$todo_seed"
+
+	if [[ "$sync_target" == "$target_counter" ]]; then
+		log_info "COUNTER_BRANCH_SYNC_NOOP: ${REMOTE_NAME}/${target_branch} already at or above max(default=${default_counter}, todo=${todo_seed})"
+		printf 'COUNTER_BRANCH_SYNCED branch=%s value=%s\n' "$target_branch" "$target_counter"
+		return 0
+	fi
+
+	local blob_sha="" existing_tree="" tree_sha="" parent_sha="" commit_sha=""
+	blob_sha=$(echo "$sync_target" | _counter_git hash-object -w --stdin 2>/dev/null) || {
+		log_error "COUNTER_BRANCH_SYNC_ERROR: failed to create blob"
+		return 1
+	}
+	existing_tree=$(_counter_git ls-tree "${REMOTE_NAME}/${target_branch}" 2>/dev/null || true)
+	if echo "$existing_tree" | grep -q "${COUNTER_FILE}$"; then
+		tree_sha=$(echo "$existing_tree" | sed "s|[0-9a-f]\{40,64\}	${COUNTER_FILE}$|${blob_sha}	${COUNTER_FILE}|" | _counter_git mktree 2>/dev/null) || {
+			log_error "COUNTER_BRANCH_SYNC_ERROR: failed to build replacement tree"
+			return 1
+		}
+	else
+		tree_sha=$(
+			{
+				echo "$existing_tree"
+				printf '100644 blob %s\t%s\n' "$blob_sha" "$COUNTER_FILE"
+			} | _counter_git mktree 2>/dev/null
+		) || {
+			log_error "COUNTER_BRANCH_SYNC_ERROR: failed to build tree"
+			return 1
+		}
+	fi
+	parent_sha=$(_counter_git rev-parse "${REMOTE_NAME}/${target_branch}" 2>/dev/null) || {
+		log_error "COUNTER_BRANCH_SYNC_ERROR: failed to resolve ${REMOTE_NAME}/${target_branch}"
+		return 1
+	}
+	commit_sha=$(_counter_git commit-tree "$tree_sha" -p "$parent_sha" \
+		-m "chore: sync-counter-branch ${target_branch} -> ${sync_target} (max of default=${default_counter}, todo=${todo_seed}, prior=${target_counter})" 2>/dev/null) || {
+		log_error "COUNTER_BRANCH_SYNC_ERROR: failed to create commit"
+		return 1
+	}
+
+	local push_err_file="" push_rc=0 stderr_text=""
+	push_err_file=$(mktemp "${AIDEVOPS_TEMP_DIR:-${HOME:-}/.aidevops/.agent-workspace/tmp}/sync-counter-push.XXXXXX" 2>/dev/null) || push_err_file=""
+	if [[ -n "$push_err_file" ]]; then
+		_run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" \
+			push "$REMOTE_NAME" "${commit_sha}:refs/heads/${target_branch}" >/dev/null 2>"$push_err_file" || push_rc=$?
+		stderr_text=$(cat "$push_err_file" 2>/dev/null || true)
+		rm -f "$push_err_file" 2>/dev/null || true
+	else
+		_run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" \
+			push "$REMOTE_NAME" "${commit_sha}:refs/heads/${target_branch}" >/dev/null || push_rc=$?
+	fi
+
+	if [[ $push_rc -ne 0 ]]; then
+		if [[ "$stderr_text" == *"Changes must be made through a pull request"* ]]; then
+			log_error "PROTECTED_COUNTER_BRANCH: ${REMOTE_NAME}/${target_branch} rejects direct sync pushes"
+			return "$CAS_PROTECTED_BRANCH_RC"
+		fi
+		log_error "COUNTER_BRANCH_SYNC_ERROR: push failed (rc=${push_rc}); ${stderr_text}"
+		return 1
+	fi
+
+	_run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" \
+		fetch -q "$REMOTE_NAME" "$target_branch" >/dev/null 2>&1 || true
+	log_info "COUNTER_BRANCH_SYNCED: ${REMOTE_NAME}/${target_branch} fast-forwarded to ${sync_target}"
+	printf 'COUNTER_BRANCH_SYNCED branch=%s value=%s\n' "$target_branch" "$sync_target"
+	return 0
+}
+
 # Prefer the conventional dedicated branch when neither CLI nor project config
 # selected a counter branch. The candidate is accepted only when its counter is
 # at least the default-branch counter and the TODO-derived seed, preventing an
