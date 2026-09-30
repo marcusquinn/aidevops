@@ -1527,9 +1527,9 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 - [ ] t18569 refactor: remove dead pattern-tracker callers and route rule-violation counts to observability #auto-dispatch #refactor tier:standard ref:GH#33144 logged:2026-09-30 -> [todo/tasks/t18569-brief.md]
 - [ ] t18570 refactor(models): retire contest and response-scoring chain, keep /cross-review, route model comparison to model-replay and model-ab #auto-dispatch #refactor tier:standard ref:GH#33145 logged:2026-09-30 -> [todo/tasks/t18570-brief.md]
 - [ ] t18571 feat(backup): archive issue and PR discussions to a same-repo orphan branch via pulse routine #auto-dispatch #feat tier:thinking ref:GH#33146 logged:2026-09-30 -> [todo/tasks/t18571-brief.md]
-- [ ] t18572 chore: retire Beads integration and todo-ready.sh after the issue archive lands #auto-dispatch #chore tier:standard blocked-by:GH#33146 ref:GH#33148 logged:2026-09-30 -> [todo/tasks/t18572-brief.md]
+- [ ] t18572 chore: retire Beads integration and todo-ready.sh after the issue archive lands #auto-dispatch #chore tier:standard blocked-by:t18571 ref:GH#33148 logged:2026-09-30 -> [todo/tasks/t18572-brief.md]
 - [ ] t18573 docs: trim textbook skills, fold minor branch-type docs, merge best-practices, retire mission-skill-learner #auto-dispatch #chore tier:standard ref:GH#33149 logged:2026-09-30 -> [todo/tasks/t18573-brief.md]
-- [ ] t18574 docs: re-sync and restructure Remotion and Cloudflare platform skills #auto-dispatch #chore tier:standard blocked-by:GH#33135 ref:GH#33150 logged:2026-09-30 -> [todo/tasks/t18574-brief.md]
+- [ ] t18574 docs: re-sync and restructure Remotion and Cloudflare platform skills #auto-dispatch #chore tier:standard blocked-by:t18563 ref:GH#33150 logged:2026-09-30 -> [todo/tasks/t18574-brief.md]
 
 - [x] t18555 fix(dispatch-dedup): merged-PR keyword check ignores issue reopen, permanently blocking reopened issues #auto-dispatch #bug ref:GH#33071 pr:#33080 completed:2026-09-29
 
