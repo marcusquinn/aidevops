@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.37.34] - 2026-09-30
+
+### Fixed
+
+- stop setup writing into third-party OPENCODE_CONFIG files
+- block headless worker commit-signing overrides
+- normalize signing/Git-auth env in Claude sandbox path (#33121)
+- route unverified post-PR handoff with durable PR to checkpoint
+- run headless signing probe in the sandboxed worker environment
+
 ## [3.37.33] - 2026-09-30
 
 ### Added
