@@ -95,6 +95,19 @@ _route_terminal_breaker_to_consolidation() {
 		return 1
 	fi
 
+	# Unlike the comment-count threshold for ordinary triage, a breaker only
+	# needs one real scope comment. An automation-only thread has nothing for
+	# a consolidation child to merge; keep the blocked escalation for review.
+	local comments_json="" substantive_json="" substantive_count=0
+	comments_json=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
+		--paginate --jq '.' 2>/dev/null) || return 1
+	substantive_json=$(_consolidation_filter_substantive_comments "$comments_json") || return 1
+	substantive_count=$(printf '%s' "$substantive_json" | jq -r 'length' 2>/dev/null) || return 1
+	if [[ "$substantive_count" -eq 0 ]]; then
+		echo "[pulse-wrapper] terminal breaker consolidation skipped: no substantive comments for #${issue_number} in ${repo_slug}" >>"$LOGFILE"
+		return 0
+	fi
+
 	echo "[pulse-wrapper] Routing terminal breaker to consolidation: #${issue_number} in ${repo_slug} source=${breaker_source} detail=${breaker_detail:-none}" >>"$LOGFILE"
 	if ! _dispatch_issue_consolidation "$issue_number" "$repo_slug" ""; then
 		echo "[pulse-wrapper] Terminal breaker consolidation failed for #${issue_number} in ${repo_slug} source=${breaker_source}" >>"$LOGFILE"
