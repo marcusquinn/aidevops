@@ -3,7 +3,6 @@
 
 # AI DevOps Framework - Full Dependency Lock File
 # Generated with pip freeze to ensure reproducible builds with exact versions
-# Contains all dependencies including transitive ones for DSPy integration
 # Use this file for production deployments to ensure version consistency
 
 aiohappyeyeballs==2.6.2
@@ -25,7 +24,6 @@ datasets==4.4.1
 dill==0.4.0
 diskcache==5.6.3
 distro==1.9.0
-dspy==3.1.0b1
 fastuuid==0.14.0
 filelock==3.29.4
 frozenlist==1.8.0
