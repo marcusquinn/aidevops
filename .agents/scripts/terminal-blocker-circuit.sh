@@ -33,6 +33,49 @@ def retry_after($event):
       ($retry | comment_id) > ($event | comment_id)));
 '
 
+# GH#33025 #aidevops:trust-boundary — hold evidence (observations, circuits,
+# blocked releases) may also come from this runner's own authenticated login
+# when GitHub reports it as a bare COLLABORATOR, e.g. a bot account on a
+# personal private repo. Otherwise its circuit never opens and identical
+# blockers redispatch forever. This only strengthens holds: other
+# collaborators stay ignored, and clearing a hold (retry) remains OWNER/MEMBER.
+# shellcheck disable=SC2016 # Shared jq definitions, not shell expansions.
+_TBC_HOLD_EVIDENCE_JQ='
+def authoritative_author($authoritative):
+  .author_association as $a | $authoritative | index($a) != null;
+def hold_evidence($authoritative; $self):
+  authoritative_author($authoritative)
+  or ($self != "" and (.author_association // "") == "COLLABORATOR"
+    and ((.author // .user.login // "") == $self));
+def hold_shaped:
+  (.body // "") | test("(?m)^CLAIM_RELEASED reason=blocked |aidevops:terminal-blocker-(observation|circuit) ");
+'
+
+# Callers set TERMINAL_BLOCKER_SELF_LOGIN to the login that posts this runner's
+# releases. Anything that is not a plain GitHub user login is ignored.
+_terminal_blocker_self_login() {
+	local login="${TERMINAL_BLOCKER_SELF_LOGIN:-}"
+	[[ "$login" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,37}[A-Za-z0-9])?$ ]] || login=""
+	printf '%s' "$login"
+	return 0
+}
+
+# Emit one stderr diagnostic when hold-shaped comments were dropped for trust
+# reasons, so an inert circuit is visible instead of silently retrying.
+_terminal_blocker_report_ignored_evidence() {
+	local comments_json="$1"
+	local self_login="" ignored=""
+	self_login=$(_terminal_blocker_self_login)
+	ignored=$(printf '%s' "$comments_json" | jq -r --arg self "$self_login" \
+		--argjson authoritative "$_TBC_AUTHORITATIVE_ASSOCIATIONS" "${_TBC_HOLD_EVIDENCE_JQ}"'
+		[.[]? | select(hold_shaped) | select(hold_evidence($authoritative; $self) | not)] | length
+	' 2>/dev/null) || ignored=0
+	[[ "$ignored" =~ ^[0-9]+$ && "$ignored" -gt 0 ]] || return 0
+	printf 'TERMINAL_BLOCKER_EVIDENCE_IGNORED count=%s reason=non_authoritative_author self_login=%s\n' \
+		"$ignored" "$([[ -n "$self_login" ]] && printf set || printf unset)" >&2
+	return 0
+}
+
 _terminal_blocker_retry_after() {
 	local retry="$1"
 	local event="$2"
@@ -220,11 +263,14 @@ terminal_blocker_fetch_trusted_comments() {
 _terminal_blocker_latest_marker() {
 	local comments_json="$1"
 	local marker="$2"
+	local self_login=""
+	self_login=$(_terminal_blocker_self_login)
 	# aidevops:trust-boundary — a deterministic marker is not a signature.
-	# The same authoritative actors must own both opening and clearing a hold.
-	printf '%s' "$comments_json" | jq -c --arg marker "$marker" \
-		--argjson authoritative "$_TBC_AUTHORITATIVE_ASSOCIATIONS" "${_TBC_ORDER_JQ}"'
-		[.[] | select(.author_association as $a | $authoritative | index($a) != null)
+	# OWNER/MEMBER (or this runner's own login, GH#33025) open holds; only
+	# OWNER/MEMBER retry directives clear them.
+	printf '%s' "$comments_json" | jq -c --arg marker "$marker" --arg self "$self_login" \
+		--argjson authoritative "$_TBC_AUTHORITATIVE_ASSOCIATIONS" "${_TBC_ORDER_JQ}${_TBC_HOLD_EVIDENCE_JQ}"'
+		[.[] | select(hold_evidence($authoritative; $self))
 		| select((.body // "") | contains($marker))]
 		| sort_by(.created_at, (comment_id // 9007199254740992), .body) | last // empty
 	' 2>/dev/null
@@ -262,6 +308,7 @@ terminal_blocker_release_mode() {
 	local task_revision="$2"
 	local blocker_fingerprint="$3"
 	local retry="" circuit="" observation="" circuit_at="" observation_at=""
+	_terminal_blocker_report_ignored_evidence "$comments_json"
 	retry=$(_terminal_blocker_latest_retry_comment "$comments_json") || retry=""
 	circuit=$(_terminal_blocker_latest_marker "$comments_json" "$_TBC_CIRCUIT_MARKER revision=${task_revision} blocker=${blocker_fingerprint}") || circuit=""
 	observation=$(_terminal_blocker_latest_marker "$comments_json" "$_TBC_OBSERVATION_MARKER revision=${task_revision} blocker=${blocker_fingerprint}") || observation=""
@@ -349,20 +396,23 @@ terminal_blocker_circuit_comment() {
 terminal_blocker_backoff_active() {
 	local comments_json="$1"
 	local now_epoch="${TERMINAL_BLOCKER_NOW_EPOCH:-}"
-	local evidence="" count=0 last_epoch=0 delay=900 steps=0
+	local evidence="" count=0 last_epoch=0 delay=900 steps=0 self_login=""
 	[[ "$now_epoch" =~ ^[0-9]+$ ]] || now_epoch=$(date -u '+%s')
+	self_login=$(_terminal_blocker_self_login)
 	# aidevops:trust-boundary — bare COLLABORATOR is not proof of write access.
-	# Accept only OWNER/MEMBER releases whose runner matches the API author.
-	# A retry must be a standalone directive, not quoted recovery instructions.
-	evidence=$(printf '%s' "$comments_json" | jq -r --argjson now "$now_epoch" \
-		--argjson associations "$_TBC_AUTHORITATIVE_ASSOCIATIONS" "${_TBC_ORDER_JQ}"'
-		def authoritative: .author_association as $a | $associations | index($a) != null;
+	# Accept OWNER/MEMBER releases, or this runner's own login (GH#33025), whose
+	# runner matches the API author. Only OWNER/MEMBER retries clear evidence;
+	# a retry must be a standalone directive, not quoted recovery instructions.
+	evidence=$(printf '%s' "$comments_json" | jq -r --argjson now "$now_epoch" --arg self "$self_login" \
+		--argjson associations "$_TBC_AUTHORITATIVE_ASSOCIATIONS" "${_TBC_ORDER_JQ}${_TBC_HOLD_EVIDENCE_JQ}"'
 		def epoch: try (.created_at | fromdateiso8601) catch 0;
-		[.[] | select(authoritative) | select(epoch > 0 and epoch <= $now)] as $trusted
-		| ([$trusted[] | select((.body // "") | test("(?m)^terminal-blocker-circuit:retry[ \\t]*\\r?$"))
+		[.[] | select(epoch > 0 and epoch <= $now)] as $timely
+		| ([$timely[] | select(authoritative_author($associations))
+			| select((.body // "") | test("(?m)^terminal-blocker-circuit:retry[ \\t]*\\r?$"))
 			| select((.body // "") | contains("aidevops:terminal-blocker-circuit") | not)]
 			| sort_by(.created_at, (comment_id // 0), .body) | last) as $retry
-		| [$trusted[] | . as $event | select(($retry | retry_after($event)) | not)
+		| [$timely[] | select(hold_evidence($associations; $self))
+			| . as $event | select(($retry | retry_after($event)) | not)
 			| . as $comment
 			| ((.body // "") | try capture("(?m)^CLAIM_RELEASED reason=blocked runner=(?<runner>[A-Za-z0-9-]+) ") catch null) as $release
 			| select($release != null and $release.runner == ($comment.author // $comment.user.login // ""))
@@ -391,6 +441,7 @@ terminal_blocker_circuit_active() {
 	local issue_number="$4"
 	local repo_path="$5"
 	local circuit="" retry="" current_revision="" fingerprint="" reason=""
+	_terminal_blocker_report_ignored_evidence "$comments_json"
 	if terminal_blocker_backoff_active "$comments_json"; then
 		return 0
 	fi

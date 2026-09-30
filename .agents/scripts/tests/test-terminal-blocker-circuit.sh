@@ -498,6 +498,97 @@ test_same_second_release_ordering() {
 	return 0
 }
 
+# GH#33025: a runner that GitHub reports as a bare COLLABORATOR (e.g. a bot
+# account on a personal private repo) must still see its own observations,
+# circuits and releases; otherwise every attempt posts a fresh observation and
+# identical blockers redispatch forever. Other collaborators stay untrusted and
+# only OWNER/MEMBER retries clear the hold.
+test_self_authored_collaborator_evidence() {
+	local status=0 fingerprint="" revision="" observation="" circuit="" comments="" changed="" diag=""
+	fingerprint=$(_terminal_blocker_hash 'v2:permission_required')
+	revision=$(terminal_blocker_task_revision '{}' owner/repo 42 '' permission_required) || status=1
+	observation="<!-- aidevops:terminal-blocker-observation revision=${revision} blocker=${fingerprint} -->"
+	circuit="<!-- aidevops:terminal-blocker-circuit revision=${revision} blocker=${fingerprint} -->"
+	comments=$(jq -nc --arg body "$observation" '[{id:20,body:$body,author:"runner-bot",author_association:"COLLABORATOR",created_at:"2026-09-06T12:00:00Z"}]')
+	[[ "$(terminal_blocker_release_mode "$comments" "$revision" "$fingerprint" 2>/dev/null)" == first ]] || status=1
+	[[ "$(TERMINAL_BLOCKER_SELF_LOGIN=runner-bot terminal_blocker_release_mode "$comments" "$revision" "$fingerprint")" == circuit ]] || status=1
+	[[ "$(TERMINAL_BLOCKER_SELF_LOGIN=other-bot terminal_blocker_release_mode "$comments" "$revision" "$fingerprint" 2>/dev/null)" == first ]] || status=1
+	# Only plain logins are accepted as self identities.
+	[[ "$(TERMINAL_BLOCKER_SELF_LOGIN='runner-bot"' terminal_blocker_release_mode "$comments" "$revision" "$fingerprint" 2>/dev/null)" == first ]] || status=1
+	comments=$(jq -nc --arg body "$circuit" '[{id:21,body:$body,author:"runner-bot",author_association:"COLLABORATOR",created_at:"2026-09-06T12:05:00Z"}]')
+	terminal_blocker_circuit_active "$comments" '{}' owner/repo 42 '' >/dev/null 2>&1 && status=1
+	TERMINAL_BLOCKER_SELF_LOGIN=runner-bot terminal_blocker_circuit_active "$comments" '{}' owner/repo 42 '' >/dev/null || status=1
+	# A different collaborator cannot open a hold by copying the marker.
+	changed=$(printf '%s' "$comments" | jq -c '.[0].author="other-collab"')
+	TERMINAL_BLOCKER_SELF_LOGIN=runner-bot terminal_blocker_circuit_active "$changed" '{}' owner/repo 42 '' >/dev/null 2>&1 && status=1
+	# Self or other collaborator retries cannot clear; OWNER/MEMBER retries can.
+	changed=$(printf '%s' "$comments" | jq -c '. + [{id:22,body:"terminal-blocker-circuit:retry",author:"runner-bot",author_association:"COLLABORATOR",created_at:"2026-09-06T12:10:00Z"}]')
+	TERMINAL_BLOCKER_SELF_LOGIN=runner-bot terminal_blocker_circuit_active "$changed" '{}' owner/repo 42 '' >/dev/null || status=1
+	changed=$(printf '%s' "$comments" | jq -c '. + [{id:22,body:"terminal-blocker-circuit:retry",author:"repo-owner",author_association:"OWNER",created_at:"2026-09-06T12:10:00Z"}]')
+	TERMINAL_BLOCKER_SELF_LOGIN=runner-bot terminal_blocker_circuit_active "$changed" '{}' owner/repo 42 '' >/dev/null && status=1
+	# Backoff counts self-authored releases only when runner= matches the author.
+	comments=$(jq -nc '[range(2) | {id:(30 + .),body:"CLAIM_RELEASED reason=blocked runner=runner-bot ts=ignored",author:"runner-bot",author_association:"COLLABORATOR",created_at:"2026-09-06T12:00:00Z"}]')
+	TERMINAL_BLOCKER_NOW_EPOCH=1788696001 terminal_blocker_backoff_active "$comments" >/dev/null && status=1
+	TERMINAL_BLOCKER_NOW_EPOCH=1788696001 TERMINAL_BLOCKER_SELF_LOGIN=runner-bot terminal_blocker_backoff_active "$comments" >/dev/null || status=1
+	changed=$(printf '%s' "$comments" | jq -c 'map(.author="other-collab")')
+	TERMINAL_BLOCKER_NOW_EPOCH=1788696001 TERMINAL_BLOCKER_SELF_LOGIN=runner-bot terminal_blocker_backoff_active "$changed" >/dev/null && status=1
+	# Dropped hold evidence is reported, never silently ignored.
+	diag=$(TERMINAL_BLOCKER_NOW_EPOCH=1788696001 terminal_blocker_circuit_active "$comments" '{}' owner/repo 42 '' 2>&1 >/dev/null) || true
+	[[ "$diag" == *'TERMINAL_BLOCKER_EVIDENCE_IGNORED count=2 reason=non_authoritative_author self_login=unset'* ]] || status=1
+	diag=$(TERMINAL_BLOCKER_NOW_EPOCH=1788696001 TERMINAL_BLOCKER_SELF_LOGIN=runner-bot terminal_blocker_circuit_active "$comments" '{}' owner/repo 42 '' 2>&1 >/dev/null) || true
+	[[ "$diag" != *'TERMINAL_BLOCKER_EVIDENCE_IGNORED'* ]] || status=1
+	print_result "collaborator runner recognises only its own hold evidence; OWNER/MEMBER retry still required" "$status"
+	return 0
+}
+
+# GH#33025 regression: repeated identical blockers from a collaborator runner
+# post one observation and one circuit instead of an observation per attempt.
+test_collaborator_runner_release_opens_circuit() {
+	local test_comments='[]' posted_count=0 status=1 last_body=""
+	terminal_blocker_fetch_trusted_comments() {
+		printf '%s\n' "$test_comments"
+		return 0
+	}
+	_hrff_release_repo_state_is_managed() { return 0; }
+	_hrff_resolve_release_runner_login() {
+		printf 'runner-bot\n'
+		return 0
+	}
+	clear_active_status_on_release() { return 0; }
+	_unlock_issue_after_dispatch_release() { return 0; }
+	gh() {
+		if [[ "$1" == "api" && "$2" == "repos/owner/repo/issues/42" ]]; then
+			printf '%s\n' '{"title":"Fix scope","body":"Files Scope: a.sh"}'
+			return 0
+		fi
+		return 1
+	}
+	_hrff_post_claim_released_comment() {
+		local body="$3"
+		posted_count=$((posted_count + 1))
+		last_body="$body"
+		test_comments=$(printf '%s' "$test_comments" | jq -c --arg body "$body" \
+			--arg created_at "2026-08-31T10:0${posted_count}:00Z" \
+			'. + [{body: $body, created_at: $created_at, author: "runner-bot", author_association: "COLLABORATOR"}]')
+		return 0
+	}
+	export DISPATCH_REPO_SLUG="owner/repo" WORKER_ISSUE_NUMBER=42
+	export AIDEVOPS_TERMINAL_BLOCKER_REPO_PATH="$TEST_ROOT"
+	AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT=$(_terminal_blocker_hash 'v2:permission_required')
+	export AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT
+	local attempt=0
+	for attempt in 1 2 3 4; do
+		_release_dispatch_claim "issue-42" "blocked" 2>/dev/null || true
+	done
+	if [[ "$posted_count" -eq 2 && "$last_body" == *"TERMINAL_BLOCKER_CIRCUIT active=true observations=2"* ]]; then
+		status=0
+	fi
+	print_result "collaborator runner opens one circuit for repeated identical blockers (attempt=${attempt}, posts=${posted_count})" "$status"
+	unset DISPATCH_REPO_SLUG WORKER_ISSUE_NUMBER AIDEVOPS_TERMINAL_BLOCKER_REPO_PATH \
+		AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT
+	return 0
+}
+
 test_blocked_backoff_cli() {
 	local result="" status=0
 	result=$(
@@ -516,6 +607,17 @@ test_blocked_backoff_cli() {
 		fetched=$(terminal_blocker_fetch_trusted_comments 42 owner/repo) || exit 1
 		[[ "$(printf '%s' "$fetched" | jq -c 'map(.id)')" == '[13,14,12]' ]] || exit 1
 		TERMINAL_BLOCKER_NOW_EPOCH=1788696001 bash "${SCRIPT_DIR}/dispatch-dedup-helper.sh" has-dispatch-comment 42 owner/repo runner
+	) || status=1
+	[[ "$result" == 'TERMINAL_BLOCKER_BACKOFF failures=2 retry_after=1788696900' ]] || status=1
+	# GH#33025: the dispatcher's own collaborator login flows through the CLI.
+	result=$(
+		gh() {
+			[[ "$1" == api && "$2" == 'repos/owner/repo/issues/42/comments?per_page=100' ]] || return 1
+			jq -nc '[[range(13;15) | {id:.,body:"CLAIM_RELEASED reason=blocked runner=runner-bot ts=ignored",user:{login:"runner-bot"},author_association:"COLLABORATOR",created_at:"2026-09-06T12:00:00Z"}]]'
+			return 0
+		}
+		export -f gh
+		TERMINAL_BLOCKER_NOW_EPOCH=1788696001 bash "${SCRIPT_DIR}/dispatch-dedup-helper.sh" has-dispatch-comment 42 owner/repo runner-bot 2>/dev/null
 	) || status=1
 	[[ "$result" == 'TERMINAL_BLOCKER_BACKOFF failures=2 retry_after=1788696900' ]] || status=1
 	print_result "production dispatch CLI preserves paginated API authors and blocks legacy repeated releases" "$status"
@@ -538,6 +640,8 @@ main() {
 	test_permission_blocker_continuation
 	test_permission_blocker_stays_in_generic_lifecycle
 	test_same_second_release_ordering
+	test_self_authored_collaborator_evidence
+	test_collaborator_runner_release_opens_circuit
 	test_blocked_backoff_cli
 	printf '\nTests run: %s failed: %s\n' "$TESTS_RUN" "$TESTS_FAILED"
 	[[ "$TESTS_FAILED" -eq 0 ]]

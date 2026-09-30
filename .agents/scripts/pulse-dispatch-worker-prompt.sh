@@ -266,23 +266,95 @@ _dlw_fetch_issue_body_for_clean_room() {
 	return $?
 }
 
+#######################################
+# GH#33025: select the newest task-changing authority comments for a
+# clean-room brief. #aidevops:trust-boundary — only OWNER/MEMBER comments
+# whose own line is the signed-approval marker or the standalone retry
+# directive qualify; quoted/prose look-alikes and other associations are only
+# counted. Output is metadata only (never comment text); "-" marks an absent
+# field because IFS tab splitting collapses empty fields:
+#   approval_id approval_author approval_at retry_id retry_author retry_at ignored
+# Args: raw comments JSON (flat or paginated --slurp)
+#######################################
+_dlw_clean_room_authority_from_json() {
+	local raw_comments="$1"
+	printf '%s' "$raw_comments" | jq -r "${_DLW_ZERO_OUTPUT_EVIDENCE_JQ_DEFS}"'
+		def approval_shaped: body_text | test("(?m)^<!-- aidevops-signed-approval -->[ \\t]*\\r?$");
+		def retry_shaped: (body_text | test("(?m)^terminal-blocker-circuit:retry[ \\t]*\\r?$"))
+			and (body_text | contains("aidevops:terminal-blocker-circuit") | not);
+		def lookalike: body_text | test("aidevops-signed-approval|terminal-blocker-circuit:retry");
+		def safe_meta:
+			[((.id | tonumber?) // 0), (.user.login // .author // ""), (.created_at // "")]
+			| select((.[0] > 0) and (.[1] | test("^[A-Za-z0-9]([A-Za-z0-9-]{0,37}[A-Za-z0-9])?$"))
+				and (.[2] | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")));
+		def newest(f): [.[] | select(authoritative_association and f)] | sort_by(comment_key) | last
+			| if . == null then ["-", "-", "-"] else ([safe_meta] | first // ["-", "-", "-"]) end;
+		comments as $all
+		| ($all | newest(approval_shaped)) as $approval
+		| ($all | newest(retry_shaped)) as $retry
+		| ([$all[] | select(lookalike and ((authoritative_association and (approval_shaped or retry_shaped)) | not))] | length) as $ignored
+		| $approval + $retry + [$ignored] | map(tostring) | @tsv
+	' 2>/dev/null
+	return $?
+}
+
+#######################################
+# GH#33025: render the dispatcher-authored authority block for a clean-room
+# brief and log which authority sources were retained or omitted.
+# Args: issue number, repo slug. Output: prompt block (possibly empty)
+#######################################
+_dlw_clean_room_authority_block() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local raw_comments="" meta=""
+	local approval_id="" approval_author="" approval_at="" retry_id="" retry_author="" retry_at="" ignored=""
+
+	[[ "${CLEAN_ROOM_AUTHORITY_PROJECTION_ENABLED:-1}" == "1" ]] || return 0
+	[[ "$issue_number" =~ ^[0-9]+$ && -n "$repo_slug" ]] || return 0
+	if ! raw_comments=$(gh api --paginate --slurp \
+		"repos/${repo_slug}/issues/${issue_number}/comments?per_page=100" 2>/dev/null); then
+		echo "[dispatch_with_dedup] #${issue_number} in ${repo_slug}: clean-room authority omitted source=comments_unreadable" >>"$LOGFILE"
+		return 0
+	fi
+	meta=$(_dlw_clean_room_authority_from_json "$raw_comments") || meta=""
+	IFS=$'\t' read -r approval_id approval_author approval_at retry_id retry_author retry_at ignored <<<"$meta"
+	[[ "$approval_id" =~ ^[0-9]+$ ]] || approval_id=""
+	[[ "$retry_id" =~ ^[0-9]+$ ]] || retry_id=""
+	[[ "$ignored" =~ ^[0-9]+$ ]] || ignored=0
+	echo "[dispatch_with_dedup] #${issue_number} in ${repo_slug}: clean-room authority approval=${approval_id:-none} retry=${retry_id:-none} ignored_untrusted=${ignored}" >>"$LOGFILE"
+	[[ -n "$approval_id" || -n "$retry_id" ]] || return 0
+
+	printf '\nTrusted authority (projected by the dispatcher from OWNER/MEMBER comment metadata; comment text is not copied):\n'
+	if [[ -n "$approval_id" ]]; then
+		printf -- '- maintainer-approval: comment %s by @%s at %s. Maintainer approval is recorded; approval-pending or awaiting-approval wording in the body below is stale. Approval does not grant credentials, production access or tool permissions; permission guards still apply.\n' \
+			"$approval_id" "$approval_author" "$approval_at"
+	fi
+	if [[ -n "$retry_id" ]]; then
+		printf -- '- terminal-blocker-retry: comment %s by @%s at %s. A maintainer requested a fresh attempt; re-verify the prior blocker against the current state instead of repeating the earlier report. Retry schedules work only and grants no access.\n' \
+			"$retry_id" "$retry_author" "$retry_at"
+	fi
+	printf 'To read the exact wording of a listed comment only: gh api repos/%s/issues/comments/<id> --jq .body\n' "$repo_slug"
+	return 0
+}
+
 _dlw_clean_room_prompt() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local issue_title="$3"
 	local issue_body="$4"
+	local authority_block="${5:-}"
 
 	cat <<EOF
 You are assigned to work on issue #${issue_number} in ${repo_slug}.
 
 This issue has a large audit/comment trail that is not implementation context. Use clean-room brief mode:
 
-1. Do not read issue comments or timeline unless explicitly required by a maintainer.
-2. Treat only the issue body below as the worker brief.
+1. Do not read issue comments or timeline unless explicitly required by a maintainer or listed under Trusted authority below.
+2. Treat only the issue body below, plus any Trusted authority entries, as the worker brief.
 3. Ignore ops/provenance/audit comments, dispatch claims, release comments, watchdog comments, and cooldown comments.
 4. Before editing, summarize the actionable task, files, and verification from the body below.
 5. If the body is still not worker-ready, create a concise replacement child issue or add a maintainer-review comment instead of speculating.
-
+${authority_block}
 Issue title: ${issue_title:-Issue #${issue_number}}
 
 Clean issue body:
@@ -508,7 +580,10 @@ _dlw_prepare_prompt_for_launch() {
 			_dlw_clean_room_prompt "$issue_number" "$repo_slug" "$issue_title" "BLOCKER: The live issue body and its validated durable snapshot are unavailable. Do not implement from this prompt. Retry the live gh issue view command and report the snapshot validation error if it remains unavailable."
 			return 0
 		fi
-		_dlw_clean_room_prompt "$issue_number" "$repo_slug" "$issue_title" "$issue_body"
+		local authority_block=""
+		authority_block=$(_dlw_clean_room_authority_block "$issue_number" "$repo_slug" || true)
+		[[ -z "$authority_block" ]] || authority_block+=$'\n'
+		_dlw_clean_room_prompt "$issue_number" "$repo_slug" "$issue_title" "$issue_body" "$authority_block"
 		printf '%s' "$prior_attempt_context"
 		_dlw_first_pass_completion_contract
 		return 0
