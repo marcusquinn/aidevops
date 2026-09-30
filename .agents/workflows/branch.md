@@ -34,7 +34,7 @@ tools:
 | Version release | `release/` | `branch/release.md` |
 
 - Worktree refs: `{type}/{short-description}` — lowercase, hyphenated, ~50 chars max. Examples: `feature/user-dashboard`, `bugfix/123-login-timeout`; releases use semver (`release/1.2.0`).
-- Planning tasks: move to `## In Progress`, add `started:<ISO>`, then `beads-sync-helper.sh push`.
+- Planning tasks: move to `## In Progress` and add `started:<ISO>`.
 
 <!-- AI-CONTEXT-END -->
 

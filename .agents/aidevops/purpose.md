@@ -34,7 +34,7 @@ guaranteed or measured result.
 
 ## Ownership and continuity
 
-Tasks, TODOs/Beads, plans, material decisions, evidence, and progress belong in
+Tasks, TODOs, plans, material decisions, evidence, and progress belong in
 durable repository knowledge. GitHub, GitLab, Gitea, and Forgejo provide
 portable execution conversations; they must not be the only record of plans or
 progress. This is the intended ownership contract, not a claim that every

@@ -10,8 +10,7 @@ Project task tracking with time estimates, dependencies, and TOON-enhanced parsi
 
 Compatible with [todo-md](https://github.com/todo-md/todo-md),
 [todomd](https://github.com/todomd/todo.md),
-[taskell](https://github.com/smallhadroncollider/taskell), and
-[Beads](https://github.com/steveyegge/beads).
+[taskell](https://github.com/smallhadroncollider/taskell).
 
 ## Format
 

@@ -88,7 +88,7 @@ export const DOMAIN_AGENTS: Record<string, string[]> = {
     "tools/git/github-cli.md",
     "tools/git/conflict-resolution.md",
   ],
-  planning: ["workflows/plans.md", "tools/task-management/beads.md"],
+  planning: ["workflows/plans.md"],
   code: [
     "tools/code-review/code-standards.md",
     "tools/code-review/code-simplifier.md",
