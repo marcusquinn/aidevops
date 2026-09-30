@@ -10,6 +10,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.37.33] - 2026-09-30
+
+### Added
+
+- keep locked issue approvals valid across write-authorized title/body edits (GH#33097) (#33107)
+- numbered y/n and a/b/c asks in What next block
+
+### Changed
+
+- Maintenance: sync ref:GH#33108 to TODO.md (#33104)
+- Tests: align knowledge review assertions with promotion flow (GH#33092) (#33093)
+- plan: add t18560 label-maintenance stalest-first ordering with worker-ready brief
+- Maintenance: mark t18554 complete (pr:#33081 completed:2026-09-29) (#33079)
+
+### Fixed
+
+- label pulse supervisor state distinctly from active workers
+- omit no-op answers from optional What next asks
+- accept parent:GH#NNN and warn on publication parse failure (#33112)
+- skip verification for zero-row OpenCode DB consumers
+- rotate label maintenance by completion age (#33099)
+- look up tag-push publish run by exact head_sha; skip recovery when channels published (GH#33073) (#33098)
+- fixed What next labels; Close is a recommendation, never an ask
+- What next asks only for what AI cannot do; options on own line
+- unshallow the release control worktree before lane reservation (#33081)
+
 ## [3.37.32] - 2026-09-29
 
 ### Changed
