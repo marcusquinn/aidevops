@@ -99,6 +99,46 @@ _REL_OUTCOME_FAILED_RESOLUTION="failed:resolution"
 _REL_OUTCOME_FAILED_UNKNOWN="failed:unknown"
 _REL_OUTCOME_DEFERRED_DEADLINE="deferred:deadline"
 
+# The three helpers below share cmd_relationships' command-local variables via
+# Bash dynamic scope, so they stay in the same file as cmd_relationships.
+_relationship_restore_suppressed_tasks() {
+	suppressed_tasks=("${_RELATIONSHIP_RESUME_SUPPRESSED_TASKS[@]}")
+	return 0
+}
+
+_relationship_suppress_failed_task() {
+	local task_id="$1"
+	if [[ -f "${_RELATIONSHIP_DIAGNOSTIC_FILE:-}" ]] && \
+		grep -q "^task=${task_id} " "$_RELATIONSHIP_DIAGNOSTIC_FILE"; then
+		suppressed_tasks+=("$task_id")
+	fi
+	return 0
+}
+
+#######################################
+# Persist and report a completed bulk relationship pass. Bash dynamic scope
+# supplies the command-local timing, workset, and pending-task variables while
+# keeping cmd_relationships focused on orchestration.
+#######################################
+_relationship_finalize_command() {
+	[[ $total -gt 25 ]] && printf "\n" >&2
+	mutation_finished=$(date +%s 2>/dev/null || printf '%s' "$mutation_started")
+	backend_calls=$(_relationship_backend_call_count)
+	_RELATIONSHIP_RESUME_SUPPRESSED_TASKS=("${suppressed_tasks[@]}")
+	if [[ -z "$target_task" ]]; then
+		if [[ ${#pending_tasks[@]} -gt 0 || ${#_RELATIONSHIP_RESUME_SUPPRESSED_TASKS[@]} -gt 0 ]]; then
+			_relationship_write_resume_state "$_RELATIONSHIP_STATE_FILE" "$_RELATIONSHIP_INPUT_REVISION" "${pending_tasks[@]}" || \
+				print_warning "Relationship progress could not be persisted; the next run will restart safely"
+		else
+			rm -f "$_RELATIONSHIP_STATE_FILE"
+		fi
+	fi
+	_relationship_print_summary "$attempted" "$complete" "$pending_before" "$retryable_total" "$deadline_exhausted" \
+		"$candidate_total" "${#pending_tasks[@]}" "$_RELATIONSHIP_RESUME_STATUS" \
+		"$((parse_finished - parse_started))" "$((mutation_finished - mutation_started))" "$backend_calls"
+	return 0
+}
+
 # Bulk relationship sync command.
 # Scans TODO.md for tasks with relationship metadata or subtask patterns,
 # resolves to GitHub node IDs, and sets relationships via GraphQL.

@@ -127,6 +127,7 @@ _gh_add_blocked_by() {
 	esac
 	# GitHub exposes rateLimit on Query, not Mutation. This fixed mutation has
 	# no connections and consumes one GraphQL point, accounted at transport.
+	# shellcheck disable=SC2016  # GraphQL $variables are literal query syntax
 	result=$(AIDEVOPS_GH_QUOTA_COST=1 \
 		AIDEVOPS_GH_ROUTE_DECISION="issue-sync-add-blocked-by-exact-cost" \
 		_relationship_run_timed mutation _gh_with_timeout write gh api graphql -f query='
@@ -164,6 +165,7 @@ _gh_remove_blocked_by() {
 		1) return 0 ;;
 		2) return 1 ;;
 	esac
+	# shellcheck disable=SC2016  # GraphQL $variables are literal query syntax
 	result=$(AIDEVOPS_GH_QUOTA_COST=1 \
 		AIDEVOPS_GH_ROUTE_DECISION="issue-sync-remove-blocked-by-exact-cost" \
 		_gh_with_timeout write gh api graphql -f query='
@@ -483,6 +485,7 @@ _gh_add_sub_issue() {
 			return 1
 			;;
 	esac
+	# shellcheck disable=SC2016  # GraphQL $variables are literal query syntax
 	result=$(AIDEVOPS_GH_QUOTA_COST=1 \
 		AIDEVOPS_GH_ROUTE_DECISION="issue-sync-add-sub-issue-exact-cost" \
 		_gh_with_timeout write gh api graphql -f query='
