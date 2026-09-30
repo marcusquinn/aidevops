@@ -242,6 +242,8 @@ Verify it posted: `gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" --jq '[.[
 
 **4.4 Review Bot Gate (t1382 + GH#17541 — CODE-ENFORCED for maintained merges):**
 
+Passing checks on a draft PR are not review evidence: review bots may skip drafts while reporting a passing status; mark the PR ready and wait for review evidence before merging.
+
 ```bash
 full-loop-helper.sh merge "$PR_NUMBER" "$REPO"
 ```
