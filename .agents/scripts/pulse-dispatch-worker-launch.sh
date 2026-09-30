@@ -793,10 +793,58 @@ _dlw_claim_unowned_reused_worktree() {
 	return 0
 }
 
+DLW_LIVE_OWNER_REFUSED_REASON="worktree_live_owner_refused"
+
+# GH#33026: identify the live owner that refused a reused-worktree claim.
+# An identity-verified live owner is a stable state, not an infrastructure
+# fault, so it gets its own reason and an owner-generation key that dispatch
+# can hold on. Read-only: never removes, resets or takes over the owner row.
+_dlw_capture_live_owner_refusal() {
+	local worktree_path="$1"
+	declare -F check_worktree_owner_snapshot >/dev/null 2>&1 || return 1
+	declare -F _wt_process_start_token_for_pid >/dev/null 2>&1 || return 1
+
+	local owner_info="" owner_pid="" owner_session="" owner_batch="" owner_task="" owner_created_at="" owner_process_start=""
+	owner_info=$(check_worktree_owner_snapshot "$worktree_path" 2>/dev/null) || return 1
+	IFS='|' read -r owner_pid owner_session owner_batch owner_task owner_created_at owner_process_start <<<"$owner_info"
+	[[ "$owner_pid" =~ ^[1-9][0-9]*$ && "$owner_pid" != "$$" ]] || return 1
+
+	local live_start=""
+	live_start=$(_wt_process_start_token_for_pid "$owner_pid" 2>/dev/null) || return 1
+	# A recorded generation that differs from the live process means PID reuse:
+	# that is not a stable live owner, so keep the generic failure path.
+	[[ -z "$owner_process_start" || "$owner_process_start" == "$live_start" ]] || return 1
+
+	_DLW_PRECREATE_FAILURE_REASON="$DLW_LIVE_OWNER_REFUSED_REASON"
+	_DLW_REFUSING_OWNER_PID="$owner_pid"
+	_DLW_REFUSING_OWNER_START="${live_start//[^A-Za-z0-9_.:-]/_}"
+	return 0
+}
+
+# Classify a failed pre-creation. Only the live-owner refusal is keyed for a
+# cross-cycle hold; SQLite and worktree-helper faults stay generic.
+_dlw_report_precreate_failure() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	if [[ "${_DLW_PRECREATE_FAILURE_REASON:-}" == "$DLW_LIVE_OWNER_REFUSED_REASON" ]]; then
+		pulse_stats_increment "worktree_live_owner_refused_count" 2>/dev/null || true
+		echo "[dispatch_with_dedup] WORKTREE_LIVE_OWNER_REFUSED issue=#${issue_number} repo=${repo_slug} owner_pid=${_DLW_REFUSING_OWNER_PID} owner_start=${_DLW_REFUSING_OWNER_START} action=hold_until_owner_exits_or_changes worktree=${_DLW_WORKTREE_PATH}" >>"$LOGFILE"
+		_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "$DLW_LIVE_OWNER_REFUSED_REASON" 2
+		return $?
+	fi
+	pulse_stats_increment "worktree_precreation_failed_count" 2>/dev/null || true
+	echo "[dispatch_with_dedup] Skipping #${issue_number} — pre-creation failed; will retry next cycle" >>"$LOGFILE"
+	_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "worktree_precreation_failed" 2
+	return $?
+}
+
 _dlw_reset_precreated_worktree_state() {
 	_DLW_WORKTREE_PATH=""
 	_DLW_WORKTREE_BRANCH=""
 	_DLW_WORKTREE_REUSED=0
+	_DLW_PRECREATE_FAILURE_REASON=""
+	_DLW_REFUSING_OWNER_PID=""
+	_DLW_REFUSING_OWNER_START=""
 	_DLW_WORKTREE_TRANSFER_MODE=""
 	_DLW_WORKTREE_EXPECTED_OWNER_PID=""
 	_DLW_WORKTREE_EXPECTED_OWNER_SESSION=""
@@ -844,6 +892,7 @@ _dlw_precreate_worktree() {
 		if _dlw_capture_reused_worktree_owner "$issue_number" "$_DLW_WORKTREE_PATH"; then
 			_has_continuation_owner=1
 		elif ! _dlw_claim_unowned_reused_worktree "$issue_number" "$_DLW_WORKTREE_PATH" "$_DLW_WORKTREE_BRANCH"; then
+			_dlw_capture_live_owner_refusal "$_DLW_WORKTREE_PATH" || true
 			return 1
 		fi
 		_dlw_prepare_existing_worktree "$_existing_path" "$repo_path" "$_has_continuation_owner"
@@ -1768,9 +1817,7 @@ _dispatch_launch_worker() {
 	_ds_t0=$(_ds_now_ns)
 	if ! _dlw_precreate_worktree "$issue_number" "$repo_path"; then
 		_ds_record "$issue_number" "$repo_slug" "precreate_worktree" "$_ds_t0"
-		pulse_stats_increment "worktree_precreation_failed_count" 2>/dev/null || true
-		echo "[dispatch_with_dedup] Skipping #${issue_number} — pre-creation failed; will retry next cycle" >>"$LOGFILE"
-		_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "worktree_precreation_failed" 2 || return $?
+		_dlw_report_precreate_failure "$issue_number" "$repo_slug" || return $?
 	fi
 	_ds_record "$issue_number" "$repo_slug" "precreate_worktree" "$_ds_t0"
 	local worker_worktree_path="$_DLW_WORKTREE_PATH" worker_worktree_branch="$_DLW_WORKTREE_BRANCH" worker_worktree_reused="${_DLW_WORKTREE_REUSED:-0}"

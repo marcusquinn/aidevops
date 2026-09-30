@@ -280,6 +280,82 @@ else
 	print_result "available unassigned claim does not write an unusable hint" 1
 fi
 
+# GH#33026: a live worktree-owner refusal holds the issue across the refused
+# attempt's own claim-comment updatedAt bump, only while that owner generation
+# is alive and still owns the recorded worktree. The owner row is never touched.
+LIVE_OWNER_TOKEN="Wed Sep 30 10:00:00 2026"
+REGISTRY_OWNER_PID=4242
+held_worktree="${TEST_ROOT}/wt/owned gh33026"
+_wt_process_start_token_for_pid() {
+	[[ "$1" == 4242 && -n "$LIVE_OWNER_TOKEN" ]] || return 1
+	printf '%s' "$LIVE_OWNER_TOKEN"
+	return 0
+}
+check_worktree_owner_snapshot() {
+	[[ "$1" == "$held_worktree" && -n "$REGISTRY_OWNER_PID" ]] || return 1
+	printf '%s|worker-session||t1|2026-09-29T00:00:00Z|token\n' "$REGISTRY_OWNER_PID"
+	return 0
+}
+held_candidate='{"number":33026,"repo_slug":"owner/repo","updatedAt":"2026-09-29T12:01:00Z","assignees":[],"labels":["status:available","solved:worker"]}'
+held_bumped="${held_candidate/12:01:00/12:05:00}"
+: >"$LOGFILE"
+printf '%s\n' '[pulse-wrapper] DISPATCH_CANDIDATE_ATTEMPT #33026 (owner/repo)' \
+	"[dispatch_with_dedup] WORKTREE_LIVE_OWNER_REFUSED issue=#33026 repo=owner/repo owner_pid=4242 owner_start=Wed_Sep_30_10:00:00_2026 action=hold_until_owner_exits_or_changes worktree=${held_worktree}" \
+	>>"$LOGFILE"
+_DISPATCH_CANDIDATE_ELIGIBILITY=""
+_dispatch_cache_confirmed_block "$held_candidate" 33026 owner/repo
+if [[ "$(_dispatch_negative_cache_reason "$held_bumped")" == worktree_live_owner_refused ]] &&
+	_dispatch_prefilter_owned_candidate "$held_bumped" 33026 owner/repo &&
+	grep -q 'cross-cycle ownership block:worktree_live_owner_refused' "$LOGFILE"; then
+	print_result "unchanged live owner refusal holds an available issue across the claim bump" 0
+else
+	print_result "unchanged live owner refusal holds an available issue across the claim bump" 1
+fi
+if [[ "$(grep -c 'is OPEN with solved:worker while a live owner holds its worktree' "$LOGFILE")" == 1 ]] &&
+	! grep -qi 'close' <<<"$(grep -v 'solved:worker' "$LOGFILE")"; then
+	print_result "solved:worker inconsistency is one diagnostic line, never a close" 0
+else
+	print_result "solved:worker inconsistency is one diagnostic line, never a close" 1
+fi
+LIVE_OWNER_TOKEN=""
+if ! _dispatch_negative_cache_reason "$held_bumped" >/dev/null; then
+	print_result "owner exit re-enables dispatch" 0
+else
+	print_result "owner exit re-enables dispatch" 1
+fi
+LIVE_OWNER_TOKEN="Wed Sep 30 11:00:00 2026"
+if ! _dispatch_negative_cache_reason "$held_bumped" >/dev/null; then
+	print_result "reused PID with a new process generation re-enables dispatch" 0
+else
+	print_result "reused PID with a new process generation re-enables dispatch" 1
+fi
+LIVE_OWNER_TOKEN="Wed Sep 30 10:00:00 2026"
+REGISTRY_OWNER_PID=5555
+if ! _dispatch_negative_cache_reason "$held_bumped" >/dev/null; then
+	print_result "ownership handover re-enables dispatch" 0
+else
+	print_result "ownership handover re-enables dispatch" 1
+fi
+REGISTRY_OWNER_PID=4242
+unrelated_candidate='{"number":33027,"repo_slug":"owner/repo","updatedAt":"2026-09-29T12:01:00Z","assignees":[],"labels":["status:available"]}'
+if ! _dispatch_negative_cache_reason "$unrelated_candidate" >/dev/null &&
+	[[ "$(_dispatch_negative_cache_reason "$held_bumped")" == worktree_live_owner_refused ]]; then
+	print_result "unrelated candidate is not held by another issue's live owner" 0
+else
+	print_result "unrelated candidate is not held by another issue's live owner" 1
+fi
+: >"$LOGFILE"
+rm -f "${HOME}/.aidevops/logs/dispatch-negative-cache/owner--repo--33026"
+printf '%s\n' '[pulse-wrapper] DISPATCH_CANDIDATE_ATTEMPT #33026 (owner/repo)' \
+	'[dispatch_with_dedup] PRE_RUNTIME_FAILURE issue=33026 repo=owner/repo reason=worktree_precreation_failed #33026 (owner/repo)' \
+	>>"$LOGFILE"
+_dispatch_cache_confirmed_block "$held_candidate" 33026 owner/repo
+if [[ ! -f "${HOME}/.aidevops/logs/dispatch-negative-cache/owner--repo--33026" ]]; then
+	print_result "generic precreation failures stay uncached" 0
+else
+	print_result "generic precreation failures stay uncached" 1
+fi
+
 if [[ "$TESTS_FAILED" -eq 0 ]]; then
 	printf 'All %d tests passed\n' "$TESTS_RUN"
 	exit 0

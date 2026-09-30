@@ -130,9 +130,50 @@ _dispatch_negative_pr_fingerprint() {
 	return $?
 }
 
+_DISPATCH_LIVE_OWNER_HOLD_REASON="worktree_live_owner_refused"
+
+# GH#33026: a live-owner hold is valid only while the exact refusing process
+# generation is alive and still owns the recorded worktree. Owner exit, PID
+# reuse or ownership handover invalidates it at once; missing helpers fail open.
+_dispatch_live_owner_hold_valid() {
+	local owner_pid="$1" owner_start="$2" worktree_path="$3" live_start="" owner_info="" registry_pid=""
+	[[ "$owner_pid" =~ ^[1-9][0-9]*$ && -n "$owner_start" && -n "$worktree_path" ]] || return 1
+	declare -F _wt_process_start_token_for_pid >/dev/null 2>&1 || return 1
+	declare -F check_worktree_owner_snapshot >/dev/null 2>&1 || return 1
+	live_start=$(_wt_process_start_token_for_pid "$owner_pid" 2>/dev/null) || return 1
+	[[ "${live_start//[^A-Za-z0-9_.:-]/_}" == "$owner_start" ]] || return 1
+	owner_info=$(check_worktree_owner_snapshot "$worktree_path" 2>/dev/null) || return 1
+	registry_pid="${owner_info%%|*}"
+	[[ "$registry_pid" == "$owner_pid" ]] || return 1
+	return 0
+}
+
+# Parse the latest structured refusal from one candidate's recent log lines.
+# Output: pid<TAB>start<TAB>worktree
+_dispatch_live_owner_refusal_fields() {
+	local lines="$1" line="" found=""
+	local pattern='WORKTREE_LIVE_OWNER_REFUSED issue=#[0-9]+ repo=[^[:space:]]+ owner_pid=([1-9][0-9]*) owner_start=([A-Za-z0-9_.:-]+) action=[a-z_]+ worktree=(.+)$'
+	while IFS= read -r line; do
+		if [[ "$line" =~ $pattern ]]; then
+			found="${BASH_REMATCH[1]}"$'\t'"${BASH_REMATCH[2]}"$'\t'"${BASH_REMATCH[3]}"
+		fi
+	done <<<"$lines"
+	[[ -n "$found" ]] || return 1
+	printf '%s\n' "$found"
+	return 0
+}
+
 _dispatch_negative_cache_record() {
-	local candidate="$1" reason="$2" pr="${3:-}" fields="" issue="" repo="" updated="" file="" tmp="" fingerprint=""
-	case "$reason" in dedup_active_claim | dedup_active_claim_live_owner | dedup_active_claim_durable_launch | worker_draft_checkpoint_blocked | terminal_blocker_circuit) ;; *) return 0 ;; esac
+	local candidate="$1" reason="$2" pr="${3:-}" fingerprint="${4:-}" owner_path="${5:-}"
+	local fields="" issue="" repo="" updated="" file="" tmp=""
+	case "$reason" in dedup_active_claim | dedup_active_claim_live_owner | dedup_active_claim_durable_launch | worker_draft_checkpoint_blocked | terminal_blocker_circuit | "$_DISPATCH_LIVE_OWNER_HOLD_REASON") ;; *) return 0 ;; esac
+	if [[ "$reason" == "$_DISPATCH_LIVE_OWNER_HOLD_REASON" ]]; then
+		[[ "$pr" =~ ^[1-9][0-9]*$ && "$fingerprint" =~ ^[A-Za-z0-9_.:-]+$ && -n "$owner_path" ]] || return 0
+		[[ "$owner_path" != *$'\t'* && "$owner_path" != *$'\n'* ]] || return 0
+	else
+		owner_path=""
+		fingerprint=""
+	fi
 	fields=$(jq -r '[(.number // ""), (.repo_slug // ""), (.updatedAt // "")] | @tsv' <<<"$candidate") || return 0
 	IFS=$'\t' read -r issue repo updated <<<"$fields"
 	[[ "$updated" =~ ^[0-9TZ:.-]+$ ]] || return 0
@@ -149,7 +190,7 @@ _dispatch_negative_cache_record() {
 	mkdir -p "${file%/*}" 2>/dev/null || return 0
 	tmp=$(mktemp "${file}.XXXXXX") || return 0
 	chmod 600 "$tmp" 2>/dev/null || { rm -f "$tmp"; return 0; }
-	if printf '%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$updated" "$reason" "$pr" "$fingerprint" >"$tmp"; then
+	if printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$updated" "$reason" "$pr" "$fingerprint" "$owner_path" >"$tmp"; then
 		mv -f "$tmp" "$file" || rm -f "$tmp"
 	else
 		rm -f "$tmp"
@@ -158,16 +199,20 @@ _dispatch_negative_cache_record() {
 }
 
 _dispatch_negative_cache_reason() {
-	local candidate="$1" fields="" issue="" repo="" updated="" file="" stamp="" cached="" reason="" now="" pr="" fingerprint="" current=""
+	local candidate="$1" fields="" issue="" repo="" updated="" file="" stamp="" cached="" reason="" now="" pr="" fingerprint="" current="" owner_path=""
 	local ttl="$_DISPATCH_NEGATIVE_CACHE_TTL_SECONDS"
 	fields=$(jq -r '[(.number // ""), (.repo_slug // ""), (.updatedAt // "")] | @tsv' <<<"$candidate") || return 1
 	IFS=$'\t' read -r issue repo updated <<<"$fields"
 	[[ "$updated" =~ ^[0-9TZ:.-]+$ ]] || return 1
 	file=$(_dispatch_negative_cache_path "$issue" "$repo") || return 1
 	[[ -f "$file" && ! -L "$file" ]] || return 1
-	IFS=$'\t' read -r stamp cached reason pr fingerprint <"$file" || return 1
-	[[ "$stamp" =~ ^[0-9]+$ && "$cached" == "$updated" ]] || return 1
-	if [[ "$reason" != terminal_blocker_circuit && "$reason" != worker_draft_checkpoint_blocked ]]; then
+	IFS=$'\t' read -r stamp cached reason pr fingerprint owner_path <"$file" || return 1
+	[[ "$stamp" =~ ^[0-9]+$ ]] || return 1
+	# The refused attempt's own claim comment bumps updatedAt, so a live-owner
+	# hold is keyed to the owner generation rather than the issue revision.
+	[[ "$cached" == "$updated" || "$reason" == "$_DISPATCH_LIVE_OWNER_HOLD_REASON" ]] || return 1
+	if [[ "$reason" != terminal_blocker_circuit && "$reason" != worker_draft_checkpoint_blocked &&
+		"$reason" != "$_DISPATCH_LIVE_OWNER_HOLD_REASON" ]]; then
 		# Ownership hints: the snapshot must independently still show a claimed
 		# owner. The worker-draft exception uses a complete, bounded-age PR
 		# snapshot and exact fingerprint instead; neither path permits a launch.
@@ -188,6 +233,9 @@ _dispatch_negative_cache_reason() {
 		[[ -n "$fingerprint" ]] || return 1
 		current=$(_dispatch_negative_pr_fingerprint "$repo" "$pr") || return 1
 		[[ "$current" == "$fingerprint" ]] || return 1
+		;;
+	"$_DISPATCH_LIVE_OWNER_HOLD_REASON")
+		_dispatch_live_owner_hold_valid "$pr" "$fingerprint" "$owner_path" || return 1
 		;;
 	*) return 1 ;;
 	esac
@@ -226,6 +274,18 @@ _dispatch_cache_confirmed_block() {
 		"$lines" =~ WORKER_DRAFT_CHECKPOINT:[[:space:]]draft[[:space:]]PR[[:space:]]#([0-9]+) ]]; then
 		pr="${BASH_REMATCH[1]}"
 		_dispatch_negative_cache_record "$candidate" worker_draft_checkpoint_blocked "$pr"
+		return 0
+	fi
+	# GH#33026: a live worktree owner refused this issue's claim. Hold until that
+	# exact owner generation exits or hands over; never touch the owner row.
+	local refusal="" owner_pid="" owner_start="" owner_path=""
+	if refusal=$(_dispatch_live_owner_refusal_fields "$lines"); then
+		IFS=$'\t' read -r owner_pid owner_start owner_path <<<"$refusal"
+		_dispatch_negative_cache_record "$candidate" "$_DISPATCH_LIVE_OWNER_HOLD_REASON" "$owner_pid" "$owner_start" "$owner_path"
+		if jq -e '[.labels[]? | .name? // .] | index("solved:worker") != null' <<<"$candidate" >/dev/null 2>&1; then
+			# Diagnostic only: a merged worker PR does not prove completion.
+			echo "[pulse-wrapper] Dispatch_max: #${issue} (${repo}) is OPEN with solved:worker while a live owner holds its worktree; verify remaining acceptance criteria before closing (no automatic close)" >>"$LOGFILE"
+		fi
 		return 0
 	fi
 	[[ "${_DISPATCH_CANDIDATE_ELIGIBILITY:-}" == "$_DISPATCH_ELIGIBILITY_INELIGIBLE" ]] || return 0
