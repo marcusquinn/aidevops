@@ -330,9 +330,12 @@ _launch_rate_limit_fast_monitor() {
 # caller's PWD. Empty work_dir is allowed (no-op cd) for callers that
 # legitimately want to inherit the current cwd.
 #
-# Kept in sync with _invoke_claude in headless-runtime-helper.sh; both
-# definitions exist because this file is sourced separately by some entry
-# points and we want either path to behave identically.
+# GH#33117: the sandboxed path normalizes the process-scoped signing and
+# repository-bound Git-auth environment exactly like
+# _invoke_opencode_run_sandboxed (headless-runtime-invoke.sh), failing closed
+# with exit 87/88 when either cannot be isolated. Without this, ambient
+# GIT_CONFIG_* entries ahead of the signing entries make the passthrough drop
+# the dedicated signing config and the worker signs with the global key.
 #
 # Args: output_file exit_code_file work_dir cmd_args...
 _invoke_claude() {
@@ -355,8 +358,19 @@ _invoke_claude() {
 			fi
 		fi
 		if [[ -x "$SANDBOX_EXEC_HELPER" && "${AIDEVOPS_HEADLESS_SANDBOX_DISABLED:-}" != "1" ]]; then
-			local passthrough_csv
-			passthrough_csv="$(build_sandbox_passthrough_csv)"
+			local passthrough_csv=""
+			local runtime_role="${_invoke_role:-worker}"
+			if ! prepare_headless_signing_sandbox_env "$runtime_role"; then
+				print_error "Headless signing configuration could not be safely isolated for the sandbox"
+				printf '%s' "87" >"$exit_code_file"
+				exit 87
+			fi
+			if ! prepare_headless_git_auth_sandbox_env "$runtime_role"; then
+				print_error "Repository-bound worker Git authentication could not be safely isolated for the sandbox"
+				printf '%s' "88" >"$exit_code_file"
+				exit 88
+			fi
+			passthrough_csv="$(build_sandbox_passthrough_csv "${_invoke_provider:-}" "$runtime_role")"
 			if [[ -n "$passthrough_csv" ]]; then
 				if [[ -n "${_HEADLESS_CLAUDE_STDIN_FILE:-}" && -f "${_HEADLESS_CLAUDE_STDIN_FILE:-}" ]]; then
 					"$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io --egress-mode "$egress_mode" --worker-id "$egress_worker_id" --passthrough "$passthrough_csv" -- "${cmd[@]}" <"$_HEADLESS_CLAUDE_STDIN_FILE" 2>&1 | tee "$output_file"
