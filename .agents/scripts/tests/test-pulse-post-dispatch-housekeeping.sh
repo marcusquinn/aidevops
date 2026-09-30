@@ -81,6 +81,18 @@ install_stage_stubs() {
 	run_simplification_dedup_cleanup() { _record_stage "dedup_cleanup"; return 0; }
 	fast_fail_prune_expired() { _record_stage "fast_fail_prune"; return 0; }
 	_preflight_ownership_reconcile() { _record_stage "ownership_reconcile"; return 0; }
+	build_dependency_graph_cache() { _record_stage "dep_graph:${PULSE_DEP_GRAPH_FORCE_REBUILD:-0}"; return 0; }
+	refresh_blocked_status_from_graph() { _record_stage "blocked_refresh"; return 0; }
+	release_repaired_brief_holds() { _record_stage "brief_hold_release"; return 0; }
+
+	_pulse_run_budget_priority_stage_with_timeout() {
+		local stage_name="$1"
+		local stage_timeout="$2"
+		shift 2
+		printf 'budget:%s:%s\n' "$stage_name" "$stage_timeout" >>"$STAGE_LOG"
+		"$@"
+		return 0
+	}
 
 	_pulse_run_optional_stage_with_timeout() {
 		local stage_name="$1"
@@ -232,10 +244,59 @@ test_housekeeping_lock_skips_live_duplicate() {
 	return 0
 }
 
+_catchup_stages() {
+	grep -E '^(dep_graph:|blocked_refresh$|brief_hold_release$|ownership_reconcile$)' "$STAGE_LOG" 2>/dev/null | tr '\n' ' '
+	return 0
+}
+
+# GH#33246: starved blocked-status maintenance catches up in the async lane.
+test_housekeeping_blocker_refresh_catchup() {
+	setup_test_env
+	export DEP_GRAPH_CACHE_FILE="${TEST_ROOT}/dep-graph-cache.json"
+	local failures=0 failmsg="" got=""
+
+	printf '{}\n' >"$DEP_GRAPH_CACHE_FILE"
+	touch -t 202601010000 "$DEP_GRAPH_CACHE_FILE"
+	_pulse_run_post_dispatch_housekeeping_stages 7
+	got=$(_catchup_stages)
+	if [[ "$got" != "dep_graph:1 blocked_refresh brief_hold_release ownership_reconcile " ]]; then
+		failures=$((failures + 1))
+		failmsg="${failmsg} | stale cache order: ${got}"
+	fi
+
+	: >"$STAGE_LOG"
+	touch "$DEP_GRAPH_CACHE_FILE"
+	_pulse_run_post_dispatch_housekeeping_stages 7
+	got=$(_catchup_stages)
+	if [[ "$got" != "ownership_reconcile " ]]; then
+		failures=$((failures + 1))
+		failmsg="${failmsg} | fresh cache ran catch-up: ${got}"
+	fi
+
+	: >"$STAGE_LOG"
+	rm -f "$DEP_GRAPH_CACHE_FILE"
+	AIDEVOPS_PULSE_BLOCKER_REFRESH_MAX_AGE_S=0 _pulse_run_post_dispatch_housekeeping_stages 7
+	got=$(_catchup_stages)
+	if [[ "$got" != "ownership_reconcile " ]]; then
+		failures=$((failures + 1))
+		failmsg="${failmsg} | disabled catch-up ran: ${got}"
+	fi
+
+	if [[ "$failures" -eq 0 ]]; then
+		print_result "post-dispatch housekeeping catches up starved blocker refresh" 0
+	else
+		print_result "post-dispatch housekeeping catches up starved blocker refresh" 1 "$failmsg"
+	fi
+	unset DEP_GRAPH_CACHE_FILE
+	teardown_test_env
+	return 0
+}
+
 main() {
 	test_sync_housekeeping_runs_all_stages
 	test_async_housekeeping_returns_before_slow_stage
 	test_housekeeping_lock_skips_live_duplicate
+	test_housekeeping_blocker_refresh_catchup
 
 	printf '\n============================================\n'
 	printf 'Tests run:    %d\n' "$TESTS_RUN"

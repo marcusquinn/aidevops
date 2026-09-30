@@ -366,10 +366,12 @@ build_dependency_graph_cache() {
 				'.repos[$slug] = $rd' 2>/dev/null) || true
 	done <<<"$repos_json"
 
-	# Atomically write cache (write to tmp then mv)
-	local tmp_file
-	tmp_file="${cache_file}.tmp.$$"
+	# Atomically write cache (write to tmp then mv). GH#33246: the async
+	# housekeeping catch-up and the in-cycle stage share the pulse PID, so a
+	# `.tmp.$$` name could collide; mktemp gives each writer its own sibling.
+	local tmp_file=""
 	mkdir -p "$(dirname "$cache_file")" 2>/dev/null || true
+	tmp_file=$(mktemp "${cache_file}.tmp.XXXXXX" 2>/dev/null) || tmp_file="${cache_file}.tmp.${BASHPID:-$$}"
 	if printf '%s\n' "$graph_json" >"$tmp_file"; then
 		mv "$tmp_file" "$cache_file" || rm -f "$tmp_file"
 	else
