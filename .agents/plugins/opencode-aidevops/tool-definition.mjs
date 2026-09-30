@@ -4,6 +4,8 @@
 // OpenCode owns packages/opencode/src/tool/bash.txt. Adapt only its known
 // listing-only paragraph through the public tool.definition hook; do not
 // replace the tool, its parameters, or any runtime permission enforcement.
+import { GREP_PATH_DESCRIPTION_NOTE } from "./grep-path-guard.mjs";
+
 export const LEGACY_PARENT_GUIDANCE = `1. Directory Verification:
    - If the command will create new directories or files, first use \`ls\` to verify the parent directory exists and is the correct location
    - For example, before running "mkdir foo/bar", first use \`ls foo\` to check that "foo" exists and is the intended parent directory`;
@@ -16,6 +18,13 @@ export const BOUNDED_PARENT_GUIDANCE = `1. Directory Verification:
    - These checks do not grant filesystem access or replace pre-edit Git checks, destructive-operation confirmation, or other permission controls.`;
 
 export async function adaptToolDefinition(input, output) {
+  if (input.toolID === "grep" && typeof output.description === "string"
+    && !output.description.includes(GREP_PATH_DESCRIPTION_NOTE)) {
+    // GH#33061: pairs with the grep-path-guard rejection so callers learn the
+    // contract before a file path is refused.
+    output.description = `${output.description.trimEnd()}\n\n${GREP_PATH_DESCRIPTION_NOTE}`;
+    return;
+  }
   if (input.toolID === "bash" && typeof output.description === "string") {
     // Exact matching leaves future upstream revisions and other plugins' text
     // untouched rather than broadly deleting an unknown safety paragraph.

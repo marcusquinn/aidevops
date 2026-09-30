@@ -363,6 +363,7 @@ export async function setupAidevopsV2(ctx) {
     await register(registrations, ctx.tool.transform((editor) => {
       addV1ToolsToV2Editor(editor, baseTools, tool.schema, { directory, worktree });
       editor.update("bash", (definition) => adaptToolDefinition({ toolID: "bash" }, definition));
+      editor.update("grep", (definition) => adaptToolDefinition({ toolID: "grep" }, definition));
       editor.update("apply_patch", (definition) => adaptToolDefinition({ toolID: "apply_patch" }, definition));
     }));
 
