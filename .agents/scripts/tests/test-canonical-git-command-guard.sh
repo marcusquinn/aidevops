@@ -382,6 +382,8 @@ ln -s "${SCRIPT_DIR}/canonical_git_readonly.py" "${OLD_BUNDLE}/canonical_git_rea
 ln -s "${SCRIPT_DIR}/canonical_git_readonly.py" "${NEW_BUNDLE}/canonical_git_readonly.py"
 ln -s "${SCRIPT_DIR}/canonical_git_ref_queries.py" "${OLD_BUNDLE}/canonical_git_ref_queries.py"
 ln -s "${SCRIPT_DIR}/canonical_git_ref_queries.py" "${NEW_BUNDLE}/canonical_git_ref_queries.py"
+ln -s "${SCRIPT_DIR}/canonical_git_config.py" "${OLD_BUNDLE}/canonical_git_config.py"
+ln -s "${SCRIPT_DIR}/canonical_git_config.py" "${NEW_BUNDLE}/canonical_git_config.py"
 ln -s "${SCRIPT_DIR}/canonical_git_management.py" "${OLD_BUNDLE}/canonical_git_management.py"
 ln -s "${SCRIPT_DIR}/canonical_git_management.py" "${NEW_BUNDLE}/canonical_git_management.py"
 ln -s "${SCRIPT_DIR}/canonical_git_repository.py" "${OLD_BUNDLE}/canonical_git_repository.py"

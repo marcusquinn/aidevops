@@ -931,6 +931,7 @@ test_explicit_git_capability_preserves_guarded_checkout() {
 		"${SCRIPT_DIR_TEST}/../canonical_git_policy.py" \
 		"${SCRIPT_DIR_TEST}/../canonical_git_readonly.py" \
 		"${SCRIPT_DIR_TEST}/../canonical_git_ref_queries.py" \
+		"${SCRIPT_DIR_TEST}/../canonical_git_config.py" \
 		"${SCRIPT_DIR_TEST}/../canonical_git_management.py" \
 		"${SCRIPT_DIR_TEST}/../canonical_git_repository.py" \
 		"${SCRIPT_DIR_TEST}/../canonical_shell_parser.py" \
