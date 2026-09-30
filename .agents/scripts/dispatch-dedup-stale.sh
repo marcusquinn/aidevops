@@ -39,6 +39,10 @@ STALE_RECOVERY_OPEN_PR_SCAN_LIMIT="${STALE_RECOVERY_OPEN_PR_SCAN_LIMIT:-1000}"
 # Default: 7200s (2 hours).
 #######################################
 INTERACTIVE_STALE_THRESHOLD_SECONDS="${INTERACTIVE_STALE_THRESHOLD_SECONDS:-7200}"
+# A verified, exclusively owned interactive claim can remain locally active
+# without GitHub writes for hours (GH#33234). Other assignments retain their
+# existing thresholds, including the 600s headless worker lease.
+INTERACTIVE_CLAIM_STALE_THRESHOLD_SECONDS="${INTERACTIVE_CLAIM_STALE_THRESHOLD_SECONDS:-21600}"
 
 #######################################
 # Convert ISO 8601 timestamp to epoch seconds
@@ -893,6 +897,35 @@ _stale_assignment_has_live_interactive_claim() {
 	return 0
 }
 
+# The audit marker alone is not ownership: require a matching comment author,
+# status:claimed and the claimant as the sole assignee. A released claim loses
+# that status/assignment; an abandoned one ages out after the extended window.
+_stale_assignment_has_owned_interactive_claim() {
+	local issue_meta_json="$1"
+	local comments_json="$2"
+	local now_epoch="$3"
+	local claim_record="" claim_timestamp="" claim_author="" claim_epoch=0
+	claim_record=$(printf '%s' "$comments_json" | jq -r '
+		[.[] | select((.body_start // "") | contains("aidevops-interactive-claim/v1"))
+		| select(. as $comment | ($comment.body_start // "") | contains("Interactive session claimed by @" + ($comment.author // "")))]
+		| first | if . == null then empty else [.created_at, .author] | @tsv end
+	' 2>/dev/null) || return 1
+	[[ -n "$claim_record" ]] || return 1
+	IFS=$'\t' read -r claim_timestamp claim_author <<<"$claim_record"
+	[[ -n "$claim_timestamp" && -n "$claim_author" ]] || return 1
+	claim_epoch=$(_ts_to_epoch "$claim_timestamp")
+	[[ "$claim_epoch" -gt 0 ]] || return 1
+	if [[ "$((now_epoch - claim_epoch))" -lt 0 || "$((now_epoch - claim_epoch))" -ge "$INTERACTIVE_CLAIM_STALE_THRESHOLD_SECONDS" ]]; then
+		return 1
+	fi
+	printf '%s' "$issue_meta_json" | jq -e --arg claimant "$claim_author" '
+		(.state | ascii_downcase) == "open" and
+		([.labels[]?.name] | index("status:claimed") != null) and
+		([.assignees[]?.login] == [$claimant])
+	' >/dev/null 2>&1 || return 1
+	return 0
+}
+
 _resolve_stale_threshold() {
 	local issue_number="$1"
 	local repo_slug="$2"
@@ -911,7 +944,10 @@ _resolve_stale_threshold() {
 	local created_at=''
 	local updated_at=''
 
-	if printf '%s' "$_issue_meta_json" | jq -e '.labels | map(.name) | index("origin:interactive")' >/dev/null 2>&1 ||
+	if _stale_assignment_has_owned_interactive_claim "$_issue_meta_json" "$comments_json" "$now_epoch"; then
+		is_interactive='true'
+		threshold="$INTERACTIVE_CLAIM_STALE_THRESHOLD_SECONDS"
+	elif printf '%s' "$_issue_meta_json" | jq -e '.labels | map(.name) | index("origin:interactive")' >/dev/null 2>&1 ||
 		_stale_assignment_has_live_interactive_claim "$_issue_meta_json" "$comments_json" "$now_epoch"; then
 		is_interactive='true'
 		threshold="$INTERACTIVE_STALE_THRESHOLD_SECONDS"

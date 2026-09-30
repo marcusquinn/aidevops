@@ -31,7 +31,12 @@
 #      genuine shared CI failures, and de-duplicates repeated PR observations.
 #      Open and closed outage markers both deterministically suppress re-filing.
 #      Generated Markdown includes the final affected PR.
-#  11. pulse-merge-stuck.sh and pulse-stats-helper.sh pass shellcheck.
+#  11. Stranded interactive draft detector (GH#33229): shape filter accepts
+#      only draft + origin:interactive PRs and excludes hold-for-review /
+#      no-auto-dispatch; linked-issue resolver requires open state, an
+#      assignee, and status:claimed/status:in-review; escalation posts
+#      exactly once per head SHA via the marker-keyed idempotent comment.
+#  12. pulse-merge-stuck.sh and pulse-stats-helper.sh pass shellcheck.
 #
 # The test never makes real network calls; functions that require gh API
 # (_classify_stuck_pr, _escalate_individual_stuck_pr, full pulse_merge_stuck_run_pass)
@@ -144,7 +149,8 @@ for entry in \
 	AIDEVOPS_MERGE_STUCK_AGE_MINUTES \
 	AIDEVOPS_MERGE_ZERO_PROGRESS_CYCLES \
 	AIDEVOPS_MERGE_PATTERN_MIN_PRS \
-	AIDEVOPS_MERGE_STUCK_ENABLED; do
+	AIDEVOPS_MERGE_STUCK_ENABLED \
+	AIDEVOPS_MERGE_STRANDED_DRAFT_AGE_MINUTES; do
 	TESTS_RUN=$((TESTS_RUN + 1))
 	if grep -qE "^${entry}=" "$CONF_FILE" 2>/dev/null; then
 		echo "${TEST_GREEN}PASS${TEST_NC}: 1: conf contains ${entry}"
@@ -168,10 +174,13 @@ assert_match "2c: AIDEVOPS_MERGE_PATTERN_MIN_PRS is positive int" \
 	"^[0-9]+$" "${AIDEVOPS_MERGE_PATTERN_MIN_PRS:-x}"
 assert_match "2d: AIDEVOPS_MERGE_STUCK_ENABLED is 0|1" \
 	"^[01]$" "${AIDEVOPS_MERGE_STUCK_ENABLED:-x}"
+assert_match "2h: AIDEVOPS_MERGE_STRANDED_DRAFT_AGE_MINUTES is positive int" \
+	"^[0-9]+$" "${AIDEVOPS_MERGE_STRANDED_DRAFT_AGE_MINUTES:-x}"
 
 assert_gt "2e: STUCK_AGE_MINUTES > 0" "$AIDEVOPS_MERGE_STUCK_AGE_MINUTES" "0"
 assert_gt "2f: ZERO_PROGRESS_CYCLES > 0" "$AIDEVOPS_MERGE_ZERO_PROGRESS_CYCLES" "0"
 assert_gt "2g: PATTERN_MIN_PRS > 1" "$AIDEVOPS_MERGE_PATTERN_MIN_PRS" "1"
+assert_gt "2i: STRANDED_DRAFT_AGE_MINUTES > 0" "$AIDEVOPS_MERGE_STRANDED_DRAFT_AGE_MINUTES" "0"
 echo ""
 
 # ---------------------------------------------------------------------------
@@ -900,9 +909,114 @@ assert_eq "8a: default branch resolves from repo API" "develop" "$got"
 echo ""
 
 # ---------------------------------------------------------------------------
-# Section 10: shellcheck cleanliness.
+# Section 11: stranded interactive draft detector (GH#33229).
 # ---------------------------------------------------------------------------
-echo "--- Section 10: shellcheck ---"
+echo "--- Section 11: stranded interactive draft detector ---"
+
+# 11a: shape accepts draft + origin:interactive, no hold/no-auto-dispatch.
+shape_ok=$(_pms_is_stranded_draft_shape \
+	'{"isDraft":true,"labels":[{"name":"origin:interactive"}]}')
+assert_eq "11a: draft + origin:interactive is a shape match" "1" "$shape_ok"
+
+# 11b: non-draft is rejected.
+shape_non_draft=$(_pms_is_stranded_draft_shape \
+	'{"isDraft":false,"labels":[{"name":"origin:interactive"}]}')
+assert_eq "11b: non-draft PR is not a stranded-draft candidate" "0" "$shape_non_draft"
+
+# 11c: draft without origin:interactive is rejected.
+shape_no_label=$(_pms_is_stranded_draft_shape \
+	'{"isDraft":true,"labels":[{"name":"origin:worker"}]}')
+assert_eq "11c: draft without origin:interactive is not a candidate" "0" "$shape_no_label"
+
+# 11d: hold-for-review opts out.
+shape_held=$(_pms_is_stranded_draft_shape \
+	'{"isDraft":true,"labels":[{"name":"origin:interactive"},{"name":"hold-for-review"}]}')
+assert_eq "11d: hold-for-review label opts out" "0" "$shape_held"
+
+# 11e: no-auto-dispatch opts out.
+shape_no_dispatch=$(_pms_is_stranded_draft_shape \
+	'{"isDraft":true,"labels":[{"name":"origin:interactive"},{"name":"no-auto-dispatch"}]}')
+assert_eq "11e: no-auto-dispatch label opts out" "0" "$shape_no_dispatch"
+
+# 11f: linked-issue resolver requires open + assignee + status:claimed.
+_extract_linked_issue() { printf '55'; return 0; }
+gh_issue_view() {
+	printf '{"state":"OPEN","labels":[{"name":"status:claimed"}],"assignees":[{"login":"alice"}]}'
+	return 0
+}
+got=$(_pms_stranded_draft_linked_issue "9" "example/repo")
+assert_eq "11f: open + assignee + status:claimed resolves the linked issue" "55" "$got"
+
+# 11g: closed linked issue is rejected.
+gh_issue_view() {
+	printf '{"state":"CLOSED","labels":[{"name":"status:claimed"}],"assignees":[{"login":"alice"}]}'
+	return 0
+}
+_pms_stranded_draft_linked_issue "9" "example/repo" >/dev/null 2>&1
+rc_11g=$?
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ "$rc_11g" -ne 0 ]]; then
+	echo "${TEST_GREEN}PASS${TEST_NC}: 11g: closed linked issue is rejected"
+else
+	TESTS_FAILED=$((TESTS_FAILED + 1))
+	echo "${TEST_RED}FAIL${TEST_NC}: 11g: closed linked issue should have been rejected"
+fi
+
+# 11h: no assignee is rejected.
+gh_issue_view() {
+	printf '{"state":"OPEN","labels":[{"name":"status:claimed"}],"assignees":[]}'
+	return 0
+}
+_pms_stranded_draft_linked_issue "9" "example/repo" >/dev/null 2>&1
+rc_11h=$?
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ "$rc_11h" -ne 0 ]]; then
+	echo "${TEST_GREEN}PASS${TEST_NC}: 11h: unassigned linked issue is rejected"
+else
+	TESTS_FAILED=$((TESTS_FAILED + 1))
+	echo "${TEST_RED}FAIL${TEST_NC}: 11h: unassigned linked issue should have been rejected"
+fi
+
+# 11i: no status:claimed/status:in-review label is rejected.
+gh_issue_view() {
+	printf '{"state":"OPEN","labels":[],"assignees":[{"login":"alice"}]}'
+	return 0
+}
+_pms_stranded_draft_linked_issue "9" "example/repo" >/dev/null 2>&1
+rc_11i=$?
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ "$rc_11i" -ne 0 ]]; then
+	echo "${TEST_GREEN}PASS${TEST_NC}: 11i: issue without status:claimed/in-review is rejected"
+else
+	TESTS_FAILED=$((TESTS_FAILED + 1))
+	echo "${TEST_RED}FAIL${TEST_NC}: 11i: issue without status label should have been rejected"
+fi
+unset -f gh_issue_view _extract_linked_issue
+
+# 11j: escalation posts the marker-keyed comment exactly once per head SHA;
+# an unchanged head is a no-op repost via the idempotent-comment contract.
+PMS_TEST_COMMENT_CALLS=0
+PMS_TEST_LAST_MARKER=""
+_gh_idempotent_comment() {
+	local entity_number="$1" repo_slug="$2" marker="$3" body="$4"
+	PMS_TEST_COMMENT_CALLS=$((PMS_TEST_COMMENT_CALLS + 1))
+	PMS_TEST_LAST_MARKER="$marker"
+	[[ "$body" == *"@bob"* ]] || return 2
+	[[ "$body" == *"gh pr ready 9 --repo example/repo"* ]] || return 2
+	return 0
+}
+pulse_stats_increment() { return 0; }
+_pms_escalate_stranded_interactive_draft "9" "example/repo" "deadbeef" "bob" "55"
+assert_eq "11j: escalation calls the idempotent comment helper once" "1" "$PMS_TEST_COMMENT_CALLS"
+assert_eq "11k: marker is keyed on the head SHA" \
+	"<!-- aidevops:stranded-draft:deadbeef -->" "$PMS_TEST_LAST_MARKER"
+unset -f _gh_idempotent_comment pulse_stats_increment
+echo ""
+
+# ---------------------------------------------------------------------------
+# Section 12: shellcheck cleanliness.
+# ---------------------------------------------------------------------------
+echo "--- Section 12: shellcheck ---"
 
 run_shellcheck() {
 	local label="$1" file="$2"

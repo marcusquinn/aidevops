@@ -10,6 +10,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.37.38] - 2026-09-30
+
+### Added
+
+- continue Claude Code sessions with open todos (#33215)
+
+### Changed
+
+- Refactor: split issue-sync-relationships.sh into focused sub-libraries (#33221)
+- Maintenance: mark t18567 complete (pr:#33215 completed:2026-09-30) (#33216)
+- Maintenance: mark t18575 complete (pr:#33213 completed:2026-09-30) (#33208)
+- Tests: align dependency review Qlty installer assertion (#33205)
+- Maintenance: mark t18571 complete (pr:#33187 completed:2026-09-30) (#33173)
+
+### Fixed
+
+- quiet exact-tag verifier error during successful preservation fallback (#33261)
+- check out unmerged remote branch directly in add (#33260)
+- detect remote default branch instead of assuming main (#33259)
+- align routing and detector regression fixtures (#33258)
+- async housekeeping survives launchd process-group teardown
+- promote OpenCode V2 2.0.20 compatibility
+- retired DSPy cleanup no longer aborts non-interactive setup on runtime-bundle installs
+- catch up starved blocked-status refresh and brief-hold release in async housekeeping. Runtime-verified: live predicate reports starved=yes against the 2026-09-29 dep-graph cache; housekeeping regression, stage-wiring (61) and dep-graph suites pass; ShellCheck clean.
+- let workers own Files Scope discovery instead of holding trusted unscoped briefs
+- finalize published dead competing lanes (#33239)
+- hold external-trigger blockers across unrelated merges (#33236)
+- accept Next.js route paths in Files Scope; name failing dependency rows (GH#33120) (#33237)
+- error (not warn) when auto-dispatch Files Scope path line has trailing prose (#33233)
+- refresh pre-claim test fixture for REST issue reads (#33220)
+- register canonical self-test fixture (#33219)
+- retry indeterminate authorization reads (#33217)
+- preserve issue-first planning publication blockers (#33211)
+- raise root fast-uri override to 3.1.8 (GHSA-hrr3-gc8f-f4qj) (#33198) (#33212)
+- make stale PR snapshot timestamps portable (#33210)
+- planning-commit-helper works from detached HEAD (#33214)
+- resolve claim TODO predecessors to task IDs (GH#33159)
+- resolve config-http/test-http Application Passwords from secret names (#33207)
+- declare claim snapshot locals in _dedup_layer7_claim_lock
+
 ## [3.37.37] - 2026-09-30
 
 ### Added

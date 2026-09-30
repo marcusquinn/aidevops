@@ -112,6 +112,33 @@ get_gopass_entry_value() {
 	return 0
 }
 
+# A headless pinentry can wait forever for a passphrase. Bound each requested
+# decrypt, including its GPG children, without putting the value in argv/logs.
+get_injected_gopass_value() {
+	local secret_path="$1"
+	if [[ -t 0 && -t 2 ]]; then
+		gopass show -n "$secret_path" 2>/dev/null || return 1
+	else
+		python3 -c '
+import os, signal, subprocess, sys
+
+process = subprocess.Popen(["gopass", "show", "-n", sys.argv[1]],
+                           stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                           start_new_session=True)
+try:
+    value, _ = process.communicate(timeout=4)
+except subprocess.TimeoutExpired:
+    os.killpg(process.pid, signal.SIGKILL)
+    process.communicate()
+    sys.exit(1)
+if process.returncode:
+    sys.exit(1)
+sys.stdout.buffer.write(value)
+' "$secret_path" || return 1
+	fi
+	return 0
+}
+
 # Collect all secret values for redaction as NUL-delimited literal data.
 redaction_value_usable() {
 	local value="$1"
@@ -314,13 +341,29 @@ build_secret_env() {
 	if has_gopass; then
 		if [[ ${#specific_names[@]} -gt 0 ]]; then
 			# Inject only specific secrets
+			local available_secrets=""
+			if ! available_secrets=$(gopass ls --flat "${GOPASS_PREFIX}/" 2>/dev/null); then
+				print_error "Unable to list gopass secrets for injection" >&2
+				return 1
+			fi
 			for name in "${specific_names[@]}"; do
-				local val
-				val=$(get_gopass_entry_value "${GOPASS_PREFIX}/${name}")
-				if [[ -n "$val" ]]; then
-					emit_secret_env_record "$name" "$val"
-					emitted_names+=("$name")
+				local secret_path=""
+				local found=false
+				while IFS= read -r secret_path; do
+					if [[ "$secret_path" == "${GOPASS_PREFIX}/${name}" ]]; then
+						found=true
+						break
+					fi
+				done <<<"$available_secrets"
+				# Names absent from gopass may still be in credentials.sh.
+				[[ "$found" == true ]] || continue
+				local val=""
+				if ! val=$(get_injected_gopass_value "${GOPASS_PREFIX}/${name}") || [[ -z "$val" ]]; then
+					print_error "secret $name unavailable: gopass/GPG locked or entry missing; unlock GPG in a terminal and retry" >&2
+					return 1
 				fi
+				emit_secret_env_record "$name" "$val"
+				emitted_names+=("$name")
 			done
 		else
 			# Inject all secrets
@@ -350,13 +393,19 @@ build_secret_env() {
 				val="${val#\"}"
 				val="${val%\"}"
 				# Only add if not already set by gopass
-				if ! secret_env_name_emitted "$name" "${emitted_names[@]}"; then
+				if [[ -n "$val" ]] && ! secret_env_name_emitted "$name" "${emitted_names[@]}"; then
 					emit_secret_env_record "$name" "$val"
 					emitted_names+=("$name")
 				fi
 			fi
 		done <"$cred_file"
 	done < <(resolve_credential_files)
+	for name in "${specific_names[@]}"; do
+		if ! secret_env_name_emitted "$name" "${emitted_names[@]}"; then
+			print_error "secret $name unavailable: gopass/GPG locked or entry missing; unlock GPG in a terminal and retry" >&2
+			return 1
+		fi
+	done
 
 	return 0
 }
@@ -813,7 +862,9 @@ cmd_run_specific() {
 	# shellcheck disable=SC2064
 	trap "rm -f '$env_file'" EXIT
 
-	build_secret_env "${secret_names[@]}" >"$env_file"
+	if ! build_secret_env "${secret_names[@]}" >"$env_file"; then
+		return 1
+	fi
 	register_redaction_digests "$env_file"
 
 	# Execute command with secrets in environment, redact output
