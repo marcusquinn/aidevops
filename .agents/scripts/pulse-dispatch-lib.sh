@@ -381,6 +381,49 @@ _dispatch_compute_capacity() {
 	return 0
 }
 
+#######################################
+# Concurrency caps that temporarily defer (never penalise) a candidate:
+#   - t3022: opus candidates at the per-model concurrency cap (429 guard).
+#   - GH#33137: `dispatch-class:<name>` candidates whose class already holds
+#     its configured share of this machine's worker slots. On success a slot
+#     reservation marker is written; _dispatch_release_attempt_reservations
+#     drops it when no worker launches. Skipped when pulse-capacity-alloc.sh
+#     is not loaded.
+# Arguments: $1 issue, $2 repo slug, $3 repo path, $4 labels CSV, $5 model
+# Returns: 0 proceed; 1 deferred (candidate marked ineligible for this round)
+#######################################
+_dispatch_concurrency_caps_allow() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local repo_path="$3"
+	local labels_csv="$4"
+	local model_override="$5"
+	_DISPATCH_CLASS_RESERVED=0
+	if ! _dispatch_check_model_concurrency_cap "$issue_number" "$repo_slug" "$model_override" >>"$LOGFILE" 2>&1; then
+		_DISPATCH_CANDIDATE_ELIGIBILITY="$_DISPATCH_ELIGIBILITY_INELIGIBLE"
+		return 1
+	fi
+	if declare -F _dispatch_check_class_cap >/dev/null 2>&1 &&
+		! _dispatch_check_class_cap "$issue_number" "$repo_slug" "$repo_path" "$labels_csv" >>"$LOGFILE" 2>&1; then
+		_DISPATCH_CANDIDATE_ELIGIBILITY="$_DISPATCH_ELIGIBILITY_INELIGIBLE"
+		return 1
+	fi
+	return 0
+}
+
+# Drop the footprint (GH#32977) and dispatch-class (GH#33137) reservations
+# written by this attempt when no worker launched.
+_dispatch_release_attempt_reservations() {
+	local repo_slug="$1"
+	local issue_number="$2"
+	local attempt_epoch="$3"
+	_dispatch_release_footprint_reservation "$repo_slug" "$issue_number" "$attempt_epoch"
+	if declare -F _dispatch_class_release_reservation >/dev/null 2>&1; then
+		_dispatch_class_release_reservation "$repo_slug" "$issue_number"
+	fi
+	return 0
+}
+
 # GH#32977: drop the same-cycle footprint reservation written by this attempt
 # (created at or after attempt_epoch) when a later gate, timeout or launch
 # failure means the worker did not launch, so it cannot block other candidates.
@@ -449,13 +492,8 @@ _dispatch_process_candidate() {
 	model_override=$(resolve_dispatch_model_for_labels "$labels_csv")
 	pulse_dispatch_debug_log "#${issue_number}: model_override=${model_override:-<auto>} — calling dispatch_with_dedup"
 
-	# t3022: defer opus candidates at the per-model concurrency cap (429 cascade guard; retried next cycle).
-	local _concurrency_cap_rc=0
-	_dispatch_check_model_concurrency_cap "$issue_number" "$repo_slug" "$model_override" >>"$LOGFILE" 2>&1 || _concurrency_cap_rc=$?
-	if [[ "$_concurrency_cap_rc" -ne 0 ]]; then
-		_DISPATCH_CANDIDATE_ELIGIBILITY="$_DISPATCH_ELIGIBILITY_INELIGIBLE"
-		return 1
-	fi
+	# t3022 per-model + GH#33137 per-class concurrency caps (retried next cycle).
+	_dispatch_concurrency_caps_allow "$issue_number" "$repo_slug" "$repo_path" "$labels_csv" "$model_override" || return 1
 
 	# t2433/GH#20071: Refresh the repo before the large-file gate (inside
 	# dispatch_with_dedup → _dispatch_dedup_check_layers → _issue_targets_large_files)
@@ -470,7 +508,7 @@ _dispatch_process_candidate() {
 	_dispatch_with_timeout "$issue_number" "$repo_slug" "$dispatch_title" "$issue_title" \
 		"$self_login" "$repo_path" "$prompt" "issue-${issue_number}" "$model_override" || dispatch_rc=$?
 	if [[ "$dispatch_rc" -ne 0 ]]; then
-		_dispatch_release_footprint_reservation "$repo_slug" "$issue_number" "$attempt_epoch"
+		_dispatch_release_attempt_reservations "$repo_slug" "$issue_number" "$attempt_epoch"
 		_dispatch_record_and_cache_block "$candidate_json" "$issue_number" "$repo_slug" "$dispatch_rc"
 		return 1
 	fi
@@ -483,7 +521,7 @@ _dispatch_process_candidate() {
 	check_worker_launch "$issue_number" "$repo_slug" >/dev/null 2>&1 || launch_rc=$?
 	if [[ "$launch_rc" -ne 0 ]]; then
 		echo "[pulse-wrapper] Dispatch_max: #${issue_number} (${repo_slug}) launch validation failed (rc=${launch_rc}, last_failure='${_PULSE_LAST_LAUNCH_FAILURE}')" >>"$LOGFILE"
-		_dispatch_release_footprint_reservation "$repo_slug" "$issue_number" "$attempt_epoch"
+		_dispatch_release_attempt_reservations "$repo_slug" "$issue_number" "$attempt_epoch"
 		_dispatch_stats_increment "dispatch_worker_launch_failed"
 		_dispatch_record_launch_failure
 		return 1
