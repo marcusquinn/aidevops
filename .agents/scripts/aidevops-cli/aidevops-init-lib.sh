@@ -950,9 +950,9 @@ EOF
 	if _scope_includes "$init_scope" "standard"; then
 		local generate_models_script="$AGENTS_DIR/scripts/generate-models-md.sh"
 		if [[ -x "$generate_models_script" ]] && command -v sqlite3 &>/dev/null; then
-			print_info "Generating MODELS.md (model performance leaderboard)..."
-			if "$generate_models_script" --output "$project_root/MODELS.md" --repo-path "$project_root" --quiet 2>/dev/null; then
-				print_success "Created MODELS.md (per-repo model leaderboard)"
+			print_info "Generating MODELS.md (model catalog)..."
+			if "$generate_models_script" --output "$project_root/MODELS.md" --quiet 2>/dev/null; then
+				print_success "Created MODELS.md (model catalog)"
 			else
 				print_warning "MODELS.md generation failed (will be populated as tasks run)"
 			fi

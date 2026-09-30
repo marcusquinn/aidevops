@@ -53,7 +53,7 @@ dataset-helper.sh merge dataset1.jsonl dataset2.jsonl -o merged.jsonl  # Dedup b
 
 **Promote from traces**: Find trace ID via `jq '.request_id' ~/.aidevops/.agent-workspace/observability/metrics.jsonl | tail`, then `dataset-helper.sh promote --trace-id <id> --tags "edge-case"`. Edit the promoted entry with expected output.
 
-**Integrations**: Bench (t1393): `compare-models-helper.sh bench --dataset golden-prompts.jsonl` | Evaluators (t1394): `ai-judgment-helper.sh evaluate --dataset golden-prompts.jsonl`
+**Integrations**: Model evaluation: `workflows/model-replay.md`, `model-ab-*.mjs` | Evaluators (t1394): `ai-judgment-helper.sh evaluate --dataset golden-prompts.jsonl`
 
 ## Design decisions
 
