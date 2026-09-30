@@ -635,6 +635,36 @@ _full_loop_release_existing_with_lane() {
 	return "$existing_rc"
 }
 
+#aidevops:trust-boundary
+# A competing start may complete an already-published lane, but only the
+# persisted source authorization and CAS-protected reconcile may finalize it.
+_full_loop_release_finalize_published_competing_lane() {
+	local repo="$1"
+	local state_json="$2"
+	local lane_pr=""
+	local lane_tag=""
+	local observation=""
+	jq -e '.active == true and (.source_pr | type == "number") and .source_pr > 0
+		and (.tag | type == "string" and length > 0)
+		and .terminal_receipt == null
+		and (.phase == "remote-publication" or .phase == "exact-tag-deployment")' \
+		<<<"$state_json" >/dev/null || return 1
+	observation=$(_release_lane_executor_observe "$state_json") || return 1
+	[[ "$(jq -r '.state // "unknown"' <<<"$observation")" == "dead" ]] || return 1
+	lane_pr=$(jq -r '.source_pr' <<<"$state_json") || return 1
+	lane_tag=$(jq -r '.tag' <<<"$state_json") || return 1
+	_full_loop_release_inspect_remote "$repo" "$lane_tag" || return 1
+	# Reconcile revalidates the lane's persisted authorization and tag provenance.
+	_full_loop_release_existing_with_lane reconcile "$lane_pr" || return 1
+	release_lane_read "$repo" || return 1
+	jq -e --argjson pr "$lane_pr" --arg tag "$lane_tag" '.active == false and .source_pr == $pr and .tag == $tag
+		and (.terminal_receipt == "published" or .terminal_receipt == "superseded")' \
+		<<<"$_AIDEVOPS_RELEASE_LANE_JSON" >/dev/null || return 1
+	printf 'RELEASE_LANE_FINALIZED source_pr=%s tag=%s receipt=%s\n' \
+		"$lane_pr" "$lane_tag" "$(jq -r '.terminal_receipt' <<<"$_AIDEVOPS_RELEASE_LANE_JSON")"
+	return 0
+}
+
 _full_loop_release_guard_competing_lane() {
 	local repo="$1"
 	local source_pr="$2"
@@ -651,6 +681,12 @@ _full_loop_release_guard_competing_lane() {
 			release_lane_recover_reservation "$repo" "$(jq -r '.source_pr' <<<"$_AIDEVOPS_RELEASE_LANE_JSON")" "$_AIDEVOPS_RELEASE_LANE_HEAD"
 			return $?
 		fi
+		if _full_loop_release_finalize_published_competing_lane "$repo" "$_AIDEVOPS_RELEASE_LANE_JSON"; then
+			return 0
+		fi
+		# A failed or deferred reconcile may have changed the lane. Report the
+		# latest state when possible, but never allow this start to reserve it.
+		release_lane_read "$repo" || true
 		printf 'ACTIVE_RELEASE_LANE source_pr=%s phase=%s tag=%s\n' \
 			"$(jq -r '.source_pr' <<<"$_AIDEVOPS_RELEASE_LANE_JSON")" \
 			"$(jq -r '.phase' <<<"$_AIDEVOPS_RELEASE_LANE_JSON")" \
