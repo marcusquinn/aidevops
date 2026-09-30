@@ -361,7 +361,7 @@ _large_file_gate_targets_match_remote_default() {
 	local repo_path="$1"
 	local remote_sha="$2"
 	local targets="$3"
-	local target="" full_path="" relative_path="" entry=""
+	local target="" full_path="" relative_path="" entry="" candidate=""
 	local mode="" object_type="" object_sha="" entry_path="" working_sha=""
 	[[ -n "$targets" ]] || return 1
 	git -C "$repo_path" cat-file -e "${remote_sha}^{commit}" 2>/dev/null || return 1
@@ -370,7 +370,15 @@ _large_file_gate_targets_match_remote_default() {
 		if [[ "$target" =~ ^(.+):([0-9]+(-[0-9]+)?)$ ]]; then
 			target="${BASH_REMATCH[1]}"
 		fi
-		full_path=$(_large_file_gate_resolve_full_path "$target" "$repo_path") || return 1
+		if ! full_path=$(_large_file_gate_resolve_full_path "$target" "$repo_path"); then
+			# Missing locally is safe only when every resolver variant is also
+			# absent at the pinned remote commit. An upstream addition must defer.
+			for candidate in "$target" ".agents/$target" ".$target"; do
+				entry=$(git -C "$repo_path" --literal-pathspecs ls-tree "$remote_sha" -- "$candidate" 2>/dev/null) || return 1
+				[[ -z "$entry" ]] || return 1
+			done
+			continue
+		fi
 		relative_path="${full_path#"${repo_path}/"}"
 		entry=$(git -C "$repo_path" --literal-pathspecs ls-tree "$remote_sha" -- "$relative_path" 2>/dev/null) || return 1
 		[[ -n "$entry" && "$entry" != *$'\n'* ]] || return 1
