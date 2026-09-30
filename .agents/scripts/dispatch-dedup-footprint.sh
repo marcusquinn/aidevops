@@ -22,8 +22,17 @@
 # 7-layer dedup chain.
 #
 # Decay: natural — the check queries issues with active status labels
-# (status:in-progress, status:in-review, status:claimed). Once the blocking
-# issue's PR merges and labels clear, the overlap disappears.
+# (status:queued, status:in-progress, status:in-review, status:claimed). Once
+# the blocking issue's PR merges and labels clear, the overlap disappears.
+#
+# Same-cycle reservations (GH#32977): each candidate runs in its own dispatch
+# subshell and a launched worker only becomes visible once its status:queued
+# edit lands, so two overlapping candidates in one refill batch could both
+# pass the live check. The overlap check therefore also consults, and on
+# success atomically writes, a per-repo reservation of the candidate's
+# declared footprint under a short lock. Reservations are released when the
+# launch fails, retired a short grace period after the issue shows durable
+# lifecycle labels, and otherwise expire after a bounded TTL.
 
 [[ -n "${_DISPATCH_DEDUP_FOOTPRINT_LOADED:-}" ]] && return 0
 _DISPATCH_DEDUP_FOOTPRINT_LOADED=1
@@ -41,6 +50,21 @@ _FOOTPRINT_DEFER_STATE_DIR="${AIDEVOPS_FOOTPRINT_DEFER_STATE_DIR:-${HOME}/.aidev
 _FOOTPRINT_DEFER_TTL_SECONDS="${AIDEVOPS_FOOTPRINT_DEFER_TTL_SECONDS:-1800}"
 [[ "$_FOOTPRINT_DEFER_TTL_SECONDS" =~ ^[1-9][0-9]*$ ]] || _FOOTPRINT_DEFER_TTL_SECONDS=1800
 _FOOTPRINT_DEFER_SCHEMA="aidevops-footprint-defer/v1"
+
+# Same-cycle reservation store (GH#32977). The TTL only needs to cover the
+# launch -> status:queued/in-progress window; durable labels replace it.
+_FOOTPRINT_RESERVATION_DIR="${AIDEVOPS_FOOTPRINT_RESERVATION_DIR:-${HOME}/.aidevops/cache/footprint-reservations}"
+_FOOTPRINT_RESERVATION_TTL_SECONDS="${AIDEVOPS_FOOTPRINT_RESERVATION_TTL_SECONDS:-900}"
+[[ "$_FOOTPRINT_RESERVATION_TTL_SECONDS" =~ ^[1-9][0-9]*$ ]] || _FOOTPRINT_RESERVATION_TTL_SECONDS=900
+_FOOTPRINT_RESERVATION_SCHEMA="aidevops-footprint-reservation/v1"
+_FOOTPRINT_RESERVATION_LOCK_STALE_SECONDS=30
+_FOOTPRINT_RESERVATION_LOCK_ATTEMPTS=50
+# Must exceed the longest live-read -> lock window (gh fetch + lock wait).
+_FOOTPRINT_RESERVATION_SUPERSEDE_GRACE_SECONDS=120
+
+# Release/version files are low-information overlap: sharing only these does
+# not block dispatch, but any shared implementation file still does.
+_FOOTPRINT_LOW_INFO_BASENAMES="${AIDEVOPS_FOOTPRINT_LOW_INFO_BASENAMES:-VERSION VERSION.txt version.txt .version CHANGELOG CHANGELOG.md CHANGES.md HISTORY.md}"
 
 # Maximum age of the footprint cache in seconds. After this, rebuild.
 # 30s: long enough to catch concurrent same-file dispatch races (the
@@ -279,7 +303,7 @@ _footprint_defer_should_suppress() {
 	if [[ -n "$blocker_json" ]]; then
 		blocker_state=$(printf '%s' "$blocker_json" | jq -r '.state // ""' | tr '[:lower:]' '[:upper:]')
 		if [[ "$blocker_state" != "OPEN" ]] || ! printf '%s' "$blocker_json" | jq -e \
-			'[(.labels // [])[]? | if type == "object" then .name else . end] | any(. == "status:in-progress" or . == "status:in-review" or . == "status:claimed")' >/dev/null 2>&1; then
+			'[(.labels // [])[]? | if type == "object" then .name else . end] | any(. == "status:queued" or . == "status:in-progress" or . == "status:in-review" or . == "status:claimed")' >/dev/null 2>&1; then
 			_footprint_defer_wake "$state_path" "$state_json" "blocker_lifecycle_changed" || true
 			return 1
 		fi
@@ -334,6 +358,235 @@ _footprint_defer_status_json() {
 }
 
 #######################################
+# Same-cycle reservation store (GH#32977).
+#######################################
+_footprint_reservation_log() {
+	local message="$1"
+	[[ -n "${LOGFILE:-}" ]] || return 0
+	printf '[footprint-reservation] %s ts=%s\n' "$message" "$(date +%s)" >>"$LOGFILE" 2>/dev/null || true
+	return 0
+}
+
+_footprint_reservation_prepare_dir() {
+	local state_dir="$_FOOTPRINT_RESERVATION_DIR"
+	if [[ ! -e "$state_dir" && ! -L "$state_dir" ]]; then
+		(umask 077 && mkdir -p "$state_dir") || return 1
+	fi
+	[[ -d "$state_dir" && ! -L "$state_dir" && -O "$state_dir" ]] || return 1
+	chmod 0700 "$state_dir" 2>/dev/null || return 1
+	return 0
+}
+
+# Hash the repo slug so reservation filenames never expose private repo names.
+_footprint_reservation_repo_key() {
+	local repo_slug="$1"
+	local normalized_repo=""
+	[[ -n "$repo_slug" ]] || return 1
+	normalized_repo=$(printf '%s' "$repo_slug" | tr '[:upper:]' '[:lower:]')
+	_footprint_hash_text "$normalized_repo"
+	return $?
+}
+
+#######################################
+# Acquire the per-repo reservation lock (mkdir is atomic on local filesystems).
+# A lock whose stamp is older than the stale bound, or that never received a
+# stamp, is broken so a crashed dispatch subshell cannot wedge dispatch.
+# Args: $1 = repo key
+# Output: lock directory path
+# Exit: 0 acquired, 1 busy
+#######################################
+_footprint_reservation_lock() {
+	local repo_key="$1"
+	local lock_dir="${_FOOTPRINT_RESERVATION_DIR}/${repo_key}.lock"
+	local attempt=0 stamp="" now_epoch=""
+	while [[ "$attempt" -lt "$_FOOTPRINT_RESERVATION_LOCK_ATTEMPTS" ]]; do
+		if mkdir "$lock_dir" 2>/dev/null; then
+			date +%s >"${lock_dir}/stamp" 2>/dev/null || true
+			printf '%s\n' "$lock_dir"
+			return 0
+		fi
+		attempt=$((attempt + 1))
+		stamp=$(cat "${lock_dir}/stamp" 2>/dev/null) || stamp=""
+		now_epoch=$(date +%s)
+		if [[ "$stamp" =~ ^[0-9]+$ ]]; then
+			if [[ $((now_epoch - stamp)) -gt "$_FOOTPRINT_RESERVATION_LOCK_STALE_SECONDS" ]]; then
+				rm -rf "$lock_dir" 2>/dev/null || true
+				continue
+			fi
+		elif [[ "$attempt" -ge $((_FOOTPRINT_RESERVATION_LOCK_ATTEMPTS / 2)) ]]; then
+			rm -rf "$lock_dir" 2>/dev/null || true
+			continue
+		fi
+		sleep 0.1
+	done
+	return 1
+}
+
+#######################################
+# Print active reservations for a repo as "path|issue" lines. Expired or
+# malformed records are pruned; records for issues that already carry durable
+# lifecycle labels (supplied as superseded issues) are replaced by that live
+# evidence and removed. Call with the repo lock held.
+# Args: $1 = repo key, $2 = issue to exclude, $3 = newline-separated live issues
+#######################################
+_footprint_reservation_entries() {
+	local repo_key="$1"
+	local exclude_issue="$2"
+	local superseded_issues="$3"
+	local record_path="" record_json="" record_issue="" now_epoch=""
+	now_epoch=$(date +%s)
+	for record_path in "${_FOOTPRINT_RESERVATION_DIR}/${repo_key}-"*.json; do
+		[[ -f "$record_path" && ! -L "$record_path" && -O "$record_path" ]] || continue
+		if ! record_json=$(jq -ce --arg schema "$_FOOTPRINT_RESERVATION_SCHEMA" --argjson now "$now_epoch" '
+			select(.schema == $schema and (.issue | type) == "number"
+				and (.expires_at | type) == "number" and (.paths | type) == "array")
+			| select(.expires_at > $now)' "$record_path" 2>/dev/null); then
+			rm -f "$record_path" 2>/dev/null || true
+			continue
+		fi
+		record_issue=$(printf '%s' "$record_json" | jq -r '.issue')
+		[[ "$record_issue" == "$exclude_issue" ]] && continue
+		if printf '%s\n' "$superseded_issues" | grep -qx "$record_issue"; then
+			# This caller's live evidence already covers the issue.
+			_footprint_reservation_supersede "$record_path" "$record_json" "$record_issue" "$now_epoch"
+			continue
+		fi
+		printf '%s' "$record_json" | jq -r --arg issue "$record_issue" \
+			'.paths[] | select(type == "string" and length > 0) | . + "|" + $issue'
+	done
+	return 0
+}
+
+#######################################
+# Retire a reservation whose issue now shows durable lifecycle labels. The
+# first sighting only stamps superseded_at: a concurrent caller whose live read
+# predates those labels may still be about to take the lock and must see the
+# reservation. Removal waits for a grace period longer than any read-to-lock
+# window. Call with the repo lock held.
+# Args: $1 = record path, $2 = record json, $3 = issue, $4 = now epoch
+#######################################
+_footprint_reservation_supersede() {
+	local record_path="$1"
+	local record_json="$2"
+	local record_issue="$3"
+	local now_epoch="$4"
+	local superseded_at="" temp_path=""
+	superseded_at=$(printf '%s' "$record_json" | jq -r '.superseded_at // 0' 2>/dev/null) || superseded_at=0
+	[[ "$superseded_at" =~ ^[0-9]+$ ]] || superseded_at=0
+	if [[ "$superseded_at" -eq 0 ]]; then
+		temp_path=$(mktemp "${_FOOTPRINT_RESERVATION_DIR}/.reservation.XXXXXX" 2>/dev/null) || return 0
+		if printf '%s' "$record_json" | jq -c --argjson now "$now_epoch" '.superseded_at = $now' >"$temp_path" 2>/dev/null &&
+			chmod 0600 "$temp_path" && mv -f "$temp_path" "$record_path"; then
+			_footprint_reservation_log "event=superseded issue=#${record_issue} reason=lifecycle_labels_visible"
+		else
+			rm -f "$temp_path" 2>/dev/null || true
+		fi
+		return 0
+	fi
+	if [[ $((now_epoch - superseded_at)) -gt "$_FOOTPRINT_RESERVATION_SUPERSEDE_GRACE_SECONDS" ]]; then
+		rm -f "$record_path" 2>/dev/null || true
+		_footprint_reservation_log "event=retired issue=#${record_issue} reason=superseded_grace_elapsed"
+	fi
+	return 0
+}
+
+# Atomically write this candidate's reservation. Call with the repo lock held.
+_footprint_reservation_write() {
+	local repo_slug="$1"
+	local repo_key="$2"
+	local issue_number="$3"
+	local candidate_files="$4"
+	local now_epoch="" expires_at="" record_json="" record_path="" temp_path=""
+	[[ "$issue_number" =~ ^[0-9]+$ ]] || return 1
+	now_epoch=$(date +%s)
+	expires_at=$((now_epoch + _FOOTPRINT_RESERVATION_TTL_SECONDS))
+	record_json=$(printf '%s\n' "$candidate_files" | jq -Rsc \
+		--arg schema "$_FOOTPRINT_RESERVATION_SCHEMA" --arg repo "$repo_slug" \
+		--argjson issue "$issue_number" --argjson created_at "$now_epoch" --argjson expires_at "$expires_at" \
+		'{schema:$schema,repo_slug:$repo,issue:$issue,paths:(split("\n") | map(select(length > 0))),created_at:$created_at,expires_at:$expires_at}') || return 1
+	record_path="${_FOOTPRINT_RESERVATION_DIR}/${repo_key}-${issue_number}.json"
+	temp_path=$(mktemp "${_FOOTPRINT_RESERVATION_DIR}/.reservation.XXXXXX" 2>/dev/null) || return 1
+	if ! printf '%s\n' "$record_json" >"$temp_path" || ! chmod 0600 "$temp_path" || ! mv -f "$temp_path" "$record_path"; then
+		rm -f "$temp_path" 2>/dev/null || true
+		return 1
+	fi
+	_footprint_reservation_log "event=reserved issue=#${issue_number} repo=${repo_slug} expires_at=${expires_at}"
+	return 0
+}
+
+#######################################
+# Release a candidate's reservation after a failed or aborted launch. With a
+# since-epoch, only a reservation created by this attempt (at or after it) is
+# removed, so an earlier live launch keeps its reservation.
+# Args: $1 = repo slug, $2 = issue number, $3 = since epoch (optional)
+# Exit: always 0
+#######################################
+footprint_release_reservation() {
+	local repo_slug="$1"
+	local issue_number="$2"
+	local since_epoch="${3:-0}"
+	local repo_key="" record_path="" created_at=""
+	[[ -n "$repo_slug" && "$issue_number" =~ ^[0-9]+$ ]] || return 0
+	[[ "$since_epoch" =~ ^[0-9]+$ ]] || since_epoch=0
+	repo_key=$(_footprint_reservation_repo_key "$repo_slug") || return 0
+	record_path="${_FOOTPRINT_RESERVATION_DIR}/${repo_key}-${issue_number}.json"
+	[[ -f "$record_path" && ! -L "$record_path" ]] || return 0
+	created_at=$(jq -r '.created_at // 0' "$record_path" 2>/dev/null) || created_at=0
+	[[ "$created_at" =~ ^[0-9]+$ ]] || created_at=0
+	[[ "$created_at" -ge "$since_epoch" ]] || return 0
+	rm -f "$record_path" 2>/dev/null || true
+	_footprint_reservation_log "event=released issue=#${issue_number} repo=${repo_slug}"
+	return 0
+}
+
+# Release/version files alone are low-information overlap.
+_footprint_is_low_information_path() {
+	local path="$1"
+	local base="${path##*/}"
+	local name=""
+	for name in $_FOOTPRINT_LOW_INFO_BASENAMES; do
+		[[ "$base" == "$name" ]] && return 0
+	done
+	return 1
+}
+
+#######################################
+# Find the blocking overlap between a candidate footprint and in-flight or
+# reserved footprints. Shared low-information (release/version) files are
+# ignored; any shared implementation file blocks.
+# Args: $1 = candidate files (newline list), $2 = "path|issue" lines
+# Output: "<blocking_issue><TAB><overlapping files>"
+# Exit: 0 overlap found, 1 none
+#######################################
+_footprint_find_overlap() {
+	local candidate_files="$1"
+	local inflight_data="$2"
+	local candidate_file="" norm_candidate="" inflight_entry="" inflight_file="" inflight_issue="" norm_inflight=""
+	local overlapping_files="" blocking_issue=""
+	[[ -n "$candidate_files" && -n "$inflight_data" ]] || return 1
+	while IFS= read -r candidate_file; do
+		[[ -n "$candidate_file" ]] || continue
+		_footprint_is_low_information_path "$candidate_file" && continue
+		# Normalise: strip leading ./ or .agents/ for comparison
+		norm_candidate=$(printf '%s' "$candidate_file" | sed 's|^\./||' | sed 's|^\.agents/||')
+		while IFS= read -r inflight_entry; do
+			[[ -n "$inflight_entry" ]] || continue
+			inflight_file="${inflight_entry%|*}"
+			inflight_issue="${inflight_entry##*|}"
+			norm_inflight=$(printf '%s' "$inflight_file" | sed 's|^\./||' | sed 's|^\.agents/||')
+			if [[ "$norm_candidate" == "$norm_inflight" ]]; then
+				overlapping_files="${overlapping_files}${candidate_file}, "
+				blocking_issue="$inflight_issue"
+				break
+			fi
+		done <<<"$inflight_data"
+	done <<<"$candidate_files"
+	[[ -n "$overlapping_files" && -n "$blocking_issue" ]] || return 1
+	printf '%s\t%s\n' "$blocking_issue" "${overlapping_files%, }"
+	return 0
+}
+
+#######################################
 # Extract file paths from an issue body.
 #
 # Parses explicit edit declarations from the brief template's "Files to Modify" section:
@@ -365,19 +618,92 @@ _footprint_extract_paths() {
 	prefixed=$(printf '%s' "$issue_body" | grep -oE '((EDIT|NEW):?|File:)[[:space:]]+[`"]?[^`"[:space:],]+' 2>/dev/null |
 		sed -E 's/^((EDIT|NEW):?|File:)[[:space:]]*//' | sed 's/^[`"]//' | sed 's/[`"]*$//' | sort -u) || prefixed=""
 
+	# GH#32977: a canonical `## Files Scope` / `### Files Scope` section is an
+	# explicit ownership declaration (see pre-dispatch-validator-lib-brief-scope.sh),
+	# so its bare list items count too. Paths elsewhere stay context-only.
+	local scoped=""
+	scoped=$(_footprint_extract_files_scope_paths "$issue_body")
+
 	# Strip line-number qualifiers — we only care about file-level overlap
 	# Handles: file.sh:45, file.sh:45-60, file.sh:1477
-	printf '%s' "$prefixed" | sed 's/:[0-9]*\(-[0-9]*\)*$//' | sort -u | grep -v '^$' || true
+	printf '%s\n%s' "$prefixed" "$scoped" | sed 's/:[0-9]*\(-[0-9]*\)*$//' | sort -u | grep -v '^$' || true
+	return 0
+}
+
+#######################################
+# Print the first path token of each list item inside a canonical Files Scope
+# section. Tokens must look like repo-relative file paths (contain "/" or ".").
+# Args: $1 = issue body
+# Output: one path per line (may include line qualifiers)
+#######################################
+_footprint_extract_files_scope_paths() {
+	local issue_body="$1"
+	# shellcheck disable=SC2016 # Backticks are literal awk regex characters.
+	printf '%s\n' "$issue_body" | tr -d '\r' | awk '
+		/^## Files Scope[[:space:]]*$/ { found = 1; level = 2; next }
+		/^### Files Scope[[:space:]]*$/ { found = 1; level = 3; next }
+		found && level == 2 && (/^# / || /^## /) { found = 0 }
+		found && level == 3 && (/^# / || /^## / || /^### /) { found = 0 }
+		found && /^[[:space:]]*[-*][[:space:]]+/ {
+			line = $0
+			sub(/^[[:space:]]*[-*][[:space:]]+/, "", line)
+			sub(/^`?(EDIT|NEW):?[[:space:]]*/, "", line)
+			quoted = (line ~ /^`/)
+			gsub(/`/, "", line)
+			split(line, parts, /[[:space:]]+/)
+			token = parts[1]
+			if (token ~ /^[A-Za-z0-9_.-]+(\/[A-Za-z0-9_.-]+)*(:[0-9]+(-[0-9]+)?)?$/ && (quoted || token ~ /[.\/]/)) print token
+		}
+	'
+	return 0
+}
+
+#######################################
+# Fetch open issues carrying any active dispatch status label, merged and
+# deduplicated by number. t3043: the per-label gh calls run concurrently via
+# temp files and background jobs (max(5-15s) instead of their serial sum).
+#
+# Args: $1 = repo_slug (owner/repo)
+# Output: JSON array of {number, body, labels}; "[]" on failure
+# Exit: always 0
+#######################################
+_footprint_fetch_active_issues() {
+	local repo_slug="$1"
+	local labels=("status:queued" "status:in-progress" "status:in-review" "status:claimed")
+	local tmpdir="" label="" idx=0 pids=() merged=""
+	tmpdir=$(mktemp -d 2>/dev/null) || tmpdir="/tmp/fp-$$"
+	mkdir -p "$tmpdir" 2>/dev/null || true
+
+	for label in "${labels[@]}"; do
+		(gh issue list --repo "$repo_slug" --label "$label" --state open \
+			--json number,body,labels --limit 50 2>/dev/null || echo "[]") >"${tmpdir}/${idx}.json" &
+		pids+=("$!")
+		idx=$((idx + 1))
+	done
+	local pid=""
+	for pid in "${pids[@]}"; do
+		wait "$pid" 2>/dev/null || true
+	done
+
+	idx=0
+	for label in "${labels[@]}"; do
+		merged="${merged}$(cat "${tmpdir}/${idx}.json" 2>/dev/null || echo "[]")"$'\n'
+		idx=$((idx + 1))
+	done
+	rm -rf "$tmpdir" 2>/dev/null || true
+
+	printf '%s' "$merged" | jq -s 'map(select(type == "array")) | add // [] | unique_by(.number)' 2>/dev/null || printf '[]\n'
 	return 0
 }
 
 #######################################
 # Get file footprints for all currently in-flight issues in a repo.
 #
-# "In-flight" = issue has an active status label (status:in-progress,
-# status:in-review, status:claimed) which indicates a worker is currently
-# processing it. Issues with status:queued are not yet dispatched and
-# don't count. Parent-task issues are coordination containers, not worker
+# "In-flight" = issue has an active status label (status:queued,
+# status:in-progress, status:in-review, status:claimed). status:queued is set
+# by the dispatcher when it assigns a worker that is about to launch
+# (GH#32977), so it is owned work even before the worker registers.
+# Parent-task issues are coordination containers, not worker
 # implementation claims, so their broad planning footprints do not block
 # worker-ready child dispatch.
 #
@@ -412,43 +738,8 @@ _footprint_get_inflight() {
 	fi
 
 	# Cache miss — rebuild.
-	# t3043: parallelise the 3 gh issue list calls. Previously serial
-	# (3x 5-15s = 15-45s on cold cache); now concurrent via temp files
-	# and background jobs (max(5-15s) ≈ 5-15s — 3x faster on cache miss).
-	local _fp_tmpdir
-	_fp_tmpdir=$(mktemp -d 2>/dev/null) || _fp_tmpdir="/tmp/fp-$$"
-	mkdir -p "$_fp_tmpdir" 2>/dev/null || true
-
-	# Launch all 3 queries in parallel
-	(gh issue list --repo "$repo_slug" --label "status:in-progress" --state open \
-		--json number,body,labels --limit 50 2>/dev/null || echo "[]") >"${_fp_tmpdir}/in-progress.json" &
-	local _fp_pid1=$!
-
-	(gh issue list --repo "$repo_slug" --label "status:in-review" --state open \
-		--json number,body,labels --limit 50 2>/dev/null || echo "[]") >"${_fp_tmpdir}/in-review.json" &
-	local _fp_pid2=$!
-
-	(gh issue list --repo "$repo_slug" --label "status:claimed" --state open \
-		--json number,body,labels --limit 50 2>/dev/null || echo "[]") >"${_fp_tmpdir}/claimed.json" &
-	local _fp_pid3=$!
-
-	# Wait for all to complete
-	wait "$_fp_pid1" 2>/dev/null || true
-	wait "$_fp_pid2" 2>/dev/null || true
-	wait "$_fp_pid3" 2>/dev/null || true
-
-	local inflight_issues review_issues claimed_issues
-	inflight_issues=$(cat "${_fp_tmpdir}/in-progress.json" 2>/dev/null) || inflight_issues="[]"
-	review_issues=$(cat "${_fp_tmpdir}/in-review.json" 2>/dev/null) || review_issues="[]"
-	claimed_issues=$(cat "${_fp_tmpdir}/claimed.json" 2>/dev/null) || claimed_issues="[]"
-
-	# Cleanup temp files
-	rm -rf "$_fp_tmpdir" 2>/dev/null || true
-
-	# Merge all three lists into one (jq handles dedup by number)
 	local all_inflight
-	all_inflight=$(printf '%s\n%s\n%s' "$inflight_issues" "$review_issues" "$claimed_issues" |
-		jq -s 'add | unique_by(.number)' 2>/dev/null) || all_inflight="[]"
+	all_inflight=$(_footprint_fetch_active_issues "$repo_slug")
 
 	local issue_count
 	issue_count=$(printf '%s' "$all_inflight" | jq 'length' 2>/dev/null) || issue_count=0
@@ -502,6 +793,9 @@ _footprint_get_inflight() {
 #   $2 = repo_slug (owner/repo)
 #   $3 = issue_body (body text of the candidate issue)
 # Output: on overlap, prints "FOOTPRINT_OVERLAP (issue=#<blocking> files=<list>)"
+# Side effect: when no overlap is found, reserves the candidate's footprint
+# for the rest of this refill window (GH#32977); callers release it with
+# footprint_release_reservation when the launch does not happen.
 # Exit:
 #   0 = overlap found (do NOT dispatch — defer one cycle)
 #   1 = no overlap (safe to dispatch)
@@ -518,47 +812,42 @@ _footprint_check_overlap() {
 	candidate_files=$(_footprint_extract_paths "$issue_body")
 	[[ -n "$candidate_files" ]] || return 1
 
-	# Get in-flight footprints (excluding self)
-	local inflight_data
+	# Get in-flight footprints (excluding self). Network reads stay outside the
+	# reservation lock; reservations are written before the launch labels, so
+	# anything this read misses is visible as a reservation under the lock.
+	local inflight_data="" repo_key="" lock_dir="" live_issues="" reserved_data=""
 	inflight_data=$(_footprint_get_inflight "$repo_slug" "$issue_number")
-	[[ -n "$inflight_data" ]] || return 1
+	if repo_key=$(_footprint_reservation_repo_key "$repo_slug") && _footprint_reservation_prepare_dir; then
+		if ! lock_dir=$(_footprint_reservation_lock "$repo_key"); then
+			_footprint_reservation_log "event=lock_busy issue=#${issue_number} repo=${repo_slug}"
+			printf 'FOOTPRINT_OVERLAP (reservation_lock_busy; retry next cycle)\n'
+			return 0
+		fi
+		live_issues=$(printf '%s\n' "$inflight_data" | awk -F '|' 'NF > 1 { print $NF }' | sort -u)
+		reserved_data=$(_footprint_reservation_entries "$repo_key" "$issue_number" "$live_issues")
+		if [[ -n "$reserved_data" ]]; then
+			inflight_data=$(printf '%s\n%s\n' "$inflight_data" "$reserved_data" | grep -v '^$' || true)
+		fi
+	else
+		_footprint_reservation_log "event=store_unavailable issue=#${issue_number} repo=${repo_slug} fallback=live_only"
+	fi
 
-	# Check each candidate file against in-flight footprints
-	local overlapping_files=""
-	local blocking_issue=""
-	while IFS= read -r candidate_file; do
-		[[ -n "$candidate_file" ]] || continue
-
-		# Normalise: strip leading ./ or .agents/ for comparison
-		local norm_candidate
-		norm_candidate=$(printf '%s' "$candidate_file" | sed 's|^\./||' | sed 's|^\.agents/||')
-
-		# Check against each in-flight file
-		while IFS= read -r inflight_entry; do
-			[[ -n "$inflight_entry" ]] || continue
-			local inflight_file="${inflight_entry%|*}"
-			local inflight_issue="${inflight_entry##*|}"
-
-			local norm_inflight
-			norm_inflight=$(printf '%s' "$inflight_file" | sed 's|^\./||' | sed 's|^\.agents/||')
-
-			if [[ "$norm_candidate" == "$norm_inflight" ]]; then
-				overlapping_files="${overlapping_files}${candidate_file}, "
-				blocking_issue="$inflight_issue"
-				break
-			fi
-		done <<<"$inflight_data"
-	done <<<"$candidate_files"
-
-	if [[ -n "$overlapping_files" && -n "$blocking_issue" ]]; then
-		# Trim trailing ", "
-		overlapping_files="${overlapping_files%, }"
+	local overlap="" blocking_issue="" overlapping_files=""
+	if overlap=$(_footprint_find_overlap "$candidate_files" "$inflight_data"); then
+		[[ -z "$lock_dir" ]] || rm -rf "$lock_dir" 2>/dev/null || true
+		blocking_issue="${overlap%%$'\t'*}"
+		overlapping_files="${overlap#*$'\t'}"
 		_footprint_defer_record_overlap "$issue_number" "$repo_slug" "$candidate_files" \
 			"$inflight_data" "$blocking_issue" "$overlapping_files"
 		printf 'FOOTPRINT_OVERLAP (issue=#%s files=%s)\n' "$blocking_issue" "$overlapping_files"
 		return 0
 	fi
 
+	if [[ -n "$lock_dir" ]]; then
+		_footprint_reservation_write "$repo_slug" "$repo_key" "$issue_number" "$candidate_files" ||
+			_footprint_reservation_log "event=reserve_failed issue=#${issue_number} repo=${repo_slug}"
+		rm -rf "$lock_dir" 2>/dev/null || true
+	fi
 	return 1
 }
 
