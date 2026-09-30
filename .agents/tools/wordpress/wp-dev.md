@@ -49,7 +49,7 @@ Requires WordPress Abilities API plugin. Repo: `~/Git/wordpress/mcp-adapter`.
 
 **STDIO** (local): `composer require wordpress/mcp-adapter && wp plugin activate mcp-adapter` → `wp mcp-adapter serve --server=mcp-adapter-default-server --user=admin`
 
-**HTTP** (remote): `npx @automattic/mcp-wordpress-remote` — set `WP_API_URL`, `WP_API_USERNAME`, `WP_API_PASSWORD`. Application Passwords: WP Admin > Users > Profile > "Application Passwords" → name `mcp-adapter-dev` → store via `setup-local-api-keys.sh set wp-app-password-sitename "xxxx xxxx xxxx xxxx"`. To keep the password out of runtime config, launch through `wordpress-mcp-helper.sh serve-http <url> <user> <secret-name>`.
+**HTTP** (remote): `npx @automattic/mcp-wordpress-remote` — set `WP_API_URL`, `WP_API_USERNAME`, `WP_API_PASSWORD`. Application Passwords: WP Admin > Users > Profile > "Application Passwords" → name `mcp-adapter-dev` → store via `setup-local-api-keys.sh set wp-app-password-sitename "xxxx xxxx xxxx xxxx"`. To keep the password out of runtime config, launch through `wordpress-mcp-helper.sh serve-http <url> <user> <secret-name>`, or generate a ready-to-paste config with `wordpress-mcp-helper.sh config-http <site> <url> <user> <secret-name>`.
 
 **Plugin abilities**: plugins register their own abilities on the default server (for example Rank Math's `rank-math/*`; see `rankmath-mcp.md`).
 

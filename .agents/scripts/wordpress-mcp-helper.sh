@@ -168,33 +168,30 @@ EOF
     return 0
 }
 
-# Generate HTTP MCP configuration for a site
+# Generate HTTP MCP configuration for a site that launches serve_http,
+# resolving the Application Password from a secret name at launch time.
+# No secret value is written to the generated config.
 generate_http_config() {
     local site_name="$1"
     local api_url="$2"
     local username="$3"
-    local app_password="$4"
+    local secret_name="$4"
     local server="${5:-mcp-adapter-default-server}"
-    
-    cat << EOF
-{
-  "mcpServers": {
-    "wordpress-$site_name": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "@automattic/mcp-wordpress-remote@latest"
-      ],
-      "env": {
-        "WP_API_URL": "$api_url/wp-json/mcp/$server",
-        "LOG_FILE": "$HOME/.agents/tmp/mcp-$site_name.log",
-        "WP_API_USERNAME": "$username",
-        "WP_API_PASSWORD": "$app_password"
-      }
-    }
-  }
-}
-EOF
+
+    if [[ ! "$site_name" =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
+        print_error "Site name must be lowercase letters, digits and hyphens: $site_name"
+        return 1
+    fi
+    validate_remote_args "$api_url" "$username" "$secret_name" || return 1
+
+    local helper="${HOME}/.aidevops/agents/scripts/wordpress-mcp-helper.sh"
+    local server_name="wordpress-${site_name}"
+    local args_json
+    args_json=$(jq -cn --arg u "${api_url%/}" --arg n "$username" --arg s "$secret_name" --arg srv "$server" \
+        '["serve-http", $u, $n, $s, $srv]') || return 1
+
+    jq -n --arg name "$server_name" --arg h "$helper" --argjson a "$args_json" \
+        '{mcpServers: {($name): {command: $h, args: $a}}}'
     return 0
 }
 
@@ -284,35 +281,42 @@ test_stdio_connection() {
     return 0
 }
 
-# Test HTTP connection
+# Test HTTP connection. Resolves the secret name and sends credentials to
+# curl through a config file on stdin, never on argv or in the process list.
 test_http_connection() {
     local api_url="$1"
     local username="$2"
-    local app_password="$3"
+    local secret_name="$3"
     local server="${4:-mcp-adapter-default-server}"
-    
+
+    validate_remote_args "$api_url" "$username" "$secret_name" || return 1
     print_info "Testing HTTP MCP connection..."
-    
+
     if ! command -v curl &> /dev/null; then
         print_error "$ERROR_CURL_REQUIRED"
         return 1
     fi
-    
-    local endpoint="$api_url/wp-json/mcp/$server"
-    
+
+    local password
+    password=$(resolve_secret_value "$secret_name") || return 1
+    local escaped="${username}:${password}"
+    escaped="${escaped//\\/\\\\}"
+    escaped="${escaped//\"/\\\"}"
+    local credentials="user = \"${escaped}\""
+
+    local endpoint="${api_url%/}/wp-json/mcp/$server"
+
     # Test endpoint accessibility
     local response
-    response=$(curl -s -o /dev/null -w "%{http_code}" \
-        -u "$username:$app_password" \
-        "$endpoint" 2>&1)
-    
+    response=$(printf '%s\n' "$credentials" | curl -sS -K - -o /dev/null -w '%{http_code}' "$endpoint" 2>&1)
+
     if [[ "$response" == "200" || "$response" == "401" ]]; then
         print_success "Endpoint reachable: $endpoint (HTTP $response)"
     else
         print_error "Endpoint not reachable: $endpoint (HTTP $response)"
         return 1
     fi
-    
+
     return 0
 }
 
@@ -575,11 +579,11 @@ Commands:
   sites                           List all configured WordPress sites
   servers <site>                  List MCP servers available on a site
   test-stdio <site> [user]        Test STDIO MCP connection
-  test-http <url> <user> <pass>   Test HTTP MCP connection
+  test-http <url> <user> <secret-name>   Test HTTP MCP connection
   discover <site> [user]          Discover WordPress abilities via MCP
   
   config-stdio <site> [user]      Generate STDIO MCP config for Claude/OpenCode
-  config-http <site> <url> <user> <pass>  Generate HTTP MCP config
+  config-http <site> <url> <user> <secret-name>  Generate HTTP MCP config
   config-ssh <site> <host> <path> [user]  Generate SSH MCP config
 
   serve-http <url> <user> <secret-name> [server]
@@ -609,8 +613,9 @@ Examples:
   # Generate config for Claude Desktop
   ./wordpress-mcp-helper.sh config-stdio mysite admin
   
-  # Test remote site via HTTP
-  ./wordpress-mcp-helper.sh test-http https://example.com admin "xxxx xxxx xxxx xxxx"
+  # Test remote site via HTTP (store the Application Password first)
+  aidevops secret set WP_EXAMPLE_APP_PASSWORD
+  ./wordpress-mcp-helper.sh test-http https://example.com admin WP_EXAMPLE_APP_PASSWORD
   
   # Generate SSH config for Hostinger
   ./wordpress-mcp-helper.sh config-ssh mysite ssh.example.com /home/user/public_html
@@ -657,7 +662,7 @@ main() {
     check_dependencies || exit 1
     load_mcp_env
     case "$command" in
-        "serve-http"|"rankmath-check"|"rankmath-config"|"help"|"-h"|"--help") ;;
+        "serve-http"|"rankmath-check"|"rankmath-config"|"config-http"|"http-config"|"test-http"|"help"|"-h"|"--help") ;;
         *) load_config || true ;;
     esac
     
@@ -689,7 +694,7 @@ main() {
             fi
             ;;
         "config-http"|"http-config")
-            generate_http_config "$arg1" "$arg2" "$arg3" "$arg4"
+            generate_http_config "$arg1" "$arg2" "$arg3" "$arg4" "${arg5:-mcp-adapter-default-server}"
             ;;
         "config-ssh"|"ssh-config")
             generate_ssh_config "$arg1" "$arg2" "$arg3" "${arg4:-admin}"
