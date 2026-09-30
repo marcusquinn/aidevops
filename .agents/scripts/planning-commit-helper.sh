@@ -586,8 +586,8 @@ commit_planning_files() {
 
 	# Publish through a temporary index so caller HEAD/index/files stay untouched.
 	log_info "Committing: $commit_msg"
-	local current_branch=""
-	current_branch=$(git -C "$repo_root" symbolic-ref --short HEAD 2>/dev/null) || return 1
+	# No named local branch is required: publication uses a temporary index
+	# against the remote default branch, so detached HEAD is supported.
 	local default_branch=""
 	default_branch=$(_todo_default_branch "$repo_root")
 	if _todo_branch_requires_planning_pr "$repo_root" "$default_branch"; then
