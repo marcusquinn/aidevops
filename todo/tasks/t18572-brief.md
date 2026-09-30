@@ -56,6 +56,9 @@ Model the migration and advisory on `cleanup_osgrep()` in `.agents/scripts/setup
 - `.agents/scripts/setup/modules/post-setup.sh`
 - `.agents/scripts/setup/modules/agent-deploy.sh`
 - `.agents/scripts/setup/modules/migrations.sh`
+- `.agents/scripts/auto-update-helper.sh`
+- `.agents/scripts/auto-update-helper-status.sh`
+- `todo/tasks/t18572-brief.md`
 - `.agents/scripts/aidevops-cli/aidevops-init-lib.sh`
 - `.agents/scripts/aidevops-cli/aidevops-status-lib.sh`
 - `.agents/scripts/tool-version-check.sh`

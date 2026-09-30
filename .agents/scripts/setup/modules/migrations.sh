@@ -254,6 +254,7 @@ cleanup_deprecated_paths() {
 
 	cleaned=$((cleaned + $(cleanup_retired_context_tooling "$agents_dir")))
 	cleaned=$((cleaned + $(cleanup_retired_ralph_commands "$agents_dir")))
+	cleanup_retired_beads "$agents_dir"
 
 	if [[ $cleaned -gt 0 ]]; then
 		print_info "Cleaned up $cleaned deprecated agent path(s)"
@@ -282,6 +283,29 @@ cleanup_deprecated_paths() {
 	# Remove oh-my-opencode from plugin array if present — guarded by same setting
 	cleanup_oh_my_opencode_plugin_entry
 
+	return 0
+}
+
+# Only remove aidevops-deployed files. Never uninstall user binaries, delete
+# project databases, or alter independently managed Git hook sections.
+cleanup_retired_beads() {
+	local agents_dir="$1"
+	local path="" tool=""
+	for path in \
+		"$agents_dir/scripts/beads-sync-helper.sh" \
+		"$agents_dir/scripts/todo-ready.sh" \
+		"$agents_dir/tools/task-management/beads.md"; do
+		if [[ -f "$path" || -L "$path" ]]; then
+			rm -f -- "$path"
+			print_info "Removed retired aidevops task helper: $path"
+		fi
+	done
+	for tool in bd bv beads-ui bdui; do
+		if command -v "$tool" >/dev/null 2>&1; then
+			print_info "Beads integration retired; optional manual uninstall: brew uninstall steveyegge/beads/bd (bd), brew uninstall bv, npm uninstall -g beads-ui bdui (check your original installer first)."
+			break
+		fi
+	done
 	return 0
 }
 

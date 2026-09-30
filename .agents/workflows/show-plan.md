@@ -27,7 +27,7 @@ Display the output directly to the user. The script handles all formatting.
 ## Arguments
 
 **Plan identifier (required unless --list or --current):**
-- Plan name (fuzzy match): `opencode`, `destructive`, `beads`
+- Plan name (fuzzy match): `opencode`, `destructive`
 - Plan ID: `p001`, `p002`, etc.
 
 **Options:**
@@ -43,7 +43,6 @@ Display the output directly to the user. The script handles all formatting.
 /show-plan --current             # Show plan for current branch
 /show-plan --list                # List all plans
 /show-plan "destructive"         # Fuzzy match "Destructive Command Hooks"
-/show-plan beads                 # Show Beads Integration plan
 ```
 
 ## Output Format
