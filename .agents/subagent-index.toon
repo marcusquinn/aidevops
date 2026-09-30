@@ -146,7 +146,7 @@ tools/video/,tools/video subagents,create-onboarding-video|davinci-resolve|remot
 tools/vision/,tools/vision subagents,create-screenshots|image-editing|image-generation|image-understanding|overview
 tools/voice/,tools/voice subagents,buzz|cloud-tts-apis|cloud-voice-agents|hyprwhspr|ios-shortcut|local-tts-models|nemotron-diarization|pipecat-opencode|qwen3-tts|speech-to-speech|transcription|voice-ai-models|voice-models|voiceink-shortcut
 tools/,tools subagents,wordpress
-tools/wordpress/,tools/wordpress subagents,localwp|mainwp|scf|wp-admin|wp-cli-reference|wp-dev|wp-preferred
+tools/wordpress/,tools/wordpress subagents,localwp|mainwp|rankmath-mcp|scf|wp-admin|wp-cli-reference|wp-dev|wp-preferred
 workflows/,workflows subagents,ai-research|auto-browse|autoagent|autoresearch|branch
 workflows/branch/,workflows/branch subagents,bugfix|chore|experiment|feature|hotfix|refactor|release
 workflows/,workflows subagents,brief

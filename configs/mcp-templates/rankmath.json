@@ -1,0 +1,27 @@
+{
+  "_comment": "Rank Math SEO MCP template (one server per WordPress site). Rank Math exposes rank-math/* abilities through the WordPress MCP Adapter default server. Generate a site-specific entry with: wordpress-mcp-helper.sh rankmath-config <site> <url> <user> <secret-name> [opencode|claude|json]",
+  "_setup": "aidevops secret set RANKMATH_EXAMPLE_WP_APP_PASSWORD && ~/.aidevops/agents/scripts/wordpress-mcp-helper.sh rankmath-check https://example.com aidevops-bot RANKMATH_EXAMPLE_WP_APP_PASSWORD",
+  "_env": "No secrets in this file. serve-http resolves the Application Password named by the last argument from the environment/credentials.sh or aidevops secret at launch.",
+  "_docs": ".agents/tools/wordpress/rankmath-mcp.md",
+  "opencode": {
+    "rankmath-example": {
+      "type": "local",
+      "command": [
+        "/Users/YOU/.aidevops/agents/scripts/wordpress-mcp-helper.sh",
+        "serve-http",
+        "https://example.com",
+        "aidevops-bot",
+        "RANKMATH_EXAMPLE_WP_APP_PASSWORD"
+      ],
+      "enabled": false,
+      "_comment": "Disabled by default; enable per session or via the rankmath-mcp subagent (tools: rankmath-*). Replace /Users/YOU with your home directory."
+    }
+  },
+  "claude_code": {
+    "_command": "claude mcp add-json rankmath-example '{\"type\":\"stdio\",\"command\":\"/Users/YOU/.aidevops/agents/scripts/wordpress-mcp-helper.sh\",\"args\":[\"serve-http\",\"https://example.com\",\"aidevops-bot\",\"RANKMATH_EXAMPLE_WP_APP_PASSWORD\"]}' --scope user"
+  },
+  "claude_desktop_oauth": {
+    "_comment": "Vendor-recommended for Claude Desktop/claude.ai: Settings > Connectors > Add custom connector. Approve in WordPress; revoke via the generated Application Password.",
+    "url": "https://example.com/wp-json/mcp/mcp-oauth-server"
+  }
+}
