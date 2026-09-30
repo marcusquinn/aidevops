@@ -108,7 +108,7 @@ _brew_upgrade_cmd() {
 # Ubuntu 24.04+, Fedora 38+, and modern Debian mark the system Python as
 # "externally managed" — bare `pip install` is blocked with an error.
 # Safe upgrade order: pipx (isolated venv) → pip --user (user site-packages).
-# $1 = pip package name (e.g. "beads-viewer", "dspy-ai", "crawl4ai")
+# $1 = pip package name (e.g. "beads-viewer", "crawl4ai")
 # shellcheck disable=SC2016  # Single quotes intentional: bash -c payload
 _pip_upgrade_cmd() {
 	local pkg="$1"
@@ -122,7 +122,6 @@ NPM_TOOLS=(
 	"npm|OpenCode|opencode|--version|opencode-ai|${_oc_upgrade_cmd}"
 	"npm|Claude Code CLI|claude|--version|@anthropic-ai/claude-code|npm install -g @anthropic-ai/claude-code@latest"
 	"npm|Codex CLI|codex|--version|@openai/codex|npm install -g @openai/codex@latest"
-	"npm|DSPyGround|dspyground|--version|dspyground|npm install -g dspyground@latest"
 	"npm|LocalWP MCP|mcp-local-wp|--version|@verygoodplugins/mcp-local-wp|npm install -g @verygoodplugins/mcp-local-wp@latest"
 	"npm|Beads UI|beads-ui|--version|beads-ui|npm install -g beads-ui@latest"
 	"npm|BDUI|bdui|--version|bdui|npm install -g bdui@latest"
@@ -150,7 +149,7 @@ PIP_TOOLS=(
 	"pip|Analytics MCP|analytics-mcp|--version|analytics-mcp|pipx upgrade analytics-mcp"
 	"pip|Outscraper MCP|outscraper-mcp-server|--version|outscraper-mcp-server|uv tool upgrade outscraper-mcp-server"
 )
-# Library dependencies (e.g. dspy-ai, crawl4ai) are intentionally excluded from
+# Library dependencies (e.g. crawl4ai) are intentionally excluded from
 # PIP_TOOLS. They are project-level dependencies managed inside project venvs via
 # pyproject.toml / requirements.txt — not global CLI tools. Auto-updating them
 # here installs redundant global copies that diverge from pinned project versions.
@@ -229,7 +228,7 @@ get_uv_installed_version() {
 # Get installed version for Python packages across all install methods.
 # Tries pip show first (standard pip installs), then pipx (isolated tools like
 # analytics-mcp), then uv tool (isolated tools like outscraper-mcp-server).
-# pip-only libraries (e.g. crawl4ai, dspy) have no CLI binary so command -v
+# pip-only libraries (e.g. crawl4ai) have no CLI binary so command -v
 # always fails — this function handles all three installation methods.
 get_python_installed_version() {
 	local pkg="$1"
@@ -693,7 +692,7 @@ check_tool() {
 
 	local installed
 	# pip tools: detect across pip/pipx/uv — pip-only libraries (e.g.
-	# crawl4ai, dspy) have no CLI binary so command -v always fails.
+	# crawl4ai) have no CLI binary so command -v always fails.
 	# npm tools: pass package name so fallback to package.json works.
 	# All other categories: standard CLI binary detection.
 	installed=$(_tool_installed_version "$category" "$cmd" "$ver_flag" "$pkg")

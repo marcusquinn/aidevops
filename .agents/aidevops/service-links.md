@@ -88,8 +88,6 @@ tools:
 | [OpenAI](https://openai.com/) | [platform.openai.com/playground](https://platform.openai.com/playground) | [platform.openai.com/docs](https://platform.openai.com/docs) |
 | [AmpCode](https://ampcode.com/) | [ampcode.com](https://ampcode.com/) | [docs.ampcode.com](https://docs.ampcode.com/) |
 | [Continue.dev](https://continue.dev/) | [continue.dev](https://continue.dev/) | [docs.continue.dev](https://docs.continue.dev/) |
-| [DSPy](https://dspy.ai/) | [dspy.ai](https://dspy.ai/) | [dspy.ai/learn](https://dspy.ai/learn/) |
-| [DSPyGround](https://dspyground.com/) | [playground.dspyground.com](https://playground.dspyground.com/) | [docs.dspyground.com](https://docs.dspyground.com/) |
 
 ## MCP Integrations
 

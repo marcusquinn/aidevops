@@ -3,7 +3,7 @@
   "configVersion": 0,
   "workspaces": {
     "": {
-      "name": "aidevops-dspy-integration",
+      "name": "aidevops",
       "dependencies": {
         "@vitejs/plugin-react": "6.1.1",
         "elysia": "1.4.30",

@@ -71,7 +71,7 @@ git clone https://github.com/openprose/prose.git ~/.config/opencode/skill/open-p
 | Agno | - | localhost:3000 | `pip install "agno[all]"` | `~/.aidevops/scripts/start-agno-stack.sh` |
 | OpenProse | 500+ | None (DSL) | `git clone https://github.com/openprose/prose.git ~/.config/opencode/skill/open-prose` | AI session = VM |
 
-**OpenProse** is zero-dependency (pattern, not framework): explicit control flow (`parallel:`, `loop until`, `try/catch`), AI-evaluated conditions (`**the code is production ready**`), portable across Claude Code, OpenCode, Amp. Operates at the **workflow layer**, complementing DSPy (prompt optimization), TOON (context compression), and Context7/Augment (knowledge retrieval).
+**OpenProse** is zero-dependency (pattern, not framework): explicit control flow (`parallel:`, `loop until`, `try/catch`), AI-evaluated conditions (`**the code is production ready**`), portable across Claude Code, OpenCode, Amp. Operates at the **workflow layer**, complementing TOON (context compression) and Context7/Augment (knowledge retrieval). Use clear agent guidance, model replay and agent-test evaluation to reduce prompt interpretation variance.
 
 ## Common Patterns
 

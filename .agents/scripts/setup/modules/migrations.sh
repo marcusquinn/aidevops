@@ -385,6 +385,81 @@ cleanup_osgrep() {
 	return 0
 }
 
+# GH#33141: retire the aidevops-managed DSPy integration once per installation.
+# User projects, configs and caches remain untouched. The cache env line was
+# persisted only in python-env/dspy-env/bin/activate, removed with that venv.
+cleanup_retired_prompt_tooling() {
+	local install_dir="${INSTALL_DIR:-}"
+	local state_dir="$HOME/.aidevops/cache/migrations"
+	local install_key
+	install_key=$(printf '%s' "$install_dir" | cksum | cut -d' ' -f1) || return 1
+	local marker="$state_dir/gh33141-retired-dspy-$install_key"
+	local agents_dir="$HOME/.aidevops/agents"
+	local path
+	local mode
+	local cleaned=false
+
+	# HOME and INSTALL_DIR ancestry comes from trusted setup configuration.
+	# Refuse redirected/non-owned managed roots before deleting anything.
+	[[ "$HOME" == /* && "$install_dir" == /* && -d "$install_dir/.agents" ]] || return 1
+	for path in "$install_dir" "$install_dir/python-env" "$HOME/.aidevops" \
+		"$HOME/.aidevops/cache" "$state_dir" "$agents_dir" \
+		"$agents_dir/scripts" "$agents_dir/scripts/tests" \
+		"$agents_dir/tools" "$agents_dir/tools/context"; do
+		if [[ -L "$path" ]] || { [[ -e "$path" ]] && [[ ! -d "$path" || ! -O "$path" ]]; }; then
+			print_warning "Skipping retired DSPy cleanup: managed path is not an owner-controlled directory"
+			return 1
+		fi
+		if [[ -d "$path" ]]; then
+			mode=$(_file_perms "$path") || return 1
+			[[ "$mode" =~ ^[0-7]{3,4}$ ]] || return 1
+			if (((8#$mode & 0022) != 0)); then
+				print_warning "Skipping retired DSPy cleanup: managed directory is writable by other users"
+				return 1
+			fi
+		fi
+	done
+	[[ -L "$marker" ]] && return 1
+	if [[ -e "$marker" ]]; then
+		[[ -f "$marker" && -O "$marker" ]] || return 1
+		return 0
+	fi
+
+	local venv="$install_dir/python-env/dspy-env"
+	if [[ -e "$venv" || -L "$venv" ]]; then
+		# Unlink a redirected venv, never follow it into an independent install.
+		if [[ -L "$venv" ]]; then
+			rm -f -- "$venv" || return 1
+		else
+			[[ -d "$venv" && -O "$venv" ]] || return 1
+			rm -rf -- "$venv" || return 1
+		fi
+		cleaned=true
+	fi
+	for path in scripts/dspy-helper.sh scripts/dspyground-helper.sh \
+		scripts/dspy-cache-security.sh scripts/tests/test-dspy-cache-security.sh \
+		tools/context/dspy.md tools/context/dspyground.md tools/context/prompt-optimization.md; do
+		if [[ -e "$agents_dir/$path" || -L "$agents_dir/$path" ]]; then
+			rm -f -- "$agents_dir/$path" || return 1
+			cleaned=true
+		fi
+	done
+	if command -v dspyground >/dev/null 2>&1; then
+		print_info "DSPyGround is no longer managed by aidevops; optionally run: npm uninstall -g dspyground"
+	fi
+	mkdir -p -- "$state_dir" || return 1
+	local marker_tmp
+	marker_tmp=$(mktemp "$state_dir/gh33141-retired-dspy.XXXXXX") || return 1
+	if ! date -u +%Y-%m-%dT%H:%M:%SZ >"$marker_tmp" || ! mv -f -- "$marker_tmp" "$marker"; then
+		rm -f -- "$marker_tmp"
+		return 1
+	fi
+	if [[ "$cleaned" == true ]]; then
+		print_success "Removed retired DSPy environment and deployed integration files"
+	fi
+	return 0
+}
+
 # Remove opencode-antigravity-auth plugin — third-party Google OAuth plugin removed from aidevops.
 # When present but unresolvable it breaks the OpenCode plugin chain, preventing the aidevops
 # pool from injecting tokens and causing "API key missing" errors for all providers.

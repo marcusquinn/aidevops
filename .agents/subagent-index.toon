@@ -104,7 +104,7 @@ tools/build-mcp/api-wrapper/,tools/build-mcp/api-wrapper subagents,patterns
 tools/build-mcp/,tools/build-mcp subagents,build-mcp|deployment|server-patterns|transports
 tools/code-review/,tools/code-review subagents,auditing|automation|best-practices|codacy|coderabbit|code-simplifier|code-standards|management|qlty|review-categories|runtime-patterns|secretlint|security-analysis|security-audit|setup|skill-scanner|snyk|tools
 tools/containers/,tools/containers subagents,docker-mcp|orbstack|remote-dispatch
-tools/context/,tools/context subagents,context7-cli|context7|context-guardrails|dspyground|dspy|github-search|mcp-discovery|model-routing|openapi-search|pageindex|prompt-optimization|toon
+tools/context/,tools/context subagents,context7-cli|context7|context-guardrails|github-search|mcp-discovery|model-routing|openapi-search|pageindex|toon
 tools/conversion/,tools/conversion subagents,mineru|pandoc
 tools/credentials/,tools/credentials subagents,api-key-management|api-key-setup|auth-troubleshooting|bitwarden|cch-reverse-engineering|encryption-stack|enpass|environment-variables|gocryptfs|gopass|list-keys|multi-tenant|psst|sops|vaultwarden
 tools/database/,tools/database subagents,pglite-local-first|vector-search

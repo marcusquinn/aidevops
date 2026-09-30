@@ -104,7 +104,7 @@ _tool_selected_sudo_command() { return 1; }
 TEST_CLI_VERSION=0.1.0
 TEST_PACKAGE_VERSION=0.3.10
 get_npm_latest() { printf '%s\n' 0.3.10; }
-check_tool npm DSPyGround dspyground --version dspyground 'true'
+check_tool npm Example example-cli --version example-cli 'true'
 [[ "${JSON_RESULTS[0]}" == metadata_mismatch && ${#OUTDATED_PACKAGES[@]} -eq 0 ]]
 get_npm_latest() { printf '\n'; }
 check_tool npm Unknown unknown --version unknown 'true'

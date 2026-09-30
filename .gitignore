@@ -141,11 +141,6 @@ venv/
 env/
 .venv/
 
-# DSPy and DSPyGround data directories
-data/dspy/
-data/dspyground/
-.dspyground/
-
 # Node.js dependencies
 node_modules/
 packages/gui-web/dist/
