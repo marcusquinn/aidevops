@@ -29,7 +29,14 @@
 #                              or value from .aidevops.json "remote" key)
 #   --counter-branch BRANCH    Branch holding .task-counter (config value first;
 #                              otherwise a validated task-id-counter branch,
-#                              then main)
+#                              then the remote's detected default branch)
+#   --sync-counter-branch      Audited fast-forward catch-up (GH#33152): sets
+#                              the counter branch (--counter-branch/config, or
+#                              the dedicated task-id-counter branch) to
+#                              max(its own counter, the default branch's
+#                              counter, the TODO.md seed), then exits without
+#                              allocating. Use when resolve_implicit_counter_branch
+#                              refused a stale dedicated branch.
 #   --skip-label-validation    Skip pre-flight label existence check (useful for
 #                              bulk --count N allocation or when gh is rate-limited)
 #   --no-blocked-by            Suppress auto-detection of predecessor references
@@ -50,10 +57,17 @@
 #   }
 #   Keys:
 #     remote          - git remote name (default: "origin")
-#     default_branch  - informational default branch name (not used by CAS)
+#     default_branch  - repository default branch; when omitted, detected from
+#                       the remote (`git ls-remote --symref`) rather than
+#                       assumed to be "main" (GH#33152). Also used as the
+#                       stale-check baseline for a dedicated counter branch.
 #     counter_branch  - explicit branch that holds .task-counter; when omitted,
-#                       a validated task-id-counter branch is preferred over main
+#                       a validated task-id-counter branch is preferred over
+#                       the detected default branch
 #   CLI flags --remote and --counter-branch override .aidevops.json values.
+#   Because .aidevops.json may itself be gitignored per-checkout, the
+#   default_branch detection above is the durable, host-independent fallback —
+#   explicit config is only required to pin a non-standard value.
 #
 # Exit codes:
 #   0  - Success (outputs: task_id=tNNN ref=GH#NNN or GL#NNN)
@@ -143,6 +157,9 @@ DRY_RUN=false
 NO_ISSUE=false
 SKIP_LABEL_VALIDATION=false
 NO_BLOCKED_BY=false
+# GH#33152: explicit, audited fast-forward counter-branch catch-up instead of
+# a normal allocation. See _main_sync_counter_branch / sync_counter_branch.
+SYNC_COUNTER_BRANCH=false
 TASK_TITLE=""
 TASK_DESCRIPTION=""
 TASK_LABELS=""
@@ -201,6 +218,11 @@ DEFAULT_BRANCH="main"
 # CLI still wins because config loading only applies while the flag is false.
 _REMOTE_NAME_SET=false
 _COUNTER_BRANCH_SET=false
+# GH#33152: true once .aidevops.json "default_branch" is loaded. When false,
+# _claim_apply_detected_default_branch queries the remote's actual default
+# branch instead of leaving the DEFAULT_BRANCH="main" literal in place —
+# avoids comparing a develop-default repo's counter against the wrong branch.
+_DEFAULT_BRANCH_SET=false
 
 # Logging (all to stderr so stdout is machine-readable)
 # Logging: uses shared log_* from shared-constants.sh
@@ -242,6 +264,7 @@ load_project_config() {
 
 	if [[ -n "$default_branch_val" ]]; then
 		DEFAULT_BRANCH="$default_branch_val"
+		_DEFAULT_BRANCH_SET=true
 		log_info "default_branch set from .aidevops.json: $DEFAULT_BRANCH"
 	fi
 
@@ -346,6 +369,10 @@ parse_args() {
 			_COUNTER_BRANCH_SET=true
 			shift 2
 			;;
+		--sync-counter-branch)
+			SYNC_COUNTER_BRANCH=true
+			shift
+			;;
 		--help)
 			grep '^#' "$0" | grep -v '#!/usr/bin/env' | sed 's/^# //' | sed 's/^#//'
 			exit 0
@@ -379,8 +406,8 @@ _validate_and_normalize_args() {
 		exit 1
 	fi
 
-	# Title is required unless batch mode
-	if [[ -z "$TASK_TITLE" ]] && [[ "$ALLOC_COUNT" -eq 1 ]]; then
+	# Title is required unless batch mode or a no-allocation --sync-counter-branch run
+	if [[ -z "$TASK_TITLE" ]] && [[ "$ALLOC_COUNT" -eq 1 ]] && [[ "$SYNC_COUNTER_BRANCH" != "true" ]]; then
 		log_error "Missing required argument: --title (or use --count N for bulk allocation)"
 		exit 1
 	fi
@@ -1030,6 +1057,23 @@ _validate_labels_exist() {
 	fi
 
 	return 0
+}
+
+# GH#33152: explicit, audited fast-forward catch-up for a counter branch
+# instead of resolve_implicit_counter_branch's silent refusal when it is
+# behind. Targets --counter-branch/config when explicitly set, otherwise the
+# dedicated task-id-counter branch name. Prints COUNTER_BRANCH_SYNCED and
+# exits without allocating — run a normal claim afterwards to allocate.
+_main_sync_counter_branch() {
+	local repo_path="$1"
+	local target_branch="$COUNTER_BRANCH"
+
+	if [[ "${_COUNTER_BRANCH_SET:-false}" == "false" ]]; then
+		target_branch="${AIDEVOPS_DEDICATED_COUNTER_BRANCH:-task-id-counter}"
+	fi
+
+	sync_counter_branch "$repo_path" "$target_branch" "${DEFAULT_BRANCH:-main}"
+	return $?
 }
 
 # Emit the online dry-run allocation without mutating the remote counter.
@@ -1766,6 +1810,13 @@ main() {
 	local counter_setup_rc=0
 	_claim_counter_prepare_git_context "$REPO_PATH" || counter_setup_rc=$?
 	[[ $counter_setup_rc -eq 0 ]] || return "$counter_setup_rc"
+	_claim_apply_detected_default_branch
+
+	if [[ "$SYNC_COUNTER_BRANCH" == "true" ]]; then
+		_main_sync_counter_branch "$REPO_PATH"
+		return $?
+	fi
+
 	resolve_implicit_counter_branch "$REPO_PATH" || counter_setup_rc=$?
 	[[ $counter_setup_rc -eq 0 ]] || return "$counter_setup_rc"
 
