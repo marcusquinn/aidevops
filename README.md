@@ -375,7 +375,7 @@ Integration families include:
 - GitHub, GitLab, Gitea, Forgejo, CI systems, quality platforms, and dependency scanners.
 - Hosting, DNS, cloud, deployment, object storage, networking, monitoring, and local development.
 - Product analytics, error monitoring, email, communications, social platforms, outreach, and payments.
-- Accounting, ecommerce, WordPress, documents, OCR, browser automation, and creative applications.
+- Accounting, ecommerce, WordPress (including [Rank Math SEO MCP](.agents/tools/wordpress/rankmath-mcp.md)), documents, OCR, browser automation, and creative applications.
 - Context7, Repomix, semantic code search, OpenAPI search, local models, and model-provider account pools.
 
 ### Skills and private agent sources
