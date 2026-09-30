@@ -26,10 +26,99 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
+  # GH#33197: scope-gate heavy full-repository jobs so version/docs-only PRs
+  # stop paying for a full ShellCheck / Framework Validation / Complexity
+  # pass. A job skipped by a job-level `if:` still reports a passing status to
+  # required checks (see test_skipping_required_allows_merge in
+  # test-pulse-merge-required-checks-filter.sh); a workflow-level `paths:`
+  # filter does not, and would leave required checks stuck at "expected" — do
+  # not switch to `paths:`. Push events and any scope-detection failure fail
+  # open (run everything): this is a cost optimization, never a coverage gate.
+  detect-scope:
+    name: Detect PR scope
+    runs-on: ubuntu-latest
+    outputs:
+      shell: ${{ steps.scope.outputs.shell }}
+      substantive: ${{ steps.scope.outputs.substantive }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Determine scope
+        id: scope
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          fail_open() {
+            echo "$1"
+            echo "shell=true" >> "$GITHUB_OUTPUT"
+            echo "substantive=true" >> "$GITHUB_OUTPUT"
+          }
+
+          if [ "${EVENT_NAME}" != "pull_request" ]; then
+            fail_open "Non-PR event (${EVENT_NAME}); running full scope."
+            exit 0
+          fi
+
+          if [ -z "${BASE_SHA}" ] || [ -z "${HEAD_SHA}" ]; then
+            fail_open "Missing base/head SHA; failing open to full scope."
+            exit 0
+          fi
+
+          MERGE_BASE=$(git merge-base "${HEAD_SHA}" "${BASE_SHA}" 2>/dev/null || echo "")
+          if [ -z "${MERGE_BASE}" ]; then
+            fail_open "Could not compute merge-base; failing open to full scope."
+            exit 0
+          fi
+
+          changed=$(git diff --name-only "${MERGE_BASE}" "${HEAD_SHA}" || true)
+          if [ -z "$changed" ]; then
+            fail_open "No changed files detected; failing open to full scope."
+            exit 0
+          fi
+          printf 'Changed files:\n%s\n' "$changed"
+
+          # Shell scope: files covered by ShellCheck / bash32-compat gates.
+          if printf '%s\n' "$changed" | grep -qE '(^|/)[^/]+\.sh$|(^|/)\.shellcheckrc$|^\.github/workflows/|^\.agents/scripts/'; then
+            echo "Shell-relevant files changed."
+            echo "shell=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No shell-relevant files changed."
+            echo "shell=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          # Substantive scope: anything beyond version/changelog/docs-only churn.
+          non_trivial=$(printf '%s\n' "$changed" | grep -Ev \
+            -e '^VERSION$' \
+            -e '^\.agents/VERSION$' \
+            -e '^CHANGELOG\.md$' \
+            -e '^package\.json$' \
+            -e '^package-lock\.json$' \
+            -e '^([A-Za-z0-9_.-]*\.md)$' \
+            -e '^todo/' \
+            -e '^TODO\.md$' \
+            -e '^\.github/.*\.md$' \
+            || true)
+          if [ -z "$non_trivial" ]; then
+            echo "Version/docs-only PR; skipping heavy full-repo jobs."
+            echo "substantive=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Non-trivial files changed; running full-repo jobs."
+            echo "substantive=true" >> "$GITHUB_OUTPUT"
+          fi
+
   # Cross-platform shellcheck: catches macOS-only assumptions in shell scripts
   # (t1748: Linux/WSL2 platform support)
   cross-platform-shellcheck:
     name: ShellCheck (${{ matrix.os }})
+    needs: detect-scope
+    if: needs.detect-scope.outputs.shell == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -142,6 +231,8 @@ jobs:
   # (GH#19585). Retires the bump-and-ratchet treadmill that churned 74↔78.
   bash32-compat:
     name: Bash 3.2 Compatibility
+    needs: detect-scope
+    if: needs.detect-scope.outputs.shell == 'true'
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
@@ -253,6 +344,8 @@ jobs:
   # even though this job reports the incompatible ceiling after the PR lands.
   framework-validation:
     name: Framework Validation
+    needs: detect-scope
+    if: needs.detect-scope.outputs.substantive == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -470,6 +563,8 @@ jobs:
     # Renaming it requires updating branch protection: gh api -X PATCH
     # "repos/marcusquinn/aidevops/branches/main/protection/required_status_checks"
     name: Complexity Analysis
+    needs: detect-scope
+    if: needs.detect-scope.outputs.substantive == 'true'
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
