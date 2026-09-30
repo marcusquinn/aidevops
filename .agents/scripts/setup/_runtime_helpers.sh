@@ -282,12 +282,21 @@ verified_install() {
 	fi
 }
 
+# shellcheck source=./_opencode_config_paths.sh
+source "${BASH_SOURCE[0]%/*}/_opencode_config_paths.sh"
+
 # Find OpenCode config file (checks multiple possible locations)
 # Returns: path to config file, or empty string if not found
+# Ambient OPENCODE_CONFIG / OPENCODE_CONFIG_DIR are honoured only when they
+# are user-owned; every caller writes to the result (GH#33046).
 find_opencode_config() {
+	local ambient_config="" ambient_config_dir=""
+	ambient_config=$(opencode_config_ambient_write_path "${OPENCODE_CONFIG:-}")
+	ambient_config_dir=$(opencode_config_ambient_write_path "${OPENCODE_CONFIG_DIR:-}")
 	local candidates=(
-		"${OPENCODE_CONFIG:-}"
-		"${OPENCODE_CONFIG_DIR:+${OPENCODE_CONFIG_DIR}/opencode.json}"
+		"$ambient_config"
+		"${ambient_config_dir:+${ambient_config_dir}/opencode.json}"
+		"$(opencode_config_user_opt_in_path)"
 		"${XDG_CONFIG_HOME:+${XDG_CONFIG_HOME}/opencode/opencode.json}"
 		"$HOME/.config/opencode/opencode.json"                     # XDG standard (Linux, some macOS)
 		"$HOME/.opencode/opencode.json"                            # Alternative location

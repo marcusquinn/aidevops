@@ -508,6 +508,10 @@ _hotfix_auto_apply() {
 	fi
 
 	(
+		# GH#33046: the greeting runs this check inside whatever OpenCode
+		# process started the session, including another tool's sandboxed
+		# child. Its per-process config must never become setup's write target.
+		unset OPENCODE_CONFIG OPENCODE_CONFIG_DIR
 		cd "$framework_repo" || exit 1
 		git pull --ff-only origin main >/dev/null 2>&1
 		if [[ -x "$setup_script" ]]; then
@@ -692,7 +696,11 @@ _check_script_drift() {
 	echo "Script drift detected (${deployed_sha:0:7}→${current_sha:0:7}). Redeploying in background..."
 	# t2729 (Option B): redirect at subshell level so the background process
 	# never holds the parent's stdout FD open for synchronous callers.
-	(bash "$setup_script" --stage ai-session || bash "$setup_script" --non-interactive) >/dev/null 2>&1 &
+	# GH#33046: never pass an inherited per-process OpenCode config to setup.
+	(
+		unset OPENCODE_CONFIG OPENCODE_CONFIG_DIR
+		bash "$setup_script" --stage ai-session || bash "$setup_script" --non-interactive
+	) >/dev/null 2>&1 &
 
 	return 0
 }
