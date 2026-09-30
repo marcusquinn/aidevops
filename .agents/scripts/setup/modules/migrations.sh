@@ -231,6 +231,18 @@ cleanup_deprecated_paths() {
 		# GH#32585: Closte integration removed
 		"$agents_dir/scripts/closte-helper.sh"
 		"$agents_dir/services/hosting/closte.md"
+		# GH#33145: retired contest and response-scoring chain (unused; /cross-review stays)
+		"$agents_dir/scripts/contest-helper.sh"
+		"$agents_dir/scripts/contest-helper-create.sh"
+		"$agents_dir/scripts/contest-helper-dispatch.sh"
+		"$agents_dir/scripts/contest-helper-evaluate.sh"
+		"$agents_dir/scripts/contest-helper-status.sh"
+		"$agents_dir/scripts/contest-helper-apply.sh"
+		"$agents_dir/scripts/response-scoring-helper.sh"
+		"$agents_dir/scripts/compare-models-bench-lib.sh"
+		"$agents_dir/scripts/commands/score-responses.md"
+		"$agents_dir/workflows/score-responses.md"
+		"$agents_dir/tools/ai-assistants/response-scoring.md"
 	)
 
 	for path in "${deprecated_paths[@]}"; do
@@ -268,6 +280,14 @@ cleanup_deprecated_paths() {
 	cleanup_antigravity_plugin
 
 	# Remove oh-my-opencode from plugin array if present — guarded by same setting
+	cleanup_oh_my_opencode_plugin_entry
+
+	return 0
+}
+
+# Remove oh-my-opencode from the OpenCode plugin array if present, guarded by
+# the same preserve_oh_my_opencode preference as cleanup_deprecated_paths.
+cleanup_oh_my_opencode_plugin_entry() {
 	local opencode_config
 	opencode_config=$(find_opencode_config 2>/dev/null) || true
 	if [[ -n "$opencode_config" ]] && [[ -f "$opencode_config" ]] && command -v jq &>/dev/null; then
@@ -281,7 +301,6 @@ cleanup_deprecated_paths() {
 			fi
 		fi
 	fi
-
 	return 0
 }
 

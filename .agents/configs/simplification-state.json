@@ -4265,12 +4265,6 @@
       "passes": 1,
       "pr": 16716
     },
-    ".agents/tools/ai-assistants/response-scoring.md": {
-      "at": "2026-07-25T03:38:35Z",
-      "hash": "5fe8fa831c3b32c5aef23482c807a1346fe65b21",
-      "passes": 4,
-      "pr": 13072
-    },
     ".agents/tools/ai-assistants/runners-code-reviewer.md": {
       "at": "2026-04-03T13:35:13Z",
       "hash": "d959a8122b1527468e242cc74f6d38c001386c72",
