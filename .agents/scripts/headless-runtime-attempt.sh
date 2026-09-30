@@ -38,19 +38,37 @@ _report_run_attempt_prelaunch_failure() {
 	return 0
 }
 
+# Mirror the launch decision in headless-runtime-invoke.sh and
+# headless-runtime-worker.sh: the runtime runs inside the clean sandbox unless
+# the helper is missing or the audited bypass is set.
+_headless_worker_runs_sandboxed() {
+	[[ -x "${SANDBOX_EXEC_HELPER:-}" && "${AIDEVOPS_HEADLESS_SANDBOX_DISABLED:-}" != "1" ]] || return 1
+	return 0
+}
+
 # Verify that a worker can create a signed commit without prompting before any
 # model tokens are spent. commit-tree exercises Git's effective signing config
 # without moving refs or changing the worktree.
+#
+# GH#33064: the sandbox never receives SSH_AUTH_SOCK (passing it would expose
+# every key in the user's agent to the model process). Probe without the
+# launcher's agent whenever the worker will be sandboxed, so an agent-only
+# signer fails pre-launch instead of at the worker's first commit.
 _headless_worker_signing_commit_probe() {
 	local work_dir="$1"
 	local tree_id=""
 	tree_id=$(git -C "$work_dir" rev-parse 'HEAD^{tree}' 2>/dev/null) || return 1
-	GIT_TERMINAL_PROMPT=0 \
-		SSH_ASKPASS=/usr/bin/false \
-		SSH_ASKPASS_REQUIRE=force \
-		DISPLAY=aidevops-headless \
-		git -C "$work_dir" commit-tree "$tree_id" \
-			-m "aidevops headless signing preflight" </dev/null >/dev/null 2>&1 || return 1
+	(
+		if _headless_worker_runs_sandboxed; then
+			unset SSH_AUTH_SOCK SSH_AGENT_PID
+		fi
+		GIT_TERMINAL_PROMPT=0 \
+			SSH_ASKPASS=/usr/bin/false \
+			SSH_ASKPASS_REQUIRE=force \
+			DISPLAY=aidevops-headless \
+			git -C "$work_dir" commit-tree "$tree_id" \
+				-m "aidevops headless signing preflight" </dev/null >/dev/null 2>&1
+	) || return 1
 	return 0
 }
 
