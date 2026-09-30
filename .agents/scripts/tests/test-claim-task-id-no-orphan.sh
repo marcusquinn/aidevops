@@ -696,6 +696,92 @@ test_discovery_timeout_diagnostic() {
 }
 test_discovery_timeout_diagnostic
 
+# GH#33157: the reconcile floor comes from remote TODO.md, not the local file.
+test_reconcile_seed_uses_remote_todo() {
+	local name="21: reconcile seed uses remote TODO.md, ignoring stale local TODO.md"
+	local tmpdir seed
+	tmpdir=$(mktemp -d) || return 1
+	# shellcheck disable=SC2064
+	trap "rm -rf '$tmpdir'" RETURN
+	printf -- '- [ ] t100 stale local\n' >"${tmpdir}/TODO.md"
+	seed=$(
+		REMOTE_NAME=origin
+		COUNTER_BRANCH=develop
+		_counter_git() {
+			[[ "$*" == "show origin/develop:TODO.md" ]] || return 1
+			printf -- '- [ ] t100 old\n- [x] t18420 newer\n'
+			return 0
+		}
+		_cas_reconciled_counter_value "$tmpdir" 18414 18414 develop
+	)
+	if [[ "$seed" == "18421" ]]; then
+		pass "$name"
+	else
+		fail "$name" "seed=${seed}"
+	fi
+	return 0
+}
+test_reconcile_seed_uses_remote_todo
+
+# GH#33157: same tNNN prefix + different title is a collision; same title recovers.
+test_duplicate_check_title_collision() {
+	local name="22: prefix match with a different title is TASK_ID_COLLISION (rc=2)"
+	local out rc=0 rc_same=0 out_same
+	local res
+	# Earlier tests stub this helper; load the real one in a subshell.
+	res=$(
+		unset _CLAIM_TASK_ID_ISSUE_LIB_LOADED
+		# shellcheck disable=SC1090
+		source "${CLAIM_SCRIPT%claim-task-id.sh}claim-task-id-issue.sh" 2>/dev/null
+		gh() {
+			if [[ "$1" == "repo" ]]; then
+				printf 'owner/repo\n'
+			else
+				printf '[{"number":77,"title":"t18419: another feature"}]\n'
+			fi
+			return 0
+		}
+		r1=0
+		r2=0
+		o1=$(_check_duplicate_issue "t18419: ci: declare things" 2>/dev/null) || r1=$?
+		o2=$(_check_duplicate_issue "t18419: Another  feature" 2>/dev/null) || r2=$?
+		printf '%s|%s|%s|%s\n' "$r1" "$o1" "$r2" "$o2"
+	)
+	IFS='|' read -r rc out rc_same out_same <<<"$res"
+	if [[ $rc -eq 2 && -z "$out" && $rc_same -eq 0 && "$out_same" == "77" ]]; then
+		pass "$name"
+	else
+		fail "$name" "rc=${rc} out=${out} rc_same=${rc_same} out_same=${out_same}"
+	fi
+	return 0
+}
+test_duplicate_check_title_collision
+
+test_create_issue_reports_collision() {
+	local name="23: create_github_issue fails on collision instead of recovering"
+	local tmpdir out rc=0
+	tmpdir=$(mktemp -d) || return 1
+	# shellcheck disable=SC2064
+	trap "rm -rf '$tmpdir'" RETURN
+	printf '# Project TODO\n' >"${tmpdir}/TODO.md"
+	out=$(
+		# Earlier tests stub create_github_issue; restore the real one.
+		# shellcheck disable=SC1090
+		source "$CLAIM_SCRIPT" 2>/dev/null
+		_try_issue_sync_delegation() { return 1; }
+		_extract_github_slug() { printf 'owner/repo\n'; return 0; }
+		_check_duplicate_issue() { return 2; }
+		create_github_issue "t18419: mine" "desc" "bug" "$tmpdir" 2>/dev/null
+	) || rc=$?
+	if [[ $rc -ne 0 && -z "$out" ]]; then
+		pass "$name"
+	else
+		fail "$name" "rc=${rc} out=${out}"
+	fi
+	return 0
+}
+test_create_issue_reports_collision
+
 # ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------

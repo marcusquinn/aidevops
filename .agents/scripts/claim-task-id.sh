@@ -664,7 +664,14 @@ create_github_issue() {
 	fi
 
 	# Dedup check before bare creation (t1446)
-	if issue_num=$(_check_duplicate_issue "$title"); then
+	local dup_rc=0
+	issue_num=$(_check_duplicate_issue "$title") || dup_rc=$?
+	if [[ $dup_rc -eq 2 ]]; then
+		# GH#33157: the ID belongs to another session's differently titled issue.
+		log_error "TASK_ID_COLLISION: ${_task_id_for_todo} is already in use by another issue; no issue created. Re-run to allocate the next ID."
+		return 1
+	fi
+	if [[ $dup_rc -eq 0 ]]; then
 		# GH#22381: issue-sync-helper.sh push can create the issue but emit no
 		# parseable number. The duplicate lookup then recovers the issue number;
 		# stamp/verify TODO.md before reporting success so dispatchability sees
