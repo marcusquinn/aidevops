@@ -391,7 +391,8 @@ resolve_secret_value() {
     local value="${!secret_name:-}"
 
     if [[ -z "$value" ]] && command -v aidevops &> /dev/null; then
-        value=$(aidevops secret get "$secret_name" 2> /dev/null) || value=""
+        # stdin is detached: under serve-http it carries the MCP JSON-RPC stream.
+        value=$(aidevops secret get "$secret_name" < /dev/null 2> /dev/null) || value=""
     fi
     if [[ -z "$value" ]]; then
         print_error "Secret not found: $secret_name"
