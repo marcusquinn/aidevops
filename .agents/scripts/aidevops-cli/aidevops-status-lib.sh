@@ -97,14 +97,6 @@ _status_ai_tools() {
 	return 0
 }
 
-_status_dev_envs() {
-	print_header "Development Environments"
-	check_dir "$INSTALL_DIR/python-env/dspy-env" && print_success "DSPy Python environment" || print_warning "DSPy Python environment - not created"
-	check_cmd dspyground && print_success "DSPyGround" || print_warning "DSPyGround - not installed"
-	echo ""
-	return 0
-}
-
 _status_ai_configs() {
 	print_header "AI Assistant Configurations"
 	local ai_configs=("$HOME/.config/opencode/opencode.json:OpenCode" "$HOME/.claude/commands:Claude Code CLI" "$HOME/CLAUDE.md:Claude Code memory")
@@ -311,7 +303,6 @@ cmd_status() {
 	check_cmd tea && print_success "Gitea CLI (tea)" || print_warning "Gitea CLI (tea) - not installed"
 	echo ""
 	_status_ai_tools
-	_status_dev_envs
 	_status_ai_configs
 	_status_runtime_config_parity
 	_status_headless_runtime_config

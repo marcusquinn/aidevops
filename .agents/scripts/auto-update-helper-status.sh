@@ -444,7 +444,7 @@ HOW IT WORKS:
        a. Reads last_tool_check from state file
        b. If >6h since last check AND user idle >6h, runs tool-version-check.sh --update --quiet
        c. Covers all installed tools: npm (OpenCode, MCP servers, etc.),
-          brew (gh, glab, shellcheck, jq, etc.), pip (DSPy, crawl4ai, etc.)
+          brew (gh, glab, shellcheck, jq, etc.), pip (Beads Viewer, Analytics MCP, etc.)
        d. Idle detection: macOS IOKit HIDIdleTime, Linux xprintidle/dbus/w(1),
           headless servers treated as always idle
        e. Opt-out: AIDEVOPS_TOOL_AUTO_UPDATE=false

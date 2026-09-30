@@ -313,7 +313,6 @@ docs.dataforseo.com
 docs.daytona.io
 docs.digitalocean.com
 docs.docker.com
-docs.dspyground.com
 docs.factory.ai
 docs.fireworks.ai
 docs.gitea.io
@@ -363,9 +362,6 @@ download.pytorch.org
 downloads.snyk.io
 downloads.wordpress.org
 dribbble.com
-dspy-docs.vercel.app
-dspy.ai
-dspyground.com
 electric-sql.com
 elevenlabs.io
 emaillove.com
@@ -597,7 +593,6 @@ platform.higgsfield.ai
 platform.openai.com
 play.google.com
 playbooks.com
-playground.dspyground.com
 playwright.dev
 podcasts.apple.com
 poolors.com
