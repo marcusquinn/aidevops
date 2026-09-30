@@ -593,7 +593,7 @@ _planning_publish_validate() {
 	fi
 	local hook="${SCRIPT_DIR:-${repo_path}/.agents/scripts}/pre-commit-hook.sh"
 	if [[ -x "$hook" ]]; then
-		(cd "$repo_path" && GIT_INDEX_FILE="$index_file" HOOK_MODE=pre-commit "$hook" >/dev/null) || return 1
+		(cd "$repo_path" && GIT_INDEX_FILE="$index_file" AIDEVOPS_PRE_COMMIT_BASE="$parent_sha" HOOK_MODE=pre-commit "$hook" >/dev/null) || return 1
 	fi
 	local privacy_lib="${SCRIPT_DIR:-${repo_path}/.agents/scripts}/privacy-guard-helper.sh"
 	if [[ -f "$privacy_lib" ]]; then

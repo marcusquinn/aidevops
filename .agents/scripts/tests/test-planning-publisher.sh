@@ -532,6 +532,41 @@ test_validation_failure_pushes_nothing() {
 	return 0
 }
 
+test_lagging_head_validates_only_planning_paths() {
+	local name="lagging HEAD hook validates only planning paths"
+	local root="" repo="" rc=0 before=""
+	root=$(mktemp -d) || return 0
+	setup_repo "$root" || {
+		fail "$name" setup
+		return 0
+	}
+	repo="${root}/work"
+	# Advance the remote with a non-planning root file the hook would reject.
+	git clone "${root}/remote.git" "${root}/other" >/dev/null 2>&1 || {
+		fail "$name" clone
+		return 0
+	}
+	printf 'x\n' >"${root}/other/upstream-junk.zzz"
+	git -C "${root}/other" add upstream-junk.zzz
+	GIT_AUTHOR_NAME=Test GIT_AUTHOR_EMAIL=test@example.invalid GIT_COMMITTER_NAME=Test GIT_COMMITTER_EMAIL=test@example.invalid \
+		git -C "${root}/other" commit -m upstream >/dev/null
+	git -C "${root}/other" push origin main >/dev/null 2>&1
+	# Strict root-file mode (local-only config) makes the upstream file a hook failure.
+	printf '{"root_files":{"mode":"strict"}}\n' >"${repo}/.aidevops.json"
+	printf '%s\n' '- [ ] t003 lagging head ref:GH#3' >>"${repo}/TODO.md"
+	before=$(git --git-dir="${root}/remote.git" rev-parse main)
+	(
+		SCRIPT_DIR="$(dirname "$PUBLISHER")"
+		# shellcheck source=../planning-publisher.sh
+		source "$PUBLISHER"
+		unset AIDEVOPS_PLANNING_VALIDATOR
+		planning_publish "$repo" "plan: lagging head" origin main TODO.md
+	) >/dev/null 2>&1 || rc=$?
+	if [[ $rc -eq 0 && "$before" != "$(git --git-dir="${root}/remote.git" rev-parse main)" ]]; then pass "$name"; else fail "$name" "rc=$rc"; fi
+	rm -rf "$root"
+	return 0
+}
+
 test_contention_replay_and_conflict() {
 	local name="replays unrelated contention"
 	local root="" repo="" hook="" rc=0
@@ -983,6 +1018,7 @@ main() {
 	test_simplification_state_defaults_to_main_without_origin_head
 	test_simplification_state_conflict_is_retryable
 	test_validation_failure_pushes_nothing
+	test_lagging_head_validates_only_planning_paths
 	test_contention_replay_and_conflict
 	test_crash_replay_is_single_publication
 	test_same_path_contention_is_retryable
