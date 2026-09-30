@@ -208,7 +208,7 @@ conversation-starter,workflows/conversation-starter.md,Session greeting and auto
 mission-skill-learning,workflows/mission-skill-learning.md,Auto-capture reusable patterns from missions and suggest promotion
 -->
 
-<!--TOON:scripts[100]{name,purpose}:
+<!--TOON:scripts[98]{name,purpose}:
 accessibility-helper.sh,Accessibility and contrast testing (WCAG compliance WAVE API for websites and emails)
 browser-qa-worker.sh,Browser QA visual testing — Playwright screenshots broken links console errors for milestone validation
 browser-qa-helper.sh,Playwright-based visual QA for milestone validation (smoke screenshots links a11y)
@@ -251,7 +251,6 @@ mail-helper.sh,TOON-based inter-agent mailbox system
 memory-helper.sh,Cross-session memory (SQLite FTS5)
 memory-embeddings-helper.sh,Semantic memory search with vector embeddings (opt-in)
 mission-skill-learner.sh,Auto-capture reusable patterns from missions (scan score promote track)
-pattern-tracker-helper.sh,Success/failure pattern tracking and analysis
 pdf-helper.sh,PDF operations (info fields fill merge text)
 procurement-helper.sh,Autonomous procurement - virtual card management budget enforcement receipt capture audit trail for missions (create-card freeze-card close-card list-cards check-budget allocate spend capture-receipt export-ledger audit reconcile status)
 unstract-helper.sh,Unstract self-hosted document processing (install start stop)
@@ -270,7 +269,6 @@ email-delivery-test-helper.sh,Email delivery testing (spam content analysis prov
 email-design-test-helper.sh,Email design testing CLI (local validation and Email on Acid API real-client rendering)
 yt-dlp-helper.sh,YouTube video/audio download and local file conversion
 privacy-filter-helper.sh,Privacy filter for public PR contributions
-self-improve-helper.sh,Self-improving agent system (analyze refine test pr)
 agent-test-helper.sh,Agent testing framework (run run-one compare baseline list create results)
 testing-setup-helper.sh,Existing testing-infrastructure inventory and explicit verification (discover gaps status verify); bundle gaps are report-only candidates
 cron-helper.sh,Cron job management for scheduled AI agent dispatch

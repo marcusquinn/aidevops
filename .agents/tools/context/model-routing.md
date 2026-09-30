@@ -294,13 +294,12 @@ same-tier candidates. Only `BLOCKED: capability limit - <evidence>` advances to
 the next entry in `escalation_order`. Interactive retries reuse the child session
 and stop before another tier when any side effect was attempted; headless workers
 retain their existing bounded redispatch path. Dispatch metrics include the canonical tier,
-candidate index, route attempt, reason, and escalation flag for auditing. The
-pattern-backed lower-tier hook (`_choose_model_tier_downgrade`) is dormant: it acts
-only when `AIDEVOPS_TIER_DOWNGRADE_TASK_TYPE` is set and an external
-`scripts/archived/pattern-tracker-helper.sh` is installed, and neither ships with
-aidevops. If enabled, it applies only to initial automatic selection, and the active
-tier, variant, retry budget, candidate index, and telemetry follow the model actually
-selected. Retry and escalation selectors never cross tier boundaries.
+candidate index, route attempt, reason, and escalation flag for auditing.
+Automatic selection stays within the requested tier; retry and escalation
+selectors never silently step down. The retired pattern-backed step-down hook
+has been removed. Future evidence-based cheaper-tier selection should use
+`model-ab-*.mjs` outcome data and `dispatch-tier-telemetry.jq`, with task-type
+success evidence and explicit routing telemetry, not a separate pattern store.
 
 **Worker BLOCKED policy (GH#14964 — MANDATORY):** Emit `BLOCKED: capability limit - <evidence>` only when model capability is the sole remaining blocker; runtime routing then attempts the next configured tier. Use generic `BLOCKED` for evidenced terminal non-capability blockers. Review-policy metadata and nominal GitHub states are not blockers. See `prompts/worker-efficiency-protocol.md` "Model escalation before BLOCKED".
 

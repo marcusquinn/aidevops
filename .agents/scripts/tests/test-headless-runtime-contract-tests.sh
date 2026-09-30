@@ -202,8 +202,7 @@ test_initial_model_selection_contract() {
 					[[ ("$scenario" == backoff || "$scenario" == pin || "$scenario" == replay) && "$1" == anthropic/preferred ]]
 			}
 			set_last_provider() { return 0; }
-			_choose_model_tier_downgrade() { printf '%s' openai/cheaper; }
-			model_tier_for_model() { printf '%s' simple; }
+			model_tier_for_model() { printf '%s' thinking; }
 			_hrff_write_external_outcome() {
 				outcome="$2:$4"
 				return 0
@@ -230,7 +229,7 @@ test_initial_model_selection_contract() {
 			(exhausted | pin) expected_model="" ;;
 			(adaptive)
 				initial_model=""
-				expected_model="openai/cheaper"
+				expected_model="openai/fallback"
 				;;
 			esac
 			if [[ "$scenario" == pin || "$scenario" == replay ]]; then
@@ -254,11 +253,7 @@ test_initial_model_selection_contract() {
 				done < <(_build_run_cmd "$selected_model" "$TEST_ROOT" "$prompt" "$title" "" "" "")
 				[[ "$command_model" == "$expected_model" ]] || exit 5
 			fi
-			if [[ "$scenario" == adaptive ]]; then
-				[[ "$tier_override" == simple ]] || exit 6
-			else
-				[[ "$tier_override" == thinking ]] || exit 7
-			fi
+			[[ "$tier_override" == thinking ]] || exit 7
 			printf '%s' verified
 		) || true
 		expected="verified"

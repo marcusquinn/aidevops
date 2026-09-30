@@ -126,12 +126,6 @@ trap 'rm -rf "$fixture_dir"' EXIT
 		[[ "$model_name" == "openai/gpt-5.6-terra" ]] && return 0
 		return 1
 	}
-	_choose_model_tier_downgrade() {
-		local current_model="$1"
-		: "$current_model"
-		printf '%s\n' "openai/gpt-5.6-luna"
-		return 0
-	}
 	extract_provider() {
 		local model_name="$1"
 		printf '%s\n' "${model_name%%/*}"
@@ -176,12 +170,6 @@ trap 'rm -rf "$fixture_dir"' EXIT
 		local model_name="$1"
 		: "$model_name"
 		return 1
-	}
-	_choose_model_tier_downgrade() {
-		local current_model="$1"
-		: "$current_model"
-		printf '%s\n' "openai/gpt-6-luna"
-		return 0
 	}
 	extract_provider() {
 		local model_name="$1"
@@ -290,12 +278,6 @@ routing_capture="${fixture_dir}/adaptive-routing.txt"
 		: "$model_name"
 		return 1
 	}
-	_choose_model_tier_downgrade() {
-		local current_model="$1"
-		: "$current_model"
-		printf '%s\n' "openai/gpt-6-luna"
-		return 0
-	}
 	extract_provider() {
 		local model_name="$1"
 		printf '%s\n' "${model_name%%/*}"
@@ -335,12 +317,12 @@ routing_capture="${fixture_dir}/adaptive-routing.txt"
 	}
 
 	_select_cmd_run_model
-	[[ "$tier_override" == "simple" ]]
-	[[ "$selected_model" == "openai/gpt-6-luna" ]]
+	[[ "$tier_override" == "standard" ]]
+	[[ "$selected_model" == "openai/gpt-5.6-terra" ]]
 	variant_override=$(resolve_headless_variant "$role" "$tier_override" "$selected_model")
 	_cmd_run_attempt_loop
 )
-[[ "$(<"$routing_capture")" == "simple|0|medium|openai/gpt-6-luna|medium" ]]
+[[ "$(<"$routing_capture")" == "standard|1|medium|openai/gpt-5.6-terra|medium" ]]
 
 (
 	attempt_exit=81
