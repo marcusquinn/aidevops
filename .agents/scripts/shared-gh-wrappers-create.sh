@@ -292,13 +292,14 @@ _gh_ci_validate_dispatch_scope() {
 		section && /^[[:space:]]*-[[:space:]]*(EDIT|NEW):[[:space:]]*`?[^`[:space:]]/ { found=1 }
 		END { exit !found }
 	' && ! printf '%s\n' "$body" | grep -Eq '^#{2,3} Files Scope[[:space:]]*$'; then
-		# GH#32531: the pulse will hold this issue as status:blocked before any
-		# worker starts; tell the author while the brief is still in hand.
+		# GH#32531/GH#33243: the author has the most context to choose the scope,
+		# so ask while the brief is still in hand. Without it the worker spends
+		# its first step on scope discovery; the pulse no longer holds the issue.
 		if _gh_ci_dispatch_scope_strict; then
-			print_error "auto-dispatch issue not created: body has no canonical Files Scope, so the pulse would hold it as status:blocked (missing_files_scope). ${scope_hint} Or drop auto-dispatch / mark it planning-only."
+			print_error "auto-dispatch issue not created: body has no canonical Files Scope. ${scope_hint} Or drop auto-dispatch / mark it planning-only."
 			return 1
 		fi
-		print_warning "auto-dispatch issue has no canonical ### Files Scope; the pulse will hold it as status:blocked (missing_files_scope). ${scope_hint}"
+		print_warning "auto-dispatch issue has no canonical ### Files Scope; its worker must discover and record the scope before editing. ${scope_hint}"
 		return 0
 	fi
 	# shellcheck source=./pre-dispatch-validator-lib-brief-scope.sh

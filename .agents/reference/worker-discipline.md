@@ -58,6 +58,26 @@ approval it describes.
 - Do not delete or exempt an existing comment to restore approval. Preserve the
   content-binding failure and follow the normal approval path.
 
+### Missing Files Scope (GH#33243)
+
+The pulse dispatches trusted-author briefs that have no canonical Files Scope
+instead of holding them for an author session that has already ended. Choosing
+files is routine analysis, so the worker owns it:
+
+1. Read the brief and the code, then choose the minimal repository-relative
+   paths, including tests and docs the change or a required gate needs.
+2. Before editing code, add a canonical `### Files Scope` section (one
+   `` - `repo/relative/path` `` line per file) to the dispatched issue body with
+   `gh-write-helper.sh issue edit`. Preserve every other line and the signature
+   footer. Re-read the issue and check it with
+   `pre-dispatch-validator-helper.sh scope-check <N> "<body>" 1`.
+3. Continue normally. Later additions follow "Integration scope recovery".
+
+Emit `TERMINAL_BLOCKER_REASON=missing_files_scope` only when the write fails or
+the brief is too ambiguous to choose paths safely. Explicit hard boundaries in
+the brief stay binding. Maintainers can restore the pre-claim hold with
+`AIDEVOPS_BRIEF_SCOPE_WORKER_DISCOVERY=0`.
+
 ### Integration scope recovery
 
 Files Scope is an initial implementation map unless trusted task instructions

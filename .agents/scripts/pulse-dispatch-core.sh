@@ -920,9 +920,11 @@ _dispatch_brief_hold_recorded() {
 	return 2
 }
 
-# Fail before dedup posts a claim. The blocked label is the durable cycle gate;
-# the body-hash marker keeps the brief-owner action to one comment per body even
-# when the label is later cleared without a body change.
+# Fail before dedup posts a claim. Trusted unscoped briefs dispatch with
+# worker-owned scope discovery (GH#33243); the hold below remains only when
+# AIDEVOPS_BRIEF_SCOPE_WORKER_DISCOVERY=0. There the blocked label is the durable
+# cycle gate and the body-hash marker keeps the brief-owner action to one comment
+# per body even when the label is later cleared without a body change.
 # GH#32979: every rc=1 logs exactly one DISPATCH_BLOCK_REASON naming the step
 # (recorded as the _brief_scope_block breadcrumb), so blocked candidates are
 # never metered as no_recent_log_evidence and untrusted unscoped briefs stay
@@ -963,6 +965,13 @@ _dispatch_preclaim_brief_scope_verdict() {
 	_brief_scope_block="self_heal_rewritten"
 	if _dispatch_brief_scope_self_heal "$issue_number" "$repo_slug" "$issue_body"; then
 		return 1
+	fi
+	# GH#33243: choosing files is routine AI analysis. Holding for an author
+	# session that has already ended parked briefs indefinitely, so the worker
+	# records the canonical scope as its first step instead.
+	if _brief_scope_worker_discovery_enabled; then
+		echo "[dispatch_with_dedup] Brief #${issue_number} in ${repo_slug} has no canonical Files Scope; dispatching with worker-owned scope discovery (GH#33243)" >>"${LOGFILE:-/dev/null}"
+		return 0
 	fi
 	_brief_scope_block="hold_marker_unavailable"
 	body_hash=$(_dispatch_brief_hold_body_hash "$issue_body") || return 1
