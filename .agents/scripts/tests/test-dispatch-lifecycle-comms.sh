@@ -470,7 +470,7 @@ else
 fi
 
 # The dispatch comment uses the same worker resolver as the headless runtime.
-for tier_model_expected in 'standard openai/gpt-6-sol low' 'thinking openai/gpt-6-sol medium'; do
+for tier_model_expected in 'standard openai/gpt-6.1-sol medium' 'thinking openai/gpt-6.1-sol medium'; do
 	read -r effort_tier effort_model effort_expected <<<"$tier_model_expected"
 	reset_gh_state
 	PULSE_DISPATCH_STAGGER_SECONDS=0 \
@@ -484,7 +484,7 @@ done
 
 reset_gh_state
 AIDEVOPS_HEADLESS_VARIANT_STANDARD=high PULSE_DISPATCH_STAGGER_SECONDS=0 \
-	_dlw_post_launch_hooks "12345" "owner/repo" "runner-a" "4242" "worker-owner-repo-12345" "standard" "openai/gpt-6-sol"
+	_dlw_post_launch_hooks "12345" "owner/repo" "runner-a" "4242" "worker-owner-repo-12345" "standard" "openai/gpt-6.1-sol"
 if grep -Fq -- '- **Effort**: high' "$GH_COMMENT_LOG"; then
 	print_result "dispatch effort respects tier override" 0
 else

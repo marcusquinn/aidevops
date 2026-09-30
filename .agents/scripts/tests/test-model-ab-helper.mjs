@@ -64,7 +64,7 @@ test("issue arms persist across retries without changing the fallback or thinkin
     assert.equal(routingPrimary(merged, "standard"), first.model);
     // The shipped minimum reasoning level is medium even for a low-variant trial arm.
     assert.equal(routingVariant(merged, "standard", first.model), first.variant === "low" ? "medium" : first.variant);
-    assert.equal(routingPrimary(merged, "thinking"), "openai/gpt-6-sol");
+    assert.equal(routingPrimary(merged, "thinking"), "openai/gpt-6.1-sol");
     assert.equal(report(experiment, { directory }).arms[first.arm].assigned, 1);
     assert.equal(report(experiment, { directory }).excluded.length, 3);
     assert.deepEqual(assign(experiment, "example/repo", 12, { directory, now: windowStart + 72 * 3600 * 1000 }), first);

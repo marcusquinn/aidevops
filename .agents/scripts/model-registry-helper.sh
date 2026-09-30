@@ -1315,7 +1315,7 @@ _route_lookup_models() {
 		fallback_model="${fallback_model:-anthropic/claude-sonnet-5-5}"
 		;;
 	thinking)
-		primary_model="${primary_model:-openai/gpt-6-sol}"
+		primary_model="${primary_model:-openai/gpt-6.1-sol}"
 		fallback_model="${fallback_model:-anthropic/claude-opus-4-6}"
 		;;
 	esac

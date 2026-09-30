@@ -250,18 +250,18 @@ test_fallback_chain_helper() {
 
 	# Test: resolve standard tier
 	output=$("$helper" resolve standard --quiet 2>&1) || true
-	if echo "$output" | grep -q "gpt-6-sol"; then
-		print_result "fallback: resolve standard -> gpt-6-sol" 0
+	if echo "$output" | grep -q "gpt-6.1-sol"; then
+		print_result "fallback: resolve standard -> gpt-6.1-sol" 0
 	else
-		print_result "fallback: resolve standard -> gpt-6-sol" 1 "Got: $output"
+		print_result "fallback: resolve standard -> gpt-6.1-sol" 1 "Got: $output"
 	fi
 
 	# Test: resolve thinking tier
 	output=$("$helper" resolve thinking --quiet 2>&1) || true
-	if echo "$output" | grep -q "gpt-6-sol"; then
-		print_result "fallback: resolve thinking -> gpt-6-sol" 0
+	if echo "$output" | grep -q "gpt-6.1-sol"; then
+		print_result "fallback: resolve thinking -> gpt-6.1-sol" 0
 	else
-		print_result "fallback: resolve thinking -> gpt-6-sol" 1 "Got: $output"
+		print_result "fallback: resolve thinking -> gpt-6.1-sol" 1 "Got: $output"
 	fi
 
 	# Test: resolve with --json flag

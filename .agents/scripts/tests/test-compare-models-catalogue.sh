@@ -5,7 +5,7 @@
 set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 helper="${script_dir}/compare-models-helper.sh"
-models=(gpt-6-sol gpt-5.6-sol claude-opus-5-5 qwen3.8-max)
+models=(gpt-6.1-sol gpt-6-sol gpt-5.6-sol claude-opus-5-5 qwen3.8-max)
 
 list=$(bash "$helper" list)
 pricing=$(bash "$helper" pricing)
@@ -20,8 +20,9 @@ for model in "${models[@]}"; do
 		exit 1
 	}
 done
-[[ "$list" == *'Snapshot: 2026-09-25'* && "$pricing" == *'Snapshot: 2026-09-25'* && "$help" == *'Snapshot: 2026-09-25'* ]]
-[[ "$comparison" == *'unverified'* && "$pricing" == *'unverified'* ]]
+[[ "$list" == *'Snapshot: 2026-09-30'* && "$pricing" == *'Snapshot: 2026-09-30'* && "$help" == *'Snapshot: 2026-09-30'* ]]
+[[ "$list" == *'unverified where marked'* && "$pricing" == *'Unverified is not free'* ]]
+[[ "$recommendation" == *'Recommended: gpt-6.1-sol'* ]]
 [[ "$recommendation" == *'not aesthetic quality'* && "$recommendation" == *'independent visual review'* ]]
 [[ "$comparison" != *'No model found'* && "$comparison" != *'No models found'* ]]
 printf 'PASS: offline model catalogue, pricing qualifiers, freshness and visual-evidence guidance\n'

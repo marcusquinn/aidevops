@@ -239,9 +239,9 @@ can inform routing, but cannot silently rewrite production policy.
 
 OpenCode defaults resolved models with larger windows to a ~240K usable-input
 compaction budget, without expanding smaller native windows or overriding
-explicit per-model context/input limits. GPT-6 Sol/Luna and their Fast variants
-also advertise the budget in their model metadata. Run `aidevops gpt6-context
-status` to check those four models in a fresh process, or `disable` to restore
+explicit per-model context/input limits. GPT-6.1 Sol, GPT-6 Sol/Luna and their
+Fast variants also advertise the budget in their model metadata. Run `aidevops
+gpt6-context status` to check those models in a fresh process, or `disable` to restore
 their native limits. Restart OpenCode after changes.
 
 See [model routing](.agents/tools/context/model-routing.md),
