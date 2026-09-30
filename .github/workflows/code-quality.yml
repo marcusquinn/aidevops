@@ -46,26 +46,27 @@ jobs:
 
     - name: ShellCheck (cross-platform)
       run: |
+        # GH#33182: this is the single full-repository ShellCheck gate (the
+        # duplicate serial pass in Framework Validation was removed). Files are
+        # checked in parallel batches; ShellCheck resolves .shellcheckrc per
+        # checked file, so batching preserves per-file results.
         echo "Running ShellCheck on ${{ matrix.os }}..."
         source .agents/scripts/lint-file-discovery.sh
         lint_shell_files
-        errors=0
-        while IFS= read -r file; do
-          [ -n "$file" ] || continue
-          if shellcheck -S error "$file" > /dev/null 2>&1; then
-            echo "OK $file"
-          else
-            echo "FAIL $file"
-            shellcheck -S error -f gcc "$file" 2>&1
-            errors=$((errors + 1))
-          fi
-        done <<< "$LINT_SH_FILES"
-        if [ "$errors" -gt 0 ]; then
-          echo ""
-          echo "$errors script(s) failed ShellCheck on ${{ matrix.os }}"
-          exit 1
+        workers=$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)
+        report="${RUNNER_TEMP}/shellcheck-report.txt"
+        file_count=$(printf '%s\n' "$LINT_SH_FILES" | sed '/^$/d' | wc -l | tr -d ' ')
+        echo "Checking ${file_count} scripts with ${workers} parallel workers"
+        if printf '%s\n' "$LINT_SH_FILES" | sed '/^$/d' | tr '\n' '\0' |
+          xargs -0 -n 16 -P "$workers" shellcheck -S error -f gcc > "$report" 2>&1; then
+          echo "All shell scripts passed ShellCheck on ${{ matrix.os }}"
+          exit 0
         fi
-        echo "All shell scripts passed ShellCheck on ${{ matrix.os }}"
+        cat "$report"
+        failed=$(grep -E '^[^:]+:[0-9]+:[0-9]+: ' "$report" | cut -d: -f1 | sort -u | wc -l | tr -d ' ')
+        echo ""
+        echo "${failed} script(s) failed ShellCheck on ${{ matrix.os }}"
+        exit 1
 
     - name: Bash 3.2 syntax validation (macOS native)
       if: runner.os == 'macOS'
@@ -349,33 +350,11 @@ jobs:
         echo ""
         echo "✅ All JSON files valid"
 
-    - name: ShellCheck Lint
-      run: |
-        echo "Validating shell scripts with ShellCheck..."
-        errors=0
-
-        # Source shared file-discovery helper (single source of truth for exclusions)
-        source .agents/scripts/lint-file-discovery.sh
-        lint_shell_files
-
-        while IFS= read -r file; do
-          [ -n "$file" ] || continue
-          if shellcheck -S error "$file" > /dev/null 2>&1; then
-            echo "OK $file"
-          else
-            echo "FAIL $file"
-            shellcheck -S error -f gcc "$file" 2>&1
-            errors=$((errors + 1))
-          fi
-        done <<< "$LINT_SH_FILES"
-
-        if [ "$errors" -gt 0 ]; then
-          echo ""
-          echo "$errors script(s) failed ShellCheck (severity: error)"
-          exit 1
-        fi
-        echo ""
-        echo "All shell scripts passed ShellCheck"
+    # GH#33182: no full-repository ShellCheck pass here. The identical
+    # `shellcheck -S error` gate over lint_shell_files runs once per OS in the
+    # cross-platform-shellcheck matrix (ShellCheck (macos-latest) is required).
+    # The former serial copy in this job took ~9 minutes and was the last
+    # required check to finish on most PRs.
 
     - name: Reusable Workflow and Maintenance Scope Contracts (GH#28862)
       run: |
