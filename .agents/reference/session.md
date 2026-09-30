@@ -36,7 +36,7 @@ screen alone. Headless workers skip it.
      - **a)** <option> · b) <option> · c) <option>
   3. <value only you know> (explicit)
      - reply `3: <value>`
-- **Left to capture:** <None | item the agent could not capture itself, and why>
+- **Left to capture:** <None | uncaptured work, its exact location, and why it remains>
 - **Close:** <Ready to close — start `/new` for your next task | Not yet: <reason> | Blocked on #N; resume via #R>
 - **Reply:** e.g. `1y 2b 3: <value>` · `ok` = all bold defaults · or plain text
 ```
@@ -56,6 +56,15 @@ Rules:
   executor (pulse, worker, routine) is not a user action; say which executor
   owns it on the Session line if relevant. Omit the **Reply** line when there
   are no asks.
+- **Check live Git state before writing `None`.** In every repository or
+  worktree touched by the session, inspect current status before returning
+  control. Session-owned modified, staged, or untracked files are uncaptured
+  work even when they exist safely in a linked worktree. If commit authority is
+  already present, commit them before replying. If the runtime requires explicit
+  commit approval and it has not been given, name the exact worktree and changes
+  under **Left to capture**, ask for that approval under **Needed from you**, and
+  set **Close** to `Not yet`. Never report those changes as delivered, captured,
+  or ready to close merely because the files were written and verified.
 - **Close is a recommendation, never an ask.** Starting `/new` is the user's
   call; state it (`Ready to close — start /new for your next task`) and never
   number it or ask `y/n`. When asks are open, Close says which ones block
@@ -85,10 +94,13 @@ Rules:
   (stable purpose plus current phase).
 - **Left to capture** is filled from the capture check below, not from memory of
   intent. Capture owed items yourself (issue, TODO, doc, memory) before
-  replying; list only what you could not capture, with the reason. Items
-  already filed are cited in the body, not here.
+  replying; list only what you could not capture, with the reason and durable
+  location. This includes session-owned changes that lack a Git commit when a
+  commit is required for durable capture. Items already filed or committed are
+  cited in the body, not here.
 - **Ready to close** only when: no open question to the user other than asks
-  marked `(optional)`; every PR is merged
+  marked `(optional)`; no session-owned repository changes remain uncommitted;
+  every PR is merged
   or handed to a named live executor; deferred and follow-up work has an issue or
   TODO number; evidenced lessons are routed per `reference/self-improvement.md`;
   and the commitment scan (unfulfilled promises, unnotified parties, displaced
@@ -138,13 +150,18 @@ Example (work merged; only a publication decision remains):
 ### Capture Check (after a full loop or before `Ready to close`)
 
 1. Scan the conversation for user aims and directions not yet delivered or tracked.
-2. Confirm each discovered defect, follow-up, or deferred objective has an issue/TODO.
-3. Route reusable lessons: shared framework lessons to the narrowest doc or
+2. Inspect live Git status in every touched repository and linked worktree.
+   Treat session-owned modified, staged, or untracked files as uncaptured until
+   committed. If commit approval is required but absent, put the approval under
+   **Needed from you**, the exact worktree and files under **Left to capture**,
+   and keep **Close** at `Not yet`. Do not rely on an earlier status snapshot.
+3. Confirm each discovered defect, follow-up, or deferred objective has an issue/TODO.
+4. Route reusable lessons: shared framework lessons to the narrowest doc or
    `framework-issue-helper.sh log`; personal/install lessons to memory.
-4. Offer a reusable-capability TODO when the session invented or adapted tooling.
-5. If session aims wait on issues handed to pulse/workers, file a continuation
+5. Offer a reusable-capability TODO when the session invented or adapted tooling.
+6. If session aims wait on issues handed to pulse/workers, file a continuation
    reminder (below) so the session can close.
-6. If anything remains, either do it now (when authorized and safe) or list it
+7. If anything remains, either do it now (when authorized and safe) or list it
    under **Left to capture**.
 
 ### Continuation Reminders
