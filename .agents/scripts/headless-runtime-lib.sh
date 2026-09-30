@@ -1041,6 +1041,14 @@ TERMINAL_BLOCKER_REASON=target_code_blocker
 Target-code blockers may re-arm when the brief, dependencies, or target revision
 changes. Never use that class for permissions, credentials, provider failures,
 capability limits, missing/excluded scope, or ambiguous evidence.
+When the trusted brief explicitly requires waiting for a named external event
+(for example a model ID publication) and current evidence confirms it has not
+occurred, use:
+TERMINAL_BLOCKER_REASON=external_trigger_pending
+Name the exact trigger and checked evidence in the protected dossier. This class
+re-arms on a brief or linked dependency change or trusted retry, not unrelated
+default-branch commits. Do not use it for generic provider outages, missing
+permissions, uncertain availability or a trigger that is already satisfied.
 For an evidenced unresolved permission boundary, including a continued session
 whose prior protected-source denial has no changed exact-context grant, use:
 TERMINAL_BLOCKER_REASON=permission_required

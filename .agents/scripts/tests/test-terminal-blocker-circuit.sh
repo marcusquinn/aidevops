@@ -283,6 +283,41 @@ test_brief_only_revision() {
 	return 0
 }
 
+test_external_trigger_pending_revision() {
+	local issue='{"title":"Wait for model","body":"### Files Scope\n- model.sh\nRun only after the model ID is published."}'
+	local output="${TEST_ROOT}/external.ndjson" fingerprint="" revision="" changed="" comments="" status=0
+	local observation="" circuit=""
+	printf '%s\n' '{"type":"text","text":"BLOCKED: the required model ID is not yet published\nTERMINAL_BLOCKER_REASON=external_trigger_pending"}' >"$output"
+	terminal_blocker_capture_output "$output" || status=1
+	fingerprint="$AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT"
+	[[ "$(_terminal_blocker_reason "$fingerprint")" == external_trigger_pending ]] || status=1
+	revision=$(terminal_blocker_task_revision "$issue" owner/repo 42 "$TEST_ROOT" external_trigger_pending) || status=1
+	observation=$(jq -nc --arg body "<!-- aidevops:terminal-blocker-observation revision=${revision} blocker=${fingerprint} -->" \
+		'[{body:$body,created_at:"2026-08-31T10:00:00Z",author_association:"MEMBER"}]')
+	[[ "$(terminal_blocker_release_mode "$observation" "$revision" "$fingerprint")" == circuit ]] || status=1
+	TEST_TARGET_REVISION='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+	changed=$(terminal_blocker_task_revision "$issue" owner/repo 42 "$TEST_ROOT" external_trigger_pending) || status=1
+	[[ "$revision" == "$changed" ]] || status=1
+	[[ "$(terminal_blocker_release_mode "$observation" "$changed" "$fingerprint")" == circuit ]] || status=1
+	circuit=$(jq -nc --arg body "<!-- aidevops:terminal-blocker-circuit revision=${changed} blocker=${fingerprint} -->" \
+		'[{body:$body,created_at:"2026-08-31T10:05:00Z",author_association:"MEMBER"}]')
+	terminal_blocker_circuit_active "$circuit" "$issue" owner/repo 42 "$TEST_ROOT" >/dev/null || status=1
+	terminal_blocker_circuit_active "$circuit" '{"title":"Wait for model","body":"### Files Scope\n- model.sh\nModel ID published."}' \
+		owner/repo 42 "$TEST_ROOT" >/dev/null && status=1
+	TEST_DEPENDENCIES='{"nodes":[{"number":9,"state":"CLOSED"}],"truncated":false}'
+	changed=$(terminal_blocker_task_revision "$issue" owner/repo 42 "$TEST_ROOT" external_trigger_pending) || status=1
+	[[ "$revision" != "$changed" ]] || status=1
+	TEST_DEPENDENCIES=unavailable
+	terminal_blocker_circuit_active "$circuit" "$issue" owner/repo 42 "$TEST_ROOT" >/dev/null && status=1
+	TEST_DEPENDENCIES='{"nodes":[],"truncated":false}'
+	comments=$(printf '%s' "$circuit" | jq -c '. + [{body:"terminal-blocker-circuit:retry",created_at:"2026-08-31T11:00:00Z",author_association:"MEMBER"}]')
+	terminal_blocker_circuit_active "$comments" "$issue" owner/repo 42 "$TEST_ROOT" >/dev/null && status=1
+	TEST_TARGET_REVISION='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+	unset AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT
+	print_result "external trigger opens after two observations across HEAD changes; brief, dependency and retry re-arm" "$status"
+	return 0
+}
+
 test_unknown_and_redaction() {
 	local output="${TEST_ROOT}/unknown.ndjson" fingerprint="" fragment="" comments="" status=0
 	printf '%s\n' '{"type":"text","text":"BLOCKED: private-token /private/runner/file.sh ambiguous failure"}' >"$output"
@@ -676,6 +711,7 @@ main() {
 	test_release_modes_and_retry
 	test_dispatch_hold_revalidates_revision
 	test_brief_only_revision
+	test_external_trigger_pending_revision
 	test_excluded_scope_revision
 	test_unknown_and_redaction
 	test_final_dossier_and_structural_precedence

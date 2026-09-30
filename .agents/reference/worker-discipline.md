@@ -155,6 +155,13 @@ does not discard a request, clear a hold or authorize another executor.
 
 #### Terminal-blocker recovery
 
+Known classes include `external_trigger_pending` for a trusted brief explicitly
+waiting on a named, verifiably unmet external event. Its circuit revision tracks
+the brief and linked dependencies, not default-branch HEAD; a corrected brief,
+dependency change or OWNER/MEMBER standalone retry re-arms it. Verify the event
+before retrying. Permission holds remain independent of brief and code changes;
+unclassified blockers retain bounded backoff rather than a permanent circuit.
+
 An open `TERMINAL_BLOCKER_CIRCUIT` stops redispatch but is not an owner. The
 runner that opened it queues the issue (`terminal-blocker-recovery-helper.sh`;
 circuits it authored are backfilled every 6h) and its pulse supervisor runs
