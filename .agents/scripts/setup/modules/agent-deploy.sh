@@ -3,7 +3,7 @@
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # Agent deployment functions: deploy_aidevops_agents, deploy_ai_templates, inject_agents_reference
 # Part of aidevops setup.sh modularization (t316.3)
-# Split from original agent-deploy.sh (t1940): runtime conversion → agent-runtime.sh, beads/hooks → tool-beads.sh
+# Split from original agent-deploy.sh (t1940): runtime conversion → agent-runtime.sh
 
 # Shell safety baseline
 set -Eeuo pipefail
