@@ -952,6 +952,13 @@ _verify_post_deploy_runtime_convergence() {
 	local sync_repo_root="$1"
 	local release_sha="$2"
 	local preservation_exit=0
+	# The exact-tag check is expected to fail whenever a concurrent auto-update
+	# already advanced the active bundle; suppress its error line here so a
+	# successful preservation fallback below does not leave a stray ERROR in
+	# otherwise-successful release logs. The fallback's own internal exact-tag
+	# verification runs un-suppressed (quiet flag cleared before that call), so
+	# a genuine convergence failure still prints its reason.
+	local _AIDEVOPS_RUNTIME_VERIFY_QUIET=1
 	if verify_aidevops_runtime_bundle_convergence \
 		"$sync_repo_root" \
 		"$release_sha" \
@@ -959,6 +966,7 @@ _verify_post_deploy_runtime_convergence() {
 		"$HOME/.aidevops/.deployed-sha"; then
 		return 0
 	fi
+	_AIDEVOPS_RUNTIME_VERIFY_QUIET=""
 	_verify_active_release_preservation_merge \
 		"$sync_repo_root" \
 		"$release_sha" \
@@ -967,6 +975,9 @@ _verify_post_deploy_runtime_convergence() {
 	if [[ "$preservation_exit" -eq 2 ]]; then
 		print_success "Post-release aidevops runtime already contains release ${release_sha:0:12} through validated preservation merge ${_AIDEVOPS_RELEASE_ACTIVE_PRESERVATION_SHA:0:12} (verified no-op)"
 		return 2
+	fi
+	if [[ -n "$_AIDEVOPS_RUNTIME_VERIFY_LAST_ERROR" ]]; then
+		print_error "$_AIDEVOPS_RUNTIME_VERIFY_LAST_ERROR"
 	fi
 	print_error "Post-release deployment helper exited successfully, but runtime bundle provenance did not converge"
 	return 1
