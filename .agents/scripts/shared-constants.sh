@@ -199,8 +199,11 @@ readonly OPENCODE_PIN_LAST_CANARY_DATE="2026-09-29"
 readonly OPENCODE_PIN_LAST_CANARY_RESULT="pass:1.18.33"
 readonly OPENCODE_PIN_REVIEW_DEADLINE="2026-10-06"
 readonly OPENCODE_PLUGIN_TESTED_VERSION="1.18.33"
-readonly OPENCODE_V2_PINNED_VERSION="2.0.3"
-readonly OPENCODE_V2_PLUGIN_TESTED_VERSION="2.0.3"
+# GH#32993: V2 promoted 2.0.20 after canary run 36752410645 passed the isolated
+# Linux-headless baseline (2.0.3) and candidate comparison with an empty native
+# tool diff; @opencode/plugin stays at the tested 2.0.3 package.
+readonly OPENCODE_V2_PINNED_VERSION="2.0.20"
+readonly OPENCODE_V2_PLUGIN_TESTED_VERSION="2.0.20"
 
 aidevops_opencode_profile_id() {
 	local requested="${AIDEVOPS_OPENCODE_PROFILE:-}"
@@ -232,9 +235,9 @@ aidevops_opencode_profile_value() {
 		v2:pinReason) printf 'Initial OpenCode V2 compatibility qualification\n' ;;
 		v2:pinPlatform) printf 'Linux\n' ;;
 		v2:pinRuntimeMode) printf 'headless\n' ;;
-		v2:lastCanaryDate) printf '2026-09-15\n' ;;
-		v2:lastCanaryResult) printf 'pass:2.0.3\n' ;;
-		v2:reviewDeadline) printf '2026-09-22\n' ;;
+		v2:lastCanaryDate) printf '2026-09-30\n' ;;
+		v2:lastCanaryResult) printf 'pass:2.0.20\n' ;;
+		v2:reviewDeadline) printf '2026-10-07\n' ;;
 		v1:package) printf 'opencode-ai\n' ;;
 		v1:binary) printf 'opencode\n' ;;
 		v1:pluginEntry) printf 'index.mjs\n' ;;
