@@ -111,6 +111,8 @@ if [[ -f "$_PULSE_MERGE_STUCK_CONF" ]]; then
 		AIDEVOPS_MERGE_PATTERN_MIN_PRS=$(grep -E '^AIDEVOPS_MERGE_PATTERN_MIN_PRS=' "$_PULSE_MERGE_STUCK_CONF" 2>/dev/null | tail -1 | cut -d= -f2)
 	[[ -z "${AIDEVOPS_MERGE_STUCK_ENABLED:-}" ]] &&
 		AIDEVOPS_MERGE_STUCK_ENABLED=$(grep -E '^AIDEVOPS_MERGE_STUCK_ENABLED=' "$_PULSE_MERGE_STUCK_CONF" 2>/dev/null | tail -1 | cut -d= -f2)
+	[[ -z "${AIDEVOPS_MERGE_STRANDED_DRAFT_AGE_MINUTES:-}" ]] &&
+		AIDEVOPS_MERGE_STRANDED_DRAFT_AGE_MINUTES=$(grep -E '^AIDEVOPS_MERGE_STRANDED_DRAFT_AGE_MINUTES=' "$_PULSE_MERGE_STUCK_CONF" 2>/dev/null | tail -1 | cut -d= -f2)
 fi
 
 # Hard defaults for any value the conf didn't supply. Validated as positive
@@ -120,6 +122,7 @@ fi
 : "${AIDEVOPS_MERGE_PATTERN_MIN_PRS:=3}"
 : "${AIDEVOPS_MERGE_STUCK_ENABLED:=1}"
 : "${AIDEVOPS_MERGE_ZERO_PROGRESS_RECOVERY_CHECK_SECONDS:=3600}"
+: "${AIDEVOPS_MERGE_STRANDED_DRAFT_AGE_MINUTES:=720}"
 
 # ── Constants (literal-dedup) ────────────────────────────────────────────────
 # Counter and gauge names that would otherwise repeat 3+ times in the body
@@ -130,6 +133,9 @@ readonly _PMS_GAUGE_ZERO_PROGRESS_CYCLES='pulse_merge_zero_progress_cycles'
 readonly _PMS_GAUGE_ZERO_PROGRESS_RECOVERY_CHECK_TS='pulse_merge_zero_progress_recovery_check_ts'
 readonly _PMS_JQ_NULL_GUARD="null"
 readonly _PMS_ISSUE_STATE_OPEN="OPEN"
+readonly _PMS_GAUGE_STRANDED_DRAFT_COUNT="pulse_merge_stranded_interactive_draft_count"
+readonly _PMS_COUNTER_STRANDED_DRAFT_ESCALATIONS="pulse_merge_stranded_interactive_draft_escalations_filed"
+readonly _PMS_NO_AUTO_DISPATCH_LABEL="no-auto-dispatch"
 
 #######################################
 # Shared open-PR field shape for stuck-merge list scans.
@@ -273,6 +279,203 @@ _pms_is_pattern_outage_candidate() {
 		return 0
 	fi
 	printf '0'
+	return 0
+}
+
+# ── Stranded interactive draft detector (GH#33229) ─────────────────────────
+#
+# A finished interactive PR opened as a draft (workflows/full-loop.md step
+# 4.2) with all required checks green can stall indefinitely: the stuck/merge
+# classifier above skips drafts unconditionally (readiness is the author's
+# decision, never auto-merge eligible), and the linked issue's
+# status:claimed/status:in-review label keeps dispatch from treating it as
+# available. This detector surfaces the gap with a single idempotent comment
+# per head SHA — it never converts to ready, merges, or unassigns.
+
+#######################################
+# Cheap structural shape check — no API calls. Filters the shared PR-list
+# fields (isDraft, labels) down to interactive-draft candidates before any
+# age/required-checks/linked-issue lookups run.
+#
+# Args: $1 = compact PR JSON object (isDraft, labels)
+# Echoes "1" when the shape matches, "0" otherwise.
+#######################################
+_pms_is_stranded_draft_shape() {
+	local pr_obj="$1"
+	local is_draft="" labels=""
+	is_draft=$(printf '%s' "$pr_obj" | jq -r '.isDraft // false' 2>/dev/null)
+	labels=$(printf '%s' "$pr_obj" | jq -r "$_PMS_LABELS_CSV_JQ" 2>/dev/null)
+	local labels_tok=",${labels},"
+
+	if [[ "$is_draft" != "true" ]]; then
+		printf '0'
+		return 0
+	fi
+	if [[ "$labels_tok" != *",origin:interactive,"* ]]; then
+		printf '0'
+		return 0
+	fi
+	if [[ "$labels_tok" == *",${_PMS_HOLD_FOR_REVIEW_LABEL},"* || "$labels_tok" == *",${_PMS_NO_AUTO_DISPATCH_LABEL},"* ]]; then
+		printf '0'
+		return 0
+	fi
+	printf '1'
+	return 0
+}
+
+#######################################
+# Resolve whether the PR's closing-keyword-linked issue is open and still
+# claimed (status:claimed or status:in-review, with an assignee). Network
+# call — caller invokes this only after the cheap shape/age/required-checks
+# filters already passed.
+#
+# Args: $1=pr_number, $2=repo_slug
+# Echoes the linked issue number on success (exit 0). Returns 1 with no
+# stdout when no qualifying linked issue was found (closed, unclaimed, no
+# assignee, or no closing-keyword linked issue at all).
+#######################################
+_pms_stranded_draft_linked_issue() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local linked_issue=""
+
+	if declare -F _extract_linked_issue >/dev/null 2>&1; then
+		linked_issue=$(_extract_linked_issue "$pr_number" "$repo_slug" 2>/dev/null) || linked_issue=""
+	fi
+	[[ -n "$linked_issue" ]] || return 1
+
+	local issue_json=""
+	issue_json=$(gh_issue_view "$linked_issue" --repo "$repo_slug" \
+		--json state,labels,assignees 2>/dev/null) || return 1
+	[[ -n "$issue_json" ]] || return 1
+
+	local issue_state="" issue_labels="" assignee_count=0
+	issue_state=$(printf '%s' "$issue_json" | jq -r '.state // ""' 2>/dev/null)
+	issue_labels=$(printf '%s' "$issue_json" | jq -r "$_PMS_LABELS_CSV_JQ" 2>/dev/null)
+	assignee_count=$(printf '%s' "$issue_json" | jq -r '(.assignees // []) | length' 2>/dev/null)
+	[[ "$assignee_count" =~ ^[0-9]+$ ]] || assignee_count=0
+
+	[[ "$issue_state" == "$_PMS_ISSUE_STATE_OPEN" ]] || return 1
+	[[ "$assignee_count" -gt 0 ]] || return 1
+	local issue_labels_tok=",${issue_labels},"
+	if [[ "$issue_labels_tok" != *",status:claimed,"* && "$issue_labels_tok" != *",status:in-review,"* ]]; then
+		return 1
+	fi
+
+	printf '%s' "$linked_issue"
+	return 0
+}
+
+#######################################
+# Post the one-shot stranded-draft comment on the PR itself, mentioning the
+# author. Idempotent via <!-- aidevops:stranded-draft:<head_sha> --> so a new
+# head SHA (author pushed again) re-arms exactly once and an unchanged head
+# never posts twice.
+#
+# Args: $1=pr_number, $2=repo_slug, $3=head_sha, $4=pr_author, $5=linked_issue
+#######################################
+_pms_escalate_stranded_interactive_draft() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local head_sha="$3"
+	local pr_author="${4:-}"
+	local linked_issue="${5:-}"
+
+	[[ "$pr_number" =~ ^[0-9]+$ && -n "$repo_slug" && -n "$head_sha" ]] || return 0
+
+	if ! declare -F _gh_idempotent_comment >/dev/null 2>&1; then
+		echo "[pulse-merge-stuck] _pms_escalate_stranded_interactive_draft: _gh_idempotent_comment not defined — skipping for PR #${pr_number} in ${repo_slug}" >>"$LOGFILE"
+		return 0
+	fi
+
+	local marker="<!-- aidevops:stranded-draft:${head_sha} -->"
+	local mention=""
+	[[ -n "$pr_author" ]] && mention="@${pr_author} "
+	local issue_note=""
+	[[ -n "$linked_issue" ]] && issue_note=" (linked issue #${linked_issue})"
+
+	local body=""
+	IFS='' read -r -d '' body <<EOF || true
+${marker}
+## Stranded interactive draft PR
+
+${mention}this PR is a draft with all required checks green and has been idle past the \`AIDEVOPS_MERGE_STRANDED_DRAFT_AGE_MINUTES\` threshold (currently ${AIDEVOPS_MERGE_STRANDED_DRAFT_AGE_MINUTES}m). Pulse never converts a draft to ready, merges, or unassigns automatically — readiness is the author's decision.
+
+### To finish this PR
+
+\`\`\`bash
+gh pr ready ${pr_number} --repo ${repo_slug}
+\`\`\`
+
+Or a maintainer can take it over with \`/full-loop <issue URL>\`${issue_note}.
+
+<sub>Posted automatically by \`pulse-merge-stuck.sh\` (GH#33229). Fires once per head SHA.</sub>
+EOF
+
+	_gh_idempotent_comment "$pr_number" "$repo_slug" "$marker" "$body" "pr" || true
+	pulse_stats_increment "$_PMS_COUNTER_STRANDED_DRAFT_ESCALATIONS"
+	echo "[pulse-merge-stuck] _pms_escalate_stranded_interactive_draft: PR #${pr_number} (${repo_slug}) — stranded-draft comment posted for head ${head_sha}" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
+# Drive the stranded-draft detector over the already-fetched open-PR list.
+# Runs as a SEPARATE pass from the stuck/merge classifier — drafts remain
+# unconditionally skipped there (_pms_is_eligible_stuck,
+# _pms_is_pattern_outage_candidate); auto-merge eligibility is never the goal
+# here, only visibility.
+#
+# Args: $1=repo_slug, $2=pr_json, $3=pr_count, $4=now_epoch
+# Echoes the count of PRs reported (comment posted or already present) this
+# cycle.
+#######################################
+_pms_detect_stranded_interactive_drafts() {
+	local repo_slug="$1"
+	local pr_json="$2"
+	local pr_count="$3"
+	local now_epoch="$4"
+	local age_threshold_secs=$((AIDEVOPS_MERGE_STRANDED_DRAFT_AGE_MINUTES * 60))
+	local reported_count=0
+	local i=0
+
+	while [[ "$i" -lt "$pr_count" ]]; do
+		if _pms_diagnostic_budget_exhausted; then
+			break
+		fi
+		local pr_obj="" pr_num="" pr_updated="" pr_age_secs=0 shape=""
+		pr_obj=$(printf '%s' "$pr_json" | jq -c ".[$i]" 2>/dev/null)
+		i=$((i + 1))
+		[[ -n "$pr_obj" ]] || continue
+		shape=$(_pms_is_stranded_draft_shape "$pr_obj")
+		[[ "$shape" == "1" ]] || continue
+		pr_num=$(printf '%s' "$pr_obj" | jq -r '.number // empty' 2>/dev/null)
+		[[ "$pr_num" =~ ^[0-9]+$ ]] || continue
+		pr_updated=$(printf '%s' "$pr_obj" | jq -r '.updatedAt // empty' 2>/dev/null)
+		[[ -n "$pr_updated" ]] || continue
+		pr_age_secs=$((now_epoch - $(_pms_iso_to_epoch "$pr_updated")))
+		[[ "$pr_age_secs" -ge "$age_threshold_secs" ]] || continue
+
+		local head_sha="" pr_author=""
+		head_sha=$(_pms_head_sha_from_pr_json "$pr_obj")
+		pr_author=$(printf '%s' "$pr_obj" | jq -r '.author.login // empty' 2>/dev/null)
+		[[ -n "$head_sha" ]] || continue
+
+		# Required checks must be provably terminal-success on the current head;
+		# QUEUED/IN_PROGRESS/absent is ordinary CI, not a stranded state.
+		if declare -F _check_required_checks_passing >/dev/null 2>&1; then
+			if ! _check_required_checks_passing "$repo_slug" "$pr_num" "$head_sha" >/dev/null 2>&1; then
+				continue
+			fi
+		fi
+
+		local linked_issue=""
+		linked_issue=$(_pms_stranded_draft_linked_issue "$pr_num" "$repo_slug") || continue
+
+		_pms_escalate_stranded_interactive_draft "$pr_num" "$repo_slug" "$head_sha" "$pr_author" "$linked_issue"
+		reported_count=$((reported_count + 1))
+	done
+
+	printf '%s' "$reported_count"
 	return 0
 }
 
@@ -1774,6 +1977,15 @@ pulse_merge_stuck_run_pass() {
 
 	# Update the gauge for this cycle's count.
 	pulse_stats_set_gauge "pulse_merge_eligible_stuck_pr_count" "$eligible_stuck_count"
+
+	# Stranded interactive drafts (GH#33229) — separate detector, reuses the
+	# same open-PR list already fetched above. The gauge makes the count
+	# visible in the existing pulse-stats digest (pulse_stats_gauge_status)
+	# alongside the stuck-PR count, without opening GitHub.
+	local stranded_draft_count=0
+	stranded_draft_count=$(_pms_detect_stranded_interactive_drafts "$repo_slug" "$pr_json" "$pr_count" "$now_epoch")
+	[[ "$stranded_draft_count" =~ ^[0-9]+$ ]] || stranded_draft_count=0
+	pulse_stats_set_gauge "$_PMS_GAUGE_STRANDED_DRAFT_COUNT" "$stranded_draft_count"
 
 	# File the runner-queue-saturation meta-issue if measured saturation was detected
 	# AND at least one stuck PR was classified into that bucket. The
