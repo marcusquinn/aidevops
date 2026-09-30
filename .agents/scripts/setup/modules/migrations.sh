@@ -203,6 +203,16 @@ cleanup_deprecated_paths() {
 		"$agents_dir/scripts/finding-to-task-helper.sh"
 		"$agents_dir/scripts/objective-runner-helper.sh"
 		"$agents_dir/scripts/ralph-loop-helper.sh"
+		"$agents_dir/workflows/ralph-loop.md"
+		# Retired slash commands are generated outside the deployed agent tree.
+		"$HOME/.claude/commands/ralph-loop.md"
+		"$HOME/.claude/commands/ralph-task.md"
+		"$HOME/.claude/commands/cancel-ralph.md"
+		"$HOME/.claude/commands/ralph-status.md"
+		"$HOME/.config/opencode/command/ralph-loop.md"
+		"$HOME/.config/opencode/command/ralph-task.md"
+		"$HOME/.config/opencode/command/cancel-ralph.md"
+		"$HOME/.config/opencode/command/ralph-status.md"
 		"$agents_dir/scripts/stale-pr-helper.sh"
 		# GH#32585: Closte integration removed
 		"$agents_dir/scripts/closte-helper.sh"
@@ -1654,8 +1664,7 @@ migrate_loop_state_directories() {
 		# Migrate from .claude/ (oldest legacy path)
 		if [[ -d "$old_state_dir" ]]; then
 			local has_loop_state=false
-			if [[ -f "$old_state_dir/ralph-loop.local.state" ]] ||
-				[[ -f "$old_state_dir/loop-state.json" ]] ||
+			if [[ -f "$old_state_dir/loop-state.json" ]] ||
 				[[ -d "$old_state_dir/receipts" ]]; then
 				has_loop_state=true
 			fi
@@ -1664,7 +1673,7 @@ migrate_loop_state_directories() {
 				print_info "Found legacy loop state in: $repo_dir/.claude/"
 				mkdir -p "$new_state_dir"
 
-				for file in ralph-loop.local.state loop-state.json re-anchor.md guardrails.md; do
+				for file in loop-state.json re-anchor.md guardrails.md; do
 					if [[ -f "$old_state_dir/$file" ]]; then
 						mv "$old_state_dir/$file" "$new_state_dir/"
 						print_info "  Moved $file"

@@ -7311,12 +7311,6 @@
       "passes": 11,
       "pr": 18924
     },
-    ".agents/workflows/ralph-loop.md": {
-      "at": "2026-03-28T11:20:12Z",
-      "hash": "fc13521cf4f2d8477be2c37928bc684dc88901f6",
-      "passes": 1,
-      "pr": 11789
-    },
     ".agents/workflows/readme-create-update.md": {
       "at": "2026-07-23T15:11:01Z",
       "hash": "7d33f37fd26924acdb7d0e44e37f1686021e3ff2",
