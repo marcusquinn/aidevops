@@ -4946,12 +4946,6 @@
       "passes": 2,
       "pr": 13733
     },
-    ".agents/tools/context/context-builder.md": {
-      "at": "2026-03-29T20:54:03Z",
-      "hash": "6f1d7629b3d1df84f79bca62005fcc5e8c5d394a",
-      "passes": 1,
-      "pr": 13297
-    },
     ".agents/tools/context/context-guardrails.md": {
       "at": "2026-03-30T06:49:16Z",
       "hash": "2d4fd932a5b9b6fdeac7c2c8ecc1c40f2e52f103",
@@ -5017,12 +5011,6 @@
       "hash": "fbfa0b2016051c28ea3824e220bc0120bf42d0f1",
       "passes": 1,
       "pr": 12749
-    },
-    ".agents/tools/context/rapidfuzz.md": {
-      "at": "2026-04-03T01:53:12Z",
-      "hash": "d16b8b5bc318eaa7bbad698ecec8d690a707cd98",
-      "passes": 3,
-      "pr": 0
     },
     ".agents/tools/context/toon.md": {
       "at": "2026-04-03T13:35:14Z",

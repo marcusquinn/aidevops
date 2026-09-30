@@ -794,7 +794,7 @@ validate_parent_subtask_blocking() {
 # Whole-word report/scratch terms (matched on the lowercased file name).
 _ROOT_ARTIFACT_WORD_RE='(^|[-_.])(test|tests|report|reports|verify|verification|result|results|output|summary|debug|scratch|notes)([-_.]|$)'
 # Standard lowercased base names (extension removed) for root .md / .txt files.
-_ROOT_STANDARD_MD_BASES=" readme changelog contributing license security code_of_conduct support governance maintainers authors notice roadmap upgrading migration architecture glossary agents agent claude gemini design todo models terms repomix-instruction "
+_ROOT_STANDARD_MD_BASES=" readme changelog contributing license security code_of_conduct support governance maintainers authors notice roadmap upgrading migration architecture glossary agents agent claude gemini design todo models terms "
 _ROOT_STANDARD_TXT_BASES=" license notice cmakelists llms runtime "
 _ROOT_MODE_GUARD="artifact-guard"
 _ROOT_MODE_FRAMEWORK="framework"
@@ -818,7 +818,7 @@ _init_root_file_allowlist() {
 		".aidevops.json" ".bandit" ".gitattributes" ".gitignore" ".nvmrc"
 		".codacy.yml" ".codefactor.yml" ".coderabbit.yaml"
 		".markdownlint-cli2.jsonc" ".markdownlint.json" ".markdownlintignore"
-		".qlty/qlty.toml" ".qlty.toml" ".qltyignore" ".repomixignore"
+		".qlty/qlty.toml" ".qlty.toml" ".qltyignore"
 		".secretlintignore" ".secretlintrc.json"
 		# Tool configs (non-dotfile)
 		"biome.json"
@@ -837,7 +837,7 @@ _init_root_file_allowlist() {
 		# Public shell entrypoints. Implementation modules belong under
 		# .agents/scripts/aidevops-cli/ or .agents/scripts/setup/modules/.
 		# Tool configs
-		"sonar-project.properties" "repomix.config.json" "repomix-instruction.md"
+		"sonar-project.properties"
 		# Test scripts (temporary - should be moved to .agents/scripts/)
 		"test-proof-log-final.sh"
 	)

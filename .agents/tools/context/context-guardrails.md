@@ -17,22 +17,22 @@ tools:
 ## Quick Reference
 
 - **Budget**: Reserve 100K tokens for conversation; never use >100K on context
-- **Escalate gradually**: README → specific files → targeted patterns → full pack (last resort)
-- **Pre-flight**: Always check repo size before packing; if grep/search returns >500 lines, don't load it all
+- **Escalate gradually**: README → specific files → targeted patterns → bulk load (last resort)
+- **Pre-flight**: Always check repo size before bulk loading; if grep/search returns >500 lines, don't load it all
 
-**Size Thresholds** — `gh api repos/{u}/{r} --jq .size` returns KB; KB × 100 ≈ full-pack tokens:
+**Size Thresholds** — `gh api repos/{u}/{r} --jq .size` returns KB; KB × 100 ≈ full-load tokens:
 
 | Repo Size (KB) | Est. Tokens | Action |
 |----------------|-------------|--------|
-| < 500 | < 50K | Safe for compressed pack |
-| 500-2000 | 50-200K | Use `--include` patterns only |
-| > 2000 | > 200K | **NEVER full pack** — targeted files only |
+| < 500 | < 50K | Load selected directories only |
+| 500-2000 | 50-200K | Targeted paths only |
+| > 2000 | > 200K | **NEVER bulk load** — targeted files only |
 
 **Tool risk**:
 
 | Tool | Typical Output | Risk |
 |------|----------------|------|
-| `npx repomix --remote` | 100K–5M+ tokens | **EXTREME** |
+| Bulk-loading a remote repo | 100K–5M+ tokens | **EXTREME** |
 | `mcp_grep` on large output | 10K–500K tokens | **HIGH** |
 | `webfetch` on docs site | 5K–50K tokens | Medium |
 | `mcp_read` single file | 1K–20K tokens | Low |
@@ -44,24 +44,14 @@ tools:
 
 ## Tool-Specific Guardrails
 
-### npx repomix --remote
+### Whole-repository ingestion
 
 ```bash
-# BAD - no size check, no patterns
-npx repomix@latest --remote https://github.com/large/repo
-
-# GOOD - check size first, then compress
+# BAD - bulk-loading a remote repo with no size check
+# GOOD - check size first, list the tree, then fetch only needed files
 gh api repos/owner/repo --jq '.size'
-
-# < 500 KB:
-npx repomix@latest --remote https://github.com/small/repo --compress
-
-# > 500 KB:
-npx repomix@latest --remote https://github.com/large/repo \
-  --include "README.md,src/**/*.ts,docs/**" --compress
-
-# Or use the helper (auto-compresses):
-~/.aidevops/agents/scripts/context-builder-helper.sh remote large/repo main
+gh api "repos/owner/repo/git/trees/main?recursive=1" --jq '.tree[].path'
+gh api repos/owner/repo/contents/README.md --jq '.content' | base64 -d
 ```
 
 ### webfetch on documentation sites
@@ -79,14 +69,6 @@ gh api repos/{owner}/{repo}/readme --jq '.content' | base64 -d
 # AVOID - raw.githubusercontent.com has 70% failure rate (agents guess wrong paths)
 ```
 
-### Searching packed output
-
-```bash
-grep -n "install" context.xml
-grep -B2 -A5 "## Install" context.xml
-sed -n '100,200p' context.xml
-```
-
 ## Recovery from Context Overflow
 
 If you hit "prompt is too long":
@@ -97,8 +79,8 @@ If you hit "prompt is too long":
 4. **Document the failure** — use `/remember` for future sessions:
 
    ```text
-   /remember FAILED_APPROACH: Attempted to pack {repo} without size check.
-   Repo was {size}KB (~{tokens} tokens). Use --include patterns next time.
+   /remember FAILED_APPROACH: Attempted to bulk-load {repo} without size check.
+   Repo was {size}KB (~{tokens} tokens). Fetch targeted paths next time.
    ```
 
 ## File Discovery Guardrails
@@ -119,6 +101,5 @@ Before attempting edits: "Do I have Edit/Write/Bash tools for this task?" If not
 
 ## Related
 
-- `tools/context/context-builder.md` — repomix wrapper for context generation
 - `tools/context/context7.md` — external library documentation
 - `tools/build-agent/build-agent.md` — agent design principles

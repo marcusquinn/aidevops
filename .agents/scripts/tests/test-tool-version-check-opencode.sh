@@ -107,7 +107,7 @@ printf '1.18.9\n' >"$SANDBOX/routine-freshness/opencode-version"
 write_executable "$SANDBOX/routine-freshness/bin/opencode" '#!/usr/bin/env bash
 version=$(<"'"$SANDBOX"'/routine-freshness/opencode-version")
 printf "%s\n" "$version"'
-for cli in claude codex repomix dspyground mcp-local-wp beads-ui bdui chrome-devtools-mcp playwriter macos-automator-mcp claude-code-mcp gws; do
+for cli in claude codex dspyground mcp-local-wp beads-ui bdui chrome-devtools-mcp playwriter macos-automator-mcp claude-code-mcp gws; do
 	write_executable "$SANDBOX/routine-freshness/bin/$cli" '#!/usr/bin/env bash
 printf "9.99.9\n"'
 done

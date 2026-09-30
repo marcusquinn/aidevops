@@ -140,19 +140,6 @@ Arguments: $ARGUMENTS
 When task is completed, the `actual:` field is calculated from all logged time.
 BODY
 
-	create_command "context" \
-		"Build token-efficient AI context for complex tasks" \
-		"$AGENT_BUILD" "true" <<'BODY'
-Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/tools/context/context-builder.md and follow its instructions.
-
-Context request: $ARGUMENTS
-
-This generates optimized context for AI assistants including:
-1. Relevant code snippets
-2. Architecture overview
-3. Dependencies and relationships
-BODY
-
 	create_command "session-review" \
 		"Review session for completeness before ending" \
 		"$AGENT_BUILD" "" <<'BODY'

@@ -332,13 +332,6 @@ Search for: $ARGUMENTS
 
 **Usage:** `/recall authentication`, `/recall --recent`, `/recall --stats`'
 
-# --- Context ---
-write_command "context" \
-	"Build token-efficient AI context for complex tasks" \
-	'Read ~/.aidevops/agents/tools/context/context-builder.md and follow its instructions.
-
-Context request: $ARGUMENTS'
-
 # --- List Keys ---
 write_command "list-keys" \
 	"List all API keys available in session with their storage locations" \

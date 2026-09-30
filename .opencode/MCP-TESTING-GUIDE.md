@@ -72,7 +72,6 @@ The web UI provides interactive testing at `http://localhost:6274`:
 
 # List tools from specific server
 ./.agents/scripts/mcp-inspector-helper.sh list-tools context7
-./.agents/scripts/mcp-inspector-helper.sh list-tools repomix
 ```
 
 ### Call Tools
@@ -81,8 +80,6 @@ The web UI provides interactive testing at `http://localhost:6274`:
 # Call Context7 resolve-library-id
 ./.agents/scripts/mcp-inspector-helper.sh call-tool context7 resolve-library-id libraryName=bun
 
-# Call Repomix pack_codebase
-./.agents/scripts/mcp-inspector-helper.sh call-tool repomix pack_codebase directory=/path/to/repo
 ```
 
 ### List Resources
@@ -100,8 +97,6 @@ The web UI provides interactive testing at `http://localhost:6274`:
 # Launch web UI for a stdio server
 npx @modelcontextprotocol/inspector npx -y @context7/mcp-server@latest
 
-# Launch web UI for Repomix
-npx @modelcontextprotocol/inspector npx -y repomix@latest --mcp
 
 # CLI mode - list tools
 npx @modelcontextprotocol/inspector --cli npx -y @context7/mcp-server@latest --method tools/list
