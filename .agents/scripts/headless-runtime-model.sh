@@ -682,9 +682,7 @@ from pathlib import Path
 # check only those. Fall back to raw grep for non-JSON output (claude CLI).
 
 raw = Path(sys.argv[1]).read_text(errors='ignore')
-# GH#33274: a terminal blocker must be an anchored line, not a quoted mention
-# such as "stop only at `FULL_LOOP_COMPLETE` or `BLOCKED`" in a summary.
-# Completion markers count when emitted bare or as <promise>MARKER</promise>,
+# GH#33274: completion markers count bare or as <promise>MARKER</promise>,
 # not when quoted or backticked as a mention.
 blocked_line = re.compile(sys.argv[2], re.MULTILINE)
 completion_marker = re.compile(r"(?<![`'\"\w])(?:FULL_LOOP_COMPLETE|TASK_COMPLETE)(?![`'\"\w])")
@@ -702,35 +700,13 @@ for line in raw.splitlines():
     # OpenCode text events contain the model's own output.
     # GH#17596 (MEDIUM): consolidate extraction into a single pass checking
     # multiple common paths for text and tool input fields.
-    if not isinstance(obj, dict):
-        continue
     event_type = obj.get("type", "")
-    if event_type == "assistant":
-        # Claude CLI stream-json: text and tool_use blocks are model-authored.
-        message = obj.get("message", {})
-        content = message.get("content", []) if isinstance(message, dict) else []
-        for block in content if isinstance(content, list) else []:
-            if not isinstance(block, dict):
-                continue
-            if block.get("type") == "text" and block.get("text"):
-                model_text_parts.append(block["text"])
-            elif block.get("type") == "tool_use":
-                inp = block.get("input") or {}
-                cmd = inp.get("command", "") if isinstance(inp, dict) else ""
-                if isinstance(cmd, (list, tuple)):
-                    cmd = " ".join(map(str, cmd))
-                if isinstance(cmd, str) and cmd:
-                    model_text_parts.append(cmd)
-    elif event_type == "text":
+    if event_type == "text":
         part = obj.get("part", {})
         # GH#33274: runtime-injected parts are not model output.
-        if isinstance(part, dict) and part.get("synthetic") is True:
+        if part.get("synthetic") is True:
             continue
-        text = (
-            obj.get("text")
-            or part.get("text")
-            or ""
-        )
+        text = obj.get("text") or part.get("text") or ""
         if text:
             model_text_parts.append(text)
     # Also check tool calls where the MODEL invoked gh pr create/merge
@@ -774,8 +750,10 @@ if model_text.strip():
         sys.exit(0)
     sys.exit(1)
 
-# Fallback for non-JSON output (claude CLI, plain text)
-if has_post_pr_handoff(raw) or blocked_line.search(raw) or completion_marker.search(raw):
+# Fallback for non-JSON output (claude CLI, plain text). Escaped newlines and
+# JSON text/result value starts count as line starts for anchored BLOCKED.
+raw_lines = re.sub(r'\\n|"(?:text|result)":\s*"', "\n", raw)
+if has_post_pr_handoff(raw) or blocked_line.search(raw_lines) or completion_marker.search(raw):
     sys.exit(0)
 if "gh pr create" in raw and ("pull/" in raw or "Created pull request" in raw.lower()):
     sys.exit(0)
@@ -855,18 +833,7 @@ for line in raw.splitlines():
         obj = json.loads(line)
     except (json.JSONDecodeError, ValueError):
         continue
-    if not isinstance(obj, dict):
-        continue
-    event_type = obj.get("type", "")
-    if event_type == "assistant":
-        # Claude CLI stream-json assistant message.
-        message = obj.get("message", {})
-        content = message.get("content", []) if isinstance(message, dict) else []
-        for block in content if isinstance(content, list) else []:
-            if isinstance(block, dict) and block.get("type") == "text" and block.get("text"):
-                model_text_parts.append(block["text"])
-        continue
-    if event_type != "text":
+    if not isinstance(obj, dict) or obj.get("type", "") != "text":
         continue
     part = obj.get("part", {})
     # GH#33274: runtime-injected parts are not model output.
@@ -877,9 +844,9 @@ for line in raw.splitlines():
         model_text_parts.append(text)
 
 model_text = "\n".join(model_text_parts)
-# Raw JSON lines start with "{", so the anchored fallback only matches
-# plain-text runtime output.
-candidate = model_text if model_text.strip() else raw
+# Fallback (claude CLI stream-json, plain text): treat escaped newlines and
+# JSON text/result value starts as line starts for the anchored match.
+candidate = model_text if model_text.strip() else re.sub(r'\\n|"(?:text|result)":\s*"', "\n", raw)
 sys.exit(0 if blocked_line.search(candidate) else 1)
 PY
 	return $?
