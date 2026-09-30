@@ -180,7 +180,7 @@ _generate_agents_opencode() {
 	done
 
 	# Remove loop-state files incorrectly created as agents
-	for f in ralph-loop.local.md quality-loop.local.md full-loop.local.md loop-state.md re-anchor.md postflight-loop.md; do
+	for f in quality-loop.local.md full-loop.local.md loop-state.md re-anchor.md postflight-loop.md; do
 		if _opencode_generated_agent_owned "$opencode_agent_dir/$f"; then
 			rm -f "$opencode_agent_dir/$f"
 		fi

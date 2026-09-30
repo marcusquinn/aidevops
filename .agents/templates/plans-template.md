@@ -34,8 +34,7 @@ Each plan includes:
 
 ### Linkage (The Pin)
 
-Based on [Loom's spec-as-lookup-table pattern](https://ghuntley.com/ralph/),
-each plan should include a Linkage section that functions as a lookup table for
+Each plan should include a Linkage section that functions as a lookup table for
 AI search:
 
 | Concept | Files | Lines | Synonyms |

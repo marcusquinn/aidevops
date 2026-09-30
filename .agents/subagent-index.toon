@@ -166,7 +166,7 @@ workflows/,workflows subagents,branch
 workflows/branch/,workflows/branch subagents,refactor|release
 workflows/,workflows subagents,brief
 workflows/brief/,workflows/brief subagents,routing|templates|tier-simple|tier-standard|tier-thinking
-workflows/,workflows subagents,browser-qa|budget-analysis|bug-fixing|campaign-growth|changelog|code-audit-remote|code-simplifier|compare-models-free|compare-models|conversation-starter|creative-production|cross-review|dashboard|define|error-feedback|feature-development|findings-to-tasks|full-loop|git-workflow|graduate-memories|humanise|init-routines|ip-check|list-todo|list-verify|local-permissions-check|log-issue-aidevops|marketing-actions|marketing-decisions|memory-audit|memory-log|milestone-validation|mission|mission-orchestrator|mission-skill-learning|model-replay|models-pool-check|multi-repo-workspace|new-task|optimise-linux-indexing-backups|optimise-macos-indexing-backups|optimise-windows-indexing-backups|optimize-tiers|patterns|performance|plans|postflight-loop|postflight|pre-edit|preflight|pr-loop|pr|public-launch-checklist|pulse-check|pulse|pulse-sweep|ralph-loop|readme-create-update|readme|recall|release|remember|review-issue-pr|review|route|routine|runners-check|runners|save-todo|score-responses|session-analysis|session-manager|session-review|show-plan|skills|sql-migrations|strategic-review|tech-stack|triage-review|ui-verification|vault-fleet|vault-setup|venv-health|version-bump|wiki-update|wordpress-local-clone|worktree-cleanup|worktree
+workflows/,workflows subagents,browser-qa|budget-analysis|bug-fixing|campaign-growth|changelog|code-audit-remote|code-simplifier|compare-models-free|compare-models|conversation-starter|creative-production|cross-review|dashboard|define|error-feedback|feature-development|findings-to-tasks|full-loop|git-workflow|graduate-memories|humanise|init-routines|ip-check|list-todo|list-verify|local-permissions-check|log-issue-aidevops|marketing-actions|marketing-decisions|memory-audit|memory-log|milestone-validation|mission|mission-orchestrator|mission-skill-learning|model-replay|models-pool-check|multi-repo-workspace|new-task|optimise-linux-indexing-backups|optimise-macos-indexing-backups|optimise-windows-indexing-backups|optimize-tiers|patterns|performance|plans|postflight-loop|postflight|pre-edit|preflight|pr-loop|pr|public-launch-checklist|pulse-check|pulse|pulse-sweep|readme-create-update|readme|recall|release|remember|review-issue-pr|review|route|routine|runners-check|runners|save-todo|score-responses|session-analysis|session-manager|session-review|show-plan|skills|sql-migrations|strategic-review|tech-stack|triage-review|ui-verification|vault-fleet|vault-setup|venv-health|version-bump|wiki-update|wordpress-local-clone|worktree-cleanup|worktree
 -->
 
 <!--TOON:mcp_servers[17]{name,url,auth,subagent,purpose}:
@@ -189,7 +189,7 @@ ableton,operator-provisioned,operator-approval,tools/audio/ableton.md,Guarded Li
 davinci-resolve,operator-provisioned,operator-approval,tools/video/davinci-resolve.md,Optional guarded timeline grading and delivery operations
 -->
 
-<!--TOON:workflows[16]{name,file,purpose}:
+<!--TOON:workflows[15]{name,file,purpose}:
 git-workflow,workflows/git-workflow.md,Branch naming and commit conventions
 plans,workflows/plans.md,Complex execution plans
 release,workflows/release.md,Semver and changelog generation
@@ -199,7 +199,6 @@ preflight,workflows/preflight.md,Pre-commit quality checks
 postflight,workflows/postflight.md,Post-release verification
 milestone-validation,workflows/milestone-validation.md,Milestone validation worker for mission orchestration with browser QA
 browser-qa,workflows/browser-qa.md,Playwright-based visual QA — screenshots broken links console errors for milestone validation
-ralph-loop,workflows/ralph-loop.md,Iterative AI development loops
 session-review,workflows/session-review.md,Session completeness review
 review-issue-pr,workflows/review-issue-pr.md,External issue/PR triage
 bug-fixing,workflows/bug-fixing.md,Bug fix workflow

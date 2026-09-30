@@ -1390,7 +1390,7 @@ _cmd_cancel_locked() {
 		}
 		rm -f "$pid_file"
 	fi
-	rm -f "$STATE_FILE" ".agents/loop-state/ralph-loop.local.state" ".agents/loop-state/quality-loop.local.state" 2>/dev/null
+	rm -f "$STATE_FILE" ".agents/loop-state/quality-loop.local.state" 2>/dev/null
 	print_success "Full loop cancelled"
 	return 0
 }

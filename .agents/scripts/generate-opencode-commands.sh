@@ -24,7 +24,7 @@
 #   - generate-opencode-commands-planning.sh   -- Planning & task commands
 #   - generate-opencode-commands-seo.sh        -- SEO & AI search commands
 #   - generate-opencode-commands-utility.sh    -- Setup, session, memory commands
-#   - generate-opencode-commands-automation.sh -- Ralph loop & CI loop commands
+#   - generate-opencode-commands-automation.sh -- CI loop & full-loop commands
 # =============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
@@ -255,12 +255,8 @@ print_summary() {
 	echo "    /remember         - Store a memory for cross-session recall"
 	echo "    /recall           - Search memories from previous sessions"
 	echo ""
-	echo "  Automation (Ralph Loops):"
-	echo "    /ralph-loop       - Start iterative AI development loop"
-	echo "    /ralph-task       - Run Ralph loop for a TODO.md task by ID"
+	echo "  Automation:"
 	echo "    /full-loop        - End-to-end: task -> preflight -> PR -> postflight"
-	echo "    /cancel-ralph     - Cancel active Ralph loop"
-	echo "    /ralph-status     - Show Ralph loop status"
 	echo "    /preflight-loop   - Iterative preflight until all pass"
 	echo "    /pr-loop          - Monitor PR until approved/merged"
 	echo "    /postflight-loop  - Monitor release health"
@@ -270,7 +266,6 @@ print_summary() {
 	echo "Planning workflow: /list-todo -> pick task -> /feature -> implement -> /create-pr"
 	echo "New work: discuss -> /save-todo -> later: /list-todo -> pick -> implement"
 	echo "Quality workflow: /preflight-loop -> /create-pr -> /pr-loop -> /postflight-loop"
-	echo "Ralph workflow: tag task #ralph -> /ralph-task t042 -> autonomous completion"
 	echo "SEO workflow: /keyword-research -> /autocomplete-research -> /keyword-research-extended"
 	echo "AI-baseline workflow: /seo-ai-baseline -> /seo-ai-readiness"
 	echo "AI-search workflow: /seo-fanout -> /seo-geo -> /seo-sro ->"

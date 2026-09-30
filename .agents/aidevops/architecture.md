@@ -142,7 +142,7 @@ Implements proven patterns from Lance Martin (LangChain), validated across Claud
 | **Offload Context** | `.agent-workspace/work/[project]/` for persistent files |
 | **Cache Context** | Stable instruction prefixes, avoid reordering between calls |
 | **Isolate Context** | Subagent markdown files with specific tool permissions |
-| **Ralph Loop** | `workflows/ralph-loop.md`, `full-loop-helper.sh` |
+| **Development Lifecycle** | `workflows/full-loop.md`, `full-loop-helper.sh` |
 | **Evolve Context** | `/remember`, `/recall` with SQLite FTS5, `memory-helper.sh` |
 
 ### MCP Lifecycle Pattern

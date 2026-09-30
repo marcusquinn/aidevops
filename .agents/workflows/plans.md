@@ -43,22 +43,6 @@ Analyze conversation for complexity signals when `/save-todo` is invoked:
 | Single action / < 2h / "quick" or "simple" | Simple | TODO.md only |
 | Multiple steps / research / >= 2h / multi-session / PRD needed | Complex | PLANS.md + TODO.md |
 
-## Ralph Classification
-
-"Ralph-able" = suitable for autonomous iterative AI loops. **Criteria** (all required): clear success criteria, automated verification, bounded scope, no human judgment needed.
-
-| Signal | Ralph-able? |
-|--------|-------------|
-| "Make all tests pass" / "Fix linting errors" / "Implement feature X with tests" | Yes |
-| "Refactor until clean" | Maybe (needs specific criteria) |
-| "Make it look better" / "Design the API" / "Debug production issue" | No |
-
-**Tagging**: `- [ ] t042 Fix all ShellCheck violations #ralph(SHELLCHECK_CLEAN) ~1h` with optional `ralph-promise:`, `ralph-verify:`, `ralph-max:` fields.
-
-**Running**: `/ralph-task t042` or `/ralph-loop "$(grep -E '^- \[ \] t042\s' TODO.md | head -n1)" --completion-promise "SHELLCHECK_CLEAN" --max-iterations 10`
-
-**Quality loop integration**: Preflight (`/preflight-loop`, `PREFLIGHT_PASS`), PR Review (`/pr-loop`, `PR_APPROVED`), Postflight (`/postflight-loop`, `RELEASE_HEALTHY`).
-
 ## Auto-Dispatch Tagging
 
 Worker-ready implementation tasks created by interactive agents (user-facing sessions) or workers default to `#auto-dispatch`; readiness is the gate. Add the tag when ALL Include column criteria pass and NO exclusion criteria apply. If readiness is missing, finish the brief/body first or mark the item `#parent`/blocked instead of saving a non-dispatchable implementation issue:
