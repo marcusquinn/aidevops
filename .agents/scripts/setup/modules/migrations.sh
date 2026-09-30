@@ -184,6 +184,45 @@ cleanup_retired_ralph_commands() {
 	return 0
 }
 
+# GH#33149: framework value audit — remove textbook skills that restate model
+# knowledge, minor branch-type docs folded into branch.md, best-practices
+# merged into code-standards.md, and the retired mission-skill-learner.
+cleanup_retired_framework_value_audit_docs() {
+	local agents_dir="$1"
+	local removed=0
+	local retired_path=""
+	for retired_path in \
+		"$agents_dir/tools/programming/modern-javascript-skill.md" \
+		"$agents_dir/tools/programming/modern-javascript-skill" \
+		"$agents_dir/tools/architecture/clean-ddd-hexagonal-skill.md" \
+		"$agents_dir/tools/architecture/clean-ddd-hexagonal-skill" \
+		"$agents_dir/tools/architecture/feature-slicing-skill.md" \
+		"$agents_dir/tools/architecture/feature-slicing-skill" \
+		"$agents_dir/services/database/postgres-drizzle-skill/performance.md" \
+		"$agents_dir/services/database/postgres-drizzle-skill/performance-caching.md" \
+		"$agents_dir/services/database/postgres-drizzle-skill/performance-explain.md" \
+		"$agents_dir/services/database/postgres-drizzle-skill/performance-indexing.md" \
+		"$agents_dir/services/database/postgres-drizzle-skill/performance-monitoring.md" \
+		"$agents_dir/services/database/postgres-drizzle-skill/performance-pagination.md" \
+		"$agents_dir/services/database/postgres-drizzle-skill/performance-pooling.md" \
+		"$agents_dir/services/database/postgres-drizzle-skill/performance-queries.md" \
+		"$agents_dir/workflows/branch/chore.md" \
+		"$agents_dir/workflows/branch/refactor.md" \
+		"$agents_dir/workflows/branch/release.md" \
+		"$agents_dir/workflows/branch/experiment.md" \
+		"$agents_dir/tools/code-review/best-practices.md" \
+		"$agents_dir/scripts/mission-skill-learner.sh" \
+		"$agents_dir/workflows/mission-skill-learning.md" \
+		"$agents_dir/tools/diagrams/mermaid-diagrams-skill"; do
+		if [[ -e "$retired_path" ]]; then
+			rm -rf "$retired_path"
+			removed=$((removed + 1))
+		fi
+	done
+	printf '%s\n' "$removed"
+	return 0
+}
+
 cleanup_deprecated_paths() {
 	local agents_dir="$HOME/.aidevops/agents"
 	local cleaned=0
@@ -244,7 +283,6 @@ cleanup_deprecated_paths() {
 		"$agents_dir/workflows/score-responses.md"
 		"$agents_dir/tools/ai-assistants/response-scoring.md"
 	)
-
 	for path in "${deprecated_paths[@]}"; do
 		if [[ -e "$path" ]]; then
 			rm -rf "$path"
@@ -254,6 +292,7 @@ cleanup_deprecated_paths() {
 
 	cleaned=$((cleaned + $(cleanup_retired_context_tooling "$agents_dir")))
 	cleaned=$((cleaned + $(cleanup_retired_ralph_commands "$agents_dir")))
+	cleaned=$((cleaned + $(cleanup_retired_framework_value_audit_docs "$agents_dir")))
 	cleanup_retired_beads "$agents_dir"
 
 	if [[ $cleaned -gt 0 ]]; then
@@ -493,12 +532,12 @@ cleanup_retired_prompt_tooling() {
 	if _retired_prompt_tooling_agents_is_bundle "$agents_dir"; then
 		bundle_agents=true
 	fi
-	local managed_paths=("$install_dir" "$install_dir/python-env" "$HOME/.aidevops" \
+	local managed_paths=("$install_dir" "$install_dir/python-env" "$HOME/.aidevops"
 		"$HOME/.aidevops/cache" "$state_dir")
 	if [[ "$bundle_agents" == true ]]; then
 		managed_paths+=("$HOME/.aidevops/runtime-bundles")
 	else
-		managed_paths+=("$agents_dir" "$agents_dir/scripts" "$agents_dir/scripts/tests" \
+		managed_paths+=("$agents_dir" "$agents_dir/scripts" "$agents_dir/scripts/tests"
 			"$agents_dir/tools" "$agents_dir/tools/context")
 	fi
 	for path in "${managed_paths[@]}"; do
