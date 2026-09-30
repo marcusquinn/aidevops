@@ -1117,6 +1117,20 @@ _cmd_add_create_worktree() {
 	# Branch doesn't exist locally — check for stale remote ref (t1060)
 	handle_stale_remote_branch "$_branch" || return 1
 
+	# GH#33194: an unmerged remote branch (e.g. an open PR head) must be
+	# checked out directly rather than diverging from origin/<default>.
+	# An explicit --base REF always overrides this.
+	if [[ -z "$_explicit_base" ]]; then
+		local _unmerged_remote_ref=""
+		_unmerged_remote_ref=$(_unmerged_remote_branch_ref "$_branch" 2>/dev/null || true)
+		if [[ -n "$_unmerged_remote_ref" ]]; then
+			echo -e "${BLUE}Creating worktree with new branch '$_branch' on unmerged remote '$_unmerged_remote_ref'...${NC}"
+			git worktree add -b "$_branch" "$_path" "$_unmerged_remote_ref" || return 1
+			git -C "$_path" branch --set-upstream-to="$_unmerged_remote_ref" "$_branch" 2>/dev/null || true
+			return 0
+		fi
+	fi
+
 	# t2802: explicitly base new branches on origin/<default> (or --base REF)
 	# to prevent scope-leak PRs when canonical HEAD is stale. Canonical
 	# failure: example-repo#2716 (PR #2733, 100-file diff for a 2-line fix).
