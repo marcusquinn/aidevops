@@ -83,6 +83,17 @@ main() {
 		"$FULL_LOOP_COMMAND" 'full-loop command omits truthful execution states' || return 1
 	require_literal 'continuation; it never completes unfinished delivery.' \
 		"$FULL_LOOP_COMMAND" 'full-loop command treats checkpointing as completion' || return 1
+	# GH#33130: What next must not hide uncommitted session-owned work.
+	require_literal 'Inspect live Git status in every touched repository and linked worktree.' \
+		"$SESSION_DOC" 'capture check omits the live Git-status inspection' || return 1
+	require_literal 'Session-owned modified, staged, or untracked files are uncaptured' \
+		"$SESSION_DOC" 'capture check does not classify uncommitted files as uncaptured' || return 1
+	require_literal 'ask for that approval under **Needed from you**' \
+		"$SESSION_DOC" 'capture check hides missing commit approval' || return 1
+	require_literal 'Do not rely on an earlier status snapshot.' \
+		"$SESSION_DOC" 'capture check accepts stale Git status' || return 1
+	require_literal 'no session-owned repository changes remain uncommitted' \
+		"$SESSION_DOC" 'Ready to close permits uncommitted session-owned changes' || return 1
 
 	if grep -Fq -- "Cleanup: commit or stash changes, then run \`wt merge\`" "$SESSION_DOC"; then
 		printf 'FAIL: session lifecycle still directs the owning session to clean its worktree\n' >&2
