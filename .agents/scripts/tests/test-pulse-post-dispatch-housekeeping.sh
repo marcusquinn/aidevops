@@ -199,6 +199,20 @@ test_async_housekeeping_returns_before_slow_stage() {
 		failures=$((failures + 1))
 		failmsg="${failmsg} | launch blocked for ${elapsed}s"
 	fi
+	# GH#33256: the async child must leave the launcher's process group so a
+	# launchd job teardown cannot kill it, and monitor mode must be restored.
+	local child_pid="" child_pgid="" own_pgid=""
+	child_pid=$(sed -n 's/.*Async post-dispatch housekeeping: launched pid=\([0-9][0-9]*\).*/\1/p' "$LOGFILE" 2>/dev/null | tail -n 1)
+	own_pgid=$(ps -o pgid= -p "$$" 2>/dev/null | tr -d ' ')
+	[[ -n "$child_pid" ]] && child_pgid=$(ps -o pgid= -p "$child_pid" 2>/dev/null | tr -d ' ')
+	if [[ -z "$child_pgid" || -z "$own_pgid" || "$child_pgid" == "$own_pgid" ]]; then
+		failures=$((failures + 1))
+		failmsg="${failmsg} | child pgid=${child_pgid:-none} shares launcher pgid=${own_pgid:-none}"
+	fi
+	if [[ $- == *m* ]]; then
+		failures=$((failures + 1))
+		failmsg="${failmsg} | monitor mode left enabled"
+	fi
 	if ! _wait_for_housekeeping_complete "$lockdir"; then
 		failures=$((failures + 1))
 		failmsg="${failmsg} | async stages did not complete"

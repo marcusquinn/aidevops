@@ -1196,12 +1196,22 @@ _pulse_start_post_dispatch_housekeeping() {
 		return 0
 	fi
 
+	# GH#33256: launchd tears down the pulse job's process group when the
+	# wrapper exits, which killed ~3 of 4 housekeeping runs mid-stage (and the
+	# GH#33246 catch-up with them). Job control only around the launch gives
+	# the subshell its own process group; stage timeouts kill by parent tree,
+	# so they are unaffected. Restore the caller's monitor mode afterwards.
+	local monitor_was_on=false
+	[[ $- == *m* ]] && monitor_was_on=true
+	set -m 2>/dev/null || true
 	(
+		set +m 2>/dev/null || true
 		trap - EXIT INT TERM
 		AIDEVOPS_PULSE_STAGE_CYCLE_CLAMP=0
 		_pulse_run_post_dispatch_housekeeping_stages "$stage_timeout"
 	) >>"$LOGFILE" 2>&1 &
 	local housekeeping_pid=$!
+	[[ "$monitor_was_on" == true ]] || set +m 2>/dev/null || true
 	echo "[pulse-wrapper] Async post-dispatch housekeeping: launched pid=${housekeeping_pid}" >>"$LOGFILE"
 	disown "$housekeeping_pid" 2>/dev/null || true
 	return 0
