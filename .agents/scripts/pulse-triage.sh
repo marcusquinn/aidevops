@@ -98,7 +98,7 @@ _route_terminal_breaker_to_consolidation() {
 	# Unlike the comment-count threshold for ordinary triage, a breaker only
 	# needs one real scope comment. An automation-only thread has nothing for
 	# a consolidation child to merge; keep the blocked escalation for review.
-	local comments_json substantive_json substantive_count
+	local comments_json="" substantive_json="" substantive_count=0
 	comments_json=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
 		--paginate --jq '.' 2>/dev/null) || return 1
 	substantive_json=$(_consolidation_filter_substantive_comments "$comments_json") || return 1
