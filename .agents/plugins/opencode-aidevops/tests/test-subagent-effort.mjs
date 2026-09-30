@@ -635,16 +635,16 @@ test("Playwright falls back to Sol medium, preserves its route, and respects pin
   const client = {
     provider: { list: async () => ({ data: {
       connected: ["openai"],
-      all: [{ id: "openai", models: { "gpt-6-sol": { id: "gpt-6-sol" } } }],
+      all: [{ id: "openai", models: { "gpt-6.1-sol": { id: "gpt-6.1-sol" } } }],
     } }) },
     session: { get: async ({ path }) => ({ data: path.id === "parent"
-      ? { model: { providerID: "openai", modelID: "gpt-6-sol" }, variant: "medium" }
+      ? { model: { providerID: "openai", modelID: "gpt-6-luna" }, variant: "high" }
       : { id: "child", parentID: "parent" } }) },
   };
   const routing = { tiers: {
     simple: { models: ["openai/gpt-6-luna"] },
     standard: { models: ["openai/terra"] },
-    thinking: { models: ["openai/gpt-6-sol"] },
+    thinking: { models: ["openai/gpt-6.1-sol"] },
   } };
   const output = () => ({ message: { sessionID: "child", agent: "playwright" }, parts: [] });
   const hooks = createSubagentEffortHooks(client, {
@@ -653,12 +653,12 @@ test("Playwright falls back to Sol medium, preserves its route, and respects pin
   });
   const fallback = output();
   await hooks.chatMessage({}, fallback);
-  assert.deepEqual(fallback.message.model, { providerID: "openai", modelID: "gpt-6-sol" });
+  assert.deepEqual(fallback.message.model, { providerID: "openai", modelID: "gpt-6.1-sol" });
   const params = { options: {} };
-  await hooks.chatParams({ message: fallback.message, provider: { id: "openai" }, model: { id: "gpt-6-sol" } }, params);
+  await hooks.chatParams({ message: fallback.message, provider: { id: "openai" }, model: { id: "gpt-6.1-sol" } }, params);
   assert.equal(params.options.reasoningEffort, "medium");
   await hooks.chatMessage({}, fallback);
-  assert.deepEqual(fallback.message.model, { providerID: "openai", modelID: "gpt-6-sol" });
+  assert.deepEqual(fallback.message.model, { providerID: "openai", modelID: "gpt-6.1-sol" });
 
   const pinned = createSubagentEffortHooks(client, {
     modelRouting: routing,

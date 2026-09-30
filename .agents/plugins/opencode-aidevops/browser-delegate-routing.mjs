@@ -9,6 +9,7 @@ import {
 
 export const BROWSER_AGENT = "playwright";
 const BROWSER_MODEL = "openai/gpt-6-luna";
+const BROWSER_SOL_FALLBACK = "openai/gpt-6.1-sol";
 
 function connectedModel(providerState, model, tier = "simple") {
   if (!providerState) return "";
@@ -27,8 +28,8 @@ export async function routeBrowserDelegate(context, childSession, message, polic
     policy.browserVariant = "xhigh";
     policy.reason = "browser_delegate";
   } else {
-    const sol = routingCandidates(context.modelRouting, "thinking").includes("openai/gpt-6-sol")
-      ? connectedModel(providerState, "openai/gpt-6-sol", "thinking") : "";
+    const sol = routingCandidates(context.modelRouting, "thinking").includes(BROWSER_SOL_FALLBACK)
+      ? connectedModel(providerState, BROWSER_SOL_FALLBACK, "thinking") : "";
     const parent = sol ? null : await context.getParentRoute(context.client, childSession);
     const fallback = sol || parent?.model;
     if (!fallback || (!sol && !parent?.variant)) {
