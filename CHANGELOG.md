@@ -10,6 +10,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.37.37] - 2026-09-30
+
+### Added
+
+- per-class dispatch cap for labelled issue classes (#33190)
+- archive issue and PR discussions to a same-repo orphan branch (#33187)
+
+### Changed
+
+- Maintenance: retire code-search leftovers, llm-tldr, context-builder/repomix and rapidfuzz (GH#33140) (#33188)
+- Maintenance: bump fast-uri and ip-address; trust npm_and_yarn:ip-address (#33180)
+- Tests: capture terminal-blocker comment body in wrapper test mock (#33181)
+
+### Fixed
+
+- accept a sentence-final period after valid task IDs
+- show OAuth URL and read auth code from terminal in console sessions
+
 ## [3.37.36] - 2026-09-30
 
 ### Fixed
