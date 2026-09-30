@@ -733,4 +733,72 @@ printf 'PASS a failed unshallow fetch blocks with RELEASE_SHALLOW_STORE action=f
 )
 printf 'PASS an unresolved shallow store blocks lane reservation before any lane write\n'
 
+# A competing release can only finalize a published lane through the existing
+# reconcile path, after observing a dead executor. Every uncertain case refuses.
+for scenario in published deployment live unknown unpublished reserved failed deferred lost-cas unfinalized; do
+	(
+		cd "$ROOT/repo/linked-branch"
+		export PATH="$ROOT/bin:/usr/bin:/bin"
+		export GIT_CALL_LOG="$ROOT/git.log" FAKE_REPO_ROOT="$ROOT/repo"
+		export AIDEVOPS_WORKTREE_BASE_DIR="$ROOT/worktrees"
+		source "$SCRIPT_DIR/full-loop-release-helper.sh" help >/dev/null
+		phase=remote-publication
+		[[ "$scenario" == deployment ]] && phase=exact-tag-deployment
+		[[ "$scenario" == reserved ]] && phase=reserved
+		lane_state=$(jq -cn --arg phase "$phase" \
+			'{active:true,source_pr:42,phase:$phase,tag:"v1.2.3",terminal_receipt:null}')
+		reads=0
+		inspections=0
+		reconciles=0
+		release_lane_read() {
+			_AIDEVOPS_RELEASE_LANE_JSON="$lane_state"
+			reads=$((reads + 1))
+			return 0
+		}
+		_release_lane_abandoned_reservation() { return 1; }
+		_release_lane_executor_observe() {
+			case "$scenario" in
+			live | unknown) printf '{"state":"%s"}\n' "$scenario" ;;
+			*) printf '{"state":"dead"}\n' ;;
+			esac
+			return 0
+		}
+		_full_loop_release_inspect_remote() {
+			inspections=$((inspections + 1))
+			[[ "$1" == test/repo && "$2" == v1.2.3 ]] || return 1
+			[[ "$scenario" != unpublished ]]
+		}
+		_full_loop_release_existing_with_lane() {
+			reconciles=$((reconciles + 1))
+			[[ "$1" == reconcile && "$2" == 42 ]] || return 1
+			case "$scenario" in
+			failed) return 1 ;;
+			deferred) return 8 ;;
+			lost-cas) return 75 ;;
+			unfinalized) return 0 ;;
+			esac
+			lane_state='{"active":false,"source_pr":42,"phase":"terminal","tag":"v1.2.3","terminal_receipt":"published"}'
+			return 0
+		}
+		release_lane_liveness_report() { return 0; }
+		rc=0
+		_full_loop_release_guard_competing_lane test/repo 61 >"$ROOT/competing-output" || rc=$?
+		output=$(<"$ROOT/competing-output")
+		case "$scenario" in
+		published | deployment)
+			[[ "$rc" -eq 0 && "$reads" -eq 2 && "$inspections" -eq 1 && "$reconciles" -eq 1 &&
+				"$output" == *'RELEASE_LANE_FINALIZED source_pr=42 tag=v1.2.3 receipt=published'* ]]
+			;;
+		live | unknown | reserved)
+			[[ "$rc" -eq 75 && "$inspections" -eq 0 && "$reconciles" -eq 0 && "$output" == *'ACTIVE_RELEASE_LANE source_pr=42'* ]]
+			;;
+		unpublished)
+			[[ "$rc" -eq 75 && "$inspections" -eq 1 && "$reconciles" -eq 0 && "$output" == *'ACTIVE_RELEASE_LANE source_pr=42'* ]]
+			;;
+		*) [[ "$rc" -eq 75 && "$inspections" -eq 1 && "$reconciles" -eq 1 && "$output" == *'ACTIVE_RELEASE_LANE source_pr=42'* ]] ;;
+		esac
+	) || { printf 'FAIL competing lane scenario %s\n' "$scenario" >&2; exit 1; }
+done
+printf 'PASS competing published dead lanes finalize; uncertain and failed lanes refuse\n'
+
 exit 0
