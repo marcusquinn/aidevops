@@ -233,8 +233,11 @@ _compute_baseline() {
 	_remote="${1:-origin}"
 	local default_remote_head
 	local baseline
+	# Keep the remote-qualified ref (e.g. origin/main). A bare branch name would
+	# resolve to the local branch, which is often stale in canonical checkouts
+	# and makes already-merged upstream files look out of scope (GH#33172).
 	default_remote_head=$(git symbolic-ref "refs/remotes/$_remote/HEAD" 2>/dev/null \
-		| sed "s@^refs/remotes/$_remote/@@")
+		| sed "s@^refs/remotes/@@")
 	if [[ -z "$default_remote_head" ]]; then
 		local candidate
 		for candidate in "$_remote/main" "$_remote/master" "HEAD"; do
