@@ -1283,6 +1283,7 @@ EOF
 		if [[ ! -f "$project_root/todo/PLANS.md" ]]; then
 			if [[ -f "$AGENTS_DIR/templates/plans-template.md" ]]; then
 				cp "$AGENTS_DIR/templates/plans-template.md" "$project_root/todo/PLANS.md"
+				sed_inplace "s/{{DATE}}/$(date +%Y-%m-%d)/g" "$project_root/todo/PLANS.md" || return 1
 				print_success "Created todo/PLANS.md"
 			else
 				# Fallback minimal template
