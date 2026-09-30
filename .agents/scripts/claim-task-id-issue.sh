@@ -676,6 +676,50 @@ _insert_todo_line() {
 	return 0
 }
 
+# Resolve the TODO projection only; preserve the original refs for GitHub labels
+# and native dependency relationships. Prefer exact local ref tokens over API.
+_todo_predecessor_task_ids() {
+	local refs="$1"
+	local repo_path="$2"
+	local ref task_id issue_num title slug="" result=""
+	local -a predecessors=()
+	IFS=',' read -r -a predecessors <<<"$refs"
+	for ref in "${predecessors[@]}"; do
+		task_id=""
+		if task_identity_validate "$ref"; then
+			task_id="$ref"
+		elif [[ "$ref" =~ ^GH#([0-9]+)$ ]]; then
+			issue_num="${BASH_REMATCH[1]}"
+			task_id=$(awk -v token="ref:GH#${issue_num}" '
+				/^[[:space:]]*- \[.\] / {
+					line = $0
+					sub(/^[[:space:]]*- \[.\] /, "", line)
+					split(line, fields, /[[:space:]]+/)
+					for (i = 1; i <= NF; i++)
+						if ($i == token) { print fields[1]; exit }
+				}' "${repo_path}/TODO.md")
+			if ! task_identity_validate "$task_id"; then
+				[[ -n "$slug" ]] || slug=$(git -C "$repo_path" remote get-url origin 2>/dev/null \
+					| sed 's|.*github\.com[:/]||;s|\.git$||' || true)
+				title=""
+				if [[ -n "$slug" ]]; then
+					title=$(gh_issue_view "$issue_num" --repo "$slug" --json title --jq '.title' 2>/dev/null || true)
+				fi
+				task_id=$(task_identity_parse_title_prefix "$title" || true)
+			fi
+		fi
+		if ! task_identity_validate "$task_id"; then
+			log_warn "Cannot resolve predecessor ${ref} to a task ID; omitting it from the TODO dependency field" >&2
+			continue
+		fi
+		if [[ ",${result}," != *",${task_id},"* ]]; then
+			result="${result:+${result},}${task_id}"
+		fi
+	done
+	printf '%s' "$result"
+	return 0
+}
+
 # _ensure_todo_entry_written TASK_ID ISSUE_NUM TITLE LABELS REPO_PATH
 # t2548: Idempotently appends a TODO.md entry after verified GitHub issue
 # creation. Closes the orphan gap where both create_github_issue() paths
@@ -756,7 +800,9 @@ _ensure_todo_entry_written() {
 	# _CLAIM_BLOCKED_BY_REFS is populated by _apply_blocked_by_detection in
 	# claim-task-id.sh before _ensure_todo_entry_written is called.
 	if [[ -n "${_CLAIM_BLOCKED_BY_REFS:-}" ]]; then
-		todo_line="${todo_line} blocked-by:${_CLAIM_BLOCKED_BY_REFS}"
+		local todo_predecessors
+		todo_predecessors=$(_todo_predecessor_task_ids "$_CLAIM_BLOCKED_BY_REFS" "$repo_path")
+		[[ -z "$todo_predecessors" ]] || todo_line="${todo_line} blocked-by:${todo_predecessors}"
 	fi
 	todo_line="${todo_line} ref:GH#${issue_num}"
 
