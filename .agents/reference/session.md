@@ -61,6 +61,11 @@ Rules:
   number it or ask `y/n`. When asks are open, Close says which ones block
   closing (`Not yet: waiting on 1`); mark an ask `(optional)` when the session
   can close without an answer.
+- **No no-op answers.** When an answer would only mean "do nothing" (the same
+  as closing the session or not replying), do not offer it. An optional ask
+  offers only the action (`y = release now`) and says that closing or not
+  replying means no action. Offer `n` or a "neither" option only when it
+  triggers something different from doing nothing.
 - Ask only for what the agent cannot do or decide itself: permission or
   authority it lacks (publish, release, merge where not authorized, delete,
   spend, security/permission changes), taste, context it cannot access, a
@@ -99,10 +104,10 @@ Example (work merged; only a publication decision remains):
 - **Session:** add CSV export to reports — Done
 - **Needed from you:**
   1. Publish a patch release containing PR #123? (explicit, optional)
-     - y = release now · n = ship with the next release
+     - y = release now · no reply = ships with the next release
 - **Left to capture:** None
 - **Close:** Ready to close — start `/new` for your next task
-- **Reply:** `1y` or `1n`
+- **Reply:** `1y` to release; otherwise just close
 ```
 
 ### Numbered Asks (least typing, no ambiguity)
@@ -115,7 +120,7 @@ Example (work merged; only a publication decision remains):
   `N: <value>` with a concrete placeholder.
 - Put the question on the numbered line and the answer options on their own
   nested bullet directly below it, never inline at the end of a long sentence.
-  Pair each option with its effect (`**y** = merge now · n = leave open`);
+  Pair each option with its effect (`**y** = merge now · n = close PR #123`);
   keep the question to one short sentence.
 - Name the concrete object (`PR #123`, `issue #45`, file path), never "this" or
   "the above", and state the effect of each answer when it is not obvious.
