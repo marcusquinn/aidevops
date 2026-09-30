@@ -118,7 +118,11 @@ mkdir -p "$live_bin"
 cat >"${live_bin}/gh" <<'STUB'
 #!/usr/bin/env bash
 if [[ "${1:-}" == "pr" && "${2:-}" == "view" ]]; then
-	printf '%s\n' '0123456789abcdef0123456789abcdef01234567'
+	if [[ " $* " == *' --json isDraft '* ]]; then
+		printf '%s\n' "${GH_TEST_DRAFT:-false}"
+	else
+		printf '%s\n' '0123456789abcdef0123456789abcdef01234567'
+	fi
 	exit 0
 fi
 if [[ "${1:-}" == "api" && "${2:-}" == "repos/example/repo/pulls/123" ]]; then
@@ -170,6 +174,11 @@ chmod +x "${live_bin}/gh"
 live_no_required_output=$(PATH="${live_bin}:$PATH" AIDEVOPS_GH_CHECKS_TEST_NO_SLEEP=1 AIDEVOPS_GH_SINGLEFLIGHT_DISABLE=1 \
 	"$HELPER" wait 123 --repo example/repo --timeout 0 2>&1)
 assert_contains "canonical no-required message is explicit terminal success" "PASS: verified no required checks; optional checks were not evaluated" "$live_no_required_output"
+live_draft_output=$(PATH="${live_bin}:$PATH" GH_TEST_DRAFT=true AIDEVOPS_GH_CHECKS_TEST_NO_SLEEP=1 AIDEVOPS_GH_SINGLEFLIGHT_DISABLE=1 \
+	"$HELPER" wait 123 --repo example/repo --timeout 0 2>&1)
+assert_contains "live draft metadata warns" "NOTE: PR is draft;" "$live_draft_output"
+assert_contains "live draft checks preserve success" "PASS: verified no required checks" "$live_draft_output"
+[[ "$live_no_required_output" != *'NOTE: PR is draft;'* ]] && pass "live non-draft metadata has no warning" || fail "live non-draft metadata has no warning"
 
 for policy_mode in required-protection required-ruleset; do
 	set +e
