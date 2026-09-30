@@ -33,6 +33,7 @@ setup_sandbox() {
 	TEST_ROOT=$(mktemp -d)
 	export TEST_ROOT
 	export HOME="${TEST_ROOT}/home"
+	export AIDEVOPS_MODEL_ROUTING_TABLE="${REPO_ROOT}/.agents/configs/model-routing-table.json"
 	mkdir -p "${HOME}/.aidevops/cache" "${TEST_ROOT}/bin"
 	unset ANTHROPIC_API_KEY || true
 	printf '#!/usr/bin/env bash\nexit 1\n' >"${TEST_ROOT}/bin/gopass"
@@ -275,6 +276,7 @@ write_detector_stubs() {
 set -euo pipefail
 case "${1:-} ${2:-}" in
 "issue list") printf '[{"number":1,"labels":[{"name":"auto-dispatch"}]}]\n' ;;
+"label list") printf '[{"name":"fix-the-fixer"}]\n' ;;
 "issue view") printf '{"title":"fix dispatch path","body":"Touches pulse-wrapper.sh dispatch behaviour.","labels":[{"name":"auto-dispatch"}],"state":"OPEN"}\n' ;;
 *) printf 'unexpected gh invocation: %s\n' "$*" >&2; exit 1 ;;
 esac
