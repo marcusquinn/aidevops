@@ -64,6 +64,10 @@ case "$cmd" in
 		exit 0
 		;;
 	show)
+		if [[ "${AIDEVOPS_TEST_LOCKED:-}" == "true" ]]; then
+			sleep 20
+			exit 1
+		fi
 		mode="${1:-}"
 		if [[ "$mode" == "-o" || "$mode" == "-n" ]]; then
 			shift
@@ -196,7 +200,7 @@ teardown() {
 		rm -rf "$TEST_DIR"
 	fi
 	TEST_DIR=""
-	unset AIDEVOPS_TEST_DIR AIDEVOPS_TEST_SECRET AIDEVOPS_TEST_MULTILINE || true
+	unset AIDEVOPS_TEST_DIR AIDEVOPS_TEST_SECRET AIDEVOPS_TEST_MULTILINE AIDEVOPS_TEST_LOCKED || true
 	return 0
 }
 
@@ -224,6 +228,70 @@ sys.stdout.write(value)
 	else
 		print_result "multiline injection preserves embedded newlines and normalizes trailing newlines" 1 \
 			"Expected full redacted injection and scalar get compatibility"
+	fi
+	return 0
+}
+
+test_specific_injection_fails_closed() {
+	setup
+	trap 'teardown' RETURN
+	export AIDEVOPS_TEST_SECRET="fixture-${TEST_DIR##*/}"
+	local result="" exit_code=0
+	result=$(HOME="$TEST_DIR/home" bash "$HELPER" REDACTION_KEY MISSING_KEY -- \
+		bash -c 'touch "$AIDEVOPS_TEST_DIR/command-ran"' 2>&1) || exit_code=$?
+	if [[ "$exit_code" -ne 0 && "$result" == *"secret MISSING_KEY unavailable"* && ! -e "$TEST_DIR/command-ran" ]]; then
+		print_result "missing requested secret prevents command execution" 0
+	else
+		print_result "missing requested secret prevents command execution" 1 "Expected names-only error and no command execution"
+	fi
+	return 0
+}
+
+test_empty_fallback_secret_fails_closed() {
+	setup
+	trap 'teardown' RETURN
+	mkdir -p "$TEST_DIR/home/.config/aidevops"
+	printf '%s\n' 'export EMPTY_KEY=""' >"$TEST_DIR/home/.config/aidevops/credentials.sh"
+	chmod 600 "$TEST_DIR/home/.config/aidevops/credentials.sh"
+	local result="" exit_code=0
+	result=$(HOME="$TEST_DIR/home" bash "$HELPER" EMPTY_KEY -- \
+		bash -c 'touch "$AIDEVOPS_TEST_DIR/command-ran"' 2>&1) || exit_code=$?
+	if [[ "$exit_code" -ne 0 && "$result" == *"secret EMPTY_KEY unavailable"* && ! -e "$TEST_DIR/command-ran" ]]; then
+		print_result "empty fallback value prevents command execution" 0
+	else
+		print_result "empty fallback value prevents command execution" 1 "Expected names-only error and no command execution"
+	fi
+	return 0
+}
+
+test_locked_injection_exits_bounded() {
+	setup
+	trap 'teardown' RETURN
+	export AIDEVOPS_TEST_LOCKED=true
+	export AIDEVOPS_TEST_SECRET="fixture-${TEST_DIR##*/}"
+	local result=""
+	# shellcheck disable=SC2016 # The child shell expands the marker path.
+	result=$(HOME="$TEST_DIR/home" HELPER_UNDER_TEST="$HELPER" python3 -c '
+import os, subprocess
+try:
+    completed = subprocess.run(
+        ["bash", os.environ["HELPER_UNDER_TEST"], "REDACTION_KEY", "--",
+         "bash", "-c", "touch \"$AIDEVOPS_TEST_DIR/command-ran\""],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=8)
+except subprocess.TimeoutExpired:
+    print("timed-out")
+else:
+    text = completed.stdout.decode(errors="replace")
+    print("ok" if completed.returncode != 0 and
+          "secret REDACTION_KEY unavailable" in text and
+          "unlock GPG" in text and
+          not os.path.exists(os.environ["AIDEVOPS_TEST_DIR"] + "/command-ran")
+          else "failed")
+')
+	if [[ "$result" == "ok" ]]; then
+		print_result "locked headless decrypt exits promptly without running command" 0
+	else
+		print_result "locked headless decrypt exits promptly without running command" 1 "$result"
 	fi
 	return 0
 }
@@ -590,6 +658,9 @@ main() {
 	test_run_redacts_overlapping_secrets_split_across_writes
 	test_run_fails_closed_when_redactor_cannot_start
 	test_multiline_gopass_injection_preserves_embedded_newlines
+	test_specific_injection_fails_closed
+	test_empty_fallback_secret_fails_closed
+	test_locked_injection_exits_bounded
 	test_inventory_is_names_only_deterministic_json
 	test_inventory_rejects_malformed_gopass_name
 	test_inventory_cleans_up_after_gopass_listing_failure
