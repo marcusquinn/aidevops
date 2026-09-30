@@ -21,6 +21,7 @@ from command_policy_account_mutation import (
 )
 from command_policy_approval import _evaluate_approval_freshness
 from command_policy_config import _decision
+from command_policy_git_signing import evaluate_worker_signing
 from command_policy_matchers import _matches
 from command_policy_process_termination import (
     _evaluate_process_termination,
@@ -263,6 +264,7 @@ def evaluate_invocations(
         ),
     ]
     if options.worker:
+        decisions.append(evaluate_worker_signing(invocations))
         decisions.append(
             _evaluate_worker_network(
                 invocations,

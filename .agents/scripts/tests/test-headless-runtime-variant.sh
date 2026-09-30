@@ -60,41 +60,45 @@ assert_equals "high" "$actual" "pulse standard routing keeps configured variant"
 
 with_clean_variant_env
 actual=$(resolve_headless_variant "worker" "simple" "openai/gpt-6-luna")
-assert_equals "low" "$actual" "GPT-6 Luna simple worker uses low routed effort" || true
+assert_equals "medium" "$actual" "GPT-6 Luna simple worker uses medium routed effort floor" || true
 
 with_clean_variant_env
 actual=$(resolve_headless_variant "worker" "standard" "openai/gpt-5.6-terra")
-assert_equals "low" "$actual" "GPT-5.6 Terra standard worker uses low routed effort" || true
+assert_equals "medium" "$actual" "GPT-5.6 Terra standard worker uses medium routed effort floor" || true
 
 with_clean_variant_env
-actual=$(resolve_headless_variant "worker" "thinking" "openai/gpt-6-sol")
-assert_equals "medium" "$actual" "GPT-6 Sol thinking worker uses medium routed effort" || true
+actual=$(resolve_headless_variant "worker" "thinking" "openai/gpt-6.1-sol")
+assert_equals "medium" "$actual" "GPT-6.1 Sol thinking worker uses medium routed effort" || true
 
 with_clean_variant_env
-actual=$(resolve_headless_variant "worker" "thinking" "openai/gpt-6-sol-fast")
+actual=$(resolve_headless_variant "worker" "thinking" "openai/gpt-6.1-sol-fast")
 assert_equals "" "$actual" "unmapped Sol Fast ID does not inherit another model's reasoning" || true
 
 with_clean_variant_env
-actual=$(resolve_headless_variant "worker" "standard" "openai/gpt-6-sol")
-assert_equals "" "$actual" "Sol outside its configured tier does not inherit Terra reasoning" || true
+actual=$(resolve_headless_variant "worker" "standard" "openai/gpt-6.1-sol")
+assert_equals "medium" "$actual" "GPT-6.1 Sol standard worker uses medium routed effort" || true
+
+with_clean_variant_env
+actual=$(resolve_headless_variant "worker" "thinking" "openai/gpt-6-sol")
+assert_equals "" "$actual" "superseded GPT-6 Sol does not inherit GPT-6.1 Sol reasoning" || true
 
 with_clean_variant_env
 AIDEVOPS_HEADLESS_VARIANT_THINKING="high"
-actual=$(resolve_headless_variant "worker" "thinking" "openai/gpt-6-sol")
-assert_equals "high" "$actual" "explicit GPT-6 Sol high variant remains stable" || true
+actual=$(resolve_headless_variant "worker" "thinking" "openai/gpt-6.1-sol")
+assert_equals "high" "$actual" "explicit GPT-6.1 Sol high variant remains stable" || true
 
 with_clean_variant_env
 AIDEVOPS_HEADLESS_VARIANT_THINKING="max"
-actual=$(resolve_headless_variant "worker" "thinking" "openai/gpt-6-sol")
-assert_equals "max" "$actual" "explicit GPT-6 Sol max opt-in remains available" || true
+actual=$(resolve_headless_variant "worker" "thinking" "openai/gpt-6.1-sol")
+assert_equals "max" "$actual" "explicit GPT-6.1 Sol max opt-in remains available" || true
 
 with_clean_variant_env
 AIDEVOPS_HEADLESS_VARIANT_THINKING="xhigh"
-actual=$(resolve_headless_variant "worker" "thinking" "openai/gpt-6-sol")
-assert_equals "xhigh" "$actual" "explicit GPT-6 Sol xhigh opt-in remains available" || true
+actual=$(resolve_headless_variant "worker" "thinking" "openai/gpt-6.1-sol")
+assert_equals "xhigh" "$actual" "explicit GPT-6.1 Sol xhigh opt-in remains available" || true
 
 with_clean_variant_env
-actual=$(resolve_headless_variant "pulse" "thinking" "openai/gpt-6-sol")
+actual=$(resolve_headless_variant "pulse" "thinking" "openai/gpt-6.1-sol")
 assert_equals "medium" "$actual" "pulse thinking tier uses the same medium runtime mapping" || true
 
 with_clean_variant_env

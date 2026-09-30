@@ -98,7 +98,7 @@ get_tier_success_rate() {
 model_id_to_tier() {
 	local model_id="$1"
 	case "$model_id" in
-	*opus* | *pro* | gpt-6-sol | gpt-5.6-sol | qwen3.8-max | o3 | gpt-5.2 | gpt-5.4 | gpt-5.4-*) echo "thinking" ;;
+	*opus* | *pro* | gpt-6.1-sol | gpt-6-sol | gpt-5.6-sol | qwen3.8-max | o3 | gpt-5.2 | gpt-5.4 | gpt-5.4-*) echo "thinking" ;;
 	*haiku* | *flash* | *terra* | gemini-2.0* | o4-mini | gpt-4.1-mini | gpt-4o-mini | deepseek* | llama* | gpt-4.1-nano) echo "simple" ;;
 	*sonnet* | gpt-5.3-codex | gpt-5.3-codex-* | gpt-4.1 | gpt-4o) echo "standard" ;;
 	*) echo "" ;;
@@ -142,17 +142,19 @@ get_all_tier_patterns() {
 # Model Database (embedded reference data)
 # =============================================================================
 # Format: model_id|provider|display_name|context_window|input_price_per_1m|output_price_per_1m|tier|capabilities|best_for
-# Offline snapshot checked 2026-09-25 against local OpenCode model metadata.
+# Offline snapshot checked 2026-09-30 against local OpenCode model metadata.
 # Standard USD/1M token prices only. A dash means unverified, not free.
 # OpenCode local metadata supplies IDs, limits and capabilities, not OpenAI OAuth
 # prices (its zeros are not API prices). Anthropic/Alibaba values reflect the
-# local model cache; gpt-5.6-sol price comes from configs/model-pricing.json.
+# local model cache; GPT-6.1 Sol, GPT-6 Sol and GPT-5.6 Sol prices come from
+# configs/model-pricing.json (OpenAI Standard short-context pricing).
 # Existing older entries retain their historical prices pending provider revalidation.
-readonly MODEL_DATA_LAST_UPDATED="2026-09-28"
+readonly MODEL_DATA_LAST_UPDATED="2026-09-30"
 
 readonly MODEL_DATA="claude-opus-4-6|Anthropic|Claude Opus 4.6|1000000|5.00|25.00|thinking|code,reasoning,architecture,vision,tools|Architecture decisions, novel problems, complex multi-step reasoning. 1M context, 800K auto-compact. Framework default for tier:thinking and the cascade's penultimate rung.
 claude-opus-5-5|Anthropic|Claude Opus 5.5|1000000|4.00|20.00|thinking|code,reasoning,vision,tools|Complex code and reasoning; model metadata is not independent evidence of aesthetic design quality.
-gpt-6-sol|OpenAI|GPT-6 Sol|388000|-|-|thinking|code,reasoning,vision,tools|Complex implementation and reasoning; standard API price unverified (cached OAuth metadata reports zero).
+gpt-6.1-sol|OpenAI|GPT-6.1 Sol|1050000|2.00|10.00|thinking|code,reasoning,vision,tools|Complex implementation and reasoning; aidevops standard/thinking primary. Input above 272K is billed at long-context rates.
+gpt-6-sol|OpenAI|GPT-6 Sol|388000|2.00|10.00|thinking|code,reasoning,vision,tools|Previous Sol; superseded by gpt-6.1-sol (same input/output price, higher cached-input price).
 gpt-5.6-sol|OpenAI|GPT-5.6 Sol|300000|4.00|20.00|thinking|code,reasoning,vision,tools|Long-running code and reasoning; standard price from local model-pricing.json, not OAuth cache.
 qwen3.8-max|Alibaba|Qwen3.8 Max|1000000|2.00|6.00|thinking|code,reasoning,vision,tools|Large-context reasoning; region and promotional pricing may differ.
 claude-opus-4-7|Anthropic|Claude Opus 4.7|250000|5.00|25.00|thinking|code,reasoning,architecture,vision,tools|Optional thinking-tier mapping candidate. Better at long-running agentic coherence than 4.6; worse at cold long-context retrieval (MRCR 256K 92%->59%, 1M 78%->32%). +20-60% tokenizer cost on English prompts. 250K cap lets OpenCode's 80% auto-compact trigger at the 200K reliability boundary.
@@ -197,12 +199,12 @@ testing|claude-sonnet-5-5|gpt-5.6-sol|o4-mini
 classification|claude-haiku-4-5|gpt-4.1-nano|gemini-2.5-flash
 summarization|gemini-2.5-flash|gpt-4o-mini|claude-haiku-4-5
 large codebase analysis|gemini-2.5-pro|gpt-5.6-sol|claude-sonnet-5-5
-math reasoning|gpt-6-sol|deepseek-r1|gemini-2.5-pro
-security audit|claude-opus-4-6|gpt-6-sol|claude-sonnet-5-5
+math reasoning|gpt-6.1-sol|deepseek-r1|gemini-2.5-pro
+security audit|claude-opus-4-6|gpt-6.1-sol|claude-sonnet-5-5
 data extraction|gemini-2.5-flash|gpt-4o-mini|claude-haiku-4-5
 commit messages|claude-haiku-4-5|gpt-4.1-nano|gemini-2.5-flash
 pr description|claude-sonnet-5-5|gpt-4o|gemini-2.5-flash
-visually polished responsive website|gpt-6-sol|claude-opus-5-5|qwen3.8-max"
+visually polished responsive website|gpt-6.1-sol|claude-opus-5-5|qwen3.8-max"
 
 # =============================================================================
 # Helper Functions
@@ -528,7 +530,7 @@ cmd_recommend() {
 	if [[ "$found" != "true" ]]; then
 		echo "No exact task match. Showing general recommendations:"
 		echo ""
-		echo "  High capability: claude-opus-5-5 or gpt-6-sol"
+		echo "  High capability: claude-opus-5-5 or gpt-6.1-sol"
 		echo "  Balanced:        claude-sonnet-5-5 or gpt-5.6-sol"
 		echo "  Budget:          gemini-2.5-flash or gpt-4.1-nano"
 		echo "  Large context:   gemini-2.5-pro or qwen3.8-max"
