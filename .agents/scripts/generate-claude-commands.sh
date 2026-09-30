@@ -665,9 +665,7 @@ _generate_seo_commands() {
 }
 
 # -----------------------------------------------------------------------------
-# System & session commands: onboarding, setup-aidevops, ralph-loop,
-#                            cancel-ralph, ralph-status, ralph-task,
-#                            session-review
+# System & session commands: onboarding, setup-aidevops, session-review
 # -----------------------------------------------------------------------------
 _generate_system_commands() {
 	maybe_write_command "onboarding" \
@@ -699,65 +697,6 @@ cd "$AIDEVOPS_REPO" && ./setup.sh || exit
 4. Copies VERSION file for version checks
 
 Arguments: $ARGUMENTS' || return 1
-
-	maybe_write_command "ralph-loop" \
-		"Start iterative AI development loop (Ralph Wiggum technique)" \
-		'Read ~/.aidevops/agents/workflows/ralph-loop.md and follow its instructions.
-
-Start a Ralph loop for iterative development.
-
-Arguments: $ARGUMENTS
-
-**Usage:**
-```bash
-/ralph-loop "<prompt>" --max-iterations <n> --completion-promise "<text>"
-```
-
-**How it works:**
-1. You work on the task
-2. When you try to exit, the SAME prompt is fed back
-3. You see your previous work in files and git history
-4. Iterate until completion or max iterations
-
-**Completion:** Output `<promise>YOUR_PHRASE</promise>` when done.' || return 1
-
-	maybe_write_command "cancel-ralph" \
-		"Cancel active Ralph Wiggum loop" \
-		'Cancel the active Ralph loop.
-
-Remove the state file to stop the loop:
-
-```bash
-rm -f .agents/loop-state/ralph-loop.local.md .agents/loop-state/ralph-loop.local.state
-```
-
-If no loop state file exists, no loop is active.' || return 1
-
-	maybe_write_command "ralph-status" \
-		"Show current Ralph loop status" \
-		'Show the current Ralph loop status.
-
-Check the state file:
-
-```bash
-cat .agents/loop-state/ralph-loop.local.md 2>/dev/null || echo "No active Ralph loop"
-```
-
-Shows: active loop, iteration count, max iterations, completion promise, start time.' || return 1
-
-	maybe_write_command "ralph-task" \
-		"Run Ralph loop for a task from TODO.md by ID" \
-		'Run a Ralph loop for a specific task from TODO.md.
-
-Task ID: $ARGUMENTS
-
-**Workflow:**
-1. Find task in TODO.md by ID (e.g., t042)
-2. Extract ralph metadata (promise, verify command, max iterations)
-3. Set session title with format: "Issue #123 t042: Task description here" when the task has a GitHub issue ref, otherwise "t042: Task description here"
-4. Start Ralph loop with extracted parameters
-
-**Usage:** `/ralph-task t042`' || return 1
 
 	maybe_write_command "session-review" \
 		"Review session for completeness before ending" \

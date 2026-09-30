@@ -129,7 +129,7 @@ done
 
 # Remove loop-state files that were incorrectly created as agents
 # These are runtime state files, not agents
-for f in ralph-loop.local.md quality-loop.local.md full-loop.local.md loop-state.md re-anchor.md postflight-loop.md; do
+for f in quality-loop.local.md full-loop.local.md loop-state.md re-anchor.md postflight-loop.md; do
 	if _opencode_generated_agent_owned "$OPENCODE_AGENT_DIR/$f"; then
 		rm -f "$OPENCODE_AGENT_DIR/$f"
 	fi

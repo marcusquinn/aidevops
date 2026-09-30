@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # =============================================================================
-# Generate OpenCode Commands -- Automation (Ralph Loop)
+# Generate OpenCode Commands -- Automation
 # =============================================================================
-# Ralph loop, CI loop, full-loop, and automation command definitions
+# CI loop, full-loop, and automation command definitions
 # for OpenCode.
 #
 # Usage: source "${SCRIPT_DIR}/generate-opencode-commands-automation.sh"
@@ -23,140 +23,11 @@
 [[ -n "${_OPENCODE_CMDS_AUTOMATION_LOADED:-}" ]] && return 0
 _OPENCODE_CMDS_AUTOMATION_LOADED=1
 
-# --- Automation (Ralph Loop) Commands ---
-# Split into core Ralph loop management and loop monitor sub-groups.
-
-cmd_ralph_loop() {
-	create_command "ralph-loop" \
-		"Start iterative AI development loop (Ralph Wiggum technique)" \
-		"$AGENT_BUILD" "" <<'BODY'
-Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/workflows/ralph-loop.md and follow its instructions.
-
-Start a Ralph loop for iterative development.
-
-Arguments: $ARGUMENTS
-
-**Session Title**: Only set a session title if one hasn't been set already (e.g., by `/ralph-task`). If the prompt references issue/PR work, use `session-rename` with the work item and issue/PR title first (`"Issue #123: Fix dispatch title prefix"` or `"PR #456: Refresh auth workflow tests"`). Otherwise use a meaningful version of the prompt. Do not impose an arbitrary length limit; keep the automatically appended AIDevOps version suffix.
-
-**Usage:**
-```bash
-/ralph-loop "<prompt>" --max-iterations <n> --completion-promise "<text>"
-```
-
-**Options:**
-- `--max-iterations <n>` - Stop after N iterations (default: unlimited)
-- `--completion-promise <text>` - Phrase that signals completion
-
-For end-to-end development, prefer `/full-loop` which handles the complete lifecycle.
-
-**How it works:**
-1. You work on the task
-2. When you try to exit, the SAME prompt is fed back
-3. You see your previous work in files and git history
-4. Iterate until completion or max iterations
-
-**Completion:**
-To signal completion, output: `<promise>YOUR_PHRASE</promise>`
-The promise must be TRUE - do not output false promises to escape.
-
-**Examples:**
-```bash
-/ralph-loop "Build a REST API for todos" --max-iterations 20 --completion-promise "DONE"
-/ralph-loop "Fix all TypeScript errors" --completion-promise "ALL_FIXED" --max-iterations 10
-```
-BODY
-
-	return 0
-}
-
-define_ralph_management_commands() {
-	create_command "cancel-ralph" \
-		"Cancel active Ralph Wiggum loop" \
-		"$AGENT_BUILD" "" <<'BODY'
-Cancel the active Ralph loop.
-
-Remove the state file to stop the loop:
-
-```bash
-rm -f .agents/loop-state/ralph-loop.local.md .agents/loop-state/ralph-loop.local.state
-```
-
-If no loop state file exists, no loop is active.
-BODY
-
-	create_command "ralph-status" \
-		"Show current Ralph loop status" \
-		"$AGENT_BUILD" "" <<'BODY'
-Show the current Ralph loop status.
-
-**Check status:**
-
-```bash
-cat .agents/loop-state/ralph-loop.local.md 2>/dev/null || echo "No active Ralph loop"
-```
-
-This shows:
-- Whether a loop is active
-- Current iteration number
-- Max iterations setting
-- Completion promise (if set)
-- When the loop started
-BODY
-
-	create_command "ralph-task" \
-		"Run Ralph loop for a task from TODO.md by ID" \
-		"$AGENT_BUILD" "" <<'BODY'
-Run a Ralph loop for a specific task from TODO.md.
-
-Task ID: $ARGUMENTS
-
-**Workflow:**
-1. Find task in TODO.md by ID (e.g., t042)
-2. Extract ralph metadata (promise, verify command, max iterations)
-3. **Set session title** using `session-rename` tool with format: `"Issue #123 t042: Task description here"` when the task has a GitHub issue ref, otherwise `"t042: Task description here"`
-4. Start Ralph loop with extracted parameters
-
-**Task format in TODO.md:**
-```markdown
-- [ ] t042 Fix all ShellCheck violations #ralph ~2h
-  ralph-promise: "SHELLCHECK_CLEAN"
-  ralph-verify: "shellcheck .agents/scripts/*.sh"
-  ralph-max: 10
-```
-
-**Or shorthand:**
-```markdown
-- [ ] t042 Fix all ShellCheck violations #ralph(SHELLCHECK_CLEAN) ~2h
-```
-
-**Usage:**
-```bash
-/ralph-task t042
-```
-
-This will:
-1. Read TODO.md and find task t042
-2. Extract the ralph-promise, ralph-verify, ralph-max values
-3. Set session title to `"Issue #123 t042: {task description}"` when the task has a GitHub issue ref, otherwise `"t042: {task description}"`, using the `session-rename` tool
-4. Start: `/ralph-loop "{task description}" --completion-promise "{promise}" --max-iterations {max}`
-
-**Requirements:**
-- Task must have `#ralph` tag
-- Task should have completion criteria defined
-BODY
-
-	return 0
-}
-
-define_ralph_core_commands() {
-	cmd_ralph_loop
-	define_ralph_management_commands
-	return 0
-}
+# --- Automation commands ---
 
 cmd_preflight_loop() {
 	create_command "preflight-loop" \
-		"Run preflight checks in a loop until all pass (Ralph pattern)" \
+		"Run preflight checks in a loop until all pass" \
 		"$AGENT_BUILD" "" <<'BODY'
 Run preflight checks iteratively until all pass or max iterations reached.
 
@@ -179,7 +50,7 @@ ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/linters-local.sh
 
 **Completion promise:** `<promise>PREFLIGHT_PASS</promise>`
 
-This applies the Ralph Wiggum technique to quality checks:
+This iterates over quality checks:
 1. Run all preflight checks (linters-local.sh, shellcheck, markdown lint)
 2. If failures and --auto-fix: attempt fixes
 3. Re-run checks
@@ -197,7 +68,7 @@ BODY
 
 cmd_pr_loop() {
 	create_command "pr-loop" \
-		"Monitor PR until approved or merged (Ralph pattern)" \
+		"Monitor PR until approved or merged" \
 		"$AGENT_BUILD" "" <<'BODY'
 Monitor a PR iteratively until approved, merged, or max iterations reached.
 
@@ -238,7 +109,7 @@ BODY
 
 cmd_postflight_loop() {
 	create_command "postflight-loop" \
-		"Monitor release health after deployment (Ralph pattern)" \
+		"Monitor release health after deployment" \
 		"$AGENT_BUILD" "" <<'BODY'
 Monitor release health for a specified duration.
 
@@ -318,7 +189,6 @@ define_loop_monitor_commands() {
 }
 
 define_automation_commands() {
-	define_ralph_core_commands
 	define_loop_monitor_commands
 	return 0
 }

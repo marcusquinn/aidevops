@@ -58,7 +58,7 @@ git clone https://github.com/openprose/prose.git ~/.config/opencode/skill/open-p
 | **Code-First Development** | CrewAI | YAML configs, Python decorators, minimal boilerplate | AutoGen |
 | **Microsoft Ecosystem** | AutoGen | .NET support, Azure integration | - |
 | **Multi-Agent DSL** | OpenProse | Explicit control flow, AI-evaluated conditions, zero dependencies | CrewAI Flows |
-| **Loop Orchestration** | OpenProse | `loop until **condition**`, parallel blocks, retry semantics | Ralph Loop |
+| **Loop Orchestration** | OpenProse | `loop until **condition**`, parallel blocks, retry semantics | Full-loop |
 | **Local LLM Priority** | All | All support Ollama/local models | - |
 
 ## Framework Comparison

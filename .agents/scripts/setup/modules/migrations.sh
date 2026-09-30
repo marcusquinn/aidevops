@@ -160,6 +160,30 @@ cleanup_retired_context_tooling() {
 	return 0
 }
 
+# Remove the retired workflow and generated slash commands from existing installs.
+# Like other deprecated path cleanup, this runs even when the source is gone.
+cleanup_retired_ralph_commands() {
+	local agents_dir="$1"
+	local removed=0
+	local command=""
+	local path=""
+	path="$agents_dir/workflows/ralph-loop.md"
+	if [[ -e "$path" ]]; then
+		rm -f "$path"
+		removed=$((removed + 1))
+	fi
+	for command in ralph-loop ralph-task cancel-ralph ralph-status; do
+		for path in "$HOME/.claude/commands/$command.md" "$HOME/.config/opencode/command/$command.md"; do
+			if [[ -e "$path" ]]; then
+				rm -f "$path"
+				removed=$((removed + 1))
+			fi
+		done
+	done
+	printf '%s\n' "$removed"
+	return 0
+}
+
 cleanup_deprecated_paths() {
 	local agents_dir="$HOME/.aidevops/agents"
 	local cleaned=0
@@ -217,6 +241,7 @@ cleanup_deprecated_paths() {
 	done
 
 	cleaned=$((cleaned + $(cleanup_retired_context_tooling "$agents_dir")))
+	cleaned=$((cleaned + $(cleanup_retired_ralph_commands "$agents_dir")))
 
 	if [[ $cleaned -gt 0 ]]; then
 		print_info "Cleaned up $cleaned deprecated agent path(s)"
@@ -1654,8 +1679,7 @@ migrate_loop_state_directories() {
 		# Migrate from .claude/ (oldest legacy path)
 		if [[ -d "$old_state_dir" ]]; then
 			local has_loop_state=false
-			if [[ -f "$old_state_dir/ralph-loop.local.state" ]] ||
-				[[ -f "$old_state_dir/loop-state.json" ]] ||
+			if [[ -f "$old_state_dir/loop-state.json" ]] ||
 				[[ -d "$old_state_dir/receipts" ]]; then
 				has_loop_state=true
 			fi
@@ -1664,7 +1688,7 @@ migrate_loop_state_directories() {
 				print_info "Found legacy loop state in: $repo_dir/.claude/"
 				mkdir -p "$new_state_dir"
 
-				for file in ralph-loop.local.state loop-state.json re-anchor.md guardrails.md; do
+				for file in loop-state.json re-anchor.md guardrails.md; do
 					if [[ -f "$old_state_dir/$file" ]]; then
 						mv "$old_state_dir/$file" "$new_state_dir/"
 						print_info "  Moved $file"

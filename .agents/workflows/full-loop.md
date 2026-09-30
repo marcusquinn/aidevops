@@ -117,7 +117,7 @@ Start: `~/.aidevops/agents/scripts/full-loop-helper.sh start "$ARGUMENTS"`. Add 
 
 ---
 
-## Step 3: Task Development (Ralph Loop)
+## Step 3: Task Development
 
 Iterate until emitting `<promise>TASK_COMPLETE</promise>`.
 
@@ -341,4 +341,4 @@ The completion-aware path never grants `external_directory` access. It accepts o
 
 ## Related
 
-`workflows/ralph-loop.md` · `workflows/preflight.md` · `workflows/pr.md` · `workflows/postflight.md` · `workflows/changelog.md` · `worktree-cleanup.md`
+`workflows/preflight.md` · `workflows/pr.md` · `workflows/postflight.md` · `workflows/changelog.md` · `worktree-cleanup.md`
