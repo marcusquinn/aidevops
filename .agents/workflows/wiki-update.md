@@ -35,13 +35,9 @@ Update `.wiki/` to reflect the latest codebase state. Changes pushed to `main` a
 
 Style: tables for structured info, short paragraphs, practical examples, no jargon.
 
-## Step 1: Build Codebase Context
+## Step 1: Gather Codebase Context
 
-```bash
-.agents/scripts/context-builder-helper.sh compress .
-```
-
-Reference `repomix-instruction.md` for guidelines. Use exact local search, targeted reads, or Repomix to understand architecture, new features, service integrations, and workflows since last update.
+Use exact local search (`rg`, `git log`, `git diff`) and targeted reads to understand architecture, new features, service integrations, and workflows since last update.
 
 ## Step 2: Review and Identify Updates
 
@@ -94,6 +90,4 @@ cat VERSION
 
 ## Related
 
-- `repomix-instruction.md` — codebase context instructions
-- `.agents/tools/context/context-builder.md` — Repomix wrapper
 - `.github/workflows/sync-wiki.yml` — auto-sync workflow

@@ -138,6 +138,28 @@ cleanup_legacy_aidevops_temp_artifacts() {
 	return 0
 }
 
+# GH#33140: code indexing and context packing retired (rg, targeted reads and
+# the ai-research files parameter cover them). Prints the number of paths removed.
+cleanup_retired_context_tooling() {
+	local agents_dir="$1"
+	local removed=0
+	local retired_path=""
+	for retired_path in \
+		"$agents_dir/tools/context/llm-tldr.md" \
+		"$agents_dir/tools/context/context-builder.md" \
+		"$agents_dir/tools/context/context-builder-agent.md" \
+		"$agents_dir/tools/context/rapidfuzz.md" \
+		"$agents_dir/scripts/context-builder-helper.sh" \
+		"$agents_dir/scripts/commands/context.md"; do
+		if [[ -e "$retired_path" ]]; then
+			rm -rf "$retired_path"
+			removed=$((removed + 1))
+		fi
+	done
+	printf '%s\n' "$removed"
+	return 0
+}
+
 cleanup_deprecated_paths() {
 	local agents_dir="$HOME/.aidevops/agents"
 	local cleaned=0
@@ -193,6 +215,8 @@ cleanup_deprecated_paths() {
 			((++cleaned))
 		fi
 	done
+
+	cleaned=$((cleaned + $(cleanup_retired_context_tooling "$agents_dir")))
 
 	if [[ $cleaned -gt 0 ]]; then
 		print_info "Cleaned up $cleaned deprecated agent path(s)"
@@ -1946,6 +1970,20 @@ migrate_worker_capacity_reset() {
 	return 0
 }
 
+# Print a file's octal mode via portable-stat; fail when it cannot be read.
+_migration_file_mode() {
+	local target_file="$1"
+	local mode=""
+	if ! declare -F _file_perms >/dev/null 2>&1; then
+		# shellcheck source=../../portable-stat.sh
+		source "${BASH_SOURCE[0]%/*}/../../portable-stat.sh" || return 1
+	fi
+	mode=$(_file_perms "$target_file") || return 1
+	[[ -n "$mode" && "$mode" != "000" ]] || return 1
+	printf '%s\n' "$mode"
+	return 0
+}
+
 # Remove the obsolete settings.json model_routing section. Runtime routing uses
 # explicit tier labels and the canonical model-routing-table.json instead.
 migrate_obsolete_settings_model_routing() {
@@ -1977,7 +2015,7 @@ migrate_obsolete_settings_model_routing() {
 		print_warning "Failed to back up settings before obsolete model routing settings migration; migration will retry"
 		return 0
 	fi
-	file_mode=$(stat -f '%Lp' "$settings_file" 2>/dev/null || stat -c '%a' "$settings_file" 2>/dev/null) || {
+	file_mode=$(_migration_file_mode "$settings_file") || {
 		print_warning "Failed to read settings permissions; obsolete model routing settings migration will retry"
 		return 0
 	}

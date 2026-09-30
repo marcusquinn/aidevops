@@ -248,7 +248,6 @@ print_summary() {
 	echo "    /setup-aidevops   - Deploy latest agent changes locally"
 	echo "    /agent-review     - Review and improve agent instructions"
 	echo "    /session-review   - Review session for completeness before ending"
-	echo "    /context          - Build AI context"
 	echo "    /list-keys        - List API keys with storage locations"
 	echo "    /log-time-spent   - Log time spent on a task"
 	echo ""

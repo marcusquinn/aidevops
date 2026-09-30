@@ -128,6 +128,4 @@ python3 examples/agentic_vectorless_rag_demo.py
 
 ## Related
 
-- [Context Builder](context-builder.md) — Token-efficient codebase packing
 - [Per-Tenant RAG Patterns](../database/vector-search.md) — Vector-based RAG with tenant isolation
-- [llm-tldr](llm-tldr.md) — Semantic code analysis with token savings

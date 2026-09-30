@@ -232,7 +232,7 @@ judgement, architecture, and synthesis, while bounded work uses the cheapest
 capable route.
 
 Progressive disclosure loads only the relevant agents, references, and tools.
-TOON registries, compact terminal summaries, semantic code search, context
+TOON registries, compact terminal summaries, exact code search, context
 bundles, prompt caching, and compaction checkpoints reduce unnecessary context
 without hiding required evidence. Model comparisons and sealed historical replay
 can inform routing, but cannot silently rewrite production policy.
@@ -376,7 +376,7 @@ Integration families include:
 - Hosting, DNS, cloud, deployment, object storage, networking, monitoring, and local development.
 - Product analytics, error monitoring, email, communications, social platforms, outreach, and payments.
 - Accounting, ecommerce, WordPress (including [Rank Math SEO MCP](.agents/tools/wordpress/rankmath-mcp.md)), documents, OCR, browser automation, and creative applications.
-- Context7, Repomix, semantic code search, OpenAPI search, local models, and model-provider account pools.
+- Context7, exact code search, OpenAPI search, local models, and model-provider account pools.
 
 ### Skills and private agent sources
 

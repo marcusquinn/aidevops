@@ -122,7 +122,6 @@ NPM_TOOLS=(
 	"npm|OpenCode|opencode|--version|opencode-ai|${_oc_upgrade_cmd}"
 	"npm|Claude Code CLI|claude|--version|@anthropic-ai/claude-code|npm install -g @anthropic-ai/claude-code@latest"
 	"npm|Codex CLI|codex|--version|@openai/codex|npm install -g @openai/codex@latest"
-	"npm|Repomix|repomix|--version|repomix|npm install -g repomix@latest"
 	"npm|DSPyGround|dspyground|--version|dspyground|npm install -g dspyground@latest"
 	"npm|LocalWP MCP|mcp-local-wp|--version|@verygoodplugins/mcp-local-wp|npm install -g @verygoodplugins/mcp-local-wp@latest"
 	"npm|Beads UI|beads-ui|--version|beads-ui|npm install -g beads-ui@latest"

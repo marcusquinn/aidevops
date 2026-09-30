@@ -621,7 +621,6 @@ qlty.sh
 qwen35-122b.completions.near.ai
 rankmath.com
 rapha.cc
-rapidfuzz.github.io
 raw.githubusercontent.com
 react-spectrum.adobe.com
 reactjs.org
@@ -641,7 +640,6 @@ relay.tools
 remotion.dev
 remotion.media
 repo.wp-composer.com
-repomix.com
 rest-api.fluentcrm.com
 roadmap.neuronwriter.com
 route53.amazonaws.com

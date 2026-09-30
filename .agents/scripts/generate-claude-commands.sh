@@ -437,7 +437,7 @@ This will:
 }
 
 # -----------------------------------------------------------------------------
-# Utility commands: list-keys, log-time-spent, context, create-pr, pr
+# Utility commands: list-keys, log-time-spent, create-pr, pr
 # -----------------------------------------------------------------------------
 _generate_utility_commands() {
 	maybe_write_command "list-keys" \
@@ -465,17 +465,6 @@ Arguments: $ARGUMENTS
 - `/log-time-spent` (prompts for task and duration)
 
 **Duration formats:** 2h, 30m, 2h30m, 1.5h' || return 1
-
-	maybe_write_command "context" \
-		"Build token-efficient AI context for complex tasks" \
-		'Read ~/.aidevops/agents/tools/context/context-builder.md and follow its instructions.
-
-Context request: $ARGUMENTS
-
-This generates optimized context for AI assistants including:
-1. Relevant code snippets
-2. Architecture overview
-3. Dependencies and relationships' || return 1
 
 	maybe_write_command "create-pr" \
 		"Create PR from current branch with title and description" \
