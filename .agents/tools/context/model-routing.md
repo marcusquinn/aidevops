@@ -74,7 +74,7 @@ normally standard; deciding that boundary is thinking.
 | `thinking` | next configured thinking-tier provider | Primary unavailable or provider-disallowed |
 
 Supervisor and OpenCode subagents resolve the first connected same-tier candidate
-at request time. Interactive diagnostics: `compare-models-helper.sh discover`.
+at request time. Interactive diagnostics: `model-availability-helper.sh check`.
 
 ## Headless Dispatch
 
@@ -270,8 +270,7 @@ lower-tier trial is suggested.
 ## CLI Tools
 
 ```bash
-compare-models-helper.sh discover [--probe|--list-models|--json]
-compare-models-helper.sh list|capabilities|compare|recommend "task"
+compare-models-helper.sh list [--provider NAME]
 local-model-helper.sh status|models
 model-availability-helper.sh check|resolve  # Exit: 0=ok, 1=unavail, 2=rate-limited, 3=bad-key
 ```
@@ -316,6 +315,6 @@ success evidence and explicit routing telemetry, not a separate pattern store.
 ## Related
 
 - `tools/local-models/local-models.md` — Local model setup (llama.cpp)
-- `tools/ai-assistants/compare-models.md` — Full model comparison subagent
-- `scripts/compare-models-helper.sh` — Provider discovery and comparison
+- `tools/ai-assistants/compare-models.md` — Model catalog, cross-review, and model-replay/model-ab/frontier-harness-eval routing
+- `scripts/compare-models-helper.sh` — Registry-backed model listing and cross-review
 - `scripts/commands/route.md` — `/route` command

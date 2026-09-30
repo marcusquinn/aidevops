@@ -23,7 +23,7 @@ standard,provider-routed,Code review and implementation
 thinking,provider-routed,Architecture and complex reasoning
 -->
 
-<!--TOON:subagents[143]{folder,purpose,key_files}:
+<!--TOON:subagents[142]{folder,purpose,key_files}:
 aidevops/,aidevops subagents,add-new-mcp-to-aidevops|agent-sources|api-integrations|architecture|badges|campaigns-plane|cases-plane|claude-flow-comparison|configs|docs|extension
 aidevops/feedback/,aidevops/feedback subagents,capture-retention|cli-routines
 aidevops/,aidevops subagents,feedback
@@ -73,7 +73,7 @@ services/networking/,services/networking subagents,netbird|nostr-vpn|obscuravpn|
 services/outreach/,services/outreach subagents,cold-outreach|infraforge|instantly|leadsforge|manyreach|smartlead|warmforge
 services/payments/,services/payments subagents,procurement|revenuecat|stripe|superwall
 tools/accessibility/,tools/accessibility subagents,accessibility-audit|accessibility
-tools/ai-assistants/,tools/ai-assistants subagents,agno|buzz-team-interface|capsolver|claude-code|codex-cli|compare-models|datasets|fallback-chains|frontier-harness-eval|headless-dispatch|jev-decisions|jev|jev-pilots|models-composer2|models-flash|models-gemini-reviewer|models-gpt-reviewer|models-haiku|models-opus|models-pro|models-README|models-sonnet|openclaw|opencode-server|overview|research-only|response-scoring|runners-code-reviewer|runners-README|runners-seo-analyst|runtime-launchers
+tools/ai-assistants/,tools/ai-assistants subagents,agno|buzz-team-interface|capsolver|claude-code|codex-cli|compare-models|datasets|fallback-chains|frontier-harness-eval|headless-dispatch|jev-decisions|jev|jev-pilots|models-composer2|models-flash|models-gemini-reviewer|models-gpt-reviewer|models-haiku|models-opus|models-pro|models-README|models-sonnet|openclaw|opencode-server|overview|research-only|runners-code-reviewer|runners-README|runners-seo-analyst|runtime-launchers
 tools/ai-generation/,tools/ai-generation subagents,comfy-cli
 tools/ai-orchestration/,tools/ai-orchestration subagents,autogen|crewai|langflow|openprose|overview|packaging
 tools/animation/,tools/animation subagents,animejs
@@ -166,7 +166,7 @@ workflows/,workflows subagents,branch
 workflows/branch/,workflows/branch subagents,refactor|release
 workflows/,workflows subagents,brief
 workflows/brief/,workflows/brief subagents,routing|templates|tier-simple|tier-standard|tier-thinking
-workflows/,workflows subagents,browser-qa|budget-analysis|bug-fixing|campaign-growth|changelog|code-audit-remote|code-simplifier|compare-models-free|compare-models|conversation-starter|creative-production|cross-review|dashboard|define|error-feedback|feature-development|findings-to-tasks|full-loop|git-workflow|graduate-memories|humanise|init-routines|ip-check|list-todo|list-verify|local-permissions-check|log-issue-aidevops|marketing-actions|marketing-decisions|memory-audit|memory-log|milestone-validation|mission|mission-orchestrator|mission-skill-learning|model-replay|models-pool-check|multi-repo-workspace|new-task|optimise-linux-indexing-backups|optimise-macos-indexing-backups|optimise-windows-indexing-backups|optimize-tiers|patterns|performance|plans|postflight-loop|postflight|pre-edit|preflight|pr-loop|pr|public-launch-checklist|pulse-check|pulse|pulse-sweep|readme-create-update|readme|recall|release|remember|review-issue-pr|review|route|routine|runners-check|runners|save-todo|score-responses|session-analysis|session-manager|session-review|show-plan|skills|sql-migrations|strategic-review|tech-stack|triage-review|ui-verification|vault-fleet|vault-setup|venv-health|version-bump|wiki-update|wordpress-local-clone|worktree-cleanup|worktree
+workflows/,workflows subagents,browser-qa|budget-analysis|bug-fixing|campaign-growth|changelog|code-audit-remote|code-simplifier|compare-models-free|compare-models|conversation-starter|creative-production|cross-review|dashboard|define|error-feedback|feature-development|findings-to-tasks|full-loop|git-workflow|graduate-memories|humanise|init-routines|ip-check|list-todo|list-verify|local-permissions-check|log-issue-aidevops|marketing-actions|marketing-decisions|memory-audit|memory-log|milestone-validation|mission|mission-orchestrator|mission-skill-learning|model-replay|models-pool-check|multi-repo-workspace|new-task|optimise-linux-indexing-backups|optimise-macos-indexing-backups|optimise-windows-indexing-backups|optimize-tiers|patterns|performance|plans|postflight-loop|postflight|pre-edit|preflight|pr-loop|pr|public-launch-checklist|pulse-check|pulse|pulse-sweep|readme-create-update|readme|recall|release|remember|review-issue-pr|review|route|routine|runners-check|runners|save-todo|session-analysis|session-manager|session-review|show-plan|skills|sql-migrations|strategic-review|tech-stack|triage-review|ui-verification|vault-fleet|vault-setup|venv-health|version-bump|wiki-update|wordpress-local-clone|worktree-cleanup|worktree
 -->
 
 <!--TOON:mcp_servers[17]{name,url,auth,subagent,purpose}:
@@ -207,7 +207,7 @@ conversation-starter,workflows/conversation-starter.md,Session greeting and auto
 mission-skill-learning,workflows/mission-skill-learning.md,Auto-capture reusable patterns from missions and suggest promotion
 -->
 
-<!--TOON:scripts[98]{name,purpose}:
+<!--TOON:scripts[96]{name,purpose}:
 accessibility-helper.sh,Accessibility and contrast testing (WCAG compliance WAVE API for websites and emails)
 browser-qa-worker.sh,Browser QA visual testing — Playwright screenshots broken links console errors for milestone validation
 browser-qa-helper.sh,Playwright-based visual QA for milestone validation (smoke screenshots links a11y)
@@ -286,9 +286,7 @@ compare-models-helper.sh,AI model capability comparison (list compare recommend 
 model-registry-helper.sh,Provider/model registry with periodic sync (sync list status check suggest deprecations diff export)
 model-availability-helper.sh,Model availability checker - probe before dispatch (check probe status cache clear)
 fallback-chain-helper.sh,Fallback chain configuration - per-agent and global model fallbacks (list get set test status validate)
-response-scoring-helper.sh,Response scoring - evaluate AI model responses side-by-side (prompt record score compare leaderboard export)
-generate-models-md.sh,Generate MODELS.md leaderboard from pattern-tracker and response-scoring data (--output --quiet help)
-contest-helper.sh,Model contest mode - dispatch same task to top-3 models in parallel and cross-rank results (create dispatch status evaluate apply list should-contest pulse-check)
+generate-models-md.sh,Generate MODELS.md model catalog from the model registry (--output --quiet help)
 sops-helper.sh,SOPS encrypted config file management (init encrypt decrypt edit rotate status install)
 gocryptfs-helper.sh,gocryptfs encrypted filesystem overlay (init mount unmount create open close list status install)
 youtube-helper.sh,YouTube Data API v3 wrapper (auth channel videos competitors search quota)
