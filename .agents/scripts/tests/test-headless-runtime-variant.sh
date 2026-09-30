@@ -13,6 +13,9 @@ source "${AGENTS_SCRIPTS}/shared-constants.sh"
 # shellcheck source=/dev/null
 source "${AGENTS_SCRIPTS}/headless-runtime-model.sh"
 
+# Assertions describe the shipped routing policy, not a machine's custom table.
+export AIDEVOPS_MODEL_ROUTING_TABLE="${AGENTS_SCRIPTS}/../configs/model-routing-table.json"
+
 failures=0
 
 assert_equals() {
@@ -41,7 +44,7 @@ with_clean_variant_env() {
 with_clean_variant_env
 AIDEVOPS_HEADLESS_VARIANT_STANDARD="high"
 actual=$(resolve_headless_variant "worker" "standard" "openai/gpt-5.5")
-assert_equals "" "$actual" "GPT-5.5 standard worker omits env-derived high variant" || true
+assert_equals "high" "$actual" "GPT-5.5 standard worker preserves configured high variant" || true
 
 with_clean_variant_env
 AIDEVOPS_HEADLESS_VARIANT_STANDARD="high"
