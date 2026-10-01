@@ -547,7 +547,7 @@ _hrff_prepare_terminal_blocker_release() {
 	case "$mode" in
 	first)
 		_HRFF_TERMINAL_BLOCKER_FRAGMENT=$(terminal_blocker_observation_fragment \
-			"$task_revision" "$blocker_fingerprint") || _HRFF_TERMINAL_BLOCKER_FRAGMENT=""
+			"$task_revision" "$blocker_fingerprint" "$mode") || _HRFF_TERMINAL_BLOCKER_FRAGMENT=""
 		;;
 	circuit)
 		_HRFF_TERMINAL_BLOCKER_MODE="circuit"
