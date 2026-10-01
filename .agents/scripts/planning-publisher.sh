@@ -586,6 +586,7 @@ _planning_publish_validate() {
 	local parent_sha="$2"
 	local candidate_sha="$3"
 	local index_file="$4"
+	local remote_name="$5"
 	local validator="${AIDEVOPS_PLANNING_VALIDATOR:-}"
 	if [[ -n "$validator" ]]; then
 		GIT_INDEX_FILE="$index_file" "$validator" "$repo_path" "$parent_sha" "$candidate_sha"
@@ -599,15 +600,26 @@ _planning_publish_validate() {
 	if [[ -f "$privacy_lib" ]]; then
 		# shellcheck disable=SC1090
 		source "$privacy_lib"
-		local privacy_hits="" slugs_file=""
+		local privacy_hits="" slugs_file="" remote_url="" visibility=2
+		remote_url=$(_planning_git -C "$repo_path" remote get-url --push "$remote_name" 2>/dev/null) || remote_url=""
+		privacy_is_target_public "$remote_url" >/dev/null 2>&1 && visibility=0 || visibility=$?
 		slugs_file=$(mktemp "${TMPDIR:-/tmp}/planning-private-slugs.XXXXXX") || return 1
-		privacy_enumerate_private_slugs "$slugs_file" >/dev/null 2>&1 || true
+		if [[ "$visibility" -ne 1 ]]; then
+			privacy_enumerate_private_slugs "$slugs_file" >/dev/null 2>&1 || true
+		fi
 		privacy_hits=$(cd "$repo_path" && {
 			privacy_scan_secret_material_diff "$parent_sha" "$candidate_sha" 2>/dev/null || true
-			privacy_scan_diff "$parent_sha" "$candidate_sha" "$slugs_file" 2>/dev/null || true
+			# Only positively private targets skip slug checks; unknown stays guarded.
+			if [[ "$visibility" -ne 1 ]]; then
+				privacy_scan_diff "$parent_sha" "$candidate_sha" "$slugs_file" 2>/dev/null || true
+			fi
 		})
 		rm -f "$slugs_file"
-		[[ -z "$privacy_hits" ]] || return 1
+		if [[ -n "$privacy_hits" ]]; then
+			# Report locations without echoing private names or secret material.
+			printf '%s\n' "$privacy_hits" | sed 's/: .*$/\: privacy validation hit/' >&2
+			return 1
+		fi
 	fi
 	return 0
 }
@@ -847,7 +859,7 @@ _planning_publish_build_candidate() {
 		"$source_head" "$parent_sha" "$publication_id") || return 1
 	candidate_sha=$(printf '%s\n\nPlanning-Publication-ID: %s\nPlanning-Publication-Handoff-ID: %s\n' \
 		"$commit_msg" "$publication_id" "$handoff_id" | _planning_git -C "$repo_path" commit-tree "$tree_sha" -p "$parent_sha") || return 1
-	if ! _planning_publish_validate "$repo_path" "$parent_sha" "$candidate_sha" "$index_file"; then
+	if ! _planning_publish_validate "$repo_path" "$parent_sha" "$candidate_sha" "$index_file" "$remote_name"; then
 		_planning_publish_log error "Planning publication validation failed; nothing pushed"
 		return 1
 	fi
