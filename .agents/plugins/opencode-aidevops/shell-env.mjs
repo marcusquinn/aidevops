@@ -7,7 +7,7 @@
 // ---------------------------------------------------------------------------
 
 import { existsSync, readFileSync } from "fs";
-import { join } from "path";
+import { isAbsolute, join } from "path";
 
 /**
  * Read a file if it exists, or return empty string.
@@ -180,9 +180,25 @@ function shellSessionOrigin(env) {
   return headless ? "worker" : "interactive";
 }
 
+/**
+ * Worker prepare selects a project-compatible Node (GH#32815) and exports its
+ * bin dir. OpenCode seeds tool-shell PATH from a login-profile snapshot, not
+ * the worker process PATH, so the selection must be re-applied here (GH#33290).
+ * @param {object} env
+ * @returns {string} validated absolute bin dir, or ""
+ */
+function projectNodeBin(env) {
+  if (shellSessionOrigin(env) !== "worker") return "";
+  const value = process.env.AIDEVOPS_PROJECT_NODE_BIN || "";
+  if (!isAbsolute(value) || value.includes(":") || value.includes("\n")) return "";
+  return existsSync(join(value, "node")) ? value : "";
+}
+
 function prependFrameworkPaths(env, scriptsDir, agentsDir) {
   const binDir = agentsDir ? join(agentsDir, "bin") : "";
-  const preferredPaths = [scriptsDir, binDir].filter((path) => path && existsSync(path));
+  const preferredPaths = [scriptsDir, binDir, projectNodeBin(env)].filter(
+    (path) => path && existsSync(path),
+  );
   if (preferredPaths.length === 0) return;
   const currentPath = env.PATH || process.env.PATH || "";
   const pathParts = currentPath

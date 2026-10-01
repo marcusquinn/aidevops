@@ -16,23 +16,23 @@ colors:
 typography:
   # Recommended levels: headline-display, headline-lg, headline-md, body-lg, body-md, body-sm, label-lg, label-md, label-sm
   headline-display:
-    fontFamily: {family}
-    fontSize: {size}
+    fontFamily: "{family}"
+    fontSize: "{size}"
     fontWeight: 700
     lineHeight: 1.1
     letterSpacing: -0.02em
   headline-lg:
-    fontFamily: {family}
+    fontFamily: "{family}"
     fontSize: 32px
     fontWeight: 600
     lineHeight: 1.2
   body-md:
-    fontFamily: {family}
+    fontFamily: "{family}"
     fontSize: 16px
     fontWeight: 400
     lineHeight: 1.5
   label-md:
-    fontFamily: {family}
+    fontFamily: "{family}"
     fontSize: 14px
     fontWeight: 500
     lineHeight: 1.4
@@ -335,9 +335,9 @@ Responsive/accessibility notes:
 | Name | Width | Key Changes |
 |------|-------|-------------|
 | Mobile | < 640px | Single column, stacked |
-| Tablet | 640-1024px | 2 columns |
-| Desktop | 1024-1440px | Full layout |
-| Wide | > 1440px | Max-width contained |
+| Tablet | 640px–1023px | 2 columns |
+| Desktop | 1024px–1439px | Full layout |
+| Wide | ≥ 1440px | Max-width contained |
 
 ### Touch Targets
 
@@ -362,7 +362,7 @@ Primary tokens a coding agent reaches for most often:
 
 | Use | Token | Value |
 |-----|-------|-------|
-| Page background | `{colors.neutral}` | `#{hex}` |
+| Page background | `{colors.background}` | `#{hex}` |
 | Card/panel background | `{colors.surface}` | `#{hex}` |
 | Main text | `{colors.primary}` | `#{hex}` |
 | Muted text | `{colors.secondary}` | `#{hex}` |

@@ -102,6 +102,5 @@ Format: `- [ ] tNNN Description @owner #tag ~estimate risk:level logged:date`
 <!-- Format: parent_id|child_ids (comma-separated) -->
 <!--/TOON:subtasks-->
 
-<!--TOON:summary{total,ready,pending,in_progress,in_review,done,declined,total_est,total_actual}:
-0,0,0,0,0,0,0,,
--->
+<!-- Counts are derived from the task sections above. -->
+<!-- Do not cache a static summary. -->

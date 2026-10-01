@@ -74,6 +74,11 @@ generate_catalog() {
 
 	echo "| Model | Provider | Tier | Context | Input/1M | Output/1M |"
 	echo "| ------- | ---------- | ------ | --------- | ---------- | ----------- |"
+	# The registry can retain historical rates. Use the shipped price source for
+	# o3 when rendering a fresh catalog, without mutating the user's registry.
+	local o3_input o3_output
+	o3_input=$(jq -er '.models.o3.input | numbers' "${SCRIPT_DIR}/../configs/model-pricing.json") || return 1
+	o3_output=$(jq -er '.models.o3.output | numbers' "${SCRIPT_DIR}/../configs/model-pricing.json") || return 1
 
 	sqlite3 -separator '|' "$REGISTRY_DB" "
         SELECT
@@ -89,8 +94,8 @@ generate_catalog() {
                 WHEN context_window >= 1000000 THEN (context_window / 1000000) || 'M'
                 ELSE (context_window / 1000) || 'K'
             END,
-            printf('\$%.2f', input_price),
-            printf('\$%.2f', output_price)
+            printf('\$%.2f', CASE WHEN model_id = 'o3' AND provider = 'openai' THEN ${o3_input} ELSE input_price END),
+            printf('\$%.2f', CASE WHEN model_id = 'o3' AND provider = 'openai' THEN ${o3_output} ELSE output_price END)
         FROM models
         ORDER BY
             CASE tier WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END,
