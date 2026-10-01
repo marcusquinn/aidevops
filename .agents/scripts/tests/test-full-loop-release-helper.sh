@@ -436,8 +436,10 @@ printf 'PASS reviewed aggregate source publishes once and truthfully supersedes 
 		local source_pr="$2"
 		local requested_sources="$3"
 		local release_type="$4"
+		local retry_assertion="$5"
 		[[ "$repo" == "marcusquinn/aidevops" && "$source_pr" == "48" &&
-			"$requested_sources" == "$persisted_sources" && "$release_type" == "patch" ]] || return 1
+			"$requested_sources" == "$persisted_sources" && "$release_type" == "patch" &&
+			-z "$retry_assertion" ]] || return 1
 		expansion_calls=$((expansion_calls + 1))
 		_FULL_LOOP_AGGREGATE_RECOVERY_EXPECTED="$requested_sources"
 		return 0
