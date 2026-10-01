@@ -390,6 +390,110 @@ test_protected_draft_remains_immediate_pr_block() {
 	return 0
 }
 
+test_remote_branch_liveness() {
+	local result=""
+	result=$(
+		# Isolate stale module fixtures from the existing pulse layer fixtures.
+		(
+			# shellcheck source=../dispatch-dedup-stale.sh
+			source "${SCRIPTS_DIR}/dispatch-dedup-stale.sh"
+			SCRIPT_DIR="$SCRIPTS_DIR"
+			STALE_ASSIGNMENT_THRESHOLD_SECONDS=600
+			local tip_date=9880 branch_name="feature/auto-x-gh2905"
+			local api_failed=false dispatch_ts=1000 activity_ts=1000
+			local comments='[]' recovered=0 recovery_body=""
+			local api_log="${TMP_DIR}/branch-api.log"
+			date() { printf '10000\n'; return 0; }
+			_ts_to_epoch() { local ts="$1"; printf '%s\n' "${ts:-0}"; return 0; }
+			gh() {
+				local args="$*"
+				printf '%s\n' "$args" >>"$api_log"
+				[[ "$api_failed" == true ]] && return 1
+				case "$args" in
+				*git/matching-refs/heads/*)
+					# Two pages exercise pagination, not just the first response.
+					jq -nc --arg branch "$branch_name" '[[{ref:"refs/heads/main",object:{sha:"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}],[{ref:("refs/heads/"+$branch),object:{sha:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}]]'
+					;;
+				*git/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa*) printf '%s\n' "$tip_date" ;;
+				*) return 1 ;;
+				esac
+				return 0
+			}
+			_interactive_claim_fence_blocks_dispatch() { return 1; }
+			_stale_assignment_fetch_comments_json() { printf '%s' "$comments"; return 0; }
+			_stale_assignment_load_threshold_context() {
+				_STALE_CONTEXT_INTERACTIVE=false
+				_STALE_CONTEXT_THRESHOLD=600
+				_STALE_CONTEXT_CREATED_AT=1
+				_STALE_CONTEXT_UPDATED_AT=1000
+				return 0
+			}
+			_issue_too_young_for_staleness() { return 1; }
+			_stale_assignment_latest_dispatch_ts() { printf '%s' "$dispatch_ts"; return 0; }
+			_stale_assignment_latest_activity_ts() { printf '%s' "$activity_ts"; return 0; }
+			_stale_assignment_has_recent_open_pr_activity() { return 1; }
+			_stale_recovery_has_unresolved_blocked_by() { return 1; }
+			_stale_recovery_fetch_comments_pages() { printf '[[]]'; return 0; }
+			# The final takeover check independently protects a newly pushed tip.
+			if _stale_recovery_final_evidence_recheck 2905 owner/repo "" true; then
+				printf 'final recheck ignored recent push'; exit 1
+			fi
+			# Capture the real normal-recovery audit comment without external writes.
+			_stale_recovery_final_evidence_recheck() { return 0; }
+			set_issue_status() { return 0; }
+			_stale_recovery_verify_transition() { return 0; }
+			aidevops_ops_marker() { return 0; }
+			gh_issue_comment() { recovery_body="$*"; return 0; }
+			_recover_stale_assignment() {
+				local issue="$1" repo="$2" assignees="$3" reason="$4"
+				recovered=$((recovered + 1))
+				_stale_recovery_apply "$issue" "$repo" "$assignees" "$reason" >/dev/null
+				return 0
+			}
+			if _is_stale_assignment 2905 owner/repo runner; then
+				printf '120s-old branch was recovered'; exit 1
+			fi
+			[[ "$recovered" -eq 0 ]] || exit 1
+			tip_date=2800
+			_is_stale_assignment 2905 owner/repo runner || exit 1
+			[[ "$recovered" -eq 1 && "$recovery_body" == *"Last pushed issue branch: feature/auto-x-gh2905 (commit aaaa"* ]] || exit 1
+			# Matching the numeric issue boundary excludes another issue's branch.
+			branch_name="feature/auto-x-gh29050"
+			tip_date=9880
+			: >"$api_log"
+			_is_stale_assignment 2905 owner/repo runner || exit 1
+			if grep -q 'git/commits/' "$api_log"; then exit 1; fi
+			[[ -z "$_STALE_BRANCH_CHECKPOINT" ]] || exit 1
+			# A trusted dispatch can name a branch outside the automatic convention.
+			branch_name="feature/custom"
+			comments='[{"author_association":"COLLABORATOR","created_at":"1000","body":"DISPATCH_CLAIM branch=feature/custom"}]'
+			if _is_stale_assignment 2905 owner/repo runner; then exit 1; fi
+			comments='[{"author_association":"NONE","created_at":"1000","body":"DISPATCH_CLAIM branch=feature/custom"}]'
+			_is_stale_assignment 2905 owner/repo runner || exit 1
+			# No-claim assignments still honor pushed work, and API failure is not death.
+			comments='[]'
+			branch_name="feature/auto-x-gh2905"
+			dispatch_ts=""
+			if _is_stale_assignment 2905 owner/repo runner; then exit 1; fi
+			api_failed=true
+			if _is_stale_assignment 2905 owner/repo runner; then exit 1; fi
+			# Ordinary recent issue activity must not spend branch lookup budget.
+			: >"$api_log"
+			activity_ts=9880
+			if _is_stale_assignment 2905 owner/repo runner; then exit 1; fi
+			[[ ! -s "$api_log" ]] || exit 1
+			printf 'ok'
+		)
+	) || true
+	if [[ "$result" == "ok" ]]; then
+		pass "branch pushes protect ownership; old tips survive in recovery evidence"
+	else
+		fail "remote branch liveness and recovery evidence" "$result"
+	fi
+	return 0
+}
+
+test_remote_branch_liveness
 test_active_claim_classifier_preserves_evidence
 test_live_owner_remains_blocked
 test_stale_recovery_without_claim_skips_fast_fail
