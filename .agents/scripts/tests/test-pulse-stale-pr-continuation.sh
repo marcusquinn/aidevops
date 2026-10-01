@@ -368,6 +368,19 @@ else
 	print_result "generic precreation failures stay uncached" 1
 fi
 
+# GH#33332: an unowned issue held by terminal-blocker backoff is cached across
+# cycles until edited, without needing claim labels.
+backoff_cache="${HOME}/.aidevops/logs/dispatch-negative-cache/owner--repo--33026"
+rm -f "$backoff_cache"
+_dispatch_negative_cache_record "$held_candidate" terminal_blocker_backoff
+if [[ "$(_dispatch_negative_cache_reason "$held_candidate")" == terminal_blocker_backoff ]] &&
+	! _dispatch_negative_cache_reason "$held_bumped" >/dev/null &&
+	[[ "$_DISPATCH_TERMINAL_BACKOFF_CACHE_TTL_SECONDS" -le 900 ]]; then
+	print_result "terminal-blocker backoff caches an unowned issue until it changes" 0
+else
+	print_result "terminal-blocker backoff caches an unowned issue until it changes" 1
+fi
+
 if [[ "$TESTS_FAILED" -eq 0 ]]; then
 	printf 'All %d tests passed\n' "$TESTS_RUN"
 	exit 0
