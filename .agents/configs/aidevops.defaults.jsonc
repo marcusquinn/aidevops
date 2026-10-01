@@ -282,7 +282,7 @@
       },
       "thinking": {
         "models": ["openai/gpt-6.1-sol", "anthropic/claude-opus-5-5"],
-        "reasoning": { "openai/gpt-6.1-sol": "medium", "anthropic/claude-opus-5-5": "medium" }
+        "reasoning": { "openai/gpt-6.1-sol": "medium", "anthropic/claude-opus-5-5": "high" }
       }
     },
 

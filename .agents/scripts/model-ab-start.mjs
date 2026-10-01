@@ -28,10 +28,22 @@ function providerArm(routing, provider) {
   return { name: provider, tiers };
 }
 
+// Background work never runs below medium, so a sub-medium arm would be silently
+// raised by the routing floor and mislabel the comparison (GH#32539, GH#33342).
+const SUB_FLOOR_VARIANTS = new Set(["none", "minimal", "low"]);
+
+export function rejectSubFloorArms(arms) {
+  const routes = arms.flatMap((arm) => (arm?.tiers ? Object.values(arm.tiers) : [arm]));
+  if (routes.some((route) => SUB_FLOOR_VARIANTS.has(route?.variant))) {
+    throw new Error("model A/B arms must use medium or higher reasoning; the routing floor raises lower variants");
+  }
+  return arms;
+}
+
 export const START_PRESETS = {
   "standard-luna-terra": { prefix: "standard-ab", hours: 48, mode: PROSPECTIVE_MODE, arms: () => [
     { name: "luna-max", model: "openai/gpt-6-luna", variant: "max" },
-    { name: "terra-low", model: "openai/gpt-5.6-terra", variant: "low" },
+    { name: "terra-medium", model: "openai/gpt-5.6-terra", variant: "medium" },
   ] },
   // A week: the 48-hour standard-only window enrolled only 2 issues (GH#32353).
   "openai-anthropic": { prefix: "provider-ab", hours: 168, mode: ALL_TIER_MODE, arms: (routing) => [
@@ -81,7 +93,7 @@ export function startProspectiveTrial(repo, {
     starts_at: new Date(now).toISOString(),
     ends_at: new Date(now + (hours || selected.hours) * HOUR_MS).toISOString(),
     enrollment: { mode: selected.mode },
-    arms: selected.arms(routing),
+    arms: rejectSubFloorArms(selected.arms(routing)),
   });
   const cohortDir = join(configRoot, "model-ab");
   mkdirSync(cohortDir, { recursive: true, mode: 0o700 });
