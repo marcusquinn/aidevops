@@ -1856,6 +1856,9 @@ cmd_record_included_release() {
 	' <<<"$compare_json" >/dev/null || return 1
 	[[ "$source_merge" == "$(_full_loop_resolve_remote_release_tag_commit "$repo" "$tag_name")" ]] || return 1
 	_full_loop_acquire_transition_lock || return 1
+	# Recheck the linked receipt under the same lock used for destination writes.
+	IFS= read -r release_status <"$source_receipt" || status=1
+	[[ "$release_status" == "$_FULL_LOOP_RELEASE_PUBLISHED" ]] || status=1
 	receipt_path=$(_full_loop_release_receipt_path "$repo" "$pr_number") || status=1
 	release_status=""
 	if [[ "$status" -eq 0 && -f "$receipt_path" ]]; then

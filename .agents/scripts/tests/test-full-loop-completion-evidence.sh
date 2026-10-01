@@ -16,7 +16,28 @@ cat >"${ROOT}/bin/gh" <<'STUB'
 #!/usr/bin/env bash
 merge_sha="${COMPLETION_PR_MERGE_SHA:-1111111111111111111111111111111111111111}"
 release_mode="${COMPLETION_RELEASE_MODE:-valid}"
-if [[ "$*" == *"repos/marcusquinn/aidevops/git/ref/tags/v3.0.0"* ]]; then
+if [[ "$*" == *"pr view 71 "* ]]; then
+	merge_sha="2222222222222222222222222222222222222222"
+fi
+if [[ "$*" == "api repos/testorg/manual" ]]; then
+	printf '%s\n' '{"archived":false,"permissions":{"admin":true}}'
+	exit 0
+fi
+if [[ "$*" == "api repos/testorg/manual/actions/permissions" ]]; then
+	jq -cn --arg enabled "${COMPLETION_ACTIONS_ENABLED:-true}" '{enabled:($enabled == "true")}'
+	exit 0
+fi
+if [[ "$*" == "api repos/testorg/manual/releases/123" ]]; then
+	jq -cn --arg mode "$release_mode" '{tag_name:"v3.0.0",draft:($mode == "draft-release"),assets:
+		(if $mode == "no-assets" then [] else [{name:"plugin.zip",state:(if $mode == "unfinished-asset" then "new" else "uploaded" end),size:(if $mode == "empty-asset" then 0 else 123 end)}] end)}'
+	exit 0
+fi
+if [[ "$*" == *"repos/testorg/manual/compare/"* ]]; then
+	jq -cn --arg status "${COMPLETION_COMPARE_STATUS:-ahead}" \
+		'{status:$status,base_commit:{sha:"2222222222222222222222222222222222222222"},merge_base_commit:{sha:"2222222222222222222222222222222222222222"}}'
+	exit 0
+fi
+if [[ "$*" == *"/git/ref/tags/v3.0.0"* ]]; then
 	if [[ "$release_mode" == "wrong-tag-commit" ]]; then
 		printf '%s\n' '{"ref":"refs/tags/v3.0.0","object":{"type":"commit","sha":"2222222222222222222222222222222222222222"}}'
 	else
@@ -24,7 +45,7 @@ if [[ "$*" == *"repos/marcusquinn/aidevops/git/ref/tags/v3.0.0"* ]]; then
 	fi
 	exit 0
 fi
-if [[ "$*" == *"repos/marcusquinn/aidevops/releases/tags/v3.0.0"* ]]; then
+if [[ "$*" == *"/releases/tags/v3.0.0"* ]]; then
 	if [[ "$release_mode" == "draft-release" ]]; then
 		printf '%s\n' '{"tag_name":"v3.0.0","draft":true}'
 	else
@@ -32,7 +53,7 @@ if [[ "$*" == *"repos/marcusquinn/aidevops/releases/tags/v3.0.0"* ]]; then
 	fi
 	exit 0
 fi
-if [[ "$*" == *"repos/marcusquinn/aidevops/actions/runs?event=release"* ]]; then
+if [[ "$*" == *"/actions/runs?event=release"* || "$*" == *"/actions/workflows/release-verify.yml/runs?event=release"* ]]; then
 	case "$release_mode" in
 	failed-workflow)
 		jq -cn --arg sha "$merge_sha" '{workflow_runs:[{event:"release",status:"completed",conclusion:"failure",head_branch:"v3.0.0",head_sha:$sha}]}'
@@ -182,7 +203,7 @@ DEFAULT_MAX_PR_ITERATIONS=20
 HEADLESS=false
 source '${SCRIPTS_DIR}/shared-constants.sh'
 source '${SCRIPTS_DIR}/full-loop-helper-state.sh'
-cmd_record_published_release "\$@"
+\${COMPLETION_RECORD_COMMAND:-cmd_record_published_release} "\$@"
 RUNNER
 chmod +x "$published_record_runner"
 
@@ -331,6 +352,112 @@ if AIDEVOPS_FULL_LOOP_RECEIPT_DIR="$receipt_dir" AIDEVOPS_FULL_LOOP_CLEANUP_DIR=
 fi
 grep -qx 'not-requested' "${receipt_dir}/marcusquinn_aidevops-60.status"
 printf 'PASS conflicting terminal receipts cannot be replaced by manual publication evidence\n'
+
+# Manual inclusion uses an independently published version-bump PR, never the
+# feature PR's ancestry as a replacement for exact source-tag evidence.
+export AIDEVOPS_FULL_LOOP_RECEIPT_DIR="$receipt_dir"
+export PATH="${ROOT}/bin:/opt/homebrew/bin:/usr/bin:/bin"
+included_status="${receipt_dir}/testorg_manual-71.status"
+included_evidence="${receipt_dir}/testorg_manual-71.aggregate.json"
+if COMPLETION_RECORD_COMMAND=cmd_record_included_release bash "$published_record_runner" \
+	71 70 v3.0.0 testorg/manual --workflow release-verify.yml >/dev/null 2>&1; then
+	printf 'FAIL inclusion accepted a missing source published receipt\n'
+	exit 1
+fi
+[[ ! -e "$included_status" && ! -e "$included_evidence" ]]
+bash "$published_record_runner" 70 v3.0.0 testorg/manual --workflow release-verify.yml >/dev/null
+grep -qx published "${receipt_dir}/testorg_manual-70.status"
+for invalid_inclusion_mode in wrong-tag-commit draft-release failed-workflow wrong-workflow-tag; do
+	if COMPLETION_RELEASE_MODE="$invalid_inclusion_mode" COMPLETION_RECORD_COMMAND=cmd_record_included_release \
+		bash "$published_record_runner" 71 70 v3.0.0 testorg/manual --workflow release-verify.yml >/dev/null 2>&1; then
+		printf 'FAIL inclusion accepted %s\n' "$invalid_inclusion_mode"
+		exit 1
+	fi
+	[[ ! -e "$included_status" && ! -e "$included_evidence" ]]
+done
+for invalid_compare in behind diverged identical; do
+	if COMPLETION_COMPARE_STATUS="$invalid_compare" COMPLETION_RECORD_COMMAND=cmd_record_included_release \
+		bash "$published_record_runner" 71 70 v3.0.0 testorg/manual --workflow release-verify.yml >/dev/null 2>&1; then
+		printf 'FAIL inclusion accepted %s ancestry\n' "$invalid_compare"
+		exit 1
+	fi
+	[[ ! -e "$included_status" && ! -e "$included_evidence" ]]
+done
+printf '%s\n' not-requested >"$included_status"
+COMPLETION_RECORD_COMMAND=cmd_record_included_release bash "$published_record_runner" \
+	71 70 v3.0.0 testorg/manual --workflow release-verify.yml >/dev/null
+grep -qx superseded "$included_status"
+jq -e '.aggregate_pr == 70 and .source_merge == "2222222222222222222222222222222222222222"
+	and .aggregate_merge == .release_commit and .release_tag == "v3.0.0"' "$included_evidence" >/dev/null
+cp "$included_evidence" "${ROOT}/included-before.json"
+COMPLETION_RECORD_COMMAND=cmd_record_included_release bash "$published_record_runner" \
+	71 70 v3.0.0 testorg/manual --workflow release-verify.yml >/dev/null
+cmp -s "$included_evidence" "${ROOT}/included-before.json"
+if COMPLETION_RECORD_COMMAND=cmd_record_included_release bash "$published_record_runner" \
+	71 58 v3.0.0 marcusquinn/aidevops >/dev/null 2>&1; then
+	printf 'FAIL manual inclusion replaced canonical signed aggregation\n'
+	exit 1
+fi
+unset AIDEVOPS_FULL_LOOP_RECEIPT_DIR
+printf 'PASS manual release inclusion verifies source evidence and ancestry, fails closed, and replays without mutation\n'
+
+# Execute the workflow's actual verification shell, without publishing anything.
+python3 - "$SCRIPTS_DIR" "$ROOT" <<'PY'
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import yaml
+
+scripts = Path(sys.argv[1]).resolve()
+root = Path(sys.argv[2])
+repo = scripts.parent.parent
+workflow = yaml.safe_load((repo / '.github/workflows/release-verify-reusable.yml').read_text())
+step = next(s for s in workflow['jobs']['verify']['steps'] if s.get('name', '').startswith('Verify release,'))
+sha = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+env = dict(os.environ, GH_REPO='testorg/manual', TAG='v3.0.0', RELEASE_ID='123',
+           GITHUB_SHA=sha, COMPLETION_PR_MERGE_SHA=sha)
+for mode, expected, success in [('valid', 'plugin.zip', True), ('valid', '', True),
+                               ('valid', 'missing.zip', False), ('draft-release', '', False),
+                               ('no-assets', '', False), ('empty-asset', '', False),
+                               ('unfinished-asset', '', False), ('wrong-tag-commit', '', False)]:
+    result = subprocess.run(['bash', '-c', step['run']], env=dict(env, COMPLETION_RELEASE_MODE=mode,
+                            EXPECTED_ASSETS=expected), capture_output=True, text=True)
+    assert (result.returncode == 0) == success, (mode, expected, result.stderr)
+print('PASS actual workflow shell verifies exact tag and uploaded assets, rejects invalid publication')
+
+home = root / 'workflow-home'
+target = home / 'repo'
+templates = home / '.aidevops/agents/templates/workflows'
+templates.mkdir(parents=True)
+(home / '.config/aidevops').mkdir(parents=True)
+(target / '.github/workflows').mkdir(parents=True)
+subprocess.run(['git', 'init', '-q', str(target)], check=True)
+subprocess.run(['git', '-C', str(target), 'remote', 'add', 'origin', 'git@github.com:testorg/manual.git'], check=True)
+template = scripts.parent / 'templates/workflows/release-verify-caller.yml'
+shutil.copy(template, templates / template.name)
+(home / '.config/aidevops/repos.json').write_text(json.dumps({'initialized_repos': [
+    {'slug': 'testorg/manual', 'path': str(target), 'local_only': False}]}))
+sync_env = dict(os.environ, HOME=str(home))
+command = ['bash', str(scripts / 'sync-workflows-helper.sh'), '--repo', 'testorg/manual',
+           '--workflow', 'release-verify', '--install-missing', '--json']
+result = subprocess.run(command, env=sync_env, check=True, capture_output=True, text=True)
+assert 'PLANNED' in result.stdout, result.stdout
+result = subprocess.run(command, env=dict(sync_env, COMPLETION_ACTIONS_ENABLED='false'),
+                        check=True, capture_output=True, text=True)
+assert 'actions-disabled' in result.stdout and 'PLANNED' not in result.stdout, result.stdout
+subprocess.run(['git', '-C', str(target), 'remote', 'remove', 'origin'], check=True)
+result = subprocess.run(command, env=sync_env, check=True, capture_output=True, text=True)
+assert 'unsupported-forge' in result.stdout and 'PLANNED' not in result.stdout, result.stdout
+shutil.copy(template, target / '.github/workflows/release-verify.yml')
+result = subprocess.run(['bash', str(scripts / 'check-workflows-helper.sh'), '--repo', 'testorg/manual',
+                         '--workflow', 'release-verify', '--json'], env=sync_env,
+                        check=True, capture_output=True, text=True)
+assert 'CURRENT/CALLER' in result.stdout, result.stdout
+print('PASS managed release caller is offered only with Actions enabled and classifies current')
+PY
 
 direct_worktree="${ROOT}/direct-merge-worktree"
 mkdir -p "$direct_worktree"

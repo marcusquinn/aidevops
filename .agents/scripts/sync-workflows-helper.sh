@@ -693,6 +693,8 @@ _contributing_policy_needs_sync() {
 # Emits an empty line for eligible repositories or a stable skip reason.
 _installation_skip_reason() {
 	local _slug="$1"
+	local _workflow="${2:-}"
+	local _path="${3:-}"
 	local _registry_flags
 	_registry_flags=$(jq -r --arg slug "$_slug" '
 		.initialized_repos[]?
@@ -735,6 +737,24 @@ _installation_skip_reason() {
 	fi
 	if jq -e '(.permissions.admin == true) or (.permissions.maintain == true)' \
 		>/dev/null 2>&1 <<<"$_repo_json"; then
+		if [[ "$_workflow" == "release-verify" ]]; then
+			local _remote="" _remote_url=""
+			_remote=$(_resolve_github_remote "$_path" "$_slug") || _remote=""
+			_remote_url=$(git -C "$_path" remote get-url "$_remote" 2>/dev/null || true)
+			if ! _github_slug_from_remote_url "$_remote_url" >/dev/null; then
+				printf 'unsupported-forge\n'
+				return 0
+			fi
+			local _actions_json=""
+			_actions_json=$(gh api "repos/${_slug}/actions/permissions" 2>/dev/null) || {
+				printf 'actions-unavailable\n'
+				return 0
+			}
+			if ! jq -e '.enabled == true' >/dev/null 2>&1 <<<"$_actions_json"; then
+				printf 'actions-disabled\n'
+				return 0
+			fi
+		fi
 		printf '\n'
 		return 0
 	fi
@@ -752,7 +772,7 @@ _emit_actionable_row() {
 		if [[ "$_class" == "$_CLASS_LOCAL_ONLY" ]]; then
 			_skip_reason="local-only"
 		else
-			_skip_reason=$(_installation_skip_reason "$_slug")
+			_skip_reason=$(_installation_skip_reason "$_slug" "$_workflow" "$_path")
 		fi
 	fi
 	printf '%s\t%s\t%s\t%s\t%s\n' \

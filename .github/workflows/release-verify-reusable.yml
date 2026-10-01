@@ -50,10 +50,11 @@ jobs:
           release=$(gh api "repos/$GH_REPO/releases/$RELEASE_ID")
           jq -e --arg tag "$TAG" --arg expected "$EXPECTED_ASSETS" '
             (.assets | map(.name)) as $names
+            | ($expected | split("\n") | map(select(length > 0))) as $wanted
             | .tag_name == $tag and .draft == false
             and (.assets | length > 0)
             and all(.assets[]; .state == "uploaded" and .size > 0)
-            and all($expected | split("\n")[] | select(length > 0); . as $name | $names | index($name) != null)
+            and (($wanted | length) == 0 or ($names | sort) == ($wanted | sort))
           ' <<<"$release"
       - name: Repository preflight (optional)
         if: inputs.preflight != ''
