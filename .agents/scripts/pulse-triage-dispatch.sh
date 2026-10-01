@@ -83,6 +83,7 @@ _compose_consolidation_worker_instructions() {
    - \`## How\` — approach with explicit file paths and line references
    - \`## Acceptance Criteria\` — testable checkboxes
    - \`### Files Scope\` — the successor's write surface, one repo-relative path per line and nothing else on the line (\`- EDIT: path/to/file\` or \`- NEW: path/to/file\`). Carry over the parent's scope when present. Read-only references belong in \`## How\`, not here. The pulse holds \`auto-dispatch\` briefs whose scope fails \`pre-dispatch-validator-helper.sh scope-check\`, so prose after a path makes the successor undispatchable.
+     Check each path against the current default branch before copying its scope marker: use \`git ls-files\` in an up-to-date default-branch checkout or \`gh api\` for that branch's contents. Use \`EDIT:\` when the path already exists on the default branch; use \`NEW:\` only after confirming it is absent. A stale checkout or failed API lookup is not proof of absence.
    - \`## Context & Decisions\` — which commenter contributed which insight (attribution matters)
    - \`## Contributors\` — a cc line @-mentioning every author from the list below
 
@@ -91,15 +92,15 @@ _compose_consolidation_worker_instructions() {
 3. **File the new consolidated issue:**
 
 \`\`\`bash
-gh issue create --repo "${repo_slug}" \\
+~/.aidevops/agents/scripts/gh-write-helper.sh issue create --repo "${repo_slug}" \\
   --title "consolidated: <concise description derived from the merged spec>" \\
-  --label "consolidated,origin:worker,auto-dispatch,<copy relevant labels from parent, excluding needs-consolidation, consolidation-task, and origin:interactive>" \\
-  --body "<merged body from step 2>"
+  --label "consolidated,origin:worker,auto-dispatch,status:available,<copy relevant labels from parent, excluding all status:* labels, needs-consolidation, consolidation-task, and origin:interactive>" \\
+  --body-file "<file containing the merged body from step 2>"
 \`\`\`
 
-**Note (GH#18670):** \`origin:worker\` is mandatory on this label list — consolidated issues are pulse-generated artifacts, not interactive maintainer work. Without it, the issue is born \`origin:interactive\` (raw \`gh issue create\` has no origin auto-detection), which triggers the GH#18352 dispatch-dedup block and drains the queue.
+**Note (GH#18670):** \`origin:worker\` is mandatory on this label list — consolidated issues are pulse-generated artifacts, not interactive maintainer work. Use the signed wrapper above rather than the raw GitHub CLI so the successor retains the managed signature and origin metadata.
 
-**Dispatch handoff:** \`auto-dispatch\` is also mandatory. The consolidated successor marker and this explicit handoff must both be present before \`_has_consolidated_label\` permits implementation dispatch.
+**Dispatch handoff:** \`auto-dispatch\` and \`status:available\` are also mandatory. Keep exactly one \`status:*\` label on the successor: \`status:available\`, never the parent's lifecycle status. The consolidated successor marker and this explicit handoff must both be present before \`_has_consolidated_label\` permits implementation dispatch; the fill-floor enumerator also needs the available status.
 
    Capture the new issue number as \$NEW_NUM.
 
