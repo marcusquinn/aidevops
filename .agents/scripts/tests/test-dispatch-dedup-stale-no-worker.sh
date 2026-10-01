@@ -393,7 +393,6 @@ test_protected_draft_remains_immediate_pr_block() {
 test_remote_branch_liveness() {
 	local result=""
 	result=$(
-		# Isolate stale module fixtures from the existing pulse layer fixtures.
 		(
 			# shellcheck source=../dispatch-dedup-stale.sh
 			source "${SCRIPTS_DIR}/dispatch-dedup-stale.sh"
@@ -411,7 +410,6 @@ test_remote_branch_liveness() {
 				[[ "$api_failed" == true ]] && return 1
 				case "$args" in
 				*git/matching-refs/heads/*)
-					# Two pages exercise pagination, not just the first response.
 					jq -nc --arg branch "$branch_name" '[[{ref:"refs/heads/main",object:{sha:"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}],[{ref:("refs/heads/"+$branch),object:{sha:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}]]'
 					;;
 				*git/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa*) printf '%s\n' "$tip_date" ;;

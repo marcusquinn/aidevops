@@ -1175,14 +1175,8 @@ _is_stale_assignment() {
 	now_epoch=$(date +%s)
 	_STALE_BRANCH_CHECKPOINT=""
 
-	# Fetch issue comments to find the most recent dispatch claim and
-	# overall activity timestamp. Use --paginate --slurp so gh combines all
-	# pages before jq sorts them; `gh api --paginate --jq ...` applies jq per
-	# page, which can leave page-1 timestamps ahead of newer activity on long
-	# issue threads and trigger false stale recovery (GH#3894 / t2769 incident).
-	#
-	# GH#18816: fail-CLOSED on API failure. A transient gh error is NOT evidence
-	# that the assignment is stale — block this pulse cycle and retry next cycle.
+	# GH#3894/t2769: slurp all comment pages before sorting, not per-page --jq.
+	# GH#18816: API failure is not staleness; protect ownership this pulse cycle.
 	local comments_json
 	if _interactive_claim_fence_blocks_dispatch "$issue_number" "$repo_slug" || ! comments_json=$(_stale_assignment_fetch_comments_json "$issue_number" "$repo_slug"); then
 		# Cannot fetch comments — cannot determine staleness. Fail-CLOSED:
@@ -1203,11 +1197,8 @@ _is_stale_assignment() {
 	# t2153 age-floor guard: issue cannot be stale before it could signal.
 	_issue_too_young_for_staleness "$issue_created_at" "$effective_threshold" "$now_epoch" && return 1
 
-	# t2132 Fix D: Find the most recent dispatch/claim comment.
-	# Matches worker dispatch patterns AND interactive session claim pattern.
-	# Previously only matched "Dispatching worker|DISPATCH_CLAIM|Worker (PID",
-	# which missed the interactive claim comment posted by
-	# interactive-session-helper.sh ("Interactive session claimed").
+	# t2132 Fix D: include both worker dispatch and "Interactive session claimed"
+	# comments from interactive-session-helper.sh when finding the latest claim.
 	local last_dispatch_ts=""
 	last_dispatch_ts=$(_stale_assignment_latest_dispatch_ts "$comments_json")
 
