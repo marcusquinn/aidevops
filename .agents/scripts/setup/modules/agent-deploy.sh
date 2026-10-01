@@ -1115,6 +1115,16 @@ _runtime_bundle_activate_locked() {
 		return 1
 	fi
 
+	# Commit the stamp while the activation lock is still held. Later setup
+	# stages may fail or be interrupted; they must not leave a stale stamp.
+	if ! _runtime_bundle_write_active_sha "$target_dir"; then
+		if [[ -n "$previous_root" ]]; then
+			_runtime_bundle_switch_link "$target_dir" "$previous_root" || return 1
+		else
+			rm -f "$target_dir"
+		fi
+		return 1
+	fi
 	_AIDEVOPS_ACTIVE_BUNDLE_ROOT="$agents_root"
 	_runtime_bundle_prune "$bundles_dir" "$agents_root" "$previous_root"
 	return 0
@@ -1409,24 +1419,30 @@ _verify_agents_deploy_or_restore() {
 	return 0
 }
 
+_runtime_bundle_write_active_sha() {
+	local target_dir="$1"
+	local deployed_sha=""
+	local stamp_file="${target_dir%/*}/.deployed-sha"
+	local stamp_tmp="${stamp_file}.tmp.$$"
+	deployed_sha=$(_runtime_bundle_manifest_value "$target_dir/.bundle-manifest" git_sha) || return 1
+	[[ "$deployed_sha" =~ ^[0-9a-f]{40}$ ]] || return 1
+	if ! printf '%s\n' "$deployed_sha" >"$stamp_tmp" || ! mv -f "$stamp_tmp" "$stamp_file"; then
+		rm -f "$stamp_tmp"
+		return 1
+	fi
+	return 0
+}
+
 _write_deployed_agents_sha() {
 	local repo_dir="$1"
-
-	# Write deployed-SHA stamp BEFORE the pulse restart so the stamp is
-	# available immediately for subsequent setup steps and the next run's
-	# backup-skip check (t3221). Previously written after the blocking
-	# restart wait; moving it here has no correctness impact — the deploy
-	# is already fully on disk at this point.
-	# t2156: enables auto-redeploy when local commits land between releases.
-	local deployed_sha
-	deployed_sha=$(git -C "$repo_dir" rev-parse HEAD 2>/dev/null || echo "")
-	if [[ -n "$deployed_sha" ]]; then
-		local aidevops_dir="${HOME}/.aidevops"
-		mkdir -p "$aidevops_dir"
-		printf '%s\n' "$deployed_sha" >"${aidevops_dir}/.deployed-sha"
-	fi
-
-	return 0
+	local write_rc=0
+	# Do not stamp the mutable source HEAD: another setup may have activated
+	# a different bundle since this invocation staged its source tree.
+	[[ -d "$repo_dir" ]] || return 1
+	aidevops_runtime_transition_lock_acquire || return 1
+	_runtime_bundle_write_active_sha "${HOME}/.aidevops/agents" || write_rc=$?
+	aidevops_runtime_transition_lock_release
+	return "$write_rc"
 }
 
 _sync_agent_bin_shims() {
