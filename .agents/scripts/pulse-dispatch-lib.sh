@@ -73,6 +73,11 @@ _DISPATCH_NEGATIVE_CACHE_TTL_SECONDS="${AIDEVOPS_DISPATCH_NEGATIVE_CACHE_TTL_SEC
 _DISPATCH_TERMINAL_CIRCUIT_CACHE_TTL_SECONDS="${AIDEVOPS_DISPATCH_TERMINAL_CIRCUIT_CACHE_TTL_SECONDS:-7200}"
 [[ "$_DISPATCH_TERMINAL_CIRCUIT_CACHE_TTL_SECONDS" =~ ^[0-9]+$ ]] || _DISPATCH_TERMINAL_CIRCUIT_CACHE_TTL_SECONDS=7200
 ((_DISPATCH_TERMINAL_CIRCUIT_CACHE_TTL_SECONDS <= 14400)) || _DISPATCH_TERMINAL_CIRCUIT_CACHE_TTL_SECONDS=14400
+# GH#33332: unknown-blocker backoff is also revision-keyed, but it expires on
+# its own schedule. Never cache longer than the shortest backoff window (15m).
+_DISPATCH_TERMINAL_BACKOFF_CACHE_TTL_SECONDS="${AIDEVOPS_DISPATCH_TERMINAL_BACKOFF_CACHE_TTL_SECONDS:-900}"
+[[ "$_DISPATCH_TERMINAL_BACKOFF_CACHE_TTL_SECONDS" =~ ^[0-9]+$ ]] || _DISPATCH_TERMINAL_BACKOFF_CACHE_TTL_SECONDS=900
+((_DISPATCH_TERMINAL_BACKOFF_CACHE_TTL_SECONDS <= 900)) || _DISPATCH_TERMINAL_BACKOFF_CACHE_TTL_SECONDS=900
 _DISPATCH_BENIGN_BLOCKS_SCRATCH_DIR=""
 _DISPATCH_BENIGN_BLOCKS_LEGACY_MIN_AGE_SECONDS="${AIDEVOPS_PULSE_BENIGN_BLOCKS_LEGACY_MIN_AGE_SECONDS:-3600}"
 [[ "$_DISPATCH_BENIGN_BLOCKS_LEGACY_MIN_AGE_SECONDS" =~ ^[0-9]+$ ]] || _DISPATCH_BENIGN_BLOCKS_LEGACY_MIN_AGE_SECONDS=3600
@@ -166,7 +171,7 @@ _dispatch_live_owner_refusal_fields() {
 _dispatch_negative_cache_record() {
 	local candidate="$1" reason="$2" pr="${3:-}" fingerprint="${4:-}" owner_path="${5:-}"
 	local fields="" issue="" repo="" updated="" file="" tmp=""
-	case "$reason" in dedup_active_claim | dedup_active_claim_live_owner | dedup_active_claim_durable_launch | worker_draft_checkpoint_blocked | terminal_blocker_circuit | "$_DISPATCH_LIVE_OWNER_HOLD_REASON") ;; *) return 0 ;; esac
+	case "$reason" in dedup_active_claim | dedup_active_claim_live_owner | dedup_active_claim_durable_launch | worker_draft_checkpoint_blocked | terminal_blocker_circuit | terminal_blocker_backoff | "$_DISPATCH_LIVE_OWNER_HOLD_REASON") ;; *) return 0 ;; esac
 	if [[ "$reason" == "$_DISPATCH_LIVE_OWNER_HOLD_REASON" ]]; then
 		[[ "$pr" =~ ^[1-9][0-9]*$ && "$fingerprint" =~ ^[A-Za-z0-9_.:-]+$ && -n "$owner_path" ]] || return 0
 		[[ "$owner_path" != *$'\t'* && "$owner_path" != *$'\n'* ]] || return 0
@@ -211,7 +216,8 @@ _dispatch_negative_cache_reason() {
 	# The refused attempt's own claim comment bumps updatedAt, so a live-owner
 	# hold is keyed to the owner generation rather than the issue revision.
 	[[ "$cached" == "$updated" || "$reason" == "$_DISPATCH_LIVE_OWNER_HOLD_REASON" ]] || return 1
-	if [[ "$reason" != terminal_blocker_circuit && "$reason" != worker_draft_checkpoint_blocked &&
+	if [[ "$reason" != terminal_blocker_circuit && "$reason" != terminal_blocker_backoff &&
+		"$reason" != worker_draft_checkpoint_blocked &&
 		"$reason" != "$_DISPATCH_LIVE_OWNER_HOLD_REASON" ]]; then
 		# Ownership hints: the snapshot must independently still show a claimed
 		# owner. The worker-draft exception uses a complete, bounded-age PR
@@ -224,6 +230,9 @@ _dispatch_negative_cache_reason() {
 		# The circuit hold applies to unowned available issues by design. An
 		# unchanged updatedAt proves no edit, retry directive or new comment.
 		ttl="$_DISPATCH_TERMINAL_CIRCUIT_CACHE_TTL_SECONDS"
+		;;
+	terminal_blocker_backoff)
+		ttl="$_DISPATCH_TERMINAL_BACKOFF_CACHE_TTL_SECONDS"
 		;;
 	dedup_active_claim | dedup_active_claim_live_owner | dedup_active_claim_durable_launch)
 		# Empty worker pools must retain the authoritative active-claim recheck.

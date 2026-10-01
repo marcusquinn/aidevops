@@ -182,6 +182,14 @@ dependency change or OWNER/MEMBER standalone retry re-arms it. Verify the event
 before retrying. Permission holds remain independent of brief and code changes;
 unclassified blockers retain bounded backoff rather than a permanent circuit.
 
+`input_required` (GH#33332) needs a standalone
+`TERMINAL_BLOCKER_INPUT_OWNER=user|contributor|maintainer|admin` line; without
+it the evidence stays `unknown`. Like every known class, the first observation
+keeps one independent verification attempt and only a second identical result
+opens the circuit, so one worker cannot defer work on its own. Its revision
+tracks the brief and dependencies: supplying the input in the issue body
+re-arms dispatch. It adds no label or review gate beyond the circuit hold.
+
 An open `TERMINAL_BLOCKER_CIRCUIT` stops redispatch but is not an owner. The
 runner that opened it queues the issue (`terminal-blocker-recovery-helper.sh`;
 circuits it authored are backfilled every 6h) and its pulse supervisor runs
@@ -200,10 +208,14 @@ AI brief owner:
    push transport, a guard blocking its own fix): fix it when in scope, or
    deduplicate/file a worker-ready framework issue and link it with
    `blocked-by`. Post `terminal-blocker-circuit:retry` only after the fix is live.
-4. **Permission, secret, spend or trust boundary**: never grant or work around.
+4. **Input required**: first decide whatever delegated AI authority covers
+   (defaults, naming, reversible choices, scope interpretation) and revise the
+   brief, which re-arms the circuit. Otherwise name the exact missing input and
+   its owner (user, contributor, maintainer or admin) on the issue once.
+5. **Permission, secret, spend or trust boundary**: never grant or work around.
    Name the smallest human input on the issue (for example an interactive
    `aidevops setup --scope source-access`) and record `wake: human_decision`.
-5. Record exactly one decision per entry: `terminal-blocker-recovery-helper.sh
+6. Record exactly one decision per entry: `terminal-blocker-recovery-helper.sh
    record <repo> <issue>` with stdin `{"wake","next_action","evidence"}`
    (`wake`: `brief_revision`, `environment_fix`, `owner_change`,
    `dependency_change` or `human_decision`). A decision suppresses

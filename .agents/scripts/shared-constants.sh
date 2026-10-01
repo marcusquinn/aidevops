@@ -661,6 +661,11 @@ readonly TASK_SIBLING_NON_ACTIVE_STATES_SQL="'verified','cancelled','deployed','
 #   echo "Remote: $(sanitize_url "$remote_url")"
 #   log_error "fetch failed: $(scrub_credentials "$error_output")"
 
+# Known credential token prefixes (ERE alternation, no grouping). Shared by
+# scrub_credentials and the security-posture tracked-template classifier
+# (GH#33339) so redaction and detection recognise the same signatures.
+[[ -z "${AIDEVOPS_CREDENTIAL_PREFIX_ERE+x}" ]] && AIDEVOPS_CREDENTIAL_PREFIX_ERE='sk-|GOCSPX-|ghp_|gho_|ghs_|ghu_|github_pat_|glpat-|xoxb-|xoxp-'
+
 scrub_credentials() {
 	local text="$1"
 	# Word-boundary anchor (^|non-word-char) prevents false positives where a
@@ -669,7 +674,7 @@ scrub_credentials() {
 	# but is NOT a credential. macOS BSD sed has no `\b`, so we capture the
 	# preceding boundary character and restore it via \1 in the replacement.
 	# (t2892, GH#21026)
-	printf '%s' "$text" | sed -E 's/(^|[^A-Za-z0-9_-])(sk-|GOCSPX-|ghp_|gho_|ghs_|ghu_|github_pat_|glpat-|xoxb-|xoxp-)[A-Za-z0-9_-]{10,}/\1[redacted-credential]/g'
+	printf '%s' "$text" | sed -E "s/(^|[^A-Za-z0-9_-])(${AIDEVOPS_CREDENTIAL_PREFIX_ERE})[A-Za-z0-9_-]{10,}/\\1[redacted-credential]/g"
 	return 0
 }
 

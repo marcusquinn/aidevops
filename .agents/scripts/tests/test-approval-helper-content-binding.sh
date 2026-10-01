@@ -604,6 +604,19 @@ ${worker_footer}"
 	printf '%s\n' "$dispatch_comments" >"${FIXTURES}/comments-41.json"
 	assert_verify "trusted canonical terminal-blocker release preserves approval" issue 41 VERIFIED 0
 
+	# GH#33332: input_required releases are canonical writer output too.
+	local input_release="${terminal_blocker_release/reason=missing_files_scope owner=brief-author/reason=input_required owner=maintainer}"
+	input_release="${input_release/Next action: Add a canonical ### Files Scope (or legacy ## Files Scope) section listing the permitted paths in the issue body./Next action: Supply the specific input named in the protected dossier in the issue brief; a brief or dependency change re-arms dispatch. The recovery supervisor first decides anything AI can resolve within delegated authority.}"
+	reset_and_sign issue 41
+	dispatch_comments=$(jq -c --arg body "$input_release" '.[0] += [{id:4316,node_id:"IC_4316",user:{id:1,node_id:"U_1",login:"maintainer",type:"User"},author_association:"OWNER",created_at:"2026-01-01T00:08:00Z",updated_at:"2026-01-01T00:08:00Z",body:$body}]' "${FIXTURES}/comments-41.json")
+	printf '%s\n' "$dispatch_comments" >"${FIXTURES}/comments-41.json"
+	assert_verify "trusted canonical input_required release preserves approval" issue 41 VERIFIED 0
+
+	reset_and_sign issue 41
+	dispatch_comments=$(jq -c --arg body "${input_release/owner=maintainer/owner=human}" '.[0] += [{id:4316,node_id:"IC_4316",user:{id:1,node_id:"U_1",login:"maintainer",type:"User"},author_association:"OWNER",created_at:"2026-01-01T00:08:00Z",updated_at:"2026-01-01T00:08:00Z",body:$body}]' "${FIXTURES}/comments-41.json")
+	printf '%s\n' "$dispatch_comments" >"${FIXTURES}/comments-41.json"
+	assert_verify "input_required release with unlisted owner remains content-bound" issue 41 STALE_APPROVAL 4
+
 	reset_and_sign issue 41
 	dispatch_comments=$(jq -c --arg body "${terminal_blocker_release}
 extra trusted commentary" '.[0] += [{id:4316,node_id:"IC_4316",user:{id:1,node_id:"U_1",login:"maintainer",type:"User"},author_association:"OWNER",created_at:"2026-01-01T00:08:00Z",updated_at:"2026-01-01T00:08:00Z",body:$body}]' "${FIXTURES}/comments-41.json")

@@ -318,6 +318,42 @@ test_external_trigger_pending_revision() {
 	return 0
 }
 
+test_input_required_owner_class() {
+	local issue='{"title":"Deploy check","body":"### Files Scope\n- deploy.sh"}'
+	local output="${TEST_ROOT}/input.ndjson" fingerprint="" revision="" changed="" fragment="" observation="" status=0
+	printf '%s\n' '{"type":"text","text":"BLOCKED: no authorized staging origin is recorded\nTERMINAL_BLOCKER_REASON=input_required\nTERMINAL_BLOCKER_INPUT_OWNER=maintainer"}' >"$output"
+	terminal_blocker_capture_output "$output" || status=1
+	fingerprint="$AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT"
+	[[ "$(_terminal_blocker_reason "$fingerprint")" == input_required ]] || status=1
+	[[ "$(_terminal_blocker_input_owner "$fingerprint")" == maintainer ]] || status=1
+	fragment=$(terminal_blocker_observation_fragment 111111111111111111111111 "$fingerprint" first)
+	[[ "$fragment" == *'reason=input_required owner=maintainer'* && "$fragment" == *'status:available'* ]] || status=1
+	# One worker cannot hold alone: first observation keeps a verification attempt.
+	revision=$(terminal_blocker_task_revision "$issue" owner/repo 42 "$TEST_ROOT" input_required) || status=1
+	[[ "$(terminal_blocker_release_mode '[]' "$revision" "$fingerprint")" == first ]] || status=1
+	observation=$(jq -nc --arg body "<!-- aidevops:terminal-blocker-observation revision=${revision} blocker=${fingerprint} -->" \
+		'[{body:$body,created_at:"2026-08-31T10:00:00Z",author_association:"MEMBER"}]')
+	[[ "$(terminal_blocker_release_mode "$observation" "$revision" "$fingerprint")" == circuit ]] || status=1
+	TEST_TARGET_REVISION='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+	changed=$(terminal_blocker_task_revision "$issue" owner/repo 42 "$TEST_ROOT" input_required) || status=1
+	[[ "$revision" == "$changed" ]] || status=1
+	changed=$(terminal_blocker_task_revision '{"title":"Deploy check","body":"### Files Scope\n- deploy.sh\nStaging origin: supplied"}' \
+		owner/repo 42 "$TEST_ROOT" input_required) || status=1
+	[[ "$revision" != "$changed" ]] || status=1
+	TEST_TARGET_REVISION='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+	# Missing, invalid or duplicated owners stay unclassified and retryable.
+	printf '%s\n' '{"type":"text","text":"BLOCKED: unsure\nTERMINAL_BLOCKER_REASON=input_required"}' >"$output"
+	terminal_blocker_capture_output "$output" || status=1
+	[[ "$(_terminal_blocker_reason "$AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT")" == unknown ]] || status=1
+	printf '%s\n' '{"type":"text","text":"BLOCKED: unsure\nTERMINAL_BLOCKER_REASON=input_required\nTERMINAL_BLOCKER_INPUT_OWNER=human"}' >"$output"
+	terminal_blocker_capture_output "$output" || status=1
+	[[ "$(_terminal_blocker_reason "$AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT")" == unknown ]] || status=1
+	_terminal_blocker_input_owner "$(_terminal_blocker_hash 'v2:target_code_blocker')" >/dev/null && status=1
+	unset AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT
+	print_result "input_required names a user/contributor/maintainer/admin owner, needs two observations and re-arms on brief change" "$status"
+	return 0
+}
+
 test_unknown_and_redaction() {
 	local output="${TEST_ROOT}/unknown.ndjson" fingerprint="" fragment="" comments="" status=0
 	printf '%s\n' '{"type":"text","text":"BLOCKED: private-token /private/runner/file.sh ambiguous failure"}' >"$output"
@@ -712,6 +748,7 @@ main() {
 	test_dispatch_hold_revalidates_revision
 	test_brief_only_revision
 	test_external_trigger_pending_revision
+	test_input_required_owner_class
 	test_excluded_scope_revision
 	test_unknown_and_redaction
 	test_final_dossier_and_structural_precedence

@@ -1061,6 +1061,15 @@ Preserve the protected blocker dossier and human-owned recovery action. Do not
 retry the denied read or regenerate a request to produce another permission event.
 Brief edits and unrelated merges cannot resolve this class; an explicit trusted
 retry only schedules verification and never grants source or secret access.
+Only when a specific value, target, credential or decision is required, absent
+from the brief, repository, linked issues and your tools, and cannot be derived
+or safely chosen within delegated authority, use both lines:
+TERMINAL_BLOCKER_REASON=input_required
+TERMINAL_BLOCKER_INPUT_OWNER=maintainer
+Owner is one of user, contributor, maintainer or admin: whoever alone can
+supply it. Reversible implementation choices, naming, defaults and scope
+interpretation are yours to decide, never this class. Name the exact input and
+where you looked; never guess it. Not for permissions or external events.
 If no class is established, omit the reason line: unknown evidence stays retryable
 with bounded cross-runner backoff, not a permanent hold.
 
