@@ -358,7 +358,7 @@ test_stale_pid_reclaim() {
 }
 
 # ============================================================
-# TEST 6: failed cleanup — last-run NOT updated on non-zero exit
+# Ownerless locks: missing, empty and invalid owners respect the age grace.
 # ============================================================
 test_ownerless_lock() {
 	local owner="$1"
@@ -398,6 +398,9 @@ test_ownerless_lock() {
 	return 0
 }
 
+# ============================================================
+# TEST 6: failed cleanup — last-run NOT updated on non-zero exit
+# ============================================================
 test_failed_cleanup_no_last_run_update() {
 	local logs_dir="${TEST_DIR}/.aidevops/logs"
 	local last_run_file="${logs_dir}/cleanup_worktrees.last-run"

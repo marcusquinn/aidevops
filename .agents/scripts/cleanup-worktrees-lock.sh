@@ -83,9 +83,13 @@ _lock_acquire() {
 		local mtime="" now="" age=""
 		[[ "$grace" =~ ^[0-9]+$ && ${#grace} -le 9 ]] || grace=300
 		_LOCK_SKIP_REASON="Ownerless lock age unavailable"
-		case "$(uname -s)" in
-		Darwin* | FreeBSD*) mtime=$(stat -f %m "$LOCK_DIR" 2>/dev/null) || return 1 ;;
-		*) mtime=$(stat -c %Y "$LOCK_DIR" 2>/dev/null) || return 1 ;;
+		case "$(uname)" in
+		Darwin* | FreeBSD*)
+			mtime=$(stat -f %m "$LOCK_DIR" 2>/dev/null) || return 1
+			;;
+		*)
+			mtime=$(stat -c %Y "$LOCK_DIR" 2>/dev/null) || return 1
+			;;
 		esac
 		[[ "$mtime" =~ ^[0-9]+$ ]] || return 1
 		now=$(date +%s) || return 1

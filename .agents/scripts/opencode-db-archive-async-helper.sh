@@ -100,9 +100,7 @@ _is_pid_alive() {
 	return 0
 }
 
-# Attempt to acquire the lock directory. On success, writes PID file and
-# registers a trap. Returns 1 (skip this run) if another live instance holds
-# the lock. Reclaims the lock if the holder PID is dead (crash recovery).
+# Finish acquisition only after recording the owner successfully.
 _lock_finish_acquire() {
 	if ! printf '%s\n' "$$" >"$PID_FILE"; then
 		rm -f "$PID_FILE" 2>/dev/null || true
@@ -133,9 +131,13 @@ _lock_acquire() {
 		local mtime="" now="" age=""
 		[[ "$grace" =~ ^[0-9]+$ && ${#grace} -le 9 ]] || grace=300
 		_LOCK_SKIP_REASON="Ownerless lock age unavailable"
-		case "$(uname -s)" in
-		Darwin* | FreeBSD*) mtime=$(stat -f %m "$LOCK_DIR" 2>/dev/null) || return 1 ;;
-		*) mtime=$(stat -c %Y "$LOCK_DIR" 2>/dev/null) || return 1 ;;
+		case "$(uname)" in
+		Darwin* | FreeBSD*)
+			mtime=$(stat -f %m "$LOCK_DIR" 2>/dev/null) || return 1
+			;;
+		*)
+			mtime=$(stat -c %Y "$LOCK_DIR" 2>/dev/null) || return 1
+			;;
 		esac
 		[[ "$mtime" =~ ^[0-9]+$ ]] || return 1
 		now=$(date +%s) || return 1
