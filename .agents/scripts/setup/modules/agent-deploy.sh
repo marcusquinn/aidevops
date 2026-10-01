@@ -1099,12 +1099,6 @@ _runtime_bundle_activate_locked() {
 		fi
 		return 1
 	fi
-	if [[ -n "$previous_root" ]]; then
-		local previous_tmp="${previous_link}.tmp.$$"
-		rm -f "$previous_tmp"
-		ln -s "$previous_root" "$previous_tmp" && _runtime_bundle_replace_link "$previous_tmp" "$previous_link" || rm -f "$previous_tmp"
-	fi
-
 	if [[ "${AIDEVOPS_BUNDLE_FAIL_AT:-}" == "after-activation" ]] ||
 		[[ "$(_runtime_bundle_resolve_root "$target_dir" 2>/dev/null || true)" != "$agents_root" ]]; then
 		if [[ -n "$previous_root" ]]; then
@@ -1124,6 +1118,12 @@ _runtime_bundle_activate_locked() {
 			rm -f "$target_dir"
 		fi
 		return 1
+	fi
+	# Do not destroy the previous rollback target on an aborted activation.
+	if [[ -n "$previous_root" ]]; then
+		local previous_tmp="${previous_link}.tmp.$$"
+		rm -f "$previous_tmp"
+		ln -s "$previous_root" "$previous_tmp" && _runtime_bundle_replace_link "$previous_tmp" "$previous_link" || rm -f "$previous_tmp"
 	fi
 	_AIDEVOPS_ACTIVE_BUNDLE_ROOT="$agents_root"
 	_runtime_bundle_prune "$bundles_dir" "$agents_root" "$previous_root"

@@ -632,10 +632,12 @@ run_activation_stamp_test() (
 	local old_sha="1111111111111111111111111111111111111111"
 	local new_sha="2222222222222222222222222222222222222222"
 	local bundles="$HOME/.aidevops/runtime-bundles"
+	bundles=$(cd "$bundles" && pwd -P) || return 1
 	printf 'git_sha=%s\nstatus=validated\n' "$old_sha" >"$bundles/old/agents/.bundle-manifest"
 	printf 'git_sha=%s\nstatus=validated\n' "$new_sha" >"$bundles/new/agents/.bundle-manifest"
 	cp "$bundles/new/agents/.bundle-manifest" "$bundles/new/manifest"
 	ln -s "$bundles/old/agents" "$HOME/.aidevops/agents"
+	ln -s "$bundles/retained/agents" "$HOME/.aidevops/previous-runtime-bundle"
 	printf '%s\n' "$old_sha" >"$HOME/.aidevops/.deployed-sha"
 	# shellcheck source=../setup/modules/agent-deploy.sh
 	source "$REPO_ROOT/.agents/scripts/setup/modules/agent-deploy.sh"
@@ -645,6 +647,7 @@ run_activation_stamp_test() (
 	if AIDEVOPS_BUNDLE_FAIL_AT=after-activation _runtime_bundle_activate "$HOME/.aidevops/agents" "$bundles/new"; then return 1; fi
 	[[ "$(readlink "$HOME/.aidevops/agents")" == "$bundles/old/agents" ]] || return 1
 	[[ "$(<"$HOME/.aidevops/.deployed-sha")" == "$old_sha" ]] || return 1
+	[[ "$(readlink "$HOME/.aidevops/previous-runtime-bundle")" == "$bundles/retained/agents" ]] || return 1
 	_runtime_bundle_activate "$HOME/.aidevops/agents" "$bundles/new" || return 1
 	[[ "$(<"$HOME/.aidevops/.deployed-sha")" == "$new_sha" ]] || return 1
 	_write_deployed_agents_sha "$REPO_ROOT" || return 1
@@ -654,6 +657,7 @@ run_activation_stamp_test() (
 	if _runtime_bundle_activate "$HOME/.aidevops/agents" "$bundles/old"; then return 1; fi
 	[[ "$(readlink "$HOME/.aidevops/agents")" == "$bundles/new/agents" ]] || return 1
 	[[ "$(<"$HOME/.aidevops/.deployed-sha")" == "$new_sha" ]] || return 1
+	[[ "$(readlink "$HOME/.aidevops/previous-runtime-bundle")" == "$bundles/old/agents" ]] || return 1
 	printf 'git_sha=%s\nstatus=validated\n' "$old_sha" >"$bundles/old/agents/.bundle-manifest"
 	_runtime_bundle_activate "$HOME/.aidevops/agents" "$bundles/old" || return 1
 	# A postcondition failure restores both the previous tree and its stamp.
