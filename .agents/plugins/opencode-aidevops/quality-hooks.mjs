@@ -37,6 +37,7 @@ import {
 } from "./source-access-request.mjs";
 import { checkResearchStagingAccess } from "./research-staging-guard.mjs";
 import { checkGrepPathScope } from "./grep-path-guard.mjs";
+import { checkRedactedEdit } from "./redacted-edit-guard.mjs";
 import {
   bindActiveScriptsDir,
   checkCanonicalGitSafetyGate,
@@ -244,6 +245,7 @@ function enforceReadAndFileQuality(ctx, log, input, output, { sessionId, sourceC
   });
   checkGrepPathScope(input.tool, output.args || {}, ctx.repositoryDir);
   checkResearchStagingAccess(input.tool, output.args || {});
+  checkRedactedEdit(input.tool, output.args || {}, ctx.repositoryDir);
   if (!isWriteOrEditTool(input.tool)) return;
   const filePath = output.args?.filePath || output.args?.file_path || "";
   if (filePath) runFileQualityGate(ctx, filePath, output.args);
