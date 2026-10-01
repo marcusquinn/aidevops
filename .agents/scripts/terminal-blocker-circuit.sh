@@ -12,6 +12,7 @@ _TBC_CIRCUIT_MARKER='aidevops:terminal-blocker-circuit'
 _TBC_RETRY_MARKER='terminal-blocker-circuit:retry'
 _TBC_MISSING_SCOPE='missing_files_scope'
 _TBC_UNKNOWN='unknown'
+_TBC_RUNNER_CAPABILITY='runner_capability_unmet'
 _TBC_AUTHORITATIVE_ASSOCIATIONS='["OWNER","MEMBER"]'
 
 # IDs break same-second ties only when both are positive, exact JSON integers.
@@ -108,7 +109,7 @@ _TBC_INPUT_OWNERS='user contributor maintainer admin'
 _terminal_blocker_reason() {
 	local fingerprint="$1"
 	local reason=""
-	for reason in missing_files_scope files_scope_excluded target_code_blocker external_trigger_pending permission_required push_policy_timeout unknown; do
+	for reason in missing_files_scope files_scope_excluded target_code_blocker external_trigger_pending permission_required push_policy_timeout runner_capability_unmet unknown; do
 		if [[ "$fingerprint" == "$(_terminal_blocker_hash "v2:${reason}")" ]]; then
 			printf '%s\n' "$reason"
 			return 0
@@ -175,7 +176,7 @@ if not marker.search(candidate):
     raise SystemExit(1)
 
 reasons = re.findall(r"^TERMINAL_BLOCKER_REASON=(.*)$", candidate, re.M)
-allowed = {'missing_files_scope', 'files_scope_excluded', 'target_code_blocker', 'external_trigger_pending', 'permission_required', 'push_policy_timeout'}
+allowed = {'missing_files_scope', 'files_scope_excluded', 'target_code_blocker', 'external_trigger_pending', 'permission_required', 'push_policy_timeout', 'runner_capability_unmet'}
 input_owners = {'user', 'contributor', 'maintainer', 'admin'}
 reason = reasons[0] if len(reasons) == 1 else 'unknown'
 if reason == 'input_required':
@@ -190,7 +191,7 @@ PY
 	[[ -n "$normalized" ]] || return 1
 	# Do not infer a missing heading from words such as "Files Scope excludes".
 	# Verify the structural condition independently against the issue itself.
-	if [[ "$normalized" != "permission_required" && "${WORKER_ISSUE_NUMBER:-}" =~ ^[0-9]+$ &&
+	if [[ "$normalized" != "permission_required" && "$normalized" != "$_TBC_RUNNER_CAPABILITY" && "${WORKER_ISSUE_NUMBER:-}" =~ ^[0-9]+$ &&
 		"${DISPATCH_REPO_SLUG:-}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
 		issue_json=$(gh api "repos/${DISPATCH_REPO_SLUG}/issues/${WORKER_ISSUE_NUMBER}" 2>/dev/null) || issue_json=""
 		if printf '%s' "$issue_json" | jq -e '.body | type == "string"' >/dev/null 2>&1 &&
@@ -255,6 +256,11 @@ terminal_blocker_task_revision() {
 	local reason="${5:-}"
 	local task_json="" dependency_signature="" target_revision="" canonical=""
 	[[ -n "$reason" ]] || reason=$(_terminal_blocker_reason "${AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT:-}")
+	# Runner-local prerequisites never need a repository/dependency revision hold.
+	if [[ "$reason" == "$_TBC_RUNNER_CAPABILITY" ]]; then
+		_terminal_blocker_hash "v2:${reason}:${repo_slug}:${issue_number}"
+		return $?
+	fi
 	# A brief edit, unrelated merge or GraphQL outage cannot satisfy a permission
 	# prerequisite. Explicit retry only schedules a new check; it grants nothing.
 	if [[ "$reason" == "permission_required" ]]; then
@@ -351,7 +357,8 @@ terminal_blocker_release_mode() {
 	local retry="" circuit="" observation="" circuit_at="" observation_at=""
 	# Host contention is transient, not an unchanged-code/brief hold. Preserve
 	# recovery evidence without opening a durable circuit on repeated timeouts.
-	if [[ "$(_terminal_blocker_reason "$blocker_fingerprint")" == "push_policy_timeout" ]]; then
+	if [[ "$(_terminal_blocker_reason "$blocker_fingerprint")" == "push_policy_timeout" ||
+		"$(_terminal_blocker_reason "$blocker_fingerprint")" == "$_TBC_RUNNER_CAPABILITY" ]]; then
 		printf 'first\n'
 		return 0
 	fi
@@ -398,6 +405,10 @@ _terminal_blocker_recovery() {
 	local projected_state="status:blocked"
 	reason=$(_terminal_blocker_reason "$fingerprint")
 	case "$reason" in
+	runner_capability_unmet)
+		owner="runner-recovery"
+		action='Release for a capable runner. Recheck declared secret and local-data requirements before claiming; do not impose a global issue hold or publish secret values.'
+		;;
 	push_policy_timeout)
 		owner="runner-recovery"
 		action='Retry policy evaluation and publication of the recorded local branch/HEAD on the same runner after host contention clears. Preserve all policy and publication guards.'
@@ -448,6 +459,7 @@ terminal_blocker_circuit_comment() {
 	local machine_readable_release="$1"
 	local task_revision="$2"
 	local blocker_fingerprint="$3"
+	[[ "$(_terminal_blocker_reason "$blocker_fingerprint")" != "$_TBC_RUNNER_CAPABILITY" ]] || return 1
 	[[ "$(_terminal_blocker_reason "$blocker_fingerprint")" != "$_TBC_UNKNOWN" ]] || return 1
 	printf '<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->\n%s\n<!-- %s revision=%s blocker=%s -->\nTERMINAL_BLOCKER_CIRCUIT active=true observations=2 task_revision=%s blocker=%s\n\nAutomatic redispatch is held for the repeated known blocker. See the preceding recovery observation.\n\nAn OWNER/MEMBER can retry without deleting history by posting %s as a standalone line. Relevant revisions re-arm code/brief blockers, but never permission blockers. Retry schedules verification only and grants no access.\n<!-- ops:end -->\n' \
 		"$machine_readable_release" "$_TBC_CIRCUIT_MARKER" "$task_revision" \
@@ -479,6 +491,7 @@ terminal_blocker_backoff_active() {
 			| select((.body // "") | contains("aidevops:terminal-blocker-circuit") | not)]
 			| sort_by(.created_at, (comment_id // 0), .body) | last) as $retry
 		| [$timely[] | select(hold_evidence($associations; $self))
+			| select((.body // "") | contains("Terminal blocker: reason=runner_capability_unmet ") | not)
 			| . as $event | select(($retry | retry_after($event)) | not)
 			| . as $comment
 			| ((.body // "") | try capture("(?m)^CLAIM_RELEASED reason=blocked runner=(?<runner>[A-Za-z0-9-]+) ") catch null) as $release

@@ -784,7 +784,26 @@ test_push_policy_timeout_checkpoint() {
 	return 0
 }
 
+test_runner_capability_class() {
+	local status=0 output="$TEST_ROOT/capability-output.jsonl" fingerprint="" revision="" fragment="" comments=""
+	printf '%s\n' '{"type":"text","text":"BLOCKED: staging secret cannot resolve\nTERMINAL_BLOCKER_REASON=runner_capability_unmet"}' >"$output"
+	terminal_blocker_capture_output "$output" || status=1
+	fingerprint="$AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT"
+	[[ "$(_terminal_blocker_reason "$fingerprint")" == runner_capability_unmet ]] || status=1
+	revision=$(terminal_blocker_task_revision '{}' owner/repo 42 '' runner_capability_unmet) || status=1
+	[[ "$(terminal_blocker_release_mode '[]' "$revision" "$fingerprint")" == first ]] || status=1
+	fragment=$(terminal_blocker_observation_fragment "$revision" "$fingerprint" first) || status=1
+	[[ "$fragment" == *'reason=runner_capability_unmet'* && "$fragment" == *'status:available'* ]] || status=1
+	terminal_blocker_circuit_comment release "$revision" "$fingerprint" >/dev/null && status=1
+	comments=$(jq -nc --arg body "CLAIM_RELEASED reason=blocked runner=maintainer ts=2026-01-01T00:00:00Z
+$fragment" '[{author_association:"OWNER",author:"maintainer",body:$body,created_at:"2026-01-01T00:00:00Z"},{author_association:"OWNER",author:"maintainer",body:$body,created_at:"2026-01-01T00:00:01Z"}]')
+	TERMINAL_BLOCKER_NOW_EPOCH=1767225660 terminal_blocker_backoff_active "$comments" >/dev/null && status=1
+	print_result "runner capability is known and never opens a shared circuit or backoff" "$status"
+	return 0
+}
+
 main() {
+	test_runner_capability_class
 	test_push_policy_timeout_checkpoint
 	test_normalized_blocker_fingerprint
 	test_worker_contract_reason_protocol
