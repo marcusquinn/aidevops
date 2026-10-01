@@ -57,6 +57,9 @@ eval "$(extract_function "$COMMIT_HELPER" _validate_completion_bookkeeping_pr_bo
 eval "$(extract_function "$COMMIT_HELPER" _validate_closed_issue_completion_bookkeeping)"
 eval "$(extract_function "$COMMIT_HELPER" _create_or_continue_pr)"
 eval "$(extract_function "$MAIN_HELPER" cmd_commit_and_pr)"
+eval "$(extract_function "$MAIN_HELPER" _commit_and_pr_prepare_metadata)"
+eval "$(extract_function "$MAIN_HELPER" _commit_and_pr_check_readiness)"
+eval "$(extract_function "$MAIN_HELPER" _commit_and_pr_publish)"
 
 _FULL_LOOP_TRUE="true"
 FULL_LOOP_COMPLETION_BOOKKEEPING_AUDIT=""
