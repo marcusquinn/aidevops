@@ -228,6 +228,9 @@ _dispatch_issue_consolidation() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local repo_path="$3"
+	# GH#33306: lets _dispatch_dedup_scope_gates tell a pre-flight skip
+	# (no child will exist) apart from a created or in-flight child.
+	_CONSOLIDATION_DISPATCH_OUTCOME=""
 
 	# Re-check immediately before any visible consolidation mutation. This
 	# closes the classification-to-dispatch race when an interactive session
@@ -242,6 +245,7 @@ _dispatch_issue_consolidation() {
 
 	# Resolve and in-flight-PR checks precede child/lock acquisition.
 	if _consolidation_dispatch_preflight_skips "$issue_number" "$repo_slug"; then
+		_CONSOLIDATION_DISPATCH_OUTCOME="preflight_skipped"
 		return 0
 	fi
 
