@@ -715,8 +715,21 @@ _worker_produced_output() {
 		"branch-or-issue" "$local_head" 1)
 	pr_state="${pr_handoff%%|*}"
 	case "$pr_state" in
-		ready | merged) printf 'pr_exists'; return 0 ;;
-		draft_checkpoint | protected_draft | closed_unmerged | unverified_open_pr | head_mismatch | ready_missing_linkage | merged_missing_linkage | ready_missing_summary | merged_missing_summary)
+		ready) printf 'pr_exists'; return 0 ;;
+		merged | merged_missing_linkage)
+			# GH#33374: a merged non-closing checkpoint, or a reopened issue,
+			# must not release as worker_complete. Preserve the existing exact
+			# PR instead of allowing a fresh implementation branch.
+			local issue_state=""
+			issue_state=$(gh api "repos/${repo_slug}/issues/${issue_number}" --jq '.state | ascii_downcase' 2>/dev/null) || issue_state=""
+			case "${issue_state}:${pr_state}" in
+			open:*) printf 'merged_checkpoint' ;;
+			closed:merged) printf 'pr_exists' ;;
+			*) printf 'merged_missing_linkage' ;;
+			esac
+			return 0
+			;;
+		draft_checkpoint | protected_draft | closed_unmerged | unverified_open_pr | head_mismatch | ready_missing_linkage | ready_missing_summary | merged_missing_summary)
 			printf '%s' "$pr_state"
 			return 0
 			;;
@@ -2336,6 +2349,17 @@ _hrw_finish_success_run() {
 			;;
 		draft_checkpoint)
 			_hrw_preserve_draft_checkpoint_handoff "$session_key" "$output_class"
+			release_needed=0
+			;;
+		merged_checkpoint)
+			# Unlike an open draft, this PR no longer owns an in-review issue.
+			# Release through the live-state projection without overwriting a
+			# blocker or marking the still-open issue complete.
+			_hrw_release_dispatch_claim "$session_key" "$_HRW_REASON_DRAFT_CHECKPOINT"
+			_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_DEFERRED"
+			_HRW_FINAL_RUNTIME_EVENT="$_HRW_EVENT_DEFERRED"
+			_HRW_FINAL_RUNTIME_STATUS="$_HRW_STATUS_CHECKPOINTED"
+			_HRW_FINAL_RUNTIME_CLASSIFICATION="$_HRW_REASON_DRAFT_CHECKPOINT"
 			release_needed=0
 			;;
 		ready_missing_summary)

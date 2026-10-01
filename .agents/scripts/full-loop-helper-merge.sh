@@ -517,6 +517,18 @@ _merge_collect_external_authority_gaps() {
 		print_error "Merge blocked: PR #${pr_number} head changed before the final authority check"
 		return 1
 	fi
+	# GH#33374: a native sidebar/development closing link must not override a
+	# For/Ref checkpoint. Fail closed before any merge write; do not silently
+	# unlink issues or infer completion from GitHub's closing metadata alone.
+	if ! printf '%s' "$pr_json" | jq -e '
+		(.body // "") as $body
+		| all(.closingIssuesReferences[]; .number as $num
+			| if ($body | test("\\b(for|ref)[[:space:]]+#" + ($num | tostring) + "\\b"; "i"))
+			then ($body | test("\\b(close[ds]?|fix(es|ed)?|resolve[ds]?)[[:space:]]+#" + ($num | tostring) + "\\b"; "i"))
+			else true end)' >/dev/null 2>&1; then
+		print_error "Merge blocked: PR #${pr_number} has a closing link contradicting its For/Ref-only issue reference"
+		return 1
+	fi
 
 	#aidevops:trust-boundary GH#17671/GH#28622 -- a live PR NMR label is an
 	# explicit hold. Marker text is never merge authority at this boundary.
