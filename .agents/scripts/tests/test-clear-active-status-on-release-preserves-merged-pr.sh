@@ -74,6 +74,12 @@ write_stub_gh() {
 	: >"$GH_PR_LIST_JSON"
 cat >"${STUB_DIR}/gh" <<'STUBEOF'
 #!/usr/bin/env bash
+if [[ "$1" == "api" && "$2" == repos/*/issues/[0-9]* && "$2" != */comments* ]]; then
+	# Closing PR fixtures represent issues already closed by GitHub. For/Ref
+	# and unrelated PR fixtures represent still-open work.
+	jq -c 'if any(.[]; .state == "MERGED" and ((.body // "") | test("(close[ds]?|fix(es|ed)?|resolve[ds]?)[[:space:]]+#20520\\b"; "i"))) then {state:"closed",labels:[]} else {state:"open",labels:[]} end' "$GH_PR_LIST_JSON"
+	exit 0
+fi
 if [[ "$1" == "api" && "$2" == /repos/*/labels\?per_page=100 ]]; then
 	printf '%s\t%s\t%s\n' \
 		"status:available" "0e8a16" "Task is available for claiming" \
