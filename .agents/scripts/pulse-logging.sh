@@ -569,11 +569,21 @@ rotate_pulse_log() {
 # PULSE_CYCLE_INDEX_MAX_LINES lines; oldest lines are pruned in-place
 # using a tmp-file swap when the cap is exceeded.
 #
-# Fields written per cycle:
+# Fields written per cycle (sampled when the deterministic pipeline and the
+# cycle-final refill have finished, before the LLM supervisor runs):
 #   ts          — ISO-8601 UTC timestamp
 #   duration_s  — cycle wall-clock duration in seconds (0 if unknown)
-#   workers     — "active/max" string
-#   dispatched  — issues dispatched this cycle
+#   workers     — "active/max"; active = max(worker processes, live ledger
+#                 entries), matching write_pulse_health_file (t3032), so a
+#                 just-launched worker not yet visible in ps still counts
+#   dispatched  — worker registrations created during this cycle by any
+#                 deterministic path (dispatch, early dispatch, refill): the
+#                 delta of the monotonic _pulse_capture_dispatch_total since
+#                 cycle start (GH#28361/GH#33320). Workers that already
+#                 exited still count. LLM-supervisor launches happen after
+#                 this record and are not included.
+#   inflight    — live in-flight ledger entries at write time (the gauge the
+#                 old `dispatched` field reported before GH#33320)
 #   merged      — PRs merged this cycle
 #   closed      — conflicting PRs closed this cycle
 #   killed      — stalled workers killed this cycle
@@ -591,21 +601,32 @@ append_cycle_index() {
 	workers_max=$(get_max_workers_target 2>/dev/null || echo "1")
 	[[ "$workers_max" =~ ^[0-9]+$ ]] || workers_max=1
 
-	local issues_dispatched=0
+	local inflight=0
 	local _ledger_helper="${SCRIPT_DIR}/dispatch-ledger-helper.sh"
 	if [[ -x "$_ledger_helper" ]]; then
 		local _ledger_count
 		_ledger_count=$("$_ledger_helper" count 2>/dev/null || echo "0")
-		[[ "$_ledger_count" =~ ^[0-9]+$ ]] && issues_dispatched="$_ledger_count"
+		[[ "$_ledger_count" =~ ^[0-9]+$ ]] && inflight="$_ledger_count"
+	fi
+	[[ "$inflight" -gt "$workers_active" ]] && workers_active="$inflight"
+
+	local issues_dispatched=0 _dispatch_after=""
+	if [[ "${_PULSE_CYCLE_DISPATCH_BEFORE:-}" =~ ^[0-9]+$ ]] &&
+		declare -F _pulse_capture_dispatch_total >/dev/null 2>&1; then
+		_dispatch_after=$(_pulse_capture_dispatch_total 2>/dev/null) || _dispatch_after=""
+		if [[ "$_dispatch_after" =~ ^[0-9]+$ && "$_dispatch_after" -gt "$_PULSE_CYCLE_DISPATCH_BEFORE" ]]; then
+			issues_dispatched=$((_dispatch_after - _PULSE_CYCLE_DISPATCH_BEFORE))
+		fi
 	fi
 
 	# Append record — use printf for portability (no echo -e needed)
-	printf '{"ts":"%s","duration_s":%s,"workers":"%s/%s","dispatched":%s,"merged":%s,"closed":%s,"killed":%s,"prefetch_errors":%s}\n' \
+	printf '{"ts":"%s","duration_s":%s,"workers":"%s/%s","dispatched":%s,"inflight":%s,"merged":%s,"closed":%s,"killed":%s,"prefetch_errors":%s}\n' \
 		"$ts" \
 		"$duration_s" \
 		"$workers_active" \
 		"$workers_max" \
 		"$issues_dispatched" \
+		"$inflight" \
 		"$_PULSE_HEALTH_PRS_MERGED" \
 		"$_PULSE_HEALTH_PRS_CLOSED_CONFLICTING" \
 		"$_PULSE_HEALTH_STALLED_KILLED" \
@@ -671,7 +692,10 @@ _pulse_health_auth_error_alert_json() {
 #   workers_max             — configured max worker slots
 #   prs_merged_this_cycle   — PRs squash-merged by deterministic merge pass
 #   prs_closed_conflicting  — conflicting PRs closed this cycle
-#   issues_dispatched       — workers launched this cycle (from dispatch ledger)
+#   issues_dispatched       — live in-flight ledger entries at write time (a
+#                             gauge, not a per-cycle launch count; the
+#                             per-cycle count is `dispatched` in the cycle
+#                             index — GH#33320)
 #   prefetch_errors         — prefetch_state failures this cycle
 #   stalled_workers_killed  — stalled workers killed by cleanup_stalled_workers
 #   models_backed_off       — active backoff entries in provider_backoff DB
