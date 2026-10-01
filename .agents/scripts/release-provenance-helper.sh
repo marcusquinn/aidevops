@@ -82,7 +82,7 @@ _release_provenance_read_json() {
 		error_text=$(<"$error_file")
 		if [[ "$status" -eq 0 && "$response" =~ [^[:space:]] ]]; then
 			rm -f "$error_file"
-			if ! jq -e 'type == "object"' <<<"$response" >/dev/null 2>&1; then
+			if ! jq -se 'length == 1 and (.[0] | type == "object")' <<<"$response" >/dev/null 2>&1; then
 				_release_provenance_error "${purpose}: invalid JSON object (attempt ${attempt})"
 				return 1
 			fi
