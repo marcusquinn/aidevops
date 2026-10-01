@@ -1466,7 +1466,9 @@ _runtime_bundle_write_sha() {
 	local deployed_sha="$2"
 	local stamp_file="${target_dir%/*}/.deployed-sha"
 	local stamp_tmp="${stamp_file}.tmp.$$"
-	[[ "$deployed_sha" =~ ^[0-9a-f]{40}$ ]] || return 1
+	# Archive installs have no Git metadata; preserve the manifest's explicit
+	# unknown value. Release convergence still requires an exact commit SHA.
+	[[ "$deployed_sha" =~ ^[0-9a-f]{40}$ || "$deployed_sha" == "$_AIDEVOPS_BUNDLE_UNKNOWN" ]] || return 1
 	if ! printf '%s\n' "$deployed_sha" >"$stamp_tmp" || ! mv -f "$stamp_tmp" "$stamp_file"; then
 		rm -f "$stamp_tmp"
 		return 1
