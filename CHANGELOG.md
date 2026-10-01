@@ -10,6 +10,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.37.40] - 2026-10-01
+
+### Changed
+
+- Refactor: remove legacy command generators (GH#33354) (#33388)
+- Maintenance: mark t18581 complete (pr:#33367 completed:2026-10-01) (#33368)
+
+### Fixed
+
+- recover full-loop PR creation from stale branches and bare shared worktrees
+- upgrade-planning preserves custom TODO sections and fails closed on loss
+- fix scope-guard false positives on tag-only pushes
+- reject edits copied from redacted Read output (#33378)
+- retry transient provenance reads (#33376)
+- cover implicit tagless snapshot retry discovery (#33372)
+- skip tap-qualified Homebrew formulas on hosts without brew
+
 ## [3.37.39] - 2026-10-01
 
 ### Added
