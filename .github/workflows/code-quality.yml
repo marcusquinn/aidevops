@@ -28,12 +28,13 @@ concurrency:
 jobs:
   # GH#33197: scope-gate heavy full-repository jobs so version/docs-only PRs
   # stop paying for a full ShellCheck / Framework Validation / Complexity
-  # pass. A job skipped by a job-level `if:` still reports a passing status to
-  # required checks (see test_skipping_required_allows_merge in
-  # test-pulse-merge-required-checks-filter.sh); a workflow-level `paths:`
-  # filter does not, and would leave required checks stuck at "expected" — do
-  # not switch to `paths:`. Push events and any scope-detection failure fail
-  # open (run everything): this is a cost optimization, never a coverage gate.
+  # pass. Keep required matrix jobs ungated: a job-level `if:` prevents matrix
+  # expansion and leaves required contexts unreported. Gate their heavy steps
+  # instead, so both required ShellCheck contexts report success for skipped
+  # scope. A workflow-level `paths:` filter also leaves required checks stuck
+  # at "expected" — do not switch to `paths:`. Push events and any
+  # scope-detection failure fail open (run everything): this is a cost
+  # optimization, never a coverage gate.
   detect-scope:
     name: Detect PR scope
     runs-on: ubuntu-latest
@@ -118,7 +119,6 @@ jobs:
   cross-platform-shellcheck:
     name: ShellCheck (${{ matrix.os }})
     needs: detect-scope
-    if: needs.detect-scope.outputs.shell == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -130,10 +130,11 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
     - name: Install ShellCheck (macOS)
-      if: runner.os == 'macOS'
+      if: runner.os == 'macOS' && needs.detect-scope.outputs.shell == 'true'
       run: brew install shellcheck
 
     - name: ShellCheck (cross-platform)
+      if: needs.detect-scope.outputs.shell == 'true'
       run: |
         # GH#33182: this is the single full-repository ShellCheck gate (the
         # duplicate serial pass in Framework Validation was removed). Files are
@@ -158,7 +159,7 @@ jobs:
         exit 1
 
     - name: Bash 3.2 syntax validation (macOS native)
-      if: runner.os == 'macOS'
+      if: runner.os == 'macOS' && needs.detect-scope.outputs.shell == 'true'
       run: |
         # GH#19252: The macOS-shipped /bin/bash (3.2) parser rejects constructs
         # that Bash 5 accepts silently — most notably heredoc-inside-$() like
@@ -189,13 +190,14 @@ jobs:
         echo "All shell scripts pass /bin/bash (3.2) syntax check."
 
     - name: Platform detection smoke test
+      if: needs.detect-scope.outputs.shell == 'true'
       run: |
         echo "Testing platform-detect.sh on ${{ matrix.os }}..."
         bash .agents/scripts/platform-detect.sh
         echo "Platform detection: OK"
 
     - name: Model replay verifier boundary (macOS)
-      if: runner.os == 'macOS'
+      if: runner.os == 'macOS' && needs.detect-scope.outputs.shell == 'true'
       run: node .agents/scripts/tests/test-model-replay-benchmark.mjs
 
   model-replay-linux:
