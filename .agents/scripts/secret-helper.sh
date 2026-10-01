@@ -1044,6 +1044,7 @@ cmd_help() {
 	echo "  init                              Initialize gopass store"
 	echo "  set <NAME>                        Store a secret (interactive hidden input)"
 	echo "  get <NAME>                        Get a secret value (for scripts/piping)"
+	echo "  check <NAME>                      Resolve by name; exit status only, no output"
 	echo "  list                              List secret names (never values)"
 	echo "  inventory                         Names-only structured local inventory"
 	echo "  status                            Show backend status"

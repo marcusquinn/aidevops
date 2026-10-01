@@ -22,6 +22,8 @@ try:
     root = Path(sys.argv[1]).resolve(strict=True)
     issue = json.loads(sys.argv[2])
     config_path = root / '.aidevops.json'
+    if config_path.is_symlink():
+        unmet()
     config = json.loads(config_path.read_text()) if config_path.exists() else {}
     classes = config.get('dispatch_class_requirements', {})
     if not isinstance(classes, dict):
@@ -30,7 +32,7 @@ try:
     for label in issue.get('labels', []):
         name = label.get('name', '') if isinstance(label, dict) else label
         if name.startswith('dispatch-class:'):
-            requirement = classes.get(name.removeprefix('dispatch-class:'), {})
+            requirement = classes.get(name[len('dispatch-class:'):], {})
             if not isinstance(requirement, dict):
                 unmet()
             requirements.append(requirement)
