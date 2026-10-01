@@ -21,7 +21,7 @@ the two modes with `data-sources.md`.
 Init the MapTiler map once (ref guard). On `load`: strip clutter (see `geo-prep.md`), add sources/layers,
 wait for `once('idle') → continueRender`. Per frame:
 
-```
+```text
 delayRender → setData/setPaintProperty → map.once('idle', continueRender) → triggerRepaint
 ```
 

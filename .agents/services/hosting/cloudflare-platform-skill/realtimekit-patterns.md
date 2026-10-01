@@ -31,18 +31,21 @@ export class AppComponent { authToken = '<token>'; onLeave(event: unknown) {} }
 RealtimeKit provides 133+ pre-built Stencil.js Web Components with framework wrappers:
 
 ### Layout Components
+
 - `<RtkMeeting>` - Full meeting UI (all-in-one)
 - `<RtkHeader>`, `<RtkStage>`, `<RtkControlbar>` - Layout sections
 - `<RtkSidebar>` - Chat/participants sidebar
 - `<RtkGrid>` - Adaptive video grid
 
-### Control Components  
+### Control Components<br>
+
 - `<RtkMicToggle>`, `<RtkCameraToggle>` - Media controls
 - `<RtkScreenShareToggle>` - Screen sharing
 - `<RtkLeaveButton>` - Leave meeting
 - `<RtkSettingsModal>` - Device settings
 
 ### Grid Variants
+
 - `<RtkSpotlightGrid>` - Active speaker focus
 - `<RtkAudioGrid>` - Audio-only mode
 - `<RtkPaginatedGrid>` - Paginated layout
@@ -52,6 +55,7 @@ RealtimeKit provides 133+ pre-built Stencil.js Web Components with framework wra
 ## Core SDK Patterns
 
 ### Basic Setup
+
 ```typescript
 import RealtimeKitClient from '@cloudflare/realtimekit';
 
@@ -62,6 +66,7 @@ await meeting.join();
 ```
 
 ### Video Grid & Device Selection
+
 ```typescript
 // Video grid
 function VideoGrid({ meeting }) {
@@ -103,9 +108,9 @@ function MyComponent() {
   const [meeting, initMeeting] = useRealtimeKitClient();
   const audioEnabled = useRealtimeKitSelector(m => m.self.audioEnabled);
   const participantCount = useRealtimeKitSelector(m => m.participants.joined.size());
-  
+
   useEffect(() => { initMeeting({ authToken: '<token>' }); }, []);
-  
+
   return <div>
     <button onClick={() => meeting?.self.enableAudio()}>{audioEnabled ? 'Mute' : 'Unmute'}</button>
     <span>{participantCount} participants</span>
@@ -182,13 +187,14 @@ await meeting.plugins.deactivate();
 ## Backend Integration
 
 ### Token Generation (Workers)
+
 ```typescript
 export interface Env { CLOUDFLARE_API_TOKEN: string; CLOUDFLARE_ACCOUNT_ID: string; REALTIMEKIT_APP_ID: string; }
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
-    
+
     if (url.pathname === '/api/join-meeting') {
       const { meetingId, userName, presetName } = await request.json();
       const response = await fetch(
@@ -202,7 +208,7 @@ export default {
       const data = await response.json();
       return Response.json({ authToken: data.result.authToken });
     }
-    
+
     return new Response('Not found', { status: 404 });
   }
 };
@@ -211,21 +217,25 @@ export default {
 ## Best Practices
 
 ### Security
+
 1. **Never expose API tokens client-side** - Generate participant tokens server-side only
 2. **Don't reuse participant tokens** - Generate fresh token per session, use refresh endpoint if expired
 3. **Use custom participant IDs** - Map to your user system for cross-session tracking
 
 ### Performance
+
 1. **Event-driven updates** - Listen to events, don't poll. Use `toArray()` only when needed
 2. **Media quality constraints** - Set appropriate resolution/bitrate limits based on network conditions
 3. **Device management** - Enable `autoSwitchAudioDevice` for better UX, handle device list updates
 
 ### Architecture
+
 1. **Separate Apps for environments** - staging vs production to prevent data mixing
 2. **Preset strategy** - Create presets at App level, reuse across meetings
 3. **Token management** - Backend generates tokens, frontend receives via authenticated endpoint
 
 ## In This Reference
+
 - [README.md](realtimekit.md) - Overview, core concepts, quick start
 - [configuration.md](realtimekit.md) - SDK config, presets, wrangler setup
 - [api.md](realtimekit.md) - Client SDK APIs, REST endpoints

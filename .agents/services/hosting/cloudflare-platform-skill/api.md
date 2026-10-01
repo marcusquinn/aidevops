@@ -13,7 +13,7 @@ Guide for working with Cloudflare's REST API - authentication, SDK usage, common
 
 ## Quick Decision Tree
 
-```
+```text
 How are you calling the Cloudflare API?
 ├─ From Workers runtime → Use bindings, not REST API (see bindings.md)
 ├─ Server-side (Node/Python/Go) → Official SDK (see below)

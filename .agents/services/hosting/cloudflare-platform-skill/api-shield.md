@@ -25,7 +25,7 @@ Expert guidance for API Shield - comprehensive API security suite for discovery,
 
 What protection do you need?
 
-```
+```text
 ├─ Validate request/response structure → Schema Validation 2.0 (configuration.md)
 ├─ Verify auth tokens → JWT Validation (configuration.md)
 ├─ Client certificates → mTLS (configuration.md)

@@ -72,7 +72,6 @@ camera banks into a turn instead of twitching left and right.
 For landscape routes, `scripts/prep-cesium-path.mjs` also clips, resamples, smooths and dampens a
 GeoJSON centerline before the component applies its final curve smoothing.
 
-
 ## Mechanics
 
 - Set `viewer.useDefaultRenderLoop = false`.

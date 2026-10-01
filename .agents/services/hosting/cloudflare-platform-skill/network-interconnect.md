@@ -62,6 +62,7 @@ Private, high-performance connectivity to Cloudflare's network. **Enterprise-onl
 2-4 weeks typical. Steps: request → config review → order connection → configure → test → enable health checks → activate → monitor.
 
 ## In This Reference
+
 - [configuration.md](./configuration.md) - BGP, routing, setup
 - [api.md](./api.md) - API endpoints, SDKs
 - [patterns.md](./patterns.md) - HA, hybrid cloud, failover
@@ -104,5 +105,6 @@ Private, high-performance connectivity to Cloudflare's network. **Enterprise-onl
 - Maintenance window coordination
 
 ## See Also
+
 - [tunnel](tunnel.md) - Alternative for private network connectivity
 - [spectrum](spectrum.md) - Layer 4 proxy for TCP/UDP traffic

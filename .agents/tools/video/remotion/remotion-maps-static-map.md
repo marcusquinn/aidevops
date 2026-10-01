@@ -26,11 +26,11 @@ import {AbsoluteFill, CanvasImage, staticFile} from 'remotion';
 
 export const StaticMap: React.FC = () => {
 	return (
-	  <>
-  		<CanvasImage
-  			src={staticFile('locator-map.png')}
-  			style={{width: '100%', height: '100%', objectFit: 'cover'}}
-  		/>
+		<>
+			<CanvasImage
+				src={staticFile('locator-map.png')}
+				style={{width: '100%', height: '100%', objectFit: 'cover'}}
+			/>
 		</>
 	);
 };

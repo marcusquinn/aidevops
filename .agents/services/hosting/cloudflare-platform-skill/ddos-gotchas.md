@@ -13,7 +13,7 @@ mode: subagent
 
 ### "False positives blocking legitimate traffic"
 
-**Cause**: Sensitivity too high, wrong action, or missing exceptions  
+**Cause**: Sensitivity too high, wrong action, or missing exceptions<br>
 **Solution**:
 1. Lower sensitivity for specific rule/category
 2. Use `log` action first to validate (Enterprise Advanced)
@@ -22,8 +22,9 @@ mode: subagent
 
 ### "Attacks getting through"
 
-**Cause**: Sensitivity too low or wrong action  
+**Cause**: Sensitivity too low or wrong action<br>
 **Solution**: Increase to `default` sensitivity and use `block` action:
+
 ```typescript
 const config = {
   rules: [{
@@ -36,42 +37,42 @@ const config = {
 
 ### "Adaptive rules not working"
 
-**Cause**: Insufficient traffic history (needs 7 days)  
+**Cause**: Insufficient traffic history (needs 7 days)<br>
 **Solution**: Wait for baseline to establish, check dashboard for adaptive rule status
 
 ### "Zone override ignored"
 
-**Cause**: Account overrides conflict with zone overrides  
+**Cause**: Account overrides conflict with zone overrides<br>
 **Solution**: Configure at zone level OR remove zone overrides to use account-level
 
 ### "Log action not available"
 
-**Cause**: Not on Enterprise Advanced DDoS plan  
+**Cause**: Not on Enterprise Advanced DDoS plan<br>
 **Solution**: Use `managed_challenge` with low sensitivity for testing
 
 ### "Rule limit exceeded"
 
-**Cause**: Too many override rules (Free/Pro/Business: 1, Enterprise Advanced: 10)  
+**Cause**: Too many override rules (Free/Pro/Business: 1, Enterprise Advanced: 10)<br>
 **Solution**: Combine conditions in single expression using `and`/`or`
 
 ### "Cannot override rule"
 
-**Cause**: Rule is read-only  
+**Cause**: Rule is read-only<br>
 **Solution**: Check API response for read-only indicator, use different rule
 
 ### "Cannot disable DDoS protection"
 
-**Cause**: DDoS managed rulesets cannot be fully disabled (always-on protection)  
+**Cause**: DDoS managed rulesets cannot be fully disabled (always-on protection)<br>
 **Solution**: Set `sensitivity_level: "eoff"` for minimal mitigation
 
 ### "Expression not allowed"
 
-**Cause**: Custom expressions require Enterprise Advanced plan  
+**Cause**: Custom expressions require Enterprise Advanced plan<br>
 **Solution**: Use `expression: "true"` for all traffic, or upgrade plan
 
 ### "Managed ruleset not found"
 
-**Cause**: Zone/account doesn't have DDoS managed ruleset, or incorrect phase  
+**Cause**: Zone/account doesn't have DDoS managed ruleset, or incorrect phase<br>
 **Solution**: Verify ruleset exists via `client.rulesets.list()`, check phase name (`ddos_l7` or `ddos_l4`)
 
 ## API Error Codes

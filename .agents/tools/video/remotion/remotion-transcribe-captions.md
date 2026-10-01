@@ -144,8 +144,8 @@ await writeFile("captions123.json", JSON.stringify(captions, null, 2));
 
 ## Choosing a model
 
-`small.en` is the recommended default for English.  
-For other languages, use a multilingual model such as `small` and pass the `language` option to `transcribe()` - automatic language detection is not supported.  
+`small.en` is the recommended default for English.<br>
+For other languages, use a multilingual model such as `small` and pass the `language` option to `transcribe()` - automatic language detection is not supported.<br>
 See [`getAvailableModels()`](https://www.remotion.dev/docs/whisper-webgpu/get-available-models.md) for all models.
 
 ## Transcribing in the browser

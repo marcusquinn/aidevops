@@ -13,23 +13,25 @@ mode: subagent
 
 ### SPA Navigation Not Tracked
 
-**Symptom:** Only initial pageload counted  
+**Symptom:** Only initial pageload counted<br>
 **Fix:** Add `spa: true`:
+
 ```html
 <script data-cf-beacon='{"token": "TOKEN", "spa": true}' ...></script>
 ```
 
 ### CSP Blocking Beacon
 
-**Symptom:** Console error "Refused to load script"  
+**Symptom:** Console error "Refused to load script"<br>
 **Fix:** Allow both domains:
-```
+
+```text
 script-src 'self' https://static.cloudflareinsights.com https://cloudflareinsights.com;
 ```
 
 ### Hash-Based Routing Unsupported
 
-**Symptom:** `#/path` URLs not tracked  
+**Symptom:** `#/path` URLs not tracked<br>
 **Fix:** Migrate to History API (`BrowserRouter`, not `HashRouter`). No workaround for hash routing.
 
 ### No Data Appearing
@@ -42,12 +44,12 @@ script-src 'self' https://static.cloudflareinsights.com https://cloudflareinsigh
 
 ### Auto-Injection Fails
 
-**Cause:** `Cache-Control: no-transform` header  
+**Cause:** `Cache-Control: no-transform` header<br>
 **Fix:** Remove `no-transform` or install beacon manually
 
 ### Duplicate Pageviews
 
-**Cause:** Multiple beacon scripts  
+**Cause:** Multiple beacon scripts<br>
 **Fix:** Keep only one beacon per page
 
 ## Configuration Issues

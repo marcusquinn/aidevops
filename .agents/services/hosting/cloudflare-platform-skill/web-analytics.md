@@ -26,7 +26,7 @@ Cloudflare Web Analytics provides:
 
 ## Quick Start Decision Tree
 
-```
+```text
 Is your site proxied through Cloudflare?
 ├─ YES → Use automatic injection (configuration.md)
 │   ├─ Enable auto-injection in dashboard
@@ -65,6 +65,7 @@ Is your site proxied through Cloudflare?
 ### SPA Mode
 
 **Critical for modern frameworks:**
+
 ```json
 {"token": "YOUR_TOKEN", "spa": true}
 ```
@@ -74,13 +75,15 @@ Without `spa: true`, client-side navigation (React Router, Vue Router, Next.js r
 ### CSP Requirements
 
 If using Content Security Policy, allow both domains:
-```
+
+```text
 script-src https://static.cloudflareinsights.com https://cloudflareinsights.com;
 ```
 
 ## Features
 
 ### Core Web Vitals Debugging
+
 - **LCP (Largest Contentful Paint)** - Identifies slow-loading hero images/elements
 - **FID (First Input Delay)** - Interaction responsiveness (legacy metric)
 - **INP (Interaction to Next Paint)** - Modern interaction responsiveness metric
@@ -90,6 +93,7 @@ script-src https://static.cloudflareinsights.com https://cloudflareinsights.com;
 Dashboard shows top 5 problematic elements with CSS selectors for debugging.
 
 ### Traffic Filters
+
 - **Bot filtering** - Exclude automated traffic from metrics
 - **Date ranges** - Custom time period analysis
 - **Geographic** - Country-level filtering

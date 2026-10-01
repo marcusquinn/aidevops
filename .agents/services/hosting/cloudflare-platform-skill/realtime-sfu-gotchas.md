@@ -19,7 +19,7 @@ mode: subagent
 ### "No media flow"
 
 **Cause:** SDP exchange incomplete, connection not established, tracks not added before offer, browser permissions missing
-**Solution:** 
+**Solution:**
 1. Verify SDP exchange complete
 2. Check `pc.connectionState === 'connected'`
 3. Ensure tracks added before creating offer
@@ -29,7 +29,7 @@ mode: subagent
 ### "Track not receiving"
 
 **Cause:** Track not published, track ID not shared, session IDs mismatch, `pc.ontrack` not set, renegotiation needed
-**Solution:** 
+**Solution:**
 1. Verify track published successfully
 2. Confirm track ID shared between peers
 3. Check session IDs match
@@ -40,16 +40,17 @@ mode: subagent
 
 **Cause:** Network changed, firewall blocked UDP, TURN needed, transient network issue
 **Solution:**
+
 ```typescript
 pc.oniceconnectionstatechange = async () => {
   if (pc.iceConnectionState === 'failed') {
     console.warn('ICE failed, attempting restart');
     await pc.restartIce(); // Triggers new ICE gathering
-    
+
     // Create new offer with ICE restart flag
     const offer = await pc.createOffer({iceRestart: true});
     await pc.setLocalDescription(offer);
-    
+
     // Send to backend → Cloudflare API
     await fetch(`/api/sessions/${sessionId}/renegotiate`, {
       method: 'PUT',
@@ -73,6 +74,7 @@ pc.oniceconnectionstatechange = async () => {
 
 **Cause:** Mobile switching WiFi↔cellular, laptop changing networks
 **Solution:**
+
 ```typescript
 // Listen for network changes
 if ('connection' in navigator) {

@@ -9,12 +9,12 @@ mode: subagent
 
 # Using Three.js and React Three Fiber in Remotion
 
-Follow React Three Fiber and Three.js best practices.  
+Follow React Three Fiber and Three.js best practices.<br>
 Only the following Remotion-specific rules need to be followed:
 
 ## Prerequisites
 
-First, the `@remotion/three` package needs to be installed.  
+First, the `@remotion/three` package needs to be installed.<br>
 If it is not, use the following command:
 
 ```bash
@@ -26,7 +26,7 @@ pnpm exec remotion add @remotion/three # If project uses pnpm
 
 ## Using ThreeCanvas
 
-You MUST wrap 3D content in `<ThreeCanvas>` and include proper lighting.  
+You MUST wrap 3D content in `<ThreeCanvas>` and include proper lighting.<br>
 `<ThreeCanvas>` MUST have a `width` and `height` prop.
 
 ```tsx
@@ -47,8 +47,8 @@ const { width, height } = useVideoConfig();
 
 ## No animations not driven by `useCurrentFrame()`
 
-Shaders, models etc MUST NOT animate by themselves.  
-No animations are allowed unless they are driven by `useCurrentFrame()`.  
+Shaders, models etc MUST NOT animate by themselves.<br>
+No animations are allowed unless they are driven by `useCurrentFrame()`.<br>
 Otherwise, it will cause flickering during rendering.
 
 Using `useFrame()` from `@react-three/fiber` is forbidden.

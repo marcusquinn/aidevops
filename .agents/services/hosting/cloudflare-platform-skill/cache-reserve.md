@@ -37,7 +37,7 @@ Cache Reserve is Cloudflare's persistent, large-scale cache storage layer built 
 
 ### Cache Hierarchy
 
-```
+```text
 Visitor Request
     ↓
 Lower-Tier Cache (closest to visitor)
@@ -51,14 +51,14 @@ Origin Server
 
 ### How It Works
 
-1. **On cache miss**: Content fetched from origin �� written to Cache Reserve + edge caches simultaneously
+1. **On cache miss**: Content fetched from origin → written to Cache Reserve + edge caches simultaneously
 2. **On edge eviction**: Content may be evicted from edge cache but remains in Cache Reserve
 3. **On subsequent request**: If edge cache misses but Cache Reserve hits → content restored to edge caches
 4. **Retention**: Assets remain in Cache Reserve for 30 days since last access (configurable via TTL)
 
 ## When to Use Cache Reserve
 
-```
+```text
 Need persistent caching?
 ├─ High origin egress costs → Cache Reserve ✓
 ├─ Long-tail content (archives, media libraries) → Cache Reserve ✓
@@ -152,5 +152,6 @@ curl -I https://example.com/asset.jpg | grep -i cache
 - [gotchas.md](./gotchas.md) - Common issues, limitations, troubleshooting
 
 ## See Also
+
 - [r2](r2.md) - Cache Reserve built on R2 storage
 - [workers](https://developers.cloudflare.com/workers/) - Workers integration with Cache API

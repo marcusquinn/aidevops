@@ -21,25 +21,25 @@ Existing apps should migrate **when you can**, so you are ready when 1.0 becomes
 
 ## Workflow
 
-1. **Review** hard rules and the replacement map  
-2. **Audit** the codebase; list hits and target shapes  
-3. **Clarify** with the user (cutover, bridge, Python image, unclear sites)  
-4. **Upgrade** package, image, and code  
-5. **Validate**  
+1. **Review** hard rules and the replacement map<br>
+2. **Audit** the codebase; list hits and target shapes<br>
+3. **Clarify** with the user (cutover, bridge, Python image, unclear sites)<br>
+4. **Upgrade** package, image, and code<br>
+5. **Validate**<br>
 
 Stop after any step that needs a user decision.
 
 ## Hard rules
 
-- Worker package and container image must be the **same** `@next` line.  
-- Production cutover uses **immediate** container rollout. Stable and `@next` control protocols are incompatible both ways; gradual rollout leaves a broken mixed window. In-flight container work can stop.  
-- After cutover, `await sandbox.exec(...)` means process **started**, not command **finished**.  
-- Argv is as-is (no implicit shell). Shell syntax needs an explicit shell binary.  
-- Process handles have **no stdin** → terminals for interactive input.  
-- Observation `timeout` / `AbortSignal` cancel the **wait only**, not the process.  
-- No single retry loop for every error.  
-- Do not invent APIs (`gitCheckout` on core, process stdin, string-exec completion helper).  
-- Self-deployed bridge stays on **stable** (not part of the preview line yet).  
+- Worker package and container image must be the **same** `@next` line.<br>
+- Production cutover uses **immediate** container rollout. Stable and `@next` control protocols are incompatible both ways; gradual rollout leaves a broken mixed window. In-flight container work can stop.<br>
+- After cutover, `await sandbox.exec(...)` means process **started**, not command **finished**.<br>
+- Argv is as-is (no implicit shell). Shell syntax needs an explicit shell binary.<br>
+- Process handles have **no stdin** → terminals for interactive input.<br>
+- Observation `timeout` / `AbortSignal` cancel the **wait only**, not the process.<br>
+- No single retry loop for every error.<br>
+- Do not invent APIs (`gitCheckout` on core, process stdin, string-exec completion helper).<br>
+- Self-deployed bridge stays on **stable** (not part of the preview line yet).<br>
 
 ## Replacement map
 
@@ -68,10 +68,10 @@ Also: string `exec(`, `cd` then a later `exec`, bare `createCodeContext` / `runC
 
 ## Clarify (ask when needed)
 
-- OK to cut production with `--containers-rollout=immediate` (live processes/terminals/streams may stop)?  
-- Self-deployed bridge? Leave on stable.  
-- Python interpreter → **`-python`** image variant?  
-- Call sites not covered by the map?  
+- OK to cut production with `--containers-rollout=immediate` (live processes/terminals/streams may stop)?<br>
+- Self-deployed bridge? Leave on stable.<br>
+- Python interpreter → **`-python`** image variant?<br>
+- Call sites not covered by the map?<br>
 
 ## Upgrade
 
@@ -165,25 +165,25 @@ Leave `rollout_active_grace_period` at default `0` (or set `0` if raised). After
 
 ## Validate
 
-1. Lockfile + Dockerfile on the same `@next` line  
-2. Typecheck against `@next`  
-3. Smoke argv `exec` + `output({ encoding: "utf8" })`  
-4. Smoke long process / terminal / interpreter if used  
-5. Errors distinguished: unavailable / interrupted-RPC / stale / local wait  
-6. No live secrets in sandbox env  
-7. Grep again for removed APIs  
-8. Production used `--containers-rollout=immediate`  
+1. Lockfile + Dockerfile on the same `@next` line<br>
+2. Typecheck against `@next`<br>
+3. Smoke argv `exec` + `output({ encoding: "utf8" })`<br>
+4. Smoke long process / terminal / interpreter if used<br>
+5. Errors distinguished: unavailable / interrupted-RPC / stale / local wait<br>
+6. No live secrets in sandbox env<br>
+7. Grep again for removed APIs<br>
+8. Production used `--containers-rollout=immediate`<br>
 
 Then day-to-day work uses **`sandbox-next`**.
 
 ## Red flags — stop and fix
 
-- Mixing `@next` Worker with stable image (or reverse)  
-- Gradual container rollout for this cutover  
-- Treating `await exec` as command completion  
-- Assuming `cd` / exports persist across `exec` calls  
-- One retry wrapper for every error  
-- Inventing `gitCheckout`, process stdin, or undocumented APIs  
-- Keeping pre-cutover process/terminal IDs after deploy  
-- Forcing production cutover without user agreement  
-- Putting live secrets in `setEnvVars` / launch `env`  
+- Mixing `@next` Worker with stable image (or reverse)<br>
+- Gradual container rollout for this cutover<br>
+- Treating `await exec` as command completion<br>
+- Assuming `cd` / exports persist across `exec` calls<br>
+- One retry wrapper for every error<br>
+- Inventing `gitCheckout`, process stdin, or undocumented APIs<br>
+- Keeping pre-cutover process/terminal IDs after deploy<br>
+- Forcing production cutover without user agreement<br>
+- Putting live secrets in `setEnvVars` / launch `env`<br>

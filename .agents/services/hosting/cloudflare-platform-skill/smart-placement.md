@@ -34,7 +34,7 @@ Smart Placement automatically analyzes Worker request duration across Cloudflare
 
 ### Decision Tree
 
-```
+```text
 Does your Worker have a fetch handler?
 ├─ No → Smart Placement won't work (skip)
 └─ Yes
@@ -60,7 +60,8 @@ Does your Worker have a fetch handler?
 ### Key Architecture Pattern
 
 **Recommended:** Split full-stack applications into separate Workers:
-```
+
+```text
 User → Frontend Worker (at edge, close to user)
          ↓ Service Binding
        Backend Worker (Smart Placement enabled, close to DB/API)
@@ -95,7 +96,7 @@ Deploy and wait 15 minutes for analysis. Check status via API or dashboard metri
 ## Placement Status Values
 
 ```typescript
-type PlacementStatus = 
+type PlacementStatus =
   | undefined  // Not yet analyzed
   | 'SUCCESS'  // Successfully optimized
   | 'INSUFFICIENT_INVOCATIONS'  // Not enough traffic

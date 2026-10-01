@@ -11,7 +11,7 @@ mode: subagent
 
 Render a video using:
 
-```
+```bash
 npx remotion render
 ```
 
@@ -19,7 +19,7 @@ Full list of options: https://www.remotion.dev/docs/cli/render.md
 
 Render a still using:
 
-```
+```bash
 npx remotion still
 ```
 
@@ -27,7 +27,7 @@ Full list of options: https://www.remotion.dev/docs/cli/still.md
 
 To render several frames as images in one call, use `render --frames`:
 
-```
+```bash
 npx remotion render [composition-id] out/frames --frames=0,30,90 --image-format=png
 ```
 

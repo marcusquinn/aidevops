@@ -41,7 +41,7 @@ Parameters:
 
 The filter outputs pairs of `silence_start` and `silence_end` timestamps:
 
-```
+```text
 [silencedetect] silence_start: 0
 [silencedetect] silence_end: 2.241021 | silence_duration: 2.241021
 [silencedetect] silence_start: 38.77425

@@ -6,7 +6,7 @@ mode: subagent
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-Drive motion with `interpolate()` over an explicit frame range. 
+Drive motion with `interpolate()` over an explicit frame range.
 To customize timing, use **`Easing.bezier`** or `Easing.spring`.
 
 A simple linear interpolation is done using the `interpolate` function.
@@ -17,7 +17,7 @@ import { interpolate } from "remotion";
 const opacity = interpolate(frame, [0, 0.3 * fps], [0, 1]);
 ```
 
-By default, the values are not clamped, so the value can go outside the range [0, 1].  
+By default, the values are not clamped, so the value can go outside the range [0, 1].<br>
 Here is how they can be clamped:
 
 ```ts title="Going from 0 to 1 over 0.3 seconds with extrapolation"
@@ -80,7 +80,7 @@ const opacity = interpolate(frame, [0, 0.3 * fps], [0, 1], {
 
 ## Animating scale
 
-When animating scale, if the output is linear, the perceived scale would be smaller the larger the scale gets.  
+When animating scale, if the output is linear, the perceived scale would be smaller the larger the scale gets.<br>
 Use this option to compensate:
 
 ```ts

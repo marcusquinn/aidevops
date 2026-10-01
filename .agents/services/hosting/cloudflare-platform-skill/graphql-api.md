@@ -22,7 +22,7 @@ Query analytics data across all Cloudflare products via a single GraphQL endpoin
 
 ## Quick Decision Tree
 
-```
+```text
 Need analytics data from Cloudflare?
 ├─ HTTP traffic (requests, bandwidth, cache) → httpRequestsAdaptiveGroups (zone or account)
 ├─ Workers performance (CPU, wall time, errors) → workersInvocationsAdaptive (account)

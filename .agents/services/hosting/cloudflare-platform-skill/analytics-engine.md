@@ -43,7 +43,7 @@ Time-series analytics database designed for high-cardinality data (millions of u
 
 ## When to Use Analytics Engine
 
-```
+```text
 Need to track metrics? → Yes
   ↓
 Millions of unique dimension values? → Yes
@@ -62,6 +62,7 @@ Alternative scenarios:
 ## Quick Start
 
 1. Add binding to `wrangler.jsonc`:
+
 ```jsonc
 {
   "analytics_engine_datasets": [
@@ -71,6 +72,7 @@ Alternative scenarios:
 ```
 
 2. Write data points (fire-and-forget, no await):
+
 ```typescript
 env.ANALYTICS.writeDataPoint({
   blobs: ["/api/users", "GET", "200"],
@@ -80,6 +82,7 @@ env.ANALYTICS.writeDataPoint({
 ```
 
 3. Query via SQL API (HTTP):
+
 ```sql
 SELECT blob1, SUM(double2) AS total_requests
 FROM my_events

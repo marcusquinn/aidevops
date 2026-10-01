@@ -7,7 +7,7 @@ mode: subagent
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-These are instructions for making a new Remotion project and composition.  
+These are instructions for making a new Remotion project and composition.<br>
 If this is not the next task, see Remotion Best Practices
 
 ## Scaffold a project

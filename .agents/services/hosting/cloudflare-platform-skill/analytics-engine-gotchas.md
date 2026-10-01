@@ -16,6 +16,7 @@ mode: subagent
 **Problem:** Queries return fewer points than written at >1M writes/min.
 
 **Solution:**
+
 ```typescript
 // Pre-aggregate before writing
 let buffer = { count: 0, total: 0 };
@@ -83,12 +84,12 @@ Auto-generated at write time. Store original in blob if needed.
 
 ## Best Practices
 
-✅ Pre-aggregate at high volumes  
-✅ Use index for high-cardinality (millions)  
-✅ Always include time filter in queries  
-✅ Design schema before coding  
+✅ Pre-aggregate at high volumes<br>
+✅ Use index for high-cardinality (millions)<br>
+✅ Always include time filter in queries<br>
+✅ Design schema before coding<br>
 
-❌ Don't await writeDataPoint  
-❌ Don't use index for low-cardinality  
-❌ Don't query without time range  
+❌ Don't await writeDataPoint<br>
+❌ Don't use index for low-cardinality<br>
+❌ Don't query without time range<br>
 ❌ Don't assume all writes succeed

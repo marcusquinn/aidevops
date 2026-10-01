@@ -24,6 +24,7 @@ for (const l of m.getStyle().layers as any[])
   layers as needed, and retain only the context borders the production requires.
 - Logo/attribution: `maptilerLogo:false` + `attributionControl:false` aren't always enough — also hide
   via CSS in the component:
+
   ```tsx
   <style>
     {`

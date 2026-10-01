@@ -52,6 +52,7 @@ curl -X POST 'https://api.cloudflare.com/client/v4/accounts/<account_id>/realtim
 ### 2. Client Integration
 
 **React**:
+
 ```tsx
 import { RtkMeeting } from '@cloudflare/realtimekit-react-ui';
 
@@ -61,6 +62,7 @@ function App() {
 ```
 
 **Core SDK**:
+
 ```typescript
 import RealtimeKitClient from '@cloudflare/realtimekit';
 

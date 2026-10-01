@@ -58,6 +58,7 @@ mode: subagent
 **Cause:** Zone-level restrictions from billing, plan, or permissions
 
 **Solution Pattern:**
+
 ```typescript
 const status = await client.argo.smartRouting.get({ zone_id: zoneId });
 
@@ -81,6 +82,7 @@ await client.argo.smartRouting.edit({ zone_id: zoneId, value: 'on' });
 **Cause:** Exceeded API rate limits (typically 1200 requests per 5 minutes)
 
 **Solution:**
+
 ```typescript
 import { RateLimitError } from 'cloudflare';
 
@@ -90,7 +92,7 @@ try {
   if (error instanceof RateLimitError) {
     const retryAfter = error.response?.headers.get('retry-after');
     console.log(`Rate limited. Retry after ${retryAfter} seconds`);
-    
+
     // Implement exponential backoff
     await new Promise(resolve => setTimeout(resolve, (retryAfter || 60) * 1000));
     // Retry request

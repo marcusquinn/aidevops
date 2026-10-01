@@ -13,20 +13,21 @@ mode: subagent
 
 ### Placeholder IDs
 
-**Error:** "Invalid namespace ID"  
+**Error:** "Invalid namespace ID"<br>
 **Fix:** Replace placeholders in wrangler.jsonc with real IDs:
+
 ```bash
 npx wrangler kv namespace create MY_KV  # Get real ID
 ```
 
 ### Authentication
 
-**Error:** "Not authenticated"  
+**Error:** "Not authenticated"<br>
 **Fix:** `npx wrangler login` or set `CLOUDFLARE_API_TOKEN`
 
 ### Name Conflict
 
-**Error:** "Worker already exists"  
+**Error:** "Worker already exists"<br>
 **Fix:** Change `name` in wrangler.jsonc
 
 ## Platform Selection
@@ -41,6 +42,7 @@ Wrong platform? Recreate with correct `--platform` flag.
 ## TypeScript Issues
 
 **"Cannot find name 'KVNamespace'"**
+
 ```bash
 npm run cf-typegen  # Regenerate types
 # Restart TS server in editor
@@ -51,6 +53,7 @@ npm run cf-typegen  # Regenerate types
 ## Package Manager
 
 **Multiple lockfiles causing issues:**
+
 ```bash
 rm pnpm-lock.yaml  # If using npm
 rm package-lock.json  # If using pnpm
@@ -59,12 +62,14 @@ rm package-lock.json  # If using pnpm
 ## CI/CD
 
 **CI hangs on prompts:**
+
 ```bash
 npm create cloudflare@latest my-app -- \
   --type=hello-world --lang=ts --no-git --no-deploy
 ```
 
 **Auth in CI:**
+
 ```yaml
 env:
   CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -81,12 +86,12 @@ env:
 
 ## Compatibility Date
 
-**"Feature X requires compatibility_date >= ..."**  
+**"Feature X requires compatibility_date >= ..."**<br>
 **Fix:** Update `compatibility_date` in wrangler.jsonc to today's date
 
 ## Node.js Version
 
-**"Node.js version not supported"**  
+**"Node.js version not supported"**<br>
 **Fix:** Install Node.js 18+ (`nvm install 20`)
 
 ## Quick Reference

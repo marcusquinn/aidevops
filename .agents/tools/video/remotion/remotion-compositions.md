@@ -57,7 +57,7 @@ nodes gives each one its own source-editing target.
 
 ## Default Props and scaffold metadata
 
-Pass `defaultProps` to provide initial values for your component.  
+Pass `defaultProps` to provide initial values for your component.<br>
 Values must be JSON-serializable (`Date`, `Map`, `Set`, and `staticFile()` are supported).
 Use `defaultProps` for composition-wide values that should be visible and editable before the video renders.
 
@@ -110,7 +110,7 @@ const defaultProps = { title: "Hello World" };
 
 ## Folders
 
-Use `<Folder>` to organize compositions in the sidebar.  
+Use `<Folder>` to organize compositions in the sidebar.<br>
 Folder names can only contain letters, numbers, and hyphens.
 
 ```tsx

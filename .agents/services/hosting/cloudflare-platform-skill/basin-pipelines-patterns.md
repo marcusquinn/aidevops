@@ -117,6 +117,7 @@ Basin Pipelines can't change. Version + dual-write:
 ```bash
 npx wrangler basin pipelines streams create events_v2 --schema-file v2.json
 ```
+
 ```typescript
 await Promise.all([env.EVENTS_V1.send([event]), env.EVENTS_V2.send([event])]);
 // query across versions with UNION ALL in Basin SQL
@@ -124,7 +125,7 @@ await Promise.all([env.EVENTS_V1.send([event]), env.EVENTS_V2.send([event])]);
 
 ## End-to-End: Streaming Analytics Dashboard
 
-```
+```text
 External APIs → Collector Worker (cron) → Pipeline → R2 (Iceberg) → Dashboard Worker → Basin SQL
 ```
 

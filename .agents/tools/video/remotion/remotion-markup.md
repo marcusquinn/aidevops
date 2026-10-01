@@ -18,8 +18,8 @@ If you detect a surprising change made in the meanwhile, don't overwrite it, ass
 
 ## General rules
 
-Drive animations using `useCurrentFrame()` and `interpolate()`.  
-CSS `transition` or `animation` will not render correctly, they need to refactored.  
+Drive animations using `useCurrentFrame()` and `interpolate()`.<br>
+CSS `transition` or `animation` will not render correctly, they need to refactored.<br>
 Tailwind animation class will not render correctly, they need to be refactored.
 
 Use `Easing.bezier()` and `Easing.spring()` to customize timing.
@@ -104,7 +104,7 @@ Use `staticFile()` to reference files from the `public/` folder.
 
 ## Media components
 
-Add video and audio using `<Video>` and `<Audio>` from `@remotion/media`.  
+Add video and audio using `<Video>` and `<Audio>` from `@remotion/media`.<br>
 Add images using the `<CanvasImage>` component.
 Add animated GIFs, APNG, WebP or AVIF images using `<AnimatedImage>`, use `@remotion/gif` if not using Chrome.
 Use `staticFile()` for files in `public/` or pass a remote URL directly:
@@ -334,7 +334,7 @@ When adding motion blur or a movement trail, read [motion-blur.md](motion-blur.m
 
 ## Visual and pixel effects
 
-When creating a visual effect, consider whether it is feasible using CSS and HTML, or whether a shader is needed.  
+When creating a visual effect, consider whether it is feasible using CSS and HTML, or whether a shader is needed.<br>
 Order or preference:
 
 1. Regular HTML + CSS or other web techniques
@@ -423,7 +423,7 @@ See [sequencing.md](sequencing.md) for more sequencing patterns - delay, trim, l
 
 Use `npx remotion add` to add new packages with the right version:
 
-```
+```bash
 npx remotion add @remotion/media
 ```
 

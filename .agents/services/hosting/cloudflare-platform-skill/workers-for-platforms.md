@@ -49,15 +49,17 @@ Multi-tenant platform with isolated customer code execution at scale.
 4. **Outbound Worker** (optional) - Intercepts external fetch, controls egress, logs subrequests (blocks TCP socket connect() API)
 
 **Request Flow:**
-```
-Request → Dispatch Worker → Determines user Worker → env.DISPATCHER.get("customer") 
+
+```text
+Request → Dispatch Worker → Determines user Worker → env.DISPATCHER.get("customer")
 → User Worker executes (Outbound Worker for external fetch) → Response → Dispatch Worker → Client
 ```
 
 ## Decision Trees
 
 ### When to Use Workers for Platforms
-```
+
+```text
 Need to run code?
 ├─ Your code only → Regular Workers
 ├─ Customer/AI code → Workers for Platforms
@@ -65,7 +67,8 @@ Need to run code?
 ```
 
 ### Routing Strategy Selection
-```
+
+```text
 Hostname routing needed?
 ├─ Subdomains only (*.saas.com) → `*.saas.com/*` route + subdomain extraction
 ├─ Custom domains → `*/*` wildcard + Cloudflare for SaaS + KV/metadata routing
@@ -73,7 +76,8 @@ Hostname routing needed?
 ```
 
 ### Isolation Mode Selection
-```
+
+```text
 Worker mode?
 ├─ Running customer code → Untrusted (default)
 ├─ Need request.cf geolocation → Trusted mode
@@ -91,6 +95,7 @@ Worker mode?
 | [gotchas.md](./gotchas.md) | Limits, isolation issues, best practices | Debugging, production prep |
 
 ## See Also
+
 - [workers](https://developers.cloudflare.com/workers/) - Core Workers runtime documentation
 - [durable-objects](https://developers.cloudflare.com/durable-objects/) - Stateful multi-tenant patterns
 - [sandbox](https://developers.cloudflare.com/sandbox/) - Alternative for untrusted code execution

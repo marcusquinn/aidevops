@@ -56,6 +56,7 @@ mode: subagent
 **Cause:** Smart Placement routes ALL requests (including static assets like HTML, CSS, JS, images) to remote locations. Static content should ALWAYS be served from edge closest to user.
 
 **Solution:** Split into separate Workers OR disable Smart Placement:
+
 ```jsonc
 // ❌ BAD - Assets routed away from user
 {
@@ -88,6 +89,7 @@ This is one of the most common and impactful Smart Placement misconfigurations.
 **Cause:** Smart Placement optimizes for backend latency but increases user-facing response time.
 
 **Solution:** Split into two Workers:
+
 ```jsonc
 // frontend/wrangler.jsonc
 {

@@ -8,7 +8,7 @@ mode: subagent
 
 # Multi-scene videos
 
-Put each substantial scene in its own component and file.  
+Put each substantial scene in its own component and file.<br>
 Register those components as [connected compositions](connected-compositions.md) so each scene has an editable Studio timeline.
 
 Treat the parent timeline as an editable document: Author every scene that
@@ -18,8 +18,8 @@ should be edited independently as a separate interactive component,
 Programmatic rendering is suitable only when the generated scenes are
 intentionally controlled as one source template.
 
-Use `<TransitionSeries>` when the scenes may have transitions.  
-Install `@remotion/transitions` if it is missing.  
+Use `<TransitionSeries>` when the scenes may have transitions.<br>
+Install `@remotion/transitions` if it is missing.<br>
 Give each sequence an inline `durationInFrames` value so Studio can edit its timing.
 
 Example:
@@ -109,8 +109,8 @@ export const RemotionRoot = () => (
 
 Keep each scene's standalone metadata and `defaultProps` consistent with how it is used in the main video.
 
-With no transition, this example needs a 210-frame main composition.  
+With no transition, this example needs a 210-frame main composition.<br>
 If you add a transition, account for its overlap in the main duration; see [transitions](transitions.md).
 
-Use `<Series>` for consecutive scenes that do not need transitions.  
+Use `<Series>` for consecutive scenes that do not need transitions.<br>
 For independently placed scenes, prefer components made with `Interactive.withSchema({wrapInSequence: true})` and put `from` and `durationInFrames` directly on each instance.

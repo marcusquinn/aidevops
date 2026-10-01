@@ -46,18 +46,22 @@ Cloudflare TURN (Traversal Using Relays around NAT) Service is a managed relay s
 ## Service Addresses and Ports
 
 ### STUN over UDP
+
 - **Primary**: `stun.cloudflare.com:3478/udp`
 - **Alternate**: `stun.cloudflare.com:53/udp` (blocked by browsers, not recommended)
 
 ### TURN over UDP
+
 - **Primary**: `turn.cloudflare.com:3478/udp`
 - **Alternate**: `turn.cloudflare.com:53/udp` (blocked by browsers)
 
 ### TURN over TCP
+
 - **Primary**: `turn.cloudflare.com:3478/tcp`
 - **Alternate**: `turn.cloudflare.com:80/tcp`
 
 ### TURN over TLS
+
 - **Primary**: `turn.cloudflare.com:5349/tcp`
 - **Alternate**: `turn.cloudflare.com:443/tcp`
 

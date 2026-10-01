@@ -316,7 +316,7 @@ const baseStyle = useMemo(() => {
 
 ## Animate using `interpolate()`
 
-Write animations as inline `interpolate()` calls on the property that changes.  
+Write animations as inline `interpolate()` calls on the property that changes.<br>
 The output range, easing, extrapolation and `output` property should use hardcoded values.
 
 The input range may additionally use `durationInFrames`, `fps`, `width` and `height` destructured directly from `useVideoConfig()`. Bare identifiers such as `durationInFrames`, multiplication with a number such as `2 * fps` or `fps * 2`, and subtraction of a number such as `durationInFrames - 1` are supported.
@@ -395,9 +395,9 @@ import {Interactive} from 'remotion';
 
 ### Morph paths using inline `interpolatePaths()`
 
-Use `interpolatePaths()` from `@remotion/paths` directly in `d`.  
+Use `interpolatePaths()` from `@remotion/paths` directly in `d`.<br>
 It accepts a frame, an input range, an equally sized array of path strings, and options for easing, extrapolation, and posterization.
-Keep the output paths, ranges, and options inline, following the same input-range rules as `interpolate()` above.  
+Keep the output paths, ranges, and options inline, following the same input-range rules as `interpolate()` above.<br>
 Do not use `interpolatePath()` API or extract the interpolated result into a variable when the path keyframes should remain editable in Studio.
 
 ```tsx title="Editable path keyframes"
@@ -432,12 +432,12 @@ export const MorphingPath = () => {
 };
 ```
 
-Studio can edit the path at the current frame, add or move keyframes, and adjust their easing.  
+Studio can edit the path at the current frame, add or move keyframes, and adjust their easing.<br>
 Use `strokeDasharray` and `strokeDashoffset` to evolve paths.
 
 ## Use `scale`, `translate`, `rotate` CSS properties
 
-Avoid the `transform` CSS property.  
+Avoid the `transform` CSS property.<br>
 If possible, use `scale`, `rotate` and `translate` instead because only they are interactively editable.
 
 ## Keep composition metadata inline

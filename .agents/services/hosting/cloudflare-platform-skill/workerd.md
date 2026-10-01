@@ -12,6 +12,7 @@ mode: subagent
 V8-based JS/Wasm runtime powering Cloudflare Workers. Use as app server, dev tool, or HTTP proxy.
 
 ## ⚠️ IMPORTANT SECURITY NOTICE
+
 **workerd is NOT a hardened sandbox.** Do not run untrusted code. It's designed for deploying YOUR code locally/self-hosted, not multi-tenant SaaS. Cloudflare production adds security layers not present in open-source workerd.
 
 ## Decision Tree: When to Use What
@@ -33,13 +34,15 @@ V8-based JS/Wasm runtime powering Cloudflare Workers. Use as app server, dev too
 - Production without additional security layers
 
 ## Key Features
+
 - **Standards-based**: Fetch API, Web Crypto, Streams, WebSocket
 - **Nanoservices**: Service bindings with local call performance
 - **Capability security**: Explicit bindings prevent SSRF
 - **Backwards compatible**: Version = max compat date supported
 
 ## Architecture
-```
+
+```text
 Config (workerd.capnp)
 ├── Services (workers/endpoints)
 ├── Sockets (HTTP/HTTPS listeners)
@@ -47,6 +50,7 @@ Config (workerd.capnp)
 ```
 
 ## Quick Start
+
 ```bash
 workerd serve config.capnp
 workerd compile config.capnp myConfig -o binary
@@ -65,6 +69,7 @@ workerd test config.capnp
 workerd is in **active development**. Breaking changes possible. Pin versions in production.
 
 ## Core Concepts
+
 - **Service**: Named endpoint (worker/network/disk/external)
 - **Binding**: Capability-based resource access (KV/DO/R2/services)
 - **Compatibility date**: Feature gate (always set!)
@@ -82,6 +87,7 @@ workerd is in **active development**. Breaking changes possible. Pin versions in
 5. [gotchas.md](./gotchas.md) - Common errors, debugging
 
 ## Related References
+
 - [workers](https://developers.cloudflare.com/workers/) - Workers runtime API documentation
 - [miniflare](miniflare.md) - Testing tool built on workerd
 - [wrangler](https://developers.cloudflare.com/workers/wrangler/) - CLI that uses workerd for local dev

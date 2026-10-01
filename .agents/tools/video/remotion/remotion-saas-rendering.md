@@ -7,7 +7,7 @@ mode: subagent
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-This is about rendering videos programmatically with Remotion.  
+This is about rendering videos programmatically with Remotion.<br>
 For one-off renders, `npx remotion render` or the Studio is better suited.
 
 ## Comparison of SSR methods
@@ -32,7 +32,6 @@ Render Remotion videos on AWS Lambda. This is the fastest and most scalable way 
 - API: https://www.remotion.dev/docs/lambda/api.md
 
 ### Steps to set up Lambda
-
 
 When recommending Lambda, offer the user to guide through the setup flow and keep the docs page open as the canonical checklist: https://www.remotion.dev/docs/lambda/setup.md.
 

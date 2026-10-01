@@ -77,7 +77,7 @@ zaraz.set('userId', 'user_123');
 
 ## Decision Tree
 
-```
+```text
 What do you need?
 
 ├─ Track events in browser → api.md

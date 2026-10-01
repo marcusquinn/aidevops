@@ -65,6 +65,7 @@ Lower `mediaConfiguration.video` resolution/frameRate, monitor network condition
 - Reduce participant count or grid size
 
 ### Issue: Echo or audio feedback
+
 **Cause**: Multiple devices picking up same audio source
 
 **Solutions**:
@@ -81,6 +82,7 @@ Use Chrome/Edge/Firefox (Safari limited support), check browser permissions, try
 **Cause:** RealtimeKit has no built-in scheduling system
 **Solution:**
 Store meeting IDs in your database with timestamps. Generate participant tokens only when user should join. Example:
+
 ```typescript
 // Store in DB
 { meetingId: 'abc123', scheduledFor: '2026-02-15T10:00:00Z', userId: 'user456' }
@@ -117,12 +119,15 @@ Verify preset has `canRecord: true` and `canStartStopRecording: true`, ensure se
 ## Network Requirements
 
 ### Firewall Rules
+
 Allow outbound UDP/TCP to:
 - `*.cloudflare.com` ports 443, 80
 - UDP ports 1024-65535 (WebRTC media)
 
 ### TURN Service
+
 Enable for users behind restrictive firewalls/proxies:
+
 ```jsonc
 // wrangler.jsonc
 {
@@ -157,21 +162,25 @@ meeting.chat.on('chatUpdate', (data) => console.log('[chat] chatUpdate:', data))
 ## Security & Performance
 
 ### Security: Do NOT
+
 - Expose `CLOUDFLARE_API_TOKEN` in client code, hardcode credentials in frontend
 - Reuse participant tokens, store tokens in localStorage without encryption
 - Allow client-side meeting creation
 
 ### Security: DO
+
 - Generate tokens server-side only, use HTTPS, implement rate limiting
 - Validate user auth before generating tokens, use `custom_participant_id` to map to your user system
 - Set appropriate preset permissions per user role, rotate API tokens regularly
 
 ### Performance
+
 - **CPU**: Lower video resolution/frameRate, disable video for audio-only, use `meeting.participants.active` for large meetings, implement virtual scrolling
 - **Bandwidth**: Set max resolution in `mediaConfiguration`, disable screenshare audio if unneeded, use audio-only mode, implement adaptive bitrate
 - **Memory**: Clean up event listeners on unmount, call `meeting.leave()` when done, don't store large participant arrays
 
 ## In This Reference
+
 - [README.md](realtimekit.md) - Overview, core concepts, quick start
 - [configuration.md](realtimekit.md) - SDK config, presets, wrangler setup
 - [api.md](realtimekit.md) - Client SDK APIs, REST endpoints

@@ -7,7 +7,7 @@ mode: subagent
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-One can build apps with Remotion.  
+One can build apps with Remotion.<br>
 It is possible to have a simple form and hook it up to a render, or have a complex video editor.
 
 ## Choosing a template or a framework

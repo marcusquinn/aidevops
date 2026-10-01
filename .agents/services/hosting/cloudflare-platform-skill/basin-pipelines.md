@@ -30,7 +30,7 @@ This reference is a fast-start with verified code and gotchas. For limits, setti
 
 ## Three Components
 
-```
+```text
 Sources → Stream → Pipeline (SQL) → Sink → R2
           ↑          ↓                 ↓
    HTTP / Workers / Transform     Iceberg (Basin Catalog)
@@ -53,6 +53,7 @@ npx wrangler basin pipelines setup
 ```
 
 Minimal Worker producer:
+
 ```typescript
 interface Env { MY_STREAM: Pipeline; }
 
@@ -66,7 +67,7 @@ export default {
 
 ## Which Sink Type?
 
-```
+```text
 Need SQL queries / ACID / time-travel on the data?
   → Basin Catalog (Iceberg)   ✅ Basin SQL, schema evolution   ❌ more setup
 

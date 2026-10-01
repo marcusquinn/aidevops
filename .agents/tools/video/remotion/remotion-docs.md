@@ -14,7 +14,7 @@ If this is not relevant, load Remotion Best Practices instead.
 
 Use the Algolia search API to find relevant documentation pages:
 
-```
+```http
 POST https://plsduol1ca-dsn.algolia.net/1/indexes/*/queries?x-algolia-api-key=3e42dbd4f895fe93ff5cf40d860c4a85&x-algolia-application-id=PLSDUOL1CA
 Content-Type: application/x-www-form-urlencoded
 
@@ -35,7 +35,7 @@ Each hit contains a `url` field pointing to the documentation page.
 
 Append `.md` to any Remotion docs URL to retrieve its Markdown source (saves tokens):
 
-```
+```text
 https://www.remotion.dev/docs/use-video-config.md
 https://www.remotion.dev/docs/sequence.md
 https://www.remotion.dev/docs/lambda/rendermediaonlambda.md

@@ -8,7 +8,7 @@ mode: subagent
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
 Prefer timing props directly on built-in interactive components and custom
-components made with `Interactive.withSchema({wrapInSequence: true})`.  
+components made with `Interactive.withSchema({wrapInSequence: true})`.<br>
 Avoid wrapping a single timing-capable component in a redundant `<Sequence>`.
 Put `name`, `from`, `durationInFrames`, `loop`, `volume`, and `premountFor`
 directly on `<Audio>` whenever their combination gives the intended timing.

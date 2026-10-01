@@ -12,7 +12,7 @@
       "docs_url": "https://animejs.com/documentation",
       "context7_id": "/websites/animejs",
       "imported_at": "2026-01-21T12:00:00Z",
-      "last_checked": "2026-01-21T12:00:00Z",
+      "last_checked": "2026-10-01T10:28:02Z",
       "merge_strategy": "added",
       "notes": "Imported via Context7 documentation API with /websites/animejs library ID"
     },
@@ -23,7 +23,7 @@
       "local_path": ".agents/tools/video/remotion/remotion.md",
       "format_detected": "skill-md-nested-multi",
       "imported_at": "2026-01-21T04:58:00Z",
-      "last_checked": "2026-10-01T00:00:00Z",
+      "last_checked": "2026-10-01T10:28:06Z",
       "merge_strategy": "added",
       "notes": "Upstream restructured into 11 nested sub-skills (remotion-best-practices router + remotion-captions/create/docs/interactivity/maps/markup/multimedia/render/saas/studio/upgrade). Chapters flattened into .agents/tools/video/remotion/ with remotion.md as index; remotion-markup's many reference files kept as remotion-<name>.md. Upstream agents/ and assets/*.svg companion dirs dropped (icons/scripts only, not knowledge content). Previous flat 28-file layout under .agents/tools/video/ removed; see migrations.sh.",
       "context7_id": "/remotion-dev/remotion"
@@ -35,7 +35,7 @@
       "local_path": ".agents/tools/video/video-prompt-design.md",
       "format_detected": "readme-distilled",
       "imported_at": "2026-01-23T20:40:00Z",
-      "last_checked": "2026-01-23T20:40:00Z",
+      "last_checked": "2026-10-01T10:28:08Z",
       "merge_strategy": "added",
       "notes": "Distilled from upstream README into 7-component meta prompt framework subagent"
     },
@@ -46,7 +46,7 @@
       "local_path": ".agents/services/hosting/cloudflare-platform-skill.md",
       "format_detected": "skill-md-nested-multi",
       "imported_at": "2026-01-21T05:12:00Z",
-      "last_checked": "2026-10-01T00:00:00Z",
+      "last_checked": "2026-10-01T10:28:14Z",
       "merge_strategy": "added",
       "notes": "GH#33150: switched from the third-party dmmulroy/cloudflare-skill fork to the official cloudflare/skills repo. The Cloudflare MCP and cf CLI cover operations, so this skill keeps only the decision tree, every *-gotchas.md, and full docs (incl. *-patterns.md) for newer products (containers, agents-sdk, ai-search, sandbox, realtimekit, workflows, basin as the r2-data-catalog/pipelines/r2-sql successor). Excludes recorded so re-sync preserves them: dropped pulumi*/terraform* entirely; dropped generic *-patterns.md for all topics except the newer-products list; dropped turnstile (now a separate turnstile-spin skill, out of scope); did not import the new net-new upstream skills cloudflare-one(-migrations), cloudflare-email-service, nextjs-on-cloudflare, k2, web-perf (out of scope for this re-sync, candidates for a future task). workers.md re-added from the new workers-best-practices skill (replaces the removed generic workers/ topic). durable-objects and wrangler kept from their now-separate upstream skills (durable-objects/references/rules.md -> durable-objects-gotchas.md; wrangler has no upstream gotchas file)."
     },
@@ -57,7 +57,7 @@
       "local_path": ".agents/content/heygen-skill.md",
       "format_detected": "skill-md-nested",
       "imported_at": "2026-01-24T12:00:00Z",
-      "last_checked": "2026-01-24T12:00:00Z",
+      "last_checked": "2026-10-01T10:28:15Z",
       "merge_strategy": "added",
       "notes": "Includes 18 rule files in .agents/content/heygen-skill/rules-"
     },
@@ -68,7 +68,7 @@
       "local_path": ".agents/tools/productivity/caldav-calendar-skill.md",
       "format_detected": "clawdhub",
       "imported_at": "2026-01-24T22:20:00Z",
-      "last_checked": "2026-01-24T22:20:00Z",
+      "last_checked": "2026-10-01T10:28:19Z",
       "merge_strategy": "added",
       "notes": "ClawdHub v1.0.1 by @Asleep123 - CalDAV calendar sync via vdirsyncer + khal"
     },
@@ -79,7 +79,7 @@
       "local_path": ".agents/services/hosting/proxmox-full-skill.md",
       "format_detected": "clawdhub",
       "imported_at": "2026-01-24T22:20:00Z",
-      "last_checked": "2026-01-24T22:20:00Z",
+      "last_checked": "2026-10-01T10:28:23Z",
       "merge_strategy": "added",
       "notes": "ClawdHub v1.0.0 by @mSarheed - Complete Proxmox VE management via REST API"
     },
@@ -90,7 +90,7 @@
       "local_path": ".agents/seo/seo-audit-skill.md",
       "format_detected": "skill-md",
       "imported_at": "2026-01-29T01:37:00Z",
-      "last_checked": "2026-01-29T01:37:00Z",
+      "last_checked": "2026-10-01T10:28:24Z",
       "merge_strategy": "added",
       "notes": "SEO audit skill from marketingskills repo (skills/seo-audit subpath), includes references/"
     },
@@ -101,7 +101,7 @@
       "local_path": ".agents/tools/deployment/cloudron-app-packaging-skill.md",
       "format_detected": "skill-md-nested",
       "imported_at": "2026-03-01T16:19:15Z",
-      "last_checked": "2026-08-08T18:16:17Z",
+      "last_checked": "2026-10-01T10:28:26Z",
       "merge_strategy": "added",
       "notes": "Official Cloudron skill from git.cloudron.io/docs/skills. Includes manifest-ref.md and addons-ref.md in cloudron-app-packaging-skill/"
     },
@@ -112,7 +112,7 @@
       "local_path": ".agents/tools/deployment/cloudron-app-publishing-skill.md",
       "format_detected": "skill-md",
       "imported_at": "2026-03-01T16:19:15Z",
-      "last_checked": "2026-08-08T18:16:17Z",
+      "last_checked": "2026-10-01T10:28:27Z",
       "merge_strategy": "added",
       "notes": "Official Cloudron skill for CloudronVersions.json publishing and community packages (9.1+)"
     },
@@ -123,7 +123,7 @@
       "local_path": ".agents/tools/deployment/cloudron-server-ops-skill.md",
       "format_detected": "skill-md",
       "imported_at": "2026-03-01T16:19:15Z",
-      "last_checked": "2026-08-08T18:16:17Z",
+      "last_checked": "2026-10-01T10:28:28Z",
       "merge_strategy": "added",
       "notes": "Official Cloudron skill for CLI server operations (logs, exec, backups, env vars, CI/CD)"
     },
@@ -134,7 +134,7 @@
       "local_path": ".agents/services/communications/convos.md",
       "format_detected": "url",
       "imported_at": "2026-03-07T18:12:47Z",
-      "last_checked": "2026-03-10T12:00:00Z",
+      "last_checked": "2026-10-01T10:28:29Z",
       "merge_strategy": "added",
       "notes": "Encrypted messaging agent built on XMTP. URL-based tracking with ETag caching (t1415.3).",
       "upstream_hash": "14e995504820fa8a9d5bac31565e52115b93157180f0d28c20ad2e9d8e137db5",
@@ -147,7 +147,7 @@
       "local_path": ".agents/tools/ui/nothing-design-skill.md",
       "format_detected": "skill-md-nested",
       "imported_at": "2026-04-01T12:00:00Z",
-      "last_checked": "2026-04-01T12:00:00Z",
+      "last_checked": "2026-10-01T10:28:29Z",
       "merge_strategy": "added",
       "notes": "Nothing-inspired monochrome UI/UX design system. Includes tokens.md, components.md, platform-mapping.md in nothing-design-skill/"
     },
@@ -158,7 +158,7 @@
       "local_path": ".agents/tools/video/video-use-skill.md",
       "format_detected": "skill-md",
       "imported_at": "2026-05-09T23:12:28Z",
-      "last_checked": "2026-05-09T23:12:28Z",
+      "last_checked": "2026-10-01T10:28:31Z",
       "merge_strategy": "added",
       "notes": "Upstream-tracked video editing skill used by tools/video/video-editor.md for raw footage editing workflows"
     }

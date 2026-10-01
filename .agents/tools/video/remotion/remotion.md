@@ -149,7 +149,7 @@ You can use the command above to let Studio open the browser, or run:
 npx remotion studio --no-open
 ```
 
-This will start a long-running process and print the server URL for the preview.  
+This will start a long-running process and print the server URL for the preview.<br>
 If the server is already started, it will print the URL.
 If you use `--no-open`, open the exact printed URL in the in-app browser and verify that Studio loads. Once a composition exists, verify that its video preview loads. If you cannot open it there, run Studio without `--no-open`.
 You can visit a specific composition by navigating to `/[composition-id]`, for example `http://localhost:3000/MapAnimation`.
@@ -172,12 +172,12 @@ To launch a project in Remotion Studio, open its exact local URL, or configure S
 
 ## Render the video
 
-Only render if the user is very explicit in asking for it.  
+Only render if the user is very explicit in asking for it.<br>
 E.g. "Render the video", "Export", "Give me the MP4".
 
 The preview also has a more intuitive rendering interface, so consider using it instead of the command line for rendering.
 
-```
+```bash
 npx remotion render
 ```
 
