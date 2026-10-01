@@ -391,6 +391,16 @@ _cmd_run_prepare() {
 			return 1
 		fi
 		[[ -n "$node_bin" ]] && export PATH="${node_bin}:$PATH"
+		# OpenCode tool shells do not inherit this process PATH; the plugin
+		# shell.env hook re-applies the selection from this var (GH#33290).
+		# rc 0 with no output means the active node already satisfies.
+		local selected_node=""
+		[[ "$node_rc" -eq 0 ]] && selected_node=$(command -v node 2>/dev/null || true)
+		if [[ "$selected_node" == /* ]]; then
+			export AIDEVOPS_PROJECT_NODE_BIN="${selected_node%/*}"
+		else
+			unset AIDEVOPS_PROJECT_NODE_BIN 2>/dev/null || true
+		fi
 	else
 		unset _WORKER_WORKTREE_PATH WORKER_TARGET_BRANCH 2>/dev/null || true
 	fi
