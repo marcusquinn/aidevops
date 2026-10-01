@@ -346,15 +346,18 @@ terminal_blocker_release_mode() {
 terminal_blocker_observation_fragment() {
 	local task_revision="$1"
 	local blocker_fingerprint="$2"
+	local release_mode="${3:-first}"
 	printf '\n<!-- %s revision=%s blocker=%s -->\n\n' \
 		"$_TBC_OBSERVATION_MARKER" "$task_revision" "$blocker_fingerprint"
-	_terminal_blocker_recovery "$blocker_fingerprint"
+	_terminal_blocker_recovery "$blocker_fingerprint" "$release_mode"
 	return 0
 }
 
 _terminal_blocker_recovery() {
 	local fingerprint="$1"
+	local release_mode="${2:-first}"
 	local reason="" owner="" action="" attempt="" issue="${WORKER_ISSUE_NUMBER:-unknown}"
+	local projected_state="status:blocked"
 	reason=$(_terminal_blocker_reason "$fingerprint")
 	case "$reason" in
 	missing_files_scope)
@@ -383,10 +386,15 @@ _terminal_blocker_recovery() {
 		;;
 	esac
 	[[ "$issue" =~ ^[0-9]+$ ]] || issue="$_TBC_UNKNOWN"
+	# GH#33294: the first observation runs one free verification retry before
+	# the circuit opens — the release already restores status:available, so
+	# the projected state must match instead of claiming a hold that is not
+	# in effect. Only an actual circuit/open release keeps the issue held.
+	[[ "$release_mode" == "first" ]] && projected_state="status:available"
 	# Correlate attempts without publishing runner names or arbitrary env text.
 	attempt=$(_terminal_blocker_hash "${AIDEVOPS_ATTEMPT_ID:-${WORKER_SESSION_KEY:-unknown}}") || attempt="$_TBC_UNKNOWN"
-	printf 'Terminal blocker: reason=%s owner=%s task=%s attempt=%s.\nProjected state: status:blocked.\nNext action: %s\nRaw evidence remains in protected worker telemetry.\n' \
-		"$reason" "$owner" "$issue" "$attempt" "$action"
+	printf 'Terminal blocker: reason=%s owner=%s task=%s attempt=%s.\nProjected state: %s.\nNext action: %s\nRaw evidence remains in protected worker telemetry.\n' \
+		"$reason" "$owner" "$issue" "$attempt" "$projected_state" "$action"
 	return 0
 }
 
