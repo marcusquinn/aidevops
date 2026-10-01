@@ -1,94 +1,29 @@
+---
+name: hyperdrive-gotchas
+description: "Cloudflare hyperdrive: gotchas"
+mode: subagent
+---
+
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-# Gotchas
+# Hyperdrive troubleshooting
 
-See [hyperdrive.md](./hyperdrive.md) and [hyperdrive-patterns.md](./hyperdrive-patterns.md).
+Start with the actual error and the affected configuration. Fetch [Troubleshoot and debug](https://developers.cloudflare.com/hyperdrive/observability/troubleshooting/) for current error codes and diagnosis rather than guessing from a generic connection failure.
 
-## Common Errors
+| Symptom | What to inspect and where to read |
+|---------|----------------------------------|
+| Connection refused or authentication failure | Check origin reachability and credentials using [troubleshooting](https://developers.cloudflare.com/hyperdrive/observability/troubleshooting/) and [firewall/networking configuration](https://developers.cloudflare.com/hyperdrive/configuration/firewall-and-networking-configuration/). |
+| Private database or TLS failure | Follow the selected [Workers VPC](https://developers.cloudflare.com/hyperdrive/configuration/connect-to-private-database-vpc/) or [Tunnel/Access](https://developers.cloudflare.com/hyperdrive/configuration/connect-to-private-database/) path and its certificate prerequisites; see [SSL/TLS configuration](https://developers.cloudflare.com/hyperdrive/configuration/tls-ssl-certificates-for-hyperdrive/). |
+| Pool exhaustion or too many connections | Distinguish client connection lifetime from origin pool capacity. Read [connection lifecycle](https://developers.cloudflare.com/hyperdrive/concepts/connection-lifecycle/), [pool tuning](https://developers.cloudflare.com/hyperdrive/configuration/tune-connection-pool/), and [limits](https://developers.cloudflare.com/hyperdrive/platform/limits/). |
+| Query timeout | Check the current [limits](https://developers.cloudflare.com/hyperdrive/platform/limits/) and [metrics](https://developers.cloudflare.com/hyperdrive/observability/metrics/) before changing query or transaction design. |
+| Stale reads or unexpectedly uncached queries | Inspect the binding's cache configuration and query eligibility in [query caching](https://developers.cloudflare.com/hyperdrive/concepts/query-caching/). Writes do not purge cached reads; do not treat prepared-statement settings as cache controls. |
+| Slow multi-query requests | Inspect [metrics](https://developers.cloudflare.com/hyperdrive/observability/metrics/) and evaluate [Smart Placement](https://developers.cloudflare.com/workers/configuration/placement/). |
+| Local connection failure, ignored environment variable, or absent cache behavior | Check binding names, local connection overrides, precedence, and remote testing in [local development](https://developers.cloudflare.com/hyperdrive/configuration/local-development/). |
+| Unsupported driver or SQL feature | Check [supported databases and features](https://developers.cloudflare.com/hyperdrive/reference/supported-databases-and-features/) and the selected [driver guide](./api.md). |
 
-| `error.message` contains | Cause | HTTP status | Action |
-|--------------------------|-------|-------------|--------|
-| `Failed to acquire a connection` | Pool exhausted | 503 | Reduce transaction duration; upgrade plan |
-| `connection_refused` | DB refusing | 503 | Check firewall/limits |
-| `timeout` / `deadline exceeded` | Query >60s | 504 | Optimize query; add indexes |
-| `password authentication failed` | Bad credentials | 500 | Check credentials |
-| `SSL` / `TLS` | TLS misconfiguration | 500 | Check `sslmode` setting |
+## Capacity and changes
 
-Catch pattern: `const msg = error.message || ""; if (msg.includes("...")) { ... }`
+Retrieve [limits](https://developers.cloudflare.com/hyperdrive/platform/limits/) and [pricing](https://developers.cloudflare.com/hyperdrive/platform/pricing/) for current plan allowances, connection and query bounds, and limit-increase guidance. Check [release notes](https://developers.cloudflare.com/hyperdrive/platform/release-notes/) when behavior changes after an upgrade.
 
-## Troubleshooting
-
-**Connection refused:** Check firewall allows Cloudflare IPs → verify DB listening on port → confirm service running → check credentials.
-
-**Pool exhausted:** Reduce transaction duration → avoid long queries (>60s) → don't hold connections during external calls → upgrade to paid plan.
-
-Monitor active connections:
-
-```sql
-SELECT usename, application_name, client_addr, state
-FROM pg_stat_activity
-WHERE application_name = 'Cloudflare Hyperdrive';
-```
-
-**SSL/TLS failed:** Add `sslmode=require` (Postgres) or `sslMode=REQUIRED` (MySQL) → upload CA cert if self-signed → verify DB has SSL enabled → check cert expiry.
-
-**Queries not cached:** Verify non-mutating (SELECT) → check for volatile functions (NOW(), RANDOM()) → confirm caching not disabled → use `wrangler dev --remote` to test → check `prepare=true` for postgres.js.
-
-**Query timeout (>60s):** Optimize with indexes → reduce dataset (LIMIT) → break into smaller queries → use async processing.
-
-**Local DB connection:** Verify `localConnectionString` correct → check DB running → confirm env var name matches binding → test with psql/mysql client.
-
-**Env var not working:** Format: `CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_<BINDING>` → binding matches wrangler.jsonc → variable exported in shell → restart wrangler dev.
-
-## Limits
-
-| Category | Limit | Free | Paid |
-|----------|-------|------|------|
-| Config | Max configs | 10 | 25 |
-| Config | Username/DB name | 63 bytes | 63 bytes |
-| Connection | Timeout | 15s | 15s |
-| Connection | Idle timeout | 10min | 10min |
-| Connection | Max origin connections | ~20 | ~100 |
-| Query | Max duration | 60s | 60s |
-| Query | Max cached response | 50MB | 50MB |
-
-## Migration Checklist
-
-- [ ] Create config via Wrangler
-- [ ] Add binding to wrangler.jsonc
-- [ ] Enable `nodejs_compat` flag
-- [ ] Set `compatibility_date` >= `2024-09-23`
-- [ ] Update code to `env.HYPERDRIVE.connectionString` (Postgres) or properties (MySQL)
-- [ ] Configure `localConnectionString`
-- [ ] Set `prepare: true` (postgres.js) or `disableEval: true` (mysql2)
-- [ ] Test locally with `wrangler dev`
-- [ ] Deploy + monitor pool usage
-- [ ] Validate cache with `wrangler dev --remote`
-- [ ] Update firewall (Cloudflare IPs)
-- [ ] Configure observability
-
-## When NOT to Use
-
-- Write-heavy workloads (limited cache benefit)
-- Real-time data requirements (<1s freshness)
-- Single-region apps close to DB
-- Minimal applications (overhead unjustified)
-- DB with strict connection limits already exceeded
-
-Alternatives: D1 (Cloudflare native SQL), Durable Objects (stateful Workers), KV (global key-value), R2 (object storage).
-
-## Supported Databases
-
-**PostgreSQL 11+** (CockroachDB, Timescale, Materialize, Neon, Supabase) — `pg` >= 8.16.3. `sslmode`: `require`, `verify-ca`, `verify-full`.
-
-**MySQL 5.7+** (PlanetScale) — `mysql2` >= 3.13.0. `sslMode`: `REQUIRED`, `VERIFY_CA`, `VERIFY_IDENTITY`.
-
-## Resources
-
-- [Docs](https://developers.cloudflare.com/hyperdrive/)
-- [Getting Started](https://developers.cloudflare.com/hyperdrive/get-started/)
-- [Wrangler Reference](https://developers.cloudflare.com/hyperdrive/reference/wrangler-commands/)
-- [Supported DBs](https://developers.cloudflare.com/hyperdrive/reference/supported-databases-and-features/)
-- [Discord #hyperdrive](https://discord.cloudflare.com)
-- [Limit Increase Form](https://forms.gle/ukpeZVLWLnKeixDu7)
+See [configuration.md](./configuration.md) to change a configuration and [patterns.md](./patterns.md) to revisit freshness or connection decisions.

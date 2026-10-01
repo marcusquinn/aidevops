@@ -1,19 +1,28 @@
+---
+name: email-routing
+description: "Cloudflare email routing: product reference"
+mode: subagent
+---
+
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-# Cloudflare Email Routing Skill Reference
+# Email Routing
 
-## Overview
+Use routing rules for address-based forwarding; use an Email Worker when incoming mail needs custom processing. Fetch the linked docs before implementing APIs, DNS, configuration, or limits.
 
-Cloudflare Email Routing enables custom email addresses for your domain that route to verified destination addresses. It's free, privacy-focused (no storage/access), and includes Email Workers for programmatic email processing.
+| Task | Start here |
+| --- | --- |
+| Forward incoming mail to an existing mailbox | [Route emails](https://developers.cloudflare.com/email-service/get-started/route-emails/) |
+| Manage addresses, verification, catch-all rules, or subaddressing | [Routing rules and addresses](https://developers.cloudflare.com/email-service/configuration/email-routing-addresses/) |
+| Filter, parse, reply to, or store incoming mail | [Email Workers](email-workers.md) |
+| Send a new outbound message | [Send emails](https://developers.cloudflare.com/email-service/get-started/send-emails/) — Workers binding, REST API, or SMTP |
 
-**Available to all Cloudflare customers using Cloudflare a...
+Forwarding requires verified destinations. Replying within an incoming email event and sending a new outbound message have different requirements; use the relevant API docs.
 
-## In This Reference
+## Reference map
 
-- **[patterns.md](./patterns.md)** - Common patterns, use cases, examples
-- **[gotchas.md](./gotchas.md)** - Troubleshooting, best practices, limitations
-
-## See Also
-
-- [Cloudflare Docs](https://developers.cloudflare.com/)
+- [Configuration](email-routing.md): domains, rules, deployment, and local testing.
+- [API](email-routing.md): routing management and inbound/outbound operations.
+- [Patterns](email-routing-patterns.md): filtering, parsing, storage, and notifications.
+- [Troubleshooting](email-routing-gotchas.md): authentication, delivery, and current limits.

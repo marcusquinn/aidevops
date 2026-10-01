@@ -1,15 +1,30 @@
+---
+name: waf
+description: "Cloudflare waf: product reference"
+mode: subagent
+---
+
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-# Cloudflare WAF Expert Skill Reference
+# Cloudflare WAF
 
-**Expertise**: Cloudflare Web Application Firewall (WAF) configuration, custom rules, managed rulesets, rate limiting, attack detection, and API integration...
+Use this reference for managed protection, custom request policies, rate limiting, and investigation of blocked traffic. Read the relevant developer documentation before implementing; it owns schemas, expressions, ruleset IDs, phase order, and plan availability.
 
-## In This Reference
+| Task | Start here |
+|------|------------|
+| Choose and enable WAF protections | [Get started](https://developers.cloudflare.com/waf/get-started/) |
+| Deploy managed protection | [Managed rules deployment](https://developers.cloudflare.com/waf/managed-rules/deploy-api/) |
+| Match application-specific requests | [Custom rules](https://developers.cloudflare.com/waf/custom-rules/create-api/) |
+| Limit request volume | [Rate limiting](https://developers.cloudflare.com/waf/rate-limiting-rules/create-api/) |
+| Understand score-based detection | [Attack score](https://developers.cloudflare.com/waf/detections/attack-score/) |
+| Diagnose blocked or unmitigated requests | [Managed rules troubleshooting](https://developers.cloudflare.com/waf/managed-rules/troubleshooting/) |
 
-- **[patterns.md](./patterns.md)** - Common patterns, use cases, examples
-- **[gotchas.md](./gotchas.md)** - Troubleshooting, best practices, limitations
+Identify the target account or zone and inspect existing rules before planning a change. Keep the requested traffic scope explicit, especially for exceptions and account-wide deployments.
 
-## See Also
+## Reading Order
 
-- [Cloudflare Docs](https://developers.cloudflare.com/)
+1. [configuration.md](waf.md) — deployment method and existing configuration.
+2. [api.md](waf.md) — API workflows and expression references.
+3. [patterns.md](waf-patterns.md) — choose a protection or exception workflow.
+4. [gotchas.md](waf-gotchas.md) — diagnose ordering, scope, and false positives.

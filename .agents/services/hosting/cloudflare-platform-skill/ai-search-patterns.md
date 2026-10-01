@@ -1,80 +1,24 @@
+---
+name: ai-search-patterns
+description: "Cloudflare ai search: patterns"
+mode: subagent
+---
+
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-# AutoRAG AI Search Patterns
+# AI Search Pattern Routes
 
-Use cases: enterprise search, customer support chat, knowledge bases, multitenancy SaaS (folder filters), content discovery.
+Choose retrieval-only search when your application displays chunks or handles generation itself; choose chat completions when AI Search should also generate the answer. Read [Search Workers binding](https://developers.cloudflare.com/ai-search/api/search/workers-binding/) for both paths and streaming behavior.
 
-## Workers Binding (Recommended)
+| Task | Documentation |
+|------|---------------|
+| Isolate tenants using separate instances or a shared filtered instance | [Multitenancy](https://developers.cloudflare.com/ai-search/how-to/per-tenant-search/) |
+| Define built-in or custom metadata | [Metadata attributes](https://developers.cloudflare.com/ai-search/configuration/indexing/metadata/) |
+| Filter by metadata, combine conditions, or match a folder and subfolders | [Filtering](https://developers.cloudflare.com/ai-search/configuration/retrieval/filtering/) |
+| Tune result count and relevance thresholds | [Result controls](https://developers.cloudflare.com/ai-search/configuration/retrieval/result-controls/) |
+| Resolve follow-up queries using conversation context | [Query rewriting](https://developers.cloudflare.com/ai-search/configuration/retrieval/query-rewriting/) |
+| Improve result ordering with a second model | [Reranking](https://developers.cloudflare.com/ai-search/configuration/retrieval/reranking/) |
+| Customize generation and query-rewriting instructions | [System prompt](https://developers.cloudflare.com/ai-search/configuration/retrieval/system-prompt/) |
 
-**wrangler.toml** or **wrangler.jsonc:**
-
-```toml
-[ai]
-binding = "AI"
-```
-
-```jsonc
-{ "ai": { "binding": "AI" } }
-```
-
-### AI Search with Generation
-
-```typescript
-const answer = await env.AI.autorag("my-autorag").aiSearch({
-  query: "How do I configure rate limits?",
-  model: "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
-  rewrite_query: true,
-  max_num_results: 10,
-  ranking_options: { score_threshold: 0.3 },
-  reranking: { enabled: true, model: "@cf/baai/bge-reranker-base" },
-  stream: true
-});
-```
-
-### Search Only (no generation)
-
-```typescript
-const results = await env.AI.autorag("my-autorag").search({
-  query: "rate limiting configuration",
-  max_num_results: 5,
-  ranking_options: { score_threshold: 0.4 },
-  reranking: { enabled: true, model: "@cf/baai/bge-reranker-base" }
-});
-// results.data[].content, results.data[].filename, results.data[].score
-```
-
-### Folder Filter (multitenancy)
-
-```typescript
-const answer = await env.AI.autorag("my-autorag").aiSearch({
-  query: userQuery,
-  filters: { type: "eq", field: "folder", value: `tenants/${tenantId}/` }
-});
-```
-
-## REST API (Alternative)
-
-Use when Workers binding is unavailable or for server-side calls.
-
-```typescript
-const response = await fetch(
-  "https://api.cloudflare.com/client/v4/accounts/{account_id}/autorag/rags/{autorag_name}/ai-search",
-  {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${AI_SEARCH_TOKEN}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      query: "How do I configure rate limits?",
-      model: "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
-      rewrite_query: true,
-      max_num_results: 10
-    })
-  }
-);
-const { result } = await response.json();
-```
-
-**Token permissions:** `AI Search - Read` (search/aiSearch), `AI Search Edit` (index management).
+For tenant isolation, read the full multitenancy guide before choosing an approach. A lower-bound folder comparison alone does not establish a tenant boundary; use the documented filtering semantics.

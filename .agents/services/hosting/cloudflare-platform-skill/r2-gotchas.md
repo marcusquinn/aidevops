@@ -1,86 +1,26 @@
+---
+name: r2-gotchas
+description: "Cloudflare r2: gotchas"
+mode: subagent
+---
+
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
 # R2 Gotchas & Troubleshooting
 
-## Key Validation
+Use the current references to diagnose the actual response or error instead of copying a workaround.
 
-Unsanitized keys allow path traversal:
+| Symptom or decision | What to check |
+|---------------------|---------------|
+| Listing stops early or escapes the intended prefix | Follow `truncated` and the returned cursor, retaining the original prefix, delimiter, and metadata options on subsequent requests. See the listing section of the [Workers API reference](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/). |
+| Conditional read has no body, or conditional write returns null | Distinguish a missing object from a failed condition; choose the HTTP response for the actual request condition. See conditional operations in the [Workers API reference](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/). |
+| ETag, metadata, checksum, or stream upload behaves unexpectedly | Check supported values and return types in the [Workers API reference](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/), the [Worker upload example](https://developers.cloudflare.com/r2/api/workers/workers-api-usage/), and [Workers streams](https://developers.cloudflare.com/workers/runtime-apis/streams/). |
+| Multipart upload fails or cannot be resumed | Check part constraints and handle an upload that has already completed or aborted: [multipart guide](https://developers.cloudflare.com/r2/api/workers/workers-multipart-usage/) and [API reference](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/). |
+| S3 authentication or signed URL fails | Verify credentials, endpoint, region, operation, signed headers, and expiry using [SDK setup](https://developers.cloudflare.com/r2/examples/aws/aws-sdk-js-v3/), [authentication](https://developers.cloudflare.com/r2/api/tokens/), and [presigned URLs](https://developers.cloudflare.com/r2/api/s3/presigned-urls/). |
+| Browser fails but an HTTP client succeeds | Check [CORS](https://developers.cloudflare.com/r2/buckets/cors/) and [troubleshooting](https://developers.cloudflare.com/r2/platform/troubleshooting/). |
+| Local and deployed data or behavior differ | Check [local development](https://developers.cloudflare.com/workers/local-development/), [supported bindings](https://developers.cloudflare.com/workers/local-development/bindings-per-env/), and the local persistence options in [Wrangler R2 commands](https://developers.cloudflare.com/r2/reference/wrangler-commands/). |
+| Reads serve old or missing content after an update | Check the [consistency model and cache interactions](https://developers.cloudflare.com/r2/reference/consistency/). |
+| Upload size, metadata size, storage cost, or lifecycle behavior is unexpected | Fetch [limits](https://developers.cloudflare.com/r2/platform/limits/), [pricing](https://developers.cloudflare.com/r2/pricing/), [storage classes](https://developers.cloudflare.com/r2/buckets/storage-classes/), and [object lifecycles](https://developers.cloudflare.com/r2/buckets/object-lifecycles/). |
 
-```typescript
-// DANGEROUS
-const key = url.pathname.slice(1); // could be ../../../etc/passwd
-
-// SAFE
-if (!key || key.includes('..') || key.startsWith('/')) {
-  return new Response('Invalid key', { status: 400 });
-}
-```
-
-## List Truncation
-
-`include` with metadata may return fewer objects per page. Paginate via `truncated`, not `objects.length`:
-
-```typescript
-// WRONG — breaks when include reduces page size
-while (listed.objects.length < options.limit) { ... }
-
-// CORRECT
-while (listed.truncated) {
-  const next = await env.MY_BUCKET.list({ cursor: listed.cursor });
-}
-```
-
-Requires `compatibility_date >= 2022-08-04` or `r2_list_honor_include` flag.
-
-## Conditional Operations
-
-Precondition failure returns the object WITHOUT body (not null):
-
-```typescript
-const object = await env.MY_BUCKET.get(key, {
-  onlyIf: { etagMatches: '"wrong"' }
-});
-if (!object) return new Response('Not found', { status: 404 });
-if (!object.body) return new Response(null, { status: 304 }); // precondition failed
-```
-
-## ETag Format
-
-Use `httpEtag` (RFC-quoted) in headers, not `etag` (unquoted):
-
-```typescript
-headers.set('etag', object.httpEtag); // not object.etag
-```
-
-## Checksum Limits
-
-Only ONE checksum algorithm per PUT:
-
-```typescript
-await env.MY_BUCKET.put(key, data, { sha256: hash }); // not { md5: h1, sha256: h2 }
-```
-
-## Multipart Requirements
-
-- All parts must be uniform size (except last)
-- Part numbers start at 1 (not 0)
-- Uncompleted uploads auto-abort after 7 days
-- `resumeMultipartUpload` doesn't validate uploadId existence
-
-## Storage Class (InfrequentAccess)
-
-- 30-day minimum billing (even if deleted early)
-- Can't transition IA → Standard via lifecycle (use S3 CopyObject)
-- Retrieval fees apply for IA reads
-
-## Limits
-
-| Limit | Value |
-|-------|-------|
-| Object size | 5 TB |
-| Multipart part count | 10,000 |
-| Batch delete | 1,000 keys |
-| List limit | 1,000 per request |
-| Key size | 1,024 bytes |
-| Custom metadata | 2 KB per object |
+For other failures, start with [R2 troubleshooting](https://developers.cloudflare.com/r2/platform/troubleshooting/) and [error codes](https://developers.cloudflare.com/r2/api/error-codes/).

@@ -1,3 +1,9 @@
+---
+name: api-shield
+description: "Cloudflare api shield: product reference"
+mode: subagent
+---
+
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
@@ -5,14 +11,40 @@
 
 Expert guidance for API Shield - comprehensive API security suite for discovery, protection, and monitoring.
 
+## Reading Order
+
+| Task | Files to Read |
+|------|---------------|
+| Initial setup | README → configuration.md |
+| Implement JWT validation | configuration.md → api.md |
+| Add schema validation | configuration.md → patterns.md |
+| Detect API attacks | patterns.md → api.md |
+| Debug issues | gotchas.md |
+
+## Feature Selection
+
+What protection do you need?
+
+```
+├─ Validate request/response structure → Schema Validation 2.0 (configuration.md)
+├─ Verify auth tokens → JWT Validation (configuration.md)
+├─ Client certificates → mTLS (configuration.md)
+├─ Detect BOLA attacks → BOLA Detection (patterns.md)
+├─ Track auth coverage → Auth Posture (patterns.md)
+├─ Stop volumetric abuse → Abuse Detection (patterns.md)
+└─ Discover shadow APIs → API Discovery (api.md)
+```
+
 ## In This Reference
 
-- **[patterns.md](./patterns.md)** - Common patterns, progressive rollout, OWASP mappings, workflows
-- **[gotchas.md](./gotchas.md)** - Troubleshooting, false positives, performance, best practices
+- **[configuration.md](api-shield.md)** - Setup, session identifiers, rules, token/mTLS configs
+- **[api.md](api-shield.md)** - Endpoint management, discovery, validation APIs, GraphQL operations
+- **[patterns.md](api-shield-patterns.md)** - Common patterns, progressive rollout, OWASP mappings, workflows
+- **[gotchas.md](api-shield-gotchas.md)** - Troubleshooting, false positives, performance, best practices
 
 ## Quick Start
 
-API Shield: Enterprise-grade API security (Discovery, Schema Validation, JWT, mTLS, Sequence Enforcement). Available as Enterprise add-on with preview access.
+API Shield: Enterprise-grade API security (Discovery, Schema Validation 2.0, JWT, mTLS, BOLA Detection, Auth Posture). Available as Enterprise add-on with preview access.
 
 ## See Also
 

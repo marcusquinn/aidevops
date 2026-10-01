@@ -1,3 +1,9 @@
+---
+name: realtimekit-patterns
+description: "Cloudflare realtimekit: patterns"
+mode: subagent
+---
+
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
@@ -20,18 +26,52 @@ export class AppComponent { authToken = '<token>'; onLeave(event: unknown) {} }
 <script>document.getElementById('meeting').authToken = '<token>';</script>
 ```
 
+## UI Components
+
+RealtimeKit provides 133+ pre-built Stencil.js Web Components with framework wrappers:
+
+### Layout Components
+- `<RtkMeeting>` - Full meeting UI (all-in-one)
+- `<RtkHeader>`, `<RtkStage>`, `<RtkControlbar>` - Layout sections
+- `<RtkSidebar>` - Chat/participants sidebar
+- `<RtkGrid>` - Adaptive video grid
+
+### Control Components  
+- `<RtkMicToggle>`, `<RtkCameraToggle>` - Media controls
+- `<RtkScreenShareToggle>` - Screen sharing
+- `<RtkLeaveButton>` - Leave meeting
+- `<RtkSettingsModal>` - Device settings
+
+### Grid Variants
+- `<RtkSpotlightGrid>` - Active speaker focus
+- `<RtkAudioGrid>` - Audio-only mode
+- `<RtkPaginatedGrid>` - Paginated layout
+
+**See full catalog**: https://docs.realtime.cloudflare.com/ui-kit
+
 ## Core SDK Patterns
 
-### Video Grid (React)
-
+### Basic Setup
 ```typescript
+import RealtimeKitClient from '@cloudflare/realtimekit';
+
+const meeting = new RealtimeKitClient({ authToken, video: true, audio: true });
+meeting.self.on('roomJoined', () => console.log('Joined:', meeting.meta.meetingTitle));
+meeting.participants.joined.on('participantJoined', (p) => console.log(`${p.name} joined`));
+await meeting.join();
+```
+
+### Video Grid & Device Selection
+```typescript
+// Video grid
 function VideoGrid({ meeting }) {
   const [participants, setParticipants] = useState([]);
   useEffect(() => {
     const update = () => setParticipants(meeting.participants.joined.toArray());
-    ['participantJoined', 'participantLeft'].forEach(e => meeting.participants.joined.on(e, update));
+    meeting.participants.joined.on('participantJoined', update);
+    meeting.participants.joined.on('participantLeft', update);
     update();
-    return () => ['participantJoined', 'participantLeft'].forEach(e => meeting.participants.joined.off(e, update));
+    return () => { meeting.participants.joined.off('participantJoined', update); meeting.participants.joined.off('participantLeft', update); };
   }, [meeting]);
   return <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))' }}>
     {participants.map(p => <VideoTile key={p.id} participant={p} />)}
@@ -41,85 +81,128 @@ function VideoGrid({ meeting }) {
 function VideoTile({ participant }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   useEffect(() => {
-    if (videoRef.current && participant.videoTrack)
-      videoRef.current.srcObject = new MediaStream([participant.videoTrack]);
+    if (videoRef.current && participant.videoTrack) videoRef.current.srcObject = new MediaStream([participant.videoTrack]);
   }, [participant.videoTrack]);
   return <div><video ref={videoRef} autoPlay playsInline muted /><div>{participant.name}</div></div>;
 }
-```
 
-### Device Selection
-
-```typescript
+// Device selection
 const devices = await meeting.self.getAllDevices();
-const audioInputs = devices.filter(d => d.kind === 'audioinput');
-const videoInputs = devices.filter(d => d.kind === 'videoinput');
-meeting.self.on('deviceListUpdate', ({ added, removed }) => console.log('Devices:', { added, removed }));
-const switchCamera = async (id: string) => { const d = devices.find(x => x.deviceId === id); if (d) await meeting.self.setDevice(d); };
+const switchCamera = (deviceId: string) => {
+  const device = devices.find(d => d.deviceId === deviceId);
+  if (device) await meeting.self.setDevice(device);
+};
 ```
 
-### Chat & Custom Hook (React)
+## React Hooks (Official)
 
 ```typescript
-function ChatComponent({ meeting }) {
-  const [messages, setMessages] = useState(meeting.chat.messages);
-  const [input, setInput] = useState('');
-  useEffect(() => {
-    const handler = ({ messages }) => setMessages(messages);
-    meeting.chat.on('chatUpdate', handler);
-    return () => meeting.chat.off('chatUpdate', handler);
-  }, [meeting]);
-  const send = async () => { if (input.trim()) { await meeting.chat.sendTextMessage(input); setInput(''); } };
+import { useRealtimeKitClient, useRealtimeKitSelector } from '@cloudflare/realtimekit-react-ui';
+
+function MyComponent() {
+  const [meeting, initMeeting] = useRealtimeKitClient();
+  const audioEnabled = useRealtimeKitSelector(m => m.self.audioEnabled);
+  const participantCount = useRealtimeKitSelector(m => m.participants.joined.size());
+  
+  useEffect(() => { initMeeting({ authToken: '<token>' }); }, []);
+  
   return <div>
-    <div>{messages.map((msg, i) => <div key={i}><strong>{msg.senderName}:</strong> {msg.text}</div>)}</div>
-    <input value={input} onChange={e => setInput(e.target.value)} onKeyPress={e => e.key === 'Enter' && send()} />
-    <button onClick={send}>Send</button>
+    <button onClick={() => meeting?.self.enableAudio()}>{audioEnabled ? 'Mute' : 'Unmute'}</button>
+    <span>{participantCount} participants</span>
   </div>;
 }
+```
 
-export function useMeeting(authToken: string) {
-  const [meeting, setMeeting] = useState<RealtimeKitClient | null>(null);
-  const [joined, setJoined] = useState(false);
-  const [participants, setParticipants] = useState([]);
-  useEffect(() => {
-    const client = new RealtimeKitClient({ authToken });
-    client.self.on('roomJoined', () => setJoined(true));
-    const update = () => setParticipants(client.participants.joined.toArray());
-    ['participantJoined', 'participantLeft'].forEach(e => client.participants.joined.on(e, update));
-    setMeeting(client);
-    return () => { client.leave(); };
-  }, [authToken]);
-  return { meeting, joined, participants, join: async () => meeting?.join(), leave: async () => meeting?.leave() };
-}
+**Benefits:** Automatic re-renders, memoized selectors, type-safe
+
+## Waitlist Handling
+
+```typescript
+// Monitor waitlist
+meeting.participants.waitlisted.on('participantJoined', (participant) => {
+  console.log(`${participant.name} is waiting`);
+  // Show admin UI to approve/reject
+});
+
+// Approve from waitlist (backend only)
+await fetch(
+  `https://api.cloudflare.com/client/v4/accounts/${accountId}/realtime/kit/${appId}/meetings/${meetingId}/active-session/waitlist/approve`,
+  {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${apiToken}` },
+    body: JSON.stringify({ user_ids: [participant.userId] })
+  }
+);
+
+// Client receives automatic transition when approved
+meeting.self.on('roomJoined', () => console.log('Approved and joined'));
+```
+
+## Audio-Only Mode
+
+```typescript
+const meeting = new RealtimeKitClient({
+  authToken: '<token>',
+  video: false,  // Disable video
+  audio: true,
+  mediaConfiguration: {
+    audio: {
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true
+    }
+  }
+});
+
+// Use audio grid component
+import { RtkAudioGrid } from '@cloudflare/realtimekit-react-ui';
+<RtkAudioGrid meeting={meeting} />
+```
+
+## Addon System
+
+```typescript
+// List available addons
+meeting.plugins.all.forEach(plugin => {
+  console.log(plugin.id, plugin.name, plugin.active);
+});
+
+// Activate collaborative app
+await meeting.plugins.activate('whiteboard-addon-id');
+
+// Listen for activations
+meeting.plugins.on('pluginActivated', ({ plugin }) => {
+  console.log(`${plugin.name} activated`);
+});
+
+// Deactivate
+await meeting.plugins.deactivate();
 ```
 
 ## Backend Integration
 
+### Token Generation (Workers)
 ```typescript
-// Express — token generation
-app.post('/api/join-meeting', async (req, res) => {
-  const { meetingId, userName, presetName } = req.body;
-  const url = `https://api.cloudflare.com/client/v4/accounts/${process.env.ACCOUNT_ID}/realtime/kit/${process.env.APP_ID}/meetings/${meetingId}/participants`;
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.CLOUDFLARE_API_TOKEN}` },
-    body: JSON.stringify({ name: userName, preset_name: presetName, custom_participant_id: req.user.id })
-  });
-  res.json({ authToken: (await response.json()).result.authToken });
-});
-
-// Workers — meeting creation
 export interface Env { CLOUDFLARE_API_TOKEN: string; CLOUDFLARE_ACCOUNT_ID: string; REALTIMEKIT_APP_ID: string; }
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    if (new URL(request.url).pathname === '/api/create-meeting') {
-      const url = `https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/realtime/kit/${env.REALTIMEKIT_APP_ID}/meetings`;
-      return fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${env.CLOUDFLARE_API_TOKEN}` },
-        body: JSON.stringify({ title: 'Team Meeting' })
-      });
+    const url = new URL(request.url);
+    
+    if (url.pathname === '/api/join-meeting') {
+      const { meetingId, userName, presetName } = await request.json();
+      const response = await fetch(
+        `https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/realtime/kit/${env.REALTIMEKIT_APP_ID}/meetings/${meetingId}/participants`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${env.CLOUDFLARE_API_TOKEN}` },
+          body: JSON.stringify({ name: userName, preset_name: presetName })
+        }
+      );
+      const data = await response.json();
+      return Response.json({ authToken: data.result.authToken });
     }
+    
     return new Response('Not found', { status: 404 });
   }
 };
@@ -127,13 +210,23 @@ export default {
 
 ## Best Practices
 
-| Area | Guidance |
-|------|----------|
-| Security | Never expose API tokens client-side — server-side token generation only. Fresh token per session (refresh endpoint if expired). `custom_participant_id` maps to your user system |
-| Performance | Event-driven updates, don't poll. `toArray()` only when needed. Set resolution/bitrate via `mediaConfiguration`. Enable `autoSwitchAudioDevice` |
-| Architecture | Separate Apps for staging vs production. Presets at App level, reuse across meetings. Backend generates tokens, frontend receives via authenticated endpoint |
+### Security
+1. **Never expose API tokens client-side** - Generate participant tokens server-side only
+2. **Don't reuse participant tokens** - Generate fresh token per session, use refresh endpoint if expired
+3. **Use custom participant IDs** - Map to your user system for cross-session tracking
+
+### Performance
+1. **Event-driven updates** - Listen to events, don't poll. Use `toArray()` only when needed
+2. **Media quality constraints** - Set appropriate resolution/bitrate limits based on network conditions
+3. **Device management** - Enable `autoSwitchAudioDevice` for better UX, handle device list updates
+
+### Architecture
+1. **Separate Apps for environments** - staging vs production to prevent data mixing
+2. **Preset strategy** - Create presets at App level, reuse across meetings
+3. **Token management** - Backend generates tokens, frontend receives via authenticated endpoint
 
 ## In This Reference
-
-- [realtimekit.md](./realtimekit.md) - Overview, core concepts, quick start
-- [realtimekit-gotchas.md](./realtimekit-gotchas.md) - Common issues, troubleshooting, limits
+- [README.md](realtimekit.md) - Overview, core concepts, quick start
+- [configuration.md](realtimekit.md) - SDK config, presets, wrangler setup
+- [api.md](realtimekit.md) - Client SDK APIs, REST endpoints
+- [gotchas.md](realtimekit-gotchas.md) - Common issues, troubleshooting, limits

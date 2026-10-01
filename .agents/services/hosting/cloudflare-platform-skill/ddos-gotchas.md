@@ -1,88 +1,116 @@
+---
+name: ddos-gotchas
+description: "Cloudflare ddos: gotchas"
+mode: subagent
+---
+
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
 # DDoS Gotchas
 
-## Always-on Protection
+## Common Errors
 
-DDoS managed rulesets cannot be fully disabled. Minimum mitigation: `sensitivity_level: "eoff"`.
+### "False positives blocking legitimate traffic"
 
-## Attacks Getting Through
+**Cause**: Sensitivity too high, wrong action, or missing exceptions  
+**Solution**:
+1. Lower sensitivity for specific rule/category
+2. Use `log` action first to validate (Enterprise Advanced)
+3. Add exception with custom expression (e.g., allowlist IPs)
+4. Query flagged requests via GraphQL Analytics API to identify patterns
 
-Sensitivity too low or wrong action. Fix — increase to default (high) sensitivity:
+### "Attacks getting through"
 
+**Cause**: Sensitivity too low or wrong action  
+**Solution**: Increase to `default` sensitivity and use `block` action:
 ```typescript
 const config = {
   rules: [{
     expression: "true",
     action: "execute",
-    action_parameters: {
-      id: managedRulesetId,
-      overrides: { sensitivity_level: "default", action: "block" },
-    },
+    action_parameters: { id: managedRulesetId, overrides: { sensitivity_level: "default", action: "block" } },
   }],
 };
 ```
 
-## False Positives
+### "Adaptive rules not working"
 
-Legitimate traffic blocked/challenged. Diagnose via GraphQL:
+**Cause**: Insufficient traffic history (needs 7 days)  
+**Solution**: Wait for baseline to establish, check dashboard for adaptive rule status
 
-```graphql
-{
-  viewer {
-    zones(filter: { zoneTag: "<ZONE_ID>" }) {
-      httpRequestsAdaptiveGroups(
-        filter: { ruleId: "<RULE_ID>", action: "log" }
-        limit: 100
-        orderBy: [datetime_DESC]
-      ) {
-        dimensions { clientCountryName clientRequestHTTPHost clientRequestPath userAgent }
-        count
-      }
-    }
-  }
-}
-```
+### "Zone override ignored"
 
-Fix:
+**Cause**: Account overrides conflict with zone overrides  
+**Solution**: Configure at zone level OR remove zone overrides to use account-level
 
-1. Lower sensitivity for specific rule/category
-2. Use `log` action first to validate (Enterprise Advanced)
-3. Add exception with custom expression (e.g., allowlist IPs)
-4. Reduce category sensitivity: `{ category: "http-flood", sensitivity_level: "low" }`
+### "Log action not available"
 
-## Adaptive Rules Not Working
+**Cause**: Not on Enterprise Advanced DDoS plan  
+**Solution**: Use `managed_challenge` with low sensitivity for testing
 
-Needs 7 days of traffic history for baseline. Check dashboard for adaptive rule status.
+### "Rule limit exceeded"
 
-## Zone vs Account Override Conflict
+**Cause**: Too many override rules (Free/Pro/Business: 1, Enterprise Advanced: 10)  
+**Solution**: Combine conditions in single expression using `and`/`or`
 
-Account overrides ignored when zone has overrides. Configure at zone level OR remove zone overrides to use account-level.
+### "Cannot override rule"
 
-## Log Action Not Available
+**Cause**: Rule is read-only  
+**Solution**: Check API response for read-only indicator, use different rule
 
-Requires Enterprise Advanced DDoS plan. Workaround: use `managed_challenge` with low sensitivity for testing.
+### "Cannot disable DDoS protection"
 
-## Rule Limits
+**Cause**: DDoS managed rulesets cannot be fully disabled (always-on protection)  
+**Solution**: Set `sensitivity_level: "eoff"` for minimal mitigation
 
-| Plan | Override rules |
-|------|---------------|
-| Free/Pro/Business | 1 |
-| Enterprise Advanced | Up to 10 |
+### "Expression not allowed"
 
-Workaround: combine conditions in single expression using `and`/`or`.
+**Cause**: Custom expressions require Enterprise Advanced plan  
+**Solution**: Use `expression: "true"` for all traffic, or upgrade plan
 
-## Read-only Managed Rules
+### "Managed ruleset not found"
 
-Some rules cannot be overridden — API response indicates if rule is read-only.
+**Cause**: Zone/account doesn't have DDoS managed ruleset, or incorrect phase  
+**Solution**: Verify ruleset exists via `client.rulesets.list()`, check phase name (`ddos_l7` or `ddos_l4`)
+
+## API Error Codes
+
+| Error Code | Message | Cause | Solution |
+|------------|---------|-------|----------|
+| 10000 | Authentication error | Invalid/missing API token | Check token has DDoS permissions |
+| 81000 | Ruleset validation failed | Invalid rule structure | Verify `action_parameters.id` is managed ruleset ID |
+| 81020 | Expression not allowed | Custom expressions on wrong plan | Use `"true"` or upgrade to Enterprise Advanced |
+| 81021 | Rule limit exceeded | Too many override rules | Reduce rules or upgrade (Enterprise Advanced: 10) |
+| 81022 | Invalid sensitivity level | Wrong sensitivity value | Use: `default`, `medium`, `low`, `eoff` |
+| 81023 | Invalid action | Wrong action for plan | Enterprise Advanced only: `log` action |
+
+## Limits
+
+| Resource/Limit | Free/Pro/Business | Enterprise | Enterprise Advanced |
+|----------------|-------------------|------------|---------------------|
+| Override rules per zone | 1 | 1 | 10 |
+| Custom expressions | ✗ | ✗ | ✓ |
+| Log action | ✗ | ✗ | ✓ |
+| Adaptive DDoS | ✗ | ✓ | ✓ |
+| Traffic history required | - | 7 days | 7 days |
 
 ## Tuning Strategy
 
 1. Start with `log` action + `medium` sensitivity
-2. Monitor 24-48 hours, identify false positives, add exceptions
-3. Gradually increase to `default` sensitivity
-4. Escalate action: `log` → `managed_challenge` → `block`
-5. Document all adjustments; test during low-traffic periods; combine with WAF for layered defense
+2. Monitor for 24-48 hours
+3. Identify false positives, add exceptions
+4. Gradually increase to `default` sensitivity
+5. Change action from `log` → `managed_challenge` → `block`
+6. Document all adjustments
+
+## Best Practices
+
+- Test during low-traffic periods
+- Use zone-level for per-site tuning
+- Reference IP lists for easier management
+- Set appropriate alert thresholds (avoid noise)
+- Combine with WAF for layered defense
+- Avoid over-tuning (keep config simple)
 
 See [patterns.md](./patterns.md) for progressive rollout examples.

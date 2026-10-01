@@ -1,87 +1,24 @@
+---
+name: do-storage-gotchas
+description: "Cloudflare do storage: gotchas"
+mode: subagent
+---
+
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-# DO Storage Gotchas & Troubleshooting
+# DO Storage Troubleshooting
 
-## Concurrency Gates
+Identify the backend and failing operation before applying concurrency or recovery guidance.
 
-**Input gate:** No new events while storage op pending (except storage completions)
-**Output gate:** Network messages held until storage writes confirm
+Fetch the relevant current documentation before implementing or reviewing changes.
 
-```typescript
-// ✅ NO RACE: Auto serialization
-async getUniqueNumber() {
-  let val = await this.ctx.storage.get("counter"); // Other requests blocked
-  await this.ctx.storage.put("counter", val + 1);
-  return val;
-}
-
-// ❌ RACE: Concurrent calls from same event
-async handler() {
-  const [v1, v2] = await Promise.all([this.getUniqueNumber(), this.getUniqueNumber()]); // v1 === v2!
-}
-
-// ✅ SAFE: Response waits for write confirm; if write fails, response discarded & restart
-async increment() {
-  let val = await this.ctx.storage.get("counter");
-  this.ctx.storage.put("counter", val + 1); // Don't await
-  return new Response(String(val));
-}
-```
-
-## Transaction Rules
-
-```typescript
-// ❌ WRONG: Direct SQL statements
-this.sql.exec('BEGIN TRANSACTION');
-
-// ✅ CORRECT: Use transactionSync() or async transaction()
-this.ctx.storage.transactionSync(() => { this.sql.exec('UPDATE ...'); });
-await this.ctx.storage.transaction(async () => { await this.ctx.storage.put("key", value); });
-
-// ❌ WRONG: Async in transactionSync
-this.ctx.storage.transactionSync(async () => { await fetch(...); }); // Error!
-```
-
-## Limits
-
-**SQL:** Max cols/table: 100; string/BLOB/row: 2MB; statement: 100KB; params: 100; LIKE/GLOB: 50B
-**Storage:** SQLite: 10GB/object, 2MB key+value; KV: Unlimited storage, key 2KiB, value 128KiB
-
-## TypeScript Type Safety
-
-```typescript
-// ❌ Types don't validate at runtime
-type User = { id: number; name: string };
-const user = this.sql.exec<User>('SELECT id FROM users WHERE id = ?', id).one(); // Only has { id }!
-
-// ✅ Query must match type
-const user = this.sql.exec<User>('SELECT id, name FROM users WHERE id = ?', id).one();
-```
-
-## Alarm Persistence
-
-```typescript
-// ❌ deleteAll() doesn't delete alarms
-await this.ctx.storage.deleteAll(); // Alarm remains!
-
-// ✅ Delete alarm explicitly
-await this.ctx.storage.deleteAlarm();
-await this.ctx.storage.deleteAll();
-```
-
-## Auto Caching & Bypass
-
-Storage reads are cached after first access; writes update cache instantly.
-
-```typescript
-// Bypass opts: allowConcurrency, noCache, allowUnconfirmed
-await this.ctx.storage.get("key", { allowConcurrency: true, noCache: true });
-```
-
-## Common Errors
-
-**Slow perf:** Use sync KV API (`ctx.storage.kv`) vs async  
-**High billing:** Check `rowsRead`/`rowsWritten`; verify unused objects call `deleteAll()`  
-**Overload:** Single DO soft limit ~1K req/sec; shard  
-**Init races:** Use `blockConcurrencyWhile()` for initialization
+| Task | Documentation |
+|------|---------------|
+| Input/output gates, write coalescing, external I/O races, or storage options | [Rules of Durable Objects](https://developers.cloudflare.com/durable-objects/best-practices/rules-of-durable-objects/); [SQLite storage API](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/); [Legacy KV storage API](https://developers.cloudflare.com/durable-objects/api/legacy-kv-storage-api/) |
+| SQL transactions, synchronous callbacks, parameter types, or numeric precision | [SQLite storage API](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/) |
+| Alarm cancellation and storage deletion | [Alarms](https://developers.cloudflare.com/durable-objects/api/alarms/); [SQLite storage API](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/) |
+| Slow queries, indexing, caching, or initialization | [Rules of Durable Objects](https://developers.cloudflare.com/durable-objects/best-practices/rules-of-durable-objects/); [Durable Object State](https://developers.cloudflare.com/durable-objects/api/state/) |
+| Storage limits or CPU exhaustion | [Limits](https://developers.cloudflare.com/durable-objects/platform/limits/) |
+| Storage charges and operation accounting | [Pricing](https://developers.cloudflare.com/durable-objects/platform/pricing/) |
+| Overload, storage timeouts, or object resets | [Troubleshooting](https://developers.cloudflare.com/durable-objects/observability/troubleshooting/); [Error handling](https://developers.cloudflare.com/durable-objects/best-practices/error-handling/) |

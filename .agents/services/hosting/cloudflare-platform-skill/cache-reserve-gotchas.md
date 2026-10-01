@@ -1,132 +1,141 @@
+---
+name: cache-reserve-gotchas
+description: "Cloudflare cache reserve: gotchas"
+mode: subagent
+---
+
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
 # Cache Reserve Gotchas
 
-## Eligibility Requirements
+## Common Errors
 
-An asset enters Cache Reserve only if all hold:
+### "Assets Not Being Cached in Cache Reserve"
 
-- Paid Cache Reserve plan active
-- Tiered Cache enabled (strongly recommended)
-- Asset cacheable per standard rules
-- TTL >= 10 hours (36000s) — `Cache-Control: public, max-age=36000`
-- `Content-Length` header present
-- No `Set-Cookie` header (or `private` directive)
-- No `Vary: *` (use `Vary: Accept-Encoding` instead)
-- Not an image transformation variant
+**Cause:** Asset is not cacheable, TTL < 10 hours, Content-Length header missing, or blocking headers present (Set-Cookie, Vary: *)  
+**Solution:** Ensure minimum TTL of 10+ hours (`Cache-Control: public, max-age=36000`), add Content-Length header, remove Set-Cookie header, and set `Vary: Accept-Encoding` (not *)
 
-## Assets Not Being Cached
+### "Range Requests Not Working" (Video Seeking Fails)
 
-Run these checks first:
+**Cause:** Cache Reserve does **NOT** support range requests (HTTP 206 Partial Content)  
+**Solution:** Range requests bypass Cache Reserve entirely. For video streaming with seeking:
+- Use edge cache only (shorter TTLs)
+- Consider R2 with direct access for range-heavy workloads
+- Accept that seekable content won't benefit from Cache Reserve persistence
 
-```bash
-# Check Cache Reserve status and asset eligibility
-curl -I https://example.com/asset.jpg | grep -i cache
-curl -X GET "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/cache/cache_reserve" \
-  -H "Authorization: Bearer $API_TOKEN" | jq
-```
+### "Origin Bandwidth Higher Than Expected"
 
-Common failures after checking eligibility above:
-- `cf-cache-status: MISS` — check TTL (must be ≥36000s), `Content-Length` header, and blocking headers
-- Review Cloudflare Trace output and Logpush `CacheReserveUsed` field
+**Cause:** Cache Reserve fetches **uncompressed** content from origin, even though it serves compressed to visitors  
+**Solution:** 
+- If origin charges by bandwidth, factor in uncompressed transfer costs
+- Cache Reserve compresses for visitors automatically (saves visitor bandwidth)
+- Compare: origin egress savings vs higher uncompressed fetch costs
 
-Typical fixes:
+### "Cloudflare Images Not Caching with Cache Reserve"
 
-```typescript
-// Ensure minimum TTL (10+ hours)
-response.headers.set('Cache-Control', 'public, max-age=36000');
+**Cause:** Cloudflare Images with `Vary: Accept` header (format negotiation) is incompatible with Cache Reserve  
+**Solution:** 
+- Cache Reserve silently skips images with Vary for format negotiation
+- Original images (non-transformed) may still be eligible
+- Use Cloudflare Images variants or edge cache for transformed images
 
-// Or via Cache Rule:
-const rule = {
-  action_parameters: {
-    edge_ttl: { mode: 'override_origin', default: 36000 }
-  }
-};
+### "High Class A Operations Costs"
 
-// Add Content-Length
-response.headers.set('Content-Length', bodySize.toString());
+**Cause:** Frequent cache misses, short TTLs, or frequent revalidation  
+**Solution:** Increase TTL for stable content (24+ hours), enable Tiered Cache to reduce direct Cache Reserve misses, or use stale-while-revalidate
 
-// Remove blocking headers
-response.headers.delete('Set-Cookie');
-response.headers.set('Vary', 'Accept-Encoding'); // Not *
-```
+### "Purge Not Working as Expected"
 
-## High Class A Operations Costs
+**Cause:** Purge by tag only triggers revalidation but doesn't remove from Cache Reserve storage  
+**Solution:** Use purge by URL for immediate removal, or disable Cache Reserve then clear all data for complete removal
 
-Frequent misses, short TTLs, and repeated revalidation increase Class A charges. For stable content, raise TTLs and use Tiered Cache to reduce direct Cache Reserve misses:
+### "O2O (Orange-to-Orange) Assets Not Caching"
 
-```typescript
-response.headers.set('Cache-Control', 'public, max-age=86400, stale-while-revalidate=86400');
-```
+**Cause:** Orange-to-Orange (proxied zone requesting another proxied zone on Cloudflare) bypasses Cache Reserve  
+**Solution:** 
+- **What is O2O**: Zone A (proxied) → Zone B (proxied), both on Cloudflare
+- **Detection**: Check `cf-cache-status` for `BYPASS` and review request path
+- **Workaround**: Use R2 or direct origin access instead of O2O proxy chains
 
-## Purge Behaviour
+### "Cache Reserve must be OFF before clearing data"
 
-| Method | Cache Reserve | Edge Cache | Cost |
-|--------|--------------|------------|------|
-| By URL | Immediately removed | Immediately removed | Free |
-| By Tag | Revalidation triggered (NOT removed) | Immediately removed | Storage costs continue until TTL |
-
-Use purge by URL for immediate removal. Purge by tag triggers revalidation but does not remove stored content. For complete removal, disable Cache Reserve, then clear it:
-
-```typescript
-await purgeByURL(['https://example.com/asset.jpg']);
-
-// Complete removal:
-await disableCacheReserve(zoneId, token);
-await clearAllCacheReserve(zoneId, token);
-```
-
-## Clearing Cache Reserve
-
-Error: `"Cache Reserve must be OFF before clearing data"`
-
-```typescript
-const clearProcess = async (zoneId: string, token: string) => {
-  const status = await getCacheReserveStatus(zoneId, token);
-  if (status.result.value !== 'off') {
-    await disableCacheReserve(zoneId, token);
-  }
-  await new Promise(resolve => setTimeout(resolve, 5000)); // propagation delay
-  await clearAllCacheReserve(zoneId, token);
-
-  // Monitor progress — can take up to 24 hours
-  let clearStatus;
-  do {
-    await new Promise(resolve => setTimeout(resolve, 60000));
-    clearStatus = await getClearStatus(zoneId, token);
-  } while (clearStatus.result.state === 'In-progress');
-};
-```
+**Cause:** Attempting to clear Cache Reserve data while it's still enabled  
+**Solution:** Disable Cache Reserve first, wait briefly for propagation (5s), then clear data (can take up to 24 hours)
 
 ## Limits
 
-| Setting | Value |
-|---------|-------|
-| Min TTL | 36000s (10 hours) |
-| Default retention | 2592000s (30 days) |
-| Max file size | Same as R2 limits |
-| Purge/clear time | Up to 24 hours |
+| Limit | Value | Notes |
+|-------|-------|-------|
+| Minimum TTL | 10 hours (36000 seconds) | Assets with shorter TTL not eligible |
+| Default retention | 30 days (2592000 seconds) | Configurable |
+| Maximum file size | Same as R2 limits | No practical limit |
+| Purge/clear time | Up to 24 hours | Complete propagation time |
+| Plan requirement | Paid Cache Reserve or Smart Shield | Not available on free plans |
+| Content-Length header | Required | Must be present for eligibility |
+| Set-Cookie header | Blocks caching | Must not be present (or use private directive) |
+| Vary header | Cannot be * | Can use Vary: Accept-Encoding |
+| Image transformations | Variants not eligible | Original images only |
+| Range requests | NOT supported | HTTP 206 bypasses Cache Reserve |
+| Compression | Fetches uncompressed | Serves compressed to visitors |
+| Worker control | Zone-level only | Cannot control per-request |
+| O2O requests | Bypassed | Orange-to-Orange not eligible |
 
-API endpoints:
+## Additional Resources
 
-| Action | Method + Path |
-|--------|--------------|
-| Status | `GET /zones/:zone_id/cache/cache_reserve` |
-| Enable/Disable | `PATCH /zones/:zone_id/cache/cache_reserve` |
-| Clear | `POST /zones/:zone_id/cache/cache_reserve_clear` |
-| Clear status | `GET /zones/:zone_id/cache/cache_reserve_clear` |
-| Purge | `POST /zones/:zone_id/purge_cache` |
-| Cache Rules | `PUT /zones/:zone_id/rulesets/phases/http_request_cache_settings/entrypoint` |
+- **Official Docs**: https://developers.cloudflare.com/cache/advanced-configuration/cache-reserve/
+- **API Reference**: https://developers.cloudflare.com/api/resources/cache/subresources/cache_reserve/
+- **Cache Rules**: https://developers.cloudflare.com/cache/how-to/cache-rules/
+- **Workers Cache API**: https://developers.cloudflare.com/workers/runtime-apis/cache/
+- **R2 Documentation**: https://developers.cloudflare.com/r2/
+- **Smart Shield**: https://developers.cloudflare.com/smart-shield/
+- **Tiered Cache**: https://developers.cloudflare.com/cache/how-to/tiered-cache/
 
-## Resources
+## Troubleshooting Flowchart
 
-- [Cache Reserve docs](https://developers.cloudflare.com/cache/advanced-configuration/cache-reserve/)
-- [API reference](https://developers.cloudflare.com/api/resources/cache/subresources/cache_reserve/)
-- [Cache Rules](https://developers.cloudflare.com/cache/how-to/cache-rules/)
-- [Workers Cache API](https://developers.cloudflare.com/workers/runtime-apis/cache/)
-- [R2 docs](https://developers.cloudflare.com/r2/)
-- [Smart Shield](https://developers.cloudflare.com/smart-shield/)
-- [Tiered Cache](https://developers.cloudflare.com/cache/how-to/tiered-cache/)
-- [Cache Reserve overview](./cache-reserve.md) — overview and core concepts
-- [Cache Reserve patterns](./cache-reserve-patterns.md) — best practices and optimization
+Asset not caching in Cache Reserve?
+
+```
+1. Is Cache Reserve enabled for zone?
+   → No: Enable via Dashboard or API
+   → Yes: Continue to step 2
+
+2. Is Tiered Cache enabled?
+   → No: Enable Tiered Cache (required!)
+   → Yes: Continue to step 3
+
+3. Does asset have TTL ≥ 10 hours?
+   → No: Increase via Cache Rules (edge_ttl override)
+   → Yes: Continue to step 4
+
+4. Is Content-Length header present?
+   → No: Fix origin to include Content-Length
+   → Yes: Continue to step 5
+
+5. Is Set-Cookie header present?
+   → Yes: Remove Set-Cookie or scope appropriately
+   → No: Continue to step 6
+
+6. Is Vary header set to *?
+   → Yes: Change to specific value (e.g., Accept-Encoding)
+   → No: Continue to step 7
+
+7. Is this a range request?
+   → Yes: Range requests bypass Cache Reserve (not supported)
+   → No: Continue to step 8
+
+8. Is this an O2O (Orange-to-Orange) request?
+   → Yes: O2O bypasses Cache Reserve
+   → No: Continue to step 9
+
+9. Check Logpush CacheReserveUsed field
+   → Filter logs to see if assets ever hit Cache Reserve
+   → Verify cf-cache-status header (should be HIT after first request)
+```
+
+## See Also
+
+- [README](./README.md) - Overview and core concepts
+- [Configuration](./configuration.md) - Setup and Cache Rules
+- [API Reference](./api.md) - Purging and monitoring
+- [Patterns](./patterns.md) - Best practices and optimization

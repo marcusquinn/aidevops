@@ -1,46 +1,29 @@
+---
+name: pages-functions
+description: "Cloudflare pages functions: product reference"
+mode: subagent
+---
+
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
 # Cloudflare Pages Functions
 
-Serverless functions on Cloudflare Pages using Workers runtime. File-based routing for full-stack dev.
+Use this reference for server-side behavior in an existing Pages project. For new applications, follow the Workers recommendation in the [Pages framework guidance](https://developers.cloudflare.com/pages/framework-guides/).
 
-## File-Based Routing
+| Task | Documentation |
+| --- | --- |
+| Identify filesystem routes and invocation boundaries | [Routing](https://developers.cloudflare.com/pages/functions/routing/) |
+| Implement request handlers | [API reference](https://developers.cloudflare.com/pages/functions/api-reference/) |
+| Understand generated Worker output | [Advanced mode](https://developers.cloudflare.com/pages/functions/advanced-mode/) |
 
-```text
-/functions
-  ├── index.js              → /
-  ├── api.js                → /api
-  ├── users/
-  │   ├── index.js          → /users/
-  │   ├── [user].js         → /users/:user
-  │   └── [[catchall]].js   → /users/*
-  └── _middleware.js        → runs on all routes
-```
+Inspect whether the project uses a Functions directory or framework-generated advanced mode before selecting a routing approach. Fetch current documentation for signatures, supported bindings, configuration, and examples.
 
-`index.js` → directory root · trailing slash optional · specific routes precede catch-alls · falls back to static if no match
+## In This Reference
 
-## Dynamic Routes
+- [api.md](./api.md) — handlers, context, middleware, and assets
+- [configuration.md](./configuration.md) — bindings, environments, types, and local development
+- [patterns.md](./patterns.md) — request ownership and shared logic
+- [gotchas.md](./gotchas.md) — route, binding, and runtime investigation
 
-`[param]` → single segment (string) · `[[param]]` → multi-segment (array):
-
-```js
-// /users/[user].js — context.params.user = "nevi"
-export function onRequest(context) {
-  return new Response(`Hello ${context.params.user}`);
-}
-
-// /users/[[catchall]].js — context.params.catchall = ["nevi", "foobar"]
-export function onRequest(context) {
-  return new Response(JSON.stringify(context.params.catchall));
-}
-```
-
-## Key Features
-
-**Method handlers:** `onRequestGet`, `onRequestPost`, etc. · **Middleware:** `_middleware.js` for cross-cutting concerns · **Bindings:** KV, D1, R2, Durable Objects, Workers AI, Service bindings · **TypeScript:** `@cloudflare/workers-types` · **Advanced mode:** `_worker.js` for custom routing logic
-
-## See Also
-
-- [pages-functions-patterns.md](./pages-functions-patterns.md) — Auth, CORS, rate limiting, forms, caching
-- [pages-functions-gotchas.md](./pages-functions-gotchas.md) — Common issues, debugging, limits
+See [Pages](pages.md) for builds and deployment decisions.

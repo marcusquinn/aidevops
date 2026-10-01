@@ -1,19 +1,36 @@
+---
+name: observability
+description: "Cloudflare observability: product reference"
+mode: subagent
+---
+
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-# Cloudflare Observability Skill Reference
+# Cloudflare Observability
 
-**Purpose**: Comprehensive guidance for implementing observability in Cloudflare Workers, covering traces, logs, metrics, and analytics.
+Use this reference to choose a telemetry signal and find the maintained implementation guide. Fetch the linked documentation before writing configuration, queries, or export code; it is the source of truth for APIs, availability, retention, limits, and pricing.
 
-**Scope**: Cloudflare Observability features ONLY - Workers Logs, Traces, Analytics Engine, Logpush, Metrics & Analytics, and OpenTelemetry exports.
+## Choose a signal
 
----...
+| Need | Start here |
+| --- | --- |
+| Store, search, and investigate historical Worker logs | [Workers Logs](https://developers.cloudflare.com/workers/observability/logs/workers-logs/) |
+| Watch a deployment or reproduce an issue live | [Real-time logs and Wrangler tail](https://developers.cloudflare.com/workers/observability/logs/real-time-logs/) |
+| Understand request flows and dependency latency | [Workers Traces](https://developers.cloudflare.com/workers/observability/traces/) |
+| Monitor built-in request, error, and CPU metrics | [Metrics and analytics](https://developers.cloudflare.com/workers/observability/metrics-and-analytics/) |
+| Record custom events and tenant-level usage for SQL analysis | [Analytics Engine](https://developers.cloudflare.com/analytics/analytics-engine/get-started/) |
+| Export logs and traces to an observability provider | [OpenTelemetry export](https://developers.cloudflare.com/workers/observability/exporting-opentelemetry-data/) |
+| Apply custom filtering, transformation, or delivery logic | [Tail Workers](https://developers.cloudflare.com/workers/observability/logs/tail-workers/) |
+| Deliver Workers Trace Events to a supported log storage destination | [Workers Logpush](https://developers.cloudflare.com/workers/observability/logs/logpush/) |
 
-## In This Reference
+Workers Logs supports retained historical data; live tailing is a separate debugging workflow. Choose persistence, sampling, and export destinations deliberately rather than assuming that every signal is stored or included without usage charges.
 
-- **[patterns.md](./patterns.md)** - Common patterns, use cases, examples
-- **[gotchas.md](./gotchas.md)** - Troubleshooting, best practices, limitations
+## Load only what the task needs
 
-## See Also
+- [configuration.md](observability.md): enable collection, bindings, environments, and exports.
+- [api.md](observability.md): logging, telemetry types, SQL, GraphQL, and Logpush APIs.
+- [patterns.md](observability-patterns.md): billing, performance, errors, tenant tracking, and export decisions.
+- [gotchas.md](observability-gotchas.md): missing data, sampling, timing, privacy, and cost checks.
 
-- [Cloudflare Docs](https://developers.cloudflare.com/)
+For broader product tasks, see [Analytics Engine](analytics-engine.md), [GraphQL API](graphql-api.md), and [Tail Workers](tail-workers.md).

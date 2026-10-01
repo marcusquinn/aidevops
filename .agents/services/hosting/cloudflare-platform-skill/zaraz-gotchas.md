@@ -1,16 +1,90 @@
+---
+name: zaraz-gotchas
+description: "Cloudflare zaraz: gotchas"
+mode: subagent
+---
+
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-# Cloudflare Zaraz — Gotchas & Debugging
+# Zaraz Gotchas
 
-## Debugging
+## Events Not Firing
 
-Enable debug: dashboard toggle or `zaraz.debug = true`. Check trigger conditions, tool enabled status, browser console, `zaraz.consent.getAll()` for consent issues.
+**Check:**
+1. Tool enabled in dashboard (green dot)
+2. Trigger conditions met
+3. Consent granted for tool's purpose
+4. Tool credentials correct (GA4: `G-XXXXXXXXXX`, FB: numeric only)
 
-## Common Issues
+**Debug:**
+```javascript
+zaraz.debug = true;
+console.log('Tools:', zaraz.tools);
+console.log('Consent:', zaraz.consent.getAll());
+```
 
-- **Trigger not firing**: Verify CSS selector matches, check trigger type (DOM Ready fires after Pageview), confirm tool is enabled.
-- **Consent blocking events**: Call `zaraz.consent.getAll()` to inspect state; ensure consent modal shown before tracking.
-- **Data layer not accessible**: Set `window.zaraz.dataLayer` before Zaraz initialises; access via `{{client.__zarazTrack.key}}` in trigger conditions.
-- **Request size exceeded**: 100 KB limit per request; split large payloads or reduce event properties.
-- **Custom component not loading**: Check component export default class, verify `handleEvent` async signature, confirm HTTPS endpoint.
+## Consent Issues
+
+**Modal not showing:**
+```javascript
+// Clear consent cookie
+document.cookie = 'zaraz-consent=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
+location.reload();
+```
+
+**Tools firing before consent:** Map tool to consent purpose with "Do not load until consent granted".
+
+## SPA Tracking
+
+**Route changes not tracked:**
+1. Configure History Change trigger in dashboard
+2. Hash routing (`#/path`) requires manual tracking:
+```javascript
+window.addEventListener('hashchange', () => {
+  zaraz.track('pageview', { page_path: location.pathname + location.hash });
+});
+```
+
+**React fix:**
+```javascript
+const location = useLocation();
+useEffect(() => {
+  zaraz.track('pageview', { page_path: location.pathname });
+}, [location]); // Include dependency
+```
+
+## Performance
+
+**Slow page load:**
+- Audit tool count (50+ degrades performance)
+- Disable blocking triggers unless required
+- Reduce event payload size (<100KB)
+
+## Tool-Specific Issues
+
+| Tool | Issue | Fix |
+|------|-------|-----|
+| GA4 | Events not in real-time | Wait 5-10 min, use DebugView |
+| Facebook | Invalid Pixel ID | Use numeric only (no `fbpx_` prefix) |
+| Google Ads | Conversions not attributed | Include `send_to: 'AW-XXX/LABEL'` |
+
+## Data Layer
+
+- Properties persist per page only - set on each page load
+- Nested access: `{{client.__zarazTrack.user.plan}}`
+
+## Limits
+
+| Resource | Limit |
+|----------|-------|
+| Request size | 100KB |
+| Consent purposes | 20 |
+| API rate | 1000 req/sec |
+
+## When NOT to Use Zaraz
+
+- Server-to-server tracking (use Workers)
+- Real-time bidirectional communication
+- Binary data transmission
+- Authentication flows

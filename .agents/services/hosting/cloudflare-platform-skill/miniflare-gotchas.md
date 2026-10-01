@@ -1,119 +1,24 @@
+---
+name: miniflare-gotchas
+description: "Cloudflare miniflare: gotchas"
+mode: subagent
+---
+
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-# Gotchas & Debugging
+# Miniflare Troubleshooting and Migrations
 
-## Compatibility
+| Symptom or task | Check |
+|-----------------|-------|
+| TypeScript, bundled code, or imports fail to load | [Custom builds](https://developers.cloudflare.com/workers/testing/miniflare/writing-tests/#custom-builds) and [module rules](https://developers.cloudflare.com/workers/testing/miniflare/core/modules/#module-rules) |
+| Bindings from Wrangler configuration are missing | [Interacting with bindings](https://developers.cloudflare.com/workers/testing/miniflare/writing-tests/#interacting-with-bindings) — direct Miniflare needs explicit configuration |
+| Tests disagree with Worker runtime behavior | [Test runtime differences](https://developers.cloudflare.com/workers/testing/miniflare/writing-tests/) and [compatibility dates](https://developers.cloudflare.com/workers/testing/miniflare/core/compatibility/) |
+| Instances keep running, ports conflict, or request metadata is unexpected | [Instance lifecycle and HTTP server](https://developers.cloudflare.com/workers/testing/miniflare/get-started/) — dispatching a request without HTTP does not mean the instance has no HTTP server |
+| Storage disappears or leaks across tests | Check the relevant [storage configuration](./configuration.md) and the chosen test tool's persistence settings |
+| Breakpoints are needed with direct Miniflare | [Attaching a debugger](https://developers.cloudflare.com/workers/testing/miniflare/developing/debugger/) |
+| Upgrade a Miniflare 2 application | [Migrate from version 2](https://developers.cloudflare.com/workers/testing/miniflare/migrations/from-v2/) |
+| Upgrade an existing Workers Vitest package | [Migrate to Vitest plugin](https://developers.cloudflare.com/workers/testing/vitest-integration/migration-guides/migrate-to-vitest-plugin/) |
+| Replace unstable_dev tests | [Migration guide](https://developers.cloudflare.com/workers/testing/vitest-integration/migration-guides/migrate-from-unstable-dev/) and [integration test harness](https://developers.cloudflare.com/workers/testing/test-harness/) |
 
-### Not Supported
-
-- Analytics Engine, Images
-- Live production data / global distribution
-- Some advanced Workers features
-
-### Behavior Differences
-
-- **No edge:** Runs in workerd locally, not Cloudflare's global network
-- **Persistence:** Local filesystem/in-memory, not distributed
-- **Request.cf:** Cached endpoint or mocked, not real edge metadata
-- **Caching:** Local ≠ edge performance
-
-## Common Issues
-
-### `Cannot find module`
-
-```js
-new Miniflare({
-  scriptPath: "./src/index.js",
-  modules: true,
-  modulesRules: [{ type: "ESModule", include: ["**/*.js"], fallthrough: true }],
-});
-```
-
-### Data Lost Between Runs
-
-Persist paths must be directories, not files:
-
-```js
-new Miniflare({
-  kvPersist: "./data/kv",
-  r2Persist: "./data/r2",
-  durableObjectsPersist: "./data/do",
-});
-```
-
-### TypeScript Workers
-
-Cannot run `.ts` directly — build first. See [patterns.md](./patterns.md) "Build Before Tests".
-
-### `Request.cf` Undefined
-
-```js
-new Miniflare({
-  cf: true,            // fetch from Cloudflare
-  // cf: "./cf.json"   // or provide custom
-});
-```
-
-### `EADDRINUSE`
-
-Use `dispatchFetch` instead of specifying a port:
-
-```js
-const mf = new Miniflare({ scriptPath: "worker.js" });
-const res = await mf.dispatchFetch("http://localhost/");
-```
-
-### `ReferenceError: Counter is not defined`
-
-DO class must be exported and name must match binding:
-
-```js
-new Miniflare({
-  modules: true,
-  script: `
-    export class Counter { /* ... */ }
-    export default { /* ... */ }
-  `,
-  durableObjects: { COUNTER: "Counter" },
-});
-```
-
-## Debugging
-
-```js
-// Debug logging
-import { Log, LogLevel } from "miniflare";
-new Miniflare({ log: new Log(LogLevel.DEBUG) });
-
-// Inspect bindings
-const bindings = await mf.getBindings();
-console.log(Object.keys(bindings));
-
-// Verify KV contents
-const ns = await mf.getKVNamespace("TEST");
-console.log(await ns.list());
-```
-
-Prefer `dispatchFetch` over HTTP server in tests — avoids port conflicts.
-
-## Migration
-
-### Wrangler Dev → Miniflare
-
-Miniflare ignores `wrangler.toml` — configure via API:
-
-```js
-new Miniflare({
-  scriptPath: "dist/worker.js",
-  kvNamespaces: ["KV"],
-  bindings: { API_KEY: "..." },
-});
-```
-
-### Miniflare 2 → 3
-
-Different API surface, better workerd integration, changed persistence options.
-See [official migration guide](https://developers.cloudflare.com/workers/testing/vitest-integration/migration-guides/migrate-from-miniflare-2/).
-
-See [patterns.md](./patterns.md) for testing examples.
+For a migration, choose the target using [the testing-tool decision](./README.md#choose-the-testing-tool) before translating old options. A historical migration page describes that version transition; use current setup documentation for new test suites.

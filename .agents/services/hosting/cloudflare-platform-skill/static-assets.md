@@ -1,15 +1,30 @@
+---
+name: static-assets
+description: "Cloudflare static assets: product reference"
+mode: subagent
+---
+
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-# Cloudflare Static Assets Skill Reference
+# Workers Static Assets
 
-Expert guidance for deploying and configuring static assets with Cloudflare Workers. This skill covers configuration patterns, routing architectures, asset binding usage, and best practices for SPAs, SSG sites, and full-stack applications....
+Use Workers Static Assets for new static sites, SPAs, generated sites, and applications combining assets with server logic. Inspect the framework, build output, and existing deployment configuration before changing routing.
 
-## In This Reference
+| Task | Documentation |
+|------|---------------|
+| Set up and deploy a static site or application | [Get started](https://developers.cloudflare.com/workers/static-assets/get-started/) |
+| Choose configuration and an optional asset binding | [Configuration and bindings](https://developers.cloudflare.com/workers/static-assets/binding/) |
+| Serve a client-rendered application | [SPA routing](https://developers.cloudflare.com/workers/static-assets/routing/single-page-application/) |
+| Serve generated HTML and custom error pages | [SSG routing](https://developers.cloudflare.com/workers/static-assets/routing/static-site-generation/) |
+| Use a full-stack framework | [Full-stack application guides](https://developers.cloudflare.com/workers/static-assets/routing/full-stack-application/) |
+| Evaluate moving an existing Pages project | [Pages migration guide](https://developers.cloudflare.com/workers/static-assets/migration-guides/migrate-from-pages/) |
 
-- **[patterns.md](./patterns.md)** - Common patterns, use cases, examples
-- **[gotchas.md](./gotchas.md)** - Troubleshooting, best practices, limitations
+Do not choose a platform solely from the framework name. For an existing Pages project, inspect its current features and migration requirements before proposing a move.
 
-## See Also
+## Reading Order
 
-- [Cloudflare Docs](https://developers.cloudflare.com/)
+1. [configuration.md](static-assets.md) — build output and routing configuration.
+2. [api.md](static-assets.md) — fetch assets and handle responses.
+3. [patterns.md](static-assets-patterns.md) — choose a routing design.
+4. [gotchas.md](static-assets-gotchas.md) — diagnose routing, caching, and deployment issues.

@@ -1,87 +1,27 @@
+---
+name: queues-gotchas
+description: "Cloudflare queues: gotchas"
+mode: subagent
+---
+
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-# Queues Gotchas
+# Queues Gotchas & Troubleshooting
 
-See [queues.md](./queues.md), [queues-patterns.md](./queues-patterns.md).
+Fetch the linked documentation before changing retry policy or interpreting delivery behavior.
 
-## Delivery Semantics
+| Symptom or question | Documentation and decision |
+|---------------------|----------------------------|
+| Successful work repeats after another message fails | Read [acknowledgement and retry rules](https://developers.cloudflare.com/queues/configuration/batching-retries/); use per-message outcomes for independent work. |
+| A caught failure disappears instead of retrying | Read [handler lifecycle and APIs](https://developers.cloudflare.com/queues/configuration/javascript-apis/); returning successfully can acknowledge messages. Explicitly retry failed work when continuing. |
+| Duplicate processing | Read [delivery guarantees](https://developers.cloudflare.com/queues/reference/delivery-guarantees/); enforce idempotency at the side-effect destination. |
+| Pull consumers cannot decode payloads | Check [pull consumer encoding](https://developers.cloudflare.com/queues/configuration/pull-consumers/) and [content types](https://developers.cloudflare.com/queues/configuration/javascript-apis/) against the producer. |
+| Messages stop arriving or backlog grows | Check [consumer configuration](https://developers.cloudflare.com/queues/configuration/configure-queues/), [pause state](https://developers.cloudflare.com/queues/configuration/pause-purge/), and [queue metrics](https://developers.cloudflare.com/queues/observability/metrics/). |
+| Dead-letter volume rises or messages disappear after retries | Read [Dead Letter Queues](https://developers.cloudflare.com/queues/configuration/dead-letter-queues/); inspect failures and plan recovery before increasing retries. |
+| API errors, resource exhaustion, or CPU failures | Read [error codes](https://developers.cloudflare.com/queues/reference/error-codes/), [limits](https://developers.cloudflare.com/queues/platform/limits/), and [consumer concurrency](https://developers.cloudflare.com/queues/configuration/consumer-concurrency/). |
+| Retention, delay, throughput, or cost assumptions no longer hold | Retrieve current [limits](https://developers.cloudflare.com/queues/platform/limits/) and [pricing](https://developers.cloudflare.com/queues/platform/pricing/) for the account's plan. |
 
-At-least-once; no ordering guarantee. Design for idempotency — ack only after durable success.
+Distinguish transient dependency failures from invalid payloads before choosing retry or recovery behavior. Acknowledging a failed message does not send it to a dead-letter queue. If handling a permanent failure separately, persist the intended recovery record successfully before acknowledging; use the documented dead-letter policy when relying on retry exhaustion.
 
-```typescript
-const processed = await env.PROCESSED_KV.get(msg.id);
-if (processed) { msg.ack(); continue; }
-await processMessage(msg.body);
-await env.PROCESSED_KV.put(msg.id, '1', { expirationTtl: 86400 });
-msg.ack();
-```
-
-## Content Type
-
-`json` is dashboard-visible and works with pull consumers. `v8` is not decodable in pull consumers or the dashboard.
-
-```typescript
-await env.MY_QUEUE.send(data, { contentType: 'json' }); // always use json for pull
-```
-
-## Retries and CPU Budget
-
-Handler exits without `ack()` or `retry()` → Cloudflare retries per queue policy. Default CPU budget is 30s; raise for heavier work. Log failures with enough context to replay or diagnose; configure a DLQ for permanent failures.
-
-```typescript
-async queue(batch: MessageBatch): Promise<void> {
-  for (const msg of batch.messages) {
-    try {
-      await processMessage(msg.body);
-      msg.ack();
-    } catch (error) {
-      msg.retry({ delaySeconds: 600 }); // omit to auto-retry
-    }
-  }
-}
-```
-
-```jsonc
-// wrangler.toml [limits]
-{ "limits": { "cpu_ms": 300000 } } // 5 minutes
-```
-
-## Cost and Throughput
-
-Each message = 3 ops (write + read + delete). Retries add reads. Cost beyond free tier: `((messages × 3) - 1M) / 1M × $0.40`. Keep messages <64 KB (charged per 64 KB chunk). Use `waitUntil()` for non-blocking sends; batch sends when possible.
-
-```jsonc
-// wrangler.toml [queues.consumers]
-{ "max_batch_size": 100, "max_batch_timeout": 30 }
-```
-
-| Limit | Value |
-|-------|-------|
-| Max queues | 10,000 |
-| Message size | 128 KB |
-| Batch size (consumer) | 100 messages |
-| Batch size (sendBatch) | 100 msgs/256 KB |
-| Throughput | 5,000 msgs/sec/queue |
-| Retention | 4-14 days |
-| Max backlog | 25 GB |
-| Max delay | 12 hours (43,200s) |
-| Max retries | 100 |
-
-## Troubleshooting
-
-### Message not delivered
-
-```bash
-wrangler queues list                                          # Check queue paused
-wrangler queues consumer worker remove my-queue my-worker    # Verify consumer
-wrangler queues consumer add my-queue my-worker
-wrangler tail my-worker                                       # Check logs
-```
-
-### High DLQ rate
-
-- Review consumer error logs
-- Check external dependency availability
-- Verify message format matches expectations
-- Increase retry delay: `"retry_delay": 300`
+See [patterns.md](./patterns.md) for idempotency and downstream integration decisions.

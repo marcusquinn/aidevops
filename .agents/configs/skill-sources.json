@@ -19,13 +19,13 @@
     {
       "name": "remotion",
       "upstream_url": "https://github.com/remotion-dev/skills",
-      "upstream_commit": "9550e1643dd451d3f8c131579d8ae827b2ce3eea",
-      "local_path": ".agents/tools/video/remotion.md",
-      "format_detected": "skill-md",
+      "upstream_commit": "0b5db9daae40f42c73544d1cc0a8c733bd530eaa",
+      "local_path": ".agents/tools/video/remotion/remotion.md",
+      "format_detected": "skill-md-nested-multi",
       "imported_at": "2026-01-21T04:58:00Z",
-      "last_checked": "2026-01-21T04:58:00Z",
+      "last_checked": "2026-10-01T00:00:00Z",
       "merge_strategy": "added",
-      "notes": "Includes 28 flat chapter files alongside .agents/tools/video/remotion.md",
+      "notes": "Upstream restructured into 11 nested sub-skills (remotion-best-practices router + remotion-captions/create/docs/interactivity/maps/markup/multimedia/render/saas/studio/upgrade). Chapters flattened into .agents/tools/video/remotion/ with remotion.md as index; remotion-markup's many reference files kept as remotion-<name>.md. Upstream agents/ and assets/*.svg companion dirs dropped (icons/scripts only, not knowledge content). Previous flat 28-file layout under .agents/tools/video/ removed; see migrations.sh.",
       "context7_id": "/remotion-dev/remotion"
     },
     {
@@ -41,14 +41,14 @@
     },
     {
       "name": "cloudflare-platform-skill",
-      "upstream_url": "https://github.com/dmmulroy/cloudflare-skill",
-      "upstream_commit": "c4696d5389f95e9546b075759ff8326deac1fba7",
+      "upstream_url": "https://github.com/cloudflare/skills",
+      "upstream_commit": "d8c1937dcd7a11d447965a87330c3a0fbf70ae22",
       "local_path": ".agents/services/hosting/cloudflare-platform-skill.md",
-      "format_detected": "skill-md-nested",
+      "format_detected": "skill-md-nested-multi",
       "imported_at": "2026-01-21T05:12:00Z",
-      "last_checked": "2026-01-21T05:12:00Z",
+      "last_checked": "2026-10-01T00:00:00Z",
       "merge_strategy": "added",
-      "notes": "Includes 60 product reference directories in .agents/services/hosting/cloudflare-platform-skill/"
+      "notes": "GH#33150: switched from the third-party dmmulroy/cloudflare-skill fork to the official cloudflare/skills repo. The Cloudflare MCP and cf CLI cover operations, so this skill keeps only the decision tree, every *-gotchas.md, and full docs (incl. *-patterns.md) for newer products (containers, agents-sdk, ai-search, sandbox, realtimekit, workflows, basin as the r2-data-catalog/pipelines/r2-sql successor). Excludes recorded so re-sync preserves them: dropped pulumi*/terraform* entirely; dropped generic *-patterns.md for all topics except the newer-products list; dropped turnstile (now a separate turnstile-spin skill, out of scope); did not import the new net-new upstream skills cloudflare-one(-migrations), cloudflare-email-service, nextjs-on-cloudflare, k2, web-perf (out of scope for this re-sync, candidates for a future task). workers.md re-added from the new workers-best-practices skill (replaces the removed generic workers/ topic). durable-objects and wrangler kept from their now-separate upstream skills (durable-objects/references/rules.md -> durable-objects-gotchas.md; wrangler has no upstream gotchas file)."
     },
     {
       "name": "heygen",

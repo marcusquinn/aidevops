@@ -1,68 +1,29 @@
+---
+name: cron-triggers
+description: "Cloudflare cron triggers: product reference"
+mode: subagent
+---
+
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
 # Cloudflare Cron Triggers
 
-Schedule Workers on Cloudflare's global network. 5-field cron syntax with Quartz extensions (L, W, #). At-least-once delivery — make handlers idempotent.
+Use Cron Triggers to start periodic Worker jobs. Fetch the relevant current documentation before implementing; configuration, API signatures, examples, and limits belong in the docs.
 
-## Quick Start
+- **Set up a recurring job:** [Cron Triggers](https://developers.cloudflare.com/workers/configuration/cron-triggers/) covers scheduling, deployment, and execution history.
+- **Implement the job:** [Scheduled handler](https://developers.cloudflare.com/workers/runtime-apis/handlers/scheduled/) covers controller properties, asynchronous work, and multiple schedules.
+- **Schedule durable work:** [Trigger Workflows](https://developers.cloudflare.com/workflows/build/trigger-workflows/) covers direct Workflow schedules and starting instances from a Worker. Check this before introducing a Worker whose only job is to start a Workflow.
+- **Check capacity:** fetch [Workers limits](https://developers.cloudflare.com/workers/platform/limits/) for the target plan and invocation type.
 
-**wrangler.jsonc:**
+## In This Reference
 
-```jsonc
-{
-  "name": "my-cron-worker",
-  "triggers": { "crons": ["*/5 * * * *", "0 2 * * *"] }
-}
-```
-
-**Handler:**
-
-```typescript
-export default {
-  async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
-    console.log("Cron:", controller.cron, "Time:", new Date(controller.scheduledTime));
-    ctx.waitUntil(asyncTask(env)); // Non-blocking
-  },
-};
-```
-
-**Test locally:** `npx wrangler dev` — see [gotchas.md](./cron-triggers-gotchas.md) "Local Testing" for curl commands and alternative paths.
-
-## Cron Syntax
-
-```text
- ┌─────────── minute (0-59)
- │ ┌───────── hour (0-23)
- │ │ ┌─────── day of month (1-31)
- │ │ │ ┌───── month (1-12, JAN-DEC)
- │ │ │ │ ┌─── day of week (1-7, SUN-SAT, 1=Sunday)
- * * * * *
- * (any)  , (list)  - (range)  / (step)  L (last)  W (weekday)  # (nth)
-```
-
-```bash
-*/5 * * * *            # Every 5 minutes
-0 * * * *              # Hourly
-0 2 * * *              # Daily 2am UTC (off-peak)
-0 9 * * MON-FRI        # Weekdays 9am UTC
-0 0 1 * *              # Monthly 1st midnight UTC
-0 9 L * *              # Last day of month 9am UTC
-0 10 * * MON#2         # 2nd Monday 10am UTC
-*/10 9-17 * * MON-FRI  # Every 10min, 9am-5pm weekdays
-```
-
-## Limits
-
-| Plan | Triggers/worker | CPU |
-|------|----------------|-----|
-| Free | 3 | 10ms |
-| Paid | Unlimited | 50ms |
-
-- **Propagation:** 15min global deployment
-- **Timezone:** UTC only — see [gotchas.md](./cron-triggers-gotchas.md) for offset calculation
+- [configuration.md](./configuration.md) — schedule setup, environments, removal, and Green Compute
+- [api.md](./api.md) — handler implementation, asynchronous completion, and tests
+- [patterns.md](./patterns.md) — choosing execution boundaries and integrations
+- [gotchas.md](./gotchas.md) — investigating timing, failures, and repeated work
 
 ## See Also
 
-- [patterns.md](./cron-triggers-patterns.md) — API sync, DB cleanup, batch processing, health checks
-- [gotchas.md](./cron-triggers-gotchas.md) — timezone offsets, duplicate execution, debugging, security
+- [Workflows](workflows.md) — durable multi-step jobs
+- [Queues](queues.md) — asynchronous message processing

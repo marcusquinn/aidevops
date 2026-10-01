@@ -1,18 +1,33 @@
+---
+name: workers-ai
+description: "Cloudflare workers ai: product reference"
+mode: subagent
+---
+
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
 # Cloudflare Workers AI
 
-Serverless AI inference on Cloudflare's edge network. Covers bindings, model invocation, REST API, Wrangler setup, pricing/neurons, RAG, streaming, function calling, AI Gateway, model selection, and TypeScript patterns.
+Use Workers AI for managed model inference from Workers or an external service. Fetch the relevant documentation before choosing a model or writing integration code; model availability, schemas, capabilities, limits, and prices change independently.
 
-## Scope
+## Choose a model
 
-**Included:** Workers AI bindings, task-specific patterns (text generation, embeddings, image gen, speech, translation), REST API + OpenAI compatibility, Wrangler config/deployment, pricing & rate limits, RAG with Vectorize, AI Gateway integration, function calling, LoRA adapters, architecture patterns.
+Start with the [model catalog](https://developers.cloudflare.com/workers-ai/models/) and open the selected model's page for its exact identifier, input/output schema, context window, and supported features. Compare candidates on the user's task, language, quality requirements, latency, and [current pricing](https://developers.cloudflare.com/workers-ai/platform/pricing/). Evaluate with representative inputs rather than treating model size as a quality or cost ranking.
 
-**Excluded:** General Workers programming, Pages (unless AI integration), CDN/DNS/security, Vectorize (unless RAG context), D1/KV/R2/Durable Objects (unless AI-specific). Use the corresponding product docs for those.
+For tool use, streaming, or structured output, confirm support for the selected model and integration. For embeddings, check output dimensions and compatibility with the existing index; changing the model may require re-embedding stored documents, even if dimensions match.
 
-## Official References
+## Route by task
 
-- Docs: https://developers.cloudflare.com/workers-ai/
-- Model catalog: https://developers.cloudflare.com/workers-ai/models/
-- Pricing: https://developers.cloudflare.com/workers-ai/platform/pricing/
+- [configuration.md](./configuration.md): choose an integration, configure bindings and types, or set up development.
+- [api.md](./api.md): find inference schemas, streaming, tool calling, and structured output.
+- [patterns.md](./patterns.md): choose direct generation or RAG, and find integration examples.
+- [gotchas.md](./gotchas.md): diagnose binding, schema, limit, pricing, and SDK issues.
+
+If a topic is missing, use the [Workers AI documentation index](https://developers.cloudflare.com/workers-ai/llms.txt) to find its current page.
+
+## Related products
+
+- [Vectorize](vectorize.md): vector storage and retrieval.
+- [AI Gateway](ai-gateway.md): inference analytics, caching, and request controls.
+- [Workers](https://developers.cloudflare.com/workers/): runtime and application hosting.

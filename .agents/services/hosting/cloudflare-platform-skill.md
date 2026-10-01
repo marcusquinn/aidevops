@@ -3,6 +3,7 @@ name: cloudflare-platform-skill
 description: "Cloudflare platform development guidance — patterns, gotchas, decision trees, SDK usage for Workers, Pages, KV, D1, R2, AI, Durable Objects, and 60+ products. Use when building or developing ON the Cloudflare platform. For managing Cloudflare resources (DNS, WAF, DDoS, R2 buckets, Workers deployments), use the cf CLI or the Cloudflare Code Mode MCP server instead."
 mode: subagent
 imported_from: external
+upstream_url: https://github.com/cloudflare/skills
 ---
 
 <!-- SPDX-License-Identifier: MIT -->
@@ -41,14 +42,17 @@ Store data?
 ├─ Vector embeddings (AI/semantic search) → vectorize/
 ├─ Strongly-consistent per-entity state → durable-objects/ (DO storage)
 ├─ Secrets management → secrets-store/
-└─ Streaming ETL to R2 → pipelines/
+├─ Streaming ETL to R2 → basin-pipelines/
+├─ Iceberg tables in R2 → basin-catalog/
+└─ SQL queries over Iceberg tables → basin-sql/
 
 Need AI?
 ├─ Run inference (LLMs, embeddings, images) → workers-ai/
 ├─ Vector database for RAG/search → vectorize/
 ├─ Build stateful AI agents → agents-sdk/
 ├─ Gateway for any AI provider (caching, routing) → ai-gateway/
-└─ AI-powered search widget → ai-search/
+├─ AI-powered search widget → ai-search/
+└─ Code execution/shell/filesystem for an agent → sandbox/
 
 Networking?
 ├─ Expose local service to internet → tunnel/
@@ -63,7 +67,6 @@ Security?
 ├─ DDoS protection → ddos/
 ├─ Bot detection/management → bot-management/
 ├─ API protection → api-shield/
-├─ CAPTCHA alternative → turnstile/
 └─ Credential leak detection → waf/ (managed ruleset)
 
 Media?
@@ -73,10 +76,11 @@ Media?
 └─ Third-party script management → zaraz/
 
 IaC?
-├─ Pulumi → pulumi/
-├─ Terraform → terraform/
 └─ Direct API → cf CLI (tools/api/cloudflare-cf-cli.md) or Code Mode MCP (tools/mcp/cloudflare-code-mode.md)
 ```
+
+IaC (Pulumi/Terraform) coverage was dropped in the GH#33150 trim — use the Cloudflare
+provider's own current docs for either tool.
 
 ## Product Index
 
@@ -84,20 +88,22 @@ All paths: `./cloudflare-platform-skill/<file>.md`
 
 **Compute & Runtime**: workers · pages · pages-functions · durable-objects · workflows · containers · workers-for-platforms · cron-triggers · tail-workers · snippets · smart-placement
 
-**Storage & Data**: kv · d1 · r2 · queues · hyperdrive · do-storage · secrets-store · pipelines · r2-data-catalog · r2-sql
+**Storage & Data**: kv · d1 · r2 · queues · hyperdrive · do-storage · secrets-store · basin-pipelines · basin-catalog · basin-sql
 
-**AI & ML**: workers-ai · vectorize · agents-sdk · ai-gateway · ai-search
+**AI & ML**: workers-ai · vectorize · agents-sdk (+ `agents-sdk-*` reference chapters) · ai-gateway · ai-search · sandbox (+ sandbox-stable, sandbox-migrate-to-next)
 
 **Networking**: tunnel · spectrum · turn · network-interconnect · argo-smart-routing · workers-vpc
 
-**Security**: waf · ddos · bot-management · api-shield · turnstile
+**Security**: waf · ddos · bot-management · api-shield
 
 **Media**: images · stream · browser-rendering · zaraz
 
 **Real-Time**: realtimekit · realtime-sfu
 
-**Dev Tools**: cf CLI (`../../tools/api/cloudflare-cf-cli.md`) · wrangler · miniflare · c3 · observability · analytics-engine · web-analytics · sandbox · workerd · workers-playground
+**Dev Tools**: cf CLI (`../../tools/api/cloudflare-cf-cli.md`) · wrangler · miniflare · c3 · observability · analytics-engine · web-analytics · workerd · workers-playground
 
-**IaC**: pulumi · terraform · [API: `.agents/tools/mcp/cloudflare-code-mode.md`]
+**New/misc**: artifacts · flagship · graphql-api
+
+**IaC**: [API: `.agents/tools/mcp/cloudflare-code-mode.md`] (Pulumi/Terraform dropped — see notes)
 
 **Other**: email-routing · email-workers · static-assets · bindings · cache-reserve
