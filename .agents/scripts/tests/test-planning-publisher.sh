@@ -532,6 +532,83 @@ test_validation_failure_pushes_nothing() {
 	return 0
 }
 
+test_privacy_validation_by_target_visibility() {
+	local root="" repo="" visibility="" output="" before="" after="" rc=0
+	local name="" secret=""
+	root=$(mktemp -d) || return 0
+	setup_repo "$root" || {
+		fail "privacy fixture" setup
+		return 0
+	}
+	repo="${root}/work"
+	mkdir -p "${root}/scripts" "${root}/home"
+	# Exercise the real scanners, stubbing only the remote visibility probe.
+	printf 'source %q\n' "${SCRIPT_DIR_TEST}/../privacy-guard-helper.sh" >"${root}/scripts/privacy-guard-helper.sh"
+	# shellcheck disable=SC2016 # Variables belong to the generated probe stub.
+	printf '%s\n' \
+		'privacy_is_target_public() {' \
+		'  local url="$1"' \
+		'  [[ "$url" == "$TEST_PUSH_URL" ]] || return 2' \
+		'  return "$TEST_VISIBILITY"' \
+		'}' >>"${root}/scripts/privacy-guard-helper.sh"
+	printf '%s\n' '{"initialized_repos":[{"slug":"fixture-owner/planning-fixture","local_only":true}]}' >"${root}/repos.json"
+	# A non-origin publication remote with a distinct push URL guards target selection.
+	git -C "$repo" remote add publication "${root}/remote.git/."
+	git -C "$repo" remote set-url --push publication "${root}/remote.git"
+	for visibility in 1 0 2; do
+		name="planning privacy validation with visibility=$visibility"
+		printf '%s\n' 'fixture-owner/planning-fixture' >"${repo}/todo/tasks/privacy.md"
+		before=$(git --git-dir="${root}/remote.git" rev-parse main)
+		rc=0
+		output=$(
+			exec 2>&1
+			export GIT_AUTHOR_NAME=Test GIT_AUTHOR_EMAIL=test@example.invalid
+			export GIT_COMMITTER_NAME=Test GIT_COMMITTER_EMAIL=test@example.invalid
+			SCRIPT_DIR="${root}/scripts"
+			# shellcheck source=../planning-publisher.sh
+			source "$PUBLISHER"
+			unset AIDEVOPS_PLANNING_VALIDATOR
+			HOME="${root}/home" PRIVACY_REPOS_CONFIG="${root}/repos.json" \
+				TEST_PUSH_URL="${root}/remote.git" TEST_VISIBILITY="$visibility" \
+				planning_publish "$repo" "plan: privacy validation" publication main todo/tasks/privacy.md
+		) || rc=$?
+		after=$(git --git-dir="${root}/remote.git" rev-parse main)
+		if [[ "$visibility" -eq 1 && "$rc" -eq 0 && "$before" != "$after" ]] &&
+			[[ "$(git --git-dir="${root}/remote.git" show main:todo/tasks/privacy.md)" == "fixture-owner/planning-fixture" ]]; then
+			pass "$name"
+		elif [[ "$visibility" -ne 1 && "$rc" -ne 0 && "$before" == "$after" && "$output" == *"todo/tasks/privacy.md:1:"* && "$output" != *"fixture-owner/planning-fixture"* ]]; then
+			pass "$name"
+		else
+			fail "$name" "rc=$rc output=$output"
+		fi
+		# Make the next attempt scan a new added line rather than the published line.
+		git --git-dir="${root}/remote.git" update-ref refs/heads/main "$before"
+	done
+	# Secret material must still block even when the target is positively private.
+	secret="ghp_$(printf '%040d' 0)"
+	printf '%s\n' "$secret" >"${repo}/todo/tasks/privacy.md"
+	rc=0
+	output=$(
+		exec 2>&1
+		export GIT_AUTHOR_NAME=Test GIT_AUTHOR_EMAIL=test@example.invalid
+		export GIT_COMMITTER_NAME=Test GIT_COMMITTER_EMAIL=test@example.invalid
+		SCRIPT_DIR="${root}/scripts"
+		# shellcheck source=../planning-publisher.sh
+		source "$PUBLISHER"
+		unset AIDEVOPS_PLANNING_VALIDATOR
+		HOME="${root}/home" PRIVACY_REPOS_CONFIG="${root}/repos.json" \
+			TEST_PUSH_URL="${root}/remote.git" TEST_VISIBILITY=1 \
+			planning_publish "$repo" "plan: secret rejection" publication main todo/tasks/privacy.md
+	) || rc=$?
+	if [[ "$rc" -ne 0 && "$before" == "$(git --git-dir="${root}/remote.git" rev-parse main)" && "$output" == *"todo/tasks/privacy.md:1:"* && "$output" != *"$secret"* ]]; then
+		pass "private target still rejects secret material without logging it"
+	else
+		fail "private target secret validation" "rc=$rc output=$output"
+	fi
+	rm -rf "$root"
+	return 0
+}
+
 test_lagging_head_validates_only_planning_paths() {
 	local name="lagging HEAD hook validates only planning paths"
 	local root="" repo="" rc=0 before=""
@@ -1018,6 +1095,7 @@ main() {
 	test_simplification_state_defaults_to_main_without_origin_head
 	test_simplification_state_conflict_is_retryable
 	test_validation_failure_pushes_nothing
+	test_privacy_validation_by_target_visibility
 	test_lagging_head_validates_only_planning_paths
 	test_contention_replay_and_conflict
 	test_crash_replay_is_single_publication
