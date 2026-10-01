@@ -7,6 +7,7 @@ import { homedir } from "os";
 import { join, resolve } from "path";
 import { classifyFullLoopCommitAndPr } from "./quality-hooks-full-loop-trust.mjs";
 import {
+  gitNetworkPolicyOperation,
   isPolicyHelperTimeout,
   parsePolicyPayload,
   policyExecutionFailure,
@@ -171,7 +172,9 @@ function executeCommandPolicy(helperArgs) {
   try {
     raw = runPolicyHelper(helperArgs, { stdio: ["ignore", "pipe", "pipe"] });
   } catch (error) {
-    if (isPolicyHelperTimeout(error)) throw transientPolicyTimeoutError("command");
+    if (isPolicyHelperTimeout(error)) {
+      throw transientPolicyTimeoutError("command", gitNetworkPolicyOperation(helperArgs));
+    }
     executionError = error;
     raw = error?.stdout?.toString() || "";
   }

@@ -740,7 +740,52 @@ test_blocked_backoff_cli() {
 	return 0
 }
 
+test_push_policy_timeout_checkpoint() {
+	local output="${TEST_ROOT}/push-timeout.ndjson"
+	local status=0 fingerprint="" release="" head=""
+	printf '%s\n' '{"type":"text","text":"BLOCKED: command policy timed out under host load\nTERMINAL_BLOCKER_REASON=push_policy_timeout"}' >"$output"
+	terminal_blocker_capture_output "$output" || status=1
+	fingerprint="$AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT"
+	[[ "$(_terminal_blocker_reason "$fingerprint")" == push_policy_timeout ]] || status=1
+	[[ "$(_terminal_blocker_recovery "$fingerprint")" == *'owner=runner-recovery'* ]] || status=1
+	# Even repeated observations must not create a permanent task-revision hold.
+	local comments='[{"id":1,"body":"observation","author_association":"OWNER","created_at":"2026-10-01T00:00:00Z"}]'
+	[[ "$(terminal_blocker_release_mode "$comments" 111111111111111111111111 "$fingerprint")" == first ]] || status=1
+	local repo="${TEST_ROOT}/push-checkpoint"
+	command -p git clone -q --shared --bare "${SCRIPT_DIR}/../.." "$repo"
+	command -p git -C "$repo" branch feature/push-checkpoint
+	command -p git -C "$repo" symbolic-ref HEAD refs/heads/feature/push-checkpoint
+	head=$(command -p git -C "$repo" rev-parse HEAD)
+	release=$(AIDEVOPS_TERMINAL_BLOCKER_REPO_PATH="$repo" _hrff_build_claim_released_line push_policy_timeout fixture 0 1)
+	[[ "$release" == *'reason=push_policy_timeout'* && "$release" == *"branch=feature/push-checkpoint head=${head}"* ]] || status=1
+	[[ "$release" != *"$repo"* ]] || status=1
+	if ! (
+		# Use the existing classifier-fixture pattern from test-integration-recovery.
+		# shellcheck source=../headless-runtime-result.sh
+		source "${SCRIPT_DIR}/headless-runtime-result.sh"
+		_headless_private_workload_enabled() { return 1; }
+		output_has_completion_signal() { return 0; }
+		output_has_blocked_signal() { return 0; }
+		output_has_post_pr_handoff_signal() { return 1; }
+		output_has_missing_context_blocked_signal() { return 1; }
+		output_has_capability_blocked_signal() { return 1; }
+		print_warning() { return 0; }
+		# shellcheck disable=SC2034
+		role=worker session_key=issue-42 discovered_session="" selected_model=fixture work_dir="$repo"
+		output_file="$output"
+		result_rc=0
+		_run_failure_reason=""
+		_handle_run_result_success_output || result_rc=$?
+		[[ "$result_rc" == 83 && "$_run_failure_reason" == push_policy_timeout ]]
+	); then
+		status=1
+	fi
+	print_result "push policy timeout stays transient and releases exact branch/HEAD without paths" "$status"
+	return 0
+}
+
 main() {
+	test_push_policy_timeout_checkpoint
 	test_normalized_blocker_fingerprint
 	test_worker_contract_reason_protocol
 	test_task_revision_inputs

@@ -178,6 +178,12 @@ _handle_run_result_success_output() {
 			_run_classification_pattern="terminal_blocked"
 			if declare -F terminal_blocker_capture_output >/dev/null 2>&1; then
 				terminal_blocker_capture_output "$output_file" || true
+				local blocker_reason=""
+				blocker_reason=$(_terminal_blocker_reason "${AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT:-}")
+				if [[ "$blocker_reason" == "push_policy_timeout" ]]; then
+					_run_failure_reason="$blocker_reason"
+					_run_classification_pattern="$blocker_reason"
+				fi
 			fi
 			rm -f "$output_file"
 			print_warning "$selected_model worker reported a terminal BLOCKED state"
