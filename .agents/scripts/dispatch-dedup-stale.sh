@@ -169,6 +169,7 @@ _stale_recovery_final_evidence_recheck() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local expected_dispatch_ts="$3"
+	local recheck_branches="${4:-false}"
 	local pages="" latest_dispatch_ts="" now_epoch=""
 	pages=$(_stale_recovery_fetch_comments_pages "$issue_number" "$repo_slug")
 	[[ -n "$pages" ]] || return 1
@@ -182,6 +183,11 @@ _stale_recovery_final_evidence_recheck() {
 		--argjson include_terminal false \
 		-f "${SCRIPT_DIR}/dispatch-lease-claims.jq" 2>/dev/null) || return 1
 	if printf '%s' "$parsed" | jq -e 'any(.lease_phase == "ready")' >/dev/null 2>&1; then
+		return 1
+	fi
+	# Re-read remote tips immediately before takeover, including pushes that
+	# arrived after the initial age check. Unknown branch evidence protects ownership.
+	if [[ "$recheck_branches" == "true" ]] && _stale_assignment_has_recent_branch_activity "$issue_number" "$repo_slug" "$now_epoch" "${_STALE_CONTEXT_THRESHOLD:-$STALE_ASSIGNMENT_THRESHOLD_SECONDS}" "$comments"; then
 		return 1
 	fi
 	# PID exit is deliberately absent: remote completion requires durable evidence.
@@ -696,7 +702,7 @@ _stale_recovery_apply() {
 		_stale_recovery_apply_blocked_by_hold "$issue_number" "$repo_slug" "$stale_assignees" "$reason" "$expected_dispatch_ts" "${_recov_extra[@]}"
 		return 0
 	fi
-	if ! _stale_recovery_final_evidence_recheck "$issue_number" "$repo_slug" "$expected_dispatch_ts"; then
+	if ! _stale_recovery_final_evidence_recheck "$issue_number" "$repo_slug" "$expected_dispatch_ts" true; then
 		printf 'STALE_RECHECK_BLOCKED: issue #%s in %s — evidence changed before takeover\n' "$issue_number" "$repo_slug"
 		return 0
 	fi
@@ -721,6 +727,9 @@ Previously assigned to: ${stale_assignees}
 Reason: ${reason}
 Threshold: ${STALE_ASSIGNMENT_THRESHOLD_SECONDS}s
 Global recovery attempt: ${recovery_tick:-1}/${recovery_threshold:-unknown}
+Last pushed issue branch: ${_STALE_BRANCH_CHECKPOINT:-none found}
+
+Resume from that remote branch when present; inspect and reuse its commits before starting new work.
 
 The assigned runner had no active worker process and produced no progress within the threshold. Unassigned and relabeled \`status:available\` for re-dispatch.
 
@@ -1002,7 +1011,7 @@ _stale_assignment_fetch_comments_json() {
 	comments_pages=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
 		--paginate --slurp 2>/dev/null) || return 1
 	comments_json=$(printf '%s' "$comments_pages" | jq \
-		'[.[] | .[]? | {created_at: .created_at, author: .user.login, body_start: ((.body // "")[:200])}] | sort_by(.created_at) | reverse' \
+		'[.[] | .[]? | {created_at: .created_at, author: .user.login, author_association: .author_association, body: .body, body_start: ((.body // "")[:200])}] | sort_by(.created_at) | reverse' \
 		2>/dev/null) || return 1
 	printf '%s' "$comments_json"
 	return 0
@@ -1093,6 +1102,48 @@ _stale_assignment_has_recent_open_pr_activity() {
 	return 1
 }
 
+# GH#33383: remote issue branches are progress even before a PR exists.
+# Returns 0 for recent OR indeterminate evidence (protect ownership), 1 only
+# after all matching remote tips are known to be old. Committer time is a proxy
+# for push time; GitHub's refs API does not expose an actual pushed-at timestamp.
+# Also leaves the newest old tip in _STALE_BRANCH_CHECKPOINT for salvage.
+_stale_assignment_has_recent_branch_activity() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local now_epoch="$3"
+	local effective_threshold="$4"
+	local comments_json="${5:-[]}"
+	local refs="" rows="" named_branch=""
+	local branch="" sha="" commit_ts="" commit_epoch="" newest_epoch=0
+	_STALE_BRANCH_CHECKPOINT=""
+	# Only the latest trusted dispatch comment can name a nonstandard branch.
+	named_branch=$(printf '%s' "$comments_json" | jq -r '
+		[.[] | select(.author_association | IN("OWNER", "MEMBER", "COLLABORATOR"))
+		| select((.body // empty) | test("Dispatching worker|DISPATCH_CLAIM|Worker \\(PID"; "i"))]
+		| sort_by(.created_at) | last | (.body // empty)
+		| [scan("(?:branch=|\\*\\*Branch\\*\\*:[ \\t]*`?)([A-Za-z0-9_./-]+)") | .[0]] | first // empty
+	' 2>/dev/null) || return 0
+	refs=$(gh api --paginate --slurp "repos/${repo_slug}/git/matching-refs/heads/" 2>/dev/null) || return 0
+	rows=$(printf '%s' "$refs" | jq -r --arg issue "$issue_number" --arg named "$named_branch" '
+		.[] | .[] | (.ref | ltrimstr("refs/heads/")) as $branch
+		| select(($branch | test("gh" + $issue + "([^0-9]|$)")) or ($named != "" and $branch == $named))
+		| [$branch, .object.sha] | @tsv
+	' 2>/dev/null) || return 0
+	while IFS=$'\t' read -r branch sha; do
+		[[ -n "$branch" ]] || continue
+		[[ "$sha" =~ ^[a-fA-F0-9]{40,64}$ ]] || return 0
+		commit_ts=$(gh api "repos/${repo_slug}/git/commits/${sha}" --jq '.committer.date // empty' 2>/dev/null) || return 0
+		commit_epoch=$(_ts_to_epoch "$commit_ts")
+		[[ "$commit_epoch" -gt 0 ]] || return 0
+		if [[ "$commit_epoch" -gt "$newest_epoch" ]]; then
+			newest_epoch="$commit_epoch"
+			_STALE_BRANCH_CHECKPOINT="${branch} (commit ${sha}, committed ${commit_ts})"
+		fi
+		[[ $((now_epoch - commit_epoch)) -lt "$effective_threshold" ]] && return 0
+	done <<<"$rows"
+	return 1
+}
+
 _stale_assignment_load_threshold_context() {
 	local issue_number="$1"
 	local repo_slug="$2"
@@ -1122,15 +1173,10 @@ _is_stale_assignment() {
 	local blocking_assignees="$3"
 	local now_epoch
 	now_epoch=$(date +%s)
+	_STALE_BRANCH_CHECKPOINT=""
 
-	# Fetch issue comments to find the most recent dispatch claim and
-	# overall activity timestamp. Use --paginate --slurp so gh combines all
-	# pages before jq sorts them; `gh api --paginate --jq ...` applies jq per
-	# page, which can leave page-1 timestamps ahead of newer activity on long
-	# issue threads and trigger false stale recovery (GH#3894 / t2769 incident).
-	#
-	# GH#18816: fail-CLOSED on API failure. A transient gh error is NOT evidence
-	# that the assignment is stale — block this pulse cycle and retry next cycle.
+	# GH#3894/t2769: slurp all comment pages before sorting, not per-page --jq.
+	# GH#18816: API failure is not staleness; protect ownership this pulse cycle.
 	local comments_json
 	if _interactive_claim_fence_blocks_dispatch "$issue_number" "$repo_slug" || ! comments_json=$(_stale_assignment_fetch_comments_json "$issue_number" "$repo_slug"); then
 		# Cannot fetch comments — cannot determine staleness. Fail-CLOSED:
@@ -1151,11 +1197,8 @@ _is_stale_assignment() {
 	# t2153 age-floor guard: issue cannot be stale before it could signal.
 	_issue_too_young_for_staleness "$issue_created_at" "$effective_threshold" "$now_epoch" && return 1
 
-	# t2132 Fix D: Find the most recent dispatch/claim comment.
-	# Matches worker dispatch patterns AND interactive session claim pattern.
-	# Previously only matched "Dispatching worker|DISPATCH_CLAIM|Worker (PID",
-	# which missed the interactive claim comment posted by
-	# interactive-session-helper.sh ("Interactive session claimed").
+	# t2132 Fix D: include both worker dispatch and "Interactive session claimed"
+	# comments from interactive-session-helper.sh when finding the latest claim.
 	local last_dispatch_ts=""
 	last_dispatch_ts=$(_stale_assignment_latest_dispatch_ts "$comments_json")
 
@@ -1178,6 +1221,9 @@ _is_stale_assignment() {
 			return 1
 		fi
 		# No dispatch comment AND no recent activity — stale
+		if _stale_assignment_has_recent_branch_activity "$issue_number" "$repo_slug" "$now_epoch" "$effective_threshold" "$comments_json"; then
+			return 1
+		fi
 		_recover_stale_assignment "$issue_number" "$repo_slug" "$blocking_assignees" \
 			"no dispatch claim comment found, no recent activity (threshold=${effective_threshold}s, interactive=${is_interactive})" || return 1
 		return 0
@@ -1209,6 +1255,9 @@ _is_stale_assignment() {
 	# dispatch checks do not burn PR-list API budget; branch pushes and draft PR
 	# updates are better liveness signals than synthetic issue heartbeats.
 	if _stale_assignment_has_recent_open_pr_activity "$issue_number" "$repo_slug" "$now_epoch" "$effective_threshold"; then
+		return 1
+	fi
+	if _stale_assignment_has_recent_branch_activity "$issue_number" "$repo_slug" "$now_epoch" "$effective_threshold" "$comments_json"; then
 		return 1
 	fi
 
