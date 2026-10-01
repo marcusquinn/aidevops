@@ -697,6 +697,67 @@ _footprint_fetch_active_issues() {
 }
 
 #######################################
+# Log a footprint-coordinator decision to LOGFILE, when set (best-effort).
+# Args: $1 = message
+#######################################
+_footprint_coordinator_log() {
+	local message="$1"
+	[[ -n "${LOGFILE:-}" ]] || return 0
+	printf '[footprint-coordinator] %s ts=%s\n' "$message" "$(date +%s)" >>"$LOGFILE" 2>/dev/null || true
+	return 0
+}
+
+#######################################
+# GH#33293: determine whether a claimed `no-auto-dispatch` coordination
+# issue has evidence of active implementation. Without evidence, such an
+# issue is a coordination container — like `parent-task` — and must not
+# reserve its declared Files Scope indefinitely just because a maintainer
+# left it claimed.
+#
+# Evidence (any one is sufficient to keep the footprint reserved):
+#   1. A dispatch-ledger entry for this issue (session_key "issue-<N>")
+#      that is still in-flight/launched — a worker or interactive session
+#      is actually registered against it.
+#   2. An open PR that either closes this issue (standard closing
+#      keywords) or whose branch name encodes the issue number, matching
+#      the aidevops worktree-branch convention (".../auto-...-gh<N>").
+#
+# Args: $1 = repo_slug, $2 = issue_number
+# Exit: 0 = evidence found (keep reserving); 1 = no evidence (skip, like
+#       parent-task) or invalid args (fail safe to "no evidence").
+#######################################
+_footprint_claimed_coordinator_has_evidence() {
+	local repo_slug="$1"
+	local issue_number="$2"
+	[[ -n "$repo_slug" && "$issue_number" =~ ^[0-9]+$ ]] || return 1
+
+	# Evidence 1 — dispatch ledger entry still in-flight for this issue.
+	local ledger_file="${AIDEVOPS_DISPATCH_LEDGER_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}/dispatch-ledger.jsonl"
+	if [[ -f "$ledger_file" && ! -L "$ledger_file" ]]; then
+		local ledger_hit=""
+		ledger_hit=$(jq -r --arg key "issue-${issue_number}" \
+			'select(.session_key == $key and (.status == "in-flight" or .status == "launched")) | .session_key' \
+			"$ledger_file" 2>/dev/null | head -1) || ledger_hit=""
+		[[ -n "$ledger_hit" ]] && return 0
+	fi
+
+	# Evidence 2 — an open PR linked to the issue (closing keyword in its
+	# body) or a branch whose name encodes the issue number.
+	local prs="" pr_hit="0"
+	prs=$(gh pr list --repo "$repo_slug" --state open \
+		--json number,headRefName,body --limit 100 2>/dev/null) || prs=""
+	[[ -n "$prs" ]] || prs="[]"
+	pr_hit=$(printf '%s' "$prs" | jq -r --arg n "$issue_number" '
+		[.[] | select(
+			((.headRefName // "") | test("gh" + $n + "([^0-9]|$)")) or
+			((.body // "") | test("(close[sd]?|fix(e[sd])?|resolve[sd]?)[ \t]*#" + $n + "([^0-9]|$)"; "i"))
+		)] | length' 2>/dev/null) || pr_hit="0"
+	[[ "$pr_hit" =~ ^[1-9][0-9]*$ ]] && return 0
+
+	return 1
+}
+
+#######################################
 # Get file footprints for all currently in-flight issues in a repo.
 #
 # "In-flight" = issue has an active status label (status:queued,
@@ -705,7 +766,9 @@ _footprint_fetch_active_issues() {
 # (GH#32977), so it is owned work even before the worker registers.
 # Parent-task issues are coordination containers, not worker
 # implementation claims, so their broad planning footprints do not block
-# worker-ready child dispatch.
+# worker-ready child dispatch. GH#33293: a claimed `no-auto-dispatch`
+# coordination issue is skipped the same way unless it carries evidence of
+# active implementation (see _footprint_claimed_coordinator_has_evidence).
 #
 # Returns a newline-separated list of "file|issue_number" pairs.
 # Uses a TTL-based cache to avoid repeated API calls within a pulse cycle.
@@ -748,11 +811,23 @@ _footprint_get_inflight() {
 	local cache_data=""
 	local i=0
 	while [[ "$i" -lt "$issue_count" ]]; do
-		local num body is_parent_task paths
+		local num body is_parent_task is_no_auto_dispatch is_claimed paths
 		num=$(printf '%s' "$all_inflight" | jq -r ".[$i].number // empty" 2>/dev/null)
 		body=$(printf '%s' "$all_inflight" | jq -r ".[$i].body // empty" 2>/dev/null)
 		is_parent_task=$(printf '%s' "$all_inflight" | jq -r ".[$i] | any((.labels // [])[]?; .name == \"parent-task\")" 2>/dev/null) || is_parent_task="false"
 		if [[ "$is_parent_task" == "true" ]]; then
+			i=$((i + 1))
+			continue
+		fi
+
+		# GH#33293: a claimed no-auto-dispatch coordination issue only
+		# holds its footprint when there is evidence of active
+		# implementation; otherwise it is skipped like parent-task.
+		is_no_auto_dispatch=$(printf '%s' "$all_inflight" | jq -r ".[$i] | any((.labels // [])[]?; .name == \"no-auto-dispatch\")" 2>/dev/null) || is_no_auto_dispatch="false"
+		is_claimed=$(printf '%s' "$all_inflight" | jq -r ".[$i] | any((.labels // [])[]?; .name == \"status:claimed\")" 2>/dev/null) || is_claimed="false"
+		if [[ "$is_no_auto_dispatch" == "true" && "$is_claimed" == "true" ]] &&
+			[[ -n "$num" ]] && ! _footprint_claimed_coordinator_has_evidence "$repo_slug" "$num"; then
+			_footprint_coordinator_log "event=footprint_stale_coordinator issue=#${num} repo=${repo_slug}"
 			i=$((i + 1))
 			continue
 		fi

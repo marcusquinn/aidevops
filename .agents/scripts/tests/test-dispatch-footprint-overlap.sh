@@ -292,6 +292,61 @@ else
 fi
 
 # =============================================================================
+# Test 11b — GH#33293: claimed no-auto-dispatch coordinators without
+# active-implementation evidence are skipped like parent-task; one with an
+# open linked PR still blocks.
+# =============================================================================
+COORD_BIN="${TEST_ROOT}/coord-bin"
+mkdir -p "$COORD_BIN"
+cat >"${COORD_BIN}/gh" <<'MOCK_GH'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "pr" && "${2:-}" == "list" ]]; then
+	repo=""
+	args=("$@")
+	for ((idx = 0; idx < ${#args[@]}; idx++)); do
+		if [[ "${args[$idx]}" == "--repo" ]]; then
+			repo="${args[$((idx + 1))]}"
+		fi
+	done
+	printf '%s\n' '[{"number":900,"headRefName":"feature/other","body":"Resolves #403"}]'
+	exit 0
+fi
+
+label=""
+while [[ "$#" -gt 0 ]]; do
+	case "${1:-}" in
+		--label)
+			shift
+			label="${1:-}"
+			;;
+	esac
+	shift || true
+done
+
+if [[ "$label" == "status:claimed" ]]; then
+	printf '%s\n' '[{"number":402,"body":"### Files Scope\n- `docs/runbook.md`","labels":[{"name":"status:claimed"},{"name":"no-auto-dispatch"}]},{"number":403,"body":"### Files Scope\n- `docs/other-runbook.md`","labels":[{"name":"status:claimed"},{"name":"no-auto-dispatch"}]}]'
+else
+	printf '[]\n'
+fi
+MOCK_GH
+chmod +x "${COORD_BIN}/gh"
+
+OLD_PATH="$PATH"
+PATH="${COORD_BIN}:$PATH"
+_FOOTPRINT_CACHE_REPO=""
+_FOOTPRINT_CACHE_DATA=""
+_FOOTPRINT_CACHE_EPOCH=0
+
+result=$(_footprint_get_inflight "test/repo" "999")
+PATH="$OLD_PATH"
+if ! printf '%s' "$result" | grep -q "docs/runbook.md|402" &&
+	printf '%s' "$result" | grep -q "docs/other-runbook.md|403"; then
+	print_result "get_inflight: skips claimed no-auto-dispatch coordinator without evidence, keeps one with a linked PR" 0
+else
+	print_result "get_inflight: skips claimed no-auto-dispatch coordinator without evidence, keeps one with a linked PR" 1 "(got: ${result})"
+fi
+
+# =============================================================================
 # Test 12 — durable defer suppresses unchanged overlap across cycles
 # =============================================================================
 _FOOTPRINT_DEFER_STATE_DIR="${TEST_ROOT}/footprint-defers"
