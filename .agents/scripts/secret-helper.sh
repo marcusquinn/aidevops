@@ -664,6 +664,16 @@ cmd_get() {
 	return 0
 }
 
+# Status-only resolution for dispatch. Unlike inventory, this detects a locked
+# store or an empty secret. Values stay inside the existing resolver and never
+# reach the caller, logs or an intermediate file.
+cmd_check() {
+	local name="${1:-}"
+	[[ "$name" =~ ^[A-Z][A-Z0-9_]*$ ]] || return 1
+	cmd_get "$name" >/dev/null 2>&1 || return 1
+	return 0
+}
+
 # List secret names (NEVER values)
 cmd_list() {
 	local has_secrets=false
@@ -1090,6 +1100,9 @@ main() {
 		;;
 	get)
 		cmd_get "$@"
+		;;
+	check)
+		cmd_check "$@"
 		;;
 	list | ls)
 		cmd_list "$@"

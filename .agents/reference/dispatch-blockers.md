@@ -129,6 +129,40 @@ Stale assignment recovery: if the blocking assignee has no live worker process A
 
 ## Validator-State Blockers
 
+### Runner-local requirements (GH#33341)
+
+Before claiming, `pulse-dispatch-core.sh` checks the repository's `.aidevops.json`:
+
+```json
+{"dispatch_class_requirements":{"data-publication":{"secrets":["STAGING_TOKEN"],"probe":"scripts/check-local-data"}}}
+```
+
+The key matches the suffix of `dispatch-class:data-publication`. All matching
+classes are combined. An issue may additionally declare a standalone
+`requires-secrets: STAGING_TOKEN, DATABASE_KEY` line. Secret names must be uppercase
+identifiers; duplicates are checked once. `aidevops secret check NAME` returns only
+an exit status (zero means a non-empty value resolves), not a value. The existing
+secret resolver performs any necessary decryption internally; inventory alone
+cannot prove a locked store is usable. Each check has a five-second timeout and
+no stdin. No credential contents are read by the dispatcher or logged.
+
+A probe is an executable repository-relative path, without arguments or shell
+syntax, configured only in the trusted local repository config, never issue text.
+It must resolve inside that repository (including symlinks), run without stdin,
+and exit zero within five seconds. Probes must be read-only, local checks: no
+publication, network operations or mutation. Output is discarded. At most 32
+secrets and eight probes are allowed. Invalid requirements, missing executables,
+failed checks and timeouts fail closed.
+
+Unmet candidates log `runner_capability_unmet` locally and return before claim,
+scope writes or worker launch. No issue label or comment is posted, so a capable
+peer can dispatch normally. A worker discovering the same problem after claiming
+uses `TERMINAL_BLOCKER_REASON=runner_capability_unmet` with `BLOCKED:` evidence.
+This is a known runner-local class, never a global circuit or shared backoff;
+the next runner independently checks capabilities. It does not grant credentials
+or bypass permission/security guards. Repositories without declarations retain
+the existing behavior.
+
 Checked by `pre-dispatch-validator-helper.sh` and the pre-dispatch eligibility gate (t2424) before spawning a worker.
 
 | Condition | Exit | Enforced by |
