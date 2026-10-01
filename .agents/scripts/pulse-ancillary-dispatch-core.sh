@@ -464,6 +464,15 @@ ESCALATION_EOF
 _triage_runtime_infra_failure_reason() {
 	local sample="$1"
 
+	if [[ "$sample" == *'Public triage provider authentication unavailable'* ]] ||
+		[[ "$sample" == *'Model not found: anthropic/'* ]]; then
+		# Never persist the raw runtime line: it can contain untrusted content
+		# or credentials. Keep a fixed diagnostic visible in pulse.log.
+		printf '%s\n' '[pulse-wrapper] OpenCode error: Model not found (isolated provider authentication unavailable)' >>"$LOGFILE"
+		printf '%s\n' 'triage-provider-auth-unsupported'
+		return 0
+	fi
+
 	if printf '%s' "$sample" | grep -qE 'Canary test FAILED|Canary failed.*aborting dispatch' 2>/dev/null; then
 		printf '%s\n' 'canary-unavailable'
 		return 0
@@ -506,7 +515,7 @@ _triage_failure_is_infrastructure() {
 	local failure_reason="$1"
 
 	case "$failure_reason" in
-	canary-unavailable | prelaunch-contract-failure | github-comment-write-failed | github-review-label-write-failed | triage-runtime-failed | triage-runtime-temp-failed | github-current-snapshot-* | github-pr-revision-* | github-public-revision-* | triage-current-snapshot-hash-failed | triage-evidence-* | triage-prompt-* | scanner-unavailable-* | scanner-tempfile-* | scanner-input-* | scanner-error-*) return 0 ;;
+	canary-unavailable | prelaunch-contract-failure | triage-provider-auth-unsupported | github-comment-write-failed | github-review-label-write-failed | triage-runtime-failed | triage-runtime-temp-failed | github-current-snapshot-* | github-pr-revision-* | github-public-revision-* | triage-current-snapshot-hash-failed | triage-evidence-* | triage-prompt-* | scanner-unavailable-* | scanner-tempfile-* | scanner-input-* | scanner-error-*) return 0 ;;
 	*) return 1 ;;
 	esac
 }

@@ -110,6 +110,13 @@ function transportOutputLimit(maxTokens: number): number {
 
 function runtimeFailure(result: CommandResult, tier: CanonicalResearchTier): ResearchRuntimeError {
   const diagnostic = `${result.stdout}\n${result.stderr}`.toLowerCase()
+  if (/public triage provider authentication unavailable|triage-provider-auth-unsupported|model not found: anthropic\//.test(diagnostic)) {
+    return new ResearchRuntimeError(
+      "AUTH_FAILED",
+      `The isolated OpenCode runtime cannot authenticate the Anthropic OAuth provider for the ${tier} tier. ` +
+        "Pure public triage does not load the provider-auth plugin; select a provider with native authentication.",
+    )
+  }
   if (/no (configured |available )?model|failed to resolve[^\n]*model/.test(diagnostic)) {
     return new ResearchRuntimeError(
       "MODEL_RESOLUTION_FAILED",
