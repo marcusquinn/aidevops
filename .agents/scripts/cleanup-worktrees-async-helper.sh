@@ -315,7 +315,7 @@ _prune_missing_worktree_metadata_all_repos() {
 
 main() {
 	if ! _lock_acquire; then
-		echo "[cleanup-worktrees-async] Lock held by live instance — skipping this invocation" >>"$LOGFILE"
+		echo "[cleanup-worktrees-async] ${_LOCK_SKIP_REASON:-Lock unavailable} — skipping this invocation" >>"$LOGFILE"
 		return 0
 	fi
 	_rotate_log_if_oversize
