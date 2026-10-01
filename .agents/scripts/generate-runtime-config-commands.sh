@@ -286,12 +286,33 @@ _copy_cmd_kimi_skill() {
 # groups them alphabetically in the client's command picker.
 _AIDEVOPS_CMD_PREFIX="aidevops-"
 
+# Hash the full body without runtime-specific frontmatter or outer blank lines.
+_command_body_digest() {
+	local file="$1"
+	local digest
+	digest=$(awk '
+		NR == 1 && /^---$/ { in_fm = 1; next }
+		in_fm && /^---$/ { in_fm = 0; next }
+		in_fm { next }
+		{ lines[++n] = $0 }
+		END {
+			first = 1
+			while (first <= n && lines[first] == "") first++
+			while (n >= first && lines[n] == "") n--
+			for (i = first; i <= n; i++) print lines[i]
+		}
+	' "$file" | shasum -a 256) || return 1
+	printf '%s\n' "${digest%% *}"
+	return 0
+}
+
 # Prune only known, unchanged legacy output. A path reference or filename alone
 # cannot establish ownership: users can write their own commands with either.
 # These SHA-256 body fingerprints come from the literal create_command bodies in
 # generate-opencode-commands-*.sh and maybe_write_command bodies in
 # generate-claude-commands.sh. Ignore frontmatter and surrounding blank lines,
-# but preserve any body edits. Unknown historical variants deliberately survive.
+# but preserve any body edits. Also recognize unchanged auto-discovered copies of
+# current source commands at these legacy names. Unknown variants survive.
 # Names still written by _generate_hardcoded_commands are excluded.
 _prune_legacy_commands() {
 	local runtime_id="$1"
@@ -301,24 +322,17 @@ _prune_legacy_commands() {
 	*) return 0 ;;
 	esac
 
-	local name fingerprints file digest
+	local name fingerprints file digest source_file source_digest
 	while IFS=: read -r name fingerprints; do
 		file="${cmd_dir}/${name}.md"
 		# Never follow symlinks or remove directories, even at an allowlisted name.
 		[[ -f "$file" && ! -L "$file" ]] || continue
-		digest=$(awk '
-			NR == 1 && /^---$/ { in_fm = 1; next }
-			in_fm && /^---$/ { in_fm = 0; next }
-			in_fm { next }
-			{ lines[++n] = $0 }
-			END {
-				first = 1
-				while (first <= n && lines[first] == "") first++
-				while (n >= first && lines[n] == "") n--
-				for (i = first; i <= n; i++) print lines[i]
-			}
-		' "$file" | shasum -a 256) || return 1
-		digest="${digest%% *}"
+		digest=$(_command_body_digest "$file") || return 1
+		source_file="$HOME/.aidevops/agents/scripts/commands/${name}.md"
+		if [[ -f "$source_file" ]]; then
+			source_digest=$(_command_body_digest "$source_file") || return 1
+			fingerprints="${fingerprints}|${source_digest}"
+		fi
 		case "|${fingerprints}|" in
 		*"|${digest}|"*)
 			rm -- "$file" || return 1
