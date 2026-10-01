@@ -93,13 +93,23 @@ api-*)
 	# Two endpoint families:
 	#   repos/<slug>/pulls/<n>          → merged_at lookup (Gate 3)
 	#   repos/<slug>/issues/<n>/comments → existing comments list (idempotent comment)
-	endpoint="$2"
+	endpoint=""
 	prev="" jq=""
-	for arg in "$@"; do
+	for arg in "${@:2}"; do
 		[[ "$prev" == "--jq" ]] && jq="$arg"
+		[[ -z "$endpoint" && "$arg" != -* && "$prev" != "--jq" ]] && endpoint="$arg"
 		prev="$arg"
 	done
 	case "$endpoint" in
+	*/events*)
+		# GH#33306: reopen-time lookup. The caller's --jq extracts
+		# created_at of `reopened` events; emit the fixture directly.
+		if [[ -n "${GH_EVENTS_FAIL:-}" ]]; then
+			printf 'API error: stub forced events failure\n' >&2
+			exit 1
+		fi
+		[[ -n "${GH_ISSUE_REOPENED_AT:-}" ]] && printf '%s\n' "$GH_ISSUE_REOPENED_AT"
+		;;
 	*/comments)
 		# Empty array → no existing marker → idempotent comment will post.
 		printf '[]\n'
@@ -171,7 +181,7 @@ teardown_stub() {
 	fi
 	TEST_ROOT=""
 	GH_LOG=""
-	unset GH_ISSUE_JSON GH_ISSUE_VIEW_FAIL
+	unset GH_ISSUE_JSON GH_ISSUE_VIEW_FAIL GH_ISSUE_REOPENED_AT GH_EVENTS_FAIL
 	# Clear any per-PR merged_at fixtures from prior tests.
 	# bash 3.2 compatible — use compgen.
 	for var in $(compgen -v | grep -E '^GH_PR_[0-9]+_MERGED_AT$' || true); do
@@ -231,6 +241,73 @@ test_gate3_merged_closing_pr() {
 		print_result "Gate 3: structurally linked merged closing PR → skip" 1 \
 			"rc=$rc; pulse log: $(cat "$LOGFILE")"
 	fi
+	teardown_stub
+	return 0
+}
+
+# GH#33306: merged closing PR after the latest reopen still proves the
+# current lifecycle is resolved.
+test_gate3_merged_after_reopen_skips() {
+	setup_stub
+	GH_ISSUE_JSON=$(_make_issue_json "OPEN" "" "auto-dispatch,file-size-debt" \
+		"No narrative PR references." "29703")
+	export GH_ISSUE_JSON GH_PR_29703_MERGED_AT="2026-09-02T10:00:00Z"
+	export GH_ISSUE_REOPENED_AT="2026-09-01T10:00:00Z"
+
+	local rc=0
+	_consolidation_skip_if_resolved 152 "owner/repo" || rc=$?
+
+	if [[ "$rc" -eq 0 ]] && grep -q 'merged closing PR #29703' "$LOGFILE" 2>/dev/null; then
+		print_result "Gate 3: merged after latest reopen → skip" 0
+	else
+		print_result "Gate 3: merged after latest reopen → skip" 1 \
+			"rc=$rc; pulse log: $(cat "$LOGFILE")"
+	fi
+	teardown_stub
+	return 0
+}
+
+# GH#33306: live #28838 shape — PR merged in an earlier lifecycle, issue
+# reopened later. Gate 3 must proceed instead of skipping consolidation.
+test_gate3_merged_before_reopen_proceeds() {
+	setup_stub
+	GH_ISSUE_JSON=$(_make_issue_json "OPEN" "" "auto-dispatch,file-size-debt" \
+		"No narrative PR references." "28842")
+	export GH_ISSUE_JSON GH_PR_28842_MERGED_AT="2026-07-29T02:50:56Z"
+	export GH_ISSUE_REOPENED_AT=$'2026-08-15T00:00:00Z\n2026-10-01T07:41:47Z'
+
+	local rc=0
+	_consolidation_skip_if_resolved 28838 "owner/repo" || rc=$?
+
+	if [[ "$rc" -eq 1 ]] && ! grep -q 'merged closing PR #28842' "$LOGFILE" 2>/dev/null &&
+		grep -q 'predate latest reopen' "$LOGFILE" 2>/dev/null; then
+		print_result "Gate 3: merged before latest reopen → proceed" 0
+	else
+		print_result "Gate 3: merged before latest reopen → proceed" 1 \
+			"rc=$rc; pulse log: $(cat "$LOGFILE")"
+	fi
+	teardown_stub
+	return 0
+}
+
+# GH#33306: reopen lookup failure fails open (Gate 3 does not skip).
+test_gate3_reopen_lookup_error_fails_open() {
+	setup_stub
+	GH_ISSUE_JSON=$(_make_issue_json "OPEN" "" "auto-dispatch" \
+		"No narrative PR references." "29704")
+	export GH_ISSUE_JSON GH_PR_29704_MERGED_AT="2026-08-07T08:21:59Z"
+	export GH_EVENTS_FAIL=1 AIDEVOPS_DDPR_LOOKUP_RETRY_DELAY=0
+
+	local rc=0
+	_consolidation_skip_if_resolved 153 "owner/repo" || rc=$?
+
+	if [[ "$rc" -eq 1 ]] && grep -q 'reopen lookup failed' "$LOGFILE" 2>/dev/null; then
+		print_result "Gate 3: reopen lookup error → fail open" 0
+	else
+		print_result "Gate 3: reopen lookup error → fail open" 1 \
+			"rc=$rc; pulse log: $(cat "$LOGFILE")"
+	fi
+	unset AIDEVOPS_DDPR_LOOKUP_RETRY_DELAY
 	teardown_stub
 	return 0
 }
@@ -460,6 +537,69 @@ test_count_merged_children_direct() {
 	return 0
 }
 
+# Exercise the real consolidation handoff and scope-gate continuation. The
+# unrelated instrumentation, capacity and ownership readers are isolated;
+# the pre-flight Gate 5 and _dispatch_issue_consolidation remain real.
+test_dispatch_skip_handoff() {
+	setup_stub
+	# shellcheck disable=SC1091
+	source "${REPO_ROOT}/.agents/scripts/pulse-dispatch-core.sh"
+	_issue_needs_consolidation() { return 0; }
+	_consolidation_dispatch_defers_for_manual_hold() {
+		[[ "${TEST_MANUAL_HOLD:-0}" == 1 ]]
+	}
+	_consolidation_dispatch_defers_for_active_ownership() { return 1; }
+	_ensure_consolidation_labels() { return 0; }
+	_consolidation_resolving_pr_exists() { return 1; }
+	_consolidation_child_exists() { [[ "${TEST_CHILD_EXISTS:-0}" == 1 ]]; }
+	_ds_now_ns() { printf '0\n'; }
+	_ds_stage_start() { return 0; }
+	_ds_record() { return 0; }
+	_issue_targets_large_files() { return 1; }
+	_footprint_check_overlap() { return 0; }
+
+	local rc=0
+	GH_ISSUE_JSON=$(_make_issue_json "OPEN" "" "bug,auto-dispatch" \
+		"Framework trust-boundary reference #17671, not a child issue.")
+	export GH_ISSUE_JSON GH_PR_17671_MERGED_AT="2026-07-29T02:50:56Z"
+	_dispatch_dedup_scope_gates 33057 "owner/repo" "$REPO_ROOT" "$GH_ISSUE_JSON" || rc=$?
+	if [[ "$rc" -eq 0 && "${_CONSOLIDATION_DISPATCH_OUTCOME:-}" == preflight_skipped ]] &&
+		grep -q '1/1 child PRs merged' "$LOGFILE" &&
+		grep -q 'continuing dispatch gates' "$LOGFILE"; then
+		print_result "Gate 5 pre-flight skip continues implementation dispatch" 0
+	else
+		print_result "Gate 5 pre-flight skip continues implementation dispatch" 1 "rc=$rc outcome=${_CONSOLIDATION_DISPATCH_OUTCOME:-unset}"
+	fi
+
+	# A real pre-flight miss with an already-existing child still defers.
+	: >"$LOGFILE"
+	GH_ISSUE_JSON=$(_make_issue_json "OPEN" "" "bug,auto-dispatch" "No references.")
+	export GH_ISSUE_JSON TEST_CHILD_EXISTS=1
+	rc=0
+	_dispatch_dedup_scope_gates 33058 "owner/repo" "$REPO_ROOT" "$GH_ISSUE_JSON" || rc=$?
+	if [[ "$rc" -eq 1 && -z "${_CONSOLIDATION_DISPATCH_OUTCOME:-}" ]] &&
+		grep -q 'needs comment consolidation' "$LOGFILE"; then
+		print_result "existing consolidation child still defers" 0
+	else
+		print_result "existing consolidation child still defers" 1 "rc=$rc outcome=${_CONSOLIDATION_DISPATCH_OUTCOME:-unset}"
+	fi
+
+	# An ownership hold must not be mistaken for a pre-flight skip.
+	: >"$LOGFILE"
+	export TEST_MANUAL_HOLD=1
+	rc=0
+	_dispatch_dedup_scope_gates 33059 "owner/repo" "$REPO_ROOT" "$GH_ISSUE_JSON" || rc=$?
+	if [[ "$rc" -eq 1 && -z "${_CONSOLIDATION_DISPATCH_OUTCOME:-}" ]] &&
+		grep -q 'needs comment consolidation' "$LOGFILE"; then
+		print_result "manual hold still defers" 0
+	else
+		print_result "manual hold still defers" 1 "rc=$rc outcome=${_CONSOLIDATION_DISPATCH_OUTCOME:-unset}"
+	fi
+	unset TEST_MANUAL_HOLD TEST_CHILD_EXISTS
+	teardown_stub
+	return 0
+}
+
 # -----------------------------------------------------------------------------
 # Run all tests
 # -----------------------------------------------------------------------------
@@ -468,6 +608,9 @@ main() {
 	test_gate1_committed_to_main_label
 	test_gate2_terminal_completion_label
 	test_gate3_merged_closing_pr
+	test_gate3_merged_after_reopen_skips
+	test_gate3_merged_before_reopen_proceeds
+	test_gate3_reopen_lookup_error_fails_open
 	test_gate2_closed_not_planned
 	test_gate2_closed_completed_proceeds
 	test_gate3_high_merge_rate_skips
@@ -476,6 +619,7 @@ main() {
 	test_api_error_fails_open
 	test_self_reference_excluded
 	test_count_merged_children_direct
+	test_dispatch_skip_handoff
 
 	printf '\n----\nTests run: %d, failed: %d\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

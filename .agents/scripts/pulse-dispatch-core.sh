@@ -486,10 +486,17 @@ _dispatch_dedup_scope_gates() {
 	_dss_t0=$(_ds_now_ns)
 	_ds_stage_start "$issue_number" "$repo_slug" "consolidation" "$_dss_t0" _ds_stage_attempt_id
 	if _issue_needs_consolidation "$issue_number" "$repo_slug" "$issue_meta_json"; then
+		_CONSOLIDATION_DISPATCH_OUTCOME=""
 		_dispatch_issue_consolidation "$issue_number" "$repo_slug" "$repo_path"
-		echo "[dispatch_with_dedup] Dispatch deferred for #${issue_number} in ${repo_slug}: issue needs comment consolidation" >>"$LOGFILE"
-		_ds_record "$issue_number" "$repo_slug" "dedup.consolidation" "$_dss_t0"
-		return 1
+		# GH#33306: a pre-flight skip (resolved parent or in-flight resolving
+		# PR) creates no child, so deferring here would hold the issue forever.
+		if [[ "${_CONSOLIDATION_DISPATCH_OUTCOME:-}" == "preflight_skipped" ]]; then
+			echo "[dispatch_with_dedup] Consolidation pre-flight skipped for #${issue_number} in ${repo_slug}; continuing dispatch gates (GH#33306)" >>"$LOGFILE"
+		else
+			echo "[dispatch_with_dedup] Dispatch deferred for #${issue_number} in ${repo_slug}: issue needs comment consolidation" >>"$LOGFILE"
+			_ds_record "$issue_number" "$repo_slug" "dedup.consolidation" "$_dss_t0"
+			return 1
+		fi
 	fi
 	_ds_record "$issue_number" "$repo_slug" "dedup.consolidation" "$_dss_t0"
 
