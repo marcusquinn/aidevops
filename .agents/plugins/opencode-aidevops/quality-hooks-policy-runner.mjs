@@ -4,6 +4,7 @@
 import { execFileSync } from "child_process";
 
 const DEFAULT_POLICY_HELPER_TIMEOUT_MS = 10000;
+const GIT_NETWORK_POLICY_HELPER_TIMEOUT_MS = 30000;
 const POLICY_HELPER_RETRY_TIMEOUT_MULTIPLIER = 3;
 
 export function parsePolicyPayload(raw) {
@@ -14,9 +15,22 @@ export function parsePolicyPayload(raw) {
   return result;
 }
 
-function policyHelperTimeoutMs() {
+export function gitNetworkPolicyOperation(helperArgs) {
+  const commandIndex = helperArgs.indexOf("--command");
+  if (commandIndex < 0) return null;
+  // This only selects a time budget, never grants command authority. The
+  // shared parser still evaluates the entire command, including compounds.
+  return helperArgs[commandIndex + 1]?.match(
+    /\bgit\s+(?:(?:-C|-c|--git-dir|--work-tree)\s+\S+\s+)*(push|fetch)\b/,
+  )?.[1] ?? null;
+}
+
+function policyHelperTimeoutMs(helperArgs) {
   const raw = String(process.env.AIDEVOPS_POLICY_HELPER_TIMEOUT_MS ?? "").trim();
-  return /^[1-9]\d{0,6}$/.test(raw) ? Number(raw) : DEFAULT_POLICY_HELPER_TIMEOUT_MS;
+  if (/^[1-9]\d{0,6}$/.test(raw)) return Number(raw);
+  return gitNetworkPolicyOperation(helperArgs)
+    ? GIT_NETWORK_POLICY_HELPER_TIMEOUT_MS
+    : DEFAULT_POLICY_HELPER_TIMEOUT_MS;
 }
 
 export function isPolicyHelperTimeout(error) {
@@ -28,7 +42,7 @@ export function isPolicyHelperTimeout(error) {
 // routinely pushes a normal evaluation past the base budget (GH#32955).
 // A second timeout propagates; callers map it with transientPolicyTimeoutError.
 export function runPolicyHelper(helperArgs, execOptions) {
-  const timeout = policyHelperTimeoutMs();
+  const timeout = policyHelperTimeoutMs(helperArgs);
   const options = { ...execOptions, encoding: "utf8" };
   try {
     return execFileSync("python3", helperArgs, { ...options, timeout });
@@ -41,9 +55,12 @@ export function runPolicyHelper(helperArgs, execOptions) {
   });
 }
 
-export function transientPolicyTimeoutError(policyName) {
+export function transientPolicyTimeoutError(policyName, operation = null) {
+  const recovery = operation === "push"
+    ? "\nTERMINAL_BLOCKER_REASON=push_policy_timeout"
+    : "";
   return new Error(
-    `BLOCKED: ${policyName} policy timed out under host load (transient infrastructure timeout, not a policy decision); retry the same command`,
+    `BLOCKED: ${policyName} policy timed out under host load (transient infrastructure timeout, not a policy decision); retry the same command${recovery}`,
   );
 }
 
