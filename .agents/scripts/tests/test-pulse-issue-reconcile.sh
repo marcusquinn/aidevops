@@ -1221,9 +1221,37 @@ test_gh27444_recurrent_file_size_debt_current_outcome() {
 }
 
 # ---------------------------------------------------------------------------
-# Test 15e (GH#32640): stages 1-2 apply the same recurrent-debt close gate.
+# Test 15e (GH#32640/GH#33374): debt closure and open/done healing stay separate.
 # Observed on #28377: stage 1 closed regrown debt citing an old merged PR.
 # ---------------------------------------------------------------------------
+# Runs one stage action with mutations recorded to the caller's fixture log.
+_gh32640_run() {
+	local stage="$1" issue_number="$2" issue_body="$3"
+	bash -c '
+		LOGFILE="${6}/pulse.log" REPOS_JSON="$2" GH_TEST_OUT="$3"
+		export LOGFILE REPOS_JSON GH_TEST_OUT
+		# shellcheck disable=SC1090
+		source "$1"
+		gh() {
+			local command="$1"
+			if [[ "$command" == api ]]; then
+				if [[ "$*" == *comments* ]]; then printf "[[]]\n";
+				else printf "%s\n" "{\"state\":\"open\",\"labels\":[{\"name\":\"status:done\"}]}"; fi
+			else printf "gh:%s\n" "$*" >>"$GH_TEST_OUT"; fi
+			return 0
+		}
+		set_issue_status() { printf "status:%s\n" "$*" >>"$GH_TEST_OUT"; return 0; }
+		_pir_pr_merged_at() { printf "2026-07-21T02:31:43Z"; return 0; }
+		set_solved_label_from_merged_pr() { return 0; }
+		fast_fail_reset() { return 0; }
+		unlock_issue_after_worker() { return 0; }
+		rc=0
+		"$4" "test/repo" "$5" "title" "$7" /nonexistent "$8" || rc=$?
+		printf "rc=%s\n" "$rc"
+	' -- "$actions_sh" "$repos_json" "$out_file" "$stage" "$issue_number" "$tmp_dir" "$dedup_helper" "$issue_body" 2>&1
+	return 0
+}
+
 test_gh32640_ciw_rsd_recurrent_file_size_debt_gate() {
 	local actions_sh="${SCRIPT_DIR}/../pulse-issue-reconcile-actions.sh"
 	local tmp_dir repo_dir repos_json out_file dedup_helper result
@@ -1237,34 +1265,6 @@ test_gh32640_ciw_rsd_recurrent_file_size_debt_gate() {
 	printf '{"initialized_repos":[{"slug":"test/repo","path":"%s"}]}' "$repo_dir" >"$repos_json"
 	printf '#!/usr/bin/env bash\nprintf "%%s\\n" "merged PR #28395 references issue"\nexit 0\n' >"$dedup_helper"
 	chmod +x "$dedup_helper"
-
-	# Runs one stage action with gh/status mutations recorded to $out_file.
-	# Args: stage function, issue number, issue body
-	_gh32640_run() {
-		bash -c '
-			LOGFILE="${6}/pulse.log" REPOS_JSON="$2" GH_TEST_OUT="$3"
-			export LOGFILE REPOS_JSON GH_TEST_OUT
-			# shellcheck disable=SC1090
-			source "$1"
-			gh() {
-				local command="$1"
-				if [[ "$command" == api ]]; then
-					if [[ "$*" == *comments* ]]; then printf "[[]]\n";
-					else printf "%s\n" "{\"state\":\"open\",\"labels\":[{\"name\":\"status:done\"}]}"; fi
-				else printf "gh:%s\n" "$*" >>"$GH_TEST_OUT"; fi
-				return 0
-			}
-			set_issue_status() { printf "status:%s\n" "$*" >>"$GH_TEST_OUT"; return 0; }
-			_pir_pr_merged_at() { printf "2026-07-21T02:31:43Z"; return 0; }
-			set_solved_label_from_merged_pr() { return 0; }
-			fast_fail_reset() { return 0; }
-			unlock_issue_after_worker() { return 0; }
-			rc=0
-			"$4" "test/repo" "$5" "title" "$7" /nonexistent "$8" || rc=$?
-			printf "rc=%s\n" "$rc"
-		' -- "$actions_sh" "$repos_json" "$out_file" "$1" "$2" "$tmp_dir" "$dedup_helper" "$3" 2>&1
-		return 0
-	}
 
 	local all_ok=1
 	# Regrown debt: file at threshold.

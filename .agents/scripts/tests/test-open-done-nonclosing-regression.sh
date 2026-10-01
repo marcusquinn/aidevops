@@ -163,4 +163,24 @@ ISSUE_JSON='{"state":"closed","labels":[]}'
 [[ "$(_worker_produced_output issue-42 "$SCRIPT_DIR")" == pr_exists ]]
 API_FAIL=1
 [[ "$(_worker_produced_output issue-42 "$SCRIPT_DIR")" == merged_missing_linkage ]]
+
+# Exercise both terminal routes, not just the classifier. Neither may turn a
+# merged checkpoint into the open-draft in-review projection or completion.
+_hrw_release_dispatch_claim() {
+	local session="$1" reason="$2"
+	[[ "$session" == issue-42 && "$reason" == worker_draft_checkpoint ]] || return 1
+	clear_active_status_on_release 42 owner/repo runner
+	return $?
+}
+_hrw_pr_less_terminal_complete() { return 1; }
+_worker_post_pr_handoff_confirmed() { return 1; }
+API_FAIL=0
+ISSUE_JSON='{"state":"open","labels":[{"name":"status:blocked"}]}'
+for _run_result_label in task_complete post_pr_handoff; do
+	_HRW_TERMINAL_OUTCOME=''
+	_hrw_finish_success_run issue-42 "$SCRIPT_DIR"
+	assert_status blocked
+	[[ "$_HRW_TERMINAL_OUTCOME" == deferred ]]
+	[[ "$_HRW_FINAL_RUNTIME_CLASSIFICATION" == worker_draft_checkpoint ]]
+done
 printf 'PASS: non-closing linkage, release, open-done healing and worker checkpoint regressions\n'
