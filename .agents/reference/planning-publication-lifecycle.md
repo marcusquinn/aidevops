@@ -89,6 +89,15 @@ PUBLICATION_FAILED
   reconcile: stale and failed counts make the run fail; deferred alone does not
   recovery: retry the same publication/mapping; never allocate a replacement ID
 
+UNMAPPED (GH#33321)
+  issue: publication:pending retained; title has no tNNN prefix and no TODO
+    task line carries ref:GH#N (a ref match maps the issue without a prefix)
+  reconcile: reported as unmapped=N; never consumes the
+    AIDEVOPS_PUBLICATION_RECONCILE_LIMIT attempt budget (the scan window is
+    AIDEVOPS_PUBLICATION_SCAN_LIMIT, default 200) and never fails the run
+  diagnostic: past the stale window, one idempotent marker comment names the
+    cause and the fix (add a ref:GH#N task line, or deliberately drop the label)
+
 CLOSED
   issue: closed; publication:pending removed only if ref:GH#N exists on the
     verified default branch (brief readiness is not required for closed work)

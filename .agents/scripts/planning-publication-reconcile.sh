@@ -20,7 +20,12 @@ PUBLICATION_AVAILABLE_LABEL="status:available"
 PUBLICATION_BLOCKED_LABEL="status:blocked"
 PUBLICATION_AUTO_LABEL="auto-dispatch"
 PUBLICATION_LIMIT="${AIDEVOPS_PUBLICATION_RECONCILE_LIMIT:-100}"
+# GH#33321: the reconcile limit budgets mapped reconciliation attempts. The scan
+# window is wider so issues that can never map cannot fill the budget and
+# starve valid tasks behind them.
+PUBLICATION_SCAN_LIMIT="${AIDEVOPS_PUBLICATION_SCAN_LIMIT:-200}"
 PUBLICATION_STALE_HOURS="${AIDEVOPS_PUBLICATION_STALE_HOURS:-24}"
+PUBLICATION_UNMAPPED_MARKER="<!-- aidevops:publication-unmapped -->"
 
 _publication_usage() {
 	printf 'Usage: planning-publication-reconcile.sh {reconcile --repo owner/repo --sha SHA [--task tNNN] | sweep-closed --repo owner/repo}\n'
@@ -77,6 +82,45 @@ _publication_task_line() {
 	matches=$(grep -E "^[[:space:]]*-[[:space:]]+\[[ x]\][[:space:]]+${task_re}[[:space:]]" TODO.md || true)
 	[[ "$(printf '%s\n' "$matches" | grep -c . || true)" -eq 1 ]] || return 1
 	printf '%s\n' "$matches"
+}
+
+# GH#33321: the canonical mapping is the TODO row's ref:GH#N, not the title.
+# Resolve the task id from exactly one task line carrying this issue ref so
+# issues without a tNNN title prefix (or with an edited title) still publish.
+_publication_task_id_for_ref() {
+	local issue_num="$1"
+	local matches="" task_id=""
+	[[ "$issue_num" =~ ^[1-9][0-9]*$ ]] || return 1
+	matches=$(grep -E "^[[:space:]]*-[[:space:]]+\[[ x]\][[:space:]]+t[0-9]+(\.[0-9]+)*[[:space:]].*(^|[[:space:]])ref:GH#${issue_num}($|[[:space:]])" TODO.md || true)
+	[[ "$(printf '%s\n' "$matches" | grep -c . || true)" -eq 1 ]] || return 1
+	task_id=$(printf '%s\n' "$matches" | sed -En 's/^[[:space:]]*-[[:space:]]+\[[ x]\][[:space:]]+(t[0-9]+(\.[0-9]+)*)[[:space:]].*/\1/p')
+	[[ -n "$task_id" ]] || return 1
+	printf '%s\n' "$task_id"
+	return 0
+}
+
+# One idempotent, visible diagnostic for a stale pending issue that has no
+# task mapping. The label is retained: publication:pending is never removed
+# without published-state verification.
+_publication_note_unmapped() {
+	local repo="$1" issue_num="$2"
+	local existing="" body_file=""
+	existing=$(gh api "repos/${repo}/issues/${issue_num}/comments" --paginate \
+		--jq ".[] | select(.body | contains(\"${PUBLICATION_UNMAPPED_MARKER}\")) | .id" 2>/dev/null) || return 1
+	[[ -z "$existing" ]] || return 0
+	body_file=$(mktemp) || return 1
+	cat >"$body_file" <<EOF
+${PUBLICATION_UNMAPPED_MARKER}
+**Planning publication cannot map this issue.** It carries \`${PUBLICATION_PENDING_LABEL}\`, but its title has no \`tNNN:\` prefix and no TODO.md task line carries \`ref:GH#${issue_num}\`, so reconciliation can never verify publication and the issue stays dispatch-blocked.
+
+Fix: add a TODO.md task line with \`ref:GH#${issue_num}\` (and its \`todo/tasks/tNNN-brief.md\`) to the default branch; the next reconcile pass then publishes it. If the issue is not meant to be planned work, remove \`${PUBLICATION_PENDING_LABEL}\` deliberately.
+EOF
+	gh_issue_comment "$issue_num" --repo "$repo" --body-file "$body_file" >/dev/null 2>&1 || {
+		rm -f "$body_file"
+		return 1
+	}
+	rm -f "$body_file"
+	return 0
 }
 
 _publication_desired_labels() {
@@ -198,6 +242,9 @@ _publication_dispatch_ready() {
 
 _publication_reconcile_one() {
 	local repo="$1" task_id="$2" issue_num="$3"
+	# 1 = issue title must start with "<task_id>:" (title-derived mapping);
+	# 0 = mapping came from the TODO row's exact ref:GH#N (GH#33321).
+	local require_title_prefix="${4:-1}"
 	local task_line="" desired_labels="" status_label="" projected_labels="" issue_json="" has_dependency=0 mapping_rc=0
 	task_line=$(_publication_validate_mapping "$task_id" "$issue_num") || {
 		mapping_rc=$?
@@ -218,8 +265,8 @@ _publication_reconcile_one() {
 	}
 	issue_json=$(gh issue view "$issue_num" --repo "$repo" --json number,title,state,labels) || return 1
 	_publication_task_has_dependency "$task_line" "$issue_json" && has_dependency=1
-	jq -e --arg task_prefix "${task_id}:" \
-		'.state == "OPEN" and (.title | startswith($task_prefix))' \
+	jq -e --arg task_prefix "${task_id}:" --arg bound "$require_title_prefix" \
+		'.state == "OPEN" and ($bound == "0" or (.title | startswith($task_prefix)))' \
 		<<<"$issue_json" >/dev/null || return 1
 	_publication_issue_has_labels "$issue_json" "$PUBLICATION_PENDING_LABEL" || return 1
 	status_label=$(_publication_status_label "$desired_labels" "$has_dependency" "$issue_json")
@@ -239,8 +286,8 @@ _publication_reconcile_one() {
 			--remove-label "$PUBLICATION_AVAILABLE_LABEL" >/dev/null || return 1
 	fi
 	issue_json=$(gh issue view "$issue_num" --repo "$repo" --json number,title,state,labels) || return 1
-	jq -e --arg task_prefix "${task_id}:" \
-		'.state == "OPEN" and (.title | startswith($task_prefix))' \
+	jq -e --arg task_prefix "${task_id}:" --arg bound "$require_title_prefix" \
+		'.state == "OPEN" and ($bound == "0" or (.title | startswith($task_prefix)))' \
 		<<<"$issue_json" >/dev/null || return 1
 	# Active lifecycle state wins if assignment races with label projection.
 	if _publication_issue_has_active_status "$issue_json"; then
@@ -311,6 +358,9 @@ cmd_reconcile() {
 	[[ "$repo" =~ ^[^/[:space:]]+/[^/[:space:]]+$ ]] || return 2
 	[[ -f TODO.md && ! -L TODO.md ]] || return 2
 	[[ "$PUBLICATION_LIMIT" =~ ^[1-9][0-9]*$ && "$PUBLICATION_STALE_HOURS" =~ ^[1-9][0-9]*$ ]] || return 2
+	[[ "$PUBLICATION_SCAN_LIMIT" =~ ^[1-9][0-9]*$ ]] || return 2
+	local scan_limit="$PUBLICATION_SCAN_LIMIT"
+	[[ "$scan_limit" -ge "$PUBLICATION_LIMIT" ]] || scan_limit="$PUBLICATION_LIMIT"
 	# Each GitHub Actions run step has a fresh process. Establish the narrowly
 	# scoped runner context before wrappers resolve privacy/write-policy inventory.
 	issue_sync_prepare_ci_context || return 1
@@ -320,17 +370,43 @@ cmd_reconcile() {
 		return 1
 	}
 
-	local issues_json="" issue_num="" title="" task_id="" created_at="" age_hours="" rc=0
-	local reconciled=0 deferred=0 stale=0 failed=0
+	local issues_json="" issue_num="" title="" task_id="" created_at="" age_hours="" rc=0 title_bound=1
+	local reconciled=0 deferred=0 stale=0 failed=0 unmapped=0 attempts=0 diagnostics=0
 	issues_json=$(gh issue list --repo "$repo" --state open --label "$PUBLICATION_PENDING_LABEL" \
-		--limit "$PUBLICATION_LIMIT" --json number,title,createdAt) || return 1
+		--limit "$scan_limit" --json number,title,createdAt) || return 1
 	while IFS=$'\t' read -r issue_num title created_at; do
 		[[ -n "$issue_num" ]] || continue
+		title_bound=1
 		task_id=$(printf '%s\n' "$title" | grep -oE '^t[0-9]+(\.[0-9]+)*' || true)
-		[[ -n "$task_id" ]] || { failed=$((failed + 1)); continue; }
+		if [[ -z "$task_id" ]]; then
+			task_id=$(_publication_task_id_for_ref "$issue_num") || task_id=""
+			title_bound=0
+		fi
+		if [[ -z "$task_id" ]]; then
+			# GH#33321: unmapped is its own class. It never consumes the
+			# reconcile budget and never fails the run; once stale it gets
+			# one idempotent diagnostic naming the cause and the fix.
+			[[ -z "$task_filter" ]] || continue
+			unmapped=$((unmapped + 1))
+			age_hours=$(_publication_issue_age_hours "$created_at") || age_hours=""
+			if [[ -z "$age_hours" || "$age_hours" -ge "$PUBLICATION_STALE_HOURS" ]] &&
+				[[ "$diagnostics" -lt "$PUBLICATION_LIMIT" ]]; then
+				diagnostics=$((diagnostics + 1))
+				if [[ "${GITHUB_ACTIONS:-}" == true ]]; then
+					printf '::warning::#%s: %s issue has no tNNN title or TODO ref:GH#%s mapping\n' "$issue_num" "$PUBLICATION_PENDING_LABEL" "$issue_num"
+				else
+					print_warning "#${issue_num}: ${PUBLICATION_PENDING_LABEL} issue has no tNNN title or TODO ref:GH#${issue_num} mapping; retaining label"
+				fi
+				_publication_note_unmapped "$repo" "$issue_num" ||
+					print_warning "#${issue_num}: could not post unmapped publication diagnostic"
+			fi
+			continue
+		fi
 		[[ -z "$task_filter" || "$task_id" == "$task_filter" ]] || continue
+		[[ "$attempts" -lt "$PUBLICATION_LIMIT" ]] || break
+		attempts=$((attempts + 1))
 		rc=0
-		_publication_reconcile_one "$repo" "$task_id" "$issue_num" || rc=$?
+		_publication_reconcile_one "$repo" "$task_id" "$issue_num" "$title_bound" || rc=$?
 		case "$rc" in
 		0) reconciled=$((reconciled + 1)) ;;
 		3)
@@ -349,7 +425,7 @@ cmd_reconcile() {
 		*) failed=$((failed + 1)) ;;
 		esac
 	done < <(jq -r '.[] | [.number, .title, (.createdAt // "")] | @tsv' <<<"$issues_json")
-	printf 'PUBLICATION_RECONCILE_SUMMARY reconciled=%s deferred=%s stale=%s failed=%s\n' "$reconciled" "$deferred" "$stale" "$failed"
+	printf 'PUBLICATION_RECONCILE_SUMMARY reconciled=%s deferred=%s stale=%s failed=%s unmapped=%s\n' "$reconciled" "$deferred" "$stale" "$failed" "$unmapped"
 	[[ $((stale + failed)) -eq 0 ]]
 }
 
