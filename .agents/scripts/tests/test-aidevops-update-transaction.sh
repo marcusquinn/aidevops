@@ -624,5 +624,58 @@ else
 	fail "missing canonical helper fails with stable-path guidance" "$missing_helper_output"
 fi
 
+run_activation_stamp_test() (
+	# Exercise real activation in an isolated home, including a failure after
+	# the link switch and a later source checkout that must not override it.
+	export HOME="$TEST_ROOT/activation-home"
+	mkdir -p "$HOME/.aidevops/runtime-bundles/old/agents/scripts" "$HOME/.aidevops/runtime-bundles/new/agents/scripts"
+	local old_sha="1111111111111111111111111111111111111111"
+	local new_sha="2222222222222222222222222222222222222222"
+	local bundles="$HOME/.aidevops/runtime-bundles"
+	printf 'git_sha=%s\nstatus=validated\n' "$old_sha" >"$bundles/old/agents/.bundle-manifest"
+	printf 'git_sha=%s\nstatus=validated\n' "$new_sha" >"$bundles/new/agents/.bundle-manifest"
+	cp "$bundles/new/agents/.bundle-manifest" "$bundles/new/manifest"
+	ln -s "$bundles/old/agents" "$HOME/.aidevops/agents"
+	printf '%s\n' "$old_sha" >"$HOME/.aidevops/.deployed-sha"
+	# shellcheck source=../setup/modules/agent-deploy.sh
+	source "$REPO_ROOT/.agents/scripts/setup/modules/agent-deploy.sh"
+	# shellcheck source=../setup/modules/agent-runtime.sh
+	source "$REPO_ROOT/.agents/scripts/setup/modules/agent-runtime.sh"
+	_runtime_bundle_prune() { return 0; }
+	if AIDEVOPS_BUNDLE_FAIL_AT=after-activation _runtime_bundle_activate "$HOME/.aidevops/agents" "$bundles/new"; then return 1; fi
+	[[ "$(readlink "$HOME/.aidevops/agents")" == "$bundles/old/agents" ]] || return 1
+	[[ "$(<"$HOME/.aidevops/.deployed-sha")" == "$old_sha" ]] || return 1
+	_runtime_bundle_activate "$HOME/.aidevops/agents" "$bundles/new" || return 1
+	[[ "$(<"$HOME/.aidevops/.deployed-sha")" == "$new_sha" ]] || return 1
+	_write_deployed_agents_sha "$REPO_ROOT" || return 1
+	[[ "$(<"$HOME/.aidevops/.deployed-sha")" == "$new_sha" ]] || return 1
+	# Actual malformed manifest failure restores the link and retains the stamp.
+	printf 'git_sha=invalid\n' >"$bundles/old/agents/.bundle-manifest"
+	if _runtime_bundle_activate "$HOME/.aidevops/agents" "$bundles/old"; then return 1; fi
+	[[ "$(readlink "$HOME/.aidevops/agents")" == "$bundles/new/agents" ]] || return 1
+	[[ "$(<"$HOME/.aidevops/.deployed-sha")" == "$new_sha" ]] || return 1
+	printf 'git_sha=%s\nstatus=validated\n' "$old_sha" >"$bundles/old/agents/.bundle-manifest"
+	_runtime_bundle_activate "$HOME/.aidevops/agents" "$bundles/old" || return 1
+	# A postcondition failure restores both the previous tree and its stamp.
+	_verify_deployed_agents_tree() { return 1; }
+	if _verify_agents_deploy_or_restore "$REPO_ROOT/.agents" "$HOME/.aidevops/agents"; then return 1; fi
+	[[ "$(readlink "$HOME/.aidevops/agents")" == "$bundles/new/agents" ]] || return 1
+	[[ "$(<"$HOME/.aidevops/.deployed-sha")" == "$new_sha" ]] || return 1
+	# A concurrent activation must not be undone by this invocation's verifier.
+	_runtime_bundle_activate "$HOME/.aidevops/agents" "$bundles/old" || return 1
+	_runtime_bundle_switch_link "$HOME/.aidevops/agents" "$bundles/new/agents" || return 1
+	_runtime_bundle_write_active_sha "$HOME/.aidevops/agents" || return 1
+	if _verify_agents_deploy_or_restore "$REPO_ROOT/.agents" "$HOME/.aidevops/agents"; then return 1; fi
+	[[ "$(readlink "$HOME/.aidevops/agents")" == "$bundles/new/agents" ]] || return 1
+	[[ "$(<"$HOME/.aidevops/.deployed-sha")" == "$new_sha" ]] || return 1
+	return 0
+)
+
+if run_activation_stamp_test; then
+	pass "locked activation stamps its manifest and preserves rollback convergence"
+else
+	fail "locked activation stamps its manifest and preserves rollback convergence" "activation or stamp mismatch"
+fi
+
 printf '%s passed, %s failed\n' "$PASS_COUNT" "$FAIL_COUNT"
 [[ "$FAIL_COUNT" -eq 0 ]]

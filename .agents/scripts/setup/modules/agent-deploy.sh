@@ -1135,10 +1135,15 @@ _runtime_bundle_activate() {
 	local bundle_dir="$2"
 	local activate_rc=0
 	_AIDEVOPS_ACTIVE_BUNDLE_ROOT=""
+	_AIDEVOPS_PREVIOUS_BUNDLE_ROOT=""
+	_AIDEVOPS_PREVIOUS_DEPLOYED_SHA=""
 
 	if ! aidevops_runtime_transition_lock_acquire; then
 		print_error "Unable to acquire the runtime activation lock"
 		return 1
+	fi
+	if [[ -f "${target_dir%/*}/.deployed-sha" ]]; then
+		IFS= read -r _AIDEVOPS_PREVIOUS_DEPLOYED_SHA <"${target_dir%/*}/.deployed-sha" || true
 	fi
 	_runtime_bundle_activate_locked "$target_dir" "$bundle_dir" || activate_rc=$?
 	aidevops_runtime_transition_lock_release
@@ -1389,14 +1394,29 @@ _run_atomic_agents_deploy() {
 _verify_agents_deploy_or_restore() {
 	local source_dir="$1"
 	local target_dir="$2"
+	local verify_rc=0
+	aidevops_runtime_transition_lock_acquire || return 1
+	# Never verify or roll back another invocation's successfully activated tree.
+	if [[ -n "${_AIDEVOPS_ACTIVE_BUNDLE_ROOT:-}" &&
+		"$(_runtime_bundle_resolve_root "$target_dir" 2>/dev/null || true)" != "$_AIDEVOPS_ACTIVE_BUNDLE_ROOT" ]]; then
+		verify_rc=1
+	else
+		_verify_agents_deploy_or_restore_locked "$source_dir" "$target_dir" || verify_rc=$?
+	fi
+	aidevops_runtime_transition_lock_release
+	return "$verify_rc"
+}
+
+_verify_agents_deploy_or_restore_locked() {
+	local source_dir="$1"
+	local target_dir="$2"
 	local previous_root="${_AIDEVOPS_PREVIOUS_BUNDLE_ROOT:-}"
 
 	# Postcondition: verify the swap actually produced a functional agents dir.
 	# _atomic_stage_and_deploy_agents returns 0 on success, but this belt-and-
 	# suspenders check catches future regressions where the function returns early
-	# without correctly populating $target_dir (GH#22014/GH#21973). Do not write
-	# .deployed-sha unless this passes; otherwise auto-update would suppress the
-	# next retry even though agents/ is empty or partial.
+	# without correctly populating $target_dir (GH#22014/GH#21973). Restore
+	# the stamp with the tree so auto-update does not suppress the next retry.
 	if ! _verify_deployed_agents_tree "$target_dir"; then
 		print_error "The agents directory was not correctly deployed — setup cannot continue"
 		if [[ -L "$target_dir" && -d "$previous_root/scripts" ]]; then
@@ -1404,6 +1424,7 @@ _verify_agents_deploy_or_restore() {
 		else
 			_restore_latest_agents_backup "$target_dir" || true
 		fi
+		_runtime_bundle_restore_stamp "$target_dir" || return 1
 		return 1
 	fi
 	if ! _verify_deployed_core_plugin_freshness "$source_dir" "$target_dir"; then
@@ -1413,18 +1434,38 @@ _verify_agents_deploy_or_restore() {
 		else
 			_restore_latest_agents_backup "$target_dir" || true
 		fi
+		_runtime_bundle_restore_stamp "$target_dir" || return 1
 		return 1
 	fi
 
 	return 0
 }
 
+_runtime_bundle_restore_stamp() {
+	local target_dir="$1"
+	if [[ -r "$target_dir/.bundle-manifest" ]]; then
+		_runtime_bundle_write_active_sha "$target_dir" || return 1
+	elif [[ -n "${_AIDEVOPS_PREVIOUS_DEPLOYED_SHA:-}" ]]; then
+		_runtime_bundle_write_sha "$target_dir" "$_AIDEVOPS_PREVIOUS_DEPLOYED_SHA" || return 1
+	else
+		rm -f "${target_dir%/*}/.deployed-sha" || return 1
+	fi
+	return 0
+}
+
 _runtime_bundle_write_active_sha() {
 	local target_dir="$1"
 	local deployed_sha=""
+	deployed_sha=$(_runtime_bundle_manifest_value "$target_dir/.bundle-manifest" git_sha) || return 1
+	_runtime_bundle_write_sha "$target_dir" "$deployed_sha"
+	return $?
+}
+
+_runtime_bundle_write_sha() {
+	local target_dir="$1"
+	local deployed_sha="$2"
 	local stamp_file="${target_dir%/*}/.deployed-sha"
 	local stamp_tmp="${stamp_file}.tmp.$$"
-	deployed_sha=$(_runtime_bundle_manifest_value "$target_dir/.bundle-manifest" git_sha) || return 1
 	[[ "$deployed_sha" =~ ^[0-9a-f]{40}$ ]] || return 1
 	if ! printf '%s\n' "$deployed_sha" >"$stamp_tmp" || ! mv -f "$stamp_tmp" "$stamp_file"; then
 		rm -f "$stamp_tmp"
