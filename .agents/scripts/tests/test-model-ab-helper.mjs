@@ -149,7 +149,7 @@ test("provider-family trial routes every tier of each enrolled issue to one prov
     assert.equal(config.enrollment.mode, "new-auto-dispatch-issues");
     assert.equal(Date.parse(config.ends_at) - Date.parse(config.starts_at), 168 * 3600 * 1000);
     assert.deepEqual(config.arms.map((arm) => arm.name), ["openai", "anthropic"]);
-    assert.deepEqual(config.arms[1].tiers.thinking, { model: "anthropic/claude-opus-5-5", variant: "medium" });
+    assert.deepEqual(config.arms[1].tiers.thinking, { model: "anthropic/claude-opus-5-5", variant: "high" });
     assert.deepEqual(config.arms[1].tiers.simple, { model: "anthropic/claude-haiku-4-5", variant: "high" });
     const createdAt = new Date(windowStart + 1000).toISOString();
     const labels = ["auto-dispatch", "status:available", "tier:thinking"];

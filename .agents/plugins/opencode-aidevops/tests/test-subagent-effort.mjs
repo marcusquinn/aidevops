@@ -89,7 +89,8 @@ test("focused and light domain captures deliver canonical knowledge with parent 
     assert.equal(output.parts[0].text, capture);
     const params = { options: { reasoning_effort: "max" } };
     await fixture.hooks.chatParams({ message: output.message, model: output.message.model }, params);
-    assert.deepEqual(params.options, { reasoning_effort: "low", reasoningEffort: "low" });
+    // A low parent ceiling is raised to the medium routing floor (GH#33342).
+    assert.deepEqual(params.options, { reasoning_effort: "medium", reasoningEffort: "medium" });
     assert.deepEqual(fixture.config.agent[name].tools, { "*": false });
     assert.deepEqual(fixture.config.agent[name].permission, { "*": "deny" });
   }
@@ -100,8 +101,8 @@ test("focused and light domain captures deliver canonical knowledge with parent 
   assert.equal(Object.keys(fixture.config.agent).length, 3);
 });
 
-test("domain-light uses medium under a high parent and stays clamped under low", async (t) => {
-  for (const [parent, expected] of [["high", "medium"], ["low", "low"]]) {
+test("domain-light uses medium under a high parent and never drops below the medium floor", async (t) => {
+  for (const [parent, expected] of [["high", "medium"], ["low", "medium"], ["minimal", "medium"]]) {
     const fixture = domainFixture(t, parent);
     const output = fixture.output("domain-light");
     await fixture.hooks.chatMessage({}, output);
@@ -606,7 +607,7 @@ test("Playwright delegates browser work to Luna xhigh from a Sol parent", async 
   }, { options: {} }), /Browser child model changed/);
 });
 
-test("same-model Luna browser child is clamped to the parent effort", async () => {
+test("same-model Luna browser child is clamped to the parent effort but not below the floor", async () => {
   const client = {
     provider: { list: async () => ({ data: {
       connected: ["openai"],
@@ -628,7 +629,7 @@ test("same-model Luna browser child is clamped to the parent effort", async () =
   await hooks.chatMessage({}, { message, parts: [] });
   const params = { options: {} };
   await hooks.chatParams({ message, provider: { id: "openai" }, model: { id: "gpt-6-luna" } }, params);
-  assert.equal(params.options.reasoningEffort, "low");
+  assert.equal(params.options.reasoningEffort, "medium");
 });
 
 test("Playwright falls back to Sol medium, preserves its route, and respects pins", async () => {
@@ -787,7 +788,7 @@ test("OpenAI child effort is task-appropriate and clamped to parent", async () =
   assert.equal(output.options.reasoningEffort, "high");
 });
 
-test("simple child stays below a thinking parent", async () => {
+test("simple child stays below a thinking parent but at least at the floor", async () => {
   const client = {
     session: {
       get: async ({ path }) => ({
@@ -807,7 +808,8 @@ test("simple child stays below a thinking parent", async () => {
     message: { sessionID: "child", agent: "explore" },
   }, output);
 
-  assert.equal(output.options.reasoningEffort, "low");
+  // A custom low simple-tier entry is raised to the medium floor (GH#33342).
+  assert.equal(output.options.reasoningEffort, "medium");
 });
 
 test("primary and non-OpenAI sessions remain unchanged", async () => {
