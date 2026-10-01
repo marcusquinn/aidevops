@@ -313,9 +313,19 @@ test_child_body_contains_parent_content_and_authors() {
 		failures=$((failures + 1))
 		failmsg="${failmsg} | missing self-contained warning"
 	fi
-	if ! printf '%s' "$body" | grep -qF -- '--label "consolidated,origin:worker,auto-dispatch,<copy relevant labels from parent, excluding needs-consolidation, consolidation-task, and origin:interactive>"'; then
+	if ! printf '%s' "$body" | grep -qF -- '--label "consolidated,origin:worker,auto-dispatch,status:available,<copy relevant labels from parent, excluding all status:* labels, needs-consolidation, consolidation-task, and origin:interactive>"'; then
 		failures=$((failures + 1))
-		failmsg="${failmsg} | consolidated successor instructions omit auto-dispatch handoff"
+		failmsg="${failmsg} | consolidated successor instructions omit available handoff or parent status exclusion"
+	fi
+	if ! printf '%s' "$body" | grep -qF -- 'gh-write-helper.sh issue create --repo "owner/repo"' ||
+		! printf '%s' "$body" | grep -qF -- '--body-file "<file containing the merged body from step 2>"'; then
+		failures=$((failures + 1))
+		failmsg="${failmsg} | successor creation omits signed wrapper or body-file"
+	fi
+	if ! printf '%s' "$body" | grep -qF -- "Use \`EDIT:\` when the path already exists on the default branch" ||
+		! printf '%s' "$body" | grep -qF -- 'A stale checkout or failed API lookup is not proof of absence.'; then
+		failures=$((failures + 1))
+		failmsg="${failmsg} | scope instructions omit default-branch existence verification"
 	fi
 	if printf '%s' "$body" | grep -q 'github-actions'; then
 		failures=$((failures + 1))
