@@ -43,6 +43,8 @@ git log --oneline HEAD..origin/$(git branch --show-current) 2>/dev/null
 
 Inside an existing linked worktree, refresh and rebase before editing. From the canonical checkout, let `worktree-helper.sh add` refresh `origin/<default>` while creating the linked worktree. Preserve unrelated uncommitted work; never stash/reset/clean another session's changes.
 
+**Stale remote branches (GH#33381):** `full-loop-helper.sh commit-and-pr` classifies the remote branch before pushing. It overwrites only its own history, using a lease on the observed SHA. A diverged foreign branch, such as one left by a dead worker, stays untouched, and the work is published as `<branch>-rN`. A foreign branch backing an open PR is refused unless you pass `--replace-pr`. PR creation passes the exact pushed head as `--head`. If the push succeeds but PR creation fails, the helper prints one `PR_CREATE_NEXT=` retry command. Linked worktrees on a bare common Git directory report `CANONICAL_SYNC_NOT_APPLICABLE` instead of a sync failure.
+
 **Canonical synchronization after a merge (explicit authorization only):** direct `git pull`, `fetch`, reset, clean, and merge remain blocked in canonical checkouts. A full-loop request for a maintained non-aidevops repository authorizes synchronization of the merged PR base; a standalone request to update a canonical checkout has the same narrow scope. For a clean, non-diverged mirror, use:
 
 ```bash

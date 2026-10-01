@@ -1697,7 +1697,7 @@ _merge_reconcile_planning_publication() {
 		return 0
 	fi
 	if [[ "$canonical_synced" != "1" ]]; then
-		print_warning "Planning publication reconcile deferred for merged PR #${pr_number}: canonical sync pending"
+		print_warning "Planning publication reconcile deferred for merged PR #${pr_number}: canonical sync pending or no canonical working tree"
 		printf 'PLANNING_RECONCILE_NEXT=planning-publication-reconcile.sh reconcile --repo %q --sha %q\n' "$repo" "$merge_sha"
 		return 0
 	fi
@@ -1963,6 +1963,14 @@ _merge_report_canonical_sync_state() {
 	local merge_sha="${3:-}"
 	if [[ -z "$canonical_dir" ]]; then
 		print_warning "CANONICAL_SYNC_PENDING=true reason=canonical_path_unavailable"
+		return 1
+	fi
+	# GH#33381: linked worktrees may share a bare common Git directory. There
+	# is no canonical working tree to preserve or fast-forward, so this layout
+	# is valid, not a canonical-layout failure; the PR lifecycle completes and
+	# only working-tree-dependent follow-ups (planning reconcile) are deferred.
+	if [[ "$(git -C "$canonical_dir" rev-parse --is-bare-repository 2>/dev/null || true)" == "true" ]]; then
+		print_info "LIFECYCLE_STATE=CANONICAL_SYNC_NOT_APPLICABLE reason=bare_common_dir canonical=${canonical_dir}"
 		return 1
 	fi
 	local default_branch

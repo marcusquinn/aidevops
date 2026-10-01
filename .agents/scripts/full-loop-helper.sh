@@ -259,7 +259,10 @@ Worker aborted PR creation: issue #${issue_number} was already closed by the tim
 }
 
 _commit_and_pr_publish() {
-	_push_branch "$branch" "$skip_hooks" || return 1
+	_push_branch "$branch" "$skip_hooks" "$repo" "$replacement_pr" || return 1
+	# GH#33381: a diverged foreign remote branch is preserved and this work is
+	# published under a replacement name; every later step uses that exact head.
+	branch="${FULL_LOOP_PUSHED_BRANCH:-$branch}"
 	local continuation_pr=""
 	if [[ "$parent_issue" -eq 0 ]]; then
 		local final_open_pr_guard_rc=0
@@ -282,7 +285,15 @@ _commit_and_pr_publish() {
 		esac
 	fi
 	pr_number=$(_create_or_continue_pr "$continuation_pr" "$repo" "$pr_title" "$pr_body" \
-		"$origin_label" "${extra_labels[@]+"${extra_labels[@]}"}") || return 1
+		"$origin_label" "${extra_labels[@]+"${extra_labels[@]}"}") || {
+		# GH#33381: the push already succeeded; the pushed branch is the durable
+		# retry state. Rerunning commit-and-pr recommits nothing, re-pushes the
+		# same head under a lease, and resumes at PR creation with --head.
+		print_warning "LIFECYCLE_STATE=PUSHED_PR_PENDING branch=${branch}"
+		printf 'PR_CREATE_NEXT=git checkout %q && full-loop-helper.sh commit-and-pr --issue %q --message %q\n' \
+			"$branch" "$issue_number" "$commit_message" >&2
+		return 1
+	}
 	# Recover from partial GraphQL writes before marking either side in review.
 	if [[ "$origin_label" == "origin:worker" && "$closing_keyword" == "Resolves" ]]; then
 		_ensure_worker_pr_linkage "$pr_number" "$repo" "$issue_number" "$pr_body" || return 1
