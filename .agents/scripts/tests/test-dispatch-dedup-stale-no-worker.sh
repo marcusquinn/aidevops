@@ -408,12 +408,13 @@ test_remote_branch_liveness() {
 				local args="$*"
 				printf '%s\n' "$args" >>"$api_log"
 				[[ "$api_failed" == true ]] && return 1
+				# Pair case-pattern parentheses for Bash 3.2 inside nested $().
 				case "$args" in
-				*git/matching-refs/heads/*)
+				(*git/matching-refs/heads/*)
 					jq -nc --arg branch "$branch_name" '[[{ref:"refs/heads/main",object:{sha:"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}],[{ref:("refs/heads/"+$branch),object:{sha:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}]]'
 					;;
-				*git/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa*) printf '%s\n' "$tip_date" ;;
-				*) return 1 ;;
+				(*git/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa*) printf '%s\n' "$tip_date" ;;
+				(*) return 1 ;;
 				esac
 				return 0
 			}
