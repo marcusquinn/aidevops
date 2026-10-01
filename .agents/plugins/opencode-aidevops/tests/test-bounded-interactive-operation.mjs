@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 import { BoundedInteractiveOperationManager } from "../bounded-interactive-operation.mjs";
 import { createOutputSandboxReader, createOutputSandboxRecorder } from "../bounded-operation-output.mjs";
 import { createBoundedInteractiveOperationTool } from "../bounded-operation-tool.mjs";
-import { resolveSessionOwnedWorktreeRoot } from "../gpt-image-worktree.mjs";
+import { resolveGptImageProjectRoot, resolveSessionOwnedWorktreeRoot } from "../gpt-image-worktree.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "aidevops-bounded-operation-"));
 const owner = { sessionID: "ses_owner" };
@@ -212,6 +212,10 @@ describe("bounded interactive operations", () => {
       assert.deepEqual(await resolveSessionOwnedWorktreeRoot(linked, parent, owner, options), { root: realpathSync(linked), linked: true });
       assert.equal(verified, 1);
       await assert.rejects(resolveSessionOwnedWorktreeRoot(unrelatedLinked, parent, owner, options), /unrelated Git repository/);
+      assert.deepEqual(await resolveGptImageProjectRoot(linked, parent, owner, options), { root: realpathSync(linked), linked: true });
+      await assert.rejects(resolveGptImageProjectRoot(unrelatedLinked, parent, owner, options), /Image workdir belongs to an unrelated Git repository/);
+      await assert.rejects(resolveGptImageProjectRoot(repo, parent, owner, options), /linked Git worktree/);
+      await assert.rejects(resolveGptImageProjectRoot(alias, parent, owner, options), /unsafe/);
       const reposFile = join(parent, "repos.json");
       writeFileSync(reposFile, JSON.stringify({ initialized_repos: [{ path: unrelated }] }));
       process.env.AIDEVOPS_REPOS_JSON = reposFile;
@@ -225,7 +229,7 @@ describe("bounded interactive operations", () => {
       assert.equal((await terminal(instance, started.operation_id)).state, "succeeded");
       await assert.rejects(instance.start({ command: [process.execPath], cwd: alias }, owner), /unsafe/);
       await assert.rejects(instance.start({ command: [process.execPath], cwd: repo }, owner), /linked Git worktree/);
-      assert.equal(verified, 3, "rejected paths must not reach ownership verification");
+      assert.equal(verified, 4, "rejected paths must not reach ownership verification");
     } finally {
       if (previousRepos === undefined) delete process.env.AIDEVOPS_REPOS_JSON;
       else process.env.AIDEVOPS_REPOS_JSON = previousRepos;
