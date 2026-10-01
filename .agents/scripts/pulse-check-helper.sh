@@ -248,6 +248,7 @@ _render_text_report() {
 		"- Collection evidence: " + (.collection | tojson),
 		"- Current window launches: " + (.summary.worker_launches_in_window | count_text) + "; terminal worker events: " + (.summary.worker_terminal_events_in_window | count_text),
 		"- Recent worker metric events: " + (.summary.recent_worker_events | count_text) + "; " + .inputs.historical_window + " runtime handoff rate: " + (.summary.historical_runtime_handoff_rate | percent_text),
+		"- Premature exits by model (" + .inputs.recent_window + "): " + ([(.worker_activity.providers.provider_model_usage // [])[] | select((.premature_exit // 0) > 0) | .model + "=" + (.premature_exit | tostring) + "/" + (.count | tostring) + " (" + ((.premature_exit_rate_pct // 0) | tostring) + "%, rescued " + ((.continuation_rescued // 0) | tostring) + ")"] | if length == 0 then "none" else join(", ") end),
 		"- Verified deliveries in " + .inputs.historical_window + ": " + (.summary.historical_worker_delivered_successes | count_text) + " (" + .summary.delivery_measurement_state + "; independent of the local attempt cohort)",
 		"- GraphQL: " + (.summary.graphql_budget_status // unknown),
 		"- REST transport admission: " + ((.summary.rest_admission // {state:"unknown"}) | tojson),

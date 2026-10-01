@@ -760,6 +760,43 @@ assert_eq "8o: issue diagnosis reports quarantined attempts" "1" \
 	"$(printf '%s' "$ISSUE_FUTURE" | jq -r '.future_dated_ignored')"
 
 # ---------------------------------------------------------------------------
+# Section 9 (GH#33331): continuation outcomes and per-model premature exits.
+# ---------------------------------------------------------------------------
+echo
+echo "--- Section 9: continuation recovery and per-model premature exits ---"
+
+CONT_METRICS="$FIXTURE_DIR/continuation-metrics.jsonl"
+{
+	# Session A (model-a): rescued at continuation 3.
+	for i in 0 1 2; do
+		reason="continuation_retry"
+		[[ "$i" -eq 0 ]] && reason="headless_dispatch"
+		printf '{"ts":%d,"role":"worker","session_key":"issue-901","repo_slug":"o/r","attempt_id":"a901","model":"p/model-a","provider":"p","result":"premature_exit","exit_code":77,"routing_reason":"%s"}\n' "$((T_5MIN_AGO + i))" "$reason"
+	done
+	printf '{"ts":%d,"role":"worker","session_key":"issue-901","repo_slug":"o/r","attempt_id":"a901","model":"p/model-a","provider":"p","result":"success","exit_code":0,"routing_reason":"continuation_retry"}\n' "$((T_5MIN_AGO + 3))"
+	# Session B (model-b): exhausted after two continuations.
+	for i in 0 1 2; do
+		reason="continuation_retry"
+		[[ "$i" -eq 0 ]] && reason="headless_dispatch"
+		printf '{"ts":%d,"role":"worker","session_key":"issue-902","repo_slug":"o/r","attempt_id":"a902","model":"p/model-b","provider":"p","result":"premature_exit","exit_code":77,"routing_reason":"%s"}\n' "$((T_5MIN_AGO + 10 + i))" "$reason"
+	done
+	# Session C (model-b): a later dispatch of another issue with no continuation.
+	printf '{"ts":%d,"role":"worker","session_key":"issue-903","repo_slug":"o/r","attempt_id":"a903","model":"p/model-b","provider":"p","result":"premature_exit","exit_code":77,"routing_reason":"headless_dispatch"}\n' "$((T_5MIN_AGO + 20))"
+} >"$CONT_METRICS"
+CONT_ENV=("WAH_METRICS_FILE=$CONT_METRICS" "WAH_PULSE_STATS_FILE=$STATS" "WAH_PR_CACHE_FILE=$PR_CACHE"
+	"WAH_OAUTH_POOL_FILE=$FIXTURE_DIR/missing-pool.json" "WAH_BLOCKER_LOG_FILE=$BLOCKERS"
+	"WAH_DISPATCH_LEDGER_FILE=$LEDGER" "WAH_OBJECTIVE_EVIDENCE_FILE=$OBJECTIVE_EVIDENCE"
+	"PULSE_PROVIDER_ACCOUNT_SLOT_MULTIPLIER=24")
+JSON=$(env "${CONT_ENV[@]}" "$HELPER" summary --since 24h --json --no-pr-check 2>&1)
+assert_eq "9a: continuation recovery separates recovered, exhausted and not attempted" "1 1 1 5" \
+	"$(printf '%s' "$JSON" | jq -r '.metrics.continuation_recovery | "\(.recovered_sessions) \(.exhausted_sessions) \(.not_attempted_sessions) \(.retries_total)"')"
+assert_eq "9b: launch-failure family records exhausted continuations and per-model counts" "exhausted 2 2" \
+	"$(printf '%s' "$JSON" | jq -r '.metrics.failure_families[] | select(.family == "launch-failure" or .family == "other-failure") | select(.continuation_retries > 0) | "\(.continuation_outcome) \(.continuation_retries) \(.models["p/model-b"])"')"
+JSON=$(env "${CONT_ENV[@]}" "$HELPER" providers --since 24h --json 2>&1)
+assert_eq "9c: per-model premature-exit rate and continuation rescues" "3/4 75 1|4/4 100 0" \
+	"$(printf '%s' "$JSON" | jq -r '[.provider_diagnostics.provider_model_usage | sort_by(.model)[] | "\(.premature_exit)/\(.count) \(.premature_exit_rate_pct) \(.continuation_rescued)"] | join("|")')"
+
+# ---------------------------------------------------------------------------
 # Summary.
 # ---------------------------------------------------------------------------
 echo
