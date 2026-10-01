@@ -29,7 +29,7 @@ test("GPT-6 Astra and GPT-5.6 pricing use published Standard short-context API r
   assert.deepEqual(getPricing("openai/gpt-6-luna"), {
     input: 0.10, output: 0.50, cacheRead: 0.01, cacheWrite: 0.125,
   });
-  assert.equal(PRICING_VERSION, "2026-09-30.1");
+  assert.equal(PRICING_VERSION, "2026-10-01.1");
 });
 
 test("specific Anthropic IDs win over generic family keys", () => {
