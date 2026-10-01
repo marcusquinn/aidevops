@@ -23,6 +23,7 @@
 #   clean [--auto] [--force-merged]  Remove worktrees for merged branches
 #   recovery [plan|apply] Inventory archives, write a plan, or explicitly apply
 #                         one exact manifest with a new receipt
+#   adopt <path> <session> <task>  Explicitly claim a registered dead-owner worktree
 #   help                   Show this help
 #
 # Examples:
@@ -136,11 +137,86 @@ source "${SCRIPT_DIR}/worktree-clean-lib.sh"
 # MAIN
 # =============================================================================
 
+# Adoption is explicit, never a side effect of verify-owner. Recheck the complete
+# lease and liveness under a SQLite write transaction; preserve task and batch.
+cmd_adopt() {
+	local requested_path="${1:-}" session_id="${2:-}" task_id="${3:-}"
+	[[ $# -eq 3 && "$session_id" =~ ^ses_[A-Za-z0-9_-]+$ && -n "$task_id" ]] || return 1
+	_wt_is_trusted_opencode_session "$session_id" || return 1
+	[[ -d "$requested_path" && ! -L "$requested_path" ]] || return 1
+	local wt_path="" git_dir="" common_dir="" branch="" snapshot=""
+	wt_path=$(_wt_registry_lookup_path "$requested_path") || return 1
+	[[ "$(git -C "$wt_path" rev-parse --show-toplevel)" == "$wt_path" ]] || return 1
+	git_dir=$(git -C "$wt_path" rev-parse --absolute-git-dir) || return 1
+	common_dir=$(git -C "$wt_path" rev-parse --path-format=absolute --git-common-dir) || return 1
+	[[ "$git_dir" != "$common_dir" ]] || return 1
+	branch=$(git -C "$wt_path" symbolic-ref --quiet --short HEAD) || return 1
+	snapshot=$(check_worktree_owner_snapshot "$wt_path") || return 1
+	local old_pid="" old_session="" old_batch="" old_task="" old_created="" old_start=""
+	IFS='|' read -r old_pid old_session old_batch old_task old_created old_start <<<"$snapshot"
+	[[ "$old_pid" =~ ^[1-9][0-9]*$ && "$old_task" == "$task_id" ]] || return 1
+	# Permission errors and PID reuse are conservatively treated as live.
+	python3 - "$old_pid" <<'PY' || return 1
+import os
+import sys
+try:
+    os.kill(int(sys.argv[1]), 0)
+except ProcessLookupError:
+    sys.exit(0)
+except OSError:
+    pass
+sys.exit(1)
+PY
+	"${SCRIPT_DIR}/audit-log-helper.sh" log operation.verify \
+		"Explicit worktree adoption requested" "session=$session_id" "task=$task_id" >/dev/null || return 1
+	local new_pid="" new_start="" new_comm=""
+	new_pid=$(_resolve_worktree_owner_pid "") || return 1
+	new_start=$(_wt_process_start_token_for_pid "$new_pid") || return 1
+	new_comm=$(_get_proc_comm "$new_pid")
+	python3 - "$WORKTREE_REGISTRY_DB" "$wt_path" "$old_pid" "$old_session" \
+		"$old_batch" "$old_task" "$old_created" "$old_start" \
+		"$new_pid" "$session_id" "$new_start" "$new_comm" "$branch" <<'PY' || return 1
+import os
+import sqlite3
+import sys
+db, path, old_pid, session, batch, task, created, start, new_pid, new_session, new_start, comm, branch = sys.argv[1:]
+with sqlite3.connect(db, isolation_level=None) as connection:
+    connection.execute("BEGIN IMMEDIATE")
+    row = connection.execute("""SELECT owner_pid, COALESCE(owner_session, ''),
+        COALESCE(owner_batch, ''), COALESCE(task_id, ''), COALESCE(created_at, ''),
+        COALESCE(owner_process_start, '') FROM worktree_owners WHERE worktree_path = ?""", (path,)).fetchone()
+    if row != (int(old_pid), session, batch, task, created, start):
+        sys.exit("Worktree owner changed; adoption refused")
+    try:
+        os.kill(int(old_pid), 0)
+    except ProcessLookupError:
+        pass
+    except OSError:
+        sys.exit("Owner liveness unavailable; adoption refused")
+    else:
+        sys.exit("Worktree owner is live; adoption refused")
+    os.kill(int(new_pid), 0)
+    connection.execute("""UPDATE worktree_owners SET owner_pid = ?, owner_session = ?,
+        owner_process_start = ?, owner_comm = ?, branch = ?, owner_dead_seen_at = '',
+        created_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE worktree_path = ?""",
+        (int(new_pid), new_session, new_start, comm, branch, path))
+    connection.execute("COMMIT")
+PY
+	_registry_verify_owner "$wt_path" "$session_id" >/dev/null || return 1
+	"${SCRIPT_DIR}/audit-log-helper.sh" log config.change \
+		"Worktree adoption verified" "session=$session_id" "task=$task_id" >/dev/null || return 1
+	printf 'ADOPTED\n'
+	return 0
+}
+
 main() {
 	local command="${1:-help}"
 	shift || true
 
 	case "$command" in
+	adopt)
+		cmd_adopt "$@"
+		;;
 	add)
 		cmd_add "$@"
 		;;

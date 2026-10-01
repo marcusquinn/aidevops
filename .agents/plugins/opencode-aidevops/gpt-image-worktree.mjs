@@ -42,7 +42,7 @@ async function verifyRegisteredOwnership({ root, sessionID, scriptsDir, subject 
     );
     if (stdout.trim() !== "VERIFIED") throw new Error("unexpected verification receipt");
   } catch {
-    throw new Error(`${subject} workdir is not owned by the current OpenCode session.`);
+    throw new Error(`${subject} workdir is not owned by the current OpenCode session. For a registered previous-session worktree, run worktree-helper.sh adopt <path> <session> <task> after its owner exits; live owners cannot be adopted.`);
   }
 }
 
