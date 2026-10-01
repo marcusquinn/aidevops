@@ -1227,6 +1227,12 @@ _classify_runtime_dispatch_blocker_reason() {
 			printf 'terminal_blocker_circuit\n'
 			return 0
 			;;
+		*terminal_blocker_backoff*)
+			# GH#33332: report the shared backoff as its own hold, not as an
+			# active claim, so pulse can cache it across cycles.
+			printf 'terminal_blocker_backoff\n'
+			return 0
+			;;
 		*dispatch_block_reason*ever_nmr_without_approval* | *blocked*ever*nmr*lacks*approval* | *requires*cryptographic*approval*)
 			printf 'ever_nmr_without_approval\n'
 			return 0

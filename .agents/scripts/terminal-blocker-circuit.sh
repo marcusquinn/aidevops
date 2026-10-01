@@ -98,6 +98,10 @@ _terminal_blocker_hash() {
 	return 0
 }
 
+# GH#33332: input_required names who must supply the missing input. Only these
+# roles are public owners; the fingerprint is v2:input_required:<owner>.
+_TBC_INPUT_OWNERS='user contributor maintainer admin'
+
 # Versioned, allowlisted classes are the only public identities. Never hash prose
 # into a durable hold. Models may interpret a dossier with an exact standalone
 # TERMINAL_BLOCKER_REASON=<class> line; unclassified evidence remains retryable.
@@ -110,8 +114,27 @@ _terminal_blocker_reason() {
 			return 0
 		fi
 	done
+	if _terminal_blocker_input_owner "$fingerprint" >/dev/null; then
+		printf 'input_required\n'
+		return 0
+	fi
 	printf 'unknown\n'
 	return 0
+}
+
+# Print the input owner (user|contributor|maintainer|admin) for an
+# input_required fingerprint; return 1 for every other fingerprint.
+_terminal_blocker_input_owner() {
+	local fingerprint="$1"
+	local owner=""
+	[[ "$fingerprint" =~ ^[a-f0-9]{24}$ ]] || return 1
+	for owner in $_TBC_INPUT_OWNERS; do
+		if [[ "$fingerprint" == "$(_terminal_blocker_hash "v2:input_required:${owner}")" ]]; then
+			printf '%s\n' "$owner"
+			return 0
+		fi
+	done
+	return 1
 }
 
 # Capture only final assistant text, not tool output. A missing canonical scope
@@ -153,7 +176,15 @@ if not marker.search(candidate):
 
 reasons = re.findall(r"^TERMINAL_BLOCKER_REASON=(.*)$", candidate, re.M)
 allowed = {'missing_files_scope', 'files_scope_excluded', 'target_code_blocker', 'external_trigger_pending', 'permission_required'}
-print(reasons[0] if len(reasons) == 1 and reasons[0] in allowed else 'unknown')
+input_owners = {'user', 'contributor', 'maintainer', 'admin'}
+reason = reasons[0] if len(reasons) == 1 else 'unknown'
+if reason == 'input_required':
+    # GH#33332: the hold must name exactly one accountable role; otherwise the
+    # evidence stays unclassified and retryable.
+    owners = re.findall(r"^TERMINAL_BLOCKER_INPUT_OWNER=(.*)$", candidate, re.M)
+    print('input_required:' + owners[0] if len(owners) == 1 and owners[0] in input_owners else 'unknown')
+else:
+    print(reason if reason in allowed else 'unknown')
 PY
 	) || normalized=""
 	[[ -n "$normalized" ]] || return 1
@@ -239,7 +270,8 @@ terminal_blocker_task_revision() {
 	dependency_signature=$(_terminal_blocker_dependency_signature "$repo_slug" "$issue_number") || return 1
 	# An external publication or other trigger is not changed by unrelated merges.
 	# Keep dependency changes and brief corrections as independent wake conditions.
-	if [[ "$reason" == "external_trigger_pending" ]]; then
+	# Missing input (GH#33332) is likewise supplied through the brief, not code.
+	if [[ "$reason" == "external_trigger_pending" || "$reason" == "input_required" ]]; then
 		canonical=$(jq -nc --arg reason "$reason" --argjson task "$task_json" \
 			--argjson dependencies "$dependency_signature" \
 			'{reason: $reason, task: $task, dependencies: $dependencies}') || return 1
@@ -379,6 +411,10 @@ _terminal_blocker_recovery() {
 	permission_required)
 		owner="permission-maintainer"
 		action='Resolve the evidenced permission prerequisite through the human-owned approval flow, then post the explicit retry directive. Retry is scheduling consent only: the original permission guard must independently verify the exact context. Do not regenerate requests or bypass the guard.'
+		;;
+	input_required)
+		owner=$(_terminal_blocker_input_owner "$fingerprint") || owner="maintainer"
+		action='Supply the specific input named in the protected dossier in the issue brief; a brief or dependency change re-arms dispatch. The recovery supervisor first decides anything AI can resolve within delegated authority.'
 		;;
 	*)
 		owner="worker-triage"
