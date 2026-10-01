@@ -798,6 +798,40 @@ _consolidation_load_reopen_helper() {
 	return 0
 }
 
+# Gate 3: a structural closing PR only resolves the current lifecycle if it
+# merged after the latest reopen. Keep the timeline lookup in dispatch-dedup-pr.
+_consolidation_skip_for_closing_pr() {
+	local issue_number="$1" repo_slug="$2" parent_json="$3"
+	local closing_pr="" closing_pr_merged_at="" merged_json="[]" blocking_pr="" reopen_rc=0
+	while IFS= read -r closing_pr; do
+		[[ "$closing_pr" =~ ^[0-9]+$ ]] || continue
+		closing_pr_merged_at=$(gh api "repos/${repo_slug}/pulls/${closing_pr}" \
+			--jq '.merged_at // empty' 2>/dev/null) || closing_pr_merged_at=""
+		if [[ -n "$closing_pr_merged_at" ]]; then
+			merged_json=$(printf '%s' "$merged_json" | jq -c --argjson n "$closing_pr" \
+				--arg m "$closing_pr_merged_at" '. + [{number: $n, mergedAt: $m}]' 2>/dev/null) || merged_json="[]"
+		fi
+	done < <(printf '%s' "$parent_json" | jq -r '.closedByPullRequestsReferences[]?.number' 2>/dev/null)
+	[[ "$merged_json" != "[]" ]] || return 1
+	if _consolidation_load_reopen_helper; then
+		blocking_pr=$(_ddpr_first_merge_after_reopen "$issue_number" "$repo_slug" "$merged_json") || reopen_rc=$?
+	else
+		reopen_rc=1
+	fi
+	if [[ "$reopen_rc" -ne 0 ]]; then
+		echo "[pulse-wrapper] _consolidation_skip_if_resolved: reopen lookup failed rc=${reopen_rc} #${issue_number} ${repo_slug} — failing open (GH#33322)" >>"$LOGFILE"
+		return 1
+	fi
+	if [[ -z "$blocking_pr" ]]; then
+		echo "[pulse-wrapper] _consolidation_skip_if_resolved: merged closing PR(s) predate latest reopen of #${issue_number} ${repo_slug} — proceeding (GH#33322)" >>"$LOGFILE"
+		return 1
+	fi
+	_consolidation_emit_skip "$issue_number" "$repo_slug" \
+		"parent already resolved by structurally linked merged PR #${blocking_pr}." \
+		"merged closing PR #${blocking_pr}"
+	return 0
+}
+
 #######################################
 # t3050: Pre-flight gate for _dispatch_issue_consolidation. Aborts when the
 # parent issue's work is already resolved, BEFORE any cross-runner lock is
@@ -826,8 +860,6 @@ _consolidation_skip_if_resolved() {
 	local repo_slug="$2"
 	# t2863: init all multi-var locals at declaration time so set -u is safe.
 	local parent_json="" state="" reason="" labels="" body=""
-	local closing_pr="" closing_pr_merged_at=""
-	local merged_json="[]" blocking_pr="" reopen_rc=0
 	local counts="" merged="" total="" list="" pct=""
 	parent_json=$(gh issue view "$issue_number" --repo "$repo_slug" \
 		--json state,stateReason,labels,body,closedByPullRequestsReferences 2>/dev/null) || parent_json=""
@@ -854,36 +886,8 @@ _consolidation_skip_if_resolved() {
 			"terminal completion label"
 		return 0
 	fi
-	# Gate 3: GitHub retains the structural closing relationship after an
-	# accidental reopen. Verify the linked PR actually merged before skipping.
-	# GH#33306: a merge older than the latest reopen belongs to an earlier
-	# lifecycle (same rule as GH#33071 in dispatch-dedup-pr.sh).
-	while IFS= read -r closing_pr; do
-		[[ "$closing_pr" =~ ^[0-9]+$ ]] || continue
-		closing_pr_merged_at=$(gh api "repos/${repo_slug}/pulls/${closing_pr}" \
-			--jq '.merged_at // empty' 2>/dev/null) || closing_pr_merged_at=""
-		if [[ -n "$closing_pr_merged_at" ]]; then
-			merged_json=$(printf '%s' "$merged_json" | jq -c --argjson n "$closing_pr" \
-				--arg m "$closing_pr_merged_at" '. + [{number: $n, mergedAt: $m}]' 2>/dev/null) || merged_json="[]"
-		fi
-	done < <(printf '%s' "$parent_json" | jq -r '.closedByPullRequestsReferences[]?.number' 2>/dev/null)
-	if [[ "$merged_json" != "[]" ]]; then
-		if _consolidation_load_reopen_helper; then
-			blocking_pr=$(_ddpr_first_merge_after_reopen "$issue_number" "$repo_slug" "$merged_json") || reopen_rc=$?
-		else
-			reopen_rc=1
-		fi
-		if [[ "$reopen_rc" -ne 0 ]]; then
-			echo "[pulse-wrapper] _consolidation_skip_if_resolved: reopen lookup failed rc=${reopen_rc} #${issue_number} ${repo_slug} — failing open (GH#33306)" >>"$LOGFILE"
-		elif [[ -n "$blocking_pr" ]]; then
-			_consolidation_emit_skip "$issue_number" "$repo_slug" \
-				"parent already resolved by structurally linked merged PR #${blocking_pr}." \
-				"merged closing PR #${blocking_pr}"
-			return 0
-		else
-			echo "[pulse-wrapper] _consolidation_skip_if_resolved: merged closing PR(s) predate latest reopen of #${issue_number} ${repo_slug} — proceeding (GH#33306)" >>"$LOGFILE"
-		fi
-	fi
+	# Gate 3: GitHub retains structural closing links across reopen cycles.
+	_consolidation_skip_for_closing_pr "$issue_number" "$repo_slug" "$parent_json" && return 0
 	# Gate 4: CLOSED with stateReason=NOT_PLANNED.
 	if [[ "$state" == "CLOSED" && "$reason" == "NOT_PLANNED" ]]; then
 		_consolidation_emit_skip "$issue_number" "$repo_slug" \

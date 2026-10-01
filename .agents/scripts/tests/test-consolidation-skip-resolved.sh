@@ -537,6 +537,69 @@ test_count_merged_children_direct() {
 	return 0
 }
 
+# Exercise the real consolidation handoff and scope-gate continuation. The
+# unrelated instrumentation, capacity and ownership readers are isolated;
+# the pre-flight Gate 5 and _dispatch_issue_consolidation remain real.
+test_dispatch_skip_handoff() {
+	setup_stub
+	# shellcheck disable=SC1091
+	source "${REPO_ROOT}/.agents/scripts/pulse-dispatch-core.sh"
+	_issue_needs_consolidation() { return 0; }
+	_consolidation_dispatch_defers_for_manual_hold() {
+		[[ "${TEST_MANUAL_HOLD:-0}" == 1 ]]
+	}
+	_consolidation_dispatch_defers_for_active_ownership() { return 1; }
+	_ensure_consolidation_labels() { return 0; }
+	_consolidation_resolving_pr_exists() { return 1; }
+	_consolidation_child_exists() { [[ "${TEST_CHILD_EXISTS:-0}" == 1 ]]; }
+	_ds_now_ns() { printf '0\n'; }
+	_ds_stage_start() { return 0; }
+	_ds_record() { return 0; }
+	_issue_targets_large_files() { return 1; }
+	_footprint_check_overlap() { return 0; }
+
+	local rc=0
+	GH_ISSUE_JSON=$(_make_issue_json "OPEN" "" "bug,auto-dispatch" \
+		"Framework trust-boundary reference #17671, not a child issue.")
+	export GH_ISSUE_JSON GH_PR_17671_MERGED_AT="2026-07-29T02:50:56Z"
+	_dispatch_dedup_scope_gates 33057 "owner/repo" "$REPO_ROOT" "$GH_ISSUE_JSON" || rc=$?
+	if [[ "$rc" -eq 0 && "${_CONSOLIDATION_DISPATCH_OUTCOME:-}" == preflight_skipped ]] &&
+		grep -q '1/1 child PRs merged' "$LOGFILE" &&
+		grep -q 'continuing dispatch gates' "$LOGFILE"; then
+		print_result "Gate 5 pre-flight skip continues implementation dispatch" 0
+	else
+		print_result "Gate 5 pre-flight skip continues implementation dispatch" 1 "rc=$rc outcome=${_CONSOLIDATION_DISPATCH_OUTCOME:-unset}"
+	fi
+
+	# A real pre-flight miss with an already-existing child still defers.
+	: >"$LOGFILE"
+	GH_ISSUE_JSON=$(_make_issue_json "OPEN" "" "bug,auto-dispatch" "No references.")
+	export GH_ISSUE_JSON TEST_CHILD_EXISTS=1
+	rc=0
+	_dispatch_dedup_scope_gates 33058 "owner/repo" "$REPO_ROOT" "$GH_ISSUE_JSON" || rc=$?
+	if [[ "$rc" -eq 1 && -z "${_CONSOLIDATION_DISPATCH_OUTCOME:-}" ]] &&
+		grep -q 'needs comment consolidation' "$LOGFILE"; then
+		print_result "existing consolidation child still defers" 0
+	else
+		print_result "existing consolidation child still defers" 1 "rc=$rc outcome=${_CONSOLIDATION_DISPATCH_OUTCOME:-unset}"
+	fi
+
+	# An ownership hold must not be mistaken for a pre-flight skip.
+	: >"$LOGFILE"
+	export TEST_MANUAL_HOLD=1
+	rc=0
+	_dispatch_dedup_scope_gates 33059 "owner/repo" "$REPO_ROOT" "$GH_ISSUE_JSON" || rc=$?
+	if [[ "$rc" -eq 1 && -z "${_CONSOLIDATION_DISPATCH_OUTCOME:-}" ]] &&
+		grep -q 'needs comment consolidation' "$LOGFILE"; then
+		print_result "manual hold still defers" 0
+	else
+		print_result "manual hold still defers" 1 "rc=$rc outcome=${_CONSOLIDATION_DISPATCH_OUTCOME:-unset}"
+	fi
+	unset TEST_MANUAL_HOLD TEST_CHILD_EXISTS
+	teardown_stub
+	return 0
+}
+
 # -----------------------------------------------------------------------------
 # Run all tests
 # -----------------------------------------------------------------------------
@@ -556,6 +619,7 @@ main() {
 	test_api_error_fails_open
 	test_self_reference_excluded
 	test_count_merged_children_direct
+	test_dispatch_skip_handoff
 
 	printf '\n----\nTests run: %d, failed: %d\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
