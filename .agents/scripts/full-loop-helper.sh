@@ -70,9 +70,8 @@ source "${SCRIPT_DIR}/issue-open-pr-guard.sh"
 source "${SCRIPT_DIR}/full-loop-helper-merge.sh"
 
 # --- cmd_commit_and_pr ---
-# Kept in the orchestrator because the function body exceeds 100 lines,
-# triggering the function-complexity gate. Moving it to a sub-library would
-# create a new (file, fname) identity-key violation. See reference/large-file-split.md §3.
+# The phase helpers below use Bash's dynamic scope to share the orchestrator's
+# local metadata. Keep them in this file so the workflow has a single owner.
 #
 # Commit-and-PR: stage, commit, rebase, push, create PR, post merge summary.
 # Collapses full-loop steps 4.1-4.2.1 into a single deterministic call.
@@ -156,54 +155,47 @@ cmd_commit_and_pr() {
 	_run_project_validators "$skip_hooks" || return 1
 	_rebase_for_push "$branch" "$skip_rebase" || return 1
 
-	# Derive final-diff metadata after rebase but before any remote mutation.
-	# Invalid risk/testing evidence must not leave a pushed orphan branch.
 	local files_changed=""
 	local closing_keyword="Resolves"
+	local pr_body=""
+	local origin_label=""
+	_commit_and_pr_prepare_metadata || return 1
+	_commit_and_pr_check_readiness || return 1
+	local pr_number=""
+	_commit_and_pr_publish || return 1
+
+	# Output PR number for caller to pass to `merge`
+	printf '%s\n' "$pr_number"
+	return 0
+}
+
+# Derive final-diff metadata after rebase but before any remote mutation.
+# Invalid risk/testing evidence must not leave a pushed orphan branch.
+_commit_and_pr_prepare_metadata() {
 	if [[ "$completion_bookkeeping" -eq 1 ]]; then
 		closing_keyword="For"
 	fi
 	base_branch=$(_resolve_remote_default_branch origin) || return 1
 	base_ref="origin/${base_branch}"
 	files_changed=$(git diff --name-only "${base_ref}..HEAD" 2>/dev/null | tr '\n' ',' | sed 's/,$//; s/,/, /g' || echo "")
-	local pr_body=""
 	pr_body=$(_build_pr_body "$issue_number" "$summary_what" "$summary_testing" "$files_changed" "" "$closing_keyword" "$runtime_risk" "$testing_level" "$base_ref") || return 1
 
-	# Build PR metadata (t2720: prefer tNNN from TODO.md so issue-sync's
-	# PR-merge auto-completion regex can extract a task_id and flip [ ] → [x]).
-	# t2825/RC3: use _compose_pr_title so a commit_message that already begins
-	# with tNNN: or GH#NNN: is not double-prefixed (canonical failure: PR #20817).
+	# Preserve explicit titles; avoid double-prefixing a GH# or tNNN commit title.
 	if [[ -z "$pr_title" ]]; then
 		pr_title="$(_compose_pr_title "$issue_number" "$commit_message")"
 	fi
-
-	# t3088: use canonical session_origin_label() instead of hand-rolling the
-	# headless-env check. Previous logic checked only HEADLESS=1 / FULL_LOOP_HEADLESS=true,
-	# while detect_session_origin() (consulted by gh_create_pr's self-injection)
-	# also recognises AIDEVOPS_HEADLESS, OPENCODE_HEADLESS, GITHUB_ACTIONS, and
-	# AIDEVOPS_SESSION_ORIGIN. When the two checks disagreed (e.g., AIDEVOPS_HEADLESS=true
-	# without HEADLESS=1) the worker PR ended up with BOTH origin:interactive and
-	# origin:worker labels — the t2200 mutual-exclusion violation observed on PR #21825.
-	# Single source of truth: session_origin_label() returns "origin:worker" or
-	# "origin:interactive" based on the canonical env-var set.
-	local origin_label
+	# Use the same origin detection as gh_create_pr (GH#21825).
 	origin_label=$(session_origin_label)
-
-	local sig_footer=""
-	local sig_helper="${SCRIPT_DIR}/gh-signature-helper.sh"
+	local sig_footer="" sig_helper="${SCRIPT_DIR}/gh-signature-helper.sh"
 	if [[ -x "$sig_helper" ]]; then
 		sig_footer=$("$sig_helper" footer 2>/dev/null || echo "")
 	fi
-
-	# t2242: Determine closing keyword — auto-swap Resolves to For when linked
-	# issue has parent-task label, unless --allow-parent-close overrides.
 	if [[ "$allow_parent_close" -eq 1 ]]; then
 		closing_keyword="Resolves"
 	elif _issue_has_parent_task_label "$issue_number" "$repo"; then
 		closing_keyword="For"
 		print_info "Issue #${issue_number} has parent-task label — using 'For' keyword (t2242)"
 	fi
-
 	local replacement_note=""
 	if [[ -n "$replacement_pr" ]]; then
 		replacement_note="This explicitly justified replacement preserves open PR #${replacement_pr}. Rationale: ${replacement_reason}"
@@ -211,18 +203,14 @@ cmd_commit_and_pr() {
 	fi
 	pr_body=$(_build_pr_body "$issue_number" "$summary_what" "$summary_testing" "$files_changed" "$sig_footer" "$closing_keyword" "$runtime_risk" "$testing_level" "$base_ref" "$replacement_note") || return 1
 
-	# t2046: parent-task keyword guard — prevent Resolves/Closes/Fixes on
-	# parent-task issues. The parent must stay open until all phase children merge.
-	# Runs in --strict mode (exit 2 = abort PR creation). Pass --allow-parent-close
-	# for the legitimate final-phase PR that intentionally closes the parent tracker.
+	# Parent-task closing keywords are forbidden except for an explicit final phase.
 	local keyword_guard="${SCRIPT_DIR}/parent-task-keyword-guard.sh"
 	if [[ -x "$keyword_guard" ]]; then
-		local tmp_pr_body
+		local tmp_pr_body guard_rc=0
 		tmp_pr_body=$(mktemp)
 		printf '%s\n' "$pr_body" >"$tmp_pr_body"
 		local guard_args=("check-body" "--body-file" "$tmp_pr_body" "--repo" "$repo" "--strict")
 		[[ "$allow_parent_close" -eq 1 ]] && guard_args+=("--allow-parent-close")
-		local guard_rc=0
 		"$keyword_guard" "${guard_args[@]}" 2>&1 >&2 || guard_rc=$?
 		rm -f "$tmp_pr_body"
 		if [[ "$guard_rc" -eq 2 ]]; then
@@ -230,22 +218,17 @@ cmd_commit_and_pr() {
 			return 1
 		fi
 	fi
+	return 0
+}
 
-	# t1955: Validate dispatch claim before creating PR. In headless mode,
-	# abort if this worker was stale-recovered and replaced by another runner.
+_commit_and_pr_check_readiness() {
+	# A stale-recovered worker must not create a PR after losing its claim.
 	_validate_worker_claim "$issue_number" "$repo" || {
 		print_error "Aborting: dispatch claim no longer valid for #${issue_number} (t1955)"
 		return 1
 	}
-	# t2091: Guard against filing PRs on already-closed issues.
-	# A worker racing an interactive session may finish implementation after
-	# the issue was already resolved. Opening a PR against a closed issue
-	# creates noise, wastes review time, and can trigger duplicate closures.
-	# The sole exception is explicit interactive completion bookkeeping that
-	# passes the terminal-state, merged-proof, identity, diff, and keyword guard.
-	local _pre_pr_issue_state=""
-	local _pre_pr_issue_reason=""
-	local _pre_pr_issue_meta=""
+	# A closed issue needs explicit, verified completion bookkeeping.
+	local _pre_pr_issue_state="" _pre_pr_issue_reason="" _pre_pr_issue_meta=""
 	_pre_pr_issue_meta=$(gh issue view "$issue_number" --repo "$repo" \
 		--json state,stateReason --jq '[.state, (.stateReason // "")] | @tsv' 2>/dev/null || echo "")
 	IFS=$'\t' read -r _pre_pr_issue_state _pre_pr_issue_reason <<<"$_pre_pr_issue_meta"
@@ -272,15 +255,15 @@ Worker aborted PR creation: issue #${issue_number} was already closed by the tim
 		print_error "Completion bookkeeping requires issue #${issue_number} to be verified closed with a terminal reason"
 		return 1
 	fi
+	return 0
+}
 
+_commit_and_pr_publish() {
 	_push_branch "$branch" "$skip_hooks" || return 1
 	local continuation_pr=""
 	if [[ "$parent_issue" -eq 0 ]]; then
 		local final_open_pr_guard_rc=0
-		# GH#33253: an already-validated replacement's ancestry proof cannot be
-		# re-checked here — WIP finalization/rebase have rewritten HEAD since
-		# _validate_replacement_pr_ancestry ran. Skip the redundant, now-defeated
-		# ancestry check for that case; otherwise require it as before.
+		# WIP finalization/rebase rewrite HEAD; do not repeat a proven ancestry check.
 		local final_require_ancestry=1
 		[[ "$REPLACEMENT_PR_ANCESTRY_VALIDATED" -eq 1 ]] && final_require_ancestry=0
 		issue_open_pr_guard_check "$issue_number" "$repo" "$branch" \
@@ -298,27 +281,18 @@ Worker aborted PR creation: issue #${issue_number} was already closed by the tim
 			;;
 		esac
 	fi
-
-	local pr_number=""
 	pr_number=$(_create_or_continue_pr "$continuation_pr" "$repo" "$pr_title" "$pr_body" \
 		"$origin_label" "${extra_labels[@]+"${extra_labels[@]}"}") || return 1
-	# A worker PR is only eligible for the worker-briefed merge path when GitHub
-	# can associate it with the issue that dispatched the worker. Creation should
-	# already preserve this body, but recover from partial GraphQL writes before
-	# marking either side in review.
+	# Recover from partial GraphQL writes before marking either side in review.
 	if [[ "$origin_label" == "origin:worker" && "$closing_keyword" == "Resolves" ]]; then
 		_ensure_worker_pr_linkage "$pr_number" "$repo" "$issue_number" "$pr_body" || return 1
 	fi
-
 	_post_merge_summary "$pr_number" "$repo" "$issue_number" "$summary_what" "$files_changed" "$summary_testing" "$summary_decisions" || return 1
 	_label_issue_in_review "$issue_number" "$repo"
 	_label_pr_in_review "$pr_number" "$repo"
 	if is_loop_active; then
 		_full_loop_record_phase "pr-review" "$pr_number" || return 1
 	fi
-
-	# Output PR number for caller to pass to `merge`
-	printf '%s\n' "$pr_number"
 	return 0
 }
 
