@@ -1408,7 +1408,8 @@ issue_brief_hold_blocks_auto_release() {
 # The current exact linked-PR state selects the projection: no linked PR is
 # available, an open draft is blocked, an open non-draft PR is in-review, and
 # an open PR with requested changes is available for repair, and a merged PR
-# is done. Unreadable or ambiguous PR metadata is a no-write error.
+# is done only after the issue is closed. Unreadable or ambiguous metadata
+# is a no-write error; an open blocked issue retains its blocker.
 #
 # Args:
 #   $1 — issue number
@@ -1435,7 +1436,7 @@ clear_active_status_on_release() {
 	# current linked PR state before writing: drafts project as blocked partial
 	# work, while non-draft OPEN PRs without requested changes project as
 	# in-review. A failed or ambiguous read preserves the prior projection.
-	local linked_prs_json="" projection=""
+	local linked_prs_json="" projection="" done_status="done"
 	local -a release_args=()
 	[[ -z "$worker_login" ]] || release_args+=(--remove-assignee "$worker_login")
 	linked_prs_json=$(gh pr list --repo "$repo_slug" --state all \
@@ -1453,6 +1454,23 @@ clear_active_status_on_release() {
 		elif any(.state == "MERGED") then "done"
 		else available end
 	' 2>/dev/null) || return 1
+	# GH#33374: a merged checkpoint (or a reopened issue) is not completion.
+	# Bound every projection to live issue state, not the release reason.
+	local issue_json="" issue_state=""
+	issue_json=$(gh api "repos/${repo_slug}/issues/${issue_num}" 2>/dev/null) || return 1
+	issue_state=$(printf '%s' "$issue_json" | jq -er '
+		select((.labels | type) == "array") | .state | ascii_downcase
+		| select(. == "open" or . == "closed")' 2>/dev/null) || return 1
+	if [[ "$issue_state" == "closed" ]]; then
+		projection="$done_status"
+	elif printf '%s' "$issue_json" | jq -e 'any(.labels[]; .name == "status:blocked")' >/dev/null 2>&1; then
+		if issue_brief_hold_blocks_auto_release "$issue_num" "$repo_slug"; then
+			return 0
+		fi
+		projection="blocked"
+	elif [[ "$projection" == "$done_status" ]]; then
+		projection="available"
+	fi
 	case "$projection" in
 	available)
 		if issue_brief_hold_blocks_auto_release "$issue_num" "$repo_slug"; then
@@ -1470,7 +1488,7 @@ clear_active_status_on_release() {
 		set_issue_status "$issue_num" "$repo_slug" in-review >/dev/null 2>&1
 		;;
 	done)
-		set_issue_status "$issue_num" "$repo_slug" "done" >/dev/null 2>&1
+		set_issue_status "$issue_num" "$repo_slug" "$done_status" >/dev/null 2>&1
 		;;
 	*) return 1 ;;
 	esac

@@ -2130,6 +2130,13 @@ _ensure_worker_pr_linkage() {
 		print_error "Worker PR #${pr_number} has ambiguous or cross-repository closing references; refusing linkage repair"
 		return 1
 	fi
+	# GH#33374: explicit checkpoint intent is not a missing closing reference.
+	# Never turn a deliberate For/Ref body into a GitHub auto-closing link.
+	if printf '%s' "$current_body" | jq -Rse --arg issue "$issue_number" \
+		'test("\\b(for|ref)[[:space:]]+#" + $issue + "\\b"; "i")' >/dev/null 2>&1; then
+		print_info "Preserving non-closing checkpoint reference on worker PR #${pr_number}"
+		return 0
+	fi
 
 	local repaired_body="$generated_body"
 	if [[ -n "$current_body" ]]; then
