@@ -5084,4 +5084,4 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t18562 fix(worker): route unverified post-PR handoff with durable PR to checkpoint, not failure and tier escalation #bug ref:GH#33115 pr:#33118 completed:2026-09-30
 - [x] t18578 perf(ci): remove duplicate serial ShellCheck pass from required Framework Validation critical path #enhancement ref:GH#33182 pr:#33185 completed:2026-09-30
 
-- [ ] t18580 Background routing: Opus 5.5 thinking at high; no sub-medium reasoning for subagents or new A/B arms #enhancement ref:GH#33342
+- [x] t18580 Background routing: Opus 5.5 thinking at high; no sub-medium reasoning for subagents or new A/B arms #enhancement ref:GH#33342 pr:#33347 completed:2026-10-01
