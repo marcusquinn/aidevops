@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, test } from "node:test";
@@ -193,6 +193,7 @@ describe("bounded interactive operations", () => {
     const unrelated = join(tmpdir(), `aidevops-unrelated-${process.pid}-${Date.now()}`);
     const unrelatedLinked = `${unrelated}-linked`;
     const alias = join(parent, "alias");
+    const previousRepos = process.env.AIDEVOPS_REPOS_JSON;
     let verified = 0;
     const options = {
       subject: "Operation",
@@ -211,6 +212,11 @@ describe("bounded interactive operations", () => {
       assert.deepEqual(await resolveSessionOwnedWorktreeRoot(linked, parent, owner, options), { root: realpathSync(linked), linked: true });
       assert.equal(verified, 1);
       await assert.rejects(resolveSessionOwnedWorktreeRoot(unrelatedLinked, parent, owner, options), /unrelated Git repository/);
+      const reposFile = join(parent, "repos.json");
+      writeFileSync(reposFile, JSON.stringify({ initialized_repos: [{ path: unrelated }] }));
+      process.env.AIDEVOPS_REPOS_JSON = reposFile;
+      assert.deepEqual(await resolveSessionOwnedWorktreeRoot(unrelatedLinked, parent, owner, options), { root: realpathSync(unrelatedLinked), linked: true });
+      delete process.env.AIDEVOPS_REPOS_JSON;
       await assert.rejects(resolveSessionOwnedWorktreeRoot(repo, parent, owner, options), /linked Git worktree/);
       await assert.rejects(resolveSessionOwnedWorktreeRoot(alias, parent, owner, options), /unsafe/);
       const instance = manager({ projectRoot: parent, resolveWorktreeRoot: (cwd, project, context) =>
@@ -219,8 +225,10 @@ describe("bounded interactive operations", () => {
       assert.equal((await terminal(instance, started.operation_id)).state, "succeeded");
       await assert.rejects(instance.start({ command: [process.execPath], cwd: alias }, owner), /unsafe/);
       await assert.rejects(instance.start({ command: [process.execPath], cwd: repo }, owner), /linked Git worktree/);
-      assert.equal(verified, 2, "rejected paths must not reach ownership verification");
+      assert.equal(verified, 3, "rejected paths must not reach ownership verification");
     } finally {
+      if (previousRepos === undefined) delete process.env.AIDEVOPS_REPOS_JSON;
+      else process.env.AIDEVOPS_REPOS_JSON = previousRepos;
       execFileSync("git", ["-C", repo, "worktree", "remove", "--force", linked]);
       execFileSync("git", ["-C", unrelated, "worktree", "remove", "--force", unrelatedLinked]);
       rmSync(unrelated, { recursive: true, force: true });
