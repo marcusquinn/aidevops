@@ -468,7 +468,9 @@ _triage_runtime_infra_failure_reason() {
 		[[ "$sample" == *'Model not found: anthropic/'* ]]; then
 		# Never persist the raw runtime line: it can contain untrusted content
 		# or credentials. Keep a fixed diagnostic visible in pulse.log.
-		printf '%s\n' '[pulse-wrapper] OpenCode error: Model not found (isolated provider authentication unavailable)' >>"$LOGFILE"
+		if [[ -n "${LOGFILE:-}" ]]; then
+			printf '%s\n' '[pulse-wrapper] OpenCode error: Model not found (isolated provider authentication unavailable)' >>"$LOGFILE"
+		fi
 		printf '%s\n' 'triage-provider-auth-unsupported'
 		return 0
 	fi
@@ -492,7 +494,9 @@ _triage_runtime_result_failure_reason() {
 	local raw_sample="$3"
 	local failure_reason=""
 
-	failure_reason=$(_triage_runtime_infra_failure_reason "$raw_sample")
+	if [[ "$runtime_status" -ne 0 ]]; then
+		failure_reason=$(_triage_runtime_infra_failure_reason "$raw_sample")
+	fi
 	if [[ "$artifact_cleanup_status" -ne 0 ]]; then
 		failure_reason="$_PAD_TRIAGE_RUNTIME_TEMP_FAILURE_REASON"
 	elif [[ "$runtime_status" -ne 0 && -z "$failure_reason" ]]; then
