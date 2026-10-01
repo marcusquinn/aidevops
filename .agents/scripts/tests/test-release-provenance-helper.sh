@@ -435,4 +435,46 @@ if (
 fi
 printf 'PASS explicit aggregate-source conflicts remain fail-closed\n'
 
+(
+	# shellcheck source=../release-provenance-helper.sh
+	source "$HELPER" --help >/dev/null
+	unset AIDEVOPS_RELEASE_SNAPSHOT_SHA
+	snapshot_base=1111111111111111111111111111111111111111
+	snapshot_head=3333333333333333333333333333333333333333
+	snapshot_sources='[{"pr":42,"merge":"2222222222222222222222222222222222222222"},{"pr":43,"merge":"3333333333333333333333333333333333333333"}]'
+	git() {
+		case "$*" in
+		'rev-parse HEAD') printf '%s\n' "$snapshot_head" ;;
+		'merge-base --is-ancestor '*) return 0 ;;
+		'describe --tags '*) printf 'v1.2.2\n' ;;
+		'rev-parse refs/tags/v1.2.2'*) printf '%s\n' "$snapshot_base" ;;
+		*) return 1 ;;
+		esac
+		return 0
+	}
+	_release_provenance_verify_github_tag() { return 0; }
+	release_snapshot_sources() {
+		printf '%s\n' "$snapshot_sources"
+		return 0
+	}
+	_release_provenance_verify_pr_record() {
+		local source_pr="$3"
+		local source_merge="$4"
+		jq -e --argjson pr "$source_pr" --arg merge "$source_merge" \
+			'any(.[]; .pr == $pr and .merge == $merge)' <<<"$snapshot_sources" >/dev/null
+		return $?
+	}
+	resolved_snapshot=$(_release_provenance_resolve_snapshot 42 test/repo main "")
+	jq -e --argjson sources "$snapshot_sources" --arg head "$snapshot_head" '
+		.mode == "snapshot" and .source_pr == 43 and .source_merge == $head
+		and .expected_sources == $sources and .aggregated_sources == $sources
+	' <<<"$resolved_snapshot" >/dev/null
+	if _release_provenance_resolve_snapshot 42 test/repo main \
+		42@2222222222222222222222222222222222222222 >/dev/null 2>&1; then
+		printf 'FAIL explicit singleton assertion accepted multi-PR snapshot\n'
+		exit 1
+	fi
+)
+printf 'PASS snapshot omission discovers all sources while explicit stale assertions fail closed\n'
+
 exit 0
