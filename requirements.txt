@@ -10,7 +10,7 @@
 
 # Core dependencies for AI/ML workflows
 openai==2.20.0
-litellm==1.84.0
+litellm==1.93.2
 pandas==2.3.3
 numpy==2.0.2
 requests==2.33.0
