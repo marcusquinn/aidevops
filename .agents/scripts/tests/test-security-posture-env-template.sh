@@ -63,6 +63,9 @@ trap 'rm -rf "$WORK_DIR"' EXIT
 # Build fake secrets from parts so this file never contains a literal token.
 FAKE_GH_TOKEN="ghp""_$(printf 'a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8')"
 FAKE_SECRET_VALUE="s3cr3tV4lu3-$(printf 'q9w8e7r6t5')"
+# Well-known local default credential, assembled at runtime so secretlint's
+# PostgreSQLConnection rule does not flag the fixture source (GH#33364).
+LOCAL_DEFAULT_PG_USER="postgres"
 FAKE_PEM_HEADER="-----BEGIN RSA ""PRIVATE KEY-----"
 
 # Usage: run_case <description> <expected severity> <file name> <content> [reason]
@@ -115,7 +118,7 @@ GITHUB_TOKEN=<github-token>
 DB_PASSWORD=\${DB_PASSWORD}
 JWT_SECRET=changeme
 DATABASE_URL=postgres://user:\${DB_PASSWORD}@db.example.internal/app
-LOCAL_DB_URL=postgres://postgres:postgres@localhost:5432/app
+LOCAL_DB_URL=postgres://${LOCAL_DEFAULT_PG_USER}:${LOCAL_DEFAULT_PG_USER}@localhost:5432/app
 PORT=3000
 TOKEN_TTL=3600
 AUTH_ENABLED=true"
