@@ -70,8 +70,16 @@ requests remain held. Preserve the original request and audit evidence, commits,
 branch, checkpoint PR and runtime session. Provisioning may not displace a live
 or foreign owner, including a dead owner without an explicit ownership transfer.
 
-**Current limitation:** both the dispatch label gate and historical signed-grant
-gate require request-specific approval. There is no unsigned supersession path.
+**Signed decisions only:** both the dispatch label gate and historical signed-grant
+gate require a request-specific signed decision. There is no unsigned supersession
+or automatic expiry path, because unsigned expiry would let a worker abandon a
+permission wall and be relaunched under an implied grant. To decline a request,
+for example when its session has ended, the maintainer runs
+`sudo aidevops approve permissions issue <N> <slug> --request perm-<id> --withdraw`.
+That signs a capability-free decision bound to the request digest, revokes any
+local grant for that request, and clears the label. `verify-permissions` then
+returns `WITHDRAWN`, which never counts as `VERIFIED`, and dispatch resumes
+without a grant. A newer request evaluates on its own and still blocks.
 The AI brief owner/coordinator owns assessment of the in-boundary alternative and
 any authorized exact-checkpoint continuation; a copy alone does not clear either
 gate. Repeated unchanged evidence uses the same permission request rather than

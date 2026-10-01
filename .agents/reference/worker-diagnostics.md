@@ -151,6 +151,11 @@ historical evidence, not a failed or active worker. After confirming the session
 is stale, append an auditable terminal reconciliation with
 `worker-blocker-cli.mjs resolve-session` using its exact repository, session, and
 request scope. Never delete the JSONL evidence or reconcile a live owner.
+Unscoped `supervisor-pulse` records are reconciled automatically after each
+supervisor run (cutoff: that run's start), and manually with
+`worker-activity-helper.sh reconcile-stale-supervisor`, which refuses while a
+supervisor-pulse process is live. This is telemetry only; it never changes
+labels, requests or grants.
 
 ## Manual Worker Launch
 

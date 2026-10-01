@@ -23,6 +23,10 @@ readonly PERMISSION_REQUEST_MARKER="<!-- aidevops-permission-request -->"
 readonly PERMISSION_GRANT_MARKER="<!-- aidevops-signed-permission-grant -->"
 readonly PERMISSION_REQUEST_SCHEMA="aidevops-permission-request/v1"
 readonly PERMISSION_GRANT_SCHEMA="aidevops-permission-grant/v1"
+# GH#33330: a signed withdrawal is the only supported exit for a request the
+# maintainer will not grant. It grants nothing and binds to one request digest.
+readonly PERMISSION_WITHDRAWAL_MARKER="<!-- aidevops-signed-permission-withdrawal -->"
+readonly PERMISSION_WITHDRAWAL_SCHEMA="aidevops-permission-withdrawal/v1"
 readonly PERMISSION_SHA256_PATTERN='^[0-9a-f]{64}$'
 readonly PERMISSION_JSON_ARRAY_TYPE="array"
 readonly PERMISSION_JSON_STRING_TYPE="string"
@@ -440,11 +444,151 @@ _persist_signed_permission_grant() {
 	return 0
 }
 
+_confirm_permission_withdrawal() {
+	local request_json="$1"
+	local target_type="$2"
+	local target_number="$3"
+	local slug="$4"
+	echo ""
+	echo "Withdrawing worker permission request (no capability is granted):"
+	echo "  Target:  ${target_type} #${target_number}"
+	echo "  Repo:    ${slug}"
+	echo "  Request: $(jq -r '.request_id' <<<"$request_json")"
+	echo "  Session: $(jq -r '.worker.session' <<<"$request_json")"
+	echo ""
+	echo "The issue becomes dispatchable again without this grant. A later worker"
+	echo "that needs the same capability must raise a new request."
+	echo ""
+	printf "Type WITHDRAW to confirm: "
+	local confirmation=""
+	read -r confirmation
+	[[ "$confirmation" == "WITHDRAW" ]] || {
+		_print_error "Permission withdrawal cancelled"
+		return 1
+	}
+	return 0
+}
+
+_build_permission_withdrawal_comment() {
+	local payload="$1"
+	local sig_file="$2"
+	local signature
+	signature=$(<"$sig_file")
+	cat <<EOF
+${PERMISSION_WITHDRAWAL_MARKER}
+## Worker permission request withdrawn (cryptographically signed)
+
+\`\`\`
+${payload}
+\`\`\`
+
+\`\`\`
+${signature}
+\`\`\`
+
+This withdrawal grants no capability. It releases only the dispatch hold for the embedded request digest; any newer request still blocks.
+EOF
+	return 0
+}
+
+# A withdrawn request must never leave a consumable local grant behind.
+_revoke_local_permission_grant() {
+	local slug="$1"
+	local target_number="$2"
+	local request_id="$3"
+	local grant_path granted_request
+	grant_path=$(_permission_grant_path "$slug" "$target_number")
+	[[ -f "$grant_path" ]] || return 0
+	granted_request=$(jq -r '.payload | fromjson | .request_id // ""' "$grant_path" 2>/dev/null || printf '')
+	[[ "$granted_request" == "$request_id" ]] || return 0
+	rm -f "$grant_path" || return 1
+	return 0
+}
+
+_persist_signed_permission_withdrawal() {
+	local target_type="$1"
+	local target_number="$2"
+	local slug="$3"
+	local request_id="$4"
+	local request_json="$5"
+	local payload="$6"
+	local sig_file="$7"
+	local worker_session="${8:-}"
+	local comment_body comment_rc=0
+	comment_body=$(_build_permission_withdrawal_comment "$payload" "$sig_file")
+	rm -f "$sig_file"
+	if [[ "$target_type" == "$_PERMISSION_TARGET_ISSUE" ]]; then
+		gh_issue_comment "$target_number" --repo "$slug" --body "$comment_body" || comment_rc=$?
+	else
+		gh_pr_comment "$target_number" --repo "$slug" --body "$comment_body" || comment_rc=$?
+	fi
+	if [[ "$comment_rc" -ne 0 ]]; then
+		_record_permission_grant_failure "withdrawal_comment_write_failed" "$target_number" "$slug" \
+			"$request_id" "$worker_session" "Signed withdrawal comment could not be persisted"
+		return 1
+	fi
+	if ! _permission_request_is_latest "$request_json" "$target_number" "$slug"; then
+		_record_permission_approval_rejection "request_superseded_after_withdrawal" "$target_number" "$slug" \
+			"$request_id" "$worker_session" "A newer permission request appeared after the withdrawal was posted"
+		_print_error "Withdrawal was posted, but a newer request exists; dispatch remains blocked on that request"
+		return 1
+	fi
+	if ! _revoke_local_permission_grant "$slug" "$target_number" "$request_id"; then
+		_record_permission_grant_failure "withdrawal_local_grant_revoke_failed" "$target_number" "$slug" \
+			"$request_id" "$worker_session" "Local grant for the withdrawn request could not be removed"
+		return 1
+	fi
+	if ! _apply_permission_approval_state "$target_type" "$target_number" "$slug" "$request_json"; then
+		_record_permission_grant_failure "withdrawal_state_update_failed" "$target_number" "$slug" \
+			"$request_id" "$worker_session" "Withdrawal exists but the blocking issue state could not be cleared"
+		return 1
+	fi
+	_record_permission_blocker_event "permission_request_withdrawn" "resuming" \
+		"permission_request_withdrawn" "false" "$target_number" "$slug" "$request_id" \
+		"$worker_session" "Signed withdrawal persisted; dispatch resumes without a grant"
+	_kick_pulse_after_permission_approval
+	_print_ok "Permission request ${request_id} withdrawn for ${target_type} #${target_number}; no capability granted"
+	return 0
+}
+
+_sign_permission_withdrawal() {
+	local target_type="$1"
+	local target_number="$2"
+	local slug="$3"
+	local request_id="$4"
+	local request_json="$5"
+	local actual_key="$6"
+	local worker_session="${7:-}"
+	local payload sig_file
+	payload=$(jq -cS --arg schema "$PERMISSION_WITHDRAWAL_SCHEMA" --arg issued "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '
+		{
+			schema: $schema,
+			authority: "worker-permissions",
+			decision: "withdrawn",
+			target,
+			request_id,
+			request_sha256,
+			worker,
+			issued_at: $issued
+		}
+	' <<<"$request_json") || return 1
+	sig_file=$(mktemp)
+	if ! _sign_approval_payload "$payload" "$actual_key" "$sig_file"; then
+		rm -f "$sig_file"
+		_record_permission_grant_failure "withdrawal_signing_failed" "$target_number" "$slug" "$request_id" \
+			"$worker_session" "Signed withdrawal payload could not be signed"
+		return 1
+	fi
+	_persist_signed_permission_withdrawal "$target_type" "$target_number" "$slug" "$request_id" \
+		"$request_json" "$payload" "$sig_file" "$worker_session"
+	return $?
+}
+
 cmd_permissions() {
 	local target_type="${1:-}"
 	local target_number="${2:-}"
 	shift 2 2>/dev/null || true
-	local slug="" request_id=""
+	local slug="" request_id="" withdraw=0
 	if [[ $# -gt 0 && "$1" != --* ]]; then
 		slug="$1"
 		shift
@@ -453,10 +597,11 @@ cmd_permissions() {
 		local arg="$1"
 		case "$arg" in
 		--request) request_id="${2:-}"; shift 2 ;;
+		--withdraw) withdraw=1; shift ;;
 		*) _print_error "Unknown permissions option: $arg"; return 1 ;;
 		esac
 	done
-	local usage="Usage: sudo aidevops approve permissions issue|pr <number> [owner/repo] --request perm-<id>"
+	local usage="Usage: sudo aidevops approve permissions issue|pr <number> [owner/repo] --request perm-<id> [--withdraw]"
 	[[ "$target_type" == "$_PERMISSION_TARGET_ISSUE" || "$target_type" == "pr" ]] || { _print_error "$usage"; return 1; }
 	_require_number_arg "$target_number" "$target_type" "$usage" || return 1
 	[[ "$request_id" =~ ^perm-[0-9a-f]{16}$ ]] || { _print_error "$usage"; return 1; }
@@ -479,6 +624,20 @@ cmd_permissions() {
 		_print_error "Permission request is malformed, changed, or contains a non-grantable sensitive capability"
 		return 1
 	}
+	if [[ "$withdraw" -eq 1 ]]; then
+		# #aidevops:trust-boundary GH#33330: same root/key/latest-request ceremony
+		# as a grant, but the signed payload carries no capabilities.
+		_confirm_permission_withdrawal "$request_json" "$target_type" "$target_number" "$slug" || return 1
+		_permission_request_is_latest "$request_json" "$target_number" "$slug" || {
+			_record_permission_approval_rejection "request_superseded" "$target_number" "$slug" "$request_id" \
+				"$worker_session" "A newer permission request superseded the request under withdrawal"
+			_print_error "A newer permission request exists; review the latest request instead"
+			return 1
+		}
+		_sign_permission_withdrawal "$target_type" "$target_number" "$slug" "$request_id" \
+			"$request_json" "$actual_key" "$worker_session"
+		return $?
+	fi
 	_confirm_permission_approval "$request_json" "$target_type" "$target_number" "$slug" || return 1
 	_permission_request_is_latest "$request_json" "$target_number" "$slug" || {
 		_record_permission_approval_rejection "request_superseded" "$target_number" "$slug" "$request_id" \
@@ -519,6 +678,8 @@ cmd_permissions() {
 	return $?
 }
 
+# Latest trusted signed decision (grant or withdrawal) for one request. The
+# signed payload schema, not the marker, decides how it is interpreted.
 _fetch_latest_permission_grant_body() {
 	local target_number="$1"
 	local slug="$2"
@@ -527,10 +688,40 @@ _fetch_latest_permission_grant_body() {
 	endpoint=$(_permission_comments_endpoint "$slug" "$target_number")
 	pages=$(gh api "$endpoint" --paginate --slurp 2>/dev/null) || return 1
 	comments=$(_trusted_permission_comments_json "$pages") || return 1
-	jq -r --arg marker "$PERMISSION_GRANT_MARKER" --arg request "$request_id" '
-		[.[] | select((.body // "") | contains($marker) and contains($request))]
+	jq -r --arg marker "$PERMISSION_GRANT_MARKER" --arg withdrawal "$PERMISSION_WITHDRAWAL_MARKER" \
+		--arg request "$request_id" '
+		[.[] | select((.body // "") | (contains($marker) or contains($withdrawal)) and contains($request))]
 		| sort_by(.id) | last | .body // ""
 	' <<<"$comments"
+	return $?
+}
+
+_validate_permission_withdrawal_payload() {
+	local payload="$1"
+	local request_json="$2"
+	jq -e --argjson request "$request_json" --arg schema "$PERMISSION_WITHDRAWAL_SCHEMA" '
+		.schema == $schema
+		and .authority == "worker-permissions"
+		and .decision == "withdrawn"
+		and .target == $request.target
+		and .request_id == $request.request_id
+		and .request_sha256 == $request.request_sha256
+		and .worker == $request.worker
+		and (has("capabilities") | not)
+		and (has("expires_at") | not)
+		and (.issued_at | type == "string")
+	' <<<"$payload" >/dev/null || return 1
+	python3 - "$payload" <<'PY'
+import datetime as dt
+import json
+import sys
+
+try:
+    issued = dt.datetime.fromisoformat(json.loads(sys.argv[1])["issued_at"].replace("Z", "+00:00"))
+except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+    raise SystemExit(1)
+raise SystemExit(0 if issued <= dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=5) else 1)
+PY
 	return $?
 }
 
@@ -598,6 +789,13 @@ cmd_verify_permissions() {
 	[[ -f "$APPROVAL_PUB" ]] || { printf 'NO_KEY\n'; return 2; }
 	_verify_comment_signature "$grant_body" "$APPROVAL_PUB" || { printf 'MALFORMED_APPROVAL\n'; return 5; }
 	payload=$(_extract_fenced_block "$grant_body" 1)
+	# #aidevops:trust-boundary GH#33330: WITHDRAWN never yields VERIFIED and
+	# never authorizes capabilities; it only releases this request's hold.
+	if [[ "$(jq -r '.schema // ""' <<<"$payload" 2>/dev/null)" == "$PERMISSION_WITHDRAWAL_SCHEMA" ]]; then
+		_validate_permission_withdrawal_payload "$payload" "$request_json" || { printf 'MALFORMED_APPROVAL\n'; return 5; }
+		printf 'WITHDRAWN\n'
+		return 1
+	fi
 	_validate_permission_grant_payload "$payload" "$request_json" || { printf 'STALE_APPROVAL\n'; return 4; }
 	printf 'VERIFIED\n'
 	return 0
