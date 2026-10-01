@@ -142,3 +142,5 @@ It refuses to sync when the worktree's `HEAD` doesn't contain `origin/<default-b
 Run already configured checks when applicable: **PHPUnit** `wp-env run tests-cli phpunit` or `vendor/bin/phpunit`; **E2E** `npx --no-install playwright test` or `npx --no-install cypress run`; **Security** `./.agents/scripts/secretlint-helper.sh scan`. For routine feature/fix work, verify first through the real LocalWP/wp-env flow and `debug.log`. Do not install PHPUnit, Playwright, Cypress, or new test infrastructure without explicit user approval.
 
 **Release checklist**: single + multisite, min/latest PHP/WP, configured/required PHPUnit and E2E checks passing, no PHP errors/warnings in debug log, no JS console errors, activation/deactivation/uninstall exercised, security + code quality passed. Do not add missing test infrastructure solely for release verification without approval.
+
+Plugin release builds, WordPress.org preflight, Plugin Check and submission: `tools/wordpress/wp-plugin-release.md` and `wp-plugin-release-helper.sh`.
