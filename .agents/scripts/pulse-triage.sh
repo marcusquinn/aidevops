@@ -224,6 +224,13 @@ _issue_needs_consolidation() {
 # Reference pattern: `_issue_targets_large_files` at pulse-dispatch-core.sh:685-757
 # which creates file-size-debt child issues the same way.
 #######################################
+_consolidation_preflight_skip_outcome() {
+	local issue_number="$1" repo_slug="$2"
+	_consolidation_dispatch_preflight_skips "$issue_number" "$repo_slug" || return 1
+	_CONSOLIDATION_DISPATCH_OUTCOME="preflight_skipped"
+	return 0
+}
+
 _dispatch_issue_consolidation() {
 	local issue_number="$1"
 	local repo_slug="$2"
@@ -244,11 +251,7 @@ _dispatch_issue_consolidation() {
 	_ensure_consolidation_labels "$repo_slug"
 
 	# Resolve and in-flight-PR checks precede child/lock acquisition.
-	if _consolidation_dispatch_preflight_skips "$issue_number" "$repo_slug"; then
-		_CONSOLIDATION_DISPATCH_OUTCOME="preflight_skipped"
-		return 0
-	fi
-
+	_consolidation_preflight_skip_outcome "$issue_number" "$repo_slug" && return 0
 	# Dedup: child already exists (t2151: lock label also returns 0, blocking
 	# competing runners before they reach the acquire path).
 	if _consolidation_child_exists "$issue_number" "$repo_slug"; then
