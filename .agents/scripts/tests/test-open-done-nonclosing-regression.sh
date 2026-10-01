@@ -112,6 +112,11 @@ _action_rsd_single owner/repo 42 fixture unused unused || rc=$?
 [[ "$rc" == 2 ]]
 assert_status blocked
 grep -q 'healed open + status:done' "$LOGFILE"
+COMMENTS_JSON='[[{"author_association":"MEMBER","body":"BLOCKED: publication still requires credentials.\nThe earlier CLAIM_RELEASED was premature."}]]'
+rc=0
+_action_rsd_single owner/repo 42 fixture unused unused || rc=$?
+[[ "$rc" == 2 ]]
+assert_status blocked
 COMMENTS_JSON='[[]]'
 rc=0
 _action_rsd_single owner/repo 42 fixture unused unused || rc=$?

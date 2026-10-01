@@ -1246,7 +1246,14 @@ test_gh32640_ciw_rsd_recurrent_file_size_debt_gate() {
 			export LOGFILE REPOS_JSON GH_TEST_OUT
 			# shellcheck disable=SC1090
 			source "$1"
-			gh() { printf "gh:%s\n" "$*" >>"$GH_TEST_OUT"; return 0; }
+			gh() {
+				local command="$1"
+				if [[ "$command" == api ]]; then
+					if [[ "$*" == *comments* ]]; then printf "[[]]\n";
+					else printf "%s\n" "{\"state\":\"open\",\"labels\":[{\"name\":\"status:done\"}]}"; fi
+				else printf "gh:%s\n" "$*" >>"$GH_TEST_OUT"; fi
+				return 0
+			}
 			set_issue_status() { printf "status:%s\n" "$*" >>"$GH_TEST_OUT"; return 0; }
 			_pir_pr_merged_at() { printf "2026-07-21T02:31:43Z"; return 0; }
 			set_solved_label_from_merged_pr() { return 0; }
@@ -1276,38 +1283,54 @@ test_gh32640_ciw_rsd_recurrent_file_size_debt_gate() {
 		all_ok=0
 	fi
 
-	# Unmeasurable outcome (cited file missing): no mutation from either stage.
+	# Unmeasurable debt defers closure, but open + done still heals its label.
 	rm -f "${repo_dir}/large.sh"
 	: >"$out_file"
 	result=$(_gh32640_run _action_ciw_single 28377 "$debt_body")
 	local ciw_missing="$result"
+	local ciw_mutated=0
+	[[ ! -s "$out_file" ]] || ciw_mutated=1
 	result=$(_gh32640_run _action_rsd_single 28377 "$debt_body")
-	if [[ "$ciw_missing" != *"rc=1"* || "$result" != *"rc=1"* ]] || [[ -s "$out_file" ]]; then
-		_fail "GH#32640: unmeasurable debt outcome was not deferred: ${ciw_missing} ${result} $(tr '\n' ' ' <"$out_file")"
+	if [[ "$ciw_missing" != *"rc=1"* || "$result" != *"rc=2"* || "$ciw_mutated" != 0 ]] ||
+		grep -q '^gh:issue close' "$out_file" || ! grep -q '^status:28377 test/repo available' "$out_file"; then
+		_fail "GH#33374: unmeasurable debt closed or failed to heal done: ${ciw_missing} ${result}"
 		all_ok=0
 	fi
 
-	# Resolved debt and ordinary issues keep closing on merged-PR evidence.
+	# Stage 1 retains closure; stage 2 only heals invalid open/done labels.
 	printf 'one\ntwo\n' >"${repo_dir}/large.sh"
 	local stage=""
 	for stage in _action_ciw_single _action_rsd_single; do
+		local expected_rc=0 expected_action='^gh:issue close'
+		if [[ "$stage" == _action_rsd_single ]]; then
+			expected_rc=2
+			expected_action='^status:'
+		fi
 		: >"$out_file"
 		result=$(_gh32640_run "$stage" 28377 "$debt_body")
-		if [[ "$result" != *"rc=0"* ]] || ! grep -q '^gh:issue close 28377' "$out_file"; then
-			_fail "GH#32640: ${stage} did not close resolved debt: ${result}"
+		if [[ "$result" != *"rc=${expected_rc}"* ]] || ! grep -q "$expected_action" "$out_file"; then
+			_fail "GH#33374: ${stage} did not apply the resolved-debt lifecycle: ${result}"
+			all_ok=0
+		fi
+		if [[ "$stage" == _action_rsd_single ]] && grep -q '^gh:issue close' "$out_file"; then
+			_fail "GH#33374: stale-done healing closed resolved debt"
 			all_ok=0
 		fi
 		: >"$out_file"
 		result=$(_gh32640_run "$stage" 99 "ordinary issue")
-		if [[ "$result" != *"rc=0"* ]] || ! grep -q '^gh:issue close 99' "$out_file"; then
+		if [[ "$result" != *"rc=${expected_rc}"* ]] || ! grep -q "$expected_action" "$out_file"; then
 			_fail "GH#32640: ${stage} changed ordinary issue behavior: ${result}"
+			all_ok=0
+		fi
+		if [[ "$stage" == _action_rsd_single ]] && grep -q '^gh:issue close' "$out_file"; then
+			_fail "GH#33374: stale-done healing closed an ordinary open issue"
 			all_ok=0
 		fi
 	done
 
 	unset -f _gh32640_run
 	rm -rf "$tmp_dir"
-	[[ "$all_ok" == "1" ]] && _pass "GH#32640: stages 1-2 keep regrown debt open, defer unmeasurable debt, close resolved and ordinary issues"
+	[[ "$all_ok" == "1" ]] && _pass "GH#32640/GH#33374: debt closure gates remain intact; stage 2 heals open/done without closing"
 	return 0
 }
 
@@ -1496,7 +1519,12 @@ EOF
 		LOGFILE="$4"
 		# shellcheck source=/dev/null
 		source "$actions_sh"
-		gh() { printf "gh:%s\n" "$*" >>"$mutation_log"; return 0; }
+		gh() {
+			local command="$1"
+			[[ "$command" != api ]] || return 1
+			printf "gh:%s\n" "$*" >>"$mutation_log"
+			return 0
+		}
 		set_issue_status() { printf "status:%s\n" "$*" >>"$mutation_log"; return 0; }
 		_pir_pr_merged_at() { return 1; }
 		ciw_rc=0

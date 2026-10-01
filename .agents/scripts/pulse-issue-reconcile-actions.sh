@@ -1361,7 +1361,7 @@ _action_rsd_single() {
 	comments_json=$(gh api --paginate --slurp "${issue_api}/comments?per_page=100" 2>/dev/null) || return 1
 	restored_status=$(printf '%s' "$comments_json" | jq -er '
 		[.[][] | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR")
-			| select((.body // "") | test("CLAIM_RELEASED|CLAIM_RENEWED|CLAIM_ACQUIRED") | not)]
+			| select((.body // "") | test("^(<!-- ops:start[^\\n]*\\n)?(CLAIM_RELEASED|CLAIM_RENEWED|CLAIM_ACQUIRED)([[:space:]]|$)") | not)]
 		| sort_by(.updated_at // .created_at) | last
 		| if ((.body // "") | test("(^|\\n)(\\*\\*)?BLOCKED\\b|TERMINAL_BLOCKER_REASON=|status:blocked"; "i")) then "blocked" else "available" end' 2>/dev/null) || return 1
 	if printf '%s' "$issue_json" | jq -e 'any(.labels[]; .name == "status:blocked")' >/dev/null 2>&1; then
