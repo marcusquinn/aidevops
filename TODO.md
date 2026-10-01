@@ -1521,14 +1521,14 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 - [x] t18563 fix(skill-update): authenticate GitHub lookups and route non-GitHub skill sources #auto-dispatch #bug tier:standard ref:GH#33135 logged:2026-09-30 -> [todo/tasks/t18563-brief.md] pr:#33161 completed:2026-09-30
 - [ ] t18564 Framework value audit: retire obsolete scaffolding and keep the ideas worth keeping #parent-task #framework #interactive tier:thinking ref:GH#33139 logged:2026-09-30 -> [todo/tasks/t18564-brief.md]
 - [x] t18565 chore: retire code-search leftovers, llm-tldr, context-builder/repomix and rapidfuzz #auto-dispatch #chore tier:standard ref:GH#33140 logged:2026-09-30 -> [todo/tasks/t18565-brief.md] pr:#33188 completed:2026-09-30
-- [ ] t18566 chore: retire DSPy and DSPyGround from setup, docs and status checks #auto-dispatch #chore tier:standard ref:GH#33141 logged:2026-09-30 -> [todo/tasks/t18566-brief.md]
+- [x] t18566 chore: retire DSPy and DSPyGround from setup, docs and status checks #auto-dispatch #chore tier:standard ref:GH#33141 logged:2026-09-30 -> [todo/tasks/t18566-brief.md] pr:#33222 completed:2026-09-30
 - [x] t18567 feat(hooks): Claude Code keep-going Stop hook matching the OpenCode session-continuation guard #auto-dispatch #feat tier:thinking ref:GH#33143 logged:2026-09-30 -> [todo/tasks/t18567-brief.md] pr:#33215 completed:2026-09-30
-- [ ] t18568 chore: retire Ralph loop commands, workflow and state readers #auto-dispatch #chore tier:standard ref:GH#33142 logged:2026-09-30 -> [todo/tasks/t18568-brief.md]
+- [x] t18568 chore: retire Ralph loop commands, workflow and state readers #auto-dispatch #chore tier:standard ref:GH#33142 logged:2026-09-30 -> [todo/tasks/t18568-brief.md] pr:#33241 completed:2026-09-30
 - [ ] t18569 refactor: remove dead pattern-tracker callers and route rule-violation counts to observability #auto-dispatch #refactor tier:standard ref:GH#33144 logged:2026-09-30 -> [todo/tasks/t18569-brief.md]
-- [ ] t18570 refactor(models): retire contest and response-scoring chain, keep /cross-review, route model comparison to model-replay and model-ab #auto-dispatch #refactor tier:standard ref:GH#33145 logged:2026-09-30 -> [todo/tasks/t18570-brief.md]
+- [x] t18570 refactor(models): retire contest and response-scoring chain, keep /cross-review, route model comparison to model-replay and model-ab #auto-dispatch #refactor tier:standard ref:GH#33145 logged:2026-09-30 -> [todo/tasks/t18570-brief.md] pr:#33245 completed:2026-09-30
 - [x] t18571 feat(backup): archive issue and PR discussions to a same-repo orphan branch via pulse routine #auto-dispatch #feat tier:thinking ref:GH#33146 logged:2026-09-30 -> [todo/tasks/t18571-brief.md] pr:#33187 completed:2026-09-30
 - [ ] t18572 chore: retire Beads integration and todo-ready.sh after the issue archive lands #auto-dispatch #chore tier:standard blocked-by:t18571 ref:GH#33148 logged:2026-09-30 -> [todo/tasks/t18572-brief.md]
-- [ ] t18573 docs: trim textbook skills, fold minor branch-type docs, merge best-practices, retire mission-skill-learner #auto-dispatch #chore tier:standard ref:GH#33149 logged:2026-09-30 -> [todo/tasks/t18573-brief.md]
+- [x] t18573 docs: trim textbook skills, fold minor branch-type docs, merge best-practices, retire mission-skill-learner #auto-dispatch #chore tier:standard ref:GH#33149 logged:2026-09-30 -> [todo/tasks/t18573-brief.md] pr:#33280 completed:2026-09-30
 - [ ] t18574 docs: re-sync and restructure Remotion and Cloudflare platform skills #auto-dispatch #chore tier:standard blocked-by:t18563 ref:GH#33150 logged:2026-09-30 -> [todo/tasks/t18574-brief.md]
 - [x] t18575 fix(claim-task-id): write auto-detected GH# predecessors as task IDs in the TODO line so publication can parse it #auto-dispatch #bug tier:standard ref:GH#33159 logged:2026-09-30 -> [todo/tasks/t18575-brief.md] pr:#33213 completed:2026-09-30
 - [ ] t18576 fix(pulse-dep-graph): read dependencies only from structured fields, not prose or code spans in issue bodies #auto-dispatch #bug tier:standard ref:GH#33166 logged:2026-09-30 -> [todo/tasks/t18576-brief.md]
@@ -5083,3 +5083,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t18561 fix: repos migrate-layout apply fails on OpenCode DBs with no matching rows #bug ref:GH#33108
 - [x] t18562 fix(worker): route unverified post-PR handoff with durable PR to checkpoint, not failure and tier escalation #bug ref:GH#33115 pr:#33118 completed:2026-09-30
 - [x] t18578 perf(ci): remove duplicate serial ShellCheck pass from required Framework Validation critical path #enhancement ref:GH#33182 pr:#33185 completed:2026-09-30
+
+- [ ] t18580 Background routing: Opus 5.5 thinking at high; no sub-medium reasoning for subagents or new A/B arms #enhancement ref:GH#33342
