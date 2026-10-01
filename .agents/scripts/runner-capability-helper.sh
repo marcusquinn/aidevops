@@ -10,6 +10,7 @@ runner_capability_check() {
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -17,6 +18,20 @@ from pathlib import Path
 def unmet():
     print('runner_capability_unmet')
     raise SystemExit(1)
+
+def run_check(argv, cwd=None):
+    # Bound descendants too: a locked pinentry or probe child must not survive.
+    process = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.DEVNULL,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                               start_new_session=True)
+    try:
+        status = process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        os.killpg(process.pid, signal.SIGKILL)
+        process.wait()
+        unmet()
+    if status:
+        unmet()
 
 try:
     root = Path(sys.argv[1]).resolve(strict=True)
@@ -67,17 +82,10 @@ try:
     if len(secrets) > 32 or len(probes) > 8:
         unmet()
     for name in sorted(secrets):
-        result = subprocess.run(['aidevops', 'secret', 'check', name],
-                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                                stderr=subprocess.DEVNULL, timeout=5)
-        if result.returncode:
-            unmet()
+        run_check(['aidevops', 'secret', 'check', name])
     for probe in probes:
-        result = subprocess.run([probe], cwd=root, stdin=subprocess.DEVNULL,
-                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
-        if result.returncode:
-            unmet()
-except (OSError, ValueError, TypeError, AttributeError, subprocess.TimeoutExpired):
+        run_check([probe], cwd=root)
+except (OSError, ValueError, TypeError, AttributeError, RuntimeError):
     unmet()
 PY
 	local rc=$?

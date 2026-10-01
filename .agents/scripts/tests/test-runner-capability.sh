@@ -22,6 +22,7 @@ with tempfile.TemporaryDirectory(prefix='runner-capability-') as temp:
     cli = bin_dir / 'aidevops'
     cli.write_text('''#!/usr/bin/env bash
 [[ "$1 $2" == 'secret check' ]] || exit 99
+[[ "$3" != SLOW ]] || exec sleep 10
 printf 'PRIVATE_VALUE\n'
 printf 'PRIVATE_ERROR\n' >&2
 [[ "$3" == GOOD ]]
@@ -51,6 +52,7 @@ printf 'PRIVATE_ERROR\n' >&2
     check('no declarations preserves dispatch', issue)
     check('missing secret defers', issue, {'publish': {'secrets': ['MISSING']}}, False)
     check('resolvable secret proceeds without output', issue, {'publish': {'secrets': ['GOOD']}})
+    check('locked secret timeout defers', issue, {'publish': {'secrets': ['SLOW']}}, False)
     check('brief requirement defers', {'body': 'requires-secrets: MISSING'}, success=False)
     check('brief comma/space names proceed', {'body': 'requires-secrets: GOOD, GOOD'})
     check('brief and class combine', dict(issue, body='requires-secrets: MISSING'),
