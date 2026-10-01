@@ -1817,6 +1817,75 @@ cmd_record_published_release() {
 	return 0
 }
 
+cmd_record_included_release() {
+	local pr_number="${1:-}"
+	local source_pr="${2:-}"
+	local tag_name="${3:-}"
+	local repo="" source_json="" feature_json="" source_merge="" feature_merge=""
+	local source_receipt="" receipt_path="" release_status="" compare_json=""
+	local workflow_file="" workflow_event="" evidence_path="" status=0
+	if [[ $# -lt 3 || ! "$pr_number" =~ ^[1-9][0-9]*$ || ! "$source_pr" =~ ^[1-9][0-9]*$ || "$pr_number" == "$source_pr" || ! "$tag_name" =~ $_FULL_LOOP_VERSION_TAG_REGEX ]]; then
+		print_error "Usage: record-included-release <PR> <SOURCE_PR> <TAG> [REPO] [--workflow FILE] [--event EVENT]"
+		return 1
+	fi
+	shift 3
+	_full_loop_parse_published_release_options "$@" || return 1
+	[[ "$_FULL_LOOP_PARSED_GENERATED_CATALOG" == "$_FULL_LOOP_BOOL_FALSE" ]] || return 1
+	repo=$(_full_loop_resolve_repo "$_FULL_LOOP_PARSED_REPO_ARG") || return 1
+	# Canonical aidevops releases retain their signed aggregation manifest path.
+	[[ "$(printf '%s' "$repo" | tr '[:upper:]' '[:lower:]')" != "marcusquinn/aidevops" ]] || return 1
+	workflow_file="$_FULL_LOOP_PARSED_WORKFLOW_FILE"
+	workflow_event="$_FULL_LOOP_PARSED_WORKFLOW_EVENT"
+	source_receipt=$(_full_loop_release_receipt_path "$repo" "$source_pr") || return 1
+	[[ -f "$source_receipt" ]] || return 1
+	IFS= read -r release_status <"$source_receipt" || return 1
+	[[ "$release_status" == "$_FULL_LOOP_RELEASE_PUBLISHED" ]] || return 1
+	source_json=$(_full_loop_read_fresh_merged_pr_json "$source_pr" "$repo") || return 1
+	feature_json=$(_full_loop_read_fresh_merged_pr_json "$pr_number" "$repo") || return 1
+	source_merge=$(jq -er '.mergeCommit.oid' <<<"$source_json") || return 1
+	feature_merge=$(jq -er '.mergeCommit.oid' <<<"$feature_json") || return 1
+	[[ "$source_merge" =~ $_FULL_LOOP_SHA40_REGEX && "$feature_merge" =~ $_FULL_LOOP_SHA40_REGEX ]] || return 1
+	# aidevops:trust-boundary — ancestry proves inclusion only AFTER independently
+	# verifying the published source receipt, exact source tag and successful run.
+	_full_loop_verify_published_release "$repo" "$tag_name" "$source_merge" "$workflow_file" "$workflow_event" || return 1
+	compare_json=$(gh api "repos/${repo}/compare/${feature_merge}...${source_merge}" 2>/dev/null) || return 1
+	jq -e --arg feature "$feature_merge" --arg source "$source_merge" '
+		(.status == "ahead" or .status == "identical")
+		and .merge_base_commit.sha == $feature and .base_commit.sha == $feature
+		and (if .status == "identical" then $source == $feature else true end)
+	' <<<"$compare_json" >/dev/null || return 1
+	[[ "$source_merge" == "$(_full_loop_resolve_remote_release_tag_commit "$repo" "$tag_name")" ]] || return 1
+	_full_loop_acquire_transition_lock || return 1
+	receipt_path=$(_full_loop_release_receipt_path "$repo" "$pr_number") || status=1
+	release_status=""
+	if [[ "$status" -eq 0 && -f "$receipt_path" ]]; then
+		IFS= read -r release_status <"$receipt_path" || status=1
+	fi
+	case "$release_status" in
+	"" | "$_FULL_LOOP_PHASE_FAILED" | "$_FULL_LOOP_RELEASE_NOT_REQUESTED") ;;
+	"$_FULL_LOOP_RELEASE_SUPERSEDED")
+		evidence_path=$(_full_loop_superseded_release_evidence_path "$repo" "$pr_number") || status=1
+		if [[ "$status" -eq 0 ]]; then
+			jq -e --argjson source "$source_pr" --arg feature "$feature_merge" --arg merge "$source_merge" --arg tag "$tag_name" '
+				.aggregate_pr == $source and .source_merge == $feature and .aggregate_merge == $merge
+				and .release_tag == $tag and .release_commit == $merge
+			' "$evidence_path" >/dev/null || status=1
+		fi
+		;;
+	*) status=1 ;;
+	esac
+	if [[ "$status" -eq 0 && "$release_status" != "$_FULL_LOOP_RELEASE_SUPERSEDED" ]]; then
+		_full_loop_write_superseded_release_receipt "$repo" "$pr_number" "$feature_merge" \
+			"$source_pr" "$source_merge" "$tag_name" "$source_merge" || status=1
+	elif [[ "$status" -eq 0 ]]; then
+		_full_loop_update_superseded_cleanup_receipt "$repo" "$pr_number" || status=1
+	fi
+	_full_loop_release_transition_lock
+	[[ "$status" -eq 0 ]] || return 1
+	print_success "release:superseded recorded for PR #${pr_number}, included in source PR #${source_pr} (${tag_name})"
+	return 0
+}
+
 _full_loop_terminal_release_status() {
 	local repo="$1"
 	local pr_number="$2"

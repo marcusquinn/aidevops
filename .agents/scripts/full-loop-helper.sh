@@ -347,6 +347,8 @@ Commands:
                                  gh CLI level; if both are given, --admin wins and
                                   --auto is dropped (GH#19310).
   record-no-release <PR> [REPO]  Verify merged evidence and record release:not-requested.
+  record-included-release <PR> <SOURCE_PR> <TAG> [REPO] [--workflow FILE] [--event EVENT]
+                                  Verify inclusion in a published non-aidevops release.
   record-published-release <PR> <TAG> [REPO] [--workflow FILE] [--event EVENT]
                                    Verify a GitHub release and record release:published.
                                    Defaults to release-event evidence; repository-owned
@@ -401,6 +403,7 @@ main() {
 	merge) cmd_merge "$@" ;;
 	record-no-release) cmd_record_no_release "$@" ;;
 	record-published-release) cmd_record_published_release "$@" ;;
+	record-included-release) cmd_record_included_release "$@" ;;
 	adopt-merged-receipt) cmd_adopt_merged_receipt "$@" ;;
 	finalize-receipt) cmd_finalize_receipt "$@" ;;
 	migrate-repository-receipt) cmd_migrate_repository_receipt "$@" ;;

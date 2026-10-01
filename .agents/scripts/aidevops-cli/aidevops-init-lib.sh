@@ -1668,6 +1668,10 @@ _init_optional_scaffolding() {
 	fi
 
 	_init_security_and_registration || return 1
+	if [[ -n "$repo_slug" ]]; then
+		print_info "Manual GitHub releases: opt in with aidevops sync-workflows --repo $repo_slug --workflow release-verify --install-missing --apply (read-only verification; Actions must be enabled)."
+		print_info "Release verification callers currently support GitHub only; Gitea/Forgejo Actions are unsupported."
+	fi
 	return 0
 }
 

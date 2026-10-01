@@ -270,6 +270,17 @@ Check gate without merging: `full-loop-helper.sh pre-merge-gate "$PR_NUMBER" "$R
 
 **4.6 Conditional Detached Release (aidevops only):** Without explicit trusted release intent, run `full-loop-helper.sh record-no-release "$PR_NUMBER" "$REPO"` after verified merge to record `release:not-requested`, then continue directly to closing and guarded cleanup. This means no immediate publication from that session, not exclusion from a later release; a later explicitly authorized release may transition the merged PR to `release:published` or `release:superseded` without asking again. The command verifies merged evidence, is idempotent, and refuses to replace `release:published`, `release:superseded`, or `release:failed`. Authorized releases MUST run `aidevops release [patch|minor|major] "$PR_NUMBER" [incremental|full]`; this canonical entry point atomically reserves the repository-wide remote release lane before creating a fresh detached release worktree at `origin/main`, then signs and pushes the provenance-bound tag and durably queues unified GitHub/npm/Homebrew publication. A competing source must follow the lane's printed status/reconcile action rather than bumping; same-source continuation adopts the lane. Exit `8` is pending, creates no false terminal receipt, and resumes through `aidevops release status "$PR_NUMBER"` or `aidevops release reconcile "$PR_NUMBER"`; the initiating process need not remain alive and process death alone never clears ownership. Reconciliation dispatches only the newest verified tag and records terminal success only after public channels, postflight, and exact-tag local deployment converge. If `main` advanced or its merged descendant tree differs from the signed release tree, publication stops before remote tag mutation and an exact-tip reviewed aggregation PR with immutable `Aidevops-Release-Aggregator-PR` and repeated `Aidevops-Release-Aggregates: PR@MERGE_SHA` trailers is required; arbitrary descendants remain blocked. Include all otherwise-unreleased PRs merged to the default remote branch without requesting per-PR authorization. The signed tag preserves the full manifest, the aggregation PR records `release:published`, and included source PRs record `release:superseded` with linked JSON evidence. Omitted type defaults to patch and omitted deployment scope defaults to incremental. Major/minor and full deployment must be selected explicitly. Never invoke `version-manager.sh release` directly from full-loop and never create another version merely to recover a queued tag.
 
+**Manual releases (maintained non-aidevops repos):** publication requires separate
+trusted release intent. Opt into the read-only `release-verify` caller through
+`aidevops sync-workflows --workflow release-verify --install-missing --apply`.
+After publication and successful verification, record the version-bump/source PR
+with `record-published-release SOURCE_PR TAG REPO --workflow release-verify.yml`,
+then `record-included-release FEATURE_PR SOURCE_PR TAG REPO --workflow
+release-verify.yml`. Inclusion requires the published source receipt, re-verifies
+its exact tag/workflow, and checks feature ancestry before recording linked
+`release:superseded` evidence. This never relaxes the source PR's exact-tag rule.
+See `workflows/release.md` → Manual Release for assets and optional preflight.
+
 Direct merge-wrapper flows without local lifecycle state use
 `full-loop-helper.sh finalize-receipt <PR> [REPO]` after terminal release evidence
 exists. The command re-verifies merged evidence and idempotently changes only the

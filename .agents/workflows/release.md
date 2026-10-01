@@ -259,6 +259,36 @@ or publication authority.
 
 ## Manual Release (Non-aidevops Repos)
 
+Publication still requires explicit release authority and follows the repository's
+own process. For GitHub repos with Actions enabled, opt into read-only evidence
+before publishing: `aidevops sync-workflows --repo OWNER/REPO --workflow
+release-verify --install-missing --apply`. Init offers this command; it does not
+publish or silently enable it. Gitea/Forgejo callers are currently unsupported.
+The caller runs on `release: published`, checks out the exact tag commit, requires
+uploaded non-empty assets, and never builds, tags or uploads. Configure repository
+variable `RELEASE_VERIFY_ASSETS` with exact asset names (one per line), and optional
+`RELEASE_VERIFY_PREFLIGHT` with the repository's verification-only command. Empty
+asset configuration requires at least one asset. Publish with all assets attached;
+a later upload does not retrigger the published event (rerun verification instead).
+
+After the caller succeeds, record the version-bump/source PR first, then each
+included feature PR:
+
+```bash
+full-loop-helper.sh record-published-release SOURCE_PR vX.Y.Z OWNER/REPO --workflow release-verify.yml
+full-loop-helper.sh record-included-release FEATURE_PR SOURCE_PR vX.Y.Z OWNER/REPO --workflow release-verify.yml
+```
+
+The source must already have a local `release:published` receipt; inclusion
+re-verifies the source PR, exact tag and successful workflow, then verifies the
+feature merge commit is an ancestor of that tag. It records `release:superseded`
+with linked source PR/merge/tag JSON evidence using the aggregate receipt schema.
+Matching retries are idempotent; conflicting terminal receipts are not replaced.
+An earlier feature `release:not-requested` may transition to included. This is
+not a substitute for exact-tag verification of the source PR and is unavailable
+for aidevops's signed release path. Missing/failed evidence leaves receipts
+unchanged; repos without the caller retain the existing workflow evidence gate.
+
 Reuse terminal-success CI and lint evidence for the exact release SHA. Do not
 repeat a full source scan merely because release follows every merge. Run the
 repository's broad gate only when no trustworthy SHA-matched evidence exists or

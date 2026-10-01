@@ -1,0 +1,62 @@
+name: Release Verify (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      expected-assets:
+        description: Exact asset names, one per line (empty requires at least one asset)
+        type: string
+        default: ''
+      preflight:
+        description: Repository-owned verification command; must not publish
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require a published release event
+        env:
+          EVENT: ${{ github.event_name }}
+          ACTION: ${{ github.event.action }}
+        run: test "$EVENT" = release && test "$ACTION" = published
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify release, immutable tag commit and uploaded assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.event.release.tag_name }}
+          RELEASE_ID: ${{ github.event.release.id }}
+          EXPECTED_ASSETS: ${{ inputs.expected-assets }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          ref=$(gh api "repos/$GH_REPO/git/ref/tags/$TAG")
+          sha=$(jq -er '.object.sha' <<<"$ref")
+          if test "$(jq -er '.object.type' <<<"$ref")" = tag; then
+            sha=$(gh api "repos/$GH_REPO/git/tags/$sha" --jq 'select(.object.type == "commit") | .object.sha')
+          else
+            test "$(jq -er '.object.type' <<<"$ref")" = commit
+          fi
+          test "$sha" = "$GITHUB_SHA"
+          release=$(gh api "repos/$GH_REPO/releases/$RELEASE_ID")
+          jq -e --arg tag "$TAG" --arg expected "$EXPECTED_ASSETS" '
+            (.assets | map(.name)) as $names
+            | .tag_name == $tag and .draft == false
+            and (.assets | length > 0)
+            and all(.assets[]; .state == "uploaded" and .size > 0)
+            and all($expected | split("\n")[] | select(length > 0); . as $name | $names | index($name) != null)
+          ' <<<"$release"
+      - name: Repository preflight (optional)
+        if: inputs.preflight != ''
+        env:
+          PREFLIGHT: ${{ inputs.preflight }}
+        run: bash -euo pipefail -c "$PREFLIGHT"

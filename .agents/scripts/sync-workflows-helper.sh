@@ -84,6 +84,7 @@ readonly _SYNC_KNOWN_WORKFLOWS=(
 	"maintainer-gate.yml:maintainer-gate-caller.yml"
 	"loc-badge.yml:loc-badge-caller.yml"
 	"linked-issue-check.yml:linked-issue-check-caller.yml"
+	"release-verify.yml:release-verify-caller.yml"
 )
 
 # Output mode constants.
