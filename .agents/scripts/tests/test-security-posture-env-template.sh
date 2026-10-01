@@ -33,6 +33,11 @@ print_pass() {
 	CAPTURED_OUTPUT="${CAPTURED_OUTPUT}${msg}"$'\n'
 	return 0
 }
+print_info() {
+	local msg="$1"
+	CAPTURED_OUTPUT="${CAPTURED_OUTPUT}${msg}"$'\n'
+	return 0
+}
 add_finding() {
 	local severity="$1"
 	local message="$3"
@@ -98,6 +103,10 @@ run_case() {
 		fail "$description" "expected reason ${reason}; output: ${CAPTURED_OUTPUT}"
 		return 0
 	fi
+	if [[ "$expected" == critical && "$CAPTURED_OUTPUT" != *"aidevops secret set <NAME>"* ]]; then
+		fail "$description" "encrypted-secret remediation missing"
+		return 0
+	fi
 	pass "$description"
 	return 0
 }
@@ -154,6 +163,19 @@ run_case "real .env remains critical by filename" critical ".env" \
 
 run_case "real .env.local remains critical by filename" critical ".env.local" \
 	"PORT=3000"
+
+run_case "nested real .env.local is critical by filename" critical "app/.env.local" \
+	"PORT=3000"
+
+run_case "nested real .env.production is critical by filename" critical "app/.env.production" \
+	"PORT=3000"
+
+run_case "nested safe template is classified by content" pass "services/api/.env.example" \
+	"API_KEY=
+PORT=3000"
+
+run_case "nested secret-bearing template is critical and redacted" critical "services/api/.env.example" \
+	"DATABASE_URL=postgres://app:${FAKE_SECRET_VALUE}@db.prod.internal/app" credential-url
 
 run_case "private key file remains critical by filename" critical "deploy.pem" \
 	"placeholder"

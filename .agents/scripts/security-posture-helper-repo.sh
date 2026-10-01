@@ -1057,7 +1057,7 @@ _posture_env_template_secret_reason() {
 _check_tracked_secret_files() {
 	local repo_path="$1"
 	local tracked
-	tracked=$(git -C "$repo_path" ls-files '*.env' '*.pem' '*.key' 'credentials.json' '.env.*' 2>/dev/null) || true
+	tracked=$(git -C "$repo_path" ls-files '*.env' '*.pem' '*.key' 'credentials.json' '.env.*' '*/.env.*' 2>/dev/null) || true
 
 	local flagged=""
 	local flagged_count=0
@@ -1080,6 +1080,12 @@ _check_tracked_secret_files() {
 
 	if [[ "$flagged_count" -gt 0 ]]; then
 		print_crit "$flagged_count potential secret file(s) tracked by git: $flagged"
+		print_info "  Rotate any committed credential; removing the file does not remove it from git history."
+		print_info "  Store each value encrypted (gopass/GPG-backed) with: aidevops secret set <NAME>"
+		print_info "  Run aidevops secret init first if needed. Enter values only at the hidden terminal prompt, never in chat or files."
+		print_info "  Inject secrets at runtime with: aidevops secret run <cmd> or aidevops secret <NAME> -- <cmd>, instead of a plaintext .env."
+		print_info "  Stop tracking with: git rm --cached <path>; add the path to .gitignore. Keep .env.example with names or placeholders only."
+		print_info "  Full policy: reference/secret-handling.md."
 		add_finding "$SEVERITY_CRITICAL" "$CAT_REPO_SECURITY" "$flagged_count secret files tracked: $flagged"
 		return 0
 	fi
