@@ -202,6 +202,62 @@ printf 'PASS partial batches leave earlier dependencies blocked and later failur
 )
 printf 'PASS young absent tasks defer; stale, malformed timestamp and missing brief fail without edits\n'
 
+# GH#33321: unmapped pending issues are a distinct, non-fatal class that cannot
+# consume the reconcile budget; ref:GH#N maps issues without a tNNN title.
+unmapped_tmp=$(mktemp -d)
+(
+	# shellcheck source=../planning-publication-reconcile.sh
+	source "$RECONCILER"
+	cd "$unmapped_tmp"
+	printf '%s\n' '- [ ] t9100 Benchmark roadmap item #auto-dispatch ~1h ref:GH#55 logged:2026-10-01' >TODO.md
+	[[ "$(_publication_task_id_for_ref 55)" == "t9100" ]]
+	if _publication_task_id_for_ref 5 >/dev/null; then exit 1; fi
+	if _publication_task_id_for_ref 56 >/dev/null; then exit 1; fi
+	issue_sync_prepare_ci_context() { return 0; }
+	_publication_exact_default_snapshot() { return 0; }
+	attempt_log="${unmapped_tmp}/attempts"
+	note_log="${unmapped_tmp}/notes"
+	: >"$attempt_log"
+	: >"$note_log"
+	_publication_reconcile_one() { printf '%s %s %s\n' "$2" "$3" "${4:-1}" >>"$attempt_log"; return 0; }
+	_publication_note_unmapped() { printf '%s\n' "$2" >>"$note_log"; return 0; }
+	gh() {
+		if [[ "$1" == repo ]]; then
+			printf 'main\n'
+			return 0
+		fi
+		# Newest first: twelve stale unmapped issues ahead of two mapped ones.
+		jq -cn '[range(200; 212) | {number: ., title: "PF-D\(.): Benchmark", createdAt: "2020-01-01T00:00:00Z"}]
+			+ [{number: 55, title: "PF-D03: Benchmark roadmap item", createdAt: "2020-01-01T00:00:00Z"},
+			   {number: 77, title: "t9000: Valid task", createdAt: "2020-01-01T00:00:00Z"}]'
+		return 0
+	}
+	PUBLICATION_LIMIT=10
+	output=$(cmd_reconcile --repo example/repo --sha 0123456789012345678901234567890123456789)
+	[[ "$output" == *'PUBLICATION_RECONCILE_SUMMARY reconciled=2 deferred=0 stale=0 failed=0 unmapped=12'* ]]
+	grep -qx 't9100 55 0' "$attempt_log"
+	grep -qx 't9000 77 1' "$attempt_log"
+	[[ "$(grep -c . "$note_log")" -eq 10 ]]
+)
+printf 'PASS unmapped pending issues are reported distinctly, never starve mapped tasks, and ref:GH maps untitled tasks\n'
+
+(
+	# shellcheck source=../planning-publication-reconcile.sh
+	source "$RECONCILER"
+	comment_log="${unmapped_tmp}/comments"
+	: >"$comment_log"
+	gh_issue_comment() { printf '%s\n' "$1" >>"$comment_log"; return 0; }
+	gh() {
+		if [[ "$2" == *"/issues/301/"* ]]; then printf '9001\n'; fi
+		return 0
+	}
+	_publication_note_unmapped example/repo 300
+	_publication_note_unmapped example/repo 301
+	[[ "$(cat "$comment_log")" == "300" ]]
+)
+rm -rf "$unmapped_tmp"
+printf 'PASS stale unmapped diagnostic is posted once per issue\n'
+
 # A closed sweep must verify the live state and canonical mapping before editing.
 (
 	gh_publication_default_has_ref() { [[ "$2" != "92" ]]; return $?; }
