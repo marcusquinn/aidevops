@@ -114,7 +114,16 @@ add_filter('original_filter', 'my_fixed_filter', 999);
 function my_fixed_filter($value) { return $modified_value; }
 ```
 
-**Sync to LocalWP**: `rsync -av --delete --exclude='.git' --exclude='node_modules' --exclude='vendor' ~/Git/developer/plugin-slug/ "~/Local Sites/site-name/app/public/wp-content/plugins/plugin-slug/"`
+**Sync to LocalWP**: a LocalWP site is **shared by every parallel session/worktree** working on the same plugin or theme — a plain `rsync --delete` lets a stale worktree silently overwrite another session's merged work. Merge the default branch into your worktree first, then use the freshness-checked helper instead of a raw `rsync`:
+
+```bash
+local-site-sync-helper.sh sync --src ~/Git/_worktrees/plugin-slug-feature/ \
+  --dest "~/Local Sites/site-name/app/public/wp-content/plugins/plugin-slug/" \
+  --exclude-from .distignore
+local-site-sync-helper.sh status --dest "~/Local Sites/site-name/app/public/wp-content/plugins/plugin-slug/"
+```
+
+It refuses to sync when the worktree's `HEAD` doesn't contain `origin/<default-branch>` (use `--force` only when intentional), warns if another worktree synced to the same destination in the last 30 minutes, and writes a stamp (source worktree, branch, HEAD SHA, dirty flag, time) next to the destination so any session can answer "which branch is on the site, and who put it there?" with `status`. After merging to the default branch, run `status` before telling the user to look. Prefer a throwaway per-worktree site (e.g. a Docker `wordpress` container on a unique port) for in-progress verification; keep the shared LocalWP site for showing the user the merged result.
 
 ## Debugging
 
