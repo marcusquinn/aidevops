@@ -225,35 +225,55 @@ _file_in_scope() {
 }
 
 # ---------------------------------------------------------------------------
-# Determine the merge-base for computing the push diff.
-# Mirrors the approach in complexity-regression-pre-push.sh (GH#20045).
+# Resolve the remote default branch as a remote-qualified ref (e.g. origin/main).
+# A bare branch name would resolve to the local branch, which is often stale in
+# canonical checkouts and makes already-merged upstream files look out of
+# scope (GH#33172). Prints nothing when no remote default can be resolved.
 # ---------------------------------------------------------------------------
-_compute_baseline() {
-	local _remote
-	_remote="${1:-origin}"
-	local default_remote_head
-	local baseline
-	# Keep the remote-qualified ref (e.g. origin/main). A bare branch name would
-	# resolve to the local branch, which is often stale in canonical checkouts
-	# and makes already-merged upstream files look out of scope (GH#33172).
-	default_remote_head=$(git symbolic-ref "refs/remotes/$_remote/HEAD" 2>/dev/null \
+_resolve_remote_default_head() {
+	local _remote="${1:-origin}"
+	local _head=""
+	_head=$(git symbolic-ref "refs/remotes/$_remote/HEAD" 2>/dev/null \
 		| sed "s@^refs/remotes/@@")
-	if [[ -z "$default_remote_head" ]]; then
+	if [[ -z "$_head" ]]; then
 		local candidate
-		for candidate in "$_remote/main" "$_remote/master" "HEAD"; do
-			if git rev-parse --verify "$candidate" >/dev/null 2>&1; then
-				default_remote_head="$candidate"
+		for candidate in "$_remote/main" "$_remote/master"; do
+			if git rev-parse --verify --quiet "$candidate" >/dev/null 2>&1; then
+				_head="$candidate"
 				break
 			fi
 		done
 	fi
+	[[ -n "$_head" ]] && printf '%s\n' "$_head"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# Determine the merge-base for computing the push diff.
+# Mirrors the approach in complexity-regression-pre-push.sh (GH#20045).
+#
+# GH#33373: the merge-base is computed against the commit being pushed, not
+# the worktree's checked-out HEAD. A tag (or any other ref) pushed from a
+# worktree whose branch is behind the remote default otherwise diffs from the
+# stale branch point and reports every file merged since then as out of scope.
+# ---------------------------------------------------------------------------
+_compute_baseline() {
+	local _remote="${1:-origin}"
+	local _pushed_commit="${2:-HEAD}"
+	local default_remote_head
+	local baseline
+	default_remote_head=$(_resolve_remote_default_head "$_remote")
+	if [[ -z "$default_remote_head" ]] &&
+		git rev-parse --verify --quiet HEAD >/dev/null 2>&1; then
+		default_remote_head="HEAD"
+	fi
 	if [[ -z "$default_remote_head" ]]; then
 		printf '[%s] warning: no %s HEAD resolved; falling back to @{u}\n' \
 			"$GUARD_NAME" "$_remote" >&2
-		git merge-base HEAD '@{u}'
+		git merge-base "$_pushed_commit" '@{u}'
 		return $?
 	fi
-	baseline=$(git merge-base HEAD "$default_remote_head" 2>/dev/null)
+	baseline=$(git merge-base "$_pushed_commit" "$default_remote_head" 2>/dev/null)
 	local rc
 	rc=$?
 	if [[ $rc -ne 0 ]] || [[ -z "$baseline" ]]; then
@@ -278,12 +298,30 @@ while IFS=' ' read -r local_ref local_sha remote_ref remote_sha; do
 		continue
 	fi
 
+	# Annotated tags arrive as tag-object SHAs; scope is about the commit.
+	pushed_commit=$(git rev-parse --verify --quiet "${local_sha}^{commit}" 2>/dev/null)
+	if [[ -z "$pushed_commit" ]]; then
+		_dbg "$local_ref does not resolve to a commit — nothing to scan"
+		continue
+	fi
+
+	# GH#33373: a tag whose commit is already on the remote default branch
+	# transfers no task changes, so it is outside any task's scope.
+	if [[ "$local_ref" == refs/tags/* || "$remote_ref" == refs/tags/* ]]; then
+		remote_default=$(_resolve_remote_default_head "$remote_name")
+		if [[ -n "$remote_default" ]] &&
+			git merge-base --is-ancestor "$pushed_commit" "$remote_default" 2>/dev/null; then
+			_dbg "$local_ref points at a commit already on $remote_default — skipping"
+			continue
+		fi
+	fi
+
 	# Determine the base for diffing: use remote sha when known, else merge-base
 	base_sha=""
 	if [[ -n "$remote_sha" ]] && ! [[ "$remote_sha" =~ ^0+$ ]]; then
 		base_sha="$remote_sha"
 	else
-		base_sha=$(_compute_baseline "$remote_name")
+		base_sha=$(_compute_baseline "$remote_name" "$pushed_commit")
 	fi
 
 	if [[ -z "$base_sha" ]]; then
@@ -294,7 +332,7 @@ while IFS=' ' read -r local_ref local_sha remote_ref remote_sha; do
 	_dbg "checking $local_ref: base=${base_sha:0:7} head=${local_sha:0:7}"
 
 	# Get the list of changed files in this push (Bash 3.2-compatible; no mapfile)
-	_raw_changed=$(git diff --name-only "$base_sha" "$local_sha" 2>/dev/null)
+	_raw_changed=$(git diff --name-only "$base_sha" "$pushed_commit" 2>/dev/null)
 	changed_files=()
 	if [[ -n "$_raw_changed" ]]; then
 		while IFS= read -r _f; do
