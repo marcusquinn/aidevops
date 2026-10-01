@@ -689,6 +689,10 @@ test_dispatch_max_exports_benign_ledger_for_direct_callers() {
 		unset _DISPATCH_BENIGN_BLOCKS_FILE AIDEVOPS_PULSE_BENIGN_BLOCKS_FILE _DISPATCH_FORCE_FLOOR
 		local _dispatch_owns_benign_blocks_cycle=0 _effective_slots=1
 		local _dispatch_path="max" _dispatch_max_parallel=1
+		# Ledger inheritance is independent of live GitHub capacity probes.
+		_dispatch_rest_core_requires_serial() {
+			return 1
+		}
 		_dispatch_prepare_round 1 '[]' 0
 		local ledger_file="${_DISPATCH_BENIGN_BLOCKS_FILE:-}" child_rc=0
 		# A new shell must inherit the same usable ledger, not create its own.
