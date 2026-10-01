@@ -520,10 +520,22 @@ def build_policy_holds(counter_events, stats_state):
     # Newer dispatchers record policy gates as benign blocks. Retain the former
     # failure-named counter for mixed-version readers, deduplicating timestamps
     # where both names describe the same observed policy hold.
-    counter_names = (
+    return _build_counter_hold(counter_events, stats_state, (
         'dispatch_candidate_blocked_policy_gate',
         'dispatch_candidate_failed_reason_policy_gate',
-    )
+    ))
+
+
+def build_permission_holds(counter_events, stats_state):
+    # GH#33330: candidates held by a maintainer permission request (label or
+    # unverified request history). Diagnose one with pulse-diagnose-helper.sh issue.
+    return _build_counter_hold(counter_events, stats_state, (
+        'dispatch_candidate_blocked_needs_maintainer_permissions',
+        'dispatch_candidate_blocked_permission_grant_unverified',
+    ))
+
+
+def _build_counter_hold(counter_events, stats_state, counter_names):
     observations = {
         timestamp
         for counter_name in counter_names
@@ -814,6 +826,7 @@ rest_admission = build_rest_admission(
     counter_hits, counter_latest, rest_admission_status_from_env(), stats_state
 )
 policy_holds = build_policy_holds(counter_events, stats_state)
+permission_holds = build_permission_holds(counter_events, stats_state)
 dispatch_pacing = {
     'inter_launch_staggered_count': counter_hits.get('dispatch_inter_launch_staggered', 0),
     'last_inter_launch_delay_seconds': gauge_values.get('dispatch_inter_launch_delay_seconds'),
@@ -983,6 +996,7 @@ result = {
     'graphql_budget': graphql_budget,
     'rest_admission': rest_admission,
     'policy_holds': policy_holds,
+    'permission_holds': permission_holds,
     'dispatch_pacing': dispatch_pacing,
     'current_state_guardrails': current_state_guardrails,
     'pre_launch_blockers': pre_launch_blockers,
@@ -1071,6 +1085,7 @@ else:
     print(f'- GraphQL budget: {json.dumps(result["graphql_budget"], sort_keys=True)}')
     print(f'- REST admission: {json.dumps(rest_admission, sort_keys=True)}')
     print(f'- Policy holds: {json.dumps(policy_holds, sort_keys=True)}')
+    print(f'- Maintainer permission holds: {json.dumps(permission_holds, sort_keys=True)}')
     print(f'- Dispatch pacing: {json.dumps(result["dispatch_pacing"], sort_keys=True)}')
     print(f'- Current-state guardrails: {json.dumps(result["current_state_guardrails"], sort_keys=True)}')
     print(f'- Top pre-launch blockers: {json.dumps(result["top_pre_launch_blockers"], sort_keys=True)}')

@@ -1021,6 +1021,65 @@ cmd_live_workers() {
 }
 
 #######################################
+# GH#33330: append audited non-blocking terminal events for retained
+# supervisor-pulse permission blockers. Telemetry only: never touches GitHub
+# labels, permission requests or grants, and never deletes blocker evidence.
+# Refuses while a supervisor-pulse process is live; the cutoff is computed
+# (now - grace) unless an explicit earlier --stale-before is supplied.
+#######################################
+_wah_supervisor_is_live() {
+	local pattern="${WAH_SUPERVISOR_PROCESS_PATTERN:---role pulse --session-key supervisor-pulse}"
+	local commands=""
+	commands=$(ps -axo command= 2>/dev/null) || return 0 # unknown liveness: treat as live
+	[[ "$commands" == *"$pattern"* ]] && return 0
+	return 1
+}
+
+cmd_reconcile_stale_supervisor() {
+	local stale_before="" dry_run=0
+	local grace="${WAH_STALE_SUPERVISOR_GRACE_SECS:-300}"
+	while [[ $# -gt 0 ]]; do
+		local arg="$1"
+		case "$arg" in
+		--stale-before) stale_before="${2:-}"; shift 2 ;;
+		--dry-run) dry_run=1; shift ;;
+		*) printf 'unknown reconcile-stale-supervisor option: %s\n' "$arg" >&2; return 2 ;;
+		esac
+	done
+	[[ "$grace" =~ ^[0-9]+$ ]] || grace=300
+	local now_epoch computed_cutoff
+	now_epoch=$(date +%s)
+	computed_cutoff=$((now_epoch - grace))
+	if [[ -z "$stale_before" ]]; then
+		stale_before="$computed_cutoff"
+	elif [[ ! "$stale_before" =~ ^[1-9][0-9]*$ ]]; then
+		printf 'reconcile-stale-supervisor: --stale-before must be a unix epoch\n' >&2
+		return 2
+	elif ((stale_before > computed_cutoff)); then
+		stale_before="$computed_cutoff"
+	fi
+	if _wah_supervisor_is_live; then
+		printf 'skipped: live supervisor-pulse owner\n'
+		return 0
+	fi
+	if [[ "$dry_run" -eq 1 ]]; then
+		printf 'dry-run: would reconcile supervisor-pulse blockers with ts <= %s\n' "$stale_before"
+		return 0
+	fi
+	[[ -f "$WAH_BLOCKER_LOG_FILE" ]] || { printf '0\n'; return 0; }
+	local node_bin resolved=""
+	node_bin=$(command -v node) || { printf 'skipped: node unavailable\n'; return 0; }
+	resolved=$("$node_bin" "${SCRIPT_DIR}/worker-blocker-cli.mjs" resolve-stale-supervisor-session \
+		--repo-slug '' --session-key supervisor-pulse --stale-before "$stale_before" \
+		--log-file "$WAH_BLOCKER_LOG_FILE" 2>/dev/null) || {
+		printf 'reconcile-stale-supervisor: resolver failed\n' >&2
+		return 1
+	}
+	printf '%s\n' "${resolved:-0}"
+	return 0
+}
+
+#######################################
 # Help text.
 #######################################
 cmd_help() {
@@ -1031,6 +1090,9 @@ Usage:
   worker-activity-helper.sh summary [OPTIONS]
   worker-activity-helper.sh providers [OPTIONS]
   worker-activity-helper.sh live-workers
+  worker-activity-helper.sh reconcile-stale-supervisor [--stale-before EPOCH] [--dry-run]
+                             Telemetry-only terminal events for retained
+                             supervisor-pulse blockers; refuses while live
   worker-activity-helper.sh help
 
 Options:
@@ -1089,6 +1151,7 @@ main() {
 	summary) cmd_summary "$@" ;;
 	providers | provider-usage) cmd_providers "$@" ;;
 	live-workers | worker-count) cmd_live_workers ;;
+	reconcile-stale-supervisor) cmd_reconcile_stale_supervisor "$@" ;;
 	help | -h | --help) cmd_help ;;
 	*)
 		printf 'unknown command: %s\n' "$cmd" >&2

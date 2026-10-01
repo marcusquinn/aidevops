@@ -619,6 +619,9 @@ _dispatch_permission_history_requires_grant() {
 	_DISPATCH_PERMISSION_VERIFY_RESULT="${verification:-NO_APPROVAL}"
 	[[ "$verification" == "NO_REQUEST" ]] && return 1
 	[[ "$verification" == "VERIFIED" ]] && return 1
+	# GH#33330: verify-permissions evaluates only the latest request, so a
+	# signed withdrawal releases that request alone; a newer request blocks.
+	[[ "$verification" == "WITHDRAWN" ]] && return 1
 	return 0
 }
 

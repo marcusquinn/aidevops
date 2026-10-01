@@ -171,6 +171,71 @@ if ! _dispatch_permission_history_requires_grant 123 owner/repo; then
 fi
 [[ "$_DISPATCH_PERMISSION_VERIFY_RESULT" == "NO_APPROVAL" ]]
 
+# GH#33330: signed withdrawal releases only the withdrawn request.
+build_withdrawal_comment() {
+	local source_request="$1"
+	local withdrawal_payload withdrawal_sig
+	withdrawal_payload=$(jq -cS --arg schema "$PERMISSION_WITHDRAWAL_SCHEMA" --arg issued "$issued_at" '
+		{schema: $schema, authority: "worker-permissions", decision: "withdrawn", target,
+		 request_id, request_sha256, worker, issued_at: $issued}' <<<"$source_request")
+	withdrawal_sig=$(mktemp)
+	_sign_approval_payload "$withdrawal_payload" "$APPROVAL_KEY" "$withdrawal_sig"
+	_build_permission_withdrawal_comment "$withdrawal_payload" "$withdrawal_sig"
+	rm -f "$withdrawal_sig"
+	return 0
+}
+withdrawal_comment=$(build_withdrawal_comment "$request_json")
+jq -cn --arg request "$request_comment" --arg withdrawal "$withdrawal_comment" \
+	'[[{id: 1, author_association: "MEMBER", body: $request},
+	   {id: 5, author_association: "OWNER", body: $withdrawal}]]' >"$comments_file"
+withdrawn_rc=0
+withdrawn=$(cmd_verify_permissions issue 123 owner/repo) || withdrawn_rc=$?
+[[ "$withdrawn" == "WITHDRAWN" && "$withdrawn_rc" -ne 0 ]] || {
+	printf 'withdrawal verified as %s (rc=%s); expected non-success WITHDRAWN\n' "$withdrawn" "$withdrawn_rc" >&2
+	exit 1
+}
+if _dispatch_permission_history_requires_grant 123 owner/repo; then
+	printf 'dispatch remained blocked after a signed withdrawal: %s\n' "${_DISPATCH_PERMISSION_VERIFY_RESULT:-}" >&2
+	exit 1
+fi
+[[ "$_DISPATCH_PERMISSION_VERIFY_RESULT" == "WITHDRAWN" ]]
+
+# A withdrawal replayed against a different request digest is not accepted.
+other_base=$(jq -cS '.created_at = "2026-07-15T00:00:00Z"' <<<"$request_base")
+other_digest=$(_permission_request_digest "$other_base")
+other_request=$(jq -cS --arg id "perm-${other_digest:0:16}" --arg digest "$other_digest" \
+	'. + {request_id: $id, request_sha256: $digest}' <<<"$other_base")
+forged=$(build_withdrawal_comment "$other_request" | sed "s/perm-${other_digest:0:16}/${request_id}/")
+jq -cn --arg request "$request_comment" --arg withdrawal "$forged" \
+	'[[{id: 1, author_association: "MEMBER", body: $request},
+	   {id: 5, author_association: "OWNER", body: $withdrawal}]]' >"$comments_file"
+if _dispatch_permission_history_requires_grant 123 owner/repo; then :; else
+	printf 'dispatch was allowed by a withdrawal bound to another request\n' >&2
+	exit 1
+fi
+[[ "$_DISPATCH_PERMISSION_VERIFY_RESULT" == "MALFORMED_APPROVAL" ]]
+
+# A newer request after the withdrawal still blocks.
+other_comment=$(printf '%s\n~~~json\n%s\n~~~\n' "$PERMISSION_REQUEST_MARKER" "$other_request")
+jq -cn --arg request "$request_comment" --arg withdrawal "$withdrawal_comment" --arg newer "$other_comment" \
+	'[[{id: 1, author_association: "MEMBER", body: $request},
+	   {id: 5, author_association: "OWNER", body: $withdrawal},
+	   {id: 6, author_association: "MEMBER", body: $newer}]]' >"$comments_file"
+if _dispatch_permission_history_requires_grant 123 owner/repo; then :; else
+	printf 'a newer request was released by an older withdrawal\n' >&2
+	exit 1
+fi
+[[ "$_DISPATCH_PERMISSION_VERIFY_RESULT" == "NO_APPROVAL" ]]
+
+# Withdrawal removes only the local grant bound to the withdrawn request.
+grant_path=$(_permission_grant_path owner/repo 123)
+mkdir -p "$(dirname "$grant_path")"
+jq -n --arg payload "$payload" '{payload: $payload, signature: "x"}' >"$grant_path"
+_revoke_local_permission_grant owner/repo 123 "perm-${other_digest:0:16}"
+[[ -f "$grant_path" ]]
+_revoke_local_permission_grant owner/repo 123 "$request_id"
+[[ ! -e "$grant_path" ]]
+
 permission_retry_result=$(bash -c '
 	set -euo pipefail
 	source "$1"

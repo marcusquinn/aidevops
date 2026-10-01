@@ -630,6 +630,24 @@ OUT=$(env "${RUN_ENV[@]}" "$HELPER" providers --since 24h 2>&1)
 assert_contains "6d: human provider output shows capacity slots" "capacity_slots=48" "$OUT"
 assert_contains "6e: human provider output names runtime handoffs" "runtime_handoffs=" "$OUT"
 
+# GH#33330: automated stale supervisor telemetry reconcile.
+SUP_LOG="$FIXTURE_DIR/supervisor-blockers.jsonl"
+for sup_ts in "$T_25H_AGO" "$T_2H_AGO" "$NOW"; do
+	printf '{"schema":"aidevops-worker-blocker/v1","ts":%d,"event":"permission_request_captured","status":"blocked","reason":"permission_required","blocking":true,"source":"opencode-permission-broker","issue_number":null,"repo_slug":"","session_key":"supervisor-pulse","request_id":"perm-sup-%d"}\n' "$sup_ts" "$sup_ts" >>"$SUP_LOG"
+done
+SUP_LOG_BEFORE=$(wc -l <"$SUP_LOG" | tr -d ' ')
+OUT=$(env "WAH_BLOCKER_LOG_FILE=$SUP_LOG" "WAH_SUPERVISOR_PROCESS_PATTERN=reconcile-stale-supervisor" \
+	"$HELPER" reconcile-stale-supervisor 2>&1)
+assert_eq "6f: reconcile refuses while a supervisor owner is live" "skipped: live supervisor-pulse owner" "$OUT"
+assert_eq "6g: refused reconcile appends nothing" "$SUP_LOG_BEFORE" "$(wc -l <"$SUP_LOG" | tr -d ' ')"
+OUT=$(env "WAH_BLOCKER_LOG_FILE=$SUP_LOG" "WAH_SUPERVISOR_PROCESS_PATTERN=no-such-supervisor-process-33330" \
+	"$HELPER" reconcile-stale-supervisor --stale-before "$((NOW - 60))" 2>&1)
+assert_eq "6h: reconcile resolves only blockers older than the cutoff" "2" "$OUT"
+assert_eq "6i: original evidence retained and terminal events appended" "5 3" \
+	"$(jq -s '"\(length) \([.[] | select(.event == "permission_request_captured")] | length)"' -r "$SUP_LOG")"
+assert_eq "6j: newer supervisor blocker stays retained" "1" \
+	"$(env "WAH_BLOCKER_LOG_FILE=$SUP_LOG" "$HELPER" summary --since 7d --json --no-pr-check 2>/dev/null | jq -r '.progress_blockers.retained_supervisor_permission_total')"
+
 # ---------------------------------------------------------------------------
 # Section 7: runtime handoff and GitHub delivery stages remain distinct.
 # ---------------------------------------------------------------------------

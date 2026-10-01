@@ -333,7 +333,7 @@ _dsi_guard_permission_history_verified() {
 		return 1
 	}
 	verification=$("$_DSI_APPROVAL_HELPER" verify-permissions issue "$issue_number" "$repo_slug" 2>/dev/null) || true
-	if [[ "$verification" == "NO_REQUEST" ]]; then
+	if [[ "$verification" == "NO_REQUEST" || "$verification" == "WITHDRAWN" ]]; then
 		return 0
 	fi
 	if [[ "$verification" == "VERIFIED" ]]; then

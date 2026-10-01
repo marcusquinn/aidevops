@@ -72,7 +72,8 @@ cmd_help() {
 	echo "  issue <number...> [slug]   Approve one or more issues with one confirmation"
 	echo "  pr <number...> [slug]      Approve one or more PRs with one confirmation"
 	echo "  batch <kind:number...> [slug] Approve mixed issues/PRs with one confirmation"
-	echo "  permissions issue|pr <number> [slug] --request perm-<id>"
+	echo "  permissions issue|pr <number> [slug] --request perm-<id> [--withdraw]"
+	echo "                             --withdraw signs a decline: grants nothing, releases the hold"
 	_approval_commands_blank_line
 	echo "Commands (no sudo needed):"
 	echo "  verify [issue|pr] <number> [slug] [--expect-head SHA] [--require-authority]"

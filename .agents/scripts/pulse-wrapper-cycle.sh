@@ -271,6 +271,7 @@ run_pulse() {
 
 	local end_epoch
 	end_epoch=$(date +%s)
+	_pulse_reconcile_stale_supervisor_blockers "$start_epoch"
 	local duration=$((end_epoch - start_epoch))
 	if [[ "$pulse_rc" -eq 0 ]]; then
 		echo "[pulse-wrapper] Pulse completed at $(date -u +%Y-%m-%dT%H:%M:%SZ) (ran ${duration}s)" >>"$LOGFILE"
@@ -278,6 +279,23 @@ run_pulse() {
 		echo "[pulse-wrapper] Pulse failed at $(date -u +%Y-%m-%dT%H:%M:%SZ) (ran ${duration}s, rc=${pulse_rc})" >>"$LOGFILE"
 	fi
 	return "$pulse_rc"
+}
+
+# GH#33330: once this cycle's supervisor child has ended, permission blockers
+# captured by earlier supervisor-pulse sessions are stale. Reconcile telemetry
+# only (no labels or grants), never delete evidence, and keep blockers from
+# this run (ts >= start) for the next cycle. The helper re-checks liveness.
+_pulse_reconcile_stale_supervisor_blockers() {
+	local start_epoch="$1"
+	local helper="${SCRIPT_DIR:-${BASH_SOURCE[0]%/*}}/worker-activity-helper.sh"
+	local result=""
+	[[ "$start_epoch" =~ ^[1-9][0-9]*$ && -x "$helper" ]] || return 0
+	result=$("$helper" reconcile-stale-supervisor --stale-before "$((start_epoch - 1))" 2>&1) || result="error"
+	case "$result" in
+	0 | "") ;;
+	*) echo "[pulse-wrapper] stale supervisor blocker reconcile: ${result}" >>"$LOGFILE" ;;
+	esac
+	return 0
 }
 
 # ---------------------------------------------------------------------------

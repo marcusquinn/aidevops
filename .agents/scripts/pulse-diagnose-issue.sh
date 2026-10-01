@@ -181,6 +181,68 @@ _issue_blocker_summary_json() {
 	return 0
 }
 
+# GH#33330: name the permission request holding an issue, its age, whether the
+# owning session has ended, and both signed exits. Advisory only: signatures
+# are verified by `aidevops approve verify-permissions`, not here.
+# Args: issue_number repo_slug issue_json comments_json
+_issue_permission_hold_json() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local issue_json="${3:-}"
+	local comments_json="${4:-}"
+	[[ -n "$issue_json" ]] || issue_json='{}'
+	[[ -n "$comments_json" ]] || comments_json='[]'
+	jq -nc --argjson issue "$issue_json" --argjson comments "$comments_json" \
+		--arg number "$issue_number" --arg repo "$repo_slug" --argjson now "$(date +%s)" '
+		def trusted: (.author_association // "") as $a | ["OWNER", "MEMBER", "COLLABORATOR"] | index($a) != null;
+		def epoch: (.created_at // "") | (try fromdateiso8601 catch null);
+		([($issue.labels // [])[]?.name] | index("needs-maintainer-permissions") != null) as $label
+		| [$comments[]? | select(trusted and ((.body // "") | contains("<!-- aidevops-permission-request -->")))]
+		| sort_by(.id) | last as $req
+		| if $req == null then {active: $label, label_present: $label, request_id: null}
+		else
+			((($req.body // "") | capture("\"request_id\":\\s*\"(?<id>perm-[0-9a-f]{16})\"")?.id) // null) as $rid
+			| [$comments[]? | select(trusted and (.id > $req.id) and ($rid != null)
+				and ((.body // "") | contains($rid))
+				and ((.body // "") | (contains("<!-- aidevops-signed-permission-grant -->")
+					or contains("<!-- aidevops-signed-permission-withdrawal -->"))))]
+			| sort_by(.id) | last as $decision
+			| (($req | epoch)) as $requested
+			| ([$comments[]? | select(.id > $req.id and ((.body // "") | contains("CLAIM_RELEASED")))] | length > 0) as $released
+			| {
+				active: ($label or $decision == null),
+				label_present: $label,
+				request_id: $rid,
+				requested_at: $req.created_at,
+				age_seconds: (if $requested == null then null else ($now - $requested) end),
+				decision: (if $decision == null then "none"
+					elif (($decision.body // "") | contains("<!-- aidevops-signed-permission-withdrawal -->")) then "withdrawal"
+					else "grant" end),
+				owner_session_terminal: $released,
+				grant_command: ("sudo aidevops approve permissions issue " + $number + " " + $repo + " --request " + ($rid // "perm-<id>")),
+				withdraw_command: ("sudo aidevops approve permissions issue " + $number + " " + $repo + " --request " + ($rid // "perm-<id>") + " --withdraw")
+			}
+		end' 2>/dev/null || printf '{"active":false,"request_id":null}'
+	return 0
+}
+
+_render_issue_permission_hold_text() {
+	local hold_json="$1"
+	[[ "$(printf '%s' "$hold_json" | jq -r '.request_id // empty' 2>/dev/null)" != "" ||
+		"$(printf '%s' "$hold_json" | jq -r '.label_present // false' 2>/dev/null)" == "true" ]] || return 0
+	printf 'Maintainer permission hold:\n'
+	printf '%s' "$hold_json" | jq -r '
+		"  Active: \(.active)  label: \(.label_present // false)",
+		"  Request: \(.request_id // "unknown")  requested: \(.requested_at // "unknown")  age_seconds: \(.age_seconds // "unknown")",
+		"  Signed decision: \(.decision // "none")  owner session ended (CLAIM_RELEASED): \(.owner_session_terminal // false)",
+		(if .active then
+			"  Grant (signs the listed capabilities):    \(.grant_command)",
+			"  Withdraw (grants nothing, resumes dispatch): \(.withdraw_command)"
+		else empty end)' 2>/dev/null || true
+	printf '\n'
+	return 0
+}
+
 # =============================================================================
 # Subcommands — cmd_issue (t3258)
 #
@@ -646,6 +708,7 @@ _render_issue_text() {
 	printf '  Created: %s\n\n' "${created_at:-(unknown)}"
 
 	_render_issue_lifecycle_comments "$comments_json"
+	_render_issue_permission_hold_text "$(_issue_permission_hold_json "$issue_number" "$repo_slug" "$issue_json" "$comments_json")"
 	_render_issue_blockers_text "$blocker_summary_json"
 	_render_issue_dirty_worktree_hold_text "$(_issue_dirty_worktree_hold_summary_json "$issue_log_lines")"
 	_render_issue_footprint_defer_text "$issue_number" "$repo_slug"
@@ -713,6 +776,9 @@ _render_issue_json() {
 	printf ',\n'
 	printf '  "progress_blockers": '
 	printf '%s' "$blocker_summary_json" | jq -c '.' 2>/dev/null || printf '{}'
+	printf ',\n'
+	printf '  "permission_hold": '
+	_issue_permission_hold_json "$issue_number" "$repo_slug" "$issue_json" "$comments_json"
 	printf ',\n'
 	printf '  "dirty_worktree_hold": '
 	_issue_dirty_worktree_hold_summary_json "$issue_log_lines"

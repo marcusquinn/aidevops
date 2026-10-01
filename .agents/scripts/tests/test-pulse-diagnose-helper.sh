@@ -936,6 +936,29 @@ if command -v jq >/dev/null 2>&1; then
 	assert_contains "JSON api-budget secondary cooldown" "active=yes" "$json_cooldown"
 fi
 
+# --- Test 23 (GH#33330): permission hold names request, age and both exits ---
+printf '\nTest 23: permission hold diagnostics\n'
+PERM_ISSUE='{"labels":[{"name":"needs-maintainer-permissions"}]}'
+PERM_COMMENTS=$(jq -cn '[
+	{id: 1, author_association: "MEMBER", created_at: "2026-09-18T00:00:00Z",
+	 body: "<!-- aidevops-permission-request -->\n~~~json\n{\"request_id\": \"perm-0123456789abcdef\"}\n~~~"},
+	{id: 2, author_association: "NONE", created_at: "2026-09-18T00:01:00Z",
+	 body: "<!-- aidevops-signed-permission-withdrawal --> perm-0123456789abcdef"},
+	{id: 3, author_association: "OWNER", created_at: "2026-09-18T01:00:00Z", body: "CLAIM_RELEASED reason=process_exit"}
+]')
+PERM_HOLD=$(bash -c 'source "$1"; _issue_permission_hold_json 77 owner/repo "$2" "$3"' \
+	_ "$SCRIPT_DIR/../pulse-diagnose-issue.sh" "$PERM_ISSUE" "$PERM_COMMENTS" 2>/dev/null)
+assert_eq "permission hold names latest trusted request" "perm-0123456789abcdef" "$(printf '%s' "$PERM_HOLD" | jq -r '.request_id')"
+assert_eq "untrusted decision comment is ignored" "none true" "$(printf '%s' "$PERM_HOLD" | jq -r '"\(.decision) \(.active)"')"
+assert_eq "terminal owner session is reported" "true" "$(printf '%s' "$PERM_HOLD" | jq -r '.owner_session_terminal')"
+assert_contains "withdraw command is request-specific" \
+	"sudo aidevops approve permissions issue 77 owner/repo --request perm-0123456789abcdef --withdraw" \
+	"$(printf '%s' "$PERM_HOLD" | jq -r '.withdraw_command')"
+assert_eq "request age is computed" "true" "$(printf '%s' "$PERM_HOLD" | jq -r '.age_seconds > 0')"
+PERM_TEXT=$(bash -c 'source "$1"; _render_issue_permission_hold_text "$2"' _ "$SCRIPT_DIR/../pulse-diagnose-issue.sh" "$PERM_HOLD" 2>/dev/null)
+assert_contains "text names grant command" "Grant (signs the listed capabilities)" "$PERM_TEXT"
+assert_contains "text names withdraw command" "Withdraw (grants nothing, resumes dispatch)" "$PERM_TEXT"
+
 # =============================================================================
 # Summary
 # =============================================================================
