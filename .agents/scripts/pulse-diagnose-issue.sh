@@ -717,6 +717,33 @@ _render_issue_text() {
 	return 0
 }
 
+# Render lifecycle-marker comments as comma-separated JSON array items.
+# Args: comments_json
+_render_issue_lifecycle_comments_json() {
+	local comments_json="$1"
+	command -v jq >/dev/null 2>&1 || return 0
+	[[ "$comments_json" != "[]" && -n "$comments_json" ]] || return 0
+	local lc_first=1 comment_total="" i=0
+	comment_total=$(printf '%s' "$comments_json" | jq 'length' 2>/dev/null || echo 0)
+	[[ "$comment_total" =~ ^[0-9]+$ ]] || comment_total=0
+	while [[ "$i" -lt "$comment_total" ]]; do
+		local comment_item="" ts="" author="" body="" excerpt=""
+		comment_item=$(printf '%s' "$comments_json" | jq -r ".[$i]" 2>/dev/null) || comment_item="{}"
+		ts=$(_jq_field "$comment_item" ".created_at" "")
+		author=$(_jq_field "$comment_item" ".user.login" "$_UNKNOWN")
+		body=$(_jq_field "$comment_item" ".body" "")
+		i=$((i + 1))
+		[[ -z "$ts" ]] && continue
+		_comment_has_lifecycle_marker "$body" || continue
+		excerpt=$(_lifecycle_comment_excerpt "$body" | tr '\n' ' ' | sed 's/"/\\"/g; s/[[:space:]]*$//')
+		[[ "$lc_first" -eq 0 ]] && printf ',\n'
+		lc_first=0
+		printf '    {"ts": "%s", "author": "%s", "excerpt": "%s"}' \
+			"$ts" "$author" "${excerpt:-}"
+	done
+	return 0
+}
+
 # Render JSON issue correlation report.
 # Args: issue_number repo_slug issue_json comments_json pr_numbers logfile logdir attempt_summary_json issue_log_lines blocker_summary_json
 _render_issue_json() {
@@ -738,29 +765,7 @@ _render_issue_json() {
 	_json_str_field "created_at"   "$created_at"
 
 	printf '  "lifecycle_comments": [\n'
-	local lc_first=1
-	if command -v jq >/dev/null 2>&1 && [[ "$comments_json" != "[]" && -n "$comments_json" ]]; then
-		local comment_total="" i=0
-		comment_total=$(printf '%s' "$comments_json" | jq 'length' 2>/dev/null || echo 0)
-		[[ "$comment_total" =~ ^[0-9]+$ ]] || comment_total=0
-		i=0
-		while [[ "$i" -lt "$comment_total" ]]; do
-			local comment_item="" ts="" author="" body=""
-			comment_item=$(printf '%s' "$comments_json" | jq -r ".[$i]" 2>/dev/null) || comment_item="{}"
-			ts=$(_jq_field "$comment_item" ".created_at" "")
-			author=$(_jq_field "$comment_item" ".user.login" "$_UNKNOWN")
-			body=$(_jq_field "$comment_item" ".body" "")
-			i=$((i + 1))
-			[[ -z "$ts" ]] && continue
-			_comment_has_lifecycle_marker "$body" || continue
-			local excerpt
-			excerpt=$(_lifecycle_comment_excerpt "$body" | tr '\n' ' ' | sed 's/"/\\"/g; s/[[:space:]]*$//')
-			[[ "$lc_first" -eq 0 ]] && printf ',\n'
-			lc_first=0
-			printf '    {"ts": "%s", "author": "%s", "excerpt": "%s"}' \
-				"$ts" "$author" "${excerpt:-}"
-		done
-	fi
+	_render_issue_lifecycle_comments_json "$comments_json"
 	printf '\n  ],\n'
 
 	printf '  "repeated_attempts": '
