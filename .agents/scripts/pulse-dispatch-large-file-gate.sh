@@ -171,6 +171,7 @@ _large_file_gate_extract_paths() {
 	# which threw away the one piece of information needed to tell "targeted
 	# edit in a 30-line range" from "rewrite the whole 3000-line file".
 	local file_paths
+	# Explicit agents/scripts targets intentionally accept any extension.
 	# shellcheck disable=SC2016  # `\s` is grep-regex escape, not shell expansion.
 	file_paths=$(printf '%s' "$issue_body" | grep -oE '(EDIT|NEW|File):?\s+[`"]?\.?agents/scripts/[^`"[:space:],]+' 2>/dev/null |
 		sed 's/^[A-Z]*:*[[:space:]]*//' | sed 's/^[`"]//' | sed 's/[`"]*$//' | sort -u) || file_paths=""
@@ -198,10 +199,12 @@ _large_file_gate_extract_paths() {
 	# t2024: Also preserve line qualifiers here. A list-item reference like
 	#   - EDIT: `pulse-ancillary-dispatch.sh:221-253`
 	# should be parsed as "file + range", not stripped to bare "file".
+	# GH#33343: End the code extension at the closing backtick or numeric
+	# line qualifier; otherwise .json/.jsonl match through the .js prefix.
 	local backtick_paths
 	# shellcheck disable=SC2016  # Backtick chars in regex are literals, not command subst.
 	backtick_paths=$(printf '%s' "$issue_body" | grep -E '^\s*[-*]\s+(EDIT|NEW|File):|^(EDIT|NEW|File):' 2>/dev/null |
-		grep -oE '`[^`]*\.(sh|py|js|ts)[^`]*`' 2>/dev/null |
+		grep -oE '`[^`]*\.(sh|py|js|jsx|mjs|cjs|ts|tsx)(:[0-9]+(-[0-9]+)?)?`' 2>/dev/null |
 		tr -d '`' | grep -v '^#' | sort -u) || backtick_paths=""
 
 	printf '%s\n%s' "$file_paths" "$backtick_paths" | sort -u | grep -v '^$' || true
