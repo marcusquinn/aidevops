@@ -2,9 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Marcus Quinn
 
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { EventEmitter } from "node:events";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { execFileSync, spawn } from "node:child_process";
+import { EventEmitter, once } from "node:events";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, test } from "node:test";
@@ -233,6 +233,57 @@ describe("bounded interactive operations", () => {
       execFileSync("git", ["-C", unrelated, "worktree", "remove", "--force", unrelatedLinked]);
       rmSync(unrelated, { recursive: true, force: true });
       rmSync(parent, { recursive: true, force: true });
+    }
+  });
+
+  test("explicit audited adoption enables a previous session worktree without taking a live owner", async () => {
+    const fixture = realpathSync(mkdtempSync(join(tmpdir(), "aidevops-adopt-")));
+    const repo = join(fixture, "repo");
+    const linked = join(fixture, "linked");
+    const scriptsDir = fileURLToPath(new URL("../../../scripts/", import.meta.url));
+    const helper = join(scriptsDir, "worktree-helper.sh");
+    const env = { ...process.env, WORKTREE_REGISTRY_DIR: fixture,
+      WORKTREE_REGISTRY_DB: join(fixture, "registry.db"), AUDIT_LOG_FILE: join(fixture, "audit.jsonl"),
+      OPENCODE_SESSION_ID: owner.sessionID, OPENCODE_PID: String(process.pid) };
+    const previousOwner = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+    try {
+      execFileSync("git", ["init", "-q", repo]);
+      execFileSync("git", ["-C", repo, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-q", "--allow-empty", "-m", "fixture"]);
+      execFileSync("git", ["-C", repo, "worktree", "add", "-q", "-b", "feature/adopt", linked]);
+      execFileSync("bash", ["-c", 'source "$1"; register_worktree "$2" feature/adopt --owner-pid "$3" --session ses_previous --task 33228',
+        "fixture", join(scriptsDir, "shared-constants.sh"), linked, String(previousOwner.pid)], { env });
+      const invoke = (path = linked, task = "33228", overrides = {}) => execFileSync(helper,
+        ["adopt", path, owner.sessionID, task], { env: { ...env, ...overrides }, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+      assert.throws(() => invoke(), "live owner must not be displaced");
+      const exited = once(previousOwner, "exit");
+      previousOwner.kill();
+      await exited;
+      assert.throws(() => invoke(linked, "other-task"));
+      assert.throws(() => invoke(linked, "33228", { OPENCODE_SESSION_ID: "ses_other" }));
+      assert.throws(() => invoke(repo));
+      const alias = join(fixture, "alias");
+      symlinkSync(linked, alias);
+      assert.throws(() => invoke(alias));
+      assert.equal(invoke().trim(), "ADOPTED");
+      assert.equal(execFileSync(helper, ["registry", "verify-owner", linked, owner.sessionID], { env, encoding: "utf8" }).trim(), "VERIFIED");
+      assert.throws(() => invoke(), "a now-live owner must not be re-adopted");
+      const audit = readFileSync(env.AUDIT_LOG_FILE, "utf8");
+      assert.match(audit, /Explicit worktree adoption requested/);
+      assert.match(audit, /Worktree adoption verified/);
+      const instance = manager({ projectRoot: fixture, scriptsDir });
+      // The normal resolver uses the isolated registry, with no verification stub.
+      const priorDB = process.env.WORKTREE_REGISTRY_DB;
+      process.env.WORKTREE_REGISTRY_DB = env.WORKTREE_REGISTRY_DB;
+      try {
+        const started = await instance.start({ command: [process.execPath, "-e", "process.exit(0)"], cwd: linked, budgetMs: 5000 }, owner);
+        assert.equal((await terminal(instance, started.operation_id, owner, 7000)).state, "succeeded");
+      } finally {
+        if (priorDB === undefined) delete process.env.WORKTREE_REGISTRY_DB;
+        else process.env.WORKTREE_REGISTRY_DB = priorDB;
+      }
+    } finally {
+      previousOwner.kill();
+      rmSync(fixture, { recursive: true, force: true });
     }
   });
 
