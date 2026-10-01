@@ -61,11 +61,59 @@ _release_provenance_trailer_values() {
 	return "${PIPESTATUS[0]}"
 }
 
+# Only read-only GitHub calls belong here. Retry transport failures, never the
+# provenance decisions made by callers against a successfully returned record.
+_release_provenance_read_json() {
+	local purpose="$1"
+	shift
+	local attempt=1
+	local response=""
+	local status=0
+	local error_file=""
+	local error_text=""
+	local cause=""
+	error_file=$(mktemp) || {
+		_release_provenance_error "cannot prepare diagnostic for ${purpose}"
+		return 1
+	}
+	while [[ "$attempt" -le 3 ]]; do
+		status=0
+		response=$(gh "$@" 2>"$error_file") || status=$?
+		error_text=$(<"$error_file")
+		if [[ "$status" -eq 0 && "$response" =~ [^[:space:]] ]]; then
+			rm -f "$error_file"
+			if ! jq -e 'type == "object"' <<<"$response" >/dev/null 2>&1; then
+				_release_provenance_error "${purpose}: invalid JSON object (attempt ${attempt})"
+				return 1
+			fi
+			printf '%s\n' "$response"
+			return 0
+		fi
+		if [[ "$error_text" =~ HTTP[[:space:]](5[0-9][0-9]) ]]; then
+			cause="HTTP ${BASH_REMATCH[1]}"
+		elif [[ ! "$response" =~ [^[:space:]] && ( "$status" -eq 0 || -z "$error_text" ) ]]; then
+			cause="empty response"
+		else
+			rm -f "$error_file"
+			_release_provenance_error "${purpose}: GitHub read failed (exit ${status}, attempt ${attempt}; not retryable)"
+			return 1
+		fi
+		[[ "$attempt" -eq 3 ]] && break
+		printf 'release-provenance: %s: %s; retrying after attempt %s/3\n' "$purpose" "$cause" "$attempt" >&2
+		sleep "$attempt"
+		attempt=$((attempt + 1))
+	done
+	rm -f "$error_file"
+	_release_provenance_error "${purpose}: ${cause} after 3 attempts"
+	return 1
+}
+
 _release_provenance_pr_json() {
 	local repo_slug="$1"
 	local pr_number="$2"
-	gh pr view "$pr_number" --repo "$repo_slug" \
-		--json state,mergedAt,mergeCommit,baseRefName,headRefOid 2>/dev/null
+	_release_provenance_read_json "source PR #${pr_number} in ${repo_slug}" \
+		pr view "$pr_number" --repo "$repo_slug" \
+		--json state,mergedAt,mergeCommit,baseRefName,headRefOid
 	return $?
 }
 
@@ -116,7 +164,8 @@ _release_provenance_verify_aggregate_base() {
 	# Use immutable SHA endpoints rather than fetching a mutable PR branch into
 	# shared refs. The merge parent must already belong to the reviewed ancestry;
 	# matching trees alone misses empty/metadata-only source PRs.
-	comparison=$(gh api "repos/${repo_slug}/compare/${reviewed_head}...${merge_parent}" 2>/dev/null) || {
+	comparison=$(_release_provenance_read_json "reviewed base of aggregation PR #${aggregate_pr} in ${repo_slug}" \
+		api "repos/${repo_slug}/compare/${reviewed_head}...${merge_parent}") || {
 		_release_provenance_error "cannot verify reviewed base of aggregation PR #${aggregate_pr}"
 		return 1
 	}
@@ -424,7 +473,8 @@ _release_provenance_verify_github_tag() {
 	local tag_object_sha=""
 	local tag_json=""
 
-	ref_json=$(gh api "repos/${repo_slug}/git/ref/tags/${tag_name}" 2>/dev/null) || {
+	ref_json=$(_release_provenance_read_json "GitHub tag ref ${tag_name} in ${repo_slug}" \
+		api "repos/${repo_slug}/git/ref/tags/${tag_name}") || {
 		_release_provenance_error "cannot read GitHub tag ref ${tag_name}"
 		return 1
 	}
@@ -437,7 +487,8 @@ _release_provenance_verify_github_tag() {
 		_release_provenance_error "local and GitHub tag objects differ for ${tag_name}"
 		return 1
 	}
-	tag_json=$(gh api "repos/${repo_slug}/git/tags/${tag_object_sha}" 2>/dev/null) || {
+	tag_json=$(_release_provenance_read_json "GitHub tag object ${tag_name} in ${repo_slug}" \
+		api "repos/${repo_slug}/git/tags/${tag_object_sha}") || {
 		_release_provenance_error "cannot read GitHub tag object ${tag_name}"
 		return 1
 	}
