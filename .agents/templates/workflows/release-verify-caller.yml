@@ -1,0 +1,18 @@
+name: Release Verify
+
+# Managed by aidevops. Verification only; publication remains repository-owned.
+# Configure exact asset names (newline-separated) and an optional preflight.
+# aidevops sync-workflows --workflow release-verify --install-missing
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    uses: marcusquinn/aidevops/.github/workflows/release-verify-reusable.yml@main
+    with:
+      expected-assets: ${{ vars.RELEASE_VERIFY_ASSETS || '' }}
+      preflight: ${{ vars.RELEASE_VERIFY_PREFLIGHT || '' }}
