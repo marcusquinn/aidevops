@@ -464,6 +464,30 @@ mktemp /tmp/x-XXXXXX         # macOS: /tmp/x-mGVJcx (correct)
 
 GNU `mktemp` (Linux) accepts both forms, masking the bug in CI. The lint gate enforces the BSD-safe form everywhere so future macOS regressions are caught at PR time.
 
+## `set -e` vs. `RETURN` cleanup traps (#33301)
+
+A function that sets `trap '...cleanup...' RETURN` for its own disposable resources (temp dirs, Docker containers/volumes/networks) must never end with a bare failing test or command as its last statement when that function is invoked directly (not inside `if`/`&&`/`||`/a command substitution). Under `set -euo pipefail`, a failing bare command there triggers immediate script-wide `errexit` termination — which skips the function's own `RETURN` trap, since the process exits rather than returning.
+
+```bash
+# Banned: leaks cleanup on a nonzero result
+my_cmd_with_run_trap() {
+	trap 'rm -rf "$tmp"; docker rm -f "$container"' RETURN
+	...
+	[[ "$errors" -eq 0 ]]
+	return $?
+}
+
+# Correct: the trap always fires
+my_cmd_with_run_trap() {
+	trap 'rm -rf "$tmp"; docker rm -f "$container"' RETURN
+	...
+	[[ "$errors" -eq 0 ]] || return 1
+	return 0
+}
+```
+
+This bug shipped in `wp-plugin-release-helper.sh`'s `plugin-check` command and was only caught by actually running it against a failing fixture and checking `docker ps -a`/`network ls`/`volume ls` afterward — shellcheck and shfmt do not flag it.
+
 ## Watchdog self-write anti-pattern (t3058 / t3071)
 
 If a script monitors file `X` for activity as a **stall signal** (byte-delta, line-count, or mtime polling), the SAME script MUST NOT write status markers to `X`. Self-writes register as "progress" and silently neuter the timeout — the very condition the marker was meant to instrument becomes unreachable. There is no log line, no exit code, no alert when this happens; the watchdog simply never trips.

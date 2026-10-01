@@ -27,6 +27,9 @@ source "${WPRH_DIR}/shared-constants.sh"
 
 LOG_PREFIX="WP-PLUGIN-RELEASE"
 
+# Default --ref for every subcommand.
+readonly WPRH_DEFAULT_REF="HEAD"
+
 # Default header lines stripped from the main file for the WordPress.org
 # build. Git Updater (and similar third-party updaters) use these headers;
 # WordPress.org forbids third-party update code (Plugin Handbook guideline 8).
@@ -77,8 +80,11 @@ EOF
 # ---------------------------------------------------------------------------
 
 wprh_repo_root() {
-	git rev-parse --show-toplevel 2>/dev/null
-	return $?
+	git rev-parse --show-toplevel 2>/dev/null || {
+		log_error "not a Git repository"
+		return 1
+	}
+	return 0
 }
 
 # Print the default remote branch name for the repo at $1, falling back to
@@ -152,6 +158,13 @@ wprh_read_header() {
 	return 0
 }
 
+# Like wprh_read_header, but prints an empty string instead of failing when
+# the header is absent (for optional preflight fields read under set -e).
+wprh_header() {
+	wprh_read_header "$1" "$2" 2>/dev/null || true
+	return 0
+}
+
 # ---------------------------------------------------------------------------
 # Archive / exclude / zip
 # ---------------------------------------------------------------------------
@@ -222,7 +235,7 @@ wprh_sha256() {
 # ---------------------------------------------------------------------------
 
 wprh_build_parse_args() {
-	WPRH_BUILD_REF="HEAD"
+	WPRH_BUILD_REF="$WPRH_DEFAULT_REF"
 	WPRH_BUILD_OUT=""
 	WPRH_BUILD_SLUG_OVERRIDE=""
 	WPRH_BUILD_MAIN_OVERRIDE=""
@@ -327,10 +340,7 @@ wprh_cmd_build() {
 	wprh_build_parse_args "$@" || return 1
 
 	local repo_root
-	repo_root="$(wprh_repo_root)" || {
-		log_error "not a Git repository"
-		return 1
-	}
+	repo_root="$(wprh_repo_root)" || return 1
 	[[ -n "$WPRH_BUILD_OUT" ]] || WPRH_BUILD_OUT="${repo_root}/dist"
 
 	local slug main_file strip_headers
@@ -413,7 +423,7 @@ wprh_check_dev_files_absent() {
 }
 
 wprh_pf_parse_args() {
-	WPRH_PF_REF="HEAD"
+	WPRH_PF_REF="$WPRH_DEFAULT_REF"
 	WPRH_PF_SLUG_OVERRIDE=""
 	WPRH_PF_MAIN_OVERRIDE=""
 	WPRH_PF_STRICT=false
@@ -458,10 +468,7 @@ wprh_pf_parse_args() {
 # extract each channel's main file once. Sets WPRH_PF_{REPO_ROOT,SLUG,
 # MAIN_FILE,TMP,GITHUB_ZIP,WPORG_ZIP,VERSION,MAIN_FROM_ZIP,WPORG_MAIN,README}.
 wprh_pf_prepare() {
-	WPRH_PF_REPO_ROOT="$(wprh_repo_root)" || {
-		log_error "not a Git repository"
-		return 1
-	}
+	WPRH_PF_REPO_ROOT="$(wprh_repo_root)" || return 1
 	WPRH_PF_SLUG="$(wprh_detect_slug "$WPRH_PF_REPO_ROOT" "$WPRH_PF_SLUG_OVERRIDE")"
 	WPRH_PF_MAIN_FILE="$(wprh_detect_main_file "$WPRH_PF_REPO_ROOT" "$WPRH_PF_SLUG" "$WPRH_PF_MAIN_OVERRIDE")" || return 1
 	WPRH_PF_TMP="$(mktemp -d "${TMPDIR:-/tmp}/wprh-preflight.XXXXXX")"
@@ -502,7 +509,7 @@ wprh_pf_check_headers() {
 	fi
 
 	local update_uri
-	update_uri="$(wprh_read_header "$WPRH_PF_MAIN_FROM_ZIP" "Update URI" 2>/dev/null || true)"
+	update_uri="$(wprh_header "$WPRH_PF_MAIN_FROM_ZIP" "Update URI")"
 	if [[ -n "$update_uri" ]]; then
 		wprh_pf_error "Update URI header present (third-party updater; WordPress.org forbids this, Plugin Check: plugin_updater_detected): ${update_uri}"
 	else
@@ -524,14 +531,14 @@ wprh_pf_check_headers() {
 wprh_pf_check_main_file_meta() {
 	local main="$WPRH_PF_MAIN_FROM_ZIP" slug="$WPRH_PF_SLUG" version="$WPRH_PF_VERSION"
 	local text_domain license
-	text_domain="$(wprh_read_header "$main" "Text Domain" 2>/dev/null || true)"
+	text_domain="$(wprh_header "$main" "Text Domain")"
 	if [[ -z "$text_domain" || "$text_domain" != "$slug" ]]; then
 		wprh_pf_error "Text Domain ('${text_domain}') must equal the plugin slug ('${slug}')"
 	else
 		wprh_pf_ok "Text Domain matches slug: ${text_domain}"
 	fi
 
-	license="$(wprh_read_header "$main" "License" 2>/dev/null || true)"
+	license="$(wprh_header "$main" "License")"
 	if [[ -z "$license" ]] || ! printf '%s' "$license" | grep -qiE 'GPL|GNU General Public License'; then
 		wprh_pf_error "License header must be GPL-compatible, got: '${license}'"
 	else
@@ -557,18 +564,18 @@ wprh_pf_check_main_file_meta() {
 wprh_pf_check_readme_versions() {
 	local readme="$WPRH_PF_README" version="$WPRH_PF_VERSION"
 	local stable_tag requires_at_least requires_php tested_up_to
-	stable_tag="$(wprh_read_header "$readme" "Stable tag" 2>/dev/null || true)"
+	stable_tag="$(wprh_header "$readme" "Stable tag")"
 	if [[ -z "$stable_tag" || "$stable_tag" == "trunk" || "$stable_tag" != "$version" ]]; then
 		wprh_pf_error "readme.txt Stable tag ('${stable_tag}') must equal the plugin Version ('${version}'), not 'trunk'"
 	else
 		wprh_pf_ok "Stable tag matches Version: ${stable_tag}"
 	fi
 
-	requires_at_least="$(wprh_read_header "$readme" "Requires at least" 2>/dev/null || true)"
-	requires_php="$(wprh_read_header "$readme" "Requires PHP" 2>/dev/null || true)"
+	requires_at_least="$(wprh_header "$readme" "Requires at least")"
+	requires_php="$(wprh_header "$readme" "Requires PHP")"
 	local main_requires_at_least main_requires_php
-	main_requires_at_least="$(wprh_read_header "$WPRH_PF_MAIN_FROM_ZIP" "Requires at least" 2>/dev/null || true)"
-	main_requires_php="$(wprh_read_header "$WPRH_PF_MAIN_FROM_ZIP" "Requires PHP" 2>/dev/null || true)"
+	main_requires_at_least="$(wprh_header "$WPRH_PF_MAIN_FROM_ZIP" "Requires at least")"
+	main_requires_php="$(wprh_header "$WPRH_PF_MAIN_FROM_ZIP" "Requires PHP")"
 	if [[ -z "$main_requires_at_least" ]]; then
 		wprh_pf_error "main file missing 'Requires at least' header"
 	elif [[ -n "$requires_at_least" && "$requires_at_least" != "$main_requires_at_least" ]]; then
@@ -584,7 +591,7 @@ wprh_pf_check_readme_versions() {
 		wprh_pf_ok "Requires PHP: ${main_requires_php}"
 	fi
 
-	tested_up_to="$(wprh_read_header "$readme" "Tested up to" 2>/dev/null || true)"
+	tested_up_to="$(wprh_header "$readme" "Tested up to")"
 	if [[ -n "$tested_up_to" && ! "$tested_up_to" =~ ^[0-9]+\.[0-9]+$ ]]; then
 		wprh_pf_error "Tested up to must be major.minor (e.g. 6.6), got: ${tested_up_to}"
 	fi
@@ -596,7 +603,7 @@ wprh_pf_check_readme_versions() {
 wprh_pf_check_readme_naming() {
 	local readme="$1" slug="$WPRH_PF_SLUG" main="$WPRH_PF_MAIN_FROM_ZIP"
 	local plugin_name readme_title
-	plugin_name="$(wprh_read_header "$main" "Plugin Name" 2>/dev/null || true)"
+	plugin_name="$(wprh_header "$main" "Plugin Name")"
 	readme_title="$(awk 'NR==1{gsub(/^=+[[:space:]]*|[[:space:]]*=+$/,""); print; exit}' "$readme" 2>/dev/null || true)"
 	if [[ -n "$plugin_name" && -n "$readme_title" && "$plugin_name" != "$readme_title" ]]; then
 		wprh_pf_warn "readme.txt title ('${readme_title}') differs from Plugin Name ('${plugin_name}')"
@@ -612,8 +619,8 @@ wprh_pf_check_readme_naming() {
 	fi
 
 	local plugin_uri author_uri
-	plugin_uri="$(wprh_read_header "$main" "Plugin URI" 2>/dev/null || true)"
-	author_uri="$(wprh_read_header "$main" "Author URI" 2>/dev/null || true)"
+	plugin_uri="$(wprh_header "$main" "Plugin URI")"
+	author_uri="$(wprh_header "$main" "Author URI")"
 	if [[ -n "$plugin_uri" && "$plugin_uri" == "$author_uri" ]]; then
 		wprh_pf_warn "Plugin URI and Author URI are identical: ${plugin_uri}"
 	fi
@@ -638,7 +645,7 @@ wprh_pf_check_readme_style() {
 	fi
 
 	local tags tag_count
-	tags="$(wprh_read_header "$readme" "Tags" 2>/dev/null || true)"
+	tags="$(wprh_header "$readme" "Tags")"
 	if [[ -n "$tags" ]]; then
 		tag_count=$(printf '%s' "$tags" | awk -F',' '{print NF}')
 		[[ "$tag_count" -gt 5 ]] && wprh_pf_warn "${tag_count} tags listed (limit 5)"
@@ -823,12 +830,13 @@ wprh_pf_check_tag_exists() {
 wprh_pf_check_network_notes() {
 	[[ "$WPRH_PF_OFFLINE" != true ]] || return 0
 
-	local default_branch
+	local default_branch origin_branch
 	default_branch="$(wprh_default_branch "$WPRH_PF_REPO_ROOT")"
-	if git -C "$WPRH_PF_REPO_ROOT" rev-parse --verify --quiet "origin/${default_branch}" >/dev/null 2>&1; then
-		if ! git -C "$WPRH_PF_REPO_ROOT" merge-base --is-ancestor "$WPRH_PF_REF" "origin/${default_branch}" 2>/dev/null &&
-			! git -C "$WPRH_PF_REPO_ROOT" merge-base --is-ancestor "origin/${default_branch}" "$WPRH_PF_REF" 2>/dev/null; then
-			wprh_pf_note "ref '${WPRH_PF_REF}' is not on origin/${default_branch}"
+	origin_branch="origin/${default_branch}"
+	if git -C "$WPRH_PF_REPO_ROOT" rev-parse --verify --quiet "$origin_branch" >/dev/null 2>&1; then
+		if ! git -C "$WPRH_PF_REPO_ROOT" merge-base --is-ancestor "$WPRH_PF_REF" "$origin_branch" 2>/dev/null &&
+			! git -C "$WPRH_PF_REPO_ROOT" merge-base --is-ancestor "$origin_branch" "$WPRH_PF_REF" 2>/dev/null; then
+			wprh_pf_note "ref '${WPRH_PF_REF}' is not on ${origin_branch}"
 		fi
 	fi
 	command -v curl >/dev/null 2>&1 || return 0
@@ -847,14 +855,14 @@ wprh_pf_check_network_notes() {
 	latest=$(curl -fsS --max-time 10 "https://api.wordpress.org/core/version-check/1.7/" 2>/dev/null |
 		grep -oE '"current":"[0-9.]+"' | head -1 | sed -E 's/.*"([0-9.]+)".*/\1/' || true)
 	local tested_up_to
-	[[ -f "$WPRH_PF_README" ]] && tested_up_to="$(wprh_read_header "$WPRH_PF_README" "Tested up to" 2>/dev/null || true)"
+	[[ -f "$WPRH_PF_README" ]] && tested_up_to="$(wprh_header "$WPRH_PF_README" "Tested up to")"
 	if [[ -n "$latest" && -n "${tested_up_to:-}" && "$tested_up_to" != "${latest%.*}" ]]; then
 		wprh_pf_warn "Tested up to (${tested_up_to}) is below the latest WordPress release (${latest})"
 	fi
 
 	if [[ -f "$WPRH_PF_README" ]]; then
 		local contributors user
-		contributors="$(wprh_read_header "$WPRH_PF_README" "Contributors" 2>/dev/null || true)"
+		contributors="$(wprh_header "$WPRH_PF_README" "Contributors")"
 		[[ -z "$contributors" ]] && return 0
 		local old_ifs="$IFS"
 		IFS=','
@@ -946,7 +954,7 @@ wprh_pc_cli_flag() {
 }
 
 wprh_pc_parse_args() {
-	WPRH_PC_REF="HEAD"
+	WPRH_PC_REF="$WPRH_DEFAULT_REF"
 	WPRH_PC_SLUG_OVERRIDE=""
 	WPRH_PC_MAIN_OVERRIDE=""
 	WPRH_PC_KEEP_OUTPUT=""
@@ -1099,10 +1107,7 @@ wprh_cmd_plugin_check() {
 	fi
 
 	local repo_root slug main_file tmp
-	repo_root="$(wprh_repo_root)" || {
-		log_error "not a Git repository"
-		return 1
-	}
+	repo_root="$(wprh_repo_root)" || return 1
 	slug="$(wprh_detect_slug "$repo_root" "$WPRH_PC_SLUG_OVERRIDE")"
 	main_file="$(wprh_detect_main_file "$repo_root" "$slug" "$WPRH_PC_MAIN_OVERRIDE")" || return 1
 	tmp="$(mktemp -d "${TMPDIR:-/tmp}/wprh-pc.XXXXXX")"
