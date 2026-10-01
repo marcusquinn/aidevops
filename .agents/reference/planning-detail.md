@@ -8,7 +8,7 @@ Core rules are in `AGENTS.md`. Full planning docs: `workflows/plans.md`.
 
 ## Key Commands
 
-`/new-task`, `/save-todo`, `/plan-status`, `/create-prd`, `/generate-tasks`
+`/new-task`, `/save-todo`, `/define`, `/show-plan`, `/list-todo`
 
 Use `/save-todo` after planning. Auto-detects complexity:
 - **Simple** → TODO.md only

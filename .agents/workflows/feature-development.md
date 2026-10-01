@@ -24,7 +24,7 @@ tools:
 | Trivial (< 30 mins) | Start immediately |
 | Small (30 mins – 2 hours) | Add to `TODO.md`, then start |
 | Medium (2 hours – 1 day) | Add to `TODO.md` with notes |
-| Large (1+ days) | Use `/create-prd` → `/generate-tasks` |
+| Large (1+ days) | Use `/define` for a brief; add a PRD/task list from `templates/` if needed |
 | Complex (multi-session) | Full `todo/PLANS.md` entry |
 
 See `workflows/plans.md` for the full planning workflow.

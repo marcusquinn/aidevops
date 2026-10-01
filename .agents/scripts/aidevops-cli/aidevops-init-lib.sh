@@ -1876,9 +1876,9 @@ _init_print_summary() {
 	else
 		echo "  ${step}. Add tasks to TODO.md"
 		((++step))
-		echo "  ${step}. Use /create-prd for complex features"
+		echo "  ${step}. Use /define to turn complex work into a decision-complete brief"
 		((++step))
-		echo "  ${step}. Use /feature to start development"
+		echo "  ${step}. Use /full-loop to implement a task end-to-end"
 	fi
 
 	return 0
