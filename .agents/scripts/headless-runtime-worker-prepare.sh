@@ -318,6 +318,29 @@ _hrw_prepare_permission_grant_path() {
 	return 0
 }
 
+# Select the project-required Node for this worker and publish it for tool
+# shells. OpenCode tool shells do not inherit this process PATH; the plugin
+# shell.env hook re-applies the selection from AIDEVOPS_PROJECT_NODE_BIN
+# (GH#33290). _project_node_bin rc 0 with no output means the active node
+# already satisfies; rc 1 is a fatal environment failure.
+_hrw_prepare_project_node() {
+	local work_dir="$1"
+	local node_bin="" node_rc=0 selected_node=""
+	node_bin=$(_project_node_bin "$work_dir" ".") || node_rc=$?
+	if [[ "$node_rc" -eq 1 ]]; then
+		_WORKER_PRELAUNCH_FAILURE_REASON="project_node_environment_failure"
+		return 1
+	fi
+	[[ -n "$node_bin" ]] && export PATH="${node_bin}:$PATH"
+	[[ "$node_rc" -eq 0 ]] && selected_node=$(command -v node 2>/dev/null || true)
+	if [[ "$selected_node" == /* ]]; then
+		export AIDEVOPS_PROJECT_NODE_BIN="${selected_node%/*}"
+	else
+		unset AIDEVOPS_PROJECT_NODE_BIN 2>/dev/null || true
+	fi
+	return 0
+}
+
 _cmd_run_prepare() {
 	local session_key="$1"
 	local work_dir="$2"
@@ -384,13 +407,7 @@ _cmd_run_prepare() {
 		WORKER_TARGET_BRANCH=$(git -C "$work_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
 		export WORKER_TARGET_BRANCH
 		_hrw_claim_worker_worktree "$session_key" "$work_dir" || return 1
-		local node_bin="" node_rc=0
-		node_bin=$(_project_node_bin "$work_dir" ".") || node_rc=$?
-		if [[ "$node_rc" -eq 1 ]]; then
-			_WORKER_PRELAUNCH_FAILURE_REASON="project_node_environment_failure"
-			return 1
-		fi
-		[[ -n "$node_bin" ]] && export PATH="${node_bin}:$PATH"
+		_hrw_prepare_project_node "$work_dir" || return 1
 	else
 		unset _WORKER_WORKTREE_PATH WORKER_TARGET_BRANCH 2>/dev/null || true
 	fi
