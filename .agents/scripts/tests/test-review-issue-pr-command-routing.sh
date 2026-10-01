@@ -2,21 +2,19 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 #
-# Regression coverage for unified /review discovery and legacy
+# Regression coverage for unified /review discovery and
 # parent-session /review-issue-pr routing.
 
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 COMMAND_LIB="${SCRIPT_DIR}/../generate-runtime-config-commands.sh"
-LEGACY_LIB="${SCRIPT_DIR}/../generate-opencode-commands-quality.sh"
 REVIEW_COMMAND_SOURCE="${SCRIPT_DIR}/../commands/review.md"
 FULL_LOOP_SOURCE="${SCRIPT_DIR}/../../workflows/full-loop.md"
 REVIEW_CORE_SOURCE="${SCRIPT_DIR}/../../reference/review-core.md"
 MAINTAINER_WORKFLOW_SOURCE="${SCRIPT_DIR}/../../workflows/review-issue-pr.md"
 TMP_DIR=$(mktemp -d -t aidevops-review-command.XXXXXX) || exit 1
 COMMAND_DIR="${TMP_DIR}/commands"
-CALL_LOG="${TMP_DIR}/legacy-calls"
 
 cleanup() {
 	local tmp_dir="$TMP_DIR"
@@ -100,39 +98,6 @@ _generate_hardcoded_commands "opencode" "$COMMAND_DIR" || {
 }
 [[ "$_GENERATED_HARDCODED_COMMAND_COUNT" -eq 7 ]] || {
 	printf 'FAIL expected seven total hardcoded commands, got %s\n' "$_GENERATED_HARDCODED_COMMAND_COUNT" >&2
-	exit 1
-}
-
-# The one-release fallback generator must preserve the same routing contract.
-create_command() {
-	local name="$1"
-	local description="$2"
-	local agent="$3"
-	local subtask="$4"
-	local body
-	body=$(cat)
-	printf '%s|%s|%s|%s|%s\n' "$name" "$description" "$agent" "$subtask" "$body" >>"$CALL_LOG"
-	return 0
-}
-AGENT_BUILD="Build+"
-# shellcheck source=../generate-opencode-commands-quality.sh
-source "$LEGACY_LIB"
-define_review_commands
-
-grep -Fq 'review-issue-pr|Review external issue or PR - validate problem and evaluate solution|Build+||' "$CALL_LOG" || {
-	printf 'FAIL fallback generator still marks review-issue-pr as a subtask\n' >&2
-	exit 1
-}
-grep -Fq 'workflows/review.md' "$CALL_LOG" || {
-	printf 'FAIL fallback generator does not load the shared review policy\n' >&2
-	exit 1
-}
-grep -Fq 'End every completed review with the exact ready-to-run approval command' "$CALL_LOG" || {
-	printf 'FAIL fallback generator does not require approval command output\n' >&2
-	exit 1
-}
-grep -Fq 'agent-review|Systematic review and improvement of agent instructions|Build+|true|' "$CALL_LOG" || {
-	printf 'FAIL fallback generator changed unrelated subtask routing\n' >&2
 	exit 1
 }
 

@@ -124,30 +124,13 @@ update_opencode_config() {
 
 	print_info "Updating OpenCode configuration..."
 
-	# Use unified generator (t1665.4) if available, fall back to legacy scripts
+	# Use the unified generator (t1665.4).
 	if [[ -f ".agents/scripts/generate-runtime-config.sh" ]]; then
 		_run_generator ".agents/scripts/generate-runtime-config.sh" \
 			"Generating OpenCode configuration (unified)..." \
 			"OpenCode configuration complete (agents, commands, MCPs, prompts)" \
 			"OpenCode configuration encountered issues" \
 			all --runtime opencode
-	else
-		# Legacy fallback — remove after one release cycle
-		_run_generator ".agents/scripts/generate-opencode-commands.sh" \
-			"Generating OpenCode commands..." \
-			"OpenCode commands configured" \
-			"OpenCode command generation encountered issues"
-
-		_run_generator ".agents/scripts/generate-opencode-agents.sh" \
-			"Generating OpenCode agent configuration..." \
-			"OpenCode agents configured (11 primary in JSON, subagents as markdown)" \
-			"OpenCode agent generation encountered issues"
-
-		_run_generator ".agents/scripts/subagent-index-helper.sh" \
-			"Regenerating subagent index..." \
-			"Subagent index regenerated" \
-			"Subagent index generation encountered issues" \
-			generate
 	fi
 
 	return 0
@@ -162,30 +145,13 @@ update_claude_config() {
 
 	print_info "Updating Claude Code configuration..."
 
-	# Use unified generator (t1665.4) if available, fall back to legacy scripts
+	# Use the unified generator (t1665.4).
 	if [[ -f ".agents/scripts/generate-runtime-config.sh" ]]; then
 		_run_generator ".agents/scripts/generate-runtime-config.sh" \
 			"Generating Claude Code configuration (unified)..." \
 			"Claude Code configuration complete (agents, commands, MCPs, prompts)" \
 			"Claude Code configuration encountered issues" \
 			all --runtime claude-code
-	else
-		# Legacy fallback — remove after one release cycle
-		_run_generator ".agents/scripts/generate-claude-commands.sh" \
-			"Generating Claude Code commands..." \
-			"Claude Code commands configured" \
-			"Claude Code command generation encountered issues"
-
-		_run_generator ".agents/scripts/generate-claude-agents.sh" \
-			"Generating Claude Code agent configuration..." \
-			"Claude Code agents configured (MCPs, settings, commands)" \
-			"Claude Code agent generation encountered issues"
-
-		_run_generator ".agents/scripts/subagent-index-helper.sh" \
-			"Regenerating subagent index..." \
-			"Subagent index regenerated" \
-			"Subagent index generation encountered issues" \
-			generate
 	fi
 
 	return 0
