@@ -40,6 +40,9 @@ source_extracted() {
 	GREEN="green"
 	RED="red"
 	YELLOW="yellow"
+	NC=""
+	BLUE=""
+	BOLD=""
 	AIDEVOPS_GH_MIN_SLURP_VERSION="2.67.0"
 	INSTALLED_COUNT=0
 	OUTDATED_COUNT=0
@@ -122,9 +125,6 @@ result=$(_run_outdated_tool_updates)
 
 # Summary language must distinguish verified convergence from unknown,
 # deferred, or no-op maintenance outcomes.
-BOLD=""
-[[ -z "${BLUE+x}" ]] && BLUE=""
-[[ -z "${NC+x}" ]] && NC=""
 QUIET=false
 AUTO_UPDATE=true
 OUTDATED_COUNT=0
