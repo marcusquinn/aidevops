@@ -3,10 +3,30 @@
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
 # Runner-local preclaim requirements; no GitHub writes or secret output.
 
+# GH#33399: never fall back to prefetched requirements. Shared by the early
+# admission gate and the final gate immediately before the persistent claim.
+runner_capability_check_fresh() {
+	local repo_path="$1" issue_number="$2" repo_slug="$3" logfile="$4"
+	local capability_meta_json=""
+	capability_meta_json=$(gh api "repos/${repo_slug}/issues/${issue_number}" \
+		--jq '{number, state, body, labels}' 2>/dev/null) || capability_meta_json=""
+	if ! printf '%s' "$capability_meta_json" | jq -e --argjson number "$issue_number" \
+		'.number == $number and .state == "open" and (.body | type == "string") and (.labels | type == "array")' >/dev/null 2>&1; then
+		printf '[dispatch_with_dedup] #%s deferred: runner_capability_unmet source=fresh metadata_unreadable\n' "$issue_number" >>"$logfile"
+		return 1
+	fi
+	if ! runner_capability_check "$repo_path" "$capability_meta_json" fresh >/dev/null 2>>"$logfile"; then
+		printf '[dispatch_with_dedup] #%s deferred: runner_capability_unmet\n' "$issue_number" >>"$logfile"
+		return 1
+	fi
+	return 0
+}
+
 runner_capability_check() {
 	local repo_path="$1"
 	local issue_meta_json="$2"
-	python3 - "$repo_path" "$issue_meta_json" <<'PY'
+	local source="${3:-}"
+	python3 - "$repo_path" "$issue_meta_json" "$source" <<'PY'
 import json
 import os
 import re
@@ -81,6 +101,9 @@ try:
             probes.append(str(executable))
     if len(secrets) > 32 or len(probes) > 8:
         unmet()
+    if sys.argv[3] == 'fresh':
+        print(f'runner_capability_check source=fresh requirements={len(secrets) + len(probes)}',
+              file=sys.stderr)
     for name in sorted(secrets):
         run_check(['aidevops', 'secret', 'check', name])
     for probe in probes:

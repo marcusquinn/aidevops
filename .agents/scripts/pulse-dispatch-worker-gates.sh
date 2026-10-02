@@ -308,21 +308,17 @@ _dlw_claim_lock_after_canary() {
 	local repo_slug="$2"
 	local self_login="$3"
 	local _ds_t0
-	local current_issue="" missing="" refreshed_state=""
 	# Re-read declarations immediately before the first persistent claim write.
+	# repo_path is dynamically scoped by _dispatch_launch_worker, as are
+	# the other launch gate inputs. Missing context must fail closed too.
+	[[ -n "${repo_path:-}" ]] || return 1
+	# shellcheck source=runner-capability-helper.sh
+	source "${SCRIPT_DIR}/runner-capability-helper.sh"
 	_ds_t0=$(_ds_now_ns)
-	current_issue=$(gh api "repos/${repo_slug}/issues/${issue_number}" 2>/dev/null) || return 0
+	local capability_rc=0
+	runner_capability_check_fresh "${repo_path:-}" "$issue_number" "$repo_slug" "$LOGFILE" || capability_rc=$?
 	_ds_record "$issue_number" "$repo_slug" "preclaim_issue_read" "$_ds_t0"
-	refreshed_state=$(printf '%s' "$current_issue" | jq -r '(.state // "") | ascii_downcase' 2>/dev/null) || refreshed_state=""
-	if [[ -n "$refreshed_state" && "$refreshed_state" != "open" ]]; then
-		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: refreshed issue state before claim is ${refreshed_state}" >>"$LOGFILE"
-		return 1
-	fi
-	missing=$(_dispatch_secret_missing_names "$current_issue") || return 0
-	if [[ -n "$missing" ]]; then
-		echo "[dispatch_with_dedup] #${issue_number}: secret admission changed before claim; yielding" >>"$LOGFILE"
-		return 0
-	fi
+	[[ "$capability_rc" -eq 0 ]] || return 1
 
 	# t3549: acquire the cross-runner GitHub claim only after the canary proves
 	# this runtime can start. Otherwise canary timeout storms publish persistent

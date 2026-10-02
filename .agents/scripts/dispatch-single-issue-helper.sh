@@ -1164,10 +1164,14 @@ _dsi_launch_worker() {
 	local repo_slug="${10:-}"
 	local self_login="${11:-}"
 
+	# Manual dispatch may inherit interactive/non-headless markers. The worker
+	# must carry its own role so the exact wrapper ownership proof is accepted.
 	local -a cmd=(
 		env
 		HEADLESS=1
 		FULL_LOOP_HEADLESS=true
+		AIDEVOPS_SESSION_ORIGIN=worker
+		AIDEVOPS_HEADLESS=true
 		WORKER_ISSUE_NUMBER="$issue_number"
 		WORKER_GITHUB_LOGIN="$self_login"
 		WORKER_WORKTREE_PATH="$worktree_path"
