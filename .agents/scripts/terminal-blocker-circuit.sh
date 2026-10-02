@@ -13,6 +13,7 @@ _TBC_RETRY_MARKER='terminal-blocker-circuit:retry'
 _TBC_MISSING_SCOPE='missing_files_scope'
 _TBC_UNKNOWN='unknown'
 _TBC_RUNNER_CAPABILITY='runner_capability_unmet'
+_TBC_RUNNER_RECOVERY_OWNER='runner-recovery'
 _TBC_AUTHORITATIVE_ASSOCIATIONS='["OWNER","MEMBER"]'
 
 # IDs break same-second ties only when both are positive, exact JSON integers.
@@ -109,7 +110,7 @@ _TBC_INPUT_OWNERS='user contributor maintainer admin'
 _terminal_blocker_reason() {
 	local fingerprint="$1"
 	local reason=""
-	for reason in missing_files_scope files_scope_excluded target_code_blocker external_trigger_pending permission_required push_policy_timeout runner_capability_unmet unknown; do
+	for reason in missing_files_scope files_scope_excluded target_code_blocker external_trigger_pending permission_required push_policy_timeout network_policy_timeout runner_capability_unmet unknown; do
 		if [[ "$fingerprint" == "$(_terminal_blocker_hash "v2:${reason}")" ]]; then
 			printf '%s\n' "$reason"
 			return 0
@@ -176,7 +177,7 @@ if not marker.search(candidate):
     raise SystemExit(1)
 
 reasons = re.findall(r"^TERMINAL_BLOCKER_REASON=(.*)$", candidate, re.M)
-allowed = {'missing_files_scope', 'files_scope_excluded', 'target_code_blocker', 'external_trigger_pending', 'permission_required', 'push_policy_timeout', 'runner_capability_unmet'}
+allowed = {'missing_files_scope', 'files_scope_excluded', 'target_code_blocker', 'external_trigger_pending', 'permission_required', 'push_policy_timeout', 'network_policy_timeout', 'runner_capability_unmet'}
 input_owners = {'user', 'contributor', 'maintainer', 'admin'}
 reason = reasons[0] if len(reasons) == 1 else 'unknown'
 if reason == 'input_required':
@@ -357,11 +358,14 @@ terminal_blocker_release_mode() {
 	local retry="" circuit="" observation="" circuit_at="" observation_at=""
 	# Host contention is transient, not an unchanged-code/brief hold. Preserve
 	# recovery evidence without opening a durable circuit on repeated timeouts.
-	if [[ "$(_terminal_blocker_reason "$blocker_fingerprint")" == "push_policy_timeout" ||
-		"$(_terminal_blocker_reason "$blocker_fingerprint")" == "$_TBC_RUNNER_CAPABILITY" ]]; then
+	local transient_reason=""
+	transient_reason=$(_terminal_blocker_reason "$blocker_fingerprint")
+	case "$transient_reason" in
+	push_policy_timeout | network_policy_timeout | "$_TBC_RUNNER_CAPABILITY")
 		printf 'first\n'
 		return 0
-	fi
+		;;
+	esac
 	_terminal_blocker_report_ignored_evidence "$comments_json"
 	retry=$(_terminal_blocker_latest_retry_comment "$comments_json") || retry=""
 	circuit=$(_terminal_blocker_latest_marker "$comments_json" "$_TBC_CIRCUIT_MARKER revision=${task_revision} blocker=${blocker_fingerprint}") || circuit=""
@@ -412,6 +416,10 @@ _terminal_blocker_recovery() {
 	push_policy_timeout)
 		owner="runner-recovery"
 		action='Retry policy evaluation and publication of the recorded local branch/HEAD on the same runner after host contention clears. Preserve all policy and publication guards.'
+		;;
+	network_policy_timeout)
+		owner="$_TBC_RUNNER_RECOVERY_OWNER"
+		action='Retry the same outbound HTTPS command on the same runner after host contention clears. The policy guard timed out; it was not a policy denial. Preserve all policy guards.'
 		;;
 	missing_files_scope)
 		owner="brief-author"

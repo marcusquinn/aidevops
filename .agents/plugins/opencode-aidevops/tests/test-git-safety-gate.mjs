@@ -974,6 +974,10 @@ test("labels a repeated policy helper timeout as transient infrastructure", () =
         (error) => /policy timed out/.test(error.message) &&
           !error.message.includes("push_policy_timeout"),
       );
+      assert.throws(
+        () => checkCommandSafetyGate("curl -fsS https://example.com/health", isolatedScripts, root),
+        /policy timed out[\s\S]*TERMINAL_BLOCKER_REASON=network_policy_timeout/,
+      );
     });
   } finally {
     rmSync(root, { recursive: true, force: true });
