@@ -738,6 +738,41 @@ else
 		"(stub log: $(tr '\n' '|' <"$STUB_LOG"))"
 fi
 
+# --- GH#33420: active status labels alone do not establish ownership ---
+for orphan_status in claimed in-progress in-review; do
+	rm -f "${claim_dir}"/*.json 2>/dev/null || true
+	: >"$STUB_LOG"
+	printf '{"state":"OPEN","labels":[{"name":"status:%s"},{"name":"origin:interactive"}],"assignees":[],"comments":[]}\n' \
+		"$orphan_status" >"${STUB_STATE_DIR}/56008.json"
+	orphan_out=$("$HELPER_PATH" claim 56008 regress/test 2>&1)
+	orphan_rc=$?
+	orphan_owner=$(jq -r '.assignees | map(.login) | join(",")' "${STUB_STATE_DIR}/56008.json")
+	if [[ $orphan_rc -eq 0 && "$orphan_owner" == "testuser" && -f "${claim_dir}/regress-test-56008.json" ]] &&
+		grep -q 'add-label status:claimed' "$STUB_LOG" &&
+		grep -q 'add-assignee testuser' "$STUB_LOG"; then
+		print_result "GH#33420: unassigned status:$orphan_status claims normally" 0
+	else
+		print_result "GH#33420: unassigned status:$orphan_status claims normally" 1 \
+			"(rc=$orphan_rc owner=$orphan_owner out=${orphan_out:0:160})"
+	fi
+done
+
+# An assigned issue still requires explicit takeover and names its owners.
+rm -f "${claim_dir}"/*.json 2>/dev/null || true
+: >"$STUB_LOG"
+printf '%s\n' '{"state":"OPEN","labels":[{"name":"status:in-progress"}],"assignees":[{"login":"worker-runner"},{"login":"other-worker"}],"comments":[]}' \
+	>"${STUB_STATE_DIR}/56009.json"
+assigned_out=$("$HELPER_PATH" claim 56009 regress/test 2>&1)
+assigned_rc=$?
+if [[ $assigned_rc -eq 1 && ! -f "${claim_dir}/regress-test-56009.json" ]] &&
+	! grep -q 'issue edit 56009' "$STUB_LOG" &&
+	printf '%s' "$assigned_out" | grep -q 'another principal (worker-runner,other-worker)'; then
+	print_result "GH#33420: assigned active issue refuses and names assignees" 0
+else
+	print_result "GH#33420: assigned active issue refuses and names assignees" 1 \
+		"(rc=$assigned_rc out=${assigned_out:0:200})"
+fi
+
 # --- Case (d2): explicit worker takeover replaces and verifies ownership ---
 rm -f "${claim_dir}"/*.json 2>/dev/null || true
 : >"$STUB_LOG"
