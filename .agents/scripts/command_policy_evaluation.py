@@ -206,36 +206,9 @@ def _evaluate_worker_network(
             "AIDEVOPS_NETWORK_POLICY_TIMEOUT_SECONDS must be a positive integer",
         )
     for argv in invocations:
-        try:
-            result = subprocess.run(  # nosec B603 -- /bin/bash is fixed and helper is policy-selected and verified as a file.
-                [
-                    "/bin/bash",
-                    str(helper),
-                    "check-argv",
-                    json.dumps(argv),
-                    "--cwd",
-                    cwd,
-                    "--worker-id",
-                    worker_id,
-                ],
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                check=False,
-            )
-        except subprocess.TimeoutExpired:
-            return _decision(
-                "forbid",
-                "network.helper-timeout",
-                f"Transient worker network policy timeout after {timeout} seconds; "
-                "failed closed, retry the policy check when host load subsides",
-            )
-        except (OSError, subprocess.SubprocessError, OverflowError) as exc:
-            return _decision(
-                "forbid",
-                "network.helper-error",
-                f"Worker network policy failed closed: {exc}",
-            )
+        result, error = _run_network_guard(argv, cwd, helper, worker_id, timeout)
+        if error:
+            return error
         if result.returncode != 0:
             reason = result.stderr.strip() or (
                 "Worker network policy denied or could not classify the command destination"
@@ -244,6 +217,42 @@ def _evaluate_worker_network(
     return _decision(
         "allow", "network.worker-allow", "Worker network policy allowed every argv"
     )
+
+
+def _run_network_guard(
+    argv: list[str], cwd: str, helper: Path, worker_id: str, timeout: int
+) -> tuple[subprocess.CompletedProcess[str] | None, dict[str, Any] | None]:
+    try:
+        result = subprocess.run(  # nosec B603 -- /bin/bash is fixed and helper is policy-selected and verified as a file.
+            [
+                "/bin/bash",
+                str(helper),
+                "check-argv",
+                json.dumps(argv),
+                "--cwd",
+                cwd,
+                "--worker-id",
+                worker_id,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return None, _decision(
+            "forbid",
+            "network.helper-timeout",
+            f"Transient worker network policy timeout after {timeout} seconds; "
+            "failed closed, retry the policy check when host load subsides",
+        )
+    except (OSError, subprocess.SubprocessError, OverflowError) as exc:
+        return None, _decision(
+            "forbid",
+            "network.helper-error",
+            f"Worker network policy failed closed: {exc}",
+        )
+    return result, None
 
 
 def evaluate_invocations(
