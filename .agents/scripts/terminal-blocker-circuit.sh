@@ -358,12 +358,14 @@ terminal_blocker_release_mode() {
 	local retry="" circuit="" observation="" circuit_at="" observation_at=""
 	# Host contention is transient, not an unchanged-code/brief hold. Preserve
 	# recovery evidence without opening a durable circuit on repeated timeouts.
-	if [[ "$(_terminal_blocker_reason "$blocker_fingerprint")" == "push_policy_timeout" ||
-		"$(_terminal_blocker_reason "$blocker_fingerprint")" == "network_policy_timeout" ||
-		"$(_terminal_blocker_reason "$blocker_fingerprint")" == "$_TBC_RUNNER_CAPABILITY" ]]; then
+	local transient_reason=""
+	transient_reason=$(_terminal_blocker_reason "$blocker_fingerprint")
+	case "$transient_reason" in
+	push_policy_timeout | network_policy_timeout | "$_TBC_RUNNER_CAPABILITY")
 		printf 'first\n'
 		return 0
-	fi
+		;;
+	esac
 	_terminal_blocker_report_ignored_evidence "$comments_json"
 	retry=$(_terminal_blocker_latest_retry_comment "$comments_json") || retry=""
 	circuit=$(_terminal_blocker_latest_marker "$comments_json" "$_TBC_CIRCUIT_MARKER revision=${task_revision} blocker=${blocker_fingerprint}") || circuit=""

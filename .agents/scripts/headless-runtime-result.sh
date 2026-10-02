@@ -180,10 +180,12 @@ _handle_run_result_success_output() {
 				terminal_blocker_capture_output "$output_file" || true
 				local blocker_reason=""
 				blocker_reason=$(_terminal_blocker_reason "${AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT:-}")
-				if [[ "$blocker_reason" == "push_policy_timeout" || "$blocker_reason" == "network_policy_timeout" ]]; then
+				case "$blocker_reason" in
+				push_policy_timeout | network_policy_timeout)
 					_run_failure_reason="$blocker_reason"
 					_run_classification_pattern="$blocker_reason"
-				fi
+					;;
+				esac
 			fi
 			rm -f "$output_file"
 			print_warning "$selected_model worker reported a terminal BLOCKED state"
