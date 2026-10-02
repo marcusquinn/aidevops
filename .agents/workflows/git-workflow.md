@@ -221,9 +221,9 @@ Git is the audit trail. Procedures: see the "## AGENTS.md User Guide Git Workflo
 
 **Origin labelling (MANDATORY):**
 
-- In managed repos, never use raw `gh pr create` or `gh issue create` directly. Always use the wrappers: `gh_create_pr` and `gh_create_issue` (defined in `shared-constants.sh`, sourced via PATH). The wrappers automatically apply `origin:interactive` or `origin:worker` based on the session context. Raw `gh` calls produce unlabelled PRs that the pulse may auto-close.
-- In managed repos, if `gh_create_pr` is unavailable (e.g. not sourced), pass `--label origin:interactive` explicitly when creating PRs in an interactive session.
-- Where the runtime blocks `source` (OpenCode Bash policy), call the executable wrapper instead: `gh-write-helper.sh issue create|comment` / `gh-write-helper.sh pr create|comment` (see `reference/gh-command-discipline.md`).
+- In managed repos, never use raw `gh pr create` or `gh issue create` directly. Prefer the executable `gh-write-helper.sh issue create` / `gh-write-helper.sh pr create`; scripts that source `shared-gh-wrappers.sh` may call `gh_create_issue` / `gh_create_pr`. Both routes automatically apply `origin:interactive` or `origin:worker` and the signature footer based on session context. Adding an origin label manually is not a substitute for the wrapper.
+- In OpenCode or any runtime that cannot source shell functions, use a single-line argv command: `gh-write-helper.sh issue create --repo owner/repo --title 'Issue title' --body-file /absolute/path/brief.md --label bug --assignee @me`. Write the body file in a separate tool call first; use the installed executable path if it is not on PATH. No `bash -c`, shell variables, redirects, or caller-side `source` are needed.
+- Use `gh-write-helper.sh issue comment` / `gh-write-helper.sh pr comment` for comments and `gh-write-helper.sh pr create` for PRs with the same body-file pattern (see `reference/gh-command-discipline.md`). This helper uses existing `gh` authentication, not the optional legacy `github-cli-helper.sh` multi-account config. Use `claim-task-id.sh --brief-file` when creating a tracked task that also needs a task ID.
 
 **External upstream repos (non-maintainer etiquette):**
 
