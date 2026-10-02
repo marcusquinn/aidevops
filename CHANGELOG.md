@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.37.41] - 2026-10-02
+
+### Fixed
+
+- fix profile scratch recovery with pre-existing untracked files
+- preserve open blocked issues after non-closing worker PRs (#33395)
+- detect nested tracked env files and explain encrypted remediation (#33386)
+
 ## [3.37.40] - 2026-10-01
 
 ### Changed
