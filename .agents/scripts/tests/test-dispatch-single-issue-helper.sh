@@ -857,6 +857,61 @@ test_permission_history_guard_requires_current_grant() {
 	return 0
 }
 
+test_manual_resume_reuses_dispatch_lifecycle() {
+	local result=0
+	(
+		resume_resolutions=0 resume_change_binding=0
+		_dsi_resolve_permission_resume() {
+			resume_resolutions=$((resume_resolutions + 1))
+			_DSI_WORKTREE_PATH=/tmp/aidevops-recovery
+			_DSI_WORKTREE_BRANCH=feature/preserved
+			_DSI_RESUME_SESSION=manual-cli-123-100
+			_DSI_RESUME_REQUEST=perm-0000000000000000
+			if [[ "$resume_change_binding" == 1 && "$resume_resolutions" -gt 1 ]]; then
+				_DSI_RESUME_REQUEST=perm-1111111111111111
+			fi
+			return 0
+		}
+		_dsi_run_dedup_check() {
+			_DSI_DEDUP_STATE=clear
+			_DSI_DEDUP_RC=1
+			_DSI_DEDUP_RESULT=clear
+			return 0
+		}
+		_dsi_acquire_consensus_claim() {
+			resume_claimed=1
+			return 0
+		}
+		_dsi_run_required_predispatch_validator() { return 0; }
+		_dsi_guard_no_existing_dispatch() { return 0; }
+		_dsi_create_worktree() { return 1; }
+		_dsi_prepare_worker_git_auth() {
+			resume_auth=1
+			return 0
+		}
+		lock_issue_for_worker() { return 0; }
+		_dsi_launch_and_report() {
+			local session="${4:-}"
+			[[ "$session" == manual-cli-123-100 && "$_DSI_WORKTREE_PATH" == /tmp/aidevops-recovery ]] || return 1
+			[[ "$resume_claimed" == 1 && "$resume_auth" == 1 ]] || return 1
+			return 0
+		}
+		MOCK_GH_LABELS_JSON='[]'
+		MOCK_GH_FAIL=0 MOCK_GH_TARGET_IS_PR=0 MOCK_GH_ISSUE_STATE=OPEN
+		unset AIDEVOPS_DISPATCH_BASE_REF
+		cmd_resume 123 owner/repo || exit 1
+		[[ "$_DSI_RESUME_MODE" == 0 ]] || exit 1
+		resume_change_binding=1 resume_resolutions=0 resume_auth=0
+		if cmd_resume 123 owner/repo; then exit 1; fi
+		[[ "$resume_auth" == 0 ]] || exit 1
+		if cmd_resume 123 owner/repo --no-ceremony; then exit 1; fi
+		MOCK_GH_LABELS_JSON='[{"name":"needs-maintainer-permissions"}]'
+		if cmd_resume 123 owner/repo; then exit 1; fi
+	) || result=1
+	print_result "manual resume reuses session/worktree through claim, ceremony and Git auth; holds remain enforced" "$result"
+	return 0
+}
+
 test_cmd_dispatch_blocks_needs_maintainer_review_before_dedup() {
 	MOCK_GH_FAIL="0"
 	MOCK_GH_TARGET_IS_PR="0"
@@ -1665,6 +1720,7 @@ _run_tests() {
 	test_issue_author_guard_blocks_missing_label_bypass
 	test_maintainer_permission_guard_blocks_manual_dispatch
 	test_permission_history_guard_requires_current_grant
+	test_manual_resume_reuses_dispatch_lifecycle
 	test_cmd_dispatch_blocks_needs_maintainer_review_before_dedup
 	test_runner_login_transport_security
 	test_dedup_receives_prefetched_issue_metadata

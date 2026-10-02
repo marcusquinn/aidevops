@@ -75,9 +75,13 @@ _DSI_DISPATCH_BASE_BRANCH=""
 _DSI_STATE_RECOVERING="recovering"
 _DSI_UNKNOWN_VALUE="<unknown>"
 _DSI_JSON_TRUE="true"
+_DSI_VERIFIED="VERIFIED"
 _DSI_DEFAULT_CANARY_TIMEOUT_SECONDS=180
 _DSI_READY_PREPARATION_ALLOWANCE_SECONDS=60
 _DSI_CLAIM_WON=0
+_DSI_RESUME_MODE=0
+_DSI_RESUME_SESSION=""
+_DSI_RESUME_REQUEST=""
 
 _dsi_gh_read() {
 	local rc=0
@@ -259,7 +263,7 @@ _dsi_guard_issue_author_trust() {
 	fi
 	local verification=""
 	verification=$("$_DSI_APPROVAL_HELPER" verify "$issue_number" "$repo_slug" 2>/dev/null) || true
-	if [[ "$verification" == "VERIFIED" ]]; then
+	if [[ "$verification" == "$_DSI_VERIFIED" ]]; then
 		return 0
 	fi
 	if [[ -n "$verification" && "$verification" != "NO_APPROVAL" ]]; then
@@ -336,13 +340,72 @@ _dsi_guard_permission_history_verified() {
 	if [[ "$verification" == "NO_REQUEST" || "$verification" == "WITHDRAWN" ]]; then
 		return 0
 	fi
-	if [[ "$verification" == "VERIFIED" ]]; then
+	if [[ "$verification" == "$_DSI_VERIFIED" ]]; then
 		_dsi_err "Issue #${issue_number} in ${repo_slug} has a signed grant bound to its original worker session and worktree; a new manual worker cannot consume it"
-		_dsi_info "  Resume through the original pulse/worker path so the bound pending request can be loaded safely."
+		_dsi_info "  Run 'dispatch-single-issue-helper.sh resume ${issue_number} ${repo_slug}' to reuse the verified original binding."
 		return 1
 	fi
 	_dsi_err "Issue #${issue_number} in ${repo_slug} has permission-request history without a current matching signed grant (${verification:-NO_APPROVAL}); refusing manual worker dispatch"
 	return 1
+}
+
+# Discover only registered linked worktrees of this repository. The marker is a
+# candidate, never authority: verify its complete signed binding before accepting
+# it. Missing or ambiguous candidates fail closed.
+_dsi_resolve_permission_resume() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local repo_path="" line="" worktree="" git_dir="" marker=""
+	local request="" session="" branch="" digest="" verification="" matches=0
+	local matched_worktree="" matched_branch="" matched_session="" matched_request=""
+	repo_path=$(_dsi_repo_path_for_slug "$repo_slug") || return 1
+	[[ -d "$repo_path" && -x "$_DSI_APPROVAL_HELPER" ]] || return 1
+	while IFS= read -r line; do
+		[[ "$line" == "worktree "* ]] || continue
+		worktree="${line#worktree }"
+		[[ -f "$worktree/.git" ]] || continue
+		[[ "$(_dsi_repo_slug_for_worktree "$worktree")" == "$repo_slug" ]] || continue
+		git_dir=$(git -C "$worktree" rev-parse --absolute-git-dir 2>/dev/null) || continue
+		marker="${git_dir}/aidevops-permission-pending"
+		[[ -f "$marker" ]] || continue
+		request=$(jq -er --arg issue "$issue_number" '
+			select(.issue == ($issue | tonumber)) | .request_id
+			| select(type == "string" and test("^perm-[a-f0-9]{16}$"))
+		' "$marker" 2>/dev/null) || continue
+		session=$(jq -er --arg prefix "manual-cli-${issue_number}-" '
+			.session | select(type == "string" and startswith($prefix))
+			| select(test("^manual-cli-[0-9]+-[0-9]+$"))
+		' "$marker" 2>/dev/null) || continue
+		branch=$(git -C "$worktree" branch --show-current) || continue
+		[[ -n "$branch" ]] || continue
+		digest=$(python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.argv[1].encode()).hexdigest())' "$worktree") || return 1
+		verification=$("$_DSI_APPROVAL_HELPER" verify-permissions issue "$issue_number" "$repo_slug" \
+			"$request" "$session" "$branch" "$digest" 2>/dev/null) || continue
+		[[ "$verification" == "$_DSI_VERIFIED" ]] || continue
+		matches=$((matches + 1))
+		matched_worktree="$worktree"
+		matched_branch="$branch"
+		matched_session="$session"
+		matched_request="$request"
+	done < <(git -C "$repo_path" worktree list --porcelain)
+	if [[ "$matches" -ne 1 ]]; then
+		_dsi_err "Resume requires exactly one preserved manual worktree with a current signed binding (found ${matches})"
+		return 1
+	fi
+	_DSI_WORKTREE_PATH="$matched_worktree"
+	_DSI_WORKTREE_BRANCH="$matched_branch"
+	_DSI_RESUME_SESSION="$matched_session"
+	_DSI_RESUME_REQUEST="$matched_request"
+	_DSI_DISPATCH_BASE_BRANCH=$(_dsi_dispatch_base_branch "$repo_slug" "$repo_path")
+	return 0
+}
+
+cmd_resume() {
+	local rc=0
+	_DSI_RESUME_MODE=1
+	cmd_dispatch "$@" || rc=$?
+	_DSI_RESUME_MODE=0
+	return "$rc"
 }
 
 #######################################
@@ -1356,7 +1419,11 @@ _dsi_print_dryrun() {
 	_dsi_info "  Session key:  ${session_key}"
 	_dsi_info "  Prompt:       $(_dsi_build_prompt "$issue_number" "$_DSI_ISSUE_URL")"
 	_dsi_info "  Base ref:     ${base_ref}"
-	_dsi_info "  Worktree:     would create auto-<ts>-gh${issue_number}"
+	if [[ "$_DSI_RESUME_MODE" -eq 1 ]]; then
+		_dsi_info "  Worktree:     reuse ${_DSI_WORKTREE_PATH}"
+	else
+		_dsi_info "  Worktree:     would create auto-<ts>-gh${issue_number}"
+	fi
 	if [[ "$_DSI_ARG_NO_CEREMONY" -eq 1 ]]; then
 		_dsi_info "  Ceremony:     SKIPPED (--no-ceremony) — labels and assignee unchanged"
 	else
@@ -1585,21 +1652,9 @@ _dsi_resolve_runner_login() {
 	return 1
 }
 
-#######################################
-# Subcommand: dispatch <issue> <slug> [--model M] [--dry-run]
-#######################################
-cmd_dispatch() {
-	local rc=0
-	_dsi_parse_dispatch_args "$@" || rc=$?
-	case "$rc" in
-	0) ;;
-	100) return 0 ;;
-	*) return "$rc" ;;
-	esac
-	local issue_number="$_DSI_ARG_ISSUE"
-	local repo_slug="$_DSI_ARG_REPO"
-
-	# Step 1-2: validate + load + parent-task gate
+_dsi_validate_dispatch_target() {
+	local issue_number="$1"
+	local repo_slug="$2"
 	_dsi_load_issue_meta "$issue_number" "$repo_slug" || return 1
 	local target_pr_rc=0
 	_dsi_target_is_pull_request "$issue_number" "$repo_slug" || target_pr_rc=$?
@@ -1615,8 +1670,35 @@ cmd_dispatch() {
 	_dsi_guard_no_maintainer_review_required "$_DSI_ISSUE_LABELS" "$issue_number" "$repo_slug" || return 1
 	_dsi_guard_issue_author_trust "$issue_number" "$repo_slug" || return 1
 	_dsi_guard_no_maintainer_permission_required "$_DSI_ISSUE_LABELS" "$issue_number" "$repo_slug" || return 1
-	_dsi_guard_permission_history_verified "$issue_number" "$repo_slug" || return 1
+	if [[ "$_DSI_RESUME_MODE" -eq 1 ]]; then
+		_dsi_resolve_permission_resume "$issue_number" "$repo_slug" || return 1
+	else
+		_dsi_guard_permission_history_verified "$issue_number" "$repo_slug" || return 1
+	fi
 	_dsi_check_parent_task "$_DSI_ISSUE_LABELS" || return 1
+	return 0
+}
+
+#######################################
+# Subcommand: dispatch <issue> <slug> [--model M] [--dry-run]
+#######################################
+cmd_dispatch() {
+	local rc=0
+	_dsi_parse_dispatch_args "$@" || rc=$?
+	case "$rc" in
+	0) ;;
+	100) return 0 ;;
+	*) return "$rc" ;;
+	esac
+	local issue_number="$_DSI_ARG_ISSUE"
+	local repo_slug="$_DSI_ARG_REPO"
+	if [[ "$_DSI_RESUME_MODE" -eq 1 && ("$_DSI_ARG_NO_CEREMONY" -eq 1 || -n "${AIDEVOPS_DISPATCH_BASE_REF:-}") ]]; then
+		_dsi_err "Resume requires normal ownership and its preserved worktree; --no-ceremony/--base are not supported"
+		return 2
+	fi
+
+	# Step 1-2: validate + load + parent-task gate
+	_dsi_validate_dispatch_target "$issue_number" "$repo_slug" || return 1
 
 	# Step 3: dedup check (informational under --dry-run, blocking otherwise).
 	# Helper exit codes (per dispatch-dedup-helper.sh::is-assigned):
@@ -1636,13 +1718,14 @@ cmd_dispatch() {
 	# same repo+issue. This closes the gap where labels or ledger entries are
 	# stale/missing but a live worker process is still writing in a worktree.
 	if [[ "$_DSI_ARG_DRYRUN" -ne 1 ]]; then
-		_dsi_guard_no_existing_dispatch "$issue_number" "$repo_slug" || return 1
+		_dsi_guard_no_existing_dispatch "$issue_number" "$repo_slug" "${_DSI_WORKTREE_PATH:-}" || return 1
 	fi
 
 	# Step 5: resolve model
 	_dsi_resolve_model "$_DSI_ISSUE_LABELS" "$_DSI_ARG_MODEL"
 	local session_key
 	session_key="manual-cli-${issue_number}-$(date +%s)"
+	[[ "$_DSI_RESUME_MODE" -eq 1 ]] && session_key="$_DSI_RESUME_SESSION"
 
 	# Step 6: dry-run short-circuit
 	if [[ "$_DSI_ARG_DRYRUN" -eq 1 ]]; then
@@ -1692,6 +1775,8 @@ _dsi_dispatch_after_dedup_clear() {
 	local repo_slug="$2"
 	local self_login="$3"
 	local session_key="$4"
+	local resume_worktree="${_DSI_WORKTREE_PATH:-}" resume_branch="${_DSI_WORKTREE_BRANCH:-}"
+	local resume_request="$_DSI_RESUME_REQUEST"
 
 	if ! _dsi_apply_prelaunch_ceremony_if_enabled "$issue_number" "$repo_slug" "$self_login"; then
 		_dsi_reset_after_prelaunch_failure "$issue_number" "$repo_slug" "$self_login" "dispatch_ceremony_failed"
@@ -1699,9 +1784,18 @@ _dsi_dispatch_after_dedup_clear() {
 	fi
 
 	# Step 7: pre-create worktree
-	if ! _dsi_create_worktree "$issue_number" "$repo_slug"; then
+	if [[ "$_DSI_RESUME_MODE" -ne 1 ]] && ! _dsi_create_worktree "$issue_number" "$repo_slug"; then
 		_dsi_reset_after_prelaunch_failure "$issue_number" "$repo_slug" "$self_login" "worktree_precreation_failed"
 		return 1
+	fi
+	# Revalidate after claims/ceremony without substituting a different binding.
+	if [[ "$_DSI_RESUME_MODE" -eq 1 ]]; then
+		if ! _dsi_resolve_permission_resume "$issue_number" "$repo_slug" ||
+			[[ "$_DSI_RESUME_SESSION" != "$session_key" || "$_DSI_RESUME_REQUEST" != "$resume_request" ||
+				"$_DSI_WORKTREE_PATH" != "$resume_worktree" || "$_DSI_WORKTREE_BRANCH" != "$resume_branch" ]]; then
+			_dsi_reset_after_prelaunch_failure "$issue_number" "$repo_slug" "$self_login" "resume_binding_changed"
+			return 1
+		fi
 	fi
 
 	# Step 7.5: re-check after worktree creation so an existing live process
@@ -1886,6 +1980,7 @@ Usage: dispatch-single-issue-helper.sh <command> [args]
 
 Commands:
   dispatch <issue> <slug> [opts]   Launch a worker against a single issue.
+  resume   <issue> <slug> [opts]   Resume a signed grant in its original manual worktree.
   status   <issue> <slug>          Show active dispatch state from ledger.
   help                             Show this help.
 
@@ -1929,6 +2024,9 @@ main() {
 	case "$_cmd" in
 	dispatch)
 		cmd_dispatch "$@"
+		;;
+	resume)
+		cmd_resume "$@"
 		;;
 	status)
 		cmd_status "$@"
