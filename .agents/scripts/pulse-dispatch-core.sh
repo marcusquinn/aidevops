@@ -1058,10 +1058,7 @@ dispatch_with_dedup() {
 	# GH#33341: evaluate runner-local capabilities before any claim or scope write.
 	# shellcheck source=runner-capability-helper.sh
 	source "${SCRIPT_DIR}/runner-capability-helper.sh"
-	if ! runner_capability_check "$repo_path" "$issue_meta_json" >/dev/null; then
-		printf '[dispatch_with_dedup] #%s deferred: runner_capability_unmet\n' "$issue_number" >>"$LOGFILE"
-		return 1
-	fi
+	runner_capability_check_fresh "$repo_path" "$issue_number" "$repo_slug" "$LOGFILE" || return 1
 	_dispatch_preclaim_brief_scope "$issue_number" "$repo_slug" "$issue_meta_json" || return 1
 
 	# Run all pre-dispatch validation and dedup check layers (10 gates total).

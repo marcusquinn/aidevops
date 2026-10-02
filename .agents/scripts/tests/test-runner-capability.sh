@@ -84,8 +84,17 @@ printf 'PRIVATE_ERROR\n' >&2
 _ds_now_ns() { printf 0; return 0; }
 _dispatch_load_and_validate_metadata() { issue_meta_json="$META"; return 0; }
 _dispatch_preclaim_brief_scope() { printf REACHED_NEXT_GATE; return 1; }
+gh() {
+    local command="$1" endpoint="$2"
+    [[ "$command $endpoint" == 'api repos/owner/repo/issues/42' ]] || return 1
+    [[ "${FETCH_RC:-0}" == 0 ]] || return 1
+    printf '%s' "$FRESH_META"
+    return 0
+}
 '''
-    dispatch_env = dict(env, META=json.dumps(issue), SCRIPT_DIR=str(scripts), LOGFILE=str(root / 'log'))
+    fresh_issue = dict(issue, number=42, state='open')
+    dispatch_env = dict(env, META=json.dumps(issue), FRESH_META=json.dumps(fresh_issue),
+                        SCRIPT_DIR=str(scripts), LOGFILE=str(root / 'log'))
     invocation = function + stub + '\ndispatch_with_dedup 42 owner/repo title title runner "$1" prompt'
     result = subprocess.run(['bash', '-c', invocation, 'fixture', str(repo)],
                             env=dispatch_env, capture_output=True, text=True)
@@ -96,6 +105,42 @@ _dispatch_preclaim_brief_scope() { printf REACHED_NEXT_GATE; return 1; }
                             env=dispatch_env, capture_output=True, text=True)
     assert result.stdout == 'REACHED_NEXT_GATE' and not result.stderr, result
     print('PASS actual dispatch fails before scope/dedup/claim and capable runner proceeds')
+
+    config.unlink()
+    gates = (scripts / 'pulse-dispatch-worker-gates.sh').read_text()
+    claim_function = re.search(r'(?ms)^_dlw_claim_lock_after_canary\(\) \{.*?^}', gates).group()
+    claim_stub = '''
+_ds_record() { return 0; }
+_dedup_layer7_claim_lock() { printf CLAIM_WRITE; return 1; }
+'''
+    claim_invocation = claim_function + stub + claim_stub + '''
+repo_path="$1"
+_dlw_claim_lock_after_canary 42 owner/repo runner
+'''
+    for label, fresh, fetch_rc in (
+        ('body edited after prefetch', dict(fresh_issue, body='requires-secrets: GOOD, MISSING'), 0),
+        ('fresh read fails closed', fresh_issue, 1),
+        ('malformed fresh metadata fails closed', {}, 0),
+        ('closed fresh issue fails closed', dict(fresh_issue, state='closed'), 0),
+        ('wrong fresh issue fails closed', dict(fresh_issue, number=43), 0),
+    ):
+        edited_env = dict(dispatch_env, FRESH_META=json.dumps(fresh), FETCH_RC=str(fetch_rc))
+        result = subprocess.run(['bash', '-c', invocation, 'fixture', str(repo)],
+                                env=edited_env, capture_output=True, text=True)
+        assert result.returncode == 1 and not result.stdout and not result.stderr, (label, result)
+        result = subprocess.run(['bash', '-c', claim_invocation, 'fixture', str(repo)],
+                                env=edited_env, capture_output=True, text=True)
+        assert result.returncode == 1 and not result.stdout and not result.stderr, (label, result)
+        print('PASS', label)
+        passed += 1
+    result = subprocess.run(['bash', '-c', claim_invocation, 'fixture', str(repo)],
+                            env=dispatch_env, capture_output=True, text=True)
+    assert result.returncode == 0 and result.stdout == 'CLAIM_WRITE' and not result.stderr, result
+    print('PASS final preclaim gate permits capable runner only')
+    passed += 1
+    log = (root / 'log').read_text()
+    assert 'runner_capability_check source=fresh requirements=2' in log, log
+    assert 'PRIVATE_' not in log and 'MISSING' not in log, log
 
     # The real status-only command must suppress both successful values and errors.
     source = (scripts / 'secret-helper.sh').read_text()
