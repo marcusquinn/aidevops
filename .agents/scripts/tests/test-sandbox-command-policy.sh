@@ -166,6 +166,7 @@ test_network_policy_fail_closed() {
 test_network_helper_timeout() {
 	if python3 - "$SCRIPT_DIR" "$TEST_ROOT" <<'PY'
 import os
+import json
 from pathlib import Path
 import subprocess
 import sys
@@ -202,6 +203,10 @@ with patch.dict(os.environ):
         error = evaluate()
         assert error["decision"] == "forbid"
         assert error["rule_id"] == "network.helper-error"
+        run.side_effect = OverflowError("timeout exceeds platform limit")
+        error = evaluate()
+        assert error["decision"] == "forbid"
+        assert error["rule_id"] == "network.helper-error"
     for invalid in ("", "0", "-1", "nan", "inf", "1.5", "invalid"):
         os.environ["AIDEVOPS_NETWORK_POLICY_TIMEOUT_SECONDS"] = invalid
         with patch("command_policy_evaluation.subprocess.run") as run:
@@ -215,6 +220,17 @@ with patch.dict(os.environ):
     assert timed_out["rule_id"] == "network.helper-timeout"
     assert "Transient" in timed_out["reason"]
     assert "1 seconds" in timed_out["reason"]
+    # Verify classification survives the public worker CLI and its exit status.
+    cli = subprocess.run(
+        [sys.executable, str(Path(sys.argv[1]) / "command-policy-helper.py"),
+         "check-command", "--worker", "--network-helper", str(helper),
+         "--argv-json", '["printf", "safe"]', "--cwd", sys.argv[2]],
+        capture_output=True, text=True, timeout=15, check=False,
+    )
+    assert cli.returncode == 20, cli.stderr
+    decision = json.loads(cli.stdout)
+    assert decision["decision"] == "forbid"
+    assert decision["rule_id"] == "network.helper-timeout"
 PY
 	then
 		pass "network helper tolerates delay and classifies timeouts fail-closed"

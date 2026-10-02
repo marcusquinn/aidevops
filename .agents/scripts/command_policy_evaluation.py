@@ -180,6 +180,14 @@ def _approval_guard_path(
     return (script_dir or Path(__file__).resolve().parent) / helper
 
 
+def _network_policy_timeout() -> int:
+    """Allow loaded hosts more time without removing the fail-closed deadline."""
+    timeout = int(os.environ.get("AIDEVOPS_NETWORK_POLICY_TIMEOUT_SECONDS", "30"))
+    if timeout <= 0:
+        raise ValueError("timeout must be positive")
+    return timeout
+
+
 def _evaluate_worker_network(
     invocations: list[list[str]], cwd: str, helper: Path, worker_id: str
 ) -> dict[str, Any]:
@@ -189,11 +197,8 @@ def _evaluate_worker_network(
             "network.helper-unavailable",
             f"Required worker network policy helper is unavailable: {helper}",
         )
-    # Allow loaded hosts more time without removing the fail-closed deadline.
     try:
-        timeout = int(os.environ.get("AIDEVOPS_NETWORK_POLICY_TIMEOUT_SECONDS", "30"))
-        if timeout <= 0:
-            raise ValueError("timeout must be positive")
+        timeout = _network_policy_timeout()
     except ValueError:
         return _decision(
             "forbid",
@@ -225,7 +230,7 @@ def _evaluate_worker_network(
                 f"Transient worker network policy timeout after {timeout} seconds; "
                 "failed closed, retry the policy check when host load subsides",
             )
-        except (OSError, subprocess.SubprocessError) as exc:
+        except (OSError, subprocess.SubprocessError, OverflowError) as exc:
             return _decision(
                 "forbid",
                 "network.helper-error",
