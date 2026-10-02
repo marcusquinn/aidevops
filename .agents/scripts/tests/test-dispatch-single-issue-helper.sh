@@ -1221,6 +1221,7 @@ session_key="$FIXTURE_SESSION" work_dir="$WORKER_WORKTREE_PATH" title=fixture pr
 _cmd_run_stop=0
 for arg in "$@"; do [[ "$arg" != --detach ]] || detach=1; done
 shift
+[[ "$AIDEVOPS_SESSION_ORIGIN" == worker && "$AIDEVOPS_HEADLESS" == true ]] || exit 1
 _prepare_cmd_run_environment "$@" || exit 1
 [[ "$_cmd_run_stop" != 1 ]] || exit 0
 [[ -f "$AIDEVOPS_GIT_AUTH_TOKEN_FILE" ]] || exit 1
@@ -1233,6 +1234,9 @@ FIXTURE
 	(
 		export HOME="$root/home" FIXTURE_ROOT="$root"
 		export FIXTURE_SCRIPTS="$_DSI_SCRIPT_DIR" FIXTURE_SESSION="git-auth-fixture-$$"
+		# GH#33402: interactive caller metadata must not leak into the worker,
+		# including the re-executed detached child and synchronous preflight.
+		export AIDEVOPS_SESSION_ORIGIN=interactive AIDEVOPS_HEADLESS=false
 		_DSI_HEADLESS="$root/runtime"
 		_DSI_TOKEN_HELPER="$root/token-helper"
 		_DSI_ASKPASS_HELPER="$_DSI_SCRIPT_DIR/../scripts/github-auth-askpass.sh"
