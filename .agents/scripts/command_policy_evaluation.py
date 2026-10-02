@@ -180,6 +180,14 @@ def _approval_guard_path(
     return (script_dir or Path(__file__).resolve().parent) / helper
 
 
+def _network_policy_timeout() -> int:
+    """Allow loaded hosts more time without removing the fail-closed deadline."""
+    timeout = int(os.environ.get("AIDEVOPS_NETWORK_POLICY_TIMEOUT_SECONDS", "30"))
+    if timeout <= 0:
+        raise ValueError("timeout must be positive")
+    return timeout
+
+
 def _evaluate_worker_network(
     invocations: list[list[str]], cwd: str, helper: Path, worker_id: str
 ) -> dict[str, Any]:
@@ -189,30 +197,18 @@ def _evaluate_worker_network(
             "network.helper-unavailable",
             f"Required worker network policy helper is unavailable: {helper}",
         )
+    try:
+        timeout = _network_policy_timeout()
+    except ValueError:
+        return _decision(
+            "forbid",
+            "network.helper-error",
+            "AIDEVOPS_NETWORK_POLICY_TIMEOUT_SECONDS must be a positive integer",
+        )
     for argv in invocations:
-        try:
-            result = subprocess.run(  # nosec B603 -- /bin/bash is fixed and helper is policy-selected and verified as a file.
-                [
-                    "/bin/bash",
-                    str(helper),
-                    "check-argv",
-                    json.dumps(argv),
-                    "--cwd",
-                    cwd,
-                    "--worker-id",
-                    worker_id,
-                ],
-                capture_output=True,
-                text=True,
-                timeout=10,
-                check=False,
-            )
-        except (OSError, subprocess.SubprocessError) as exc:
-            return _decision(
-                "forbid",
-                "network.helper-error",
-                f"Worker network policy failed closed: {exc}",
-            )
+        result, error = _run_network_guard(argv, cwd, helper, worker_id, timeout)
+        if error:
+            return error
         if result.returncode != 0:
             reason = result.stderr.strip() or (
                 "Worker network policy denied or could not classify the command destination"
@@ -221,6 +217,42 @@ def _evaluate_worker_network(
     return _decision(
         "allow", "network.worker-allow", "Worker network policy allowed every argv"
     )
+
+
+def _run_network_guard(
+    argv: list[str], cwd: str, helper: Path, worker_id: str, timeout: int
+) -> tuple[subprocess.CompletedProcess[str] | None, dict[str, Any] | None]:
+    try:
+        result = subprocess.run(  # nosec B603 -- /bin/bash is fixed and helper is policy-selected and verified as a file.
+            [
+                "/bin/bash",
+                str(helper),
+                "check-argv",
+                json.dumps(argv),
+                "--cwd",
+                cwd,
+                "--worker-id",
+                worker_id,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return None, _decision(
+            "forbid",
+            "network.helper-timeout",
+            f"Transient worker network policy timeout after {timeout} seconds; "
+            "failed closed, retry the policy check when host load subsides",
+        )
+    except (OSError, subprocess.SubprocessError, OverflowError) as exc:
+        return None, _decision(
+            "forbid",
+            "network.helper-error",
+            f"Worker network policy failed closed: {exc}",
+        )
+    return result, None
 
 
 def evaluate_invocations(
