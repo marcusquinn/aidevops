@@ -200,7 +200,7 @@ not make a comment non-scope-bearing or grant execution authority.
 
 The JS plugin hook (`quality-hooks-signature.mjs::checkSignatureFooterGate`) runs BEFORE bash executes. If you build a body file and then post it in the SAME bash call (e.g. `cp ... /tmp/foo.md && gh issue comment --body-file /tmp/foo.md`, or `cat <<EOF > /tmp/foo.md ... EOF; gh issue comment --body-file /tmp/foo.md`), the hook's `readFileSync` sees ENOENT — bash hasn't created the file yet — and blocks with `FAIL_REASON.FILE_NOT_FOUND`.
 
-This is NOT a heredoc / command-substitution / quoting failure (those report different `FAIL_REASON` values). When the error message names `body-file not found (may be created later in this same bash call)`, use one of these two patterns:
+This is NOT a heredoc / command-substitution / quoting failure (those report different `FAIL_REASON` values). When the error message names `body-file not found (may be created later in this same bash call)`, use one of these patterns:
 
 - **Two bash tool calls.** Write the file in call 1, post it in call 2. The JS hook reads the file in call 2 and sees the marker.
 - **Executable wrapper (OpenCode).** Write the file in a separate tool call,
