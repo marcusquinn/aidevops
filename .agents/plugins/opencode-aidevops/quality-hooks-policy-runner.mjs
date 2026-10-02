@@ -36,10 +36,16 @@ export function httpNetworkPolicyOperation(helperArgs) {
   return /\b(?:curl|wget)\b|\bfetch\s*\(|https?:\/\//.test(command);
 }
 
+// "push" | "fetch" | "network" (HTTP) | null; selects budget and blocker class.
+export function policyNetworkOperation(helperArgs) {
+  return gitNetworkPolicyOperation(helperArgs)
+    ?? (httpNetworkPolicyOperation(helperArgs) ? "network" : null);
+}
+
 function policyHelperTimeoutMs(helperArgs) {
   const raw = String(process.env.AIDEVOPS_POLICY_HELPER_TIMEOUT_MS ?? "").trim();
   if (/^[1-9]\d{0,6}$/.test(raw)) return Number(raw);
-  return gitNetworkPolicyOperation(helperArgs) || httpNetworkPolicyOperation(helperArgs)
+  return policyNetworkOperation(helperArgs)
     ? GIT_NETWORK_POLICY_HELPER_TIMEOUT_MS
     : DEFAULT_POLICY_HELPER_TIMEOUT_MS;
 }
