@@ -17,10 +17,14 @@ source "${SCRIPT_DIR}/approval-helper.sh"
 ssh-keygen -t ed25519 -N '' -q -f "$APPROVAL_KEY"
 cp "${APPROVAL_KEY}.pub" "$APPROVAL_PUB"
 
-request_base=$(jq -cnS '{
+resume_worktree="${TEST_ROOT}/preserved worker"
+git init -q --initial-branch=feature/auto-gh123 --separate-git-dir="${TEST_ROOT}/worker-git" "$resume_worktree"
+git -C "$resume_worktree" remote add origin https://github.com/owner/repo.git
+resume_digest=$(python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.argv[1].encode()).hexdigest())' "$resume_worktree")
+request_base=$(jq -cnS --arg worktree "$resume_digest" '{
   schema: "aidevops-permission-request/v1",
   target: {kind: "issue", repository: "owner/repo", number: 123},
-  worker: {session: "issue-123", branch: "feature/auto-gh123", worktree_sha256: ("a" * 64)},
+  worker: {session: "manual-cli-123-100", branch: "feature/auto-gh123", worktree_sha256: $worktree},
   context: {stage: "worker tool execution", changed_files: [], alternatives: "none", resume_auto_dispatch: true},
   capabilities: [{
     permission: "external_directory",
@@ -109,6 +113,57 @@ verification=$(cmd_verify_permissions issue 123 owner/repo)
 	printf 'valid permission grant did not verify: %s\n' "$verification" >&2
 	exit 1
 }
+
+[[ "$(cmd_verify_permissions issue 123 owner/repo "$request_id" manual-cli-123-100 feature/auto-gh123 "$resume_digest")" == VERIFIED ]]
+for binding in request session branch worktree; do
+	expected_request="$request_id" expected_session=manual-cli-123-100
+	expected_branch=feature/auto-gh123 expected_digest="$resume_digest"
+	case "$binding" in
+	request) expected_request=perm-0000000000000000 ;;
+	session) expected_session=manual-cli-123-101 ;;
+	branch) expected_branch=feature/replacement ;;
+	worktree) expected_digest=invalid ;;
+	esac
+	verification=$(cmd_verify_permissions issue 123 owner/repo "$expected_request" "$expected_session" "$expected_branch" "$expected_digest") && exit 1
+	[[ "$verification" == BINDING_MISMATCH ]]
+done
+
+# Exercise production resume discovery against the real signed comments and Git
+# metadata, then the unchanged runtime request/grant environment preparation.
+(
+	# shellcheck source=../dispatch-single-issue-helper.sh
+	source "${SCRIPT_DIR}/dispatch-single-issue-helper.sh"
+	# shellcheck source=../headless-runtime-worker-prepare.sh
+	source "${SCRIPT_DIR}/headless-runtime-worker-prepare.sh"
+	_dsi_repo_path_for_slug() {
+		printf '%s\n' "$resume_worktree"
+		return 0
+	}
+	git() {
+		local args="$*"
+		if [[ "$args" == *'worktree list --porcelain' ]]; then
+			printf 'worktree %s\n' "$resume_worktree"
+			return 0
+		fi
+		command git "$@"
+		return $?
+	}
+	jq -cn --arg request "$request_id" '{issue:123,session:"manual-cli-123-100",request_id:$request}' \
+		>"${TEST_ROOT}/worker-git/aidevops-permission-pending"
+	_dsi_resolve_permission_resume 123 owner/repo
+	[[ "$_DSI_WORKTREE_PATH" == "$resume_worktree" && "$_DSI_RESUME_SESSION" == manual-cli-123-100 ]]
+	export WORKER_ISSUE_NUMBER=123 WORKER_SESSION_KEY="$_DSI_RESUME_SESSION"
+	_hrw_prepare_role_context worker "$_DSI_WORKTREE_PATH"
+	_hrw_prepare_permission_grant_path owner/repo
+	[[ "$AIDEVOPS_PERMISSION_REQUEST_ID" == "$request_id" ]]
+	[[ "$AIDEVOPS_PERMISSION_GRANT_FILE" == "$HOME/.aidevops/permission-grants/owner_repo/123.json" ]]
+	command git -C "$resume_worktree" symbolic-ref HEAD refs/heads/feature/replacement
+	if _dsi_resolve_permission_resume 123 owner/repo; then exit 1; fi
+	command git -C "$resume_worktree" symbolic-ref HEAD refs/heads/feature/auto-gh123
+	jq '.session = "manual-cli-123-101"' "${TEST_ROOT}/worker-git/aidevops-permission-pending" >"${TEST_ROOT}/changed-marker"
+	mv "${TEST_ROOT}/changed-marker" "${TEST_ROOT}/worker-git/aidevops-permission-pending"
+	if _dsi_resolve_permission_resume 123 owner/repo; then exit 1; fi
+)
 
 # shellcheck source=../pulse-dispatch-core.sh
 source "${SCRIPT_DIR}/pulse-dispatch-core.sh"

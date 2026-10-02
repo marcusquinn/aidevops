@@ -355,7 +355,9 @@ _apply_permission_approval_state() {
 		labels_csv=$(jq -r '(.labels // []) | map(.name) | join(",")' <<<"$issue_json") || return 1
 		resume_auto=$(jq -r '.context.resume_auto_dispatch == true' <<<"$request_json") || return 1
 		local -a edit_args=(--remove-label "needs-maintainer-permissions")
-		if [[ ",${labels_csv}," != *",status:blocked,"* ]]; then
+		if [[ ",${labels_csv}," == *",needs-maintainer-permissions,"* ]]; then
+			edit_args+=(--remove-label "status:blocked" --add-label "status:available")
+		elif [[ ",${labels_csv}," != *",status:blocked,"* ]]; then
 			edit_args+=(--add-label "status:available")
 		fi
 		if [[ "$resume_auto" == "true" ]]; then
@@ -766,7 +768,8 @@ cmd_verify_permissions() {
 	local target_type="${1:-}"
 	local target_number="${2:-}"
 	local slug="${3:-}"
-	local usage="Usage: aidevops approve verify-permissions issue|pr <number> [owner/repo]"
+	local expected_request="${4:-}" expected_session="${5:-}" expected_branch="${6:-}" expected_worktree="${7:-}"
+	local usage="Usage: aidevops approve verify-permissions issue|pr <number> [owner/repo] [request session branch worktree-sha256]"
 	[[ "$target_type" == "$_PERMISSION_TARGET_ISSUE" || "$target_type" == "pr" ]] || { printf 'MALFORMED_APPROVAL\n'; return 5; }
 	_require_number_arg "$target_number" "$target_type" "$usage" >/dev/null 2>&1 || { printf 'MALFORMED_APPROVAL\n'; return 5; }
 	slug=$(_resolve_slug_or_fail "$slug" "$usage") || { printf 'API_ERROR\n'; return 6; }
@@ -797,6 +800,18 @@ cmd_verify_permissions() {
 		return 1
 	fi
 	_validate_permission_grant_payload "$payload" "$request_json" || { printf 'STALE_APPROVAL\n'; return 4; }
+	# aidevops:trust-boundary -- bind resumes to the verified signed payload,
+	# never merely any approval on the issue or an unsigned local marker.
+	if [[ -n "$expected_request$expected_session$expected_branch$expected_worktree" ]]; then
+		jq -e --arg request "$expected_request" --arg session "$expected_session" \
+			--arg branch "$expected_branch" --arg worktree "$expected_worktree" '
+			.request_id == $request and .worker.session == $session
+			and .worker.branch == $branch and .worker.worktree_sha256 == $worktree
+		' <<<"$payload" >/dev/null || {
+			printf 'BINDING_MISMATCH\n'
+			return 4
+		}
+	fi
 	printf 'VERIFIED\n'
 	return 0
 }

@@ -41,4 +41,29 @@ fi
 grep -Eq '^cmd_permissions\(\)' "$PERMISSIONS_MODULE"
 grep -Eq '^cmd_verify_permissions\(\)' "$PERMISSIONS_MODULE"
 
+# Approval clears only a permission-owned blocked status, preserving unrelated
+# generic blockers when no live permission hold is present.
+(
+	gh_issue_view() {
+		printf '%s\n' "$fixture_labels"
+		return 0
+	}
+	gh_issue_edit_safe() {
+		local args="$*"
+		[[ "$args" == *'--remove-label needs-maintainer-permissions'* ]] || return 1
+		if [[ "$fixture_permission_hold" == true ]]; then
+			[[ "$args" == *'--remove-label status:blocked --add-label status:available'* ]] || return 1
+		else
+			[[ "$args" != *'status:available'* && "$args" != *'--remove-label status:blocked'* ]] || return 1
+		fi
+		return 0
+	}
+	fixture_permission_hold=true
+	fixture_labels='{"labels":[{"name":"needs-maintainer-permissions"},{"name":"status:blocked"}]}'
+	_apply_permission_approval_state issue 123 owner/repo '{"context":{"resume_auto_dispatch":false}}'
+	fixture_permission_hold=false
+	fixture_labels='{"labels":[{"name":"status:blocked"}]}'
+	_apply_permission_approval_state issue 123 owner/repo '{"context":{"resume_auto_dispatch":false}}'
+)
+
 printf 'approval permission module boundary tests passed\n'
