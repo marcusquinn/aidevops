@@ -25,10 +25,21 @@ export function gitNetworkPolicyOperation(helperArgs) {
   )?.[1] ?? null;
 }
 
+// Outbound HTTP(S) tool commands (curl, wget, fetch in node/python one-liners,
+// or a literal http(s) URL) need the same larger budget as git network
+// operations (GH#33406). Only selects a time budget; never grants authority.
+export function httpNetworkPolicyOperation(helperArgs) {
+  const commandIndex = helperArgs.indexOf("--command");
+  if (commandIndex < 0) return false;
+  const command = helperArgs[commandIndex + 1];
+  if (typeof command !== "string") return false;
+  return /\b(?:curl|wget)\b|\bfetch\s*\(|https?:\/\//.test(command);
+}
+
 function policyHelperTimeoutMs(helperArgs) {
   const raw = String(process.env.AIDEVOPS_POLICY_HELPER_TIMEOUT_MS ?? "").trim();
   if (/^[1-9]\d{0,6}$/.test(raw)) return Number(raw);
-  return gitNetworkPolicyOperation(helperArgs)
+  return gitNetworkPolicyOperation(helperArgs) || httpNetworkPolicyOperation(helperArgs)
     ? GIT_NETWORK_POLICY_HELPER_TIMEOUT_MS
     : DEFAULT_POLICY_HELPER_TIMEOUT_MS;
 }
@@ -56,9 +67,9 @@ export function runPolicyHelper(helperArgs, execOptions) {
 }
 
 export function transientPolicyTimeoutError(policyName, operation = null) {
-  const recovery = operation === "push"
-    ? "\nTERMINAL_BLOCKER_REASON=push_policy_timeout"
-    : "";
+  let recovery = "";
+  if (operation === "push") recovery = "\nTERMINAL_BLOCKER_REASON=push_policy_timeout";
+  else if (operation === "network") recovery = "\nTERMINAL_BLOCKER_REASON=network_policy_timeout";
   return new Error(
     `BLOCKED: ${policyName} policy timed out under host load (transient infrastructure timeout, not a policy decision); retry the same command${recovery}`,
   );

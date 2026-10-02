@@ -721,7 +721,7 @@ _release_dispatch_claim() {
 	runner_name=$(_hrff_resolve_release_runner_login)
 	machine_readable_part=$(_hrff_build_claim_released_line "$reason" "$runner_name" "$exit_code_arg" "$session_count_arg")
 	local terminal_blocker_fragment=""
-	if [[ "$reason" == "blocked" || "$reason" == "push_policy_timeout" ]]; then
+	if [[ "$reason" == "blocked" || "$reason" == "push_policy_timeout" || "$reason" == "network_policy_timeout" ]]; then
 		local terminal_blocker_rc=0
 		_hrff_handle_terminal_blocker_release "$issue_number" "$repo_slug" "$machine_readable_part" || terminal_blocker_rc=$?
 		[[ "$terminal_blocker_rc" -eq 10 ]] && return 0
