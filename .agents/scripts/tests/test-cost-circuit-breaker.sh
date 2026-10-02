@@ -62,6 +62,7 @@ mkdir -p "$STUB_DIR"
 # Fixture state files — the stub gh reads these to know what to return.
 FIXTURE_ISSUE_JSON="${TEST_ROOT}/fixture-issue.json"
 FIXTURE_COMMENTS_JSON="${TEST_ROOT}/fixture-comments.json"
+FIXTURE_TIMELINE_JSON="${TEST_ROOT}/fixture-timeline.json"
 
 write_stub_gh() {
 	cat >"${STUB_DIR}/gh" <<STUB
@@ -79,7 +80,15 @@ fi
 # gh api repos/<slug>/issues/<num>/comments --paginate
 if [[ "\$1" == "api" ]]; then
 	if [[ "\$2" == "repos/"*"/issues/"*"/comments" ]]; then
+		if [[ " \$* " == *" --slurp "* ]]; then
+			jq -s '.' "${FIXTURE_COMMENTS_JSON}" 2>/dev/null || exit 1
+			exit 0
+		fi
 		cat "${FIXTURE_COMMENTS_JSON}" 2>/dev/null || echo '[]'
+		exit 0
+	fi
+	if [[ "\$2" == "repos/"*"/issues/"*"/timeline" ]]; then
+		jq -s '.' "${FIXTURE_TIMELINE_JSON}" 2>/dev/null || exit 1
 		exit 0
 	fi
 	if [[ "\$2" == "user" ]]; then
@@ -173,6 +182,7 @@ write_fixture_comments_with_existing_cost_marker() {
 	return 0
 }
 
+printf '[]' >"$FIXTURE_TIMELINE_JSON"
 write_stub_gh
 OLD_PATH="$PATH"
 export PATH="${STUB_DIR}:${PATH}"
@@ -424,6 +434,55 @@ if [[ "$terminal_rc" -eq 1 && -z "$terminal_output" ]] &&
 else
 	print_result "completed issue skips over-budget breaker side effects" 1 \
 		"(rc=$terminal_rc output='$terminal_output' stub_log=$(tr '\n' ' ' <"$STUB_LOG" 2>/dev/null))"
+fi
+
+# Merged For/Ref/Resolves checkpoints reset spend at merge time, across pages.
+cat >"$FIXTURE_COMMENTS_JSON" <<'JSON'
+[{"created_at":"2026-05-03T19:00:00Z","body":"spent 600000 tokens"}]
+[{"created_at":"2026-05-03T19:30:00Z","body":"spent 300000 tokens"}]
+JSON
+for reference in For Ref Resolves; do
+	cat >"$FIXTURE_TIMELINE_JSON" <<JSON
+[]
+[{"event":"cross-referenced","created_at":"2026-05-03T18:00:00Z","source":{"issue":{"repository":{"full_name":"owner/repo"},"body":"${reference} #18013","pull_request":{"merged_at":"2026-05-03T19:25:00Z"}}}}]
+JSON
+	sum_output=$("$DEDUP_HELPER" sum-issue-token-spend 18013 "owner/repo" 2>/dev/null)
+	if [[ "$sum_output" == "300000|1" ]]; then
+		print_result "merged ${reference} checkpoint resets spend across pages" 0
+	else
+		print_result "merged ${reference} checkpoint resets spend across pages" 1 "(got: '$sum_output')"
+	fi
+done
+run_check_cost_budget 18013 "owner/repo" "standard"
+if [[ "$rc" -eq 1 && -z "$output" ]]; then
+	print_result "merged checkpoint keeps 300K under budget" 0
+else
+	print_result "merged checkpoint keeps 300K under budget" 1 "(rc=$rc output='$output')"
+fi
+
+# Unmerged PRs, ordinary issues, other repositories and prefix collisions do not reset.
+cat >"$FIXTURE_TIMELINE_JSON" <<'JSON'
+[
+ {"event":"cross-referenced","source":{"issue":{"repository":{"full_name":"owner/repo"},"body":"For #18013","pull_request":{"merged_at":null}}}},
+ {"event":"cross-referenced","source":{"issue":{"repository":{"full_name":"other/repo"},"body":"For #18013","pull_request":{"merged_at":"2026-05-03T19:25:00Z"}}}},
+ {"event":"cross-referenced","source":{"issue":{"repository":{"full_name":"owner/repo"},"body":"For #180130","pull_request":{"merged_at":"2026-05-03T19:25:00Z"}}}},
+ {"event":"cross-referenced","source":{"issue":{"repository":{"full_name":"owner/repo"},"body":"For #18013"}}}
+]
+JSON
+sum_output=$("$DEDUP_HELPER" sum-issue-token-spend 18013 "owner/repo" 2>/dev/null)
+run_check_cost_budget 18013 "owner/repo" "standard"
+if [[ "$sum_output" == "900000|2" && "$rc" -eq 0 && "$output" == *"COST_BUDGET_EXCEEDED"* ]]; then
+	print_result "without delivered checkpoint 900K still trips breaker" 0
+else
+	print_result "without delivered checkpoint 900K still trips breaker" 1 "(sum='$sum_output' rc=$rc output='$output')"
+fi
+
+printf 'not-valid-json' >"$FIXTURE_TIMELINE_JSON"
+run_check_cost_budget 18013 "owner/repo" "standard"
+if [[ "$rc" -eq 1 && -z "$output" ]]; then
+	print_result "timeline lookup/parse failure stays fail-open" 0
+else
+	print_result "timeline lookup/parse failure stays fail-open" 1 "(rc=$rc output='$output')"
 fi
 
 export PATH="$OLD_PATH"
