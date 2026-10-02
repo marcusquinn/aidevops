@@ -92,13 +92,31 @@ _sum_issue_token_spend() {
 	fi
 
 	local comments_json
-	comments_json=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" --paginate 2>/dev/null) || return 1
+	comments_json=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" --paginate --slurp 2>/dev/null) || return 1
 	if [[ -z "$comments_json" || "$comments_json" == "null" ]]; then
 		return 1
 	fi
 
+	# Delivered checkpoints start a new spend window, not a lifetime budget.
+	# REST cross-reference events embed pull_request.merged_at (not the event's
+	# created_at). Only same-repository PRs with an explicit issue reference count;
+	# open/unmerged PRs and incidental mentions must not hide an actual loop.
+	# A failed timeline lookup/parse leaves dispatch fail-open, like comments.
+	local timeline_json checkpoint_epoch
+	timeline_json=$(gh api "repos/${repo_slug}/issues/${issue_number}/timeline" --paginate --slurp 2>/dev/null) || return 1
+	checkpoint_epoch=$(printf '%s' "$timeline_json" | jq -r --arg repo "$repo_slug" --arg issue "$issue_number" '
+		[.[][]
+		 | select(.event == "cross-referenced")
+		 | .source.issue
+		 | select(.repository.full_name == $repo)
+		 | select(((.title // "") + "\n" + (.body // ""))
+			| test("(?i)\\b(for|ref|resolves)\\s+#" + $issue + "([^0-9]|$)"))
+		 | .pull_request.merged_at // empty
+		 | fromdateiso8601] | max // 0
+	' 2>/dev/null) || return 1
+
 	# Extract comment bodies, excluding interactive-session signature footers and
-	# comments predating the latest maintainer approval / cost reset marker.
+	# comments predating the latest approval, cost reset marker or merged checkpoint.
 	# Interactive footers are maintainer triage/review activity that should
 	# NOT count toward the per-issue worker cost budget — including them
 	# produces false-positive circuit-breaker trips every time a maintainer
@@ -110,12 +128,14 @@ _sum_issue_token_spend() {
 	# this, approving/removing NMR after a cost trip immediately re-trips on the
 	# same historical worker footers and no new dispatch can occur.
 	local bodies
-	bodies=$(printf '%s' "$comments_json" | jq -r '
+	bodies=$(printf '%s' "$comments_json" | jq -r --argjson checkpoint "$checkpoint_epoch" '
 		def epoch: try ((.created_at // "") | fromdateiso8601) catch 0;
+		[.[][]]
+		|
 		(map(select(
 				((.body // "") | contains("<!-- aidevops-signed-approval -->"))
 				or ((.body // "") | contains("<!-- cost-circuit-breaker:reset"))
-			) | epoch) | max // 0) as $reset_epoch
+			) | epoch) + [$checkpoint] | max // 0) as $reset_epoch
 		|
 		.[]
 		| select((.body // "") | contains("with the user in an interactive session") | not)
