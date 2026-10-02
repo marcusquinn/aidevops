@@ -10,6 +10,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.38.0] - 2026-10-02
+
+### Added
+
+- GH#33398: audit macOS dev churn paths and backup exclusion coverage
+
+### Changed
+
+- Refactor: keep network-op selection out of git-safety file (GH#33406) (#33407)
+- Maintenance: sync ref:GH#33398 to TODO.md (#33400)
+
+### Fixed
+
+- ignore issue-derived task titles without TODO backing (GH#33408) (#33409)
+- initialize extracted test colors before use (GH#33366) (#33405)
+- fresh runner capability admission before claim (#33404)
+
 ## [3.37.41] - 2026-10-02
 
 ### Fixed
