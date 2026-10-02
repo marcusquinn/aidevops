@@ -163,6 +163,67 @@ test_network_policy_fail_closed() {
 	return 0
 }
 
+test_network_helper_timeout() {
+	if python3 - "$SCRIPT_DIR" "$TEST_ROOT" <<'PY'
+import os
+from pathlib import Path
+import subprocess
+import sys
+from unittest.mock import patch
+
+sys.path.insert(0, sys.argv[1])
+from command_policy_evaluation import _evaluate_worker_network
+
+helper = Path(sys.argv[2]) / "delayed-network-helper.sh"
+# exec avoids leaving a child holding captured pipes open after a timeout.
+helper.write_text("exec python3 -c 'import time; time.sleep(11)'\n")
+argv = [["git", "push", "origin", "HEAD"]]
+
+def evaluate():
+    return _evaluate_worker_network(argv, sys.argv[2], helper, "timeout-test")
+
+with patch.dict(os.environ):
+    os.environ.pop("AIDEVOPS_NETWORK_POLICY_TIMEOUT_SECONDS", None)
+    # Deterministically reproduce scheduling delay beyond the old 10s budget
+    # without saturating a shared runner or actually pushing a branch.
+    assert evaluate()["decision"] == "allow"
+    with patch("command_policy_evaluation.subprocess.run") as run:
+        run.return_value = subprocess.CompletedProcess([], 0, "", "")
+        assert evaluate()["decision"] == "allow"
+        assert run.call_args.kwargs["timeout"] == 30
+        os.environ["AIDEVOPS_NETWORK_POLICY_TIMEOUT_SECONDS"] = "45"
+        assert evaluate()["decision"] == "allow"
+        assert run.call_args.kwargs["timeout"] == 45
+        run.return_value = subprocess.CompletedProcess([], 1, "", "policy denied")
+        denied = evaluate()
+        assert denied["decision"] == "forbid"
+        assert denied["rule_id"] == "network.worker-policy"
+        run.side_effect = OSError("helper failed")
+        error = evaluate()
+        assert error["decision"] == "forbid"
+        assert error["rule_id"] == "network.helper-error"
+    for invalid in ("", "0", "-1", "nan", "inf", "1.5", "invalid"):
+        os.environ["AIDEVOPS_NETWORK_POLICY_TIMEOUT_SECONDS"] = invalid
+        with patch("command_policy_evaluation.subprocess.run") as run:
+            invalid_result = evaluate()
+            assert invalid_result["decision"] == "forbid"
+            assert invalid_result["rule_id"] == "network.helper-error"
+            run.assert_not_called()
+    os.environ["AIDEVOPS_NETWORK_POLICY_TIMEOUT_SECONDS"] = "1"
+    timed_out = evaluate()
+    assert timed_out["decision"] == "forbid"
+    assert timed_out["rule_id"] == "network.helper-timeout"
+    assert "Transient" in timed_out["reason"]
+    assert "1 seconds" in timed_out["reason"]
+PY
+	then
+		pass "network helper tolerates delay and classifies timeouts fail-closed"
+	else
+		fail "network helper tolerates delay and classifies timeouts fail-closed"
+	fi
+	return 0
+}
+
 test_sandbox_enforcement() {
 	local status=0
 	reset_marker
@@ -223,6 +284,7 @@ main() {
 	write_fake_network_tools
 	test_network_check_command
 	test_network_policy_fail_closed
+	test_network_helper_timeout
 	test_sandbox_enforcement
 	test_sandbox_required_policy
 	printf '\nTests: %d, Failures: %d\n' "$TESTS" "$FAILURES"

@@ -189,6 +189,17 @@ def _evaluate_worker_network(
             "network.helper-unavailable",
             f"Required worker network policy helper is unavailable: {helper}",
         )
+    # Allow loaded hosts more time without removing the fail-closed deadline.
+    try:
+        timeout = int(os.environ.get("AIDEVOPS_NETWORK_POLICY_TIMEOUT_SECONDS", "30"))
+        if timeout <= 0:
+            raise ValueError("timeout must be positive")
+    except ValueError:
+        return _decision(
+            "forbid",
+            "network.helper-error",
+            "AIDEVOPS_NETWORK_POLICY_TIMEOUT_SECONDS must be a positive integer",
+        )
     for argv in invocations:
         try:
             result = subprocess.run(  # nosec B603 -- /bin/bash is fixed and helper is policy-selected and verified as a file.
@@ -204,8 +215,15 @@ def _evaluate_worker_network(
                 ],
                 capture_output=True,
                 text=True,
-                timeout=10,
+                timeout=timeout,
                 check=False,
+            )
+        except subprocess.TimeoutExpired:
+            return _decision(
+                "forbid",
+                "network.helper-timeout",
+                f"Transient worker network policy timeout after {timeout} seconds; "
+                "failed closed, retry the policy check when host load subsides",
             )
         except (OSError, subprocess.SubprocessError) as exc:
             return _decision(
