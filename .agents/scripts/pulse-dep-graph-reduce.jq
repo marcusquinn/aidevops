@@ -22,8 +22,32 @@ def malformed_task_candidate:
 def extracted_task_ids:
   [scan("(^|[^[:alnum:].])(" + task_id_pattern + ")(?=$|[^[:alnum:].])") | .[1]];
 
+# Keep the same unfenced -> visible order as _blocked_by_structured_lines.
+# A closing fence must use the opener's character and at least its length.
+def unfenced_text:
+  reduce (split("\n")[]) as $line (
+    {fence: "", size: 0, lines: []};
+    ($line | ((try capture("^[[:space:]]*(?<marker>`{3,}|~{3,})(?<rest>.*)$") catch null) // null)) as $match
+    | if .fence == "" then
+        if $match != null then
+          .fence = $match.marker[0:1] | .size = ($match.marker | length)
+        else .lines += [$line] end
+      elif $match != null and $match.marker[0:1] == .fence
+        and ($match.marker | length) >= .size and ($match.rest | test("^[[:space:]]*$")) then
+        .fence = "" | .size = 0
+      else . end
+  ) | .lines | join("\n");
+
+def visible_text:
+  unfenced_text
+  # Preserve line boundaries for multiline comments, as the AWK parser does.
+  | gsub("<!--(?<text>.*?)-->"; if (.text | contains("\n")) then "\n" else "" end; "ms")
+  | sub("<!--.*$"; ""; "ms");
+
 def blocker_text:
-  [scan("blocked[- ]by[^\\r\\n]*"; "i")] | join("\n");
+  visible_text | gsub("\r"; "") | split("\n")
+  | map(select(test("^[[:space:]]*([-*+][[:space:]]+)?(\\*\\*)?blocked[- ]by(\\*\\*)?[[:space:]]*:"; "i")))
+  | join("\n");
 
 def defer_marker:
   test("defer until|do[-[:space:]]not[-[:space:]]dispatch|on[-[:space:]]hold|HUMAN_UNBLOCK_REQUIRED|hold for |paused[[:space:]:]"; "i");
@@ -36,6 +60,13 @@ def issue_number:
 
 def label_names:
   [(.labels // [])[]? | .name? // empty | strings];
+
+# Only generated consolidation children have this label/title pair. The parent
+# is context to consolidate, never a prerequisite for completing the child.
+def consolidation_parent:
+  if (label_names | index("consolidation-task")) != null then
+    (.title | text_value | ((try capture("^consolidation-task: merge thread on #(?<number>[0-9]+) into single spec$").number catch null) // null))
+  else null end;
 
 def parsed_issue:
   (.number | issue_number) as $number
@@ -52,10 +83,12 @@ def parsed_issue:
       | ([$labels[] | select(test("^blocked-by:#[0-9]+$")) | ltrimstr("blocked-by:#")]) as $label_issue_nums
       | (($body_issue_nums + $label_issue_nums) | unique | map(select(. != ($number | tostring)))) as $issue_nums
       | ($body | defer_marker) as $defer
+      | consolidation_parent as $parent
       | {
           number: $number,
           state: ((.state // "OPEN") | text_value | ascii_upcase),
           task_id: $task_id,
+          consolidation_parent: $parent,
           task_ids: $task_ids,
           issue_nums: $issue_nums,
           defer: $defer,
@@ -63,7 +96,8 @@ def parsed_issue:
         }
     end;
 
-reduce (.[] | parsed_issue | select(. != null)) as $issue (
+map(parsed_issue | select(. != null)) as $issues
+| reduce ($issues[]) as $issue (
   {open_issues: [], closed_issues: [], known_issues: [], task_to_issue: {}, blocked_by: {}, defer_flags: {}};
   .known_issues += [$issue.number]
   | if $issue.state == "CLOSED" then .closed_issues += [$issue.number] else .open_issues += [$issue.number] end
@@ -77,3 +111,17 @@ reduce (.[] | parsed_issue | select(. != null)) as $issue (
     else . end
   | if $issue.defer then .defer_flags[($issue.number | tostring)] = true else . end
 )
+# Resolve task aliases after the complete task map exists, independent of input
+# order. Filter both body and label edges without suppressing other blockers.
+| .task_to_issue as $task_map
+| reduce ($issues[] | select(.consolidation_parent != null)) as $child (.;
+    ($child.number | tostring) as $key
+    | $child.consolidation_parent as $parent
+    | if .blocked_by[$key] != null then
+        .blocked_by[$key].issue_nums |= map(select(. != $parent))
+        | .blocked_by[$key].task_ids |= map(select(($task_map[.] | tostring) != $parent))
+        | if (.blocked_by[$key].issue_nums | length) == 0 and (.blocked_by[$key].task_ids | length) == 0 then
+            del(.blocked_by[$key])
+          else . end
+      else . end
+  )
