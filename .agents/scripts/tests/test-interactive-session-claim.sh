@@ -748,7 +748,7 @@ for orphan_status in claimed in-progress in-review; do
 	orphan_rc=$?
 	orphan_owner=$(jq -r '.assignees | map(.login) | join(",")' "${STUB_STATE_DIR}/56008.json")
 	if [[ $orphan_rc -eq 0 && "$orphan_owner" == "testuser" && -f "${claim_dir}/regress-test-56008.json" ]] &&
-		grep -q 'add-label status:claimed' "$STUB_LOG" &&
+		jq -e 'any(.labels[]?; .name == "status:claimed")' "${STUB_STATE_DIR}/56008.json" >/dev/null &&
 		grep -q 'add-assignee testuser' "$STUB_LOG"; then
 		print_result "GH#33420: unassigned status:$orphan_status claims normally" 0
 	else
