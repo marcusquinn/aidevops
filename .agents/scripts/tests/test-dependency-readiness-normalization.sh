@@ -73,6 +73,51 @@ parsed=$(_dep_graph_process_issue_json "$issue" "$acc")
 assert_eq "self task reference ignored" '[]' "$(printf '%s' "$parsed" | jq -c '.blocked_by_map["20"].task_ids')"
 assert_eq "self issue reference ignored" '["10"]' "$(printf '%s' "$parsed" | jq -c '.blocked_by_map["20"].issue_nums')"
 
+# GH#33414: exercise the production cache reducer, not only the shell parser.
+_test_cache_blocker_nums() {
+	local body="$1"
+	jq -n --arg body "$body" '[{number:30,title:"t30: child",state:"OPEN",body:$body,labels:[]}]' |
+		jq -f "$DEP_GRAPH_REDUCE_FILTER" | jq -c '.blocked_by["30"].issue_nums // []'
+	return 0
+}
+
+assert_eq "cache ignores prose blocked-by reference" '[]' \
+	"$(_test_cache_blocker_nums '- **Blocked by #10:** open a Resolves #20 data PR.')"
+assert_eq "cache preserves bold structured field" '["10"]' \
+	"$(_test_cache_blocker_nums '**Blocked by:** #10')"
+assert_eq "cache preserves bare list field and case" '["10"]' \
+	"$(_test_cache_blocker_nums ' + BLOCKED-BY: #10')"
+assert_eq "cache ignores inline and quoted fields" '[]' \
+	"$(_test_cache_blocker_nums $'Prose blocked-by: #10\n> **Blocked by:** #20')"
+assert_eq "cache strips comments and both fence types" '["10"]' \
+	"$(_test_cache_blocker_nums $'```md\nblocked-by: #20\n```\n~~~\nblocked-by: #21\n~~~\n<!--\nblocked-by: #22\n-->\n<!-- hidden -->**Blocked by:** #10')"
+assert_eq "cache requires matching fence character and length" '["10"]' \
+	"$(_test_cache_blocker_nums $'````md\n```\nblocked-by: #20\n~~~~\nblocked-by: #21\n````\nblocked-by: #10')"
+assert_eq "cache drops unterminated comments" '["10"]' \
+	"$(_test_cache_blocker_nums $'blocked-by: #10\n<!--\nblocked-by: #20')"
+assert_eq "cache drops unterminated fences" '["10"]' \
+	"$(_test_cache_blocker_nums $'blocked-by: #10\n~~~\nblocked-by: #20')"
+assert_eq "cache accepts CRLF fields" '["10"]' \
+	"$(_test_cache_blocker_nums $'**Blocked by:** #10\r\n')"
+
+consolidation_graph=$(jq -n '[
+	{number:30,title:"consolidation-task: merge thread on #20 into single spec",state:"OPEN",
+	 body:"**Blocked by:** #20, t20, #10, t10",labels:[{name:"consolidation-task"},{name:"blocked-by:#20"},{name:"blocked-by:t20"}]},
+	{number:31,title:"consolidation-task: merge thread on #20 into single spec",state:"OPEN",
+	 body:"blocked-by: #20, t20",labels:[{name:"consolidation-task"}]},
+	{number:32,title:"ordinary issue",state:"OPEN",body:"blocked-by: #20, t20",labels:[]},
+	{number:20,title:"t20: parent",state:"OPEN",body:"",labels:[]},
+	{number:10,title:"t10: predecessor",state:"OPEN",body:"",labels:[]}
+]' | jq -f "$DEP_GRAPH_REDUCE_FILTER")
+assert_eq "consolidation cache excludes parent number including labels" '["10"]' \
+	"$(printf '%s' "$consolidation_graph" | jq -c '.blocked_by["30"].issue_nums')"
+assert_eq "consolidation cache excludes parent task aliases including labels" '["t10"]' \
+	"$(printf '%s' "$consolidation_graph" | jq -c '.blocked_by["30"].task_ids')"
+assert_eq "parent-only consolidation has no blocker entry" 'false' \
+	"$(printf '%s' "$consolidation_graph" | jq -c '.blocked_by | has("31")')"
+assert_eq "ordinary child still depends on parent" '["20"]' \
+	"$(printf '%s' "$consolidation_graph" | jq -c '.blocked_by["32"].issue_nums')"
+
 entry='{"task_ids":["t10"],"issue_nums":["11"]}'
 assert_true "closed roadmap predecessors resolve" \
 	_refresh_all_blockers_resolved "$entry" '{"t10":10}' '[10,11]' '[10,11,20]'
@@ -346,7 +391,7 @@ assert_eq "cycle pruning keeps one dependency direction" '[]' \
 	"$(printf '%s' "$pruned_graph" | jq -c '.blocked_by["10"].issue_nums')"
 
 gh_issue_list() {
-	printf '%s\n' '[{"number":10,"title":"t10: first","state":"OPEN","body":"Blocked by #20","labels":[]},{"number":20,"title":"t20: second","state":"OPEN","body":"Blocked by #10","labels":[]}]'
+	printf '%s\n' '[{"number":10,"title":"t10: first","state":"OPEN","body":"Blocked by: #20","labels":[]},{"number":20,"title":"t20: second","state":"OPEN","body":"Blocked by: #10","labels":[]}]'
 	return 0
 }
 export -f gh_issue_list
