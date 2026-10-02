@@ -89,7 +89,12 @@ check_dependencies() {
 load_config() {
 	if [[ ! -f "$CONFIG_FILE" ]]; then
 		print_error "$ERROR_CONFIG_MISSING"
-		print_info "Create configuration: cp configs/github-cli-config.json.txt $CONFIG_FILE"
+		print_info "This optional multi-account configuration is only required by github-cli-helper.sh."
+		print_info "For managed issues, use the authenticated gh session without this config:"
+		print_info "  ${SCRIPT_DIR}/gh-write-helper.sh issue create --repo owner/repo --title 'Issue title' --body-file /absolute/path/brief.md --label bug --assignee @me"
+		print_info "For PRs and comments, use gh-write-helper.sh pr create or gh-write-helper.sh issue|pr comment."
+		print_info "For task IDs, use ${SCRIPT_DIR}/claim-task-id.sh with --brief-file."
+		print_info "To opt into this legacy helper, copy configs/github-cli-config.json.txt from the aidevops source repository to $CONFIG_FILE."
 		return 1
 	fi
 	return 0
@@ -774,6 +779,11 @@ COMMANDS:
     create-issue <account> <repo> <title> [body] - Create issue
     close-issue <account> <repo> <number>   - Close issue
 
+    Managed repos / OpenCode (no multi-account config or source required):
+      gh-write-helper.sh issue create --repo owner/repo --title 'Issue title' --body-file /absolute/path/brief.md --label bug --assignee @me
+      gh-write-helper.sh issue comment <number> --repo owner/repo --body-file /absolute/path/comment.md
+      For task IDs, use claim-task-id.sh with --brief-file.
+
   Pull Request Management:
     list-prs <account> <repo> [state]       - List pull requests
     create-pr <account> <repo> <title> [base] [head] [body] - Create PR
@@ -795,8 +805,9 @@ EXAMPLES:
   $0 create-pr marcusquinn my-repo "Fix bug" main bugfix
 
 CONFIGURATION:
-  File: configs/github-cli-config.json
-  Example: cp configs/github-cli-config.json.txt configs/github-cli-config.json
+  Optional multi-account helper only: configs/github-cli-config.json
+  Template: configs/github-cli-config.json.txt in the aidevops source repository
+  gh-write-helper.sh uses existing gh authentication and does not need this file.
 
 REQUIREMENTS:
   - GitHub CLI (gh) installed and authenticated

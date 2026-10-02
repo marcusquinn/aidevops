@@ -88,6 +88,14 @@ their existing behavior.
   comment` or `gh-write-helper.sh pr comment`. Use `--body-file -` for streamed
   bodies; the executable loads the audited create/edit/comment wrappers
   internally without caller-side `source`.
+- In OpenCode, prefer this executable over sourcing shell functions or using
+  `bash -c`. Write the body file in a separate tool call, then run one argv-only
+  command: `gh-write-helper.sh issue create --repo owner/repo --title 'Issue title' --body-file /absolute/path/brief.md --label bug --assignee @me`.
+  The create wrappers add the session's origin label and signature automatically;
+  do not fall back to raw creation with manually added origin labels. Use the
+  installed executable path if it is not on PATH. It uses existing `gh`
+  authentication and needs no `github-cli-config.json`; that file is optional
+  multi-account configuration for the legacy `github-cli-helper.sh` only.
 - Explicit bounded publication uses `gh-write-helper.sh batch MANIFEST.json`.
   The owner-only manifest and every body file must live under
   `AIDEVOPS_TEMP_DIR`. Schema `aidevops.github-write-batch/v1` accepts 1-10
@@ -120,6 +128,9 @@ their existing behavior.
   - (a) `.agents/scripts/gh` PATH shim — transparently injects sig on `--body` / `--body-file` args before exec'ing the real `gh`. Active whenever `~/.aidevops/agents/scripts/` is first in PATH (default for aidevops-installed shells). Bypass: `AIDEVOPS_GH_SHIM_DISABLE=1`.
   - (b) `.agents/plugins/opencode-aidevops/quality-hooks.mjs::checkSignatureFooterGate` — runs on every Bash tool call inside opencode; repairs the command in place when parseable, blocks (throws) otherwise with a mentoring error message.
 - Workers/scripts that source `shared-gh-wrappers.sh` should call `gh_issue_comment`, `gh_create_issue`, `gh_pr_comment`, or `gh_create_pr` by name — these already auto-inject via `_gh_wrapper_auto_sig`.
+- When caller-side sourcing is unavailable, use the corresponding
+  `gh-write-helper.sh issue|pr create|comment` subcommand instead; do not try to
+  change the runtime's Bash policy to make shell-function calls work.
 - If the plugin hook blocks your command with a parse-failure, the fix is ALWAYS to add the helper call explicitly — never to work around with `AIDEVOPS_GH_SHIM_DISABLE=1`, which only defeats layer (a) and leaves the audit trail inconsistent.
 
 ## Job logs for in-progress workflow runs
@@ -192,7 +203,11 @@ The JS plugin hook (`quality-hooks-signature.mjs::checkSignatureFooterGate`) run
 This is NOT a heredoc / command-substitution / quoting failure (those report different `FAIL_REASON` values). When the error message names `body-file not found (may be created later in this same bash call)`, use one of these two patterns:
 
 - **Two bash tool calls.** Write the file in call 1, post it in call 2. The JS hook reads the file in call 2 and sees the marker.
-- **Sourced wrapper.** `source ~/.aidevops/agents/scripts/shared-gh-wrappers.sh && gh_issue_comment N --body-file "$BODY_FILE"`. The shell wrapper runs AFTER the file-creation steps in your shell, the PATH shim takes over at exec-time, and both layers see the completed file.
+- **Executable wrapper (OpenCode).** Write the file in a separate tool call,
+  then run `gh-write-helper.sh issue comment N --repo owner/repo --body-file /absolute/path/comment.md`.
+  The executable sources and signs internally; caller-side sourcing and dynamic
+  shell expansion are not needed.
+- **Sourced wrapper (scripts/compatible shells only).** `source ~/.aidevops/agents/scripts/shared-gh-wrappers.sh && gh_issue_comment N --body-file "$BODY_FILE"`. The shell wrapper runs AFTER the file-creation steps in your shell, the PATH shim takes over at exec-time, and both layers see the completed file. This is not an OpenCode Bash-tool workaround.
 
 Do NOT respond to a `FILE_NOT_FOUND` block by debugging temp-file paths, file content, or the JS hook source — the file is correct, the hook just runs too early. The error message itself names the same-bash-call hypothesis as the likely cause; trust it.
 
