@@ -460,6 +460,41 @@ else
 	print_result "merged checkpoint keeps 300K under budget" 1 "(rc=$rc output='$output')"
 fi
 
+# Timeline ordering is reference ordering, not necessarily merge ordering.
+cat >"$FIXTURE_TIMELINE_JSON" <<'JSON'
+[
+ {"event":"cross-referenced","source":{"issue":{"repository":{"full_name":"owner/repo"},"body":"For #18013","pull_request":{"merged_at":"2026-05-03T19:25:00Z"}}}},
+ {"event":"cross-referenced","source":{"issue":{"repository":{"full_name":"owner/repo"},"body":"Ref #18013","pull_request":{"merged_at":"2026-05-03T18:25:00Z"}}}}
+]
+JSON
+sum_output=$("$DEDUP_HELPER" sum-issue-token-spend 18013 "owner/repo" 2>/dev/null)
+if [[ "$sum_output" == "300000|1" ]]; then
+	print_result "latest merge wins regardless of timeline order" 0
+else
+	print_result "latest merge wins regardless of timeline order" 1 "(got: '$sum_output')"
+fi
+
+for marker in '<!-- cost-circuit-breaker:reset -->' '<!-- aidevops-signed-approval -->'; do
+	cat >"$FIXTURE_COMMENTS_JSON" <<JSON
+[
+ {"created_at":"2026-05-03T19:26:00Z","body":"spent 600000 tokens"},
+ {"created_at":"2026-05-03T19:28:00Z","body":"${marker}"},
+ {"created_at":"2026-05-03T19:30:00Z","body":"spent 300000 tokens"},
+ {"created_at":"2026-05-03T19:31:00Z","body":"spent 900000 tokens with the user in an interactive session"}
+]
+JSON
+	sum_output=$("$DEDUP_HELPER" sum-issue-token-spend 18013 "owner/repo" 2>/dev/null)
+	if [[ "$sum_output" == "300000|1" ]]; then
+		print_result "newer ${marker} overrides merge; interactive spend excluded" 0
+	else
+		print_result "newer ${marker} overrides merge; interactive spend excluded" 1 "(got: '$sum_output')"
+	fi
+done
+cat >"$FIXTURE_COMMENTS_JSON" <<'JSON'
+[{"created_at":"2026-05-03T19:00:00Z","body":"spent 600000 tokens"}]
+[{"created_at":"2026-05-03T19:30:00Z","body":"spent 300000 tokens"}]
+JSON
+
 # Unmerged PRs, ordinary issues, other repositories and prefix collisions do not reset.
 cat >"$FIXTURE_TIMELINE_JSON" <<'JSON'
 [
