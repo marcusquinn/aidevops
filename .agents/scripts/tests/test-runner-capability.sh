@@ -7,6 +7,7 @@ python3 - "$SCRIPT_DIR" <<'PY'
 import json
 import os
 import re
+import socket
 import subprocess
 import sys
 import tempfile
@@ -141,6 +142,57 @@ _dlw_claim_lock_after_canary 42 owner/repo runner
     log = (root / 'log').read_text()
     assert 'runner_capability_check source=fresh requirements=2' in log, log
     assert 'PRIVATE_' not in log and 'MISSING' not in log, log
+
+    # Exercise the shared fresh gate with inherited tool pipes and sockets.
+    fresh_invocation = 'source "$1/runner-capability-helper.sh"; ' + stub + '''
+runner_capability_check_fresh "$2" 42 owner/repo "$3"
+'''
+    for transport in ('pipe', 'socket', 'file'):
+        for label, fresh, requirements, success in (
+            ('capable', fresh_issue, None, True),
+            ('missing secret', dict(fresh_issue, body='requires-secrets: MISSING'), None, False),
+            ('failed probe', fresh_issue, {'publish': {'probe': 'probe'}}, False),
+            ('closed metadata', dict(fresh_issue, state='closed'), None, False),
+        ):
+            config.unlink(missing_ok=True)
+            if requirements is not None:
+                probe.write_text('#!/usr/bin/env bash\nexit 1\n')
+                config.write_text(json.dumps({'dispatch_class_requirements': requirements}))
+            check_env = dict(dispatch_env, FRESH_META=json.dumps(fresh))
+            destination = '/dev/stderr'
+            if transport == 'file':
+                destination = str(root / 'descriptor-log')
+                Path(destination).write_text('existing audit\n')
+            argv = ['bash', '-c', fresh_invocation, 'fixture', str(scripts), str(repo), destination]
+            if transport == 'socket':
+                reader, writer = socket.socketpair()
+                with reader, writer:
+                    result = subprocess.run(argv, env=check_env, stdout=subprocess.PIPE,
+                                            stderr=writer, text=True)
+                    writer.shutdown(socket.SHUT_WR)
+                    diagnostics = reader.makefile().read()
+            else:
+                result = subprocess.run(argv, env=check_env, capture_output=True, text=True)
+                diagnostics = result.stderr
+            if transport == 'file':
+                assert not diagnostics, result
+                diagnostics = Path(destination).read_text()
+                assert diagnostics.startswith('existing audit\n'), diagnostics
+            assert (result.returncode == 0) == success, (transport, label, result, diagnostics)
+            assert not result.stdout, result
+            assert 'runner_capability_' in diagnostics, diagnostics
+            assert 'No such device' not in diagnostics and 'PRIVATE_' not in diagnostics, diagnostics
+            if not success:
+                assert 'runner_capability_unmet' in diagnostics, diagnostics
+            print('PASS fresh gate', transport, label)
+            passed += 1
+    config.unlink(missing_ok=True)
+    result = subprocess.run(['bash', '-c', fresh_invocation, 'fixture', str(scripts),
+                             str(repo), str(root / 'missing-parent' / 'log')],
+                            env=dispatch_env, capture_output=True, text=True)
+    assert result.returncode != 0 and not result.stdout, result
+    print('PASS unusable audit log rejects admission')
+    passed += 1
 
     # The real status-only command must suppress both successful values and errors.
     source = (scripts / 'secret-helper.sh').read_text()
