@@ -111,16 +111,18 @@ async function exerciseViewport(run, journey) {
   run.result.status = stepsPassed && clean ? 'passed' : 'failed';
 }
 
-async function runViewport(session, viewportName) {
+async function runViewport(session, viewport) {
   const { browser, journey } = session;
+  const viewportName = typeof viewport === 'string' ? viewport : viewport.name;
+  const { width, height } = typeof viewport === 'string' ? VIEWPORTS[viewport] : viewport;
   const context = await browser.newContext({
-    viewport: VIEWPORTS[viewportName],
+    viewport: { width, height },
     serviceWorkers: 'block',
     acceptDownloads: false,
   });
   const guard = createGuard(journey);
   const diagnostics = watchDiagnostics(context);
-  const result = { viewport: viewportName, status: 'failed', steps: [] };
+  const result = { viewport: viewportName, width, height, status: 'failed', steps: [] };
   try {
     await installGuard(context, guard);
     const page = await context.newPage();

@@ -103,6 +103,51 @@ run_validation_tests() {
 	return 0
 }
 
+test_layout_validation() {
+	if node --input-type=module - "${SCRIPT_DIR}/../browser-qa-journey-config.mjs" <<'VALIDATION'; then
+import assert from 'node:assert/strict';
+const { validateJourney } = await import(process.argv[2]);
+const validate = (steps, viewports) => {
+  process.env.QA_USER = 'fixture-user';
+  process.env.QA_PASSWORD = 'fixture-password';
+  return validateJourney({ version: 1, environments: { test: {
+    origin: 'http://127.0.0.1', credentials: { usernameEnv: 'QA_USER', passwordEnv: 'QA_PASSWORD' },
+    login: { path: '/login', method: 'POST', successPath: '/home', usernameSelector: '#user', passwordSelector: '#password', submitSelector: 'button' },
+    logout: { path: '/logout', method: 'POST' }, viewports,
+  } }, steps }, 'test');
+};
+const layout = { type: 'layout', selector: '#field', compare: '#button', match: ['top', 'height'] };
+const tablet = { name: 'tablet-782', width: 782, height: 900 };
+assert.deepEqual(validate([layout], ['desktop', tablet, 'mobile']).viewports, ['desktop', tablet, 'mobile']);
+for (const tolerancePx of [0, 1, 8]) validate([{ ...layout, tolerancePx }]);
+validate([{ ...layout, match: ['top', 'bottom', 'left', 'right', 'width', 'height', 'centerX', 'centerY'] }]);
+for (const match of [[], ['top', 'top'], ['unknown'], 'top', null]) {
+  assert.throws(() => validate([{ ...layout, match }]), /match is missing or invalid/);
+}
+for (const tolerancePx of [-1, 9, 0.5, '1', null]) {
+  assert.throws(() => validate([{ ...layout, tolerancePx }]), /tolerancePx is missing or invalid/);
+}
+for (const key of ['selector', 'compare', 'match']) {
+  assert.throws(() => validate([{ ...layout, [key]: undefined }]), /missing or invalid/);
+}
+for (const viewports of [[], Array.from({ length: 9 }, (_, i) => ({ ...tablet, name: `v${i}` })),
+  ['tablet'], [null], [320], [{ ...tablet, name: '' }], [{ ...tablet, name: 'bad name' }],
+  ...[319, 3841, 782.5, '782'].map((width) => [{ ...tablet, width }]),
+  ...[319, 2161, 900.5, '900'].map((height) => [{ ...tablet, height }])]) {
+  assert.throws(() => validate([layout], viewports), /viewports/);
+}
+for (const viewports of [['desktop', 'desktop'], [tablet, { ...tablet }], ['desktop', { ...tablet, name: 'desktop' }]]) {
+  assert.throws(() => validate([layout], viewports), /unique names/);
+}
+validate([layout], [{ name: 'min', width: 320, height: 320 }, { name: 'max', width: 3840, height: 2160 }]);
+VALIDATION
+		pass "layout/custom viewport schema accepts valid entries and rejects invalid bounds, edges and duplicates"
+	else
+		fail "layout/custom viewport validation"
+	fi
+	return 0
+}
+
 write_fixture_server() {
 	cat >"${JOURNEY_TEST_TEMP_DIR}/fixture-server.mjs" <<'FIXTURE'
 import http from 'node:http';
@@ -118,6 +163,8 @@ const send = (res, status, body, headers = {}) => { res.writeHead(status, { 'con
 const readBody = (req) => new Promise((resolve) => { let data = ''; req.on('data', (c) => { data += c; }); req.on('end', () => resolve(data)); });
 const form = (action) => `<!doctype html><form method="post" action="${action}"><input id="user" name="user"><input id="password" name="password" type="password"><button type="submit">Sign in</button></form>`;
 const home = (port) => `<!doctype html><title>${title}</title><h1 id="title">${title} dashboard</h1>
+<style>.search-row { display:flex; align-items:flex-start; } .search-row input, .search-row button { box-sizing:border-box; height:40px; width:100px; flex-shrink:1; min-width:0; } .search-row #uneven { height:30px; } .search-row #near { height:41px; }</style>
+<div class="search-row"><input id="search-field"><button id="search-button">Search</button><button id="uneven">Uneven</button><button id="near">Near</button></div>
 <ul><li class="clip">A</li><li class="clip">B</li></ul>
 <button id="open">Open</button><div id="modal" hidden role="dialog"><h2 id="modal-title">${title} clip</h2><video id="player" src="/media/${title}.mp4"></video></div>
 <button id="save">Save</button><p id="save-result"></p><a id="leave" href="http://localhost:${port}/home">Leave</a>
@@ -281,6 +328,32 @@ test_beta_journey_isolated() {
 	return 0
 }
 
+test_layout_journey() {
+	local env status=0
+	env="\"alpha\":{$(environment_json "$ALPHA_PORT" QA_ALPHA ',"viewports":["desktop",{"name":"tablet-782","width":782,"height":900},"mobile"],"timeoutMs":1000')}"
+	write_journey layout.json "$env" '[{"type":"layout","selector":"#search-field","compare":"#search-button","match":["top","bottom","height","centerY"],"tolerancePx":0},{"type":"layout","selector":"#search-field","compare":"#search-field","match":["left","right","width","centerX"]},{"type":"layout","selector":"#search-field","compare":"#near","match":["height"]},{"type":"no-horizontal-overflow"}]'
+	run_journey layout.json alpha
+	[[ "$RUN_EXIT" -eq 0 && "$RUN_OUTPUT" == *'"viewport":"desktop","width":1440,"height":900'* && "$RUN_OUTPUT" == *'"viewport":"tablet-782","width":782,"height":900'* && "$RUN_OUTPUT" == *'"viewport":"mobile","width":375,"height":667'* ]] || status=1
+	check "layout and overflow pass at 1440, 782 and 375; default tolerance accepts 1px" "$status" "exit=${RUN_EXIT} ${RUN_OUTPUT}"
+	env="\"alpha\":{$(environment_json "$ALPHA_PORT" QA_ALPHA ',"viewports":["desktop"],"timeoutMs":1000')}"
+	write_journey uneven.json "$env" '[{"type":"layout","selector":"#search-field","compare":"#uneven","match":["top","height"]}]'
+	run_journey uneven.json alpha
+	status=0
+	[[ "$RUN_EXIT" -ne 0 && "$RUN_OUTPUT" == *'layout assertion failed: height 40 vs 30'* && "$RUN_OUTPUT" == *'"signOut":{"status":"passed"}'* ]] || status=1
+	check "CSS height mismatch reports both values and still signs out" "$status" "exit=${RUN_EXIT} ${RUN_OUTPUT}"
+	write_journey exact.json "$env" '[{"type":"layout","selector":"#search-field","compare":"#near","match":["height"],"tolerancePx":0}]'
+	run_journey exact.json alpha
+	status=0
+	[[ "$RUN_EXIT" -ne 0 && "$RUN_OUTPUT" == *'height 40 vs 41'* ]] || status=1
+	check "zero tolerance rejects a 1px mismatch" "$status" "exit=${RUN_EXIT} ${RUN_OUTPUT}"
+	write_journey absent.json "$env" '[{"type":"layout","selector":"#search-field","compare":"#absent","match":["top"]}]'
+	run_journey absent.json alpha
+	status=0
+	[[ "$RUN_EXIT" -ne 0 && "$RUN_OUTPUT" == *'layout assertion failed: element box unavailable'* ]] || status=1
+	check "missing element fails layout within the action budget" "$status" "exit=${RUN_EXIT} ${RUN_OUTPUT}"
+	return 0
+}
+
 test_non_api_write_blocked() {
 	local env detail status=0
 	env="\"alpha\":{$(environment_json "$ALPHA_PORT" QA_ALPHA ',"viewports":["desktop"]')}"
@@ -376,7 +449,7 @@ run_browser_tests() {
 	: >"${JOURNEY_TEST_TEMP_DIR}/all-output.log"
 
 	local test_fn
-	for test_fn in test_alpha_journey_passes test_beta_journey_isolated test_non_api_write_blocked \
+	for test_fn in test_alpha_journey_passes test_beta_journey_isolated test_layout_journey test_non_api_write_blocked \
 		test_wrong_origin_navigation_blocked test_off_origin_auth_redirect_blocked \
 		test_timeout_still_signs_out test_wrong_password_fails_without_leak; do
 		reset_fixtures
@@ -390,6 +463,7 @@ main() {
 	JOURNEY_TEST_TEMP_DIR=$(mktemp -d)
 	trap cleanup EXIT
 	run_validation_tests
+	test_layout_validation
 	run_browser_tests
 	printf 'Results: %s passed, %s failed, %s skipped\n' "$TESTS_PASSED" "$TESTS_FAILED" "$TESTS_SKIPPED"
 	if [[ "$TESTS_FAILED" -eq 0 ]]; then

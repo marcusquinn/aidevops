@@ -12,6 +12,7 @@ export const VIEWPORTS = {
 
 const MAX_STEPS = 50;
 const MAX_TEXT_LENGTH = 500;
+const LAYOUT_EDGES = new Set(['top', 'bottom', 'left', 'right', 'width', 'height', 'centerX', 'centerY']);
 const ACTION_TIMEOUT = { fallback: 15000, max: 60000, label: 'timeoutMs' };
 const RUN_TIMEOUT = { fallback: 180000, max: 600000, label: 'runTimeoutMs' };
 const AUTH_METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']);
@@ -28,6 +29,7 @@ export const STEP_FIELDS = {
   count: { selector: 'text', equals: 'count' },
   text: { selector: 'text', includes: 'text' },
   attribute: { selector: 'text', name: 'text', equals: 'text' },
+  layout: { selector: 'text', compare: 'text', match: 'layoutMatch' },
   'no-horizontal-overflow': {},
 };
 
@@ -54,6 +56,8 @@ const FIELD_CHECKS = {
   count: (value) => Number.isInteger(value) && value >= 0,
   navigationPath: isNavigationPath,
   exactPath: isExactPath,
+  layoutMatch: (value) => Array.isArray(value) && value.length > 0 && value.every((edge) => LAYOUT_EDGES.has(edge)) && new Set(value).size === value.length,
+  tolerancePx: (value) => Number.isInteger(value) && value >= 0 && value <= 8,
 };
 
 function requireField(value, check, label) {
@@ -107,8 +111,19 @@ function boundedMs(value, limits) {
 
 function validateViewports(value) {
   const viewports = value ?? Object.keys(VIEWPORTS);
-  const valid = Array.isArray(viewports) && viewports.length > 0 && viewports.every((name) => Object.hasOwn(VIEWPORTS, name));
-  if (!valid || new Set(viewports).size !== viewports.length) fail('viewports must list desktop and/or mobile once each');
+  if (!Array.isArray(viewports) || viewports.length === 0 || viewports.length > 8) fail('viewports must contain 1-8 named or custom entries');
+  const names = new Set();
+  for (const viewport of viewports) {
+    const named = typeof viewport === 'string' && Object.hasOwn(VIEWPORTS, viewport);
+    const custom = viewport !== null && typeof viewport === 'object' && !Array.isArray(viewport)
+      && typeof viewport.name === 'string' && /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(viewport.name)
+      && Number.isInteger(viewport.width) && viewport.width >= 320 && viewport.width <= 3840
+      && Number.isInteger(viewport.height) && viewport.height >= 320 && viewport.height <= 2160;
+    if (!named && !custom) fail('viewports require desktop/mobile or a custom name, integer width 320-3840 and height 320-2160');
+    const name = named ? viewport : viewport.name;
+    if (names.has(name)) fail('viewports require unique names');
+    names.add(name);
+  }
   return viewports;
 }
 
@@ -119,6 +134,7 @@ function validateStep(step, index) {
   }
   for (const [key, check] of Object.entries(STEP_FIELDS[step.type])) requireField(step[key], check, `${label} ${key}`);
   if (step.name !== undefined) requireField(step.name, 'text', `${label} name`);
+  if (step.type === 'layout' && step.tolerancePx !== undefined) requireField(step.tolerancePx, 'tolerancePx', `${label} tolerancePx`);
 }
 
 function validateSteps(steps) {
