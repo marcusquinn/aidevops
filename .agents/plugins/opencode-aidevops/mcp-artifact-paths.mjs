@@ -1,7 +1,22 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
-import { isAbsolute, relative, resolve } from "node:path";
+import { lstatSync } from "node:fs";
+import { dirname, isAbsolute, relative, resolve } from "node:path";
+
+function hasUnsafeComponent(target) {
+  let current = target;
+  while (true) {
+    try {
+      if (lstatSync(current).isSymbolicLink()) return true;
+    } catch (err) {
+      if (err.code !== "ENOENT") return true;
+    }
+    const parent = dirname(current);
+    if (parent === current) return false;
+    current = parent;
+  }
+}
 
 /** Normalize local Markdown artifact links against the managed MCP's real cwd. */
 export function normalizeMcpArtifactPaths(input, output, workspaces) {
@@ -13,7 +28,8 @@ export function normalizeMcpArtifactPaths(input, output, workspaces) {
     if (/^[a-z][a-z\d+.-]*:|^[#/]|^\\/i.test(target)) return link;
     const absolute = resolve(cwd, target);
     const within = relative(workspace.directory, absolute);
-    if (within === ".." || within.startsWith("../") || isAbsolute(within)) return link;
+    if (within === ".." || within.startsWith("../") || isAbsolute(within)
+      || hasUnsafeComponent(`${cwd}/${target}`) || hasUnsafeComponent(absolute)) return link;
     return `](${absolute})`;
   });
 }

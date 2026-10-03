@@ -4,10 +4,79 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "fs";
-import { join } from "path";
+import { dirname, join } from "path";
 import { tmpdir } from "os";
 
 import { createPermissionBroker, sanitizePermissionText } from "../permission-broker.mjs";
+
+test("missing exact external reads fail without a permission handoff; existing and sensitive paths retain gates", async (t) => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "aidevops-impossible-read-")));
+  const previous = preserveWorkerEnvironment();
+  t.after(() => { restoreWorkerEnvironment(previous); rmSync(root, { recursive: true, force: true }); });
+  const home = join(root, "home");
+  mkdirSync(home);
+  const requestFile = join(root, "request.json");
+  const blockerLog = join(root, "blockers.jsonl");
+  process.env.AIDEVOPS_PERMISSION_REQUEST_FILE = requestFile;
+  const replies = [];
+  const broker = createPermissionBroker({
+    client: { postSessionIdPermissionsPermissionId: async (value) => replies.push(value) },
+    isHeadless: () => true, home, blockerLogPath: blockerLog,
+  });
+  const missing = join(root, "wrong/.aidevops/.agent-workspace/shot.png");
+  assert.throws(() => broker.recordToolCall({ tool: "read", callID: "before" }, { args: { filePath: missing } }), /does not exist.*session output directory/);
+  for (const tool of ["read", "glob", "grep", "list"]) {
+    broker.recordToolCall({ tool, callID: tool }, { args: {} });
+    const raw = { id: tool, sessionID: "missing", permission: "external_directory", patterns: [`${dirname(missing)}/*`], metadata: { filepath: missing }, tool: { callID: tool } };
+    await broker.handleEvent({ event: { type: "permission.asked", properties: raw } });
+    const output = { status: "ask" };
+    broker.permissionAsk(raw, output);
+    assert.equal(output.status, "deny");
+    assert.match(output.message, /does not exist/);
+  }
+  assert.deepEqual(replies.map((reply) => reply.body.response), ["reject", "reject", "reject", "reject"]);
+  assert.equal(existsSync(requestFile), false);
+  assert.equal(existsSync(blockerLog), false);
+
+  const existing = join(root, "existing.txt");
+  writeFileSync(existing, "existing");
+  const sensitive = join(root, ".ssh/missing-key");
+  for (const [id, target] of [["existing", existing], ["sensitive", sensitive]]) {
+    broker.recordToolCall({ tool: "read", callID: id }, { args: { filePath: target } });
+    await broker.handleEvent({ event: { type: "permission.asked", properties: {
+      id, sessionID: "gated", permission: "external_directory", patterns: [target], tool: { callID: id },
+    } } });
+  }
+  const capture = JSON.parse(readFileSync(requestFile, "utf8"));
+  assert.equal(capture.requests[0].risk.grantable, true);
+  assert.equal(capture.requests[1].risk.grantable, false);
+  assert.match(readFileSync(blockerLog, "utf8"), /permission_request_captured/);
+
+  const managed = join(home, ".aidevops/.agent-workspace");
+  mkdirSync(managed, { recursive: true });
+  const alias = join(root, "alias");
+  symlinkSync(join(home, ".aidevops"), alias, "dir");
+  writeFileSync(join(home, "existing-through-traversal.txt"), "existing");
+  const traversal = `${alias}/../existing-through-traversal.txt`;
+  assert.equal(existsSync(traversal), true);
+  assert.equal(existsSync(join(root, "existing-through-traversal.txt")), false);
+  assert.doesNotThrow(() => broker.recordToolCall({ tool: "read", callID: "before-traversal" }, { args: { filePath: traversal } }));
+  for (const [id, tool, target, patterns] of [
+    ["managed", "read", join(managed, "missing.png"), [join(managed, "missing.png")]],
+    ["symlink", "read", join(alias, ".agent-workspace/missing.png"), [join(alias, ".agent-workspace/missing.png")]],
+    ["traversal", "read", traversal, [traversal]],
+    ["mutation", "edit", missing, [missing]],
+    ["unbounded", "read", missing, ["*"]],
+    ["no-pattern", "read", missing, []],
+  ]) {
+    broker.recordToolCall({ tool, callID: id }, { args: {} });
+    const output = { status: "ask" };
+    broker.permissionAsk({ permission: "external_directory", patterns, metadata: { filepath: target }, callID: id }, output);
+    assert.equal(output.status, "deny");
+    assert.equal(output.message, undefined);
+  }
+  assert.equal(JSON.parse(readFileSync(requestFile, "utf8")).requests.length, 8);
+});
 
 const WORKER_ENV_KEYS = [
   "AIDEVOPS_PERMISSION_REQUEST_FILE",
