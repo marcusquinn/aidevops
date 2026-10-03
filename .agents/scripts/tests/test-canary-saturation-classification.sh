@@ -198,7 +198,7 @@ extract_classifier() {
 		/^_classify_canary_failure_reason\(\)/ { in_fn = 1 }
 		in_fn { print }
 		in_fn && /^}$/ { in_fn = 0 }
-	' "${SCRIPT_DIR}/headless-runtime-lib.sh"
+	' "${SCRIPT_DIR}/headless-runtime-canary.sh"
 }
 
 extract_canary_backoff_recorder() {
@@ -206,7 +206,7 @@ extract_canary_backoff_recorder() {
 		/^_record_canary_provider_backoff\(\)/ { in_fn = 1 }
 		in_fn { print }
 		in_fn && /^}$/ { in_fn = 0 }
-	' "${SCRIPT_DIR}/headless-runtime-lib.sh"
+	' "${SCRIPT_DIR}/headless-runtime-canary.sh"
 }
 
 # shellcheck disable=SC2046
