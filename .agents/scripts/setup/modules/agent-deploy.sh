@@ -356,7 +356,7 @@ _verify_deployed_core_plugin_freshness() {
 }
 
 # _verify_opencode_plugin_deps plugin_dir
-# Imports shared and both versioned runtime dependencies before a bundle is
+# Imports shared dependencies and the native V2 descriptor before a bundle is
 # eligible for activation. Prefer Bun because OpenCode embeds Bun; use Node when
 # the standalone Bun CLI is unavailable.
 _verify_opencode_plugin_deps() {
@@ -374,7 +374,7 @@ _verify_opencode_plugin_deps() {
 
 	if (
 		cd "$plugin_dir" || exit 1
-		"$js_runtime" -e 'Promise.all([import("@bufbuild/protobuf"), import("@opencode-ai/plugin"), import("@opencode/plugin")]).then(([, v1, v2]) => { if (!v1.tool || !v1.tool.schema) throw new Error("@opencode-ai/plugin does not export tool.schema"); if (!v2.Plugin || typeof v2.Plugin.define !== "function") throw new Error("@opencode/plugin does not export Plugin.define"); }).catch((error) => { console.error(error.message); process.exit(1); })'
+		"$js_runtime" -e 'Promise.all([import("@bufbuild/protobuf"), import("@opencode-ai/plugin"), import("./v2.mjs")]).then(([, v1, v2]) => { if (!v1.tool || !v1.tool.schema) throw new Error("@opencode-ai/plugin does not export tool.schema"); if (v2.default?.id !== "aidevops" || typeof v2.default?.setup !== "function") throw new Error("V2 plugin does not export the native descriptor"); }).catch((error) => { console.error(error.message); process.exit(1); })'
 	); then
 		return 0
 	fi

@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
-import { Plugin } from "@opencode/plugin";
 import { execSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -250,10 +249,14 @@ export async function startEventLoop(ctx, handler) {
   };
 }
 
-/** Define an aidevops descriptor through the released OpenCode V2 SDK. */
+/**
+ * Return the released V2 descriptor: Plugin.define in SDK 2.0.3 is identity.
+ * The host supplies the context; importing that SDK solely for identity pulls
+ * in an unnecessary npm-fetch dependency graph (GH#33467).
+ */
 export function defineAidevopsV2Adapter(setup) {
   if (typeof setup !== "function") throw new TypeError("OpenCode V2 adapter setup must be a function");
-  return Plugin.define({ id: "aidevops", setup });
+  return { id: "aidevops", setup };
 }
 
 export function applyV2PermissionEvaluation(permissionBroker, event) {
