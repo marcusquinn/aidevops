@@ -74,6 +74,37 @@ Accounts stored in `~/.aidevops/oauth-pool.json` (0600). Repeat for additional a
 - `anthropic-pool/claude-sonnet-5-5`
 - `anthropic-pool/claude-haiku-4-5`
 
+## Offline rotation diagnostic
+
+```bash
+aidevops model-accounts-pool probe-rotation anthropic
+```
+
+This **offline, simulated** diagnostic requires no accounts, tokens, API calls,
+deployment or session restart. It runs the installed sibling plugin's real
+`createProviderAuthHook`, account-selection and recovery modules in a short-lived
+subprocess. In a source worktree it exercises that worktree's sibling plugin;
+deployment-directory symlinks are resolved before reading the same modules.
+
+It reports PASS/FAIL for bidirectional 429 fallback, identical-body retries,
+Retry-After cooldowns, SDK auth updates, replacement-account affinity, bounded
+two-account exhaustion and exclusion of a cooling alternate. Expected simulated
+429 responses are successful assertions, not diagnostic failures. Overall success
+returns zero; unsupported runtime, missing modules, isolation mismatch, timeout or
+failed assertions return nonzero without falling back to live credentials.
+
+Requires Node.js 18+ with experimental VM modules support (enabled in the child).
+Only three allowlisted provider source files are read. Pool storage, token refresh,
+SDK auth writes, network and request/response transforms are substituted in memory;
+unexpected imports are rejected by dependency specifier before path resolution.
+No production pool/auth file is opened, and no filesystem capability is exposed to
+the trusted provider code. This is not a sandbox for arbitrary hostile JavaScript.
+
+Unlike `check` (live token validity) and `diagnose` (live pipeline diagnostics), this
+does **not** prove live Anthropic admission, quotas, subscription entitlement, token
+refresh, persistence correctness or live end-to-end failover. Existing sessions and
+normal authentication semantics are untouched.
+
 ## Authentication Methods
 
 ### 1. Claude Pro/Max OAuth — Built-in (v1.1.36–v1.2.29)

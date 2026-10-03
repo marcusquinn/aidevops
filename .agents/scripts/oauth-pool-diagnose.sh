@@ -40,6 +40,21 @@ fi
 # Help
 # ---------------------------------------------------------------------------
 
+# Never invoke pool_ops, curl, or live diagnostics from the offline command.
+cmd_probe_rotation() {
+	local provider="${1:-}"
+	if [[ "$provider" != "anthropic" || "$#" -ne 1 ]]; then
+		print_error "Usage: aidevops model-accounts-pool probe-rotation anthropic (offline)"
+		return 1
+	fi
+	if ! command -v node >/dev/null 2>&1; then
+		print_error "Offline probe requires Node.js 18+ with VM modules support"
+		return 1
+	fi
+	env -u NODE_OPTIONS -u NODE_PATH node "${SCRIPT_DIR}/oauth-pool-rotation-probe.mjs" "$provider" || return 1
+	return 0
+}
+
 cmd_help() {
 	cat >&2 <<'HELP'
 oauth-pool-helper.sh — Manage OAuth pool accounts from the shell
@@ -51,6 +66,7 @@ Commands:
   add [anthropic|openai|cursor|google]            Add an account (OAuth; OpenAI defaults to device flow)
   check [anthropic|openai|cursor|google|all]      Health check: token expiry + live validity
   diagnose [anthropic]                            Full pipeline diagnostics (pool, plugin, CCH, runtime)
+  probe-rotation anthropic                       Offline simulated rotation (no accounts/network/restart)
   list [anthropic|openai|cursor|google|all]       List accounts with per-account status
   status [anthropic|openai|cursor|google|all]     Pool aggregate stats (counts, availability)
   refresh [anthropic|openai|google] [email|all]   Refresh expired tokens without re-auth (uses refresh_token)
