@@ -1,17 +1,18 @@
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+# Browser Run (formerly Browser Rendering)
 
-# Cloudflare Browser Rendering Skill Reference
+Use Browser Run for screenshots, PDFs, rendered content extraction, and browser automation. Read the relevant current documentation before implementing; use the [documentation index](https://developers.cloudflare.com/browser-run/llms.txt) to discover additional guides.
 
-**Description**: Expert knowledge for Cloudflare Browser Rendering - control headless Chrome on Cloudflare's global network for browser automation, screenshots, PDFs, web scraping, testing, and content generation.
+Choose the integration by the work and runtime:
 
-**When to use**: Any task involving Cloudflare Browser Rendering including: taking sc...
+- For a self-contained screenshot, PDF, or extraction, start with Quick Actions. They are available through REST and Workers bindings; check the chosen action's supported interface.
+- For multi-step interactions or persistent state, use browser sessions. In Workers, use Cloudflare's Puppeteer or Playwright package; from external scripts or CI, use the CDP integration.
+- When adapting existing automation, preserve its library where supported and check installed versions against the corresponding guide.
 
-## In This Reference
+Read only the reference needed for the task:
 
-- **[patterns.md](./patterns.md)** - Common patterns, use cases, examples
-- **[gotchas.md](./gotchas.md)** - Troubleshooting, best practices, limitations
-
-## See Also
-
-- [Cloudflare Docs](https://developers.cloudflare.com/)
+| Task | Reference |
+|------|-----------|
+| Set up bindings, dependencies, or development | [configuration.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/browser-rendering/configuration.md) |
+| Select an endpoint or browser client API | [api.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/browser-rendering/api.md) |
+| Implement a workflow or manage reusable sessions | [patterns.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/browser-rendering/patterns.md) |
+| Diagnose failures or plan capacity and cost | [gotchas.md](browser-rendering-gotchas.md) |

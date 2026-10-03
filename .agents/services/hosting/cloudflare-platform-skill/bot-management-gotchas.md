@@ -1,85 +1,110 @@
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Bot Management Gotchas
 
-## False Positives
+## Common Errors
 
-1. Check Bot Analytics for affected IPs and paths.
-2. Identify detection source (ML, heuristics, etc.).
-3. Add exception rule for isolated issues:
+### "Bot Score = 0"
 
-```txt
-(cf.bot_management.score lt 30 and http.request.uri.path eq "/problematic-path")
-Action: Skip (Bot Management)
-```
+**Cause:** Bot Management didn't run (internal Cloudflare request, Worker routing to zone (Orange-to-Orange), or request handled before BM (Redirect Rules, etc.))<br>
+**Solution:** Check request flow and ensure Bot Management runs in request lifecycle
 
-4. Allowlist by IP, ASN, or country if necessary.
+### "JavaScript Detections Not Working"
 
-## False Negatives
+**Cause:** `js_detection.passed` always false or undefined due to: CSP headers don't allow `/cdn-cgi/challenge-platform/`, using on first page visit (needs HTML page first), ad blockers or disabled JS, JSD not enabled in dashboard, or using Block action (must use Managed Challenge)<br>
+**Solution:** Add CSP header `Content-Security-Policy: script-src 'self' /cdn-cgi/challenge-platform/;` and ensure JSD is enabled with Managed Challenge action
 
-1. Increase enforcement threshold (e.g., 30 → 50).
-2. Enable JavaScript Detections (JSD).
-3. Add JA3/JA4 fingerprinting rules.
-4. Use rate limiting as fallback.
+### "False Positives (Legitimate Users Blocked)"
 
-## Bot Score = 0
+**Cause:** Bot detection incorrectly flagging legitimate users<br>
+**Solution:** Check Bot Analytics for affected IPs/paths, identify detection source (ML, Heuristics, etc.), create exception rule like `(cf.bot_management.score lt 30 and http.request.uri.path eq "/problematic-path")` with Action: Skip (Bot Management), or allowlist by IP/ASN/country
 
-- Indicates Bot Management did not execute (not a score of 100).
-- Causes: internal Cloudflare requests, Worker-routed Orange-to-Orange traffic, or request completion before execution.
-- Fix: Trace request path; ensure Bot Management runs in the lifecycle.
+### "False Negatives (Bots Not Caught)"
 
-## JavaScript Detections (JSD) Not Working
+**Cause:** Bots bypassing detection<br>
+**Solution:** Lower score threshold (30 → 50), enable JavaScript Detections, add JA3/JA4 fingerprinting rules, or use rate limiting as fallback
 
-If `js_detection.passed` is `false` or `undefined`:
+### "Verified Bot Blocked"
 
-- **CSP:** Ensure `/cdn-cgi/challenge-platform/` is allowed.
-- **First Visit:** JSD requires an initial HTML page visit.
-- **Client:** Check for disabled JS or ad blockers.
-- **Dashboard:** Verify JSD is enabled.
-- **Action:** Rule must be `Managed Challenge` (not `Block`).
+**Cause:** Search engine bot blocked by WAF Managed Rules (not just Bot Management)<br>
+**Solution:** Create WAF exception for specific rule ID and verify bot via reverse DNS
 
-**CSP fix:**
+### "Yandex Bot Blocked During IP Update"
 
-```txt
-Content-Security-Policy: script-src 'self' /cdn-cgi/challenge-platform/;
-```
+**Cause:** Yandex updates bot IPs; new IPs unrecognized for 48h during propagation<br>
+**Solution:**
+1. Check Security Events for specific WAF rule ID blocking Yandex
+2. Create WAF exception:
 
-## Verified Bot Blocked
+   ```txt
+   (http.user_agent contains "YandexBot" and ip.src in {<yandex-ip-range>})
+   Action: Skip (WAF Managed Ruleset)
+   ```
 
-- Usually WAF Managed Rules, not Bot Management.
-- Yandex bot verification may fail for 48h during Cloudflare IP updates.
-- Fix: Create WAF exception for the rule ID; verify bot via reverse DNS.
+3. Monitor Bot Analytics for 48h
+4. Remove exception after propagation completes
 
-## JA3/JA4 Missing
+Issue resolves automatically after 48h. Contact Cloudflare Support if persists.
 
-- Requires HTTPS/TLS traffic.
-- Missing on Worker-routed or Orange-to-Orange traffic.
-- Only exists if Bot Management executed.
+### "JA3/JA4 Missing"
 
-## Detection Limits
+**Cause:** Non-HTTPS traffic, Worker routing traffic, Orange-to-Orange traffic via Worker, or Bot Management skipped<br>
+**Solution:** JA3/JA4 only available for HTTPS/TLS traffic; check request routing
 
-### Bot score
+**JA3/JA4 Not User-Unique:** Same browser/library version = same fingerprint
+- Don't use for user identification
+- Use for client profiling only
+- Fingerprints change with browser updates
 
-- `0` = not computed.
-- Initial requests may lack JSD data.
-- Scores are probabilistic; false positives/negatives occur.
+## Bot Verification Methods
 
-### JavaScript Detections
+Cloudflare verifies bots via:
 
-- Fails on first HTML page visit.
-- Requires JS-enabled browser.
-- Strips ETags from HTML.
-- Breaks with restrictive CSP (no `<meta>` CSP support).
-- No WebSocket or native mobile app support.
+1. **Reverse DNS (IP validation):** Traditional method—bot IP resolves to expected domain
+2. **Web Bot Auth:** Modern cryptographic verification—faster propagation
 
-### JA3/JA4 fingerprints
+When `verifiedBot=true`, bot passed at least one method.
 
-- HTTPS/TLS only.
-- Missing on Worker-routed traffic.
-- Not unique per user; fingerprints can change on browser/library updates.
+**Inactive verified bots:** IPs removed after 24h of no traffic.
 
-## Plan Restrictions
+## Detection Engine Behavior
+
+| Engine | Score | Timing | Plan | Notes |
+|--------|-------|--------|------|-------|
+| Heuristics | Always 1 | Immediate | All | Known fingerprints—overrides ML |
+| ML | 1-99 | Immediate | All | Majority of detections |
+| Anomaly Detection | Influences | After baseline | Enterprise | Optional, baseline analysis |
+| JavaScript Detections | Pass/fail | After JS | Pro+ | Headless browser detection |
+| Cloudflare Service | N/A | N/A | Enterprise | Zero Trust internal source |
+
+**Priority:** Heuristics > ML—if heuristic matches, score=1 regardless of ML.
+
+## Limits
+
+| Limit | Value | Notes |
+|-------|-------|-------|
+| Bot Score = 0 | Means not computed | Not score = 100 |
+| First request JSD data | May not be available | JSD data appears on subsequent requests |
+| Score accuracy | Not 100% guaranteed | False positives/negatives possible |
+| JSD on first HTML page visit | Not supported | Requires subsequent page load |
+| JSD requirements | JavaScript-enabled browser | Won't work with JS disabled or ad blockers |
+| JSD ETag stripping | Strips ETags from HTML responses | May affect caching behavior |
+| JSD CSP compatibility | Requires specific CSP | Not compatible with some CSP configurations |
+| JSD meta CSP tags | Not supported | Must use HTTP headers |
+| JSD WebSocket support | Not supported | WebSocket endpoints won't work with JSD |
+| JSD mobile app support | Native apps won't pass | Only works in browsers |
+| JA3/JA4 traffic type | HTTPS/TLS only | Not available for non-HTTPS traffic |
+| JA3/JA4 Worker routing | Missing for Worker-routed traffic | Check request routing |
+| JA3/JA4 uniqueness | Not unique per user | Shared by clients with same browser/library |
+| JA3/JA4 stability | Can change with updates | Browser/library updates affect fingerprints |
+| WAF custom rules (Free) | 5 | Varies by plan |
+| WAF custom rules (Pro) | 20 | Varies by plan |
+| WAF custom rules (Business) | 100 | Varies by plan |
+| WAF custom rules (Enterprise) | 1,000+ | Varies by plan |
+| Workers CPU time | Varies by plan | Applies to bot logic |
+| Bot Analytics sampling | 1-10% adaptive | High-volume zones sampled more aggressively |
+| Bot Analytics history | 30 days max | Historical data retention limit |
+| CSP requirements for JSD | Must allow `/cdn-cgi/challenge-platform/` | Required for JSD to function |
+
+### Plan Restrictions
 
 | Feature | Free | Pro/Business | Enterprise |
 |---------|------|--------------|------------|
@@ -89,10 +114,3 @@ Content-Security-Policy: script-src 'self' /cdn-cgi/challenge-platform/;
 | Corporate Proxy detection | No | No | Yes |
 | Verified bot categories | Limited | Limited | Full |
 | Custom WAF rules | 5 | 20/100 | 1,000+ |
-
-## Technical Constraints
-
-- Max 25 WAF custom rules on Free (varies by plan).
-- Workers CPU limits apply to bot logic.
-- Bot Analytics sampled at 1-10%; 30-day history max.
-- JSD requires CSP allowing `/cdn-cgi/challenge-platform/`.

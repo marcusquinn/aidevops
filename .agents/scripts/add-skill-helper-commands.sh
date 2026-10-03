@@ -232,6 +232,17 @@ _cmd_add_github() {
 	local dry_run="$7"
 	local skip_security="$8"
 
+	# Reviewed registry policy takes precedence over openskills and path inference.
+	if has_curated_policy "$custom_name"; then
+		local canonical_url="https://github.com/$owner/$repo${subpath:+/$subpath}"
+		if ! has_curated_policy "$custom_name" "$canonical_url"; then
+			log_error "Source does not match the curated registry entry: $custom_name"
+			return 1
+		fi
+		import_curated_skill "$canonical_url" "$custom_name" "$dry_run" "$skip_security" "$force"
+		return $?
+	fi
+
 	# Create temp directory
 	rm -rf "$TEMP_DIR"
 	mkdir -p "$TEMP_DIR"

@@ -27,7 +27,7 @@ artifact ownership, permissions and session learning.
   when it resolves a material ambiguity; do not require generated imagery.
 - Load only the selected route: `tools/video/video-editor.md` for local editing,
   `tools/video/davinci-resolve.md` for an approved Resolve connection,
-  `tools/video/remotion.md` for code-driven video, or
+  `tools/video/remotion/remotion.md` for code-driven video, or
   `content/media-generation-providers.md` for an authorised generation job.
 - Resolve is optional. Missing software, licence, scripting capability or approval
   means unavailable, not permission to install it or operate a different project.

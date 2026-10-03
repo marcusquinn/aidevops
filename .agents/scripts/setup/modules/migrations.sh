@@ -160,6 +160,242 @@ cleanup_retired_context_tooling() {
 	return 0
 }
 
+# GH#5155: scripts archived upstream but orphaned in deployed installs (rsync
+# only adds/overwrites, doesn't delete removed files). Prints removed count.
+cleanup_retired_quality_automation_scripts() {
+	local agents_dir="$1"
+	local removed=0
+	local retired_path=""
+	for retired_path in \
+		"$agents_dir/scripts/pattern-tracker-helper.sh" \
+		"$agents_dir/scripts/quality-sweep-helper.sh" \
+		"$agents_dir/scripts/quality-loop-helper.sh" \
+		"$agents_dir/scripts/review-pulse-helper.sh" \
+		"$agents_dir/scripts/self-improve-helper.sh" \
+		"$agents_dir/scripts/coderabbit-pulse-helper.sh" \
+		"$agents_dir/scripts/coderabbit-task-creator-helper.sh" \
+		"$agents_dir/scripts/audit-task-creator-helper.sh" \
+		"$agents_dir/scripts/batch-cleanup-helper.sh" \
+		"$agents_dir/scripts/coordinator-helper.sh" \
+		"$agents_dir/scripts/finding-to-task-helper.sh" \
+		"$agents_dir/scripts/objective-runner-helper.sh" \
+		"$agents_dir/scripts/ralph-loop-helper.sh" \
+		"$agents_dir/scripts/stale-pr-helper.sh"; do
+		if [[ -e "$retired_path" ]]; then
+			rm -rf "$retired_path"
+			removed=$((removed + 1))
+		fi
+	done
+	printf '%s\n' "$removed"
+	return 0
+}
+
+# GH#33145: retired contest and response-scoring chain (unused; /cross-review
+# stays). Prints removed count.
+cleanup_retired_contest_scoring_tooling() {
+	local agents_dir="$1"
+	local removed=0
+	local retired_path=""
+	for retired_path in \
+		"$agents_dir/scripts/contest-helper.sh" \
+		"$agents_dir/scripts/contest-helper-create.sh" \
+		"$agents_dir/scripts/contest-helper-dispatch.sh" \
+		"$agents_dir/scripts/contest-helper-evaluate.sh" \
+		"$agents_dir/scripts/contest-helper-status.sh" \
+		"$agents_dir/scripts/contest-helper-apply.sh" \
+		"$agents_dir/scripts/response-scoring-helper.sh" \
+		"$agents_dir/scripts/compare-models-bench-lib.sh" \
+		"$agents_dir/scripts/commands/score-responses.md" \
+		"$agents_dir/workflows/score-responses.md" \
+		"$agents_dir/tools/ai-assistants/response-scoring.md"; do
+		if [[ -e "$retired_path" ]]; then
+			rm -rf "$retired_path"
+			removed=$((removed + 1))
+		fi
+	done
+	printf '%s\n' "$removed"
+	return 0
+}
+
+# GH#33150: Remotion skill restructured from flat tools/video/remotion-*.md
+# files into tools/video/remotion/ subfolder chapters. Prints removed count.
+_remove_retired_skill_file() {
+	local agents_dir="$1"
+	local retired_path="$2"
+	local source_agents="${BASH_SOURCE[0]%/*}/../../.."
+	# The deployed source wins over a historical retirement list. Never recursively
+	# delete resource directories: unknown user files inside them are not ours.
+	if [[ -e "$source_agents/${retired_path#"$agents_dir/"}" ]]; then
+		printf '0\n'
+		return 0
+	fi
+	if [[ -d "$retired_path" && ! -L "$retired_path" ]]; then
+		rmdir "$retired_path" 2>/dev/null || true
+		printf '0\n'
+	elif [[ -e "$retired_path" || -L "$retired_path" ]]; then
+		rm -f "$retired_path"
+		printf '1\n'
+	else
+		printf '0\n'
+	fi
+	return 0
+}
+
+cleanup_retired_remotion_flat_docs() {
+	local agents_dir="$1"
+	local removed=0
+	local retired_path=""
+	for retired_path in \
+		"$agents_dir/tools/video/remotion.md" \
+		"$agents_dir/tools/video/remotion-3d.md" \
+		"$agents_dir/tools/video/remotion-animations.md" \
+		"$agents_dir/tools/video/remotion-assets.md" \
+		"$agents_dir/tools/video/remotion-assets" \
+		"$agents_dir/tools/video/remotion-audio.md" \
+		"$agents_dir/tools/video/remotion-calculate-metadata.md" \
+		"$agents_dir/tools/video/remotion-can-decode.md" \
+		"$agents_dir/tools/video/remotion-charts.md" \
+		"$agents_dir/tools/video/remotion-compositions.md" \
+		"$agents_dir/tools/video/remotion-display-captions.md" \
+		"$agents_dir/tools/video/remotion-extract-frames.md" \
+		"$agents_dir/tools/video/remotion-fonts.md" \
+		"$agents_dir/tools/video/remotion-get-audio-duration.md" \
+		"$agents_dir/tools/video/remotion-get-video-dimensions.md" \
+		"$agents_dir/tools/video/remotion-get-video-duration.md" \
+		"$agents_dir/tools/video/remotion-gifs.md" \
+		"$agents_dir/tools/video/remotion-images.md" \
+		"$agents_dir/tools/video/remotion-import-srt-captions.md" \
+		"$agents_dir/tools/video/remotion-lottie.md" \
+		"$agents_dir/tools/video/remotion-measuring-dom-nodes.md" \
+		"$agents_dir/tools/video/remotion-measuring-text.md" \
+		"$agents_dir/tools/video/remotion-sequencing.md" \
+		"$agents_dir/tools/video/remotion-tailwind.md" \
+		"$agents_dir/tools/video/remotion-text-animations.md" \
+		"$agents_dir/tools/video/remotion-timing.md" \
+		"$agents_dir/tools/video/remotion-transcribe-captions.md" \
+		"$agents_dir/tools/video/remotion-transitions.md" \
+		"$agents_dir/tools/video/remotion-trimming.md" \
+		"$agents_dir/tools/video/remotion-videos.md"; do
+		removed=$((removed + $(_remove_retired_skill_file "$agents_dir" "$retired_path")))
+	done
+	for retired_path in charts-bar-chart.tsx text-animations-typewriter.tsx text-animations-word-highlight.tsx; do
+		removed=$((removed + $(_remove_retired_skill_file "$agents_dir" "$agents_dir/tools/video/remotion-assets/$retired_path")))
+	done
+	rmdir "$agents_dir/tools/video/remotion-assets" 2>/dev/null || true
+	printf '%s\n' "$removed"
+	return 0
+}
+
+# GH#33150: cloudflare-platform-skill re-sourced from the official
+# cloudflare/skills repo and trimmed (decision tree + gotchas always,
+# patterns only for newer products); pulumi/terraform/turnstile dropped.
+# Prints removed count.
+cleanup_retired_cloudflare_platform_skill_patterns() {
+	local agents_dir="$1"
+	local removed=0
+	local retired_path=""
+	for retired_path in \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/agents-sdk-gotchas.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/agents-sdk-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/analytics-engine-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/api-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/api-shield-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/argo-smart-routing-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/bindings-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/bot-management-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/browser-rendering-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/cache-reserve-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/cron-triggers-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/d1-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/ddos-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/do-storage-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/do-storage-patterns" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/durable-objects-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/email-routing-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/hyperdrive-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/images-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/kv-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/miniflare-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/network-interconnect-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/observability-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/pages-functions-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/pages-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/pipelines.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/pulumi-gotchas.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/pulumi-gotchas" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/pulumi-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/pulumi.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/queues-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/r2-data-catalog-gotchas.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/r2-data-catalog-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/r2-data-catalog.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/r2-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/r2-patterns" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/r2-sql.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/realtime-sfu-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/sandbox-gotchas.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/sandbox-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/sandbox-patterns" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/smart-placement-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/snippets-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/spectrum-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/static-assets-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/stream-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/terraform-gotchas.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/terraform-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/terraform.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/tunnel-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/turnstile-gotchas.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/turnstile-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/turnstile.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/vectorize-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/waf-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/web-analytics-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/workerd-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/workers-for-platforms-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/workers-gotchas.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/workers-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/workers-playground-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/wrangler-gotchas.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/wrangler-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/zaraz-patterns.md"; do
+		removed=$((removed + $(_remove_retired_skill_file "$agents_dir" "$retired_path")))
+	done
+	removed=$((removed + $(cleanup_retired_cloudflare_examples "$agents_dir")))
+	printf '%s\n' "$removed"
+	return 0
+}
+
+# Exact formerly shipped leaves; custom files keep their containing directory.
+cleanup_retired_cloudflare_examples() {
+	local agents_dir="$1"
+	local removed=0
+	local relative=""
+	local root="$agents_dir/services/hosting/cloudflare-platform-skill"
+	for relative in \
+		do-storage-patterns/01-schema-migration.md do-storage-patterns/02-in-memory-caching.md \
+		do-storage-patterns/03-rate-limiting.md do-storage-patterns/04-batch-processing-with-alarms.md \
+		do-storage-patterns/05-initialization-and-counters.md do-storage-patterns/06-cleanup.md \
+		pulumi-gotchas/best-practices.md pulumi-gotchas/ci-cd.md pulumi-gotchas/common-errors.md \
+		pulumi-gotchas/debugging.md pulumi-gotchas/migration.md pulumi-gotchas/performance.md \
+		pulumi-gotchas/resources.md pulumi-gotchas/security.md \
+		r2-patterns/01-streaming-large-files.md r2-patterns/02-conditional-get.md \
+		r2-patterns/03-upload-with-validation.md r2-patterns/04-multipart-with-progress.md \
+		r2-patterns/05-batch-delete.md r2-patterns/06-checksum-validation.md \
+		r2-patterns/07-storage-class-transitions.md r2-patterns/08-public-bucket-custom-domain.md \
+		sandbox-patterns/01-ai-code-execution.md sandbox-patterns/02-interactive-dev-environment.md \
+		sandbox-patterns/03-ci-cd-pipeline.md sandbox-patterns/04-multi-language-code-runner.md \
+		sandbox-patterns/05-multi-tenant.md sandbox-patterns/06-jupyter-integration.md \
+		sandbox-patterns/07-git-operations.md; do
+		removed=$((removed + $(_remove_retired_skill_file "$agents_dir" "$root/$relative")))
+	done
+	for relative in do-storage-patterns pulumi-gotchas r2-patterns sandbox-patterns; do
+		rmdir "$root/$relative" 2>/dev/null || true
+	done
+	printf '%s\n' "$removed"
+	return 0
+}
+
 # Remove the retired workflow and generated slash commands from existing installs.
 # Like other deprecated path cleanup, this runs even when the source is gone.
 cleanup_retired_ralph_commands() {
@@ -251,37 +487,9 @@ cleanup_deprecated_paths() {
 		"$agents_dir/youtube"
 		# osgrep removed — disproportionate CPU/disk cost vs rg + LLM comprehension
 		"$agents_dir/tools/context/osgrep.md"
-		# GH#5155: scripts archived upstream but orphaned in deployed installs
-		# (rsync only adds/overwrites, doesn't delete removed files)
-		"$agents_dir/scripts/pattern-tracker-helper.sh"
-		"$agents_dir/scripts/quality-sweep-helper.sh"
-		"$agents_dir/scripts/quality-loop-helper.sh"
-		"$agents_dir/scripts/review-pulse-helper.sh"
-		"$agents_dir/scripts/self-improve-helper.sh"
-		"$agents_dir/scripts/coderabbit-pulse-helper.sh"
-		"$agents_dir/scripts/coderabbit-task-creator-helper.sh"
-		"$agents_dir/scripts/audit-task-creator-helper.sh"
-		"$agents_dir/scripts/batch-cleanup-helper.sh"
-		"$agents_dir/scripts/coordinator-helper.sh"
-		"$agents_dir/scripts/finding-to-task-helper.sh"
-		"$agents_dir/scripts/objective-runner-helper.sh"
-		"$agents_dir/scripts/ralph-loop-helper.sh"
-		"$agents_dir/scripts/stale-pr-helper.sh"
 		# GH#32585: Closte integration removed
 		"$agents_dir/scripts/closte-helper.sh"
 		"$agents_dir/services/hosting/closte.md"
-		# GH#33145: retired contest and response-scoring chain (unused; /cross-review stays)
-		"$agents_dir/scripts/contest-helper.sh"
-		"$agents_dir/scripts/contest-helper-create.sh"
-		"$agents_dir/scripts/contest-helper-dispatch.sh"
-		"$agents_dir/scripts/contest-helper-evaluate.sh"
-		"$agents_dir/scripts/contest-helper-status.sh"
-		"$agents_dir/scripts/contest-helper-apply.sh"
-		"$agents_dir/scripts/response-scoring-helper.sh"
-		"$agents_dir/scripts/compare-models-bench-lib.sh"
-		"$agents_dir/scripts/commands/score-responses.md"
-		"$agents_dir/workflows/score-responses.md"
-		"$agents_dir/tools/ai-assistants/response-scoring.md"
 	)
 	for path in "${deprecated_paths[@]}"; do
 		if [[ -e "$path" ]]; then
@@ -293,6 +501,10 @@ cleanup_deprecated_paths() {
 	cleaned=$((cleaned + $(cleanup_retired_context_tooling "$agents_dir")))
 	cleaned=$((cleaned + $(cleanup_retired_ralph_commands "$agents_dir")))
 	cleaned=$((cleaned + $(cleanup_retired_framework_value_audit_docs "$agents_dir")))
+	cleaned=$((cleaned + $(cleanup_retired_quality_automation_scripts "$agents_dir")))
+	cleaned=$((cleaned + $(cleanup_retired_contest_scoring_tooling "$agents_dir")))
+	cleaned=$((cleaned + $(cleanup_retired_remotion_flat_docs "$agents_dir")))
+	cleaned=$((cleaned + $(cleanup_retired_cloudflare_platform_skill_patterns "$agents_dir")))
 	cleanup_retired_beads "$agents_dir"
 
 	if [[ $cleaned -gt 0 ]]; then

@@ -17,6 +17,7 @@ import {
   createPoolTool,
 } from "./oauth-pool.mjs";
 import {
+  consumeV2Completion,
   handleEvent,
   initObservability,
   recordObjectiveDecision,
@@ -200,6 +201,22 @@ async function register(registrations, promise) {
   const registration = await promise;
   registrations.push(registration);
   return registration;
+}
+
+// OpenCode 2.0.3 public SessionEvent.Step uses data + envelope.created, not
+// message.updated (or the unreleased session.next.* shape in PR #33024).
+export function createV2CompletionNormalizer() {
+  const started = new Map();
+  return (event) => {
+    const data = event?.data;
+    const key = `${data?.sessionID}/${data?.assistantMessageID}`;
+    if (started.size > 1000) started.delete(started.keys().next().value);
+    if (event?.type === "session.step.started") {
+      started.set(key, event);
+      return null;
+    }
+    return consumeV2Completion(event, started, key);
+  };
 }
 
 export async function startEventLoop(ctx, handler) {
@@ -415,9 +432,13 @@ export async function setupAidevopsV2(ctx) {
       applyV2PermissionEvaluation(permissionBroker, event);
     }));
 
+    const normalizeCompletion = createV2CompletionNormalizer();
     stopEvents = await startEventLoop(ctx, async (input) => {
+      const completed = normalizeCompletion(input.event);
+      const observeContext = { resolveSessionModel: (sessionID) => sessionModels.resolve(sessionID) };
       await Promise.all([
-        handleEvent(input, { resolveSessionModel: (sessionID) => sessionModels.resolve(sessionID) }),
+        handleEvent(input, observeContext),
+        completed ? handleEvent({ event: completed }, observeContext) : undefined,
         Promise.resolve(boundedOperationManager.handleEvent(input)),
         permissionBroker.handleEvent(input),
       ]);

@@ -1,25 +1,22 @@
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Cloudflare Stream
 
-Hosted VOD and live video — upload, encode, store, deliver, and stream without running your own transcoding stack. Supports TUS/API/URL uploads, direct creator uploads, iframe/HLS/DASH playback, RTMPS/SRT live ingest, `requireSignedURLs`, `allowedOrigins`, webhooks, GraphQL analytics, captions, and watermarks.
+Use Stream for on-demand video upload and playback or live broadcasting. Start with the application's upload source, player, and access requirements, then read the corresponding documentation before writing code.
 
-**Security:** Use direct creator uploads for end-user content — API tokens must never reach the frontend.
+## Choose a Workflow
 
-## Resources
-
-- Dashboard: https://dash.cloudflare.com/?to=/:account/stream
-- API docs: https://developers.cloudflare.com/api/resources/stream/
-- Product docs: https://developers.cloudflare.com/stream/
+| Task | Read |
+|---|---|
+| Let users upload without exposing an API token | [Direct creator uploads](https://developers.cloudflare.com/stream/uploading-videos/direct-creator-uploads/index.md) |
+| Choose server upload, resumable upload, or import from a URL | [Upload methods and supported formats](https://developers.cloudflare.com/stream/uploading-videos/index.md) |
+| Embed playback or integrate an existing player | [Stream Player](https://developers.cloudflare.com/stream/viewing-videos/using-the-stream-player/index.md) or [HLS/DASH players](https://developers.cloudflare.com/stream/viewing-videos/using-own-player/index.md) |
+| Restrict viewing to authorized users or embedding origins | [Secure your Stream](https://developers.cloudflare.com/stream/viewing-videos/securing-your-stream/index.md) |
+| Broadcast live, replay recordings, or simulcast | [Live workflow routing](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/stream/api-live.md) |
+| Check usage, costs, or upload constraints | [Analytics](https://developers.cloudflare.com/stream/getting-analytics/index.md), [pricing](https://developers.cloudflare.com/stream/pricing/index.md), and [upload requirements](https://developers.cloudflare.com/stream/uploading-videos/index.md) |
 
 ## In This Reference
 
-- [stream-patterns.md](./stream-patterns.md) — Direct uploads, polling/webhooks, live workflows, and best practices
-- [stream-gotchas.md](./stream-gotchas.md) — Errors, limits, troubleshooting, and security pitfalls
-
-## See Also
-
-- [workers.md](./workers.md) — Handle uploads, tokens, and webhooks in Workers
-- [pages.md](./pages.md) — Build upload and playback UIs on Pages
-- [workers-ai.md](./workers-ai.md) — Add AI-generated captions and media enrichment
+- [configuration.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/stream/configuration.md): project setup and access decisions.
+- [api.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/stream/api.md): upload, playback, editing, and library operations.
+- [api-live.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/stream/api-live.md): live inputs, outputs, recording, and WebRTC.
+- [patterns.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/stream/patterns.md): application workflow decisions.
+- [gotchas.md](stream-gotchas.md): troubleshooting routes.
