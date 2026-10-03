@@ -98,7 +98,8 @@ export class BoundedInteractiveOperationManager {
     const child = this.spawn(this.supervisorRuntime, [SUPERVISOR_PATH], {
       cwd: operation.cwd,
       detached: true,
-      env: process.env,
+      // Lifecycle helpers must inherit the authenticated caller, not a stale host session.
+      env: { ...process.env, OPENCODE_SESSION_ID: operation.owner },
       stdio: ["pipe", "pipe", "pipe", "ipc"],
     });
     child.on("message", (message) => {

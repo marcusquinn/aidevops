@@ -276,14 +276,36 @@ describe("bounded interactive operations", () => {
       assert.match(audit, /Worktree adoption verified/);
       const instance = manager({ projectRoot: fixture, scriptsDir });
       // The normal resolver uses the isolated registry, with no verification stub.
-      const priorDB = process.env.WORKTREE_REGISTRY_DB;
+      const environmentKeys = ["WORKTREE_REGISTRY_DB", "AIDEVOPS_FULL_LOOP_CLEANUP_DIR",
+        "AIDEVOPS_SESSION_ID", "OPENCODE_SESSION_ID", "OPENCODE_PID"];
+      const priorEnvironment = Object.fromEntries(environmentKeys.map((key) => [key, process.env[key]]));
       process.env.WORKTREE_REGISTRY_DB = env.WORKTREE_REGISTRY_DB;
+      process.env.AIDEVOPS_FULL_LOOP_CLEANUP_DIR = join(fixture, "cleanup-receipts");
+      process.env.AIDEVOPS_SESSION_ID = "";
+      process.env.OPENCODE_SESSION_ID = "ses_stale_host_environment";
+      process.env.OPENCODE_PID = String(process.pid);
       try {
-        const started = await instance.start({ command: [process.execPath, "-e", "process.exit(0)"], cwd: linked, budgetMs: 5000 }, owner);
-        assert.equal((await terminal(instance, started.operation_id, owner, 7000)).state, "succeeded");
+        const handoff = await instance.start({
+          command: ["bash", "-c", 'SCRIPT_DIR="$1"; source "$SCRIPT_DIR/shared-constants.sh"; source "$SCRIPT_DIR/full-loop-helper-state.sh"; source "$SCRIPT_DIR/full-loop-helper-merge.sh"; _merge_record_deferred_cleanup_owner 123 example/repo "$2"',
+            "fixture", scriptsDir, `${linked}\tfeature/adopt\t0`],
+          cwd: linked, budgetMs: 15000,
+        }, owner);
+        assert.equal((await terminal(instance, handoff.operation_id, owner, 17000)).state, "succeeded");
+        const receipt = JSON.parse(readFileSync(join(process.env.AIDEVOPS_FULL_LOOP_CLEANUP_DIR, "example_repo-123.json"), "utf8"));
+        assert.equal(receipt.owner.session, owner.sessionID);
+        assert.equal(receipt.owner.pid, process.pid);
+        assert.equal(receipt.resource_cleanup_state, "CLEANUP_DEFERRED");
+        assert.ok(receipt.owner.process_identity, "the live owner start identity is retained");
+        assert.equal(execFileSync(helper, ["registry", "verify-owner", linked, owner.sessionID], { env, encoding: "utf8" }).trim(), "VERIFIED");
+        assert.throws(() => invoke(), "cleanup deferral must not enable live-owner adoption");
+        await assert.rejects(instance.start({ command: [process.execPath], cwd: linked }, { sessionID: "ses_other" }), /not owned/);
+        const resumed = await instance.start({ command: [process.execPath, "-e", "process.exit(0)"], cwd: linked, budgetMs: 5000 }, owner);
+        assert.equal((await terminal(instance, resumed.operation_id, owner, 7000)).state, "succeeded");
       } finally {
-        if (priorDB === undefined) delete process.env.WORKTREE_REGISTRY_DB;
-        else process.env.WORKTREE_REGISTRY_DB = priorDB;
+        for (const key of environmentKeys) {
+          if (priorEnvironment[key] === undefined) delete process.env[key];
+          else process.env[key] = priorEnvironment[key];
+        }
       }
     } finally {
       previousOwner.kill();
