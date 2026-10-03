@@ -110,4 +110,9 @@ Judgement items Plugin Check and `preflight` cannot fully automate. Sources: [De
 4. `wp-plugin-release-helper.sh build --ref vX.Y.Z --out dist` (building from the tag, not the working tree, guarantees the shipped zip matches the tagged commit).
 5. `gh release create vX.Y.Z dist/<slug>-X.Y.Z.zip` — attach only the GitHub-channel zip; never attach the WordPress.org zip to a GitHub release.
 
+For deployment across existing sites, see
+[Fleet rollout of a self-hosted plugin release](wp-cli-reference.md#fleet-rollout-of-a-self-hosted-plugin-release)
+for cron-context update checks, fingerprint-only credential checks, and the
+checksum-verified zip fallback.
+
 Tagging, pushing, and publishing the release are explicit, owner-approved actions outside this helper.
