@@ -883,6 +883,8 @@ test_manual_resume_reuses_dispatch_lifecycle() {
 			return 0
 		}
 		_dsi_run_required_predispatch_validator() { return 0; }
+		# Capability behavior is exercised separately with the real fresh validator.
+		_dsi_check_runner_capability() { return 0; }
 		_dsi_guard_no_existing_dispatch() { return 0; }
 		_dsi_create_worktree() { return 1; }
 		_dsi_prepare_worker_git_auth() {
@@ -1687,6 +1689,120 @@ test_status_accepts_live_identity_matched_ledger_pid() {
 # -----------------------------------------------------------------------------
 # Runner
 # -----------------------------------------------------------------------------
+test_fresh_runner_capability_before_manual_claim() {
+	local result=0
+	python3 - "$HELPER_PATH" <<'PY' || result=1
+import json
+import os
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+# Use the production dispatch/resume path and capability validator. All external
+# effects are isolated spies, including the secret backend (never live secrets).
+invocation = r'''
+source "$HELPER"
+_dsi_validate_dispatch_target() {
+    _DSI_ISSUE_LABELS=""
+    _DSI_ISSUE_META_JSON='{"body":"requires-secrets: FIXTURE_A"}'
+    if [[ "$_DSI_RESUME_MODE" == 1 ]]; then
+        _dsi_resolve_permission_resume || return 1
+    fi
+    return 0
+}
+_dsi_resolve_permission_resume() {
+    _DSI_WORKTREE_PATH="$FIXTURE_ROOT"
+    _DSI_WORKTREE_BRANCH=feature/preserved
+    _DSI_RESUME_SESSION=manual-cli-123-100
+    _DSI_RESUME_REQUEST=perm-0000000000000000
+    return 0
+}
+_dsi_repo_path_for_slug() { printf '%s' "$REPO_PATH"; return 0; }
+_dsi_resolve_runner_login() { printf runner; return 0; }
+_dsi_run_dedup_check() {
+    _DSI_DEDUP_STATE=clear _DSI_DEDUP_RC=1 _DSI_DEDUP_RESULT=clear
+    return 0
+}
+_dsi_guard_no_existing_dispatch() { return 0; }
+gh() {
+    [[ "$*" == *'repos/owner/repo/issues/123'* ]] || return 1
+    [[ "$FETCH_RC" == 0 ]] || return 1
+    printf '%s' "$FRESH_META"
+    return 0
+}
+_dsi_acquire_consensus_claim() { printf 'claim\n' >>"$EVENTS"; return 0; }
+_dsi_run_required_predispatch_validator() { return 0; }
+_dsi_apply_prelaunch_ceremony_if_enabled() { printf 'ceremony\n' >>"$EVENTS"; return 0; }
+_dsi_create_worktree() {
+    printf 'worktree\n' >>"$EVENTS"
+    _DSI_WORKTREE_PATH="$FIXTURE_ROOT"
+    return 0
+}
+_dsi_prepare_worker_git_auth() { printf 'auth\n' >>"$EVENTS"; return 0; }
+lock_issue_for_worker() { printf 'lock\n' >>"$EVENTS"; return 0; }
+_dsi_launch_and_report() { printf 'launch\n' >>"$EVENTS"; return 0; }
+unset AIDEVOPS_DISPATCH_BASE_REF AIDEVOPS_WORKTREE_BASE
+"$@"
+'''
+names = ['FIXTURE_A', 'FIXTURE_B', 'FIXTURE_C', 'FIXTURE_D', 'FIXTURE_E']
+issue = dict(number=123, state='open', labels=[],
+             body='requires-secrets: ' + ', '.join(names))
+with tempfile.TemporaryDirectory(prefix='manual-capability-') as temp:
+    root = Path(temp)
+    (root / 'aidevops').write_text('''#!/usr/bin/env python3
+import os, sys
+assert sys.argv[1:3] == ['secret', 'check']
+sys.exit(0 if sys.argv[3] in os.environ['AVAILABLE'].split(',') else 1)
+''')
+    (root / 'aidevops').chmod(0o700)
+    events = root / 'events'
+    env = dict(os.environ, HELPER=sys.argv[1], FIXTURE_ROOT=temp,
+               REPO_PATH=temp, EVENTS=str(events),
+               PATH=temp + os.pathsep + os.environ['PATH'])
+    cases = [
+        ('five names, two absent', issue, 0, names[:3], False),
+        ('requirements edited after prefetch', issue, 0, names[:1], False),
+        ('failed fresh read', issue, 1, names, False),
+        ('invalid fresh metadata', {}, 0, names, False),
+        ('closed fresh issue', dict(issue, state='closed'), 0, names, False),
+        ('wrong fresh issue', dict(issue, number=124), 0, names, False),
+        ('invalid requirement', dict(issue, body='requires-secrets: invalid'), 0, names, False),
+        ('all names present', issue, 0, names, True),
+    ]
+    for command in (['cmd_dispatch', '123', 'owner/repo'],
+                    ['cmd_dispatch', '123', 'owner/repo', '--no-ceremony'],
+                    ['cmd_resume', '123', 'owner/repo']):
+        for label, fresh, fetch_rc, available, admitted in cases:
+            events.write_text('')
+            fixture_env = dict(env, FRESH_META=json.dumps(fresh),
+                               FETCH_RC=str(fetch_rc), AVAILABLE=','.join(available))
+            result = subprocess.run(['bash', '-c', invocation, 'fixture', *command],
+                                    env=fixture_env, capture_output=True, text=True)
+            evidence = (command, label, result.returncode, result.stdout, result.stderr)
+            assert (result.returncode == 0) == admitted, evidence
+            effects = events.read_text().splitlines()
+            if admitted:
+                expected = ['claim', 'ceremony', 'auth', 'lock', 'launch']
+                if command[0] != 'cmd_resume':
+                    expected.insert(2, 'worktree')
+                assert effects == expected, (evidence, effects)
+                assert 'source=fresh requirements=5' in result.stderr, evidence
+            else:
+                assert not effects, (evidence, effects)
+                assert 'runner_capability_unmet' in result.stderr, evidence
+            assert not any(name in result.stdout + result.stderr for name in names), evidence
+    # A missing registered repository must not silently check the caller's cwd.
+    events.write_text('')
+    result = subprocess.run(['bash', '-c', invocation, 'fixture', 'cmd_dispatch', '123', 'owner/repo'],
+                            env=dict(fixture_env, REPO_PATH=''), capture_output=True, text=True)
+    assert result.returncode != 0 and not events.read_text(), result
+print('PASS 25 isolated normal/no-ceremony/resume capability admission fixtures')
+PY
+	print_result "fresh runner capabilities block manual claims and checkpoint resume without secret disclosure" "$result"
+	return 0
+}
+
 # IMPORTANT: the helper script we source defines `main()` for its CLI entry.
 # We renamed our runner to `_run_tests` to avoid shadowing the helper's main
 # (which is itself sourced but guarded behind BASH_SOURCE check). Sourcing
@@ -1720,6 +1836,7 @@ _run_tests() {
 	test_issue_author_guard_blocks_missing_label_bypass
 	test_maintainer_permission_guard_blocks_manual_dispatch
 	test_permission_history_guard_requires_current_grant
+	test_fresh_runner_capability_before_manual_claim
 	test_manual_resume_reuses_dispatch_lifecycle
 	test_cmd_dispatch_blocks_needs_maintainer_review_before_dedup
 	test_runner_login_transport_security

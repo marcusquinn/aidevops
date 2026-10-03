@@ -59,6 +59,9 @@ source "${_DSI_SCRIPT_DIR}/shared-gh-wrappers.sh"
 # shellcheck source=./pulse-dispatch-core.sh
 # shellcheck disable=SC1091
 source "${_DSI_SCRIPT_DIR}/pulse-dispatch-core.sh"
+# shellcheck source=./runner-capability-helper.sh
+# shellcheck disable=SC1091
+source "${_DSI_SCRIPT_DIR}/runner-capability-helper.sh"
 
 # Paths
 _DSI_LOG_DIR="${HOME}/.aidevops/logs"
@@ -1024,6 +1027,21 @@ _dsi_validate_dispatch_target() {
 	return 0
 }
 
+_dsi_check_runner_capability() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local repo_path=""
+	repo_path=$(_dsi_repo_path_for_slug "$repo_slug") || repo_path=""
+	if [[ -z "$repo_path" || ! -d "$repo_path" ]]; then
+		_dsi_err "runner_capability_unmet source=fresh metadata_unreadable"
+		return 1
+	fi
+	# Keep the existing secret backend and count-only diagnostics. No log file,
+	# claim, or ownership mutation is needed to perform this fresh read.
+	runner_capability_check_fresh "$repo_path" "$issue_number" "$repo_slug" /dev/stderr || return 1
+	return 0
+}
+
 #######################################
 # Subcommand: dispatch <issue> <slug> [--model M] [--dry-run]
 #######################################
@@ -1103,6 +1121,10 @@ cmd_dispatch() {
 		return 1
 		;;
 	esac
+	# aidevops:trust-boundary — normal dispatch and signed checkpoint resume
+	# must enforce current requirements, never the prefetched issue body, before
+	# the first persistent claim (including with --no-ceremony).
+	_dsi_check_runner_capability "$issue_number" "$repo_slug" || return 1
 	if ! _dsi_acquire_consensus_claim "$issue_number" "$repo_slug" "$self_login"; then
 		return 1
 	fi
