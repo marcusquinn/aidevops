@@ -20,24 +20,38 @@ tools:
 
 ## Standard-tier release handoff
 
-Routine aidevops release execution defaults to a **standard-tier local child**, not
-the thinking-tier implementation parent. Scripts and CI own deterministic work;
-the child invokes the canonical entry point below and interprets its evidence.
+Routine aidevops release execution defaults to a **standard-tier local child**
+where the host supports the handoff, rather than the thinking-tier implementation
+parent. Scripts and CI own deterministic work; the child invokes the canonical
+entry point below and interprets its evidence.
 This is a release-only exception to interactive advisory-only delegation, activated
 after verified merge and explicit trusted publication intent. The primary remains
 responsible for the full-loop outcome. No release intent means no release child.
 
-Use the host's local Task/subagent route with a prompt beginning
-`[effort:standard]` and load this workflow. In OpenCode the existing subagent-effort
-hook resolves that marker through the configured standard-tier candidate list;
-use the general subagent when the leaf release agent is not registered. In other
-hosts select the configured standard-tier model explicitly. A prose marker alone
+**OpenCode fallback (GH#33488):** Keep release execution in the primary session
+that owns the linked worktree. Do not launch a Task child to attempt publication
+first: `aidevops_bounded_operation` verifies the caller's session ownership, and a
+child cannot start an operation in its live parent's worktree. The standard-tier
+effort-routing hook does not transfer that ownership. Run the canonical
+`aidevops release [patch|minor|major] <merged-pr-number> [incremental|full]` command
+directly through the primary's `aidevops_bounded_operation`, with `cwd` set to its
+session-owned linked worktree. The primary owns status/reconciliation and verifies
+the terminal evidence under the same bounds below. Never adopt a live parent's
+worktree, impersonate its session, or launch a headless worker to bypass ownership.
+Retain this fallback until the plugin supports and verifies parent-owned worktree
+access for release children; do not claim standard-tier handoff savings for this
+primary-session path. This changes only the executor, not publication authority,
+release guards, or receipt requirements.
+
+**Other hosts:** Use the host's trusted local Task/subagent route with a prompt
+beginning `[effort:standard]` and load this workflow; select the configured
+standard-tier model explicitly. A prose marker alone
 is not model-selection evidence: verify the runtime's resolved model/tier from
 routing metadata before crediting savings. If the host cannot enforce or expose
 the route, report that limitation and use the deterministic helper directly;
 do not silently claim a cheaper handoff or launch a headless worker as a substitute.
 
-Pass a compact handoff, not the implementation transcript:
+For a supported child route, pass a compact handoff, not the implementation transcript:
 
 - Repository identity, session-owned linked worktree, parent session/lifecycle
   identity, source PR and verified merge SHA, and exact reviewed source manifest.
