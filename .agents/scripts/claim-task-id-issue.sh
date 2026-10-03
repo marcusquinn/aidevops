@@ -341,6 +341,12 @@ _try_issue_sync_delegation() {
 	local title="$1"
 	local repo_path="$2"
 
+	# issue-sync reads only the durable task brief, not an explicit caller brief.
+	# Use direct composition so a successful sync cannot silently ignore it.
+	if [[ -n "${TASK_BRIEF_FILE:-}" && -f "$TASK_BRIEF_FILE" && -r "$TASK_BRIEF_FILE" ]]; then
+		return 1
+	fi
+
 	# Extract task ID from title (format: "tNNN: description")
 	local task_id=""
 	[[ "$title" =~ ^(t[0-9]+) ]] && task_id="${BASH_REMATCH[1]}"
@@ -454,6 +460,18 @@ _check_duplicate_issue() {
 # Issue Body Composition
 # =============================================================================
 
+# Resolve the same source for summary, scope preparation and full body inlining.
+_resolve_claim_brief_file() {
+	local task_id="$1"
+	local repo_path="$2"
+	if [[ -n "${TASK_BRIEF_FILE:-}" && -f "$TASK_BRIEF_FILE" && -r "$TASK_BRIEF_FILE" ]]; then
+		printf '%s' "$TASK_BRIEF_FILE"
+	elif [[ -n "$task_id" ]]; then
+		printf '%s' "${repo_path}/todo/tasks/${task_id}-brief.md"
+	fi
+	return 0
+}
+
 # Read the "What" section from a task brief file (t1906).
 # Extracts content between "## What" and the next "##" heading.
 # Returns 0 and echoes the content if found, returns 1 if not.
@@ -461,7 +479,8 @@ _read_brief_what_section() {
 	local task_id="$1"
 	local repo_path="$2"
 
-	local brief_file="${repo_path}/todo/tasks/${task_id}-brief.md"
+	local brief_file=""
+	brief_file=$(_resolve_claim_brief_file "$task_id" "$repo_path")
 	if [[ ! -f "$brief_file" ]]; then
 		return 1
 	fi
@@ -481,7 +500,7 @@ _read_brief_what_section() {
 # Compose a structured issue body from title and description (t1899, t2063).
 #
 # Behaviour (t2063 — brief-first inlining):
-#   1. If a brief file exists at `${REPO_PATH}/todo/tasks/${task_id}-brief.md`:
+#   1. If a readable --brief-file or durable todo/tasks/${task_id}-brief.md exists:
 #      - Use --description (or the brief's What section) as the summary paragraph
 #      - Inline Worker Guidance (from the brief's How section) via shared helper
 #      - Inline full Task Brief (stripped of frontmatter) via shared helper
@@ -511,12 +530,15 @@ _compose_issue_body() {
 
 	# Resolve brief file path (may or may not exist)
 	local brief_file=""
-	if [[ -n "$task_id" ]]; then
-		brief_file="${REPO_PATH}/todo/tasks/${task_id}-brief.md"
-	fi
+	brief_file=$(_resolve_claim_brief_file "$task_id" "$REPO_PATH")
 
 	# t2063 brief-first path: when a brief exists, the brief is the source of truth
 	if [[ -n "$brief_file" && -f "$brief_file" ]] && [[ "$(type -t _compose_issue_worker_guidance 2>/dev/null)" == "function" ]]; then
+		# External briefs are caller-owned: validate without relaxing prepare-scope's
+		# linked-worktree write boundary. Durable briefs keep delegation preparation.
+		if [[ "$brief_file" == "${TASK_BRIEF_FILE:-}" ]]; then
+			bash "$SCRIPT_DIR/brief-readiness-helper.sh" scope-check "$(<"$brief_file")" >&2 || return "$CLAIM_COMPOSE_FAILED_RC"
+		fi
 		local body=""
 
 		# Summary paragraph: caller's --description, OR brief's What section, OR empty
@@ -526,7 +548,7 @@ _compose_issue_body() {
 			local brief_what=""
 			brief_what=$(_read_brief_what_section "$task_id" "$REPO_PATH") || true
 			if [[ -n "$brief_what" ]]; then
-				log_info "Auto-read summary from brief What section: todo/tasks/${task_id}-brief.md"
+				log_info "Auto-read summary from resolved brief What section"
 				body="## Task"$'\n\n'"$brief_what"
 			fi
 		fi
