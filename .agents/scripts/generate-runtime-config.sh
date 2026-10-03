@@ -209,6 +209,16 @@ _opencode_command_output_matches_source() {
 			rm -f "$expected_file"
 			return 1
 		fi
+		# Bare alias (GH#33484). Main-agent/hardcoded names and user-kept
+		# symlinks or non-regular entries are intentionally not alias-owned.
+		_bare_command_alias_allowed "$command_name" "$AGENTS_DIR/commands" || continue
+		deployed_file="$command_dir/$command_name.md"
+		[[ -L "$deployed_file" ]] && continue
+		[[ -e "$deployed_file" && ! -f "$deployed_file" ]] && continue
+		if [[ ! -f "$deployed_file" ]] || ! cmp -s "$expected_file" "$deployed_file"; then
+			rm -f "$expected_file"
+			return 1
+		fi
 	done
 	rm -f "$expected_file"
 	return 0

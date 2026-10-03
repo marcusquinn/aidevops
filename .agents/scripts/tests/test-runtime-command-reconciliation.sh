@@ -61,9 +61,38 @@ if _opencode_command_output_matches_source; then
 	exit 1
 fi
 
+# GH#33484: bare aliases (/full-loop) are generator-owned. A pre-existing user
+# file at a bare name is backed up before replacement, and a legacy-listed name
+# with a live source is never pruned.
+OPENCODE_CMD_DIR="$TEST_HOME/.config/opencode/command"
+export AIDEVOPS_COMMAND_BACKUP_DIR="$TEST_ROOT/command-backups"
+printf '%s\n' '---' 'description: loop' '---' '' '# full loop command' >"$TEST_HOME/.aidevops/agents/scripts/commands/full-loop.md"
+printf '%s\n' '# user-authored session command' >"$OPENCODE_CMD_DIR/session-analysis.md"
+
 _generate_commands_for_runtime opencode >/dev/null
 if ! _opencode_command_output_matches_source; then
 	printf '%s\n' 'FAIL: complete generated command set failed parity verification' >&2
+	exit 1
+fi
+for bare_name in full-loop session-analysis; do
+	if ! cmp -s "$OPENCODE_CMD_DIR/$bare_name.md" "$OPENCODE_CMD_DIR/aidevops-$bare_name.md"; then
+		printf 'FAIL: bare alias %s missing or differs from aidevops-%s\n' "$bare_name" "$bare_name" >&2
+		exit 1
+	fi
+done
+if ! grep -rqF 'user-authored session command' "$AIDEVOPS_COMMAND_BACKUP_DIR/opencode"; then
+	printf '%s\n' 'FAIL: replaced user-authored bare command was not backed up' >&2
+	exit 1
+fi
+
+printf '%s\n' '# stale bare alias' >"$OPENCODE_CMD_DIR/full-loop.md"
+if _opencode_command_output_matches_source; then
+	printf '%s\n' 'FAIL: stale bare alias passed parity verification' >&2
+	exit 1
+fi
+_generate_commands_for_runtime opencode >/dev/null
+if [[ ! -f "$OPENCODE_CMD_DIR/full-loop.md" ]] || ! _opencode_command_output_matches_source; then
+	printf '%s\n' 'FAIL: generation did not restore the bare /full-loop alias' >&2
 	exit 1
 fi
 

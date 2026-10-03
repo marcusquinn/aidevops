@@ -306,40 +306,41 @@ _command_body_digest() {
 	return 0
 }
 
-# Prune only known, unchanged legacy output. A path reference or filename alone
-# cannot establish ownership: users can write their own commands with either.
+# Runtimes whose documented and worker-dispatched prompts use bare command
+# names (`/full-loop Implement issue #N`, `/pulse`, `/review`). These receive
+# both `aidevops-<name>` and `<name>` for every scripts/commands source.
+_runtime_uses_bare_command_aliases() {
+	local runtime_id="$1"
+	case "$runtime_id" in
+	opencode | claude-code) return 0 ;;
+	*) return 1 ;;
+	esac
+}
+
+# Names written by _generate_hardcoded_commands. Keep in sync with the
+# _maybe_write_hardcoded_command calls below; these names own their bare slot.
+_HARDCODED_COMMAND_NAMES="agent-review review-issue-pr preflight postflight release onboarding setup-aidevops"
+
+# Succeed when a scripts/commands source may own the bare `<name>` alias.
+# Main-agent commands (.agents/commands/<name>.md) and hardcoded commands keep
+# their own names, so a skill alias must never shadow them.
+# Arguments: $1=name $2=main-agent command source dir
+_bare_command_alias_allowed() {
+	local name="$1"
+	local main_src_dir="$2"
+	[[ -e "$main_src_dir/${name}.md" ]] && return 1
+	case " ${_HARDCODED_COMMAND_NAMES} " in
+	*" ${name} "*) return 1 ;;
+	esac
+	return 0
+}
+
+# Print `name:fingerprint|fingerprint` rows for legacy generator output.
 # These SHA-256 body fingerprints come from the literal create_command bodies in
 # generate-opencode-commands-*.sh and maybe_write_command bodies in
-# generate-claude-commands.sh. Ignore frontmatter and surrounding blank lines,
-# but preserve any body edits. Also recognize unchanged auto-discovered copies of
-# current source commands at these legacy names. Unknown variants survive.
-# Names still written by _generate_hardcoded_commands are excluded.
-_prune_legacy_commands() {
-	local runtime_id="$1"
-	local cmd_dir="$2"
-	case "$runtime_id" in
-	opencode | claude-code) ;;
-	*) return 0 ;;
-	esac
-
-	local name fingerprints file digest source_file source_digest
-	while IFS=: read -r name fingerprints; do
-		file="${cmd_dir}/${name}.md"
-		# Never follow symlinks or remove directories, even at an allowlisted name.
-		[[ -f "$file" && ! -L "$file" ]] || continue
-		digest=$(_command_body_digest "$file") || return 1
-		source_file="$HOME/.aidevops/agents/scripts/commands/${name}.md"
-		if [[ -f "$source_file" ]]; then
-			source_digest=$(_command_body_digest "$source_file") || return 1
-			fingerprints="${fingerprints}|${source_digest}"
-		fi
-		case "|${fingerprints}|" in
-		*"|${digest}|"*)
-			rm -- "$file" || return 1
-			print_info "Removed stale legacy command: $file"
-			;;
-		esac
-	done <<'LEGACY_COMMANDS'
+# generate-claude-commands.sh, ignoring frontmatter and outer blank lines.
+_legacy_command_fingerprint_table() {
+	cat <<'LEGACY_COMMANDS'
 autocomplete-research:3ced4a07c86536e082f932b648b8dabc8792e02c1f39470fdf0cc987aeb6852c|8e8432186cf79752c36777bb04755b95ea233744a61638111146acc44030adfa
 bugfix:4eb162e536d21f23909a679bb2e1891bb70027fd8082796e5878dfaacd478f89|df4df13751aae4a828452fd9c2a2c308c400681c20cbd74a2e4f69e65dd59814
 changelog:04c689b6ec618da7bd38215a66884a5bcbb73af821863bf48f63d85f43de91b2|202f3a2098cdd3c3a3a8039561a300f72a697513648c18b8901d744c321dc6c9
@@ -377,6 +378,104 @@ session-review:07dd5b12eca536c6cf69c61ee35f184f6e40ed2ee15ccbfc2a0a40e38ab85b2b|
 version-bump:86a27ab1e52f6e944541d7e9e920afdda603380e33dd966d0ae0b4ac487cbca8|fdcc820a4a3d76dea54483c88bd97a798ba38087237be128bc31dee5d2cd87d6
 webmaster-keywords:6d5209db6a31e40c76ab5036f4a93ab2f931c2cf53b78ed20a890e5035ba267e|dc1a717e189d2a41bddc8cdb4cba11dd2edc7388d66ac9eb90b91d2a3e8a6d6f
 LEGACY_COMMANDS
+	return 0
+}
+
+# Succeed when a body digest is a known legacy generator fingerprint for name.
+_is_legacy_command_fingerprint() {
+	local name="$1"
+	local digest="$2"
+	local row_name fingerprints
+	while IFS=: read -r row_name fingerprints; do
+		[[ "$row_name" == "$name" ]] || continue
+		case "|${fingerprints}|" in
+		*"|${digest}|"*) return 0 ;;
+		esac
+	done < <(_legacy_command_fingerprint_table)
+	return 1
+}
+
+# Prune only known, unchanged legacy output. A path reference or filename alone
+# cannot establish ownership: users can write their own commands with either.
+# Unknown variants survive. Names with a live scripts/commands source are bare
+# aliases owned by _deploy_bare_command_alias (GH#33484), so never prune them:
+# workers and docs invoke `/full-loop`, `/pr-loop`, `/recall` and friends.
+# Names still written by _generate_hardcoded_commands are excluded.
+_prune_legacy_commands() {
+	local runtime_id="$1"
+	local cmd_dir="$2"
+	_runtime_uses_bare_command_aliases "$runtime_id" || return 0
+
+	local name fingerprints file digest
+	while IFS=: read -r name fingerprints; do
+		[[ -f "$HOME/.aidevops/agents/scripts/commands/${name}.md" ]] && continue
+		file="${cmd_dir}/${name}.md"
+		# Never follow symlinks or remove directories, even at an allowlisted name.
+		[[ -f "$file" && ! -L "$file" ]] || continue
+		digest=$(_command_body_digest "$file") || return 1
+		case "|${fingerprints}|" in
+		*"|${digest}|"*)
+			rm -- "$file" || return 1
+			print_info "Removed stale legacy command: $file"
+			;;
+		esac
+	done < <(_legacy_command_fingerprint_table)
+	return 0
+}
+
+# Deploy the bare `<name>` alias for a scripts/commands source (GH#33484).
+# Ownership rules for an existing file at the bare name:
+#   - symlink or non-regular entry: never follow or replace; warn and keep it
+#   - identical to the generated output: leave untouched
+#   - known legacy generator fingerprint: replace
+#   - any other regular file: copy to the backup dir, then replace
+# Arguments: $1=runtime_id $2=source file $3=bare name $4=cmd_dir
+# Returns: 0 on success (including a kept non-regular entry), 1 on failure.
+_deploy_bare_command_alias() {
+	local runtime_id="$1"
+	local src="$2"
+	local name="$3"
+	local cmd_dir="$4"
+	local dest="${cmd_dir}/${name}.md"
+	local stage_dir digest backup_dir backup_file
+
+	if [[ -L "$dest" ]] || { [[ -e "$dest" ]] && [[ ! -f "$dest" ]]; }; then
+		print_warning "Keeping non-regular command entry $dest; use /${_AIDEVOPS_CMD_PREFIX}${name}"
+		return 0
+	fi
+
+	stage_dir=$(mktemp -d) || return 1
+	if ! _deploy_one_command "$runtime_id" "$src" "$name" "$stage_dir"; then
+		rm -rf "$stage_dir"
+		return 1
+	fi
+
+	if [[ -f "$dest" ]]; then
+		if cmp -s "$stage_dir/${name}.md" "$dest"; then
+			rm -rf "$stage_dir"
+			return 0
+		fi
+		digest=$(_command_body_digest "$dest") || {
+			rm -rf "$stage_dir"
+			return 1
+		}
+		if ! _is_legacy_command_fingerprint "$name" "$digest"; then
+			backup_dir="${AIDEVOPS_COMMAND_BACKUP_DIR:-$HOME/.aidevops/.agent-workspace/backups/commands}/${runtime_id}"
+			backup_file="${backup_dir}/${name}.md.$(date +%Y%m%dT%H%M%S)"
+			if ! mkdir -p "$backup_dir" || ! cp -p "$dest" "$backup_file"; then
+				rm -rf "$stage_dir"
+				print_warning "Could not back up $dest; keeping it unchanged"
+				return 1
+			fi
+			print_info "Backed up replaced command $dest -> $backup_file"
+		fi
+	fi
+
+	if ! mv -f "$stage_dir/${name}.md" "$dest"; then
+		rm -rf "$stage_dir"
+		return 1
+	fi
+	rm -rf "$stage_dir"
 	return 0
 }
 
@@ -458,7 +557,9 @@ _deploy_one_command() {
 #   1. ~/.aidevops/agents/commands/        -- main-agent symlinks (already
 #                                            prefixed with `aidevops-`)
 #   2. ~/.aidevops/agents/scripts/commands/ -- skills/workflows/utilities
-#                                            (prefix is applied at deploy time)
+#                                            (prefix is applied at deploy time;
+#                                            OpenCode/Claude Code also get the
+#                                            bare name, e.g. /full-loop)
 # Gated on the per-runtime `commands` feature flag.
 #
 # Arguments: $1=runtime_id
@@ -535,6 +636,16 @@ _generate_commands_for_runtime() {
 					continue
 				fi
 				print_warning "Failed to deploy command $cmd_name for $display_name"
+				return 1
+			fi
+			command_count=$((command_count + 1))
+
+			# Bare alias keeps documented and worker-dispatched names working
+			# (`/full-loop Implement issue #N`).
+			_runtime_uses_bare_command_aliases "$runtime_id" || continue
+			_bare_command_alias_allowed "$cmd_name" "$main_src_dir" || continue
+			if ! _deploy_bare_command_alias "$runtime_id" "$cmd_file" "$cmd_name" "$cmd_dir"; then
+				print_warning "Failed to deploy bare command alias $cmd_name for $display_name"
 				return 1
 			fi
 			command_count=$((command_count + 1))
