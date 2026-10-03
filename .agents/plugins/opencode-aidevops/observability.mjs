@@ -228,6 +228,24 @@ let runtime = {};
 // Public API
 // ---------------------------------------------------------------------------
 
+/** Consume captured V2 step metadata into the existing OC1 recording contract. */
+export function consumeV2Completion(event, started, key) {
+  const begin = started.get(key);
+  const data = event?.data;
+  const recordable = [event?.type === "session.step.ended", begin?.data?.model,
+    data?.sessionID, data?.assistantMessageID, data?.tokens,
+    Number.isFinite(begin?.created), Number.isFinite(event?.created)].every(Boolean);
+  if (!recordable) return null;
+  started.delete(key);
+  return { type: "message.updated", properties: { info: {
+    id: data.assistantMessageID, sessionID: data.sessionID, role: "assistant",
+    providerID: begin.data.model.providerID, modelID: begin.data.model.id,
+    agent: begin.data.agent, variant: begin.data.model.variant,
+    tokens: data.tokens, cost: data.cost, finish: data.finish,
+    time: { created: begin.created, completed: event.created },
+  } } };
+}
+
 /**
  * Initialise the observability system.
  * Call once at plugin startup.
