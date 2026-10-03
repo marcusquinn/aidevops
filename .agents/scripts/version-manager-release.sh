@@ -943,6 +943,46 @@ _verify_active_release_preservation_merge() {
 	return 2
 }
 
+# Verify the active runtime after exact-tag deployment. A concurrent auto-update
+# can activate a newer, validated descendant after deployment; accept only the
+# fully materialized preservation result, never an unverified exact-tag bundle
+# or a stale/unrelated runtime. Returns 0 converged, 2 preservation no-op
+# (success already reported), 1 not converged.
+_verify_post_deploy_runtime_convergence() {
+	local sync_repo_root="$1"
+	local release_sha="$2"
+	local preservation_exit=0
+	# The exact-tag check is expected to fail whenever a concurrent auto-update
+	# already advanced the active bundle; suppress its error line here so a
+	# successful preservation fallback below does not leave a stray ERROR in
+	# otherwise-successful release logs. The fallback's own internal exact-tag
+	# verification runs un-suppressed (quiet flag cleared before that call), so
+	# a genuine convergence failure still prints its reason.
+	local _AIDEVOPS_RUNTIME_VERIFY_QUIET=1
+	if verify_aidevops_runtime_bundle_convergence \
+		"$sync_repo_root" \
+		"$release_sha" \
+		"$HOME/.aidevops/agents" \
+		"$HOME/.aidevops/.deployed-sha"; then
+		return 0
+	fi
+	_AIDEVOPS_RUNTIME_VERIFY_QUIET=""
+	_verify_active_release_preservation_merge \
+		"$sync_repo_root" \
+		"$release_sha" \
+		"$HOME/.aidevops/agents" \
+		"$HOME/.aidevops/.deployed-sha" || preservation_exit=$?
+	if [[ "$preservation_exit" -eq 2 ]]; then
+		print_success "Post-release aidevops runtime already contains release ${release_sha:0:12} through validated preservation merge ${_AIDEVOPS_RELEASE_ACTIVE_PRESERVATION_SHA:0:12} (verified no-op)"
+		return 2
+	fi
+	if [[ -n "$_AIDEVOPS_RUNTIME_VERIFY_LAST_ERROR" ]]; then
+		print_error "$_AIDEVOPS_RUNTIME_VERIFY_LAST_ERROR"
+	fi
+	print_error "Post-release deployment helper exited successfully, but runtime bundle provenance did not converge"
+	return 1
+}
+
 run_post_release_agent_sync() {
 	local sync_repo_root="${AIDEVOPS_SYNC_REPO_ROOT:-$REPO_ROOT}"
 	local remote_url
@@ -1025,14 +1065,10 @@ run_post_release_agent_sync() {
 		print_error "Post-release aidevops deployment or CLI convergence failed: $sync_output"
 		return 1
 	fi
-	if ! verify_aidevops_runtime_bundle_convergence \
-		"$sync_repo_root" \
-		"$release_sha" \
-		"$HOME/.aidevops/agents" \
-		"$HOME/.aidevops/.deployed-sha"; then
-		print_error "Post-release deployment helper exited successfully, but runtime bundle provenance did not converge"
-		return 1
-	fi
+	local convergence_exit=0
+	_verify_post_deploy_runtime_convergence "$sync_repo_root" "$release_sha" || convergence_exit=$?
+	[[ "$convergence_exit" -ne 2 ]] || return 0
+	[[ "$convergence_exit" -eq 0 ]] || return 1
 
 	if [[ "$sync_exit" -eq 2 ]]; then
 		print_success "Post-release aidevops runtime was already converged to ${release_sha:0:12} (verified no-op)"

@@ -6,11 +6,24 @@ directory inside the candidate. On Linux, same-user `gpg-agent`, `sshd`, and
 parent, or apparent daemon role is not proof of their working directory. The
 guard therefore fails closed with `cwd-visibility-degraded`.
 
+To see which processes currently cause this, run
+`worktree-helper.sh recovery unreadable-processes`. It lists the PID, `comm`
+and remedy of each process that still blocks visibility after the inspector
+below has been tried. The remedy is `inspector` when the inspector's UID rule
+accepts the process, so installing or repairing the inspector clears it, and
+`stop-only` when only stopping the process through its normal controls clears
+it. The listing is read-only and is for manual review only.
+
 ## Optional privileged read-only inspector
 
 `.agents/scripts/worktree-cwd-inspect.py` reads **one** process CWD. It accepts
-only a numeric PID whose four Linux process UID fields match the invoking
-`SUDO_UID`. It verifies that the process identity remains stable during the
+only a numeric PID whose real UID is the invoking `SUDO_UID` and whose
+effective, saved and filesystem UIDs are each that user or root (`0`). The root
+allowance covers same-user setuid-root helpers, such as a FUSE mount's
+`fusermount3 auto_unmount` watcher or an open `sudo` parent, which keep root
+privileges but were started by the user
+(GH#32871). Any other UID, including a root real UID, is another identity and
+is refused. It verifies that the process identity remains stable during the
 read, rejects control-character/non-absolute output, and neither edits files nor
 authorizes deletion. The ordinary guard still checks the candidate, Git
 registration/locks, ownership, process CWDs, and recovery requirements.

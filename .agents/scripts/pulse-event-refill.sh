@@ -316,6 +316,16 @@ pulse_event_refill_drain() {
 	[[ "$max_passes" =~ ^[0-9]+$ ]] || max_passes=2
 	((max_passes > 0)) || max_passes=1
 	pulse_event_refill_recover_processing
+	# The normal cycle runs preflight and its own dispatch rounds. Running the
+	# full, potentially multi-candidate apply_dispatch_max here can consume the
+	# entire cycle before preflight. Leave the signal for cycle-final (or an
+	# independent worker-exit refill); never claim that dispatch ran at entry.
+	if [[ "$source_name" == "cycle-entry" ]]; then
+		if [[ -f "$trigger_file" ]]; then
+			pulse_event_refill_log "action=drain_completed source=cycle-entry pass=0 dispatch=deferred trigger=retained"
+		fi
+		return 0
+	fi
 	if ! declare -F apply_dispatch_max >/dev/null 2>&1; then
 		pulse_event_refill_log "action=blocked reason=dispatch_unavailable trigger=retained source=${source_name}"
 		return 0

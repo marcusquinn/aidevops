@@ -8,11 +8,15 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { applyV2ContextBudget, readV2ContextBudget } from "../v2-context-budget.mjs";
 
-test("V2 240K policy is disabled without an exact explicit setting", () => {
+test("V2 240K policy is on by default and any other explicit target opts out (GH#32807)", () => {
   const root = mkdtempSync(join(process.env.AIDEVOPS_TEMP_DIR || tmpdir(), "v2-budget-"));
   try {
     const file = join(root, "settings.json");
-    assert.equal(readV2ContextBudget(file), null);
+    assert.deepEqual(readV2ContextBudget(file), { target: 240000, buffer: 20000 });
+    writeFileSync(file, JSON.stringify({ runtime: { opencode: { astra_context_cap: true } } }));
+    assert.deepEqual(readV2ContextBudget(file), { target: 240000, buffer: 20000 });
+    writeFileSync(file, "{not json");
+    assert.deepEqual(readV2ContextBudget(file), { target: 240000, buffer: 20000 });
     for (const value of ["240000", 0, false, 500000]) {
       writeFileSync(file, JSON.stringify({ runtime: { opencode: { v2_compaction_target: value } } }));
       assert.equal(readV2ContextBudget(file), null);

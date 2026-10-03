@@ -182,7 +182,7 @@ test_cmd_run_finishes_confirmed_terminal_worker_before_continuation() {
 	_hrw_release_worker_worktree() { return 0; }
 	_cleanup_headless_runtime_temp_paths() { return 0; }
 	_cmd_run_prepare() { return 0; }
-	choose_model() { printf '%s' "anthropic/claude-sonnet-4-6"; return 0; }
+	choose_model() { printf '%s' "anthropic/claude-sonnet-5-5"; return 0; }
 	_enforce_opencode_version_pin() { return 0; }
 	_run_canary_test() { return 0; }
 	append_worker_headless_contract() { printf '%s' "$1"; return 0; }
@@ -234,7 +234,7 @@ test_cmd_run_kills_after_stall_cap() {
 	# Stubs for infrastructure calls — all no-ops or minimal returns.
 	_cmd_run_prepare() { return 0; }
 	_cmd_run_finish() { _finish_status="${2:-}"; return 0; }
-	choose_model() { echo "anthropic/claude-sonnet-4-6"; return 0; }
+	choose_model() { echo "anthropic/claude-sonnet-5-5"; return 0; }
 	_enforce_opencode_version_pin() { return 0; }
 	_run_canary_test() { return 0; }
 	append_worker_headless_contract() { printf '%s' "$1"; return 0; }
@@ -287,7 +287,7 @@ test_cmd_run_does_not_duplicate_exit_79_metric() {
 		_run_result_label="watchdog_stall_killed"
 		_run_failure_reason="watchdog_stall_killed"
 		_run_activity_detected="1"
-		append_runtime_metric worker test-stall-cap anthropic/claude-sonnet-4-6 anthropic \
+		append_runtime_metric worker test-stall-cap anthropic/claude-sonnet-5-5 anthropic \
 			watchdog_stall_killed 79 watchdog_stall_killed 1 100
 		return 79
 	}

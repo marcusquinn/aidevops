@@ -112,6 +112,5 @@ State sources: git (branch, uncommitted changes, commits, worktrees), GitHub (op
 
 - `AGENTS.md` — Root agent instructions (authoritative)
 - `workflows/worktree.md` — Parallel branch development
-- `workflows/ralph-loop.md` — Iterative development loops
 - `tools/build-agent/agent-review.md` — Session review process
 - `tools/opencode/opencode.md` — OpenCode CLI reference

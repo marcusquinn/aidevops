@@ -142,7 +142,7 @@ Implements proven patterns from Lance Martin (LangChain), validated across Claud
 | **Offload Context** | `.agent-workspace/work/[project]/` for persistent files |
 | **Cache Context** | Stable instruction prefixes, avoid reordering between calls |
 | **Isolate Context** | Subagent markdown files with specific tool permissions |
-| **Ralph Loop** | `workflows/ralph-loop.md`, `full-loop-helper.sh` |
+| **Development Lifecycle** | `workflows/full-loop.md`, `full-loop-helper.sh` |
 | **Evolve Context** | `/remember`, `/recall` with SQLite FTS5, `memory-helper.sh` |
 
 ### MCP Lifecycle Pattern
@@ -220,7 +220,7 @@ The repository root is a public contract, not a scratch space. New top-level fil
 - **Packaging surfaces:** distribution and package-manager assets such as `bin/`, `scripts/`, `homebrew/`, `package.json`, and lock/dependency files.
 - **Repo-local data planes:** underscore-prefixed local working areas such as `_knowledge/`, `_cases/`, `_campaigns/`, `_inbox/`, `_feedback/`, `_projects/`, `_performance/`, and `_reports/`.
 - **Docs and planning:** documentation and task surfaces such as `.wiki/`, `docs/`, `todo/`, `TODO.md`, and model/reference docs.
-- **Generated or ignored tooling surfaces:** intentionally tracked tool config and generated-input files such as `.github/`, `.qlty/`, lint configs, Repomix configs, and scanner config.
+- **Generated or ignored tooling surfaces:** intentionally tracked tool config and generated-input files such as `.github/`, `.qlty/`, lint configs, and scanner config.
 
 Run `.agents/scripts/repo-layout-audit-helper.sh --check` to audit tracked top-level drift. The audit is non-destructive: it reports unknown paths and recommends likely homes, but never moves files.
 

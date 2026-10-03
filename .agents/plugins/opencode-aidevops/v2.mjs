@@ -360,13 +360,14 @@ export async function setupAidevopsV2(ctx) {
       registerV2PrimaryProfiles(editor, primaryProfiles);
     }));
     const budget = readV2ContextBudget();
-    if (budget) await register(registrations, ctx.catalog.transform((editor) => {
+    if (budget && typeof ctx.catalog?.transform === "function") await register(registrations, ctx.catalog.transform((editor) => {
       applyV2ContextBudget(editor, budget);
     }));
 
     await register(registrations, ctx.tool.transform((editor) => {
       addV1ToolsToV2Editor(editor, baseTools, tool.schema, { directory, worktree });
       editor.update("bash", (definition) => adaptToolDefinition({ toolID: "bash" }, definition));
+      editor.update("grep", (definition) => adaptToolDefinition({ toolID: "grep" }, definition));
       editor.update("apply_patch", (definition) => adaptToolDefinition({ toolID: "apply_patch" }, definition));
     }));
 
@@ -392,6 +393,7 @@ export async function setupAidevopsV2(ctx) {
       const legacy = { system: systemStrings(event.system), messages: event.messages };
       await systemTransformHook(input, legacy);
       await messagesTransformHook(input, legacy).catch((error) => qualityLog("WARN", `V2 message transform skipped: ${error.message}`));
+      legacy.system.push("OpenCode 2: if TodoWrite is unavailable, keep a short numbered task list in your responses and update it as work progresses. The Code Mode catalogue is partial; find unlisted aidevops tools with search({ namespace: \"aidevops\" }) before concluding they are unavailable.");
       try {
         applyImageSizeGuard(legacy, qualityLog);
       } catch (error) {
@@ -403,7 +405,7 @@ export async function setupAidevopsV2(ctx) {
     }));
     await register(registrations, ctx.session.hook("compaction", async (event) => {
       const output = { context: [] };
-      await compactingHook({ workspaceDir: WORKSPACE_DIR, scriptsDir: SCRIPTS_DIR }, event, output, directory);
+      await compactingHook({ workspaceDir: WORKSPACE_DIR, scriptsDir: SCRIPTS_DIR }, event, output, directory, { host: "opencode2" });
       event.system.push(...output.context.map((text) => ({ type: "text", text })));
     }));
     await register(registrations, ctx.session.hook("http.request", providerAuth.httpRequest));

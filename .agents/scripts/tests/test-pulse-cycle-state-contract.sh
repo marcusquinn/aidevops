@@ -129,6 +129,15 @@ assert_health "actual dispatch registration produces typed progress" '
 	and .cycle_state.progress.consecutive_no_progress_cycles == 0
 	and .cycle_state.blocker.kind == "none"
 '
+# GH#33320: the cycle index counts registrations made this cycle, even when
+# the launched worker has already exited (no live in-flight ledger entry).
+_PULSE_CYCLE_DISPATCH_BEFORE="$dispatch_before"
+append_cycle_index 5
+if tail -n 1 "$PULSE_CYCLE_INDEX_FILE" | jq -e '.dispatched == 1 and .inflight == 0 and .duration_s == 5' >/dev/null; then
+	pass "cycle index records the per-cycle dispatch delta, not the live gauge"
+else
+	fail "cycle index records the per-cycle dispatch delta, not the live gauge" "$(tail -n 1 "$PULSE_CYCLE_INDEX_FILE" 2>/dev/null)"
+fi
 if [[ "${_PULSE_LEGACY_CYCLE_OUTCOME_PENDING:-1}" -eq 0 ]]; then
 	pass "current terminal publication commits the legacy outcome once"
 else

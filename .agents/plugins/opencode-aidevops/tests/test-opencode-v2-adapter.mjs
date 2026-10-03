@@ -104,7 +104,15 @@ test("V2 event processing continues after one handler failure", async () => {
   assert.deepEqual(seen, ["first", "second"]);
 });
 
-test("V2 setup registers SDK lifecycle hooks and disposes every registration", async () => {
+for (const budgetEnabled of [false, true]) test(`V2 setup registers SDK lifecycle hooks and disposes every registration (240K budget ${budgetEnabled ? "enabled" : "disabled"})`, async () => {
+  const previousSettingsFile = process.env.AIDEVOPS_SETTINGS_FILE;
+  const settingsDir = mkdtempSync(join(tmpdir(), "aidevops-v2-adapter-"));
+  process.env.AIDEVOPS_SETTINGS_FILE = join(settingsDir, "settings.json");
+  try {
+    // GH#32807: the budget is on by default; the disabled case is an explicit opt-out.
+    if (!budgetEnabled) {
+      writeFileSync(process.env.AIDEVOPS_SETTINGS_FILE, JSON.stringify({ runtime: { opencode: { v2_compaction_target: false } } }));
+    }
   const registered = [];
   const disposed = [];
   const eventState = { returned: false };
@@ -178,6 +186,7 @@ test("V2 setup registers SDK lifecycle hooks and disposes every registration", a
   assert.deepEqual(registered.map(({ domain, name }) => `${domain}:${name}`), [
     "mcp:transform",
     "agent:transform",
+    ...(budgetEnabled ? ["catalog:transform"] : []),
     "tool:transform",
     "tool:execute.before",
     "tool:execute.after",
@@ -190,9 +199,24 @@ test("V2 setup registers SDK lifecycle hooks and disposes every registration", a
     "permission:evaluate",
   ]);
 
+  const contextHook = registered.find(({ domain, name }) => domain === "session" && name === "context").callback;
+  const request = { sessionID: "v2-parity", model: { providerID: "anthropic", id: "test" }, system: [], messages: [] };
+  await contextHook(request);
+  const instructions = request.system.map(({ text }) => text).join("\n");
+  assert.match(instructions, /if TodoWrite is unavailable, keep a short numbered task list/);
+  assert.match(instructions, /search\(\{ namespace: "aidevops" \}\)/);
+
   await cleanup();
   assert.equal(eventState.returned, true);
   assert.deepEqual(disposed.sort(), registered.map(({ domain, name }) => `${domain}:${name}`).sort());
+
+  // Newer V2 hosts may omit the catalogue transform; tool/context hooks still work.
+  registered.length = 0;
+  disposed.length = 0;
+  delete context.catalog;
+  const withoutCatalog = await setupAidevopsV2(context);
+  assert.equal(registered.some(({ domain }) => domain === "catalog"), false);
+  await withoutCatalog();
 
   registered.length = 0;
   disposed.length = 0;
@@ -206,6 +230,11 @@ test("V2 setup registers SDK lifecycle hooks and disposes every registration", a
   context.event.subscribe = async () => { throw new Error("synthetic subscription failure"); };
   await assert.rejects(() => setupAidevopsV2(context), /synthetic subscription failure/);
   assert.deepEqual(disposed.sort(), registered.map(({ domain, name }) => `${domain}:${name}`).sort());
+  } finally {
+    if (previousSettingsFile === undefined) delete process.env.AIDEVOPS_SETTINGS_FILE;
+    else process.env.AIDEVOPS_SETTINGS_FILE = previousSettingsFile;
+    rmSync(settingsDir, { recursive: true, force: true });
+  }
 });
 
 test("V2 compatibility client translates V1 session request shapes", async () => {

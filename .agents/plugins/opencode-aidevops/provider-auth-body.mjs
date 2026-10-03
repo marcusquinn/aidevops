@@ -5,6 +5,10 @@ import { createHash, randomBytes } from "node:crypto";
 
 import { buildBillingHeader, serializeWithKeyOrder, computeBodyHash, CCH_PLACEHOLDER } from "./provider-auth-cch.mjs";
 import { normalizeToolNames, normalizeToolUseBlocks } from "./provider-auth-tool-names.mjs";
+import { createCacheStabilityMonitor } from "./cache-stability.mjs";
+
+// One process-wide monitor: requests from every session share this module.
+const cacheStability = createCacheStabilityMonitor();
 
 const TAG_RENAMES = [
   [/<directories>/g, "<working_dirs>"],     [/<\/directories>/g, "</working_dirs>"],
@@ -210,10 +214,20 @@ function finalizeBillingHeaderHash(serialized, sentinel) {
   return `${before}cch=${bodyHash};${after}`;
 }
 
+/** Diagnostics only (GH#32744): never let fingerprinting affect the request. */
+function observeCacheStability(parsed, context) {
+  try {
+    (context.cacheMonitor ?? cacheStability).observe(parsed, context);
+  } catch {
+    // fail open
+  }
+}
+
 /**
  * Transform the request body while preserving billing-header key ordering.
  * @param {string|null|undefined} body
- * @param {{ sessionID?: string }} [context] - optional diagnostics context
+ * @param {{ sessionID?: string, account?: string, cacheMonitor?: { observe: Function } }} [context]
+ *   optional diagnostics context
  * @returns {string|null|undefined}
  */
 export function transformRequestBody(body, context = {}) {
@@ -222,6 +236,7 @@ export function transformRequestBody(body, context = {}) {
     const parsed = JSON.parse(body);
     const sentinel = createCchSentinel();
     applyBodyTransforms(parsed, sentinel, context);
+    observeCacheStability(parsed, context);
     const serialized = serializeWithKeyOrder(parsed);
     return finalizeBillingHeaderHash(serialized, sentinel);
   } catch {

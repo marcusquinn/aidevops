@@ -12,5 +12,18 @@ export function normalizeInteractiveDefault(value) {
 }
 
 export function normalizeSpecialistAdvisor(value) {
-  return normalizeModelVariant(value, ["low", "medium", "high"]);
+  const normalized = normalizeModelVariant(value, ["low", "medium", "high"]);
+  if (normalized?.variant === "low") normalized.variant = "medium";
+  return normalized;
+}
+
+export function reasoningFloor(value) {
+  return ["high", "xhigh", "max"].includes(value) ? value : "medium";
+}
+
+export function floorReasoning(variant, minimum = "medium") {
+  if (!variant) return ""; // Unknown variants retain the provider default.
+  const levels = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
+  const floor = reasoningFloor(minimum);
+  return levels.indexOf(variant) < levels.indexOf(floor) ? floor : variant;
 }

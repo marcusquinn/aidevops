@@ -11,6 +11,13 @@ SCOPE_LIKE = re.compile(r"^#{1,6}\s+files\s+scope\b", re.I)
 DECLARATION = re.compile(
     r"(?:`(?:EDIT|NEW): ([^`]+)`|(?:EDIT|NEW): `([^`]+)`|(?:EDIT|NEW): ([^\s`,;]+))"
 )
+# The brief template recommends `EDIT: path:45-60`; the range locates the
+# change and never widens or narrows the writable file (GH#32689).
+LINE_RANGE = re.compile(r":\d+(?:[-–]\d+)?$")
+# `EDIT: a` and `b/c` declares both files. Only a backticked repository path
+# joined directly by ", " or " and " continues the declaration; "and/or" and
+# prose mentions remain explanations and still fail closed where ambiguous.
+CONTINUATION = re.compile(r"(?:, | and )`([^`\s]+/[^`\s]+)`")
 
 
 def fail():
@@ -19,7 +26,7 @@ def fail():
 
 
 def exact(path):
-    return bool(re.fullmatch(r"[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*", path)) and all(
+    return bool(re.fullmatch(r"[A-Za-z0-9_.()\[\]-]+(?:/[A-Za-z0-9_.()\[\]-]+)*", path)) and all(
         part not in (".", "..", ".git") for part in path.split("/")
     )
 
@@ -27,7 +34,9 @@ def exact(path):
 def section(lines, start):
     result = []
     for line in lines[start + 1:]:
-        if re.match(r"^#{1,6}\s", line) or line == "</details>":
+        # A thematic break ends the section: signed issue bodies close with
+        # "---" plus the signature footer, which is not scope (GH#32689).
+        if re.match(r"^#{1,6}\s", line) or line in ("</details>", "---"):
             break
         result.append(line)
     return result
@@ -72,17 +81,26 @@ def check_explanation(rest):
         fail()
 
 
+def declared_path(path):
+    path = LINE_RANGE.sub("", path)
+    if not exact(path):
+        fail()
+    return path
+
+
 def declared_paths(rest):
     paths = []
     while True:
         match = DECLARATION.match(rest)
         if not match:
             fail()
-        path = next(value for value in match.groups() if value is not None)
-        if not exact(path):
-            fail()
-        paths.append(path)
+        paths.append(declared_path(next(value for value in match.groups() if value is not None)))
         rest = rest[match.end():]
+        continuation = CONTINUATION.match(rest)
+        while continuation:
+            paths.append(declared_path(continuation[1]))
+            rest = rest[continuation.end():]
+            continuation = CONTINUATION.match(rest)
         separator = re.match(r"(?:, |; | and )(?=`?(?:EDIT|NEW):)", rest)
         if separator:
             rest = rest[separator.end():]

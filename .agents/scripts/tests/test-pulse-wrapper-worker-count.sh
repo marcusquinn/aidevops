@@ -481,6 +481,8 @@ test_count_queued_without_worker_keeps_stdout_numeric_with_debug() {
 }
 
 test_queue_governor_enters_merge_heavy_at_critical_backlog() {
+	# Isolate the seeded target from the host's auto cap (cores/2) (GH#32686).
+	local MAX_WORKERS_CAP=64
 	STATE_FILE="${HOME}/.aidevops/logs/pulse-state.txt"
 	QUEUE_METRICS_FILE="${HOME}/.aidevops/logs/pulse-queue-metrics"
 	: >"$STATE_FILE"
@@ -503,6 +505,7 @@ test_queue_governor_enters_merge_heavy_at_critical_backlog() {
 }
 
 test_queue_governor_enters_pr_heavy_at_heavy_backlog() {
+	local MAX_WORKERS_CAP=64
 	STATE_FILE="${HOME}/.aidevops/logs/pulse-state.txt"
 	QUEUE_METRICS_FILE="${HOME}/.aidevops/logs/pulse-queue-metrics"
 	: >"$STATE_FILE"
@@ -524,6 +527,7 @@ test_queue_governor_enters_pr_heavy_at_heavy_backlog() {
 }
 
 test_queue_governor_reports_drain_rate_telemetry() {
+	local MAX_WORKERS_CAP=64
 	STATE_FILE="${HOME}/.aidevops/logs/pulse-state.txt"
 	QUEUE_METRICS_FILE="${HOME}/.aidevops/logs/pulse-queue-metrics"
 	: >"$STATE_FILE"

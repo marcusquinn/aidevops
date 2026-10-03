@@ -6,6 +6,69 @@
 [[ -n "${_PULSE_DISPATCH_CANDIDATES_LIB_LOADED:-}" ]] && return 0
 _PULSE_DISPATCH_CANDIDATES_LIB_LOADED=1
 
+# Names-only credential admission. Return 0 only when every declared name is
+# present; 1 means this runner must yield. The issue JSON is never evaluated.
+_dispatch_secret_missing_names() {
+	local issue_json="$1"
+	local declared="" listing="" name="" missing="" line=""
+	declared=$(printf '%s' "$issue_json" | jq -r '
+		. as $issue | [.labels[]? | if type == "object" then .name else . end |
+		 select(type == "string" and startswith("needs-secret:")) |
+		 sub("^needs-secret:"; "")] | if length > 0 then .[]
+		 else ($issue.body // "" | capture("<!-- aidevops:needs-secrets (?<names>[A-Za-z_0-9 ]+) -->")? | .names // "" | split(" ")[]) end
+	' 2>/dev/null) || return 1
+	[[ -n "$declared" ]] || return 0
+	# Fail closed on malformed declarations or an unavailable local name store.
+	listing=$(aidevops secret list 2>/dev/null) || return 1
+	while IFS= read -r name; do
+		[[ "$name" =~ ^[A-Za-z_][A-Za-z_0-9]*$ ]] || return 1
+		local found=0
+		while IFS= read -r line; do
+			line="${line#"${line%%[![:space:]]*}"}"
+			[[ "$line" == "$name" ]] && found=1
+		done <<<"$listing"
+		[[ "$found" -eq 1 ]] || missing="${missing:+$missing }$name"
+	done <<<"$declared"
+	printf '%s' "$missing"
+	return 0
+}
+
+_dispatch_skip_for_secrets() {
+	local issue_number="$1" repo_slug="$2" issue_json="" missing="" created="" age=0 threshold=""
+	issue_json=$(gh api "repos/${repo_slug}/issues/${issue_number}" 2>/dev/null) || return 0
+	missing=$(_dispatch_secret_missing_names "$issue_json") || {
+		echo "[pulse-wrapper] #${issue_number}: secret name evidence unavailable; yielding" >>"$LOGFILE"
+		return 0
+	}
+	[[ -n "$missing" ]] || return 1
+	echo "[pulse-wrapper] #${issue_number}: runner lacks declared secret names; yielding" >>"$LOGFILE"
+	threshold="${AIDEVOPS_SECRET_STARVATION_SECONDS:-86400}"
+	[[ "$threshold" =~ ^[0-9]+$ ]] || threshold=86400
+	created=$(printf '%s' "$issue_json" | jq -r '.updated_at // .created_at // ""')
+	created=$(date -u -d "$created" +%s 2>/dev/null) || \
+		created=$(date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$created" +%s 2>/dev/null) || created=0
+	[[ "$created" -gt 0 ]] || return 0
+	age=$(($(date -u +%s) - created))
+	if [[ "$age" -ge "$threshold" ]]; then
+		_dispatch_secret_starvation_notice "$issue_number" "$repo_slug" "$missing" "$issue_json" || true
+	fi
+	return 0
+}
+
+_dispatch_secret_starvation_notice() {
+	local issue_number="$1" repo_slug="$2" missing="$3" issue_json="$4" comments="" marker="<!-- aidevops:secret-starvation -->"
+	local comments_endpoint="repos/${repo_slug}/issues/${issue_number}/comments"
+	comments=$(gh api "$comments_endpoint" --paginate --jq '.[].body' 2>/dev/null) || return 1
+	if [[ "$comments" != *"$marker"* ]]; then
+		gh api "$comments_endpoint" --method POST \
+			--field body="$(printf '%s\n%s' "$marker" "Dispatch has waited for a runner with these required secret names: ${missing}. No secret values were accessed.")" >/dev/null || return 1
+	fi
+	if ! printf '%s' "$issue_json" | jq -e '.labels[]? | (if type == "object" then .name else . end) == "status:blocked"' >/dev/null; then
+		gh issue edit "$issue_number" --repo "$repo_slug" --add-label status:blocked >/dev/null || return 1
+	fi
+	return 0
+}
+
 _dispatch_run_prepasses() {
 	local available_slots="$1"
 
@@ -111,6 +174,9 @@ _dispatch_should_skip_candidate() {
 	local repo_slug="$2"
 
 	pulse_dispatch_debug_log "evaluating skip checks for #${issue_number} (${repo_slug})"
+	if _dispatch_skip_for_secrets "$issue_number" "$repo_slug"; then
+		return 0
+	fi
 
 	if _dispatch_skip_for_benign_block "$issue_number" "$repo_slug"; then
 		return 0
@@ -631,9 +697,20 @@ _dispatch_rest_core_requires_serial() {
 #
 # Returns:
 #   0 — budget is sufficient, unavailable, or checker is not loaded
-#   1 — budget is below threshold; caller should stop the loop
+#   1 — cycle wall-clock budget is below the per-candidate floor (logged here)
+#   2 — GraphQL budget is below threshold; caller should stop the loop
 #######################################
 _dispatch_graphql_budget_allows_next() {
+	# Both serial and parallel candidate loops call this before any candidate
+	# API work. Keep the 600s ceremony floor; defer instead of shrinking it.
+	local cycle_remaining="" floor_seconds="${DISPATCH_PER_CANDIDATE_TIMEOUT_FLOOR:-600}"
+	[[ "$floor_seconds" =~ ^[1-9][0-9]*$ ]] || floor_seconds=600
+	if declare -F _pulse_cycle_remaining_seconds >/dev/null 2>&1 && cycle_remaining=$(_pulse_cycle_remaining_seconds "${AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S:-90}"); then
+		if [[ "$cycle_remaining" -lt "$floor_seconds" ]]; then
+			echo "[pulse-wrapper] Dispatch_max stopping early: cycle wall-clock budget below per-candidate floor (remaining=${cycle_remaining}s floor=${floor_seconds}s)" >>"$LOGFILE"
+			return 1
+		fi
+	fi
 	if ! declare -F is_graphql_budget_sufficient >/dev/null 2>&1; then
 		return 0
 	fi
@@ -643,7 +720,7 @@ _dispatch_graphql_budget_allows_next() {
 	if [[ "$_budget_rc" -eq 1 ]]; then
 		_dispatch_stats_increment "dispatch_graphql_circuit_blocked"
 		_dispatch_stats_increment_candidate_failed "graphql_circuit_breaker"
-		return 1
+		return 2
 	fi
 	return 0
 }
@@ -724,9 +801,10 @@ _dispatch_check_model_concurrency_cap() {
 	local opus_cap="${AIDEVOPS_OPUS_CONCURRENCY_CAP:-${OPUS_CONCURRENCY_CAP}}"
 
 	# Count in-flight opus workers from the process list.
-	# opencode is launched with '-m anthropic/claude-opus-4-6' (or -4-7) by
-	# _build_run_cmd in headless-runtime-model.sh:412. pgrep -f matches the
-	# full cmdline so it catches both 4-6 and 4-7 variants in one probe.
+	# opencode is launched with '-m anthropic/claude-opus-<version>' by
+	# _build_run_cmd in headless-runtime-model.sh. pgrep -f matches the full
+	# cmdline, so one probe counts every opus version, including opus workers
+	# chosen by auto-routing (only explicitly pinned candidates are deferred).
 	#
 	# pgrep exits 1 with no output when no processes match — perfectly normal.
 	# Assign to a variable first with || true to avoid triggering set -o pipefail.

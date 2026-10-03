@@ -186,21 +186,24 @@ aidevops_ensure_symlink_target() {
 # promoted 1.18.18 after making that comparison self-contained; GH#30695
 # promoted 1.18.23 after the isolated baseline and candidate probes passed;
 # GH#30957 promoted 1.18.25, GH#31588 promoted 1.18.29, GH#31909 promoted
-# 1.18.31, and GH#32210 promoted 1.18.32 after the same isolated comparison
-# passed. Keep the complete compatibility decision visible and machine-readable;
+# 1.18.31, GH#32210 promoted 1.18.32, and GH#32761 promoted 1.18.33 after the
+# same isolated comparison passed. Keep the complete compatibility decision visible and machine-readable;
 # general installs track latest because the observed failure scope is Linux
 # headless.
-readonly OPENCODE_PINNED_VERSION="1.18.32"
+readonly OPENCODE_PINNED_VERSION="1.18.33"
 readonly OPENCODE_PIN_REASON="GH#28766 Linux headless bootstrap stalled with isolated XDG_DATA_HOME"
 readonly OPENCODE_PIN_PLATFORM="Linux"
 readonly OPENCODE_PIN_RUNTIME_MODE="headless"
 readonly OPENCODE_PIN_INTRODUCED_DATE="2026-07-30"
-readonly OPENCODE_PIN_LAST_CANARY_DATE="2026-09-22"
-readonly OPENCODE_PIN_LAST_CANARY_RESULT="pass:1.18.32"
-readonly OPENCODE_PIN_REVIEW_DEADLINE="2026-09-29"
-readonly OPENCODE_PLUGIN_TESTED_VERSION="1.18.32"
-readonly OPENCODE_V2_PINNED_VERSION="2.0.3"
-readonly OPENCODE_V2_PLUGIN_TESTED_VERSION="2.0.3"
+readonly OPENCODE_PIN_LAST_CANARY_DATE="2026-09-29"
+readonly OPENCODE_PIN_LAST_CANARY_RESULT="pass:1.18.33"
+readonly OPENCODE_PIN_REVIEW_DEADLINE="2026-10-06"
+readonly OPENCODE_PLUGIN_TESTED_VERSION="1.18.33"
+# GH#32993: V2 promoted 2.0.20 after canary run 36752410645 passed the isolated
+# Linux-headless baseline (2.0.3) and candidate comparison with an empty native
+# tool diff; @opencode/plugin stays at the tested 2.0.3 package.
+readonly OPENCODE_V2_PINNED_VERSION="2.0.20"
+readonly OPENCODE_V2_PLUGIN_TESTED_VERSION="2.0.20"
 
 aidevops_opencode_profile_id() {
 	local requested="${AIDEVOPS_OPENCODE_PROFILE:-}"
@@ -232,9 +235,9 @@ aidevops_opencode_profile_value() {
 		v2:pinReason) printf 'Initial OpenCode V2 compatibility qualification\n' ;;
 		v2:pinPlatform) printf 'Linux\n' ;;
 		v2:pinRuntimeMode) printf 'headless\n' ;;
-		v2:lastCanaryDate) printf '2026-09-15\n' ;;
-		v2:lastCanaryResult) printf 'pass:2.0.3\n' ;;
-		v2:reviewDeadline) printf '2026-09-22\n' ;;
+		v2:lastCanaryDate) printf '2026-09-30\n' ;;
+		v2:lastCanaryResult) printf 'pass:2.0.20\n' ;;
+		v2:reviewDeadline) printf '2026-10-07\n' ;;
 		v1:package) printf 'opencode-ai\n' ;;
 		v1:binary) printf 'opencode\n' ;;
 		v1:pluginEntry) printf 'index.mjs\n' ;;
@@ -594,7 +597,7 @@ ensure_credentials_file() {
 # Pattern Tracking Constants
 # =============================================================================
 # All pattern-related memory types (dedicated + supervisor-generated)
-# Used by memory/_common.sh migrate_db backfill (pattern-tracker-helper.sh archived)
+# Used by memory/_common.sh migrate_db backfill for legacy pattern records
 # TIER_DOWNGRADE_OK: evidence that a cheaper model tier succeeded on a task type (t5148)
 readonly PATTERN_TYPES_SQL="'SUCCESS_PATTERN','FAILURE_PATTERN','WORKING_SOLUTION','FAILED_APPROACH','ERROR_FIX','TIER_DOWNGRADE_OK'"
 
@@ -658,6 +661,11 @@ readonly TASK_SIBLING_NON_ACTIVE_STATES_SQL="'verified','cancelled','deployed','
 #   echo "Remote: $(sanitize_url "$remote_url")"
 #   log_error "fetch failed: $(scrub_credentials "$error_output")"
 
+# Known credential token prefixes (ERE alternation, no grouping). Shared by
+# scrub_credentials and the security-posture tracked-template classifier
+# (GH#33339) so redaction and detection recognise the same signatures.
+[[ -z "${AIDEVOPS_CREDENTIAL_PREFIX_ERE+x}" ]] && AIDEVOPS_CREDENTIAL_PREFIX_ERE='sk-|GOCSPX-|ghp_|gho_|ghs_|ghu_|github_pat_|glpat-|xoxb-|xoxp-'
+
 scrub_credentials() {
 	local text="$1"
 	# Word-boundary anchor (^|non-word-char) prevents false positives where a
@@ -666,7 +674,7 @@ scrub_credentials() {
 	# but is NOT a credential. macOS BSD sed has no `\b`, so we capture the
 	# preceding boundary character and restore it via \1 in the replacement.
 	# (t2892, GH#21026)
-	printf '%s' "$text" | sed -E 's/(^|[^A-Za-z0-9_-])(sk-|GOCSPX-|ghp_|gho_|ghs_|ghu_|github_pat_|glpat-|xoxb-|xoxp-)[A-Za-z0-9_-]{10,}/\1[redacted-credential]/g'
+	printf '%s' "$text" | sed -E "s/(^|[^A-Za-z0-9_-])(${AIDEVOPS_CREDENTIAL_PREFIX_ERE})[A-Za-z0-9_-]{10,}/\\1[redacted-credential]/g"
 	return 0
 }
 
@@ -1341,6 +1349,58 @@ _source_shared_module_with_retry "${_SC_SELF%/*}/managed-label-provisioning-lib.
 # shellcheck disable=SC1091  # sub-library resolved at runtime via _SC_SELF
 _source_shared_module_with_retry "${_SC_SELF%/*}/shared-gh-wrappers.sh"
 
+# Machine-readable provenance for automated issue comments. Kind is an
+# identifier, never free-form issue content; callers prepend this to the body.
+aidevops_ops_marker() {
+	local kind="$1"
+	[[ "$kind" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || return 1
+	printf '<!-- aidevops:ops kind=%s -->\n' "$kind"
+	return 0
+}
+
+# A brief hold belongs to the exact body that produced it, not merely to a
+# status label. Only collaborator-authored comments can assert the marker.
+# Returns 0 for a matching hold, 1 for no matching hold, 2 for bad evidence.
+issue_has_active_brief_hold() {
+	local comments_json="$1"
+	local issue_body="$2"
+	local body_hash="" verdict=""
+	if command -v shasum >/dev/null 2>&1; then
+		body_hash=$(printf '%s' "$issue_body" | shasum -a 256 | cut -c1-24) || return 2
+	else
+		body_hash=$(printf '%s' "$issue_body" | sha256sum | cut -c1-24) || return 2
+	fi
+	[[ "$body_hash" =~ ^[a-f0-9]{24}$ ]] || return 2
+	verdict=$(printf '%s' "$comments_json" | jq -r --arg marker "<!-- aidevops:brief-hold reason=missing_files_scope body=${body_hash} -->" '
+		arrays
+		| (if ([.[0]? | arrays] | length) > 0 then add else . end)
+		| if any(.[]?; ((.author_association // "") | IN("OWNER", "MEMBER", "COLLABORATOR"))
+			and ((.body // "") | contains($marker))) then "held" else "absent" end
+	' 2>/dev/null) || return 2
+	case "$verdict" in
+	held) return 0 ;;
+	absent) return 1 ;;
+	esac
+	return 2
+}
+
+# Use before an automated blocked → available transition. An unreadable body
+# or comment history must not silently release a hold.
+issue_brief_hold_blocks_auto_release() {
+	local issue_num="$1"
+	local repo_slug="$2"
+	local issue_json="" comments_json="" issue_body="" held_rc=0
+	issue_json=$(gh api "repos/${repo_slug}/issues/${issue_num}" 2>/dev/null) || return 0
+	# Avoid a comments lookup on ordinary issues that are not blocked.
+	if ! printf '%s' "$issue_json" | jq -e '[.labels[]?.name] | index("status:blocked") != null' >/dev/null 2>&1; then
+		return 1
+	fi
+	issue_body=$(printf '%s' "$issue_json" | jq -r '.body // ""') || return 0
+	comments_json=$(gh api "repos/${repo_slug}/issues/${issue_num}/comments?per_page=100" --paginate --slurp 2>/dev/null) || return 0
+	issue_has_active_brief_hold "$comments_json" "$issue_body" || held_rc=$?
+	[[ "$held_rc" -ne 1 ]]
+}
+
 
 #######################################
 # Project an authoritative lifecycle label on dispatch claim release (t2420).
@@ -1348,7 +1408,8 @@ _source_shared_module_with_retry "${_SC_SELF%/*}/shared-gh-wrappers.sh"
 # The current exact linked-PR state selects the projection: no linked PR is
 # available, an open draft is blocked, an open non-draft PR is in-review, and
 # an open PR with requested changes is available for repair, and a merged PR
-# is done. Unreadable or ambiguous PR metadata is a no-write error.
+# is done only after the issue is closed. Unreadable or ambiguous metadata
+# is a no-write error; an open blocked issue retains its blocker.
 #
 # Args:
 #   $1 — issue number
@@ -1375,7 +1436,7 @@ clear_active_status_on_release() {
 	# current linked PR state before writing: drafts project as blocked partial
 	# work, while non-draft OPEN PRs without requested changes project as
 	# in-review. A failed or ambiguous read preserves the prior projection.
-	local linked_prs_json="" projection=""
+	local linked_prs_json="" projection="" done_status="done"
 	local -a release_args=()
 	[[ -z "$worker_login" ]] || release_args+=(--remove-assignee "$worker_login")
 	linked_prs_json=$(gh pr list --repo "$repo_slug" --state all \
@@ -1393,8 +1454,29 @@ clear_active_status_on_release() {
 		elif any(.state == "MERGED") then "done"
 		else available end
 	' 2>/dev/null) || return 1
+	# GH#33374: a merged checkpoint (or a reopened issue) is not completion.
+	# Bound every projection to live issue state, not the release reason.
+	local issue_json="" issue_state=""
+	issue_json=$(gh api "repos/${repo_slug}/issues/${issue_num}" 2>/dev/null) || return 1
+	issue_state=$(printf '%s' "$issue_json" | jq -er '
+		select((.labels | type) == "array") | .state | ascii_downcase
+		| select(. == "open" or . == "closed")' 2>/dev/null) || return 1
+	if [[ "$issue_state" == "closed" ]]; then
+		projection="$done_status"
+	elif printf '%s' "$issue_json" | jq -e 'any(.labels[]; .name == "status:blocked")' >/dev/null 2>&1; then
+		if issue_brief_hold_blocks_auto_release "$issue_num" "$repo_slug"; then
+			return 0
+		fi
+		projection="blocked"
+	elif [[ "$projection" == "$done_status" ]]; then
+		projection="available"
+	fi
 	case "$projection" in
 	available)
+		if issue_brief_hold_blocks_auto_release "$issue_num" "$repo_slug"; then
+			printf 'clear_active_status_on_release: preserving brief hold on #%s in %s\n' "$issue_num" "$repo_slug" >&2
+			return 0
+		fi
 		set_issue_status "$issue_num" "$repo_slug" available \
 			${release_args[@]+"${release_args[@]}"} >/dev/null 2>&1
 		;;
@@ -1406,7 +1488,7 @@ clear_active_status_on_release() {
 		set_issue_status "$issue_num" "$repo_slug" in-review >/dev/null 2>&1
 		;;
 	done)
-		set_issue_status "$issue_num" "$repo_slug" "done" >/dev/null 2>&1
+		set_issue_status "$issue_num" "$repo_slug" "$done_status" >/dev/null 2>&1
 		;;
 	*) return 1 ;;
 	esac

@@ -299,7 +299,7 @@ async function executeAuthenticatedFetch(client, getAuth, input, init, sessionAc
   const sessionID = hostSessionID(input, init);
   const ctx = {
     requestHeaders,
-    body: transformRequestBody(init?.body, { sessionID }),
+    body: transformRequestBody(init?.body, { sessionID, account: currentEmail }),
     requestInput: addBetaQueryParam(input),
     requestInit: init ?? {},
   };

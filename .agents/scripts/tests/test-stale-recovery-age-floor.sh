@@ -113,6 +113,12 @@ if [[ "\$1" == "issue" && "\$2" == "view" ]]; then
 	exit 0
 fi
 
+# REST-first gh wrapper and the bounded reprobe both read this endpoint.
+if [[ "\$1" == "api" && "\$2" == *"/issues/"* && "\$2" != *"/comments"* ]]; then
+	printf '%s\n' '${payload}' | jq -c '. + {state: ((.state // "OPEN") | ascii_downcase), created_at: .createdAt, updated_at: .updatedAt}'
+	exit 0
+fi
+
 # gh api .../comments — two shapes:
 #   1. With --jq containing 'length' → integer count (ticks counter)
 #   2. Otherwise → comments array
@@ -268,6 +274,53 @@ if [[ "$rc" -eq 1 && "$output" != *"ASSIGNED"* ]]; then
 else
 	print_result "interactive comment without live ownership retains worker stale policy" 1 \
 		"(rc=$rc output='$output')"
+fi
+
+# GH#33234: a real claimed session can spend two hours on local work without
+# GitHub activity. Its audit marker, sole assignee and claimed status jointly
+# grant the extended window even on an origin:worker issue.
+claimed_iso=$(iso_minus_seconds 7500)
+claimed_issue_iso=$(iso_minus_seconds 30000)
+claimed_comments="[[{\"created_at\":\"${claimed_iso}\",\"user\":{\"login\":\"other-runner\"},\"body\":\"<!-- aidevops-interactive-claim/v1 -->\\n> Interactive session claimed by @other-runner in linked-worktree.\"}]]"
+claimed_meta="{\"state\":\"OPEN\",\"assignees\":[{\"login\":\"other-runner\"}],\"labels\":[{\"name\":\"origin:worker\"},{\"name\":\"status:claimed\"}],\"createdAt\":\"${claimed_issue_iso}\",\"updatedAt\":\"${claimed_iso}\"}"
+write_stub_gh_age_floor "$claimed_meta" "$claimed_comments"
+run_is_assigned 99708 "owner/repo"
+if [[ "$rc" -eq 0 && "$output" == *"ASSIGNED"* && "$output" != *"WORKER_SUPERSEDED"* ]] &&
+	! grep -q '^issue edit' "$GH_CALLS_FILE"; then
+	print_result "Verified interactive claim at 2h stays assigned without recovery" 0
+else
+	print_result "Verified interactive claim at 2h stays assigned without recovery" 1 "(rc=$rc output='$output')"
+fi
+
+# Release removes claimed status; a historical marker must not hold the lock.
+write_stub_gh_age_floor "${claimed_meta/\"status:claimed\"/\"status:available\"}" "$claimed_comments"
+run_is_assigned 99709 "owner/repo"
+if [[ "$rc" -eq 1 && "$output" != *"ASSIGNED"* ]]; then
+	print_result "Released interactive claim recovers at worker threshold" 0
+else
+	print_result "Released interactive claim recovers at worker threshold" 1 "(rc=$rc output='$output')"
+fi
+
+expired_iso=$(iso_minus_seconds 22500)
+expired_comments="${claimed_comments//$claimed_iso/$expired_iso}"
+write_stub_gh_age_floor "${claimed_meta//$claimed_iso/$expired_iso}" "$expired_comments"
+run_is_assigned 99710 "owner/repo"
+if [[ "$rc" -eq 1 && "$output" != *"ASSIGNED"* ]]; then
+	print_result "Abandoned interactive claim past extended window recovers at interactive threshold" 0
+else
+	print_result "Abandoned interactive claim past extended window recovers at interactive threshold" 1 "(rc=$rc output='$output')"
+fi
+
+# A claimed session can have recent GitHub activity after its initial claim.
+# Crossing the claim-age window must not switch back to the 600s worker rule.
+recent_iso=$(iso_minus_seconds 1800)
+write_stub_gh_age_floor "${claimed_meta//$claimed_iso/$recent_iso}" "$expired_comments"
+run_is_assigned 99711 "owner/repo"
+if [[ "$rc" -eq 0 && "$output" == *"ASSIGNED"* && "$output" != *"WORKER_SUPERSEDED"* ]] &&
+	! grep -q '^issue edit' "$GH_CALLS_FILE"; then
+	print_result "Old owned claim with recent activity stays assigned past claim-age window" 0
+else
+	print_result "Old owned claim with recent activity stays assigned past claim-age window" 1 "(rc=$rc output='$output')"
 fi
 
 export PATH="$OLD_PATH"

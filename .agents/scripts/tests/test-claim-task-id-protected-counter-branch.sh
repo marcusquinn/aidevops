@@ -50,6 +50,9 @@ setup_protected_remote() {
 	printf '# Tasks\n\n' >"${seed_dir}/TODO.md"
 	git -C "$seed_dir" add .task-counter .gitignore TODO.md >/dev/null 2>&1 || return 1
 	git -C "$seed_dir" commit -m "chore: seed protected counter" >/dev/null 2>&1 || return 1
+	printf '%s\n' 'fixture history' >"${seed_dir}/history.txt"
+	git -C "$seed_dir" add history.txt >/dev/null 2>&1 || return 1
+	git -C "$seed_dir" commit -m "chore: retain parent history" >/dev/null 2>&1 || return 1
 	git -C "$seed_dir" push origin main >/dev/null 2>&1 || return 1
 	if [[ "$dedicated_state" != "absent" ]]; then
 		git -C "$seed_dir" push origin main:refs/heads/task-id-counter >/dev/null 2>&1 || return 1
@@ -307,6 +310,58 @@ test_implicit_dedicated_counter_branch() {
 	return 0
 }
 
+test_linked_worktree_preserves_history() {
+	local parent_tmpdir="$1"
+	local bin_dir="$2"
+	local mode=""
+	local case_dir=""
+	local work_dir=""
+	local name=""
+	local output=""
+	local rc=0
+	local history_count=""
+
+	for mode in explicit implicit; do
+		name="linked worktree ${mode} counter claim preserves shared history"
+		case_dir="${parent_tmpdir}/linked-${mode}"
+		mkdir -p "$case_dir" || { fail "$name" "fixture directory failed"; continue; }
+		work_dir=$(setup_protected_remote "$case_dir") || {
+			fail "$name" "repo setup failed"
+			continue
+		}
+		if [[ "$mode" == "implicit" ]]; then
+			printf '%s\n' '{}' >"${work_dir}/.aidevops.json"
+		fi
+		rc=0
+		output=$(PATH="${bin_dir}:${PATH}" FAKE_GH_POLICY=unavailable \
+			CAS_MAX_RETRIES=5 CAS_WALL_TIMEOUT_S=20 CAS_SSH_FALLBACK_ENABLED=0 "$CLAIM_SCRIPT" \
+			--title "${mode} linked history" --no-issue --repo-path "$work_dir" 2>&1) || rc=$?
+		if [[ "$mode" == "implicit" && $rc -ne 0 ]] || \
+			[[ "$mode" == "explicit" && $rc -ne 4 ]]; then
+			fail "$name" "unexpected claim exit ${rc}: $output"
+			continue
+		fi
+		if [[ "$mode" == "implicit" ]] && ! printf '%s\n' "$output" | grep -Fq \
+			'counter branch auto-selected from validated dedicated branch: task-id-counter'; then
+			fail "$name" "implicit discovery was not exercised: $output"
+			continue
+		fi
+		if [[ "$mode" == "explicit" ]] && ! printf '%s\n' "$output" | grep -Fq \
+			'PROTECTED_COUNTER_BRANCH'; then
+			fail "$name" "explicit main counter fetch was not exercised: $output"
+			continue
+		fi
+		history_count=$(git -C "${case_dir}/seed" rev-list --count origin/main 2>/dev/null) || history_count=0
+		if [[ $(git -C "${case_dir}/seed" rev-parse --is-shallow-repository) != "false" ]] || \
+			((history_count < 2)); then
+			fail "$name" "shared repository became shallow or origin/main lost history (${history_count} commits)"
+			continue
+		fi
+		pass "$name"
+	done
+	return 0
+}
+
 run_canonical_claim() {
 	local work_dir="$1"
 	local bin_dir="$2"
@@ -472,6 +527,135 @@ test_canonical_context_setup_failure() {
 	return 0
 }
 
+# GH#33152: fixture with a `develop` (not `main`) default branch, a stale
+# dedicated task-id-counter branch, and no explicit .aidevops.json
+# default_branch/counter_branch. Exercises remote-detected default branch
+# discovery, the resulting (correct) COUNTER_BRANCH_STALE refusal, the
+# --sync-counter-branch fast-forward catch-up, and a subsequent successful
+# allocation off the synced branch.
+setup_develop_default_remote() {
+	local base_dir="$1"
+	local bare_dir="${base_dir}/remote.git"
+	local seed_dir="${base_dir}/seed"
+	local work_dir="${base_dir}/work"
+
+	git init --bare --initial-branch=develop "$bare_dir" >/dev/null 2>&1 || return 1
+	git clone "$bare_dir" "$seed_dir" >/dev/null 2>&1 || return 1
+	git -C "$seed_dir" config user.email "test@test.local" >/dev/null 2>&1 || return 1
+	git -C "$seed_dir" config user.name "Test" >/dev/null 2>&1 || return 1
+	git -C "$seed_dir" config commit.gpgsign false >/dev/null 2>&1 || true
+	printf '2000\n' >"${seed_dir}/.task-counter"
+	printf '# Tasks\n\n' >"${seed_dir}/TODO.md"
+	git -C "$seed_dir" add .task-counter TODO.md >/dev/null 2>&1 || return 1
+	git -C "$seed_dir" commit -m "chore: seed develop counter" >/dev/null 2>&1 || return 1
+	git -C "$seed_dir" push origin develop >/dev/null 2>&1 || return 1
+	git -C "$seed_dir" push origin develop:refs/heads/task-id-counter >/dev/null 2>&1 || return 1
+
+	# Make the dedicated branch stale relative to develop (M < N) on its own
+	# lineage — sync_counter_branch must fast-forward it, not rebase/rewrite.
+	git -C "$seed_dir" checkout -b task-id-counter-local origin/task-id-counter >/dev/null 2>&1 || return 1
+	printf '1500\n' >"${seed_dir}/.task-counter"
+	git -C "$seed_dir" add .task-counter >/dev/null 2>&1 || return 1
+	git -C "$seed_dir" commit -m "chore: stale dedicated counter" >/dev/null 2>&1 || return 1
+	git -C "$seed_dir" push origin task-id-counter-local:refs/heads/task-id-counter --force >/dev/null 2>&1 || return 1
+	git -C "$seed_dir" checkout develop >/dev/null 2>&1 || return 1
+	git -C "$seed_dir" branch -D task-id-counter-local >/dev/null 2>&1 || true
+
+	git -C "$seed_dir" config "url.file://${bare_dir}.insteadOf" "https://github.com/example/develop-default.git" || return 1
+	git -C "$seed_dir" remote set-url origin "https://github.com/example/develop-default.git" || return 1
+	git -C "$seed_dir" worktree add --detach "$work_dir" develop >/dev/null 2>&1 || return 1
+	printf '%s\n' '{}' >"${work_dir}/.aidevops.json"
+	printf '%s\n' "$work_dir"
+	return 0
+}
+
+# gh stub reporting no branch protection for any branch — this fixture only
+# exercises default-branch detection and the sync action, not the policy
+# preflight already covered by test_protected_counter_branch_preflight.
+setup_open_policy_stub() {
+	local base_dir="$1"
+	local bin_dir="${base_dir}/bin-open"
+
+	mkdir -p "$bin_dir" || return 1
+	cat >"${bin_dir}/gh" <<'STUB'
+#!/usr/bin/env bash
+set -u
+if [[ "$#" -ge 2 && "$1" == "api" ]]; then
+	printf '%s\n' '{}'
+	exit 0
+fi
+exit 1
+STUB
+	chmod +x "${bin_dir}/gh" || return 1
+	printf '%s\n' "$bin_dir"
+	return 0
+}
+
+test_develop_default_branch_sync_and_claim() {
+	local tmpdir="$1"
+	local name_detect="develop-default repo detects remote default branch instead of assuming main"
+	local name_sync="sync-counter-branch fast-forwards a stale dedicated branch to the default-branch counter"
+	local name_claim="claim after sync allocates from the caught-up dedicated counter branch"
+	local case_dir="${tmpdir}/develop-default"
+	local work_dir="" bin_dir="" output="" rc=0 task_id=""
+
+	mkdir -p "$case_dir" || { fail "$name_detect" "fixture directory failed"; return 0; }
+	work_dir=$(setup_develop_default_remote "$case_dir") || {
+		fail "$name_detect" "repo setup failed"
+		return 0
+	}
+	bin_dir=$(setup_open_policy_stub "$case_dir") || {
+		fail "$name_detect" "policy stub setup failed"
+		return 0
+	}
+
+	rc=0
+	output=$(PATH="${bin_dir}:${PATH}" CAS_MAX_RETRIES=5 CAS_WALL_TIMEOUT_S=20 CAS_SSH_FALLBACK_ENABLED=0 \
+		"$CLAIM_SCRIPT" --title "develop default discovery" --no-issue --dry-run --repo-path "$work_dir" 2>&1) || rc=$?
+
+	if ! printf '%s\n' "$output" | grep -Fq 'Default branch detected from origin: develop'; then
+		fail "$name_detect" "missing remote default-branch detection evidence: $output"
+		return 0
+	fi
+	if printf '%s\n' "$output" | grep -Eq 'refs/heads/main[^-]|/main:'; then
+		fail "$name_detect" "helper referenced a main branch that does not exist in this fixture: $output"
+		return 0
+	fi
+	if [[ $rc -ne 0 ]] || ! printf '%s\n' "$output" | grep -q 'COUNTER_BRANCH_STALE'; then
+		fail "$name_detect" "expected a correctly-classified stale refusal against develop: rc=${rc}: $output"
+		return 0
+	fi
+	pass "$name_detect"
+
+	rc=0
+	output=$(PATH="${bin_dir}:${PATH}" CAS_MAX_RETRIES=5 CAS_WALL_TIMEOUT_S=20 CAS_SSH_FALLBACK_ENABLED=0 \
+		"$CLAIM_SCRIPT" --sync-counter-branch --no-issue --repo-path "$work_dir" 2>&1) || rc=$?
+	if [[ $rc -ne 0 ]] || ! printf '%s\n' "$output" | grep -Fq 'COUNTER_BRANCH_SYNCED branch=task-id-counter value=2000'; then
+		fail "$name_sync" "expected a fast-forward to 2000: rc=${rc}: $output"
+		return 0
+	fi
+	pass "$name_sync"
+
+	rc=0
+	output=$(PATH="${bin_dir}:${PATH}" CAS_MAX_RETRIES=5 CAS_WALL_TIMEOUT_S=20 CAS_SSH_FALLBACK_ENABLED=0 \
+		"$CLAIM_SCRIPT" --title "develop default claim after sync" --no-issue --repo-path "$work_dir" 2>&1) || rc=$?
+	if [[ $rc -ne 0 ]]; then
+		fail "$name_claim" "claim failed after sync: rc=${rc}: $output"
+		return 0
+	fi
+	if ! printf '%s\n' "$output" | grep -Fq 'counter branch auto-selected from validated dedicated branch: task-id-counter'; then
+		fail "$name_claim" "expected the caught-up dedicated branch to be selected: $output"
+		return 0
+	fi
+	task_id=$(printf '%s\n' "$output" | awk -F= '/^task_id=/{print $2; exit}')
+	if [[ "$task_id" != "t2000" ]]; then
+		fail "$name_claim" "expected t2000, got ${task_id:-<empty>}"
+		return 0
+	fi
+	pass "$name_claim"
+	return 0
+}
+
 main() {
 	local tmpdir=""
 	local work_dir=""
@@ -501,8 +685,10 @@ main() {
 	test_protected_counter_branch_preflight "$tmpdir" "$work_dir" "$bin_dir"
 	test_protected_counter_branch_push_fallback "$tmpdir" "$work_dir" "$bin_dir"
 	test_implicit_dedicated_counter_branch "$tmpdir" "$work_dir" "$bin_dir"
+	test_linked_worktree_preserves_history "$tmpdir" "$bin_dir"
 	test_canonical_implicit_counter_discovery "$tmpdir" "$bin_dir"
 	test_canonical_context_setup_failure "$tmpdir" "$bin_dir"
+	test_develop_default_branch_sync_and_claim "$tmpdir"
 	rm -rf "$tmpdir"
 	printf '%s passed, %s failed\n' "$PASS" "$FAIL"
 	[[ "$FAIL" -eq 0 ]] || return 1

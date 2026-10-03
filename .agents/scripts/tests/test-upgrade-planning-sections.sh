@@ -11,17 +11,21 @@
 # TODO.md.bak. On webapp (2026-04-20) this ate 141 completed "[x]" rows —
 # audit-trail data NOT reconstructable from GitHub.
 #
-# Pattern modelled on tests/test-init-scope.sh:
-#   - Extract the target functions from aidevops.sh via sed
-#   - eval them into the test shell
+# GH#33375 extends it: custom "## " sections (Queued, phases, routine
+# registries) and multi-line tasks survive verbatim, and an upgrade that would
+# lose any task line restores the original and returns non-zero.
+#
+# Pattern:
+#   - Source aidevops-cli/aidevops-upgrade-planning-lib.sh (the functions moved
+#     out of aidevops.sh; sed-extracting them from aidevops.sh no longer works)
 #   - Stub print_info / print_success / sed_inplace
 #   - Build synthetic fixtures in a temp dir
 #   - Drive the upgrade and assert survivors
 
 set -uo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
-AIDEVOPS_SH="$SCRIPT_DIR/../../../aidevops.sh"
+TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+UPGRADE_LIB="$TEST_DIR/../aidevops-cli/aidevops-upgrade-planning-lib.sh"
 
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'
@@ -50,35 +54,20 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if [[ ! -f "$AIDEVOPS_SH" ]]; then
-	echo "ERROR: Cannot find aidevops.sh at $AIDEVOPS_SH" >&2
+if [[ ! -f "$UPGRADE_LIB" ]]; then
+	echo "ERROR: Cannot find upgrade-planning lib at $UPGRADE_LIB" >&2
 	exit 1
 fi
 
-# Stub the aidevops.sh globals the target functions depend on. The test runs
-# purely against the extracted function bodies — no CLI side effects.
+# Stub the CLI globals the library functions depend on — no CLI side effects.
 print_info() { return 0; }
 print_success() { return 0; }
 print_warning() { return 0; }
 print_error() { return 0; }
 sed_inplace() { if [[ "$(uname)" == "Darwin" ]]; then sed -i '' "$@"; else sed -i "$@"; fi; }
 
-# Extract target function bodies from aidevops.sh and eval them into this shell.
-_extract_function() {
-	local name="$1"
-	sed -n "/^${name}() {/,/^}/p" "$AIDEVOPS_SH"
-	return 0
-}
-
-for fn in _extract_todo_section _filter_todo_placeholders _insert_after_toon_marker \
-	_upgrade_todo_preserve_sections _upgrade_todo_reinsert_sections _upgrade_todo; do
-	body=$(_extract_function "$fn")
-	if [[ -z "$body" ]]; then
-		echo "ERROR: could not extract $fn from aidevops.sh" >&2
-		exit 1
-	fi
-	eval "$body"
-done
+# shellcheck source=../aidevops-cli/aidevops-upgrade-planning-lib.sh
+source "$UPGRADE_LIB"
 
 # ---- Fixtures ----
 
@@ -384,6 +373,98 @@ EOF
 	return 0
 }
 
+test_upgrade_preserves_custom_sections() {
+	echo ""
+	echo "=== Testing _upgrade_todo preserves custom sections (GH#33375) ==="
+	local todo="$TEST_ROOT/custom.md" template="$TEST_ROOT/template.md"
+	write_new_template "$template"
+	cat >"$todo" <<'EOF'
+# TODO
+
+## Queued
+
+- [ ] t700 Queued task @alice ~1h
+  continuation detail for t700
+  - [ ] t700.1 nested subtask
+
+## Phase 2: Launch
+
+- [ ] P2-01 Phase task with non-tNNN id
+- [x] P2-02 Completed phase task
+
+## Backlog
+
+- [ ] t201 Canonical backlog task
+
+## Weekly Routines
+
+- [x] r001 Weekly digest repeat:weekly(mon@09:00)
+EOF
+	local expected
+	expected=$(_upgrade_todo_task_lines "$todo")
+
+	local rc=0
+	_upgrade_todo "$todo" "$template" "false" || rc=$?
+	[[ "$rc" -eq 0 ]] && print_result "Custom-section upgrade succeeds" 0 \
+		|| print_result "Custom-section upgrade succeeds" 1 "rc=$rc"
+
+	local line missing=0
+	while IFS= read -r line; do
+		[[ -n "$line" ]] || continue
+		grep -qxF -- "$line" "$todo" || {
+			missing=$((missing + 1))
+			printf '       missing: %s\n' "$line"
+		}
+	done <<<"$expected"
+	[[ "$missing" -eq 0 ]] && print_result "Every task and continuation line survives" 0 \
+		|| print_result "Every task and continuation line survives" 1 "$missing missing"
+
+	task_in_section "$todo" "Queued" "t700" \
+		&& print_result "t700 stays under ## Queued" 0 || print_result "t700 stays under ## Queued" 1
+	task_in_section "$todo" "Phase 2: Launch" "P2-01" \
+		&& print_result "P2-01 stays under its phase heading" 0 \
+		|| print_result "P2-01 stays under its phase heading" 1
+	task_in_section "$todo" "Weekly Routines" "r001" \
+		&& print_result "r001 stays under its routine heading" 0 \
+		|| print_result "r001 stays under its routine heading" 1
+	task_in_section "$todo" "Backlog" "t201" \
+		&& print_result "t201 still mapped into Backlog" 0 || print_result "t201 still mapped into Backlog" 1
+	grep -q "<!--TOON:backlog" "$todo" \
+		&& print_result "Template markers present after custom-section upgrade" 0 \
+		|| print_result "Template markers present after custom-section upgrade" 1
+	return 0
+}
+
+test_upgrade_fails_closed_on_loss() {
+	echo ""
+	echo "=== Testing _upgrade_todo fails closed when tasks cannot be placed (GH#33375) ==="
+	local todo="$TEST_ROOT/unplaceable.md" template="$TEST_ROOT/template.md"
+	write_new_template "$template"
+	# A task before any "## " heading has no section to carry it over.
+	cat >"$todo" <<'EOF'
+# TODO
+
+- [ ] t800 Task in the preamble with no section
+
+## Backlog
+
+- [ ] t801 Placeable task
+EOF
+	local before_sum after_sum
+	before_sum=$(cksum <"$todo")
+
+	local rc=0
+	_upgrade_todo "$todo" "$template" "false" || rc=$?
+	after_sum=$(cksum <"$todo")
+
+	[[ "$rc" -ne 0 ]] && print_result "Unplaceable task makes the upgrade return non-zero" 0 \
+		|| print_result "Unplaceable task makes the upgrade return non-zero" 1 "rc=$rc"
+	[[ "$before_sum" == "$after_sum" ]] \
+		&& print_result "Original TODO.md restored byte-for-byte with --no-backup" 0 \
+		|| print_result "Original TODO.md restored byte-for-byte with --no-backup" 1
+	return 0
+}
+
 # ---- Run all tests ----
 
 echo "test-upgrade-planning-sections.sh — _upgrade_todo multi-section preservation (t2434)"
@@ -395,6 +476,8 @@ test_extract_todo_section
 test_filter_placeholders
 test_upgrade_preserves_all_sections
 test_upgrade_empty_todo
+test_upgrade_preserves_custom_sections
+test_upgrade_fails_closed_on_loss
 
 echo ""
 echo "===================================================================================="

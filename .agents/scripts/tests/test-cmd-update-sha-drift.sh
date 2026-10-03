@@ -63,30 +63,35 @@ AUTO_UPDATE_CHECK_SH="$WORKTREE_ROOT/.agents/scripts/auto-update-helper-check.sh
 UPDATE_CHECK_SH="$WORKTREE_ROOT/.agents/scripts/aidevops-update-check.sh"
 UPDATE_LIB="$WORKTREE_ROOT/.agents/scripts/aidevops-cli/aidevops-update-lib.sh"
 
-# Test 1: aidevops.sh cmd_update references .deployed-sha in the VERSION-match branch
+# Test 1: the already-current update path checks deployed stamp drift and redeploys code.
 if grep -q '\.deployed-sha' "$AIDEVOPS_SH" &&
-	grep -q 't2706' "$AIDEVOPS_SH"; then
-	print_result "aidevops.sh cmd_update has stamp-drift check (t2706 marker)" 0
+	grep -q "\"\$deployed_sha\" != \"\$local_hash\"" "$AIDEVOPS_SH" &&
+	grep -q "diff --name-only \"\$deployed_sha\" \"\$local_hash\" -- .agents/scripts/" "$AIDEVOPS_SH" &&
+	grep -q "_run_update_setup_transaction \"\$update_output_mode\" \"\$local_hash\"" "$AIDEVOPS_SH"; then
+	print_result "aidevops.sh already-current update redeploys stamped code drift" 0
 else
-	print_result "aidevops.sh cmd_update has stamp-drift check (t2706 marker)" 1 \
-		"(expected .deployed-sha reference and t2706 marker)"
+	print_result "aidevops.sh already-current update redeploys stamped code drift" 1 \
+		"(expected stamp comparison, framework-code diff and incremental setup)"
 fi
 
 if grep -q '_update_repo_verify_files_changed' "$UPDATE_LIB" &&
-	grep -q 'skip_project_sync.*reconcile_repo_verify' "$AIDEVOPS_SH"; then
+	grep -q "_update_repo_verify_files_changed \"\$deployed_sha\" \"\$local_hash\"" "$AIDEVOPS_SH" &&
+	grep -q 'skip_project_sync.*_AIDEVOPS_UPDATE_RECONCILE_REPO_VERIFY' "$AIDEVOPS_SH" &&
+	grep -q '_update_reconcile_repo_verify' "$AIDEVOPS_SH"; then
 	print_result "lint reconciliation is changed-file gated and honours project-sync skip" 0
 else
 	print_result "lint reconciliation is changed-file gated and honours project-sync skip" 1 \
 		"(expected changed-file helper and skip_project_sync gate)"
 fi
 
-# Test 2: aidevops.sh filters for framework code paths (skips docs-only drift)
-if grep -q '\.agents/scripts/' "$AIDEVOPS_SH" &&
-	grep -q 'has_code_drift' "$AIDEVOPS_SH"; then
-	print_result "aidevops.sh filters for framework code paths" 0
+# Test 2: session-start drift detection filters framework code (skips docs-only drift).
+if grep -q '\.agents/scripts/\* | .agents/agents/\*' "$UPDATE_CHECK_SH" &&
+	grep -q 'has_code_drift=1' "$UPDATE_CHECK_SH" &&
+	grep -q "\"\$has_code_drift\" -eq 0" "$UPDATE_CHECK_SH"; then
+	print_result "aidevops-update-check.sh filters for framework code paths" 0
 else
-	print_result "aidevops.sh filters for framework code paths" 1 \
-		"(expected .agents/scripts/ case and has_code_drift variable)"
+	print_result "aidevops-update-check.sh filters for framework code paths" 1 \
+		"(expected framework path case, code-drift flag and docs-only skip)"
 fi
 
 # Test 2b: aidevops.sh uses the AI-session setup scope for update redeploys.

@@ -7,7 +7,7 @@ Universal gateway for AI model providers with analytics, caching, rate limiting,
 
 ## Core Concepts
 
-```
+```text
 Your App → AI Gateway → AI Provider (OpenAI, Anthropic, etc.)
          ↓
     Analytics, Caching, Rate Limiting, Logging
@@ -46,7 +46,7 @@ const client = new OpenAI({
 
 // Switch providers by changing model format: {provider}/{model}
 const response = await client.chat.completions.create({
-  model: 'openai/gpt-4o-mini', // or 'anthropic/claude-sonnet-4-6'
+  model: 'openai/gpt-4o-mini', // or 'anthropic/claude-sonnet-5-5'
   messages: [{ role: 'user', content: 'Hello!' }]
 });
 ```
@@ -180,7 +180,7 @@ GATEWAY_ID = "my-gateway"
 | Provider | Unified API | Provider Endpoint | Notes |
 |----------|-------------|-------------------|-------|
 | OpenAI | ✅ `openai/gpt-4o` | `/openai/*` | Full support |
-| Anthropic | ✅ `anthropic/claude-sonnet-4-6` | `/anthropic/*` | Full support |
+| Anthropic | ✅ `anthropic/claude-sonnet-5-5` | `/anthropic/*` | Full support |
 | Google AI Studio | ✅ `google-ai-studio/gemini-2.0-flash` | `/google-ai-studio/*` | Full support |
 | Workers AI | ✅ `workersai/@cf/meta/llama-3` | `/workers-ai/*` | Native integration |
 | Azure OpenAI | ✅ `azure-openai/*` | `/azure-openai/*` | Deployment names |

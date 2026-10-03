@@ -66,8 +66,12 @@ def _should_refresh_account(account: dict, target_email: str, now_ms: int) -> bo
     if not account.get("refresh", ""):
         return False
     cooldown_until = int(account.get("cooldownUntil") or 0)
-    if account.get("status") == "auth-error" and cooldown_until > now_ms:
-        return False
+    if account.get("status") == "auth-error":
+        # An auth-error account has no other exit: auto-clear zeroes its
+        # expired cooldown but keeps the status, and capacity/routing treat it
+        # as unavailable. Re-validate once the backoff expires, even when the
+        # token is far from expiry; failure re-applies backoff (GH#32927).
+        return cooldown_until <= now_ms
     expires = account.get("expires", 0)
     if expires and expires > now_ms + _EXPIRY_REFRESH_WINDOW_MS:
         return False

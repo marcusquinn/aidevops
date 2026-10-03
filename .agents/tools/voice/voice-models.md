@@ -52,6 +52,8 @@ The voice bridge (`voice-bridge.py`) implements three TTS engines:
 | **macOS Say** | Built-in, zero deps, default `Samantha`, macOS only | `voice-bridge.py:182-205` |
 | **FacebookMMS** | 1,100+ languages, requires `transformers`, CPU-friendly | `voice-bridge.py:208-238` |
 
+EdgeTTS uses an unofficial consumer endpoint; do not assume commercial-use rights or service guarantees for advertising. Use a licensed provider for commercial delivery.
+
 ```bash
 voice-helper.sh talk  # Use via voice bridge
 ```
@@ -89,6 +91,7 @@ Voice bridge (`voice-bridge.py:99-115`) implements `FasterWhisperSTT`. Speech-to
 | **Lightweight/embedded** | Kokoro (82M) or Piper | Whisper Tiny/Base |
 | **Highest quality (cloud)** | ElevenLabs | ElevenLabs Scribe v2 |
 | **Best value (cloud)** | MiniMax ($5/mo, 120 min) | Groq Whisper |
+| **Compare many cloud voices with one key** | NanoGPT (`cloud-tts-apis.md`) | — |
 | **Free cloud** | EdgeTTS | Groq Whisper |
 | **Meeting transcription** | — | Whisper Large v3 Turbo or Groq |
 | **YouTube transcription** | — | See `transcription.md` pipeline |

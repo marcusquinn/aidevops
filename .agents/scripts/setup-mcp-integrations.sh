@@ -330,18 +330,15 @@ _install_dataforseo() {
 	print_warning "DataForSEO MCP requires API credentials"
 	print_info "Get credentials from: https://app.dataforseo.com/"
 	echo ""
-	print_info "Store in ~/.config/aidevops/credentials.sh:"
-	print_info "  export DATAFORSEO_USERNAME=\"your_username\""
-	print_info "  export DATAFORSEO_PASSWORD=\"your_password\""
+	print_info "Store with aidevops secret set DATAFORSEO_API_LOGIN and"
+	print_info "aidevops secret set DATAFORSEO_API_PASSWORD (API password, not dashboard password)."
 	echo ""
-	print_info "Or use the helper script:"
-	print_info "  bash ~/.aidevops/agents/scripts/setup-local-api-keys.sh set DATAFORSEO_USERNAME your_username"
-	print_info "  bash ~/.aidevops/agents/scripts/setup-local-api-keys.sh set DATAFORSEO_PASSWORD your_password"
+	print_info "Alternatively, export DATAFORSEO_USERNAME and DATAFORSEO_PASSWORD in credentials.sh."
 	echo ""
 	print_info "For OpenCode, use bash wrapper pattern in opencode.json:"
 	print_info '  "dataforseo": {'
 	print_info '    "type": "local",'
-	print_info '    "command": ["/bin/bash", "-c", "source ~/.config/aidevops/credentials.sh && DATAFORSEO_USERNAME=\$DATAFORSEO_USERNAME DATAFORSEO_PASSWORD=\$DATAFORSEO_PASSWORD npx dataforseo-mcp-server"],'
+	print_info '    "command": ["/bin/bash", "-c", "source \"$HOME/.aidevops/agents/scripts/dataforseo-credentials.sh\" && dataforseo_load_credentials && exec npx dataforseo-mcp-server"],'
 	print_info '    "enabled": true'
 	print_info '  }'
 	echo ""

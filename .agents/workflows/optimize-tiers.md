@@ -30,14 +30,28 @@ Topic: $ARGUMENTS
 Show current tier dispatch telemetry from production data:
 
 ```bash
-~/.aidevops/agents/scripts/dispatch-ledger-helper.sh tier-report
+~/.aidevops/agents/scripts/dispatch-ledger-helper.sh tier-report [--days N] [--json]
 ```
 
-Outputs include dispatches, outcomes, escalation counts, pass rates, and dominant
-failure reasons by tier. Telemetry is recorded automatically by:
+The report covers attempts dispatched in the last 30 days by default; `--days 0`
+reads all history and `--json` prints the raw summary. Terminal outcomes count
+in the window of their dispatch. Sections:
+
+- Dispatches, outcomes, and escalation reasons, with dispatch counts by tier
+- Pass rate by tier: success over terminal outcomes
+- First-dispatch pass rate: only the first attempt per issue, the best measure
+  of solving on the first attempt
+- Pass rate by tier and `model@variant`, with deferred outcomes excluded from
+  the denominator and shown separately, so provider deferrals do not read as
+  model failures
+
+Telemetry is recorded automatically by:
 
 - `dispatch-ledger-helper.sh register` — records tier + model at dispatch time
-- `dispatch-ledger-helper.sh record-outcome` — records outcome + escalation reason
+- `dispatch-ledger-helper.sh record-outcome` — records outcome + escalation
+  reason, plus the model, variant, and route-attempt count that last ran. The
+  dispatch row owns tier and model; worker values only fill launches that
+  registered before routing
 - Append-only log: `~/.aidevops/.agent-workspace/tmp/tier-telemetry.jsonl`
 
 ### Opt-in issue-level model A/B observation
@@ -97,20 +111,25 @@ The standard-only preset generates this shape:
   "enrollment": {"mode": "new-standard-issues"},
   "arms": [
     {"name": "luna-max", "model": "openai/gpt-6-luna", "variant": "max"},
-    {"name": "terra-low", "model": "openai/gpt-5.6-terra", "variant": "low"}
+    {"name": "terra-medium", "model": "openai/gpt-5.6-terra", "variant": "medium"}
   ]
 }
 ```
 
+`start` refuses `none`, `minimal` and `low` arm variants. Background and
+subagent work never runs below medium, so the routing floor would silently
+raise such an arm and mislabel the comparison (GH#32539 compared medium vs
+medium for this reason). Older configs that declare `low` still validate for
+reporting.
+
 A provider-family arm replaces `model`/`variant` with a route per tier. Omit
-`variant` to keep the provider default (Haiku 4.5 has no low-effort variant).
-Both arms must use the same form.
+`variant` to keep the provider default. Both arms must use the same form.
 
 ```json
 {"name": "anthropic", "tiers": {
-  "simple": {"model": "anthropic/claude-haiku-4-5"},
-  "standard": {"model": "anthropic/claude-sonnet-5", "variant": "low"},
-  "thinking": {"model": "anthropic/claude-opus-5-5", "variant": "medium"}
+  "simple": {"model": "anthropic/claude-haiku-4-5", "variant": "high"},
+  "standard": {"model": "anthropic/claude-sonnet-5-5", "variant": "medium"},
+  "thinking": {"model": "anthropic/claude-opus-5-5", "variant": "high"}
 }}
 ```
 

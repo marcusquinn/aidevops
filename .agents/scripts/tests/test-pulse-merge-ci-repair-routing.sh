@@ -204,6 +204,9 @@ if [[ "${1:-} ${2:-}" == "run view" ]]; then
 	log_exit_143)
 		printf '%s\n' 'Lint Run ##[error]Process completed with exit code 143.'
 		;;
+	billing_blocked | zero_step_no_annotation)
+		# A job GitHub never started has no failed log output.
+		;;
 	*)
 		printf '%s\n' 'Lint Run actual lint error in source file'
 		;;
@@ -214,6 +217,7 @@ fi
 GHEOF
 	_append_gh_auth_mock_routes
 	_append_gh_mock_routes
+	_append_gh_annotation_mock_routes
 	_append_gh_ownership_mock_routes
 	chmod +x "${TEST_ROOT}/bin/gh"
 	return 0
@@ -247,7 +251,7 @@ _append_gh_mock_routes() {
 		fi
 		if [[ "$*" == *"name,bucket,state,link"* ]]; then
 			case "${TEST_CHECK_SCENARIO:-terminal_failure}:${_is_required}" in
-				terminal_failure:1 | log_exit_143:1 | required_and_advisory:1 | nonrequired_baseline:1 | infra_registry_rate_limit:1 | infra_dockerhub_rate_limit:1 | infra_github_api_rate_limit:1)
+				terminal_failure:1 | log_exit_143:1 | required_and_advisory:1 | nonrequired_baseline:1 | infra_registry_rate_limit:1 | infra_dockerhub_rate_limit:1 | infra_github_api_rate_limit:1 | billing_blocked:1 | zero_step_no_annotation:1)
 					printf '%s\n' '[{"name":"Lint","bucket":"fail","state":"FAILURE","link":"https://github.com/owner/repo/actions/runs/123/job/456"}]'
 					;;
 				nonrequired_baseline:0)
@@ -326,6 +330,25 @@ fi
 if [[ "${1:-}" == "api" && "${2:-}" == "repos/owner/repo/pulls/100" ]]; then
 	printf '%s\t%s\t%s\n' "$(<"${TEST_ROOT}/pr-state.txt")" "$TEST_PR_HEAD_SHA" \
 		"$(<"${TEST_ROOT}/pr-labels.txt")"
+	exit 0
+fi
+GHEOF
+	return 0
+}
+
+# GH#32869: check-run annotations for the Actions billing classifier.
+_append_gh_annotation_mock_routes() {
+	cat >>"${TEST_ROOT}/bin/gh" <<'GHEOF'
+if [[ "${1:-}" == "api" && "${2:-}" == "repos/owner/repo/check-runs/456/annotations" ]]; then
+	printf 'annotations %s\n' "${2:-}" >>"${TEST_ROOT}/gh-annotations.log"
+	case "${TEST_CHECK_SCENARIO:-terminal_failure}" in
+	billing_blocked)
+		printf '%s\n' '[{"path":".github","annotation_level":"failure","title":"","message":"The job was not started because recent account payments have failed or your spending limit needs to be increased. Please check the '"'"'Billing & plans'"'"' section in your settings","raw_details":""}]'
+		;;
+	*)
+		printf '[]\n'
+		;;
+	esac
 	exit 0
 fi
 GHEOF
@@ -623,6 +646,7 @@ EOF
 define_ci_dispatch_helpers() {
 	local fns=(
 		_ci_check_url_has_infra_failure_log
+		_ci_check_url_has_billing_block
 		_ci_actionable_failed_checks_markdown
 		_ci_check_evidence_role
 		_ci_filter_nonrequired_baseline_evidence
@@ -639,6 +663,9 @@ define_ci_dispatch_helpers() {
 		# shellcheck disable=SC1090
 		eval "$fn_src"
 	done
+	unset _CI_INFRA_SIGNATURE_LIB_LOADED
+	# shellcheck source=../ci-infra-signature-lib.sh
+	source "${FEEDBACK_CI_REPAIR_SCRIPT%/*}/ci-infra-signature-lib.sh" || return 1
 	return 0
 }
 
@@ -1401,6 +1428,56 @@ test_ci_feedback_skips_github_api_rate_limit_failure() {
 	return 0
 }
 
+# GH#32869: a job GitHub refused to start for Actions billing/spending reasons
+# is a capability failure — no code repair and no rerun.
+test_ci_feedback_skips_billing_blocked_check() {
+	setup_test_env
+	TEST_CHECK_SCENARIO="billing_blocked"
+	define_feedback_helpers || { print_result "defines feedback helpers for billing block" 1 "could not extract feedback helpers"; teardown_test_env; return 0; }
+
+	_dispatch_ci_fix_worker "100" "owner/repo" "42"
+	sleep 1
+	local prompt_file=""
+	prompt_file=$(find "$AIDEVOPS_CI_REPAIR_STATE_DIR" -name prompt.md -type f -print -quit 2>/dev/null) || prompt_file=""
+	if [[ -n "$prompt_file" ]] || grep -qF 'CI Repair Feedback' "${TEST_ROOT}/issue-body.txt"; then
+		print_result "billing-blocked check does not dispatch code repair" 1 "Dispatch log: $(cat "$GH_LOG")"
+	elif [[ -s "${TEST_ROOT}/infra-rerun-calls.log" ]]; then
+		print_result "billing-blocked check does not request a rerun" 1 "Rerun calls: $(cat "${TEST_ROOT}/infra-rerun-calls.log")"
+	elif ! grep -qF "check 'Lint' classified as Actions billing/spending block — no code repair, no rerun" "$LOGFILE"; then
+		print_result "billing-blocked check records billing classification" 1 "Log: $(cat "$LOGFILE")"
+	else
+		print_result "billing-blocked check skips code repair and rerun" 0
+	fi
+	teardown_test_env
+	return 0
+}
+
+# A zero-step job without a billing annotation keeps the existing routing:
+# no infra log signature, so it remains actionable repair evidence.
+test_ci_feedback_keeps_zero_step_check_without_billing_annotation() {
+	setup_test_env
+	TEST_CHECK_SCENARIO="zero_step_no_annotation"
+	define_feedback_helpers || { print_result "defines feedback helpers for zero-step job" 1 "could not extract feedback helpers"; teardown_test_env; return 0; }
+
+	_dispatch_ci_fix_worker "100" "owner/repo" "42"
+	sleep 1
+	local prompt_file=""
+	prompt_file=$(find "$AIDEVOPS_CI_REPAIR_STATE_DIR" -name prompt.md -type f -print -quit)
+	if grep -qF 'billing/spending block' "$LOGFILE"; then
+		print_result "zero-step check without annotation is not billing-classified" 1 "Log: $(cat "$LOGFILE")"
+	elif ! grep -qF 'annotations repos/owner/repo/check-runs/456/annotations' "${TEST_ROOT}/gh-annotations.log" 2>/dev/null; then
+		print_result "zero-step check reads check-run annotations" 1 "Annotations lookup missing"
+	elif [[ -s "${TEST_ROOT}/infra-rerun-calls.log" ]]; then
+		print_result "zero-step check without annotation does not request a rerun" 1 "Rerun calls: $(cat "${TEST_ROOT}/infra-rerun-calls.log")"
+	elif [[ -z "$prompt_file" ]] || ! grep -qF '**Lint**: failure — [check URL](https://github.com/owner/repo/actions/runs/123/job/456)' "$prompt_file"; then
+		print_result "zero-step check without annotation keeps repair routing" 1 "Dispatch log: $(cat "$GH_LOG")"
+	else
+		print_result "zero-step check without billing annotation keeps existing routing" 0
+	fi
+	teardown_test_env
+	return 0
+}
+
 test_ci_feedback_owner_arrives_during_routing() {
 	setup_test_env
 	define_feedback_helpers || return 1
@@ -1628,6 +1705,8 @@ main() {
 	test_ci_feedback_skips_registry_rate_limit_failure
 	test_ci_feedback_skips_dockerhub_pull_rate_limit_failure
 	test_ci_feedback_skips_github_api_rate_limit_failure
+	test_ci_feedback_skips_billing_blocked_check
+	test_ci_feedback_keeps_zero_step_check_without_billing_annotation
 	test_ci_feedback_owner_arrives_during_routing
 	test_ci_repair_preserves_pr_until_launch_retries_exhausted
 	test_ci_repair_recovers_one_stale_lease_then_exhausts

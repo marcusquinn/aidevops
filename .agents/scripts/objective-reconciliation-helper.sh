@@ -132,6 +132,17 @@ _objective_release_append_lock() {
 	return 0
 }
 
+# GH#32938: parse line by line. `jq -s` fails the whole tail on one torn
+# append, which blanked every disposition (and its suppress flags) for weeks.
+_objective_read_evidence() {
+	local evidence_file="$1"
+	local evidence_limit="$2"
+	tail -n "$evidence_limit" "$evidence_file" 2>/dev/null | jq -Rsc \
+		--arg object_type "$OBJECTIVE_JSON_TYPE_OBJECT" \
+		'[split("\n")[] | fromjson? | select(type == $object_type)]' 2>/dev/null || printf '[]'
+	return 0
+}
+
 _objective_record_outcome() {
 	local repo="$1"
 	local issue_number="$2"
@@ -214,8 +225,7 @@ _objective_disposition() {
 	}
 	[[ "$evidence_limit" =~ ^[1-9][0-9]*$ ]] || evidence_limit=2000
 	if [[ -s "$evidence_file" ]]; then
-		evidence_json=$(tail -n "$evidence_limit" "$evidence_file" 2>/dev/null | jq -sc \
-			--arg object_type "$OBJECTIVE_JSON_TYPE_OBJECT" '[.[] | select(type == $object_type)]') || evidence_json='[]'
+		evidence_json=$(_objective_read_evidence "$evidence_file" "$evidence_limit")
 	fi
 	if [[ -s "$state_file" ]]; then
 		state_json=$(jq -c '.' "$state_file" 2>/dev/null) || state_json="$OBJECTIVE_EMPTY_STATE"
@@ -290,8 +300,7 @@ _objective_attach_durable_evidence() {
 		return 0
 	fi
 	local evidence_json="[]"
-	evidence_json=$(tail -n "$evidence_limit" "$evidence_file" 2>/dev/null | jq -sc \
-		--arg object_type "$OBJECTIVE_JSON_TYPE_OBJECT" '[.[] | select(type == $object_type)]') || evidence_json="[]"
+	evidence_json=$(_objective_read_evidence "$evidence_file" "$evidence_limit")
 	jq -nc --arg repo "$repo" --argjson input "$input_json" --argjson evidence "$evidence_json" \
 		--arg event_completed "$OBJECTIVE_EVENT_COMPLETED" --arg event_failed "$OBJECTIVE_EVENT_FAILED" \
 		--arg event_deferred "$OBJECTIVE_EVENT_DEFERRED" '

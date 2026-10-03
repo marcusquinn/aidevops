@@ -49,29 +49,12 @@ assert_contains() {
 
 write_model_databases() {
 	local registry_db="$1"
-	local memory_db="$2"
-	local scoring_db="$3"
 
 	sqlite3 "$registry_db" <<'SQL'
 CREATE TABLE models (model_id TEXT, provider TEXT, tier TEXT, context_window INTEGER, input_price REAL, output_price REAL);
 CREATE TABLE subagent_models (tier TEXT, model_id TEXT);
 INSERT INTO models VALUES ('fixture-model', 'Fixture', 'high', 200000, 1.0, 2.0);
 INSERT INTO subagent_models VALUES ('opus', 'fixture-model');
-SQL
-	sqlite3 "$memory_db" <<'SQL'
-CREATE TABLE learnings (type TEXT, project_path TEXT, tags TEXT, content TEXT, created_at TEXT);
-INSERT INTO learnings VALUES ('SUCCESS_PATTERN', '/fixture/repo', 'model:thinking feature', 'fixture', '2026-07-22T00:00:00Z');
-SQL
-	sqlite3 "$scoring_db" <<'SQL'
-CREATE TABLE responses (response_id TEXT, model_id TEXT, prompt_id TEXT, response_time REAL);
-CREATE TABLE scores (response_id TEXT, criterion TEXT, score REAL);
-CREATE TABLE comparisons (prompt_id TEXT, winner_id TEXT);
-INSERT INTO responses VALUES ('response-1', 'fixture-model', 'prompt-1', 1.5);
-INSERT INTO scores VALUES ('response-1', 'correctness', 5.0);
-INSERT INTO scores VALUES ('response-1', 'completeness', 4.0);
-INSERT INTO scores VALUES ('response-1', 'code_quality', 5.0);
-INSERT INTO scores VALUES ('response-1', 'clarity', 4.0);
-INSERT INTO comparisons VALUES ('prompt-1', 'response-1');
 SQL
 	return 0
 }
@@ -105,6 +88,7 @@ generate_pointer_files() {
 	source "$REPO_ROOT/.agents/scripts/aidevops-cli/aidevops-init-lib.sh"
 	_scope_includes() { return 0; }
 	_init_scaffold_design_md() { return 0; }
+	_init_scaffold_keywords() { return 0; }
 	scaffold_repo_courtesy_files() { return 0; }
 
 	_init_scaffold_scope_gated_files "$output_root" standard fixture false
@@ -122,33 +106,17 @@ generate_pointer_files() {
 generate_model_outputs() {
 	local output_root="$1"
 	local registry_db="$TEST_ROOT/model-registry.db"
-	local memory_dir="$TEST_ROOT/memory"
-	local scoring_db="$TEST_ROOT/response-scoring.db"
-	local mode
-	mkdir -p "$memory_dir"
-	write_model_databases "$registry_db" "$memory_dir/memory.db" "$scoring_db"
+	write_model_databases "$registry_db"
 
-	for mode in all global performance; do
-		MODEL_REGISTRY_DB="$registry_db" \
-			AIDEVOPS_MEMORY_DIR="$memory_dir" \
-			SCORING_DB_OVERRIDE="$scoring_db" \
-			"$MODEL_SCRIPT" --mode "$mode" \
-			--output "$output_root/MODELS-$mode.md" \
-			--repo-path /fixture/repo --quiet
-	done
-	assert_contains "| fixture-model | Fixture | opus | 200K | \$1.00 | \$2.00 |" \
-		"$output_root/MODELS-all.md"
+	MODEL_REGISTRY_DB="$registry_db" \
+		"$MODEL_SCRIPT" \
+		--output "$output_root/MODELS-global.md" --quiet
 	assert_contains "| fixture-model | Fixture | opus | 200K | \$1.00 | \$2.00 |" \
 		"$output_root/MODELS-global.md"
-	assert_contains '| fixture-model | 1 | 4.55/5.0 | 1.5 |' \
-		"$output_root/MODELS-performance.md"
 
 	MODEL_REGISTRY_DB="$TEST_ROOT/missing-registry.db" \
-		AIDEVOPS_MEMORY_DIR="$TEST_ROOT/missing-memory" \
-		SCORING_DB_OVERRIDE="$TEST_ROOT/missing-scoring.db" \
-		"$MODEL_SCRIPT" --mode performance \
-		--output "$output_root/MODELS-performance-empty.md" \
-		--repo-path /fixture/repo --quiet
+		"$MODEL_SCRIPT" \
+		--output "$output_root/MODELS-global-empty.md" --quiet
 	return 0
 }
 
@@ -179,10 +147,8 @@ run_default_markdownlint() {
 		"$output_root/.github/copilot-instructions.md"
 		"$output_root/TODO.md"
 		"$output_root/todo/PLANS.md"
-		"$output_root/MODELS-all.md"
 		"$output_root/MODELS-global.md"
-		"$output_root/MODELS-performance.md"
-		"$output_root/MODELS-performance-empty.md"
+		"$output_root/MODELS-global-empty.md"
 		"$output_root/metrics-populated/repo-metrics.md"
 		"$output_root/metrics-empty/repo-metrics.md"
 	)

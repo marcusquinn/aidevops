@@ -50,10 +50,10 @@ chain until a healthy approved provider is found.
 
 ```yaml
 fallback-chain:
-  - anthropic/claude-sonnet-4-6
+  - anthropic/claude-sonnet-5-5
   - openai/gpt-5.4
   - google/gemini-2.5-pro
-  - openrouter/anthropic/claude-sonnet-4-6
+  - openrouter/anthropic/claude-sonnet-5-5
 ```
 
 > **Note:** codex/code-completion models (gpt-5.3-codex, gpt-5.4-codex) are NOT agentic and must never appear in fallback chains. See `configs/model-routing-table.json` for the canonical tier→model mappings.
@@ -71,8 +71,7 @@ fallback-chain:
 2. Edit or create a provider profile only when durable capability, compatibility,
    cost, or context-limit evidence is needed.
 3. Update mapping evidence in `tools/context/model-routing.md`.
-4. Update `compare-models-helper.sh` `MODEL_DATA` if applicable.
-5. Run `model-registry-helper.sh sync --force && model-registry-helper.sh check`.
+4. Run `model-registry-helper.sh sync --force && model-registry-helper.sh check`.
 
 ## Model Registry
 
@@ -91,7 +90,7 @@ model-registry-helper.sh diff          # Registry vs local config
 
 - `tools/ai-assistants/fallback-chains.md` — fallback config
 - `tools/context/model-routing.md` — cost-aware routing
-- `scripts/compare-models-helper.sh discover --probe` — discovery
+- `scripts/compare-models-helper.sh list` — registry-backed model listing
 - `model-registry-helper.sh` — maintenance
 - `fallback-chain-helper.sh` — resolution
 - `tools/ai-assistants/headless-dispatch.md` — CLI dispatch

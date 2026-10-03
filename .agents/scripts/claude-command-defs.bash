@@ -270,17 +270,6 @@ cd "$AIDEVOPS_REPO" && ./setup.sh || exit
 This deploys agents, updates commands, regenerates configs.
 Arguments: $ARGUMENTS'
 
-# --- Ralph Loop ---
-write_command "ralph-loop" \
-	"Start iterative AI development loop (Ralph Wiggum technique)" \
-	'Read ~/.aidevops/agents/workflows/ralph-loop.md and follow its instructions.
-
-Start a Ralph loop for iterative development.
-
-Arguments: $ARGUMENTS
-
-For end-to-end development, prefer `/full-loop` which handles the complete lifecycle.'
-
 # --- Full Loop ---
 write_command "full-loop" \
 	"Start end-to-end development loop (task -> preflight -> PR -> postflight -> deploy)" \
@@ -331,13 +320,6 @@ write_command "recall" \
 Search for: $ARGUMENTS
 
 **Usage:** `/recall authentication`, `/recall --recent`, `/recall --stats`'
-
-# --- Context ---
-write_command "context" \
-	"Build token-efficient AI context for complex tasks" \
-	'Read ~/.aidevops/agents/tools/context/context-builder.md and follow its instructions.
-
-Context request: $ARGUMENTS'
 
 # --- List Keys ---
 write_command "list-keys" \

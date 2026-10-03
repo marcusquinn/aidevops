@@ -9,6 +9,14 @@ session, clear a sensitive-scope hold, or replace the existing PR.
 
 ## Approval and continuation
 
+When the draft blocks ordinary redispatch (`WORKER_DRAFT_CHECKPOINT`), Pulse
+runs `pr-checkpoint-continuation-helper.sh blocked-attention OWNER/REPO ISSUE PR`.
+If the newest trusted release is the PR author's `blocked` release with no later
+coordination event, it posts one `BLOCKED_CHECKPOINT_ATTENTION` comment per head
+and release. That comment names the release ID, attempt and both exits: approve
+after correcting the brief, or close the draft to restart dispatch (GH#33132).
+It grants nothing, starts no line with an event prefix and never dispatches.
+
 1. Read fresh issue/PR metadata and coordination comments. Verify the exact
    original worker attempt has released as `blocked`, no successor owns the
    objective, and the proposed scope correction preserves the authorised outcome.

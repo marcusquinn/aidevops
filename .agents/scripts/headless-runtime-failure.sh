@@ -480,6 +480,19 @@ _hrff_build_claim_released_line() {
 	if [[ -n "$session_count_arg" ]]; then
 		machine_readable_part+=" session_count=${session_count_arg}"
 	fi
+	if [[ "$reason" == "push_policy_timeout" ]]; then
+		local repo_path="${AIDEVOPS_TERMINAL_BLOCKER_REPO_PATH:-}"
+		local branch="" head=""
+		if [[ -n "$repo_path" && -d "$repo_path" ]]; then
+			branch=$(git -C "$repo_path" symbolic-ref --quiet --short HEAD 2>/dev/null) || branch=""
+			head=$(git -C "$repo_path" rev-parse --verify HEAD 2>/dev/null) || head=""
+			# Release markers are public: omit private paths, arbitrary text and
+			# unsafe ref characters. Recovery must revalidate this exact checkpoint.
+			if [[ "$branch" =~ ^[A-Za-z0-9._/-]+$ && "$head" =~ ^[a-f0-9]{40,64}$ ]]; then
+				machine_readable_part+=" branch=${branch} head=${head}"
+			fi
+		fi
+	fi
 
 	printf '%s\n' "$machine_readable_part"
 	return 0
@@ -540,12 +553,14 @@ _hrff_prepare_terminal_blocker_release() {
 	comments_json=$(terminal_blocker_fetch_trusted_comments "$issue_number" "$repo_slug") || return 0
 	task_revision=$(terminal_blocker_task_revision \
 		"$issue_json" "$repo_slug" "$issue_number" "$repo_path") || return 0
-	mode=$(terminal_blocker_release_mode \
-		"$comments_json" "$task_revision" "$blocker_fingerprint") || return 0
+	# GH#33025: the login that authors this runner's releases also recognises
+	# its own earlier observations when GitHub reports it as a collaborator.
+	mode=$(TERMINAL_BLOCKER_SELF_LOGIN="$(_hrff_resolve_release_runner_login)" \
+		terminal_blocker_release_mode "$comments_json" "$task_revision" "$blocker_fingerprint") || return 0
 	case "$mode" in
 	first)
 		_HRFF_TERMINAL_BLOCKER_FRAGMENT=$(terminal_blocker_observation_fragment \
-			"$task_revision" "$blocker_fingerprint") || _HRFF_TERMINAL_BLOCKER_FRAGMENT=""
+			"$task_revision" "$blocker_fingerprint" "$mode") || _HRFF_TERMINAL_BLOCKER_FRAGMENT=""
 		;;
 	circuit)
 		_HRFF_TERMINAL_BLOCKER_MODE="circuit"
@@ -576,6 +591,49 @@ _hrff_apply_terminal_permission_hold() {
 	return 0
 }
 
+# t18514/GH#32754: hand a newly opened circuit to this runner's pulse
+# supervisor, which owns AI brief/environment recovery. Best-effort: the queue
+# grants nothing and a missed enqueue is backfilled by the helper's seed pass.
+_hrff_enqueue_blocker_recovery() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local helper="${SCRIPT_DIR:-${BASH_SOURCE[0]%/*}}/terminal-blocker-recovery-helper.sh"
+	local reason=""
+	[[ -f "$helper" ]] || return 0
+	if declare -F _terminal_blocker_reason >/dev/null 2>&1; then
+		reason=$(_terminal_blocker_reason "${AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT:-}") || reason=""
+	fi
+	# The helper normalises an empty or unrecognised reason to its unknown class.
+	bash "$helper" enqueue "$repo_slug" "$issue_number" "$reason" >/dev/null 2>&1 ||
+		print_warning "Blocker recovery enqueue failed for #${issue_number} (seed pass will backfill)"
+	return 0
+}
+
+#######################################
+# Project exactly one status:blocked while a terminal-blocker circuit holds
+# dispatch (GH#33138), remove the runner assignee and unlock. The matching
+# release to status:available is owned by terminal-blocker-recovery-helper.sh
+# when the circuit re-arms (trusted retry or relevant revision).
+#
+# Args: $1 = issue_number, $2 = repo_slug
+#######################################
+_hrff_hold_terminal_blocker_circuit() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local runner_name=""
+	local -a hold_args=()
+
+	runner_name=$(_hrff_resolve_release_runner_login)
+	[[ -z "$runner_name" ]] || hold_args+=(--remove-assignee "$runner_name")
+	if declare -F set_issue_status >/dev/null 2>&1; then
+		set_issue_status "$issue_number" "$repo_slug" blocked \
+			${hold_args[@]+"${hold_args[@]}"} >/dev/null 2>&1 ||
+			print_warning "Failed to project status:blocked on #${issue_number} (non-fatal)"
+	fi
+	_unlock_issue_after_dispatch_release "$issue_number" "$repo_slug"
+	return 0
+}
+
 _hrff_handle_terminal_blocker_release() {
 	local issue_number="$1"
 	local repo_slug="$2"
@@ -590,12 +648,13 @@ _hrff_handle_terminal_blocker_release() {
 			return 11
 		fi
 		print_info "Opened unchanged terminal-blocker circuit on #${issue_number}"
-		_hrff_release_rate_limit_circuit_cleanup "$issue_number" "$repo_slug"
+		_hrff_enqueue_blocker_recovery "$issue_number" "$repo_slug"
+		_hrff_hold_terminal_blocker_circuit "$issue_number" "$repo_slug"
 		return 10
 		;;
 	open)
 		print_info "Unchanged terminal-blocker circuit already active on #${issue_number}; suppressing duplicate release diagnostics"
-		_hrff_release_rate_limit_circuit_cleanup "$issue_number" "$repo_slug"
+		_hrff_hold_terminal_blocker_circuit "$issue_number" "$repo_slug"
 		return 10
 		;;
 	esac
@@ -662,13 +721,15 @@ _release_dispatch_claim() {
 	runner_name=$(_hrff_resolve_release_runner_login)
 	machine_readable_part=$(_hrff_build_claim_released_line "$reason" "$runner_name" "$exit_code_arg" "$session_count_arg")
 	local terminal_blocker_fragment=""
-	if [[ "$reason" == "blocked" ]]; then
+	case "$reason" in
+	blocked | push_policy_timeout | network_policy_timeout)
 		local terminal_blocker_rc=0
 		_hrff_handle_terminal_blocker_release "$issue_number" "$repo_slug" "$machine_readable_part" || terminal_blocker_rc=$?
 		[[ "$terminal_blocker_rc" -eq 10 ]] && return 0
 		[[ "$terminal_blocker_rc" -eq 11 ]] && return 1
 		terminal_blocker_fragment="${_HRFF_TERMINAL_BLOCKER_FRAGMENT:-}"
-	fi
+		;;
+	esac
 	if [[ "$reason" == "${_HRW_REASON_DRAFT_CHECKPOINT:-worker_draft_checkpoint}" ]]; then
 		terminal_blocker_fragment=$'\nDraft checkpoint: partial work is blocked. Next action: verify the exact head and current brief before resuming.\n'
 	fi
@@ -681,6 +742,28 @@ ${machine_readable_part}${terminal_blocker_fragment}
 		return 1
 	fi
 	print_info "Released claim on #${issue_number} (reason: ${reason})"
+	_hrff_project_post_release_state "$issue_number" "$repo_slug" "$runner_name" "$reason"
+	return 0
+}
+
+#######################################
+# Project issue lifecycle state after a persisted CLAIM_RELEASED comment.
+# Reason-specific paths preserve state that authoritative handoffs already
+# projected; the default path clears active status so re-dispatch is not
+# blocked. Always non-fatal.
+#
+# Args:
+#   $1 = issue_number
+#   $2 = repo_slug
+#   $3 = runner_name
+#   $4 = reason
+#######################################
+_hrff_project_post_release_state() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local runner_name="$3"
+	local reason="$4"
+
 	if [[ "$reason" == "${_HRW_REASON_OWNERSHIP_LOST:-worker_ownership_lost}" ]]; then
 		print_info "Preserving live issue ownership for #${issue_number} after worker ownership loss"
 		return 0
@@ -692,6 +775,16 @@ ${machine_readable_part}${terminal_blocker_fragment}
 		fi
 		_unlock_issue_after_dispatch_release "$issue_number" "$repo_slug"
 		print_info "Projected draft checkpoint #${issue_number} as blocked partial work"
+		return 0
+	fi
+	# GH#33287: ready-PR handoffs have already projected and verified
+	# status:in-review with the runner assigned. The generic projection counts
+	# only closing keywords, so a deliberate `For #N` PR would reset the issue
+	# to status:available and orphan the open PR. Keep that state; only unlock.
+	if [[ "$reason" == "${_HRW_REASON_READY_MISSING_LINKAGE:-worker_ready_missing_linkage}" ||
+		"$reason" == "${_HRW_REASON_READY_MISSING_SUMMARY:-worker_ready_missing_summary}" ]]; then
+		_unlock_issue_after_dispatch_release "$issue_number" "$repo_slug"
+		print_info "Preserved in-review handoff on #${issue_number} (reason: ${reason})"
 		return 0
 	fi
 

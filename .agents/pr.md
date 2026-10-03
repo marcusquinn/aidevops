@@ -63,6 +63,7 @@ PR agent: earned media strategy, press positioning, newsworthiness, newsjacking,
 | Draft a same-day comment | `public-relations/reactive-comment.md` |
 | Monitor for newsjacking opportunities | `public-relations/newsjack-monitor.md` |
 | Track brand/keyword coverage | `public-relations/coverage-tracker.md` |
+| Keep releases, pitches and third-party posts on-message for search | `aidevops keywords brief --asset pr` (canonical entity names, topic associations, varied anchors; `seo/keywords-standard.md`) |
 | Schedule recurring PR work | `public-relations/routines.md` and `workflows/routine.md` |
 
 ## Open-source/direct-source principle

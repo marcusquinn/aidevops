@@ -23,13 +23,25 @@ set -euo pipefail
 # Per AGENTS.md "Gate design — ratchet, not absolute (t2228 class)":
 # "security/credentials checks are absolute — a new violation is P1 regardless."
 
+# Staged-diff wrapper. AIDEVOPS_PRE_COMMIT_BASE (optional) overrides the
+# comparison base, so a temporary index built from a commit other than HEAD
+# (planning publisher) only validates what it changed relative to that base.
+staged_diff() {
+	if [[ -n "${AIDEVOPS_PRE_COMMIT_BASE:-}" ]]; then
+		git diff --cached "$AIDEVOPS_PRE_COMMIT_BASE" "$@"
+	else
+		git diff --cached "$@"
+	fi
+	return $?
+}
+
 # Return file content at HEAD for a given path. Prints empty output for new
 # files or when HEAD does not yet exist (first commit). Always exits 0 so the
 # callers can `head_content=$(_get_head_content "$file")` without tripping
 # `set -e`.
 _get_head_content() {
 	local _file="$1"
-	git show "HEAD:$_file" 2>/dev/null || true
+	git show "${AIDEVOPS_PRE_COMMIT_BASE:-HEAD}:$_file" 2>/dev/null || true
 	return 0
 }
 
@@ -55,7 +67,7 @@ _make_head_temp() {
 
 # Get list of modified shell files
 get_modified_shell_files() {
-	git diff --cached --name-only --diff-filter=ACM | grep '\.sh$' || true
+	staged_diff --name-only --diff-filter=ACM | grep '\.sh$' || true
 	return 0
 }
 
@@ -83,7 +95,7 @@ get_modified_shell_files() {
 #   - TODO.md doesn't exist in HEAD (first commit) → any duplicate fails.
 validate_duplicate_task_ids() {
 	# Only check if TODO.md is staged
-	if ! git diff --cached --name-only | grep -q '^TODO\.md$'; then
+	if ! staged_diff --name-only | grep -q '^TODO\.md$'; then
 		return 0
 	fi
 
@@ -133,7 +145,7 @@ validate_duplicate_task_ids() {
 #   - Staged value <  HEAD value      -> FAIL (stale worktree regression)
 #   - Non-numeric in either           -> skip (first-commit or legacy)
 validate_task_counter_monotonic() {
-	if ! git diff --cached --name-only | grep -q '^\.task-counter$'; then
+	if ! staged_diff --name-only | grep -q '^\.task-counter$'; then
 		return 0
 	fi
 
@@ -472,7 +484,7 @@ check_secrets() {
 
 	# Get staged files
 	local staged_files
-	staged_files=$(git diff --cached --name-only --diff-filter=ACMR | tr '\n' ' ')
+	staged_files=$(staged_diff --name-only --diff-filter=ACMR | tr '\n' ' ')
 
 	if [[ -z "$staged_files" ]]; then
 		print_info "No files to check for secrets"
@@ -538,7 +550,7 @@ check_quality_standards() {
 # When [ ] -> [x], require pr:# or verified: field for proof-log
 validate_todo_completions() {
 	# Only check if TODO.md is staged
-	if ! git diff --cached --name-only | grep -q '^TODO\.md$'; then
+	if ! staged_diff --name-only | grep -q '^TODO\.md$'; then
 		return 0
 	fi
 
@@ -547,7 +559,7 @@ validate_todo_completions() {
 	# Find ALL tasks (including subtasks) that changed from [ ] to [x] in this commit
 	# We need to check both top-level and subtasks
 	local newly_completed
-	newly_completed=$(git diff --cached -U0 -- TODO.md | grep -E '^\+.*- \[x\] t[0-9]+' | sed 's/^\+//' || true)
+	newly_completed=$(staged_diff -U0 -- TODO.md | grep -E '^\+.*- \[x\] t[0-9]+' | sed 's/^\+//' || true)
 
 	if [[ -z "$newly_completed" ]]; then
 		return 0
@@ -555,7 +567,7 @@ validate_todo_completions() {
 
 	# Also get lines that were already [x] (to skip them - not a transition)
 	local already_completed
-	already_completed=$(git diff --cached -U0 -- TODO.md | grep -E '^\-.*- \[x\] t[0-9]+' | sed 's/^\-//' || true)
+	already_completed=$(staged_diff -U0 -- TODO.md | grep -E '^\-.*- \[x\] t[0-9]+' | sed 's/^\-//' || true)
 
 	local task_count=0
 	local fail_count=0
@@ -701,7 +713,7 @@ _report_parent_subtask_failures() {
 
 validate_parent_subtask_blocking() {
 	# Only check if TODO.md is staged
-	if ! git diff --cached --name-only | grep -q '^TODO\.md$'; then
+	if ! staged_diff --name-only | grep -q '^TODO\.md$'; then
 		return 0
 	fi
 
@@ -716,7 +728,7 @@ validate_parent_subtask_blocking() {
 
 	# Find tasks that changed from [ ] to [x]
 	local newly_completed
-	newly_completed=$(git diff --cached -U0 -- TODO.md | grep -E '^\+.*- \[x\] t[0-9]+' | sed 's/^\+//' || true)
+	newly_completed=$(staged_diff -U0 -- TODO.md | grep -E '^\+.*- \[x\] t[0-9]+' | sed 's/^\+//' || true)
 
 	if [[ -z "$newly_completed" ]]; then
 		return 0
@@ -724,7 +736,7 @@ validate_parent_subtask_blocking() {
 
 	# Also get lines that were already [x] (to skip them)
 	local already_completed
-	already_completed=$(git diff --cached -U0 -- TODO.md | grep -E '^\-.*- \[x\] t[0-9]+' | sed 's/^\-//' || true)
+	already_completed=$(staged_diff -U0 -- TODO.md | grep -E '^\-.*- \[x\] t[0-9]+' | sed 's/^\-//' || true)
 
 	local fail_count=0
 	local failed_tasks=()
@@ -771,10 +783,30 @@ validate_parent_subtask_blocking() {
 	return 0
 }
 
-# t1039: Validate that new files in repo root are in the allowlist
+# t1039 / GH#32805: Validate new files in the repo root.
 # Prevents workers from committing ephemeral artifacts (TEST-REPORT.md, VERIFY-*.md, etc.)
+#   - aidevops framework repo: strict exact-name allowlist (_init_root_file_allowlist).
+#   - consumer repos (default "artifact-guard"): block only report/scratch-like
+#     names; standard toolchain files (tsconfig.json, Dockerfile, ...) pass.
+#   - .aidevops.json {"root_files": {"mode": "artifact-guard"|"strict",
+#     "allow": [names], "deny": [globs]}} overrides consumer behaviour.
+
+# Whole-word report/scratch terms (matched on the lowercased file name).
+_ROOT_ARTIFACT_WORD_RE='(^|[-_.])(test|tests|report|reports|verify|verification|result|results|output|summary|debug|scratch|notes)([-_.]|$)'
+# Standard lowercased base names (extension removed) for root .md / .txt files.
+_ROOT_STANDARD_MD_BASES=" readme changelog contributing license security code_of_conduct support governance maintainers authors notice roadmap upgrading migration architecture glossary agents agent claude gemini design todo models terms "
+_ROOT_STANDARD_TXT_BASES=" license notice cmakelists llms runtime "
+_ROOT_MODE_GUARD="artifact-guard"
+_ROOT_MODE_FRAMEWORK="framework"
+# jq prefix yielding the root_files object, or {} when absent or not an object.
+_ROOT_FILES_JQ_SECTION='(.root_files // {}) | (objects // {})'
+ROOT_FILES_MODE="$_ROOT_MODE_GUARD"
+ROOT_FILES_ALLOW=""
+ROOT_FILES_DENY=""
 
 # Populate the ROOT_FILE_ALLOWLIST array with permitted root-level filenames.
+# Framework repo and strict mode use it exclusively; artifact-guard mode also
+# accepts every name on it, so the guard never rejects a previously valid file.
 # Call once, then reference ${ROOT_FILE_ALLOWLIST[@]} in checks.
 _init_root_file_allowlist() {
 	ROOT_FILE_ALLOWLIST=(
@@ -786,12 +818,16 @@ _init_root_file_allowlist() {
 		".aidevops.json" ".bandit" ".gitattributes" ".gitignore" ".nvmrc"
 		".codacy.yml" ".codefactor.yml" ".coderabbit.yaml"
 		".markdownlint-cli2.jsonc" ".markdownlint.json" ".markdownlintignore"
-		".qlty/qlty.toml" ".qlty.toml" ".qltyignore" ".repomixignore"
+		".qlty/qlty.toml" ".qlty.toml" ".qltyignore"
 		".secretlintignore" ".secretlintrc.json"
 		# Tool configs (non-dotfile)
 		"biome.json"
 		"eslint.config.js" "eslint.config.mjs" "eslint.config.cjs"
 		"eslint.config.ts" "eslint.config.mts" "eslint.config.cts"
+		# Vitest resolves vitest.config.{ts,mts,cts,js,mjs,cjs}; Vitest 4
+		# test.projects lives here (GH#32799).
+		"vitest.config.js" "vitest.config.mjs" "vitest.config.cjs"
+		"vitest.config.ts" "vitest.config.mts" "vitest.config.cts"
 		# Build/package files
 		"package.json" "package-lock.json" "npm-shrinkwrap.json"
 		"pnpm-lock.yaml" "yarn.lock" "bun.lock" "bun.lockb"
@@ -801,7 +837,7 @@ _init_root_file_allowlist() {
 		# Public shell entrypoints. Implementation modules belong under
 		# .agents/scripts/aidevops-cli/ or .agents/scripts/setup/modules/.
 		# Tool configs
-		"sonar-project.properties" "repomix.config.json" "repomix-instruction.md"
+		"sonar-project.properties"
 		# Test scripts (temporary - should be moved to .agents/scripts/)
 		"test-proof-log-final.sh"
 	)
@@ -823,40 +859,203 @@ _is_root_file_allowed() {
 	return 1
 }
 
-# Report root file allowlist violations with remediation guidance.
-# Arguments: rejected filenames passed as positional args
+# Lowercase a string portably (Bash 3.2 has no ${var,,}).
+_root_lower() {
+	local value="$1"
+	printf '%s' "$value" | tr '[:upper:]' '[:lower:]'
+	return 0
+}
+
+# Arguments: $1=repo root. Returns 0 for the aidevops framework repo.
+_is_aidevops_framework_repo() {
+	local repo_root="$1"
+	if [[ -f "${repo_root}/aidevops.sh" && -f "${repo_root}/.agents/scripts/pre-commit-hook.sh" ]]; then
+		return 0
+	fi
+	return 1
+}
+
+# Read one root_files list (allow|deny) from .aidevops.json as newline-separated strings.
+# Arguments: $1=config file, $2=key
+_root_files_config_list() {
+	local config_file="$1"
+	local key="$2"
+	jq -r --arg key "$key" "${_ROOT_FILES_JQ_SECTION} | (.[\$key] // []) | (arrays // []) | .[] | strings" \
+		"$config_file" 2>/dev/null || true
+	return 0
+}
+
+# Resolve ROOT_FILES_MODE (framework|strict|artifact-guard), ROOT_FILES_ALLOW and
+# ROOT_FILES_DENY. Config problems warn and fall back to artifact-guard.
+# Arguments: $1=repo root
+_root_files_mode() {
+	local repo_root="$1"
+	local config_file="${repo_root}/.aidevops.json"
+	ROOT_FILES_MODE="$_ROOT_MODE_GUARD"
+	ROOT_FILES_ALLOW=""
+	ROOT_FILES_DENY=""
+
+	if _is_aidevops_framework_repo "$repo_root"; then
+		ROOT_FILES_MODE="$_ROOT_MODE_FRAMEWORK"
+		return 0
+	fi
+	if [[ ! -f "$config_file" ]]; then
+		return 0
+	fi
+	if ! command -v jq >/dev/null 2>&1; then
+		print_warning "jq not found; ignoring root_files in .aidevops.json (using artifact-guard)"
+		return 0
+	fi
+	if ! jq -e 'objects' "$config_file" >/dev/null 2>&1; then
+		print_warning ".aidevops.json is not a valid JSON object; using artifact-guard root file mode"
+		return 0
+	fi
+
+	local mode
+	mode=$(jq -r --arg def "$_ROOT_MODE_GUARD" "${_ROOT_FILES_JQ_SECTION} | (.mode // \$def) | tostring" \
+		"$config_file" 2>/dev/null) || mode="$_ROOT_MODE_GUARD"
+	case "$mode" in
+	artifact-guard | strict) ROOT_FILES_MODE="$mode" ;;
+	*) print_warning "Unknown root_files.mode '${mode}' in .aidevops.json; using artifact-guard" ;;
+	esac
+	ROOT_FILES_ALLOW=$(_root_files_config_list "$config_file" allow)
+	ROOT_FILES_DENY=$(_root_files_config_list "$config_file" deny)
+	return 0
+}
+
+# Arguments: $1=lowercased name, $2=newline list, $3=exact|glob
+# Returns: 0 if the name matches an entry (case-insensitive)
+_root_name_in_list() {
+	local name_lc="$1"
+	local list="$2"
+	local match_kind="$3"
+	local entry entry_lc
+	while IFS= read -r entry; do
+		[[ -z "$entry" ]] && continue
+		entry_lc=$(_root_lower "$entry")
+		if [[ "$match_kind" == "glob" ]]; then
+			# shellcheck disable=SC2053 # deny entries are intentional glob patterns
+			if [[ "$name_lc" == $entry_lc ]]; then
+				return 0
+			fi
+		elif [[ "$name_lc" == "$entry_lc" ]]; then
+			return 0
+		fi
+	done <<<"$list"
+	return 1
+}
+
+# Arguments: $1=lowercased .md/.txt/.toon name. Returns 0 for standard doc names.
+_is_standard_doc_name() {
+	local name_lc="$1"
+	local ext="${name_lc##*.}"
+	local base="${name_lc%.*}"
+	case "$ext" in
+	md)
+		[[ "$_ROOT_STANDARD_MD_BASES" == *" ${base} "* ]] && return 0
+		;;
+	txt)
+		case "$base" in
+		requirements* | constraints*) return 0 ;;
+		esac
+		[[ "$_ROOT_STANDARD_TXT_BASES" == *" ${base} "* ]] && return 0
+		;;
+	esac
+	return 1
+}
+
+# Arguments: $1=lowercased name. Returns 0 when the name looks like a work artifact.
+_is_root_artifact_name() {
+	local name_lc="$1"
+	if [[ "$name_lc" =~ $_ROOT_ARTIFACT_WORD_RE ]]; then
+		return 0
+	fi
+	case "$name_lc" in
+	*.md | *.txt | *.toon)
+		_is_standard_doc_name "$name_lc" || return 0
+		;;
+	*.log | *.patch | *.diff | *.orig | *.rej | *.bak | *.tmp | *.out | junit*.xml | coverage*)
+		return 0
+		;;
+	esac
+	return 1
+}
+
+# Arguments: $1=filename, $2=mode. Returns 0 if the new root file is permitted.
+_is_root_file_permitted() {
+	local filename="$1"
+	local mode="$2"
+	local name_lc
+	name_lc=$(_root_lower "$filename")
+
+	if [[ "$mode" == "$_ROOT_MODE_FRAMEWORK" ]]; then
+		_is_root_file_allowed "$filename" && return 0
+		return 1
+	fi
+	if _root_name_in_list "$name_lc" "$ROOT_FILES_ALLOW" exact; then
+		return 0
+	fi
+	if [[ "$mode" == "strict" ]]; then
+		_is_root_file_allowed "$filename" && return 0
+		return 1
+	fi
+	if _root_name_in_list "$name_lc" "$ROOT_FILES_DENY" glob; then
+		return 1
+	fi
+	if _is_root_file_allowed "$filename"; then
+		return 0
+	fi
+	if _is_root_artifact_name "$name_lc"; then
+		return 1
+	fi
+	return 0
+}
+
+# Report root file violations with remediation guidance.
+# Arguments: $1=mode, then rejected filenames
 _report_root_file_violations() {
-	print_error "Repo root file validation FAILED"
+	local mode="$1"
+	shift
+	local file
+	print_error "Repo root file validation FAILED (mode: ${mode})"
 	print_error ""
-	print_error "The following new files in repo root are not allowlisted:"
+	print_error "The following new repo root files look like work artifacts or are not allowed:"
 	for file in "$@"; do
 		print_error "  - $file"
 	done
 	print_error ""
-	print_error "Ephemeral artifacts (reports, verification files, etc.) should NOT"
-	print_error "be committed to the repo root. Move them to an appropriate subdirectory:"
-	print_error "  - Test reports → .agents/scripts/ or tests/"
-	print_error "  - Verification files → .agents/scripts/ or docs/"
-	print_error "  - Temporary files → should not be committed at all"
+	print_error "Do not commit reports, verification output or scratch notes to the repo root:"
+	print_error "  - Temporary notes → \${AIDEVOPS_TEMP_DIR:-~/.aidevops/.agent-workspace/tmp} (never committed)"
+	print_error "  - Work notes that should be committed → todo/research/"
 	print_error ""
-	print_error "If this file is a legitimate new root-level file, add it to the"
-	print_error "allowlist in .agents/scripts/pre-commit-hook.sh (_init_root_file_allowlist)"
+	if [[ "$mode" == "$_ROOT_MODE_FRAMEWORK" ]]; then
+		print_error "If this file is a legitimate new root-level file, add it to the"
+		print_error "allowlist in .agents/scripts/pre-commit-hook.sh (_init_root_file_allowlist)"
+	else
+		print_error "If this file is a legitimate root-level file, add its name to"
+		print_error "root_files.allow in .aidevops.json"
+	fi
 	print_error ""
 	return 0
 }
 
 validate_repo_root_files() {
-	print_info "Validating repo root files (allowlist check)..."
+	print_info "Validating repo root files..."
 
 	_init_root_file_allowlist
 
 	# Get newly added root-level files (not in subdirectories)
 	local new_root_files
-	new_root_files=$(git diff --cached --name-only --diff-filter=A | grep -E '^[^/]+$' || true)
+	new_root_files=$(staged_diff --name-only --diff-filter=A | grep -E '^[^/]+$' || true)
 
 	if [[ -z "$new_root_files" ]]; then
 		return 0
 	fi
+
+	local repo_root
+	repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || repo_root="."
+	_root_files_mode "$repo_root"
+	local mode="$ROOT_FILES_MODE"
 
 	local violations=0
 	local -a rejected_files=()
@@ -866,14 +1065,14 @@ validate_repo_root_files() {
 			continue
 		fi
 
-		if ! _is_root_file_allowed "$file"; then
+		if ! _is_root_file_permitted "$file" "$mode"; then
 			rejected_files+=("$file")
 			((++violations))
 		fi
 	done <<<"$new_root_files"
 
 	if [[ "$violations" -gt 0 ]]; then
-		_report_root_file_violations "${rejected_files[@]}"
+		_report_root_file_violations "$mode" "${rejected_files[@]}"
 		return 1
 	fi
 
@@ -892,7 +1091,7 @@ check_workflow_files() {
 	# Detect staged workflow files without shelling into the helper first —
 	# avoids an extra process when no workflow files are staged.
 	local staged_workflows
-	staged_workflows=$(git diff --cached --name-only --diff-filter=ACM \
+	staged_workflows=$(staged_diff --name-only --diff-filter=ACM \
 		| grep -E '^\.github/workflows/[^/]+\.ya?ml$' || true)
 
 	if [[ -z "$staged_workflows" ]]; then
@@ -956,7 +1155,7 @@ main_pre_commit() {
 	echo "" >&2
 
 	validate_repo_root_files || {
-		print_error "Commit rejected: new repo root files not in allowlist"
+		print_error "Commit rejected: new repo root files not permitted"
 		exit 1
 	}
 	echo "" >&2

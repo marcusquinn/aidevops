@@ -5,7 +5,7 @@
 // ---------------------------------------------------------------------------
 
 import { existsSync } from "fs";
-import { execFileSync, execFile } from "child_process";
+import { execFile } from "child_process";
 import { join, resolve } from "path";
 import { recordToolCall, toolCallSucceeded } from "./observability.mjs";
 import {
@@ -36,6 +36,8 @@ import {
   finishObservedSourceAccess,
 } from "./source-access-request.mjs";
 import { checkResearchStagingAccess } from "./research-staging-guard.mjs";
+import { checkGrepPathScope } from "./grep-path-guard.mjs";
+import { checkRedactedEdit } from "./redacted-edit-guard.mjs";
 import {
   bindActiveScriptsDir,
   checkCanonicalGitSafetyGate,
@@ -124,41 +126,11 @@ export {
 };
 
 // ---------------------------------------------------------------------------
-// Pattern tracking
+// Operation logging
 // ---------------------------------------------------------------------------
 
 /**
- * Run a shell command and return stdout, or empty string on failure.
- * @param {string} cmd
- * @param {number} [timeout=5000]
- * @returns {string}
- */
-/**
- * Record a git operation pattern via pattern-tracker-helper.sh.
- * @param {string} scriptsDir
- * @param {string} title
- * @param {string} outputText
- */
-function recordGitPattern(scriptsDir, title, outputText) {
-  const patternTracker = join(scriptsDir, "pattern-tracker-helper.sh");
-  if (!existsSync(patternTracker)) return;
-
-  const success = !outputText.includes("error") && !outputText.includes("fatal");
-  const patternType = success ? "SUCCESS_PATTERN" : "FAILURE_PATTERN";
-
-  try {
-    execFileSync(
-      "bash",
-      [patternTracker, "record", patternType, `git operation: ${title.substring(0, 100)}`, "--tag", "quality-hook"],
-      { encoding: "utf-8", timeout: 5000, stdio: ["pipe", "pipe", "pipe"] },
-    );
-  } catch {
-    // best-effort
-  }
-}
-
-/**
- * Track Bash tool operations (git, lint) for pattern recording.
+ * Log Bash tool operations (git, lint) without subprocess recording.
  * @param {object} ctx - { scriptsDir, logsDir, qualityLogPath }
  * @param {string} title
  * @param {string} outputText
@@ -170,7 +142,6 @@ function trackBashOperation(ctx, title, outputText) {
     // informational telemetry in the quality log: writing it to stderr draws
     // over OpenCode's TUI and makes payload text part of console routing.
     qualityLog(ctx.logsDir, ctx.qualityLogPath, "INFO", `Git operation: ${boundedTitle}`);
-    recordGitPattern(ctx.scriptsDir, boundedTitle, outputText);
   }
 
   if (title.includes("shellcheck") || title.includes("linters-local")) {
@@ -272,7 +243,9 @@ function enforceReadAndFileQuality(ctx, log, input, output, { sessionId, sourceC
     requestRun: ctx.sourceAccessRequestRun,
     sourceContext: sourceContextForPath(output.args?.filePath || output.args?.file_path || ""),
   });
+  checkGrepPathScope(input.tool, output.args || {}, ctx.repositoryDir);
   checkResearchStagingAccess(input.tool, output.args || {});
+  checkRedactedEdit(input.tool, output.args || {}, ctx.repositoryDir);
   if (!isWriteOrEditTool(input.tool)) return;
   const filePath = output.args?.filePath || output.args?.file_path || "";
   if (filePath) runFileQualityGate(ctx, filePath, output.args);

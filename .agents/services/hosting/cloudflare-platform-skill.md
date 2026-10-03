@@ -1,6 +1,6 @@
 ---
 name: cloudflare-platform-skill
-description: "Cloudflare platform development guidance — patterns, gotchas, decision trees, SDK usage for Workers, Pages, KV, D1, R2, AI, Durable Objects, and 60+ products. Use when building or developing ON the Cloudflare platform. For managing Cloudflare resources (DNS, WAF, DDoS, R2 buckets, Workers deployments), use the Cloudflare Code Mode MCP server instead."
+description: "Cloudflare platform development guidance — patterns, gotchas, decision trees, SDK usage for Workers, Pages, KV, D1, R2, AI, Durable Objects, and 60+ products. Use when building or developing ON the Cloudflare platform. For managing Cloudflare resources (DNS, WAF, DDoS, R2 buckets, Workers deployments), use the cf CLI or the Cloudflare Code Mode MCP server instead."
 mode: subagent
 imported_from: external
 ---
@@ -15,7 +15,8 @@ imported_from: external
 <!-- AI-CONTEXT-START -->
 
 - **Scope**: Code that runs ON Cloudflare (Workers, Pages, D1, R2, KV, DO, AI, etc.)
-- **Operations** (DNS, WAF, DDoS, R2 buckets, deployments): Code Mode MCP (`../../tools/api/cloudflare-mcp.md`)
+- **Operations** (DNS, WAF, DDoS, R2 buckets, deployments): `cf` CLI when installed (`../../tools/api/cloudflare-cf-cli.md`), else Code Mode MCP (`../../tools/api/cloudflare-mcp.md`)
+- **cf vs Wrangler**: `cloudflare.config.ts` projects use `cf init/dev/build/deploy`; `wrangler.toml`/`wrangler.json[c]` projects keep the Wrangler guidance in this skill until migrated with `cf migrate`. Wrangler stays supported during the `cf` beta and 18 months after it.
 - **Products**: Decision trees below → load `./cloudflare-platform-skill/<product>.md`
 
 <!-- AI-CONTEXT-END -->
@@ -74,7 +75,7 @@ Media?
 IaC?
 ├─ Pulumi → pulumi/
 ├─ Terraform → terraform/
-└─ Direct API → Code Mode MCP (tools/mcp/cloudflare-code-mode.md)
+└─ Direct API → cf CLI (tools/api/cloudflare-cf-cli.md) or Code Mode MCP (tools/mcp/cloudflare-code-mode.md)
 ```
 
 ## Product Index
@@ -95,7 +96,7 @@ All paths: `./cloudflare-platform-skill/<file>.md`
 
 **Real-Time**: realtimekit · realtime-sfu
 
-**Dev Tools**: wrangler · miniflare · c3 · observability · analytics-engine · web-analytics · sandbox · workerd · workers-playground
+**Dev Tools**: cf CLI (`../../tools/api/cloudflare-cf-cli.md`) · wrangler · miniflare · c3 · observability · analytics-engine · web-analytics · sandbox · workerd · workers-playground
 
 **IaC**: pulumi · terraform · [API: `.agents/tools/mcp/cloudflare-code-mode.md`]
 

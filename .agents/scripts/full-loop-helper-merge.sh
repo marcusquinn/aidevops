@@ -517,6 +517,18 @@ _merge_collect_external_authority_gaps() {
 		print_error "Merge blocked: PR #${pr_number} head changed before the final authority check"
 		return 1
 	fi
+	# GH#33374: a native sidebar/development closing link must not override a
+	# For/Ref checkpoint. Fail closed before any merge write; do not silently
+	# unlink issues or infer completion from GitHub's closing metadata alone.
+	if ! printf '%s' "$pr_json" | jq -e '
+		(.body // "") as $body
+		| all(.closingIssuesReferences[]; .number as $num
+			| if ($body | test("\\b(for|ref)[[:space:]]+#" + ($num | tostring) + "\\b"; "i"))
+			then ($body | test("\\b(close[ds]?|fix(es|ed)?|resolve[ds]?)[[:space:]]+#" + ($num | tostring) + "\\b"; "i"))
+			else true end)' >/dev/null 2>&1; then
+		print_error "Merge blocked: PR #${pr_number} has a closing link contradicting its For/Ref-only issue reference"
+		return 1
+	fi
 
 	#aidevops:trust-boundary GH#17671/GH#28622 -- a live PR NMR label is an
 	# explicit hold. Marker text is never merge authority at this boundary.
@@ -1410,6 +1422,55 @@ _merge_prepare_verified_head_aggregation_body() {
 	return 0
 }
 
+# Re-read required-check state immediately before an implicit admin fallback.
+# An empty PR rollup is not proof that the base branch has no required contexts.
+_merge_admin_fallback_required_checks_clear() {
+	local pr_number="$1"
+	local repo="$2"
+	local checks_rc=0
+	"${SCRIPT_DIR}/gh-checks-wait-helper.sh" wait "$pr_number" --repo "$repo" --timeout 0 --initial-interval 1 --max-interval 1 || checks_rc=$?
+	case "$checks_rc" in
+	0) return 0 ;;
+	8)
+		print_error "LIFECYCLE_STATE=CHECKS_PENDING required checks are not terminal on the verified PR head; refusing admin fallback"
+		return 8
+		;;
+	*)
+		print_error "Could not re-verify required checks before admin fallback; refusing admin fallback"
+		return 1
+		;;
+	esac
+}
+
+# Only a review-count failure after a fresh required-check read permits an
+# implicit admin retry. A generic branch-policy error is not review evidence.
+_merge_try_review_only_admin_fallback() {
+	local pr_number="$1" repo="$2" merge_method="$3" match_head_sha="$4"
+	local squash_subject="$5" merge_body_file="$6" merge_output="$7"
+	if ! printf '%s' "$merge_output" | grep -qE 'At least [0-9]+ approving review'; then
+		print_error "Merge remains blocked by branch policy; refusing admin fallback without a review-only block"
+		return 1
+	fi
+	_merge_admin_fallback_required_checks_clear "$pr_number" "$repo" || return $?
+	_merge_revalidate_transport_authority "$pr_number" "$repo" "$match_head_sha" || return 1
+	print_info "Review count blocked plain merge; retrying with --admin (workers share the maintainer's gh auth per GH#18538)..."
+	local subject_flags=() admin_rc=0 admin_output=""
+	[[ -n "$squash_subject" ]] && subject_flags+=("$FULL_LOOP_MERGE_SUBJECT_FLAG" "$squash_subject")
+	[[ -n "$merge_body_file" ]] && subject_flags+=("$FULL_LOOP_MERGE_BODY_FILE_FLAG" "$merge_body_file")
+	_MERGE_WRITE_OUTPUT=""
+	_merge_run_bounded_write "$pr_number" "$repo" "$match_head_sha" \
+		gh pr merge "$pr_number" --repo "$repo" "$merge_method" --admin --match-head-commit "$match_head_sha" ${subject_flags[@]+"${subject_flags[@]}"} || admin_rc=$?
+	admin_output="$_MERGE_WRITE_OUTPUT"
+	if [[ "$admin_rc" -eq 0 ]]; then
+		[[ -n "$admin_output" ]] && printf '%s\n' "$admin_output"
+		print_success "PR #${pr_number} merged with --admin fallback"
+		_signal_admin_merge_fallback "$pr_number" "$repo" "$merge_method" "$merge_output"
+		return 0
+	fi
+	_merge_report_admin_fallback_failure "$pr_number" "$admin_output"
+	return 1
+}
+
 _merge_execute() {
 	local pr_number="$1" repo="$2" merge_method="$3"
 	local has_admin="$4" has_auto="$5" squash_subject=""
@@ -1475,25 +1536,13 @@ ${_merge_retry_out}"
 			return 1
 		# Only fall back to --admin when caller passed neither --admin nor --auto.
 		elif [[ $has_admin -eq 0 && $has_auto -eq 0 ]] &&
-			printf '%s' "$_merge_out" | grep -qE 'base branch policy prohibits|Required status checks? (is|are) expected|At least [0-9]+ approving review'; then
-			_merge_revalidate_transport_authority "$pr_number" "$repo" "$match_head_sha" || return 1
-			print_info "Branch protection blocked plain merge; retrying with --admin (workers share the maintainer's gh auth per GH#18538)..."
-			local subject_flags=()
-			[[ -n "$squash_subject" ]] && subject_flags+=("$FULL_LOOP_MERGE_SUBJECT_FLAG" "$squash_subject")
-			[[ -n "$merge_body_file" ]] && subject_flags+=("$FULL_LOOP_MERGE_BODY_FILE_FLAG" "$merge_body_file")
-			local admin_rc=0 admin_output=""
-			_MERGE_WRITE_OUTPUT=""
-			_merge_run_bounded_write "$pr_number" "$repo" "$match_head_sha" \
-				gh pr merge "$pr_number" --repo "$repo" "$merge_method" --admin --match-head-commit "$match_head_sha" ${subject_flags[@]+"${subject_flags[@]}"} || admin_rc=$?
-			admin_output="$_MERGE_WRITE_OUTPUT"
-			if [[ "$admin_rc" -eq 0 ]]; then
-				[[ -n "$admin_output" ]] && printf '%s\n' "$admin_output"
-				print_success "PR #${pr_number} merged with --admin fallback"
-				# t2247: Signal fallback through a PR comment, audit entry, and label.
-				_signal_admin_merge_fallback "$pr_number" "$repo" "$merge_method" "$_merge_out"
-				return 0
-			fi
-			_merge_report_admin_fallback_failure "$pr_number" "$admin_output"
+			printf '%s' "$_merge_out" | grep -qE 'At least [0-9]+ approving review'; then
+			_merge_try_review_only_admin_fallback "$pr_number" "$repo" "$merge_method" "$match_head_sha" "$squash_subject" "$merge_body_file" "$_merge_out" || return $?
+			return 0
+		elif [[ $has_admin -eq 0 && $has_auto -eq 0 ]] &&
+			printf '%s' "$_merge_out" | grep -qE 'base branch policy prohibits|Required status checks? (is|are) expected'; then
+			_merge_admin_fallback_required_checks_clear "$pr_number" "$repo" || return $?
+			print_error "Merge remains blocked by branch policy; refusing admin fallback without a review-only block"
 			return 1
 		else
 			print_error "Merge failed for PR #${pr_number}"
@@ -1625,6 +1674,59 @@ _merge_canonical_dir_for_sync() {
 	return 0
 }
 
+# Resolve a managed repository's canonical path from its registered slug, not
+# the current worktree. `full-loop-helper.sh merge PR owner/repo` is allowed
+# to run from another repository.
+_merge_repo_path_for_slug() {
+	local repo_slug="$1"
+	local repos_json="${AIDEVOPS_REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
+	local repo_path=""
+	[[ -n "$repo_slug" && -f "$repos_json" ]] || return 1
+	repo_path=$(jq -r --arg slug "$repo_slug" '
+		.initialized_repos[]?
+		| select(((.slug // "") | ascii_downcase) == ($slug | ascii_downcase))
+		| .path // empty
+	' "$repos_json" 2>/dev/null | sed -n '1p') || repo_path=""
+	[[ -n "$repo_path" ]] || return 1
+	repo_path="${repo_path/#\~/$HOME}"
+	[[ -d "$repo_path" ]] || return 1
+	printf '%s\n' "$repo_path"
+	return 0
+}
+
+_merge_reconcile_planning_publication() {
+	local pr_number="$1"
+	local repo="$2"
+	local merge_sha="$3"
+	local canonical_synced="${4:-1}"
+	local repo_path=""
+	local changed_files=""
+	local reconciler="${SCRIPT_DIR}/planning-publication-reconcile.sh"
+
+	[[ -x "$reconciler" && "$merge_sha" =~ ^[0-9a-f]{40}$ ]] || return 0
+	changed_files=$(gh api --paginate "repos/${repo}/pulls/${pr_number}/files" --jq '.[].filename' 2>/dev/null || true)
+	if ! printf '%s\n' "$changed_files" | grep -qE '^(TODO\.md|todo/tasks/)'; then
+		return 0
+	fi
+	if [[ "$canonical_synced" != "1" ]]; then
+		print_warning "Planning publication reconcile deferred for merged PR #${pr_number}: canonical sync pending or no canonical working tree"
+		printf 'PLANNING_RECONCILE_NEXT=planning-publication-reconcile.sh reconcile --repo %q --sha %q\n' "$repo" "$merge_sha"
+		return 0
+	fi
+	repo_path=$(_merge_repo_path_for_slug "$repo" 2>/dev/null || true)
+	if [[ -z "$repo_path" ]]; then
+		print_warning "Planning publication reconcile skipped: canonical path for ${repo} is not registered"
+		return 0
+	fi
+	if (cd "$repo_path" && "$reconciler" reconcile --repo "$repo" --sha "$merge_sha"); then
+		print_success "Planning publication reconciled for merged PR #${pr_number}"
+	else
+		print_warning "Planning publication reconcile deferred for merged PR #${pr_number}"
+		printf 'PLANNING_RECONCILE_NEXT=planning-publication-reconcile.sh reconcile --repo %q --sha %q\n' "$repo" "$merge_sha"
+	fi
+	return 0
+}
+
 _merge_current_worktree_cleanup_plan() {
 	local pr_head_ref="$1"
 	local pr_head_oid="$2"
@@ -1733,24 +1835,135 @@ _merge_default_branch_for_cleanup() {
 	return 0
 }
 
+# Remote default-branch tip observed by the last canonical refresh (read-only
+# `git ls-remote`; canonical refs are never fetched outside the audited helper).
+FULL_LOOP_CANONICAL_REMOTE_HEAD=""
+
+# Query the remote default-branch tip without mutating canonical. A direct
+# `git fetch` in canonical is denied by the canonical Git guard (GH#33013), so
+# only read-only ls-remote runs here; canonical-recovery-helper.sh owns fetches.
+_merge_canonical_remote_head() {
+	local canonical_dir="$1"
+	local default_branch="$2"
+	local ls_output=""
+	local remote_head=""
+	if ! ls_output=$(git -C "$canonical_dir" ls-remote origin "refs/heads/${default_branch}" 2>&1); then
+		if [[ "$ls_output" == *"canonical Git guard"* ]]; then
+			print_warning "CANONICAL_SYNC_PENDING=true reason=canonical_guard_denied"
+		else
+			print_warning "CANONICAL_SYNC_PENDING=true reason=origin_query_failed"
+		fi
+		return 1
+	fi
+	remote_head=$(printf '%s\n' "$ls_output" | awk -v ref="refs/heads/${default_branch}" '$2 == ref { print $1; exit }')
+	if [[ ! "$remote_head" =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]]; then
+		print_warning "CANONICAL_SYNC_PENDING=true reason=origin_query_failed"
+		return 1
+	fi
+	printf '%s\n' "$remote_head"
+	return 0
+}
+
+_merge_canonical_fast_forward_enabled() {
+	[[ "${AIDEVOPS_MERGE_CANONICAL_FAST_FORWARD:-1}" != "0" ]] || return 1
+	! _merge_is_headless_session || return 1
+	return 0
+}
+
+_merge_resolve_canonical_recovery_helper() {
+	local candidate=""
+	for candidate in "${SCRIPT_DIR}/canonical-recovery-helper.sh" \
+		"${HOME:-}/.aidevops/agents/scripts/canonical-recovery-helper.sh"; do
+		if [[ -f "$candidate" ]]; then
+			printf '%s\n' "$candidate"
+			return 0
+		fi
+	done
+	return 1
+}
+
+# Fast-forward a clean interactive canonical default branch to the merged tip
+# through the audited recovery helper. Returns 2 when preconditions exclude the
+# attempt (no mutation), 1 when the helper refused, and 0 after a fast-forward.
+_merge_fast_forward_canonical() {
+	local canonical_dir="$1"
+	local default_branch="$2"
+	local merge_sha="$3"
+	local issue_number="$4"
+	local current_branch=""
+	local status_output=""
+	local canonical_head=""
+	local helper=""
+	local helper_output=""
+	local refusal=""
+
+	_merge_canonical_fast_forward_enabled || return 2
+	[[ "$merge_sha" =~ ^[0-9a-f]{40}$ && "$issue_number" =~ ^[0-9]+$ ]] || return 2
+	current_branch=$(git -C "$canonical_dir" branch --show-current 2>/dev/null || true)
+	[[ -n "$current_branch" && "$current_branch" == "$default_branch" ]] || return 2
+	status_output=$(git -C "$canonical_dir" status --porcelain 2>/dev/null) || return 2
+	[[ -z "$status_output" ]] || return 2
+	canonical_head=$(git -C "$canonical_dir" rev-parse HEAD 2>/dev/null || true)
+	[[ -n "$canonical_head" ]] || return 2
+	# When the merge commit is already local, prove ancestry before mutating.
+	# Otherwise the helper fetches the tip and refuses any non-fast-forward.
+	if git -C "$canonical_dir" cat-file -e "${merge_sha}^{commit}" 2>/dev/null &&
+		! git -C "$canonical_dir" merge-base --is-ancestor "$canonical_head" "$merge_sha" 2>/dev/null; then
+		return 2
+	fi
+	helper=$(_merge_resolve_canonical_recovery_helper) || {
+		print_warning "CANONICAL_SYNC_PENDING=true reason=fast_forward_refused detail=recovery_helper_unavailable"
+		return 1
+	}
+	if helper_output=$(AIDEVOPS_REAL_GIT_BIN="${AIDEVOPS_REAL_GIT_BIN:-/usr/bin/git}" bash "$helper" \
+		fast-forward-current --repo "$canonical_dir" --branch "$default_branch" \
+		--issue "$issue_number" --confirm FAST_FORWARD_CANONICAL_BRANCH 2>&1); then
+		print_info "Canonical ${default_branch} fast-forwarded through canonical-recovery-helper.sh"
+		return 0
+	fi
+	refusal=$(printf '%s\n' "$helper_output" | grep -m1 'BLOCKED' || true)
+	print_warning "CANONICAL_SYNC_PENDING=true reason=fast_forward_refused${refusal:+ detail=${refusal}}"
+	return 1
+}
+
+# Args: canonical_dir default_branch [merge_sha issue_number]
+# Without a merge SHA this is read-only. With one, interactive sessions may
+# fast-forward a clean default-branch canonical via the audited helper.
 _merge_refresh_canonical_for_cleanup() {
 	local canonical_dir="$1"
 	local default_branch="$2"
+	local merge_sha="${3:-}"
+	local issue_number="${4:-}"
 	[[ -d "$canonical_dir" && -n "$default_branch" ]] || return 1
 
-	if ! git fetch --quiet origin "$default_branch" >/dev/null 2>&1; then
-		print_warning "CANONICAL_SYNC_PENDING=true reason=origin_fetch_failed"
-		return 1
-	fi
+	FULL_LOOP_CANONICAL_REMOTE_HEAD=""
+	local remote_head=""
+	remote_head=$(_merge_canonical_remote_head "$canonical_dir" "$default_branch") || return 1
+	FULL_LOOP_CANONICAL_REMOTE_HEAD="$remote_head"
 	local current_canonical_branch=""
 	current_canonical_branch=$(git -C "$canonical_dir" branch --show-current 2>/dev/null || true)
 	local canonical_head=""
 	canonical_head=$(git -C "$canonical_dir" rev-parse HEAD 2>/dev/null || true)
-	local remote_head=""
-	remote_head=$(git rev-parse "origin/${default_branch}" 2>/dev/null || true)
-	if [[ "$current_canonical_branch" == "$default_branch" && -n "$remote_head" && "$canonical_head" == "$remote_head" ]]; then
+	if [[ "$current_canonical_branch" == "$default_branch" && "$canonical_head" == "$remote_head" ]]; then
 		print_success "LIFECYCLE_STATE=CANONICAL_SYNCED sha=${remote_head}"
 		return 0
+	fi
+	if [[ -n "$merge_sha" ]]; then
+		local ff_rc=0
+		_merge_fast_forward_canonical "$canonical_dir" "$default_branch" "$merge_sha" "$issue_number" || ff_rc=$?
+		if [[ "$ff_rc" -eq 0 ]]; then
+			canonical_head=$(git -C "$canonical_dir" rev-parse HEAD 2>/dev/null || true)
+			if [[ -n "$canonical_head" && "$canonical_head" == "$remote_head" ]]; then
+				print_success "LIFECYCLE_STATE=CANONICAL_SYNCED sha=${remote_head}"
+				return 0
+			fi
+			if [[ -n "$canonical_head" ]] &&
+				git -C "$canonical_dir" merge-base --is-ancestor "$merge_sha" "$canonical_head" 2>/dev/null; then
+				FULL_LOOP_CANONICAL_REMOTE_HEAD="$canonical_head"
+				print_success "LIFECYCLE_STATE=CANONICAL_SYNCED sha=${canonical_head}"
+				return 0
+			fi
+		fi
 	fi
 	print_warning "CANONICAL_SYNC_PENDING=true canonical=${canonical_dir} branch=${current_canonical_branch:-detached}"
 	return 1
@@ -1759,30 +1972,61 @@ _merge_refresh_canonical_for_cleanup() {
 _merge_report_canonical_sync_state() {
 	local canonical_dir="$1"
 	local issue_number="${2:-}"
+	local merge_sha="${3:-}"
 	if [[ -z "$canonical_dir" ]]; then
 		print_warning "CANONICAL_SYNC_PENDING=true reason=canonical_path_unavailable"
 		return 1
 	fi
+	# GH#33381: linked worktrees may share a bare common Git directory. There
+	# is no canonical working tree to preserve or fast-forward, so this layout
+	# is valid, not a canonical-layout failure; the PR lifecycle completes and
+	# only working-tree-dependent follow-ups (planning reconcile) are deferred.
+	if [[ "$(git -C "$canonical_dir" rev-parse --is-bare-repository 2>/dev/null || true)" == "true" ]]; then
+		print_info "LIFECYCLE_STATE=CANONICAL_SYNC_NOT_APPLICABLE reason=bare_common_dir canonical=${canonical_dir}"
+		return 1
+	fi
 	local default_branch
 	default_branch=$(_merge_default_branch_for_cleanup "$canonical_dir")
-	if _merge_refresh_canonical_for_cleanup "$canonical_dir" "$default_branch"; then
+	if _merge_refresh_canonical_for_cleanup "$canonical_dir" "$default_branch" "$merge_sha" "$issue_number"; then
 		return 0
 	fi
 	local current_branch=""
 	local clean=""
 	local local_head=""
-	local remote_head=""
+	local remote_head="$FULL_LOOP_CANONICAL_REMOTE_HEAD"
+	local fast_forward_candidate=0
 	current_branch=$(git -C "$canonical_dir" branch --show-current 2>/dev/null || true)
 	clean=$(git -C "$canonical_dir" status --porcelain 2>/dev/null || true)
 	local_head=$(git -C "$canonical_dir" rev-parse HEAD 2>/dev/null || true)
-	remote_head=$(git -C "$canonical_dir" rev-parse "origin/${default_branch}" 2>/dev/null || true)
-	if [[ "$current_branch" == "$default_branch" && -z "$clean" && -n "$local_head" && -n "$remote_head" ]] &&
-		git -C "$canonical_dir" merge-base --is-ancestor "$local_head" "$remote_head" 2>/dev/null; then
+	[[ -n "$remote_head" ]] || remote_head=$(git -C "$canonical_dir" rev-parse "origin/${default_branch}" 2>/dev/null || true)
+	if [[ "$current_branch" == "$default_branch" && -z "$clean" && -n "$local_head" && -n "$remote_head" ]]; then
+		# An unfetched remote tip cannot be proven locally; the audited
+		# fast-forward helper fetches it and refuses any divergence.
+		if ! git -C "$canonical_dir" cat-file -e "${remote_head}^{commit}" 2>/dev/null ||
+			git -C "$canonical_dir" merge-base --is-ancestor "$local_head" "$remote_head" 2>/dev/null; then
+			fast_forward_candidate=1
+		fi
+	fi
+	if [[ "$fast_forward_candidate" -eq 1 ]]; then
 		printf 'CANONICAL_SYNC_NEXT=canonical-recovery-helper.sh fast-forward-current --repo %q --branch %q --issue %q --confirm FAST_FORWARD_CANONICAL_BRANCH\n' "$canonical_dir" "$default_branch" "$issue_number"
 	else
 		printf 'CANONICAL_SYNC_NEXT=canonical-recovery-helper.sh sync-mirror --repo %q --issue %q --confirm SYNCHRONIZE_CANONICAL_MIRROR\n' "$canonical_dir" "$issue_number"
 	fi
 	return 1
+}
+
+# Sync canonical first (audited fast-forward when eligible) so planning
+# reconcile sees the exact merged snapshot (GH#33013).
+_merge_sync_canonical_then_reconcile() {
+	local pr_number="$1"
+	local repo="$2"
+	local canonical_dir="${3:-}"
+	local canonical_synced=0
+	canonical_dir=$(_merge_repo_path_for_slug "$repo" 2>/dev/null || printf '%s' "$canonical_dir")
+	_merge_report_canonical_sync_state "$canonical_dir" "${WORKER_ISSUE_NUMBER:-$pr_number}" \
+		"${FULL_LOOP_MERGE_SHA:-}" && canonical_synced=1
+	_merge_reconcile_planning_publication "$pr_number" "$repo" "${FULL_LOOP_MERGE_SHA:-}" "$canonical_synced"
+	return 0
 }
 
 _merge_resolve_worktree_helper() {
@@ -2173,7 +2417,7 @@ cmd_merge() {
 		return 1
 	fi
 	print_success "LIFECYCLE_STATE=MERGED merge_sha=${FULL_LOOP_MERGE_SHA}"
-	_merge_report_canonical_sync_state "$_canonical_dir" "${WORKER_ISSUE_NUMBER:-$pr_number}" || true
+	_merge_sync_canonical_then_reconcile "$pr_number" "$repo" "$_canonical_dir"
 	if declare -F is_loop_active >/dev/null 2>&1 && is_loop_active; then
 		_full_loop_record_phase "postflight" "$pr_number" || return 1
 	fi

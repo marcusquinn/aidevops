@@ -377,7 +377,18 @@ _try_issue_sync_delegation() {
 	return 1
 }
 
+# Compare two issue titles ignoring case and whitespace differences (GH#33157).
+_titles_equivalent() {
+	local a="$1"
+	local b="$2"
+	a=$(printf '%s' "$a" | tr '[:upper:]' '[:lower:]' | tr -s '[:space:]' ' ' | sed -e 's/^ //' -e 's/ $//')
+	b=$(printf '%s' "$b" | tr '[:upper:]' '[:lower:]' | tr -s '[:space:]' ' ' | sed -e 's/^ //' -e 's/ $//')
+	[[ "$a" == "$b" ]]
+}
+
 # t1446: Broader dedup check before bare issue creation.
+# Returns 2 (TASK_ID_COLLISION) when the tNNN prefix belongs to a differently
+# titled open issue (GH#33157).
 # GitHub search matches across the full title (not just prefix), catching
 # duplicates with different title formats (e.g., "t1344:" vs "coderabbit:").
 # Echoes the existing issue number if found, returns 1 if no duplicate.
@@ -415,15 +426,23 @@ _check_duplicate_issue() {
 
 	# Exact tNNN: prefix match, case-sensitive; use jq --arg to avoid embedding
 	# the variable in the filter string (defense-in-depth, GH#18550)
-	local existing_issue
-	existing_issue=$(gh issue list --repo "$repo_slug" \
+	local existing_issue existing_title match=""
+	match=$(gh issue list --repo "$repo_slug" \
 		--state open --search "${task_id_prefix}: in:title" \
 		--json number,title --limit 10 |
 		jq -r --arg prefix "${task_id_prefix}: " \
-			'.[] | select(.title | startswith($prefix)) | .number // ""' |
+			'[.[] | select(.title | startswith($prefix))][0] // empty | "\(.number)\t\(.title)"' |
 		head -1)
+	existing_issue="${match%%$'\t'*}"
+	existing_title="${match#*$'\t'}"
 
 	if [[ -n "$existing_issue" ]]; then
+		# GH#33157: same prefix but a different title is another session's
+		# issue (ID collision), not an idempotent retry of this request.
+		if ! _titles_equivalent "$title" "$existing_title"; then
+			log_error "TASK_ID_COLLISION: ${task_id_prefix} is already used by open issue #${existing_issue} with a different title; refusing to report it as recovered"
+			return 2
+		fi
 		log_info "Found existing OPEN issue #$existing_issue with exact ${task_id_prefix} prefix, skipping duplicate creation"
 		echo "$existing_issue"
 		return 0
@@ -590,7 +609,7 @@ _report_issue_body_compose_failure() {
 		;;
 	"$CLAIM_COMPOSE_NORMALIZE_RC")
 		log_warn "Skipping issue creation — supplied description failed canonical body normalization. Task ID is secured."
-		log_warn "Recovery: correct ambiguous Files Scope declarations to use explicit EDIT:/NEW: paths."
+		log_warn "Recovery: under an existing Files Scope heading, use bare '- path/to/file' bullets."
 		;;
 	*)
 		log_warn "Skipping issue creation — issue body composition failed (status ${compose_rc}). Task ID is secured."
@@ -654,6 +673,50 @@ _insert_todo_line() {
 	else
 		rm -f "$tmp"
 	fi
+	return 0
+}
+
+# Resolve the TODO projection only; preserve the original refs for GitHub labels
+# and native dependency relationships. Prefer exact local ref tokens over API.
+_todo_predecessor_task_ids() {
+	local refs="$1"
+	local repo_path="$2"
+	local ref task_id issue_num title slug="" result=""
+	local -a predecessors=()
+	IFS=',' read -r -a predecessors <<<"$refs"
+	for ref in "${predecessors[@]}"; do
+		task_id=""
+		if task_identity_validate "$ref"; then
+			task_id="$ref"
+		elif [[ "$ref" =~ ^GH#([0-9]+)$ ]]; then
+			issue_num="${BASH_REMATCH[1]}"
+			task_id=$(awk -v token="ref:GH#${issue_num}" '
+				/^[[:space:]]*- \[.\] / {
+					line = $0
+					sub(/^[[:space:]]*- \[.\] /, "", line)
+					split(line, fields, /[[:space:]]+/)
+					for (i = 1; i <= NF; i++)
+						if ($i == token) { print fields[1]; exit }
+				}' "${repo_path}/TODO.md")
+			if ! task_identity_validate "$task_id"; then
+				[[ -n "$slug" ]] || slug=$(git -C "$repo_path" remote get-url origin 2>/dev/null \
+					| sed 's|.*github\.com[:/]||;s|\.git$||' || true)
+				title=""
+				if [[ -n "$slug" ]]; then
+					title=$(gh_issue_view "$issue_num" --repo "$slug" --json title --jq '.title' 2>/dev/null || true)
+				fi
+				task_id=$(task_identity_parse_title_prefix "$title" || true)
+			fi
+		fi
+		if ! task_identity_validate "$task_id"; then
+			log_warn "Cannot resolve predecessor ${ref} to a task ID; omitting it from the TODO dependency field" >&2
+			continue
+		fi
+		if [[ ",${result}," != *",${task_id},"* ]]; then
+			result="${result:+${result},}${task_id}"
+		fi
+	done
+	printf '%s' "$result"
 	return 0
 }
 
@@ -737,7 +800,9 @@ _ensure_todo_entry_written() {
 	# _CLAIM_BLOCKED_BY_REFS is populated by _apply_blocked_by_detection in
 	# claim-task-id.sh before _ensure_todo_entry_written is called.
 	if [[ -n "${_CLAIM_BLOCKED_BY_REFS:-}" ]]; then
-		todo_line="${todo_line} blocked-by:${_CLAIM_BLOCKED_BY_REFS}"
+		local todo_predecessors
+		todo_predecessors=$(_todo_predecessor_task_ids "$_CLAIM_BLOCKED_BY_REFS" "$repo_path")
+		[[ -z "$todo_predecessors" ]] || todo_line="${todo_line} blocked-by:${todo_predecessors}"
 	fi
 	todo_line="${todo_line} ref:GH#${issue_num}"
 
@@ -746,7 +811,7 @@ _ensure_todo_entry_written() {
 	# successful operations while directing the mutable TODO projection to a
 	# linked worktree.
 	if _repo_path_is_canonical_checkout "$repo_path"; then
-		printf 'TODO.md was not changed in canonical checkout; add this line in a linked worktree:\n%s\n' "$todo_line"
+		printf 'TODO.md was not changed in canonical checkout; add this line in a linked worktree:\n%s\n' "$todo_line" >&2
 		return 0
 	fi
 

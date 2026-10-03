@@ -2,22 +2,15 @@
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
 # AI DevOps Framework - Python Dependencies
-# DSPy and DSPyGround integration requirements
 #
 # SECURITY: All versions pinned to exact versions (==) to prevent supply chain
 # attacks via malicious PyPI uploads. See: LiteLLM supply chain incident
 # (March 2026) where compromised v1.82.7/v1.82.8 contained credential stealers.
 # Update versions deliberately via requirements-lock.txt, not automatically.
 
-# Core DSPy packages (dspy-ai was a legacy alias, removed in favour of dspy)
-# KNOWN: dspy resolves diskcache transitively and no patched diskcache release is
-# available yet. Avoid a direct application pin; keep the audited transitive pin
-# in requirements-lock.txt until dspy can resolve a fixed version or replacement.
-dspy==3.1.0b1
-
 # Core dependencies for AI/ML workflows
 openai==2.20.0
-litellm==1.84.0
+litellm==1.93.2
 pandas==2.3.3
 numpy==2.0.2
 requests==2.33.0

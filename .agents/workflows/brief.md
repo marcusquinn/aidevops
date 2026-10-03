@@ -95,9 +95,16 @@ The wrapper currently self-assigns in violation of t2157. Until t2406/GH#19991 m
 
 ### 6. Files Scope for auto-dispatch (GH#32531)
 
-Every `auto-dispatch` implementation issue body needs a canonical scope section,
-or the pulse holds it as `status:blocked` (`missing_files_scope`) before any
-worker starts. `## Files`, `### Files to Modify` or prose file lists do not count.
+Every `auto-dispatch` implementation issue body should carry a canonical scope
+section; the author has the most context to choose it. `## Files` and prose file
+lists do not count. Explicit
+`` `EDIT: path[:lines]` `` / `` `NEW: path` `` bullets under `### Files to Modify`
+(including `` and `other/path` `` continuations) are normalized: the pulse appends
+the derived Files Scope to trusted bodies. Otherwise the pulse still dispatches
+trusted briefs, and the worker's first step is scope discovery: it records the
+section on the issue before editing (GH#33243, `reference/worker-discipline.md`
+"Missing Files Scope"). Older `missing_files_scope` brief holds are released
+automatically.
 
 ```markdown
 ### Files Scope
@@ -111,7 +118,19 @@ nothing after it; list tests and docs the worker must touch. Put descriptions,
 hard boundaries and recovery guidance in a sibling section. Verify before publishing:
 `pre-dispatch-validator-helper.sh scope-check <N> "$(cat body.md)" 1` (exit 0).
 Interactive `claim-task-id.sh --labels auto-dispatch` refuses a description
-without it. Planning-only issues start with `Planning-only:` instead.
+without it, and the `gh_create_issue` PATH command refuses an unscoped
+`auto-dispatch` body, because the author can fix it on the spot; scripts that
+source the library only warn (GH#32880).
+Also list any test file a required CI gate will demand
+(for example platform/bash-compat fixes need a changed test). Planning-only
+issues start with `Planning-only:` instead.
+
+For work requiring runner-local credentials during verification or publication,
+declare **names only** with one `needs-secret:NAME` label per name. Alternatively
+put `<!-- aidevops:needs-secrets NAME1 NAME2 -->` in the issue body when labels
+are impractical. Labels take precedence when both are present. Never include
+secret values; names in either form remain visible to issue readers. A runner
+without every named secret silently yields before claiming.
 
 ## Dispatch Readiness Contract (brief schema v2)
 

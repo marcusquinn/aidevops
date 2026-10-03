@@ -8,11 +8,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" || exit 1
 GUARD="${SCRIPT_DIR}/canonical-git-command-guard.py"
 SHIM="${SCRIPT_DIR}/git"
 TEST_ROOT=$(mktemp -d)
-trap 'rm -rf "$TEST_ROOT"' EXIT
+trap 'rm -rf "$TEST_ROOT" "$NON_TEMP_ROOT"' EXIT
 REPO="${TEST_ROOT}/repo"
 LINKED="${TEST_ROOT}/linked"
 PASSWORD_REPO="${TEST_ROOT}/password-store"
 MARKED_REPO="${TEST_ROOT}/marked-repo"
+NON_TEMP_ROOT=$(mktemp -d "${HOME}/canonical-git-guard.XXXXXX")
+NON_TEMP_MARKED_REPO="${NON_TEMP_ROOT}/marked-repo"
 SEPARATE_REPO="${TEST_ROOT}/separate-repo"
 SEPARATE_GIT_DIR="${TEST_ROOT}/separate-repo-git"
 SNAPSHOT_REPO="${TEST_ROOT}/snapshot.git"
@@ -48,8 +50,8 @@ git -C "$REPO" add README.md
 git -C "$REPO" commit -q -m seed
 INITIAL_HEAD=$(git -C "$REPO" rev-parse HEAD)
 REPOS_FILE="${TEST_ROOT}/repos.json"
-printf '{"initialized_repos":[{"path":"%s"},{"path":"%s"}]}\n' \
-	"$REPO" "$SEPARATE_REPO" >"$REPOS_FILE"
+printf '{"initialized_repos":[{"path":"%s"},{"path":"%s"},{"path":"%s"}]}\n' \
+	"$REPO" "$SEPARATE_REPO" "$MARKED_REPO" >"$REPOS_FILE"
 export AIDEVOPS_REPOS_FILE="$REPOS_FILE"
 
 mkdir -p "$PASSWORD_REPO"
@@ -60,6 +62,15 @@ mkdir -p "$MARKED_REPO"
 git -C "$MARKED_REPO" init -q -b main
 printf '{}\n' >"${MARKED_REPO}/.aidevops.json"
 printf 'managed fixture\n' >"${MARKED_REPO}/managed.txt"
+mkdir -p "$NON_TEMP_MARKED_REPO"
+git -C "$NON_TEMP_MARKED_REPO" init -q -b main
+printf '{}\n' >"${NON_TEMP_MARKED_REPO}/.aidevops.json"
+printf 'managed fixture\n' >"${NON_TEMP_MARKED_REPO}/managed.txt"
+UNREGISTERED_REPO="${TEST_ROOT}/unregistered-repo"
+mkdir -p "$UNREGISTERED_REPO"
+git -C "$UNREGISTERED_REPO" init -q -b main
+printf '{}\n' >"${UNREGISTERED_REPO}/.aidevops.json"
+printf 'disposable fixture\n' >"${UNREGISTERED_REPO}/disposable.txt"
 
 mkdir -p "$SEPARATE_REPO"
 git init -q -b main --separate-git-dir "$SEPARATE_GIT_DIR" "$SEPARATE_REPO"
@@ -158,8 +169,40 @@ assert_blocked "blocks canonical local credential helper config" \
 	"git config credential.helper '!gh auth git-credential'"
 assert_blocked "blocks canonical global non-credential config write" \
 	"git config --global include.path '$TEST_ROOT/unsafe.gitconfig'"
+# GH#33066: single-key reads without --get are reads, not canonical mutations.
+assert_allowed "allows bare global config key read" "$REPO" "git config --global gpg.format"
+assert_allowed "allows bare system config key read" "$REPO" "git config --system core.editor"
+assert_allowed "allows bare local config key read" "$REPO" "git config user.signingkey"
+assert_allowed "allows file-scoped config key read" "$REPO" "git config --file '$TEST_ROOT/x.gitconfig' user.name"
+assert_allowed "allows typed config key read" "$REPO" "git config --type bool commit.gpgsign"
+assert_allowed "allows get subcommand read" "$REPO" "git config get user.name"
+assert_allowed "allows get subcommand with get options" "$REPO" "git config get --all --show-names user.name"
+assert_allowed "allows list subcommand" "$REPO" "git config list --global"
+assert_blocked "blocks bare global config write" "git config --global gpg.format ssh"
+assert_blocked "blocks typed config write" "git config --type bool commit.gpgsign true"
+assert_blocked "blocks file-scoped config write" "git config -f '$TEST_ROOT/x.gitconfig' user.name value"
+assert_blocked "blocks config unset" "git config --unset user.name"
+assert_blocked "blocks config edit" "git config -e"
+assert_blocked "blocks config long edit" "git config --global --edit"
+assert_blocked "blocks set subcommand" "git config set user.name value"
+assert_blocked "blocks unset subcommand" "git config unset user.name"
+assert_blocked "blocks sectionless single positional" "git config edit"
+assert_blocked "blocks value option missing its value" "git config user.name --type"
+assert_blocked "blocks unknown config option" "git config --bogus user.name"
+assert_blocked "blocks get-only option on legacy read" "git config --all user.name"
+assert_blocked "blocks list with extra positional" "git config list user.name"
 assert_blocked "blocks mutation in a repository with an aidevops project marker" \
 	"git -C '$MARKED_REPO' add managed.txt"
+assert_allowed "allows git add in an unregistered temp repo with a project marker" "$REPO" \
+	"git -C '$UNREGISTERED_REPO' add disposable.txt"
+if (cd "$UNREGISTERED_REPO" && PATH="${SCRIPT_DIR}:/usr/bin:/bin" "$SHIM" add disposable.txt) &&
+	! git -C "$UNREGISTERED_REPO" diff --cached --quiet -- disposable.txt; then
+	pass "PATH shim stages files in an unregistered temp marker repo"
+else
+	fail "PATH shim stages files in an unregistered temp marker repo"
+fi
+assert_blocked "blocks marker repository outside temp roots" \
+	"git -C '$NON_TEMP_MARKED_REPO' add managed.txt"
 assert_blocked "blocks git-dir-only mutation targeting a managed canonical repository" \
 	"git -C '$PASSWORD_REPO' --git-dir='$REPO/.git' update-ref refs/heads/blocked '$INITIAL_HEAD'"
 assert_blocked "blocks git-dir-only mutation targeting a registered separate Git directory" \
@@ -185,8 +228,8 @@ assert_allowed "malformed managed-repository registry does not intercept unrelat
 printf '{"initialized_repos":[{"path":"~aidevops-user-that-does-not-exist/repo"}]}\n' >"$REPOS_FILE"
 assert_allowed "invalid managed-repository path does not intercept unrelated Git" "$REPO" \
 	"git -C '$PASSWORD_REPO' add test-secret.gpg"
-printf '{"initialized_repos":[{"path":"%s"},{"path":"%s"}]}\n' \
-	"$REPO" "$SEPARATE_REPO" >"$REPOS_FILE"
+printf '{"initialized_repos":[{"path":"%s"},{"path":"%s"},{"path":"%s"}]}\n' \
+	"$REPO" "$SEPARATE_REPO" "$MARKED_REPO" >"$REPOS_FILE"
 
 if [[ "$(git -C "$REPO" symbolic-ref --short HEAD)" == "main" ]] &&
 	[[ "$(git -C "$REPO" rev-parse HEAD)" == "$INITIAL_HEAD" ]] &&
@@ -339,6 +382,8 @@ ln -s "${SCRIPT_DIR}/canonical_git_readonly.py" "${OLD_BUNDLE}/canonical_git_rea
 ln -s "${SCRIPT_DIR}/canonical_git_readonly.py" "${NEW_BUNDLE}/canonical_git_readonly.py"
 ln -s "${SCRIPT_DIR}/canonical_git_ref_queries.py" "${OLD_BUNDLE}/canonical_git_ref_queries.py"
 ln -s "${SCRIPT_DIR}/canonical_git_ref_queries.py" "${NEW_BUNDLE}/canonical_git_ref_queries.py"
+ln -s "${SCRIPT_DIR}/canonical_git_config.py" "${OLD_BUNDLE}/canonical_git_config.py"
+ln -s "${SCRIPT_DIR}/canonical_git_config.py" "${NEW_BUNDLE}/canonical_git_config.py"
 ln -s "${SCRIPT_DIR}/canonical_git_management.py" "${OLD_BUNDLE}/canonical_git_management.py"
 ln -s "${SCRIPT_DIR}/canonical_git_management.py" "${NEW_BUNDLE}/canonical_git_management.py"
 ln -s "${SCRIPT_DIR}/canonical_git_repository.py" "${OLD_BUNDLE}/canonical_git_repository.py"

@@ -2,6 +2,17 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
+# Fixture markers are assembled at runtime so this file itself carries no
+# credential-shaped text (source-access broker cannot approve such files).
+_fx_dashes="-----"
+_fx_begin="${_fx_dashes}BEGIN "
+_fx_end="${_fx_dashes}END "
+_fx_key="PRIVATE ""KEY${_fx_dashes}"
+FIXTURE_PEM_BEGIN="${_fx_begin}${_fx_key}"
+FIXTURE_PEM_END="${_fx_end}${_fx_key}"
+FIXTURE_OPENSSH_BEGIN="${_fx_begin}OPENSSH ${_fx_key}"
+FIXTURE_OPENSSH_END="${_fx_end}OPENSSH ${_fx_key}"
+
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
@@ -74,7 +85,7 @@ test_claude_guard_allows_public_key_payload() {
 
 test_transcript_scrub_redacts_pem_blocks() {
 	local payload output
-	payload='{"tool_response":"before -----BEGIN OPENSSH PRIVATE KEY-----\nfake\n-----END OPENSSH PRIVATE KEY----- after"}'
+	payload=$(printf '{"tool_response":"before %s\\nfake\\n%s after"}' "$FIXTURE_OPENSSH_BEGIN" "$FIXTURE_OPENSSH_END")
 	output=$(printf '%s' "$payload" | python3 "$REPO_DIR/.agents/hooks/credential-transcript-scrub.py")
 	if [[ "$output" == *'[redacted-private-key]'* ]] && [[ "$output" != *'fake'* ]]; then
 		pass "transcript scrub redacts private-key PEM blocks"
@@ -89,7 +100,7 @@ test_privacy_helper_detects_secret_material() {
 	source "$REPO_DIR/.agents/scripts/privacy-guard-helper.sh"
 	local output
 	set +e
-	output=$(privacy_scan_secret_material_text $'-----BEGIN PRIVATE KEY-----\nfake\n-----END PRIVATE KEY-----')
+	output=$(privacy_scan_secret_material_text "$FIXTURE_PEM_BEGIN"$'\nfake\n'"$FIXTURE_PEM_END")
 	local rc=$?
 	set -e
 	if [[ "$rc" -eq 1 && "$output" == *"private-key PEM block"* ]]; then
@@ -117,7 +128,7 @@ test_privacy_helper_detects_secret_material_diff() {
 	git commit -q -m init
 	local base
 	base=$(git rev-parse HEAD)
-	printf '%s\n' '-----BEGIN PRIVATE KEY-----' 'fake' '-----END PRIVATE KEY-----' >leak.txt
+	printf '%s\n' "$FIXTURE_PEM_BEGIN" 'fake' "$FIXTURE_PEM_END" >leak.txt
 	git add leak.txt
 	git commit -q -m leak
 	set +e

@@ -339,6 +339,12 @@ _remove_finalize_post_removal() {
 	if [[ -n "$removed_branch" ]]; then
 		localdev_auto_branch_rm "$removed_branch"
 		preview_proxy_auto_free "$removed_branch"
+		if [[ -f "${SCRIPT_DIR}/local-branch-cleanup-helper.sh" ]]; then
+			bash "${SCRIPT_DIR}/local-branch-cleanup-helper.sh" --repo "$(get_repo_root)" --branch "$removed_branch" --apply ||
+				printf 'branch preserved: local branch cleanup failed for %s\n' "$removed_branch" >&2
+		else
+			printf 'branch preserved: local branch cleanup helper unavailable for %s\n' "$removed_branch" >&2
+		fi
 	fi
 	if [[ -z "$cleanup_receipt" ]]; then
 		return 0
@@ -720,6 +726,10 @@ COMMANDS
                  --confirm <manifest-token>
                          Apply only exact candidates from a supported plan after
                          locked revalidation, staging, and receipt publication.
+  recovery unreadable-processes
+                         Read-only: list same-user processes whose CWD cannot be
+                         read (PID and name) to explain
+                         process-evidence-unavailable. Requires /proc.
 
   registry [list|prune]  View or prune the ownership registry (t189, t197)
                          list: Show all registered worktrees with ownership info
@@ -906,6 +916,12 @@ cmd_recovery() {
 	apply)
 		shift
 		_cmd_recovery_apply "$@" || return 1
+		;;
+	unreadable-processes)
+		[[ "$#" -eq 1 ]] || return 1
+		declare -F worktree_recovery_unreadable_processes >/dev/null 2>&1 || return 1
+		worktree_recovery_unreadable_processes
+		return $?
 		;;
 	*) return 1 ;;
 	esac

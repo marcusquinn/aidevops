@@ -10,6 +10,13 @@ SANDBOX="$(mktemp -d -t aidevops-opencode-v2-setup.XXXXXX)"
 trap 'rm -rf "$SANDBOX"' EXIT
 export HOME="$SANDBOX/home"
 mkdir -p "$HOME"
+# Run from an opencode2 shell, the shim's exports point at the live V2 runtime.
+# HOME alone does not isolate them; leaking them let this test overwrite the
+# live V2 config and break V2 provider auth (GH#32738).
+unset OPENCODE_CONFIG OPENCODE_CONFIG_DIR XDG_CONFIG_HOME XDG_DATA_HOME XDG_CACHE_HOME XDG_STATE_HOME \
+	AIDEVOPS_OPENCODE_PROFILE AIDEVOPS_OPENCODE_V2_ROOT AIDEVOPS_OPENCODE_V2_CONFIG_HOME \
+	AIDEVOPS_OPENCODE_V2_CONFIG_DIR AIDEVOPS_OPENCODE_V2_CONFIG AIDEVOPS_OPENCODE_V2_STATE_HOME \
+	AIDEVOPS_OAUTH_POOL_FILE AIDEVOPS_SKIP_OPENCODE_V2_SERVICE_RESTART
 
 print_info() { :; }
 print_success() { :; }
@@ -153,6 +160,24 @@ v1_symlink="$HOME/.config/opencode/plugins/opencode-aidevops"
 [[ -L "$v1_symlink" ]]
 [[ "$(readlink "$v1_symlink")" == "$HOME/.aidevops/agents/plugins/opencode-aidevops" ]]
 jq -e '([.plugins[] | select(endswith("/v2-plugin"))] | length == 1)' "$v2_config" >/dev/null
+# GH#32738: a V1 pass started from an opencode2 shell inherits the shim's V2
+# config env. The V1 pass alone (no V2 pass to repair it afterwards) must leave
+# the V2 config and plugins dir alone and still target the V1 config.
+v2_config_before=$(<"$v2_config")
+PATH="$SANDBOX/bin:$PATH" AIDEVOPS_OPENCODE_PROFILE=v1 AIDEVOPS_INSTALL_OPENCODE2_PREVIEW=0 \
+	OPENCODE_CONFIG="$v2_config" OPENCODE_CONFIG_DIR="${v2_config%/*}" \
+	XDG_CONFIG_HOME="$HOME/.aidevops/runtimes/opencode-v2/config" setup_opencode_runtime_plugins
+[[ "$(<"$v2_config")" == "$v2_config_before" ]] ||
+	{ printf 'V1 plugin pass rewrote the V2 config from ambient V2 env\n' >&2; exit 1; }
+[[ ! -e "$v2_plugins_dir/opencode-aidevops" && ! -L "$v2_plugins_dir/opencode-aidevops" ]] ||
+	{ printf 'V1 plugin pass linked the V1 plugin into the V2 plugins dir\n' >&2; exit 1; }
+[[ "$(readlink "$v1_symlink")" == "$HOME/.aidevops/agents/plugins/opencode-aidevops" ]]
+jq -e '([.plugin[] | select(endswith("/index.mjs"))] | length == 1)' "$config" >/dev/null
+# A redeploy's V2 pass removes V1 link residue from the V2 plugins dir.
+ln -s "$HOME/.aidevops/agents/plugins/opencode-aidevops" "$v2_plugins_dir/opencode-aidevops"
+PATH="$SANDBOX/bin:$PATH" AIDEVOPS_OPENCODE_PROFILE=v2 setup_opencode_plugins
+[[ ! -e "$v2_plugins_dir/opencode-aidevops" && ! -L "$v2_plugins_dir/opencode-aidevops" ]] ||
+	{ printf 'V1 plugin link remained in the V2 plugins dir\n' >&2; exit 1; }
 ambient_v2_config="$SANDBOX/ambient-v2.json"
 printf '{"plugins":["file:///ambient-v2.mjs"]}\n' >"$ambient_v2_config"
 PATH="$SANDBOX/bin:$PATH" AIDEVOPS_OPENCODE_PROFILE=v2 \
@@ -177,6 +202,54 @@ for helper in "$REPO_ROOT/.agents/scripts/setup/_common.sh" "$REPO_ROOT/.agents/
 	)
 	[[ "$resolved" == "$xdg_root/opencode/opencode.json" ]]
 done
+
+# GH#33046: another tool's per-process OPENCODE_CONFIG must never become a
+# setup write target; user-owned and opted-in locations stay honoured.
+user_config="$HOME/.config/opencode/opencode.json"
+mkdir -p "${user_config%/*}"
+[[ -f "$user_config" ]] || printf '{}\n' >"$user_config"
+foreign_config="$SANDBOX/foreign-tool/analysis-opencode.json"
+mkdir -p "${foreign_config%/*}"
+printf '{"agent":{"image-analyzer":{"permission":{"*":"deny"}}}}\n' >"$foreign_config"
+foreign_before=$(<"$foreign_config")
+dotfiles_config="$SANDBOX/dotfiles/opencode.json"
+mkdir -p "${dotfiles_config%/*}"
+printf '{}\n' >"$dotfiles_config"
+for helper in "$REPO_ROOT/.agents/scripts/setup/_common.sh" "$REPO_ROOT/.agents/scripts/setup/_runtime_helpers.sh"; do
+	resolved_set=$(
+		unset _SETUP_RUNTIME_HELPERS_LOADED
+		# shellcheck source=/dev/null
+		source "$helper"
+		printf '%s|' "$(OPENCODE_CONFIG="$foreign_config" find_opencode_config 2>/dev/null)"
+		printf '%s|' "$(OPENCODE_CONFIG_DIR="${foreign_config%/*}" find_opencode_config 2>/dev/null)"
+		printf '%s|' "$(OPENCODE_CONFIG="$user_config" find_opencode_config 2>/dev/null)"
+		printf '%s|' "$(AIDEVOPS_OPENCODE_USER_CONFIG="$dotfiles_config" OPENCODE_CONFIG="$dotfiles_config" find_opencode_config 2>/dev/null)"
+		printf '%s' "$(AIDEVOPS_OPENCODE_USER_CONFIG="${dotfiles_config%/*}" find_opencode_config 2>/dev/null)"
+	)
+	expected_set="${user_config}|${user_config}|${user_config}|${dotfiles_config}|${dotfiles_config}"
+	[[ "$resolved_set" == "$expected_set" ]] ||
+		{ printf '%s resolved ambient configs unexpectedly: %s\n' "$(basename "$helper")" "$resolved_set" >&2; exit 1; }
+done
+notice=$(
+	unset -f find_opencode_config
+	# shellcheck source=/dev/null
+	source "$REPO_ROOT/.agents/scripts/setup/_common.sh"
+	OPENCODE_CONFIG="$foreign_config" find_opencode_config 2>&1 >/dev/null || true
+)
+[[ "$notice" == *"AIDEVOPS_OPENCODE_USER_CONFIG"* ]] ||
+	{ printf 'foreign ambient config skip was silent\n' >&2; exit 1; }
+(
+	# Exercise the real resolver, not the stub used by the earlier passes.
+	unset -f find_opencode_config
+	# shellcheck source=/dev/null
+	source "$REPO_ROOT/.agents/scripts/setup/_common.sh"
+	PATH="$SANDBOX/bin:$PATH" AIDEVOPS_OPENCODE_PROFILE=v1 AIDEVOPS_INSTALL_OPENCODE2_PREVIEW=0 \
+		OPENCODE_CONFIG="$foreign_config" setup_opencode_runtime_plugins
+) >/dev/null 2>&1
+[[ "$(<"$foreign_config")" == "$foreign_before" ]] ||
+	{ printf 'V1 plugin pass rewrote a foreign OPENCODE_CONFIG\n' >&2; exit 1; }
+jq -e '([.plugin[] | select(endswith("/opencode-aidevops/index.mjs"))] | length == 1)' "$user_config" >/dev/null ||
+	{ printf 'V1 plugin pass did not register in the user config\n' >&2; exit 1; }
 
 grep -Eq '_time_step .* setup_opencode_runtimes$' "$REPO_ROOT/setup.sh"
 grep -Eq 'confirm_step .*setup_opencode_runtimes$' "$REPO_ROOT/setup.sh"

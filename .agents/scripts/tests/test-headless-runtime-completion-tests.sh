@@ -453,6 +453,8 @@ test_cmd_run_finish_rejects_unverified_post_pr_handoff() {
 		_hrw_record_terminal_outcome() { return 0; }
 		_emit_worker_runtime_event() { return 0; }
 		_worker_post_pr_handoff_confirmed() { return 1; }
+		# Fail-open classification is not durable PR evidence (GH#33115).
+		_worker_produced_output() { printf 'pr_exists'; return 0; }
 		_hrw_record_reconciled_outcome() {
 			local session_key="$1"
 			local raw_result="$2"
@@ -1089,8 +1091,9 @@ test_attempt_orphan_recovery_pr_uses_authoritative_worker_issue() {
 		"feature/auto-test-issue-99999" "test-owner/test-repo" "draft"
 	unset -f gh 2>/dev/null || true
 
+	# GH#32933: recovery PRs use the non-closing `For #N` reference.
 	if [[ "$gh_called" -eq 1 && "$gh_title" == *"#28313"* && \
-		"$gh_body" == *"Resolves #28313"* && \
+		"$gh_body" == *"For #28313"* && "$gh_body" != *"Resolves #28313"* && \
 		"$gh_title" != *"1784593858"* && "$gh_body" != *"#1784593858"* ]]; then
 		print_result "orphan recovery prefers authoritative worker issue over session timestamp" 0
 	else
@@ -1122,7 +1125,7 @@ test_ensure_orphan_recovery_rejects_empty_branch() {
 
 test_build_orphan_recovery_pr_body_tolerates_missing_publish_flag() {
 	local pr_body=""
-	if ! pr_body=$(_build_orphan_recovery_pr_body "issue-99999" "feature/auto-test-issue-99999" "Resolves #99999"); then
+	if ! pr_body=$(_build_orphan_recovery_pr_body "issue-99999" "feature/auto-test-issue-99999" "For #99999"); then
 		print_result "_build_orphan_recovery_pr_body tolerates missing publish flag" 1 \
 			"Function failed when published_local_branch arg was omitted"
 		return 0

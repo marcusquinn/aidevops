@@ -6,7 +6,9 @@ import { test } from "node:test";
 import plugin, {
   computeTerminalTitle,
   createTerminalTitleSync,
+  createTabbyRecoverySync,
   createVersionReader,
+  isTabbyRecoveryEnabled,
   resolveSessionTitleStatus,
   setupTerminalTitle,
 } from "../v2-plugin/tui.mjs";
@@ -32,6 +34,32 @@ function fakeApi({ route = { type: "session", sessionID: "root" }, status = {}, 
     },
   };
 }
+
+test("V2 TUI records one Tabby recovery marker per routed root session (GH#32700)", () => {
+  assert.equal(isTabbyRecoveryEnabled({ AIDEVOPS_TABBY_V2_RECOVERY: "1", XDG_DATA_HOME: "/v2" }), true);
+  assert.equal(isTabbyRecoveryEnabled({ AIDEVOPS_TABBY_V2_RECOVERY: "0", XDG_DATA_HOME: "/v2" }), false);
+  assert.equal(isTabbyRecoveryEnabled({ AIDEVOPS_TABBY_V2_RECOVERY: "1" }), false);
+
+  const api = fakeApi({ route: { type: "session", sessionID: "child" } });
+  let directory;
+  api.data.session.get = (id) => (id === "root" && directory ? { id, location: { directory } } : undefined);
+  const markers = [];
+  const reported = [];
+  const sync = createTabbyRecoverySync(api, {
+    env: { XDG_DATA_HOME: "/v2" },
+    workDir: "/work",
+    writeMarker: (marker) => markers.push(marker) && `/work/marker/${marker.sessionID}`,
+    writeDirectory: (path) => reported.push(path),
+  });
+  assert.equal(sync(), false, "unsynced session data is retried later");
+  directory = "/repo";
+  assert.equal(sync(), true);
+  assert.equal(sync(), false, "an unchanged root session is not rewritten");
+  assert.deepEqual(markers, [{ sessionID: "root", directory: "/repo", dataDir: "/v2", workDir: "/work", runtime: "v2" }]);
+  assert.deepEqual(reported, ["/work/marker/root"]);
+  api.state.route = { type: "home" };
+  assert.equal(sync(), false, "home keeps the last session marker");
+});
 
 test("V2 TUI plugin module satisfies the OpenCode V2 TUI contract", () => {
   assert.equal(typeof plugin.id, "string");

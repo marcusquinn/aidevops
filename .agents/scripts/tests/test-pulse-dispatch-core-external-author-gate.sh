@@ -331,9 +331,9 @@ test_author_lookup_failure_fails_closed() {
 
 test_dedup_author_gate_integration() {
 	local caller_src
-	# The orchestrator delegates to three extracted gates. Include their actual
+	# The orchestrator delegates to four extracted gates. Include their actual
 	# implementations so this isolated integration check exercises the caller chain.
-	caller_src=$(awk '/^_dispatch_dedup_capacity_gates\(\) \{/,/^}$/ { print } /^_dispatch_dedup_state_label_gates\(\) \{/,/^}$/ { print } /^_dispatch_dedup_dependency_gates\(\) \{/,/^}$/ { print } /^_dispatch_dedup_check_layers\(\) \{/,/^}$/ { print }' "$ORCHESTRATOR_SCRIPT")
+	caller_src=$(awk '/^_dispatch_dedup_capacity_gates\(\) \{/,/^}$/ { print } /^_dispatch_dedup_state_label_gates\(\) \{/,/^}$/ { print } /^_dispatch_dedup_dependency_gates\(\) \{/,/^}$/ { print } /^_dispatch_dedup_scope_gates\(\) \{/,/^}$/ { print } /^_dispatch_dedup_check_layers\(\) \{/,/^}$/ { print }' "$ORCHESTRATOR_SCRIPT")
 	eval "$caller_src"
 	# Isolate unrelated pre-dispatch dependencies; exercise the actual caller,
 	# author gate, JSON validation and GitHub mock together without network I/O.
@@ -349,7 +349,14 @@ test_dedup_author_gate_integration() {
 	_has_consolidated_label() { return 1; }
 	_check_nmr_approval_gate() { return 1; }
 	is_blocked_by_unresolved() { return 1; }
-	_issue_needs_consolidation() { return 1; }
+	local consolidation_calls_file=""
+	consolidation_calls_file=$(mktemp 2>/dev/null || mktemp -t aidevops-gh32729)
+	# GH#32729: costly scope gates must not run for a candidate the read-only
+	# dedup layers already rejected.
+	_issue_needs_consolidation() {
+		printf '%s\n' "$1" >>"$consolidation_calls_file"
+		return 1
+	}
 	_issue_targets_large_files() { return 1; }
 	_dedup_dependabot_intake_target() { return 1; }
 	_footprint_check_overlap() { return 0; }
@@ -362,6 +369,11 @@ test_dedup_author_gate_integration() {
 		print_result "active claim skips author metadata lookup and mutation" 0
 	else
 		print_result "active claim skips author metadata lookup and mutation" 1 "rc=$rc"
+	fi
+	if [[ ! -s "$consolidation_calls_file" ]]; then
+		print_result "active claim skips costly consolidation gate" 0
+	else
+		print_result "active claim skips costly consolidation gate" 1 "consolidation ran before dedup rejected the candidate"
 	fi
 	# A successful API with empty output must defer, not allow dispatch.
 	mock_dedup_rc=1
@@ -382,6 +394,12 @@ test_dedup_author_gate_integration() {
 	else
 		print_result "trusted bot dispatch resumes when metadata recovers" 1 "rc=$rc"
 	fi
+	if grep -qx '31404' "$consolidation_calls_file"; then
+		print_result "unclaimed candidate still runs consolidation gate" 0
+	else
+		print_result "unclaimed candidate still runs consolidation gate" 1 "consolidation gate was skipped"
+	fi
+	rm -f "$consolidation_calls_file"
 	cleanup_case
 	return 0
 }

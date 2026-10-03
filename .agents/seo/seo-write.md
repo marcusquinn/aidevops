@@ -20,7 +20,8 @@ Topic/Keyword: $ARGUMENTS
 2. **Context**: Check for project context files; read any that exist before writing
 
    ```bash
-   ls context/brand-voice.md context/style-guide.md context/internal-links-map.md context/target-keywords.md 2>/dev/null
+   ls context/keywords.md context/brand-voice.md context/style-guide.md context/internal-links-map.md context/target-keywords.md 2>/dev/null
+   aidevops keywords brief --cluster <cluster-id>   # when context/keywords.md exists (seo/keywords-standard.md)
    ls .aidevops/context/brand-voice.md .aidevops/context/style-guide.md 2>/dev/null
    ```
 

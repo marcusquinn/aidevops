@@ -166,7 +166,7 @@ extract_repo_slug() {
 #######################################
 # Extract provider name from worker command line
 #
-# Workers are dispatched with a model like "anthropic/claude-sonnet-4-6".
+# Workers are dispatched with a model like "anthropic/claude-sonnet-5-5".
 # The provider is the prefix before the first slash.
 #
 # Arguments:

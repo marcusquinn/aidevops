@@ -71,6 +71,50 @@ clear_terminal_issue_dispatch_labels() {
 	return "$exit_code"
 }
 
+clear_closed_pr_dispatch_labels() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local merged="$3"
+	local current_labels="${4:-}"
+
+	if [[ ! "$pr_number" =~ ^[0-9]+$ || -z "$repo_slug" ]]; then
+		return 1
+	fi
+
+	local -a edit_args=("pr" "edit" "$pr_number" "--repo" "$repo_slug")
+	local label found=0
+	if [[ "$merged" == "true" ]]; then
+		edit_args+=("--add-label" "status:done")
+		found=1
+	fi
+	while IFS= read -r label; do
+		[[ -n "$label" ]] || continue
+		if [[ "$label" == status:* ]]; then
+			if [[ "$merged" != "true" || "$label" != "status:done" ]]; then
+				edit_args+=("--remove-label" "$label")
+				found=1
+			fi
+		elif [[ "$label" == "auto-dispatch" || "$label" == "needs-maintainer-permissions" ]]; then
+			edit_args+=("--remove-label" "$label")
+			found=1
+		fi
+	done <<<"$current_labels"
+
+	if [[ "$found" -eq 0 ]]; then
+		return 0
+	fi
+
+	local exit_code=0
+	gh "${edit_args[@]}" >/dev/null 2>&1 || exit_code=$?
+	if [[ "$exit_code" -eq 0 ]]; then
+		echo "[pulse-wrapper] dispatch-label-cleanup: transitioned closed PR ${repo_slug}#${pr_number}" >>"$LOGFILE"
+		return 0
+	fi
+
+	echo "[pulse-wrapper] dispatch-label-cleanup: failed to transition closed PR ${repo_slug}#${pr_number} [exit: ${exit_code}]" >>"$LOGFILE"
+	return "$exit_code"
+}
+
 reconcile_terminal_issue_worker_blockers() {
 	local issue_number="$1"
 	local repo_slug="$2"
@@ -181,7 +225,8 @@ sweep_closed_auto_dispatch_issues() {
 	[[ "$limit" -gt 0 ]] || limit=50
 
 	local total=0 checked=0 open=0 ambiguous=0 logger_failed=0 label_failed=0
-	local repo_slug issue_number issue_rows snapshot state state_reason labels_csv reason
+	local pr_checked=0 pr_updated=0 pr_failed=0
+	local repo_slug issue_number issue_rows snapshot state state_reason labels_csv reason pr_rows pr_number merged
 	while IFS= read -r repo_slug; do
 		[[ -n "$repo_slug" ]] || continue
 		if ! declare -F repo_allows_pulse_write_actions >/dev/null 2>&1 \
@@ -192,8 +237,8 @@ sweep_closed_auto_dispatch_issues() {
 			logger_failed=$((logger_failed + 1))
 			continue
 		}
-		[[ -n "$issue_rows" ]] || continue
-		while IFS= read -r issue_number; do
+		if [[ -n "$issue_rows" ]]; then
+			while IFS= read -r issue_number; do
 			[[ "$issue_number" =~ ^[0-9]+$ ]] || continue
 			snapshot=$(_dispatch_terminal_issue_snapshot "$issue_number" "$repo_slug") || {
 				ambiguous=$((ambiguous + 1))
@@ -214,10 +259,27 @@ sweep_closed_auto_dispatch_issues() {
 			else
 				logger_failed=$((logger_failed + 1))
 			fi
-		done <<<"$issue_rows"
+			done <<<"$issue_rows"
+		fi
+
+		pr_rows=$(gh pr list --repo "$repo_slug" --state closed --label "status:in-review" \
+			--limit "$limit" --json number,mergedAt,labels \
+			--jq '.[] | [.number, (if .mergedAt then "true" else "false" end), ([.labels[].name] | join("|"))] | @tsv' 2>/dev/null) || {
+			pr_failed=$((pr_failed + 1))
+			continue
+		}
+		while IFS=$'\t' read -r pr_number merged labels_csv; do
+			[[ "$pr_number" =~ ^[0-9]+$ ]] || continue
+			pr_checked=$((pr_checked + 1))
+			if clear_closed_pr_dispatch_labels "$pr_number" "$repo_slug" "$merged" "${labels_csv//|/$'\n'}"; then
+				pr_updated=$((pr_updated + 1))
+			else
+				pr_failed=$((pr_failed + 1))
+			fi
+		done <<<"$pr_rows"
 	done < <(_dispatch_label_sweep_repos "$repos_json" || true)
 
 	_dispatch_label_sweep_mark_run
-	echo "[pulse-wrapper] dispatch-label-cleanup: blocker sweep resolved=${total} checked=${checked} open=${open} ambiguous=${ambiguous} logger_failed=${logger_failed} label_failed=${label_failed}" >>"$LOGFILE"
+	echo "[pulse-wrapper] dispatch-label-cleanup: blocker sweep resolved=${total} checked=${checked} open=${open} ambiguous=${ambiguous} logger_failed=${logger_failed} label_failed=${label_failed} pr_checked=${pr_checked} pr_updated=${pr_updated} pr_failed=${pr_failed}" >>"$LOGFILE"
 	return 0
 }

@@ -27,6 +27,7 @@ tools:
 3. **Review**: `~/.aidevops/.agent-workspace/work/seo-data/example.com/analysis-*.toon`
 4. **Prioritize**: Quick wins → Low CTR → Cannibalization → Striking distance
 5. **Extend**: `seo-analysis-helper.sh example.com quick-wins` → `/keyword-research-extended "top opportunity keyword"`
+6. **Record**: import exports into registry history with `aidevops keywords track --source export --file <gsc-*.toon>`; `aidevops keywords report` then lists striking-distance targets and movers against the project's own targets (`seo/keywords-standard.md`)
 
 Data sources: GSC (clicks/impr), Ahrefs/DataForSEO (volume/difficulty), Bing — merged across sources; cannibalization detection spans all.
 

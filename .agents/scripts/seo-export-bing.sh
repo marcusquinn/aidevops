@@ -38,6 +38,23 @@ readonly DEFAULT_DAYS=90
 # Get API key from environment
 get_api_key() {
     source "$CONFIG_DIR/credentials.sh" 2>/dev/null || true
+
+    # gopass fallback: aidevops/BING_WEBMASTER_API_KEY, else a single
+    # aidevops/BING_WEBMASTER_API_KEY_* entry. Never printed.
+    if [[ -z "${BING_WEBMASTER_API_KEY:-}" ]] && command -v gopass >/dev/null 2>&1; then
+        local found entries entry_count
+        found="$(gopass show -o aidevops/BING_WEBMASTER_API_KEY 2>/dev/null || true)"
+        if [[ -z "$found" ]]; then
+            entries="$(gopass ls --flat aidevops/ 2>/dev/null | grep -E '^aidevops/BING_WEBMASTER_API_KEY_' || true)"
+            entry_count="$(printf '%s' "$entries" | grep -c . || true)"
+            if [[ "$entry_count" == "1" ]]; then
+                found="$(gopass show -o "$entries" 2>/dev/null || true)"
+            fi
+        fi
+        if [[ -n "$found" ]]; then
+            BING_WEBMASTER_API_KEY="$found"
+        fi
+    fi
     
     if [[ -z "${BING_WEBMASTER_API_KEY:-}" ]]; then
         print_error "BING_WEBMASTER_API_KEY not configured"
@@ -217,7 +234,9 @@ Output:
     ~/.aidevops/.agent-workspace/work/seo-data/{domain}/bing-{start}-{end}.toon
 
 Requirements:
-    - BING_WEBMASTER_API_KEY set in ~/.config/aidevops/credentials.sh
+    - BING_WEBMASTER_API_KEY in the environment, ~/.config/aidevops/credentials.sh,
+      or gopass (aidevops/BING_WEBMASTER_API_KEY, or a single
+      aidevops/BING_WEBMASTER_API_KEY_* entry)
     - Site must be verified in Bing Webmaster Tools
 
 API Key Setup:

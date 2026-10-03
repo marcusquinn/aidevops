@@ -421,13 +421,20 @@ _ensure_orphan_recovery_branch_remote() {
 
 #######################################
 # Build orphan-recovery PR body.
-# Args: $1=session_key, $2=branch_name, $3=closing_line, $4=published_local_branch
+#
+# The issue reference must be non-closing (`For #N`, GH#32933): the worker
+# exited without declaring completion, so merging recovered partial work must
+# leave the issue open for review and redispatch.
+#
+# Args: $1=session_key, $2=branch_name, $3=issue_reference_line,
+#       $4=published_local_branch
 #######################################
 _build_orphan_recovery_pr_body() {
 	local session_key="$1"
 	local branch_name="$2"
-	local closing_line="$3"
+	local issue_reference_line="$3"
 	local published_local_branch="${4:-}"
+	local pr_completion_note="This recovery PR preserves partial worker progress only. The worker did not declare completion, so this PR uses a non-closing issue reference: merging it leaves the issue open for review and redispatch until its acceptance criteria are verified (GH#32933)."
 
 	local pr_summary="Orphan recovery PR — worker pushed this branch but exited before opening a PR."
 	local pr_context="Branch \`${branch_name}\` was pushed by headless worker session \`${session_key}\` which released as \`worker_branch_orphan\`. This PR was auto-created by the orphan-recovery path (GH#20819) so the change can land via the normal review and merge pipeline."
@@ -438,10 +445,11 @@ _build_orphan_recovery_pr_body() {
 		pr_marker="<!-- aidevops:orphan-recovery worker_local_branch_unpushed session=${session_key} -->"
 	fi
 
-	printf '%s\n\n%s\n\n%s\n\n%s' \
+	printf '%s\n\n%s\n\n%s\n\n%s\n\n%s' \
 		"$pr_summary" \
 		"$pr_context" \
-		"$closing_line" \
+		"$pr_completion_note" \
+		"$issue_reference_line" \
 		"$pr_marker"
 	return 0
 }
@@ -529,6 +537,16 @@ _scl_worker_issue_number() {
 # Non-fatal guard: issues in CLOSED state skip recovery rather than
 # creating a PR nobody will review (edge case: worker closed issue as
 # "premise falsified" per worker-triage rules — GH#20819 §Context).
+#
+# Issue reference (GH#32933): recovery PRs exist because the worker exited
+# WITHOUT declaring completion. A pushed branch is progress evidence, not
+# proof that acceptance criteria are met, so the body uses the non-closing
+# `For #N` — never Resolves/Closes/Fixes. A closing keyword let the
+# deterministic merge pass close the issue and apply status:done and
+# solved:worker for partial WIP branches. With `For #N`, claim release
+# projects the issue back to status:available, dispatch dedup still sees the
+# open PR through its `#N` title/body reference, and a merge leaves the issue
+# open for review and redispatch.
 #######################################
 _attempt_orphan_recovery_pr() {
 	local session_key="$1"
@@ -600,19 +618,19 @@ _attempt_orphan_recovery_pr() {
 	local base_branch=""
 	base_branch=$(_resolve_orphan_recovery_base_branch "$repo_slug" "$work_dir")
 
-	# Build PR metadata
+	# Build PR metadata. Non-closing issue reference by design (GH#32933).
 	local pr_title="auto-recover: orphaned worker branch"
-	local closing_line=""
+	local issue_reference_line=""
 	if [[ -n "$issue_number" ]]; then
 		pr_title="auto-recover: orphaned worker branch for #${issue_number}"
-		closing_line="Resolves #${issue_number}"
+		issue_reference_line="For #${issue_number}"
 	fi
 	if [[ "$recovery_mode" == "draft" ]]; then
 		pr_title="checkpoint: recover dirty worker worktree for #${issue_number}"
 	fi
 
 	local pr_body
-	pr_body=$(_build_orphan_recovery_pr_body "$session_key" "$branch_name" "$closing_line" "$published_local_branch")
+	pr_body=$(_build_orphan_recovery_pr_body "$session_key" "$branch_name" "$issue_reference_line" "$published_local_branch")
 
 	# Attempt PR creation — non-draft so auto-merge and review gates apply.
 	# Raw gh pr create (not gh_create_pr wrapper) is intentional: gh_create_pr

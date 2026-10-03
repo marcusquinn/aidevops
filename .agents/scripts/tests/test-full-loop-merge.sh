@@ -125,6 +125,10 @@ if [[ "\$_gh_cmd" == "pr" && "\$_gh_sub" == "merge" ]]; then
 		echo "base branch policy prohibits the merge" >&2
 		exit 124
 	fi
+	if [[ "$mode" == "pending-policy" ]]; then
+		echo "base branch policy prohibits the merge" >&2
+		exit 1
+	fi
 
 	if [[ "$mode" == "fallback" || "$mode" == "fallback-nmr" || "$mode" == "fallback-native-review" ||
 		"$mode" == "auto-review-required" || "$mode" == "auto-review-required-admin-block" ||
@@ -383,6 +387,11 @@ SCRIPT_DIR='${scripts_dir}'
 source '${scripts_dir}/shared-constants.sh'
 source '${scripts_dir}/full-loop-helper-merge.sh'
 _merge_guard_prospective_todo() { return 0; }
+if [[ -n "\${MERGE_TEST_REQUIRED_CHECKS_RC:-}" ]]; then
+	_merge_admin_fallback_required_checks_clear() { printf '%s\n' 'LIFECYCLE_STATE=CHECKS_PENDING'; return "\${MERGE_TEST_REQUIRED_CHECKS_RC}"; }
+else
+	_merge_admin_fallback_required_checks_clear() { return 0; }
+fi
 _merge_execute '$pr_number' '$repo' '$merge_method' '$has_admin' '$has_auto'
 RUNNER_EOF
 	chmod +x "$tmp_runner"
@@ -608,6 +617,20 @@ test_admin_fallback_blocks_needs_maintainer_review_issue() {
 	fi
 	print_result "admin fallback: no success signaling when maintainer gate blocks" "$signaled"
 
+	return 0
+}
+
+test_admin_fallback_blocks_pending_required_checks() {
+	rm -f "${TEST_ROOT}/logs/"*.txt
+	create_gh_stub "pending-policy"
+
+	local exit_code=0 out="" merge_calls=0
+	out=$(MERGE_TEST_REQUIRED_CHECKS_RC=8 run_merge_execute "42" "testorg/testrepo" "--squash" "0" "0" 2>&1) || exit_code=$?
+	merge_calls=$(grep -c '^gh pr merge' "${TEST_ROOT}/logs/gh-calls.txt" 2>/dev/null || true)
+	print_result "pending checks: policy refusal remains non-zero" "$((exit_code == 0 ? 1 : 0))" "output=$out"
+	print_result "pending checks: no admin retry occurs" "$((merge_calls == 1 ? 0 : 1))" "merge_calls=$merge_calls"
+	print_result "pending checks: lifecycle state is explicit" \
+		"$([[ "$out" == *"LIFECYCLE_STATE=CHECKS_PENDING"* ]] && printf '0' || printf '1')" "output=$out"
 	return 0
 }
 
@@ -1782,6 +1805,7 @@ main() {
 	test_admin_fallback_native_review_handoff
 	test_admin_timeout_reconciles_without_replay
 	test_admin_fallback_blocks_needs_maintainer_review_issue
+	test_admin_fallback_blocks_pending_required_checks
 	test_explicit_admin_no_signaling
 	test_other_error_no_fallback
 	test_late_review_blocks_every_merge_transport

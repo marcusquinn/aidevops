@@ -133,8 +133,27 @@ gh_create_issue() {
 		fi
 	done
 	[[ -n "$body_file" && -f "$body_file" ]] || return 1
+	if [[ "$CREATE_ISSUE_FAIL" -eq 1 ]]; then
+		printf 'could not add label: dependencies not found\nsecond line\n'
+		return 1
+	fi
 	cp "$body_file" "${TEST_ROOT}/created-body"
 	printf 'https://github.com/owner/repo/issues/42\n'
+	return 0
+}
+
+LABEL_SNAPSHOT="origin:worker"
+LABEL_CREATE_FAIL=0
+CREATE_ISSUE_FAIL=0
+
+_gh_managed_label_names_snapshot() {
+	printf '%s\n' "$LABEL_SNAPSHOT"
+	return 0
+}
+
+_gh_managed_label_create_runner() {
+	printf '%s\n' "$*" >>"${TEST_ROOT}/label-create-calls"
+	[[ "$LABEL_CREATE_FAIL" -eq 0 ]] || return 1
 	return 0
 }
 
@@ -167,6 +186,59 @@ test_creates_worker_ready_issue() {
 	# shellcheck disable=SC2016 # Literal Markdown scope declarations.
 	assert_file_contains "worker issue permits narrow trust-policy repair" "${TEST_ROOT}/created-body" '- EDIT: `.agents/configs/trusted-dependabot-updates.conf`'
 	assert_file_contains "worker issue carries idempotency marker" "${TEST_ROOT}/created-body" "aidevops:dependabot-pr-intake repo=owner/repo pr=30038"
+	return 0
+}
+
+test_provisions_missing_dependencies_label() {
+	rm -f "${TEST_ROOT}/create-args" "${TEST_ROOT}/label-create-calls"
+	OPEN_ISSUES_JSON="[]"
+	CLOSED_ISSUES_JSON="[]"
+	AUTHENTIC=1
+	LABEL_SNAPSHOT="origin:worker"
+	LABEL_CREATE_FAIL=0
+	_pulse_route_dependabot_pr_to_worker_issue "30038" "owner/repo" "app/dependabot" "head-current" "policy-ineligible"
+	[[ -f "${TEST_ROOT}/create-args" ]] || return 1
+	assert_file_contains "missing dependencies label is created once" "${TEST_ROOT}/label-create-calls" "owner/repo dependencies"
+	[[ "$(wc -l <"${TEST_ROOT}/label-create-calls" | tr -d ' ')" == "1" ]] || return 1
+	return 0
+}
+
+test_existing_dependencies_label_skips_create() {
+	rm -f "${TEST_ROOT}/create-args" "${TEST_ROOT}/label-create-calls"
+	LABEL_SNAPSHOT=$'origin:worker\ndependencies'
+	_pulse_route_dependabot_pr_to_worker_issue "30038" "owner/repo" "app/dependabot" "head-current" "policy-ineligible"
+	[[ -f "${TEST_ROOT}/create-args" && ! -e "${TEST_ROOT}/label-create-calls" ]]
+	return $?
+}
+
+test_label_provisioning_failure_creates_no_issue() {
+	local route_rc=0
+	rm -f "${TEST_ROOT}/create-args" "${TEST_ROOT}/label-create-calls"
+	: >"$LOGFILE"
+	LABEL_SNAPSHOT="origin:worker"
+	LABEL_CREATE_FAIL=1
+	_pulse_route_dependabot_pr_to_worker_issue "30038" "owner/repo" "app/dependabot" "head-current" "policy-ineligible" || route_rc=$?
+	LABEL_CREATE_FAIL=0
+	[[ "$route_rc" -eq 1 && ! -e "${TEST_ROOT}/create-args" ]] || return 1
+	assert_file_contains "label failure is logged" "$LOGFILE" "dependencies label unavailable"
+	# Lock must be released: a subsequent route succeeds.
+	_pulse_route_dependabot_pr_to_worker_issue "30038" "owner/repo" "app/dependabot" "head-current" "policy-ineligible"
+	[[ -f "${TEST_ROOT}/create-args" ]]
+	return $?
+}
+
+test_create_failure_logs_reason() {
+	local route_rc=0
+	: >"$LOGFILE"
+	LABEL_SNAPSHOT=$'origin:worker\ndependencies'
+	CREATE_ISSUE_FAIL=1
+	_pulse_route_dependabot_pr_to_worker_issue "30038" "owner/repo" "app/dependabot" "head-current" "policy-ineligible" || route_rc=$?
+	CREATE_ISSUE_FAIL=0
+	[[ "$route_rc" -ne 0 ]] || return 1
+	assert_file_contains "create failure log has one-line reason" "$LOGFILE" "worker issue creation failed: could not add label: dependencies not found"
+	if grep -qF "second line" "$LOGFILE"; then
+		return 1
+	fi
 	return 0
 }
 
@@ -274,6 +346,21 @@ test_untrusted_marker_does_not_own_target() {
 		return 1
 	fi
 	return 0
+}
+
+# GH#32979: a consolidation-task child inlines the parent's marker verbatim but
+# never works the Dependabot PR; the parent's ownership must not block it.
+test_consolidation_child_not_blocked_by_parent_target() {
+	local child_body=$'## Consolidation target: #171\n\n## Parent body (verbatim)\n\n<!-- aidevops:dependabot-pr-intake repo=owner/repo pr=30038 -->'
+	local child_meta='{"labels":[{"name":"consolidation-task"},{"name":"auto-dispatch"},{"name":"origin:worker"}]}'
+	OPEN_ISSUES_JSON='[{"number":171,"body":"<!-- aidevops:dependabot-pr-intake repo=owner/repo pr=30038 -->","assignees":[],"labels":[{"name":"origin:worker"},{"name":"dependencies"},{"name":"needs-consolidation"}]}]'
+	if _dedup_dependabot_intake_target "181" "owner/repo" "$child_body" "$child_meta"; then
+		return 1
+	fi
+	# Without the label evidence the same body is still blocked by the owner.
+	_dedup_dependabot_intake_target "181" "owner/repo" "$child_body" || return 1
+	[[ "$_DEDUP_DEPENDABOT_BLOCK" == "owned" ]]
+	return $?
 }
 
 test_target_lookup_failure_blocks_dispatch() {
@@ -653,6 +740,15 @@ gh_issue_list() {
 	return 0
 }
 
+_gh_managed_label_names_snapshot() {
+	printf '%s\n' 'dependencies'
+	return 0
+}
+
+_gh_managed_label_create_runner() {
+	return 0
+}
+
 gh_create_issue() {
 	printf '%s\n' "$$" >>"$CREATE_COUNT"
 	sleep 1
@@ -670,6 +766,8 @@ gh_pr_view() {
 	return 0
 }
 
+# shellcheck source=../managed-label-provisioning-lib.sh
+source "$(dirname "$INTAKE_SCRIPT")/managed-label-provisioning-lib.sh"
 # shellcheck source=../pulse-dependabot-intake.sh
 source "$INTAKE_SCRIPT"
 _pulse_route_dependabot_pr_to_worker_issue "30038" "owner/repo" "app/dependabot" "head-current" "policy-ineligible"
@@ -689,11 +787,20 @@ EOF
 main() {
 	setup_test_env
 	trap teardown_test_env EXIT
+	# shellcheck source=../managed-label-provisioning-lib.sh
+	source "${SCRIPT_DIR}/../managed-label-provisioning-lib.sh"
 	# shellcheck source=../pulse-dependabot-intake.sh
 	source "$INTAKE_SCRIPT"
 	# shellcheck source=../pulse-dispatch-dedup-layers.sh
 	source "${SCRIPT_DIR}/../pulse-dispatch-dedup-layers.sh"
 	test_creates_worker_ready_issue
+	test_provisions_missing_dependencies_label
+	printf 'PASS missing dependencies label is provisioned once\n'
+	test_existing_dependencies_label_skips_create
+	printf 'PASS existing dependencies label skips create\n'
+	test_label_provisioning_failure_creates_no_issue
+	printf 'PASS label provisioning failure creates no issue\n'
+	test_create_failure_logs_reason
 	test_scope_read_fails_closed_on_head_drift
 	test_scope_read_rejects_unsafe_markdown_path
 	test_reuses_existing_issue
@@ -731,6 +838,8 @@ main() {
 	printf 'PASS same-target intake dispatch elects one live owner\n'
 	test_untrusted_marker_does_not_own_target
 	printf 'PASS untrusted marker cannot own an intake target\n'
+	test_consolidation_child_not_blocked_by_parent_target
+	printf 'PASS consolidation child is not blocked by its parent target owner\n'
 	test_target_lookup_failure_blocks_dispatch
 	printf 'PASS unknown target lookup fails closed\n'
 	test_saturated_target_lookup_blocks_dispatch

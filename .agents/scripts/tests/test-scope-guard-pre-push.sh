@@ -406,6 +406,76 @@ printf '\n[6] Branch with no task ID → fail-open\n'
 }
 
 # ---------------------------------------------------------------------------
+# stale_branch_setup — repo whose task branch is behind a simulated
+# origin/main that has other tasks' merged files (GH#33373).
+#
+# Returns (via stdout): <repo_dir> <origin_main_sha>
+# ---------------------------------------------------------------------------
+stale_branch_setup() {
+	local _repo _base _main_sha
+	read -r _repo _base <<< "$(repo_setup t9999)"
+	write_brief "$_repo" "t9999" ".agents/hooks/scope-guard-pre-push.sh"
+	(
+		cd "$_repo" || exit 1
+		git checkout -q -b upstream-main "$_base"
+		mkdir -p other
+		printf 'merged by another task\n' > other/merged.sh
+		git add other/merged.sh
+		git commit -q -m 'other task merged to main'
+		git update-ref refs/remotes/origin/main HEAD
+		git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
+		git checkout -q feature/t9999-test-branch
+	)
+	_main_sha=$(git -C "$_repo" rev-parse refs/remotes/origin/main)
+	printf '%s %s\n' "$_repo" "$_main_sha"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# Test 7: annotated tag on origin/main pushed from a stale task branch → allowed
+# ---------------------------------------------------------------------------
+printf '\n[7] Tag on origin/main from a stale task branch → allowed (GH#33373)\n'
+{
+	read -r repo main_sha <<< "$(stale_branch_setup)"
+	git -C "$repo" -c tag.gpgSign=false tag -a test-tag -m test "$main_sha"
+	tag_obj=$(git -C "$repo" rev-parse refs/tags/test-tag)
+	stdin_line="refs/tags/test-tag ${tag_obj} refs/tags/test-tag 0000000000000000000000000000000000000000"
+	rc=0
+	(cd "$repo" && bash "$HOOK" origin 'git@github.com:test/repo.git' \
+		<<<"$stdin_line" 2>/dev/null) || rc=$?
+	if [[ "$rc" -eq 0 ]]; then
+		_pass "tag-only push of an origin/main commit is allowed"
+	else
+		_fail "tag-only push of an origin/main commit is allowed" "hook blocked with rc=$rc"
+	fi
+}
+
+# ---------------------------------------------------------------------------
+# Test 8: new-branch push from a stale task branch with a real out-of-scope
+# change → still blocked, and already-merged upstream files are not reported.
+# ---------------------------------------------------------------------------
+printf '\n[8] New-branch push with out-of-scope change from stale branch → blocked\n'
+{
+	read -r repo main_sha <<< "$(stale_branch_setup)"
+	mkdir -p "${repo}/unrelated"
+	printf 'creep\n' > "${repo}/unrelated/creep.sh"
+	git -C "$repo" add "${repo}/unrelated/creep.sh"
+	git -C "$repo" commit -q -m 'out-of-scope change'
+	head_sha=$(git -C "$repo" rev-parse HEAD)
+	stdin_line="refs/heads/feature/t9999-test-branch ${head_sha} refs/heads/feature/t9999-test-branch 0000000000000000000000000000000000000000"
+	rc=0
+	stderr_out=$(cd "$repo" && bash "$HOOK" origin 'git@github.com:test/repo.git' \
+		<<<"$stdin_line" 2>&1 >/dev/null) || rc=$?
+	if [[ "$rc" -ne 0 ]] && [[ "$stderr_out" == *"unrelated/creep.sh"* ]] &&
+		[[ "$stderr_out" != *"other/merged.sh"* ]]; then
+		_pass "out-of-scope change blocked without reporting upstream-merged files"
+	else
+		_fail "out-of-scope change blocked without reporting upstream-merged files" \
+			"rc=$rc stderr=${stderr_out}"
+	fi
+}
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 printf '\n%d tests run, %d failed\n' "$TESTS_RUN" "$TESTS_FAILED"

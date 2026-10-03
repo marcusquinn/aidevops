@@ -31,7 +31,7 @@ resolve_model_id() {
 	local name="${1:-simple}"
 	case "$name" in
 	simple) echo "claude-haiku-4-5-20251001" ;;
-	standard) echo "claude-sonnet-4-6" ;;
+	standard) echo "claude-sonnet-5-5" ;;
 	thinking) echo "claude-opus-4-6" ;;
 	anthropic/*) echo "${name#anthropic/}" ;;
 	*) echo "claude-haiku-4-5-20251001" ;;

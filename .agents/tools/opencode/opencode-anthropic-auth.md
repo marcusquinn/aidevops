@@ -27,12 +27,14 @@ tools:
 | **Manual API Key** | All versions | Standard rates, best for CI/CD |
 
 **Setup (v1.2.30+):**
+
 ```bash
 opencode auth login  # Select: Anthropic Pool → enter email → complete OAuth in browser
 # Repeat to add more accounts for automatic rotation
 ```
 
 **Setup (v1.1.36–v1.2.29):**
+
 ```bash
 opencode auth login  # Select: Anthropic → Claude Pro/Max
 ```
@@ -44,11 +46,13 @@ opencode auth login  # Select: Anthropic → Claude Pro/Max
 The aidevops OAuth pool (`oauth-pool.mjs`) replaces the removed built-in auth, adding multi-account rotation — when one account hits a 429, requests switch to the next available account automatically.
 
 **Prerequisite:** aidevops plugin registered (done by `setup.sh`). Verify:
+
 ```bash
 grep -q "opencode-aidevops" ~/.config/opencode/opencode.json 2>/dev/null && echo "OK" || echo "Run: aidevops setup"
 ```
 
 **Adding accounts:**
+
 ```bash
 opencode auth login
 # Select: "Anthropic Pool" → enter email → browser opens → sign in → paste authorization code
@@ -57,6 +61,7 @@ opencode auth login
 Accounts stored in `~/.aidevops/oauth-pool.json` (0600). Repeat for additional accounts.
 
 **Managing the pool:**
+
 ```text
 /model-accounts-pool list              # Show all accounts with status
 /model-accounts-pool status            # Rotation statistics
@@ -66,7 +71,7 @@ Accounts stored in `~/.aidevops/oauth-pool.json` (0600). Repeat for additional a
 
 **Pool models** (appear in model picker after adding accounts):
 - `anthropic-pool/claude-opus-4-6`
-- `anthropic-pool/claude-sonnet-4-6`
+- `anthropic-pool/claude-sonnet-5-5`
 - `anthropic-pool/claude-haiku-4-5`
 
 ## Authentication Methods
@@ -108,14 +113,16 @@ opencode auth login
 | Pro/Max OAuth shows non-zero costs | Verify `type: "oauth"` in `~/.config/opencode/auth.json`; re-authenticate |
 
 **Verify authentication:**
+
 ```bash
 opencode auth status
-opencode run "Hello, Claude!" --model anthropic/claude-sonnet-4-6
+opencode run "Hello, Claude!" --model anthropic/claude-sonnet-5-5
 ```
 
 **Debug:**
+
 ```bash
-DEBUG=opencode:* opencode run "test" --model anthropic/claude-sonnet-4-6
+DEBUG=opencode:* opencode run "test" --model anthropic/claude-sonnet-5-5
 jq '.anthropic' ~/.config/opencode/auth.json  # Check token expiration
 ```
 

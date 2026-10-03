@@ -12,6 +12,8 @@ _TBC_CIRCUIT_MARKER='aidevops:terminal-blocker-circuit'
 _TBC_RETRY_MARKER='terminal-blocker-circuit:retry'
 _TBC_MISSING_SCOPE='missing_files_scope'
 _TBC_UNKNOWN='unknown'
+_TBC_RUNNER_CAPABILITY='runner_capability_unmet'
+_TBC_RUNNER_RECOVERY_OWNER='runner-recovery'
 _TBC_AUTHORITATIVE_ASSOCIATIONS='["OWNER","MEMBER"]'
 
 # IDs break same-second ties only when both are positive, exact JSON integers.
@@ -32,6 +34,49 @@ def retry_after($event):
       ($retry | comment_id) != null and ($event | comment_id) != null and
       ($retry | comment_id) > ($event | comment_id)));
 '
+
+# GH#33025 #aidevops:trust-boundary — hold evidence (observations, circuits,
+# blocked releases) may also come from this runner's own authenticated login
+# when GitHub reports it as a bare COLLABORATOR, e.g. a bot account on a
+# personal private repo. Otherwise its circuit never opens and identical
+# blockers redispatch forever. This only strengthens holds: other
+# collaborators stay ignored, and clearing a hold (retry) remains OWNER/MEMBER.
+# shellcheck disable=SC2016 # Shared jq definitions, not shell expansions.
+_TBC_HOLD_EVIDENCE_JQ='
+def authoritative_author($authoritative):
+  .author_association as $a | $authoritative | index($a) != null;
+def hold_evidence($authoritative; $self):
+  authoritative_author($authoritative)
+  or ($self != "" and (.author_association // "") == "COLLABORATOR"
+    and ((.author // .user.login // "") == $self));
+def hold_shaped:
+  (.body // "") | test("(?m)^CLAIM_RELEASED reason=blocked |aidevops:terminal-blocker-(observation|circuit) ");
+'
+
+# Callers set TERMINAL_BLOCKER_SELF_LOGIN to the login that posts this runner's
+# releases. Anything that is not a plain GitHub user login is ignored.
+_terminal_blocker_self_login() {
+	local login="${TERMINAL_BLOCKER_SELF_LOGIN:-}"
+	[[ "$login" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,37}[A-Za-z0-9])?$ ]] || login=""
+	printf '%s' "$login"
+	return 0
+}
+
+# Emit one stderr diagnostic when hold-shaped comments were dropped for trust
+# reasons, so an inert circuit is visible instead of silently retrying.
+_terminal_blocker_report_ignored_evidence() {
+	local comments_json="$1"
+	local self_login="" ignored=""
+	self_login=$(_terminal_blocker_self_login)
+	ignored=$(printf '%s' "$comments_json" | jq -r --arg self "$self_login" \
+		--argjson authoritative "$_TBC_AUTHORITATIVE_ASSOCIATIONS" "${_TBC_HOLD_EVIDENCE_JQ}"'
+		[.[]? | select(hold_shaped) | select(hold_evidence($authoritative; $self) | not)] | length
+	' 2>/dev/null) || ignored=0
+	[[ "$ignored" =~ ^[0-9]+$ && "$ignored" -gt 0 ]] || return 0
+	printf 'TERMINAL_BLOCKER_EVIDENCE_IGNORED count=%s reason=non_authoritative_author self_login=%s\n' \
+		"$ignored" "$([[ -n "$self_login" ]] && printf set || printf unset)" >&2
+	return 0
+}
 
 _terminal_blocker_retry_after() {
 	local retry="$1"
@@ -55,20 +100,43 @@ _terminal_blocker_hash() {
 	return 0
 }
 
+# GH#33332: input_required names who must supply the missing input. Only these
+# roles are public owners; the fingerprint is v2:input_required:<owner>.
+_TBC_INPUT_OWNERS='user contributor maintainer admin'
+
 # Versioned, allowlisted classes are the only public identities. Never hash prose
 # into a durable hold. Models may interpret a dossier with an exact standalone
 # TERMINAL_BLOCKER_REASON=<class> line; unclassified evidence remains retryable.
 _terminal_blocker_reason() {
 	local fingerprint="$1"
 	local reason=""
-	for reason in missing_files_scope files_scope_excluded target_code_blocker permission_required unknown; do
+	for reason in missing_files_scope files_scope_excluded target_code_blocker external_trigger_pending permission_required push_policy_timeout network_policy_timeout runner_capability_unmet unknown; do
 		if [[ "$fingerprint" == "$(_terminal_blocker_hash "v2:${reason}")" ]]; then
 			printf '%s\n' "$reason"
 			return 0
 		fi
 	done
+	if _terminal_blocker_input_owner "$fingerprint" >/dev/null; then
+		printf 'input_required\n'
+		return 0
+	fi
 	printf 'unknown\n'
 	return 0
+}
+
+# Print the input owner (user|contributor|maintainer|admin) for an
+# input_required fingerprint; return 1 for every other fingerprint.
+_terminal_blocker_input_owner() {
+	local fingerprint="$1"
+	local owner=""
+	[[ "$fingerprint" =~ ^[a-f0-9]{24}$ ]] || return 1
+	for owner in $_TBC_INPUT_OWNERS; do
+		if [[ "$fingerprint" == "$(_terminal_blocker_hash "v2:input_required:${owner}")" ]]; then
+			printf '%s\n' "$owner"
+			return 0
+		fi
+	done
+	return 1
 }
 
 # Capture only final assistant text, not tool output. A missing canonical scope
@@ -109,14 +177,22 @@ if not marker.search(candidate):
     raise SystemExit(1)
 
 reasons = re.findall(r"^TERMINAL_BLOCKER_REASON=(.*)$", candidate, re.M)
-allowed = {'missing_files_scope', 'files_scope_excluded', 'target_code_blocker', 'permission_required'}
-print(reasons[0] if len(reasons) == 1 and reasons[0] in allowed else 'unknown')
+allowed = {'missing_files_scope', 'files_scope_excluded', 'target_code_blocker', 'external_trigger_pending', 'permission_required', 'push_policy_timeout', 'network_policy_timeout', 'runner_capability_unmet'}
+input_owners = {'user', 'contributor', 'maintainer', 'admin'}
+reason = reasons[0] if len(reasons) == 1 else 'unknown'
+if reason == 'input_required':
+    # GH#33332: the hold must name exactly one accountable role; otherwise the
+    # evidence stays unclassified and retryable.
+    owners = re.findall(r"^TERMINAL_BLOCKER_INPUT_OWNER=(.*)$", candidate, re.M)
+    print('input_required:' + owners[0] if len(owners) == 1 and owners[0] in input_owners else 'unknown')
+else:
+    print(reason if reason in allowed else 'unknown')
 PY
 	) || normalized=""
 	[[ -n "$normalized" ]] || return 1
 	# Do not infer a missing heading from words such as "Files Scope excludes".
 	# Verify the structural condition independently against the issue itself.
-	if [[ "$normalized" != "permission_required" && "${WORKER_ISSUE_NUMBER:-}" =~ ^[0-9]+$ &&
+	if [[ "$normalized" != "permission_required" && "$normalized" != "$_TBC_RUNNER_CAPABILITY" && "${WORKER_ISSUE_NUMBER:-}" =~ ^[0-9]+$ &&
 		"${DISPATCH_REPO_SLUG:-}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
 		issue_json=$(gh api "repos/${DISPATCH_REPO_SLUG}/issues/${WORKER_ISSUE_NUMBER}" 2>/dev/null) || issue_json=""
 		if printf '%s' "$issue_json" | jq -e '.body | type == "string"' >/dev/null 2>&1 &&
@@ -181,6 +257,11 @@ terminal_blocker_task_revision() {
 	local reason="${5:-}"
 	local task_json="" dependency_signature="" target_revision="" canonical=""
 	[[ -n "$reason" ]] || reason=$(_terminal_blocker_reason "${AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT:-}")
+	# Runner-local prerequisites never need a repository/dependency revision hold.
+	if [[ "$reason" == "$_TBC_RUNNER_CAPABILITY" ]]; then
+		_terminal_blocker_hash "v2:${reason}:${repo_slug}:${issue_number}"
+		return $?
+	fi
 	# A brief edit, unrelated merge or GraphQL outage cannot satisfy a permission
 	# prerequisite. Explicit retry only schedules a new check; it grants nothing.
 	if [[ "$reason" == "permission_required" ]]; then
@@ -194,6 +275,16 @@ terminal_blocker_task_revision() {
 		return $?
 	fi
 	dependency_signature=$(_terminal_blocker_dependency_signature "$repo_slug" "$issue_number") || return 1
+	# An external publication or other trigger is not changed by unrelated merges.
+	# Keep dependency changes and brief corrections as independent wake conditions.
+	# Missing input (GH#33332) is likewise supplied through the brief, not code.
+	if [[ "$reason" == "external_trigger_pending" || "$reason" == "input_required" ]]; then
+		canonical=$(jq -nc --arg reason "$reason" --argjson task "$task_json" \
+			--argjson dependencies "$dependency_signature" \
+			'{reason: $reason, task: $task, dependencies: $dependencies}') || return 1
+		_terminal_blocker_hash "$canonical"
+		return $?
+	fi
 	target_revision=$(_terminal_blocker_target_revision "$repo_path") || return 1
 	canonical=$(jq -nc --argjson task "$task_json" --argjson dependencies "$dependency_signature" \
 		--arg target "$target_revision" '{task: $task, dependencies: $dependencies, target_revision: $target}') || return 1
@@ -220,11 +311,14 @@ terminal_blocker_fetch_trusted_comments() {
 _terminal_blocker_latest_marker() {
 	local comments_json="$1"
 	local marker="$2"
+	local self_login=""
+	self_login=$(_terminal_blocker_self_login)
 	# aidevops:trust-boundary — a deterministic marker is not a signature.
-	# The same authoritative actors must own both opening and clearing a hold.
-	printf '%s' "$comments_json" | jq -c --arg marker "$marker" \
-		--argjson authoritative "$_TBC_AUTHORITATIVE_ASSOCIATIONS" "${_TBC_ORDER_JQ}"'
-		[.[] | select(.author_association as $a | $authoritative | index($a) != null)
+	# OWNER/MEMBER (or this runner's own login, GH#33025) open holds; only
+	# OWNER/MEMBER retry directives clear them.
+	printf '%s' "$comments_json" | jq -c --arg marker "$marker" --arg self "$self_login" \
+		--argjson authoritative "$_TBC_AUTHORITATIVE_ASSOCIATIONS" "${_TBC_ORDER_JQ}${_TBC_HOLD_EVIDENCE_JQ}"'
+		[.[] | select(hold_evidence($authoritative; $self))
 		| select((.body // "") | contains($marker))]
 		| sort_by(.created_at, (comment_id // 9007199254740992), .body) | last // empty
 	' 2>/dev/null
@@ -262,6 +356,17 @@ terminal_blocker_release_mode() {
 	local task_revision="$2"
 	local blocker_fingerprint="$3"
 	local retry="" circuit="" observation="" circuit_at="" observation_at=""
+	# Host contention is transient, not an unchanged-code/brief hold. Preserve
+	# recovery evidence without opening a durable circuit on repeated timeouts.
+	local transient_reason=""
+	transient_reason=$(_terminal_blocker_reason "$blocker_fingerprint")
+	case "$transient_reason" in
+	push_policy_timeout | network_policy_timeout | "$_TBC_RUNNER_CAPABILITY")
+		printf 'first\n'
+		return 0
+		;;
+	esac
+	_terminal_blocker_report_ignored_evidence "$comments_json"
 	retry=$(_terminal_blocker_latest_retry_comment "$comments_json") || retry=""
 	circuit=$(_terminal_blocker_latest_marker "$comments_json" "$_TBC_CIRCUIT_MARKER revision=${task_revision} blocker=${blocker_fingerprint}") || circuit=""
 	observation=$(_terminal_blocker_latest_marker "$comments_json" "$_TBC_OBSERVATION_MARKER revision=${task_revision} blocker=${blocker_fingerprint}") || observation=""
@@ -290,17 +395,32 @@ terminal_blocker_release_mode() {
 terminal_blocker_observation_fragment() {
 	local task_revision="$1"
 	local blocker_fingerprint="$2"
+	local release_mode="${3:-first}"
 	printf '\n<!-- %s revision=%s blocker=%s -->\n\n' \
 		"$_TBC_OBSERVATION_MARKER" "$task_revision" "$blocker_fingerprint"
-	_terminal_blocker_recovery "$blocker_fingerprint"
+	_terminal_blocker_recovery "$blocker_fingerprint" "$release_mode"
 	return 0
 }
 
 _terminal_blocker_recovery() {
 	local fingerprint="$1"
+	local release_mode="${2:-first}"
 	local reason="" owner="" action="" attempt="" issue="${WORKER_ISSUE_NUMBER:-unknown}"
+	local projected_state="status:blocked"
 	reason=$(_terminal_blocker_reason "$fingerprint")
 	case "$reason" in
+	runner_capability_unmet)
+		owner="runner-recovery"
+		action='Release for a capable runner. Recheck declared secret and local-data requirements before claiming; do not impose a global issue hold or publish secret values.'
+		;;
+	push_policy_timeout)
+		owner="runner-recovery"
+		action='Retry policy evaluation and publication of the recorded local branch/HEAD on the same runner after host contention clears. Preserve all policy and publication guards.'
+		;;
+	network_policy_timeout)
+		owner="$_TBC_RUNNER_RECOVERY_OWNER"
+		action='Retry the same outbound HTTPS command on the same runner after host contention clears. The policy guard timed out; it was not a policy denial. Preserve all policy guards.'
+		;;
 	missing_files_scope)
 		owner="brief-author"
 		action='Add a canonical ### Files Scope (or legacy ## Files Scope) section listing the permitted paths in the issue body.'
@@ -313,9 +433,17 @@ _terminal_blocker_recovery() {
 		owner="target-maintainer"
 		action='Review the protected blocker dossier and correct the target code or task dependencies before retrying.'
 		;;
+	external_trigger_pending)
+		owner="dependency-owner"
+		action='Wait for the specified external trigger. When it is verified, correct the brief or post an authorized retry directive; unrelated repository merges do not clear this hold.'
+		;;
 	permission_required)
 		owner="permission-maintainer"
 		action='Resolve the evidenced permission prerequisite through the human-owned approval flow, then post the explicit retry directive. Retry is scheduling consent only: the original permission guard must independently verify the exact context. Do not regenerate requests or bypass the guard.'
+		;;
+	input_required)
+		owner=$(_terminal_blocker_input_owner "$fingerprint") || owner="maintainer"
+		action='Supply the specific input named in the protected dossier in the issue brief; a brief or dependency change re-arms dispatch. The recovery supervisor first decides anything AI can resolve within delegated authority.'
 		;;
 	*)
 		owner="worker-triage"
@@ -323,10 +451,15 @@ _terminal_blocker_recovery() {
 		;;
 	esac
 	[[ "$issue" =~ ^[0-9]+$ ]] || issue="$_TBC_UNKNOWN"
+	# GH#33294: the first observation runs one free verification retry before
+	# the circuit opens — the release already restores status:available, so
+	# the projected state must match instead of claiming a hold that is not
+	# in effect. Only an actual circuit/open release keeps the issue held.
+	[[ "$release_mode" == "first" ]] && projected_state="status:available"
 	# Correlate attempts without publishing runner names or arbitrary env text.
 	attempt=$(_terminal_blocker_hash "${AIDEVOPS_ATTEMPT_ID:-${WORKER_SESSION_KEY:-unknown}}") || attempt="$_TBC_UNKNOWN"
-	printf 'Terminal blocker: reason=%s owner=%s task=%s attempt=%s.\nProjected state: status:blocked.\nNext action: %s\nRaw evidence remains in protected worker telemetry.\n' \
-		"$reason" "$owner" "$issue" "$attempt" "$action"
+	printf 'Terminal blocker: reason=%s owner=%s task=%s attempt=%s.\nProjected state: %s.\nNext action: %s\nRaw evidence remains in protected worker telemetry.\n' \
+		"$reason" "$owner" "$issue" "$attempt" "$projected_state" "$action"
 	return 0
 }
 
@@ -334,6 +467,7 @@ terminal_blocker_circuit_comment() {
 	local machine_readable_release="$1"
 	local task_revision="$2"
 	local blocker_fingerprint="$3"
+	[[ "$(_terminal_blocker_reason "$blocker_fingerprint")" != "$_TBC_RUNNER_CAPABILITY" ]] || return 1
 	[[ "$(_terminal_blocker_reason "$blocker_fingerprint")" != "$_TBC_UNKNOWN" ]] || return 1
 	printf '<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->\n%s\n<!-- %s revision=%s blocker=%s -->\nTERMINAL_BLOCKER_CIRCUIT active=true observations=2 task_revision=%s blocker=%s\n\nAutomatic redispatch is held for the repeated known blocker. See the preceding recovery observation.\n\nAn OWNER/MEMBER can retry without deleting history by posting %s as a standalone line. Relevant revisions re-arm code/brief blockers, but never permission blockers. Retry schedules verification only and grants no access.\n<!-- ops:end -->\n' \
 		"$machine_readable_release" "$_TBC_CIRCUIT_MARKER" "$task_revision" \
@@ -349,20 +483,24 @@ terminal_blocker_circuit_comment() {
 terminal_blocker_backoff_active() {
 	local comments_json="$1"
 	local now_epoch="${TERMINAL_BLOCKER_NOW_EPOCH:-}"
-	local evidence="" count=0 last_epoch=0 delay=900 steps=0
+	local evidence="" count=0 last_epoch=0 delay=900 steps=0 self_login=""
 	[[ "$now_epoch" =~ ^[0-9]+$ ]] || now_epoch=$(date -u '+%s')
+	self_login=$(_terminal_blocker_self_login)
 	# aidevops:trust-boundary — bare COLLABORATOR is not proof of write access.
-	# Accept only OWNER/MEMBER releases whose runner matches the API author.
-	# A retry must be a standalone directive, not quoted recovery instructions.
-	evidence=$(printf '%s' "$comments_json" | jq -r --argjson now "$now_epoch" \
-		--argjson associations "$_TBC_AUTHORITATIVE_ASSOCIATIONS" "${_TBC_ORDER_JQ}"'
-		def authoritative: .author_association as $a | $associations | index($a) != null;
+	# Accept OWNER/MEMBER releases, or this runner's own login (GH#33025), whose
+	# runner matches the API author. Only OWNER/MEMBER retries clear evidence;
+	# a retry must be a standalone directive, not quoted recovery instructions.
+	evidence=$(printf '%s' "$comments_json" | jq -r --argjson now "$now_epoch" --arg self "$self_login" \
+		--argjson associations "$_TBC_AUTHORITATIVE_ASSOCIATIONS" "${_TBC_ORDER_JQ}${_TBC_HOLD_EVIDENCE_JQ}"'
 		def epoch: try (.created_at | fromdateiso8601) catch 0;
-		[.[] | select(authoritative) | select(epoch > 0 and epoch <= $now)] as $trusted
-		| ([$trusted[] | select((.body // "") | test("(?m)^terminal-blocker-circuit:retry[ \\t]*\\r?$"))
+		[.[] | select(epoch > 0 and epoch <= $now)] as $timely
+		| ([$timely[] | select(authoritative_author($associations))
+			| select((.body // "") | test("(?m)^terminal-blocker-circuit:retry[ \\t]*\\r?$"))
 			| select((.body // "") | contains("aidevops:terminal-blocker-circuit") | not)]
 			| sort_by(.created_at, (comment_id // 0), .body) | last) as $retry
-		| [$trusted[] | . as $event | select(($retry | retry_after($event)) | not)
+		| [$timely[] | select(hold_evidence($associations; $self))
+			| select((.body // "") | contains("Terminal blocker: reason=runner_capability_unmet ") | not)
+			| . as $event | select(($retry | retry_after($event)) | not)
 			| . as $comment
 			| ((.body // "") | try capture("(?m)^CLAIM_RELEASED reason=blocked runner=(?<runner>[A-Za-z0-9-]+) ") catch null) as $release
 			| select($release != null and $release.runner == ($comment.author // $comment.user.login // ""))
@@ -391,6 +529,7 @@ terminal_blocker_circuit_active() {
 	local issue_number="$4"
 	local repo_path="$5"
 	local circuit="" retry="" current_revision="" fingerprint="" reason=""
+	_terminal_blocker_report_ignored_evidence "$comments_json"
 	if terminal_blocker_backoff_active "$comments_json"; then
 		return 0
 	fi

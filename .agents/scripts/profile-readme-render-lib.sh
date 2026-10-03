@@ -132,6 +132,68 @@ _get_top_apps() {
 # Tables — Model Usage Table Rendering
 # =============================================================================
 
+# --- Merge model rows that share a display name ---
+# Dated IDs (claude-opus-4-6-20250610) and their undated alias render with the
+# same cleaned name; summing them avoids duplicate table rows (GH#32744).
+# Session hours stay unknown (null) when any merged row lacks them; a session
+# that used both IDs is counted once per ID.
+_merge_model_rows_by_display_name() {
+	local model_json="$1"
+	local merged
+	merged=$(printf '%s' "$model_json" | jq -c --arg array_type "${PROFILE_JSON_ARRAY_TYPE:-array}" '
+		if type != $array_type then . else
+			map(. + {model: ((.model // "") | sub("-[0-9]{8}$"; ""))})
+			| group_by(.model)
+			| map(
+				if length == 1 then .[0] else
+					reduce .[] as $row (.[0] + {requests: 0, input_tokens: 0, output_tokens: 0,
+						cache_read_tokens: 0, cache_write_tokens: 0, session_count: 0, session_hours: 0, cost_total: 0};
+						.requests += ($row.requests // 0)
+						| .input_tokens += ($row.input_tokens // 0)
+						| .output_tokens += ($row.output_tokens // 0)
+						| .cache_read_tokens += ($row.cache_read_tokens // 0)
+						| .cache_write_tokens += ($row.cache_write_tokens // 0)
+						| .session_count += ($row.session_count // 0)
+						| .cost_total += ($row.cost_total // 0)
+						| .session_hours = (if .session_hours == null or $row.session_hours == null
+							then null else .session_hours + $row.session_hours end))
+				end)
+		end' 2>/dev/null) || merged=""
+	if [[ -n "$merged" ]]; then
+		printf '%s\n' "$merged"
+	else
+		printf '%s\n' "$model_json"
+	fi
+	return 0
+}
+
+# --- Render one model usage table row ---
+# Hit rate is the share of all prompt tokens served from cache. Cache writes are
+# uncached prompt tokens (Anthropic reports them separately from input), so
+# omitting them overstated Claude rows as 100% (GH#32744).
+_render_model_usage_row() {
+	local row="$1"
+	local model requests input output cache cache_write cache_hit_pct session_count session_hours
+	IFS=$'\t' read -r model requests input output cache cache_write cache_hit_pct session_count session_hours < <(
+		echo "$row" | jq -r '
+			((.input_tokens // 0) + (.cache_write_tokens // 0) + (.cache_read_tokens // 0)) as $prompt
+			| [.model, (.requests // 0), (.input_tokens // 0), (.output_tokens // 0), (.cache_read_tokens // 0),
+				(.cache_write_tokens // 0),
+				(if $prompt > 0 then (((.cache_read_tokens // 0) / $prompt * 1000 | round) / 10) else 0 end),
+				(.session_count // 0), (.session_hours // "unknown")]
+			| @tsv'
+	)
+	local f_session_hours="—"
+	if [[ "$session_hours" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+		f_session_hours="$(_format_number "$(_format_hours "$session_hours")")h"
+	fi
+	printf '| %s | %s | %s | %s | %s | %s | %s%% | %s | %s |' \
+		"$(_clean_model_name "$model")" "$(_format_number "$requests")" "$(_format_tokens "$input")" \
+		"$(_format_tokens "$output")" "$(_format_tokens "$cache")" "$(_format_tokens "$cache_write")" \
+		"$(_format_hours "$cache_hit_pct")" "$(_format_number "$session_count")" "$f_session_hours"
+	return 0
+}
+
 # --- Render a model usage table ---
 # Usage: _render_model_usage_table <heading> <model_json> <token_totals_json>
 # Outputs a markdown table with model usage, cache efficiency, and session totals.
@@ -146,66 +208,39 @@ _render_model_usage_table() {
 	if [[ "${model_count:-0}" == "0" ]]; then
 		return 0
 	fi
+	model_json=$(_merge_model_rows_by_display_name "$model_json")
 
-	local total_requests=0 total_input=0 total_output=0 total_cache=0
-	local total_session_hours="0" session_hours_complete=true total_sessions=0
-	local model_rows=""
+	local total_sessions=0
+	local model_rows="" row
 	total_sessions=$(echo "$model_json" | jq -r '[.[] | .total_session_count // 0] | max // 0' 2>/dev/null || printf '0\n')
 	if [[ "$total_sessions" -eq 0 ]]; then
 		total_sessions=$(echo "$model_json" | jq -r '[.[] | .session_count // 0] | add // 0' 2>/dev/null || printf '0\n')
 	fi
 
 	while IFS= read -r row; do
-		local model requests input output cache cache_write session_count session_hours
-		model=$(echo "$row" | jq -r '.model')
-		requests=$(echo "$row" | jq -r '.requests // 0')
-		input=$(echo "$row" | jq -r '.input_tokens // 0')
-		output=$(echo "$row" | jq -r '.output_tokens // 0')
-		cache=$(echo "$row" | jq -r '.cache_read_tokens // 0')
-		cache_write=$(echo "$row" | jq -r '.cache_write_tokens // 0')
-		session_count=$(echo "$row" | jq -r '.session_count // 0')
-		session_hours=$(echo "$row" | jq -r '.session_hours // empty')
-
-		total_requests=$((total_requests + requests))
-		total_input=$((total_input + input))
-		total_output=$((total_output + output))
-		total_cache=$((total_cache + cache))
-		if [[ "$session_hours" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
-			total_session_hours=$(echo "$total_session_hours + $session_hours" | bc)
-		else
-			session_hours_complete=false
-		fi
-
-		local clean_model cache_hit_pct
-		clean_model=$(_clean_model_name "$model")
-		cache_hit_pct=$(echo "$row" | jq -r '
-			((.input_tokens // 0) + (.cache_read_tokens // 0)) as $total
-			| if $total > 0 then (((.cache_read_tokens // 0) / $total * 1000 | round) / 10) else 0 end')
-		local f_requests f_input f_output f_cache f_cache_hit f_session_count f_session_hours
-		f_requests=$(_format_number "$requests")
-		f_input=$(_format_tokens "$input")
-		f_output=$(_format_tokens "$output")
-		f_cache=$(_format_tokens "$cache")
-		f_cache_hit=$(_format_hours "$cache_hit_pct")
-		f_session_count=$(_format_number "$session_count")
-		if [[ "$session_hours" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
-			f_session_hours="$(_format_number "$(_format_hours "$session_hours")")h"
-		else
-			f_session_hours="—"
-		fi
-
-		model_rows="${model_rows}| ${clean_model} | ${f_requests} | ${f_input} | ${f_output} | ${f_cache} | ${f_cache_hit}% | ${f_session_count} | ${f_session_hours} |
+		model_rows="${model_rows}$(_render_model_usage_row "$row")
 "
 	done < <(echo "$model_json" | jq -c 'sort_by(-(.requests // 0)) | .[] | select((.requests // 0) > 0)')
 
-	# Format totals
-	local f_total_req f_total_in f_total_out f_total_cache f_total_sessions f_total_session_hours
+	# Totals over the same rendered rows; hours stay unknown if any row lacks them.
+	local total_requests total_input total_output total_cache total_cache_write total_session_hours
+	IFS=$'\t' read -r total_requests total_input total_output total_cache total_cache_write total_session_hours < <(
+		echo "$model_json" | jq -r '[.[] | select((.requests // 0) > 0)]
+			| [(map(.requests // 0) | add), (map(.input_tokens // 0) | add), (map(.output_tokens // 0) | add),
+				(map(.cache_read_tokens // 0) | add), (map(.cache_write_tokens // 0) | add),
+				(if all(.[]; (.session_hours | type) == "number" and .session_hours >= 0)
+					then (map(.session_hours) | add) else "unknown" end)]
+			| @tsv'
+	)
+
+	local f_total_req f_total_in f_total_out f_total_cache f_total_cache_write f_total_sessions f_total_session_hours
 	f_total_req=$(_format_number "$total_requests")
 	f_total_in=$(_format_tokens "$total_input")
 	f_total_out=$(_format_tokens "$total_output")
 	f_total_cache=$(_format_tokens "$total_cache")
+	f_total_cache_write=$(_format_tokens "$total_cache_write")
 	f_total_sessions=$(_format_number "$total_sessions")
-	if [[ "$session_hours_complete" == true ]]; then
+	if [[ "$total_session_hours" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
 		f_total_session_hours="$(_format_number "$(_format_hours "$total_session_hours")")h"
 	else
 		f_total_session_hours="—"
@@ -222,9 +257,9 @@ _render_model_usage_table() {
 
 ## ${heading}
 
-| Model | Requests | Input | Output | Cache read | Cache Hit-Rate % | Session Count | Session Hours |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-${model_rows}| **Total** | **${f_total_req}** | **${f_total_in}** | **${f_total_out}** | **${f_total_cache}** | **${cache_pct}%** | **${f_total_sessions}** | **${f_total_session_hours}** |
+| Model | Requests | Input | Output | Cache read | Cache write | Cache Hit-Rate % | Session Count | Session Hours |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+${model_rows}| **Total** | **${f_total_req}** | **${f_total_in}** | **${f_total_out}** | **${f_total_cache}** | **${f_total_cache_write}** | **${cache_pct}%** | **${f_total_sessions}** | **${f_total_session_hours}** |
 
 _${f_all_tokens} total tokens processed. ${cache_pct}% cache hit rate._
 EOF

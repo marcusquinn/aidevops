@@ -361,7 +361,7 @@ test_update_preserves_manual_sections() {
 }
 
 test_update_recovers_dirty_profile_publication_worktree() {
-	local test_name="profile update recoverably removes its dirty scratch worktree after guarded cleanup refusal"
+	local test_name="profile recovery preserves pre-existing canonical untracked files after guarded cleanup refusal"
 	TEST_DIR=$(mktemp -d)
 	local fixture_home="${TEST_DIR}/home"
 	local fixture_repo="${TEST_DIR}/profile-repo"
@@ -372,11 +372,14 @@ test_update_recovers_dirty_profile_publication_worktree() {
 	local recovery_root="${TEST_DIR}/recovery"
 	local output_file="${TEST_DIR}/update-output"
 	local marker_evidence="${TEST_DIR}/marker-evidence"
+	local canonical_status_before=""
 
 	mkdir -p "$helper_dir" "$fixture_home"
 	install_helper_with_libs "$helper_dir"
 	write_stub_dependencies "$helper_dir"
 	create_profile_repo_fixture "$fixture_home" "$fixture_repo" "$fixture_remote"
+	printf '%s\n' 'unrelated work must survive recovery' >"${fixture_repo}/unrelated-local-work"
+	canonical_status_before=$(git -C "$fixture_repo" status --porcelain --untracked-files=all)
 	cat >"$refusing_helper" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -417,7 +420,8 @@ EOF
 	if [[ "$(git -C "$fixture_repo" worktree list --porcelain | grep -c '^worktree ' || true)" != "1" ]] ||
 		[[ ! -d "$recovery_root" ]] ||
 		[[ "$(cat "$marker_evidence" 2>/dev/null)" != "verified" ]] ||
-		[[ -n "$(git -C "$fixture_repo" status --porcelain --untracked-files=all)" ]]; then
+		[[ "$(git -C "$fixture_repo" status --porcelain --untracked-files=all)" != "$canonical_status_before" ]] ||
+		[[ "$(cat "${fixture_repo}/unrelated-local-work")" != 'unrelated work must survive recovery' ]]; then
 		print_helper_failure "$test_name" "scratch worktree leaked, recovery archive missing, or canonical checkout changed" "$output_file"
 		return 0
 	fi
@@ -1168,14 +1172,17 @@ test_model_usage_renders_activity_metrics_without_costs() {
 	# shellcheck source=../profile-readme-render-lib.sh
 	source "$SOURCE_RENDER_LIB"
 	local model_json token_totals output_file
-	model_json='[{"model":"model-a","requests":2,"input_tokens":100,"output_tokens":900,"cache_read_tokens":900,"cache_write_tokens":100,"session_count":2,"total_session_count":2,"session_hours":1.5,"cost_total":0}]'
+	# GH#32744: cache writes count as prompt tokens, and a dated model ID merges
+	# into its undated display name instead of rendering a duplicate row.
+	model_json='[{"model":"model-a","requests":2,"input_tokens":100,"output_tokens":900,"cache_read_tokens":850,"cache_write_tokens":100,"session_count":2,"total_session_count":3,"session_hours":1.5,"cost_total":0},{"model":"model-a-20250610","requests":1,"input_tokens":0,"output_tokens":0,"cache_read_tokens":50,"cache_write_tokens":0,"session_count":1,"total_session_count":3,"session_hours":0.5,"cost_total":0}]'
 	token_totals=$(_token_totals_from_model_usage "$model_json")
 	output_file="${TEST_DIR}/model-usage.md"
 	_render_model_usage_table "AI Model Usage" "$model_json" "$token_totals" >"$output_file"
 
-	if ! grep -Fq '| Model | Requests | Input | Output | Cache read | Cache Hit-Rate % | Session Count | Session Hours |' "$output_file" ||
-		! grep -Fq '| model-a | 2 | 100 | 900 | 900 | 90.0% | 2 | 1.5h |' "$output_file" ||
-		! grep -Fq '| **Total** | **2** | **100** | **900** | **900** | **90%** | **2** | **1.5h** |' "$output_file"; then
+	if ! grep -Fq '| Model | Requests | Input | Output | Cache read | Cache write | Cache Hit-Rate % | Session Count | Session Hours |' "$output_file" ||
+		! grep -Fq '| model-a | 3 | 100 | 900 | 900 | 100 | 81.8% | 3 | 2.0h |' "$output_file" ||
+		! grep -Fq '| **Total** | **3** | **100** | **900** | **900** | **100** | **81.8%** | **3** | **2.0h** |' "$output_file" ||
+		[[ "$(grep -c '^| model-a' "$output_file")" != "1" ]]; then
 		print_result "$test_name" 1 "activity metric columns or values are missing"
 		return 0
 	fi

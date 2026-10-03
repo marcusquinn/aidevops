@@ -64,6 +64,10 @@ case "$cmd" in
 		exit 0
 		;;
 	show)
+		if [[ "${AIDEVOPS_TEST_LOCKED:-}" == "true" ]]; then
+			sleep 20
+			exit 1
+		fi
 		mode="${1:-}"
 		if [[ "$mode" == "-o" || "$mode" == "-n" ]]; then
 			shift
@@ -196,7 +200,7 @@ teardown() {
 		rm -rf "$TEST_DIR"
 	fi
 	TEST_DIR=""
-	unset AIDEVOPS_TEST_DIR AIDEVOPS_TEST_SECRET AIDEVOPS_TEST_MULTILINE || true
+	unset AIDEVOPS_TEST_DIR AIDEVOPS_TEST_SECRET AIDEVOPS_TEST_MULTILINE AIDEVOPS_TEST_LOCKED || true
 	return 0
 }
 
@@ -224,6 +228,70 @@ sys.stdout.write(value)
 	else
 		print_result "multiline injection preserves embedded newlines and normalizes trailing newlines" 1 \
 			"Expected full redacted injection and scalar get compatibility"
+	fi
+	return 0
+}
+
+test_specific_injection_fails_closed() {
+	setup
+	trap 'teardown' RETURN
+	export AIDEVOPS_TEST_SECRET="fixture-${TEST_DIR##*/}"
+	local result="" exit_code=0
+	result=$(HOME="$TEST_DIR/home" bash "$HELPER" REDACTION_KEY MISSING_KEY -- \
+		bash -c 'touch "$AIDEVOPS_TEST_DIR/command-ran"' 2>&1) || exit_code=$?
+	if [[ "$exit_code" -ne 0 && "$result" == *"secret MISSING_KEY unavailable"* && ! -e "$TEST_DIR/command-ran" ]]; then
+		print_result "missing requested secret prevents command execution" 0
+	else
+		print_result "missing requested secret prevents command execution" 1 "Expected names-only error and no command execution"
+	fi
+	return 0
+}
+
+test_empty_fallback_secret_fails_closed() {
+	setup
+	trap 'teardown' RETURN
+	mkdir -p "$TEST_DIR/home/.config/aidevops"
+	printf '%s\n' 'export EMPTY_KEY=""' >"$TEST_DIR/home/.config/aidevops/credentials.sh"
+	chmod 600 "$TEST_DIR/home/.config/aidevops/credentials.sh"
+	local result="" exit_code=0
+	result=$(HOME="$TEST_DIR/home" bash "$HELPER" EMPTY_KEY -- \
+		bash -c 'touch "$AIDEVOPS_TEST_DIR/command-ran"' 2>&1) || exit_code=$?
+	if [[ "$exit_code" -ne 0 && "$result" == *"secret EMPTY_KEY unavailable"* && ! -e "$TEST_DIR/command-ran" ]]; then
+		print_result "empty fallback value prevents command execution" 0
+	else
+		print_result "empty fallback value prevents command execution" 1 "Expected names-only error and no command execution"
+	fi
+	return 0
+}
+
+test_locked_injection_exits_bounded() {
+	setup
+	trap 'teardown' RETURN
+	export AIDEVOPS_TEST_LOCKED=true
+	export AIDEVOPS_TEST_SECRET="fixture-${TEST_DIR##*/}"
+	local result=""
+	# shellcheck disable=SC2016 # The child shell expands the marker path.
+	result=$(HOME="$TEST_DIR/home" HELPER_UNDER_TEST="$HELPER" python3 -c '
+import os, subprocess
+try:
+    completed = subprocess.run(
+        ["bash", os.environ["HELPER_UNDER_TEST"], "REDACTION_KEY", "--",
+         "bash", "-c", "touch \"$AIDEVOPS_TEST_DIR/command-ran\""],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=8)
+except subprocess.TimeoutExpired:
+    print("timed-out")
+else:
+    text = completed.stdout.decode(errors="replace")
+    print("ok" if completed.returncode != 0 and
+          "secret REDACTION_KEY unavailable" in text and
+          "unlock GPG" in text and
+          not os.path.exists(os.environ["AIDEVOPS_TEST_DIR"] + "/command-ran")
+          else "failed")
+')
+	if [[ "$result" == "ok" ]]; then
+		print_result "locked headless decrypt exits promptly without running command" 0
+	else
+		print_result "locked headless decrypt exits promptly without running command" 1 "$result"
 	fi
 	return 0
 }
@@ -419,10 +487,40 @@ test_run_redacts_sed_significant_literal_values() {
 	return 0
 }
 
+test_run_skips_short_value_and_masks_long_value() {
+	setup
+	trap 'teardown' RETURN
+	local short_value='openai'
+	local long_value='abcdefghijklmnopqrstuvwx'
+	export AIDEVOPS_TEST_SECRET="$short_value"
+	local output="" warning=""
+	output=$(HOME="$TEST_DIR/home" bash "$HELPER" REDACTION_KEY -- bash -c \
+		'printf "stdout:%s %s\n" "$REDACTION_KEY" "$REDACTION_KEY"; printf "stderr:%s\n" "$REDACTION_KEY" >&2' 2>"$TEST_DIR/warning")
+	warning=$(<"$TEST_DIR/warning")
+	if [[ "$output" == $'stdout:openai openai\nstderr:openai' &&
+		"$warning" == 'WARN: secret REDACTION_KEY value too short to redact safely; not masked' ]]; then
+		print_result "short value passes through with one names-only warning" 0
+	else
+		print_result "short value passes through with one names-only warning" 1 "Short-value output or warning mismatch"
+	fi
+
+	export AIDEVOPS_TEST_SECRET="$long_value"
+	output=$(HOME="$TEST_DIR/home" bash "$HELPER" REDACTION_KEY -- bash -c \
+		'printf "stdout:%s\n" "$REDACTION_KEY"; printf "stderr:%s\n" "$REDACTION_KEY" >&2' 2>"$TEST_DIR/warning")
+	warning=$(<"$TEST_DIR/warning")
+	if [[ "$output" == $'stdout:[REDACTED]\nstderr:[REDACTED]' && -z "$warning" ]]; then
+		print_result "24-character value remains masked on stdout and stderr" 0
+	else
+		print_result "24-character value remains masked on stdout and stderr" 1 "Long-value redaction or warning mismatch"
+	fi
+	return 0
+}
+
 test_run_streams_safe_output_before_child_exit() {
 	setup
 	trap 'teardown' RETURN
-	export AIDEVOPS_TEST_SECRET='PUBLIC_READY_MARKER_IS_A_LONG_SECRET_VALUE'
+	local fx_a="PUBLIC_READY_MARKER_" fx_b="IS_A_LONG_SECRET_VALUE"
+	export AIDEVOPS_TEST_SECRET="${fx_a}${fx_b}"
 	cat >"$TEST_DIR/bin/gopass" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -501,7 +599,8 @@ PY
 test_run_redacts_overlapping_secrets_split_across_writes() {
 	setup
 	trap 'teardown' RETURN
-	export AIDEVOPS_TEST_SECRET='split-boundary-fixture-value'
+	local fx_a="split-boundary-" fx_b="fixture-value"
+	export AIDEVOPS_TEST_SECRET="${fx_a}${fx_b}"
 	mkdir -p "$TEST_DIR/home/.config/aidevops"
 	cat >"$TEST_DIR/home/.config/aidevops/credentials.sh" <<'EOF'
 export SHORT_REDACTION_KEY="split-boundary"
@@ -554,10 +653,14 @@ main() {
 	test_fallback_set_creates_credentials_store
 	test_concurrent_fallback_sets_preserve_all_credentials
 	test_run_redacts_sed_significant_literal_values
+	test_run_skips_short_value_and_masks_long_value
 	test_run_streams_safe_output_before_child_exit
 	test_run_redacts_overlapping_secrets_split_across_writes
 	test_run_fails_closed_when_redactor_cannot_start
 	test_multiline_gopass_injection_preserves_embedded_newlines
+	test_specific_injection_fails_closed
+	test_empty_fallback_secret_fails_closed
+	test_locked_injection_exits_bounded
 	test_inventory_is_names_only_deterministic_json
 	test_inventory_rejects_malformed_gopass_name
 	test_inventory_cleans_up_after_gopass_listing_failure

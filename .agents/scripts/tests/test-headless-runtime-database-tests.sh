@@ -1003,7 +1003,7 @@ test_large_opencode_prompt_uses_file_attachment() {
 	cmd_text=$(
 		while IFS= read -r -d '' arg; do
 			printf '<%s>' "$arg"
-		done < <(_build_run_cmd "anthropic/claude-sonnet-4-6" "$TEST_ROOT" "$prompt_arg" \
+		done < <(_build_run_cmd "anthropic/claude-sonnet-5-5" "$TEST_ROOT" "$prompt_arg" \
 			"Prompt Transport Test" "" "" "" --file "$prompt_file")
 	)
 
@@ -1210,7 +1210,7 @@ test_large_claude_prompt_uses_stdin_file() {
 	cmd_text=$(
 		while IFS= read -r -d '' arg; do
 			printf '<%s>' "$arg"
-		done < <(_build_claude_cmd "anthropic/claude-sonnet-4-6" "$TEST_ROOT" "$prompt_arg" \
+		done < <(_build_claude_cmd "anthropic/claude-sonnet-5-5" "$TEST_ROOT" "$prompt_arg" \
 			"Prompt Transport Test" "")
 	)
 

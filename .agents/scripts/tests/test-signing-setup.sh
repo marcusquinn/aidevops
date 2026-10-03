@@ -27,6 +27,8 @@ printf 'export SSH_AUTH_SOCK=%q\nexport SSH_AGENT_PID=%q\n' \
 cat >"${FAKE_BIN}/git" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"${AIDEVOPS_SIGNING_TEST_GIT_CALL_LOG:?}"
+# GH#33066: simulate a command guard blocking config reads, or an unset key.
+[[ -z "${AIDEVOPS_SIGNING_TEST_GIT_EXIT:-}" ]] || exit "$AIDEVOPS_SIGNING_TEST_GIT_EXIT"
 case "$*" in
 *gpg.format*) printf 'ssh\n' ;;
 *user.signingkey*) printf '%s/.ssh/id_ed25519.pub\n' "$HOME" ;;
@@ -90,6 +92,24 @@ if grep -qF "${TEST_HOME}/.ssh/id_ed25519_signing" "$CALL_LOG"; then
 	exit 1
 fi
 
+blocked_output=$(AIDEVOPS_SIGNING_TEST_GIT_EXIT=42 HOME="$TEST_HOME" PATH="${FAKE_BIN}:$PATH" \
+	"${SCRIPT_DIR}/signing-setup.sh" check)
+if [[ "$blocked_output" == *"not set"* ]] || \
+	[[ "$blocked_output" == *"Run: aidevops signing setup"* ]] || \
+	[[ "$blocked_output" != *"unreadable (git config exit 42)"* ]]; then
+	printf 'FAIL blocked config reads were reported as unset\n%s\n' "$blocked_output"
+	exit 1
+fi
+
+unset_output=$(AIDEVOPS_SIGNING_TEST_GIT_EXIT=1 HOME="$TEST_HOME" PATH="${FAKE_BIN}:$PATH" \
+	"${SCRIPT_DIR}/signing-setup.sh" check)
+if [[ "$unset_output" != *"gpg.format:      not set"* ]] || \
+	[[ "$unset_output" != *"Run: aidevops signing setup"* ]]; then
+	printf 'FAIL genuinely unset config was not reported as unset\n%s\n' "$unset_output"
+	exit 1
+fi
+
 printf 'PASS signing check sources persisted agent state and matches public keys\n'
+printf 'PASS blocked config reads are unknown, not unset; exit 1 remains unset\n'
 printf 'PASS agent-start avoids duplicate key loads\n'
 printf 'PASS headless setup preserves the global interactive signing key\n'

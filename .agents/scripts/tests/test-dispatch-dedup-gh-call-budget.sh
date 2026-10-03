@@ -53,6 +53,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)" || exit 1
 
 CORE_SH="${REPO_ROOT}/.agents/scripts/pulse-dispatch-core.sh"
 DISPATCH_LIB_SH="${REPO_ROOT}/.agents/scripts/pulse-dispatch-lib.sh"
+DISPATCH_CANDIDATES_SH="${REPO_ROOT}/.agents/scripts/pulse-dispatch-lib-candidates.sh"
 LARGE_FILE_GATE_SH="${REPO_ROOT}/.agents/scripts/pulse-dispatch-large-file-gate.sh"
 TRIAGE_SH="${REPO_ROOT}/.agents/scripts/pulse-triage.sh"
 
@@ -123,22 +124,23 @@ _count_issue_view_in_function() {
 }
 
 # ---------------------------------------------------------------------------
-# Test 1: dispatch_with_dedup makes ONE canonical gh call with `body`.
+# Test 1: the metadata loader called by dispatch_with_dedup makes ONE
+# canonical gh call with `body` (and the author fields needed by later gates).
 # ---------------------------------------------------------------------------
 test_canonical_bundle_includes_body() {
 	local body
-	body=$(_extract_function_body "$CORE_SH" "dispatch_with_dedup")
+	body=$(_extract_function_body "$CORE_SH" "_dispatch_load_and_validate_metadata")
 
 	# shellcheck disable=SC2016 # Literal '$issue_number' inside regex pattern is intentional.
 	if printf '%s' "$body" | grep -qE 'gh_issue_view "\$issue_number" --repo "\$repo_slug" \\$'; then
 		# header line present; check the next line includes body
-		if printf '%s' "$body" | grep -qE -- '--json number,title,state,labels,assignees,body'; then
+		if printf '%s' "$body" | grep -qF -- '--json number,title,state,labels,assignees,body,author,createdAt'; then
 			_print_result "dispatch_with_dedup canonical gh call includes body" 1
 			return 0
 		fi
 	fi
 	_print_result "dispatch_with_dedup canonical gh call includes body" 0 \
-		"expected '--json number,title,state,labels,assignees,body' inside dispatch_with_dedup"
+		"expected canonical bundle in _dispatch_load_and_validate_metadata"
 	return 1
 }
 
@@ -148,6 +150,14 @@ test_canonical_bundle_includes_body() {
 test_dispatch_with_dedup_single_gh_call() {
 	local count
 	count=$(_count_issue_view_in_function "$CORE_SH" "dispatch_with_dedup")
+	count=$((count + $(_count_issue_view_in_function "$CORE_SH" "_dispatch_load_and_validate_metadata")))
+	local orchestrator
+	orchestrator=$(_extract_function_body "$CORE_SH" "dispatch_with_dedup")
+	# shellcheck disable=SC2016 # Match literal variable names in production source.
+	if ! printf '%s' "$orchestrator" | grep -qF '_dispatch_load_and_validate_metadata "$issue_number" "$repo_slug"'; then
+		_print_result "dispatch_with_dedup calls canonical metadata loader" 0
+		return 0
+	fi
 	count="${count//[!0-9]/}"
 	count="${count:-0}"
 	if [[ "$count" -eq 1 ]]; then
@@ -296,7 +306,7 @@ test_t2996_markers_present() {
 # ---------------------------------------------------------------------------
 test_dispatch_skip_candidate_body_uses_rest() {
 	local body
-	body=$(_extract_function_body "$DISPATCH_LIB_SH" "_dispatch_skip_for_issue_body")
+	body=$(_extract_function_body "$DISPATCH_CANDIDATES_SH" "_dispatch_skip_for_issue_body")
 	if printf '%s' "$body" | grep -qE 'gh api "repos/\$\{repo_slug\}/issues/\$\{issue_number\}"' \
 		&& ! printf '%s' "$body" | grep -vE '^[[:space:]]*#' | grep -qE 'gh issue view .*body'; then
 		_print_result "_dispatch_skip_for_issue_body fetches body via REST" 1

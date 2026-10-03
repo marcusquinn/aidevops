@@ -98,7 +98,8 @@ class RepoLayoutMigrationTest(unittest.TestCase):
         self._git("stash", "push", "-q", "-m", "fixture")
         (self.source / "dirty.txt").write_text("dirty\n", encoding="utf-8")
 
-    def _create_database(self, path: Path) -> None:
+    def _create_database(self, path: Path, directory: Path | None = None) -> None:
+        directory = directory or self.source
         path.parent.mkdir(parents=True, exist_ok=True)
         with sqlite3.connect(path) as connection:
             connection.execute("CREATE TABLE project (id TEXT PRIMARY KEY, worktree TEXT)")
@@ -106,11 +107,11 @@ class RepoLayoutMigrationTest(unittest.TestCase):
                 "CREATE TABLE session (id TEXT PRIMARY KEY, directory TEXT, parent_id TEXT)"
             )
             connection.execute(
-                "INSERT INTO project VALUES (?, ?)", ("project-1", str(self.source))
+                "INSERT INTO project VALUES (?, ?)", ("project-1", str(directory))
             )
             connection.execute(
                 "INSERT INTO session VALUES (?, ?, NULL)",
-                ("ses_fixture1", str(self.source)),
+                ("ses_fixture1", str(directory)),
             )
 
     def _create_consumers(self) -> None:
@@ -144,6 +145,11 @@ class RepoLayoutMigrationTest(unittest.TestCase):
         self._create_database(self.database)
         isolated_db = self.isolated_root / "worker-1/opencode/opencode.db"
         self._create_database(isolated_db)
+        # Unrelated sessions yield a database consumer with no matching rows.
+        self._create_database(
+            self.isolated_root / "worker-2/opencode/opencode.db",
+            self.workspace / "Unrelated",
+        )
         marker = self.recovery_root / "ses_fixture1/recovery.json"
         marker.parent.mkdir(parents=True)
         self.recovery_root.chmod(0o700)
@@ -205,7 +211,8 @@ class RepoLayoutMigrationTest(unittest.TestCase):
         self.assertIsNotNone(repository["fingerprint"]["gitmodules_sha256"])
         self.assertEqual(len(repository["fingerprint"]["worktrees"]), 2)
         self.assertEqual(len(repository["linked_pointers"]), 1)
-        self.assertEqual(len(payload["consumers"]["databases"]), 2)
+        self.assertEqual(len(payload["consumers"]["databases"]), 3)
+        self.assertEqual(payload["consumers"]["databases"][-1]["rows"], [])
         self.assertEqual(len(payload["consumers"]["markers"]), 1)
         self.assertFalse(self.destination.exists())
 
@@ -446,6 +453,7 @@ class RepoLayoutMigrationTest(unittest.TestCase):
             "consumer:tabby",
             "consumer:database:0",
             "consumer:database:1",
+            "consumer:database:2",
             "consumer:marker:0",
         )
         for boundary in boundaries:

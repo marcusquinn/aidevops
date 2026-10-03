@@ -23,6 +23,28 @@ from mcp_config import (
 output_format = sys.argv[2]
 
 agents_dir = os.path.expanduser("~/.aidevops/agents")
+OPENCODE_SHARED_CONFIG_PATH = os.path.expanduser("~/.config/opencode/opencode.json")
+
+
+def _session_profile_override():
+    """Return the env profile override only when it governs the shared config.
+
+    The isolated opencode2 shim exports AIDEVOPS_OPENCODE_PROFILE=v2 together
+    with OPENCODE_CONFIG pointing at its private config. That override belongs
+    to the isolated runtime, so a setup/update run from inside such a session
+    must not rewrite the shared ~/.config/opencode file in V2 shape (V1 then
+    refuses to start).
+    """
+    override = os.environ.get('AIDEVOPS_OPENCODE_PROFILE')
+    if not override:
+        return None
+    session_config = os.environ.get('OPENCODE_CONFIG')
+    if session_config and os.path.realpath(os.path.expanduser(session_config)) != os.path.realpath(
+            OPENCODE_SHARED_CONFIG_PATH):
+        print(f"  Ignoring AIDEVOPS_OPENCODE_PROFILE={override} from isolated runtime session "
+              f"(OPENCODE_CONFIG targets another file)", file=sys.stderr)
+        return None
+    return override
 
 
 def _load_opencode_profile():
@@ -32,11 +54,12 @@ def _load_opencode_profile():
         os.path.join(agents_dir, 'configs', 'opencode-runtime-profiles.json'),
         str(Path(__file__).resolve().parent.parent / 'configs' / 'opencode-runtime-profiles.json'),
     ]
+    session_override = _session_profile_override()
     for candidate in filter(None, candidates):
         try:
             with open(candidate, 'r', encoding='utf-8') as handle:
                 document = json.load(handle)
-            profile_id = os.environ.get('AIDEVOPS_OPENCODE_PROFILE', document['default'])
+            profile_id = session_override or document['default']
             profile = document['profiles'][profile_id]
             return profile_id, profile
         except (FileNotFoundError, OSError, KeyError, json.JSONDecodeError):
@@ -352,7 +375,7 @@ def output_opencode_json():
     """Write agent config to opencode.json."""
     import shutil
 
-    config_path = os.path.expanduser("~/.config/opencode/opencode.json")
+    config_path = OPENCODE_SHARED_CONFIG_PATH
     try:
         with open(config_path, 'r', encoding='utf-8') as f:
             config = json.load(f)

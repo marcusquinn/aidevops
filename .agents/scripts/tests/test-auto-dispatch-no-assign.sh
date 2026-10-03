@@ -133,6 +133,10 @@ export -f gh
 print_info() { printf '[INFO] %s\n' "$*" >>"${GH_INFO_OUTPUT}"; }
 export -f print_info
 
+# Keep this guard focused on assignment after the immutable mapping gate.
+# The mapping transport and persistence are exercised by push-failures tests.
+require_task_issue_mapping() { return 0; }
+
 printf '%sRunning _push_create_issue auto-dispatch guard tests (t2157)%s\n' \
 	"$TEST_BLUE" "$TEST_NC"
 

@@ -88,6 +88,7 @@ readonly _KNOWN_WORKFLOWS=(
 	"maintainer-gate.yml:maintainer-gate-reusable.yml:maintainer-gate-caller.yml"
 	"loc-badge.yml:loc-badge-reusable.yml:loc-badge-caller.yml"
 	"linked-issue-check.yml:linked-issue-check-reusable.yml:linked-issue-check-caller.yml"
+	"release-verify.yml:release-verify-reusable.yml:release-verify-caller.yml"
 )
 
 # Versioned inventory of framework-owned paths superseded by reusable callers.

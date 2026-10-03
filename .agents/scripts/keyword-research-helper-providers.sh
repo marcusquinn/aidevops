@@ -11,7 +11,7 @@
 #
 # Dependencies:
 #   - shared-constants.sh (print_error, print_info, etc.)
-#   - Credentials in ~/.config/aidevops/credentials.sh
+#   - DataForSEO via dataforseo-credentials.sh; other providers via credentials.sh
 #
 # Part of aidevops framework: https://aidevops.sh
 
@@ -39,10 +39,14 @@ dataforseo_request() {
 	local endpoint="$1"
 	local data="$2"
 
-	source "$HOME/.config/aidevops/credentials.sh" 2>/dev/null || true
-
+	# shellcheck source=dataforseo-credentials.sh
+	source "$SCRIPT_DIR/dataforseo-credentials.sh"
+	if ! dataforseo_load_credentials; then
+		print_error "DataForSEO credentials not configured"
+		return 1
+	fi
 	local auth
-	auth=$(echo -n "${DATAFORSEO_USERNAME}:${DATAFORSEO_PASSWORD}" | base64)
+	auth=$(printf '%s:%s' "$DATAFORSEO_USERNAME" "$DATAFORSEO_PASSWORD" | base64 | tr -d '\n')
 
 	curl -s -X POST \
 		"https://api.dataforseo.com/v3/$endpoint" \

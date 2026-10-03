@@ -16,6 +16,7 @@ import { getClaudeProxyPort, registerClaudeProvider } from "./claude-proxy.mjs";
 import { checkOpenCodeVersionDriftAsync } from "./version-tracking.mjs";
 import { registerApprovedWorkerPermissions } from "./config-worker-permissions.mjs";
 import { applyCompactionRouting } from "./compaction-routing.mjs";
+import { registerPendingAnthropicModels } from "./anthropic-catalog-bridge.mjs";
 import {
   registerAgentRoutingIntent,
   registerAgents,
@@ -92,6 +93,7 @@ const CLAUDECLI_MODELS = buildClaudeModelMap({
   "claude-haiku-4-5":  "Claude Haiku 4.5 (via CLI)",
   "claude-sonnet-4-5": "Claude Sonnet 4.5 (via CLI)",
   "claude-sonnet-4-6": "Claude Sonnet 4.6 (via CLI)",
+  "claude-sonnet-5-5": "Claude Sonnet 5.5 (via CLI)",
   "claude-opus-4-5":   "Claude Opus 4.5 (via CLI)",
   "claude-opus-4-6":   "Claude Opus 4.6 (via CLI)",
   "claude-opus-4-7":   "Claude Opus 4.7 (via CLI)",
@@ -325,6 +327,7 @@ function logConfigSummary(counts) {
     [counts.permissionGrants, "signed worker permission grants"],
     [counts.poolCleaned, `cleaned ${counts.poolCleaned} stale pool provider${counts.poolCleaned === 1 ? "" : "s"}`],
     [counts.anthropicLegacyCleaned, `cleaned ${counts.anthropicLegacyCleaned} legacy Anthropic model override${counts.anthropicLegacyCleaned === 1 ? "" : "s"}`],
+    [counts.anthropicPending, "pending Anthropic catalog models"],
     [counts.openai, "OpenAI context limits"],
     [counts.cursor, "Cursor models"],
     [counts.google, "Google models"],
@@ -411,6 +414,7 @@ export function createConfigHook(deps) {
     );
     const poolCleaned = registerPoolProvider(config);
     const anthropicLegacyCleaned = removeLegacyAnthropicModelOverrides(config);
+    const anthropicPending = registerPendingAnthropicModels(config);
     const claudeFallback = registerClaudeCliFallbackModels(config);
     const openai = registerGpt56ContextLimits(config) + registerAstraContextLimits(config) +
       registerGpt6ContextLimits(config);
@@ -460,6 +464,7 @@ export function createConfigHook(deps) {
         permissionGrants,
         poolCleaned,
         anthropicLegacyCleaned,
+        anthropicPending,
         openai,
         cursor,
         google,

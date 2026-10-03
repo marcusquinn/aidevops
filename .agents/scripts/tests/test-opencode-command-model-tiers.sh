@@ -51,9 +51,9 @@ grep -Fq 'Keep this body example: model: standard' "$COMMAND_DIR/tier.md"
 grep -Fq 'model: openai/gpt-5.6-sol' "$COMMAND_DIR/concrete.md"
 grep -Fq 'mode: subagent' "$COMMAND_DIR/concrete.md"
 
-mkdir -p "$TEST_ROOT/agents/scripts/commands" "$TEST_ROOT/home"
-cp "$TEST_ROOT/tier.md" "$TEST_ROOT/agents/scripts/commands/tier.md"
-cat >"$TEST_ROOT/agents/scripts/commands/agent-review.md" <<'EOF_COLLISION'
+mkdir -p "$TEST_ROOT/home/.aidevops/agents/scripts/commands"
+cp "$TEST_ROOT/tier.md" "$TEST_ROOT/home/.aidevops/agents/scripts/commands/tier.md"
+cat >"$TEST_ROOT/home/.aidevops/agents/scripts/commands/agent-review.md" <<'EOF_COLLISION'
 ---
 description: Conflicting source command
 ---
@@ -61,7 +61,7 @@ description: Conflicting source command
 Conflicting source body
 EOF_COLLISION
 mkdir -p "$TEST_ROOT/home/.config/opencode/command"
-cat >"$TEST_ROOT/home/.config/opencode/command/tier.md" <<'EOF_STALE'
+cat >"$TEST_ROOT/home/.config/opencode/command/aidevops-tier.md" <<'EOF_STALE'
 ---
 description: Stale generated command
 model: openai/gpt-5.5
@@ -69,18 +69,20 @@ model: openai/gpt-5.5
 
 Stale body
 EOF_STALE
-HOME="$TEST_ROOT/home" AIDEVOPS_DIR="$TEST_ROOT" \
-	bash "$REPO_ROOT/.agents/scripts/generate-opencode-commands.sh" >/dev/null
-legacy_command="$TEST_ROOT/home/.config/opencode/command/tier.md"
-if grep -q '^model: standard$' "$legacy_command"; then
-	printf '%s\n' 'FAIL: workload tier leaked through legacy OpenCode command generator' >&2
+HOME="$TEST_ROOT/home" \
+	bash "$REPO_ROOT/.agents/scripts/generate-runtime-config.sh" commands --runtime opencode >/dev/null
+generated_command="$TEST_ROOT/home/.config/opencode/command/aidevops-tier.md"
+if grep -q '^model: standard$' "$generated_command"; then
+	printf '%s\n' 'FAIL: workload tier leaked through unified OpenCode command generator' >&2
 	exit 1
 fi
-if grep -q 'openai/gpt-5.5\|Stale body' "$legacy_command"; then
-	printf '%s\n' 'FAIL: legacy OpenCode command generator preserved stale output' >&2
+if grep -q 'openai/gpt-5.5\|Stale body' "$generated_command"; then
+	printf '%s\n' 'FAIL: unified OpenCode command generator preserved stale output' >&2
 	exit 1
 fi
-grep -Fq 'Keep this body example: model: standard' "$legacy_command"
+grep -Fq 'Keep this body example: model: standard' "$generated_command"
+# Discovered commands are namespaced; the built-in keeps its unprefixed name.
+grep -Fq 'Conflicting source body' "$TEST_ROOT/home/.config/opencode/command/aidevops-agent-review.md"
 if grep -q 'Conflicting source body' "$TEST_ROOT/home/.config/opencode/command/agent-review.md"; then
 	printf '%s\n' 'FAIL: auto-discovery overwrote a manually defined command' >&2
 	exit 1

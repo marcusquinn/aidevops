@@ -286,6 +286,19 @@ complete_task() {
 		_complete_task_confirm_verified || return 0
 	fi
 
+	# Canonical checkouts are read-only service mirrors. Refuse before touching
+	# TODO.md; publication from a linked worktree remains available.
+	local classification
+	classification=$(python3 "${SCRIPT_DIR}/canonical-write-policy-helper.py" classify \
+		--cwd "$repo_root" --field classification 2>/dev/null) || {
+		log_error "Cannot classify repository before task completion; refusing to edit TODO.md"
+		return 1
+	}
+	if [[ "$classification" == "canonical" ]]; then
+		log_error "Canonical checkout is read-only; complete from a linked worktree with full-loop-helper.sh commit-and-pr --completion-bookkeeping"
+		return 1
+	fi
+
 	# Update TODO.md
 	_complete_task_update_todo "$todo_file" "$task_id" "$pr_number" "$verified_mode" || return 1
 
@@ -573,8 +586,8 @@ commit_planning_files() {
 
 	# Publish through a temporary index so caller HEAD/index/files stay untouched.
 	log_info "Committing: $commit_msg"
-	local current_branch=""
-	current_branch=$(git -C "$repo_root" symbolic-ref --short HEAD 2>/dev/null) || return 1
+	# No named local branch is required: publication uses a temporary index
+	# against the remote default branch, so detached HEAD is supported.
 	local default_branch=""
 	default_branch=$(_todo_default_branch "$repo_root")
 	if _todo_branch_requires_planning_pr "$repo_root" "$default_branch"; then

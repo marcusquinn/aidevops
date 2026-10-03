@@ -239,6 +239,16 @@ _gh_ci_prepare_status_label() {
 	return 0
 }
 
+# GH#32880: agent sessions (interactive and headless workers) create issues
+# through the `gh_create_issue` PATH shim, which sets
+# AIDEVOPS_STRICT_DISPATCH_SCOPE=1. Those callers can repair a brief the moment
+# creation fails but do not act on warnings. Scripted/routine callers source
+# the library directly and keep warn-only, so scheduled findings are never lost.
+_gh_ci_dispatch_scope_strict() {
+	[[ "${AIDEVOPS_STRICT_DISPATCH_SCOPE:-0}" == "1" ]] && return 0
+	return 1
+}
+
 # Fail closed at publication rather than creating a worker-owned issue whose
 # first worker can only report missing_files_scope. Explicit declarations in
 # legacy Files sections need author review before they become write authority.
@@ -268,19 +278,28 @@ _gh_ci_validate_dispatch_scope() {
 	if printf '%s\n' "$body" | grep -Eqi '^[[:space:]]*(#{1,3}[[:space:]]*)?(planning-only|pure planning|brief-only|no code changes)(:|[[:space:]]*$)'; then
 		return 0
 	fi
+	# GH#33227: shared by both rejection paths below so the "no Files Scope
+	# heading" and "heading present but no accepted path line" messages
+	# describe one accepted line shape instead of contradicting each other.
+	# shellcheck disable=SC2016 # literal Markdown backticks, not expansions
+	local scope_hint='Add a "### Files Scope" section with one "- `repo/relative/path`" line per file (optional EDIT:/NEW: prefix, nothing after the path), then verify with pre-dispatch-validator-helper.sh scope-check <N> "<body>" 1. See workflows/brief.md section 6.'
 	# Creation-time repair is limited to explicit file declarations; bodies
-	# without them remain subject to the pre-claim validator. Routine callers
-	# often run without headless markers, so undeclared scope only warns here.
+	# without them remain subject to the pre-claim validator. Deterministic
+	# routine callers only warn here; the agent-facing shim fails closed (GH#32880).
 	if ! printf '%s\n' "$body" | awk '
 		/^###? (Files to Modify|Files|Relevant Files)[[:space:]]*$/ { section=1; next }
 		/^# / || /^## / || /^### / { section=0 }
 		section && /^[[:space:]]*-[[:space:]]*(EDIT|NEW):[[:space:]]*`?[^`[:space:]]/ { found=1 }
 		END { exit !found }
 	' && ! printf '%s\n' "$body" | grep -Eq '^#{2,3} Files Scope[[:space:]]*$'; then
-		# GH#32531: the pulse will hold this issue as status:blocked before any
-		# worker starts; tell the author while the brief is still in hand.
-		# shellcheck disable=SC2016 # literal Markdown backticks, not expansions
-		print_warning 'auto-dispatch issue has no canonical ### Files Scope; the pulse will hold it as status:blocked (missing_files_scope). Add "- EDIT: `path`" / "- NEW: `path`" lines, then verify with pre-dispatch-validator-helper.sh scope-check. See workflows/brief.md.'
+		# GH#32531/GH#33243: the author has the most context to choose the scope,
+		# so ask while the brief is still in hand. Without it the worker spends
+		# its first step on scope discovery; the pulse no longer holds the issue.
+		if _gh_ci_dispatch_scope_strict; then
+			print_error "auto-dispatch issue not created: body has no canonical Files Scope. ${scope_hint} Or drop auto-dispatch / mark it planning-only."
+			return 1
+		fi
+		print_warning "auto-dispatch issue has no canonical ### Files Scope; its worker must discover and record the scope before editing. ${scope_hint}"
 		return 0
 	fi
 	# shellcheck source=./pre-dispatch-validator-lib-brief-scope.sh
@@ -289,7 +308,7 @@ _gh_ci_validate_dispatch_scope() {
 	if _brief_files_scope_has_path "$body"; then
 		return 0
 	fi
-	print_warning 'auto-dispatch implementation brief requires canonical ##/### Files Scope with EDIT/NEW paths; review legacy Files declarations before publication'
+	print_error "auto-dispatch issue not created: Files Scope heading is present but no line matches the accepted shape. ${scope_hint}"
 	return 1
 }
 
@@ -365,19 +384,19 @@ _gh_ci_prepare_trusted_nmr_labels() {
 		"persistent" "supervisor" "contributor" "quality-review" \
 		"routine-tracking" "needs-credentials" "needs-maintainer-permissions" \
 		"status:done" "status:resolved"; do
-		if _gh_wrapper_args_have_label "$suppression_label" "${_GH_CI_TRUST_NORMALIZED_ARGS[@]}"; then
+		if _gh_wrapper_args_have_label "$suppression_label" ${_GH_CI_TRUST_NORMALIZED_ARGS[@]+"${_GH_CI_TRUST_NORMALIZED_ARGS[@]}"}; then
 			explicit_suppress=1
 			infer_dispatch=0
 			replacement_label=""
 			break
 		fi
 	done
-	if _gh_wrapper_args_have_label "security" "${_GH_CI_TRUST_NORMALIZED_ARGS[@]}" \
-		|| _gh_wrapper_args_have_label "security-review" "${_GH_CI_TRUST_NORMALIZED_ARGS[@]}"; then
+	if _gh_wrapper_args_have_label "security" ${_GH_CI_TRUST_NORMALIZED_ARGS[@]+"${_GH_CI_TRUST_NORMALIZED_ARGS[@]}"} \
+		|| _gh_wrapper_args_have_label "security-review" ${_GH_CI_TRUST_NORMALIZED_ARGS[@]+"${_GH_CI_TRUST_NORMALIZED_ARGS[@]}"}; then
 		infer_dispatch=0
 		replacement_label="hold-for-review"
 	elif [[ "$explicit_suppress" -eq 0 ]] \
-		&& _gh_wrapper_args_have_label "$_GH_CREATE_AUTO_DISPATCH_LABEL" "${_GH_CI_TRUST_NORMALIZED_ARGS[@]}"; then
+		&& _gh_wrapper_args_have_label "$_GH_CREATE_AUTO_DISPATCH_LABEL" ${_GH_CI_TRUST_NORMALIZED_ARGS[@]+"${_GH_CI_TRUST_NORMALIZED_ARGS[@]}"}; then
 		infer_dispatch=0
 		replacement_label=""
 	fi
@@ -417,7 +436,7 @@ _gh_ci_prepare_trusted_nmr_labels() {
 		esac
 		i=$((i + 1))
 	done
-	_GH_CI_TRUST_NORMALIZED_ARGS=("${normalized_args[@]}")
+	_GH_CI_TRUST_NORMALIZED_ARGS=(${normalized_args[@]+"${normalized_args[@]}"})
 	if [[ "$infer_dispatch" -eq 1 ]]; then
 		print_info "[INFO] GH#29408: translated trusted-author needs-maintainer-review to auto-dispatch"
 	else
@@ -507,12 +526,12 @@ ${marker}"
 _GH_CI_READY_ARGS=()
 _gh_ci_prepare_parent_contract_and_signature() {
 	local is_parent_task=0
-	if _gh_wrapper_args_have_label "parent-task" "$@" "${_GH_CI_TODO_LABEL_ARGS[@]}"; then
+	if _gh_wrapper_args_have_label "parent-task" "$@" ${_GH_CI_TODO_LABEL_ARGS[@]+"${_GH_CI_TODO_LABEL_ARGS[@]}"}; then
 		is_parent_task=1
 	fi
 	_gh_ci_prepare_parent_close_contract "$is_parent_task" "$@"
-	_gh_wrapper_auto_sig "${_GH_CI_CONTRACT_ARGS[@]}"
-	_GH_CI_READY_ARGS=("${_GH_WRAPPER_SIG_MODIFIED_ARGS[@]}")
+	_gh_wrapper_auto_sig ${_GH_CI_CONTRACT_ARGS[@]+"${_GH_CI_CONTRACT_ARGS[@]}"}
+	_GH_CI_READY_ARGS=(${_GH_WRAPPER_SIG_MODIFIED_ARGS[@]+"${_GH_WRAPPER_SIG_MODIFIED_ARGS[@]}"})
 	return 0
 }
 
@@ -557,6 +576,18 @@ _gh_finish_created_issue() {
 	return 0
 }
 
+_gh_ci_ensure_requested_reminder_label() {
+	local target_repo="$1"
+	shift
+	_gh_wrapper_args_have_label "continuation-reminder" "$@" || return 0
+	[[ -n "$target_repo" ]] || target_repo=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || true)
+	if [[ -z "$target_repo" ]] || ! ensure_continuation_reminder_label_exists "$target_repo"; then
+		printf 'gh_create_issue: could not ensure continuation-reminder label on target repo; issue not created\n' >&2
+		return 1
+	fi
+	return 0
+}
+
 gh_create_issue() {
 	_gh_wrapper_enter_cleanup_scope
 	gh_record_call graphql gh_create_issue 2>/dev/null || true
@@ -564,7 +595,7 @@ gh_create_issue() {
 		_gh_edit_audit_rejection "gh issue create" "$_GH_EDIT_REJECTION_REASON" "$@"
 		return 1
 	fi
-	set -- "${_GH_WRAPPER_BODY_FILE_ARGS[@]}"
+	set -- ${_GH_WRAPPER_BODY_FILE_ARGS[@]+"${_GH_WRAPPER_BODY_FILE_ARGS[@]}"}
 	# GH#19857: validate title/body before creating (same invariant as edit wrappers)
 	if ! _gh_validate_edit_args "$@"; then
 		_gh_edit_audit_rejection "gh issue create" "$_GH_EDIT_REJECTION_REASON" "$@"
@@ -585,7 +616,7 @@ gh_create_issue() {
 	# Helper writes _GH_CI_FILTERED_ARGS and _GH_CI_TODO_LABEL_ARGS globals.
 	_gh_ci_prepare_todo_labels "$@"
 	if [[ ${#_GH_CI_FILTERED_ARGS[@]} -gt 0 ]]; then
-		set -- "${_GH_CI_FILTERED_ARGS[@]}"
+		set -- ${_GH_CI_FILTERED_ARGS[@]+"${_GH_CI_FILTERED_ARGS[@]}"}
 	else
 		set --
 	fi
@@ -596,7 +627,7 @@ gh_create_issue() {
 
 	# Stamp parent close contracts before the signature so it remains the footer.
 	_gh_ci_prepare_parent_contract_and_signature "$@"
-	set -- "${_GH_CI_READY_ARGS[@]}"
+	set -- ${_GH_CI_READY_ARGS[@]+"${_GH_CI_READY_ARGS[@]}"}
 
 	# Fold derived labels into one list, then normalize trusted-author NMR before
 	# building either the GraphQL or REST creation command.
@@ -605,7 +636,7 @@ gh_create_issue() {
 	else
 		_gh_ci_prepare_trusted_nmr_labels "$@"
 	fi
-	set -- "${_GH_CI_TRUST_NORMALIZED_ARGS[@]}"
+	set -- ${_GH_CI_TRUST_NORMALIZED_ARGS[@]+"${_GH_CI_TRUST_NORMALIZED_ARGS[@]}"}
 	_todo_label_args=()
 	_gh_ci_prepare_status_label "$@"
 	_gh_ci_validate_dispatch_scope "$@" || return 1
@@ -629,6 +660,7 @@ gh_create_issue() {
 	# but keep durable creation independent from the best-effort assignment.
 	local issue_output rc auto_assignee="" target_repo=""
 	target_repo=$(_gh_extract_repo_from_args "$@" 2>/dev/null || true)
+	_gh_ci_ensure_requested_reminder_label "$target_repo" "$@" || return 1
 	if ! _gh_wrapper_args_have_assignee "$@"; then
 		if [[ "${AIDEVOPS_GH_SKIP_AUTO_ASSIGNMENT:-0}" == 1 ]]; then
 			# GH#30325: pending publication withholds auto-dispatch from the
@@ -1110,7 +1142,7 @@ gh_create_pr() {
 		_gh_edit_audit_rejection "gh pr create" "$_GH_EDIT_REJECTION_REASON" "$@"
 		return 1
 	fi
-	set -- "${_GH_WRAPPER_BODY_FILE_ARGS[@]}"
+	set -- ${_GH_WRAPPER_BODY_FILE_ARGS[@]+"${_GH_WRAPPER_BODY_FILE_ARGS[@]}"}
 	# GH#19857: validate title/body before creating (same invariant as edit wrappers)
 	if ! _gh_validate_edit_args "$@"; then
 		_gh_edit_audit_rejection "gh pr create" "$_GH_EDIT_REJECTION_REASON" "$@"
@@ -1140,7 +1172,7 @@ gh_create_pr() {
 
 	# t2115: auto-append signature footer when body lacks one
 	_gh_wrapper_auto_sig "$@"
-	set -- "${_GH_WRAPPER_SIG_MODIFIED_ARGS[@]}"
+	set -- ${_GH_WRAPPER_SIG_MODIFIED_ARGS[@]+"${_GH_WRAPPER_SIG_MODIFIED_ARGS[@]}"}
 	if ! _gh_guard_public_write_args "$@"; then
 		return 1
 	fi
@@ -1234,7 +1266,7 @@ gh_issue_comment() {
 		_gh_edit_audit_rejection "gh issue comment" "$_GH_EDIT_REJECTION_REASON" "$@"
 		return 1
 	fi
-	set -- "${_GH_WRAPPER_BODY_FILE_ARGS[@]}"
+	set -- ${_GH_WRAPPER_BODY_FILE_ARGS[@]+"${_GH_WRAPPER_BODY_FILE_ARGS[@]}"}
 	if ! _gh_validate_edit_args "$@"; then
 		_gh_edit_audit_rejection "gh issue comment" "$_GH_EDIT_REJECTION_REASON" "$@"
 		return 1
@@ -1260,7 +1292,7 @@ gh_issue_comment() {
 	fi
 	gh_record_call graphql gh_issue_comment 2>/dev/null || true
 	_gh_wrapper_auto_sig "$@"
-	set -- "${_GH_WRAPPER_SIG_MODIFIED_ARGS[@]}"
+	set -- ${_GH_WRAPPER_SIG_MODIFIED_ARGS[@]+"${_GH_WRAPPER_SIG_MODIFIED_ARGS[@]}"}
 	if ! _gh_guard_public_write_args "$@"; then
 		return 1
 	fi
@@ -1280,14 +1312,14 @@ gh_pr_comment() {
 		_gh_edit_audit_rejection "gh pr comment" "$_GH_EDIT_REJECTION_REASON" "$@"
 		return 1
 	fi
-	set -- "${_GH_WRAPPER_BODY_FILE_ARGS[@]}"
+	set -- ${_GH_WRAPPER_BODY_FILE_ARGS[@]+"${_GH_WRAPPER_BODY_FILE_ARGS[@]}"}
 	if ! _gh_validate_edit_args "$@"; then
 		_gh_edit_audit_rejection "gh pr comment" "$_GH_EDIT_REJECTION_REASON" "$@"
 		return 1
 	fi
 	gh_record_call graphql gh_pr_comment 2>/dev/null || true
 	_gh_wrapper_auto_sig "$@"
-	set -- "${_GH_WRAPPER_SIG_MODIFIED_ARGS[@]}"
+	set -- ${_GH_WRAPPER_SIG_MODIFIED_ARGS[@]+"${_GH_WRAPPER_SIG_MODIFIED_ARGS[@]}"}
 	if ! _gh_guard_public_write_args "$@"; then
 		return 1
 	fi

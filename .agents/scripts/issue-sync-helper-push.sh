@@ -129,6 +129,13 @@ _push_lock_created_issue() {
 _push_create_issue() {
 	local task_id="$1" repo="$2" todo_file="$3" title="$4" body="$5" labels="$6" assignee="$7"
 	_PUSH_CREATED_NUM=""
+	# GH#32608: auto-dispatch is worker-owned unless an implementation session
+	# explicitly claims it later. Never carry a TODO assignee into creation: it
+	# would project status:claimed and permanently block Pulse after publication.
+	if [[ ",${labels}," == *",auto-dispatch,"* && -n "$assignee" ]]; then
+		print_info "Ignoring assignee for $task_id — auto-dispatch entry is worker-owned"
+		assignee=""
+	fi
 
 	_push_prepare_creation_labels "$labels" "$assignee" "$repo" || return 2
 	local publication_state="$_PUSH_CREATION_STATE"
@@ -206,8 +213,11 @@ _push_create_issue() {
 
 	# t1970/t1984/t2157: auto-assign interactive origin issues (not auto-dispatch).
 	# Worker issues follow status:claimed + pulse-managed assignment instead.
+	# GH#32703: decide from the TODO intent ($labels). The pending-publication
+	# projection strips auto-dispatch, so $all_labels would self-assign
+	# worker-owned tasks and strand them after publication.
 	[[ -n "$num" && -z "$assignee" && "$origin_label" == "origin:interactive" ]] &&
-		_push_auto_assign_interactive "$num" "$repo" "$all_labels"
+		_push_auto_assign_interactive "$num" "$repo" "$labels"
 
 	# Mapping validation above must precede this lock mutation.
 	[[ -n "$num" ]] && _push_lock_created_issue "$num" "$repo" "$origin_label"

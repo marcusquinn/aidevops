@@ -63,9 +63,12 @@ Regression pattern: a fix for one axis breaks the other. Recent production failu
 **Test both platforms before merging.** ShellCheck catches neither axis — manual review and regression tests required.
 
 CI also runs `.agents/scripts/platform-fix-regression-evidence.sh`: PRs that
-claim Linux/macOS or coreutils portability fixes must update a targeted test or
-include a substantive `## Regression Evidence` rationale. Documentation-only
-changes are exempt; see `todo/plans/shell-portability-hardening.md` for context.
+claim Linux/macOS or coreutils portability fixes in the title or non-testing
+body sections must update a targeted repository test (under `.agents/scripts/tests/`,
+`.agents/tests/`, `.agents/plugins/*/tests/`, `tests/`, or `packages/*/tests/`)
+or include a substantive `## Regression Evidence` rationale. Testing and
+verification narrative does not trigger the gate; documentation-only changes
+are exempt. See `todo/plans/shell-portability-hardening.md` for context.
 
 ## Bash 3.2 Compatibility (macOS default shell)
 

@@ -764,8 +764,6 @@ _test_context_budget_full() {
 
 		# Mock helpers to avoid slow external calls
 		mkdir -p "$TEST_TMP/mock-budget"
-		printf '#!/usr/bin/env bash\necho "Mock patterns: 5 success, 1 failure"\n' >"$TEST_TMP/mock-budget/pattern-tracker-helper.sh"
-		chmod +x "$TEST_TMP/mock-budget/pattern-tracker-helper.sh"
 		printf '#!/usr/bin/env bash\necho "Mock memory: entry 1"\n' >"$TEST_TMP/mock-budget/memory-helper.sh"
 		chmod +x "$TEST_TMP/mock-budget/memory-helper.sh"
 
@@ -1451,8 +1449,6 @@ _test_pattern_integration() {
 
 		# Create mock helper scripts that return instantly
 		mkdir -p "$TEST_TMP/mock-scripts"
-		printf '#!/usr/bin/env bash\necho "Mock pattern data: 10 success, 2 failure"\n' >"$TEST_TMP/mock-scripts/pattern-tracker-helper.sh"
-		chmod +x "$TEST_TMP/mock-scripts/pattern-tracker-helper.sh"
 		printf '#!/usr/bin/env bash\necho "Mock memory: test memory entry"\n' >"$TEST_TMP/mock-scripts/memory-helper.sh"
 		chmod +x "$TEST_TMP/mock-scripts/memory-helper.sh"
 
@@ -1462,9 +1458,9 @@ _test_pattern_integration() {
 		local context
 		context=$(build_ai_context "$REPO_DIR" "full" 2>/dev/null)
 
-		# Full scope should include pattern tracker section
-		if ! printf '%s' "$context" | grep -q "Pattern Tracker" 2>/dev/null; then
-			echo "FAIL: full context missing Pattern Tracker section"
+		# Retired pattern tooling must not be advertised in full context.
+		if printf '%s' "$context" | grep -q "Pattern Tracker" 2>/dev/null; then
+			echo "FAIL: full context still advertises retired Pattern Tracker"
 			exit 1
 		fi
 
@@ -1473,9 +1469,9 @@ _test_pattern_integration() {
 }
 
 if _test_pattern_integration 2>/dev/null; then
-	pass "full context includes Pattern Tracker section"
+	pass "full context excludes retired Pattern Tracker section"
 else
-	fail "pattern tracker integration missing from context"
+	fail "retired pattern tracker still advertised in context"
 fi
 
 # Test 7.2: Context builder includes memory section (uses mock helpers)
@@ -1504,8 +1500,6 @@ _test_memory_integration() {
 
 		# Create mock helper scripts
 		mkdir -p "$TEST_TMP/mock-scripts2"
-		printf '#!/usr/bin/env bash\necho "Mock pattern data"\n' >"$TEST_TMP/mock-scripts2/pattern-tracker-helper.sh"
-		chmod +x "$TEST_TMP/mock-scripts2/pattern-tracker-helper.sh"
 		printf '#!/usr/bin/env bash\necho "Mock memory: recent entry"\n' >"$TEST_TMP/mock-scripts2/memory-helper.sh"
 		chmod +x "$TEST_TMP/mock-scripts2/memory-helper.sh"
 
@@ -1557,8 +1551,6 @@ _test_quick_scope_skips() {
 
 		# Create mock helpers (should NOT be called in quick scope)
 		mkdir -p "$TEST_TMP/mock-scripts3"
-		printf '#!/usr/bin/env bash\necho "SHOULD NOT BE CALLED"\nexit 1\n' >"$TEST_TMP/mock-scripts3/pattern-tracker-helper.sh"
-		chmod +x "$TEST_TMP/mock-scripts3/pattern-tracker-helper.sh"
 		printf '#!/usr/bin/env bash\necho "SHOULD NOT BE CALLED"\nexit 1\n' >"$TEST_TMP/mock-scripts3/memory-helper.sh"
 		chmod +x "$TEST_TMP/mock-scripts3/memory-helper.sh"
 
