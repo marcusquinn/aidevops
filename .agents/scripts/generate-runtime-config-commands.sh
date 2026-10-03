@@ -429,16 +429,21 @@ _prune_legacy_commands() {
 #   - identical to the generated output: leave untouched
 #   - known legacy generator fingerprint: replace
 #   - any other regular file: copy to the backup dir, then replace
+# No-op for runtimes without bare aliases and for main-agent/hardcoded names.
 # Arguments: $1=runtime_id $2=source file $3=bare name $4=cmd_dir
-# Returns: 0 on success (including a kept non-regular entry), 1 on failure.
+#            $5=main-agent command source dir
+# Returns: 0 on success (including skips and kept entries), 1 on failure.
 _deploy_bare_command_alias() {
 	local runtime_id="$1"
 	local src="$2"
 	local name="$3"
 	local cmd_dir="$4"
+	local main_src_dir="$5"
 	local dest="${cmd_dir}/${name}.md"
 	local stage_dir digest backup_dir backup_file
 
+	_runtime_uses_bare_command_aliases "$runtime_id" || return 0
+	_bare_command_alias_allowed "$name" "$main_src_dir" || return 0
 	if [[ -L "$dest" ]] || { [[ -e "$dest" ]] && [[ ! -f "$dest" ]]; }; then
 		print_warning "Keeping non-regular command entry $dest; use /${_AIDEVOPS_CMD_PREFIX}${name}"
 		return 0
@@ -447,6 +452,7 @@ _deploy_bare_command_alias() {
 	stage_dir=$(mktemp -d) || return 1
 	if ! _deploy_one_command "$runtime_id" "$src" "$name" "$stage_dir"; then
 		rm -rf "$stage_dir"
+		print_warning "Failed to render bare command alias $name"
 		return 1
 	fi
 
@@ -473,6 +479,7 @@ _deploy_bare_command_alias() {
 
 	if ! mv -f "$stage_dir/${name}.md" "$dest"; then
 		rm -rf "$stage_dir"
+		print_warning "Failed to install bare command alias $dest"
 		return 1
 	fi
 	rm -rf "$stage_dir"
@@ -639,16 +646,8 @@ _generate_commands_for_runtime() {
 				return 1
 			fi
 			command_count=$((command_count + 1))
-
-			# Bare alias keeps documented and worker-dispatched names working
-			# (`/full-loop Implement issue #N`).
-			_runtime_uses_bare_command_aliases "$runtime_id" || continue
-			_bare_command_alias_allowed "$cmd_name" "$main_src_dir" || continue
-			if ! _deploy_bare_command_alias "$runtime_id" "$cmd_file" "$cmd_name" "$cmd_dir"; then
-				print_warning "Failed to deploy bare command alias $cmd_name for $display_name"
-				return 1
-			fi
-			command_count=$((command_count + 1))
+			# Bare alias keeps `/full-loop Implement issue #N` working (GH#33484).
+			_deploy_bare_command_alias "$runtime_id" "$cmd_file" "$cmd_name" "$cmd_dir" "$main_src_dir" || return 1
 		done
 	fi
 
