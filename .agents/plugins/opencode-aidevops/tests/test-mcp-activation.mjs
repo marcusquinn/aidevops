@@ -15,7 +15,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { spawnSync } from "node:child_process";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -25,6 +25,39 @@ import {
   enforceManagedMcpArtifactPath,
 } from "../mcp-activation-tool.mjs";
 import { createMcpSessionRuntime, getMcpRegistry, getOnDemandMcpAgents, registerMcpServers } from "../mcp-registry.mjs";
+import { normalizeMcpArtifactPaths } from "../mcp-artifact-paths.mjs";
+
+test("normalizes Playwright artifact links using the MCP cwd, not the worktree", () => {
+  const runtime = createMcpSessionRuntime("/home/example/.aidevops/.agent-workspace", { nonce: "links" });
+  const workspace = runtime.workspaces.playwright;
+  const snapshot = join(workspace.outputDirectory, "page.yml");
+  const output = { output: `[Snapshot](${relative(workspace.outputDirectory, snapshot)})\n[Screenshot](./shot.png)` };
+  normalizeMcpArtifactPaths({ tool: "playwright_browser_navigate" }, output, runtime.workspaces);
+  assert.equal(output.output, `[Snapshot](${snapshot})\n[Screenshot](${join(workspace.outputDirectory, "shot.png")})`);
+
+  // A ../../.. link is valid only when its resolved destination is in this session.
+  const nested = { directory: workspace.directory, outputDirectory: join(workspace.directory, "a", "b", "c") };
+  const traversing = { output: "[Snapshot](../../../.aidevops/.agent-workspace/page.yml)\n[Escape](../../../../outside.png)\n[Web](https://example.com/a.png)" };
+  normalizeMcpArtifactPaths({ tool: "playwright_browser_snapshot" }, traversing, { playwright: nested });
+  assert.equal(traversing.output, `[Snapshot](${join(workspace.directory, ".aidevops/.agent-workspace/page.yml")})\n[Escape](../../../../outside.png)\n[Web](https://example.com/a.png)`);
+  const unrelated = { output: "[Screenshot](./shot.png)" };
+  normalizeMcpArtifactPaths({ tool: "read" }, unrelated, runtime.workspaces);
+  assert.equal(unrelated.output, "[Screenshot](./shot.png)");
+});
+
+test("leaves artifact links through a symlink escape unchanged", (t) => {
+  const root = mkdtempSync(join(tmpdir(), "aidevops-artifact-links-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const directory = join(root, "session");
+  const outputDirectory = join(directory, ".playwright-mcp");
+  const outside = join(root, "outside");
+  mkdirSync(outputDirectory, { recursive: true });
+  mkdirSync(outside);
+  symlinkSync(outside, join(outputDirectory, "linked"), "dir");
+  const output = { output: "[Screenshot](./linked/shot.png)\n[Traversal](./linked/../shot.png)" };
+  normalizeMcpArtifactPaths({ tool: "playwright_browser_take_screenshot" }, output, { playwright: { directory, outputDirectory } });
+  assert.equal(output.output, "[Screenshot](./linked/shot.png)\n[Traversal](./linked/../shot.png)");
+});
 
 const TEST_DIR = fileURLToPath(new URL(".", import.meta.url));
 const AGENTS_DIR = join(TEST_DIR, "../../..");
@@ -587,7 +620,7 @@ done
 mkdir -p -- "$output_dir"
 printf 'snapshot' >"$output_dir/page.yml"
 printf 'console' >"$output_dir/console.log"
-printf 'named screenshot' >"$output_dir/review-home-desktop.png"
+printf 'named screenshot' >"review-home-desktop.png"
 `, { mode: 0o755 });
 
   const config = {};
