@@ -9,6 +9,7 @@ SCRIPTS_DIR="${SCRIPT_DIR}/.."
 ROOT=$(mktemp -d)
 trap 'rm -rf "$ROOT"' EXIT
 mkdir -p "${ROOT}/bin" "${ROOT}/helpers"
+cp "${SCRIPTS_DIR}/project-node-runtime.sh" "${ROOT}/helpers/"
 
 cat >"${ROOT}/helpers/review-bot-gate-helper.sh" <<'STUB'
 #!/usr/bin/env bash
@@ -152,6 +153,34 @@ gh_pr_checks_exact_json() {
 	local selection_mode="\$3"
 	: "\$repo_slug" "\$pr_number" "\$selection_mode"
 	case "\${GH_TEST_MODE:-pass}" in
+		required-skipped)
+			printf '%s\n' '[{"name":"required-ci","state":"SKIPPED","bucket":"skipping"}]'
+			return 0
+			;;
+		required-cancelled)
+			printf '%s\n' '[{"name":"required-ci","state":"CANCELLED","bucket":"cancel"}]'
+			return 0
+			;;
+		required-failure)
+			printf '%s\n' '[{"name":"required-ci","state":"FAILURE","bucket":"fail"}]'
+			return 0
+			;;
+		skipped-unknown-state)
+			printf '%s\n' '[{"name":"required-ci","state":"UNKNOWN","bucket":"skipping"}]'
+			return 0
+			;;
+		skipped-missing-state)
+			printf '%s\n' '[{"name":"required-ci","bucket":"skipping"}]'
+			return 0
+			;;
+		skipped-wrong-bucket)
+			printf '%s\n' '[{"name":"required-ci","state":"SKIPPED","bucket":"unknown"}]'
+			return 0
+			;;
+		pending-with-skipped)
+			printf '%s\n' '[{"name":"required-ci","state":"SKIPPED","bucket":"skipping"},{"name":"required-pending","state":"IN_PROGRESS","bucket":"pending"}]'
+			return 8
+			;;
 		pending)
 			printf '%s\n' '[{"name":"required-ci","state":"IN_PROGRESS","bucket":"pending"}]'
 			return 8
@@ -210,11 +239,17 @@ RUNNER
 	return $?
 }
 
-run_gate pass || {
+run_gate pass visible || {
 	printf 'FAIL terminal remote evidence was rejected\n'
 	exit 1
 }
 printf 'PASS terminal remote evidence is accepted\n'
+
+run_gate required-skipped || {
+	printf 'FAIL completed skipped required check was rejected\n'
+	exit 1
+}
+printf 'PASS completed skipped required check is accepted\n'
 
 REVIEW_GATE_TEST_RESULT=PASS_ADVISORY run_gate pass || {
 	printf 'FAIL advisory-default review result was rejected\n'
@@ -240,13 +275,23 @@ run_gate cli-no-required || {
 }
 printf 'PASS canonical CLI no-required-checks evidence survives unavailable branch protection\n'
 
-for mode in draft pending changes closed api-error changed-wording malformed empty-array readiness-missing-cost readiness-errors; do
+for mode in draft pending required-cancelled required-failure skipped-unknown-state skipped-missing-state skipped-wrong-bucket changes closed api-error changed-wording malformed empty-array readiness-missing-cost readiness-errors; do
 	if run_gate "$mode"; then
 		printf 'FAIL unsafe remote state was accepted: %s\n' "$mode"
 		exit 1
 	fi
 	printf 'PASS unsafe remote state is blocked: %s\n' "$mode"
 done
+
+pending_rc=0
+pending_output=$(run_gate pending-with-skipped visible 2>&1) || pending_rc=$?
+if [[ "$pending_rc" -ne 0 && "$pending_output" == *"CHECK_STATUS=pending"* &&
+	"$pending_output" == *"no repair action is eligible"* ]]; then
+	printf 'PASS skipped checks do not turn pending checks into terminal failures\n'
+else
+	printf 'FAIL mixed skipped/pending evidence lost its classification: rc=%s output=%s\n' "$pending_rc" "$pending_output"
+	exit 1
+fi
 
 cooldown_rc=0
 cooldown_output=$(run_gate cooldown visible 2>&1) || cooldown_rc=$?
