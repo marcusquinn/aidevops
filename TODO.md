@@ -5091,3 +5091,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t18582 Extend macOS indexing/backup audit with dev churn paths and exclusion coverage #enhancement ref:GH#33398 pr:#33401 completed:2026-10-03
 
 - [ ] to1js8zy8ag99c0gfcn6b16zqrqa-50 Add blind reviewer packets and final requirements acceptance review #auto-dispatch #enhancement ref:GH#33459
+
+- [ ] t18584 fix(pulse): never-terminal 'qlty usage' pending status wedges pulse auto-merge #bug ref:GH#33495
