@@ -64,3 +64,11 @@ export function unquotedTokens(command) {
   flushWord(state, words);
   return words;
 }
+
+export function bodyFileArgument(words) {
+  const index = words.findIndex(({ text, flag }) => flag && (text === "--body-file" || text.startsWith("--body-file=")));
+  if (index === -1) return null;
+  const argument = words[index].text;
+  const path = argument === "--body-file" ? words[index + 1]?.text : argument.slice("--body-file=".length);
+  return { path };
+}

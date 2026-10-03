@@ -50,7 +50,7 @@ import { join } from "path";
 
 import { FAIL_REASON, formatGateThrowMessage } from "./quality-hooks-signature-failures.mjs";
 import { repairBodyFile } from "./quality-hooks-signature-body-file.mjs";
-import { unquotedTokens } from "./quality-hooks-signature-shell-words.mjs";
+import { bodyFileArgument, unquotedTokens } from "./quality-hooks-signature-shell-words.mjs";
 import {
   SIG_MARKER,
   hasTrustedSignatureSignal,
@@ -239,18 +239,15 @@ export function tryRepairSignature(cmd, scriptsDir, log, options = {}) {
   }
 
   // --body-file PATH form: filesystem-side repair.
-  const fileIndex = tokens.findIndex(({ text, flag }) => flag && (text === "--body-file" || text.startsWith("--body-file=")));
-  if (fileIndex !== -1) {
-    const flag = tokens[fileIndex].text;
-    const filePath = flag === "--body-file" ? tokens[fileIndex + 1]?.text : flag.slice("--body-file=".length);
-    if (!filePath) return { status: "fail", reason: FAIL_REASON.BODY_ARG_NO_MATCH };
-    return repairBodyFile(cmd, filePath, helperPath, log, {
+  const bodyFile = bodyFileArgument(tokens);
+  if (bodyFile) {
+    return bodyFile.path ? repairBodyFile(cmd, bodyFile.path, helperPath, log, {
       commandWorkdir: options.commandWorkdir,
       sigMarker: SIG_MARKER,
       isMachineProtocolCommand,
       generateSignature: (path, body, signatureLog) =>
         _generateSignature(path, body, signatureLog, options),
-    });
+    }) : { status: "fail", reason: FAIL_REASON.BODY_ARG_NO_MATCH };
   }
 
   // --body VALUE form: command-side repair.
