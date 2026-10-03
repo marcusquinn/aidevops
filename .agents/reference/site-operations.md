@@ -16,6 +16,14 @@ placeholder-only template from `configs/site-inventory.json.txt`. It is local an
 uncommitted. Store credential *values* in the secret store. Inventory may hold only
 a credential variable name, account reference, and non-secret connection metadata.
 
+## Pre-change server backups
+
+Before changing a site, store server-side backups (settings JSON, database dumps,
+and copies of `wp-config.php` or `.htaccess`) in `~/backups/`, verified to be
+outside the web root. Use directory mode `700` and file mode `600`. Never put
+backups under `public_html`, `wp-content/uploads`, or any other web-served path;
+web-server or security-plugin blocking is not a substitute for private storage.
+
 ## Record model and precedence
 
 Each `sites` entry identifies a canonical hostname, aliases, platform, environment,
