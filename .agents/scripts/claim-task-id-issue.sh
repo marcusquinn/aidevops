@@ -534,7 +534,11 @@ _compose_issue_body() {
 
 	# t2063 brief-first path: when a brief exists, the brief is the source of truth
 	if [[ -n "$brief_file" && -f "$brief_file" ]] && [[ "$(type -t _compose_issue_worker_guidance 2>/dev/null)" == "function" ]]; then
-		bash "$SCRIPT_DIR/brief-readiness-helper.sh" prepare-scope "$brief_file" || return "$CLAIM_COMPOSE_FAILED_RC"
+		# External briefs are caller-owned: validate without relaxing prepare-scope's
+		# linked-worktree write boundary. Durable briefs keep delegation preparation.
+		if [[ "$brief_file" == "${TASK_BRIEF_FILE:-}" ]]; then
+			bash "$SCRIPT_DIR/brief-readiness-helper.sh" scope-check "$(<"$brief_file")" >&2 || return "$CLAIM_COMPOSE_FAILED_RC"
+		fi
 		local body=""
 
 		# Summary paragraph: caller's --description, OR brief's What section, OR empty
