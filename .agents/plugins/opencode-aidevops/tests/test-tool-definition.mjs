@@ -7,7 +7,51 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { adaptToolDefinition, LEGACY_PARENT_GUIDANCE, BOUNDED_PARENT_GUIDANCE } from "../tool-definition.mjs";
+import { adaptToolDefinition, LEGACY_PARENT_GUIDANCE, BOUNDED_PARENT_GUIDANCE, BUILTIN_DESCRIPTION_TRIMS } from "../tool-definition.mjs";
+
+test("each captured example trim is exact, tool-specific, schema-preserving and idempotent", async () => {
+  for (const [toolID, trims] of Object.entries(BUILTIN_DESCRIPTION_TRIMS)) {
+    for (const { original, replacement } of trims) {
+      const prefix = "Safety, permissions and Git rules stay here.\n";
+      const suffix = "\nRemaining rules and parameter semantics stay here.";
+      const parameters = { properties: { agent__intent: { type: "string" } } };
+      const before = structuredClone(parameters);
+      const output = { description: prefix + original + suffix, parameters };
+      await adaptToolDefinition({ toolID }, output);
+      assert.equal(output.description, prefix + replacement + suffix);
+      assert.equal(output.parameters, parameters);
+      assert.deepEqual(output.parameters, before);
+      await adaptToolDefinition({ toolID }, output);
+      assert.equal(output.description, prefix + replacement + suffix);
+
+      const otherTool = { description: prefix + original + suffix };
+      await adaptToolDefinition({ toolID: "read" }, otherTool);
+      assert.equal(otherTool.description, prefix + original + suffix);
+
+      // One upstream byte changed: do not guess which paragraph to remove.
+      const revised = { description: prefix + original.replace(" ", "\t") + suffix };
+      const revisedBefore = revised.description;
+      await adaptToolDefinition({ toolID }, revised);
+      assert.equal(revised.description, revisedBefore);
+    }
+  }
+});
+
+test("combined trims preserve surrounding rules and unknown inputs fall through", async () => {
+  for (const [toolID, trims] of Object.entries(BUILTIN_DESCRIPTION_TRIMS)) {
+    const output = { description: trims.map(({ original }) => original).join("\nKEEP RULE\n") };
+    await adaptToolDefinition({ toolID }, output);
+    assert.equal(output.description, trims.map(({ replacement }) => replacement).join("\nKEEP RULE\n"));
+    for (const description of ["Unrecognised upstream description", undefined, null]) {
+      const unknown = { description };
+      await adaptToolDefinition({ toolID }, unknown);
+      assert.equal(unknown.description, description);
+    }
+  }
+  const prototypeKey = { description: "unchanged" };
+  await adaptToolDefinition({ toolID: "constructor" }, prototypeKey);
+  assert.equal(prototypeKey.description, "unchanged");
+});
 
 test("only the known Bash directory paragraph changes, preserving parameters and safety text", async () => {
   const suffix = '\n\n2. Command Execution:\n   - Always quote file paths that contain spaces with double quotes';
