@@ -292,6 +292,61 @@ else
 fi
 
 # =============================================================================
+# Test 11b — GH#33293: claimed no-auto-dispatch coordinators without
+# active-implementation evidence are skipped like parent-task; one with an
+# open linked PR still blocks.
+# =============================================================================
+COORD_BIN="${TEST_ROOT}/coord-bin"
+mkdir -p "$COORD_BIN"
+cat >"${COORD_BIN}/gh" <<'MOCK_GH'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "pr" && "${2:-}" == "list" ]]; then
+	repo=""
+	args=("$@")
+	for ((idx = 0; idx < ${#args[@]}; idx++)); do
+		if [[ "${args[$idx]}" == "--repo" ]]; then
+			repo="${args[$((idx + 1))]}"
+		fi
+	done
+	printf '%s\n' '[{"number":900,"headRefName":"feature/other","body":"Resolves #403"}]'
+	exit 0
+fi
+
+label=""
+while [[ "$#" -gt 0 ]]; do
+	case "${1:-}" in
+		--label)
+			shift
+			label="${1:-}"
+			;;
+	esac
+	shift || true
+done
+
+if [[ "$label" == "status:claimed" ]]; then
+	printf '%s\n' '[{"number":402,"body":"### Files Scope\n- `docs/runbook.md`","labels":[{"name":"status:claimed"},{"name":"no-auto-dispatch"}]},{"number":403,"body":"### Files Scope\n- `docs/other-runbook.md`","labels":[{"name":"status:claimed"},{"name":"no-auto-dispatch"}]}]'
+else
+	printf '[]\n'
+fi
+MOCK_GH
+chmod +x "${COORD_BIN}/gh"
+
+OLD_PATH="$PATH"
+PATH="${COORD_BIN}:$PATH"
+_FOOTPRINT_CACHE_REPO=""
+_FOOTPRINT_CACHE_DATA=""
+_FOOTPRINT_CACHE_EPOCH=0
+
+result=$(_footprint_get_inflight "test/repo" "999")
+PATH="$OLD_PATH"
+if ! printf '%s' "$result" | grep -q "docs/runbook.md|402" &&
+	printf '%s' "$result" | grep -q "docs/other-runbook.md|403"; then
+	print_result "get_inflight: skips claimed no-auto-dispatch coordinator without evidence, keeps one with a linked PR" 0
+else
+	print_result "get_inflight: skips claimed no-auto-dispatch coordinator without evidence, keeps one with a linked PR" 1 "(got: ${result})"
+fi
+
+# =============================================================================
 # Test 12 — durable defer suppresses unchanged overlap across cycles
 # =============================================================================
 _FOOTPRINT_DEFER_STATE_DIR="${TEST_ROOT}/footprint-defers"
@@ -440,6 +495,169 @@ else
 	print_result "durable defer: blocker refresh failure remains fail-closed" 1 "(unsafe reconsideration)"
 fi
 unset MOCK_BLOCKER_FAIL
+PATH="$OLD_PATH"
+
+# =============================================================================
+# GH#32977 — same-batch footprint reservations
+# =============================================================================
+# Each production candidate runs in its own dispatch subshell with a cold
+# footprint cache, and a just-launched worker is not yet visible through
+# GitHub labels. Model that with a gh stub that reports no active issues
+# unless MOCK_QUEUED_JSON is set, and reset the in-process cache per call.
+BATCH_BIN="${TEST_ROOT}/batch-bin"
+mkdir -p "$BATCH_BIN"
+cat >"${BATCH_BIN}/gh" <<'MOCK_GH'
+#!/usr/bin/env bash
+label=""
+while [[ "$#" -gt 0 ]]; do
+	[[ "${1:-}" == "--label" ]] && { shift; label="${1:-}"; }
+	shift || true
+done
+if [[ "$label" == "status:queued" && -n "${MOCK_QUEUED_JSON:-}" ]]; then
+	printf '%s\n' "$MOCK_QUEUED_JSON"
+else
+	printf '[]\n'
+fi
+MOCK_GH
+chmod +x "${BATCH_BIN}/gh"
+export PATH="${BATCH_BIN}:$OLD_PATH"
+_FOOTPRINT_RESERVATION_DIR="${TEST_ROOT}/footprint-reservations"
+_FOOTPRINT_DEFER_STATE_DIR="${TEST_ROOT}/footprint-defers-batch"
+
+batch_check() {
+	local issue="$1"
+	local body="$2"
+	local rc=0
+	_FOOTPRINT_CACHE_REPO=""
+	_FOOTPRINT_CACHE_DATA=""
+	_FOOTPRINT_CACHE_EPOCH=0
+	BATCH_SIGNAL=$(_footprint_check_overlap "$issue" "batch/repo" "$body") || rc=$?
+	return "$rc"
+}
+
+# shellcheck disable=SC2016 # Markdown backticks are literal fixture content.
+scope_body_a='## What
+
+Fix the engine.
+
+### Files Scope
+
+- `src/engine/core.ts`
+- `VERSION`
+- `CHANGELOG.md`
+
+## Reference
+
+- `src/engine/unrelated-context.ts`'
+# shellcheck disable=SC2016 # Markdown backticks are literal fixture content.
+scope_body_b='### Files Scope
+
+- EDIT: `src/engine/core.ts` — shared implementation file
+- `VERSION`'
+# shellcheck disable=SC2016 # Markdown backticks are literal fixture content.
+scope_body_c='### Files Scope
+
+- `src/ui/panel.ts`
+- `VERSION`
+- `CHANGELOG.md`'
+
+result=$(_footprint_extract_paths "$scope_body_a")
+# Match the helper's locale-dependent sort order.
+expected=$(printf '%s\n' CHANGELOG.md VERSION src/engine/core.ts | sort -u)
+if [[ "$result" == "$expected" ]]; then
+	print_result "extract_paths: canonical Files Scope list items are declared footprint" 0
+else
+	print_result "extract_paths: canonical Files Scope list items are declared footprint" 1 "(got: ${result})"
+fi
+
+BATCH_SIGNAL=""
+if ! batch_check 600 "$scope_body_a"; then
+	print_result "batch: first candidate launches and reserves its footprint" 0
+else
+	print_result "batch: first candidate launches and reserves its footprint" 1 "(signal=${BATCH_SIGNAL})"
+fi
+
+BATCH_SIGNAL=""
+if batch_check 601 "$scope_body_b" && [[ "$BATCH_SIGNAL" == *"issue=#600"* && "$BATCH_SIGNAL" == *"src/engine/core.ts"* ]]; then
+	print_result "batch: second candidate sharing an implementation file is deferred" 0
+else
+	print_result "batch: second candidate sharing an implementation file is deferred" 1 "(signal=${BATCH_SIGNAL})"
+fi
+
+BATCH_SIGNAL=""
+if ! batch_check 602 "$scope_body_c"; then
+	print_result "batch: version/changelog-only overlap still launches in parallel" 0
+else
+	print_result "batch: version/changelog-only overlap still launches in parallel" 1 "(signal=${BATCH_SIGNAL})"
+fi
+
+# A failed launch for #600 releases its reservation, so #601 can proceed.
+footprint_release_reservation "batch/repo" 600 0
+BATCH_SIGNAL=""
+if ! batch_check 601 "$scope_body_b"; then
+	print_result "batch: failed launch releases its reservation" 0
+else
+	print_result "batch: failed launch releases its reservation" 1 "(signal=${BATCH_SIGNAL})"
+fi
+
+# A release scoped to a later attempt must not drop an earlier reservation.
+footprint_release_reservation "batch/repo" 601 "$(($(date +%s) + 60))"
+BATCH_SIGNAL=""
+if batch_check 603 "$scope_body_b" && [[ "$BATCH_SIGNAL" == *"issue=#601"* ]]; then
+	print_result "batch: release scoped to a later attempt keeps the live reservation" 0
+else
+	print_result "batch: release scoped to a later attempt keeps the live reservation" 1 "(signal=${BATCH_SIGNAL})"
+fi
+
+# Once #601 is visible as status:queued, live label evidence supersedes the
+# reservation (stamped, not yet removed) while still deferring overlaps.
+MOCK_QUEUED_JSON=$(jq -cn --arg body "$scope_body_b" '[{number:601,body:$body,labels:[{name:"status:queued"}]}]')
+export MOCK_QUEUED_JSON
+reservation_key=$(_footprint_reservation_repo_key "batch/repo")
+reservation_601="${_FOOTPRINT_RESERVATION_DIR}/${reservation_key}-601.json"
+BATCH_SIGNAL=""
+if batch_check 604 "$scope_body_b" && [[ "$BATCH_SIGNAL" == *"issue=#601"* ]] &&
+	jq -e '.superseded_at > 0' "$reservation_601" >/dev/null 2>&1; then
+	print_result "batch: status:queued evidence supersedes the reservation and still blocks" 0
+else
+	print_result "batch: status:queued evidence supersedes the reservation and still blocks" 1 "(signal=${BATCH_SIGNAL})"
+fi
+unset MOCK_QUEUED_JSON
+
+# A caller whose live read predates the labels still sees the superseded
+# reservation during the grace window.
+BATCH_SIGNAL=""
+if batch_check 606 "$scope_body_b" && [[ "$BATCH_SIGNAL" == *"issue=#601"* ]]; then
+	print_result "batch: stale live read still sees a superseded reservation in grace" 0
+else
+	print_result "batch: stale live read still sees a superseded reservation in grace" 1 "(signal=${BATCH_SIGNAL})"
+fi
+
+# After the grace window, the next caller with live evidence retires it.
+jq -c '.superseded_at = 1' "$reservation_601" >"${reservation_601}.tmp" && mv -f "${reservation_601}.tmp" "$reservation_601"
+MOCK_QUEUED_JSON=$(jq -cn --arg body "$scope_body_b" '[{number:601,body:$body,labels:[{name:"status:queued"}]}]')
+export MOCK_QUEUED_JSON
+BATCH_SIGNAL=""
+if batch_check 607 "$scope_body_b" && [[ "$BATCH_SIGNAL" == *"issue=#601"* ]] && [[ ! -e "$reservation_601" ]]; then
+	print_result "batch: superseded reservation is retired after the grace window" 0
+else
+	print_result "batch: superseded reservation is retired after the grace window" 1 "(signal=${BATCH_SIGNAL})"
+fi
+unset MOCK_QUEUED_JSON
+
+# Expired reservations never block.
+reservation_file="${_FOOTPRINT_RESERVATION_DIR}/${reservation_key}-602.json"
+jq -c '.expires_at = 0' "$reservation_file" >"${reservation_file}.tmp" && mv -f "${reservation_file}.tmp" "$reservation_file"
+# shellcheck disable=SC2016 # Markdown backticks are literal fixture content.
+panel_body='### Files Scope
+
+- `src/ui/panel.ts`'
+BATCH_SIGNAL=""
+if ! batch_check 605 "$panel_body" && [[ ! -e "$reservation_file" ]]; then
+	print_result "batch: expired reservation is pruned and does not block" 0
+else
+	print_result "batch: expired reservation is pruned and does not block" 1 "(signal=${BATCH_SIGNAL})"
+fi
 PATH="$OLD_PATH"
 
 # =============================================================================

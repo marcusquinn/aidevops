@@ -57,16 +57,20 @@ _PULSE_AUTHOR_PERMISSION_UNKNOWN="unknown"
 _PULSE_AUTHOR_PERMISSION_LOOKUP_STATE="$_PULSE_AUTHOR_PERMISSION_UNKNOWN"
 _PULSE_AUTHOR_PERMISSION_HTTP="$_PULSE_AUTHOR_PERMISSION_UNKNOWN"
 _PULSE_AUTHOR_PERMISSION_VALUE="$_PULSE_AUTHOR_PERMISSION_UNKNOWN"
+_PULSE_AUTHOR_PERMISSION_REASON="$_PULSE_AUTHOR_PERMISSION_UNKNOWN"
 
 #######################################
 # Record collaborator-permission lookup state for merge callers.
-# Args: $1=state, $2=http-status, $3=permission-value(optional)
+# Args: $1=state, $2=http-status, $3=permission-value(optional),
+#       $4=failure/verdict reason(optional)
 # Returns: 0 always.
 #######################################
 _pulse_author_permission_state_set() {
 	local state="$1"
 	local http_status="$2"
 	local permission_value="${3:-$_PULSE_AUTHOR_PERMISSION_UNKNOWN}"
+	local reason="${4:-$_PULSE_AUTHOR_PERMISSION_UNKNOWN}"
+	_PULSE_AUTHOR_PERMISSION_REASON="$reason"
 	_PULSE_AUTHOR_PERMISSION_LOOKUP_STATE="$state"
 	_PULSE_AUTHOR_PERMISSION_HTTP="$http_status"
 	_PULSE_AUTHOR_PERMISSION_VALUE="$permission_value"
@@ -100,11 +104,12 @@ _pulse_author_permission_lookup_uncached() {
 	if declare -F _gh_collaborator_permission_lookup >/dev/null 2>&1; then
 		_gh_collaborator_permission_lookup "$repo_slug" "$author" pulse_perm_value
 		local rc=$?
+		local perm_reason="${AIDEVOPS_GH_COLLAB_PERMISSION_REASON:-$_PULSE_AUTHOR_PERMISSION_UNKNOWN}"
 		if [[ "$rc" -ne 0 ]]; then
-			_pulse_author_permission_state_set "failed" "${AIDEVOPS_GH_COLLAB_PERMISSION_HTTP:-$_PULSE_AUTHOR_PERMISSION_UNKNOWN}"
+			_pulse_author_permission_state_set "failed" "${AIDEVOPS_GH_COLLAB_PERMISSION_HTTP:-$_PULSE_AUTHOR_PERMISSION_UNKNOWN}" "$_PULSE_AUTHOR_PERMISSION_UNKNOWN" "$perm_reason"
 			return 2
 		fi
-		_pulse_author_permission_state_set "ok" "${AIDEVOPS_GH_COLLAB_PERMISSION_HTTP:-$_PULSE_AUTHOR_PERMISSION_UNKNOWN}" "$pulse_perm_value"
+		_pulse_author_permission_state_set "ok" "${AIDEVOPS_GH_COLLAB_PERMISSION_HTTP:-$_PULSE_AUTHOR_PERMISSION_UNKNOWN}" "$pulse_perm_value" "$perm_reason"
 		if [[ -n "$out_var" ]]; then
 			printf -v "$out_var" '%s' "$pulse_perm_value"
 		else
@@ -133,7 +138,7 @@ _pulse_author_permission_lookup() {
 	local out_var="${3:-}"
 	local cache_dir="${AIDEVOPS_PULSE_AUTHOR_PERMISSION_CACHE_DIR:-}"
 	local cache_file="" cache_key=""
-	local cache_rc="" cache_state="" cache_http="" cache_value=""
+	local cache_rc="" cache_state="" cache_http="" cache_value="" cache_reason=""
 	local lookup_rc=0 lookup_value=""
 
 	if [[ -n "$cache_dir" && -d "$cache_dir" ]]; then
@@ -145,10 +150,11 @@ _pulse_author_permission_lookup() {
 				IFS= read -r cache_state || cache_state="$_PULSE_AUTHOR_PERMISSION_UNKNOWN"
 				IFS= read -r cache_http || cache_http="$_PULSE_AUTHOR_PERMISSION_UNKNOWN"
 				IFS= read -r cache_value || cache_value="$_PULSE_AUTHOR_PERMISSION_UNKNOWN"
+				IFS= read -r cache_reason || cache_reason="$_PULSE_AUTHOR_PERMISSION_UNKNOWN"
 			} <"$cache_file"
 			[[ "$cache_rc" =~ ^[0-9]+$ ]] || cache_rc=2
-			_pulse_author_permission_state_set "$cache_state" "$cache_http" "$cache_value"
 			if [[ "$cache_rc" -eq 0 ]]; then
+				_pulse_author_permission_state_set "$cache_state" "$cache_http" "$cache_value" "$cache_reason"
 				if [[ -n "$out_var" ]]; then
 					printf -v "$out_var" '%s' "$cache_value"
 				else
@@ -156,14 +162,20 @@ _pulse_author_permission_lookup() {
 				fi
 				return 0
 			fi
-			return 2
+			# Failed verdict: allow exactly one fresh retry per pass (bounds
+			# API calls to 2 per author). The marker is created before the
+			# retry so a second failure is served from cache afterwards.
+			if [[ -e "${cache_file}.retried" ]] || ! : >"${cache_file}.retried" 2>/dev/null; then
+				_pulse_author_permission_state_set "$cache_state" "$cache_http" "$cache_value" "$cache_reason"
+				return 2
+			fi
 		fi
 	fi
 
 	_pulse_author_permission_lookup_uncached "$author" "$repo_slug" lookup_value
 	lookup_rc=$?
 	if [[ -n "$cache_file" ]]; then
-		printf '%s\n%s\n%s\n%s\n' "$lookup_rc" "$_PULSE_AUTHOR_PERMISSION_LOOKUP_STATE" "$_PULSE_AUTHOR_PERMISSION_HTTP" "$_PULSE_AUTHOR_PERMISSION_VALUE" >"$cache_file"
+		printf '%s\n%s\n%s\n%s\n%s\n' "$lookup_rc" "$_PULSE_AUTHOR_PERMISSION_LOOKUP_STATE" "$_PULSE_AUTHOR_PERMISSION_HTTP" "$_PULSE_AUTHOR_PERMISSION_VALUE" "$_PULSE_AUTHOR_PERMISSION_REASON" >"$cache_file"
 	fi
 	if [[ "$lookup_rc" -eq 0 ]]; then
 		if [[ -n "$out_var" ]]; then

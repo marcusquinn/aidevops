@@ -4,7 +4,7 @@
 # =============================================================================
 # Loop Common - Shared Infrastructure for All Loop Components
 # =============================================================================
-# Provides shared functions for ralph-loop, quality-loop, and full-loop:
+# Provides shared functions for quality-loop and full-loop:
 # - State management (JSON-based, survives session restart)
 # - Re-anchor prompt generation
 # - Receipt verification
@@ -110,7 +110,7 @@ loop_init_state_dir() {
 
 # Create new loop state
 # Arguments:
-#   $1 - loop_type (ralph|preflight|pr-review|postflight|full)
+#   $1 - loop_type (preflight|pr-review|postflight|full)
 #   $2 - prompt/task description
 #   $3 - max_iterations (default: 50)
 #   $4 - completion_promise (default: TASK_COMPLETE)

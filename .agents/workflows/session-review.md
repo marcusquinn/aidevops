@@ -19,7 +19,7 @@ tools:
 <!-- AI-CONTEXT-START -->
 
 **Purpose**: Review current session for completeness, workflow adherence, and knowledge capture.
-**Trigger**: `/session-review [focus]` — focus: `objectives | workflow | knowledge | all` (default). Run at end of significant work, before ending session, or after Ralph loop completion.
+**Trigger**: `/session-review [focus]` — focus: `objectives | workflow | knowledge | all` (default). Run at end of significant work or before ending a session.
 **Output**: Completion score (0-100%), outstanding items, value extraction report, evidence-based friction/efficiency retrospective, knowledge capture recommendations, session continuation advice.
 
 <!-- AI-CONTEXT-END -->
@@ -32,8 +32,6 @@ tools:
 git branch --show-current && git log --oneline -10
 grep -A 20 "## In Progress" TODO.md 2>/dev/null || echo "No TODO.md"
 git status --short
-test -f .agents/loop-state/ralph-loop.local.md && head -10 .agents/loop-state/ralph-loop.local.md || \
-  test -f .claude/ralph-loop.local.md && head -10 .claude/ralph-loop.local.md
 gh pr list --state open --limit 5 2>/dev/null || echo "No open PRs"
 ```
 
@@ -131,7 +129,6 @@ Output: status (Continue/End Recommended/End Required), reason, final actions if
 
 - **Before PR creation**: Ensure all changes committed, no outstanding items, docs complete.
 - **Before ending session**: Capture learnings, update TODO.md, check issue-sync drift (`issue-sync-helper.sh status`, t179.4), ensure clean handoff.
-- **After Ralph loop completion**: Verify completion promise met, identify cleanup, suggest next steps.
 
 ### Security Summary (t1428.5)
 

@@ -614,7 +614,7 @@ _full_loop_release_find_workflow_run() {
 		return 1
 	}
 	if ! gh api --method GET "repos/${repo}/actions/workflows/publish-packages.yml/runs" \
-		-f event=push -F per_page=100 --paginate >"$push_runs_file" 2>/dev/null ||
+		-f event=push -f head_sha="$tag_commit" -F per_page=100 --paginate >"$push_runs_file" 2>/dev/null ||
 		! gh api --method GET "repos/${repo}/actions/workflows/publish-packages.yml/runs" \
 			-f event=workflow_dispatch -F per_page=100 --paginate >"$recovery_runs_file" 2>/dev/null ||
 		! _full_loop_release_runs_payload_valid "$push_runs_file" ||
@@ -960,6 +960,12 @@ _full_loop_release_inspect_remote() {
 	_full_loop_release_find_workflow_run "$repo" "$tag_name" "$tag_commit" || find_rc=$?
 	if [[ "$find_rc" -eq 3 ]]; then
 		printf 'RELEASE_TAG=%s\nWORKFLOW_STATUS=absent\n' "$tag_name"
+		# The run list can serve stale snapshots; published channels mean
+		# absence is uncorroborated, so do not dispatch a redundant recovery.
+		if _full_loop_release_verify_channels "$repo" "$tag_name"; then
+			printf 'WORKFLOW_LOOKUP=uncorroborated\n'
+			return 8
+		fi
 		return 3
 	fi
 	[[ "$find_rc" -eq 0 ]] || return 1

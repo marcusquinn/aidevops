@@ -632,62 +632,6 @@ Code quality and security auditing.
 
 ## AI & Automation
 
-### DSPy Helper
-
-**File**: `.agents/scripts/dspy-helper.sh`
-
-DSPy framework integration for prompt optimization.
-
-**Commands**:
-
-```bash
-# Install DSPy
-./.agents/scripts/dspy-helper.sh install
-
-# Run optimization
-./.agents/scripts/dspy-helper.sh optimize [prompt-file]
-
-# Test prompts
-./.agents/scripts/dspy-helper.sh test [prompt-file]
-
-# Export optimized prompts
-./.agents/scripts/dspy-helper.sh export [output-file]
-```
-
-**Configuration**: `configs/dspy-config.json`
-
-**Features**:
-
-- Prompt optimization
-- Model evaluation
-- Chain-of-thought reasoning
-- Multi-model support
-
----
-
-### DSPyGround Helper
-
-**File**: `.agents/scripts/dspyground-helper.sh`
-
-DSPyGround playground for prompt experimentation.
-
-**Commands**:
-
-```bash
-# Start playground
-./.agents/scripts/dspyground-helper.sh start
-
-# Stop playground
-./.agents/scripts/dspyground-helper.sh stop
-
-# Open in browser
-./.agents/scripts/dspyground-helper.sh open
-```
-
-**Configuration**: `configs/dspyground-config.json`
-
----
-
 ### TOON Helper
 
 **File**: `.agents/scripts/toon-helper.sh`

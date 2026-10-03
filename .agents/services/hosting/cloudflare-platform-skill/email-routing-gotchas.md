@@ -1,19 +1,15 @@
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+# Email Routing Troubleshooting
 
-## Best Practices
+Start with the message's activity log to distinguish routing, authentication, and delivery failures, then fetch the matching documentation.
 
-1. **Verify destinations first**: Rules auto-disabled until destination verified
-2. **Use Email Workers for complex logic**: Don't create dozens of rules; use Workers
-3. **Monitor spam scores**: Check `X-Cf-Spamh-Score` header for filtering
-4. **Handle auth failures**: Enforce SPF/DKIM/DMARC at sender domain
-5. **Use subaddressing strategically**: Track where emails come from (`user+service@`)
-6. **Consider Worker limits**: Upgrade to Paid plan for heavy processing
-7. **Store raw emails carefully**: R2 for archival, KV for metadata
-8. **Implement proper error handling**: Always handle `setReject` cases
-9. **Test locally with wrangler dev**: Use curl to simulate email delivery
-10. **Use priority for rule ordering**: Lower priority = evaluated first
+| Symptom or question | Documentation |
+| --- | --- |
+| Rule disabled, wrong destination, or catch-all behavior | [Routing rules and verified addresses](https://developers.cloudflare.com/email-service/configuration/email-routing-addresses/index.md) |
+| DNS conflict or domain not configured | [Domain configuration](https://developers.cloudflare.com/email-service/configuration/domains/index.md) |
+| SPF, DKIM, or DMARC failure | [Authentication troubleshooting](https://developers.cloudflare.com/email-service/reference/troubleshooting/index.md) |
+| Message missing, rejected, dropped, or delivery failed | [Email logs](https://developers.cloudflare.com/email-service/observability/logs/index.md) |
+| Quotas, message sizes, routing capacity, or Worker resource exhaustion | [Current limits](https://developers.cloudflare.com/email-service/platform/limits/index.md) |
+| Sending costs and verified-destination allowances | [Pricing](https://developers.cloudflare.com/email-service/platform/pricing/index.md) |
+| Stream, parser, reply, or Worker execution error | [Email Workers troubleshooting](email-workers-gotchas.md) |
 
-## Debugging
-
-### Chec
+Do not use a sender-address string as proof of authentication. Inspect the authentication results described in the logs and authentication docs.

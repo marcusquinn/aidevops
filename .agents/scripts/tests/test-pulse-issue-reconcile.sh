@@ -1221,9 +1221,37 @@ test_gh27444_recurrent_file_size_debt_current_outcome() {
 }
 
 # ---------------------------------------------------------------------------
-# Test 15e (GH#32640): stages 1-2 apply the same recurrent-debt close gate.
+# Test 15e (GH#32640/GH#33374): debt closure and open/done healing stay separate.
 # Observed on #28377: stage 1 closed regrown debt citing an old merged PR.
 # ---------------------------------------------------------------------------
+# Runs one stage action with mutations recorded to the caller's fixture log.
+_gh32640_run() {
+	local stage="$1" issue_number="$2" issue_body="$3"
+	bash -c '
+		LOGFILE="${6}/pulse.log" REPOS_JSON="$2" GH_TEST_OUT="$3"
+		export LOGFILE REPOS_JSON GH_TEST_OUT
+		# shellcheck disable=SC1090
+		source "$1"
+		gh() {
+			local command="$1"
+			if [[ "$command" == api ]]; then
+				if [[ "$*" == *comments* ]]; then printf "[[]]\n";
+				else printf "%s\n" "{\"state\":\"open\",\"labels\":[{\"name\":\"status:done\"}]}"; fi
+			else printf "gh:%s\n" "$*" >>"$GH_TEST_OUT"; fi
+			return 0
+		}
+		set_issue_status() { printf "status:%s\n" "$*" >>"$GH_TEST_OUT"; return 0; }
+		_pir_pr_merged_at() { printf "2026-07-21T02:31:43Z"; return 0; }
+		set_solved_label_from_merged_pr() { return 0; }
+		fast_fail_reset() { return 0; }
+		unlock_issue_after_worker() { return 0; }
+		rc=0
+		"$4" "test/repo" "$5" "title" "$7" /nonexistent "$8" || rc=$?
+		printf "rc=%s\n" "$rc"
+	' -- "$actions_sh" "$repos_json" "$out_file" "$stage" "$issue_number" "$tmp_dir" "$dedup_helper" "$issue_body" 2>&1
+	return 0
+}
+
 test_gh32640_ciw_rsd_recurrent_file_size_debt_gate() {
 	local actions_sh="${SCRIPT_DIR}/../pulse-issue-reconcile-actions.sh"
 	local tmp_dir repo_dir repos_json out_file dedup_helper result
@@ -1237,27 +1265,6 @@ test_gh32640_ciw_rsd_recurrent_file_size_debt_gate() {
 	printf '{"initialized_repos":[{"slug":"test/repo","path":"%s"}]}' "$repo_dir" >"$repos_json"
 	printf '#!/usr/bin/env bash\nprintf "%%s\\n" "merged PR #28395 references issue"\nexit 0\n' >"$dedup_helper"
 	chmod +x "$dedup_helper"
-
-	# Runs one stage action with gh/status mutations recorded to $out_file.
-	# Args: stage function, issue number, issue body
-	_gh32640_run() {
-		bash -c '
-			LOGFILE="${6}/pulse.log" REPOS_JSON="$2" GH_TEST_OUT="$3"
-			export LOGFILE REPOS_JSON GH_TEST_OUT
-			# shellcheck disable=SC1090
-			source "$1"
-			gh() { printf "gh:%s\n" "$*" >>"$GH_TEST_OUT"; return 0; }
-			set_issue_status() { printf "status:%s\n" "$*" >>"$GH_TEST_OUT"; return 0; }
-			_pir_pr_merged_at() { printf "2026-07-21T02:31:43Z"; return 0; }
-			set_solved_label_from_merged_pr() { return 0; }
-			fast_fail_reset() { return 0; }
-			unlock_issue_after_worker() { return 0; }
-			rc=0
-			"$4" "test/repo" "$5" "title" "$7" /nonexistent "$8" || rc=$?
-			printf "rc=%s\n" "$rc"
-		' -- "$actions_sh" "$repos_json" "$out_file" "$1" "$2" "$tmp_dir" "$dedup_helper" "$3" 2>&1
-		return 0
-	}
 
 	local all_ok=1
 	# Regrown debt: file at threshold.
@@ -1276,38 +1283,54 @@ test_gh32640_ciw_rsd_recurrent_file_size_debt_gate() {
 		all_ok=0
 	fi
 
-	# Unmeasurable outcome (cited file missing): no mutation from either stage.
+	# Unmeasurable debt defers closure, but open + done still heals its label.
 	rm -f "${repo_dir}/large.sh"
 	: >"$out_file"
 	result=$(_gh32640_run _action_ciw_single 28377 "$debt_body")
 	local ciw_missing="$result"
+	local ciw_mutated=0
+	[[ ! -s "$out_file" ]] || ciw_mutated=1
 	result=$(_gh32640_run _action_rsd_single 28377 "$debt_body")
-	if [[ "$ciw_missing" != *"rc=1"* || "$result" != *"rc=1"* ]] || [[ -s "$out_file" ]]; then
-		_fail "GH#32640: unmeasurable debt outcome was not deferred: ${ciw_missing} ${result} $(tr '\n' ' ' <"$out_file")"
+	if [[ "$ciw_missing" != *"rc=1"* || "$result" != *"rc=2"* || "$ciw_mutated" != 0 ]] ||
+		grep -q '^gh:issue close' "$out_file" || ! grep -q '^status:28377 test/repo available' "$out_file"; then
+		_fail "GH#33374: unmeasurable debt closed or failed to heal done: ${ciw_missing} ${result}"
 		all_ok=0
 	fi
 
-	# Resolved debt and ordinary issues keep closing on merged-PR evidence.
+	# Stage 1 retains closure; stage 2 only heals invalid open/done labels.
 	printf 'one\ntwo\n' >"${repo_dir}/large.sh"
 	local stage=""
 	for stage in _action_ciw_single _action_rsd_single; do
+		local expected_rc=0 expected_action='^gh:issue close'
+		if [[ "$stage" == _action_rsd_single ]]; then
+			expected_rc=2
+			expected_action='^status:'
+		fi
 		: >"$out_file"
 		result=$(_gh32640_run "$stage" 28377 "$debt_body")
-		if [[ "$result" != *"rc=0"* ]] || ! grep -q '^gh:issue close 28377' "$out_file"; then
-			_fail "GH#32640: ${stage} did not close resolved debt: ${result}"
+		if [[ "$result" != *"rc=${expected_rc}"* ]] || ! grep -q "$expected_action" "$out_file"; then
+			_fail "GH#33374: ${stage} did not apply the resolved-debt lifecycle: ${result}"
+			all_ok=0
+		fi
+		if [[ "$stage" == _action_rsd_single ]] && grep -q '^gh:issue close' "$out_file"; then
+			_fail "GH#33374: stale-done healing closed resolved debt"
 			all_ok=0
 		fi
 		: >"$out_file"
 		result=$(_gh32640_run "$stage" 99 "ordinary issue")
-		if [[ "$result" != *"rc=0"* ]] || ! grep -q '^gh:issue close 99' "$out_file"; then
+		if [[ "$result" != *"rc=${expected_rc}"* ]] || ! grep -q "$expected_action" "$out_file"; then
 			_fail "GH#32640: ${stage} changed ordinary issue behavior: ${result}"
+			all_ok=0
+		fi
+		if [[ "$stage" == _action_rsd_single ]] && grep -q '^gh:issue close' "$out_file"; then
+			_fail "GH#33374: stale-done healing closed an ordinary open issue"
 			all_ok=0
 		fi
 	done
 
 	unset -f _gh32640_run
 	rm -rf "$tmp_dir"
-	[[ "$all_ok" == "1" ]] && _pass "GH#32640: stages 1-2 keep regrown debt open, defer unmeasurable debt, close resolved and ordinary issues"
+	[[ "$all_ok" == "1" ]] && _pass "GH#32640/GH#33374: debt closure gates remain intact; stage 2 heals open/done without closing"
 	return 0
 }
 
@@ -1496,7 +1519,12 @@ EOF
 		LOGFILE="$4"
 		# shellcheck source=/dev/null
 		source "$actions_sh"
-		gh() { printf "gh:%s\n" "$*" >>"$mutation_log"; return 0; }
+		gh() {
+			local command="$1"
+			[[ "$command" != api ]] || return 1
+			printf "gh:%s\n" "$*" >>"$mutation_log"
+			return 0
+		}
 		set_issue_status() { printf "status:%s\n" "$*" >>"$mutation_log"; return 0; }
 		_pir_pr_merged_at() { return 1; }
 		ciw_rc=0

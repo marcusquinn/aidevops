@@ -23,13 +23,25 @@ set -euo pipefail
 # Per AGENTS.md "Gate design — ratchet, not absolute (t2228 class)":
 # "security/credentials checks are absolute — a new violation is P1 regardless."
 
+# Staged-diff wrapper. AIDEVOPS_PRE_COMMIT_BASE (optional) overrides the
+# comparison base, so a temporary index built from a commit other than HEAD
+# (planning publisher) only validates what it changed relative to that base.
+staged_diff() {
+	if [[ -n "${AIDEVOPS_PRE_COMMIT_BASE:-}" ]]; then
+		git diff --cached "$AIDEVOPS_PRE_COMMIT_BASE" "$@"
+	else
+		git diff --cached "$@"
+	fi
+	return $?
+}
+
 # Return file content at HEAD for a given path. Prints empty output for new
 # files or when HEAD does not yet exist (first commit). Always exits 0 so the
 # callers can `head_content=$(_get_head_content "$file")` without tripping
 # `set -e`.
 _get_head_content() {
 	local _file="$1"
-	git show "HEAD:$_file" 2>/dev/null || true
+	git show "${AIDEVOPS_PRE_COMMIT_BASE:-HEAD}:$_file" 2>/dev/null || true
 	return 0
 }
 
@@ -55,7 +67,7 @@ _make_head_temp() {
 
 # Get list of modified shell files
 get_modified_shell_files() {
-	git diff --cached --name-only --diff-filter=ACM | grep '\.sh$' || true
+	staged_diff --name-only --diff-filter=ACM | grep '\.sh$' || true
 	return 0
 }
 
@@ -83,7 +95,7 @@ get_modified_shell_files() {
 #   - TODO.md doesn't exist in HEAD (first commit) → any duplicate fails.
 validate_duplicate_task_ids() {
 	# Only check if TODO.md is staged
-	if ! git diff --cached --name-only | grep -q '^TODO\.md$'; then
+	if ! staged_diff --name-only | grep -q '^TODO\.md$'; then
 		return 0
 	fi
 
@@ -133,7 +145,7 @@ validate_duplicate_task_ids() {
 #   - Staged value <  HEAD value      -> FAIL (stale worktree regression)
 #   - Non-numeric in either           -> skip (first-commit or legacy)
 validate_task_counter_monotonic() {
-	if ! git diff --cached --name-only | grep -q '^\.task-counter$'; then
+	if ! staged_diff --name-only | grep -q '^\.task-counter$'; then
 		return 0
 	fi
 
@@ -472,7 +484,7 @@ check_secrets() {
 
 	# Get staged files
 	local staged_files
-	staged_files=$(git diff --cached --name-only --diff-filter=ACMR | tr '\n' ' ')
+	staged_files=$(staged_diff --name-only --diff-filter=ACMR | tr '\n' ' ')
 
 	if [[ -z "$staged_files" ]]; then
 		print_info "No files to check for secrets"
@@ -538,7 +550,7 @@ check_quality_standards() {
 # When [ ] -> [x], require pr:# or verified: field for proof-log
 validate_todo_completions() {
 	# Only check if TODO.md is staged
-	if ! git diff --cached --name-only | grep -q '^TODO\.md$'; then
+	if ! staged_diff --name-only | grep -q '^TODO\.md$'; then
 		return 0
 	fi
 
@@ -547,7 +559,7 @@ validate_todo_completions() {
 	# Find ALL tasks (including subtasks) that changed from [ ] to [x] in this commit
 	# We need to check both top-level and subtasks
 	local newly_completed
-	newly_completed=$(git diff --cached -U0 -- TODO.md | grep -E '^\+.*- \[x\] t[0-9]+' | sed 's/^\+//' || true)
+	newly_completed=$(staged_diff -U0 -- TODO.md | grep -E '^\+.*- \[x\] t[0-9]+' | sed 's/^\+//' || true)
 
 	if [[ -z "$newly_completed" ]]; then
 		return 0
@@ -555,7 +567,7 @@ validate_todo_completions() {
 
 	# Also get lines that were already [x] (to skip them - not a transition)
 	local already_completed
-	already_completed=$(git diff --cached -U0 -- TODO.md | grep -E '^\-.*- \[x\] t[0-9]+' | sed 's/^\-//' || true)
+	already_completed=$(staged_diff -U0 -- TODO.md | grep -E '^\-.*- \[x\] t[0-9]+' | sed 's/^\-//' || true)
 
 	local task_count=0
 	local fail_count=0
@@ -701,7 +713,7 @@ _report_parent_subtask_failures() {
 
 validate_parent_subtask_blocking() {
 	# Only check if TODO.md is staged
-	if ! git diff --cached --name-only | grep -q '^TODO\.md$'; then
+	if ! staged_diff --name-only | grep -q '^TODO\.md$'; then
 		return 0
 	fi
 
@@ -716,7 +728,7 @@ validate_parent_subtask_blocking() {
 
 	# Find tasks that changed from [ ] to [x]
 	local newly_completed
-	newly_completed=$(git diff --cached -U0 -- TODO.md | grep -E '^\+.*- \[x\] t[0-9]+' | sed 's/^\+//' || true)
+	newly_completed=$(staged_diff -U0 -- TODO.md | grep -E '^\+.*- \[x\] t[0-9]+' | sed 's/^\+//' || true)
 
 	if [[ -z "$newly_completed" ]]; then
 		return 0
@@ -724,7 +736,7 @@ validate_parent_subtask_blocking() {
 
 	# Also get lines that were already [x] (to skip them)
 	local already_completed
-	already_completed=$(git diff --cached -U0 -- TODO.md | grep -E '^\-.*- \[x\] t[0-9]+' | sed 's/^\-//' || true)
+	already_completed=$(staged_diff -U0 -- TODO.md | grep -E '^\-.*- \[x\] t[0-9]+' | sed 's/^\-//' || true)
 
 	local fail_count=0
 	local failed_tasks=()
@@ -782,7 +794,7 @@ validate_parent_subtask_blocking() {
 # Whole-word report/scratch terms (matched on the lowercased file name).
 _ROOT_ARTIFACT_WORD_RE='(^|[-_.])(test|tests|report|reports|verify|verification|result|results|output|summary|debug|scratch|notes)([-_.]|$)'
 # Standard lowercased base names (extension removed) for root .md / .txt files.
-_ROOT_STANDARD_MD_BASES=" readme changelog contributing license security code_of_conduct support governance maintainers authors notice roadmap upgrading migration architecture glossary agents agent claude gemini design todo models terms repomix-instruction "
+_ROOT_STANDARD_MD_BASES=" readme changelog contributing license security code_of_conduct support governance maintainers authors notice roadmap upgrading migration architecture glossary agents agent claude gemini design todo models terms "
 _ROOT_STANDARD_TXT_BASES=" license notice cmakelists llms runtime "
 _ROOT_MODE_GUARD="artifact-guard"
 _ROOT_MODE_FRAMEWORK="framework"
@@ -806,7 +818,7 @@ _init_root_file_allowlist() {
 		".aidevops.json" ".bandit" ".gitattributes" ".gitignore" ".nvmrc"
 		".codacy.yml" ".codefactor.yml" ".coderabbit.yaml"
 		".markdownlint-cli2.jsonc" ".markdownlint.json" ".markdownlintignore"
-		".qlty/qlty.toml" ".qlty.toml" ".qltyignore" ".repomixignore"
+		".qlty/qlty.toml" ".qlty.toml" ".qltyignore"
 		".secretlintignore" ".secretlintrc.json"
 		# Tool configs (non-dotfile)
 		"biome.json"
@@ -825,7 +837,7 @@ _init_root_file_allowlist() {
 		# Public shell entrypoints. Implementation modules belong under
 		# .agents/scripts/aidevops-cli/ or .agents/scripts/setup/modules/.
 		# Tool configs
-		"sonar-project.properties" "repomix.config.json" "repomix-instruction.md"
+		"sonar-project.properties"
 		# Test scripts (temporary - should be moved to .agents/scripts/)
 		"test-proof-log-final.sh"
 	)
@@ -1034,7 +1046,7 @@ validate_repo_root_files() {
 
 	# Get newly added root-level files (not in subdirectories)
 	local new_root_files
-	new_root_files=$(git diff --cached --name-only --diff-filter=A | grep -E '^[^/]+$' || true)
+	new_root_files=$(staged_diff --name-only --diff-filter=A | grep -E '^[^/]+$' || true)
 
 	if [[ -z "$new_root_files" ]]; then
 		return 0
@@ -1079,7 +1091,7 @@ check_workflow_files() {
 	# Detect staged workflow files without shelling into the helper first —
 	# avoids an extra process when no workflow files are staged.
 	local staged_workflows
-	staged_workflows=$(git diff --cached --name-only --diff-filter=ACM \
+	staged_workflows=$(staged_diff --name-only --diff-filter=ACM \
 		| grep -E '^\.github/workflows/[^/]+\.ya?ml$' || true)
 
 	if [[ -z "$staged_workflows" ]]; then

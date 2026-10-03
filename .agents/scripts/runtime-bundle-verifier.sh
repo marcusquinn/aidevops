@@ -12,8 +12,20 @@ _runtime_bundle_verifier_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "$_runtime_bundle_verifier_dir/runtime-bundle-manifest.sh"
 unset _runtime_bundle_verifier_dir
 
+_AIDEVOPS_RUNTIME_VERIFY_LAST_ERROR=""
+
 _runtime_bundle_verify_emit_error() {
 	local message="$1"
+	_AIDEVOPS_RUNTIME_VERIFY_LAST_ERROR="$message"
+	# A caller may set a local _AIDEVOPS_RUNTIME_VERIFY_QUIET=1 before invoking
+	# verify_aidevops_runtime_bundle_convergence to suppress this expected-failure
+	# path (for example when a fallback verifier may still accept the result).
+	# Bash dynamic scoping makes the caller's local visible here. Default
+	# behaviour (unset) is unchanged for every other caller, including
+	# `aidevops update`.
+	if [[ -n "${_AIDEVOPS_RUNTIME_VERIFY_QUIET:-}" ]]; then
+		return 0
+	fi
 	if declare -F print_error >/dev/null 2>&1; then
 		print_error "$message"
 	else

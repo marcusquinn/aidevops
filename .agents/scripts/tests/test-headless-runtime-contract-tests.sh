@@ -202,8 +202,7 @@ test_initial_model_selection_contract() {
 					[[ ("$scenario" == backoff || "$scenario" == pin || "$scenario" == replay) && "$1" == anthropic/preferred ]]
 			}
 			set_last_provider() { return 0; }
-			_choose_model_tier_downgrade() { printf '%s' openai/cheaper; }
-			model_tier_for_model() { printf '%s' simple; }
+			model_tier_for_model() { printf '%s' thinking; }
 			_hrff_write_external_outcome() {
 				outcome="$2:$4"
 				return 0
@@ -230,7 +229,7 @@ test_initial_model_selection_contract() {
 			(exhausted | pin) expected_model="" ;;
 			(adaptive)
 				initial_model=""
-				expected_model="openai/cheaper"
+				expected_model="openai/fallback"
 				;;
 			esac
 			if [[ "$scenario" == pin || "$scenario" == replay ]]; then
@@ -254,11 +253,7 @@ test_initial_model_selection_contract() {
 				done < <(_build_run_cmd "$selected_model" "$TEST_ROOT" "$prompt" "$title" "" "" "")
 				[[ "$command_model" == "$expected_model" ]] || exit 5
 			fi
-			if [[ "$scenario" == adaptive ]]; then
-				[[ "$tier_override" == simple ]] || exit 6
-			else
-				[[ "$tier_override" == thinking ]] || exit 7
-			fi
+			[[ "$tier_override" == thinking ]] || exit 7
 			printf '%s' verified
 		) || true
 		expected="verified"
@@ -556,6 +551,72 @@ test_worker_signing_sandbox_env_excludes_ambient_git_config() {
 	return 0
 }
 
+test_claude_worker_sandbox_normalizes_signing_git_config() {
+	# GH#33117: the Claude runtime path must normalize signing env like OpenCode.
+	local signing_public_key="${TEST_ROOT}/claude-sandbox-worker-signing-key.pub"
+	local output_file="${TEST_ROOT}/claude-sandbox-signing.out"
+	local exit_code_file="${TEST_ROOT}/claude-sandbox-signing.exit"
+	printf '%s\n' 'ssh-ed25519 AAAAC3NzaClaudeSandboxFixture aidevops-headless-signing' >"$signing_public_key"
+	: >"$output_file"
+	: >"$exit_code_file"
+	local result="" status=0
+	result=$(
+		export _AIDEVOPS_HEADLESS_SIGNING_ENV_CONFIGURED=1
+		export _AIDEVOPS_HEADLESS_SIGNING_GIT_CONFIG_START=1
+		export GIT_CONFIG_COUNT=4
+		export GIT_CONFIG_KEY_0="http.extraHeader" GIT_CONFIG_VALUE_0="unrelated"
+		export GIT_CONFIG_KEY_1="gpg.format" GIT_CONFIG_VALUE_1="ssh"
+		export GIT_CONFIG_KEY_2="user.signingkey" GIT_CONFIG_VALUE_2="$signing_public_key"
+		export GIT_CONFIG_KEY_3="commit.gpgsign" GIT_CONFIG_VALUE_3="true"
+		export AIDEVOPS_WORKER_EGRESS_MODE=off
+		unset AIDEVOPS_HEADLESS_SANDBOX_DISABLED AIDEVOPS_GIT_AUTH_TOKEN_FILE _HEADLESS_CLAUDE_STDIN_FILE 2>/dev/null || true
+		_invoke_role="worker"
+		_invoke_provider="anthropic"
+		_invoke_claude "$output_file" "$exit_code_file" "$TEST_ROOT" \
+			git config --get-regexp '^(gpg\.format|user\.signingkey|commit\.gpgsign|http\.extraheader)$' >/dev/null 2>&1
+		printf 'exit=%s\n' "$(<"$exit_code_file")"
+		cat "$output_file"
+	) || status=$?
+	if [[ "$status" -eq 0 && "$result" == *"exit=0"* && "$result" == *"gpg.format ssh"* &&
+		"$result" == *"user.signingkey ${signing_public_key}"* && "$result" == *"commit.gpgsign true"* &&
+		"$result" != *"http.extraheader"* ]]; then
+		print_result "claude worker sandbox receives only validated signing Git configuration" 0
+	else
+		print_result "claude worker sandbox receives only validated signing Git configuration" 1 \
+			"status=$status result=${result:-<empty>}"
+	fi
+	return 0
+}
+
+test_claude_worker_sandbox_fails_closed_on_unisolated_signing() {
+	local output_file="${TEST_ROOT}/claude-sandbox-signing-reject.out"
+	local exit_code_file="${TEST_ROOT}/claude-sandbox-signing-reject.exit"
+	local launched_marker="${TEST_ROOT}/claude-sandbox-signing-reject.launched"
+	: >"$output_file"
+	: >"$exit_code_file"
+	rm -f "$launched_marker"
+	(
+		export _AIDEVOPS_HEADLESS_SIGNING_ENV_CONFIGURED=1
+		export _AIDEVOPS_HEADLESS_SIGNING_GIT_CONFIG_START=1
+		# Count mismatch: the signing entries cannot be proven contiguous.
+		export GIT_CONFIG_COUNT=5
+		export AIDEVOPS_WORKER_EGRESS_MODE=off
+		unset AIDEVOPS_HEADLESS_SANDBOX_DISABLED 2>/dev/null || true
+		_invoke_role="worker"
+		_invoke_claude "$output_file" "$exit_code_file" "$TEST_ROOT" \
+			touch "$launched_marker" >/dev/null 2>&1
+	)
+	local exit_code=""
+	exit_code=$(<"$exit_code_file")
+	if [[ "$exit_code" == "87" && ! -e "$launched_marker" ]]; then
+		print_result "claude worker sandbox fails closed when signing env cannot be isolated" 0
+	else
+		print_result "claude worker sandbox fails closed when signing env cannot be isolated" 1 \
+			"exit=${exit_code:-<empty>} launched=$([[ -e "$launched_marker" ]] && printf yes || printf no)"
+	fi
+	return 0
+}
+
 test_worker_signing_preflight_accepts_proven_existing_signing() {
 	local result="" status=0
 	result=$(
@@ -619,6 +680,62 @@ test_worker_signing_config_rejects_unusable_existing_signing() {
 	else
 		print_result "worker signing migration rejects an unusable existing signing configuration" 1 \
 			"status=$status"
+	fi
+	return 0
+}
+
+# GH#33064: a signer reachable only through the launcher's ssh-agent must not
+# pass the probe when the worker will run in the sandbox, which never receives
+# SSH_AUTH_SOCK. The git stub signs only when an agent socket is visible.
+_run_agent_only_signing_probe() {
+	local sandbox_disabled="$1"
+	local record_file="$2"
+	: >"$record_file"
+	(
+		git() {
+			case "$*" in
+			*"config --bool commit.gpgsign"*) printf 'true\n' ;;
+			*"rev-parse"*) printf '%s\n' 4b825dc642cb6eb9a060e54bf8d69288fbee4904 ;;
+			*"commit-tree"*)
+				printf 'sock=%s pid=%s\n' "${SSH_AUTH_SOCK:-<unset>}" "${SSH_AGENT_PID:-<unset>}" >>"$record_file"
+				[[ -n "${SSH_AUTH_SOCK:-}" ]] || return 1
+				;;
+			esac
+			return 0
+		}
+		unset _AIDEVOPS_HEADLESS_SIGNING_ENV_CONFIGURED 2>/dev/null || true
+		export SSH_AUTH_SOCK="${TEST_ROOT}/launcher-agent.sock" SSH_AGENT_PID=4242
+		AIDEVOPS_HEADLESS_SANDBOX_DISABLED="$sandbox_disabled" \
+			AIDEVOPS_HEADLESS_SIGNING_PUBLIC_KEY="${TEST_ROOT}/missing-worker-signing-key.pub" \
+			_configure_headless_worker_signing_env "$TEST_ROOT"
+	)
+	return $?
+}
+
+test_worker_signing_probe_ignores_launcher_agent_when_sandboxed() {
+	local record_file="${TEST_ROOT}/signing-probe-sandboxed" status=0
+	_run_agent_only_signing_probe 0 "$record_file" || status=$?
+	local record=""
+	record=$(<"$record_file")
+	if [[ "$status" -eq 1 && "$record" == "sock=<unset> pid=<unset>" ]]; then
+		print_result "worker signing probe ignores the launcher ssh-agent for sandboxed workers" 0
+	else
+		print_result "worker signing probe ignores the launcher ssh-agent for sandboxed workers" 1 \
+			"status=$status record=${record:-<empty>}"
+	fi
+	return 0
+}
+
+test_worker_signing_probe_keeps_agent_when_sandbox_disabled() {
+	local record_file="${TEST_ROOT}/signing-probe-unsandboxed" status=0
+	_run_agent_only_signing_probe 1 "$record_file" || status=$?
+	local record=""
+	record=$(<"$record_file")
+	if [[ "$status" -eq 0 && "$record" == "sock=${TEST_ROOT}/launcher-agent.sock pid=4242" ]]; then
+		print_result "worker signing probe honours the ssh-agent when the sandbox is disabled" 0
+	else
+		print_result "worker signing probe honours the ssh-agent when the sandbox is disabled" 1 \
+			"status=$status record=${record:-<empty>}"
 	fi
 	return 0
 }
@@ -687,9 +804,13 @@ run_worker_signing_contract_tests() {
 	test_worker_signing_preflight_skips_unsigned_repositories
 	test_worker_signing_config_is_process_scoped_and_idempotent
 	test_worker_signing_sandbox_env_excludes_ambient_git_config
+	test_claude_worker_sandbox_normalizes_signing_git_config
+	test_claude_worker_sandbox_fails_closed_on_unisolated_signing
 	test_worker_signing_preflight_accepts_proven_existing_signing
 	test_worker_signing_sandbox_preserves_proven_existing_config
 	test_worker_signing_config_rejects_unusable_existing_signing
+	test_worker_signing_probe_ignores_launcher_agent_when_sandboxed
+	test_worker_signing_probe_keeps_agent_when_sandbox_disabled
 	test_worker_signing_preflight_self_heals_agent_once
 	test_worker_signing_preflight_fails_before_runtime_attempt
 	return 0

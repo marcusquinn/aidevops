@@ -86,6 +86,9 @@ async function signOut(run, journey) {
     const response = await run.context.request.fetch(resolvePath(run.origin, journey.logout.path), {
       method: journey.logout.method,
       headers: { origin: run.origin },
+      // Object data makes Playwright send JSON with the matching Content-Type.
+      // GET sign-out endpoints retain their bodyless request behavior.
+      ...(journey.logout.method === 'GET' ? {} : { data: {} }),
       maxRedirects: 0,
       timeout: SIGN_OUT_TIMEOUT_MS,
     });
@@ -108,16 +111,18 @@ async function exerciseViewport(run, journey) {
   run.result.status = stepsPassed && clean ? 'passed' : 'failed';
 }
 
-async function runViewport(session, viewportName) {
+async function runViewport(session, viewport) {
   const { browser, journey } = session;
+  const viewportName = typeof viewport === 'string' ? viewport : viewport.name;
+  const { width, height } = typeof viewport === 'string' ? VIEWPORTS[viewport] : viewport;
   const context = await browser.newContext({
-    viewport: VIEWPORTS[viewportName],
+    viewport: { width, height },
     serviceWorkers: 'block',
     acceptDownloads: false,
   });
   const guard = createGuard(journey);
   const diagnostics = watchDiagnostics(context);
-  const result = { viewport: viewportName, status: 'failed', steps: [] };
+  const result = { viewport: viewportName, width, height, status: 'failed', steps: [] };
   try {
     await installGuard(context, guard);
     const page = await context.newPage();

@@ -1,100 +1,180 @@
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+---
+name: durable-objects
+description: Build, debug, or review Cloudflare Durable Objects code for persistent state and coordination.
+---
 
-# Cloudflare Durable Objects
+# Durable Objects
 
-Globally-unique compute + storage: single-threaded, strongly-consistent, co-located with state. Spawns near first request.
+Build stateful, coordinated applications on Cloudflare's edge using Durable Objects.
 
-## When to Use DOs
+## Retrieval Sources
 
-Stateful coordination — serialized access to shared state:
-- **Coordination**: shared state across clients (chat rooms, multiplayer games)
-- **Strong consistency**: serialized operations (booking systems, inventory)
-- **Per-entity storage**: isolated database per user/tenant/resource (multi-tenant SaaS)
-- **Persistent connections**: long-lived WebSockets surviving across requests
-- **Per-entity scheduled work**: timers per entity (subscription renewals, game timeouts)
+Your knowledge of Durable Objects APIs and configuration may be outdated. **Prefer retrieval over pre-training** for any Durable Objects task.
 
-## When NOT to Use DOs
+| Resource | URL |
+|----------|-----|
+| Docs | https://developers.cloudflare.com/durable-objects/index.md |
+| API Reference | https://developers.cloudflare.com/durable-objects/api/index.md |
+| Best Practices | https://developers.cloudflare.com/durable-objects/best-practices/index.md |
+| Examples | https://developers.cloudflare.com/durable-objects/examples/index.md |
+| Roles and permissions | https://developers.cloudflare.com/workers/authorization/durable-objects/index.md |
 
-| Scenario | Use Instead |
-|----------|-------------|
-| Stateless request handling | Workers |
-| Maximum global distribution | Workers |
-| High fan-out (independent requests) | Workers |
-| Global singleton handling all traffic | Shard across multiple DOs |
-| High-frequency pub/sub | Queues |
-| Long-running continuous processes | Workers + Alarms |
-| Chatty microservice (every request) | Reconsider architecture |
-| Eventual consistency OK, read-heavy | KV |
-| Relational queries across entities | D1 |
+Fetch the relevant doc page when implementing features.
 
-## Design Heuristics
+## When to Use
 
-Model each DO around the **atom of coordination** — the unit needing serialized access (user, room, document, session).
+- Creating new Durable Object classes for stateful coordination
+- Implementing RPC methods, alarms, or WebSocket handlers
+- Reviewing existing DO code for best practices
+- Configuring wrangler.jsonc/toml for DO bindings and migrations
+- Writing tests with Cloudflare’s Vitest integration
+- Designing sharding strategies and parent-child relationships
 
-| Metric | Feels Right | Question It | Reconsider |
-|----------------|-------------|-------------|------------|
-| Requests/sec (sustained) | < 100 | 100-500 | > 500 |
-| Storage keys | < 100 | 100-1000 | > 1000 |
-| Total state size | < 10MB | 10MB-100MB | > 1GB |
-| Alarm frequency | Minutes-hours | Every 30s | Every few seconds |
-| WebSocket duration | Short bursts | Hours (hibernating) | Days always-on |
-| Fan-out from this DO | Never/rarely | To < 10 DOs | To 100+ DOs |
+## Reference Documentation
 
-## Core Concepts
+- `./references/rules.md` - Core rules, storage, concurrency, RPC, alarms
+- [Testing reference](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/durable-objects/references/testing.md) - Current Vitest documentation, migration choices, and test selection
+- `./references/workers.md` - Workers handlers, types, wrangler config, observability
 
-| Concept | Detail |
-|---------|--------|
-| **Class** | Extend `DurableObject`. Constructor receives `DurableObjectState` (storage, WebSockets, alarms) and `Env` (bindings). |
-| **Access** | Workers get stubs via bindings → RPC methods (recommended) or fetch handler (legacy). |
-| **ID generation** | `idFromName()` deterministic; `newUniqueId()` random/sharding; `idFromString()` from existing; jurisdiction for data locality. |
-| **Storage** | SQLite default (10GB/DO, transactions); Sync KV API (simple key-value); Async KV API (legacy/advanced). |
-| **Special features** | Alarms (per-DO scheduled execution); WebSocket Hibernation (zero-cost idle); PITR (30-day window). |
+Search: `blockConcurrencyWhile`, `idFromName`, `getByName`, `setAlarm`, `sql.exec`
 
-## Quick Start
+## Core Principles
+
+### Use Durable Objects For
+
+| Need | Example |
+|------|---------|
+| Coordination | Chat rooms, multiplayer games, collaborative docs |
+| Strong consistency | Inventory, booking systems, turn-based games |
+| Per-entity storage | Multi-tenant SaaS, per-user data |
+| Persistent connections | WebSockets, real-time notifications |
+| Scheduled work per entity | Subscription renewals, game timeouts |
+
+### Do NOT Use For
+
+- Stateless request handling (use plain Workers)
+- Maximum global distribution needs
+- High fan-out independent requests
+
+## Quick Reference
+
+### Wrangler Configuration
+
+```jsonc
+// wrangler.jsonc
+{
+  "durable_objects": {
+    "bindings": [{ "name": "MY_DO", "class_name": "MyDurableObject" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["MyDurableObject"] }]
+}
+```
+
+### Basic Durable Object Pattern
 
 ```typescript
 import { DurableObject } from "cloudflare:workers";
 
-export class Counter extends DurableObject<Env> {
-  async increment(): Promise<number> {
-    const result = this.ctx.storage.sql.exec(
-      `INSERT INTO counters (id, value) VALUES (1, 1)
-       ON CONFLICT(id) DO UPDATE SET value = value + 1
-       RETURNING value`
-    ).one();
-    return result.value;
+export interface Env {
+  MY_DO: DurableObjectNamespace<MyDurableObject>;
+}
+
+export class MyDurableObject extends DurableObject<Env> {
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    ctx.blockConcurrencyWhile(async () => {
+      this.ctx.storage.sql.exec(`
+        CREATE TABLE IF NOT EXISTS items (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          data TEXT NOT NULL
+        )
+      `);
+    });
+  }
+
+  async addItem(data: string): Promise<number> {
+    const result = this.ctx.storage.sql.exec<{ id: number }>(
+      "INSERT INTO items (data) VALUES (?) RETURNING id",
+      data
+    );
+    return result.one().id;
   }
 }
 
-// Worker access
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    const id = env.COUNTER.idFromName("global");
-    const stub = env.COUNTER.get(id);
-    const count = await stub.increment();
-    return new Response(`Count: ${count}`);
-  }
+    const stub = env.MY_DO.getByName("my-instance");
+    const id = await stub.addItem("hello");
+    return Response.json({ id });
+  },
 };
 ```
 
-## Essential Commands
+## Critical Rules
 
-```bash
-npx wrangler dev              # Local dev with DOs
-npx wrangler dev --remote     # Test against prod DOs
-npx wrangler deploy           # Deploy + auto-apply migrations
+1. **Model around coordination atoms** - One DO per chat room/game/user, not one global DO
+2. **Use `getByName()` for deterministic routing** - Same input = same DO instance
+3. **Use SQLite storage** - Configure `new_sqlite_classes` in migrations
+4. **Initialize in constructor** - Use `blockConcurrencyWhile()` for schema setup only
+5. **Use RPC methods** - Not fetch() handler (compatibility date >= 2024-04-03)
+6. **Persist first, cache second** - Always write to storage before updating in-memory state
+7. **One alarm per DO** - `setAlarm()` replaces any existing alarm
+
+## Authorization
+
+Durable Objects do not have separate roles or permissions; access follows the Worker that implements them. Retrieve the current [Durable Objects authorization guidance](https://developers.cloudflare.com/workers/authorization/durable-objects/index.md) before granting observability or Data Studio access, and scope the Workers role to the intended Worker or Workers product.
+
+## Anti-Patterns (NEVER)
+
+- Single global DO handling all requests (bottleneck)
+- Using `blockConcurrencyWhile()` on every request (kills throughput)
+- Storing critical state only in memory (lost on eviction/crash)
+- Using `await` between related storage writes (breaks atomicity)
+- Holding `blockConcurrencyWhile()` across `fetch()` or external I/O
+
+## Stub Creation
+
+```typescript
+// Deterministic - preferred for most cases
+const stub = env.MY_DO.getByName("room-123");
+
+// From existing ID string
+const id = env.MY_DO.idFromString(storedIdString);
+const stub = env.MY_DO.get(id);
+
+// New unique ID - store mapping externally
+const id = env.MY_DO.newUniqueId();
+const stub = env.MY_DO.get(id);
 ```
 
-## Resources
+## Storage Operations
 
-- [Docs](https://developers.cloudflare.com/durable-objects/)
-- [API Reference](https://developers.cloudflare.com/durable-objects/api/)
-- [Examples](https://developers.cloudflare.com/durable-objects/examples/)
+```typescript
+// SQL (synchronous, recommended)
+this.ctx.storage.sql.exec("INSERT INTO t (c) VALUES (?)", value);
+const rows = this.ctx.storage.sql.exec<Row>("SELECT * FROM t").toArray();
 
-## See Also
+// KV (async)
+await this.ctx.storage.put("key", value);
+const val = await this.ctx.storage.get<Type>("key");
+```
 
-- [Patterns](./durable-objects-patterns.md) — Rate limiting, locks, real-time collab, sessions
-- [Gotchas](./durable-objects-gotchas.md) — Limits, common issues, troubleshooting
-- [Workers](./workers.md) — Core Workers runtime
-- [DO Storage](./do-storage.md) — Deep dive on storage APIs
+## Alarms
+
+```typescript
+// Schedule (replaces existing)
+await this.ctx.storage.setAlarm(Date.now() + 60_000);
+
+// Handler
+async alarm(): Promise<void> {
+  // Process scheduled work
+  // Optionally reschedule: await this.ctx.storage.setAlarm(...)
+}
+
+// Cancel
+await this.ctx.storage.deleteAlarm();
+```
+
+## Testing
+
+Read the [testing reference](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/durable-objects/references/testing.md) before configuring a suite or writing Durable Object tests. It routes to current setup, APIs, and examples and identifies the behavior to cover.

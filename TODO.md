@@ -1442,7 +1442,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18491 fix: session worktree resolver errors say 'Image workdir' for bounded operations and hide which root failed #auto-dispatch #bug #interactive tier:simple ~30m ref:GH#32612 logged:2026-09-27 -> [todo/tasks/t18491-brief.md] pr:#32653 completed:2026-09-27
 
-- [ ] t18492 fix: aidevops secret NAME -- cmd redacts short dictionary words (e.g. 'openai') from output #auto-dispatch #bug #interactive tier:standard ~1h ref:GH#32614 logged:2026-09-27 -> [todo/tasks/t18492-brief.md]
+- [x] t18492 fix: aidevops secret NAME -- cmd redacts short dictionary words (e.g. 'openai') from output #auto-dispatch #bug #interactive tier:standard ~1h ref:GH#32614 logged:2026-09-27 -> [todo/tasks/t18492-brief.md] pr:#33023 completed:2026-09-29
 
 - [x] t18493 feat: media-qa-helper for rendered video/audio deliverables (streams, loudness, contact sheets, whisper intelligibility) #auto-dispatch #feat #interactive tier:standard ~2h ref:GH#32615 logged:2026-09-27 -> [todo/tasks/t18493-brief.md] pr:#32709 completed:2026-09-28
 
@@ -1450,11 +1450,11 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18496 fix(dispatch): stop false missing_files_scope holds and auto-release repaired briefs #auto-dispatch #bug #interactive tier:standard ~2h ref:GH#32689 logged:2026-09-28 pr:#32690 completed:2026-09-28
 
-- [ ] t18497 fix(claim-task-id): shallow counter-branch discovery fetches that time out at the 30s default #auto-dispatch #bug #interactive tier:standard ~45m ref:GH#32692 logged:2026-09-28
+- [x] t18497 fix(claim-task-id): shallow counter-branch discovery fetches that time out at the 30s default #auto-dispatch #bug #interactive tier:standard ~45m ref:GH#32692 logged:2026-09-28 pr:#33053 completed:2026-09-29
 
 - [x] t18503 test: isolate brief-scope pulse tests from the live pulse.log #bug #interactive tier:simple ~15m ref:GH#32710 logged:2026-09-28 pr:#32712 completed:2026-09-28
 
-- [ ] t18504 fix(planning-publisher): 3-way merge TODO.md instead of overwriting concurrent entries #auto-dispatch #bug #interactive tier:thinking ~2h ref:GH#32714 logged:2026-09-28
+- [x] t18504 fix(planning-publisher): 3-way merge TODO.md instead of overwriting concurrent entries #auto-dispatch #bug #interactive tier:thinking ~2h ref:GH#32714 logged:2026-09-28 pr:#33047 completed:2026-09-29
 
 - [x] t18505 perf(dispatch): run read-only dedup layers before costly scope gates #enhancement #interactive tier:standard ~1h ref:GH#32729 logged:2026-09-28 pr:#32732 completed:2026-09-28
 
@@ -1471,6 +1471,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 - [x] t18509 feat(seo): search targets standard — context/keywords.md registry, team hub sync, budgeted rank/AI tracking, ecommerce drill-down, init scaffold and repo backfill #feature #seo #framework #interactive tier:thinking ~6h ref:GH#32739 logged:2026-09-28 -> [todo/tasks/t18509-brief.md] pr:#32746 completed:2026-09-28
 
 - [x] t18511 fix(design): make the brand-identity.toon template valid TOON #bug #design #interactive tier:standard ~45m ref:GH#32741 logged:2026-09-28 -> [todo/tasks/t18511-brief.md] pr:#32750 completed:2026-09-28
+- [x] t18512 fix(release): npm publication verify window shorter than npm async processing lag #auto-dispatch #bug #interactive ref:GH#32749 logged:2026-09-28 pr:#33045 completed:2026-09-29
 
 - [x] t18516 fix(seo): keywords hub clone from canonical cwd; exported env overrides config #bug #seo #framework #interactive tier:standard ~30m ref:GH#32791 logged:2026-09-28 -> [todo/tasks/t18516-brief.md] pr:#32792 completed:2026-09-28
 
@@ -1502,8 +1503,39 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 - [x] t18541 fix(pulse): break consolidation/Dependabot-target dispatch deadlock and log silent brief-scope blocks #auto-dispatch #bug ref:GH#32979 logged:2026-09-29 pr:#32983 completed:2026-09-29
 - [x] t18542 fix(worker): recognise completed consolidation children instead of worker_noop #auto-dispatch #bug ref:GH#32984 logged:2026-09-29 pr:#32987 completed:2026-09-29
 - [x] t18543 docs(dispatch): correct fail-closed claim, cap, tier-routing and supervisor drift #auto-dispatch #bug ref:GH#32989 logged:2026-09-29 pr:#32994 completed:2026-09-29
-- [ ] t18544 fix(release): retry npm attestation verification through registry propagation lag #auto-dispatch #bug ref:GH#32999 logged:2026-09-29
-- [ ] t18545 fix(pulse-merge): retry transient author permission lookups and stop manual-merge comments for them #auto-dispatch #bug ref:GH#33000 logged:2026-09-29
+- [x] t18544 fix(release): retry npm attestation verification through registry propagation lag #auto-dispatch #bug tier:standard ref:GH#32999 logged:2026-09-29 -> [todo/tasks/t18544-brief.md] pr:#33021 completed:2026-09-29
+- [ ] t18545 fix(pulse-merge): retry transient author permission lookups and stop manual-merge comments for them #auto-dispatch #bug tier:standard ref:GH#33000 logged:2026-09-29 -> [todo/tasks/t18545-brief.md]
+- [ ] t18546 fix(pulse-dependabot): provision the dependencies label before creating intake issues and log the gh error #auto-dispatch #bug tier:standard ref:GH#33003 logged:2026-09-29 -> [todo/tasks/t18546-brief.md]
+- [ ] t18547 fix(pulse-dispatch): re-resolve worker model after tier guard and stop tier-derived defaults bypassing model A/B #auto-dispatch #bug tier:thinking ref:GH#33004 logged:2026-09-29 -> [todo/tasks/t18547-brief.md]
+- [ ] t18548 fix(pulse): clamp stage timeouts to the cycle deadline so full cycles finish before lock force-reclaim kills them #auto-dispatch #bug tier:thinking ref:GH#33007 logged:2026-09-29 -> [todo/tasks/t18548-brief.md]
+- [x] t18549 fix(brief-readiness): read indented continuation lines so nested sub-bullet fields are not reported empty #auto-dispatch #bug tier:standard ref:GH#33009 logged:2026-09-29 pr:#33018 completed:2026-09-29 -> [todo/tasks/t18549-brief.md]
+- [x] t18550 fix(full-loop-merge): sync canonical through the audited fast-forward and reconcile planning after it, not before #auto-dispatch #bug tier:thinking ref:GH#33013 logged:2026-09-29 -> [todo/tasks/t18550-brief.md] pr:#33022 completed:2026-09-29
+- [x] t18551 fix(planning-publication): defer not-yet-landed tasks instead of failing every main Issue Sync; repair stranded publication:pending issues #auto-dispatch #bug #framework #interactive tier:standard ~2h ref:GH#33031 logged:2026-09-29 -> [todo/tasks/t18551-brief.md] pr:#33039 completed:2026-09-29
+
+- [x] t18552 feat(worktree-cleanup): audited local-branch cleanup so merged branches do not accumulate after worktree removal #auto-dispatch #feat tier:standard ref:GH#33030 logged:2026-09-29 -> [todo/tasks/t18552-brief.md] pr:#33042 completed:2026-09-29
+- [x] t18553 fix(claim-task-id): keep depth-1 counter fetches in the isolated context so linked-worktree claims stop truncating shared repo history #auto-dispatch #bug tier:standard ref:GH#33033 logged:2026-09-29 -> [todo/tasks/t18553-brief.md] pr:#33041 completed:2026-09-29
+- [x] t18554 fix(release): unshallow the release control worktree before lane reservation so a shallow store cannot strand the release lane #auto-dispatch #bug tier:standard ref:GH#33069 logged:2026-09-29 -> [todo/tasks/t18554-brief.md] pr:#33081 completed:2026-09-29
+- [ ] t18556 fix(release): look up the tag-push publish run by exact head_sha and skip recovery dispatch when channels are already published #auto-dispatch #bug tier:standard ref:GH#33073 logged:2026-09-29 -> [todo/tasks/t18556-brief.md]
+- [x] t18559 perf(worktree-cleanup): list open PRs once per local-branch scan and cap per-run GitHub lookups #auto-dispatch #bug tier:standard ref:GH#33077 logged:2026-09-29 -> [todo/tasks/t18559-brief.md] pr:#33102 completed:2026-09-29
+- [ ] t18560 fix(pulse): run label-maintenance substages stalest-first so needs-simplification re-evaluation cannot starve #auto-dispatch #bug tier:standard ref:GH#33086 logged:2026-09-29 -> [todo/tasks/t18560-brief.md]
+- [x] t18563 fix(skill-update): authenticate GitHub lookups and route non-GitHub skill sources #auto-dispatch #bug tier:standard ref:GH#33135 logged:2026-09-30 -> [todo/tasks/t18563-brief.md] pr:#33161 completed:2026-09-30
+- [ ] t18564 Framework value audit: retire obsolete scaffolding and keep the ideas worth keeping #parent-task #framework #interactive tier:thinking ref:GH#33139 logged:2026-09-30 -> [todo/tasks/t18564-brief.md]
+- [x] t18565 chore: retire code-search leftovers, llm-tldr, context-builder/repomix and rapidfuzz #auto-dispatch #chore tier:standard ref:GH#33140 logged:2026-09-30 -> [todo/tasks/t18565-brief.md] pr:#33188 completed:2026-09-30
+- [x] t18566 chore: retire DSPy and DSPyGround from setup, docs and status checks #auto-dispatch #chore tier:standard ref:GH#33141 logged:2026-09-30 -> [todo/tasks/t18566-brief.md] pr:#33222 completed:2026-09-30
+- [x] t18567 feat(hooks): Claude Code keep-going Stop hook matching the OpenCode session-continuation guard #auto-dispatch #feat tier:thinking ref:GH#33143 logged:2026-09-30 -> [todo/tasks/t18567-brief.md] pr:#33215 completed:2026-09-30
+- [x] t18568 chore: retire Ralph loop commands, workflow and state readers #auto-dispatch #chore tier:standard ref:GH#33142 logged:2026-09-30 -> [todo/tasks/t18568-brief.md] pr:#33241 completed:2026-09-30
+- [ ] t18569 refactor: remove dead pattern-tracker callers and route rule-violation counts to observability #auto-dispatch #refactor tier:standard ref:GH#33144 logged:2026-09-30 -> [todo/tasks/t18569-brief.md]
+- [x] t18570 refactor(models): retire contest and response-scoring chain, keep /cross-review, route model comparison to model-replay and model-ab #auto-dispatch #refactor tier:standard ref:GH#33145 logged:2026-09-30 -> [todo/tasks/t18570-brief.md] pr:#33245 completed:2026-09-30
+- [x] t18571 feat(backup): archive issue and PR discussions to a same-repo orphan branch via pulse routine #auto-dispatch #feat tier:thinking ref:GH#33146 logged:2026-09-30 -> [todo/tasks/t18571-brief.md] pr:#33187 completed:2026-09-30
+- [ ] t18572 chore: retire Beads integration and todo-ready.sh after the issue archive lands #auto-dispatch #chore tier:standard blocked-by:t18571 ref:GH#33148 logged:2026-09-30 -> [todo/tasks/t18572-brief.md]
+- [x] t18573 docs: trim textbook skills, fold minor branch-type docs, merge best-practices, retire mission-skill-learner #auto-dispatch #chore tier:standard ref:GH#33149 logged:2026-09-30 -> [todo/tasks/t18573-brief.md] pr:#33280 completed:2026-09-30
+- [x] t18574 docs: re-sync and restructure Remotion and Cloudflare platform skills #auto-dispatch #chore tier:standard blocked-by:t18563 ref:GH#33150 logged:2026-09-30 -> [todo/tasks/t18574-brief.md] pr:#33318 completed:2026-10-03
+- [x] t18575 fix(claim-task-id): write auto-detected GH# predecessors as task IDs in the TODO line so publication can parse it #auto-dispatch #bug tier:standard ref:GH#33159 logged:2026-09-30 -> [todo/tasks/t18575-brief.md] pr:#33213 completed:2026-09-30
+- [ ] t18576 fix(pulse-dep-graph): read dependencies only from structured fields, not prose or code spans in issue bodies #auto-dispatch #bug tier:standard ref:GH#33166 logged:2026-09-30 -> [todo/tasks/t18576-brief.md]
+- [x] t18577 feat: add Rank Math MCP support for WordPress SEO #enhancement #interactive tier:standard ref:GH#33175 logged:2026-09-30 pr:#33179 completed:2026-09-30 -> [todo/tasks/t18577-brief.md]
+- [x] t18579 fix(wordpress): resolve config-http/test-http Application Passwords from secret names, not argv or config #auto-dispatch #bug #security #interactive tier:standard ref:GH#33195 logged:2026-09-30 -> [todo/tasks/t18579-brief.md] pr:#33207 completed:2026-09-30
+
+- [x] t18555 fix(dispatch-dedup): merged-PR keyword check ignores issue reopen, permanently blocking reopened issues #auto-dispatch #bug ref:GH#33071 pr:#33080 completed:2026-09-29
 
 ## In Progress
 
@@ -5046,3 +5078,14 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t18525 Install and update Cloudflare cf CLI via setup and update-tools #enhancement ref:GH#32862
 - [ ] t18524 fix(seo): keywords allow one target per phrase per site #bug #seo ref:GH#32854
 - [ ] t18523 Add Cloudflare cf CLI guidance and routing #enhancement ref:GH#32850
+- [x] t18558 fix(prefetch): events tickle 304 must not skip owners whose snapshots are stale (private-org public events feed) #bug ref:GH#33074 pr:#33076 completed:2026-09-29
+
+- [ ] t18561 fix: repos migrate-layout apply fails on OpenCode DBs with no matching rows #bug ref:GH#33108
+- [x] t18562 fix(worker): route unverified post-PR handoff with durable PR to checkpoint, not failure and tier escalation #bug ref:GH#33115 pr:#33118 completed:2026-09-30
+- [x] t18578 perf(ci): remove duplicate serial ShellCheck pass from required Framework Validation critical path #enhancement ref:GH#33182 pr:#33185 completed:2026-09-30
+
+- [x] t18580 Background routing: Opus 5.5 thinking at high; no sub-medium reasoning for subagents or new A/B arms #enhancement ref:GH#33342 pr:#33347 completed:2026-10-01
+
+- [x] t18581 fix(tests): test-pulse-current-state-guardrails fails 2/26 on main (dispatch_max ledger export, ranked dispatch order) #auto-dispatch #bug ref:GH#33362 pr:#33367 completed:2026-10-01
+
+- [ ] t18582 Extend macOS indexing/backup audit with dev churn paths and exclusion coverage #enhancement ref:GH#33398

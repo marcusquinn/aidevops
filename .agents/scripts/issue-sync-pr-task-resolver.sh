@@ -183,14 +183,16 @@ resolve_pr_task_ids() {
 		return 1
 	fi
 	collect_effective_issues "$todo_file" "$issue_numbers" "$vetoed_issue_numbers" || return 1
-	if [[ -n "$title_task_id" ]]; then
+	# Legacy worker titles may use t<issue> without an actual TODO task. Only
+	# canonical task rows (with an exact ID) make those titles task-backed.
+	if [[ -n "$title_task_id" ]] && todo_mapping_keys "$todo_file" | grep -Fx "task:$title_task_id" >/dev/null; then
 		RESOLVED_TASK_BACKED="true"
 	fi
 	if [[ "$RESOLVED_TASK_BACKED" == "true" ]]; then
 		map_issue_tasks "$todo_file" "$RESOLVED_EFFECTIVE_ISSUES" || return 1
 	fi
 
-	if [[ -n "$title_task_id" && " $RESOLVED_TASK_IDS " != *" $title_task_id "* ]]; then
+	if [[ "$RESOLVED_TASK_BACKED" == "true" && -n "$title_task_id" && " $RESOLVED_TASK_IDS " != *" $title_task_id "* ]]; then
 		printf 'ERROR: PR title task %s conflicts with closing-issue TODO mapping(s): %s\n' "$title_task_id" "$RESOLVED_TASK_IDS" >&2
 		return 1
 	fi

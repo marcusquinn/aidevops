@@ -157,6 +157,45 @@ _tbr_decision_active() {
 }
 
 #######################################
+# GH#33138: a circuit this runner opened projects status:blocked. When the
+# circuit re-arms (trusted retry, relevant revision or backoff expiry), return
+# the issue to status:available exactly once. Never releases brief holds,
+# dependency blocks, permission-helper holds or maintainer holds: only a plain
+# status:blocked issue with no other hold label is touched.
+# Args: repo issue issue_json comments_json. Always returns 0 (best-effort).
+#######################################
+_tbr_release_circuit_hold() {
+	local repo="$1"
+	local issue="$2"
+	local issue_json="$3"
+	local comments="$4"
+	local labels=""
+	labels=$(printf '%s' "$issue_json" | jq -c '[.labels[]?.name]' 2>/dev/null) || return 0
+	printf '%s' "$labels" | jq -e '
+		(index("status:blocked") != null) and
+		([.[] | select(. == "needs-maintainer-permissions" or . == "hold-for-review" or
+			. == "no-auto-dispatch" or . == "parent-task" or . == "needs-maintainer-review" or
+			startswith("status:") and . != "status:blocked")] | length == 0)
+	' >/dev/null 2>&1 || return 0
+	# Only release when the newest hold evidence is a terminal-blocker circuit.
+	printf '%s' "$comments" | jq -e '
+		[flatten[]? | select((.body // "") | test("TERMINAL_BLOCKER_CIRCUIT|Terminal blocker: reason="))] | length > 0
+	' >/dev/null 2>&1 || return 0
+	if ! declare -F set_issue_status >/dev/null 2>&1; then
+		# shellcheck source=shared-constants.sh
+		source "${_TBR_SCRIPT_DIR}/shared-constants.sh" >/dev/null 2>&1 || return 0
+	fi
+	declare -F set_issue_status >/dev/null 2>&1 || return 0
+	if declare -F issue_has_active_brief_hold >/dev/null 2>&1; then
+		local held_rc=0
+		issue_has_active_brief_hold "$comments" "$(printf '%s' "$issue_json" | jq -r '.body // ""')" || held_rc=$?
+		[[ "$held_rc" -ne 1 ]] && return 0
+	fi
+	set_issue_status "$issue" "$repo" available >/dev/null 2>&1 || true
+	return 0
+}
+
+#######################################
 # Re-verify one entry against GitHub. Prints a JSON line when the circuit is
 # still active and unowned; retires the entry when resolved. Returns 0 when
 # printed, 1 otherwise.
@@ -188,6 +227,7 @@ _tbr_check_entry() {
 	repo_path=$(_tbr_repo_path "$repo")
 	if ! terminal_blocker_circuit_active "$comments" "$brief" "$repo" "$issue" "$repo_path" >/dev/null 2>&1; then
 		# Brief revision, retry directive or backoff expiry re-armed dispatch.
+		_tbr_release_circuit_hold "$repo" "$issue" "$issue_json" "$comments"
 		rm -f "$file" "${TBR_ROOT}/decisions/${key}.json"
 		return 1
 	fi
@@ -206,9 +246,16 @@ tbr_pending() {
 	local mode="${1:-}"
 	_tbr_init_dirs || return 1
 	tbr_seed || true
-	local file="" count=0
+	local file="" count=0 self_resolved=0
 	for file in "${TBR_ROOT}"/queue/*.json; do
 		[[ -f "$file" ]] || continue
+		# GH#33025: resolve once, only when work exists, so this runner's own
+		# collaborator-authored circuits stay recognised during recovery.
+		if [[ "$self_resolved" -eq 0 && -z "${TERMINAL_BLOCKER_SELF_LOGIN:-}" ]]; then
+			TERMINAL_BLOCKER_SELF_LOGIN=$(_tbr_self_login 2>/dev/null) || TERMINAL_BLOCKER_SELF_LOGIN=""
+			export TERMINAL_BLOCKER_SELF_LOGIN
+		fi
+		self_resolved=1
 		if [[ "$mode" == "--count" ]]; then
 			_tbr_check_entry "$file" >/dev/null && count=$((count + 1))
 		else

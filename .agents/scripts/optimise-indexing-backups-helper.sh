@@ -17,6 +17,7 @@ STATE_FILE="${AIDEVOPS_OPTIMISE_STATE_FILE:-${STATE_DIR}/optimise-indexing-backu
 LOG_FILE="${AIDEVOPS_OPTIMISE_LOG_FILE:-${LOG_DIR}/optimise-indexing-backups.log}"
 REMINDER_DAYS="${AIDEVOPS_OPTIMISE_REMINDER_DAYS:-30}"
 NOTIFY_INTERVAL_SECONDS="${AIDEVOPS_OPTIMISE_NOTIFY_INTERVAL_SECONDS:-86400}"
+BACKBLAZE_BZINFO="${AIDEVOPS_BACKBLAZE_BZINFO:-/Library/Backblaze.bzpkg/bzdata/bzinfo.xml}"
 PLATFORM_WINDOWS="windows"
 
 usage() {
@@ -165,8 +166,13 @@ _candidate_paths() {
                 "${HOME}/Library/pnpm" \
                 "${HOME}/.cache" \
                 "${HOME}/.npm" \
-                "${HOME}/.bun/install/cache" \
+                "${HOME}/.bun" \
+                "${HOME}/.rustup" \
                 "${HOME}/.cargo/registry" \
+                "${HOME}/.lmstudio" \
+                "${HOME}/.local/share/opencode/snapshot" \
+                "${HOME}/.local/share/opencode/storage" \
+                "${HOME}/Library/Group Containers/HUAQ24HBR6.dev.orbstack" \
                 "${HOME}/Library/Developer/CoreSimulator/Caches" \
                 "${HOME}/Library/Developer/CoreSimulator/Devices" \
                 "${HOME}/.aidevops/.agent-workspace" \
@@ -184,6 +190,11 @@ _candidate_paths() {
                 "${HOME}/.cache/pip" \
                 "${HOME}/.cargo/registry" \
                 "${HOME}/.cargo/git" \
+                "${HOME}/.bun" \
+                "${HOME}/.rustup" \
+                "${HOME}/.lmstudio" \
+                "${HOME}/.local/share/opencode/snapshot" \
+                "${HOME}/.local/share/opencode/storage" \
                 "${HOME}/.aidevops/.agent-workspace" \
                 "${HOME}/.aidevops/cache" \
                 "${HOME}/.aidevops/logs" \
@@ -329,6 +340,137 @@ _detected_systems() {
     return 0
 }
 
+# Prints true|false|unknown|not-installed for Backblaze's
+# "Also exclude Apple-specified exclusions" setting. Reads only the
+# use_time_machine_excludes attribute; identity fields are never printed.
+_backblaze_apple_exclusions() {
+    if [[ ! -e "$BACKBLAZE_BZINFO" ]]; then
+        printf 'not-installed\n'
+        return 0
+    fi
+    if [[ ! -r "$BACKBLAZE_BZINFO" ]]; then
+        printf 'unknown\n'
+        return 0
+    fi
+    local value
+    value="$(grep -Eo 'use_time_machine_excludes="(true|false)"' "$BACKBLAZE_BZINFO" 2>/dev/null | head -n 1 || true)"
+    case "$value" in
+        *'"true"') printf 'true\n' ;;
+        *'"false"') printf 'false\n' ;;
+        *) printf 'unknown\n' ;;
+    esac
+    return 0
+}
+
+# Prints one Backblaze status per path argument (excluded|included|unknown),
+# using the longest case-insensitive bzdirfilter prefix match.
+_backblaze_path_statuses() {
+    if [[ ! -r "$BACKBLAZE_BZINFO" ]] || ! command -v python3 >/dev/null 2>&1; then
+        local path
+        for path in "$@"; do
+            printf 'unknown\n'
+        done
+        return 0
+    fi
+    python3 - "$BACKBLAZE_BZINFO" "$@" <<'PY'
+import re, sys
+config, paths = sys.argv[1], sys.argv[2:]
+try:
+    with open(config, "r", encoding="utf-8", errors="replace") as handle:
+        text = handle.read()
+except Exception:
+    for _ in paths:
+        print("unknown")
+    sys.exit(0)
+filters = [
+    (match.group(1).lower(), match.group(2).lower())
+    for match in re.finditer(r'<bzdirfilter\s+dir="([^"]*)"\s+whichfiles="([^"]*)"', text)
+]
+for path in paths:
+    key = path.lower().rstrip("/") + "/"
+    best = None
+    for directory, which in filters:
+        if key.startswith(directory) and (best is None or len(directory) > len(best[0])):
+            best = (directory, which)
+    print("excluded" if best is not None and best[1] == "none" else "included")
+PY
+    return 0
+}
+
+_time_machine_status() {
+    local path="$1"
+    if ! command -v tmutil >/dev/null 2>&1; then
+        printf 'unknown\n'
+        return 0
+    fi
+    local output
+    output="$(tmutil isexcluded "$path" 2>/dev/null || true)"
+    case "$output" in
+        *"[Excluded]"*) printf 'excluded\n' ;;
+        *"[Included]"*) printf 'included\n' ;;
+        *) printf 'unknown\n' ;;
+    esac
+    return 0
+}
+
+# Emits "path<TAB>time_machine<TAB>backblaze" for existing macOS candidates.
+# Read-only: never changes Time Machine or Backblaze configuration.
+_macos_coverage_tsv() {
+    local apple path status
+    local -a paths=()
+    local -a bz_statuses=()
+    apple="$(_backblaze_apple_exclusions)"
+    while IFS= read -r path; do
+        [[ -n "$path" && -d "$path" ]] && paths+=("$path")
+    done < <(_candidate_paths macos)
+    [[ "${#paths[@]}" -gt 0 ]] || return 0
+    if [[ "$apple" == "not-installed" ]]; then
+        for path in "${paths[@]}"; do
+            bz_statuses+=("n/a")
+        done
+    else
+        while IFS= read -r status; do
+            bz_statuses+=("$status")
+        done < <(_backblaze_path_statuses "${paths[@]}")
+    fi
+    local index=0 tm_status bz_status
+    for path in "${paths[@]}"; do
+        tm_status="$(_time_machine_status "$path")"
+        bz_status="${bz_statuses[$index]:-unknown}"
+        if [[ "$bz_status" == "included" && "$apple" == "true" && "$tm_status" == "excluded" ]]; then
+            bz_status="excluded-via-apple"
+        fi
+        printf '%s\t%s\t%s\n' "$path" "$tm_status" "$bz_status"
+        index=$((index + 1))
+    done
+    return 0
+}
+
+_emit_macos_coverage_human() {
+    local apple path tm_status bz_status
+    printf '\nExclusion coverage for existing paths (tm=Time Machine, bz=Backblaze):\n'
+    while IFS="$(printf '\t')" read -r path tm_status bz_status; do
+        [[ -n "$path" ]] || continue
+        printf '%s\n' "- ${path}: tm=${tm_status} bz=${bz_status}"
+    done < <(_macos_coverage_tsv)
+    apple="$(_backblaze_apple_exclusions)"
+    [[ "$apple" == "not-installed" ]] && return 0
+    printf '\nBackblaze "Also exclude Apple-specified exclusions": %s\n' "$apple"
+    if [[ "$apple" == "false" ]]; then
+        printf 'Recommendation: enable it in Backblaze Settings > Exclusions so Time Machine exclusions (for example node_modules) also apply to Backblaze.\n'
+    fi
+    return 0
+}
+
+_macos_coverage_json() {
+    if [[ "$#" -gt 0 && "$1" != "macos" ]]; then
+        printf '[]\n'
+        return 0
+    fi
+    _macos_coverage_tsv | jq -R 'split("\t") | {path: .[0], time_machine: .[1], backblaze: .[2]}' | jq -s .
+    return 0
+}
+
 _emit_scan_human() {
     local platform="$1"
     local apply_mode="$2"
@@ -350,6 +492,9 @@ _emit_scan_human() {
     _project_patterns "$platform" | while IFS= read -r pattern; do
         printf '%s\n' "- ${pattern}"
     done
+    if [[ "$platform" == "macos" ]]; then
+        _emit_macos_coverage_human
+    fi
     if [[ "$platform" == "$PLATFORM_WINDOWS" ]]; then
         printf '\nNative Windows support posture: limited experimental optimisation command only; full aidevops support still recommends WSL2.\n'
         printf 'Apply mode writes reusable recommendation files only and does not mutate Windows Search, File History, OneDrive, Defender, or backup-client settings.\n'
@@ -365,10 +510,14 @@ _emit_scan_json() {
         print_error "--json requires jq"
         return 1
     fi
-    local candidates systems patterns
+    local candidates systems patterns coverage apple_exclusions="n/a"
     candidates="$(_candidate_paths "$platform" | jq -R . | jq -s .)"
     systems="$(_detected_systems "$platform" | jq -R 'split(":") | {status: .[0], name: .[1]}' | jq -s .)"
     patterns="$(_project_patterns "$platform" | jq -R . | jq -s .)"
+    coverage="$(_macos_coverage_json "$platform")"
+    if [[ "$platform" == "macos" ]]; then
+        apple_exclusions="$(_backblaze_apple_exclusions)"
+    fi
     jq -n \
         --arg platform "$platform" \
         --arg mode "$mode" \
@@ -378,7 +527,9 @@ _emit_scan_json() {
         --argjson candidates "$candidates" \
         --argjson systems "$systems" \
         --argjson patterns "$patterns" \
-        '{platform:$platform, mode:$mode, state_file:$state_file, log_file:$log_file, support_posture:$support_posture, detected_systems:$systems, candidate_paths:$candidates, project_patterns:$patterns, unsafe_exclusions:["home directory","source trees","Documents","Desktop","Downloads",".ssh",".gnupg","credential stores","broad config directories"]}'
+        --argjson coverage "$coverage" \
+        --arg apple_exclusions "$apple_exclusions" \
+        '{platform:$platform, mode:$mode, state_file:$state_file, log_file:$log_file, support_posture:$support_posture, detected_systems:$systems, candidate_paths:$candidates, project_patterns:$patterns, coverage:$coverage, backblaze:{apple_exclusions:$apple_exclusions}, unsafe_exclusions:["home directory","source trees","Documents","Desktop","Downloads",".ssh",".gnupg","credential stores","broad config directories"]}'
     return 0
 }
 

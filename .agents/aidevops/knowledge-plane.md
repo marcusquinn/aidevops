@@ -28,6 +28,11 @@ and retrieval surfaces.
   bytes, and retain replay/deletion coverage in private index manifests.
 - LLM, email, review, indexing, and enrichment behaviour is detailed in the
   chapter files below.
+- Affiliate observations use `scripts/affiliate-helper.sh` and the authenticated
+  `personal:default` corpus: canonical `sources/affiliate/raw/` evidence and a
+  rebuildable `index/affiliate.json` projection. Requirements and dry-run signup
+  preparation are public/offline; private retrieval/import retain existing grants.
+  See `marketing-sales/affiliate-programmes.md`; no live signup adapter is enabled.
 
 ## Chapter Files
 

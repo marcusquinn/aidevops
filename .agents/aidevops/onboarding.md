@@ -172,7 +172,7 @@ chmod 600 ~/.config/aidevops/credentials.sh && chmod 700 ~/.config/aidevops
 - **Layers**: Main agents (Tab) → subagents (`@name`) → commands (`/name`)
 - **Main**: generated from the canonical roster; currently `Aidevops`, `Automate`, `Build+`, `Business`, `Content`, `Health`, `Legal`, `Marketing-Sales`, `PR`, `Product`, `Reports`, `Research`, `SEO`, `Vault` | **Init**: `cd ~/your-project && aidevops init`
 - **Subagents**: `@hetzner`, `@cloudflare`, `@cloudron`, `@coolify`, `@vercel`, `@github-cli`, `@dataforseo`, `@getanyapi`, `@code-standards`, `@wp-dev`, `@calendar`
-- **Commands**: `/create-prd`, `/generate-tasks`, `/feature`, `/bugfix`, `/hotfix`, `/pr`, `/preflight`, `/release`, `/linters-local`, `/keyword-research`
+- **Commands**: `/define`, `/new-task`, `/save-todo`, `/full-loop`, `/review`, `/pr`, `/preflight`, `/release`, `/seo` (runtime pickers list them with an `aidevops-` prefix)
 
 ## Repo Sync & Orchestration
 
@@ -193,5 +193,5 @@ Settings: `settings-helper.sh list`. Cost note: subscription plans (Claude Max/P
 
 1. **Playground**: `mkdir ~/Git/aidevops-playground && cd $_ && git init && aidevops init`
 2. **Smoke test**: "List my GitHub repos" or "Check my Hetzner servers"
-3. **First flow**: `/create-prd` → `/generate-tasks` → `/feature` → build → `/release`
+3. **First flow**: `/define` → `/full-loop` → `/release`
 4. **Orchestration**: see `scripts/commands/runners.md`, add `#auto-dispatch` to a TODO.md task

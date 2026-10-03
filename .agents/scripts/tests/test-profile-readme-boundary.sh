@@ -361,7 +361,7 @@ test_update_preserves_manual_sections() {
 }
 
 test_update_recovers_dirty_profile_publication_worktree() {
-	local test_name="profile update recoverably removes its dirty scratch worktree after guarded cleanup refusal"
+	local test_name="profile recovery preserves pre-existing canonical untracked files after guarded cleanup refusal"
 	TEST_DIR=$(mktemp -d)
 	local fixture_home="${TEST_DIR}/home"
 	local fixture_repo="${TEST_DIR}/profile-repo"
@@ -372,11 +372,14 @@ test_update_recovers_dirty_profile_publication_worktree() {
 	local recovery_root="${TEST_DIR}/recovery"
 	local output_file="${TEST_DIR}/update-output"
 	local marker_evidence="${TEST_DIR}/marker-evidence"
+	local canonical_status_before=""
 
 	mkdir -p "$helper_dir" "$fixture_home"
 	install_helper_with_libs "$helper_dir"
 	write_stub_dependencies "$helper_dir"
 	create_profile_repo_fixture "$fixture_home" "$fixture_repo" "$fixture_remote"
+	printf '%s\n' 'unrelated work must survive recovery' >"${fixture_repo}/unrelated-local-work"
+	canonical_status_before=$(git -C "$fixture_repo" status --porcelain --untracked-files=all)
 	cat >"$refusing_helper" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -417,7 +420,8 @@ EOF
 	if [[ "$(git -C "$fixture_repo" worktree list --porcelain | grep -c '^worktree ' || true)" != "1" ]] ||
 		[[ ! -d "$recovery_root" ]] ||
 		[[ "$(cat "$marker_evidence" 2>/dev/null)" != "verified" ]] ||
-		[[ -n "$(git -C "$fixture_repo" status --porcelain --untracked-files=all)" ]]; then
+		[[ "$(git -C "$fixture_repo" status --porcelain --untracked-files=all)" != "$canonical_status_before" ]] ||
+		[[ "$(cat "${fixture_repo}/unrelated-local-work")" != 'unrelated work must survive recovery' ]]; then
 		print_helper_failure "$test_name" "scratch worktree leaked, recovery archive missing, or canonical checkout changed" "$output_file"
 		return 0
 	fi

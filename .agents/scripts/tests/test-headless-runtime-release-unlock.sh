@@ -229,14 +229,32 @@ fi
 rm -f "${TMP_HOME}/comment-attempts"
 _release_dispatch_claim "issue-12345" "worker_draft_checkpoint" "1" "0"
 if grep -q 'CLAIM_RELEASED reason=worker_draft_checkpoint' "$CALL_LOG" && \
-	grep -q 'Preserving issue ownership and review state for draft checkpoint #12345' "$CALL_LOG" && \
-	! grep -q '^CLEAR ' "$CALL_LOG" && ! grep -q '^UNLOCK ' "$CALL_LOG"; then
-	printf 'PASS draft-checkpoint release preserves assignment and review state\n'
+	grep -q 'Draft checkpoint: partial work is blocked' "$CALL_LOG" && \
+	grep -q 'CLEAR issue=12345 repo=owner/repo runner=assigned-bot' "$CALL_LOG" && \
+	grep -q 'Projected draft checkpoint #12345 as blocked partial work' "$CALL_LOG"; then
+	printf 'PASS draft-checkpoint release projects blocked partial work\n'
 else
-	printf 'FAIL draft-checkpoint release cleared continuation ownership\n'
+	printf 'FAIL draft-checkpoint release did not project blocked partial work\n'
 	sed 's/^/  /' "$CALL_LOG"
 	exit 1
 fi
+
+# GH#33287: ready-PR handoffs already projected status:in-review; the generic
+# closing-keyword projection must not reset a `For #N` PR's issue to available.
+for ready_reason in worker_ready_missing_linkage worker_ready_missing_summary; do
+	: >"$CALL_LOG"
+	rm -f "${TMP_HOME}/comment-attempts"
+	_release_dispatch_claim "issue-12345" "$ready_reason" "0" "0"
+	if grep -q "CLAIM_RELEASED reason=${ready_reason}" "$CALL_LOG" && \
+		grep -q 'UNLOCK issue=12345 repo=owner/repo' "$CALL_LOG" && \
+		! grep -q '^CLEAR ' "$CALL_LOG"; then
+		printf 'PASS %s release preserves the in-review handoff\n' "$ready_reason"
+	else
+		printf 'FAIL %s release reset the in-review handoff\n' "$ready_reason"
+		sed 's/^/  /' "$CALL_LOG"
+		exit 1
+	fi
+done
 
 : >"$CALL_LOG"
 GH_ISSUE_LABELS=bug

@@ -108,7 +108,7 @@ _approval_snapshot_v2_comments_json() {
 				")\\n<!-- ops:end -->" + aidevops_worker_footer + "$"
 			);
 		# #aidevops:trust-boundary — exclude only complete writer-produced recovery envelopes; copied markers, altered guidance, and extra prose stay bound.
-		def canonical_terminal_blocker_release: test("^<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->\\n" + "CLAIM_RELEASED reason=blocked runner=[A-Za-z0-9._:-]+ ts=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z(?: [a-z_]+=[A-Za-z0-9._:@/+:-]+)*\\n" + "<!-- aidevops:terminal-blocker-observation revision=[0-9a-f]{16,64} blocker=[0-9a-f]{16,64} -->\\n\\n" + "Terminal blocker: reason=(?:missing_files_scope owner=brief-author|files_scope_excluded owner=brief-author|target_code_blocker owner=target-maintainer|permission_required owner=permission-maintainer|unknown owner=worker-triage) task=[0-9]+ attempt=[0-9a-f]{16,64}\\.\\n" + "Projected state: status:blocked\\.\\n" + "Next action: (?:Add a canonical ### Files Scope \\(or legacy ## Files Scope\\) section listing the permitted paths in the issue body\\.|The AI brief owner must review the protected integration dossier, check concurrent ownership and correct the permitted paths before resuming the existing checkpoint\\. Preserve explicit hard boundaries and security guarantees; do not retry an unchanged brief\\.|Review the protected blocker dossier and correct the target code or task dependencies before retrying\\.|Resolve the evidenced permission prerequisite through the human-owned approval flow, then post the explicit retry directive\\. Retry is scheduling consent only: the original permission guard must independently verify the exact context\\. Do not regenerate requests or bypass the guard\\.|Interpret the protected dossier and record a known blocker class or repair the brief\\. No global dispatch hold is imposed\\.)\\n" + "Raw evidence remains in protected worker telemetry\\.\\n<!-- ops:end -->" + aidevops_worker_footer + "$");
+		def canonical_terminal_blocker_release: test("^<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->\\n" + "CLAIM_RELEASED reason=blocked runner=[A-Za-z0-9._:-]+ ts=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z(?: [a-z_]+=[A-Za-z0-9._:@/+:-]+)*\\n" + "<!-- aidevops:terminal-blocker-observation revision=[0-9a-f]{16,64} blocker=[0-9a-f]{16,64} -->\\n\\n" + "Terminal blocker: reason=(?:missing_files_scope owner=brief-author|files_scope_excluded owner=brief-author|target_code_blocker owner=target-maintainer|external_trigger_pending owner=dependency-owner|permission_required owner=permission-maintainer|input_required owner=(?:user|contributor|maintainer|admin)|unknown owner=worker-triage) task=[0-9]+ attempt=[0-9a-f]{16,64}\\.\\n" + "Projected state: status:(?:blocked|available)\\.\\n" + "Next action: (?:Add a canonical ### Files Scope \\(or legacy ## Files Scope\\) section listing the permitted paths in the issue body\\.|The AI brief owner must review the protected integration dossier, check concurrent ownership and correct the permitted paths before resuming the existing checkpoint\\. Preserve explicit hard boundaries and security guarantees; do not retry an unchanged brief\\.|Review the protected blocker dossier and correct the target code or task dependencies before retrying\\.|Resolve the evidenced permission prerequisite through the human-owned approval flow, then post the explicit retry directive\\. Retry is scheduling consent only: the original permission guard must independently verify the exact context\\. Do not regenerate requests or bypass the guard\\.|Wait for the specified external trigger\\. When it is verified, correct the brief or post an authorized retry directive; unrelated repository merges do not clear this hold\\.|Supply the specific input named in the protected dossier in the issue brief; a brief or dependency change re-arms dispatch\\. The recovery supervisor first decides anything AI can resolve within delegated authority\\.|Interpret the protected dossier and record a known blocker class or repair the brief\\. No global dispatch hold is imposed\\.)\\n" + "Raw evidence remains in protected worker telemetry\\.\\n<!-- ops:end -->" + aidevops_worker_footer + "$");
 		def canonical_self_hosting_override:
 			test(
 				"^<!-- self-hosting-tier-override -->\\n<!-- provenance:start -->\\n## Self-Hosting Tier Override\\n\\nPre-dispatch self-hosting detector replaced lower workload-tier labels with `tier:thinking` on this issue\\.\\n\\n\\*\\*Matched pattern:\\*\\* `[A-Za-z0-9._-]+` in issue body\\n\\n\\*\\*Rationale:\\*\\* Issues modifying the dispatch path have a self-referential property — workers dispatched to fix them run through the code being fixed\\. Applying the terminal workload tier upfront avoids wasted lower-tier attempts while runtime routing retains control of the exact model and reasoning level\\.\\n\\n\\*\\*Bypass:\\*\\* `AIDEVOPS_SKIP_SELF_HOSTING_DETECTOR=1`\\n\\n_Automated by `pre-dispatch-validator-helper\\.sh` \\(t2819\\)\\. This comment is posted once via the `<!-- self-hosting-tier-override -->` marker; re-runs are no-ops\\._\\n<!-- provenance:end -->" + aidevops_worker_footer + "$"
@@ -494,6 +494,26 @@ approval_snapshot_v2_digest() {
 	return 0
 }
 
+# #aidevops:trust-boundary — GH#33097: per-component digests for issue
+# snapshots. `frame` covers every scope-bearing byte except the title and body
+# (comments, linked references, identity, lifecycle), so a verifier can prove
+# that only the title/body changed and then authenticate those edits separately.
+# Prints compact JSON {title, body, frame}. Snapshot bytes pass through
+# here-strings, not argv, so large issues stay within argument limits.
+approval_snapshot_v2_content_digests() {
+	local snapshot_json="$1"
+	local title_json="" body_json="" frame_json="" title_digest="" body_digest="" frame_digest=""
+	title_json=$(jq -cS '.title // ""' <<<"$snapshot_json") || return 1
+	body_json=$(jq -cS '.body // ""' <<<"$snapshot_json") || return 1
+	frame_json=$(jq -cS 'del(.title, .body)' <<<"$snapshot_json") || return 1
+	title_digest=$(approval_snapshot_v2_digest "$title_json") || return 1
+	body_digest=$(approval_snapshot_v2_digest "$body_json") || return 1
+	frame_digest=$(approval_snapshot_v2_digest "$frame_json") || return 1
+	jq -cS -n --arg title "$title_digest" --arg body "$body_digest" --arg frame "$frame_digest" \
+		'{title: $title, body: $body, frame: $frame}'
+	return $?
+}
+
 approval_snapshot_v2_payload() (
 	local target_type="$1"
 	local target_number="$2"
@@ -501,17 +521,20 @@ approval_snapshot_v2_payload() (
 	local issued_at="$4"
 	local excluded_comment_id="${5:-}"
 	local source_timestamp_profile="${6:-$APPROVAL_SNAPSHOT_PROFILE_TRUSTED_SOURCES}"
-	local snapshot_json="" digest="" normalized_slug=""
+	local snapshot_json="" digest="" normalized_slug="" content_digests="null"
 	local temp_dir=""
 
 	snapshot_json=$(approval_snapshot_v2_build "$target_type" "$target_number" "$slug" "$excluded_comment_id" "$issued_at" "$source_timestamp_profile") || return 1
 	digest=$(approval_snapshot_v2_digest "$snapshot_json") || return 1
+	if [[ "$target_type" == "$APPROVAL_TARGET_ISSUE" ]]; then
+		content_digests=$(approval_snapshot_v2_content_digests "$snapshot_json") || return 1
+	fi
 	normalized_slug=$(printf '%s' "$slug" | tr '[:upper:]' '[:lower:]')
 	temp_dir=$(_approval_snapshot_v2_create_temp_dir) || return 1
 	trap 'rm -rf "$temp_dir"' EXIT
 	_approval_snapshot_v2_write_json_file "$temp_dir/snapshot.json" "$snapshot_json" || return 1
 	jq -cS -n --arg type "$target_type" --arg repo "$normalized_slug" --arg issue_kind "$APPROVAL_TARGET_ISSUE" --argjson number "$target_number" \
-		--arg issued "$issued_at" --arg digest "$digest" --slurpfile snapshot_input "$temp_dir/snapshot.json" '
+		--arg issued "$issued_at" --arg digest "$digest" --argjson content_digests "$content_digests" --slurpfile snapshot_input "$temp_dir/snapshot.json" '
 		($snapshot_input[0]) as $snapshot |
 		{
 			schema: "aidevops-approval/v2",
@@ -526,7 +549,7 @@ approval_snapshot_v2_payload() (
 				base_ref: $snapshot.base.ref,
 				base_repository: $snapshot.base.repository
 			} else null end),
-			issue: (if $type == $issue_kind then {lifecycle: $snapshot.lifecycle} else null end)
+			issue: (if $type == $issue_kind then {lifecycle: $snapshot.lifecycle, content_digests: $content_digests} else null end)
 		}
 	'
 	return $?

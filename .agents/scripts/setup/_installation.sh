@@ -37,17 +37,3 @@ install_mcp_packages() {
 	:
 	return 0
 }
-
-# Install Beads binary (Homebrew tap)
-install_beads_binary() {
-	# TODO: Extract from setup.sh lines 4266-4348
-	:
-	return 0
-}
-
-# Install Beads from Go source
-install_beads_go() {
-	# TODO: Extract from setup.sh lines 4351-4361
-	:
-	return 0
-}

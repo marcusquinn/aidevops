@@ -98,8 +98,8 @@ gh_issue_edit_safe() {
 _apply_permission_approval_state issue 123 owner/repo "$request_json"
 edit_args=$(<"$edit_log")
 [[ "$edit_args" == *"--remove-label needs-maintainer-permissions"* ]]
-[[ "$edit_args" != *"--remove-label status:blocked"* ]]
-[[ "$edit_args" != *"--add-label status:available"* ]]
+[[ "$edit_args" == *"--remove-label status:blocked"* ]]
+[[ "$edit_args" == *"--add-label status:available"* ]]
 [[ "$edit_args" != *"--add-label auto-dispatch"* ]]
 
 original_approval_home="$_APPROVAL_HOME"

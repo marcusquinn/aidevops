@@ -278,6 +278,11 @@ _gh_ci_validate_dispatch_scope() {
 	if printf '%s\n' "$body" | grep -Eqi '^[[:space:]]*(#{1,3}[[:space:]]*)?(planning-only|pure planning|brief-only|no code changes)(:|[[:space:]]*$)'; then
 		return 0
 	fi
+	# GH#33227: shared by both rejection paths below so the "no Files Scope
+	# heading" and "heading present but no accepted path line" messages
+	# describe one accepted line shape instead of contradicting each other.
+	# shellcheck disable=SC2016 # literal Markdown backticks, not expansions
+	local scope_hint='Add a "### Files Scope" section with one "- `repo/relative/path`" line per file (optional EDIT:/NEW: prefix, nothing after the path), then verify with pre-dispatch-validator-helper.sh scope-check <N> "<body>" 1. See workflows/brief.md section 6.'
 	# Creation-time repair is limited to explicit file declarations; bodies
 	# without them remain subject to the pre-claim validator. Deterministic
 	# routine callers only warn here; the agent-facing shim fails closed (GH#32880).
@@ -287,15 +292,14 @@ _gh_ci_validate_dispatch_scope() {
 		section && /^[[:space:]]*-[[:space:]]*(EDIT|NEW):[[:space:]]*`?[^`[:space:]]/ { found=1 }
 		END { exit !found }
 	' && ! printf '%s\n' "$body" | grep -Eq '^#{2,3} Files Scope[[:space:]]*$'; then
-		# GH#32531: the pulse will hold this issue as status:blocked before any
-		# worker starts; tell the author while the brief is still in hand.
-		# shellcheck disable=SC2016 # literal Markdown backticks, not expansions
-		local scope_hint='Add a "### Files Scope" section with one "- `repo/relative/path`" line per file (no prefix, nothing after it), then verify with pre-dispatch-validator-helper.sh scope-check <N> "<body>" 1. See workflows/brief.md section 6.'
+		# GH#32531/GH#33243: the author has the most context to choose the scope,
+		# so ask while the brief is still in hand. Without it the worker spends
+		# its first step on scope discovery; the pulse no longer holds the issue.
 		if _gh_ci_dispatch_scope_strict; then
-			print_error "auto-dispatch issue not created: body has no canonical Files Scope, so the pulse would hold it as status:blocked (missing_files_scope). ${scope_hint} Or drop auto-dispatch / mark it planning-only."
+			print_error "auto-dispatch issue not created: body has no canonical Files Scope. ${scope_hint} Or drop auto-dispatch / mark it planning-only."
 			return 1
 		fi
-		print_warning "auto-dispatch issue has no canonical ### Files Scope; the pulse will hold it as status:blocked (missing_files_scope). ${scope_hint}"
+		print_warning "auto-dispatch issue has no canonical ### Files Scope; its worker must discover and record the scope before editing. ${scope_hint}"
 		return 0
 	fi
 	# shellcheck source=./pre-dispatch-validator-lib-brief-scope.sh
@@ -304,7 +308,7 @@ _gh_ci_validate_dispatch_scope() {
 	if _brief_files_scope_has_path "$body"; then
 		return 0
 	fi
-	print_warning 'auto-dispatch implementation brief requires canonical ##/### Files Scope with EDIT/NEW paths; review legacy Files declarations before publication'
+	print_error "auto-dispatch issue not created: Files Scope heading is present but no line matches the accepted shape. ${scope_hint}"
 	return 1
 }
 

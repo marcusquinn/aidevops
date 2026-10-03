@@ -323,7 +323,7 @@
       {
         "path": "requirements-lock.txt",
         "ecosystem": "python",
-        "direct": 81,
+        "direct": 80,
         "locked": 0,
         "dependencies": [
           "Jinja2",
@@ -351,7 +351,6 @@
           "dill",
           "diskcache",
           "distro",
-          "dspy",
           "fastuuid",
           "filelock",
           "frozenlist",
@@ -412,11 +411,10 @@
       {
         "path": "requirements.txt",
         "ecosystem": "python",
-        "direct": 14,
+        "direct": 13,
         "locked": 0,
         "dependencies": [
           "datasets",
-          "dspy",
           "joblib",
           "litellm",
           "numpy",

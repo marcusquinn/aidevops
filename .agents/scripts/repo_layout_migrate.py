@@ -1354,6 +1354,9 @@ def prepare_database(
 def update_database(details: dict[str, Any]) -> None:
     """Idempotently apply prepared exact OpenCode row changes."""
     path = Path(details["path"])
+    if not details["changes"]:
+        # Drift-guard-only consumer: no matching rows, so nothing to write or verify.
+        return
     state = database_change_state(path, details["changes"])
     if state == "after":
         return

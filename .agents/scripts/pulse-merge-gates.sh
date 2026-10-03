@@ -574,7 +574,7 @@ _pulse_merge_admin_safety_check() {
 # Companion to check_external_contributor_pr() for the case where the
 # collaborator permission API itself fails (403, 429, 5xx, network error).
 # Posts a distinct "Permission check failed" comment so a maintainer
-# knows to review manually. Idempotent — checks for existing comment
+# can see why the merge was skipped (transient classes post nothing). Idempotent — checks for existing comment
 # before posting, fails closed on API errors.
 #
 # Arguments:
@@ -582,6 +582,7 @@ _pulse_merge_admin_safety_check() {
 #   $2 - repo slug (owner/repo)
 #   $3 - PR author login
 #   $4 - HTTP status code from the failed permission check
+#   $5 - failure reason (optional; AIDEVOPS_GH_COLLAB_PERMISSION_REASON)
 #
 # Exit codes:
 #   0 - comment already exists or was just posted
@@ -592,6 +593,8 @@ check_permission_failure_pr() {
 	local repo_slug="$2"
 	local pr_author="$3"
 	local http_status="${4:-unknown}"
+	local reason="${5:-unknown}"
+	local transient=0
 
 	if [[ -z "$pr_number" || -z "$repo_slug" || -z "$pr_author" ]]; then
 		echo "[pulse-wrapper] check_permission_failure_pr: missing arguments" >>"$LOGFILE"
@@ -599,6 +602,19 @@ check_permission_failure_pr() {
 	fi
 	if ! _pulse_repo_allows_pr_gate_writes "$repo_slug" "check_permission_failure_pr"; then
 		return 2
+	fi
+
+	# Transient failures (network/429/5xx) usually clear on the next merge pass:
+	# the merge stays skipped (fail closed) but no comment is posted.
+	case "$http_status" in
+	unknown | 429 | 5[0-9][0-9]) transient=1 ;;
+	esac
+	case "$reason" in
+	*api-failure*) transient=1 ;;
+	esac
+	if [[ "$transient" -eq 1 ]]; then
+		echo "[pulse-wrapper] check_permission_failure_pr: transient permission failure for PR #$pr_number in $repo_slug (HTTP $http_status, reason $reason) — no comment, merge skipped this pass" >>"$LOGFILE"
+		return 0
 	fi
 
 	# Check for existing permission-failure comment (fail closed on API error)
@@ -618,9 +634,9 @@ check_permission_failure_pr() {
 
 	# Safe to post — no existing comment and API call succeeded
 	gh_pr_comment "$pr_number" --repo "$repo_slug" \
-		--body "Permission check failed for this PR (HTTP ${http_status} from collaborator permission API). Unable to determine if @${pr_author} is a maintainer or external contributor. **A maintainer must review and merge this PR manually.** This is a fail-closed safety measure — the pulse will not auto-merge until the permission API succeeds." || true
+		--body "Permission check failed for this PR (HTTP ${http_status}, reason ${reason} from collaborator permission API). Unable to determine if @${pr_author} is a maintainer or external contributor. This is a fail-closed safety measure — the pulse retries the check automatically on each merge pass and will not auto-merge until the permission API succeeds. A maintainer only needs to act if this PR stays unmerged." || true
 
-	echo "[pulse-wrapper] check_permission_failure_pr: posted permission-failure comment on PR #$pr_number in $repo_slug (HTTP $http_status)" >>"$LOGFILE"
+	echo "[pulse-wrapper] check_permission_failure_pr: posted permission-failure comment on PR #$pr_number in $repo_slug (HTTP $http_status, reason $reason)" >>"$LOGFILE"
 	return 0
 }
 

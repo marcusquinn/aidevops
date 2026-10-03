@@ -35,7 +35,7 @@ tools:
 
 | Own | Hand off |
 |-----|----------|
-| Runtime lifecycle, version policy, process supervision, server health, dependency/runtime maintenance, CPU/RAM/latency diagnosis | JavaScript language/API design → `tools/programming/modern-javascript-skill.md` |
+| Runtime lifecycle, version policy, process supervision, server health, dependency/runtime maintenance, CPU/RAM/latency diagnosis | JavaScript language/API design → Build+ (current model knowledge) |
 | Node, Next.js SSR, API, worker, CLI, MCP, and build-tool processes | Next.js layouts/components/routing → `tools/ui/nextjs-layouts.md` |
 | npm, pnpm, Yarn, Bun compatibility and lockfile fidelity | Turborepo graph/filter/cache design → `tools/monorepo/turborepo.md` |
 | Local and production process evidence | Browser Core Web Vitals → `workflows/performance.md` |

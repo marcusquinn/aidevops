@@ -68,7 +68,7 @@
 #   anti-pattern at the dispatch layer — punting analysis to a human who
 #   then just hands it back to an AI anyway. Original GH#18538 was caused
 #   by a bot finding with a false premise (Gemini claimed TODO.md's
-#   "## Ready" section is auto-generated; todo-ready.sh is read-only).
+#   "## Ready" section is auto-generated; the retired task helper was read-only).
 #   Under this model the worker reads the section header, greps the
 #   helper, closes with "premise falsified — no write path exists" — done
 #   in minutes, with zero human touches.

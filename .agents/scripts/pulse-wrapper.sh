@@ -1108,6 +1108,63 @@ is_no_work_rate_acceptable() {
 source "${SCRIPT_DIR}/pulse-wrapper-cycle-gates.sh"
 
 # ---------------------------------------------------------------------------
+# GH#33307: dispatch wall-clock reserve.
+#
+# Dispatch_max refuses each candidate when the cycle budget is below the
+# per-candidate floor (DISPATCH_PER_CANDIDATE_TIMEOUT_FLOOR, default 600s;
+# the floor itself is unchanged here). Two cycle-level gaps starved batch
+# dispatch for 45+ minutes:
+#   1. Pre-dispatch merge stages could spend the floor that dispatch_max
+#      needs later in the same cycle.
+#   2. Once the budget was spent, dispatch_max, its minimum-floor refill and
+#      the cycle-final event drain each re-enumerated every candidate
+#      (~250s apiece) only to stop at the floor, then consumed the refill
+#      trigger. That pushed the cycle ~750s past its budget, delaying the
+#      next fresh-budget cycle.
+# The reserve leaves one floor for dispatch before merge-only stages run; the
+# admission gate skips enumeration entirely when no candidate could launch,
+# preserving the existing per-candidate early-stop for genuinely overrun
+# cycles. Missing/invalid cycle clocks fail open (legacy behaviour).
+# ---------------------------------------------------------------------------
+_pulse_dispatch_floor_seconds() {
+	local floor_seconds="${DISPATCH_PER_CANDIDATE_TIMEOUT_FLOOR:-600}"
+	[[ "$floor_seconds" =~ ^[1-9][0-9]*$ ]] || floor_seconds=600
+	printf '%s\n' "$floor_seconds"
+	return 0
+}
+
+# Stdout: finalisation reserve plus one dispatch floor, for stages that must
+# leave dispatch_max a launchable budget.
+_pulse_dispatch_reserved_finalise_seconds() {
+	local finalise_seconds="${AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S:-90}" floor_seconds=""
+	[[ "$finalise_seconds" =~ ^[0-9]+$ ]] || finalise_seconds=90
+	floor_seconds=$(_pulse_dispatch_floor_seconds)
+	if [[ "${AIDEVOPS_PULSE_DISPATCH_BUDGET_RESERVE:-1}" != "1" ]]; then
+		printf '%s\n' "$finalise_seconds"
+		return 0
+	fi
+	printf '%s\n' "$((finalise_seconds + floor_seconds))"
+	return 0
+}
+
+# Returns 0 when one dispatch candidate can still be admitted this cycle (or
+# the cycle clock is unavailable), 1 after logging a skip.
+# Args: $1=dispatch context for the log line
+_pulse_cycle_budget_admits_dispatch() {
+	local dispatch_context="$1" remaining_seconds="" floor_seconds=""
+	[[ "${AIDEVOPS_PULSE_DISPATCH_BUDGET_RESERVE:-1}" == "1" ]] || return 0
+	declare -F _pulse_cycle_remaining_seconds >/dev/null 2>&1 || return 0
+	remaining_seconds=$(_pulse_cycle_remaining_seconds "${AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S:-90}") || return 0
+	floor_seconds=$(_pulse_dispatch_floor_seconds)
+	[[ "$remaining_seconds" -ge "$floor_seconds" ]] && return 0
+	echo "[pulse-wrapper] ${dispatch_context} skipped before candidate enumeration: cycle wall-clock budget below per-candidate floor (remaining=${remaining_seconds}s floor=${floor_seconds}s); refill trigger retained for a fresh-budget pass (GH#33307)" >>"$LOGFILE"
+	if declare -F pulse_stats_increment >/dev/null 2>&1; then
+		pulse_stats_increment "pulse_dispatch_cycle_budget_skipped" 2>/dev/null || true
+	fi
+	return 1
+}
+
+# ---------------------------------------------------------------------------
 # _pulse_run_deterministic_pipeline
 #
 # Deterministic cycle stages: merge pass, dependency graph, blocked-status
@@ -1174,8 +1231,15 @@ _pulse_run_deterministic_pipeline() {
 			_pmr_skip=1
 		fi
 	fi
+	# GH#33307: merge-only stages keep one dispatch floor in reserve. The
+	# graceful merge deadline and stage clamp both honour this reserve, so a
+	# long backlog pauses at its PR cursor and resumes next cycle instead of
+	# leaving dispatch_max below its per-candidate floor.
+	local _pulse_merge_stage_reserve_s=""
+	_pulse_merge_stage_reserve_s=$(_pulse_dispatch_reserved_finalise_seconds)
 	if [[ "$_pmr_skip" -eq 0 ]]; then
-		_pulse_run_budget_priority_stage_with_timeout "deterministic_merge_pass" "$PRE_RUN_STAGE_TIMEOUT" \
+		AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S="$_pulse_merge_stage_reserve_s" \
+			_pulse_run_budget_priority_stage_with_timeout "deterministic_merge_pass" "$PRE_RUN_STAGE_TIMEOUT" \
 			merge_ready_prs_all_repos || true
 	fi
 
@@ -1187,7 +1251,8 @@ _pulse_run_deterministic_pipeline() {
 	if [[ -f "$STOP_FLAG" ]]; then
 		echo "[pulse-wrapper] Stop flag appeared — skipping dirty-pr-sweep" >>"$LOGFILE"
 	else
-		_pulse_run_budget_priority_stage_with_timeout "dirty_pr_sweep" "$PRE_RUN_STAGE_TIMEOUT" \
+		AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S="$_pulse_merge_stage_reserve_s" \
+			_pulse_run_budget_priority_stage_with_timeout "dirty_pr_sweep" "$PRE_RUN_STAGE_TIMEOUT" \
 			dirty_pr_sweep_all_repos || true
 	fi
 	# Accumulate health counters written by merge_ready_prs_all_repos (GH#18571, GH#15107).
@@ -1278,7 +1343,7 @@ _pulse_run_deterministic_pipeline() {
 				pulse_stats_increment "dispatch_candidate_failed" 2>/dev/null || true
 				pulse_stats_increment "dispatch_candidate_failed_reason_runner_health_circuit_breaker" 2>/dev/null || true
 			fi
-		else
+		elif _pulse_cycle_budget_admits_dispatch "Dispatch_max"; then
 			_pulse_run_budget_priority_stage "dispatch_max" apply_dispatch_max
 		fi
 	fi
@@ -1668,6 +1733,7 @@ main() {
 	_pulse_set_rest_core_budget_priority
 	local _cycle_dispatch_before
 	_cycle_dispatch_before=$(_pulse_capture_dispatch_total)
+	_PULSE_CYCLE_DISPATCH_BEFORE="$_cycle_dispatch_before"
 	if [[ "${PULSE_DRY_RUN:-0}" != "1" ]]; then
 		pulse_event_refill_drain "cycle-entry" || true
 	fi
@@ -1802,7 +1868,13 @@ main() {
 	# extracted to helper.
 	_pulse_cycle_state_publish deterministic || true
 	_pulse_run_deterministic_pipeline
-	pulse_event_refill_drain "cycle-final" || true
+	# GH#33307: an exhausted cycle cannot launch a candidate; leave the refill
+	# trigger for a fresh-budget worker-exit refill or the next cycle instead of
+	# re-enumerating every candidate and consuming the trigger with 0 launches.
+	local _pulse_refill_trigger="${PULSE_EVENT_REFILL_TRIGGER_FILE:-${HOME}/.aidevops/cache/pulse-event-refill.trigger}"
+	if [[ ! -f "$_pulse_refill_trigger" ]] || _pulse_cycle_budget_admits_dispatch "Event refill drain (cycle-final)"; then
+		pulse_event_refill_drain "cycle-final" || true
+	fi
 
 	# Run LLM supervisor if stall/daily-sweep/force conditions are met.
 	# GH#18689: extracted to _pulse_maybe_run_llm_supervisor().
@@ -1955,109 +2027,11 @@ ENRICHMENT_MAX_PER_CYCLE="${ENRICHMENT_MAX_PER_CYCLE:-2}"
 # sync_todo_refs_for_repo and _pulse_is_sourced provided by
 # pulse-wrapper-cycle.sh (GH#21311 / t2936-child).
 
-# Policy-compatible command router for supervisor prompts. OpenCode intentionally
-# rejects source-and-function compound commands, so expose only the bounded
-# wrapper operations the pulse workflows need while preserving their existing
-# authority, capacity, sandbox, and dedup implementations.
-_pulse_wrapper_command_usage() {
-	printf '%s\n' 'usage: pulse-wrapper.sh --command <capacity|list-candidates|dispatch|approve-pr|relabel-needs-info|dispatch-foss|repo-cap|count-debt|create-debt-worktree|sync-todo> [args...]' >&2
-	return 2
-}
-
-_pulse_wrapper_run_command() {
-	local command_name="${1:-}"
-	[[ -n "$command_name" ]] || {
-		_pulse_wrapper_command_usage
-		return 2
-	}
-	shift
-
-	case "$command_name" in
-	capacity)
-		[[ "$#" -eq 0 ]] || {
-			_pulse_wrapper_command_usage
-			return 2
-		}
-		local max_workers="" active_workers="" available=""
-		max_workers=$(get_max_workers_target)
-		active_workers=$(count_active_workers)
-		[[ "$max_workers" =~ ^[0-9]+$ ]] || max_workers=1
-		[[ "$active_workers" =~ ^[0-9]+$ ]] || active_workers=0
-		available=$((max_workers - active_workers))
-		[[ "$available" -ge 0 ]] || available=0
-		printf '%s|%s|%s\n' "$max_workers" "$active_workers" "$available"
-		;;
-	list-candidates)
-		[[ "$#" -ge 1 && "$#" -le 2 && -n "${1:-}" && "${2:-100}" =~ ^[0-9]+$ ]] || {
-			_pulse_wrapper_command_usage
-			return 2
-		}
-		list_dispatchable_issue_candidates "$1" "${2:-100}"
-		;;
-	dispatch)
-		[[ "$#" -eq 7 ]] || {
-			_pulse_wrapper_command_usage
-			return 2
-		}
-		dispatch_with_dedup "$@"
-		;;
-	approve-pr)
-		[[ "$#" -eq 3 ]] || {
-			_pulse_wrapper_command_usage
-			return 2
-		}
-		approve_collaborator_pr "$@"
-		;;
-	relabel-needs-info)
-		[[ "$#" -le 1 ]] || {
-			_pulse_wrapper_command_usage
-			return 2
-		}
-		relabel_needs_info_replies "$@"
-		;;
-	dispatch-foss)
-		[[ "$#" -ge 1 && "$#" -le 2 && "${1:-}" =~ ^[0-9]+$ ]] || {
-			_pulse_wrapper_command_usage
-			return 2
-		}
-		dispatch_foss_workers "$@"
-		;;
-	repo-cap)
-		[[ "$#" -eq 1 ]] || {
-			_pulse_wrapper_command_usage
-			return 2
-		}
-		check_repo_worker_cap "$1"
-		;;
-	count-debt)
-		[[ "$#" -eq 2 ]] || {
-			_pulse_wrapper_command_usage
-			return 2
-		}
-		count_debt_workers "$@"
-		;;
-	create-debt-worktree)
-		[[ "$#" -eq 3 ]] || {
-			_pulse_wrapper_command_usage
-			return 2
-		}
-		create_quality_debt_worktree "$@"
-		;;
-	sync-todo)
-		[[ "$#" -eq 2 ]] || {
-			_pulse_wrapper_command_usage
-			return 2
-		}
-		sync_todo_refs_for_repo "$@"
-		;;
-	*)
-		_pulse_wrapper_command_usage
-		return 2
-		;;
-	esac
-
-	return 0
-}
+# Policy-compatible command router for supervisor prompts. Keep this source
+# before the inline entrypoint gate: a sourced wrapper exposes the same functions.
+# shellcheck source=./pulse-wrapper-commands.sh
+# shellcheck disable=SC1091  # sibling library resolved at runtime via $SCRIPT_DIR
+source "${SCRIPT_DIR}/pulse-wrapper-commands.sh"
 
 # Only run main when executed directly, not when sourced.
 # The pulse agent sources this file to access helper functions

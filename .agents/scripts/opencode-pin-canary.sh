@@ -180,7 +180,9 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", "0"))
         body = json.loads(self.rfile.read(length))
         with open(request_file, "a", encoding="utf-8") as requests:
-            requests.write(self.path + "\n")
+            requests.write(json.dumps({"path": self.path,
+                                       "tool_count": len(body.get('tools', [])),
+                                       "keys": sorted(body.keys())}) + "\n")
         with open(tools_file, 'a', encoding='utf-8') as tools:
             tools.write(json.dumps([tool.get('name') or tool.get('function', {}).get('name')
                                     for tool in body.get('tools', [])]) + '\n')
@@ -250,12 +252,26 @@ verify_probe_plugin_tools() {
 	fi
 	local expected_tool
 	local tools_present=1
-	for expected_tool in aidevops_pre_edit_check aidevops_memory; do
-		if ! grep -qx "$expected_tool" "$captured_tools"; then
-			printf 'FAIL: %s missing aidevops tool %s\n' "$label" "$expected_tool" >&2
+	if [[ "$OPENCODE_CANARY_PROFILE" == "v2" ]]; then
+		# OpenCode 2 exposes plugin tools through the Code Mode `execute` gateway
+		# rather than as named provider tools, so verify the gateway is offered and
+		# the plugin reported registering its tools in the health marker.
+		if ! grep -qx 'execute' "$captured_tools"; then
+			printf 'FAIL: %s missing Code Mode execute gateway\n' "$label" >&2
 			tools_present=0
 		fi
-	done
+		if ! jq -e '(.details.factory_initialized.tools // 0) >= 2' "$health_file" >/dev/null 2>&1; then
+			printf 'FAIL: %s plugin reported fewer than 2 registered aidevops tools\n' "$label" >&2
+			tools_present=0
+		fi
+	else
+		for expected_tool in aidevops_pre_edit_check aidevops_memory; do
+			if ! grep -qx "$expected_tool" "$captured_tools"; then
+				printf 'FAIL: %s missing aidevops tool %s\n' "$label" "$expected_tool" >&2
+				tools_present=0
+			fi
+		done
+	fi
 	if ! jq -e --arg nonce "$health_nonce" '.nonce == $nonce and (.stages | index("factory_initialized") != null)' "$health_file" >/dev/null; then
 		printf 'FAIL: %s plugin initialization marker absent\n' "$label" >&2
 		tools_present=0
@@ -282,6 +298,12 @@ report_probe_failure() {
 	fi
 	printf 'Plugin health stages: ' >&2
 	jq -c '.stages' "$health_file" >&2 || true
+	printf 'Registered plugin tools: ' >&2
+	jq -c '.details.factory_initialized.tools // null' "$health_file" >&2 || true
+	printf 'Provider request shapes: ' >&2
+	if [[ -f "$probe_root/../mock-provider.requests" ]]; then
+		jq -c -s '.[-2:]' "$probe_root/../mock-provider.requests" >&2 || true
+	fi
 	python3 - "$output_file" <<'PY' >&2
 import sys
 with open(sys.argv[1], encoding='utf-8', errors='replace') as source:

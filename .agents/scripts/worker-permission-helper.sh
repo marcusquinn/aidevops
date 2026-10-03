@@ -319,6 +319,10 @@ Review the exact scope above, then run:
 
 This signs only the listed capabilities for this issue. It does not approve the issue scope, clear needs-maintainer-review, or authorize merge/release.
 
+To decline instead (for example, the requesting session has ended), sign a withdrawal that grants nothing and lets dispatch resume without this capability:
+
+    sudo aidevops approve permissions issue ${issue_number} ${repo_slug} --request ${request_id} --withdraw
+
 ~~~json
 $(jq . "$envelope_file")
 ~~~

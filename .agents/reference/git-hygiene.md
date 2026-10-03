@@ -36,6 +36,10 @@ git rev-parse --is-shallow-repository
 ```
 
 If it returns `true`, the fix is to fetch the missing history, not to resolve conflicts.
+Older `claim-task-id.sh` runs from linked worktrees could also make the shared
+repository shallow: their depth-1 counter fetches wrote grafts to the common
+`.git/shallow`. Depth-limited counter fetches now run only in an isolated bare
+context.
 
 ### Auto-recovery (GH#21900)
 
@@ -48,6 +52,13 @@ an error message instead, set:
 export AIDEVOPS_SHALLOW_UNSHALLOW=0
 ```
 
+The release helper self-heals too (GH#33069): `full-loop-release-helper.sh`
+checks its disposable control worktree for `--is-shallow-repository` before
+reserving the release lane and runs the same bounded `git fetch --unshallow
+--tags origin` there, never in the canonical checkout. A disabled or failed
+unshallow prints `RELEASE_SHALLOW_STORE action=disabled|failed` and stops
+before any lane write.
+
 ### Manual Recovery
 
 If the auto-unshallow fails or you need to recover mid-conflict:
@@ -56,12 +67,15 @@ If the auto-unshallow fails or you need to recover mid-conflict:
 # Step 1: abort any in-progress rebase
 git rebase --abort 2>/dev/null || true
 
-# Step 2: unshallow the clone
+# Step 2: from a linked worktree (never the canonical checkout), unshallow
 git fetch --unshallow origin
 
 # Step 3: retry the rebase
 git rebase origin/main
 ```
+
+The object store and shallow state are shared: unshallowing from one linked
+worktree restores history for the canonical checkout and every worktree.
 
 ### Save-patch Recovery (work was committed before the rebase attempt)
 

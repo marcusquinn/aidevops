@@ -12,7 +12,6 @@ _TOOL_INSTALL_ENVIRONMENTS_LOADED=1
 TOOL_INSTALL_EMPTY=${TOOL_INSTALL_EMPTY-}
 TOOL_INSTALL_BOOL_TRUE=${TOOL_INSTALL_BOOL_TRUE-true}
 TOOL_INSTALL_NODE_LABEL=${TOOL_INSTALL_NODE_LABEL-Node.js}
-TOOL_INSTALL_DSPY_ACTIVATE=${TOOL_INSTALL_DSPY_ACTIVATE-python-env/dspy-env/bin/activate}
 TOOL_INSTALL_UPGRADE_COMMAND=${TOOL_INSTALL_UPGRADE_COMMAND-"  Upgrade command:"}
 
 # SCRIPT_DIR fallback for direct sourcing and test harnesses.
@@ -104,117 +103,6 @@ check_python_upgrade_available() {
 	fi
 
 	return 0
-}
-
-setup_python_env() {
-	print_info "Setting up Python environment for DSPy..."
-
-	# Check if Python 3 is available
-	local python3_bin
-	if ! python3_bin=$(find_python3); then
-		print_warning "Python 3 not found - DSPy setup skipped"
-		print_info "Install Python 3.8+ to enable DSPy integration"
-		return
-	fi
-
-	local python_version
-	python_version=$("$python3_bin" --version | cut -d' ' -f2 | cut -d'.' -f1-2)
-	local version_check
-	version_check=$("$python3_bin" -c "import sys; print(1 if sys.version_info >= (3, 8) else 0)")
-
-	if [[ "$version_check" != "1" ]]; then
-		print_warning "Python 3.8+ required for DSPy, found $python_version - DSPy setup skipped"
-		return
-	fi
-
-	# Create Python virtual environment
-	if [[ ! -d "python-env/dspy-env" ]] || [[ ! -f "${TOOL_INSTALL_DSPY_ACTIVATE}" ]]; then
-		print_info "Creating Python virtual environment for DSPy..."
-		mkdir -p python-env
-		# Remove corrupted venv if directory exists but activate script is missing
-		if [[ -d "python-env/dspy-env" ]] && [[ ! -f "${TOOL_INSTALL_DSPY_ACTIVATE}" ]]; then
-			rm -rf python-env/dspy-env
-		fi
-		if "$python3_bin" -m venv python-env/dspy-env; then
-			print_success "Python virtual environment created"
-		else
-			print_warning "Failed to create Python virtual environment - DSPy setup skipped"
-			return
-		fi
-	else
-		print_info "Python virtual environment already exists"
-	fi
-
-	if ! declare -F aidevops_secure_dspy_cache >/dev/null 2>&1; then
-		print_warning "DSPy cache security helper unavailable - DSPy setup skipped"
-		return 0
-	fi
-	if ! aidevops_secure_dspy_cache; then
-		print_warning "DSPy cache could not be restricted to an owner-only directory - DSPy setup skipped"
-		return 0
-	fi
-	if ! aidevops_persist_dspy_cache_env "${TOOL_INSTALL_DSPY_ACTIVATE}"; then
-		print_warning "DSPy cache environment could not be persisted - DSPy setup skipped"
-		return 0
-	fi
-
-	# Install DSPy dependencies
-	print_info "Installing DSPy dependencies..."
-	# shellcheck source=/dev/null
-	if [[ -f "${TOOL_INSTALL_DSPY_ACTIVATE}" ]]; then
-		source python-env/dspy-env/bin/activate
-	else
-		print_warning "Python venv activate script not found - DSPy setup skipped"
-		return
-	fi
-	pip install --upgrade pip >/dev/null 2>&1
-
-	if run_with_spinner "Installing DSPy dependencies" pip install -r requirements.txt; then
-		: # Success message handled by spinner
-	else
-		print_info "Check requirements.txt or run manually:"
-		print_info "  source python-env/dspy-env/bin/activate && pip install -r requirements.txt"
-	fi
-	return 0
-}
-
-setup_nodejs_env() {
-	print_info "Setting up Node.js environment for DSPyGround..."
-
-	# Check if Node.js is available
-	if ! command -v node &>/dev/null; then
-		print_warning "Node.js not found - DSPyGround setup skipped"
-		print_info "Install Node.js 18+ to enable DSPyGround integration"
-		return
-	fi
-
-	local node_version
-	node_version=$(node --version 2>/dev/null | cut -d'v' -f2 | cut -d'.' -f1)
-	if [[ -z "$node_version" ]] || ! [[ "$node_version" =~ ^[0-9]+$ ]]; then
-		print_warning "Could not determine Node.js version - DSPyGround setup skipped"
-		return
-	fi
-	if [[ "$node_version" -lt 18 ]]; then
-		print_warning "Node.js 18+ required for DSPyGround, found v$node_version - DSPyGround setup skipped"
-		return
-	fi
-
-	# Check if npm is available
-	if ! command -v npm &>/dev/null; then
-		print_warning "npm not found - DSPyGround setup skipped"
-		return
-	fi
-
-	# Install DSPyGround globally if not already installed
-	if ! command -v dspyground &>/dev/null; then
-		if run_with_spinner "Installing DSPyGround" npm_global_install dspyground; then
-			: # Success message handled by spinner
-		else
-			print_warning "Try manually: sudo npm install -g dspyground"
-		fi
-	else
-		print_success "DSPyGround already installed"
-	fi
 }
 
 # Install Node.js via apt, preferring NodeSource LTS over the distro package.

@@ -1,22 +1,66 @@
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+# Cloudflare API Integration
 
-# Cloudflare API Integration Skill Reference
+Guide for working with Cloudflare's REST API - authentication, SDK usage, common patterns, and troubleshooting.
 
-Guide for working with Cloudflare's REST API - covering authentication, SDK usage, common patterns, and API categories.
+## Quick Decision Tree
 
-## When to Use This Skill
+```text
+How are you calling the Cloudflare API?
+├─ From Workers runtime → Use bindings, not REST API (see ../bindings/)
+├─ Server-side (Node/Python/Go) → Official SDK (see api.md)
+├─ CLI/scripts → Wrangler or curl (see configuration.md)
+├─ Infrastructure-as-code → See ../pulumi/ or ../terraform/
+└─ One-off requests → curl examples (see api.md)
+```
 
-Use when working with:
-- Cloudflare API authentication and tokens
-- Official Cloudflare SDKs (TypeScript, Python, Go)
-- Zone management, DNS, Workers, o...
+## SDK Selection
+
+| Language | Package | Best For | Default Retries |
+|----------|---------|----------|-----------------|
+| TypeScript | `cloudflare` | Node.js, Bun, Next.js, Workers | 2 |
+| Python | `cloudflare` | FastAPI, Django, scripts | 2 |
+| Go | `cloudflare-go/v4` | CLI tools, microservices | 10 |
+
+All SDKs are Stainless-generated from OpenAPI spec (consistent APIs).
+
+## Authentication Methods
+
+| Method | Security | Use Case | Scope |
+|--------|----------|----------|-------|
+| **API Token** ✓ | Scoped, rotatable | Production | Per-zone or account |
+| API Key + Email | Full account access | Legacy only | Everything |
+| User Service Key | Limited | Origin CA certs only | Origin CA |
+
+**Always use API tokens** for new projects.
+
+## Rate Limits
+
+| Limit | Value |
+|-------|-------|
+| Per user/token | 1200 requests / 5 minutes |
+| Per IP | 200 requests / second |
+| GraphQL | 320 / 5 minutes (cost-based) |
+
+## Reading Order
+
+| Task | Files to Read |
+|------|---------------|
+| Initialize SDK client | api.md |
+| Configure auth/timeout/retry | configuration.md |
+| Find usage patterns | patterns.md |
+| Debug errors/rate limits | gotchas.md |
+| Product-specific APIs | [Workers docs](https://developers.cloudflare.com/workers/index.md), ../r2/, ../kv/, etc. |
 
 ## In This Reference
 
-- **[patterns.md](./patterns.md)** - Common patterns, use cases, examples
-- **[gotchas.md](./gotchas.md)** - Troubleshooting, best practices, limitations
+- **[api.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/api/api.md)** - SDK client initialization, pagination, error handling, examples
+- **[configuration.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/api/configuration.md)** - Environment variables, SDK config, Wrangler setup
+- **[patterns.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/api/patterns.md)** - Real-world patterns, batch operations, workflows
+- **[gotchas.md](api-gotchas.md)** - Rate limits, SDK-specific issues, troubleshooting
 
 ## See Also
 
-- [Cloudflare Docs](https://developers.cloudflare.com/)
+- [Cloudflare API Docs](https://developers.cloudflare.com/api/index.md)
+- [Bindings Reference](../bindings/) - Workers runtime bindings (preferred over REST API)
+- [Wrangler Reference](https://developers.cloudflare.com/workers/wrangler/index.md) - CLI tool for Cloudflare development
+- [GraphQL Analytics API Reference](../graphql-api/) - Analytics data via GraphQL (separate endpoint from REST API)

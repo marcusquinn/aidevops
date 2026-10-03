@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 Marcus Quinn
 
-import { describeOpus47Override, OPUS_47_CONTEXT_DEFAULT } from "./model-limits.mjs";
+import { describeOpus47Override, GPT6_MODEL_IDS, OPUS_47_CONTEXT_DEFAULT } from "./model-limits.mjs";
 
 export function preserveGpt6Limit(settings, model) {
   const explicit = model.limit?.context !== undefined || model.limit?.input !== undefined;
@@ -28,7 +28,7 @@ export function preserveFamilyPreference(model, settings) {
   if (model.providerID !== "openai") return false;
   const id = model.id;
   const astra = id === "gpt-6-astra" || id?.startsWith("gpt-6-astra-");
-  const gpt6 = /^gpt-6-(sol|luna)(-fast)?$/.test(id);
+  const gpt6 = GPT6_MODEL_IDS.includes(id);
   if (astra && settings.astra_context_cap === false) return true;
   if (astra && settings.astra_compaction_target === 400000) return true;
   if (gpt6 && settings.gpt6_context_cap === false) return true;
@@ -81,8 +81,8 @@ export function restoreCustomLimit(existing, limit) {
 export function restoreConfiguredLimits(config, customized, settings) {
   for (const [key, limit] of customized) {
     // Explicit CLI enable is a deliberate override of GPT-6 model limits.
-    if (settings.gpt6_context_cap === true &&
-        /^openai\/gpt-6-(sol|luna)(-fast)?$/.test(key)) continue;
+    if (settings.gpt6_context_cap === true && key.startsWith("openai/") &&
+        GPT6_MODEL_IDS.includes(key.slice("openai/".length))) continue;
     const slash = key.indexOf("/");
     const existing = config.provider?.[key.slice(0, slash)]?.models?.[key.slice(slash + 1)];
     if (existing?.limit) restoreCustomLimit(existing, limit);

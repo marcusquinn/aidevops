@@ -203,6 +203,54 @@ for helper in "$REPO_ROOT/.agents/scripts/setup/_common.sh" "$REPO_ROOT/.agents/
 	[[ "$resolved" == "$xdg_root/opencode/opencode.json" ]]
 done
 
+# GH#33046: another tool's per-process OPENCODE_CONFIG must never become a
+# setup write target; user-owned and opted-in locations stay honoured.
+user_config="$HOME/.config/opencode/opencode.json"
+mkdir -p "${user_config%/*}"
+[[ -f "$user_config" ]] || printf '{}\n' >"$user_config"
+foreign_config="$SANDBOX/foreign-tool/analysis-opencode.json"
+mkdir -p "${foreign_config%/*}"
+printf '{"agent":{"image-analyzer":{"permission":{"*":"deny"}}}}\n' >"$foreign_config"
+foreign_before=$(<"$foreign_config")
+dotfiles_config="$SANDBOX/dotfiles/opencode.json"
+mkdir -p "${dotfiles_config%/*}"
+printf '{}\n' >"$dotfiles_config"
+for helper in "$REPO_ROOT/.agents/scripts/setup/_common.sh" "$REPO_ROOT/.agents/scripts/setup/_runtime_helpers.sh"; do
+	resolved_set=$(
+		unset _SETUP_RUNTIME_HELPERS_LOADED
+		# shellcheck source=/dev/null
+		source "$helper"
+		printf '%s|' "$(OPENCODE_CONFIG="$foreign_config" find_opencode_config 2>/dev/null)"
+		printf '%s|' "$(OPENCODE_CONFIG_DIR="${foreign_config%/*}" find_opencode_config 2>/dev/null)"
+		printf '%s|' "$(OPENCODE_CONFIG="$user_config" find_opencode_config 2>/dev/null)"
+		printf '%s|' "$(AIDEVOPS_OPENCODE_USER_CONFIG="$dotfiles_config" OPENCODE_CONFIG="$dotfiles_config" find_opencode_config 2>/dev/null)"
+		printf '%s' "$(AIDEVOPS_OPENCODE_USER_CONFIG="${dotfiles_config%/*}" find_opencode_config 2>/dev/null)"
+	)
+	expected_set="${user_config}|${user_config}|${user_config}|${dotfiles_config}|${dotfiles_config}"
+	[[ "$resolved_set" == "$expected_set" ]] ||
+		{ printf '%s resolved ambient configs unexpectedly: %s\n' "$(basename "$helper")" "$resolved_set" >&2; exit 1; }
+done
+notice=$(
+	unset -f find_opencode_config
+	# shellcheck source=/dev/null
+	source "$REPO_ROOT/.agents/scripts/setup/_common.sh"
+	OPENCODE_CONFIG="$foreign_config" find_opencode_config 2>&1 >/dev/null || true
+)
+[[ "$notice" == *"AIDEVOPS_OPENCODE_USER_CONFIG"* ]] ||
+	{ printf 'foreign ambient config skip was silent\n' >&2; exit 1; }
+(
+	# Exercise the real resolver, not the stub used by the earlier passes.
+	unset -f find_opencode_config
+	# shellcheck source=/dev/null
+	source "$REPO_ROOT/.agents/scripts/setup/_common.sh"
+	PATH="$SANDBOX/bin:$PATH" AIDEVOPS_OPENCODE_PROFILE=v1 AIDEVOPS_INSTALL_OPENCODE2_PREVIEW=0 \
+		OPENCODE_CONFIG="$foreign_config" setup_opencode_runtime_plugins
+) >/dev/null 2>&1
+[[ "$(<"$foreign_config")" == "$foreign_before" ]] ||
+	{ printf 'V1 plugin pass rewrote a foreign OPENCODE_CONFIG\n' >&2; exit 1; }
+jq -e '([.plugin[] | select(endswith("/opencode-aidevops/index.mjs"))] | length == 1)' "$user_config" >/dev/null ||
+	{ printf 'V1 plugin pass did not register in the user config\n' >&2; exit 1; }
+
 grep -Eq '_time_step .* setup_opencode_runtimes$' "$REPO_ROOT/setup.sh"
 grep -Eq 'confirm_step .*setup_opencode_runtimes$' "$REPO_ROOT/setup.sh"
 grep -Eq '_time_step .* setup_opencode_runtime_plugins$' "$REPO_ROOT/setup.sh"

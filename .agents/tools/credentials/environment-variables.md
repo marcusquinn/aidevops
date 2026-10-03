@@ -24,8 +24,8 @@ tools:
 - **Priority**: Environment variables > .env files > config files > defaults
 - **OpenAI**: `OPENAI_API_KEY` (sk-...), `OPENAI_BASE_URL`
 - **Anthropic**: `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`
-- **Others**: `AI_GATEWAY_API_KEY`, `GOOGLE_API_KEY`, `AZURE_OPENAI_API_KEY`
-- **Check keys**: `env | grep -E "(OPENAI|ANTHROPIC|CLAUDE)_API_KEY"`
+- **Others**: `GOOGLE_API_KEY`, `AZURE_OPENAI_API_KEY`
+- **Check keys**: check whether variables are set without printing their values
 - **Test OpenAI**: `curl -H "Authorization: Bearer $OPENAI_API_KEY" https://api.openai.com/v1/models | head -20`
 
 <!-- AI-CONTEXT-END -->
@@ -38,7 +38,6 @@ tools:
 | OpenAI | `OPENAI_BASE_URL` | Custom endpoint (optional) |
 | Anthropic | `ANTHROPIC_API_KEY` | For Claude models |
 | Anthropic | `ANTHROPIC_BASE_URL` | Custom endpoint (optional) |
-| DSPyGround | `AI_GATEWAY_API_KEY` | AI Gateway integration |
 | Google | `GOOGLE_API_KEY` | Gemini models |
 | Azure | `AZURE_OPENAI_API_KEY` | Azure OpenAI |
 
@@ -52,28 +51,15 @@ tools:
 ## How It Works
 
 Tools read environment variables automatically — no additional configuration needed.
-
-**DSPy** checks environment first:
-
-```python
-api_key = os.getenv("OPENAI_API_KEY", config_fallback)
-lm = dspy.LM(model="openai/gpt-3.5-turbo", api_key=api_key)
-```
-
-**`.env` files** reference your session variables:
-
-```bash
-OPENAI_API_KEY=${OPENAI_API_KEY}
-```
+Store secrets with `aidevops secret set NAME` or in `~/.config/aidevops/credentials.sh` with mode 600. Never commit secret values in `.env` or configuration files.
 
 ## Troubleshooting
 
 ```bash
-# Verify keys are set
-env | grep -E "(OPENAI|ANTHROPIC|CLAUDE)_API_KEY"
-
-# Check OpenAI key format (must start with sk-)
-echo $OPENAI_API_KEY | grep -E "^sk-"
+# Verify a key is set without exposing it
+if [[ -n "${OPENAI_API_KEY:-}" ]]; then
+  printf 'OpenAI key is set\n'
+fi
 
 # Test API connectivity
 curl -H "Authorization: Bearer $OPENAI_API_KEY" https://api.openai.com/v1/models | head -20
@@ -81,7 +67,7 @@ curl -H "Authorization: Bearer $OPENAI_API_KEY" https://api.openai.com/v1/models
 
 **Common issues:**
 
-1. Key not found — `echo $OPENAI_API_KEY` to verify it's exported
+1. Key not found — verify it's exported without printing it
 2. Wrong format — OpenAI keys start with `sk-`
 3. Permissions — ensure key has required scopes
 4. Rate limits — check API usage dashboard

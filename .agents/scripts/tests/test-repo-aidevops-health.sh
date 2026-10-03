@@ -171,7 +171,8 @@ assert_equal "current local config remains byte-identical" "$(cksum <"$CURRENT_R
 assert_equal "local config update does not create a commit" "$(/usr/bin/git -C "$STALE_REPO" rev-parse HEAD)" "$STALE_HEAD_BEFORE"
 assert_equal "ignored local config keeps repository clean" "$(/usr/bin/git -C "$STALE_REPO" status --porcelain)" ""
 assert_equal "tracked config remains byte-identical" "$(cksum <"$TRACKED_REPO/.aidevops.json")" "$TRACKED_BEFORE"
-assert_equal "tracked config emits one migration plan" "$(count_migration_plans)" "1"
+assert_contains "tracked config without origin reports migration blocker" "$(<"$HEALTH_LOG")" "no GitHub origin is available"
+assert_equal "tracked config without origin does not write obsolete local plan" "$(count_migration_plans)" "0"
 assert_equal "registered missing config is not created" "$(test -e "$REGISTERED_MISSING_REPO/.aidevops.json" && printf yes || printf no)" "no"
 assert_contains "missing config guidance uses config-only recovery" "$(<"$HEALTH_LOG")" "aidevops project-config restore 'test/registered-missing'"
 
@@ -179,9 +180,51 @@ STATUS_OUT=$("$HELPER" status 2>&1)
 assert_contains "status reports bump counters" "$STATUS_OUT" "1 bumped, 2 bump-skipped, 0 bump-failed"
 assert_contains "status reports drift counters" "$STATUS_OUT" "1 registered-config-missing, 1 missing-folder, 1 no-init"
 
+# Persistent sync observations and missing loaded launchd script are diagnostics
+# only; health status must not unload or rewrite scheduler entries.
+mkdir -p "$HOME/.aidevops/cache" "$HOME/Library/LaunchAgents" "$TEST_ROOT/bin"
+jq -n --arg failed "$STALE_REPO" --arg stale "$CURRENT_REPO" '{repo_observations:{
+	($failed):{last_result:"FAIL",fail_runs:3,stale_since:null},
+	($stale):{last_result:"STALE",fail_runs:0,stale_since:"2020-01-01T00:00:00Z"}
+}}' >"$HOME/.aidevops/cache/repo-sync-state.json"
+printf '%s\n' '<plist><dict><key>ProgramArguments</key></dict></plist>' >"$HOME/Library/LaunchAgents/sh.aidevops.mirror-sync.plist"
+cat >"$TEST_ROOT/bin/launchctl" <<'FAKE_LAUNCHCTL'
+#!/usr/bin/env bash
+if [[ "${1:-}" == list ]]; then
+	printf '%s\t%s\t%s\n' '-' '127' 'sh.aidevops.mirror-sync'
+fi
+FAKE_LAUNCHCTL
+cat >"$TEST_ROOT/bin/plutil" <<'FAKE_PLUTIL'
+#!/usr/bin/env bash
+case "${2:-}" in
+ProgramArguments.0) printf '%s\n' "$HOME/.aidevops/agents/custom/scripts/mirror-sync-helper.sh" ;;
+ProgramArguments.1) printf 'check\n' ;;
+esac
+FAKE_PLUTIL
+chmod +x "$TEST_ROOT/bin/launchctl" "$TEST_ROOT/bin/plutil"
+STATUS_OUT=$(PATH="$TEST_ROOT/bin:$PATH" AIDEVOPS_SCHEDULER=launchd "$HELPER" status 2>&1)
+assert_contains "three sync failures are visible" "$STATUS_OUT" "Repo sync: FAIL $STALE_REPO (3 consecutive runs)"
+assert_contains "stale over 24h is visible" "$STATUS_OUT" "Repo sync: STALE $CURRENT_REPO"
+assert_contains "missing launchd program is reported" "$STATUS_OUT" "sh.aidevops.mirror-sync missing program/script"
+assert_contains "missing launchd job includes explicit removal" "$STATUS_OUT" "launchctl bootout gui/"
+
+printf 'ExecStart=/bin/bash %s\n' "$HOME/.aidevops/agents/custom/scripts/mirror-sync-helper.sh" >"$TEST_ROOT/broken.service"
+cat >"$TEST_ROOT/bin/systemctl" <<'FAKE_SYSTEMCTL'
+#!/usr/bin/env bash
+case "${2:-}" in
+list-unit-files) printf 'aidevops-broken.service enabled\n' ;;
+show) printf '%s\n' "$BROKEN_UNIT_FILE" ;;
+esac
+FAKE_SYSTEMCTL
+chmod +x "$TEST_ROOT/bin/systemctl"
+STATUS_OUT=$(BROKEN_UNIT_FILE="$TEST_ROOT/broken.service" PATH="$TEST_ROOT/bin:$PATH" AIDEVOPS_SCHEDULER=systemd "$HELPER" status 2>&1)
+assert_contains "missing systemd script is reported" "$STATUS_OUT" "aidevops-broken.service missing program/script"
+assert_contains "systemd removal is report-only" "$STATUS_OUT" "systemctl --user disable --now aidevops-broken.service"
+
 "$HELPER" check >/dev/null 2>&1
 assert_contains "rerun is idempotent" "$(<"$HEALTH_LOG")" "0 bumped, 3 bump-skipped, 0 bump-failed, 1 registered-config-missing, 1 missing-folder, 1 no-init"
-assert_equal "rerun keeps one migration plan" "$(count_migration_plans)" "1"
+assert_equal "rerun preserves tracked config bytes" "$(cksum <"$TRACKED_REPO/.aidevops.json")" "$TRACKED_BEFORE"
+assert_equal "rerun creates no obsolete local plans" "$(count_migration_plans)" "0"
 
 set +e
 UNKNOWN_OUT=$("$HELPER" bogus-subcommand 2>&1)

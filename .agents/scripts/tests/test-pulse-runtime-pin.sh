@@ -240,6 +240,88 @@ test_invalid_pin_blocks_direct_entrypoint() {
 	return 0
 }
 
+test_worker_exit_refill_uses_active_bundle_before_lock() {
+	local pinned_root="$1"
+	local old_root=""
+	local active_root=""
+	local exec_log="$TEST_ROOT/refill-exec.log"
+	local now=""
+	old_root=$(write_bundle "bundle-old")
+	active_root=$(write_bundle "bundle-active")
+	# Start the real wrapper from A, as an A-pinned worker does. Only its early
+	# bootstrap dependencies are needed: successful re-exec must precede leases.
+	cp "$REPO_ROOT/.agents/scripts/pulse-wrapper.sh" "$old_root/scripts/pulse-wrapper.sh"
+	cp "$REPO_ROOT/.agents/scripts/pulse-runtime-pin.sh" "$old_root/scripts/pulse-runtime-pin.sh"
+	cp "$REPO_ROOT/.agents/scripts/runtime-bundle-manifest.sh" "$old_root/scripts/runtime-bundle-manifest.sh"
+	cp "$REPO_ROOT/.agents/scripts/runtime-bundle-lease.sh" "$active_root/scripts/runtime-bundle-lease.sh"
+	cat >"$active_root/scripts/pulse-wrapper.sh" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+root="${0%/scripts/pulse-wrapper.sh}"
+[[ ! -d "$HOME/.aidevops/runtime-bundles/.leases/bundle-old" ]]
+[[ ! -d "$HOME/.aidevops/logs/pulse-wrapper.lockdir" ]]
+source "$root/scripts/runtime-bundle-lease.sh"
+aidevops_runtime_bundle_lease_acquire "$root"
+[[ -f "$HOME/.aidevops/runtime-bundles/.leases/bundle-active/$$" ]]
+mkdir -p "$HOME/.aidevops/logs"
+mkdir "$HOME/.aidevops/logs/pulse-wrapper.lockdir"
+printf '%s|%s|active-lease-before-lock\n' "$0" "$*" >>"${PULSE_PIN_EXEC_LOG:?}"
+rmdir "$HOME/.aidevops/logs/pulse-wrapper.lockdir"
+aidevops_runtime_bundle_lease_release
+SH
+	# Switch activation to B after the worker has retained its A entrypoint.
+	rm "$HOME/.aidevops/agents"
+	ln -s "$active_root" "$HOME/.aidevops/agents"
+	now=$(date +%s)
+	pulse_runtime_pin_set "$old_root" "$((now + 600))"
+	PULSE_PIN_EXEC_LOG="$exec_log" AIDEVOPS_AGENTS_DIR="$old_root" \
+		bash "$old_root/scripts/pulse-wrapper.sh" --refill-source=worker-exit --refill-only
+	grep -qF "$active_root/scripts/pulse-wrapper.sh|--refill-source=worker-exit --refill-only|active-lease-before-lock" "$exec_log" || fail "old worker refill did not acquire its first lease and lock from B"
+	# Ordinary refills still follow the operator pin. The A wrapper is real,
+	# so use a different ordinary pin stub for this check.
+	pulse_runtime_pin_set "$pinned_root" "$((now + 600))"
+	PULSE_PIN_EXEC_LOG="$exec_log" bash "$old_root/scripts/pulse-wrapper.sh" --refill-only --refill-source=integration
+	grep -qF "$pinned_root/scripts/pulse-wrapper.sh|--refill-only --refill-source=integration" "$exec_log" || fail "ordinary refill bypassed the operator pin"
+	# Current B returns without exec; the pin to another bundle cannot bounce
+	# a worker-exit wake back into A. This is the same resolver used by the CLI.
+	(
+		pulse_runtime_pin_reexec "$active_root" "scripts/pulse-wrapper.sh" --refill-only --refill-source=worker-exit
+		printf 'current-active-returned\n' >>"$exec_log"
+	)
+	grep -qF 'current-active-returned' "$exec_log" || fail "current-bundle refill re-entered an old pin"
+	pulse_runtime_pin_clear --force
+	pass "A worker exit enters validated B before its first lease/lock; ordinary pins remain unchanged"
+	return 0
+}
+
+test_worker_exit_refill_rejects_invalid_active_bundle() {
+	local pinned_root="$1"
+	local old_root="$HOME/.aidevops/runtime-bundles/bundle-old/agents"
+	local active_root="$HOME/.aidevops/runtime-bundles/bundle-active/agents"
+	local invalid_root=""
+	local rc=0
+	local exec_log="$TEST_ROOT/invalid-refill-exec.log"
+	# A valid ordinary pin must not be a fallback for an invalid active root.
+	pulse_runtime_pin_set "$pinned_root" "$(($(date +%s) + 600))"
+	for invalid_root in "$TEST_ROOT/missing" "$TEST_ROOT/outside/agents" "$active_root"; do
+		if [[ "$invalid_root" == "$active_root" ]]; then
+			printf 'status=rejected\n' >>"$active_root/.bundle-manifest"
+		fi
+		rc=0
+		PULSE_PIN_EXEC_LOG="$exec_log" AIDEVOPS_ACTIVE_AGENTS_LINK="$invalid_root" \
+			bash "$old_root/scripts/pulse-wrapper.sh" --refill-only --refill-source=worker-exit >/dev/null 2>&1 || rc=$?
+		[[ "$rc" -eq 2 ]] || fail "invalid active root did not block worker-exit refill"
+		[[ ! -e "$exec_log" ]] || fail "invalid active root executed a fallback bundle"
+		[[ ! -d "$HOME/.aidevops/runtime-bundles/.leases/bundle-old" ]] || fail "invalid active root leased A"
+		[[ ! -d "$HOME/.aidevops/logs/pulse-wrapper.lockdir" ]] || fail "invalid active root acquired the lock"
+	done
+	pulse_runtime_pin_clear --force
+	rm "$HOME/.aidevops/agents"
+	ln -s "$pinned_root" "$HOME/.aidevops/agents"
+	pass "missing, outside and invalid active roots fail closed before worker-exit lease/lock acquisition"
+	return 0
+}
+
 test_set_current_rejects_overlong_ttl() {
 	local agents_root="$1"
 	if AIDEVOPS_ACTIVE_AGENTS_LINK="$agents_root" pulse_runtime_pin_set_current "$((_PULSE_RUNTIME_PIN_MAX_SECONDS + 1))" >/dev/null 2>&1; then
@@ -357,6 +439,8 @@ main() {
 	test_rejects_duplicate_manifest_keys "$agents_root"
 	test_direct_entrypoints_reexec_pinned_bundle "$agents_root"
 	test_invalid_pin_blocks_direct_entrypoint "$agents_root"
+	test_worker_exit_refill_uses_active_bundle_before_lock "$agents_root"
+	test_worker_exit_refill_rejects_invalid_active_bundle "$agents_root"
 	test_set_current_rejects_overlong_ttl "$agents_root"
 	test_active_pin_preserves_installed_scheduler
 	test_active_pin_preserves_merge_scheduler

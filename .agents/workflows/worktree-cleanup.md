@@ -143,6 +143,12 @@ aidevops cleanup branches --repo ~/Git/aidevops --remote origin
 
 The command deletes only branches with safety evidence: merged to the default branch or linked to a merged PR, with no open PR and no active local worktree. Unmerged branches are reported as `review` and are not deleted by default.
 
+## Local Branch Cleanup
+
+Use `aidevops cleanup local-branches` for a dry-run audit of local branches, or `aidevops cleanup local-branches --apply` to remove safe candidates. To inspect one branch, add `--branch NAME`. A full scan lists open PRs once per cache window (`AIDEVOPS_LOCAL_BRANCH_CLEANUP_OPEN_TTL_S`, default 60s) and caps closed-PR lookups with `--max-lookups N` (default 500); branches beyond the budget are kept with `lookup budget exhausted`, so rerun to continue a large backlog. Worktree `remove` and `clean` run single-branch cleanup automatically after removing a worktree; a refused cleanup preserves the branch and does not fail worktree removal.
+
+Only branches with no open PR and no active worktree are eligible. Their exact tip must be an ancestor of the remote default branch or match a merged PR's head SHA. Ref deletion uses an atomic SHA lease from an isolated linked worktree and logs the deleted branch and SHA for recovery. Failed GitHub evidence checks preserve branches rather than guessing whether they merged.
+
 ## See Also
 
 - `workflows/git-workflow.md` — full worktree lifecycle

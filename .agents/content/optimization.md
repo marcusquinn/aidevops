@@ -195,7 +195,7 @@ experiments, reports, recommendations) | `content-calendar-helper.sh`
 `variant-generator-helper.sh` (10 variants) | `seed-bracket-helper.sh` (AI video
 seed testing) | `thumbnail-factory-helper.sh` (thumbnail variants, t207)
 
-**Feeds into**: `content/research.md` (next research), `content/production-*.md` (next batch). **Uses from**: `content/distribution-*.md` (analytics), `content/production-*.md` (variants). **Related**: `tools/task-management/beads.md`, `reference/memory.md`.
+**Feeds into**: `content/research.md` (next research), `content/production-*.md` (next batch). **Uses from**: `content/distribution-*.md` (analytics), `content/production-*.md` (variants). **Related**: `reference/memory.md`.
 
 **After optimization**: Store only owner-reviewed, evidence-qualified patterns,
 update the calendar within approved authority, feed validated topics into the

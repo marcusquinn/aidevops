@@ -669,6 +669,38 @@ _pmp_record_pr_list_timing() {
 	return 0
 }
 
+# Per-repo cache helpers for _merge_ready_prs_for_repo. They set/clean the
+# caller's dynamically scoped AIDEVOPS_PULSE_*_CACHE_DIR locals.
+_pmp_setup_merge_repo_caches() {
+	local repo_slug="$1"
+	AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/aidevops-pulse-required-contexts.XXXXXX" 2>/dev/null) || AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR=""
+	AIDEVOPS_PULSE_AUTHOR_PERMISSION_CACHE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/aidevops-pulse-author-perms.XXXXXX" 2>/dev/null) || AIDEVOPS_PULSE_AUTHOR_PERMISSION_CACHE_DIR=""
+	if [[ -z "$AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR" || -z "$AIDEVOPS_PULSE_AUTHOR_PERMISSION_CACHE_DIR" ]]; then
+		echo "[pulse-wrapper] Merge pass: per-repo cache setup incomplete for ${repo_slug}; continuing without one or more caches (GH#25696)" >>"$LOGFILE"
+	fi
+	return 0
+}
+
+_pmp_cleanup_merge_repo_caches() {
+	[[ -n "${AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR:-}" ]] && rm -rf -- "$AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR"
+	[[ -n "${AIDEVOPS_PULSE_AUTHOR_PERMISSION_CACHE_DIR:-}" ]] && rm -rf -- "$AIDEVOPS_PULSE_AUTHOR_PERMISSION_CACHE_DIR"
+	return 0
+}
+
+# GH#33307: run backlog enrichment and attribute its wall time to
+# <prefix>enrichment_s so per-repo total_s is explainable.
+# Args: $1=repo slug, $2=PR JSON, $3=output var name, $4=timing prefix (optional)
+_pmp_prepare_enriched_pr_backlog_timed() {
+	local repo_slug="$1" backlog_json="$2" out_var="$3" timing_prefix="${4:-}"
+	local enrichment_start="" enrichment_rc=0
+	enrichment_start=$(_pmp_now_epoch)
+	_pmp_prepare_enriched_pr_backlog "$repo_slug" "$backlog_json" "$out_var" || enrichment_rc=$?
+	if [[ -n "$timing_prefix" ]]; then
+		_pmp_add_elapsed_seconds "${timing_prefix}enrichment_s" "$enrichment_start" || true
+	fi
+	return "$enrichment_rc"
+}
+
 #######################################
 # Merge ready PRs for a single repo.
 #
@@ -731,17 +763,12 @@ _merge_ready_prs_for_repo() {
 	fi
 
 	local AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR="" AIDEVOPS_PULSE_AUTHOR_PERMISSION_CACHE_DIR=""
-	AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/aidevops-pulse-required-contexts.XXXXXX" 2>/dev/null) || AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR=""
-	AIDEVOPS_PULSE_AUTHOR_PERMISSION_CACHE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/aidevops-pulse-author-perms.XXXXXX" 2>/dev/null) || AIDEVOPS_PULSE_AUTHOR_PERMISSION_CACHE_DIR=""
-	if [[ -z "$AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR" || -z "$AIDEVOPS_PULSE_AUTHOR_PERMISSION_CACHE_DIR" ]]; then
-		echo "[pulse-wrapper] Merge pass: per-repo cache setup incomplete for ${repo_slug}; continuing without one or more caches (GH#25696)" >>"$LOGFILE"
-	fi
+	_pmp_setup_merge_repo_caches "$repo_slug"
 
 	local prepared_pr_json="" preparation_rc=0
-	_pmp_prepare_enriched_pr_backlog "$repo_slug" "$pr_json" prepared_pr_json || preparation_rc=$?
+	_pmp_prepare_enriched_pr_backlog_timed "$repo_slug" "$pr_json" prepared_pr_json "$_timing_prefix" || preparation_rc=$?
 	if [[ "$preparation_rc" -ne 0 ]]; then
-		[[ -n "$AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR" ]] && rm -rf -- "$AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR"
-		[[ -n "$AIDEVOPS_PULSE_AUTHOR_PERMISSION_CACHE_DIR" ]] && rm -rf -- "$AIDEVOPS_PULSE_AUTHOR_PERMISSION_CACHE_DIR"
+		_pmp_cleanup_merge_repo_caches
 		eval "${_merged_var}=0; ${_closed_var}=0; ${_failed_var}=0"
 		return "$preparation_rc"
 	fi
@@ -755,9 +782,11 @@ _merge_ready_prs_for_repo() {
 	local i=0
 	_pmp_prepare_merge_pr_cursor_resume "$repo_slug" "$pr_json" "$pr_count" "$PULSE_MERGE_PR_CURSOR_FILE" "$LOGFILE" i || i=0
 	while [[ "$i" -lt "$pr_count" ]]; do
-		local pr_obj=""
+		local pr_obj="" _pr_start=""
+		_pr_start=$(_pmp_now_epoch) # GH#33307: time the whole per-PR unit
 		_pmp_prepare_pr_at_cursor "$repo_slug" "$pr_json" "$i" pr_obj "$_merged_var" "$_closed_var" "$_failed_var" "$merged" "$closed" "$failed" "$AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR" "$AIDEVOPS_PULSE_AUTHOR_PERMISSION_CACHE_DIR" || return $?
 		[[ -n "$pr_obj" ]] || {
+			[[ -n "$_timing_prefix" ]] && _pmp_record_pr_processing_timing "$_timing_prefix" "$_pr_start" ""
 			i=$((i + 1))
 			continue
 		}
@@ -770,14 +799,14 @@ _merge_ready_prs_for_repo() {
 
 		_process_single_ready_pr "$repo_slug" "$pr_obj" "$_timing_prefix"
 		local _pr_rc=$?
+		[[ -n "$_timing_prefix" ]] && _pmp_record_pr_processing_timing "$_timing_prefix" "$_pr_start" "$_cursor_last_pr"
 		_pmp_record_processed_pr_result "$repo_slug" "$_cursor_last_pr" "$_pr_head_sha" "$_pr_rc" merged closed failed || outcomes_complete=0
 		_pmp_write_merge_pr_cursor "$PULSE_MERGE_PR_CURSOR_FILE" "$repo_slug" "$i" "$_cursor_last_pr" "$_cursor_next_pr"
 	done
 	_pmp_clear_merge_pr_cursor "$PULSE_MERGE_PR_CURSOR_FILE"
 	_pmp_clear_merge_enrichment_state
 
-	[[ -n "$AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR" ]] && rm -rf -- "$AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR"
-	[[ -n "$AIDEVOPS_PULSE_AUTHOR_PERMISSION_CACHE_DIR" ]] && rm -rf -- "$AIDEVOPS_PULSE_AUTHOR_PERMISSION_CACHE_DIR"
+	_pmp_cleanup_merge_repo_caches
 	if [[ "$pr_list_complete" -eq 1 && "$outcomes_complete" -eq 1 ]]; then _pmp_mark_same_pass_repo_complete "$repo_slug" 2>/dev/null || true; fi
 
 	eval "${_merged_var}=${merged}; ${_closed_var}=${closed}; ${_failed_var}=${failed}"

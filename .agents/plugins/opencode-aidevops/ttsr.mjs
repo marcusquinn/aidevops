@@ -1,4 +1,4 @@
-import { existsSync } from "fs";
+import { appendRuntimeEvent } from "../../scripts/runtime-events.mjs";
 import { join } from "path";
 import { compactSystemContext } from "./context-catalogue.mjs";
 import {
@@ -352,6 +352,7 @@ async function ttsrMessagesTransform(input, output, state, qualityLog, isHeadles
 
   const sessionID = output.messages[0]?.info?.sessionID || "";
   output.messages.push(buildCorrectionMessage(allViolations, sessionID));
+  recordViolationEvents(allViolations, sessionID, "messages.transform");
 
   qualityLog(
     "INFO",
@@ -360,18 +361,21 @@ async function ttsrMessagesTransform(input, output, state, qualityLog, isHeadles
 }
 
 /**
- * Record TTSR violations to the pattern tracker script if available.
+ * Count each detected rule through the existing fail-open observability queue.
+ * Store rule IDs and scan source only, never assistant text or rule corrections.
  * @param {Array<{ rule: object }>} violations
- * @param {{ scriptsDir: string, run: Function }} execDeps
+ * @param {string} sessionID
+ * @param {string} source
  */
-function recordViolationsToTracker(violations, execDeps) {
-  const patternTracker = join(execDeps.scriptsDir, "pattern-tracker-helper.sh");
-  if (!existsSync(patternTracker)) return;
-  const ruleIds = violations.map((v) => v.rule.id).join(",");
-  execDeps.run(
-    `bash "${patternTracker}" record "TTSR_VIOLATION" "rules: ${ruleIds}" --tag "ttsr" 2>/dev/null`,
-    5000,
-  );
+function recordViolationEvents(violations, sessionID, source) {
+  for (const { rule } of violations) {
+    appendRuntimeEvent({
+      eventType: "rule.violation",
+      subjectId: rule.id,
+      sessionId: sessionID,
+      payload: { source, observation: { count: 1 } },
+    });
+  }
 }
 
 /**
@@ -379,10 +383,9 @@ function recordViolationsToTracker(violations, execDeps) {
  * @param {object} input
  * @param {object} output
  * @param {object} state
- * @param {{ scriptsDir: string, run: Function }} execDeps
  * @param {(level: string, message: string) => void} qualityLog
  */
-async function ttsrTextComplete(input, output, state, execDeps, qualityLog) {
+async function ttsrTextComplete(input, output, state, qualityLog) {
   if (!output.text) return;
 
   const violations = scanForViolations(output.text, state);
@@ -401,7 +404,7 @@ async function ttsrTextComplete(input, output, state, execDeps, qualityLog) {
   });
 
   output.text = output.text + "\n" + markers.join("\n");
-  recordViolationsToTracker(violations, execDeps);
+  recordViolationEvents(violations, input.sessionID, "text.complete");
 }
 
 // ---------------------------------------------------------------------------
@@ -427,12 +430,11 @@ async function ttsrTextComplete(input, output, state, execDeps, qualityLog) {
  * @returns {{ loadTtsrRules: Function, systemTransformHook: Function, messagesTransformHook: Function, textCompleteHook: Function }}
  */
 export function createTtsrHooks(deps) {
-  const { agentsDir, scriptsDir, readIfExists, qualityLog, run, intentField } = deps;
+  const { agentsDir, readIfExists, qualityLog, intentField } = deps;
   const isHeadless = deps.isHeadless || (() => false);
   const shouldInjectGreeting = deps.shouldInjectGreeting || (async () => !isHeadless());
   const ttsrRulesPath = join(agentsDir, "configs", "ttsr-rules.json");
   const state = createTtsrState(ttsrRulesPath, readIfExists);
-  const execDeps = { scriptsDir, run };
   const greetingOptions = {
     readGreetingCache: deps.readGreetingCache,
     now: deps.now,
@@ -450,7 +452,7 @@ export function createTtsrHooks(deps) {
     loadTtsrRules: () => loadTtsrRules(state),
     systemTransformHook: (input, output) => ttsrSystemTransform(input, output, systemTransformContext),
     messagesTransformHook: (_input, output) => ttsrMessagesTransform(_input, output, state, qualityLog, isHeadless),
-    textCompleteHook: (input, output) => ttsrTextComplete(input, output, state, execDeps, qualityLog),
+    textCompleteHook: (input, output) => ttsrTextComplete(input, output, state, qualityLog),
   };
 }
 

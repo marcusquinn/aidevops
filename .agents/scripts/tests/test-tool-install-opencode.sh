@@ -853,6 +853,7 @@ env-check)
 	;;
 auth-env) printf '%s|%s\n' "${XDG_CONFIG_HOME:-}" "${GH_CONFIG_DIR:-}" ;;
 "") printf 'pwd=%s\n' "$PWD" ;;
+--session) printf 'session=%s pwd=%s\n' "${2:-}" "$PWD" ;;
 *)
 	if [[ "$*" == *auth-env* ]]; then
 		printf '%s|%s\n' "${XDG_CONFIG_HOME:-}" "${GH_CONFIG_DIR:-}"
@@ -918,7 +919,8 @@ mkdir -p "$v2_marker_dir" "$v2_project_dir" "$v2_resolver_dir"
 v2_project_dir=$(cd "$v2_project_dir" && pwd -P)
 printf 'process.stdout.write(%s + "\\t/data\\tses_abcdef123456\\n");\n' "\"$v2_project_dir\"" \
 	>"$v2_resolver_dir/session-recovery-marker.mjs"
-assert_eq "V2 TUI leaves a Tabby recovery marker directory for its project" "pwd=$v2_project_dir" \
+assert_eq "V2 TUI resumes the marked session from its project directory" \
+	"session=ses_abcdef123456 pwd=$v2_project_dir" \
 	"$(cd "$v2_marker_dir" && HOME="$v2_home" "$v2_shim" 2>/dev/null)"
 printf 'process.exitCode = 1;\n' >"$v2_resolver_dir/session-recovery-marker.mjs"
 assert_eq "V2 TUI falls back to HOME for an unresolvable recovery marker" "pwd=$v2_home" \

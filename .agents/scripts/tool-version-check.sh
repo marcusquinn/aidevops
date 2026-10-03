@@ -108,7 +108,7 @@ _brew_upgrade_cmd() {
 # Ubuntu 24.04+, Fedora 38+, and modern Debian mark the system Python as
 # "externally managed" — bare `pip install` is blocked with an error.
 # Safe upgrade order: pipx (isolated venv) → pip --user (user site-packages).
-# $1 = pip package name (e.g. "beads-viewer", "dspy-ai", "crawl4ai")
+# $1 = pip package name (e.g. "analytics-mcp")
 # shellcheck disable=SC2016  # Single quotes intentional: bash -c payload
 _pip_upgrade_cmd() {
 	local pkg="$1"
@@ -122,11 +122,7 @@ NPM_TOOLS=(
 	"npm|OpenCode|opencode|--version|opencode-ai|${_oc_upgrade_cmd}"
 	"npm|Claude Code CLI|claude|--version|@anthropic-ai/claude-code|npm install -g @anthropic-ai/claude-code@latest"
 	"npm|Codex CLI|codex|--version|@openai/codex|npm install -g @openai/codex@latest"
-	"npm|Repomix|repomix|--version|repomix|npm install -g repomix@latest"
-	"npm|DSPyGround|dspyground|--version|dspyground|npm install -g dspyground@latest"
 	"npm|LocalWP MCP|mcp-local-wp|--version|@verygoodplugins/mcp-local-wp|npm install -g @verygoodplugins/mcp-local-wp@latest"
-	"npm|Beads UI|beads-ui|--version|beads-ui|npm install -g beads-ui@latest"
-	"npm|BDUI|bdui|--version|bdui|npm install -g bdui@latest"
 	"npm|Chrome DevTools MCP|chrome-devtools-mcp|--version|chrome-devtools-mcp|npm install -g chrome-devtools-mcp@latest"
 	"npm|GSC MCP|mcp-server-gsc|--version|mcp-server-gsc|npm install -g mcp-server-gsc@latest"
 	"npm|Playwriter MCP|playwriter|--version|playwriter|npm install -g playwriter@0.5.0"
@@ -140,18 +136,16 @@ BREW_TOOLS=(
 	"brew|GitHub CLI|gh|--version|gh|$(_brew_upgrade_cmd gh)"
 	"brew|GitLab CLI|glab|--version|glab|$(_brew_upgrade_cmd glab)"
 	"brew|Worktrunk|wt|--version|max-sixty/worktrunk/wt|$(_brew_upgrade_cmd max-sixty/worktrunk/wt)"
-	"brew|Beads CLI|bd|version|steveyegge/beads/bd|$(_brew_upgrade_cmd steveyegge/beads/bd)"
 	"brew|jq|jq|--version|jq|$(_brew_upgrade_cmd jq)"
 	"brew|ripgrep|rg|--version|ripgrep|$(_brew_upgrade_cmd ripgrep)"
 	"brew|ShellCheck|shellcheck|--version|shellcheck|$(_brew_upgrade_cmd shellcheck)"
 )
 
 PIP_TOOLS=(
-	"pip|Beads Viewer|beads_viewer|--version|beads-viewer|$(_pip_upgrade_cmd beads-viewer)"
 	"pip|Analytics MCP|analytics-mcp|--version|analytics-mcp|pipx upgrade analytics-mcp"
 	"pip|Outscraper MCP|outscraper-mcp-server|--version|outscraper-mcp-server|uv tool upgrade outscraper-mcp-server"
 )
-# Library dependencies (e.g. dspy-ai, crawl4ai) are intentionally excluded from
+# Library dependencies (e.g. crawl4ai) are intentionally excluded from
 # PIP_TOOLS. They are project-level dependencies managed inside project venvs via
 # pyproject.toml / requirements.txt — not global CLI tools. Auto-updating them
 # here installs redundant global copies that diverge from pinned project versions.
@@ -230,7 +224,7 @@ get_uv_installed_version() {
 # Get installed version for Python packages across all install methods.
 # Tries pip show first (standard pip installs), then pipx (isolated tools like
 # analytics-mcp), then uv tool (isolated tools like outscraper-mcp-server).
-# pip-only libraries (e.g. crawl4ai, dspy) have no CLI binary so command -v
+# pip-only libraries (e.g. crawl4ai) have no CLI binary so command -v
 # always fails — this function handles all three installation methods.
 get_python_installed_version() {
 	local pkg="$1"
@@ -391,12 +385,11 @@ get_brew_latest() {
 		printf '%s\n' "${stable:-unknown}"
 	else
 		# No brew — fall back to GitHub Releases API for known tools.
-		# Strip tap prefix (e.g. "max-sixty/worktrunk/wt" → "wt") for matching.
-		local base_pkg="${pkg##*/}"
-		case "$base_pkg" in
+		# Tap-qualified formulas never reach here without brew (see
+		# _tool_latest_version): no system package manager can update them.
+		case "$pkg" in
 		gh) get_public_release_tag "cli/cli" ;;
 		glab) get_public_release_tag "gitlab-org/cli" ;;
-		wt) get_public_release_tag "max-sixty/worktrunk" ;;
 		jq) get_public_release_tag "jqlang/jq" ;;
 		ripgrep) get_public_release_tag "BurntSushi/ripgrep" ;;
 		shellcheck) get_public_release_tag "koalaman/shellcheck" ;;
@@ -545,8 +538,14 @@ _tool_latest_version() {
 	npm)
 		if [[ "$pkg" == playwriter ]]; then printf '%s\n' 0.5.0; else get_npm_latest "$pkg"; fi ;;
 	brew)
-		if ! command -v brew >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
-			get_apt_candidate "${pkg##*/}"
+		if ! command -v brew >/dev/null 2>&1 && [[ "$pkg" == */* ]]; then
+			# Tap-qualified formulas (owner/tap/formula) exist only in Homebrew.
+			# apt/dnf/yum cannot upgrade them, and a same-named distro package
+			# can be an unrelated tool (e.g. apt "bd" is not Beads), so report
+			# unknown rather than queue an update that cannot succeed.
+			printf '%s\n' unknown
+		elif ! command -v brew >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
+			get_apt_candidate "$pkg"
 		else
 			get_brew_latest "$pkg"
 		fi ;;
@@ -694,7 +693,7 @@ check_tool() {
 
 	local installed
 	# pip tools: detect across pip/pipx/uv — pip-only libraries (e.g.
-	# crawl4ai, dspy) have no CLI binary so command -v always fails.
+	# crawl4ai) have no CLI binary so command -v always fails.
 	# npm tools: pass package name so fallback to package.json works.
 	# All other categories: standard CLI binary detection.
 	installed=$(_tool_installed_version "$category" "$cmd" "$ver_flag" "$pkg")

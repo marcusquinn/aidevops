@@ -5,7 +5,7 @@
 # AI DevOps Framework CLI
 # Usage: aidevops <command> [options]
 #
-# Version: 3.37.30
+# Version: 3.38.0
 
 set -euo pipefail
 
@@ -660,12 +660,6 @@ cmd_features() {
 	echo "                 - seeds/ for initial/test data"
 	echo "                 - Auto-generate migrations on schema diff"
 	echo ""
-	echo "  beads          Task graph visualization with Beads"
-	echo "                 - Dependency tracking (blocked-by:, blocks:)"
-	echo "                 - Graph visualization with bd CLI"
-	echo "                 - Ready task detection (/ready)"
-	echo "                 - Bi-directional sync with TODO.md/PLANS.md"
-	echo ""
 	echo "  sops           Encrypted config files with SOPS + age"
 	echo "                 - Value-level encryption (keys visible, values encrypted)"
 	echo "                 - .sops.yaml with age backend (simpler than GPG)"
@@ -701,7 +695,6 @@ cmd_features() {
 	echo "  aidevops init planning           # Enable only planning"
 	echo "  aidevops init sops               # Enable SOPS encryption"
 	echo "  aidevops init security           # Enable security posture checks"
-	echo "  aidevops init beads              # Enable beads (includes planning)"
 	echo "  aidevops init database           # Enable only database"
 	echo "  aidevops init deployment-context # Scaffold deployment inventory"
 	echo "  aidevops init wordpress-context  # Scaffold WordPress + deployment context"
@@ -2014,20 +2007,26 @@ _main_dispatch_cleanup() {
 		shift || true
 		_dispatch_helper "remote-branch-cleanup-helper.sh" "remote-branch-cleanup-helper.sh" "$cleanup_subcommand" "$@"
 		;;
+	local-branches)
+		shift || true
+		_dispatch_helper "local-branch-cleanup-helper.sh" "local-branch-cleanup-helper.sh" "$@"
+		;;
 	help | --help | -h | "")
-		echo "Usage: aidevops cleanup <branches|remote-branches> [options]"
+		echo "Usage: aidevops cleanup <branches|remote-branches|local-branches> [options]"
 		echo ""
 		echo "Cleanup commands:"
 		echo "  branches          Audit stale remote branches (dry-run default)"
 		echo "  remote-branches   Alias for branches"
+		echo "  local-branches    Audit merged local branches (dry-run default)"
 		echo ""
 		echo "Options:"
 		echo "  --repo PATH       Repository path (default: current directory)"
 		echo "  --remote NAME     Remote to audit (default: origin)"
+		echo "  --branch NAME     Single local branch (local-branches only)"
 		echo "  --apply           Delete safe candidates"
 		echo ""
 		;;
-	*) print_error "Unknown cleanup subcommand: $cleanup_subcommand (try branches|remote-branches|help)"; return 1 ;;
+	*) print_error "Unknown cleanup subcommand: $cleanup_subcommand (try branches|remote-branches|local-branches|help)"; return 1 ;;
 	esac
 	return 0
 }
