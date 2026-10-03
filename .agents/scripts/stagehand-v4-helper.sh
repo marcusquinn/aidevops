@@ -13,6 +13,7 @@ readonly STAGEHAND_V4_ZOD_VERSION="4.4.3"
 readonly STAGEHAND_V4_DIR="${HOME}/.aidevops/stagehand-v4"
 readonly STAGEHAND_V4_EXAMPLE="${STAGEHAND_V4_DIR}/example.mjs"
 readonly STAGEHAND_V4_SOURCE="${SCRIPT_DIR}/../tools/browser/stagehand-v4-example.mjs.txt"
+readonly STAGEHAND_V4_NANOGPT_SOURCE="${SCRIPT_DIR}/../tools/browser/stagehand-v4-nanogpt-probe.mjs.txt"
 
 stagehand_v4_installed() {
 	[[ -f "${STAGEHAND_V4_DIR}/node_modules/@browserbasehq/stagehand/package.json" ]] || return 1
@@ -78,6 +79,35 @@ stagehand_v4_run() {
 	node "$STAGEHAND_V4_EXAMPLE"
 }
 
+stagehand_v4_nanogpt_probe() {
+	local mode="${1:-}"
+	[[ -f "$STAGEHAND_V4_NANOGPT_SOURCE" ]] || return 1
+	# Offline fixtures are deliberately independent of the optional SDK install.
+	# No credential or ambient browser profile is passed to the fixture runner.
+	if [[ "$mode" == "offline" ]]; then
+		shift
+		stagehand_v4_probe_source offline "$@" || return 1
+		return 0
+	fi
+	[[ "$mode" == "live" ]] || {
+		print_error "Use probe offline <fixture> or probe live"
+		return 1
+	}
+	stagehand_v4_installed || {
+		print_error "Reviewed Stagehand v4.1.0 install required; live NanoGPT transport remains disabled"
+		return 1
+	}
+	stagehand_v4_probe_source live || return 1
+	return 0
+}
+
+stagehand_v4_probe_source() {
+	env -u OPENAI_API_KEY -u NANOGPT_API_KEY -u OPENCODE_API_KEY \
+		node -e 'require("node:vm").runInThisContext(require("node:fs").readFileSync(process.argv[1], "utf8"))' \
+		"$STAGEHAND_V4_NANOGPT_SOURCE" "$@" || return 1
+	return 0
+}
+
 case "${1:-help}" in
 install) stagehand_v4_install ;;
 setup) stagehand_v4_install && stagehand_v4_example ;;
@@ -89,9 +119,14 @@ status)
 	print_success "Stagehand v${STAGEHAND_V4_VERSION} is installed in the isolated project"
 	;;
 run-example) stagehand_v4_run ;;
+probe)
+	shift
+	stagehand_v4_nanogpt_probe "$@"
+	;;
 help | --help)
-	printf 'Usage: %s {install|setup|status|run-example}\n' "$0"
+	printf 'Usage: %s {install|setup|status|run-example|probe offline <fixture>|probe live}\n' "$0"
 	printf 'Opt-in isolated Stagehand v4.1.0; run-example requires OPENAI_API_KEY and STAGEHAND_MODEL.\n'
+	printf 'NanoGPT probe: offline fixtures only; live transport disabled until a verified hard spend bound exists.\n'
 	;;
 *)
 	print_error "Unknown Stagehand v4 command"
