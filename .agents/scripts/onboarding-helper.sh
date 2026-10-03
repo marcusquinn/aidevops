@@ -990,7 +990,7 @@ show_guide() {
 	orchestration | supervisor | pulse) _guide_orchestration ;;
 	*)
 		echo "Available guides: github, openai, anthropic, hetzner, cloudflare,"
-		echo "                  dataforseo, augment, sonarcloud, openclaw,"
+		echo "                  dataforseo, sonarcloud, openclaw,"
 		echo "                  tailscale, orbstack, orchestration"
 		echo ""
 		echo "Usage: $0 guide <service>"
@@ -1074,7 +1074,7 @@ show_help() {
 	echo "                        Types: web, devops, seo, wordpress, or leave blank"
 	echo "  guide <service>     - Show setup guide for a specific service"
 	echo "                        Services: github, openai, anthropic, hetzner, cloudflare,"
-	echo "                                  dataforseo, augment, sonarcloud, openclaw,"
+	echo "                                  dataforseo, sonarcloud, openclaw,"
 	echo "                                  tailscale, orbstack, orchestration"
 	echo "  configure-dirs      - Interactively add git parent directories for repo-sync"
 	echo "  settings            - Show current settings from settings.json"
