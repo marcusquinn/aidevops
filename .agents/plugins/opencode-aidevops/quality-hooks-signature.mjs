@@ -50,7 +50,7 @@ import { join } from "path";
 
 import { FAIL_REASON, formatGateThrowMessage } from "./quality-hooks-signature-failures.mjs";
 import { repairBodyFile } from "./quality-hooks-signature-body-file.mjs";
-import { bodyFileArgument, unquotedTokens } from "./quality-hooks-signature-shell-words.mjs";
+import { bodyFileArgument, hasUnparseableBody, unquotedTokens } from "./quality-hooks-signature-shell-words.mjs";
 import {
   SIG_MARKER,
   hasTrustedSignatureSignal,
@@ -120,28 +120,6 @@ function _generateSignature(helperPath, bodyValue, log, options = {}) {
       detail: e.message,
     };
   }
-}
-
-function _bodyToken(token) {
-  return token.flag && /^(?:--body(?:-file)?|--comment|-c)(?:=|$)/.test(token.text);
-}
-
-/**
- * Check if the command uses unparseable body syntax (heredoc, process
- * substitution, or command substitution in the body argument). These forms
- * are too dynamic to rewrite safely and the caller should use the helper
- * explicitly. Returns true if unparseable.
- * @param {string} cmd
- * @returns {boolean}
- */
-function _hasUnparseableBody(cmd, tokens) {
-  const bodyStart = tokens.find(_bodyToken)?.start ?? -1;
-  const afterBody = bodyStart === -1 ? "" : cmd.slice(bodyStart);
-  return (
-    (bodyStart !== -1 && /^(?:--(?:body(?:-file)?|comment)|-c)\s*=?\s*(?:<<-?\s*['"]?\w+|<\()/.test(afterBody)) ||
-    afterBody.includes("$(") ||
-    /`[^`]*`/.test(afterBody)
-  );
 }
 
 /**
@@ -233,7 +211,7 @@ export function tryRepairSignature(cmd, scriptsDir, log, options = {}) {
 
   const helperPath = join(scriptsDir, "gh-signature-helper.sh");
   const tokens = unquotedTokens(cmd);
-  if (_hasUnparseableBody(cmd, tokens)) {
+  if (hasUnparseableBody(cmd, tokens)) {
     log("WARN", "Command has unparseable body (heredoc/command-sub); refusing auto-repair (t2685)");
     return { status: "fail", reason: FAIL_REASON.UNPARSEABLE_BODY };
   }

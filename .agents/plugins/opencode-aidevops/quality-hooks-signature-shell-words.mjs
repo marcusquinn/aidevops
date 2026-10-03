@@ -72,3 +72,18 @@ export function bodyFileArgument(words) {
   const path = argument === "--body-file" ? words[index + 1]?.text : argument.slice("--body-file=".length);
   return { path };
 }
+
+function bodyToken(word) {
+  return word.flag && /^(?:--body(?:-file)?|--comment|-c)(?:=|$)/.test(word.text);
+}
+
+// Reject dynamic body syntax without evaluating shell input.
+export function hasUnparseableBody(command, words) {
+  const bodyStart = words.find(bodyToken)?.start ?? -1;
+  const afterBody = bodyStart === -1 ? "" : command.slice(bodyStart);
+  return (
+    (bodyStart !== -1 && /^(?:--(?:body(?:-file)?|comment)|-c)\s*=?\s*(?:<<-?\s*['"]?\w+|<\()/.test(afterBody)) ||
+    afterBody.includes("$(") ||
+    /`[^`]*`/.test(afterBody)
+  );
+}
