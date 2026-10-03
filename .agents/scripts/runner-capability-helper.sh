@@ -7,16 +7,28 @@
 # admission gate and the final gate immediately before the persistent claim.
 runner_capability_check_fresh() {
 	local repo_path="$1" issue_number="$2" repo_slug="$3" logfile="$4"
+	# Tool stderr may be a socket: duplicate it, never reopen /dev/stderr.
+	# Function-scoped redirections restore the caller's descriptor on return.
+	if [[ "$logfile" == /dev/stderr ]]; then
+		_runner_capability_check_fresh_logged "$repo_path" "$issue_number" "$repo_slug" 3>&2 || return 1
+	else
+		_runner_capability_check_fresh_logged "$repo_path" "$issue_number" "$repo_slug" 3>>"$logfile" || return 1
+	fi
+	return 0
+}
+
+_runner_capability_check_fresh_logged() {
+	local repo_path="$1" issue_number="$2" repo_slug="$3"
 	local capability_meta_json=""
 	capability_meta_json=$(gh api "repos/${repo_slug}/issues/${issue_number}" \
 		--jq '{number, state, body, labels}' 2>/dev/null) || capability_meta_json=""
 	if ! printf '%s' "$capability_meta_json" | jq -e --argjson number "$issue_number" \
 		'.number == $number and .state == "open" and (.body | type == "string") and (.labels | type == "array")' >/dev/null 2>&1; then
-		printf '[dispatch_with_dedup] #%s deferred: runner_capability_unmet source=fresh metadata_unreadable\n' "$issue_number" >>"$logfile"
+		printf '[dispatch_with_dedup] #%s deferred: runner_capability_unmet source=fresh metadata_unreadable\n' "$issue_number" >&3
 		return 1
 	fi
-	if ! runner_capability_check "$repo_path" "$capability_meta_json" fresh >/dev/null 2>>"$logfile"; then
-		printf '[dispatch_with_dedup] #%s deferred: runner_capability_unmet\n' "$issue_number" >>"$logfile"
+	if ! runner_capability_check "$repo_path" "$capability_meta_json" fresh >/dev/null 2>&3; then
+		printf '[dispatch_with_dedup] #%s deferred: runner_capability_unmet\n' "$issue_number" >&3
 		return 1
 	fi
 	return 0
