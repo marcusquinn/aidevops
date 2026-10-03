@@ -152,7 +152,10 @@ const routes = {
     if (id) stats.foreignCookies += 1;
     return send(res, 302, '', { location: '/login' });
   },
-  'POST /logout': (req, res) => {
+  'POST /logout': async (req, res) => {
+    // Reproduce better-auth's rejection of bodyless/non-JSON sign-out POSTs.
+    if (req.headers['content-type'] !== 'application/json') return send(res, 415, 'JSON required');
+    if (await readBody(req) !== '{}') return send(res, 400, 'empty JSON object required');
     if (sessions.delete(sid(req))) stats.logouts += 1;
     return send(res, 200, 'bye');
   },
