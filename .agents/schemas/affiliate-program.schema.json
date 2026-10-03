@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Affiliate observation v1",
+  "type": "object",
+  "required": ["version", "kind", "id", "programme", "region", "stage", "observed_at", "source_url"],
+  "properties": {
+    "version": {"const": 1},
+    "kind": {"enum": ["programme", "account", "link", "profile", "authorization", "checkpoint"]},
+    "id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{2,95}$"},
+    "programme": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{2,95}$"},
+    "region": {"enum": ["unknown", "UK", "US", "global"]},
+    "stage": {"enum": ["network", "merchant"]},
+    "observed_at": {"type": "string", "format": "date-time"},
+    "source_url": {"type": "string", "format": "uri", "pattern": "^https://"}
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "kind": {"const": "programme"},
+        "merchant": {"$ref": "#/$defs/id"},
+        "network": {"$ref": "#/$defs/id"},
+        "signup_url": {"type": "string", "format": "uri", "pattern": "^https://"},
+        "dashboard_url": {"type": "string", "format": "uri", "pattern": "^https://"},
+        "requirements": {"type": "array", "minItems": 1, "items": {"enum": ["country", "business-identity", "tax-residency", "audience-evidence", "promotional-properties", "email-verification", "captcha", "agreement", "payout-handoff", "unknown"]}},
+        "later_stages": {"enum": ["unknown", "observed"]}
+      },
+      "required": ["merchant", "network", "signup_url", "requirements", "later_stages"]
+    },
+    {
+      "properties": {
+        "kind": {"const": "account"},
+        "state": {"enum": ["discovered", "preparation-ready", "awaiting-human", "submitted", "pending-review", "approved", "rejected", "closed"]},
+        "confirmation": {"enum": ["none", "submission-receipt", "review-notice", "approval-notice", "rejection-notice", "closure-notice"]},
+        "deadline_at": {"type": "string", "format": "date-time"}
+      },
+      "required": ["state", "confirmation"]
+    },
+    {
+      "properties": {
+        "kind": {"const": "link"},
+        "url": {"type": "string", "format": "uri", "pattern": "^https://"},
+        "purpose": {"enum": ["home", "product", "pricing", "store", "bundle", "bot"]},
+        "link_state": {"enum": ["observed", "verified", "degraded", "unknown"]},
+        "http_status": {"type": "integer", "minimum": 100, "maximum": 599},
+        "landing": {"enum": ["matched", "wrong-product", "closed", "unknown"]},
+        "tracking": {"enum": ["preserved", "lost", "unknown"]},
+        "restrictions": {"type": "array", "items": {"enum": ["unknown", "disclosure-required", "no-paid-search", "no-email", "no-social", "no-coupon", "approved-properties-only"]}}
+      },
+      "required": ["url", "purpose", "link_state"]
+    },
+    {
+      "properties": {
+        "kind": {"const": "profile"},
+        "profile_ref": {"type": "string", "pattern": "^protected:[A-Za-z0-9_-]{3,96}$"},
+        "country": {"type": "string", "pattern": "^([A-Z]{2}|unknown)$"},
+        "approved": {"type": "boolean"},
+        "data_scope": {"$ref": "#/$defs/data_scope"}
+      },
+      "required": ["profile_ref", "country", "approved", "data_scope"]
+    },
+    {
+      "properties": {
+        "kind": {"const": "authorization"},
+        "profile_id": {"$ref": "#/$defs/id"},
+        "profile_sha256": {"$ref": "#/$defs/digest"},
+        "destination": {"type": "string", "format": "uri", "pattern": "^https://"},
+        "agreement_sha256": {"$ref": "#/$defs/digest"},
+        "data_scope": {"$ref": "#/$defs/data_scope"},
+        "expires_at": {"type": "string", "format": "date-time"},
+        "action": {"const": "submit"}
+      },
+      "required": ["profile_id", "profile_sha256", "destination", "agreement_sha256", "data_scope", "expires_at", "action"]
+    },
+    {
+      "properties": {
+        "kind": {"const": "checkpoint"},
+        "authorization_id": {"$ref": "#/$defs/id"},
+        "idempotency_id": {"$ref": "#/$defs/digest"},
+        "outcome": {"enum": ["awaiting-reconciliation", "confirmed-submitted", "confirmed-not-submitted"]}
+      },
+      "required": ["authorization_id", "idempotency_id", "outcome"]
+    }
+  ],
+  "unevaluatedProperties": false,
+  "$defs": {
+    "id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{2,95}$"},
+    "digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "data_scope": {"type": "array", "minItems": 1, "items": {"enum": ["identity-reference", "country", "promotional-properties", "audience-evidence"]}}
+  }
+}
