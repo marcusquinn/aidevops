@@ -56,6 +56,20 @@ grep -Fq 'readiness failure alone must not rewrite an otherwise valid issue verd
 	exit 1
 }
 
+REVIEW_WORKFLOW_SOURCE="${SCRIPT_DIR}/../../workflows/review.md"
+grep -Fq 'blind build' "$REVIEW_WORKFLOW_SOURCE" || {
+	printf 'FAIL review workflow does not document blind packet activation\n' >&2
+	exit 1
+}
+grep -Fq 'Final requirements check' "$FULL_LOOP_SOURCE" || {
+	printf 'FAIL full-loop lacks the final requirements check\n' >&2
+	exit 1
+}
+grep -Fq 'Default closeout output is P0 only' "$REVIEW_CORE_SOURCE" || {
+	printf 'FAIL review core lost the P0-only closeout default\n' >&2
+	exit 1
+}
+
 # shellcheck source=../generate-runtime-config-commands.sh
 source "$COMMAND_LIB"
 
