@@ -1,11 +1,9 @@
 ---
-name: remotion-get-video-duration
+name: get-video-duration
 description: Getting the duration of a video file in seconds with Mediabunny
-mode: subagent
+metadata:
+  tags: duration, video, length, time, seconds
 ---
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
 # Getting video duration with Mediabunny
 

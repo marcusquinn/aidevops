@@ -1,11 +1,9 @@
 ---
-name: remotion-sequencing
+name: sequencing
 description: Sequencing patterns for Remotion - delay, trim, limit duration of items
-mode: subagent
+metadata:
+  tags: sequence, series, timing, delay, trim
 ---
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
 Prefer timing props directly on built-in interactive components and custom
 components made with `Interactive.withSchema({wrapInSequence: true})`.<br>
@@ -14,7 +12,7 @@ Put `name`, `from`, `durationInFrames`, `loop`, `volume`, and `premountFor`
 directly on `<Audio>` whenever their combination gives the intended timing.
 
 See Remotion Interactivity for creating
-schema-wrapped components and [connected compositions](connected-compositions.md)
+schema-wrapped components and [connected compositions](remotion-connected-compositions.md)
 for registering them with their own Studio timelines.
 
 ```tsx

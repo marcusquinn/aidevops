@@ -1,11 +1,3 @@
----
-name: remotion-html-in-canvas
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Using `<HtmlInCanvas>` in Remotion
 
 Renders children into a `<canvas>` so you can post-process them with the Canvas 2D API or WebGL.

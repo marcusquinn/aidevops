@@ -1,15 +1,6 @@
----
-name: agents-sdk-codemode
-description: "Cloudflare Agents SDK: codemode"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Codemode (Experimental)
 
-Fetch https://developers.cloudflare.com/agents/api-reference/codemode/ for complete documentation.
+Fetch https://developers.cloudflare.com/agents/tools/codemode/api-reference/index.md for complete documentation.
 
 Codemode lets LLMs write and execute code that orchestrates your tools, instead of calling them one at a time. The LLM gets a single "write code" tool; generated JavaScript runs in an isolated Worker sandbox.
 

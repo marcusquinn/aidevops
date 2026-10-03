@@ -1,12 +1,3 @@
----
-name: workers-playground-gotchas
-description: "Cloudflare workers playground: gotchas"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Workers Playground Gotchas
 
 ## Platform Limitations

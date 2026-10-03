@@ -1,11 +1,3 @@
----
-name: remotion-transcribe-captions
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Transcribing audio
 
 To transcribe audio to generate captions in Remotion, use the [`transcribe()`](https://www.remotion.dev/docs/whisper-webgpu/transcribe.md) function from the [`@remotion/whisper-webgpu`](https://www.remotion.dev/docs/whisper-webgpu.md) package.
@@ -175,4 +167,4 @@ export const transcribeFile = async (file: File) => {
 
 Transcribe each clip individually.
 
-See [Displaying captions](display-captions.md) for how to display the captions in Remotion.
+See [Displaying captions](remotion-display-captions.md) for how to display the captions in Remotion.

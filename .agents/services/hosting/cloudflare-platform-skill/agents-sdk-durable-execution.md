@@ -1,15 +1,6 @@
----
-name: agents-sdk-durable-execution
-description: "Cloudflare Agents SDK: durable execution"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Durable Execution
 
-Fetch https://developers.cloudflare.com/agents/api-reference/durable-execution/ for complete documentation.
+Fetch https://developers.cloudflare.com/agents/runtime/execution/durable-execution/index.md for complete documentation.
 
 Fibers let agent work survive Durable Object eviction. Progress is checkpointed to SQLite; on recovery, you decide what to do.
 

@@ -1,27 +1,18 @@
----
-name: cron-triggers
-description: "Cloudflare cron triggers: product reference"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Cloudflare Cron Triggers
 
 Use Cron Triggers to start periodic Worker jobs. Fetch the relevant current documentation before implementing; configuration, API signatures, examples, and limits belong in the docs.
 
-- **Set up a recurring job:** [Cron Triggers](https://developers.cloudflare.com/workers/configuration/cron-triggers/) covers scheduling, deployment, and execution history.
-- **Implement the job:** [Scheduled handler](https://developers.cloudflare.com/workers/runtime-apis/handlers/scheduled/) covers controller properties, asynchronous work, and multiple schedules.
-- **Schedule durable work:** [Trigger Workflows](https://developers.cloudflare.com/workflows/build/trigger-workflows/) covers direct Workflow schedules and starting instances from a Worker. Check this before introducing a Worker whose only job is to start a Workflow.
-- **Check capacity:** fetch [Workers limits](https://developers.cloudflare.com/workers/platform/limits/) for the target plan and invocation type.
+- **Set up a recurring job:** [Cron Triggers](https://developers.cloudflare.com/workers/configuration/cron-triggers/index.md) covers scheduling, deployment, and execution history.
+- **Implement the job:** [Scheduled handler](https://developers.cloudflare.com/workers/runtime-apis/handlers/scheduled/index.md) covers controller properties, asynchronous work, and multiple schedules.
+- **Schedule durable work:** [Trigger Workflows](https://developers.cloudflare.com/workflows/build/trigger-workflows/index.md) covers direct Workflow schedules and starting instances from a Worker. Check this before introducing a Worker whose only job is to start a Workflow.
+- **Check capacity:** fetch [Workers limits](https://developers.cloudflare.com/workers/platform/limits/index.md) for the target plan and invocation type.
 
 ## In This Reference
 
-- [configuration.md](./configuration.md) — schedule setup, environments, removal, and Green Compute
-- [api.md](./api.md) — handler implementation, asynchronous completion, and tests
-- [patterns.md](./patterns.md) — choosing execution boundaries and integrations
-- [gotchas.md](./gotchas.md) — investigating timing, failures, and repeated work
+- [configuration.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/cron-triggers/configuration.md) — schedule setup, environments, removal, and Green Compute
+- [api.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/cron-triggers/api.md) — handler implementation, asynchronous completion, and tests
+- [patterns.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/cron-triggers/patterns.md) — choosing execution boundaries and integrations
+- [gotchas.md](cron-triggers-gotchas.md) — investigating timing, failures, and repeated work
 
 ## See Also
 

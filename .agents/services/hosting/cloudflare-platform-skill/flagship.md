@@ -1,12 +1,3 @@
----
-name: flagship
-description: "Cloudflare flagship: product reference"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Cloudflare Flagship
 
 Feature flag service for controlling feature visibility without redeploying code. Define flags with targeting rules and percentage-based rollouts, then evaluate them in Workers via a native binding or from any JavaScript runtime via the OpenFeature SDK.
@@ -55,14 +46,14 @@ REST API note: management endpoints use Cloudflare v4 envelopes (`result`, `resu
 
 ## In This Reference
 
-- **[api.md](./api.md)** — REST API endpoints, binding methods, OpenFeature SDK, schemas
-- **[configuration.md](./configuration.md)** — Wrangler binding setup, SDK installation, TypeScript types
-- **[patterns.md](./patterns.md)** — Flag CRUD via API, targeting rules, rollouts, OpenFeature usage
-- **[gotchas.md](./gotchas.md)** — Common errors, limits, anti-patterns, troubleshooting
+- **[api.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/flagship/api.md)** — REST API endpoints, binding methods, OpenFeature SDK, schemas
+- **[configuration.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/flagship/configuration.md)** — Wrangler binding setup, SDK installation, TypeScript types
+- **[patterns.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/flagship/patterns.md)** — Flag CRUD via API, targeting rules, rollouts, OpenFeature usage
+- **[gotchas.md](flagship-gotchas.md)** — Common errors, limits, anti-patterns, troubleshooting
 
 ## See Also
 
-- **[Flagship API reference](https://developers.cloudflare.com/api/resources/flagship/)** — Source of truth for REST API paths, envelopes, and response fields
-- **[Workers docs](https://developers.cloudflare.com/workers/)** — Workers runtime (Flagship runs inside Workers)
-- **[../kv/](kv.md)** — KV storage (Flagship uses KV infrastructure for flag delivery)
-- **[Wrangler docs](https://developers.cloudflare.com/workers/wrangler/)** — Wrangler CLI for deployment and config
+- **[Flagship API reference](https://developers.cloudflare.com/api/resources/flagship/index.md)** — Source of truth for REST API paths, envelopes, and response fields
+- **[Workers docs](https://developers.cloudflare.com/workers/index.md)** — Workers runtime (Flagship runs inside Workers)
+- **[../kv/](../kv/)** — KV storage (Flagship uses KV infrastructure for flag delivery)
+- **[Wrangler docs](https://developers.cloudflare.com/workers/wrangler/index.md)** — Wrangler CLI for deployment and config

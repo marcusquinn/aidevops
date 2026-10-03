@@ -1,12 +1,3 @@
----
-name: sandbox-examples
-description: "Cloudflare Sandbox: examples"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # `@next` examples index
 
 Pointers only—not a full catalog. Prefer the repo tree and docs.

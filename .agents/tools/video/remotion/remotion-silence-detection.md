@@ -1,11 +1,9 @@
 ---
-name: remotion-silence-detection
+name: silence-detection
 description: Adaptive silence detection for video/audio files using FFmpeg loudnorm and silencedetect
-mode: subagent
+metadata:
+  tags: silence, detection, trimming, ffmpeg, loudnorm, audio
 ---
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
 # Adaptive Silence Detection
 

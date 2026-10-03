@@ -1,15 +1,6 @@
----
-name: agents-sdk-email
-description: "Cloudflare Agents SDK: email"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Email Handling
 
-Fetch https://developers.cloudflare.com/agents/api-reference/email/ for complete documentation.
+Fetch https://developers.cloudflare.com/agents/communication-channels/email/index.md for complete documentation.
 
 ## Overview
 

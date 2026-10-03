@@ -1,11 +1,9 @@
 ---
-name: remotion-effects
+name: effects
 description: Canvas/WebGL visual effects for Remotion using effects arrays and createEffect().
-mode: subagent
+metadata:
+  tags: effects, visual-effects, webgl, canvas, video, create-effect
 ---
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
 Use this rule only when the top-level skill lists an effect that matches the requested look, or when the user asks to create a reusable custom effect.
 

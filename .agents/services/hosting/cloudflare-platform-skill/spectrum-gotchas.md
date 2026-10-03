@@ -1,12 +1,3 @@
----
-name: spectrum-gotchas
-description: "Cloudflare spectrum: gotchas"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 ## Common Issues
 
 ### Connection Timeouts
@@ -154,5 +145,5 @@ const app = await client.spectrum.apps.create({
 
 ## See Also
 
-- [patterns.md](spectrum-patterns.md) - Protocol examples
-- [configuration.md](spectrum.md) - TLS/Proxy setup
+- [patterns.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/spectrum/patterns.md) - Protocol examples
+- [configuration.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/spectrum/configuration.md) - TLS/Proxy setup

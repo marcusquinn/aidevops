@@ -1,11 +1,9 @@
 ---
-name: remotion-text-highlights
+name: text-highlights
 description: Animated text highlights and hand-drawn annotations using @remotion/rough-notation.
-mode: subagent
+metadata:
+  tags: text, highlights, annotations, circles, rough-notation
 ---
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
 # Text highlights
 

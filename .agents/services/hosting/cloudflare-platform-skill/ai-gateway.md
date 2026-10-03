@@ -1,12 +1,3 @@
----
-name: ai-gateway
-description: "Cloudflare ai gateway: product reference"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Cloudflare AI Gateway
 
 Use AI Gateway to observe and control requests to AI providers through caching, rate limiting, logging, and routing.
@@ -17,20 +8,20 @@ Fetch the linked documentation before choosing endpoints, authentication headers
 
 | Task | Reference |
 |------|-----------|
-| Create a gateway or choose authentication and provider credentials | [Configuration](./configuration.md) |
-| Integrate an SDK, direct HTTP, or a Worker binding | [SDK integration](./sdk-integration.md) |
-| Configure caching, rate limits, security, billing, or logging | [Features](./features.md) |
-| Add fallbacks, conditional routing, or traffic splits | [Dynamic routing](./dynamic-routing.md) |
-| Diagnose failed requests, caching, or missing logs | [Troubleshooting](./troubleshooting.md) |
+| Create a gateway or choose authentication and provider credentials | [Configuration](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/ai-gateway/configuration.md) |
+| Integrate an SDK, direct HTTP, or a Worker binding | [SDK integration](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/ai-gateway/sdk-integration.md) |
+| Configure caching, rate limits, security, billing, or logging | [Features](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/ai-gateway/features.md) |
+| Add fallbacks, conditional routing, or traffic splits | [Dynamic routing](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/ai-gateway/dynamic-routing.md) |
+| Diagnose failed requests, caching, or missing logs | [Troubleshooting](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/ai-gateway/troubleshooting.md) |
 
-For new single-model calls, start with the [REST API](https://developers.cloudflare.com/ai-gateway/usage/rest-api/) or [Workers bindings](https://developers.cloudflare.com/ai-gateway/usage/worker-binding-methods/), depending on the runtime. Preserve provider-native integrations when their API shape is needed; use the corresponding [provider guide](https://developers.cloudflare.com/ai-gateway/usage/providers/).
+For new single-model calls, start with the [REST API](https://developers.cloudflare.com/ai-gateway/usage/rest-api/index.md) or [Workers bindings](https://developers.cloudflare.com/ai-gateway/usage/worker-binding-methods/index.md), depending on the runtime. Preserve provider-native integrations when their API shape is needed; use the corresponding [provider guide](https://developers.cloudflare.com/ai-gateway/usage/providers/index.md).
 
-The [legacy Unified API](https://developers.cloudflare.com/ai-gateway/usage/chat-completion/) is deprecated for single-model calls but remains required for dynamic routes. Check the task before changing an existing endpoint.
+The [legacy Unified API](https://developers.cloudflare.com/ai-gateway/usage/chat-completion/index.md) is deprecated for single-model calls but remains required for dynamic routes. Check the task before changing an existing endpoint.
 
-Gateway authentication and upstream provider credentials are separate concerns. Choose the endpoint first, then follow its authentication and billing requirements in [configuration](./configuration.md).
+Gateway authentication and upstream provider credentials are separate concerns. Choose the endpoint first, then follow its authentication and billing requirements in [configuration](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/ai-gateway/configuration.md).
 
 ## Related references
 
 - [Workers AI](workers-ai.md) — model inference.
-- [Agents SDK documentation](https://developers.cloudflare.com/agents/) — stateful agents.
+- [Agents SDK documentation](https://developers.cloudflare.com/agents/index.md) — stateful agents.
 - [Vectorize](vectorize.md) — vector search.

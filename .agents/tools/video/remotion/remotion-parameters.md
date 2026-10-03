@@ -1,11 +1,9 @@
 ---
-name: remotion-parameters
+name: parameters
 description: Make a video parametrizable by adding a Zod schema
-mode: subagent
+metadata:
+  tags: parameters, zod, schema
 ---
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
 To make a video parametrizable, a Zod schema can be added to a composition.
 

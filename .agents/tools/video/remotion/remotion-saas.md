@@ -1,11 +1,8 @@
 ---
 name: remotion-saas
 description: Build an app with Remotion
-mode: subagent
+version: 4.0.532
 ---
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
 One can build apps with Remotion.<br>
 It is possible to have a simple form and hook it up to a render, or have a complex video editor.
@@ -13,15 +10,15 @@ It is possible to have a simple form and hook it up to a render, or have a compl
 ## Choosing a template or a framework
 
 We have several templates for SaaS which can be cloned or used as a reference.
-See [Choosing a framework](framework.md) for help choosing a template or framework.
+See [Choosing a framework](remotion-saas-framework.md) for help choosing a template or framework.
 
 ## The `<Player>`
 
-This component allows embedding a Remotion preview in a React app. See [Player](player.md) for more information about the Player.
+This component allows embedding a Remotion preview in a React app. See [Player](remotion-saas-player.md) for more information about the Player.
 
 ## Rendering
 
-There are client-side and server-side rendering options available. See [Rendering](rendering.md) for advice on how to choose, and about the Lambda, Vercel, Node.js and Cloudflare options.
+There are client-side and server-side rendering options available. See [Rendering](remotion-saas-rendering.md) for advice on how to choose, and about the Lambda, Vercel, Node.js and Cloudflare options.
 
 ## With Vue
 

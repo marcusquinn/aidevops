@@ -1,12 +1,3 @@
----
-name: flagship-gotchas
-description: "Cloudflare flagship: gotchas"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Flagship Gotchas & Troubleshooting
 
 ## Common Errors

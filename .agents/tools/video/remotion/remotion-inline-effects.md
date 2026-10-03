@@ -1,11 +1,3 @@
----
-name: remotion-inline-effects
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 ## Effects should be inline too
 
 The effects array should not be computed.

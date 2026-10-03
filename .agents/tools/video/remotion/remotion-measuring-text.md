@@ -1,11 +1,9 @@
 ---
-name: remotion-measuring-text
+name: measuring-text
 description: Measuring text dimensions, fitting text to containers, and checking overflow
-mode: subagent
+metadata:
+  tags: measure, text, layout, dimensions, fitText, fillTextBox
 ---
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
 # Measuring text in Remotion
 

@@ -1,12 +1,3 @@
----
-name: bot-management-gotchas
-description: "Cloudflare bot management: gotchas"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Bot Management Gotchas
 
 ## Common Errors

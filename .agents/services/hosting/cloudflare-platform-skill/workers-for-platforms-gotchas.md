@@ -1,12 +1,3 @@
----
-name: workers-for-platforms-gotchas
-description: "Cloudflare workers for platforms: gotchas"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Gotchas & Limits
 
 ## Common Errors
@@ -129,7 +120,7 @@ async function deployWithBackoff(deploy: () => Promise<void>, maxRetries = 3) {
 | Client API | 200 requests / sec | Per IP address |
 | GraphQL | Varies by query cost | Query complexity |
 
-See [Cloudflare API Rate Limits](https://developers.cloudflare.com/fundamentals/api/reference/limits/) for details.
+See [Cloudflare API Rate Limits](https://developers.cloudflare.com/fundamentals/api/reference/limits/index.md) for details.
 
 ## Operational Limits
 
@@ -140,4 +131,4 @@ See [Cloudflare API Rate Limits](https://developers.cloudflare.com/fundamentals/
 | Outbound Worker subrequests | Not intercepted for DO/mTLS | Only regular fetch() calls |
 | TCP sockets with outbound | Disabled | `connect()` API unavailable |
 
-See [README.md](./README.md), [configuration.md](./configuration.md), [api.md](./api.md), [patterns.md](./patterns.md)
+See [README.md](workers-for-platforms.md), [configuration.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/workers-for-platforms/configuration.md), [api.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/workers-for-platforms/api.md), [patterns.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/workers-for-platforms/patterns.md)

@@ -1,11 +1,8 @@
 ---
 name: remotion-interactivity
 description: Structure Remotion markup for interactivity
-mode: subagent
+version: 4.0.532
 ---
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
 By writing Remotion markup in a specific way, the Remotion Studio is able to recognize the structure of the code and makes it interactive:
 

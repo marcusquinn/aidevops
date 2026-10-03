@@ -1,15 +1,6 @@
----
-name: basin-sql-gotchas
-description: "Cloudflare Basin sql: gotchas"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Basin SQL Gotchas
 
-Operational pitfalls. For the authoritative list of supported features, unsupported features, and recommended workarounds, pull `https://developers.cloudflare.com/basin-sql/reference/limitations-best-practices/` and `https://developers.cloudflare.com/basin-sql/troubleshooting/`.
+Operational pitfalls. For the authoritative list of supported features, unsupported features, and recommended workarounds, pull `https://developers.cloudflare.com/basin-sql/reference/limitations-best-practices/index.md` and `https://developers.cloudflare.com/basin-sql/troubleshooting/index.md`.
 
 ## Access
 
@@ -45,4 +36,4 @@ No implicit conversions. Timestamps must be RFC3339 with timezone; dates ISO 860
 
 ## See Also
 
-- [api.md](basin-sql.md) · [patterns.md](basin-sql-patterns.md) · [configuration.md](basin-sql.md)
+- [api.md](basin-sql-api.md) · [patterns.md](basin-sql-patterns.md) · [configuration.md](basin-sql-configuration.md)

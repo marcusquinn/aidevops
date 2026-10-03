@@ -1,11 +1,3 @@
----
-name: remotion-maps-mapbox-render-stability
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Moving Map Render Stability
 
 Read this reference before building a moving 2D MapTiler scene or diagnosing a wavering Remotion render.

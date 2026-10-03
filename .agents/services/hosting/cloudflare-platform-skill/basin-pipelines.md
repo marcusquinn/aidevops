@@ -1,12 +1,3 @@
----
-name: basin-pipelines
-description: "Cloudflare Basin pipelines"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Basin Pipelines
 
 Streaming ingest: receive events over HTTP/Workers/Logpush, transform with SQL, write to R2 as Iceberg tables or Parquet/JSON files.
@@ -17,16 +8,16 @@ This reference is a fast-start with verified code and gotchas. For limits, setti
 
 | Topic | URL |
 |-------|-----|
-| Overview / getting started | `https://developers.cloudflare.com/basin-pipelines/getting-started/` |
-| Streams (write, manage, Logpush) | `https://developers.cloudflare.com/basin-pipelines/streams/` |
-| Sinks | `https://developers.cloudflare.com/basin-pipelines/sinks/` |
-| Basin Pipelines & SQL transforms | `https://developers.cloudflare.com/basin-pipelines/pipelines/` |
-| SQL reference (statements, types) | `https://developers.cloudflare.com/basin-pipelines/sql-reference/` |
-| Wrangler commands | `https://developers.cloudflare.com/basin-pipelines/reference/wrangler-commands/` |
-| Terraform | `https://developers.cloudflare.com/basin-pipelines/reference/terraform/` |
-| Limits | `https://developers.cloudflare.com/basin-pipelines/platform/limits/` |
-| Pricing | `https://developers.cloudflare.com/basin-pipelines/platform/pricing/` |
-| Metrics (GraphQL) | `https://developers.cloudflare.com/basin-pipelines/observability/metrics/` |
+| Overview / getting started | `https://developers.cloudflare.com/basin-pipelines/getting-started/index.md` |
+| Streams (write, manage, Logpush) | `https://developers.cloudflare.com/basin-pipelines/streams/index.md` |
+| Sinks | `https://developers.cloudflare.com/basin-pipelines/sinks/index.md` |
+| Basin Pipelines & SQL transforms | `https://developers.cloudflare.com/basin-pipelines/pipelines/index.md` |
+| SQL reference (statements, types) | `https://developers.cloudflare.com/basin-pipelines/sql-reference/index.md` |
+| Wrangler commands | `https://developers.cloudflare.com/basin-pipelines/reference/wrangler-commands/index.md` |
+| Terraform | `https://developers.cloudflare.com/basin-pipelines/reference/terraform/index.md` |
+| Limits | `https://developers.cloudflare.com/basin-pipelines/platform/limits/index.md` |
+| Pricing | `https://developers.cloudflare.com/basin-pipelines/platform/pricing/index.md` |
+| Metrics (GraphQL) | `https://developers.cloudflare.com/basin-pipelines/observability/metrics/index.md` |
 
 ## Three Components
 
@@ -88,13 +79,13 @@ These are non-obvious and prevent most failures — see [gotchas.md](basin-pipel
 
 ## Reading Order
 
-1. [configuration.md](basin-pipelines.md) — schema, streams, sinks, pipelines (CLI + REST + Terraform), bindings
-2. [api.md](basin-pipelines.md) — `send()`, HTTP ingest, REST API, pipeline SQL, lifecycle states
+1. [configuration.md](basin-pipelines-configuration.md) — schema, streams, sinks, pipelines (CLI + REST + Terraform), bindings
+2. [api.md](basin-pipelines-api.md) — `send()`, HTTP ingest, REST API, pipeline SQL, lifecycle states
 3. [patterns.md](basin-pipelines-patterns.md) — fire-and-forget, validation, Logpush, observability, end-to-end
 4. [gotchas.md](basin-pipelines-gotchas.md) — silent drops, immutability, REST≠CLI field names
 
 ## See Also
 
-- [Basin Catalog](basin-catalog.md) — Iceberg sink destination
-- [Basin SQL](basin-sql.md) — query the ingested data
-- [r2](https://developers.cloudflare.com/r2/) · [queues](https://developers.cloudflare.com/queues/) · [workers](https://developers.cloudflare.com/workers/)
+- [Basin Catalog](../catalog/) — Iceberg sink destination
+- [Basin SQL](../sql/) — query the ingested data
+- [r2](https://developers.cloudflare.com/r2/index.md) · [queues](https://developers.cloudflare.com/queues/index.md) · [workers](https://developers.cloudflare.com/workers/index.md)

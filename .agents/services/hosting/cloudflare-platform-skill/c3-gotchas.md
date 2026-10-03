@@ -1,12 +1,3 @@
----
-name: c3-gotchas
-description: "Cloudflare c3: gotchas"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # C3 Troubleshooting
 
 ## Deployment Issues

@@ -95,8 +95,6 @@ For up-to-date API docs: `/context7 remotion [query]`
 
 ## Upstream router
 
-The sections below are the upstream routing guidance (kept close to upstream wording); each linked chapter is self-contained.
-
 ## Preserve user changes
 
 Users may make edits in the code outside of the conversation.
@@ -177,7 +175,7 @@ E.g. "Render the video", "Export", "Give me the MP4".
 
 The preview also has a more intuitive rendering interface, so consider using it instead of the command line for rendering.
 
-```bash
+```text
 npx remotion render
 ```
 

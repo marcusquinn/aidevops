@@ -1,11 +1,9 @@
 ---
-name: remotion-audio
+name: audio
 description: Using audio and sound in Remotion - importing, trimming, volume, speed, pitch
-mode: subagent
+metadata:
+  tags: audio, media, trim, volume, speed, loop, pitch, mute, sound, sfx
 ---
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
 # Using audio in Remotion
 

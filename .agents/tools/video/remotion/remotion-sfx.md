@@ -1,11 +1,9 @@
 ---
-name: remotion-sfx
+name: sfx
 description: Including sound effects
-mode: subagent
+metadata:
+  tags: sfx, sound, effect, audio
 ---
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
 To include a sound effect, use the `<Audio>` tag:
 

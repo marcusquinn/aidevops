@@ -1,15 +1,6 @@
----
-name: agents-sdk-server-driven-messages
-description: "Cloudflare Agents SDK: server driven messages"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Server-Driven Messages
 
-Read [Autonomous responses](https://developers.cloudflare.com/agents/communication-channels/chat/autonomous-responses/) for scheduled, webhook, email, and agent-triggered turns, message schemas, response hooks, and client streaming status.
+Read [Autonomous responses](https://developers.cloudflare.com/agents/communication-channels/chat/autonomous-responses/index.md) for scheduled, webhook, email, and agent-triggered turns, message schemas, response hooks, and client streaming status.
 
 Choose `saveMessages` to persist messages and request a model response, or `persistMessages` to update context without starting a turn. Use `onChatResponse` to react to turns regardless of their trigger. For webhooks that need a quick acknowledgement, consult the documented `submitMessages` path.
 

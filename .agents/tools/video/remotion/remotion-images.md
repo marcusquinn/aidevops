@@ -1,11 +1,3 @@
----
-name: remotion-images
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 ## Sizing and positioning
 
 Use the `style` prop to control size and position:

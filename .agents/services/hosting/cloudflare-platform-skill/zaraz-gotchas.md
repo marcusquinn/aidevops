@@ -1,12 +1,3 @@
----
-name: zaraz-gotchas
-description: "Cloudflare zaraz: gotchas"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Zaraz Gotchas
 
 ## Events Not Firing

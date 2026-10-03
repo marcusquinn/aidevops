@@ -1,11 +1,9 @@
 ---
-name: remotion-get-audio-duration
+name: get-audio-duration
 description: Getting the duration of an audio file in seconds with Mediabunny
-mode: subagent
+metadata:
+  tags: duration, audio, length, time, seconds, mp3, wav
 ---
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
 # Getting audio duration with Mediabunny
 

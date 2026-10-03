@@ -1,11 +1,8 @@
 ---
 name: remotion-studio
 description: Preview a Remotion video
-mode: subagent
+version: 4.0.532
 ---
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
 When creating or editing a video, start Studio and open its preview as soon as the project can run, before building the composition. Keep it open while you work so the user can see changes and steer.
 

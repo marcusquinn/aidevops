@@ -1,12 +1,3 @@
----
-name: turn-gotchas
-description: "Cloudflare turn: gotchas"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # TURN Gotchas & Troubleshooting
 
 Common mistakes, security best practices, and troubleshooting for Cloudflare TURN.
@@ -119,7 +110,7 @@ const response = await fetch('/api/turn-credentials');
 
 ## ICE Restart Required Scenarios
 
-These events require ICE restart (see [patterns.md](./patterns.md#ice-restart-pattern)):
+These events require ICE restart (see [patterns.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/turn/patterns.md#ice-restart-pattern)):
 
 1. **TURN server maintenance** (occasional on Cloudflare's network)
 2. **Network topology changes** (anycast routing changes)
@@ -236,6 +227,6 @@ const filtered = urls.filter(url => !url.includes(':53'));
 
 ## See Also
 
-- [api.md](./api.md) - Credential generation API, revocation
-- [configuration.md](./configuration.md) - IP allowlisting, monitoring
-- [patterns.md](./patterns.md) - ICE restart, credential refresh patterns
+- [api.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/turn/api.md) - Credential generation API, revocation
+- [configuration.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/turn/configuration.md) - IP allowlisting, monitoring
+- [patterns.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/turn/patterns.md) - ICE restart, credential refresh patterns

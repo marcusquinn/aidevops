@@ -1,11 +1,9 @@
 ---
-name: remotion-compositions
+name: compositions
 description: Defining compositions, stills, folders, default props and dynamic metadata
-mode: subagent
+metadata:
+  tags: composition, still, folder, props, metadata
 ---
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
 A `<Composition>` defines the component, width, height, fps and duration of a renderable video.
 
@@ -162,7 +160,7 @@ Use [`calculateMetadata`](remotion-calculate-metadata.md) to make dimensions, du
 
 To render a composition's component inside another composition, use `<Sequence>` with `width` and `height` when the nested content needs its own dimensions.
 
-When the nested scene should have its own editable Studio timeline, use the [connected composition structure](connected-compositions.md).
+When the nested scene should have its own editable Studio timeline, use the [connected composition structure](remotion-connected-compositions.md).
 
 ```tsx
 <>

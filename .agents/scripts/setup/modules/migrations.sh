@@ -219,6 +219,28 @@ cleanup_retired_contest_scoring_tooling() {
 
 # GH#33150: Remotion skill restructured from flat tools/video/remotion-*.md
 # files into tools/video/remotion/ subfolder chapters. Prints removed count.
+_remove_retired_skill_file() {
+	local agents_dir="$1"
+	local retired_path="$2"
+	local source_agents="${BASH_SOURCE[0]%/*}/../../.."
+	# The deployed source wins over a historical retirement list. Never recursively
+	# delete resource directories: unknown user files inside them are not ours.
+	if [[ -e "$source_agents/${retired_path#"$agents_dir/"}" ]]; then
+		printf '0\n'
+		return 0
+	fi
+	if [[ -d "$retired_path" && ! -L "$retired_path" ]]; then
+		rmdir "$retired_path" 2>/dev/null || true
+		printf '0\n'
+	elif [[ -e "$retired_path" || -L "$retired_path" ]]; then
+		rm -f "$retired_path"
+		printf '1\n'
+	else
+		printf '0\n'
+	fi
+	return 0
+}
+
 cleanup_retired_remotion_flat_docs() {
 	local agents_dir="$1"
 	local removed=0
@@ -254,11 +276,12 @@ cleanup_retired_remotion_flat_docs() {
 		"$agents_dir/tools/video/remotion-transitions.md" \
 		"$agents_dir/tools/video/remotion-trimming.md" \
 		"$agents_dir/tools/video/remotion-videos.md"; do
-		if [[ -e "$retired_path" ]]; then
-			rm -rf "$retired_path"
-			removed=$((removed + 1))
-		fi
+		removed=$((removed + $(_remove_retired_skill_file "$agents_dir" "$retired_path")))
 	done
+	for retired_path in charts-bar-chart.tsx text-animations-typewriter.tsx text-animations-word-highlight.tsx; do
+		removed=$((removed + $(_remove_retired_skill_file "$agents_dir" "$agents_dir/tools/video/remotion-assets/$retired_path")))
+	done
+	rmdir "$agents_dir/tools/video/remotion-assets" 2>/dev/null || true
 	printf '%s\n' "$removed"
 	return 0
 }
@@ -336,10 +359,38 @@ cleanup_retired_cloudflare_platform_skill_patterns() {
 		"$agents_dir/services/hosting/cloudflare-platform-skill/wrangler-gotchas.md" \
 		"$agents_dir/services/hosting/cloudflare-platform-skill/wrangler-patterns.md" \
 		"$agents_dir/services/hosting/cloudflare-platform-skill/zaraz-patterns.md"; do
-		if [[ -e "$retired_path" ]]; then
-			rm -rf "$retired_path"
-			removed=$((removed + 1))
-		fi
+		removed=$((removed + $(_remove_retired_skill_file "$agents_dir" "$retired_path")))
+	done
+	removed=$((removed + $(cleanup_retired_cloudflare_examples "$agents_dir")))
+	printf '%s\n' "$removed"
+	return 0
+}
+
+# Exact formerly shipped leaves; custom files keep their containing directory.
+cleanup_retired_cloudflare_examples() {
+	local agents_dir="$1"
+	local removed=0
+	local relative=""
+	local root="$agents_dir/services/hosting/cloudflare-platform-skill"
+	for relative in \
+		do-storage-patterns/01-schema-migration.md do-storage-patterns/02-in-memory-caching.md \
+		do-storage-patterns/03-rate-limiting.md do-storage-patterns/04-batch-processing-with-alarms.md \
+		do-storage-patterns/05-initialization-and-counters.md do-storage-patterns/06-cleanup.md \
+		pulumi-gotchas/best-practices.md pulumi-gotchas/ci-cd.md pulumi-gotchas/common-errors.md \
+		pulumi-gotchas/debugging.md pulumi-gotchas/migration.md pulumi-gotchas/performance.md \
+		pulumi-gotchas/resources.md pulumi-gotchas/security.md \
+		r2-patterns/01-streaming-large-files.md r2-patterns/02-conditional-get.md \
+		r2-patterns/03-upload-with-validation.md r2-patterns/04-multipart-with-progress.md \
+		r2-patterns/05-batch-delete.md r2-patterns/06-checksum-validation.md \
+		r2-patterns/07-storage-class-transitions.md r2-patterns/08-public-bucket-custom-domain.md \
+		sandbox-patterns/01-ai-code-execution.md sandbox-patterns/02-interactive-dev-environment.md \
+		sandbox-patterns/03-ci-cd-pipeline.md sandbox-patterns/04-multi-language-code-runner.md \
+		sandbox-patterns/05-multi-tenant.md sandbox-patterns/06-jupyter-integration.md \
+		sandbox-patterns/07-git-operations.md; do
+		removed=$((removed + $(_remove_retired_skill_file "$agents_dir" "$root/$relative")))
+	done
+	for relative in do-storage-patterns pulumi-gotchas r2-patterns sandbox-patterns; do
+		rmdir "$root/$relative" 2>/dev/null || true
 	done
 	printf '%s\n' "$removed"
 	return 0

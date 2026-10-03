@@ -1,11 +1,9 @@
 ---
-name: remotion-voiceover
+name: voiceover
 description: Adding AI-generated voiceover to Remotion compositions using TTS
-mode: subagent
+metadata:
+  tags: voiceover, audio, elevenlabs, tts, speech, calculateMetadata, dynamic duration
 ---
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
 # Adding AI voiceover to a Remotion composition
 
@@ -90,7 +88,7 @@ export const calculateMetadata: CalculateMetadataFunction<Props> = async ({
 
 The computed `sceneDurations` are passed into the component via a `voiceover` prop so the component knows how long each scene should be.
 
-If the composition uses [`<TransitionSeries>`](remotion-transitions.md), subtract the overlap from total duration: [remotion-transitions.md#calculating-total-composition-duration](remotion-transitions.md#calculating-total-composition-duration)
+If the composition uses [`<TransitionSeries>`](remotion-transitions.md), subtract the overlap from total duration: [./transitions.md#calculating-total-composition-duration](remotion-transitions.md#calculating-total-composition-duration)
 
 ## Rendering audio in the component
 

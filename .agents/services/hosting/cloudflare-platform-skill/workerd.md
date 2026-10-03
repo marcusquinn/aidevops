@@ -1,12 +1,3 @@
----
-name: workerd
-description: "Cloudflare workerd: product reference"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Workerd Runtime
 
 V8-based JS/Wasm runtime powering Cloudflare Workers. Use as app server, dev tool, or HTTP proxy.
@@ -79,15 +70,15 @@ workerd is in **active development**. Breaking changes possible. Pin versions in
 
 **Start here:**
 1. This README (overview, decision tree)
-2. [patterns.md](./patterns.md) - Common workflows, framework examples
+2. [patterns.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/workerd/patterns.md) - Common workflows, framework examples
 
 **When you need details:**
-3. [configuration.md](./configuration.md) - Config format, services, bindings
-4. [api.md](./api.md) - Runtime APIs, TypeScript types
-5. [gotchas.md](./gotchas.md) - Common errors, debugging
+3. [configuration.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/workerd/configuration.md) - Config format, services, bindings
+4. [api.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/workerd/api.md) - Runtime APIs, TypeScript types
+5. [gotchas.md](workerd-gotchas.md) - Common errors, debugging
 
 ## Related References
 
-- [workers](https://developers.cloudflare.com/workers/) - Workers runtime API documentation
-- [miniflare](miniflare.md) - Testing tool built on workerd
-- [wrangler](https://developers.cloudflare.com/workers/wrangler/) - CLI that uses workerd for local dev
+- [workers](https://developers.cloudflare.com/workers/index.md) - Workers runtime API documentation
+- [miniflare](../miniflare/) - Testing tool built on workerd
+- [wrangler](https://developers.cloudflare.com/workers/wrangler/index.md) - CLI that uses workerd for local dev

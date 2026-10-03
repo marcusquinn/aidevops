@@ -1,12 +1,3 @@
----
-name: api-gotchas
-description: "Cloudflare api: gotchas"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Gotchas & Troubleshooting
 
 ## Rate Limits & 429 Errors
@@ -229,6 +220,6 @@ export async function getZoneDetails(zoneId: string) {
 
 ## See Also
 
-- [api.md](./api.md) - Error types, authentication
-- [configuration.md](./configuration.md) - Timeout/retry configuration
-- [patterns.md](./patterns.md) - Error handling patterns
+- [api.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/api/api.md) - Error types, authentication
+- [configuration.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/api/configuration.md) - Timeout/retry configuration
+- [patterns.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/api/patterns.md) - Error handling patterns

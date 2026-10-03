@@ -1,12 +1,3 @@
----
-name: web-analytics
-description: "Cloudflare web analytics: product reference"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Cloudflare Web Analytics
 
 Privacy-first web analytics providing Core Web Vitals, traffic metrics, and user insights without compromising visitor privacy.
@@ -28,11 +19,11 @@ Cloudflare Web Analytics provides:
 
 ```text
 Is your site proxied through Cloudflare?
-├─ YES → Use automatic injection (configuration.md)
+├─ YES → Use automatic injection (https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/web-analytics/configuration.md)
 │   ├─ Enable auto-injection in dashboard
 │   └─ No code changes needed (unless Cache-Control: no-transform)
 │
-└─ NO → Use manual beacon integration (integration.md)
+└─ NO → Use manual beacon integration (https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/web-analytics/integration.md)
     ├─ Add JS snippet to HTML
     ├─ Use spa: true for React/Vue/Next.js
     └─ Configure CSP if needed
@@ -40,9 +31,9 @@ Is your site proxied through Cloudflare?
 
 ## Reading Order
 
-1. **[configuration.md](web-analytics.md)** - Setup for proxied vs non-proxied sites
-2. **[integration.md](integration.md)** - Framework-specific beacon integration (React, Next.js, Vue, Nuxt, etc.)
-3. **[patterns.md](web-analytics-patterns.md)** - Common use cases (performance monitoring, GDPR consent, multi-site tracking)
+1. **[configuration.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/web-analytics/configuration.md)** - Setup for proxied vs non-proxied sites
+2. **[integration.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/web-analytics/integration.md)** - Framework-specific beacon integration (React, Next.js, Vue, Nuxt, etc.)
+3. **[patterns.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/web-analytics/patterns.md)** - Common use cases (performance monitoring, GDPR consent, multi-site tracking)
 4. **[gotchas.md](web-analytics-gotchas.md)** - Troubleshooting (SPA tracking, CSP issues, hash routing limitations)
 
 ## When to Use Each File
@@ -149,6 +140,6 @@ Create custom tracking rules for advanced configurations:
 
 ## See Also
 
-- [Cloudflare Web Analytics Docs](https://developers.cloudflare.com/analytics/web-analytics/)
+- [Cloudflare Web Analytics Docs](https://developers.cloudflare.com/web-analytics/index.md)
 - [Core Web Vitals Guide](https://web.dev/vitals/)
-- [GraphQL Analytics API Reference](graphql-api.md) - Query server-side analytics (HTTP, Workers, DNS, Firewall, etc.) via GraphQL
+- [GraphQL Analytics API Reference](../graphql-api/) - Query server-side analytics (HTTP, Workers, DNS, Firewall, etc.) via GraphQL

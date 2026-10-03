@@ -1,11 +1,7 @@
 ---
-name: remotion-maps-static-map
+name: remotion-maps-static
 description: Create a deterministic static locator map in Remotion when neither the camera nor geographic data animates.
-mode: subagent
 ---
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
 # Static map
 
@@ -25,14 +21,14 @@ import React from 'react';
 import {AbsoluteFill, CanvasImage, staticFile} from 'remotion';
 
 export const StaticMap: React.FC = () => {
-	return (
-		<>
-			<CanvasImage
-				src={staticFile('locator-map.png')}
-				style={{width: '100%', height: '100%', objectFit: 'cover'}}
-			/>
-		</>
-	);
+  return (
+    <>
+      <CanvasImage
+        src={staticFile('locator-map.png')}
+        style={{width: '100%', height: '100%', objectFit: 'cover'}}
+      />
+    </>
+  );
 };
 ```
 

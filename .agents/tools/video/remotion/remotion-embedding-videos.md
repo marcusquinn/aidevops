@@ -1,11 +1,9 @@
 ---
-name: remotion-embedding-videos
+name: embedding-videos
 description: Embedding videos in Remotion - trimming, volume, speed, looping, pitch
-mode: subagent
+metadata:
+  tags: video, media, trim, volume, speed, loop, pitch
 ---
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
 # Using videos in Remotion
 

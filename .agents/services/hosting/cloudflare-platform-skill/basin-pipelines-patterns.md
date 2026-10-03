@@ -1,15 +1,6 @@
----
-name: basin-pipelines-patterns
-description: "Cloudflare Basin pipelines: patterns"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Basin Pipelines Patterns
 
-Code-first patterns. For observability dataset/field schemas and Logpush dataset lists, pull `https://developers.cloudflare.com/basin-pipelines/observability/metrics/` and `https://developers.cloudflare.com/basin-pipelines/streams/logpush/`.
+Code-first patterns. For observability dataset/field schemas and Logpush dataset lists, pull `https://developers.cloudflare.com/basin-pipelines/observability/metrics/index.md` and `https://developers.cloudflare.com/basin-pipelines/streams/logpush/index.md`.
 
 ## Fire-and-Forget Producer
 
@@ -129,12 +120,12 @@ await Promise.all([env.EVENTS_V1.send([event]), env.EVENTS_V2.send([event])]);
 External APIs → Collector Worker (cron) → Pipeline → R2 (Iceberg) → Dashboard Worker → Basin SQL
 ```
 
-1. Create bucket + enable catalog ([Basin Catalog](catalog.md))
+1. Create bucket + enable catalog ([Basin Catalog](basin-catalog-configuration.md))
 2. Create stream + sink + pipeline (here)
 3. Collector Worker with cron + stream binding (above)
-4. Dashboard Worker querying Basin SQL ([sql/patterns.md](sql-patterns.md))
+4. Dashboard Worker querying Basin SQL ([sql/patterns.md](basin-sql-patterns.md))
 5. Enable automatic compaction
 
 ## See Also
 
-- [configuration.md](basin-pipelines.md) · [api.md](basin-pipelines.md) · [gotchas.md](basin-pipelines-gotchas.md) · [Basin SQL](basin-sql.md)
+- [configuration.md](basin-pipelines-configuration.md) · [api.md](basin-pipelines-api.md) · [gotchas.md](basin-pipelines-gotchas.md) · [Basin SQL](../sql/)

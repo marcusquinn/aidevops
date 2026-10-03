@@ -1,12 +1,3 @@
----
-name: ddos-gotchas
-description: "Cloudflare ddos: gotchas"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # DDoS Gotchas
 
 ## Common Errors
@@ -114,4 +105,4 @@ const config = {
 - Combine with WAF for layered defense
 - Avoid over-tuning (keep config simple)
 
-See [patterns.md](./patterns.md) for progressive rollout examples.
+See [patterns.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/ddos/patterns.md) for progressive rollout examples.

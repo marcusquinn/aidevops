@@ -1,12 +1,3 @@
----
-name: ddos
-description: "Cloudflare ddos: product reference"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Cloudflare DDoS Protection
 
 Autonomous, always-on protection against DDoS attacks across L3/4 and L7.
@@ -40,12 +31,12 @@ Autonomous, always-on protection against DDoS attacks across L3/4 and L7.
 
 | File | Purpose | Start Here If... |
 |------|---------|------------------|
-| [configuration.md](./configuration.md) | Dashboard setup, rule structure, adaptive profiles | You're setting up DDoS protection for the first time |
-| [api.md](./api.md) | API endpoints, SDK usage, ruleset ID discovery | You're automating configuration or need programmatic access |
-| [patterns.md](./patterns.md) | Protection strategies, defense-in-depth, dynamic response | You need implementation patterns or layered security |
-| [gotchas.md](./gotchas.md) | False positives, tuning, error handling | You're troubleshooting or optimizing existing protection |
+| [configuration.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/ddos/configuration.md) | Dashboard setup, rule structure, adaptive profiles | You're setting up DDoS protection for the first time |
+| [api.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/ddos/api.md) | API endpoints, SDK usage, ruleset ID discovery | You're automating configuration or need programmatic access |
+| [patterns.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/ddos/patterns.md) | Protection strategies, defense-in-depth, dynamic response | You need implementation patterns or layered security |
+| [gotchas.md](ddos-gotchas.md) | False positives, tuning, error handling | You're troubleshooting or optimizing existing protection |
 
 ## See Also
 
-- [waf](waf.md) - Application-layer security rules
-- [bot-management](bot-management.md) - Bot detection and mitigation
+- [waf](../waf/) - Application-layer security rules
+- [bot-management](../bot-management/) - Bot detection and mitigation

@@ -1,11 +1,9 @@
 ---
-name: remotion-measuring-dom-nodes
+name: measuring-dom-nodes
 description: Measuring DOM element dimensions in Remotion
-mode: subagent
+metadata:
+  tags: measure, layout, dimensions, getBoundingClientRect, scale
 ---
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
 # Measuring DOM nodes in Remotion
 

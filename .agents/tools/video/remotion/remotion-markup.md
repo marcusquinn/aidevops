@@ -1,11 +1,8 @@
 ---
 name: remotion-markup
 description: Content, animation and effects best practices
-mode: subagent
+version: 4.0.532
 ---
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
 This is guidance for writing Remotion React Markup.
 If this is not relevant, load Remotion Best Practices instead.
@@ -133,12 +130,12 @@ export const MyComposition = () => {
 ```
 
 If the composition is primarily a timeline of video or audio clips, read
-[video-editing.md](video-editing.md) before choosing its source structure.
+[video-editing.md](remotion-video-editing.md) before choosing its source structure.
 
 ## Example scene
 
 A background video with a lower third.
-The lower third is an interactive component with its own timeline, registered as a [connected composition](connected-compositions.md).
+The lower third is an interactive component with its own timeline, registered as a [connected composition](remotion-connected-compositions.md).
 Its text is passed as `children` and `accentColor` is an editable prop.
 The fade-in is keyframed inline at the call site.
 
@@ -294,43 +291,43 @@ See [Remotion Maps](remotion-maps.md) if wanting to include maps in the video.
 
 ## Text highlights and annotations
 
-See [text-highlights.md](text-highlights.md) for text highlights (highlight markers), circles, underlines, strike-throughs, crossed-off text, boxes.
+See [text-highlights.md](remotion-text-highlights.md) for text highlights (highlight markers), circles, underlines, strike-throughs, crossed-off text, boxes.
 
 ## Multi-scene videos
 
-See [multi-scene-video.md](multi-scene-video.md) if planning to make a video with multiple subsequent scenes.
+See [multi-scene-video.md](remotion-multi-scene-video.md) if planning to make a video with multiple subsequent scenes.
 
 ## Connected compositions
 
-When a scene or group of layers deserves its own editable timeline, follow [connected-compositions.md](connected-compositions.md). Prefer this structure for substantial scenes in a multi-scene video.
+When a scene or group of layers deserves its own editable timeline, follow [connected-compositions.md](remotion-connected-compositions.md). Prefer this structure for substantial scenes in a multi-scene video.
 
 ### Pre-compose action
 
-For a Studio request such as `Pre-compose Ambient glow (src/BarChart.tsx:134)`, find the selected sequence markup at the given location. Make a connected composition, following [connected-compositions.md](connected-compositions.md): extract the markup into a named component, preferably make it interactive with `Interactive.withSchema({wrapInSequence: true})`, and register the same exported component reference with a unique `<Composition>` in the root. Render the interactive component directly with its timing props, or as the only child of a sequence when that wrapper has a purpose. If the selected node is already a sequence, keep its props and extract its children. The registration needs dimensions, fps, duration, and `defaultProps` equivalent to its parent use. A component extraction without a registered composition does not complete a pre-compose request.
+For a Studio request such as `Pre-compose Ambient glow (src/BarChart.tsx:134)`, find the selected sequence markup at the given location. Make a connected composition, following [connected-compositions.md](remotion-connected-compositions.md): extract the markup into a named component, preferably make it interactive with `Interactive.withSchema({wrapInSequence: true})`, and register the same exported component reference with a unique `<Composition>` in the root. Render the interactive component directly with its timing props, or as the only child of a sequence when that wrapper has a purpose. If the selected node is already a sequence, keep its props and extract its children. The registration needs dimensions, fps, duration, and `defaultProps` equivalent to its parent use. A component extraction without a registered composition does not complete a pre-compose request.
 
 ## Voiceover
 
-See [voiceover.md](voiceover.md) for adding an AI-generated voiceover to Remotion compositions using ElevenLabs TTS.
+See [voiceover.md](remotion-voiceover.md) for adding an AI-generated voiceover to Remotion compositions using ElevenLabs TTS.
 
 ## Embedding Videos
 
-See [embedding-videos.md](embedding-videos.md) for advanced knowledge about embedding videos - trimming, volume, speed, looping, pitch.
+See [embedding-videos.md](remotion-embedding-videos.md) for advanced knowledge about embedding videos - trimming, volume, speed, looping, pitch.
 
 ## Embedding Audio
 
-See [audio.md](audio.md) for advanced audio features like trimming, volume, speed, pitch.
+See [audio.md](remotion-audio.md) for advanced audio features like trimming, volume, speed, pitch.
 
 ## Cropping
 
-See [cropping.md](cropping.md) if needing to crop the visible rectangle of a component.
+See [cropping.md](remotion-cropping.md) if needing to crop the visible rectangle of a component.
 
 ## Transitions
 
-See [transitions.md](transitions.md) for scene transition patterns.
+See [transitions.md](remotion-transitions.md) for scene transition patterns.
 
 ## Motion blur
 
-When adding motion blur or a movement trail, read [motion-blur.md](motion-blur.md) for the preferred HTML-in-canvas approach, preview requirements, and alternatives.
+When adding motion blur or a movement trail, read [motion-blur.md](remotion-motion-blur.md) for the preferred HTML-in-canvas approach, preview requirements, and alternatives.
 
 ## Visual and pixel effects
 
@@ -338,22 +335,22 @@ When creating a visual effect, consider whether it is feasible using CSS and HTM
 Order or preference:
 
 1. Regular HTML + CSS or other web techniques
-2. An effect applied to the element directly (`<Video>`, `<Img>`), or by wrapping the content in [`<HtmlInCanvas>`](html-in-canvas.md), which also accepts `effects`:
+2. An effect applied to the element directly (`<Video>`, `<Img>`), or by wrapping the content in [`<HtmlInCanvas>`](remotion-html-in-canvas.md), which also accepts `effects`:
 
-- A listed effect via [effects.md](effects.md)
-- A custom `createEffect()` via [effects.md](effects.md) when no preset is available.
+- A listed effect via [effects.md](remotion-effects.md)
+- A custom `createEffect()` via [effects.md](remotion-effects.md) when no preset is available.
 
 ## 3D content
 
-See [remotion-3d.md](remotion-3d.md) for 3D content in Remotion using Three.js and React Three Fiber.
+See [./3d.md](remotion-3d.md) for 3D content in Remotion using Three.js and React Three Fiber.
 
 ## Sound effects
 
-When needing to use sound effects, load the [remotion-sfx.md](remotion-sfx.md) file for more information.
+When needing to use sound effects, load the [./sfx.md](remotion-sfx.md) file for more information.
 
 ## Audio visualization
 
-When needing to visualize audio (spectrum bars, waveforms, bass-reactive effects), load the [remotion-audio-visualization.md](remotion-audio-visualization.md) file for more information.
+When needing to visualize audio (spectrum bars, waveforms, bass-reactive effects), load the [./audio-visualization.md](remotion-audio-visualization.md) file for more information.
 
 ## Maps
 
@@ -365,65 +362,65 @@ When dealing with captions or subtitles, load the Remotion Captions skill for mo
 
 ## Google Fonts
 
-Is the recommended way to load fonts in Remotion. See [google-fonts.md](google-fonts.md) for how to load Google Fonts.
+Is the recommended way to load fonts in Remotion. See [google-fonts.md](remotion-google-fonts.md) for how to load Google Fonts.
 
 ## Local fonts
 
-See [local-fonts.md](local-fonts.md) for how to load local fonts.
+See [local-fonts.md](remotion-local-fonts.md) for how to load local fonts.
 
 ## GIFs
 
-See [gifs.md](gifs.md) for how to display GIFs synchronized with Remotion's timeline.
+See [gifs.md](remotion-gifs.md) for how to display GIFs synchronized with Remotion's timeline.
 
 ## Advanced Images
 
-See [images.md](images.md) for sizing and positioning images, dynamic image paths, and getting image dimensions.
+See [images.md](remotion-images.md) for sizing and positioning images, dynamic image paths, and getting image dimensions.
 
 ## Lottie animations
 
-See [lottie.md](lottie.md) for embedding Lottie animations in Remotion.
+See [lottie.md](remotion-lottie.md) for embedding Lottie animations in Remotion.
 
 ## Timing
 
-See [timing.md](timing.md) for more timing techniques for `interpolate()`.
+See [timing.md](remotion-timing.md) for more timing techniques for `interpolate()`.
 
 ## Parameterized videos
 
-See [parameters.md](parameters.md) for making a composition parametrizable by adding a Zod schema.
+See [parameters.md](remotion-parameters.md) for making a composition parametrizable by adding a Zod schema.
 
 ## Measuring DOM nodes
 
-See [measuring-dom-nodes.md](measuring-dom-nodes.md) for measuring DOM element dimensions in Remotion.
+See [measuring-dom-nodes.md](remotion-measuring-dom-nodes.md) for measuring DOM element dimensions in Remotion.
 
 ## Measuring text
 
-See [measuring-text.md](measuring-text.md) for measuring text dimensions, fitting text to containers, and checking overflow.
+See [measuring-text.md](remotion-measuring-text.md) for measuring text dimensions, fitting text to containers, and checking overflow.
 
 ## Using FFmpeg
 
-For some video operations, such as trimming videos or detecting silence, FFmpeg should be used. Load the [remotion-ffmpeg.md](remotion-ffmpeg.md) file for more information.
+For some video operations, such as trimming videos or detecting silence, FFmpeg should be used. Load the [./ffmpeg.md](remotion-ffmpeg.md) file for more information.
 
 ## Silence detection
 
-When needing to detect and trim silent segments from video or audio files, load the [remotion-silence-detection.md](remotion-silence-detection.md) file.
+When needing to detect and trim silent segments from video or audio files, load the [./silence-detection.md](remotion-silence-detection.md) file.
 
 ## Dynamic duration, dimensions and data
 
-See [calculate-metadata.md](calculate-metadata.md) for dynamically set composition duration, dimensions, and props.
+See [calculate-metadata.md](remotion-calculate-metadata.md) for dynamically set composition duration, dimensions, and props.
 
 ## Compositions and stills
 
-Before registering `<Composition>` or `<Still>` elements, read [compositions.md](compositions.md) for source-editable registrations, folders, default props and nesting. For Studio navigation into a scene's own timeline, use [connected compositions](connected-compositions.md).
+Before registering `<Composition>` or `<Still>` elements, read [compositions.md](remotion-compositions.md) for source-editable registrations, folders, default props and nesting. For Studio navigation into a scene's own timeline, use [connected compositions](remotion-connected-compositions.md).
 
 ## Advanced sequencing
 
-See [sequencing.md](sequencing.md) for more sequencing patterns - delay, trim, limit duration of items.
+See [sequencing.md](remotion-sequencing.md) for more sequencing patterns - delay, trim, limit duration of items.
 
 ## Install modules
 
 Use `npx remotion add` to add new packages with the right version:
 
-```bash
+```text
 npx remotion add @remotion/media
 ```
 

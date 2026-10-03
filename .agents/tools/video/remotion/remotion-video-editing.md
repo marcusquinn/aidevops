@@ -1,11 +1,3 @@
----
-name: remotion-video-editing
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Editable video timelines
 
 The Studio edits the JSX source node that created a timeline item. Every clip
@@ -148,7 +140,7 @@ The `<TransitionSeries.Sequence>` is the editable clip row. Do not set `from`
 on it; the series calculates the start frame and accounts for transition
 overlaps.
 
-Read [transitions.md](transitions.md) for transition types, imports,
+Read [transitions.md](remotion-transitions.md) for transition types, imports,
 installation instructions and composition-duration calculation. Import
 `<Video>` from `@remotion/media`, and keep the parent composition's
 `durationInFrames` as an inline literal after accounting for all clip durations

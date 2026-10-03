@@ -1,11 +1,9 @@
 ---
-name: remotion-transitions
+name: transitions
 description: Scene transitions and overlays for Remotion using TransitionSeries.
-mode: subagent
+metadata:
+  tags: transitions, overlays, fade, slide, wipe, scenes
 ---
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
 ## TransitionSeries
 

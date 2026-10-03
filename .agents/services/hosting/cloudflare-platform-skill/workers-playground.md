@@ -1,12 +1,3 @@
----
-name: workers-playground
-description: "Cloudflare workers playground: product reference"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Cloudflare Workers Playground Skill Reference
 
 ## Overview
@@ -79,16 +70,16 @@ export default {
 
 ## Reading Order
 
-1. **[configuration.md](workers-playground.md)** - Start here: playground setup, constraints, deployment
-2. **[api.md](workers-playground.md)** - Core APIs: Request, Response, ExecutionContext, fetch, Cache
-3. **[patterns.md](workers-playground-patterns.md)** - Common use cases: routing, proxying, A/B testing, multi-module code
+1. **[configuration.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/workers-playground/configuration.md)** - Start here: playground setup, constraints, deployment
+2. **[api.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/workers-playground/api.md)** - Core APIs: Request, Response, ExecutionContext, fetch, Cache
+3. **[patterns.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/workers-playground/patterns.md)** - Common use cases: routing, proxying, A/B testing, multi-module code
 4. **[gotchas.md](workers-playground-gotchas.md)** - Troubleshooting: errors, browser issues, limits, best practices
 
 ## In This Reference
 
-- **[configuration.md](workers-playground.md)** - Setup, deployment, configuration
-- **[api.md](workers-playground.md)** - API endpoints, methods, interfaces
-- **[patterns.md](workers-playground-patterns.md)** - Common patterns, use cases, examples
+- **[configuration.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/workers-playground/configuration.md)** - Setup, deployment, configuration
+- **[api.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/workers-playground/api.md)** - API endpoints, methods, interfaces
+- **[patterns.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/workers-playground/patterns.md)** - Common patterns, use cases, examples
 - **[gotchas.md](workers-playground-gotchas.md)** - Troubleshooting, best practices, limitations
 
 ## Key Features
@@ -130,7 +121,7 @@ export default {
 
 ## See Also
 
-- [Cloudflare Workers Docs](https://developers.cloudflare.com/workers/)
-- [Workers Examples](https://developers.cloudflare.com/workers/examples/)
-- [Wrangler CLI](https://developers.cloudflare.com/workers/wrangler/)
-- [Workers API Reference](https://developers.cloudflare.com/workers/runtime-apis/)
+- [Cloudflare Workers Docs](https://developers.cloudflare.com/workers/index.md)
+- [Workers Examples](https://developers.cloudflare.com/workers/examples/index.md)
+- [Wrangler CLI](https://developers.cloudflare.com/workers/wrangler/index.md)
+- [Workers API Reference](https://developers.cloudflare.com/workers/runtime-apis/index.md)

@@ -1,12 +1,3 @@
----
-name: analytics-engine-gotchas
-description: "Cloudflare analytics engine: gotchas"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Analytics Engine Gotchas
 
 ## Critical Issues

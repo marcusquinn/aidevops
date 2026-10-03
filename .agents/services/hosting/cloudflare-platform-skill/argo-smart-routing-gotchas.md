@@ -1,12 +1,3 @@
----
-name: argo-smart-routing-gotchas
-description: "Cloudflare argo smart routing: gotchas"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 ## Best Practices Summary
 
 **Smart Shield Note:** Argo Smart Routing evolving into Smart Shield. Best practices below remain applicable; monitor Cloudflare changelog for Smart Shield updates.
@@ -115,8 +106,8 @@ try {
 
 ## Additional Resources
 
-- [Official Argo Smart Routing Docs](https://developers.cloudflare.com/argo-smart-routing/)
-- [Cloudflare Smart Shield](https://developers.cloudflare.com/smart-shield/)
-- [API Authentication](https://developers.cloudflare.com/fundamentals/api/get-started/create-token/)
+- [Official Argo Smart Routing Docs](https://developers.cloudflare.com/argo-smart-routing/index.md)
+- [Cloudflare Smart Shield](https://developers.cloudflare.com/smart-shield/index.md)
+- [API Authentication](https://developers.cloudflare.com/fundamentals/api/get-started/create-token/index.md)
 - [Cloudflare TypeScript SDK](https://github.com/cloudflare/cloudflare-typescript)
 - [Cloudflare Python SDK](https://github.com/cloudflare/cloudflare-python)

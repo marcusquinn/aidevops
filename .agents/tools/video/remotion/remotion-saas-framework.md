@@ -1,11 +1,9 @@
 ---
-name: remotion-saas-framework
+name: framework
 description: Choose a framework for a Remotion-based app.
-mode: subagent
+metadata:
+  tags: remotion, saas, templates, nextjs, react-router, vercel, lambda, cloudflare
 ---
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
 Remotion can be used with any React framework.
 

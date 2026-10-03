@@ -1,12 +1,3 @@
----
-name: realtime-sfu
-description: "Cloudflare realtime sfu: product reference"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Cloudflare Realtime SFU Reference
 
 Expert guidance for building real-time audio/video/data applications using Cloudflare Realtime SFU (Selective Forwarding Unit).
@@ -26,9 +17,9 @@ Expert guidance for building real-time audio/video/data applications using Cloud
 
 ## In This Reference
 
-- **[configuration.md](realtime-sfu.md)** - Setup, deployment, environment variables, Wrangler config
-- **[api.md](realtime-sfu.md)** - Sessions, tracks, endpoints, request/response patterns
-- **[patterns.md](realtime-sfu-patterns.md)** - Architecture patterns, use cases, integration examples
+- **[configuration.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/realtime-sfu/configuration.md)** - Setup, deployment, environment variables, Wrangler config
+- **[api.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/realtime-sfu/api.md)** - Sessions, tracks, endpoints, request/response patterns
+- **[patterns.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/realtime-sfu/patterns.md)** - Architecture patterns, use cases, integration examples
 - **[gotchas.md](realtime-sfu-gotchas.md)** - Common issues, debugging, performance, security
 
 ## Quick Start
@@ -70,5 +61,5 @@ Get `CALLS_APP_ID` and `CALLS_APP_SECRET` from dashboard, then see configuration
 - [Orange Meets Demo](https://demo.orange.cloudflare.dev/)
 - [Orange Source](https://github.com/cloudflare/orange)
 - [Calls Examples](https://github.com/cloudflare/calls-examples)
-- [API Reference](https://developers.cloudflare.com/api/resources/calls/)
-- [RealtimeKit Docs](https://developers.cloudflare.com/realtime/realtimekit/)
+- [API Reference](https://developers.cloudflare.com/api/resources/calls/index.md)
+- [RealtimeKit Docs](https://developers.cloudflare.com/realtime/realtimekit/index.md)

@@ -1,12 +1,3 @@
----
-name: smart-placement-gotchas
-description: "Cloudflare smart placement: gotchas"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Smart Placement Gotchas
 
 ## Common Errors

@@ -1,11 +1,8 @@
 ---
 name: remotion-upgrade
 description: Upgrade Remotion, and related packages
-mode: subagent
+version: 4.0.532
 ---
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
 # Upgrade Remotion
 

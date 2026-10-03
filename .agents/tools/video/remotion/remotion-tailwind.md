@@ -1,11 +1,8 @@
 ---
-name: remotion-tailwind
+name: tailwind
 description: Using TailwindCSS in Remotion.
-mode: subagent
+metadata:
 ---
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
 You can and should use TailwindCSS in Remotion, if TailwindCSS is installed in the project.
 

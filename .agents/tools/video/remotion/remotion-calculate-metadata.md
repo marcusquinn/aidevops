@@ -1,11 +1,9 @@
 ---
-name: remotion-calculate-metadata
+name: calculate-metadata
 description: Dynamically set composition duration, dimensions, and props
-mode: subagent
+metadata:
+  tags: calculateMetadata, duration, dimensions, props, dynamic
 ---
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
 # Using calculateMetadata
 

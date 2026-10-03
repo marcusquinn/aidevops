@@ -1,11 +1,3 @@
----
-name: remotion-connected-compositions
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Connected compositions
 
 Using the connected compositions pattern, a group of layers can get their own Studio timeline, like a precomposition in After Effects.

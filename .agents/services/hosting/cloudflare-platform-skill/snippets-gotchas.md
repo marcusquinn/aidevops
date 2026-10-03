@@ -1,12 +1,3 @@
----
-name: snippets-gotchas
-description: "Cloudflare snippets: gotchas"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Gotchas & Best Practices
 
 ## Common Errors

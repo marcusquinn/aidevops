@@ -1,12 +1,3 @@
----
-name: miniflare
-description: "Cloudflare miniflare: product reference"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Miniflare
 
 Miniflare provides programmatic control of local Workers simulation. Read the linked documentation before choosing APIs, configuration, or a migration path.
@@ -15,17 +6,17 @@ Miniflare provides programmatic control of local Workers simulation. Read the li
 
 | Need | Start here |
 |------|------------|
-| Unit tests that execute in the Workers runtime | [Workers Vitest setup](https://developers.cloudflare.com/workers/testing/vitest-integration/write-your-first-test/) |
-| Integration tests against built Workers | [Integration test harness](https://developers.cloudflare.com/workers/testing/test-harness/) |
-| Low-level simulator control for a custom harness | [Miniflare testing guide](https://developers.cloudflare.com/workers/testing/miniflare/writing-tests/) |
-| Binding access from a Node.js process | [Wrangler getPlatformProxy](https://developers.cloudflare.com/workers/wrangler/api/#getplatformproxy) |
+| Unit tests that execute in the Workers runtime | [Workers Vitest setup](https://developers.cloudflare.com/workers/testing/vitest-integration/write-your-first-test/index.md) |
+| Integration tests against built Workers | [Integration test harness](https://developers.cloudflare.com/workers/testing/test-harness/index.md) |
+| Low-level simulator control for a custom harness | [Miniflare testing guide](https://developers.cloudflare.com/workers/testing/miniflare/writing-tests/index.md) |
+| Binding access from a Node.js process | [Wrangler getPlatformProxy](https://developers.cloudflare.com/workers/wrangler/api/index.md#getplatformproxy) |
 
 For interactive local development, use the project's Wrangler or Cloudflare Vite workflow. Direct Miniflare is useful when the higher-level testing tools do not expose the control needed.
 
 ## Read for the task
 
-- [Get started](https://developers.cloudflare.com/workers/testing/miniflare/get-started/) — installation, scripts, lifecycle, and event dispatch.
-- [API routing](./api.md) — events and access to local resources.
-- [Configuration](./configuration.md) — modules, bindings, compatibility, and multiple Workers.
-- [Testing patterns](./patterns.md) — runtime choice, mocking, and test lifecycle.
-- [Troubleshooting and migrations](./gotchas.md) — build/configuration differences and existing test suites.
+- [Get started](https://developers.cloudflare.com/workers/testing/miniflare/get-started/index.md) — installation, scripts, lifecycle, and event dispatch.
+- [API routing](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/miniflare/api.md) — events and access to local resources.
+- [Configuration](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/miniflare/configuration.md) — modules, bindings, compatibility, and multiple Workers.
+- [Testing patterns](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/miniflare/patterns.md) — runtime choice, mocking, and test lifecycle.
+- [Troubleshooting and migrations](miniflare-gotchas.md) — build/configuration differences and existing test suites.

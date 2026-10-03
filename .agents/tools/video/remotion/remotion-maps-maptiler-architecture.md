@@ -1,11 +1,3 @@
----
-name: remotion-maps-maptiler-architecture
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Map Explainer — architecture reference
 
 Deep detail behind `TECHNIQUE.md`: the timing model, the river reveal + electric head, the per-country

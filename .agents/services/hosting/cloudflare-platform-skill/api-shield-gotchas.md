@@ -1,12 +1,3 @@
----
-name: api-shield-gotchas
-description: "Cloudflare api shield: gotchas"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Gotchas & Troubleshooting
 
 ## Common Errors
@@ -129,6 +120,6 @@ mode: subagent
 
 ## See Also
 
-- [configuration.md](api-shield.md) - Setup guides to avoid common issues
-- [patterns.md](api-shield-patterns.md) - Best practices and progressive rollout
-- [API Shield Docs](https://developers.cloudflare.com/api-shield/)
+- [configuration.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/api-shield/configuration.md) - Setup guides to avoid common issues
+- [patterns.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/api-shield/patterns.md) - Best practices and progressive rollout
+- [API Shield Docs](https://developers.cloudflare.com/api-shield/index.md)

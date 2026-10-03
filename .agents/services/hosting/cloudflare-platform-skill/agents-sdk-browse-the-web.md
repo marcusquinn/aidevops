@@ -1,15 +1,6 @@
----
-name: agents-sdk-browse-the-web
-description: "Cloudflare Agents SDK: browse the web"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Browse the Web (Experimental)
 
-Fetch https://developers.cloudflare.com/agents/api-reference/browse-the-web/ for complete documentation.
+Fetch https://developers.cloudflare.com/agents/tools/browser/index.md for complete documentation.
 
 CDP-powered browser tools that let agents scrape, screenshot, and interact with web pages.
 

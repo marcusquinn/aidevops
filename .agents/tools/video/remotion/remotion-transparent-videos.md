@@ -1,11 +1,9 @@
 ---
-name: remotion-transparent-videos
+name: transparent-videos
 description: Rendering transparent videos in Remotion
-mode: subagent
+metadata:
+  tags: transparent, alpha, codec, vp9, prores, webm
 ---
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
 # Rendering Transparent Videos
 

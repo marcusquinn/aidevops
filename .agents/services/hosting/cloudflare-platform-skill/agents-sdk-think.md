@@ -1,15 +1,6 @@
----
-name: agents-sdk-think
-description: "Cloudflare Agents SDK: think"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Think (Experimental)
 
-Fetch https://developers.cloudflare.com/agents/api-reference/think/ for complete documentation.
+Fetch https://developers.cloudflare.com/agents/harnesses/think/index.md for complete documentation.
 
 `@cloudflare/think` — a higher-level chat agent class that handles the `streamText` loop, tool execution, and message persistence for you. You provide `getModel()` and `getSystemPrompt()`; Think handles the rest.
 

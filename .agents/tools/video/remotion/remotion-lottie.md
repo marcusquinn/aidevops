@@ -1,11 +1,9 @@
 ---
-name: remotion-lottie
+name: lottie
 description: Embedding Lottie animations in Remotion.
-mode: subagent
+metadata:
+  category: Animation
 ---
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
 # Using Lottie Animations in Remotion
 

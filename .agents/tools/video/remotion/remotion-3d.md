@@ -1,11 +1,9 @@
 ---
-name: remotion-3d
+name: 3d
 description: 3D content in Remotion using Three.js and React Three Fiber.
-mode: subagent
+metadata:
+  tags: 3d, three, threejs
 ---
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
 # Using Three.js and React Three Fiber in Remotion
 

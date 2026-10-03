@@ -1,12 +1,3 @@
----
-name: realtime-sfu-gotchas
-description: "Cloudflare realtime sfu: gotchas"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Gotchas & Troubleshooting
 
 ## Common Errors

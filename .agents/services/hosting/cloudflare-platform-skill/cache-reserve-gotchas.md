@@ -1,20 +1,11 @@
----
-name: cache-reserve-gotchas
-description: "Cloudflare cache reserve: gotchas"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Cache Reserve Gotchas
 
 ## Common Errors
 
 ### "Assets Not Being Cached in Cache Reserve"
 
-**Cause:** Asset is not cacheable, TTL < 10 hours, Content-Length header missing, or blocking headers present (Set-Cookie, Vary: *)<br>
-**Solution:** Ensure minimum TTL of 10+ hours (`Cache-Control: public, max-age=36000`), add Content-Length header, remove Set-Cookie header, and set `Vary: Accept-Encoding` (not*)
+**Cause:** Asset is not cacheable, TTL < 10 hours, Content-Length header missing, or blocking headers present (Set-Cookie, Vary: `*`)<br>
+**Solution:** Ensure minimum TTL of 10+ hours (`Cache-Control: public, max-age=36000`), add Content-Length header, remove Set-Cookie header, and set `Vary: Accept-Encoding` (not `*`)
 
 ### "Range Requests Not Working" (Video Seeking Fails)
 
@@ -83,13 +74,13 @@ mode: subagent
 
 ## Additional Resources
 
-- **Official Docs**: https://developers.cloudflare.com/cache/advanced-configuration/cache-reserve/
-- **API Reference**: https://developers.cloudflare.com/api/resources/cache/subresources/cache_reserve/
-- **Cache Rules**: https://developers.cloudflare.com/cache/how-to/cache-rules/
-- **Workers Cache API**: https://developers.cloudflare.com/workers/runtime-apis/cache/
-- **R2 Documentation**: https://developers.cloudflare.com/r2/
-- **Smart Shield**: https://developers.cloudflare.com/smart-shield/
-- **Tiered Cache**: https://developers.cloudflare.com/cache/how-to/tiered-cache/
+- **Official Docs**: https://developers.cloudflare.com/cache/advanced-configuration/cache-reserve/index.md
+- **API Reference**: https://developers.cloudflare.com/api/resources/cache/subresources/cache_reserve/index.md
+- **Cache Rules**: https://developers.cloudflare.com/cache/how-to/cache-rules/index.md
+- **Workers Cache API**: https://developers.cloudflare.com/workers/runtime-apis/cache/index.md
+- **R2 Documentation**: https://developers.cloudflare.com/r2/index.md
+- **Smart Shield**: https://developers.cloudflare.com/smart-shield/index.md
+- **Tiered Cache**: https://developers.cloudflare.com/cache/how-to/tiered-cache/index.md
 
 ## Troubleshooting Flowchart
 
@@ -135,7 +126,7 @@ Asset not caching in Cache Reserve?
 
 ## See Also
 
-- [README](./README.md) - Overview and core concepts
-- [Configuration](./configuration.md) - Setup and Cache Rules
-- [API Reference](./api.md) - Purging and monitoring
-- [Patterns](./patterns.md) - Best practices and optimization
+- [README](cache-reserve.md) - Overview and core concepts
+- [Configuration](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/cache-reserve/configuration.md) - Setup and Cache Rules
+- [API Reference](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/cache-reserve/api.md) - Purging and monitoring
+- [Patterns](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/cache-reserve/patterns.md) - Best practices and optimization

@@ -1,11 +1,8 @@
 ---
 name: remotion-docs
 description: Search Remotion documentation
-mode: subagent
+version: 4.0.532
 ---
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
 This skill teaches you how to discover and read current Remotion documentation.
 If this is not relevant, load Remotion Best Practices instead.
@@ -14,7 +11,7 @@ If this is not relevant, load Remotion Best Practices instead.
 
 Use the Algolia search API to find relevant documentation pages:
 
-```http
+```text
 POST https://plsduol1ca-dsn.algolia.net/1/indexes/*/queries?x-algolia-api-key=3e42dbd4f895fe93ff5cf40d860c4a85&x-algolia-application-id=PLSDUOL1CA
 Content-Type: application/x-www-form-urlencoded
 

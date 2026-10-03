@@ -1,12 +1,3 @@
----
-name: graphql-api-gotchas
-description: "Cloudflare graphql api: gotchas"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # GraphQL Analytics API Gotchas & Troubleshooting
 
 ## Rate Limits
@@ -114,6 +105,6 @@ Not all datasets are available on all plans. Higher plans get more datasets, lon
 ## See Also
 
 - [README.md](graphql-api.md) - Overview, decision tree, dataset index
-- [api.md](graphql-api.md) - Query structure, aggregation fields, filtering operators
-- [configuration.md](graphql-api.md) - Authentication, client setup, introspection queries
-- [patterns.md](graphql-api-patterns.md) - Common query patterns (time-series, top-N, per-product)
+- [api.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/graphql-api/api.md) - Query structure, aggregation fields, filtering operators
+- [configuration.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/graphql-api/configuration.md) - Authentication, client setup, introspection queries
+- [patterns.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/graphql-api/patterns.md) - Common query patterns (time-series, top-N, per-product)

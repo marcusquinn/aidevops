@@ -1,12 +1,3 @@
----
-name: realtimekit
-description: "Cloudflare realtimekit: product reference"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Cloudflare RealtimeKit
 
 Expert guidance for building real-time video and audio applications using **Cloudflare RealtimeKit** - a comprehensive SDK suite for adding customizable live video and voice to web or mobile applications.
@@ -104,21 +95,21 @@ Need raw WebRTC control?
 
 ## In This Reference
 
-- [Configuration](./configuration.md) - Setup, installation, wrangler config
-- [API](./api.md) - Meeting object, REST API, SDK methods
-- [Patterns](./patterns.md) - Common workflows, code examples
-- [Gotchas](./gotchas.md) - Common issues, troubleshooting
+- [Configuration](realtimekit-configuration.md) - Setup, installation, wrangler config
+- [API](realtimekit-api.md) - Meeting object, REST API, SDK methods
+- [Patterns](realtimekit-patterns.md) - Common workflows, code examples
+- [Gotchas](realtimekit-gotchas.md) - Common issues, troubleshooting
 
 ## See Also
 
-- [Workers](https://developers.cloudflare.com/workers/) - Backend integration
-- [D1](d1.md) - Meeting metadata storage
-- [R2](r2.md) - Recording storage
-- [KV](kv.md) - Session management
+- [Workers](https://developers.cloudflare.com/workers/index.md) - Backend integration
+- [D1](../d1/) - Meeting metadata storage
+- [R2](../r2/) - Recording storage
+- [KV](../kv/) - Session management
 
 ## Reference Links
 
-- **Official Docs**: https://developers.cloudflare.com/realtime/realtimekit/
-- **API Reference**: https://developers.cloudflare.com/api/resources/realtime_kit/
+- **Official Docs**: https://developers.cloudflare.com/realtime/realtimekit/index.md
+- **API Reference**: https://developers.cloudflare.com/api/resources/realtime_kit/index.md
 - **Examples**: https://github.com/cloudflare/realtimekit-web-examples
 - **Dashboard**: https://dash.cloudflare.com/?to=/:account/realtime/kit

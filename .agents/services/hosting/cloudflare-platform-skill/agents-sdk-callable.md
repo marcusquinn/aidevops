@@ -1,15 +1,6 @@
----
-name: agents-sdk-callable
-description: "Cloudflare Agents SDK: callable"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Callable Methods
 
-Fetch https://developers.cloudflare.com/agents/api-reference/callable-methods/ for complete documentation.
+Fetch https://developers.cloudflare.com/agents/runtime/lifecycle/callable-methods/index.md for complete documentation.
 
 ## Overview
 

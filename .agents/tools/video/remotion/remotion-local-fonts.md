@@ -1,11 +1,3 @@
----
-name: remotion-local-fonts
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 For local font files, use the `@remotion/fonts` package.
 
 ### Prerequisites

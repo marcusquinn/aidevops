@@ -1,11 +1,9 @@
 ---
-name: remotion-ffmpeg
+name: ffmpeg
 description: Using FFmpeg and FFprobe in Remotion
-mode: subagent
+metadata:
+  tags: ffmpeg, ffprobe, video, trimming
 ---
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
 ## FFmpeg in Remotion
 

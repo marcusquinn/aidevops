@@ -1,11 +1,3 @@
----
-name: remotion-maps-cesium-troubleshooting
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # 3D Flyover — troubleshooting
 
 ## The headless dead-end (why we render through Remotion)

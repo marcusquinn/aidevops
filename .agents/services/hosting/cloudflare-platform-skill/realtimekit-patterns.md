@@ -1,12 +1,3 @@
----
-name: realtimekit-patterns
-description: "Cloudflare realtimekit: patterns"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # RealtimeKit Patterns
 
 ## UI Kit (Minimal Code)
@@ -37,7 +28,7 @@ RealtimeKit provides 133+ pre-built Stencil.js Web Components with framework wra
 - `<RtkSidebar>` - Chat/participants sidebar
 - `<RtkGrid>` - Adaptive video grid
 
-### Control Components<br>
+### Control Components
 
 - `<RtkMicToggle>`, `<RtkCameraToggle>` - Media controls
 - `<RtkScreenShareToggle>` - Screen sharing
@@ -237,6 +228,6 @@ export default {
 ## In This Reference
 
 - [README.md](realtimekit.md) - Overview, core concepts, quick start
-- [configuration.md](realtimekit.md) - SDK config, presets, wrangler setup
-- [api.md](realtimekit.md) - Client SDK APIs, REST endpoints
+- [configuration.md](realtimekit-configuration.md) - SDK config, presets, wrangler setup
+- [api.md](realtimekit-api.md) - Client SDK APIs, REST endpoints
 - [gotchas.md](realtimekit-gotchas.md) - Common issues, troubleshooting, limits

@@ -1,12 +1,3 @@
----
-name: realtimekit-gotchas
-description: "Cloudflare realtimekit: gotchas"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # RealtimeKit Gotchas & Troubleshooting
 
 ## Common Errors
@@ -182,6 +173,6 @@ meeting.chat.on('chatUpdate', (data) => console.log('[chat] chatUpdate:', data))
 ## In This Reference
 
 - [README.md](realtimekit.md) - Overview, core concepts, quick start
-- [configuration.md](realtimekit.md) - SDK config, presets, wrangler setup
-- [api.md](realtimekit.md) - Client SDK APIs, REST endpoints
+- [configuration.md](realtimekit-configuration.md) - SDK config, presets, wrangler setup
+- [api.md](realtimekit-api.md) - Client SDK APIs, REST endpoints
 - [patterns.md](realtimekit-patterns.md) - Common patterns, React hooks, backend integration

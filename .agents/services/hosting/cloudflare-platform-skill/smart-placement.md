@@ -1,12 +1,3 @@
----
-name: smart-placement
-description: "Cloudflare smart placement: product reference"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Cloudflare Workers Smart Placement
 
 Automatic workload placement optimization to minimize latency by running Workers closer to backend infrastructure rather than end users.
@@ -122,27 +113,27 @@ wrangler tail your-worker-name --header cf-placement
 
 **First time?** Start here:
 1. This README - understand core concepts and when to use Smart Placement
-2. [configuration.md](./configuration.md) - set up wrangler.jsonc and understand limitations
-3. [patterns.md](./patterns.md) - see practical examples for your use case
-4. [api.md](./api.md) - monitor and verify Smart Placement is working
-5. [gotchas.md](./gotchas.md) - troubleshoot common issues
+2. [configuration.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/smart-placement/configuration.md) - set up wrangler.jsonc and understand limitations
+3. [patterns.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/smart-placement/patterns.md) - see practical examples for your use case
+4. [api.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/smart-placement/api.md) - monitor and verify Smart Placement is working
+5. [gotchas.md](smart-placement-gotchas.md) - troubleshoot common issues
 
 **Quick lookup:**
 - "Should I enable Smart Placement?" → See "When to Use" above
-- "How do I configure it?" → [configuration.md](./configuration.md)
-- "How do I split frontend/backend?" → [patterns.md](./patterns.md)
-- "Why isn't it working?" → [gotchas.md](./gotchas.md)
+- "How do I configure it?" → [configuration.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/smart-placement/configuration.md)
+- "How do I split frontend/backend?" → [patterns.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/smart-placement/patterns.md)
+- "Why isn't it working?" → [gotchas.md](smart-placement-gotchas.md)
 
 ## In This Reference
 
-- [configuration.md](./configuration.md) - wrangler.jsonc setup, mode values, validation rules
-- [api.md](./api.md) - Placement Status API, cf-placement header, monitoring
-- [patterns.md](./patterns.md) - Frontend/backend split, database workers, SSR patterns
-- [gotchas.md](./gotchas.md) - Troubleshooting INSUFFICIENT_INVOCATIONS, performance issues
+- [configuration.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/smart-placement/configuration.md) - wrangler.jsonc setup, mode values, validation rules
+- [api.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/smart-placement/api.md) - Placement Status API, cf-placement header, monitoring
+- [patterns.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/smart-placement/patterns.md) - Frontend/backend split, database workers, SSR patterns
+- [gotchas.md](smart-placement-gotchas.md) - Troubleshooting INSUFFICIENT_INVOCATIONS, performance issues
 
 ## See Also
 
-- [workers](https://developers.cloudflare.com/workers/) - Worker runtime and fetch handlers
-- [d1](d1.md) - D1 database that benefits from Smart Placement
-- [durable-objects](https://developers.cloudflare.com/durable-objects/) - Durable Objects with backend logic
-- [bindings](bindings.md) - Service bindings for frontend/backend split
+- [workers](https://developers.cloudflare.com/workers/index.md) - Worker runtime and fetch handlers
+- [d1](../d1/) - D1 database that benefits from Smart Placement
+- [durable-objects](https://developers.cloudflare.com/durable-objects/index.md) - Durable Objects with backend logic
+- [bindings](../bindings/) - Service bindings for frontend/backend split

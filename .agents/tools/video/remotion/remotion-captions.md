@@ -1,11 +1,8 @@
 ---
 name: remotion-captions
 description: Transcribing, displaying and animating captions
-mode: subagent
+version: 4.0.532
 ---
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
 All captions must be processed in JSON. The captions must use the [`Caption`](https://www.remotion.dev/docs/captions/caption.md) type which is the following:
 
@@ -28,15 +25,15 @@ type Caption = {
 
 ## Generating captions
 
-To transcribe video and audio files to generate captions, load the [transcribe-captions.md](transcribe-captions.md) file for more instructions.
+To transcribe video and audio files to generate captions, load the [transcribe-captions.md](remotion-transcribe-captions.md) file for more instructions.
 
 ## Displaying captions
 
-To display captions in your video, load the [display-captions.md](display-captions.md) file for more instructions.
+To display captions in your video, load the [display-captions.md](remotion-display-captions.md) file for more instructions.
 
 ## Importing captions
 
-To import captions from a .srt file, load the [import-srt-captions.md](import-srt-captions.md) file for more instructions.
+To import captions from a .srt file, load the [import-srt-captions.md](remotion-import-srt-captions.md) file for more instructions.
 
 ## Post-creation
 

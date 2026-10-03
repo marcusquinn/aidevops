@@ -1,12 +1,3 @@
----
-name: graphql-api
-description: "Cloudflare graphql api: product reference"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Cloudflare GraphQL Analytics API
 
 Query analytics data across all Cloudflare products via a single GraphQL endpoint. Covers HTTP requests, Workers metrics, DNS, Firewall events, Network Analytics, and 70+ other datasets.
@@ -133,24 +124,24 @@ Dataset names follow a consistent pattern visible in the schema:
 
 | Task | Start Here | Then Read |
 |------|------------|-----------|
-| **First query** | [configuration.md](graphql-api.md) (auth) -> this README (structure) | [api.md](graphql-api.md) |
-| **Build a dashboard** | [patterns.md](graphql-api-patterns.md) (time-series, top-N) | [api.md](graphql-api.md) (aggregation fields) |
-| **Debug query issues** | [gotchas.md](graphql-api-gotchas.md) | [api.md](graphql-api.md) (filtering) |
-| **Understand sampling** | [gotchas.md](graphql-api-gotchas.md) (sampling section) | [api.md](graphql-api.md) (confidence intervals) |
-| **Product-specific metrics** | [patterns.md](graphql-api-patterns.md) (per-product examples) | [api.md](graphql-api.md) (dataset reference) |
+| **First query** | [configuration.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/graphql-api/configuration.md) (auth) -> this README (structure) | [api.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/graphql-api/api.md) |
+| **Build a dashboard** | [patterns.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/graphql-api/patterns.md) (time-series, top-N) | [api.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/graphql-api/api.md) (aggregation fields) |
+| **Debug query issues** | [gotchas.md](graphql-api-gotchas.md) | [api.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/graphql-api/api.md) (filtering) |
+| **Understand sampling** | [gotchas.md](graphql-api-gotchas.md) (sampling section) | [api.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/graphql-api/api.md) (confidence intervals) |
+| **Product-specific metrics** | [patterns.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/graphql-api/patterns.md) (per-product examples) | [api.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/graphql-api/api.md) (dataset reference) |
 
 ## In This Reference
 
-- **[api.md](graphql-api.md)** - Query structure, aggregation fields (sum/avg/quantiles/count), filtering operators, dimensions, dataset details
-- **[configuration.md](graphql-api.md)** - Authentication, API tokens, client setup (curl, JS, Python), introspection
-- **[patterns.md](graphql-api-patterns.md)** - Common queries: time-series, top-N, Workers metrics, HTTP analytics, firewall events, multi-zone
+- **[api.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/graphql-api/api.md)** - Query structure, aggregation fields (sum/avg/quantiles/count), filtering operators, dimensions, dataset details
+- **[configuration.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/graphql-api/configuration.md)** - Authentication, API tokens, client setup (curl, JS, Python), introspection
+- **[patterns.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/graphql-api/patterns.md)** - Common queries: time-series, top-N, Workers metrics, HTTP analytics, firewall events, multi-zone
 - **[gotchas.md](graphql-api-gotchas.md)** - Rate limits, sampling caveats, query cost, common errors, plan-based limits
 
 ## See Also
 
-- [GraphQL Analytics API Docs](https://developers.cloudflare.com/analytics/graphql-api/)
+- [GraphQL Analytics API Docs](https://developers.cloudflare.com/analytics/graphql-api/index.md)
 - [GraphQL API Explorer](https://graphql.cloudflare.com/)
-- [Observability Reference](observability.md) - Workers Logs, Tail Workers, console logging
-- [Analytics Engine Reference](analytics-engine.md) - Custom high-cardinality analytics via Workers
-- [Web Analytics Reference](web-analytics.md) - Client-side (RUM) analytics
-- [API Reference](api.md) - REST API, SDKs, authentication basics
+- [Observability Reference](../observability/) - Workers Logs, Tail Workers, console logging
+- [Analytics Engine Reference](../analytics-engine/) - Custom high-cardinality analytics via Workers
+- [Web Analytics Reference](../web-analytics/) - Client-side (RUM) analytics
+- [API Reference](../api/) - REST API, SDKs, authentication basics

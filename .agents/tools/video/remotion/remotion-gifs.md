@@ -1,11 +1,9 @@
 ---
-name: remotion-gifs
+name: gif
 description: Displaying GIFs, APNG, AVIF and WebP in Remotion
-mode: subagent
+metadata:
+  tags: gif, animation, images, animated, apng, avif, webp
 ---
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
 # Using Animated images in Remotion
 

@@ -1,17 +1,15 @@
 ---
-name: remotion-import-srt-captions
+name: import-srt-captions
 description: Importing .srt subtitle files into Remotion using @remotion/captions
-mode: subagent
+metadata:
+  tags: captions, subtitles, srt, import, parse
 ---
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
 # Importing .srt subtitles into Remotion
 
 If you have an existing `.srt` subtitle file, you can import it into Remotion using `parseSrt()` from `@remotion/captions`.
 
-If you don't have a .srt file, read [Transcribing audio](transcribe-captions.md) for how to generate captions instead.
+If you don't have a .srt file, read [Transcribing audio](remotion-transcribe-captions.md) for how to generate captions instead.
 
 ## Prerequisites
 

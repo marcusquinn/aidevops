@@ -1,12 +1,3 @@
----
-name: workers-for-platforms
-description: "Cloudflare workers for platforms: product reference"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Cloudflare Workers for Platforms
 
 Multi-tenant platform with isolated customer code execution at scale.
@@ -28,7 +19,7 @@ Multi-tenant platform with isolated customer code execution at scale.
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/cloudflare/workers-for-platforms-example)
 
-**Manual setup:** See [configuration.md](./configuration.md) for namespace creation and dispatch worker configuration.
+**Manual setup:** See [configuration.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/workers-for-platforms/configuration.md) for namespace creation and dispatch worker configuration.
 
 ## Key Features
 
@@ -89,15 +80,15 @@ Worker mode?
 
 | File | Purpose | When to Read |
 |------|---------|--------------|
-| [configuration.md](./configuration.md) | Namespace setup, dispatch worker config | First-time setup, changing limits |
-| [api.md](./api.md) | User worker API, dispatch API, outbound worker | Deploying workers, SDK integration |
-| [patterns.md](./patterns.md) | Multi-tenancy, routing, egress control | Planning architecture, scaling |
-| [gotchas.md](./gotchas.md) | Limits, isolation issues, best practices | Debugging, production prep |
+| [configuration.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/workers-for-platforms/configuration.md) | Namespace setup, dispatch worker config | First-time setup, changing limits |
+| [api.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/workers-for-platforms/api.md) | User worker API, dispatch API, outbound worker | Deploying workers, SDK integration |
+| [patterns.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/workers-for-platforms/patterns.md) | Multi-tenancy, routing, egress control | Planning architecture, scaling |
+| [gotchas.md](workers-for-platforms-gotchas.md) | Limits, isolation issues, best practices | Debugging, production prep |
 
 ## See Also
 
-- [workers](https://developers.cloudflare.com/workers/) - Core Workers runtime documentation
-- [durable-objects](https://developers.cloudflare.com/durable-objects/) - Stateful multi-tenant patterns
-- [sandbox](https://developers.cloudflare.com/sandbox/) - Alternative for untrusted code execution
-- [Reference Architecture: Programmable Platforms](https://developers.cloudflare.com/reference-architecture/diagrams/serverless/programmable-platforms/)
-- [Reference Architecture: AI Vibe Coding Platform](https://developers.cloudflare.com/reference-architecture/diagrams/ai/ai-vibe-coding-platform/)
+- [workers](https://developers.cloudflare.com/workers/index.md) - Core Workers runtime documentation
+- [durable-objects](https://developers.cloudflare.com/durable-objects/index.md) - Stateful multi-tenant patterns
+- [sandbox](https://developers.cloudflare.com/sandbox/index.md) - Alternative for untrusted code execution
+- [Reference Architecture: Programmable Platforms](https://developers.cloudflare.com/reference-architecture/diagrams/serverless/programmable-platforms/index.md)
+- [Reference Architecture: AI Vibe Coding Platform](https://developers.cloudflare.com/reference-architecture/diagrams/ai/ai-vibe-coding-platform/index.md)

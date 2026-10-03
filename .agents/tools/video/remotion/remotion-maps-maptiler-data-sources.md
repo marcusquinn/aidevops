@@ -1,11 +1,3 @@
----
-name: remotion-maps-maptiler-data-sources
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Map element data sources
 
 Choose the source independently for every story element. A single map can—and often should—mix

@@ -1,11 +1,9 @@
 ---
-name: remotion-google-fonts
+name: fonts
 description: Loading Google Fonts and local fonts in Remotion
-mode: subagent
+metadata:
+  tags: fonts, google-fonts, typography, text
 ---
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
 # Using fonts in Remotion
 

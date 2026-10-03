@@ -1,15 +1,6 @@
----
-name: agents-sdk-observability
-description: "Cloudflare Agents SDK: observability"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Observability
 
-Fetch https://developers.cloudflare.com/agents/api-reference/observability/ for complete documentation.
+Fetch https://developers.cloudflare.com/agents/runtime/operations/observability/index.md for complete documentation.
 
 Agents emit structured events via Node.js `diagnostics_channel`. Subscribe in development or forward via Tail Workers in production.
 

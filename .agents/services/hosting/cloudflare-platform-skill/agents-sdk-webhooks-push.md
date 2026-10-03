@@ -1,17 +1,8 @@
----
-name: agents-sdk-webhooks-push
-description: "Cloudflare Agents SDK: webhooks push"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Webhooks & Push Notifications
 
 ## Webhooks
 
-Fetch https://developers.cloudflare.com/agents/communication-channels/webhooks/ for complete documentation.
+Fetch https://developers.cloudflare.com/agents/communication-channels/webhooks/index.md for complete documentation.
 
 Route external webhooks to agent instances via `onRequest`:
 
@@ -49,7 +40,7 @@ export class MyAgent extends Agent<Env, State> {
 
 ## Push Notifications
 
-Fetch https://developers.cloudflare.com/agents/communication-channels/webhooks/push-notifications/ for complete documentation.
+Fetch https://developers.cloudflare.com/agents/communication-channels/webhooks/push-notifications/index.md for complete documentation.
 
 Web Push via VAPID from agents. Store subscriptions in agent state, send via `web-push`.
 

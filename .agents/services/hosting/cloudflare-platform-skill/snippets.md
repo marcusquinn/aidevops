@@ -1,12 +1,3 @@
----
-name: snippets
-description: "Cloudflare snippets: product reference"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Cloudflare Snippets Skill Reference
 
 ## Description
@@ -48,16 +39,16 @@ Snippets execute synchronously in the request path - performance is critical.
 
 ## Reading Order
 
-1. **[configuration.md](snippets.md)** - Start here: setup, deployment methods (Dashboard/API/Terraform)
-2. **[api.md](snippets.md)** - Core APIs: Request, Response, headers, `request.cf` properties
-3. **[patterns.md](snippets-patterns.md)** - Real-world examples: geo-routing, A/B tests, security headers
+1. **[configuration.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/snippets/configuration.md)** - Start here: setup, deployment methods (Dashboard/API/Terraform)
+2. **[api.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/snippets/api.md)** - Core APIs: Request, Response, headers, `request.cf` properties
+3. **[patterns.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/snippets/patterns.md)** - Real-world examples: geo-routing, A/B tests, security headers
 4. **[gotchas.md](snippets-gotchas.md)** - Troubleshooting: common errors, performance tips, API limitations
 
 ## In This Reference
 
-- **[configuration.md](snippets.md)** - Setup, deployment, configuration
-- **[api.md](snippets.md)** - API endpoints, methods, interfaces
-- **[patterns.md](snippets-patterns.md)** - Common patterns, use cases, examples
+- **[configuration.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/snippets/configuration.md)** - Setup, deployment, configuration
+- **[api.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/snippets/api.md)** - API endpoints, methods, interfaces
+- **[patterns.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/snippets/patterns.md)** - Common patterns, use cases, examples
 - **[gotchas.md](snippets-gotchas.md)** - Troubleshooting, best practices, limitations
 
 ## Quick Start
@@ -79,4 +70,4 @@ Deploy via Dashboard (Rules → Snippets) or API/Terraform. See configuration.md
 
 ## See Also
 
-- [Cloudflare Docs](https://developers.cloudflare.com/rules/snippets/)
+- [Cloudflare Docs](https://developers.cloudflare.com/rules/snippets/index.md)

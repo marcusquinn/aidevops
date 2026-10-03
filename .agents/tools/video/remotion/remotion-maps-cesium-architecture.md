@@ -1,11 +1,3 @@
----
-name: remotion-maps-cesium-architecture
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # 3D Flyover — architecture reference
 
 Deep detail behind `TECHNIQUE.md`: provider loading, the camera-path pipeline, per-frame camera math, and

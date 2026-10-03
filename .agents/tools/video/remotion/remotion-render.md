@@ -1,17 +1,14 @@
 ---
 name: remotion-render
 description: Export a Remotion video
-mode: subagent
+version: 4.0.532
 ---
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
 ## General rendering strategy
 
 Render a video using:
 
-```bash
+```text
 npx remotion render
 ```
 
@@ -19,7 +16,7 @@ Full list of options: https://www.remotion.dev/docs/cli/render.md
 
 Render a still using:
 
-```bash
+```text
 npx remotion still
 ```
 
@@ -27,7 +24,7 @@ Full list of options: https://www.remotion.dev/docs/cli/still.md
 
 To render several frames as images in one call, use `render --frames`:
 
-```bash
+```text
 npx remotion render [composition-id] out/frames --frames=0,30,90 --image-format=png
 ```
 

@@ -1,15 +1,6 @@
----
-name: agents-sdk-configuration
-description: "Cloudflare Agents SDK: configuration"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Configuration
 
-Fetch https://developers.cloudflare.com/agents/api-reference/configuration/ for complete documentation.
+Fetch https://developers.cloudflare.com/agents/runtime/operations/configuration/index.md for complete documentation.
 
 ## Wrangler Config (`wrangler.jsonc`)
 

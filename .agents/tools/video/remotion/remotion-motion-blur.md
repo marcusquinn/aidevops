@@ -1,11 +1,3 @@
----
-name: remotion-motion-blur
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Motion blur
 
 Use `@remotion/motion-blur` for frame-driven motion blur.<br>

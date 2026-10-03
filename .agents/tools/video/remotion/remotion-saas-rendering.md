@@ -1,11 +1,9 @@
 ---
-name: remotion-saas-rendering
+name: rendering
 description: Advice on programmatic rendering with Remotion.
-mode: subagent
+metadata:
+  tags: remotion, saas, ssr, renderer, node, bun, render-server
 ---
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
 This is about rendering videos programmatically with Remotion.<br>
 For one-off renders, `npx remotion render` or the Studio is better suited.

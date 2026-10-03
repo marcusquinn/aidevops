@@ -1,11 +1,8 @@
 ---
 name: remotion-create
 description: Create a new Remotion video
-mode: subagent
+version: 4.0.532
 ---
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
 These are instructions for making a new Remotion project and composition.<br>
 If this is not the next task, see Remotion Best Practices
@@ -48,7 +45,7 @@ As soon as the project can run, open Remotion Studio in the browser before writi
 ## Designing a video
 
 Keep the scaffold and add React Markup.
-Follow Remotion React Markup Best Practices and [Video Layout Rules](video-layout.md) for video-first layout and text sizing guidance.
+Follow Remotion React Markup Best Practices and [Video Layout Rules](remotion-video-layout.md) for video-first layout and text sizing guidance.
 
 Before writing the root that registers `<Composition>` or `<Still>` elements,
 follow Compositions and stills.
@@ -70,7 +67,7 @@ By structuring the React Markup following Remotion Interactivity Best Practices,
 
 ## TailwindCSS
 
-If Tailwind is requested, see [tailwind.md](tailwind.md) for using TailwindCSS in Remotion.
+If Tailwind is requested, see [tailwind.md](remotion-tailwind.md) for using TailwindCSS in Remotion.
 
 ## Follow-up
 

@@ -1,21 +1,12 @@
----
-name: agents-sdk-queue-retries
-description: "Cloudflare Agents SDK: queue retries"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Queue & Retries
 
 Read the current Cloudflare documentation for queue management, retry options, defaults, and callback examples.
 
 | Task | Documentation |
 |------|---------------|
-| Enqueue, inspect, and remove background work; understand sequential processing and failure handling | [Queue tasks](https://developers.cloudflare.com/agents/runtime/execution/queue-tasks/) |
-| Retry an operation or configure retries for queued and scheduled callbacks | [Retries](https://developers.cloudflare.com/agents/runtime/execution/retries/) |
-| Delay recovery or run work on a recurring schedule | [Schedule tasks](https://developers.cloudflare.com/agents/runtime/execution/schedule-tasks/) |
+| Enqueue, inspect, and remove background work; understand sequential processing and failure handling | [Queue tasks](https://developers.cloudflare.com/agents/runtime/execution/queue-tasks/index.md) |
+| Retry an operation or configure retries for queued and scheduled callbacks | [Retries](https://developers.cloudflare.com/agents/runtime/execution/retries/index.md) |
+| Delay recovery or run work on a recurring schedule | [Schedule tasks](https://developers.cloudflare.com/agents/runtime/execution/schedule-tasks/index.md) |
 
 Keep these execution choices in mind when using the linked guides:
 
@@ -24,4 +15,4 @@ Keep these execution choices in mind when using the linked guides:
 - Queued items are removed after their retry budget is exhausted; there is no built-in dead-letter queue. Record failures explicitly when the application needs recovery or auditing.
 - The selective retry predicate is available on `this.retry()`, not serialized queue or schedule options. Handle non-retryable errors in those callbacks.
 
-See [state-scheduling.md](state-scheduling.md) for choosing schedule modes and persisting application state.
+See [state-scheduling.md](agents-sdk-state-scheduling.md) for choosing schedule modes and persisting application state.

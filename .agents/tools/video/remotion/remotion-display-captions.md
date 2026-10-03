@@ -1,11 +1,9 @@
 ---
-name: remotion-display-captions
+name: display-captions
 description: Displaying captions in Remotion using the Basic Captions element
-mode: subagent
+metadata:
+  tags: captions, subtitles, display, element
 ---
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
 # Displaying captions in Remotion
 
@@ -13,7 +11,7 @@ This guide explains how to display captions in Remotion, assuming you already ha
 
 ## Prerequisites
 
-Read [Transcribing audio](transcribe-captions.md) for how to generate captions.
+Read [Transcribing audio](remotion-transcribe-captions.md) for how to generate captions.
 
 First, the [`@remotion/captions`](https://www.remotion.dev/docs/captions.md) package needs to be installed.
 If it is not installed, use the following command:

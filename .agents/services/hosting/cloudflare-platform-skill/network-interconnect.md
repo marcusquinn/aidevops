@@ -1,12 +1,3 @@
----
-name: network-interconnect
-description: "Cloudflare network interconnect: product reference"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Cloudflare Network Interconnect (CNI)
 
 Private, high-performance connectivity to Cloudflare's network. **Enterprise-only**.
@@ -38,7 +29,7 @@ Private, high-performance connectivity to Cloudflare's network. **Enterprise-onl
 - Enterprise plan
 - IPv4 /24+ or IPv6 /48+ prefixes
 - BGP ASN for v1
-- See [locations PDF](https://developers.cloudflare.com/network-interconnect/static/cni-locations-05-may-2026.pdf)
+- See [locations PDF](https://developers.cloudflare.com/network-interconnect/locations/index.md)
 
 ## Specs
 
@@ -63,10 +54,10 @@ Private, high-performance connectivity to Cloudflare's network. **Enterprise-onl
 
 ## In This Reference
 
-- [configuration.md](./configuration.md) - BGP, routing, setup
-- [api.md](./api.md) - API endpoints, SDKs
-- [patterns.md](./patterns.md) - HA, hybrid cloud, failover
-- [gotchas.md](./gotchas.md) - Troubleshooting, limits
+- [configuration.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/network-interconnect/configuration.md) - BGP, routing, setup
+- [api.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/network-interconnect/api.md) - API endpoints, SDKs
+- [patterns.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/network-interconnect/patterns.md) - HA, hybrid cloud, failover
+- [gotchas.md](network-interconnect-gotchas.md) - Troubleshooting, limits
 
 ## Reading Order by Task
 
@@ -106,5 +97,5 @@ Private, high-performance connectivity to Cloudflare's network. **Enterprise-onl
 
 ## See Also
 
-- [tunnel](tunnel.md) - Alternative for private network connectivity
-- [spectrum](spectrum.md) - Layer 4 proxy for TCP/UDP traffic
+- [tunnel](../tunnel/) - Alternative for private network connectivity
+- [spectrum](../spectrum/) - Layer 4 proxy for TCP/UDP traffic

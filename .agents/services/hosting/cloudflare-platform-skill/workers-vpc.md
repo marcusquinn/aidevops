@@ -1,12 +1,3 @@
----
-name: workers-vpc
-description: "Cloudflare workers vpc: product reference"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Workers VPC Connectivity
 
 Connect Cloudflare Workers to private networks and internal infrastructure using TCP Sockets.
@@ -30,10 +21,10 @@ Need private network connectivity from Workers?
 | Requirement | Use | Why |
 |------------|-----|-----|
 | HTTP/HTTPS APIs in private network | VPC Services (beta, separate docs) | SSRF-safe, declarative bindings |
-| PostgreSQL/MySQL databases | [Hyperdrive](hyperdrive.md) | Connection pooling, caching, optimized |
+| PostgreSQL/MySQL databases | [Hyperdrive](../hyperdrive/) | Connection pooling, caching, optimized |
 | Custom TCP protocols (SSH, MQTT, proprietary) | **TCP Sockets (this doc)** | Full protocol control |
-| Simple HTTP with lowest latency | TCP Sockets + [Smart Placement](smart-placement.md) | Manual optimization |
-| Expose on-prem to internet (inbound) | [Cloudflare Tunnel](tunnel.md) | Not Worker-specific |
+| Simple HTTP with lowest latency | TCP Sockets + [Smart Placement](../smart-placement/) | Manual optimization |
+| Expose on-prem to internet (inbound) | [Cloudflare Tunnel](../tunnel/) | Not Worker-specific |
 
 ## When to Use TCP Sockets
 
@@ -94,15 +85,15 @@ Most private network connectivity combines TCP Sockets with Cloudflare Tunnel:
 2. Tunnel endpoint routes to private IP
 3. Response flows back through Tunnel to Worker
 
-See [configuration.md](./configuration.md) for Tunnel setup details.
+See [configuration.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/workers-vpc/configuration.md) for Tunnel setup details.
 
 ## Reading Order
 
-1. **Start here (README.md)** - Overview and decision guide
-2. **[api.md](./api.md)** - Socket interface, types, methods
-3. **[configuration.md](./configuration.md)** - Wrangler setup, Tunnel integration
-4. **[patterns.md](./patterns.md)** - Real-world examples (databases, protocols, error handling)
-5. **[gotchas.md](./gotchas.md)** - Limits, blocked ports, common errors
+1. **Start here (workers-vpc.md)** - Overview and decision guide
+2. **[api.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/workers-vpc/api.md)** - Socket interface, types, methods
+3. **[configuration.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/workers-vpc/configuration.md)** - Wrangler setup, Tunnel integration
+4. **[patterns.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/workers-vpc/patterns.md)** - Real-world examples (databases, protocols, error handling)
+5. **[gotchas.md](workers-vpc-gotchas.md)** - Limits, blocked ports, common errors
 
 ## Key Limits
 
@@ -112,7 +103,7 @@ See [configuration.md](./configuration.md) for Tunnel setup details.
 | Blocked destinations | Cloudflare IPs, localhost, port 25 |
 | Scope requirement | Must create in handler (not global) |
 
-See [gotchas.md](./gotchas.md) for complete limits and troubleshooting.
+See [gotchas.md](workers-vpc-gotchas.md) for complete limits and troubleshooting.
 
 ## Best Practices
 
@@ -124,13 +115,13 @@ See [gotchas.md](./gotchas.md) for complete limits and troubleshooting.
 
 ## Related Technologies
 
-- **[Hyperdrive](hyperdrive.md)** - PostgreSQL/MySQL with connection pooling
-- **[Cloudflare Tunnel](tunnel.md)** - Secure private network access
-- **[Smart Placement](smart-placement.md)** - Auto-locate Workers near backends
+- **[Hyperdrive](../hyperdrive/)** - PostgreSQL/MySQL with connection pooling
+- **[Cloudflare Tunnel](../tunnel/)** - Secure private network access
+- **[Smart Placement](../smart-placement/)** - Auto-locate Workers near backends
 - **VPC Services (beta)** - HTTP-only service bindings with SSRF protection (separate docs)
 
 ## Reference
 
-- [TCP Sockets API Documentation](https://developers.cloudflare.com/workers/runtime-apis/tcp-sockets/)
-- [Connect to databases guide](https://developers.cloudflare.com/workers/tutorials/postgres/)
-- [Cloudflare Tunnel setup](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/)
+- [TCP Sockets API Documentation](https://developers.cloudflare.com/workers/runtime-apis/tcp-sockets/index.md)
+- [Connect to databases guide](https://developers.cloudflare.com/workers/tutorials/postgres/index.md)
+- [Cloudflare Tunnel setup](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/index.md)

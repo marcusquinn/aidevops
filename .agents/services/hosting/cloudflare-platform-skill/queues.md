@@ -1,12 +1,3 @@
----
-name: queues
-description: "Cloudflare queues: product reference"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Cloudflare Queues
 
 Use Queues to decouple producers from asynchronous consumers and buffer bursts of work. Design consumers for duplicate delivery; use Workflows when the task needs durable multi-step orchestration.
@@ -19,15 +10,15 @@ Fetch the relevant documentation below before implementing. Treat current Cloudf
 - Use an HTTP pull consumer when processing runs in another environment; plan for polling, visibility timeouts, and acknowledgement leases.
 - Choose a message encoding the consumer can decode. Check serialization and compatibility-date behavior before sending existing application objects.
 
-See [How Queues works](https://developers.cloudflare.com/queues/reference/how-queues-works/) and [delivery guarantees](https://developers.cloudflare.com/queues/reference/delivery-guarantees/) before choosing ordering or deduplication strategies.
+See [How Queues works](https://developers.cloudflare.com/queues/reference/how-queues-works/index.md) and [delivery guarantees](https://developers.cloudflare.com/queues/reference/delivery-guarantees/index.md) before choosing ordering or deduplication strategies.
 
 ## Read by task
 
 | Task | Reference |
 |------|-----------|
-| Create queues, bind producers, and configure consumers | [configuration.md](./configuration.md) |
-| Send messages and implement acknowledgement or retries | [api.md](./api.md) |
-| Buffer APIs, defer jobs, or integrate with storage and orchestration | [patterns.md](./patterns.md) |
-| Diagnose delivery failures, duplicates, or capacity issues | [gotchas.md](./gotchas.md) |
+| Create queues, bind producers, and configure consumers | [configuration.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/queues/configuration.md) |
+| Send messages and implement acknowledgement or retries | [api.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/queues/api.md) |
+| Buffer APIs, defer jobs, or integrate with storage and orchestration | [patterns.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/queues/patterns.md) |
+| Diagnose delivery failures, duplicates, or capacity issues | [gotchas.md](queues-gotchas.md) |
 
-For a first application, fetch [Getting started](https://developers.cloudflare.com/queues/get-started/). Retrieve [limits](https://developers.cloudflare.com/queues/platform/limits/) and [pricing](https://developers.cloudflare.com/queues/platform/pricing/) before sizing throughput, retention, or cost; plan-specific values are not maintained here.
+For a first application, fetch [Getting started](https://developers.cloudflare.com/queues/get-started/index.md). Retrieve [limits](https://developers.cloudflare.com/queues/platform/limits/index.md) and [pricing](https://developers.cloudflare.com/queues/platform/pricing/index.md) before sizing throughput, retention, or cost; plan-specific values are not maintained here.

@@ -1,15 +1,6 @@
----
-name: basin-sql-patterns
-description: "Cloudflare Basin sql: patterns"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Basin SQL Patterns
 
-Code templates for CLI, REST, and Worker access. For performance/partitioning best practices, pull `https://developers.cloudflare.com/basin-sql/reference/limitations-best-practices/`.
+Code templates for CLI, REST, and Worker access. For performance/partitioning best practices, pull `https://developers.cloudflare.com/basin-sql/reference/limitations-best-practices/index.md`.
 
 ## Wrangler CLI
 
@@ -115,13 +106,13 @@ SELECT * FROM logs.requests WHERE __ingest_ts < '<last_ts>' ORDER BY __ingest_ts
 ## Performance (essentials)
 
 - **Always `LIMIT`** (early termination); **filter on partition keys first** (`__ingest_ts` range), then add predicates.
-- **Narrow time ranges**; **compact tables** (file count dominates latency — enable automatic compaction in [Basin Catalog](catalog.md)).
+- **Narrow time ranges**; **compact tables** (file count dominates latency — enable automatic compaction in [Basin Catalog](basin-catalog-configuration.md)).
 - Read response `metrics` (`files_scanned`, `bytes_scanned`) to tune. Full guidance: limitations-best-practices doc.
 
 ## Basin Pipelines → Basin SQL
 
-After `npx wrangler basin pipelines setup` (Basin Catalog destination), wait for first flush (3–7 min), then query the table. See [pipelines/patterns.md](pipelines-patterns.md).
+After `npx wrangler basin pipelines setup` (Basin Catalog destination), wait for first flush (3–7 min), then query the table. See [pipelines/patterns.md](basin-pipelines-patterns.md).
 
 ## See Also
 
-- [api.md](basin-sql.md) · [gotchas.md](basin-sql-gotchas.md) · [catalog/patterns.md](catalog-patterns.md)
+- [api.md](basin-sql-api.md) · [gotchas.md](basin-sql-gotchas.md) · [catalog/patterns.md](basin-catalog-patterns.md)

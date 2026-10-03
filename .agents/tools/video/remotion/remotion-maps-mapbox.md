@@ -1,11 +1,9 @@
 ---
-name: remotion-maps-mapbox
+name: maps-mapbox
 description: Make deterministic Remotion 2D map animations with Mapbox GL JS and Turf. Use when the user chooses Mapbox for animated routes, map markers, labels, camera movement, or Mapbox styles.
-mode: subagent
+metadata:
+  tags: map, map animation, mapbox, turf, geojson, route animation
 ---
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
 Use Mapbox GL JS for rendering maps in Remotion when the user wants Mapbox styles or higher-fidelity map visuals and has a Mapbox access token. Use Turf for geospatial operations such as great-circle routes, distances, slicing lines, and positions along routes.
 
@@ -68,7 +66,7 @@ Mapbox requires a public access token. Prefer passing it as an input prop or rea
 const mapboxAccessToken = process.env.REMOTION_MAPBOX_TOKEN;
 
 if (!mapboxAccessToken) {
-	throw new Error('Set REMOTION_MAPBOX_TOKEN to render Mapbox maps.');
+  throw new Error('Set REMOTION_MAPBOX_TOKEN to render Mapbox maps.');
 }
 ```
 
@@ -85,47 +83,47 @@ const zurich: [number, number] = [8.5417, 47.3769];
 const mapboxAccessToken = process.env.REMOTION_MAPBOX_TOKEN;
 
 if (!mapboxAccessToken) {
-	throw new Error('Set REMOTION_MAPBOX_TOKEN to render Mapbox maps.');
+  throw new Error('Set REMOTION_MAPBOX_TOKEN to render Mapbox maps.');
 }
 
 export const MyComposition = () => {
-	const containerRef = useRef<HTMLDivElement>(null);
-	const {delayRender, continueRender} = useDelayRender();
-	const {width, height} = useVideoConfig();
-	const [loadingHandle] = useState(() => delayRender('Loading Mapbox map'));
+  const containerRef = useRef<HTMLDivElement>(null);
+  const {delayRender, continueRender} = useDelayRender();
+  const {width, height} = useVideoConfig();
+  const [loadingHandle] = useState(() => delayRender('Loading Mapbox map'));
 
-	useEffect(() => {
-		if (!containerRef.current) {
-			return;
-		}
+  useEffect(() => {
+    if (!containerRef.current) {
+      return;
+    }
 
-		const mapInstance = new mapboxgl.Map({
-			accessToken: mapboxAccessToken,
-			container: containerRef.current,
-			style: 'mapbox://styles/mapbox/standard',
-			center: zurich,
-			zoom: 7,
-			interactive: false,
-			attributionControl: false,
-			fadeDuration: 0,
-			canvasContextAttributes: {
-				preserveDrawingBuffer: true,
-			},
-		});
+    const mapInstance = new mapboxgl.Map({
+      accessToken: mapboxAccessToken,
+      container: containerRef.current,
+      style: 'mapbox://styles/mapbox/standard',
+      center: zurich,
+      zoom: 7,
+      interactive: false,
+      attributionControl: false,
+      fadeDuration: 0,
+      canvasContextAttributes: {
+        preserveDrawingBuffer: true,
+      },
+    });
 
-		mapInstance.on('load', () => {
-			mapInstance.jumpTo({center: zurich, zoom: 7});
-			mapInstance.once('idle', () => {
-				continueRender(loadingHandle);
-			});
-		});
-	}, [continueRender, loadingHandle]);
+    mapInstance.on('load', () => {
+      mapInstance.jumpTo({center: zurich, zoom: 7});
+      mapInstance.once('idle', () => {
+        continueRender(loadingHandle);
+      });
+    });
+  }, [continueRender, loadingHandle]);
 
-	return (
-		<AbsoluteFill>
-			<div ref={containerRef} style={{width, height, position: 'absolute'}} />
-		</AbsoluteFill>
-	);
+  return (
+    <AbsoluteFill>
+      <div ref={containerRef} style={{width, height, position: 'absolute'}} />
+    </AbsoluteFill>
+  );
 };
 ```
 
@@ -145,12 +143,12 @@ This example shows the recommended pattern for route animations:
 import * as turf from '@turf/turf';
 import {useEffect, useRef, useState} from 'react';
 import {
-	AbsoluteFill,
-	Easing,
-	interpolate,
-	useCurrentFrame,
-	useDelayRender,
-	useVideoConfig,
+  AbsoluteFill,
+  Easing,
+  interpolate,
+  useCurrentFrame,
+  useDelayRender,
+  useVideoConfig,
 } from 'remotion';
 import mapboxgl, {type GeoJSONSource, type Map} from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
@@ -161,193 +159,193 @@ const newYork: [number, number] = [-74.006, 40.7128];
 const mapboxAccessToken = process.env.REMOTION_MAPBOX_TOKEN;
 
 if (!mapboxAccessToken) {
-	throw new Error('Set REMOTION_MAPBOX_TOKEN to render Mapbox maps.');
+  throw new Error('Set REMOTION_MAPBOX_TOKEN to render Mapbox maps.');
 }
 
 const greatCircleLine = (from: [number, number], to: [number, number]) => {
-	const route = turf.greatCircle(from, to, {npoints: 100});
+  const route = turf.greatCircle(from, to, {npoints: 100});
 
-	if (route.geometry.type === 'LineString') {
-		return turf.lineString(route.geometry.coordinates);
-	}
+  if (route.geometry.type === 'LineString') {
+    return turf.lineString(route.geometry.coordinates);
+  }
 
-	// Great-circle routes crossing the antimeridian can become MultiLineString.
-	// Keep the example valid by choosing the longest segment.
-	const longestSegment = route.geometry.coordinates.reduce((longest, segment) => {
-		return segment.length > longest.length ? segment : longest;
-	});
+  // Great-circle routes crossing the antimeridian can become MultiLineString.
+  // Keep the example valid by choosing the longest segment.
+  const longestSegment = route.geometry.coordinates.reduce((longest, segment) => {
+    return segment.length > longest.length ? segment : longest;
+  });
 
-	return turf.lineString(longestSegment);
+  return turf.lineString(longestSegment);
 };
 
 const targetRoute = greatCircleLine(zurich, newYork);
 const targetRouteDistance = turf.length(targetRoute);
 
 const cityMarkers = turf.featureCollection([
-	turf.point(zurich, {name: 'Zurich'}),
-	turf.point(newYork, {name: 'New York'}),
+  turf.point(zurich, {name: 'Zurich'}),
+  turf.point(newYork, {name: 'New York'}),
 ]);
 
 const clampProgress = (progress: number) => Math.min(1, Math.max(0, progress));
 
 const distanceAlong = (totalDistance: number, progress: number) => {
-	// Keep the route non-empty at progress 0; Turf can error on zero-length slices.
-	return Math.max(0.001, totalDistance * clampProgress(progress));
+  // Keep the route non-empty at progress 0; Turf can error on zero-length slices.
+  return Math.max(0.001, totalDistance * clampProgress(progress));
 };
 
 const getPartialTargetRoute = (progress: number) => {
-	return turf.lineSliceAlong(
-		targetRoute,
-		0,
-		distanceAlong(targetRouteDistance, progress),
-	);
+  return turf.lineSliceAlong(
+    targetRoute,
+    0,
+    distanceAlong(targetRouteDistance, progress),
+  );
 };
 
 const getCameraOptions = (progress: number) => {
-	const target = turf.along(
-		targetRoute,
-		distanceAlong(targetRouteDistance, progress),
-	).geometry.coordinates as [number, number];
+  const target = turf.along(
+    targetRoute,
+    distanceAlong(targetRouteDistance, progress),
+  ).geometry.coordinates as [number, number];
 
-	return {
-		center: target,
-		zoom: interpolate(progress, [0, 0.5, 1], [7, 2.4, 8], {
-			extrapolateLeft: 'clamp',
-			extrapolateRight: 'clamp',
-			easing: Easing.bezier(0.645, 0.045, 0.355, 1),
-		}),
-		bearing: interpolate(progress, [0, 1], [-20, 35], {
-			extrapolateLeft: 'clamp',
-			extrapolateRight: 'clamp',
-		}),
-		pitch: interpolate(progress, [0, 0.25, 0.75, 1], [25, 55, 55, 30], {
-			extrapolateLeft: 'clamp',
-			extrapolateRight: 'clamp',
-			easing: Easing.bezier(0.645, 0.045, 0.355, 1),
-		}),
-	};
+  return {
+    center: target,
+    zoom: interpolate(progress, [0, 0.5, 1], [7, 2.4, 8], {
+      extrapolateLeft: 'clamp',
+      extrapolateRight: 'clamp',
+      easing: Easing.bezier(0.645, 0.045, 0.355, 1),
+    }),
+    bearing: interpolate(progress, [0, 1], [-20, 35], {
+      extrapolateLeft: 'clamp',
+      extrapolateRight: 'clamp',
+    }),
+    pitch: interpolate(progress, [0, 0.25, 0.75, 1], [25, 55, 55, 30], {
+      extrapolateLeft: 'clamp',
+      extrapolateRight: 'clamp',
+      easing: Easing.bezier(0.645, 0.045, 0.355, 1),
+    }),
+  };
 };
 
 export const MyComposition = () => {
-	const containerRef = useRef<HTMLDivElement>(null);
-	const frame = useCurrentFrame();
-	const {delayRender, continueRender} = useDelayRender();
-	const {durationInFrames, height, width} = useVideoConfig();
-	const [map, setMap] = useState<Map | null>(null);
-	const [loadingHandle] = useState(() => delayRender('Loading Mapbox map'));
+  const containerRef = useRef<HTMLDivElement>(null);
+  const frame = useCurrentFrame();
+  const {delayRender, continueRender} = useDelayRender();
+  const {durationInFrames, height, width} = useVideoConfig();
+  const [map, setMap] = useState<Map | null>(null);
+  const [loadingHandle] = useState(() => delayRender('Loading Mapbox map'));
 
-	useEffect(() => {
-		if (!containerRef.current) {
-			return;
-		}
+  useEffect(() => {
+    if (!containerRef.current) {
+      return;
+    }
 
-		const mapInstance = new mapboxgl.Map({
-			accessToken: mapboxAccessToken,
-			container: containerRef.current,
-			style: 'mapbox://styles/mapbox/standard',
-			center: zurich,
-			zoom: 7,
-			interactive: false,
-			attributionControl: false,
-			fadeDuration: 0,
-			canvasContextAttributes: {
-				preserveDrawingBuffer: true,
-			},
-		});
+    const mapInstance = new mapboxgl.Map({
+      accessToken: mapboxAccessToken,
+      container: containerRef.current,
+      style: 'mapbox://styles/mapbox/standard',
+      center: zurich,
+      zoom: 7,
+      interactive: false,
+      attributionControl: false,
+      fadeDuration: 0,
+      canvasContextAttributes: {
+        preserveDrawingBuffer: true,
+      },
+    });
 
-		mapInstance.on('load', () => {
-			mapInstance.addSource('trace', {
-				type: 'geojson',
-				data: getPartialTargetRoute(0),
-			});
+    mapInstance.on('load', () => {
+      mapInstance.addSource('trace', {
+        type: 'geojson',
+        data: getPartialTargetRoute(0),
+      });
 
-			mapInstance.addLayer({
-				id: 'trace-line',
-				type: 'line',
-				source: 'trace',
-				layout: {
-					'line-cap': 'round',
-					'line-join': 'round',
-				},
-				paint: {
-					'line-color': '#111111',
-					'line-width': 7,
-				},
-			});
+      mapInstance.addLayer({
+        id: 'trace-line',
+        type: 'line',
+        source: 'trace',
+        layout: {
+          'line-cap': 'round',
+          'line-join': 'round',
+        },
+        paint: {
+          'line-color': '#111111',
+          'line-width': 7,
+        },
+      });
 
-			mapInstance.addSource('city-markers', {
-				type: 'geojson',
-				data: cityMarkers,
-			});
+      mapInstance.addSource('city-markers', {
+        type: 'geojson',
+        data: cityMarkers,
+      });
 
-			mapInstance.addLayer({
-				id: 'city-marker-dots',
-				type: 'circle',
-				source: 'city-markers',
-				paint: {
-					'circle-color': '#f03b20',
-					'circle-radius': 12,
-					'circle-stroke-color': '#ffffff',
-					'circle-stroke-width': 4,
-				},
-			});
+      mapInstance.addLayer({
+        id: 'city-marker-dots',
+        type: 'circle',
+        source: 'city-markers',
+        paint: {
+          'circle-color': '#f03b20',
+          'circle-radius': 12,
+          'circle-stroke-color': '#ffffff',
+          'circle-stroke-width': 4,
+        },
+      });
 
-			mapInstance.addLayer({
-				id: 'city-marker-labels',
-				type: 'symbol',
-				source: 'city-markers',
-				layout: {
-					'text-allow-overlap': true,
-					'text-anchor': 'top',
-					'text-field': ['get', 'name'],
-					'text-offset': [0, 0.9],
-					'text-size': 28,
-				},
-				paint: {
-					'text-color': '#111111',
-					'text-halo-color': '#ffffff',
-					'text-halo-width': 3,
-				},
-			});
+      mapInstance.addLayer({
+        id: 'city-marker-labels',
+        type: 'symbol',
+        source: 'city-markers',
+        layout: {
+          'text-allow-overlap': true,
+          'text-anchor': 'top',
+          'text-field': ['get', 'name'],
+          'text-offset': [0, 0.9],
+          'text-size': 28,
+        },
+        paint: {
+          'text-color': '#111111',
+          'text-halo-color': '#ffffff',
+          'text-halo-width': 3,
+        },
+      });
 
-			mapInstance.jumpTo(getCameraOptions(0));
-			mapInstance.once('idle', () => {
-				setMap(mapInstance);
-				continueRender(loadingHandle);
-			});
-		});
-	}, [continueRender, loadingHandle]);
+      mapInstance.jumpTo(getCameraOptions(0));
+      mapInstance.once('idle', () => {
+        setMap(mapInstance);
+        continueRender(loadingHandle);
+      });
+    });
+  }, [continueRender, loadingHandle]);
 
-	useEffect(() => {
-		if (!map) {
-			return;
-		}
+  useEffect(() => {
+    if (!map) {
+      return;
+    }
 
-		const handle = delayRender('Rendering Mapbox frame');
-		const timelineProgress = interpolate(frame, [0, durationInFrames - 1], [0, 1], {
-			extrapolateLeft: 'clamp',
-			extrapolateRight: 'clamp',
-		});
-		const travelProgress = interpolate(timelineProgress, [0.2, 0.82], [0, 1], {
-			extrapolateLeft: 'clamp',
-			extrapolateRight: 'clamp',
-			easing: Easing.bezier(0.645, 0.045, 0.355, 1),
-		});
-		const trace = map.getSource('trace') as GeoJSONSource | undefined;
+    const handle = delayRender('Rendering Mapbox frame');
+    const timelineProgress = interpolate(frame, [0, durationInFrames - 1], [0, 1], {
+      extrapolateLeft: 'clamp',
+      extrapolateRight: 'clamp',
+    });
+    const travelProgress = interpolate(timelineProgress, [0.2, 0.82], [0, 1], {
+      extrapolateLeft: 'clamp',
+      extrapolateRight: 'clamp',
+      easing: Easing.bezier(0.645, 0.045, 0.355, 1),
+    });
+    const trace = map.getSource('trace') as GeoJSONSource | undefined;
 
-		trace?.setData(getPartialTargetRoute(travelProgress));
-		map.jumpTo(getCameraOptions(travelProgress));
+    trace?.setData(getPartialTargetRoute(travelProgress));
+    map.jumpTo(getCameraOptions(travelProgress));
 
-		map.once('idle', () => continueRender(handle));
-		// Force an idle event even if the camera parameters are unchanged from the previous frame.
-		map.triggerRepaint();
-	}, [continueRender, delayRender, durationInFrames, frame, map]);
+    map.once('idle', () => continueRender(handle));
+    // Force an idle event even if the camera parameters are unchanged from the previous frame.
+    map.triggerRepaint();
+  }, [continueRender, delayRender, durationInFrames, frame, map]);
 
-	return (
-		<AbsoluteFill style={{backgroundColor: '#e8eef3'}}>
-			<div ref={containerRef} style={{height, position: 'absolute', width}} />
-		</AbsoluteFill>
-	);
+  return (
+    <AbsoluteFill style={{backgroundColor: '#e8eef3'}}>
+      <div ref={containerRef} style={{height, position: 'absolute', width}} />
+    </AbsoluteFill>
+  );
 };
 ```
 
@@ -357,10 +355,10 @@ For a validated live-camera route animation, animate `center`, `zoom`, `bearing`
 
 ```ts
 map.jumpTo({
-	center,
-	zoom,
-	bearing,
-	pitch,
+  center,
+  zoom,
+  bearing,
+  pitch,
 });
 ```
 
@@ -376,10 +374,10 @@ For geodesic flight routes, use Turf:
 const line = greatCircleLine(start, end);
 const distance = turf.length(line);
 const partialLine = turf.lineSliceAlong(
-	line,
-	0,
-	// Keep the route non-empty at progress 0.
-	Math.max(0.001, distance * progress),
+  line,
+  0,
+  // Keep the route non-empty at progress 0.
+  Math.max(0.001, distance * progress),
 );
 ```
 
@@ -391,40 +389,40 @@ Use map-native GeoJSON layers for markers and labels:
 
 ```tsx
 mapInstance.addSource('markers', {
-	type: 'geojson',
-	data: turf.featureCollection([
-		turf.point([-118.2437, 34.0522], {name: 'Los Angeles'}),
-	]),
+  type: 'geojson',
+  data: turf.featureCollection([
+    turf.point([-118.2437, 34.0522], {name: 'Los Angeles'}),
+  ]),
 });
 
 mapInstance.addLayer({
-	id: 'marker-dots',
-	type: 'circle',
-	source: 'markers',
-	paint: {
-		'circle-color': '#f03b20',
-		'circle-radius': 12,
-		'circle-stroke-color': '#ffffff',
-		'circle-stroke-width': 4,
-	},
+  id: 'marker-dots',
+  type: 'circle',
+  source: 'markers',
+  paint: {
+    'circle-color': '#f03b20',
+    'circle-radius': 12,
+    'circle-stroke-color': '#ffffff',
+    'circle-stroke-width': 4,
+  },
 });
 
 mapInstance.addLayer({
-	id: 'marker-labels',
-	type: 'symbol',
-	source: 'markers',
-	layout: {
-		'text-allow-overlap': true,
-		'text-anchor': 'top',
-		'text-field': ['get', 'name'],
-		'text-offset': [0, 0.9],
-		'text-size': 28,
-	},
-	paint: {
-		'text-color': '#111111',
-		'text-halo-color': '#ffffff',
-		'text-halo-width': 3,
-	},
+  id: 'marker-labels',
+  type: 'symbol',
+  source: 'markers',
+  layout: {
+    'text-allow-overlap': true,
+    'text-anchor': 'top',
+    'text-field': ['get', 'name'],
+    'text-offset': [0, 0.9],
+    'text-size': 28,
+  },
+  paint: {
+    'text-color': '#111111',
+    'text-halo-color': '#ffffff',
+    'text-halo-width': 3,
+  },
 });
 ```
 

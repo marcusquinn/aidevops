@@ -1,12 +1,3 @@
----
-name: cache-reserve
-description: "Cloudflare cache reserve: product reference"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Cloudflare Cache Reserve
 
 **Persistent cache storage built on R2 for long-term content retention**
@@ -51,7 +42,7 @@ Origin Server
 
 ### How It Works
 
-1. **On cache miss**: Content fetched from origin → written to Cache Reserve + edge caches simultaneously
+1. **On cache miss**: Content fetched from origin �� written to Cache Reserve + edge caches simultaneously
 2. **On edge eviction**: Content may be evicted from edge cache but remains in Cache Reserve
 3. **On subsequent request**: If edge cache misses but Cache Reserve hits → content restored to edge caches
 4. **Retention**: Assets remain in Cache Reserve for 30 days since last access (configurable via TTL)
@@ -139,19 +130,19 @@ curl -I https://example.com/asset.jpg | grep -i cache
 | Task | Files |
 |------|-------|
 | Evaluate if Cache Reserve fits your use case | README.md (this file) |
-| Enable Cache Reserve for your zone | README.md + [configuration.md](./configuration.md) |
-| Use with Workers (understand limitations) | [api.md](./api.md) |
-| Setup via SDKs or IaC (TypeScript, Python, Terraform) | [configuration.md](./configuration.md) |
-| Optimize costs and debug issues | [patterns.md](./patterns.md) + [gotchas.md](./gotchas.md) |
-| Understand eligibility and troubleshoot | [gotchas.md](./gotchas.md) → [patterns.md](./patterns.md) |
+| Enable Cache Reserve for your zone | README.md + [configuration.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/cache-reserve/configuration.md) |
+| Use with Workers (understand limitations) | [api.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/cache-reserve/api.md) |
+| Setup via SDKs or IaC (TypeScript, Python, Terraform) | [configuration.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/cache-reserve/configuration.md) |
+| Optimize costs and debug issues | [patterns.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/cache-reserve/patterns.md) + [gotchas.md](cache-reserve-gotchas.md) |
+| Understand eligibility and troubleshoot | [gotchas.md](cache-reserve-gotchas.md) → [patterns.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/cache-reserve/patterns.md) |
 
 **Files:**
-- [configuration.md](./configuration.md) - Setup, API, SDKs, and Cache Rules
-- [api.md](./api.md) - Purging, monitoring, Workers integration
-- [patterns.md](./patterns.md) - Best practices, cost optimization, debugging
-- [gotchas.md](./gotchas.md) - Common issues, limitations, troubleshooting
+- [configuration.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/cache-reserve/configuration.md) - Setup, API, SDKs, and Cache Rules
+- [api.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/cache-reserve/api.md) - Purging, monitoring, Workers integration
+- [patterns.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/cache-reserve/patterns.md) - Best practices, cost optimization, debugging
+- [gotchas.md](cache-reserve-gotchas.md) - Common issues, limitations, troubleshooting
 
 ## See Also
 
-- [r2](r2.md) - Cache Reserve built on R2 storage
-- [workers](https://developers.cloudflare.com/workers/) - Workers integration with Cache API
+- [r2](../r2/) - Cache Reserve built on R2 storage
+- [workers](https://developers.cloudflare.com/workers/index.md) - Workers integration with Cache API

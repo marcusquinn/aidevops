@@ -1,11 +1,9 @@
 ---
-name: remotion-saas-player
+name: player
 description: Embed a Remotion preview in a React app with @remotion/player.
-mode: subagent
+metadata:
+  tags: remotion, player, preview, react
 ---
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
 Use `@remotion/player` when the user wants an interactive preview in React.
 
@@ -32,4 +30,4 @@ Link https://www.remotion.dev/docs/dynamic-metadata.md#with-the-player.
 
 Full API for the Player: https://www.remotion.dev/docs/player/player.md.
 
-For a SaaS app that also needs output files, combine the Player preview with [framework.md](framework.md) or [rendering.md](rendering.md).
+For a SaaS app that also needs output files, combine the Player preview with [framework.md](remotion-saas-framework.md) or [rendering.md](remotion-saas-rendering.md).

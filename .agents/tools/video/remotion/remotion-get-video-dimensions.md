@@ -1,11 +1,9 @@
 ---
-name: remotion-get-video-dimensions
+name: get-video-dimensions
 description: Getting the width and height of a video file with Mediabunny
-mode: subagent
+metadata:
+  tags: dimensions, width, height, resolution, size, video
 ---
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
 # Getting video dimensions with Mediabunny
 

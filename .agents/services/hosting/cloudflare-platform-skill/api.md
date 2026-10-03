@@ -1,12 +1,3 @@
----
-name: api
-description: "Cloudflare api: product reference"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Cloudflare API Integration
 
 Guide for working with Cloudflare's REST API - authentication, SDK usage, common patterns, and troubleshooting.
@@ -15,11 +6,11 @@ Guide for working with Cloudflare's REST API - authentication, SDK usage, common
 
 ```text
 How are you calling the Cloudflare API?
-├─ From Workers runtime → Use bindings, not REST API (see bindings.md)
-├─ Server-side (Node/Python/Go) → Official SDK (see below)
-├─ CLI/scripts → Wrangler or curl (see wrangler.md)
-├─ Infrastructure-as-code → Use the Cloudflare Terraform or Pulumi provider's own current docs (not mirrored here)
-└─ One-off requests → curl examples (see below)
+├─ From Workers runtime → Use bindings, not REST API (see ../bindings/)
+├─ Server-side (Node/Python/Go) → Official SDK (see api.md)
+├─ CLI/scripts → Wrangler or curl (see configuration.md)
+├─ Infrastructure-as-code → See ../pulumi/ or ../terraform/
+└─ One-off requests → curl examples (see api.md)
 ```
 
 ## SDK Selection
@@ -58,16 +49,18 @@ All SDKs are Stainless-generated from OpenAPI spec (consistent APIs).
 | Configure auth/timeout/retry | configuration.md |
 | Find usage patterns | patterns.md |
 | Debug errors/rate limits | gotchas.md |
-| Product-specific APIs | [Workers docs](https://developers.cloudflare.com/workers/), ../r2/, ../kv/, etc. |
+| Product-specific APIs | [Workers docs](https://developers.cloudflare.com/workers/index.md), ../r2/, ../kv/, etc. |
 
 ## In This Reference
 
-- **This file** - SDK client initialization, environment variables, pagination, error handling, examples
-- **[api-gotchas.md](api-gotchas.md)** - Rate limits, SDK-specific issues, troubleshooting
+- **[api.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/api/api.md)** - SDK client initialization, pagination, error handling, examples
+- **[configuration.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/api/configuration.md)** - Environment variables, SDK config, Wrangler setup
+- **[patterns.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/api/patterns.md)** - Real-world patterns, batch operations, workflows
+- **[gotchas.md](api-gotchas.md)** - Rate limits, SDK-specific issues, troubleshooting
 
 ## See Also
 
-- [Cloudflare API Docs](https://developers.cloudflare.com/api/)
-- [Bindings Reference](bindings.md) - Workers runtime bindings (preferred over REST API)
-- [Wrangler Reference](https://developers.cloudflare.com/workers/wrangler/) - CLI tool for Cloudflare development
-- [GraphQL Analytics API Reference](graphql-api.md) - Analytics data via GraphQL (separate endpoint from REST API)
+- [Cloudflare API Docs](https://developers.cloudflare.com/api/index.md)
+- [Bindings Reference](../bindings/) - Workers runtime bindings (preferred over REST API)
+- [Wrangler Reference](https://developers.cloudflare.com/workers/wrangler/index.md) - CLI tool for Cloudflare development
+- [GraphQL Analytics API Reference](../graphql-api/) - Analytics data via GraphQL (separate endpoint from REST API)

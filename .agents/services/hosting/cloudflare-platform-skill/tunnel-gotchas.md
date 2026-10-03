@@ -1,24 +1,15 @@
----
-name: tunnel-gotchas
-description: "Cloudflare tunnel: gotchas"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Tunnel Troubleshooting
 
 Capture the tunnel status, failing route, management mode, and cloudflared logs before changing settings.
 
 | Task | Documentation |
 | --- | --- |
-| Tunnel fails to connect or reports an error | [Troubleshooting](https://developers.cloudflare.com/tunnel/troubleshooting/) |
-| Tunnel is healthy but an HTTPS application fails or redirects | [HTTPS origins](https://developers.cloudflare.com/tunnel/troubleshooting/https-origins/) |
-| Inspect connection health and application diagnostics | [Monitoring](https://developers.cloudflare.com/tunnel/monitoring/) |
-| Check local configuration and rule matching | [Configuration file](https://developers.cloudflare.com/tunnel/advanced/local-management/configuration-file/) |
-| Connections behave unexpectedly after token rotation | [Tunnel tokens](https://developers.cloudflare.com/tunnel/advanced/tunnel-tokens/) |
-| Check replica capacity or firewall requirements | [Configuration](https://developers.cloudflare.com/tunnel/configuration/) |
-| Update an existing installation | [Update cloudflared](https://developers.cloudflare.com/tunnel/downloads/update-cloudflared/) |
+| Tunnel fails to connect or reports an error | [Troubleshooting](https://developers.cloudflare.com/tunnel/troubleshooting/index.md) |
+| Tunnel is healthy but an HTTPS application fails or redirects | [HTTPS origins](https://developers.cloudflare.com/tunnel/troubleshooting/https-origins/index.md) |
+| Inspect connection health and application diagnostics | [Monitoring](https://developers.cloudflare.com/tunnel/observability/index.md) |
+| Check local configuration and rule matching | [Configuration file](https://developers.cloudflare.com/tunnel/features/locally-managed-tunnels/configuration-file/index.md) |
+| Connections behave unexpectedly after token rotation | [Tunnel tokens](https://developers.cloudflare.com/tunnel/reference/tunnel-tokens/index.md) |
+| Check replica capacity or firewall requirements | [Configuration](https://developers.cloudflare.com/tunnel/configuration/index.md) |
+| Update an existing installation | [Update cloudflared](https://developers.cloudflare.com/tunnel/guides/update-cloudflared/index.md) |
 
-Separate tunnel health from origin availability. Check the service address, protocol, and certificate before relaxing verification. Scope operational changes to the intended tunnel and replicas; follow the documented rotation and upgrade sequence instead of stopping every cloudflared process on a host. See [networking.md](./networking.md) for connectivity checks.
+Separate tunnel health from origin availability. Check the service address, protocol, and certificate before relaxing verification. Scope operational changes to the intended tunnel and replicas; follow the documented rotation and upgrade sequence instead of stopping every cloudflared process on a host. See [networking.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/tunnel/networking.md) for connectivity checks.

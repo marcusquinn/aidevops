@@ -1,12 +1,3 @@
----
-name: argo-smart-routing
-description: "Cloudflare argo smart routing: product reference"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Cloudflare Argo Smart Routing Skill Reference
 
 ## Overview
@@ -83,23 +74,23 @@ console.log(`Argo enabled: ${result.value}`);
 
 | Your Goal | Start With | Then Read |
 |-----------|------------|-----------|
-| Enable Argo for first time | Quick Start above → [configuration.md](argo-smart-routing.md) | [gotchas.md](argo-smart-routing-gotchas.md) |
-| Use TypeScript/Python SDK | [api.md](argo-smart-routing.md) | [patterns.md](argo-smart-routing-patterns.md) |
-| Terraform/IaC setup | [configuration.md](argo-smart-routing.md) | - |
-| Enable for Spectrum TCP app | [patterns.md](argo-smart-routing-patterns.md) → Spectrum section | [api.md](argo-smart-routing.md) |
-| Troubleshoot enablement issue | [gotchas.md](argo-smart-routing-gotchas.md) | [api.md](argo-smart-routing.md) |
-| Manage billing/usage | [patterns.md](argo-smart-routing-patterns.md) → Billing section | [gotchas.md](argo-smart-routing-gotchas.md) |
+| Enable Argo for first time | Quick Start above → [configuration.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/argo-smart-routing/configuration.md) | [gotchas.md](argo-smart-routing-gotchas.md) |
+| Use TypeScript/Python SDK | [api.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/argo-smart-routing/api.md) | [patterns.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/argo-smart-routing/patterns.md) |
+| Terraform/IaC setup | [configuration.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/argo-smart-routing/configuration.md) | - |
+| Enable for Spectrum TCP app | [patterns.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/argo-smart-routing/patterns.md) → Spectrum section | [api.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/argo-smart-routing/api.md) |
+| Troubleshoot enablement issue | [gotchas.md](argo-smart-routing-gotchas.md) | [api.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/argo-smart-routing/api.md) |
+| Manage billing/usage | [patterns.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/argo-smart-routing/patterns.md) → Billing section | [gotchas.md](argo-smart-routing-gotchas.md) |
 
 ## In This Reference
 
-- **[api.md](argo-smart-routing.md)** - API endpoints, SDK methods, error handling, Python/TypeScript examples
-- **[configuration.md](argo-smart-routing.md)** - Terraform setup, environment config, billing configuration
-- **[patterns.md](argo-smart-routing-patterns.md)** - Tiered Cache integration, Spectrum TCP apps, billing management, validation patterns
+- **[api.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/argo-smart-routing/api.md)** - API endpoints, SDK methods, error handling, Python/TypeScript examples
+- **[configuration.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/argo-smart-routing/configuration.md)** - Terraform setup, environment config, billing configuration
+- **[patterns.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/argo-smart-routing/patterns.md)** - Tiered Cache integration, Spectrum TCP apps, billing management, validation patterns
 - **[gotchas.md](argo-smart-routing-gotchas.md)** - Common errors, permission issues, limits, best practices
 
 ## See Also
 
-- [Cloudflare Argo Smart Routing Docs](https://developers.cloudflare.com/argo-smart-routing/)
-- [Cloudflare Smart Shield](https://developers.cloudflare.com/smart-shield/)
-- [Spectrum Documentation](https://developers.cloudflare.com/spectrum/)
-- [Tiered Cache](https://developers.cloudflare.com/cache/how-to/tiered-cache/)
+- [Cloudflare Argo Smart Routing Docs](https://developers.cloudflare.com/argo-smart-routing/index.md)
+- [Cloudflare Smart Shield](https://developers.cloudflare.com/smart-shield/index.md)
+- [Spectrum Documentation](https://developers.cloudflare.com/spectrum/index.md)
+- [Tiered Cache](https://developers.cloudflare.com/cache/how-to/tiered-cache/index.md)

@@ -1,12 +1,3 @@
----
-name: zaraz
-description: "Cloudflare zaraz: product reference"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Cloudflare Zaraz
 
 Expert guidance for Cloudflare Zaraz - server-side tag manager for loading third-party tools at the edge.
@@ -58,10 +49,10 @@ zaraz.set('userId', 'user_123');
 
 | File | Purpose | When to Read |
 |------|---------|--------------|
-| [api.md](./api.md) | Web API, zaraz object, consent methods | Implementing tracking calls |
-| [configuration.md](./configuration.md) | Dashboard setup, triggers, tools | Initial setup, adding tools |
-| [patterns.md](./patterns.md) | SPA, e-commerce, Worker integration | Best practices, common scenarios |
-| [gotchas.md](./gotchas.md) | Troubleshooting, limits, pitfalls | Debugging issues |
+| [api.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/zaraz/api.md) | Web API, zaraz object, consent methods | Implementing tracking calls |
+| [configuration.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/zaraz/configuration.md) | Dashboard setup, triggers, tools | Initial setup, adding tools |
+| [patterns.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/zaraz/patterns.md) | SPA, e-commerce, Worker integration | Best practices, common scenarios |
+| [gotchas.md](zaraz-gotchas.md) | Troubleshooting, limits, pitfalls | Debugging issues |
 
 ## Reading Order by Task
 
@@ -111,9 +102,9 @@ What do you need?
 
 ## Reference
 
-- [Zaraz Docs](https://developers.cloudflare.com/zaraz/)
-- [Web API](https://developers.cloudflare.com/zaraz/web-api/)
-- [Managed Components](https://developers.cloudflare.com/zaraz/advanced/load-custom-managed-component/)
+- [Zaraz Docs](https://developers.cloudflare.com/zaraz/index.md)
+- [Web API](https://developers.cloudflare.com/zaraz/web-api/index.md)
+- [Managed Components](https://developers.cloudflare.com/zaraz/advanced/load-custom-managed-component/index.md)
 
 ---
 

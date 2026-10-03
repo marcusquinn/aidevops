@@ -1,12 +1,3 @@
----
-name: turn
-description: "Cloudflare turn: product reference"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Cloudflare TURN Service
 
 Expert guidance for implementing Cloudflare TURN Service in WebRTC applications.
@@ -27,10 +18,10 @@ Cloudflare TURN (Traversal Using Relays around NAT) Service is a managed relay s
 
 | File | Purpose |
 |------|---------|
-| [api.md](./api.md) | Credentials API, TURN key management, types, constraints |
-| [configuration.md](./configuration.md) | Worker setup, wrangler.jsonc, env vars, IP allowlisting |
-| [patterns.md](./patterns.md) | Implementation patterns, use cases, integration examples |
-| [gotchas.md](./gotchas.md) | Troubleshooting, limits, security, common mistakes |
+| [api.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/turn/api.md) | Credentials API, TURN key management, types, constraints |
+| [configuration.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/turn/configuration.md) | Worker setup, wrangler.jsonc, env vars, IP allowlisting |
+| [patterns.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/turn/patterns.md) | Implementation patterns, use cases, integration examples |
+| [gotchas.md](turn-gotchas.md) | Troubleshooting, limits, security, common mistakes |
 
 ## Reading Order
 
@@ -67,10 +58,10 @@ Cloudflare TURN (Traversal Using Relays around NAT) Service is a managed relay s
 
 ## Quick Start
 
-1. **Create TURN key via API**: see [api.md#create-turn-key](./api.md#create-turn-key)
-2. **Generate credentials**: see [api.md#generate-temporary-credentials](./api.md#generate-temporary-credentials)
-3. **Configure Worker**: see [configuration.md#cloudflare-worker-integration](./configuration.md#cloudflare-worker-integration)
-4. **Implement client**: see [patterns.md#basic-turn-configuration-browser](./patterns.md#basic-turn-configuration-browser)
+1. **Create TURN key via API**: see [api.md#create-turn-key](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/turn/api.md#create-turn-key)
+2. **Generate credentials**: see [api.md#generate-temporary-credentials](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/turn/api.md#generate-temporary-credentials)
+3. **Configure Worker**: see [configuration.md#cloudflare-worker-integration](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/turn/configuration.md#cloudflare-worker-integration)
+4. **Implement client**: see [patterns.md#basic-turn-configuration-browser](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/turn/patterns.md#basic-turn-configuration-browser)
 
 ## When to Use TURN
 
@@ -89,7 +80,7 @@ Cloudflare TURN (Traversal Using Relays around NAT) Service is a managed relay s
 
 ## Additional Resources
 
-- [Cloudflare Calls Documentation](https://developers.cloudflare.com/calls/)
-- [Cloudflare TURN Service Docs](https://developers.cloudflare.com/realtime/turn/)
-- [Cloudflare API Reference](https://developers.cloudflare.com/api/resources/calls/subresources/turn/)
+- [Cloudflare Calls Documentation](https://developers.cloudflare.com/realtime/index.md)
+- [Cloudflare TURN Service Docs](https://developers.cloudflare.com/realtime/turn/index.md)
+- [Cloudflare API Reference](https://developers.cloudflare.com/api/resources/calls/subresources/turn/index.md)
 - [Orange Meets (Open Source Example)](https://github.com/cloudflare/orange)

@@ -1,11 +1,9 @@
 ---
-name: remotion-audio-visualization
+name: audio-visualization
 description: Audio visualization patterns - spectrum bars, waveforms, bass-reactive effects
-mode: subagent
+metadata:
+  tags: audio, visualization, spectrum, waveform, bass, music, audiogram, frequency
 ---
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
 # Audio Visualization in Remotion
 

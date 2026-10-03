@@ -1,12 +1,3 @@
----
-name: bot-management
-description: "Cloudflare bot management: product reference"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Cloudflare Bot Management
 
 Enterprise-grade bot detection, protection, and mitigation using ML/heuristics, bot scores, JavaScript detections, and verified bot handling.
@@ -91,13 +82,13 @@ export default {
 
 ## In This Reference
 
-- [configuration.md](./configuration.md) - Product tiers, WAF rule setup, JavaScript Detections, ML auto-updates
-- [api.md](./api.md) - Workers BotManagement interface, WAF fields, JA4 Signals
-- [patterns.md](./patterns.md) - E-commerce, API protection, mobile app allowlisting, SEO-friendly handling
-- [gotchas.md](./gotchas.md) - False positives/negatives, score=0 issues, JSD limitations, CSP requirements
+- [configuration.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/bot-management/configuration.md) - Product tiers, WAF rule setup, JavaScript Detections, ML auto-updates
+- [api.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/bot-management/api.md) - Workers BotManagement interface, WAF fields, JA4 Signals
+- [patterns.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/bot-management/patterns.md) - E-commerce, API protection, mobile app allowlisting, SEO-friendly handling
+- [gotchas.md](bot-management-gotchas.md) - False positives/negatives, score=0 issues, JSD limitations, CSP requirements
 
 ## See Also
 
-- [waf](waf.md) - WAF custom rules for bot enforcement
-- [workers](https://developers.cloudflare.com/workers/) - Workers request.cf.botManagement API
-- [api-shield](api-shield.md) - API-specific bot protection
+- [waf](../waf/) - WAF custom rules for bot enforcement
+- [workers](https://developers.cloudflare.com/workers/index.md) - Workers request.cf.botManagement API
+- [api-shield](../api-shield/) - API-specific bot protection

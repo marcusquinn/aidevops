@@ -1,11 +1,3 @@
----
-name: remotion-maps-maptiler-geo-prep
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Map Explainer — basemap & geo prep
 
 How the basemap is cleaned and how `../scripts/prep-geo.mjs` bakes the per-country data the component reads.

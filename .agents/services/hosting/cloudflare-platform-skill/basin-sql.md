@@ -1,12 +1,3 @@
----
-name: basin-sql
-description: "Cloudflare Basin sql"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Basin SQL
 
 Serverless, distributed, **read-only** query engine (Apache DataFusion) for Apache Iceberg tables in Basin Catalog.
@@ -17,15 +8,15 @@ For full function lists, data types, and pricing, **retrieve the live docs** —
 
 | Topic | URL |
 |-------|-----|
-| Overview / get started | `https://developers.cloudflare.com/basin-sql/get-started/` |
-| Query data | `https://developers.cloudflare.com/basin-sql/query-data/` |
-| SQL reference | `https://developers.cloudflare.com/basin-sql/sql-reference/` |
-| Aggregate functions | `https://developers.cloudflare.com/basin-sql/sql-reference/aggregate-functions/` |
-| Scalar functions | `https://developers.cloudflare.com/basin-sql/sql-reference/scalar-functions/` |
-| Complex types | `https://developers.cloudflare.com/basin-sql/sql-reference/complex-types/` |
-| Limitations & best practices | `https://developers.cloudflare.com/basin-sql/reference/limitations-best-practices/` |
-| Wrangler commands | `https://developers.cloudflare.com/basin-sql/reference/wrangler-commands/` |
-| Pricing | `https://developers.cloudflare.com/basin-sql/platform/pricing/` |
+| Overview / get started | `https://developers.cloudflare.com/basin-sql/get-started/index.md` |
+| Query data | `https://developers.cloudflare.com/basin-sql/query-data/index.md` |
+| SQL reference | `https://developers.cloudflare.com/basin-sql/sql-reference/index.md` |
+| Aggregate functions | `https://developers.cloudflare.com/basin-sql/sql-reference/aggregate-functions/index.md` |
+| Scalar functions | `https://developers.cloudflare.com/basin-sql/sql-reference/scalar-functions/index.md` |
+| Complex types | `https://developers.cloudflare.com/basin-sql/sql-reference/complex-types/index.md` |
+| Limitations & best practices | `https://developers.cloudflare.com/basin-sql/reference/limitations-best-practices/index.md` |
+| Wrangler commands | `https://developers.cloudflare.com/basin-sql/reference/wrangler-commands/index.md` |
+| Pricing | `https://developers.cloudflare.com/basin-sql/platform/pricing/index.md` |
 
 ## Connection Values
 
@@ -48,7 +39,7 @@ npx wrangler basin sql query "$ACCOUNT_ID"_my-bucket \
 
 ## SQL Surface
 
-Basin SQL is read-only and supports a broad analytical SQL surface (SELECT, JOINs, subqueries, CTEs, set operations, window functions, and aggregate/scalar/JSON functions over complex types). For the authoritative, current list of supported syntax, functions, and limitations, see the SQL reference and limitations docs linked above. [api.md](basin-sql.md) has query templates.
+Basin SQL is read-only and supports a broad analytical SQL surface (SELECT, JOINs, subqueries, CTEs, set operations, window functions, and aggregate/scalar/JSON functions over complex types). For the authoritative, current list of supported syntax, functions, and limitations, see the SQL reference and limitations docs linked above. [api.md](basin-sql-api.md) has query templates.
 
 ## When to Use
 
@@ -62,12 +53,12 @@ There is no `env.R2_SQL` binding. Query from a Worker via `fetch()` to the REST 
 
 ## Reading Order
 
-1. [configuration.md](basin-sql.md) — enable catalog, tokens, env setup
-2. [api.md](basin-sql.md) — SQL syntax templates, JOIN/window examples, response format, data types
+1. [configuration.md](basin-sql-configuration.md) — enable catalog, tokens, env setup
+2. [api.md](basin-sql-api.md) — SQL syntax templates, JOIN/window examples, response format, data types
 3. [patterns.md](basin-sql-patterns.md) — CLI/REST/Worker queries, use cases, pagination, performance
 4. [gotchas.md](basin-sql-gotchas.md) — what works vs. not, performance, troubleshooting
 
 ## See Also
 
-- [Basin Catalog](basin-catalog.md) — PyIceberg/PySpark, table management
-- [Basin Pipelines](basin-pipelines.md) — streaming ingest into queryable tables
+- [Basin Catalog](../catalog/) — PyIceberg/PySpark, table management
+- [Basin Pipelines](../pipelines/) — streaming ingest into queryable tables

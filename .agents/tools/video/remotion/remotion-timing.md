@@ -1,11 +1,3 @@
----
-name: remotion-timing
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 Drive motion with `interpolate()` over an explicit frame range.
 To customize timing, use **`Easing.bezier`** or `Easing.spring`.
 

@@ -1,12 +1,3 @@
----
-name: workerd-gotchas
-description: "Cloudflare workerd: gotchas"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Workerd Gotchas
 
 ## Common Errors
@@ -133,7 +124,7 @@ bindings = [(name = "API", service = (external = (address = "api.com:443", http 
 
 **Problem:** Breaking changes after compat date update
 **Cause:** New flags enabled between dates
-**Solution:** Review [compat dates docs](https://developers.cloudflare.com/workers/configuration/compatibility-dates/), test locally first
+**Solution:** Review [compat dates docs](https://developers.cloudflare.com/workers/configuration/compatibility-dates/index.md), test locally first
 
 **Problem:** "Compatibility date not supported"
 **Cause:** Workerd version older than compat date
@@ -157,4 +148,4 @@ bindings = [(name = "API", service = (external = (address = "api.com:443", http 
 6. **Isolate issue**: Minimal repro config
 7. **Review schema**: [workerd.capnp](https://github.com/cloudflare/workerd/blob/main/src/workerd/server/workerd.capnp)
 
-See [configuration.md](./configuration.md) for config details, [patterns.md](./patterns.md) for working examples, [api.md](./api.md) for runtime APIs.
+See [configuration.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/workerd/configuration.md) for config details, [patterns.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/workerd/patterns.md) for working examples, [api.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/workerd/api.md) for runtime APIs.

@@ -1,11 +1,9 @@
 ---
-name: remotion-light-leaks
+name: light-leaks
 description: Light leak overlay effects for Remotion using lightLeak() from @remotion/effects.
-mode: subagent
+metadata:
+  tags: light-leaks, overlays, effects, transitions
 ---
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
 ## Light Leaks
 

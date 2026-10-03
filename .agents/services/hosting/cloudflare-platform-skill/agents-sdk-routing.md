@@ -1,15 +1,6 @@
----
-name: agents-sdk-routing
-description: "Cloudflare Agents SDK: routing"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Routing
 
-Fetch https://developers.cloudflare.com/agents/api-reference/routing/ for complete documentation.
+Fetch https://developers.cloudflare.com/agents/runtime/communication/routing/index.md for complete documentation.
 
 ## Default URL Pattern
 

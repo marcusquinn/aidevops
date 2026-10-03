@@ -1,11 +1,3 @@
----
-name: remotion-maps-maptiler
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # MapTiler maps in Remotion
 
 MapTiler is a good solution for map animations where geographics features should be drawn as annotations on top of the map: Country borders, rivers, labels for POIs.

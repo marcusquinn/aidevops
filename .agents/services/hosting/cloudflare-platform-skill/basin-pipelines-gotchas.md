@@ -1,15 +1,6 @@
----
-name: basin-pipelines-gotchas
-description: "Cloudflare Basin pipelines: gotchas"
-mode: subagent
----
-
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Basin Pipelines Gotchas
 
-Non-obvious failure modes (not well covered by docs). For current limits and error semantics, pull `https://developers.cloudflare.com/basin-pipelines/platform/limits/`.
+Non-obvious failure modes (not well covered by docs). For current limits and error semantics, pull `https://developers.cloudflare.com/basin-pipelines/platform/limits/index.md`.
 
 ## Events accepted but never appear (most common)
 
@@ -38,7 +29,7 @@ curl -X DELETE "$BASE_URL/streams/{id}"   -H "Authorization: Bearer $API_TOKEN"
 
 ## REST API field names ≠ CLI flags
 
-`r2_data_catalog` vs `--type basin-catalog`, `table_name` vs `--table`, `token` vs `--catalog-token`, and `format` is required in REST but implied in CLI. See [configuration.md](basin-pipelines.md#option-c-rest-api-programmatic).
+`r2_data_catalog` vs `--type basin-catalog`, `table_name` vs `--table`, `token` vs `--catalog-token`, and `format` is required in REST but implied in CLI. See [configuration.md](basin-pipelines-configuration.md#option-c-rest-api-programmatic).
 
 ## `wrangler basin pipelines delete` defaults to "no"
 
@@ -51,7 +42,7 @@ Non-interactive environments answer "no" automatically — use REST `DELETE` for
 - **JSON-only input** — no Avro/Protobuf/CSV.
 - **Naming:** streams/sinks/pipelines use underscores; buckets use hyphens.
 - **Metrics lag 5–10 min** after creation.
-- **Pipeline SQL is row-level only** — no GROUP BY/aggregation/window functions (do aggregation in [Basin SQL](basin-sql.md) at query time). CTEs and `UNNEST` are supported.
+- **Pipeline SQL is row-level only** — no GROUP BY/aggregation/window functions (do aggregation in [Basin SQL](../sql/) at query time). CTEs and `UNNEST` are supported.
 
 ## Debug Checklist
 
@@ -64,4 +55,4 @@ Non-interactive environments answer "no" automatically — use REST `DELETE` for
 
 ## See Also
 
-- [configuration.md](basin-pipelines.md) · [api.md](basin-pipelines.md) · [patterns.md](basin-pipelines-patterns.md)
+- [configuration.md](basin-pipelines-configuration.md) · [api.md](basin-pipelines-api.md) · [patterns.md](basin-pipelines-patterns.md)
