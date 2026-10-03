@@ -7,7 +7,6 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { Plugin } from "@opencode/plugin";
 
 import { getOpenCodeRuntimeProfile, profileForOpenCodeVersion } from "../runtime-profile.mjs";
 import { loadV1ToolHelper, tool } from "../tools.mjs";
@@ -29,10 +28,10 @@ test("package exposes released V1 and V2 plugin entrypoints", () => {
   const packageDocument = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
   assert.equal(packageDocument.exports["./v1"], "./index.mjs");
   assert.equal(packageDocument.exports["./v2"], "./v2.mjs");
-  assert.equal(packageDocument.dependencies["@opencode/plugin"], "2.0.3");
+  assert.equal(packageDocument.dependencies["@opencode/plugin"], undefined);
   assert.equal(v2Plugin.id, "aidevops");
   assert.equal(typeof v2Plugin.setup, "function");
-  assert.equal(Plugin.define(v2Plugin), v2Plugin);
+  assert.deepEqual(Object.keys(v2Plugin).sort(), ["id", "setup"]);
 });
 
 test("V2 runtime version comes from the V2 CLI package, never the V1 install", () => {
@@ -61,7 +60,7 @@ test("V2 directory loader resolves to the released V2 descriptor", async () => {
   assert.equal(loader.default, v2Plugin);
 });
 
-test("V2 descriptor seam uses the released Plugin.define contract", async () => {
+test("V2 descriptor seam preserves the released identity contract without SDK dependencies", async () => {
   const context = { app: { version: "2.0.3" } };
   let observed;
   const cleanup = () => {};
