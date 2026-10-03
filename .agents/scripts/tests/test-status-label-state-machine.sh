@@ -118,14 +118,16 @@ STUBEOF
 	return 0
 }
 
-write_stub_gh() {
-	: >"$GH_CALLS_FILE"
-	cat >"${STUB_DIR}/gh" <<'STUBEOF'
-#!/usr/bin/env bash
-# Stub gh for test-status-label-state-machine.sh — records all calls.
-printf '%s\n' "$*" >>"${GH_CALLS_FILE}"
-if [[ "${1:-}" == "api" && "${2:-}" == /repos/*/labels\?per_page=100 ]]; then
+append_stub_gh_labels() {
+	cat >>"${STUB_DIR}/gh" <<'STUBEOF'
+if [[ "${1:-}" == "api" && "${2:-}" == "graphql" ]]; then
 	[[ "${STUB_LABEL_LIST_FAIL:-0}" == "1" ]] && exit 1
+	case "${STUB_LABEL_MODE:-exact}" in
+	partial) printf '%s\n' '{"data":{"repository":{"label0":null}},"errors":[{"message":"lookup failed"}]}' ; exit 0 ;;
+	unavailable) printf '%s\n' '{"data":{"repository":null}}' ; exit 0 ;;
+	malformed) printf '%s\n' '{"data":{"repository":{"label0":null}}}' ; exit 0 ;;
+	esac
+	{
 	printf '%s\t%s\t%s\n' \
 		"status:available" "0e8a16" "Task is available for claiming" \
 		"status:queued" "fbca04" "Worker dispatched, not yet started" \
@@ -138,8 +140,26 @@ if [[ "${1:-}" == "api" && "${2:-}" == /repos/*/labels\?per_page=100 ]]; then
 	elif [[ "${STUB_LABEL_MODE:-exact}" == "drifted" ]]; then
 		printf '%s\t%s\t%s\n' "status:blocked" "ffffff" "Drifted definition"
 	fi
+	} | jq -Rn '
+		[inputs | split("\t") | {name: .[0], color: .[1], description: .[2]}] |
+		to_entries | map({key: ("label" + (.key | tostring)), value: .value}) |
+		from_entries | if has("label6") then . else .label6 = null end |
+		{data: {repository: .}}'
 	exit 0
 fi
+STUBEOF
+	return 0
+}
+
+write_stub_gh() {
+	: >"$GH_CALLS_FILE"
+	cat >"${STUB_DIR}/gh" <<'STUBEOF'
+#!/usr/bin/env bash
+# Stub gh for test-status-label-state-machine.sh — records all calls.
+printf '%s\n' "$*" >>"${GH_CALLS_FILE}"
+STUBEOF
+	append_stub_gh_labels
+	cat >>"${STUB_DIR}/gh" <<'STUBEOF'
 if [[ "${1:-}" == "api" && "${2:-}" == /repos/*/issues/[0-9]* ]]; then
 	[[ "${STUB_ISSUE_GET_FAIL:-0}" == "1" ]] && exit 1
 	if [[ "${STUB_STATEFUL_ISSUE:-0}" == "1" && -f "${ISSUE_STATE_FILE}" ]]; then
@@ -582,9 +602,11 @@ test_converged_label_contract_is_read_only() {
 	local rc=$?
 	local reads=0
 	local writes=0
-	reads=$(grep -c '^api /repos/owner/repo/labels?per_page=100 ' "$GH_CALLS_FILE" 2>/dev/null || true)
+	reads=$(grep -c '^api graphql ' "$GH_CALLS_FILE" 2>/dev/null || true)
 	writes=$(grep -Ec '^label (create|edit) ' "$GH_CALLS_FILE" 2>/dev/null || true)
-	if [[ "$rc" -eq 0 && "$reads" -eq 1 && "$writes" -eq 0 ]]; then
+	if [[ "$rc" -eq 0 && "$reads" -eq 1 && "$writes" -eq 0 ]] &&
+		! grep -q -- '--paginate' "$GH_CALLS_FILE" &&
+		[[ $(grep -o 'label(name:' "$GH_CALLS_FILE" | wc -l) -eq 7 ]]; then
 		print_result "converged label contract uses one read and zero writes" 0
 	else
 		print_result "converged label contract uses one read and zero writes" 1 \
@@ -637,7 +659,7 @@ test_label_create_conflict_is_verified() {
 	ensure_status_labels_exist "owner/repo"
 	local rc=$?
 	local reads=0
-	reads=$(grep -c '^api /repos/owner/repo/labels?per_page=100 ' "$GH_CALLS_FILE" 2>/dev/null || true)
+	reads=$(grep -c '^api graphql ' "$GH_CALLS_FILE" 2>/dev/null || true)
 	if [[ "$rc" -eq 0 && "$reads" -ge 3 ]] &&
 		grep -q '^label create status:blocked ' "$GH_CALLS_FILE"; then
 		print_result "concurrent label create conflict is re-read and verified" 0
@@ -663,6 +685,19 @@ test_label_contract_read_failure_is_fail_closed() {
 		print_result "failed label-contract read performs no mutation" 1 \
 			"(rc=${rc}; calls=$(cat "$GH_CALLS_FILE"))"
 	fi
+	local mode=""
+	for mode in partial unavailable malformed; do
+		_reset_state
+		export STUB_LABEL_MODE="$mode"
+		set_issue_status 2718 "owner/repo" "queued" >/dev/null 2>&1
+		rc=$?
+		if [[ "$rc" -ne 0 && -z "$_STATUS_LABELS_ENSURED" ]] &&
+			! grep -qE '^(api -X (PATCH|POST|DELETE)|issue edit|label (create|edit))' "$GH_CALLS_FILE"; then
+			print_result "$mode label-contract response performs no mutation or caching" 0
+		else
+			print_result "$mode label-contract response performs no mutation or caching" 1 "(rc=${rc})"
+		fi
+	done
 	return 0
 }
 
