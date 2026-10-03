@@ -33,6 +33,11 @@ export const STEP_FIELDS = {
   'no-horizontal-overflow': {},
 };
 
+function isLayoutMatch(value) {
+  if (!Array.isArray(value) || value.length === 0) return false;
+  return value.every((edge) => LAYOUT_EDGES.has(edge)) && new Set(value).size === value.length;
+}
+
 function fail(message) {
   throw new Error(message);
 }
@@ -56,7 +61,7 @@ const FIELD_CHECKS = {
   count: (value) => Number.isInteger(value) && value >= 0,
   navigationPath: isNavigationPath,
   exactPath: isExactPath,
-  layoutMatch: (value) => Array.isArray(value) && value.length > 0 && value.every((edge) => LAYOUT_EDGES.has(edge)) && new Set(value).size === value.length,
+  layoutMatch: isLayoutMatch,
   tolerancePx: (value) => Number.isInteger(value) && value >= 0 && value <= 8,
 };
 
@@ -115,10 +120,17 @@ function inRange(value, min, max) {
   return Number.isInteger(value) && value >= min && value <= max;
 }
 
+function isPlainObject(value) {
+  return Object.prototype.toString.call(value) === '[object Object]';
+}
+
+function hasViewportSize(viewport) {
+  return inRange(viewport.width, 320, 3840) && inRange(viewport.height, 320, 2160);
+}
+
 function isCustomViewport(viewport) {
-  return viewport !== null && typeof viewport === 'object' && !Array.isArray(viewport)
-    && VIEWPORT_NAME.test(String(viewport.name))
-    && inRange(viewport.width, 320, 3840) && inRange(viewport.height, 320, 2160);
+  if (!isPlainObject(viewport)) return false;
+  return VIEWPORT_NAME.test(String(viewport.name)) && hasViewportSize(viewport);
 }
 
 function viewportName(viewport) {
