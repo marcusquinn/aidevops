@@ -7,6 +7,7 @@ import concurrent.futures
 import hashlib
 import json
 import os
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -64,10 +65,13 @@ class AffiliateTests(unittest.TestCase):
         self.ledger.append(self.record("authorization", identifier))
 
     def cli(self, *arguments):
+        bash = shutil.which("bash")
+        if bash is None:
+            raise RuntimeError("Bash is required for offline CLI checks")
         return subprocess.run(
-            ["bash", str(SCRIPTS / "affiliate-helper.sh"), *arguments],
+            [bash, str(SCRIPTS / "affiliate-helper.sh"), *arguments],
             env={**os.environ, "KNOWLEDGE_CORPUS_BASE": str(self.base)},
-            text=True, capture_output=True, check=False,
+            text=True, capture_output=True, check=False, shell=False,
         )
 
     def test_cli_import_replay_lookup_rebuild(self):

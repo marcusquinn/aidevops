@@ -6,9 +6,13 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from datetime import datetime, timezone
 
-from affiliate_ledger import AffiliateError, canonical_json, catalog, date, latest
+from affiliate_ledger import Ledger, canonical_json, catalog, latest
+from affiliate_storage import AffiliateError, date, directory_fd, read_private
+from knowledge_corpus_helpers import _default_base
+from knowledge_corpus_context import validate_private_file
 
 
 def identity(record: dict) -> tuple:
@@ -25,11 +29,10 @@ def referenced(events: list[dict], kind: str, identifier: str) -> dict:
 def authorization(events: list[dict], record: dict, *, current: bool = True) -> dict:
     profile = referenced(events, "profile", record["profile_id"])
     profile_digest = hashlib.sha256(canonical_json(profile).encode()).hexdigest()
-    if (identity(profile) != identity(record) or not profile["approved"]
-            or profile["country"] == "unknown"
-            or record["profile_sha256"] != profile_digest
-            or not set(record["data_scope"]) <= set(profile["data_scope"])
-            or (current and date(record["expires_at"]) <= datetime.now(timezone.utc))):
+    if any((identity(profile) != identity(record), not profile["approved"],
+            profile["country"] == "unknown", record["profile_sha256"] != profile_digest,
+            not set(record["data_scope"]) <= set(profile["data_scope"]),
+            current and date(record["expires_at"]) <= datetime.now(timezone.utc))):
         raise AffiliateError("authorization profile, region, expiry or data scope conflicts")
     # Country eligibility is never inferred from region/language. Catalogue only
     # records public entrypoints; no provider has a verified automated adapter.
@@ -48,6 +51,10 @@ def validate_transition(events: list[dict], record: dict, *, current: bool = Tru
         authorization(events, record, current=current)
     if record["kind"] != "checkpoint":
         return
+    validate_checkpoint(events, record, previous, current=current)
+
+
+def validate_checkpoint(events: list[dict], record: dict, previous: list[dict], *, current: bool) -> None:
     auth = referenced(events, "authorization", record["authorization_id"])
     if identity(auth) != identity(record):
         raise AffiliateError("checkpoint scope mismatch")
@@ -92,3 +99,23 @@ def checkpoint(ledger, identifier: str | None) -> dict:
     event = ledger.append(record)
     return {"checkpoint": event["evidence_id"], "state": "awaiting-reconciliation",
             "submitted": False, "handoff": "live adapter disabled; inspect scoped confirmation before any retry"}
+
+
+def private_command(args) -> object:
+    ledger = Ledger(_default_base(), write=args.command in {"import", "rebuild", "checkpoint"})
+    if args.command == "import":
+        if args.file is None:
+            raise AffiliateError("private import file required")
+        validate_private_file(args.file, "import input", repair=False)
+        with directory_fd(args.file.parent) as directory:
+            return ledger.append(json.loads(read_private(args.file.name, directory)))
+    if args.command == "rebuild":
+        return {"rebuilt": ledger.rebuild()}
+    if args.command == "checkpoint":
+        return checkpoint(ledger, args.authorization)
+    events = latest(ledger.replay(), "link" if args.command == "lookup" else None)
+    result = [e for e in events if not args.programme or e["record"]["programme"] == args.programme]
+    if args.command == "lookup":
+        result = [e for e in result if e["record"]["link_state"] == "verified"
+                  and args.purpose == e["record"]["purpose"]]
+    return result
