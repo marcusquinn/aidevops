@@ -1,6 +1,18 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
+export function runtimeProvenance(options = {}) {
+  const version = String(options.aidevopsVersion || process.env.AIDEVOPS_VERSION || "")
+    .trim().replace(/^v/, "");
+  const aidevopsVersion = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(version) ? version : "";
+  const adapterId = stringOrNull(options.adapterId);
+  return {
+    aidevopsVersion,
+    runtimeVersion: stringOrNull(options.runtimeVersion),
+    adapterVersion: adapterId && aidevopsVersion ? `${adapterId}@${aidevopsVersion}` : null,
+  };
+}
+
 /**
  * Normalise bounded, source-qualified request evidence for SQLite storage.
  * Runtime configuration is never represented as provider confirmation.
