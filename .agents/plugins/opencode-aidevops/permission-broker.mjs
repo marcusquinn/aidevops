@@ -2,11 +2,12 @@
 // SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
 import { createHash } from "crypto";
-import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
-import { dirname, isAbsolute, join, relative, resolve } from "path";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
+import { dirname, join } from "path";
 import { homedir } from "os";
 import { appendWorkerBlockerEvent } from "../../scripts/worker-blocker-log.mjs";
 import { isManagedToolOutputRead } from "./permission-broker-tool-output.mjs";
+import { impossibleExternalRead as classifyImpossibleRead, rejectImpossibleToolRead } from "./permission-broker-read-target.mjs";
 
 const REQUEST_SCHEMA = "aidevops-permission-capture/v1";
 const MAX_PATTERN_LENGTH = 500;
@@ -117,75 +118,8 @@ function recordPermissionToolCall(toolCalls, isHeadless, home, input, output) {
   while (toolCalls.size > 100) toolCalls.delete(toolCalls.keys().next().value);
 }
 
-function hasBoundedReadTarget(raw, target) {
-  const source = raw?.patterns ?? raw?.pattern ?? [];
-  const patterns = Array.isArray(source) ? source : [source];
-  if (typeof target !== "string" || !isAbsolute(target) || /[*?\[\]{}\u0000]/.test(target)
-    || target.split(/[\\/]+/).includes("..")
-    || FORBIDDEN_PATTERN.test(target) || patterns.length === 0) return false;
-  const bounded = [target, `${dirname(target)}/*`, `${dirname(target)}/**`];
-  return patterns.every((pattern) => !FORBIDDEN_PATTERN.test(String(pattern)) && bounded.includes(pattern));
-}
-
-function missingTargetAncestor(target) {
-  let ancestor = resolve(target);
-  try {
-    lstatSync(ancestor);
-    return "";
-  } catch (err) {
-    if (err.code !== "ENOENT") return "";
-  }
-  while (true) {
-    const parent = dirname(ancestor);
-    if (parent === ancestor) return "";
-    ancestor = parent;
-    try {
-      lstatSync(ancestor);
-      return ancestor;
-    } catch (err) {
-      if (err.code !== "ENOENT") return "";
-    }
-  }
-}
-
-function hasSymlinkAncestor(ancestor) {
-  // lstat of the nearest directory alone does not detect a symlink above it.
-  let component = ancestor;
-  try {
-    while (true) {
-      if (lstatSync(component).isSymbolicLink()) return true;
-      const parent = dirname(component);
-      if (parent === component) break;
-      component = parent;
-    }
-  } catch {
-    return true;
-  }
-  return false;
-}
-
-// Only an exact, demonstrably absent target is an impossible read. EACCES,
-// symlinks, wildcard-only requests and sensitive locations keep the normal gate.
 function impossibleExternalRead(context, raw) {
-  const { toolCalls, home, dataHome } = context;
-  if ((raw?.permission || raw?.type) !== "external_directory") return "";
-  const call = toolCalls.get(raw?.tool?.callID || raw?.callID || "");
-  const tool = call?.tool || raw?.metadata?.tool;
-  if (!["read", "glob", "grep", "list"].includes(tool)) return "";
-  const target = call?.target || raw?.metadata?.filepath || raw?.metadata?.path;
-  if (!hasBoundedReadTarget(raw, target)) return "";
-  const ancestor = missingTargetAncestor(target);
-  if (!ancestor || hasSymlinkAncestor(ancestor)) return "";
-  const managed = [join(home, ".aidevops"), join(dataHome, "opencode", "tool-output"), process.env.WORKER_WORKTREE_PATH].filter(Boolean);
-  if (managed.some((root) => {
-    const within = relative(resolve(root), ancestor);
-    return within === "" || (within !== ".." && !within.startsWith("../") && !isAbsolute(within));
-  })) return "";
-  const marker = "/.aidevops/.agent-workspace/";
-  const hint = target.includes(marker)
-    ? ` Resolve MCP artifacts from the session output directory under ${join(home, ".aidevops", ".agent-workspace")}.`
-    : " Check the tool's artifact path and working directory.";
-  return `External read target does not exist; no permission approval can make this read succeed.${hint}`;
+  return classifyImpossibleRead(context, raw, FORBIDDEN_PATTERN);
 }
 
 function recordPermissionBlocker({ loggedEvents, home, blockerLogPath, capture, request, event, reason, detail }) {
@@ -340,13 +274,7 @@ export function createPermissionBroker({
   return {
     recordToolCall: (input, output) => {
       recordPermissionToolCall(toolCalls, isHeadless, home, input, output);
-      if (!isHeadless()) return;
-      const callID = input?.callID || input?.callId;
-      const target = toolCalls.get(callID)?.target;
-      const message = impossibleExternalRead(context, {
-        permission: "external_directory", callID, patterns: target ? [target] : [],
-      });
-      if (message) throw new Error(message);
+      rejectImpossibleToolRead(context, input, FORBIDDEN_PATTERN);
     },
     handleEvent: (input) => handlePermissionEvent(context, input),
     permissionAsk: (input, output) => handlePermissionAsk(context, input, output),

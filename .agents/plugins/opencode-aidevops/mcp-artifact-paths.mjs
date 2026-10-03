@@ -18,6 +18,12 @@ function hasUnsafeComponent(target) {
   }
 }
 
+function isOutsideWorkspace(workspace, absolute) {
+  const within = relative(workspace.directory, absolute);
+  if (within === ".." || within.startsWith("../")) return true;
+  return isAbsolute(within);
+}
+
 /** Normalize local Markdown artifact links against the managed MCP's real cwd. */
 export function normalizeMcpArtifactPaths(input, output, workspaces) {
   const workspace = workspaces?.playwright;
@@ -27,9 +33,8 @@ export function normalizeMcpArtifactPaths(input, output, workspaces) {
     // Leave URLs, anchors and absolute links untouched, including file: URLs.
     if (/^[a-z][a-z\d+.-]*:|^[#/]|^\\/i.test(target)) return link;
     const absolute = resolve(cwd, target);
-    const within = relative(workspace.directory, absolute);
-    if (within === ".." || within.startsWith("../") || isAbsolute(within)
-      || hasUnsafeComponent(`${cwd}/${target}`) || hasUnsafeComponent(absolute)) return link;
+    if (isOutsideWorkspace(workspace, absolute)) return link;
+    if (hasUnsafeComponent(`${cwd}/${target}`) || hasUnsafeComponent(absolute)) return link;
     return `](${absolute})`;
   });
 }
