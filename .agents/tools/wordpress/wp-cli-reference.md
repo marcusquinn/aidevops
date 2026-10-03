@@ -67,6 +67,63 @@ wp plugin delete plugin-name
 wp plugin search "seo" --fields=name,slug,rating
 ```
 
+### Fleet rollout of a self-hosted plugin release
+
+For a GitHub-updater release, use the GitHub-channel zip built by
+[the plugin release workflow](wp-plugin-release.md#release-steps-github-channel).
+Before updating the fleet, test one representative site's update check in cron
+context (replace the plugin basename with its actual entry file):
+
+```bash
+wp eval 'if (!defined("DOING_CRON")) { define("DOING_CRON", true); } $updates = get_site_transient("update_plugins"); if (is_object($updates)) { $updates->last_checked = 0; set_site_transient("update_plugins", $updates); } wp_update_plugins(); $updates = get_site_transient("update_plugins"); $plugin = "<slug>/<slug>.php"; $offer = is_object($updates) ? ($updates->response[$plugin] ?? null) : null; echo $offer ? $offer->new_version . PHP_EOL : "No update offered; inspect updater diagnostics." . PHP_EOL;'
+```
+
+HTTP Requests Manager's smart mode can block outbound requests once PHP has run
+for 3 seconds or made 3 requests, while exempting cron and `update-core.php`.
+A heavy site's WP-CLI bootstrap can exhaust that budget before the updater runs.
+Similar request limiters/firewalls may have different exemptions; inspect the
+installed version and configuration. The cron constant here affects only this
+CLI process, not the site's persistent firewall settings.
+
+"Plugin already updated" is not proof the release is unavailable. Read the error
+recorded in the updater's release cache/log before blaming a missing token or
+private repository. A recorded `User has blocked requests through HTTP` or
+`total_time_limit` error points to request blocking. Inspect only the relevant
+error, not a full cache/config dump that might expose credentials. If credentials
+need checking, compare SHA-256 fingerprints of the securely stored expected token
+and the site's configured constant in a trusted process, reporting only
+match/mismatch. Never print either token or put it in CLI arguments or logs.
+
+If the updater remains blocked, use the checksum-verified release zip fallback:
+
+1. Confirm a current backup and the intended version; verify the built release
+   asset against its trusted `SHA256SUMS`. Copy it once per host, outside the web
+   root, then verify the remote checksum before installing it on any site:
+
+   ```bash
+   scp "dist/<slug>-X.Y.Z.zip" "<ssh-host>:<private-release-directory>/"
+   ssh "<ssh-host>" 'shasum -a 256 "<private-release-directory>/<slug>-X.Y.Z.zip"'
+   ```
+
+2. On the host, run the following for each site from its WordPress root (or use
+   `--path`); `--force` replaces the installed plugin files. Preserve the existing
+   activation state rather than adding `--activate`:
+
+   ```bash
+   wp plugin install "<private-release-directory>/<slug>-X.Y.Z.zip" --force
+   wp plugin get "<slug>" --field=version
+   curl --silent --show-error --output /dev/null --write-out '%{http_code}\n' "<home-url>"
+   ```
+
+3. Require the expected version and front-end status for each site; stop on an
+   unexpected result and inspect site logs before continuing. Remove the exact
+   copied zip after verification of all sites on that host.
+
+Expected non-200 front ends (admin-only redirects, password-protected staging)
+belong in the local site inventory, not shared docs. Compare each response with
+that inventory; do not globally treat redirects or authentication errors as
+successful health checks.
+
 ## WordPress Core
 
 ```bash
