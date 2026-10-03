@@ -68,7 +68,7 @@ class AffiliateTests(unittest.TestCase):
         bash = shutil.which("bash")
         if bash is None:
             raise RuntimeError("Bash is required for offline CLI checks")
-        return subprocess.run(
+        return subprocess.run(  # nosec B603 -- resolved Bash, fixed local wrapper, test-owned argv, no shell
             [bash, str(SCRIPTS / "affiliate-helper.sh"), *arguments],
             env={**os.environ, "KNOWLEDGE_CORPUS_BASE": str(self.base)},
             text=True, capture_output=True, check=False, shell=False,
