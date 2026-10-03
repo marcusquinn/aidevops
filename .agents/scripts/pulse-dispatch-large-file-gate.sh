@@ -171,6 +171,7 @@ _large_file_gate_extract_paths() {
 	# which threw away the one piece of information needed to tell "targeted
 	# edit in a 30-line range" from "rewrite the whole 3000-line file".
 	local file_paths
+	# Explicit agents/scripts targets intentionally accept any extension.
 	# shellcheck disable=SC2016  # `\s` is grep-regex escape, not shell expansion.
 	file_paths=$(printf '%s' "$issue_body" | grep -oE '(EDIT|NEW|File):?\s+[`"]?\.?agents/scripts/[^`"[:space:],]+' 2>/dev/null |
 		sed 's/^[A-Z]*:*[[:space:]]*//' | sed 's/^[`"]//' | sed 's/[`"]*$//' | sort -u) || file_paths=""
@@ -198,10 +199,12 @@ _large_file_gate_extract_paths() {
 	# t2024: Also preserve line qualifiers here. A list-item reference like
 	#   - EDIT: `pulse-ancillary-dispatch.sh:221-253`
 	# should be parsed as "file + range", not stripped to bare "file".
+	# GH#33343: End the code extension at the closing backtick or numeric
+	# line qualifier; otherwise .json/.jsonl match through the .js prefix.
 	local backtick_paths
 	# shellcheck disable=SC2016  # Backtick chars in regex are literals, not command subst.
 	backtick_paths=$(printf '%s' "$issue_body" | grep -E '^\s*[-*]\s+(EDIT|NEW|File):|^(EDIT|NEW|File):' 2>/dev/null |
-		grep -oE '`[^`]*\.(sh|py|js|ts)[^`]*`' 2>/dev/null |
+		grep -oE '`[^`]*\.(sh|py|js|jsx|mjs|cjs|ts|tsx)(:[0-9]+(-[0-9]+)?)?`' 2>/dev/null |
 		tr -d '`' | grep -v '^#' | sort -u) || backtick_paths=""
 
 	printf '%s\n%s' "$file_paths" "$backtick_paths" | sort -u | grep -v '^$' || true
@@ -361,7 +364,7 @@ _large_file_gate_targets_match_remote_default() {
 	local repo_path="$1"
 	local remote_sha="$2"
 	local targets="$3"
-	local target="" full_path="" relative_path="" entry=""
+	local target="" full_path="" relative_path="" entry="" candidate=""
 	local mode="" object_type="" object_sha="" entry_path="" working_sha=""
 	[[ -n "$targets" ]] || return 1
 	git -C "$repo_path" cat-file -e "${remote_sha}^{commit}" 2>/dev/null || return 1
@@ -370,7 +373,15 @@ _large_file_gate_targets_match_remote_default() {
 		if [[ "$target" =~ ^(.+):([0-9]+(-[0-9]+)?)$ ]]; then
 			target="${BASH_REMATCH[1]}"
 		fi
-		full_path=$(_large_file_gate_resolve_full_path "$target" "$repo_path") || return 1
+		if ! full_path=$(_large_file_gate_resolve_full_path "$target" "$repo_path"); then
+			# Missing locally is safe only when every resolver variant is also
+			# absent at the pinned remote commit. An upstream addition must defer.
+			for candidate in "$target" ".agents/$target" ".$target"; do
+				entry=$(git -C "$repo_path" --literal-pathspecs ls-tree "$remote_sha" -- "$candidate" 2>/dev/null) || return 1
+				[[ -z "$entry" ]] || return 1
+			done
+			continue
+		fi
 		relative_path="${full_path#"${repo_path}/"}"
 		entry=$(git -C "$repo_path" --literal-pathspecs ls-tree "$remote_sha" -- "$relative_path" 2>/dev/null) || return 1
 		[[ -n "$entry" && "$entry" != *$'\n'* ]] || return 1
@@ -581,7 +592,9 @@ _large_file_gate_normalize_debt_issue() {
 		--remove-label "simplification-incomplete" \
 		--remove-label "duplicate" \
 		--remove-label "already-fixed" \
-		--remove-label "wontfix" >/dev/null 2>&1
+		--remove-label "wontfix" \
+		--remove-label "solved:worker" \
+		--remove-label "solved:interactive" >/dev/null 2>&1
 	return $?
 }
 

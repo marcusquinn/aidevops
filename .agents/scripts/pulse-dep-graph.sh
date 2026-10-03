@@ -39,7 +39,33 @@ source "${_pulse_dep_graph_dir}/task-identity-lib.sh"
 # shellcheck source=./issue-hold-marker-lib.sh
 source "${_pulse_dep_graph_dir}/issue-hold-marker-lib.sh"
 DEP_GRAPH_REDUCE_FILTER="${PULSE_DEP_GRAPH_REDUCE_FILTER:-${_pulse_dep_graph_dir}/pulse-dep-graph-reduce.jq}"
+DEP_GRAPH_BRIEF_PARSER_AWK="${_pulse_dep_graph_dir}/brief-readiness-parser.awk"
 unset _pulse_dep_graph_dir
+
+#######################################
+# Emit only structured blocked-by field lines from an issue body (GH#33166).
+#
+# Accepted forms (optional list marker, case-insensitive, colon required):
+#   blocked-by:t123,#456        (bare TODO field)
+#   **Blocked by:** `t123`, #4  (brief-template bold field)
+# Fenced code blocks and HTML comments are removed first with the shared
+# brief parser. Prose or inline-code mentions that do not begin the line are
+# ignored. Each matching line is emitted starting at the field label.
+#
+# Arguments: $1 - issue body
+#######################################
+_blocked_by_structured_lines() {
+	local body="$1"
+	local field_re='^[[:space:]]*([-*+][[:space:]]+)?(\*\*)?blocked[- ]by(\*\*)?[[:space:]]*:'
+	local cleaned="$body"
+	if [[ -r "$DEP_GRAPH_BRIEF_PARSER_AWK" ]]; then
+		cleaned=$(printf '%s\n' "$body" | awk -v mode="unfenced" -f "$DEP_GRAPH_BRIEF_PARSER_AWK" |
+			awk -v mode="visible" -f "$DEP_GRAPH_BRIEF_PARSER_AWK")
+	fi
+	printf '%s\n' "$cleaned" | tr -d '\r' | grep -iE "$field_re" |
+		sed -E 's/^[[:space:]]*([-*+][[:space:]]+)?//' || true
+	return 0
+}
 
 #######################################
 # Parse a single issue for the dep-graph cache (t2031 refactor)
@@ -86,7 +112,7 @@ _dep_graph_process_issue_json() {
 	# via POSIX `[^[:cntrl:]]` (see t1983 / t2015 for history).
 	# Subtask decimal suffixes (t325.1) are preserved (GH#19165).
 	local blocker_lines="" body_blocker_tids="" body_blocker_nums="" label_names="" label_blocker_tids="" label_blocker_nums="" blocker_tids="" blocker_nums=""
-	blocker_lines=$(printf '%s' "$body" | grep -ioE '[Bb]locked[- ][Bb]y[^[:cntrl:]]*' || true)
+	blocker_lines=$(_blocked_by_structured_lines "$body")
 	body_blocker_tids=$(_blocked_by_extract_tids "$blocker_lines")
 	body_blocker_nums=$(printf '%s' "$blocker_lines" | grep -oE '#[0-9]+' | grep -oE '[0-9]+' || true)
 	label_names=$(printf '%s' "$issue_json" | jq -r '.labels[]?.name // empty' 2>/dev/null) || label_names=""
@@ -340,10 +366,12 @@ build_dependency_graph_cache() {
 				'.repos[$slug] = $rd' 2>/dev/null) || true
 	done <<<"$repos_json"
 
-	# Atomically write cache (write to tmp then mv)
-	local tmp_file
-	tmp_file="${cache_file}.tmp.$$"
+	# Atomically write cache (write to tmp then mv). GH#33246: the async
+	# housekeeping catch-up and the in-cycle stage share the pulse PID, so a
+	# `.tmp.$$` name could collide; mktemp gives each writer its own sibling.
+	local tmp_file=""
 	mkdir -p "$(dirname "$cache_file")" 2>/dev/null || true
+	tmp_file=$(mktemp "${cache_file}.tmp.XXXXXX" 2>/dev/null) || tmp_file="${cache_file}.tmp.${BASHPID:-$$}"
 	if printf '%s\n' "$graph_json" >"$tmp_file"; then
 		mv "$tmp_file" "$cache_file" || rm -f "$tmp_file"
 	else
@@ -922,7 +950,7 @@ _blocked_by_extract_tids() {
 	# Match the dep-graph whole-line parser so compact blocker lists such as
 	# `blocked-by:t001,t002,t003` are enforced consistently at dispatch time.
 	# Capture full subtask ID including decimal suffix (e.g. t325.1 → 325.1).
-	blocker_lines=$(printf '%s' "$body" | grep -ioE '[Bb]locked[- ][Bb]y[^[:cntrl:]]*' || true)
+	blocker_lines=$(_blocked_by_structured_lines "$body")
 	if task_identity_has_malformed_candidate "$blocker_lines"; then
 		printf '%s\n' '__malformed__'
 		return 0
@@ -934,7 +962,7 @@ _blocked_by_extract_tids() {
 _blocked_by_extract_nums() {
 	local body="$1"
 	local blocker_lines
-	blocker_lines=$(printf '%s' "$body" | grep -ioE '[Bb]locked[- ][Bb]y[^[:cntrl:]]*' || true)
+	blocker_lines=$(_blocked_by_structured_lines "$body")
 	printf '%s' "$blocker_lines" | grep -oE '#[0-9]+' | grep -oE '[0-9]+' || true
 	return 0
 }

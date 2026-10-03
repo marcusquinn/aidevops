@@ -277,6 +277,35 @@ test("headless shell preserves explicit worker lineage", async () => {
   }
 });
 
+test("worker shell PATH re-applies the selected project Node bin (GH#33290)", async () => {
+  const root = mkdtempSync(join(tmpdir(), "aidevops-project-node-"));
+  const nodeBin = join(root, "node24", "bin");
+  mkdirSync(nodeBin, { recursive: true });
+  writeFileSync(join(nodeBin, "node"), "#!/bin/sh\n", { mode: 0o755 });
+  const saved = process.env.AIDEVOPS_PROJECT_NODE_BIN;
+  try {
+    process.env.AIDEVOPS_PROJECT_NODE_BIN = nodeBin;
+    const worker = { env: { PATH: `/opt/homebrew/bin:${nodeBin}:/usr/bin`, OPENCODE_HEADLESS: "true" } };
+    await makeHook()({ sessionID: "worker-session" }, worker);
+    assert.equal(worker.env.PATH, `${nodeBin}:/opt/homebrew/bin:/usr/bin`);
+
+    await withCleanHeadlessProcessEnv(async () => {
+      const interactive = { env: { PATH: "/opt/homebrew/bin:/usr/bin" } };
+      await makeHook()({ sessionID: "interactive-session" }, interactive);
+      assert.equal(interactive.env.PATH, "/opt/homebrew/bin:/usr/bin");
+    });
+
+    process.env.AIDEVOPS_PROJECT_NODE_BIN = join(root, "missing");
+    const invalid = { env: { PATH: "/opt/homebrew/bin:/usr/bin", OPENCODE_HEADLESS: "true" } };
+    await makeHook()({ sessionID: "worker-session" }, invalid);
+    assert.equal(invalid.env.PATH, "/opt/homebrew/bin:/usr/bin");
+  } finally {
+    if (saved === undefined) delete process.env.AIDEVOPS_PROJECT_NODE_BIN;
+    else process.env.AIDEVOPS_PROJECT_NODE_BIN = saved;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("shell env version prefers deployed agents VERSION over legacy version", async () => {
   await withTempAgentsDir(async (agentsDir) => {
     writeFileSync(join(agentsDir, "VERSION"), "3.20.102\n");

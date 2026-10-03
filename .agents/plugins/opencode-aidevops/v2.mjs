@@ -17,6 +17,7 @@ import {
   createPoolTool,
 } from "./oauth-pool.mjs";
 import {
+  consumeV2Completion,
   handleEvent,
   initObservability,
   recordObjectiveDecision,
@@ -202,6 +203,22 @@ async function register(registrations, promise) {
   return registration;
 }
 
+// OpenCode 2.0.3 public SessionEvent.Step uses data + envelope.created, not
+// message.updated (or the unreleased session.next.* shape in PR #33024).
+export function createV2CompletionNormalizer() {
+  const started = new Map();
+  return (event) => {
+    const data = event?.data;
+    const key = `${data?.sessionID}/${data?.assistantMessageID}`;
+    if (started.size > 1000) started.delete(started.keys().next().value);
+    if (event?.type === "session.step.started") {
+      started.set(key, event);
+      return null;
+    }
+    return consumeV2Completion(event, started, key);
+  };
+}
+
 export async function startEventLoop(ctx, handler) {
   let iterator;
   let stopped = false;
@@ -272,7 +289,11 @@ export async function setupAidevopsV2(ctx) {
     debug: process.env.AIDEVOPS_PLUGIN_DEBUG === "1",
   });
   recordPluginHealthStage("imported", { runtime: "v2" });
-  initObservability({ aidevopsVersion: currentAidevopsVersion() });
+  initObservability({
+    aidevopsVersion: currentAidevopsVersion(),
+    runtimeVersion: (typeof ctx.app?.version === "string" && ctx.app.version) || detectOpenCodeV2RuntimeVersion(),
+    adapterId: "opencode-v2",
+  });
 
   const conversation = loadTeamInterfaceConversation(process.env, AGENTS_DIR, {
     pluginEntryPath: PLUGIN_ENTRY_PATH,
@@ -363,6 +384,7 @@ export async function setupAidevopsV2(ctx) {
     await register(registrations, ctx.tool.transform((editor) => {
       addV1ToolsToV2Editor(editor, baseTools, tool.schema, { directory, worktree });
       editor.update("bash", (definition) => adaptToolDefinition({ toolID: "bash" }, definition));
+      editor.update("grep", (definition) => adaptToolDefinition({ toolID: "grep" }, definition));
       editor.update("apply_patch", (definition) => adaptToolDefinition({ toolID: "apply_patch" }, definition));
     }));
 
@@ -410,9 +432,13 @@ export async function setupAidevopsV2(ctx) {
       applyV2PermissionEvaluation(permissionBroker, event);
     }));
 
+    const normalizeCompletion = createV2CompletionNormalizer();
     stopEvents = await startEventLoop(ctx, async (input) => {
+      const completed = normalizeCompletion(input.event);
+      const observeContext = { resolveSessionModel: (sessionID) => sessionModels.resolve(sessionID) };
       await Promise.all([
-        handleEvent(input, { resolveSessionModel: (sessionID) => sessionModels.resolve(sessionID) }),
+        handleEvent(input, observeContext),
+        completed ? handleEvent({ event: completed }, observeContext) : undefined,
         Promise.resolve(boundedOperationManager.handleEvent(input)),
         permissionBroker.handleEvent(input),
       ]);

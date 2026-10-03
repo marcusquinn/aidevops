@@ -16,10 +16,23 @@ ONLY_BRANCH=""
 APPLY=0
 TRANSPORT=""
 FAILURES=0
+MAX_LOOKUPS=500
+LOOKUPS=0
+OPEN_PR_REFS=""
+OPEN_PR_STATUS=unavailable
+OPEN_PR_LOADED_AT=""
+ACTIVE_CACHE=""
+ACTIVE_CACHE_SET=""
+N_SCANNED=0
+N_ACTED=0
+N_KEPT=0
+N_BUDGET=0
 
 usage() {
-	printf '%s\n' 'Usage: local-branch-cleanup-helper.sh [--repo PATH] [--remote NAME] [--branch NAME] [--apply]' \
+	printf '%s\n' 'Usage: local-branch-cleanup-helper.sh [--repo PATH] [--remote NAME] [--branch NAME] [--apply] [--max-lookups N]' \
 		'Dry-run by default. --branch limits the scan to one local branch.' \
+		'--max-lookups N caps closed-PR lookups per run (default 500); rerun to continue a large backlog.' \
+		'AIDEVOPS_LOCAL_BRANCH_CLEANUP_OPEN_TTL_S sets the open-PR listing cache TTL in seconds (default 60).' \
 		'AIDEVOPS_LOCAL_BRANCH_CLEANUP_SKIP_GH=1 disables GitHub reads and preserves all branches.'
 	return 0
 }
@@ -30,12 +43,15 @@ parse_args() {
 		arg="${1:-}"
 		value="${2:-}"
 		case "$arg" in
-		--repo | --remote | --branch)
+		--repo | --remote | --branch | --max-lookups)
 			[[ $# -ge 2 && -n "$value" ]] || { usage >&2; return 1; }
 			case "$arg" in
 			--repo) REPO_PATH="$value" ;;
 			--remote) REMOTE_NAME="$value" ;;
 			--branch) ONLY_BRANCH="$value" ;;
+			--max-lookups)
+				[[ "$value" =~ ^(0|[1-9][0-9]*)$ ]] || { usage >&2; return 1; }
+				MAX_LOOKUPS="$value" ;;
 			esac
 			shift 2 ;;
 		--apply) APPLY=1; shift ;;
@@ -85,31 +101,43 @@ repo_slug() {
 	return 0
 }
 
-# A failed or incomplete PR lookup must never authorize a deletion.
-pr_evidence() {
-	local branch="$1" sha="$2" slug="$3" need_merged="$4" page=1 data count owner=""
-	PR_STATUS=unavailable
-	[[ "${AIDEVOPS_LOCAL_BRANCH_CLEANUP_SKIP_GH:-0}" != 1 && -n "$slug" ]] || return 0
+# Open PR heads are loop-invariant within a scan: list them once per TTL window.
+# A failed or incomplete listing sets OPEN_PR_STATUS=unavailable (keep branches).
+load_open_pr_refs() {
+	local slug="$1" page=1 data count refs="" now="" ttl="${AIDEVOPS_LOCAL_BRANCH_CLEANUP_OPEN_TTL_S:-60}"
+	[[ "$ttl" =~ ^[1-9][0-9]*$ ]] || ttl=60
+	now=$(date +%s)
+	if [[ -n "$OPEN_PR_LOADED_AT" && $((now - OPEN_PR_LOADED_AT)) -lt "$ttl" ]]; then
+		return 0
+	fi
+	OPEN_PR_REFS=""
+	OPEN_PR_STATUS=unavailable
+	OPEN_PR_LOADED_AT="$now"
 	command -v gh >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 || return 0
-	owner="${slug%%/*}"
-	# An open PR from a fork can have the same head.ref. Head-owner filtering
-	# alone would miss it; exhaust bounded open pages before trusting a ref.
+	# An open PR from a fork can have the same head.ref, so match on ref alone
+	# and exhaust bounded open pages before trusting the listing.
 	while [[ "$page" -le 10 ]]; do
 		data=$(AIDEVOPS_GH_ROUTE_DECISION="local-branch-cleanup-open-prs-rest" gh api "repos/${slug}/pulls?state=open&per_page=100&page=${page}" 2>/dev/null) || return 0
 		count=$(printf '%s' "$data" | jq -r 'if type == "array" then length else -1 end' 2>/dev/null) || return 0
 		[[ "$count" =~ ^[0-9]+$ ]] || return 0
-		if printf '%s' "$data" | jq -e --arg b "$branch" 'any(.[]; .head.ref == $b)' >/dev/null; then
-			PR_STATUS=open
+		refs+=$(printf '%s' "$data" | jq -r '.[].head.ref // empty' 2>/dev/null)$'\n' || return 0
+		if [[ "$count" -lt 100 ]]; then
+			OPEN_PR_REFS="$refs"
+			OPEN_PR_STATUS=ok
 			return 0
 		fi
-		[[ "$count" -lt 100 ]] && break
 		page=$((page + 1))
 	done
-	[[ "$page" -le 10 ]] || return 0
+	return 0
+}
+
+# Closed-PR lookups are budgeted by --max-lookups; each request counts.
+closed_pr_lookup() {
+	local branch="$1" sha="$2" slug="$3" owner="" page=1 data count
+	owner="${slug%%/*}"
 	PR_STATUS=none
-	[[ "$need_merged" -eq 1 ]] || return 0
-	page=1
 	while [[ "$page" -le 10 ]]; do
+		LOOKUPS=$((LOOKUPS + 1))
 		data=$(AIDEVOPS_GH_ROUTE_DECISION="local-branch-cleanup-prs-rest" gh api "repos/${slug}/pulls?state=closed&head=${owner}:${branch}&per_page=100&page=${page}" 2>/dev/null) || { PR_STATUS=unavailable; return 0; }
 		count=$(printf '%s' "$data" | jq -r 'if type == "array" then length else -1 end' 2>/dev/null) || { PR_STATUS=unavailable; return 0; }
 		[[ "$count" =~ ^[0-9]+$ ]] || { PR_STATUS=unavailable; return 0; }
@@ -123,9 +151,41 @@ pr_evidence() {
 	return 0
 }
 
+# A failed or incomplete PR lookup must never authorize a deletion.
+# enforce_budget=1 yields PR_STATUS=budget when the closed-PR budget is spent.
+pr_evidence() {
+	local branch="$1" sha="$2" slug="$3" need_merged="$4" enforce_budget="${5:-0}"
+	PR_STATUS=unavailable
+	[[ "${AIDEVOPS_LOCAL_BRANCH_CLEANUP_SKIP_GH:-0}" != 1 && -n "$slug" ]] || return 0
+	command -v gh >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 || return 0
+	load_open_pr_refs "$slug"
+	[[ "$OPEN_PR_STATUS" == ok ]] || return 0
+	if [[ $'\n'"$OPEN_PR_REFS" == *$'\n'"${branch}"$'\n'* ]]; then
+		PR_STATUS=open
+		return 0
+	fi
+	PR_STATUS=none
+	[[ "$need_merged" -eq 1 ]] || return 0
+	if [[ "$enforce_budget" -eq 1 && "$LOOKUPS" -ge "$MAX_LOOKUPS" ]]; then
+		PR_STATUS=budget
+		return 0
+	fi
+	closed_pr_lookup "$branch" "$sha" "$slug"
+	return 0
+}
+
+# fresh=1 bypasses the scan cache (mutation-time guard).
 active_branch() {
-	local branch="$1" active=""
-	active=$(repo_git worktree list --porcelain) || return 0
+	local branch="$1" fresh="${2:-0}" active=""
+	if [[ "$fresh" -eq 1 || -z "$ACTIVE_CACHE_SET" ]]; then
+		active=$(repo_git worktree list --porcelain) || return 0
+		if [[ "$fresh" -ne 1 ]]; then
+			ACTIVE_CACHE="$active"
+			ACTIVE_CACHE_SET=1
+		fi
+	else
+		active="$ACTIVE_CACHE"
+	fi
 	[[ $'\n'"$active"$'\n' == *$'\n'"branch refs/heads/${branch}"$'\n'* ]]
 	return $?
 }
@@ -150,6 +210,10 @@ prepare_transport() {
 report() {
 	local action="$1" branch="$2" detail="$3"
 	printf '%s %s %s\n' "$action" "$branch" "$detail"
+	case "$action" in
+	would-delete | deleted) N_ACTED=$((N_ACTED + 1)) ;;
+	keep) N_KEPT=$((N_KEPT + 1)) ;;
+	esac
 	if [[ -n "$ONLY_BRANCH" && "$action" == keep || -n "$ONLY_BRANCH" && "$action" == failed ]]; then
 		printf 'branch preserved: %s (%s)\n' "$detail" "$branch"
 	fi
@@ -163,7 +227,7 @@ delete_branch() {
 		FAILURES=$((FAILURES + 1))
 		return 0
 	fi
-	if active_branch "$branch"; then
+	if active_branch "$branch" 1; then
 		report keep "$branch" 'checked out after scan'
 		return 0
 	fi
@@ -188,6 +252,7 @@ delete_branch() {
 
 scan_branch() {
 	local branch="$1" default="$2" slug="$3" sha="" reason="" merged_by_ancestry=0
+	N_SCANNED=$((N_SCANNED + 1))
 	sha=$(repo_git rev-parse --verify "refs/heads/${branch}" 2>/dev/null) || sha=""
 	if [[ -z "$sha" ]]; then
 		report keep "$branch" absent
@@ -199,8 +264,11 @@ scan_branch() {
 		if repo_git merge-base --is-ancestor "$sha" "refs/remotes/${REMOTE_NAME}/${default}" 2>/dev/null; then
 			merged_by_ancestry=1
 		fi
-		pr_evidence "$branch" "$sha" "$slug" "$((1 - merged_by_ancestry))"
-		if [[ "$PR_STATUS" == open ]]; then reason='open PR exists'
+		pr_evidence "$branch" "$sha" "$slug" "$((1 - merged_by_ancestry))" 1
+		if [[ "$PR_STATUS" == budget ]]; then
+			reason='lookup budget exhausted'
+			N_BUDGET=$((N_BUDGET + 1))
+		elif [[ "$PR_STATUS" == open ]]; then reason='open PR exists'
 		elif [[ "$PR_STATUS" == unavailable ]]; then reason='github evidence unavailable'
 		elif [[ "$merged_by_ancestry" -eq 1 ]]; then reason='merged by ancestry'
 		elif [[ "$PR_STATUS" == merged ]]; then reason='merged PR head SHA'
@@ -234,6 +302,10 @@ main() {
 	fi
 	cleanup_transport || rc=1
 	trap - EXIT
+	if [[ -z "$ONLY_BRANCH" ]]; then
+		printf 'summary scanned=%s %s=%s kept=%s lookups=%s budget_exhausted=%s\n' \
+			"$N_SCANNED" "$([[ "$APPLY" -eq 1 ]] && printf deleted || printf would-delete)" "$N_ACTED" "$N_KEPT" "$LOOKUPS" "$N_BUDGET"
+	fi
 	[[ "$FAILURES" -eq 0 && "$rc" -eq 0 ]] || return 1
 	return 0
 }

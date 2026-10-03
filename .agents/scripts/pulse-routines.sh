@@ -749,6 +749,35 @@ _evaluate_session_miner_routine() {
 }
 
 #######################################
+# Evaluate the framework-managed issue/PR discussion archive (t18571). One
+# pulse host is the single writer; the helper itself selects pulse-enabled
+# registered repos and honours the per-repo `issue_archive: false` opt-out.
+# AIDEVOPS_ISSUE_ARCHIVE_ENABLED=0 disables the routine on this host.
+#######################################
+_evaluate_issue_archive_routine() {
+	local routine_id="r-issue-archive"
+	local schedule="${AIDEVOPS_ISSUE_ARCHIVE_SCHEDULE:-daily(@05:20)}"
+	local last_epoch=0
+	if [[ "${AIDEVOPS_ISSUE_ARCHIVE_ENABLED:-1}" == "0" ]]; then
+		return 0
+	fi
+	if _routine_retry_blocked "$routine_id"; then
+		return 0
+	fi
+	last_epoch=$(_routine_last_run_epoch "$routine_id")
+	if ! _routine_schedule_is_due "$schedule" "$last_epoch" ""; then
+		return 0
+	fi
+	if ! _routine_rest_core_allows_next "routine_execute:${routine_id}"; then
+		return 0
+	fi
+	echo "[pulse-wrapper] routine ${routine_id} is due (expr=${schedule}, last_run_epoch=${last_epoch})" >>"$LOGFILE"
+	_routine_execute "$routine_id" "Archive issue and PR discussions to orphan branch" \
+		"scripts/issue-archive-helper.sh run" "" "$PULSE_DIR"
+	return $?
+}
+
+#######################################
 # Evaluate routines across all pulse-enabled repos
 #
 # Reads TODO.md from each pulse-enabled repo, extracts enabled routines
@@ -773,6 +802,7 @@ evaluate_routines() {
 		return 0
 	fi
 	_evaluate_session_miner_routine
+	_evaluate_issue_archive_routine
 
 	local routines_dispatched=0
 	local _routine_slug repo_path

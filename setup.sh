@@ -17,7 +17,7 @@ fi
 # AI Assistant Server Access Framework Setup Script
 # Helps developers set up the framework for their infrastructure
 #
-# Version: 3.37.30
+# Version: 3.38.0
 #
 # Quick Install:
 #   npm install -g aidevops && aidevops update          (recommended)
@@ -157,17 +157,6 @@ if [[ -f "$_SHARED_CONSTANTS" ]]; then
 	source "$_SHARED_CONSTANTS"
 fi
 unset _SHARED_CONSTANTS
-
-# Secure the optional DSPy disk cache before setup installs or imports DSPy.
-_DSPY_CACHE_SECURITY="${INSTALL_DIR}/.agents/scripts/dspy-cache-security.sh"
-if [[ ! -f "$_DSPY_CACHE_SECURITY" ]]; then
-	_DSPY_CACHE_SECURITY="$HOME/.aidevops/agents/scripts/dspy-cache-security.sh"
-fi
-if [[ -f "$_DSPY_CACHE_SECURITY" ]]; then
-	# shellcheck disable=SC1090  # Dynamic path resolved at runtime
-	source "$_DSPY_CACHE_SECURITY"
-fi
-unset _DSPY_CACHE_SECURITY
 
 # Escape a string for safe embedding in XML (plist heredocs).
 # Prevents XML injection if paths contain &, <, >, ", or ' characters.
@@ -374,8 +363,6 @@ source "${SETUP_IMPL_MODULES_DIR}/mcp-setup.sh"
 source "${SETUP_IMPL_MODULES_DIR}/agent-deploy.sh"
 # shellcheck disable=SC1091
 source "${SETUP_IMPL_MODULES_DIR}/agent-runtime.sh"
-# shellcheck disable=SC1091
-source "${SETUP_IMPL_MODULES_DIR}/tool-beads.sh"
 # shellcheck disable=SC1091
 source "${SETUP_IMPL_MODULES_DIR}/config.sh"
 # shellcheck disable=SC1091
@@ -1552,6 +1539,12 @@ reconcile_buzz_desktop_compatibility() {
 	esac
 }
 
+# GH#33249: best-effort one-shot cleanup; a refusal must not abort deployment.
+_setup_cleanup_retired_prompt_tooling_nonfatal() {
+	cleanup_retired_prompt_tooling || print_warning "Retired prompt tooling cleanup incomplete; setup will retry next time"
+	return 0
+}
+
 _setup_run_noninteractive_migrations() {
 	_time_step "migrate_old_backups" migrate_old_backups
 	_time_step "migrate_loop_state_directories" migrate_loop_state_directories
@@ -1559,6 +1552,7 @@ _setup_run_noninteractive_migrations() {
 	_time_step "migrate_mcp_env_to_credentials" migrate_mcp_env_to_credentials
 	_time_step "migrate_pulse_repos_to_repos_json" migrate_pulse_repos_to_repos_json
 	_time_step "cleanup_deprecated_paths" cleanup_deprecated_paths
+	_time_step "cleanup_retired_prompt_tooling" _setup_cleanup_retired_prompt_tooling_nonfatal
 	_time_step "migrate_orphaned_supervisor" migrate_orphaned_supervisor
 	_time_step "migrate_custom_model_routing_reasoning_defaults" migrate_custom_model_routing_reasoning_defaults
 	_time_step "migrate_obsolete_settings_model_routing" migrate_obsolete_settings_model_routing
@@ -1685,11 +1679,8 @@ _setup_run_non_interactive() {
 _setup_run_interactive_runtime_tools() {
 	confirm_step "Deploy aidevops agents to runtime agent directories" && deploy_agents_to_runtimes
 	confirm_step "Setup isolated Vault crypto runtime" && setup_vault_python_env
-	confirm_step "Setup Python environment (DSPy, crawl4ai)" && setup_python_env
-	confirm_step "Setup Node.js environment" && setup_nodejs_env
 	confirm_step "Install MCP packages globally (fast startup)" && install_mcp_packages
 	confirm_step "Setup LocalWP MCP server" && setup_localwp_mcp
-	confirm_step "Setup Beads task management" && setup_beads
 	confirm_step "Setup SEO integrations (curl subagents)" && setup_seo_mcps
 	confirm_step "Setup Google Analytics MCP" && setup_google_analytics_mcp
 	confirm_step "Setup QuickFile MCP (UK accounting)" && setup_quickfile_mcp
@@ -1712,6 +1703,7 @@ _setup_run_interactive_runtime_tools() {
 # — no prompt needed). The non-interactive path times the same steps in
 # _setup_run_noninteractive_migrations.
 _setup_run_interactive_silent_migrations() {
+	_setup_cleanup_retired_prompt_tooling_nonfatal
 	cleanup_stale_health_issue_caches
 	cleanup_legacy_aidevops_temp_artifacts
 	cleanup_worktree_entries_in_repos_json

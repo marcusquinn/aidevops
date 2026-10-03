@@ -52,6 +52,13 @@ an error message instead, set:
 export AIDEVOPS_SHALLOW_UNSHALLOW=0
 ```
 
+The release helper self-heals too (GH#33069): `full-loop-release-helper.sh`
+checks its disposable control worktree for `--is-shallow-repository` before
+reserving the release lane and runs the same bounded `git fetch --unshallow
+--tags origin` there, never in the canonical checkout. A disabled or failed
+unshallow prints `RELEASE_SHALLOW_STORE action=disabled|failed` and stops
+before any lane write.
+
 ### Manual Recovery
 
 If the auto-unshallow fails or you need to recover mid-conflict:

@@ -10,6 +10,7 @@ import {
   isPolicyHelperTimeout,
   parsePolicyPayload,
   policyExecutionFailure,
+  policyNetworkOperation,
   runPolicyHelper,
   transientPolicyTimeoutError,
 } from "./quality-hooks-policy-runner.mjs";
@@ -171,7 +172,9 @@ function executeCommandPolicy(helperArgs) {
   try {
     raw = runPolicyHelper(helperArgs, { stdio: ["ignore", "pipe", "pipe"] });
   } catch (error) {
-    if (isPolicyHelperTimeout(error)) throw transientPolicyTimeoutError("command");
+    if (isPolicyHelperTimeout(error)) {
+      throw transientPolicyTimeoutError("command", policyNetworkOperation(helperArgs));
+    }
     executionError = error;
     raw = error?.stdout?.toString() || "";
   }

@@ -187,7 +187,7 @@ Verify the target through its delivered runtime context, applicable existing che
 | Search contents | `rg` | `mcp_grep` |
 | Read/Edit files | `mcp_read` / `mcp_edit` | `cat`/`sed` via bash |
 | Web content | `mcp_webfetch` | `curl` via bash |
-| Remote repo | `mcp_webfetch` README first | `npx repomix --remote` |
+| Remote repo | `gh api` README + tree first | Bulk-loading the whole repo |
 | Parallel AI dispatch | OpenCode server API | Multiple TUI instances |
 
 Self-checks: "Faster CLI alternative?" and "Could this return >50K tokens?" See `tools/context/context-guardrails.md`.

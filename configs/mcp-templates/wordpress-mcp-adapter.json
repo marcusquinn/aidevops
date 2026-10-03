@@ -15,18 +15,15 @@
       ]
     },
     "wordpress-remote-http": {
-      "_comment": "HTTP transport for remote sites - works without SSH access",
-      "command": "npx",
+      "_comment": "HTTP transport for remote sites - resolves the Application Password from a secret name at launch, never written here. Generate with: wordpress-mcp-helper.sh config-http <site> <url> <user> <secret-name>",
+      "command": "~/.aidevops/agents/scripts/wordpress-mcp-helper.sh",
       "args": [
-        "-y",
-        "@automattic/mcp-wordpress-remote@latest"
-      ],
-      "env": {
-        "WP_API_URL": "https://example.com/wp-json/mcp/mcp-adapter-default-server",
-        "LOG_FILE": "~/.aidevops/.agent-workspace/tmp/mcp-wordpress.log",
-        "WP_API_USERNAME": "YOUR_USERNAME",
-        "WP_API_PASSWORD": "YOUR_APPLICATION_PASSWORD"
-      }
+        "serve-http",
+        "https://example.com",
+        "YOUR_USERNAME",
+        "YOUR_SECRET_NAME",
+        "mcp-adapter-default-server"
+      ]
     },
     "wordpress-remote-ssh": {
       "_comment": "SSH STDIO transport for remote sites with SSH access",

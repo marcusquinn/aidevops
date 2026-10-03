@@ -2,7 +2,7 @@
   "_comment": "Model routing table — SINGLE SOURCE OF TRUTH for tier-to-model mappings. All scripts, docs, and configs should reference this file rather than hardcoding model IDs. When a new model generation releases (e.g., gpt-5.6), update this file and its documented static fallbacks.",
   "_docs": "See .agents/tools/context/model-routing.md for routing rules, .agents/tools/ai-assistants/fallback-chains.md for integration.",
   "_agentic_note": "codex/code-completion models (gpt-5.3-codex, gpt-5.4-codex) are NOT agentic — zero tool calls observed (GH#17669). Never use them for headless worker dispatch. Only general-purpose models support agentic workflows.",
-  "_defaults": "The first model in each tier's array is primary; subsequent entries are same-tier availability fallbacks. Optional per-tier round_robin: true balances independent worker dispatches across healthy providers; false (default) preserves priority order. Capability failure advances through escalation_order. GLM-5.2 has no known variant and keeps the provider default. Custom overrides use custom/configs/model-routing-table.json; omitted tiers inherit this table, and reasoning keys should use full provider/model IDs. The minimum_reasoning setting floors known variants. Use AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST for local provider overrides. GPT-6 Sol is standard at medium and thinking at medium; tier lookup keeps the requested tier or matching variant rather than the first tier listing the model.",
+  "_defaults": "The first model in each tier's array is primary; subsequent entries are same-tier availability fallbacks. Optional per-tier round_robin: true balances independent worker dispatches across healthy providers; false (default) preserves priority order. Capability failure advances through escalation_order. GLM-5.2 has no known variant and keeps the provider default. Custom overrides use custom/configs/model-routing-table.json; omitted tiers inherit this table, and reasoning keys should use full provider/model IDs. The minimum_reasoning setting floors known variants. Use AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST for local provider overrides. GPT-6.1 Sol is standard at medium and thinking at medium. Thinking-tier Opus 5.5 is a fallback at high, the background ceiling: the GH#32539 provider A/B found no evidence that effort above high helps workers, and OpenAI-primary tiers cost about a third as much per verified issue. Background and subagent work never runs below medium. Tier lookup keeps the requested tier or matching variant rather than the first tier listing the model.",
   "_tier_names": "Canonical workload tiers are simple, standard, and thinking. Provider names, model families, and reasoning variants must not be used as tier names.",
   "tiers": {
     "simple": {
@@ -10,12 +10,12 @@
       "reasoning": { "openai/gpt-6-luna": "medium", "anthropic/claude-haiku-4-5": "high" }
     },
     "standard": {
-      "models": ["openai/gpt-6-sol", "openai/gpt-5.6-terra", "zai-coding-plan/glm-5.2", "anthropic/claude-sonnet-5-5"],
-      "reasoning": { "openai/gpt-6-sol": "medium", "openai/gpt-5.6-terra": "medium", "anthropic/claude-sonnet-5-5": "medium" }
+      "models": ["openai/gpt-6.1-sol", "openai/gpt-5.6-terra", "zai-coding-plan/glm-5.2", "anthropic/claude-sonnet-5-5"],
+      "reasoning": { "openai/gpt-6.1-sol": "medium", "openai/gpt-5.6-terra": "medium", "anthropic/claude-sonnet-5-5": "medium" }
     },
     "thinking": {
-      "models": ["openai/gpt-6-sol", "anthropic/claude-opus-5-5"],
-      "reasoning": { "openai/gpt-6-sol": "medium", "anthropic/claude-opus-5-5": "medium" }
+      "models": ["openai/gpt-6.1-sol", "anthropic/claude-opus-5-5"],
+      "reasoning": { "openai/gpt-6.1-sol": "medium", "anthropic/claude-opus-5-5": "high" }
     }
   },
 

@@ -1385,13 +1385,26 @@ _release_lane_source_contains_tag() {
 	local source_root="$1"
 	local tag_name="$2"
 	local tag_commit=""
+	local local_tag=""
+	local remote_tags=""
+	local remote_tag=""
+	local remote_ref=""
 	[[ -n "$source_root" && -n "$tag_name" ]] || return 1
 	[[ "$tag_name" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
 	git -C "$source_root" rev-parse --git-dir >/dev/null 2>&1 || return 1
 	# #aidevops:trust-boundary — the tag name comes from the remote-verified lane;
-	# refresh that exact tag from origin rather than trusting a local ref.
-	git -C "$source_root" fetch --quiet --no-tags origin \
-		"+refs/tags/${tag_name}:refs/tags/${tag_name}" >/dev/null 2>&1 || return 1
+	# Compare the tag object itself (including annotated tags), not just its
+	# peeled commit. A matching local tag needs no canonical ref mutation.
+	remote_tags=$(git -C "$source_root" ls-remote --exit-code origin "refs/tags/${tag_name}" 2>/dev/null) || return 1
+	IFS=$'\t' read -r remote_tag remote_ref <<<"$remote_tags"
+	[[ "$remote_tag" =~ ^[0-9a-f]{40}$ && "$remote_ref" == "refs/tags/${tag_name}" ]] || return 1
+	local_tag=$(git -C "$source_root" rev-parse --verify --quiet "refs/tags/${tag_name}" 2>/dev/null) || local_tag=""
+	if [[ "$local_tag" != "$remote_tag" ]]; then
+		git -C "$source_root" fetch --quiet --no-tags origin \
+			"+refs/tags/${tag_name}:refs/tags/${tag_name}" >/dev/null 2>&1 || return 1
+		local_tag=$(git -C "$source_root" rev-parse --verify --quiet "refs/tags/${tag_name}" 2>/dev/null) || return 1
+		[[ "$local_tag" == "$remote_tag" ]] || return 1
+	fi
 	tag_commit=$(git -C "$source_root" rev-parse --verify --quiet "refs/tags/${tag_name}^{commit}" 2>/dev/null) || return 1
 	[[ "$tag_commit" =~ ^[0-9a-f]{40}$ ]] || return 1
 	git -C "$source_root" merge-base --is-ancestor "$tag_commit" HEAD 2>/dev/null

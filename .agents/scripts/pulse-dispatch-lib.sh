@@ -73,6 +73,11 @@ _DISPATCH_NEGATIVE_CACHE_TTL_SECONDS="${AIDEVOPS_DISPATCH_NEGATIVE_CACHE_TTL_SEC
 _DISPATCH_TERMINAL_CIRCUIT_CACHE_TTL_SECONDS="${AIDEVOPS_DISPATCH_TERMINAL_CIRCUIT_CACHE_TTL_SECONDS:-7200}"
 [[ "$_DISPATCH_TERMINAL_CIRCUIT_CACHE_TTL_SECONDS" =~ ^[0-9]+$ ]] || _DISPATCH_TERMINAL_CIRCUIT_CACHE_TTL_SECONDS=7200
 ((_DISPATCH_TERMINAL_CIRCUIT_CACHE_TTL_SECONDS <= 14400)) || _DISPATCH_TERMINAL_CIRCUIT_CACHE_TTL_SECONDS=14400
+# GH#33332: unknown-blocker backoff is also revision-keyed, but it expires on
+# its own schedule. Never cache longer than the shortest backoff window (15m).
+_DISPATCH_TERMINAL_BACKOFF_CACHE_TTL_SECONDS="${AIDEVOPS_DISPATCH_TERMINAL_BACKOFF_CACHE_TTL_SECONDS:-900}"
+[[ "$_DISPATCH_TERMINAL_BACKOFF_CACHE_TTL_SECONDS" =~ ^[0-9]+$ ]] || _DISPATCH_TERMINAL_BACKOFF_CACHE_TTL_SECONDS=900
+((_DISPATCH_TERMINAL_BACKOFF_CACHE_TTL_SECONDS <= 900)) || _DISPATCH_TERMINAL_BACKOFF_CACHE_TTL_SECONDS=900
 _DISPATCH_BENIGN_BLOCKS_SCRATCH_DIR=""
 _DISPATCH_BENIGN_BLOCKS_LEGACY_MIN_AGE_SECONDS="${AIDEVOPS_PULSE_BENIGN_BLOCKS_LEGACY_MIN_AGE_SECONDS:-3600}"
 [[ "$_DISPATCH_BENIGN_BLOCKS_LEGACY_MIN_AGE_SECONDS" =~ ^[0-9]+$ ]] || _DISPATCH_BENIGN_BLOCKS_LEGACY_MIN_AGE_SECONDS=3600
@@ -130,9 +135,50 @@ _dispatch_negative_pr_fingerprint() {
 	return $?
 }
 
+_DISPATCH_LIVE_OWNER_HOLD_REASON="worktree_live_owner_refused"
+
+# GH#33026: a live-owner hold is valid only while the exact refusing process
+# generation is alive and still owns the recorded worktree. Owner exit, PID
+# reuse or ownership handover invalidates it at once; missing helpers fail open.
+_dispatch_live_owner_hold_valid() {
+	local owner_pid="$1" owner_start="$2" worktree_path="$3" live_start="" owner_info="" registry_pid=""
+	[[ "$owner_pid" =~ ^[1-9][0-9]*$ && -n "$owner_start" && -n "$worktree_path" ]] || return 1
+	declare -F _wt_process_start_token_for_pid >/dev/null 2>&1 || return 1
+	declare -F check_worktree_owner_snapshot >/dev/null 2>&1 || return 1
+	live_start=$(_wt_process_start_token_for_pid "$owner_pid" 2>/dev/null) || return 1
+	[[ "${live_start//[^A-Za-z0-9_.:-]/_}" == "$owner_start" ]] || return 1
+	owner_info=$(check_worktree_owner_snapshot "$worktree_path" 2>/dev/null) || return 1
+	registry_pid="${owner_info%%|*}"
+	[[ "$registry_pid" == "$owner_pid" ]] || return 1
+	return 0
+}
+
+# Parse the latest structured refusal from one candidate's recent log lines.
+# Output: pid<TAB>start<TAB>worktree
+_dispatch_live_owner_refusal_fields() {
+	local lines="$1" line="" found=""
+	local pattern='WORKTREE_LIVE_OWNER_REFUSED issue=#[0-9]+ repo=[^[:space:]]+ owner_pid=([1-9][0-9]*) owner_start=([A-Za-z0-9_.:-]+) action=[a-z_]+ worktree=(.+)$'
+	while IFS= read -r line; do
+		if [[ "$line" =~ $pattern ]]; then
+			found="${BASH_REMATCH[1]}"$'\t'"${BASH_REMATCH[2]}"$'\t'"${BASH_REMATCH[3]}"
+		fi
+	done <<<"$lines"
+	[[ -n "$found" ]] || return 1
+	printf '%s\n' "$found"
+	return 0
+}
+
 _dispatch_negative_cache_record() {
-	local candidate="$1" reason="$2" pr="${3:-}" fields="" issue="" repo="" updated="" file="" tmp="" fingerprint=""
-	case "$reason" in dedup_active_claim | dedup_active_claim_live_owner | dedup_active_claim_durable_launch | worker_draft_checkpoint_blocked | terminal_blocker_circuit) ;; *) return 0 ;; esac
+	local candidate="$1" reason="$2" pr="${3:-}" fingerprint="${4:-}" owner_path="${5:-}"
+	local fields="" issue="" repo="" updated="" file="" tmp=""
+	case "$reason" in dedup_active_claim | dedup_active_claim_live_owner | dedup_active_claim_durable_launch | worker_draft_checkpoint_blocked | terminal_blocker_circuit | terminal_blocker_backoff | "$_DISPATCH_LIVE_OWNER_HOLD_REASON") ;; *) return 0 ;; esac
+	if [[ "$reason" == "$_DISPATCH_LIVE_OWNER_HOLD_REASON" ]]; then
+		[[ "$pr" =~ ^[1-9][0-9]*$ && "$fingerprint" =~ ^[A-Za-z0-9_.:-]+$ && -n "$owner_path" ]] || return 0
+		[[ "$owner_path" != *$'\t'* && "$owner_path" != *$'\n'* ]] || return 0
+	else
+		owner_path=""
+		fingerprint=""
+	fi
 	fields=$(jq -r '[(.number // ""), (.repo_slug // ""), (.updatedAt // "")] | @tsv' <<<"$candidate") || return 0
 	IFS=$'\t' read -r issue repo updated <<<"$fields"
 	[[ "$updated" =~ ^[0-9TZ:.-]+$ ]] || return 0
@@ -149,7 +195,7 @@ _dispatch_negative_cache_record() {
 	mkdir -p "${file%/*}" 2>/dev/null || return 0
 	tmp=$(mktemp "${file}.XXXXXX") || return 0
 	chmod 600 "$tmp" 2>/dev/null || { rm -f "$tmp"; return 0; }
-	if printf '%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$updated" "$reason" "$pr" "$fingerprint" >"$tmp"; then
+	if printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$updated" "$reason" "$pr" "$fingerprint" "$owner_path" >"$tmp"; then
 		mv -f "$tmp" "$file" || rm -f "$tmp"
 	else
 		rm -f "$tmp"
@@ -158,16 +204,21 @@ _dispatch_negative_cache_record() {
 }
 
 _dispatch_negative_cache_reason() {
-	local candidate="$1" fields="" issue="" repo="" updated="" file="" stamp="" cached="" reason="" now="" pr="" fingerprint="" current=""
+	local candidate="$1" fields="" issue="" repo="" updated="" file="" stamp="" cached="" reason="" now="" pr="" fingerprint="" current="" owner_path=""
 	local ttl="$_DISPATCH_NEGATIVE_CACHE_TTL_SECONDS"
 	fields=$(jq -r '[(.number // ""), (.repo_slug // ""), (.updatedAt // "")] | @tsv' <<<"$candidate") || return 1
 	IFS=$'\t' read -r issue repo updated <<<"$fields"
 	[[ "$updated" =~ ^[0-9TZ:.-]+$ ]] || return 1
 	file=$(_dispatch_negative_cache_path "$issue" "$repo") || return 1
 	[[ -f "$file" && ! -L "$file" ]] || return 1
-	IFS=$'\t' read -r stamp cached reason pr fingerprint <"$file" || return 1
-	[[ "$stamp" =~ ^[0-9]+$ && "$cached" == "$updated" ]] || return 1
-	if [[ "$reason" != terminal_blocker_circuit && "$reason" != worker_draft_checkpoint_blocked ]]; then
+	IFS=$'\t' read -r stamp cached reason pr fingerprint owner_path <"$file" || return 1
+	[[ "$stamp" =~ ^[0-9]+$ ]] || return 1
+	# The refused attempt's own claim comment bumps updatedAt, so a live-owner
+	# hold is keyed to the owner generation rather than the issue revision.
+	[[ "$cached" == "$updated" || "$reason" == "$_DISPATCH_LIVE_OWNER_HOLD_REASON" ]] || return 1
+	if [[ "$reason" != terminal_blocker_circuit && "$reason" != terminal_blocker_backoff &&
+		"$reason" != worker_draft_checkpoint_blocked &&
+		"$reason" != "$_DISPATCH_LIVE_OWNER_HOLD_REASON" ]]; then
 		# Ownership hints: the snapshot must independently still show a claimed
 		# owner. The worker-draft exception uses a complete, bounded-age PR
 		# snapshot and exact fingerprint instead; neither path permits a launch.
@@ -180,6 +231,9 @@ _dispatch_negative_cache_reason() {
 		# unchanged updatedAt proves no edit, retry directive or new comment.
 		ttl="$_DISPATCH_TERMINAL_CIRCUIT_CACHE_TTL_SECONDS"
 		;;
+	terminal_blocker_backoff)
+		ttl="$_DISPATCH_TERMINAL_BACKOFF_CACHE_TTL_SECONDS"
+		;;
 	dedup_active_claim | dedup_active_claim_live_owner | dedup_active_claim_durable_launch)
 		# Empty worker pools must retain the authoritative active-claim recheck.
 		[[ "${_DISPATCH_ACTIVE_WORKERS:-0}" != 0 ]] || return 1
@@ -188,6 +242,9 @@ _dispatch_negative_cache_reason() {
 		[[ -n "$fingerprint" ]] || return 1
 		current=$(_dispatch_negative_pr_fingerprint "$repo" "$pr") || return 1
 		[[ "$current" == "$fingerprint" ]] || return 1
+		;;
+	"$_DISPATCH_LIVE_OWNER_HOLD_REASON")
+		_dispatch_live_owner_hold_valid "$pr" "$fingerprint" "$owner_path" || return 1
 		;;
 	*) return 1 ;;
 	esac
@@ -226,6 +283,18 @@ _dispatch_cache_confirmed_block() {
 		"$lines" =~ WORKER_DRAFT_CHECKPOINT:[[:space:]]draft[[:space:]]PR[[:space:]]#([0-9]+) ]]; then
 		pr="${BASH_REMATCH[1]}"
 		_dispatch_negative_cache_record "$candidate" worker_draft_checkpoint_blocked "$pr"
+		return 0
+	fi
+	# GH#33026: a live worktree owner refused this issue's claim. Hold until that
+	# exact owner generation exits or hands over; never touch the owner row.
+	local refusal="" owner_pid="" owner_start="" owner_path=""
+	if refusal=$(_dispatch_live_owner_refusal_fields "$lines"); then
+		IFS=$'\t' read -r owner_pid owner_start owner_path <<<"$refusal"
+		_dispatch_negative_cache_record "$candidate" "$_DISPATCH_LIVE_OWNER_HOLD_REASON" "$owner_pid" "$owner_start" "$owner_path"
+		if jq -e '[.labels[]? | .name? // .] | index("solved:worker") != null' <<<"$candidate" >/dev/null 2>&1; then
+			# Diagnostic only: a merged worker PR does not prove completion.
+			echo "[pulse-wrapper] Dispatch_max: #${issue} (${repo}) is OPEN with solved:worker while a live owner holds its worktree; verify remaining acceptance criteria before closing (no automatic close)" >>"$LOGFILE"
+		fi
 		return 0
 	fi
 	[[ "${_DISPATCH_CANDIDATE_ELIGIBILITY:-}" == "$_DISPATCH_ELIGIBILITY_INELIGIBLE" ]] || return 0
@@ -322,6 +391,61 @@ _dispatch_compute_capacity() {
 }
 
 #######################################
+# Concurrency caps that temporarily defer (never penalise) a candidate:
+#   - t3022: opus candidates at the per-model concurrency cap (429 guard).
+#   - GH#33137: `dispatch-class:<name>` candidates whose class already holds
+#     its configured share of this machine's worker slots. On success a slot
+#     reservation marker is written; _dispatch_release_attempt_reservations
+#     drops it when no worker launches. Skipped when pulse-capacity-alloc.sh
+#     is not loaded.
+# Arguments: $1 issue, $2 repo slug, $3 repo path, $4 labels CSV, $5 model
+# Returns: 0 proceed; 1 deferred (candidate marked ineligible for this round)
+#######################################
+_dispatch_concurrency_caps_allow() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local repo_path="$3"
+	local labels_csv="$4"
+	local model_override="$5"
+	_DISPATCH_CLASS_RESERVED=0
+	if ! _dispatch_check_model_concurrency_cap "$issue_number" "$repo_slug" "$model_override" >>"$LOGFILE" 2>&1; then
+		_DISPATCH_CANDIDATE_ELIGIBILITY="$_DISPATCH_ELIGIBILITY_INELIGIBLE"
+		return 1
+	fi
+	if declare -F _dispatch_check_class_cap >/dev/null 2>&1 &&
+		! _dispatch_check_class_cap "$issue_number" "$repo_slug" "$repo_path" "$labels_csv" >>"$LOGFILE" 2>&1; then
+		_DISPATCH_CANDIDATE_ELIGIBILITY="$_DISPATCH_ELIGIBILITY_INELIGIBLE"
+		return 1
+	fi
+	return 0
+}
+
+# Drop the footprint (GH#32977) and dispatch-class (GH#33137) reservations
+# written by this attempt when no worker launched.
+_dispatch_release_attempt_reservations() {
+	local repo_slug="$1"
+	local issue_number="$2"
+	local attempt_epoch="$3"
+	_dispatch_release_footprint_reservation "$repo_slug" "$issue_number" "$attempt_epoch"
+	if declare -F _dispatch_class_release_reservation >/dev/null 2>&1; then
+		_dispatch_class_release_reservation "$repo_slug" "$issue_number"
+	fi
+	return 0
+}
+
+# GH#32977: drop the same-cycle footprint reservation written by this attempt
+# (created at or after attempt_epoch) when a later gate, timeout or launch
+# failure means the worker did not launch, so it cannot block other candidates.
+_dispatch_release_footprint_reservation() {
+	local repo_slug="$1"
+	local issue_number="$2"
+	local attempt_epoch="$3"
+	declare -F footprint_release_reservation >/dev/null 2>&1 || return 0
+	footprint_release_reservation "$repo_slug" "$issue_number" "$attempt_epoch" || true
+	return 0
+}
+
+#######################################
 # Run triage under one cumulative Pulse-cycle budget, refreshing stale triage
 # state at bounded intervals while unspent attempts remain. Typed outcomes never
 # reduce worker slots or count as live implementation launches.
@@ -377,15 +501,8 @@ _dispatch_process_candidate() {
 	model_override=$(resolve_dispatch_model_for_labels "$labels_csv")
 	pulse_dispatch_debug_log "#${issue_number}: model_override=${model_override:-<auto>} — calling dispatch_with_dedup"
 
-	# t3022: Defer opus candidates when the per-model concurrency cap is reached.
-	# Prevents 429 cascades from simultaneous opus worker launches. Sonnet/haiku
-	# candidates are unaffected. Deferred candidates retry next pulse cycle.
-	local _concurrency_cap_rc=0
-	_dispatch_check_model_concurrency_cap "$issue_number" "$repo_slug" "$model_override" >>"$LOGFILE" 2>&1 || _concurrency_cap_rc=$?
-	if [[ "$_concurrency_cap_rc" -ne 0 ]]; then
-		_DISPATCH_CANDIDATE_ELIGIBILITY="$_DISPATCH_ELIGIBILITY_INELIGIBLE"
-		return 1
-	fi
+	# t3022 per-model + GH#33137 per-class concurrency caps (retried next cycle).
+	_dispatch_concurrency_caps_allow "$issue_number" "$repo_slug" "$repo_path" "$labels_csv" "$model_override" || return 1
 
 	# t2433/GH#20071: Refresh the repo before the large-file gate (inside
 	# dispatch_with_dedup → _dispatch_dedup_check_layers → _issue_targets_large_files)
@@ -393,14 +510,14 @@ _dispatch_process_candidate() {
 	# within a single dispatch_max subshell execution.
 	_pulse_refresh_repo "$repo_path"
 
-	# GH#18804 + t2989: dispatch with isolation + per-candidate timeout.
-	# Detail (subshell isolation, hang signature, 30s default rationale):
-	# see _dispatch_with_timeout doc comment above.
+	# GH#18804 + t2989: isolated dispatch with per-candidate timeout (see _dispatch_with_timeout).
 	echo "[pulse-wrapper] DISPATCH_CANDIDATE_ATTEMPT #${issue_number} (${repo_slug})" >>"$LOGFILE"
-	local dispatch_rc=0
+	local dispatch_rc=0 attempt_epoch=""
+	attempt_epoch=$(date +%s)
 	_dispatch_with_timeout "$issue_number" "$repo_slug" "$dispatch_title" "$issue_title" \
 		"$self_login" "$repo_path" "$prompt" "issue-${issue_number}" "$model_override" || dispatch_rc=$?
 	if [[ "$dispatch_rc" -ne 0 ]]; then
+		_dispatch_release_attempt_reservations "$repo_slug" "$issue_number" "$attempt_epoch"
 		_dispatch_record_and_cache_block "$candidate_json" "$issue_number" "$repo_slug" "$dispatch_rc"
 		return 1
 	fi
@@ -413,6 +530,7 @@ _dispatch_process_candidate() {
 	check_worker_launch "$issue_number" "$repo_slug" >/dev/null 2>&1 || launch_rc=$?
 	if [[ "$launch_rc" -ne 0 ]]; then
 		echo "[pulse-wrapper] Dispatch_max: #${issue_number} (${repo_slug}) launch validation failed (rc=${launch_rc}, last_failure='${_PULSE_LAST_LAUNCH_FAILURE}')" >>"$LOGFILE"
+		_dispatch_release_attempt_reservations "$repo_slug" "$issue_number" "$attempt_epoch"
 		_dispatch_stats_increment "dispatch_worker_launch_failed"
 		_dispatch_record_launch_failure
 		return 1

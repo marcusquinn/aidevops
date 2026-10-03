@@ -103,6 +103,19 @@ Only routines explicitly documented as persistent or externally scheduled use a
 dedicated platform unit. Generated routine descriptions name that unit when one
 exists; do not derive a service label from the routine title or ID.
 
+Framework-managed routines have no `TODO.md` line; `pulse-routines.sh` evaluates
+them through the same schedule, retry and REST-budget path:
+
+| ID | Default schedule | Runs | Opt-out |
+| --- | --- | --- | --- |
+| `r-session-miner` | `daily(@04:40)` (`AIDEVOPS_SESSION_MINER_SCHEDULE`) | `session-miner-pulse.sh --create-issues` | — |
+| `r-issue-archive` | `daily(@05:20)` (`AIDEVOPS_ISSUE_ARCHIVE_SCHEDULE`) | `issue-archive-helper.sh run` | host: `AIDEVOPS_ISSUE_ARCHIVE_ENABLED=0`; repo: `"issue_archive": false` in `repos.json` |
+
+`r-issue-archive` archives issue/PR discussions of each pulse-enabled,
+non-`local_only` registered repo to its orphan `aidevops/issues-archive` branch.
+Enable it on one pulse host per repo so there is a single writer. Details:
+`reference/forge-portability.md` "Issue and PR discussion archive".
+
 ## Anti-patterns
 
 - Separate routine registry outside `TODO.md`

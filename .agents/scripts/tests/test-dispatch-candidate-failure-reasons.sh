@@ -54,6 +54,9 @@ assert_reason 'DISPATCH_BLOCK_REASON reason=dependabot_target_unverified signal=
 assert_reason '[pulse-wrapper] Dedup: authoritative Dependabot intake lookup unavailable for #43; blocking dispatch' 'dependabot_target_unverified'
 assert_reason 'DISPATCH_BLOCK_REASON reason=brief_scope_hold signal=brief_scope_hold_recorded' 'brief_scope_hold'
 assert_reason 'DISPATCH_BLOCK_REASON reason=missing_worker_context signal=brief_scope_untrusted_author' 'missing_worker_context'
+# GH#33332: terminal-blocker backoff is its own cacheable hold, not an active claim.
+assert_reason 'TERMINAL_BLOCKER_BACKOFF failures=2 retry_after=1788696900' 'terminal_blocker_backoff'
+assert_reason 'TERMINAL_BLOCKER_CIRCUIT task_revision=aaaaaaaaaaaaaaaaaaaaaaaa' 'terminal_blocker_circuit'
 assert_reason '' 'no_recent_log_evidence'
 assert_reason 'new blocker shape not yet classified' 'unclassified_signal'
 

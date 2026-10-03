@@ -220,6 +220,8 @@ test_text_extraction() {
 	assert_equal "t18097.2" "$extracted" "extract first legacy ID" || return 1
 	extracted=$(task_identity_extract_all "t7, ${namespaced}; t9.1") || return 1
 	assert_equal $'t7\n'"${namespaced}"$'\nt9.1' "$extracted" "extract all IDs in encounter order" || return 1
+	extracted=$(task_identity_extract_all "splits point 5 into t112. Then t9.1.") || return 1
+	assert_equal $'t112\nt9.1' "$extracted" "extract IDs followed by a sentence period" || return 1
 
 	if task_identity_extract_first "embeddedxt7value" >/dev/null; then
 		fail "extractor accepted embedded ID"
@@ -286,6 +288,20 @@ test_structured_helpers() {
 		return 1
 	fi
 	pass "malformed detector accepts valid marker"
+	if task_identity_has_malformed_candidate "split into t112." ||
+		task_identity_has_malformed_candidate "split into t112. Done" ||
+		task_identity_has_malformed_candidate "see t${ORIGIN_ID}-42.3."; then
+		fail "malformed detector rejected a valid ID followed by a sentence period"
+		return 1
+	fi
+	pass "malformed detector accepts a sentence period after a valid ID"
+	if ! task_identity_has_malformed_candidate "t7.0 marker" ||
+		! task_identity_has_malformed_candidate "see t7.x" ||
+		! task_identity_has_malformed_candidate "see t7.."; then
+		fail "malformed detector accepted an inner or repeated dot"
+		return 1
+	fi
+	pass "malformed detector still rejects inner and repeated dots"
 	if task_identity_has_malformed_candidate "truthful throughput testing"; then
 		fail "malformed detector treated ordinary lowercase t-words as task IDs"
 		return 1

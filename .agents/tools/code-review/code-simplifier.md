@@ -176,8 +176,7 @@ When the authenticated user IS the maintainer, issues skip the review gate and g
 
 | Agent | Purpose |
 |-------|---------|
-| `code-standards.md` | Reference quality rules |
-| `best-practices.md` | AI-assisted coding patterns |
+| `code-standards.md` | Reference quality rules, AI-assisted coding patterns |
 | `auditing.md` | Security and quality audits |
 | `codacy.md` | Codacy integration (maintainability grades) |
 | `tools/build-agent/agent-review.md` | Canonical semantic review for instruction surfaces |

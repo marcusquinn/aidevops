@@ -517,6 +517,18 @@ _merge_collect_external_authority_gaps() {
 		print_error "Merge blocked: PR #${pr_number} head changed before the final authority check"
 		return 1
 	fi
+	# GH#33374: a native sidebar/development closing link must not override a
+	# For/Ref checkpoint. Fail closed before any merge write; do not silently
+	# unlink issues or infer completion from GitHub's closing metadata alone.
+	if ! printf '%s' "$pr_json" | jq -e '
+		(.body // "") as $body
+		| all(.closingIssuesReferences[]; .number as $num
+			| if ($body | test("\\b(for|ref)[[:space:]]+#" + ($num | tostring) + "\\b"; "i"))
+			then ($body | test("\\b(close[ds]?|fix(es|ed)?|resolve[ds]?)[[:space:]]+#" + ($num | tostring) + "\\b"; "i"))
+			else true end)' >/dev/null 2>&1; then
+		print_error "Merge blocked: PR #${pr_number} has a closing link contradicting its For/Ref-only issue reference"
+		return 1
+	fi
 
 	#aidevops:trust-boundary GH#17671/GH#28622 -- a live PR NMR label is an
 	# explicit hold. Marker text is never merge authority at this boundary.
@@ -1697,7 +1709,7 @@ _merge_reconcile_planning_publication() {
 		return 0
 	fi
 	if [[ "$canonical_synced" != "1" ]]; then
-		print_warning "Planning publication reconcile deferred for merged PR #${pr_number}: canonical sync pending"
+		print_warning "Planning publication reconcile deferred for merged PR #${pr_number}: canonical sync pending or no canonical working tree"
 		printf 'PLANNING_RECONCILE_NEXT=planning-publication-reconcile.sh reconcile --repo %q --sha %q\n' "$repo" "$merge_sha"
 		return 0
 	fi
@@ -1963,6 +1975,14 @@ _merge_report_canonical_sync_state() {
 	local merge_sha="${3:-}"
 	if [[ -z "$canonical_dir" ]]; then
 		print_warning "CANONICAL_SYNC_PENDING=true reason=canonical_path_unavailable"
+		return 1
+	fi
+	# GH#33381: linked worktrees may share a bare common Git directory. There
+	# is no canonical working tree to preserve or fast-forward, so this layout
+	# is valid, not a canonical-layout failure; the PR lifecycle completes and
+	# only working-tree-dependent follow-ups (planning reconcile) are deferred.
+	if [[ "$(git -C "$canonical_dir" rev-parse --is-bare-repository 2>/dev/null || true)" == "true" ]]; then
+		print_info "LIFECYCLE_STATE=CANONICAL_SYNC_NOT_APPLICABLE reason=bare_common_dir canonical=${canonical_dir}"
 		return 1
 	fi
 	local default_branch

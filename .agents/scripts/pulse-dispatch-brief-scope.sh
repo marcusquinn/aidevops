@@ -19,6 +19,7 @@
 # Functions in this module (in source order):
 #   - _brief_scope_log_block
 #   - _brief_scope_author_trusted
+#   - _brief_scope_worker_discovery_enabled
 #   - _brief_scope_passes
 #   - _brief_scope_normalized_body
 #   - _dispatch_brief_scope_self_heal
@@ -65,6 +66,15 @@ _brief_scope_author_trusted() {
 	case "$permission" in admin | maintain | write) ;; *) return 1 ;; esac
 	declare -F repo_allows_pulse_write_actions >/dev/null 2>&1 || return 1
 	repo_allows_pulse_write_actions "$repo_slug" || return 1
+	return 0
+}
+
+# GH#33243: trusted briefs without a derivable canonical scope dispatch and the
+# worker records the scope before editing (reference/worker-discipline.md
+# "Missing Files Scope"). Set AIDEVOPS_BRIEF_SCOPE_WORKER_DISCOVERY=0 to restore
+# the brief-author hold.
+_brief_scope_worker_discovery_enabled() {
+	[[ "${AIDEVOPS_BRIEF_SCOPE_WORKER_DISCOVERY:-1}" == "0" ]] && return 1
 	return 0
 }
 
@@ -146,25 +156,32 @@ _brief_scope_hold_is_latest_blocker() {
 	return $?
 }
 
-# Release one held issue whose brief is now scoped (or deterministically
-# normalizable). Still-unscoped bodies return before any GitHub call.
+# Release one held issue whose brief is now scoped, deterministically
+# normalizable, or (GH#33243) eligible for worker-owned scope discovery. With
+# discovery disabled, still-unscoped bodies return before any GitHub call.
 _release_repaired_brief_hold() {
 	local repo_slug="$1"
 	local issue_number="$2"
 	local issue_body="$3"
 	local author="$4"
-	local scoped="false"
+	local mode="discovery"
 	if _brief_scope_passes "$issue_number" "$issue_body"; then
-		scoped="true"
-	elif ! _brief_scope_normalized_body "$issue_number" "$issue_body" >/dev/null; then
+		mode="scoped"
+	elif _brief_scope_normalized_body "$issue_number" "$issue_body" >/dev/null; then
+		mode="normalize"
+	elif ! _brief_scope_worker_discovery_enabled; then
 		return 1
 	fi
 	_brief_scope_hold_is_latest_blocker "$repo_slug" "$issue_number" || return 1
 	_brief_scope_author_trusted "$repo_slug" "$author" || return 1
-	if [[ "$scoped" != "true" ]]; then
+	if [[ "$mode" == "normalize" ]]; then
 		_dispatch_brief_scope_self_heal "$issue_number" "$repo_slug" "$issue_body" || return 1
 	fi
 	set_issue_status "$issue_number" "$repo_slug" available >/dev/null || return 1
+	if [[ "$mode" == "discovery" ]]; then
+		echo "[pulse-wrapper] brief-hold-release: #${issue_number} in ${repo_slug} — no canonical Files Scope; released for worker-owned scope discovery; status:blocked → status:available (GH#33243)" >>"${LOGFILE:-/dev/null}"
+		return 0
+	fi
 	echo "[pulse-wrapper] brief-hold-release: #${issue_number} in ${repo_slug} — brief now has a canonical Files Scope; status:blocked → status:available (GH#32689)" >>"${LOGFILE:-/dev/null}"
 	return 0
 }

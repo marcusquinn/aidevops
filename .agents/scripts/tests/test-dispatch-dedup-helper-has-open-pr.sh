@@ -182,6 +182,27 @@ EOF
 _append_gh_stub_native_reads() {
 	local stub_path="$1"
 	cat >>"$stub_path" <<'EOF'
+# gh api repos/R/issues/N/events — returns GH_ISSUE_EVENTS_JSON (GH#33071).
+if [[ "${1:-}" == "api" ]]; then
+	events_path=""
+	events_jq="."
+	shift
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--jq) events_jq="${2:-.}"; shift 2 ;;
+		--paginate) shift ;;
+		*) events_path="$1"; shift ;;
+		esac
+	done
+	if [[ "$events_path" =~ ^repos/[^/]+/[^/]+/issues/[0-9]+/events ]]; then
+		[[ "${GH_ISSUE_EVENTS_FAIL:-0}" == "1" ]] && exit 1
+		printf '%s' "${GH_ISSUE_EVENTS_JSON:-[]}" | jq -r "$events_jq"
+		exit 0
+	fi
+	printf 'unsupported gh api path in test stub: %s\n' "$events_path" >&2
+	exit 1
+fi
+
 # gh pr list — returns fixture JSON for (repo, state, search) lookup.
 if [[ "${1:-}" == "pr" && "${2:-}" == "list" ]]; then
 	if [[ "${GH_PR_LIST_FAIL:-0}" == "1" ]]; then
@@ -906,6 +927,58 @@ test_has_open_pr_allows_dispatch_on_task_id_collision() {
 	return 0
 }
 
+# GH#33071: a closing PR merged before the issue's latest reopen belongs to
+# an earlier lifecycle (e.g. file-size-debt reopened by the large-file gate).
+readonly REOPEN_EVENTS_FIXTURE='[{"event":"closed","created_at":"2026-07-29T03:12:57Z"},{"event":"reopened","created_at":"2026-09-27T08:44:15Z"},{"event":"closed","created_at":"2026-09-27T12:48:30Z"},{"event":"reopened","created_at":"2026-09-28T05:23:16Z"}]'
+
+test_has_open_pr_allows_reopened_issue_after_merged_close() {
+	set_gh_fixtures 'marcusquinn/aidevops|merged|#28839 in:body|[{"number":28845,"body":"Resolves #28839","mergedAt":"2026-07-29T03:12:56Z"}]
+marcusquinn/aidevops|merged|t28839 in:title|[{"number":28845,"body":"Resolves #28839","mergedAt":"2026-07-29T03:12:56Z"}]'
+	export GH_ISSUE_EVENTS_JSON="$REOPEN_EVENTS_FIXTURE"
+	local output="" rc=0
+	output=$("$HELPER_SCRIPT" has-open-pr 28839 marcusquinn/aidevops 't28839: file-size-debt') || rc=$?
+	unset GH_ISSUE_EVENTS_JSON
+
+	if [[ "$rc" -eq 1 && -z "$output" ]]; then
+		print_result "has-open-pr allows reopened issue whose closing PRs predate the reopen" 0
+		return 0
+	fi
+	print_result "has-open-pr allows reopened issue whose closing PRs predate the reopen" 1 \
+		"rc=${rc} output=${output}"
+	return 0
+}
+
+test_has_open_pr_blocks_merge_after_latest_reopen() {
+	set_gh_fixtures 'marcusquinn/aidevops|merged|#28839 in:body|[{"number":28845,"body":"Resolves #28839","mergedAt":"2026-07-29T03:12:56Z"},{"number":33072,"body":"Resolves #28839","mergedAt":"2026-09-29T19:58:07Z"}]'
+	export GH_ISSUE_EVENTS_JSON="$REOPEN_EVENTS_FIXTURE"
+	local output="" rc=0
+	output=$("$HELPER_SCRIPT" has-open-pr 28839 marcusquinn/aidevops 'file-size-debt') || rc=$?
+	unset GH_ISSUE_EVENTS_JSON
+
+	if [[ "$rc" -eq 0 && "$output" == *"merged PR #33072 references issue #28839 via keyword"* ]]; then
+		print_result "has-open-pr blocks when a closing PR merged after the latest reopen" 0
+		return 0
+	fi
+	print_result "has-open-pr blocks when a closing PR merged after the latest reopen" 1 \
+		"rc=${rc} output=${output}"
+	return 0
+}
+
+test_has_open_pr_fails_closed_when_reopen_lookup_fails() {
+	set_gh_fixtures 'marcusquinn/aidevops|merged|#28839 in:body|[{"number":28845,"body":"Resolves #28839","mergedAt":"2026-07-29T03:12:56Z"}]'
+	export GH_ISSUE_EVENTS_FAIL=1
+	local output="" rc=0
+	output=$("$HELPER_SCRIPT" has-open-pr 28839 marcusquinn/aidevops 'file-size-debt') || rc=$?
+	unset GH_ISSUE_EVENTS_FAIL
+
+	if [[ "$rc" -eq 0 && "$output" == *"PR_LOOKUP_RESULT=uncertain reason=api_request_failed scope=merged_body_reopen"* ]]; then
+		print_result "has-open-pr fails closed when the reopen lookup fails" 0
+		return 0
+	fi
+	print_result "has-open-pr fails closed when the reopen lookup fails" 1 "rc=${rc} output=${output}"
+	return 0
+}
+
 test_has_open_pr_blocks_superseded_consolidated_issue() {
 	set_gh_fixtures 'marcusquinn/aidevops|merged|#26241|[{"number":26266,"title":"For #26241: split mixed PR view fields","body":"## Summary\n\n- Split mixed gh_pr_view requests into REST and GraphQL subsets.\n\nFor #26241\n\n## Testing\n\n- .agents/scripts/tests/test-gh-wrapper-rest-fallback.sh"}]'
 	export ISSUE_META_JSON='{"body":"_Supersedes #26241 — this issue is the consolidated spec._"}'
@@ -1122,6 +1195,9 @@ main() {
 	test_has_open_pr_ignores_planning_ref_reference
 	test_has_open_pr_requires_close_keyword_for_our_issue
 	test_has_open_pr_allows_dispatch_on_task_id_collision
+	test_has_open_pr_allows_reopened_issue_after_merged_close
+	test_has_open_pr_blocks_merge_after_latest_reopen
+	test_has_open_pr_fails_closed_when_reopen_lookup_fails
 	test_has_open_pr_detects_open_body_closing_keyword
 	test_has_open_pr_blocks_draft_body_closing_keyword
 	test_has_open_pr_marks_worker_draft_for_stale_routing

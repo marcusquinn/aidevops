@@ -358,6 +358,47 @@ test_stale_pid_reclaim() {
 }
 
 # ============================================================
+# Ownerless locks: missing, empty and invalid owners respect the age grace.
+# ============================================================
+test_ownerless_lock() {
+	local owner="$1"
+	local freshness="$2"
+	local logs_dir="${TEST_DIR}/.aidevops/logs"
+	local lock_dir="${logs_dir}/cleanup_worktrees.lock"
+	local mock_ran="${TEST_DIR}/mock-ran"
+	local cleanup_log="${logs_dir}/cleanup_worktrees.log"
+	mkdir -p "$lock_dir"
+	case "$owner" in
+	empty) printf '' >"${lock_dir}/pid" ;;
+	invalid) printf 'not-a-pid\n' >"${lock_dir}/pid" ;;
+	missing) ;;
+	esac
+	if [[ "$freshness" == "old" ]]; then
+		# Portable touch format; no real-time waits or GNU-only date arithmetic.
+		touch -t 200001010000 "$lock_dir"
+	fi
+	AIDEVOPS_LOCK_OWNERLESS_GRACE_SECONDS=300 MOCK_CLEANUP_EXIT=0 run_helper_in_isolation
+	if [[ "$freshness" == "old" ]]; then
+		if [[ -f "$mock_ran" && ! -d "$lock_dir" ]] &&
+			grep -Eq 'Reclaiming ownerless lock \(age [0-9]+s\)' "$cleanup_log"; then
+			print_result "ownerless-${owner}: old lock reclaimed and cleanup runs" 0
+		else
+			print_result "ownerless-${owner}: old lock reclaimed and cleanup runs" 1 \
+				"cleanup, lock release, or age diagnostic missing"
+		fi
+	else
+		if [[ ! -f "$mock_ran" && -d "$lock_dir" ]] &&
+			grep -q 'Young ownerless lock' "$cleanup_log"; then
+			print_result "ownerless-${owner}: young lock protected" 0
+		else
+			print_result "ownerless-${owner}: young lock protected" 1 \
+				"young lock reclaimed or skip reason missing"
+		fi
+	fi
+	return 0
+}
+
+# ============================================================
 # TEST 6: failed cleanup — last-run NOT updated on non-zero exit
 # ============================================================
 test_failed_cleanup_no_last_run_update() {
@@ -656,6 +697,15 @@ main() {
 	teardown
 	setup
 	test_stale_pid_reclaim
+
+	local owner freshness
+	for owner in missing empty invalid; do
+		for freshness in old young; do
+			teardown
+			setup
+			test_ownerless_lock "$owner" "$freshness"
+		done
+	done
 
 	teardown
 	setup

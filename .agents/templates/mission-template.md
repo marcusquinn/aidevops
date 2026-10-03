@@ -153,10 +153,7 @@ _Completed after mission finishes._
 
 ### Skill Learning
 
-<!-- Auto-populated: mission-skill-learner.sh scan {mission-dir}
-     Promote: mission-skill-learner.sh promote <path> [draft|custom]
-     Patterns: mission-skill-learner.sh patterns --mission {mission_id}
-     See: workflows/mission-skill-learning.md -->
+<!-- Memory graduation covers artifact promotion: workflows/graduate-memories.md -->
 
 | Artifact | Type | Score | Promoted To | Notes |
 |----------|------|-------|-------------|-------|

@@ -17,6 +17,7 @@
 #   - _dedup_layer3_title_match
 #   - _dedup_layer4_pr_evidence
 #   - _dedup_layer5_dispatch_comment
+#   - _dispatch_blocked_checkpoint_attention
 #   - _dispatch_interactive_hold_gate
 #   - _dedup_layer6_assignee_and_stale
 #   - _dedup_layer7_claim_lock
@@ -304,6 +305,7 @@ _dedup_layer4_pr_evidence() {
 				echo "[pulse-wrapper] Dedup: PR evidence already exists for #${issue_number} in ${repo_slug}" >>"$LOGFILE"
 			fi
 			if [[ "$dedup_helper_output" == WORKER_DRAFT_CHECKPOINT:* ]]; then
+				_dispatch_blocked_checkpoint_attention "$issue_number" "$repo_slug" "$dedup_helper_output"
 				return 2
 			fi
 			return 0
@@ -410,6 +412,26 @@ _dispatch_revised_checkpoint() {
 	"${SCRIPT_DIR}/pr-checkpoint-continuation-helper.sh" dispatch-approved \
 		"$repo" "$path" "$issue" "$login" >>"$LOGFILE" 2>&1
 	return $?
+}
+
+#######################################
+# GH#33132: a worker that released as `blocked` after opening a draft leaves
+# the objective held here by WORKER_DRAFT_CHECKPOINT with no approval prompt.
+# Ask the continuation helper for one deduplicated attention record per PR
+# head and blocked release. Best-effort: it never dispatches, relabels or
+# reassigns, and the draft remains a hard duplicate-dispatch block.
+# Arguments: issue_number, repo_slug, WORKER_DRAFT_CHECKPOINT output
+#######################################
+_dispatch_blocked_checkpoint_attention() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local checkpoint_output="$3"
+	local pr_number=""
+	[[ "$checkpoint_output" =~ WORKER_DRAFT_CHECKPOINT:[[:space:]]draft[[:space:]]PR[[:space:]]#([0-9]+) ]] || return 0
+	pr_number="${BASH_REMATCH[1]}"
+	"${SCRIPT_DIR}/pr-checkpoint-continuation-helper.sh" blocked-attention \
+		"$repo_slug" "$issue_number" "$pr_number" >>"$LOGFILE" 2>&1 || true
+	return 0
 }
 
 _dispatch_interactive_worker_checkpoint_continuation() {
@@ -598,20 +620,35 @@ _dedup_layer7_claim_lock() {
 		# comment is left on the issue, wasting a GitHub API call and
 		# cluttering the issue. The pre-check is cheap (read-only) and
 		# catches the common case where another runner already claimed.
+		# Private, attempt-local snapshot is only for takeover annotation. The
+		# post-consensus claim read must always fetch the live GitHub timeline.
+		# GH#33202: these must stay in this function; set -u aborts dispatch
+		# when they are declared anywhere else.
+		local claim_snapshot=""
+		claim_snapshot=$(umask 077; mktemp "${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}/dispatch-claim.XXXXXX") || claim_snapshot=""
+		local _claim_started_ns=""
+		_claim_started_ns=$(_ds_now_ns)
 		local _precheck_output="" _precheck_exit=0
-		_precheck_output=$("$dedup_helper" check-claim "$issue_number" "$repo_slug") || _precheck_exit=$?
+		_precheck_output=$(AIDEVOPS_DISPATCH_CLAIM_CALL_LOG="$LOGFILE" DISPATCH_CLAIM_SNAPSHOT_FILE="$claim_snapshot" "$dedup_helper" check-claim "$issue_number" "$repo_slug") || _precheck_exit=$?
+		_ds_record "$issue_number" "$repo_slug" "claim_precheck" "$_claim_started_ns"
 		if [[ "$_precheck_exit" -eq 0 ]]; then
+			[[ -z "$claim_snapshot" ]] || rm -f "$claim_snapshot"
 			# Active claim exists from another runner — skip claim entirely
 			echo "[pulse-wrapper] Dedup: pre-check found active claim on #${issue_number} in ${repo_slug} — skipping (${_precheck_output})" >>"$LOGFILE"
 			return 0
 		fi
 		if [[ "$_precheck_exit" -eq 2 ]]; then
+			[[ -z "$claim_snapshot" ]] || rm -f "$claim_snapshot"
 			echo "[pulse-wrapper] Dedup: claim pre-check error for #${issue_number} in ${repo_slug} — blocking dispatch for this cycle (fail-closed)" >>"$LOGFILE"
 			return 0
 		fi
 		# No active claim found (exit 1) — proceed to claim.
 		local claim_exit=0 claim_output=""
-		claim_output=$("$dedup_helper" claim "$issue_number" "$repo_slug" "$self_login" 2>>"$LOGFILE") || claim_exit=$?
+		_claim_started_ns=$(_ds_now_ns)
+		# shellcheck disable=SC2094 # LOGFILE is an output-only diagnostic sink, not an input.
+		claim_output=$(AIDEVOPS_DISPATCH_CLAIM_CALL_LOG="$LOGFILE" DISPATCH_CLAIM_SNAPSHOT_FILE="$claim_snapshot" "$dedup_helper" claim "$issue_number" "$repo_slug" "$self_login" 2>>"$LOGFILE") || claim_exit=$?
+		[[ -z "$claim_snapshot" ]] || rm -f "$claim_snapshot"
+		_ds_record "$issue_number" "$repo_slug" "claim_consensus" "$_claim_started_ns"
 		echo "$claim_output" >>"$LOGFILE"
 		if [[ "$claim_exit" -eq 1 ]]; then
 			echo "[pulse-wrapper] Dedup: claim lost for #${issue_number} in ${repo_slug} — another runner claimed first (GH#11086)" >>"$LOGFILE"

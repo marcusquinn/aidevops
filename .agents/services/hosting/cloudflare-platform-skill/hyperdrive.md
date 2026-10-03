@@ -1,48 +1,27 @@
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Hyperdrive
 
-Connect Workers to PostgreSQL/MySQL with connection pooling and edge setup. Reuses origin connections to remove ~7 round-trips.
+Use Hyperdrive to connect Workers to an existing PostgreSQL or MySQL database with connection pooling and optional query caching. It does not replace the origin database or replicate its data. Start with [how Hyperdrive works](https://developers.cloudflare.com/hyperdrive/concepts/how-hyperdrive-works/index.md) and [supported databases and features](https://developers.cloudflare.com/hyperdrive/reference/supported-databases-and-features/index.md) to assess fit.
 
-- **Compatibility**: CockroachDB, Timescale, PlanetScale, Neon, Supabase.
-- **Best Fit**: Global users, single-region DB, read-heavy, or high connection setup cost.
-- **Avoid**: Write-heavy, <1s freshness required, or Worker in same region as DB.
+## Retrieve current documentation
 
-## Capabilities
-- **Pooling**: Reuses origin connections.
-- **Edge Setup**: Negotiates at edge, pools near DB.
-- **Caching**: 60s default for non-mutating queries.
+Fetch the relevant official page before implementing. Driver versions, compatibility settings, API shapes, CLI flags, cache settings, and limits belong in the docs rather than this reference. Use the [Hyperdrive documentation index](https://developers.cloudflare.com/hyperdrive/llms.txt) to discover additional pages. Retrieve a page as Markdown by sending `Accept: text/markdown` to its URL.
 
-## Architecture
-`Worker → Edge (setup) → Pool (near DB) → Origin`
+## Choose the next reference
 
-## Quick Start
-```bash
-npx wrangler hyperdrive create my-db --connection-string="postgres://user:pass@host:5432/db"
-```
+| Task | Reference |
+|------|-----------|
+| Create a configuration, bind it, connect privately, or develop locally | [configuration.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/hyperdrive/configuration.md) |
+| Choose a driver, use binding credentials, or integrate an ORM | [api.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/hyperdrive/api.md) |
+| Decide read freshness, connection lifetime, or query placement | [patterns.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/hyperdrive/patterns.md) |
+| Diagnose connection, cache, latency, or capacity problems | [gotchas.md](hyperdrive-gotchas.md) |
 
-```jsonc
-// wrangler.jsonc
-{
-  "compatibility_flags": ["nodejs_compat"],
-  "hyperdrive": [{"binding": "HYPERDRIVE", "id": "<ID>"}]
-}
-```
+## Decisions to preserve
 
-```typescript
-import { Client } from "pg";
-export default {
-  async fetch(req: Request, env: Env): Promise<Response> {
-    const client = new Client({ connectionString: env.HYPERDRIVE.connectionString });
-    await client.connect();
-    const result = await client.query("SELECT * FROM users WHERE id = $1", [123]);
-    await client.end();
-    return Response.json(result.rows);
-  },
-};
-```
+- Choose a driver for the database engine and existing application stack; verify supported versions and Worker requirements in its guide.
+- Create database clients inside each handler invocation. Hyperdrive manages the underlying origin pool; consult [connection lifecycle](https://developers.cloudflare.com/hyperdrive/concepts/connection-lifecycle/index.md) for cleanup behavior.
+- Choose caching by read freshness. Disabling caching still allows connection pooling; a write does not invalidate cached reads. See [query caching](https://developers.cloudflare.com/hyperdrive/concepts/query-caching/index.md).
 
-## Related Docs
-- [Patterns](./hyperdrive-patterns.md) | [Gotchas](./hyperdrive-gotchas.md)
-- [Cloudflare Docs](https://developers.cloudflare.com/hyperdrive/) | [Discord #hyperdrive](https://discord.cloudflare.com)
+## See also
+
+- [D1](../d1/) for a managed SQLite alternative.
+- [Workers](https://developers.cloudflare.com/workers/index.md) for the runtime and bindings.

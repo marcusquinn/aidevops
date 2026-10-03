@@ -5,36 +5,30 @@
 set -euo pipefail
 
 repo_root=$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)
-index_file="$repo_root/.agents/tools/video/remotion.md"
-consumer_file="$repo_root/.agents/content/heygen-skill/rules-remotion-integration.md"
-registry_file="$repo_root/.agents/configs/skill-sources.json"
-expected_count=28
-
-if grep -Fq "tools/video/remotion/" "$index_file" "$consumer_file" "$registry_file"; then
-	printf 'Stale nested Remotion chapter path found:\n' >&2
-	grep -Fn "tools/video/remotion/" "$index_file" "$consumer_file" "$registry_file" >&2
-	exit 1
-fi
-
-chapter_refs=$(grep -oE 'tools/video/remotion-[[:alnum:]-]+\.md' "$index_file" | LC_ALL=C sort -u)
-chapter_count=$(printf '%s\n' "$chapter_refs" | grep -c '.')
-
-if [[ "$chapter_count" -ne "$expected_count" ]]; then
-	printf 'Expected %d unique Remotion chapter references, found %d\n' "$expected_count" "$chapter_count" >&2
-	exit 1
-fi
-
-while IFS= read -r chapter_ref; do
-	[[ -n "$chapter_ref" ]] || continue
-	tracked_path=".agents/$chapter_ref"
-	if [[ ! -f "$repo_root/$tracked_path" ]]; then
-		printf 'Remotion chapter reference does not exist: %s\n' "$tracked_path" >&2
-		exit 1
-	fi
-	if ! git -C "$repo_root" ls-files --error-unmatch "$tracked_path" >/dev/null 2>&1; then
-		printf 'Remotion chapter reference is not tracked: %s\n' "$tracked_path" >&2
-		exit 1
-	fi
-done <<<"$chapter_refs"
-
-printf 'PASS: %d flat Remotion chapter references resolve to tracked files\n' "$chapter_count"
+python3 - "$repo_root/.agents" <<'PY'
+import re
+import sys
+from pathlib import Path
+agents = Path(sys.argv[1])
+count = 0
+files = list((agents / "tools/video/remotion").glob("*.md"))
+files += list((agents / "services/hosting/cloudflare-platform-skill").glob("*.md"))
+files += [agents / "services/hosting/cloudflare-platform-skill.md"]
+for file in files:
+    text = file.read_text()
+    for link in re.findall(r"\]\(([^\s()]+\.md)(?:#[^\s()]*)?\)", text):
+        if not re.match(r"[a-zA-Z]+:", link) and not link.startswith("/"):
+            assert (file.parent / link).is_file(), f"Broken local link: {file.relative_to(agents)} -> {link}"
+            count += 1
+    if file.name == "remotion.md":
+        for chapter in re.findall(r"`(remotion-[\w-]+\.md)`", text):
+            assert (file.parent / chapter).is_file(), chapter
+            count += 1
+for file in agents.rglob("*.md"):
+    assert not re.search(r"tools/video/remotion(?:\.md|-[\w-]+\.md)", file.read_text()), f"Stale inbound link: {file.relative_to(agents)}"
+for relative in ("content/heygen-skill/rules-remotion-integration.md", "tools/design/threejs.md"):
+    for chapter in re.findall(r"tools/video/remotion/[\w-]+\.md", (agents / relative).read_text()):
+        assert (agents / chapter).is_file(), chapter
+assert (agents / "scripts/higgsfield/remotion/src/Root.tsx").is_file()
+print(f"PASS: {count} nested skill links resolve; inbound links, HeyGen, Three.js and Higgsfield preserved")
+PY

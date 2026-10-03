@@ -63,16 +63,35 @@ _headless_signing_key_loaded() {
 	return $?
 }
 
+# GH#33066: read one global key. Exit 1 from `git config --get` means unset;
+# any other failure (for example a command guard blocking the read) must not be
+# reported as "not set", or setup gets recommended for a configured machine.
+_global_config_value() {
+	local key="$1"
+	local unset_text="$2"
+	local value="" rc=0
+	value=$(git config --global --get "$key" 2>/dev/null) || rc=$?
+	case "$rc" in
+	0) printf '%s\n' "$value" ;;
+	1) printf '%s\n' "$unset_text" ;;
+	*)
+		printf 'unreadable (git config exit %s)\n' "$rc"
+		return 1
+		;;
+	esac
+	return 0
+}
+
 # Check current signing setup
 cmd_check() {
 	echo "Checking git commit signing configuration..."
 	echo ""
 
-	local gpg_format signing_key commit_sign tag_sign
-	gpg_format=$(git config --global gpg.format 2>/dev/null || echo "not set")
-	signing_key=$(git config --global user.signingkey 2>/dev/null || echo "not set")
-	commit_sign=$(git config --global commit.gpgsign 2>/dev/null || echo "not set")
-	tag_sign=$(git config --global tag.gpgsign 2>/dev/null || echo "not set")
+	local gpg_format signing_key commit_sign tag_sign read_failed=0
+	gpg_format=$(_global_config_value gpg.format "not set") || read_failed=1
+	signing_key=$(_global_config_value user.signingkey "not set") || read_failed=1
+	commit_sign=$(_global_config_value commit.gpgsign "not set") || read_failed=1
+	tag_sign=$(_global_config_value tag.gpgsign "not set") || read_failed=1
 
 	echo "  gpg.format:      $gpg_format"
 	echo "  user.signingkey: $signing_key"
@@ -80,7 +99,9 @@ cmd_check() {
 	echo "  tag.gpgsign:     $tag_sign"
 	echo ""
 
-	if [[ "$gpg_format" == "ssh" && "$signing_key" != "not set" && "$commit_sign" == "true" ]]; then
+	if [[ "$read_failed" -eq 1 ]]; then
+		_print_error "Could not read global git config; signing state is unknown (not recommending setup)"
+	elif [[ "$gpg_format" == "ssh" && "$signing_key" != "not set" && "$commit_sign" == "true" ]]; then
 		_print_ok "SSH commit signing is configured"
 		if [[ "$signing_key" == "$SSH_KEY_HEADLESS_PUB" ]]; then
 			_print_warn "Default Git signing uses the passphrase-less headless key"
@@ -135,7 +156,10 @@ cmd_setup() {
 
 	# Get git email for allowed_signers
 	local git_email
-	git_email=$(git config --global user.email 2>/dev/null || echo "")
+	if ! git_email=$(_global_config_value user.email ""); then
+		_print_error "Could not read git user.email: $git_email"
+		return 1
+	fi
 	if [[ -z "$git_email" ]]; then
 		_print_error "No git user.email configured"
 		echo "Set it: git config --global user.email \"your@email.com\""
@@ -196,7 +220,10 @@ cmd_headless_setup() {
 
 	# Get git email for allowed_signers
 	local git_email
-	git_email=$(git config --global user.email 2>/dev/null || echo "")
+	if ! git_email=$(_global_config_value user.email ""); then
+		_print_error "Could not read git user.email: $git_email"
+		return 1
+	fi
 	if [[ -z "$git_email" ]]; then
 		_print_error "No git user.email configured"
 		echo "Set it: git config --global user.email \"your@email.com\""
@@ -215,7 +242,7 @@ cmd_headless_setup() {
 	# Do not replace the user's interactive signing key. Headless runtimes inject
 	# this dedicated key through process-scoped Git configuration.
 	local default_signing_key=""
-	default_signing_key=$(git config --global user.signingkey 2>/dev/null || true)
+	default_signing_key=$(git config --global --get user.signingkey 2>/dev/null || true)
 	if [[ "$default_signing_key" == "$SSH_KEY_HEADLESS_PUB" ]]; then
 		_print_warn "Default Git signing still points to the headless key"
 		echo "After updating aidevops, run 'aidevops signing setup' to restore the passphrase-protected interactive key."
@@ -384,7 +411,7 @@ cmd_verify_update() {
 
 	# Strategy 2: Local git signature verification (fallback)
 	local signers_file
-	signers_file=$(git config --global gpg.ssh.allowedSignersFile 2>/dev/null || echo "")
+	signers_file=$(git config --global --get gpg.ssh.allowedSignersFile 2>/dev/null || echo "")
 
 	if [[ -z "$signers_file" || ! -f "$signers_file" ]]; then
 		echo "UNVERIFIABLE"

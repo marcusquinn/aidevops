@@ -192,6 +192,11 @@ test_release_integration_bounds_comments() {
 		cleanup_count=$((cleanup_count + 1))
 		return 0
 	}
+	set_issue_status() {
+		[[ "$3" == "blocked" ]] || return 1
+		cleanup_count=$((cleanup_count + 1))
+		return 0
+	}
 	_unlock_issue_after_dispatch_release() {
 		cleanup_count=$((cleanup_count + 1))
 		return 0
@@ -275,6 +280,77 @@ test_brief_only_revision() {
 	TEST_TARGET_REVISION='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 	TEST_DEPENDENCIES='{"nodes":[],"truncated":false}'
 	print_result "brief hold ignores target/dependency changes but corrected brief and trusted retry re-arm" "$status"
+	return 0
+}
+
+test_external_trigger_pending_revision() {
+	local issue='{"title":"Wait for model","body":"### Files Scope\n- model.sh\nRun only after the model ID is published."}'
+	local output="${TEST_ROOT}/external.ndjson" fingerprint="" revision="" changed="" comments="" status=0
+	local observation="" circuit=""
+	printf '%s\n' '{"type":"text","text":"BLOCKED: the required model ID is not yet published\nTERMINAL_BLOCKER_REASON=external_trigger_pending"}' >"$output"
+	terminal_blocker_capture_output "$output" || status=1
+	fingerprint="$AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT"
+	[[ "$(_terminal_blocker_reason "$fingerprint")" == external_trigger_pending ]] || status=1
+	revision=$(terminal_blocker_task_revision "$issue" owner/repo 42 "$TEST_ROOT" external_trigger_pending) || status=1
+	observation=$(jq -nc --arg body "<!-- aidevops:terminal-blocker-observation revision=${revision} blocker=${fingerprint} -->" \
+		'[{body:$body,created_at:"2026-08-31T10:00:00Z",author_association:"MEMBER"}]')
+	[[ "$(terminal_blocker_release_mode "$observation" "$revision" "$fingerprint")" == circuit ]] || status=1
+	TEST_TARGET_REVISION='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+	changed=$(terminal_blocker_task_revision "$issue" owner/repo 42 "$TEST_ROOT" external_trigger_pending) || status=1
+	[[ "$revision" == "$changed" ]] || status=1
+	[[ "$(terminal_blocker_release_mode "$observation" "$changed" "$fingerprint")" == circuit ]] || status=1
+	circuit=$(jq -nc --arg body "<!-- aidevops:terminal-blocker-circuit revision=${changed} blocker=${fingerprint} -->" \
+		'[{body:$body,created_at:"2026-08-31T10:05:00Z",author_association:"MEMBER"}]')
+	terminal_blocker_circuit_active "$circuit" "$issue" owner/repo 42 "$TEST_ROOT" >/dev/null || status=1
+	terminal_blocker_circuit_active "$circuit" '{"title":"Wait for model","body":"### Files Scope\n- model.sh\nModel ID published."}' \
+		owner/repo 42 "$TEST_ROOT" >/dev/null && status=1
+	TEST_DEPENDENCIES='{"nodes":[{"number":9,"state":"CLOSED"}],"truncated":false}'
+	changed=$(terminal_blocker_task_revision "$issue" owner/repo 42 "$TEST_ROOT" external_trigger_pending) || status=1
+	[[ "$revision" != "$changed" ]] || status=1
+	TEST_DEPENDENCIES=unavailable
+	terminal_blocker_circuit_active "$circuit" "$issue" owner/repo 42 "$TEST_ROOT" >/dev/null && status=1
+	TEST_DEPENDENCIES='{"nodes":[],"truncated":false}'
+	comments=$(printf '%s' "$circuit" | jq -c '. + [{body:"terminal-blocker-circuit:retry",created_at:"2026-08-31T11:00:00Z",author_association:"MEMBER"}]')
+	terminal_blocker_circuit_active "$comments" "$issue" owner/repo 42 "$TEST_ROOT" >/dev/null && status=1
+	TEST_TARGET_REVISION='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+	unset AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT
+	print_result "external trigger opens after two observations across HEAD changes; brief, dependency and retry re-arm" "$status"
+	return 0
+}
+
+test_input_required_owner_class() {
+	local issue='{"title":"Deploy check","body":"### Files Scope\n- deploy.sh"}'
+	local output="${TEST_ROOT}/input.ndjson" fingerprint="" revision="" changed="" fragment="" observation="" status=0
+	printf '%s\n' '{"type":"text","text":"BLOCKED: no authorized staging origin is recorded\nTERMINAL_BLOCKER_REASON=input_required\nTERMINAL_BLOCKER_INPUT_OWNER=maintainer"}' >"$output"
+	terminal_blocker_capture_output "$output" || status=1
+	fingerprint="$AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT"
+	[[ "$(_terminal_blocker_reason "$fingerprint")" == input_required ]] || status=1
+	[[ "$(_terminal_blocker_input_owner "$fingerprint")" == maintainer ]] || status=1
+	fragment=$(terminal_blocker_observation_fragment 111111111111111111111111 "$fingerprint" first)
+	[[ "$fragment" == *'reason=input_required owner=maintainer'* && "$fragment" == *'status:available'* ]] || status=1
+	# One worker cannot hold alone: first observation keeps a verification attempt.
+	revision=$(terminal_blocker_task_revision "$issue" owner/repo 42 "$TEST_ROOT" input_required) || status=1
+	[[ "$(terminal_blocker_release_mode '[]' "$revision" "$fingerprint")" == first ]] || status=1
+	observation=$(jq -nc --arg body "<!-- aidevops:terminal-blocker-observation revision=${revision} blocker=${fingerprint} -->" \
+		'[{body:$body,created_at:"2026-08-31T10:00:00Z",author_association:"MEMBER"}]')
+	[[ "$(terminal_blocker_release_mode "$observation" "$revision" "$fingerprint")" == circuit ]] || status=1
+	TEST_TARGET_REVISION='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+	changed=$(terminal_blocker_task_revision "$issue" owner/repo 42 "$TEST_ROOT" input_required) || status=1
+	[[ "$revision" == "$changed" ]] || status=1
+	changed=$(terminal_blocker_task_revision '{"title":"Deploy check","body":"### Files Scope\n- deploy.sh\nStaging origin: supplied"}' \
+		owner/repo 42 "$TEST_ROOT" input_required) || status=1
+	[[ "$revision" != "$changed" ]] || status=1
+	TEST_TARGET_REVISION='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+	# Missing, invalid or duplicated owners stay unclassified and retryable.
+	printf '%s\n' '{"type":"text","text":"BLOCKED: unsure\nTERMINAL_BLOCKER_REASON=input_required"}' >"$output"
+	terminal_blocker_capture_output "$output" || status=1
+	[[ "$(_terminal_blocker_reason "$AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT")" == unknown ]] || status=1
+	printf '%s\n' '{"type":"text","text":"BLOCKED: unsure\nTERMINAL_BLOCKER_REASON=input_required\nTERMINAL_BLOCKER_INPUT_OWNER=human"}' >"$output"
+	terminal_blocker_capture_output "$output" || status=1
+	[[ "$(_terminal_blocker_reason "$AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT")" == unknown ]] || status=1
+	_terminal_blocker_input_owner "$(_terminal_blocker_hash 'v2:target_code_blocker')" >/dev/null && status=1
+	unset AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT
+	print_result "input_required names a user/contributor/maintainer/admin owner, needs two observations and re-arms on brief change" "$status"
 	return 0
 }
 
@@ -498,6 +574,137 @@ test_same_second_release_ordering() {
 	return 0
 }
 
+# GH#33025: a runner that GitHub reports as a bare COLLABORATOR (e.g. a bot
+# account on a personal private repo) must still see its own observations,
+# circuits and releases; otherwise every attempt posts a fresh observation and
+# identical blockers redispatch forever. Other collaborators stay untrusted and
+# only OWNER/MEMBER retries clear the hold.
+test_self_authored_collaborator_evidence() {
+	local status=0 fingerprint="" revision="" observation="" circuit="" comments="" changed="" diag=""
+	fingerprint=$(_terminal_blocker_hash 'v2:permission_required')
+	revision=$(terminal_blocker_task_revision '{}' owner/repo 42 '' permission_required) || status=1
+	observation="<!-- aidevops:terminal-blocker-observation revision=${revision} blocker=${fingerprint} -->"
+	circuit="<!-- aidevops:terminal-blocker-circuit revision=${revision} blocker=${fingerprint} -->"
+	comments=$(jq -nc --arg body "$observation" '[{id:20,body:$body,author:"runner-bot",author_association:"COLLABORATOR",created_at:"2026-09-06T12:00:00Z"}]')
+	[[ "$(terminal_blocker_release_mode "$comments" "$revision" "$fingerprint" 2>/dev/null)" == first ]] || status=1
+	[[ "$(TERMINAL_BLOCKER_SELF_LOGIN=runner-bot terminal_blocker_release_mode "$comments" "$revision" "$fingerprint")" == circuit ]] || status=1
+	[[ "$(TERMINAL_BLOCKER_SELF_LOGIN=other-bot terminal_blocker_release_mode "$comments" "$revision" "$fingerprint" 2>/dev/null)" == first ]] || status=1
+	# Only plain logins are accepted as self identities.
+	[[ "$(TERMINAL_BLOCKER_SELF_LOGIN='runner-bot"' terminal_blocker_release_mode "$comments" "$revision" "$fingerprint" 2>/dev/null)" == first ]] || status=1
+	comments=$(jq -nc --arg body "$circuit" '[{id:21,body:$body,author:"runner-bot",author_association:"COLLABORATOR",created_at:"2026-09-06T12:05:00Z"}]')
+	terminal_blocker_circuit_active "$comments" '{}' owner/repo 42 '' >/dev/null 2>&1 && status=1
+	TERMINAL_BLOCKER_SELF_LOGIN=runner-bot terminal_blocker_circuit_active "$comments" '{}' owner/repo 42 '' >/dev/null || status=1
+	# A different collaborator cannot open a hold by copying the marker.
+	changed=$(printf '%s' "$comments" | jq -c '.[0].author="other-collab"')
+	TERMINAL_BLOCKER_SELF_LOGIN=runner-bot terminal_blocker_circuit_active "$changed" '{}' owner/repo 42 '' >/dev/null 2>&1 && status=1
+	# Self or other collaborator retries cannot clear; OWNER/MEMBER retries can.
+	changed=$(printf '%s' "$comments" | jq -c '. + [{id:22,body:"terminal-blocker-circuit:retry",author:"runner-bot",author_association:"COLLABORATOR",created_at:"2026-09-06T12:10:00Z"}]')
+	TERMINAL_BLOCKER_SELF_LOGIN=runner-bot terminal_blocker_circuit_active "$changed" '{}' owner/repo 42 '' >/dev/null || status=1
+	changed=$(printf '%s' "$comments" | jq -c '. + [{id:22,body:"terminal-blocker-circuit:retry",author:"repo-owner",author_association:"OWNER",created_at:"2026-09-06T12:10:00Z"}]')
+	TERMINAL_BLOCKER_SELF_LOGIN=runner-bot terminal_blocker_circuit_active "$changed" '{}' owner/repo 42 '' >/dev/null && status=1
+	# Backoff counts self-authored releases only when runner= matches the author.
+	comments=$(jq -nc '[range(2) | {id:(30 + .),body:"CLAIM_RELEASED reason=blocked runner=runner-bot ts=ignored",author:"runner-bot",author_association:"COLLABORATOR",created_at:"2026-09-06T12:00:00Z"}]')
+	TERMINAL_BLOCKER_NOW_EPOCH=1788696001 terminal_blocker_backoff_active "$comments" >/dev/null && status=1
+	TERMINAL_BLOCKER_NOW_EPOCH=1788696001 TERMINAL_BLOCKER_SELF_LOGIN=runner-bot terminal_blocker_backoff_active "$comments" >/dev/null || status=1
+	changed=$(printf '%s' "$comments" | jq -c 'map(.author="other-collab")')
+	TERMINAL_BLOCKER_NOW_EPOCH=1788696001 TERMINAL_BLOCKER_SELF_LOGIN=runner-bot terminal_blocker_backoff_active "$changed" >/dev/null && status=1
+	# Dropped hold evidence is reported, never silently ignored.
+	diag=$(TERMINAL_BLOCKER_NOW_EPOCH=1788696001 terminal_blocker_circuit_active "$comments" '{}' owner/repo 42 '' 2>&1 >/dev/null) || true
+	[[ "$diag" == *'TERMINAL_BLOCKER_EVIDENCE_IGNORED count=2 reason=non_authoritative_author self_login=unset'* ]] || status=1
+	diag=$(TERMINAL_BLOCKER_NOW_EPOCH=1788696001 TERMINAL_BLOCKER_SELF_LOGIN=runner-bot terminal_blocker_circuit_active "$comments" '{}' owner/repo 42 '' 2>&1 >/dev/null) || true
+	[[ "$diag" != *'TERMINAL_BLOCKER_EVIDENCE_IGNORED'* ]] || status=1
+	print_result "collaborator runner recognises only its own hold evidence; OWNER/MEMBER retry still required" "$status"
+	return 0
+}
+
+# GH#33025 regression: repeated identical blockers from a collaborator runner
+# post one observation and one circuit instead of an observation per attempt.
+test_collaborator_runner_release_opens_circuit() {
+	local test_comments='[]' posted_count=0 status=1 last_body=""
+	terminal_blocker_fetch_trusted_comments() {
+		printf '%s\n' "$test_comments"
+		return 0
+	}
+	_hrff_release_repo_state_is_managed() { return 0; }
+	_hrff_resolve_release_runner_login() {
+		printf 'runner-bot\n'
+		return 0
+	}
+	clear_active_status_on_release() { return 0; }
+	set_issue_status() { return 0; }
+	_unlock_issue_after_dispatch_release() { return 0; }
+	gh() {
+		if [[ "$1" == "api" && "$2" == "repos/owner/repo/issues/42" ]]; then
+			printf '%s\n' '{"title":"Fix scope","body":"Files Scope: a.sh"}'
+			return 0
+		fi
+		return 1
+	}
+	_hrff_post_claim_released_comment() {
+		local body="$3"
+		posted_count=$((posted_count + 1))
+		last_body="$body"
+		test_comments=$(printf '%s' "$test_comments" | jq -c --arg body "$body" \
+			--arg created_at "2026-08-31T10:0${posted_count}:00Z" \
+			'. + [{body: $body, created_at: $created_at, author: "runner-bot", author_association: "COLLABORATOR"}]')
+		return 0
+	}
+	export DISPATCH_REPO_SLUG="owner/repo" WORKER_ISSUE_NUMBER=42
+	export AIDEVOPS_TERMINAL_BLOCKER_REPO_PATH="$TEST_ROOT"
+	AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT=$(_terminal_blocker_hash 'v2:permission_required')
+	export AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT
+	local attempt=0
+	for attempt in 1 2 3 4; do
+		_release_dispatch_claim "issue-42" "blocked" 2>/dev/null || true
+	done
+	if [[ "$posted_count" -eq 2 && "$last_body" == *"TERMINAL_BLOCKER_CIRCUIT active=true observations=2"* ]]; then
+		status=0
+	fi
+	print_result "collaborator runner opens one circuit for repeated identical blockers (attempt=${attempt}, posts=${posted_count})" "$status"
+	unset DISPATCH_REPO_SLUG WORKER_ISSUE_NUMBER AIDEVOPS_TERMINAL_BLOCKER_REPO_PATH \
+		AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT
+	return 0
+}
+
+test_circuit_hold_projects_blocked_and_releases() {
+	local status=1 projected=""
+	set_issue_status() {
+		projected="${projected}${3};"
+		return 0
+	}
+	_hrff_resolve_release_runner_login() {
+		printf 'runner-one\n'
+		return 0
+	}
+	_unlock_issue_after_dispatch_release() { return 0; }
+	_hrff_hold_terminal_blocker_circuit 42 owner/repo
+	[[ "$projected" == "blocked;" ]] || status=1
+	[[ "$projected" == "blocked;" ]] && status=0
+	print_result "open circuit projects status:blocked, never available" "$status"
+
+	# shellcheck source=../terminal-blocker-recovery-helper.sh
+	source "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh"
+	local circuit='[{"body":"TERMINAL_BLOCKER_CIRCUIT active=true observations=2"}]'
+	projected=""
+	_tbr_release_circuit_hold owner/repo 42 '{"body":"b","labels":[{"name":"status:blocked"}]}' "$circuit"
+	status=1
+	[[ "$projected" == "available;" ]] && status=0
+	print_result "re-armed circuit releases plain status:blocked to available" "$status"
+
+	local label=""
+	projected=""
+	for label in needs-maintainer-permissions hold-for-review status:in-review; do
+		_tbr_release_circuit_hold owner/repo 42 \
+			"{\"body\":\"b\",\"labels\":[{\"name\":\"status:blocked\"},{\"name\":\"${label}\"}]}" "$circuit"
+	done
+	_tbr_release_circuit_hold owner/repo 42 '{"body":"b","labels":[{"name":"bug"}]}' "$circuit"
+	_tbr_release_circuit_hold owner/repo 42 '{"body":"b","labels":[{"name":"status:blocked"}]}' '[{"body":"unrelated"}]'
+	status=1
+	[[ -z "$projected" ]] && status=0
+	print_result "other holds and non-circuit blocks are never released" "$status"
+	return 0
+}
+
 test_blocked_backoff_cli() {
 	local result="" status=0
 	result=$(
@@ -518,17 +725,94 @@ test_blocked_backoff_cli() {
 		TERMINAL_BLOCKER_NOW_EPOCH=1788696001 bash "${SCRIPT_DIR}/dispatch-dedup-helper.sh" has-dispatch-comment 42 owner/repo runner
 	) || status=1
 	[[ "$result" == 'TERMINAL_BLOCKER_BACKOFF failures=2 retry_after=1788696900' ]] || status=1
+	# GH#33025: the dispatcher's own collaborator login flows through the CLI.
+	result=$(
+		gh() {
+			[[ "$1" == api && "$2" == 'repos/owner/repo/issues/42/comments?per_page=100' ]] || return 1
+			jq -nc '[[range(13;15) | {id:.,body:"CLAIM_RELEASED reason=blocked runner=runner-bot ts=ignored",user:{login:"runner-bot"},author_association:"COLLABORATOR",created_at:"2026-09-06T12:00:00Z"}]]'
+			return 0
+		}
+		export -f gh
+		TERMINAL_BLOCKER_NOW_EPOCH=1788696001 bash "${SCRIPT_DIR}/dispatch-dedup-helper.sh" has-dispatch-comment 42 owner/repo runner-bot 2>/dev/null
+	) || status=1
+	[[ "$result" == 'TERMINAL_BLOCKER_BACKOFF failures=2 retry_after=1788696900' ]] || status=1
 	print_result "production dispatch CLI preserves paginated API authors and blocks legacy repeated releases" "$status"
 	return 0
 }
 
+test_push_policy_timeout_checkpoint() {
+	local output="${TEST_ROOT}/push-timeout.ndjson"
+	local status=0 fingerprint="" release="" head=""
+	printf '%s\n' '{"type":"text","text":"BLOCKED: command policy timed out under host load\nTERMINAL_BLOCKER_REASON=push_policy_timeout"}' >"$output"
+	terminal_blocker_capture_output "$output" || status=1
+	fingerprint="$AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT"
+	[[ "$(_terminal_blocker_reason "$fingerprint")" == push_policy_timeout ]] || status=1
+	[[ "$(_terminal_blocker_recovery "$fingerprint")" == *'owner=runner-recovery'* ]] || status=1
+	# Even repeated observations must not create a permanent task-revision hold.
+	local comments='[{"id":1,"body":"observation","author_association":"OWNER","created_at":"2026-10-01T00:00:00Z"}]'
+	[[ "$(terminal_blocker_release_mode "$comments" 111111111111111111111111 "$fingerprint")" == first ]] || status=1
+	local repo="${TEST_ROOT}/push-checkpoint"
+	command -p git clone -q --shared --bare "${SCRIPT_DIR}/../.." "$repo"
+	command -p git -C "$repo" branch feature/push-checkpoint
+	command -p git -C "$repo" symbolic-ref HEAD refs/heads/feature/push-checkpoint
+	head=$(command -p git -C "$repo" rev-parse HEAD)
+	release=$(AIDEVOPS_TERMINAL_BLOCKER_REPO_PATH="$repo" _hrff_build_claim_released_line push_policy_timeout fixture 0 1)
+	[[ "$release" == *'reason=push_policy_timeout'* && "$release" == *"branch=feature/push-checkpoint head=${head}"* ]] || status=1
+	[[ "$release" != *"$repo"* ]] || status=1
+	if ! (
+		# Use the existing classifier-fixture pattern from test-integration-recovery.
+		# shellcheck source=../headless-runtime-result.sh
+		source "${SCRIPT_DIR}/headless-runtime-result.sh"
+		_headless_private_workload_enabled() { return 1; }
+		output_has_completion_signal() { return 0; }
+		output_has_blocked_signal() { return 0; }
+		output_has_post_pr_handoff_signal() { return 1; }
+		output_has_missing_context_blocked_signal() { return 1; }
+		output_has_capability_blocked_signal() { return 1; }
+		print_warning() { return 0; }
+		# shellcheck disable=SC2034
+		role=worker session_key=issue-42 discovered_session="" selected_model=fixture work_dir="$repo"
+		output_file="$output"
+		result_rc=0
+		_run_failure_reason=""
+		_handle_run_result_success_output || result_rc=$?
+		[[ "$result_rc" == 83 && "$_run_failure_reason" == push_policy_timeout ]]
+	); then
+		status=1
+	fi
+	print_result "push policy timeout stays transient and releases exact branch/HEAD without paths" "$status"
+	return 0
+}
+
+test_runner_capability_class() {
+	local status=0 output="$TEST_ROOT/capability-output.jsonl" fingerprint="" revision="" fragment="" comments=""
+	printf '%s\n' '{"type":"text","text":"BLOCKED: staging secret cannot resolve\nTERMINAL_BLOCKER_REASON=runner_capability_unmet"}' >"$output"
+	terminal_blocker_capture_output "$output" || status=1
+	fingerprint="$AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT"
+	[[ "$(_terminal_blocker_reason "$fingerprint")" == runner_capability_unmet ]] || status=1
+	revision=$(terminal_blocker_task_revision '{}' owner/repo 42 '' runner_capability_unmet) || status=1
+	[[ "$(terminal_blocker_release_mode '[]' "$revision" "$fingerprint")" == first ]] || status=1
+	fragment=$(terminal_blocker_observation_fragment "$revision" "$fingerprint" first) || status=1
+	[[ "$fragment" == *'reason=runner_capability_unmet'* && "$fragment" == *'status:available'* ]] || status=1
+	terminal_blocker_circuit_comment release "$revision" "$fingerprint" >/dev/null && status=1
+	comments=$(jq -nc --arg body "CLAIM_RELEASED reason=blocked runner=maintainer ts=2026-01-01T00:00:00Z
+$fragment" '[{author_association:"OWNER",author:"maintainer",body:$body,created_at:"2026-01-01T00:00:00Z"},{author_association:"OWNER",author:"maintainer",body:$body,created_at:"2026-01-01T00:00:01Z"}]')
+	TERMINAL_BLOCKER_NOW_EPOCH=1767225660 terminal_blocker_backoff_active "$comments" >/dev/null && status=1
+	print_result "runner capability is known and never opens a shared circuit or backoff" "$status"
+	return 0
+}
+
 main() {
+	test_runner_capability_class
+	test_push_policy_timeout_checkpoint
 	test_normalized_blocker_fingerprint
 	test_worker_contract_reason_protocol
 	test_task_revision_inputs
 	test_release_modes_and_retry
 	test_dispatch_hold_revalidates_revision
 	test_brief_only_revision
+	test_external_trigger_pending_revision
+	test_input_required_owner_class
 	test_excluded_scope_revision
 	test_unknown_and_redaction
 	test_final_dossier_and_structural_precedence
@@ -538,6 +822,9 @@ main() {
 	test_permission_blocker_continuation
 	test_permission_blocker_stays_in_generic_lifecycle
 	test_same_second_release_ordering
+	test_self_authored_collaborator_evidence
+	test_collaborator_runner_release_opens_circuit
+	test_circuit_hold_projects_blocked_and_releases
 	test_blocked_backoff_cli
 	printf '\nTests run: %s failed: %s\n' "$TESTS_RUN" "$TESTS_FAILED"
 	[[ "$TESTS_FAILED" -eq 0 ]]

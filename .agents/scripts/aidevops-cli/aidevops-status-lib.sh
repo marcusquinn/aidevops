@@ -92,15 +92,6 @@ _status_recommended_tools() {
 _status_ai_tools() {
 	print_header "AI Tools & MCPs"
 	check_cmd opencode && print_success "OpenCode CLI" || print_warning "OpenCode CLI - not installed"
-	check_cmd bd && print_success "Beads CLI (task graph)" || print_warning "Beads CLI (bd) - not installed"
-	echo ""
-	return 0
-}
-
-_status_dev_envs() {
-	print_header "Development Environments"
-	check_dir "$INSTALL_DIR/python-env/dspy-env" && print_success "DSPy Python environment" || print_warning "DSPy Python environment - not created"
-	check_cmd dspyground && print_success "DSPyGround" || print_warning "DSPyGround - not installed"
 	echo ""
 	return 0
 }
@@ -311,7 +302,6 @@ cmd_status() {
 	check_cmd tea && print_success "Gitea CLI (tea)" || print_warning "Gitea CLI (tea) - not installed"
 	echo ""
 	_status_ai_tools
-	_status_dev_envs
 	_status_ai_configs
 	_status_runtime_config_parity
 	_status_headless_runtime_config
@@ -322,9 +312,9 @@ cmd_status() {
 	echo ""
 	print_header "Commit Signing"
 	local signing_format signing_key signing_enabled
-	signing_format=$(git config --global gpg.format 2>/dev/null || echo "")
-	signing_key=$(git config --global user.signingkey 2>/dev/null || echo "")
-	signing_enabled=$(git config --global commit.gpgsign 2>/dev/null || echo "")
+	signing_format=$(git config --global --get gpg.format 2>/dev/null || echo "")
+	signing_key=$(git config --global --get user.signingkey 2>/dev/null || echo "")
+	signing_enabled=$(git config --global --get commit.gpgsign 2>/dev/null || echo "")
 	if [[ "$signing_format" == "ssh" && -n "$signing_key" && "$signing_enabled" == "true" ]]; then
 		print_success "SSH commit signing enabled"
 		if check_file "$HOME/.ssh/allowed_signers"; then

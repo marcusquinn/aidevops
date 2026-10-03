@@ -64,7 +64,7 @@ test("issue arms persist across retries without changing the fallback or thinkin
     assert.equal(routingPrimary(merged, "standard"), first.model);
     // The shipped minimum reasoning level is medium even for a low-variant trial arm.
     assert.equal(routingVariant(merged, "standard", first.model), first.variant === "low" ? "medium" : first.variant);
-    assert.equal(routingPrimary(merged, "thinking"), "openai/gpt-6-sol");
+    assert.equal(routingPrimary(merged, "thinking"), "openai/gpt-6.1-sol");
     assert.equal(report(experiment, { directory }).arms[first.arm].assigned, 1);
     assert.equal(report(experiment, { directory }).excluded.length, 3);
     assert.deepEqual(assign(experiment, "example/repo", 12, { directory, now: windowStart + 72 * 3600 * 1000 }), first);
@@ -149,7 +149,7 @@ test("provider-family trial routes every tier of each enrolled issue to one prov
     assert.equal(config.enrollment.mode, "new-auto-dispatch-issues");
     assert.equal(Date.parse(config.ends_at) - Date.parse(config.starts_at), 168 * 3600 * 1000);
     assert.deepEqual(config.arms.map((arm) => arm.name), ["openai", "anthropic"]);
-    assert.deepEqual(config.arms[1].tiers.thinking, { model: "anthropic/claude-opus-5-5", variant: "medium" });
+    assert.deepEqual(config.arms[1].tiers.thinking, { model: "anthropic/claude-opus-5-5", variant: "high" });
     assert.deepEqual(config.arms[1].tiers.simple, { model: "anthropic/claude-haiku-4-5", variant: "high" });
     const createdAt = new Date(windowStart + 1000).toISOString();
     const labels = ["auto-dispatch", "status:available", "tier:thinking"];

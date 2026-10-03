@@ -77,6 +77,10 @@ jobs:
           if grep -q '^RESULT=pass$' canary-result.txt 2>/dev/null; then
             title="Promote passing OpenCode ${PROFILE} compatibility candidate"
             summary="The scheduled isolated Linux-headless OpenCode candidate canary passed."
+          elif grep -q '^RESULT=skip$' canary-result.txt 2>/dev/null; then
+            # Registry latest already matches the pin; no candidate ran and
+            # there is no compatibility failure to dispatch for review.
+            exit 0
           else
             title="OpenCode ${PROFILE} compatibility pin review is due"
             summary="The scheduled isolated Linux-headless OpenCode candidate canary did not pass."

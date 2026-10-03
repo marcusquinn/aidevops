@@ -158,4 +158,14 @@ else
 	fail=$((fail + 1))
 fi
 
+# shellcheck disable=SC2016 # Match the workflow shell variable literally.
+if grep -q "elif grep -q '\^RESULT=skip\$' canary-result.txt" "$workflow" &&
+	grep -A 4 "elif grep -q '\^RESULT=skip\$' canary-result.txt" "$workflow" | grep -q 'exit 0' &&
+	grep -q 'title="OpenCode ${PROFILE} compatibility pin review is due"' "$workflow"; then
+	printf 'PASS: unchanged pin skips review without suppressing failed or inconclusive candidates\n'
+else
+	printf 'FAIL: unchanged pin incorrectly creates a compatibility review\n' >&2
+	fail=$((fail + 1))
+fi
+
 exit "$fail"

@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,6 +14,7 @@ import { loadV1ToolHelper, tool } from "../tools.mjs";
 import v2Plugin, {
   applyV2PermissionEvaluation,
   createCompatibilityClient,
+  createV2CompletionNormalizer,
   defineAidevopsV2Adapter,
   detectOpenCodeV2RuntimeVersion,
   OPENCODE_V2_CAPABILITIES,
@@ -102,6 +104,72 @@ test("V2 event processing continues after one handler failure", async () => {
   await processed;
   await stop();
   assert.deepEqual(seen, ["first", "second"]);
+});
+
+// Captured through context-budget-helper.sh on OC2 2.0.3, 2026-10-03.
+// Session/message IDs are redacted; public usage/model/timestamps are unchanged.
+const capturedStepStart = {
+  type: "session.step.started", created: 1790995311574,
+  data: { sessionID: "ses_probe", assistantMessageID: "msg_probe", agent: "Build+",
+    model: { id: "claude-haiku-4-5", providerID: "anthropic", variant: "default" } },
+};
+const capturedStepEnd = {
+  type: "session.step.ended", created: 1790995311943,
+  data: { sessionID: "ses_probe", assistantMessageID: "msg_probe", finish: "stop",
+    cost: 0.02671675, tokens: { input: 3, output: 4, reasoning: 0, cache: { read: 0, write: 21355 } } },
+};
+
+test("captured OC2 step completion maps observed metadata and ignores incomplete/repeated events", () => {
+  const normalize = createV2CompletionNormalizer();
+  assert.equal(normalize(capturedStepEnd), null);
+  assert.equal(normalize(capturedStepStart), null);
+  for (const event of [undefined, {}, { type: "session.text.delta", data: capturedStepEnd.data },
+    { ...capturedStepEnd, created: undefined }, { ...capturedStepEnd, data: {} }]) {
+    assert.equal(normalize(event), null);
+  }
+  const completed = normalize(capturedStepEnd);
+  assert.equal(completed.type, "message.updated");
+  assert.deepEqual(completed.properties.info, {
+    id: "msg_probe", sessionID: "ses_probe", role: "assistant", providerID: "anthropic",
+    modelID: "claude-haiku-4-5", agent: "Build+", variant: "default", finish: "stop",
+    tokens: capturedStepEnd.data.tokens, cost: capturedStepEnd.data.cost,
+    time: { created: capturedStepStart.created, completed: capturedStepEnd.created },
+  });
+  assert.equal(normalize(capturedStepEnd), null);
+});
+
+test("production V2 event loop records exactly one SQLite row across replayed completion events", () => {
+  const root = mkdtempSync(join(tmpdir(), "aidevops-v2-usage-"));
+  try {
+    const result = spawnSync(process.execPath, ["--input-type=module", "-e", `
+      import { createV2CompletionNormalizer, startEventLoop } from ${JSON.stringify(new URL("../v2.mjs", import.meta.url).href)};
+      import { handleEvent, initObservability } from ${JSON.stringify(new URL("../observability.mjs", import.meta.url).href)};
+      import { sqliteExecSync, shutdownSqlite } from ${JSON.stringify(new URL("../../../scripts/sqlite-process.mjs", import.meta.url).href)};
+      initObservability({ runtimeVersion: "2.0.3", adapterId: "opencode-v2", aidevopsVersion: "3.37.91" });
+      const normalize = createV2CompletionNormalizer();
+      const events = ${JSON.stringify([capturedStepStart, capturedStepEnd, capturedStepEnd, capturedStepStart, capturedStepEnd])};
+      let done;
+      const processed = new Promise(resolve => { done = resolve; });
+      const stop = await startEventLoop({ event: { subscribe: () => ({ async *[Symbol.asyncIterator]() {
+        yield* events;
+        done();
+      } }) } }, input => {
+        handleEvent(input);
+        const completed = normalize(input.event);
+        if (completed) handleEvent({ event: completed });
+      });
+      await processed;
+      await stop();
+      await new Promise(resolve => setTimeout(resolve, 100));
+      console.log(sqliteExecSync("SELECT count(*) || '|' || model_id || '|' || session_id || '|' || tokens_input || '|' || tokens_output || '|' || tokens_cache_write || '|' || duration_ms || '|' || runtime_version || '|' || adapter_version FROM llm_requests;"));
+      shutdownSqlite();
+    `], { encoding: "utf8", timeout: 30000,
+      env: { ...process.env, AIDEVOPS_OBS_DB_OVERRIDE: join(root, "usage.db") } });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout.trim(), "1|claude-haiku-4-5|ses_probe|3|4|21355|369|2.0.3|opencode-v2@3.37.91");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 for (const budgetEnabled of [false, true]) test(`V2 setup registers SDK lifecycle hooks and disposes every registration (240K budget ${budgetEnabled ? "enabled" : "disabled"})`, async () => {

@@ -989,8 +989,10 @@ _dd_has_trusted_completion_after_dispatch() {
 has_dispatch_comment() {
 	local issue_number="$1"
 	local repo_slug="$2"
-	# $3 = self_login — unused since GH#15317 (trusted dispatch comments from
-	# every repository actor are checked regardless of author identity)
+	# self_login: dispatch comments from every trusted actor are checked
+	# regardless of author (GH#15317); it only identifies this runner's own
+	# terminal-blocker hold evidence (GH#33025).
+	local self_login="${3:-}"
 
 	if [[ ! "$issue_number" =~ ^[0-9]+$ ]] || [[ -z "$repo_slug" ]]; then
 		return 1
@@ -1013,8 +1015,10 @@ has_dispatch_comment() {
 	if [[ -z "$comments_json" || "$comments_json" == "null" || "$comments_json" == "[]" ]]; then
 		return 1
 	fi
-	if terminal_blocker_circuit_active "$comments_json" "${ISSUE_META_JSON:-}" \
-		"$repo_slug" "$issue_number" "${DISPATCH_REPO_PATH:-}"; then
+	# GH#33025: this runner's own collaborator-authored releases count as hold
+	# evidence; see terminal-blocker-circuit.sh _TBC_HOLD_EVIDENCE_JQ.
+	if TERMINAL_BLOCKER_SELF_LOGIN="$self_login" terminal_blocker_circuit_active "$comments_json" \
+		"${ISSUE_META_JSON:-}" "$repo_slug" "$issue_number" "${DISPATCH_REPO_PATH:-}"; then
 		return 0
 	fi
 
@@ -1221,6 +1225,12 @@ _classify_runtime_dispatch_blocker_reason() {
 			;;
 		*terminal_blocker_circuit*)
 			printf 'terminal_blocker_circuit\n'
+			return 0
+			;;
+		*terminal_blocker_backoff*)
+			# GH#33332: report the shared backoff as its own hold, not as an
+			# active claim, so pulse can cache it across cycles.
+			printf 'terminal_blocker_backoff\n'
 			return 0
 			;;
 		*dispatch_block_reason*ever_nmr_without_approval* | *blocked*ever*nmr*lacks*approval* | *requires*cryptographic*approval*)

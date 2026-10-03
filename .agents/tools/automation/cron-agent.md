@@ -181,4 +181,3 @@ Remote server env vars: `OPENCODE_HOST`, `OPENCODE_PORT`, `OPENCODE_SERVER_PASSW
 - `tools/ai-assistants/opencode-server.md` — OpenCode server API and full plist/service templates
 - `mail-helper.sh` — inter-agent mailbox for notifications
 - `memory-helper.sh` — cross-session memory for task context
-- `workflows/ralph-loop.md` — iterative AI development patterns

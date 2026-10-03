@@ -750,14 +750,14 @@ _pmp_log_repo_timing_rows() {
 	local primary_rows="$1"
 	local diagnostic_rows="$2"
 	local repo_slug="" total_s=0 list_s=0 mergeability_s=0 ruleset_s=0 branch_protection_s=0 list_state="complete"
-	local merged=0 closed=0 failed=0 pr_count=0 stuck_s=0
+	local merged=0 closed=0 failed=0 pr_count=0 stuck_s=0 enrichment_s=0 pr_s=0 slowest_pr=""
 
-	while IFS='|' read -r repo_slug total_s list_s mergeability_s ruleset_s branch_protection_s merged closed failed pr_count list_state; do
+	while IFS='|' read -r repo_slug total_s list_s mergeability_s ruleset_s branch_protection_s merged closed failed pr_count list_state enrichment_s pr_s slowest_pr; do
 		[[ -n "$repo_slug" ]] || continue
 		stuck_s=$(_pmp_diagnostic_seconds_for_repo "$diagnostic_rows" "$repo_slug")
 		[[ "$total_s" =~ ^[0-9]+$ ]] || total_s=0
 		total_s=$((total_s + stuck_s))
-		_pmp_log_repo_timing_summary "$repo_slug" "$total_s" "$list_s" "$mergeability_s" "$ruleset_s" "$branch_protection_s" "$stuck_s" "$merged" "$closed" "$failed" "$pr_count" "$list_state"
+		_pmp_log_repo_timing_summary "$repo_slug" "$total_s" "$list_s" "$mergeability_s" "$ruleset_s" "$branch_protection_s" "$stuck_s" "$merged" "$closed" "$failed" "$pr_count" "$list_state" "$enrichment_s" "$pr_s" "$slowest_pr"
 	done <<<"$primary_rows"
 	return 0
 }
@@ -832,6 +832,7 @@ _pmp_process_merge_repo_for_pass() {
 
 	local repo_merged=0 repo_closed=0 repo_failed=0 _mr_repo_pr_count=0
 	local _mr_repo_list_s=0 _mr_repo_mergeability_s=0 _mr_repo_ruleset_s=0 _mr_repo_branch_protection_s=0 _mr_repo_list_state="complete"
+	local _mr_repo_enrichment_s=0 _mr_repo_pr_s=0 _mr_repo_slowest_pr=""
 	local _mr_repo_start _mr_repo_total_s=0
 	_mr_repo_start=$(_pmp_now_epoch)
 
@@ -841,7 +842,7 @@ _pmp_process_merge_repo_for_pass() {
 	_pmp_add_counter_var "$total_closed_var" "$repo_closed"
 	_pmp_add_counter_var "$total_failed_var" "$repo_failed"
 	_pmp_add_elapsed_seconds _mr_repo_total_s "$_mr_repo_start"
-	_PMP_LAST_REPO_TIMING_ROW="${repo_slug}|${_mr_repo_total_s}|${_mr_repo_list_s}|${_mr_repo_mergeability_s}|${_mr_repo_ruleset_s}|${_mr_repo_branch_protection_s}|${repo_merged}|${repo_closed}|${repo_failed}|${_mr_repo_pr_count}|${_mr_repo_list_state}"
+	_PMP_LAST_REPO_TIMING_ROW="${repo_slug}|${_mr_repo_total_s}|${_mr_repo_list_s}|${_mr_repo_mergeability_s}|${_mr_repo_ruleset_s}|${_mr_repo_branch_protection_s}|${repo_merged}|${repo_closed}|${repo_failed}|${_mr_repo_pr_count}|${_mr_repo_list_state}|${_mr_repo_enrichment_s}|${_mr_repo_pr_s}|${_mr_repo_slowest_pr}"
 	if [[ "$_mr_repo_rc" -eq 5 ]]; then
 		echo "[pulse-wrapper] Deterministic merge pass paused mid-repo ${repo_slug}; PR cursor persisted" >>"$logfile"
 		printf -v "$completed_all_var" '%s' '0'

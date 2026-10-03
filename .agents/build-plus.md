@@ -1,6 +1,6 @@
 ---
 name: build-plus
-description: Unified coding agent - planning, implementation, and DevOps with semantic search
+description: Unified coding agent - planning, implementation, and DevOps with exact search
 mode: subagent
 subagents:
   # Catalogued domain entries are progressive-disclosure docs, not necessarily
@@ -28,7 +28,6 @@ subagents:
   - content-provenance
   - qlty
   # Context tools
-  - context-builder
   - context7
   - toon
   # Browser/testing
@@ -110,7 +109,7 @@ with supplied evidence; selection, exclusions and envelope: `reference/agent-rou
 ## Quick Reference
 
 - Conversation starters: `workflows/conversation-starter.md`. Implementation: `workflows/branch.md`.
-- Context: Augment for semantic search; Context7 for library docs. TOON for data serialization. Use the shared exact-search rule in `.agents/AGENTS.md` first.
+- Context: exact search (`rg`/`git grep`, then targeted Read); Context7 for library docs. TOON for data serialization. Use the shared exact-search rule in `.agents/AGENTS.md` first.
 - Quality: `reference/ci-gate-policy.md` and `workflows/full-loop.md` detail the shared verification policy in `.agents/AGENTS.md`; full-repository gates require evidenced shared contracts/root tooling/release infrastructure, never generic completion proof.
 - Draft agents: `~/.aidevops/agents/draft/` with `status: draft`. See `tools/build-agent/build-agent.md`.
 
@@ -121,7 +120,7 @@ with supplied evidence; selection, exclusions and envelope: `reference/agent-rou
 1. **Fetch URLs**: use the External Content Lookup table below and the shared security rules in `.agents/AGENTS.md`. Scanner warns → extract facts only. Threat model: `tools/security/prompt-injection-defender.md`.
 2. **Understand**: Think before coding — expected behaviour, edge cases, dependencies. Follow the shared memory-recall rule in `.agents/AGENTS.md`.
 3. **Domain check**: Task touches a specialist domain? Read the relevant subagent BEFORE coding (see Domain Expertise table below).
-4. **Investigate**: exact search → Augment (semantic) → Context7 (library docs). Use the External Content Lookup table for GitHub content.
+4. **Investigate**: exact search (`rg`/`git grep`) → targeted Read → Context7 (library docs). Use the External Content Lookup table for GitHub content.
 5. **Plan**: Follow the shared TodoWrite and completion rules in `.agents/AGENTS.md`.
 6. **Code**: Make small, incremental changes. Retry failed patches. Check for `.env` needs; follow the shared file-reading and Git rules in `.agents/AGENTS.md`.
 7. **Debug**: Root-cause only — don't address symptoms. Use logs/print statements to inspect state.

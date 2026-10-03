@@ -1,116 +1,19 @@
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Gotchas & Debugging
 
-## Timeouts
+Start with the failing instance and step, then fetch the relevant guide before changing code or resource limits.
 
-- **Step**: 10 min/attempt default. CPU: 30s default, 5min max (`limits.cpu_ms = 300_000` in wrangler.toml)
-- **waitForEvent**: 24h default, 365d max. **Throws on timeout** — always wrap in try-catch
+| Symptom or question | What to check |
+| --- | --- |
+| Step timeout or repeated failure | [Sleeping and retrying](https://developers.cloudflare.com/workflows/build/sleeping-and-retrying/index.md) for per-attempt timeout, retry policy, and non-retryable failures |
+| CPU exhaustion despite a short run | [Limits](https://developers.cloudflare.com/workflows/reference/limits/index.md) for active CPU budgets; increasing an elapsed-time timeout does not increase CPU capacity |
+| Missing event or event timeout | [Events and parameters](https://developers.cloudflare.com/workflows/build/events-and-parameters/index.md) for instance targeting, event type/payload requirements, and timeout handling |
+| State disappears or branches change after resuming | [Rules of Workflows](https://developers.cloudflare.com/workflows/build/rules-of-workflows/index.md) for persisted step returns, deterministic names and conditionals, and awaited operations |
+| Duplicate charge, write, or notification | Review the destination's idempotency guarantees and [step design](workflows-patterns.md#design-decisions); retries can repeat an external operation even when its previous attempt committed |
+| Instance ID collision or unexpected batch result | [Workers API](https://developers.cloudflare.com/workflows/build/workers-api/index.md) for creation semantics, plus [limits](https://developers.cloudflare.com/workflows/reference/limits/index.md) for retention |
+| Oversized results, queued instances, or missing historical data | [Limits](https://developers.cloudflare.com/workflows/reference/limits/index.md) for return/event sizes, concurrency, creation rates, and retention; export required long-term results before expiry |
+| Local-only failure or failing introspection test | [Local development](https://developers.cloudflare.com/workflows/build/local-development/index.md) and [Workflow test APIs](https://developers.cloudflare.com/workers/testing/vitest-integration/test-apis/index.md#workflows) |
+| Inspect execution and cost | [Metrics and analytics](https://developers.cloudflare.com/workflows/observability/metrics-analytics/index.md), [Wrangler commands](https://developers.cloudflare.com/workflows/reference/wrangler-commands/index.md), and [pricing](https://developers.cloudflare.com/workflows/reference/pricing/index.md) |
 
-```typescript
-await step.do('long op', {timeout: '30 minutes'}, async () => { /* ... */ });
+CPU time measures active computation; waiting for network or storage I/O is elapsed time. Event waits, sleeps, and retry delays also have their own documented behavior. Check the current limits page for how these states affect concurrency and step accounting rather than treating every wait as active execution.
 
-try {
-  const event = await step.waitForEvent('wait', { type: 'approval', timeout: '1h' });
-} catch (e) { /* Timeout - proceed with default */ }
-```
-
-## Limits
-
-| Limit | Free | Paid |
-|-------|------|------|
-| CPU per step | 10ms | 30s (default), 5min (max) |
-| Step state | 1 MiB | 1 MiB |
-| Instance state | 100 MB | 1 GB |
-| Steps per workflow | 1,024 | 1,024 |
-| Executions/day | 100k | Unlimited |
-| Concurrent instances | 25 | 10k |
-| State retention | 3d | 30d |
-
-`step.sleep()` doesn't count toward step limit.
-
-## Debugging
-
-```typescript
-// Logs: inside steps = logged once; outside steps = may duplicate on restart
-await step.do('process', async () => {
-  console.log('Logged once per successful step');
-  return result;
-});
-```
-
-```bash
-# Instance status via CLI
-npx wrangler workflows instances describe my-workflow instance-id
-```
-
-```typescript
-// Instance status via API
-const status = await (await env.MY_WORKFLOW.get('instance-id')).status();
-// queued | running | paused | errored | terminated | complete | waiting | waitingForPause | unknown
-```
-
-## Common Pitfalls
-
-**Non-deterministic names/conditionals** — step names are cache keys; non-deterministic values break replay:
-
-```typescript
-// ❌ await step.do(`step-${Date.now()}`, ...)
-// ✅ await step.do(`step-${event.instanceId}`, ...)
-
-// ❌ if (Date.now() > deadline) { await step.do(...) }
-// ✅ const isLate = await step.do('check', async () => Date.now() > deadline);
-//    if (isLate) { await step.do(...) }
-```
-
-**State in variables** — local vars lost on hibernation; persist via step returns:
-
-```typescript
-// ❌ let total = 0; await step.do('s1', async () => { total += 10; });
-// ✅ const total = await step.do('s1', async () => 10);
-```
-
-**Large step returns** — step state capped at 1 MiB; store in R2/KV, return refs:
-
-```typescript
-// ❌ return await fetchHugeDataset(); // 5 MiB
-// ✅ Store in R2, return { key }
-```
-
-**Idempotency ignored** — steps retry on failure; side effects must be idempotent:
-
-```typescript
-// ❌ await step.do('charge', async () => await chargeCustomer(...));
-// ✅ Check if already charged first; use NonRetryableError for permanent failures
-```
-
-**Instance ID collision** — IDs must be unique within retention window:
-
-```typescript
-// ❌ await env.MY_WORKFLOW.create({ id: userId, params: {} });
-// ✅ await env.MY_WORKFLOW.create({ id: `${userId}-${Date.now()}`, params: {} });
-```
-
-**Missing await** — unawaited steps are fire-and-forget:
-
-```typescript
-// ❌ step.do('task', ...);
-// ✅ await step.do('task', ...);
-```
-
-## Pricing
-
-| Metric | Free | Paid |
-|--------|------|------|
-| Requests | 100k/day | 10M/mo + $0.30/M |
-| CPU time | 10ms/invoke | 30M CPU-ms/mo + $0.02/M CPU-ms |
-| Storage | 1 GB | 1 GB/mo + $0.20/GB-mo |
-
-Storage includes all instances (running/errored/sleeping/completed). Retention: 3d (Free), 30d (Paid).
-
-## References
-
-[Docs](https://developers.cloudflare.com/workflows/) | [Guide](https://developers.cloudflare.com/workflows/get-started/guide/) | [Workers API](https://developers.cloudflare.com/workflows/build/workers-api/) | [REST API](https://developers.cloudflare.com/api/resources/workflows/) | [Examples](https://developers.cloudflare.com/workflows/examples/) | [Limits](https://developers.cloudflare.com/workflows/reference/limits/) | [Pricing](https://developers.cloudflare.com/workflows/reference/pricing/)
-
-See: [workflows.md](./workflows.md), [workflows-patterns.md](./workflows-patterns.md)
+See [README.md](workflows.md), [configuration.md](workflows-configuration.md), [api.md](workflows-api.md), and [patterns.md](workflows-patterns.md).

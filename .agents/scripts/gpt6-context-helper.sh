@@ -19,7 +19,8 @@ Usage: aidevops gpt6-context [enable|disable|status]
   disable  Restore native provider metadata for the managed models.
   status   Show the saved preference and a fresh-process effective-config probe.
 
-The mode covers gpt-6-sol, gpt-6-sol-fast, gpt-6-luna, and gpt-6-luna-fast.
+The mode covers gpt-6.1-sol, gpt-6.1-sol-fast, gpt-6-sol, gpt-6-sol-fast,
+gpt-6-luna, and gpt-6-luna-fast.
 It preserves model options, variants, and explicit output limits. Other models
 and global compaction settings are unchanged. Preferences survive normal updates.
 Restart OpenCode after changes. A probe cannot update an already running session.
@@ -47,7 +48,7 @@ report_probe() {
 		(.details.config_applied.gpt6_context |
 		 .target == 240000 and .managed == $managed and (.auto | type == "boolean") and
 		 (if .managed then
-			(["gpt-6-sol","gpt-6-sol-fast","gpt-6-luna","gpt-6-luna-fast"] as $ids |
+			(["gpt-6.1-sol","gpt-6.1-sol-fast","gpt-6-sol","gpt-6-sol-fast","gpt-6-luna","gpt-6-luna-fast"] as $ids |
 			 . as $health |
 			 (.models | type == "object") and
 			 all($ids[]; . as $id |

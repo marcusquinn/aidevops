@@ -57,6 +57,9 @@ eval "$(extract_function "$COMMIT_HELPER" _validate_completion_bookkeeping_pr_bo
 eval "$(extract_function "$COMMIT_HELPER" _validate_closed_issue_completion_bookkeeping)"
 eval "$(extract_function "$COMMIT_HELPER" _create_or_continue_pr)"
 eval "$(extract_function "$MAIN_HELPER" cmd_commit_and_pr)"
+eval "$(extract_function "$MAIN_HELPER" _commit_and_pr_prepare_metadata)"
+eval "$(extract_function "$MAIN_HELPER" _commit_and_pr_check_readiness)"
+eval "$(extract_function "$MAIN_HELPER" _commit_and_pr_publish)"
 
 _FULL_LOOP_TRUE="true"
 FULL_LOOP_COMPLETION_BOOKKEEPING_AUDIT=""
@@ -201,6 +204,14 @@ _stage_and_commit() {
 _finalize_wip_history() {
 	local commit_message="$1"
 	[[ -n "$commit_message" ]] || return 1
+	return 0
+}
+
+# GH#33253: no fixture in this suite exercises --replace-pr, so ancestry is
+# always a no-op skip (mirrors the real helper's behavior without a replacement).
+REPLACEMENT_PR_ANCESTRY_VALIDATED=0
+_validate_replacement_pr_ancestry() {
+	REPLACEMENT_PR_ANCESTRY_VALIDATED=0
 	return 0
 }
 

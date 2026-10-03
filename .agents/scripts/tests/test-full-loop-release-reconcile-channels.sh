@@ -47,6 +47,10 @@ if [[ "$args" == *" workflow run publish-packages.yml "* ]]; then
 	exit 0
 fi
 if [[ "$args" == *" -f event=push "* ]]; then
+	if [[ "$args" != *" -f head_sha=3333333333333333333333333333333333333333 "* ]]; then
+		printf '%s\n' '{"workflow_runs":[]}'
+		exit 0
+	fi
 	push_branch='v1.2.3'
 	[[ "${FAKE_PUSH_BRANCH_MODE:-valid}" == "mismatch" ]] && push_branch='v9.9.9'
 	printf '{"workflow_runs":[{"id":10,"event":"push","head_branch":"%s","head_sha":"3333333333333333333333333333333333333333","status":"completed","conclusion":"success","created_at":"2026-07-27T00:00:00Z","display_title":"push","html_url":"push-url"}]}\n' "$push_branch"

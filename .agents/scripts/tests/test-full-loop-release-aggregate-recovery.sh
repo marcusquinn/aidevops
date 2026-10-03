@@ -1118,14 +1118,20 @@ printf 'PASS failed pre-publication preparation admits only reviewed direct, agg
 		local repo="$1"
 		local source_pr="$2"
 		local expected_sources="$3"
-		[[ "$repo" == "test/repo" && "$source_pr" == "42" && -n "$expected_sources" ]] || return 1
+		local normalized_sources=""
+		[[ "$repo" == "test/repo" && "$source_pr" == "42" ]] || return 1
 		_FULL_LOOP_AGGREGATE_RECOVERY_EXPECTED="$prepublication_expected"
 		if [[ "$prepublication_mode" == "snapshot" ]]; then
+			if [[ -n "$expected_sources" ]]; then
+				normalized_sources=$(_full_loop_recovery_resolve_lane_authorization "$expected_sources" "$prepublication_expected") || return 1
+				release_authorization_compare "$normalized_sources" "$prepublication_expected" || return 1
+			fi
 			_FULL_LOOP_RESOLVED_SOURCE_JSON=$(jq -cn \
 				--arg merge 5555555555555555555555555555555555555555 \
 				--arg base 1111111111111111111111111111111111111111 \
 				'{mode:"snapshot",source_merge:$merge,snapshot_base:$base}')
 		else
+			[[ -n "$expected_sources" ]] || return 1
 			_FULL_LOOP_RESOLVED_SOURCE_JSON="{\"mode\":\"${prepublication_mode}\"}"
 		fi
 		printf 'prepare-prepublication\n' >>"$RESERVED_LOG"
@@ -1365,6 +1371,33 @@ printf 'PASS failed pre-publication preparation admits only reviewed direct, agg
 	[[ "$authorization" == "$expanded_manifest" && "$lane_phase" == "reserved" ]]
 	prepublication_mode=aggregate
 	printf 'PASS verified expanded snapshot retry repins before release preparation\n'
+
+	: >"$RESERVED_LOG"
+	authorization="$old_manifest"
+	lane_phase=reconcile-required
+	test_lane_sources="$old_manifest"
+	prepublication_marker=false
+	prepublication_failed_sources="$old_manifest"
+	prepublication_mode=snapshot
+	# Advanced main now includes PR 43; omission must reach snapshot discovery.
+	_full_loop_recovery_expand_reserved_authorization test/repo 42 "$old_manifest" patch "" >/dev/null
+	[[ "$(tr '\n' ' ' <"$RESERVED_LOG")" == "prepare-prepublication validate verify-failure acquire reopen fence expand-auth finish repin " ]]
+	[[ "$authorization" == "$expanded_manifest" && "$lane_phase" == "reserved" ]]
+	printf 'PASS implicit tagless snapshot retry expands authorization and repins advanced main\n'
+
+	: >"$RESERVED_LOG"
+	authorization="$old_manifest"
+	lane_phase=reconcile-required
+	test_lane_sources="$old_manifest"
+	prepublication_marker=false
+	prepublication_failed_sources="$old_manifest"
+	if _full_loop_recovery_expand_reserved_authorization test/repo 42 "$old_manifest" patch "$old_manifest" >/dev/null 2>&1; then
+		printf 'FAIL explicit stale snapshot assertion accepted advanced main\n'
+		exit 1
+	fi
+	[[ ! -s "$RESERVED_LOG" && "$authorization" == "$old_manifest" && "$lane_phase" == "reconcile-required" ]]
+	prepublication_mode=aggregate
+	printf 'PASS explicit stale snapshot retry fails before any authorization or lane write\n'
 
 	: >"$RESERVED_LOG"
 	authorization="$old_manifest"

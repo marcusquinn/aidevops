@@ -11,6 +11,9 @@ IFS=$'\n\t'
 trap 'rc=$?; echo "[ERROR] ${BASH_SOURCE[0]}:${LINENO} exit $rc" >&2' ERR
 shopt -s inherit_errexit 2>/dev/null || true
 
+# shellcheck source=../_opencode_config_paths.sh
+source "${BASH_SOURCE[0]%/*}/../_opencode_config_paths.sh"
+
 _SETUP_GOOGLE_ANALYTICS_MCP_KEY="google-analytics-mcp"
 _SETUP_GOOGLE_ANALYTICS_MCP_LABEL="Google Analytics MCP"
 
@@ -688,15 +691,12 @@ _setup_opencode_v2_link_framework_guide() {
 # aidevops V2 plugin, its agents and its OAuth pool request hooks, and V2 then
 # fails with "API key is invalid" (GH#32738). Prints the path unchanged, or
 # nothing when it belongs to an aidevops-managed V2 runtime.
+# find_opencode_config additionally rejects ambient OPENCODE_CONFIG /
+# OPENCODE_CONFIG_DIR paths owned by other programs (GH#33046).
 _setup_opencode_v1_ambient_path() {
 	local candidate="$1"
-	local v2_root="${AIDEVOPS_OPENCODE_V2_ROOT:-${HOME}/.aidevops/runtimes/opencode-v2}"
-	local v2_config_home="${AIDEVOPS_OPENCODE_V2_CONFIG_HOME:-${v2_root}/config}"
-
-	case "$candidate" in
-	"" | "$v2_root" | "$v2_root"/* | "$v2_config_home" | "$v2_config_home"/*) return 0 ;;
-	*/.aidevops/runtimes/opencode-v2 | */.aidevops/runtimes/opencode-v2/*) return 0 ;;
-	esac
+	[[ -n "$candidate" ]] || return 0
+	opencode_config_path_is_v2_owned "$candidate" && return 0
 	printf '%s\n' "$candidate"
 	return 0
 }

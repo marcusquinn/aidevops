@@ -1,49 +1,44 @@
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Cloudflare Network Interconnect (CNI)
 
-Private, high-performance connectivity to Cloudflare's network. **Enterprise-only** and **not SLA-backed** — keep backup Internet connectivity. Typical lead time: **2-4 weeks**.
+Private, high-performance connectivity to Cloudflare's network. **Enterprise-only**.
 
-## Connection type
+## Connection Types
 
-| Type | Use when | Notes |
-|------|----------|-------|
-| **Direct** | You share a datacenter with Cloudflare | Physical fiber cross-connect, 10/100 Gbps |
-| **Partner** | You want a faster virtual handoff | Via Console Connect, Equinix, Megaport, or similar SDN partner |
-| **Cloud** | You connect from AWS Direct Connect or GCP Cloud Interconnect | Magic WAN only |
+**Direct**: Physical fiber in shared datacenter. 10/100 Gbps. You order cross-connect.
 
-## Dataplane version
+**Partner**: Virtual via Console Connect, Equinix, Megaport, etc. Managed via partner SDN.
 
-| Version | Prefer when | Limits |
-|---------|-------------|--------|
-| **v1 (Classic)** | You need GRE, VLAN, BFD, LACP, or peering | Asymmetric MTU (1500↓/1476↑) |
-| **v2 (Beta)** | You want native 1500-byte MTU and simpler routing | No GRE, VLAN, BFD, or LACP; uses ECMP |
+**Cloud**: AWS Direct Connect or GCP Cloud Interconnect. Magic WAN only.
 
-Default to **v2** unless you need a v1-only feature.
+## Dataplane Versions
 
-## Supported deployments
+**v1 (Classic)**: GRE tunnel support, VLAN/BFD/LACP, asymmetric MTU (1500↓/1476↑), peering support.
 
-| Deployment | Version |
-|------------|---------|
-| Magic Transit DSR (DDoS protection, egress via ISP) | v1/v2 |
-| Magic Transit + Egress (DDoS protection + egress via CF) | v1/v2 |
-| Magic WAN + Zero Trust (private backbone; v1 needs GRE, v2 native) | v1/v2 |
-| App Security (WAF, Cache, or Load Balancing over Magic Transit) | v1/v2 |
-| Peering (public routes at a PoP) | v1 only |
+**v2 (Beta)**: No GRE, 1500 MTU both ways, no VLAN/BFD/LACP yet, ECMP instead.
 
-## Requirements and limits
+## Use Cases
 
-| Requirement | Detail |
-|-------------|--------|
-| Plan | Enterprise |
-| Prefixes | IPv4 /24+ or IPv6 /48+ |
-| BGP ASN | Required for v1 |
-| Subnets | /31 point-to-point |
-| Optical distance | 10 km max |
-| 10G optics | 10GBASE-LR single-mode |
-| 100G optics | 100GBASE-LR4 single-mode |
-| Locations | [locations PDF](https://developers.cloudflare.com/network-interconnect/static/cni-locations-30-10-2025.pdf) |
+- **Magic Transit DSR**: DDoS protection, egress via ISP (v1/v2)
+- **Magic Transit + Egress**: DDoS + egress via CF (v1/v2)
+- **Magic WAN + Zero Trust**: Private backbone (v1 needs GRE, v2 native)
+- **Peering**: Public routes at PoP (v1 only)
+- **App Security**: WAF/Cache/LB (v1/v2 over Magic Transit)
+
+## Prerequisites
+
+- Enterprise plan
+- IPv4 /24+ or IPv6 /48+ prefixes
+- BGP ASN for v1
+- See [locations PDF](https://developers.cloudflare.com/network-interconnect/locations/index.md)
+
+## Specs
+
+- /31 point-to-point subnets
+- 10km max optical distance
+- 10G: 10GBASE-LR single-mode
+- 100G: 100GBASE-LR4 single-mode
+- **No SLA** (free service)
+- Backup Internet required
 
 ## Throughput
 
@@ -51,9 +46,56 @@ Default to **v2** unless you need a v1-only feature.
 |-----------|-----|------|
 | CF → Customer | 10 Gbps | 100 Gbps |
 | Customer → CF (peering) | 10 Gbps | 100 Gbps |
-| Customer → CF (Magic) | 1 Gbps per tunnel or CNI | 1 Gbps per tunnel or CNI |
+| Customer → CF (Magic) | 1 Gbps/tunnel or CNI | 1 Gbps/tunnel or CNI |
 
-## See also
+## Timeline
 
-- [network-interconnect-patterns.md](./network-interconnect-patterns.md) — HA, hybrid cloud, failover
-- [network-interconnect-gotchas.md](./network-interconnect-gotchas.md) — Troubleshooting, limits
+2-4 weeks typical. Steps: request → config review → order connection → configure → test → enable health checks → activate → monitor.
+
+## In This Reference
+
+- [configuration.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/network-interconnect/configuration.md) - BGP, routing, setup
+- [api.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/network-interconnect/api.md) - API endpoints, SDKs
+- [patterns.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/network-interconnect/patterns.md) - HA, hybrid cloud, failover
+- [gotchas.md](network-interconnect-gotchas.md) - Troubleshooting, limits
+
+## Reading Order by Task
+
+| Task | Files to Load |
+|------|---------------|
+| Initial setup | README → configuration.md → api.md |
+| Create interconnect via API | api.md → gotchas.md |
+| Design HA architecture | patterns.md → README |
+| Troubleshoot connection | gotchas.md → configuration.md |
+| Cloud integration (AWS/GCP) | configuration.md → patterns.md |
+| Monitor + alerts | configuration.md |
+
+## Automation Boundary
+
+**API-Automatable:**
+- List/create/delete interconnects (Direct, Partner)
+- List available slots
+- Get interconnect status
+- Download LOA PDF
+- Create/update CNI objects (BGP config)
+- Query settings
+
+**Requires Account Team:**
+- Initial request approval
+- AWS Direct Connect setup (send LOA+VLAN to CF)
+- GCP Cloud Interconnect final activation
+- Partner interconnect acceptance (Equinix, Megaport)
+- VLAN assignment (v1)
+- Configuration document generation (v1)
+- Escalations + troubleshooting support
+
+**Cannot Be Automated:**
+- Physical cross-connect installation (Direct)
+- Partner portal operations (virtual circuit ordering)
+- AWS/GCP portal operations
+- Maintenance window coordination
+
+## See Also
+
+- [tunnel](../tunnel/) - Alternative for private network connectivity
+- [spectrum](../spectrum/) - Layer 4 proxy for TCP/UDP traffic

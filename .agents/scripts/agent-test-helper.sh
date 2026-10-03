@@ -684,64 +684,6 @@ _cmd_run_save_results() {
 }
 
 #######################################
-# Sync test results to pattern tracker backbone (t1094)
-# Arguments:
-#   $1 - suite name
-#   $2 - suite agent
-#   $3 - suite model
-#   $4 - passed count
-#   $5 - failed count
-#   $6 - total duration in seconds
-#######################################
-_cmd_run_sync_pattern_tracker() {
-	local suite_name="$1"
-	local suite_agent="$2"
-	local suite_model="$3"
-	local passed="$4"
-	local failed="$5"
-	local total_duration="$6"
-
-	local pt_helper="${SCRIPT_DIR}/archived/pattern-tracker-helper.sh"
-	[[ -x "$pt_helper" ]] || return 0
-
-	local pt_outcome="success"
-	[[ "$failed" -gt 0 ]] && pt_outcome="failure"
-
-	local model_tier=""
-	case "${suite_model:-}" in
-	*haiku* | *terra* | *flash*) model_tier="simple" ;;
-	*opus* | *pro*) model_tier="thinking" ;;
-	*) model_tier="standard" ;;
-	esac
-
-	local pt_quality=""
-	if [[ "$failed" -eq 0 ]]; then
-		pt_quality="ci-pass-first-try"
-	elif [[ "$passed" -gt 0 ]]; then
-		pt_quality="ci-pass-after-fix"
-	else
-		pt_quality="needs-human"
-	fi
-
-	local pt_desc="Agent test suite '${suite_name}': ${passed} passed, ${failed} failed"
-	[[ -n "$suite_agent" ]] && pt_desc="${pt_desc} (agent: ${suite_agent})"
-
-	local pt_args=(
-		--outcome "$pt_outcome"
-		--task-type "testing"
-		--description "$pt_desc"
-		--quality "$pt_quality"
-		--duration "$total_duration"
-		--tags "agent-test,suite:${suite_name}"
-		--source "build-agent"
-	)
-	[[ -n "$model_tier" ]] && pt_args+=(--model "$model_tier")
-
-	"$pt_helper" score "${pt_args[@]}" >/dev/null 2>&1 || true
-	return 0
-}
-
-#######################################
 # Emit composite metric JSON for autoresearch integration
 # Arguments:
 #   $1 - suite name
@@ -946,10 +888,6 @@ cmd_run() {
 	if [[ "$json_output" == "false" ]]; then
 		log_info "Results saved: $result_file"
 	fi
-
-	_cmd_run_sync_pattern_tracker \
-		"$suite_name" "$suite_agent" "$suite_model" \
-		"$passed" "$failed" "$total_duration"
 
 	if [[ "$json_output" == "true" ]]; then
 		_cmd_run_emit_json_metrics "$suite_name" "$passed" "$failed" "$skipped" "$results"

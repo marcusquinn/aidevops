@@ -54,6 +54,7 @@ git -C "$REPO" checkout -q main
 
 cat >"$BIN/gh" <<'STUB'
 #!/usr/bin/env bash
+printf '%s\n' "$*" >>"$GH_LOG"
 case "$*" in
 *'pulls?state=open&'*) printf '%s\n' '[{"state":"open","head":{"ref":"fork-pr","sha":"x"},"merged_at":null},{"state":"open","head":{"ref":"open-pr","sha":"x"},"merged_at":null}]' ;;
 *'example:squash&'*) printf '[{"state":"closed","head":{"ref":"squash","sha":"%s"},"merged_at":"2026-09-29T00:00:00Z"}]\n' "$SQUASH_SHA" ;;
@@ -62,6 +63,7 @@ esac
 STUB
 chmod +x "$BIN/gh"
 export SQUASH_SHA
+export GH_LOG="$ROOT/gh.log"
 export AIDEVOPS_WORKTREE_BASE_DIR="$ROOT/transport"
 export AUDIT_LOG_DIR="$ROOT/audit"
 dry=$(PATH="$BIN:$PATH" bash "$HELPER" --repo "$REPO")
@@ -73,6 +75,12 @@ assert_has "$dry" 'keep open-pr open PR'
 assert_has "$dry" 'keep fork-pr open PR'
 assert_has "$dry" 'keep unmerged unmerged local commits'
 git -C "$REPO" show-ref --verify --quiet refs/heads/merged || fail 'dry-run deleted a ref'
+assert_has "$dry" 'summary scanned='
+[[ "$(grep -c 'pulls?state=open&' "$GH_LOG")" -eq 1 ]] || fail 'open PRs listed more than once per scan'
+budget=$(PATH="$BIN:$PATH" bash "$HELPER" --repo "$REPO" --max-lookups 0)
+assert_has "$budget" 'would-delete merged'
+assert_has "$budget" 'keep squash lookup budget exhausted'
+assert_has "$budget" 'budget_exhausted=2'
 
 result=$(PATH="$BIN:$PATH" bash "$HELPER" --repo "$REPO" --branch merged --apply)
 assert_has "$result" 'deleted merged'

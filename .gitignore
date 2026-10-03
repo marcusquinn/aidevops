@@ -141,11 +141,6 @@ venv/
 env/
 .venv/
 
-# DSPy and DSPyGround data directories
-data/dspy/
-data/dspyground/
-.dspyground/
-
 # Node.js dependencies
 node_modules/
 packages/gui-web/dist/
@@ -261,11 +256,6 @@ test-*.yaml
 # Superset local config
 .superset/
 
-# Repomix generated outputs (generate on-demand, don't commit)
-repomix-output.*
-*-repomix-*.xml
-*-repomix-*.md
-*-repomix-*.json
 .osgrep
 
 # Bundle detection cache (runtime artifact)

@@ -7,6 +7,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { PRICING_VERSION } from "../observability-pricing.mjs";
 import {
   consumeRoutingDecision,
   recordRoutingDecision as queueRoutingDecision,
@@ -104,7 +105,7 @@ test("completed child responses join queued routing decisions to parent feedback
     assert.equal(summary.tokensTotal, 17);
     assert.equal(summary.models[0], "openai/gpt-5.6-luna");
     assert.deepEqual(summary.aidevopsVersions, ["3.32.240"]);
-    assert.deepEqual(summary.pricingVersions, ["2026-09-27.2"]);
+    assert.deepEqual(summary.pricingVersions, [PRICING_VERSION]);
     assert.deepEqual(summary.populationsUsed, ["interactive_child"]);
 
     observability.recordSubagentOutcome({
@@ -154,7 +155,7 @@ test("completed child responses join queued routing decisions to parent feedback
         || pricing_quality
 FROM llm_requests WHERE message_id = 'message-1';
     `);
-    assert.equal(persisted, "interactive_child|3.32.240|2026-09-27.2|xhigh|max|max|host_observed||local_estimate|exact_model");
+    assert.equal(persisted, `interactive_child|3.32.240|${PRICING_VERSION}|xhigh|max|max|host_observed||local_estimate|exact_model`);
 
     const outcomePayload = JSON.parse(sqlite.sqliteExecSync(`
 SELECT payload_json FROM runtime_events WHERE event_type = 'subagent.host.outcome' LIMIT 1;

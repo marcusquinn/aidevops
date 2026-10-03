@@ -486,10 +486,17 @@ _dispatch_dedup_scope_gates() {
 	_dss_t0=$(_ds_now_ns)
 	_ds_stage_start "$issue_number" "$repo_slug" "consolidation" "$_dss_t0" _ds_stage_attempt_id
 	if _issue_needs_consolidation "$issue_number" "$repo_slug" "$issue_meta_json"; then
+		_CONSOLIDATION_DISPATCH_OUTCOME=""
 		_dispatch_issue_consolidation "$issue_number" "$repo_slug" "$repo_path"
-		echo "[dispatch_with_dedup] Dispatch deferred for #${issue_number} in ${repo_slug}: issue needs comment consolidation" >>"$LOGFILE"
-		_ds_record "$issue_number" "$repo_slug" "dedup.consolidation" "$_dss_t0"
-		return 1
+		# GH#33306: a pre-flight skip (resolved parent or in-flight resolving
+		# PR) creates no child, so deferring here would hold the issue forever.
+		if [[ "${_CONSOLIDATION_DISPATCH_OUTCOME:-}" == "preflight_skipped" ]]; then
+			echo "[dispatch_with_dedup] Consolidation pre-flight skipped for #${issue_number} in ${repo_slug}; continuing dispatch gates (GH#33306)" >>"$LOGFILE"
+		else
+			echo "[dispatch_with_dedup] Dispatch deferred for #${issue_number} in ${repo_slug}: issue needs comment consolidation" >>"$LOGFILE"
+			_ds_record "$issue_number" "$repo_slug" "dedup.consolidation" "$_dss_t0"
+			return 1
+		fi
 	fi
 	_ds_record "$issue_number" "$repo_slug" "dedup.consolidation" "$_dss_t0"
 
@@ -920,9 +927,11 @@ _dispatch_brief_hold_recorded() {
 	return 2
 }
 
-# Fail before dedup posts a claim. The blocked label is the durable cycle gate;
-# the body-hash marker keeps the brief-owner action to one comment per body even
-# when the label is later cleared without a body change.
+# Fail before dedup posts a claim. Trusted unscoped briefs dispatch with
+# worker-owned scope discovery (GH#33243); the hold below remains only when
+# AIDEVOPS_BRIEF_SCOPE_WORKER_DISCOVERY=0. There the blocked label is the durable
+# cycle gate and the body-hash marker keeps the brief-owner action to one comment
+# per body even when the label is later cleared without a body change.
 # GH#32979: every rc=1 logs exactly one DISPATCH_BLOCK_REASON naming the step
 # (recorded as the _brief_scope_block breadcrumb), so blocked candidates are
 # never metered as no_recent_log_evidence and untrusted unscoped briefs stay
@@ -963,6 +972,13 @@ _dispatch_preclaim_brief_scope_verdict() {
 	_brief_scope_block="self_heal_rewritten"
 	if _dispatch_brief_scope_self_heal "$issue_number" "$repo_slug" "$issue_body"; then
 		return 1
+	fi
+	# GH#33243: choosing files is routine AI analysis. Holding for an author
+	# session that has already ended parked briefs indefinitely, so the worker
+	# records the canonical scope as its first step instead.
+	if _brief_scope_worker_discovery_enabled; then
+		echo "[dispatch_with_dedup] Brief #${issue_number} in ${repo_slug} has no canonical Files Scope; dispatching with worker-owned scope discovery (GH#33243)" >>"${LOGFILE:-/dev/null}"
+		return 0
 	fi
 	_brief_scope_block="hold_marker_unavailable"
 	body_hash=$(_dispatch_brief_hold_body_hash "$issue_body") || return 1
@@ -1039,6 +1055,10 @@ dispatch_with_dedup() {
 	local issue_meta_json="" metadata_rc=0
 	_dispatch_load_and_validate_metadata "$issue_number" "$repo_slug" || metadata_rc=$?
 	[[ "$metadata_rc" -eq 0 ]] || return "$metadata_rc"
+	# GH#33341: evaluate runner-local capabilities before any claim or scope write.
+	# shellcheck source=runner-capability-helper.sh
+	source "${SCRIPT_DIR}/runner-capability-helper.sh"
+	runner_capability_check_fresh "$repo_path" "$issue_number" "$repo_slug" "$LOGFILE" || return 1
 	_dispatch_preclaim_brief_scope "$issue_number" "$repo_slug" "$issue_meta_json" || return 1
 
 	# Run all pre-dispatch validation and dedup check layers (10 gates total).

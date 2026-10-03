@@ -951,12 +951,15 @@ _full_loop_recovery_prepare_reserved_retry_source() {
 	local repo="$1"
 	local source_pr="$2"
 	local expected_sources="$3"
+	local retry_assertion="${4-$expected_sources}"
 	local phase=""
 	release_lane_read "$repo" || return 1
 	phase=$(jq -er '.phase' <<<"$_AIDEVOPS_RELEASE_LANE_JSON") || return 1
 	if [[ "$phase" == "$_FULL_LOOP_FAILED_PREPUBLICATION_PHASE" ]] ||
 		_full_loop_recovery_lane_has_prepublication_marker; then
-		_full_loop_recovery_prepare_prepublication_source "$repo" "$source_pr" "$expected_sources" || {
+		# Omission discovers the advanced snapshot; persisted authorization remains
+		# a required subset in the fenced refresh transaction, not an exact assertion.
+		_full_loop_recovery_prepare_prepublication_source "$repo" "$source_pr" "$retry_assertion" || {
 			_full_loop_recovery_failed_prepublication_refused "reviewed retry source is neither a valid direct source nor aggregate"
 			return 1
 		}
@@ -1074,6 +1077,7 @@ _full_loop_recovery_expand_reserved_authorization() {
 	local source_pr="$2"
 	local expected_sources="$3"
 	local release_type="${4:-patch}"
+	local retry_assertion="${5-$expected_sources}"
 	local previous_auth=""
 	local lane_sources=""
 	local phase=""
@@ -1088,7 +1092,7 @@ _full_loop_recovery_expand_reserved_authorization() {
 	_full_loop_recovery_validate_reserved_receipt "$repo" "$source_pr" || return 1
 	_full_loop_release_find_tag_for_pr "$repo" "$source_pr" || existing_tag_rc=$?
 	[[ "$existing_tag_rc" -eq 2 ]] || return 1
-	_full_loop_recovery_prepare_reserved_retry_source "$repo" "$source_pr" "$expected_sources" || return 1
+	_full_loop_recovery_prepare_reserved_retry_source "$repo" "$source_pr" "$expected_sources" "$retry_assertion" || return 1
 	_full_loop_validate_release_candidates "$repo" "$_FULL_LOOP_RESOLVED_SOURCE_JSON" || return 1
 	_full_loop_release_reset_tag_worktree || return 1
 	current_auth=$(_full_loop_read_release_authorization "$repo" "$source_pr") || return 1

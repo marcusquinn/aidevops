@@ -120,11 +120,6 @@
           "args": ["-y", "@context7/mcp-server@latest"]
         }
       }
-    },
-    "augment_agent": {
-      "integration": "Built-in Context7 tools available",
-      "usage": "Use resolve-library-id and get-library-docs tools directly",
-      "benefits": "No additional MCP server setup required"
     }
   },
   "workflow_examples": {
