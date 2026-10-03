@@ -39,7 +39,7 @@ export function routePattern(origin, value) {
 async function pollUntil(run, probe, message) {
   const deadline = Date.now() + run.budget();
   while (!(await probe())) {
-    if (Date.now() >= deadline) throw new Error(message);
+    if (Date.now() >= deadline) throw new Error(typeof message === 'function' ? message() : message);
     await sleep(POLL_INTERVAL_MS);
   }
 }
@@ -60,6 +60,36 @@ async function hasHorizontalOverflow(page) {
   return page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
 }
 
+function layoutEdges(box) {
+  return {
+    top: box.y, bottom: box.y + box.height, left: box.x, right: box.x + box.width,
+    width: box.width, height: box.height, centerX: box.x + box.width / 2, centerY: box.y + box.height / 2,
+  };
+}
+
+function measureBox(run, selector) {
+  return run.page.locator(selector).first().boundingBox({ timeout: probeTimeout(run) }).catch(() => null);
+}
+
+function layoutMismatches(step, boxes) {
+  const [first, second] = boxes.map(layoutEdges);
+  const tolerance = step.tolerancePx ?? 1;
+  return step.match
+    .filter((edge) => Math.abs(first[edge] - second[edge]) > tolerance)
+    .map((edge) => `${edge} ${first[edge]} vs ${second[edge]}`);
+}
+
+async function assertLayout(run, step) {
+  let detail = 'element box unavailable';
+  await pollUntil(run, async () => {
+    const boxes = await Promise.all([step.selector, step.compare].map((selector) => measureBox(run, selector)));
+    if (boxes.includes(null)) return false;
+    const mismatches = layoutMismatches(step, boxes);
+    detail = mismatches.join(', ');
+    return mismatches.length === 0;
+  }, () => `layout assertion failed: ${detail}`);
+}
+
 const HANDLERS = {
   navigate: (run, step) => run.page.goto(resolvePath(run.origin, step.path), { waitUntil: 'domcontentloaded', timeout: run.budget() }),
   // Strict locator: an ambiguous click target fails instead of guessing.
@@ -68,6 +98,7 @@ const HANDLERS = {
   count: (run, step) => pollUntil(run, async () => (await run.page.locator(step.selector).count()) === step.equals, 'count assertion failed'),
   text: (run, step) => pollUntil(run, async () => (await readText(run, step.selector)).includes(step.includes), 'text assertion failed'),
   attribute: (run, step) => pollUntil(run, async () => (await readAttribute(run, step)) === step.equals, 'attribute assertion failed'),
+  layout: assertLayout,
   'no-horizontal-overflow': async (run) => {
     if (await hasHorizontalOverflow(run.page)) throw new Error('horizontal overflow detected');
   },

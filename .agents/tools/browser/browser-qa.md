@@ -68,7 +68,26 @@ Prefer a repository's existing E2E test when it already covers the authenticated
 browser-qa-helper.sh journey --config journey.json --environment staging
 ```
 
-Steps: `navigate` (`path`), `click` (`selector`, strict single match), `visible` (`selector`), `count` (`selector`, `equals`), `text` (`selector`, `includes`), `attribute` (`selector`, `name`, `equals`), `no-horizontal-overflow`; each accepts an optional `name`. Assertions re-check until the action timeout. Unknown schema versions, unknown step types, off-origin or protocol-relative paths and missing credentials fail before the browser launches. Tests: `scripts/tests/test-browser-qa-journey.sh`.
+Steps: `navigate` (`path`), `click` (`selector`, strict single match), `visible` (`selector`), `count` (`selector`, `equals`), `text` (`selector`, `includes`), `attribute` (`selector`, `name`, `equals`), `layout` (`selector`, `compare`, `match`, optional `tolerancePx`), `no-horizontal-overflow`; each accepts an optional `name`. Assertions re-check until the action timeout. Unknown schema versions, unknown step types, off-origin or protocol-relative paths and missing credentials fail before the browser launches. Tests: `scripts/tests/test-browser-qa-journey.sh`.
+
+`layout` compares rendered bounding boxes of the first match for each selector. `match` is a non-empty array of unique entries from `top`, `bottom`, `left`, `right`, `width`, `height`, `centerX`, `centerY`. Coordinates and centers are relative to the viewport. Each requested value must differ by no more than `tolerancePx` (integer 0–8, default 1 CSS pixel). Missing or hidden boxes fail after polling; mismatches report the edge and both measured values, e.g. `layout assertion failed: height 30 vs 40`, through the normal redactor. No config-supplied code is evaluated.
+
+Journey `viewports` defaults to `["desktop", "mobile"]` (1440×900 and 375×667). Mix named strings with custom objects: width must be an integer 320–3840 and height 320–2160. Names must be unique across all entries, contain 1–64 ASCII letters, digits, hyphens or underscores, and begin with a letter or digit. There are at most eight entries. Invalid entries fail before browser launch or sign-in; each viewport result retains its `viewport` name and adds `width` and `height`. These additions retain schema version 1.
+
+For a search field and button with matching top edges and heights at 1440, 782 and 375px, use these environment members and steps with the sign-in/out config above:
+
+```json
+{
+  "viewports": ["desktop", {"name": "tablet-782", "width": 782, "height": 900}, "mobile"],
+  "steps": [
+    {"type": "navigate", "path": "/account"},
+    {"type": "layout", "selector": "#search-field", "compare": "#search-button", "match": ["top", "height"], "tolerancePx": 1},
+    {"type": "no-horizontal-overflow"}
+  ]
+}
+```
+
+Place `viewports` inside the selected environment and `steps` at the config root; the snippet is not a complete standalone config.
 
 ### Step 1: Start the Application
 
