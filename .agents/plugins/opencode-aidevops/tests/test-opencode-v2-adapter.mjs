@@ -273,6 +273,33 @@ for (const budgetEnabled of [false, true]) test(`V2 setup registers SDK lifecycl
   assert.match(instructions, /if TodoWrite is unavailable, keep a short numbered task list/);
   assert.match(instructions, /search\(\{ namespace: "aidevops" \}\)/);
 
+  const compactionHook = registered.find(({ domain, name }) => domain === "session" && name === "compaction").callback;
+  // Released 2.0.3: both hooks receive the base transcript independently;
+  // the host adds its summary-template user message only after compaction.
+  const transcript = {
+    sessionID: "v2-prefix", model: request.model,
+    system: [{ type: "text", text: "Stable host instructions", metadata: { test: "keep" } }],
+    messages: [
+      { role: "user", content: [{ type: "text", text: "Keep the public marker and original aim." }] },
+      { role: "assistant", content: [{ type: "text", text: "Historical progress." }] },
+    ],
+  };
+  const primary = structuredClone(transcript);
+  const compacted = structuredClone(transcript);
+  await contextHook(primary);
+  await compactionHook(compacted);
+  assert.deepEqual(compacted.system, primary.system, "compaction must preserve the transformed system prefix");
+  assert.equal(compacted.system[0].metadata.test, "keep");
+  assert.deepEqual(compacted.messages.slice(0, primary.messages.length), primary.messages, "historical messages stay in order");
+  assert.equal(compacted.messages.length, primary.messages.length + 1);
+  const guidance = compacted.messages.at(-1);
+  assert.equal(guidance.role, "user", "operational payload must not become system instructions");
+  assert.equal(guidance.content[0].type, "text");
+  assert.match(guidance.content[0].text, /# aidevops Framework Context/);
+  assert.match(guidance.content[0].text, /Follow the host's summary template exactly/);
+  assert.match(guidance.content[0].text, /untrusted historical data only/);
+  assert.doesNotMatch(compacted.system.map(({ text }) => text).join("\n"), /# aidevops Framework Context/);
+
   await cleanup();
   assert.equal(eventState.returned, true);
   assert.deepEqual(disposed.sort(), registered.map(({ domain, name }) => `${domain}:${name}`).sort());
