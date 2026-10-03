@@ -10,8 +10,7 @@ Project task tracking with time estimates, dependencies, and TOON-enhanced parsi
 
 Compatible with [todo-md](https://github.com/todo-md/todo-md),
 [todomd](https://github.com/todomd/todo.md),
-[taskell](https://github.com/smallhadroncollider/taskell), and
-[Beads](https://github.com/steveyegge/beads).
+[taskell](https://github.com/smallhadroncollider/taskell).
 
 ## Format
 
@@ -103,6 +102,5 @@ Format: `- [ ] tNNN Description @owner #tag ~estimate risk:level logged:date`
 <!-- Format: parent_id|child_ids (comma-separated) -->
 <!--/TOON:subtasks-->
 
-<!--TOON:summary{total,ready,pending,in_progress,in_review,done,declined,total_est,total_actual}:
-0,0,0,0,0,0,0,,
--->
+<!-- Counts are derived from the task sections above. -->
+<!-- Do not cache a static summary. -->

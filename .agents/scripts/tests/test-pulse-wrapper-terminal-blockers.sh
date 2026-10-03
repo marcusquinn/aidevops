@@ -64,6 +64,25 @@ setup_test_env() {
 	# shellcheck source=/dev/null
 	source "$WRAPPER_SCRIPT" 2>/dev/null
 	set -e
+	# The real gh_issue_comment wrapper does not reach the mocked gh function
+	# (it resolves the gh binary and adds signature footers). Route it through
+	# the mock so the posted body (--body or --body-file) is captured.
+	gh_issue_comment() {
+		GH_ISSUE_COMMENT_CALLED=true
+		local prev="" arg=""
+		for arg in "$@"; do
+			if [[ "$prev" == "--body" ]]; then
+				GH_ISSUE_COMMENT_BODY="$arg"
+				break
+			fi
+			if [[ "$prev" == "--body-file" && -r "$arg" ]]; then
+				GH_ISSUE_COMMENT_BODY="$(<"$arg")"
+				break
+			fi
+			prev="$arg"
+		done
+		return 0
+	}
 	return 0
 }
 
@@ -117,6 +136,14 @@ gh() {
 			for arg in "$@"; do
 				if [[ "$prev_arg_val" == "--body" ]]; then
 					GH_ISSUE_COMMENT_BODY="$arg"
+					break
+				fi
+				if [[ "$prev_arg_val" == "--body-file" ]]; then
+					if [[ "$arg" == "-" ]]; then
+						GH_ISSUE_COMMENT_BODY="$(cat)"
+					elif [[ -r "$arg" ]]; then
+						GH_ISSUE_COMMENT_BODY="$(cat "$arg")"
+					fi
 					break
 				fi
 				prev_arg_val="$arg"

@@ -659,6 +659,13 @@ test_call_sites_use_helper() {
 		fail "$name" "raw 'git fetch \$REMOTE_NAME' still present in counter sub-library"
 		return 0
 	fi
+	# GH#33154: counter-branch fetches must go through _cas_fetch_counter_branch,
+	# which adds --depth=1 --no-tags in the isolated context.
+	# shellcheck disable=SC2016  # grep regex literal — vars must NOT expand
+	if grep -qE 'fetch -q "\$REMOTE_NAME" "\$COUNTER_BRANCH"' "$COUNTER_LIB"; then
+		fail "$name" "unbounded counter-branch fetch present; use _cas_fetch_counter_branch (GH#33154)"
+		return 0
+	fi
 
 	pass "$name"
 	return 0

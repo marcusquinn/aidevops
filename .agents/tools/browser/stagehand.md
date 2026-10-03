@@ -46,7 +46,7 @@ tools:
 
 **Parallel**: Multiple Stagehand instances (each launches own browser). Full isolation but slow due to AI overhead per instance. For parallel speed, use Playwright direct.
 
-**Custom browsers (v4)**: `localBrowser.launch({ executablePath })` uses a separate Chrome/Chromium-family browser. The bundled example uses the SDK's default local Chrome; custom browsers and existing profiles are not tested in this route.
+**Custom browsers (v4)**: `localBrowser.launch({ executablePath, headless: true })` can use an isolated Brave process (verified in the bounded authenticated probe); the bundled example uses the SDK's default local Chrome. Existing profiles remain untested in this route.
 
 **Extensions/consent**: v4 runs an extension in its owned browser and `localBrowser.connect({ cdpUrl })` can attach over CDP, but CDP access is broader than user-selected tabs. Do not connect this route to a live browser, import cookies, or claim it replaces Playwright Extension or legacy Playwriter for consent-scoped authenticated tabs.
 
@@ -67,7 +67,32 @@ tools:
 | Unknown/changing page or typed AI extraction | Opt-in Stagehand v4 after model/cost consent | v4 separates deterministic `browser.context`/`page.locator()` from `act`/`extract`/`observe`; results contain `data` and `metadata` for token/caching diagnostics. |
 | User-selected existing authenticated tabs | Playwright Extension; Playwriter only for explicit legacy compatibility | v4 CDP connection does not demonstrate selected-tab consent/profile isolation, so no replacement or headless-worker access is approved. |
 
-v4 removes `agent()` and changes `new Stagehand().init()` to `Stagehand.create({ browser })`; the browser factory owns the process. The opt-in helper is the lowest-context bounded execution path; no OpenCode MCP registry entry is appropriate until profile/consent isolation and lifecycle cleanup are demonstrated. Server-side caching requires Browserbase; local v4 has no managed cache. Browserbase adds usage-based browser charges in addition to model charges. No fresh comparable v4/Playwright/Playwriter benchmark is available; do not substitute the dated v3 timings. Before enabling a wider route, measure end-to-end latency, task success, model tokens/cost, cache hits, recovery and browser/profile cleanup on the same representative scenarios. Model-backed side effects must not be retried blindly.
+Prefer v4 over selectors only when a representative **whole-workflow** comparison
+shows that adaptive actions can offset their model latency and cost—for example,
+when frequent layout changes, retry loops or selector maintenance make the
+deterministic path slower or less reliable overall. Compare completed tasks,
+retry/recovery behaviour, end-to-end time, provider spend and browser cleanup,
+not just a successful AI extraction against a single DOM query. The measured
+v4 heading probes showed no speed advantage and the private-page sample matched
+the DOM only once in three runs; no general faster/more-reliable claim follows.
+Fall back to Playwright for known selectors, low model budget, sensitive data
+without provider-sharing consent, or when a v4 attempt gives an unverified result.
+
+For an explicitly authorized, bounded **model-backed** experiment, NanoGPT is
+an option when a supported provider API key is available and an OAuth-pool
+token cannot be used by the Stagehand SDK. An isolated v4 `model: { generate }`
+callback reached its OpenAI-compatible API using a scoped secret, without
+relying on OpenCode's OAuth pool or passing a NanoGPT key to Stagehand's native
+OpenAI model configuration. Keep the provider/model explicit, cap calls,
+serialized input and output tokens, and log only redacted usage/cost evidence.
+An API key and the user's consent to send page content to that provider are
+required; OAuth-pool tokens are **not** assumed interchangeable with provider
+API keys. This is not a persistent NanoGPT adapter, provider-enforced spend
+cap, or a default for ordinary Playwright automation. The authenticated
+heading probe matched the DOM in only one of three fresh sessions; details in
+`browser-benchmark.md`. Prefer deterministic Playwright for known selectors.
+
+v4 removes `agent()` and changes `new Stagehand().init()` to `Stagehand.create({ browser })`; the browser factory owns the process. The opt-in helper is the lowest-context bounded execution path; no OpenCode MCP registry entry is appropriate until profile/consent isolation and lifecycle cleanup are demonstrated. Server-side caching requires Browserbase; local v4 has no managed cache. Browserbase adds usage-based browser charges in addition to model charges. The only like-for-like v4/Playwright measurement is deterministic page extraction (no AI calls): identical content, about 4% slower, with ~620 ms extra launch/attach (`browser-benchmark.md`, 2026-09-27). No full-matrix, AI-path or Playwriter comparison exists; do not substitute the dated v3 timings. Before enabling a wider route, measure end-to-end latency, task success, model tokens/cost, cache hits, recovery and browser/profile cleanup on the same representative scenarios. Model-backed side effects must not be retried blindly.
 
 Upstream references: [v4 quickstart](https://docs.stagehand.dev/v4/first-steps/quickstart), [browser ownership](https://docs.stagehand.dev/v4/configuration/browser), [v3 migration](https://docs.stagehand.dev/v4/migrations/v3).
 

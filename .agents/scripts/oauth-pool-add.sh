@@ -49,8 +49,7 @@ _add_prompt_email() {
 		email="$prefill_email"
 		print_info "Using email: ${email}" >&2
 	else
-		printf '%s' "$prompt_text" >&2
-		read -r email
+		email=$(oauth_prompt_read "$prompt_text")
 	fi
 	if [[ -z "$email" || "$email" != *@* ]]; then
 		print_error "Invalid email address" >&2
@@ -197,13 +196,13 @@ _add_get_provider_params() {
 	return 0
 }
 
-# Read and validate the authorization code from stdin, stripping fragment and
+# Read and validate the authorization code from the terminal (see
+# oauth_prompt_read), stripping fragment and
 # checking state nonce. Prints the bare code to stdout.
 _add_read_auth_code() {
 	local state_nonce="$1"
 	local auth_code
-	printf 'Paste the authorization code here: ' >&2
-	read -r auth_code
+	auth_code=$(oauth_prompt_read 'Paste the authorization code here: ')
 	if [[ -z "$auth_code" ]]; then
 		print_error "No authorization code provided" >&2
 		return 1
@@ -693,9 +692,8 @@ cmd_add_google() {
 	open_browser "$full_url"
 
 	# Google OOB flow: the authorization code is shown in the browser
-	printf 'Paste the authorization code from the browser: ' >&2
 	local auth_code
-	read -r auth_code
+	auth_code=$(oauth_prompt_read 'Paste the authorization code from the browser: ')
 	if [[ -z "$auth_code" ]]; then
 		print_error "No authorization code provided"
 		return 1

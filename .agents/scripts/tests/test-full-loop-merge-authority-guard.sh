@@ -257,6 +257,7 @@ reset_fixture() {
 	FIXTURE_TRUSTED_DEPENDABOT=0
 	FIXTURE_TRUSTED_ISSUE_SYNC=0
 	export FIXTURE_TRUSTED_ISSUE_SYNC
+	FULL_LOOP_EXTERNAL_AUTHORITY_APPROVAL_TARGETS=()
 	AUTHORITY_GUARD_PASS=1
 	AUTHORITY_GUARD_FAIL_ON_CALL=0
 	: >"$CRYPTO_CALLS"
@@ -478,10 +479,23 @@ test_pre_merge_authority_preflight() {
 	FIXTURE_PR_APPROVED=1
 	actual_rc=0
 	output=$(cmd_pre_merge_gate 900 owner/repo 2>&1) || actual_rc=$?
-	if [[ "$actual_rc" -eq 0 ]] && ! grep -qF 'aidevops approve batch' <<<"$output"; then
-		print_result "preflight passes without an approval prompt when all authority is current" 0
+	if [[ "$actual_rc" -eq 0 ]] &&
+		grep -qF 'verified for issue:42 issue:43 pr:900 on PR #900' <<<"$output" &&
+		! grep -qF 'no approval required' <<<"$output"; then
+		print_result "preflight names verified external authority targets" 0
 	else
-		print_result "preflight passes without an approval prompt when all authority is current" 1 \
+		print_result "preflight names verified external authority targets" 1 \
+			"rc=$actual_rc output=$output"
+	fi
+
+	reset_fixture
+	actual_rc=0
+	output=$(cmd_pre_merge_gate 900 owner/repo 2>&1) || actual_rc=$?
+	if [[ "$actual_rc" -eq 0 ]] &&
+		grep -qF 'no external authority targets for PR #900' <<<"$output"; then
+		print_result "preflight distinguishes absent external authority targets" 0
+	else
+		print_result "preflight distinguishes absent external authority targets" 1 \
 			"rc=$actual_rc output=$output"
 	fi
 

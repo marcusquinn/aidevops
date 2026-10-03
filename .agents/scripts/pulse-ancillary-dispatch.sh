@@ -218,10 +218,11 @@ _triage_mark_security_hold() {
 	local reason="$3"
 
 	[[ -n "$issue_num" && -n "$repo_slug" ]] || return 0
-	gh label create "security-review" --repo "$repo_slug" --color "D73A4A" \
+	# Attention colour: see label-sync-helper.sh palette groups.
+	gh label create "security-review" --repo "$repo_slug" --color "E4007C" \
 		--description "Requires security review — suspicious AI request" --force \
 		>/dev/null 2>&1 || true
-	gh label create "$_PAD_REVIEW_HOLD_LABEL" --repo "$repo_slug" --color "D73A4A" \
+	gh label create "$_PAD_REVIEW_HOLD_LABEL" --repo "$repo_slug" --color "E4007C" \
 		--description "Opt-out: block issue auto-dispatch or PR auto-merge for maintainer review" --force \
 		>/dev/null 2>&1 || true
 	if ! gh issue edit "$issue_num" --repo "$repo_slug" \

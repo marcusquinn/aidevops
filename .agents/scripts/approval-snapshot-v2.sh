@@ -9,6 +9,11 @@ APPROVAL_TARGET_ISSUE="issue"
 APPROVAL_SNAPSHOT_V2_SCHEMA="aidevops-approval-snapshot/v2"
 APPROVAL_SNAPSHOT_PROFILE_CURRENT="current"
 APPROVAL_SNAPSHOT_PROFILE_LEGACY="legacy"
+# Linked-source profiles: legacy (pre-GH#29009, binds source updated_at),
+# stable (GH#29009, binds all source content), trusted-sources (GH#32455,
+# default for new approvals; see _approval_snapshot_v2_linked_references_json).
+APPROVAL_SNAPSHOT_PROFILE_STABLE="stable"
+APPROVAL_SNAPSHOT_PROFILE_TRUSTED_SOURCES="trusted-sources"
 APPROVAL_JSON_OBJECT="object"
 
 _approval_snapshot_v2_create_temp_dir() {
@@ -102,6 +107,8 @@ _approval_snapshot_v2_comments_json() {
 				"|CLAIM_RELEASED reason=[A-Za-z0-9._:-]+ runner=[A-Za-z0-9._:-]+ ts=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z(?: [a-z_]+=[A-Za-z0-9._:@/+:-]+)*" +
 				")\\n<!-- ops:end -->" + aidevops_worker_footer + "$"
 			);
+		# #aidevops:trust-boundary — exclude only complete writer-produced recovery envelopes; copied markers, altered guidance, and extra prose stay bound.
+		def canonical_terminal_blocker_release: test("^<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->\\n" + "CLAIM_RELEASED reason=blocked runner=[A-Za-z0-9._:-]+ ts=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z(?: [a-z_]+=[A-Za-z0-9._:@/+:-]+)*\\n" + "<!-- aidevops:terminal-blocker-observation revision=[0-9a-f]{16,64} blocker=[0-9a-f]{16,64} -->\\n\\n" + "Terminal blocker: reason=(?:missing_files_scope owner=brief-author|files_scope_excluded owner=brief-author|target_code_blocker owner=target-maintainer|external_trigger_pending owner=dependency-owner|permission_required owner=permission-maintainer|input_required owner=(?:user|contributor|maintainer|admin)|unknown owner=worker-triage) task=[0-9]+ attempt=[0-9a-f]{16,64}\\.\\n" + "Projected state: status:(?:blocked|available)\\.\\n" + "Next action: (?:Add a canonical ### Files Scope \\(or legacy ## Files Scope\\) section listing the permitted paths in the issue body\\.|The AI brief owner must review the protected integration dossier, check concurrent ownership and correct the permitted paths before resuming the existing checkpoint\\. Preserve explicit hard boundaries and security guarantees; do not retry an unchanged brief\\.|Review the protected blocker dossier and correct the target code or task dependencies before retrying\\.|Resolve the evidenced permission prerequisite through the human-owned approval flow, then post the explicit retry directive\\. Retry is scheduling consent only: the original permission guard must independently verify the exact context\\. Do not regenerate requests or bypass the guard\\.|Wait for the specified external trigger\\. When it is verified, correct the brief or post an authorized retry directive; unrelated repository merges do not clear this hold\\.|Supply the specific input named in the protected dossier in the issue brief; a brief or dependency change re-arms dispatch\\. The recovery supervisor first decides anything AI can resolve within delegated authority\\.|Interpret the protected dossier and record a known blocker class or repair the brief\\. No global dispatch hold is imposed\\.)\\n" + "Raw evidence remains in protected worker telemetry\\.\\n<!-- ops:end -->" + aidevops_worker_footer + "$");
 		def canonical_self_hosting_override:
 			test(
 				"^<!-- self-hosting-tier-override -->\\n<!-- provenance:start -->\\n## Self-Hosting Tier Override\\n\\nPre-dispatch self-hosting detector replaced lower workload-tier labels with `tier:thinking` on this issue\\.\\n\\n\\*\\*Matched pattern:\\*\\* `[A-Za-z0-9._-]+` in issue body\\n\\n\\*\\*Rationale:\\*\\* Issues modifying the dispatch path have a self-referential property — workers dispatched to fix them run through the code being fixed\\. Applying the terminal workload tier upfront avoids wasted lower-tier attempts while runtime routing retains control of the exact model and reasoning level\\.\\n\\n\\*\\*Bypass:\\*\\* `AIDEVOPS_SKIP_SELF_HOSTING_DETECTOR=1`\\n\\n_Automated by `pre-dispatch-validator-helper\\.sh` \\(t2819\\)\\. This comment is posted once via the `<!-- self-hosting-tier-override -->` marker; re-runs are no-ops\\._\\n<!-- provenance:end -->" + aidevops_worker_footer + "$"
@@ -156,7 +163,7 @@ _approval_snapshot_v2_comments_json() {
 			((.author_association // $empty) | trusted_association)
 			and ($cutoff != $empty)
 			and ((.created_at // $empty) > $cutoff)
-			and ((.body // $empty) | canonical_dispatch_audit or canonical_self_hosting_override or canonical_no_work_escalation_skip)
+			and ((.body // $empty) | canonical_dispatch_audit or canonical_terminal_blocker_release or canonical_self_hosting_override or canonical_no_work_escalation_skip)
 		) | not)
 		| comment_identity
 		] | sort_by(.source, .id) end
@@ -164,13 +171,47 @@ _approval_snapshot_v2_comments_json() {
 	return $?
 }
 
+# #aidevops:trust-boundary — GH#32455: under the trusted-sources profile, a
+# linked source authored by an OWNER/MEMBER/COLLABORATOR of the target
+# repository itself binds identity and author association but not its mutable
+# title/body/state. Supervisor dashboards rewrite themselves every pulse and
+# would otherwise stale every approval they link to; their authors already hold
+# write authority on the target repository. Sources from other repositories
+# (association is repository-relative) or with any other association keep full
+# content binding. Mirrored by source_access_core._issue_reference.
+_approval_snapshot_v2_linked_source_content() {
+	cat <<'JQ'
+def trusted_source:
+	$source_timestamp_profile == $trusted_profile
+	and ((.repository.full_name // $empty) | ascii_downcase) == ($target_repository | ascii_downcase)
+	and ((.author_association // $empty) as $association | any(("OWNER", "MEMBER", "COLLABORATOR"); . == $association));
+def source_content:
+	if $source_timestamp_profile != $trusted_profile then
+		{title: (.title // $empty), body: (.body // $empty), state: (.state // $empty)}
+	elif trusted_source then
+		{author_association: .author_association, content_bound: false}
+	else
+		{title: (.title // $empty), body: (.body // $empty), state: (.state // $empty),
+			author_association: (.author_association // $empty), content_bound: true}
+	end;
+JQ
+	return 0
+}
+
 _approval_snapshot_v2_linked_references_json() {
 	local pages_json="$1"
 	local issued_at_cutoff="${2:-}"
-	local source_timestamp_profile="${3:-stable}"
+	local source_timestamp_profile="${3:-$APPROVAL_SNAPSHOT_PROFILE_TRUSTED_SOURCES}"
+	local target_repository="${4:-}"
 	local empty_string=""
 	local timestamp_pattern='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'
-	[[ "$source_timestamp_profile" == "stable" || "$source_timestamp_profile" == "$APPROVAL_SNAPSHOT_PROFILE_LEGACY" ]] || return 1
+	case "$source_timestamp_profile" in
+	"$APPROVAL_SNAPSHOT_PROFILE_STABLE" | "$APPROVAL_SNAPSHOT_PROFILE_LEGACY") ;;
+	"$APPROVAL_SNAPSHOT_PROFILE_TRUSTED_SOURCES")
+		[[ "$target_repository" == */* ]] || return 1
+		;;
+	*) return 1 ;;
+	esac
 
 	# GitHub timeline cross-reference events are the authoritative read-only
 	# projection of issue/PR links. Keep external text and URLs as opaque bytes;
@@ -181,9 +222,11 @@ _approval_snapshot_v2_linked_references_json() {
 	# Linked-source updated_at is intentionally excluded: any source comment
 	# mutates it, so reciprocal issue/PR approval comments would make the two
 	# signatures mutually stale. Source identity and scope-bearing content remain
-	# bound below.
+	# bound (see _approval_snapshot_v2_linked_source_content for GH#32455).
 	jq -cS --arg empty "$empty_string" --arg cutoff "$issued_at_cutoff" --arg timestamp_pattern "$timestamp_pattern" \
-		--arg source_timestamp_profile "$source_timestamp_profile" --arg legacy_profile "$APPROVAL_SNAPSHOT_PROFILE_LEGACY" --arg issue_kind "$APPROVAL_TARGET_ISSUE" '
+		--arg source_timestamp_profile "$source_timestamp_profile" --arg legacy_profile "$APPROVAL_SNAPSHOT_PROFILE_LEGACY" --arg issue_kind "$APPROVAL_TARGET_ISSUE" \
+		--arg trusted_profile "$APPROVAL_SNAPSHOT_PROFILE_TRUSTED_SOURCES" --arg target_repository "$target_repository" "
+		$(_approval_snapshot_v2_linked_source_content)"'
 		def is_linked_reference:
 			(.event // $empty) == "cross-referenced"
 			or (.event // $empty) == "connected"
@@ -222,16 +265,13 @@ _approval_snapshot_v2_linked_references_json() {
 				number: (.source.issue.number // null),
 				id: (.source.issue.id // null),
 				node_id: (.source.issue.node_id // $empty),
-				title: (.source.issue.title // $empty),
-				body: (.source.issue.body // $empty),
-				state: (.source.issue.state // $empty),
 				author: {
 					id: (.source.issue.user.id // null),
 					node_id: (.source.issue.user.node_id // $empty),
 					login: (.source.issue.user.login // $empty),
 					type: (.source.issue.user.type // $empty)
 				}
-			} + (if $source_timestamp_profile == $legacy_profile then {
+			} + (.source.issue | source_content) + (if $source_timestamp_profile == $legacy_profile then {
 				updated_at: (.source.issue.updated_at // $empty)
 			} else {} end)) end)
 		}
@@ -325,7 +365,7 @@ approval_snapshot_v2_build() (
 	local slug="$3"
 	local excluded_comment_id="${4:-}"
 	local issued_at_cutoff="${5:-}"
-	local source_timestamp_profile="${6:-stable}"
+	local source_timestamp_profile="${6:-$APPROVAL_SNAPSHOT_PROFILE_TRUSTED_SOURCES}"
 	local issue_lifecycle_profile="${7:-$APPROVAL_SNAPSHOT_PROFILE_CURRENT}"
 	local issue_json="" comments_pages="" comments_json="" timeline_pages="" linked_references_json="" normalized_slug=""
 	local issue_lifecycle_json=""
@@ -348,7 +388,7 @@ approval_snapshot_v2_build() (
 	comments_pages=$(_approval_snapshot_v2_fetch_pages "repos/${slug}/issues/${target_number}/comments?per_page=100") || return 1
 	comments_json=$(_approval_snapshot_v2_comments_json "$comments_pages" "$excluded_comment_id" "conversation" "$issued_at_cutoff" "$target_number" "$slug") || return 1
 	timeline_pages=$(_approval_snapshot_v2_fetch_pages "repos/${slug}/issues/${target_number}/timeline?per_page=100") || return 1
-	linked_references_json=$(_approval_snapshot_v2_linked_references_json "$timeline_pages" "$issued_at_cutoff" "$source_timestamp_profile") || return 1
+	linked_references_json=$(_approval_snapshot_v2_linked_references_json "$timeline_pages" "$issued_at_cutoff" "$source_timestamp_profile" "$normalized_slug") || return 1
 	if [[ "$target_type" == "$APPROVAL_TARGET_ISSUE" && "$issue_lifecycle_profile" == "$APPROVAL_SNAPSHOT_PROFILE_CURRENT" ]]; then
 		issue_lifecycle_json=$(_approval_snapshot_v2_issue_lifecycle_json "$issue_json" "$timeline_pages") || return 1
 	fi
@@ -454,24 +494,47 @@ approval_snapshot_v2_digest() {
 	return 0
 }
 
+# #aidevops:trust-boundary — GH#33097: per-component digests for issue
+# snapshots. `frame` covers every scope-bearing byte except the title and body
+# (comments, linked references, identity, lifecycle), so a verifier can prove
+# that only the title/body changed and then authenticate those edits separately.
+# Prints compact JSON {title, body, frame}. Snapshot bytes pass through
+# here-strings, not argv, so large issues stay within argument limits.
+approval_snapshot_v2_content_digests() {
+	local snapshot_json="$1"
+	local title_json="" body_json="" frame_json="" title_digest="" body_digest="" frame_digest=""
+	title_json=$(jq -cS '.title // ""' <<<"$snapshot_json") || return 1
+	body_json=$(jq -cS '.body // ""' <<<"$snapshot_json") || return 1
+	frame_json=$(jq -cS 'del(.title, .body)' <<<"$snapshot_json") || return 1
+	title_digest=$(approval_snapshot_v2_digest "$title_json") || return 1
+	body_digest=$(approval_snapshot_v2_digest "$body_json") || return 1
+	frame_digest=$(approval_snapshot_v2_digest "$frame_json") || return 1
+	jq -cS -n --arg title "$title_digest" --arg body "$body_digest" --arg frame "$frame_digest" \
+		'{title: $title, body: $body, frame: $frame}'
+	return $?
+}
+
 approval_snapshot_v2_payload() (
 	local target_type="$1"
 	local target_number="$2"
 	local slug="$3"
 	local issued_at="$4"
 	local excluded_comment_id="${5:-}"
-	local source_timestamp_profile="${6:-stable}"
-	local snapshot_json="" digest="" normalized_slug=""
+	local source_timestamp_profile="${6:-$APPROVAL_SNAPSHOT_PROFILE_TRUSTED_SOURCES}"
+	local snapshot_json="" digest="" normalized_slug="" content_digests="null"
 	local temp_dir=""
 
 	snapshot_json=$(approval_snapshot_v2_build "$target_type" "$target_number" "$slug" "$excluded_comment_id" "$issued_at" "$source_timestamp_profile") || return 1
 	digest=$(approval_snapshot_v2_digest "$snapshot_json") || return 1
+	if [[ "$target_type" == "$APPROVAL_TARGET_ISSUE" ]]; then
+		content_digests=$(approval_snapshot_v2_content_digests "$snapshot_json") || return 1
+	fi
 	normalized_slug=$(printf '%s' "$slug" | tr '[:upper:]' '[:lower:]')
 	temp_dir=$(_approval_snapshot_v2_create_temp_dir) || return 1
 	trap 'rm -rf "$temp_dir"' EXIT
 	_approval_snapshot_v2_write_json_file "$temp_dir/snapshot.json" "$snapshot_json" || return 1
 	jq -cS -n --arg type "$target_type" --arg repo "$normalized_slug" --arg issue_kind "$APPROVAL_TARGET_ISSUE" --argjson number "$target_number" \
-		--arg issued "$issued_at" --arg digest "$digest" --slurpfile snapshot_input "$temp_dir/snapshot.json" '
+		--arg issued "$issued_at" --arg digest "$digest" --argjson content_digests "$content_digests" --slurpfile snapshot_input "$temp_dir/snapshot.json" '
 		($snapshot_input[0]) as $snapshot |
 		{
 			schema: "aidevops-approval/v2",
@@ -486,7 +549,7 @@ approval_snapshot_v2_payload() (
 				base_ref: $snapshot.base.ref,
 				base_repository: $snapshot.base.repository
 			} else null end),
-			issue: (if $type == $issue_kind then {lifecycle: $snapshot.lifecycle} else null end)
+			issue: (if $type == $issue_kind then {lifecycle: $snapshot.lifecycle, content_digests: $content_digests} else null end)
 		}
 	'
 	return $?

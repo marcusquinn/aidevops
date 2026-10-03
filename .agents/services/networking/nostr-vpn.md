@@ -23,9 +23,11 @@ tools:
 
 - **Purpose**: Experimental decentralized mesh VPN for advanced users who want accountless, Nostr-key-based device networking.
 - **Use when**: Connect laptop, workstation, homelab, VPS, and remote compute devices without SaaS coordination.
-- **CLI**: `fips`, `fipsctl`, `fipstop`, `fips-gateway`; aidevops wrapper: `.agents/scripts/nostr-vpn-helper.sh`.
-- **Docs/source**: https://nostrvpn.org/ · https://github.com/jmcorgan/fips · https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/nostr-vpn
-- **Status**: Experimental; upstream says protocol/API are not stable and security audit is pending. macOS `v0.4.0-rc1` packages are available for testing and must pass checksum plus package-structure validation before install.
+- **Recommended stack**: Nostr VPN app + `nvpn` CLI/daemon (https://nostrvpn.org/, https://github.com/mmalmi/nostr-vpn). It embeds an independently evolved FIPS fork, signed rosters, MagicDNS (`.nvpn`), and a verified self-updater.
+- **Legacy CLI**: standalone `fips`, `fipsctl`, `fipstop`, `fips-gateway` from https://github.com/jmcorgan/fips. Do not run it alongside Nostr VPN; keep `com.fips.daemon` disabled or uninstalled.
+- **aidevops wrapper**: `.agents/scripts/nostr-vpn-helper.sh`; `aidevops update` runs `nostr-vpn-helper.sh update` only when Nostr VPN is already installed.
+- **Docs/source**: https://nostrvpn.org/ · https://github.com/mmalmi/nostr-vpn · https://github.com/jmcorgan/fips · https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/nostr-vpn
+- **Status**: Experimental; upstream says protocol/API are not stable and security audit is pending.
 - **Secrets**: Use `aidevops secret set FIPS_NSEC` only for import/recovery; never paste Nostr private keys into chat or commit key files.
 
 **Key concepts**: Nostr keypair identity · npub node address · FIPS mesh · IPv6 `fd00::/8` TUN · `.fips` DNS · Nostr-mediated discovery · peer ACL · optional `fips0` firewall · LAN gateway · WireGuard exit sidecar.
@@ -72,7 +74,102 @@ For stronger privacy, combine FIPS with other aidevops guidance and tools:
 
 Hard limit: full privacy and anonymity cannot be guaranteed by a VPN overlay alone. IP addresses, timing correlation, device fingerprints, writing style, payment trails, relay logs, and compromised endpoints can identify users.
 
-## Setup Pattern
+## Nostr VPN App and nvpn (Recommended)
+
+- **Install (opt-in)**: signed and notarized macOS `.dmg` from https://nostrvpn.org/ or the GitHub releases. The app installs a root LaunchDaemon (`to.nostrvpn.nvpn`) running `/Library/PrivilegedHelperTools/to.nostrvpn.nvpn` with config under `~/Library/Application Support/nvpn/`.
+- **Updates**: the app updates itself through its verified in-app updater. `nostr-vpn-helper.sh update` (run by `aidevops update`) reports app updates, installs or refreshes `/usr/local/bin/nvpn` from the app helper so the CLI matches the running daemon, and uses `nvpn update` (which refuses unverified releases) on CLI-only hosts. It never installs Nostr VPN, replaces the app, writes the root helper, or changes config.
+- **Enrollment**: signed rosters control membership. Keep `connect_to_non_roster_fips_peers: false`. The helper wraps the CLI flow validated on 4.1.16 (GH#23846, GH#32583). Each command prints the next one to run:
+
+  ```bash
+  # Every device, once: CLI matching the app daemon (sudo if /usr/local/bin is not writable)
+  nostr-vpn-helper.sh update
+  # First (admin) device: moves off NetBird's UDP 51820, sets the LAN endpoint, creates the network, names itself
+  nostr-vpn-helper.sh setup-admin macbook
+  # Each joining device (command printed by setup-admin)
+  nostr-vpn-helper.sh join <admin-npub> <network-id> mini --admin-alias macbook
+  # Admin device (command printed by join): approve and name it
+  nostr-vpn-helper.sh approve <joiner-npub> mini
+  # Names on every device: run the printed set-alias lines on each other device, then verify
+  nostr-vpn-helper.sh aliases
+  nostr-vpn-helper.sh dns-check mini
+  ```
+
+  Raw equivalents: `nvpn set --listen-port 51821 --endpoint <lan-ip>:51821`, `nvpn set --device <own-npub>` (admin, creates the network), `nvpn join-manual --admin-device-id <npub> --network-id <id>`, `nvpn add-device --device <npub> --publish`. Alternatively use `nvpn join-request` plus approval in the admin app.
+
+### Direct-only mode (no third-party bootstrap or discovery)
+
+nvpn 4.1.16 defaults include upstream bootstrap/transit peers (`fips1.iris.to`, `fips2.iris.to` in `[fips_bootstrap_peers]`) and public Nostr relay discovery. Relays and transit peers cannot read tunnel traffic, but they can see identities, IPs and timing. `nvpn status` shows them as `fips_peers: … other`.
+
+```bash
+nostr-vpn-helper.sh direct-only <peer-npub>=<lan-or-public-host>[:port] [...]   # per device, listing its peers
+nostr-vpn-helper.sh direct-only --off                                            # back to upstream defaults
+```
+
+Validated between two Macs on one LAN: `mesh_ready: true`, `0 other` FIPS peers, and ping/SSH over `.nvpn` names. The trade-off is that peers can only reach each other through the listed endpoints, plus LAN mDNS when `lan_discovery_enabled` is on. Off-LAN you need a reachable public endpoint (port forward or VPS) or the defaults.
+
+**nvpn cannot ride NetBird/Tailscale links.** Endpoint hints reject CGNAT `100.64.0.0/10`. On macOS, a NetBird IPv6 ULA hint fails with `No route to host (os error 65)`, even though `ping6` works, because the daemon pins its underlay to the physical interface (`physical route sample: selected=en0`). Run the meshes side by side and pick one per connection; don't layer them.
+
+A self-hosted transit/bootstrap node you control may replace the upstream seeds (`[fips_bootstrap_peers]` in `config.toml`; the CLI has no flag for it). This is untested in aidevops.
+
+- **Root helper hygiene**: binaries that launchd runs as root should be `root:wheel` and not user-writable (`ls -l /Library/PrivilegedHelperTools/`). Report anomalies privately, never in public issues. The published contact address bounced in September 2026 (mmalmi/nostr-vpn#70); check that issue for the current private channel.
+
+### MagicDNS (`.nvpn` names)
+
+MagicDNS only serves devices that have an alias. Until then, the daemon logs `magicdns: skipped (no configured alias records)` and writes no `/etc/resolver/nvpn`. On 4.1.16 the CLI has no alias command, and alias-only changes did not propagate through `add-device --publish` (`published_recipients=0`), so every device needs every alias. `nostr-vpn-helper.sh set-alias <npub|self> <alias>` writes the entry (backup: `config.toml.bak-aidevops`) and reloads the daemon. `nostr-vpn-helper.sh aliases` prints the commands to copy to other devices. `nostr-vpn-helper.sh dns-check <alias>` runs the three checks below. It edits the `[peer_aliases]` table in `~/Library/Application Support/nvpn/config.toml` (Linux: `~/.config/nvpn/config.toml`; override with `NVPN_CONFIG_PATH`), keyed by npub:
+
+```toml
+[peer_aliases]
+npub1<admin-device> = "macbook"
+npub1<joined-device> = "mini"
+```
+
+Then `nvpn reload`. Verify it in three layers:
+
+1. The daemon answers: `dig +short @127.0.0.1 -p 1053 mini.nvpn A`.
+2. macOS has registered the resolver: `scutil --dns | grep 'domain   : nvpn'`.
+3. The system resolves the name: `dscacheutil -q host -a name mini.nvpn`.
+
+If layer 1 works but layer 2 is empty, macOS has not re-read `/etc/resolver`; `scutil --dns` may still list removed resolvers such as `fips`. `sudo killall -HUP mDNSResponder` does **not** fix this. macOS re-reads the directory on a network change, so cycle the default interface (`route -n get default | grep interface`). For example, if Wi-Fi is `en0`:
+
+```bash
+networksetup -setairportpower en0 off; sleep 3; networksetup -setairportpower en0 on; sleep 15
+scutil --dns | grep -E 'domain   : (nvpn|fips)'   # expect only nvpn
+```
+
+This drops the network for about 15 s; NetBird and nvpn reconnect on their own. If it doesn't help, reboot. Verified on macOS arm64 (GH#23846).
+
+### Coexisting with NetBird
+
+| Resource | NetBird | Nostr VPN | Action |
+|----------|---------|-----------|--------|
+| WireGuard UDP port | `51820` default | `51820` default | Clash. Move nvpn: `nvpn set --listen-port 51821 && nvpn reload` |
+| Tunnel IPv4 | `100.64.0.0/10` range | `10.44.x.x` (observed on 4.1.16) | No overlap unless a LAN uses `10.44.x.x`; check `nvpn ip` |
+| IPv6 | `fd07:…/64` per network | FIPS `fd00::/8` host tunnel (`fips_host_tunnel_enabled`, off in observed defaults) | Longest-prefix routing keeps NetBird `/64`s; verify with `route -n get -inet6 <addr>` |
+| DNS | `.netbird.selfhosted` (or custom) | `.nvpn` MagicDNS | Separate suffixes |
+| Exit nodes | Optional | Optional | Enable at most one default-route exit at a time |
+
+`nostr-vpn-helper.sh conflicts` detects the port clash and leftover standalone FIPS files. For using either mesh to reach OpenCode workers, see `reference/mesh-remote-workers.md`.
+
+Validated on two macOS devices (GH#23846): nvpn on its own `utun` and NetBird on another, both reachable at the same time, with nvpn on UDP `51821`.
+
+### Removing Legacy Standalone FIPS
+
+The standalone daemon, its CLI, its config directory and its resolver all share the basename `fips`. A single `mv` into one backup folder therefore fails for the later items. Use distinct names:
+
+```bash
+sudo launchctl bootout system /Library/LaunchDaemons/com.fips.daemon.plist 2>/dev/null || true
+B=/var/root/fips-legacy-backup; sudo mkdir -p "$B"
+sudo mv /Library/LaunchDaemons/com.fips.daemon.plist "$B/" 2>/dev/null || true
+sudo mv /usr/local/etc/fips "$B/etc-fips" 2>/dev/null || true
+sudo mv /etc/resolver/fips "$B/resolver-fips" 2>/dev/null || true
+for f in fips fipsctl fipstop fips-gateway; do sudo mv "/usr/local/bin/$f" "$B/bin-$f" 2>/dev/null || true; done
+sudo launchctl enable system/com.fips.daemon
+nostr-vpn-helper.sh conflicts   # expect: OK: no standalone jmcorgan/fips install found
+```
+
+The backup folder contains the old FIPS private key. Delete it once you no longer need recovery.
+
+## Legacy Standalone FIPS Setup Pattern
 
 1. Install FIPS from a pinned upstream release or package; verify checksums first.
 2. On macOS, prefer `v0.4.0-rc1` or later packages over the removed corrupt `v0.3.0` package.
@@ -153,17 +250,32 @@ Prefer fresh per-device identities over shared private keys. If a key is importe
 
 ## OpenCode Remote Compute Pattern
 
-1. On the compute node, bind OpenCode or other local services to loopback or the FIPS interface only.
-2. Open only the required port on `fips0`; keep public interfaces default-deny.
-3. From the client node, connect using the peer `.fips` name or mapped IPv6 address.
-4. Store service auth tokens with `aidevops secret set OPENCODE_SERVER_TOKEN`.
-5. Verify with `nostr-vpn-helper.sh diagnostics` and an authenticated application-level request.
+Validated with nvpn 4.1.16 between two Macs (GH#23846). OpenCode stays on the compute node's loopback interface, and SSH over the mesh provides both transport and authentication. No listener is exposed on a tunnel IP.
+
+1. Enrol both devices (see Enrollment), install your SSH key (`ssh-copy-id <user>@<peer-tunnel-ip>`), and add an SSH alias whose `HostName` is the peer's tunnel IP or `<alias>.nvpn`.
+2. In terminal 1 on the client, run: `ssh -L 127.0.0.1:14096:127.0.0.1:4096 <alias> "zsh -lic 'cd ~ && opencode serve --hostname 127.0.0.1 --port 4096'"`. The login shell (`-lic`) is needed when OpenCode is installed with nvm.
+3. In terminal 2, run: `opencode attach http://127.0.0.1:14096 --dir <remote project path>`. Health check: `curl -s http://127.0.0.1:14096/path` returns the remote home.
+4. Closing SSH can leave the remote server running. Stop it with: `ssh <alias> 'pkill -f "opencode serve --hostname 127.0.0.1 --port 4096"'`.
+5. Bind OpenCode to a tunnel IP only with `OPENCODE_SERVER_PASSWORD` set (`aidevops secret set OPENCODE_SERVER_TOKEN`) and a reviewed trust boundary.
+
+`nostr-vpn-helper.sh opencode-guide` prints the same steps.
 
 Other aidevops-adjacent candidates after SSH is proven: private Git remotes, MCP servers, local dashboards, homelab storage, GPU workers, staging apps, and CI/debug workers. Bind each service to loopback or the FIPS interface; do not publish public listeners as a shortcut.
 
 ## Helper Commands
 
 ```bash
+.agents/scripts/nostr-vpn-helper.sh update --check
+.agents/scripts/nostr-vpn-helper.sh update
+.agents/scripts/nostr-vpn-helper.sh nvpn-status
+.agents/scripts/nostr-vpn-helper.sh conflicts
+.agents/scripts/nostr-vpn-helper.sh setup-admin [alias]
+.agents/scripts/nostr-vpn-helper.sh join <admin-npub> <network-id> [alias] [--admin-alias name]
+.agents/scripts/nostr-vpn-helper.sh approve <device-npub> <alias>
+.agents/scripts/nostr-vpn-helper.sh set-alias <npub|self> <alias>
+.agents/scripts/nostr-vpn-helper.sh aliases
+.agents/scripts/nostr-vpn-helper.sh dns-check <alias>
+.agents/scripts/nostr-vpn-helper.sh direct-only <npub>=<host[:port]>... | --off
 .agents/scripts/nostr-vpn-helper.sh check
 .agents/scripts/nostr-vpn-helper.sh status
 .agents/scripts/nostr-vpn-helper.sh identity
@@ -177,7 +289,7 @@ Other aidevops-adjacent candidates after SSH is proven: private Git remotes, MCP
 .agents/scripts/nostr-vpn-helper.sh opencode-guide
 ```
 
-The helper is intentionally read-only except for printing operator instructions; destructive or privileged changes should be confirmed and implemented in a later, tested phase.
+Diagnostics are read-only. `update` only installs or refreshes the user-owned `nvpn` CLI. Enrollment commands change nvpn settings, the roster, or `[peer_aliases]` only when you run them explicitly. None of them install Nostr VPN, need sudo, or touch the root helper.
 
 ## Security Checklist
 

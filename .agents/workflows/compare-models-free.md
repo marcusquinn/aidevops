@@ -7,36 +7,28 @@ mode: subagent
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-Compare AI models using only embedded reference data. No web fetches, no API calls.
+Compare AI models using only the local model registry. No web fetches, no API calls.
 
 Target: $ARGUMENTS
 
 ## Instructions
 
-Run the appropriate helper subcommand based on `$ARGUMENTS`:
-
 ```bash
 ~/.aidevops/agents/scripts/compare-models-helper.sh list                        # all models
-~/.aidevops/agents/scripts/compare-models-helper.sh compare <model1> <model2>  # specific models
-~/.aidevops/agents/scripts/compare-models-helper.sh recommend "<task>"         # task-based recommendation
-~/.aidevops/agents/scripts/compare-models-helper.sh pricing                    # pricing overview
-~/.aidevops/agents/scripts/compare-models-helper.sh capabilities               # capability matrix
+~/.aidevops/agents/scripts/compare-models-helper.sh list --provider <name>      # filter by provider
 ```
 
-**Do NOT fetch any web pages.** Note the "Last updated" date in output for data freshness.
+Present results as a structured comparison table: pricing per 1M tokens
+(input and output), context window sizes, and each model's canonical aidevops
+workload tier (`simple`, `standard`, or `thinking`).
 
-Present results as a structured comparison table:
-- Pricing per 1M tokens (input and output)
-- Context window sizes
-- Capability matrix
-- Task suitability recommendations
-- canonical aidevops workload tier (`simple`, `standard`, or `thinking`) for each model
+For "how good is a new model at our actual work?", this catalog is not the
+right tool — read `tools/ai-assistants/compare-models.md` and use
+model-replay, model-ab, or frontier-harness-eval instead.
 
 ## Examples
 
 ```bash
-/compare-models-free claude-sonnet-4-6 gpt-4o   # compare specific models
-/compare-models-free --task "summarization"      # task recommendation
-/compare-models-free --pricing                   # all pricing
-/compare-models-free --capabilities              # capabilities matrix
+/compare-models-free                    # full registry
+/compare-models-free --provider OpenAI  # OpenAI models only
 ```

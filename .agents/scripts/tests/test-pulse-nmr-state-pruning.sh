@@ -22,6 +22,9 @@ gh() {
 	repos/owner/repo/issues/1) printf '{"state":"closed"}\n' ;;
 	repos/owner/repo/issues/2) printf '{"state":"open"}\n' ;;
 	repos/owner/repo/issues/3) return 1 ;;
+	repos/owner/repo/issues/4) printf '{"state":"open","labels":[{"name":"persistent"}]}\n' ;;
+	repos/owner/repo/issues/5) printf '{"state":"open","labels":[{"name":"hold-for-review"}]}\n' ;;
+	repos/owner/repo/issues/6) printf '{"state":"open","labels":[{"name":"bug"},{"name":"needs-maintainer-review"}]}\n' ;;
 	*) return 1 ;;
 	esac
 	return 0
@@ -31,9 +34,11 @@ gh() {
 source "$NMR_SCRIPT"
 
 cat >"$AIDEVOPS_NMR_REVALIDATION_STATE_FILE" <<'JSON'
-{"entries":{"invalid-key":{"status":"keep"},"owner/repo#1":{"status":"closed"},"owner/repo#2":{"status":"open"},"owner/repo#3":{"status":"unknown"}}}
+{"entries":{"invalid-key":{"status":"keep"},"owner/repo#1":{"status":"closed"},"owner/repo#2":{"status":"open"},"owner/repo#3":{"status":"unknown"},"owner/repo#4":{"status":"ungated","source":"legacy-marker"},"owner/repo#5":{"status":"held","source":"manual-hold"},"owner/repo#6":{"status":"nmr"}}}
 JSON
 
+_nmr_prune_closed_revalidation_state
+_nmr_prune_closed_revalidation_state
 _nmr_prune_closed_revalidation_state
 _nmr_prune_closed_revalidation_state
 
@@ -41,11 +46,14 @@ if ! jq -e '
   (.entries["owner/repo#1"] == null) and
   (.entries["owner/repo#2"].status == "open") and
   (.entries["owner/repo#3"].status == "unknown") and
+  (.entries["owner/repo#4"] == null) and
+  (.entries["owner/repo#5"].status == "held") and
+  (.entries["owner/repo#6"].status == "nmr") and
   (.entries["invalid-key"].status == "keep") and
   (.prune_cursor | type == "string")
 ' "$AIDEVOPS_NMR_REVALIDATION_STATE_FILE" >/dev/null; then
-	printf 'FAIL: pruning did not remove only authoritatively closed state\n' >&2
+	printf 'FAIL: pruning did not remove only closed or ungated state\n' >&2
 	exit 1
 fi
 
-printf 'PASS: NMR state pruning removes only authoritatively closed entries\n'
+printf 'PASS: NMR state pruning removes only closed or authoritatively ungated entries\n'

@@ -47,7 +47,7 @@ Apply these when the target stores WordPress or HTML content:
 2. **Refine:** Apply these guidelines.
 3. **Structure:** Keep valid block markup such as `<!-- wp:paragraph -->...`.
 4. **Update:** `wp post update 123 content.txt`
-5. **Verify:** Flush provider caches and check the frontend. On a legacy Closte estate, follow `services/hosting/closte.md` "Mutation Guard" and confirm Development Mode is disabled.
+5. **Verify:** Flush provider caches and check the frontend.
 
 ## Example Transformation
 

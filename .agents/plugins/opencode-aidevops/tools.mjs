@@ -107,6 +107,26 @@ function createAidevopsTool(run) {
   });
 }
 
+function storeMemory(scriptsDir, memoryHelper, args, run) {
+  const content = args.content.trim();
+  const confidence = args.confidence || "medium";
+  const cmd = `bash "${memoryHelper}" store ${shellEscape(content)} --confidence ${shellEscape(confidence)}`;
+  const result = run(cmd, 10000) || "Memory stored successfully.";
+  const frameworkHelper = join(scriptsDir, "framework-issue-helper.sh");
+  let hint = "";
+
+  if (existsSync(frameworkHelper)) {
+    try {
+      run(`bash "${frameworkHelper}" detect ${shellEscape(content)}`, 10000);
+      hint = "\n\nThis appears to be a framework lesson. Local memory does not reach other users; update the narrowest shared reference or file a worker-ready issue with framework-issue-helper.sh log.";
+    } catch {
+      // A non-framework classification is expected and does not affect storage.
+    }
+  }
+
+  return `${result}${hint}`;
+}
+
 /**
  * Create the unified memory tool (recall and store in one tool).
  *
@@ -126,6 +146,7 @@ function createMemoryTool(scriptsDir, run) {
       'limit (string, default "5", for recall), ' +
       'content (non-empty string, for store), confidence ("low"|"medium"|"high", default "medium", for store). ' +
       'A recall query matching a complete mem_... or obs_... ID uses exact lookup; an unknown ID returns no result without semantic fallback. ' +
+      'Stored local memory does not reach other users; for shared framework lessons, update the narrowest reference or use framework-issue-helper.sh log. ' +
       'Do not call with an empty payload; use {action:"recall",query:"...",limit:"5"} or {action:"store",content:"...",confidence:"medium"}.',
     args: {
       action: z.enum(["recall", "store"]).optional().describe('Memory operation to perform; defaults to "recall"'),
@@ -157,11 +178,7 @@ function createMemoryTool(scriptsDir, run) {
       }
 
       if (action === "store") {
-        const content = args.content.trim();
-        const confidence = args.confidence || "medium";
-        const cmd = `bash "${memoryHelper}" store ${shellEscape(content)} --confidence ${shellEscape(confidence)}`;
-        const result = run(cmd, 10000);
-        return result || "Memory stored successfully.";
+        return storeMemory(scriptsDir, memoryHelper, args, run);
       }
 
       return validationError;
@@ -181,6 +198,10 @@ function createMemoryTool(scriptsDir, run) {
  *   - aidevops_mcp        — registry-allowlisted on-demand MCP lifecycle
  *   - gpt_image_generate  — OAuth-first GPT Image 2 generation and reference editing
  *   - model-accounts-pool   — OAuth account pool management (added in index.mjs)
+ *
+ * OpenCode 1 (index.mjs) then moves gpt_image_generate, model-accounts-pool and
+ * aidevops_objective_receipt behind aidevops_on_demand (on-demand-tools.mjs);
+ * OpenCode 2 registers them directly because Code Mode already defers them.
  *
  * NOTE: aidevops_quality_check was removed. Quality checks run automatically
  * via the tool.execute.before hook on every Write/Edit operation — an explicit

@@ -12,6 +12,7 @@
 # Usage:
 #   install-hooks-helper.sh install              # Install hooks (default)
 #   install-hooks-helper.sh install --force-install  # Install, bypass validator preflight
+#   install-hooks-helper.sh install-pre-commit   # Only the current repo's missing pre-commit hook
 #   install-hooks-helper.sh uninstall            # Remove hooks
 #   install-hooks-helper.sh status               # Check installation status
 #   install-hooks-helper.sh test                 # Run hook self-test
@@ -34,12 +35,14 @@ CREDENTIAL_SCRUB_SCRIPT="$HOOKS_DIR/credential-transcript-scrub.py"
 STRUCTURED_TEXT_PARSER_SCRIPT="$HOOKS_DIR/structured_text_parser.py"
 SECRET_READ_GUARD_SCRIPT="$HOOKS_DIR/secret_file_read_guard.py"
 COMPLEXITY_ADVISORY_SCRIPT="$HOOKS_DIR/complexity_advisory_pre_edit.py"
+STOP_HOOK_SCRIPT="$HOOKS_DIR/session_continuation_stop.py"
 CLAUDE_SETTINGS="$HOME/.claude/settings.json"
 HOOK_COMMAND="\$HOME/.aidevops/hooks/git_safety_guard.py"
 POST_HOOK_COMMAND="\$HOME/.aidevops/hooks/mcp_task_post_hook.py"
 CREDENTIAL_SCRUB_COMMAND="\$HOME/.aidevops/hooks/credential-transcript-scrub.py"
 SECRET_READ_GUARD_COMMAND="\$HOME/.aidevops/hooks/secret_file_read_guard.py"
 COMPLEXITY_ADVISORY_COMMAND="\$HOME/.aidevops/hooks/complexity_advisory_pre_edit.py"
+STOP_HOOK_COMMAND="\$HOME/.aidevops/hooks/session_continuation_stop.py"
 
 # gh-wrapper-guard pre-push hook (t2113)
 GH_WRAPPER_GUARD_MARKER="# aidevops-gh-wrapper-guard"
@@ -257,10 +260,15 @@ install_pre_commit_hook() {
 		fi
 	fi
 
-	# Write a dispatcher that prefers the in-repo copy (so script updates
-	# propagate without re-running this installer) and falls back to the
-	# deployed copy when no repo checkout is available.
-	cat >"$hook_path" <<HOOKEOF
+	_pre_commit_dispatcher >"$hook_path" || return 1
+	chmod +x "$hook_path"
+	print_success "installed pre-commit quality hook at $hook_path"
+	return 0
+}
+
+# Prefer the repository validator, falling back to the stable deployed copy.
+_pre_commit_dispatcher() {
+	cat <<HOOKEOF || return 1
 #!/usr/bin/env bash
 $PRE_COMMIT_MARKER
 # Managed by install-hooks-helper.sh — do not edit.
@@ -285,8 +293,71 @@ else
 	printf '[pre-commit-hook][WARN] hook not found — allowing commit\n' >&2
 fi
 HOOKEOF
-	chmod +x "$hook_path"
-	print_success "installed pre-commit quality hook at $hook_path"
+	return 0
+}
+
+# Missing-hook repair only: never refresh, replace, or chain an existing hook.
+# Linked worktrees intentionally share this hook through their common Git dir.
+install_pre_commit_only() {
+	if [[ "$#" -ne 0 ]]; then
+		print_error "install-pre-commit accepts no options (including --force-install)"
+		return 1
+	fi
+	local repo_root common_dir hooks_dir hook_path
+	repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || {
+		print_error "install-pre-commit requires a Git working tree"
+		return 1
+	}
+	common_dir=$(git rev-parse --git-common-dir) || return 1
+	hooks_dir="$common_dir/hooks"
+	hook_path="$hooks_dir/pre-commit"
+	local config_status=0
+	git config --get core.hooksPath >/dev/null 2>&1 || config_status=$?
+	if [[ "$config_status" -ne 1 ]]; then
+		print_error "Cannot use default hooks: core.hooksPath is configured or its lookup failed"
+		return 1
+	fi
+	if [[ -L "$hooks_dir" || (-e "$hooks_dir" && ! -d "$hooks_dir") || -L "$hook_path" ]]; then
+		print_error "Refusing a redirected or non-directory hooks location or symlinked pre-commit"
+		return 1
+	fi
+	if [[ -e "$hook_path" ]]; then
+		if [[ -f "$hook_path" && -x "$hook_path" ]] && grep -Fqx "$PRE_COMMIT_MARKER" "$hook_path"; then
+			print_info "Pre-commit quality hook already present — leaving it unchanged"
+			return 0
+		fi
+		print_error "Existing pre-commit hook requires manual review — leaving it unchanged"
+		return 1
+	fi
+
+	# Validate the hook the dispatcher will actually execute, not the helper's
+	# adjacent source (which may be a different framework checkout/version).
+	local source_hook="$repo_root/.agents/scripts/pre-commit-hook.sh"
+	if [[ ! -f "$source_hook" ]]; then
+		source_hook="$PRE_COMMIT_DEPLOYED"
+	fi
+	if [[ ! -f "$source_hook" || ! -x "$source_hook" ]]; then
+		print_error "No executable repository or deployed pre-commit validator is available"
+		return 1
+	fi
+	_dry_run_validators "$source_hook" false "$source_hook" || return 1
+	if ! HOOK_MODE=pre-commit "$source_hook"; then
+		print_error "Pre-commit runtime check failed — no hook installed"
+		return 1
+	fi
+	# Recheck after preflight rather than overwriting a concurrently added hook.
+	if [[ -e "$hook_path" || -L "$hook_path" || -L "$hooks_dir" ]]; then
+		print_error "Hook location changed during preflight — no hook installed"
+		return 1
+	fi
+	mkdir -p "$hooks_dir" || return 1
+	# Exclusive creation also protects against a file appearing after the recheck.
+	if ! (set -o noclobber; _pre_commit_dispatcher >"$hook_path"); then
+		print_error "Cannot create pre-commit without overwriting existing state"
+		return 1
+	fi
+	chmod +x "$hook_path" || return 1
+	print_success "Installed only the repository pre-commit quality hook"
 	return 0
 }
 
@@ -479,11 +550,11 @@ _dry_run_validators() {
 	print_info "Running pre-install validator dry-run against HEAD..."
 
 	# Find the pre-commit-hook.sh source
-	local pch_source
-	pch_source=$(_find_pre_commit_hook) || {
+	local pch_source="${3:-}"
+	if [[ -z "$pch_source" ]] && ! pch_source=$(_find_pre_commit_hook); then
 		print_warning "pre-commit-hook.sh not found — skipping validator preflight"
 		return 0
-	}
+	fi
 
 	# Enumerate validator functions from the hook source
 	local validators=()
@@ -520,17 +591,19 @@ _dry_run_validators() {
 			# File-arg validator: pass tracked shell files
 			if [[ ${#shell_files[@]} -gt 0 ]]; then
 				(
-					# Source everything except the final main "$@" call
+					# Keep dependencies relative to the selected validator source.
+					SCRIPT_DIR="$(dirname "$pch_source")"
 					# shellcheck disable=SC1090
-					eval "$(sed '$ { /^main "\$@"$/d; }' "$pch_source")"
+					eval "$(sed '/^SCRIPT_DIR=/d; $ { /^main "\$@"$/d; }' "$pch_source")"
 					"$validator" "${shell_files[@]}"
 				) >/dev/null 2>&1 || exit_code=$?
 			fi
 		else
 			# No-arg validator: call directly (nothing staged → trivial pass)
 			(
+				SCRIPT_DIR="$(dirname "$pch_source")"
 				# shellcheck disable=SC1090
-				eval "$(sed '$ { /^main "\$@"$/d; }' "$pch_source")"
+				eval "$(sed '/^SCRIPT_DIR=/d; $ { /^main "\$@"$/d; }' "$pch_source")"
 				"$validator"
 			) >/dev/null 2>&1 || exit_code=$?
 		fi
@@ -677,6 +750,8 @@ install_hook() {
 	source_secret_read_guard_hook=$(find_source_hook "secret_file_read_guard.py") || return 1
 	local source_complexity_advisory_hook
 	source_complexity_advisory_hook=$(find_source_hook "complexity_advisory_pre_edit.py") || return 1
+	local source_stop_hook
+	source_stop_hook=$(find_source_hook "session_continuation_stop.py") || return 1
 
 	# Pre-install validator dry-run (t2226): abort if validators fail HEAD state
 	_dry_run_validators "$source_hook" "$force_install" || return 1
@@ -705,6 +780,9 @@ install_hook() {
 	cp "$source_complexity_advisory_hook" "$COMPLEXITY_ADVISORY_SCRIPT"
 	chmod +x "$COMPLEXITY_ADVISORY_SCRIPT"
 	print_success "Installed $COMPLEXITY_ADVISORY_SCRIPT"
+	cp "$source_stop_hook" "$STOP_HOOK_SCRIPT"
+	chmod +x "$STOP_HOOK_SCRIPT"
+	print_success "Installed $STOP_HOOK_SCRIPT"
 	_probe_hook_runtime "$HOOK_SCRIPT" || return 1
 
 	# Configure Claude Code settings.json
@@ -800,6 +878,16 @@ settings = {
                     }
                 ]
             }
+        ],
+        'Stop': [
+            {
+                'hooks': [
+                    {
+                        'type': 'command',
+                        'command': '$STOP_HOOK_COMMAND'
+                    }
+                ]
+            }
         ]
     }
 }
@@ -852,7 +940,10 @@ for h in hooks.get('PostToolUse', []):
         if 'credential-transcript-scrub' in sub.get('command', ''):
             has_scrub = True
 
-if has_guard_bash and has_guard_edit_write and has_complexity and has_secret_read_guard and has_post and has_scrub:
+has_stop = any('session_continuation_stop' in sub.get('command', '')
+               for h in hooks.get('Stop', []) for sub in h.get('hooks', []))
+
+if has_guard_bash and has_guard_edit_write and has_complexity and has_secret_read_guard and has_post and has_scrub and has_stop:
     sys.exit(0)
 sys.exit(1)
 " 2>/dev/null; then
@@ -973,6 +1064,11 @@ else:
     if not has_hook(settings['hooks']['PostToolUse'], 'credential-transcript-scrub'):
         settings['hooks']['PostToolUse'].append(credential_scrub_entry)
 
+# Stop hook: keep going while tracked todos remain open (GH#33143)
+stop_entries = settings['hooks'].setdefault('Stop', [])
+if not has_hook(stop_entries, 'session_continuation_stop'):
+    stop_entries.append({'hooks': [{'type': 'command', 'command': '$STOP_HOOK_COMMAND'}]})
+
 path = '$CLAUDE_SETTINGS'
 fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), suffix='.tmp')
 with os.fdopen(fd, 'w') as f:
@@ -986,6 +1082,39 @@ os.rename(tmp, path)
 		return 1
 	}
 	print_success "Updated $CLAUDE_SETTINGS with hook configuration"
+	return 0
+}
+
+# Remove the session-continuation Stop hook script and its settings entry
+# (GH#33143). Runs before the Stop-agnostic cleanup in uninstall_hook, which
+# drops the whole 'hooks' key once every framework entry is gone.
+_uninstall_stop_hook() {
+	if [[ -f "$STOP_HOOK_SCRIPT" ]]; then
+		rm "$STOP_HOOK_SCRIPT"
+		print_success "Removed $STOP_HOOK_SCRIPT"
+	fi
+	[[ -f "$CLAUDE_SETTINGS" ]] || return 0
+	python3 - "$CLAUDE_SETTINGS" <<'PY' 2>/dev/null || print_warning "Could not remove Stop hook from $CLAUDE_SETTINGS"
+import json, os, sys, tempfile
+path = sys.argv[1]
+with open(path) as f:
+    settings = json.load(f)
+hooks = settings.get('hooks', {})
+kept = []
+for rule in hooks.get('Stop', []):
+    rule['hooks'] = [s for s in rule.get('hooks', []) if 'session_continuation_stop' not in s.get('command', '')]
+    if rule['hooks']:
+        kept.append(rule)
+if kept:
+    hooks['Stop'] = kept
+else:
+    hooks.pop('Stop', None)
+fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), suffix='.tmp')
+with os.fdopen(fd, 'w') as f:
+    json.dump(settings, f, indent=2)
+    f.write('\n')
+os.rename(tmp, path)
+PY
 	return 0
 }
 
@@ -1023,6 +1152,7 @@ uninstall_hook() {
 	else
 		print_info "Complexity advisory hook not found (already removed)"
 	fi
+	_uninstall_stop_hook
 
 	# Remove from Claude settings
 	if [[ -f "$CLAUDE_SETTINGS" ]]; then
@@ -1532,6 +1662,14 @@ test_hook() {
 	test_root=$(cd "$test_root" && pwd -P) || return 1
 	_test_hook_create_repo "$test_root"
 
+	# Marker-only repositories under temp roots are intentionally unmanaged.
+	# Register only the canonical fixture, without touching the user's registry;
+	# the linked and unmanaged fixtures must retain their distinct policy results.
+	local AIDEVOPS_REPOS_FILE="${test_root}/hook-test-repos.json"
+	export AIDEVOPS_REPOS_FILE
+	python3 -c 'import json, sys; print(json.dumps({"initialized_repos": [{"path": sys.argv[1]}]}))' \
+		"$test_root" >"$AIDEVOPS_REPOS_FILE" || return 1
+
 	local linked_worktree="${test_root}/linked-wt"
 	local real_git="${AIDEVOPS_REAL_GIT_BIN:-/usr/bin/git}"
 	"$real_git" -C "$test_root" worktree add "$linked_worktree" -b feature/hook-linked-test >/dev/null 2>&1
@@ -1566,12 +1704,17 @@ show_help() {
 	echo "Commands:"
 	echo "  install               Install safety hooks (default)"
 	echo "  install --force-install  Bypass validator preflight check"
+	echo "  install-pre-commit    Preflight and install only a missing repository pre-commit hook"
 	echo "  uninstall             Remove safety hooks"
 	echo "  status                Check installation status"
 	echo "  test                  Run hook self-test"
 	echo "  help                  Show this help"
 	echo ""
-	echo "Installs to:"
+	echo "install-pre-commit leaves pre-push, user settings, and existing hooks unchanged."
+	echo "It uses shared Git hooks for linked worktrees and refuses core.hooksPath overrides."
+	echo "It requires an existing executable repository/deployed validator; no force option."
+	echo ""
+	echo "Full install writes to:"
 	echo "  ~/.aidevops/hooks/git_safety_guard.py"
 	echo "  ~/.claude/settings.json (PreToolUse hook config)"
 	echo "  .git/hooks/pre-push (gh-wrapper-guard t2113, quality-validation t2207)"
@@ -1584,6 +1727,7 @@ cmd="${1:-install}"
 shift || true
 case "$cmd" in
 install) install_hook "$@" ;;
+install-pre-commit) install_pre_commit_only "$@" ;;
 uninstall) uninstall_hook ;;
 status) check_status ;;
 test) test_hook ;;

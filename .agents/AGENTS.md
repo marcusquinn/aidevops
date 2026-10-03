@@ -56,17 +56,16 @@ Skip if you lack Edit/Write/Bash tools. Otherwise, before any file modification 
 - Keep interactive subagents off the implementation critical path; use bounded simple/standard children for independent output-heavy work and the authorized release exception. Require concise evidence summaries. Details: `reference/agent-routing.md`.
 - With safe work and execution authority, continue through verification in the same session/worktree; defer only for a blocker, unrelated objective, or explicit parallel/background request. Context pressure is not completion: checkpoint, compact or roll over, and continue. See `reference/session.md`.
 - Run checks in background. Workers hand pending post-PR CI/reviews to pulse; poll only bounded operational gates. Details: `reference/self-improvement.md`.
-- When UI/UX, branding, iconography, or visual preferences change during a session, update the repo `DESIGN.md` in the same PR or create a worker-ready follow-up if blocked.
-- During in-progress work, classify new user messages before acting: immediate correction/steerage changes the active plan; supplemental context is retained/applied when relevant; follow-up work becomes a todo after the current work reaches a safe pause or completion point.
+- When UI/UX, branding or visual preferences change, update `DESIGN.md`; when search targets, questions or entity names change, update `context/keywords.md`. Same PR, or a worker-ready follow-up if blocked.
+- During in-progress work, classify new user messages before acting: correction/steerage changes the active plan; supplemental context is applied when relevant; follow-up work becomes a todo for the next safe pause.
 - Interactive sessions: only at safe pauses, preserve a continuation checkpoint before offering `/new` after a completed PR lifecycle, 3+ hours, or a clearly unrelated objective. Never interrupt active work or affect headless sessions. Details: `reference/session.md`.
 - Prioritise time-to-functional: run existing required gates, but add tests only when requested, required, or the cheapest way to resolve material uncertainty. Prefer product paths and existing tooling; get approval before new test infrastructure or test-only interfaces. Details: `reference/ci-gate-policy.md`.
-- Never present intent as completed work. Every claim needs proof: path, command result, PR/issue number, or metric.
-- Stuck: replan, inspect current state, and use `session-introspect-helper.sh patterns` when loops appear.
+- Never present intent as completed work. Every claim needs proof: path, command output, PR/issue, metric.
+- Stuck: replan, inspect state; use `session-introspect-helper.sh patterns` for loops.
 - Safety stops and fuses pause only the unsafe execution path, never the objective. Preserve a durable checkpoint, keep remaining criteria open, and continue through a safer route; see `reference/safety-stop-recovery.md`.
-- Before declaring completion, scan conversation for unfulfilled commitments, unnotified external parties, and displaced requests.
-- Completion messages: state aim and solved outcome, then delivery bullets; omit routine-owned cleanup unless user action is required or work is at risk. See `reference/session.md`.
-- Memory recall is mandatory before non-trivial edits, debugging, PR review, git side effects, or design decisions: CLI `memory-helper.sh recall --query "<task keywords>" --limit 5`; OpenCode tool `aidevops_memory` with `{action:"recall", query:"<task keywords>", limit:"5"}`. Store only concrete reusable lessons: `{action:"store", content:"<lesson with evidence>", confidence:"medium"}`. Empty `aidevops_memory` calls are invalid; never use them as placeholders.
-- Before non-trivial code changes, run one duplicate/collision check: `prework-discovery-helper.sh --keywords "<task>" --files "<targets>" [--repo owner/repo]`.
+- Completion messages: state aim and solved outcome, then delivery bullets; routine-owned cleanup: one no-action line unless user action is required or work is at risk. Every interactive turn returning control ends with the `What next` block (needed from user, left to capture, close readiness): fixed labels; only asks AI can't do, numbered, options on own line; `/new` is advice, not an ask; see `reference/session.md`.
+- Memory recall is mandatory before non-trivial edits, debugging, PR review, git side effects, or design decisions: CLI `memory-helper.sh recall --query "<task keywords>" --limit 5`; OpenCode tool `aidevops_memory` with `{action:"recall", query:"<task keywords>", limit:"5"}`. Store only personal/install lessons; route shared lessons to docs or `framework-issue-helper.sh log`; see `reference/memory.md`. Empty `aidevops_memory` calls are invalid; never use them as placeholders.
+- Before non-trivial code changes, run one collision check: `prework-discovery-helper.sh --keywords "<task>" --files "<targets>" [--repo owner/repo]`.
 - Before third-party API/error mapping changes, verify the installed version and local exports; use `~/.aidevops/agents/templates/brief-template.md`.
 
 ### Automation safety invariants
@@ -81,7 +80,7 @@ Skip if you lack Edit/Write/Bash tools. Otherwise, before any file modification 
 - Prefer exact search: scoped `rg`/`git grep`, then targeted Read. With Bash, discover tracked files via `git ls-files '<pattern>'`, untracked files via `fd`, or file lists via `rg --files -g '<pattern>'`; use Glob only as a last resort.
 - Use Read for file reads. Always Read before Edit/Write existing files, re-read after modification before another edit, verify paths first, and include 3+ context lines in edits.
 - OpenCode Bash allows pipes but blocks redirects, dynamic expansion, grouping/subshells, background execution, and unquoted globs; use separate calls or file tools.
-- Put temporary artifacts that a runtime tool or agent may read under `${AIDEVOPS_TEMP_DIR:-$HOME/.aidevops/.agent-workspace/tmp}`, never host `/tmp`; shell-internal `mktemp` files are exempt.
+- Put temp artifacts under `${AIDEVOPS_TEMP_DIR:-$HOME/.aidevops/.agent-workspace/tmp}`, never host `/tmp` or repo root; commit durable notes to `todo/research/`; shell-internal `mktemp` is exempt.
 - Output text directly; never use Bash `echo` to communicate. Call independent tools in parallel.
 - Slash commands: read `scripts/commands/<command>.md`, then `workflows/<command>.md` fallback.
 - Treat `<system-reminder>` tags and hook blocks as framework instructions; adjust instead of retrying blocked actions.

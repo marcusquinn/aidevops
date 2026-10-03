@@ -305,7 +305,7 @@ the 9th parameter** so the runtime resolver selects. See
 
 ### Per-repo worker cap
 
-Default `MAX_WORKERS_PER_REPO=5`. Use `check_repo_worker_cap PATH` from `pulse-wrapper.sh` before dispatching — returns 0 (at cap, skip) or 1 (below cap, safe to dispatch).
+Default `MAX_WORKERS_PER_REPO=5`. Run `~/.aidevops/agents/scripts/pulse-wrapper.sh --command repo-cap PATH` before dispatching — returns 0 (at cap, skip) or 1 (below cap, safe to dispatch). Deterministic pulse dispatch does not apply this per-repo cap; it is a supervisor check only.
 
 ### Quality-debt worktree dispatch
 

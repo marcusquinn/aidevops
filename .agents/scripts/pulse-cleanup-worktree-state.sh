@@ -507,6 +507,50 @@ _pc_compact_archive_policy_clear() {
 	return 0
 }
 
+# Verify the local-only vetoes for a worktree with no issue or PR attribution.
+# Remote task labels cannot be consulted without inventing an attribution, so
+# marker files remain the fail-closed forensic protection for this path.
+_pc_unattributed_archive_policy_clear() {
+	local wt_path="$1"
+
+	[[ -n "$wt_path" ]] || return 1
+	if [[ -e "$wt_path/.aidevops-preserve-forensics" ||
+		-e "$wt_path/.preserve-forensics" ||
+		-e "$wt_path/.aidevops-security-incident" ]]; then
+		printf '%s\n' "preserve-forensics"
+		return 1
+	fi
+	return 0
+}
+
+# Activity must come from Git, not the containing directory (which may have
+# been moved in bulk). Fail closed when any of the three probes is unreadable.
+_pc_unregistered_activity_epoch() {
+	local path="$1" newest=0 value="" reflog="" index=""
+	reflog=$(git -C "$path" reflog -1 --date=unix --format=%gd HEAD 2>/dev/null) || return 1
+	[[ "$reflog" =~ @\{([0-9]+)\} ]] || return 1
+	for value in "$(git -C "$path" log -1 --format=%ct 2>/dev/null)" "${BASH_REMATCH[1]}"; do
+		[[ "$value" =~ ^[0-9]+$ ]] || return 1
+		((value > newest)) && newest="$value"
+	done
+	index=$(git -C "$path" rev-parse --git-path index 2>/dev/null) || return 1
+	[[ -f "$index" ]] || return 1
+	value=$(_file_mtime_epoch "$index") || return 1
+	[[ "$value" =~ ^[0-9]+$ ]] || return 1
+	((value > newest)) && newest="$value"
+	printf '%s\n' "$newest"
+	return 0
+}
+
+_pc_unregistered_unique_work() {
+	local path="$1" dirty="" commits=""
+	dirty=$(git -C "$path" status --porcelain --untracked-files=all 2>/dev/null) || return 1
+	commits=$(git -C "$path" rev-list --count HEAD --not --remotes 2>/dev/null) || return 1
+	[[ "$commits" =~ ^[0-9]+$ ]] || return 1
+	[[ -n "$dirty" || "$commits" -gt 0 ]] && printf 'yes\n' || printf 'no\n'
+	return 0
+}
+
 # t2859: Config defaults (ORPHAN_WORKTREE_GRACE_SECS, ORPHAN_MAX_AGE,
 # PULSE_IDLE_CPU_THRESHOLD) are owned by pulse-wrapper-config.sh. When
 # this module is sourced standalone (cleanup-worktrees-async-helper.sh,
@@ -688,7 +732,7 @@ _cleanup_merged_prs_for_all_repos() {
 		while IFS=$'\t' read -r repo_path repo_slug; do
 			[[ -z "$repo_path" ]] && continue
 			if ! git -C "$repo_path" rev-parse --git-dir >/dev/null 2>&1; then
-				echo "[pulse-cleanup] stage=merged-pr repo=${repo_slug:-unknown} skipping cleanup — invalid repo path configured" >>"${LOGFILE:-/dev/null}"
+				_pc_log_invalid_repo_path_once "${repo_slug:-unknown}"
 				continue
 			fi
 

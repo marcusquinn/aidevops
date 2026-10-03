@@ -55,7 +55,7 @@ Give one fix at a time:
 - **EXPIRED / INVALID (401) / auth-error**: Re-add — `oauth-pool-helper.sh add <provider>`.
   - Cursor exception: expired tokens are normal (IDE re-reads them) — only flag Cursor if status is also `auth-error`.
 - **Missing refresh token**: Remove first (`oauth-pool-helper.sh remove <provider> <email>`), then re-add.
-- **All rate-limited**: Offer to reset: `model-accounts-pool` tool `{"action": "reset-cooldowns"}`.
+- **All rate-limited**: Offer to reset: `model-accounts-pool` tool `{"action": "reset-cooldowns"}` (OpenCode 1: `aidevops_on_demand` with `{"tool": "model-accounts-pool", "args": {...}}`).
 
 #### Path D — manage existing accounts
 

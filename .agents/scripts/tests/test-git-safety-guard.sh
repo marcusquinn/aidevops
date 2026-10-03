@@ -60,6 +60,10 @@ setup_test_repo() {
 	# Resolve symlinks so paths are consistent with what git returns
 	# (macOS: mktemp returns /var/... which is a symlink to /private/var/...)
 	TEST_ROOT=$(cd "$TEST_ROOT" && pwd -P)
+	# The canonical fixture must be registered: unregistered temp marker repos
+	# are intentionally exempt from the Git command guard.
+	printf '{"initialized_repos":[{"path":"%s"}]}\n' "$TEST_ROOT" >"${TEST_ROOT}/repos.json"
+	export AIDEVOPS_REPOS_FILE="${TEST_ROOT}/repos.json"
 	git -C "$TEST_ROOT" init -b main >/dev/null 2>&1 || {
 		git -C "$TEST_ROOT" init >/dev/null 2>&1
 		git -C "$TEST_ROOT" checkout -b main >/dev/null 2>&1

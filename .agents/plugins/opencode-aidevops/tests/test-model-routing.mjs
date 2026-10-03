@@ -11,6 +11,7 @@ import {
   loadModelRouting,
   nextRoutingTier,
   routingProfile,
+  routingTierForModel,
   selectConnectedRoutingCandidate,
 } from "../model-routing.mjs";
 import { withUnambiguousProviderFallbacks } from "../model-routing-reasoning.mjs";
@@ -18,6 +19,30 @@ import {
   applyAgentRoutingProfile,
   registerAgentRoutingIntent,
 } from "../config-agent-profiles.mjs";
+import { applyCompactionRouting, capCompactionEffort } from "../compaction-routing.mjs";
+
+test("a model serving several tiers resolves by observed variant", () => {
+  const root = mkdtempSync(join(tmpdir(), "aidevops-model-routing-"));
+  const table = join(root, "table.json");
+  try {
+    writeFileSync(table, JSON.stringify({
+      tiers: {
+        standard: { models: ["vendor/shared"], reasoning: { vendor: "low" } },
+        thinking: { models: ["vendor/shared"], reasoning: { vendor: "high" } },
+      },
+      escalation_order: ["simple", "standard", "thinking"],
+    }));
+    const routing = loadModelRouting([table]);
+    assert.equal(routingTierForModel(routing, "vendor/shared"), "standard");
+    assert.equal(routingTierForModel(routing, "vendor/shared", "low"), "standard");
+    assert.equal(routingTierForModel(routing, "vendor/shared", "medium"), "standard");
+    assert.equal(routingTierForModel(routing, "vendor/shared", "high"), "thinking");
+    assert.equal(routingTierForModel(routing, "vendor/shared", "xhigh"), "standard");
+    assert.equal(routingTierForModel(routing, "vendor/other", "medium"), "");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test("partial higher-precedence routing tables inherit unspecified framework tiers", () => {
   const root = mkdtempSync(join(tmpdir(), "aidevops-model-routing-"));
@@ -40,7 +65,7 @@ test("partial higher-precedence routing tables inherit unspecified framework tie
 
     const routing = loadModelRouting([custom, framework]);
     assert.deepEqual(routingProfile(routing, "simple"), {
-      tier: "simple", model: "vendor/simple", variant: "low",
+      tier: "simple", model: "vendor/simple", variant: "medium",
     });
     assert.deepEqual(routingProfile(routing, "standard"), {
       tier: "standard", model: "custom/standard", variant: "max",
@@ -171,4 +196,65 @@ test("agent routing metadata defers tier selection while preserving explicit mod
   assert.equal(registerAgentRoutingIntent(state, "custom", pinned, "standard", routing), false);
   assert.equal(state.pinned.has("custom"), true);
   assert.deepEqual(pinned, { model: "other/pinned" });
+});
+
+test("compaction uses the simple route only when its input budget fits the managed target", () => {
+  const routing = { tiers: { simple: { models: ["openai/gpt-6-luna"], reasoning: { openai: "low" } } } };
+  const config = { provider: { openai: { models: {
+    "gpt-6-luna": { limit: { input: 260000, output: 128000, context: 388000 } },
+  } } } };
+  assert.equal(applyCompactionRouting(config, routing), true);
+  assert.deepEqual(config.agent.compaction, { model: "openai/gpt-6-luna", variant: "medium" });
+
+  const tooSmall = { provider: { openai: { models: {
+    "gpt-6-luna": { limit: { input: 239999 } },
+  } } } };
+  assert.equal(applyCompactionRouting(tooSmall, routing), false);
+  assert.deepEqual(tooSmall.agent.compaction, {});
+});
+
+test("compaction skips a too-small first simple candidate for the next that fits (GH#32934)", () => {
+  const routing = { tiers: { simple: {
+    models: ["anthropic/claude-haiku-4-5", "openai/gpt-6-luna"],
+    reasoning: { "anthropic/claude-haiku-4-5": "high", "openai/gpt-6-luna": "medium" },
+  } } };
+  const config = { provider: {
+    anthropic: { models: { "claude-haiku-4-5": { limit: { context: 200000, output: 32000 } } } },
+    openai: { models: { "gpt-6-luna": { limit: { input: 260000, output: 128000, context: 388000 } } } },
+  } };
+  assert.equal(applyCompactionRouting(config, routing), true);
+  assert.deepEqual(config.agent.compaction, { model: "openai/gpt-6-luna", variant: "medium" });
+});
+
+test("compaction effort is clamped down, never raised, and only for the compaction agent", () => {
+  const routing = { tiers: { simple: { models: ["openai/gpt-6-luna"], reasoning: { "openai/gpt-6-luna": "medium" } } } };
+  const opus = { providerID: "anthropic", id: "claude-opus-5-5" };
+  const maxed = { options: { thinking: { type: "adaptive" }, effort: "max" } };
+  const logs = [];
+  const log = (level, message) => logs.push(`${level} ${message}`);
+  assert.deepEqual(capCompactionEffort({ agent: "compaction", model: opus }, maxed, routing, { env: {}, log }), [{ from: "max", to: "high" }]);
+  assert.equal(maxed.options.effort, "high");
+  assert.deepEqual(logs, ["INFO [compaction] effort capped max -> high (claude-opus-5-5)"]);
+
+  const luna = { providerID: "openai", id: "gpt-6-luna" };
+  const lunaXhigh = { options: { reasoningEffort: "xhigh" } };
+  capCompactionEffort({ agent: "compaction", model: luna }, lunaXhigh, routing, { env: {} });
+  assert.equal(lunaXhigh.options.reasoningEffort, "medium");
+
+  const low = { options: { effort: "low" } };
+  assert.deepEqual(capCompactionEffort({ agent: "compaction", model: opus }, low, routing, { env: {} }), []);
+  const primary = { options: { effort: "max" } };
+  assert.deepEqual(capCompactionEffort({ agent: "build-plus", model: opus }, primary, routing, { env: {} }), []);
+  assert.equal(primary.options.effort, "max");
+
+  const override = { options: { reasoning: { effort: "xhigh" } } };
+  capCompactionEffort({ agent: "compaction", model: opus }, override, routing, { env: { AIDEVOPS_COMPACTION_MAX_EFFORT: "medium" } });
+  assert.equal(override.options.reasoning.effort, "medium");
+});
+
+test("compaction preserves explicit user model and variant pins", () => {
+  const routing = { tiers: { simple: { models: ["openai/gpt-6-luna"] } } };
+  const config = { agent: { compaction: { model: "anthropic/pinned", variant: "high" } } };
+  assert.equal(applyCompactionRouting(config, routing), false);
+  assert.deepEqual(config.agent.compaction, { model: "anthropic/pinned", variant: "high" });
 });

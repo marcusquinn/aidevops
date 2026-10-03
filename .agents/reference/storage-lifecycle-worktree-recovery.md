@@ -110,14 +110,30 @@ that entry. Age, size, and OpenCode or Claude session history never prove
 reclaimability. Plan files grant no deletion authority by themselves.
 
 Branch-backed archives prove terminal state through an exact merged PR head and
-a closed linked task. Detached archives remain protected unless their v2
-producer identity matches the profile publication scratch-worktree contract.
-That narrow producer has no branch-keyed claim or linked task; it becomes
+a closed linked task. Detached archives have no branch-keyed claim or linked
+task, so they use one of two publication contracts. The profile publication
+scratch-worktree producer (exact v2 producer identity) becomes
 eligible only when GitHub independently proves the archived HEAD is the merge
 base of the repository's current default-branch tip. A changed producer/context,
 unavailable API, non-ancestor commit, dirty archive, or live local reference
-still preserves the bucket. Other detached producers remain protected until
-they define an equally specific evidence contract. Classification recognises
+still preserves the bucket.
+
+Other v2 detached archives (any producer, with recorded `created-at` evidence)
+follow a combined retention and publication contract. They stay `protected`
+with `detached-within-retention` until their recorded creation time is at
+least the retention period old (`AIDEVOPS_WORKTREE_RECOVERY_MAINTENANCE_RETENTION_DAYS`,
+default seven days, for both manual plans and automatic maintenance); bucket
+mtime never substitutes for missing or unparsable creation evidence, which is
+`unknown` with `retention-evidence-unavailable`. After retention elapses they
+become `candidate` with `detached-head-published-retention-elapsed` only when
+the same GitHub merge-base proof shows the archived HEAD is published on the
+current default branch, source removal is complete, Git state is clean, and
+worktree, registry, and process evidence are all clear. An unpublished HEAD is
+`exact-commit-not-published`; unavailable APIs or process visibility remain
+`unknown`. Legacy detached archives without v2 creation evidence remain
+`detached-or-unresolved-branch`. Both detached candidate reasons are accepted
+by the confirmation-bound and automatic apply paths, which revalidate the full
+evidence before any move. Classification recognises
 the exact producer identity before external publication proof is available, so
 an early evidence failure reports its owning stage (for example,
 `process-evidence-unavailable`) instead of misreporting a supported producer as
@@ -275,13 +291,37 @@ separately reviewed manual plan can proceed to the existing confirmation-bound
 apply path. A maintenance failure leaves the affected archive intact and does
 not turn a successful broader cleanup cycle into a failure.
 
-If that sustained pressure includes `process-evidence-unavailable`, maintenance
+The escalation records `dominant_reason` and `dominant_reason_count`: the
+fixed-cardinality retained reason with the highest count across this run and
+the accumulated zero-candidate cycle (ties resolve by reason key). While an
+escalation is required, maintenance also writes the session advisory
+`~/.aidevops/advisories/worktree-recovery-retention.advisory` with the
+inventory count, measured store size, dominant reason, and the read-only plan
+command. It contains no archive paths or process details, grants no deletion
+authority, and is removed automatically once a pass reclaims space or the
+escalation condition clears.
+
+If `process-evidence-unavailable` is that dominant reason, maintenance
 instead reports `outcome:"operator-intervention-required"` with the fixed
-`unsupported-process-visibility` condition. The result includes only a bounded
+`unsupported-process-visibility` condition. A minority of process-visibility
+observations no longer overrides a larger blocker such as detached or dirty
+archives. The result includes only a bounded
 scan-observation count and fixed guidance: inspect the read-only plan locally,
 stop affected same-user processes through their normal process or service
-controls, and rerun planning. It never reports process names, command lines,
-CWDs, usernames, or archive paths. If complete visibility remains unavailable,
+controls, optionally install the opt-in read-only inspector described in
+`reference/worktree-cwd-visibility.md`, and rerun planning. It never reports process names, command lines,
+CWDs, usernames, or archive paths. The one operator-invoked exception is
+`worktree-helper.sh recovery unreadable-processes` (GH#32853): run manually on
+a `/proc` host, it prints `<pid>\t<comm>\t<remedy>` for each live, non-zombie
+process that is not provably foreign-UID and whose CWD neither a direct read
+nor the opt-in inspector can read. These are exactly the entries that make
+visibility degraded. `<remedy>` is `inspector` when the inspector's UID rule
+(real UID is the caller; other UIDs are the caller or root) accepts the process
+and `stop-only` otherwise (GH#32871). It is read-only, prints to the terminal
+only, and is never called by automatic maintenance, advisories, logs, or plans;
+the escalation advisory names the command but never its output. Names are identification
+aids, never exemptions. Platforms without `/proc` exit 3 because `lsof` does not
+identify denied processes. If complete visibility remains unavailable,
 automatic permanent deletion is explicitly unsupported and the archives remain
 retained. This diagnostic outcome grants no deletion authority, does not trust
 process names, and does not require root access or weaker kernel process

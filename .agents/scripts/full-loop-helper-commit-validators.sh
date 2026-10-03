@@ -22,6 +22,8 @@
 # Include guard
 [[ -n "${_FULL_LOOP_COMMIT_VALIDATORS_LIB_LOADED:-}" ]] && return 0
 _FULL_LOOP_COMMIT_VALIDATORS_LIB_LOADED=1
+# shellcheck source=./project-node-runtime.sh
+source "${SCRIPT_DIR:-${BASH_SOURCE[0]%/*}}/project-node-runtime.sh"
 
 _restore_validator_repo_root() {
 	local repo_root="$1"
@@ -225,9 +227,33 @@ _validator_state_unchanged() {
 _run_scoped_node_checks() {
 	local pm="$1" scope="$2" t="$3" snapshot_dir="$4"
 	local package_json="package.json" scope_label="repository root"
+	local node_bin="" node_rc=0
+	node_bin=$(_project_node_bin "$PWD" "$scope") || node_rc=$?
+	[[ "$node_rc" -eq 1 ]] && return 1
+	# The selected bin takes precedence over package-manager shims that may
+	# dispatch through /usr/bin/env node; keep it local to this scoped check.
+	[[ -n "$node_bin" ]] && export PATH="${node_bin}:$PATH"
 	if [[ "$scope" != "." ]]; then
 		package_json="$scope/package.json"
 		scope_label="$scope"
+	fi
+	# A linked worktree has no ignored dependencies. Only npm lockfile scopes can
+	# be safely bootstrapped with npm ci; other managers retain their own policy.
+	if [[ "$pm" == "npm" && -f "$scope/package-lock.json" ]] &&
+		{ [[ ! -d "$scope/node_modules" || ! -f "$scope/node_modules/.package-lock.json" ]] ||
+			[[ "$scope/package-lock.json" -nt "$scope/node_modules/.package-lock.json" ]]; }; then
+		print_info "[validators] installing locked dependencies for ${scope_label}"
+		local install_rc=0
+		(
+			cd "$scope" || exit 1
+			timeout_sec "$t" npm ci --ignore-scripts --no-audit --no-fund
+		) >"${snapshot_dir}/install.log" 2>&1 || install_rc=$?
+		if [[ "$install_rc" -ne 0 ]]; then
+			print_error "[validators] ENVIRONMENT FAILURE (exit ${install_rc}): npm ci (${scope_label})"
+			[[ "$install_rc" -eq 124 ]] && print_error "[validators] Set AIDEVOPS_VALIDATOR_TIMEOUT=<n> and rerun; do not skip checks"
+			tail -20 "${snapshot_dir}/install.log" >&2
+			return 1
+		fi
 	fi
 	local phase="" script_name="" check_count=0 command_rc=0 check_index=0
 	for phase in format lint typecheck test; do
@@ -246,6 +272,7 @@ _run_scoped_node_checks() {
 		_validator_state_unchanged "${snapshot_dir}/before-${check_index}" "${snapshot_dir}/after-${check_index}" "$pm run $script_name ($scope_label)" || return 1
 		if [[ "$command_rc" -eq 124 ]]; then
 			print_error "[validators] TIMEOUT after ${t}s: $pm run $script_name ($scope_label)"
+			print_error "[validators] Set AIDEVOPS_VALIDATOR_TIMEOUT=<n> and rerun; do not skip checks"
 			return 1
 		elif [[ "$command_rc" -ne 0 ]]; then
 			print_error "[validators] CHECK FAILED (exit ${command_rc}): $pm run $script_name ($scope_label)"
@@ -279,9 +306,22 @@ _run_project_validators() {
 	fi
 	print_info "[validators] running node project validators ($pm)..."
 	local validator_timeout
-	validator_timeout="${AIDEVOPS_VALIDATOR_TIMEOUT:-300}"
+	# Project configuration takes precedence over the environment override.
+	if [[ -f .aidevops.json ]]; then
+		if ! jq -e 'type == "object"' .aidevops.json >/dev/null 2>&1; then
+			print_error "[validators] invalid .aidevops.json configuration"
+			return 1
+		fi
+		if jq -e 'has("validator_timeout_seconds")' .aidevops.json >/dev/null; then
+			validator_timeout=$(jq -r '.validator_timeout_seconds | tostring' .aidevops.json) || return 1
+		else
+			validator_timeout="${AIDEVOPS_VALIDATOR_TIMEOUT-300}"
+		fi
+	else
+		validator_timeout="${AIDEVOPS_VALIDATOR_TIMEOUT-300}"
+	fi
 	if ! [[ "$validator_timeout" =~ ^[1-9][0-9]*$ ]]; then
-		print_error "[validators] AIDEVOPS_VALIDATOR_TIMEOUT must be a positive integer"
+		print_error "[validators] validator_timeout_seconds / AIDEVOPS_VALIDATOR_TIMEOUT must be a positive integer"
 		return 1
 	fi
 	if ! command -v "$pm" >/dev/null 2>&1; then
@@ -294,7 +334,7 @@ _run_project_validators() {
 	snapshot_dir=$(mktemp -d) || return 1
 	while IFS= read -r scope; do
 		[[ -n "$scope" ]] || continue
-		_run_scoped_node_checks "$pm" "$scope" "$validator_timeout" "$snapshot_dir" || {
+		( _run_scoped_node_checks "$pm" "$scope" "$validator_timeout" "$snapshot_dir" ) || {
 			rm -rf "$snapshot_dir"
 			return 1
 		}

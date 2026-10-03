@@ -1,0 +1,65 @@
+---
+schema: aidevops.keywords/v1
+name: {Project Name}
+property: {property}
+surfaces: [{surfaces}]
+domains: []
+locales: [en-GB]
+markets: [GB]
+data: {data}
+# budget_usd_month: 1   # team cap; unset = repos.json/config keywords.monthly_budget_usd (default $1)
+location_code: 2826
+language_code: en
+tracking:
+  gsc: weekly
+  bing: weekly
+  github: weekly
+  npm: weekly
+  dataforseo: monthly
+  ai_answers: monthly
+thresholds:
+  drilldown_min_priority: 60
+  facet_min_demand: 50
+  facet_min_items: 3
+---
+
+# {Project Name} search targets
+
+Standard: `~/.aidevops/agents/seo/keywords-standard.md`. Registry tables live in
+`context/keywords/` and are edited with `aidevops keywords add|set` so TOON row
+counts stay valid. Visual rules stay in `DESIGN.md`; voice and positioning stay
+in `context/brand-identity.toon`.
+
+## Positioning
+
+- Who searches: _audience and their jobs; link to `context/brand-identity.toon`_
+- What we want to be found for: _two or three pillar topics_
+- What we will not compete on: _exclusions and negative keywords_
+
+## Priorities
+
+- _Pillar topics in order, with the reason (revenue, activation, authority)._
+
+## Naming and metadata rules
+
+- Slugs and file names: `aidevops keywords slug "<primary phrase>"`; one primary phrase per URL.
+- Titles lead with the primary phrase in natural words; descriptions answer the query first.
+- Image alt text describes what is visible first; add a phrase only when literally true.
+- Tags, categories, topics and hashtags come from cluster rows, not ad hoc lists.
+
+## Location targeting
+
+- _Markets, locales, hreflang pairs, service areas; leave empty for global products._
+
+## Entities and E-E-A-T
+
+- Canonical entity names and `sameAs` profiles: `context/keywords/entities.toon`.
+- _Qualified authors or reviewers per cluster and the evidence they bring._
+
+## Channels
+
+- _Social, PR, marketplaces and third-party publishing that should reuse these targets._
+
+## Decisions
+
+- _YYYY-MM-DD: decision and evidence._

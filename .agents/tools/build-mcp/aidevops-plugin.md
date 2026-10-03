@@ -59,7 +59,7 @@ tools:
 
 | Hook | Coverage |
 |---|---|
-| `tool` registration | `aidevops`, `aidevops_memory`, `aidevops_pre_edit_check`, `model-accounts-pool` |
+| `tool` registration | `aidevops`, `aidevops_memory`, `aidevops_pre_edit_check`, `aidevops_hook_status`, `aidevops_bounded_operation`, `aidevops_mcp`; OpenCode 1 serves rarely used `gpt_image_generate`, `model-accounts-pool`, and `aidevops_objective_receipt` through `aidevops_on_demand` (`on-demand-tools.mjs`), while OpenCode 2 registers them directly for its Code Mode catalogue |
 | `tool.execute.before` (`t008.3`) | ShellCheck (`-x -S warning`), return validation, `local var="$1"`, Markdown MD031, trailing whitespace, write-time secret scanning |
 | `tool.execute.after` (`t008.3`) | Git operation detection, pattern tracking via cross-session memory, audit logging to `~/.aidevops/logs/quality-hooks.log` |
 | `shell.env` | Prepends `~/.aidevops/agents/scripts/` to `PATH`; exports `AIDEVOPS_AGENTS_DIR`, `AIDEVOPS_WORKSPACE_DIR`, `AIDEVOPS_VERSION` |

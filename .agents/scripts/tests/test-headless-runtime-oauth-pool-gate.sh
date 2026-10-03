@@ -106,11 +106,11 @@ PY
 	return 0
 }
 
-TEST_MODELS=("openai/gpt-5.5" "anthropic/claude-sonnet-4-6")
+TEST_MODELS=("openai/gpt-5.5" "anthropic/claude-sonnet-5-5")
 cooldown="$(future_ms)"
 write_pool "{\"openai\":[{\"email\":\"one@example.test\",\"status\":\"rate-limited\",\"cooldownUntil\":${cooldown}},{\"email\":\"two@example.test\",\"status\":\"auth-error\",\"cooldownUntil\":${cooldown}}],\"anthropic\":[{\"email\":\"ok@example.test\",\"status\":\"active\",\"cooldownUntil\":0}]}"
 actual="$(_choose_model_auto "worker" "standard")"
-assert_equals "anthropic/claude-sonnet-4-6" "$actual" "all cooling OpenAI OAuth pool accounts are skipped" || true
+assert_equals "anthropic/claude-sonnet-5-5" "$actual" "all cooling OpenAI OAuth pool accounts are skipped" || true
 
 cooldown="$(future_ms)"
 write_pool "{\"openai\":[{\"email\":\"one@example.test\",\"status\":\"rate-limited\",\"cooldownUntil\":${cooldown}},{\"email\":\"two@example.test\",\"status\":\"idle\",\"cooldownUntil\":0}]}"
@@ -131,7 +131,7 @@ AIDEVOPS_OPENAI_API_KEY_SOURCE="oauth-pool"
 export OPENAI_API_KEY AIDEVOPS_OPENAI_API_KEY_SOURCE
 write_pool "{\"openai\":[{\"email\":\"one@example.test\",\"status\":\"rate-limited\",\"cooldownUntil\":${cooldown}}],\"anthropic\":[{\"email\":\"ok@example.test\",\"status\":\"active\",\"cooldownUntil\":0}]}"
 actual="$(_choose_model_auto "worker" "standard")"
-assert_equals "anthropic/claude-sonnet-4-6" "$actual" "OAuth-injected OpenAI API key does not bypass OAuth pool cooldown gate" || true
+assert_equals "anthropic/claude-sonnet-5-5" "$actual" "OAuth-injected OpenAI API key does not bypass OAuth pool cooldown gate" || true
 unset OPENAI_API_KEY AIDEVOPS_OPENAI_API_KEY_SOURCE
 
 rm -f "$HOME/.aidevops/oauth-pool.json"

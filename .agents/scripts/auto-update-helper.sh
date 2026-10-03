@@ -571,6 +571,29 @@ _run_setup_ai_session_with_fallback() {
 }
 
 #######################################
+# Return 0 when a same-version script-drift redeploy should wait because the
+# last successful deploy (the deployed-sha stamp mtime) is inside the batching
+# window. AIDEVOPS_SCRIPT_DRIFT_MIN_INTERVAL_SECONDS=0 disables batching.
+# Args: $1 = deployed-sha stamp file
+#######################################
+_script_drift_redeploy_debounced() {
+	local stamp_file="$1"
+	local min_interval="${AIDEVOPS_SCRIPT_DRIFT_MIN_INTERVAL_SECONDS:-3600}"
+	local stamp_epoch="" now_epoch="" age=0
+	[[ "$min_interval" =~ ^[0-9]+$ ]] || min_interval=3600
+	[[ "$min_interval" -gt 0 ]] || return 1
+	declare -F _file_mtime_epoch >/dev/null 2>&1 || return 1
+	stamp_epoch=$(_file_mtime_epoch "$stamp_file" 2>/dev/null) || return 1
+	[[ "$stamp_epoch" =~ ^[0-9]+$ && "$stamp_epoch" -gt 0 ]] || return 1
+	now_epoch=$(date +%s)
+	age=$((now_epoch - stamp_epoch))
+	# A future-dated stamp is not evidence of a recent deploy.
+	[[ "$age" -ge 0 && "$age" -lt "$min_interval" ]] || return 1
+	log_info "Script drift redeploy batched: last deploy ${age}s ago (< ${min_interval}s window)"
+	return 0
+}
+
+#######################################
 # Handle stale deployed agents when repo version matches remote.
 # Checks VERSION mismatch and sentinel script hash drift; re-deploys if needed.
 # Args: $1 = current version string
@@ -640,6 +663,14 @@ _cmd_check_stale_agent_redeploy() {
 				.agents/scripts/ .agents/agents/ .agents/workflows/ .agents/prompts/ .agents/hooks/ \
 				setup.sh .agents/scripts/setup/modules/ aidevops.sh 2>/dev/null | grep -q .; then
 				has_code_drift=1
+			fi
+			# Same-version drift redeploys restart the Pulse and discard its
+			# in-flight cycle. On busy days main moves every 20-40 minutes, so an
+			# undebounced redeploy kept every runner's Pulse from ever finishing a
+			# dispatch cycle. Releases (VERSION change, handled above) stay
+			# immediate; same-version drift is batched to one redeploy per window.
+			if [[ "$has_code_drift" -eq 1 ]] && _script_drift_redeploy_debounced "$stamp_file"; then
+				has_code_drift=0
 			fi
 			if [[ "$has_code_drift" -eq 1 ]]; then
 				log_warn "Script drift detected (${deployed_sha:0:7}→${head_sha:0:7} at v$current) — re-deploying agents..."
@@ -1722,7 +1753,7 @@ HOW IT WORKS:
        a. Reads last_tool_check from state file
        b. If >6h since last check AND user idle >6h, runs tool-version-check.sh --update --quiet
        c. Covers all installed tools: npm (OpenCode, MCP servers, etc.),
-          brew (gh, glab, shellcheck, jq, etc.), pip (DSPy, crawl4ai, etc.)
+           brew (gh, glab, shellcheck, jq, etc.), pip (Analytics MCP, etc.)
        d. Idle detection: macOS IOKit HIDIdleTime, Linux xprintidle/dbus/w(1),
           headless servers treated as always idle
        e. Opt-out: AIDEVOPS_TOOL_AUTO_UPDATE=false

@@ -33,6 +33,7 @@ setup_sandbox() {
 	TEST_ROOT=$(mktemp -d)
 	export TEST_ROOT
 	export HOME="${TEST_ROOT}/home"
+	export AIDEVOPS_MODEL_ROUTING_TABLE="${REPO_ROOT}/.agents/configs/model-routing-table.json"
 	mkdir -p "${HOME}/.aidevops/cache" "${TEST_ROOT}/bin"
 	unset ANTHROPIC_API_KEY || true
 	printf '#!/usr/bin/env bash\nexit 1\n' >"${TEST_ROOT}/bin/gopass"
@@ -258,7 +259,7 @@ test_opencode_tier_models() {
 	standard_model=$(resolve_opencode_model_id standard)
 	standard_variant=$(resolve_opencode_variant standard)
 	thinking_model=$(resolve_opencode_model_id thinking)
-	if [[ "$standard_model" == "openai/gpt-5.6-terra" && "$standard_variant" == "low" && "$thinking_model" == "openai/gpt-6-sol" ]] &&
+	if [[ "$standard_model" == "openai/gpt-6.1-sol" && "$standard_variant" == "medium" && "$thinking_model" == "openai/gpt-6.1-sol" ]] &&
 		[[ "$(resolve_opencode_variant thinking)" == "medium" ]] &&
 		[[ -z "$(resolve_opencode_variant thinking openai/unmapped-model)" ]]; then
 		record_result "OpenCode research tiers follow canonical model and effort defaults" 0
@@ -275,6 +276,7 @@ write_detector_stubs() {
 set -euo pipefail
 case "${1:-} ${2:-}" in
 "issue list") printf '[{"number":1,"labels":[{"name":"auto-dispatch"}]}]\n' ;;
+"label list") printf '[{"name":"fix-the-fixer"}]\n' ;;
 "issue view") printf '{"title":"fix dispatch path","body":"Touches pulse-wrapper.sh dispatch behaviour.","labels":[{"name":"auto-dispatch"}],"state":"OPEN"}\n' ;;
 *) printf 'unexpected gh invocation: %s\n' "$*" >&2; exit 1 ;;
 esac

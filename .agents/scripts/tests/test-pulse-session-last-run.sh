@@ -175,7 +175,67 @@ _test_force_stop_targets_canonical_worker_pid() {
 	return 0
 }
 
+_assert_contains() {
+	local haystack="$1"
+	local needle="$2"
+	local name="$3"
+	if [[ "$haystack" == *"$needle"* ]]; then
+		_assert_equal "present" "present" "$name"
+	else
+		_assert_equal "present" "missing" "$name"
+	fi
+	return 0
+}
+
+_assert_not_contains() {
+	local haystack="$1"
+	local needle="$2"
+	local name="$3"
+	if [[ "$haystack" == *"$needle"* ]]; then
+		_assert_equal "absent" "present" "$name"
+	else
+		_assert_equal "absent" "absent" "$name"
+	fi
+	return 0
+}
+
+# GH#32982: a waiting supervisor must not read as idle workers.
+_test_waiting_supervisor_with_active_workers() {
+	local output=""
+	output=$(
+		is_pulse_running() { return 1; }
+		is_scheduler_installed() { return 0; }
+		get_scheduler_name() {
+			printf '%s\n' "launchd"
+			return 0
+		}
+		get_pulse_repo_count() {
+			printf '%s\n' "0"
+			return 0
+		}
+		_status_print_process
+		_status_print_workers_summary 4
+	)
+	_assert_contains "$output" "Supervisor:" "status labels the supervisor, not a generic process"
+	_assert_contains "$output" "for next launchd cycle" "waiting supervisor names the scheduler cycle"
+	_assert_not_contains "$output" "Process:" "ambiguous Process label is gone"
+	_assert_not_contains "$output" "idle" "waiting supervisor is not described as idle"
+	_assert_contains "$output" "workers continue independently between supervisor cycles" \
+		"active workers explain supervisor independence"
+
+	output=$(
+		get_pulse_repo_count() {
+			printf '%s\n' "0"
+			return 0
+		}
+		_status_print_workers_summary 0
+	)
+	_assert_not_contains "$output" "continue independently" "independence note is omitted without workers"
+	return 0
+}
+
 main() {
+	_test_waiting_supervisor_with_active_workers
 	_test_marker_precedes_optional_cycle_log
 	_test_log_fallbacks
 	_test_portable_date_fallback

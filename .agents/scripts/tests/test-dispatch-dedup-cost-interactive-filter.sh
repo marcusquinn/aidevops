@@ -100,7 +100,7 @@ write_mixed_comments() {
 		tokens="${item#*|}"
 		case "$kind" in
 		worker)
-			body="Worker run.\\n\\n<!-- aidevops:sig -->\\n---\\n[aidevops.sh](https://aidevops.sh) v3.8.78 plugin for [OpenCode](https://opencode.ai) v1.14.18 with claude-sonnet-4-6 spent 4m and ${tokens} tokens on this as a headless worker."
+			body="Worker run.\\n\\n<!-- aidevops:sig -->\\n---\\n[aidevops.sh](https://aidevops.sh) v3.8.78 plugin for [OpenCode](https://opencode.ai) v1.14.18 with claude-sonnet-5-5 spent 4m and ${tokens} tokens on this as a headless worker."
 			;;
 		interactive)
 			body="Maintainer triage comment.\\n\\n<!-- aidevops:sig -->\\n---\\n[aidevops.sh](https://aidevops.sh) v3.8.78 plugin for [OpenCode](https://opencode.ai) v1.14.18 with claude-opus-4-7 spent 1h 20m and ${tokens} tokens on this with the user in an interactive session."

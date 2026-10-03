@@ -73,7 +73,7 @@ analyze_codebase_structure() {
     
     # Analyze provider coverage
     print_info "Provider Categories:"
-    print_info "  • Hosting: Hostinger, Hetzner, Closte"
+	print_info "  • Hosting: Hostinger, Hetzner"
     print_info "  • DNS: Spaceship, 101domains, Route53"
     print_info "  • Security: Vaultwarden, SES, SSL"
     print_info "  • Development: Git platforms, Code audit"

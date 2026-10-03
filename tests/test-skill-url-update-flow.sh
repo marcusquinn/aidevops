@@ -404,6 +404,151 @@ else
 	fail "URL check returns latest SHA-256 hash for changed content" "Expected '$expected_hash_3', got '$latest_hash_3'"
 fi
 
+# Curated imports exercise the normal update/add path with the real registry
+# policies and deterministic upstream/scanner fixtures (no network or paid calls).
+CURATED_AGENTS="$TMP_DIR/curated-agents"
+CURATED_SOURCE="$TMP_DIR/curated-source"
+mkdir -p "$CURATED_AGENTS/configs" "$CURATED_SOURCE"
+ln -s "$REPO_DIR/.agents/scripts" "$CURATED_AGENTS/scripts"
+jq '.skills |= map(select(.name == "remotion" or .name == "cloudflare-platform-skill"))' \
+	"$REPO_DIR/.agents/configs/skill-sources.json" >"$CURATED_AGENTS/configs/skill-sources.json"
+python3 - "$CURATED_SOURCE" "$CURATED_AGENTS" "$REPO_DIR/.agents" <<'PY'
+import shutil
+import sys
+from pathlib import Path
+source, agents, repo = map(Path, sys.argv[1:])
+fixtures = {
+    "skills/remotion-best-practices/SKILL.md": "# Router\n\n[Markup](remotion-markup/REFERENCE.md)\n",
+    "skills/remotion-markup/SKILL.md": "# Markup\n\n[3D](3d.md)\n",
+    "skills/remotion-markup/3d.md": "# 3D\n",
+    "skills/remotion-markup/assets/icon.svg": "excluded asset",
+    "skills/cloudflare/SKILL.md": "# Decision tree\n\n[Containers](references/containers/README.md)\n",
+    "skills/cloudflare/references/containers/README.md": "# Containers\n\n[API](api.md)\n",
+    "skills/cloudflare/references/containers/api.md": "# Containers API\n",
+    "skills/cloudflare/references/containers/patterns.md": "# Containers patterns\n",
+    "skills/cloudflare/references/kv/README.md": "# KV\n",
+    "skills/cloudflare/references/kv/gotchas.md": "# KV gotchas\n",
+    "skills/cloudflare/references/kv/patterns.md": "excluded generic patterns",
+    "skills/cloudflare/references/pulumi/gotchas.md": "excluded IaC",
+    "skills/agents-sdk/SKILL.md": "# Agents\n",
+}
+for relative, content in fixtures.items():
+    file = source / relative
+    file.parent.mkdir(parents=True, exist_ok=True)
+    file.write_text(content)
+for relative in ("tools/video/remotion/remotion.md", "services/hosting/cloudflare-platform-skill.md"):
+    target = agents / relative
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(repo / relative, target)
+(agents / "tools/video/remotion/custom.md").write_text("user knowledge\n")
+(agents / "services/hosting/cloudflare-platform-skill").mkdir(parents=True, exist_ok=True)
+(agents / "services/hosting/cloudflare-platform-skill/custom.md").write_text("user knowledge\n")
+PY
+cat >"$FAKE_BIN/skill-scanner" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${CURATED_BLOCK_SCAN:-false}" == true ]]; then
+	printf '%s\n' '{"total_findings":1,"max_severity":"HIGH","findings":[{"severity":"HIGH","rule_id":"fixture","description":"blocked fixture"}]}'
+else
+	printf '%s\n' '{"total_findings":0,"findings":[]}'
+fi
+EOF
+cat >"$FAKE_BIN/openskills" <<'EOF'
+#!/usr/bin/env bash
+exit 99
+EOF
+chmod +x "$FAKE_BIN/skill-scanner" "$FAKE_BIN/openskills"
+for skill in remotion cloudflare-platform-skill; do
+	for sync in 1 2; do
+		PATH="$FAKE_BIN:$PATH" REAL_GIT="$REAL_GIT" FAKE_GIT_SOURCE="$CURATED_SOURCE" \
+			AIDEVOPS_AGENTS_DIR="$CURATED_AGENTS" bash "$UPDATE_SCRIPT" update "$skill" >/dev/null
+		python3 - "$CURATED_AGENTS" "$TMP_DIR/$skill-$sync.json" <<'PY'
+import hashlib
+import json
+import sys
+from pathlib import Path
+agents, output = map(Path, sys.argv[1:])
+files = sorted(list((agents / "tools").rglob("*.md")) + list((agents / "services").rglob("*.md")))
+output.write_text(json.dumps({str(p.relative_to(agents)): hashlib.sha256(p.read_bytes()).hexdigest() for p in files}, sort_keys=True))
+PY
+	done
+	if cmp -s "$TMP_DIR/$skill-1.json" "$TMP_DIR/$skill-2.json"; then
+		pass "$skill repeated sync is byte-identical"
+	else
+		fail "$skill repeated sync is byte-identical"
+	fi
+done
+assert_file_exists "$CURATED_AGENTS/tools/video/remotion/remotion-3d.md" "Repeated Remotion sync uses registry target"
+assert_file_exists "$CURATED_AGENTS/services/hosting/cloudflare-platform-skill/containers-api.md" "Repeated Cloudflare sync keeps full new-product docs"
+assert_file_exists "$CURATED_AGENTS/services/hosting/cloudflare-platform-skill/kv-gotchas.md" "Repeated Cloudflare sync keeps gotchas"
+assert_file_exists "$CURATED_AGENTS/services/hosting/cloudflare-platform-skill/containers-patterns.md" "New-product patterns survive policy selection"
+assert_file_exists "$CURATED_AGENTS/tools/video/remotion/custom.md" "Repeated sync preserves custom Remotion files"
+assert_file_exists "$CURATED_AGENTS/services/hosting/cloudflare-platform-skill/custom.md" "Repeated sync preserves custom Cloudflare files"
+if [[ ! -e "$CURATED_AGENTS/tools/video/remotion.md" &&
+	! -e "$CURATED_AGENTS/services/hosting/cloudflare-platform-skill/kv-patterns.md" &&
+	! -e "$CURATED_AGENTS/services/hosting/cloudflare-platform-skill/pulumi-gotchas.md" &&
+	! -e "$CURATED_AGENTS/tools/video/remotion/assets" ]]; then
+	pass "Repeated sync never recreates retired targets or excluded documents"
+else
+	fail "Repeated sync never recreates retired targets or excluded documents"
+fi
+assert_eq "1" "$(jq '[.skills[] | select(.import_policy.version == 1)] | length / 2' "$CURATED_AGENTS/configs/skill-sources.json")" "Policy survives registration on both repeated updates"
+if grep -q '(remotion-markup.md)' "$CURATED_AGENTS/tools/video/remotion/remotion.md" &&
+	grep -q '(containers-api.md)' "$CURATED_AGENTS/services/hosting/cloudflare-platform-skill/containers.md"; then
+	pass "Router aliases and flattened local links resolve"
+else
+	fail "Router aliases and flattened local links resolve"
+fi
+cp "$CURATED_AGENTS/configs/skill-sources.json" "$TMP_DIR/curated-registry-before.json"
+if PATH="$FAKE_BIN:$PATH" REAL_GIT="$REAL_GIT" FAKE_GIT_SOURCE="$CURATED_SOURCE" \
+	CURATED_BLOCK_SCAN=true AIDEVOPS_AGENTS_DIR="$CURATED_AGENTS" \
+	bash "$UPDATE_SCRIPT" update remotion >/dev/null 2>&1; then
+	fail "Scanner rejection propagates through update"
+else
+	pass "Scanner rejection propagates through update"
+fi
+if cmp -s "$TMP_DIR/curated-registry-before.json" "$CURATED_AGENTS/configs/skill-sources.json"; then
+	pass "Blocked scan leaves provenance and policy unchanged"
+else
+	fail "Blocked scan leaves provenance and policy unchanged"
+fi
+
+# Run setup's actual cleanup entrypoint in an isolated HOME, retaining all current
+# shipped files and user files even inside a retired example directory.
+MIGRATION_HOME="$TMP_DIR/migration-home"
+mkdir -p "$MIGRATION_HOME/.aidevops/agents"
+cp -R "$REPO_DIR/.agents/tools" "$MIGRATION_HOME/.aidevops/agents/"
+mkdir -p "$MIGRATION_HOME/.aidevops/agents/services/hosting"
+cp -R "$REPO_DIR/.agents/services/hosting/cloudflare-platform-skill" "$MIGRATION_HOME/.aidevops/agents/services/hosting/"
+mkdir -p "$MIGRATION_HOME/.aidevops/agents/services/hosting/cloudflare-platform-skill/r2-patterns"
+touch "$MIGRATION_HOME/.aidevops/agents/tools/video/remotion.md" \
+	"$MIGRATION_HOME/.aidevops/agents/services/hosting/cloudflare-platform-skill/kv-patterns.md" \
+	"$MIGRATION_HOME/.aidevops/agents/services/hosting/cloudflare-platform-skill/r2-patterns/01-streaming-large-files.md" \
+	"$MIGRATION_HOME/.aidevops/agents/services/hosting/cloudflare-platform-skill/r2-patterns/custom.md"
+HOME="$MIGRATION_HOME" bash -c 'source "$1"; source "$2"; cleanup_deprecated_paths' bash \
+	"$REPO_DIR/.agents/scripts/shared-constants.sh" \
+	"$REPO_DIR/.agents/scripts/setup/modules/migrations.sh" >/dev/null
+if [[ ! -e "$MIGRATION_HOME/.aidevops/agents/tools/video/remotion.md" &&
+	! -e "$MIGRATION_HOME/.aidevops/agents/services/hosting/cloudflare-platform-skill/kv-patterns.md" &&
+	! -e "$MIGRATION_HOME/.aidevops/agents/services/hosting/cloudflare-platform-skill/r2-patterns/01-streaming-large-files.md" ]]; then
+	pass "Setup cleanup removes exact retired files at runtime"
+else
+	fail "Setup cleanup removes exact retired files at runtime"
+fi
+assert_file_exists "$MIGRATION_HOME/.aidevops/agents/services/hosting/cloudflare-platform-skill/r2-patterns/custom.md" "Setup preserves user files in retired resource directories"
+if python3 - "$REPO_DIR/.agents" "$MIGRATION_HOME/.aidevops/agents" <<'PY'; then
+import sys
+from pathlib import Path
+source, deployed = map(Path, sys.argv[1:])
+for relative in ("tools/video/remotion", "services/hosting/cloudflare-platform-skill"):
+    for file in (source / relative).rglob("*"):
+        if file.is_file():
+            assert file.read_bytes() == (deployed / file.relative_to(source)).read_bytes(), str(file.relative_to(source))
+PY
+	pass "Setup preserves every retained skill file"
+else
+	fail "Setup preserves every retained skill file"
+fi
+
 printf "\nRan %d tests, %d failed.\n" "$TOTAL_COUNT" "$FAIL_COUNT"
 
 if [[ "$FAIL_COUNT" -ne 0 ]]; then

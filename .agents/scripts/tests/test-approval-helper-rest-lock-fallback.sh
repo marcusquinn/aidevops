@@ -314,18 +314,16 @@ run_case "genuine lock failure is distinguished" '
 	# shellcheck disable=SC1090
 	source "$APPROVAL_HELPER_UNDER_TEST" >/dev/null 2>&1
 	_rest_should_fallback() { return 0; }
-	set_issue_status() { return 0; }
-	gh_issue_edit_safe() { return 0; }
+	_approval_ensure_lifecycle_labels() { return 0; }
 	gh() {
 		local arg1="${1:-}"
 		local arg2="${2:-}"
 		local arg3="${3:-}"
-		if [[ "$arg1" == "api" && "$arg2" == "user" ]]; then printf "marcusquinn"; return 0; fi
 		if [[ "$arg1" == "issue" && "$arg2" == "lock" ]]; then return 1; fi
 		if [[ "$arg1" == "api" && "$arg2" == "-X" && "$arg3" == "PUT" ]]; then return 22; fi
 		return 1
 	}
-	_approval_apply_issue_lifecycle_updates 123 marcusquinn/aidevops
+	_approve_target_after_confirmation issue 123 marcusquinn/aidevops mock-key
 ' 1
 assert_contains "genuine lock failure names advisory lock path" "$LAST_OUTPUT" "Approval advisory lock failure"
 assert_not_contains "genuine lock failure is not mislabeled as label failure" "$LAST_OUTPUT" "Failed to update approval labels/assignee"

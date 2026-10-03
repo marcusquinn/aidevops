@@ -1,7 +1,0 @@
-{
-  "llm-tldr": {
-    "command": "tldr-mcp",
-    "args": ["--project", "${workspaceFolder}"],
-    "description": "TLDR semantic code analysis - tree, structure, context, CFG, DFG, semantic search, impact analysis. 95% token savings."
-  }
-}

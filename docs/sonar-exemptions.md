@@ -69,7 +69,6 @@ These annotations were added before config-level exclusions were established. Th
 
 | File | Line | Implied Rule | Annotation Text | Config Key |
 |------|------|-------------|-----------------|------------|
-| `.agents/scripts/dspyground-helper.sh` | 82 | S6505 | npm scripts required for CLI binary installation | e1, e11 |
 | `.agents/scripts/agent-test-helper.sh` | 101 | S5332/S6506 | localhost dev server, no TLS needed | e2, e3, e12, e13 |
 | `.agents/scripts/agent-test-helper.sh` | 165 | S5332/S6506 | localhost dev server health check, HTTP intentional | e2, e3, e12, e13 |
 | `.agents/scripts/agent-test-helper.sh` | 234 | S5332/S6506 | localhost dev server API call, HTTP intentional | e2, e3, e12, e13 |

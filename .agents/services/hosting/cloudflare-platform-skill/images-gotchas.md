@@ -1,30 +1,16 @@
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+# Images Troubleshooting
 
-## Best Practices
+First identify whether the failure involves hosted-image storage, remote URL transformations, or a Worker binding. Capture the failing operation, response status, relevant headers, and error message before changing options.
 
-### 1. Use Appropriate Fit Modes
+| Symptom or question | Documentation |
+|---------------------|---------------|
+| Resizing is absent, an origin request fails, or a transformation returns an error code | [Troubleshooting](https://developers.cloudflare.com/images/reference/troubleshooting/index.md) |
+| Input size, dimensions, animation, or format compatibility | [Limits and formats](https://developers.cloudflare.com/images/get-started/limits/index.md) — choose the section for the affected interface |
+| Unexpected fit, quality, format, or crop behavior | [Optimization features](https://developers.cloudflare.com/images/optimization/features/index.md) |
+| Binding input, output, or response handling fails | [Binding methods](https://developers.cloudflare.com/images/optimization/binding/index.md#methods) |
+| Local behavior differs from production | [Local binding development](https://developers.cloudflare.com/images/optimization/binding/index.md#interact-with-your-images-binding-locally) |
+| Private delivery fails or an image is unexpectedly public | [Serve private images](https://developers.cloudflare.com/images/optimization/hosted-images/serve-private-images/index.md) and [variant public access](https://developers.cloudflare.com/images/optimization/hosted-images/create-variants/index.md#public-access) |
+| Remote transformations appear stale | [Caching and purging](https://developers.cloudflare.com/images/reference/troubleshooting/index.md#caching-and-purging) |
+| Worker transformations repeat unnecessarily | [Binding caching guidance](https://developers.cloudflare.com/images/optimization/binding/index.md#methods) |
 
-- `cover`: Hero images, thumbnails, avatars (fills space, crops)
-- `contain`: Product images, artwork (preserves full image)
-- `scale-down`: Ensure images aren't unnecessarily enlarged
-
-### 2. Format Selection
-
-- Use `format=auto` for automatic AVIF/WebP/JPEG selection
-- For Workers, parse `Accept` header for format negotiation
-- AVIF: Best compression, use for modern browsers
-- WebP: Wide support, good compression
-- JPEG: Fallback for older browsers
-
-### 3. Quality Settings
-
-- `85`: Good default balance
-- `90-95`: High-quality images (portfolios, product photos)
-- `75-80`: Acceptable quality for faster loading
-- WebP lossless: `quality=100`
-
-### 4. Responsive Images
-
-- Use `srcset` with multiple widths (400w, 800w, 1200w)
-- Set appropriate
+Do not apply one interface's limits, error codes, or caching rules to another. Reproduce with a representative image and verify the chosen fix using the project's existing checks. Retry only after identifying a transient failure; changing invalid inputs or access configuration requires a different fix. See [API selection](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/images/api.md) and [configuration](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/images/configuration.md) when the wrong interface or setup is responsible.

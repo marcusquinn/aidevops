@@ -350,6 +350,7 @@ _full_loop_verify_pr_readiness() {
 	local pr_json=""
 	local verified_head=""
 	local review_decision=""
+	local readiness_failures=""
 
 	_full_loop_read_pr_readiness "$pr_number" "$repo" || return 1
 	pr_json="$FULL_LOOP_PR_READINESS_JSON"
@@ -360,14 +361,18 @@ _full_loop_verify_pr_readiness() {
 		pr_json="$FULL_LOOP_RECONCILED_PR_JSON"
 	fi
 
-	if ! printf '%s' "$pr_json" | jq -e '
+	readiness_failures=$(printf '%s' "$pr_json" | jq -r --arg pr "$pr_number" --arg repo "$repo" '
 		def up(v): (v // "" | ascii_upcase);
-		(.state == "OPEN")
-		and (.isDraft != true)
-		and (up(.reviewDecision) != "CHANGES_REQUESTED")
-		and ((.headRefOid // "") != "")
-	' >/dev/null; then
-		print_error "PR #${pr_number} is not remotely verified: require OPEN, non-draft, no changes requested, and a stable head"
+		[
+			if .state != "OPEN" then "PR #\($pr) is not open" else empty end,
+			if .isDraft == true then "PR #\($pr) is a draft; mark it ready with: gh pr ready \($pr) --repo \($repo)" else empty end,
+			if up(.reviewDecision) == "CHANGES_REQUESTED" then "PR #\($pr) has changes requested" else empty end,
+			if (.headRefOid // "") == "" then "PR #\($pr) has no stable head" else empty end
+		][]') || return 1
+	if [[ -n "$readiness_failures" ]]; then
+		while IFS= read -r readiness_failure; do
+			print_error "$readiness_failure"
+		done <<<"$readiness_failures"
 		return 1
 	fi
 	verified_head=$(printf '%s' "$pr_json" | jq -r '.headRefOid // empty')
@@ -490,6 +495,19 @@ cmd_pre_merge_gate() {
 	#aidevops:trust-boundary GH#17671/GH#28622 -- resolve every authority target
 	# from the final live PR snapshot. This diagnostic never grants authority; the
 	# merge transport repeats the same evaluation immediately before its write.
+	#aidevops:trust-boundary -- advisory only; never grants merge authority.
+	local verifier_dir="" active_dir="" verifier_bundle="" active_bundle=""
+	verifier_dir=$(cd -P "$_FULL_LOOP_COMMIT_DIR" 2>/dev/null && pwd) || verifier_dir=""
+	if [[ "$verifier_dir" == */runtime-bundles/*/agents/scripts ]]; then
+		active_dir=$(cd -P "$HOME/.aidevops/agents/scripts" 2>/dev/null && pwd) || active_dir=""
+		if [[ "$active_dir" == */runtime-bundles/*/agents/scripts && "$active_dir" != "$verifier_dir" ]]; then
+			verifier_bundle=${verifier_dir%/agents/scripts}
+			active_bundle=${active_dir%/agents/scripts}
+			printf 'APPROVAL_NOTE: verifier bundle %s is older than active bundle %s; re-run with ~/.aidevops/agents/scripts/approval-helper.sh before re-signing\n' "${verifier_bundle##*/}" "${active_bundle##*/}" >&2
+		fi
+	fi
+	declare -p FULL_LOOP_EXTERNAL_AUTHORITY_APPROVAL_TARGETS >/dev/null 2>&1 ||
+		FULL_LOOP_EXTERNAL_AUTHORITY_APPROVAL_TARGETS=()
 	if ! _merge_collect_external_authority_gaps "$pr_number" "$repo"; then
 		FULL_LOOP_PRE_MERGE_BLOCKER_KIND="external-authority"
 		FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL="unable to verify external/fork authority"
@@ -506,7 +524,13 @@ cmd_pre_merge_gate() {
 		return 1
 	fi
 
-	print_success "External/fork authority preflight: no approval required for PR #${pr_number}"
+	#aidevops:trust-boundary -- distinguish absent authority targets from verified
+	# targets without changing the fail-closed authority evaluation above.
+	if [[ "${#FULL_LOOP_EXTERNAL_AUTHORITY_APPROVAL_TARGETS[@]}" -gt 0 ]]; then
+		print_success "External/fork authority preflight: verified for ${FULL_LOOP_EXTERNAL_AUTHORITY_APPROVAL_TARGETS[*]} on PR #${pr_number}"
+	else
+		print_success "External/fork authority preflight: no external authority targets for PR #${pr_number}"
+	fi
 	return 0
 }
 
@@ -1112,6 +1136,49 @@ _finalize_wip_history() {
 	return 0
 }
 
+# GH#33253: _finalize_wip_history (above) and _rebase_for_push both rewrite
+# branch history, which defeats issue_open_pr_guard_check's require_ancestry
+# proof if that check runs afterward on the rewritten HEAD. Validate an
+# explicit --replace-pr's ancestry now, against the pre-finalization,
+# pre-rebase HEAD, while the replaced PR's head commit is still reachable.
+# Sets REPLACEMENT_PR_ANCESTRY_VALIDATED=1 when this call proved ancestry, so
+# the final guard call downstream can skip its now-defeated ancestry check.
+# Args: $1=issue_number $2=repo $3=branch $4=replacement_pr $5=replacement_reason
+REPLACEMENT_PR_ANCESTRY_VALIDATED=0
+_validate_replacement_pr_ancestry() {
+	local issue_number="$1"
+	local repo="$2"
+	local branch="$3"
+	local replacement_pr="$4"
+	local replacement_reason="$5"
+
+	REPLACEMENT_PR_ANCESTRY_VALIDATED=0
+	[[ -n "$replacement_pr" ]] || return 0
+
+	local guard_rc=0
+	issue_open_pr_guard_check "$issue_number" "$repo" "$branch" \
+		"$replacement_pr" "$replacement_reason" 1 || guard_rc=$?
+	case "$guard_rc" in
+	0)
+		REPLACEMENT_PR_ANCESTRY_VALIDATED=1
+		return 0
+		;;
+	3)
+		# Continuing the same branch/author as the open PR; no separate
+		# replacement-ancestry proof is required.
+		return 0
+		;;
+	1)
+		print_error "Aborting duplicate PR creation: open PR #${replacement_pr}'s head is not contained in this branch"
+		return 1
+		;;
+	*)
+		print_error "Aborting PR creation: replacement-PR ancestry evidence is unavailable or ambiguous"
+		return 1
+		;;
+	esac
+}
+
 # --- Project Validators (t2842) ---
 # Closes the worker-CI-failure gap where workers ship code that fails
 # project CI checks (Format/Lint/Typecheck) because no pre-push
@@ -1334,11 +1401,153 @@ _rebase_for_push() {
 	return 0
 }
 
+# GH#33381: the exact branch name the last successful _push_branch published.
+# PR creation and its partial-failure recovery use this instead of inferring
+# the head from ambient git/gh state, which can differ after a replacement
+# branch or in a linked worktree backed by a bare common directory.
+FULL_LOOP_PUSHED_BRANCH=""
+
+# GH#33381: classify the remote ref for a branch before pushing.
+# Args: $1=branch
+# Output: "<state> <remote_sha>" where state is one of
+#   absent       — no remote ref (remote_sha empty)
+#   same         — remote already equals HEAD
+#   fast-forward — remote is an ancestor of HEAD
+#   own-rewrite  — remote is a previous tip of this local branch (its reflog),
+#                  i.e. our own history rewritten by rebase/WIP finalization
+#   foreign      — remote diverged and is not our history (e.g. a dead
+#                  worker's push under the same deterministic branch name)
+#   unknown      — remote could not be queried
+_classify_remote_branch() {
+	local branch="$1"
+	local ls_output="" remote_sha="" head_sha=""
+	if ! ls_output=$(git ls-remote --heads origin "refs/heads/${branch}" 2>/dev/null); then
+		printf 'unknown \n'
+		return 0
+	fi
+	remote_sha=$(printf '%s\n' "$ls_output" | awk -v ref="refs/heads/${branch}" '$2 == ref { print $1; exit }')
+	if [[ -z "$remote_sha" ]]; then
+		printf 'absent \n'
+		return 0
+	fi
+	head_sha=$(git rev-parse HEAD 2>/dev/null || true)
+	if [[ "$remote_sha" == "$head_sha" ]]; then
+		printf 'same %s\n' "$remote_sha"
+		return 0
+	fi
+	if ! git cat-file -e "${remote_sha}^{commit}" 2>/dev/null; then
+		git fetch --quiet origin "refs/heads/${branch}" 2>/dev/null || true
+	fi
+	if git cat-file -e "${remote_sha}^{commit}" 2>/dev/null; then
+		if git merge-base --is-ancestor "$remote_sha" HEAD 2>/dev/null; then
+			printf 'fast-forward %s\n' "$remote_sha"
+			return 0
+		fi
+		# Capture first: `grep -q` exiting early would SIGPIPE git under pipefail.
+		local own_tips=""
+		own_tips=$(git reflog show --format=%H "refs/heads/${branch}" 2>/dev/null || true)
+		if [[ $'\n'"${own_tips}"$'\n' == *$'\n'"${remote_sha}"$'\n'* ]]; then
+			printf 'own-rewrite %s\n' "$remote_sha"
+			return 0
+		fi
+	fi
+	printf 'foreign %s\n' "$remote_sha"
+	return 0
+}
+
+# GH#33381: pick the first "<branch>-rN" name that exists neither locally nor
+# on origin. Args: $1=branch. Output: replacement name. Returns 1 if none free.
+_replacement_branch_name() {
+	local branch="$1"
+	local n=2 candidate="" remote_hit=""
+	while [[ "$n" -le 9 ]]; do
+		candidate="${branch}-r${n}"
+		if ! git show-ref --verify --quiet "refs/heads/${candidate}"; then
+			remote_hit=$(git ls-remote --heads origin "refs/heads/${candidate}" 2>/dev/null || printf 'error')
+			if [[ -z "$remote_hit" ]]; then
+				printf '%s\n' "$candidate"
+				return 0
+			fi
+		fi
+		n=$((n + 1))
+	done
+	return 1
+}
+
+# GH#33381: resolve the --head value for PR creation. Same-repository pushes
+# use the plain branch name; a fork origin needs "<fork-owner>:<branch>".
+# Args: $1=target repo slug $2=branch
+_pr_head_ref_for_repo() {
+	local repo="$1"
+	local branch="$2"
+	local origin_url="" origin_slug=""
+	origin_url=$(git remote get-url origin 2>/dev/null || true)
+	origin_slug=$(printf '%s\n' "$origin_url" | sed -E 's#\.git$##; s#^.*[:/]([^/:]+/[^/]+)$#\1#')
+	if [[ "$origin_slug" == */* && -n "$repo" ]] &&
+		[[ "$(printf '%s' "$origin_slug" | tr '[:upper:]' '[:lower:]')" != "$(printf '%s' "$repo" | tr '[:upper:]' '[:lower:]')" ]]; then
+		printf '%s:%s\n' "${origin_slug%%/*}" "$branch"
+		return 0
+	fi
+	printf '%s\n' "$branch"
+	return 0
+}
+
 # Push a branch after all final-diff metadata validation has passed.
-# Args: $1=branch $2=skip_hooks (0|1, optional, default 0)
+# Args: $1=branch $2=skip_hooks (0|1, optional, default 0) $3=repo slug (optional)
+#       $4=explicitly authorized --replace-pr number (optional)
+# Sets FULL_LOOP_PUSHED_BRANCH to the branch actually published.
+#
+# GH#33381: never overwrite history that is not ours. The remote ref is
+# classified first; our own (fast-forward or reflog-proven rewrite) history is
+# replaced only with an explicit lease on the observed SHA. A diverged foreign
+# remote branch is preserved untouched and this work is published under a
+# collision-free "<branch>-rN" name instead — unless that remote branch backs
+# an open PR, which must be continued or replaced explicitly.
 _push_branch() {
 	local branch="$1"
 	local skip_hooks="${2:-0}"
+	local repo="${3:-}"
+	local replacement_pr="${4:-}"
+	FULL_LOOP_PUSHED_BRANCH=""
+
+	local classification="" remote_state="" remote_sha=""
+	classification=$(_classify_remote_branch "$branch")
+	remote_state="${classification%% *}"
+	remote_sha="${classification#* }"
+
+	local lease_arg=""
+	case "$remote_state" in
+	absent) lease_arg="--force-with-lease=${branch}:" ;;
+	same | fast-forward | own-rewrite) lease_arg="--force-with-lease=${branch}:${remote_sha}" ;;
+	foreign)
+		local open_pr=""
+		if [[ -n "$repo" ]]; then
+			open_pr=$(gh pr list --repo "$repo" --head "$branch" --state open \
+				--json number --jq '.[0].number // empty' 2>/dev/null || printf 'unknown')
+		else
+			open_pr="unknown"
+		fi
+		if [[ -n "$open_pr" && ( -z "$replacement_pr" || "$open_pr" != "$replacement_pr" ) ]]; then
+			print_error "Remote branch '${branch}' has diverged (${remote_sha:0:12}) and backs open PR #${open_pr} (or PR state is unavailable)."
+			print_error "Continue that PR's history, or replace it explicitly with --replace-pr N --replacement-reason TEXT; nothing was pushed."
+			return 1
+		fi
+		local replacement=""
+		replacement=$(_replacement_branch_name "$branch") || {
+			print_error "Remote branch '${branch}' has diverged and no free '${branch}-rN' replacement name was found; nothing was pushed."
+			return 1
+		}
+		print_warning "Remote branch '${branch}' has diverged with history that is not this branch's (${remote_sha:0:12}); preserving it untouched."
+		git branch -m "$branch" "$replacement" || {
+			print_error "Could not rename local branch '${branch}' to '${replacement}'; nothing was pushed."
+			return 1
+		}
+		print_info "Publishing this work as replacement branch '${replacement}'"
+		branch="$replacement"
+		lease_arg="--force-with-lease=${branch}:"
+		;;
+	*) lease_arg="" ;;
+	esac
 
 	print_info "Pushing to origin/${branch}..."
 
@@ -1349,7 +1558,8 @@ _push_branch() {
 	# Fast-path: both hooks now exit early on doc-only diffs (<1s), so the
 	# 60s timeout is a safety net for edge cases, not a normal code path.
 	local push_timeout=60
-	local _push_args=(-u origin "$branch" --force-with-lease)
+	local _push_args=(-u origin "$branch")
+	[[ -n "$lease_arg" ]] && _push_args+=("$lease_arg")
 	[[ "$skip_hooks" == "1" ]] && _push_args+=(--no-verify)
 
 	local push_rc
@@ -1372,16 +1582,19 @@ _push_branch() {
 		print_error "Push failed (exit ${push_rc}). Check remote state and retry."
 		return 1
 	fi
+	FULL_LOOP_PUSHED_BRANCH="$branch"
 	return 0
 }
 
 # Compatibility wrapper for callers that do not need a pre-push validation gap.
+# Args: $1=branch $2=skip_hooks $3=skip_rebase $4=repo slug (optional)
 _rebase_and_push() {
 	local branch="$1"
 	local skip_hooks="${2:-0}"
 	local skip_rebase="${3:-0}"
+	local repo="${4:-}"
 	_rebase_for_push "$branch" "$skip_rebase" || return 1
-	_push_branch "$branch" "$skip_hooks" || return 1
+	_push_branch "$branch" "$skip_hooks" "$repo" || return 1
 	return 0
 }
 
@@ -1753,7 +1966,13 @@ _create_pr() {
 	# Canonical failure: PR #21825. Origin label is now injected at creation by
 	# gh_create_pr, via session_origin_label(), then reconciled below after the
 	# PR number is known to cover partial-success recovery gaps (GH#26045).
+	# GH#33381: pass the exact pushed head instead of letting gh infer it from
+	# ambient checkout state (wrong after a replacement branch, or in linked
+	# worktrees backed by a bare common directory).
+	local head_branch="${FULL_LOOP_PUSHED_BRANCH:-}"
+	[[ -n "$head_branch" ]] || head_branch=$(git branch --show-current 2>/dev/null || echo "")
 	local -a pr_cmd=(gh_create_pr --repo "$repo" --title "$pr_title" --body "$pr_body")
+	[[ -n "$head_branch" ]] && pr_cmd+=(--head "$(_pr_head_ref_for_repo "$repo" "$head_branch")")
 	for lbl in "${extra_labels[@]+"${extra_labels[@]}"}"; do
 		pr_cmd+=(--label "$lbl")
 	done
@@ -1768,9 +1987,8 @@ _create_pr() {
 		# label application) succeeds on GitHub's backend but the subsequent API response
 		# fails with a transient error (e.g. "Something went wrong while executing your query").
 		# Before treating this as a hard failure, check whether the PR now exists.
-		local current_branch="" recovered_url=""
-		current_branch=$(git branch --show-current 2>/dev/null || echo "")
-		recovered_url=$(_gh_recover_pr_if_exists "$current_branch" "$repo" 2>/dev/null || echo "")
+		local recovered_url=""
+		recovered_url=$(_gh_recover_pr_if_exists "$head_branch" "$repo" 2>/dev/null || echo "")
 		if [[ -n "$recovered_url" ]]; then
 			print_info "PR creation command returned non-zero but PR exists — recovering (t2767): ${recovered_url}"
 			pr_url="$recovered_url"
@@ -1911,6 +2129,13 @@ _ensure_worker_pr_linkage() {
 		'(close[ds]?|fix(es|ed)?|resolve[ds]?)[[:space:]]+[^[:space:]]+#[0-9]+'; then
 		print_error "Worker PR #${pr_number} has ambiguous or cross-repository closing references; refusing linkage repair"
 		return 1
+	fi
+	# GH#33374: explicit checkpoint intent is not a missing closing reference.
+	# Never turn a deliberate For/Ref body into a GitHub auto-closing link.
+	if printf '%s' "$current_body" | jq -Rse --arg issue "$issue_number" \
+		'test("\\b(for|ref)[[:space:]]+#" + $issue + "\\b"; "i")' >/dev/null 2>&1; then
+		print_info "Preserving non-closing checkpoint reference on worker PR #${pr_number}"
+		return 0
 	fi
 
 	local repaired_body="$generated_body"

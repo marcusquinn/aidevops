@@ -18,8 +18,8 @@ usage() {
 Usage: worktree-archive-helper.sh <command> [options]
 
 Commands:
-  archive WORKTREE --repo OWNER/REPO --issue N
-      --reason failed-worker|post-pr-cleanup --base-branch BRANCH
+  archive WORKTREE --repo OWNER/REPO (--issue N|--unattributed)
+	  --reason failed-worker|post-pr-cleanup|unattributed-worktree --base-branch BRANCH
       [--base-sha SHA] [--output-root DIR] [--failure-log FILE]
   restore ARCHIVE_DIR --target NEW_WORKTREE_PATH
   list [--repo OWNER/REPO] [--issue N] [--output-root DIR]
@@ -189,7 +189,7 @@ for name in names:
 manifest = {
     'schema': sys.argv[15],
     'repo': sys.argv[2],
-    'issue': int(sys.argv[3]),
+    'issue': None if sys.argv[3] == 'unattributed' else int(sys.argv[3]),
     "reason": sys.argv[4],
     "created_at": sys.argv[5],
     "source_worktree": sys.argv[6],
@@ -212,13 +212,14 @@ PY
 archive_worktree() {
 	local worktree="${1:-}"
 	shift || true
-	local repo="" issue="" reason="" base_branch="" base_sha="" output_root="$ARCHIVE_ROOT" failure_log=""
+	local repo="" issue="" unattributed="false" reason="" base_branch="" base_sha="" output_root="$ARCHIVE_ROOT" failure_log=""
 	local created_at timestamp repo_path archive_dir branch head_sha default_branch remote_state dirty_state git_common_dir commit_count
 	[[ -n "$worktree" ]] || { usage >&2; return 1; }
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--repo) require_value "$1" "${2:-}" || return 1; repo="$2"; shift 2 ;;
 		--issue) require_value "$1" "${2:-}" || return 1; issue="$2"; shift 2 ;;
+		--unattributed) unattributed="true"; shift ;;
 		--reason) require_value "$1" "${2:-}" || return 1; reason="$2"; shift 2 ;;
 		--base-branch) require_value "$1" "${2:-}" || return 1; base_branch="$2"; shift 2 ;;
 		--base-sha) require_value "$1" "${2:-}" || return 1; base_sha="$2"; shift 2 ;;
@@ -228,8 +229,13 @@ archive_worktree() {
 		esac
 	done
 	validate_repo "$repo" || return 1
-	validate_issue "$issue" || return 1
-	[[ "$reason" == "failed-worker" || "$reason" == "post-pr-cleanup" ]] || { die "invalid archive reason"; return 1; }
+	if [[ "$unattributed" == "true" ]]; then
+		[[ -z "$issue" && "$reason" == "unattributed-worktree" ]] || { die "unattributed archive cannot have an issue"; return 1; }
+		issue="unattributed"
+	else
+		validate_issue "$issue" || return 1
+		[[ "$reason" == "failed-worker" || "$reason" == "post-pr-cleanup" ]] || { die "invalid archive reason"; return 1; }
+	fi
 	validate_branch "$base_branch" || return 1
 	[[ -d "$worktree" ]] || { die "worktree does not exist: $worktree"; return 1; }
 	git -C "$worktree" rev-parse --is-inside-work-tree >/dev/null 2>&1 || { die "not a Git worktree: $worktree"; return 1; }

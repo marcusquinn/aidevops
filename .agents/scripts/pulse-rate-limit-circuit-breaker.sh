@@ -925,14 +925,41 @@ _circuit_breaker_status() {
 #   AIDEVOPS_SKIP_ACTIONS_QUEUE_SATURATION=1 — return saturated=0 unconditionally
 #   QUEUED_MIN=0                              — disable check via threshold
 #######################################
+_cb_actions_queued_endpoint() {
+	local repo_slug="$1"
+	local queue_window_hours="$2"
+	local endpoint="repos/${repo_slug}/actions/runs?status=queued&per_page=1"
+	local now_epoch="" window_start_epoch="" window_start=""
+
+	[[ "$queue_window_hours" -gt 0 ]] || {
+		printf '%s' "$endpoint"
+		return 0
+	}
+	now_epoch=$(date -u '+%s' 2>/dev/null) || now_epoch=""
+	if [[ "$now_epoch" =~ ^[0-9]+$ ]]; then
+		window_start_epoch=$((now_epoch - queue_window_hours * 3600))
+		window_start=$(date -u -r "$window_start_epoch" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || true)
+		[[ -n "$window_start" ]] || window_start=$(date -u -d "@${window_start_epoch}" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || true)
+	fi
+	if [[ -n "$window_start" ]]; then
+		printf '%s&created=>=%s' "$endpoint" "$window_start"
+	else
+		echo "${_CB_RL_LOG_PREFIX} WARNING: could not calculate Actions queue window — querying all queued runs" >>"$LOGFILE"
+		printf '%s' "$endpoint"
+	fi
+	return 0
+}
+
 _check_actions_queue_saturation() {
 	local repo_slug="$1"
 	local queued_min="${AIDEVOPS_ACTIONS_QUEUE_SATURATION_QUEUED_MIN:-50}"
 	local ratio_min="${AIDEVOPS_ACTIONS_QUEUE_SATURATION_RATIO_MIN:-10}"
+	local queue_window_hours="${AIDEVOPS_ACTIONS_QUEUE_SATURATION_WINDOW_HOURS:-6}"
 
 	# Validate inputs — invalid env values default to safe disabled state.
 	[[ "$queued_min" =~ ^[0-9]+$ ]] || queued_min=50
 	[[ "$ratio_min" =~ ^[0-9]+$ ]] || ratio_min=10
+	[[ "$queue_window_hours" =~ ^[0-9]+$ ]] || queue_window_hours=6
 
 	# Empty repo_slug → cannot query → fail-open with zeros.
 	if [[ -z "$repo_slug" ]]; then
@@ -967,11 +994,18 @@ _check_actions_queue_saturation() {
 		fi
 	fi
 
+	# Query only queued runs created within the configured window. GitHub can
+	# retain uncancellable zombie runs in queued state indefinitely; counting
+	# those as current runner demand causes false saturation. The in-progress
+	# query intentionally remains unfiltered.
+	local queued_endpoint=""
+	queued_endpoint=$(_cb_actions_queued_endpoint "$repo_slug" "$queue_window_hours")
+
 	# Query Actions runs for queued + in_progress states. per_page=1 is
 	# enough — the .total_count field carries the population size without
 	# pulling the run bodies (cheap REST call).
 	local queued_json="" in_progress_json=""
-	queued_json=$(gh api "repos/${repo_slug}/actions/runs?status=queued&per_page=1" 2>/dev/null) || queued_json=""
+	queued_json=$(gh api "$queued_endpoint" 2>/dev/null) || queued_json=""
 	in_progress_json=$(gh api "repos/${repo_slug}/actions/runs?status=in_progress&per_page=1" 2>/dev/null) || in_progress_json=""
 
 	# Fail-open on any API error — instrumentation must never break the pulse.
@@ -1059,6 +1093,7 @@ _main() {
 		echo "Environment (Actions queue, t3211):"
 		echo "  AIDEVOPS_ACTIONS_QUEUE_SATURATION_QUEUED_MIN  min queued runs (default 50; 0 disables)"
 		echo "  AIDEVOPS_ACTIONS_QUEUE_SATURATION_RATIO_MIN   min queued/in_progress ratio (default 10)"
+		echo "  AIDEVOPS_ACTIONS_QUEUE_SATURATION_WINDOW_HOURS recent queued-run window (default 6; 0 counts all)"
 		echo "  AIDEVOPS_SKIP_ACTIONS_QUEUE_SATURATION=1      emergency bypass"
 		echo "  AIDEVOPS_SKIP_GITHUB_ACTIONS_STATUS=1         bypass public Actions incident signal"
 		return 0

@@ -70,8 +70,8 @@ else
 		"expected worker_launch_rc_* pattern in pulse-dispatch-core.sh"
 fi
 
-active_line=$(grep -n 'has active dispatch comment.*active claim' "${SCRIPTS_DIR}/pulse-dispatch-lib.sh" | cut -d: -f1 | head -1)
-block_line=$(grep -n 'DISPATCH_BLOCK_REASON reason=' "${SCRIPTS_DIR}/pulse-dispatch-lib.sh" | cut -d: -f1 | head -1)
+active_line=$(grep -n 'has active dispatch comment.*active claim' "${SCRIPTS_DIR}/pulse-dispatch-lib-capacity.sh" | cut -d: -f1 | head -1)
+block_line=$(grep -n 'DISPATCH_BLOCK_REASON reason=' "${SCRIPTS_DIR}/pulse-dispatch-lib-capacity.sh" | cut -d: -f1 | head -1)
 if [[ -n "$active_line" && -n "$block_line" && "$active_line" -lt "$block_line" ]]; then
 	pass "dedup-active evidence takes precedence over stale historical block reasons"
 else

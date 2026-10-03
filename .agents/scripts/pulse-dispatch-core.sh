@@ -10,41 +10,13 @@
 # This module is sourced by pulse-wrapper.sh. Depends on shared-constants.sh
 # and worker-lifecycle-common.sh being sourced first by the orchestrator.
 #
-# Functions in this module (in source order):
-#   - _resolve_worker_tier
-#   - has_worker_for_repo_issue
-#   - check_dispatch_dedup
-#   - lock_issue_for_worker
-#   - unlock_issue_after_worker
-#   - _count_impl_commits
-#   - _task_id_in_recent_commits
-#   - _task_id_in_merged_pr
-#   - _task_id_in_changed_files
-#   - _check_nmr_approval_gate
-#   - _check_commit_subject_dedup_gate
-#   - _has_force_dispatch_label
-#   - _has_publication_pending_label
-#   - _is_bot_generated_cleanup_issue
-#   - _is_task_committed_to_main
-#   - _dispatch_target_is_pull_request
-#   - _is_renovate_dependency_dashboard_issue
-#   - _dispatch_waiting_for_maintainer_permission
-#   - _dispatch_permission_history_requires_grant
-#   - _dispatch_has_interactive_hold
-#   - _dispatch_registered_worktree_count
-#   - _dispatch_run_guarded_worktree_cleanup
-#   - _dispatch_cleanup_worktree_capacity
-#   - _dispatch_worktree_capacity_gate
-#   - _dispatch_run_guarded_disk_cleanup
-#   - _dispatch_cleanup_disk_pressure
-#   - _dispatch_dedup_check_layers  (t1999: extracted from dispatch_with_dedup)
-#   - dispatch_with_dedup           (t1999: thin orchestrator, <80 lines)
-#   - _ensure_issue_body_has_brief
-#   - _match_terminal_blocker_pattern
-#   - _apply_terminal_blocker
-#   - check_terminal_blockers
+# Issue locks, worker discovery, and commit/approval gates are defined in the
+# sibling libraries below. This module retains capacity gates, dedup orchestration,
+# brief validation, and terminal blocker handling.
 #
 # Extracted sub-modules (sourced below):
+#   - pulse-dispatch-locks.sh          — worker discovery, issue locks, commit detection
+#   - pulse-dispatch-commit-gates.sh   — trust, approval, label and main-commit gates
 #   - pulse-dispatch-dedup-layers.sh    — 7-layer dedup chain + stale classifier
 #   - pulse-dispatch-large-file-gate.sh — large-file simplification gate
 #   - pulse-dispatch-worker-launch.sh   — worker launch helpers + orchestrator
@@ -64,6 +36,7 @@
 [[ -n "${_PULSE_DISPATCH_CORE_LOADED:-}" ]] && return 0
 _PULSE_DISPATCH_CORE_LOADED=1
 _PULSE_DISPATCH_FALSE="false"
+_PULSE_DISPATCH_OPEN_STATE="OPEN"
 _PULSE_DISPATCH_ELIGIBILITY_STAGE="eligibility_gate"
 _PULSE_DISPATCH_NMR_LABEL="needs-maintainer-review"
 _PULSE_DISPATCH_COLLABORATOR_ASSOCIATION="COLLABORATOR"
@@ -90,6 +63,9 @@ source "${BASH_SOURCE[0]%/*}/renovate-dependency-dashboard-helper.sh"
 source "${BASH_SOURCE[0]%/*}/pulse-dispatch-dedup-layers.sh"
 # shellcheck source=pulse-dispatch-large-file-gate.sh
 source "${BASH_SOURCE[0]%/*}/pulse-dispatch-large-file-gate.sh"
+# GH#32689: brief-scope normalization and repaired-hold release
+# shellcheck source=pulse-dispatch-brief-scope.sh
+source "${BASH_SOURCE[0]%/*}/pulse-dispatch-brief-scope.sh"
 # shellcheck source=pulse-dispatch-worker-launch.sh
 source "${BASH_SOURCE[0]%/*}/pulse-dispatch-worker-launch.sh"
 # t2117/GH#19109: file-footprint overlap throttle
@@ -109,1311 +85,12 @@ if ! declare -F _gh_collaborator_permission_lookup >/dev/null 2>&1; then
 	source "${BASH_SOURCE[0]%/*}/shared-gh-collaborator-permission.sh"
 fi
 
-#######################################
-# Resolve the worker tier from issue labels. When multiple tier:* labels
-# are present (collision — see t1997), pick the highest rank order.
-# Fallback: tier:standard if no tier label is present.
-# Arguments:
-#   $1 - comma-separated label list (e.g., "bug,tier:simple,auto-dispatch")
-# Output:
-#   tier:thinking, tier:standard, or tier:simple
-# Exit codes:
-#   0 - always succeeds
-#######################################
-_resolve_worker_tier() {
-	local labels_csv="$1"
-	# Convert to lowercase for case-insensitive matching (Bash 3.2 compatible)
-	local labels_lower
-	labels_lower=$(printf '%s' "$labels_csv" | tr '[:upper:]' '[:lower:]')
-	local labels_with_commas=",${labels_lower},"
+# Dispatch issue locks and commit/approval gates are loaded in original order.
+# shellcheck source=pulse-dispatch-locks.sh
+source "${BASH_SOURCE[0]%/*}/pulse-dispatch-locks.sh"
+# shellcheck source=pulse-dispatch-commit-gates.sh
+source "${BASH_SOURCE[0]%/*}/pulse-dispatch-commit-gates.sh"
 
-	if [[ "$labels_with_commas" == *",tier:thinking,"* ]]; then
-		printf 'tier:thinking'
-	elif [[ "$labels_with_commas" == *",tier:standard,"* ]]; then
-		printf 'tier:standard'
-	elif [[ "$labels_with_commas" == *",tier:simple,"* ]]; then
-		printf 'tier:simple'
-	else
-		printf 'tier:standard' # default when no tier label present
-	fi
-	return 0
-}
-
-#######################################
-# Check if a worker exists for a specific repo+issue pair
-# Arguments:
-#   $1 - issue number
-#   $2 - repo slug (owner/repo)
-# Exit codes:
-#   0 - matching worker exists
-#   1 - no matching worker
-#######################################
-has_worker_for_repo_issue() {
-	local issue_number="$1"
-	local repo_slug="$2"
-
-	if [[ ! "$issue_number" =~ $_PULSE_DISPATCH_UNSIGNED_INTEGER_PATTERN ]] || [[ -z "$repo_slug" ]]; then
-		return 1
-	fi
-
-	local repo_path
-	repo_path=$(get_repo_path_by_slug "$repo_slug")
-
-	local worker_lines
-	worker_lines=$(list_active_worker_processes) || worker_lines=""
-
-	# Primary match: repo path + issue number in command line.
-	# Requires get_repo_path_by_slug to return a non-empty path.
-	if [[ -n "$repo_path" ]]; then
-		local matches
-		matches=$(printf '%s\n' "$worker_lines" | awk -v issue="$issue_number" -v path="$repo_path" '
-			BEGIN {
-				esc = path
-				gsub(/[][(){}.^$*+?|\\]/, "\\\\&", esc)
-			}
-			$0 ~ ("--dir[[:space:]]+" esc "([[:space:]]|$)") &&
-			($0 ~ ("issue-" issue "([^0-9]|$)") || $0 ~ ("Issue #" issue "([^0-9]|$)")) { count++ }
-			END { print count + 0 }
-		') || matches=0
-		[[ "$matches" =~ $_PULSE_DISPATCH_UNSIGNED_INTEGER_PATTERN ]] || matches=0
-		if [[ "$matches" -gt 0 ]]; then
-			return 0
-		fi
-	fi
-
-	# Fallback: match by session-key alone (GH#6453).
-	# When get_repo_path_by_slug returns empty (slug not in repos.json,
-	# path mismatch, or repos.json unavailable), the primary match above
-	# always returns 0 matches — a false-negative that causes the backfill
-	# cycle to re-dispatch already-running workers.
-	# The session-key "issue-<number>" is always present in the command line
-	# of workers dispatched via headless-runtime-helper.sh run --session-key.
-	# This fallback catches those workers regardless of path resolution.
-	local sk_matches
-	sk_matches=$(printf '%s\n' "$worker_lines" | awk -v issue="$issue_number" '
-		$0 ~ ("--session-key[[:space:]]+issue-" issue "([^0-9]|$)") { count++ }
-		END { print count + 0 }
-	') || sk_matches=0
-	[[ "$sk_matches" =~ $_PULSE_DISPATCH_UNSIGNED_INTEGER_PATTERN ]] || sk_matches=0
-	if [[ "$sk_matches" -gt 0 ]]; then
-		return 0
-	fi
-
-	return 1
-}
-
-#######################################
-# Thin orchestrator — runs read-only dedup layers in order.
-# Byte-for-byte behavioural equivalent of the pre-GH#18654 single-function
-# implementation. Layers return 0 to block or 1 to continue; Layer 4 returns 2
-# only for a worker draft that must reach stale-assignment recovery first.
-# The optimistic GitHub claim lock runs after the worker canary preflight in
-# _dispatch_launch_worker so a broken local runtime does not publish noisy
-# DISPATCH_CLAIM comments when no worker can start.
-#######################################
-check_dispatch_dedup() {
-	local issue_number="$1"
-	local repo_slug="$2"
-	local title="$3"
-	local issue_title="${4:-}"
-	local self_login="${5:-}"
-
-	_dedup_layer1_ledger_check "$issue_number" "$repo_slug" && return 0
-	_dedup_layer2_process_match "$issue_number" "$repo_slug" && return 0
-	_dedup_layer3_title_match "$title" && return 0
-	local _pr_evidence_rc=0
-	_dedup_layer4_pr_evidence "$issue_number" "$repo_slug" "$issue_title" || _pr_evidence_rc=$?
-	if [[ "$_pr_evidence_rc" -eq 0 ]]; then
-		return 0
-	fi
-	# A verified worker-owned draft is still a hard duplicate-dispatch block,
-	# but its assignment may need the existing stale-checkpoint transition.
-	# Unknown Layer 4 outcomes fail closed rather than weakening PR protection.
-	if [[ "$_pr_evidence_rc" -ne 1 && "$_pr_evidence_rc" -ne 2 ]]; then
-		return 0
-	fi
-	# Active dispatch comments and assignment/claim guards are expected
-	# cross-runner locks, not launch failures. Preserve the block while giving
-	# dispatch_max a distinct benign rc so the stage wrapper suppresses generic
-	# "Stage failed" noise and refill loops can skip this candidate for the
-	# current pulse cycle (GH#23541).
-	_dedup_layer5_dispatch_comment "$issue_number" "$repo_slug" "$self_login" && return 3
-	_dedup_layer6_assignee_and_stale "$issue_number" "$repo_slug" "$self_login" && return 3
-	[[ "$_pr_evidence_rc" -eq 2 ]] && return 0
-
-	return 1
-}
-
-_read_issue_conversation_lock() {
-	local issue_num="$1"
-	local slug="$2"
-	gh api "repos/${slug}/issues/${issue_num}" --jq '.locked' 2>/dev/null || return 1
-	return 0
-}
-
-#######################################
-# Read authoritative conversation-lock state for every auto-dispatch issue in
-# one bounded GraphQL request. Reconciliation may use this repository-level
-# snapshot, while the worker launch path continues to perform its own fresh
-# per-target verification.
-#
-# Args:
-#   $1 = repository slug
-#   $2 = raw open-issue snapshot JSON
-# Returns:
-#   JSON list of {number, locked}; non-zero when any requested issue is absent
-#   or malformed
-#######################################
-_read_issue_conversation_locks_batch() {
-	local slug="$1"
-	local issue_json="$2"
-	local owner="${slug%%/*}"
-	local repo="${slug#*/}"
-	local issue_numbers="" query="" issue_num="" response=""
-
-	# Require two non-empty components, not different names: same/same is valid.
-	[[ "$slug" == */* && -n "$owner" && -n "$repo" && "$repo" != */* ]] || return 1
-	issue_numbers=$(printf '%s' "$issue_json" | jq -ce \
-		--arg auto_dispatch_label "$_PULSE_DISPATCH_AUTO_LABEL" \
-		--arg no_auto_dispatch_label "no-auto-dispatch" '
-		[.[] |
-			([.labels[]? | .name? // .]) as $labels |
-			select(($labels | index($auto_dispatch_label)) != null and ($labels | index($no_auto_dispatch_label)) == null) |
-			.number] |
-		if all(.[]; type == "number" and . >= 1 and floor == .) then unique else error("invalid issue number") end
-	' 2>/dev/null) || return 1
-	[[ "$issue_numbers" != "[]" ]] || {
-		printf '[]\n'
-		return 0
-	}
-
-	# shellcheck disable=SC2016  # GraphQL variables are literal query syntax.
-	query='query($owner:String!,$name:String!){repository(owner:$owner,name:$name){'
-	while IFS= read -r issue_num; do
-		query="${query}issue_${issue_num}:issue(number:${issue_num}){number locked}"
-	done < <(printf '%s' "$issue_numbers" | jq -r '.[]')
-	query="${query}}}"
-
-	response=$(gh api graphql -f "query=${query}" -F "owner=${owner}" -F "name=${repo}" 2>/dev/null) || return 1
-	printf '%s' "$response" | jq -ce --argjson expected "$issue_numbers" '
-		(.data.repository // null) as $repository |
-		if ($repository | type) != "object" then error("missing repository lock snapshot") else
-			[$repository[] | select(type == "object") | {number, locked}] as $locks |
-			if (($locks | map(.number) | sort) == ($expected | sort)) and
-				all($locks[]; (.locked | type) == "boolean")
-			then $locks else error("incomplete repository lock snapshot") end
-		end
-	' 2>/dev/null || return 1
-	return 0
-}
-
-#######################################
-# Verify an issue conversation lock after GitHub accepts the lock mutation.
-# The issue REST read can briefly lag the mutation, so retry boundedly while
-# preserving the fail-closed trust boundary.
-#
-# Args:
-#   $1 = issue number
-#   $2 = repository slug
-# Returns:
-#   0 when a read confirms locked=true, 1 after bounded exhaustion
-#######################################
-_verify_issue_conversation_lock() {
-	local issue_num="$1"
-	local slug="$2"
-	local attempts="${AIDEVOPS_CONVERSATION_LOCK_VERIFY_ATTEMPTS:-3}"
-	local retry_delay="${AIDEVOPS_CONVERSATION_LOCK_VERIFY_DELAY:-2}"
-	local attempt=1
-	local locked_state=""
-
-	[[ "$attempts" =~ ^[1-9][0-9]*$ ]] || attempts=3
-	[[ "$attempts" -le 3 ]] || attempts=3
-	[[ "$retry_delay" =~ $_PULSE_DISPATCH_UNSIGNED_INTEGER_PATTERN ]] || retry_delay=2
-	[[ "$retry_delay" -le 5 ]] || retry_delay=2
-
-	while [[ "$attempt" -le "$attempts" ]]; do
-		# Retry observed propagation lag, never an unknown transport outcome.
-		locked_state=$(_read_issue_conversation_lock "$issue_num" "$slug") || return 1
-		if [[ "$locked_state" == "true" ]]; then
-			return 0
-		fi
-		[[ "$locked_state" == "$_PULSE_DISPATCH_FALSE" ]] || return 1
-		if [[ "$attempt" -lt "$attempts" ]]; then
-			sleep "$retry_delay"
-		fi
-		attempt=$((attempt + 1))
-	done
-
-	return 1
-}
-
-#######################################
-# Lock an issue to prevent prompt injection
-# (t1894, t1934, GH#30180). Auto-dispatch is the authorization boundary,
-# so the issue must be frozen before it enters worker-readable context.
-# The issue lock is strict and verified. Linked PR conversations remain open so
-# write-access CI can post reviews and status comments during worker execution.
-#######################################
-_apply_issue_conversation_lock_state() {
-	local issue_num="$1"
-	local slug="$2"
-	local reason="${3:-resolved}"
-	local locked_state="$4"
-
-	[[ -n "$issue_num" && -n "$slug" ]] || return 1
-	case "$locked_state" in
-	true)
-		_record_auto_dispatch_lock "$issue_num" "$slug" || return 1
-		echo "[pulse-wrapper] Reused existing verified conversation lock for #${issue_num} in ${slug} (GH#30180)" >>"$LOGFILE"
-		return 0
-		;;
-	false) ;;
-	*) return 1 ;;
-	esac
-
-	# aidevops:trust-boundary — never launch a worker when the mutable public
-	# instruction surface could not be frozen and independently re-read.
-	local lock_applied=0
-	if ! gh issue lock "$issue_num" --repo "$slug" --reason "$reason" >/dev/null 2>&1; then
-		if ! _verify_issue_conversation_lock "$issue_num" "$slug"; then
-			echo "[pulse-wrapper] Failed to verify conversation lock for #${issue_num} in ${slug}; dispatch remains blocked (GH#30180)" >>"$LOGFILE"
-			return 1
-		fi
-		echo "[pulse-wrapper] Reused existing verified conversation lock for #${issue_num} in ${slug} (GH#30180)" >>"$LOGFILE"
-	else
-		lock_applied=1
-	fi
-	if [[ "$lock_applied" -eq 1 ]] && ! _verify_issue_conversation_lock "$issue_num" "$slug"; then
-		echo "[pulse-wrapper] Failed to verify conversation lock for #${issue_num} in ${slug}; dispatch remains blocked (GH#30180)" >>"$LOGFILE"
-		return 1
-	fi
-	_record_auto_dispatch_lock "$issue_num" "$slug" || return 1
-	echo "[pulse-wrapper] Locked #${issue_num} in ${slug} during worker execution (t1934)" >>"$LOGFILE"
-
-	return 0
-}
-
-lock_issue_for_worker() {
-	local issue_num="$1"
-	local slug="$2"
-	local reason="${3:-resolved}"
-	local locked_state=""
-
-	[[ -n "$issue_num" && -n "$slug" ]] || return 1
-
-	# The launch path always uses a fresh per-target read. Repository-level
-	# reconciliation calls _apply_issue_conversation_lock_state directly with a
-	# bounded authoritative batch snapshot and cannot weaken this final gate.
-	locked_state=$(_read_issue_conversation_lock "$issue_num" "$slug") || return 1
-	_apply_issue_conversation_lock_state "$issue_num" "$slug" "$reason" "$locked_state"
-	return $?
-}
-
-_auto_dispatch_lock_marker() {
-	local issue_num="$1"
-	local slug="$2"
-	local lock_dir="${AIDEVOPS_AUTO_DISPATCH_LOCK_DIR:-${HOME}/.aidevops/cache/auto-dispatch-locks}"
-	local lock_key="${slug//\//--}-${issue_num}"
-	printf '%s/%s\n' "$lock_dir" "$lock_key"
-	return 0
-}
-
-_record_auto_dispatch_lock() {
-	local issue_num="$1"
-	local slug="$2"
-	local marker=""
-	marker=$(_auto_dispatch_lock_marker "$issue_num" "$slug") || return 1
-	mkdir -p "${marker%/*}" 2>/dev/null || return 1
-	: >"$marker" 2>/dev/null || return 1
-	return 0
-}
-
-#######################################
-# Return success when label policy requires the conversation to remain locked.
-# Args: comma-separated label names
-#######################################
-_auto_dispatch_lock_required() {
-	local labels_csv="$1"
-	if [[ ",$labels_csv," == *,auto-dispatch,* && ",$labels_csv," != *,no-auto-dispatch,* ]]; then
-		return 0
-	fi
-	return 1
-}
-
-#######################################
-# Reconcile conversation locks for every visible auto-dispatch issue,
-# including blocked and queued work that cannot reach the launch path yet.
-# Only markers owned by this mechanism may trigger an unlock.
-#######################################
-reconcile_auto_dispatch_issue_locks() {
-	local slug="$1"
-	local issue_json="$2"
-	local issue_num="" marker="" labels="" labels_csv="" lock_snapshot="" lock_states="" locked_state=""
-	[[ -n "$slug" && -n "$issue_json" ]] || return 1
-	lock_snapshot=$(_read_issue_conversation_locks_batch "$slug" "$issue_json") || return 1
-	lock_states=$(printf '%s' "$lock_snapshot" | jq -ce '
-		map({key: (.number | tostring), value: .locked}) | from_entries
-	' 2>/dev/null) || return 1
-
-	while IFS=$'\t' read -r issue_num labels; do
-		[[ "$issue_num" =~ $_PULSE_DISPATCH_UNSIGNED_INTEGER_PATTERN ]] || continue
-		marker=$(_auto_dispatch_lock_marker "$issue_num" "$slug") || continue
-		labels_csv=",${labels},"
-		if _auto_dispatch_lock_required "$labels"; then
-			locked_state=$(printf '%s' "$lock_states" | jq -r --arg issue_num "$issue_num" \
-				'if has($issue_num) then .[$issue_num] | tostring else "unknown" end' 2>/dev/null) || return 1
-			[[ "$locked_state" == "true" || "$locked_state" == "$_PULSE_DISPATCH_FALSE" ]] || return 1
-			_apply_issue_conversation_lock_state "$issue_num" "$slug" resolved "$locked_state" || return 1
-		elif [[ -f "$marker" && "$labels_csv" != *,no-auto-dispatch,* ]]; then
-			gh issue unlock "$issue_num" --repo "$slug" >/dev/null 2>&1 || return 1
-			rm -f "$marker" 2>/dev/null || return 1
-			echo "[pulse-wrapper] Unlocked #${issue_num} in ${slug} after auto-dispatch removal (GH#30180)" >>"$LOGFILE"
-		fi
-	done < <(printf '%s' "$issue_json" | jq -r '.[] | [(.number | tostring), ([.labels[]? | .name? // .] | join(","))] | @tsv' 2>/dev/null)
-
-	return 0
-}
-
-#######################################
-# Release conversation locks after terminal worker handling only when the issue
-# is no longer auto-dispatch eligible. Retryable work stays frozen across the
-# worker-to-Pulse handoff, closing the post-worker comment race (GH#30180).
-#######################################
-unlock_issue_after_worker() {
-	local issue_num="$1"
-	local slug="$2"
-
-	[[ -n "$issue_num" && -n "$slug" ]] || return 0
-
-	local labels=""
-	if ! labels=$(gh api "repos/${slug}/issues/${issue_num}" --jq '[.labels[]? | .name] | join(",")' 2>/dev/null); then
-		echo "[pulse-wrapper] Could not verify labels before unlocking #${issue_num} in ${slug}; retaining conversation lock (GH#30180)" >>"$LOGFILE"
-		return 1
-	fi
-	# aidevops:trust-boundary — auto-dispatch remains authoritative across
-	# retries, so completion cleanup must not reopen its instruction surface.
-	if _auto_dispatch_lock_required "$labels"; then
-		echo "[pulse-wrapper] Retained conversation lock for auto-dispatch #${issue_num} in ${slug} after worker handoff (GH#30180)" >>"$LOGFILE"
-		return 0
-	fi
-
-	gh issue unlock "$issue_num" --repo "$slug" >/dev/null 2>&1 || true
-	local marker=""
-	marker=$(_auto_dispatch_lock_marker "$issue_num" "$slug") || marker=""
-	[[ -z "$marker" ]] || rm -f "$marker" 2>/dev/null || true
-	echo "[pulse-wrapper] Unlocked #${issue_num} in ${slug} after worker completion (t1934)" >>"$LOGFILE"
-
-	return 0
-}
-
-#######################################
-# GH#17779: Helper for _is_task_committed_to_main.
-# Reads commit hashes from stdin, applies the two-stage planning filter
-# (subject-line prefix + path-based), and prints the count of real
-# implementation commits to stdout.
-#
-# Planning-only path allowlist (t2379, GH#19863):
-#   - TODO.md / todo/**           — task entries and briefs
-#   - AGENTS.md / .agents/AGENTS.md — agent guides
-#   - docs/** / */docs/**         — documentation
-#   - .task-counter               — CAS counter file touched by
-#                                   claim-task-id.sh on every ID allocation.
-#                                   Without this, a planning PR that
-#                                   touches TODO.md + brief + .task-counter
-#                                   is misclassified as implementation and
-#                                   permanently blocks future dispatch via
-#                                   the main-commit dedup false positive
-#                                   (GH#17574). Root cause of the t2366
-#                                   r914 task getting stuck after its
-#                                   plan-filing PR #19819 merged.
-#
-# Args:
-#   $1 - repo_path (local path to the repo)
-# Stdin: one commit hash per line
-#######################################
-_count_impl_commits() {
-	local repo_path_inner="$1"
-	local match_count_inner=0
-	local commit_hash_inner
-	while IFS= read -r commit_hash_inner; do
-		[[ -z "$commit_hash_inner" ]] && continue
-		local is_planning_only_inner=true
-		local touched_path_inner
-		while IFS= read -r touched_path_inner; do
-			[[ -z "$touched_path_inner" ]] && continue
-			case "$touched_path_inner" in
-			TODO.md | todo/* | AGENTS.md | .agents/AGENTS.md | */docs/* | docs/* | .task-counter) ;;
-			*)
-				is_planning_only_inner=false
-				break
-				;;
-			esac
-		done < <(git -C "$repo_path_inner" diff-tree --no-commit-id --name-only -r "$commit_hash_inner" 2>/dev/null)
-		if [[ "$is_planning_only_inner" == "$_PULSE_DISPATCH_FALSE" ]]; then
-			match_count_inner=$((match_count_inner + 1))
-		fi
-	done
-	echo "$match_count_inner"
-	return 0
-}
-
-#######################################
-# t2004: Signal 1 — search git log subject lines for task ID patterns.
-# Handles tNNN and GH#NNN prefixes extracted from the issue title.
-# Subject-only matching prevents body cross-references from causing false
-# positives (GH#17779). Uses _count_impl_commits to filter planning-only
-# commits (GH#17707).
-#
-# Args:
-#   $1 - issue_title (to extract tNNN / GH#NNN prefix patterns)
-#   $2 - repo_path (local path to the repo)
-#   $3 - created_at (ISO timestamp for --since filter)
-#
-# Exit codes:
-#   0 - found matching implementation commit(s) on origin/main
-#   1 - no match
-#######################################
-_task_id_in_recent_commits() {
-	local issue_title="$1"
-	local repo_path="$2"
-	local created_at="$3"
-
-	# Pattern 1: tNNN or tNNN.X task ID from title (e.g., "t153: add dark mode", "t2053.2: shell init")
-	# Subject-only: body cross-references like "(t101)" must not match.
-	# grep -w enforces word boundaries — prevents t101 matching t1010.
-	# Subtask decimal suffix preserved (GH#19165) — t2053.2 must NOT match parent t2053 commits.
-	local -a subject_patterns=()
-	local task_id_match
-	task_id_match=$(printf '%s' "$issue_title" | grep -oE '^t[0-9]+(\.[0-9a-z]+)*' | head -1 | sed 's/[.]/\\./g') || task_id_match=""
-	if [[ -n "$task_id_match" ]]; then
-		subject_patterns+=("$task_id_match")
-	fi
-
-	# Pattern 2: GH#NNN from title (e.g., "GH#17574: fix pulse dispatch")
-	# Subject-only: body mentions of other GH# IDs must not match.
-	local gh_id_match
-	gh_id_match=$(printf '%s' "$issue_title" | grep -oE '^GH#[0-9]+' | head -1) || gh_id_match=""
-	if [[ -n "$gh_id_match" ]]; then
-		subject_patterns+=("$gh_id_match")
-	fi
-
-	[[ ${#subject_patterns[@]} -gt 0 ]] || return 1
-
-	# Bash 3.2 + set -u: length check already done above.
-	local pattern
-	for pattern in "${subject_patterns[@]}"; do
-		local match_count=0
-		# Fetch all commits as "HASH SUBJECT", filter planning subjects, then
-		# grep -w for word-boundary match on the subject portion only.
-		#
-		# Subject exclusions (t2379, GH#19863):
-		#   - chore: claim        — claim-task-id.sh counter bump commits
-		#   - chore: mark tNNN complete — task-complete-helper.sh bookkeeping
-		#       commits written by issue-sync.yml after ANY PR merge. Touch
-		#       TODO.md only, but belt+braces against future regressions.
-		#   - plan: / pNN:        — explicit planning prefixes
-		match_count=$(_count_impl_commits "$repo_path" < <(
-			git -C "$repo_path" log origin/main --since="$created_at" \
-				--format='%H %s' |
-				grep -vE '^[0-9a-f]+ (chore: claim|chore: mark t[0-9]+ complete|plan:|p[0-9]+:)' |
-				grep -wE "$pattern" |
-				cut -d' ' -f1 || true
-		))
-		if [[ "$match_count" -gt 0 ]]; then
-			echo "[pulse-wrapper] _task_id_in_recent_commits: found ${match_count} commit(s) matching subject pattern '${pattern}' on origin/main since ${created_at}" >>"$LOGFILE"
-			return 0
-		fi
-	done
-
-	return 1
-}
-
-#######################################
-# t2004: Signal 2 — search git log commit messages for closing keywords and
-# squash-merge suffixes that indicate the issue was resolved via a merged PR.
-#
-# Patterns: "(#NNN)" squash-merge suffix, "Closes #NNN", "Fixes #NNN".
-# Full-message matching is safe here — these keywords legitimately appear
-# only in commit bodies for commits that close an issue (GH#17779).
-#
-# Args:
-#   $1 - issue_number
-#   $2 - repo_path (local path to the repo)
-#   $3 - created_at (ISO timestamp for --since filter)
-#
-# Exit codes:
-#   0 - found matching implementation commit(s) on origin/main
-#   1 - no match
-#######################################
-_task_id_in_merged_pr() {
-	local issue_number="$1"
-	local repo_path="$2"
-	local created_at="$3"
-
-	# Pattern 3: GitHub squash-merge suffix "(#NNN)" — only matches commit
-	# titles, not body references. The bare "#NNN" pattern previously caused
-	# false positives: any commit that MENTIONED an issue (e.g., "Relabeled
-	# #17659 and #17660") would match, closing issues whose work hadn't been
-	# done. Restrict to the "(#NNN)" suffix that GitHub adds to squash merges.
-	# t1927: Escape parens for -E regex — unescaped parens are capture groups
-	# that match bare "#NNN" in commit bodies (evidence tables, PR descriptions).
-	# With \( \) the pattern only matches the literal "(#NNN)" suffix.
-	local -a message_patterns=()
-	message_patterns+=("\\(#${issue_number}\\)")
-
-	# Patterns 4-5: "Closes #NNN" / "Fixes #NNN" in commit messages — these
-	# are the conventional patterns for commits that resolve an issue.
-	# \b word boundary prevents #17779 from matching #177790 (longer IDs).
-	message_patterns+=("[Cc]loses #${issue_number}\\b")
-	message_patterns+=("[Ff]ixes #${issue_number}\\b")
-
-	# Bash 3.2 + set -u: guard empty array iteration.
-	local pattern
-	for pattern in "${message_patterns[@]}"; do
-		local match_count=0
-		match_count=$(_count_impl_commits "$repo_path" < <(
-			git -C "$repo_path" log origin/main --since="$created_at" \
-				-E --grep="$pattern" --format='%H %s' |
-				grep -vE '^[0-9a-f]+ (chore: claim|plan:|p[0-9]+:)' |
-				cut -d' ' -f1 || true
-		))
-		if [[ "$match_count" -gt 0 ]]; then
-			echo "[pulse-wrapper] _task_id_in_merged_pr: found ${match_count} commit(s) matching message pattern '${pattern}' on origin/main since ${created_at}" >>"$LOGFILE"
-			return 0
-		fi
-	done
-
-	return 1
-}
-
-#######################################
-# t2004: Signal 3 — scan TODO.md on origin/main for completed task markers.
-# Catches tasks marked [x] in planning files without a conventional commit
-# message — e.g., tasks completed via direct TODO edit + push.
-#
-# Args:
-#   $1 - issue_number
-#   $2 - issue_title (to extract tNNN prefix)
-#   $3 - repo_path (local path to the repo)
-#
-# Exit codes:
-#   0 - task found completed ([x]) in TODO.md on origin/main
-#   1 - no match (or TODO.md unavailable)
-#######################################
-_task_id_in_changed_files() {
-	local issue_number="$1"
-	local issue_title="$2"
-	local repo_path="$3"
-
-	local todo_content
-	todo_content=$(git -C "$repo_path" show origin/main:TODO.md 2>/dev/null) || return 1
-
-	# Check for tNNN or tNNN.X completion marker: "- [x] tNNN ..."
-	local task_id_match
-	task_id_match=$(printf '%s' "$issue_title" | grep -oE '^t[0-9]+(\.[0-9a-z]+)*' | head -1 | sed 's/[.]/\\./g') || task_id_match=""
-	if [[ -n "$task_id_match" ]]; then
-		if printf '%s' "$todo_content" | grep -qE "^\s*-\s*\[x\]\s+${task_id_match}(\s|$)"; then
-			echo "[pulse-wrapper] _task_id_in_changed_files: found completed '${task_id_match}' in TODO.md on origin/main" >>"$LOGFILE"
-			return 0
-		fi
-	fi
-
-	# Check for GH#NNN completion marker: "- [x] ... GH#NNN ..."
-	if printf '%s' "$todo_content" | grep -qE "^\s*-\s*\[x\].*\bGH#${issue_number}\b"; then
-		echo "[pulse-wrapper] _task_id_in_changed_files: found completed 'GH#${issue_number}' in TODO.md on origin/main" >>"$LOGFILE"
-		return 0
-	fi
-
-	return 1
-}
-
-#######################################
-# t1894 + GH#18648: Cryptographic approval gate (ever-NMR) with
-# review-followup exemption for bot-generated cleanup issues.
-#
-# Extracted from _dispatch_dedup_check_layers() to keep the parent
-# function under the 100-line complexity threshold while the exemption
-# logic grew.
-#
-# Logic:
-#   1. Determine if the issue currently has `needs-maintainer-review`
-#      — set known_ever_nmr="true" for the cache-path short-circuit.
-#   2. If the issue is bot-generated cleanup (review-followup or
-#      source:review-scanner) AND the label is not currently present,
-#      override known_ever_nmr=false to skip the historical timeline
-#      check. This clears the ever-NMR permanence trap for routine
-#      cleanup issues whose NMR label was applied by the fast-fail
-#      escalation path and has since been removed.
-#   3. If NMR is not currently present, skip historical ever-NMR for
-#      trusted maintainer threads: issue author is OWNER/MEMBER and every
-#      issue comment is OWNER/MEMBER or a known framework-generated GitHub
-#      Actions hold/remediation notice. COLLABORATOR authors/comments are
-#      trusted only after an authenticated collaborator-permission lookup
-#      confirms write/admin/maintain. This preserves prompt-injection
-#      protection while avoiding permanent crypto approval for internal
-#      retry/hold labels that a maintainer has already removed.
-#   4. Call issue_has_required_approval with the determined state.
-#
-# The exemption does NOT fire when the label is currently present —
-# maintainer-applied or bot-applied NMR still blocks dispatch until
-# the label is removed or cryptographic approval is posted.
-#
-# Args:
-#   $1 - issue_number
-#   $2 - repo_slug (owner/repo)
-#   $3 - issue_meta_json (pre-fetched JSON with .labels array)
-#
-# Exit codes:
-#   0 - gate blocks dispatch (ever-NMR without approval)
-#   1 - gate allows dispatch
-#######################################
-_issue_thread_is_trusted_maintainer_only() {
-	local issue_number="$1"
-	local repo_slug="$2"
-
-	[[ -n "$issue_number" && -n "$repo_slug" ]] || return 1
-
-	local issue_api_path="repos/${repo_slug}/issues/"
-	issue_api_path="${issue_api_path}${issue_number}"
-	local issue_comments_path="${issue_api_path}/comments"
-	local issue_json
-	local issue_author_association
-	local issue_author_login
-	issue_json=$(gh api "$issue_api_path" 2>/dev/null) || return 1
-	IFS=$'\t' read -r issue_author_association issue_author_login < <(printf '%s' "$issue_json" |
-		jq -r '[.author_association // "NONE", (.user.login // .author.login // "")] | @tsv') || {
-		issue_author_association=""
-		issue_author_login=""
-	}
-	case "$issue_author_association" in
-	OWNER | MEMBER) ;;
-	COLLABORATOR)
-		_issue_actor_has_repo_write_permission "$repo_slug" "$issue_author_login" || return 1
-		;;
-	*)
-		return 1
-		;;
-	esac
-
-	local comments_json
-	comments_json=$(gh api "$issue_comments_path" \
-		--paginate --slurp 2>/dev/null) || return 1
-	[[ -n "$comments_json" && "$comments_json" != "null" ]] || comments_json="[]"
-
-	local untrusted_comment_count
-	untrusted_comment_count=$(printf '%s' "$comments_json" | jq -r --arg array_type "$_PULSE_DISPATCH_JSON_ARRAY_TYPE" \
-		--arg collaborator_association "$_PULSE_DISPATCH_COLLABORATOR_ASSOCIATION" '
-		(if type == $array_type and (.[0]? | type) == $array_type then [.[][]]
-		elif type == $array_type then .
-		else [] end)
-		| [ .[] | select(
-			((.author_association // "NONE") as $a | ($a != "OWNER" and $a != "MEMBER" and $a != $collaborator_association))
-			and (((.user.login // .author.login // "") as $login
-				| ((($login == "github-actions[bot]") or ($login == "github-actions"))
-					and ((.body // "") | test("^<!-- (nmr-hold-guidance|ever-nmr-remediation) -->")))) | not)
-		) ]
-		| length
-	') || return 1
-	[[ "$untrusted_comment_count" =~ $_PULSE_DISPATCH_UNSIGNED_INTEGER_PATTERN ]] || return 1
-	[[ "$untrusted_comment_count" -eq 0 ]] || return 1
-
-	local missing_collaborator_login_count
-	missing_collaborator_login_count=$(printf '%s' "$comments_json" | jq -r --arg array_type "$_PULSE_DISPATCH_JSON_ARRAY_TYPE" \
-		--arg collaborator_association "$_PULSE_DISPATCH_COLLABORATOR_ASSOCIATION" '
-		(if type == $array_type and (.[0]? | type) == $array_type then [.[][]]
-		elif type == $array_type then .
-		else [] end)
-		| [ .[] | select(
-			(.author_association // "NONE") == $collaborator_association
-			and ((.user.login // .author.login // "") == "")
-		) ]
-		| length
-	') || return 1
-	[[ "$missing_collaborator_login_count" =~ $_PULSE_DISPATCH_UNSIGNED_INTEGER_PATTERN ]] || return 1
-	[[ "$missing_collaborator_login_count" -eq 0 ]] || return 1
-
-	local collaborator_comment_logins
-	collaborator_comment_logins=$(printf '%s' "$comments_json" | jq -r --arg array_type "$_PULSE_DISPATCH_JSON_ARRAY_TYPE" \
-		--arg collaborator_association "$_PULSE_DISPATCH_COLLABORATOR_ASSOCIATION" '
-		(if type == $array_type and (.[0]? | type) == $array_type then [.[][]]
-		elif type == $array_type then .
-		else [] end)
-		| [ .[] | select((.author_association // "NONE") == $collaborator_association) | (.user.login // .author.login // "") ]
-		| unique | .[]
-	') || return 1
-	local comment_login
-	while IFS= read -r comment_login; do
-		[[ -n "$comment_login" ]] || continue
-		_issue_actor_has_repo_write_permission "$repo_slug" "$comment_login" || return 1
-	done <<<"$collaborator_comment_logins"
-
-	return 0
-}
-
-_issue_actor_has_repo_write_permission() {
-	local repo_slug="$1"
-	local login="$2"
-
-	[[ -n "$repo_slug" && -n "$login" ]] || return 1
-	# #aidevops:trust-boundary — never trust bare COLLABORATOR association for
-	# ever-NMR bypass. GitHub can use COLLABORATOR for ambiguous private-org
-	# events; require an authenticated per-repo permission lookup.
-	_gh_actor_has_repo_write_authority "$repo_slug" "$login" "$_PULSE_DISPATCH_COLLABORATOR_ASSOCIATION"
-	return $?
-}
-
-_check_nmr_approval_gate() {
-	local issue_number="$1"
-	local repo_slug="$2"
-	local issue_meta_json="$3"
-
-	local known_ever_nmr="unknown"
-	if printf '%s' "$issue_meta_json" | jq -e '.labels | map(.name) | index("needs-maintainer-review")' >/dev/null 2>&1; then
-		known_ever_nmr="true"
-	fi
-
-	# GH#18648: bot-generated cleanup exemption. See
-	# _is_bot_generated_cleanup_issue() doc for full rationale.
-	if [[ "$known_ever_nmr" != "true" ]] && _is_bot_generated_cleanup_issue "$issue_meta_json"; then
-		known_ever_nmr="$_PULSE_DISPATCH_FALSE"
-		echo "[pulse-wrapper] dispatch_with_dedup: review-followup exemption for #${issue_number} in ${repo_slug} — skipping historical ever-NMR check (GH#18648)" >>"$LOGFILE"
-	fi
-
-	# <!-- aidevops:trust-boundary -->
-	# Historical NMR is a prompt-injection trust boundary only when untrusted
-	# content may have entered the worker prompt. If the active NMR label has
-	# been removed and both issue author plus every comment author are OWNER or
-	# MEMBER, allow dispatch without requiring a cryptographic approval marker.
-	if [[ "$known_ever_nmr" != "true" ]] && _issue_thread_is_trusted_maintainer_only "$issue_number" "$repo_slug"; then
-		known_ever_nmr=false
-		echo "[pulse-wrapper] dispatch_with_dedup: trusted maintainer thread exemption for #${issue_number} in ${repo_slug} — skipping historical ever-NMR check" >>"$LOGFILE"
-	fi
-
-	if ! issue_has_required_approval "$issue_number" "$repo_slug" "$known_ever_nmr"; then
-		echo "[pulse-wrapper] dispatch_with_dedup: BLOCKED #${issue_number} in ${repo_slug} — requires cryptographic approval (ever-NMR)" >>"$LOGFILE"
-		echo "[pulse-wrapper] DISPATCH_BLOCK_REASON reason=ever_nmr_without_approval issue=#${issue_number} repo=${repo_slug}" >>"$LOGFILE"
-		# GH#20682: when the NMR label is absent (human removed it) but the
-		# ever-NMR block still fires, post a one-shot remediation comment so
-		# the maintainer knows why dispatch is still skipped and what to do.
-		if [[ "$known_ever_nmr" != 'true' ]]; then
-			notify_ever_nmr_without_approval "$issue_number" "$repo_slug"
-		fi
-		return 0
-	fi
-	return 1
-}
-
-#######################################
-# GH#22399: Fail-closed external issue author gate.
-#
-# GitHub Actions issue-triage-gate.yml applies needs-maintainer-review to
-# non-collaborator issues, but Actions can sit queued while the pulse keeps
-# dispatching. This gate repeats the trust-boundary check in the dispatch path
-# immediately before worker launch. OWNER/MEMBER, write-authorized collaborators,
-# and bot-created issues keep the fast path. External, read/triage collaborator,
-# or unknown authors must carry a valid cryptographic approval; otherwise the
-# pulse applies NMR and blocks this candidate in the current cycle.
-#
-# Args:
-#   $1 - issue_number
-#   $2 - repo_slug (owner/repo)
-#
-# Exit codes:
-#   0 - gate blocks dispatch (external/unknown author without approval)
-#   1 - gate allows dispatch
-#######################################
-_check_external_issue_author_gate() {
-	local issue_number="$1"
-	local repo_slug="$2"
-	local nmr_label="${_PULSE_DISPATCH_NMR_LABEL:-needs-maintainer-review}"
-
-	local issue_author_meta=""
-	issue_author_meta=$(gh api "repos/${repo_slug}/issues/${issue_number}" \
-		--jq 'if (type == "object" and (.labels | arrays) and all(.labels[]; if type == "object" then ((.name | type) == "string" and (.name | length) > 0) else false end)) then [.author_association // "NONE", .user.type // "", .user.login // "", (([.labels[].name] | index("external-contributor") != null) | tostring)] | join("|") else empty end' 2>/dev/null) || issue_author_meta=""
-
-	local author_association="NONE"
-	local author_type=""
-	local author_login=""
-	local external_source="unknown"
-	local metadata_valid=0
-	if [[ -n "$issue_author_meta" ]]; then
-		IFS='|' read -r author_association author_type author_login external_source <<<"$issue_author_meta"
-		if [[ -n "$author_login" && "$external_source" =~ ^(true|false)$ ]]; then
-			metadata_valid=1
-		fi
-	fi
-	[[ -n "$author_association" ]] || author_association="NONE"
-
-	# aidevops:trust-boundary — unavailable metadata is not evidence of an
-	# external author. Defer this candidate without creating a persistent hold.
-	# This predicate returns 0 to block; its caller returns 1 to skip dispatch.
-	if [[ "$metadata_valid" -eq 0 ]]; then
-		echo "[dispatch_with_dedup] GH#31404: metadata fetch failed for #${issue_number} in ${repo_slug}; skipping dispatch without changing labels (transient)" >>"$LOGFILE"
-		return 0
-	fi
-
-	if [[ "$metadata_valid" -eq 1 && "$author_type" == "Bot" && "$external_source" != "true" ]]; then
-		return 1
-	fi
-	local authority_rc=2
-	if [[ "$metadata_valid" -eq 1 && "$external_source" != "true" ]]; then
-		authority_rc=0
-		_gh_actor_has_repo_write_authority "$repo_slug" "$author_login" "$author_association" || authority_rc=$?
-	fi
-	if [[ "$authority_rc" -eq 0 ]]; then
-		return 1
-	fi
-
-	local approval_helper="${AGENTS_DIR:-$HOME/.aidevops/agents}/scripts/approval-helper.sh"
-	local verify_result=""
-	if [[ -f "$approval_helper" ]]; then
-		verify_result=$(bash "$approval_helper" verify "$issue_number" "$repo_slug" 2>/dev/null || true)
-		if [[ "$verify_result" == "VERIFIED" ]]; then
-			echo "[dispatch_with_dedup] GH#22399: external/unknown issue author for #${issue_number} in ${repo_slug} has cryptographic approval; allowing dispatch" >>"$LOGFILE"
-			return 1
-		fi
-		# <!-- aidevops:trust-boundary -->
-		# Distinguish an absent approval from an unverifiable approval marker. A
-		# worker missing the approval public key must fail closed for dispatch, but
-		# must not mutate lifecycle labels over a maintainer's signed handoff.
-		if [[ -n "$verify_result" && "$verify_result" != "NO_APPROVAL" ]]; then
-			echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: cryptographic approval marker present but verification returned ${verify_result}; not re-applying ${nmr_label} (GH#22733)" >>"$LOGFILE"
-			return 0
-		fi
-	fi
-
-	echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: author_association=${author_association}, author_type=${author_type:-unknown}, external_source=${external_source}, authority=${AIDEVOPS_GH_ACTOR_AUTHORITY_REASON:-unknown}; applying ${nmr_label} until cryptographic approval lands (GH#22399)" >>"$LOGFILE"
-	if declare -F gh_issue_edit_safe >/dev/null 2>&1; then
-		gh_issue_edit_safe "$issue_number" --repo "$repo_slug" \
-			--add-label "$nmr_label" >/dev/null 2>&1 || true
-	else
-		gh issue edit "$issue_number" --repo "$repo_slug" \
-			--add-label "$nmr_label" >/dev/null 2>&1 || true
-	fi
-	return 0
-}
-
-#######################################
-# GH#17574 + GH#18644: Combined commit-subject dedup gate with
-# force-dispatch maintainer override.
-#
-# Wraps the _is_task_committed_to_main call with an early bypass when
-# the issue carries the `force-dispatch` label. Extracted from
-# _dispatch_dedup_check_layers() to keep the parent function under the
-# 100-line complexity threshold while the logic-body grows.
-#
-# Args:
-#   $1 - issue_number
-#   $2 - repo_slug (owner/repo)
-#   $3 - target_title (issue title from meta_json)
-#   $4 - repo_path (local path to the repo)
-#   $5 - issue_meta_json (pre-fetched JSON with .labels array)
-#
-# Exit codes:
-#   0 - gate fires (block dispatch — task appears committed to main,
-#       force-dispatch is NOT set)
-#   1 - gate allows dispatch (task not committed, OR force-dispatch
-#       override is set)
-#######################################
-_check_commit_subject_dedup_gate() {
-	local issue_number="$1"
-	local repo_slug="$2"
-	local target_title="$3"
-	local repo_path="$4"
-	local issue_meta_json="$5"
-
-	# GH#18644: force-dispatch label bypasses the commit-subject dedup
-	# entirely. The override is for legacy task-ID collisions where a
-	# commit subject accidentally mentions a task ID that was never
-	# claimed via claim-task-id.sh. Maintainer-only — workers must not
-	# apply this label. Does NOT bypass ever-NMR, claim/lock layers,
-	# large-file gates, or blocked-by dependencies.
-	if _has_force_dispatch_label "$issue_meta_json"; then
-		echo "[pulse-wrapper] dispatch_with_dedup: force-dispatch label active on #${issue_number} in ${repo_slug} — bypassing _is_task_committed_to_main (GH#18644)" >>"$LOGFILE"
-		return 1
-	fi
-
-	# t2955: cache fast-path. If a previous cycle already verified this
-	# issue is committed to main, the `dispatch-blocked:committed-to-main`
-	# label was applied. Skip the expensive `gh issue view` + `git fetch` +
-	# 3 `git log --grep` ops and block immediately. Production data showed
-	# this check was the dominant cost in `preflight_early_dispatch` —
-	# 224 affected issues × 5 ops/cycle was timing out the 600s stage on
-	# 100% of recent cycles, capping concurrency at 1-2 dispatches/cycle.
-	#
-	# Force-dispatch override (above) takes precedence — a maintainer
-	# applying force-dispatch unblocks the cache too.
-	#
-	# Revert handling: if a commit is reverted, the cache label sticks
-	# (false-positive block). Manual remediation: remove the label via
-	# `gh issue edit N --remove-label dispatch-blocked:committed-to-main`.
-	# A periodic scrubber to automate this is tracked separately —
-	# kept out of this PR per one-fix-per-PR (Review Bot Gate t1382).
-	if _has_committed_to_main_cache_label "$issue_meta_json"; then
-		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: task already committed to main (GH#17574) (cached, t2955)" >>"$LOGFILE"
-		return 0
-	fi
-
-	# GH#17574: Skip dispatch if the task has already been committed
-	# directly to main. Workers that bypass the PR flow (direct commits)
-	# complete the work invisibly — the issue stays open until the
-	# pulse's mark-complete pass runs, which happens AFTER dispatch
-	# decisions for the next cycle. Without this check, the pulse
-	# dispatches redundant workers for already-completed work.
-	#
-	# GH#17642: Do NOT auto-close the issue on a block. The main-commit
-	# check has a high false-positive rate (casual mentions, multi-
-	# runner deployment gaps, stale patterns). A false skip is harmless
-	# (next cycle retries), a false close is destructive (needs manual
-	# reopen, re-dispatch, and loses worker context). Let the verified
-	# merge-pass or human close it.
-	if _is_task_committed_to_main "$issue_number" "$repo_slug" "$target_title" "$repo_path"; then
-		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: task already committed to main (GH#17574) (scanned, t2955)" >>"$LOGFILE"
-		# t2955: apply cache label so subsequent cycles skip the scan.
-		# Best-effort — do not fail dispatch decision if label apply errors.
-		_apply_committed_to_main_cache_label "$issue_number" "$repo_slug" || true
-		return 0
-	fi
-
-	return 1
-}
-
-#######################################
-# GH#18644: Detect the `force-dispatch` maintainer override label.
-#
-# Purpose: escape hatch for false-positive task-ID collisions in the
-# commit-subject dedup (_is_task_committed_to_main). When a commit
-# subject accidentally mentions a task ID that was never claimed via
-# claim-task-id.sh — e.g., `chore(build.txt): add rule (t2046)` for a
-# task that is actually GH#18508, not the canonical t2046 — the dedup
-# block fires permanently even though no implementation has happened.
-#
-# The `force-dispatch` label is a maintainer-only override that
-# bypasses this specific check. It does NOT bypass:
-#   - The cryptographic approval gate (ever-NMR) above it
-#   - Any Layer 1-7 claim/lock/assignee/open-PR machinery below it
-#   - Large-file gates, blocked-by dependencies, or supervisor title guards
-#
-# Workers MUST NOT apply this label themselves. It represents a
-# human decision that the dedup signal is wrong for this specific issue.
-#
-# Args:
-#   $1 - issue_meta_json (pre-fetched JSON with a .labels array)
-#
-# Exit codes:
-#   0 - force-dispatch label is present
-#   1 - force-dispatch label is absent (or meta_json is empty/invalid)
-#######################################
-_has_force_dispatch_label() {
-	local issue_meta_json="$1"
-	[[ -n "$issue_meta_json" ]] || return 1
-	printf '%s' "$issue_meta_json" |
-		jq -e '.labels | map(.name) | index("force-dispatch")' >/dev/null 2>&1
-}
-
-#######################################
-# Detect the publication hold label before any claim or worker launch.
-#
-# `publication:pending` represents an issue that was intentionally created
-# before its TODO.md entry and worker brief/stub reached the default branch.
-# This dedicated pre-launch check remains effective if candidate filtering or
-# the dispatch-dedup helper is bypassed. Malformed metadata fails closed.
-#
-# Args:
-#   $1 - issue metadata JSON with a .labels array
-# Exit codes:
-#   0 - publication is pending or metadata cannot be safely read
-#   1 - publication is not pending
-#######################################
-_has_publication_pending_label() {
-	local issue_meta_json="$1"
-	local label_state=""
-	[[ -n "$issue_meta_json" ]] || return 0
-	label_state=$(printf '%s' "$issue_meta_json" |
-		jq -r 'if ((.labels // []) | map(.name) | index("publication:pending")) != null then "pending" else "published" end' 2>/dev/null) || return 0
-	[[ "$label_state" == "pending" ]]
-}
-
-#######################################
-# t2955: Detect the `dispatch-blocked:committed-to-main` cache label.
-#
-# Purpose: cache fast-path for `_check_commit_subject_dedup_gate`. When
-# the expensive `_is_task_committed_to_main` check first detects a block,
-# the gate applies this label so subsequent dispatch cycles skip the
-# `gh issue view` + `git fetch` + 3 `git log --grep` ops on the same
-# issue. Eliminates the spam pattern where 224+ affected issues ran the
-# expensive scan every cycle and timed out `preflight_early_dispatch` at
-# its 600s budget (100% of last 10 cycles before this fix).
-#
-# The cache label is set by `_apply_committed_to_main_cache_label` (next
-# helper) and never removed automatically by this gate. Periodic
-# revalidation for revert handling is a follow-up; for now, manual
-# remediation is via `gh issue edit N --remove-label
-# dispatch-blocked:committed-to-main`.
-#
-# Args:
-#   $1 - issue_meta_json (pre-fetched JSON with a .labels array)
-#
-# Exit codes:
-#   0 - cache label is present (skip the expensive scan)
-#   1 - cache label is absent (run the full scan)
-#######################################
-_has_committed_to_main_cache_label() {
-	local issue_meta_json="$1"
-	[[ -n "$issue_meta_json" ]] || return 1
-	printf '%s' "$issue_meta_json" |
-		jq -e '.labels | map(.name) | index("dispatch-blocked:committed-to-main")' >/dev/null 2>&1
-}
-
-#######################################
-# Detect terminal consolidated issues before worker dispatch.
-#
-# Consolidated source issues are archival records and must not be dispatched
-# again. Consolidated successor specs are dispatchable only when they carry
-# both the explicit auto-dispatch handoff and the canonical body marker.
-# Review/CI feedback specs remain dispatchable through their source labels.
-#
-# Args:
-#   $1 - issue_meta_json (pre-fetched JSON with a .labels array)
-#
-# Exit codes:
-#   0 - consolidated label is present
-#   1 - consolidated label is absent (or meta_json is empty/invalid)
-#######################################
-_has_consolidated_label() {
-	local issue_meta_json="$1"
-	[[ -n "$issue_meta_json" ]] || return 1
-	if printf '%s' "$issue_meta_json" | jq -e --arg auto_dispatch_label "$_PULSE_DISPATCH_AUTO_LABEL" '
-		(.labels | map(.name)) as $labels
-		| (
-			(($labels | index($auto_dispatch_label)) != null)
-			and ((.body // "") | test("(^|\\n)_Supersedes #[0-9]+ (—|-) this issue is the consolidated spec\\._(\\n|$)"))
-		) as $dispatchable_spec
-		| (($labels | index("consolidated")) != null)
-		and (($labels | index("quality-debt")) == null)
-		and (($labels | index("source:review-feedback")) == null)
-		and (($labels | index("source:ci-feedback")) == null)
-		and ($dispatchable_spec | not)
-	' >/dev/null 2>&1; then
-		return 0
-	fi
-	return 1
-}
-
-#######################################
-# Determine whether a GitHub issue-number target is actually a pull request.
-#
-# `gh issue view` intentionally presents PRs through the issue facade, so the
-# dispatch preflight must use the REST issue object and inspect the
-# `pull_request` marker before any label/assignee writes. This is a hard
-# trust-boundary guard: dispatching a worker against a PR number would mutate an
-# interactive review object and can open a competing implementation PR.
-#
-# Args:
-#   $1 - issue_number
-#   $2 - repo_slug
-# Returns:
-#   0 - target is a PR
-#   1 - target is a plain Issue
-#   2 - unable to verify safely
-#######################################
-_dispatch_target_is_pull_request() {
-	local issue_number="$1"
-	local repo_slug="$2"
-	local target_json="" has_pull_request=""
-
-	target_json=$(gh api "repos/${repo_slug}/issues/${issue_number}" 2>/dev/null) || return 2
-	has_pull_request=$(printf '%s' "$target_json" | jq -r 'has("pull_request")' 2>/dev/null) || return 2
-	if [[ "$has_pull_request" == "true" ]]; then
-		return 0
-	fi
-	if [[ "$has_pull_request" == "$_PULSE_DISPATCH_FALSE" ]]; then
-		return 1
-	fi
-	return 2
-}
-
-#######################################
-# t2955: Apply the `dispatch-blocked:committed-to-main` cache label.
-#
-# Called by `_check_commit_subject_dedup_gate` after the first scan
-# detects a committed-to-main block. Best-effort: failures (rate limit,
-# label-not-yet-created on the repo, transient API error) do NOT fail
-# the dispatch decision. The current cycle's block stands regardless;
-# the cache miss simply repeats next cycle.
-#
-# The `--add-label` call auto-creates the label on the repo if it
-# doesn't exist (GitHub default behaviour for `gh issue edit`).
-#
-# Args:
-#   $1 - issue_number
-#   $2 - repo_slug (owner/repo)
-#
-# Exit codes:
-#   Always 0 — best-effort, never blocks the caller.
-#######################################
-_apply_committed_to_main_cache_label() {
-	local issue_number="$1"
-	local repo_slug="$2"
-	[[ -n "$issue_number" && -n "$repo_slug" ]] || return 0
-	gh issue edit "$issue_number" --repo "$repo_slug" \
-		--add-label "dispatch-blocked:committed-to-main" >/dev/null 2>&1 || true
-	return 0
-}
-
-#######################################
-# GH#18648 (Fix 3a): Detect bot-generated cleanup issues.
-#
-# Bot-generated cleanup issues carry `review-followup` (from
-# post-merge-review-scanner.sh), `source:review-scanner`, or
-# `source:review-feedback` (from quality-feedback-helper.sh scan-merged).
-# These labels indicate: "this issue was auto-created from already-merged
-# PR review comments, no new maintainer decision is required".
-#
-# Callers use this to exempt the issue from the ever-NMR permanence
-# trap — historical NMR labels applied by automated escalation paths
-# (dispatch-dedup fast-fail circuit breaker) no longer drain the
-# dispatch queue once the label is manually removed.
-#
-# The exemption does NOT fire when the issue CURRENTLY has the
-# needs-maintainer-review label — a present label still requires
-# cryptographic approval, regardless of issue provenance. The fix
-# is surgical to the historical-timeline false-positive case.
-#
-# Args:
-#   $1 - issue_meta_json (pre-fetched JSON with .labels array)
-#
-# Exit codes:
-#   0 - issue is bot-generated cleanup
-#   1 - issue is not bot-generated (or meta_json is empty/invalid)
-#######################################
-_is_bot_generated_cleanup_issue() {
-	local issue_meta_json="$1"
-	[[ -n "$issue_meta_json" ]] || return 1
-	printf '%s' "$issue_meta_json" |
-		jq -e '.labels | map(.name) | (index("review-followup") != null or index("source:review-scanner") != null or index("source:review-feedback") != null)' >/dev/null 2>&1
-}
-
-_dispatch_waiting_for_maintainer_permission() {
-	local issue_meta_json="$1"
-	printf '%s' "$issue_meta_json" |
-		jq -e '.labels | map(.name) | index("needs-maintainer-permissions") != null' >/dev/null 2>&1
-	return $?
-}
-
-_dispatch_permission_history_requires_grant() {
-	local issue_number="$1"
-	local repo_slug="$2"
-	local events_json="" labeled_count="" verification=""
-	local attempts="${AIDEVOPS_PERMISSION_HISTORY_ATTEMPTS:-2}"
-	local retry_delay="${AIDEVOPS_PERMISSION_HISTORY_RETRY_DELAY:-1}"
-	local attempt=1
-	_DISPATCH_PERMISSION_VERIFY_RESULT=""
-	[[ "$attempts" =~ ^[1-9][0-9]*$ ]] || attempts=2
-	[[ "$attempts" -le 3 ]] || attempts=3
-	[[ "$retry_delay" =~ $_PULSE_DISPATCH_UNSIGNED_INTEGER_PATTERN ]] || retry_delay=1
-	[[ "$retry_delay" -le 5 ]] || retry_delay=1
-	while [[ "$attempt" -le "$attempts" ]]; do
-		if events_json=$(gh api "repos/${repo_slug}/issues/${issue_number}/events?per_page=100" --paginate --slurp 2>/dev/null); then
-			break
-		fi
-		events_json=""
-		if [[ "$attempt" -lt "$attempts" ]]; then
-			sleep "$retry_delay"
-		fi
-		attempt=$((attempt + 1))
-	done
-	if [[ -z "$events_json" ]]; then
-		_DISPATCH_PERMISSION_VERIFY_RESULT="API_ERROR"
-		return 0
-	fi
-	labeled_count=$(jq '[.[][]? | select(.event == "labeled" and .label.name == "needs-maintainer-permissions")] | length' <<<"$events_json" 2>/dev/null) || {
-		_DISPATCH_PERMISSION_VERIFY_RESULT="API_ERROR"
-		return 0
-	}
-	[[ "$labeled_count" -gt 0 ]] || return 1
-	local approval_helper="${BASH_SOURCE[0]%/*}/approval-helper.sh"
-	[[ -x "$approval_helper" ]] || {
-		_DISPATCH_PERMISSION_VERIFY_RESULT="HELPER_MISSING"
-		return 0
-	}
-	verification=$($approval_helper verify-permissions issue "$issue_number" "$repo_slug" 2>/dev/null) || true
-	_DISPATCH_PERMISSION_VERIFY_RESULT="${verification:-NO_APPROVAL}"
-	[[ "$verification" == "NO_REQUEST" ]] && return 1
-	[[ "$verification" == "VERIFIED" ]] && return 1
-	return 0
-}
-
-#######################################
-# GH#17574: Check if a task has already landed on main (via PR merge or direct commit).
-#
-# Workers that bypass the PR flow (direct commits to main) complete the
-# work invisibly — the issue stays open until the pulse's mark-complete
-# pass runs, which happens AFTER dispatch decisions for the next cycle.
-# This caused 3× token waste in the observed incident (t153–t160).
-#
-# Delegates to three per-signal helpers (t2004):
-#   _task_id_in_recent_commits — task ID in commit subject line
-#   _task_id_in_merged_pr      — closing keywords / squash-merge suffix
-#   _task_id_in_changed_files  — [x] completion marker in TODO.md
-#
-# Args:
-#   $1 - issue_number
-#   $2 - repo_slug (owner/repo)
-#   $3 - issue_title (e.g., "t153: add dark mode toggle")
-#   $4 - repo_path (local path to the repo)
-#
-# Exit codes:
-#   0 - task IS committed to main (do NOT dispatch)
-#   1 - task is NOT committed to main (safe to dispatch)
-#######################################
-_is_task_committed_to_main() {
-	local issue_number="$1"
-	local repo_slug="$2"
-	local issue_title="$3"
-	local repo_path="$4"
-
-	[[ -n "$issue_number" && -n "$repo_slug" && -n "$repo_path" ]] || return 1
-
-	# Get the issue creation date for --since filtering.
-	# t3027: route through gh_issue_view wrapper for REST fallback under
-	# GraphQL exhaustion. The `// .created_at` jq fallback handles both
-	# camelCase (gh native) and snake_case (REST) field names — the REST
-	# endpoint /repos/.../issues/N returns `created_at`, gh returns `createdAt`.
-	local created_at
-	created_at=$(gh_issue_view "$issue_number" --repo "$repo_slug" \
-		--json createdAt --jq '.createdAt // .created_at' 2>/dev/null) || created_at=""
-	if [[ -z "$created_at" ]]; then
-		return 1
-	fi
-
-	# Ensure we have the latest remote refs (the dispatch loop already
-	# does git pull, but fetch is cheaper and sufficient for log queries)
-	if [[ -d "$repo_path/.git" ]] || git -C "$repo_path" rev-parse --git-dir >/dev/null 2>&1; then
-		git -C "$repo_path" fetch origin main --quiet 2>/dev/null || true
-	else
-		return 1
-	fi
-
-	_task_id_in_recent_commits "$issue_title" "$repo_path" "$created_at" && return 0
-	_task_id_in_merged_pr "$issue_number" "$repo_path" "$created_at" && return 0
-	_task_id_in_changed_files "$issue_number" "$issue_title" "$repo_path" && return 0
-	return 1
-}
-
-#######################################
-# Detect labels that mean a human/review workflow owns the target.
-#
-# status:in-review is a live interactive hold signal while the issue is not
-# explicitly worker-dispatchable. origin:interactive is provenance only unless a
-# same-session owner/assignee is still attached; unassigned status:available
-# issues must remain dispatchable so TODO/brief sync does not strand worker-ready
-# backlog items that lack auto-dispatch labels.
-#
-# Args:
-#   $1 - issue metadata JSON with optional .labels[].name
-# Returns: 0 when an interactive hold label is present, 1 otherwise
-#######################################
 _dispatch_has_interactive_hold() {
 	local issue_meta_json="$1"
 	[[ -n "$issue_meta_json" ]] || return 1
@@ -1461,13 +138,27 @@ _dispatch_has_interactive_hold() {
 #   1 - blocked (reason logged to LOGFILE by the failing gate)
 #   3 - expected benign dispatch block with structured DISPATCH_BLOCK_REASON
 #######################################
+# Count live registered worktrees. Git marks entries whose directory vanished
+# outside aidevops (for example a reboot wiping /tmp) as `prunable`; they hold
+# no disk and must not consume dispatch capacity (GH#32913). Locked entries are
+# never marked prunable, so they remain counted and the gate stays fail-closed.
 _dispatch_registered_worktree_count() {
 	local repo_path="$1"
 	local worktree_list=""
+	local line=""
+	local total=0
+	local prunable=0
 	local count=""
-	worktree_list=$(git -C "$repo_path" worktree list 2>/dev/null) || return 1
+	worktree_list=$(git -C "$repo_path" worktree list --porcelain 2>/dev/null) || return 1
 	[[ -n "$worktree_list" ]] || return 1
-	count=$(printf '%s\n' "$worktree_list" | wc -l | tr -d ' ')
+	while IFS= read -r line; do
+		case "$line" in
+		"worktree "*) total=$((total + 1)) ;;
+		prunable | "prunable "*) prunable=$((prunable + 1)) ;;
+		esac
+	done <<<"$worktree_list"
+	[[ "$total" -ge 1 && "$prunable" -lt "$total" ]] || return 1
+	count=$((total - prunable))
 	[[ "$count" =~ $_PULSE_DISPATCH_UNSIGNED_INTEGER_PATTERN ]] || return 1
 	printf '%s\n' "$count"
 	return 0
@@ -1507,7 +198,7 @@ _dispatch_cleanup_worktree_capacity() {
 		return 1
 	fi
 
-	echo "[dispatch_with_dedup] Worktree count ${before_count} >= cap ${max_count} for #${issue_number} in ${repo_slug}; attempting guarded cleanup (timeout ${cleanup_timeout}s)" >>"$LOGFILE"
+	echo "[dispatch_with_dedup] Live worktree count ${before_count} >= cap ${max_count} for #${issue_number} in ${repo_slug}; attempting guarded cleanup (timeout ${cleanup_timeout}s)" >>"$LOGFILE"
 	run_stage_with_timeout "dispatch_worktree_capacity_cleanup" "$cleanup_timeout" \
 		_dispatch_run_guarded_worktree_cleanup "$repo_path" "$helper" || cleanup_rc=$?
 	if ! after_count=$(_dispatch_registered_worktree_count "$repo_path"); then
@@ -1590,27 +281,18 @@ _dispatch_cleanup_disk_pressure() {
 	return 1
 }
 
-_dispatch_dedup_check_layers() {
+_dispatch_dedup_capacity_gates() {
 	local issue_number="$1"
 	local repo_slug="$2"
-	local dispatch_title="$3"
-	local issue_title="$4"
-	local self_login="$5"
-	local repo_path="$6"
-	local issue_meta_json="$7"
+	local issue_title="$3"
+	local self_login="$4"
+	local repo_path="$5"
+	local issue_meta_json="$6"
 
 	# t3043: per-sub-stage timing inside dedup_check. The outer
 	# dispatch_with_dedup records "dedup_check" as one blob; these
 	# sub-stage records let us identify which gate dominates the 235s avg.
 	local _dss_t0="" _ds_stage_attempt_id=""
-
-	local target_state="" target_title=""
-	# GH#21717: normalize to uppercase — REST fallback returns lowercase "open"/"closed"
-	# while GraphQL returns enum "OPEN"/"CLOSED". The comparison at line 921 is
-	# case-sensitive, so without normalization every issue appears non-OPEN when
-	# GraphQL is exhausted, silently blocking all dispatch for 30+ min.
-	target_state=$(printf '%s' "$issue_meta_json" | jq -r '.state // ""' 2>/dev/null | tr '[:lower:]' '[:upper:]')
-	target_title=$(printf '%s' "$issue_meta_json" | jq -r '.title // ""' 2>/dev/null)
 
 	# GH#22948/GH#22964/GH#29535: interactive/review holds remain independent
 	# of assignee identity. A terminal worker draft checkpoint is the sole narrow
@@ -1659,10 +341,18 @@ _dispatch_dedup_check_layers() {
 		return 1
 	fi
 	_ds_record "$issue_number" "$repo_slug" "dedup.worktree_cap" "$_dss_t0"
+	return 0
+}
+
+_dispatch_dedup_state_label_gates() {
+	local issue_number="$1" repo_slug="$2" issue_meta_json="$3"
+	local _dss_t0="" _ds_stage_attempt_id="" target_state=""
+	# REST fallback returns lowercase state while GraphQL returns uppercase.
+	target_state=$(printf '%s' "$issue_meta_json" | jq -r '.state // ""' 2>/dev/null | tr '[:lower:]' '[:upper:]')
 
 	_dss_t0=$(_ds_now_ns)
 	_ds_stage_start "$issue_number" "$repo_slug" "state_check" "$_dss_t0" _ds_stage_attempt_id
-	if [[ "$target_state" != "OPEN" ]]; then
+	if [[ "$target_state" != "$_PULSE_DISPATCH_OPEN_STATE" ]]; then
 		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: issue state is ${target_state:-unknown}" >>"$LOGFILE"
 		_ds_record "$issue_number" "$repo_slug" "dedup.state_check" "$_dss_t0"
 		return 1
@@ -1730,6 +420,13 @@ _dispatch_dedup_check_layers() {
 		return 1
 	fi
 	_ds_record "$issue_number" "$repo_slug" "dedup.nmr_gate" "$_dss_t0"
+	return 0
+}
+
+_dispatch_dedup_dependency_gates() {
+	local issue_number="$1" repo_slug="$2" repo_path="$3" issue_meta_json="$4"
+	local _dss_t0="" _ds_stage_attempt_id="" target_title=""
+	target_title=$(printf '%s' "$issue_meta_json" | jq -r '.title // ""' 2>/dev/null)
 
 	if [[ "$target_title" == \[Supervisor:* ]]; then
 		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: supervisor telemetry title" >>"$LOGFILE"
@@ -1745,15 +442,17 @@ _dispatch_dedup_check_layers() {
 	# Checks GitHub's native blockedBy relationship field first, then falls back
 	# to issue-body markers such as "blocked-by:tNNN" or "Blocked by #NNN".
 	# t2996: body now travels in $issue_meta_json (`,body` was added at the
-	# canonical gh call); extract once and reuse for the consolidation,
-	# large-file, and footprint gates below — eliminating 1-2 extra gh calls
-	# per dispatch candidate.
+	# canonical gh call), so no gate re-fetches it.
 	_dss_t0=$(_ds_now_ns)
 	_ds_stage_start "$issue_number" "$repo_slug" "blocked_by" "$_dss_t0" _ds_stage_attempt_id
 	local _dispatch_issue_body
 	_dispatch_issue_body=$(printf '%s' "$issue_meta_json" | jq -r '.body // ""' 2>/dev/null) || _dispatch_issue_body=""
-	if _dedup_dependabot_intake_target "$issue_number" "$repo_slug" "$_dispatch_issue_body"; then
-		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: another issue owns the same Dependabot PR target" >>"$LOGFILE"
+	if _dedup_dependabot_intake_target "$issue_number" "$repo_slug" "$_dispatch_issue_body" "$issue_meta_json"; then
+		# GH#32979: owned = another intake legitimately holds the target
+		# (benign); anything else is a fail-closed read or evidence failure.
+		local _dependabot_reason="dependabot_target_unverified"
+		[[ "${_DEDUP_DEPENDABOT_BLOCK:-}" == "owned" ]] && _dependabot_reason="dependabot_target_owned"
+		echo "[dispatch_with_dedup] DISPATCH_BLOCK_REASON reason=${_dependabot_reason} signal=dependabot_target_${_DEDUP_DEPENDABOT_BLOCK:-unknown} issue=#${issue_number} repo=${repo_slug}" >>"$LOGFILE"
 		_ds_record "$issue_number" "$repo_slug" "dedup.dependabot_target" "$_dss_t0"
 		return 1
 	fi
@@ -1763,6 +462,19 @@ _dispatch_dedup_check_layers() {
 		return 1
 	fi
 	_ds_record "$issue_number" "$repo_slug" "dedup.blocked_by" "$_dss_t0"
+	return 0
+}
+
+# t18505/GH#32729: costly scope gates run only after the read-only dedup
+# layers confirm no other owner, PR or terminal-blocker circuit. Measured on
+# a live runner, ~75% of candidates reaching these gates were rejected by the
+# dedup layers anyway, so running them first spent ~7h/day of candidate
+# evaluation (consolidation p50 16.5s) and could fire consolidation or
+# simplification side effects for issues another runner owns.
+_dispatch_dedup_scope_gates() {
+	local issue_number="$1" repo_slug="$2" repo_path="$3" issue_meta_json="$4"
+	local _dss_t0="" _ds_stage_attempt_id="" _dispatch_issue_body=""
+	_dispatch_issue_body=$(printf '%s' "$issue_meta_json" | jq -r '.body // ""' 2>/dev/null) || _dispatch_issue_body=""
 
 	# Pre-dispatch: issue consolidation check. If an issue has accumulated
 	# multiple substantive comments that change scope (not dispatch/approval
@@ -1774,10 +486,17 @@ _dispatch_dedup_check_layers() {
 	_dss_t0=$(_ds_now_ns)
 	_ds_stage_start "$issue_number" "$repo_slug" "consolidation" "$_dss_t0" _ds_stage_attempt_id
 	if _issue_needs_consolidation "$issue_number" "$repo_slug" "$issue_meta_json"; then
+		_CONSOLIDATION_DISPATCH_OUTCOME=""
 		_dispatch_issue_consolidation "$issue_number" "$repo_slug" "$repo_path"
-		echo "[dispatch_with_dedup] Dispatch deferred for #${issue_number} in ${repo_slug}: issue needs comment consolidation" >>"$LOGFILE"
-		_ds_record "$issue_number" "$repo_slug" "dedup.consolidation" "$_dss_t0"
-		return 1
+		# GH#33306: a pre-flight skip (resolved parent or in-flight resolving
+		# PR) creates no child, so deferring here would hold the issue forever.
+		if [[ "${_CONSOLIDATION_DISPATCH_OUTCOME:-}" == "preflight_skipped" ]]; then
+			echo "[dispatch_with_dedup] Consolidation pre-flight skipped for #${issue_number} in ${repo_slug}; continuing dispatch gates (GH#33306)" >>"$LOGFILE"
+		else
+			echo "[dispatch_with_dedup] Dispatch deferred for #${issue_number} in ${repo_slug}: issue needs comment consolidation" >>"$LOGFILE"
+			_ds_record "$issue_number" "$repo_slug" "dedup.consolidation" "$_dss_t0"
+			return 1
+		fi
 	fi
 	_ds_record "$issue_number" "$repo_slug" "dedup.consolidation" "$_dss_t0"
 
@@ -1810,6 +529,20 @@ _dispatch_dedup_check_layers() {
 		return 1
 	fi
 	_ds_record "$issue_number" "$repo_slug" "dedup.footprint" "$_dss_t0"
+	return 0
+}
+
+_dispatch_dedup_check_layers() {
+	local issue_number="$1" repo_slug="$2" dispatch_title="$3" issue_title="$4"
+	local self_login="$5" repo_path="$6" issue_meta_json="$7"
+	local _dss_t0="" _ds_stage_attempt_id="" gate_rc=0
+	_dispatch_dedup_capacity_gates "$issue_number" "$repo_slug" "$issue_title" \
+		"$self_login" "$repo_path" "$issue_meta_json" || gate_rc=$?
+	[[ "$gate_rc" -eq 0 ]] || return "$gate_rc"
+	_dispatch_dedup_state_label_gates "$issue_number" "$repo_slug" "$issue_meta_json" || gate_rc=$?
+	[[ "$gate_rc" -eq 0 ]] || return "$gate_rc"
+	_dispatch_dedup_dependency_gates "$issue_number" "$repo_slug" "$repo_path" "$issue_meta_json" || gate_rc=$?
+	[[ "$gate_rc" -eq 0 ]] || return "$gate_rc"
 
 	# Read-only dedup layers — cannot be skipped.
 	# t2996: ISSUE_META_JSON forwards the canonical bundle to
@@ -1842,6 +575,9 @@ _dispatch_dedup_check_layers() {
 		return 1
 	fi
 	_ds_record "$issue_number" "$repo_slug" "dedup.7_layers" "$_dss_t0"
+
+	_dispatch_dedup_scope_gates "$issue_number" "$repo_slug" "$repo_path" "$issue_meta_json" || gate_rc=$?
+	[[ "$gate_rc" -eq 0 ]] || return "$gate_rc"
 
 	# GH#22399/GH#31404: fail closed before launch, but only after dedup
 	# confirms eligibility. Never mutate author-gate labels on an active PR.
@@ -1935,8 +671,8 @@ _rollback_prelaunch_ownership() {
 	issue_meta_json=$(gh_issue_view "$issue_number" --repo "$repo_slug" \
 		--json state,labels,assignees,locked 2>/dev/null) || return 1
 	local owns_queued=""
-	owns_queued=$(printf '%s' "$issue_meta_json" | jq -r --arg self "$self_login" '
-		(.state == "OPEN") and
+	owns_queued=$(printf '%s' "$issue_meta_json" | jq -r --arg self "$self_login" --arg open_state "$_PULSE_DISPATCH_OPEN_STATE" '
+		(.state == $open_state) and
 		(([.labels[].name] | index("status:queued")) != null) and
 		(([.assignees[].login] | index($self)) != null)
 	' 2>/dev/null) || return 1
@@ -1961,8 +697,8 @@ _rollback_prelaunch_ownership() {
 		expected_locked=true
 		lock_summary="required conversation lock retained"
 	fi
-	if ! printf '%s' "$issue_meta_json" | jq -e --arg self "$self_login" '
-		.state == "OPEN" and
+	if ! printf '%s' "$issue_meta_json" | jq -e --arg self "$self_login" --arg open_state "$_PULSE_DISPATCH_OPEN_STATE" '
+		.state == $open_state and
 		(([.labels[].name] | index("status:queued")) == null) and
 		(([.labels[].name] | index("status:available")) != null) and
 		(([.assignees[].login] | index($self)) == null)
@@ -2099,6 +835,182 @@ CLAIM_RELEASED reason=dispatch_aborted:${reason} runner=${self_login} ts=$(date 
 #   1 - hard error (metadata unavailable, dedup gate blocked)
 #   2 - explicit launch no-op (canary/precreate/orphan guard; retry later)
 #######################################
+_dispatch_load_and_validate_metadata() {
+	local issue_number="$1" repo_slug="$2"
+	local _ds_t0=""
+	# issue_meta_json is owned by dispatch_with_dedup in the calling scope.
+	# Do not shadow it: the fetched bundle is reused by all later gates.
+	_ds_t0=$(_ds_now_ns)
+	issue_meta_json=$(gh_issue_view "$issue_number" --repo "$repo_slug" \
+		--json number,title,state,labels,assignees,body,author,createdAt 2>/dev/null) || issue_meta_json=""
+	_ds_record "$issue_number" "$repo_slug" "gh_issue_view" "$_ds_t0"
+	if [[ -z "$issue_meta_json" ]]; then
+		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: unable to load issue metadata" >>"$LOGFILE"
+		return 1
+	fi
+	local issue_state
+	issue_state=$(printf '%s' "$issue_meta_json" | jq -r '.state // ""' 2>/dev/null | tr '[:lower:]' '[:upper:]') || issue_state=""
+	if [[ "$issue_state" == "CLOSED" ]]; then
+		echo "[dispatch] Skipping #${issue_number}: state=CLOSED" >>"$LOGFILE"
+		pulse-batch-prefetch-helper.sh evict-issue "$repo_slug" "$issue_number" 2>/dev/null || true
+		return 1
+	fi
+
+	#aidevops:trust-boundary -- a worker permission request is dispatchable only
+	# after the request-specific signed grant flow removes its dedicated label.
+	if _dispatch_waiting_for_maintainer_permission "$issue_meta_json"; then
+		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: waiting for a scoped signed maintainer permission grant" >>"$LOGFILE"
+		echo "[dispatch_with_dedup] DISPATCH_BLOCK_REASON reason=needs_maintainer_permissions signal=needs-maintainer-permissions issue=#${issue_number} repo=${repo_slug}" >>"$LOGFILE"
+		return 1
+	fi
+	if _dispatch_permission_history_requires_grant "$issue_number" "$repo_slug"; then
+		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: permission-request history lacks a current matching signed grant (${_DISPATCH_PERMISSION_VERIFY_RESULT:-unknown})" >>"$LOGFILE"
+		echo "[dispatch_with_dedup] DISPATCH_BLOCK_REASON reason=permission_grant_unverified signal=${_DISPATCH_PERMISSION_VERIFY_RESULT:-unknown} issue=#${issue_number} repo=${repo_slug}" >>"$LOGFILE"
+		return 1
+	fi
+
+	# A PR shares the Issues API number space but must never be dispatched.
+	local _target_pr_rc=0
+	_dispatch_target_is_pull_request "$issue_number" "$repo_slug" || _target_pr_rc=$?
+	if [[ "$_target_pr_rc" -eq 0 ]]; then
+		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: target is a pull request, not a dispatchable issue (GH#22948)" >>"$LOGFILE"
+		echo "[dispatch_with_dedup] DISPATCH_BLOCK_REASON reason=pr_target_not_dispatchable signal=pr_target_not_dispatchable issue=#${issue_number} repo=${repo_slug}" >>"$LOGFILE"
+		return 3
+	fi
+	if [[ "$_target_pr_rc" -ne 1 ]]; then
+		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: unable to verify target is not a pull request (GH#22948, rc=${_target_pr_rc})" >>"$LOGFILE"
+		return 1
+	fi
+	if _is_renovate_dependency_dashboard_issue "$issue_meta_json"; then
+		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: Renovate Dependency Dashboard issues are metadata only" >>"$LOGFILE"
+		echo "[dispatch_with_dedup] DISPATCH_BLOCK_REASON reason=renovate_dependency_dashboard signal=renovate_dependency_dashboard issue=#${issue_number} repo=${repo_slug}" >>"$LOGFILE"
+		return 3
+	fi
+	return 0
+}
+
+# Stable identity of the brief body that produced a scope hold. Other pulse
+# paths (and other runners) can move status:blocked back to available, so the
+# label alone cannot prove the brief owner was already told (GH#32531).
+_dispatch_brief_hold_body_hash() {
+	local issue_body="$1"
+	local digest=""
+	if command -v shasum >/dev/null 2>&1; then
+		digest=$(printf '%s' "$issue_body" | shasum -a 256 2>/dev/null | cut -c1-24) || digest=""
+	elif command -v sha256sum >/dev/null 2>&1; then
+		digest=$(printf '%s' "$issue_body" | sha256sum 2>/dev/null | cut -c1-24) || digest=""
+	fi
+	[[ "$digest" =~ ^[a-f0-9]{24}$ ]] || return 1
+	printf '%s\n' "$digest"
+	return 0
+}
+
+# Returns 0 when a trusted comment already records the hold for this exact
+# body, 1 when none exists, 2 when comments cannot be read. A forged marker can
+# only suppress a duplicate comment; the blocked label is still applied.
+_dispatch_brief_hold_recorded() {
+	local issue_number="$1" repo_slug="$2" marker="$3"
+	local comments_json="" state=""
+	comments_json=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments?per_page=100" \
+		--paginate --slurp 2>/dev/null) || return 2
+	# Non-array payloads produce no output and are treated as unreadable.
+	state=$(printf '%s' "$comments_json" | jq -r --arg marker "$marker" '
+		arrays
+		| (if ([.[0]? | arrays] | length) > 0 then add else . end)
+		| if any(.[]?; ((.author_association // "") | IN("OWNER", "MEMBER", "COLLABORATOR"))
+			and ((.body // "") | contains($marker))) then "recorded" else "absent" end
+	' 2>/dev/null) || return 2
+	case "$state" in
+	recorded) return 0 ;;
+	absent) return 1 ;;
+	esac
+	return 2
+}
+
+# Fail before dedup posts a claim. Trusted unscoped briefs dispatch with
+# worker-owned scope discovery (GH#33243); the hold below remains only when
+# AIDEVOPS_BRIEF_SCOPE_WORKER_DISCOVERY=0. There the blocked label is the durable
+# cycle gate and the body-hash marker keeps the brief-owner action to one comment
+# per body even when the label is later cleared without a body change.
+# GH#32979: every rc=1 logs exactly one DISPATCH_BLOCK_REASON naming the step
+# (recorded as the _brief_scope_block breadcrumb), so blocked candidates are
+# never metered as no_recent_log_evidence and untrusted unscoped briefs stay
+# visible instead of retrying silently every cycle.
+_dispatch_preclaim_brief_scope() {
+	local issue_number="$1" repo_slug="$2" issue_meta_json="$3"
+	local _brief_scope_block="" verdict_rc=0
+	_dispatch_preclaim_brief_scope_verdict "$issue_number" "$repo_slug" "$issue_meta_json" || verdict_rc=$?
+	[[ "$verdict_rc" -eq 0 ]] && return 0
+	_brief_scope_log_block "$issue_number" "$repo_slug" "${_brief_scope_block:-unknown}"
+	return 1
+}
+
+# Sets the caller's _brief_scope_block before each step that can return 1.
+_dispatch_preclaim_brief_scope_verdict() {
+	local issue_number="$1" repo_slug="$2" issue_meta_json="$3"
+	local issue_body="" author="" comment_file="" scope_rc=0
+	local body_hash="" hold_marker="" recorded_rc=0
+	printf '%s' "$issue_meta_json" | jq -e '[.labels[]?.name] | index("auto-dispatch") != null' >/dev/null 2>&1 || return 0
+	_brief_scope_block="status_blocked"
+	if printf '%s' "$issue_meta_json" | jq -e '[.labels[]?.name] | index("status:blocked") != null' >/dev/null 2>&1; then
+		return 1
+	fi
+	_brief_scope_block="body_unreadable"
+	issue_body=$(printf '%s' "$issue_meta_json" | jq -r '.body // ""') || return 1
+	"${SCRIPT_DIR}/pre-dispatch-validator-helper.sh" scope-check "$issue_number" "$issue_body" 1 >/dev/null 2>&1 || scope_rc=$?
+	[[ "$scope_rc" -eq 0 ]] && return 0
+	_brief_scope_block="validator_error"
+	[[ "$scope_rc" -eq 40 ]] || return 1
+
+	# aidevops:trust-boundary — only the authenticated runner may hold a trusted
+	# implementation brief; untrusted authors must stay on the normal review path.
+	_brief_scope_block="untrusted_author"
+	author=$(printf '%s' "$issue_meta_json" | jq -r '.author.login // ""') || return 1
+	_brief_scope_author_trusted "$repo_slug" "$author" || return 1
+	# GH#32689: explicit Files to Modify declarations normalize to the exact
+	# canonical scope; rewrite once and dispatch next cycle instead of holding.
+	_brief_scope_block="self_heal_rewritten"
+	if _dispatch_brief_scope_self_heal "$issue_number" "$repo_slug" "$issue_body"; then
+		return 1
+	fi
+	# GH#33243: choosing files is routine AI analysis. Holding for an author
+	# session that has already ended parked briefs indefinitely, so the worker
+	# records the canonical scope as its first step instead.
+	if _brief_scope_worker_discovery_enabled; then
+		echo "[dispatch_with_dedup] Brief #${issue_number} in ${repo_slug} has no canonical Files Scope; dispatching with worker-owned scope discovery (GH#33243)" >>"${LOGFILE:-/dev/null}"
+		return 0
+	fi
+	_brief_scope_block="hold_marker_unavailable"
+	body_hash=$(_dispatch_brief_hold_body_hash "$issue_body") || return 1
+	hold_marker="<!-- aidevops:brief-hold reason=missing_files_scope body=${body_hash} -->"
+	_dispatch_brief_hold_recorded "$issue_number" "$repo_slug" "$hold_marker" || recorded_rc=$?
+	# Unreadable history: skip dispatch without writing; the next cycle retries.
+	_brief_scope_block="history_unreadable"
+	[[ "$recorded_rc" -eq 2 ]] && return 1
+	if [[ "$recorded_rc" -eq 0 ]]; then
+		_brief_scope_block="hold_recorded"
+		set_issue_status "$issue_number" "$repo_slug" blocked >/dev/null || true
+		echo "[dispatch_with_dedup] Brief hold for #${issue_number} in ${repo_slug} already recorded for this body; relabelled without a new comment" >>"${LOGFILE:-/dev/null}"
+		return 1
+	fi
+	_brief_scope_block="hold_write_failed"
+	comment_file=$(mktemp) || return 1
+	aidevops_ops_marker brief-hold >"$comment_file" || return 1
+	# shellcheck disable=SC2016 # literal Markdown backticks, not expansions
+	printf '%s\nBrief hold: reason=missing_files_scope owner=brief-author.\nProjected state: status:blocked.\nNext action: Add a canonical ### Files Scope section with one `` - `repo/relative/path` `` line per permitted file (no prefix, nothing after the path) to the issue body, or explicit `` `EDIT: path` `` / `` `NEW: path` `` bullets under ### Files to Modify; verify with pre-dispatch-validator-helper.sh scope-check. The pulse releases this hold automatically once the edited body passes; no label change is needed. This body is not held again unless it changes.\n' "$hold_marker" >>"$comment_file"
+	if ! set_issue_status "$issue_number" "$repo_slug" blocked >/dev/null; then
+		rm -f "$comment_file"
+		return 1
+	fi
+	if ! gh_issue_comment "$issue_number" --repo "$repo_slug" --body-file "$comment_file" >/dev/null; then
+		rm -f "$comment_file"
+		return 1
+	fi
+	rm -f "$comment_file"
+	_brief_scope_block="hold_posted"
+	return 1
+}
+
 dispatch_with_dedup() {
 	local issue_number="$1"
 	local repo_slug="$2"
@@ -2140,57 +1052,14 @@ dispatch_with_dedup() {
 	# fetch + the large-file labels/title fetches + the brief-freshness body
 	# fetch) with a single call. See .agents/reference/dispatch-architecture.md
 	# "gh API call budget" for the full inventory.
-	_ds_t0=$(_ds_now_ns)
-	local issue_meta_json
-	issue_meta_json=$(gh_issue_view "$issue_number" --repo "$repo_slug" \
-		--json number,title,state,labels,assignees,body,author,createdAt 2>/dev/null) || issue_meta_json=""
-	_ds_record "$issue_number" "$repo_slug" "gh_issue_view" "$_ds_t0"
-	if [[ -z "$issue_meta_json" ]]; then
-		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: unable to load issue metadata" >>"$LOGFILE"
-		return 1
-	fi
-	local issue_state
-	issue_state=$(printf '%s' "$issue_meta_json" | jq -r '.state // ""' 2>/dev/null | tr '[:lower:]' '[:upper:]') || issue_state=""
-	if [[ "$issue_state" == "CLOSED" ]]; then
-		echo "[dispatch] Skipping #${issue_number}: state=CLOSED" >>"$LOGFILE"
-		pulse-batch-prefetch-helper.sh evict-issue "$repo_slug" "$issue_number" 2>/dev/null || true
-		return 1
-	fi
-
-	#aidevops:trust-boundary -- a worker permission request is dispatchable only
-	# after the request-specific signed grant flow removes its dedicated label.
-	if _dispatch_waiting_for_maintainer_permission "$issue_meta_json"; then
-		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: waiting for a scoped signed maintainer permission grant" >>"$LOGFILE"
-		echo "[dispatch_with_dedup] DISPATCH_BLOCK_REASON reason=needs_maintainer_permissions signal=needs-maintainer-permissions issue=#${issue_number} repo=${repo_slug}" >>"$LOGFILE"
-		return 1
-	fi
-	if _dispatch_permission_history_requires_grant "$issue_number" "$repo_slug"; then
-		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: permission-request history lacks a current matching signed grant (${_DISPATCH_PERMISSION_VERIFY_RESULT:-unknown})" >>"$LOGFILE"
-		echo "[dispatch_with_dedup] DISPATCH_BLOCK_REASON reason=permission_grant_unverified signal=${_DISPATCH_PERMISSION_VERIFY_RESULT:-unknown} issue=#${issue_number} repo=${repo_slug}" >>"$LOGFILE"
-		return 1
-	fi
-
-	# GH#22948: hard PR-target guard before any lifecycle mutation. A pull
-	# request shares the Issues API number space, but it is already an
-	# implementation under review; dispatching a worker against it can relabel
-	# origin:interactive to origin:worker and open a competing PR.
-	local _target_pr_rc=0
-	_dispatch_target_is_pull_request "$issue_number" "$repo_slug" || _target_pr_rc=$?
-	if [[ "$_target_pr_rc" -eq 0 ]]; then
-		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: target is a pull request, not a dispatchable issue (GH#22948)" >>"$LOGFILE"
-		echo "[dispatch_with_dedup] DISPATCH_BLOCK_REASON reason=pr_target_not_dispatchable signal=pr_target_not_dispatchable issue=#${issue_number} repo=${repo_slug}" >>"$LOGFILE"
-		return 3
-	fi
-	if [[ "$_target_pr_rc" -ne 1 ]]; then
-		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: unable to verify target is not a pull request (GH#22948, rc=${_target_pr_rc})" >>"$LOGFILE"
-		return 1
-	fi
-
-	if _is_renovate_dependency_dashboard_issue "$issue_meta_json"; then
-		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: Renovate Dependency Dashboard issues are metadata only" >>"$LOGFILE"
-		echo "[dispatch_with_dedup] DISPATCH_BLOCK_REASON reason=renovate_dependency_dashboard signal=renovate_dependency_dashboard issue=#${issue_number} repo=${repo_slug}" >>"$LOGFILE"
-		return 3
-	fi
+	local issue_meta_json="" metadata_rc=0
+	_dispatch_load_and_validate_metadata "$issue_number" "$repo_slug" || metadata_rc=$?
+	[[ "$metadata_rc" -eq 0 ]] || return "$metadata_rc"
+	# GH#33341: evaluate runner-local capabilities before any claim or scope write.
+	# shellcheck source=runner-capability-helper.sh
+	source "${SCRIPT_DIR}/runner-capability-helper.sh"
+	runner_capability_check_fresh "$repo_path" "$issue_number" "$repo_slug" "$LOGFILE" || return 1
+	_dispatch_preclaim_brief_scope "$issue_number" "$repo_slug" "$issue_meta_json" || return 1
 
 	# Run all pre-dispatch validation and dedup check layers (10 gates total).
 	# Each gate logs its own blocked reason to LOGFILE before returning 1.
@@ -2209,6 +1078,32 @@ dispatch_with_dedup() {
 		return 1
 	fi
 	_ds_record "$issue_number" "$repo_slug" "dedup_check" "$_ds_t0"
+	local original_tier=""
+	original_tier=$(jq -r '[.labels[]?.name | select(startswith("tier:"))] | first // empty' <<<"$issue_meta_json")
+	_dispatch_post_dedup_gates "$issue_number" "$repo_slug" "$repo_path" "$issue_title" "$self_login" || return $?
+	if [[ "${_TIER_LABELS_MUTATED:-0}" -eq 1 ]]; then
+		local refreshed_tier="" original_tier_model="" refreshed_model="" refreshed_labels_csv=""
+		refreshed_tier=$(jq -r '[.labels[]?.name | select(startswith("tier:"))] | first // empty' <<<"$issue_meta_json")
+		if [[ "$refreshed_tier" != "$original_tier" ]]; then
+			original_tier_model=$(resolve_dispatch_model_for_labels "$original_tier")
+			if [[ "$model_override" == "$original_tier_model" ]]; then
+				refreshed_labels_csv=$(jq -r '[.labels[]?.name] | join(",")' <<<"$issue_meta_json")
+				refreshed_model=$(resolve_dispatch_model_for_labels "$refreshed_labels_csv")
+				echo "[dispatch_with_dedup] #${issue_number}: tier ${original_tier:-<auto>} → ${refreshed_tier:-<auto>}; model ${model_override:-<auto>} → ${refreshed_model:-<auto>}" >>"$LOGFILE"
+				model_override="$refreshed_model"
+			fi
+		fi
+	fi
+	_dispatch_launch_checked_worker "$issue_number" "$repo_slug" "$dispatch_title" "$issue_title" \
+		"$self_login" "$repo_path" "$prompt" "$session_key" "$model_override"
+	return $?
+}
+
+# Runs after dedup has established the claim. issue_meta_json and
+# _claim_comment_id remain dynamically scoped to dispatch_with_dedup.
+_dispatch_post_dedup_gates() {
+	local issue_number="$1" repo_slug="$2" repo_path="$3" issue_title="$4" self_login="$5"
+	local _ds_t0=""
 
 	# t2063: brief-body freshness guard — defence-in-depth.
 	# If a brief file exists for this issue but the issue body lacks the
@@ -2284,6 +1179,13 @@ dispatch_with_dedup() {
 		return 1
 	fi
 	_ds_record "$issue_number" "$repo_slug" "$_PULSE_DISPATCH_ELIGIBILITY_STAGE" "$_ds_t0"
+	return 0
+}
+
+_dispatch_launch_checked_worker() {
+	local issue_number="$1" repo_slug="$2" dispatch_title="$3" issue_title="$4"
+	local self_login="$5" repo_path="$6" prompt="$7" session_key="$8" model_override="$9"
+	local _ds_t0=""
 
 	# All checks passed — launch the worker.
 	_ds_t0=$(_ds_now_ns)

@@ -18,7 +18,7 @@
 #   - _dlw_prewarm_opencode_db
 #   - _dlw_prepare_opencode_db
 #   - _dlw_exec_detached
-#   - _dlw_exec_systemd_user_service
+#   (systemd helpers: pulse-dispatch-worker-systemd.sh)
 #   - _dlw_spawn_early_exit_monitor
 #   - _dlw_spawn_lifecycle_observer (t3055/GH#21870)
 #   - _dlw_nohup_launch
@@ -46,6 +46,9 @@ source "${_DLW_SCRIPT_DIR}/pulse-dispatch-worker-prompt.sh"
 # shellcheck source=pulse-dispatch-worker-gates.sh
 # shellcheck disable=SC1091  # _DLW_SCRIPT_DIR is resolved at runtime.
 source "${_DLW_SCRIPT_DIR}/pulse-dispatch-worker-gates.sh"
+# shellcheck source=pulse-dispatch-worker-systemd.sh
+# shellcheck disable=SC1091  # _DLW_SCRIPT_DIR is resolved at runtime.
+source "${_DLW_SCRIPT_DIR}/pulse-dispatch-worker-systemd.sh"
 unset _DLW_SCRIPT_DIR
 : "${AIDEVOPS_UNKNOWN_VERSION:=unknown}"
 if [[ -z "${_DLW_ZERO_ATTEMPT_EVIDENCE_PATTERN+x}" ]]; then
@@ -326,25 +329,46 @@ _dlw_assign_model_ab() {
 	_DLW_AB_ROUTING_TABLE=""
 	_DLW_AB_EXPERIMENT=""
 	_DLW_AB_ARM=""
-	[[ -n "${AIDEVOPS_MODEL_AB_CONFIG:-}" && -z "$model_override" ]] || return 0
+	[[ -n "${AIDEVOPS_MODEL_AB_CONFIG:-}" ]] || return 0
+	# Candidate dispatch supplies a tier default as an override. Only a model
+	# differing from the current labels' default is an explicit A/B bypass.
+	if [[ -n "$model_override" ]]; then
+		local labels_csv="" tier_default=""
+		labels_csv=$(jq -r '[.labels[]?.name] | join(",")' <<<"$issue_meta_json")
+		if declare -F resolve_dispatch_model_for_labels >/dev/null; then
+			tier_default=$(resolve_dispatch_model_for_labels "$labels_csv")
+		fi
+		[[ -n "$tier_default" && "$model_override" == "$tier_default" ]] || return 0
+	fi
 	local ab_json="" ab_helper="${BASH_SOURCE[0]%/*}/model-ab-helper.mjs"
 	local -a ab_args=(assign "$repo_slug" "$issue_number")
 	local created_at="" labels_json=""
 	created_at=$(jq -r '.createdAt // .created_at // empty' <<<"$issue_meta_json") || created_at=""
 	labels_json=$(jq -c '[.labels[]?.name]' <<<"$issue_meta_json") || labels_json="[]"
 	[[ -z "$created_at" ]] || ab_args+=(--created-at "$created_at" --labels-json "$labels_json")
-	[[ "$_DLW_DISPATCH_MODEL_TIER" == "$_DLW_STANDARD_TIER" ]] || ab_args+=(--continuation-only)
+	# The helper decides whether this tier may start an assignment: standard-only
+	# arms treat other tiers as continuation-only; provider-family arms route all.
+	local routed_tier=""
+	case "$_DLW_DISPATCH_MODEL_TIER" in
+	simple | standard | thinking)
+		routed_tier="$_DLW_DISPATCH_MODEL_TIER"
+		ab_args+=(--tier "$routed_tier")
+		;;
+	*) ab_args+=(--continuation-only) ;;
+	esac
 	ab_json=$(node "$ab_helper" "${ab_args[@]}") || return 1
 	[[ "$(jq -r '.active' <<<"$ab_json")" == "true" ]] || return 0
 	_DLW_AB_ROUTING_TABLE=$(jq -r '.routing_table' <<<"$ab_json") || return 1
 	_DLW_AB_EXPERIMENT=$(jq -r '.experiment' <<<"$ab_json") || return 1
 	_DLW_AB_ARM=$(jq -r '.arm' <<<"$ab_json") || return 1
+	local ab_scope=""
+	ab_scope=$(jq -r '.scope // empty' <<<"$ab_json") || ab_scope=""
+	[[ "$ab_scope" == "all-tiers" ]] || [[ "$routed_tier" == "$_DLW_STANDARD_TIER" ]] || return 0
+	[[ -n "$routed_tier" ]] || return 0
 	# Availability selection follows the arm-first table; a failed primary may
 	# use its existing same-tier fallback without changing the assigned arm.
-	if [[ "$_DLW_DISPATCH_MODEL_TIER" == "$_DLW_STANDARD_TIER" ]]; then
-		_DLW_SELECTED_MODEL=$(AIDEVOPS_MODEL_ROUTING_TABLE="$_DLW_AB_ROUTING_TABLE" \
-			"$HEADLESS_RUNTIME_HELPER" select --role worker --tier "$_DLW_STANDARD_TIER" 2>/dev/null) || _DLW_SELECTED_MODEL=""
-	fi
+	_DLW_SELECTED_MODEL=$(AIDEVOPS_MODEL_ROUTING_TABLE="$_DLW_AB_ROUTING_TABLE" \
+		"$HEADLESS_RUNTIME_HELPER" select --role worker --tier "$routed_tier" 2>/dev/null) || _DLW_SELECTED_MODEL=""
 	return 0
 }
 
@@ -666,7 +690,11 @@ _dlw_restore_worktree_deps() {
 		fi
 		local _src_nm="${repo_path}${_rel_dir}/node_modules"
 		local _dst_nm="${worktree_path}${_rel_dir}/node_modules"
-		if [[ -d "$_src_nm" && ! -d "$_dst_nm" ]]; then
+		# The validator accepts only a package-local package-lock.json or
+		# pnpm-lock.yaml (not bun.lock, nor a workspace member whose lock is at
+		# the root); skip guaranteed rejections before they spend the budget.
+		if [[ -d "$_src_nm" && ! -d "$_dst_nm" ]] &&
+			[[ -f "${_dir}/package-lock.json" || -f "${_dir}/pnpm-lock.yaml" ]]; then
 			# Rejections also spend preparation time and must not exhaust the
 			# prelaunch lease by retrying every package in a large worktree.
 			_attempted=$((_attempted + 1))
@@ -765,10 +793,58 @@ _dlw_claim_unowned_reused_worktree() {
 	return 0
 }
 
+DLW_LIVE_OWNER_REFUSED_REASON="worktree_live_owner_refused"
+
+# GH#33026: identify the live owner that refused a reused-worktree claim.
+# An identity-verified live owner is a stable state, not an infrastructure
+# fault, so it gets its own reason and an owner-generation key that dispatch
+# can hold on. Read-only: never removes, resets or takes over the owner row.
+_dlw_capture_live_owner_refusal() {
+	local worktree_path="$1"
+	declare -F check_worktree_owner_snapshot >/dev/null 2>&1 || return 1
+	declare -F _wt_process_start_token_for_pid >/dev/null 2>&1 || return 1
+
+	local owner_info="" owner_pid="" owner_session="" owner_batch="" owner_task="" owner_created_at="" owner_process_start=""
+	owner_info=$(check_worktree_owner_snapshot "$worktree_path" 2>/dev/null) || return 1
+	IFS='|' read -r owner_pid owner_session owner_batch owner_task owner_created_at owner_process_start <<<"$owner_info"
+	[[ "$owner_pid" =~ ^[1-9][0-9]*$ && "$owner_pid" != "$$" ]] || return 1
+
+	local live_start=""
+	live_start=$(_wt_process_start_token_for_pid "$owner_pid" 2>/dev/null) || return 1
+	# A recorded generation that differs from the live process means PID reuse:
+	# that is not a stable live owner, so keep the generic failure path.
+	[[ -z "$owner_process_start" || "$owner_process_start" == "$live_start" ]] || return 1
+
+	_DLW_PRECREATE_FAILURE_REASON="$DLW_LIVE_OWNER_REFUSED_REASON"
+	_DLW_REFUSING_OWNER_PID="$owner_pid"
+	_DLW_REFUSING_OWNER_START="${live_start//[^A-Za-z0-9_.:-]/_}"
+	return 0
+}
+
+# Classify a failed pre-creation. Only the live-owner refusal is keyed for a
+# cross-cycle hold; SQLite and worktree-helper faults stay generic.
+_dlw_report_precreate_failure() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	if [[ "${_DLW_PRECREATE_FAILURE_REASON:-}" == "$DLW_LIVE_OWNER_REFUSED_REASON" ]]; then
+		pulse_stats_increment "worktree_live_owner_refused_count" 2>/dev/null || true
+		echo "[dispatch_with_dedup] WORKTREE_LIVE_OWNER_REFUSED issue=#${issue_number} repo=${repo_slug} owner_pid=${_DLW_REFUSING_OWNER_PID} owner_start=${_DLW_REFUSING_OWNER_START} action=hold_until_owner_exits_or_changes worktree=${_DLW_WORKTREE_PATH}" >>"$LOGFILE"
+		_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "$DLW_LIVE_OWNER_REFUSED_REASON" 2
+		return $?
+	fi
+	pulse_stats_increment "worktree_precreation_failed_count" 2>/dev/null || true
+	echo "[dispatch_with_dedup] Skipping #${issue_number} — pre-creation failed; will retry next cycle" >>"$LOGFILE"
+	_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "worktree_precreation_failed" 2
+	return $?
+}
+
 _dlw_reset_precreated_worktree_state() {
 	_DLW_WORKTREE_PATH=""
 	_DLW_WORKTREE_BRANCH=""
 	_DLW_WORKTREE_REUSED=0
+	_DLW_PRECREATE_FAILURE_REASON=""
+	_DLW_REFUSING_OWNER_PID=""
+	_DLW_REFUSING_OWNER_START=""
 	_DLW_WORKTREE_TRANSFER_MODE=""
 	_DLW_WORKTREE_EXPECTED_OWNER_PID=""
 	_DLW_WORKTREE_EXPECTED_OWNER_SESSION=""
@@ -795,12 +871,10 @@ _dlw_precreate_worktree() {
 	# is dispatched repeatedly (GH#19042). Matches branch names containing
 	# gh<N> or gh-<N> (the pattern used by this function and cleanup regex).
 	local _existing_path="" _existing_branch=""
-	local _wt_line=""
+	local _wt_line="" _wt_p="" _wt_b=""
 	while IFS= read -r _wt_line; do
-		local _wt_p="" _wt_b=""
 		_wt_p=$(printf '%s' "$_wt_line" | awk '{print $1}') || _wt_p=""
 		_wt_b=$(printf '%s' "$_wt_line" | awk '{print $3}' | sed 's/^\[//;s/\]$//') || _wt_b=""
-		# Match branches with embedded issue number: gh19014 or gh-19014
 		if [[ "$_wt_b" =~ gh-?${issue_number}([^0-9]|$) && -d "$_wt_p" ]]; then
 			_existing_path="$_wt_p"
 			_existing_branch="$_wt_b"
@@ -816,6 +890,7 @@ _dlw_precreate_worktree() {
 		if _dlw_capture_reused_worktree_owner "$issue_number" "$_DLW_WORKTREE_PATH"; then
 			_has_continuation_owner=1
 		elif ! _dlw_claim_unowned_reused_worktree "$issue_number" "$_DLW_WORKTREE_PATH" "$_DLW_WORKTREE_BRANCH"; then
+			_dlw_capture_live_owner_refusal "$_DLW_WORKTREE_PATH" || true
 			return 1
 		fi
 		_dlw_prepare_existing_worktree "$_existing_path" "$repo_path" "$_has_continuation_owner"
@@ -1033,232 +1108,6 @@ _dlw_prepare_opencode_db() {
 	_dlw_renew_prelaunch_lease "$issue_number" "$repo_slug" "$session_key" "$worker_log" "$attempt_id" || return 1
 	_dlw_prewarm_opencode_db "$worker_log" "$attempt_id"
 	return 0
-}
-
-#######################################
-# Return 0 when a Linux systemd user manager is available for transient
-# services. `setsid` detaches workers from the pulse process group, but it
-# does NOT move them out of the systemd service cgroup. On systemd pulse
-# timers, long-lived children therefore remain visible as leftovers after the
-# oneshot exits (GH#23073). A transient user service gives each worker an
-# intentional lifecycle owner outside aidevops-supervisor-pulse.service.
-_dlw_systemd_user_service_available() {
-	[[ "${AIDEVOPS_SKIP_SYSTEMD_WORKER_SERVICE:-0}" == "1" ]] && return 1
-	[[ "$(uname -s 2>/dev/null || printf '%s' unknown)" == "Linux" ]] || return 1
-	command -v systemd-run >/dev/null 2>&1 || return 1
-	command -v systemctl >/dev/null 2>&1 || return 1
-	systemctl --user status >/dev/null 2>&1 || return 1
-	return 0
-}
-
-_dlw_systemd_unit_name() {
-	local unit_prefix="$1"
-	local issue_number="$2"
-	local suffix="${RANDOM:-0}"
-	printf '%s-%s-%s-%s' "$unit_prefix" "${issue_number:-unknown}" "$$" "$suffix"
-	return 0
-}
-
-_dlw_systemd_snapshot() {
-	local unit_name="$1"
-	local state_file="$2"
-	local snapshot=""
-
-	snapshot=$(systemctl --user show "$unit_name" \
-		-p Id -p MainPID -p ActiveState -p SubState \
-		-p ExecMainCode -p ExecMainStatus -p Result 2>/dev/null || true)
-	printf 'Unit=%s\n%s\n' "$unit_name" "$snapshot" >"$state_file"
-	printf '%s\n' "$snapshot"
-	return 0
-}
-
-_dlw_systemd_wait_stable() {
-	local unit_name="$1"
-	local issue_number="$2"
-	local state_file="$3"
-	local expected_pid="$4"
-	local attempts="${DLW_SYSTEMD_STABILITY_ATTEMPTS:-3}"
-	local wait_i=0 stable_count=0 snapshot="" main_pid="" active_state="" sub_state=""
-	local exec_main_code="" exec_main_status="" result="" key="" value=""
-	local poll_seconds="${DLW_SYSTEMD_STABILITY_POLL_SECONDS:-0.2}"
-
-	[[ "$attempts" =~ ^[1-9][0-9]*$ ]] || attempts=3
-	[[ "$poll_seconds" =~ ^[0-9]+([.][0-9]+)?$ ]] || poll_seconds="0.2"
-	while [[ "$wait_i" -lt "$attempts" ]]; do
-		snapshot=$(_dlw_systemd_snapshot "$unit_name" "$state_file")
-		main_pid=""
-		active_state=""
-		sub_state=""
-		exec_main_code="" exec_main_status="" result=""
-		while IFS='=' read -r key value || [[ -n "$key" ]]; do
-			case "$key" in
-				MainPID) main_pid="$value" ;;
-				ActiveState) active_state="$value" ;;
-				SubState) sub_state="$value" ;;
-				ExecMainCode) exec_main_code="$value" ;;
-				ExecMainStatus) exec_main_status="$value" ;;
-				Result) result="$value" ;;
-			esac
-		done <<<"$snapshot"
-
-		if [[ "$active_state" == "failed" || "$active_state" == "inactive" ]]; then
-			printf 'LaunchState=startup_failed\n' >>"$state_file"
-			echo "[dispatch_worker_launch] systemd startup_failed unit=${unit_name} issue=${issue_number} MainPID=${main_pid:-0} ExecMainCode=${exec_main_code:-unknown} ExecMainStatus=${exec_main_status:-unknown} Result=${result:-unknown} state=${active_state:-unknown}/${sub_state:-unknown}" >>"$LOGFILE"
-			return 2
-		fi
-
-		if [[ "$main_pid" == "$expected_pid" && "$active_state" == "active" && "$sub_state" == "running" ]]; then
-			stable_count=$((stable_count + 1))
-		else
-			stable_count=0
-		fi
-		wait_i=$((wait_i + 1))
-		[[ "$stable_count" -ge "$attempts" ]] && {
-			printf 'LaunchState=worker_ready\n' >>"$state_file"
-			return 0
-		}
-		sleep "$poll_seconds"
-	done
-
-	printf 'LaunchState=pid_observed\n' >>"$state_file"
-	return 3
-}
-
-_dlw_systemd_resolve_main_pid() {
-	local unit_name="$1"
-	local issue_number="$2"
-	local state_file="${3:-${TMPDIR:-/tmp}/aidevops-systemd-state.$$}"
-	local wait_i=0 snapshot="" main_pid="" active_state="" sub_state="" key="" value=""
-
-	while [[ "$wait_i" -lt 15 ]]; do
-		snapshot=$(_dlw_systemd_snapshot "$unit_name" "$state_file")
-		main_pid=""
-		active_state=""
-		sub_state=""
-		while IFS='=' read -r key value || [[ -n "$key" ]]; do
-			case "$key" in
-				MainPID)
-					main_pid="$value"
-					;;
-				ActiveState)
-					active_state="$value"
-					;;
-				SubState)
-					sub_state="$value"
-					;;
-			esac
-		done <<<"$snapshot"
-
-		if [[ "$main_pid" =~ ^[1-9][0-9]*$ ]]; then
-			echo "[dispatch_worker_launch] WARNING: systemd worker PID handoff missing for unit ${unit_name}; resolved MainPID=${main_pid} state=${active_state:-unknown}/${sub_state:-unknown} via systemctl, not launching fallback" >>"$LOGFILE"
-			local stable_rc=0
-			if _dlw_systemd_wait_stable "$unit_name" "$issue_number" "$state_file" "$main_pid"; then
-				printf '%s\n' "$main_pid"
-				return 0
-			else
-				stable_rc=$?
-			fi
-			return "$stable_rc"
-		fi
-
-		case "${active_state:-unknown}" in
-			inactive|failed)
-				echo "[dispatch_worker_launch] systemd unit ${unit_name} has no live MainPID state=${active_state:-unknown}/${sub_state:-unknown}; falling back to setsid/nohup for #${issue_number}" >>"$LOGFILE"
-				return 1
-				;;
-		esac
-
-		sleep 0.2
-		wait_i=$((wait_i + 1))
-	done
-
-	echo "[dispatch_worker_launch] ERROR: systemd-run launched ${unit_name} for #${issue_number} but no child PID or live MainPID was reported" >>"$LOGFILE"
-	return 1
-}
-
-_dlw_exec_systemd_user_service() {
-	local unit_prefix="$1"
-	local worker_log="$2"
-	local issue_number="$3"
-	shift 3
-	local state_file="${_DLW_SYSTEMD_STATE_FILE:-${TMPDIR:-/tmp}/aidevops-systemd-state.$$}"
-
-	local pid_file=""
-	pid_file=$(mktemp "${TMPDIR:-/tmp}/aidevops-systemd-worker.XXXXXX") || return 1
-	rm -f "$pid_file" 2>/dev/null || true
-
-	local unit_name=""
-	unit_name=$(_dlw_systemd_unit_name "$unit_prefix" "$issue_number")
-	local runner_script
-	# shellcheck disable=SC2016  # Expanded by the child bash launched by systemd-run.
-	runner_script='
-		_dlw_systemd_child() {
-			local pid_file="$1" out_log="$2"
-			shift 2
-			printf "%s\n" "$$" >"$pid_file" 2>/dev/null || true
-			exec "$@" </dev/null >>"$out_log" 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&-
-		}
-		_dlw_systemd_child "$@"
-	'
-
-	if ! systemd-run --user --unit="$unit_name" --collect --quiet \
-		--description="aidevops worker ${issue_number:-unknown}" \
-		/bin/bash -lc "$runner_script" _ "$pid_file" "$worker_log" "$@" \
-		>/dev/null 2>>"$LOGFILE"; then
-		rm -f "$pid_file" 2>/dev/null || true
-		return 1
-	fi
-
-	local wait_i=0 service_pid=""
-	while [[ "$wait_i" -lt 25 ]]; do
-		if [[ -s "$pid_file" ]]; then
-			read -r service_pid <"$pid_file" || service_pid=""
-			break
-		fi
-		sleep 0.2
-		wait_i=$((wait_i + 1))
-	done
-	rm -f "$pid_file" 2>/dev/null || true
-
-	if [[ "$service_pid" =~ ^[0-9]+$ ]]; then
-		echo "[dispatch_worker_launch] systemd unit ${unit_name} reported child PID=${service_pid} for #${issue_number}" >>"$LOGFILE"
-		local stable_rc=0
-		if _dlw_systemd_wait_stable "$unit_name" "$issue_number" "$state_file" "$service_pid"; then
-			printf '%s\n' "$service_pid"
-			return 0
-		else
-			stable_rc=$?
-		fi
-		return "$stable_rc"
-	fi
-
-	_dlw_systemd_resolve_main_pid "$unit_name" "$issue_number" "$state_file"
-	return $?
-}
-
-_dlw_handle_systemd_launch_failure() {
-	local systemd_rc="$1"
-	local systemd_state_file="$2"
-	local worker_log="$3"
-	local issue_number="$4"
-
-	if [[ "$systemd_rc" -ne 2 && "$systemd_rc" -ne 3 ]]; then
-		echo "[dispatch_worker_launch] WARNING: systemd-run worker launch unresolved for #${issue_number}; falling back to setsid/nohup" >>"$LOGFILE"
-		return 0
-	fi
-
-	if [[ -f "$systemd_state_file" ]]; then
-		{
-			if [[ "$systemd_rc" -eq 2 ]]; then
-				printf '[systemd-launch] classification=crash_during_startup\n'
-			else
-				printf '[systemd-launch] classification=readiness_unconfirmed\n'
-			fi
-			cat "$systemd_state_file"
-		} >>"$worker_log"
-	fi
-	echo "[dispatch_worker_launch] ERROR: systemd worker for #${issue_number} did not reach durable readiness (rc=${systemd_rc}); duplicate fallback suppressed" >>"$LOGFILE"
-	return 1
 }
 
 # Execute a worker command via systemd-run (Linux user services) or setsid +
@@ -1946,15 +1795,13 @@ _dispatch_launch_worker() {
 	fi
 	_ds_record "$issue_number" "$repo_slug" "$DLW_STAGE_CANARY_PREFLIGHT" "$_ds_t0"
 
-	if ! _dlw_preclaim_state_refresh_or_skip "$issue_number" "$repo_slug"; then
-		_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "preclaim_state_changed" 2 || return $?
-	fi
-
 	if ! _dlw_claim_lock_after_canary "$issue_number" "$repo_slug" "$self_login"; then
 		_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "claim_lock_failed" 2 || return $?
 	fi
 	local worker_pid attempt_id="" attempt_started_at="" prelaunch_deadline=0
+	_ds_t0=$(_ds_now_ns)
 	_dlw_begin_prelaunch "$issue_number" "$repo_slug" "$session_key" "$worker_log" || return $?
+	_ds_record "$issue_number" "$repo_slug" "begin_prelaunch" "$_ds_t0"
 
 	local zero_output_comment_metrics=""
 	zero_output_comment_metrics=$(_dlw_comment_bloat_metrics "$issue_number" "$repo_slug")
@@ -1968,14 +1815,14 @@ _dispatch_launch_worker() {
 	_ds_t0=$(_ds_now_ns)
 	if ! _dlw_precreate_worktree "$issue_number" "$repo_path"; then
 		_ds_record "$issue_number" "$repo_slug" "precreate_worktree" "$_ds_t0"
-		pulse_stats_increment "worktree_precreation_failed_count" 2>/dev/null || true
-		echo "[dispatch_with_dedup] Skipping #${issue_number} — pre-creation failed; will retry next cycle" >>"$LOGFILE"
-		_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "worktree_precreation_failed" 2 || return $?
+		_dlw_report_precreate_failure "$issue_number" "$repo_slug" || return $?
 	fi
 	_ds_record "$issue_number" "$repo_slug" "precreate_worktree" "$_ds_t0"
 	local worker_worktree_path="$_DLW_WORKTREE_PATH" worker_worktree_branch="$_DLW_WORKTREE_BRANCH" worker_worktree_reused="${_DLW_WORKTREE_REUSED:-0}"
+	_ds_t0=$(_ds_now_ns)
 	_dlw_final_worker_spawn_gates "$issue_number" "$repo_slug" "$worker_worktree_branch" "$worker_worktree_reused" \
 		"${repo_path}/TODO.md" "$worker_worktree_path" "$issue_meta_json" "$repo_path" || return $?
+	_ds_record "$issue_number" "$repo_slug" "final_spawn_gates" "$_ds_t0"
 
 	local launch_prompt=""
 	launch_prompt=$(_dlw_prepare_prompt_for_launch "$issue_number" "$repo_slug" "$issue_title" "$prompt" "$zero_output_comment_metrics")

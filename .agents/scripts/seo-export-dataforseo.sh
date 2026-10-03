@@ -43,11 +43,11 @@ readonly IMPRESSION_VOLUME_MULTIPLIER=10
 
 # Get auth header from environment
 get_auth_header() {
-    source "$CONFIG_DIR/credentials.sh" 2>/dev/null || true
-    
-    if [[ -z "${DATAFORSEO_USERNAME:-}" ]] || [[ -z "${DATAFORSEO_PASSWORD:-}" ]]; then
+    # shellcheck source=dataforseo-credentials.sh
+    source "$SCRIPT_DIR/dataforseo-credentials.sh"
+    if ! dataforseo_load_credentials; then
         print_error "DataForSEO credentials not configured"
-        print_error "Set DATAFORSEO_USERNAME and DATAFORSEO_PASSWORD in ~/.config/aidevops/credentials.sh"
+        print_error "Use aidevops secret set DATAFORSEO_API_LOGIN and DATAFORSEO_API_PASSWORD, or credentials.sh"
         return 1
     fi
     
@@ -264,14 +264,14 @@ Data Fields:
     - difficulty: Competition level
 
 Requirements:
-    - DATAFORSEO_USERNAME and DATAFORSEO_PASSWORD in ~/.config/aidevops/credentials.sh
+    - API login/password via environment, credentials.sh, or aidevops secret set
 
 Setup:
     1. Sign up at https://app.dataforseo.com/
     2. Get API credentials from dashboard
-    3. Add to credentials.sh:
-       export DATAFORSEO_USERNAME="your_username"
-       export DATAFORSEO_PASSWORD="your_password"
+    3. Run aidevops secret set DATAFORSEO_API_LOGIN and
+       aidevops secret set DATAFORSEO_API_PASSWORD
+       (or set DATAFORSEO_USERNAME/PASSWORD in credentials.sh)
 
 EOF
     return 0

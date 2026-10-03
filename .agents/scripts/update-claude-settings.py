@@ -6,6 +6,7 @@
 # =============================================================================
 # Manages ~/.claude/settings.json:
 #   - Safety hooks (PreToolUse — git safety guard)
+#   - Session continuation (Stop — keep going while todos remain open)
 #   - Tool permissions (allow/deny/ask rules per Claude Code syntax)
 #   - Preserves user customizations (model, etc.)
 #
@@ -58,6 +59,19 @@ for required_matcher in ("Bash", "Edit|Write"):
     if not has_matcher:
         settings["hooks"]["PreToolUse"].append({"matcher": required_matcher, "hooks": [hook_entry]})
         changed = True
+
+# --- Stop hook: keep going while tracked todos remain open (GH#33143) ---
+# Mirrors the OpenCode session-continuation guard. Stop events take no matcher.
+stop_hook_command = "$HOME/.aidevops/hooks/session_continuation_stop.py"
+stop_rules = settings["hooks"].setdefault("Stop", [])
+stop_registered = any(
+    "session_continuation_stop" in h.get("command", "")
+    for rule in stop_rules
+    for h in rule.get("hooks", [])
+)
+if not stop_registered:
+    stop_rules.append({"hooks": [{"type": "command", "command": stop_hook_command}]})
+    changed = True
 
 # --- Tool permissions (allow / deny / ask) ---
 # Claude Code permission rule syntax: Tool or Tool(specifier)

@@ -28,4 +28,9 @@ fi
 # shellcheck disable=SC1090  # dynamic path resolved at runtime
 source "$_SHARED_CONSTANTS"
 
+# GH#32880: this shim is the agent-facing entry point. Refuse unscoped
+# auto-dispatch briefs here instead of publishing an issue the pulse will hold
+# as status:blocked (missing_files_scope). Set to 0 to restore warn-only.
+AIDEVOPS_STRICT_DISPATCH_SCOPE="${AIDEVOPS_STRICT_DISPATCH_SCOPE:-1}"
+
 gh_create_issue "$@"

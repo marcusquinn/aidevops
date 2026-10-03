@@ -40,6 +40,10 @@ _ISLR_JSON_TRUE="true"
 _ISSUE_SYNC_REPOSITORY_ID_CACHE_FILE=""
 
 # Defensive SCRIPT_DIR fallback
+# Load the task-line selector when this library is sourced independently of
+# issue-sync-lib.sh (for example by the push helper's mapping gate).
+# shellcheck source=./issue-sync-lib-parse.sh
+source "${BASH_SOURCE[0]%/*}/issue-sync-lib-parse.sh"
 if [[ -z "${SCRIPT_DIR:-}" ]]; then
 	# Pure-bash dirname replacement — avoids external binary dependency
 	_lib_path="${BASH_SOURCE[0]%/*}"

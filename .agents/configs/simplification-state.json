@@ -3091,54 +3091,6 @@
       "passes": 1,
       "pr": 11966
     },
-    ".agents/services/database/postgres-drizzle-skill/performance-caching.md": {
-      "at": "2026-03-29T15:08:44Z",
-      "hash": "c913579a4d4e3423ab6105a7ada526d01da58e24",
-      "passes": 1,
-      "pr": 13034
-    },
-    ".agents/services/database/postgres-drizzle-skill/performance-explain.md": {
-      "at": "2026-03-29T15:08:44Z",
-      "hash": "e30b41ee9d586aed02513b262308454e1582a157",
-      "passes": 1,
-      "pr": 13034
-    },
-    ".agents/services/database/postgres-drizzle-skill/performance-indexing.md": {
-      "at": "2026-03-29T15:08:44Z",
-      "hash": "a05593a14716c339aa20762bd58c1f2fd3524632",
-      "passes": 1,
-      "pr": 13034
-    },
-    ".agents/services/database/postgres-drizzle-skill/performance-monitoring.md": {
-      "at": "2026-03-29T15:08:44Z",
-      "hash": "6bea6117b5d890a1488f104180ec836232aff0d5",
-      "passes": 1,
-      "pr": 13034
-    },
-    ".agents/services/database/postgres-drizzle-skill/performance-pagination.md": {
-      "at": "2026-03-29T15:08:44Z",
-      "hash": "f9e3947bc34450d7c0eec8331387598fa0c3df27",
-      "passes": 1,
-      "pr": 13034
-    },
-    ".agents/services/database/postgres-drizzle-skill/performance-pooling.md": {
-      "at": "2026-03-29T15:08:45Z",
-      "hash": "6a8410cfe9fa14ffbd5eb664e325b32b659d6efe",
-      "passes": 1,
-      "pr": 13034
-    },
-    ".agents/services/database/postgres-drizzle-skill/performance-queries.md": {
-      "at": "2026-03-29T15:08:45Z",
-      "hash": "f1407412c73dc5a603a8c1211ae033e1c41e894f",
-      "passes": 1,
-      "pr": 13034
-    },
-    ".agents/services/database/postgres-drizzle-skill/performance.md": {
-      "at": "2026-03-29T15:08:45Z",
-      "hash": "8cc1d6de992385ce08c37a47731b39a4c61b6190",
-      "passes": 1,
-      "pr": 13034
-    },
     ".agents/services/database/postgres-drizzle-skill/postgres.md": {
       "at": "2026-03-28T05:50:57Z",
       "hash": "7761d7e4aa275d19e1ef37cdb18070faca39b5d8",
@@ -3324,12 +3276,6 @@
       "hash": "a65d8cccef3d95f6fd26e74ac5b51f986d131de5",
       "passes": 1,
       "pr": 11633
-    },
-    ".agents/services/hosting/closte.md": {
-      "at": "2026-07-20T04:18:28Z",
-      "hash": "42bd5e20e00defb0495d8585e9400db1404eb50b",
-      "passes": 2,
-      "pr": 12219
     },
     ".agents/services/hosting/cloudflare-platform-skill.md": {
       "at": "2026-05-04T14:44:59Z",
@@ -4271,12 +4217,6 @@
       "passes": 1,
       "pr": 16716
     },
-    ".agents/tools/ai-assistants/response-scoring.md": {
-      "at": "2026-07-25T03:38:35Z",
-      "hash": "5fe8fa831c3b32c5aef23482c807a1346fe65b21",
-      "passes": 4,
-      "pr": 13072
-    },
     ".agents/tools/ai-assistants/runners-code-reviewer.md": {
       "at": "2026-04-03T13:35:13Z",
       "hash": "d959a8122b1527468e242cc74f6d38c001386c72",
@@ -4366,96 +4306,6 @@
       "hash": "f9deaca26dc7ea2979bf8d8410c338c5d45dfb5f",
       "passes": 1,
       "pr": 11792
-    },
-    ".agents/tools/architecture/clean-ddd-hexagonal-skill.md": {
-      "at": "2026-04-03T01:53:26Z",
-      "hash": "b3640231f92ee8c22e24c89fce09c1ef566c739e",
-      "passes": 1,
-      "pr": 15695
-    },
-    ".agents/tools/architecture/clean-ddd-hexagonal-skill/cheatsheet.md": {
-      "at": "2026-03-28T05:10:19Z",
-      "hash": "0aff7409e32b870ac31fdcf1c43a5486f12d5fb3",
-      "passes": 1,
-      "pr": 11393
-    },
-    ".agents/tools/architecture/clean-ddd-hexagonal-skill/cqrs-events.md": {
-      "at": "2026-03-30T04:51:54Z",
-      "hash": "ce212a1402e90558c412e02dd54859eb37e4db16",
-      "passes": 2,
-      "pr": 13768
-    },
-    ".agents/tools/architecture/clean-ddd-hexagonal-skill/ddd-strategic.md": {
-      "at": "2026-03-28T11:20:20Z",
-      "hash": "1706368184eba55521667a3f2e3e845e19efe6e4",
-      "passes": 1,
-      "pr": 11805
-    },
-    ".agents/tools/architecture/clean-ddd-hexagonal-skill/ddd-tactical.md": {
-      "at": "2026-03-28T11:20:40Z",
-      "hash": "1227f41a5aa385a0ae2106c0493d974156ebd694",
-      "passes": 1,
-      "pr": 11734
-    },
-    ".agents/tools/architecture/clean-ddd-hexagonal-skill/hexagonal.md": {
-      "at": "2026-03-30T06:49:15Z",
-      "hash": "b8b36575ecc73cce041d4389633636be3b6acb6a",
-      "passes": 2,
-      "pr": 13931
-    },
-    ".agents/tools/architecture/clean-ddd-hexagonal-skill/layers.md": {
-      "at": "2026-03-28T21:58:55Z",
-      "hash": "6aaf111524bd845c5a5720997556c8837483d638",
-      "passes": 1,
-      "pr": 12236
-    },
-    ".agents/tools/architecture/clean-ddd-hexagonal-skill/testing.md": {
-      "at": "2026-03-28T13:38:11Z",
-      "hash": "df7464ac6a848d34507f008290abcbffa6cd50b0",
-      "passes": 1,
-      "pr": 11790
-    },
-    ".agents/tools/architecture/feature-slicing-skill.md": {
-      "at": "2026-03-27T21:25:18Z",
-      "hash": "24a480a29f65a65dc86b71125a3544fbfd9b68c2",
-      "passes": 2,
-      "pr": 11010
-    },
-    ".agents/tools/architecture/feature-slicing-skill/cheatsheet.md": {
-      "at": "2026-03-27T21:25:23Z",
-      "hash": "2801fb8f7a2dedb07cf0045d3aa6b474c01e3b06",
-      "passes": 1,
-      "pr": 11018
-    },
-    ".agents/tools/architecture/feature-slicing-skill/implementation.md": {
-      "at": "2026-03-28T20:16:39Z",
-      "hash": "c3c7177c0b01ac610ed7c48736b3803c6d0f5a2d",
-      "passes": 1,
-      "pr": 12160
-    },
-    ".agents/tools/architecture/feature-slicing-skill/layers.md": {
-      "at": "2026-03-28T08:18:16Z",
-      "hash": "6915c7e84600a9f43d40e1647996a21ef474973d",
-      "passes": 1,
-      "pr": 11537
-    },
-    ".agents/tools/architecture/feature-slicing-skill/migration.md": {
-      "at": "2026-03-30T00:32:19Z",
-      "hash": "9287b33c7d73c0049c7552d42bcfbb0e406bc90b",
-      "passes": 2,
-      "pr": 13466
-    },
-    ".agents/tools/architecture/feature-slicing-skill/nextjs.md": {
-      "at": "2026-03-28T06:59:34Z",
-      "hash": "6cab12565b8e693c09f6b057bc0b532508cade6c",
-      "passes": 1,
-      "pr": 11437
-    },
-    ".agents/tools/architecture/feature-slicing-skill/public-api.md": {
-      "at": "2026-03-28T16:40:13Z",
-      "hash": "bd3aa8714f43491e51ca08675071037af4362b8d",
-      "passes": 1,
-      "pr": 12030
     },
     ".agents/tools/autoagent/autoagent.md": {
       "at": "2026-07-25T03:38:37Z",
@@ -4846,12 +4696,6 @@
       "passes": 2,
       "pr": 16628
     },
-    ".agents/tools/code-review/best-practices.md": {
-      "at": "2026-03-28T13:38:46Z",
-      "hash": "0c29ade476d3841f62cb9533712d681da6ae2595",
-      "passes": 1,
-      "pr": 11771
-    },
     ".agents/tools/code-review/codacy.md": {
       "at": "2026-03-29T22:09:31Z",
       "hash": "01aafc8caf20256e88f011e8a1a051e7357555aa",
@@ -4952,12 +4796,6 @@
       "passes": 2,
       "pr": 13733
     },
-    ".agents/tools/context/context-builder.md": {
-      "at": "2026-03-29T20:54:03Z",
-      "hash": "6f1d7629b3d1df84f79bca62005fcc5e8c5d394a",
-      "passes": 1,
-      "pr": 13297
-    },
     ".agents/tools/context/context-guardrails.md": {
       "at": "2026-03-30T06:49:16Z",
       "hash": "2d4fd932a5b9b6fdeac7c2c8ecc1c40f2e52f103",
@@ -4975,18 +4813,6 @@
       "hash": "edd95da6e383415d7ef6e8b7b0e14dbe6ee90414",
       "passes": 2,
       "pr": 12182
-    },
-    ".agents/tools/context/dspy.md": {
-      "at": "2026-03-29T20:53:49Z",
-      "hash": "7f9a09f389697c83217d683b872bd784186f29e6",
-      "passes": 1,
-      "pr": 13289
-    },
-    ".agents/tools/context/dspyground.md": {
-      "at": "2026-04-03T11:54:14Z",
-      "hash": "4aebe68d698c70d88f8e8ac42c653109df99bb73",
-      "passes": 1,
-      "pr": 16494
     },
     ".agents/tools/context/github-search.md": {
       "at": "2026-07-18T16:11:01Z",
@@ -5023,12 +4849,6 @@
       "hash": "fbfa0b2016051c28ea3824e220bc0120bf42d0f1",
       "passes": 1,
       "pr": 12749
-    },
-    ".agents/tools/context/rapidfuzz.md": {
-      "at": "2026-04-03T01:53:12Z",
-      "hash": "d16b8b5bc318eaa7bbad698ecec8d690a707cd98",
-      "passes": 3,
-      "pr": 0
     },
     ".agents/tools/context/toon.md": {
       "at": "2026-04-03T13:35:14Z",
@@ -5957,54 +5777,6 @@
       "passes": 1,
       "pr": 11935
     },
-    ".agents/tools/diagrams/mermaid-diagrams-skill/advanced.md": {
-      "at": "2026-03-29T11:51:51Z",
-      "hash": "8d503a6cd73cf42489b18f7a5664f2b322d8673a",
-      "passes": 1,
-      "pr": 12922
-    },
-    ".agents/tools/diagrams/mermaid-diagrams-skill/architecture.md": {
-      "at": "2026-03-28T16:00:33Z",
-      "hash": "69321b2bc44bba8fe56ee85836144b038b947e40",
-      "passes": 1,
-      "pr": 11987
-    },
-    ".agents/tools/diagrams/mermaid-diagrams-skill/cheatsheet.md": {
-      "at": "2026-03-29T21:43:04Z",
-      "hash": "568e7a49215a4fcd8b2487d7c6455e27e698e343",
-      "passes": 1,
-      "pr": 13300
-    },
-    ".agents/tools/diagrams/mermaid-diagrams-skill/class-er.md": {
-      "at": "2026-03-28T08:17:42Z",
-      "hash": "cac152d5a323a68222a3b72869b48b6ac00a1fd9",
-      "passes": 1,
-      "pr": 11589
-    },
-    ".agents/tools/diagrams/mermaid-diagrams-skill/data-charts.md": {
-      "at": "2026-03-28T08:58:03Z",
-      "hash": "4006f122f01a479c9f18cf811f4518cd84b43bea",
-      "passes": 1,
-      "pr": 11602
-    },
-    ".agents/tools/diagrams/mermaid-diagrams-skill/flowcharts.md": {
-      "at": "2026-03-30T04:52:39Z",
-      "hash": "aa40ff75d4ee501fc82db4dbce013fcf8ccbfe05",
-      "passes": 1,
-      "pr": 13784
-    },
-    ".agents/tools/diagrams/mermaid-diagrams-skill/sequence.md": {
-      "at": "2026-03-28T05:10:17Z",
-      "hash": "321dcb7f9abbc8ebfeec457313dabbd52227f242",
-      "passes": 1,
-      "pr": 11392
-    },
-    ".agents/tools/diagrams/mermaid-diagrams-skill/state-journey.md": {
-      "at": "2026-03-29T08:11:29Z",
-      "hash": "cfd8bd062a27912784b2f79040783472553deafc",
-      "passes": 1,
-      "pr": 12755
-    },
     ".agents/tools/document/docstrange.md": {
       "at": "2026-03-29T16:34:31Z",
       "hash": "356dc36b0eeaae56c2ae1b5ad27e2442f58d8725",
@@ -6448,84 +6220,6 @@
       "passes": 1,
       "pr": 16552
     },
-    ".agents/tools/programming/modern-javascript-skill.md": {
-      "at": "2026-04-01T20:59:25Z",
-      "hash": "47b55328e048c60d654647f946df59c3836e5fa1",
-      "passes": 1,
-      "pr": 15131
-    },
-    ".agents/tools/programming/modern-javascript-skill/01-decision-trees.md": {
-      "at": "2026-04-01T20:59:25Z",
-      "hash": "241f4a3b8466d306e07aa80178d184e9dfb89813",
-      "passes": 1,
-      "pr": 15131
-    },
-    ".agents/tools/programming/modern-javascript-skill/02-es-versions.md": {
-      "at": "2026-04-01T20:59:25Z",
-      "hash": "4c8efb98765918aeb91c6c27468322860f85ebdf",
-      "passes": 1,
-      "pr": 15131
-    },
-    ".agents/tools/programming/modern-javascript-skill/cheatsheet.md": {
-      "at": "2026-03-28T16:40:20Z",
-      "hash": "b159f4fa6de09be8185323ca9d0f05c14a9a012d",
-      "passes": 1,
-      "pr": 12042
-    },
-    ".agents/tools/programming/modern-javascript-skill/composition.md": {
-      "at": "2026-03-28T03:53:07Z",
-      "hash": "b46fc38d6db3ad25a0f493a62c9db380f0af72ea",
-      "passes": 1,
-      "pr": 11328
-    },
-    ".agents/tools/programming/modern-javascript-skill/concurrency.md": {
-      "at": "2026-03-29T22:50:16Z",
-      "hash": "896412638b06c7e34f990bb930129a819979db56",
-      "passes": 2,
-      "pr": 13349
-    },
-    ".agents/tools/programming/modern-javascript-skill/es2016-es2017.md": {
-      "at": "2026-04-03T01:11:46Z",
-      "hash": "77b181e2b0e95ddde4d4d1a01d1e176066b30306",
-      "passes": 1,
-      "pr": 15969
-    },
-    ".agents/tools/programming/modern-javascript-skill/es2018-es2019.md": {
-      "at": "2026-03-28T05:50:55Z",
-      "hash": "ac1032b10ca7a6d010e5c0075774e7679edbe2ec",
-      "passes": 1,
-      "pr": 11439
-    },
-    ".agents/tools/programming/modern-javascript-skill/es2022-es2023.md": {
-      "at": "2026-03-28T03:53:13Z",
-      "hash": "608d6037a22cbc948bb9fe7739be906b2786fb03",
-      "passes": 1,
-      "pr": 11337
-    },
-    ".agents/tools/programming/modern-javascript-skill/es2024.md": {
-      "at": "2026-03-27T21:25:08Z",
-      "hash": "7013a082c06d9066d8f79a83bbb8e8aa29829b27",
-      "passes": 1,
-      "pr": 11002
-    },
-    ".agents/tools/programming/modern-javascript-skill/es2025.md": {
-      "at": "2026-03-28T21:58:57Z",
-      "hash": "ce555c928cfb853d3497544a6bc730c6da40fcbc",
-      "passes": 1,
-      "pr": 12234
-    },
-    ".agents/tools/programming/modern-javascript-skill/immutability.md": {
-      "at": "2026-04-03T11:54:14Z",
-      "hash": "5b23af121a1ea49028004359340334bc9b8a6105",
-      "passes": 1,
-      "pr": 16493
-    },
-    ".agents/tools/programming/modern-javascript-skill/upcoming.md": {
-      "at": "2026-03-29T07:02:28Z",
-      "hash": "ee06c980e465703b5763d6f3e04456ec44b8755a",
-      "passes": 1,
-      "pr": 12584
-    },
     ".agents/tools/research/providers/crft-lookup.md": {
       "at": "2026-07-11T14:36:49Z",
       "hash": "94b03ac1f0b48a2524c091eb3d5c7daca4c34c98",
@@ -6609,12 +6303,6 @@
       "hash": "0e5a61217d3b30eac5bdf6f41d05d81970e5dcf3",
       "passes": 1,
       "pr": 15777
-    },
-    ".agents/tools/task-management/beads.md": {
-      "at": "2026-05-10T22:12:58Z",
-      "hash": "e5f63a0340e700aebc966e4644a8d3fba2b6741d",
-      "passes": 2,
-      "pr": 12830
     },
     ".agents/tools/terminal/terminal-optimization.md": {
       "at": "2026-07-13T01:30:40Z",
@@ -7078,12 +6766,6 @@
       "passes": 3,
       "pr": 15517
     },
-    ".agents/workflows/branch/experiment.md": {
-      "at": "2026-06-28T21:56:29Z",
-      "hash": "e68564b6f366605d42d4a170f790516d7c239801",
-      "passes": 4,
-      "pr": 0
-    },
     ".agents/workflows/branch/feature.md": {
       "at": "2026-06-28T21:56:34Z",
       "hash": "f11c2ebdb0bb4f503571f5c96563db8cc1f8ca8a",
@@ -7095,18 +6777,6 @@
       "hash": "6a3057f9c557219280eb68b7804486d129083bca",
       "passes": 3,
       "pr": 15209
-    },
-    ".agents/workflows/branch/refactor.md": {
-      "at": "2026-06-28T21:56:39Z",
-      "hash": "45d9b2a104ca90bcb7ec54d8ebc5168928c70dfa",
-      "passes": 3,
-      "pr": 16676
-    },
-    ".agents/workflows/branch/release.md": {
-      "at": "2026-07-13T01:30:45Z",
-      "hash": "f2cfe8059c751752806fbbae7ced2f8f79c139c3",
-      "passes": 6,
-      "pr": 16675
     },
     ".agents/workflows/brief.md": {
       "at": "2026-07-26T19:50:23Z",
@@ -7246,12 +6916,6 @@
       "passes": 5,
       "pr": 13841
     },
-    ".agents/workflows/mission-skill-learning.md": {
-      "at": "2026-07-25T03:39:03Z",
-      "hash": "8adb8eb078a21e06ff335f2d0ffddbd9e7274e01",
-      "passes": 3,
-      "pr": 14996
-    },
     ".agents/workflows/mission.md": {
       "at": "2026-07-10T17:11:36Z",
       "hash": "71a3b83f672c94cf18abd8f556af002e1bf6c5ad",
@@ -7340,12 +7004,6 @@
       "hash": "9928cf16f1421ffba7894f3705991c499f158340",
       "passes": 11,
       "pr": 18924
-    },
-    ".agents/workflows/ralph-loop.md": {
-      "at": "2026-03-28T11:20:12Z",
-      "hash": "fc13521cf4f2d8477be2c37928bc684dc88901f6",
-      "passes": 1,
-      "pr": 11789
     },
     ".agents/workflows/readme-create-update.md": {
       "at": "2026-07-23T15:11:01Z",

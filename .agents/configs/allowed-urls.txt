@@ -110,7 +110,6 @@ apireq.enhancor.ai
 apiv2.ahrefs.com
 app.ahrefs.com
 app.au.snyk.io
-app.closte.com
 app.codacy.com
 app.coderabbit.ai
 app.contentkingapp.com
@@ -194,7 +193,6 @@ cli.coderabbit.ai
 cli.github.com
 client-mainwp.yourdomain.com
 clifford.io
-closte.com
 cloud-api.near.ai
 cloud.browser-use.com
 cloud.digitalocean.com
@@ -301,7 +299,6 @@ docs.aws.amazon.com
 docs.bluebubbles.app
 docs.browser-use.com
 docs.capsolver.com
-docs.closte.com
 docs.cloudron.io
 docs.codacy.com
 docs.codefactor.io
@@ -316,7 +313,6 @@ docs.dataforseo.com
 docs.daytona.io
 docs.digitalocean.com
 docs.docker.com
-docs.dspyground.com
 docs.factory.ai
 docs.fireworks.ai
 docs.gitea.io
@@ -366,9 +362,6 @@ download.pytorch.org
 downloads.snyk.io
 downloads.wordpress.org
 dribbble.com
-dspy-docs.vercel.app
-dspy.ai
-dspyground.com
 electric-sql.com
 elevenlabs.io
 emaillove.com
@@ -600,7 +593,6 @@ platform.higgsfield.ai
 platform.openai.com
 play.google.com
 playbooks.com
-playground.dspyground.com
 playwright.dev
 podcasts.apple.com
 poolors.com
@@ -624,7 +616,6 @@ qlty.sh
 qwen35-122b.completions.near.ai
 rankmath.com
 rapha.cc
-rapidfuzz.github.io
 raw.githubusercontent.com
 react-spectrum.adobe.com
 reactjs.org
@@ -644,7 +635,6 @@ relay.tools
 remotion.dev
 remotion.media
 repo.wp-composer.com
-repomix.com
 rest-api.fluentcrm.com
 roadmap.neuronwriter.com
 route53.amazonaws.com

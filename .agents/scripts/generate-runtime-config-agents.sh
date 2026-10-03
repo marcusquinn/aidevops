@@ -66,6 +66,9 @@ _run_agent_discovery_python() {
 
 # Shared helper: write ~/.config/<runtime>/AGENTS.md with the authoritative
 # plugin-injection precedence and cache/VERSION greeting fallback.
+# The greeting-fallback markers must match GREETING_FALLBACK_START/END in
+# .agents/plugins/opencode-aidevops/greeting.mjs: while the plugin greeting is
+# enabled, the plugin removes the delimited section (GH#32592).
 # Arguments:
 #   $1 - runtime_id (e.g. "opencode", "claude-code")
 #   $2 - config_dir (e.g. "$HOME/.config/opencode")
@@ -112,6 +115,7 @@ Add ~/.aidevops/agents/AGENTS.md to context for AI DevOps capabilities.
 
 **Runtime**: You are running in ${display_name}. Global config: \`${global_config_path}\`.
 
+<!-- aidevops:greeting-fallback:start -->
 ## aidevops Framework Status
 
 The ${plugin_name} renders session-start framework status (versions,
@@ -122,7 +126,7 @@ NOT repeat toast content in the chat.
 
 **On interactive conversation start** (skip only when the runtime is actually headless; a slash-command name such as \`/full-loop\` does not make an interactive session headless):
 
-1. If an earlier system instruction declares itself the authoritative plugin-injected greeting block and supplies exact version values, follow it. Its first-visible-text requirement does not prevent task tool calls from running first. Do not read the cache or VERSION first.
+1. If another system instruction declares itself the authoritative plugin-injected greeting block and supplies exact version values, follow it. Its first-visible-text requirement does not prevent task tool calls from running first. Do not read the cache or VERSION first.
 2. Otherwise, the plugin injection is unavailable. Read \`~/.aidevops/agents/VERSION\` first, then line 1 of \`${cache_path}\` if present. Use the deployed VERSION for {X}; use cached ${display_name} v{Y} only if the cache's aidevops version matches {X}. If the cache is stale or missing, omit \`in ${display_name} v{Y}\`. Make the first visible text in your first assistant response exactly this template — no extra prose, no status dump:
 
        Hi!
@@ -135,6 +139,7 @@ NOT repeat toast content in the chat.
 4. Then respond to the user's actual message. If the user launched the session with an initial task, start its tool work immediately (before visible text when the runtime cannot interleave text and tools), then prefix the first visible response with the greeting. Never emit a greeting-only response. Never emit both the injected greeting and the fallback greeting.
 
 If the user later asks about aidevops updates, direct them to run \`aidevops update\` in a terminal session (or type \`!aidevops update\` below). Do not announce updates unprompted — the toast already did.
+<!-- aidevops:greeting-fallback:end -->
 
 ## Pre-Edit Git Check
 
@@ -175,7 +180,7 @@ _generate_agents_opencode() {
 	done
 
 	# Remove loop-state files incorrectly created as agents
-	for f in ralph-loop.local.md quality-loop.local.md full-loop.local.md loop-state.md re-anchor.md postflight-loop.md; do
+	for f in quality-loop.local.md full-loop.local.md loop-state.md re-anchor.md postflight-loop.md; do
 		if _opencode_generated_agent_owned "$opencode_agent_dir/$f"; then
 			rm -f "$opencode_agent_dir/$f"
 		fi
@@ -450,7 +455,7 @@ _clean_generated_subagents() {
 # GH#19399 / t2149: Resolve basename collisions deterministically.
 #
 # Multiple source files with the same basename (e.g. `aidevops/architecture.md`
-# vs `tools/diagrams/mermaid-diagrams-skill/architecture.md`) previously fed
+# vs `tools/design/library/brands/claude/architecture.md`) previously fed
 # the parallel `xargs -P` write loop, where whichever subshell won the race
 # wrote the deployed stub. When the permissive sibling won, the sandboxed
 # source's `bash: false` / `webfetch: false` intent was silently lost.

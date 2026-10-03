@@ -17,10 +17,14 @@ source "${SCRIPT_DIR}/approval-helper.sh"
 ssh-keygen -t ed25519 -N '' -q -f "$APPROVAL_KEY"
 cp "${APPROVAL_KEY}.pub" "$APPROVAL_PUB"
 
-request_base=$(jq -cnS '{
+resume_worktree="${TEST_ROOT}/preserved worker"
+git init -q --initial-branch=feature/auto-gh123 --separate-git-dir="${TEST_ROOT}/worker-git" "$resume_worktree"
+git -C "$resume_worktree" remote add origin https://github.com/owner/repo.git
+resume_digest=$(python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.argv[1].encode()).hexdigest())' "$resume_worktree")
+request_base=$(jq -cnS --arg worktree "$resume_digest" '{
   schema: "aidevops-permission-request/v1",
   target: {kind: "issue", repository: "owner/repo", number: 123},
-  worker: {session: "issue-123", branch: "feature/auto-gh123", worktree_sha256: ("a" * 64)},
+  worker: {session: "manual-cli-123-100", branch: "feature/auto-gh123", worktree_sha256: $worktree},
   context: {stage: "worker tool execution", changed_files: [], alternatives: "none", resume_auto_dispatch: true},
   capabilities: [{
     permission: "external_directory",
@@ -110,6 +114,57 @@ verification=$(cmd_verify_permissions issue 123 owner/repo)
 	exit 1
 }
 
+[[ "$(cmd_verify_permissions issue 123 owner/repo "$request_id" manual-cli-123-100 feature/auto-gh123 "$resume_digest")" == VERIFIED ]]
+for binding in request session branch worktree; do
+	expected_request="$request_id" expected_session=manual-cli-123-100
+	expected_branch=feature/auto-gh123 expected_digest="$resume_digest"
+	case "$binding" in
+	request) expected_request=perm-0000000000000000 ;;
+	session) expected_session=manual-cli-123-101 ;;
+	branch) expected_branch=feature/replacement ;;
+	worktree) expected_digest=invalid ;;
+	esac
+	verification=$(cmd_verify_permissions issue 123 owner/repo "$expected_request" "$expected_session" "$expected_branch" "$expected_digest") && exit 1
+	[[ "$verification" == BINDING_MISMATCH ]]
+done
+
+# Exercise production resume discovery against the real signed comments and Git
+# metadata, then the unchanged runtime request/grant environment preparation.
+(
+	# shellcheck source=../dispatch-single-issue-helper.sh
+	source "${SCRIPT_DIR}/dispatch-single-issue-helper.sh"
+	# shellcheck source=../headless-runtime-worker-prepare.sh
+	source "${SCRIPT_DIR}/headless-runtime-worker-prepare.sh"
+	_dsi_repo_path_for_slug() {
+		printf '%s\n' "$resume_worktree"
+		return 0
+	}
+	git() {
+		local args="$*"
+		if [[ "$args" == *'worktree list --porcelain' ]]; then
+			printf 'worktree %s\n' "$resume_worktree"
+			return 0
+		fi
+		command git "$@"
+		return $?
+	}
+	jq -cn --arg request "$request_id" '{issue:123,session:"manual-cli-123-100",request_id:$request}' \
+		>"${TEST_ROOT}/worker-git/aidevops-permission-pending"
+	_dsi_resolve_permission_resume 123 owner/repo
+	[[ "$_DSI_WORKTREE_PATH" == "$resume_worktree" && "$_DSI_RESUME_SESSION" == manual-cli-123-100 ]]
+	export WORKER_ISSUE_NUMBER=123 WORKER_SESSION_KEY="$_DSI_RESUME_SESSION"
+	_hrw_prepare_role_context worker "$_DSI_WORKTREE_PATH"
+	_hrw_prepare_permission_grant_path owner/repo
+	[[ "$AIDEVOPS_PERMISSION_REQUEST_ID" == "$request_id" ]]
+	[[ "$AIDEVOPS_PERMISSION_GRANT_FILE" == "$HOME/.aidevops/permission-grants/owner_repo/123.json" ]]
+	command git -C "$resume_worktree" symbolic-ref HEAD refs/heads/feature/replacement
+	if _dsi_resolve_permission_resume 123 owner/repo; then exit 1; fi
+	command git -C "$resume_worktree" symbolic-ref HEAD refs/heads/feature/auto-gh123
+	jq '.session = "manual-cli-123-101"' "${TEST_ROOT}/worker-git/aidevops-permission-pending" >"${TEST_ROOT}/changed-marker"
+	mv "${TEST_ROOT}/changed-marker" "${TEST_ROOT}/worker-git/aidevops-permission-pending"
+	if _dsi_resolve_permission_resume 123 owner/repo; then exit 1; fi
+)
+
 # shellcheck source=../pulse-dispatch-core.sh
 source "${SCRIPT_DIR}/pulse-dispatch-core.sh"
 
@@ -170,6 +225,71 @@ if ! _dispatch_permission_history_requires_grant 123 owner/repo; then
 	exit 1
 fi
 [[ "$_DISPATCH_PERMISSION_VERIFY_RESULT" == "NO_APPROVAL" ]]
+
+# GH#33330: signed withdrawal releases only the withdrawn request.
+build_withdrawal_comment() {
+	local source_request="$1"
+	local withdrawal_payload withdrawal_sig
+	withdrawal_payload=$(jq -cS --arg schema "$PERMISSION_WITHDRAWAL_SCHEMA" --arg issued "$issued_at" '
+		{schema: $schema, authority: "worker-permissions", decision: "withdrawn", target,
+		 request_id, request_sha256, worker, issued_at: $issued}' <<<"$source_request")
+	withdrawal_sig=$(mktemp)
+	_sign_approval_payload "$withdrawal_payload" "$APPROVAL_KEY" "$withdrawal_sig"
+	_build_permission_withdrawal_comment "$withdrawal_payload" "$withdrawal_sig"
+	rm -f "$withdrawal_sig"
+	return 0
+}
+withdrawal_comment=$(build_withdrawal_comment "$request_json")
+jq -cn --arg request "$request_comment" --arg withdrawal "$withdrawal_comment" \
+	'[[{id: 1, author_association: "MEMBER", body: $request},
+	   {id: 5, author_association: "OWNER", body: $withdrawal}]]' >"$comments_file"
+withdrawn_rc=0
+withdrawn=$(cmd_verify_permissions issue 123 owner/repo) || withdrawn_rc=$?
+[[ "$withdrawn" == "WITHDRAWN" && "$withdrawn_rc" -ne 0 ]] || {
+	printf 'withdrawal verified as %s (rc=%s); expected non-success WITHDRAWN\n' "$withdrawn" "$withdrawn_rc" >&2
+	exit 1
+}
+if _dispatch_permission_history_requires_grant 123 owner/repo; then
+	printf 'dispatch remained blocked after a signed withdrawal: %s\n' "${_DISPATCH_PERMISSION_VERIFY_RESULT:-}" >&2
+	exit 1
+fi
+[[ "$_DISPATCH_PERMISSION_VERIFY_RESULT" == "WITHDRAWN" ]]
+
+# A withdrawal replayed against a different request digest is not accepted.
+other_base=$(jq -cS '.created_at = "2026-07-15T00:00:00Z"' <<<"$request_base")
+other_digest=$(_permission_request_digest "$other_base")
+other_request=$(jq -cS --arg id "perm-${other_digest:0:16}" --arg digest "$other_digest" \
+	'. + {request_id: $id, request_sha256: $digest}' <<<"$other_base")
+forged=$(build_withdrawal_comment "$other_request" | sed "s/perm-${other_digest:0:16}/${request_id}/")
+jq -cn --arg request "$request_comment" --arg withdrawal "$forged" \
+	'[[{id: 1, author_association: "MEMBER", body: $request},
+	   {id: 5, author_association: "OWNER", body: $withdrawal}]]' >"$comments_file"
+if _dispatch_permission_history_requires_grant 123 owner/repo; then :; else
+	printf 'dispatch was allowed by a withdrawal bound to another request\n' >&2
+	exit 1
+fi
+[[ "$_DISPATCH_PERMISSION_VERIFY_RESULT" == "MALFORMED_APPROVAL" ]]
+
+# A newer request after the withdrawal still blocks.
+other_comment=$(printf '%s\n~~~json\n%s\n~~~\n' "$PERMISSION_REQUEST_MARKER" "$other_request")
+jq -cn --arg request "$request_comment" --arg withdrawal "$withdrawal_comment" --arg newer "$other_comment" \
+	'[[{id: 1, author_association: "MEMBER", body: $request},
+	   {id: 5, author_association: "OWNER", body: $withdrawal},
+	   {id: 6, author_association: "MEMBER", body: $newer}]]' >"$comments_file"
+if _dispatch_permission_history_requires_grant 123 owner/repo; then :; else
+	printf 'a newer request was released by an older withdrawal\n' >&2
+	exit 1
+fi
+[[ "$_DISPATCH_PERMISSION_VERIFY_RESULT" == "NO_APPROVAL" ]]
+
+# Withdrawal removes only the local grant bound to the withdrawn request.
+grant_path=$(_permission_grant_path owner/repo 123)
+mkdir -p "$(dirname "$grant_path")"
+jq -n --arg payload "$payload" '{payload: $payload, signature: "x"}' >"$grant_path"
+_revoke_local_permission_grant owner/repo 123 "perm-${other_digest:0:16}"
+[[ -f "$grant_path" ]]
+_revoke_local_permission_grant owner/repo 123 "$request_id"
+[[ ! -e "$grant_path" ]]
 
 permission_retry_result=$(bash -c '
 	set -euo pipefail

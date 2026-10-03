@@ -36,7 +36,7 @@ Output: `~/.aidevops/.agent-workspace/work/seo-data/{domain}/`
 
 | Platform | Credential | Env var |
 |----------|------------|---------|
-| GSC | Service account JSON | `GOOGLE_APPLICATION_CREDENTIALS` |
+| GSC | Service account or user ADC JSON at `~/.config/aidevops/gsc-credentials.json` by default | Optional `GOOGLE_APPLICATION_CREDENTIALS`; `GSC_ACCESS_TOKEN` takes precedence |
 | Bing | API key | `BING_WEBMASTER_API_KEY` |
 | Ahrefs | API key | `AHREFS_API_KEY` |
 | DataForSEO | Username/password | `DATAFORSEO_USERNAME`, `DATAFORSEO_PASSWORD` |

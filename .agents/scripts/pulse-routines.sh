@@ -132,6 +132,9 @@ _routine_update_state() {
 		--argjson deferred_until "$deferred_until" '
 		.[$id] = ((.[$id] // {}) + {"last_attempt": $ts, "last_status": $st})
 		| if $st == $success then .[$id].last_run = $ts else . end
+		| if $st == "failure" then .[$id].consecutive_failures = ((.[$id].consecutive_failures // 0) + 1)
+		  elif $st == $success then del(.[$id].consecutive_failures)
+		  else . end
 		| if $st == $deferred then
 			.[$id].deferred_until = ([.[$id].deferred_until // 0, $deferred_until] | max)
 		  else del(.[$id].deferred_until)
@@ -146,19 +149,26 @@ _routine_update_state() {
 }
 
 #######################################
-# Block duplicate active executions and apply an explicit short failure retry
+# Block duplicate active executions and apply an explicit failure retry
 # cooldown without moving the successful calendar boundary marker.
+#
+# Consecutive failures back off exponentially (retry, 2x, 4x ... capped).
+# Running routines are detached before Pulse dispatch, so this gate prevents
+# the next cycle from launching a second runner while the first is active.
 #######################################
 _routine_retry_blocked() {
 	local routine_id="$1"
 	local retry_seconds="${AIDEVOPS_ROUTINE_FAILURE_RETRY_SECONDS:-900}"
+	local retry_max_seconds="${AIDEVOPS_ROUTINE_FAILURE_RETRY_MAX_SECONDS:-21600}"
 	local running_seconds="${AIDEVOPS_ROUTINE_RUNNING_TIMEOUT_SECONDS:-21600}"
 	local status=""
 	local attempt_iso=""
 	local attempt_epoch=0
 	local now_epoch=0
 	local deferred_until=0
+	local failures=0
 	[[ "$retry_seconds" =~ ^[0-9]+$ ]] || retry_seconds=900
+	[[ "$retry_max_seconds" =~ ^[0-9]+$ ]] || retry_max_seconds=21600
 	[[ "$running_seconds" =~ ^[0-9]+$ ]] || running_seconds=21600
 	[[ -f "$ROUTINE_STATE_FILE" ]] || return 1
 	status=$(jq -r --arg id "$routine_id" '.[$id].last_status // empty' "$ROUTINE_STATE_FILE" 2>/dev/null || true)
@@ -168,7 +178,16 @@ _routine_retry_blocked() {
 	now_epoch=$(_routine_now_epoch)
 	case "$status" in
 	running) [[ $((now_epoch - attempt_epoch)) -lt "$running_seconds" ]] ;;
-	failure) [[ $((now_epoch - attempt_epoch)) -lt "$retry_seconds" ]] ;;
+	failure)
+		failures=$(jq -r --arg id "$routine_id" '.[$id].consecutive_failures // 1' "$ROUTINE_STATE_FILE" 2>/dev/null || true)
+		[[ "$failures" =~ ^[0-9]+$ && "$failures" -ge 1 ]] || failures=1
+		while [[ "$failures" -gt 1 && "$retry_seconds" -lt "$retry_max_seconds" ]]; do
+			retry_seconds=$((retry_seconds * 2))
+			failures=$((failures - 1))
+		done
+		[[ "$retry_seconds" -le "$retry_max_seconds" || "$retry_max_seconds" -eq 0 ]] || retry_seconds="$retry_max_seconds"
+		[[ $((now_epoch - attempt_epoch)) -lt "$retry_seconds" ]]
+		;;
 	deferred)
 		deferred_until=$(jq -r --arg id "$routine_id" '.[$id].deferred_until // 0' "$ROUTINE_STATE_FILE" 2>/dev/null || true)
 		[[ "$deferred_until" =~ ^[0-9]+$ && "$now_epoch" -lt "$deferred_until" ]]
@@ -247,9 +266,84 @@ _routine_dispatch_agent() {
 }
 
 #######################################
-# Execute a single routine. Script routines finish synchronously; agent
-# routines detach a wrapper that waits for the headless process before logging
-# a terminal result.
+# Run one validated script routine outside Pulse's process group, then record
+# its terminal lifecycle state. The per-routine mkdir lock protects the small
+# window between recording `running` and a detached child starting.
+#######################################
+_routine_run_detached_script() {
+	local routine_id="$1"
+	local script_path="$2"
+	local repo_path="$3"
+	shift 3
+	local started_epoch="$1"
+	shift
+	local lock_dir="${ROUTINE_STATE_FILE}.${routine_id}.runner"
+	local status="$_ROUTINE_STATUS_SUCCESS"
+	local exit_code=0
+	local deferred_until=0
+
+	if ! mkdir "$lock_dir" 2>/dev/null; then
+		echo "[pulse-wrapper] routine ${routine_id}: detached runner already active" >>"$LOGFILE"
+		return 0
+	fi
+	trap 'rmdir "$lock_dir" 2>/dev/null || true' EXIT
+	if [[ "$#" -gt 0 ]]; then
+		(cd "$repo_path" && "$script_path" "$@") >>"$LOGFILE" 2>&1 || exit_code=$?
+	else
+		(cd "$repo_path" && "$script_path") >>"$LOGFILE" 2>&1 || exit_code=$?
+	fi
+	if [[ "$exit_code" -eq "$_ROUTINE_TEMPFAIL_EXIT" ]]; then
+		status="$_ROUTINE_STATUS_DEFERRED"
+		deferred_until=$(_routine_deferred_until "$routine_id")
+		echo "[pulse-wrapper] routine ${routine_id}: deferred by GitHub API cooldown until epoch ${deferred_until}" >>"$LOGFILE"
+	elif [[ "$exit_code" -ne 0 ]]; then
+		status="$_ROUTINE_STATUS_FAILURE"
+		echo "[pulse-wrapper] routine ${routine_id}: script exited with code ${exit_code}" >>"$LOGFILE"
+	else
+		echo "[pulse-wrapper] routine ${routine_id}: script completed successfully" >>"$LOGFILE"
+	fi
+	_routine_finalize_terminal "$routine_id" "$status" "$started_epoch" "" "$deferred_until"
+	return 0
+}
+
+_routine_dispatch_script() {
+	local routine_id="$1"
+	local script_path="$2"
+	local repo_path="$3"
+	shift 3
+	local started_epoch="$1"
+	shift
+	local module_path="${BASH_SOURCE[0]}"
+	local runner_log="${LOGFILE}.routine-${routine_id}.log"
+
+	_routine_update_state "$routine_id" "running"
+	_routine_record_lifecycle "$routine_id" "running" 0
+	export LOGFILE ROUTINE_STATE_FILE ROUTINE_LOG_HELPER
+	if command -v setsid >/dev/null 2>&1; then
+		# shellcheck disable=SC2016 # The child shell must expand its own positional arguments.
+		setsid nohup bash -c 'source "$1" && shift && _routine_run_detached_script "$@"' \
+			_ "$module_path" "$routine_id" "$script_path" "$repo_path" "$started_epoch" "$@" \
+			</dev/null >>"$runner_log" 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
+	elif command -v perl >/dev/null 2>&1; then
+		perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV or exit 127' nohup bash -c \
+			'source "$1" && shift && _routine_run_detached_script "$@"' \
+			_ "$module_path" "$routine_id" "$script_path" "$repo_path" "$started_epoch" "$@" \
+			</dev/null >>"$runner_log" 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
+	else
+		# shellcheck disable=SC2016 # The child shell must expand its own positional arguments.
+		nohup bash -c 'source "$1" && shift && _routine_run_detached_script "$@"' \
+			_ "$module_path" "$routine_id" "$script_path" "$repo_path" "$started_epoch" "$@" \
+			</dev/null >>"$runner_log" 2>&1 &
+	fi
+	local runner_pid=$!
+	disown "$runner_pid" 2>/dev/null || true
+	echo "[pulse-wrapper] routine ${routine_id}: detached script runner pid ${runner_pid}" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
+# Execute a single routine. Script and agent routines detach wrappers that
+# record their terminal result without delaying Pulse's first dispatch pass.
 #######################################
 _routine_execute() {
 	local routine_id="$1"
@@ -282,23 +376,12 @@ _routine_execute() {
 		# variable. Keep the zero-argument path separate instead of expanding it.
 		if [[ "${#run_parts[@]}" -gt 1 ]]; then
 			local script_args=("${run_parts[@]:1}")
-			echo "[pulse-wrapper] routine ${routine_id}: executing script ${script_path} ${script_args[*]}" >>"$LOGFILE"
-			(cd "$repo_path" && "$script_path" "${script_args[@]}") >>"$LOGFILE" 2>&1 || exit_code=$?
+			echo "[pulse-wrapper] routine ${routine_id}: dispatching script ${script_path} ${script_args[*]}" >>"$LOGFILE"
+			_routine_dispatch_script "$routine_id" "$script_path" "$repo_path" "$started_epoch" "${script_args[@]}"
 		else
-			echo "[pulse-wrapper] routine ${routine_id}: executing script ${script_path}" >>"$LOGFILE"
-			(cd "$repo_path" && "$script_path") >>"$LOGFILE" 2>&1 || exit_code=$?
+			echo "[pulse-wrapper] routine ${routine_id}: dispatching script ${script_path}" >>"$LOGFILE"
+			_routine_dispatch_script "$routine_id" "$script_path" "$repo_path" "$started_epoch"
 		fi
-		if [[ "$exit_code" -eq "$_ROUTINE_TEMPFAIL_EXIT" ]]; then
-			status="$_ROUTINE_STATUS_DEFERRED"
-			deferred_until=$(_routine_deferred_until "$routine_id")
-			echo "[pulse-wrapper] routine ${routine_id}: deferred by GitHub API cooldown until epoch ${deferred_until}" >>"$LOGFILE"
-		elif [[ "$exit_code" -ne 0 ]]; then
-			status="$_ROUTINE_STATUS_FAILURE"
-			echo "[pulse-wrapper] routine ${routine_id}: script exited with code ${exit_code}" >>"$LOGFILE"
-		else
-			echo "[pulse-wrapper] routine ${routine_id}: script completed successfully" >>"$LOGFILE"
-		fi
-		_routine_finalize_terminal "$routine_id" "$status" "$started_epoch" "" "$deferred_until"
 		return 0
 	fi
 
@@ -666,6 +749,35 @@ _evaluate_session_miner_routine() {
 }
 
 #######################################
+# Evaluate the framework-managed issue/PR discussion archive (t18571). One
+# pulse host is the single writer; the helper itself selects pulse-enabled
+# registered repos and honours the per-repo `issue_archive: false` opt-out.
+# AIDEVOPS_ISSUE_ARCHIVE_ENABLED=0 disables the routine on this host.
+#######################################
+_evaluate_issue_archive_routine() {
+	local routine_id="r-issue-archive"
+	local schedule="${AIDEVOPS_ISSUE_ARCHIVE_SCHEDULE:-daily(@05:20)}"
+	local last_epoch=0
+	if [[ "${AIDEVOPS_ISSUE_ARCHIVE_ENABLED:-1}" == "0" ]]; then
+		return 0
+	fi
+	if _routine_retry_blocked "$routine_id"; then
+		return 0
+	fi
+	last_epoch=$(_routine_last_run_epoch "$routine_id")
+	if ! _routine_schedule_is_due "$schedule" "$last_epoch" ""; then
+		return 0
+	fi
+	if ! _routine_rest_core_allows_next "routine_execute:${routine_id}"; then
+		return 0
+	fi
+	echo "[pulse-wrapper] routine ${routine_id} is due (expr=${schedule}, last_run_epoch=${last_epoch})" >>"$LOGFILE"
+	_routine_execute "$routine_id" "Archive issue and PR discussions to orphan branch" \
+		"scripts/issue-archive-helper.sh run" "" "$PULSE_DIR"
+	return $?
+}
+
+#######################################
 # Evaluate routines across all pulse-enabled repos
 #
 # Reads TODO.md from each pulse-enabled repo, extracts enabled routines
@@ -690,6 +802,7 @@ evaluate_routines() {
 		return 0
 	fi
 	_evaluate_session_miner_routine
+	_evaluate_issue_archive_routine
 
 	local routines_dispatched=0
 	local _routine_slug repo_path

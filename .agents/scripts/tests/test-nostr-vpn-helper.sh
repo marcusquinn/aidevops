@@ -219,6 +219,171 @@ test_privacy_guide_mentions_limits_and_companions() {
 	return 0
 }
 
+# Stub the app-managed root helper: `install-cli` writes a matching CLI stub.
+write_nvpn_app_helper_stub() {
+	local helper_path="$1"
+	mkdir -p "$(dirname "$helper_path")"
+	cat >"$helper_path" <<'EOF_HELPER'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-}" in
+version) printf '4.1.16\n' ;;
+update) printf '{"available":false,"current_version":"4.1.16","latest_version":"4.1.16"}\n' ;;
+status) printf 'endpoint: 192.0.2.10:51820\nlisten_port: 51820\n' ;;
+install-cli)
+	dest="$3"
+	cp "$0" "$dest"
+	chmod +x "$dest"
+	;;
+*) exit 2 ;;
+esac
+EOF_HELPER
+	chmod +x "$helper_path"
+	return 0
+}
+
+run_nvpn_update_sandbox() {
+	local stub_bin="${TEST_ROOT}/bin"
+	mkdir -p "$stub_bin"
+	write_nvpn_app_helper_stub "${TEST_ROOT}/helper/to.nostrvpn.nvpn"
+	cat >"${stub_bin}/netbird" <<'EOF_NETBIRD'
+#!/usr/bin/env bash
+printf 'Wireguard port: 51820\n'
+EOF_NETBIRD
+	chmod +x "${stub_bin}/netbird"
+	PATH="${stub_bin}:/usr/bin:/bin" \
+		NVPN_APP_HELPER="${TEST_ROOT}/helper/to.nostrvpn.nvpn" \
+		NVPN_APP_PATH="${TEST_ROOT}/missing.app" \
+		NVPN_CLI_PATH="${stub_bin}/nvpn" \
+		LEGACY_FIPS_PLIST="${TEST_ROOT}/missing.plist" \
+		LEGACY_FIPS_PREFIX="${TEST_ROOT}/missing-prefix" \
+		LEGACY_FIPS_RESOLVER="${TEST_ROOT}/missing-resolver" \
+		bash "$HELPER_SCRIPT" update "$@"
+	return $?
+}
+
+test_update_installs_cli_matching_app_daemon() {
+	local output=""
+	output="$(run_nvpn_update_sandbox 2>&1)" || true
+	if [[ "$output" == *"OK: installed nvpn CLI 4.1.16"* && -x "${TEST_ROOT}/bin/nvpn" && "$output" == *"OK: Nostr VPN app is current"* ]]; then
+		print_result "update installs nvpn CLI matching app daemon" 0
+		return 0
+	fi
+	print_result "update installs nvpn CLI matching app daemon" 1 "$output"
+	return 0
+}
+
+test_update_reports_netbird_port_conflict() {
+	local output=""
+	output="$(run_nvpn_update_sandbox --check 2>&1)" || true
+	if [[ "$output" == *"CONFLICT: nvpn and NetBird both use UDP 51820"* && "$output" == *"--listen-port 51821"* ]]; then
+		print_result "update reports NetBird port conflict" 0
+		return 0
+	fi
+	print_result "update reports NetBird port conflict" 1 "$output"
+	return 0
+}
+
+SELF_NPUB="npub1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
+PEER_NPUB="npub1pppppppppppppppppppppppppppppppppppppppppppppppppppppppppp"
+
+# Enrollment sandbox: stub nvpn records its argv; config lives in TEST_ROOT.
+run_enroll() {
+	local sandbox="${TEST_ROOT}/enroll"
+	mkdir -p "${sandbox}/bin"
+	cat >"${sandbox}/bin/nvpn" <<EOF_NVPN
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"${sandbox}/nvpn-args.log"
+case "\${1:-}" in
+status) printf 'network: 68e236aa\ndevice_id=${SELF_NPUB}\n' ;;
+esac
+exit 0
+EOF_NVPN
+	chmod +x "${sandbox}/bin/nvpn"
+	PATH="${sandbox}/bin:/usr/bin:/bin" \
+		NVPN_CONFIG_PATH="${sandbox}/config.toml" \
+		NVPN_APP_HELPER="${sandbox}/missing-helper" \
+		NVPN_CLI_PATH="${sandbox}/bin/nvpn" \
+		bash "$HELPER_SCRIPT" "$@"
+	return $?
+}
+
+write_enroll_config() {
+	local body="$1"
+	mkdir -p "${TEST_ROOT}/enroll"
+	printf '%s' "$body" >"${TEST_ROOT}/enroll/config.toml"
+	rm -f "${TEST_ROOT}/enroll/nvpn-args.log"
+	return 0
+}
+
+test_set_alias_replaces_within_section() {
+	local config=""
+	write_enroll_config "$(printf 'node_name = "x"\n\n[peer_aliases]\n%s = "old"\n\n[nat]\nenabled = true\n' "$PEER_NPUB")"
+	run_enroll set-alias "$PEER_NPUB" "Mac Mini!!" >/dev/null 2>&1 || true
+	config="$(<"${TEST_ROOT}/enroll/config.toml")"
+	if [[ "$config" == *"${PEER_NPUB} = \"mac-mini\""* && "$config" != *'"old"'* &&
+		"$config" == *"[nat]"$'\n'"enabled = true"* && -f "${TEST_ROOT}/enroll/config.toml.bak-aidevops" ]] &&
+		grep -q '^reload' "${TEST_ROOT}/enroll/nvpn-args.log"; then
+		print_result "set-alias replaces alias in section, normalises, backs up, reloads" 0
+		return 0
+	fi
+	print_result "set-alias replaces alias in section, normalises, backs up, reloads" 1 "$config"
+	return 0
+}
+
+test_set_alias_self_creates_section() {
+	local config=""
+	write_enroll_config "$(printf 'node_name = "x"\n\n[nat]\nenabled = true\n')"
+	run_enroll set-alias self macbook >/dev/null 2>&1 || true
+	config="$(<"${TEST_ROOT}/enroll/config.toml")"
+	if [[ "$config" == *"[peer_aliases]"$'\n'"${SELF_NPUB} = \"macbook\""* ]]; then
+		print_result "set-alias self creates [peer_aliases] with own npub" 0
+		return 0
+	fi
+	print_result "set-alias self creates [peer_aliases] with own npub" 1 "$config"
+	return 0
+}
+
+test_set_alias_rejects_invalid_npub() {
+	local before="node_name = \"x\"\n"
+	local rc=0
+	write_enroll_config "$before"
+	run_enroll set-alias npub1bogus mini >/dev/null 2>&1 || rc=$?
+	if [[ "$rc" -ne 0 && "$(<"${TEST_ROOT}/enroll/config.toml")" == "$before" ]]; then
+		print_result "set-alias rejects invalid npub without touching config" 0
+		return 0
+	fi
+	print_result "set-alias rejects invalid npub without touching config" 1 "rc=${rc}"
+	return 0
+}
+
+test_direct_only_rejects_cgnat_and_sets_flags() {
+	local rc=0
+	local args=""
+	write_enroll_config "x"
+	run_enroll direct-only "${PEER_NPUB}=100.64.0.10:51821" >/dev/null 2>&1 || rc=$?
+	run_enroll direct-only "${PEER_NPUB}=192.168.1.20:51821" >/dev/null 2>&1 || true
+	args="$(cat "${TEST_ROOT}/enroll/nvpn-args.log" 2>/dev/null || true)"
+	if [[ "$rc" -ne 0 && "$args" == *"--fips-bootstrap-enabled false --fips-nostr-discovery-enabled false --fips-peer-endpoint ${PEER_NPUB}=192.168.1.20:51821"* && "$args" != *"100.64.0.10"* ]]; then
+		print_result "direct-only rejects CGNAT hints and disables bootstrap/discovery" 0
+		return 0
+	fi
+	print_result "direct-only rejects CGNAT hints and disables bootstrap/discovery" 1 "rc=${rc} args=${args}"
+	return 0
+}
+
+test_aliases_exports_set_alias_commands() {
+	local output=""
+	write_enroll_config "$(printf '[peer_aliases]\n%s = "mini"\n' "$PEER_NPUB")"
+	output="$(run_enroll aliases 2>&1)" || true
+	if [[ "$output" == *"nostr-vpn-helper.sh set-alias ${PEER_NPUB} mini"* ]]; then
+		print_result "aliases exports set-alias commands" 0
+		return 0
+	fi
+	print_result "aliases exports set-alias commands" 1 "$output"
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -233,6 +398,13 @@ main() {
 	test_safe_posture_mentions_disable_and_default_open
 	test_opencode_guide_mentions_aidevops_services
 	test_privacy_guide_mentions_limits_and_companions
+	test_update_installs_cli_matching_app_daemon
+	test_update_reports_netbird_port_conflict
+	test_set_alias_replaces_within_section
+	test_set_alias_self_creates_section
+	test_set_alias_rejects_invalid_npub
+	test_direct_only_rejects_cgnat_and_sets_flags
+	test_aliases_exports_set_alias_commands
 
 	printf '\nTests run: %d\n' "$TESTS_RUN"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

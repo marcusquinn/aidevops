@@ -1,48 +1,24 @@
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Cloudflare Queues
 
-Flexible message queuing for async task processing with at-least-once delivery. Supports push-based (Worker) and pull-based (HTTP) consumers, configurable batching/retries, Dead Letter Queues (DLQ), and delays up to 12 hours.
+Use Queues to decouple producers from asynchronous consumers and buffer bursts of work. Design consumers for duplicate delivery; use Workflows when the task needs durable multi-step orchestration.
 
-**Use cases:** Async processing, API buffering, rate limiting, event workflows, deferred jobs
+Fetch the relevant documentation below before implementing. Treat current Cloudflare docs as the source of truth for API signatures, acknowledgement semantics, configuration, limits, and pricing.
 
-## Quick Start
+## Choose a consumer
 
-```bash
-wrangler queues create my-queue
-wrangler queues consumer add my-queue my-worker
-```
+- Use a Worker push consumer when processing runs on Workers.
+- Use an HTTP pull consumer when processing runs in another environment; plan for polling, visibility timeouts, and acknowledgement leases.
+- Choose a message encoding the consumer can decode. Check serialization and compatibility-date behavior before sending existing application objects.
 
-```typescript
-// Producer
-await env.MY_QUEUE.send({ userId: 123, action: 'notify' });
+See [How Queues works](https://developers.cloudflare.com/queues/reference/how-queues-works/index.md) and [delivery guarantees](https://developers.cloudflare.com/queues/reference/delivery-guarantees/index.md) before choosing ordering or deduplication strategies.
 
-// Consumer
-export default {
-  async queue(batch: MessageBatch, env: Env): Promise<void> {
-    for (const msg of batch.messages) {
-      await process(msg.body);
-      msg.ack();
-    }
-  }
-};
-```
+## Read by task
 
-## Core Operations
+| Task | Reference |
+|------|-----------|
+| Create queues, bind producers, and configure consumers | [configuration.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/queues/configuration.md) |
+| Send messages and implement acknowledgement or retries | [api.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/queues/api.md) |
+| Buffer APIs, defer jobs, or integrate with storage and orchestration | [patterns.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/queues/patterns.md) |
+| Diagnose delivery failures, duplicates, or capacity issues | [gotchas.md](queues-gotchas.md) |
 
-| Operation | Purpose | Limit |
-|-----------|---------|-------|
-| `send(body, options?)` | Publish message | 128 KB |
-| `sendBatch(messages)` | Bulk publish | 100 msgs/256 KB |
-| `message.ack()` | Acknowledge success | - |
-| `message.retry(options?)` | Retry with delay | - |
-| `batch.ackAll()` | Ack entire batch | - |
-
-## See Also
-
-- [queues-patterns.md](./queues-patterns.md) — async tasks, buffering, rate limiting, fan-out, event workflows, DLQ
-- [queues-gotchas.md](./queues-gotchas.md) — idempotency, retry limits, content types, cost optimization, limits
-- [workers.md](./workers.md) — Worker runtime for producers/consumers
-- [r2.md](./r2.md) — process R2 event notifications via queues
-- [d1.md](./d1.md) — batch write to D1 from queue consumers
+For a first application, fetch [Getting started](https://developers.cloudflare.com/queues/get-started/index.md). Retrieve [limits](https://developers.cloudflare.com/queues/platform/limits/index.md) and [pricing](https://developers.cloudflare.com/queues/platform/pricing/index.md) before sizing throughput, retention, or cost; plan-specific values are not maintained here.

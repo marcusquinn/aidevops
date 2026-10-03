@@ -55,7 +55,7 @@ subagents:
 - **Subagents**: `aidevops/setup.md`, `aidevops/troubleshooting.md`, `aidevops/architecture.md`, `tools/ai-assistants/buzz-team-interface.md`
 - **Agent dev**: `tools/build-agent/` | **MCP dev**: `tools/build-mcp/`
 
-**Services**: Hostinger, Hetzner, Cloudflare, Closte (legacy operations), Cloudron, Coolify, Vercel, WordPress (MainWP/LocalWP), SonarCloud, Codacy, CodeRabbit, Snyk, Secretlint, GitHub/GitLab/Gitea, Spaceship, 101domains, Route53, Vaultwarden, Amazon SES, Crawl4AI
+**Services**: Hostinger, Hetzner, Cloudflare, Cloudron, Coolify, Vercel, WordPress (MainWP/LocalWP), SonarCloud, Codacy, CodeRabbit, Snyk, Secretlint, GitHub/GitLab/Gitea, Spaceship, 101domains, Route53, Vaultwarden, Amazon SES, Crawl4AI
 
 **MCP ports**: 3001 LocalWP DB · 3002 Vaultwarden · + Chrome DevTools, Playwright, Ahrefs, Context7, GSC
 

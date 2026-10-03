@@ -10,7 +10,7 @@ model: simple
 
 # Platform Persona Adaptations
 
-Base voice: `context/brand-identity.toon`, then `context/brand-voice.md` or the product brief. Use `content/guidelines.md` for screen layout, not as a substitute for brand evidence. See `tools/design/brand-identity.md`.
+Base voice: `context/brand-identity.toon`, then `context/brand-voice.md` or the product brief. Titles, tags, hashtags and profile keywords come from `aidevops keywords brief --asset social` (`seo/keywords-standard.md`). Use `content/guidelines.md` for screen layout, not as a substitute for brand evidence. See `tools/design/brand-identity.md`.
 
 **Workflow**: establish core voice → apply platform shift below → identity constant, delivery changes.
 

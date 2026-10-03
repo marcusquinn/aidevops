@@ -60,7 +60,7 @@ import {
   rememberRoutingFeedback,
 } from "./observability-routing.mjs";
 import { normalizeProviderError } from "./provider-error-diagnostics.mjs";
-import { requestProvenance } from "./observability-provenance.mjs";
+import { requestProvenance, runtimeProvenance } from "./observability-provenance.mjs";
 
 const HOME = homedir();
 const DEFAULT_OBS_DIR = join(HOME, ".aidevops", ".agent-workspace", "observability");
@@ -156,6 +156,7 @@ function _runDataMigrations(options = {}) {
       ["pricing_version", "TEXT"],
     ]);
   }
+  migrateColumns("llm_requests", [["ab_experiment", "TEXT"], ["ab_arm", "TEXT"]]);
   if (!options.provenanceColumnsReady) {
     migrateColumns("llm_requests", [
       ["requested_effort", "TEXT"], ["resolved_effort", "TEXT"], ["observed_effort", "TEXT"],
@@ -221,26 +222,39 @@ const partStreamSummaries = new PartStreamSummaryTracker();
  */
 let dbReady = false;
 let aidevopsVersion = "";
-
-function normalizedAidevopsVersion(value) {
-  const version = String(value || "").trim().replace(/^v/, "");
-  return /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(version) ? version : "";
-}
+let runtime = {};
 
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
+/** Consume captured V2 step metadata into the existing OC1 recording contract. */
+export function consumeV2Completion(event, started, key) {
+  const begin = started.get(key);
+  const data = event?.data;
+  const recordable = [event?.type === "session.step.ended", begin?.data?.model,
+    data?.sessionID, data?.assistantMessageID, data?.tokens,
+    Number.isFinite(begin?.created), Number.isFinite(event?.created)].every(Boolean);
+  if (!recordable) return null;
+  started.delete(key);
+  return { type: "message.updated", properties: { info: {
+    id: data.assistantMessageID, sessionID: data.sessionID, role: "assistant",
+    providerID: begin.data.model.providerID, modelID: begin.data.model.id,
+    agent: begin.data.agent, variant: begin.data.model.variant,
+    tokens: data.tokens, cost: data.cost, finish: data.finish,
+    time: { created: begin.created, completed: event.created },
+  } } };
+}
+
 /**
  * Initialise the observability system.
  * Call once at plugin startup.
- * @param {{ aidevopsVersion?: string }} [options]
+ * @param {{ aidevopsVersion?: string, runtimeVersion?: string, adapterId?: string }} [options]
  * @returns {boolean} Whether initialisation succeeded
  */
 export function initObservability(options = {}) {
-  aidevopsVersion = normalizedAidevopsVersion(
-    options.aidevopsVersion || process.env.AIDEVOPS_VERSION,
-  );
+  runtime = runtimeProvenance(options);
+  aidevopsVersion = runtime.aidevopsVersion;
   dbReady = initDatabase();
   if (dbReady) {
     console.error("[aidevops] Observability: SQLite DB ready at " + DB_PATH);
@@ -379,6 +393,8 @@ function handleMessageUpdated(event, context = {}) {
     routing_reason: routing.reason || null,
     routing_escalated: routing.escalated === 1,
     routing_population: routing.population,
+    ab_experiment: routing.ab_experiment || null,
+    ab_arm: routing.ab_arm || null,
     aidevops_version: aidevopsVersion || null,
     pricing_version: PRICING_VERSION,
   }, context);
@@ -404,7 +420,7 @@ function handleMessageUpdated(event, context = {}) {
   // Calculate cost from tokens — OpenCode does not provide msg.cost
   const pricing = getPricingProvenance(msg.modelID);
   const cost = calculateCost(msg.tokens, msg.modelID);
-  const provenance = requestProvenance(msg, routing, pricing);
+  const provenance = requestProvenance(msg, routing, pricing, runtime);
   rememberRoutingFeedback(msg, routing, cost, errorType, aidevopsVersion, PRICING_VERSION);
 
   const sql = `INSERT INTO llm_requests (
@@ -414,7 +430,7 @@ function handleMessageUpdated(event, context = {}) {
     cost, duration_ms, finish_reason, error_type, error_message,
     tool_call_count, project_path, variant, parent_session_id,
     routing_tier, routing_candidate_index, routing_attempt, routing_reason,
-    routing_escalated, routing_population, aidevops_version, pricing_version,
+    routing_escalated, routing_population, aidevops_version, pricing_version, ab_experiment, ab_arm,
     requested_effort, resolved_effort, observed_effort, effort_source, provider_confirmed_effort,
     requested_model, observed_model, runtime_name, runtime_version, adapter_version,
     policy_fingerprint, billing_mode, cost_source, pricing_quality
@@ -447,6 +463,8 @@ function handleMessageUpdated(event, context = {}) {
     ${sqlEscape(routing.population)},
     ${sqlEscape(aidevopsVersion || null)},
     ${sqlEscape(PRICING_VERSION)},
+    ${sqlEscape(routing.ab_experiment || null)},
+    ${sqlEscape(routing.ab_arm || null)},
     ${sqlEscape(provenance.requested_effort)}, ${sqlEscape(provenance.resolved_effort)},
     ${sqlEscape(provenance.observed_effort)}, ${sqlEscape(provenance.effort_source)},
     ${sqlEscape(provenance.provider_confirmed_effort)}, ${sqlEscape(provenance.requested_model)},

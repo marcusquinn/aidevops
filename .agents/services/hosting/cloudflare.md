@@ -20,8 +20,8 @@ tools:
 
 | Intent | Resource |
 |--------|----------|
-| **Manage/configure** Cloudflare resources (DNS, WAF, DDoS, R2, Workers, zones, rules) | `.agents/tools/mcp/cloudflare-code-mode.md` — Code Mode MCP (2,500+ endpoints, live OpenAPI) |
-| **Build/develop** on the Cloudflare platform (Workers, Pages, D1, KV, Durable Objects, AI) | [`cloudflare-platform-skill.md`](cloudflare-platform-skill.md) — patterns, gotchas, decision trees, SDK usage |
+| **Manage/configure** Cloudflare resources (DNS, WAF, DDoS, R2, Workers, zones, rules) | `.agents/tools/api/cloudflare-cf-cli.md` — `cf` CLI (full API, JSON output, `cf cli search`) when installed; otherwise `.agents/tools/mcp/cloudflare-code-mode.md` — Code Mode MCP |
+| **Build/develop** on the Cloudflare platform (Workers, Pages, D1, KV, Durable Objects, AI) | [`cloudflare-platform-skill.md`](cloudflare-platform-skill.md) — patterns, gotchas, decision trees, SDK usage; project commands (`cf init/dev/deploy/migrate`) in `.agents/tools/api/cloudflare-cf-cli.md` |
 | **Auth/token setup** for API access | This file (below) |
 
 <!-- AI-CONTEXT-START -->
@@ -40,6 +40,7 @@ tools:
 - **API test**: `curl -X GET "https://api.cloudflare.com/client/v4/zones" -H "Authorization: Bearer TOKEN"`
 - **Security**: IP filtering, expiration dates, minimal permissions
 - **Rotation**: Every 6-12 months or after team changes
+- **cf CLI**: `.agents/tools/api/cloudflare-cf-cli.md` (open beta; reads `CLOUDFLARE_API_TOKEN`)
 - **Code Mode MCP**: `.agents/tools/mcp/cloudflare-code-mode.md` (operations via 2,500+ endpoints)
 - **Crawler policy default**: Prefer allowing crawlers unless the user or site policy explicitly requires blocking; preserve search discovery by keeping mixed-purpose crawlers allowed
 

@@ -6,6 +6,9 @@ import { test } from "node:test";
 import plugin, {
   computeTerminalTitle,
   createTerminalTitleSync,
+  createTabbyRecoverySync,
+  createVersionReader,
+  isTabbyRecoveryEnabled,
   resolveSessionTitleStatus,
   setupTerminalTitle,
 } from "../v2-plugin/tui.mjs";
@@ -32,6 +35,32 @@ function fakeApi({ route = { type: "session", sessionID: "root" }, status = {}, 
   };
 }
 
+test("V2 TUI records one Tabby recovery marker per routed root session (GH#32700)", () => {
+  assert.equal(isTabbyRecoveryEnabled({ AIDEVOPS_TABBY_V2_RECOVERY: "1", XDG_DATA_HOME: "/v2" }), true);
+  assert.equal(isTabbyRecoveryEnabled({ AIDEVOPS_TABBY_V2_RECOVERY: "0", XDG_DATA_HOME: "/v2" }), false);
+  assert.equal(isTabbyRecoveryEnabled({ AIDEVOPS_TABBY_V2_RECOVERY: "1" }), false);
+
+  const api = fakeApi({ route: { type: "session", sessionID: "child" } });
+  let directory;
+  api.data.session.get = (id) => (id === "root" && directory ? { id, location: { directory } } : undefined);
+  const markers = [];
+  const reported = [];
+  const sync = createTabbyRecoverySync(api, {
+    env: { XDG_DATA_HOME: "/v2" },
+    workDir: "/work",
+    writeMarker: (marker) => markers.push(marker) && `/work/marker/${marker.sessionID}`,
+    writeDirectory: (path) => reported.push(path),
+  });
+  assert.equal(sync(), false, "unsynced session data is retried later");
+  directory = "/repo";
+  assert.equal(sync(), true);
+  assert.equal(sync(), false, "an unchanged root session is not rewritten");
+  assert.deepEqual(markers, [{ sessionID: "root", directory: "/repo", dataDir: "/v2", workDir: "/work", runtime: "v2" }]);
+  assert.deepEqual(reported, ["/work/marker/root"]);
+  api.state.route = { type: "home" };
+  assert.equal(sync(), false, "home keeps the last session marker");
+});
+
 test("V2 TUI plugin module satisfies the OpenCode V2 TUI contract", () => {
   assert.equal(typeof plugin.id, "string");
   assert.ok(plugin.id.length > 0);
@@ -53,6 +82,38 @@ test("V2 TUI title decorates root session titles and leaves plugin routes alone"
   assert.equal(computeTerminalTitle(fakeApi({ title: "x".repeat(60) })), `🟢 ${"x".repeat(37)}…`);
   assert.equal(computeTerminalTitle(fakeApi({ route: { type: "home" } })), "OpenCode");
   assert.equal(computeTerminalTitle(fakeApi({ route: { type: "plugin", name: "p" } })), "");
+});
+
+test("V2 TUI title appends the AIDevOps version like V1 session titles", () => {
+  assert.equal(computeTerminalTitle(fakeApi(), "3.37.2"), "🟢 Fix tabs · AIDevOps 3.37.2");
+  assert.equal(computeTerminalTitle(fakeApi({ title: "Old · AIDevOps 3.1.0" }), "3.37.2"), "🟢 Old · AIDevOps 3.37.2");
+  assert.equal(computeTerminalTitle(fakeApi({ route: { type: "home" } }), "3.37.2"), "OpenCode · AIDevOps 3.37.2");
+  assert.equal(computeTerminalTitle(fakeApi({ route: { type: "plugin", name: "p" } }), "3.37.2"), "");
+});
+
+test("V2 TUI version reader caches reads and keeps the last value on failure", () => {
+  let clock = 0;
+  let reads = 0;
+  let fail = false;
+  const getVersion = createVersionReader({
+    agentsDir: "/unused",
+    now: () => clock,
+    cacheMs: 1000,
+    readVersion: () => {
+      reads += 1;
+      if (fail) throw new Error("unreadable");
+      return `3.37.${reads}`;
+    },
+  });
+  assert.equal(getVersion(), "3.37.1");
+  clock = 500;
+  assert.equal(getVersion(), "3.37.1");
+  clock = 1000;
+  assert.equal(getVersion(), "3.37.2");
+  fail = true;
+  clock = 2000;
+  assert.equal(getVersion(), "3.37.2");
+  assert.equal(reads, 3);
 });
 
 test("V2 TUI title sync writes on change, refreshes after native overwrites, and yields to native ownership", () => {
@@ -86,8 +147,8 @@ test("V2 TUI setup polls with an unref'd timer and returns cleanup", () => {
     },
     clearInterval: () => { calls.clear += 1; },
   };
-  const cleanup = setupTerminalTitle(api, { env: OWNED_ENV, pollMs: 50, timers });
-  assert.deepEqual(api.writes, ["🟢 Fix tabs"]);
+  const cleanup = setupTerminalTitle(api, { env: OWNED_ENV, pollMs: 50, timers, getVersion: () => "3.37.2" });
+  assert.deepEqual(api.writes, ["🟢 Fix tabs · AIDevOps 3.37.2"]);
   cleanup();
   assert.deepEqual(calls, { set: 1, clear: 1, unref: 1 });
   assert.equal(setupTerminalTitle(fakeApi(), { env: { AIDEVOPS_TERMINAL_TITLE_OWNER: "native" }, timers }), undefined);

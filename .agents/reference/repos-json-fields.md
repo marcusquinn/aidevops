@@ -38,7 +38,7 @@ always preserved.
 - `standard`: adds DESIGN.md, MODELS.md, collaborator pointers, README.md
 - `public`: adds LICENCE, CHANGELOG.md, CONTRIBUTING.md, SECURITY.md, CODE_OF_CONDUCT.md
 
-Auto-inferred when absent: `local_only`/no-remote → `minimal`; others → `standard`. Stored in `.aidevops.json` per project. Preserved on re-registration.
+Auto-inferred when absent: `local_only`/no-remote → `minimal`; a GitHub remote reporting `PUBLIC` via `gh repo view` → `public`; private or unknown visibility → `standard`. An explicit scope on the canonical main-worktree entry in `repos.json` also applies in linked worktrees. Stored in `.aidevops.json` per project. Preserved on re-registration.
 
 Repository-native verification policy lives in `.aidevops.json.features.code_quality`
 and `.aidevops.json.verify`. `aidevops lint audit` reports registration/config
@@ -48,6 +48,18 @@ configuration on canonical `main`/`master`; tracked changes require a linked-wor
 ### `has_interface` detail
 
 `aidevops init` records this field in `.aidevops.json` and mirrors it into `repos.json` during registration. When absent, design helpers infer it from UI markers such as Next/Vite/Nuxt/Astro/Svelte config, React/Vue/Svelte entry files, view templates, frontend/client/web directories, or UI dependencies. Minimal-scope repos with `has_interface: true` still receive a root `DESIGN.md`; standard/public scopes continue to seed it by default.
+
+### `keywords` object
+
+Search-targets standard (`seo/keywords-standard.md`). `aidevops init` scaffolds `context/keywords.md` for standard/public scopes; minimal scope only when `.aidevops.json` sets `"keywords": {"enabled": true}`.
+
+| Key | Where | Description |
+|-----|-------|-------------|
+| `data` | `.aidevops.json` or `repos.json` | `tracked` (commit registry) or `ignored` (gitignore it; share via the private hub). Absent → public scope or public GitHub repo resolves to `ignored`, otherwise `tracked`. |
+| `enabled` | `.aidevops.json` | `true` opts a minimal-scope repo into scaffolding. |
+| `budget_usd_month` | `repos.json` | Per-repo paid-provider cap; overrides config `keywords.monthly_budget_usd` (default 1). An explicit front matter `budget_usd_month` in `context/keywords.md` (shared team cap) wins over both. |
+
+The hub slug is global local config (`keywords.hub_slug`), never a repo field, so private hub names stay out of repositories.
 
 ### `agent_source` detail
 
@@ -133,6 +145,7 @@ explicit values. Package slugs and paths remain local to `repos.json`.
 | `manifest` | `CloudronManifest.json` | Manifest path relative to the registered repository root. Absolute paths and `..` are rejected by monitors. |
 | `release_workflow` | `.github/workflows/cloudron-package-release.yml` | Thin tag-triggered caller scaffolded by `aidevops init`; existing files are never overwritten. |
 | `upstream_slug` | unset | Upstream GitHub `owner/repo` used for stable-release comparison. Monitoring stays disabled until this is explicitly configured. |
+| `upstream_source` | `releases` | `releases` reads GitHub releases and excludes drafts/prereleases; `tags` reads paginated GitHub tags (for upstreams without releases). Other values fail closed. |
 | `upstream_tag_prefixes` | `["v", ""]` | Non-empty array of tag-stream prefixes. Each value must be a string; ASCII control characters are rejected, while the empty string allows bare semantic tags. Only tags whose configured prefix leaves a semantic version are candidates. |
 | `upstream_image` | unset | Optional release-parent source gate: `{ "repository": "ghcr.io/owner/image", "signer_workflow": "owner/repo/.github/workflows/docker.yml", "qualification_annotation": "index.annotation.key", "eligibility_predicate_type": "https://example.org/attestations/deployment-eligibility/v1" }`. Requires an exact `sha-<first seven parent-SHA>` tag, a linux/amd64 + linux/arm64 OCI index with parent revision and success annotation, and matching upstream keyless SLSA provenance. The optional eligibility predicate requires an additional signed positive source/build/qualification claim. Use only when the upstream's release tag is a one-parent release-only commit and its Docker workflow publishes qualified images at the parent commit. |
 | `monitor_upstream` | `true` when `upstream_slug` is set; otherwise `false` | Include the package in the daily upstream-release routine. |
@@ -165,10 +178,12 @@ rejecting unrelated `v...` tags:
 }
 ```
 
-The upstream monitor paginates all GitHub releases, excludes drafts and
+The upstream monitor paginates all GitHub releases by default, excludes drafts and
 prereleases, and chooses the numerically highest stable semantic version from
 the configured streams. Invalid prefix configuration or no matching stable tag
 fails closed with a diagnostic rather than falling back to another stream.
+With `upstream_source: "tags"`, it instead paginates GitHub tags and applies
+the same prefix and stable-semver selection without release-only draft/prerelease flags.
 With `upstream_image` configured, the monitor waits without filing a worker
 issue when the exact release-parent image or required attestations are unavailable. A
 newer passing `main` image never stands in for that release's parent. When

@@ -3,7 +3,10 @@
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
 # AI DevOps Framework - Template Deployment Script
-# Securely deploys minimal AGENTS.md templates to user's home directory
+# Deploys the agent workspace README. Home and Git-root AGENTS.md templates are
+# no longer deployed (GH#32592): runtimes that load parent-directory AGENTS.md
+# paid for stale text on every session. The setup migration
+# cleanup_legacy_agents_md_templates removes unmodified legacy copies.
 
 set -euo pipefail
 
@@ -113,45 +116,6 @@ cleanup_old_backups() {
     return 0
 }
 
-deploy_home_agents() {
-    local target_file="$HOME/AGENTS.md"
-    
-    print_info "Deploying minimal AGENTS.md to home directory..."
-    
-    # Backup existing file if it exists (with rotation)
-    if [[ -f "$target_file" ]]; then
-        create_backup_with_rotation "$target_file" "home-agents"
-    fi
-    
-    # Deploy template
-    cp "$SCRIPT_DIR/home/AGENTS.md" "$target_file"
-    print_success "Deployed: $target_file"
-    return 0
-}
-
-deploy_git_agents() {
-    local git_dir="$HOME/git"
-    local target_file="$git_dir/AGENTS.md"
-    
-    print_info "Deploying minimal AGENTS.md to git directory..."
-    
-    # Create git directory if it doesn't exist
-    if [[ ! -d "$git_dir" ]]; then
-        mkdir -p "$git_dir"
-        print_info "Created git directory: $git_dir"
-    fi
-    
-    # Backup existing file if it exists (with rotation)
-    if [[ -f "$target_file" ]]; then
-        create_backup_with_rotation "$target_file" "git-agents"
-    fi
-    
-    # Deploy template
-    cp "$SCRIPT_DIR/home/git/AGENTS.md" "$target_file"
-    print_success "Deployed: $target_file"
-    return 0
-}
-
 deploy_agent_directory() {
     local agent_workspace="$HOME/.aidevops/.agent-workspace"
     local target_file="$agent_workspace/README.md"
@@ -179,8 +143,6 @@ verify_deployment() {
     print_info "Verifying template deployment..."
     
     local files_to_check=(
-        "$HOME/AGENTS.md"
-        "$HOME/git/AGENTS.md"
         "$HOME/.aidevops/.agent-workspace/README.md"
     )
     
@@ -207,21 +169,14 @@ main() {
     echo -e "${BLUE}🔒 AI DevOps Framework - Secure Template Deployment${NC}"
     echo -e "${BLUE}============================================================${NC}"
     
-    print_info "Deploying minimal, secure AGENTS.md templates..."
-    print_warning "These templates contain minimal instructions to prevent prompt injection attacks"
-    
     # Clean up old in-place backups from previous versions
     cleanup_old_backups
     
-    deploy_home_agents
-    deploy_git_agents
     deploy_agent_directory
     verify_deployment
     
     echo ""
     print_success "Template deployment complete!"
-    print_info "All templates reference the authoritative repository at: $REPO_ROOT"
-    print_warning "Do not modify these templates beyond minimal references for security"
     
     return 0
 }

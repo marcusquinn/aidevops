@@ -19,7 +19,7 @@ tools:
 
 ## Quick Reference
 
-- **Commands**: `/save-todo` (auto-detects complexity), `/ready` (show unblocked), `/sync-beads` (sync to Beads)
+- **Commands**: `/save-todo` (auto-detects complexity), `/list-todo` (review tasks)
 - **Principle**: Don't make user think about where to save
 
 | File | Purpose |
@@ -28,7 +28,6 @@ tools:
 | `todo/PLANS.md` | Complex execution plans with context |
 | `todo/tasks/prd-{name}.md` | Product requirement documents |
 | `todo/tasks/tasks-{name}.md` | Implementation task lists |
-| `.beads/` | Beads database (synced from TODO.md) |
 
 **Task ID Format**: `tNNN` (top-level), `tNNN.N` (subtask), `tNNN.N.N` (sub-subtask)
 
@@ -42,22 +41,6 @@ Analyze conversation for complexity signals when `/save-todo` is invoked:
 |--------|-----------|--------|
 | Single action / < 2h / "quick" or "simple" | Simple | TODO.md only |
 | Multiple steps / research / >= 2h / multi-session / PRD needed | Complex | PLANS.md + TODO.md |
-
-## Ralph Classification
-
-"Ralph-able" = suitable for autonomous iterative AI loops. **Criteria** (all required): clear success criteria, automated verification, bounded scope, no human judgment needed.
-
-| Signal | Ralph-able? |
-|--------|-------------|
-| "Make all tests pass" / "Fix linting errors" / "Implement feature X with tests" | Yes |
-| "Refactor until clean" | Maybe (needs specific criteria) |
-| "Make it look better" / "Design the API" / "Debug production issue" | No |
-
-**Tagging**: `- [ ] t042 Fix all ShellCheck violations #ralph(SHELLCHECK_CLEAN) ~1h` with optional `ralph-promise:`, `ralph-verify:`, `ralph-max:` fields.
-
-**Running**: `/ralph-task t042` or `/ralph-loop "$(grep -E '^- \[ \] t042\s' TODO.md | head -n1)" --completion-promise "SHELLCHECK_CLEAN" --max-iterations 10`
-
-**Quality loop integration**: Preflight (`/preflight-loop`, `PREFLIGHT_PASS`), PR Review (`/pr-loop`, `PR_APPROVED`), Postflight (`/postflight-loop`, `RELEASE_HEALTHY`).
 
 ## Auto-Dispatch Tagging
 
@@ -120,7 +103,7 @@ If any element is missing, complete the brief before saving. Omit `#auto-dispatc
 
 1. Create PLANS.md entry using `templates/plans-template.md`. Required sections: **Status/Estimate**, **Purpose**, **Progress** (timestamped phases), **Context from Discussion**, **Decision Log**, **Surprises & Discoveries**.
 2. Add reference to TODO.md: `- [ ] {title} #plan -> [todo/PLANS.md#{slug}] ~{estimate} logged:{YYYY-MM-DD}`
-3. Optionally create PRD/tasks if scope warrants (`/create-prd`, `/generate-tasks`)
+3. Optionally create PRD/tasks if scope warrants (see "PRD and Task Generation" below)
 
 ## Starting Work from Plans
 
@@ -143,9 +126,11 @@ Update PLANS.md in place: check off Progress items with timestamps, add Decision
 
 ## PRD and Task Generation
 
-**Generate PRD** (`/create-prd`): Ask clarifying questions with numbered options. Create PRD in `todo/tasks/prd-{slug}.md` using `templates/prd-template.md`.
+No dedicated slash commands; ask the agent directly, or start from `/define` for a decision-complete brief.
 
-**Generate Tasks** (`/generate-tasks`): Phase 1 — present high-level tasks with estimates, ask "Go". Phase 2 — create in `todo/tasks/tasks-{slug}.md` with numbered hierarchy (`0.0`, `1.0`, `1.1`, etc.) using `templates/tasks-template.md`.
+**Generate PRD**: Ask clarifying questions with numbered options. Create PRD in `todo/tasks/prd-{slug}.md` using `templates/prd-template.md`.
+
+**Generate Tasks**: Phase 1 — present high-level tasks with estimates, ask "Go". Phase 2 — create in `todo/tasks/tasks-{slug}.md` with numbered hierarchy (`0.0`, `1.0`, `1.1`, etc.) using `templates/tasks-template.md`.
 
 ## Time Estimation
 
@@ -162,17 +147,9 @@ Use calibrated tiers from `reference/planning-detail.md` (based on 340 completed
 
 **TOON machine-readable format**: `<!--TOON:dependencies[N]{from_id,to_id,type}: t019.2,t019.1,blocked-by -->`
 
-**`/ready` command**: `~/.aidevops/agents/scripts/todo-ready.sh` — shows tasks with no open blockers and lists blocked tasks with their dependencies.
-
-## Beads Integration
-
-`/sync-beads push` (TODO→Beads) | `/sync-beads pull` (Beads→TODO) | `/sync-beads` (two-way with conflict detection). Script: `beads-sync-helper.sh [push|pull|sync]`. Guarantees: lock file, checksum verification, audit trail in `.beads/sync.log`, command-led only.
-
-**Beads UIs**: `bv` (graph analytics), `npx beads-ui start` (web dashboard), `bdui` (terminal), `perles` (BQL queries), `M-x beads-list` (Emacs).
-
 ## Time Tracking Configuration
 
-Configure per-repo in `.aidevops.json`: `{ "time_tracking": "prompt", "features": ["planning", "time-tracking", "beads"] }`. Values: `true` = always prompt | `false` = never | `prompt` = ask once per session. Use `/log-time-spent` to manually log time.
+Configure per-repo in `.aidevops.json`: `{ "time_tracking": "prompt", "features": ["planning", "time-tracking"] }`. Values: `true` = always prompt | `false` = never | `prompt` = ask once per session. Use `/log-time-spent` to manually log time.
 
 ## Distributed Task Claiming (t164/t165)
 

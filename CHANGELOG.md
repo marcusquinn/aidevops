@@ -10,6 +10,667 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.38.0] - 2026-10-02
+
+### Added
+
+- GH#33398: audit macOS dev churn paths and backup exclusion coverage
+
+### Changed
+
+- Refactor: keep network-op selection out of git-safety file (GH#33406) (#33407)
+- Maintenance: sync ref:GH#33398 to TODO.md (#33400)
+
+### Fixed
+
+- ignore issue-derived task titles without TODO backing (GH#33408) (#33409)
+- initialize extracted test colors before use (GH#33366) (#33405)
+- fresh runner capability admission before claim (#33404)
+
+## [3.37.41] - 2026-10-02
+
+### Fixed
+
+- fix profile scratch recovery with pre-existing untracked files
+- preserve open blocked issues after non-closing worker PRs (#33395)
+- detect nested tracked env files and explain encrypted remediation (#33386)
+
+## [3.37.40] - 2026-10-01
+
+### Changed
+
+- Refactor: remove legacy command generators (GH#33354) (#33388)
+- Maintenance: mark t18581 complete (pr:#33367 completed:2026-10-01) (#33368)
+
+### Fixed
+
+- recover full-loop PR creation from stale branches and bare shared worktrees
+- upgrade-planning preserves custom TODO sections and fails closed on loss
+- fix scope-guard false positives on tag-only pushes
+- reject edits copied from redacted Read output (#33378)
+- retry transient provenance reads (#33376)
+- cover implicit tagless snapshot retry discovery (#33372)
+- skip tap-qualified Homebrew formulas on hosts without brew
+
+## [3.37.39] - 2026-10-01
+
+### Added
+
+- record continuation outcomes and per-model premature-exit rates
+- t18580 Background routing: Opus 5.5 thinking at high; no sub-medium reasoning for subagents or new A/B arms
+- plugin release build, WordPress.org preflight and Plugin Check helper + submission guide (#33301) (#33315)
+- freshness-checked local site sync helper (#33296) (#33299)
+- surface stranded interactive draft PRs (#33265)
+
+### Changed
+
+- Maintenance: sync ref:GH#33362 to TODO.md (#33363)
+- Maintenance: mark t18580 complete (pr:#33347 completed:2026-10-01) (#33349)
+- Maintenance: sync ref:GH#33342 to TODO.md (#33224)
+- Maintenance: bump litellm to 1.93.2 (fixes open SSRF advisory) (#33319)
+- Maintenance: adopt reviewed urllib3 2.8.0 update (#33279)
+- Documentation: trim textbook skills, fold branch-type docs, merge best-practices, retire mission-skill-learner (#33280)
+- Documentation: document commit-and-pr PR body options
+- Maintenance: complete Beads retirement migration and docs (#33272)
+- Maintenance: retire Beads integration (#33270)
+
+### Fixed
+
+- secretlint false positive in env-template fixture blocks release preflight
+- match exact code extensions in large-file gate (#33358)
+- replace unavailable legacy slash commands in init output and docs
+- make dirty-worktree backup prune --dry-run non-mutating
+- classify tracked .env templates by content instead of filename
+- input_required terminal blocker class with accountable owner
+- map by ref:GH and stop unmapped pending issues starving reconcile
+- record per-cycle dispatch delta in cycle index
+- respect private planning publication targets (GH#33328) (#33329)
+- reserve dispatch budget and attribute merge-pass time
+- preserve required ShellCheck contexts (#33305)
+- skip claimed no-auto-dispatch coordinators without implementation evidence (GH#33293) (#33298)
+- correct init scaffold review findings (#33289)
+- re-apply project Node selection in OpenCode tool shells
+- keep ready-PR handoffs in review after claim release
+- anchor worker BLOCKED and completion markers
+- treat For/Ref #N open PRs as in-flight for consolidation
+- admit verified-absent NEW targets on stale mirrors (#33282)
+- skip empty terminal breaker consolidation (#33277)
+- retain interactive threshold for owned claims (#33275)
+- warn when draft PR checks lack review evidence (#33269)
+- protect live interactive claims from stale recovery (#33262)
+- fail closed on locked or missing injected secrets (#33263)
+- validate --replace-pr ancestry before WIP finalization discards it (#33264)
+
+## [3.37.38] - 2026-09-30
+
+### Added
+
+- continue Claude Code sessions with open todos (#33215)
+
+### Changed
+
+- Refactor: split issue-sync-relationships.sh into focused sub-libraries (#33221)
+- Maintenance: mark t18567 complete (pr:#33215 completed:2026-09-30) (#33216)
+- Maintenance: mark t18575 complete (pr:#33213 completed:2026-09-30) (#33208)
+- Tests: align dependency review Qlty installer assertion (#33205)
+- Maintenance: mark t18571 complete (pr:#33187 completed:2026-09-30) (#33173)
+
+### Fixed
+
+- quiet exact-tag verifier error during successful preservation fallback (#33261)
+- check out unmerged remote branch directly in add (#33260)
+- detect remote default branch instead of assuming main (#33259)
+- align routing and detector regression fixtures (#33258)
+- async housekeeping survives launchd process-group teardown
+- promote OpenCode V2 2.0.20 compatibility
+- retired DSPy cleanup no longer aborts non-interactive setup on runtime-bundle installs
+- catch up starved blocked-status refresh and brief-hold release in async housekeeping. Runtime-verified: live predicate reports starved=yes against the 2026-09-29 dep-graph cache; housekeeping regression, stage-wiring (61) and dep-graph suites pass; ShellCheck clean.
+- let workers own Files Scope discovery instead of holding trusted unscoped briefs
+- finalize published dead competing lanes (#33239)
+- hold external-trigger blockers across unrelated merges (#33236)
+- accept Next.js route paths in Files Scope; name failing dependency rows (GH#33120) (#33237)
+- error (not warn) when auto-dispatch Files Scope path line has trailing prose (#33233)
+- refresh pre-claim test fixture for REST issue reads (#33220)
+- register canonical self-test fixture (#33219)
+- retry indeterminate authorization reads (#33217)
+- preserve issue-first planning publication blockers (#33211)
+- raise root fast-uri override to 3.1.8 (GHSA-hrr3-gc8f-f4qj) (#33198) (#33212)
+- make stale PR snapshot timestamps portable (#33210)
+- planning-commit-helper works from detached HEAD (#33214)
+- resolve claim TODO predecessors to task IDs (GH#33159)
+- resolve config-http/test-http Application Passwords from secret names (#33207)
+- declare claim snapshot locals in _dedup_layer7_claim_lock
+
+## [3.37.37] - 2026-09-30
+
+### Added
+
+- per-class dispatch cap for labelled issue classes (#33190)
+- archive issue and PR discussions to a same-repo orphan branch (#33187)
+
+### Changed
+
+- Maintenance: retire code-search leftovers, llm-tldr, context-builder/repomix and rapidfuzz (GH#33140) (#33188)
+- Maintenance: bump fast-uri and ip-address; trust npm_and_yarn:ip-address (#33180)
+- Tests: capture terminal-blocker comment body in wrapper test mock (#33181)
+
+### Fixed
+
+- accept a sentence-final period after valid task IDs
+- show OAuth URL and read auth code from terminal in console sessions
+
+## [3.37.36] - 2026-09-30
+
+### Fixed
+
+- read dependencies only from structured fields (GH#33166) (#33174)
+- scope-guard compares against origin/main, not stale local main
+
+## [3.37.35] - 2026-09-30
+
+### Changed
+
+- Tests: update V2 shim Tabby recovery assertion to the session-resume contract (GH#33129) (#33162)
+- Maintenance: use task-ID blocked-by for t18572 and t18574
+- Maintenance: add briefs for framework value audit tasks t18563-t18574
+- Maintenance: add framework value audit tasks t18563-t18574
+- Maintenance: mark t18562 complete (pr:#33118 completed:2026-09-30) (#33126)
+
+### Fixed
+
+- seed counter reconcile from remote TODO.md and fail on foreign-title task ID collision (#33168)
+- project status:blocked for open terminal-blocker circuits and release on re-arm (#33170)
+- surface one approval-ready attention record when a blocked worker leaves a draft checkpoint
+- shallow --no-tags counter-branch fetches in isolated claim-task-id context (#33164)
+- validate planning publication against remote base in pre-commit hook (#33163)
+- authenticate GitHub lookups and route non-GitHub sources (#33161)
+- reserve declared file footprints atomically within each Pulse refill batch
+- project trusted approvals into clean-room briefs and let collaborator runners open terminal-blocker circuits
+- stop pulse retrying issues whose reused worktree has an unchanged live owner
+- reject OpenCode Grep regular-file paths that silently search siblings
+
+## [3.37.34] - 2026-09-30
+
+### Fixed
+
+- stop setup writing into third-party OPENCODE_CONFIG files
+- block headless worker commit-signing overrides
+- normalize signing/Git-auth env in Claude sandbox path (#33121)
+- route unverified post-PR handoff with durable PR to checkpoint
+- run headless signing probe in the sandboxed worker environment
+
+## [3.37.33] - 2026-09-30
+
+### Added
+
+- keep locked issue approvals valid across write-authorized title/body edits (GH#33097) (#33107)
+- numbered y/n and a/b/c asks in What next block
+
+### Changed
+
+- Maintenance: sync ref:GH#33108 to TODO.md (#33104)
+- Tests: align knowledge review assertions with promotion flow (GH#33092) (#33093)
+- plan: add t18560 label-maintenance stalest-first ordering with worker-ready brief
+- Maintenance: mark t18554 complete (pr:#33081 completed:2026-09-29) (#33079)
+
+### Fixed
+
+- label pulse supervisor state distinctly from active workers
+- omit no-op answers from optional What next asks
+- accept parent:GH#NNN and warn on publication parse failure (#33112)
+- skip verification for zero-row OpenCode DB consumers
+- rotate label maintenance by completion age (#33099)
+- look up tag-push publish run by exact head_sha; skip recovery when channels published (GH#33073) (#33098)
+- fixed What next labels; Close is a recommendation, never an ask
+- What next asks only for what AI cannot do; options on own line
+- unshallow the release control worktree before lane reservation (#33081)
+
+## [3.37.32] - 2026-09-29
+
+### Changed
+
+- Maintenance: add t18554 release shallow-store preflight and t18556 reconcile exact publish-run lookup with worker-ready briefs
+
+### Fixed
+
+- make merged-PR checks reopen-aware (GH#33071)
+- bound events-tickle skip by snapshot age (GH#33074)
+
+## [3.37.31] - 2026-09-29
+
+### Added
+
+- audit and lease merged local branch deletion (#33042)
+
+### Changed
+
+- Maintenance: mark t18497 complete (pr:#33053 completed:2026-09-29) (#33056)
+- Maintenance: replace Dependabot Actions update (#33059) (#33060)
+- Maintenance: mark t18504 complete (pr:#33047 completed:2026-09-29) (#33050)
+- Refactor: extract dispatch_max stages (#33051)
+- Maintenance: mark t18553 complete (pr:#33041 completed:2026-09-29) (#33043)
+- Maintenance: mark t18492 complete (pr:#33023 completed:2026-09-29) (#33027)
+- Maintenance: add t18552 local-branch cleanup and t18553 claim shallow-fetch fix with worker-ready briefs
+- Maintenance: add t18551 planning publication deferral; restore t18512 entry
+- Maintenance: mark t18550 complete (pr:#33022 completed:2026-09-29) (#33020)
+- Maintenance: add t18546 and t18547 follow-ups with worker-ready briefs
+- Maintenance: add worker-ready briefs for t18544 and t18545
+- Maintenance: mark t18541 complete (pr:#32983); add t18544 and t18545 follow-ups
+- Maintenance: sync GitHub issue state to TODO.md [skip ci]
+- Refactor: simplify dispatch blocker classification (#32995)
+
+### Fixed
+
+- bound counter tip fetch and explain timeout (#33053)
+- merge concurrent planning TODO changes (#33047)
+- cache unchanged worker draft checkpoints (#33044)
+- allow npm publication fifteen minutes to converge (#33045)
+- keep counter depth fetches isolated (#33041)
+- defer young unpublished planning tasks (#33039)
+- promote OpenCode 1.18.33 compatibility
+- verify plugin tools via Code Mode execute gateway in pin canary (GH#32762)
+- avoid masking short secret values in command output (#33023)
+- audited canonical fast-forward before planning reconcile (#33022)
+- wait for npm attestation propagation (#33021)
+- retry transient permission lookups (#33019)
+- accept nested brief readiness field evidence (#33018)
+- finish cycles before lock reclaim (#33015)
+- align tier guard model and A/B defaults (#33012)
+- provision dependencies label before intake issue creation and log gh error (t18546) (#33011)
+
+## [3.37.30] - 2026-09-29
+
+### Changed
+
+- docs(dispatch): correct fail-closed claim, cap, tier-routing and supervisor drift
+- Maintenance: mark t18542 complete (pr:#32987 completed:2026-09-29) (#32980)
+- fix(worker): recognise completed consolidation children instead of worker_noop
+- fix(pulse): break consolidation/Dependabot-target dispatch deadlock and log silent brief-scope blocks
+- Maintenance: mark t18539 complete (pr:#32970 completed:2026-09-29) (#32976)
+
+### Fixed
+
+- accept validated descendant runtime after post-publication deploy (#32985)
+- guide todo fallback and tool search (#32981)
+- defer recovery until publish propagation grace expires (#32974)
+
+## [3.37.29] - 2026-09-29
+
+### Added
+
+- prune expired GitHub read caches older than 8 days (GH#32957) (#32966)
+
+### Changed
+
+- retry policy helper once on ETIMEDOUT under host load; label second timeout as transient
+- Tests: restore pulse merge regression suites (#32967)
+
+### Fixed
+
+- t18539: fix(telemetry): keep tier/model on attempt-matched outcomes; window tier-report with model@variant and first-dispatch pass rates
+- bound isolated counter discovery fetches (#32963)
+
+## [3.37.28] - 2026-09-29
+
+### Fixed
+
+- unblock merges wedged by never-reported required checks and private-plan ruleset 403
+- t18536: log dependency provisioning reason codes; skip package dirs without a supported lockfile
+- t18535: resolve default git remote for bare push/fetch/pull; classify pushurl and --multiple remotes
+
+## [3.37.27] - 2026-09-29
+
+### Added
+
+- refresh GSC and Bing exports before routine import (#32937)
+
+### Fixed
+
+- prune vanished worktree metadata across managed repos; count only live worktrees at dispatch cap
+- retire native Sonnet 5.5 catalog bridge (#32944)
+- keep orphan-recovery PRs from closing incomplete issues (#32940)
+- t18534: restore retry context lost to torn objective-evidence lines; add sanitised failure signals
+
+## [3.37.26] - 2026-09-29
+
+### Changed
+
+- cap compaction effort; route compaction to first fitting simple candidate
+
+### Fixed
+
+- re-validate auth-error accounts once cooldown expires
+- t18531: capability escalation skips identical model routes
+
+## [3.37.25] - 2026-09-29
+
+### Changed
+
+- Maintenance: mark t18508 complete (pr:#32902 completed:2026-09-28) (#32912)
+- Maintenance: build credential-shaped fixtures at runtime (GH#32841) (#32918)
+- Refactor: split release reconciliation regression tests (#32910)
+
+### Fixed
+
+- stop infra hold self-counting; add reset boundary
+- restore only verified OpenCode runtime lockfile drift before rebase (#32926)
+- support trusted PR-less data-only completion (#32920)
+- source primary cooldown under zsh (#32921)
+- return host-compatible objective receipt text (#32917)
+- bind canonical cleanup fetch to canonical repository (#32914)
+
+## [3.37.24] - 2026-09-28
+
+### Changed
+
+- Maintenance: mark t18530 complete (pr:#32891 completed:2026-09-28) (#32894)
+
+### Fixed
+
+- gate publication readiness on auto-dispatch only
+- stop brief-hold/repair comments triggering consolidation
+- accept same-major Node when version-file pin patch differs
+- publish partial quality sweep within repo budget (#32902)
+
+## [3.37.23] - 2026-09-28
+
+### Changed
+
+- Maintenance: plan: add t18529 and t18530 briefs for GH#32871 and GH#32869
+- Maintenance: mark t18526 complete (pr:#32874 completed:2026-09-28) (#32879)
+- Maintenance: sync ref:GH#32867 to TODO.md (#32847)
+
+### Fixed
+
+- allow reads of tracked code/doc files with loose secret names; un-ignore .agents secret/credential source
+- classify Actions billing-blocked checks as capability failures in CI repair
+- let opt-in CWD inspector read same-user setuid-root helpers
+- guard empty create-wrapper arrays under nounset (#32768)
+- derive OpenCode test fixtures from headless pin (#32874)
+
+## [3.37.22] - 2026-09-28
+
+### Added
+
+- Install and update Cloudflare cf CLI via setup and update-tools
+- manual diagnostic listing unreadable processes by PID and comm
+
+### Fixed
+
+- keywords rollup uses the target's own site platform
+- macOS bundle ACL uses account name, not numeric uid
+- scope GSC ADC tokens and resolve default credentials (#32866)
+- canonicalize privileged bootstrap bytecode fixture (#32857)
+
+## [3.37.21] - 2026-09-28
+
+### Added
+
+- Add Cloudflare cf CLI guidance and routing
+- provision continuation reminder labels on issue creation (#32840)
+
+### Fixed
+
+- allow one keyword target per phrase per site
+- reclaim published detached recovery archives and fix recovery escalation attribution
+- share DataForSEO credential resolver (#32839)
+
+## [3.37.20] - 2026-09-28
+
+### Fixed
+
+- macOS broker state under /private/var/db
+- replace consumer-repo root allowlist with artifact guard and document work-notes location
+
+## [3.37.19] - 2026-09-28
+
+### Added
+
+- Align compaction guidance with OpenCode 1/2 host summary templates
+- select project Node for validators and workers (#32819)
+
+### Changed
+
+- Maintenance: mark t18519 complete (pr:#32823 completed:2026-09-28) (#32818)
+
+## [3.37.18] - 2026-09-28
+
+### Fixed
+
+- broker git rejects user-owned worktrees as dubious ownership
+- keywords read DATAFORSEO_API_LOGIN/API_PASSWORD from gopass
+
+## [3.37.17] - 2026-09-28
+
+### Changed
+
+- Maintenance: mark t18517 complete (pr:#32804 completed:2026-09-28) (#32806)
+
+## [3.37.16] - 2026-09-28
+
+### Added
+
+- accept body-file fingerprints and report matched placeholders (#32781)
+- gate OpenCode V2 promotion on profile canaries (#32759)
+- runner-local AI owner for terminal-blocker circuits
+
+### Changed
+
+- Maintenance: mark t18516 complete (pr:#32792 completed:2026-09-28) (#32795)
+- Documentation: add private search target registry pointer (#32797)
+- Refactor: split tool installation modules (#32789)
+- Maintenance: mark t18498 complete (pr:#32784 completed:2026-09-28) (#32780)
+- Documentation: use project commands for code diagnostics (#32784)
+- Tests: repair structural tests after core split (#32783)
+- Documentation: refresh TTS music and BT.709 delivery guidance (#32775)
+- Tests: keep dispatch concurrency reset fresh and name unexpected failures (#32769)
+- Maintenance: mark t18502 complete (pr:#32759 completed:2026-09-28) (#32753)
+- Tests: track current update drift owners (GH#32726) (#32757)
+
+### Fixed
+
+- keep V2 session profile out of the shared V1 config (#32802)
+- keywords DataForSEO credentials fall back to gopass
+- allow Vitest config files in root-file validation
+- keywords rollout fixes — hub clone cwd, env over config, dispatchable backfill issues
+- preserve gh authentication in OpenCode V2 (#32790)
+- accept coloned reproducer labels (#32785)
+- mark automated OpenCode harness runs headless (#32782)
+- preserve exact-body missing-scope holds (#32778)
+- retire stale supervisor and deployment references (#32779)
+- correct init defaults and worktree scope inference (#32767)
+- re-exec bash before creating control worktree (#32766)
+
+## [3.37.15] - 2026-09-28
+
+### Added
+
+- route credential-dependent dispatch to equipped runners (#32748)
+- context/keywords.md search targets standard with hub sync, tracking and ecommerce drill-down
+
+### Fixed
+
+- make the brand-identity.toon template valid TOON
+
+## [3.37.14] - 2026-09-28
+
+### Changed
+
+- Maintenance: mark t18510 complete (pr:#32740 completed:2026-09-28) (#32731)
+
+### Fixed
+
+- keep V1 plugin pass out of the live OpenCode V2 config
+
+## [3.37.13] - 2026-09-28
+
+### Changed
+
+- Version bump and maintenance updates
+
+## [3.37.12] - 2026-09-28
+
+### Added
+
+- monitor tag-only Cloudron upstreams (#32715)
+
+### Changed
+
+- Maintenance: mark t18503 complete (pr:#32712 completed:2026-09-28) (#32708)
+
+## [3.37.11] - 2026-09-28
+
+### Added
+
+- refresh generated issue bodies safely (#32717)
+- add media QA helper (#32709)
+
+### Changed
+
+- Tests: isolate brief-scope pulse tests from the live pulse.log
+
+### Fixed
+
+- report active lane for not-requested status (#32719)
+- defer cycle-entry refill dispatch (#32720)
+- restore exact V2 sessions in restored Tabby tabs
+- show resolved effort in worker dispatch comments (#32706)
+
+## [3.37.10] - 2026-09-28
+
+### Added
+
+- show AIDevOps and OpenCode versions in OpenCode V2 TUI slots
+
+### Changed
+
+- Maintenance: mark t18494 complete (pr:#32674 completed:2026-09-27) (#32678)
+
+### Fixed
+
+- clamp cached dispatch target to live MAX_WORKERS_CAP
+- transition terminal PR labels (#32697)
+- load issue-sync task selector for independent mapping checks (#32691)
+- stop false missing_files_scope holds and auto-release repaired briefs (GH#32689)
+- keep migration backups when cleaning legacy config-backups
+- refuse canonical task completion before editing TODO (#32680)
+- scope platform evidence to claims and repository tests (#32675)
+- make aidevops init scaffold portable (#32676)
+- preserve claim task ID allocation (#32674)
+- repair managed repository planning lifecycle (#32670)
+- detach due script routines (#32668)
+
+## [3.37.9] - 2026-09-27
+
+### Added
+
+- auto worker cap (50% of cores) with one-time fleet reset of capacity overrides
+- bold attention colour for needs-* labels and grouped label palette
+
+### Changed
+
+- Maintenance: mark t18491 complete (pr:#32653 completed:2026-09-27) (#32660)
+
+### Fixed
+
+- bound prospective TODO guard object transfer
+- deny dated ChatGPT OAuth snapshots (#32655)
+- identify failing session worktree root (GH#32612) (#32653)
+- attribute OpenCode signatures to active runtime (GH#32625) (#32648)
+- restore dispatch throughput — bounded scratch cleanup, cheap candidate rejection, routine failure backoff
+- guard merged-PR reconcile stages 1-2 against recurrent file-size debt (t18495)
+
+## [3.37.8] - 2026-09-27
+
+### Added
+
+- end interactive turns with a What next block (GH#32628)
+
+### Changed
+
+- Refactor: split pulse-diagnose-helper issue and api-budget modules
+- Maintenance: mark t18487 complete (pr:#32601 completed:2026-09-27) (#32609)
+- Documentation: align brief Files Scope examples with canonical validator (#32611)
+- Documentation: explain direct invocation of hyphenated Python tests (#32597)
+
+### Fixed
+
+- hold unscoped briefs once per body; catch missing Files Scope at creation (GH#32598)
+
+## [3.37.7] - 2026-09-27
+
+### Changed
+
+- Maintenance: remove Closte hosting integration (#32587)
+- Performance: skip unchanged benign dispatch blocks across pulse cycles (#32580)
+- Refactor: reduce pulse dispatch gate complexity (#32578)
+- Refactor: split pulse dispatch core into focused libraries (#32575)
+- Maintenance: mark t18486 complete (pr:#32564 completed:2026-09-27) (#32565)
+- Maintenance: mark t18485 complete (pr:#32562 completed:2026-09-27) (#32466)
+
+### Fixed
+
+- require canonical Files Scope in consolidation successor briefs
+- retain inactive bundle refill triggers (#32581)
+- hold unscoped auto-dispatch briefs before claim (#32579)
+- archive old unattributed worktrees (#32573)
+- cap async cleanup logs (#32567)
+- filter stale Actions queue runs (#32563)
+- evaluate unregistered central worktrees during pulse cleanup (#32559)
+- accept template verification label in brief readiness (#32556)
+- queue tracked project config migrations (#32550)
+
+## [3.37.6] - 2026-09-27
+
+### Fixed
+
+- reap leaked release-control worktrees from killed helper runs
+
+## [3.37.5] - 2026-09-27
+
+### Added
+
+- prompt parent acceptance receipts (#32514)
+
+### Fixed
+
+- setsid async launch and expire idle deferred post-merge owners
+- bootstrap locked npm validators in fresh worktrees (#32533)
+- on-demand agents for all MCPs, V2 title version suffix, Tabby scrollbar strip
+- fix pulse/worker capacity waste (false premature_exit loops, gate runner churn, stats growth)
+- retain agent scratch with scheduled trash cleanup (#32519)
+- avoid resuming live Tabby sessions from split tabs (#32507)
+- stuck exact-tag lane must not block aidevops update/auto-update
+
+## [3.37.4] - 2026-09-27
+
+### Fixed
+
+- report canonical sync without local PR worktree (#32511)
+- warn when pinned approval verifier differs from active bundle (#32508)
+- avoid setup lock waits for active bundles (#32504)
+- restore issue lock diagnostics (#32501)
+- preserve terminal blocker continuity (#32502)
+- clarify full-loop merge gate diagnostics (#32492)
+
+## [3.37.3] - 2026-09-27
+
+### Added
+
+- add repository-only pre-commit repair
+
+## [3.37.2] - 2026-09-27
+
+### Changed
+
+- Version bump and maintenance updates
+
+## [3.37.1] - 2026-09-27
+
+### Changed
+
+- Maintenance: mark t18482 complete (pr:#32451 completed:2026-09-27) (#32448)
+
 ## [3.37.0] - 2026-09-27
 
 ### Fixed

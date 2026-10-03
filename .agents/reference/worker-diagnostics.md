@@ -151,6 +151,11 @@ historical evidence, not a failed or active worker. After confirming the session
 is stale, append an auditable terminal reconciliation with
 `worker-blocker-cli.mjs resolve-session` using its exact repository, session, and
 request scope. Never delete the JSONL evidence or reconcile a live owner.
+Unscoped `supervisor-pulse` records are reconciled automatically after each
+supervisor run (cutoff: that run's start), and manually with
+`worker-activity-helper.sh reconcile-stale-supervisor`, which refuses while a
+supervisor-pulse process is live. This is telemetry only; it never changes
+labels, requests or grants.
 
 ## Manual Worker Launch
 
@@ -481,6 +486,19 @@ When active workers are below the floor:
 - Existing max worker caps above the floor still cap runaway dispatch.
 
 Set `orchestration.min_worker_concurrency=0` (or `AIDEVOPS_MIN_WORKER_CONCURRENCY=0`) to disable the floor, or set a higher/lower integer for a runner-specific target.
+
+### Per-Class Dispatch Cap (GH#33137)
+
+Cap how much of one machine's worker capacity a labelled issue class may use, so a large batch cannot starve feature and bug work in the same repo. Label issues `dispatch-class:<name>` and configure the class on the repo entry in `repos.json` (fallback: the repo's `.aidevops.json`):
+
+```json
+"dispatch_classes": { "award-enrichment": { "max_share_pct": 50, "max_workers": 3 } }
+```
+
+- Cap = `floor(simultaneous_target_final * max_share_pct / 100)`, minimum 1; with `max_workers` also set, the lower value wins. Example: target 8 and 50% → at most 4 class workers; other issues fill the remaining slots.
+- Enforced per candidate in `_dispatch_process_candidate` (`pulse-dispatch-lib.sh`) via `_dispatch_check_class_cap` (`pulse-capacity-alloc.sh`). Active count = local reservation markers under `$PULSE_DIR/dispatch-classes/<owner>__<repo>/` whose issue has a live worker in `list_active_worker_processes`, plus reservations younger than `PULSE_DISPATCH_CLASS_RESERVATION_GRACE` (default 300s) so parallel launches cannot overshoot. Orphan markers are pruned; failed launches release their marker.
+- Deferred candidates are retried next cycle, never penalised. `pulse.log`: `deferred — dispatch_class_cap: class=<name> active=<n> cap=<n> target=<n> ...`; stats counter `dispatch_candidate_deferred_class_cap`.
+- Unlabelled issues, and class labels without config, dispatch exactly as before (`Dispatch_class_cap: ... has no dispatch_classes config — uncapped`). Workers started outside the pulse dispatch loop are not counted.
 
 ### Adaptive Worker Launch Staggering (t3482)
 
@@ -1012,6 +1030,7 @@ has a reusable CI helper.
 | Claim/release loop | Comment history on issue | Stale claims, guard rejections — recreate issue with clean context |
 | Watchdog doesn't fire | `ps aux \| grep watchdog` | Watchdog process died with subshell |
 | `CLAIM_RELEASED reason=launch_recovery:no_worker_process` on multiple issues | `grep "no active worker process" ~/.aidevops/logs/pulse-wrapper.log` | Cluster failure on one runner — retries at same tier (no cascade escalation, t2815); check system load |
+| Few workers despite a full queue | `pulse-stage-timings.log` stages at `600`/exit `124`; `dispatch-stages.tsv` per-stage averages; `rg -o "DISPATCH_BLOCK_REASON reason=[a-z_]+" pulse.log \| sort \| uniq -c`; `pulse-watchdog.log` "pulse dead for"; `auto-update.log` "Requesting Pulse restart" count | Slow preflight or routine stage ahead of dispatch, costly late rejections, or redeploys killing in-flight cycles (GH#32633) |
 
 ## Proving Workers Are Doing Real Work
 

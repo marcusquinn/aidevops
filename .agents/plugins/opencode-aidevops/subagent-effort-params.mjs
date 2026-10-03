@@ -1,7 +1,18 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 Marcus Quinn
 
-import { routingCandidateIndex, routingTierForModel } from "./model-routing.mjs";
+import { routingCandidateIndex, routingTierForModel, routingVariant } from "./model-routing.mjs";
+import { floorReasoning } from "./model-routing-variant.mjs";
+
+const KNOWN_VARIANTS = new Set(["none", "minimal", "low", "medium", "high", "xhigh", "max"]);
+
+// Subagent work never runs below the routing floor (GH#33342), even under a
+// lower parent ceiling or a custom table entry. Unknown provider variants and
+// explicit native pins (handled before this point) are left unchanged.
+function floorChildVariant(context, variant) {
+  if (!KNOWN_VARIANTS.has(variant)) return variant;
+  return floorReasoning(variant, context.modelRouting?.minimumReasoning);
+}
 
 function childModelFrom(context, input) {
   return context.modelIdentity({
@@ -18,7 +29,7 @@ function currentVariantFrom(context, input, output) {
 }
 
 async function recordRootRouting(context, sessionID, input, childModel, currentVariant) {
-  const rootTier = routingTierForModel(context.modelRouting, childModel);
+  const rootTier = routingTierForModel(context.modelRouting, childModel, currentVariant);
   const dispatchTier = process.env.AIDEVOPS_DISPATCH_TIER || "";
   const shouldRecord = rootTier && !dispatchTier
     && typeof context.onRoutingDecision === "function";
@@ -74,6 +85,7 @@ async function recordChildRouting(context, {
     reason: policy?.reason || "agent_default",
     escalated: Boolean(policy?.escalated),
     population: "interactive_child",
+    ...(policy?.ab_arm ? { ab_experiment: policy.ab_experiment, ab_arm: policy.ab_arm } : {}),
   });
 }
 
@@ -91,13 +103,20 @@ function applyProtectedChildParams(context, input, output, policy) {
   if (!policy?.domainVariant || childModelFrom(context, input) !== policy.routedModel) {
     throw new Error("[aidevops] Domain parent ceiling unavailable or model changed");
   }
-  applyRequestedVariant(output, policy.domainVariant, policy.domainVariant);
+  const domainVariant = floorChildVariant(context, policy.domainVariant);
+  applyRequestedVariant(output, domainVariant, domainVariant);
   return true;
 }
 
 function requestedChildVariant(context, input, policy, effort) {
   if (policy?.browserVariant) return policy.browserVariant;
   if (policy?.reason === "specialist_advice") return context.agentRoutingState.specialistAdvisor.variant;
+  if (policy?.armRouting) {
+    const model = childModelFrom(context, input);
+    if (model === policy.armModels?.[effort]?.model) return policy.armModels[effort].variant || "";
+    const variant = routingVariant(policy.armRouting, effort, model);
+    if (variant) return variant;
+  }
   return context.resolveTierReasoning(
     effort, input?.provider?.id, input?.model?.id, context.tierReasoning,
   );
@@ -122,12 +141,16 @@ export async function routeChatParams(context, input, output) {
     const policy = context.policies.get(sessionID);
     const desiredEffort = policy?.effort
       ?? context.inferSubagentEffort(input.message.agent ?? childSession.agent);
-    const requestedVariant = requestedChildVariant(context, input, policy, desiredEffort);
-    const effectiveVariant = await effectiveChildVariant(
-      context, childSession, childModel, requestedVariant, currentVariant,
+    const requestedVariant = floorChildVariant(
+      context, requestedChildVariant(context, input, policy, desiredEffort),
     );
+    const effectiveVariant = floorChildVariant(context, await effectiveChildVariant(
+      context, childSession, childModel, requestedVariant, currentVariant,
+    ));
     if (policy) policy.requestedVariant = requestedVariant;
-    applyRequestedVariant(output, requestedVariant, effectiveVariant);
+    // An inherited sub-floor variant is raised even without a routed request.
+    const raisedInherited = effectiveVariant && effectiveVariant !== currentVariant ? effectiveVariant : "";
+    applyRequestedVariant(output, requestedVariant || raisedInherited, effectiveVariant);
     await recordChildRouting(context, {
       sessionID, childSession, childModel, desiredEffort, effectiveVariant, policy,
     });

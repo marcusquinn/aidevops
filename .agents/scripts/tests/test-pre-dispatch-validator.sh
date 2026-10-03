@@ -787,6 +787,372 @@ Planning-only: document options; no code changes.'
 	return 0
 }
 
+test_auto_dispatch_preclaim_scope_contract() {
+	# shellcheck disable=SC2016 # literal Markdown fixture
+	local rc=0 body='## What
+Implement the repair.
+
+## Files
+- EDIT: `src/repair.sh`'
+	"$HELPER_SCRIPT" scope-check 32531 "$body" 1 >/dev/null 2>&1 || rc=$?
+	if [[ "$rc" -eq 40 ]]; then
+		print_result "interactive auto-dispatch legacy Files cannot pass pre-claim scope" 0
+	else
+		print_result "interactive auto-dispatch legacy Files cannot pass pre-claim scope" 1 "rc=${rc}"
+	fi
+	if "$HELPER_SCRIPT" scope-check 32531 "$body" 0 >/dev/null 2>&1; then
+		print_result "non-auto untagged brief retains legacy validation behavior" 0
+	else
+		print_result "non-auto untagged brief retains legacy validation behavior" 1
+	fi
+	if "$HELPER_SCRIPT" scope-check 32531 $'Planning-only: no code changes' 1 >/dev/null 2>&1 &&
+		"$HELPER_SCRIPT" scope-check 32531 $'### Files Scope\n- EDIT: `src/repair.sh`' 1 >/dev/null 2>&1 &&
+		"$HELPER_SCRIPT" scope-check 32531 $'## Files Scope\n- `src/repair.sh`' 1 >/dev/null 2>&1; then
+		print_result "planning briefs and both canonical scope formats remain eligible" 0
+	else
+		print_result "planning briefs and both canonical scope formats remain eligible" 1
+	fi
+	return 0
+}
+
+test_scope_gate_precedes_claim() {
+	local core="${SCRIPT_DIR}/../pulse-dispatch-core.sh" gate_line="" dedup_line=""
+	# shellcheck disable=SC2016 # literal source-code search pattern
+	gate_line=$(grep -n '^[[:space:]]*_dispatch_preclaim_brief_scope "\$issue_number"' "$core" | cut -d: -f1)
+	dedup_line=$(grep -nE '^[[:space:]]+_dispatch_dedup_check_layers[[:space:]]' "$core" | cut -d: -f1)
+	if [[ "$gate_line" =~ ^[0-9]+$ && "$dedup_line" =~ ^[0-9]+$ && "$gate_line" -lt "$dedup_line" ]]; then
+		print_result "scope gate runs before dedup and claim comments" 0
+	else
+		print_result "scope gate runs before dedup and claim comments" 1 "gate=${gate_line} dedup=${dedup_line}"
+	fi
+	return 0
+}
+
+test_issue_creation_legacy_scope_rejected() {
+	local rc=0
+	(
+		# shellcheck source=../shared-constants.sh
+		source "${SCRIPT_DIR}/../shared-constants.sh" >/dev/null 2>&1
+		_gh_ci_validate_dispatch_scope --label auto-dispatch --body $'## Files\n- EDIT: `src/repair.sh`'
+	) >/dev/null 2>&1 || rc=$?
+	if [[ "$rc" -eq 1 ]]; then
+		print_result "issue creation rejects explicit legacy paths without canonical scope" 0
+	else
+		print_result "issue creation rejects explicit legacy paths without canonical scope" 1 "rc=${rc}"
+	fi
+	if (
+		# shellcheck source=../shared-constants.sh
+		source "${SCRIPT_DIR}/../shared-constants.sh" >/dev/null 2>&1
+		_gh_ci_validate_dispatch_scope --label auto-dispatch --body $'### Files Scope\n- EDIT: `src/repair.sh`' &&
+			_gh_ci_validate_dispatch_scope --label auto-dispatch --body 'Planning-only: no code changes'
+	) >/dev/null 2>&1; then
+		print_result "issue creation preserves canonical and planning issue behavior" 0
+	else
+		print_result "issue creation preserves canonical and planning issue behavior" 1
+	fi
+	return 0
+}
+
+# GH#32880: agents ignored the warning and published unscoped briefs that the
+# pulse then held. The agent-facing PATH shim fails closed; scripted/routine
+# callers that source the library keep warn-only.
+_run_scope_gate() {
+	local strict="$1"
+	local label="$2"
+	local body="$3"
+	# shellcheck source=../shared-constants.sh
+	source "${SCRIPT_DIR}/../shared-constants.sh" >/dev/null 2>&1
+	AIDEVOPS_STRICT_DISPATCH_SCOPE="$strict" \
+		_gh_ci_validate_dispatch_scope --label "$label" --body "$body"
+	return $?
+}
+
+test_issue_creation_unscoped_strict_fails_closed() {
+	local unscoped=$'## What\nFix it.\n\nFiles to modify:\n- EDIT: `src/repair.sh` (explain)'
+	local rc_strict=0 rc_routine=0 rc_scoped=0 rc_manual=0 rc_shim=0
+	local fake_bin="" gh_log=""
+	(_run_scope_gate 1 auto-dispatch "$unscoped") >/dev/null 2>&1 || rc_strict=$?
+	(_run_scope_gate 0 auto-dispatch "$unscoped") >/dev/null 2>&1 || rc_routine=$?
+	(_run_scope_gate 1 auto-dispatch $'### Files Scope\n\n- `src/repair.sh`') >/dev/null 2>&1 || rc_scoped=$?
+	(_run_scope_gate 1 no-auto-dispatch "$unscoped") >/dev/null 2>&1 || rc_manual=$?
+	if [[ "$rc_strict" -eq 1 && "$rc_routine" -eq 0 && "$rc_scoped" -eq 0 && "$rc_manual" -eq 0 ]]; then
+		print_result "strict issue creation rejects only unscoped auto-dispatch briefs" 0
+	else
+		print_result "strict issue creation rejects only unscoped auto-dispatch briefs" 1 \
+			"strict=${rc_strict} routine=${rc_routine} scoped=${rc_scoped} manual=${rc_manual}"
+	fi
+	# End to end through the agent-facing shim with a recording gh stub.
+	fake_bin=$(mktemp -d) || return 1
+	gh_log="${fake_bin}/gh.log"
+	cat >"${fake_bin}/gh" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"${gh_log}"
+case "\$*" in
+*".private"*) printf 'true\n' ;;
+"api user"*) printf 'testuser\n' ;;
+"issue create"*) printf 'https://github.com/owner/repo/issues/9991\n' ;;
+esac
+exit 0
+EOF
+	chmod +x "${fake_bin}/gh"
+	: >"$gh_log"
+	PATH="${fake_bin}:${PATH}" AIDEVOPS_SESSION_ORIGIN=interactive \
+		"${SCRIPT_DIR}/../../bin/gh_create_issue" --repo owner/repo --title "t0: unscoped" \
+		--label auto-dispatch --body "$unscoped" >/dev/null 2>"${fake_bin}/err" || rc_shim=$?
+	if [[ "$rc_shim" -ne 0 ]] && grep -q 'auto-dispatch issue not created' "${fake_bin}/err" &&
+		! grep -Eq 'issue create|createIssue' "$gh_log"; then
+		print_result "gh_create_issue shim refuses unscoped auto-dispatch before publishing" 0
+	else
+		print_result "gh_create_issue shim refuses unscoped auto-dispatch before publishing" 1 \
+			"rc=${rc_shim} err=$(tr '\n' ';' <"${fake_bin}/err")"
+	fi
+	# Control: the explicit opt-out passes the scope gate with a warning only.
+	PATH="${fake_bin}:${PATH}" AIDEVOPS_SESSION_ORIGIN=interactive AIDEVOPS_STRICT_DISPATCH_SCOPE=0 \
+		"${SCRIPT_DIR}/../../bin/gh_create_issue" --repo owner/repo --title "t0: unscoped" \
+		--label auto-dispatch --body "$unscoped" >/dev/null 2>"${fake_bin}/err" || true
+	if grep -q 'auto-dispatch issue has no canonical' "${fake_bin}/err" &&
+		! grep -q 'auto-dispatch issue not created' "${fake_bin}/err"; then
+		print_result "gh_create_issue shim opt-out keeps warn-only creation" 0
+	else
+		print_result "gh_create_issue shim opt-out keeps warn-only creation" 1 \
+			"err=$(tr '\n' ';' <"${fake_bin}/err")"
+	fi
+	rm -rf "$fake_bin"
+	return 0
+}
+
+test_preclaim_hold_once() {
+	local calls="" comments="" rc=0
+	calls=$(mktemp) || return 1
+	comments=$(mktemp) || return 1
+	printf '[[]]\n' >"$comments"
+	(
+		# shellcheck source=../shared-constants.sh
+		source "${SCRIPT_DIR}/../shared-constants.sh" >/dev/null 2>&1
+		# shellcheck source=../pulse-dispatch-core.sh
+		source "${SCRIPT_DIR}/../pulse-dispatch-core.sh" >/dev/null 2>&1
+		# Fixture decisions must never reach the live pulse.log (GH#32689).
+		LOGFILE=/dev/null
+		# GH#33243: the hold is now the opt-out path.
+		AIDEVOPS_BRIEF_SCOPE_WORKER_DISCOVERY=0
+		gh() {
+			if [[ "$*" == *"/comments"* ]]; then
+				cat "$comments"
+				return 0
+			fi
+			printf 'write\n'
+			return 0
+		}
+		repo_allows_pulse_write_actions() { return 0; }
+		set_issue_status() { printf 'status:%s\n' "$3" >>"$calls"; return 0; }
+		gh_issue_comment() {
+			local body_file="$5"
+			printf 'comment\n' >>"$calls"
+			# Record the posted hold as a trusted runner comment.
+			jq -n --rawfile body "$body_file" \
+				'[[{author_association:"COLLABORATOR", body:$body}]]' >"$comments"
+			return 0
+		}
+		# shellcheck disable=SC2016 # literal JSON fixture
+		local meta='{"author":{"login":"maintainer"},"labels":[{"name":"auto-dispatch"}],"body":"## Files\n- EDIT: `src/repair.sh`"}'
+		_dispatch_preclaim_brief_scope 32531 owner/repo "$meta" && exit 1
+		# shellcheck disable=SC2016 # literal JSON fixture
+		local blocked='{"author":{"login":"maintainer"},"labels":[{"name":"auto-dispatch"},{"name":"status:blocked"}],"body":"## Files\n- EDIT: `src/repair.sh`"}'
+		_dispatch_preclaim_brief_scope 32531 owner/repo "$blocked" && exit 1
+		[[ "$(wc -l <"$calls")" -eq 2 ]] || exit 2
+		# Another path cleared the label but the body is unchanged: relabel only.
+		_dispatch_preclaim_brief_scope 32531 owner/repo "$meta" && exit 1
+		[[ "$(grep -c '^comment$' "$calls")" -eq 1 ]] || exit 3
+		[[ "$(grep -c '^status:blocked$' "$calls")" -eq 2 ]] || exit 4
+		# A changed but still unscoped body gets exactly one new action.
+		# shellcheck disable=SC2016 # literal JSON fixture
+		meta='{"author":{"login":"maintainer"},"labels":[{"name":"auto-dispatch"}],"body":"## Files\n- EDIT: `src/other.sh`"}'
+		_dispatch_preclaim_brief_scope 32531 owner/repo "$meta" && exit 1
+		[[ "$(grep -c '^comment$' "$calls")" -eq 2 ]] || exit 5
+		# Unreadable comment history writes nothing.
+		gh() {
+			[[ "$*" == *"/comments"* ]] && return 1
+			printf 'write\n'
+			return 0
+		}
+		# shellcheck disable=SC2016 # literal JSON fixture
+		meta='{"author":{"login":"maintainer"},"labels":[{"name":"auto-dispatch"}],"body":"## Files\n- EDIT: `src/third.sh`"}'
+		_dispatch_preclaim_brief_scope 32531 owner/repo "$meta" && exit 1
+		[[ "$(wc -l <"$calls")" -eq 5 ]] || exit 6
+	) >/dev/null 2>&1 || rc=$?
+	if [[ "$rc" -eq 0 ]]; then
+		print_result "missing scope holds once per body without a claim or repeated action" 0
+	else
+		print_result "missing scope holds once per body without a claim or repeated action" 1 "rc=${rc}"
+	fi
+	rm -f "$calls" "$comments"
+	return 0
+}
+
+# GH#32689: normalizable briefs are rewritten instead of held, once per body;
+# repaired holds release only while the hold is still the newest blocker.
+test_brief_scope_self_heal_and_release() {
+	local calls="" comments="" rc=0
+	calls=$(mktemp) || return 1
+	comments=$(mktemp) || return 1
+	printf '[[]]\n' >"$comments"
+	(
+		# shellcheck source=../shared-constants.sh
+		source "${SCRIPT_DIR}/../shared-constants.sh" >/dev/null 2>&1
+		# shellcheck source=../pulse-dispatch-core.sh
+		source "${SCRIPT_DIR}/../pulse-dispatch-core.sh" >/dev/null 2>&1
+		LOGFILE=/dev/null
+		# GH#33243: exercise the opt-out hold path.
+		AIDEVOPS_BRIEF_SCOPE_WORKER_DISCOVERY=0
+		gh() {
+			if [[ "$*" == *"/comments"* ]]; then
+				cat "$comments"
+				return 0
+			fi
+			printf 'write\n'
+			return 0
+		}
+		repo_allows_pulse_write_actions() { return 0; }
+		set_issue_status() {
+			printf 'status:%s\n' "$3" >>"$calls"
+			return 0
+		}
+		gh_issue_edit_safe() {
+			printf 'edit\n' >>"$calls"
+			return 0
+		}
+		gh_issue_comment() {
+			local body_file="$5"
+			printf 'comment\n' >>"$calls"
+			jq -n --rawfile body "$body_file" \
+				'[[{author_association:"COLLABORATOR", body:$body}]]' >"$comments"
+			return 0
+		}
+		# shellcheck disable=SC2016 # literal JSON fixture
+		local meta='{"author":{"login":"maintainer"},"labels":[{"name":"auto-dispatch"}],"body":"## What\nx\n\n### Files to Modify\n- `EDIT: src/repair.sh:10-20` — fix"}'
+		_dispatch_preclaim_brief_scope 32689 owner/repo "$meta" && exit 1
+		[[ "$(tr '\n' ' ' <"$calls")" == "edit comment " ]] || exit 2
+		# The same body coming back (external sync) is held, not re-edited.
+		_dispatch_preclaim_brief_scope 32689 owner/repo "$meta" && exit 1
+		[[ "$(grep -c '^edit$' "$calls")" -eq 1 && "$(grep -c '^status:blocked$' "$calls")" -eq 1 ]] || exit 3
+		: >"$calls"
+		# shellcheck disable=SC2016
+		local hold='<!-- aidevops:brief-hold reason=missing_files_scope body=aaaaaaaaaaaaaaaaaaaaaaaa -->'
+		# shellcheck disable=SC2016
+		local scoped=$'## What\nx\n\n### Files Scope\n\n- `src/repair.sh`'
+		jq -n --arg b "$hold" '[[{author_association:"COLLABORATOR", body:$b}]]' >"$comments"
+		_release_repaired_brief_hold owner/repo 32689 "$scoped" maintainer || exit 4
+		[[ "$(tr '\n' ' ' <"$calls")" == "status:available " ]] || exit 5
+		: >"$calls"
+		# A newer blocker after the hold keeps the issue blocked.
+		jq -n --arg b "$hold" '[[{author_association:"COLLABORATOR", body:$b},
+			{author_association:"COLLABORATOR", body:"Worker Watchdog Kill"}]]' >"$comments"
+		_release_repaired_brief_hold owner/repo 32689 "$scoped" maintainer && exit 6
+		# Still-unscoped bodies are skipped without reading comments.
+		printf 'not-json\n' >"$comments"
+		_release_repaired_brief_hold owner/repo 32689 $'## Files\n- src/x.sh' maintainer && exit 7
+		[[ ! -s "$calls" ]] || exit 8
+		exit 0
+	) >/dev/null 2>&1 || rc=$?
+	if [[ "$rc" -eq 0 ]]; then
+		print_result "brief scope self-heals once per body and releases repaired holds" 0
+	else
+		print_result "brief scope self-heals once per body and releases repaired holds" 1 "rc=${rc}"
+	fi
+	rm -f "$calls" "$comments"
+	return 0
+}
+
+# GH#33243: by default trusted unscoped briefs dispatch for worker-owned scope
+# discovery, untrusted ones stay blocked, and existing holds are released.
+test_brief_scope_worker_discovery() {
+	local calls="" comments="" rc=0
+	calls=$(mktemp) || return 1
+	comments=$(mktemp) || return 1
+	(
+		# shellcheck source=../shared-constants.sh
+		source "${SCRIPT_DIR}/../shared-constants.sh" >/dev/null 2>&1
+		# shellcheck source=../pulse-dispatch-core.sh
+		source "${SCRIPT_DIR}/../pulse-dispatch-core.sh" >/dev/null 2>&1
+		LOGFILE=/dev/null
+		unset AIDEVOPS_BRIEF_SCOPE_WORKER_DISCOVERY
+		# Not named "permission": _brief_scope_author_trusted declares that local.
+		local fixture_permission="write"
+		gh() {
+			if [[ "$*" == *"/comments"* ]]; then
+				cat "$comments"
+				return 0
+			fi
+			printf '%s\n' "$fixture_permission"
+			return 0
+		}
+		repo_allows_pulse_write_actions() { return 0; }
+		set_issue_status() { printf 'status:%s\n' "$3" >>"$calls"; return 0; }
+		gh_issue_edit_safe() { printf 'edit\n' >>"$calls"; return 0; }
+		gh_issue_comment() { printf 'comment\n' >>"$calls"; return 0; }
+		local meta='{"author":{"login":"maintainer"},"labels":[{"name":"auto-dispatch"}],"body":"## What\nUnscoped brief"}'
+		_dispatch_preclaim_brief_scope 33243 owner/repo "$meta" || exit 1
+		[[ ! -s "$calls" ]] || exit 2
+		fixture_permission="read"
+		_dispatch_preclaim_brief_scope 33243 owner/repo "$meta" && exit 3
+		[[ ! -s "$calls" ]] || exit 4
+		fixture_permission="write"
+		local hold='<!-- aidevops:brief-hold reason=missing_files_scope body=aaaaaaaaaaaaaaaaaaaaaaaa -->'
+		jq -n --arg b "$hold" '[[{author_association:"COLLABORATOR", body:$b}]]' >"$comments"
+		_release_repaired_brief_hold owner/repo 33243 $'## What\nUnscoped brief' maintainer || exit 5
+		[[ "$(tr '\n' ' ' <"$calls")" == "status:available " ]] || exit 6
+		exit 0
+	) >/dev/null 2>&1 || rc=$?
+	if [[ "$rc" -eq 0 ]]; then
+		print_result "trusted unscoped briefs dispatch for worker scope discovery and holds release" 0
+	else
+		print_result "trusted unscoped briefs dispatch for worker scope discovery and holds release" 1 "rc=${rc}"
+	fi
+	rm -f "$calls" "$comments"
+	return 0
+}
+
+test_brief_hold_release_is_body_bound() {
+	local rc=0
+	(
+		# shellcheck source=../shared-constants.sh
+		source "${SCRIPT_DIR}/../shared-constants.sh" >/dev/null 2>&1
+		local body='## What
+Unscoped brief'
+		local digest="" comments=""
+		digest=$(_dispatch_brief_hold_body_hash "$body") || {
+			# Core is not required to load the shared predicate.
+			digest=$(printf '%s' "$body" | sha256sum | cut -c1-24)
+		}
+		comments=$(jq -cn --arg marker "<!-- aidevops:brief-hold reason=missing_files_scope body=${digest} -->" \
+			'[[{author_association:"COLLABORATOR",body:$marker}]]')
+		issue_has_active_brief_hold "$comments" "$body" || exit 1
+		issue_has_active_brief_hold "$comments" "${body} edited" && exit 2
+		local untrusted=""
+		untrusted=$(printf '%s' "$comments" | jq '.[0][0].author_association="NONE"')
+		issue_has_active_brief_hold "$untrusted" "$body" && exit 3
+		gh() {
+			if [[ "$*" == *'/comments?'* ]]; then
+				printf '%s\n' "$comments"
+			else
+				jq -cn --arg body "$body" '{body:$body,labels:[{name:"status:blocked"}]}'
+			fi
+			return 0
+		}
+		issue_brief_hold_blocks_auto_release 42 owner/repo || exit 4
+		body='## What
+Edited brief'
+		issue_brief_hold_blocks_auto_release 42 owner/repo && exit 5
+		exit 0
+	) >/dev/null 2>&1 || rc=$?
+	if [[ "$rc" -eq 0 ]]; then
+		print_result "brief hold blocks only trusted exact-body releases" 0
+	else
+		print_result "brief hold blocks only trusted exact-body releases" 1 "rc=${rc}"
+	fi
+	return 0
+}
+
 test_zero_progress_meta_recovered_blocks_dispatch() {
 	setup_test_env
 	create_gh_stub_zero_progress_body "write"
@@ -1176,6 +1542,14 @@ main() {
 	test_dependabot_intake_without_scope_blocks_before_worker
 	test_dependabot_intake_with_scope_allows_dispatch
 	test_planning_only_generated_brief_without_scope_allows_dispatch
+	test_auto_dispatch_preclaim_scope_contract
+	test_scope_gate_precedes_claim
+	test_issue_creation_legacy_scope_rejected
+	test_issue_creation_unscoped_strict_fails_closed
+	test_preclaim_hold_once
+	test_brief_scope_self_heal_and_release
+	test_brief_scope_worker_discovery
+	test_brief_hold_release_is_body_bound
 	test_zero_progress_meta_recovered_blocks_dispatch
 	test_zero_progress_meta_recovered_readonly_allows_dispatch_without_write
 	test_zero_progress_meta_active_allows_dispatch

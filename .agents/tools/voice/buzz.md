@@ -42,4 +42,4 @@ buzz transcribe foreign.mp3 --task translate --language auto
 
 - `tools/voice/transcription.md` - local vs cloud transcription options
 - `tools/voice/speech-to-speech.md` - real-time speech pipeline
-- `tools/video/remotion.md` - video workflows that consume transcripts
+- `tools/video/remotion/remotion.md` - video workflows that consume transcripts

@@ -973,28 +973,6 @@ get_todo_status() {
 	echo "completed:$completed,incomplete:$incomplete,in_progress:$in_progress"
 }
 
-# Check for Ralph loop
-get_ralph_status() {
-	local project_root="$1"
-	# Check new location first, then legacy
-	local ralph_file="$project_root/.agents/loop-state/ralph-loop.local.state"
-	local ralph_file_legacy="$project_root/.claude/ralph-loop.local.state"
-
-	local active_file=""
-	[[ -f "$ralph_file" ]] && active_file="$ralph_file"
-	[[ -z "$active_file" && -f "$ralph_file_legacy" ]] && active_file="$ralph_file_legacy"
-
-	if [[ -n "$active_file" ]]; then
-		local iteration max_iter
-		iteration=$(grep '^iteration:' "$active_file" 2>/dev/null | cut -d: -f2 | tr -d ' ' || echo "0")
-		max_iter=$(grep '^max_iterations:' "$active_file" 2>/dev/null | cut -d: -f2 | tr -d ' ' || echo "unlimited")
-		echo "active:true,iteration:$iteration,max:$max_iter"
-	else
-		echo "active:false"
-	fi
-	return 0
-}
-
 # Get open PRs
 get_pr_status() {
 	if command -v gh &>/dev/null; then
@@ -1145,7 +1123,6 @@ gather_context() {
 
 	if [[ "$focus" == "all" || "$focus" == "knowledge" ]]; then
 		echo -e "${CYAN}## Session Context${NC}"
-		echo "Ralph loop: $(get_ralph_status "$project_root")"
 		echo "Open PRs: $(get_pr_status)"
 		echo ""
 	fi
@@ -1201,10 +1178,9 @@ gather_context() {
 output_json() {
 	local project_root="$1"
 
-	local branch todo_status ralph_status adherence changes
+	local branch todo_status adherence changes
 	branch=$(get_branch)
 	todo_status=$(get_todo_status "$project_root")
-	ralph_status=$(get_ralph_status "$project_root")
 	adherence=$(check_workflow_adherence "$project_root")
 	changes=$(get_uncommitted_changes)
 
@@ -1229,9 +1205,6 @@ output_json() {
   "changes": {
     "staged": ${staged:-0},
     "unstaged": ${unstaged:-0}
-  },
-  "ralph_loop": {
-    "active": $(echo "$ralph_status" | grep -q 'active:true' && echo "true" || echo "false")
   },
   "workflow": {
     "on_protected_branch": $(is_protected_branch && echo "true" || echo "false")

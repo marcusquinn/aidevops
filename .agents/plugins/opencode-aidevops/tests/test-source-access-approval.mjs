@@ -34,7 +34,7 @@ import { createSourceAccessRuntime } from "../source-access-runtime.mjs";
 
 const BASE = {
   tool: "read",
-  args: { filePath: "/repo/secret-helper.sh" },
+  args: { filePath: "/repo/secret-helper.rb" },
   sessionId: "ses_fixture_123456",
   callId: "call_fixture_123456",
   scriptsDir: "/framework/scripts",
@@ -51,14 +51,14 @@ function mutationFixture() {
   mkdirSync(tempParent, { recursive: true });
   const root = mkdtempSync(join(tempParent, "source-access-mutation-test-"));
   const repo = join(root, "repo");
-  const source = join(repo, "secret-helper.sh");
+  const source = join(repo, "secret-helper.rb");
   const snapshot = join(root, "approved.source");
   const sessionId = "ses_mutation_123456";
   mkdirSync(repo);
   execFileSync("git", ["-C", repo, "init", "--quiet"]);
   writeFileSync(source, "one\n");
   writeFileSync(snapshot, "one\n");
-  execFileSync("git", ["-C", repo, "add", "secret-helper.sh"]);
+  execFileSync("git", ["-C", repo, "add", "secret-helper.rb"]);
   const approval = {
     approvalId: "a".repeat(64),
     approvedPath: snapshot,
@@ -66,7 +66,7 @@ function mutationFixture() {
     contentSha256: createHash("sha256").update("one\n").digest("hex"),
     expiresAt: 2_000_000_000,
     repoRoot: realpathSync(repo),
-    relativePath: "secret-helper.sh",
+    relativePath: "secret-helper.rb",
   };
   const verify = ({ sessionId: requestedSession, filePath, authorizedApprovalId }) => {
     if (requestedSession !== sessionId || realpathSync(filePath) !== approval.canonicalPath) return false;
@@ -330,7 +330,7 @@ test("the loaded verifier accepts only the exact signed receipt", () => {
   mkdirSync(tempParent, { recursive: true });
   const root = mkdtempSync(join(tempParent, "source-access-node-test-"));
   const repo = join(root, "repo");
-  const source = join(repo, "secret-helper.sh");
+  const source = join(repo, "secret-helper.rb");
   const key = join(root, "source-access-key");
   const stateDir = join(root, "state");
   const uid = typeof process.getuid === "function" ? process.getuid() : 0;
@@ -341,7 +341,7 @@ test("the loaded verifier accepts only the exact signed receipt", () => {
     mkdirSync(repo);
     execFileSync("git", ["-C", repo, "init", "--quiet"]);
     writeFileSync(source, "#!/usr/bin/env bash\nprintf synthetic\\n\n");
-    execFileSync("git", ["-C", repo, "add", "secret-helper.sh"]);
+    execFileSync("git", ["-C", repo, "add", "secret-helper.rb"]);
     execFileSync("/usr/bin/ssh-keygen", [
       "-q",
       "-t",
@@ -418,7 +418,7 @@ test("the loaded verifier accepts only the exact signed receipt", () => {
     writeFileSync(source, "changed\n");
     assert.equal(verifySourceAccessReceipt(verifierArgs), false);
     writeFileSync(source, "#!/usr/bin/env bash\nprintf synthetic\\n\n");
-    execFileSync("git", ["-C", repo, "rm", "--cached", "--quiet", "secret-helper.sh"]);
+    execFileSync("git", ["-C", repo, "rm", "--cached", "--quiet", "secret-helper.rb"]);
     assert.equal(verifySourceAccessReceipt(verifierArgs), false);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -430,7 +430,7 @@ function manifestFixtureProtocol(bound) {
   return {
     payloadSchema: `aidevops-source-access-approval/${version}`,
     receiptSchema: `aidevops-source-access-receipt/${version}`,
-    thirdPath: "tests/test-secret-helper-\u00e9.sh",
+    thirdPath: "tests/test-secret-helper-\u00e9.rb",
   };
 }
 
@@ -569,7 +569,9 @@ async function checkSignedManifest(inLinkedWorktree, bound = false, atomic = fal
       execFileSync("/usr/bin/git", ["-C", canonicalRepo, "worktree", "add", "--detach", "--quiet", repo]);
     }
     execFileSync("git", ["-C", otherRepo, "init", "--quiet"]);
-    const relativePaths = ["secret-helper.sh", "secret-other.sh", protocol.thirdPath];
+    // GH#32526: tracked .sh/.mjs/.js/.ts/.py/.md files with loose secret names
+    // are readable without approval, so approval fixtures use .rb.
+    const relativePaths = ["secret-helper.rb", "secret-other.rb", protocol.thirdPath];
     const paths = relativePaths.map((name, index) => {
       const filePath = join(repo, name);
       mkdirSync(dirname(filePath), { recursive: true });
@@ -577,12 +579,12 @@ async function checkSignedManifest(inLinkedWorktree, bound = false, atomic = fal
       return filePath;
     });
     execFileSync("git", ["-C", repo, "add", ...relativePaths]);
-    const extraPath = join(repo, "secret-extra.sh");
+    const extraPath = join(repo, "secret-extra.rb");
     writeFileSync(extraPath, "extra\n");
-    execFileSync("git", ["-C", repo, "add", "secret-extra.sh"]);
-    const foreignPath = join(otherRepo, "secret-helper.sh");
+    execFileSync("git", ["-C", repo, "add", "secret-extra.rb"]);
+    const foreignPath = join(otherRepo, "secret-helper.rb");
     writeFileSync(foreignPath, "foreign\n");
-    execFileSync("git", ["-C", otherRepo, "add", "secret-helper.sh"]);
+    execFileSync("git", ["-C", otherRepo, "add", "secret-helper.rb"]);
     execFileSync("/usr/bin/ssh-keygen", [
       "-q", "-t", "ed25519", "-N", "", "-C", "source-access@aidevops.sh", "-f", key,
     ]);
@@ -914,7 +916,7 @@ test("unobserved filesystem and identity transitions fail closed", () => {
     try {
       if (scenario === "external") writeFileSync(fixture.source, "external\n");
       if (scenario === "untracked") {
-        execFileSync("git", ["-C", fixture.repo, "rm", "--cached", "--quiet", "secret-helper.sh"]);
+        execFileSync("git", ["-C", fixture.repo, "rm", "--cached", "--quiet", "secret-helper.rb"]);
       }
       if (scenario === "hardlink") linkSync(fixture.source, join(fixture.root, "linked.source"));
       if (scenario === "symlink") {

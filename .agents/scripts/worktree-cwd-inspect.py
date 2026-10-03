@@ -10,14 +10,29 @@ import re
 import sys
 
 
-def owner_uid(pid: str) -> int:
+def uid_fields_accepted(values: list, sudo_uid: int) -> bool:
+    """Return True when a /proc Uid: line belongs to the invoking user.
+
+    The real UID must be the invoking user. Effective, saved and filesystem
+    UIDs may be that user or root, which covers same-user setuid-root helpers
+    such as `fusermount3 auto_unmount` or an open `sudo` parent (GH#32871).
+    Any other UID, including a root real UID, is another identity.
+    """
+    if sudo_uid <= 0 or len(values) != 4:
+        return False
+    if not all(re.fullmatch(r"[0-9]+", value) for value in values):
+        return False
+    uids = [int(value) for value in values]
+    if uids[0] != sudo_uid:
+        return False
+    return all(uid in (sudo_uid, 0) for uid in uids[1:])
+
+
+def owned_by_invoker(pid: str, sudo_uid: int) -> bool:
     with open(f"/proc/{pid}/status", encoding="ascii") as status:
         for line in status:
             if line.startswith("Uid:\t"):
-                values = line.split()[1:]
-                if len(values) != 4 or len(set(values)) != 1:
-                    raise ValueError("process identity is not stable")
-                return int(values[0])
+                return uid_fields_accepted(line.split()[1:], sudo_uid)
     raise ValueError("process UID is unavailable")
 
 
@@ -30,12 +45,13 @@ def main() -> int:
         if not re.fullmatch(r"[1-9][0-9]*", pid) or not re.fullmatch(r"[1-9][0-9]*", sudo_uid):
             raise ValueError("invoking identity is invalid")
         proc_dir = f"/proc/{pid}"
+        invoker_uid = int(sudo_uid)
         before = os.stat(proc_dir, follow_symlinks=False)
-        if owner_uid(pid) != int(sudo_uid):
+        if not owned_by_invoker(pid, invoker_uid):
             raise ValueError("process owner does not match the invoking user")
         cwd = os.readlink(f"{proc_dir}/cwd")
         after = os.stat(proc_dir, follow_symlinks=False)
-        if before.st_ino != after.st_ino or owner_uid(pid) != int(sudo_uid):
+        if before.st_ino != after.st_ino or not owned_by_invoker(pid, invoker_uid):
             raise ValueError("process identity changed during inspection")
         if not cwd.startswith("/") or any(ord(character) < 32 or ord(character) == 127 for character in cwd):
             raise ValueError("process CWD is not a safe absolute path")

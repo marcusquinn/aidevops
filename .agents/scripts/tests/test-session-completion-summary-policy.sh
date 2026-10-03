@@ -26,14 +26,29 @@ require_literal() {
 main() {
 	require_literal 'state aim and solved outcome' \
 		"$AGENTS_DOC" 'always-loaded completion guidance omits the session aim and solved outcome' || return 1
+	# shellcheck disable=SC2016 # literal Markdown backticks
+	require_literal 'ends with the `What next` block (needed from user, left to capture, close readiness)' \
+		"$AGENTS_DOC" 'always-loaded guidance omits the end-of-turn What next block' || return 1
+	for field in '**Needed from you:**' '**Left to capture:**' '**Close:**' '### Capture Check'; do
+		require_literal "$field" "$SESSION_DOC" \
+			"session What next block omits: $field" || return 1
+	done
+	require_literal "never write \`None\` while a question" \
+		"$SESSION_DOC" 'What next block may hide an open user question' || return 1
 	require_literal 'reconnects the delivered work to the session aim or problem' \
 		"$SESSION_DOC" 'session completion detail omits reader reorientation context' || return 1
-	require_literal 'omit routine-owned cleanup unless user action is required or work is at risk' \
-		"$AGENTS_DOC" 'always-loaded completion guidance does not suppress routine cleanup noise' || return 1
-	require_literal 'Do not attempt or report normal deferred cleanup' \
-		"$SESSION_DOC" 'session lifecycle still asks the owning session to narrate cleanup' || return 1
-	require_literal "A valid routine-owned \`CLEANUP_DEFERRED\` handoff is silent operational bookkeeping" \
-		"$FULL_LOOP_COMMAND" 'full-loop guidance does not classify routine cleanup as silent' || return 1
+	require_literal 'routine-owned cleanup: one no-action line unless user action is required or work is at risk' \
+		"$AGENTS_DOC" 'always-loaded completion guidance does not limit routine cleanup to a no-action note' || return 1
+	require_literal 'Do not attempt that cleanup, and never turn it into a user task' \
+		"$SESSION_DOC" 'session lifecycle may still hand routine cleanup to the user' || return 1
+	require_literal 'is not a reason to ask the user to clean up' \
+		"$SESSION_DOC" 'session lifecycle lets blocked deletions become user cleanup tasks' || return 1
+	require_literal 'after this session closes; no action needed.' \
+		"$SESSION_DOC" 'session lifecycle omits the no-action cleanup explanation' || return 1
+	require_literal "A valid routine-owned \`CLEANUP_DEFERRED\` handoff is operational bookkeeping, not a user task" \
+		"$FULL_LOOP_COMMAND" 'full-loop guidance does not classify routine cleanup as a non-user task' || return 1
+	require_literal 'after this session closes; no action needed.' \
+		"$FULL_LOOP_COMMAND" 'full-loop guidance omits the no-action cleanup explanation' || return 1
 	require_literal 'Do not copy lifecycle promise tokens' \
 		"$FULL_LOOP_COMMAND" 'machine lifecycle tokens may leak into the user-facing summary' || return 1
 	require_literal '**Delivered:** every promised acceptance criterion has verified evidence.' \
@@ -68,6 +83,17 @@ main() {
 		"$FULL_LOOP_COMMAND" 'full-loop command omits truthful execution states' || return 1
 	require_literal 'continuation; it never completes unfinished delivery.' \
 		"$FULL_LOOP_COMMAND" 'full-loop command treats checkpointing as completion' || return 1
+	# GH#33130: What next must not hide uncommitted session-owned work.
+	require_literal 'Inspect live Git status in every touched repository and linked worktree.' \
+		"$SESSION_DOC" 'capture check omits the live Git-status inspection' || return 1
+	require_literal 'Session-owned modified, staged, or untracked files are uncaptured' \
+		"$SESSION_DOC" 'capture check does not classify uncommitted files as uncaptured' || return 1
+	require_literal 'ask for that approval under **Needed from you**' \
+		"$SESSION_DOC" 'capture check hides missing commit approval' || return 1
+	require_literal 'Do not rely on an earlier status snapshot.' \
+		"$SESSION_DOC" 'capture check accepts stale Git status' || return 1
+	require_literal 'no session-owned repository changes remain uncommitted' \
+		"$SESSION_DOC" 'Ready to close permits uncommitted session-owned changes' || return 1
 
 	if grep -Fq -- "Cleanup: commit or stash changes, then run \`wt merge\`" "$SESSION_DOC"; then
 		printf 'FAIL: session lifecycle still directs the owning session to clean its worktree\n' >&2

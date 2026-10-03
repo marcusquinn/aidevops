@@ -1290,12 +1290,18 @@ _pir_pr_lookup_uncertain() {
 # Stage 1 action: close an issue whose work is done via a merged PR.
 # (Per-issue body of close_issues_with_merged_prs — no slug loop.)
 #
-# Args: $1=slug, $2=issue_num, $3=issue_title, $4=dedup_helper, $5=verify_helper
+# Args: $1=slug, $2=issue_num, $3=issue_title, $4=dedup_helper, $5=verify_helper,
+#       $6=issue_body (optional; enables the recurrent file-size-debt gate)
 # Returns: 0 if issue was closed, 1 otherwise
 #######################################
 _action_ciw_single() {
 	local slug="$1" issue_num="$2" issue_title="$3"
 	local dedup_helper="$4" verify_helper="$5"
+	local issue_body="${6:-}"
+
+	# GH#32640: checked before any API call — regrown debt is never closed on
+	# historical merged-PR evidence, and an unmeasurable outcome defers.
+	_pir_file_size_debt_close_gate "$slug" "$issue_num" "$issue_body" "Auto-close" || return 1
 
 	local dedup_output=""
 	dedup_output=$("$dedup_helper" has-open-pr "$issue_num" "$slug" "$issue_title" 2>/dev/null) || return 1
@@ -1339,57 +1345,32 @@ _action_ciw_single() {
 # Stage 2 action: reconcile a status:done issue.
 # (Per-issue body of reconcile_stale_done_issues — no slug loop.)
 #
-# Args: $1=slug, $2=issue_num, $3=issue_title, $4=dedup_helper, $5=verify_helper
-# Returns: 0 if closed, 2 if reset to status:available, 1 if no action taken
+# Args: $1=slug, $2=issue_num, $3=issue_title, $4=dedup_helper, $5=verify_helper,
+#       $6=issue_body (optional; enables the recurrent file-size-debt gate)
+# Returns: 2 if healed to a non-terminal status, 1 if no action taken
 #######################################
 _action_rsd_single() {
 	local slug="$1" issue_num="$2" issue_title="$3"
-	local dedup_helper="$4" verify_helper="$5"
-	local available_status="available"
-
-	local dedup_output=""
-	if dedup_output=$("$dedup_helper" has-open-pr "$issue_num" "$slug" "$issue_title" 2>/dev/null); then
-		if _pir_pr_lookup_uncertain "$dedup_output"; then
-			echo "[pulse-wrapper] Reconcile done: deferred #${issue_num} in ${slug} — PR lookup uncertain" >>"$LOGFILE"
-			return 1
-		fi
-		local pr_ref="" pr_num="" merged_at=""
-		pr_ref=$(printf '%s' "$dedup_output" | grep -o '#[0-9]*' | head -1) || pr_ref=""
-		pr_num=$(printf '%s' "$pr_ref" | tr -d '#')
-		merged_at=""
-
-		if [[ -n "$pr_num" ]]; then
-			merged_at=$(_pir_pr_merged_at "$pr_num" "$slug") || merged_at=""
-			if [[ -z "$merged_at" ]]; then
-				echo "[pulse-wrapper] Reconcile done: skipped close #${issue_num} in ${slug} — PR #${pr_num} is NOT merged (GH#17871 guard)" >>"$LOGFILE"
-				set_issue_status "$issue_num" "$slug" "$available_status" >/dev/null 2>&1 || return 1
-				return 2
-			fi
-		fi
-
-		if [[ -n "$pr_num" ]] && [[ -x "$verify_helper" ]]; then
-			if ! "$verify_helper" check "$issue_num" "$pr_num" "$slug" >/dev/null 2>&1; then
-				echo "[pulse-wrapper] Reconcile done: skipped close #${issue_num} in ${slug} — PR #${pr_num} does not touch issue files (GH#17372 guard)" >>"$LOGFILE"
-				set_issue_status "$issue_num" "$slug" "$available_status" >/dev/null 2>&1 || return 1
-				return 2
-			fi
-		fi
-
-		gh issue close "$issue_num" --repo "$slug" \
-			--comment "Closing: work completed via merged PR ${pr_ref:-"(detected by dedup)"} (merged at ${merged_at:-unknown})." \
-			>/dev/null 2>&1 || return 1
-		[[ "$pr_num" =~ ^[0-9]+$ ]] && set_solved_label_from_merged_pr "$issue_num" "$slug" "$pr_num" || true
-
-		fast_fail_reset "$issue_num" "$slug" || true
-		unlock_issue_after_worker "$issue_num" "$slug"
-		echo "[pulse-wrapper] Reconcile done: closed #${issue_num} in ${slug} — merged PR: ${dedup_output:-"found"}" >>"$LOGFILE"
-		return 0
-	else
-		# No merged PR — reset for re-evaluation
-		set_issue_status "$issue_num" "$slug" "$available_status" >/dev/null 2>&1 || return 1
-		echo "[pulse-wrapper] Reconcile done: reset #${issue_num} in ${slug} to status:available — no merged PR evidence" >>"$LOGFILE"
-		return 2
+	local issue_json="" comments_json="" restored_status="available" issue_api=""
+	printf -v issue_api 'repos/%s/issues/%s' "$slug" "$issue_num"
+	# GH#33374: open + done is invalid, not permission to close. Closing-intent
+	# reconciliation remains in stage 3; this stage only repairs the projection.
+	issue_json=$(gh api "$issue_api" 2>/dev/null) || return 1
+	printf '%s' "$issue_json" | jq -e '
+		.state == "open" and any(.labels[]; .name == "status:done")' >/dev/null 2>&1 || return 1
+	comments_json=$(gh api --paginate --slurp "${issue_api}/comments?per_page=100" 2>/dev/null) || return 1
+	restored_status=$(printf '%s' "$comments_json" | jq -er '
+		[.[][] | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR")
+			| select((.body // "") | test("^(<!-- ops:start[^\\n]*\\n)?(CLAIM_RELEASED|CLAIM_RENEWED|CLAIM_ACQUIRED)([[:space:]]|$)") | not)]
+		| sort_by(.updated_at // .created_at) | last
+		| if ((.body // "") | test("(^|\\n)(\\*\\*)?BLOCKED\\b|TERMINAL_BLOCKER_REASON=|status:blocked"; "i")) then "blocked" else "available" end' 2>/dev/null) || return 1
+	if printf '%s' "$issue_json" | jq -e 'any(.labels[]; .name == "status:blocked")' >/dev/null 2>&1; then
+		restored_status="blocked"
 	fi
+	set_issue_status "$issue_num" "$slug" "$restored_status" >/dev/null 2>&1 || return 1
+	printf '[pulse-wrapper] Reconcile done: healed open + status:done #%s in %s to status:%s (%s)\n' \
+		"$issue_num" "$slug" "$restored_status" "$issue_title" >>"$LOGFILE"
+	return 2
 }
 
 #######################################
@@ -1431,6 +1412,32 @@ _pir_file_size_debt_current_outcome() {
 		return 0
 	fi
 	return 1
+}
+
+#######################################
+# Shared merged-PR close gate for recurrent file-size debt (GH#27444, GH#32640).
+# Every reconcile stage that closes on merged-PR evidence must consult this
+# before closing, so historical evidence cannot close regrown debt.
+#
+# Args: $1=slug, $2=issue_num, $3=issue body, $4=log label (stage name)
+# Returns: 0=close may proceed, 1=debt still current (keep open),
+#          2=current outcome unmeasurable (defer; caller must not close)
+#######################################
+_pir_file_size_debt_close_gate() {
+	local slug="$1" issue_num="$2" issue_body="$3" stage_label="$4"
+	local current_outcome_rc=0
+	_pir_file_size_debt_current_outcome "$slug" "$issue_body" || current_outcome_rc=$?
+	case "$current_outcome_rc" in
+	0)
+		echo "[pulse-wrapper] ${stage_label}: skipped close #${issue_num} in ${slug} — recurrent file-size debt still exceeds its threshold" >>"$LOGFILE"
+		return 1
+		;;
+	2)
+		echo "[pulse-wrapper] ${stage_label}: deferred close #${issue_num} in ${slug} — recurrent file-size debt outcome unavailable" >>"$LOGFILE"
+		return 2
+		;;
+	esac
+	return 0
 }
 
 #######################################
@@ -1493,18 +1500,7 @@ _action_oimp_single() {
 	fi
 	[[ -n "$merged_pr_num" && "$merged_pr_num" =~ ^[0-9]+$ ]] || return 1
 
-	local current_outcome_rc=0
-	_pir_file_size_debt_current_outcome "$slug" "$issue_body" || current_outcome_rc=$?
-	case "$current_outcome_rc" in
-	0)
-		echo "[pulse-wrapper] Reconcile merged-PR: skipped close #${issue_num} in ${slug} — recurrent file-size debt still exceeds its threshold" >>"$LOGFILE"
-		return 1
-		;;
-	2)
-		echo "[pulse-wrapper] Reconcile merged-PR: deferred close #${issue_num} in ${slug} — recurrent file-size debt outcome unavailable" >>"$LOGFILE"
-		return 1
-		;;
-	esac
+	_pir_file_size_debt_close_gate "$slug" "$issue_num" "$issue_body" "Reconcile merged-PR" || return 1
 
 	# Body keyword check is built into the lookup builder — the jq scan
 	# only emits pairs from PR bodies actually containing

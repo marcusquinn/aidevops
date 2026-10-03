@@ -1,31 +1,15 @@
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+# Vectorize troubleshooting routes
 
-# Vectorize Gotchas & Troubleshooting
+Fetch current documentation before diagnosing a numeric limit, API error, or delayed mutation. Do not infer batch sizes or result limits from old snippets.
 
-## Common Mistakes
+| Symptom or decision | What to check | Current documentation |
+|---------------------|---------------|-----------------------|
+| A write succeeded but search has not changed | Mutations are asynchronous; acceptance does not guarantee query visibility | [Insert, upsert, and delete semantics](https://developers.cloudflare.com/vectorize/reference/client-api/index.md#operations) |
+| Ingestion is slow or a batch is rejected | Batch size depends on the interface; inspect throughput and payload constraints | [Write throughput](https://developers.cloudflare.com/vectorize/best-practices/insert-vectors/index.md#improve-write-throughput) and [limits](https://developers.cloudflare.com/vectorize/platform/limits/index.md) |
+| Query count is rejected or metadata is incomplete | Returned values and metadata affect query limits; indexed metadata can be truncated | [Query options](https://developers.cloudflare.com/vectorize/reference/client-api/index.md#query-vectors) |
+| Metadata filters return no matches | Confirm field type, operators, nesting, and index creation; re-upsert data written before the metadata index existed | [Metadata filtering](https://developers.cloudflare.com/vectorize/reference/metadata-filtering/index.md) |
+| Query has no matches or poor relevance | Check embedding model and dimensions, metric, namespace, filters, and mutation visibility | [Query vectors](https://developers.cloudflare.com/vectorize/best-practices/query-vectors/index.md) and [index configuration](https://developers.cloudflare.com/vectorize/best-practices/create-indexes/index.md) |
+| Existing IDs or metadata behave unexpectedly on update | Insert preserves existing IDs; upsert replaces the full vector and metadata | [Mutation semantics](https://developers.cloudflare.com/vectorize/reference/client-api/index.md#operations) |
+| Capacity or model output no longer fits | Check current limits and model output dimensions; changing dimensions or metric requires another index | [Limits](https://developers.cloudflare.com/vectorize/platform/limits/index.md) and [create indexes](https://developers.cloudflare.com/vectorize/best-practices/create-indexes/index.md) |
 
-**Do:**
-
-1. Create metadata indexes BEFORE inserting vectors (existing vectors not retroactively indexed)
-2. Use `upsert` for updates -- `insert` ignores duplicates
-3. Batch 1000-2500 vectors per operation for optimal throughput
-4. Use `returnMetadata: "indexed"` for speed, `"all"` only when needed
-5. Use namespace filtering instead of metadata when possible (faster)
-6. Handle async operations -- inserts/upserts take seconds to be queryable
-
-**Don't:**
-
-1. Pass wrong data shape: Workers AI -> `embeddings.data[0]`; OpenAI -> `response.data[0].embedding`
-2. Return all values/metadata by default -- impacts performance and topK limit
-3. Use high-cardinality range queries -- bucket or use discrete values
-4. Forget `npx wrangler types` after config changes
-
-## Troubleshooting
-
-| Problem | Solution |
-|---------|----------|
-| Vectors not appearing | Wait 5-10s; check `wrangler vectorize info <index>` for mutation processing |
-| Dimension mismatch | Verify query vector length matches index dimensions exactly |
-| Filter not working | Verify metadata index exists (`list-metadata-index`); re-upsert vectors after creating index |
-| Performance issues | Reduce topK with returnValues/returnMetadata; simplify filters; batch operations |
+For changes to embedding providers or tenant boundaries, also read [pattern decisions](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/vectorize/patterns.md).

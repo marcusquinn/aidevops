@@ -126,12 +126,14 @@
     "draft_responses": true,
 
     // Hard ceiling for pulse worker pool size after RAM-based calculation.
-    // Default 8 preserves current behavior.
+    // 0 = auto: 50% of logical CPU cores, bounded by total RAM (min 2, max 64).
+    // Set a positive number only when a machine needs a fixed ceiling.
     // Env override: AIDEVOPS_MAX_WORKERS_CAP
-    "max_workers_cap": 8,
+    "max_workers_cap": 0,
 
     // Minimum active implementation-worker floor. Pulse will try to refill to
     // this target while provider/account health and host load are acceptable.
+    // Never exceeds the resolved max_workers_cap.
     // Set to 0 to disable. Env override: AIDEVOPS_MIN_WORKER_CONCURRENCY
     "min_worker_concurrency": 6,
 
@@ -199,6 +201,32 @@
   },
 
   // ---------------------------------------------------------------------------
+  // keywords — context/keywords.md search-targets data (seo/keywords-standard.md)
+  // ---------------------------------------------------------------------------
+  "keywords": {
+    // Default paid-provider spend cap per property per calendar month (USD).
+    // Per-repo override: repos.json keywords.budget_usd_month or the
+    // budget_usd_month front matter in context/keywords.md.
+    // Env override: AIDEVOPS_KEYWORDS_MONTHLY_BUDGET_USD
+    "monthly_budget_usd": 1,
+
+    // Private team hub repository (owner/repo) that stores registries,
+    // history and spend for every property. Local only — never committed.
+    // Empty keeps data in ~/.aidevops/.agent-workspace/keywords/local.
+    // Env override: AIDEVOPS_KEYWORDS_HUB_SLUG
+    "hub_slug": "",
+
+    // Optional explicit hub checkout path. Empty uses the workspace clone.
+    // Env override: AIDEVOPS_KEYWORDS_HUB_PATH
+    "hub_path": "",
+
+    // Conservative pre-call estimate for one DataForSEO ranked-keywords call.
+    // The ledger records the provider-reported cost when the response has one.
+    // Env override: AIDEVOPS_KEYWORDS_DATAFORSEO_ESTIMATE_USD
+    "dataforseo_estimate_usd": 0.05
+  },
+
+  // ---------------------------------------------------------------------------
   // safety — Security hooks, verification, and protective measures
   // ---------------------------------------------------------------------------
   "safety": {
@@ -246,15 +274,15 @@
     "tiers": {
       "simple": {
         "models": ["openai/gpt-6-luna", "anthropic/claude-haiku-4-5"],
-        "reasoning": { "openai/gpt-6-luna": "low" }
+        "reasoning": { "openai/gpt-6-luna": "medium", "anthropic/claude-haiku-4-5": "high" }
       },
       "standard": {
-        "models": ["openai/gpt-5.6-terra", "zai-coding-plan/glm-5.2", "anthropic/claude-sonnet-4-6"],
-        "reasoning": { "openai/gpt-5.6-terra": "low" }
+        "models": ["openai/gpt-6.1-sol", "openai/gpt-5.6-terra", "zai-coding-plan/glm-5.2", "anthropic/claude-sonnet-5-5"],
+        "reasoning": { "openai/gpt-6.1-sol": "medium", "openai/gpt-5.6-terra": "medium", "anthropic/claude-sonnet-5-5": "medium" }
       },
       "thinking": {
-        "models": ["openai/gpt-6-sol", "anthropic/claude-opus-4-6"],
-        "reasoning": { "openai/gpt-6-sol": "medium" }
+        "models": ["openai/gpt-6.1-sol", "anthropic/claude-opus-5-5"],
+        "reasoning": { "openai/gpt-6.1-sol": "medium", "anthropic/claude-opus-5-5": "high" }
       }
     },
 
@@ -280,9 +308,9 @@
     // Fallback chain configuration for model-level failover.
     "fallback_chains": {
       "simple":   ["openai/gpt-6-luna", "anthropic/claude-haiku-4-5"],
-      "standard": ["openai/gpt-5.6-terra", "zai-coding-plan/glm-5.2", "anthropic/claude-sonnet-4-6"],
-      "thinking": ["openai/gpt-6-sol", "anthropic/claude-opus-4-6"],
-      "default":  ["openai/gpt-5.6-terra", "zai-coding-plan/glm-5.2", "anthropic/claude-sonnet-4-6"]
+      "standard": ["openai/gpt-6.1-sol", "openai/gpt-5.6-terra", "zai-coding-plan/glm-5.2", "anthropic/claude-sonnet-5-5"],
+      "thinking": ["openai/gpt-6.1-sol", "anthropic/claude-opus-5-5"],
+      "default":  ["openai/gpt-6.1-sol", "openai/gpt-5.6-terra", "zai-coding-plan/glm-5.2", "anthropic/claude-sonnet-5-5"]
     },
 
     // Fallback trigger configuration.
@@ -296,6 +324,7 @@
 
     // General model routing settings.
     "settings": {
+      "minimum_reasoning": "medium",
       "probe_timeout_seconds": 10,
       "cache_ttl_seconds": 300,
       "max_chain_depth": 5,

@@ -1023,6 +1023,31 @@ full_loop_cleanup_owner_alive() {
 	return 0
 }
 
+# GH#32528: An interactive runtime hosts many sequential full-loops and can
+# live for days, so owner liveness alone kept every merged worktree it touched.
+# The deferral protects a runtime that may still use the worktree right after
+# merge; once WORKTREE_DEFERRED_OWNER_MAX_HOURS (default 4, matching
+# WORKTREE_CLEAN_GRACE_HOURS) has passed since the deferral was recorded, the
+# lease expires. Downstream cwd, dirty-content, open-PR and merge-proof guards
+# still decide removal. Missing or malformed timestamps fail closed.
+full_loop_cleanup_owner_lease_aged() {
+	local receipt_path="$1"
+	local max_hours="${WORKTREE_DEFERRED_OWNER_MAX_HOURS:-4}"
+	local age_seconds=""
+
+	[[ "$max_hours" =~ ^[0-9]+$ && "$max_hours" -gt 0 ]] || max_hours=4
+	[[ -f "$receipt_path" ]] || return 1
+	age_seconds=$(jq -r '
+		(.created_at // .updated_at // "") as $stamp
+		| if ($stamp | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))
+		  then (now - ($stamp | fromdateiso8601)) | floor
+		  else empty end
+	' "$receipt_path" 2>/dev/null) || return 1
+	[[ "$age_seconds" =~ ^[0-9]+$ ]] || return 1
+	[[ "$age_seconds" -ge $((max_hours * 3600)) ]] || return 1
+	return 0
+}
+
 full_loop_transition_cleanup_receipt() {
 	local receipt_path="$1"
 	local target_state="$2"

@@ -41,6 +41,8 @@ function normalizeRoutingDecision(decision) {
     reason: decision.reason || "",
     escalated: decision.escalated ? 1 : 0,
     population: decision.population || "",
+    ab_experiment: decision.ab_experiment || "",
+    ab_arm: decision.ab_arm || "",
   };
 }
 

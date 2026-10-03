@@ -1,6 +1,6 @@
 {
   "name": "aidevops",
-  "version": "3.37.0",
+  "version": "3.38.0",
   "description": "AI DevOps Framework - AI-assisted development workflows, code quality, and deployment automation",
   "type": "module",
   "packageManager": "bun@1.3.11",
@@ -20,11 +20,7 @@
     "server:typecheck": "tsc --ignoreConfig --noEmit --skipLibCheck --target ES2022 --module ESNext --moduleResolution Bundler --types bun .opencode/server/api-gateway.ts .opencode/server/mcp-dashboard.ts .opencode/server/index.ts .opencode/server/security.ts .opencode/server/security.test.ts",
     "server:check": "bun run server:typecheck && bun run server:test",
     "quality": "bun run .opencode/tool/parallel-quality.ts",
-    "dspy:init": "dspyground init",
-    "dspy:dev": "dspyground dev",
-    "dspy:build": "dspyground build",
-    "install:python": "python3 -m venv python-env/dspy-env && source python-env/dspy-env/bin/activate && pip install -r requirements.txt",
-    "setup": "npm run setup:bun && npm run install:python",
+    "setup": "npm run setup:bun",
     "setup:bun": "bun install --frozen-lockfile --ignore-scripts",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
@@ -53,7 +49,6 @@
     "git-workflow",
     "mcp",
     "llm",
-    "dspy",
     "prompt-optimization",
     "ai-agents"
   ],
@@ -79,7 +74,7 @@
   },
   "overrides": {
     "esbuild": "0.28.1",
-    "fast-uri": "3.1.7",
+    "fast-uri": "3.1.8",
     "js-yaml": "4.3.2",
     "nanoid": "3.3.18",
     "postcss": "8.5.23"

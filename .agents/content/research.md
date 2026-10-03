@@ -288,7 +288,7 @@ summary table does not replace that ledger.
 | P0 | [title] | [pillar/cluster/satellite] | [keyword] | [count] | [stage] |
 
 ## Next Steps
-- [ ] Populate `context/target-keywords.md`
+- [ ] Record validated targets and questions in `context/keywords/` (`aidevops keywords add`, `seo/keywords-standard.md`)
 - [ ] Update `context/competitor-analysis.md`
 - [ ] Add topics to content calendar
 - [ ] Brief writer with this research for first article
@@ -312,7 +312,7 @@ Save to the project's `context/` directory (see `content/context-templates.md`):
 
 - `context/audience-profiles.md` — audience segments and personas
 - `context/competitor-analysis.md` — competitor content matrix
-- `context/target-keywords.md` — validated keyword targets
+- `context/keywords.md` + `context/keywords/*.toon` — validated keyword targets, AI-answer questions and entities
 - `context/niche-scorecards.md` — niche validation results
 
 Read automatically by `content/seo-writer.md` and `content/editor.md`.

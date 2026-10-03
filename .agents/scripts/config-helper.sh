@@ -359,6 +359,10 @@ _config_env_map() {
 	orchestration.provider_account_slot_multiplier) echo "PULSE_PROVIDER_ACCOUNT_SLOT_MULTIPLIER" ;;
 	orchestration.triage_known_contributors) echo "AIDEVOPS_TRIAGE_KNOWN_CONTRIBUTORS" ;;
 	orchestration.triage_refresh_interval_seconds) echo "AIDEVOPS_TRIAGE_REFRESH_INTERVAL_SECONDS" ;;
+	keywords.monthly_budget_usd) echo "AIDEVOPS_KEYWORDS_MONTHLY_BUDGET_USD" ;;
+	keywords.hub_slug) echo "AIDEVOPS_KEYWORDS_HUB_SLUG" ;;
+	keywords.hub_path) echo "AIDEVOPS_KEYWORDS_HUB_PATH" ;;
+	keywords.dataforseo_estimate_usd) echo "AIDEVOPS_KEYWORDS_DATAFORSEO_ESTIMATE_USD" ;;
 	*) echo "" ;;
 	esac
 	return 0

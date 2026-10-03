@@ -69,6 +69,7 @@ DIFF_COMMIT=""
 EXPECTED_SOURCE_SHA=""
 SOURCE_LOCK_DIR=""
 PLUGIN_NAMESPACES=()
+ACTIVE_BUNDLE_NAME=""
 
 sanitize_plugin_namespace() {
 	local namespace="$1"
@@ -307,6 +308,82 @@ validate_stable_target() {
 	return 0
 }
 
+# Return success only when the active immutable bundle can be proven to include
+# the requested source commit.  Missing or malformed evidence deliberately
+# falls through to setup rather than skipping a deployment.
+active_bundle_contains_expected_sha() {
+	local stable_target="$HOME/.aidevops/agents"
+	local active_root=""
+	local manifest_file=""
+	local manifest_status=""
+	local manifest_bundle_id=""
+	local manifest_sha=""
+	local stamped_sha=""
+	local resolved_active_sha=""
+
+	ACTIVE_BUNDLE_NAME=""
+	[[ -L "$stable_target" && -n "$EXPECTED_SOURCE_SHA" ]] || return 1
+	active_root=$(cd -P "$stable_target" 2>/dev/null && pwd) || return 1
+	ACTIVE_BUNDLE_NAME=$(basename "$(dirname "$active_root")")
+	manifest_file="$active_root/.bundle-manifest"
+	[[ -r "$manifest_file" && -r "$HOME/.aidevops/.deployed-sha" ]] || return 1
+	manifest_status=$(awk -F= '$1 == "status" { print $2; exit }' "$manifest_file" 2>/dev/null || true)
+	manifest_bundle_id=$(awk -F= '$1 == "bundle_id" { print $2; exit }' "$manifest_file" 2>/dev/null || true)
+	manifest_sha=$(awk -F= '$1 == "git_sha" { print $2; exit }' "$manifest_file" 2>/dev/null || true)
+	stamped_sha=$(tr -d '[:space:]' <"$HOME/.aidevops/.deployed-sha" 2>/dev/null) || return 1
+	# A manifest's ancestry alone cannot attest a deployment: a different stamp
+	# means the active bundle is inconsistent and setup must repair it instead.
+	[[ "$manifest_status" == "validated" && "$manifest_bundle_id" == "$ACTIVE_BUNDLE_NAME" ]] || return 1
+	[[ "$manifest_sha" =~ ^[0-9a-f]{40}$ && "$stamped_sha" == "$manifest_sha" ]] || return 1
+	resolved_active_sha=$(git -C "$REPO_DIR" rev-parse --verify "${manifest_sha}^{commit}" 2>/dev/null) || return 1
+	[[ "$resolved_active_sha" == "$manifest_sha" ]] || return 1
+	git -C "$REPO_DIR" merge-base --is-ancestor "$EXPECTED_SOURCE_SHA" "$resolved_active_sha" 2>/dev/null
+	return $?
+}
+
+log_active_bundle_already_deployed() {
+	log_success "already deployed by active bundle $ACTIVE_BUNDLE_NAME"
+	return 0
+}
+
+# Return 0 when the active setup lock is held.  This is intentionally only a
+# hint: setup remains the authority for acquiring and reclaiming its lock.
+setup_lock_is_held() {
+	local lock_dir="${AIDEVOPS_SETUP_LOCK_DIR:-$HOME/.aidevops/locks/setup-noninteractive.lock.d}"
+
+	[[ -d "$lock_dir" ]]
+}
+
+# Avoid inheriting setup.sh's 900-second contention wait when another setup
+# transaction can activate the requested immutable bundle for us.
+wait_for_active_bundle_deploy() {
+	local wait_ceiling="${AIDEVOPS_DEPLOY_ACTIVE_BUNDLE_WAIT_TIMEOUT_S:-120}"
+	local poll_interval="${AIDEVOPS_DEPLOY_ACTIVE_BUNDLE_POLL_INTERVAL_S:-5}"
+	local waited=0
+	local lock_dir="${AIDEVOPS_SETUP_LOCK_DIR:-$HOME/.aidevops/locks/setup-noninteractive.lock.d}"
+	local owner_pid=""
+	local owner_cmd=""
+
+	[[ "$wait_ceiling" =~ ^[0-9]+$ ]] || wait_ceiling=120
+	[[ "$poll_interval" =~ ^[0-9]+$ && "$poll_interval" -gt 0 ]] || poll_interval=5
+	while setup_lock_is_held; do
+		if active_bundle_contains_expected_sha; then
+			log_active_bundle_already_deployed
+			return 0
+		fi
+		if [[ "$waited" -ge "$wait_ceiling" ]]; then
+			[[ -r "$lock_dir/owner.pid" ]] && owner_pid=$(tr -d '[:space:]' <"$lock_dir/owner.pid" 2>/dev/null || true)
+			[[ -r "$lock_dir/command" ]] && owner_cmd=$(tr '\n' ' ' <"$lock_dir/command" 2>/dev/null || true)
+			log_warn "setup lock remains held after ${waited}s (owner pid ${owner_pid:-unknown}${owner_cmd:+, command: $owner_cmd}); retry after the active deployment completes"
+			return 75
+		fi
+		log_info "Waiting up to ${wait_ceiling}s for the active setup deployment to activate the requested bundle"
+		sleep "$poll_interval"
+		waited=$((waited + poll_interval))
+	done
+	return 1
+}
+
 # Detect which agent files changed since a commit
 detect_changes() {
 	local since_commit="$1"
@@ -381,6 +458,18 @@ run_transactional_incremental_deploy() {
 	if [[ "$DRY_RUN" == "true" ]]; then
 		log_info "[dry-run] Would stage and atomically activate a runtime bundle via setup.sh --stage ai-session"
 		return 0
+	fi
+	if active_bundle_contains_expected_sha; then
+		log_active_bundle_already_deployed
+		return 0
+	fi
+	if setup_lock_is_held; then
+		wait_for_active_bundle_deploy || setup_exit=$?
+		if [[ "$setup_exit" -eq 0 ]]; then
+			return 0
+		elif [[ "$setup_exit" -eq 75 ]]; then
+			return 75
+		fi
 	fi
 
 	log_info "Staging and atomically activating an immutable runtime bundle..."
@@ -706,6 +795,18 @@ _run_full_deploy() {
 	if [[ "$DRY_RUN" == "true" ]]; then
 		log_info "[dry-run] Would run: AIDEVOPS_NON_INTERACTIVE=true $REPO_DIR/setup.sh --non-interactive"
 		return 0
+	fi
+	if active_bundle_contains_expected_sha; then
+		log_active_bundle_already_deployed
+		return 0
+	fi
+	if setup_lock_is_held; then
+		wait_for_active_bundle_deploy || full_exit=$?
+		if [[ "$full_exit" -eq 0 ]]; then
+			return 0
+		elif [[ "$full_exit" -eq 75 ]]; then
+			return 75
+		fi
 	fi
 	env -u AIDEVOPS_AGENTS_DIR -u AGENTS_DIR \
 		AIDEVOPS_NON_INTERACTIVE=true \

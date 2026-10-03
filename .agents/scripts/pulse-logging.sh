@@ -399,6 +399,7 @@ _pulse_cycle_state_write_terminal_if_current() {
 
 _pulse_cycle_state_finish_if_needed() {
 	local outcome="${1:-interrupted}"
+	local progress_kinds="[]" dispatch_after=""
 	[[ "${_PULSE_CYCLE_STATE_INITIALIZED:-0}" == "1" ]] || return 0
 	_pulse_cycle_state_executor_is_owner || return 0
 	[[ "${_PULSE_CYCLE_STATE_TERMINAL:-0}" != "1" ]] || return 0
@@ -406,7 +407,13 @@ _pulse_cycle_state_finish_if_needed() {
 		&& "${_PULSE_CYCLE_BLOCKER_KIND:-$PULSE_CYCLE_STATE_BLOCKER_NONE}" == "$PULSE_CYCLE_STATE_BLOCKER_NONE" ]]; then
 		_pulse_cycle_state_note_blocker interrupted pulse-wrapper exit || true
 	fi
-	_pulse_cycle_state_finalize "$outcome" "[]" || return 0
+	if [[ "${_PULSE_CYCLE_DISPATCH_BEFORE:-}" =~ ^[0-9]+$ ]] && declare -F _pulse_capture_dispatch_total >/dev/null 2>&1; then
+		dispatch_after=$(_pulse_capture_dispatch_total) || dispatch_after=""
+		if [[ "$dispatch_after" =~ ^[0-9]+$ && "$dispatch_after" -gt "$_PULSE_CYCLE_DISPATCH_BEFORE" ]]; then
+			progress_kinds='["worker-dispatched"]'
+		fi
+	fi
+	_pulse_cycle_state_finalize "$outcome" "$progress_kinds" || return 0
 	_pulse_cycle_state_write_terminal_if_current || true
 	return 0
 }
@@ -562,11 +569,21 @@ rotate_pulse_log() {
 # PULSE_CYCLE_INDEX_MAX_LINES lines; oldest lines are pruned in-place
 # using a tmp-file swap when the cap is exceeded.
 #
-# Fields written per cycle:
+# Fields written per cycle (sampled when the deterministic pipeline and the
+# cycle-final refill have finished, before the LLM supervisor runs):
 #   ts          — ISO-8601 UTC timestamp
 #   duration_s  — cycle wall-clock duration in seconds (0 if unknown)
-#   workers     — "active/max" string
-#   dispatched  — issues dispatched this cycle
+#   workers     — "active/max"; active = max(worker processes, live ledger
+#                 entries), matching write_pulse_health_file (t3032), so a
+#                 just-launched worker not yet visible in ps still counts
+#   dispatched  — worker registrations created during this cycle by any
+#                 deterministic path (dispatch, early dispatch, refill): the
+#                 delta of the monotonic _pulse_capture_dispatch_total since
+#                 cycle start (GH#28361/GH#33320). Workers that already
+#                 exited still count. LLM-supervisor launches happen after
+#                 this record and are not included.
+#   inflight    — live in-flight ledger entries at write time (the gauge the
+#                 old `dispatched` field reported before GH#33320)
 #   merged      — PRs merged this cycle
 #   closed      — conflicting PRs closed this cycle
 #   killed      — stalled workers killed this cycle
@@ -584,21 +601,32 @@ append_cycle_index() {
 	workers_max=$(get_max_workers_target 2>/dev/null || echo "1")
 	[[ "$workers_max" =~ ^[0-9]+$ ]] || workers_max=1
 
-	local issues_dispatched=0
+	local inflight=0
 	local _ledger_helper="${SCRIPT_DIR}/dispatch-ledger-helper.sh"
 	if [[ -x "$_ledger_helper" ]]; then
 		local _ledger_count
 		_ledger_count=$("$_ledger_helper" count 2>/dev/null || echo "0")
-		[[ "$_ledger_count" =~ ^[0-9]+$ ]] && issues_dispatched="$_ledger_count"
+		[[ "$_ledger_count" =~ ^[0-9]+$ ]] && inflight="$_ledger_count"
+	fi
+	[[ "$inflight" -gt "$workers_active" ]] && workers_active="$inflight"
+
+	local issues_dispatched=0 _dispatch_after=""
+	if [[ "${_PULSE_CYCLE_DISPATCH_BEFORE:-}" =~ ^[0-9]+$ ]] &&
+		declare -F _pulse_capture_dispatch_total >/dev/null 2>&1; then
+		_dispatch_after=$(_pulse_capture_dispatch_total 2>/dev/null) || _dispatch_after=""
+		if [[ "$_dispatch_after" =~ ^[0-9]+$ && "$_dispatch_after" -gt "$_PULSE_CYCLE_DISPATCH_BEFORE" ]]; then
+			issues_dispatched=$((_dispatch_after - _PULSE_CYCLE_DISPATCH_BEFORE))
+		fi
 	fi
 
 	# Append record — use printf for portability (no echo -e needed)
-	printf '{"ts":"%s","duration_s":%s,"workers":"%s/%s","dispatched":%s,"merged":%s,"closed":%s,"killed":%s,"prefetch_errors":%s}\n' \
+	printf '{"ts":"%s","duration_s":%s,"workers":"%s/%s","dispatched":%s,"inflight":%s,"merged":%s,"closed":%s,"killed":%s,"prefetch_errors":%s}\n' \
 		"$ts" \
 		"$duration_s" \
 		"$workers_active" \
 		"$workers_max" \
 		"$issues_dispatched" \
+		"$inflight" \
 		"$_PULSE_HEALTH_PRS_MERGED" \
 		"$_PULSE_HEALTH_PRS_CLOSED_CONFLICTING" \
 		"$_PULSE_HEALTH_STALLED_KILLED" \
@@ -633,6 +661,29 @@ append_cycle_index() {
 	return 0
 }
 
+_pulse_health_auth_error_alert_json() {
+	local provider="" state_dir="" stamp="" cycles=0 threshold="${PULSE_AUTH_ERROR_ALERT_CYCLES:-3}"
+	local total="" available="" limited="" errors=""
+	declare -F _pulse_capacity_selected_provider >/dev/null 2>&1 || return 0
+	provider=$(_pulse_capacity_selected_provider)
+	[[ "$provider" =~ ^[a-zA-Z0-9_-]+$ ]] || return 0
+	state_dir=$(_pulse_capacity_auth_error_state_dir)
+	stamp="${state_dir}/${provider}.cycles"
+	[[ -f "$stamp" ]] || return 0
+	read -r total available limited errors <<<"$(_pulse_capacity_provider_account_counts "$provider")"
+	if ! _pulse_capacity_auth_error_only "$total" "$available" "$errors"; then
+		rm -f "$stamp"
+		return 0
+	fi
+	read -r cycles _ <"$stamp" || true
+	[[ "$cycles" =~ ^[0-9]+$ ]] || return 0
+	[[ "$threshold" =~ ^[1-9][0-9]*$ ]] || threshold=3
+	((cycles >= threshold)) || return 0
+	jq -cn --arg provider "$provider" --argjson cycles "$cycles" \
+		'{auth_error_capacity_zero: {provider: $provider, cycles: $cycles, remedy: ("oauth-pool-helper.sh reset-cooldowns " + $provider)}} | to_entries[0] | "\(.key | tojson):\(.value | tojson),"' -r
+	return 0
+}
+
 #######################################
 # Write pulse-health.json — structured status snapshot for instant diagnosis.
 #
@@ -641,7 +692,10 @@ append_cycle_index() {
 #   workers_max             — configured max worker slots
 #   prs_merged_this_cycle   — PRs squash-merged by deterministic merge pass
 #   prs_closed_conflicting  — conflicting PRs closed this cycle
-#   issues_dispatched       — workers launched this cycle (from dispatch ledger)
+#   issues_dispatched       — live in-flight ledger entries at write time (a
+#                             gauge, not a per-cycle launch count; the
+#                             per-cycle count is `dispatched` in the cycle
+#                             index — GH#33320)
 #   prefetch_errors         — prefetch_state failures this cycle
 #   stalled_workers_killed  — stalled workers killed by cleanup_stalled_workers
 #   models_backed_off       — active backoff entries in provider_backoff DB
@@ -666,6 +720,8 @@ write_pulse_health_file() {
 	local cycle_state_json=null
 	cycle_state_json=$(_pulse_cycle_state_json) || cycle_state_json=null
 	printf '%s' "$cycle_state_json" | jq empty >/dev/null 2>&1 || cycle_state_json=null
+	local auth_error_alert_json=""
+	auth_error_alert_json=$(_pulse_health_auth_error_alert_json) || auth_error_alert_json=""
 
 	# t3032: declare ledger helper once — used for both workers reconciliation
 	# and issues_dispatched. The ledger is written synchronously at dispatch
@@ -697,11 +753,17 @@ write_pulse_health_file() {
 		fi
 	fi
 
-	# models_backed_off: count active backoff entries in provider_backoff DB
+	# models_backed_off: count active backoff entries in provider_backoff DB.
+	# Rows are key|reason|retry_after|updated_at (ISO-8601 UTC). Expired rows
+	# are only cleared when their exact key is re-checked, so retired-model keys
+	# linger forever. Count future retry_after values plus empty ones, which
+	# backoff_active_for_key treats as active (GH#32979).
 	local models_backed_off=0
 	if [[ -x "$HEADLESS_RUNTIME_HELPER" ]]; then
-		local _backoff_rows
-		_backoff_rows=$("$HEADLESS_RUNTIME_HELPER" backoff status 2>/dev/null | grep -c '|' || echo "0")
+		local _backoff_rows="0" _backoff_now=""
+		_backoff_now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+		_backoff_rows=$("$HEADLESS_RUNTIME_HELPER" backoff status 2>/dev/null |
+			awk -F'|' -v now="$_backoff_now" 'NF >= 3 && ($3 == "" || $3 > now) { n++ } END { print n + 0 }') || _backoff_rows=0
 		[[ "$_backoff_rows" =~ ^[0-9]+$ ]] && models_backed_off="$_backoff_rows"
 	fi
 
@@ -740,6 +802,7 @@ write_pulse_health_file() {
   "prefetch_conditional_misses": ${_PULSE_HEALTH_CONDITIONAL_MISSES:-0},
   "prefetch_throttled": ${_PULSE_HEALTH_PREFETCH_THROTTLED:-0},
   "idle_cycle_skipped": ${_PULSE_HEALTH_IDLE_CYCLE_SKIPPED:-0},
+  ${auth_error_alert_json}
   "cycle_state": ${cycle_state_json}
 }
 EOF

@@ -16,7 +16,7 @@ mode: subagent
   [--score] [--judge thinking]
 ```
 
-Present response summaries, diff (2-model), judge scores+winner if `--score` used, note failures. Scores → model-comparisons DB → `/route`, `/patterns`.
+Present response summaries, diff (2-model), judge scores+winner if `--score` used, note failures. Scores persist to the model-comparisons DB; view them with `compare-models-helper.sh results`.
 
 For broad evaluation, compare the same prompt, context, tools, timeout, and
 verification across concrete models configured in one workload tier. With no
@@ -51,15 +51,13 @@ boundary itself, and label that result as non-like-for-like.
 
 # Explicit same-tier concrete-model comparison with custom timeout
 /cross-review "Summarize the key changes in this diff" \
-  --models openai/gpt-5.6-sol,anthropic/claude-sonnet-4-6 --timeout 120
+  --models openai/gpt-5.6-sol,anthropic/claude-sonnet-5-5 --timeout 120
 
 # View scoring results after a cross-review
-/score-responses --leaderboard
+~/.aidevops/agents/scripts/compare-models-helper.sh results
 ```
 
 ## Related
 
 - `/compare-models` — Compare model capabilities and pricing (no live dispatch)
-- `/score-responses` — View and manage response scoring history
-- `/route` — Get model routing recommendations based on pattern data
-- `/patterns` — View model performance patterns
+- `tools/ai-assistants/compare-models.md` — model-replay, model-ab, frontier-harness-eval for "is this new model good at our work?"

@@ -472,12 +472,36 @@ _status_label_contract() {
 	return 0
 }
 
-# Fetch every repository label once so steady-state verification is read-only.
+# Fetch only exact contract labels in one request, independent of repo label count.
+# Aliases avoid both repository-wide pagination and truncated label search results.
 _status_labels_snapshot() {
 	local repo="$1"
-	AIDEVOPS_GH_ROUTE_DECISION="status-label-contract-list-rest" \
-		_gh_with_timeout read gh api "/repos/${repo}/labels?per_page=100" --paginate \
-		--jq '.[] | [.name, ((.color // "") | ascii_downcase), (.description // "")] | @tsv'
+	local fields=""
+	local response=""
+	local name=""
+	local index=0
+	while IFS=$'\t' read -r name _; do
+		fields="${fields} label${index}: label(name: \"${name}\") { name color description }"
+		index=$((index + 1))
+	done < <(_status_label_contract)
+	AIDEVOPS_GH_ROUTE_DECISION="status-label-contract-exact-graphql" \
+		response=$(_gh_with_timeout read gh api graphql \
+		-f query="query(\$owner: String!, \$name: String!) { repository(owner: \$owner, name: \$name) { ${fields} } }" \
+		-f owner="${repo%%/*}" -f name="${repo#*/}") || return 1
+	# Null labels mean confirmed absence. Errors, null repositories and malformed
+	# partial responses are unknown state and must never trigger label mutations.
+	printf '%s' "$response" | jq -er --argjson count "$index" '
+		def is_string: type == "string";
+		if ((.errors // []) | length) == 0
+			and (.data.repository | type) == "object"
+			and (.data.repository | length) == $count
+			and all(.data.repository[]; . == null or
+				(type == "object" and (.name | is_string)
+				and (.color | is_string)
+				and (.description == null or (.description | is_string))))
+		then [.data.repository[] | select(. != null) |
+			[.name, (.color | ascii_downcase), (.description // "")] | @tsv] | join("\n")
+		else error("unable to verify exact status-label snapshot") end'
 	return $?
 }
 
@@ -537,7 +561,7 @@ _status_label_create_or_reconcile() {
 }
 
 # Ensure all core status:* labels exist on a repo (idempotent, cached per-process).
-# A converged repository costs one paginated read and zero writes. Missing or
+# A converged repository costs one exact-label read and zero writes. Missing or
 # drifted definitions are reconciled, then the complete contract is re-verified
 # before the process-local cache is populated.
 #

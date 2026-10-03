@@ -84,6 +84,7 @@ HOME="$TMP_DIR" WORKER_ISSUE_NUMBER=1 GITHUB_REPOSITORY=owner/repo \
 	AIDEVOPS_WORKER_ID=worker:test AIDEVOPS_OBJECTIVE_EVIDENCE_FILE="$evidence_file" \
 	bash -c 'source "$1"; _emit_worker_runtime_event worker.failed failed runtime_error' _ "$LIFECYCLE"
 jq -e 'select(.event_type == "worker.failed" and .issue_number == 1 and .next_action == "retry_infrastructure" and .commits_preserved == true)' "$evidence_file" >/dev/null || fail "terminal lifecycle evidence"
+[[ ! -e "${evidence_file}.lockdir" ]] || fail "lifecycle evidence append must release the shared ledger lock"
 AIDEVOPS_OBJECTIVE_EVIDENCE_FILE="$evidence_file" \
 	"$HELPER" derive --repo owner/repo --input "$fixture" --now 10000 --ttl 3600 >"$derived"
 jq -e '.[] | select(.number == 1 and .execution_path_state == "recovery" and .preservation.commits == true)' "$derived" >/dev/null || fail "durable lifecycle evidence merge"
@@ -161,6 +162,14 @@ AIDEVOPS_OBJECTIVE_EVIDENCE_FILE="$chronology_file" \
 jq -e '.attempt_id == "attempt-new" and .effective_outcome == "failed" and
 	.suppress_retry == false' "$disposition" >/dev/null ||
 	fail "issue-level disposition must sort by logical attempt chronology"
+
+# GH#32938: one torn concurrent append must not blank every disposition.
+printf '%s\n' '{"repo":"owner/repo","issue_number":42,"event_type":"worker.fa{"repo":"owner/repo","issue_number":42' >>"$chronology_file"
+AIDEVOPS_OBJECTIVE_EVIDENCE_FILE="$chronology_file" \
+	"$HELPER" disposition --repo owner/repo --issue 42 \
+	--state-file "$state_file" >"$disposition"
+jq -e '.attempt_id == "attempt-new" and .effective_outcome == "failed"' "$disposition" >/dev/null ||
+	fail "torn evidence line must not hide valid attempt outcomes"
 
 # Concurrent terminal writers for one attempt must produce one valid record.
 concurrent_file="$TMP_DIR/concurrent.jsonl"

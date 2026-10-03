@@ -29,7 +29,14 @@
 #                              or value from .aidevops.json "remote" key)
 #   --counter-branch BRANCH    Branch holding .task-counter (config value first;
 #                              otherwise a validated task-id-counter branch,
-#                              then main)
+#                              then the remote's detected default branch)
+#   --sync-counter-branch      Audited fast-forward catch-up (GH#33152): sets
+#                              the counter branch (--counter-branch/config, or
+#                              the dedicated task-id-counter branch) to
+#                              max(its own counter, the default branch's
+#                              counter, the TODO.md seed), then exits without
+#                              allocating. Use when resolve_implicit_counter_branch
+#                              refused a stale dedicated branch.
 #   --skip-label-validation    Skip pre-flight label existence check (useful for
 #                              bulk --count N allocation or when gh is rate-limited)
 #   --no-blocked-by            Suppress auto-detection of predecessor references
@@ -50,10 +57,17 @@
 #   }
 #   Keys:
 #     remote          - git remote name (default: "origin")
-#     default_branch  - informational default branch name (not used by CAS)
+#     default_branch  - repository default branch; when omitted, detected from
+#                       the remote (`git ls-remote --symref`) rather than
+#                       assumed to be "main" (GH#33152). Also used as the
+#                       stale-check baseline for a dedicated counter branch.
 #     counter_branch  - explicit branch that holds .task-counter; when omitted,
-#                       a validated task-id-counter branch is preferred over main
+#                       a validated task-id-counter branch is preferred over
+#                       the detected default branch
 #   CLI flags --remote and --counter-branch override .aidevops.json values.
+#   Because .aidevops.json may itself be gitignored per-checkout, the
+#   default_branch detection above is the durable, host-independent fallback —
+#   explicit config is only required to pin a non-standard value.
 #
 # Exit codes:
 #   0  - Success (outputs: task_id=tNNN ref=GH#NNN or GL#NNN)
@@ -143,6 +157,9 @@ DRY_RUN=false
 NO_ISSUE=false
 SKIP_LABEL_VALIDATION=false
 NO_BLOCKED_BY=false
+# GH#33152: explicit, audited fast-forward counter-branch catch-up instead of
+# a normal allocation. See _main_sync_counter_branch / sync_counter_branch.
+SYNC_COUNTER_BRANCH=false
 TASK_TITLE=""
 TASK_DESCRIPTION=""
 TASK_LABELS=""
@@ -201,6 +218,11 @@ DEFAULT_BRANCH="main"
 # CLI still wins because config loading only applies while the flag is false.
 _REMOTE_NAME_SET=false
 _COUNTER_BRANCH_SET=false
+# GH#33152: true once .aidevops.json "default_branch" is loaded. When false,
+# _claim_apply_detected_default_branch queries the remote's actual default
+# branch instead of leaving the DEFAULT_BRANCH="main" literal in place —
+# avoids comparing a develop-default repo's counter against the wrong branch.
+_DEFAULT_BRANCH_SET=false
 
 # Logging (all to stderr so stdout is machine-readable)
 # Logging: uses shared log_* from shared-constants.sh
@@ -242,6 +264,7 @@ load_project_config() {
 
 	if [[ -n "$default_branch_val" ]]; then
 		DEFAULT_BRANCH="$default_branch_val"
+		_DEFAULT_BRANCH_SET=true
 		log_info "default_branch set from .aidevops.json: $DEFAULT_BRANCH"
 	fi
 
@@ -346,6 +369,10 @@ parse_args() {
 			_COUNTER_BRANCH_SET=true
 			shift 2
 			;;
+		--sync-counter-branch)
+			SYNC_COUNTER_BRANCH=true
+			shift
+			;;
 		--help)
 			grep '^#' "$0" | grep -v '#!/usr/bin/env' | sed 's/^# //' | sed 's/^#//'
 			exit 0
@@ -379,8 +406,8 @@ _validate_and_normalize_args() {
 		exit 1
 	fi
 
-	# Title is required unless batch mode
-	if [[ -z "$TASK_TITLE" ]] && [[ "$ALLOC_COUNT" -eq 1 ]]; then
+	# Title is required unless batch mode or a no-allocation --sync-counter-branch run
+	if [[ -z "$TASK_TITLE" ]] && [[ "$ALLOC_COUNT" -eq 1 ]] && [[ "$SYNC_COUNTER_BRANCH" != "true" ]]; then
 		log_error "Missing required argument: --title (or use --count N for bulk allocation)"
 		exit 1
 	fi
@@ -409,7 +436,47 @@ _validate_and_normalize_args() {
 	# GH#21991: advisory structural check on --description before issue creation.
 	# Non-blocking by default; set AIDEVOPS_BODY_FORMAT_STRICT=1 to hard-fail.
 	_validate_description_format
+	if ! _validate_interactive_dispatch_scope; then
+		exit 1
+	fi
 	return 0
+}
+
+# _validate_interactive_dispatch_scope — fail before allocation when an
+# interactive session files auto-dispatch work without a canonical Files Scope.
+# Pending publication withholds auto-dispatch from the created issue (GH#30325),
+# so the gh_create_issue scope gate cannot see the intent. The author has the
+# most context, so ask now; unscoped briefs from other paths are dispatched with
+# worker-owned scope discovery (GH#33243) so findings are never lost.
+_validate_interactive_dispatch_scope() {
+	[[ "$NO_ISSUE" == "true" || "$DRY_RUN" == "true" ]] && return 0
+	[[ -n "$TASK_DESCRIPTION" ]] || return 0
+	[[ "$TASK_LABELS" =~ (^|,)auto-dispatch(,|$) ]] || return 0
+	[[ "$(detect_session_origin 2>/dev/null || true)" == "interactive" ]] || return 0
+
+	local scope_lib="${SCRIPT_DIR}/pre-dispatch-validator-lib-brief-scope.sh"
+	local fmt_helper="${SCRIPT_DIR}/issue-body-format-helper.sh"
+	local body="$TASK_DESCRIPTION" normalized=""
+	[[ -r "$scope_lib" ]] || return 0
+	# shellcheck source=./pre-dispatch-validator-lib-brief-scope.sh
+	# shellcheck disable=SC1091
+	source "$scope_lib"
+	# Normalization derives Files Scope from explicit "Files to Modify" paths.
+	if [[ -x "$fmt_helper" ]]; then
+		normalized=$("$fmt_helper" normalize "$body" 2>/dev/null) && body="$normalized"
+	fi
+	_brief_requires_files_scope "$body" 1 || return 0
+	_brief_files_scope_has_path "$body" && return 0
+
+	log_error "auto-dispatch brief has no canonical Files Scope; add before claiming:"
+	log_error "  ### Files Scope"
+	log_error "  - \`repo/relative/existing-file\`"
+	log_error "  - \`repo/relative/new-file\`"
+	log_error "One exact path per line: no EDIT:/NEW: prefix, no globs, nothing after it."
+	log_error "Or declare \`EDIT: path[:lines]\` bullets under '### Files to Modify'; they normalize."
+	log_error "Planning-only work: start the body with 'Planning-only:' instead."
+	log_error "You hold the most context now; without it the worker must rediscover the scope (GH#33243)."
+	return 1
 }
 
 # _dedupe_csv_labels — preserve first occurrence while removing duplicate labels.
@@ -460,6 +527,27 @@ _validate_description_format() {
 		rc=0
 	fi
 	return $rc
+}
+
+# _validate_description_scope_before_allocation — reject descriptions that the
+# issue-body composer cannot canonicalize before advancing the CAS counter.
+_validate_description_scope_before_allocation() {
+	[[ "$NO_ISSUE" == "true" || "$DRY_RUN" == "true" || "$OFFLINE_MODE" == "true" ]] && return 0
+	[[ -z "$TASK_DESCRIPTION" ]] && return 0
+
+	local scope_helper="${SCRIPT_DIR}/brief_scope.py"
+	if [[ ! -r "$scope_helper" ]]; then
+		log_warn "brief_scope.py is unavailable; preserving post-allocation body validation"
+		return 0
+	fi
+
+	if ! printf '%s' "$TASK_DESCRIPTION" | python3 "$scope_helper" prepare \
+		"$TASK_DESCRIPTION" "$TASK_DESCRIPTION" >/dev/null; then
+		log_error "Description body cannot be canonicalized before task-ID allocation."
+		log_error "Recovery: under an existing '### Files Scope', use bare '- path/to/file' bullets."
+		return 1
+	fi
+	return 0
 }
 
 # t2436: Scan TODO.md for the task entry matching task_id and derive
@@ -603,7 +691,14 @@ create_github_issue() {
 	fi
 
 	# Dedup check before bare creation (t1446)
-	if issue_num=$(_check_duplicate_issue "$title"); then
+	local dup_rc=0
+	issue_num=$(_check_duplicate_issue "$title") || dup_rc=$?
+	if [[ $dup_rc -eq 2 ]]; then
+		# GH#33157: the ID belongs to another session's differently titled issue.
+		log_error "TASK_ID_COLLISION: ${_task_id_for_todo} is already in use by another issue; no issue created. Re-run to allocate the next ID."
+		return 1
+	fi
+	if [[ $dup_rc -eq 0 ]]; then
 		# GH#22381: issue-sync-helper.sh push can create the issue but emit no
 		# parseable number. The duplicate lookup then recovers the issue number;
 		# stamp/verify TODO.md before reporting success so dispatchability sees
@@ -964,6 +1059,23 @@ _validate_labels_exist() {
 	return 0
 }
 
+# GH#33152: explicit, audited fast-forward catch-up for a counter branch
+# instead of resolve_implicit_counter_branch's silent refusal when it is
+# behind. Targets --counter-branch/config when explicitly set, otherwise the
+# dedicated task-id-counter branch name. Prints COUNTER_BRANCH_SYNCED and
+# exits without allocating — run a normal claim afterwards to allocate.
+_main_sync_counter_branch() {
+	local repo_path="$1"
+	local target_branch="$COUNTER_BRANCH"
+
+	if [[ "${_COUNTER_BRANCH_SET:-false}" == "false" ]]; then
+		target_branch="${AIDEVOPS_DEDICATED_COUNTER_BRANCH:-task-id-counter}"
+	fi
+
+	sync_counter_branch "$repo_path" "$target_branch" "${DEFAULT_BRANCH:-main}"
+	return $?
+}
+
 # Emit the online dry-run allocation without mutating the remote counter.
 _main_emit_online_dry_run_allocation() {
 	local current=""
@@ -1107,16 +1219,19 @@ _main_create_issues() {
 				issue_title="$(_format_legacy_task_id "$i"): ${TASK_TITLE}"
 				local issue_num=""
 
-				case "$platform" in
-				github)
-					issue_num=$(create_github_issue "$issue_title" "$TASK_DESCRIPTION" "$TASK_LABELS" "$REPO_PATH") || true
+			case "$platform" in
+			github)
+				issue_num=$(create_github_issue "$issue_title" "$TASK_DESCRIPTION" "$TASK_LABELS" "$REPO_PATH") || true
 					;;
 				gitlab)
 					issue_num=$(create_gitlab_issue "$issue_title" "$TASK_DESCRIPTION" "$TASK_LABELS" "$REPO_PATH") || true
 					;;
-				esac
+			esac
 
-				if [[ -n "$issue_num" ]]; then
+			# create_* output is captured for the public ref contract; never log or
+			# parse advisory/noisy output as an issue number.
+			[[ "$issue_num" =~ ^[0-9]+$ ]] || issue_num=""
+			if [[ -n "$issue_num" ]]; then
 					log_success "Created issue: ${ref_prefix}#${issue_num}"
 					issue_nums+=("$issue_num")
 					has_any_issue=true
@@ -1695,6 +1810,13 @@ main() {
 	local counter_setup_rc=0
 	_claim_counter_prepare_git_context "$REPO_PATH" || counter_setup_rc=$?
 	[[ $counter_setup_rc -eq 0 ]] || return "$counter_setup_rc"
+	_claim_apply_detected_default_branch
+
+	if [[ "$SYNC_COUNTER_BRANCH" == "true" ]]; then
+		_main_sync_counter_branch "$REPO_PATH"
+		return $?
+	fi
+
 	resolve_implicit_counter_branch "$REPO_PATH" || counter_setup_rc=$?
 	[[ $counter_setup_rc -eq 0 ]] || return "$counter_setup_rc"
 
@@ -1763,6 +1885,12 @@ main() {
 		fi
 	fi
 
+	# Reject body-normalization failures before the monotonic CAS allocation so
+	# a retry after correcting the scope does not leave an unused task ID.
+	if ! _validate_description_scope_before_allocation; then
+		return 3
+	fi
+
 	# --- Allocate the ID(s) first (the critical atomic step) ---
 
 	local _alloc_first_id="" _alloc_is_offline=""
@@ -1810,7 +1938,17 @@ main() {
 	if [[ "$NO_ISSUE" == "false" ]] && [[ "$is_offline" == "false" ]] && [[ "$platform" != "unknown" ]]; then
 		local issue_output
 		issue_output=$(_main_create_issues "$first_id" "$platform")
-		eval "$(echo "$issue_output" | grep -E '^_issue_(ref_prefix|has_any|first_num|nums_csv)=')"
+		local issue_key issue_value
+		while IFS='=' read -r issue_key issue_value; do
+			case "$issue_key" in
+			_issue_ref_prefix) _issue_ref_prefix="$issue_value" ;;
+			_issue_has_any) _issue_has_any="$issue_value" ;;
+			_issue_first_num)
+				[[ "$issue_value" =~ ^[0-9]+$ ]] && _issue_first_num="$issue_value"
+				;;
+			_issue_nums_csv) _issue_nums_csv="$issue_value" ;;
+			esac
+		done <<<"$issue_output"
 	fi
 
 	# --- Output machine-readable results ---

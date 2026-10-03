@@ -9,6 +9,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { assign, assignedArm, report, validateExperiment } from "../model-ab-helper.mjs";
 import { aggregateObserved } from "../model-ab-report.mjs";
+import { reportSubagents } from "../model-ab-subagents.mjs";
 import { startProspectiveTrial } from "../model-ab-start.mjs";
 import { loadModelRouting, routingPrimary, routingVariant } from "../../plugins/opencode-aidevops/model-routing.mjs";
 
@@ -23,6 +24,28 @@ const experiment = {
   ],
 };
 
+test("interactive report joins explicit parent receipts by child session only", () => {
+  const parent = process.env.AIDEVOPS_TEMP_DIR || join(homedir(), ".aidevops", ".agent-workspace", "tmp");
+  const directory = mkdtempSync(join(parent, "model-ab-child-report-"));
+  try {
+    const db = join(directory, "requests.db");
+    execFileSync("sqlite3", [db, `CREATE TABLE llm_requests(session_id TEXT, ab_experiment TEXT, ab_arm TEXT, tokens_total INTEGER, cost REAL, routing_population TEXT);
+      CREATE TABLE runtime_events(id INTEGER PRIMARY KEY, event_type TEXT, subject_id TEXT, payload_json TEXT);
+      INSERT INTO llm_requests VALUES('ses_a','trial','openai',10,0.2,'interactive_child');
+      INSERT INTO llm_requests VALUES('ses_a','trial','openai',5,0.1,'interactive_child');
+      INSERT INTO llm_requests VALUES('ses_b','trial','anthropic',8,0.3,'interactive_child');
+      INSERT INTO runtime_events VALUES(1,'subagent.acceptance','opencode-child:ses_a','{"contribution_id":"opencode-child:ses_a","contribution_outcome":"accepted_repaired","intervention_count":2}');
+      INSERT INTO runtime_events VALUES(2,'subagent.acceptance','unrelated','{"contribution_id":"unrelated","contribution_outcome":"accepted_unchanged"}');`]);
+    const result = reportSubagents({ id: "trial", arms: [{ name: "openai" }, { name: "anthropic" }] }, db);
+    assert.equal(result.arms.openai.delegations, 1);
+    assert.equal(result.arms.openai.accepted_repaired, 1);
+    assert.equal(result.arms.openai.interventions, 2);
+    assert.equal(result.arms.openai.tokens, 15);
+    assert.equal(result.arms.anthropic.delegations, 1);
+    assert.equal(result.arms.anthropic.accepted_unchanged, 0);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
 test("issue arms persist across retries without changing the fallback or thinking routes", () => {
   const parent = process.env.AIDEVOPS_TEMP_DIR || join(homedir(), ".aidevops", ".agent-workspace", "tmp");
   const directory = mkdtempSync(join(parent, "model-ab-test-"));
@@ -34,13 +57,14 @@ test("issue arms persist across retries without changing the fallback or thinkin
     const route = JSON.parse(readFileSync(first.routing_table, "utf8"));
     assert.equal(route.tiers.standard.models[0], first.model);
     assert.equal(route.tiers.standard.reasoning[first.model], first.variant);
-    assert.ok(route.tiers.standard.models.includes("anthropic/claude-sonnet-4-6"));
+    assert.ok(route.tiers.standard.models.includes("anthropic/claude-sonnet-5-5"));
     assert.equal(route.tiers.thinking, undefined);
     const shipped = fileURLToPath(new URL("../../configs/model-routing-table.json", import.meta.url));
     const merged = loadModelRouting([first.routing_table, shipped]);
     assert.equal(routingPrimary(merged, "standard"), first.model);
-    assert.equal(routingVariant(merged, "standard", first.model), first.variant);
-    assert.equal(routingPrimary(merged, "thinking"), "openai/gpt-6-sol");
+    // The shipped minimum reasoning level is medium even for a low-variant trial arm.
+    assert.equal(routingVariant(merged, "standard", first.model), first.variant === "low" ? "medium" : first.variant);
+    assert.equal(routingPrimary(merged, "thinking"), "openai/gpt-6.1-sol");
     assert.equal(report(experiment, { directory }).arms[first.arm].assigned, 1);
     assert.equal(report(experiment, { directory }).excluded.length, 3);
     assert.deepEqual(assign(experiment, "example/repo", 12, { directory, now: windowStart + 72 * 3600 * 1000 }), first);
@@ -60,7 +84,7 @@ test("configuration requires a bounded window and distinct issue population", ()
   assert.equal(arms.filter((name) => name === "luna-max").length, 2);
   assert.equal(arms.filter((name) => name === "terra-low").length, 2);
   assert.throws(() => validateExperiment({ ...experiment, issues: [12, 12] }), /invalid model A\/B/);
-  assert.throws(() => validateExperiment({ ...experiment, ends_at: "2026-10-01T00:00:00Z" }), /72-hour/);
+  assert.throws(() => validateExperiment({ ...experiment, ends_at: "2026-10-01T00:00:00Z" }), /168-hour/);
   assert.throws(() => validateExperiment({ ...experiment, arms: [{ ...experiment.arms[0] }] }), /invalid model A\/B/);
 });
 
@@ -109,6 +133,46 @@ test("start creates a bounded private cohort and persistent Pulse env override w
     assert.equal(overrides["com.aidevops.aidevops-supervisor-pulse"].AIDEVOPS_MODEL_AB_CONFIG, started.config);
     assert.equal(report(config, { directory }).arms["luna-max"].assigned, 0);
     assert.throws(() => startProspectiveTrial("example/repo", { configRoot, now: windowStart + 1, validate: validateExperiment }), /already has/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("provider-family trial routes every tier of each enrolled issue to one provider", () => {
+  const parent = process.env.AIDEVOPS_TEMP_DIR || join(homedir(), ".aidevops", ".agent-workspace", "tmp");
+  const directory = mkdtempSync(join(parent, "model-ab-provider-"));
+  const configRoot = join(directory, ".config", "aidevops");
+  try {
+    const started = startProspectiveTrial("example/repo",
+      { configRoot, now: windowStart, validate: validateExperiment, preset: "openai-anthropic" });
+    const config = JSON.parse(readFileSync(started.config, "utf8"));
+    assert.equal(config.enrollment.mode, "new-auto-dispatch-issues");
+    assert.equal(Date.parse(config.ends_at) - Date.parse(config.starts_at), 168 * 3600 * 1000);
+    assert.deepEqual(config.arms.map((arm) => arm.name), ["openai", "anthropic"]);
+    assert.deepEqual(config.arms[1].tiers.thinking, { model: "anthropic/claude-opus-5-5", variant: "high" });
+    assert.deepEqual(config.arms[1].tiers.simple, { model: "anthropic/claude-haiku-4-5", variant: "high" });
+    const createdAt = new Date(windowStart + 1000).toISOString();
+    const labels = ["auto-dispatch", "status:available", "tier:thinking"];
+    const first = assign(config, "example/repo", 200,
+      { directory, now: windowStart + 2000, createdAt, labels, tier: "thinking" });
+    assert.equal(first.active, true);
+    assert.equal(first.scope, "all-tiers");
+    const arm = config.arms.find((candidate) => candidate.name === first.arm);
+    const route = JSON.parse(readFileSync(first.routing_table, "utf8"));
+    for (const tier of ["simple", "standard", "thinking"]) {
+      assert.equal(route.tiers[tier].models[0], arm.tiers[tier].model);
+    }
+    assert.deepEqual(assign(config, "example/repo", 200,
+      { directory, now: windowStart + 3000, createdAt, labels: [], tier: "standard", continuationOnly: true }), first);
+    assert.throws(() => validateExperiment({ ...config, arms: [config.arms[0], experiment.arms[1]] }), /invalid model A\/B/);
+    const legacy = { ...experiment, enrollment: { mode: "new-auto-dispatch-issues" } };
+    delete legacy.issues;
+    assert.throws(() => validateExperiment(legacy), /invalid model A\/B/);
+    const summary = aggregateObserved(report(config, { directory }), () => ({ delivery: "pending",
+      route_observed: true, models: [arm.tiers.standard.model, "zai-coding-plan/glm-5.2"],
+      model_variants: [], escalations: 0, fallbacks: 1, retries: 0, accepted_subagents: 0, parent_interventions: 0 }));
+    assert.equal(summary.arms[first.arm].off_arm_issues, 1);
+    assert.deepEqual(summary.arms[first.arm].observations[0].off_arm_models, ["zai-coding-plan/glm-5.2"]);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

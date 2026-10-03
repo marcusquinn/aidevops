@@ -282,7 +282,8 @@ _worktree_recovery_maintenance_zero_reason_counts_json() {
 		unrecognised_evidence_state:0,age_unavailable:0,archive_worktree_dirty:0,
 		active_git_worktree_reference:0,active_registry_owner:0,active_session_claim:0,
 		active_process_reference:0,open_pull_request:0,source_removal_not_complete:0,
-		detached_or_unresolved_branch:0,exact_commit_not_merged:0,exact_commit_not_published:0,
+		detached_or_unresolved_branch:0,detached_within_retention:0,
+		retention_evidence_unavailable:0,exact_commit_not_merged:0,exact_commit_not_published:0,
 		linked_task_not_closed:0,
 		protected_other:0,retention_policy:0,selection_limit:0}'
 	return $?
@@ -319,6 +320,8 @@ _worktree_recovery_maintenance_record_reason() {
 	open-pull-request) safe_reason="open_pull_request" ;;
 	source-removal-not-complete) safe_reason="source_removal_not_complete" ;;
 	detached-or-unresolved-branch) safe_reason="detached_or_unresolved_branch" ;;
+	detached-within-retention) safe_reason="detached_within_retention" ;;
+	retention-evidence-unavailable) safe_reason="retention_evidence_unavailable" ;;
 	exact-commit-not-merged) safe_reason="exact_commit_not_merged" ;;
 	exact-commit-not-published) safe_reason="exact_commit_not_published" ;;
 	linked-task-not-closed) safe_reason="linked_task_not_closed" ;;
@@ -1261,6 +1264,8 @@ _worktree_recovery_maintenance_finalize_pending() {
 	destination="${completed_root}/${plan_id#sha256:}"
 	[[ ! -e "$destination" && ! -L "$destination" ]] || return 1
 	mv "$pending_dir" "$destination" || return 1
+	# A completed reclaiming transaction ends any sustained non-reclamation.
+	_worktree_recovery_maintenance_update_advisory '{"escalation":{"required":false}}' || true
 	printf '%s\n' "$destination"
 	return 0
 }
@@ -1309,14 +1314,28 @@ _worktree_recovery_maintenance_no_candidates_json() {
 	printf '%s\n' "$policy_json" | jq -c \
 		--arg schema "$WORKTREE_RECOVERY_MAINTENANCE_RUN_SCHEMA" \
 		--argjson diagnostics "$diagnostics_json" \
-		'def process_visibility_count:
+		'def counts_of($source): ($source // {}) | with_entries(select((.value | numbers) != null));
+		def retained_counts:
+			counts_of($diagnostics.classification_reason_counts) as $run |
+			counts_of($diagnostics.zero_candidate_cycle.reason_counts) as $cycle |
+			(($run | keys) + ($cycle | keys) | unique) |
+			map({key:., value:([($run[.] // 0), ($cycle[.] // 0)] | max)}) |
+			map(select(.value > 0));
+		# Deterministic: highest count wins; ties resolve by reason key.
+		def dominant:
+			retained_counts | sort_by(-.value, .key) | first // null;
+		def process_visibility_count:
 			[($diagnostics.classification_reason_counts.process_evidence_unavailable // 0),
 			($diagnostics.zero_candidate_cycle.reason_counts.process_evidence_unavailable // 0)] | max;
 		def sustained_pressure:
 			.pressure_active == true and
 			$diagnostics.sustained_non_reclamation.escalation_threshold_reached == true;
+		# Blame process visibility only when it is the dominant retained reason;
+		# otherwise the operator is pointed at the actual majority blocker.
 		def process_visibility_intervention:
-			sustained_pressure and process_visibility_count > 0;
+			sustained_pressure and process_visibility_count > 0 and
+			(dominant.key // "") == "process_evidence_unavailable";
+		def plan_command: ["worktree-helper.sh","recovery","plan","--output","<absolute-new-path>"];
 		{schema:$schema,
 		outcome:(if process_visibility_intervention then "operator-intervention-required" else "no-candidates" end),
 		reclaimed_bytes:0,policy:.,diagnostics:$diagnostics,
@@ -1325,16 +1344,19 @@ _worktree_recovery_maintenance_no_candidates_json() {
 			blocked_archive_observations:process_visibility_count,
 			guidance:[
 				"Run the read-only recovery plan and inspect process-evidence-unavailable entries locally.",
-				"Stop affected same-user processes through their normal process or service controls, then rerun the plan.",
+				"Identify affected same-user processes locally with worktree-helper.sh recovery unreadable-processes, stop them through their normal process or service controls, then rerun the plan.",
+				"Where protected same-user processes hide their CWDs, an administrator may install the opt-in read-only inspector described in reference/worktree-cwd-visibility.md.",
 				"If complete process visibility cannot be restored, retain the archives; automatic permanent deletion is unsupported in this environment."
 			]
 		} else null end),
 		escalation:(if process_visibility_intervention then {
 			required:true,reason:"unsupported-process-visibility",authority:"read-only",
-			command:["worktree-helper.sh","recovery","plan","--output","<absolute-new-path>"]
+			dominant_reason:dominant.key,dominant_reason_count:dominant.value,
+			command:plan_command
 		} elif sustained_pressure then {
 			required:true,reason:"pressure-sustained-no-candidates",authority:"read-only",
-			command:["worktree-helper.sh","recovery","plan","--output","<absolute-new-path>"]
+			dominant_reason:(dominant.key // null),dominant_reason_count:(dominant.value // 0),
+			command:plan_command
 		} else {required:false,reason:null,authority:null,command:null} end)}'
 	return $?
 }
@@ -1408,6 +1430,109 @@ _worktree_recovery_maintenance_defer_expired_cache_selection() {
 	return 0
 }
 
+WORKTREE_RECOVERY_MAINTENANCE_ADVISORY_ID="worktree-recovery-retention"
+
+# Surface sustained non-reclamation in the existing session advisory channel
+# (~/.aidevops/advisories, shown by aidevops-update-check.sh). The advisory
+# carries only aggregate counts and the read-only plan command: no archive
+# paths, process details, or deletion authority. It self-clears once the
+# escalation condition no longer holds or maintenance reclaims space.
+_worktree_recovery_maintenance_update_advisory() {
+	local result_json="$1"
+	local advisory_dir="${AIDEVOPS_ADVISORIES_DIR:-${HOME}/.aidevops/advisories}"
+	local advisory_path="${advisory_dir}/${WORKTREE_RECOVERY_MAINTENANCE_ADVISORY_ID}.advisory"
+	local required=""
+	local advisory_text=""
+	local temp_path=""
+
+	required=$(printf '%s\n' "$result_json" | jq -r '.escalation.required // false') || return 1
+	if [[ "$required" != true ]]; then
+		if [[ -f "$advisory_path" && ! -L "$advisory_path" ]]; then
+			rm -f "$advisory_path" || return 1
+		fi
+		return 0
+	fi
+	[[ ! -L "$advisory_dir" && ! -L "$advisory_path" ]] || return 1
+	mkdir -p "$advisory_dir" || return 1
+	advisory_text=$(printf '%s\n' "$result_json" | jq -r '
+		def size_text:
+			(.policy.store_bytes | numbers | "\((. / 1073741824 * 10 | floor) / 10) GiB") //
+			"unmeasured size";
+		"[WARN] Worktree recovery store is not reclaiming space under pressure (" +
+		"\(.diagnostics.inventory_count // "unknown") archives, \(size_text); " +
+		"dominant blocker: \(.escalation.dominant_reason // "unknown" | gsub("_"; "-")))\n\n" +
+		"Automatic maintenance found no safe deletion candidates across the current inventory.\n" +
+		"Review the read-only plan (it grants no deletion authority):\n\n" +
+		"  " + (.escalation.command | join(" ")) + "\n\n" +
+		(if .outcome == "operator-intervention-required"
+		then "Process visibility is incomplete. List the blocking processes and their remedy with:\n\n" +
+			"  worktree-helper.sh recovery unreadable-processes\n\n" +
+			"See reference/worktree-cwd-visibility.md for the opt-in inspector.\n\n"
+		else "" end) +
+		"Details: reference/storage-lifecycle-worktree-recovery.md\n" +
+		"This advisory clears automatically once maintenance reclaims space or pressure ends."
+	') || return 1
+	temp_path=$(mktemp "${advisory_dir}/.${WORKTREE_RECOVERY_MAINTENANCE_ADVISORY_ID}.XXXXXX") || return 1
+	if ! printf '%s\n' "$advisory_text" >"$temp_path" || ! mv -f "$temp_path" "$advisory_path"; then
+		rm -f "$temp_path" 2>/dev/null || true
+		return 1
+	fi
+	return 0
+}
+
+_worktree_recovery_maintenance_emit_no_candidates() {
+	local policy_json="$1"
+	local diagnostics_json="$2"
+	local result_json=""
+
+	result_json=$(_worktree_recovery_maintenance_no_candidates_json \
+		"$policy_json" "$diagnostics_json") || return 1
+	printf '%s\n' "$result_json"
+	# Advisory failures never turn a successful maintenance pass into a failure.
+	_worktree_recovery_maintenance_update_advisory "$result_json" || true
+	return 0
+}
+
+worktree_recovery_maintenance_usage() {
+	cat <<'USAGE'
+Usage: worktree-recovery-maintenance-helper.sh [run]
+
+Runs one bounded automatic recovery-archive maintenance pass on the default
+framework-owned recovery root (non-macOS only) and prints a JSON result.
+
+Commands:
+  run            Run one maintenance pass (default when no argument is given)
+  help, --help   Show this help without acquiring the maintenance lock
+
+See reference/storage-lifecycle-worktree-recovery.md for policy and tuning.
+USAGE
+	return 0
+}
+
+worktree_recovery_maintenance_main() {
+	local command="${1:-run}"
+
+	case "$command" in
+	run)
+		[[ $# -le 1 ]] || {
+			worktree_recovery_maintenance_usage >&2
+			return 2
+		}
+		worktree_recovery_maintenance_run
+		return $?
+		;;
+	help | --help | -h)
+		worktree_recovery_maintenance_usage
+		return 0
+		;;
+	*)
+		printf 'Unknown argument: %s\n\n' "$command" >&2
+		worktree_recovery_maintenance_usage >&2
+		return 2
+		;;
+	esac
+}
+
 worktree_recovery_maintenance_run() {
 	local platform="" state_dir="" recovery_root="" limits_json="" policy_json=""
 	local plan_json="" pending_dir="" pending_init_dir="" plan_path="" receipt_path=""
@@ -1467,9 +1592,9 @@ worktree_recovery_maintenance_run() {
 	}
 	if [[ "$WORKTREE_RECOVERY_MAINTENANCE_SELECTED" -eq 0 &&
 		"$WORKTREE_RECOVERY_MAINTENANCE_CACHE_SELECTED" -eq 0 ]]; then
-		_worktree_recovery_maintenance_no_candidates_json "$policy_json" "$diagnostics_json"
+		_worktree_recovery_maintenance_emit_no_candidates "$policy_json" "$diagnostics_json" || run_status=1
 		_worktree_recovery_maintenance_release_lock || return 1
-		return 0
+		return "$run_status"
 	fi
 	if [[ "$WORKTREE_RECOVERY_MAINTENANCE_CACHE_SELECTED" -gt 0 ]]; then
 		operation="$WORKTREE_RECOVERY_MAINTENANCE_OPERATION_CACHE_PRUNE"
@@ -1512,5 +1637,5 @@ worktree_recovery_maintenance_run() {
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
 	set -euo pipefail
-	worktree_recovery_maintenance_run
+	worktree_recovery_maintenance_main "$@"
 fi

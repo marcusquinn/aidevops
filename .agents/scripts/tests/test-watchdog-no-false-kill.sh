@@ -203,11 +203,11 @@ assert_contains \
 	"$pulse_wd_source"
 
 #######################################
-# Test 7: pulse-dispatch-lib.sh timeout handler emits [lifecycle] line
+# Test 7: extracted pulse-dispatch candidate timeout emits [lifecycle] line
 #######################################
-dispatch_source=$(< "${SCRIPT_DIR}/pulse-dispatch-lib.sh")
+dispatch_source=$(< "${SCRIPT_DIR}/pulse-dispatch-lib-candidates.sh")
 assert_contains \
-	"7. pulse-dispatch-lib.sh per-candidate timeout emits [lifecycle] line" \
+	"7. pulse-dispatch-lib-candidates.sh per-candidate timeout emits [lifecycle] line" \
 	"reason=wait_loop_timeout_" \
 	"$dispatch_source"
 

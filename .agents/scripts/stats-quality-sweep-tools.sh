@@ -729,6 +729,7 @@ _build_sweep_comment() {
 **Date**: ${now_iso}
 **Repository**: current repository
 **Tools run**: ${tool_count}
+**Skipped tools**: ${QUALITY_SWEEP_SKIPPED_TOOLS:-none}
 
 ---
 

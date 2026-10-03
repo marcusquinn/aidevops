@@ -15,7 +15,9 @@
 #      the network.
 #   4. Custom thresholds via env vars (QUEUED_MIN, RATIO_MIN) take precedence
 #      over conf-file defaults.
-#   5. _classify_stuck_pr returns STUCK_RUNNER_QUEUE_SATURATION when the
+#   5. The queued query applies the default recent-run window, while a zero
+#      window retains the unfiltered query for an explicit operator override.
+#   6. _classify_stuck_pr returns STUCK_RUNNER_QUEUE_SATURATION when the
 #      caller passes is_saturated=1 AND the PR's rollup contains a QUEUED
 #      check; falls through to STUCK_CHECKS_FAILING when is_saturated=0.
 #   6. shellcheck cleanliness on pulse-rate-limit-circuit-breaker.sh.
@@ -100,6 +102,8 @@ cat >"$SHIM_DIR/gh" <<'SHIM_EOF'
 #   GH_SHIM_QUEUED_TOTAL      total_count for status=queued response (integer)
 #   GH_SHIM_IN_PROGRESS_TOTAL total_count for status=in_progress response (integer)
 #   GH_SHIM_FAIL              if "1", emit empty stdout + exit 1 (API error)
+#   GH_SHIM_EXPECT_QUEUED_ENDPOINT exact queued endpoint expected by a test
+#   GH_SHIM_EXPECT_QUEUED_ENDPOINT_PREFIX prefix queued endpoint expected by a test
 #   GH_SHIM_PR_VIEW_JSON      raw JSON to return for `gh pr view` calls
 #   GH_SHIM_CHECK_RUNS_JSON   check_runs array for the current head
 
@@ -162,6 +166,12 @@ case "$1" in
 		fi
 		case "$endpoint" in
 			*"actions/runs?status=queued"*)
+				if [[ -n "${GH_SHIM_EXPECT_QUEUED_ENDPOINT:-}" && "$endpoint" != "$GH_SHIM_EXPECT_QUEUED_ENDPOINT" ]]; then
+					exit 1
+				fi
+				if [[ -n "${GH_SHIM_EXPECT_QUEUED_ENDPOINT_PREFIX:-}" && "$endpoint" != "${GH_SHIM_EXPECT_QUEUED_ENDPOINT_PREFIX}"* ]]; then
+					exit 1
+				fi
 				body=$(printf '{"total_count":%s,"workflow_runs":[]}' "${GH_SHIM_QUEUED_TOTAL:-0}")
 				emit_body "$body" "$@"
 				exit 0
@@ -236,6 +246,7 @@ _reset_env() {
 	unset AIDEVOPS_PULSE_CIRCUIT_BREAKER_THRESHOLD
 	unset AIDEVOPS_ACTIONS_QUEUE_SATURATION_QUEUED_MIN
 	unset AIDEVOPS_ACTIONS_QUEUE_SATURATION_RATIO_MIN
+	unset AIDEVOPS_ACTIONS_QUEUE_SATURATION_WINDOW_HOURS
 	unset AIDEVOPS_SKIP_ACTIONS_QUEUE_SATURATION
 	unset AIDEVOPS_GH_STATUS_HELPER
 	unset GH_STATUS_SHIM_RC
@@ -244,6 +255,8 @@ _reset_env() {
 	unset GH_SHIM_QUEUED_TOTAL
 	unset GH_SHIM_IN_PROGRESS_TOTAL
 	unset GH_SHIM_FAIL
+	unset GH_SHIM_EXPECT_QUEUED_ENDPOINT
+	unset GH_SHIM_EXPECT_QUEUED_ENDPOINT_PREFIX
 	unset GH_SHIM_PR_VIEW_JSON
 	unset GH_SHIM_CHECK_RUNS_JSON
 	unset GH_SHIM_SAME_PASS_CHECK_RUNS_JSON
@@ -426,10 +439,41 @@ out=$(_check_actions_queue_saturation "marcusquinn/aidevops")
 assert_eq "raised threshold: saturated=0" "0" "$(_field saturated "$out")"
 
 # ---------------------------------------------------------------------------
-# Test class 5: integration with _classify_stuck_pr
+# Test class 5: queued-run recency window
 # ---------------------------------------------------------------------------
 echo ""
-echo "${TEST_BLUE}── 5. _classify_stuck_pr integration ──${TEST_NC}"
+echo "${TEST_BLUE}── 5. Queued-run recency window ──${TEST_NC}"
+
+# 5a: Default six-hour window excludes historical queued zombies from the
+# query. The shim rejects any endpoint that does not contain the calculated
+# cutoff, proving the detector asks GitHub for the filtered total_count.
+_reset_env
+set_shim "GH_SHIM_EXPECT_QUEUED_ENDPOINT_PREFIX=repos/marcusquinn/aidevops/actions/runs?status=queued&per_page=1&created=>=" \
+	GH_SHIM_QUEUED_TOTAL=39 GH_SHIM_IN_PROGRESS_TOTAL=1
+out=$(_check_actions_queue_saturation "marcusquinn/aidevops")
+assert_eq "default window: recent queued total is used" "39" "$(_field queued "$out")"
+assert_eq "default window: old zombie total does not saturate" "0" "$(_field saturated "$out")"
+
+# 5b: A genuine recent backlog is still detected after the window filter.
+_reset_env
+set_shim "GH_SHIM_EXPECT_QUEUED_ENDPOINT_PREFIX=repos/marcusquinn/aidevops/actions/runs?status=queued&per_page=1&created=>=" \
+	GH_SHIM_QUEUED_TOTAL=51 GH_SHIM_IN_PROGRESS_TOTAL=4
+out=$(_check_actions_queue_saturation "marcusquinn/aidevops")
+assert_eq "default window: recent backlog saturates" "1" "$(_field saturated "$out")"
+
+# 5c: Window 0 preserves the operator's explicit all-queued-runs override.
+_reset_env
+set_shim AIDEVOPS_ACTIONS_QUEUE_SATURATION_WINDOW_HOURS=0 \
+	GH_SHIM_EXPECT_QUEUED_ENDPOINT="repos/marcusquinn/aidevops/actions/runs?status=queued&per_page=1" \
+	GH_SHIM_QUEUED_TOTAL=51 GH_SHIM_IN_PROGRESS_TOTAL=4
+out=$(_check_actions_queue_saturation "marcusquinn/aidevops")
+assert_eq "zero window: unfiltered backlog still saturates" "1" "$(_field saturated "$out")"
+
+# ---------------------------------------------------------------------------
+# Test class 6: integration with _classify_stuck_pr
+# ---------------------------------------------------------------------------
+echo ""
+echo "${TEST_BLUE}── 6. _classify_stuck_pr integration ──${TEST_NC}"
 
 # Source the merge-stuck module — pulls in _classify_stuck_pr.
 # shellcheck disable=SC1090
@@ -507,10 +551,10 @@ classification=$(_classify_stuck_pr "12345" "marcusquinn/aidevops")
 assert_eq "default param: treated as is_saturated=0" "STUCK_OTHER" "$classification"
 
 # ---------------------------------------------------------------------------
-# Test class 6: shellcheck cleanliness
+# Test class 7: shellcheck cleanliness
 # ---------------------------------------------------------------------------
 echo ""
-echo "${TEST_BLUE}── 6. Shellcheck ──${TEST_NC}"
+echo "${TEST_BLUE}── 7. Shellcheck ──${TEST_NC}"
 
 if command -v shellcheck >/dev/null 2>&1; then
 	if shellcheck "$RATE_LIMIT_HELPER" >/dev/null 2>&1; then

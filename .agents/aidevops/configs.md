@@ -44,7 +44,7 @@ tools:
 
 | Category | Files |
 |----------|-------|
-| Infrastructure & Hosting | `hostinger`, `hetzner`, `cloudron`; `closte` (legacy compatibility) |
+| Infrastructure & Hosting | `hostinger`, `hetzner`, `cloudron` |
 | Deployment | `coolify` |
 | Content Management | `mainwp` |
 | Security & Secrets | `vaultwarden` |

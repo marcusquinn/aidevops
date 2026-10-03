@@ -103,6 +103,19 @@ Only routines explicitly documented as persistent or externally scheduled use a
 dedicated platform unit. Generated routine descriptions name that unit when one
 exists; do not derive a service label from the routine title or ID.
 
+Framework-managed routines have no `TODO.md` line; `pulse-routines.sh` evaluates
+them through the same schedule, retry and REST-budget path:
+
+| ID | Default schedule | Runs | Opt-out |
+| --- | --- | --- | --- |
+| `r-session-miner` | `daily(@04:40)` (`AIDEVOPS_SESSION_MINER_SCHEDULE`) | `session-miner-pulse.sh --create-issues` | — |
+| `r-issue-archive` | `daily(@05:20)` (`AIDEVOPS_ISSUE_ARCHIVE_SCHEDULE`) | `issue-archive-helper.sh run` | host: `AIDEVOPS_ISSUE_ARCHIVE_ENABLED=0`; repo: `"issue_archive": false` in `repos.json` |
+
+`r-issue-archive` archives issue/PR discussions of each pulse-enabled,
+non-`local_only` registered repo to its orphan `aidevops/issues-archive` branch.
+Enable it on one pulse host per repo so there is a single writer. Details:
+`reference/forge-portability.md` "Issue and PR discussion archive".
+
 ## Anti-patterns
 
 - Separate routine registry outside `TODO.md`
@@ -213,3 +226,23 @@ It gathers evidence from:
 `<!-- aidevops:generator=pulse-check finding=... -->`; issue bodies must stay
 aggregate-only and must not include private repo names, local paths, issue
 titles, or raw worker examples.
+
+## Private mirror sync (r919)
+
+Register private mirrors in `~/.config/aidevops/repos.json` under
+`initialized_repos` with `slug` (the mirror's `owner/repo`) and
+`mirror_upstream` (a string upstream `owner/repo`). Optional
+`mirror_upstream_url` overrides the upstream fetch URL. Boolean
+`mirror_upstream` is a privacy marker only and is not synchronised. Set
+`"mirror_sync": false` on an entry to opt out.
+
+When eligible entries exist, setup installs a daily 20:00 job with label
+`sh.aidevops.mirror-sync` on macOS (or a systemd/cron equivalent on Linux).
+`mirror-sync-helper.sh check [--repo owner/repo]` inspects without pushing;
+`sync` fetches upstream and mirror in a disposable repository. It pushes only
+to the private mirror: a pure mirror advances by fast-forward; divergence
+creates a dated `sync/upstream-YYYYMMDD` branch and fast-forward pushes the
+clean merge. Conflicts leave the default branch untouched and appear in
+`mirror-sync-helper.sh status`. Neither force pushes, tags nor writes to the
+upstream are performed. Mirror identities and conflict paths remain local;
+do not copy them to public issues or TODOs.

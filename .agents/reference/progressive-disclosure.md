@@ -101,6 +101,11 @@ for f in files:
 "
 ```
 
+This is a rough file-size estimate. For the full first request OpenCode sends
+(instruction files, skills, plugin additions, tools) and API-reported token
+evidence before and after a change, use `context-budget-helper.sh`; see
+`reference/context-budget.md`.
+
 ## Decision-boundary delivery review (t18409 / GH#31294)
 
 This section owns the placement review, not the domain rules. Apply the Agent

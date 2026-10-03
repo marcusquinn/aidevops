@@ -223,5 +223,5 @@ query-docs("/yt-dlp/yt-dlp", "SponsorBlock integration")
 
 - [yt-dlp GitHub](https://github.com/yt-dlp/yt-dlp)
 - [yt-dlp Wiki](https://github.com/yt-dlp/yt-dlp/wiki)
-- `tools/video/remotion.md` - Programmatic video editing
+- `tools/video/remotion/remotion.md` - Programmatic video editing
 - `tools/video/video-prompt-design.md` - Video prompt design

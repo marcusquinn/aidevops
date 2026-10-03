@@ -7,7 +7,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
-LIB_SCRIPT="${SCRIPT_DIR}/../pulse-dispatch-lib.sh"
+LIB_SCRIPT="${SCRIPT_DIR}/../pulse-dispatch-lib-candidates.sh"
 
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'

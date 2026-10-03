@@ -98,7 +98,17 @@ ordinary merge guards do not read or mutate publisher ownership. Status remains 
 
 Age alone never unlocks a lane. Live/recent reservations, legacy/foreign owners,
 publication phases and aggregation recovery are not automatically released. A
-stale `preparing` lane is resumable only by the exact same authorized source and
+competing authorized release may instead finalize a `remote-publication` or
+`exact-tag-deployment` lane when its local executor is verifiably dead and its
+exact tag is published on GitHub, npm and Homebrew. It calls the existing
+source-PR reconcile path, which checks the persisted authorization and uses
+compare-and-swap writes. Only an inactive lane with a terminal receipt lets the
+new release proceed; unknown ownership, partial publication, failed or deferred
+reconciliation, and lost races still refuse the competing start. This does not
+free a publication lane without verified finalization or grant new publication
+authority.
+
+A stale `preparing` lane is resumable only by the exact same authorized source and
 increment when the local executor is verifiably dead, its deterministic detached
 worktree remains isolated at the pinned snapshot, no release process survives,
 the persisted source manifest still matches, and the intended tag, protected

@@ -3,7 +3,7 @@
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # Agent deployment functions: deploy_aidevops_agents, deploy_ai_templates, inject_agents_reference
 # Part of aidevops setup.sh modularization (t316.3)
-# Split from original agent-deploy.sh (t1940): runtime conversion → agent-runtime.sh, beads/hooks → tool-beads.sh
+# Split from original agent-deploy.sh (t1940): runtime conversion → agent-runtime.sh
 
 # Shell safety baseline
 set -Eeuo pipefail
@@ -320,6 +320,8 @@ _verify_deployed_core_plugin_freshness() {
 		"plugins/opencode-aidevops/quality-hooks-git-safety.mjs"
 		"plugins/opencode-aidevops/quality-hooks-output-scrub.mjs"
 		"plugins/opencode-aidevops/quality-hooks.mjs"
+		"plugins/opencode-aidevops/registered-value-redaction.mjs"
+		"plugins/opencode-aidevops/registered-value-sources.mjs"
 		"plugins/opencode-aidevops/runtime-profile.mjs"
 		"plugins/opencode-aidevops/tool-schema.mjs"
 		"plugins/opencode-aidevops/v2-mcp-adapter.mjs"
@@ -1097,12 +1099,6 @@ _runtime_bundle_activate_locked() {
 		fi
 		return 1
 	fi
-	if [[ -n "$previous_root" ]]; then
-		local previous_tmp="${previous_link}.tmp.$$"
-		rm -f "$previous_tmp"
-		ln -s "$previous_root" "$previous_tmp" && _runtime_bundle_replace_link "$previous_tmp" "$previous_link" || rm -f "$previous_tmp"
-	fi
-
 	if [[ "${AIDEVOPS_BUNDLE_FAIL_AT:-}" == "after-activation" ]] ||
 		[[ "$(_runtime_bundle_resolve_root "$target_dir" 2>/dev/null || true)" != "$agents_root" ]]; then
 		if [[ -n "$previous_root" ]]; then
@@ -1113,6 +1109,22 @@ _runtime_bundle_activate_locked() {
 		return 1
 	fi
 
+	# Commit the stamp while the activation lock is still held. Later setup
+	# stages may fail or be interrupted; they must not leave a stale stamp.
+	if ! _runtime_bundle_write_active_sha "$target_dir"; then
+		if [[ -n "$previous_root" ]]; then
+			_runtime_bundle_switch_link "$target_dir" "$previous_root" || return 1
+		else
+			rm -f "$target_dir"
+		fi
+		return 1
+	fi
+	# Do not destroy the previous rollback target on an aborted activation.
+	if [[ -n "$previous_root" ]]; then
+		local previous_tmp="${previous_link}.tmp.$$"
+		rm -f "$previous_tmp"
+		ln -s "$previous_root" "$previous_tmp" && _runtime_bundle_replace_link "$previous_tmp" "$previous_link" || rm -f "$previous_tmp"
+	fi
 	_AIDEVOPS_ACTIVE_BUNDLE_ROOT="$agents_root"
 	_runtime_bundle_prune "$bundles_dir" "$agents_root" "$previous_root"
 	return 0
@@ -1123,10 +1135,15 @@ _runtime_bundle_activate() {
 	local bundle_dir="$2"
 	local activate_rc=0
 	_AIDEVOPS_ACTIVE_BUNDLE_ROOT=""
+	_AIDEVOPS_PREVIOUS_BUNDLE_ROOT=""
+	_AIDEVOPS_PREVIOUS_DEPLOYED_SHA=""
 
 	if ! aidevops_runtime_transition_lock_acquire; then
 		print_error "Unable to acquire the runtime activation lock"
 		return 1
+	fi
+	if [[ -f "${target_dir%/*}/.deployed-sha" ]]; then
+		IFS= read -r _AIDEVOPS_PREVIOUS_DEPLOYED_SHA <"${target_dir%/*}/.deployed-sha" || true
 	fi
 	_runtime_bundle_activate_locked "$target_dir" "$bundle_dir" || activate_rc=$?
 	aidevops_runtime_transition_lock_release
@@ -1377,14 +1394,29 @@ _run_atomic_agents_deploy() {
 _verify_agents_deploy_or_restore() {
 	local source_dir="$1"
 	local target_dir="$2"
+	local verify_rc=0
+	aidevops_runtime_transition_lock_acquire || return 1
+	# Never verify or roll back another invocation's successfully activated tree.
+	if [[ -n "${_AIDEVOPS_ACTIVE_BUNDLE_ROOT:-}" &&
+		"$(_runtime_bundle_resolve_root "$target_dir" 2>/dev/null || true)" != "$_AIDEVOPS_ACTIVE_BUNDLE_ROOT" ]]; then
+		verify_rc=1
+	else
+		_verify_agents_deploy_or_restore_locked "$source_dir" "$target_dir" || verify_rc=$?
+	fi
+	aidevops_runtime_transition_lock_release
+	return "$verify_rc"
+}
+
+_verify_agents_deploy_or_restore_locked() {
+	local source_dir="$1"
+	local target_dir="$2"
 	local previous_root="${_AIDEVOPS_PREVIOUS_BUNDLE_ROOT:-}"
 
 	# Postcondition: verify the swap actually produced a functional agents dir.
 	# _atomic_stage_and_deploy_agents returns 0 on success, but this belt-and-
 	# suspenders check catches future regressions where the function returns early
-	# without correctly populating $target_dir (GH#22014/GH#21973). Do not write
-	# .deployed-sha unless this passes; otherwise auto-update would suppress the
-	# next retry even though agents/ is empty or partial.
+	# without correctly populating $target_dir (GH#22014/GH#21973). Restore
+	# the stamp with the tree so auto-update does not suppress the next retry.
 	if ! _verify_deployed_agents_tree "$target_dir"; then
 		print_error "The agents directory was not correctly deployed — setup cannot continue"
 		if [[ -L "$target_dir" && -d "$previous_root/scripts" ]]; then
@@ -1392,6 +1424,7 @@ _verify_agents_deploy_or_restore() {
 		else
 			_restore_latest_agents_backup "$target_dir" || true
 		fi
+		_runtime_bundle_restore_stamp "$target_dir" || return 1
 		return 1
 	fi
 	if ! _verify_deployed_core_plugin_freshness "$source_dir" "$target_dir"; then
@@ -1401,30 +1434,58 @@ _verify_agents_deploy_or_restore() {
 		else
 			_restore_latest_agents_backup "$target_dir" || true
 		fi
+		_runtime_bundle_restore_stamp "$target_dir" || return 1
 		return 1
 	fi
 
 	return 0
 }
 
+_runtime_bundle_restore_stamp() {
+	local target_dir="$1"
+	if [[ -r "$target_dir/.bundle-manifest" ]]; then
+		_runtime_bundle_write_active_sha "$target_dir" || return 1
+	elif [[ -n "${_AIDEVOPS_PREVIOUS_DEPLOYED_SHA:-}" ]]; then
+		_runtime_bundle_write_sha "$target_dir" "$_AIDEVOPS_PREVIOUS_DEPLOYED_SHA" || return 1
+	else
+		rm -f "${target_dir%/*}/.deployed-sha" || return 1
+	fi
+	return 0
+}
+
+_runtime_bundle_write_active_sha() {
+	local target_dir="$1"
+	local deployed_sha=""
+	deployed_sha=$(_runtime_bundle_manifest_value "$target_dir/.bundle-manifest" git_sha) || return 1
+	_runtime_bundle_write_sha "$target_dir" "$deployed_sha"
+	return $?
+}
+
+_runtime_bundle_write_sha() {
+	local target_dir="$1"
+	local deployed_sha="$2"
+	local stamp_file="${target_dir%/*}/.deployed-sha"
+	local stamp_tmp="${stamp_file}.tmp.$$"
+	# Archive installs have no Git metadata; preserve the manifest's explicit
+	# unknown value. Release convergence still requires an exact commit SHA.
+	[[ "$deployed_sha" =~ ^[0-9a-f]{40}$ || "$deployed_sha" == "$_AIDEVOPS_BUNDLE_UNKNOWN" ]] || return 1
+	if ! printf '%s\n' "$deployed_sha" >"$stamp_tmp" || ! mv -f "$stamp_tmp" "$stamp_file"; then
+		rm -f "$stamp_tmp"
+		return 1
+	fi
+	return 0
+}
+
 _write_deployed_agents_sha() {
 	local repo_dir="$1"
-
-	# Write deployed-SHA stamp BEFORE the pulse restart so the stamp is
-	# available immediately for subsequent setup steps and the next run's
-	# backup-skip check (t3221). Previously written after the blocking
-	# restart wait; moving it here has no correctness impact — the deploy
-	# is already fully on disk at this point.
-	# t2156: enables auto-redeploy when local commits land between releases.
-	local deployed_sha
-	deployed_sha=$(git -C "$repo_dir" rev-parse HEAD 2>/dev/null || echo "")
-	if [[ -n "$deployed_sha" ]]; then
-		local aidevops_dir="${HOME}/.aidevops"
-		mkdir -p "$aidevops_dir"
-		printf '%s\n' "$deployed_sha" >"${aidevops_dir}/.deployed-sha"
-	fi
-
-	return 0
+	local write_rc=0
+	# Do not stamp the mutable source HEAD: another setup may have activated
+	# a different bundle since this invocation staged its source tree.
+	[[ -d "$repo_dir" ]] || return 1
+	aidevops_runtime_transition_lock_acquire || return 1
+	_runtime_bundle_write_active_sha "${HOME}/.aidevops/agents" || write_rc=$?
+	aidevops_runtime_transition_lock_release
+	return "$write_rc"
 }
 
 _sync_agent_bin_shims() {
@@ -1476,6 +1537,69 @@ _install_canonical_git_guard_shim() {
 	return 0
 }
 
+# Returns 0 when pid $1 is the current shell or one of its ancestors.
+_process_is_self_or_ancestor() {
+	local target_pid="$1"
+	local current_pid="$$"
+	local depth=0
+	while [[ "$current_pid" =~ ^[0-9]+$ ]] && [[ "$current_pid" -gt 1 ]] && [[ "$depth" -lt 64 ]]; do
+		[[ "$current_pid" == "$target_pid" ]] && return 0
+		current_pid=$(ps -o ppid= -p "$current_pid" 2>/dev/null | tr -d '[:space:]')
+		depth=$((depth + 1))
+	done
+	return 1
+}
+
+# OpenCode V2 runs a long-lived background service. After the runtime bundle
+# swaps underneath it, locations that service opens for the first time stop
+# loading the aidevops plugin, so provider OAuth hooks are absent and requests
+# fail with "API key is invalid". Updates are usually run by AI sessions, so a
+# warning alone goes unseen: restart the service while V2 is an isolated preview
+# runtime. Revisit (e.g. defer to idle) when opencode2 becomes the default.
+# Restart through the managed opencode2 shim: it drops the caller's session and
+# headless environment so the restarted service stays interactive (GH#32498).
+_restart_opencode_v2_service_after_deploy() {
+	[[ "${AIDEVOPS_SKIP_OPENCODE_V2_SERVICE_RESTART:-0}" == "1" ]] && return 0
+	local v2_root="${AIDEVOPS_OPENCODE_V2_ROOT:-${HOME}/.aidevops/runtimes/opencode-v2}"
+	local state_home="${AIDEVOPS_OPENCODE_V2_STATE_HOME:-${v2_root}/state}"
+	local service_file="${state_home}/opencode/service.json"
+	[[ -f "$service_file" ]] || return 0
+	command -v jq >/dev/null 2>&1 || return 0
+
+	local service_pid=""
+	service_pid=$(jq -r '.pid // empty' "$service_file" 2>/dev/null) || service_pid=""
+	[[ "$service_pid" =~ ^[0-9]+$ ]] || return 0
+	kill -0 "$service_pid" 2>/dev/null || return 0
+
+	# Never kill the service hosting the session that is running this setup.
+	if _process_is_self_or_ancestor "$service_pid"; then
+		print_warning "OpenCode V2 service hosts this session; run 'opencode2 service restart' afterwards to load the new aidevops bundle"
+		return 0
+	fi
+
+	local v2_bin=""
+	local resolved_file="$HOME/.aidevops/.opencode-v2-bin-resolved"
+	[[ -f "$resolved_file" ]] && v2_bin=$(<"$resolved_file")
+	[[ -n "$v2_bin" && -x "$v2_bin" ]] || v2_bin="$HOME/.local/bin/opencode2"
+	if [[ ! -x "$v2_bin" ]]; then
+		print_warning "OpenCode V2 service is running but opencode2 was not found; run 'opencode2 service restart' to load the new aidevops bundle"
+		return 0
+	fi
+
+	local restart_rc=0
+	if declare -F timeout_sec >/dev/null 2>&1; then
+		timeout_sec 60 "$v2_bin" service restart >/dev/null 2>&1 || restart_rc=$?
+	else
+		"$v2_bin" service restart >/dev/null 2>&1 || restart_rc=$?
+	fi
+	if [[ "$restart_rc" -eq 0 ]]; then
+		print_success "Restarted OpenCode V2 background service to load the new aidevops bundle"
+	else
+		print_warning "OpenCode V2 service restart failed (exit $restart_rc); run 'opencode2 service restart' manually"
+	fi
+	return 0
+}
+
 deploy_aidevops_agents() {
 	print_info "Deploying aidevops agents to ~/.aidevops/agents/..."
 
@@ -1509,6 +1633,7 @@ deploy_aidevops_agents() {
 	_sync_agent_bin_shims "$target_dir" || return 1
 
 	_write_deployed_agents_sha "$repo_dir"
+	_restart_opencode_v2_service_after_deploy
 
 	return 0
 }

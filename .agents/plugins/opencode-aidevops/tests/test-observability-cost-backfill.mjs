@@ -9,6 +9,7 @@ import { test } from "node:test";
 
 import { backfillCosts } from "../observability-cost-backfill.mjs";
 import { createSchema } from "../observability-init.mjs";
+import { PRICING_VERSION } from "../observability-pricing.mjs";
 import {
   setDbPath, shutdownSqlite, sqliteExecSync,
 } from "../observability-sqlite.mjs";
@@ -38,9 +39,9 @@ SELECT session_id || '|' || printf('%.8f', cost) || '|' || COALESCE(pricing_vers
 FROM llm_requests ORDER BY session_id;
     `);
     assert.equal(first, [
-      "luna-old|0.46700000|2026-09-05.1",
-      "sol-zero|4.00000000|2026-09-05.1",
-      "terra-old|4.67000000|2026-09-05.1",
+      `luna-old|0.46700000|${PRICING_VERSION}`,
+      `sol-zero|4.00000000|${PRICING_VERSION}`,
+      `terra-old|4.67000000|${PRICING_VERSION}`,
       "terra-unverified|1.25000000|legacy-unverified",
     ].join("\n"));
     assert.match(readFileSync(markerPath, "utf8"), /^\d{4}-\d{2}-\d{2}T/);

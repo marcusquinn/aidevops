@@ -7,7 +7,7 @@ model-fallback: openai/gpt-5.4
 fallback-chain:
   - anthropic/claude-opus-4-6
   - openai/gpt-5.4
-  - anthropic/claude-sonnet-4-6
+  - anthropic/claude-sonnet-5-5
   - openrouter/anthropic/claude-opus-4-6
 tools:
   read: true
@@ -79,9 +79,9 @@ native models. Those registrations also overrode native model metadata, so we
 retired them in favour of the native catalogue. The separate `claudecli/*`
 proxy entries are retained for CLI transport; they are not the Anthropic pool.
 
-OpenCode 1 applies a 500K usable-input budget at request time to native Opus
-5.5+ models with sufficiently large windows; other modern Anthropic families
-are described in `reference/context-efficiency.md`. Opus 4.7 retains its
+OpenCode 1 applies the shared 240K usable-input budget at request time to native
+Opus 5.5+ models with larger windows (500K before GH#32807); see
+`reference/context-efficiency.md`. Opus 4.7 retains its
 more conservative **200K usable-input** reliability boundary without a picker
 entry. This expresses the historical 250K/80% intent using the current
 input-minus-reserve compaction calculation, without reducing smaller native

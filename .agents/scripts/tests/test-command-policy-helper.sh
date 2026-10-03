@@ -470,6 +470,34 @@ PY
 	return 0
 }
 
+test_workspace_repository_creation() {
+	local workspace="${TEST_ROOT}/create-projects"
+	local repo="${workspace}/repo-a"
+	local outside="${TEST_ROOT}/create-outside"
+	local sibling="${workspace}-sibling"
+	local escape="${workspace}/escape"
+	local allowed='"decision": "allow"'
+
+	mkdir -p "$repo" "$outside" "$sibling"
+	ln -s "$outside" "$escape"
+
+	assert_authorized_decision "workspace session creates a remote-only repository without authorization" "" "gh repo create owner/new-repo --public --add-readme --license mit --description 'New package'" 0 "$allowed" "$repo" "$workspace"
+	assert_authorized_decision "workspace root itself creates a repository without authorization" "" "gh repo create new-repo --private" 0 "$allowed" "$workspace" "$workspace"
+	assert_authorized_decision "workspace session uses the repository new alias without authorization" "" "gh repo new owner/new-alias --private" 0 "$allowed" "$repo" "$workspace"
+	assert_authorized_decision "creation outside the workspace still needs authorization" "" "gh repo create owner/new-repo --public" 20 "github.account-mutation" "$outside" "$workspace"
+	assert_authorized_decision "sibling-prefix directory is outside the workspace" "" "gh repo create owner/new-repo --public" 20 "github.account-mutation" "$sibling" "$workspace"
+	assert_authorized_decision "symlink escape is outside the workspace" "" "gh repo create owner/new-repo --public" 20 "github.account-mutation" "$escape" "$workspace"
+	assert_authorized_decision "local source creation still needs authorization" "" "gh repo create owner/new-repo --public --source=." 20 "github.account-mutation" "$repo" "$workspace"
+	assert_authorized_decision "clone-capable creation still needs authorization" "" "gh repo create owner/new-repo --public --clone" 20 "github.account-mutation" "$repo" "$workspace"
+	assert_authorized_decision "creation without explicit visibility still needs authorization" "" "gh repo create owner/new-repo --public=false" 20 "github.account-mutation" "$repo" "$workspace"
+	assert_authorized_decision "forks still need authorization inside the workspace" "" "gh repo fork owner/source --clone=false" 20 "github.account-mutation" "$repo" "$workspace"
+	assert_authorized_decision "compound creation still needs authorization" "" "gh repo create owner/new-repo --public && printf done" 20 "github.account-mutation" "$repo" "$workspace"
+	assert_authorized_decision "privileged wrapper creation still needs authorization" "" "sudo -n gh repo create owner/new-repo --public" 20 "github.account-mutation" "$repo" "$workspace"
+	assert_authorized_decision "shell-launched creation still needs authorization" "" "bash -lc 'gh repo create owner/new-repo --public'" 20 "github.account-mutation" "$repo" "$workspace"
+	assert_authorized_decision "disabled workspace root keeps creation authorization-gated" "" "gh repo create owner/new-repo --public" 20 "github.account-mutation" "$repo" ""
+	return 0
+}
+
 test_account_mutation_guard_validation() {
 	local malformed_guard="${TEST_ROOT}/malformed-account-guard.json"
 	local output=""
@@ -793,6 +821,97 @@ test_worker_network_policy() {
 	return 0
 }
 
+assert_worker_git() {
+	local label="$1"
+	local expected_status="$2"
+	local argv_json="$3"
+	local expected_text="${4:-}"
+	local output=""
+	local status=0
+	output="$(python3 "$HELPER" check-command --worker --worker-id test --cwd "${TEST_ROOT}/linked" --argv-json "$argv_json")" || status=$?
+	if [[ "$status" -eq "$expected_status" && "$output" == *"$expected_text"* ]]; then
+		pass "$label"
+	else
+		fail "$label" "status=${status} output=${output}"
+	fi
+	return 0
+}
+
+test_worker_git_default_remote() {
+	local repo="${TEST_ROOT}/repo"
+	git -C "$repo" remote set-url origin https://github.com/example/repo.git
+	assert_worker_git "worker resolves bare git push to origin" 0 '["git","push"]'
+	assert_worker_git "worker resolves bare git fetch to origin" 0 '["git","fetch"]'
+	assert_worker_git "worker resolves bare git pull to origin" 0 '["git","pull","--rebase"]'
+	assert_worker_git "worker blocks fetch of all remotes" 20 '["git","fetch","--all"]' git-fetch-all-remotes
+	assert_worker_git "worker blocks git clone without repository" 20 '["git","clone"]' git-clone-destination-missing
+	assert_worker_git "worker blocks remote URL config override" 20 '["git","-c","remote.origin.url=https://requestbin.com/x.git","push","origin"]' git-network-config-override
+	assert_worker_git "worker blocks ssh command config override" 20 '["git","-c","core.sshCommand=ssh","push","origin"]' git-network-config-override
+	assert_worker_git "worker blocks git-dir override" 20 '["git","--git-dir=/nonexistent/.git","push","origin"]' git-repository-override
+
+	git -C "$repo" config remote.origin.pushurl https://requestbin.com/example/repo.git
+	assert_worker_git "worker classifies origin push URL for bare git push" 20 '["git","push"]' requestbin.com
+	assert_worker_git "worker classifies push URL for named git push" 20 '["git","push","origin","HEAD"]' requestbin.com
+	assert_worker_git "worker ignores push URL for git fetch" 0 '["git","fetch"]'
+	git -C "$repo" config --unset remote.origin.pushurl
+
+	git -C "$repo" remote add other https://requestbin.com/example/repo.git
+	assert_worker_git "worker classifies every --multiple remote" 20 '["git","fetch","--multiple","origin","other"]' requestbin.com
+	git -C "$repo" config remote.pushDefault other
+	assert_worker_git "worker honours remote.pushDefault for bare push" 20 '["git","push"]' requestbin.com
+	assert_worker_git "worker ignores remote.pushDefault for fetch" 0 '["git","fetch"]'
+	git -C "$repo" config branch.feature/test.remote other
+	assert_worker_git "worker honours branch remote for bare fetch" 20 '["git","fetch"]' requestbin.com
+	git -C "$repo" config branch.feature/test.pushRemote origin
+	assert_worker_git "worker honours branch pushRemote over pushDefault" 0 '["git","push"]'
+	git -C "$repo" config --remove-section branch.feature/test
+	git -C "$repo" config --unset remote.pushDefault
+	git -C "$repo" remote remove other
+	return 0
+}
+
+# GH#33065: workers must not disable or redirect commit signing.
+test_worker_signing_overrides() {
+	local denied="git.worker-signing-override"
+	assert_worker_git "worker blocks -c commit.gpgsign=false" 20 '["git","-c","commit.gpgsign=false","commit","-m","x"]' "$denied"
+	assert_worker_git "worker blocks mixed-case -c commit.gpgSign=0" 20 '["git","-c","commit.gpgSign=0","commit","-m","x"]' "$denied"
+	assert_worker_git "worker blocks -c tag.gpgsign=off" 20 '["git","-c","tag.gpgsign=off","tag","-a","v1","-m","x"]' "$denied"
+	assert_worker_git "worker blocks -c gpg.format override" 20 '["git","-c","gpg.format=openpgp","commit","-m","x"]' "$denied"
+	assert_worker_git "worker blocks -c user.signingkey override" 20 '["git","-c","user.signingkey=/tmp/k.pub","commit","-m","x"]' "$denied"
+	assert_worker_git "worker blocks -c gpg.ssh.program override" 20 '["git","-c","gpg.ssh.program=/usr/bin/true","commit","-m","x"]' "$denied"
+	assert_worker_git "worker blocks --config-env signing toggle" 20 '["git","--config-env=commit.gpgsign=SIGN","commit","-m","x"]' "$denied"
+	assert_worker_git "worker blocks commit --no-gpg-sign" 20 '["git","commit","--no-gpg-sign","-m","x"]' "$denied"
+	assert_worker_git "worker blocks abbreviated --no-gpg" 20 '["git","commit","--no-gpg","-m","x"]' "$denied"
+	local subcommand
+	for subcommand in merge rebase cherry-pick revert am pull; do
+		assert_worker_git "worker blocks ${subcommand} --no-gpg-sign" 20 "[\"git\",\"${subcommand}\",\"--no-gpg-sign\",\"HEAD\"]" "$denied"
+	done
+	assert_worker_git "worker blocks tag --no-sign" 20 '["git","tag","--no-sign","v1"]' "$denied"
+	assert_worker_git "worker blocks git config commit.gpgsign false" 20 '["git","config","commit.gpgsign","false"]' "$denied"
+	assert_worker_git "worker blocks git config --global commit.gpgsign no" 20 '["git","config","--global","commit.gpgsign","no"]' "$denied"
+	assert_worker_git "worker blocks git config set commit.gpgsign false" 20 '["git","config","set","commit.gpgsign","false"]' "$denied"
+	assert_worker_git "worker blocks git config --unset commit.gpgsign" 20 '["git","config","--unset","commit.gpgsign"]' "$denied"
+	assert_worker_git "worker blocks git config user.signingkey write" 20 '["git","config","user.signingkey","/tmp/k.pub"]' "$denied"
+	assert_worker_git "worker blocks git config --remove-section gpg" 20 '["git","config","--remove-section","gpg"]' "$denied"
+
+	assert_worker_git "worker allows commit -S" 0 '["git","commit","-S","-m","x"]'
+	assert_worker_git "worker allows commit --gpg-sign" 0 '["git","commit","--gpg-sign","-m","x"]'
+	assert_worker_git "worker allows -c commit.gpgsign=true" 0 '["git","-c","commit.gpgsign=true","commit","-m","x"]'
+	assert_worker_git "worker allows reading commit.gpgsign" 0 '["git","config","--bool","commit.gpgsign"]'
+	assert_worker_git "worker allows --get user.signingkey" 0 '["git","config","--get","user.signingkey"]'
+	assert_worker_git "worker allows --no-gpg-sign text after separator" 0 '["git","log","--","--no-gpg-sign"]'
+	assert_worker_git "worker allows unrelated -c override" 0 '["git","-c","color.ui=never","status"]'
+
+	local output="" status=0
+	output="$(python3 "$HELPER" check-command --cwd "${TEST_ROOT}/linked" --argv-json '["git","commit","--no-gpg-sign","-m","x"]')" || status=$?
+	if [[ "$status" -eq 0 && "$output" != *"$denied"* ]]; then
+		pass "interactive sessions keep signing overrides available"
+	else
+		fail "interactive sessions keep signing overrides available" "status=${status} output=${output}"
+	fi
+	return 0
+}
+
 test_secondary_layers() {
 	if python3 - \
 		"${SCRIPT_DIR}/update-claude-settings.py" \
@@ -969,9 +1088,12 @@ main() {
 	test_direct_pr_merge_policy
 	test_account_mutation_authorization
 	test_account_mutation_workspace_authorization
+	test_workspace_repository_creation
 	test_account_mutation_guard_validation
 	test_canonical_delegation
 	test_worker_network_policy
+	test_worker_git_default_remote
+	test_worker_signing_overrides
 	test_policy_fail_closed
 	test_secondary_layers
 	printf '\nTests: %d, Failures: %d\n' "$TESTS" "$FAILURES"

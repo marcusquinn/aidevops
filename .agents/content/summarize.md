@@ -71,7 +71,7 @@ summarize "https://example.com" --extract --format text
 | Provider | Model ID Format | API Key |
 |----------|-----------------|---------|
 | OpenAI | `openai/gpt-5-mini` | `OPENAI_API_KEY` |
-| Anthropic | `anthropic/claude-sonnet-4-6` | `ANTHROPIC_API_KEY` |
+| Anthropic | `anthropic/claude-sonnet-5-5` | `ANTHROPIC_API_KEY` |
 | Google | `google/gemini-3-flash-preview` | `GEMINI_API_KEY` |
 | xAI | `xai/grok-4-fast-non-reasoning` | `XAI_API_KEY` |
 | Z.AI (Zhipu) | `zai/glm-4.7` | `Z_AI_API_KEY` |

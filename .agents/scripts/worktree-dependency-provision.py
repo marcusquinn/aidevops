@@ -9,8 +9,10 @@ Callers must hold their existing restore lock and own the destination.
 
 import argparse
 import ctypes
+import errno
 import os
 from pathlib import Path
+import re
 from subprocess import SubprocessError  # nosec B404 -- exception type only, no process execution.
 import sys
 
@@ -88,14 +90,25 @@ def run(args):
     return result
 
 
+def rejection_reason(error):
+    """Return a fixed, path-free reason code; never exception text."""
+    if isinstance(error, Rejected) and re.fullmatch(r"[a-z0-9-]{1,64}", str(error)):
+        return str(error)
+    if isinstance(error, SubprocessError):
+        return "git-query-failed"
+    if isinstance(error, OSError):
+        return f"os-error-{errno.errorcode.get(error.errno, 'unknown')}"
+    return "invalid-metadata"
+
+
 def main():
     args = parse_args()
     try:
         print(run(args))
         return 0
-    except (OSError, ValueError, RuntimeError, SubprocessError):
+    except (OSError, ValueError, RuntimeError, SubprocessError) as error:
         # Never copy raw paths, package contents or subprocess stderr into logs.
-        print("dependency-provision-rejected", file=sys.stderr)
+        print(f"dependency-provision-rejected reason={rejection_reason(error)}", file=sys.stderr)
         return 1
 
 

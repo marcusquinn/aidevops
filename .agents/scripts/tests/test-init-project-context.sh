@@ -182,11 +182,7 @@ test_config_booleans() {
 }
 
 test_secret_reference_contract() {
-	local closte_guide="$INSTALL_DIR/.agents/services/hosting/closte.md"
 	local deployment_template="$AGENTS_DIR/templates/project-context/deployments.yaml"
-	assert_equal 0 "$(grep -c "aidevops secret get" "$closte_guide" || true)" "Closte guide never retrieves secret values"
-	assert_equal 2 "$(grep -c "aidevops secret SITE_SSH_HOST SITE_SSH_PORT SITE_SSH_USER SITE_SSH_PASSWORD -- sh -c" "$closte_guide" || true)" "Closte commands inject the four site SSH secrets"
-	assert_equal 4 "$(grep -c "aidevops secret set SITE_SSH_" "$closte_guide" || true)" "Closte guide stores four site SSH secrets interactively"
 	assert_equal 9 "$(grep -c "_secret_name:" "$deployment_template" || true)" "deployment manifest exposes only connection secret-name fields"
 	assert_equal 2 "$(grep -c "port_secret_name:" "$deployment_template" || true)" "deployment manifest references SSH and database port secret names"
 	assert_equal 2 "$(grep -c "username_secret_name:" "$deployment_template" || true)" "deployment manifest references SSH and database user secret names"

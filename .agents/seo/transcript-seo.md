@@ -76,7 +76,7 @@ Use `cssSelector` (not `xpath`) — Google's TTS pipeline primarily uses CSS sel
 
 ## LLM Retrieval Optimisation
 
-Transcript paragraphs that match query intent in full sentences rank higher than bullet fragments.
+Transcript paragraphs that match query intent in full sentences rank higher than bullet fragments. Take the target phrase and AI-answer questions from `context/keywords.md` (`aidevops keywords brief --cluster <id>`) and answer each question in one full sentence.
 
 | Anti-pattern | LLM retrieval impact | Fix |
 |--------------|---------------------|-----|

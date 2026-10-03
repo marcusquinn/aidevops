@@ -59,6 +59,13 @@ if grep -q 'Run .*aidevops-update-check.sh' "$GENERATED_FILE"; then
 	exit 1
 fi
 [[ "$(grep -c '^       Hi!$' "$GENERATED_FILE")" -eq 1 ]]
+# GH#32592: the plugin strips this delimited section while its greeting is on;
+# markers must stay in sync with greeting.mjs.
+GREETING_JS="${REPO_ROOT}/.agents/plugins/opencode-aidevops/greeting.mjs"
+for marker in '<!-- aidevops:greeting-fallback:start -->' '<!-- aidevops:greeting-fallback:end -->'; do
+	[[ "$(grep -cxF "$marker" "$GENERATED_FILE")" -eq 1 ]]
+	grep -Fq "\"${marker}\"" "$GREETING_JS"
+done
 
 grep -q 'authoritative plugin-injected greeting block' "$TEMPLATE_FILE"
 grep -q 'plugin injection is unavailable' "$TEMPLATE_FILE"

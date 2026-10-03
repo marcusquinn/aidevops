@@ -75,6 +75,8 @@ extract_functions() {
 		/^_setup_opencode_binary_is_ephemeral\(\)/, /^}$/ { print; next }
 		/^_setup_clear_canary_negative_cache\(\)/, /^}$/ { print; next }
 		/^_setup_opencode_managed_shim_target\(\)/, /^}$/ { print; next }
+		/^_setup_opencode_v2_shim_version_marker\(\)/, /^}$/ { print; next }
+		/^_setup_append_opencode_v2_session_guard\(\)/, /^}$/ { print; next }
 		/^_setup_write_opencode_v2_shim\(\)/, /^}$/ { print; next }
 		/^_setup_write_opencode_v1_shim\(\)/, /^}$/ { print; next }
 		/^_setup_ensure_opencode_stable_shim\(\)/, /^}$/ { print; next }
@@ -251,6 +253,7 @@ cat >"$SANDBOX/bin/opencode-v2" <<'EOF'
 #!/usr/bin/env bash
 [[ "${1:-}" == "--version" ]] && echo "opencode v2.0.3"
 [[ "${1:-}" == "--help" ]] && printf 'OpenCode command line interface\nrun  Run OpenCode with a message\n'
+[[ "$*" == *auth-env* ]] && printf '%s|%s\n' "${XDG_CONFIG_HOME:-}" "${GH_CONFIG_DIR:-}"
 exit 0
 EOF
 chmod +x "$SANDBOX/bin/opencode-v2"
@@ -266,6 +269,23 @@ assert_eq "V2 profile accepts V2 binary" "0" "$?"
 	echo "$rc"
 ) >"$SANDBOX/out2e" 2>&1
 assert_eq "V2 profile rejects V1 binary" "1" "$(tail -1 "$SANDBOX/out2e")"
+
+# Exercise the generated shim even on hosts whose unrelated V1 install tests
+# encounter a pre-existing system OpenCode binary.
+(
+	source_extracted
+	_setup_write_opencode_v2_shim "$SANDBOX/v2-auth-shim" "$SANDBOX/bin/opencode-v2" ""
+)
+chmod +x "$SANDBOX/v2-auth-shim"
+assert_eq "V2 shim forwards the default gh config to tool shells" \
+	"$HOME/.aidevops/runtimes/opencode-v2/config|$HOME/.config/gh" \
+	"$(env -u GH_CONFIG_DIR -u XDG_CONFIG_HOME AIDEVOPS_TABBY_V2_RECOVERY=0 "$SANDBOX/v2-auth-shim" auth-env)"
+assert_eq "V2 service forwards the caller's XDG gh config" \
+	"$HOME/.aidevops/runtimes/opencode-v2/config|$HOME/caller-config/gh" \
+	"$(env -u GH_CONFIG_DIR XDG_CONFIG_HOME="$HOME/caller-config" AIDEVOPS_TABBY_V2_RECOVERY=0 "$SANDBOX/v2-auth-shim" serve auth-env)"
+assert_eq "V2 service retains an explicit gh config override" \
+	"$HOME/.aidevops/runtimes/opencode-v2/config|$HOME/custom-gh" \
+	"$(GH_CONFIG_DIR="$HOME/custom-gh" AIDEVOPS_TABBY_V2_RECOVERY=0 "$SANDBOX/v2-auth-shim" service auth-env)"
 
 # --- Test 2b: validator rejects multi-digit non-opencode majors ------------
 echo "Test 2b: _setup_validate_opencode_binary rejects major >=10"
@@ -831,7 +851,19 @@ env-check)
 		"${XDG_DATA_HOME:-}" "${XDG_CACHE_HOME:-}" "${XDG_STATE_HOME:-}" \
 		"${TMPDIR:-}" "${OPENCODE_CONFIG:-}" "${AIDEVOPS_OAUTH_POOL_FILE:-}"
 	;;
-*) printf '%s\n' "$*" ;;
+auth-env) printf '%s|%s\n' "${XDG_CONFIG_HOME:-}" "${GH_CONFIG_DIR:-}" ;;
+"") printf 'pwd=%s\n' "$PWD" ;;
+--session) printf 'session=%s pwd=%s\n' "${2:-}" "$PWD" ;;
+*)
+	if [[ "$*" == *auth-env* ]]; then
+		printf '%s|%s\n' "${XDG_CONFIG_HOME:-}" "${GH_CONFIG_DIR:-}"
+	elif [[ "$*" == *session-env* ]]; then
+		printf '%s|%s|%s|%s|%s|%s\n' "${AIDEVOPS_HEADLESS:-}" "${OPENCODE_PID:-}" \
+			"${AIDEVOPS_SESSION_ORIGIN:-}" "${AIDEVOPS_AGENTS_DIR:-}" "${GITHUB_ACTIONS:-}" "${OPENAI_API_KEY:-}"
+	else
+		printf '%s\n' "$*"
+	fi
+	;;
 esac
 EOF
 chmod +x "$v2_real_dir/opencode2"
@@ -850,6 +882,15 @@ custom_v2_root="$v2_home/custom-v2-root"
 assert_eq "V2 shim honors a custom isolation root" \
 	"v2|$custom_v2_root/config|$custom_v2_root/data|$custom_v2_root/cache|$custom_v2_root/state|$custom_v2_root/tmp|$custom_v2_root/config/opencode/opencode.json|$custom_v2_root/auth/oauth-pool.json" \
 	"$(HOME="$v2_home" AIDEVOPS_OPENCODE_V2_ROOT="$custom_v2_root" "$v2_shim" env-check)"
+assert_eq "V2 tool shells use caller's default gh config, not isolated OpenCode config" \
+	"$v2_root/config|$v2_home/.config/gh" \
+	"$(env -u GH_CONFIG_DIR -u XDG_CONFIG_HOME HOME="$v2_home" "$v2_shim" auth-env)"
+assert_eq "V2 shared service preserves caller's XDG gh config" \
+	"$v2_root/config|$v2_home/caller-config/gh" \
+	"$(env -u GH_CONFIG_DIR HOME="$v2_home" XDG_CONFIG_HOME="$v2_home/caller-config" "$v2_shim" serve auth-env)"
+assert_eq "V2 shared service honors explicit GH_CONFIG_DIR" \
+	"$v2_root/config|$v2_home/custom-gh" \
+	"$(HOME="$v2_home" XDG_CONFIG_HOME="$v2_home/caller-config" GH_CONFIG_DIR="$v2_home/custom-gh" "$v2_shim" service auth-env)"
 assert_eq "V2 serve gets isolated default port" "serve --port 4097 --hostname 127.0.0.1" \
 	"$(HOME="$v2_home" "$v2_shim" serve --hostname 127.0.0.1)"
 assert_eq "V2 serve preserves explicit port" "serve --port 4999" "$(HOME="$v2_home" "$v2_shim" serve --port 4999)"
@@ -863,6 +904,29 @@ assert_eq "V2 leading global option preserves an explicit port" \
 	"--print-logs serve --port 4999" "$(HOME="$v2_home" "$v2_shim" --print-logs serve --port 4999)"
 assert_eq "V2 does not treat a run message as the serve subcommand" \
 	"run serve" "$(HOME="$v2_home" "$v2_shim" run serve)"
+v2_caller_env=(AIDEVOPS_HEADLESS=1 OPENCODE_PID=4242 AIDEVOPS_SESSION_ORIGIN=worker
+	AIDEVOPS_AGENTS_DIR=/stale/bundle GITHUB_ACTIONS=true OPENAI_API_KEY=placeholder-key)
+assert_eq "V2 shared-service commands drop caller session and headless env" "||||true|placeholder-key" \
+	"$(env "${v2_caller_env[@]}" HOME="$v2_home" "$v2_shim" service session-env)"
+assert_eq "V2 standalone commands keep the caller env" \
+	"1|4242|worker|/stale/bundle|true|placeholder-key" \
+	"$(env "${v2_caller_env[@]}" HOME="$v2_home" "$v2_shim" run --standalone session-env)"
+v2_marker_root="$v2_home/.aidevops/.agent-workspace/work/opencode-tabby-recovery"
+v2_marker_dir="$v2_marker_root/ses_abcdef123456"
+v2_project_dir="$v2_home/project"
+v2_resolver_dir="$v2_home/.aidevops/agents/plugins/opencode-aidevops"
+mkdir -p "$v2_marker_dir" "$v2_project_dir" "$v2_resolver_dir"
+v2_project_dir=$(cd "$v2_project_dir" && pwd -P)
+printf 'process.stdout.write(%s + "\\t/data\\tses_abcdef123456\\n");\n' "\"$v2_project_dir\"" \
+	>"$v2_resolver_dir/session-recovery-marker.mjs"
+assert_eq "V2 TUI resumes the marked session from its project directory" \
+	"session=ses_abcdef123456 pwd=$v2_project_dir" \
+	"$(cd "$v2_marker_dir" && HOME="$v2_home" "$v2_shim" 2>/dev/null)"
+printf 'process.exitCode = 1;\n' >"$v2_resolver_dir/session-recovery-marker.mjs"
+assert_eq "V2 TUI falls back to HOME for an unresolvable recovery marker" "pwd=$v2_home" \
+	"$(cd "$v2_marker_dir" && HOME="$v2_home" "$v2_shim" 2>/dev/null)"
+assert_eq "V2 TUI outside a recovery marker keeps its directory" "pwd=$v2_project_dir" \
+	"$(cd "$v2_project_dir" && HOME="$v2_home" "$v2_shim" 2>/dev/null)"
 for isolated_dir in config data cache state tmp auth; do
 	if [[ -d "$v2_root/$isolated_dir" ]]; then
 		assert_eq "V2 shim creates isolated $isolated_dir directory" "present" "present"

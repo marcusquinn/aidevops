@@ -88,6 +88,19 @@ readonly _APPROVAL_BATCH_FAILURE_SYSTEMIC="systemic-transport"
 readonly _APPROVAL_BATCH_FAILURE_RATE_LIMIT="shared-rate-limit"
 readonly _APPROVAL_BATCH_FAILURE_AUTH="shared-auth-failure"
 
+#aidevops:trust-boundary -- diagnostic only; a bundle mismatch cannot grant authority.
+_approval_warn_pinned_verifier() {
+	local verifier_dir="" active_dir="" verifier_bundle="" active_bundle=""
+	verifier_dir=$(cd -P "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd) || return 0
+	[[ "$verifier_dir" == */runtime-bundles/*/agents/scripts ]] || return 0
+	active_dir=$(cd -P "${_APPROVAL_HOME}/.aidevops/agents/scripts" 2>/dev/null && pwd) || return 0
+	[[ "$active_dir" == */runtime-bundles/*/agents/scripts && "$active_dir" != "$verifier_dir" ]] || return 0
+	verifier_bundle=${verifier_dir%/agents/scripts}
+	active_bundle=${active_dir%/agents/scripts}
+	printf 'APPROVAL_NOTE: verifier bundle %s is older than active bundle %s; re-run with ~/.aidevops/agents/scripts/approval-helper.sh before re-signing\n' "${verifier_bundle##*/}" "${active_bundle##*/}" >&2
+	return 0
+}
+
 _APPROVAL_GH_RATE_LIMIT_RESET=""
 _APPROVAL_GH_AUTH_FAILURE=""
 _APPROVAL_LABEL_SETS_ENSURED=""
@@ -810,7 +823,7 @@ _approval_apply_issue_lifecycle_updates() {
 		}
 		return 1
 	fi
-	_print_info "Issue #$target_number lock verified (scope finalized, unlocks after worker completion)"
+	_print_info "Issue #$target_number locked and verified (scope finalized, unlocks after worker completion)"
 
 	# t2057: remove only the local claim stamp after the complete remote state is
 	# verified. Invoking `release` here would perform a second remote status write
@@ -1021,7 +1034,7 @@ _approve_target_after_confirmation() {
 	# authoritative locked snapshot. PR approval semantics remain unchanged.
 	if [[ "$target_type" == "$APPROVAL_TARGET_ISSUE" ]]; then
 		_approval_lock_issue "$target_number" "$slug" >/dev/null 2>&1 || {
-			_print_error "Could not lock issue before building its approval snapshot"
+			_print_error "Approval advisory lock failure: issue #$target_number could not be locked before building its approval snapshot"
 			return 1
 		}
 	fi
@@ -1379,7 +1392,7 @@ _approval_classify_signed_comment() {
 	if [[ "$target_type" == "$APPROVAL_TARGET_ISSUE" ]] && ! jq -e --arg object "$APPROVAL_JSON_OBJECT" '.issue.lifecycle | type == $object' <<<"$payload" >/dev/null 2>&1; then
 		issue_lifecycle_profile="$APPROVAL_SNAPSHOT_PROFILE_LEGACY"
 	fi
-	snapshot_json=$(approval_snapshot_v2_build "$target_type" "$target_number" "$slug" "$comment_id" "$issued_at" "stable" "$issue_lifecycle_profile") || {
+	snapshot_json=$(approval_snapshot_v2_build "$target_type" "$target_number" "$slug" "$comment_id" "$issued_at" "$APPROVAL_SNAPSHOT_PROFILE_TRUSTED_SOURCES" "$issue_lifecycle_profile") || {
 		printf 'API_ERROR\n'
 		return 0
 	}
@@ -1389,20 +1402,17 @@ _approval_classify_signed_comment() {
 	}
 	signed_digest=$(jq -r '.snapshot_sha256' <<<"$payload") || signed_digest=""
 	if [[ "$current_digest" != "$signed_digest" ]]; then
-		# #aidevops:trust-boundary — V2 approvals issued before GH#29009
-		# included mutable linked-source updated_at metadata. Accept that profile
-		# only when its complete current digest still matches the signed digest;
-		# new approvals always use the stable profile above.
+		# #aidevops:trust-boundary — older V2 approvals used the stable
+		# (pre-GH#32455) or legacy (pre-GH#29009) linked-source profiles. Accept
+		# those only on a complete exact digest match; new approvals always use
+		# the trusted-sources profile above. Profiles differ only in linked
+		# references, so the head/base check below is profile-independent.
 		mismatch_classification=$(_approval_classify_digest_mismatch "$target_type" "$target_number" "$slug" "$comment_id" "$issued_at" \
 			"$issue_lifecycle_profile" "$payload" "$snapshot_json" "$signed_digest")
-		if [[ "$mismatch_classification" != "LEGACY_MATCH" ]]; then
+		if [[ "$mismatch_classification" != "STABLE_MATCH" && "$mismatch_classification" != "LEGACY_MATCH" ]]; then
 			printf '%s\n' "$mismatch_classification"
 			return 0
 		fi
-		snapshot_json=$(approval_snapshot_v2_build "$target_type" "$target_number" "$slug" "$comment_id" "$issued_at" "$APPROVAL_SNAPSHOT_PROFILE_LEGACY" "$issue_lifecycle_profile") || {
-			printf 'API_ERROR\n'
-			return 0
-		}
 	fi
 
 	if [[ "$target_type" == "pr" ]]; then
@@ -1630,7 +1640,10 @@ _approval_classify_marked_comments() {
 		fi
 		classification=$(_approval_classify_signed_comment "$target_type" "$target_number" "$slug" "$comment_id" "$body" "$pub_key" "$expected_head_sha")
 		case "$classification" in
-		VERIFIED) printf 'VERIFIED\n'; return 0 ;;
+		VERIFIED)
+			printf 'VERIFIED\n'
+			return 0
+			;;
 		API_ERROR) saw_api_error=1 ;;
 		STALE_APPROVAL) saw_stale=1 ;;
 		LEGACY_APPROVAL) saw_legacy=1 ;;
@@ -1638,10 +1651,22 @@ _approval_classify_marked_comments() {
 		esac
 	done <<<"$comment_rows"
 
-	[[ "$saw_api_error" -eq 0 ]] || { printf 'API_ERROR\n'; return 6; }
-	[[ "$saw_stale" -eq 0 ]] || { printf 'STALE_APPROVAL\n'; return 4; }
-	[[ "$saw_legacy" -eq 0 ]] || { printf 'LEGACY_APPROVAL\n'; return 3; }
-	[[ "$saw_untrusted" -eq 0 ]] || { printf 'UNTRUSTED_APPROVAL\n'; return 7; }
+	[[ "$saw_api_error" -eq 0 ]] || {
+		printf 'API_ERROR\n'
+		return 6
+	}
+	[[ "$saw_stale" -eq 0 ]] || {
+		printf 'STALE_APPROVAL\n'
+		return 4
+	}
+	[[ "$saw_legacy" -eq 0 ]] || {
+		printf 'LEGACY_APPROVAL\n'
+		return 3
+	}
+	[[ "$saw_untrusted" -eq 0 ]] || {
+		printf 'UNTRUSTED_APPROVAL\n'
+		return 7
+	}
 	[[ "$saw_malformed" -eq 1 ]] || saw_malformed=1
 	printf 'MALFORMED_APPROVAL\n'
 	return 5
@@ -1651,6 +1676,7 @@ _approval_classify_marked_comments() {
 # Legacy syntax (`verify N slug`) remains an issue verification request, but V1
 # signatures return LEGACY_APPROVAL and never authorize an external merge.
 cmd_verify() {
+	_approval_warn_pinned_verifier
 	local target_type="issue"
 	if [[ "${1:-}" == "issue" || "${1:-}" == "pr" ]]; then
 		target_type="$1"

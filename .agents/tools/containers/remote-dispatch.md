@@ -1,5 +1,5 @@
 ---
-description: Remote container dispatch via SSH/Tailscale with credential forwarding and log collection
+description: Remote worker dispatch via SSH over any mesh (NetBird, Nostr VPN, WireGuard, Tailscale) with credential forwarding and log collection
 mode: subagent
 tools:
   read: true
@@ -26,7 +26,7 @@ tools:
 | Logs | `~/.aidevops/.agent-workspace/supervisor/logs/remote/` |
 | Task | t1165.3 |
 
-**Use when**: GPU tasks, multi-machine distribution, isolated containers, Tailscale mesh dispatch.
+**Use when**: GPU tasks, multi-machine distribution, isolated containers, dispatch over a private mesh (prefer self-hosted or decentralised: `reference/mesh-remote-workers.md`).
 **Don't use when**: Local tasks, local filesystem access needed, interactive development.
 
 For an explicitly isolated durable per-agent environment with create/start/exec/
@@ -41,6 +41,8 @@ stop/recover/destroy receipts, use `reference/agent-sandbox-lifecycle.md` and
 
 ```bash
 remote-dispatch-helper.sh add gpu-server 192.168.1.100
+remote-dispatch-helper.sh add mini mini.nvpn --user me                  # auto: nvpn
+remote-dispatch-helper.sh add gpu peer.netbird.selfhosted --user me     # auto: netbird
 remote-dispatch-helper.sh add build-node build-node.tailnet.ts.net --transport tailscale
 remote-dispatch-helper.sh add docker-host 10.0.0.5 --user deploy --container worker-1
 remote-dispatch-helper.sh add staging ssh://deploy@staging.example.com:2222
@@ -77,17 +79,19 @@ remote-dispatch-helper.sh status t123 gpu-server   # host, transport, container,
 remote-dispatch-helper.sh cleanup t123 gpu-server [--keep-logs]
 ```
 
-## Transport: SSH vs Tailscale
+## Transports
 
-| Feature | SSH | Tailscale |
-|---------|-----|-----------|
-| Setup | SSH keys + sshd | Tailscale on both ends |
-| Network | Direct IP/hostname | Mesh (100.x.x.x or *.ts.net) |
-| NAT traversal | Requires port forwarding | Automatic |
-| Auth | SSH keys / agent | Tailscale identity |
-| Command | `ssh` | `tailscale ssh` (falls back to `ssh`) |
+Every transport uses SSH keys for authentication; the mesh only provides reachability. `--transport` is `ssh|netbird|nvpn|wireguard|tailscale`. Only `tailscale` changes the command (`tailscale ssh`, falling back to `ssh`); the others label diagnostics for failed checks. When omitted, the transport is detected:
 
-Tailscale auto-detected for `*.ts.net` and `100.x.x.x` addresses.
+| Address | Transport |
+|---------|-----------|
+| `*.nvpn` | `nvpn` |
+| `*.netbird.selfhosted`, `*.netbird.cloud` | `netbird` |
+| `*.ts.net` | `tailscale` |
+| `100.64.0.0/10` listed by `tailscale status` / `netbird status -d` | `tailscale` / `netbird` (the range is shared, so it is never guessed) |
+| anything else | `ssh` |
+
+Non-login SSH shells miss nvm/bun/Homebrew installs. `check` and the dispatch script prepend common tool paths and load nvm, so nvm-installed `opencode` is found. Agent forwarding (`-A`) is on; register only hosts you trust as much as your workstation. Mesh choice and the OpenCode server pattern: `reference/mesh-remote-workers.md`.
 
 ## Environment Variables
 
@@ -101,7 +105,7 @@ Tailscale auto-detected for `*.ts.net` and `100.x.x.x` addresses.
 
 | Problem | Commands |
 |---------|----------|
-| SSH fails | `ssh -v user@host echo OK` · `ssh-add -l` · `tailscale status && tailscale ping hostname` |
+| SSH fails | `ssh -v user@host echo OK` · `ssh-add -l` · mesh: `netbird status -d` / `nvpn status` / `wg show` / `tailscale status` |
 | No AI CLI on remote | `npm install -g opencode-ai` or `curl -fsSL https://opencode.ai/install \| bash` · alt: `npm install -g @anthropic-ai/claude-code` |
 | Logs not collected | `remote-dispatch-helper.sh logs t123 gpu-server` · `ssh user@host "ls -la /tmp/aidevops-worker/t123/worker.log"` |
 | Worker stuck | `remote-dispatch-helper.sh status t123 gpu-server` · `remote-dispatch-helper.sh cleanup t123 gpu-server` |

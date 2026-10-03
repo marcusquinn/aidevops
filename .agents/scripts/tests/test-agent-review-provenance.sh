@@ -11,12 +11,10 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)" || exit 1
 AGENT_REVIEW="$REPO_ROOT/.agents/tools/build-agent/agent-review.md"
 BUILD_AGENT="$REPO_ROOT/.agents/tools/build-agent/build-agent.md"
 CODE_SIMPLIFIER="$REPO_ROOT/.agents/tools/code-review/code-simplifier.md"
-CLAUDE_GENERATOR="$REPO_ROOT/.agents/scripts/generate-claude-commands.sh"
-OPENCODE_GENERATOR="$REPO_ROOT/.agents/scripts/generate-opencode-commands-quality.sh"
 RUNTIME_GENERATOR="$REPO_ROOT/.agents/scripts/generate-runtime-config-commands.sh"
 
 python3 - "$AGENT_REVIEW" "$BUILD_AGENT" "$CODE_SIMPLIFIER" \
-	"$CLAUDE_GENERATOR" "$OPENCODE_GENERATOR" "$RUNTIME_GENERATOR" <<'PY'
+	"$RUNTIME_GENERATOR" <<'PY'
 import sys
 from pathlib import Path
 

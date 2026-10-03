@@ -34,7 +34,7 @@
       "mcp_server": "mcp-adapter-default-server",
       "http_config": {
         "username": "YOUR_WP_USERNAME",
-        "_app_password": "STORE_IN_CREDENTIALS_FILE",
+        "_app_password": "[redacted-credential]",
         "_env_var": "WP_PRODUCTION_APP_PASSWORD"
       }
     },
@@ -67,19 +67,6 @@
         "use_sshpass": true
       }
     },
-    "closte-site": {
-      "type": "closte",
-      "name": "Closte Hosted Site",
-      "url": "https://closte-example.com",
-      "transport": "http",
-      "mcp_server": "mcp-adapter-default-server",
-      "http_config": {
-        "username": "YOUR_WP_USERNAME",
-        "_app_password": "STORE_IN_CREDENTIALS_FILE",
-        "_env_var": "WP_CLOSTE_APP_PASSWORD"
-      },
-      "_note": "Closte uses password-based SSH - prefer HTTP transport"
-    },
     "cloudron-site": {
       "type": "cloudron",
       "name": "Cloudron WordPress",
@@ -88,7 +75,7 @@
       "mcp_server": "mcp-adapter-default-server",
       "http_config": {
         "username": "YOUR_WP_USERNAME",
-        "_app_password": "STORE_IN_CREDENTIALS_FILE",
+        "_app_password": "[redacted-credential]",
         "_env_var": "WP_CLOUDRON_APP_PASSWORD"
       }
     },
@@ -124,8 +111,7 @@
   "_credential_storage": {
     "location": "~/.config/aidevops/credentials.sh",
     "example": [
-      "export WP_PRODUCTION_APP_PASSWORD='xxxx xxxx xxxx xxxx'",
-      "export WP_CLOSTE_APP_PASSWORD='xxxx xxxx xxxx xxxx'"
+      "export WP_PRODUCTION_APP_PASSWORD=[redacted-credential]"
     ],
     "ssh_passwords": "Store in ~/.ssh/SITE_password with 600 permissions"
   }

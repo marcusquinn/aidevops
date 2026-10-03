@@ -23,7 +23,7 @@ Applied to GitHub issues. The pulse checks these before spawning a worker.
 | `needs-maintainer-review` | `pulse-nmr-approval.sh` `auto_approve_maintainer_issues`, external-author workflows | External-author authority gate. Authors without verified write authority require maintainer cryptographic approval (`sudo aidevops approve issue <N>`) before dispatch. Write-authorized authors never self-approve: explicit durable human-decision evidence normalizes to `hold-for-review`, machine-breaker evidence becomes `status:blocked`, and unreasoned residue is removed without replacing active `status:*`. Unknown authority or incomplete required evidence fails closed by retaining NMR unchanged. |
 | `needs-maintainer-permissions` | `worker-permission-helper.sh`, `dispatch-dedup-helper.sh`, `pulse-dispatch-core.sh`, candidate filters | Worker paused after requesting a capability outside its sandbox. Only the request-specific signed permission command clears this label; dispatch also verifies historical applications against the matching unexpired grant, so removing the label alone cannot bypass the hold. It is distinct from scope/trust approval. |
 | `needs-credentials` | `label-sync-helper.sh` SYSTEM_LABELS | Task requires credentials, API keys, or account access — cannot be completed by a headless worker autonomously. Add when the TODO entry has `#no-auto-dispatch` due to credential dependency. |
-| `persistent` | `pulse-issue-reconcile.sh` | Monitoring/tracking issue — must not be dispatched as a code task. |
+| `persistent` | `pulse-issue-reconcile.sh` | Monitoring/tracking issue — must not be dispatched as a code task. Dashboard content, privacy and lifecycle contract: `reference/persistent-dashboards.md`. |
 | `supervisor` | `pulse-issue-reconcile.sh` | Supervisor health dashboard — pulse-managed, not a dispatch target. |
 | `contributor` | `pulse-issue-reconcile.sh` | Contributor health dashboard — pulse-managed, not a dispatch target. |
 | `quality-review` | `pulse-issue-reconcile.sh` | Daily quality review tracker — pulse-managed. |
@@ -70,8 +70,16 @@ requests remain held. Preserve the original request and audit evidence, commits,
 branch, checkpoint PR and runtime session. Provisioning may not displace a live
 or foreign owner, including a dead owner without an explicit ownership transfer.
 
-**Current limitation:** both the dispatch label gate and historical signed-grant
-gate require request-specific approval. There is no unsigned supersession path.
+**Signed decisions only:** both the dispatch label gate and historical signed-grant
+gate require a request-specific signed decision. There is no unsigned supersession
+or automatic expiry path, because unsigned expiry would let a worker abandon a
+permission wall and be relaunched under an implied grant. To decline a request,
+for example when its session has ended, the maintainer runs
+`sudo aidevops approve permissions issue <N> <slug> --request perm-<id> --withdraw`.
+That signs a capability-free decision bound to the request digest, revokes any
+local grant for that request, and clears the label. `verify-permissions` then
+returns `WITHDRAWN`, which never counts as `VERIFIED`, and dispatch resumes
+without a grant. A newer request evaluates on its own and still blocks.
 The AI brief owner/coordinator owns assessment of the in-boundary alternative and
 any authorized exact-checkpoint continuation; a copy alone does not clear either
 gate. Repeated unchanged evidence uses the same permission request rather than
@@ -120,6 +128,40 @@ Stale assignment recovery: if the blocking assignee has no live worker process A
 ---
 
 ## Validator-State Blockers
+
+### Runner-local requirements (GH#33341)
+
+Before claiming, `pulse-dispatch-core.sh` checks the repository's `.aidevops.json`:
+
+```json
+{"dispatch_class_requirements":{"data-publication":{"secrets":["STAGING_TOKEN"],"probe":"scripts/check-local-data"}}}
+```
+
+The key matches the suffix of `dispatch-class:data-publication`. All matching
+classes are combined. An issue may additionally declare a standalone
+`requires-secrets: STAGING_TOKEN, DATABASE_KEY` line. Secret names must be uppercase
+identifiers; duplicates are checked once. `aidevops secret check NAME` returns only
+an exit status (zero means a non-empty value resolves), not a value. The existing
+secret resolver performs any necessary decryption internally; inventory alone
+cannot prove a locked store is usable. Each check has a five-second timeout and
+no stdin. No credential contents are read by the dispatcher or logged.
+
+A probe is an executable repository-relative path, without arguments or shell
+syntax, configured only in the trusted local repository config, never issue text.
+It must resolve inside that repository (including symlinks), run without stdin,
+and exit zero within five seconds. Probes must be read-only, local checks: no
+publication, network operations or mutation. Output is discarded. At most 32
+secrets and eight probes are allowed. Invalid requirements, missing executables,
+failed checks and timeouts fail closed.
+
+Unmet candidates log `runner_capability_unmet` locally and return before claim,
+scope writes or worker launch. No issue label or comment is posted, so a capable
+peer can dispatch normally. A worker discovering the same problem after claiming
+uses `TERMINAL_BLOCKER_REASON=runner_capability_unmet` with `BLOCKED:` evidence.
+This is a known runner-local class, never a global circuit or shared backoff;
+the next runner independently checks capabilities. It does not grant credentials
+or bypass permission/security guards. Repositories without declarations retain
+the existing behavior.
 
 Checked by `pre-dispatch-validator-helper.sh` and the pre-dispatch eligibility gate (t2424) before spawning a worker.
 

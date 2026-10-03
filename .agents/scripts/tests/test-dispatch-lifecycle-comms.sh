@@ -469,6 +469,37 @@ else
 	print_result "Fix D: posts dispatch comment before stagger sleep" 1 "log: $(cat "$GH_COMMENT_LOG")"
 fi
 
+# The dispatch comment uses the same worker resolver as the headless runtime.
+for tier_model_expected in 'standard openai/gpt-6.1-sol medium' 'thinking openai/gpt-6.1-sol medium'; do
+	read -r effort_tier effort_model effort_expected <<<"$tier_model_expected"
+	reset_gh_state
+	PULSE_DISPATCH_STAGGER_SECONDS=0 \
+		_dlw_post_launch_hooks "12345" "owner/repo" "runner-a" "4242" "worker-owner-repo-12345" "$effort_tier" "$effort_model"
+	if grep -Fq -- "- **Effort**: ${effort_expected}" "$GH_COMMENT_LOG"; then
+		print_result "dispatch effort: ${effort_tier} ${effort_model} resolves to ${effort_expected}" 0
+	else
+		print_result "dispatch effort: ${effort_tier} ${effort_model} resolves to ${effort_expected}" 1
+	fi
+done
+
+reset_gh_state
+AIDEVOPS_HEADLESS_VARIANT_STANDARD=high PULSE_DISPATCH_STAGGER_SECONDS=0 \
+	_dlw_post_launch_hooks "12345" "owner/repo" "runner-a" "4242" "worker-owner-repo-12345" "standard" "openai/gpt-6.1-sol"
+if grep -Fq -- '- **Effort**: high' "$GH_COMMENT_LOG"; then
+	print_result "dispatch effort respects tier override" 0
+else
+	print_result "dispatch effort respects tier override" 1
+fi
+
+reset_gh_state
+PULSE_DISPATCH_STAGGER_SECONDS=0 \
+	_dlw_post_launch_hooks "12345" "owner/repo" "runner-a" "4242" "worker-owner-repo-12345" "standard" ""
+if grep -Fq -- '- **Effort**: resolved at launch' "$GH_COMMENT_LOG"; then
+	print_result "auto-select effort is deferred to launch" 0
+else
+	print_result "auto-select effort is deferred to launch" 1
+fi
+
 # GH#31239: public blocker observations preserve lifecycle attempt correlation,
 # while public text never copies raw attempt metadata or a protected dossier.
 # shellcheck source=../terminal-blocker-circuit.sh

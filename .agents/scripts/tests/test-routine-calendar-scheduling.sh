@@ -151,6 +151,22 @@ assert_pulse_state_policy() {
 	_routine_retry_blocked r002 || blocked_rc=$?
 	record_result "ordinary failure retries after generic boundary" "$blocked_rc" 1
 
+	# Consecutive failures back off exponentially and success resets them.
+	AIDEVOPS_ROUTINE_NOW_EPOCH=1900
+	_routine_update_state r002 failure
+	AIDEVOPS_ROUTINE_NOW_EPOCH=3699
+	blocked_rc=0
+	_routine_retry_blocked r002 || blocked_rc=$?
+	record_result "second consecutive failure doubles the retry cooldown" "$blocked_rc" 0
+	AIDEVOPS_ROUTINE_NOW_EPOCH=3700
+	blocked_rc=0
+	_routine_retry_blocked r002 || blocked_rc=$?
+	record_result "second consecutive failure retries after doubled boundary" "$blocked_rc" 1
+	_routine_update_state r002 success
+	local reset_shape=""
+	reset_shape=$(jq -r '.r002 | has("consecutive_failures")' "$ROUTINE_STATE_FILE")
+	record_result "successful run resets the consecutive failure count" "$reset_shape" "false"
+
 	AIDEVOPS_ROUTINE_NOW_EPOCH=2000
 	_routine_update_state r003 deferred 2100
 	_routine_update_state r003 deferred 2050

@@ -27,7 +27,7 @@ source "${SCRIPTS_DIR}/shared-constants.sh"
 
 [[ "$(model_tier_candidates standard)" == "custom/standard" ]]
 [[ "$(model_tier_candidates simple | sed -n '1p')" == "openai/gpt-6-luna" ]]
-[[ "$(model_tier_variant simple openai/gpt-6-luna)" == "low" ]]
+[[ "$(model_tier_variant simple openai/gpt-6-luna)" == "medium" ]]
 [[ "$(model_tier_next simple)" == "standard" ]]
 
 cat >"$custom_table" <<'JSON'
@@ -56,3 +56,14 @@ JSON
 [[ "$(model_tier_next simple)" == "thinking" ]]
 
 printf 'PASS: partial shell routing overrides inherit unspecified framework tiers\n'
+
+# A model listed in several tiers keeps the requested tier and its effort.
+printf '{}\n' >"$custom_table"
+[[ "$(model_tier_for_model openai/gpt-6.1-sol)" == "standard" ]]
+[[ "$(model_tier_for_model openai/gpt-6.1-sol thinking)" == "thinking" ]]
+[[ "$(model_tier_for_model openai/gpt-6.1-sol standard)" == "standard" ]]
+[[ "$(model_tier_for_model openai/gpt-6-luna thinking)" == "simple" ]]
+[[ "$(model_tier_variant standard openai/gpt-6.1-sol)" == "medium" ]]
+[[ "$(model_tier_variant thinking openai/gpt-6.1-sol)" == "medium" ]]
+
+printf 'PASS: multi-tier models keep the requested tier and effort\n'

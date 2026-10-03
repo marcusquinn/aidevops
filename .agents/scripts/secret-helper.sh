@@ -24,6 +24,7 @@
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
+source "${SCRIPT_DIR}/portable-stat.sh"
 
 set -euo pipefail
 
@@ -111,9 +112,52 @@ get_gopass_entry_value() {
 	return 0
 }
 
+# A headless pinentry can wait forever for a passphrase. Bound each requested
+# decrypt, including its GPG children, without putting the value in argv/logs.
+get_injected_gopass_value() {
+	local secret_path="$1"
+	if [[ -t 0 && -t 2 ]]; then
+		gopass show -n "$secret_path" 2>/dev/null || return 1
+	else
+		python3 -c '
+import os, signal, subprocess, sys
+
+process = subprocess.Popen(["gopass", "show", "-n", sys.argv[1]],
+                           stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                           start_new_session=True)
+try:
+    value, _ = process.communicate(timeout=4)
+except subprocess.TimeoutExpired:
+    os.killpg(process.pid, signal.SIGKILL)
+    process.communicate()
+    sys.exit(1)
+if process.returncode:
+    sys.exit(1)
+sys.stdout.buffer.write(value)
+' "$secret_path" || return 1
+	fi
+	return 0
+}
+
 # Collect all secret values for redaction as NUL-delimited literal data.
+redaction_value_usable() {
+	local value="$1"
+	[[ ${#value} -ge 8 ]] || return 1
+	case "$value" in
+	'***' | '[redacted]' | '[REDACTED]' | 'not set' | 'none' | 'null' | 'undefined' | 'changeme') return 1 ;;
+	esac
+	return 0
+}
+
+warn_short_redaction_value() {
+	local name="$1"
+	printf 'WARN: secret %s value too short to redact safely; not masked\n' "$name" >&2
+	return 0
+}
+
 collect_secret_values() {
 	local -a values=()
+	local -a warned_names=()
 
 	if has_gopass; then
 		local secrets
@@ -124,11 +168,18 @@ collect_secret_values() {
 			local entry_val=""
 			scalar_val=$(gopass show -o "$secret_path" 2>/dev/null || true)
 			entry_val=$(get_gopass_entry_value "$secret_path")
-			if [[ -n "$scalar_val" && ${#scalar_val} -ge 4 ]]; then
+			local name="${secret_path#"${GOPASS_PREFIX}"/}"
+			if redaction_value_usable "$scalar_val"; then
 				values+=("$scalar_val")
+			elif [[ -n "$scalar_val" && ${#scalar_val} -lt 8 ]] && ! secret_env_name_emitted "$name" "${warned_names[@]}"; then
+				warn_short_redaction_value "$name"
+				warned_names+=("$name")
 			fi
-			if [[ -n "$entry_val" && ${#entry_val} -ge 4 && "$entry_val" != "$scalar_val" ]]; then
+			if [[ "$entry_val" != "$scalar_val" ]] && redaction_value_usable "$entry_val"; then
 				values+=("$entry_val")
+			elif [[ -n "$entry_val" && ${#entry_val} -lt 8 ]] && ! secret_env_name_emitted "$name" "${warned_names[@]}"; then
+				warn_short_redaction_value "$name"
+				warned_names+=("$name")
 			fi
 		done <<<"$secrets"
 	fi
@@ -144,8 +195,13 @@ collect_secret_values() {
 				val="${val%\"}"
 				val="${val#\'}"
 				val="${val%\'}"
-				if [[ -n "$val" && ${#val} -ge 4 ]]; then
+				local name="${line%%=*}"
+				name="${name##* }"
+				if redaction_value_usable "$val"; then
 					values+=("$val")
+				elif [[ -n "$val" && ${#val} -lt 8 ]] && ! secret_env_name_emitted "$name" "${warned_names[@]}"; then
+					warn_short_redaction_value "$name"
+					warned_names+=("$name")
 				fi
 			fi
 		done <"$cred_file"
@@ -174,9 +230,13 @@ redact_stream() {
 	trap 'rm -f "$values_file"' RETURN
 
 	if [[ -n "$env_file" ]]; then
+		local -a warned_names=()
 		while IFS='=' read -r -d '' _key value; do
-			if [[ -n "$value" && ${#value} -ge 4 ]]; then
+			if redaction_value_usable "$value"; then
 				printf '%s\0' "$value"
+			elif [[ -n "$value" && ${#value} -lt 8 ]] && ! secret_env_name_emitted "$_key" "${warned_names[@]}"; then
+				warn_short_redaction_value "$_key"
+				warned_names+=("$_key")
 			fi
 		done <"$env_file" >"$values_file"
 	else
@@ -281,13 +341,29 @@ build_secret_env() {
 	if has_gopass; then
 		if [[ ${#specific_names[@]} -gt 0 ]]; then
 			# Inject only specific secrets
+			local available_secrets=""
+			if ! available_secrets=$(gopass ls --flat "${GOPASS_PREFIX}/" 2>/dev/null); then
+				print_error "Unable to list gopass secrets for injection" >&2
+				return 1
+			fi
 			for name in "${specific_names[@]}"; do
-				local val
-				val=$(get_gopass_entry_value "${GOPASS_PREFIX}/${name}")
-				if [[ -n "$val" ]]; then
-					emit_secret_env_record "$name" "$val"
-					emitted_names+=("$name")
+				local secret_path=""
+				local found=false
+				while IFS= read -r secret_path; do
+					if [[ "$secret_path" == "${GOPASS_PREFIX}/${name}" ]]; then
+						found=true
+						break
+					fi
+				done <<<"$available_secrets"
+				# Names absent from gopass may still be in credentials.sh.
+				[[ "$found" == true ]] || continue
+				local val=""
+				if ! val=$(get_injected_gopass_value "${GOPASS_PREFIX}/${name}") || [[ -z "$val" ]]; then
+					print_error "secret $name unavailable: gopass/GPG locked or entry missing; unlock GPG in a terminal and retry" >&2
+					return 1
 				fi
+				emit_secret_env_record "$name" "$val"
+				emitted_names+=("$name")
 			done
 		else
 			# Inject all secrets
@@ -317,14 +393,34 @@ build_secret_env() {
 				val="${val#\"}"
 				val="${val%\"}"
 				# Only add if not already set by gopass
-				if ! secret_env_name_emitted "$name" "${emitted_names[@]}"; then
+				if [[ -n "$val" ]] && ! secret_env_name_emitted "$name" "${emitted_names[@]}"; then
 					emit_secret_env_record "$name" "$val"
 					emitted_names+=("$name")
 				fi
 			fi
 		done <"$cred_file"
 	done < <(resolve_credential_files)
+	for name in "${specific_names[@]}"; do
+		if ! secret_env_name_emitted "$name" "${emitted_names[@]}"; then
+			print_error "secret $name unavailable: gopass/GPG locked or entry missing; unlock GPG in a terminal and retry" >&2
+			return 1
+		fi
+	done
 
+	return 0
+}
+
+# Register keyed digests of injected values so the OpenCode plugin can redact
+# them from tool output, such as provider argv in process listings (GH#32362).
+# Stores no plaintext; a registry failure never blocks the command.
+register_redaction_digests() {
+	local env_file="$1"
+	local registry_helper="${SCRIPT_DIR}/redaction-digest-registry.py"
+	[[ -s "$env_file" && -f "$registry_helper" ]] || return 0
+	command -v python3 >/dev/null 2>&1 || return 0
+	if ! python3 "$registry_helper" register <"$env_file" >/dev/null 2>&1; then
+		print_warning "Secret redaction registry update failed; exact-value tool-output redaction may be incomplete" >&2
+	fi
 	return 0
 }
 
@@ -568,6 +664,16 @@ cmd_get() {
 	return 0
 }
 
+# Status-only resolution for dispatch. Unlike inventory, this detects a locked
+# store or an empty secret. Values stay inside the existing resolver and never
+# reach the caller, logs or an intermediate file.
+cmd_check() {
+	local name="${1:-}"
+	[[ "$name" =~ ^[A-Z][A-Z0-9_]*$ ]] || return 1
+	cmd_get "$name" >/dev/null 2>&1 || return 1
+	return 0
+}
+
 # List secret names (NEVER values)
 cmd_list() {
 	local has_secrets=false
@@ -652,7 +758,7 @@ cmd_inventory() (
 			return 1
 		fi
 		local permissions=""
-		permissions=$(stat -f '%Lp' "$credential_file" 2>/dev/null || stat -c '%a' "$credential_file" 2>/dev/null || true)
+		permissions=$(_file_perms "$credential_file" 2>/dev/null || true)
 		if [[ ! "$permissions" =~ ^[046]00$ ]]; then
 			print_error "Credentials inventory source must be owner-only" >&2
 			return 1
@@ -715,6 +821,7 @@ cmd_run() {
 	trap "rm -f '$env_file'" EXIT
 
 	build_secret_env >"$env_file"
+	register_redaction_digests "$env_file"
 
 	# Execute command with secrets in environment, redact output
 	local exit_code=0
@@ -765,7 +872,10 @@ cmd_run_specific() {
 	# shellcheck disable=SC2064
 	trap "rm -f '$env_file'" EXIT
 
-	build_secret_env "${secret_names[@]}" >"$env_file"
+	if ! build_secret_env "${secret_names[@]}" >"$env_file"; then
+		return 1
+	fi
+	register_redaction_digests "$env_file"
 
 	# Execute command with secrets in environment, redact output
 	local exit_code=0
@@ -934,6 +1044,7 @@ cmd_help() {
 	echo "  init                              Initialize gopass store"
 	echo "  set <NAME>                        Store a secret (interactive hidden input)"
 	echo "  get <NAME>                        Get a secret value (for scripts/piping)"
+	echo "  check <NAME>                      Resolve by name; exit status only, no output"
 	echo "  list                              List secret names (never values)"
 	echo "  inventory                         Names-only structured local inventory"
 	echo "  status                            Show backend status"
@@ -990,6 +1101,9 @@ main() {
 		;;
 	get)
 		cmd_get "$@"
+		;;
+	check)
+		cmd_check "$@"
 		;;
 	list | ls)
 		cmd_list "$@"
