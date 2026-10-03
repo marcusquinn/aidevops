@@ -44,6 +44,6 @@ status_json=$(PATH="$SANDBOX/bin:$PATH" AIDEVOPS_AGENTS_DIR="$REPO_ROOT/.agents"
 	AIDEVOPS_OPENCODE_PROFILE=v2 "$REPO_ROOT/.agents/scripts/opencode-pin-canary.sh" status --json)
 assert_eq "V2 canary profile" "v2" "$(jq -r '.profile' <<<"$status_json")"
 assert_eq "V2 canary package registry" "2.0.3" "$(jq -r '.registry_latest' <<<"$status_json")"
-assert_eq "V2 canary metadata" "pass:2.0.3" "$(jq -r '.last_canary_result' <<<"$status_json")"
+assert_eq "V2 canary metadata" "$(python3 "$HELPER" get v2 lastCanaryResult)" "$(jq -r '.last_canary_result' <<<"$status_json")"
 
 printf 'OpenCode runtime profile tests passed\n'

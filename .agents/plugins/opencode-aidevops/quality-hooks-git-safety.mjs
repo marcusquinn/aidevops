@@ -6,6 +6,14 @@ import { existsSync } from "fs";
 import { homedir } from "os";
 import { join, resolve } from "path";
 import { classifyFullLoopCommitAndPr } from "./quality-hooks-full-loop-trust.mjs";
+import {
+  isPolicyHelperTimeout,
+  parsePolicyPayload,
+  policyExecutionFailure,
+  policyNetworkOperation,
+  runPolicyHelper,
+  transientPolicyTimeoutError,
+} from "./quality-hooks-policy-runner.mjs";
 
 export { bindActiveScriptsDir } from "./quality-hooks-full-loop-trust.mjs";
 
@@ -111,14 +119,6 @@ export function expectedSimpleMutationContent(state, mutation) {
   return updated === undefined || updated === false ? updated : Buffer.from(updated);
 }
 
-function parsePolicyPayload(raw) {
-  const result = JSON.parse(raw);
-  if (!result || typeof result !== "object" || Array.isArray(result)) {
-    throw new TypeError("policy returned a non-object payload");
-  }
-  return result;
-}
-
 export function checkCanonicalWriteSafetyGate(
   filePath,
   scriptsDir,
@@ -138,21 +138,14 @@ export function checkCanonicalWriteSafetyGate(
       cwd,
     ];
     if (patchText === null) helperArgs.push("--path", filePath || "");
-    raw = execFileSync(
-      "python3",
-      helperArgs,
-      {
-        encoding: "utf8",
-        input: patchText === null
-          ? undefined
-          : (typeof patchText === "string" ? patchText : ""),
-        stdio: ["pipe", "pipe", "pipe"],
-        timeout: 10000,
-      },
-    );
+    raw = runPolicyHelper(helperArgs, {
+      input: patchText === null
+        ? undefined
+        : (typeof patchText === "string" ? patchText : ""),
+      stdio: ["pipe", "pipe", "pipe"],
+    });
   } catch (error) {
-    const detail = error?.stderr?.toString().trim() || error?.message || "policy check failed";
-    throw new Error(`BLOCKED: canonical-write policy failed closed: ${detail}`);
+    throw policyExecutionFailure("canonical-write", error);
   }
   let result;
   try {
@@ -177,16 +170,11 @@ function executeCommandPolicy(helperArgs) {
   let raw = "";
   let executionError = null;
   try {
-    raw = execFileSync(
-      "python3",
-      helperArgs,
-      {
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout: 10000,
-      },
-    );
+    raw = runPolicyHelper(helperArgs, { stdio: ["ignore", "pipe", "pipe"] });
   } catch (error) {
+    if (isPolicyHelperTimeout(error)) {
+      throw transientPolicyTimeoutError("command", policyNetworkOperation(helperArgs));
+    }
     executionError = error;
     raw = error?.stdout?.toString() || "";
   }

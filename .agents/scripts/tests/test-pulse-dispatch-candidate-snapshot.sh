@@ -22,6 +22,32 @@ mkdir -p "$AIDEVOPS_TEMP_DIR" "${HOME}/.aidevops/logs"
 # shellcheck source=../pulse-dispatch-engine.sh
 source "${SCRIPT_DIR}/pulse-dispatch-engine.sh"
 
+# GH#32703: priority:critical/high lead ranking strictly; tier and age bonuses
+# must not lift ordinary work above them. Runs the real ranking function before
+# the builder is stubbed below; the subshell contains the repo-fetch stubs.
+ranking_order=$(
+	REPOS_JSON="${TEST_ROOT}/repos.json"
+	printf '%s\n' '{"initialized_repos":[{"slug":"owner/repo","path":"/tmp/repo","pulse":true,"priority":"tooling"}]}' >"$REPOS_JSON"
+	check_repo_pulse_schedule() { return 0; }
+	check_repo_pulse_interval() { return 0; }
+	update_repo_pulse_timestamp() { return 0; }
+	pulse_campaign_shadow_candidates_json() {
+		printf '%s\n' '[
+			{"number":1,"createdAt":"2020-01-01T00:00:00Z","labels":[{"name":"tier:simple"},{"name":"bug"},{"name":"auto-dispatch"},{"name":"status:available"}]},
+			{"number":2,"createdAt":"2026-09-28T00:00:00Z","labels":[{"name":"priority:high"},{"name":"tier:thinking"},{"name":"auto-dispatch"}]},
+			{"number":3,"createdAt":"2026-09-28T00:00:00Z","labels":[{"name":"priority:critical"},{"name":"tier:thinking"}]},
+			{"number":4,"createdAt":"2026-09-28T00:00:00Z","labels":[{"name":"priority:high"},{"name":"tier:standard"},{"name":"auto-dispatch"},{"name":"status:available"}]}
+		]'
+		return 0
+	}
+	build_ranked_dispatch_candidates_json 50 skip | jq -r '[.[].number] | join(",")'
+)
+[[ "$ranking_order" == "3,4,2,1" ]] || {
+	printf 'FAIL priority labels do not lead dispatch ranking: %s\n' "$ranking_order" >&2
+	exit 1
+}
+printf 'PASS priority:critical/high candidates lead ranking regardless of tier and age\n'
+
 BUILD_COUNT_FILE="${TEST_ROOT}/build-count"
 BUILD_MODE_FILE="${TEST_ROOT}/build-mode"
 : >"$BUILD_COUNT_FILE"

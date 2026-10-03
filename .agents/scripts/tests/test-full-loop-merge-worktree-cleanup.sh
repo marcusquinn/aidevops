@@ -19,6 +19,10 @@ GH_RELEASE_STATUS="not-requested"
 GH_RELEASE_TAG_MODE=""
 GH_RELEASE_TAG_COMMIT="1111111111111111111111111111111111111111"
 GH_RELEASE_TAG_OBJECT="2222222222222222222222222222222222222222"
+GH_PR_FILES=""
+FF_CANONICAL=""
+FF_TIP=""
+FF_HELPER_LOG=""
 TESTS_RUN=0
 TESTS_FAILED=0
 
@@ -98,6 +102,10 @@ gh() {
 			return 0
 			;;
 		esac
+	fi
+	if [[ "$command" == "api" && "$args" == *"/pulls/"*"/files"* ]]; then
+		[[ -z "$GH_PR_FILES" ]] || printf '%s\n' "$GH_PR_FILES"
+		return 0
 	fi
 	if [[ "$command" == "pr" && "$subcommand" == "view" ]]; then
 		if [[ "$args" == *"state,mergedAt,mergeCommit,headRefName,headRefOid,headRepository,isCrossRepository"* ]]; then
@@ -756,6 +764,171 @@ test_refresh_canonical_reports_pending_without_mutation() {
 	return 0
 }
 
+# Build a clean canonical on main that is one commit behind origin/main, plus a
+# recording stand-in for canonical-recovery-helper.sh that fast-forwards only.
+make_fast_forward_fixture() {
+	local name="$1"
+	FF_CANONICAL="${TEST_ROOT}/ff-${name}"
+	local origin_repo="${TEST_ROOT}/ff-${name}-origin.git"
+	local updater_repo="${TEST_ROOT}/ff-${name}-updater"
+	FF_HELPER_LOG="${TEST_ROOT}/ff-${name}-helper.log"
+	rm -f "$FF_HELPER_LOG"
+	mkdir -p "$FF_CANONICAL"
+	git -C "$FF_CANONICAL" init -q -b main
+	git -C "$FF_CANONICAL" config user.email test@example.invalid
+	git -C "$FF_CANONICAL" config user.name 'Aidevops Test'
+	printf 'base\n' >"${FF_CANONICAL}/README.md"
+	git -C "$FF_CANONICAL" add README.md
+	git -C "$FF_CANONICAL" commit -q -m 'init'
+	git clone -q --bare "$FF_CANONICAL" "$origin_repo"
+	git -C "$FF_CANONICAL" remote add origin "$origin_repo"
+	git -C "$FF_CANONICAL" push -q -u origin main
+	git clone -q "$origin_repo" "$updater_repo"
+	git -C "$updater_repo" config user.email test@example.invalid
+	git -C "$updater_repo" config user.name 'Aidevops Test'
+	printf 'merged change\n' >>"${updater_repo}/README.md"
+	git -C "$updater_repo" add README.md
+	git -C "$updater_repo" commit -q -m 'merge PR'
+	git -C "$updater_repo" push -q origin main
+	FF_TIP=$(git -C "$updater_repo" rev-parse HEAD)
+	cat >"${TEST_ROOT}/bin/fake-recovery-helper.sh" <<'HELPER'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >>"${FF_HELPER_LOG:?}"
+repo=""
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+	--repo) repo="$2"; shift 2 ;;
+	*) shift ;;
+	esac
+done
+"${AIDEVOPS_REAL_GIT_BIN:?}" -C "$repo" fetch -q origin main
+"${AIDEVOPS_REAL_GIT_BIN:?}" -C "$repo" merge -q --ff-only origin/main || {
+	printf 'BLOCKED: local main has diverged from origin/main\n' >&2
+	exit 1
+}
+HELPER
+	chmod +x "${TEST_ROOT}/bin/fake-recovery-helper.sh"
+	_merge_resolve_canonical_recovery_helper() {
+		printf '%s\n' "${TEST_ROOT}/bin/fake-recovery-helper.sh"
+		return 0
+	}
+	return 0
+}
+
+# Run the canonical sync report as an interactive session unless overridden.
+run_interactive_sync_report() {
+	(
+		unset FULL_LOOP_HEADLESS AIDEVOPS_HEADLESS Claude_HEADLESS GITHUB_ACTIONS AIDEVOPS_MERGE_CANONICAL_FAST_FORWARD
+		export FF_HELPER_LOG AIDEVOPS_REAL_GIT_BIN="$FIXTURE_GIT_BIN"
+		[[ -z "${SYNC_ENV_OVERRIDE:-}" ]] || export "${SYNC_ENV_OVERRIDE?}"
+		_merge_report_canonical_sync_state "$FF_CANONICAL" "33013" "$FF_TIP"
+	)
+	return $?
+}
+
+test_interactive_merge_fast_forwards_canonical_through_helper() {
+	make_fast_forward_fixture "interactive"
+	local output=""
+	local sync_rc=0
+	local rc=0
+	output=$(run_interactive_sync_report 2>&1) || sync_rc=$?
+	[[ "$sync_rc" -eq 0 ]] || rc=1
+	[[ "$output" == *"LIFECYCLE_STATE=CANONICAL_SYNCED sha=${FF_TIP}"* ]] || rc=1
+	[[ "$(git -C "$FF_CANONICAL" rev-parse HEAD)" == "$FF_TIP" ]] || rc=1
+	grep -qF -- "fast-forward-current --repo ${FF_CANONICAL} --branch main --issue 33013 --confirm FAST_FORWARD_CANONICAL_BRANCH" \
+		"$FF_HELPER_LOG" || rc=1
+	print_result "interactive merge fast-forwards clean canonical through audited helper" "$rc" "$output"
+
+	# A second refresh (cleanup path) is a read-only no-op once synced.
+	output=$(_merge_refresh_canonical_for_cleanup "$FF_CANONICAL" "main" 2>&1) || rc=1
+	[[ "$output" == *"LIFECYCLE_STATE=CANONICAL_SYNCED"* ]] || rc=1
+	[[ "$(grep -c . "$FF_HELPER_LOG")" -eq 1 ]] || rc=1
+	print_result "cleanup refresh after audited fast-forward is a no-op" "$rc" "$output"
+	return 0
+}
+
+assert_sync_report_does_not_mutate() {
+	local label="$1"
+	local expected_next="$2"
+	local before=""
+	local output=""
+	local sync_rc=0
+	local rc=0
+	before=$(git -C "$FF_CANONICAL" rev-parse HEAD)
+	output=$(run_interactive_sync_report 2>&1) || sync_rc=$?
+	[[ "$sync_rc" -ne 0 ]] || rc=1
+	[[ "$output" == *"CANONICAL_SYNC_PENDING=true"* ]] || rc=1
+	[[ "$output" == *"CANONICAL_SYNC_NEXT=canonical-recovery-helper.sh ${expected_next}"* ]] || rc=1
+	[[ "$(git -C "$FF_CANONICAL" rev-parse HEAD)" == "$before" ]] || rc=1
+	[[ ! -s "$FF_HELPER_LOG" ]] || rc=1
+	print_result "$label" "$rc" "$output"
+	return 0
+}
+
+test_canonical_fast_forward_exclusions() {
+	make_fast_forward_fixture "headless"
+	SYNC_ENV_OVERRIDE="FULL_LOOP_HEADLESS=true" assert_sync_report_does_not_mutate \
+		"headless merge never mutates canonical and reports pending next step" "fast-forward-current"
+
+	make_fast_forward_fixture "optout"
+	SYNC_ENV_OVERRIDE="AIDEVOPS_MERGE_CANONICAL_FAST_FORWARD=0" assert_sync_report_does_not_mutate \
+		"AIDEVOPS_MERGE_CANONICAL_FAST_FORWARD=0 keeps no-mutation pending report" "fast-forward-current"
+
+	make_fast_forward_fixture "dirty"
+	printf 'local edit\n' >>"${FF_CANONICAL}/README.md"
+	assert_sync_report_does_not_mutate "dirty canonical is never fast-forwarded" "sync-mirror"
+
+	make_fast_forward_fixture "branch"
+	git -C "$FF_CANONICAL" checkout -q -b feature/active
+	assert_sync_report_does_not_mutate "non-default-branch canonical is never fast-forwarded" "sync-mirror"
+
+	make_fast_forward_fixture "diverged"
+	git -C "$FF_CANONICAL" fetch -q origin main
+	printf 'local commit\n' >"${FF_CANONICAL}/LOCAL.md"
+	git -C "$FF_CANONICAL" add LOCAL.md
+	git -C "$FF_CANONICAL" commit -q -m 'local divergence'
+	assert_sync_report_does_not_mutate "diverged canonical is never fast-forwarded" "sync-mirror"
+	return 0
+}
+
+test_canonical_guard_denial_is_reported() {
+	make_fast_forward_fixture "guard"
+	local output=""
+	local rc=0
+	git() {
+		if [[ "$*" == *"ls-remote"* ]]; then
+			printf 'BLOCKED by canonical Git guard: canonical worktree mutation\n' >&2
+			return 1
+		fi
+		command git "$@"
+		return $?
+	}
+	output=$(_merge_refresh_canonical_for_cleanup "$FF_CANONICAL" "main" 2>&1) && rc=1
+	unset -f git
+	[[ "$output" == *"reason=canonical_guard_denied"* ]] || rc=1
+	[[ "$output" != *"origin_fetch_failed"* ]] || rc=1
+	print_result "canonical guard denial is reported instead of a fetch failure" "$rc" "$output"
+	return 0
+}
+
+test_planning_reconcile_waits_for_canonical_sync() {
+	local output=""
+	local rc=0
+	output=$(
+		GH_PR_FILES="TODO.md"
+		_merge_repo_path_for_slug() {
+			printf 'reconcile-must-not-resolve-path\n'
+			return 1
+		}
+		_merge_reconcile_planning_publication "123" "example/repo" "$FF_TIP" "0" 2>&1
+	) || rc=1
+	[[ "$output" == *"PLANNING_RECONCILE_NEXT=planning-publication-reconcile.sh reconcile --repo example/repo --sha ${FF_TIP}"* ]] || rc=1
+	[[ "$output" != *"reconcile-must-not-resolve-path"* && "$output" != *"not registered"* ]] || rc=1
+	print_result "planning reconcile is skipped with next step while canonical sync is pending" "$rc" "$output"
+	return 0
+}
+
 test_release_tag_commit_resolution() {
 	setup_subject
 	local stderr_file="${TEST_ROOT}/tag-resolution.stderr"
@@ -795,6 +968,10 @@ main() {
 	resolve_fixture_git
 	setup_subject
 	test_refresh_canonical_reports_pending_without_mutation
+	test_interactive_merge_fast_forwards_canonical_through_helper
+	test_canonical_fast_forward_exclusions
+	test_canonical_guard_denial_is_reported
+	test_planning_reconcile_waits_for_canonical_sync
 	test_cmd_merge_defers_current_linked_worktree
 	test_no_release_before_merge_receipt_converges
 	test_cmd_merge_defers_cleanup_for_live_process_cwd

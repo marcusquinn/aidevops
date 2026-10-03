@@ -1,15 +1,25 @@
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+# Cloudflare AI Search
 
-# Cloudflare AI Search Skill Reference
+Use AI Search for managed content indexing and retrieval, with optional answer generation. Start with [How AI Search works](https://developers.cloudflare.com/ai-search/concepts/how-ai-search-works/index.md).
 
-Expert guidance for implementing Cloudflare AI Search (formerly AutoRAG), Cloudflare's managed semantic search and RAG service....
+## Choose the right product
 
-## In This Reference
+- **Managed search or RAG over your content:** AI Search.
+- **Custom embeddings and vector-index management:** [Vectorize](vectorize.md).
+- **Model inference without a managed retrieval pipeline:** [Workers AI](workers-ai.md).
 
-- **[patterns.md](./patterns.md)** - Common patterns, use cases, examples
-- **[gotchas.md](./gotchas.md)** - Troubleshooting, best practices, limitations
+For freshness requirements, read [Syncing](https://developers.cloudflare.com/ai-search/configuration/indexing/syncing/index.md) for your data source before choosing an architecture. Use the current [limits and pricing](https://developers.cloudflare.com/ai-search/platform/limits-pricing/index.md) instead of assuming a fixed indexing interval or account limit.
 
-## See Also
+## Find the right documentation
 
-- [Cloudflare Docs](https://developers.cloudflare.com/)
+Read the linked page before implementing; these references route to the maintained documentation instead of copying API examples or configuration.
+
+| Task | Start here |
+|------|------------|
+| Build a new Worker integration | [Workers binding quick start](https://developers.cloudflare.com/ai-search/get-started/workers/index.md) |
+| Choose an API or maintain an existing integration | [API routes](ai-search-api.md) |
+| Connect data, configure indexing, or manage environments | [Configuration routes](ai-search-configuration.md) |
+| Choose retrieval, generation, or tenant isolation patterns | [Pattern routes](ai-search-patterns.md) |
+| Diagnose indexing, authentication, filters, or limits | [Troubleshooting routes](ai-search-gotchas.md) |
+
+Existing `env.AI.autorag()` integrations can continue to work. Use the [migration guide](https://developers.cloudflare.com/ai-search/api/migration/workers-binding/index.md) when upgrading; migration is not required just to maintain an existing integration.

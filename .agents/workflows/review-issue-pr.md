@@ -253,7 +253,7 @@ Before claiming approval is missing or asking the maintainer to approve again,
 query the authoritative current state with
 `approval-helper.sh verify issue <number> <owner/repo>`. Never infer approval
 state from local `sudo` availability, an earlier label snapshot, or a failed
-attempt to invoke the signing command.
+attempt to invoke the signing command. Write-authorized comments after approval on a locked issue do not stale it (`reference/auto-merge.md`).
 
 Do not expose an approval command as the next action merely because a dispatch helper reports `needs-maintainer-review`; that gate identifies missing authority, not review quality. If review evidence is incomplete, recommend investigation rather than approval.
 

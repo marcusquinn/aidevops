@@ -53,7 +53,9 @@ print_result() {
 TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "$TEST_ROOT"' EXIT
 export HOME="${TEST_ROOT}/home"
-mkdir -p "${HOME}/.aidevops/logs" "${HOME}/.aidevops/.agent-workspace/supervisor"
+mkdir -p "${HOME}/.aidevops/logs" "${HOME}/.aidevops/.agent-workspace/supervisor" "${HOME}/.config/aidevops"
+# Public-write privacy guard fails closed without a readable repo inventory.
+printf '{"initialized_repos":[]}\n' >"${HOME}/.config/aidevops/repos.json"
 
 STUB_DIR="${TEST_ROOT}/bin"
 mkdir -p "$STUB_DIR"
@@ -91,7 +93,13 @@ fi
 
 # Status-label contract lookup used by set_issue_status.
 if [[ "\$1" == "api" && "\$2" == *"/labels?per_page=100"* ]]; then
-	printf 'status:available\t0e8a16\tTask is available for claiming\nstatus:queued\tfbca04\tWorker dispatched, not yet started\nstatus:claimed\tf9d0c4\tInteractive session claimed this task\nstatus:in-progress\t1d76db\tWorker actively running\nstatus:in-review\t5319e7\tPR open, awaiting review/merge\nstatus:done\t6f42c1\tTask is complete\nstatus:blocked\td93f0b\tWaiting on blocker task\n'
+	printf 'status:available\t0e8a16\tTask is available for claiming\nstatus:queued\tfbca04\tWorker dispatched, not yet started\nstatus:claimed\tf9d0c4\tInteractive implementation is actively claimed\nstatus:in-progress\t1d76db\tWorker actively running\nstatus:in-review\t5319e7\tNon-draft PR ready for review/merge\nstatus:done\t6f42c1\tTask is complete\nstatus:blocked\td93f0b\tPartial work blocked; inspect reason and next action\n'
+	exit 0
+fi
+
+# Public-write privacy guard target probe: the fixture repo is public.
+if [[ "\$1" == "api" && "\$2" == "repos/owner/repo" ]]; then
+	printf '%s\n' false
 	exit 0
 fi
 

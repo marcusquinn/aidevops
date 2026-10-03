@@ -178,6 +178,55 @@ assert_extract_eq \
 	"$GH19415_FIXED_BRIEF" \
 	".agents/scripts/pulse-triage.sh,.agents/scripts/tests/test-gate.sh"
 
+# GH#33343: Data-only briefs must not match the .js extension prefix.
+# shellcheck disable=SC2016 # Backticks are literal issue-body markup.
+assert_extract_eq \
+	"JSON/JSONL glob targets and Markdown → no extraction" \
+	'- NEW: `a/b*.json`
+- NEW: `x/*.jsonl`
+- EDIT: `notes.md`' \
+	""
+
+# shellcheck disable=SC2016 # Backticks are literal issue-body markup.
+assert_extract_eq \
+	"non-code extension suffixes → no extraction" \
+	'- EDIT: `x.tsv`
+- EDIT: `y.shtml`
+- EDIT: `z.js.map`
+- EDIT: `a.sh.bak`
+- EDIT: `b.json:10-20`' \
+	""
+
+# shellcheck disable=SC2016 # Backticks are literal issue-body markup.
+assert_extract_eq \
+	"exact code extensions including JSX and modules → extracted" \
+	'- EDIT: `x.sh:10-20`
+- EDIT: `y.ts`
+- EDIT: `c.tsx`
+- EDIT: `d.py`
+- EDIT: `e.js`
+- EDIT: `f.jsx`
+- EDIT: `g.mjs`
+- EDIT: `h.cjs`' \
+	"x.sh:10-20,y.ts,c.tsx,d.py,e.js,f.jsx,g.mjs,h.cjs"
+
+# shellcheck disable=SC2016 # Backticks are literal issue-body markup.
+assert_extract_eq \
+	"single-line and range qualifiers survive; nonnumeric suffixes do not" \
+	'- EDIT: `x.sh:10`
+- EDIT: `y.ts:20-30`
+- EDIT: `c.tsx:40`
+- EDIT: `d.js:abc`
+- EDIT: `e.py:10-20-extra`' \
+	"x.sh:10,y.ts:20-30,c.tsx:40"
+
+# The explicit agents/scripts extractor is intentionally extension-agnostic.
+# shellcheck disable=SC2016 # Backticks are literal issue-body markup.
+assert_extract_eq \
+	"explicit agents/scripts data target → preserved" \
+	'- EDIT: `.agents/scripts/config.json`' \
+	".agents/scripts/config.json"
+
 printf '\n%d run, %d failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 
 if [[ "$TESTS_FAILED" -gt 0 ]]; then

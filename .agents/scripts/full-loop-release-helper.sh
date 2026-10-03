@@ -5,6 +5,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+# Re-exec under modern Bash before creating a PID-named control worktree:
+# exec preserves $$ but does not run the EXIT cleanup trap.
+# shellcheck source=./shared-constants.sh
+source "${SCRIPT_DIR}/shared-constants.sh"
 
 _full_loop_release_valid_repo_root() {
 	local candidate_root="$1"
@@ -146,9 +150,30 @@ _full_loop_capture_release_authorization() {
 	local expected_sources="${5:-}"
 	local authorization_json=""
 	local expected_intent=""
+	local attempt=0
+	local resolver_rc=0
 	local resolver_args=(resolve-authorization --snapshot --source-pr "$source_pr" --repo "$repo" --branch main)
 	[[ -n "$expected_sources" ]] && resolver_args+=(--expected-sources "$expected_sources")
-	authorization_json=$(cd "$release_path" && bash "$resolver" "${resolver_args[@]}") || return 1
+	# gh can fail inside the resolver with an empty JSON read, or a successful
+	# resolver can emit an empty/truncated document. Neither proves authorization.
+	for attempt in 1 2 3; do
+		resolver_rc=0
+		authorization_json=$(cd "$release_path" && bash "$resolver" "${resolver_args[@]}" 2>&1) || resolver_rc=$?
+		if [[ "$resolver_rc" -eq 0 ]] && jq -e 'type == "object" and (.expected_sources | type == "array")' \
+			<<<"$authorization_json" >/dev/null 2>&1; then
+			break
+		fi
+		if [[ "$resolver_rc" -ne 0 && "$authorization_json" != *'unexpected end of JSON input'* ]]; then
+			printf '%s\n' "$authorization_json" >&2
+			return 1
+		fi
+	done
+	if [[ "$attempt" -eq 3 && "$resolver_rc" -ne 0 ]] ||
+		! jq -e 'type == "object" and (.expected_sources | type == "array")' \
+			<<<"$authorization_json" >/dev/null 2>&1; then
+		printf 'Release authorization read is indeterminate; pinned lane remains fenced.\n' >&2
+		return 8
+	fi
 	if [[ -n "$expected_sources" ]]; then
 		expected_intent=$(release_authorization_intent_json "$expected_sources") || return 1
 		#aidevops:trust-boundary
@@ -318,6 +343,49 @@ EOF
 	return 0
 }
 
+# GH#33069 (t18554): the disposable release control worktree can inherit a
+# shallow object store from the canonical repo (older deployed copies,
+# --depth clones, or other tools). `git describe --tags` then fails inside
+# _full_loop_release_prepare_new AFTER the lane has been reserved, stranding
+# it for the five-minute recovery window. Self-heal in the control worktree —
+# never the canonical checkout — before any lane write. Modeled on
+# _check_and_handle_shallow_clone in full-loop-helper-commit.sh.
+#
+# Behaviour:
+#   AIDEVOPS_SHALLOW_UNSHALLOW=0  → print RELEASE_SHALLOW_STORE action=disabled, return 1
+#   otherwise                     → attempt `git fetch --unshallow --tags origin`
+#
+# Returns: 0 if REPO_ROOT is full-depth or was successfully unshallowed
+#          1 if shallow and auto-unshallow is disabled or failed
+_full_loop_release_ensure_full_history() {
+	local is_shallow=""
+	is_shallow=$(git -C "$REPO_ROOT" rev-parse --is-shallow-repository 2>/dev/null || echo "false")
+	if [[ "$is_shallow" != "true" ]]; then
+		return 0
+	fi
+
+	local opt="${AIDEVOPS_SHALLOW_UNSHALLOW:-1}"
+	if [[ "$opt" == "0" ]]; then
+		printf 'RELEASE_SHALLOW_STORE action=disabled\n' >&2
+		printf 'Run: git fetch --unshallow --tags origin\n' >&2
+		printf 'See .agents/reference/git-hygiene.md for recovery steps.\n' >&2
+		return 1
+	fi
+
+	if timeout_sec "${AIDEVOPS_RELEASE_UNSHALLOW_TIMEOUT_S:-600}" \
+		git -C "$REPO_ROOT" fetch --unshallow --tags origin >/dev/null 2>&1; then
+		is_shallow=$(git -C "$REPO_ROOT" rev-parse --is-shallow-repository 2>/dev/null || echo "false")
+		if [[ "$is_shallow" != "true" ]]; then
+			printf 'RELEASE_SHALLOW_STORE action=healed\n' >&2
+			return 0
+		fi
+	fi
+	printf 'RELEASE_SHALLOW_STORE action=failed\n' >&2
+	printf 'Run: git fetch --unshallow --tags origin\n' >&2
+	printf 'See .agents/reference/git-hygiene.md for recovery steps.\n' >&2
+	return 1
+}
+
 _full_loop_release_prepare_new() {
 	local repo="$1"
 	local source_pr="$2"
@@ -329,6 +397,7 @@ _full_loop_release_prepare_new() {
 	local base=""
 	local base_tag=""
 	local base_object=""
+	local shallow_state=""
 
 	phase_started=$(_full_loop_release_timing_start release-run-fetch-main)
 	if ! git -C "$REPO_ROOT" fetch origin main >/dev/null; then
@@ -339,7 +408,12 @@ _full_loop_release_prepare_new() {
 	snapshot=$(jq -r '.snapshot_sha // ""' <<<"${_AIDEVOPS_RELEASE_LANE_JSON:-null}") || return 1
 	if [[ -z "$snapshot" ]]; then
 		snapshot=$(git -C "$REPO_ROOT" rev-parse 'origin/main^{commit}') || return 1
-		base_tag=$(git -C "$REPO_ROOT" describe --tags --match 'v[0-9]*' --abbrev=0 "$snapshot") || return 1
+		if ! base_tag=$(git -C "$REPO_ROOT" describe --tags --match 'v[0-9]*' --abbrev=0 "$snapshot" 2>/dev/null); then
+			shallow_state=$(git -C "$REPO_ROOT" rev-parse --is-shallow-repository 2>/dev/null || echo "unknown")
+			printf 'RELEASE_BASE_TAG_UNRESOLVED snapshot=%s shallow=%s\n' "$snapshot" "$shallow_state" >&2
+			printf 'Run: git fetch --unshallow --tags origin\n' >&2
+			return 1
+		fi
 		base=$(git -C "$REPO_ROOT" rev-parse "refs/tags/${base_tag}^{commit}") || return 1
 		base_object=$(git -C "$REPO_ROOT" rev-parse "refs/tags/${base_tag}") || return 1
 	else
@@ -367,9 +441,11 @@ _full_loop_release_prepare_new() {
 	trap 'cleanup_release_worktree' EXIT
 
 	phase_started=$(_full_loop_release_timing_start release-run-capture-authorization)
-	if ! _full_loop_capture_release_authorization "$repo" "$source_pr" "$release_path" "$resolver" "$expected_sources"; then
+	local authorization_rc=0
+	_full_loop_capture_release_authorization "$repo" "$source_pr" "$release_path" "$resolver" "$expected_sources" || authorization_rc=$?
+	if [[ "$authorization_rc" -ne 0 ]]; then
 		_full_loop_release_timing_finish release-run-capture-authorization "$phase_started" failed
-		return 1
+		return "$authorization_rc"
 	fi
 	_full_loop_release_timing_finish release-run-capture-authorization "$phase_started" ok
 	phase_started=$(_full_loop_release_timing_start release-run-resolve-source)
@@ -408,15 +484,24 @@ _full_loop_release_run_new() {
 	local evidence_release_type=""
 	local run_started=""
 	local phase_started=""
+	local preparation_rc=0
+	local resume_command=""
 	run_started=$(_full_loop_release_timing_start release-run-new)
 	if [[ ! -d "$worktree_base" ]]; then
 		_full_loop_release_timing_finish release-run-new "$run_started" failed
 		return 1
 	fi
 	resolver="${AIDEVOPS_FULL_LOOP_SOURCE_RESOLVER:-$release_path/.agents/scripts/release-provenance-helper.sh}"
-	if ! _full_loop_release_prepare_new "$repo" "$source_pr" "$release_path" "$resolver" "$expected_sources"; then
+	_full_loop_release_prepare_new "$repo" "$source_pr" "$release_path" "$resolver" "$expected_sources" || preparation_rc=$?
+	if [[ "$preparation_rc" -ne 0 ]]; then
 		_full_loop_release_timing_finish release-run-new "$run_started" failed
-		return 1
+		if [[ "$preparation_rc" -eq 8 ]]; then
+			resume_command="aidevops release $release_type $source_pr $deployment_scope"
+			[[ -z "$expected_sources" ]] || resume_command+=" --expected-sources $expected_sources"
+			printf 'After the guarded dead-executor window, resume with:\n  aidevops release recover-reservation %s\n  %s\n' \
+				"$source_pr" "$resume_command" >&2
+		fi
+		return "$preparation_rc"
 	fi
 
 	version_manager="${AIDEVOPS_FULL_LOOP_VERSION_MANAGER:-$release_path/.agents/scripts/version-manager.sh}"
@@ -550,6 +635,36 @@ _full_loop_release_existing_with_lane() {
 	return "$existing_rc"
 }
 
+#aidevops:trust-boundary
+# A competing start may complete an already-published lane, but only the
+# persisted source authorization and CAS-protected reconcile may finalize it.
+_full_loop_release_finalize_published_competing_lane() {
+	local repo="$1"
+	local state_json="$2"
+	local lane_pr=""
+	local lane_tag=""
+	local observation=""
+	jq -e '.active == true and (.source_pr | type == "number") and .source_pr > 0
+		and (.tag | type == "string" and length > 0)
+		and .terminal_receipt == null
+		and (.phase == "remote-publication" or .phase == "exact-tag-deployment")' \
+		<<<"$state_json" >/dev/null || return 1
+	observation=$(_release_lane_executor_observe "$state_json") || return 1
+	[[ "$(jq -r '.state // "unknown"' <<<"$observation")" == "dead" ]] || return 1
+	lane_pr=$(jq -r '.source_pr' <<<"$state_json") || return 1
+	lane_tag=$(jq -r '.tag' <<<"$state_json") || return 1
+	_full_loop_release_inspect_remote "$repo" "$lane_tag" || return 1
+	# Reconcile revalidates the lane's persisted authorization and tag provenance.
+	_full_loop_release_existing_with_lane reconcile "$lane_pr" || return 1
+	release_lane_read "$repo" || return 1
+	jq -e --argjson pr "$lane_pr" --arg tag "$lane_tag" '.active == false and .source_pr == $pr and .tag == $tag
+		and (.terminal_receipt == "published" or .terminal_receipt == "superseded")' \
+		<<<"$_AIDEVOPS_RELEASE_LANE_JSON" >/dev/null || return 1
+	printf 'RELEASE_LANE_FINALIZED source_pr=%s tag=%s receipt=%s\n' \
+		"$lane_pr" "$lane_tag" "$(jq -r '.terminal_receipt' <<<"$_AIDEVOPS_RELEASE_LANE_JSON")"
+	return 0
+}
+
 _full_loop_release_guard_competing_lane() {
 	local repo="$1"
 	local source_pr="$2"
@@ -566,6 +681,12 @@ _full_loop_release_guard_competing_lane() {
 			release_lane_recover_reservation "$repo" "$(jq -r '.source_pr' <<<"$_AIDEVOPS_RELEASE_LANE_JSON")" "$_AIDEVOPS_RELEASE_LANE_HEAD"
 			return $?
 		fi
+		if _full_loop_release_finalize_published_competing_lane "$repo" "$_AIDEVOPS_RELEASE_LANE_JSON"; then
+			return 0
+		fi
+		# A failed or deferred reconcile may have changed the lane. Report the
+		# latest state when possible, but never allow this start to reserve it.
+		release_lane_read "$repo" || true
 		printf 'ACTIVE_RELEASE_LANE source_pr=%s phase=%s tag=%s\n' \
 			"$(jq -r '.source_pr' <<<"$_AIDEVOPS_RELEASE_LANE_JSON")" \
 			"$(jq -r '.phase' <<<"$_AIDEVOPS_RELEASE_LANE_JSON")" \
@@ -585,6 +706,7 @@ _full_loop_release_resolve_persisted_intent() {
 	local requested_sources="$3"
 	local persisted_sources="$4"
 	local release_type="${5:-patch}"
+	local retry_assertion="$requested_sources"
 	local persisted_prs=""
 	local requested_prs=""
 	local transaction_rc=0
@@ -610,7 +732,7 @@ _full_loop_release_resolve_persisted_intent() {
 		esac
 	fi
 	_full_loop_recovery_expand_reserved_authorization "$repo" "$source_pr" "$requested_sources" \
-		"$release_type" || return $?
+		"$release_type" "$retry_assertion" || return $?
 	_FULL_LOOP_RESERVED_RECOVERY_EXPECTED="$_FULL_LOOP_AGGREGATE_RECOVERY_EXPECTED"
 	_FULL_LOOP_RESERVED_RECOVERY_COMPLETED=true
 	return 0
@@ -627,6 +749,7 @@ _full_loop_release_start_new() {
 	local preparing_recovery_rc=0
 	_FULL_LOOP_RESERVED_RECOVERY_COMPLETED=false
 	_FULL_LOOP_RESERVED_RECOVERY_FAILED_PREPUBLICATION=false
+	_full_loop_release_ensure_full_history || return 1
 	_full_loop_release_guard_competing_lane "$repo" "$source_pr" || return $?
 	# A snapshot retry must not turn an implicit legacy subset into a new exact
 	# CLI assertion. The verified capture migrates compatible prior evidence.

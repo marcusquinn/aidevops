@@ -13,6 +13,14 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
     unset _pmf_module_path
 fi
 
+# Shared Actions billing-block detector (GH#32869). Load from this module's own
+# directory; a missing lib keeps the previous classification (fail-open).
+_pmrc_lib_dir="${BASH_SOURCE[0]%/*}"
+[[ "$_pmrc_lib_dir" == "${BASH_SOURCE[0]}" ]] && _pmrc_lib_dir="."
+# shellcheck source=ci-infra-signature-lib.sh
+source "${_pmrc_lib_dir}/ci-infra-signature-lib.sh" 2>/dev/null || true
+unset _pmrc_lib_dir
+
 _build_ci_feedback_section() {
 	local pr_number="$1"
 	local failing_checks="$2"
@@ -97,8 +105,39 @@ _ci_check_url_has_infra_failure_log() {
 }
 
 #######################################
+# Return whether a failed check URL points at a GitHub Actions job that GitHub
+# refused to run because of an Actions billing or spending block (GH#32869).
+# Such jobs have no steps and no failed log, so the log classifier above cannot
+# see them; the check-run annotation is the structured evidence.
+#
+# Args:
+#   $1 - repo_slug
+#   $2 - check URL
+#
+# Returns: 0=billing block reported, 1=not reported or unavailable.
+#######################################
+_ci_check_url_has_billing_block() {
+	local repo_slug="$1"
+	local check_url="$2"
+	local job_id=""
+
+	[[ -n "$repo_slug" ]] || return 1
+	declare -F ci_check_run_indicates_billing_outage >/dev/null 2>&1 || return 1
+	case "$check_url" in
+	*"/actions/runs/"*"/job/"*) ;;
+	*) return 1 ;;
+	esac
+	job_id="${check_url#*/job/}"
+	job_id="${job_id%%[/?#]*}"
+	[[ "$job_id" =~ ^[0-9]+$ ]] || return 1
+	ci_check_run_indicates_billing_outage "$repo_slug" "$job_id"
+	return $?
+}
+
+#######################################
 # Filter required failed checks down to actionable code failures by excluding
-# GitHub Actions jobs whose logs show infrastructure-failure signatures.
+# Actions billing blocks and GitHub Actions jobs whose logs show
+# infrastructure-failure signatures.
 #
 # Args:
 #   $1 - pr_number
@@ -122,7 +161,10 @@ _ci_actionable_failed_checks_markdown() {
 		name=$(printf '%s' "$checks_json" | jq -r --argjson i "$idx" '.[$i].name // empty' 2>/dev/null) || name=""
 		conclusion=$(printf '%s' "$checks_json" | jq -r --argjson i "$idx" '.[$i].conclusion // empty' 2>/dev/null) || conclusion=""
 		link=$(printf '%s' "$checks_json" | jq -r --argjson i "$idx" '.[$i].link // empty' 2>/dev/null) || link=""
-		if _ci_check_url_has_infra_failure_log "$repo_slug" "$link"; then
+		if _ci_check_url_has_billing_block "$repo_slug" "$link"; then
+			# A rerun cannot succeed and no code change can fix account capability.
+			echo "[pulse-wrapper] _dispatch_ci_fix_worker: PR #${pr_number} check '${name}' classified as Actions billing/spending block — no code repair, no rerun" >>"$LOGFILE"
+		elif _ci_check_url_has_infra_failure_log "$repo_slug" "$link"; then
 			echo "[pulse-wrapper] _dispatch_ci_fix_worker: PR #${pr_number} check '${name}' classified as infrastructure failure from failed log — skipping code redispatch" >>"$LOGFILE"
 			if ! declare -F _pmrc_rerun_infrastructure_check >/dev/null 2>&1; then
 				echo "[pulse-wrapper] _dispatch_ci_fix_worker: bounded infrastructure rerun helper unavailable for PR #${pr_number} check '${name}' — preserving PR for a later merge pass" >>"$LOGFILE"

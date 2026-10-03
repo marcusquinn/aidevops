@@ -1,86 +1,135 @@
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Gotchas & Troubleshooting
 
-## Security
+## Common Errors
 
-Never expose App Secret client-side (use backend env vars, Wrangler secrets)
-Track IDs = capabilities, authz required:
+### "Slow initial connect (~1.8s)"
 
-```ts
-app.post('/api/sessions/:sid/tracks', async (req, res) => {
-  for (const t of req.body.tracks)
-    if (!await canAccessTrack(req.user.id, t.trackName)) return res.status(403).json({error: 'Unauth'});
-  // CF API call
-});
+**Cause:** First STUN delayed during consensus forming (normal behavior)
+**Solution:** Subsequent connections are faster. CF detects DTLS ClientHello early to compensate.
+
+### "No media flow"
+
+**Cause:** SDP exchange incomplete, connection not established, tracks not added before offer, browser permissions missing
+**Solution:**
+1. Verify SDP exchange complete
+2. Check `pc.connectionState === 'connected'`
+3. Ensure tracks added before creating offer
+4. Confirm browser permissions granted
+5. Use `chrome://webrtc-internals` for debugging
+
+### "Track not receiving"
+
+**Cause:** Track not published, track ID not shared, session IDs mismatch, `pc.ontrack` not set, renegotiation needed
+**Solution:**
+1. Verify track published successfully
+2. Confirm track ID shared between peers
+3. Check session IDs match
+4. Set `pc.ontrack` handler before answer
+5. Trigger renegotiation if needed
+
+### "ICE connection failed"
+
+**Cause:** Network changed, firewall blocked UDP, TURN needed, transient network issue
+**Solution:**
+
+```typescript
+pc.oniceconnectionstatechange = async () => {
+  if (pc.iceConnectionState === 'failed') {
+    console.warn('ICE failed, attempting restart');
+    await pc.restartIce(); // Triggers new ICE gathering
+
+    // Create new offer with ICE restart flag
+    const offer = await pc.createOffer({iceRestart: true});
+    await pc.setLocalDescription(offer);
+
+    // Send to backend → Cloudflare API
+    await fetch(`/api/sessions/${sessionId}/renegotiate`, {
+      method: 'PUT',
+      body: JSON.stringify({sdp: offer.sdp})
+    });
+  }
+};
 ```
 
-Validate session ownership, timeouts, cleanup abandoned sessions.
+### "Track stuck/frozen"
 
-## Common Issues
+**Cause:** Sender paused track, network congestion, codec mismatch, mobile browser backgrounded
+**Solution:**
+1. Check `track.enabled` and `track.readyState === 'live'`
+2. Verify sender active: `pc.getSenders().find(s => s.track === track)`
+3. Check stats for packet loss/jitter (see patterns.md)
+4. On mobile: Re-acquire tracks when app foregrounded
+5. Test with different codecs if persistent
 
-**Slow connect (~1.8s):** First STUN delayed (consensus forming), normal, subsequent faster
-**USE-CANDIDATE delay (Chrome):** CF detects DTLS ClientHello early to compensate
+### "Network change disconnects call"
 
-**No media flow checklist:**
-1. SDP exchange done?
-2. `pc.connectionState === 'connected'`?
-3. Tracks added before offer?
-4. Browser perms?
-5. `chrome://webrtc-internals`
+**Cause:** Mobile switching WiFi↔cellular, laptop changing networks
+**Solution:**
 
-**Track not RX checklist:**
-1. Published OK?
-2. Track ID shared?
-3. Session IDs match?
-4. `pc.ontrack` before answer?
-5. Renegotiation done?
-
-## Debug
-
-`chrome://webrtc-internals`: ICE pairs, DTLS, media stats, bandwidth
-
-```ts
-pc.addEventListener('icecandidateerror', (e) => console.error('ICE err:', e));
-pc.addEventListener('connectionstatechange', () => console.log('Conn:', pc.connectionState));
-pc.addEventListener('iceconnectionstatechange', () => console.log('ICE:', pc.iceConnectionState));
-```
-
-```ts
-setInterval(async () => {
-  const stats = await pc.getStats();
-  stats.forEach(r => {
-    if (r.type === 'inbound-rtp' && r.kind === 'video')
-      console.log('Loss:', r.packetsLost, 'Jitter:', r.jitter, 'Bytes:', r.bytesReceived);
+```typescript
+// Listen for network changes
+if ('connection' in navigator) {
+  (navigator as any).connection.addEventListener('change', async () => {
+    console.log('Network changed');
+    await pc.restartIce(); // Use ICE restart pattern above
   });
-}, 1000);
+}
+
+// Or use PartyTracks (handles automatically)
 ```
 
-## Pricing & Limits
+## Retry with Exponential Backoff
 
-Free: 1TB/mo egress. Paid: $0.05/GB. Inbound free. TURN free w/SFU. No participant/track limits (client bandwidth/CPU bound). Optimize: bitrates, simulcast, adaptive, cleanup
-
-## vs Traditional SFUs
-
-| Aspect | Traditional | Cloudflare |
-|--------|------------|------------|
-| Deploy | Single region | 310+ DCs |
-| Route | Manual | Anycast |
-| SDK | Often required | Pure WebRTC |
-| Arch | Rooms | Sessions/tracks |
-| Scale | Vertical/horiz | Auto global |
-| TURN | Separate | Integrated |
-| State | Centralized | Distributed |
-
-## Quick Ref
-
-```bash
-POST /v1/apps/{appId}/sessions/new  # Create
-POST .../sessions/{sid}/tracks/new  # Pub: {sessionDescription, tracks: [{location:'local',trackName}]}
-POST .../sessions/{sid}/tracks/new  # Sub: {tracks:[{location:'remote',trackName,sessionId}]}
-PUT .../sessions/{sid}/renegotiate  # Renegotiate
-PUT .../sessions/{sid}/tracks/close # Close
+```typescript
+async function fetchWithRetry(url: string, options: RequestInit, maxRetries = 3) {
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      const res = await fetch(url, options);
+      if (res.ok) return res;
+      if (res.status >= 500) throw new Error('Server error');
+      return res; // Client error, don't retry
+    } catch (err) {
+      if (i === maxRetries - 1) throw err;
+      const delay = Math.min(1000 * 2 ** i, 10000); // Cap at 10s
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+}
 ```
 
-CF SFU: unopinionated, full WebRTC control, max flexibility, needs fundamentals
+## Debugging with chrome://webrtc-internals
+
+1. Open `chrome://webrtc-internals` in Chrome/Edge
+2. Find your PeerConnection in the list
+3. Check **Stats graphs** for packet loss, jitter, bandwidth
+4. Check **ICE candidate pairs**: Look for `succeeded` state, relay vs host candidates
+5. Check **getStats**: Raw metrics for inbound/outbound RTP
+6. Look for errors in **Event log**: `iceConnectionState`, `connectionState` changes
+7. Export data with "Download the PeerConnection updates and stats data" button
+8. Common issues visible here: ICE failures, high packet loss, bitrate drops
+
+## Limits
+
+| Resource/Limit | Value | Notes |
+|----------------|-------|-------|
+| Egress (Free) | 1TB/month | Per account |
+| Egress (Paid) | $0.05/GB | After free tier |
+| Inbound traffic | Free | All plans |
+| TURN service | Free | Included with SFU |
+| Participants | No hard limit | Client bandwidth/CPU bound (typically 10-50 tracks) |
+| Tracks per session | No hard limit | Client resources limited |
+| Session duration | No hard limit | Production calls run for hours |
+| WebRTC ports | UDP 1024-65535 | Outbound only, required for media |
+| API rate limit | 600 req/min | Per app, burst allowed |
+
+## Security Checklist
+
+- ✅ **Never expose** `CALLS_APP_SECRET` to client
+- ✅ **Validate user identity** in backend before creating sessions
+- ✅ **Implement auth tokens** for session access (JWT in custom header)
+- ✅ **Rate limit** session creation endpoints
+- ✅ **Expire sessions** server-side after inactivity
+- ✅ **Validate track IDs** before subscribing (prevent unauthorized access)
+- ✅ **Use HTTPS** for all signaling (API calls)
+- ✅ **Enable DTLS-SRTP** (automatic with Cloudflare, encrypts media)
+- ⚠️ **Consider E2EE** for sensitive content (implement client-side with Insertable Streams API)

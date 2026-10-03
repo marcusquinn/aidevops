@@ -3,7 +3,7 @@
 
 import { randomBytes } from "node:crypto";
 import { realpathSync } from "node:fs";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -38,6 +38,12 @@ const SUPERVISOR_RUNTIME = "node";
 export class BoundedInteractiveOperationManager {
   constructor(options = {}) {
     this.projectRoot = realpathSync(options.projectRoot || process.cwd());
+    try {
+      this.projectIsGit = execFileSync("git", ["-C", this.projectRoot, "rev-parse", "--is-inside-work-tree"],
+        { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 5_000 }).trim() === "true";
+    } catch {
+      this.projectIsGit = false;
+    }
     this.scriptsDir = options.scriptsDir;
     this.worktreeResolver = options.resolveWorktreeRoot || resolveSessionOwnedWorktreeRoot;
     this.spawn = options.spawn || spawn;
@@ -58,8 +64,8 @@ export class BoundedInteractiveOperationManager {
 
   async resolveCwd(requested, context) {
     const cwd = realpathSync(requested || this.projectRoot);
-    if (withinRoot(cwd, this.projectRoot)) return cwd;
-    const resolved = await this.worktreeResolver(cwd, this.projectRoot, context, {
+    if (cwd === this.projectRoot || (this.projectIsGit && withinRoot(cwd, this.projectRoot))) return cwd;
+    const resolved = await this.worktreeResolver(requested, this.projectRoot, context, {
       allowStartupRoot: true,
       scriptsDir: this.scriptsDir,
       subject: "Operation",

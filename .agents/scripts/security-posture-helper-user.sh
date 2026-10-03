@@ -232,9 +232,9 @@ check_git_signing() {
 	local label="Git commit signing"
 
 	local signing_key
-	signing_key=$(git config --global user.signingkey || echo "")
+	signing_key=$(git config --global --get user.signingkey || echo "")
 	local gpg_sign
-	gpg_sign=$(git config --global commit.gpgsign || echo "false")
+	gpg_sign=$(git config --global --get commit.gpgsign || echo "false")
 
 	if [[ -n "$signing_key" && "$gpg_sign" == "true" ]]; then
 		CHECK_LABEL="$label"
@@ -551,7 +551,7 @@ _setup_ssh_key() {
 	if [[ "$response" =~ ^[Yy]$ ]]; then
 		echo ""
 		local git_email
-		git_email=$(git config --global user.email || echo "")
+		git_email=$(git config --global --get user.email || echo "")
 		ssh-keygen -t ed25519 -C "$git_email"
 		actions_fixed=$((actions_fixed + 1))
 		echo ""

@@ -3,6 +3,8 @@ name: seo
 description: SEO and GEO analysis - search intent, keyword research, Search Console, and site crawling
 mode: subagent
 subagents:
+  - keywords-standard
+  - ecommerce-seo
   - keyword-research
   - conversational-search-intent
   - google-search-console
@@ -55,6 +57,8 @@ subagents:
 - **MCP**: GSC, DataForSEO, Serper, Google Analytics, Context7
 - **Commands**: `/keyword-research`, `/autocomplete-research`, `/keyword-research-extended`, `/seo-export`, `/seo-analyze`, `/seo-opportunities`, `/seo-write`, `/seo-optimize`, `/seo-analyze-content`, `/seo-fanout`, `/seo-geo`, `/seo-sro`, `/seo-hallucination-defense`, `/seo-agent-discovery`, `/seo-ai-readiness`, `/seo-ai-baseline`
 
+- **Project search targets**: read `context/keywords.md` or run `aidevops keywords brief` first; standard, hub sync, tracking and budget: `seo/keywords-standard.md`. Ecommerce collections/facets: `seo/ecommerce-seo.md`.
+
 **Subagents** (`seo/` and `services/analytics/`):
 
 - **Research**: `conversational-search-intent` (user jobs, query forms, provenance, trends) | `keyword-research` (SERP weakness, 17 types, KeywordScore 0-100) | `ranking-opportunities` (quick wins, striking distance, cannibalization) | `query-fanout-research` (thematic fan-out) | `keyword-mapper` (placement/density) | `domain-research` | `domain-opportunities` (ranked local auction evidence)
@@ -75,7 +79,7 @@ subagents:
 
 ## SEO Workflow
 
-**Keyword and intent research**: Frame ambiguous, conversational, market, trend, or log-derived seeds with `seo/conversational-search-intent.md`, then run `/keyword-research "seed"` | `/autocomplete-research "question"` | `/keyword-research-extended "top keywords"`. Domain/Competitor/Gap modes: `seo/keyword-research.md`. GSC query evidence: `seo/google-search-console.md`.
+**Keyword and intent research**: Record accepted targets, questions and entities in the project registry (`aidevops keywords add`, `seo/keywords-standard.md`), not only in exported CSVs. Frame ambiguous, conversational, market, trend, or log-derived seeds with `seo/conversational-search-intent.md`, then run `/keyword-research "seed"` | `/autocomplete-research "question"` | `/keyword-research-extended "top keywords"`. Domain/Competitor/Gap modes: `seo/keyword-research.md`. GSC query evidence: `seo/google-search-console.md`.
 
 **Domain opportunities**: For provider-authorized auction inventory, deterministic SQLite scoring, optional Google Ads/Trends evidence, and local CSV/JSON/Markdown reports, use `seo/domain-opportunities.md`. This is separate from backlink-expiry reclamation.
 
@@ -113,7 +117,7 @@ gsc-sitemap-helper.sh status example.com
 
 **Image SEO**: AI-powered alt text (WCAG-compliant, Moondream), SEO filenames, keyword tags, upscaling — `seo/image-seo.md`.
 
-**Content**: Integrate with `content.md` (calendar, writing, meta, internal linking). Per-project config: `content/context-templates.md`. Workflow: Plan → Research → Write → Analyze → Optimize (`seo/seo-optimizer.md`) → Edit → Publish.
+**Content**: Integrate with `content.md` (calendar, writing, meta, internal linking). Per-project config: `context/keywords.md` (`seo/keywords-standard.md`) plus voice/style templates in `content/context-templates.md`. Workflow: Plan → Research → Write → Analyze → Optimize (`seo/seo-optimizer.md`) → Edit → Publish.
 
 ## Tool Comparison
 
@@ -127,5 +131,5 @@ gsc-sitemap-helper.sh status example.com
 | Local/Places | No | Yes | Yes | No | No |
 | News Search | No | Yes | Yes | No | No |
 | Competitor Analysis | No | Yes | No | Yes | Yes (Domain vs Domain) |
-| Position Tracking | No | No | No | No | Yes (Projects API) |
+| Position Tracking | Via `aidevops keywords track` | Via `aidevops keywords track` (budgeted) | No | No | Yes (Projects API) |
 | Pricing | Free | Subscription | Pay-per-search | Subscription | Unit-based |

@@ -31,7 +31,7 @@ Writes long-form, SEO-optimized content that ranks well and serves the target au
 
 ### 1. Pre-Writing Research
 
-Gather: primary keyword + search volume (`seo/keyword-research.md`), 3-5 secondary keywords, search intent (`seo-content-analyzer.py intent "keyword"`), brand voice (`context/brand-voice.md`), internal links map (`context/internal-links-map.md`).
+Gather: project targets first — `aidevops keywords brief --url <page>` or `--cluster <id>` when `context/keywords.md` exists (legacy fallback `context/target-keywords.md`; `seo/keywords-standard.md`); then primary keyword + search volume (`seo/keyword-research.md`), 3-5 secondary keywords, search intent (`seo-content-analyzer.py intent "keyword"`), brand voice (`context/brand-voice.md`), internal links map (`context/internal-links-map.md`).
 
 ### 2. Article Structure
 

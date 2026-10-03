@@ -129,7 +129,7 @@ done
 
 # Remove loop-state files that were incorrectly created as agents
 # These are runtime state files, not agents
-for f in ralph-loop.local.md quality-loop.local.md full-loop.local.md loop-state.md re-anchor.md postflight-loop.md; do
+for f in quality-loop.local.md full-loop.local.md loop-state.md re-anchor.md postflight-loop.md; do
 	if _opencode_generated_agent_owned "$OPENCODE_AGENT_DIR/$f"; then
 		rm -f "$OPENCODE_AGENT_DIR/$f"
 	fi
@@ -286,7 +286,7 @@ _write_sandboxed_agent() {
 			$0 == "---" { delimiters++; if (delimiters == 2) print "<!-- aidevops:generated-subagent -->" }
 		' "$f" | sed \
 			-e 's/^model: opus$/model: anthropic\/claude-opus-4-6/' \
-			-e 's/^model: sonnet$/model: anthropic\/claude-sonnet-4-6/' \
+			-e 's/^model: sonnet$/model: anthropic\/claude-sonnet-5-5/' \
 			-e 's/^model: haiku$/model: anthropic\/claude-haiku-4-5/' \
 			"$f" >"$OPENCODE_AGENT_DIR/$name.md"
 		echo 1

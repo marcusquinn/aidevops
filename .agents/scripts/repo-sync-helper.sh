@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
-# repo-sync-helper.sh - Daily read-only diagnostics for human canonical repos
+# repo-sync-helper.sh - Daily read-only diagnostics for canonical service mirrors
 #
 # Scans configured parent directories for git repos cloned from a remote and
 # reports remote drift for repos where:
@@ -54,6 +54,9 @@ readonly LOCK_DIR="$HOME/.aidevops/locks"
 readonly LOCK_FILE="$LOCK_DIR/repo-sync.lock"
 readonly LOG_FILE="$HOME/.aidevops/logs/repo-sync.log"
 readonly STATE_FILE="$HOME/.aidevops/cache/repo-sync-state.json"
+readonly GIT_LS_REMOTE_OPERATION="ls-remote"
+readonly SYNC_RESULT_FAIL="FAIL"
+readonly SYNC_RESULT_STALE="STALE"
 readonly CRON_MARKER="# aidevops-repo-sync"
 readonly DEFAULT_INTERVAL=1440
 readonly LAUNCHD_LABEL="sh.aidevops.repo-sync"
@@ -290,8 +293,9 @@ get_default_branch() {
 #######################################
 is_working_tree_clean() {
 	local repo_path="$1"
-	git -C "$repo_path" diff --quiet 2>/dev/null &&
-		git -C "$repo_path" diff --cached --quiet 2>/dev/null
+	local status
+	status=$(git -C "$repo_path" status --porcelain --untracked-files=all 2>/dev/null) || return 1
+	[[ -z "$status" ]]
 	return $?
 }
 
@@ -341,6 +345,23 @@ is_github_https_remote() {
 	esac
 }
 
+# Only accept ordinary GitHub owner/repo SSH remotes. Never pass an arbitrary
+# configured URL through the gh credential helper or interpolate it into git config.
+github_ssh_https_url() {
+	local remote_url="$1"
+	local path=""
+	case "$remote_url" in
+	git@github.com:*) path="${remote_url#git@github.com:}" ;;
+	ssh://git@github.com/*) path="${remote_url#ssh://git@github.com/}" ;;
+	*) return 1 ;;
+	esac
+	if [[ "$path" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(\.git)?$ ]]; then
+		printf 'https://github.com/%s\n' "$path"
+		return 0
+	fi
+	return 1
+}
+
 #######################################
 # Detect auth/password-prompt git failures that are safe to retry with gh.
 # Arguments:
@@ -350,7 +371,7 @@ is_github_https_remote() {
 is_git_auth_failure() {
 	local stderr_text="$1"
 	case "$stderr_text" in
-	*"could not read Password"* | *"could not read Username"* | *"Authentication failed"* | *"terminal prompts disabled"*)
+	*"could not read Password"* | *"could not read Username"* | *"Authentication failed"* | *"terminal prompts disabled"* | *"Permission denied (publickey)"* | *"ssh_askpass"*)
 		return 0
 		;;
 	*) return 1 ;;
@@ -383,7 +404,7 @@ run_git_capturing_stderr() {
 	local rc
 	local stderr_output
 
-	if { stderr_output=$(GIT_TERMINAL_PROMPT=0 git -C "$repo_path" "$@" 2>&1 >&3); } 3>&1; then
+	if { stderr_output=$(GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="ssh -o BatchMode=yes" git -C "$repo_path" "$@" 2>&1 >&3); } 3>&1; then
 		return 0
 	else
 		rc=$?
@@ -438,22 +459,29 @@ run_git_with_auth_fallback() {
 	shift 4
 	local remote_url
 	remote_url=$(git -C "$repo_path" remote get-url "$remote" 2>/dev/null || true)
+	local ssh_https_url=""
+	ssh_https_url=$(github_ssh_https_url "$remote_url" 2>/dev/null) || true
 
 	if run_git_capturing_stderr "$repo_path" "$@"; then
 		return 0
 	fi
 
 	local plain_stderr="$_REPO_SYNC_LAST_GIT_STDERR"
-	if is_github_https_remote "$remote_url" && is_git_auth_failure "$plain_stderr"; then
+	if { is_github_https_remote "$remote_url" || [[ -n "$ssh_https_url" ]]; } && is_git_auth_failure "$plain_stderr"; then
 		if gh_auth_available; then
 			log_info "AUTH $repo_name: retrying git $operation with gh credential helper"
-			if run_git_with_gh_credential "$repo_path" "$@"; then
+			local -a retry_args=("$@")
+			# The configured remote stays unchanged; only this invocation uses HTTPS.
+			if [[ -n "$ssh_https_url" && "$operation" == "$GIT_LS_REMOTE_OPERATION" && "${retry_args[0]}" == "$GIT_LS_REMOTE_OPERATION" && "${retry_args[1]:-}" == "$remote" ]]; then
+				retry_args[1]="$ssh_https_url"
+			fi
+			if run_git_with_gh_credential "$repo_path" "${retry_args[@]}"; then
 				return 0
 			fi
 			log_git_stderr "$_REPO_SYNC_LAST_GIT_STDERR"
 			return 1
 		fi
-		log_info "AUTH $repo_name: gh auth unavailable for GitHub HTTPS fallback"
+		log_info "AUTH $repo_name: gh auth unavailable for GitHub fallback"
 	fi
 
 	log_git_stderr "$plain_stderr"
@@ -516,7 +544,7 @@ sync_repo() {
 	# Query the remote without updating any canonical Git or worktree state.
 	log_info "CHECK $repo_name: reading $remote/$default_branch..."
 	local remote_output=""
-	if ! remote_output=$(run_git_with_auth_fallback "$repo_path" "$repo_name" "$remote" "ls-remote" \
+	if ! remote_output=$(run_git_with_auth_fallback "$repo_path" "$repo_name" "$remote" "$GIT_LS_REMOTE_OPERATION" \
 		ls-remote "$remote" "refs/heads/$default_branch"); then
 		log_error "FAIL $repo_name: git ls-remote failed"
 		return 1
@@ -531,7 +559,14 @@ sync_repo() {
 		return 0
 	fi
 
-	log_warn "STALE $repo_name: differs from $remote/$default_branch; human checkout left unchanged"
+	# The remote tip may not exist locally. Never fetch into a canonical here:
+	# canonical-recovery-helper owns the audited, rollback-safe mutation route.
+	if [[ -n "$upstream_sha" ]] && git -C "$repo_path" cat-file -e "${upstream_sha}^{commit}" 2>/dev/null &&
+		git -C "$repo_path" merge-base --is-ancestor "$local_sha" "$upstream_sha" 2>/dev/null; then
+		log_warn "STALE $repo_name: CONVERGENCE_ELIGIBLE (read-only default); audited sync: canonical-recovery-helper.sh sync-mirror --repo '$repo_path' --issue <issue-number> --confirm SYNCHRONIZE_CANONICAL_MIRROR"
+	else
+		log_warn "STALE $repo_name: differs from $remote/$default_branch; ancestry unverified or diverged; human checkout left unchanged"
+	fi
 	return 0
 }
 
@@ -585,11 +620,13 @@ update_state_action() {
 #   $1 - synced count
 #   $2 - skipped count
 #   $3 - failed count
+#   $4 - JSON array of per-repo observations
 #######################################
 update_state() {
 	local synced="$1"
 	local skipped="$2"
 	local failed="$3"
+	local observations="$4"
 	local timestamp
 	timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
@@ -601,33 +638,32 @@ update_state() {
 	tmp_state=$(mktemp)
 	trap 'rm -f "${tmp_state:-}"' RETURN
 
+	local previous='{}'
 	if [[ -f "$STATE_FILE" ]]; then
-		jq --arg ts "$timestamp" \
-			--argjson synced "$synced" \
-			--argjson skipped "$skipped" \
-			--argjson failed "$failed" \
-			'. + {
-				last_sync: $ts,
-				last_synced: $synced,
-				last_skipped: $skipped,
-				last_failed: $failed,
-				total_synced: ((.total_synced // 0) + $synced),
-				total_failed: ((.total_failed // 0) + $failed)
-			}' "$STATE_FILE" >"$tmp_state" 2>/dev/null && mv "$tmp_state" "$STATE_FILE"
-	else
-		jq -n --arg ts "$timestamp" \
-			--argjson synced "$synced" \
-			--argjson skipped "$skipped" \
-			--argjson failed "$failed" \
-			'{
-				last_sync: $ts,
-				last_synced: $synced,
-				last_skipped: $skipped,
-				last_failed: $failed,
-				total_synced: $synced,
-				total_failed: $failed
-			}' >"$STATE_FILE"
+		previous=$(jq -c . "$STATE_FILE" 2>/dev/null) || return 1
 	fi
+	jq -n --argjson previous "$previous" --arg ts "$timestamp" \
+		--arg fail "$SYNC_RESULT_FAIL" --arg stale "$SYNC_RESULT_STALE" \
+		--argjson synced "$synced" --argjson skipped "$skipped" \
+		--argjson failed "$failed" --argjson observations "$observations" \
+		'$previous | . + {
+			last_sync: $ts, last_synced: $synced, last_skipped: $skipped,
+			last_failed: $failed,
+			total_synced: ((.total_synced // 0) + $synced),
+			total_failed: ((.total_failed // 0) + $failed)
+		} | reduce $observations[] as $obs (.;
+			(.repo_observations[$obs.path] // {}) as $prior |
+			.repo_observations[$obs.path] = {
+				last_result: $obs.result,
+				fail_runs: (if $obs.result == $fail then
+					(if $prior.last_result == $fail then ($prior.fail_runs // 0) + 1 else 1 end)
+				else 0 end),
+				stale_since: (if $obs.result == $stale then
+					(if $prior.last_result == $stale then $prior.stale_since // $ts else $ts end)
+				else null end)
+			})' >"$tmp_state" || return 1
+	mv "$tmp_state" "$STATE_FILE" || return 1
+	chmod 600 "$STATE_FILE"
 	return 0
 }
 
@@ -654,6 +690,7 @@ cmd_check() {
 	local synced=0
 	local skipped=0
 	local failed=0
+	local -a observations=()
 
 	log_info "Starting repo sync..."
 
@@ -682,6 +719,7 @@ cmd_check() {
 		# helper excludes linked worktrees, submodules, nested repos, and
 		# reserved operational directories.
 		while IFS= read -r -d '' repo_dir; do
+			local result="SKIP"
 			if sync_repo "$repo_dir"; then
 				# Determine if it was pulled or skipped based on log
 				local last_log
@@ -689,18 +727,27 @@ cmd_check() {
 				if [[ "$last_log" == *"PULLED"* ]]; then
 					synced=$((synced + 1))
 				elif [[ "$last_log" == *"OK"* ]]; then
-					: # already up to date — not counted as synced or skipped
+					result="OK"
 				else
 					skipped=$((skipped + 1))
+					[[ "$last_log" == *"$SYNC_RESULT_STALE"* ]] && result="$SYNC_RESULT_STALE"
 				fi
 			else
 				failed=$((failed + 1))
+				result="$SYNC_RESULT_FAIL"
+			fi
+			if command -v jq >/dev/null 2>&1; then
+				observations+=("$(jq -nc --arg path "$repo_dir" --arg result "$result" '{path:$path,result:$result}')")
 			fi
 		done < <(aidevops_discover_canonical_repos "$parent_dir")
 	done
 
 	log_info "Sync complete: ${synced} pulled, ${skipped} skipped, ${failed} failed"
-	update_state "$synced" "$skipped" "$failed"
+	local observations_json="[]"
+	if [[ ${#observations[@]} -gt 0 ]]; then
+		observations_json=$(printf '%s\n' "${observations[@]}" | jq -sc '.')
+	fi
+	update_state "$synced" "$skipped" "$failed" "$observations_json"
 
 	if [[ $failed -gt 0 ]]; then
 		return 1

@@ -21,6 +21,12 @@ fi
 # shellcheck source=shared-constants.sh
 # shellcheck disable=SC1091  # This module's directory is resolved at runtime.
 source "${BASH_SOURCE[0]%/*}/shared-constants.sh"
+# Reuse the launcher's effort precedence without triggering model selection.
+# shellcheck source=headless-runtime-model.sh
+source "${BASH_SOURCE[0]%/*}/headless-runtime-model.sh"
+# Names-only admission shared with the early candidate filter.
+# shellcheck source=pulse-dispatch-lib-candidates.sh
+source "${BASH_SOURCE[0]%/*}/pulse-dispatch-lib-candidates.sh"
 
 #######################################
 # Transition a durably registered live worker from queued to in-progress.
@@ -118,6 +124,11 @@ _dlw_post_launch_hooks() {
 
 	local dispatch_comment_body
 	local display_model="${selected_model:-auto-select (ordered fallback)}"
+	local display_effort="resolved at launch"
+	if [[ -n "$selected_model" ]]; then
+		display_effort=$(resolve_headless_variant worker "$dispatch_tier" "$selected_model")
+		display_effort="${display_effort:-runtime default}"
+	fi
 	local aidevops_version="$AIDEVOPS_UNKNOWN_VERSION" opencode_version="$AIDEVOPS_UNKNOWN_VERSION"
 	if declare -F aidevops_find_version >/dev/null 2>&1; then
 		aidevops_version=$(aidevops_find_version 2>/dev/null || printf '%s' "$AIDEVOPS_UNKNOWN_VERSION")
@@ -132,6 +143,7 @@ Dispatching worker (deterministic).
 - **Worker PID**: ${worker_pid}
 - **Model**: ${display_model}
 - **Tier**: ${dispatch_tier}
+- **Effort**: ${display_effort}
 - **Runner**: ${self_login}
 - **aidevops**: $(_dlw_display_version_or_unknown "$aidevops_version")
 - **OpenCode**: $(_dlw_display_version_or_unknown "$opencode_version")
@@ -296,6 +308,17 @@ _dlw_claim_lock_after_canary() {
 	local repo_slug="$2"
 	local self_login="$3"
 	local _ds_t0
+	# Re-read declarations immediately before the first persistent claim write.
+	# repo_path is dynamically scoped by _dispatch_launch_worker, as are
+	# the other launch gate inputs. Missing context must fail closed too.
+	[[ -n "${repo_path:-}" ]] || return 1
+	# shellcheck source=runner-capability-helper.sh
+	source "${SCRIPT_DIR}/runner-capability-helper.sh"
+	_ds_t0=$(_ds_now_ns)
+	local capability_rc=0
+	runner_capability_check_fresh "${repo_path:-}" "$issue_number" "$repo_slug" "$LOGFILE" || capability_rc=$?
+	_ds_record "$issue_number" "$repo_slug" "preclaim_issue_read" "$_ds_t0"
+	[[ "$capability_rc" -eq 0 ]] || return 1
 
 	# t3549: acquire the cross-runner GitHub claim only after the canary proves
 	# this runtime can start. Otherwise canary timeout storms publish persistent

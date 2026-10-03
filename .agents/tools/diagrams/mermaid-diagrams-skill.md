@@ -1,172 +1,65 @@
 ---
-description: "|"
+description: Mermaid diagram syntax pitfalls — quoting, reserved words, renderer differences
 mode: subagent
-imported_from: external
 ---
 
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-# mermaid-diagrams
 
-# Mermaid Diagrams
+# Mermaid Diagrams — Pitfalls
 
-Generate diagrams in markdown that render in GitHub, GitLab, VS Code, Obsidian, Notion.
+Diagrams render in GitHub, GitLab, VS Code, Obsidian, Notion. Models already know the
+diagram types (`flowchart`, `sequenceDiagram`, `erDiagram`, `classDiagram`,
+`stateDiagram-v2`, `gantt`, `journey`, `gitGraph`, `pie`, `quadrantChart`); this page
+covers only the syntax mistakes smaller models actually hit.
 
-## Quick Start
+## Edge-label quoting
 
-````markdown
-```mermaid
-flowchart LR
-    A[Start] --> B{Decision}
-    B -->|Yes| C[Action]
-    B -->|No| D[End]
-```
-````
-
-## Quick Decision Tree
-
-```
-What to visualize?
-├─ Process, algorithm, decision flow    → flowchart
-├─ API calls, service interactions      → sequenceDiagram
-├─ Database tables, relationships       → erDiagram
-├─ OOP, type hierarchy, domain model    → classDiagram
-├─ State machine, lifecycle             → stateDiagram-v2
-├─ System architecture, services        → flowchart + subgraphs (or C4Context)
-├─ Project timeline, sprints            → gantt
-├─ User experience, pain points         → journey
-├─ Git branches                         → gitGraph
-├─ Data distribution                    → pie
-└─ Priority matrix                      → quadrantChart
-```
-
-## Diagram Types
-
-| Type | Declaration | Best For |
-|------|-------------|----------|
-| **Flowchart** | `flowchart LR/TB` | Processes, decisions, data flow |
-| **Sequence** | `sequenceDiagram` | API flows, service calls |
-| **ER** | `erDiagram` | Database schemas |
-| **Class** | `classDiagram` | Types, domain models |
-| **State** | `stateDiagram-v2` | State machines |
-| **Gantt** | `gantt` | Project timelines |
-| **Journey** | `journey` | User experience |
-| **C4** | `C4Context` | System architecture |
-| **Git** | `gitGraph` | Branch visualization |
-
-## Common Patterns
-
-### System Architecture
+Quote edge labels that contain `|`, `#`, or punctuation — an unquoted label breaks
+the parser at the first special character:
 
 ```mermaid
 flowchart LR
-    subgraph Client
-        Browser & Mobile
-    end
-    subgraph Services
-        API --> Auth & Core
-    end
-    subgraph Data
-        DB[(PostgreSQL)]
-    end
-    Client --> API
-    Core --> DB
+    A -->|"Approve (final)"| B
+    A -->|Reject| C
 ```
 
-### API Request Flow
+## Reserved words
+
+`end` (lowercase) closes `subgraph`, `alt`, `opt`, `loop`, `par`, and `critical`
+blocks. A node or state literally named `end` breaks parsing — capitalize it
+(`End`) or quote it: `["End"]`.
+
+## Special characters in node text
+
+Escape `"`, `#`, `<`, `>`, `{`, `}` inside node labels with HTML entities, or wrap
+the whole label in quotes:
 
 ```mermaid
-sequenceDiagram
-    autonumber
-    Client->>+API: POST /orders
-    API->>Auth: Validate
-    Auth-->>API: OK
-    API->>+DB: Insert
-    DB-->>-API: ID
-    API-->>-Client: 201 Created
+flowchart LR
+    A["Cost: #quot;$5#quot; < $10"]
 ```
 
-### Database Schema
+Unescaped `{`/`}` inside flowchart node text is read as a new node shape, not
+literal text — this is the most common silent-failure case.
 
-```mermaid
-erDiagram
-    USER ||--o{ ORDER : places
-    ORDER ||--|{ LINE_ITEM : contains
-    USER { uuid id PK; string email UK }
-    ORDER { uuid id PK; uuid user_id FK }
-```
+## Subgraph IDs
 
-### State Machine
+Give every `subgraph` an explicit ID (`subgraph client [Client Layer]`) instead
+of relying on the title text as the ID. Untitled/duplicate-title subgraphs
+collide and links between them silently fail to resolve.
 
-```mermaid
-stateDiagram-v2
-    [*] --> Draft
-    Draft --> Submitted : submit()
-    Submitted --> Approved : approve()
-    Submitted --> Rejected : reject()
-    Approved --> [*]
-```
+## Renderer differences: GitHub vs mermaid-cli
 
-## Syntax Quick Reference
+- GitHub is stricter about trailing semicolons inside `erDiagram` attribute
+  blocks than `mermaid-cli`/Mermaid Live — omit them.
+- `%%{init: ...}%%` theme directives render in mermaid-cli and VS Code but
+  GitHub's built-in renderer ignores them.
+- GitHub caps diagram complexity — large `erDiagram`/`classDiagram` graphs can
+  render blank with no error; split oversized diagrams instead of debugging one.
+- Validate in the [Mermaid Live Editor](https://mermaid.live) first; valid
+  there but blank on GitHub is almost always one of the above.
 
-### Flowchart Nodes
-
-```
-[Rectangle]  (Rounded)  {Diamond}  [(Database)]  [[Subroutine]]
-((Circle))   >Asymmetric]   {{Hexagon}}
-```
-
-### Flowchart Edges
-
-```
-A --> B       # Arrow
-A --- B       # Line
-A -.-> B      # Dotted arrow
-A ==> B       # Thick arrow
-A -->|text| B # Labeled
-```
-
-### Sequence Arrows
-
-```
-->>   # Solid arrow (request)
--->>  # Dotted arrow (response)
--x    # X end (async)
--)    # Open arrow
-```
-
-### ER Cardinality
-
-```
-||--||   # One to one
-||--o{   # One to many
-}o--o{   # Many to many
-```
-
-## Best Practices
-
-1. **Choose the right type** — Use decision tree above
-2. **Keep focused** — One concept per diagram
-3. **Use meaningful labels** — Not just A, B, C
-4. **Direction matters** — `LR` for flows, `TB` for hierarchies
-5. **Group with subgraphs** — Organize related nodes
-
-## Reference Documentation
-
-| File | Purpose |
-|------|---------|
-| [mermaid-diagrams-skill/flowcharts.md](mermaid-diagrams-skill/flowcharts.md) | Nodes, edges, subgraphs, styling |
-| [mermaid-diagrams-skill/sequence.md](mermaid-diagrams-skill/sequence.md) | Participants, messages, activation |
-| [mermaid-diagrams-skill/class-er.md](mermaid-diagrams-skill/class-er.md) | Classes, ER diagrams, relationships |
-| [mermaid-diagrams-skill/state-journey.md](mermaid-diagrams-skill/state-journey.md) | States, user journeys |
-| [mermaid-diagrams-skill/data-charts.md](mermaid-diagrams-skill/data-charts.md) | Gantt, Pie, Timeline, Quadrant |
-| [mermaid-diagrams-skill/architecture.md](mermaid-diagrams-skill/architecture.md) | Architecture, Block, C4, Kanban, Packet, Requirement |
-| [mermaid-diagrams-skill/cheatsheet.md](mermaid-diagrams-skill/cheatsheet.md) | All syntax quick reference |
-
-## Resources
-
-- **Official Documentation**: https://mermaid.js.org
-- **Live Editor**: https://mermaid.live
-- **GitHub Repository**: https://github.com/mermaid-js/mermaid
-- **GitHub Markdown Support**: https://docs.github.com/en/get-started/writing-on-github/working-with-advanced-formatting/creating-diagrams
-- **GitLab Markdown Support**: https://docs.gitlab.com/ee/user/markdown.html#diagrams-and-flowcharts
+**Resources:** [mermaid.js.org](https://mermaid.js.org) ·
+[mermaid.live](https://mermaid.live) ·
+[github.com/mermaid-js/mermaid](https://github.com/mermaid-js/mermaid)

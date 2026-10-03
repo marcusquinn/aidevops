@@ -11,6 +11,9 @@ IFS=$'\n\t'
 trap 'rc=$?; echo "[ERROR] ${BASH_SOURCE[0]}:${LINENO} exit $rc" >&2' ERR
 shopt -s inherit_errexit 2>/dev/null || true
 
+# shellcheck source=../_opencode_config_paths.sh
+source "${BASH_SOURCE[0]%/*}/../_opencode_config_paths.sh"
+
 _SETUP_GOOGLE_ANALYTICS_MCP_KEY="google-analytics-mcp"
 _SETUP_GOOGLE_ANALYTICS_MCP_LABEL="Google Analytics MCP"
 
@@ -681,13 +684,43 @@ _setup_opencode_v2_link_framework_guide() {
 	return 0
 }
 
+# The opencode2 shim exports OPENCODE_CONFIG, OPENCODE_CONFIG_DIR and
+# XDG_CONFIG_HOME for its isolated runtime, so setup (or a setup test) started
+# from an opencode2 shell inherits them. A V1 pass must never treat those as V1
+# locations: writing the V1 plugin entry into the live V2 config unloads the
+# aidevops V2 plugin, its agents and its OAuth pool request hooks, and V2 then
+# fails with "API key is invalid" (GH#32738). Prints the path unchanged, or
+# nothing when it belongs to an aidevops-managed V2 runtime.
+# find_opencode_config additionally rejects ambient OPENCODE_CONFIG /
+# OPENCODE_CONFIG_DIR paths owned by other programs (GH#33046).
+_setup_opencode_v1_ambient_path() {
+	local candidate="$1"
+	[[ -n "$candidate" ]] || return 0
+	opencode_config_path_is_v2_owned "$candidate" && return 0
+	printf '%s\n' "$candidate"
+	return 0
+}
+
+# Resolve the V1 opencode.json while ignoring V2-owned ambient config paths.
+_setup_opencode_v1_find_config() {
+	local ambient_config=""
+	local ambient_config_dir=""
+	local ambient_config_home=""
+	ambient_config=$(_setup_opencode_v1_ambient_path "${OPENCODE_CONFIG:-}")
+	ambient_config_dir=$(_setup_opencode_v1_ambient_path "${OPENCODE_CONFIG_DIR:-}")
+	ambient_config_home=$(_setup_opencode_v1_ambient_path "${XDG_CONFIG_HOME:-}")
+	OPENCODE_CONFIG="$ambient_config" OPENCODE_CONFIG_DIR="$ambient_config_dir" \
+		XDG_CONFIG_HOME="$ambient_config_home" find_opencode_config
+	return $?
+}
+
 setup_opencode_plugins() {
 	local profile="${AIDEVOPS_OPENCODE_PROFILE:-v1}"
 	local binary_name="opencode"
 	local plugin_entry="index.mjs"
 	local plugin_key="plugin"
-	local config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
-	local opencode_config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
+	local config_home=""
+	local opencode_config_dir=""
 	local opencode_config=""
 	local binary_path=""
 	if declare -F aidevops_opencode_profile_id >/dev/null 2>&1; then
@@ -701,6 +734,10 @@ setup_opencode_plugins() {
 		config_home="${AIDEVOPS_OPENCODE_V2_CONFIG_HOME:-${v2_root}/config}"
 		opencode_config_dir="${AIDEVOPS_OPENCODE_V2_CONFIG_DIR:-${config_home}/opencode}"
 		opencode_config="${AIDEVOPS_OPENCODE_V2_CONFIG:-${opencode_config_dir}/opencode.json}"
+	else
+		config_home=$(_setup_opencode_v1_ambient_path "${XDG_CONFIG_HOME:-}")
+		config_home="${config_home:-$HOME/.config}"
+		opencode_config_dir="${config_home}/opencode"
 	fi
 	# Check prerequisites before announcing setup (GH#5240)
 	if ! binary_path=$(_setup_opencode_plugins_resolve_binary "$binary_name" "$profile"); then
@@ -744,7 +781,7 @@ setup_opencode_plugins() {
 		fi
 		_setup_opencode_v2_link_framework_guide "$opencode_config_dir"
 	fi
-	if [[ -n "$opencode_config" ]] || opencode_config=$(find_opencode_config); then
+	if [[ -n "$opencode_config" ]] || opencode_config=$(_setup_opencode_v1_find_config); then
 		pool_plugin_registered=$(_setup_opencode_plugins_register_file_url "$opencode_config" "$aidevops_plugin_entrypoint" "$plugin_key")
 	else
 		print_info "opencode.json not found — run 'opencode' once to create it, then re-run setup"
@@ -756,6 +793,11 @@ setup_opencode_plugins() {
 		_setup_opencode_plugins_remove_managed_symlink "$aidevops_plugin_dst"
 	else
 		_setup_opencode_plugins_register_symlink "$plugins_dir" "$aidevops_plugin_symlink_src" "$aidevops_plugin_dst"
+	fi
+	# A V1 directory link left in the V2 plugins dir duplicates the plugin ID or
+	# loads the V1 entry; remove it so a redeploy repairs GH#32738 residue.
+	if [[ "$profile" == "v2" ]]; then
+		_setup_opencode_plugins_remove_managed_symlink "$plugins_dir/opencode-aidevops"
 	fi
 
 	setup_track_configured "OpenCode plugins"
@@ -800,16 +842,19 @@ setup_seo_mcps() {
 	# Subagents: serper.md, dataforseo.md, ahrefs.md, google-search-console.md
 	print_info "SEO uses curl-based subagents (zero context cost until invoked)"
 
-	# Check if credentials are configured
+	# Resolve DataForSEO independently of the other providers' config file.
+	# shellcheck source=../../dataforseo-credentials.sh
+	source "${INSTALL_DIR}/.agents/scripts/dataforseo-credentials.sh"
+	if dataforseo_load_credentials; then
+		print_success "DataForSEO credentials configured"
+	else
+		print_info "DataForSEO: aidevops secret set DATAFORSEO_API_LOGIN and DATAFORSEO_API_PASSWORD"
+	fi
+
+	# Check other SEO providers' credentials.
 	if [[ -f "$HOME/.config/aidevops/credentials.sh" ]]; then
 		# shellcheck source=/dev/null
 		source "$HOME/.config/aidevops/credentials.sh"
-
-		if [[ -n "${DATAFORSEO_USERNAME:-}" ]]; then
-			print_success "DataForSEO credentials configured"
-		else
-			print_info "DataForSEO: set DATAFORSEO_USERNAME and DATAFORSEO_PASSWORD in credentials.sh"
-		fi
 
 		if [[ -n "${SERPER_API_KEY:-}" ]]; then
 			print_success "Serper API key configured"

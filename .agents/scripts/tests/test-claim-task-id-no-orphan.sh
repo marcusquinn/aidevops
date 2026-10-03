@@ -40,6 +40,8 @@
 #   16. rejected descriptions fail pre-allocation validation
 #   17. canonical TODO advisory stays out of captured stdout
 #   18. non-numeric issue creator output is not emitted as a reference
+#   19. tip-only reconcile reads shallow only in isolated Git contexts
+#   20. discovery failures expose the configured HTTPS timeout budget
 
 set -u
 
@@ -633,6 +635,152 @@ test_non_numeric_issue_output_is_rejected() {
 	return 0
 }
 test_non_numeric_issue_output_is_rejected
+
+# A default-branch reconcile read needs the tip's file, unlike the counter
+# branch's CAS parent. The shallow flag must not leak into a shared worktree.
+test_reconcile_tip_fetch_depth() {
+	local name="19: default-counter reconcile fetch is shallow only when isolated"
+	local tmpdir
+	tmpdir=$(mktemp -d) || return 1
+	# shellcheck disable=SC2064
+	trap "rm -rf '$tmpdir'" RETURN
+	(
+		REMOTE_NAME=origin
+		COUNTER_BRANCH=task-id-counter
+		COUNTER_FILE=.task-counter
+		_CLAIM_COUNTER_CONTEXT_ROOT="$tmpdir"
+		CAS_GIT_CONTEXT_PATH="$tmpdir/repository.git"
+		_run_git_with_ssh_fallback() { printf '%s\n' "$*" >>"$tmpdir/fetches"; return 0; }
+		_counter_git() { printf '23\n'; return 0; }
+		_cas_read_default_counter_for_reconcile main >/dev/null
+		CAS_GIT_CONTEXT_PATH=""
+		_cas_read_default_counter_for_reconcile main >/dev/null
+	)
+	if [[ $(<"$tmpdir/fetches") == *$'fetch -q --depth=1 origin main\n'* ]] &&
+		[[ $(<"$tmpdir/fetches") == *'fetch -q origin main'* ]]; then
+		pass "$name"
+	else
+		fail "$name" "fetches=$(<"$tmpdir/fetches")"
+	fi
+	return 0
+}
+test_reconcile_tip_fetch_depth
+
+test_discovery_timeout_diagnostic() {
+	local name="20: failed discovery names the HTTPS timeout budget"
+	local tmpdir
+	tmpdir=$(mktemp -d) || return 1
+	# shellcheck disable=SC2064
+	trap "rm -rf '$tmpdir'" RETURN
+	(
+		_COUNTER_BRANCH_SET=false
+		OFFLINE_MODE=false
+		COUNTER_BRANCH=main
+		DEFAULT_BRANCH=main
+		REMOTE_NAME=origin
+		CAS_HTTPS_TIMEOUT_S=30
+		_run_git_with_ssh_fallback() {
+			[[ " $* " == *' ls-remote '* ]] && return 1
+			return 124
+		}
+		log_error() { printf '%s\n' "$*" >>"$tmpdir/diagnostic"; return 0; }
+		_task_counter_status() { return 0; }
+		resolve_implicit_counter_branch "$tmpdir" >/dev/null
+	) || true
+	if grep -q 'COUNTER_BRANCH_DISCOVERY_ERROR:.*fetch_rc=124, probe_rc=1, CAS_HTTPS_TIMEOUT_S=30' "$tmpdir/diagnostic"; then
+		pass "$name"
+	else
+		fail "$name" "diagnostic=$(<"$tmpdir/diagnostic")"
+	fi
+	return 0
+}
+test_discovery_timeout_diagnostic
+
+# GH#33157: the reconcile floor comes from remote TODO.md, not the local file.
+test_reconcile_seed_uses_remote_todo() {
+	local name="21: reconcile seed uses remote TODO.md, ignoring stale local TODO.md"
+	local tmpdir seed
+	tmpdir=$(mktemp -d) || return 1
+	# shellcheck disable=SC2064
+	trap "rm -rf '$tmpdir'" RETURN
+	printf -- '- [ ] t100 stale local\n' >"${tmpdir}/TODO.md"
+	seed=$(
+		REMOTE_NAME=origin
+		COUNTER_BRANCH=develop
+		_counter_git() {
+			[[ "$*" == "show origin/develop:TODO.md" ]] || return 1
+			printf -- '- [ ] t100 old\n- [x] t18420 newer\n'
+			return 0
+		}
+		_cas_reconciled_counter_value "$tmpdir" 18414 18414 develop
+	)
+	if [[ "$seed" == "18421" ]]; then
+		pass "$name"
+	else
+		fail "$name" "seed=${seed}"
+	fi
+	return 0
+}
+test_reconcile_seed_uses_remote_todo
+
+# GH#33157: same tNNN prefix + different title is a collision; same title recovers.
+test_duplicate_check_title_collision() {
+	local name="22: prefix match with a different title is TASK_ID_COLLISION (rc=2)"
+	local out rc=0 rc_same=0 out_same
+	local res
+	# Earlier tests stub this helper; load the real one in a subshell.
+	res=$(
+		unset _CLAIM_TASK_ID_ISSUE_LIB_LOADED
+		# shellcheck disable=SC1090
+		source "${CLAIM_SCRIPT%claim-task-id.sh}claim-task-id-issue.sh" 2>/dev/null
+		gh() {
+			if [[ "$1" == "repo" ]]; then
+				printf 'owner/repo\n'
+			else
+				printf '[{"number":77,"title":"t18419: another feature"}]\n'
+			fi
+			return 0
+		}
+		r1=0
+		r2=0
+		o1=$(_check_duplicate_issue "t18419: ci: declare things" 2>/dev/null) || r1=$?
+		o2=$(_check_duplicate_issue "t18419: Another  feature" 2>/dev/null) || r2=$?
+		printf '%s|%s|%s|%s\n' "$r1" "$o1" "$r2" "$o2"
+	)
+	IFS='|' read -r rc out rc_same out_same <<<"$res"
+	if [[ $rc -eq 2 && -z "$out" && $rc_same -eq 0 && "$out_same" == "77" ]]; then
+		pass "$name"
+	else
+		fail "$name" "rc=${rc} out=${out} rc_same=${rc_same} out_same=${out_same}"
+	fi
+	return 0
+}
+test_duplicate_check_title_collision
+
+test_create_issue_reports_collision() {
+	local name="23: create_github_issue fails on collision instead of recovering"
+	local tmpdir out rc=0
+	tmpdir=$(mktemp -d) || return 1
+	# shellcheck disable=SC2064
+	trap "rm -rf '$tmpdir'" RETURN
+	printf '# Project TODO\n' >"${tmpdir}/TODO.md"
+	out=$(
+		# Earlier tests stub create_github_issue; restore the real one.
+		# shellcheck disable=SC1090
+		source "$CLAIM_SCRIPT" 2>/dev/null
+		_try_issue_sync_delegation() { return 1; }
+		_extract_github_slug() { printf 'owner/repo\n'; return 0; }
+		_check_duplicate_issue() { return 2; }
+		create_github_issue "t18419: mine" "desc" "bug" "$tmpdir" 2>/dev/null
+	) || rc=$?
+	if [[ $rc -ne 0 && -z "$out" ]]; then
+		pass "$name"
+	else
+		fail "$name" "rc=${rc} out=${out}"
+	fi
+	return 0
+}
+test_create_issue_reports_collision
 
 # ---------------------------------------------------------------------------
 # Summary

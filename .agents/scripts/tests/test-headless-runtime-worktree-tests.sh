@@ -878,6 +878,141 @@ test_worker_worktree_clean_without_upstream_blocks_local_commits() {
 	return 0
 }
 
+# --- OpenCode runtime lockfile drift (GH#32903) ---
+
+_lockfile_git() {
+	local repo="$1"
+	shift
+	git -C "$repo" -c user.name="aidevops-test" -c user.email="aidevops-test@example.invalid" \
+		-c commit.gpgsign=false "$@"
+	return $?
+}
+
+_write_npm_opencode_lock() {
+	local file="$1"
+	local version="$2"
+	local zod_version="${3:-4.1.8}"
+	printf '{\n  "name": "opencode",\n  "lockfileVersion": 3,\n  "packages": {\n' >"$file"
+	printf '    "": { "dependencies": { "@opencode-ai/plugin": "%s" } },\n' "$version" >>"$file"
+	printf '    "node_modules/@opencode-ai/plugin": {\n      "version": "%s",\n' "$version" >>"$file"
+	printf '      "resolved": "https://registry.npmjs.org/@opencode-ai/plugin/-/plugin-%s.tgz",\n' "$version" >>"$file"
+	printf '      "integrity": "sha512-plugin%s==",\n' "${version//./}" >>"$file"
+	printf '      "dependencies": { "@opencode-ai/sdk": "%s", "zod": "%s" }\n    },\n' "$version" "$zod_version" >>"$file"
+	printf '    "node_modules/@opencode-ai/sdk": {\n      "version": "%s",\n' "$version" >>"$file"
+	printf '      "integrity": "sha512-sdk%s=="\n    },\n' "${version//./}" >>"$file"
+	printf '    "node_modules/zod": { "version": "%s", "integrity": "sha512-zod==" }\n  }\n}\n' "$zod_version" >>"$file"
+	return 0
+}
+
+_write_bun_opencode_lock() {
+	local file="$1"
+	local version="$2"
+	local zod_version="${3:-4.1.8}"
+	printf '{\n  "lockfileVersion": 1,\n  "workspaces": {\n    "": {\n' >"$file"
+	printf '      "dependencies": {\n        "@opencode-ai/plugin": "%s",\n      },\n    },\n  },\n' "$version" >>"$file"
+	printf '  "packages": {\n' >>"$file"
+	printf '    "@opencode-ai/plugin": ["@opencode-ai/plugin@%s", "", { "dependencies": { "@opencode-ai/sdk": "%s", "zod": "%s" } }, "sha512-plugin%s=="],\n' \
+		"$version" "$version" "$zod_version" "${version//./}" >>"$file"
+	printf '    "@opencode-ai/sdk": ["@opencode-ai/sdk@%s", "", {}, "sha512-sdk%s=="],\n' "$version" "${version//./}" >>"$file"
+	printf '    "zod": ["zod@%s", "", {}, "sha512-zod=="],\n  }\n}\n' "$zod_version" >>"$file"
+	return 0
+}
+
+# Creates a repo whose worker branch is one commit behind origin/main.
+_init_opencode_lockfile_repo() {
+	local repo="$1"
+	local lock_name="$2"
+	mkdir -p "${repo}/.opencode"
+	git -C "$repo" init -q -b main
+	if [[ "$lock_name" == "bun.lock" ]]; then
+		_write_bun_opencode_lock "${repo}/.opencode/bun.lock" "1.18.31"
+	else
+		_write_npm_opencode_lock "${repo}/.opencode/package-lock.json" "1.18.31"
+	fi
+	printf 'base\n' >"${repo}/README.md"
+	_lockfile_git "$repo" add -A
+	_lockfile_git "$repo" commit -q -m "base"
+	printf 'upstream\n' >"${repo}/UPSTREAM.md"
+	_lockfile_git "$repo" add UPSTREAM.md
+	_lockfile_git "$repo" commit -q -m "upstream"
+	git -C "$repo" update-ref refs/remotes/origin/main HEAD
+	_lockfile_git "$repo" checkout -q -b worker HEAD~1
+	printf 'worker\n' >"${repo}/WORKER.md"
+	_lockfile_git "$repo" add WORKER.md
+	_lockfile_git "$repo" commit -q -m "worker change"
+	return 0
+}
+
+test_opencode_lockfile_runtime_drift_restores_and_rebases() {
+	local lock_name="" repo="" output="" status=0 rebase_status=0 blocked_status=0
+	for lock_name in package-lock.json bun.lock; do
+		repo="${TEST_ROOT}/opencode-drift-${lock_name}"
+		_init_opencode_lockfile_repo "$repo" "$lock_name"
+		if [[ "$lock_name" == "bun.lock" ]]; then
+			_write_bun_opencode_lock "${repo}/.opencode/bun.lock" "1.18.32"
+		else
+			_write_npm_opencode_lock "${repo}/.opencode/package-lock.json" "1.18.32"
+		fi
+		blocked_status=0
+		_lockfile_git "$repo" rebase -q origin/main >/dev/null 2>&1 || blocked_status=$?
+		status=0 rebase_status=0
+		output=$(cmd_opencode_lockfile_drift --dir "$repo" --restore 2>&1) || status=$?
+		_lockfile_git "$repo" rebase -q origin/main >/dev/null 2>&1 || rebase_status=$?
+		if [[ "$blocked_status" -ne 0 && "$status" -eq 0 &&
+			"$output" == *".opencode/${lock_name}"$'\t'"restored"* &&
+			-z "$(git -C "$repo" status --short)" && "$rebase_status" -eq 0 &&
+			-f "${repo}/UPSTREAM.md" && -z "$(git -C "$repo" log --format=%H origin/main..HEAD -- .opencode)" ]]; then
+			print_result "opencode ${lock_name} runtime-only drift is restored and rebase succeeds" 0
+		else
+			print_result "opencode ${lock_name} runtime-only drift is restored and rebase succeeds" 1 \
+				"blocked=$blocked_status status=$status rebase=$rebase_status output=${output:-<empty>}"
+		fi
+	done
+	return 0
+}
+
+test_opencode_lockfile_real_changes_are_preserved() {
+	local lock_name="" repo="" output="" status=0 lock_path="" before="" after=""
+	for lock_name in package-lock.json bun.lock; do
+		repo="${TEST_ROOT}/opencode-preserve-${lock_name}"
+		lock_path="${repo}/.opencode/${lock_name}"
+		_init_opencode_lockfile_repo "$repo" "$lock_name"
+		# Version drift plus a non-OpenCode dependency change is ambiguous.
+		if [[ "$lock_name" == "bun.lock" ]]; then
+			_write_bun_opencode_lock "$lock_path" "1.18.32" "4.2.0"
+		else
+			_write_npm_opencode_lock "$lock_path" "1.18.32" "4.2.0"
+		fi
+		printf 'worker edit\n' >>"${repo}/README.md"
+		before=$(git -C "$repo" diff)
+		status=0
+		output=$(cmd_opencode_lockfile_drift --dir "$repo" --restore 2>&1) || status=$?
+		after=$(git -C "$repo" diff)
+		if [[ "$status" -eq 1 && "$output" == *"preserved:non-opencode-change"* &&
+			-n "$before" && "$before" == "$after" ]]; then
+			print_result "opencode ${lock_name} ambiguous drift and other edits are preserved" 0
+		else
+			print_result "opencode ${lock_name} ambiguous drift and other edits are preserved" 1 \
+				"status=$status output=${output:-<empty>}"
+		fi
+	done
+
+	# Runtime-only drift is restored while a genuine tracked edit elsewhere stays.
+	repo="${TEST_ROOT}/opencode-mixed"
+	_init_opencode_lockfile_repo "$repo" "package-lock.json"
+	_write_npm_opencode_lock "${repo}/.opencode/package-lock.json" "1.18.32"
+	printf 'worker edit\n' >>"${repo}/README.md"
+	status=0
+	output=$(cmd_opencode_lockfile_drift --dir "$repo" --restore 2>&1) || status=$?
+	if [[ "$status" -eq 0 && "$(git -C "$repo" status --short)" == " M README.md" ]]; then
+		print_result "opencode runtime drift restore leaves other tracked edits intact" 0
+	else
+		print_result "opencode runtime drift restore leaves other tracked edits intact" 1 \
+			"status=$status output=${output:-<empty>} git=$(git -C "$repo" status --short)"
+	fi
+	return 0
+}
+
 test_worker_worktree_claim_classifies_unreclaimed_live_owner() {
 	local worktree_dir="${TEST_ROOT}/claim-live-owner-blocked"
 	mkdir -p "$worktree_dir"

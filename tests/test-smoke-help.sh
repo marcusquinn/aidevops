@@ -116,7 +116,6 @@ SKIP_HELP=(
 	"servers-helper.sh"
 	"pagespeed-helper.sh"
 	"tool-version-check.sh"
-	"todo-ready.sh"
 	"localhost-helper.sh"
 	"linters-local.sh"
 	"markdown-lint-fix.sh"

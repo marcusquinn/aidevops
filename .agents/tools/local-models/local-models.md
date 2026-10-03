@@ -225,8 +225,7 @@ Server defaults (`~/.aidevops/local-models/config.json`): port 8080, host 127.0.
 
 ```bash
 model-availability-helper.sh check local          # exit 0 if server running
-compare-models-helper.sh compare local sonnet haiku
-response-scoring-helper.sh prompt "Explain X" --models local,haiku,sonnet
+compare-models-helper.sh cross-review --prompt "Explain X" --models local,haiku,sonnet
 ```
 
 > Helper scripts must recognise `local` tier (tracked in t1338).

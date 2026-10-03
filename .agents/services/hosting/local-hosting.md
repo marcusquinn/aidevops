@@ -245,6 +245,8 @@ localhost-helper.sh start-mcp | stop-mcp | test-mcp | mcp-query "<sql>"
 
 **LocalWP coexistence:** `localdev add` checks for `#Local Site` collisions and rejects conflicts. `localdev list` shows both. Sites config: `~/Library/Application Support/Local/sites.json`.
 
+**Shared site, parallel worktrees:** a LocalWP (or any shared) site is shared by every session that syncs into it. A plain `rsync --delete` from an in-progress or stale worktree can silently remove another session's already-merged work, with no record of which session last deployed. Use `local-site-sync-helper.sh sync --src <worktree> --dest <plugin-or-theme-dir>` — it refuses to sync a worktree that lacks the default branch, warns on a recent sync from another worktree, and records a stamp; `local-site-sync-helper.sh status --dest <dir>` reports it. See `tools/wordpress/wp-dev.md` ("Sync to LocalWP").
+
 ## Database Patterns
 
 ```bash

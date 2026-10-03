@@ -182,7 +182,7 @@ main() {
 			fi
 			shift 2
 			;;
-		--help | -h)
+		--help | -h | help)
 			show_help
 			exit 0
 			;;

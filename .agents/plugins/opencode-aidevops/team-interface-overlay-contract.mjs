@@ -125,7 +125,9 @@ function readPermissionRules() {
     "**/.netrc": "deny",
     "**/.npmrc": "deny",
     "**/.pypirc": "deny",
-    "**/.git-credentials": "deny",
+    // Covers .git-credentials. OpenCode redacts values under keys containing
+    // "credential" in `debug config`, which would make this deny unverifiable.
+    "**/.git-cred*": "deny",
     "**/auth.json": "deny",
   };
 }
@@ -196,6 +198,9 @@ export function conversationBootstrapConfig(pluginUrl) {
     plugin: [parsedPluginUrl.href],
     share: "disabled",
     snapshot: false,
+    // Declared in the file as well as the plugin hook: `opencode debug config`
+    // does not reflect hook-set subagent_depth, so verification needs it here.
+    subagent_depth: 0,
     tools: conversationTools(),
   };
 }

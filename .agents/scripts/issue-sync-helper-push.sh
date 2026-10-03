@@ -213,8 +213,11 @@ _push_create_issue() {
 
 	# t1970/t1984/t2157: auto-assign interactive origin issues (not auto-dispatch).
 	# Worker issues follow status:claimed + pulse-managed assignment instead.
+	# GH#32703: decide from the TODO intent ($labels). The pending-publication
+	# projection strips auto-dispatch, so $all_labels would self-assign
+	# worker-owned tasks and strand them after publication.
 	[[ -n "$num" && -z "$assignee" && "$origin_label" == "origin:interactive" ]] &&
-		_push_auto_assign_interactive "$num" "$repo" "$all_labels"
+		_push_auto_assign_interactive "$num" "$repo" "$labels"
 
 	# Mapping validation above must precede this lock mutation.
 	[[ -n "$num" ]] && _push_lock_created_issue "$num" "$repo" "$origin_label"

@@ -45,10 +45,16 @@ export const ASTRA_COMPACTION_TARGET = 400000;
 export const ASTRA_COMPACTION_BUDGET_TARGET = 240000;
 export const ASTRA_OUTPUT_DEFAULT = 128000;
 
-/** Opt-in GPT-6 Sol/Luna compaction target, not a provider capacity claim. */
+/**
+ * Default GPT-6 Sol/Luna compaction target, not a provider capacity claim.
+ * GPT-6.1 Sol advertises 922K input natively; the cap keeps sessions below
+ * OpenAI's 272K short-context price boundary.
+ */
 export const GPT6_COMPACTION_TARGET = 240000;
 export const GPT6_OUTPUT_DEFAULT = 128000;
 export const GPT6_MODEL_IDS = [
+  "gpt-6.1-sol",
+  "gpt-6.1-sol-fast",
   "gpt-6-sol",
   "gpt-6-sol-fast",
   "gpt-6-luna",
@@ -122,6 +128,8 @@ export const CLAUDE_MODEL_LIMITS = {
   "claude-haiku-4-5":  { context:  200000, output: 32000 },
   "claude-sonnet-4-5": { context:  200000, output: 64000 },
   "claude-sonnet-4-6": { context: 1000000, output: 64000 },
+  // Sonnet 5.5: models.dev publishes 1M context / 128K output.
+  "claude-sonnet-5-5": { context: 1000000, output: 128000 },
   "claude-opus-4-5":   { context:  200000, output: 64000 },
   "claude-opus-4-6":   { context: 1000000, output: 64000 },
   // Opus 4.7 context default 250K (not the 1M API ceiling). Anthropic's own

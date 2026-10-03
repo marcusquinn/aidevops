@@ -4,12 +4,12 @@
 
 set -euo pipefail
 
-printf '%s | fetch_mode=%s pull_mode=%s dirty=%s remote_url=%s\n' \
+printf '%s | fetch_mode=%s pull_mode=%s dirty=%s remote_url=%s ssh_command=%s\n' \
 	"$*" \
 	"${FAKE_FETCH_MODE:-unset}" \
 	"${FAKE_PULL_MODE:-unset}" \
 	"${FAKE_DIRTY:-unset}" \
-	"${FAKE_REMOTE_URL:-unset}" >>"${FAKE_GIT_LOG:?}"
+	"${FAKE_REMOTE_URL:-unset}" "${GIT_SSH_COMMAND:-unset}" >>"${FAKE_GIT_LOG:?}"
 
 repo_path=""
 helper_used=0
@@ -55,6 +55,18 @@ diff)
 	fi
 	exit 0
 	;;
+status)
+	if [[ "${FAKE_DIRTY:-0}" == "1" ]]; then
+		printf ' M README.md\n'
+	fi
+	if [[ "${FAKE_UNTRACKED:-0}" == "1" ]]; then
+		printf '?? new-file.txt\n'
+	fi
+	exit 0
+	;;
+cat-file)
+	exit 1
+	;;
 rev-parse)
 	case "${1:-}" in
 	--abbrev-ref) printf '%s\n' "${FAKE_CURRENT_BRANCH:-main}" ;;
@@ -87,12 +99,21 @@ fetch)
 	;;
 ls-remote)
 	case "${FAKE_FETCH_MODE:-success}" in
-	success) printf '%s\trefs/heads/main\n' "${FAKE_UPSTREAM_SHA:-aaaa}"; exit 0 ;;
+	success)
+		printf '%s\trefs/heads/main\n' "${FAKE_UPSTREAM_SHA:-aaaa}"
+		exit 0
+		;;
 	auth_then_success)
 		if [[ "$helper_used" == "1" ]]; then
 			printf '%s\trefs/heads/main\n' "${FAKE_UPSTREAM_SHA:-aaaa}"
 			exit 0
 		fi
+		case "${FAKE_REMOTE_URL:-}" in
+		git@github.com:* | ssh://git@github.com/*)
+			printf 'git@github.com: Permission denied (publickey).\n' >&2
+			exit 1
+			;;
+		esac
 		printf "fatal: could not read Password for 'https://x-access-token:%s@github.com': terminal prompts disabled\n" "${FAKE_TOKEN:-SECRET_TOKEN}" >&2
 		exit 1
 		;;

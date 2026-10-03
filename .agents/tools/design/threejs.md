@@ -32,4 +32,4 @@ API changes; do not load every engine guide or invent supported export formats.
 
 Record durable UI decisions in the project `DESIGN.md`. Do not copy source-available
 noncommercial demos into a commercial app; use licensed dependencies and original
-implementation. For deterministic video, reuse `tools/video/remotion-3d.md`.
+implementation. For deterministic video, reuse `tools/video/remotion/remotion-3d.md`.

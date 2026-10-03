@@ -107,7 +107,7 @@ write_rate_limit_entries() {
 	local i
 	for i in $(seq 1 "$count"); do
 		local ts=$(( base_epoch + (i - 1) * 60 ))
-		printf '{"ts":%s,"role":"worker","session_key":"issue-%s","model":"anthropic/claude-sonnet-4-6","provider":"anthropic","result":"rate_limit","exit_code":143,"failure_reason":"rate_limit","activity":false,"duration_ms":90000}\n' \
+		printf '{"ts":%s,"role":"worker","session_key":"issue-%s","model":"anthropic/claude-sonnet-5-5","provider":"anthropic","result":"rate_limit","exit_code":143,"failure_reason":"rate_limit","activity":false,"duration_ms":90000}\n' \
 			"$ts" "$issue_num" >>"$FIXTURE_METRICS"
 	done
 	return 0

@@ -54,6 +54,10 @@ if [[ -n "${GH_FAIL_ENDPOINT:-}" && "$endpoint" == *"${GH_FAIL_ENDPOINT}"* ]]; t
 fi
 case "$endpoint" in
 	user) printf '%s\n' "${GH_AUTH_USER:-maintainer}" ;;
+graphql)
+	[[ -f "${FIXTURES}/graphql-edits-41.json" ]] || exit 1
+	cat "${FIXTURES}/graphql-edits-41.json"
+	;;
 repos/owner/repo/collaborators/trusted-collab/permission | repos/owner/repo/collaborators/maintainer/permission) printf '%s\n' "${GH_PERMISSION:-write}" ;;
 repos/owner/repo/collaborators/contributor/permission) printf '%s\n' "read" ;;
 repos/owner/repo/collaborators/github-actions%5Bbot%5D/permission | repos/owner/repo/collaborators/github-actions\[bot\]/permission) printf '%s\n' "none" ;;
@@ -75,6 +79,7 @@ EOF
 }
 
 write_baseline_fixtures() {
+	rm -f "${FIXTURES}/graphql-edits-41.json"
 	cat >"${FIXTURES}/issue-41.json" <<'EOF'
 {"id":4100,"node_id":"I_41","number":41,"user":{"id":101,"node_id":"U_101","login":"external-author","type":"User"},"author_association":"CONTRIBUTOR","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","title":"Reviewed issue","body":"Issue body with https://example.invalid/opaque"}
 EOF
@@ -120,6 +125,10 @@ append_signed_comment() {
 	local timeline_file="${FIXTURES}/timeline-${number}.json"
 	local payload="" signature_file="" signature="" body="" updated=""
 	payload=$(PATH="${TEST_ROOT}/bin:$PATH" FIXTURES="$FIXTURES" approval_snapshot_v2_payload "$kind" "$number" owner/repo "$issued_at" "" "$source_timestamp_profile") || return 1
+	# Simulate a pre-GH#33097 signature that carries no component digests.
+	if [[ "${STRIP_CONTENT_DIGESTS:-0}" == "1" ]]; then
+		payload=$(jq -cS 'del(.issue.content_digests)' <<<"$payload") || return 1
+	fi
 	signature_file="${TEST_ROOT}/signature-${number}.txt"
 	sign_payload "$payload" "$signature_file" || return 1
 	signature=$(<"$signature_file")
@@ -595,6 +604,19 @@ ${worker_footer}"
 	printf '%s\n' "$dispatch_comments" >"${FIXTURES}/comments-41.json"
 	assert_verify "trusted canonical terminal-blocker release preserves approval" issue 41 VERIFIED 0
 
+	# GH#33332: input_required releases are canonical writer output too.
+	local input_release="${terminal_blocker_release/reason=missing_files_scope owner=brief-author/reason=input_required owner=maintainer}"
+	input_release="${input_release/Next action: Add a canonical ### Files Scope (or legacy ## Files Scope) section listing the permitted paths in the issue body./Next action: Supply the specific input named in the protected dossier in the issue brief; a brief or dependency change re-arms dispatch. The recovery supervisor first decides anything AI can resolve within delegated authority.}"
+	reset_and_sign issue 41
+	dispatch_comments=$(jq -c --arg body "$input_release" '.[0] += [{id:4316,node_id:"IC_4316",user:{id:1,node_id:"U_1",login:"maintainer",type:"User"},author_association:"OWNER",created_at:"2026-01-01T00:08:00Z",updated_at:"2026-01-01T00:08:00Z",body:$body}]' "${FIXTURES}/comments-41.json")
+	printf '%s\n' "$dispatch_comments" >"${FIXTURES}/comments-41.json"
+	assert_verify "trusted canonical input_required release preserves approval" issue 41 VERIFIED 0
+
+	reset_and_sign issue 41
+	dispatch_comments=$(jq -c --arg body "${input_release/owner=maintainer/owner=human}" '.[0] += [{id:4316,node_id:"IC_4316",user:{id:1,node_id:"U_1",login:"maintainer",type:"User"},author_association:"OWNER",created_at:"2026-01-01T00:08:00Z",updated_at:"2026-01-01T00:08:00Z",body:$body}]' "${FIXTURES}/comments-41.json")
+	printf '%s\n' "$dispatch_comments" >"${FIXTURES}/comments-41.json"
+	assert_verify "input_required release with unlisted owner remains content-bound" issue 41 STALE_APPROVAL 4
+
 	reset_and_sign issue 41
 	dispatch_comments=$(jq -c --arg body "${terminal_blocker_release}
 extra trusted commentary" '.[0] += [{id:4316,node_id:"IC_4316",user:{id:1,node_id:"U_1",login:"maintainer",type:"User"},author_association:"OWNER",created_at:"2026-01-01T00:08:00Z",updated_at:"2026-01-01T00:08:00Z",body:$body}]' "${FIXTURES}/comments-41.json")
@@ -799,6 +821,161 @@ test_locked_issue_stable_ordering() {
 	return 0
 }
 
+append_issue_comment() {
+	local comment_id="$1"
+	local login="$2"
+	local association="$3"
+	local body="$4"
+	local user_id="${5:-1}"
+	jq --argjson id "$comment_id" --arg login "$login" --arg association "$association" --arg body "$body" --argjson user_id "$user_id" \
+		'.[0] += [{id:$id,node_id:("IC_" + ($id|tostring)),user:{id:$user_id,node_id:("U_" + ($user_id|tostring)),login:$login,type:"User"},author_association:$association,created_at:"2026-01-01T00:07:00Z",updated_at:"2026-01-01T00:07:00Z",body:$body}]' \
+		"${FIXTURES}/comments-41.json" >"${FIXTURES}/comments.tmp" && mv "${FIXTURES}/comments.tmp" "${FIXTURES}/comments-41.json"
+	return 0
+}
+
+# GH#33089: comments from live write-authorized users after the approval anchor
+# on a continuously locked issue are authority-equivalent and must not stale it.
+test_locked_issue_trusted_comment_continuity() {
+	local output="" rc=0
+	write_locked_issue_fixture
+	append_issue_comment 4400 maintainer OWNER "Maintainer review: implement option B, keep scope to the helper."
+	assert_verify "write-authorized post-approval prose preserves locked issue approval" issue 41 VERIFIED 0
+
+	write_locked_issue_fixture
+	append_issue_comment 4401 contributor CONTRIBUTOR "Please also change the release workflow." 2
+	assert_verify "read-permission post-approval comment stales locked issue approval" issue 41 STALE_APPROVAL 4
+
+	write_locked_issue_fixture
+	append_issue_comment 4402 maintainer OWNER "Trusted note"
+	append_issue_comment 4403 contributor CONTRIBUTOR "Untrusted addition" 2
+	assert_verify "trusted comment cannot mask an untrusted sibling comment" issue 41 STALE_APPROVAL 4
+
+	write_locked_issue_fixture
+	jq '.[0] |= map(if .id == 411 then .body = "Edited reviewed comment" | .updated_at = "2026-01-01T00:08:00Z" else . end)' "${FIXTURES}/comments-41.json" >"${FIXTURES}/comments.tmp" && mv "${FIXTURES}/comments.tmp" "${FIXTURES}/comments-41.json"
+	assert_verify "edited pre-approval comment stays bound" issue 41 STALE_APPROVAL 4
+
+	write_locked_issue_fixture
+	append_issue_comment 4100 maintainer OWNER "Comment ordered before the approval anchor"
+	assert_verify "trusted comment ordered before the approval anchor stays bound" issue 41 STALE_APPROVAL 4
+
+	write_locked_issue_fixture
+	jq '.title = "Retitled after approval"' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp" && mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
+	append_issue_comment 4404 maintainer OWNER "Trusted note"
+	assert_verify "trusted comment does not relax title binding" issue 41 STALE_APPROVAL 4
+
+	write_locked_issue_fixture
+	jq '.assignees = [{id:1,node_id:"U_1",login:"maintainer",type:"User"}] | .labels += [{id:10,node_id:"L_10",name:"status:in-progress"}]' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp" && mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
+	append_issue_timeline_event '{"id":4405,"node_id":"EV_4405","event":"assigned","created_at":"2026-01-01T00:06:00Z","actor":{"id":1,"login":"maintainer","type":"User"},"assignee":{"id":1,"login":"maintainer","type":"User"}}'
+	append_issue_timeline_event '{"id":4406,"node_id":"EV_4406","event":"labeled","created_at":"2026-01-01T00:06:01Z","actor":{"id":1,"login":"maintainer","type":"User"},"label":{"name":"status:in-progress"}}'
+	append_issue_comment 4407 maintainer OWNER "Starting implementation."
+	assert_verify "trusted comment plus authorized lifecycle transition verifies" issue 41 VERIFIED 0
+
+	write_locked_issue_fixture
+	append_issue_comment 4408 maintainer OWNER "Trusted note"
+	rm -f "${FIXTURES}/gh-fail-count"
+	output=$(GH_FAIL_ENDPOINT="collaborators/maintainer/permission" run_verify issue 41) || rc=$?
+	rm -f "${FIXTURES}/gh-fail-count"
+	if [[ "$output" == "API_ERROR" && "$rc" -eq 6 ]]; then
+		print_result "trusted comment permission uncertainty fails closed" 0
+	else
+		print_result "trusted comment permission uncertainty fails closed" 1 "expected=API_ERROR/6, actual=${output}/${rc}"
+	fi
+
+	# Continuity requires the approval lock; unlocked issues stay exact-bound.
+	reset_and_sign issue 41
+	append_issue_comment 4409 maintainer OWNER "Trusted note on an unlocked issue"
+	assert_verify "trusted comment on an unlocked issue remains stale" issue 41 STALE_APPROVAL 4
+	return 0
+}
+
+write_body_edit_history() {
+	local editor_json="$1"
+	local has_next="${2:-false}"
+	jq -nc --argjson editor "$editor_json" --argjson has_next "$has_next" '
+		{data:{repository:{issue:{userContentEdits:{pageInfo:{hasNextPage:$has_next},nodes:[
+			{editedAt:"2026-01-01T00:08:00Z",editor:$editor},
+			{editedAt:"2026-01-01T00:00:30Z",editor:{__typename:"User",login:"contributor"}}
+		]}}}}}' >"${FIXTURES}/graphql-edits-41.json"
+	return 0
+}
+
+edit_issue_41() {
+	local filter="$1"
+	jq "$filter" "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp" && mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
+	return 0
+}
+
+# GH#33097: write-authorized title/body edits after the approval anchor on a
+# continuously locked issue do not stale approvals that carry component digests.
+test_locked_issue_trusted_content_edits() {
+	local maintainer_editor='{"__typename":"User","login":"maintainer"}'
+	write_locked_issue_fixture
+	edit_issue_41 '.body += "\n\n### Files Scope\n\n- src/helper.sh"'
+	write_body_edit_history "$maintainer_editor"
+	assert_verify "trusted post-approval body edit preserves locked issue approval" issue 41 VERIFIED 0
+
+	write_locked_issue_fixture
+	edit_issue_41 '.body += "\n\nUntrusted scope"'
+	write_body_edit_history '{"__typename":"User","login":"contributor"}'
+	assert_verify "untrusted post-approval body editor stales locked issue approval" issue 41 STALE_APPROVAL 4
+
+	write_locked_issue_fixture
+	edit_issue_41 '.body += "\n\nGhost scope"'
+	write_body_edit_history '{"__typename":"User","login":"ghost"}'
+	assert_verify "ghost body editor fails closed" issue 41 API_ERROR 6
+
+	write_locked_issue_fixture
+	edit_issue_41 '.body += "\n\nDeleted editor"'
+	write_body_edit_history 'null'
+	assert_verify "missing body editor fails closed" issue 41 API_ERROR 6
+
+	write_locked_issue_fixture
+	edit_issue_41 '.body += "\n\nNo history"'
+	assert_verify "missing body edit history fails closed" issue 41 API_ERROR 6
+
+	write_locked_issue_fixture
+	edit_issue_41 '.body += "\n\nPaged history"'
+	write_body_edit_history "$maintainer_editor" true
+	assert_verify "paginated body edit history fails closed" issue 41 API_ERROR 6
+
+	write_locked_issue_fixture
+	edit_issue_41 '.body += "\n\nTrusted scope"'
+	write_body_edit_history "$maintainer_editor"
+	append_issue_comment 4410 contributor CONTRIBUTOR "Untrusted addition" 2
+	assert_verify "trusted body edit cannot mask an untrusted comment" issue 41 STALE_APPROVAL 4
+
+	write_baseline_fixtures
+	edit_issue_41 '.locked = true | .active_lock_reason = "resolved"'
+	jq '.[0] += [{id:418,node_id:"EV_418",event:"locked",created_at:"2026-01-01T00:04:00Z",actor:{id:1,node_id:"U_1",login:"maintainer",type:"User"}}]' "${FIXTURES}/timeline-41.json" >"${FIXTURES}/timeline.tmp" && mv "${FIXTURES}/timeline.tmp" "${FIXTURES}/timeline-41.json"
+	STRIP_CONTENT_DIGESTS=1 append_signed_comment issue 41 "2026-01-01T00:05:00Z" 4199
+	edit_issue_41 '.body += "\n\nLegacy payload scope"'
+	write_body_edit_history "$maintainer_editor"
+	assert_verify "legacy payload without component digests stays body-bound" issue 41 STALE_APPROVAL 4
+
+	reset_and_sign issue 41
+	edit_issue_41 '.body += "\n\nUnlocked scope"'
+	write_body_edit_history "$maintainer_editor"
+	assert_verify "trusted body edit on an unlocked issue remains stale" issue 41 STALE_APPROVAL 4
+
+	write_locked_issue_fixture
+	edit_issue_41 '.title = "Retitled by maintainer"'
+	append_issue_timeline_event '{"id":4420,"node_id":"EV_4420","event":"renamed","created_at":"2026-01-01T00:08:00Z","actor":{"id":1,"login":"maintainer","type":"User"},"rename":{"from":"Reviewed issue","to":"Retitled by maintainer"}}'
+	assert_verify "trusted post-approval rename preserves locked issue approval" issue 41 VERIFIED 0
+
+	write_locked_issue_fixture
+	edit_issue_41 '.title = "Retitled by contributor"'
+	append_issue_timeline_event '{"id":4421,"node_id":"EV_4421","event":"renamed","created_at":"2026-01-01T00:08:00Z","actor":{"id":2,"login":"contributor","type":"User"},"rename":{"from":"Reviewed issue","to":"Retitled by contributor"}}'
+	assert_verify "untrusted post-approval rename stales locked issue approval" issue 41 STALE_APPROVAL 4
+
+	# A body edit by a trusted editor cannot carry an untrusted rename with it.
+	write_locked_issue_fixture
+	edit_issue_41 '.title = "Retitled by contributor" | .body += "\n\nTrusted scope"'
+	write_body_edit_history "$maintainer_editor"
+	append_issue_timeline_event '{"id":4422,"node_id":"EV_4422","event":"renamed","created_at":"2026-01-01T00:08:00Z","actor":{"id":2,"login":"contributor","type":"User"},"rename":{"from":"Reviewed issue","to":"Retitled by contributor"}}'
+	assert_verify "trusted body edit cannot mask an untrusted rename" issue 41 STALE_APPROVAL 4
+	return 0
+}
+
 test_locked_issue_continuity() {
 	# Production regression from the first #30153 signature: approval-helper
 	# performed the trusted handoff, then the narrowly scoped repository workflow
@@ -996,6 +1173,8 @@ main() {
 	test_dispatch_audit_comments_fail_closed
 	test_post_approval_linked_references
 	test_locked_issue_continuity
+	test_locked_issue_trusted_comment_continuity
+	test_locked_issue_trusted_content_edits
 	test_locked_issue_tier_backfill_continuity
 	test_signed_tier_self_hosting_continuity
 

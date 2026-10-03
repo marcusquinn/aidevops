@@ -63,6 +63,9 @@ source "${BASH_SOURCE[0]%/*}/renovate-dependency-dashboard-helper.sh"
 source "${BASH_SOURCE[0]%/*}/pulse-dispatch-dedup-layers.sh"
 # shellcheck source=pulse-dispatch-large-file-gate.sh
 source "${BASH_SOURCE[0]%/*}/pulse-dispatch-large-file-gate.sh"
+# GH#32689: brief-scope normalization and repaired-hold release
+# shellcheck source=pulse-dispatch-brief-scope.sh
+source "${BASH_SOURCE[0]%/*}/pulse-dispatch-brief-scope.sh"
 # shellcheck source=pulse-dispatch-worker-launch.sh
 source "${BASH_SOURCE[0]%/*}/pulse-dispatch-worker-launch.sh"
 # t2117/GH#19109: file-footprint overlap throttle
@@ -135,13 +138,27 @@ _dispatch_has_interactive_hold() {
 #   1 - blocked (reason logged to LOGFILE by the failing gate)
 #   3 - expected benign dispatch block with structured DISPATCH_BLOCK_REASON
 #######################################
+# Count live registered worktrees. Git marks entries whose directory vanished
+# outside aidevops (for example a reboot wiping /tmp) as `prunable`; they hold
+# no disk and must not consume dispatch capacity (GH#32913). Locked entries are
+# never marked prunable, so they remain counted and the gate stays fail-closed.
 _dispatch_registered_worktree_count() {
 	local repo_path="$1"
 	local worktree_list=""
+	local line=""
+	local total=0
+	local prunable=0
 	local count=""
-	worktree_list=$(git -C "$repo_path" worktree list 2>/dev/null) || return 1
+	worktree_list=$(git -C "$repo_path" worktree list --porcelain 2>/dev/null) || return 1
 	[[ -n "$worktree_list" ]] || return 1
-	count=$(printf '%s\n' "$worktree_list" | wc -l | tr -d ' ')
+	while IFS= read -r line; do
+		case "$line" in
+		"worktree "*) total=$((total + 1)) ;;
+		prunable | "prunable "*) prunable=$((prunable + 1)) ;;
+		esac
+	done <<<"$worktree_list"
+	[[ "$total" -ge 1 && "$prunable" -lt "$total" ]] || return 1
+	count=$((total - prunable))
 	[[ "$count" =~ $_PULSE_DISPATCH_UNSIGNED_INTEGER_PATTERN ]] || return 1
 	printf '%s\n' "$count"
 	return 0
@@ -181,7 +198,7 @@ _dispatch_cleanup_worktree_capacity() {
 		return 1
 	fi
 
-	echo "[dispatch_with_dedup] Worktree count ${before_count} >= cap ${max_count} for #${issue_number} in ${repo_slug}; attempting guarded cleanup (timeout ${cleanup_timeout}s)" >>"$LOGFILE"
+	echo "[dispatch_with_dedup] Live worktree count ${before_count} >= cap ${max_count} for #${issue_number} in ${repo_slug}; attempting guarded cleanup (timeout ${cleanup_timeout}s)" >>"$LOGFILE"
 	run_stage_with_timeout "dispatch_worktree_capacity_cleanup" "$cleanup_timeout" \
 		_dispatch_run_guarded_worktree_cleanup "$repo_path" "$helper" || cleanup_rc=$?
 	if ! after_count=$(_dispatch_registered_worktree_count "$repo_path"); then
@@ -425,15 +442,17 @@ _dispatch_dedup_dependency_gates() {
 	# Checks GitHub's native blockedBy relationship field first, then falls back
 	# to issue-body markers such as "blocked-by:tNNN" or "Blocked by #NNN".
 	# t2996: body now travels in $issue_meta_json (`,body` was added at the
-	# canonical gh call); extract once and reuse for the consolidation,
-	# large-file, and footprint gates below — eliminating 1-2 extra gh calls
-	# per dispatch candidate.
+	# canonical gh call), so no gate re-fetches it.
 	_dss_t0=$(_ds_now_ns)
 	_ds_stage_start "$issue_number" "$repo_slug" "blocked_by" "$_dss_t0" _ds_stage_attempt_id
 	local _dispatch_issue_body
 	_dispatch_issue_body=$(printf '%s' "$issue_meta_json" | jq -r '.body // ""' 2>/dev/null) || _dispatch_issue_body=""
-	if _dedup_dependabot_intake_target "$issue_number" "$repo_slug" "$_dispatch_issue_body"; then
-		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: another issue owns the same Dependabot PR target" >>"$LOGFILE"
+	if _dedup_dependabot_intake_target "$issue_number" "$repo_slug" "$_dispatch_issue_body" "$issue_meta_json"; then
+		# GH#32979: owned = another intake legitimately holds the target
+		# (benign); anything else is a fail-closed read or evidence failure.
+		local _dependabot_reason="dependabot_target_unverified"
+		[[ "${_DEDUP_DEPENDABOT_BLOCK:-}" == "owned" ]] && _dependabot_reason="dependabot_target_owned"
+		echo "[dispatch_with_dedup] DISPATCH_BLOCK_REASON reason=${_dependabot_reason} signal=dependabot_target_${_DEDUP_DEPENDABOT_BLOCK:-unknown} issue=#${issue_number} repo=${repo_slug}" >>"$LOGFILE"
 		_ds_record "$issue_number" "$repo_slug" "dedup.dependabot_target" "$_dss_t0"
 		return 1
 	fi
@@ -443,6 +462,19 @@ _dispatch_dedup_dependency_gates() {
 		return 1
 	fi
 	_ds_record "$issue_number" "$repo_slug" "dedup.blocked_by" "$_dss_t0"
+	return 0
+}
+
+# t18505/GH#32729: costly scope gates run only after the read-only dedup
+# layers confirm no other owner, PR or terminal-blocker circuit. Measured on
+# a live runner, ~75% of candidates reaching these gates were rejected by the
+# dedup layers anyway, so running them first spent ~7h/day of candidate
+# evaluation (consolidation p50 16.5s) and could fire consolidation or
+# simplification side effects for issues another runner owns.
+_dispatch_dedup_scope_gates() {
+	local issue_number="$1" repo_slug="$2" repo_path="$3" issue_meta_json="$4"
+	local _dss_t0="" _ds_stage_attempt_id="" _dispatch_issue_body=""
+	_dispatch_issue_body=$(printf '%s' "$issue_meta_json" | jq -r '.body // ""' 2>/dev/null) || _dispatch_issue_body=""
 
 	# Pre-dispatch: issue consolidation check. If an issue has accumulated
 	# multiple substantive comments that change scope (not dispatch/approval
@@ -454,10 +486,17 @@ _dispatch_dedup_dependency_gates() {
 	_dss_t0=$(_ds_now_ns)
 	_ds_stage_start "$issue_number" "$repo_slug" "consolidation" "$_dss_t0" _ds_stage_attempt_id
 	if _issue_needs_consolidation "$issue_number" "$repo_slug" "$issue_meta_json"; then
+		_CONSOLIDATION_DISPATCH_OUTCOME=""
 		_dispatch_issue_consolidation "$issue_number" "$repo_slug" "$repo_path"
-		echo "[dispatch_with_dedup] Dispatch deferred for #${issue_number} in ${repo_slug}: issue needs comment consolidation" >>"$LOGFILE"
-		_ds_record "$issue_number" "$repo_slug" "dedup.consolidation" "$_dss_t0"
-		return 1
+		# GH#33306: a pre-flight skip (resolved parent or in-flight resolving
+		# PR) creates no child, so deferring here would hold the issue forever.
+		if [[ "${_CONSOLIDATION_DISPATCH_OUTCOME:-}" == "preflight_skipped" ]]; then
+			echo "[dispatch_with_dedup] Consolidation pre-flight skipped for #${issue_number} in ${repo_slug}; continuing dispatch gates (GH#33306)" >>"$LOGFILE"
+		else
+			echo "[dispatch_with_dedup] Dispatch deferred for #${issue_number} in ${repo_slug}: issue needs comment consolidation" >>"$LOGFILE"
+			_ds_record "$issue_number" "$repo_slug" "dedup.consolidation" "$_dss_t0"
+			return 1
+		fi
 	fi
 	_ds_record "$issue_number" "$repo_slug" "dedup.consolidation" "$_dss_t0"
 
@@ -536,6 +575,9 @@ _dispatch_dedup_check_layers() {
 		return 1
 	fi
 	_ds_record "$issue_number" "$repo_slug" "dedup.7_layers" "$_dss_t0"
+
+	_dispatch_dedup_scope_gates "$issue_number" "$repo_slug" "$repo_path" "$issue_meta_json" || gate_rc=$?
+	[[ "$gate_rc" -eq 0 ]] || return "$gate_rc"
 
 	# GH#22399/GH#31404: fail closed before launch, but only after dedup
 	# confirms eligibility. Never mutate author-gate labels on an active PR.
@@ -885,45 +927,77 @@ _dispatch_brief_hold_recorded() {
 	return 2
 }
 
-# Fail before dedup posts a claim. The blocked label is the durable cycle gate;
-# the body-hash marker keeps the brief-owner action to one comment per body even
-# when the label is later cleared without a body change.
+# Fail before dedup posts a claim. Trusted unscoped briefs dispatch with
+# worker-owned scope discovery (GH#33243); the hold below remains only when
+# AIDEVOPS_BRIEF_SCOPE_WORKER_DISCOVERY=0. There the blocked label is the durable
+# cycle gate and the body-hash marker keeps the brief-owner action to one comment
+# per body even when the label is later cleared without a body change.
+# GH#32979: every rc=1 logs exactly one DISPATCH_BLOCK_REASON naming the step
+# (recorded as the _brief_scope_block breadcrumb), so blocked candidates are
+# never metered as no_recent_log_evidence and untrusted unscoped briefs stay
+# visible instead of retrying silently every cycle.
 _dispatch_preclaim_brief_scope() {
 	local issue_number="$1" repo_slug="$2" issue_meta_json="$3"
-	local issue_body="" author="" permission="" comment_file="" scope_rc=0
+	local _brief_scope_block="" verdict_rc=0
+	_dispatch_preclaim_brief_scope_verdict "$issue_number" "$repo_slug" "$issue_meta_json" || verdict_rc=$?
+	[[ "$verdict_rc" -eq 0 ]] && return 0
+	_brief_scope_log_block "$issue_number" "$repo_slug" "${_brief_scope_block:-unknown}"
+	return 1
+}
+
+# Sets the caller's _brief_scope_block before each step that can return 1.
+_dispatch_preclaim_brief_scope_verdict() {
+	local issue_number="$1" repo_slug="$2" issue_meta_json="$3"
+	local issue_body="" author="" comment_file="" scope_rc=0
 	local body_hash="" hold_marker="" recorded_rc=0
 	printf '%s' "$issue_meta_json" | jq -e '[.labels[]?.name] | index("auto-dispatch") != null' >/dev/null 2>&1 || return 0
+	_brief_scope_block="status_blocked"
 	if printf '%s' "$issue_meta_json" | jq -e '[.labels[]?.name] | index("status:blocked") != null' >/dev/null 2>&1; then
 		return 1
 	fi
+	_brief_scope_block="body_unreadable"
 	issue_body=$(printf '%s' "$issue_meta_json" | jq -r '.body // ""') || return 1
 	"${SCRIPT_DIR}/pre-dispatch-validator-helper.sh" scope-check "$issue_number" "$issue_body" 1 >/dev/null 2>&1 || scope_rc=$?
 	[[ "$scope_rc" -eq 0 ]] && return 0
+	_brief_scope_block="validator_error"
 	[[ "$scope_rc" -eq 40 ]] || return 1
 
 	# aidevops:trust-boundary — only the authenticated runner may hold a trusted
 	# implementation brief; untrusted authors must stay on the normal review path.
+	_brief_scope_block="untrusted_author"
 	author=$(printf '%s' "$issue_meta_json" | jq -r '.author.login // ""') || return 1
-	[[ "$author" =~ ^[A-Za-z0-9-]+$ ]] || return 1
-	permission=$(gh api "repos/${repo_slug}/collaborators/${author}/permission" --jq '.permission' 2>/dev/null) || return 1
-	case "$permission" in admin | maintain | write) ;; *) return 1 ;; esac
-	if ! declare -F repo_allows_pulse_write_actions >/dev/null 2>&1 ||
-		! repo_allows_pulse_write_actions "$repo_slug"; then
+	_brief_scope_author_trusted "$repo_slug" "$author" || return 1
+	# GH#32689: explicit Files to Modify declarations normalize to the exact
+	# canonical scope; rewrite once and dispatch next cycle instead of holding.
+	_brief_scope_block="self_heal_rewritten"
+	if _dispatch_brief_scope_self_heal "$issue_number" "$repo_slug" "$issue_body"; then
 		return 1
 	fi
+	# GH#33243: choosing files is routine AI analysis. Holding for an author
+	# session that has already ended parked briefs indefinitely, so the worker
+	# records the canonical scope as its first step instead.
+	if _brief_scope_worker_discovery_enabled; then
+		echo "[dispatch_with_dedup] Brief #${issue_number} in ${repo_slug} has no canonical Files Scope; dispatching with worker-owned scope discovery (GH#33243)" >>"${LOGFILE:-/dev/null}"
+		return 0
+	fi
+	_brief_scope_block="hold_marker_unavailable"
 	body_hash=$(_dispatch_brief_hold_body_hash "$issue_body") || return 1
 	hold_marker="<!-- aidevops:brief-hold reason=missing_files_scope body=${body_hash} -->"
 	_dispatch_brief_hold_recorded "$issue_number" "$repo_slug" "$hold_marker" || recorded_rc=$?
 	# Unreadable history: skip dispatch without writing; the next cycle retries.
+	_brief_scope_block="history_unreadable"
 	[[ "$recorded_rc" -eq 2 ]] && return 1
 	if [[ "$recorded_rc" -eq 0 ]]; then
+		_brief_scope_block="hold_recorded"
 		set_issue_status "$issue_number" "$repo_slug" blocked >/dev/null || true
 		echo "[dispatch_with_dedup] Brief hold for #${issue_number} in ${repo_slug} already recorded for this body; relabelled without a new comment" >>"${LOGFILE:-/dev/null}"
 		return 1
 	fi
+	_brief_scope_block="hold_write_failed"
 	comment_file=$(mktemp) || return 1
+	aidevops_ops_marker brief-hold >"$comment_file" || return 1
 	# shellcheck disable=SC2016 # literal Markdown backticks, not expansions
-	printf '%s\nBrief hold: reason=missing_files_scope owner=brief-author.\nProjected state: status:blocked.\nNext action: Add a canonical ### Files Scope (or legacy ## Files Scope) section with one `` - EDIT: `repo/path` `` or `` - NEW: `repo/path` `` line per permitted file (nothing after the path) in the issue body; verify with pre-dispatch-validator-helper.sh scope-check. The corrected body re-arms dispatch after the blocked label is cleared by the brief owner. This body is not held again unless it changes.\n' "$hold_marker" >"$comment_file"
+	printf '%s\nBrief hold: reason=missing_files_scope owner=brief-author.\nProjected state: status:blocked.\nNext action: Add a canonical ### Files Scope section with one `` - `repo/relative/path` `` line per permitted file (no prefix, nothing after the path) to the issue body, or explicit `` `EDIT: path` `` / `` `NEW: path` `` bullets under ### Files to Modify; verify with pre-dispatch-validator-helper.sh scope-check. The pulse releases this hold automatically once the edited body passes; no label change is needed. This body is not held again unless it changes.\n' "$hold_marker" >>"$comment_file"
 	if ! set_issue_status "$issue_number" "$repo_slug" blocked >/dev/null; then
 		rm -f "$comment_file"
 		return 1
@@ -933,6 +1007,7 @@ _dispatch_preclaim_brief_scope() {
 		return 1
 	fi
 	rm -f "$comment_file"
+	_brief_scope_block="hold_posted"
 	return 1
 }
 
@@ -980,6 +1055,10 @@ dispatch_with_dedup() {
 	local issue_meta_json="" metadata_rc=0
 	_dispatch_load_and_validate_metadata "$issue_number" "$repo_slug" || metadata_rc=$?
 	[[ "$metadata_rc" -eq 0 ]] || return "$metadata_rc"
+	# GH#33341: evaluate runner-local capabilities before any claim or scope write.
+	# shellcheck source=runner-capability-helper.sh
+	source "${SCRIPT_DIR}/runner-capability-helper.sh"
+	runner_capability_check_fresh "$repo_path" "$issue_number" "$repo_slug" "$LOGFILE" || return 1
 	_dispatch_preclaim_brief_scope "$issue_number" "$repo_slug" "$issue_meta_json" || return 1
 
 	# Run all pre-dispatch validation and dedup check layers (10 gates total).
@@ -999,7 +1078,22 @@ dispatch_with_dedup() {
 		return 1
 	fi
 	_ds_record "$issue_number" "$repo_slug" "dedup_check" "$_ds_t0"
+	local original_tier=""
+	original_tier=$(jq -r '[.labels[]?.name | select(startswith("tier:"))] | first // empty' <<<"$issue_meta_json")
 	_dispatch_post_dedup_gates "$issue_number" "$repo_slug" "$repo_path" "$issue_title" "$self_login" || return $?
+	if [[ "${_TIER_LABELS_MUTATED:-0}" -eq 1 ]]; then
+		local refreshed_tier="" original_tier_model="" refreshed_model="" refreshed_labels_csv=""
+		refreshed_tier=$(jq -r '[.labels[]?.name | select(startswith("tier:"))] | first // empty' <<<"$issue_meta_json")
+		if [[ "$refreshed_tier" != "$original_tier" ]]; then
+			original_tier_model=$(resolve_dispatch_model_for_labels "$original_tier")
+			if [[ "$model_override" == "$original_tier_model" ]]; then
+				refreshed_labels_csv=$(jq -r '[.labels[]?.name] | join(",")' <<<"$issue_meta_json")
+				refreshed_model=$(resolve_dispatch_model_for_labels "$refreshed_labels_csv")
+				echo "[dispatch_with_dedup] #${issue_number}: tier ${original_tier:-<auto>} → ${refreshed_tier:-<auto>}; model ${model_override:-<auto>} → ${refreshed_model:-<auto>}" >>"$LOGFILE"
+				model_override="$refreshed_model"
+			fi
+		fi
+	fi
 	_dispatch_launch_checked_worker "$issue_number" "$repo_slug" "$dispatch_title" "$issue_title" \
 		"$self_login" "$repo_path" "$prompt" "$session_key" "$model_override"
 	return $?

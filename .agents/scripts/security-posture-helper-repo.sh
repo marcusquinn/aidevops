@@ -899,6 +899,206 @@ check_collaborators() {
 	return 0
 }
 
+# --- Tracked secret-file classification (GH#33339) ---
+# Real env files, keys and credential files are critical by filename alone.
+# Env templates (.env.example, .env.production.sample, ...) are classified by
+# their committed content instead: comments, bare names and placeholder values
+# are safe; private keys, known token signatures, credential-bearing URLs and
+# secret-named assignments with real-looking values stay critical. Diagnostics
+# name only the path, reason class and line number, never the value.
+
+# Matches .env[.<stage>].example and <name>.example.env style template names.
+POSTURE_ENV_TEMPLATE_BASENAME_ERE='^(\.env(\.[a-z0-9_-]+)*\.(example|sample|template|tmpl|dist|defaults)|[a-z0-9_.-]*\.(example|sample|template|tmpl|dist|defaults)\.env)$'
+POSTURE_SECRET_KEY_NAME_ERE='(SECRET|TOKEN|PASSWORD|PASSWD|CREDENTIAL|PRIVATE_KEY|API_KEY|ACCESS_KEY|_KEY$|^KEY$|_PAT$|_PASS$|^PASS$)'
+POSTURE_SECRET_VALUE_MIN_LENGTH=8
+_POSTURE_SECRET_REASON=""
+
+# Ensure the shared token-prefix set is available when sourced standalone.
+if [[ -z "${AIDEVOPS_CREDENTIAL_PREFIX_ERE:-}" && -f "${SCRIPT_DIR}/shared-constants.sh" ]]; then
+	# shellcheck source=./shared-constants.sh
+	source "${SCRIPT_DIR}/shared-constants.sh"
+fi
+
+# Return 0 when the path's basename is an env template.
+_posture_is_env_template_path() {
+	local path="$1"
+	local base_lc
+	base_lc=$(printf '%s' "${path##*/}" | tr '[:upper:]' '[:lower:]')
+	if [[ "$base_lc" =~ $POSTURE_ENV_TEMPLATE_BASENAME_ERE ]]; then
+		return 0
+	fi
+	return 1
+}
+
+# Return 0 when a value is an obvious placeholder, empty, or filler.
+_posture_is_placeholder_value() {
+	local value="$1"
+	local lc
+	lc=$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]')
+	[[ -z "$lc" ]] && return 0
+	case "$lc" in
+	\<*\> | \$\{*\} | \$[a-z_]* | \{\{*\}\}) return 0 ;;
+	*your* | *example* | *change*me* | *placeholder* | *replace* | *dummy* | *sample* | *redacted* | *todo* | *fixme* | *xxx* | *\*\*\** | *...*) return 0 ;;
+	esac
+	if [[ "$lc" =~ ^[x*.#0_-]+$ ]]; then
+		return 0
+	fi
+	return 1
+}
+
+# Return 0 when a value is clearly non-secret configuration (number/boolean).
+_posture_is_inert_value() {
+	local value="$1"
+	local lc
+	lc=$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]')
+	if [[ "$lc" =~ ^[0-9]+$ ]]; then
+		return 0
+	fi
+	case "$lc" in
+	true | false | yes | no | on | off | none | null) return 0 ;;
+	esac
+	return 1
+}
+
+# Strip quotes and unquoted inline comments from an assignment value.
+# Sets _POSTURE_PARSED_VALUE.
+_posture_parse_assignment_value() {
+	local raw="$1"
+	local quote="${raw:0:1}"
+	if [[ "$quote" == '"' || "$quote" == "'" ]]; then
+		raw="${raw:1}"
+		_POSTURE_PARSED_VALUE="${raw%%"$quote"*}"
+		return 0
+	fi
+	raw="${raw%%[[:space:]]#*}"
+	# Trim trailing whitespace.
+	raw="${raw%"${raw##*[![:space:]]}"}"
+	_POSTURE_PARSED_VALUE="$raw"
+	return 0
+}
+
+# Return 0 and set _POSTURE_SECRET_REASON when one template line carries a
+# secret. Returns 1 for safe lines. Never stores or prints the value.
+_posture_env_line_secret_reason() {
+	local line="$1"
+	local pem_re='-----BEGIN [A-Z ]*PRIVATE KEY-----'
+	# Shared scrub prefixes plus detection-only live-key prefixes (AWS, Stripe, Google).
+	local token_re="(^|[^A-Za-z0-9_-])(${AIDEVOPS_CREDENTIAL_PREFIX_ERE}|AKIA|ASIA|sk_live_|rk_live_|AIza)([A-Za-z0-9_-]{10,})"
+	local url_re='[A-Za-z][A-Za-z0-9+.-]*://[^/:@[:space:]]+:([^/@[:space:]]+)@([^/:?#[:space:]]+)'
+	local assign_re='^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_.]*)[[:space:]]*=[[:space:]]*(.*)$'
+
+	if [[ "$line" =~ $pem_re ]]; then
+		_POSTURE_SECRET_REASON="private-key"
+		return 0
+	fi
+	if [[ "$line" =~ $token_re ]] && ! _posture_is_placeholder_value "${BASH_REMATCH[3]}"; then
+		_POSTURE_SECRET_REASON="token-signature"
+		return 0
+	fi
+	if [[ "$line" =~ $url_re ]]; then
+		local url_pass="${BASH_REMATCH[1]}"
+		local url_host
+		url_host=$(printf '%s' "${BASH_REMATCH[2]}" | tr '[:upper:]' '[:lower:]')
+		case "$url_host" in
+		localhost | 127.0.0.1 | 0.0.0.0 | host.docker.internal) ;;
+		*)
+			if ! _posture_is_placeholder_value "$url_pass"; then
+				_POSTURE_SECRET_REASON="credential-url"
+				return 0
+			fi
+			;;
+		esac
+	fi
+
+	# Comments and bare variable names carry no assignment.
+	[[ "$line" =~ ^[[:space:]]*# ]] && return 1
+	[[ "$line" =~ $assign_re ]] || return 1
+
+	local key_uc
+	key_uc=$(printf '%s' "${BASH_REMATCH[2]}" | tr '[:lower:]' '[:upper:]')
+	_posture_parse_assignment_value "${BASH_REMATCH[3]}"
+	local value="$_POSTURE_PARSED_VALUE"
+	[[ "$key_uc" =~ $POSTURE_SECRET_KEY_NAME_ERE ]] || return 1
+	[[ ${#value} -ge $POSTURE_SECRET_VALUE_MIN_LENGTH ]] || return 1
+	_posture_is_placeholder_value "$value" && return 1
+	_posture_is_inert_value "$value" && return 1
+	_POSTURE_SECRET_REASON="secret-assignment"
+	return 0
+}
+
+# Classify a tracked env template from its committed (index) content.
+# Returns 0 and sets _POSTURE_SECRET_REASON ("<class>, line N") when the file
+# carries a secret; returns 1 when the template is safe. Unreadable blobs fail
+# closed as secret-bearing.
+_posture_env_template_secret_reason() {
+	local repo_path="$1"
+	local path="$2"
+	local content
+	_POSTURE_SECRET_REASON=""
+	if ! content=$(git -C "$repo_path" show ":./${path}" 2>/dev/null); then
+		_POSTURE_SECRET_REASON="unreadable"
+		return 0
+	fi
+
+	local line=""
+	local line_no=0
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		line_no=$((line_no + 1))
+		line="${line%$'\r'}"
+		if _posture_env_line_secret_reason "$line"; then
+			_POSTURE_SECRET_REASON="${_POSTURE_SECRET_REASON}, line ${line_no}"
+			return 0
+		fi
+	done <<<"$content"
+	return 1
+}
+
+# Report tracked secret files, classifying env templates by content.
+_check_tracked_secret_files() {
+	local repo_path="$1"
+	local tracked
+	tracked=$(git -C "$repo_path" ls-files '*.env' '*.pem' '*.key' 'credentials.json' '.env.*' '*/.env.*' 2>/dev/null) || true
+
+	local flagged=""
+	local flagged_count=0
+	local safe_templates=0
+	local path=""
+	while IFS= read -r path; do
+		[[ -z "$path" ]] && continue
+		if _posture_is_env_template_path "$path"; then
+			if ! _posture_env_template_secret_reason "$repo_path" "$path"; then
+				safe_templates=$((safe_templates + 1))
+				continue
+			fi
+			path="${path} (${_POSTURE_SECRET_REASON})"
+		fi
+		flagged_count=$((flagged_count + 1))
+		if [[ "$flagged_count" -le 3 ]]; then
+			flagged="${flagged:+${flagged}; }${path}"
+		fi
+	done <<<"$tracked"
+
+	if [[ "$flagged_count" -gt 0 ]]; then
+		print_crit "$flagged_count potential secret file(s) tracked by git: $flagged"
+		print_info "  Rotate any committed credential; removing the file does not remove it from git history."
+		print_info "  Store each value encrypted (gopass/GPG-backed) with: aidevops secret set <NAME>"
+		print_info "  Run aidevops secret init first if needed. Enter values only at the hidden terminal prompt, never in chat or files."
+		print_info "  Inject secrets at runtime with: aidevops secret run <cmd> or aidevops secret <NAME> -- <cmd>, instead of a plaintext .env."
+		print_info "  Stop tracking with: git rm --cached <path>; add the path to .gitignore. Keep .env.example with names or placeholders only."
+		print_info "  Full policy: reference/secret-handling.md."
+		add_finding "$SEVERITY_CRITICAL" "$CAT_REPO_SECURITY" "$flagged_count secret files tracked: $flagged"
+		return 0
+	fi
+
+	local pass_msg="No obvious secret files tracked by git"
+	if [[ "$safe_templates" -gt 0 ]]; then
+		pass_msg="${pass_msg} ($safe_templates env template(s) contain no secret values)"
+	fi
+	print_pass "$pass_msg"
+	add_finding "$SEVERITY_PASS" "$CAT_REPO_SECURITY" "No secret files tracked"
+	return 0
+}
+
 # Phase 6: General repo security checks
 check_repo_security() {
 	local repo_path="$1"
@@ -936,18 +1136,7 @@ check_repo_security() {
 	fi
 
 	# Check for committed secrets (quick scan of tracked files)
-	local secret_files
-	secret_files=$(git -C "$repo_path" ls-files '*.env' '*.pem' '*.key' 'credentials.json' '.env.*' 2>/dev/null) || true
-
-	if [[ -n "$secret_files" ]]; then
-		local secret_count
-		secret_count=$(echo "$secret_files" | wc -l | tr -d ' ')
-		print_crit "$secret_count potential secret file(s) tracked by git"
-		add_finding "$SEVERITY_CRITICAL" "$CAT_REPO_SECURITY" "$secret_count secret files tracked: $(echo "$secret_files" | head -3 | tr '\n' ', ')"
-	else
-		print_pass "No obvious secret files tracked by git"
-		add_finding "$SEVERITY_PASS" "$CAT_REPO_SECURITY" "No secret files tracked"
-	fi
+	_check_tracked_secret_files "$repo_path"
 
 	# Check for Dependabot or Renovate config
 	if [[ -f "$repo_path/.github/dependabot.yml" ]] || [[ -f "$repo_path/.github/dependabot.yaml" ]]; then

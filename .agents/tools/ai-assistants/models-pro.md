@@ -3,7 +3,7 @@ description: High-capability model for large codebase analysis and complex reaso
 mode: subagent
 model: google/gemini-2.5-pro
 model-tier: thinking
-model-fallback: anthropic/claude-sonnet-4-6
+model-fallback: anthropic/claude-sonnet-5-5
 tools:
   read: true
   write: true

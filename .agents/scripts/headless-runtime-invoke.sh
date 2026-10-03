@@ -101,6 +101,16 @@ _invoke_opencode_copy_isolated_auth() {
 			"${isolated_data_dir}/opencode/auth.json" >/dev/null 2>&1; then
 			public_triage_auth_ready=1
 		fi
+		# aidevops:trust-boundary — pure public triage cannot load the plugin
+		# which implements Anthropic OAuth. Never treat a copied entry as usable
+		# auth or silently fall back to an ambient credential for this entry.
+		if [[ "$public_triage" -eq 1 && "${_invoke_provider:-}" == "anthropic" ]] &&
+			jq -e '.anthropic.type == "oauth"' \
+			"${isolated_data_dir}/opencode/auth.json" >/dev/null 2>&1; then
+			print_error "Public triage provider authentication unavailable: Anthropic OAuth requires the plugin disabled by OPENCODE_PURE (Model not found)"
+			printf '%s' "86" >"$exit_code_file"
+			return 1
+		fi
 	fi
 	return 0
 }

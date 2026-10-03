@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
 import assert from "node:assert/strict";
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -46,7 +46,9 @@ assert.deepEqual(resolveSessionRecoveryMarker({ cwd: markerDirectory, workDir })
   directory: realpathSync(directory),
   dataDir: realpathSync(dataDir),
   markerDirectory: realpathSync(markerDirectory),
+  runtime: "v1",
   ownerLive: true,
+  foreignRuntime: false,
 });
 assert.equal(resolveSessionRecoveryMarker({ cwd: directory, workDir }), null);
 
@@ -72,6 +74,67 @@ const missingCli = spawnSync(
   { encoding: "utf8" },
 );
 assert.equal(missingCli.status, 2, "resolver CLI should preserve the no-marker status through a symlink");
+
+// V2 markers: one shared data home, sessions in session_v2 (GH#32700).
+const v2DataDir = join(root, "v2-data");
+const v2SessionID = "ses_V2SessionAbCdEf01";
+mkdirSync(join(v2DataDir, "opencode"), { recursive: true });
+const v2Sqlite = spawnSync(
+  "sqlite3",
+  [
+    join(v2DataDir, "opencode", "opencode.db"),
+    [
+      "CREATE TABLE session_v2 (id text PRIMARY KEY, parent_id text, directory text NOT NULL);",
+      `INSERT INTO session_v2 (id, parent_id, directory) VALUES ('${v2SessionID}', NULL, '${directory}');`,
+    ].join(" "),
+  ],
+  { encoding: "utf8" },
+);
+assert.equal(v2Sqlite.status, 0, v2Sqlite.stderr);
+const v2Marker = writeSessionRecoveryMarker({
+  sessionID: v2SessionID,
+  directory,
+  dataDir: v2DataDir,
+  workDir,
+  runtime: "v2",
+});
+assert.equal(
+  resolveSessionRecoveryMarker({ cwd: v2Marker, workDir, runtime: "v2", dataDir: v2DataDir }).ownerLive,
+  true,
+  "a V2 marker owned by this live process must report its owner as live",
+);
+assert.throws(
+  () => resolveSessionRecoveryMarker({ cwd: v2Marker, workDir, runtime: "v2", dataDir: dataDir }),
+  /not the OpenCode V2 data directory/,
+  "a V2 marker must name the caller's V2 data home",
+);
+assert.equal(
+  resolveSessionRecoveryMarker({ cwd: v2Marker, workDir }).foreignRuntime,
+  true,
+  "the V1 resolver must not resume a V2 session",
+);
+assert.equal(
+  resolveSessionRecoveryMarker({ cwd: markerDirectory, workDir, runtime: "v2", dataDir: v2DataDir }).foreignRuntime,
+  true,
+  "the V2 resolver must not resume a V1 session",
+);
+const v2MarkerPath = join(v2Marker, "recovery.json");
+const v2Payload = JSON.parse(readFileSync(v2MarkerPath, "utf8"));
+writeFileSync(v2MarkerPath, `${JSON.stringify({ ...v2Payload, owner_start: "ps:dead owner" })}\n`, { mode: 0o600 });
+const v2Cli = spawnSync(
+  process.execPath,
+  [resolverPath, "resolve", "--cwd", v2Marker, "--work-dir", workDir, "--runtime", "v2", "--data-dir", v2DataDir],
+  { encoding: "utf8" },
+);
+assert.equal(v2Cli.status, 0, `a V2 marker with a dead owner is resumable: ${v2Cli.stderr}`);
+assert.equal(v2Cli.stdout, `${realpathSync(directory)}\t${realpathSync(v2DataDir)}\t${v2SessionID}\n`);
+const foreignCli = spawnSync(
+  process.execPath,
+  [resolverPath, "resolve", "--cwd", v2Marker, "--work-dir", workDir],
+  { encoding: "utf8" },
+);
+assert.equal(foreignCli.status, 4, foreignCli.stderr);
+assert.equal(foreignCli.stdout, `${realpathSync(directory)}\n`, "foreign markers expose only the project directory");
 
 const pluginIndexUrl = new URL("../../plugins/opencode-aidevops/index.mjs", import.meta.url).href;
 const subcommandImport = spawnSync(

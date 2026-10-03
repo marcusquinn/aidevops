@@ -49,7 +49,9 @@ Requires WordPress Abilities API plugin. Repo: `~/Git/wordpress/mcp-adapter`.
 
 **STDIO** (local): `composer require wordpress/mcp-adapter && wp plugin activate mcp-adapter` → `wp mcp-adapter serve --server=mcp-adapter-default-server --user=admin`
 
-**HTTP** (remote): `npx @automattic/mcp-wordpress-remote` — set `WP_API_URL`, `WP_API_USERNAME`, `WP_API_PASSWORD`. Application Passwords: WP Admin > Users > Profile > "Application Passwords" → name `mcp-adapter-dev` → store via `setup-local-api-keys.sh set wp-app-password-sitename "xxxx xxxx xxxx xxxx"`
+**HTTP** (remote): `npx @automattic/mcp-wordpress-remote` — set `WP_API_URL`, `WP_API_USERNAME`, `WP_API_PASSWORD`. Application Passwords: WP Admin > Users > Profile > "Application Passwords" → name `mcp-adapter-dev` → store via `setup-local-api-keys.sh set wp-app-password-sitename "xxxx xxxx xxxx xxxx"`. To keep the password out of runtime config, launch through `wordpress-mcp-helper.sh serve-http <url> <user> <secret-name>`, or generate a ready-to-paste config with `wordpress-mcp-helper.sh config-http <site> <url> <user> <secret-name>`.
+
+**Plugin abilities**: plugins register their own abilities on the default server (for example Rank Math's `rank-math/*`; see `rankmath-mcp.md`).
 
 ## Testing Environments
 
@@ -59,7 +61,7 @@ runner, or suite requires an explicit request.
 
 **Playground** (instant, no Docker, ephemeral): `npx @wp-playground/cli server --port=8888 --blueprint=blueprint.json`. Blueprint steps: `defineWpConfigConsts`, `installPlugin`, `enableMultisite`. [Docs](https://wordpress.github.io/wordpress-playground/blueprints). *Flaky in CI.*
 
-**LocalWP** (5-10 min, full persistence, no Docker): Sites at `~/Local Sites/`. WP-CLI: `/Applications/Local.app/Contents/Resources/extraResources/bin/wp-cli.phar`
+**LocalWP** (5-10 min, full persistence, no Docker): Sites at `~/Local Sites/` by default; the actual paths are the `"path"` entries in `~/Library/Application Support/Local/sites.json`. WP-CLI: `/Applications/Local.app/Contents/Resources/extraResources/bin/wp-cli.phar`. Local's PHP defaults (OPcache 128 MB, `memory_limit` 256M, 2 workers) are too small for many-plugin test sites: size them first (`localwp.md` → "Site PHP resources").
 
 **wp-env** (2-5 min, Docker, CI-ready): `wp-env start` (`npm install -g @wordpress/env`), `wp-env run cli wp plugin list`, `wp-env run tests-cli phpunit`. Config `.wp-env.json`:
 
@@ -112,7 +114,16 @@ add_filter('original_filter', 'my_fixed_filter', 999);
 function my_fixed_filter($value) { return $modified_value; }
 ```
 
-**Sync to LocalWP**: `rsync -av --delete --exclude='.git' --exclude='node_modules' --exclude='vendor' ~/Git/developer/plugin-slug/ "~/Local Sites/site-name/app/public/wp-content/plugins/plugin-slug/"`
+**Sync to LocalWP**: a LocalWP site is **shared by every parallel session/worktree** working on the same plugin or theme — a plain `rsync --delete` lets a stale worktree silently overwrite another session's merged work. Merge the default branch into your worktree first, then use the freshness-checked helper instead of a raw `rsync`:
+
+```bash
+local-site-sync-helper.sh sync --src ~/Git/_worktrees/plugin-slug-feature/ \
+  --dest "~/Local Sites/site-name/app/public/wp-content/plugins/plugin-slug/" \
+  --exclude-from .distignore
+local-site-sync-helper.sh status --dest "~/Local Sites/site-name/app/public/wp-content/plugins/plugin-slug/"
+```
+
+It refuses to sync when the worktree's `HEAD` doesn't contain `origin/<default-branch>` (use `--force` only when intentional), warns if another worktree synced to the same destination in the last 30 minutes, and writes a stamp (source worktree, branch, HEAD SHA, dirty flag, time) next to the destination so any session can answer "which branch is on the site, and who put it there?" with `status`. After merging to the default branch, run `status` before telling the user to look. Prefer a throwaway per-worktree site (e.g. a Docker `wordpress` container on a unique port) for in-progress verification; keep the shared LocalWP site for showing the user the merged result.
 
 ## Debugging
 
@@ -131,3 +142,5 @@ function my_fixed_filter($value) { return $modified_value; }
 Run already configured checks when applicable: **PHPUnit** `wp-env run tests-cli phpunit` or `vendor/bin/phpunit`; **E2E** `npx --no-install playwright test` or `npx --no-install cypress run`; **Security** `./.agents/scripts/secretlint-helper.sh scan`. For routine feature/fix work, verify first through the real LocalWP/wp-env flow and `debug.log`. Do not install PHPUnit, Playwright, Cypress, or new test infrastructure without explicit user approval.
 
 **Release checklist**: single + multisite, min/latest PHP/WP, configured/required PHPUnit and E2E checks passing, no PHP errors/warnings in debug log, no JS console errors, activation/deactivation/uninstall exercised, security + code quality passed. Do not add missing test infrastructure solely for release verification without approval.
+
+Plugin release builds, WordPress.org preflight, Plugin Check and submission: `tools/wordpress/wp-plugin-release.md` and `wp-plugin-release-helper.sh`.

@@ -1,1 +1,0 @@
-../../workflows/score-responses.md

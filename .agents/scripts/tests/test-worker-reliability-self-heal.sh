@@ -529,7 +529,7 @@ test_preserve_moves_to_diag_dir() {
 	src=$(mktemp)
 	printf 'synthetic worker output for test\n' >"$src"
 
-	_preserve_no_activity_output "$src" "issue-99999" "anthropic/claude-sonnet-4-6"
+	_preserve_no_activity_output "$src" "issue-99999" "anthropic/claude-sonnet-5-5"
 
 	if [[ -f "$src" ]]; then
 		print_result "preserve: source file removed after move" 1 \

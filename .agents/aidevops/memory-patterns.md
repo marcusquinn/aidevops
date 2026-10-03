@@ -20,16 +20,15 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: Persistent memory files that instruct AI CLI tools to read `~/AGENTS.md`
-- **Config script**: `.agents/scripts/ai-cli-config.sh` — `configure_qwen_cli()`, `create_ai_memory_files()`, `create_project_memory_files()`
-- **Setup**: `setup.sh` auto-creates all memory files (detects installed tools, preserves existing)
-- **Warp AI / Amp Code**: Use project context only (no memory files)
+- **Legacy memory files**: Some existing AI CLI memory files may instruct tools to read `~/AGENTS.md`; setup no longer creates them.
+- **Current config**: `.agents/scripts/ai-cli-config.sh` configures OpenAPI search MCP, not memory files.
+- **Migration**: `_home_agents_md_is_referenced` in `.agents/scripts/setup/modules/migrations.sh` preserves `~/AGENTS.md` while a legacy memory file still points at it.
 
 <!-- AI-CONTEXT-END -->
 
-## Memory File Locations
+## Historical Memory File Locations
 
-All files contain: `At the beginning of each session, read ~/AGENTS.md to get additional context and instructions.`
+These are historical locations, not files created by current setup. Existing files may contain: `At the beginning of each session, read ~/AGENTS.md to get additional context and instructions.`
 
 | Tool | Home directory | Project-level |
 |------|---------------|---------------|

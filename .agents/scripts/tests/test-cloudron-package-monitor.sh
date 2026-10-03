@@ -38,10 +38,10 @@ write_fake_commands() {
 	cat >"${bin_dir}/gh" <<'GH'
 #!/usr/bin/env bash
 set -euo pipefail
-if [[ "${1:-}" == "api" && "$*" == *releases\?per_page=100* ]]; then
+if [[ "${1:-}" == "api" && ( "$*" == *releases\?per_page=100* || "$*" == *tags\?per_page=100* ) ]]; then
     endpoint=""
     for arg in "$@"; do
-        [[ "$arg" == /repos/*/releases\?per_page=100 ]] && endpoint="$arg"
+        [[ "$arg" == /repos/*/releases\?per_page=100 || "$arg" == /repos/*/tags\?per_page=100 ]] && endpoint="$arg"
     done
     printf 'API %s\nARGS %s\nTIMEOUT %s\n' "$endpoint" "$*" "${AIDEVOPS_GH_READ_TIMEOUT:-unset}" >>"${MONITOR_API_LOG:-/dev/null}"
     case "${MONITOR_RATE_FIXTURE:-}" in
@@ -402,6 +402,30 @@ JSON
 	return 0
 }
 
+test_monitor_selects_tag_source() {
+	local home_dir="${TEST_ROOT}/tags-home" repo_dir="${TEST_ROOT}/tags-package" bin_dir="${TEST_ROOT}/tags-bin"
+	local log_file="${TEST_ROOT}/tags-issues.log" api_log="${TEST_ROOT}/tags-api.log"
+	local tags_file="${TEST_ROOT}/tags-pages.json" config_tmp="${TEST_ROOT}/tags-repos.json" output="" rc=0
+	write_fake_commands "$bin_dir"
+	write_fixture "$home_dir" "$repo_dir"
+	jq '.initialized_repos[0].cloudron_package |= (.upstream_source = "tags" | .upstream_tag_prefixes = ["desktop-v"])' \
+		"${home_dir}/.config/aidevops/repos.json" >"$config_tmp"
+	mv "$config_tmp" "${home_dir}/.config/aidevops/repos.json"
+	printf '%s\n' '[{"name":"desktop-v1.2.0"},{"name":"v99.0.0"}]' '[{"name":"desktop-v2.0.0-rc.1"},{"name":"desktop-v1.10.0"}]' >"$tags_file"
+	HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$log_file" MONITOR_API_LOG="$api_log" \
+		MONITOR_RELEASES_FILE="$tags_file" CLOUDRON_PACKAGE_ISSUE_WRAPPER="${bin_dir}/gh_create_issue" \
+		bash "$HELPER" upstream --apply >/dev/null
+	assert_equal 1 "$(grep -c '^TITLE Example Package upstream v1.10.0 is available$' "$log_file")" "tag source selects highest stable matching semantic tag across pages"
+	grep -Fq '/repos/exampleorg/upstream/tags?per_page=100' "$api_log" && assert_equal true true "tag source queries paginated tags" || assert_equal true false "tag source queries paginated tags"
+	jq '.initialized_repos[0].cloudron_package.upstream_source = "invalid"' \
+		"${home_dir}/.config/aidevops/repos.json" >"$config_tmp"
+	mv "$config_tmp" "${home_dir}/.config/aidevops/repos.json"
+	if output=$(HOME="$home_dir" PATH="${bin_dir}:$PATH" bash "$HELPER" upstream 2>&1); then rc=0; else rc=$?; fi
+	assert_equal 1 "$rc" "invalid upstream source fails closed"
+	[[ "$output" == *"cloudron_package.upstream_source"* ]] && assert_equal true true "invalid source reports diagnostic" || assert_equal true false "invalid source reports diagnostic"
+	return 0
+}
+
 test_monitor_rejects_malformed_prefixes() {
 	local home_dir="${TEST_ROOT}/prefix-home"
 	local repo_dir="${TEST_ROOT}/prefix-package"
@@ -679,6 +703,7 @@ main() {
 	test_monitor_uses_remote_manifest_and_fails_closed
 	test_monitor_rejects_invalid_release_timeout
 	test_monitor_selects_configured_stream
+	test_monitor_selects_tag_source
 	test_monitor_rejects_malformed_prefixes
 	test_monitor_rejects_control_characters_in_prefixes
 	test_monitor_fails_closed_on_release_api_error

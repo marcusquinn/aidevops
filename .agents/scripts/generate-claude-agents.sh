@@ -4,8 +4,8 @@
 # shellcheck disable=SC2016 # $ARGUMENTS is a Claude Code template placeholder written literally to .md files
 # =============================================================================
 # DEPRECATED: Use generate-runtime-config.sh instead (t1665.4)
-# This script is kept for one release cycle as a fallback.
-# .agents/scripts/setup/modules/config.sh will use generate-runtime-config.sh when available.
+# This script is retained for standalone compatibility, not setup fallback.
+# .agents/scripts/setup/modules/config.sh uses generate-runtime-config.sh.
 # =============================================================================
 # Generate Claude Code Configuration
 # =============================================================================
@@ -14,11 +14,11 @@
 #   2. MCP servers: Registered via `claude mcp add-json` (user scope)
 #   3. Settings: Enhanced ~/.claude/settings.json (hooks, permissions)
 #
-# Architecture mirrors generate-opencode-agents.sh / generate-opencode-commands.sh
+# Architecture mirrors generate-opencode-agents.sh
 # but targets Claude Code's native configuration system.
 #
 # Prerequisites: none (if `claude` is missing, MCP registration is skipped)
-# Called by: setup.sh update_claude_config()
+# Setup entrypoint: generate-runtime-config.sh (this script is not called by setup)
 # =============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit

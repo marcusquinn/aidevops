@@ -180,7 +180,7 @@ _generate_agents_opencode() {
 	done
 
 	# Remove loop-state files incorrectly created as agents
-	for f in ralph-loop.local.md quality-loop.local.md full-loop.local.md loop-state.md re-anchor.md postflight-loop.md; do
+	for f in quality-loop.local.md full-loop.local.md loop-state.md re-anchor.md postflight-loop.md; do
 		if _opencode_generated_agent_owned "$opencode_agent_dir/$f"; then
 			rm -f "$opencode_agent_dir/$f"
 		fi
@@ -455,7 +455,7 @@ _clean_generated_subagents() {
 # GH#19399 / t2149: Resolve basename collisions deterministically.
 #
 # Multiple source files with the same basename (e.g. `aidevops/architecture.md`
-# vs `tools/diagrams/mermaid-diagrams-skill/architecture.md`) previously fed
+# vs `tools/design/library/brands/claude/architecture.md`) previously fed
 # the parallel `xargs -P` write loop, where whichever subshell won the race
 # wrote the deployed stub. When the permissive sibling won, the sandboxed
 # source's `bash: false` / `webfetch: false` intent was silently lost.

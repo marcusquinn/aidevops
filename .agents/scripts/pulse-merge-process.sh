@@ -669,6 +669,38 @@ _pmp_record_pr_list_timing() {
 	return 0
 }
 
+# Per-repo cache helpers for _merge_ready_prs_for_repo. They set/clean the
+# caller's dynamically scoped AIDEVOPS_PULSE_*_CACHE_DIR locals.
+_pmp_setup_merge_repo_caches() {
+	local repo_slug="$1"
+	AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/aidevops-pulse-required-contexts.XXXXXX" 2>/dev/null) || AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR=""
+	AIDEVOPS_PULSE_AUTHOR_PERMISSION_CACHE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/aidevops-pulse-author-perms.XXXXXX" 2>/dev/null) || AIDEVOPS_PULSE_AUTHOR_PERMISSION_CACHE_DIR=""
+	if [[ -z "$AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR" || -z "$AIDEVOPS_PULSE_AUTHOR_PERMISSION_CACHE_DIR" ]]; then
+		echo "[pulse-wrapper] Merge pass: per-repo cache setup incomplete for ${repo_slug}; continuing without one or more caches (GH#25696)" >>"$LOGFILE"
+	fi
+	return 0
+}
+
+_pmp_cleanup_merge_repo_caches() {
+	[[ -n "${AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR:-}" ]] && rm -rf -- "$AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR"
+	[[ -n "${AIDEVOPS_PULSE_AUTHOR_PERMISSION_CACHE_DIR:-}" ]] && rm -rf -- "$AIDEVOPS_PULSE_AUTHOR_PERMISSION_CACHE_DIR"
+	return 0
+}
+
+# GH#33307: run backlog enrichment and attribute its wall time to
+# <prefix>enrichment_s so per-repo total_s is explainable.
+# Args: $1=repo slug, $2=PR JSON, $3=output var name, $4=timing prefix (optional)
+_pmp_prepare_enriched_pr_backlog_timed() {
+	local repo_slug="$1" backlog_json="$2" out_var="$3" timing_prefix="${4:-}"
+	local enrichment_start="" enrichment_rc=0
+	enrichment_start=$(_pmp_now_epoch)
+	_pmp_prepare_enriched_pr_backlog "$repo_slug" "$backlog_json" "$out_var" || enrichment_rc=$?
+	if [[ -n "$timing_prefix" ]]; then
+		_pmp_add_elapsed_seconds "${timing_prefix}enrichment_s" "$enrichment_start" || true
+	fi
+	return "$enrichment_rc"
+}
+
 #######################################
 # Merge ready PRs for a single repo.
 #
@@ -731,17 +763,12 @@ _merge_ready_prs_for_repo() {
 	fi
 
 	local AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR="" AIDEVOPS_PULSE_AUTHOR_PERMISSION_CACHE_DIR=""
-	AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/aidevops-pulse-required-contexts.XXXXXX" 2>/dev/null) || AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR=""
-	AIDEVOPS_PULSE_AUTHOR_PERMISSION_CACHE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/aidevops-pulse-author-perms.XXXXXX" 2>/dev/null) || AIDEVOPS_PULSE_AUTHOR_PERMISSION_CACHE_DIR=""
-	if [[ -z "$AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR" || -z "$AIDEVOPS_PULSE_AUTHOR_PERMISSION_CACHE_DIR" ]]; then
-		echo "[pulse-wrapper] Merge pass: per-repo cache setup incomplete for ${repo_slug}; continuing without one or more caches (GH#25696)" >>"$LOGFILE"
-	fi
+	_pmp_setup_merge_repo_caches "$repo_slug"
 
 	local prepared_pr_json="" preparation_rc=0
-	_pmp_prepare_enriched_pr_backlog "$repo_slug" "$pr_json" prepared_pr_json || preparation_rc=$?
+	_pmp_prepare_enriched_pr_backlog_timed "$repo_slug" "$pr_json" prepared_pr_json "$_timing_prefix" || preparation_rc=$?
 	if [[ "$preparation_rc" -ne 0 ]]; then
-		[[ -n "$AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR" ]] && rm -rf -- "$AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR"
-		[[ -n "$AIDEVOPS_PULSE_AUTHOR_PERMISSION_CACHE_DIR" ]] && rm -rf -- "$AIDEVOPS_PULSE_AUTHOR_PERMISSION_CACHE_DIR"
+		_pmp_cleanup_merge_repo_caches
 		eval "${_merged_var}=0; ${_closed_var}=0; ${_failed_var}=0"
 		return "$preparation_rc"
 	fi
@@ -755,9 +782,11 @@ _merge_ready_prs_for_repo() {
 	local i=0
 	_pmp_prepare_merge_pr_cursor_resume "$repo_slug" "$pr_json" "$pr_count" "$PULSE_MERGE_PR_CURSOR_FILE" "$LOGFILE" i || i=0
 	while [[ "$i" -lt "$pr_count" ]]; do
-		local pr_obj=""
+		local pr_obj="" _pr_start=""
+		_pr_start=$(_pmp_now_epoch) # GH#33307: time the whole per-PR unit
 		_pmp_prepare_pr_at_cursor "$repo_slug" "$pr_json" "$i" pr_obj "$_merged_var" "$_closed_var" "$_failed_var" "$merged" "$closed" "$failed" "$AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR" "$AIDEVOPS_PULSE_AUTHOR_PERMISSION_CACHE_DIR" || return $?
 		[[ -n "$pr_obj" ]] || {
+			[[ -n "$_timing_prefix" ]] && _pmp_record_pr_processing_timing "$_timing_prefix" "$_pr_start" ""
 			i=$((i + 1))
 			continue
 		}
@@ -770,14 +799,14 @@ _merge_ready_prs_for_repo() {
 
 		_process_single_ready_pr "$repo_slug" "$pr_obj" "$_timing_prefix"
 		local _pr_rc=$?
+		[[ -n "$_timing_prefix" ]] && _pmp_record_pr_processing_timing "$_timing_prefix" "$_pr_start" "$_cursor_last_pr"
 		_pmp_record_processed_pr_result "$repo_slug" "$_cursor_last_pr" "$_pr_head_sha" "$_pr_rc" merged closed failed || outcomes_complete=0
 		_pmp_write_merge_pr_cursor "$PULSE_MERGE_PR_CURSOR_FILE" "$repo_slug" "$i" "$_cursor_last_pr" "$_cursor_next_pr"
 	done
 	_pmp_clear_merge_pr_cursor "$PULSE_MERGE_PR_CURSOR_FILE"
 	_pmp_clear_merge_enrichment_state
 
-	[[ -n "$AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR" ]] && rm -rf -- "$AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR"
-	[[ -n "$AIDEVOPS_PULSE_AUTHOR_PERMISSION_CACHE_DIR" ]] && rm -rf -- "$AIDEVOPS_PULSE_AUTHOR_PERMISSION_CACHE_DIR"
+	_pmp_cleanup_merge_repo_caches
 	if [[ "$pr_list_complete" -eq 1 && "$outcomes_complete" -eq 1 ]]; then _pmp_mark_same_pass_repo_complete "$repo_slug" 2>/dev/null || true; fi
 
 	eval "${_merged_var}=${merged}; ${_closed_var}=${closed}; ${_failed_var}=${failed}"
@@ -1773,6 +1802,12 @@ _check_required_checks_passing() {
 	local pr_number="$2"
 	local pr_sha="${3:-}"
 
+	# GH#32951: expose why contexts are not passing so native auto-merge can
+	# tell never-reported contexts from in-flight ones. Empty = unknown.
+	_PULSE_REQUIRED_CHECKS_NONPASS_COUNT=""
+	_PULSE_REQUIRED_CHECKS_MISSING_COUNT=""
+	_PULSE_CHECKS_IN_FLIGHT_COUNT=""
+
 	# Resolve required contexts (delegates default-branch lookup + branch
 	# protection API + 404 distinction to the helper). Empty stdout + exit 0
 	# means "no enforcement required, treat as PASS"; exit 1 means real error.
@@ -1827,11 +1862,13 @@ _check_required_checks_passing() {
 	# Count required contexts that are not in a passing state. check-runs
 	# objects expose `.name`, `.conclusion`, and `.status`. Status
 	# `completed` + conclusion in {success, neutral, skipped} → PASS.
-	local failing_count _fc_exit
-	failing_count=$(jq -n \
+	# Also count required contexts absent from the exact-head rollup and any
+	# check still in flight (GH#32951).
+	local counts="" failing_count="" missing_count="" in_flight_count="" _fc_exit=0
+	counts=$(jq -nr \
 		--argjson req "$req_json" \
 		--argjson checks "$rollup_json" \
-		'$req | map(
+		'($req | map(
 			. as $ctx |
 			($checks | map(select((.name // "") == $ctx)) | last) as $c |
 			if $c == null then "NOT_FOUND"
@@ -1839,16 +1876,21 @@ _check_required_checks_passing() {
 				| . == "SUCCESS" or . == "NEUTRAL" or . == "SKIPPED") then "PASS"
 			else "FAIL"
 			end
-		) | map(select(. != "PASS")) | length' 2>/dev/null)
-	_fc_exit=$?
+		)) as $states |
+		($checks | map(select(((.status // "completed") | ascii_downcase) != "completed")) | length) as $in_flight |
+		"\($states | map(select(. != "PASS")) | length) \($states | map(select(. == "NOT_FOUND")) | length) \($in_flight)"' 2>/dev/null) || _fc_exit=$?
+	read -r failing_count missing_count in_flight_count <<<"$counts"
 
-	if [[ $_fc_exit -ne 0 || -z "$failing_count" ]]; then
+	if [[ $_fc_exit -ne 0 || ! "$failing_count" =~ ^[0-9]+$ || ! "$missing_count" =~ ^[0-9]+$ || ! "$in_flight_count" =~ ^[0-9]+$ ]]; then
 		echo "[pulse-merge] _check_required_checks_passing: jq evaluation failed for PR #${pr_number} in ${repo_slug} — failing closed (t2922)" >>"$LOGFILE"
 		return 1
 	fi
+	_PULSE_REQUIRED_CHECKS_NONPASS_COUNT="$failing_count"
+	_PULSE_REQUIRED_CHECKS_MISSING_COUNT="$missing_count"
+	_PULSE_CHECKS_IN_FLIGHT_COUNT="$in_flight_count"
 
 	if [[ "$failing_count" -gt 0 ]]; then
-		echo "[pulse-merge] _check_required_checks_passing: ${failing_count} required context(s) not passing for PR #${pr_number} in ${repo_slug} (t2922)" >>"$LOGFILE"
+		echo "[pulse-merge] _check_required_checks_passing: ${failing_count} required context(s) not passing for PR #${pr_number} in ${repo_slug} (${missing_count} never reported, ${in_flight_count} check(s) in flight) (t2922)" >>"$LOGFILE"
 		return 1
 	fi
 
@@ -2184,6 +2226,12 @@ _handle_existing_native_auto_merge() {
 	if ! _check_required_checks_passing "$repo_slug" "$pr_number" >/dev/null 2>&1; then
 		pending_count=1
 	fi
+	if [[ "$pending_count" -gt 0 ]] \
+		&& _pmp_remediate_missing_required_checks "$pr_number" "$repo_slug" "$expected_head_sha"; then
+		# GH#32951: required contexts never reported; CI retrigger requested
+		# or bounded. Keep the existing request instead of churning it.
+		return 0
+	fi
 	if [[ "$pending_count" -gt 0 ]]; then
 		local enabled_at="" enabled_epoch="0" now_epoch="0" age_seconds="0"
 		enabled_at=$(printf '%s' "$pr_state" | jq -r '.autoMergeRequest.enabledAt // ""' 2>/dev/null) || enabled_at=""
@@ -2223,6 +2271,8 @@ _handle_existing_native_auto_merge() {
 #   * Repo allow_auto_merge=false      → return 1 (caller --admin path)
 #   * No required check pending        → return 1 (caller --admin path —
 #                                                  immediate merge fastest)
+#   * Required contexts never reported → return 2 (bounded update-branch
+#     on an aged head, nothing in flight   retriggers CI; GH#32951)
 #   * gh pr merge --auto succeeds      → return 0 (caller skips merge)
 #   * gh pr merge --auto fails         → return 1 (caller --admin fallback)
 #
@@ -2285,6 +2335,11 @@ _set_native_auto_merge_or_skip() {
 	fi
 	if [[ "$require_synchronous_final_gate" == "1" ]]; then
 		echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: CI pending; external approval state requires synchronous final revalidation, so native auto-merge remains disabled" >>"$LOGFILE"
+		return 2
+	fi
+	# GH#32951: never-reported required contexts cannot turn green; retrigger
+	# CI (bounded) instead of arming a native auto-merge that cannot finish.
+	if _pmp_remediate_missing_required_checks "$pr_number" "$repo_slug" "$expected_head_sha"; then
 		return 2
 	fi
 

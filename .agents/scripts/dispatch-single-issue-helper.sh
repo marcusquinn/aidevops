@@ -75,9 +75,13 @@ _DSI_DISPATCH_BASE_BRANCH=""
 _DSI_STATE_RECOVERING="recovering"
 _DSI_UNKNOWN_VALUE="<unknown>"
 _DSI_JSON_TRUE="true"
+_DSI_VERIFIED="VERIFIED"
 _DSI_DEFAULT_CANARY_TIMEOUT_SECONDS=180
 _DSI_READY_PREPARATION_ALLOWANCE_SECONDS=60
 _DSI_CLAIM_WON=0
+_DSI_RESUME_MODE=0
+_DSI_RESUME_SESSION=""
+_DSI_RESUME_REQUEST=""
 
 _dsi_gh_read() {
 	local rc=0
@@ -126,239 +130,10 @@ _dsi_err() {
 	return 0
 }
 
-#######################################
-# Validate issue exists, is OPEN, and emit metadata via stdout (single jq call).
-# Sets _DSI_ISSUE_TITLE, _DSI_ISSUE_LABELS, _DSI_ISSUE_URL, _DSI_ISSUE_ASSIGNEES.
-# Args:
-#   $1 - issue number
-#   $2 - owner/repo slug
-# Returns: 0 ok, 1 not found / closed / API error
-#######################################
-_dsi_load_issue_meta() {
-	local issue_number="$1"
-	local repo_slug="$2"
-	local meta_json
-
-	meta_json=$(gh issue view "$issue_number" --repo "$repo_slug" \
-		--json number,title,state,labels,assignees,url 2>/dev/null) || meta_json=""
-
-	if [[ -z "$meta_json" ]]; then
-		_dsi_err "Cannot fetch issue #${issue_number} from ${repo_slug} (not found, no permission, or network error)"
-		return 1
-	fi
-
-	local state state_normalized
-	state=$(printf '%s' "$meta_json" | jq -r '.state // "UNKNOWN"')
-	state_normalized=$(printf '%s' "$state" | tr '[:lower:]' '[:upper:]')
-	if [[ "$state_normalized" != "OPEN" ]]; then
-		_dsi_err "Issue #${issue_number} is ${state} (must be OPEN for dispatch)"
-		return 1
-	fi
-
-	_DSI_ISSUE_META_JSON="$meta_json"
-	_DSI_ISSUE_TITLE=$(printf '%s' "$meta_json" | jq -r '.title // ""')
-	_DSI_ISSUE_URL=$(printf '%s' "$meta_json" | jq -r '.url // ""')
-	_DSI_ISSUE_LABELS=$(printf '%s' "$meta_json" | jq -r '[.labels[].name] | join(",")')
-	_DSI_ISSUE_ASSIGNEES=$(printf '%s' "$meta_json" | jq -r '[.assignees[].login] | join(",")')
-	return 0
-}
-
-#######################################
-# Determine whether the target number is a pull request, not a plain Issue.
-#
-# Manual dispatch can be pointed at an arbitrary number, and `gh issue view`
-# accepts PR numbers through the issue facade. Use the REST issue object's
-# `pull_request` marker as a trust-boundary guard before any ceremony writes.
-#
-# Args:
-#   $1 - issue number
-#   $2 - owner/repo slug
-# Returns:
-#   0 target is a PR, 1 target is a plain Issue, 2 unable to verify
-#######################################
-_dsi_target_is_pull_request() {
-	local issue_number="$1"
-	local repo_slug="$2"
-	local target_json="" has_pull_request=""
-
-	_DSI_TARGET_JSON=""
-	target_json=$(gh api "repos/${repo_slug}/issues/${issue_number}" 2>/dev/null) || return 2
-	_DSI_TARGET_JSON="$target_json"
-	has_pull_request=$(printf '%s' "$target_json" | jq -r 'has("pull_request")' 2>/dev/null) || return 2
-	if [[ "$has_pull_request" == "$_DSI_JSON_TRUE" ]]; then
-		return 0
-	fi
-	if [[ "$has_pull_request" == "false" ]]; then
-		return 1
-	fi
-	return 2
-}
-
-#######################################
-# Block manual dispatch when live interactive/review hold labels are present.
-# Args: $1 - labels CSV
-# Returns: 0 when safe, 1 when held
-#######################################
-_dsi_guard_no_interactive_hold() {
-	local labels_csv="$1"
-	local labels_with_commas=""
-	labels_with_commas=$(printf ',%s,' "$labels_csv")
-	if [[ "$labels_with_commas" == *",status:in-review,"* && "$labels_with_commas" != *",auto-dispatch,"* ]]; then
-		_dsi_err "Target carries an interactive review hold label; refusing worker dispatch (GH#22948)"
-		return 1
-	fi
-	if [[ "$labels_with_commas" == *",origin:interactive,"* && "$labels_with_commas" != *",auto-dispatch,"* ]]; then
-		_dsi_err "Target carries an interactive review hold label; refusing worker dispatch (GH#22948)"
-		return 1
-	fi
-	return 0
-}
-
-#######################################
-# Independently verify issue-author authority before a manual worker launch.
-# This closes the gap where creation-time NMR labeling failed and the manual
-# dispatcher previously treated the missing label as approval.
-# Args: $1 - issue number, $2 - owner/repo slug
-# Returns: 0 when trusted/approved, 1 when dispatch must remain blocked
-#######################################
-_dsi_guard_issue_author_trust() {
-	local issue_number="$1"
-	local repo_slug="$2"
-	local issue_json="${_DSI_TARGET_JSON:-}"
-	local author_meta="" author_association="NONE" author_type="" author_login="" external_source="false"
-
-	if [[ -z "$issue_json" ]]; then
-		issue_json=$(gh api "repos/${repo_slug}/issues/${issue_number}" 2>/dev/null) || issue_json=""
-	fi
-	if [[ -n "$issue_json" ]]; then
-		author_meta=$(printf '%s' "$issue_json" | jq -r \
-			'[.author_association // "NONE", .user.type // "", .user.login // "", (([.labels[]?.name] | index("external-contributor") != null) | tostring)] | join("|")' 2>/dev/null) || author_meta=""
-	fi
-	if [[ -n "$author_meta" ]]; then
-		IFS='|' read -r author_association author_type author_login external_source <<<"$author_meta"
-	fi
-	[[ -n "$author_association" ]] || author_association="NONE"
-	if [[ "$author_type" == "Bot" && "$external_source" != "$_DSI_JSON_TRUE" ]]; then
-		return 0
-	fi
-
-	local authority_rc=1
-	if [[ "$external_source" != "$_DSI_JSON_TRUE" ]] && declare -F _gh_actor_has_repo_write_authority >/dev/null 2>&1; then
-		authority_rc=0
-		_gh_actor_has_repo_write_authority "$repo_slug" "$author_login" "$author_association" || authority_rc=$?
-	elif [[ "$external_source" != "$_DSI_JSON_TRUE" ]]; then
-		authority_rc=2
-	fi
-	if [[ "$authority_rc" -eq 0 ]]; then
-		return 0
-	fi
-
-	if [[ ! -x "$_DSI_APPROVAL_HELPER" ]]; then
-		_dsi_err "Issue-author approval verifier is unavailable; refusing manual worker dispatch"
-		return 1
-	fi
-	local verification=""
-	verification=$("$_DSI_APPROVAL_HELPER" verify "$issue_number" "$repo_slug" 2>/dev/null) || true
-	if [[ "$verification" == "VERIFIED" ]]; then
-		return 0
-	fi
-	if [[ -n "$verification" && "$verification" != "NO_APPROVAL" ]]; then
-		_dsi_err "Issue #${issue_number} in ${repo_slug} has an unverifiable approval marker (${verification}); refusing manual worker dispatch"
-		return 1
-	fi
-
-	#aidevops:trust-boundary -- label mutation is containment, never the authority source.
-	if declare -F gh_issue_edit_safe >/dev/null 2>&1; then
-		gh_issue_edit_safe "$issue_number" --repo "$repo_slug" \
-			--add-label "needs-maintainer-review" >/dev/null 2>&1 || true
-	else
-		gh issue edit "$issue_number" --repo "$repo_slug" \
-			--add-label "needs-maintainer-review" >/dev/null 2>&1 || true
-	fi
-	_dsi_err "Issue #${issue_number} in ${repo_slug} has untrusted, external-source, or unknown author authority (${author_association}; external_source=${external_source}; ${AIDEVOPS_GH_ACTOR_AUTHORITY_REASON:-unknown}) and no verified approval; refusing manual worker dispatch"
-	return 1
-}
-
-#######################################
-# Block manual worker dispatch until maintainer-review trust gates are cleared.
-# Args: $1 - labels CSV, $2 - issue number, $3 - owner/repo slug
-# Returns: 0 when safe, 1 when maintainer review is still required
-#######################################
-_dsi_guard_no_maintainer_review_required() {
-	local labels_csv="$1"
-	local issue_number="$2"
-	local repo_slug="$3"
-	local labels_with_commas=""
-	labels_with_commas=$(printf ',%s,' "$labels_csv")
-
-	#aidevops:trust-boundary -- manual dispatch must not bypass signed/maintainer issue approval.
-	if [[ "$labels_with_commas" == *",needs-maintainer-review,"* ]]; then
-		_dsi_err "Issue #${issue_number} in ${repo_slug} still requires maintainer review; refusing manual worker dispatch"
-		_dsi_info "  Required action: run 'sudo aidevops approve issue ${issue_number} ${repo_slug}' or record an equivalent maintainer decision before dispatch."
-		return 1
-	fi
-
-	return 0
-}
-
-_dsi_guard_no_maintainer_permission_required() {
-	local labels_csv="$1"
-	local issue_number="$2"
-	local repo_slug="$3"
-	local labels_with_commas=""
-	labels_with_commas=$(printf ',%s,' "$labels_csv")
-	if [[ "$labels_with_commas" == *",needs-maintainer-permissions,"* ]]; then
-		_dsi_err "Issue #${issue_number} in ${repo_slug} is waiting for a scoped maintainer permission grant; refusing manual worker dispatch"
-		_dsi_info "  Run the request-specific 'sudo aidevops approve permissions ... --request perm-...' command from the issue comment."
-		return 1
-	fi
-	return 0
-}
-
-_dsi_guard_permission_history_verified() {
-	local issue_number="$1"
-	local repo_slug="$2"
-	local events_json labeled_count verification
-	events_json=$(gh api "repos/${repo_slug}/issues/${issue_number}/events?per_page=100" --paginate --slurp 2>/dev/null) || {
-		_dsi_err "Unable to inspect permission-request history for issue #${issue_number} in ${repo_slug}; refusing manual worker dispatch"
-		return 1
-	}
-	labeled_count=$(jq '[.[][]? | select(.event == "labeled" and .label.name == "needs-maintainer-permissions")] | length' <<<"$events_json" 2>/dev/null) || {
-		_dsi_err "Permission-request history for issue #${issue_number} in ${repo_slug} is malformed; refusing manual worker dispatch"
-		return 1
-	}
-	[[ "$labeled_count" -gt 0 ]] || return 0
-	[[ -x "$_DSI_APPROVAL_HELPER" ]] || {
-		_dsi_err "Permission verification helper is unavailable; refusing manual worker dispatch"
-		return 1
-	}
-	verification=$("$_DSI_APPROVAL_HELPER" verify-permissions issue "$issue_number" "$repo_slug" 2>/dev/null) || true
-	if [[ "$verification" == "NO_REQUEST" ]]; then
-		return 0
-	fi
-	if [[ "$verification" == "VERIFIED" ]]; then
-		_dsi_err "Issue #${issue_number} in ${repo_slug} has a signed grant bound to its original worker session and worktree; a new manual worker cannot consume it"
-		_dsi_info "  Resume through the original pulse/worker path so the bound pending request can be loaded safely."
-		return 1
-	fi
-	_dsi_err "Issue #${issue_number} in ${repo_slug} has permission-request history without a current matching signed grant (${verification:-NO_APPROVAL}); refusing manual worker dispatch"
-	return 1
-}
-
-#######################################
-# Check parent-task gate. parent-task is always a hard block (never single-dispatch).
-# Args: $1 - labels CSV (from _dsi_load_issue_meta)
-# Returns: 0 not parent-task, 1 IS parent-task (block)
-#######################################
-_dsi_check_parent_task() {
-	local labels_csv="$1"
-	local needle=",${labels_csv},"
-	if [[ "$needle" == *",parent-task,"* ]]; then
-		_dsi_err "Issue is labeled parent-task — these are decomposition trackers and cannot be single-dispatched"
-		return 1
-	fi
-	return 0
-}
+# Issue validation and signed permission gates share the CLI's initialized state.
+# shellcheck source=./dispatch-single-issue-policy.sh
+# shellcheck disable=SC1091 # sibling library resolved at runtime
+source "${_DSI_SCRIPT_DIR}/dispatch-single-issue-policy.sh"
 
 #######################################
 # Resolve model + tier for dispatch.
@@ -657,377 +432,10 @@ _dsi_register_ledger() {
 	return 0
 }
 
-#######################################
-# Extract a --dir value from a worker command line.
-# Args: $1 - command line
-# Stdout: worktree path, or empty string
-#######################################
-_dsi_extract_worktree_from_cmd() {
-	local cmd="$1"
-	local worktree_path=""
-	if [[ "$cmd" =~ --dir[[:space:]]+([^[:space:]]+) ]]; then
-		worktree_path="${BASH_REMATCH[1]}"
-	fi
-	printf '%s\n' "$worktree_path"
-	return 0
-}
-
-#######################################
-# Resolve a repo slug from a worktree path.
-# Args: $1 - worktree path
-# Stdout: owner/repo slug, or empty string
-#######################################
-_dsi_repo_slug_for_worktree() {
-	local worktree_path="$1"
-	local remote_url=""
-	if [[ -z "$worktree_path" || ! -d "$worktree_path" ]]; then
-		printf '\n'
-		return 0
-	fi
-	remote_url=$(git -C "$worktree_path" remote get-url origin 2>/dev/null || true)
-	if [[ "$remote_url" =~ github\.com[:/]([^/]+/[^/.]+)(\.git)?$ ]]; then
-		printf '%s\n' "${BASH_REMATCH[1]}"
-		return 0
-	fi
-	printf '\n'
-	return 0
-}
-
-#######################################
-# Emit active worker process lines for duplicate detection.
-# Tests override this function with fixture output.
-# Stdout: ps rows: "PID STAT COMMAND..."
-#######################################
-_dsi_ps_worker_lines() {
-	ps axwwo pid=,stat=,command= 2>/dev/null || true
-	return 0
-}
-
-#######################################
-# Check whether a PID is currently signalable by this runner.
-# Tests override this function with deterministic process fixtures.
-# Args: $1 - PID
-# Returns: 0 live, 1 dead/inaccessible
-#######################################
-_dsi_pid_is_live() {
-	local pid="$1"
-	kill -0 "$pid" 2>/dev/null
-	return $?
-}
-
-#######################################
-# Check if a command line belongs to a worker for an issue number.
-# Args: $1 - issue number, $2 - command line
-# Returns: 0 match, 1 no match
-#######################################
-_dsi_cmd_matches_issue() {
-	local issue_number="$1"
-	local cmd="$2"
-	local issue_re="([Ii]ssue[[:space:]]+#|[Ii]ssue[[:space:]]+|GH#)${issue_number}([^0-9]|$)"
-	if [[ "$cmd" =~ $issue_re ]]; then
-		return 0
-	fi
-	if [[ "$cmd" == *"--session-key issue-${issue_number}"* || "$cmd" == *"--session-key manual-cli-${issue_number}-"* ]]; then
-		return 0
-	fi
-	return 1
-}
-
-#######################################
-# Find a manual-dispatch log that names a worker PID.
-# Args: $1 - issue number, $2 - PID
-# Stdout: log path, or "<unknown>"
-#######################################
-_dsi_find_log_for_pid() {
-	local issue_number="$1"
-	local worker_pid="$2"
-	local candidate=""
-	for candidate in "$_DSI_LOG_DIR"/manual-dispatch-"${issue_number}"-*.log; do
-		[[ -f "$candidate" ]] || continue
-		if grep -Fq "Dispatched PID: ${worker_pid}" "$candidate" 2>/dev/null; then
-			printf '%s\n' "$candidate"
-			return 0
-		fi
-	done
-	printf '%s\n' "$_DSI_UNKNOWN_VALUE"
-	return 0
-}
-
-#######################################
-# Find a live worker by repo+issue and/or exact worktree path.
-# Args: $1 - issue number, $2 - repo slug, $3 - worktree path (optional)
-# Stdout: TSV source, pid, log, worktree, session_key
-# Returns: 0 found, 1 none
-#######################################
-_dsi_find_live_dispatch() {
-	local issue_number="$1"
-	local repo_slug="$2"
-	local target_worktree="${3:-}"
-	local line pid stat cmd worktree_path worker_repo log_path session_key
-
-	while IFS= read -r line; do
-		[[ -n "$line" ]] || continue
-		pid="${line%%[[:space:]]*}"
-		line="${line#*[[:space:]]}"
-		stat="${line%%[[:space:]]*}"
-		cmd="${line#*[[:space:]]}"
-		[[ "$pid" =~ ^[0-9]+$ ]] || continue
-		[[ "$stat" == *Z* || "$stat" == *T* ]] && continue
-		[[ "$cmd" == *"dispatch-single-issue-helper.sh"* ]] && continue
-
-		worktree_path=$(_dsi_extract_worktree_from_cmd "$cmd")
-		if [[ -n "$target_worktree" && "$worktree_path" == "$target_worktree" ]]; then
-			log_path=$(_dsi_find_log_for_pid "$issue_number" "$pid")
-			session_key=$(printf '%s' "$cmd" | sed -n 's/.*--session-key[[:space:]]\([^[:space:]]*\).*/\1/p' | head -1)
-			printf 'process\t%s\t%s\t%s\t%s\n' "$pid" "$log_path" "$worktree_path" "${session_key:-$_DSI_UNKNOWN_VALUE}"
-			return 0
-		fi
-
-		_dsi_cmd_matches_issue "$issue_number" "$cmd" || continue
-		worker_repo=$(_dsi_repo_slug_for_worktree "$worktree_path")
-		[[ "$worker_repo" == "$repo_slug" ]] || continue
-		log_path=$(_dsi_find_log_for_pid "$issue_number" "$pid")
-		session_key=$(printf '%s' "$cmd" | sed -n 's/.*--session-key[[:space:]]\([^[:space:]]*\).*/\1/p' | head -1)
-		printf 'process\t%s\t%s\t%s\t%s\n' "$pid" "$log_path" "${worktree_path:-$_DSI_UNKNOWN_VALUE}" "${session_key:-$_DSI_UNKNOWN_VALUE}"
-		return 0
-	done < <(_dsi_ps_worker_lines)
-
-	return 1
-}
-
-#######################################
-# Find a live ledger entry for repo+issue.
-# Args: $1 - issue number, $2 - repo slug
-# Stdout: TSV source, pid, log, worktree, session_key
-# Returns: 0 found, 1 none
-#######################################
-_dsi_find_ledger_dispatch() {
-	local issue_number="$1"
-	local repo_slug="$2"
-	local entry pid session_key worktree_path log_path
-	entry=$("$_DSI_LEDGER_HELPER" check-issue --issue "$issue_number" --repo "$repo_slug" 2>/dev/null) || entry=""
-	[[ -n "$entry" ]] || return 1
-	pid=$(printf '%s' "$entry" | jq -r '.pid // "?"')
-	session_key=$(printf '%s' "$entry" | jq -r --arg unknown "$_DSI_UNKNOWN_VALUE" '.session_key // $unknown')
-	worktree_path=$(printf '%s' "$entry" | jq -r '.worktree_path // ""')
-	[[ -n "$worktree_path" && "$worktree_path" != "null" ]] || worktree_path="$_DSI_UNKNOWN_VALUE"
-	log_path=$(_dsi_find_log_for_pid "$issue_number" "$pid")
-	printf 'ledger\t%s\t%s\t%s\t%s\n' "$pid" "$log_path" "$worktree_path" "$session_key"
-	return 0
-}
-
-#######################################
-# Print active dispatch details from a TSV record.
-# Args: TSV source, pid, log, worktree, session_key
-#######################################
-_dsi_print_dispatch_details() {
-	local record="$1"
-	local source pid log_path worktree_path session_key
-	IFS=$'\t' read -r source pid log_path worktree_path session_key <<<"$record"
-	_dsi_info "  Evidence source:  ${source}"
-	_dsi_info "  Existing PID:     ${pid}"
-	_dsi_info "  Existing log:     ${log_path}"
-	_dsi_info "  Existing worktree:${worktree_path}"
-	_dsi_info "  Existing session: ${session_key}"
-	return 0
-}
-
-#######################################
-# Verify that a ledger record still names the same live worker process.
-# A lease can intentionally outlive its local PID for cross-runner dedup, so
-# launch-worker status must independently validate PID liveness plus the
-# session, worktree, issue, and repository encoded in the process command.
-# Args: $1 - issue number, $2 - repo slug, $3 - ledger TSV record
-# Returns: 0 verified live worker, 1 stale/dead/reused PID evidence
-#######################################
-_dsi_ledger_record_has_live_identity() {
-	local issue_number="$1"
-	local repo_slug="$2"
-	local record="$3"
-	local source="" pid="" log_path="" worktree_path="" session_key=""
-	IFS=$'\t' read -r source pid log_path worktree_path session_key <<<"$record"
-
-	[[ "$source" == "ledger" && "$pid" =~ ^[0-9]+$ ]] || return 1
-	[[ -n "$session_key" && "$session_key" != "$_DSI_UNKNOWN_VALUE" ]] || return 1
-	[[ -n "$worktree_path" && "$worktree_path" != "$_DSI_UNKNOWN_VALUE" ]] || return 1
-	_dsi_pid_is_live "$pid" || return 1
-
-	local line="" process_pid="" stat="" cmd=""
-	local process_session="" process_worktree="" process_repo=""
-	while IFS= read -r line; do
-		[[ -n "$line" ]] || continue
-		process_pid="${line%%[[:space:]]*}"
-		[[ "$process_pid" == "$pid" ]] || continue
-		line="${line#*[[:space:]]}"
-		stat="${line%%[[:space:]]*}"
-		cmd="${line#*[[:space:]]}"
-		[[ "$stat" != *Z* && "$stat" != *T* ]] || return 1
-		[[ "$cmd" == *"headless-runtime-helper.sh"* ]] || return 1
-
-		process_session=$(printf '%s' "$cmd" | sed -n 's/.*--session-key[[:space:]]\([^[:space:]]*\).*/\1/p')
-		[[ "$process_session" == "$session_key" ]] || return 1
-		process_worktree=$(_dsi_extract_worktree_from_cmd "$cmd")
-		[[ "$process_worktree" == "$worktree_path" ]] || return 1
-		_dsi_cmd_matches_issue "$issue_number" "$cmd" || return 1
-		process_repo=$(_dsi_repo_slug_for_worktree "$process_worktree")
-		[[ "$process_repo" == "$repo_slug" ]] || return 1
-		return 0
-	done < <(_dsi_ps_worker_lines)
-
-	return 1
-}
-
-#######################################
-# Print an existing active dispatch as a blocking duplicate.
-# Args: TSV source, pid, log, worktree, session_key
-#######################################
-_dsi_print_existing_dispatch() {
-	local record="$1"
-	local source="${record%%$'\t'*}"
-	_dsi_err "Active worker already owns this issue or worktree (${source})"
-	_dsi_print_dispatch_details "$record"
-	return 0
-}
-
-#######################################
-# Fail closed if an active dispatch already owns repo+issue or worktree.
-# Args: $1 - issue number, $2 - repo slug, $3 - worktree path (optional)
-# Returns: 0 clear, 1 blocked
-#######################################
-_dsi_guard_no_existing_dispatch() {
-	local issue_number="$1"
-	local repo_slug="$2"
-	local worktree_path="${3:-}"
-	local record=""
-	if record=$(_dsi_find_ledger_dispatch "$issue_number" "$repo_slug"); then
-		_dsi_print_existing_dispatch "$record"
-		return 1
-	fi
-	if record=$(_dsi_find_live_dispatch "$issue_number" "$repo_slug" "$worktree_path"); then
-		_dsi_print_existing_dispatch "$record"
-		return 1
-	fi
-	return 0
-}
-
-#######################################
-# Resolve the real worker PID from the worker_log file.
-# headless-runtime-helper.sh _detach_worker prints "Dispatched PID: <pid>"
-# right before forking the actual worker subshell (see headless-runtime-helper.sh:1483).
-# We poll the log briefly waiting for that line; if it never appears,
-# fall back to the launch wrapper PID (degraded — ledger may show dead PID).
-# Args: $1 - worker_log path, $2 - launch_pid (fallback)
-# Stdout: PID (single integer)
-#######################################
-_dsi_resolve_worker_pid() {
-	local worker_log="$1"
-	local launch_pid="$2"
-	local attempts=0
-	while [[ $attempts -lt 30 ]]; do
-		if [[ -s "$worker_log" ]]; then
-			local pid
-			pid=$(grep -oE 'Dispatched PID: [0-9]+' "$worker_log" 2>/dev/null | awk '{print $3}' | head -1)
-			if [[ -n "$pid" ]]; then
-				echo "$pid"
-				return 0
-			fi
-		fi
-		sleep 0.1
-		attempts=$((attempts + 1))
-	done
-	# Fallback: caller can decide what to do with degraded state
-	_dsi_warn "Could not extract worker PID from log within 3s — using launch wrapper PID (ledger may go stale)"
-	echo "$launch_pid"
-	return 0
-}
-
-#######################################
-# Return the detached runtime log path used by headless-runtime-helper.sh.
-# Args: $1 - session_key
-# Stdout: absolute log path
-#######################################
-_dsi_detached_runtime_log() {
-	local session_key="$1"
-	printf '/tmp/worker-%s.log' "$session_key"
-	return 0
-}
-
-#######################################
-# Resolve the bounded manual-dispatch readiness budget.
-# The detached worker may spend the full canary allowance before preparation
-# emits worker_started, so the default must cover canary plus setup overhead.
-# Stdout: timeout seconds
-#######################################
-_dsi_ready_timeout_seconds() {
-	local canary_timeout_s="${CANARY_TIMEOUT_SECONDS:-$_DSI_DEFAULT_CANARY_TIMEOUT_SECONDS}"
-	local configured_timeout_s="${AIDEVOPS_DSI_READY_TIMEOUT_SECONDS:-}"
-	if ! [[ "$canary_timeout_s" =~ ^[0-9]+$ ]]; then
-		canary_timeout_s="$_DSI_DEFAULT_CANARY_TIMEOUT_SECONDS"
-	fi
-	local default_timeout_s=$((canary_timeout_s + _DSI_READY_PREPARATION_ALLOWANCE_SECONDS))
-	if [[ -z "$configured_timeout_s" ]] || ! [[ "$configured_timeout_s" =~ ^[0-9]+$ ]]; then
-		configured_timeout_s="$default_timeout_s"
-	fi
-	printf '%s\n' "$configured_timeout_s"
-	return 0
-}
-
-#######################################
-# Wait until a detached worker reaches an observable readiness signal.
-#
-# The outer nohup wrapper can exit successfully before model selection,
-# canary, and worker preparation complete. Treat launch as ready only when the
-# real child is alive and has emitted the canonical worker-start marker, or has
-# exited/failed with inspectable log evidence. Ledger registration happens
-# before the worker-start marker, so it is progress evidence but not readiness.
-# This prevents silent success when pre-worker setup blocks.
-# Args:
-#   $1 - issue_number
-#   $2 - repo_slug
-#   $3 - session_key
-#   $4 - worker_pid
-#   $5 - launcher_log path
-# Returns: 0 ready, 1 failed/not-ready before timeout
-#######################################
-_dsi_wait_for_worker_readiness() {
-	local issue_number="$1"
-	local repo_slug="$2"
-	local session_key="$3"
-	local worker_pid="$4"
-	local launcher_log="$5"
-	local runtime_log
-	runtime_log=$(_dsi_detached_runtime_log "$session_key")
-	local timeout_s
-	timeout_s=$(_dsi_ready_timeout_seconds)
-	local attempts=0
-	local max_attempts=$((timeout_s * 10))
-
-	while [[ "$attempts" -le "$max_attempts" ]]; do
-		if [[ -s "$runtime_log" ]] &&
-			grep -Fq -e "worker_started" -e "worker_start session=${session_key}" "$runtime_log" 2>/dev/null; then
-			return 0
-		fi
-
-		if [[ -n "$worker_pid" ]] && ! kill -0 "$worker_pid" 2>/dev/null; then
-			_dsi_err "Worker launch failed — detached child exited before readiness"
-			_dsi_info "  Launcher log: ${launcher_log}"
-			_dsi_info "  Runtime log:  ${runtime_log}"
-			return 1
-		fi
-
-		if [[ "$attempts" -eq "$max_attempts" ]]; then
-			break
-		fi
-		sleep 0.1
-		attempts=$((attempts + 1))
-	done
-
-	_dsi_err "Worker launch did not reach readiness within ${timeout_s}s"
-	_dsi_info "  Worker PID:   ${worker_pid}"
-	_dsi_info "  Launcher log: ${launcher_log}"
-	_dsi_info "  Runtime log:  ${runtime_log}"
-	return 1
-}
+# Worker tracking and readiness remain available to dispatch and status callers.
+# shellcheck source=./dispatch-single-issue-tracking.sh
+# shellcheck disable=SC1091 # sibling library resolved at runtime
+source "${_DSI_SCRIPT_DIR}/dispatch-single-issue-tracking.sh"
 
 #######################################
 # Build the worker prompt.  Headless-runtime-lib auto-appends
@@ -1164,10 +572,14 @@ _dsi_launch_worker() {
 	local repo_slug="${10:-}"
 	local self_login="${11:-}"
 
+	# Manual dispatch may inherit interactive/non-headless markers. The worker
+	# must carry its own role so the exact wrapper ownership proof is accepted.
 	local -a cmd=(
 		env
 		HEADLESS=1
 		FULL_LOOP_HEADLESS=true
+		AIDEVOPS_SESSION_ORIGIN=worker
+		AIDEVOPS_HEADLESS=true
 		WORKER_ISSUE_NUMBER="$issue_number"
 		WORKER_GITHUB_LOGIN="$self_login"
 		WORKER_WORKTREE_PATH="$worktree_path"
@@ -1352,7 +764,11 @@ _dsi_print_dryrun() {
 	_dsi_info "  Session key:  ${session_key}"
 	_dsi_info "  Prompt:       $(_dsi_build_prompt "$issue_number" "$_DSI_ISSUE_URL")"
 	_dsi_info "  Base ref:     ${base_ref}"
-	_dsi_info "  Worktree:     would create auto-<ts>-gh${issue_number}"
+	if [[ "$_DSI_RESUME_MODE" -eq 1 ]]; then
+		_dsi_info "  Worktree:     reuse ${_DSI_WORKTREE_PATH}"
+	else
+		_dsi_info "  Worktree:     would create auto-<ts>-gh${issue_number}"
+	fi
 	if [[ "$_DSI_ARG_NO_CEREMONY" -eq 1 ]]; then
 		_dsi_info "  Ceremony:     SKIPPED (--no-ceremony) — labels and assignee unchanged"
 	else
@@ -1581,21 +997,9 @@ _dsi_resolve_runner_login() {
 	return 1
 }
 
-#######################################
-# Subcommand: dispatch <issue> <slug> [--model M] [--dry-run]
-#######################################
-cmd_dispatch() {
-	local rc=0
-	_dsi_parse_dispatch_args "$@" || rc=$?
-	case "$rc" in
-	0) ;;
-	100) return 0 ;;
-	*) return "$rc" ;;
-	esac
-	local issue_number="$_DSI_ARG_ISSUE"
-	local repo_slug="$_DSI_ARG_REPO"
-
-	# Step 1-2: validate + load + parent-task gate
+_dsi_validate_dispatch_target() {
+	local issue_number="$1"
+	local repo_slug="$2"
 	_dsi_load_issue_meta "$issue_number" "$repo_slug" || return 1
 	local target_pr_rc=0
 	_dsi_target_is_pull_request "$issue_number" "$repo_slug" || target_pr_rc=$?
@@ -1611,8 +1015,35 @@ cmd_dispatch() {
 	_dsi_guard_no_maintainer_review_required "$_DSI_ISSUE_LABELS" "$issue_number" "$repo_slug" || return 1
 	_dsi_guard_issue_author_trust "$issue_number" "$repo_slug" || return 1
 	_dsi_guard_no_maintainer_permission_required "$_DSI_ISSUE_LABELS" "$issue_number" "$repo_slug" || return 1
-	_dsi_guard_permission_history_verified "$issue_number" "$repo_slug" || return 1
+	if [[ "$_DSI_RESUME_MODE" -eq 1 ]]; then
+		_dsi_resolve_permission_resume "$issue_number" "$repo_slug" || return 1
+	else
+		_dsi_guard_permission_history_verified "$issue_number" "$repo_slug" || return 1
+	fi
 	_dsi_check_parent_task "$_DSI_ISSUE_LABELS" || return 1
+	return 0
+}
+
+#######################################
+# Subcommand: dispatch <issue> <slug> [--model M] [--dry-run]
+#######################################
+cmd_dispatch() {
+	local rc=0
+	_dsi_parse_dispatch_args "$@" || rc=$?
+	case "$rc" in
+	0) ;;
+	100) return 0 ;;
+	*) return "$rc" ;;
+	esac
+	local issue_number="$_DSI_ARG_ISSUE"
+	local repo_slug="$_DSI_ARG_REPO"
+	if [[ "$_DSI_RESUME_MODE" -eq 1 && ("$_DSI_ARG_NO_CEREMONY" -eq 1 || -n "${AIDEVOPS_DISPATCH_BASE_REF:-}") ]]; then
+		_dsi_err "Resume requires normal ownership and its preserved worktree; --no-ceremony/--base are not supported"
+		return 2
+	fi
+
+	# Step 1-2: validate + load + parent-task gate
+	_dsi_validate_dispatch_target "$issue_number" "$repo_slug" || return 1
 
 	# Step 3: dedup check (informational under --dry-run, blocking otherwise).
 	# Helper exit codes (per dispatch-dedup-helper.sh::is-assigned):
@@ -1632,13 +1063,14 @@ cmd_dispatch() {
 	# same repo+issue. This closes the gap where labels or ledger entries are
 	# stale/missing but a live worker process is still writing in a worktree.
 	if [[ "$_DSI_ARG_DRYRUN" -ne 1 ]]; then
-		_dsi_guard_no_existing_dispatch "$issue_number" "$repo_slug" || return 1
+		_dsi_guard_no_existing_dispatch "$issue_number" "$repo_slug" "${_DSI_WORKTREE_PATH:-}" || return 1
 	fi
 
 	# Step 5: resolve model
 	_dsi_resolve_model "$_DSI_ISSUE_LABELS" "$_DSI_ARG_MODEL"
 	local session_key
 	session_key="manual-cli-${issue_number}-$(date +%s)"
+	[[ "$_DSI_RESUME_MODE" -eq 1 ]] && session_key="$_DSI_RESUME_SESSION"
 
 	# Step 6: dry-run short-circuit
 	if [[ "$_DSI_ARG_DRYRUN" -eq 1 ]]; then
@@ -1688,6 +1120,8 @@ _dsi_dispatch_after_dedup_clear() {
 	local repo_slug="$2"
 	local self_login="$3"
 	local session_key="$4"
+	local resume_worktree="${_DSI_WORKTREE_PATH:-}" resume_branch="${_DSI_WORKTREE_BRANCH:-}"
+	local resume_request="$_DSI_RESUME_REQUEST"
 
 	if ! _dsi_apply_prelaunch_ceremony_if_enabled "$issue_number" "$repo_slug" "$self_login"; then
 		_dsi_reset_after_prelaunch_failure "$issue_number" "$repo_slug" "$self_login" "dispatch_ceremony_failed"
@@ -1695,9 +1129,18 @@ _dsi_dispatch_after_dedup_clear() {
 	fi
 
 	# Step 7: pre-create worktree
-	if ! _dsi_create_worktree "$issue_number" "$repo_slug"; then
+	if [[ "$_DSI_RESUME_MODE" -ne 1 ]] && ! _dsi_create_worktree "$issue_number" "$repo_slug"; then
 		_dsi_reset_after_prelaunch_failure "$issue_number" "$repo_slug" "$self_login" "worktree_precreation_failed"
 		return 1
+	fi
+	# Revalidate after claims/ceremony without substituting a different binding.
+	if [[ "$_DSI_RESUME_MODE" -eq 1 ]]; then
+		if ! _dsi_resolve_permission_resume "$issue_number" "$repo_slug" ||
+			[[ "$_DSI_RESUME_SESSION" != "$session_key" || "$_DSI_RESUME_REQUEST" != "$resume_request" ||
+				"$_DSI_WORKTREE_PATH" != "$resume_worktree" || "$_DSI_WORKTREE_BRANCH" != "$resume_branch" ]]; then
+			_dsi_reset_after_prelaunch_failure "$issue_number" "$repo_slug" "$self_login" "resume_binding_changed"
+			return 1
+		fi
 	fi
 
 	# Step 7.5: re-check after worktree creation so an existing live process
@@ -1882,6 +1325,7 @@ Usage: dispatch-single-issue-helper.sh <command> [args]
 
 Commands:
   dispatch <issue> <slug> [opts]   Launch a worker against a single issue.
+  resume   <issue> <slug> [opts]   Resume a signed grant in its original manual worktree.
   status   <issue> <slug>          Show active dispatch state from ledger.
   help                             Show this help.
 
@@ -1925,6 +1369,9 @@ main() {
 	case "$_cmd" in
 	dispatch)
 		cmd_dispatch "$@"
+		;;
+	resume)
+		cmd_resume "$@"
 		;;
 	status)
 		cmd_status "$@"

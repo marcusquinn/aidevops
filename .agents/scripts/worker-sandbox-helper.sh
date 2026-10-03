@@ -79,8 +79,8 @@ setup_sandbox_git_config() {
 	local sandbox_dir="$1"
 	local git_name git_email
 
-	git_name=$(git config --global user.name 2>/dev/null || echo "aidevops-worker")
-	git_email=$(git config --global user.email 2>/dev/null || echo "worker@aidevops.sh")
+	git_name=$(git config --global --get user.name 2>/dev/null || echo "aidevops-worker")
+	git_email=$(git config --global --get user.email 2>/dev/null || echo "worker@aidevops.sh")
 
 	mkdir -p "$sandbox_dir" || return 1
 	cat >"$sandbox_dir/.gitconfig" <<-GITCONFIG || return 1

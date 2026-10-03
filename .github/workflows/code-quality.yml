@@ -26,10 +26,99 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
+  # GH#33197: scope-gate heavy full-repository jobs so version/docs-only PRs
+  # stop paying for a full ShellCheck / Framework Validation / Complexity
+  # pass. Keep required matrix jobs ungated: a job-level `if:` prevents matrix
+  # expansion and leaves required contexts unreported. Gate their heavy steps
+  # instead, so both required ShellCheck contexts report success for skipped
+  # scope. A workflow-level `paths:` filter also leaves required checks stuck
+  # at "expected" — do not switch to `paths:`. Push events and any
+  # scope-detection failure fail open (run everything): this is a cost
+  # optimization, never a coverage gate.
+  detect-scope:
+    name: Detect PR scope
+    runs-on: ubuntu-latest
+    outputs:
+      shell: ${{ steps.scope.outputs.shell }}
+      substantive: ${{ steps.scope.outputs.substantive }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Determine scope
+        id: scope
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          fail_open() {
+            echo "$1"
+            echo "shell=true" >> "$GITHUB_OUTPUT"
+            echo "substantive=true" >> "$GITHUB_OUTPUT"
+          }
+
+          if [ "${EVENT_NAME}" != "pull_request" ]; then
+            fail_open "Non-PR event (${EVENT_NAME}); running full scope."
+            exit 0
+          fi
+
+          if [ -z "${BASE_SHA}" ] || [ -z "${HEAD_SHA}" ]; then
+            fail_open "Missing base/head SHA; failing open to full scope."
+            exit 0
+          fi
+
+          MERGE_BASE=$(git merge-base "${HEAD_SHA}" "${BASE_SHA}" 2>/dev/null || echo "")
+          if [ -z "${MERGE_BASE}" ]; then
+            fail_open "Could not compute merge-base; failing open to full scope."
+            exit 0
+          fi
+
+          changed=$(git diff --name-only "${MERGE_BASE}" "${HEAD_SHA}" || true)
+          if [ -z "$changed" ]; then
+            fail_open "No changed files detected; failing open to full scope."
+            exit 0
+          fi
+          printf 'Changed files:\n%s\n' "$changed"
+
+          # Shell scope: files covered by ShellCheck / bash32-compat gates.
+          if printf '%s\n' "$changed" | grep -qE '(^|/)[^/]+\.sh$|(^|/)\.shellcheckrc$|^\.github/workflows/|^\.agents/scripts/'; then
+            echo "Shell-relevant files changed."
+            echo "shell=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No shell-relevant files changed."
+            echo "shell=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          # Substantive scope: anything beyond version/changelog/docs-only churn.
+          non_trivial=$(printf '%s\n' "$changed" | grep -Ev \
+            -e '^VERSION$' \
+            -e '^\.agents/VERSION$' \
+            -e '^CHANGELOG\.md$' \
+            -e '^package\.json$' \
+            -e '^package-lock\.json$' \
+            -e '^([A-Za-z0-9_.-]*\.md)$' \
+            -e '^todo/' \
+            -e '^TODO\.md$' \
+            -e '^\.github/.*\.md$' \
+            || true)
+          if [ -z "$non_trivial" ]; then
+            echo "Version/docs-only PR; skipping heavy full-repo jobs."
+            echo "substantive=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Non-trivial files changed; running full-repo jobs."
+            echo "substantive=true" >> "$GITHUB_OUTPUT"
+          fi
+
   # Cross-platform shellcheck: catches macOS-only assumptions in shell scripts
   # (t1748: Linux/WSL2 platform support)
   cross-platform-shellcheck:
     name: ShellCheck (${{ matrix.os }})
+    needs: detect-scope
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -41,34 +130,36 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
     - name: Install ShellCheck (macOS)
-      if: runner.os == 'macOS'
+      if: runner.os == 'macOS' && needs.detect-scope.outputs.shell == 'true'
       run: brew install shellcheck
 
     - name: ShellCheck (cross-platform)
+      if: needs.detect-scope.outputs.shell == 'true'
       run: |
+        # GH#33182: this is the single full-repository ShellCheck gate (the
+        # duplicate serial pass in Framework Validation was removed). Files are
+        # checked in parallel batches; ShellCheck resolves .shellcheckrc per
+        # checked file, so batching preserves per-file results.
         echo "Running ShellCheck on ${{ matrix.os }}..."
         source .agents/scripts/lint-file-discovery.sh
         lint_shell_files
-        errors=0
-        while IFS= read -r file; do
-          [ -n "$file" ] || continue
-          if shellcheck -S error "$file" > /dev/null 2>&1; then
-            echo "OK $file"
-          else
-            echo "FAIL $file"
-            shellcheck -S error -f gcc "$file" 2>&1
-            errors=$((errors + 1))
-          fi
-        done <<< "$LINT_SH_FILES"
-        if [ "$errors" -gt 0 ]; then
-          echo ""
-          echo "$errors script(s) failed ShellCheck on ${{ matrix.os }}"
-          exit 1
+        workers=$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)
+        report="${RUNNER_TEMP}/shellcheck-report.txt"
+        file_count=$(printf '%s\n' "$LINT_SH_FILES" | sed '/^$/d' | wc -l | tr -d ' ')
+        echo "Checking ${file_count} scripts with ${workers} parallel workers"
+        if printf '%s\n' "$LINT_SH_FILES" | sed '/^$/d' | tr '\n' '\0' |
+          xargs -0 -n 16 -P "$workers" shellcheck -S error -f gcc > "$report" 2>&1; then
+          echo "All shell scripts passed ShellCheck on ${{ matrix.os }}"
+          exit 0
         fi
-        echo "All shell scripts passed ShellCheck on ${{ matrix.os }}"
+        cat "$report"
+        failed=$(grep -E '^[^:]+:[0-9]+:[0-9]+: ' "$report" | cut -d: -f1 | sort -u | wc -l | tr -d ' ')
+        echo ""
+        echo "${failed} script(s) failed ShellCheck on ${{ matrix.os }}"
+        exit 1
 
     - name: Bash 3.2 syntax validation (macOS native)
-      if: runner.os == 'macOS'
+      if: runner.os == 'macOS' && needs.detect-scope.outputs.shell == 'true'
       run: |
         # GH#19252: The macOS-shipped /bin/bash (3.2) parser rejects constructs
         # that Bash 5 accepts silently — most notably heredoc-inside-$() like
@@ -99,13 +190,14 @@ jobs:
         echo "All shell scripts pass /bin/bash (3.2) syntax check."
 
     - name: Platform detection smoke test
+      if: needs.detect-scope.outputs.shell == 'true'
       run: |
         echo "Testing platform-detect.sh on ${{ matrix.os }}..."
         bash .agents/scripts/platform-detect.sh
         echo "Platform detection: OK"
 
     - name: Model replay verifier boundary (macOS)
-      if: runner.os == 'macOS'
+      if: runner.os == 'macOS' && needs.detect-scope.outputs.shell == 'true'
       run: node .agents/scripts/tests/test-model-replay-benchmark.mjs
 
   model-replay-linux:
@@ -141,6 +233,8 @@ jobs:
   # (GH#19585). Retires the bump-and-ratchet treadmill that churned 74↔78.
   bash32-compat:
     name: Bash 3.2 Compatibility
+    needs: detect-scope
+    if: needs.detect-scope.outputs.shell == 'true'
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
@@ -252,6 +346,8 @@ jobs:
   # even though this job reports the incompatible ceiling after the PR lands.
   framework-validation:
     name: Framework Validation
+    needs: detect-scope
+    if: needs.detect-scope.outputs.substantive == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -349,33 +445,11 @@ jobs:
         echo ""
         echo "✅ All JSON files valid"
 
-    - name: ShellCheck Lint
-      run: |
-        echo "Validating shell scripts with ShellCheck..."
-        errors=0
-
-        # Source shared file-discovery helper (single source of truth for exclusions)
-        source .agents/scripts/lint-file-discovery.sh
-        lint_shell_files
-
-        while IFS= read -r file; do
-          [ -n "$file" ] || continue
-          if shellcheck -S error "$file" > /dev/null 2>&1; then
-            echo "OK $file"
-          else
-            echo "FAIL $file"
-            shellcheck -S error -f gcc "$file" 2>&1
-            errors=$((errors + 1))
-          fi
-        done <<< "$LINT_SH_FILES"
-
-        if [ "$errors" -gt 0 ]; then
-          echo ""
-          echo "$errors script(s) failed ShellCheck (severity: error)"
-          exit 1
-        fi
-        echo ""
-        echo "All shell scripts passed ShellCheck"
+    # GH#33182: no full-repository ShellCheck pass here. The identical
+    # `shellcheck -S error` gate over lint_shell_files runs once per OS in the
+    # cross-platform-shellcheck matrix (ShellCheck (macos-latest) is required).
+    # The former serial copy in this job took ~9 minutes and was the last
+    # required check to finish on most PRs.
 
     - name: Reusable Workflow and Maintenance Scope Contracts (GH#28862)
       run: |
@@ -450,6 +524,8 @@ jobs:
         # .agents/reference/incident-gh17671-supply-chain.md
         echo "Running approve_collaborator_pr regression test..."
         bash .agents/scripts/tests/test-pulse-merge-approve-collaborator-guard.sh
+        bash .agents/scripts/tests/test-pulse-merge-ruleset-fallback.sh
+        bash .agents/scripts/tests/test-pulse-merge-phantom-pending-checks.sh
         echo "Approve collaborator author guard test passed"
 
     - name: Bash Expansion Pattern Guard (GH#19966)
@@ -489,6 +565,8 @@ jobs:
     # Renaming it requires updating branch protection: gh api -X PATCH
     # "repos/marcusquinn/aidevops/branches/main/protection/required_status_checks"
     name: Complexity Analysis
+    needs: detect-scope
+    if: needs.detect-scope.outputs.substantive == 'true'
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
@@ -979,7 +1057,7 @@ jobs:
 
     - name: SonarCloud Scan
       if: env.SONAR_TOKEN != ''
-      uses: SonarSource/sonarqube-scan-action@22918119ff8e1ca75a623e15c8296b6ea4fbe28f # v8.2.1
+      uses: SonarSource/sonarqube-scan-action@ba9859eae8dd6bd29e412f25ddbbef3d032000f4 # v8.2.2
       # SonarCloud may fail on fork PR merge refs even when SONAR_TOKEN is
       # available (e.g., maintainer re-runs). Non-fatal — other quality tools
       # (Codacy, CodeFactor, Qlty) still provide coverage.

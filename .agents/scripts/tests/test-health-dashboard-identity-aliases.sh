@@ -304,10 +304,10 @@ body=$(_build_health_issue_body \
 	"0" "4" "0.00" "0.00" "low" "100" "supervisor" \
 	"—" "—" "0" "0" "_No diagnostics_" "$canonical" "$aliases")
 
-if [[ "$body" == *"canonical:"* && "$body" == *"canonical-operator"* && "$body" == *"local-user"* ]]; then
-	pass "dashboard body exposes canonical identity context"
+if [[ "$body" == *"canonical operator:"* && "$body" == *"canonical-operator"* && "$body" != *"local-user"* ]]; then
+	pass "dashboard body shows canonical operator without publishing local aliases"
 else
-	fail "dashboard body exposes canonical identity context" "$body"
+	fail "dashboard body shows canonical operator without publishing local aliases" "$body"
 fi
 
 : >"$LOGFILE"
@@ -565,6 +565,22 @@ if ! grep -q 'issue edit' "$GH_CALLS"; then
 	pass "unchanged dashboard metrics preserve the existing changed timestamp"
 else
 	fail "unchanged dashboard metrics preserve the existing changed timestamp" "calls=$(tr '\n' ';' <"$GH_CALLS")"
+fi
+
+# GH#32730: only other operators' dashboards with a parseable, old freshness
+# marker are archived; the current operator's own dashboard never is.
+stale_issues_json='[
+ {"number":1,"body":"x\nlast_refresh: 2026-01-01T00:00:00Z\n","labels":[{"name":"operator:github-user"}]},
+ {"number":2,"body":"x\nlast_refresh: 2026-01-01T00:00:00Z\n","labels":[{"name":"operator:other-user"}]},
+ {"number":3,"body":"x\nlast_refresh: 2026-01-30T00:00:00Z\n","labels":[{"name":"operator:recent-user"}]},
+ {"number":4,"body":"legacy body without marker","labels":[{"name":"operator:legacy-user"}]}
+]'
+stale_now=$(_health_iso_to_epoch "2026-02-01T00:00:00Z")
+stale_selected=$(_select_stale_operator_dashboards "$stale_issues_json" "github-user" "$stale_now" 1209600 | tr '\n' ' ')
+if [[ "$stale_selected" == "2|2026-01-01T00:00:00Z " ]]; then
+	pass "stale archive selects only other operators with old freshness markers"
+else
+	fail "stale archive selects only other operators with old freshness markers" "selected=${stale_selected}"
 fi
 
 printf '\n== Summary ==\n'

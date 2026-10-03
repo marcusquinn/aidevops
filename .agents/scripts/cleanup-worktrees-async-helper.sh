@@ -10,7 +10,8 @@
 # Lifecycle:
 #   1. Acquire a mkdir-based single-runner lock (~/.aidevops/logs/cleanup_worktrees.lock).
 #   2. Check cadence gate: skip if last successful run < N minutes ago.
-#   3. Source pulse-cleanup.sh deps and call cleanup_worktrees.
+#   3. Prune metadata for vanished worktrees in every managed repo (API-free),
+#      then source pulse-cleanup.sh deps and call cleanup_worktrees.
 #   4. Update ~/.aidevops/logs/cleanup_worktrees.last-run on success.
 #   5. Release lock on EXIT/INT/TERM (trap).
 #
@@ -221,27 +222,46 @@ _maintain_worktree_recovery() {
 	return 0
 }
 
-_prune_current_repo_missing_worktree_metadata() {
-	local repo_context=""
+# Print the current repo plus every repos.json repository path, once each.
+_missing_metadata_repo_paths() {
+	local repos_json="${HOME:+${HOME}/.config/aidevops/repos.json}"
+	local repo_path=""
+	local seen=$'\n'
+
+	{
+		git rev-parse --show-toplevel 2>/dev/null || true
+		if [[ -n "$repos_json" && -f "$repos_json" ]] && command -v jq >/dev/null 2>&1; then
+			jq -r '.initialized_repos[]? | .path // empty' "$repos_json" 2>/dev/null || true
+		fi
+	} | while IFS= read -r repo_path; do
+		[[ -n "$repo_path" && "$seen" != *$'\n'"${repo_path}"$'\n'* ]] || continue
+		seen="${seen}${repo_path}"$'\n'
+		printf '%s\n' "$repo_path"
+	done
+	return 0
+}
+
+# Print the first prunable entry whose directory is absent. Native
+# `git worktree prune` is repo-wide, so return 1 without output when any absent
+# entry's parent directory is also absent (for example an unmounted volume):
+# that repo is deferred rather than risking metadata for recoverable work.
+_missing_worktree_prune_target() {
+	local repo_context="$1"
 	local field=""
 	local wt_path=""
-	local prunable_path=""
-
-	declare -F prune_missing_worktree_metadata >/dev/null 2>&1 || return 0
-	command -v git >/dev/null 2>&1 || return 0
-	repo_context=$(git rev-parse --show-toplevel 2>/dev/null) || return 0
-	[[ -n "$repo_context" && -d "$repo_context" ]] || return 0
+	local parent=""
+	local target=""
 
 	while IFS= read -r -d '' field; do
 		case "$field" in
 		worktree\ *)
 			wt_path="${field#worktree }"
 			;;
-		prunable\ *)
-			if [[ -n "$wt_path" && ! -e "$wt_path" ]]; then
-				prunable_path="$wt_path"
-				break
-			fi
+		prunable | prunable\ *)
+			[[ -n "$wt_path" && ! -e "$wt_path" ]] || continue
+			parent="${wt_path%/*}"
+			[[ -d "${parent:-/}" ]] || return 1
+			[[ -n "$target" ]] || target="$wt_path"
 			;;
 		"")
 			wt_path=""
@@ -249,12 +269,43 @@ _prune_current_repo_missing_worktree_metadata() {
 		esac
 	done < <(git -C "$repo_context" worktree list --porcelain -z 2>/dev/null || true)
 
-	[[ -n "$prunable_path" ]] || return 0
-	if prune_missing_worktree_metadata "$repo_context" "$prunable_path"; then
-		echo "[cleanup-worktrees-async] pruned missing worktree metadata from current repo" >>"$LOGFILE"
-	else
-		echo "[cleanup-worktrees-async] missing worktree metadata prune failed closed; continuing" >>"$LOGFILE"
-	fi
+	[[ -z "$target" ]] || printf '%s\n' "$target"
+	return 0
+}
+
+# Reconcile Git metadata for linked worktrees that vanished outside aidevops
+# (for example a reboot wiping /tmp) in every managed repository (GH#32913).
+# The pass is local and API-free, so it runs every cycle independently of the
+# GitHub-dependent cleanup outcome. The audited primitive only prunes an absent
+# target and verifies its metadata disappeared; locked entries are preserved.
+_prune_missing_worktree_metadata_all_repos() {
+	local repo_context=""
+	local target=""
+	local pruned=0
+	local failed=0
+	local deferred=0
+
+	declare -F prune_missing_worktree_metadata >/dev/null 2>&1 || return 0
+	command -v git >/dev/null 2>&1 || return 0
+
+	while IFS= read -r repo_context; do
+		[[ -d "$repo_context" ]] || continue
+		if ! target=$(_missing_worktree_prune_target "$repo_context"); then
+			deferred=$((deferred + 1))
+			echo "[cleanup-worktrees-async] missing worktree metadata prune deferred repo=${repo_context}: an absent entry's parent directory is unavailable" >>"$LOGFILE"
+			continue
+		fi
+		[[ -n "$target" ]] || continue
+		if prune_missing_worktree_metadata "$repo_context" "$target"; then
+			pruned=$((pruned + 1))
+			echo "[cleanup-worktrees-async] pruned missing worktree metadata repo=${repo_context}" >>"$LOGFILE"
+		else
+			failed=$((failed + 1))
+			echo "[cleanup-worktrees-async] missing worktree metadata prune failed closed repo=${repo_context}; continuing" >>"$LOGFILE"
+		fi
+	done < <(_missing_metadata_repo_paths)
+
+	echo "[cleanup-worktrees-async] missing-metadata-prune repos_pruned=${pruned} failed=${failed} deferred=${deferred}" >>"$LOGFILE"
 	return 0
 }
 
@@ -264,7 +315,7 @@ _prune_current_repo_missing_worktree_metadata() {
 
 main() {
 	if ! _lock_acquire; then
-		echo "[cleanup-worktrees-async] Lock held by live instance — skipping this invocation" >>"$LOGFILE"
+		echo "[cleanup-worktrees-async] ${_LOCK_SKIP_REASON:-Lock unavailable} — skipping this invocation" >>"$LOGFILE"
 		return 0
 	fi
 	_rotate_log_if_oversize
@@ -276,6 +327,7 @@ main() {
 
 	echo "[cleanup-worktrees-async] Starting cleanup_worktrees (cadence OK)" >>"$LOGFILE"
 	_reconcile_worktree_registry
+	_prune_missing_worktree_metadata_all_repos
 
 	local rc=0
 	local outcome="success"
@@ -292,7 +344,6 @@ main() {
 		outcome="safety-skip"
 		echo "[cleanup-worktrees-async] cleanup_worktrees skipped by safety gate — last-run NOT updated" >>"$LOGFILE"
 	elif [[ "$rc" -eq 0 ]]; then
-		_prune_current_repo_missing_worktree_metadata
 		_maintain_worktree_recovery
 		_update_last_run
 		echo "[cleanup-worktrees-async] Completed successfully at $(date -u '+%Y-%m-%dT%H:%M:%SZ'). last-run updated." >>"$LOGFILE"

@@ -106,7 +106,7 @@ For a new upstream commit:
 
 | Engine | Choose for | Agent/reference |
 |--------|------------|-----------------|
-| Remotion | React compositions and reusable branded systems | `tools/video/remotion.md` and chapters |
+| Remotion | React compositions and reusable branded systems | `tools/video/remotion/remotion.md` and chapters |
 | HyperFrames | HTML/CSS/GSAP compositions, UI-to-video | Installed upstream SKILL.md; verify engine CLI/version first |
 | Manim | Equations, formal diagrams and graph transformations | Installed `skills/manim-video/SKILL.md` |
 | PIL | Simple cards, labels, counters and image sequences | Installed upstream SKILL.md |

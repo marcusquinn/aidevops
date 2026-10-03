@@ -20,6 +20,9 @@ new test assets are separate decisions:
 1. Start with the production-facing behaviour through the existing app, API,
    CLI, integration, or deployment path. Prefer standard logs, telemetry,
    framework diagnostics, and existing targeted checks over synthetic machinery.
+   Get code diagnostics from the project's lint, typecheck, or compiler
+   commands; do not depend on editor or runtime LSP diagnostics (OpenCode 2
+   does not run language servers).
 2. Run explicit repository-required gates directly. Before adding or broadening
    test code, or running a non-required broad suite, identify what decision its
    result can change or what material uncertainty it reduces. Do not create a
@@ -116,6 +119,43 @@ run those directly too, without `-k` (they do not provide unittest filtering).
     follow-up issues. Repositories with exceptional sensitivity may explicitly
     opt into `review_gate.completion_behavior: strict`; never make that the
     framework default.
+
+## Private repositories and public launch
+
+Code developed privately for a later open-source launch (WordPress plugins,
+CLIs, libraries, apps) uses two phases, because Actions minutes and most
+code-review apps are billed on private repositories and free on public ones.
+
+1. **Private phase: fast, advisory.**
+   - Build the project's own CI early: lint, static analysis with a baseline
+     that only shrinks, build/release preflight, and a smoke test on the
+     minimum and latest supported runtimes. Make the same scripts run locally.
+   - Keep every check advisory: no branch protection, required status checks
+     or paid review apps. Fix failures the PR itself causes before merge; file
+     a follow-up issue with the run link for any other failure and merge.
+   - Control cost: run only lint on draft PRs, cancel superseded runs with
+     `concurrency`, cache tool results, and use short artifact retention.
+   - Use secure defaults from the start, since they cost nothing: actions
+     pinned to commit SHAs, `permissions: contents: read`,
+     `persist-credentials: false`, no `|| true` on checks, and Dependabot for
+     actions and dev tools.
+2. **Public launch: full sweep, then required.** With owner approval to
+   publish, in the same step:
+   - turn on free whole-codebase reviewers (CodeRabbit full review, Codacy,
+     SonarQube Cloud, qlty, Socket), CodeQL, secret scanning with push
+     protection, Dependabot alerts, and OpenSSF Scorecard;
+   - fix findings in small PRs by area, security first. Fix, justify inline,
+     or dismiss each one with a reason in the service;
+   - empty static-analysis baselines, then raise strictness one level at a
+     time while findings stay real;
+   - make the core CI checks required on the default branch (rules below),
+     and add `SECURITY.md` with private vulnerability reporting,
+     `CONTRIBUTING.md`, and issue/PR templates;
+   - run `workflows/public-launch-checklist.md` → "Open-sourcing a code
+     repository".
+
+WordPress plugin gates: `tools/wordpress/wp-plugin-release.md` → "Pull
+request quality gates".
 
 ## Ruleset checklist
 

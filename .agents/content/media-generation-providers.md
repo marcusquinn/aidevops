@@ -56,7 +56,7 @@ retention, and support when accessed through a gateway.
 | **HeyGen** (`heygen-skill.md`) | The deliverable is an avatar, presenter, translation, or talking-head video | Avatar and speech-led video workflows | Specialized rather than general scene generation |
 | **ComfyUI** (`tools/ai-generation/comfy-cli.md`) | Local control, privacy, reusable graphs, or custom models dominate | Local execution and explicit workflows | Setup, hardware, model storage, and node maintenance |
 | **Enhancor** (`video-enhancor.md`) | Existing portraits need enhancement after generation | Face-aware enhancement and upscale | Post-processing only |
-| **Remotion** (`tools/video/remotion.md`) | Assets need deterministic code-based assembly, captions, or animation | Reproducible React compositions and rendering | Composes media; it is not a generation-model gateway |
+| **Remotion** (`tools/video/remotion/remotion.md`) | Assets need deterministic code-based assembly, captions, or animation | Reproducible React compositions and rendering | Composes media; it is not a generation-model gateway |
 
 ## Decision Checks
 
@@ -85,7 +85,7 @@ retention, and support when accessed through a gateway.
 | Generated video shots | `production-video.md` -> this file -> selected provider |
 | Voice/music generation | `production-audio.md` -> this file -> selected provider |
 | Avatar video | `heygen-skill.md` |
-| Post-production assembly | `tools/video/remotion.md` or `tools/video/video-editor.md` |
+| Post-production assembly | `tools/video/remotion/remotion.md` or `tools/video/video-editor.md` |
 | Local/private generation | `tools/ai-generation/comfy-cli.md` |
 
 <!-- AI-CONTEXT-END -->

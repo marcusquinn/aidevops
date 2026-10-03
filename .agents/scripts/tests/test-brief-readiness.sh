@@ -467,6 +467,31 @@ BODY_V2_SHORT_PATH_BUN=$(printf '%s\n' "$BODY_V2_COMPLETE" | sed \
 	-e 's|^shellcheck src/state.sh.*$|bun test|' \
 	-e '/^bash tests\/test-state\.sh$/d')
 
+# Field labels can carry their evidence entirely in more-indented sub-bullets.
+# shellcheck disable=SC2016
+BODY_V2_NESTED=$(printf '%s\n' "$BODY_V2_COMPLETE" | sed \
+	-e 's|^- \*\*Callers/readers:\*\*.*$|- **Callers/readers:**\
+  - `src/app.sh` reads the state|' \
+	-e 's|^- \*\*Writers/mutation paths:\*\*.*$|- **Writers/mutation paths:**\
+  - `src/state.sh` writes the state|' \
+	-e 's|^- \*\*Cleanup/rollback paths:\*\*.*$|- **Cleanup/rollback paths:**\
+  - `scripts/rollback-state.sh` restores records|' \
+	-e 's|^- \*\*Concurrency/atomicity:\*\*.*$|- **Concurrency/atomicity:**\
+  - write to a temporary file before rename|' \
+	-e 's|^- \*\*Mixed-version/backward compatibility:\*\*.*$|- **Mixed-version/backward compatibility:**\
+  - old readers still accept v1 records|' \
+	-e 's|^- \*\*Idempotency/retry:\*\*.*$|- **Idempotency/retry:**\
+  - replay leaves migrated records unchanged|' \
+	-e 's|^- \*\*Partial failure/recovery:\*\*.*$|- **Partial failure/recovery:**\
+  - interrupted temporary files are ignored|')
+# shellcheck disable=SC2016
+BODY_V2_NESTED_EMPTY=$(printf '%s\n' "$BODY_V2_NESTED" | sed '/^  - `src\/app.sh` reads the state$/d')
+# shellcheck disable=SC2016
+BODY_V2_NESTED_NA=$(printf '%s\n' "$BODY_V2_NESTED" | sed 's|^  - `src/app.sh` reads the state$|  - N/A|')
+# shellcheck disable=SC2016
+BODY_V2_NESTED_SIBLING=$(printf '%s\n' "$BODY_V2_NESTED" | sed 's|^  - `src/app.sh` reads the state$|- **Other field:** `src/app.sh` reads the state|')
+BODY_V2_NESTED_EMPTY_HAZARD=$(printf '%s\n' "$BODY_V2_NESTED" | sed '/^  - write to a temporary file before rename$/d')
+
 # Negative language in prose must not replace a negative observable criterion.
 BODY_V2_NEGATIVE_PROSE_ONLY=$(printf '%s\n' "$BODY_V2_COMPLETE" | sed \
 	's/^- \[ \] A failed migration never replaces a valid existing record or regresses v1 reads\.$/- [ ] Migration failures return an observable error./')
@@ -789,10 +814,11 @@ else
 fi
 
 # --- Test 21: legitimate shell, generic, and object syntax in code is accepted ---
-if "$HELPER" check --body "$BODY_V2_WITH_CODE_SYNTAX" >/dev/null 2>&1; then
+output=$("$HELPER" check --body "$BODY_V2_WITH_CODE_SYNTAX" 2>/dev/null)
+if [[ "$output" == *"WORKER_READY=true"* && "$output" != *"PLACEHOLDER_MATCH="* ]]; then
 	pass "T21: placeholder-like syntax inside code remains valid"
 else
-	fail "T21: code syntax false-positive guard" "readiness check failed"
+	fail "T21: code syntax false-positive guard" "output: $output"
 fi
 
 # --- Test 22: fenced examples cannot populate genuine readiness sections ---
@@ -861,7 +887,7 @@ fi
 
 # --- Test 30: unknown path placeholders remain rejectable prose ---
 output=$("$HELPER" check --body "$BODY_V2_WITH_PATH_PLACEHOLDER" 2>/dev/null)
-if [[ "$output" == *"WORKER_READY=false"* && "$output" == *"placeholder:unfilled"* ]]; then
+if [[ "$output" == *"WORKER_READY=false"* && "$output" == *"placeholder:unfilled"* && "$output" == *"PLACEHOLDER_MATCH=<path>"* ]]; then
 	pass "T30: unknown <path> placeholder remains rejected"
 else
 	fail "T30: unknown path placeholder rejection" "output: $output"
@@ -869,7 +895,7 @@ fi
 
 # --- Test 31: generated wrappers preserve unknown placeholders in inner prose ---
 output=$("$HELPER" check --body "$BODY_V2_WITH_COMMAND_PLACEHOLDER" 2>/dev/null)
-if [[ "$output" == *"WORKER_READY=false"* && "$output" == *"placeholder:unfilled"* ]]; then
+if [[ "$output" == *"WORKER_READY=false"* && "$output" == *"placeholder:unfilled"* && "$output" == *"PLACEHOLDER_MATCH=<command>"* ]]; then
 	pass "T31: generated wrappers preserve and reject inner <command> placeholders"
 else
 	fail "T31: generated wrapper inner-text preservation" "output: $output"
@@ -891,6 +917,28 @@ if [[ $rc -eq 0 && "$output" == *"WORKER_READY=true"* && "$output" == *"VALIDATI
 	pass "T33: Done when remains schema-v2 ready"
 else
 	fail "T33: Done when readiness alias" "got exit $rc, output: $output"
+fi
+
+# --- Test 34: nested sub-bullets count as field evidence, without relaxing empty fields ---
+output=$("$HELPER" check --body "$BODY_V2_NESTED" 2>/dev/null)
+if [[ "$output" == *"WORKER_READY=true"* && "$output" == *"VALIDATION_ERRORS=none"* ]]; then
+	pass "T34: nested write-surface paths and hazard evidence are accepted"
+else
+	fail "T34: nested field evidence" "output: $output"
+fi
+for variant in BODY_V2_NESTED_EMPTY BODY_V2_NESTED_NA BODY_V2_NESTED_SIBLING; do
+	output=$("$HELPER" check --body "${!variant}" 2>/dev/null)
+	if [[ "$output" == *"WORKER_READY=false"* && "$output" == *"write-surface:Callers/readers"* ]]; then
+		pass "T34: $variant cannot borrow evidence from another field"
+	else
+		fail "T34: $variant rejection" "output: $output"
+	fi
+done
+output=$("$HELPER" check --body "$BODY_V2_NESTED_EMPTY_HAZARD" 2>/dev/null)
+if [[ "$output" == *"WORKER_READY=false"* && "$output" == *"hazard:Concurrency/atomicity"* ]]; then
+	pass "T34: empty hazard without continuation is rejected"
+else
+	fail "T34: empty hazard rejection" "output: $output"
 fi
 
 # Producer/consumer scope contract (GH#31390).
@@ -950,6 +998,29 @@ if "$HELPER" scope-normalize $'<!-- aidevops-signed-approval -->\n'"$scope_legac
 	fail "scope: signed content cannot gain permissions"
 else
 	pass "scope: signed content cannot gain permissions"
+fi
+
+# GH#32689: template line ranges and explicit backticked continuations
+# normalize; "and/or" stays ambiguous; a signature footer ends the section.
+# shellcheck disable=SC2016 # Literal declaration syntax under test.
+scope_ranged=$("$HELPER" scope-normalize $'### Files to Modify\n- `EDIT: src/a.sh:45-60` — change\n- `EDIT: src/b.sh:7`: and `src/c.md`\n- `EDIT: src/d.sh` and `docs/e.md`: document both' 2>/dev/null) || scope_ranged=""
+# shellcheck disable=SC2016
+if [[ "$scope_ranged" == *$'## Files Scope\n\n- `src/a.sh`\n- `src/b.sh`\n- `src/d.sh`\n- `docs/e.md`' ]]; then
+	pass "scope: line ranges dropped and explicit continuations kept"
+else
+	fail "scope: line ranges and continuations" "got: $scope_ranged"
+fi
+# shellcheck disable=SC2016
+if "$HELPER" scope-normalize $'### Files to Modify\n- EDIT: `src/a.sh` and/or `src/b.sh`' >/dev/null 2>&1; then
+	fail "scope: and/or continuation stays ambiguous"
+else
+	pass "scope: and/or continuation stays ambiguous"
+fi
+# shellcheck disable=SC2016
+if "$HELPER" scope-check $'## What\nx\n\n### Files Scope\n\n- `src/a.sh`\n\n---\n[aidevops.sh](https://aidevops.sh) signature' >/dev/null 2>&1; then
+	pass "scope: signature footer ends the Files Scope section"
+else
+	fail "scope: signature footer ends the Files Scope section"
 fi
 
 # Exercise the unchanged pre-push consumer against an actual prepared local

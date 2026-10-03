@@ -18,6 +18,29 @@ def _wah_failure_family:
   elif ((.launch_failure_cause // "") != "")
     or ((.result // "") | test("launch")) then "launch-failure"
   else "other-failure" end;
+# GH#33331: each attempt writes one metric row; continuation attempts carry
+# routing_reason=continuation_retry. Join them to the terminal session row so
+# "continuations exhausted" is distinguishable from "never attempted".
+def _wah_is_premature_exit:
+  .result == "premature_exit" or .launch_failure_cause == "model_stopped_before_completion";
+def _wah_with_continuations($events):
+  map(. as $t
+    | (($t.session_key // "") | tostring) as $key
+    | . + {continuation_retries: (if $key == "" then 0 else
+        [$events[] | select(
+          .routing_reason == "continuation_retry"
+          and ((.session_key // "") | tostring) == $key
+          and (.repo_slug // "") == ($t.repo_slug // "")
+          and ((($t.attempt_id // "") == "") or (.attempt_id // "") == $t.attempt_id)
+          and (.ts // 0) <= ($t.ts // 0)
+        )] | length end)});
+def _wah_continuation_recovery:
+  {
+    retries_total: (map(.continuation_retries // 0) | add // 0),
+    recovered_sessions: (map(select(_wah_runtime_handoff and (.continuation_retries // 0) > 0)) | length),
+    exhausted_sessions: (map(select(_wah_is_premature_exit and (.continuation_retries // 0) > 0)) | length),
+    not_attempted_sessions: (map(select(_wah_is_premature_exit and (.continuation_retries // 0) == 0)) | length)
+  };
 def _wah_failure_family_summary:
   map(select(_wah_effective_failure))
   | map(. + {failure_family: _wah_failure_family})
@@ -34,7 +57,14 @@ def _wah_failure_family_summary:
     last_ts: (map(.ts // 0) | max),
     confidence: (if length >= 3 and (map((.repo_slug // "legacy") + "|" + (.session_key // (.session_id // "unknown"))) | unique | length) >= 2 then "high" elif length >= 2 then "medium" else "low" end),
     recovery_outcome: (if length >= 3 then "recurring" else "observed" end),
+    occurrences: length,
+    continuation_retries: (map(.continuation_retries // 0) | add // 0),
+    continuation_outcome: (
+      if any(.[]; _wah_is_premature_exit and (.continuation_retries // 0) > 0) then "exhausted"
+      elif any(.[]; _wah_is_premature_exit) then "not_attempted"
+      else "not_applicable" end),
     results: (reduce .[] as $row ({}; .[$row.result // "unknown"] += 1)),
-    examples: (sort_by(.ts // 0) | reverse | .[0:3] | map({ts, result, exit_code, launch_failure_cause, kill_reason, next_action}))
+    models: (reduce .[] as $row ({}; .[$row.model // "unknown"] += 1)),
+    examples: (sort_by(.ts // 0) | reverse | .[0:3] | map({ts, result, exit_code, launch_failure_cause, kill_reason, next_action, model, continuation_retries}))
   })
   | sort_by(.count) | reverse | .[0:10];

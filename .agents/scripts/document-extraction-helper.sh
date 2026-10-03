@@ -510,7 +510,7 @@ do_validate() {
 # Model IDs are configurable via environment variables:
 #   DOCEXTRACT_GEMINI_MODEL  - Gemini model (default: gemini-2.5-flash)
 #   DOCEXTRACT_OPENAI_MODEL  - OpenAI model (default: gpt-4o)
-#   DOCEXTRACT_ANTHROPIC_MODEL - Anthropic model (default: claude-sonnet-4-6)
+#   DOCEXTRACT_ANTHROPIC_MODEL - Anthropic model (default: claude-sonnet-5-5)
 #   DOCEXTRACT_OLLAMA_MODEL  - Ollama model (default: llama3.2)
 resolve_llm_backend() {
 	local privacy="$1"
@@ -518,7 +518,7 @@ resolve_llm_backend() {
 
 	local gemini_model="${DOCEXTRACT_GEMINI_MODEL:-gemini-2.5-flash}"
 	local openai_model="${DOCEXTRACT_OPENAI_MODEL:-gpt-4o}"
-	local anthropic_model="${DOCEXTRACT_ANTHROPIC_MODEL:-claude-sonnet-4-6}"
+	local anthropic_model="${DOCEXTRACT_ANTHROPIC_MODEL:-claude-sonnet-5-5}"
 	local ollama_model="${DOCEXTRACT_OLLAMA_MODEL:-llama3.2}"
 
 	# Basic model name sanity check (no spaces, no shell metacharacters)

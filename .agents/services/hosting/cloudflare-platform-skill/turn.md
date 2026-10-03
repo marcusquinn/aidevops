@@ -1,158 +1,86 @@
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Cloudflare TURN Service
 
-Managed TURN relay for WebRTC on Cloudflare's global anycast network (310+ cities). Free with Cloudflare Calls SFU; otherwise $0.05/GB outbound.
+Expert guidance for implementing Cloudflare TURN Service in WebRTC applications.
 
-## Service Addresses
+## Overview
 
-| Protocol | Primary | Alternate |
-|----------|---------|-----------|
-| STUN/UDP | `stun.cloudflare.com:3478` | `:53/udp` (avoid — blocked by many ISPs) |
-| TURN/UDP | `turn.cloudflare.com:3478` | `:53/udp` |
-| TURN/TCP | `turn.cloudflare.com:3478` | `:80/tcp` |
-| TURN/TLS | `turn.cloudflare.com:5349` | `:443/tcp` |
+Cloudflare TURN (Traversal Using Relays around NAT) Service is a managed relay service for WebRTC applications. TURN acts as a relay point for traffic between WebRTC clients and SFUs, particularly when direct peer-to-peer communication is obstructed by NATs or firewalls. The service runs on Cloudflare's global anycast network across 310+ cities.
 
-## API Endpoints
+## Key Characteristics
 
-Base URL: `https://api.cloudflare.com/client/v4` — requires API token with "Calls Write" permission.
+- **Anycast Architecture**: Automatically connects clients to the closest Cloudflare location
+- **Global Network**: Available across Cloudflare's entire network (excluding China Network)
+- **Zero Configuration**: No need to manually select regions or servers
+- **Protocol Support**: STUN/TURN over UDP, TCP, and TLS
+- **Free Tier**: Free when used with Cloudflare Calls SFU, otherwise $0.05/GB outbound
 
-```
-GET    /accounts/{account_id}/calls/turn_keys
-GET    /accounts/{account_id}/calls/turn_keys/{key_id}
-POST   /accounts/{account_id}/calls/turn_keys          body: {"name": "my-turn-key"}
-PUT    /accounts/{account_id}/calls/turn_keys/{key_id} body: {"name": "updated-name"}
-DELETE /accounts/{account_id}/calls/turn_keys/{key_id}
-```
+## In This Reference
 
-Create response includes `uid`, `key` (secret — only returned once), `name`, `created`, `modified`.
+| File | Purpose |
+|------|---------|
+| [api.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/turn/api.md) | Credentials API, TURN key management, types, constraints |
+| [configuration.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/turn/configuration.md) | Worker setup, wrangler.jsonc, env vars, IP allowlisting |
+| [patterns.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/turn/patterns.md) | Implementation patterns, use cases, integration examples |
+| [gotchas.md](turn-gotchas.md) | Troubleshooting, limits, security, common mistakes |
 
-## Generate Temporary Credentials
+## Reading Order
 
-```
-POST https://rtc.live.cloudflare.com/v1/turn/keys/{key_id}/credentials/generate
-Authorization: Bearer {key_secret}
-Content-Type: application/json
+| Task | Files to Read | Est. Tokens |
+|------|---------------|-------------|
+| Quick start | README only | ~500 |
+| Generate credentials | README → api | ~1300 |
+| Worker integration | README → configuration → patterns | ~2000 |
+| Debug connection | gotchas | ~700 |
+| Security review | api → gotchas | ~1500 |
+| Enterprise firewall | configuration | ~600 |
 
-{"ttl": 86400}
-```
+## Service Addresses and Ports
 
-Response:
+### STUN over UDP
 
-```json
-{
-  "iceServers": {
-    "urls": [
-      "stun:stun.cloudflare.com:3478",
-      "turn:turn.cloudflare.com:3478?transport=udp",
-      "turn:turn.cloudflare.com:3478?transport=tcp",
-      "turns:turn.cloudflare.com:5349?transport=tcp"
-    ],
-    "username": "generated-username",
-    "credential": "generated-credential"
-  }
-}
-```
+- **Primary**: `stun.cloudflare.com:3478/udp`
+- **Alternate**: `stun.cloudflare.com:53/udp` (blocked by browsers, not recommended)
 
-## Implementation
+### TURN over UDP
 
-### Backend — generate credentials (Node.js/TypeScript)
+- **Primary**: `turn.cloudflare.com:3478/udp`
+- **Alternate**: `turn.cloudflare.com:53/udp` (blocked by browsers)
 
-```typescript
-async function generateTURNCredentials(keyId: string, keySecret: string, ttl = 86400) {
-  const res = await fetch(
-    `https://rtc.live.cloudflare.com/v1/turn/keys/${keyId}/credentials/generate`,
-    {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${keySecret}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ttl })
-    }
-  );
-  if (!res.ok) throw new Error(`TURN credential generation failed: ${res.status}`);
-  const { iceServers } = await res.json();
-  return { username: iceServers.username, credential: iceServers.credential, urls: iceServers.urls };
-}
-```
+### TURN over TCP
 
-Cache credentials client-side; refresh 60s before expiry (`expiresAt: now + ttl * 1000 - 60000`).
+- **Primary**: `turn.cloudflare.com:3478/tcp`
+- **Alternate**: `turn.cloudflare.com:80/tcp`
 
-### Browser — fetch credentials from backend
+### TURN over TLS
 
-```typescript
-async function getTURNConfig(): Promise<RTCIceServer[]> {
-  const { iceServers } = await fetch('/api/turn-credentials').then(r => r.json());
-  return [
-    { urls: 'stun:stun.cloudflare.com:3478' },
-    { urls: iceServers.urls, username: iceServers.username, credential: iceServers.credential }
-  ];
-}
+- **Primary**: `turn.cloudflare.com:5349/tcp`
+- **Alternate**: `turn.cloudflare.com:443/tcp`
 
-const peerConnection = new RTCPeerConnection({ iceServers: await getTURNConfig() });
-```
+## Quick Start
 
-### Cloudflare Worker
+1. **Create TURN key via API**: see [api.md#create-turn-key](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/turn/api.md#create-turn-key)
+2. **Generate credentials**: see [api.md#generate-temporary-credentials](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/turn/api.md#generate-temporary-credentials)
+3. **Configure Worker**: see [configuration.md#cloudflare-worker-integration](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/turn/configuration.md#cloudflare-worker-integration)
+4. **Implement client**: see [patterns.md#basic-turn-configuration-browser](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/turn/patterns.md#basic-turn-configuration-browser)
 
-```typescript
-export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
-    if (new URL(request.url).pathname !== '/turn-credentials') return new Response('Not found', { status: 404 });
-    if (!request.headers.get('Authorization')) return new Response('Unauthorized', { status: 401 });
-    const res = await fetch(
-      `https://rtc.live.cloudflare.com/v1/turn/keys/${env.TURN_KEY_ID}/credentials/generate`,
-      { method: 'POST', headers: { 'Authorization': `Bearer ${env.TURN_KEY_SECRET}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ ttl: 3600 }) }
-    );
-    if (!res.ok) return new Response('Failed to generate credentials', { status: 500 });
-    const { iceServers } = await res.json();
-    return new Response(JSON.stringify({ iceServers: [
-      { urls: 'stun:stun.cloudflare.com:3478' },
-      { urls: iceServers.urls, username: iceServers.username, credential: iceServers.credential }
-    ]}), { headers: { 'Content-Type': 'application/json' } });
-  }
-};
-```
+## When to Use TURN
 
-Env vars: `TURN_KEY_ID` (var), `TURN_KEY_SECRET` (secret via `wrangler secret put TURN_KEY_SECRET`), `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`.
+- **Restrictive NATs**: Symmetric NATs that block direct connections
+- **Corporate firewalls**: Environments blocking WebRTC ports
+- **Mobile networks**: Carrier-grade NAT scenarios
+- **Predictable connectivity**: When reliability > efficiency
 
-## Limits & TLS
+## Related Cloudflare Services
 
-**Rate limits** (per user): >5 new unique IPs/sec, 5–10k pps, 50–100 Mbps. Exceeding causes packet drops.
+- **Cloudflare Calls SFU**: Managed Selective Forwarding Unit (TURN free when used with SFU)
+- **Cloudflare Stream**: Video streaming with WHIP/WHEP support
+- **Cloudflare Workers**: Backend for credential generation
+- **Cloudflare KV**: Credential caching
+- **Cloudflare Durable Objects**: Session state management
 
-**TLS**: 1.1, 1.2, 1.3. Recommended ciphers: `AEAD-AES128-GCM-SHA256`, `AEAD-AES256-GCM-SHA384`, `AEAD-CHACHA20-POLY1305-SHA256` (TLS 1.3); `ECDHE-ECDSA-AES128-GCM-SHA256`, `ECDHE-RSA-AES128-GCM-SHA256` (TLS 1.2).
+## Additional Resources
 
-## Security Best Practices
-
-1. **Never expose TURN key secrets client-side** — always generate credentials server-side
-2. **Rate-limit credential generation** — 5s cooldown per client minimum
-3. **Set appropriate TTLs** — 1800–3600s for short sessions; 86400s max
-4. **Validate client authentication** before generating credentials
-5. **Monitor usage** — track generation requests, alert on anomalies
-
-## Troubleshooting
-
-| Issue | Check |
-|-------|-------|
-| Credentials not working | Key ID/secret correct? TTL expired? Can reach `rtc.live.cloudflare.com`? |
-| Slow connection | ICE candidate gathering, firewall blocking WebRTC ports, try TURN over TLS `:443` |
-| High packet loss | Rate limits (5–10k pps, 50–100 Mbps), client network quality |
-
-### Debug ICE
-
-```typescript
-pc.addEventListener('icecandidate', e => e.candidate && console.log('ICE:', e.candidate.type, e.candidate.protocol));
-pc.addEventListener('iceconnectionstatechange', () => console.log('ICE state:', pc.iceConnectionState));
-```
-
-## Architecture
-
-- **Anycast**: BGP routes clients to nearest location — no region selection needed
-- **Use TURN when**: symmetric NATs, corporate firewalls, carrier-grade NAT, predictable connectivity required
-- **`iceTransportPolicy: 'all'`**: try direct first (recommended, reduces cost); `'relay'`: force TURN (IoT/predictability)
-- **With Cloudflare Calls SFU**: TURN is free and automatically coordinated; cache credentials within TTL window
-
-## Resources
-
-- [Cloudflare TURN Docs](https://developers.cloudflare.com/realtime/turn/)
-- [Cloudflare Calls Docs](https://developers.cloudflare.com/calls/) — Calls SFU (TURN free when used together), Stream (WHIP/WHEP), Workers (credential backend), KV (credential caching)
-- [API Reference](https://developers.cloudflare.com/api/resources/calls/subresources/turn/)
-- [Orange Meets (example)](https://github.com/cloudflare/orange)
+- [Cloudflare Calls Documentation](https://developers.cloudflare.com/realtime/index.md)
+- [Cloudflare TURN Service Docs](https://developers.cloudflare.com/realtime/turn/index.md)
+- [Cloudflare API Reference](https://developers.cloudflare.com/api/resources/calls/subresources/turn/index.md)
+- [Orange Meets (Open Source Example)](https://github.com/cloudflare/orange)

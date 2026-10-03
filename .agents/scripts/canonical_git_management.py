@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 from pathlib import Path
 
 
@@ -59,7 +60,21 @@ def is_managed_root(repo_root: str) -> bool:
     git_dir = _gitdir_target(root)
     if git_dir and linked_worktree_root(str(git_dir)) == root:
         return False
-    return (root / ".aidevops.json").is_file() or root in _registered_roots()
+    if root in _registered_roots():
+        return True
+    if not (root / ".aidevops.json").is_file():
+        return False
+    temp_dirs = (
+        tempfile.gettempdir(),
+        os.environ.get("TMPDIR", tempfile.gettempdir()),
+        os.environ.get("AIDEVOPS_TEMP_DIR") or "~/.aidevops/.agent-workspace/tmp",
+    )
+    #aidevops:trust-boundary: only unregistered markers inside isolated temp roots are exempt.
+    for temp_dir in temp_dirs:
+        resolved_temp = Path(temp_dir).expanduser().resolve()
+        if root != resolved_temp and root.is_relative_to(resolved_temp):
+            return False
+    return True
 
 
 def is_registered_common_dir(common_dir: str) -> bool:

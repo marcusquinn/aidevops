@@ -15,10 +15,11 @@ mcp_servers:
 
 **MCP server URL**: `https://mcp.cloudflare.com/mcp` | **Config template**: `configs/mcp-templates/cloudflare-api.json`
 
-## When to Use This (vs cloudflare-platform skill)
+## When to Use This (vs cf CLI and cloudflare-platform skill)
 
-- **Code Mode MCP** (`search` + `execute`): Manage DNS, zones, WAF, DDoS, firewall rules, R2 buckets, Workers deployments, Zero Trust, Access policies
-- **`cloudflare-platform-skill`**: Build Workers (SDK, bindings, patterns), configure wrangler.toml, local dev, debug runtime issues, understand product architecture
+- **`cf` CLI** (`tools/api/cloudflare-cf-cli.md`): Preferred for shell-driven management when installed — same full-API coverage, JSON output, `cf cli search` discovery, `--dry-run`
+- **Code Mode MCP** (`search` + `execute`): Manage DNS, zones, WAF, DDoS, firewall rules, R2 buckets, Workers deployments, Zero Trust, Access policies when `cf` is unavailable, or to batch many calls in one sandboxed script
+- **`cloudflare-platform-skill`**: Build Workers (SDK, bindings, patterns), configure `cloudflare.config.ts` or `wrangler.toml`/`wrangler.jsonc`, local dev, debug runtime issues, understand product architecture
 
 For crawler controls, prefer allowing crawlers unless an explicit site policy says
 otherwise. Audit `GET /zones/{zone_id}/bot_management` and set

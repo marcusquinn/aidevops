@@ -95,8 +95,9 @@ _issue_attempt_summary_json() {
 		return 0
 	fi
 
-	local summary=""
-	summary=$(jq -rs --arg sk "$session_key" --arg issue "$issue_number" --arg repo "$repo_slug" --arg unknown "$_UNKNOWN" '
+	local summary="" now_epoch=""
+	now_epoch=$(date +%s)
+	summary=$(jq -rs --arg sk "$session_key" --arg issue "$issue_number" --arg repo "$repo_slug" --arg unknown "$_UNKNOWN" --argjson future_limit "$((now_epoch + 300))" '
 		def is_issue:
 			((.session_key // "") == $sk) or (((.issue_number // "") | tostring) == $issue);
 		def is_repo:
@@ -106,10 +107,13 @@ _issue_attempt_summary_json() {
 			or .result == "rate_limit_fast"
 			or .provider_error_type == "rate_limit"
 			or ((.provider_status // "") | tostring) == "429";
-		[.[] | select(is_issue and is_repo)] as $attempts
+		[.[] | select(is_issue and is_repo)] as $matching
+		| ($matching | map(select((.ts | type) == "number" and .ts > $future_limit)) | length) as $future_ignored
+		| ($matching | map(select((.ts | type) != "number" or .ts <= $future_limit))) as $attempts
 		| ($attempts | map(select(is_rate_limit))) as $rl
 		| {
 			attempt_count: ($attempts | length),
+			future_dated_ignored: $future_ignored,
 			rate_limit_count: ($rl | length),
 			last_attempt_ts: (($attempts | map(.ts // 0) | max) // 0),
 			last_rate_limit_ts: (($rl | map(.ts // 0) | max) // 0),
@@ -174,6 +178,68 @@ _issue_blocker_summary_json() {
 			recent_events: ($events | sort_by(.ts // 0) | reverse | .[0:10])
 		}' "$blocker_log" 2>/dev/null || \
 		printf '{"event_total":0,"active_total":0,"event_counts":{},"reason_counts":{},"active_blockers":[],"recent_events":[]}'
+	return 0
+}
+
+# GH#33330: name the permission request holding an issue, its age, whether the
+# owning session has ended, and both signed exits. Advisory only: signatures
+# are verified by `aidevops approve verify-permissions`, not here.
+# Args: issue_number repo_slug issue_json comments_json
+_issue_permission_hold_json() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local issue_json="${3:-}"
+	local comments_json="${4:-}"
+	[[ -n "$issue_json" ]] || issue_json='{}'
+	[[ -n "$comments_json" ]] || comments_json='[]'
+	jq -nc --argjson issue "$issue_json" --argjson comments "$comments_json" \
+		--arg number "$issue_number" --arg repo "$repo_slug" --argjson now "$(date +%s)" '
+		def trusted: (.author_association // "") as $a | ["OWNER", "MEMBER", "COLLABORATOR"] | index($a) != null;
+		def epoch: (.created_at // "") | (try fromdateiso8601 catch null);
+		([($issue.labels // [])[]?.name] | index("needs-maintainer-permissions") != null) as $label
+		| [$comments[]? | select(trusted and ((.body // "") | contains("<!-- aidevops-permission-request -->")))]
+		| sort_by(.id) | last as $req
+		| if $req == null then {active: $label, label_present: $label, request_id: null}
+		else
+			((($req.body // "") | capture("\"request_id\":\\s*\"(?<id>perm-[0-9a-f]{16})\"")?.id) // null) as $rid
+			| [$comments[]? | select(trusted and (.id > $req.id) and ($rid != null)
+				and ((.body // "") | contains($rid))
+				and ((.body // "") | (contains("<!-- aidevops-signed-permission-grant -->")
+					or contains("<!-- aidevops-signed-permission-withdrawal -->"))))]
+			| sort_by(.id) | last as $decision
+			| (($req | epoch)) as $requested
+			| ([$comments[]? | select(.id > $req.id and ((.body // "") | contains("CLAIM_RELEASED")))] | length > 0) as $released
+			| {
+				active: ($label or $decision == null),
+				label_present: $label,
+				request_id: $rid,
+				requested_at: $req.created_at,
+				age_seconds: (if $requested == null then null else ($now - $requested) end),
+				decision: (if $decision == null then "none"
+					elif (($decision.body // "") | contains("<!-- aidevops-signed-permission-withdrawal -->")) then "withdrawal"
+					else "grant" end),
+				owner_session_terminal: $released,
+				grant_command: ("sudo aidevops approve permissions issue " + $number + " " + $repo + " --request " + ($rid // "perm-<id>")),
+				withdraw_command: ("sudo aidevops approve permissions issue " + $number + " " + $repo + " --request " + ($rid // "perm-<id>") + " --withdraw")
+			}
+		end' 2>/dev/null || printf '{"active":false,"request_id":null}'
+	return 0
+}
+
+_render_issue_permission_hold_text() {
+	local hold_json="$1"
+	[[ "$(printf '%s' "$hold_json" | jq -r '.request_id // empty' 2>/dev/null)" != "" ||
+		"$(printf '%s' "$hold_json" | jq -r '.label_present // false' 2>/dev/null)" == "true" ]] || return 0
+	printf 'Maintainer permission hold:\n'
+	printf '%s' "$hold_json" | jq -r '
+		"  Active: \(.active)  label: \(.label_present // false)",
+		"  Request: \(.request_id // "unknown")  requested: \(.requested_at // "unknown")  age_seconds: \(.age_seconds // "unknown")",
+		"  Signed decision: \(.decision // "none")  owner session ended (CLAIM_RELEASED): \(.owner_session_terminal // false)",
+		(if .active then
+			"  Grant (signs the listed capabilities):    \(.grant_command)",
+			"  Withdraw (grants nothing, resumes dispatch): \(.withdraw_command)"
+		else empty end)' 2>/dev/null || true
+	printf '\n'
 	return 0
 }
 
@@ -642,11 +708,39 @@ _render_issue_text() {
 	printf '  Created: %s\n\n' "${created_at:-(unknown)}"
 
 	_render_issue_lifecycle_comments "$comments_json"
+	_render_issue_permission_hold_text "$(_issue_permission_hold_json "$issue_number" "$repo_slug" "$issue_json" "$comments_json")"
 	_render_issue_blockers_text "$blocker_summary_json"
 	_render_issue_dirty_worktree_hold_text "$(_issue_dirty_worktree_hold_summary_json "$issue_log_lines")"
 	_render_issue_footprint_defer_text "$issue_number" "$repo_slug"
 	_render_issue_attempts_text "$attempt_summary_json" "$issue_log_lines" "$verbose"
 	_render_issue_linked_prs "$repo_slug" "$pr_numbers" "$logfile" "$logdir" "$verbose"
+	return 0
+}
+
+# Render lifecycle-marker comments as comma-separated JSON array items.
+# Args: comments_json
+_render_issue_lifecycle_comments_json() {
+	local comments_json="$1"
+	command -v jq >/dev/null 2>&1 || return 0
+	[[ "$comments_json" != "[]" && -n "$comments_json" ]] || return 0
+	local lc_first=1 comment_total="" i=0
+	comment_total=$(printf '%s' "$comments_json" | jq 'length' 2>/dev/null || echo 0)
+	[[ "$comment_total" =~ ^[0-9]+$ ]] || comment_total=0
+	while [[ "$i" -lt "$comment_total" ]]; do
+		local comment_item="" ts="" author="" body="" excerpt=""
+		comment_item=$(printf '%s' "$comments_json" | jq -r ".[$i]" 2>/dev/null) || comment_item="{}"
+		ts=$(_jq_field "$comment_item" ".created_at" "")
+		author=$(_jq_field "$comment_item" ".user.login" "$_UNKNOWN")
+		body=$(_jq_field "$comment_item" ".body" "")
+		i=$((i + 1))
+		[[ -z "$ts" ]] && continue
+		_comment_has_lifecycle_marker "$body" || continue
+		excerpt=$(_lifecycle_comment_excerpt "$body" | tr '\n' ' ' | sed 's/"/\\"/g; s/[[:space:]]*$//')
+		[[ "$lc_first" -eq 0 ]] && printf ',\n'
+		lc_first=0
+		printf '    {"ts": "%s", "author": "%s", "excerpt": "%s"}' \
+			"$ts" "$author" "${excerpt:-}"
+	done
 	return 0
 }
 
@@ -671,29 +765,7 @@ _render_issue_json() {
 	_json_str_field "created_at"   "$created_at"
 
 	printf '  "lifecycle_comments": [\n'
-	local lc_first=1
-	if command -v jq >/dev/null 2>&1 && [[ "$comments_json" != "[]" && -n "$comments_json" ]]; then
-		local comment_total="" i=0
-		comment_total=$(printf '%s' "$comments_json" | jq 'length' 2>/dev/null || echo 0)
-		[[ "$comment_total" =~ ^[0-9]+$ ]] || comment_total=0
-		i=0
-		while [[ "$i" -lt "$comment_total" ]]; do
-			local comment_item="" ts="" author="" body=""
-			comment_item=$(printf '%s' "$comments_json" | jq -r ".[$i]" 2>/dev/null) || comment_item="{}"
-			ts=$(_jq_field "$comment_item" ".created_at" "")
-			author=$(_jq_field "$comment_item" ".user.login" "$_UNKNOWN")
-			body=$(_jq_field "$comment_item" ".body" "")
-			i=$((i + 1))
-			[[ -z "$ts" ]] && continue
-			_comment_has_lifecycle_marker "$body" || continue
-			local excerpt
-			excerpt=$(_lifecycle_comment_excerpt "$body" | tr '\n' ' ' | sed 's/"/\\"/g; s/[[:space:]]*$//')
-			[[ "$lc_first" -eq 0 ]] && printf ',\n'
-			lc_first=0
-			printf '    {"ts": "%s", "author": "%s", "excerpt": "%s"}' \
-				"$ts" "$author" "${excerpt:-}"
-		done
-	fi
+	_render_issue_lifecycle_comments_json "$comments_json"
 	printf '\n  ],\n'
 
 	printf '  "repeated_attempts": '
@@ -709,6 +781,9 @@ _render_issue_json() {
 	printf ',\n'
 	printf '  "progress_blockers": '
 	printf '%s' "$blocker_summary_json" | jq -c '.' 2>/dev/null || printf '{}'
+	printf ',\n'
+	printf '  "permission_hold": '
+	_issue_permission_hold_json "$issue_number" "$repo_slug" "$issue_json" "$comments_json"
 	printf ',\n'
 	printf '  "dirty_worktree_hold": '
 	_issue_dirty_worktree_hold_summary_json "$issue_log_lines"

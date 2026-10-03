@@ -930,7 +930,10 @@ cmd_fail() {
 #   --outcome OUTCOME    "success" | "escalated" | "failed" | "timeout"
 #   --reason REASON      escalation reason code (optional)
 #   --tokens NUM         tokens used (optional)
-#   --tier TIER          tier at dispatch time (optional, for context)
+#   --tier TIER          routed tier; used only when the dispatch row has none
+#   --model MODEL        model that ran last; also fills a blank dispatch model
+#   --variant VARIANT    reasoning variant that ran last (optional)
+#   --routing-attempts N in-worker route attempts, including fallbacks (optional)
 #   --session-key KEY    worker session key (preferred correlation fallback)
 #   --lease-token TOKEN  dispatch lease token (preferred exact correlation)
 #   --attempt-id ID      explicit telemetry attempt ID
@@ -944,9 +947,12 @@ _find_pending_telemetry_attempt() {
 	local issue_number="$4"
 	local repo_slug="$5"
 
+	# jq binds every filter variable at compile time, so --arg since is required
+	# even though only the report operation reads it.
 	jq -sc -f "$TIER_TELEMETRY_FILTER" --arg operation find \
 		--arg aid "$attempt_id" --arg sk "$session_key" \
-		--arg inum "$issue_number" --arg slug "$repo_slug" "$telemetry_file" 2>/dev/null
+		--arg inum "$issue_number" --arg slug "$repo_slug" --arg since "" \
+		"$telemetry_file" 2>/dev/null
 	return 0
 }
 
@@ -979,14 +985,22 @@ _append_terminal_telemetry() {
 	local outcome="$8"
 	local reason="$9"
 	local tokens="${10}"
+	local final_model="${11:-}"
+	local variant="${12:-}"
+	local routing_attempts="${13:-}"
 	local now=""
 	now=$(_now_utc)
+	[[ "$routing_attempts" =~ ^[1-9][0-9]{0,3}$ ]] || routing_attempts=""
 
 	jq -cn --argjson schema 2 --arg aid "$attempt_id" --arg sk "$session_key" \
 		--arg inum "$issue_number" --arg slug "$repo_slug" --arg tier "$tier" \
 		--arg model "$model" --arg outcome "$outcome" --arg reason "$reason" \
-		--argjson tokens "$tokens" --arg ts "$now" \
-		'{schema: $schema, attempt_id: $aid, session_key: $sk, issue: $inum, repo: $slug, tier: $tier, model: $model, outcome: $outcome, reason: $reason, tokens: $tokens, completed_at: $ts}' \
+		--argjson tokens "$tokens" --arg ts "$now" --arg final_model "$final_model" \
+		--arg variant "$variant" --arg routing_attempts "$routing_attempts" \
+		'{schema: $schema, attempt_id: $aid, session_key: $sk, issue: $inum, repo: $slug, tier: $tier, model: $model, outcome: $outcome, reason: $reason, tokens: $tokens, completed_at: $ts}
+		+ (if $final_model != "" then {final_model: $final_model} else {} end)
+		+ (if $variant != "" then {variant: $variant} else {} end)
+		+ (if $routing_attempts != "" then {routing_attempts: ($routing_attempts | tonumber)} else {} end)' \
 		>>"$telemetry_file" 2>/dev/null || true
 	return 0
 }
@@ -997,49 +1011,28 @@ cmd_record_outcome() {
 	local outcome=""
 	local reason=""
 	local tokens="0"
-	local tier=""
+	local tier="" model="" variant="" routing_attempts=""
 	local session_key=""
 	local lease_token=""
 	local attempt_id=""
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
-		--issue)
-			issue_number="${2:-}"
-			shift 2
-			;;
-		--repo)
-			repo_slug="${2:-}"
-			shift 2
-			;;
-		--outcome)
-			outcome="${2:-}"
-			shift 2
-			;;
-		--reason)
-			reason="${2:-}"
-			shift 2
-			;;
-		--tokens)
-			tokens="${2:-0}"
-			shift 2
-			;;
-		--tier)
-			tier="${2:-}"
-			shift 2
-			;;
+		--issue) issue_number="${2:-}"; shift 2 ;;
+		--repo) repo_slug="${2:-}"; shift 2 ;;
+		--outcome) outcome="${2:-}"; shift 2 ;;
+		--reason) reason="${2:-}"; shift 2 ;;
+		--tokens) tokens="${2:-0}"; shift 2 ;;
+		--tier) tier="${2:-}"; shift 2 ;;
+		--model) model="${2:-}"; shift 2 ;;
+		--variant) variant="${2:-}"; shift 2 ;;
+		--routing-attempts) routing_attempts="${2:-}"; shift 2 ;;
 		--session-key)
 			session_key="${2:-}"
 			shift 2
 			;;
-		--lease-token)
-			lease_token="${2:-}"
-			shift 2
-			;;
-		--attempt-id)
-			attempt_id="${2:-}"
-			shift 2
-			;;
+		--lease-token) lease_token="${2:-}"; shift 2 ;;
+		--attempt-id) attempt_id="${2:-}"; shift 2 ;;
 		*) shift ;;
 		esac
 	done
@@ -1062,20 +1055,22 @@ cmd_record_outcome() {
 	pending=$(_find_pending_telemetry_attempt "$telemetry_file" "$attempt_id" \
 		"$session_key" "$issue_number" "$repo_slug" || true)
 
+	# The dispatch row owns tier/model; caller values only fill launch paths
+	# that registered before the worker resolved its route (GH#32964).
+	local final_model="$model"
 	if [[ -n "$pending" ]]; then
 		attempt_id=$(printf '%s' "$pending" | jq -r '.attempt_id')
 		[[ -n "$session_key" ]] || session_key=$(printf '%s' "$pending" | jq -r '.session_key // ""')
 		[[ -n "$issue_number" ]] || issue_number=$(printf '%s' "$pending" | jq -r '.issue // ""')
 		[[ -n "$repo_slug" ]] || repo_slug=$(printf '%s' "$pending" | jq -r '.repo // ""')
-		tier=$(printf '%s' "$pending" | jq -r '.tier // ""')
-		local model=""
-		model=$(printf '%s' "$pending" | jq -r '.model // ""')
-	else
-		local model=""
-		if [[ -z "$attempt_id" ]]; then
-			_release_lock
-			return 0
-		fi
+		local pending_tier="" pending_model=""
+		pending_tier=$(printf '%s' "$pending" | jq -r '.tier // ""')
+		pending_model=$(printf '%s' "$pending" | jq -r '.model // ""')
+		if [[ -n "$pending_tier" ]]; then tier="$pending_tier"; fi
+		if [[ -n "$pending_model" ]]; then model="$pending_model"; fi
+	elif [[ -z "$attempt_id" ]]; then
+		_release_lock
+		return 0
 	fi
 
 	if [[ -n "$attempt_id" ]] && jq -ne --arg aid "$attempt_id" \
@@ -1086,32 +1081,76 @@ cmd_record_outcome() {
 	fi
 
 	_append_terminal_telemetry "$telemetry_file" "$attempt_id" "$session_key" \
-		"$issue_number" "$repo_slug" "$tier" "$model" "$outcome" "$reason" "$tokens"
+		"$issue_number" "$repo_slug" "$tier" "$model" "$outcome" "$reason" "$tokens" \
+		"$final_model" "$variant" "$routing_attempts"
 	_release_lock
 
 	return 0
 }
 
 #######################################
+# Print rate rows from TSV on stdin: label, success, total[, suffix].
+# Rows without a positive total are skipped.
+#######################################
+_print_tier_rate_rows() {
+	local label="" row_success="" row_total="" suffix="" pct=""
+	while IFS=$'\t' read -r label row_success row_total suffix; do
+		[[ "$row_success" =~ ^[0-9]+$ && "$row_total" =~ ^[1-9][0-9]*$ ]] || continue
+		pct=$(awk -v s="$row_success" -v t="$row_total" 'BEGIN {printf "%.1f", s / t * 100}')
+		printf '  %s — %s/%s (%s%%)%s\n' "$label" "$row_success" "$row_total" "$pct" "${suffix:+ $suffix}"
+	done
+	return 0
+}
+
+# Print the ISO-8601 UTC window start for $1 days; nothing for 0 (all history).
+_tier_report_since() {
+	local days="$1"
+	[[ "$days" -gt 0 ]] || return 0
+	local now_epoch=""
+	now_epoch=$(_now_epoch)
+	jq -rn --argjson epoch "$((now_epoch - days * 86400))" '$epoch | todate'
+	return 0
+}
+
+#######################################
 # Report tier telemetry summary
 #
-# Reads tier-telemetry.jsonl and outputs aggregate stats.
+# Reads tier-telemetry.jsonl and outputs aggregate stats for attempts
+# dispatched in the window (default 30 days; --days 0 = all history).
 # Used by the pulse sweep and /optimize-tiers command.
 #
-# Exit codes: 0 always
+# Args: [--days N] [--json]
+# Exit codes: 0 on success, 1 on invalid options
 #######################################
 cmd_tier_report() {
 	local telemetry_file="${LEDGER_DIR}/tier-telemetry.jsonl"
+	local days="30" json_output=0
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--days) days="${2:-}"; shift 2 ;;
+		--json) json_output=1; shift ;;
+		*) echo "Error: Unknown option for tier-report: $1" >&2; return 1 ;;
+		esac
+	done
+	if [[ ! "$days" =~ ^[0-9]{1,5}$ ]]; then
+		echo "Error: --days requires a whole number of days (0 = all history)" >&2
+		return 1
+	fi
 
 	if [[ ! -s "$telemetry_file" ]]; then
 		echo "No tier telemetry data yet."
 		return 0
 	fi
 
-	local summary=""
+	local since="" summary=""
+	since=$(_tier_report_since "$days")
 	summary=$(jq -sc -f "$TIER_TELEMETRY_FILTER" --arg operation report \
-		--arg aid "" --arg sk "" --arg inum "" --arg slug "" \
+		--arg aid "" --arg sk "" --arg inum "" --arg slug "" --arg since "$since" \
 		"$telemetry_file" 2>/dev/null) || summary='{}'
+	if [[ "$json_output" -eq 1 ]]; then
+		printf '%s\n' "$summary"
+		return 0
+	fi
 
 	local total success escalated failed deferred pending_unknown unmatched
 	total=$(printf '%s' "$summary" | jq -r '.total // 0')
@@ -1123,6 +1162,11 @@ cmd_tier_report() {
 	unmatched=$(printf '%s' "$summary" | jq -r '.unmatched // 0')
 
 	echo "=== Tier Dispatch Telemetry ==="
+	if [[ -n "$since" ]]; then
+		echo "Window: dispatched since ${since} (last ${days} days; --days 0 for all history)"
+	else
+		echo "Window: all history"
+	fi
 	echo "Total dispatches: $total"
 	echo "Success: $success"
 	echo "Escalated: $escalated"
@@ -1132,18 +1176,23 @@ cmd_tier_report() {
 	echo "Legacy/unmatched terminal events: $unmatched"
 	echo ""
 	echo "By tier:"
-	printf '%s' "$summary" | jq -r '.by_tier[] | "\(.count | tostring | if length < 6 then (" " * (6 - length)) + . else . end) \(.tier)"'
+	printf '%s' "$summary" | jq -r '.by_tier[]? | "\(.count | tostring | if length < 6 then (" " * (6 - length)) + . else . end) \(.tier)"'
 	echo ""
 	echo "Escalation reasons:"
-	printf '%s' "$summary" | jq -r '.reasons[] | "\(.count | tostring | if length < 6 then (" " * (6 - length)) + . else . end) \(.reason)"'
+	printf '%s' "$summary" | jq -r '.reasons[]? | "\(.count | tostring | if length < 6 then (" " * (6 - length)) + . else . end) \(.reason)"'
 	echo ""
 	echo "Pass rate by tier:"
-	printf '%s' "$summary" | jq -r '.pass_rates[] | select(.tier != "" and .total > 0) | [.tier, .success, .total] | @tsv' |
-		while IFS=$'\t' read -r tier_name tier_success tier_total; do
-			local pct=""
-			pct=$(awk "BEGIN {printf \"%.1f\", ${tier_success}/${tier_total}*100}")
-			printf '  tier:%s — %s/%s (%s%%)\n' "$tier_name" "$tier_success" "$tier_total" "$pct"
-		done
+	printf '%s' "$summary" | jq -r '.pass_rates[]? | select(.tier != "") | ["tier:\(.tier)", .success, .total] | @tsv' |
+		_print_tier_rate_rows
+	echo ""
+	echo "First-dispatch pass rate by tier (first attempt per issue):"
+	printf '%s' "$summary" | jq -r '.first_dispatch[]? | select(.tier != "") | ["tier:\(.tier)", .success, .total] | @tsv' |
+		_print_tier_rate_rows
+	echo ""
+	echo "Pass rate by tier and model@variant (deferred excluded):"
+	printf '%s' "$summary" | jq -r '.by_model[]? | select(.tier != "" and .model != "") |
+		["tier:\(.tier) \(.model)", .success, (.total - .deferred), "deferred:\(.deferred)"] | @tsv' |
+		_print_tier_rate_rows
 
 	return 0
 }
@@ -1675,10 +1724,12 @@ Usage:
     Mark dispatch as failed (worker errored or timed out).
 
   dispatch-ledger-helper.sh record-outcome --outcome OUTCOME [--session-key KEY]
+      [--attempt-id ID] [--tier T] [--model M] [--variant V] [--routing-attempts N]
     Record one correlated terminal tier-telemetry event. First outcome wins.
 
-  dispatch-ledger-helper.sh tier-report
-    Report logical dispatch attempts, terminal outcomes, and pass rates by tier.
+  dispatch-ledger-helper.sh tier-report [--days N] [--json]
+    Report attempts dispatched in the last N days (default 30; 0 = all history):
+    outcomes, pass rates by tier, first-dispatch pass rates, and by model@variant.
 
   dispatch-ledger-helper.sh expire [--ttl SECONDS]
     Expire stale in-flight entries (default TTL: 3600s / 60 min).
@@ -1756,7 +1807,7 @@ main() {
 		cmd_record_outcome "$@"
 		;;
 	tier-report)
-		cmd_tier_report
+		cmd_tier_report "$@"
 		;;
 	expire)
 		cmd_expire "$@"

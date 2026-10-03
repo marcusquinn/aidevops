@@ -106,7 +106,7 @@ async def run_agent(webrtc_connection: SmallWebRTCConnection):
     )
     llm = AnthropicLLMService(
         api_key=os.getenv("ANTHROPIC_API_KEY"),
-        model="claude-sonnet-4-6",
+        model="claude-sonnet-5-5",
     )
     messages = [{
         "role": "system",
@@ -168,7 +168,7 @@ tools = [
     {"name": "edit_file", "description": "Edit a file in the project",
      "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}}, "required": ["path", "content"]}},
 ]
-llm = AnthropicLLMService(api_key=os.getenv("ANTHROPIC_API_KEY"), model="claude-sonnet-4-6", tools=tools)
+llm = AnthropicLLMService(api_key=os.getenv("ANTHROPIC_API_KEY"), model="claude-sonnet-5-5", tools=tools)
 ```
 
 For session continuity with an existing OpenCode session, proxy through the OpenCode server API (adds latency vs direct API). See `tools/ai-assistants/opencode-server.md`.

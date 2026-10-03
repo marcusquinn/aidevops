@@ -41,9 +41,9 @@ gh() {
 run_create() {
 	: >"$GH_CALLS"
 	_PUSH_CREATED_NUM=""
-	AIDEVOPS_PLANNING_PUBLICATION_STATE="$1" \
+	AIDEVOPS_SESSION_USER=tester AIDEVOPS_PLANNING_PUBLICATION_STATE="$1" \
 		_push_create_issue t9000 owner/repo "${TMP_DIR}/TODO.md" \
-		"t9000: publication test" body "auto-dispatch,tier:standard,status:available" ""
+		"t9000: publication test" body "${2:-auto-dispatch,tier:standard,status:available}" ""
 }
 
 run_create pending
@@ -52,6 +52,18 @@ pending_args=$(grep '^issue create' "$GH_CALLS")
 [[ "$pending_args" != *'auto-dispatch'* ]]
 [[ "$pending_args" != *'status:available'* ]]
 printf 'PASS pending issue creation withholds positive dispatch labels\n'
+
+# GH#32703: the pending projection strips auto-dispatch, but the TODO intent
+# still makes the task worker-owned, so it must not be self-assigned.
+if grep -q -- '--add-assignee' "$GH_CALLS"; then
+	printf 'FAIL pending auto-dispatch issue was self-assigned\n' >&2
+	exit 1
+fi
+printf 'PASS pending auto-dispatch issue creation does not self-assign\n'
+
+run_create pending "tier:standard"
+grep -q -- '--add-assignee tester' "$GH_CALLS"
+printf 'PASS pending interactive-only issue creation still self-assigns\n'
 
 run_create canonical
 canonical_args=$(grep '^issue create' "$GH_CALLS")

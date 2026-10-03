@@ -49,6 +49,9 @@ and data paths; the `opencode2` shim uses private config, data, cache, state, an
 temporary roots under `~/.aidevops/runtimes/opencode-v2/`. Its default server
 port is `4097`, while an explicit `--port` always wins. This allows V1 and V2
 sessions to run concurrently without sharing configuration or session databases.
+Upstream's V2 curl installer replaces a V1 installation; the managed side-by-side
+setup above uses separately installed npm packages and the isolated shim, not
+that installer.
 
 Select V2 as the primary profile for setup and headless execution, opt out of
 the preview companion installation, or explicitly roll back:
@@ -71,8 +74,9 @@ when the config entry cannot be written. To check this, run
 `opencode2 api GET /api/plugin`: it should list exactly one `aidevops` entry
 with `status: active`.
 
-V1 loads the framework guide through its config `instructions`. V2 has no such
-entry, so setup links `~/.aidevops/agents/AGENTS.md` to
+V1 loads the framework guide through its config `instructions`. V2's upstream
+migration guide says `instructions` requires no migration, but aidevops setup
+also links `~/.aidevops/agents/AGENTS.md` to
 `~/.aidevops/runtimes/opencode-v2/config/opencode/AGENTS.md`; a user-authored
 file there is kept. The V2 background service serves every later session, so
 the shim drops caller session identity, headless flags, and bundle pins before
@@ -82,16 +86,33 @@ Plugin log lines `Session greeting skipped for <session>: <reason>` explain a
 missing greeting. To check parity, compare a fresh session's `core/instructions`
 in the V2 `instruction_state` table with the V1 system prompt.
 
-V2 promotion requires the isolated plugin, security-hook, lifecycle-cleanup,
-OAuth/MCP, headless execution, and V1 rollback gates to pass. Until then, do not
+V2 promotion requires all six gates below. The weekly Linux canary checks both
+profiles but does not substitute for the other gates. Until all pass, do not
 change the profile document's `default` from `v1`.
+
+| Gate | Check before promotion |
+|------|------------------------|
+| Plugin loaded and tools present | `AIDEVOPS_OPENCODE_PROFILE=v2 .agents/scripts/opencode-pin-canary.sh canary latest` (plugin health marker and aidevops tools); inspect the native tool diff. |
+| Security hooks | `node --test .agents/plugins/opencode-aidevops/tests/test-permission-broker.mjs` and manually deny an unsafe edit in a V2 session. |
+| Lifecycle cleanup | Manually start then exit a standalone V2 session and verify the event subscription and MCP connections close without residual processes. |
+| OAuth/MCP | Manually check a V2 OAuth-backed model and connect/disconnect one configured MCP server using the isolated profile. |
+| Headless execution | The `OpenCode Pin Canary` workflow runs isolated baseline/candidate probes for both profiles; inspect the V2 artifact and result. |
+| V1 rollback | `bash .agents/scripts/tests/test-opencode-runtime-profile.sh` then `AIDEVOPS_OPENCODE_PROFILE=v1 ./setup.sh --non-interactive` on an isolated installation and confirm V1 config and plugin are restored. |
+
+The V2 pin remains 2.0.3: on 2026-09-28 an isolated local V2 canary against
+`@opencode/cli` 2.0.18 reached the mock provider and recorded the plugin's
+`factory_initialized` health stage, but the pinned 2.0.3 `build` request offered
+native tools only, missing `aidevops_pre_edit_check` and `aidevops_memory`.
+That baseline is inconclusive under the stricter gate, so it cannot qualify the
+candidate or justify advancing the pin. Diagnose the V2 agent/tool registration
+separately, then rerun both profiles. Do not infer compatibility from V1.
 
 The "via aidevops" Anthropic 4.x picker entries were OpenCode 1 config-hook
 injections, not a separate OAuth transport; its native Anthropic models still
 use the pool auth hook. OpenCode 2 uses its own provider-request auth adapter,
 and does not call the OpenCode 1 picker config hook. The OpenCode 1 request-time
-budget (240K generally, 500K for specified newer Anthropic families, 180K
-target for Haiku 4.5) is independent of the optional V2 policy below. OpenCode
+budget (240K for all models, 180K target for Haiku 4.5, ~200K for Opus 4.7)
+is independent of the V2 policy below. OpenCode
 2.0.3's
 `session.context` exposes only a model reference; its automatic compaction
 uses `min(input - buffer, context - max(min(output, 32K), buffer))` when input
@@ -99,13 +120,23 @@ is set; without input, only the second term applies. The SDK
 allows `catalog.transform` to edit model limits, but this mutates picker
 metadata and cannot distinguish native from explicit user limits. Its optional
 compaction threshold only works in provider-compaction mode; enabling that
-mode changes compaction behavior. The opt-in V2 policy deliberately caps larger
+mode changes compaction behavior. The V2 policy deliberately caps larger
 input limits instead, without changing the compaction mechanism. Do not claim
 the V1 per-family targets apply to V2. If the launcher is not on `PATH`, use the
 managed
 `~/.local/bin/opencode2` shim; invoking the raw binary under
 `~/.aidevops/runtimes/opencode-v2/runtime/node_modules/.bin/` bypasses its
 private config/data/auth isolation.
+
+### Language servers (LSP)
+
+OpenCode 2 accepts and preserves `lsp` configuration, but does not run
+language servers, expose LSP tools, or produce LSP diagnostics; its sidebar
+has no LSP panel. Upstream directs users to the project's lint, typecheck, or
+compiler commands instead (V2 migration guide, `migrate-v1.mdx`). Aidevops
+follows the same rule on every runtime (`reference/ci-gate-policy.md`), and
+headless profiles already set `lsp: false`. OpenCode 1 still supports
+language servers, but framework verification never depends on them.
 
 ### Maintaining agent parity
 
@@ -125,28 +156,29 @@ plus the existing V1 agent generator checks. After deployment, restart each
 runtime and inspect both agent selectors and the resolved Build+ prompt. Do not
 infer V2 parity from a successful built-in Build session or a plugin import.
 
-### Optional V2 240K local compaction target
+### V2 240K local compaction target
 
-V2 keeps its native limits by default. To opt into a 240,000-token usable-input
-target across models with larger windows, merge this into
+V2 targets 240,000 tokens of usable input on models with larger windows by
+default (GH#32807; it was opt-in before). To keep native limits, merge this into
 `~/.config/aidevops/settings.json` (do not replace other settings):
 
 ```json
 {
   "runtime": {
-    "opencode": { "v2_compaction_target": 240000 }
+    "opencode": { "v2_compaction_target": false }
   }
 }
 ```
 
 Restart the **V2 background service and client** to apply the change. OpenCode
-2.0.3 uses a 20K local-compaction buffer by default, so the opt-in catalogue
+2.0.3 uses a 20K local-compaction buffer by default, so the catalogue
 transform caps a large model's `limit.input` at 260K; the local threshold then
 becomes 240K. The model's context, output, name, and variants stay native. Models
 whose smaller native input or physical context already triggers earlier are not
 expanded. This is an explicit policy override: it also caps any larger
 user-supplied model input limit, because V2's catalogue transform does not expose
-the limit's provenance. Remove `v2_compaction_target` to restore native limits.
+the limit's provenance. Set `v2_compaction_target` to `false` to restore native
+limits; any value other than `240000` opts out.
 If the host's `compaction.buffer` differs from 20K, set
 `runtime.opencode.v2_compaction_buffer` to the same integer; a mismatch changes
 the effective trigger. The option does not take effect when the host has disabled
@@ -247,7 +279,7 @@ TUI requires restart for config changes. Use CLI for quick iteration:
 
 ```bash
 opencode run "List your available tools" --agent SEO
-opencode run "Quick test" --agent Build+ --model anthropic/claude-sonnet-4-6
+opencode run "Quick test" --agent Build+ --model anthropic/claude-sonnet-5-5
 
 # Isolated V2 preview
 opencode2 run "List your available tools" --agent SEO

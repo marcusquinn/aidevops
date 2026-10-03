@@ -25,6 +25,12 @@
 # Module-level counters (caller-visible globals after sourcing):
 #   _PULSE_EVENTS_TICKLE_FRESH — owners skipped this cycle (304 hits)
 #   _PULSE_EVENTS_TICKLE_STALE — owners with changed events this cycle
+#   _PULSE_EVENTS_TICKLE_LAST_REASON — why the last call returned 0:
+#     "etag" (304) or "cooldown" (rate-limit protection). Empty otherwise.
+#
+# Limitation (GH#33074): /orgs/{org}/events lists public events only, so a 304
+# for an org with private repos does not prove its issues/PRs are unchanged.
+# Callers must bound how long an "etag" skip may keep a snapshot unrefreshed.
 #
 # Feature flag: PULSE_EVENTS_TICKLE_ENABLED (default: 1; set in
 #   .agents/configs/pulse-rate-limit.conf or as an env var override)
@@ -65,6 +71,9 @@ _EVENTS_TICKLE_CACHE_DIR="${HOME}/.aidevops/cache/pulse-events-etag"
 # reads these after its per-owner loop to populate the refresh summary output.
 _PULSE_EVENTS_TICKLE_FRESH="${_PULSE_EVENTS_TICKLE_FRESH:-0}"
 _PULSE_EVENTS_TICKLE_STALE="${_PULSE_EVENTS_TICKLE_STALE:-0}"
+_PULSE_EVENTS_TICKLE_LAST_REASON=""
+_EVENTS_TICKLE_REASON_ETAG="etag"
+_EVENTS_TICKLE_REASON_COOLDOWN="cooldown"
 
 # Logfile — inherit from caller if set, otherwise default.
 _EVENTS_TICKLE_LOGFILE="${LOGFILE:-${HOME}/.aidevops/logs/pulse-wrapper.log}"
@@ -178,6 +187,7 @@ _events_tickle_retry_org_endpoint() {
 	if _events_tickle_rate_limited_response "$org_response" "$org_status"; then
 		_events_tickle_log "cooldown recorded for owner=${owner} (org retry status=${org_status:-none} exit=${org_exit}); skipping search fanout"
 		_PULSE_EVENTS_TICKLE_FRESH=$((_PULSE_EVENTS_TICKLE_FRESH + 1))
+		_PULSE_EVENTS_TICKLE_LAST_REASON="$_EVENTS_TICKLE_REASON_COOLDOWN"
 		return 0
 	fi
 	if [[ "$org_status" == "200" ]]; then
@@ -217,6 +227,7 @@ _events_tickle_retry_org_endpoint() {
 #   2 — unknown (error, rate-limit, network failure, or feature disabled)
 events_tickle() {
 	local owner="$1"
+	_PULSE_EVENTS_TICKLE_LAST_REASON=""
 
 	# Feature flag gate — disabled means we cannot skip batch search.
 	if [[ "${PULSE_EVENTS_TICKLE_ENABLED:-1}" != "1" ]]; then
@@ -226,6 +237,7 @@ events_tickle() {
 		if ! _gh_secondary_cooldown_preflight read >/dev/null 2>&1; then
 			_events_tickle_log "cooldown active for owner=${owner}; skipping search fanout"
 			_PULSE_EVENTS_TICKLE_FRESH=$((_PULSE_EVENTS_TICKLE_FRESH + 1))
+			_PULSE_EVENTS_TICKLE_LAST_REASON="$_EVENTS_TICKLE_REASON_COOLDOWN"
 			return 0
 		fi
 	fi
@@ -266,6 +278,7 @@ events_tickle() {
 	if _events_tickle_rate_limited_response "$response" "$http_status"; then
 		_events_tickle_log "cooldown recorded for owner=${owner} (status=${http_status:-none} exit=${exit_code}); skipping search fanout"
 		_PULSE_EVENTS_TICKLE_FRESH=$((_PULSE_EVENTS_TICKLE_FRESH + 1))
+		_PULSE_EVENTS_TICKLE_LAST_REASON="$_EVENTS_TICKLE_REASON_COOLDOWN"
 		return 0
 	fi
 
@@ -275,6 +288,7 @@ events_tickle() {
 		# ETag unchanged — nothing new for this owner.
 		_events_tickle_log "fresh for owner=${owner} (304 ETag match)"
 		_PULSE_EVENTS_TICKLE_FRESH=$((_PULSE_EVENTS_TICKLE_FRESH + 1))
+		_PULSE_EVENTS_TICKLE_LAST_REASON="$_EVENTS_TICKLE_REASON_ETAG"
 		return 0
 		;;
 

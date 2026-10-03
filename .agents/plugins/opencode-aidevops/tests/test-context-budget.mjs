@@ -44,22 +44,18 @@ test("caps any resolved large model on first request without changing provider m
   }
 });
 
-test("uses 500K usable-input target for Opus 5.5+, Fable 5.1+, Sonnet 5+ only", () => {
+test("uses the 240K usable-input target for every large Anthropic model (GH#32807)", () => {
   const budget = setup();
   budget.capture({});
   for (const id of ["claude-opus-5-5", "claude-opus-5-6-20260926", "claude-opus-6",
-    "claude-fable-5-1", "claude-fable-5-2", "claude-sonnet-5", "claude-sonnet-5-1"]) {
-    const resolved = model("anthropic", id);
-    assert.equal(budget.apply({ model: resolved }), true, id);
-    assert.equal(resolved.limit.input - 20000, 500000, id);
-    assert.equal(resolved.limit.context, 648000, id);
-    assert.equal(resolved.limit.output, 128000, id);
-    assert.equal(budget.apply({ model: resolved }), false, id);
-  }
-  for (const id of ["claude-opus-5-4", "claude-fable-5", "claude-sonnet-4-6", "claude-haiku-5"]) {
+    "claude-fable-5-1", "claude-fable-5-2", "claude-sonnet-5", "claude-sonnet-5-1",
+    "claude-opus-5-4", "claude-fable-5", "claude-sonnet-4-6", "claude-haiku-5"]) {
     const resolved = model("anthropic", id);
     assert.equal(budget.apply({ model: resolved }), true, id);
     assert.equal(resolved.limit.input - 20000, 240000, id);
+    assert.equal(resolved.limit.context, 388000, id);
+    assert.equal(resolved.limit.output, 128000, id);
+    assert.equal(budget.apply({ model: resolved }), false, id);
   }
   const customProvider = model("custom", "claude-opus-5-5");
   assert.equal(budget.apply({ model: customProvider }), true);

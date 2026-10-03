@@ -14,7 +14,11 @@ const MAX_TTL_SECONDS = 12 * 60 * 60;
 const MAX_SOURCE_BYTES = 10 * 1024 * 1024;
 const MAX_MANIFEST_ENTRIES = 32;
 const ATOMIC_BUNDLE_LAYOUT = "atomic-directory/v1";
-const DEFAULT_STATE_DIR = "/var/run/aidevops/source-access";
+// GH#32834: must match DEFAULT_STATE_DIR in scripts/source_access_core.py.
+// macOS /private/var/run is group-writable, so the broker uses /private/var/db.
+export const DEFAULT_STATE_DIR = process.platform === "darwin"
+  ? "/private/var/db/aidevops/source-access"
+  : "/var/run/aidevops/source-access";
 const DEFAULT_PUBLIC_KEY = "/etc/aidevops/source-access/source-access.pub";
 
 export function renderApprovedSourceContent(content, args, template) {

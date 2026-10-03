@@ -275,6 +275,100 @@ test_base_drift_fails_closed_without_reverting_upstream() {
 	return 0
 }
 
+test_validate_replacement_ancestry_noop_without_replacement() {
+	# shellcheck disable=SC2317  # stub invoked indirectly by the function under test
+	issue_open_pr_guard_check() { print_error "issue_open_pr_guard_check should not run without --replace-pr"; return 99; }
+	REPLACEMENT_PR_ANCESTRY_VALIDATED=1
+	_validate_replacement_pr_ancestry 42 owner/repo feature/test '' '' >/dev/null 2>&1
+	local rc=$?
+	if [[ "$rc" -eq 0 && "$REPLACEMENT_PR_ANCESTRY_VALIDATED" -eq 0 ]]; then
+		print_result 'GH#33253: no replacement means no ancestry check' 0
+	else
+		print_result 'GH#33253: no replacement means no ancestry check' 1 "rc=${rc}, validated=${REPLACEMENT_PR_ANCESTRY_VALIDATED}"
+	fi
+	unset -f issue_open_pr_guard_check
+	return 0
+}
+
+test_validate_replacement_ancestry_marks_validated_on_success() {
+	# shellcheck disable=SC2317  # stub invoked indirectly by the function under test
+	issue_open_pr_guard_check() { return 0; }
+	REPLACEMENT_PR_ANCESTRY_VALIDATED=0
+	_validate_replacement_pr_ancestry 42 owner/repo feature/new 77 'The old approach cannot satisfy the verified contract.' >/dev/null 2>&1
+	local rc=$?
+	if [[ "$rc" -eq 0 && "$REPLACEMENT_PR_ANCESTRY_VALIDATED" -eq 1 ]]; then
+		print_result 'GH#33253: proven ancestor before finalization is recorded' 0
+	else
+		print_result 'GH#33253: proven ancestor before finalization is recorded' 1 "rc=${rc}, validated=${REPLACEMENT_PR_ANCESTRY_VALIDATED}"
+	fi
+	unset -f issue_open_pr_guard_check
+	return 0
+}
+
+test_validate_replacement_ancestry_continuation_skips_flag() {
+	# shellcheck disable=SC2317  # stub invoked indirectly by the function under test
+	issue_open_pr_guard_check() { return 3; }
+	REPLACEMENT_PR_ANCESTRY_VALIDATED=0
+	_validate_replacement_pr_ancestry 42 owner/repo feature/existing 77 'The old approach cannot satisfy the verified contract.' >/dev/null 2>&1
+	local rc=$?
+	if [[ "$rc" -eq 0 && "$REPLACEMENT_PR_ANCESTRY_VALIDATED" -eq 0 ]]; then
+		print_result 'GH#33253: same-branch continuation needs no separate proof' 0
+	else
+		print_result 'GH#33253: same-branch continuation needs no separate proof' 1 "rc=${rc}, validated=${REPLACEMENT_PR_ANCESTRY_VALIDATED}"
+	fi
+	unset -f issue_open_pr_guard_check
+	return 0
+}
+
+test_validate_replacement_ancestry_rejects_missing_ancestor() {
+	# shellcheck disable=SC2317  # stub invoked indirectly by the function under test
+	issue_open_pr_guard_check() { return 1; }
+	REPLACEMENT_PR_ANCESTRY_VALIDATED=0
+	_validate_replacement_pr_ancestry 42 owner/repo feature/new 77 'The old approach cannot satisfy the verified contract.' >/dev/null 2>&1
+	local rc=$?
+	if [[ "$rc" -eq 1 && "$REPLACEMENT_PR_ANCESTRY_VALIDATED" -eq 0 ]]; then
+		print_result 'GH#33253: replaced PR head not contained in branch fails closed' 0
+	else
+		print_result 'GH#33253: replaced PR head not contained in branch fails closed' 1 "rc=${rc}, validated=${REPLACEMENT_PR_ANCESTRY_VALIDATED}"
+	fi
+	unset -f issue_open_pr_guard_check
+	return 0
+}
+
+test_validate_replacement_ancestry_rejects_ambiguous_evidence() {
+	# shellcheck disable=SC2317  # stub invoked indirectly by the function under test
+	issue_open_pr_guard_check() { return 2; }
+	REPLACEMENT_PR_ANCESTRY_VALIDATED=0
+	_validate_replacement_pr_ancestry 42 owner/repo feature/new 77 'The old approach cannot satisfy the verified contract.' >/dev/null 2>&1
+	local rc=$?
+	if [[ "$rc" -eq 1 && "$REPLACEMENT_PR_ANCESTRY_VALIDATED" -eq 0 ]]; then
+		print_result 'GH#33253: ambiguous replacement evidence fails closed' 0
+	else
+		print_result 'GH#33253: ambiguous replacement evidence fails closed' 1 "rc=${rc}, validated=${REPLACEMENT_PR_ANCESTRY_VALIDATED}"
+	fi
+	unset -f issue_open_pr_guard_check
+	return 0
+}
+
+test_orchestrator_validates_replacement_ancestry_before_finalization() {
+	local orchestrator="${SCRIPT_DIR}/full-loop-helper.sh"
+	local stage_line="" validate_line="" finalize_line=""
+	# shellcheck disable=SC2016
+	stage_line=$(grep -n '_stage_and_commit "\$commit_message"' "$orchestrator" | cut -d: -f1)
+	# shellcheck disable=SC2016
+	validate_line=$(grep -n '_validate_replacement_pr_ancestry "\$issue_number"' "$orchestrator" | cut -d: -f1)
+	# shellcheck disable=SC2016
+	finalize_line=$(grep -n '_finalize_wip_history "\$commit_message"' "$orchestrator" | cut -d: -f1)
+	if [[ "$stage_line" =~ ^[0-9]+$ && "$validate_line" =~ ^[0-9]+$ && "$finalize_line" =~ ^[0-9]+$ &&
+		"$stage_line" -lt "$validate_line" && "$validate_line" -lt "$finalize_line" ]]; then
+		print_result 'GH#33253: replacement ancestry is validated before WIP finalization rewrites HEAD' 0
+	else
+		print_result 'GH#33253: replacement ancestry is validated before WIP finalization rewrites HEAD' 1 \
+			"stage=${stage_line}, validate=${validate_line}, finalize=${finalize_line}"
+	fi
+	return 0
+}
+
 test_orchestrator_finalizes_before_validation() {
 	local orchestrator="${SCRIPT_DIR}/full-loop-helper.sh"
 	local stage_line="" finalize_line="" validators_line=""
@@ -362,10 +456,16 @@ test_commit_hook_failure_restores_tip
 test_wip_final_message_is_rejected
 test_base_drift_fails_closed_without_reverting_upstream
 test_orchestrator_finalizes_before_validation
+test_validate_replacement_ancestry_noop_without_replacement
+test_validate_replacement_ancestry_marks_validated_on_success
+test_validate_replacement_ancestry_continuation_skips_flag
+test_validate_replacement_ancestry_rejects_missing_ancestor
+test_validate_replacement_ancestry_rejects_ambiguous_evidence
+test_orchestrator_validates_replacement_ancestry_before_finalization
 
 printf '\n%d tests run, %d failed\n' "$TESTS_RUN" "$TESTS_FAILED"
-if [[ "$TESTS_RUN" -ne 11 ]]; then
-	printf '%sFAIL%s expected 11 tests to execute\n' "$TEST_RED" "$TEST_RESET"
+if [[ "$TESTS_RUN" -ne 17 ]]; then
+	printf '%sFAIL%s expected 17 tests to execute\n' "$TEST_RED" "$TEST_RESET"
 	exit 1
 fi
 [[ "$TESTS_FAILED" -eq 0 ]] || exit 1

@@ -24,7 +24,7 @@ tools:
 - **One-shot**: `opencode run "prompt"` | **Warm server**: `opencode run --attach http://localhost:4096 "prompt"`
 - **Server**: `opencode serve [--port 4096]` | **SDK**: `npm install @opencode-ai/sdk`
 - **Runners**: `runner-helper.sh [create|run|status|list|stop|destroy]` → `~/.aidevops/.agent-workspace/runners/`
-- **Model override**: `opencode run -m openrouter/anthropic/claude-sonnet-4-6 "Task"` | Auth: `opencode auth login`
+- **Model override**: `opencode run -m openrouter/anthropic/claude-sonnet-5-5 "Task"` | Auth: `opencode auth login`
 
 **Use for**: parallel tasks, scheduled/cron AI work, CI/CD, chat-triggered dispatch (Matrix/Discord/Slack via OpenClaw), background tasks.
 **Don't use for**: interactive dev (use TUI), frequent human-in-the-loop, single quick questions.
@@ -50,7 +50,7 @@ tools:
 
 ```bash
 opencode run "Review src/auth.ts for security issues"       # one-shot
-opencode run -m anthropic/claude-sonnet-4-6 "Task"          # model override
+opencode run -m anthropic/claude-sonnet-5-5 "Task"          # model override
 opencode run --agent plan "Analyze the database schema"     # agent override
 opencode run -f ./schema.sql "Generate types"               # file context
 opencode run --session ses_abc123 "Add handling"             # resume explicit session
@@ -88,7 +88,7 @@ done
 
 ## Model Providers
 
-`opencode auth login` for setup. Override: `opencode run -m openrouter/anthropic/claude-sonnet-4-6 "Task"`.
+`opencode auth login` for setup. Override: `opencode run -m openrouter/anthropic/claude-sonnet-5-5 "Task"`.
 
 **OAuth-aware routing (t1163)**: `SUPERVISOR_PREFER_OAUTH=true` (default) routes Anthropic requests through Claude CLI if OAuth available (zero marginal cost). Non-Anthropic → `opencode`. Override: `SUPERVISOR_CLI=opencode`. Detection: `~/.claude/` credentials, cached 5 min. Budget: `budget-tracker-helper.sh configure claude-oauth --billing-type subscription`.
 

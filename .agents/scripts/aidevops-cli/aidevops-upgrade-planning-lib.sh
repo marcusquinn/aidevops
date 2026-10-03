@@ -165,6 +165,71 @@ _upgrade_todo_preserve_sections() {
 	return 0
 }
 
+# GH#33375: Print every "## " section that is not one of the six canonical
+# task sections and not "## Format", verbatim and in original order. Custom
+# headings (Queued, phases, routine registries) have no canonical meaning, so
+# they are carried over unchanged rather than mapped onto a template section.
+# Headings inside fenced code blocks do not start sections.
+_upgrade_todo_extract_extra_sections() {
+	local todo_file="$1"
+	awk '
+		/^```/ { in_code = !in_code }
+		!in_code && /^## / {
+			in_extra = !($0 ~ /^## Format/ || $0 == "## Ready" || $0 == "## Backlog" ||
+				$0 == "## In Progress" || $0 == "## In Review" || $0 == "## Done" ||
+				$0 == "## Declined")
+		}
+		in_extra { print }
+	' "$todo_file" 2>/dev/null || true
+	return 0
+}
+
+# GH#33375: Print the lines that an upgrade must not lose: every task line
+# ("- [ ] ", "- [x] ", "- [-] ", any indentation) plus the indented
+# continuation lines that follow it. The Format block, fenced code, and the
+# literal Format placeholders (tXXX/tYYY/tZZZ) are documentation, not tasks.
+_upgrade_todo_task_lines() {
+	local todo_file="$1"
+	awk '
+		/^## Format/ { in_format = 1; prev = 0; next }
+		in_format && /^## / { in_format = 0 }
+		in_format { next }
+		/^```/ { in_code = !in_code; prev = 0; next }
+		in_code { next }
+		/^[[:space:]]*- \[[ xX-]\] / {
+			id = $0
+			sub(/^[[:space:]]*- \[[ xX-]\] /, "", id)
+			sub(/ .*/, "", id)
+			if (id == "tXXX" || id == "tYYY" || id == "tZZZ") { prev = 0; next }
+			print
+			prev = 1
+			next
+		}
+		prev && /^[[:space:]]+[^[:space:]]/ { print; next }
+		{ prev = 0 }
+	' "$todo_file" 2>/dev/null || true
+	return 0
+}
+
+# GH#33375: Verify every expected line survives in the upgraded file, counting
+# duplicates. Writes missing lines to $3 and prints the missing count.
+_upgrade_todo_count_missing() {
+	local expected_file="$1" upgraded_file="$2" missing_file="$3"
+	awk -v missing_out="$missing_file" '
+		NR == FNR { need[$0]++; next }
+		{ have[$0]++ }
+		END {
+			missing = 0
+			for (line in need) {
+				gap = need[line] - have[line]
+				if (gap > 0) { missing += gap; print line > missing_out }
+			}
+			print missing
+		}
+	' "$expected_file" "$upgraded_file"
+	return 0
+}
+
 # t2434: Re-insert preserved section content after its matching TOON marker
 # in the freshly-applied new template. Caller is responsible for counting
 # merged tasks from the final file — keeping count out of the hot loop avoids
@@ -187,6 +252,10 @@ _upgrade_todo_reinsert_sections() {
 # tasks from all 6 sections (Ready, Backlog, In Progress, In Review, Done,
 # Declined). Prior behaviour (GH#20077) only preserved Backlog and silently
 # dropped the other 5 sections into TODO.md.bak, losing audit-trail data.
+# GH#33375: custom "## " sections are carried over verbatim, and the upgrade
+# fails closed — restoring the original file and returning 1 — when any task
+# line or continuation line from the original would be lost. This holds even
+# with --no-backup, because the original is always kept in the work dir.
 _upgrade_todo() {
 	local todo_file="$1" todo_template="$2" backup="$3"
 	print_info "Upgrading TODO.md..."
@@ -194,8 +263,16 @@ _upgrade_todo() {
 	workdir=$(mktemp -d)
 	# shellcheck disable=SC2064  # intentional $workdir expansion at trap-set time
 	trap "rm -rf \"${workdir}\"" RETURN
+	local had_original=false
 	if [[ -f "$todo_file" ]]; then
+		had_original=true
+		cp "$todo_file" "$workdir/original.md" || {
+			print_error "Could not snapshot TODO.md before upgrade; leaving it unchanged"
+			return 1
+		}
+		_upgrade_todo_task_lines "$todo_file" >"$workdir/expected.txt"
 		_upgrade_todo_preserve_sections "$todo_file" "$workdir"
+		_upgrade_todo_extract_extra_sections "$todo_file" >"$workdir/extra.txt"
 		[[ "$backup" == "$_AIDEVOPS_UPGRADE_TRUE" ]] && {
 			cp "$todo_file" "${todo_file}.bak"
 			print_success "Backup created: TODO.md.bak"
@@ -210,10 +287,39 @@ _upgrade_todo() {
 	fi
 	sed_inplace "s/{{DATE}}/$(date +%Y-%m-%d)/" "$todo_file" 2>/dev/null || true
 	_upgrade_todo_reinsert_sections "$todo_file" "$workdir"
+	local extra_count=0
+	if [[ -s "$workdir/extra.txt" ]]; then
+		{
+			printf '\n'
+			cat "$workdir/extra.txt"
+		} >>"$todo_file"
+		extra_count=$(grep -c '^## ' "$workdir/extra.txt" 2>/dev/null || true)
+		extra_count="${extra_count:-0}"
+	fi
+	[[ "$had_original" == "$_AIDEVOPS_UPGRADE_TRUE" ]] || {
+		print_success "TODO.md created from TOON-enhanced template"
+		return 0
+	}
+	local missing=0
+	if [[ -s "$workdir/expected.txt" ]]; then
+		missing=$(_upgrade_todo_count_missing "$workdir/expected.txt" "$todo_file" "$workdir/missing.txt")
+		missing="${missing:-0}"
+	fi
+	if [[ "$missing" -gt 0 ]]; then
+		cp "$workdir/original.md" "$todo_file"
+		print_error "TODO.md upgrade would lose ${missing} task line(s); original restored unchanged"
+		local sample=""
+		while IFS= read -r sample; do
+			print_error "  missing: ${sample}"
+		done < <(head -5 "$workdir/missing.txt" 2>/dev/null || true)
+		print_info "Move those lines under a '## ' section heading, then rerun upgrade-planning"
+		return 1
+	fi
 	local merged=0
-	merged=$(grep -cE '^- \[[ x-]\] (t[0-9]|GH#[0-9])' "$todo_file" 2>/dev/null || true)
+	merged=$(grep -cE '^[[:space:]]*- \[[ xX-]\] ' "$workdir/expected.txt" 2>/dev/null || true)
 	merged="${merged:-0}"
-	[[ "$merged" -gt 0 ]] && print_success "Merged $merged existing task(s) across sections"
+	[[ "$merged" -gt 0 ]] && print_success "Preserved $merged existing task(s)"
+	[[ "$extra_count" -gt 0 ]] && print_success "Carried over $extra_count custom section(s) unchanged"
 	print_success "TODO.md upgraded to TOON-enhanced template"
 	return 0
 }
@@ -350,8 +456,17 @@ cmd_upgrade_planning() {
 		}
 	fi
 	echo ""
-	[[ "$todo_needs" == "$_AIDEVOPS_UPGRADE_TRUE" ]] && _upgrade_todo "$todo_file" "$todo_template" "$backup"
-	[[ "$plans_needs" == "$_AIDEVOPS_UPGRADE_TRUE" ]] && _upgrade_plans "$plans_file" "$plans_template" "$backup" "$project_root"
+	if [[ "$todo_needs" == "$_AIDEVOPS_UPGRADE_TRUE" ]]; then
+		# GH#33375: stop before touching PLANS.md or templates_version when the
+		# TODO.md upgrade could not preserve every task.
+		_upgrade_todo "$todo_file" "$todo_template" "$backup" || {
+			print_error "Planning upgrade aborted; TODO.md restored, todo/PLANS.md and templates_version unchanged"
+			return 1
+		}
+	fi
+	if [[ "$plans_needs" == "$_AIDEVOPS_UPGRADE_TRUE" ]]; then
+		_upgrade_plans "$plans_file" "$plans_template" "$backup" "$project_root"
+	fi
 	_upgrade_config_version "$project_root/.aidevops.json"
 	echo ""
 	print_success "Planning files upgraded!"

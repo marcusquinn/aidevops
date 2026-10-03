@@ -125,7 +125,7 @@ Full reference: `python s2s_pipeline.py -h` or [arguments_classes/](https://gith
 
 - **Transcription**: Standalone — use Whisper directly (`tools/voice/transcription.md`). S2S-based — use `--llm open_api` with a transcription-only system prompt.
 - **Phone (Twilio)**: WebSocket audio stream → S2S → TTS response. See `services/communications/twilio.md`.
-- **Video narration**: LLM script → TTS audio → Remotion composite. See `tools/video/remotion.md`.
+- **Video narration**: LLM script → TTS audio → Remotion composite. See `tools/video/remotion/remotion.md`.
 
 ## Troubleshooting
 

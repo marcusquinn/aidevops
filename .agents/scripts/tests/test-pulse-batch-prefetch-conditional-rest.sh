@@ -73,6 +73,10 @@ if [[ "\$1" == "api" ]]; then
     exit 0
   fi
   if [[ "\$*" == *'/users/owner/events?per_page=1'* ]]; then
+    case "\${STUB_EVENTS_STATUS:-200}" in
+    304) printf 'HTTP/2 304\\r\\netag: "events"\\r\\n\\r\\n'; exit 1 ;;
+    403) printf 'HTTP/2 403\\r\\nretry-after: 60\\r\\nx-ratelimit-remaining: 0\\r\\n\\r\\n{"message":"rate limit exceeded"}'; exit 1 ;;
+    esac
     printf 'HTTP/2 200\\r\\netag: "events"\\r\\n\\r\\n[]'
     exit 0
   fi
@@ -809,7 +813,81 @@ test_partial_failure_keeps_successful_snapshots() {
 	return 0
 }
 
+# GH#33074: an events-ETag 304 may skip an owner only while its snapshots are
+# recent; org event feeds omit private-repo activity. Cooldown skips still hold.
+TICKLE_CASE_OUTPUT=""
+TICKLE_CASE_REPO_CALLS=0
+run_tickle_refresh_case() {
+	local events_status="$1"
+	local snapshot_age="$2"
+	local now="" kind="" cache_file=""
+	setup_env
+	export PULSE_EVENTS_TICKLE_ENABLED=1 PULSE_EVENTS_TICKLE_MAX_CACHE_AGE=900
+	export STUB_EVENTS_STATUS="$events_status"
+	seed_cache
+	if [[ "$snapshot_age" == "recent" ]]; then
+		now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+		for kind in issues prs; do
+			cache_file="$PULSE_BATCH_PREFETCH_CACHE_DIR/${kind}-owner__repo.json"
+			jq --arg ts "$now" '.timestamp = $ts | .fetched_at = $ts' "$cache_file" >"$TEST_ROOT/restamp.json"
+			mv "$TEST_ROOT/restamp.json" "$cache_file"
+		done
+	fi
+	mkdir -p "$HOME/.aidevops/cache/pulse-events-etag"
+	printf '%s\n' '{"etag":"events","owner_type":"users","last_check":"2026-05-01T00:00:00Z"}' \
+		>"$HOME/.aidevops/cache/pulse-events-etag/owner.json"
+	write_gh_stub not_modified
+	TICKLE_CASE_OUTPUT=$("$HELPER" refresh 2>/dev/null) || TICKLE_CASE_OUTPUT=""
+	TICKLE_CASE_REPO_CALLS=$(grep -c 'repos/owner/repo/' "$TEST_ROOT/gh-calls.log" 2>/dev/null || true)
+	unset STUB_EVENTS_STATUS PULSE_EVENTS_TICKLE_MAX_CACHE_AGE
+	return 0
+}
+
+test_tickle_304_refreshes_stale_owner_snapshots() {
+	run_tickle_refresh_case 304 stale
+	local prs_ts=""
+	prs_ts=$(jq -r '.timestamp' "$PULSE_BATCH_PREFETCH_CACHE_DIR/prs-owner__repo.json" 2>/dev/null) || prs_ts=""
+	if [[ "${TICKLE_CASE_REPO_CALLS:-0}" -eq 2 && "$prs_ts" != "2026-05-01T00:00:00Z" ]] &&
+		grep -q 'events_tickle_fresh=0' <<<"$TICKLE_CASE_OUTPUT" &&
+		grep -q 'events_tickle_stale=1' <<<"$TICKLE_CASE_OUTPUT" &&
+		grep -q 'but snapshots older than 900s — refreshing' "$LOGFILE"; then
+		print_result "events 304 refreshes an owner whose snapshots are stale" 0
+	else
+		print_result "events 304 refreshes an owner whose snapshots are stale (repo_calls=${TICKLE_CASE_REPO_CALLS}, prs_ts=${prs_ts})" 1
+	fi
+	teardown_env
+	return 0
+}
+
+test_tickle_304_skips_recent_owner_snapshots() {
+	run_tickle_refresh_case 304 recent
+	if [[ "${TICKLE_CASE_REPO_CALLS:-0}" -eq 0 ]] &&
+		grep -q 'events_tickle_fresh=1' <<<"$TICKLE_CASE_OUTPUT" &&
+		grep -q 'events tickle fresh for owner=owner — skipping search calls' "$LOGFILE"; then
+		print_result "events 304 still skips an owner whose snapshots are recent" 0
+	else
+		print_result "events 304 still skips an owner whose snapshots are recent (repo_calls=${TICKLE_CASE_REPO_CALLS})" 1
+	fi
+	teardown_env
+	return 0
+}
+
+test_tickle_cooldown_skips_even_stale_owner_snapshots() {
+	run_tickle_refresh_case 403 stale
+	if [[ "${TICKLE_CASE_REPO_CALLS:-0}" -eq 0 ]] &&
+		grep -q 'events tickle fresh for owner=owner — skipping search calls' "$LOGFILE"; then
+		print_result "events cooldown skips fanout even when snapshots are stale" 0
+	else
+		print_result "events cooldown skips fanout even when snapshots are stale (repo_calls=${TICKLE_CASE_REPO_CALLS})" 1
+	fi
+	teardown_env
+	return 0
+}
+
 test_partial_failure_keeps_successful_snapshots
+test_tickle_304_refreshes_stale_owner_snapshots
+test_tickle_304_skips_recent_owner_snapshots
+test_tickle_cooldown_skips_even_stale_owner_snapshots
 test_unchanged_repo_uses_304_cache
 test_changed_repo_refreshes_cache
 test_bodyless_transport_rows_are_rejected

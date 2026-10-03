@@ -199,11 +199,11 @@ detect_dispatch_backend() {
 
 #######################################
 # Extract Claude-compatible model name from provider/model string (t1160.3)
-# opencode uses "anthropic/claude-sonnet-4-6", Claude CLI uses "claude-sonnet-4-6"
+# opencode uses "anthropic/claude-sonnet-5-5", Claude CLI uses "claude-sonnet-5-5"
 #######################################
 model_for_claude_cli() {
 	local model="$1"
-	# Strip provider prefix if present (e.g., "anthropic/claude-sonnet-4-6" -> "claude-sonnet-4-6")
+	# Strip provider prefix if present (e.g., "anthropic/claude-sonnet-5-5" -> "claude-sonnet-5-5")
 	if [[ "$model" == *"/"* ]]; then
 		echo "${model#*/}"
 	else
@@ -1248,7 +1248,7 @@ EXAMPLES:
     # Create a code reviewer
     runner-helper.sh create code-reviewer \
       --description "Reviews code for security and quality" \
-      --model anthropic/claude-sonnet-4-6
+      --model anthropic/claude-sonnet-5-5
 
     # Run a review task
     runner-helper.sh run code-reviewer "Review src/auth/ for vulnerabilities"

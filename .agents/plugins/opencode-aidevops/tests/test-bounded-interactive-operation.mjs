@@ -2,8 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Marcus Quinn
 
 import assert from "node:assert/strict";
-import { EventEmitter } from "node:events";
-import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { execFileSync, spawn } from "node:child_process";
+import { EventEmitter, once } from "node:events";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, test } from "node:test";
@@ -12,7 +13,7 @@ import { fileURLToPath } from "node:url";
 import { BoundedInteractiveOperationManager } from "../bounded-interactive-operation.mjs";
 import { createOutputSandboxReader, createOutputSandboxRecorder } from "../bounded-operation-output.mjs";
 import { createBoundedInteractiveOperationTool } from "../bounded-operation-tool.mjs";
-import { resolveSessionOwnedWorktreeRoot } from "../gpt-image-worktree.mjs";
+import { resolveGptImageProjectRoot, resolveSessionOwnedWorktreeRoot } from "../gpt-image-worktree.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "aidevops-bounded-operation-"));
 const owner = { sessionID: "ses_owner" };
@@ -177,7 +178,7 @@ describe("bounded interactive operations", () => {
       budgetMs: 1000,
     }, owner);
     assert.equal((await terminal(instance, started.operation_id)).state, "succeeded");
-    assert.equal(resolution.requested, realpathSync(linked));
+    assert.equal(realpathSync(resolution.requested), realpathSync(linked));
     assert.equal(resolution.projectRoot, realpathSync(root));
     assert.equal(resolution.context, owner);
     assert.equal(resolution.options.subject, "Operation");
@@ -185,11 +186,109 @@ describe("bounded interactive operations", () => {
     rmSync(linked, { recursive: true, force: true });
   });
 
-  test("a non-Git session project root reports the Operation subject and failing role", async () => {
-    await assert.rejects(
-      resolveSessionOwnedWorktreeRoot(process.cwd(), root, owner, { subject: "Operation" }),
-      (error) => error.message.startsWith("Operation workdir:") && error.message.includes("session project root"),
-    );
+  test("non-Git parent accepts owned child worktree but rejects unrelated, canonical and symlink paths", async () => {
+    const parent = mkdtempSync(join(tmpdir(), "aidevops-org-parent-"));
+    const repo = join(parent, "child");
+    const linked = join(tmpdir(), `aidevops-linked-${process.pid}-${Date.now()}`);
+    const unrelated = join(tmpdir(), `aidevops-unrelated-${process.pid}-${Date.now()}`);
+    const unrelatedLinked = `${unrelated}-linked`;
+    const alias = join(parent, "alias");
+    const previousRepos = process.env.AIDEVOPS_REPOS_JSON;
+    let verified = 0;
+    const options = {
+      subject: "Operation",
+      verifyWorktreeOwnership: async () => { verified++; },
+    };
+    try {
+      mkdirSync(repo);
+      execFileSync("git", ["init", "-q", repo]);
+      execFileSync("git", ["-C", repo, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-q", "--allow-empty", "-m", "fixture"]);
+      execFileSync("git", ["-C", repo, "worktree", "add", "-q", "--detach", linked]);
+      mkdirSync(unrelated);
+      execFileSync("git", ["init", "-q", unrelated]);
+      execFileSync("git", ["-C", unrelated, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-q", "--allow-empty", "-m", "fixture"]);
+      execFileSync("git", ["-C", unrelated, "worktree", "add", "-q", "--detach", unrelatedLinked]);
+      symlinkSync(linked, alias);
+      assert.deepEqual(await resolveSessionOwnedWorktreeRoot(linked, parent, owner, options), { root: realpathSync(linked), linked: true });
+      assert.equal(verified, 1);
+      await assert.rejects(resolveSessionOwnedWorktreeRoot(unrelatedLinked, parent, owner, options), /unrelated Git repository/);
+      assert.deepEqual(await resolveGptImageProjectRoot(linked, parent, owner, options), { root: realpathSync(linked), linked: true });
+      await assert.rejects(resolveGptImageProjectRoot(unrelatedLinked, parent, owner, options), /Image workdir belongs to an unrelated Git repository/);
+      await assert.rejects(resolveGptImageProjectRoot(repo, parent, owner, options), /linked Git worktree/);
+      await assert.rejects(resolveGptImageProjectRoot(alias, parent, owner, options), /unsafe/);
+      const reposFile = join(parent, "repos.json");
+      writeFileSync(reposFile, JSON.stringify({ initialized_repos: [{ path: unrelated }] }));
+      process.env.AIDEVOPS_REPOS_JSON = reposFile;
+      assert.deepEqual(await resolveSessionOwnedWorktreeRoot(unrelatedLinked, parent, owner, options), { root: realpathSync(unrelatedLinked), linked: true });
+      delete process.env.AIDEVOPS_REPOS_JSON;
+      await assert.rejects(resolveSessionOwnedWorktreeRoot(repo, parent, owner, options), /linked Git worktree/);
+      await assert.rejects(resolveSessionOwnedWorktreeRoot(alias, parent, owner, options), /unsafe/);
+      const instance = manager({ projectRoot: parent, resolveWorktreeRoot: (cwd, project, context) =>
+        resolveSessionOwnedWorktreeRoot(cwd, project, context, options) });
+      const started = await instance.start({ command: [process.execPath, "-e", "process.exit(0)"], cwd: linked, budgetMs: 1000 }, owner);
+      assert.equal((await terminal(instance, started.operation_id)).state, "succeeded");
+      await assert.rejects(instance.start({ command: [process.execPath], cwd: alias }, owner), /unsafe/);
+      await assert.rejects(instance.start({ command: [process.execPath], cwd: repo }, owner), /linked Git worktree/);
+      assert.equal(verified, 4, "rejected paths must not reach ownership verification");
+    } finally {
+      if (previousRepos === undefined) delete process.env.AIDEVOPS_REPOS_JSON;
+      else process.env.AIDEVOPS_REPOS_JSON = previousRepos;
+      execFileSync("git", ["-C", repo, "worktree", "remove", "--force", linked]);
+      execFileSync("git", ["-C", unrelated, "worktree", "remove", "--force", unrelatedLinked]);
+      rmSync(unrelated, { recursive: true, force: true });
+      rmSync(parent, { recursive: true, force: true });
+    }
+  });
+
+  test("explicit audited adoption enables a previous session worktree without taking a live owner", async () => {
+    const fixture = realpathSync(mkdtempSync(join(tmpdir(), "aidevops-adopt-")));
+    const repo = join(fixture, "repo");
+    const linked = join(fixture, "linked");
+    const scriptsDir = fileURLToPath(new URL("../../../scripts/", import.meta.url));
+    const helper = join(scriptsDir, "worktree-helper.sh");
+    const env = { ...process.env, WORKTREE_REGISTRY_DIR: fixture,
+      WORKTREE_REGISTRY_DB: join(fixture, "registry.db"), AUDIT_LOG_FILE: join(fixture, "audit.jsonl"),
+      OPENCODE_SESSION_ID: owner.sessionID, OPENCODE_PID: String(process.pid) };
+    const previousOwner = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+    try {
+      execFileSync("git", ["init", "-q", repo]);
+      execFileSync("git", ["-C", repo, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-q", "--allow-empty", "-m", "fixture"]);
+      execFileSync("git", ["-C", repo, "worktree", "add", "-q", "-b", "feature/adopt", linked]);
+      execFileSync("bash", ["-c", 'source "$1"; register_worktree "$2" feature/adopt --owner-pid "$3" --session ses_previous --task 33228',
+        "fixture", join(scriptsDir, "shared-constants.sh"), linked, String(previousOwner.pid)], { env });
+      const invoke = (path = linked, task = "33228", overrides = {}) => execFileSync(helper,
+        ["adopt", path, owner.sessionID, task], { env: { ...env, ...overrides }, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+      assert.throws(() => invoke(), "live owner must not be displaced");
+      const exited = once(previousOwner, "exit");
+      previousOwner.kill();
+      await exited;
+      assert.throws(() => invoke(linked, "other-task"));
+      assert.throws(() => invoke(linked, "33228", { OPENCODE_SESSION_ID: "ses_other" }));
+      assert.throws(() => invoke(repo));
+      const alias = join(fixture, "alias");
+      symlinkSync(linked, alias);
+      assert.throws(() => invoke(alias));
+      assert.equal(invoke().trim(), "ADOPTED");
+      assert.equal(execFileSync(helper, ["registry", "verify-owner", linked, owner.sessionID], { env, encoding: "utf8" }).trim(), "VERIFIED");
+      assert.throws(() => invoke(), "a now-live owner must not be re-adopted");
+      const audit = readFileSync(env.AUDIT_LOG_FILE, "utf8");
+      assert.match(audit, /Explicit worktree adoption requested/);
+      assert.match(audit, /Worktree adoption verified/);
+      const instance = manager({ projectRoot: fixture, scriptsDir });
+      // The normal resolver uses the isolated registry, with no verification stub.
+      const priorDB = process.env.WORKTREE_REGISTRY_DB;
+      process.env.WORKTREE_REGISTRY_DB = env.WORKTREE_REGISTRY_DB;
+      try {
+        const started = await instance.start({ command: [process.execPath, "-e", "process.exit(0)"], cwd: linked, budgetMs: 5000 }, owner);
+        assert.equal((await terminal(instance, started.operation_id, owner, 7000)).state, "succeeded");
+      } finally {
+        if (priorDB === undefined) delete process.env.WORKTREE_REGISTRY_DB;
+        else process.env.WORKTREE_REGISTRY_DB = priorDB;
+      }
+    } finally {
+      previousOwner.kill();
+      rmSync(fixture, { recursive: true, force: true });
+    }
   });
 
   test("failure, timeout, and scoped cancellation cannot appear as success", async () => {

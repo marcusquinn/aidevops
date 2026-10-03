@@ -211,6 +211,17 @@ end) as $max_workers |
     cadence_api_risk: ($api.cadence_api_risk // "unknown")
   },
   findings: ([
+    if ($health_fresh and ($current.pulse_health.auth_error_capacity_zero // null) != null) then
+      finding(
+        "auth-error-capacity-zero";
+        "high";
+        "Provider dispatch capacity is zero from auth-error accounts";
+        ["provider=" + ($current.pulse_health.auth_error_capacity_zero.provider // "unknown"),
+         "consecutive_cycles=" + (($current.pulse_health.auth_error_capacity_zero.cycles // 0) | tostring)];
+        ($current.pulse_health.auth_error_capacity_zero.remedy // "oauth-pool-helper.sh reset-cooldowns <provider>");
+        false
+      )
+    else empty end,
     if (["reserve", "cooldown"] | index($api.rest_admission.state // "unknown")) != null then
       finding(
         "github-rest-admission-held";
@@ -275,7 +286,21 @@ end) as $max_workers |
           ("retained_unverified_blockers_all_sources=" + (($progress_blockers.retained_unverified_total // 0) | tostring)),
           "blocker_evidence=aggregate_redacted"
         ];
-        "Run worker-activity-helper.sh live-workers and worker-activity-helper.sh summary --since 7d to classify retained records. After confirming supervisor-pulse is stale, append audited non-blocking terminal events with worker-blocker-cli.mjs resolve-stale-supervisor-session --repo-slug '' --session-key supervisor-pulse --stale-before <verified-unix-cutoff>; do not delete blocker evidence or clear current or live-owner records.";
+        "Pulse reconciles earlier supervisor-pulse telemetry after each supervisor run. If records persist, run worker-activity-helper.sh reconcile-stale-supervisor; it refuses while a supervisor-pulse owner is live and wraps worker-blocker-cli.mjs resolve-stale-supervisor-session with a computed cutoff. It never deletes blocker evidence or touches labels or grants. Recurring permission_required from supervisor-pulse means the supervisor prompt or allowlist needs a fix; classify the denied commands with worker-activity-helper.sh summary --since 7d.";
+        false
+      )
+    else empty end,
+    if (($current.permission_holds.count // 0) | number_or_zero) > 0 then
+      finding(
+        "maintainer-permission-holds";
+        "low";
+        "Dispatch candidates are held by maintainer permission requests";
+        [
+          ("permission_hold_observations=" + (($current.permission_holds.count // 0) | tostring)),
+          ("last_observed_at=" + (($current.permission_holds.last_observed_at // "unknown") | tostring)),
+          "issue_identity=redacted; see pulse.log DISPATCH_BLOCK_REASON reason=needs_maintainer_permissions|permission_grant_unverified"
+        ];
+        "Run pulse-diagnose-helper.sh issue <N> --repo <owner/repo> for each held issue. It names the request, its age, whether the owning session ended, and both signed exits: grant (sudo aidevops approve permissions ... --request perm-<id>) or withdraw (same command with --withdraw), which grants nothing and resumes dispatch. Requests never expire unsigned.";
         false
       )
     else empty end,

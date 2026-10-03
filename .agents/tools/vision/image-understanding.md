@@ -65,7 +65,7 @@ curl https://api.anthropic.com/v1/messages \
   -H "x-api-key: $ANTHROPIC_API_KEY" \
   -H "anthropic-version: 2023-06-01" \
   -H "Content-Type: application/json" \
-  -d '{"model":"claude-sonnet-4-6","max_tokens":1024,"messages":[{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"<base64-data>"}},{"type":"text","text":"Describe this"}]}]}'
+  -d '{"model":"claude-sonnet-5-5","max_tokens":1024,"messages":[{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"<base64-data>"}},{"type":"text","text":"Describe this"}]}]}'
 ```
 
 **Limits**: JPEG/PNG/GIF/WebP. Max 5MB (API), 10MB (Claude.ai). Hard limit 8000x8000 px. Long edge >1568 px auto-downscaled — resize first:

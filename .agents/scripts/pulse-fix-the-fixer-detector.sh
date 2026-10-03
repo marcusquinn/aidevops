@@ -36,7 +36,7 @@
 #   - Fail-open: any internal error returns 0 — the deterministic
 #     t2819 detector remains the primary safety net.
 #   - Capped scope: --limit caps issues per run (default 10).
-#   - Cheap: defaults to claude-haiku-4-5 (~$0.001 per call); env override.
+#   - Cheap: defaults to the `simple` tier; env override.
 #
 # Usage:
 #   pulse-fix-the-fixer-detector.sh run [--repo OWNER/REPO] [--limit N]

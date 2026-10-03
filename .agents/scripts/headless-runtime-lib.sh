@@ -1019,16 +1019,22 @@ Mandatory behavior:
 4. Never ask for user confirmation, approval, or next steps. No user will respond.
 5. Never emit user-directed language ("If you want...", "Let me know...", "Should I...").
 6. Reading the issue and reading docs are SETUP -- not completion. You MUST continue through implementation, commit, push, and PR creation after setup.
+   Exception: only when the trusted issue explicitly contains `<!-- aidevops:completion-contract:data-only/v1 -->`, a guarded external publication may finish without repository edits. Never treat this marker as publication permission: obey all existing publication/credential/approval guards. After publishing, verify the user-facing result and post an issue comment containing `<!-- aidevops:data-only-completion:v1 -->` followed on the next line by one JSON object with `repository`, `issue` (number), `status` (`published`), `verified` (`true` only after viewing the user-facing result), and `evidence_url` (the verified HTTPS user-facing result). Close the exact issue only after the receipt and verification. A trusted collaborator must author the receipt. A clean branch with no commits ahead and no PR is required; otherwise use the normal PR path.
 7. A draft PR is only a durable checkpoint, never completion. Continue until the implementation and required local verification are complete, every intended commit is pushed, the PR is non-draft, the PR head matches local HEAD, and the required MERGE_SUMMARY exists.
-8. Attempt the merge path once. If it merges, finish the required closing comments. If the exact-head non-draft PR has no terminal check failure and only asynchronous CI, review-bot, human approval, or native auto-merge remains, emit POST_PR_HANDOFF on its own line and exit normally. Pulse/webhook automation owns subsequent monitoring. Do not sleep, wait, or poll for those gates, and never bypass, disable, or weaken branch protection, approval, review-bot, CI, or security gates.
+8. Attempt the merge path once. If it merges, finish the required closing comments. If the exact-head non-draft PR has no terminal check failure and only asynchronous CI, review-bot, human approval, or native auto-merge remains, emit POST_PR_HANDOFF on its own line and exit normally. Pulse/webhook automation owns subsequent monitoring. Do not sleep, wait, or poll for those gates, and never bypass, disable, or weaken branch protection, approval, review-bot, CI, or security gates. Never disable or redirect commit signing (`-c commit.gpgsign=false`, `--no-gpg-sign`, signing-key overrides); if signing fails, stop with the permission blocker so the operator runs `aidevops signing headless-setup`.
 9. Model escalation before BLOCKED (GH#14964): BLOCKED is only valid after exhausting all autonomous solution paths. If the only remaining blocker is the current model's inability to reason through the task safely, emit `BLOCKED: capability limit - <evidence>`; runtime routing will retry at the next configured capability tier. Never use that marker for permission, authentication, provider, rate-limit, secret, policy, trust-boundary, or locality failures. Review-policy metadata and nominal GitHub states are NOT valid blockers. Genuine blockers require evidence: a failing check that cannot be repaired, missing permission, unresolved conflict, or explicit policy gate.
 
 Terminal blocker reason protocol (GH#31239):
 When genuinely blocked, put BLOCKED: <evidence> and exactly one standalone
 reason line in the SAME final assistant text message (not a tool result):
 TERMINAL_BLOCKER_REASON=missing_files_scope
-Use that reason only when the canonical ## Files Scope or ### Files Scope
-heading is absent; the runtime independently verifies the current issue body.
+A missing canonical Files Scope is not by itself a blocker (GH#33243): scope
+discovery is your first step. Choose the minimal repository-relative paths,
+add a canonical ### Files Scope section (one "- `repo/relative/path`" line per file) to the
+dispatched issue body with gh-write-helper.sh issue edit before editing code,
+re-read it, then continue. Use that reason only when that write fails or the
+brief is too ambiguous to choose paths safely, and only while the canonical
+heading is still absent; the runtime independently verifies the issue body.
 When the heading exists but a directly necessary integration file is excluded:
 TERMINAL_BLOCKER_REASON=files_scope_excluded
 Scope exclusion re-arms only on a corrected brief or an authorized explicit retry,
@@ -1040,6 +1046,14 @@ TERMINAL_BLOCKER_REASON=target_code_blocker
 Target-code blockers may re-arm when the brief, dependencies, or target revision
 changes. Never use that class for permissions, credentials, provider failures,
 capability limits, missing/excluded scope, or ambiguous evidence.
+When the trusted brief explicitly requires waiting for a named external event
+(for example a model ID publication) and current evidence confirms it has not
+occurred, use:
+TERMINAL_BLOCKER_REASON=external_trigger_pending
+Name the exact trigger and checked evidence in the protected dossier. This class
+re-arms on a brief or linked dependency change or trusted retry, not unrelated
+default-branch commits. Do not use it for generic provider outages, missing
+permissions, uncertain availability or a trigger that is already satisfied.
 For an evidenced unresolved permission boundary, including a continued session
 whose prior protected-source denial has no changed exact-context grant, use:
 TERMINAL_BLOCKER_REASON=permission_required
@@ -1047,6 +1061,15 @@ Preserve the protected blocker dossier and human-owned recovery action. Do not
 retry the denied read or regenerate a request to produce another permission event.
 Brief edits and unrelated merges cannot resolve this class; an explicit trusted
 retry only schedules verification and never grants source or secret access.
+Only when a specific value, target, credential or decision is required, absent
+from the brief, repository, linked issues and your tools, and cannot be derived
+or safely chosen within delegated authority, use both lines:
+TERMINAL_BLOCKER_REASON=input_required
+TERMINAL_BLOCKER_INPUT_OWNER=maintainer
+Owner is one of user, contributor, maintainer or admin: whoever alone can
+supply it. Reversible implementation choices, naming, defaults and scope
+interpretation are yours to decide, never this class. Name the exact input and
+where you looked; never guess it. Not for permissions or external events.
 If no class is established, omit the reason line: unknown evidence stays retryable
 with bounded cross-runner backoff, not a permanent hold.
 
@@ -1097,6 +1120,7 @@ time exceeds the safe worker runtime budget.
 
 Pre-exit self-check -- MANDATORY:
 Before ending your session, verify ALL of these:
+   - For an explicitly opted-in data-only task only: verify the trusted receipt, user-facing HTTPS evidence, CLOSED issue, clean worktree, no commits ahead of the current remote default branch, and no PR on the worker branch. This is the sole exception to the commit/PR/merge-summary checks below; publication guards still apply. The runtime independently checks the receipt and branch before accepting FULL_LOOP_COMPLETE.
   - At least one commit with implementation changes exists on your branch.
   - A PR exists for your branch: run gh pr list --head YOUR_BRANCH_NAME
   - The PR is non-draft, local HEAD is pushed and equals the PR headRefOid, and

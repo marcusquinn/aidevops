@@ -1,51 +1,20 @@
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Cloudflare Pages
 
-JAMstack platform for full-stack apps on Cloudflare's global network. Git-based deploys, preview URLs per branch/PR, Pages Functions (Workers runtime), smart asset caching + edge compute. Frameworks: Next.js, SvelteKit, Remix, Astro, Nuxt, Qwik.
+Use this reference when maintaining an existing Pages project. For new applications, start with Workers as recommended in the [Pages framework guidance](https://developers.cloudflare.com/pages/framework-guides/index.md). Fetch current documentation before implementing.
 
-## Deployment Methods
+| Task | Documentation |
+| --- | --- |
+| Configure the existing build | [Build configuration](https://developers.cloudflare.com/pages/configuration/build-configuration/index.md) |
+| Manage automatic deployments from a repository | [Git integration](https://developers.cloudflare.com/pages/configuration/git-integration/index.md) |
+| Deploy prebuilt output | [Direct Upload](https://developers.cloudflare.com/pages/get-started/direct-upload/index.md) |
+| Implement server-side requests | [Functions API reference](https://developers.cloudflare.com/pages/functions/api-reference/index.md) |
+| Plan a move to Workers | [Migrate from Pages to Workers](https://developers.cloudflare.com/workers/static-assets/migration-guides/migrate-from-pages/index.md) |
 
-**Git Integration (Production):** Dashboard → Workers & Pages → Create → Connect to Git → Configure build
+## In This Reference
 
-**Direct Upload:**
+- [configuration.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/pages/configuration.md) — build output, environments, and static rules
+- [api.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/pages/api.md) — request handling and framework integration
+- [patterns.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/pages/patterns.md) — project decisions and migration
+- [gotchas.md](pages-gotchas.md) — build, routing, and deployment investigation
 
-```bash
-npx wrangler pages deploy ./dist --project-name=my-project
-npx wrangler pages deploy ./dist --project-name=my-project --branch=staging
-```
-
-**C3 CLI:** `npm create cloudflare@latest my-app` — select framework → auto-setup + deploy
-
-## vs Workers
-
-- **Pages**: Static sites, JAMstack, frameworks, git workflow, file-based routing
-- **Workers**: Pure APIs, complex routing, WebSockets, scheduled tasks, email handlers
-- **Combine**: Pages Functions use Workers runtime, can bind to Workers
-
-## Quick Start
-
-```bash
-npm create cloudflare@latest
-npx wrangler pages dev ./dist
-npx wrangler pages deploy ./dist --project-name=my-project
-npx wrangler types --path='./functions/types.d.ts'
-echo "value" | npx wrangler pages secret put KEY --project-name=my-project
-npx wrangler pages deployment tail --project-name=my-project
-```
-
-## Resources
-
-- [Pages Docs](https://developers.cloudflare.com/pages/)
-- [Functions API](https://developers.cloudflare.com/pages/functions/api-reference/)
-- [Framework Guides](https://developers.cloudflare.com/pages/framework-guides/)
-- [Discord #functions](https://discord.com/channels/595317990191398933/910978223968518144)
-
-## See Also
-
-- [patterns.md](./patterns.md) — Full-stack patterns, frameworks
-- [gotchas.md](./gotchas.md) — Build issues, limits, debugging
-- [pages-functions](../pages-functions/) — File-based routing, middleware
-- [d1](../d1/) — SQL database for Pages Functions
-- [kv](../kv/) — Key-value storage for caching/state
+See [Pages Functions](pages-functions.md) for handler-focused navigation. Identify the existing deployment method and framework before proposing changes.

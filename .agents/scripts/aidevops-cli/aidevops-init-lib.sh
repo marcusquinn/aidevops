@@ -92,13 +92,12 @@ _init_write_project_config() {
 		--argjson agent_source "$is_agent_source" --argjson planning "$enable_planning" \
 		--argjson git_workflow "$enable_git_workflow" --argjson code_quality "$enable_code_quality" \
 		--argjson time_tracking "$enable_time_tracking" --argjson database "$enable_database" \
-		--argjson beads "$enable_beads" --argjson sops "$enable_sops" --argjson security "$enable_security" \
+		--argjson sops "$enable_sops" --argjson security "$enable_security" \
 		--argjson deployment_context "$enable_deployment_context" --argjson wordpress_context "$enable_wordpress_context" \
 		'{version:$version,initialized:$initialized,init_scope:$init_scope,has_interface:$has_interface,agent_source:$agent_source,
-		features:{planning:$planning,git_workflow:$git_workflow,code_quality:$code_quality,time_tracking:$time_tracking,database:$database,beads:$beads,sops:$sops,security:$security,deployment_context:$deployment_context,wordpress_context:$wordpress_context},
+		features:{planning:$planning,git_workflow:$git_workflow,code_quality:$code_quality,time_tracking:$time_tracking,database:$database,sops:$sops,security:$security,deployment_context:$deployment_context,wordpress_context:$wordpress_context},
 		time_tracking:{enabled:$time_tracking,prompt_on_commit:true,auto_record_branch_start:true},
 		database:{enabled:$database,schema_path:"schemas",migrations_path:"migrations",seeds_path:"seeds",auto_generate_migration:true},
-		beads:{enabled:$beads,sync_on_commit:false,auto_ready_check:true},
 		sops:{enabled:$sops,backend:"age",patterns:["*.secret.yaml","*.secret.json","configs/*.enc.json","configs/*.enc.yaml"]},plugins:[]}' >"$desired_file"; then
 		rm -f "$desired_file" "$merged_file"
 		_repo_verify_lock_release
@@ -192,28 +191,6 @@ _init_repo_verify_hook_integrity() {
 	# shellcheck disable=SC2016 # Match literal dispatcher expressions.
 	grep -Fq 'exit "$_exit_code"' "$hook_file" || return 1
 	return 0
-}
-
-_init_run_beads_init() {
-	local project_root="$1"
-	if bd init --help 2>&1 | grep -q -- '--skip-hooks'; then
-		(cd "$project_root" && bd init --skip-hooks 2>/dev/null)
-		return $?
-	fi
-
-	local common_dir="" hook_file="" hook_backup="" beads_status=0
-	common_dir=$(git -C "$project_root" rev-parse --git-common-dir 2>/dev/null) || return 1
-	[[ "$common_dir" == /* ]] || common_dir="${project_root}/${common_dir}"
-	hook_file="${common_dir}/hooks/pre-push"
-	if [[ -f "$hook_file" ]]; then
-		hook_backup=$(mktemp "${hook_file}.aidevops-init.XXXXXX") || return 1
-		cp -p "$hook_file" "$hook_backup" || return 1
-	fi
-	(cd "$project_root" && bd init 2>/dev/null) || beads_status=$?
-	if [[ -n "$hook_backup" ]]; then
-		mv "$hook_backup" "$hook_file" || return 1
-	fi
-	return "$beads_status"
 }
 
 _agent_source_template_dir() {
@@ -383,7 +360,10 @@ scaffold_repo_courtesy_files() {
 	local scope="${2:-standard}" # Default to standard for backward compatibility
 	local created=0
 	local repo_name
-	repo_name=$(basename "$project_root")
+	local remote_url main_wt
+	remote_url=$(git -C "$project_root" remote get-url origin 2>/dev/null || true)
+	main_wt=$(git -C "$project_root" worktree list --porcelain 2>/dev/null | awk '/^worktree / {sub(/^worktree /, ""); print; exit}')
+	repo_name=$(basename "${remote_url:-${main_wt:-$project_root}}" .git)
 	local author_name
 	author_name=$(git -C "$project_root" config user.name 2>/dev/null || echo "")
 	local current_year
@@ -721,10 +701,21 @@ _update_agents_md_security() {
 }
 
 # Init helpers (extracted for complexity reduction)
+_init_has_database_signals() {
+	local project_root="$1"
+	local marker
+	for marker in schema.prisma prisma/schema.prisma drizzle.config.ts drizzle.config.js knexfile.js knexfile.ts ormconfig.json alembic.ini manage.py db/schema.rb migrations schemas; do
+		[[ -e "$project_root/$marker" ]] && return 0
+	done
+	# Limit traversal to tracked project files, excluding dependencies and generated output.
+	git -C "$project_root" ls-files -- '*.sql' '**/*.sql' | grep -q . && return 0
+	return 1
+}
+
 _init_parse_features() {
 	local features="$1"
 	case "$features" in
-	all) echo "planning git_workflow code_quality time_tracking database beads security" ;;
+	all) echo "planning git_workflow code_quality time_tracking security" ;;
 	planning) echo "planning" ;; git-workflow) echo "git_workflow" ;; code-quality) echo "code_quality" ;;
 	time-tracking) echo "time_tracking planning" ;; database) echo "database" ;;
 	beads) echo "beads planning" ;; sops) echo "sops" ;; security) echo "security" ;;
@@ -915,6 +906,12 @@ EOF
 		print_info "DESIGN.md skipped (init_scope: $init_scope, interface: $has_interface)"
 	fi
 
+	# context/keywords.md — search targets; every standard/public repo is a search
+	# property (GitHub, registries, AI answers). Minimal scope only via explicit opt-in.
+	if _scope_includes "$init_scope" "standard" || [[ "$(jq -r '.keywords.enabled // false' "$project_root/.aidevops.json" 2>/dev/null)" == "true" ]]; then
+		_init_scaffold_keywords "$project_root" "$init_scope"
+	fi
+
 	# Courtesy files (README, LICENCE, CHANGELOG, etc.) — scope handled internally
 	scaffold_repo_courtesy_files "$project_root" "$init_scope"
 
@@ -922,9 +919,9 @@ EOF
 	if _scope_includes "$init_scope" "standard"; then
 		local generate_models_script="$AGENTS_DIR/scripts/generate-models-md.sh"
 		if [[ -x "$generate_models_script" ]] && command -v sqlite3 &>/dev/null; then
-			print_info "Generating MODELS.md (model performance leaderboard)..."
-			if "$generate_models_script" --output "$project_root/MODELS.md" --repo-path "$project_root" --quiet 2>/dev/null; then
-				print_success "Created MODELS.md (per-repo model leaderboard)"
+			print_info "Generating MODELS.md (model catalog)..."
+			if "$generate_models_script" --output "$project_root/MODELS.md" --quiet 2>/dev/null; then
+				print_success "Created MODELS.md (model catalog)"
 			else
 				print_warning "MODELS.md generation failed (will be populated as tasks run)"
 			fi
@@ -1050,6 +1047,14 @@ _init_run_workflow() {
 		wordpress_context) enable_wordpress_context=true ;;
 		esac
 	done
+	if [[ "$enable_beads" == "true" ]]; then
+		print_warning "Beads integration is retired; planning remains available. Use the issue/PR archive for forge-loss recovery."
+	fi
+	# The default set includes database scaffolding only for projects with evidence
+	# of a database. Explicit `database` remains available for empty repositories.
+	if [[ "$features" == "all" ]] && _init_has_database_signals "$project_root"; then
+		enable_database=true
+	fi
 
 	# Determine init_scope: minimal | standard | public
 	# Infer from context when not set; user can override via repos.json or .aidevops.json
@@ -1278,6 +1283,7 @@ EOF
 		if [[ ! -f "$project_root/todo/PLANS.md" ]]; then
 			if [[ -f "$AGENTS_DIR/templates/plans-template.md" ]]; then
 				cp "$AGENTS_DIR/templates/plans-template.md" "$project_root/todo/PLANS.md"
+				sed_inplace "s/{{DATE}}/$(date +%Y-%m-%d)/g" "$project_root/todo/PLANS.md" || return 1
 				print_success "Created todo/PLANS.md"
 			else
 				# Fallback minimal template
@@ -1317,11 +1323,11 @@ EOF
 		_seed_mission_control_template "$project_root" "$mission_scope"
 	fi
 
-	_init_database_and_beads || return 1
+	_init_database_support || return 1
 	return 0
 }
 
-_init_database_and_beads() {
+_init_database_support() {
 
 	# Create database directories if enabled
 	if [[ "$enable_database" == "true" ]]; then
@@ -1370,41 +1376,6 @@ EOF
 			print_success "Created seeds/ directory"
 		else
 			print_warning "seeds/ already exists, skipping"
-		fi
-	fi
-
-	# Initialize Beads if enabled
-	if [[ "$enable_beads" == "true" ]]; then
-		print_info "Setting up Beads task graph..."
-
-		# Check if Beads CLI is installed
-		if ! command -v bd &>/dev/null; then
-			print_warning "Beads CLI (bd) not installed"
-			echo "  Install with: brew install steveyegge/beads/bd"
-			echo "  Or download: https://github.com/steveyegge/beads/releases"
-			echo "  Or via Go:   go install github.com/steveyegge/beads/cmd/bd@latest"
-		else
-			# Initialize Beads in the project
-			if [[ ! -d "$project_root/.beads" ]]; then
-				print_info "Initializing Beads database..."
-				if _init_run_beads_init "$project_root"; then
-					print_success "Beads initialized"
-				else
-					print_warning "Beads init failed - run manually: bd init"
-				fi
-			else
-				print_info "Beads already initialized"
-			fi
-
-			# Run initial sync from TODO.md/PLANS.md
-			if [[ -f "$AGENTS_DIR/scripts/beads-sync-helper.sh" ]]; then
-				print_info "Syncing tasks to Beads..."
-				if bash "$AGENTS_DIR/scripts/beads-sync-helper.sh" push "$project_root" 2>/dev/null; then
-					print_success "Tasks synced to Beads"
-				else
-					print_warning "Beads sync failed - run manually: beads-sync-helper.sh push"
-				fi
-			fi
 		fi
 	fi
 
@@ -1695,8 +1666,17 @@ _init_optional_scaffolding() {
 			print_info "Reminder: set SYNC_PAT so GitHub Actions can refresh repo metrics and Star History — see: aidevops --help sync-pat"
 		fi
 	fi
-
 	_init_security_and_registration || return 1
+	_init_offer_release_verification "$repo_slug"
+	return 0
+}
+
+_init_offer_release_verification() {
+	local target_slug="$1"
+	if [[ -n "$target_slug" ]]; then
+		print_info "Manual GitHub releases: opt in with aidevops sync-workflows --repo $target_slug --workflow release-verify --install-missing --apply (read-only verification; Actions must be enabled)."
+	fi
+	print_info "Release verification callers currently support GitHub only; Gitea/Forgejo Actions are unsupported."
 	return 0
 }
 
@@ -1757,7 +1737,6 @@ _init_security_and_registration() {
 	[[ "$enable_code_quality" == "true" ]] && features_list="${features_list}code-quality,"
 	[[ "$enable_time_tracking" == "true" ]] && features_list="${features_list}time-tracking,"
 	[[ "$enable_database" == "true" ]] && features_list="${features_list}database,"
-	[[ "$enable_beads" == "true" ]] && features_list="${features_list}beads,"
 	[[ "$enable_sops" == "true" ]] && features_list="${features_list}sops,"
 	[[ "$enable_security" == "true" ]] && features_list="${features_list}security,"
 	[[ "$enable_deployment_context" == "true" ]] && features_list="${features_list}deployment-context,"
@@ -1797,6 +1776,10 @@ _init_commit_files() {
 	[[ -f "$project_root/.aidevops/wordpress.yaml" ]] && init_files+=(".aidevops/wordpress.yaml")
 	[[ -f "$project_root/AGENTS.md" ]] && init_files+=("AGENTS.md")
 	[[ -f "$project_root/DESIGN.md" ]] && init_files+=("DESIGN.md")
+	# Public repos gitignore keywords data; only stage it when Git tracks it.
+	if [[ -d "$project_root/context/keywords" ]] && ! git -C "$project_root" check-ignore -q context/keywords/ 2>/dev/null; then
+		init_files+=("context/keywords.md" "context/keywords/")
+	fi
 	[[ -f "$project_root/TODO.md" ]] && init_files+=("TODO.md")
 	[[ -d "$project_root/todo" ]] && init_files+=("todo/")
 	[[ -f "$project_root/MODELS.md" ]] && init_files+=("MODELS.md")
@@ -1856,7 +1839,6 @@ _init_print_summary() {
 	[[ "$enable_code_quality" == "true" ]] && echo "  ✓ Code quality (linting, auditing)"
 	[[ "$enable_time_tracking" == "true" ]] && echo "  ✓ Time tracking (estimates, actuals)"
 	[[ "$enable_database" == "true" ]] && echo "  ✓ Database (schemas/, migrations/, seeds/)"
-	[[ "$enable_beads" == "true" ]] && echo "  ✓ Beads (task graph visualization)"
 	[[ "$enable_sops" == "true" ]] && echo "  ✓ SOPS (encrypted config files with age backend)"
 	[[ "$enable_security" == "true" ]] && echo "  ✓ Security (per-repo posture assessment)"
 	[[ "$enable_deployment_context" == "true" ]] && echo "  ✓ Deployment context (.aidevops/deployments.yaml)"
@@ -1885,15 +1867,7 @@ _init_print_summary() {
 		echo "  ${step}. Commit the initialized files: git add -A && git commit -m 'chore: initialize aidevops'"
 		((++step))
 	fi
-	if [[ "$enable_beads" == "true" ]]; then
-		echo "  ${step}. Add tasks to TODO.md with dependencies (blocked-by:t001)"
-		((++step))
-		echo "  ${step}. Run /ready to see unblocked tasks"
-		((++step))
-		echo "  ${step}. Run /sync-beads to sync with Beads graph"
-		((++step))
-		echo "  ${step}. Use 'bd' CLI for graph visualization"
-	elif [[ "$enable_database" == "true" ]]; then
+	if [[ "$enable_database" == "true" ]]; then
 		echo "  ${step}. Add schema files to schemas/"
 		((++step))
 		echo "  ${step}. Run diff to generate migrations"
@@ -1902,9 +1876,9 @@ _init_print_summary() {
 	else
 		echo "  ${step}. Add tasks to TODO.md"
 		((++step))
-		echo "  ${step}. Use /create-prd for complex features"
+		echo "  ${step}. Use /define to turn complex work into a decision-complete brief"
 		((++step))
-		echo "  ${step}. Use /feature to start development"
+		echo "  ${step}. Use /full-loop to implement a task end-to-end"
 	fi
 
 	return 0
@@ -1919,7 +1893,7 @@ Initialize aidevops in the current Git repository.
 
 FEATURES may be `all` (the default standard set), one feature, or a
 comma-separated list of features:
-  planning, git-workflow, code-quality, time-tracking, database, beads,
+  planning, git-workflow, code-quality, time-tracking, database,
   sops, security, deployment-context, hosting-context, wordpress-context
 
 Examples:

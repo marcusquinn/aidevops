@@ -29,6 +29,7 @@ mode: subagent
 | Clone production into LocalWP | `../workflows/wordpress-local-clone.md` | Export, sanitize, contain side effects, and validate |
 | Update many sites | `mainwp.md` | Centralized MainWP operations |
 | Choose hosting for a WordPress site | `../aidevops/recommendations.md` | Priority-led selection among Hostinger, Hetzner, and Cloudflare |
+| Audit or configure Rank Math SEO via MCP | `wordpress/rankmath-mcp.md` | `rank-math/*` abilities: site audit, settings, post analysis, redirections, GSC keywords, AI Visibility |
 | Choose plugins | `wp-preferred.md` | 127+ curated plugins across 19 categories |
 | Work with custom fields | `scf.md` | Field modeling and SCF/ACF guidance |
 

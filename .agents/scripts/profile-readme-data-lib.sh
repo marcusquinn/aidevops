@@ -135,7 +135,9 @@ _model_cost_rates() {
 	*gpt-5.1-chat*) echo "$PROFILE_RATE_GPT" ;;
 	*gpt-4.1-mini*) echo "0.40|1.60|0.10" ;;
 	*gpt-4.1*) echo "2.0|8.0|0.50" ;;
-	*o3*) echo "10.0|40.0|2.50" ;;
+	*o3-pro*) echo "20.0|80.0|0" ;;
+	*o3-mini*) echo "1.10|4.40|0.55" ;;
+	*o3*) echo "2.0|8.0|0.50" ;;
 	*o4-mini*) echo "1.10|4.40|0.275" ;;
 	*gemini-2.5-pro* | *gemini-3-pro*) echo "1.25|10.0|0.3125" ;;
 	*gemini-2.5-flash* | *gemini-3-flash*) echo "0.15|0.60|0.0375" ;;
@@ -567,9 +569,13 @@ _get_profile_model_usage_bundle() {
 # =============================================================================
 
 # --- Token totals: shared jq expression for computing total_all and cache_hit_pct ---
+# Hit rate = cache reads / all prompt tokens (uncached input + cache writes +
+# cache reads). Anthropic reports cache writes separately from input (GH#32744).
 _token_totals_jq_expr() {
 	echo '. + {total_all: (.total_input + .total_output + .total_cache_read + .total_cache_write)}
-		| . + {cache_hit_pct: (if (.total_cache_read + .total_input) > 0 then ((.total_cache_read / (.total_cache_read + .total_input) * 1000 | round) / 10) else 0 end)}'
+		| . + {prompt_tokens: (.total_input + (.total_cache_write // 0) + .total_cache_read)}
+		| . + {cache_hit_pct: (if .prompt_tokens > 0 then ((.total_cache_read / .prompt_tokens * 1000 | round) / 10) else 0 end)}
+		| del(.prompt_tokens)'
 	return 0
 }
 

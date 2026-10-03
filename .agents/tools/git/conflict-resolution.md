@@ -253,6 +253,5 @@ git checkout <lost-commit-sha>
 - `tools/git/worktrunk.md` — Worktree management (conflict prevention)
 - `workflows/git-workflow.md` — Branch-first development
 - `workflows/pr.md` — PR creation and merge
-- `workflows/branch.md` — Branch management
-- `workflows/branch/release.md` — Cherry-pick for releases
+- `workflows/branch.md` — Branch management; "Chore, Refactor, Release, Experiment" covers cherry-pick for releases
 - `tools/git/lumen.md` — Visual diff viewer for conflict review

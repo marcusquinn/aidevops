@@ -241,6 +241,12 @@ resolve_tabby_recovery() {
         fi
         return 3
     fi
+    if ((resolver_status == 4)); then
+        # An OpenCode V2 marker: open its project directory without resuming.
+        TABBY_RECOVERY_LAUNCH_DIR="${resolution}"
+        [[ -n "${TABBY_RECOVERY_LAUNCH_DIR}" ]] || return 1
+        return 4
+    fi
     ((resolver_status == 2)) && return 2
     print_error "Tabby session recovery marker validation failed"
     return 1
@@ -1425,6 +1431,8 @@ apply_tabby_recovery() {
         if ((recovery_status == 3)); then
             printf -v "${launch_dir_var}" '%s' "${TABBY_RECOVERY_LAUNCH_DIR}"
             printf -v "${data_dir_var}" '%s' "${TABBY_RECOVERY_DATA_DIR}"
+        elif ((recovery_status == 4)); then
+            printf -v "${launch_dir_var}" '%s' "${TABBY_RECOVERY_LAUNCH_DIR}"
         else
             ((recovery_status == 2)) || return 1
         fi

@@ -45,6 +45,7 @@ import {
 } from "./shell-env.mjs";
 import { compactingHook } from "./compaction.mjs";
 import { createCompactionAutoContinueGuard } from "./compaction-lifecycle.mjs";
+import { capCompactionEffort } from "./compaction-routing.mjs";
 import { INTENT_FIELD } from "./intent-tracing.mjs";
 import { createGreetingHandler } from "./greeting.mjs";
 import { applyImageSizeGuard } from "./quality-hooks-image.mjs";
@@ -386,7 +387,11 @@ export async function AidevopsPlugin({ directory, client }) {
   }
 
   // Initialise LLM observability
-  initObservability({ aidevopsVersion: currentAidevopsVersion() });
+  initObservability({
+    aidevopsVersion: currentAidevopsVersion(),
+    runtimeVersion: DETECTED_OPENCODE_RUNTIME_VERSION,
+    adapterId: "opencode-v1",
+  });
 
   // Cursor gRPC proxy — prepare models/provider in the background so OpenCode
   // startup never waits on network-bound model discovery or OAuth refresh.
@@ -676,7 +681,7 @@ export async function AidevopsPlugin({ directory, client }) {
       const { sessionId, modelId } = sessionModelIdentity(input);
       sessionModels.remember(sessionId, modelId);
       await subagentEffortHooks.chatParams(input, output);
-      return applyConversationRootVariant(
+      const applied = await applyConversationRootVariant(
         input,
         output,
         isRestrictedConversation(conversation) ? conversation : null,
@@ -686,6 +691,9 @@ export async function AidevopsPlugin({ directory, client }) {
         tierReasoning,
         },
       );
+      // GH#32934: last, so no earlier hook can restore a max/xhigh summary.
+      capCompactionEffort(input, output, modelRouting, { log: qualityLog });
+      return applied;
     },
 
     // Quality hooks
@@ -765,6 +773,7 @@ export async function AidevopsPlugin({ directory, client }) {
         input,
         output,
         directory,
+        { host: "opencode1" },
       ),
     "experimental.compaction.autocontinue": compactionContinuation.autoContinue,
   };

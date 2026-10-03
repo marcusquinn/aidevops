@@ -86,6 +86,31 @@ public website/app/plugin/widget/dashboard/tool is launch-ready.
 - Update project `SESSION-STATE.md`, changelog/version log, and TODO/dashboard follow-ups.
 - Before completion, scan the conversation for unfulfilled launch promises and displaced requests.
 
+## 9. Open-sourcing a code repository
+
+For a private repository becoming public (plugin, tool, library, app). Phase
+model: `reference/ci-gate-policy.md` → "Private repositories and public launch".
+
+- Get explicit owner approval to change visibility; it cannot be fully undone
+  (forks, clones and caches persist).
+- Scan full Git history, not just `HEAD`, for secrets and private details
+  (`gitleaks detect` or `trufflehog git file://.`). Rotate anything ever
+  committed; rewriting history does not un-leak it.
+- Review issues, PRs, comments, releases, wiki, Actions logs and artifacts:
+  they become public too. Remove private site names, client data, local
+  paths, internal hostnames and tokens; delete stale artifacts.
+- Confirm the licence file and headers, third-party licences and credits for
+  bundled code or assets, and a `README` that explains install, use and
+  support.
+- Add `SECURITY.md` (with private vulnerability reporting on),
+  `CONTRIBUTING.md`, a code of conduct if contributions are invited, and
+  issue/PR templates. Keep them out of distributable builds.
+- Run the full quality sweep with free public-repo reviewers, then make the
+  core CI checks required on the default branch.
+- Check that installed apps and tokens with access to the repo are still
+  needed and least-privilege. Set Actions to require approval for workflows
+  from first-time contributors' forks.
+
 ## Suggested exposure search terms
 
 Use project-specific terms plus:

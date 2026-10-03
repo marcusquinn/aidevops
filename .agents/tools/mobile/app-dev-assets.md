@@ -105,7 +105,7 @@ See `tools/browser/remotion-best-practices-skill.md` for Remotion patterns.
 - `tools/mobile/app-dev-publishing.md` - Screenshot size requirements
 - `tools/vision/overview.md` - Image generation tools
 - `tools/browser/remotion-best-practices-skill.md` - Remotion best practices
-- `tools/video/remotion.md` - Programmatic video creation
+- `tools/video/remotion/remotion.md` - Programmatic video creation
 - `tools/video/` - Video generation and enhancement
 - `content/video-wavespeed.md` - 200+ video generation models
 - `content/video-real-video-enhancer.md` - Upscale and enhance video

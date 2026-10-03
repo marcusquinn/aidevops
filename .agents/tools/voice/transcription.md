@@ -91,6 +91,8 @@ whisper foreign.mp3 --task translate --model medium              # translate to 
 
 **whisper.cpp** (Apple Silicon optimised): `git clone https://github.com/ggml-org/whisper.cpp && cd whisper.cpp && make && ./models/download-ggml-model.sh medium` → `./build/bin/whisper-cli -m models/ggml-medium.bin -f audio.wav -otxt -osrt`
 
+`media-qa-helper.sh` discovers local ggml models in this order: explicit `--model`, `WHISPER_MODEL`, then `~/Library/Application Support/WhisperModels/`, `~/Library/Application Support/MacWhisper/WhisperModels/`, `~/.cache/whisper/`, and `~/.local/share/whisper/`. It never downloads a model.
+
 ## Buzz (macOS GUI for Whisper)
 
 Desktop Whisper wrapper — no cloud/API key. Supports MP3/WAV/FLAC/OGG/M4A/WMA audio and MP4/MKV/AVI/MOV/WebM video. Output: TXT/SRT/VTT/JSON.

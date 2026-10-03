@@ -20,7 +20,13 @@ export function createObjectiveReceiptTool(tool, recordObjectiveDecision) {
       policy_version: z.string().optional(),
     },
     async execute(args) {
-      return recordObjectiveDecision({
+      for (const key of ["parent_session_id", "objective_id", "run_id", "contribution_id"]) {
+        if (typeof args[key] !== "string" || !args[key].trim()) {
+          throw new Error(`aidevops_objective_receipt requires ${key} from the parent-receipt hint`);
+        }
+      }
+      if (!args.outcome) throw new Error("aidevops_objective_receipt requires outcome");
+      const result = await recordObjectiveDecision({
         parentSessionID: args.parent_session_id,
         objectiveID: args.objective_id,
         runID: args.run_id,
@@ -35,6 +41,9 @@ export function createObjectiveReceiptTool(tool, recordObjectiveDecision) {
         policyVersion: args.policy_version || "v1",
         source: "explicit_parent_decision",
       });
+      // OpenCode tool results must be text; returning the receipt object makes
+      // the V1 host attempt string operations on an undefined text payload.
+      return typeof result === "string" ? result : JSON.stringify(result ?? { recorded: false });
     },
   });
 }

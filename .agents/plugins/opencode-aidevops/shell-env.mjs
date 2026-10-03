@@ -7,7 +7,7 @@
 // ---------------------------------------------------------------------------
 
 import { existsSync, readFileSync } from "fs";
-import { join } from "path";
+import { isAbsolute, join } from "path";
 
 /**
  * Read a file if it exists, or return empty string.
@@ -109,10 +109,12 @@ export function sessionModelIdentity(input) {
  * @param {number} maxEntries
  * @returns {{ remember: Function, resolve: Function }}
  */
+let defaultSessionModels;
 export function createSessionModelStore(maxEntries = 128) {
+  if (arguments.length === 0 && defaultSessionModels) return defaultSessionModels;
   const models = new Map();
   const limit = Math.max(1, Number(maxEntries) || 128);
-  return {
+  const store = {
     remember(sessionId, modelId) {
       if (!sessionId || !modelId) return;
       models.delete(sessionId);
@@ -123,6 +125,8 @@ export function createSessionModelStore(maxEntries = 128) {
       return sessionId ? models.get(sessionId) || "" : "";
     },
   };
+  if (arguments.length === 0) defaultSessionModels = store;
+  return store;
 }
 
 /**
@@ -176,9 +180,25 @@ function shellSessionOrigin(env) {
   return headless ? "worker" : "interactive";
 }
 
+/**
+ * Worker prepare selects a project-compatible Node (GH#32815) and exports its
+ * bin dir. OpenCode seeds tool-shell PATH from a login-profile snapshot, not
+ * the worker process PATH, so the selection must be re-applied here (GH#33290).
+ * @param {object} env
+ * @returns {string} validated absolute bin dir, or ""
+ */
+function projectNodeBin(env) {
+  if (shellSessionOrigin(env) !== "worker") return "";
+  const value = process.env.AIDEVOPS_PROJECT_NODE_BIN || "";
+  if (!isAbsolute(value) || value.includes(":") || value.includes("\n")) return "";
+  return existsSync(join(value, "node")) ? value : "";
+}
+
 function prependFrameworkPaths(env, scriptsDir, agentsDir) {
   const binDir = agentsDir ? join(agentsDir, "bin") : "";
-  const preferredPaths = [scriptsDir, binDir].filter((path) => path && existsSync(path));
+  const preferredPaths = [scriptsDir, binDir, projectNodeBin(env)].filter(
+    (path) => path && existsSync(path),
+  );
   if (preferredPaths.length === 0) return;
   const currentPath = env.PATH || process.env.PATH || "";
   const pathParts = currentPath
@@ -229,7 +249,8 @@ function projectSessionIdentity(input, env, onSessionIdentity) {
     env.AIDEVOPS_OPENCODE_SESSION_ID = sessionId;
   }
 
-  if (modelId && !env.AIDEVOPS_SIG_MODEL) env.AIDEVOPS_SIG_MODEL = modelId;
+  const currentModel = modelId || createSessionModelStore().resolve(sessionId);
+  if (currentModel && !env.AIDEVOPS_SIG_MODEL) env.AIDEVOPS_SIG_MODEL = currentModel;
   if (sessionId && env.AIDEVOPS_SIG_MODEL) {
     onSessionIdentity(sessionId, env.AIDEVOPS_SIG_MODEL);
   }

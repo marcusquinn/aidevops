@@ -201,6 +201,38 @@ run_cmd_with_timeout() {
 #   124 - stage timed out and was killed
 #   else- stage exited with command exit code
 #######################################
+# Return the remaining cycle budget after a finalisation reserve. Missing or
+# invalid clocks/configuration fail open so standalone routines retain their
+# existing timeout behaviour. Pass 0 for admission checks that own a reserve.
+_pulse_cycle_remaining_seconds() {
+	local reserve="${1:-${AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S:-90}}"
+	local start="${PULSE_START_EPOCH:-}" stale="${PULSE_STALE_THRESHOLD:-}"
+	local lock="${PULSE_LOCK_MAX_AGE_S:-1800}" now=""
+	[[ "$reserve" =~ ^[0-9]+$ && "$start" =~ ^[0-9]+$ &&
+		"$stale" =~ ^[1-9][0-9]*$ && "$lock" =~ ^[1-9][0-9]*$ ]] || return 1
+	now=$(date +%s 2>/dev/null) || return 1
+	[[ "$now" =~ ^[0-9]+$ && "$now" -ge "$start" ]] || return 1
+	[[ "$lock" -lt "$stale" ]] && stale="$lock"
+	printf '%s\n' "$((start + stale - now - reserve))"
+	return 0
+}
+
+_pulse_stage_cycle_timeout() {
+	local stage_name="$1" timeout_seconds="$2" remaining=""
+	[[ "${AIDEVOPS_PULSE_STAGE_CYCLE_CLAMP:-1}" == "1" ]] || { printf '%s\n' "$timeout_seconds"; return 0; }
+	remaining=$(_pulse_cycle_remaining_seconds "${AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S:-90}") || { printf '%s\n' "$timeout_seconds"; return 0; }
+	if [[ "$remaining" -lt 15 ]]; then
+		echo "[pulse-wrapper] Stage deferred: ${stage_name} cycle budget exhausted" >>"$LOGFILE"
+		return 124
+	fi
+	if [[ "$remaining" -lt "$timeout_seconds" ]]; then
+		echo "[pulse-wrapper] Stage cycle budget clamp: ${stage_name} ${timeout_seconds}s -> ${remaining}s" >>"$LOGFILE"
+		timeout_seconds="$remaining"
+	fi
+	printf '%s\n' "$timeout_seconds"
+	return 0
+}
+
 run_stage_with_timeout() {
 	local stage_name="$1"
 	local timeout_seconds="$2"
@@ -214,6 +246,7 @@ run_stage_with_timeout() {
 	if [[ "$timeout_seconds" -lt 1 ]]; then
 		timeout_seconds=1
 	fi
+	timeout_seconds=$(_pulse_stage_cycle_timeout "$stage_name" "$timeout_seconds") || return $?
 
 	local stage_start
 	stage_start=$(date +%s)

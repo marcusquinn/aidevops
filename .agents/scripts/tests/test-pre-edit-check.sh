@@ -242,32 +242,36 @@ test_blocks_when_linked_worktree_owned_by_another_live_process() {
 }
 
 test_allows_headless_child_of_exact_wrapper_owner() {
-	local worktree_path="${TEST_ROOT}/wrapper-owned-worktree"
-	"$GIT_BIN" -C "$TEST_ROOT" worktree add "$worktree_path" -b bugfix/wrapper-owned-worktree >/dev/null 2>&1
+	local owner_session="${1:-issue-28426}"
+	local worktree_path="${TEST_ROOT}/wrapper-owned-${owner_session}"
+	local branch="bugfix/wrapper-owned-${owner_session}"
+	"$GIT_BIN" -C "$TEST_ROOT" worktree add "$worktree_path" -b "$branch" >/dev/null 2>&1
 
 	ensure_registry_schema
 	sqlite3 "$TEST_REGISTRY_DB" "
         INSERT OR REPLACE INTO worktree_owners
             (worktree_path, branch, owner_pid, owner_session, task_id)
         VALUES
-            ('$worktree_path', 'bugfix/wrapper-owned-worktree', $$, 'issue-28426', '28426');
+            ('$worktree_path', '$branch', $$, '$owner_session', '28426');
     " >/dev/null 2>&1
 
 	local output=""
 	local exit_code=0
 	output=$(AIDEVOPS_SESSION_ORIGIN=worker AIDEVOPS_HEADLESS=true \
 		AIDEVOPS_WORKTREE_OWNER_PID="$$" \
-		AIDEVOPS_WORKTREE_OWNER_SESSION="issue-28426" \
+		AIDEVOPS_WORKTREE_OWNER_SESSION="$owner_session" \
 		AIDEVOPS_WORKTREE_OWNER_TASK="28426" \
 		AIDEVOPS_WORKTREE_OWNER_PATH="$worktree_path" \
 		PRE_EDIT_OWNER_PID="$BASHPID" run_helper "$worktree_path" 2>&1) || exit_code=$?
 
-	if [[ "$exit_code" -eq 0 && "$output" == *"OK"* && "$output" != *"WORKTREE_OWNERSHIP_CONFLICT=true"* ]]; then
-		print_result "allows headless child of exact live wrapper owner" 0
+	local registry_owner=""
+	registry_owner=$(sqlite3 "$TEST_REGISTRY_DB" "SELECT owner_pid || '|' || owner_session || '|' || task_id FROM worktree_owners WHERE worktree_path = '$worktree_path';")
+	if [[ "$exit_code" -eq 0 && "$output" == *"OK"* && "$output" != *"WORKTREE_OWNERSHIP_CONFLICT=true"* && "$registry_owner" == "$$|$owner_session|28426" ]]; then
+		print_result "allows headless child without replacing exact wrapper owner: ${owner_session}" 0
 		return 0
 	fi
 
-	print_result "allows headless child of exact live wrapper owner" 1 "exit=${exit_code} output=${output}"
+	print_result "allows headless child without replacing exact wrapper owner: ${owner_session}" 1 "exit=${exit_code} owner=${registry_owner} output=${output}"
 	return 0
 }
 
@@ -321,8 +325,10 @@ test_headless_wrapper_owner_proof_fails_closed() {
 }
 
 test_rejects_forged_proof_for_unrelated_live_owner() {
-	local worktree_path="${TEST_ROOT}/unrelated-live-owner-worktree"
-	"$GIT_BIN" -C "$TEST_ROOT" worktree add "$worktree_path" -b bugfix/unrelated-live-owner >/dev/null 2>&1
+	local owner_session="${1:-issue-28426}"
+	local worktree_path="${TEST_ROOT}/unrelated-live-owner-${owner_session}"
+	local branch="bugfix/unrelated-live-owner-${owner_session}"
+	"$GIT_BIN" -C "$TEST_ROOT" worktree add "$worktree_path" -b "$branch" >/dev/null 2>&1
 
 	local unrelated_pid=""
 	sleep 30 >/dev/null 2>&1 &
@@ -332,14 +338,14 @@ test_rejects_forged_proof_for_unrelated_live_owner() {
         INSERT OR REPLACE INTO worktree_owners
             (worktree_path, branch, owner_pid, owner_session, task_id)
         VALUES
-            ('$worktree_path', 'bugfix/unrelated-live-owner', $unrelated_pid, 'issue-28426', '28426');
+            ('$worktree_path', '$branch', $unrelated_pid, '$owner_session', '28426');
     " >/dev/null 2>&1
 
 	local output=""
 	local exit_code=0
 	output=$(AIDEVOPS_SESSION_ORIGIN=worker AIDEVOPS_HEADLESS=true \
 		AIDEVOPS_WORKTREE_OWNER_PID="$unrelated_pid" \
-		AIDEVOPS_WORKTREE_OWNER_SESSION="issue-28426" \
+		AIDEVOPS_WORKTREE_OWNER_SESSION="$owner_session" \
 		AIDEVOPS_WORKTREE_OWNER_TASK="28426" \
 		AIDEVOPS_WORKTREE_OWNER_PATH="$worktree_path" \
 		PRE_EDIT_OWNER_PID="$BASHPID" run_helper "$worktree_path" 2>&1) || exit_code=$?
@@ -347,11 +353,11 @@ test_rejects_forged_proof_for_unrelated_live_owner() {
 	wait "$unrelated_pid" 2>/dev/null || true
 
 	if [[ "$exit_code" -eq 2 && "$output" == *"WORKTREE_OWNERSHIP_CONFLICT=true"* ]]; then
-		print_result "rejects copied proof for unrelated live owner process" 0
+		print_result "rejects copied proof for unrelated live owner process: ${owner_session}" 0
 		return 0
 	fi
 
-	print_result "rejects copied proof for unrelated live owner process" 1 "exit=${exit_code} output=${output}"
+	print_result "rejects copied proof for unrelated live owner process: ${owner_session}" 1 "exit=${exit_code} output=${output}"
 	return 0
 }
 
@@ -651,8 +657,11 @@ main() {
 	test_warns_when_canonical_repo_is_off_main
 	test_blocks_when_linked_worktree_owned_by_another_live_process
 	test_allows_headless_child_of_exact_wrapper_owner
+	# GH#33303: manual dispatch must accept the same exact-wrapper proof as pulse.
+	test_allows_headless_child_of_exact_wrapper_owner "manual-cli-28426-1790835194"
 	test_headless_wrapper_owner_proof_fails_closed
 	test_rejects_forged_proof_for_unrelated_live_owner
+	test_rejects_forged_proof_for_unrelated_live_owner "manual-cli-28426-1790835194"
 	test_allows_same_opencode_session_pid_rollover
 	test_headless_planning_path_requires_worktree
 	test_interactive_allowlisted_path_still_requires_worktree

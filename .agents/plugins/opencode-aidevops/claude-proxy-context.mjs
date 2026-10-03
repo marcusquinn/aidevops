@@ -275,7 +275,8 @@ export function parseChatMessages(messages) {
 const MODEL_ALIASES = new Map([
   ["haiku",    "claude-haiku-4-5"],
   ["sonnet45", "claude-sonnet-4-5"],
-  ["sonnet",   "claude-sonnet-4-6"],
+  ["sonnet46", "claude-sonnet-4-6"],
+  ["sonnet",   "claude-sonnet-5-5"],
   ["opus45",   "claude-opus-4-5"],
   ["opus",     "claude-opus-4-6"],
 ]);

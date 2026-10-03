@@ -129,6 +129,28 @@ if [[ -f "$WAH_FAILURE_FAMILY_FILTER" ]]; then
 	WAH_FAILURE_FAMILY_JQ=$(<"$WAH_FAILURE_FAMILY_FILTER")
 fi
 
+# Per provider/model attempt counts. GH#33331: premature_exit and
+# continuation_rescued are split out of other_failure so a model-specific
+# premature-exit pattern is visible without manual clustering.
+# shellcheck disable=SC2016 # jq variables are evaluated by jq, not the shell
+WAH_PROVIDER_MODEL_USAGE_JQ='
+	def _wah_provider_model_usage:
+		group_by([.provider // "unknown", .model // "unknown"])
+		| map({
+			provider: (.[0].provider // "unknown"),
+			model: (.[0].model // "unknown"),
+			count: length,
+			runtime_handoffs: (map(select(_wah_runtime_handoff)) | length),
+			rate_limited: (map(select(_wah_effective_failure and (.result == $rate_limit_result or .provider_error_type == $rate_limit_result or .provider_status == "429"))) | length),
+			other_failure: (map(select(_wah_effective_failure and .result != $rate_limit_result and .provider_error_type != $rate_limit_result and .provider_status != "429")) | length),
+			premature_exit: (map(select(.result == "premature_exit" or .launch_failure_cause == "model_stopped_before_completion")) | length),
+			continuation_rescued: (map(select(_wah_runtime_handoff and .routing_reason == "continuation_retry")) | length),
+			latest_ts: (map(.ts // 0) | max)
+		})
+		| map(. + {premature_exit_rate_pct: (if .count > 0 then ((.premature_exit * 100 / .count) | floor) else 0 end)})
+		| sort_by(.count, .latest_ts) | reverse | .[0:12];
+'
+
 # Keep the rich details projection outside the shell function body so adding
 # output fields does not turn jq data-shaping into shell function complexity.
 # shellcheck disable=SC2016 # jq variables are evaluated by jq, not the shell
@@ -141,7 +163,7 @@ WAH_METRIC_DETAILS_JQ=$WAH_SESSION_OUTCOME_JQ$WAH_FAILURE_FAMILY_JQ'
 	| ($window_events | map(select(
 		$repo_slug == "" or (((.repo_slug // "") | ascii_downcase) == ($repo_slug | ascii_downcase))
 	))) as $events
-	| ($events | _wah_session_outcomes) as $w
+	| ($events | _wah_session_outcomes | _wah_with_continuations($events)) as $w
 	| ($w | map(.duration_ms // 0)) as $durations
 	| ($w | map(select(_wah_effective_failure))) as $failures
 	| {
@@ -184,6 +206,7 @@ WAH_METRIC_DETAILS_JQ=$WAH_SESSION_OUTCOME_JQ$WAH_FAILURE_FAMILY_JQ'
 				examples: (sort_by(.ts // 0) | reverse | .[0:3] | map({ts, session_id, work_dir, output_file, exit_code, duration_ms, provider_error_type, provider_status, runtime_error_type, classification_source, classification_pattern, launch_failure_cause, kill_reason, next_action}))
 			})
 			| sort_by(.count) | reverse | .[0:10]),
+		continuation_recovery: ($w | _wah_continuation_recovery),
 		failure_families: ($w | _wah_failure_family_summary)
 	}'
 
@@ -212,8 +235,9 @@ _wah_objective_outcomes_json() {
 		printf '[]'
 		return 0
 	fi
+	# GH#32938: per-line parse so one torn append cannot blank every outcome.
 	tail -n "$evidence_limit" "$WAH_OBJECTIVE_EVIDENCE_FILE" 2>/dev/null |
-		jq -sc '[.[] | select(.record_type == "attempt_outcome")]' 2>/dev/null || printf '[]'
+		jq -Rsc '[split("\n")[] | fromjson? | select(type == "object" and .record_type == "attempt_outcome")]' 2>/dev/null || printf '[]'
 	return 0
 }
 
@@ -316,6 +340,17 @@ _wah_metric_details_json() {
 	objective_outcomes=$(_wah_objective_outcomes_json)
 	jq -rn --argjson cutoff "$cutoff_epoch" --argjson now "$now_epoch" --argjson objective_outcomes "$objective_outcomes" --arg worker_role "$WAH_RUNTIME_ROLE" --arg outcome_failed "$WAH_DELIVERY_FAILED" --arg watchdog_killed_result "$WAH_RESULT_WATCHDOG_STALL_KILLED" --arg local_kill_result "$WAH_RESULT_LOCAL_KILL" --arg repo_slug "$repo_slug" "$WAH_METRIC_DETAILS_JQ" <"$metrics" 2>/dev/null ||
 		printf '{"event_total":0,"unscoped_event_total":0,"excluded_event_total":0,"result_counts":{},"diagnostic_focus":{},"timing_ms":{"avg":0,"max":0,"samples":0},"recent_examples":[],"failure_groups":[],"failure_families":[]}'
+	return 0
+}
+
+# Count quarantined worker rows irrespective of the requested rolling cutoff.
+_wah_future_dated_count() {
+	local now_epoch="$1" repo_slug="${2:-}"
+	[[ -f "$WAH_METRICS_FILE" ]] || { printf '0\n'; return 0; }
+	jq -rn --argjson limit "$((now_epoch + 300))" --arg repo "$repo_slug" '
+		[inputs | select(.role == "worker" and (.ts | type) == "number" and .ts > $limit
+			and ($repo == "" or ((.repo_slug // "" | ascii_downcase) == ($repo | ascii_downcase))))] | length
+	' <"$WAH_METRICS_FILE" 2>/dev/null || printf '0\n'
 	return 0
 }
 
@@ -446,7 +481,7 @@ _wah_provider_usage_json() {
 	((account_multiplier < 1)) && account_multiplier=1
 
 	if [[ -f "$pool" ]]; then
-		jq -rn --slurpfile pool "$pool" --argjson cutoff "$cutoff_epoch" --argjson now "$now_epoch" --argjson objective_outcomes "$(_wah_objective_outcomes_json)" --arg outcome_failed "$WAH_DELIVERY_FAILED" --argjson account_multiplier "$account_multiplier" --arg rate_limit_result "$WAH_RESULT_RATE_LIMIT" --arg worker_role "$WAH_RUNTIME_ROLE" --arg status_empty '' --arg status_auth_error 'auth-error' --arg status_rate_limited 'rate-limited' --arg status_active 'active' --arg status_idle 'idle' "$WAH_SESSION_OUTCOME_JQ"'
+		jq -rn --slurpfile pool "$pool" --argjson cutoff "$cutoff_epoch" --argjson now "$now_epoch" --argjson objective_outcomes "$(_wah_objective_outcomes_json)" --arg outcome_failed "$WAH_DELIVERY_FAILED" --argjson account_multiplier "$account_multiplier" --arg rate_limit_result "$WAH_RESULT_RATE_LIMIT" --arg worker_role "$WAH_RUNTIME_ROLE" --arg status_empty '' --arg status_auth_error 'auth-error' --arg status_rate_limited 'rate-limited' --arg status_active 'active' --arg status_idle 'idle' "$WAH_SESSION_OUTCOME_JQ$WAH_PROVIDER_MODEL_USAGE_JQ"'
 			def account_status: .status // $status_empty;
 			def available_account:
 				(account_status) as $status
@@ -459,20 +494,7 @@ _wah_provider_usage_json() {
 			| [inputs | select(.role == $worker_role and (.ts // 0) >= $cutoff and (.ts // 0) <= $now)] as $raw
 			| ($raw | map(_wah_reconcile_outcome)) as $w
 			| {
-				provider_model_usage: (
-					$w
-					| group_by([.provider // "unknown", .model // "unknown"])
-					| map({
-						provider: (.[0].provider // "unknown"),
-						model: (.[0].model // "unknown"),
-						count: length,
-						runtime_handoffs: (map(select(_wah_runtime_handoff)) | length),
-						rate_limited: (map(select(_wah_effective_failure and (.result == $rate_limit_result or .provider_error_type == $rate_limit_result or .provider_status == "429"))) | length),
-						other_failure: (map(select(_wah_effective_failure and .result != $rate_limit_result and .provider_error_type != $rate_limit_result and .provider_status != "429")) | length),
-						latest_ts: (map(.ts // 0) | max)
-					})
-					| sort_by(.count, .latest_ts) | reverse | .[0:12]
-				),
+				provider_model_usage: ($w | _wah_provider_model_usage),
 				recent_events: (
 					$w | sort_by(.ts // 0) | reverse | .[0:10]
 					| map({ts, provider, model, result, exit_code, issue_number, session_key})
@@ -495,11 +517,11 @@ _wah_provider_usage_json() {
 				)
 			}' <"$input_file" 2>/dev/null || printf '{"provider_model_usage":[],"recent_events":[],"account_pool":[]}'
 	else
-		jq -rn --argjson cutoff "$cutoff_epoch" --argjson now "$now_epoch" --argjson objective_outcomes "$(_wah_objective_outcomes_json)" --arg outcome_failed "$WAH_DELIVERY_FAILED" --arg rate_limit_result "$WAH_RESULT_RATE_LIMIT" --arg worker_role "$WAH_RUNTIME_ROLE" "$WAH_SESSION_OUTCOME_JQ"'
+		jq -rn --argjson cutoff "$cutoff_epoch" --argjson now "$now_epoch" --argjson objective_outcomes "$(_wah_objective_outcomes_json)" --arg outcome_failed "$WAH_DELIVERY_FAILED" --arg rate_limit_result "$WAH_RESULT_RATE_LIMIT" --arg worker_role "$WAH_RUNTIME_ROLE" "$WAH_SESSION_OUTCOME_JQ$WAH_PROVIDER_MODEL_USAGE_JQ"'
 			[inputs | select(.role == $worker_role and (.ts // 0) >= $cutoff and (.ts // 0) <= $now)] as $raw
 			| ($raw | map(_wah_reconcile_outcome)) as $w
 			| {
-				provider_model_usage: ($w | group_by([.provider // "unknown", .model // "unknown"]) | map({provider: (.[0].provider // "unknown"), model: (.[0].model // "unknown"), count: length, runtime_handoffs: (map(select(_wah_runtime_handoff)) | length), rate_limited: (map(select(_wah_effective_failure and (.result == $rate_limit_result or .provider_error_type == $rate_limit_result or .provider_status == "429"))) | length), other_failure: (map(select(_wah_effective_failure and .result != $rate_limit_result and .provider_error_type != $rate_limit_result and .provider_status != "429")) | length), latest_ts: (map(.ts // 0) | max)}) | sort_by(.count, .latest_ts) | reverse | .[0:12]),
+				provider_model_usage: ($w | _wah_provider_model_usage),
 				recent_events: ($w | sort_by(.ts // 0) | reverse | .[0:10] | map({ts, provider, model, result, exit_code, issue_number, session_key})),
 				account_pool: []
 			}' <"$input_file" 2>/dev/null || printf '{"provider_model_usage":[],"recent_events":[],"account_pool":[]}'
@@ -678,6 +700,7 @@ _wah_emit_human() {
 	printf '\n'
 	printf 'headless-runtime-metrics.jsonl (canonical worker outcomes; scope: %s):\n' "$(if [[ -n "$repo_label" ]]; then printf 'repository'; else printf 'global'; fi)"
 	printf '  Raw attempt/events:          %d\n' "$total"
+	printf '  Future-dated ignored:        %s\n' "$(printf '%s' "$details_json" | jq -r '.future_dated_ignored // 0' 2>/dev/null || printf '0')"
 	printf '  Terminal session outcomes:   %d\n' "$terminal_total"
 	printf '  Runtime handoffs:            %d  (%s of terminal)\n' "$succ" "$handoff_rate_pct"
 	printf '  Watchdog stall-killed:       %d\n' "$wk"
@@ -687,6 +710,7 @@ _wah_emit_human() {
 	printf '  Other failure:               %d\n' "$of"
 	printf '  Result classes:              %s\n' "$(printf '%s' "$details_json" | jq -c '.result_counts' 2>/dev/null || printf '{}')"
 	printf '  Diagnostic focus:            %s\n' "$(printf '%s' "$details_json" | jq -c '.diagnostic_focus // {}' 2>/dev/null || printf '{}')"
+	printf '  Continuation recovery:       %s\n' "$(printf '%s' "$details_json" | jq -c '.continuation_recovery // {}' 2>/dev/null || printf '{}')"
 	printf '  Timing ms (avg/max/samples): %s/%s/%s\n' \
 		"$(printf '%s' "$details_json" | jq -r '.timing_ms.avg // 0' 2>/dev/null || printf '0')" \
 		"$(printf '%s' "$details_json" | jq -r '.timing_ms.max // 0' 2>/dev/null || printf '0')" \
@@ -742,7 +766,7 @@ _wah_emit_providers_human() {
 	printf '%s' "$usage_json" | jq -r '
 		(.provider_model_usage // []) as $rows
 		| if ($rows | length) == 0 then "  (no worker metric events in window)"
-		else $rows[] | "  \(.provider)/\(.model): count=\(.count) runtime_handoffs=\(.runtime_handoffs) rate_limited=\(.rate_limited) other_failure=\(.other_failure) latest_ts=\(.latest_ts)"
+		else $rows[] | "  \(.provider)/\(.model): count=\(.count) runtime_handoffs=\(.runtime_handoffs) rate_limited=\(.rate_limited) other_failure=\(.other_failure) premature_exit=\(.premature_exit // 0) (\(.premature_exit_rate_pct // 0)%) continuation_rescued=\(.continuation_rescued // 0) latest_ts=\(.latest_ts)"
 		end' 2>/dev/null || printf '  (provider/model usage unavailable)\n'
 	printf '\n'
 	printf 'OAuth account pool aggregate (redacted; no emails/tokens):\n'
@@ -802,6 +826,7 @@ _wah_emit_json() {
 				terminal_session_total: $terminal_total,
 				event_total: ($details.event_total // $total),
 				unscoped_event_total: ($details.unscoped_event_total // 0),
+				future_dated_ignored: ($details.future_dated_ignored // 0),
 				excluded_event_total: ($details.excluded_event_total // 0),
 				continuation_events: ($details.continuation_events // 0),
 				runtime_handoffs: $succ,
@@ -815,6 +840,7 @@ _wah_emit_json() {
 				result_counts: $details.result_counts,
 				event_result_counts: ($details.event_result_counts // $details.result_counts),
 				diagnostic_focus: ($details.diagnostic_focus // {}),
+				continuation_recovery: ($details.continuation_recovery // {}),
 				timing_ms: $details.timing_ms,
 				recent_examples: $details.recent_examples,
 				failure_groups: ($details.failure_groups // []),
@@ -893,6 +919,7 @@ cmd_summary() {
 	agg=$(_wah_aggregate_metrics "$cutoff_epoch" "$now_epoch" "$repo_label")
 	read -r total terminal_total succ wk wc sic rl of <<<"$agg"
 	details_json=$(_wah_metric_details_json "$cutoff_epoch" "$now_epoch" "$repo_label")
+	details_json=$(printf '%s' "$details_json" | jq --argjson future "$(_wah_future_dated_count "$now_epoch" "$repo_label")" '. + {future_dated_ignored:$future}')
 	live_blocker_sessions_json=$(_wah_live_blocker_sessions_json "$repo_label")
 	blocker_json=$(_wah_blocker_details_json "$cutoff_epoch" "$now_epoch" "$repo_label" "$live_blocker_sessions_json")
 
@@ -994,6 +1021,65 @@ cmd_live_workers() {
 }
 
 #######################################
+# GH#33330: append audited non-blocking terminal events for retained
+# supervisor-pulse permission blockers. Telemetry only: never touches GitHub
+# labels, permission requests or grants, and never deletes blocker evidence.
+# Refuses while a supervisor-pulse process is live; the cutoff is computed
+# (now - grace) unless an explicit earlier --stale-before is supplied.
+#######################################
+_wah_supervisor_is_live() {
+	local pattern="${WAH_SUPERVISOR_PROCESS_PATTERN:---role pulse --session-key supervisor-pulse}"
+	local commands=""
+	commands=$(ps -axo command= 2>/dev/null) || return 0 # unknown liveness: treat as live
+	[[ "$commands" == *"$pattern"* ]] && return 0
+	return 1
+}
+
+cmd_reconcile_stale_supervisor() {
+	local stale_before="" dry_run=0
+	local grace="${WAH_STALE_SUPERVISOR_GRACE_SECS:-300}"
+	while [[ $# -gt 0 ]]; do
+		local arg="$1"
+		case "$arg" in
+		--stale-before) stale_before="${2:-}"; shift 2 ;;
+		--dry-run) dry_run=1; shift ;;
+		*) printf 'unknown reconcile-stale-supervisor option: %s\n' "$arg" >&2; return 2 ;;
+		esac
+	done
+	[[ "$grace" =~ ^[0-9]+$ ]] || grace=300
+	local now_epoch computed_cutoff
+	now_epoch=$(date +%s)
+	computed_cutoff=$((now_epoch - grace))
+	if [[ -z "$stale_before" ]]; then
+		stale_before="$computed_cutoff"
+	elif [[ ! "$stale_before" =~ ^[1-9][0-9]*$ ]]; then
+		printf 'reconcile-stale-supervisor: --stale-before must be a unix epoch\n' >&2
+		return 2
+	elif ((stale_before > computed_cutoff)); then
+		stale_before="$computed_cutoff"
+	fi
+	if _wah_supervisor_is_live; then
+		printf 'skipped: live supervisor-pulse owner\n'
+		return 0
+	fi
+	if [[ "$dry_run" -eq 1 ]]; then
+		printf 'dry-run: would reconcile supervisor-pulse blockers with ts <= %s\n' "$stale_before"
+		return 0
+	fi
+	[[ -f "$WAH_BLOCKER_LOG_FILE" ]] || { printf '0\n'; return 0; }
+	local node_bin resolved=""
+	node_bin=$(command -v node) || { printf 'skipped: node unavailable\n'; return 0; }
+	resolved=$("$node_bin" "${SCRIPT_DIR}/worker-blocker-cli.mjs" resolve-stale-supervisor-session \
+		--repo-slug '' --session-key supervisor-pulse --stale-before "$stale_before" \
+		--log-file "$WAH_BLOCKER_LOG_FILE" 2>/dev/null) || {
+		printf 'reconcile-stale-supervisor: resolver failed\n' >&2
+		return 1
+	}
+	printf '%s\n' "${resolved:-0}"
+	return 0
+}
+
+#######################################
 # Help text.
 #######################################
 cmd_help() {
@@ -1004,6 +1090,9 @@ Usage:
   worker-activity-helper.sh summary [OPTIONS]
   worker-activity-helper.sh providers [OPTIONS]
   worker-activity-helper.sh live-workers
+  worker-activity-helper.sh reconcile-stale-supervisor [--stale-before EPOCH] [--dry-run]
+                             Telemetry-only terminal events for retained
+                             supervisor-pulse blockers; refuses while live
   worker-activity-helper.sh help
 
 Options:
@@ -1062,6 +1151,7 @@ main() {
 	summary) cmd_summary "$@" ;;
 	providers | provider-usage) cmd_providers "$@" ;;
 	live-workers | worker-count) cmd_live_workers ;;
+	reconcile-stale-supervisor) cmd_reconcile_stale_supervisor "$@" ;;
 	help | -h | --help) cmd_help ;;
 	*)
 		printf 'unknown command: %s\n' "$cmd" >&2
