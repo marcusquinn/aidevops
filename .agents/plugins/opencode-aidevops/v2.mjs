@@ -407,7 +407,9 @@ export async function setupAidevopsV2(ctx) {
     await register(registrations, ctx.shell.hook("create.before", async (event) => {
       await shellEnvHook(v1HookInput(event), event);
     }));
-    await register(registrations, ctx.session.hook("context", async (event) => {
+    // Released 2.0.3 dispatches these hooks separately on the base transcript.
+    // Keep framework transformations identical before adding compaction's tail.
+    const transformContext = async (event) => {
       const input = v1HookInput(event);
       sessionModels.remember(event.sessionID, input.model.modelID);
       const legacy = { system: systemStrings(event.system), messages: event.messages };
@@ -422,11 +424,19 @@ export async function setupAidevopsV2(ctx) {
       if (isRemoteInteractiveConversation(conversation)) appendConversationSystemContext(legacy, conversation);
       replaceSystemParts(event, legacy.system);
       event.messages = legacy.messages;
-    }));
+    };
+    await register(registrations, ctx.session.hook("context", transformContext));
     await register(registrations, ctx.session.hook("compaction", async (event) => {
+      await transformContext(event);
       const output = { context: [] };
       await compactingHook({ workspaceDir: WORKSPACE_DIR, scriptsDir: SCRIPTS_DIR }, event, output, directory, { host: "opencode2" });
-      event.system.push(...output.context.map((text) => ({ type: "text", text })));
+      // Native Message.user shape; the host appends buildPrompt() after this
+      // hook (core/session/compaction.ts). Never put mutable operational data
+      // into the cached system prefix or replace the host's summary template.
+      event.messages.push(...output.context.map((text) => ({
+        role: "user",
+        content: [{ type: "text", text }],
+      })));
     }));
     await register(registrations, ctx.session.hook("http.request", providerAuth.httpRequest));
     await register(registrations, ctx.session.hook("http.response", providerAuth.httpResponse));
