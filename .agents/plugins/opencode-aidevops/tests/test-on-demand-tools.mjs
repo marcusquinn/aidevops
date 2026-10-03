@@ -53,7 +53,7 @@ test("rare tools move behind one dispatcher; gated and frequent tools stay direc
   assert.deepEqual(Object.keys(tools), ["aidevops_memory", "aidevops_mcp", ON_DEMAND_TOOL]);
   assert.deepEqual(
     [...ON_DEMAND_TOOL_NAMES].sort(),
-    ["aidevops_objective_receipt", "gpt_image_generate", "model-accounts-pool", "session-rename", "session-rename_sync_branch"],
+    ["aidevops_objective_receipt", "gpt_image_generate", "model-accounts-pool"],
   );
   const empty = moveToolsOnDemand({ aidevops_memory: {} }, tool);
   assert.deepEqual(Object.keys(empty), ["aidevops_memory"], "no dispatcher without sub-tools");

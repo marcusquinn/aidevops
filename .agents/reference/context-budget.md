@@ -29,10 +29,11 @@ at `~/.aidevops/.agent-workspace/observability/llm-requests.db`:
 ```sql
 WITH active AS (
   SELECT DISTINCT session_id FROM tool_calls
-  WHERE timestamp >= datetime('now', '-30 days')
+  WHERE timestamp >= strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-30 days')
 ), counts AS (
   SELECT tool_name, count(DISTINCT session_id) AS sessions FROM tool_calls
-  WHERE timestamp >= datetime('now', '-30 days') GROUP BY tool_name
+  WHERE timestamp >= strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-30 days')
+  GROUP BY tool_name
 )
 SELECT tool_name, sessions, (SELECT count(*) FROM active) AS total_sessions,
   round(100.0 * sessions / (SELECT count(*) FROM active), 3) AS percent
@@ -40,6 +41,13 @@ FROM counts ORDER BY tool_name;
 ```
 
 Keep mandatory-guidance and per-agent-gated tools direct even below 2%.
+
+Check the registration boundary before changing `ON_DEMAND_TOOL_NAMES`:
+`moveToolsOnDemand` sees only the plugin's `baseTools` map. Native exports in
+`.opencode/tool/`, including the session-title tools, are loaded separately.
+Adding their names to the constant does not defer them; missing names are
+ignored. If no additional registered tool meets every condition, report the
+usage and keep the existing list rather than claim a saving.
 
 ```bash
 # Control: deployed plugin. Two turns show the prompt-cache read on turn 2.

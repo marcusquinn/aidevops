@@ -20,8 +20,6 @@ export const ON_DEMAND_TOOL_NAMES = Object.freeze([
   "gpt_image_generate",
   "model-accounts-pool",
   "aidevops_objective_receipt",
-  "session-rename",
-  "session-rename_sync_branch",
 ]);
 
 // provider-auth-body.mjs injects this into top-level tool schemas only; a model
