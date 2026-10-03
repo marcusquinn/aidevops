@@ -171,7 +171,8 @@ assert_equal "current local config remains byte-identical" "$(cksum <"$CURRENT_R
 assert_equal "local config update does not create a commit" "$(/usr/bin/git -C "$STALE_REPO" rev-parse HEAD)" "$STALE_HEAD_BEFORE"
 assert_equal "ignored local config keeps repository clean" "$(/usr/bin/git -C "$STALE_REPO" status --porcelain)" ""
 assert_equal "tracked config remains byte-identical" "$(cksum <"$TRACKED_REPO/.aidevops.json")" "$TRACKED_BEFORE"
-assert_equal "tracked config emits one migration plan" "$(count_migration_plans)" "1"
+assert_contains "tracked config without origin reports migration blocker" "$(<"$HEALTH_LOG")" "no GitHub origin is available"
+assert_equal "tracked config without origin does not write obsolete local plan" "$(count_migration_plans)" "0"
 assert_equal "registered missing config is not created" "$(test -e "$REGISTERED_MISSING_REPO/.aidevops.json" && printf yes || printf no)" "no"
 assert_contains "missing config guidance uses config-only recovery" "$(<"$HEALTH_LOG")" "aidevops project-config restore 'test/registered-missing'"
 
@@ -222,7 +223,8 @@ assert_contains "systemd removal is report-only" "$STATUS_OUT" "systemctl --user
 
 "$HELPER" check >/dev/null 2>&1
 assert_contains "rerun is idempotent" "$(<"$HEALTH_LOG")" "0 bumped, 3 bump-skipped, 0 bump-failed, 1 registered-config-missing, 1 missing-folder, 1 no-init"
-assert_equal "rerun keeps one migration plan" "$(count_migration_plans)" "1"
+assert_equal "rerun preserves tracked config bytes" "$(cksum <"$TRACKED_REPO/.aidevops.json")" "$TRACKED_BEFORE"
+assert_equal "rerun creates no obsolete local plans" "$(count_migration_plans)" "0"
 
 set +e
 UNKNOWN_OUT=$("$HELPER" bogus-subcommand 2>&1)

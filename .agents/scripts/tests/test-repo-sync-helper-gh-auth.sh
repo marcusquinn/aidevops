@@ -118,6 +118,35 @@ run_canonical_guard_case() {
 	LAST_CASE_RC="$rc"
 	LAST_CANONICAL_REFS_UNCHANGED=0
 	[[ "$before" == "$after" ]] && LAST_CANONICAL_REFS_UNCHANGED=1
+
+	# Exercise actual unpushed and dirty state, not just fake Git responses.
+	printf 'local-only\n' >"${repo}/local.txt"
+	/usr/bin/git -C "$repo" add local.txt
+	/usr/bin/git -C "$repo" commit -q -m local-only
+	printf 'staged\n' >>"${repo}/README.md"
+	/usr/bin/git -C "$repo" add README.md
+	printf 'unstaged\n' >>"${repo}/README.md"
+	printf 'untracked\n' >"${repo}/untracked.txt"
+	before=$(canonical_snapshot "$repo")
+	env HOME="${tmp_dir}/home" \
+		PATH="${tmp_dir}/bin:/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin" \
+		FAKE_GH_LOG="${tmp_dir}/gh.log" \
+		"$HELPER" check >"${tmp_dir}/dirty-stdout.log" 2>"${tmp_dir}/dirty-stderr.log" || rc=$?
+	after=$(canonical_snapshot "$repo")
+	LAST_CASE_RC="$rc"
+	LAST_CANONICAL_DIRTY_UNCHANGED=0
+	[[ "$before" == "$after" ]] && LAST_CANONICAL_DIRTY_UNCHANGED=1
+	return 0
+}
+
+canonical_snapshot() {
+	local repo="$1"
+	/usr/bin/git -C "$repo" show-ref
+	/usr/bin/git -C "$repo" rev-parse HEAD
+	/usr/bin/git -C "$repo" write-tree
+	/usr/bin/git -C "$repo" diff --binary
+	/usr/bin/git -C "$repo" diff --cached --binary
+	cksum "${repo}/README.md" "${repo}/local.txt" "${repo}/untracked.txt"
 	return 0
 }
 
@@ -222,6 +251,8 @@ assert_rc 0 "$LAST_CASE_RC" "repo-sync completes through the deployed canonical 
 assert_file_contains "${LAST_CASE_DIR}/home/.aidevops/logs/repo-sync.log" "CONVERGENCE_ELIGIBLE (read-only default)" "clean strictly-behind canonical is reported eligible"
 assert_file_not_contains "${LAST_CASE_DIR}/stderr.log" "BLOCKED by canonical Git guard" "canonical repo-sync is not rejected as mutation"
 assert_rc 1 "$LAST_CANONICAL_REFS_UNCHANGED" "canonical repo-sync leaves local refs unchanged"
+assert_rc 1 "$LAST_CANONICAL_DIRTY_UNCHANGED" "real canonical unpushed commit, index, tracked and untracked bytes remain unchanged"
+assert_file_contains "${LAST_CASE_DIR}/home/.aidevops/logs/repo-sync.log" "working tree is dirty" "real dirty canonical is skipped"
 
 if [[ $failures -gt 0 ]]; then
 	printf '\n%d repo-sync gh-auth test(s) failed\n' "$failures" >&2
