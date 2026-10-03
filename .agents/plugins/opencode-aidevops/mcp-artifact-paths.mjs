@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
 import { lstatSync } from "node:fs";
-import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 
 function hasUnsafeComponent(target) {
   let current = target;
@@ -20,7 +20,7 @@ function hasUnsafeComponent(target) {
 
 function isOutsideWorkspace(workspace, absolute) {
   const within = relative(workspace.directory, absolute);
-  if (within === ".." || within.startsWith("../")) return true;
+  if (within === ".." || within.startsWith(`..${sep}`)) return true;
   return isAbsolute(within);
 }
 

@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
 import { lstatSync } from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 function hasBoundedReadTarget(raw, target, forbidden) {
   if (typeof target !== "string" || !isAbsolute(target)) return false;
@@ -54,7 +54,7 @@ function hasSymlinkAncestor(ancestor) {
 
 function isWithin(root, target) {
   const within = relative(resolve(root), target);
-  if (within === ".." || within.startsWith("../")) return false;
+  if (within === ".." || within.startsWith(`..${sep}`)) return false;
   return !isAbsolute(within);
 }
 
