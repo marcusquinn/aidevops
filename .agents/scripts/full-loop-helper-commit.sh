@@ -396,7 +396,9 @@ _full_loop_verify_pr_readiness() {
 		return 1
 	fi
 	local non_passing=""
-	non_passing=$(printf '%s' "$required_checks" | jq -c '[.[] | select((.bucket // "") != "pass")]')
+	# GitHub accepts completed SKIPPED checks for non-applicable required gates.
+	# Do not admit other skipping states or infer completion from the bucket alone.
+	non_passing=$(printf '%s' "$required_checks" | jq -c '[.[] | select(((.bucket == "pass") or (.bucket == "skipping" and .state == "SKIPPED")) | not)]')
 	if [[ "$(printf '%s' "$non_passing" | jq 'length')" -gt 0 ]]; then
 		if printf '%s' "$non_passing" | jq -e --arg pending "$_FULL_LOOP_CHECK_PENDING" 'all(.[]; (.bucket // "") == $pending)' >/dev/null 2>&1; then
 			FULL_LOOP_PR_CHECK_STATUS="$_FULL_LOOP_CHECK_PENDING"
