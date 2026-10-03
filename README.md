@@ -56,6 +56,112 @@ The “100x more capable” goal is an ambition to substantiate, not a guarantee
 measured result. The canonical purpose and decision criteria are in
 [`.agents/aidevops/purpose.md`](.agents/aidevops/purpose.md).
 
+## Quick Setup
+
+New to aidevops? Work through these six steps once, in order, so nothing is
+missed. Commands are safe to rerun. For a guided version, type `/onboarding` in
+an AI session after step 2.
+
+### 1. Install aidevops
+
+```bash
+brew install marcusquinn/tap/aidevops && aidevops update   # macOS (Homebrew)
+npm install -g aidevops && aidevops update                 # Linux / cross-platform
+```
+
+Setup deploys agents to `~/.aidevops/agents/`, installs and configures
+OpenCode, and offers optional tools. Accept **Tabby** when offered. Other
+methods: [Installation](#installation). Check the result with
+`aidevops status`; `aidevops doctor --fix` resolves duplicate installs and PATH
+conflicts.
+
+### 2. Open Tabby and start OpenCode
+
+```bash
+brew install --cask tabby   # macOS, only if you skipped Tabby during setup
+aidevops tabby sync         # one Tabby profile per registered project
+aidevops opencode           # launch OpenCode with the Build+ agent
+```
+
+Rerun `aidevops tabby sync` after adding projects in step 4. Profile details:
+[Tabby profiles](.agents/reference/tabby-profiles.md).
+
+### 3. Connect model providers
+
+```bash
+# OpenCode Go subscription: create an API key in your OpenCode account first
+opencode auth login                          # choose "OpenCode Go", paste the key
+
+# NanoGPT: create an API key in your NanoGPT account first
+opencode auth login                          # choose "NanoGPT", paste the key
+
+# OAuth pool for subscription accounts (browser sign-in, add one or more each)
+aidevops model-accounts-pool add anthropic   # Claude Pro/Max
+aidevops model-accounts-pool add openai      # ChatGPT Plus/Pro
+aidevops model-accounts-pool status          # pool health
+aidevops model-accounts-pool check           # live token test
+```
+
+Inside OpenCode, `/connect` is equivalent to `opencode auth login`. Add several
+accounts per provider so the pool can rotate on rate limits, then restart
+OpenCode. Never paste keys or tokens into an AI chat; store other service
+credentials with `aidevops secret set NAME`.
+
+### 4. Put projects in `~/Git` on the local drive
+
+Keep canonical clones on the local disk, not in a cloud-synced folder such as
+iCloud Drive, Dropbox, or OneDrive. Layout: personal repositories at
+`~/Git/<repo>`, organization or third-party repositories at
+`~/Git/<owner>/<repo>` ([repository organization](.agents/reference/repo-organization.md)).
+
+```bash
+mkdir -p ~/Git
+mv ~/path/to/my-project ~/Git/my-project                  # move an existing checkout
+gh repo clone example-org/service ~/Git/example-org/service   # or clone fresh
+cd ~/Git/my-project && aidevops init                      # add conventions and register
+aidevops detect                                           # find and register other projects
+aidevops repos clean                                      # drop entries for moved paths
+aidevops repos                                            # review the registry
+aidevops tabby sync                                       # refresh Tabby profiles
+```
+
+Already-registered repositories in an older layout can use the guarded
+`aidevops repos migrate-layout plan` instead of a manual move.
+
+### 5. Turn on auto-update, Pulse, workers, and routines
+
+```bash
+aidevops auto-update enable                                # check for updates every 10 minutes
+aidevops repo-sync enable                                  # daily git pull for repos under ~/Git
+aidevops config set orchestration.supervisor_pulse true    # unattended Pulse, survives reboots
+aidevops setup --scope pulse                               # install or refresh the Pulse scheduler
+aidevops pulse status                                      # consent layers, workers, repos
+aidevops init-routines                                     # private aidevops-routines repo (--local: no remote)
+```
+
+Pulse runs every 2 minutes and dispatches headless workers only for repositories
+marked `"pulse": true` in `~/.config/aidevops/repos.json`; enable it only where
+autonomous work is approved. Workers pick up issues labelled `auto-dispatch`.
+Pause with `aidevops pulse stop`. In an AI session, use `/routine` to design
+recurring jobs, `/pulse` to supervise, and `/runners` for runner setup. Details:
+[routines](.agents/reference/routines.md),
+[worker diagnostics](.agents/reference/worker-diagnostics.md).
+
+### 6. Verify and start working
+
+```bash
+aidevops status
+aidevops security
+```
+
+Then, in OpenCode inside a project:
+
+```text
+/onboarding
+/skills recommend "TASK"
+/full-loop "Describe the outcome you want"
+```
+
 <!-- AI-CONTEXT-START -->
 
 ## Quick Reference
@@ -453,6 +559,9 @@ server and folder without replacing saved defaults. Unsupported builds, includin
 the released 1.18.32 app, retain the manual flow; this does not install a patched Desktop.
 
 ## Quick Start
+
+For the full first-run checklist (providers, project layout, automation), see
+[Quick Setup](#quick-setup).
 
 1. Install aidevops using one of the methods above.
 2. Start OpenCode in a project and run `/onboarding` for account-level setup.
