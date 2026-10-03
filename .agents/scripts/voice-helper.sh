@@ -135,7 +135,7 @@ cmd_talk() {
 	local stt="${1:-whisper-mlx}"
 	local tts="${2:-edge-tts}"
 	local voice="${3:-}"
-	local model="${4:-opencode/claude-sonnet-4-6}"
+	local model="${4:-opencode/claude-sonnet-5-5}"
 
 	check_venv || return 1
 	check_deps || return 1
@@ -313,7 +313,7 @@ except Exception as e:
 try:
     import subprocess
     start = time.time()
-    r = subprocess.run(['opencode', 'run', '-m', 'opencode/claude-sonnet-4-6', 'Say OK'], capture_output=True, text=True, timeout=30)
+    r = subprocess.run(['opencode', 'run', '-m', 'opencode/claude-sonnet-5-5', 'Say OK'], capture_output=True, text=True, timeout=30)
     print(f'  opencode run:    {time.time()-start:.3f}s (response: {r.stdout.strip()[:50]})')
 except Exception as e:
     print(f'  opencode run:    FAILED ({e})')

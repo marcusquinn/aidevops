@@ -447,7 +447,7 @@ from `_parse_phases_section` — then add new logic to the slimmed parent functi
 - **Resume condition:** {specific condition}
 - **Owner and status:** {owner}; {recovering | blocked | not-triggered}
 
-### Files Scope
+### Scope Boundaries
 
 Initial implementation map. Directly necessary adjacent integration follows
 `reference/worker-discipline.md` "Integration scope recovery": document and verify
@@ -465,8 +465,8 @@ and Pulse intake in `reference/worker-discipline.md` when local recovery is unsa
      The scope-guard pre-push hook (scope-guard-pre-push.sh) reads this list
      and blocks pushes that include files outside the declared scope,
      preventing accidental scope-leak during rebase or implementation drift.
-     Glob patterns are supported (e.g., `.agents/hooks/*.sh`).
-     One path or glob pattern per `- ` line.
+      Use exact repository-relative paths only; globs are not supported.
+      One path per `- ` line, with no descriptions or other prose in this section.
 
      CRITICAL RULES:
      1. Paths MUST be relative to the repository root (e.g., `.agents/hooks/foo.sh`,
@@ -475,13 +475,12 @@ and Pulse intake in `reference/worker-discipline.md` when local recovery is unsa
         the repository root via `git rev-parse --show-toplevel`. Paths not anchored to
         the root will silently fail to match — the guard will not fire and unintended
         files can pass through without review.
-     2. Do NOT use overly-permissive globs (e.g., `**/*` or `*.sh` without a prefix).
-        Overly-broad scope declarations create a path traversal risk: files outside
-        the intended scope may be committed and pushed without triggering a block,
-        undermining the entire guard. Declare the narrowest scope that covers the
-        intended changes. -->
+      2. Declare each intended file explicitly; wildcard patterns such as `*.sh`
+         fail the canonical Files Scope validator. -->
 
-- `{path/to/file-or-glob}`
+### Files Scope
+
+- `{path/to/exact-file}`
 
 ## Acceptance Criteria
 

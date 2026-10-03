@@ -33,6 +33,7 @@ tools:
 | SEO & Research | Ahrefs MCP | `AHREFS_API_KEY` (passed as `API_KEY` via wrapper) |
 | | Perplexity MCP | `PERPLEXITY_API_KEY` |
 | | Google Search Console | `GOOGLE_APPLICATION_CREDENTIALS` (service account JSON) |
+| | Rank Math MCP | Per-site WordPress Application Password via `wordpress-mcp-helper.sh rankmath-config` |
 | Document Processing | Unstract MCP | `UNSTRACT_API_KEY` + `API_BASE_URL` (Docker, self-hosted default) |
 | Mobile Testing | iOS Simulator MCP | macOS + Xcode + Facebook IDB |
 | Development | Claude Code MCP | Forked server (`github:marcusquinn/claude-code-mcp`) |
@@ -271,6 +272,18 @@ OpenCode config (bash wrapper, disabled globally):
 ```
 
 Per-agent enablement: `services/crm/fluentcrm.md`. Tools: Contacts, Tags, Lists, Campaigns, Email Templates, Automations, Webhooks, Smart Links, Dashboard Stats.
+
+### Rank Math MCP
+
+Rank Math SEO exposes `rank-math/*` abilities through the WordPress MCP Adapter; add one server per site. The generated entry launches `serve-http`, which resolves the Application Password at start-up, so no secret is written to runtime config:
+
+```bash
+aidevops secret set RANKMATH_EXAMPLE_WP_APP_PASSWORD   # run in your terminal
+~/.aidevops/agents/scripts/wordpress-mcp-helper.sh rankmath-check https://example.com aidevops-bot RANKMATH_EXAMPLE_WP_APP_PASSWORD
+~/.aidevops/agents/scripts/wordpress-mcp-helper.sh rankmath-config example https://example.com aidevops-bot RANKMATH_EXAMPLE_WP_APP_PASSWORD opencode
+```
+
+Template: `configs/mcp-templates/rankmath.json`. Abilities, write-safety rules and OAuth connector notes: `tools/wordpress/rankmath-mcp.md`.
 
 ### Unstract MCP
 

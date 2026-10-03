@@ -344,7 +344,7 @@ test_t2955_helpers_match_production() {
 	# the production line containing the canonical jq expression to
 	# pin the contract.
 	local prod_file
-	prod_file="$(dirname "${BASH_SOURCE[0]}")/../pulse-dispatch-core.sh"
+	prod_file="$(dirname "${BASH_SOURCE[0]}")/../pulse-dispatch-commit-gates.sh"
 	if [[ ! -f "$prod_file" ]]; then
 		print_result "t2955: production file present for drift check" "1" "missing $prod_file"
 		return 0

@@ -247,12 +247,33 @@ pulse_runtime_pin_reexec() {
 	local pinned_root=""
 	local physical_current_root=""
 	local resolve_rc=0
+	local refill_only=0
+	local refill_source=""
+	local argument=""
 	shift 2
 	case "$relative_entrypoint" in
 	scripts/*.sh) ;;
 	*) return 2 ;;
 	esac
-	pinned_root=$(pulse_runtime_pin_resolve 2>/dev/null) || resolve_rc=$?
+	physical_current_root=$(cd "$current_root" 2>/dev/null && pwd -P) || return 2
+	for argument in "$@"; do
+		case "$argument" in
+		--refill-only) refill_only=1 ;;
+		--refill-source=*) refill_source="${argument#*=}" ;;
+		esac
+	done
+	# A worker-exit wake is a new invocation, not a continuation of its worker's
+	# bundle. Resolve at entry (before leases/locks), closing the race after the
+	# signaler's active-wrapper check. Only bundle-backed refill wrappers opt in;
+	# ordinary operator pins and standalone/source test paths remain unchanged.
+	if [[ "$relative_entrypoint" == "scripts/pulse-wrapper.sh" && "$refill_only" -eq 1 && "$refill_source" == "worker-exit" && -r "$physical_current_root/.bundle-manifest" ]]; then
+		pinned_root=$(_pulse_runtime_pin_validate_root "${AIDEVOPS_ACTIVE_AGENTS_LINK:-${HOME:?HOME must be set}/.aidevops/agents}") || {
+			printf 'Active Pulse runtime is invalid; refusing worker-exit refill\n' >&2
+			return 2
+		}
+	else
+		pinned_root=$(pulse_runtime_pin_resolve 2>/dev/null) || resolve_rc=$?
+	fi
 	case "$resolve_rc" in
 	0) ;;
 	1 | 3) return 0 ;;
@@ -261,7 +282,6 @@ pulse_runtime_pin_reexec() {
 		return 2
 		;;
 	esac
-	physical_current_root=$(cd "$current_root" 2>/dev/null && pwd -P) || return 2
 	[[ "$pinned_root" != "$physical_current_root" ]] || return 0
 	if [[ ! -f "$pinned_root/$relative_entrypoint" || -L "$pinned_root/$relative_entrypoint" || ! -x "$pinned_root/$relative_entrypoint" ]]; then
 		printf 'Pinned Pulse runtime is missing the required %s entrypoint\n' "${relative_entrypoint##*/}" >&2

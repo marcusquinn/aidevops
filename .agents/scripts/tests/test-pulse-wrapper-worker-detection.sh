@@ -935,6 +935,64 @@ EOF
 	return 0
 }
 
+test_dispatch_re_resolves_mutated_tier_model() {
+	local original_definitions="" original_logfile="$LOGFILE"
+	original_definitions=$(capture_function_definitions _dispatch_load_and_validate_metadata _dispatch_preclaim_brief_scope _dispatch_dedup_check_layers _dispatch_post_dedup_gates _dispatch_launch_checked_worker resolve_dispatch_model_for_labels)
+	LOGFILE="${TEST_ROOT}/tier-model-refresh.log"
+	_dispatch_load_and_validate_metadata() {
+		issue_meta_json='{"labels":[{"name":"tier:simple"}]}'
+		return 0
+	}
+	_dispatch_preclaim_brief_scope() { return 0; }
+	_dispatch_dedup_check_layers() { return 0; }
+	_dispatch_post_dedup_gates() {
+		_TIER_LABELS_MUTATED="$_TEST_MUTATE_TIER"
+		if [[ "$_TEST_MUTATE_TIER" -eq 1 ]]; then
+			issue_meta_json='{"labels":[{"name":"tier:standard"}]}'
+		fi
+		return 0
+	}
+	resolve_dispatch_model_for_labels() {
+		local labels_csv="$1"
+		case ",$labels_csv," in
+		*,tier:simple,*) printf '%s' 'simple/model' ;;
+		*,tier:standard,*) printf '%s' 'standard/model' ;;
+		esac
+		return 0
+	}
+	_dispatch_launch_checked_worker() {
+		local model_override="$9"
+		_CAPTURED_TIER_MODEL="$model_override"
+		return 0
+	}
+	local _CAPTURED_TIER_MODEL="" dispatch_rc=0 _TEST_MUTATE_TIER=1
+	dispatch_with_dedup 8892 example/repo 'Issue #8892' 'tier mutation' testuser "$TEST_ROOT" 'prompt' issue-8892 simple/model || dispatch_rc=$?
+	if [[ "$dispatch_rc" -eq 0 && "$_CAPTURED_TIER_MODEL" == standard/model ]] &&
+		[[ "$(<"$LOGFILE")" == *'tier tier:simple → tier:standard; model simple/model → standard/model'* ]]; then
+		print_result 'tier mutation re-resolves candidate default before worker launch' 0
+	else
+		print_result 'tier mutation re-resolves candidate default before worker launch' 1
+	fi
+	_CAPTURED_TIER_MODEL=""
+	dispatch_with_dedup 8893 example/repo 'Issue #8893' 'explicit pin' testuser "$TEST_ROOT" 'prompt' issue-8893 explicit/model || dispatch_rc=$?
+	if [[ "$_CAPTURED_TIER_MODEL" == explicit/model ]]; then
+		print_result 'tier mutation preserves explicit model pin' 0
+	else
+		print_result 'tier mutation preserves explicit model pin' 1
+	fi
+	_TEST_MUTATE_TIER=0
+	_CAPTURED_TIER_MODEL=""
+	dispatch_with_dedup 8894 example/repo 'Issue #8894' 'unchanged tier' testuser "$TEST_ROOT" 'prompt' issue-8894 simple/model || dispatch_rc=$?
+	if [[ "$_CAPTURED_TIER_MODEL" == simple/model ]]; then
+		print_result 'unchanged simple tier retains candidate model' 0
+	else
+		print_result 'unchanged simple tier retains candidate model' 1
+	fi
+	LOGFILE="$original_logfile"
+	restore_function_definitions "$original_definitions" _dispatch_load_and_validate_metadata _dispatch_preclaim_brief_scope _dispatch_dedup_check_layers _dispatch_post_dedup_gates _dispatch_launch_checked_worker resolve_dispatch_model_for_labels
+	return 0
+}
+
 test_build_ranked_dispatch_candidates_json_scores_candidates() {
 	local original_repos_json="$REPOS_JSON"
 	cat >"${REPOS_JSON}" <<'JSON'
@@ -1188,7 +1246,7 @@ _test_capacity_model_for_labels() {
 	local labels="$1"
 	case ",${labels}," in
 	*,tier:thinking,*) printf '%s\n' "anthropic/claude-opus-4-6" ;;
-	*,tier:standard,*) printf '%s\n' "anthropic/claude-sonnet-4-6" ;;
+	*,tier:standard,*) printf '%s\n' "anthropic/claude-sonnet-5-5" ;;
 	*,tier:simple,*) printf '%s\n' "anthropic/claude-haiku-4-5" ;;
 	*) printf '\n' ;;
 	esac
@@ -1704,6 +1762,7 @@ main() {
 	test_dispatch_with_dedup_proceeds_when_no_duplicate
 	test_dispatch_with_dedup_detaches_worker_stdio
 	test_dispatch_with_dedup_passes_explicit_model_override
+	test_dispatch_re_resolves_mutated_tier_model
 	test_build_ranked_dispatch_candidates_json_scores_candidates
 	test_build_ranked_dispatch_candidates_json_respects_priority_labels
 	test_build_ranked_dispatch_candidates_json_prioritizes_security_quality_debt

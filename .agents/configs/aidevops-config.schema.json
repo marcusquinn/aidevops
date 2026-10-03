@@ -140,9 +140,9 @@
         },
         "max_workers_cap": {
           "type": "integer",
-          "default": 8,
-          "minimum": 1,
-          "description": "Hard ceiling for pulse worker pool size after RAM-based calculation. Env: AIDEVOPS_MAX_WORKERS_CAP"
+          "default": 0,
+          "minimum": 0,
+          "description": "Hard ceiling for pulse worker pool size after RAM-based calculation. 0 = auto (50% of logical CPU cores, bounded by total RAM, min 2, max 64). Env: AIDEVOPS_MAX_WORKERS_CAP"
         },
         "min_worker_concurrency": {
           "type": "integer",
@@ -254,6 +254,36 @@
           "default": 2,
           "minimum": 1,
           "description": "Maximum simultaneous FOSS contribution workers. Env: AIDEVOPS_FOSS_MAX_CONCURRENT"
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "keywords": {
+      "type": "object",
+      "description": "Search-targets registry (context/keywords.md) hub and paid-provider budget settings.",
+      "properties": {
+        "monthly_budget_usd": {
+          "type": "number",
+          "default": 1,
+          "minimum": 0,
+          "description": "Default paid-provider spend cap per property per month (USD). Env: AIDEVOPS_KEYWORDS_MONTHLY_BUDGET_USD"
+        },
+        "hub_slug": {
+          "type": "string",
+          "default": "",
+          "description": "Private team hub repository (owner/repo); local only. Env: AIDEVOPS_KEYWORDS_HUB_SLUG"
+        },
+        "hub_path": {
+          "type": "string",
+          "default": "",
+          "description": "Optional explicit hub checkout path. Env: AIDEVOPS_KEYWORDS_HUB_PATH"
+        },
+        "dataforseo_estimate_usd": {
+          "type": "number",
+          "default": 0.05,
+          "minimum": 0,
+          "description": "Pre-call estimate for one DataForSEO ranked-keywords call. Env: AIDEVOPS_KEYWORDS_DATAFORSEO_ESTIMATE_USD"
         }
       },
       "additionalProperties": false

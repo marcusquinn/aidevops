@@ -125,6 +125,10 @@ if [[ "\$_gh_cmd" == "pr" && "\$_gh_sub" == "merge" ]]; then
 		echo "base branch policy prohibits the merge" >&2
 		exit 124
 	fi
+	if [[ "$mode" == "pending-policy" ]]; then
+		echo "base branch policy prohibits the merge" >&2
+		exit 1
+	fi
 
 	if [[ "$mode" == "fallback" || "$mode" == "fallback-nmr" || "$mode" == "fallback-native-review" ||
 		"$mode" == "auto-review-required" || "$mode" == "auto-review-required-admin-block" ||
@@ -383,6 +387,11 @@ SCRIPT_DIR='${scripts_dir}'
 source '${scripts_dir}/shared-constants.sh'
 source '${scripts_dir}/full-loop-helper-merge.sh'
 _merge_guard_prospective_todo() { return 0; }
+if [[ -n "\${MERGE_TEST_REQUIRED_CHECKS_RC:-}" ]]; then
+	_merge_admin_fallback_required_checks_clear() { printf '%s\n' 'LIFECYCLE_STATE=CHECKS_PENDING'; return "\${MERGE_TEST_REQUIRED_CHECKS_RC}"; }
+else
+	_merge_admin_fallback_required_checks_clear() { return 0; }
+fi
 _merge_execute '$pr_number' '$repo' '$merge_method' '$has_admin' '$has_auto'
 RUNNER_EOF
 	chmod +x "$tmp_runner"
@@ -608,6 +617,20 @@ test_admin_fallback_blocks_needs_maintainer_review_issue() {
 	fi
 	print_result "admin fallback: no success signaling when maintainer gate blocks" "$signaled"
 
+	return 0
+}
+
+test_admin_fallback_blocks_pending_required_checks() {
+	rm -f "${TEST_ROOT}/logs/"*.txt
+	create_gh_stub "pending-policy"
+
+	local exit_code=0 out="" merge_calls=0
+	out=$(MERGE_TEST_REQUIRED_CHECKS_RC=8 run_merge_execute "42" "testorg/testrepo" "--squash" "0" "0" 2>&1) || exit_code=$?
+	merge_calls=$(grep -c '^gh pr merge' "${TEST_ROOT}/logs/gh-calls.txt" 2>/dev/null || true)
+	print_result "pending checks: policy refusal remains non-zero" "$((exit_code == 0 ? 1 : 0))" "output=$out"
+	print_result "pending checks: no admin retry occurs" "$((merge_calls == 1 ? 0 : 1))" "merge_calls=$merge_calls"
+	print_result "pending checks: lifecycle state is explicit" \
+		"$([[ "$out" == *"LIFECYCLE_STATE=CHECKS_PENDING"* ]] && printf '0' || printf '1')" "output=$out"
 	return 0
 }
 
@@ -1347,6 +1370,7 @@ run_prospective_todo_guard() {
 	local remote_url="${5:-https://github.com/testorg/testrepo.git}"
 	local reported_repo="${6:-testorg/testrepo}"
 	local caller_context="${7:-$fixture_dir}"
+	local real_git_bin="${8:-/usr/bin/git}"
 	local scripts_dir="${SCRIPT_DIR}/.."
 	local tmp_runner=""
 	local verification_tmp="${fixture_dir}/verification-tmp"
@@ -1387,7 +1411,7 @@ RUNNER_EOF
 	local rc=0
 	env PATH="${TEST_ROOT}/bin:${scripts_dir}:/usr/bin:/bin:${PATH}" \
 		HOME="$attacker_home" AIDEVOPS_TEMP_DIR="$verification_tmp" \
-		AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_TEST_MERGE_DRIVER_MARKER="$driver_marker" \
+		AIDEVOPS_REAL_GIT_BIN="$real_git_bin" AIDEVOPS_TEST_MERGE_DRIVER_MARKER="$driver_marker" \
 		GIT_ALTERNATE_OBJECT_DIRECTORIES="$hostile_alternates" \
 		GIT_ATTR_SOURCE=refs/heads/aidevops-hostile GIT_INDEX_FILE="$hostile_index" \
 		GIT_OBJECT_DIRECTORY="$hostile_objects" \
@@ -1464,10 +1488,21 @@ create_prospective_fetch_fixture() {
 	local root_sha="" base_sha="" head_sha=""
 	mkdir -p "$fixture_root" || return 1
 	/usr/bin/git init --bare --initial-branch=main "$remote_repo" >/dev/null 2>&1 || return 1
+	# Mirror GitHub: partial-clone filters and object-ID wants are supported.
+	/usr/bin/git -C "$remote_repo" config uploadpack.allowFilter true || return 1
+	/usr/bin/git -C "$remote_repo" config uploadpack.allowAnySHA1InWant true || return 1
 	/usr/bin/git clone "$remote_repo" "$fixture_dir" >/dev/null 2>&1 || return 1
 	/usr/bin/git -C "$fixture_dir" config user.email test@test.local || return 1
 	/usr/bin/git -C "$fixture_dir" config user.name Test || return 1
 	/usr/bin/git -C "$fixture_dir" config commit.gpgsign false || return 1
+	# Large history the PR never touches: neither blob may be transferred (GH#32641).
+	head -c 1048576 /dev/urandom >"${fixture_dir}/large.bin" || return 1
+	/usr/bin/git -C "$fixture_dir" add large.bin || return 1
+	/usr/bin/git -C "$fixture_dir" commit -q -m 'large history v1' || return 1
+	/usr/bin/git -C "$fixture_dir" rev-parse HEAD:large.bin >"${fixture_root}/unrelated.blobs" || return 1
+	head -c 1048576 /dev/urandom >"${fixture_dir}/large.bin" || return 1
+	/usr/bin/git -C "$fixture_dir" commit -q -am 'large history v2' || return 1
+	/usr/bin/git -C "$fixture_dir" rev-parse HEAD:large.bin >>"${fixture_root}/unrelated.blobs" || return 1
 	printf '## Base tasks\n- [ ] t1 Root ref:GH#1\n\n## Branch tasks\n' >"${fixture_dir}/TODO.md"
 	/usr/bin/git -C "$fixture_dir" add TODO.md || return 1
 	/usr/bin/git -C "$fixture_dir" commit -q -m root || return 1
@@ -1499,6 +1534,39 @@ create_prospective_fetch_fixture() {
 	printf '%s\n' "$head_sha" >"${fixture_root}/head.sha"
 	printf '%s\n' "$remote_repo" >"${fixture_root}/remote.url"
 	printf '%s\n' "$caller"
+	return 0
+}
+
+# Native Git wrapper that records which unrelated blobs exist in the isolated
+# object store when merge-tree runs, and can delay fetches to prove the bound.
+create_prospective_git_probe() {
+	local probe="${TEST_ROOT}/prospective-git-probe"
+	cat >"$probe" <<'PROBE_EOF'
+#!/usr/bin/env bash
+repo="" prev="" arg="" oid="" subcommand=""
+for arg in "$@"; do
+	if [[ "$prev" == "-C" ]]; then
+		repo="$arg"
+	elif [[ -z "$subcommand" && "$prev" != "-c" && "$arg" != -* ]]; then
+		subcommand="$arg"
+	fi
+	prev="$arg"
+done
+if [[ "$subcommand" == "fetch" && -n "${AIDEVOPS_TEST_FETCH_DELAY:-}" ]]; then
+	sleep "$AIDEVOPS_TEST_FETCH_DELAY"
+fi
+if [[ "$subcommand" == "merge-tree" && -n "${AIDEVOPS_TEST_TRANSFER_LOG:-}" ]]; then
+	printf 'checked\n' >>"$AIDEVOPS_TEST_TRANSFER_LOG"
+	while IFS= read -r oid; do
+		if GIT_NO_LAZY_FETCH=1 /usr/bin/git -C "$repo" cat-file -e "$oid" 2>/dev/null; then
+			printf 'transferred %s\n' "$oid" >>"$AIDEVOPS_TEST_TRANSFER_LOG"
+		fi
+	done <"$AIDEVOPS_TEST_UNRELATED_BLOBS"
+fi
+exec /usr/bin/git "$@"
+PROBE_EOF
+	chmod +x "$probe" || return 1
+	printf '%s\n' "$probe"
 	return 0
 }
 
@@ -1538,8 +1606,8 @@ test_todo_duplicate_report_large_baseline() {
 }
 
 test_prospective_todo_merge_guard() {
-	local fixture_dir="" fixture_root="" base_sha="" head_sha="" remote_url="" supervisor_workspace="" output="" rc=0 objects_before="" objects_after=""
-	local cleanup_rc=0 environment_rc=0 isolation_rc=0 storage_before="" storage_after="" absent_before=0 absent_after=0
+	local fixture_dir="" base_sha="" head_sha="" output="" rc=0 objects_before="" objects_after=""
+	local cleanup_rc=0 environment_rc=0 isolation_rc=0
 	fixture_dir=$(create_prospective_fixture collision)
 	base_sha=$(<"${fixture_dir}/base.sha")
 	head_sha=$(<"${fixture_dir}/head.sha")
@@ -1581,11 +1649,13 @@ test_prospective_todo_merge_guard() {
 	prospective_hostile_git_environment_clean "$fixture_dir" || environment_rc=$?
 	[[ "$environment_rc" -eq 0 ]] || cleanup_rc=1
 	print_result "prospective TODO: failure cleans isolated context" "$cleanup_rc"
+	return 0
+}
 
-	rc=0
-	cleanup_rc=0
-	environment_rc=0
-	isolation_rc=0
+test_prospective_todo_live_fetch_guard() {
+	local fixture_dir="" fixture_root="" base_sha="" head_sha="" remote_url="" supervisor_workspace="" output="" rc=0
+	local cleanup_rc=0 environment_rc=0 isolation_rc=0 storage_before="" storage_after="" absent_before=0 absent_after=0
+	local git_probe="" transfer_log=""
 	fixture_dir=$(create_prospective_fetch_fixture) || return 0
 	fixture_root="${fixture_dir%/caller}"
 	base_sha=$(<"${fixture_root}/base.sha")
@@ -1598,7 +1668,12 @@ test_prospective_todo_merge_guard() {
 	if /usr/bin/git -C "$fixture_dir" cat-file -e "${head_sha}^{commit}" 2>/dev/null; then absent_before=1; fi
 	supervisor_workspace="${fixture_root}/supervisor-workspace"
 	mkdir -p "$supervisor_workspace" || return 0
-	run_prospective_todo_guard "$fixture_dir" "$base_sha" "$head_sha" live "$remote_url" 'testorg/testrepo' "$supervisor_workspace" >/dev/null || rc=$?
+	git_probe=$(create_prospective_git_probe) || return 0
+	transfer_log="${fixture_root}/transfer.log"
+	: >"$transfer_log"
+	output=$(AIDEVOPS_TEST_TRANSFER_LOG="$transfer_log" AIDEVOPS_TEST_UNRELATED_BLOBS="${fixture_root}/unrelated.blobs" \
+		run_prospective_todo_guard "$fixture_dir" "$base_sha" "$head_sha" live "$remote_url" 'testorg/testrepo' \
+		"$supervisor_workspace" "$git_probe") || rc=$?
 	storage_after=$(prospective_git_storage_digest "$fixture_dir")
 	if /usr/bin/git -C "$fixture_dir" cat-file -e "${head_sha}^{commit}" 2>/dev/null; then absent_after=1; fi
 	prospective_contexts_clean "$fixture_dir" || cleanup_rc=$?
@@ -1606,7 +1681,30 @@ test_prospective_todo_merge_guard() {
 	[[ "$rc" -eq 0 && "$cleanup_rc" -eq 0 && "$environment_rc" -eq 0 &&
 		"$absent_before" -eq 0 && "$absent_after" -eq 0 &&
 		"$storage_before" == "$storage_after" ]] || isolation_rc=1
-	print_result "prospective TODO: explicit target objects fetch from a non-Git supervisor workspace" "$isolation_rc"
+	print_result "prospective TODO: explicit target objects fetch from a non-Git supervisor workspace" "$isolation_rc" \
+		"rc=$rc output=$output"
+	print_result "prospective TODO: unrelated large history blobs are not transferred" \
+		"$([[ "$(<"$transfer_log")" == "checked" ]] && printf '0' || printf '1')" \
+		"log=$(<"$transfer_log")"
+
+	rc=0
+	output=$(AIDEVOPS_PROSPECTIVE_FETCH_TIMEOUT=1 AIDEVOPS_TEST_FETCH_DELAY=5 \
+		run_prospective_todo_guard "$fixture_dir" "$base_sha" "$head_sha" live "$remote_url" 'testorg/testrepo' \
+		"$supervisor_workspace" "$git_probe") || rc=$?
+	cleanup_rc=0
+	prospective_contexts_clean "$fixture_dir" || cleanup_rc=$?
+	print_result "prospective TODO: bounded object transfer timeout fails closed" \
+		"$([[ "$rc" -ne 0 && "$cleanup_rc" -eq 0 && "$output" == *"object transfer exceeded 1s"* ]] && printf '0' || printf '1')" \
+		"output=$output"
+
+	rc=0
+	/usr/bin/git -C "$remote_url" config uploadpack.allowFilter false || return 0
+	output=$(run_prospective_todo_guard "$fixture_dir" "$base_sha" "$head_sha" live "$remote_url" 'testorg/testrepo' \
+		"$supervisor_workspace") || rc=$?
+	/usr/bin/git -C "$remote_url" config uploadpack.allowFilter true || return 0
+	print_result "prospective TODO: remote without partial fetch support fails closed" \
+		"$([[ "$rc" -ne 0 && "$output" == *"does not support partial fetch"* ]] && printf '0' || printf '1')" \
+		"output=$output"
 
 	rc=0
 	output=$(run_prospective_todo_guard "$fixture_dir" "$base_sha" "$head_sha" live "$remote_url" 'otherorg/otherrepo') || rc=$?
@@ -1707,6 +1805,7 @@ main() {
 	test_admin_fallback_native_review_handoff
 	test_admin_timeout_reconciles_without_replay
 	test_admin_fallback_blocks_needs_maintainer_review_issue
+	test_admin_fallback_blocks_pending_required_checks
 	test_explicit_admin_no_signaling
 	test_other_error_no_fallback
 	test_late_review_blocks_every_merge_transport
@@ -1737,6 +1836,7 @@ main() {
 	test_checkout_free_publication_readiness_handoff
 	test_todo_duplicate_report_large_baseline
 	test_prospective_todo_merge_guard
+	test_prospective_todo_live_fetch_guard
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

@@ -171,6 +171,7 @@ _large_file_gate_extract_paths() {
 	# which threw away the one piece of information needed to tell "targeted
 	# edit in a 30-line range" from "rewrite the whole 3000-line file".
 	local file_paths
+	# Explicit agents/scripts targets intentionally accept any extension.
 	# shellcheck disable=SC2016  # `\s` is grep-regex escape, not shell expansion.
 	file_paths=$(printf '%s' "$issue_body" | grep -oE '(EDIT|NEW|File):?\s+[`"]?\.?agents/scripts/[^`"[:space:],]+' 2>/dev/null |
 		sed 's/^[A-Z]*:*[[:space:]]*//' | sed 's/^[`"]//' | sed 's/[`"]*$//' | sort -u) || file_paths=""
@@ -198,10 +199,12 @@ _large_file_gate_extract_paths() {
 	# t2024: Also preserve line qualifiers here. A list-item reference like
 	#   - EDIT: `pulse-ancillary-dispatch.sh:221-253`
 	# should be parsed as "file + range", not stripped to bare "file".
+	# GH#33343: End the code extension at the closing backtick or numeric
+	# line qualifier; otherwise .json/.jsonl match through the .js prefix.
 	local backtick_paths
 	# shellcheck disable=SC2016  # Backtick chars in regex are literals, not command subst.
 	backtick_paths=$(printf '%s' "$issue_body" | grep -E '^\s*[-*]\s+(EDIT|NEW|File):|^(EDIT|NEW|File):' 2>/dev/null |
-		grep -oE '`[^`]*\.(sh|py|js|ts)[^`]*`' 2>/dev/null |
+		grep -oE '`[^`]*\.(sh|py|js|jsx|mjs|cjs|ts|tsx)(:[0-9]+(-[0-9]+)?)?`' 2>/dev/null |
 		tr -d '`' | grep -v '^#' | sort -u) || backtick_paths=""
 
 	printf '%s\n%s' "$file_paths" "$backtick_paths" | sort -u | grep -v '^$' || true
@@ -361,7 +364,7 @@ _large_file_gate_targets_match_remote_default() {
 	local repo_path="$1"
 	local remote_sha="$2"
 	local targets="$3"
-	local target="" full_path="" relative_path="" entry=""
+	local target="" full_path="" relative_path="" entry="" candidate=""
 	local mode="" object_type="" object_sha="" entry_path="" working_sha=""
 	[[ -n "$targets" ]] || return 1
 	git -C "$repo_path" cat-file -e "${remote_sha}^{commit}" 2>/dev/null || return 1
@@ -370,7 +373,15 @@ _large_file_gate_targets_match_remote_default() {
 		if [[ "$target" =~ ^(.+):([0-9]+(-[0-9]+)?)$ ]]; then
 			target="${BASH_REMATCH[1]}"
 		fi
-		full_path=$(_large_file_gate_resolve_full_path "$target" "$repo_path") || return 1
+		if ! full_path=$(_large_file_gate_resolve_full_path "$target" "$repo_path"); then
+			# Missing locally is safe only when every resolver variant is also
+			# absent at the pinned remote commit. An upstream addition must defer.
+			for candidate in "$target" ".agents/$target" ".$target"; do
+				entry=$(git -C "$repo_path" --literal-pathspecs ls-tree "$remote_sha" -- "$candidate" 2>/dev/null) || return 1
+				[[ -z "$entry" ]] || return 1
+			done
+			continue
+		fi
 		relative_path="${full_path#"${repo_path}/"}"
 		entry=$(git -C "$repo_path" --literal-pathspecs ls-tree "$remote_sha" -- "$relative_path" 2>/dev/null) || return 1
 		[[ -n "$entry" && "$entry" != *$'\n'* ]] || return 1
@@ -565,6 +576,13 @@ _large_file_gate_normalize_debt_issue() {
 	local issue_number="$1"
 	local repo_slug="$2"
 
+	# The simplification gate runs independently of dispatch and must not
+	# undo a brief-owner hold for the same body on each pulse cycle.
+	if declare -F issue_brief_hold_blocks_auto_release >/dev/null 2>&1 &&
+		issue_brief_hold_blocks_auto_release "$issue_number" "$repo_slug"; then
+		echo "[pulse-wrapper] large-file-gate: preserving brief hold for #${issue_number} in ${repo_slug}" >>"${LOGFILE:-/dev/null}"
+		return 0
+	fi
 	# Route the complete transition through the canonical lifecycle helper so
 	# sibling status labels converge atomically and repeated calls are no-ops.
 	set_issue_status "$issue_number" "$repo_slug" "available" \
@@ -574,7 +592,9 @@ _large_file_gate_normalize_debt_issue() {
 		--remove-label "simplification-incomplete" \
 		--remove-label "duplicate" \
 		--remove-label "already-fixed" \
-		--remove-label "wontfix" >/dev/null 2>&1
+		--remove-label "wontfix" \
+		--remove-label "solved:worker" \
+		--remove-label "solved:interactive" >/dev/null 2>&1
 	return $?
 }
 
@@ -655,6 +675,16 @@ _large_file_gate_file_new_debt_issue() {
 		--color "D93F0B" \
 		--force 2>/dev/null || true
 
+	# A split creates sibling modules, so the scope must admit them up front;
+	# otherwise the worker stops on files_scope_excluded. Drop a -helper suffix
+	# to follow the helper/lib precedent (issue-sync-helper.sh -> issue-sync-lib.sh).
+	local _split_scope_line=""
+	if [[ "${lf_path##*/}" == *.* ]]; then
+		local _lf_stem="${lf_path%.*}"
+		_split_scope_line="
+- NEW: \`${_lf_stem%-helper}-*.${lf_path##*.}\`"
+	fi
+
 	local _new_num _create_body _create_combined
 	_create_body="<!-- aidevops:generator=large-file-simplification-gate cited_file=${lf_path} threshold=${LARGE_FILE_LINE_THRESHOLD} -->
 
@@ -666,7 +696,7 @@ Issue #${parent_issue} is blocked by the large-file gate. Workers dispatched aga
 
 ### Files Scope
 
-- EDIT: \`${lf_path}\`
+- EDIT: \`${lf_path}\`${_split_scope_line}
 
 ## How
 - Extract cohesive function groups into separate files

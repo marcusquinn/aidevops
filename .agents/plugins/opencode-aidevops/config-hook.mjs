@@ -15,6 +15,8 @@ import { getGoogleProxyPort, registerGoogleProvider } from "./google-proxy.mjs";
 import { getClaudeProxyPort, registerClaudeProvider } from "./claude-proxy.mjs";
 import { checkOpenCodeVersionDriftAsync } from "./version-tracking.mjs";
 import { registerApprovedWorkerPermissions } from "./config-worker-permissions.mjs";
+import { applyCompactionRouting } from "./compaction-routing.mjs";
+import { registerPendingAnthropicModels } from "./anthropic-catalog-bridge.mjs";
 import {
   registerAgentRoutingIntent,
   registerAgents,
@@ -69,8 +71,7 @@ function claudeModelDef(overrides) {
 
 /**
  * Build a provider model map from CLAUDE_MODEL_LIMITS with provider-specific
- * display names. Preserves backward compatibility with the previous
- * ANTHROPIC_MODELS / CLAUDECLI_MODELS shapes.
+ * display names for the separate Claude CLI proxy transport.
  *
  * Note: CLAUDE_MODEL_LIMITS lives in `model-limits.mjs` so claude-proxy.mjs
  * (the Claude CLI proxy provider drift-copy that previously hardcoded the
@@ -87,45 +88,27 @@ function buildClaudeModelMap(names) {
   return out;
 }
 
-/** Models registered under the built-in anthropic provider (via aidevops OAuth pool). */
-const ANTHROPIC_MODELS = buildClaudeModelMap({
-  "claude-haiku-4-5":  "Claude Haiku 4.5 (via aidevops)",
-  "claude-sonnet-4-5": "Claude Sonnet 4.5 (via aidevops)",
-  "claude-sonnet-4-6": "Claude Sonnet 4.6 (via aidevops)",
-  "claude-opus-4-5":   "Claude Opus 4.5 (via aidevops)",
-  "claude-opus-4-6":   "Claude Opus 4.6 (via aidevops)",
-  "claude-opus-4-7":   "Claude Opus 4.7 (via aidevops)",
-});
-
 /** Models registered under the claudecli provider (via Claude CLI proxy). */
 const CLAUDECLI_MODELS = buildClaudeModelMap({
   "claude-haiku-4-5":  "Claude Haiku 4.5 (via CLI)",
   "claude-sonnet-4-5": "Claude Sonnet 4.5 (via CLI)",
   "claude-sonnet-4-6": "Claude Sonnet 4.6 (via CLI)",
+  "claude-sonnet-5-5": "Claude Sonnet 5.5 (via CLI)",
   "claude-opus-4-5":   "Claude Opus 4.5 (via CLI)",
   "claude-opus-4-6":   "Claude Opus 4.6 (via CLI)",
   "claude-opus-4-7":   "Claude Opus 4.7 (via CLI)",
 });
 
 /**
- * Upsert aidevops-managed models into the anthropic and claudecli providers.
- * Preserves any user options already set on the providers.
+ * Upsert models for the separate Claude CLI proxy, preserving user options.
+ * Do not add or override built-in anthropic models: OAuth pooling is attached
+ * to that provider by its auth hook, not by picker model definitions.
  * @param {object} config - OpenCode Config object (mutable)
  * @returns {number} number of model entries upserted
  */
-function registerAnthropicModels(config) {
+export function registerClaudeCliFallbackModels(config) {
   if (!config.provider) config.provider = {};
   let count = 0;
-
-  // anthropic provider — via aidevops OAuth pool
-  if (!config.provider.anthropic) config.provider.anthropic = {};
-  if (!config.provider.anthropic.models) config.provider.anthropic.models = {};
-  for (const [id, def] of Object.entries(ANTHROPIC_MODELS)) {
-    const existing = config.provider.anthropic.models[id];
-    // Always merge — ensures stale fields (modalities, attachment) get updated
-    config.provider.anthropic.models[id] = { ...existing, ...def };
-    if (!existing) count++;
-  }
 
   // claudecli provider — via Claude CLI proxy
   if (!config.provider.claudecli) {
@@ -150,6 +133,28 @@ function registerAnthropicModels(config) {
   }
 
   return count;
+}
+
+/**
+ * Drop Anthropic model overrides persisted by plugin versions before GH#32447.
+ * Those entries carried Claude CLI proxy metadata (`family: claudecli`,
+ * `tool_call: false`, text-only input, zero cost) and masked OpenCode's native
+ * Anthropic model metadata. Only the exact legacy shape is removed; user-authored
+ * entries are preserved.
+ * @param {object} config - OpenCode Config object (mutable)
+ * @returns {number} number of legacy entries removed
+ */
+export function removeLegacyAnthropicModelOverrides(config) {
+  const models = config?.provider?.anthropic?.models;
+  if (!models || typeof models !== "object") return 0;
+  let removed = 0;
+  for (const [id, def] of Object.entries(models)) {
+    if (def?.family !== "claudecli") continue;
+    if (!String(def?.name || "").endsWith("(via aidevops)")) continue;
+    delete models[id];
+    removed += 1;
+  }
+  return removed;
 }
 
 /**
@@ -277,7 +282,7 @@ async function discoverAndRegisterModels(opts) {
  *
  * When the proxy is NOT yet running (lazy-start path, GH#21944), the
  * `claudecli` provider entry was already eagerly registered by
- * `registerAnthropicModels` above with the hardcoded default port — leave
+ * `registerClaudeCliFallbackModels` above with the hardcoded default port — leave
  * it intact so the models stay visible in the picker. The proxy will be
  * brought up by the system.transform hook on the first claudecli/* request.
  *
@@ -292,7 +297,7 @@ async function discoverAndRegisterModels(opts) {
 function registerClaudeCliModels(config) {
   const claudeProxyPort = getClaudeProxyPort();
   if (!claudeProxyPort) {
-    // Proxy not running yet — registerAnthropicModels already populated the
+    // Proxy not running yet — registerClaudeCliFallbackModels already populated the
     // provider with the hardcoded default port; lazy-start will bring up
     // the listener on the same port when needed.
     return 0;
@@ -321,7 +326,8 @@ function logConfigSummary(counts) {
     [counts.directories, "managed directory perms"],
     [counts.permissionGrants, "signed worker permission grants"],
     [counts.poolCleaned, `cleaned ${counts.poolCleaned} stale pool provider${counts.poolCleaned === 1 ? "" : "s"}`],
-    [counts.anthropic, "anthropic models"],
+    [counts.anthropicLegacyCleaned, `cleaned ${counts.anthropicLegacyCleaned} legacy Anthropic model override${counts.anthropicLegacyCleaned === 1 ? "" : "s"}`],
+    [counts.anthropicPending, "pending Anthropic catalog models"],
     [counts.openai, "OpenAI context limits"],
     [counts.cursor, "Cursor models"],
     [counts.google, "Google models"],
@@ -379,7 +385,6 @@ export function createConfigHook(deps) {
         directories: 0,
         permissionGrants: 0,
         poolCleaned: 0,
-        anthropic: 0,
         openai: 0,
         cursor: 0,
         google: 0,
@@ -408,9 +413,12 @@ export function createConfigHook(deps) {
       modelRouting,
     );
     const poolCleaned = registerPoolProvider(config);
-    const anthropic = registerAnthropicModels(config);
+    const anthropicLegacyCleaned = removeLegacyAnthropicModelOverrides(config);
+    const anthropicPending = registerPendingAnthropicModels(config);
+    const claudeFallback = registerClaudeCliFallbackModels(config);
     const openai = registerGpt56ContextLimits(config) + registerAstraContextLimits(config) +
       registerGpt6ContextLimits(config);
+    applyCompactionRouting(config, modelRouting);
     // Discover and register proxy provider models only when a proxy listener is
     // already active. The normal startup path intentionally leaves these ports
     // null until first use, so unconditional imports/discovery here made config
@@ -442,7 +450,7 @@ export function createConfigHook(deps) {
       });
     }
 
-    const claude = registerClaudeCliModels(config);
+    const claude = claudeFallback + registerClaudeCliModels(config);
     enforcePublicTriageIsolation(config);
     const conversationIsolation = enforceTeamInterfaceConversationIsolation(config, conversation);
     const remoteInteractiveSelection = enforceTeamInterfaceRemoteInteractiveSelection(config, conversation);
@@ -455,7 +463,8 @@ export function createConfigHook(deps) {
         directories,
         permissionGrants,
         poolCleaned,
-        anthropic,
+        anthropicLegacyCleaned,
+        anthropicPending,
         openai,
         cursor,
         google,

@@ -22,6 +22,10 @@
 #   - calculate_priority_allocations
 #   - count_debt_workers
 #   - check_repo_worker_cap
+#   - dispatch class cap helpers (GH#33137, appended after the pure move):
+#     _dispatch_class_from_labels, _dispatch_class_config, _dispatch_class_cap_value,
+#     _dispatch_class_state_dir, _dispatch_class_active_count,
+#     _dispatch_check_class_cap, _dispatch_class_release_reservation
 #
 # This is a pure move from pulse-wrapper.sh. The function bodies are
 # byte-identical to their pre-extraction form. Any change must go in a
@@ -258,15 +262,19 @@ calculate_max_workers() {
 	local free_mb
 	if [[ "$(uname)" == "Darwin" ]]; then
 		# macOS: use vm_stat for free + inactive (reclaimable) pages
-		local page_size="" free_pages="" inactive_pages=""
+		# Reclaimable = free + inactive + speculative + purgeable pages. The
+		# speculative/purgeable pools are file cache the kernel drops on demand;
+		# omitting them under-reported headroom on busy Macs.
+		local page_size="" vm_out="" reclaimable_pages=""
 		page_size=$(sysctl -n hw.pagesize 2>/dev/null || echo 16384)
-		free_pages=$(vm_stat 2>/dev/null | awk '/Pages free/ {gsub(/\./,"",$3); print $3}')
-		inactive_pages=$(vm_stat 2>/dev/null | awk '/Pages inactive/ {gsub(/\./,"",$3); print $3}')
+		vm_out=$(vm_stat 2>/dev/null) || vm_out=""
+		reclaimable_pages=$(printf '%s\n' "$vm_out" | awk '
+			/^Pages (free|inactive|speculative|purgeable):/ { gsub(/\./, "", $NF); sum += $NF }
+			END { printf "%d", sum }')
 		# Validate integers before arithmetic expansion
 		[[ "$page_size" =~ ^[0-9]+$ ]] || page_size=16384
-		[[ "$free_pages" =~ ^[0-9]+$ ]] || free_pages=0
-		[[ "$inactive_pages" =~ ^[0-9]+$ ]] || inactive_pages=0
-		free_mb=$(((free_pages + inactive_pages) * page_size / 1024 / 1024))
+		[[ "$reclaimable_pages" =~ ^[0-9]+$ ]] || reclaimable_pages=0
+		free_mb=$((reclaimable_pages * page_size / 1024 / 1024))
 	else
 		# Linux: use MemAvailable from /proc/meminfo
 		free_mb=$(awk '/MemAvailable/ {print int($2/1024)}' /proc/meminfo 2>/dev/null || echo 8192)
@@ -559,4 +567,290 @@ check_repo_worker_cap() {
 		return 0
 	fi
 	return 1
+}
+
+# =============================================================================
+# GH#33137: per-class dispatch cap
+# =============================================================================
+#
+# Issues labelled `dispatch-class:<name>` may be limited to a share of this
+# machine's simultaneous worker target. Configuration lives on the repo entry
+# in repos.json (preferred) or in the repo's .aidevops.json:
+#
+#   "dispatch_classes": { "award-enrichment": { "max_share_pct": 50, "max_workers": 3 } }
+#
+# cap = floor(simultaneous_target_final * max_share_pct / 100), minimum 1;
+# when max_workers is also set the lower value wins. Unlabelled issues and
+# labels with no configured class are never capped (behaviour unchanged).
+#
+# Active class workers are counted from local reservation markers written by
+# the dispatch loop, intersected with the shared worker discovery path
+# (list_active_worker_processes). A marker without a live worker still counts
+# for PULSE_DISPATCH_CLASS_RESERVATION_GRACE seconds (default 300) so parallel
+# launch ceremonies cannot overshoot the cap; older orphan markers are pruned.
+
+#######################################
+# Extract the first valid dispatch class from a comma-separated label list.
+# Arguments: $1 - labels CSV
+# Stdout: class name (empty when none)
+#######################################
+_dispatch_class_from_labels() {
+	local labels_csv="$1"
+	local label="" class=""
+	local -a label_list=()
+	IFS=',' read -r -a label_list <<<"$labels_csv"
+	for label in "${label_list[@]+"${label_list[@]}"}"; do
+		label="${label#"${label%%[![:space:]]*}"}"
+		label="${label%"${label##*[![:space:]]}"}"
+		case "$label" in
+		dispatch-class:*)
+			class="${label#dispatch-class:}"
+			if [[ "$class" =~ ^[A-Za-z0-9._-]+$ ]]; then
+				printf '%s\n' "$class"
+				return 0
+			fi
+			;;
+		esac
+	done
+	return 0
+}
+
+#######################################
+# Resolve a class configuration for a repo.
+# Arguments: $1 - repo slug, $2 - class name, $3 - repo path (optional)
+# Stdout: "<max_share_pct> <max_workers>" (0 = unset); empty when unconfigured
+#######################################
+_dispatch_class_config() {
+	local repo_slug="$1"
+	local class="$2"
+	local repo_path="${3:-}"
+	local repos_json="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
+	local filter='((.max_share_pct // 0 | tonumber? // 0 | floor | tostring) + " " + (.max_workers // 0 | tonumber? // 0 | floor | tostring))'
+	local config=""
+
+	command -v jq >/dev/null 2>&1 || return 0
+	if [[ -f "$repos_json" ]]; then
+		config=$(jq -r --arg slug "$repo_slug" --arg class "$class" \
+			"[.initialized_repos[]? | select(.slug == \$slug) | .dispatch_classes[\$class]? | objects] | first // empty | ${filter}" \
+			"$repos_json" 2>/dev/null) || config=""
+	fi
+	if [[ -z "$config" && -n "$repo_path" && -f "${repo_path}/.aidevops.json" ]]; then
+		config=$(jq -r --arg class "$class" \
+			".dispatch_classes[\$class]? | objects | ${filter}" \
+			"${repo_path}/.aidevops.json" 2>/dev/null) || config=""
+	fi
+	[[ "$config" =~ ^[0-9]+\ [0-9]+$ ]] || return 0
+	printf '%s\n' "$config"
+	return 0
+}
+
+#######################################
+# Compute the effective cap for a class.
+# Arguments: $1 - simultaneous worker target, $2 - max_share_pct, $3 - max_workers
+# Stdout: cap (0 = uncapped)
+#######################################
+_dispatch_class_cap_value() {
+	local target="$1"
+	local share_pct="$2"
+	local max_workers="$3"
+	local cap=0
+	[[ "$target" =~ ^[0-9]+$ ]] || target=1
+	[[ "$share_pct" =~ ^[0-9]+$ ]] || share_pct=0
+	[[ "$max_workers" =~ ^[0-9]+$ ]] || max_workers=0
+	if ((share_pct > 0)); then
+		cap=$((target * share_pct / 100))
+		((cap < 1)) && cap=1
+	fi
+	if ((max_workers > 0)); then
+		if ((cap == 0 || max_workers < cap)); then
+			cap="$max_workers"
+		fi
+	fi
+	printf '%s\n' "$cap"
+	return 0
+}
+
+#######################################
+# Reservation marker directory for one repo.
+# Arguments: $1 - repo slug
+#######################################
+_dispatch_class_state_dir() {
+	local repo_slug="$1"
+	local safe_slug="${repo_slug//\//__}"
+	printf '%s/dispatch-classes/%s\n' "${PULSE_DIR:-${HOME}/.aidevops/.agent-workspace/supervisor}" "$safe_slug"
+	return 0
+}
+
+#######################################
+# List issue numbers that have a live local worker for a repo.
+# Workers launched with --dir for another repo are ignored; workers without
+# --dir fall back to their session key (mirrors has_worker_for_repo_issue).
+# Arguments: $1 - repo path (may be empty), $2 - worker process lines
+#######################################
+_dispatch_class_live_issues() {
+	local repo_path="$1"
+	local worker_procs="$2"
+	printf '%s\n' "$worker_procs" | awk -v path="$repo_path" '
+		BEGIN { esc = path; gsub(/[][(){}.^$*+?|\\]/, "\\\\&", esc) }
+		{
+			if (path != "" && $0 ~ /--dir[[:space:]]/ && $0 !~ ("--dir[[:space:]]+" esc "([[:space:]]|$)")) next
+			line = $0
+			while (match(line, /issue-[0-9]+/)) { print substr(line, RSTART + 6, RLENGTH - 6); line = substr(line, RSTART + RLENGTH) }
+			line = $0
+			while (match(line, /Issue #[0-9]+/)) { print substr(line, RSTART + 7, RLENGTH - 7); line = substr(line, RSTART + RLENGTH) }
+		}' | sort -u
+	return 0
+}
+
+#######################################
+# Count active (live or freshly reserved) workers for a class in one repo.
+# Prunes orphan markers older than the reservation grace window.
+# Arguments: $1 - repo slug, $2 - repo path, $3 - class, $4 - issue to exclude,
+#            $5 - worker process lines
+# Stdout: count
+#######################################
+_dispatch_class_active_count() {
+	local repo_slug="$1"
+	local repo_path="$2"
+	local class="$3"
+	local exclude_issue="$4"
+	local worker_procs="$5"
+	local state_dir="" live_issues="" marker="" issue="" marker_class="" marker_epoch="" now=0 count=0
+	local grace="${PULSE_DISPATCH_CLASS_RESERVATION_GRACE:-300}"
+	[[ "$grace" =~ ^[0-9]+$ ]] || grace=300
+	state_dir=$(_dispatch_class_state_dir "$repo_slug")
+	if [[ ! -d "$state_dir" ]]; then
+		printf '0\n'
+		return 0
+	fi
+	live_issues=$(_dispatch_class_live_issues "$repo_path" "$worker_procs")
+	now=$(date +%s)
+	for marker in "$state_dir"/*; do
+		[[ -f "$marker" ]] || continue
+		issue="${marker##*/}"
+		[[ "$issue" =~ ^[0-9]+$ ]] || continue
+		[[ "$issue" == "$exclude_issue" ]] && continue
+		marker_class=""
+		marker_epoch=""
+		read -r marker_class marker_epoch <"$marker" 2>/dev/null || true
+		[[ "$marker_epoch" =~ ^[0-9]+$ ]] || marker_epoch=0
+		if printf '%s\n' "$live_issues" | grep -qx "$issue"; then
+			[[ "$marker_class" == "$class" ]] && count=$((count + 1))
+		elif ((now - marker_epoch < grace)); then
+			[[ "$marker_class" == "$class" ]] && count=$((count + 1))
+		else
+			rm -f "$marker" 2>/dev/null || true
+		fi
+	done
+	printf '%s\n' "$count"
+	return 0
+}
+
+#######################################
+# Enforce the per-class dispatch cap for one candidate and reserve a slot.
+#
+# Arguments:
+#   $1 - issue number
+#   $2 - repo slug
+#   $3 - repo path
+#   $4 - labels CSV
+#   $5 - (optional) pre-fetched list_active_worker_processes output
+# Globals:
+#   _DISPATCH_CLASS_CAP_TARGET - simultaneous_target_final for this round
+#                                (falls back to get_max_workers_target)
+#   _DISPATCH_CLASS_RESERVED   - set to 1 when this call wrote a marker
+# Stdout: log lines (caller appends to LOGFILE)
+# Returns:
+#   0 - proceed (unclassified, unconfigured, or below cap)
+#   1 - deferred (class at cap); retried next cycle, never penalised
+#######################################
+_dispatch_check_class_cap() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local repo_path="$3"
+	local labels_csv="$4"
+	local worker_procs="${5:-}"
+	_DISPATCH_CLASS_RESERVED=0
+
+	local class="" config="" share_pct=0 max_workers=0 target="" cap=0 active=0
+	class=$(_dispatch_class_from_labels "$labels_csv")
+	[[ -n "$class" ]] || return 0
+	config=$(_dispatch_class_config "$repo_slug" "$class" "$repo_path")
+	if [[ -z "$config" ]]; then
+		echo "[pulse-wrapper] Dispatch_class_cap: #${issue_number} (${repo_slug}) class=${class} has no dispatch_classes config — uncapped"
+		return 0
+	fi
+	read -r share_pct max_workers <<<"$config"
+	target="${_DISPATCH_CLASS_CAP_TARGET:-}"
+	if ! [[ "$target" =~ ^[0-9]+$ ]]; then
+		if declare -F get_max_workers_target >/dev/null 2>&1; then
+			target=$(get_max_workers_target)
+		fi
+		[[ "$target" =~ ^[0-9]+$ ]] || target=1
+	fi
+	cap=$(_dispatch_class_cap_value "$target" "$share_pct" "$max_workers")
+	[[ "$cap" =~ ^[0-9]+$ ]] || cap=0
+	((cap > 0)) || return 0
+
+	if [[ -z "$worker_procs" ]] && declare -F list_active_worker_processes >/dev/null 2>&1; then
+		worker_procs=$(list_active_worker_processes 2>/dev/null) || worker_procs=""
+	fi
+
+	local state_dir="" lock_dir="" locked=0 attempt=0
+	state_dir=$(_dispatch_class_state_dir "$repo_slug")
+	mkdir -p "$state_dir" 2>/dev/null || true
+	lock_dir="${state_dir}/.lock"
+	while ((attempt < 50)); do
+		if mkdir "$lock_dir" 2>/dev/null; then
+			locked=1
+			break
+		fi
+		attempt=$((attempt + 1))
+		sleep 0.1 2>/dev/null || sleep 1
+	done
+	if ((locked == 0)); then
+		echo "[pulse-wrapper] Dispatch_class_cap: lock busy for ${repo_slug}; counting without lock"
+	fi
+
+	active=$(_dispatch_class_active_count "$repo_slug" "$repo_path" "$class" "$issue_number" "$worker_procs")
+	[[ "$active" =~ ^[0-9]+$ ]] || active=0
+	if ((active >= cap)); then
+		if ((locked == 1)); then
+			rmdir "$lock_dir" 2>/dev/null || true
+		fi
+		echo "[pulse-wrapper] Dispatch_max: #${issue_number} (${repo_slug}) deferred — dispatch_class_cap: class=${class} active=${active} cap=${cap} target=${target} max_share_pct=${share_pct} max_workers=${max_workers} (retry next cycle)"
+		if declare -F _dispatch_stats_increment >/dev/null 2>&1; then
+			_dispatch_stats_increment "dispatch_candidate_deferred_class_cap"
+		fi
+		return 1
+	fi
+
+	local marker="${state_dir}/${issue_number}"
+	if [[ -f "$marker" ]] && _dispatch_class_live_issues "$repo_path" "$worker_procs" | grep -qx "$issue_number"; then
+		# A live worker already owns this issue; keep its marker untouched so
+		# a dedup-blocked re-evaluation cannot release the live reservation.
+		:
+	elif printf '%s %s\n' "$class" "$(date +%s)" >"$marker" 2>/dev/null; then
+		_DISPATCH_CLASS_RESERVED=1
+	fi
+	if ((locked == 1)); then
+		rmdir "$lock_dir" 2>/dev/null || true
+	fi
+	echo "[pulse-wrapper] Dispatch_class_cap: #${issue_number} (${repo_slug}) class=${class} active=${active} cap=${cap} target=${target} — proceeding"
+	return 0
+}
+
+#######################################
+# Drop the reservation marker written by _dispatch_check_class_cap when the
+# candidate did not launch a worker.
+# Arguments: $1 - repo slug, $2 - issue number
+#######################################
+_dispatch_class_release_reservation() {
+	local repo_slug="$1"
+	local issue_number="$2"
+	if [[ "${_DISPATCH_CLASS_RESERVED:-0}" == "1" && "$issue_number" =~ ^[0-9]+$ ]]; then
+		rm -f "$(_dispatch_class_state_dir "$repo_slug")/${issue_number}" 2>/dev/null || true
+	fi
+	_DISPATCH_CLASS_RESERVED=0
+	return 0
 }

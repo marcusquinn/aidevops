@@ -129,6 +129,9 @@ _preflight_launch_systemd_cleanup() {
 # Launch cleanup outside the parent pulse cgroup where systemd is available,
 # retaining the existing nohup behaviour on other platforms or submission
 # failure. Helper-level locks and cadence gates remain authoritative.
+# GH#32528: the fallback starts a new session (setsid, else perl POSIX::setsid).
+# launchd tears down the job's process group when pulse-wrapper.sh exits, so a
+# plain nohup child was killed mid-run and cleanup never reached most repos.
 # Args: $1=helper path, $2=log path, $3=stable cleanup name
 #######################################
 _preflight_launch_async_cleanup() {
@@ -144,7 +147,15 @@ _preflight_launch_async_cleanup() {
 		echo "[pulse-wrapper] ${cleanup_name} transient cleanup submission failed; using nohup fallback" >>"${LOGFILE:-/dev/null}"
 	fi
 
-	nohup "$helper" </dev/null >>"$log_file" 2>&1 &
+	if command -v setsid >/dev/null 2>&1; then
+		setsid nohup "$helper" </dev/null >>"$log_file" 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
+	elif command -v perl >/dev/null 2>&1; then
+		# Stock macOS lacks setsid(1); perl's POSIX::setsid is always present.
+		perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV or exit 127' nohup "$helper" \
+			</dev/null >>"$log_file" 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
+	else
+		nohup "$helper" </dev/null >>"$log_file" 2>&1 &
+	fi
 	local helper_pid=$!
 	disown "$helper_pid" 2>/dev/null || true
 	return 0
@@ -308,37 +319,98 @@ _preflight_rest_core_allows_next() {
 }
 
 #######################################
+# Oldest completed substage first; equal/missing epochs retain historical order.
+#######################################
+_preflight_label_maintenance_order() {
+	local state_file="${AIDEVOPS_LABEL_MAINTENANCE_STATE_FILE:-${PULSE_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/pulse}/label-maintenance-epochs}"
+	local key="" epoch="" extra=""
+	local consolidation=0 backfill=0 simplification=0
+	if [[ -r "$state_file" && -f "$state_file" ]]; then
+		while read -r key epoch extra; do
+			[[ -z "$extra" && "$epoch" =~ ^[0-9]+$ ]] || continue
+			case "$key" in
+				consolidation) consolidation="$epoch" ;;
+				backfill) backfill="$epoch" ;;
+				simplification) simplification="$epoch" ;;
+			esac
+		done <"$state_file"
+	fi
+	printf '%s consolidation\n%s backfill\n%s simplification\n' "$consolidation" "$backfill" "$simplification" |
+		sort -s -n -k1,1 | cut -d' ' -f2
+	return 0
+}
+
+#######################################
+# Persist only successful completions, without exposing a partially written file.
+#######################################
+_preflight_label_maintenance_completed() {
+	local completed_key="$1"
+	local state_file="${AIDEVOPS_LABEL_MAINTENANCE_STATE_FILE:-${PULSE_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/pulse}/label-maintenance-epochs}"
+	local key="" epoch="" extra="" tmp=""
+	mkdir -p "${state_file%/*}" || return 1
+	tmp=$(mktemp "${state_file}.XXXXXX") || return 1
+	if [[ -r "$state_file" && -f "$state_file" ]]; then
+		while read -r key epoch extra; do
+			[[ "$key" != "$completed_key" && -z "$extra" && "$epoch" =~ ^[0-9]+$ ]] || continue
+			case "$key" in consolidation|backfill|simplification) printf '%s %s\n' "$key" "$epoch" >>"$tmp" ;; esac
+		done <"$state_file"
+	fi
+	printf '%s %s\n' "$completed_key" "$(date +%s)" >>"$tmp"
+	mv -f "$tmp" "$state_file" || return 1
+	return 0
+}
+
+# Count attempts at the first substage before it starts, so a timeout does not
+# erase the evidence. Reset only after that substage actually completes.
+_preflight_label_maintenance_first_attempt() {
+	local key="$1"
+	local state_file="${AIDEVOPS_LABEL_MAINTENANCE_STATE_FILE:-${PULSE_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/pulse}/label-maintenance-epochs}.first-attempt"
+	local previous="" count=0 tmp
+	if [[ -r "$state_file" ]]; then
+		read -r previous count <"$state_file" || true
+	fi
+	[[ "$previous" == "$key" && "$count" =~ ^[0-9]+$ ]] || count=0
+	count=$((count + 1))
+	mkdir -p "${state_file%/*}" || return 1
+	tmp=$(mktemp "${state_file}.XXXXXX") || return 1
+	printf '%s %s\n' "$key" "$count" >"$tmp"
+	mv -f "$tmp" "$state_file" || return 1
+	if [[ "$count" -ge 3 ]]; then
+		echo "[pulse-wrapper] Label maintenance: $key first for $count attempts without completion" >>"$LOGFILE"
+	fi
+	return 0
+}
+
+#######################################
 # Cross-repository needs-* label maintenance. Runs after the first dispatch so
 # already-eligible work can boot while these idempotent sweeps expose additional
 # candidates for the post-maintenance refill.
 #######################################
 _preflight_label_maintenance() {
-	# GH#21470: preserve per-substage timing while separating these potentially
-	# slow GitHub/repository sweeps from the capacity-critical dispatch path.
-
-	# Re-evaluate needs-consolidation labels before the refill. Issues labeled
-	# by an earlier (less precise) filter may no longer trigger under the
-	# current filter. Auto-clearing here makes them dispatchable in this cycle
-	# instead of stuck forever behind a label that list_dispatchable_issue_candidates_json
-	# filters out (needs-* exclusion at line 6703).
-	_preflight_rest_core_allows_next "label_maintenance_consolidation_reevaluate" || return 0
-	local _ss0=$SECONDS
-	_reevaluate_consolidation_labels
-	_log_substage_timing "substage:label_maintenance/reevaluate_consolidation_labels" "$_ss0" 0
-
-	# t1982: Backfill pass for stuck needs-consolidation issues that never
-	# got a consolidation-task child created (pre-t1982 dispatches just
-	# labelled and returned). Dispatches a child retroactively so the
-	# parent can actually be consolidated instead of sitting forever.
-	_preflight_rest_core_allows_next "label_maintenance_consolidation_backfill" || return 0
-	local _ss1=$SECONDS
-	_backfill_stale_consolidation_labels
-	_log_substage_timing "substage:label_maintenance/backfill_consolidation_labels" "$_ss1" 0
-
-	_preflight_rest_core_allows_next "label_maintenance_simplification_reevaluate" || return 0
-	local _ss2=$SECONDS
-	_reevaluate_simplification_labels
-	_log_substage_timing "substage:label_maintenance/reevaluate_simplification_labels" "$_ss2" 0
+	local key context fn timing started rc first=1
+	while IFS= read -r key; do
+		case "$key" in
+			consolidation) context="label_maintenance_consolidation_reevaluate"; fn="_reevaluate_consolidation_labels"; timing="reevaluate_consolidation_labels" ;;
+			backfill) context="label_maintenance_consolidation_backfill"; fn="_backfill_stale_consolidation_labels"; timing="backfill_consolidation_labels" ;;
+			simplification) context="label_maintenance_simplification_reevaluate"; fn="_reevaluate_simplification_labels"; timing="reevaluate_simplification_labels" ;;
+			*) continue ;;
+		esac
+		_preflight_rest_core_allows_next "$context" || return 0
+		if [[ "$first" -eq 1 ]]; then
+			_preflight_label_maintenance_first_attempt "$key" || true
+			first=0
+		fi
+		started=$SECONDS
+		rc=0
+		"$fn" || rc=$?
+		_log_substage_timing "substage:label_maintenance/${timing}" "$started" "$rc"
+		[[ "$rc" -eq 0 ]] || return "$rc"
+		_preflight_label_maintenance_completed "$key" || echo "[pulse-wrapper] Could not persist label-maintenance completion: $key" >>"$LOGFILE"
+		if [[ "$first" -eq 0 ]]; then
+			rm -f "${AIDEVOPS_LABEL_MAINTENANCE_STATE_FILE:-${PULSE_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/pulse}/label-maintenance-epochs}.first-attempt"
+			first=2
+		fi
+	done < <(_preflight_label_maintenance_order)
 
 	return 0
 }
@@ -349,15 +421,10 @@ _preflight_label_maintenance() {
 # An unknown clock/budget fails open to the next stage, never to unbounded work.
 _preflight_refill_reserved_timeout() {
 	local stage_limit="$1"
-	local start_epoch="${PULSE_START_EPOCH:-}"
-	local ceiling="${PULSE_STALE_THRESHOLD:-}"
 	local refill_reserve="${PULSE_POST_LABEL_REFILL_MIN_REMAINING_SECONDS:-${PRE_RUN_STAGE_TIMEOUT:-600}}"
-	local now_epoch=""
-	now_epoch=$(date +%s 2>/dev/null) || return 1
-	[[ "$stage_limit" =~ ^[1-9][0-9]*$ && "$start_epoch" =~ ^[0-9]+$ &&
-		"$ceiling" =~ ^[1-9][0-9]*$ && "$refill_reserve" =~ ^[1-9][0-9]*$ &&
-		"$now_epoch" =~ ^[0-9]+$ && "$now_epoch" -ge "$start_epoch" ]] || return 1
-	local available=$((start_epoch + ceiling - now_epoch - refill_reserve - 5))
+	[[ "$stage_limit" =~ ^[1-9][0-9]*$ && "$refill_reserve" =~ ^[1-9][0-9]*$ ]] || return 1
+	local available=""
+	available=$(_pulse_cycle_remaining_seconds "$((refill_reserve + 5))") || return 1
 	[[ "$available" -gt 0 ]] || return 1
 	[[ "$available" -lt "$stage_limit" ]] && stage_limit="$available"
 	printf '%s\n' "$stage_limit"
@@ -417,16 +484,12 @@ _preflight_early_dispatch() {
 # prevents a second full dispatch pass from starting near the cycle ceiling.
 #######################################
 _preflight_post_label_refill_wall_clock_allows() {
-	local start_epoch="${PULSE_START_EPOCH:-}"
-	local ceiling_seconds="${PULSE_STALE_THRESHOLD:-}"
 	local required_seconds="${PULSE_POST_LABEL_REFILL_MIN_REMAINING_SECONDS:-${PRE_RUN_STAGE_TIMEOUT:-600}}"
-	local now_epoch=""
-	now_epoch=$(date +%s 2>/dev/null) || now_epoch=""
+	local remaining_seconds=""
+	remaining_seconds=$(_pulse_cycle_remaining_seconds 0) || remaining_seconds=""
 
-	if [[ ! "$start_epoch" =~ ^[0-9]+$ || ! "$ceiling_seconds" =~ ^[1-9][0-9]*$ ||
-		! "$required_seconds" =~ ^[1-9][0-9]*$ || ! "$now_epoch" =~ ^[0-9]+$ ||
-		"$now_epoch" -lt "$start_epoch" ]]; then
-		echo "[pulse-wrapper] Post-label dispatch_max skipped: wall-clock budget unavailable (start=${start_epoch:-?}, now=${now_epoch:-?}, ceiling=${ceiling_seconds:-?}, required=${required_seconds:-?})" >>"$LOGFILE"
+	if [[ ! "$required_seconds" =~ ^[1-9][0-9]*$ || -z "$remaining_seconds" ]]; then
+		echo "[pulse-wrapper] Post-label dispatch_max skipped: wall-clock budget unavailable (required=${required_seconds:-?})" >>"$LOGFILE"
 		if declare -F pulse_stats_increment >/dev/null 2>&1; then
 			pulse_stats_increment "pulse_post_label_refill_wall_clock_skipped" 2>/dev/null || true
 		fi
@@ -434,11 +497,9 @@ _preflight_post_label_refill_wall_clock_allows() {
 		return 1
 	fi
 
-	local elapsed_seconds=$((now_epoch - start_epoch))
-	local remaining_seconds=$((ceiling_seconds - elapsed_seconds))
 	[[ "$remaining_seconds" -lt 0 ]] && remaining_seconds=0
 	if [[ "$remaining_seconds" -lt "$required_seconds" ]]; then
-		echo "[pulse-wrapper] Post-label dispatch_max skipped: insufficient wall-clock budget (remaining=${remaining_seconds}s, required=${required_seconds}s, elapsed=${elapsed_seconds}s, ceiling=${ceiling_seconds}s)" >>"$LOGFILE"
+		echo "[pulse-wrapper] Post-label dispatch_max skipped: insufficient wall-clock budget (remaining=${remaining_seconds}s, required=${required_seconds}s)" >>"$LOGFILE"
 		if declare -F pulse_stats_increment >/dev/null 2>&1; then
 			pulse_stats_increment "pulse_post_label_refill_wall_clock_skipped" 2>/dev/null || true
 		fi
@@ -481,6 +542,11 @@ _preflight_post_label_refill() {
 # stuck states. Trusted NMR reconciliation runs before the refill instead.
 #######################################
 _preflight_ownership_reconcile() {
+	local outer_budget="${1:-${PRE_RUN_STAGE_TIMEOUT:-600}}"
+	[[ "$outer_budget" =~ ^[1-9][0-9]*$ ]] || outer_budget=600
+	local ownership_start=$SECONDS reserve=8 reconcile_budget remaining
+	# Leave room for the outer wrapper's two-second watchdog cadence and cleanup.
+	[[ "$outer_budget" -gt 16 ]] || reserve=2
 	# GH#21470: per-substage timing for the unwrapped prefetch_contribution_watch
 	# call. The three run_stage_with_timeout calls below are already individually
 	# timed by that wrapper; prefetch_contribution_watch was the blind spot.
@@ -489,15 +555,27 @@ _preflight_ownership_reconcile() {
 	prefetch_contribution_watch
 	_log_substage_timing "substage:ownership_reconcile/prefetch_contribution_watch" "$_ss0" 0
 
-	# Ensure active labels reflect ownership to prevent multi-worker overlap.
-	run_stage_with_timeout "normalize_active_issue_assignments" "$PRE_RUN_STAGE_TIMEOUT" normalize_active_issue_assignments || true
-
 	# t2776: single-pass reconcile — iterates the issue list ONCE per repo and
 	# applies all five reconcile checks in sub-stage order (close-merged-PR,
 	# stale-done, open-with-merged-PR, parent-task, labelless backfill).
 	# Replaces the five sequential stage calls that each had their own per-repo
 	# fetch loop; now 5N → N iterations per cycle.
-	run_stage_with_timeout "reconcile_issues_single_pass" "$PRE_RUN_STAGE_TIMEOUT" reconcile_issues_single_pass || true
+	# Run the shorter, higher-value pass first. The 360s internal budget gets a
+	# watchdog allowance; normalization receives only the time actually left.
+	remaining=$((outer_budget - (SECONDS - ownership_start) - reserve))
+	if [[ "$remaining" -gt 0 ]]; then
+		reconcile_budget=$remaining
+		[[ "$reconcile_budget" -le 380 ]] || reconcile_budget=380
+		run_stage_with_timeout "reconcile_issues_single_pass" "$reconcile_budget" reconcile_issues_single_pass || true
+	fi
+
+	# Ensure active labels reflect ownership to prevent multi-worker overlap.
+	remaining=$((outer_budget - (SECONDS - ownership_start) - reserve))
+	if [[ "$remaining" -gt 0 ]]; then
+		run_stage_with_timeout "normalize_active_issue_assignments" "$remaining" normalize_active_issue_assignments || true
+	else
+		echo "[pulse-wrapper] Assignment normalization deferred: ownership budget exhausted" >>"$LOGFILE"
+	fi
 
 	return 0
 }

@@ -227,7 +227,7 @@ _sync_subagent_file() {
 	model_tier=$(echo "$frontmatter" | grep '^model_tier=' | cut -d= -f2-)
 	model_fallback=$(echo "$frontmatter" | grep '^model_fallback=' | cut -d= -f2-)
 
-	# Extract short model_id from full ID (e.g., anthropic/claude-sonnet-4-6 -> claude-sonnet-4-6)
+	# Extract short model_id from full ID (e.g., anthropic/claude-sonnet-5-5 -> claude-sonnet-5-5)
 	local model_short
 	model_short="${model_full#*/}"
 	# Strip trailing date suffix (e.g., -20250514)
@@ -287,135 +287,6 @@ sync_subagents() {
     "
 
 	print_info "Subagent sync: $updated tiers updated from frontmatter"
-	return 0
-}
-
-# =============================================================================
-# Sync: Embedded Model Data (from compare-models-helper.sh)
-# =============================================================================
-
-# Extract the MODEL_DATA block from compare-models-helper.sh.
-# Outputs the raw pipe-delimited lines to stdout; returns 1 if not found.
-_extract_model_data() {
-	local compare_helper="$1"
-	local model_data=""
-	local in_model_data=false
-	while IFS= read -r line; do
-		if [[ "$line" == 'readonly MODEL_DATA="'* ]]; then
-			in_model_data=true
-			model_data="${line#*=\"}"
-			if [[ "$model_data" == *'"' ]]; then
-				model_data="${model_data%\"}"
-				break
-			fi
-			continue
-		fi
-		if [[ "$in_model_data" == "true" ]]; then
-			if [[ "$line" == *'"' ]]; then
-				model_data="${model_data}
-${line%\"}"
-				break
-			fi
-			model_data="${model_data}
-${line}"
-		fi
-	done <"$compare_helper"
-
-	if [[ -z "$model_data" ]]; then
-		return 1
-	fi
-	printf '%s\n' "$model_data"
-	return 0
-}
-
-# Upsert a single pipe-delimited model line into the models table.
-# Arguments: <pipe-delimited line> <added_var_name> <updated_var_name>
-# Increments the named counter variables via eval.
-_upsert_embedded_model() {
-	local line="$1"
-	local added_ref="$2"
-	local updated_ref="$3"
-
-	local model_id provider display_name ctx input output tier caps best_for
-	model_id=$(echo "$line" | cut -d'|' -f1)
-	provider=$(echo "$line" | cut -d'|' -f2)
-	display_name=$(echo "$line" | cut -d'|' -f3)
-	ctx=$(echo "$line" | cut -d'|' -f4)
-	input=$(echo "$line" | cut -d'|' -f5)
-	output=$(echo "$line" | cut -d'|' -f6)
-	tier=$(echo "$line" | cut -d'|' -f7)
-	caps=$(echo "$line" | cut -d'|' -f8)
-	best_for=$(echo "$line" | cut -d'|' -f9)
-
-	local norm_name
-	norm_name=$(normalize_model_name "$model_id")
-
-	local existing
-	existing=$(db_query "SELECT model_id FROM models WHERE model_id='$(sql_escape "$model_id")' AND provider='$(sql_escape "$provider")';")
-
-	if [[ -n "$existing" ]]; then
-		db_query "
-            UPDATE models SET
-                display_name = '$(sql_escape "$display_name")',
-                normalized_name = '$(sql_escape "$norm_name")',
-                context_window = $ctx,
-                input_price = $input,
-                output_price = $output,
-                tier = '$(sql_escape "$tier")',
-                capabilities = '$(sql_escape "$caps")',
-                best_for = '$(sql_escape "$best_for")',
-                last_seen = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
-                source = 'embedded'
-            WHERE model_id = '$(sql_escape "$model_id")' AND provider = '$(sql_escape "$provider")';
-        "
-		eval "${updated_ref}=\$(( ${updated_ref} + 1 ))"
-	else
-		db_query "
-            INSERT INTO models (model_id, provider, display_name, normalized_name, context_window, input_price, output_price, tier, capabilities, best_for, source)
-            VALUES (
-                '$(sql_escape "$model_id")',
-                '$(sql_escape "$provider")',
-                '$(sql_escape "$display_name")',
-                '$(sql_escape "$norm_name")',
-                $ctx, $input, $output,
-                '$(sql_escape "$tier")',
-                '$(sql_escape "$caps")',
-                '$(sql_escape "$best_for")',
-                'embedded'
-            );
-        "
-		eval "${added_ref}=\$(( ${added_ref} + 1 ))"
-	fi
-	return 0
-}
-
-sync_embedded() {
-	local added=0
-	local updated=0
-
-	local compare_helper="${SCRIPT_DIR}/compare-models-helper.sh"
-	if [[ ! -f "$compare_helper" ]]; then
-		print_warning "compare-models-helper.sh not found"
-		return 0
-	fi
-
-	local model_data
-	if ! model_data=$(_extract_model_data "$compare_helper"); then
-		print_warning "Could not extract MODEL_DATA from compare-models-helper.sh"
-		return 0
-	fi
-
-	while IFS= read -r line; do
-		[[ -z "$line" ]] && continue
-		_upsert_embedded_model "$line" added updated
-	done <<<"$model_data"
-
-	db_query "
-        INSERT INTO sync_log (sync_type, source, models_added, models_updated, details)
-        VALUES ('embedded', 'compare-models-helper.sh', $added, $updated, 'Parsed MODEL_DATA');
-    "
-
-	print_info "Embedded sync: $added added, $updated updated from compare-models-helper.sh"
 	return 0
 }
 
@@ -734,16 +605,12 @@ cmd_sync() {
 	[[ "$quiet" != "true" ]] && print_info "Phase 1: Syncing subagent frontmatter..."
 	sync_subagents
 
-	# Phase 2: Sync embedded model data
-	[[ "$quiet" != "true" ]] && print_info "Phase 2: Syncing embedded model data..."
-	sync_embedded
-
-	# Phase 3: Sync from OpenCode model registry (preferred — fast, no API keys needed)
-	[[ "$quiet" != "true" ]] && print_info "Phase 3: Discovering models from OpenCode registry..."
+	# Phase 2: Sync from OpenCode model registry (preferred — fast, no API keys needed)
+	[[ "$quiet" != "true" ]] && print_info "Phase 2: Discovering models from OpenCode registry..."
 	sync_opencode
 
-	# Phase 4: Fallback to direct provider API probing (skipped if Phase 3 succeeded)
-	[[ "$quiet" != "true" ]] && print_info "Phase 4: Direct provider API discovery (fallback)..."
+	# Phase 3: Fallback to direct provider API probing (skipped if Phase 2 succeeded)
+	[[ "$quiet" != "true" ]] && print_info "Phase 3: Direct provider API discovery (fallback)..."
 	sync_providers
 
 	# Cleanup old backups
@@ -1051,8 +918,7 @@ cmd_suggest() {
 		print_info "No new model suggestions. Registry is up to date."
 	else
 		echo "  $count potential models found."
-		echo "  Review and add relevant ones to compare-models-helper.sh MODEL_DATA"
-		echo "  and create subagent files in $MODELS_DIR/ as needed."
+		echo "  Review and create subagent files in $MODELS_DIR/ as needed."
 	fi
 	echo ""
 	return 0
@@ -1312,10 +1178,10 @@ _route_lookup_models() {
 		;;
 	standard)
 		primary_model="${primary_model:-openai/gpt-5.6-terra}"
-		fallback_model="${fallback_model:-anthropic/claude-sonnet-4-6}"
+		fallback_model="${fallback_model:-anthropic/claude-sonnet-5-5}"
 		;;
 	thinking)
-		primary_model="${primary_model:-openai/gpt-6-sol}"
+		primary_model="${primary_model:-openai/gpt-6.1-sol}"
 		fallback_model="${fallback_model:-anthropic/claude-opus-4-6}"
 		;;
 	esac
@@ -1442,9 +1308,8 @@ cmd_help() {
 	echo ""
 	echo "Data Sources:"
 	echo "  1. Subagent frontmatter ($MODELS_DIR/*.md)"
-	echo "  2. Embedded data (compare-models-helper.sh MODEL_DATA)"
-	echo "  3. OpenCode model registry (opencode models — preferred, from models.dev)"
-	echo "  4. Provider APIs (Anthropic, OpenAI, Google, OpenRouter, Groq, DeepSeek)"
+	echo "  2. OpenCode model registry (opencode models — preferred, from models.dev)"
+	echo "  3. Provider APIs (Anthropic, OpenAI, Google, OpenRouter, Groq, DeepSeek)"
 	echo ""
 	return 0
 }

@@ -358,6 +358,47 @@ test_stale_pid_reclaim() {
 }
 
 # ============================================================
+# Ownerless locks: missing, empty and invalid owners respect the age grace.
+# ============================================================
+test_ownerless_lock() {
+	local owner="$1"
+	local freshness="$2"
+	local logs_dir="${TEST_DIR}/.aidevops/logs"
+	local lock_dir="${logs_dir}/cleanup_worktrees.lock"
+	local mock_ran="${TEST_DIR}/mock-ran"
+	local cleanup_log="${logs_dir}/cleanup_worktrees.log"
+	mkdir -p "$lock_dir"
+	case "$owner" in
+	empty) printf '' >"${lock_dir}/pid" ;;
+	invalid) printf 'not-a-pid\n' >"${lock_dir}/pid" ;;
+	missing) ;;
+	esac
+	if [[ "$freshness" == "old" ]]; then
+		# Portable touch format; no real-time waits or GNU-only date arithmetic.
+		touch -t 200001010000 "$lock_dir"
+	fi
+	AIDEVOPS_LOCK_OWNERLESS_GRACE_SECONDS=300 MOCK_CLEANUP_EXIT=0 run_helper_in_isolation
+	if [[ "$freshness" == "old" ]]; then
+		if [[ -f "$mock_ran" && ! -d "$lock_dir" ]] &&
+			grep -Eq 'Reclaiming ownerless lock \(age [0-9]+s\)' "$cleanup_log"; then
+			print_result "ownerless-${owner}: old lock reclaimed and cleanup runs" 0
+		else
+			print_result "ownerless-${owner}: old lock reclaimed and cleanup runs" 1 \
+				"cleanup, lock release, or age diagnostic missing"
+		fi
+	else
+		if [[ ! -f "$mock_ran" && -d "$lock_dir" ]] &&
+			grep -q 'Young ownerless lock' "$cleanup_log"; then
+			print_result "ownerless-${owner}: young lock protected" 0
+		else
+			print_result "ownerless-${owner}: young lock protected" 1 \
+				"young lock reclaimed or skip reason missing"
+		fi
+	fi
+	return 0
+}
+
+# ============================================================
 # TEST 6: failed cleanup — last-run NOT updated on non-zero exit
 # ============================================================
 test_failed_cleanup_no_last_run_update() {
@@ -580,10 +621,10 @@ test_archive_outcome_summary_is_logged() {
 
 	MOCK_CLEANUP_EXIT=0 MOCK_REMOVED_COUNT=3 MOCK_ARCHIVED_COUNT=2 \
 		MOCK_ARCHIVE_FAILED_COUNT=1 run_helper_in_isolation || true
-	if grep -q 'outcome=success removed=3 archived=2 archive_failed=1' "$cleanup_log" 2>/dev/null; then
-		print_result "archive-summary: async cleanup reports archive/delete outcomes" 0
+	if grep -q 'outcome=success removed=3 archived=2 archive_failed=1 skip_reasons=none' "$cleanup_log" 2>/dev/null; then
+		print_result "archive-summary: async cleanup reports archive/delete outcomes and skip reasons" 0
 	else
-		print_result "archive-summary: async cleanup reports archive/delete outcomes" 1 \
+		print_result "archive-summary: async cleanup reports archive/delete outcomes and skip reasons" 1 \
 			"structured archive outcome summary missing"
 	fi
 	return 0
@@ -597,11 +638,26 @@ test_missing_metadata_prune_runs_after_success() {
 
 	MOCK_CLEANUP_EXIT=0 MOCK_PRUNABLE_TARGET="$prunable_target" run_helper_in_isolation || true
 	if [[ -f "$metadata_prune_ran" ]] && grep -q "METADATA_PRUNE_RAN" "$metadata_prune_ran" 2>/dev/null &&
-		grep -q 'pruned missing worktree metadata from current repo' "$cleanup_log" 2>/dev/null; then
+		grep -q "pruned missing worktree metadata repo=${TEST_DIR}/repo" "$cleanup_log" 2>/dev/null; then
 		print_result "metadata-prune: async cleanup prunes stale gitdir entries after success" 0
 	else
 		print_result "metadata-prune: async cleanup prunes stale gitdir entries after success" 1 \
 			"metadata prune marker or log entry missing"
+	fi
+	return 0
+}
+
+# GH#32913: the API-free prune must not depend on the GitHub-bound cleanup.
+test_missing_metadata_prune_runs_when_cleanup_skipped() {
+	local metadata_prune_ran="${TEST_DIR}/metadata-prune-ran"
+	rm -f "$metadata_prune_ran"
+
+	MOCK_CLEANUP_SKIPPED=1 MOCK_PRUNABLE_TARGET="${TEST_DIR}/missing-worktree" run_helper_in_isolation || true
+	if grep -q "METADATA_PRUNE_RAN" "$metadata_prune_ran" 2>/dev/null; then
+		print_result "metadata-prune: runs even when GitHub-bound cleanup is skipped" 0
+	else
+		print_result "metadata-prune: runs even when GitHub-bound cleanup is skipped" 1 \
+			"metadata prune did not run on a safety-skipped cleanup cycle"
 	fi
 	return 0
 }
@@ -642,6 +698,15 @@ main() {
 	setup
 	test_stale_pid_reclaim
 
+	local owner freshness
+	for owner in missing empty invalid; do
+		for freshness in old young; do
+			teardown
+			setup
+			test_ownerless_lock "$owner" "$freshness"
+		done
+	done
+
 	teardown
 	setup
 	test_failed_cleanup_no_last_run_update
@@ -681,6 +746,10 @@ main() {
 	teardown
 	setup
 	test_missing_metadata_prune_runs_after_success
+
+	teardown
+	setup
+	test_missing_metadata_prune_runs_when_cleanup_skipped
 
 	echo ""
 	echo "Results: ${TESTS_PASSED}/${TESTS_RUN} passed, ${TESTS_FAILED} failed"

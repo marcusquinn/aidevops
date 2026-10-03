@@ -75,6 +75,13 @@ mkdir -p "$FAKE_BIN"
 cat >"${FAKE_BIN}/npm" <<'EOF'
 #!/usr/bin/env bash
 printf '%s|%s\n' "$PWD" "$*" >>"${NPM_CALL_LOG:?}"
+if [[ "$1" == ci ]]; then
+	if [[ "${NPM_INSTALL_FAIL:-0}" == 1 ]]; then
+		exit 42
+	fi
+	mkdir -p node_modules
+	touch node_modules/.package-lock.json
+fi
 if [[ "${NPM_FAKE_ACTION:-}" == "mutate-other" ]]; then
 	printf '%s\n' 'validator mutation' >>"${NPM_FIX_TARGET:?}"
 fi
@@ -285,10 +292,55 @@ export NPM_CALL_LOG NPM_FAKE_ACTION='' NPM_FAKE_RC=0
 	PATH="${FAKE_BIN}:$PATH" _run_project_validators 0
 ) 2>"${TEST_ROOT}/timeout-error.log"
 case6_rc=$?
-if [[ "$case6_rc" -ne 0 ]] && grep -q 'TIMEOUT after' "${TEST_ROOT}/timeout-error.log"; then
+if [[ "$case6_rc" -ne 0 ]] && grep -q 'TIMEOUT after' "${TEST_ROOT}/timeout-error.log" &&
+	grep -q 'AIDEVOPS_VALIDATOR_TIMEOUT=<n> and rerun' "${TEST_ROOT}/timeout-error.log"; then
 	print_result "portable validator timeout is a distinct failure" 0
 else
 	print_result "portable validator timeout is a distinct failure" 1 "rc=${case6_rc}"
+fi
+
+# Project configuration wins over the environment; invalid values fail before
+# invoking any package manager. The fallback is 300 when neither is specified.
+printf '%s\n' '{"validator_timeout_seconds":1500}' >"$TIMEOUT_REPO/.aidevops.json"
+(
+	cd "$TIMEOUT_REPO" || exit 1
+	timeout_sec() { [[ "$1" == 1500 ]] || return 1; shift; "$@"; }
+	PATH="${FAKE_BIN}:$PATH" AIDEVOPS_VALIDATOR_TIMEOUT=60 _run_project_validators 0
+) >/dev/null 2>"${TEST_ROOT}/config-error.log"
+case_config_rc=$?
+if [[ "$case_config_rc" -eq 0 ]]; then
+	print_result "project timeout overrides environment" 0
+else
+	print_result "project timeout overrides environment" 1 "rc=${case_config_rc}"
+fi
+printf '%s\n' '{"validator_timeout_seconds":0}' >"$TIMEOUT_REPO/.aidevops.json"
+(
+	cd "$TIMEOUT_REPO" || exit 1
+	PATH="${FAKE_BIN}:$PATH" _run_project_validators 0
+) >/dev/null 2>"${TEST_ROOT}/invalid-timeout.log"
+case_invalid_rc=$?
+if [[ "$case_invalid_rc" -ne 0 ]] && grep -q 'must be a positive integer' "${TEST_ROOT}/invalid-timeout.log"; then
+	print_result "invalid project timeout fails clearly" 0
+else
+	print_result "invalid project timeout fails clearly" 1 "rc=${case_invalid_rc}"
+fi
+rm "$TIMEOUT_REPO/.aidevops.json"
+(
+	cd "$TIMEOUT_REPO" || exit 1
+	timeout_sec() { [[ "$1" == 420 ]] || return 1; shift; "$@"; }
+	PATH="${FAKE_BIN}:$PATH" AIDEVOPS_VALIDATOR_TIMEOUT=420 _run_project_validators 0
+) >/dev/null 2>"${TEST_ROOT}/env-timeout.log"
+case_env_rc=$?
+(
+	cd "$TIMEOUT_REPO" || exit 1
+	timeout_sec() { [[ "$1" == 300 ]] || return 1; shift; "$@"; }
+	PATH="${FAKE_BIN}:$PATH" _run_project_validators 0
+) >/dev/null 2>"${TEST_ROOT}/default-timeout.log"
+case_default_rc=$?
+if [[ "$case_env_rc" -eq 0 && "$case_default_rc" -eq 0 ]]; then
+	print_result "environment timeout and 300-second fallback" 0
+else
+	print_result "environment timeout and 300-second fallback" 1 "env=${case_env_rc} default=${case_default_rc}"
 fi
 
 # Case 7: a root/shared Node change visibly broadens to every declared workspace
@@ -482,6 +534,42 @@ if [[ "$case15_rc" -eq 0 && $(wc -l <"$NPM_CALL_LOG") -eq 3 ]] &&
 	print_result "pnpm manifest alone triggers shared package checks" 0
 else
 	print_result "pnpm manifest alone triggers shared package checks" 1 "rc=${case15_rc}"
+fi
+
+# A locked workspace in a fresh worktree installs once, then reuses its
+# installed lock marker. Install failures are environment failures, not tests.
+LOCK_REPO="${TEST_ROOT}/locked-workspace"
+make_repo "$LOCK_REPO"
+NPM_CALL_LOG="${TEST_ROOT}/npm-locked.log"
+export NPM_CALL_LOG NPM_FAKE_RC=0 NPM_INSTALL_FAIL=0
+(
+	cd "$LOCK_REPO" || exit 1
+	printf '%s\n' '{"lockfileVersion":3}' >package-lock.json
+	git add package-lock.json
+	git -c user.name='Test User' -c user.email='test@example.invalid' commit -qm 'add lockfile'
+	PATH="${FAKE_BIN}:$PATH" _run_project_validators 0 || exit 1
+	PATH="${FAKE_BIN}:$PATH" _run_project_validators 0
+)
+locked_rc=$?
+if [[ "$locked_rc" -eq 0 && $(grep -c '|ci --ignore-scripts --no-audit --no-fund' "$NPM_CALL_LOG") -eq 1 &&
+	$(grep -c '|run typecheck' "$NPM_CALL_LOG") -eq 2 ]]; then
+	print_result "locked worktree installs once before checks" 0
+else
+	print_result "locked worktree installs once before checks" 1 "rc=${locked_rc}"
+fi
+rm -rf "$LOCK_REPO/node_modules"
+NPM_CALL_LOG="${TEST_ROOT}/npm-install-failure.log"
+export NPM_CALL_LOG NPM_INSTALL_FAIL=1
+(
+	cd "$LOCK_REPO" || exit 1
+	PATH="${FAKE_BIN}:$PATH" _run_project_validators 0
+) 2>"${TEST_ROOT}/install-error.log"
+install_rc=$?
+if [[ "$install_rc" -ne 0 && $(wc -l <"$NPM_CALL_LOG") -eq 1 ]] &&
+	grep -q 'ENVIRONMENT FAILURE (exit 42): npm ci' "${TEST_ROOT}/install-error.log"; then
+	print_result "install failure is classified as environment failure" 0
+else
+	print_result "install failure is classified as environment failure" 1 "rc=${install_rc}"
 fi
 
 printf '\n%d tests run, %d failed\n' "$TESTS_RUN" "$TESTS_FAILED"

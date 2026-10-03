@@ -24,7 +24,6 @@ tools:
 |---------|---------|------|
 | [Hostinger](https://www.hostinger.com/) | [hpanel.hostinger.com](https://hpanel.hostinger.com/) | [developers.hostinger.com](https://developers.hostinger.com/) |
 | [Hetzner Cloud](https://www.hetzner.com/cloud) | [console.hetzner.cloud](https://console.hetzner.cloud/) | [docs.hetzner.com/cloud](https://docs.hetzner.com/cloud) |
-| [Closte (legacy)](https://closte.com/) | [app.closte.com](https://app.closte.com/) | [docs.closte.com](https://docs.closte.com/) |
 | [Coolify](https://coolify.io/) | [app.coolify.io](https://app.coolify.io/) | [coolify.io/docs](https://coolify.io/docs) |
 | [Cloudron](https://www.cloudron.io/) | [marketplace.cloudron.io](https://marketplace.cloudron.io/) | [docs.cloudron.io](https://docs.cloudron.io/) |
 | [AWS](https://aws.amazon.com/) | [console.aws.amazon.com](https://console.aws.amazon.com/) | [docs.aws.amazon.com](https://docs.aws.amazon.com/) |
@@ -89,8 +88,6 @@ tools:
 | [OpenAI](https://openai.com/) | [platform.openai.com/playground](https://platform.openai.com/playground) | [platform.openai.com/docs](https://platform.openai.com/docs) |
 | [AmpCode](https://ampcode.com/) | [ampcode.com](https://ampcode.com/) | [docs.ampcode.com](https://docs.ampcode.com/) |
 | [Continue.dev](https://continue.dev/) | [continue.dev](https://continue.dev/) | [docs.continue.dev](https://docs.continue.dev/) |
-| [DSPy](https://dspy.ai/) | [dspy.ai](https://dspy.ai/) | [dspy.ai/learn](https://dspy.ai/learn/) |
-| [DSPyGround](https://dspyground.com/) | [playground.dspyground.com](https://playground.dspyground.com/) | [docs.dspyground.com](https://docs.dspyground.com/) |
 
 ## MCP Integrations
 

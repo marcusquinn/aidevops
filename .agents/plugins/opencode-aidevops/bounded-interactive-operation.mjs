@@ -3,7 +3,7 @@
 
 import { randomBytes } from "node:crypto";
 import { realpathSync } from "node:fs";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -29,6 +29,7 @@ import {
   operationStatusVersion,
 } from "./bounded-operation-access.mjs";
 import { resolveSessionOwnedWorktreeRoot } from "./gpt-image-worktree.mjs";
+import { defaultSecretValueRedactor } from "./registered-value-redaction.mjs";
 
 const MAX_OPERATIONS = 24;
 const SUPERVISOR_PATH = fileURLToPath(new URL("./bounded-operation-supervisor.mjs", import.meta.url));
@@ -37,12 +38,19 @@ const SUPERVISOR_RUNTIME = "node";
 export class BoundedInteractiveOperationManager {
   constructor(options = {}) {
     this.projectRoot = realpathSync(options.projectRoot || process.cwd());
+    try {
+      this.projectIsGit = execFileSync("git", ["-C", this.projectRoot, "rev-parse", "--is-inside-work-tree"],
+        { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 5_000 }).trim() === "true";
+    } catch {
+      this.projectIsGit = false;
+    }
     this.scriptsDir = options.scriptsDir;
     this.worktreeResolver = options.resolveWorktreeRoot || resolveSessionOwnedWorktreeRoot;
     this.spawn = options.spawn || spawn;
     this.now = options.now || Date.now;
     this.makeID = options.makeID || (() => `op_${this.now()}_${randomBytes(6).toString("hex")}`);
     this.recordOutput = options.recordOutput || (async () => "");
+    this.secretRedactor = options.secretRedactor || defaultSecretValueRedactor();
     this.readOutput = options.readOutput || (async () => {
       throw new Error("stored output retrieval is unavailable");
     });
@@ -56,8 +64,8 @@ export class BoundedInteractiveOperationManager {
 
   async resolveCwd(requested, context) {
     const cwd = realpathSync(requested || this.projectRoot);
-    if (withinRoot(cwd, this.projectRoot)) return cwd;
-    const resolved = await this.worktreeResolver(cwd, this.projectRoot, context, {
+    if (cwd === this.projectRoot || (this.projectIsGit && withinRoot(cwd, this.projectRoot))) return cwd;
+    const resolved = await this.worktreeResolver(requested, this.projectRoot, context, {
       allowStartupRoot: true,
       scriptsDir: this.scriptsDir,
       subject: "Operation",
@@ -250,7 +258,10 @@ export class BoundedInteractiveOperationManager {
     operation.state = "finalizing";
     this.notifyStatusWaiters(operation);
     try {
-      operation.outputID = await this.recordOutput(Buffer.concat(operation.output), {
+      // GH#32362: redact registered secret values from the complete capture
+      // before storage, so later offset/limit windows cannot split a value.
+      const captured = Buffer.concat(operation.output).toString("utf8");
+      operation.outputID = await this.recordOutput(this.secretRedactor.redactText(captured).text, {
         exitCode: operation.processExit,
         state: finalState,
       });

@@ -58,11 +58,33 @@ test_zero_worker_diagnostics_show_auth_and_launch_failure() {
 
 	local output
 	output=$(_gather_worker_zero_diagnostics 0 6 2 10 20 "low (8192MB free)")
-	if [[ "$output" == *"worker launch failure"* && "$output" == *"OpenAI: oauth"* && "$output" == *"Last Launch Failure"* ]]; then
-		print_result "zero-worker diagnostics include launch and auth signals" 0
+	if [[ "$output" == *"worker launch failure"* && "$output" == *"| Model access | available |"* && "$output" == *"launch validation failed for #1"* ]]; then
+		print_result "zero-worker diagnostics include launch and model-access signals" 0
+	else
+		print_result "zero-worker diagnostics include launch and model-access signals" 1 "$output"
+	fi
+
+	# GH#32730: public dashboards must not publish credential posture or raw
+	# telemetry records (models, providers, session/worker identifiers).
+	if [[ "$output" != *"OpenAI: oauth"* && "$output" != *"auth file"* && "$output" != *"openai/gpt-5.5"* && "$output" != *'"role":"worker"'* ]]; then
+		print_result "zero-worker diagnostics omit auth posture and raw telemetry" 0
+	else
+		print_result "zero-worker diagnostics omit auth posture and raw telemetry" 1 "$output"
+	fi
+	return 0
+}
+
+test_zero_worker_diagnostics_scope_to_dashboard_repo() {
+	printf '{"role":"worker","repo_slug":"owner/private","issue_number":7,"result":"blocked","ts":1790557720,"duration_ms":120000}\n{"role":"worker","repo_slug":"owner/repo","issue_number":5,"result":"post_pr_handoff","ts":1790557000,"duration_ms":600000,"session_id":"ses_secret"}\n' >"${HOME}/.aidevops/logs/headless-runtime-metrics.jsonl"
+	printf '[pulse-wrapper] Launch validation failed for issue #9 (owner/private) — no active worker process within 35s\n' >"$LOGFILE"
+
+	local output
+	output=$(_gather_worker_zero_diagnostics 0 6 2 10 20 "low (8192MB free)" "owner/repo")
+	if [[ "$output" == *"#5 · post_pr_handoff · 10m"* && "$output" != *"#7"* && "$output" != *"#9"* && "$output" != *"owner/private"* && "$output" != *"ses_secret"* ]]; then
+		print_result "zero-worker diagnostics scope evidence to the dashboard repository" 0
 		return 0
 	fi
-	print_result "zero-worker diagnostics include launch and auth signals" 1 "$output"
+	print_result "zero-worker diagnostics scope evidence to the dashboard repository" 1 "$output"
 	return 0
 }
 
@@ -80,6 +102,7 @@ test_nonzero_workers_skip_zero_diagnostics() {
 main() {
 	setup_test_env
 	test_zero_worker_diagnostics_show_auth_and_launch_failure
+	test_zero_worker_diagnostics_scope_to_dashboard_repo
 	test_nonzero_workers_skip_zero_diagnostics
 	teardown_test_env
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"

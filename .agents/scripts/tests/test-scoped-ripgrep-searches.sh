@@ -60,26 +60,6 @@ expected_related_files=$(printf '%s\n' \
 assert_eq "issue sync emits one clean line per explicit and discovered reference" \
 	"$expected_related_files" "$related_files"
 
-mkdir -p "$TEST_ROOT/home/.aidevops/logs" "$TEST_ROOT/mission"
-artifact="$TEST_ROOT/mission/helper[1].sh"
-printf '%s\n' '# helper[1].sh' >"$artifact"
-printf '%s\n' 'uses helper[1].sh' >"$TEST_ROOT/mission/one.md"
-printf '%s\n' 'uses helper[1].sh' >"$TEST_ROOT/mission/two.md"
-printf '%s\n' 'uses helper[1].sh' >"$TEST_ROOT/mission/three.md"
-mission_score=$(HOME="$TEST_ROOT/home" \
-	JSONC_DEFAULTS="$REPO_ROOT/.agents/configs/aidevops.defaults.jsonc" bash -c \
-	'source "$1"; _score_multi_feature_usage "$2" "$3"' _ \
-	"$REPO_ROOT/.agents/scripts/mission-skill-learner.sh" "$artifact" "$TEST_ROOT/mission")
-assert_eq "mission scoring uses fixed-string artifact references" "20" "$mission_score"
-
-unused_artifact="$TEST_ROOT/mission/unused[1].sh"
-printf '%s\n' '# no references' >"$unused_artifact"
-unused_score=$(HOME="$TEST_ROOT/home" \
-	JSONC_DEFAULTS="$REPO_ROOT/.agents/configs/aidevops.defaults.jsonc" bash -c \
-	'source "$1"; _score_multi_feature_usage "$2" "$3"' _ \
-	"$REPO_ROOT/.agents/scripts/mission-skill-learner.sh" "$unused_artifact" "$TEST_ROOT/mission")
-assert_eq "mission scoring handles a no-match rg result" "0" "$unused_score"
-
 mkdir -p "$TEST_ROOT/project/.github/workflows"
 printf '%s\n' 'steps:' '  - run: pnpm test' >"$TEST_ROOT/project/.github/workflows/test.yml"
 ci_result=$(bash -c 'source "$1"; discover_ci "$2"' _ \

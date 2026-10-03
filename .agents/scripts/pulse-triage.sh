@@ -95,6 +95,19 @@ _route_terminal_breaker_to_consolidation() {
 		return 1
 	fi
 
+	# Unlike the comment-count threshold for ordinary triage, a breaker only
+	# needs one real scope comment. An automation-only thread has nothing for
+	# a consolidation child to merge; keep the blocked escalation for review.
+	local comments_json="" substantive_json="" substantive_count=0
+	comments_json=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
+		--paginate --jq '.' 2>/dev/null) || return 1
+	substantive_json=$(_consolidation_filter_substantive_comments "$comments_json") || return 1
+	substantive_count=$(printf '%s' "$substantive_json" | jq -r 'length' 2>/dev/null) || return 1
+	if [[ "$substantive_count" -eq 0 ]]; then
+		echo "[pulse-wrapper] terminal breaker consolidation skipped: no substantive comments for #${issue_number} in ${repo_slug}" >>"$LOGFILE"
+		return 0
+	fi
+
 	echo "[pulse-wrapper] Routing terminal breaker to consolidation: #${issue_number} in ${repo_slug} source=${breaker_source} detail=${breaker_detail:-none}" >>"$LOGFILE"
 	if ! _dispatch_issue_consolidation "$issue_number" "$repo_slug" ""; then
 		echo "[pulse-wrapper] Terminal breaker consolidation failed for #${issue_number} in ${repo_slug} source=${breaker_source}" >>"$LOGFILE"
@@ -211,10 +224,20 @@ _issue_needs_consolidation() {
 # Reference pattern: `_issue_targets_large_files` at pulse-dispatch-core.sh:685-757
 # which creates file-size-debt child issues the same way.
 #######################################
+_consolidation_preflight_skip_outcome() {
+	local issue_number="$1" repo_slug="$2"
+	_consolidation_dispatch_preflight_skips "$issue_number" "$repo_slug" || return 1
+	_CONSOLIDATION_DISPATCH_OUTCOME="preflight_skipped"
+	return 0
+}
+
 _dispatch_issue_consolidation() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local repo_path="$3"
+	# GH#33306: lets _dispatch_dedup_scope_gates tell a pre-flight skip
+	# (no child will exist) apart from a created or in-flight child.
+	_CONSOLIDATION_DISPATCH_OUTCOME=""
 
 	# Re-check immediately before any visible consolidation mutation. This
 	# closes the classification-to-dispatch race when an interactive session
@@ -228,10 +251,7 @@ _dispatch_issue_consolidation() {
 	_ensure_consolidation_labels "$repo_slug"
 
 	# Resolve and in-flight-PR checks precede child/lock acquisition.
-	if _consolidation_dispatch_preflight_skips "$issue_number" "$repo_slug"; then
-		return 0
-	fi
-
+	_consolidation_preflight_skip_outcome "$issue_number" "$repo_slug" && return 0
 	# Dedup: child already exists (t2151: lock label also returns 0, blocking
 	# competing runners before they reach the acquire path).
 	if _consolidation_child_exists "$issue_number" "$repo_slug"; then

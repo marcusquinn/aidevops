@@ -204,6 +204,27 @@ Inspect recent events without exposing any other store:
 observability-helper.sh runtime-events 20
 ```
 
+### Rule-violation counts
+
+OpenCode TTSR emits one `rule.violation` runtime event per detected rule, with
+the rule ID in `subject_id`, `observation.count=1`, and the scan hook in `source`.
+Both `text.complete` and deduplicated `messages.transform` corrections emit
+evidence through the existing asynchronous, fail-open SQLite queue. Counts are
+scan detections, not distinct messages: the same output can be seen by both
+hooks. Assistant text, descriptions and corrections are not event payloads.
+
+```bash
+observability-helper.sh rule-violations 20
+```
+
+The report ranks rules in the active runtime-event store alongside
+`configs/prompt-hook-candidates.conf`. Registry sections use human-readable
+names, so the report does not infer a rule-ID mapping or promote candidates
+automatically. Counts cover retained events, not archived lifetime totals.
+Use them as evidence when deciding which prompt rules need deterministic hooks.
+Evidence-based tier step-down belongs to `model-ab-*.mjs` outcome data and
+`dispatch-tier-telemetry.jq`; the retired dormant hook is not reimplemented here.
+
 ### 2. OpenTelemetry spans (opt-in, opencode v1.4.7+)
 
 opencode emits OTLP spans for AI SDK calls, tool execution, and server

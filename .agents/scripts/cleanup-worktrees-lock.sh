@@ -65,21 +65,48 @@ _lock_finish_acquire() {
 }
 
 _lock_acquire() {
+	_LOCK_SKIP_REASON="Lock unavailable"
 	if mkdir "$LOCK_DIR" 2>/dev/null; then
 		_lock_finish_acquire
 		return $?
 	fi
+	local lock_pid=""
 	if [[ -f "$PID_FILE" ]]; then
-		local lock_pid=""
 		lock_pid=$(<"$PID_FILE")
-		if [[ -n "$lock_pid" ]] && ! _is_pid_alive "$lock_pid"; then
-			echo "[cleanup-worktrees] Reclaiming stale lock (PID ${lock_pid} no longer alive)" >>"$LOGFILE"
-			rm -rf "$LOCK_DIR" 2>/dev/null || true
-			if mkdir "$LOCK_DIR" 2>/dev/null; then
-				_lock_finish_acquire
-				return $?
-			fi
+	fi
+	if [[ "$lock_pid" =~ ^[1-9][0-9]*$ ]]; then
+		_LOCK_SKIP_REASON="Lock held by live instance (PID ${lock_pid})"
+		_is_pid_alive "$lock_pid" && return 1
+		echo "[cleanup-worktrees] Reclaiming stale lock (PID ${lock_pid} no longer alive)" >>"$LOGFILE"
+	else
+		local grace="${AIDEVOPS_LOCK_OWNERLESS_GRACE_SECONDS:-300}"
+		local mtime="" now="" age=""
+		[[ "$grace" =~ ^[0-9]+$ && ${#grace} -le 9 ]] || grace=300
+		_LOCK_SKIP_REASON="Ownerless lock age unavailable"
+		case "$(uname)" in
+		Darwin* | FreeBSD*)
+			mtime=$(stat -f %m "$LOCK_DIR" 2>/dev/null) || return 1
+			;;
+		*)
+			mtime=$(stat -c %Y "$LOCK_DIR" 2>/dev/null) || return 1
+			;;
+		esac
+		[[ "$mtime" =~ ^[0-9]+$ ]] || return 1
+		now=$(date +%s) || return 1
+		age=$((now - mtime))
+		_LOCK_SKIP_REASON="Young ownerless lock (age ${age}s, grace ${grace}s)"
+		((age > 10#$grace)) || return 1
+		# Re-read the owner: a live acquirer may have written it during stat.
+		if [[ -f "$PID_FILE" ]]; then
+			lock_pid=$(<"$PID_FILE")
+			[[ "$lock_pid" =~ ^[1-9][0-9]*$ ]] && return 1
 		fi
+		echo "[cleanup-worktrees] Reclaiming ownerless lock (age ${age}s)" >>"$LOGFILE"
+	fi
+	rm -rf "$LOCK_DIR" 2>/dev/null || true
+	if mkdir "$LOCK_DIR" 2>/dev/null; then
+		_lock_finish_acquire
+		return $?
 	fi
 	return 1
 }

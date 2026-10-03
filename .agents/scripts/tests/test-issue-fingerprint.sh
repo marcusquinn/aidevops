@@ -18,9 +18,15 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIB_FILE="${SCRIPT_DIR}/../lib/issue-fingerprint.sh"
+HELPER="${SCRIPT_DIR}/../log-issue-helper.sh"
 
 if [[ ! -f "$LIB_FILE" ]]; then
 	echo "FATAL: lib not found at ${LIB_FILE}" >&2
+	exit 1
+fi
+
+if [[ ! -f "$HELPER" ]]; then
+	echo "FATAL: helper not found at ${HELPER}" >&2
 	exit 1
 fi
 
@@ -206,6 +212,55 @@ fp10a=$(_compute_issue_fingerprint "$CANONICAL_TITLE" "$ISSUE_A_BODY")
 fp10b=$(_compute_issue_fingerprint "$CANONICAL_TITLE" "$ISSUE_B_BODY")
 [[ "$fp10a" == "$fp10b" ]] && ok=1 || ok=0
 check "$ok" "Test 10: canonical GH#21729/21730 scenario → same fingerprint" "got $fp10a vs $fp10b"
+
+# ============================================================
+# Test 11: CLI body-file and positional body forms interoperate
+# ============================================================
+TEST_ROOT=$(mktemp -d)
+trap 'rm -rf "$TEST_ROOT"' EXIT
+TEST_HOME="${TEST_ROOT}/home"
+BODY_FILE="${TEST_ROOT}/issue-body.md"
+mkdir -p "$TEST_HOME"
+printf '%s\n' "$BODY_CORE" >"$BODY_FILE"
+
+HOME="$TEST_HOME" bash "$HELPER" record-fingerprint "$TITLE" --body-file "$BODY_FILE" 32679 >/dev/null
+unset rc
+output=$(HOME="$TEST_HOME" bash "$HELPER" check-fingerprint "$TITLE" "$BODY_CORE" 2>&1) || rc=$?
+if [[ "${rc:-0}" -eq 1 && "$output" == DUPLICATE:32679:* ]]; then
+	check 1 "Test 11a: positional check detects a body-file record" ""
+else
+	check 0 "Test 11a: positional check detects a body-file record" "output: $output"
+fi
+
+HOME="$TEST_HOME" bash "$HELPER" record-fingerprint "$TITLE_DIFFERENT" "$BODY_CORE" 32680 >/dev/null
+unset rc
+output=$(HOME="$TEST_HOME" bash "$HELPER" check-fingerprint "$TITLE_DIFFERENT" --body-file "$BODY_FILE" 2>&1) || rc=$?
+if [[ "${rc:-0}" -eq 1 && "$output" == DUPLICATE:32680:* ]]; then
+	check 1 "Test 11b: body-file check detects a positional record" ""
+else
+	check 0 "Test 11b: body-file check detects a positional record" "output: $output"
+fi
+
+# ============================================================
+# Test 12: missing body files do not produce success or state
+# ============================================================
+MISSING_FILE="${TEST_ROOT}/missing-body.md"
+unset rc
+output=$(HOME="$TEST_HOME" bash "$HELPER" check-fingerprint "$TITLE" --body-file "$MISSING_FILE" 2>&1) || rc=$?
+if [[ "${rc:-0}" -ne 0 && "$output" != *"OK"* ]]; then
+	check 1 "Test 12a: missing body file rejects fingerprint checks" ""
+else
+	check 0 "Test 12a: missing body file rejects fingerprint checks" "output: $output"
+fi
+
+unset rc
+output=$(HOME="$TEST_HOME" bash "$HELPER" record-fingerprint "$TITLE" --body-file "$MISSING_FILE" 32681 2>&1) || rc=$?
+STATE_FILE="${TEST_HOME}/.aidevops/state/log-issue-fingerprints.jsonl"
+if [[ "${rc:-0}" -ne 0 && "$output" != *"OK"* ]] && ! grep -q '32681' "$STATE_FILE"; then
+	check 1 "Test 12b: missing body file does not record a fingerprint" ""
+else
+	check 0 "Test 12b: missing body file does not record a fingerprint" "output: $output"
+fi
 
 # ============================================================
 # Summary

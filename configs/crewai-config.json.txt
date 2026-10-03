@@ -35,7 +35,7 @@
       "anthropic": {
         "enabled": true,
         "api_key_env": "ANTHROPIC_API_KEY",
-        "default_model": "claude-sonnet-4-6"
+        "default_model": "claude-sonnet-5-5"
       },
       "ollama": {
         "enabled": true,

@@ -54,6 +54,7 @@ not depend on a user remembering to request learning or feedback capture.
 2. If it is clearly code work (`implement`, `fix`, `refactor`, `CI`), use Build+ or omit `--agent`.
 3. Resolve a narrow user-intent match through `reference/domain-index.md` before using a broad primary-agent trigger. Select knowledge without service probes for conceptual work; before provider-dependent execution, apply the Core rule readiness gate above. Execute only when every mandatory dimension is true and task authority permits it; otherwise use the reported fallback.
 4. If uncertain, default to Build+; it can load narrower docs on demand.
+   For a native macOS dialog or desktop app UI test, Build+ delegates a bounded task to `macos-automator`, which connects its scoped MCP on demand. On other platforms do not claim a local desktop automation capability.
 5. **Bundle-aware routing (t1364.6):** project bundles can define `agent_routing` overrides. Check with `bundle-helper.sh get agent_routing <repo-path>`. An explicit `--agent` flag wins.
 
 The selected agent changes the system prompt and domain knowledge loaded for the worker.
@@ -107,7 +108,8 @@ Expected parent-verifiable evidence is 2% versus 3%, a 1 percentage-point differ
 these counts alone do not establish causality. Host completion is not acceptance.
 Return missing evidence/capability as unavailable and cancellation as cancelled.
 Task results expose parent-owned `aidevopsObjective` metadata. At the actual
-contribution decision point the parent calls `aidevops_objective_receipt` with
+contribution decision point the parent calls `aidevops_objective_receipt`
+(OpenCode 1: through `aidevops_on_demand`) with
 accepted unchanged, accepted with repair, rejected, reused, or unknown; repair
 decisions include the repair contribution identity and observed intervention
 count. The tool may append a distinct objective outcome, but independently
@@ -124,8 +126,8 @@ and no parent transcript or repo content is loaded automatically. Supply any
 essential decisions or additional domain evidence in the envelope; if a required
 section is absent, use the focused role rather than claiming the light role read it.
 
-The exact parent model is inherited. Focused reasoning is capped at medium (low for
-simple requests), light reasoning at low, and both are clamped to the observed
+The exact parent model is inherited. Focused and light reasoning are capped at
+medium, and both are clamped to the observed
 parent variant. Unknown parent model/variant, changed model, missing source, source
 drift or malformed envelope fails closed. These are reasoning ceilings, not claims
 of exact token/cost caps. No provider fallback or escalation can enlarge the bound.
@@ -160,10 +162,19 @@ and estimate limitations live in `tools/context/model-routing.md`.
 ### Specialist advice before avoidable user decisions
 
 Start with the cheapest credible model and reasoning level, not the largest model
-associated with a domain label. The OpenAI daily driver and thinking route use GPT-6 Sol
-medium; simple and standard children use GPT-6 Luna low and GPT-5.6 Terra low. Pulse and worker
-parents can use the same advisory pattern as interactive parents without allowing
-children to recurse or expanding the worker's dispatched scope.
+associated with a domain label. Concrete models and reasoning levels per tier live
+in `configs/model-routing-table.json` (summary: `tools/context/model-routing.md`
+"Model Tiers"); do not restate them here. Pulse and worker parents can use the same
+advisory pattern as interactive parents without allowing children to recurse or
+expanding the worker's dispatched scope.
+
+Primary-session context size, not reasoning effort, dominates interactive cost:
+every parent request re-reads the cached conversation, and 14-day local telemetry
+(2026-09-27) attributed ~90% of estimated spend to primary sessions, with reasoning
+under 1% of tokens. Keep the parent lean: move output-heavy reads and searches into
+bounded children that return summaries, avoid re-reading large files, and
+checkpoint then compact or roll over at a natural pause rather than carrying a
+near-limit context through unrelated follow-up work.
 
 Use `specialist-advisor` (OpenCode native Task) only for a concrete capability gap,
 a genuinely difficult specialist decision, or an explicit request for escalation.
@@ -182,11 +193,12 @@ continues without interruption when the recommendation is safe, reversible and
 evidence-backed. Key the attempt by the unresolved decision and evidence so an
 unchanged retry cannot create a reasoning loop or duplicate user prompts.
 
-The separately configured `specialist_advisor` route defaults to Astra low. It is
+The separately configured `specialist_advisor` route (see the routing table) is
 not a fourth tier, not an availability fallback, and not an automatic continuation
-of a Sol session. `domain-focused` and `domain-light` still inherit the exact parent
-model and cannot be used to request Astra from Sol. `ai-research` accepts canonical
-tiers only, so `thinking` means Sol, not this specialist route.
+of the parent session. `domain-focused` and `domain-light` still inherit the exact
+parent model and cannot be used to request the specialist model. `ai-research`
+accepts canonical tiers only, so `thinking` means the thinking route, not this
+specialist route.
 
 Pass a JSON prompt (optionally prefixed `[effort:thinking]`):
 
@@ -207,8 +219,8 @@ proposal. The parent performs those operations using the actual domain tools.
 Validate once against the acceptance criteria and integrate the answer; do not
 automatically purchase another review. A tool error, missing source, authentication,
 rate limit, permission or privacy restriction requires repair of that cause, not
-a larger model. No automatic whole-session reasoning ladder is shipped for Sol or
-Astra. The imminent alternative of exporting a still-resolvable decision to the
+a larger model. No automatic whole-session reasoning ladder is shipped for the
+thinking or specialist routes. The imminent alternative of exporting a still-resolvable decision to the
 user is evidence for this one decision-only consultation; routine uncertainty is
 not. After a bounded unsuccessful attempt, retain the evidence and use the existing
 blocker or user-escalation path rather than recursively consulting another child.

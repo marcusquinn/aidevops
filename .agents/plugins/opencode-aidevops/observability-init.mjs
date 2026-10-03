@@ -97,6 +97,8 @@ CREATE TABLE IF NOT EXISTS llm_requests (
   routing_reason TEXT,
   routing_escalated INTEGER DEFAULT 0,
   routing_population TEXT,
+  ab_experiment TEXT,
+  ab_arm TEXT,
   aidevops_version TEXT,
   pricing_version TEXT,
   requested_effort TEXT,

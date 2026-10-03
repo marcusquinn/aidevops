@@ -40,6 +40,12 @@ get_max_workers_target() {
 	if [[ "$max_workers" -lt 1 ]]; then
 		max_workers=1
 	fi
+	# The file is only rewritten by the preflight_capacity stage. Clamp to the
+	# live ceiling so a lowered cap (config change, GH#32663 reset) applies to
+	# refill/drain dispatch before the next full preflight recomputes it.
+	if [[ "${MAX_WORKERS_CAP:-}" =~ ^[1-9][0-9]*$ ]] && ((max_workers > MAX_WORKERS_CAP)); then
+		max_workers="$MAX_WORKERS_CAP"
+	fi
 	echo "$max_workers"
 	return 0
 }
@@ -75,7 +81,7 @@ _pulse_capacity_selected_provider() {
 _pulse_capacity_provider_account_counts() {
 	local provider="$1"
 	local unavailable_counts='0 -1 0 0'
-	local pool_file="${PULSE_DISPATCH_OAUTH_POOL_FILE:-${HOME}/.aidevops/oauth-pool.json}"
+	local pool_file="${PULSE_DISPATCH_OAUTH_POOL_FILE:-${AIDEVOPS_OAUTH_POOL_FILE:-${HOME}/.aidevops/oauth-pool.json}}"
 	if [[ -z "$provider" || ! -f "$pool_file" ]] || ! command -v jq >/dev/null 2>&1; then
 		printf '%s\n' "$unavailable_counts"
 		return 0
@@ -145,6 +151,110 @@ _pulse_capacity_recent_health_counts() {
 	return 0
 }
 
+# The capacity caller runs in a command substitution, so cross-cycle health
+# must be persisted rather than returned through shell globals.
+_pulse_capacity_auth_error_state_dir() {
+	printf '%s/pulse-auth-error-recovery\n' "${AIDEVOPS_TEMP_DIR:-$HOME/.aidevops/.agent-workspace/tmp}"
+	return 0
+}
+
+_pulse_capacity_auth_error_only() {
+	local total="$1" available="$2" auth_errors="$3"
+	((total > 0 && available == 0 && auth_errors == total))
+}
+
+# Return success only when this invocation actually attempts a refresh.
+_pulse_capacity_auth_error_recovery() {
+	local provider="$1" total="$2" available="$3" auth_errors="$4"
+	[[ "$provider" =~ ^[a-zA-Z0-9_-]+$ ]] || return 1
+	_pulse_capacity_auth_error_only "$total" "$available" "$auth_errors" || return 1
+	local state_dir stamp lock now last=0 throttle="${PULSE_AUTH_ERROR_REFRESH_THROTTLE_SECONDS:-300}"
+	local pool_file="${PULSE_DISPATCH_OAUTH_POOL_FILE:-${AIDEVOPS_OAUTH_POOL_FILE:-$HOME/.aidevops/oauth-pool.json}}"
+	# An unexpired backoff is not an attempt: do not consume the throttle
+	# window before the pool's refresh eligibility can recover.
+	jq -e --arg provider "$provider" --argjson now "$(($(date +%s) * 1000))" \
+		'([.[$provider][]? | select(.status == "auth-error" and ((.cooldownUntil // 0 | tonumber? // 0) <= $now))] | length) > 0' \
+		"$pool_file" >/dev/null 2>&1 || return 1
+	state_dir=$(_pulse_capacity_auth_error_state_dir)
+	stamp="${state_dir}/${provider}.last-refresh"
+	lock="${state_dir}/${provider}.refresh-lock"
+	[[ "$throttle" =~ ^[0-9]+$ ]] || throttle=300
+	mkdir -p "$state_dir" 2>/dev/null || return 1
+	# Claim atomically across overlapping pulse invocations. A crashed claimant
+	# leaves a lock; fail closed instead of repeatedly contacting the endpoint.
+	mkdir "$lock" 2>/dev/null || return 1
+	now=$(date +%s)
+	if [[ -f "$stamp" ]]; then
+		IFS= read -r last <"$stamp" || true
+	fi
+	[[ "$last" =~ ^[0-9]+$ ]] || last=0
+	if ((now - last < throttle)); then
+		rmdir "$lock" 2>/dev/null || true
+		return 1
+	fi
+	if ! printf '%s\n' "$now" >"$stamp"; then
+		rmdir "$lock" 2>/dev/null || true
+		return 1
+	fi
+	rmdir "$lock" 2>/dev/null || true
+	local helper="${BASH_SOURCE[0]%/*}/oauth-pool-helper.sh"
+	# Refresh is serialized by the pool's own lock. Never let a token endpoint
+	# stall the dispatch cycle; the pool helper owns credential transitions.
+	if ! AIDEVOPS_OAUTH_POOL_FILE="$pool_file" timeout_sec 20 "$helper" refresh "$provider" >>"${LOGFILE:-/dev/null}" 2>&1; then
+		printf '[pulse-wrapper] auth-error refresh failed or timed out: provider=%s\n' "$provider" >>"${LOGFILE:-/dev/null}" 2>/dev/null || true
+	fi
+	return 0
+}
+
+_pulse_capacity_auth_error_cycles() {
+	local provider="$1" total="$2" available="$3" auth_errors="$4"
+	local state_dir stamp cycles=0 previous_cycle="" cycle_id="${_PULSE_CYCLE_ID:-}"
+	[[ "$provider" =~ ^[a-zA-Z0-9_-]+$ ]] || { printf '0\n'; return 0; }
+	state_dir=$(_pulse_capacity_auth_error_state_dir)
+	stamp="${state_dir}/${provider}.cycles"
+	if ! _pulse_capacity_auth_error_only "$total" "$available" "$auth_errors"; then
+		rm -f "$stamp"
+		printf '0\n'
+		return 0
+	fi
+	mkdir -p "$state_dir" 2>/dev/null || { printf '0\n'; return 0; }
+	if [[ -f "$stamp" ]]; then
+		read -r cycles previous_cycle <"$stamp" || true
+	fi
+	[[ "$cycles" =~ ^[0-9]+$ ]] || cycles=0
+	if [[ -z "$cycle_id" || "$previous_cycle" != "$cycle_id" ]]; then
+		cycles=$((cycles + 1))
+	fi
+	printf '%s %s\n' "$cycles" "$cycle_id" >"$stamp" || true
+	printf '%s\n' "$cycles"
+	return 0
+}
+
+_pulse_capacity_account_multiplier() {
+	local multiplier="${PULSE_PROVIDER_ACCOUNT_SLOT_MULTIPLIER:-}" source="env:PULSE_PROVIDER_ACCOUNT_SLOT_MULTIPLIER"
+	if [[ -z "$multiplier" ]] && declare -F config_get >/dev/null 2>&1; then
+		multiplier=$(config_get "orchestration.provider_account_slot_multiplier" "24")
+		source="config:orchestration.provider_account_slot_multiplier"
+	elif [[ -z "$multiplier" ]]; then
+		source="default:24"
+	fi
+	[[ "$multiplier" =~ ^[0-9]+$ ]] || multiplier=24
+	((multiplier < 1)) && multiplier=1
+	printf '%s %s\n' "$multiplier" "$source"
+	return 0
+}
+
+_pulse_capacity_emit_gauges() {
+	local available="$1" failures="$2" final_max="$3"
+	if declare -F _dispatch_stats_gauge >/dev/null 2>&1; then
+		_dispatch_stats_gauge "dispatch_capacity_provider_accounts_available" "$((available < 0 ? 0 : available))"
+		_dispatch_stats_gauge "dispatch_capacity_recent_failures" "$failures"
+		_dispatch_stats_gauge "dispatch_capacity_recent_worker_terminal_failures" "$failures"
+		_dispatch_stats_gauge "dispatch_capacity_final_max_workers" "$final_max"
+	fi
+	return 0
+}
+
 #######################################
 # Apply a provider/account/terminal-health-aware cap to the raw dispatch target.
 # The historical function name remains for sourced-call compatibility; host
@@ -170,6 +280,11 @@ pulse_apply_provider_load_capacity_cap() {
 	[[ "$account_available" =~ ^-?[0-9]+$ ]] || account_available=-1
 	[[ "$account_limited" =~ ^[0-9]+$ ]] || account_limited=0
 	[[ "$account_auth_errors" =~ ^[0-9]+$ ]] || account_auth_errors=0
+	if _pulse_capacity_auth_error_recovery "$provider" "$account_total" "$account_available" "$account_auth_errors"; then
+		read -r account_total account_available account_limited account_auth_errors <<<"$(_pulse_capacity_provider_account_counts "$provider")"
+	fi
+	local auth_error_only_cycles
+	auth_error_only_cycles=$(_pulse_capacity_auth_error_cycles "$provider" "$account_total" "$account_available" "$account_auth_errors")
 
 	local failures="" rate_limits="" service_interruptions="" provider_5xx="" progress_heartbeats=""
 	read -r failures rate_limits service_interruptions provider_5xx progress_heartbeats <<<"$(_pulse_capacity_recent_health_counts)"
@@ -179,15 +294,8 @@ pulse_apply_provider_load_capacity_cap() {
 	[[ "$provider_5xx" =~ ^[0-9]+$ ]] || provider_5xx=0
 	[[ "$progress_heartbeats" =~ ^[0-9]+$ ]] || progress_heartbeats=0
 
-	local account_multiplier="${PULSE_PROVIDER_ACCOUNT_SLOT_MULTIPLIER:-}" account_multiplier_source="env:PULSE_PROVIDER_ACCOUNT_SLOT_MULTIPLIER"
-	if [[ -z "$account_multiplier" ]] && declare -F config_get >/dev/null 2>&1; then
-		account_multiplier=$(config_get "orchestration.provider_account_slot_multiplier" "24")
-		account_multiplier_source="config:orchestration.provider_account_slot_multiplier"
-	elif [[ -z "$account_multiplier" ]]; then
-		account_multiplier_source="default:24"
-	fi
-	[[ "$account_multiplier" =~ ^[0-9]+$ ]] || account_multiplier=24
-	((account_multiplier < 1)) && account_multiplier=1
+	local account_multiplier="" account_multiplier_source=""
+	read -r account_multiplier account_multiplier_source <<<"$(_pulse_capacity_account_multiplier)"
 	local account_cap=-1
 	if ((account_available >= 0)); then
 		account_cap=$((account_available * account_multiplier))
@@ -230,16 +338,11 @@ pulse_apply_provider_load_capacity_cap() {
 		floor_active=0
 	fi
 
-	if declare -F _dispatch_stats_gauge >/dev/null 2>&1; then
-		_dispatch_stats_gauge "dispatch_capacity_provider_accounts_available" "$((account_available < 0 ? 0 : account_available))"
-		_dispatch_stats_gauge "dispatch_capacity_recent_failures" "$failures"
-		_dispatch_stats_gauge "dispatch_capacity_recent_worker_terminal_failures" "$failures"
-		_dispatch_stats_gauge "dispatch_capacity_final_max_workers" "$final_max"
-	fi
+	_pulse_capacity_emit_gauges "$account_available" "$failures" "$final_max"
 	local health_window_seconds="${PULSE_DISPATCH_CAPACITY_HEALTH_WINDOW_SECONDS:-900}"
 	[[ "$health_window_seconds" =~ ^[0-9]+$ ]] || health_window_seconds=900
-	printf '[pulse-wrapper] Dispatch_capacity: capacity_unit=simultaneous_workers simultaneous_target_raw=%s simultaneous_target_final=%s active_workers=%s provider=%s provider_accounts_total=%s provider_accounts_available=%s account_cap=%s provider_account_slot_multiplier=%s provider_account_slot_multiplier_source=%s override_hint="lower orchestration.provider_account_slot_multiplier or PULSE_PROVIDER_ACCOUNT_SLOT_MULTIPLIER if provider plan cannot sustain this concurrency" rate_limited_accounts=%s auth_error_accounts=%s worker_terminal_failures=%s rate_limits=%s service_interruptions=%s provider_5xx=%s worker_progress_heartbeats=%s failure_observation_window_seconds=%s task_duration_limit=none min_floor=%s floor_allowed=%s floor_active=%s\n' \
-		"$raw_max_workers" "$final_max" "$active_workers" "${provider:-unknown}" "$account_total" "$account_available" "$account_cap" "$account_multiplier" "$account_multiplier_source" "$account_limited" "$account_auth_errors" "$failures" "$rate_limits" "$service_interruptions" "$provider_5xx" "$progress_heartbeats" "$health_window_seconds" "$min_worker_floor" "$floor_allowed" "$floor_active" >>"${LOGFILE:-/dev/null}" 2>/dev/null || true
+	printf '[pulse-wrapper] Dispatch_capacity: capacity_unit=simultaneous_workers simultaneous_target_raw=%s simultaneous_target_final=%s active_workers=%s provider=%s provider_accounts_total=%s provider_accounts_available=%s account_cap=%s provider_account_slot_multiplier=%s provider_account_slot_multiplier_source=%s override_hint="lower orchestration.provider_account_slot_multiplier or PULSE_PROVIDER_ACCOUNT_SLOT_MULTIPLIER if provider plan cannot sustain this concurrency" rate_limited_accounts=%s auth_error_accounts=%s worker_terminal_failures=%s rate_limits=%s service_interruptions=%s provider_5xx=%s worker_progress_heartbeats=%s failure_observation_window_seconds=%s task_duration_limit=none min_floor=%s floor_allowed=%s floor_active=%s auth_error_only_cycles=%s\n' \
+		"$raw_max_workers" "$final_max" "$active_workers" "${provider:-unknown}" "$account_total" "$account_available" "$account_cap" "$account_multiplier" "$account_multiplier_source" "$account_limited" "$account_auth_errors" "$failures" "$rate_limits" "$service_interruptions" "$provider_5xx" "$progress_heartbeats" "$health_window_seconds" "$min_worker_floor" "$floor_allowed" "$floor_active" "$auth_error_only_cycles" >>"${LOGFILE:-/dev/null}" 2>/dev/null || true
 	printf '%s %s\n' "$final_max" "$floor_active"
 	return 0
 }

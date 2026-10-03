@@ -10,23 +10,90 @@ when their trigger applies; never remove them merely to meet a token target.
 
 ## OpenCode loading contract
 
-- `context-catalogue.mjs` shares the identical explicit-request trigger for
-  generated aidevops command-skill wrappers. Every name and source location stays
-  advertised; full skill bodies, discovery and invocation permissions are unchanged.
-  Specialist descriptions, custom triggers, extra metadata and unknown formats
-  stay verbatim. This is deterministic lossless metadata factoring, not a keyword
-  classifier deciding which guidance an agent deserves to see.
+- `context-catalogue.mjs` lists generated aidevops command-skill wrappers
+  (exact description `Run the aidevops X workflow when explicitly requested.`)
+  once by name under one shared trigger; an OpenCode 2 `<id>` that differs from
+  the name is kept inline. Full skill bodies, discovery and invocation permissions
+  are unchanged. Specialist descriptions, custom triggers, extra metadata,
+  non-standard locations and unknown formats stay verbatim. This is deterministic
+  lossless factoring, not a keyword classifier deciding which guidance is shown.
 - Only separately supplied `Instructions from:` system blocks with byte-identical
   bodies share an already loaded copy. Differing scoped instructions remain intact,
   including whitespace differences. Provenance and applicability remain explicit.
-  Native Read reminders are not stripped; their ordering relative to plugin hooks
-  is a separate runtime boundary. No stored conversation history is rewritten.
-- OpenAI/non-Anthropic one-shot startup guidance follows the durable system prefix.
-  The greeting text, authority and root-session-only gate are unchanged. Anthropic
-  compatibility ordering is deliberately untouched.
+- OpenCode 1 Read reminders: `instruction-reminders.mjs` replaces a nearby
+  instruction document in Read output only when its file bytes equal an
+  instruction file already in the session system prompt (for example the repo
+  `.agents/AGENTS.md` copy of the deployed guide). It runs once in
+  `tool.execute.after`, before storage, so replayed history stays byte-stable;
+  host `metadata.loaded` dedupe is untouched. OpenCode 2 publishes nearby
+  instructions as a separate synthetic message and is not rewritten.
+- The plugin session greeting is on by default in OpenCode 1 and 2
+  (`AIDEVOPS_PLUGIN_SESSION_GREETING=1|0` forces it on or off). Versions are
+  resolved by the plugin (OpenCode 1: the detected CLI version; OpenCode 2: the
+  service version), so the model needs no VERSION/cache reads. The shared
+  root-session gate keeps the identical block on every request of an
+  interactive root session (stable prefix) and omits it for child and headless
+  sessions. While enabled, the plugin removes the marker-delimited greeting
+  fallback of the generated OpenCode 1 config AGENTS.md
+  (`<!-- aidevops:greeting-fallback:start/end -->`, written by
+  `generate-runtime-config-agents.sh`); with the plugin greeting disabled or
+  absent, that fallback greets as before. The block is appended after durable
+  guidance for every provider. The system
+  transform mutates the host array in place so its blocks reach OpenCode 1 as
+  well as OpenCode 2. Anthropic OAuth keeps the billing header and the exact
+  Claude Code identity block in `system`; provider auth redistributes all other
+  system text into the first user message.
+- Per-tool `agent__intent` schemas carry only a pointer description; the full
+  rule is the `## Intent Tracing (observability)` system instruction.
+- OpenCode 1 sends every tool schema on every request, so rarely used plugin
+  tools (`gpt_image_generate`, `model-accounts-pool`,
+  `aidevops_objective_receipt`) sit behind `aidevops_on_demand`
+  (`on-demand-tools.mjs`): one-line signatures in its description, full schema
+  on omitted or invalid `args`. Per-agent gated (`aidevops_mcp`) and frequently
+  used tools stay direct. OpenCode 2 already defers plugin tools into its Code
+  Mode catalogue, so it registers them directly. Project-local `.opencode/tool`
+  descriptions load in every session within this repository; keep them compact.
+- Legacy `~/AGENTS.md` and `~/Git/AGENTS.md` templates are no longer deployed.
+  Setup moves byte-identical historical copies to
+  `~/.aidevops/config-backups/migrations/gh32592-agents-md/` (a home copy stays
+  while a runtime memory file still points at it); edited copies are kept.
+- Anthropic OAuth `cch` signing targets the billing header's own placeholder via
+  a random per-request sentinel, never the first placeholder in serialized
+  `messages`, so quoted history cannot change the cached prefix. System text
+  redistributed into the first user message keeps its `cache_control` marker
+  within the four-breakpoint limit.
 - Keep stable instruction/tool ordering. Do not add timestamps, per-request
   randomness, or quota state ahead of reusable guidance. Do not force cache
   retention parameters onto an OAuth endpoint without validating support.
+- The resolved greeting block is pinned per session (GH#32744): a deploy that
+  changes `VERSION` no longer rewrites the cached framework prefix of every
+  open session. Framework instruction files that a deploy actually changes still
+  do.
+- `cache-stability.mjs` fingerprints each Anthropic request per session, model,
+  and `family=<agent|aux>` (tool-bearing vs no-tool) and logs
+  `[aidevops] cache-stability: session=… family=… segment=<account|tools|system|thinking|prefix|history> …`
+  to the plugin log when a stable segment changes. History lines identify the
+  changed `block=`, `type=`, `change=`, and `chars=`; pruned tool results may add
+  an 80-character `now=` snippet. Read it with
+  `rg 'cache-stability' ~/.aidevops/logs/opencode-plugin.log` next to
+  `llm_requests` rows where `tokens_cache_read` dropped below the previous turn's
+  `tokens_cache_read + tokens_cache_write`. `tail=true` history changes are
+  expected synthetic advisories. `AIDEVOPS_CACHE_STABILITY_LOG=0` disables it.
+  Evaluate warm cache breaks with:
+
+  ```sql
+  with r as (
+    select session_id, timestamp, aidevops_version, tokens_input, tokens_cache_read, tokens_cache_write,
+           lag(timestamp) over (partition by session_id order by timestamp) as prev_ts
+    from llm_requests where provider_id = 'anthropic'
+  )
+  select aidevops_version, count(*) as requests, count(distinct session_id) as sessions,
+    sum(prev_ts is not null and (julianday(timestamp) - julianday(prev_ts)) * 86400 < 300
+        and tokens_cache_read = 0 and tokens_cache_write >= 10000) as warm_breaks,
+    round(100.0 * sum(tokens_cache_read) / nullif(sum(tokens_input + tokens_cache_write + tokens_cache_read), 0), 1) as hit_pct
+  from r group by aidevops_version order by min(timestamp);
+  ```
+
 - Successful verbose test/build receipts already use `output-compaction.mjs`.
   Do not discard failure diagnostics or blindly summarise source files. Read
   targeted ranges and load retained evidence when needed.
@@ -60,8 +127,10 @@ merely to verify this arithmetic.
 
 ## GPT-6 Sol and Luna compaction
 
-`gpt-6-sol`, `gpt-6-sol-fast`, `gpt-6-luna`, and `gpt-6-luna-fast` default to
-a 240,000-token usable-input target. Explicit per-model context/input limits
+`gpt-6.1-sol`, `gpt-6.1-sol-fast`, the superseded `gpt-6-sol` and
+`gpt-6-sol-fast`, `gpt-6-luna`, and `gpt-6-luna-fast` default to a
+240,000-token usable-input target (below the 272K short-context pricing
+boundary). Explicit per-model context/input limits
 take precedence unless `aidevops gpt6-context enable` forces the budget.
 `disable` leaves native provider metadata untouched rather than restoring a
 hard-coded snapshot. The saved `runtime.opencode.gpt6_context_cap` preference
@@ -78,17 +147,29 @@ config probe instead of synthetic paid long-context requests.
 
 ## Default budget across resolved models
 
-On the first request for each resolved model, the OpenCode request hook applies
-the same 240K usable-input ceiling to models with larger native windows, including
+On the first request for each resolved model, the OpenCode 1 request hook applies
+a 240K usable-input ceiling to models with larger native windows, including
 built-in and newly discovered provider models absent from the config hook's model
-list. It does not expand smaller windows, modify output limits or variants, or
-override explicit `provider.<name>.models.<id>.limit.context/input` entries.
+list. This includes native Anthropic Opus 5.5+, Fable 5.1+, and Sonnet 5+, which
+targeted 500K before GH#32807: a replay of 42 Opus 5.5 main sessions found 240K
+about 14% cheaper, because every turn re-reads the cached context and every pause
+over five minutes rewrites it. Haiku 4.5 is capped at its 200K physical context and targets
+180K usable input. When the output limit and compaction reserve require more
+than 20K headroom, the effective trigger is earlier (for a 32K output limit,
+no later than 168K before considering any extra reserve). The policy does not
+expand smaller windows, modify output limits or variants, or override explicit
+`provider.<name>.models.<id>.limit.context/input` entries.
 Existing GPT-5.6, Astra, and GPT-6 opt-outs/extended-target selections are
-respected. An explicit global `compaction.auto=false` is respected. The limit is
-applied to the resolved model used by OpenCode's subsequent overflow check; it
+respected. Native Anthropic Opus 4.7 retains a 200K usable-input reliability
+target (or its explicit `AIDEVOPS_OPUS_47_CONTEXT` override). An explicit global
+`compaction.auto=false` is respected. The limit is applied to the resolved
+model used by OpenCode's subsequent overflow check; it
 does not alter its model catalogue before the first request. A resumed session
 may require one request to register the budget before it can compact; restart
 OpenCode to load plugin changes. A completed response can exceed the budget.
+This request-time cap is implemented by the OpenCode 1 plugin; OpenCode 2
+uses a separate adapter and must be qualified independently before claiming
+the same compaction threshold.
 
 ## Efficiency scorecard
 

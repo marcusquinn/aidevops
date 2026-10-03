@@ -277,6 +277,36 @@ WRAPPER
 	return 0
 }
 
+test_signal_from_inactive_bundle_retains_trigger() {
+	reset_state
+	local active_agents="${TEST_ROOT}/active-bundle/agents"
+	local stale_agents="${TEST_ROOT}/stale-bundle/agents"
+	local stale_wrapper="${stale_agents}/scripts/pulse-wrapper.sh"
+	local wake_log="${TEST_ROOT}/inactive-bundle-wake.log"
+	mkdir -p "${active_agents}/scripts" "${stale_agents}/scripts"
+	: >"${active_agents}/.bundle-manifest"
+	: >"${stale_agents}/.bundle-manifest"
+	cat >"$stale_wrapper" <<'WRAPPER'
+#!/usr/bin/env bash
+# Supports --refill-only for the mixed-version compatibility probe.
+printf '%s\n' "$*" >>"$PULSE_EVENT_TEST_WAKE_LOG"
+rm -f "$PULSE_EVENT_REFILL_TRIGGER_FILE"
+WRAPPER
+	chmod +x "$stale_wrapper"
+	ln -s "$active_agents" "${HOME}/.aidevops/agents"
+	export PULSE_EVENT_TEST_WAKE_LOG="$wake_log"
+	PULSE_EVENT_REFILL_WRAPPER="$stale_wrapper"
+	pulse_event_refill_signal 551 5551
+	assert_file_exists "inactive bundle signal retains its trigger" "$PULSE_EVENT_REFILL_TRIGGER_FILE"
+	assert_file_absent "inactive bundle signal does not invoke its wrapper" "$wake_log"
+	if grep -q 'action=wake_skipped reason=inactive-bundle' "$LOGFILE"; then
+		pass "inactive bundle signal records the skipped wake"
+	else
+		fail "inactive bundle signal records the skipped wake" "inactive-bundle skip was not logged"
+	fi
+	return 0
+}
+
 test_stale_wake_lock_is_reclaimed() {
 	reset_state
 	local fake_wrapper="${TEST_ROOT}/fake-stale-wake-wrapper.sh"
@@ -313,6 +343,7 @@ main() {
 	test_processing_recovery_and_busy_lock
 	test_wrapper_refill_only_cli_short_circuit
 	test_signal_wake_coalesces_parallel_exits
+	test_signal_from_inactive_bundle_retains_trigger
 	test_stale_wake_lock_is_reclaimed
 	printf '\nTests run: %s, failed: %s\n' "$TESTS_RUN" "$TESTS_FAILED"
 	[[ "$TESTS_FAILED" -eq 0 ]]

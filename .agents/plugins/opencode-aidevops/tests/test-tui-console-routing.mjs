@@ -61,20 +61,12 @@ test("diagnostic rotation keeps a bounded set of process archives", () => {
 
 test("post-tool operation telemetry stays out of the TUI and is safely persisted", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "aidevops-tui-routing-"));
-  const trackerPath = join(tempDir, "pattern-tracker-helper.sh");
-  const capturePath = join(tempDir, "tracker-args.txt");
   const injectionMarker = join(tempDir, "must-not-exist");
-  const previousCapture = process.env.AIDEVOPS_TEST_PATTERN_CAPTURE;
   const originalConsoleError = console.error;
   const consoleCalls = [];
   const credential = `ghp_${"a".repeat(36)}`;
   const title = `git commit shellcheck \"$(touch ${injectionMarker})\"; headless-runtime-failure.sh\n${credential}\t${"x".repeat(600)}`;
 
-  writeFileSync(
-    trackerPath,
-    "#!/usr/bin/env bash\nprintf '%s\\n' \"$@\" > \"$AIDEVOPS_TEST_PATTERN_CAPTURE\"\n",
-  );
-  process.env.AIDEVOPS_TEST_PATTERN_CAPTURE = capturePath;
   console.error = (...args) => consoleCalls.push(args);
 
   try {
@@ -85,7 +77,6 @@ test("post-tool operation telemetry stays out of the TUI and is safely persisted
     );
 
     const qualityLog = readFileSync(join(tempDir, "quality-hooks.log"), "utf8");
-    const trackerArgs = readFileSync(capturePath, "utf8");
     assert.doesNotMatch(qualityLog, /ghp_|[\r\t]/);
     assert.match(qualityLog, /\[redacted-credential]/);
     assert.match(qualityLog, /Git operation:/);
@@ -94,13 +85,10 @@ test("post-tool operation telemetry stays out of the TUI and is safely persisted
       const payload = line.replace(/^.*(?:Git operation: |Lint run: )/, "").replace(/ — (?:PASS|issues found)$/, "");
       assert.ok(payload.length <= 500, `telemetry payload exceeded 500 characters: ${payload.length}`);
     }
-    assert.doesNotMatch(trackerArgs, /ghp_|[\r\t]/);
     assert.equal(existsSync(injectionMarker), false);
     assert.deepEqual(consoleCalls, []);
   } finally {
     console.error = originalConsoleError;
-    if (previousCapture === undefined) delete process.env.AIDEVOPS_TEST_PATTERN_CAPTURE;
-    else process.env.AIDEVOPS_TEST_PATTERN_CAPTURE = previousCapture;
     rmSync(tempDir, { recursive: true, force: true });
   }
 });

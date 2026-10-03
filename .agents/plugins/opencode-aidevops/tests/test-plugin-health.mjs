@@ -154,6 +154,7 @@ test("probe-only plugin factory registers config and terminal-title health", () 
   assert.deepEqual(gpt6.customized, []);
   assert.deepEqual(Object.keys(gpt6.models).sort(), [
     "gpt-6-luna", "gpt-6-luna-fast", "gpt-6-sol", "gpt-6-sol-fast",
+    "gpt-6.1-sol", "gpt-6.1-sol-fast",
   ].sort());
   for (const model of Object.values(gpt6.models)) {
     assert.equal(model.limits.input - model.reserve, 240000);

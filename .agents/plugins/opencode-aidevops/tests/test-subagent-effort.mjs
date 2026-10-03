@@ -89,7 +89,8 @@ test("focused and light domain captures deliver canonical knowledge with parent 
     assert.equal(output.parts[0].text, capture);
     const params = { options: { reasoning_effort: "max" } };
     await fixture.hooks.chatParams({ message: output.message, model: output.message.model }, params);
-    assert.deepEqual(params.options, { reasoning_effort: "low", reasoningEffort: "low" });
+    // A low parent ceiling is raised to the medium routing floor (GH#33342).
+    assert.deepEqual(params.options, { reasoning_effort: "medium", reasoningEffort: "medium" });
     assert.deepEqual(fixture.config.agent[name].tools, { "*": false });
     assert.deepEqual(fixture.config.agent[name].permission, { "*": "deny" });
   }
@@ -98,6 +99,17 @@ test("focused and light domain captures deliver canonical knowledge with parent 
   assert.ok(full.knowledge.length > light.knowledge.length);
   assert.equal(registerDelegatedDomainProfiles(fixture.config, fixture.root, fixture.state), 0);
   assert.equal(Object.keys(fixture.config.agent).length, 3);
+});
+
+test("domain-light uses medium under a high parent and never drops below the medium floor", async (t) => {
+  for (const [parent, expected] of [["high", "medium"], ["low", "medium"], ["minimal", "medium"]]) {
+    const fixture = domainFixture(t, parent);
+    const output = fixture.output("domain-light");
+    await fixture.hooks.chatMessage({}, output);
+    const params = { options: {} };
+    await fixture.hooks.chatParams({ message: output.message, model: output.message.model }, params);
+    assert.equal(params.options.reasoningEffort, expected);
+  }
 });
 
 test("domain registration preserves user profiles and isolates canonical source registries", (t) => {
@@ -392,6 +404,13 @@ test("task result carries parent-owned objective identity without inferred accep
     runID: "run:root",
   });
   assert.equal(Object.hasOwn(output.metadata.aidevopsObjective, "acceptance"), false);
+  assert.match(output.output, /\[AIDEvOps parent receipt\]/);
+  // V1 exposes the receipt tool through the on-demand dispatcher (GH#32592).
+  assert.match(output.output, /aidevops_on_demand tool=aidevops_objective_receipt args:/);
+  assert.match(output.output, /parent_session_id=parent/);
+  assert.match(output.output, /objective_id=objective:root/);
+  assert.match(output.output, /run_id=run:root/);
+  assert.match(output.output, /contribution_id=opencode-child:child-objective/);
 });
 
 test("only provider-neutral workload tiers are recognized", () => {
@@ -466,6 +485,49 @@ test("interactive routing selects an authenticated same-tier fallback", async ()
 
   await hooks.chatMessage({}, output);
   assert.deepEqual(output.message.model, { providerID: "anthropic", modelID: "sonnet" });
+});
+
+test("opted-in general child uses its stable arm and records the parent decision", async () => {
+  const { subagentArm } = await import("../subagent-ab.mjs");
+  const arms = ["openai", "anthropic"].map((name) => ({ name, tiers: {
+    simple: { model: `${name}/simple` },
+    standard: { model: `${name}/standard`, variant: "high" },
+    thinking: { model: `${name}/thinking` },
+  } }));
+  const trial = { id: "interactive", seed: "stable", arms,
+    starts_at: "2020-01-01T00:00:00Z", ends_at: "2099-01-01T00:00:00Z" };
+  const client = {
+    provider: { list: async () => ({ data: { connected: ["openai", "anthropic"],
+      all: ["openai", "anthropic"].map((id) => ({ id, models: {
+        simple: { id: "simple" }, standard: { id: "standard" },
+      } })),
+    } }) },
+    session: { get: async ({ path }) => ({ data: path.id === "parent"
+      ? { model: { providerID: "openai", modelID: "parent" }, variant: "low" }
+      : { id: path.id, parentID: "parent", agent: "general" } }) },
+  };
+  const base = { tiers: {
+    simple: { models: ["openai/simple"], reasoning: {} },
+    standard: { models: ["openai/standard"], reasoning: {} },
+    thinking: { models: ["openai/thinking"], reasoning: {} },
+  } };
+  const decisions = [];
+  const hooks = createSubagentEffortHooks(client, {
+    modelRouting: base, subagentTrial: trial,
+    agentRoutingState: { tiers: new Map(), pinned: new Set() },
+    onRoutingDecision: async (_id, decision) => decisions.push(decision),
+  });
+  const sessionID = "child-ab";
+  const arm = subagentArm(trial, sessionID);
+  const message = { sessionID, agent: "general" };
+  await hooks.chatMessage({}, { message, parts: [{ type: "text", text: "implement" }] });
+  assert.deepEqual(message.model, { providerID: arm.name, modelID: "standard" });
+  await hooks.chatParams({ message, model: { id: "standard", providerID: arm.name },
+    provider: { id: arm.name } }, { options: {} });
+  assert.equal(decisions[0].ab_experiment, trial.id);
+  assert.equal(decisions[0].ab_arm, arm.name);
+  assert.equal(decisions[0].resolvedVariant, "high");
+  assert.equal(subagentArm(trial, sessionID), arm);
 });
 
 test("an explicit thinking marker changes the actual child request model", async () => {
@@ -545,7 +607,7 @@ test("Playwright delegates browser work to Luna xhigh from a Sol parent", async 
   }, { options: {} }), /Browser child model changed/);
 });
 
-test("same-model Luna browser child is clamped to the parent effort", async () => {
+test("same-model Luna browser child is clamped to the parent effort but not below the floor", async () => {
   const client = {
     provider: { list: async () => ({ data: {
       connected: ["openai"],
@@ -567,23 +629,23 @@ test("same-model Luna browser child is clamped to the parent effort", async () =
   await hooks.chatMessage({}, { message, parts: [] });
   const params = { options: {} };
   await hooks.chatParams({ message, provider: { id: "openai" }, model: { id: "gpt-6-luna" } }, params);
-  assert.equal(params.options.reasoningEffort, "low");
+  assert.equal(params.options.reasoningEffort, "medium");
 });
 
 test("Playwright falls back to Sol medium, preserves its route, and respects pins", async () => {
   const client = {
     provider: { list: async () => ({ data: {
       connected: ["openai"],
-      all: [{ id: "openai", models: { "gpt-6-sol": { id: "gpt-6-sol" } } }],
+      all: [{ id: "openai", models: { "gpt-6.1-sol": { id: "gpt-6.1-sol" } } }],
     } }) },
     session: { get: async ({ path }) => ({ data: path.id === "parent"
-      ? { model: { providerID: "openai", modelID: "gpt-6-sol" }, variant: "medium" }
+      ? { model: { providerID: "openai", modelID: "gpt-6-luna" }, variant: "high" }
       : { id: "child", parentID: "parent" } }) },
   };
   const routing = { tiers: {
     simple: { models: ["openai/gpt-6-luna"] },
     standard: { models: ["openai/terra"] },
-    thinking: { models: ["openai/gpt-6-sol"] },
+    thinking: { models: ["openai/gpt-6.1-sol"] },
   } };
   const output = () => ({ message: { sessionID: "child", agent: "playwright" }, parts: [] });
   const hooks = createSubagentEffortHooks(client, {
@@ -592,12 +654,12 @@ test("Playwright falls back to Sol medium, preserves its route, and respects pin
   });
   const fallback = output();
   await hooks.chatMessage({}, fallback);
-  assert.deepEqual(fallback.message.model, { providerID: "openai", modelID: "gpt-6-sol" });
+  assert.deepEqual(fallback.message.model, { providerID: "openai", modelID: "gpt-6.1-sol" });
   const params = { options: {} };
-  await hooks.chatParams({ message: fallback.message, provider: { id: "openai" }, model: { id: "gpt-6-sol" } }, params);
+  await hooks.chatParams({ message: fallback.message, provider: { id: "openai" }, model: { id: "gpt-6.1-sol" } }, params);
   assert.equal(params.options.reasoningEffort, "medium");
   await hooks.chatMessage({}, fallback);
-  assert.deepEqual(fallback.message.model, { providerID: "openai", modelID: "gpt-6-sol" });
+  assert.deepEqual(fallback.message.model, { providerID: "openai", modelID: "gpt-6.1-sol" });
 
   const pinned = createSubagentEffortHooks(client, {
     modelRouting: routing,
@@ -726,7 +788,7 @@ test("OpenAI child effort is task-appropriate and clamped to parent", async () =
   assert.equal(output.options.reasoningEffort, "high");
 });
 
-test("simple child stays below a thinking parent", async () => {
+test("simple child stays below a thinking parent but at least at the floor", async () => {
   const client = {
     session: {
       get: async ({ path }) => ({
@@ -746,7 +808,8 @@ test("simple child stays below a thinking parent", async () => {
     message: { sessionID: "child", agent: "explore" },
   }, output);
 
-  assert.equal(output.options.reasoningEffort, "low");
+  // A custom low simple-tier entry is raised to the medium floor (GH#33342).
+  assert.equal(output.options.reasoningEffort, "medium");
 });
 
 test("primary and non-OpenAI sessions remain unchanged", async () => {

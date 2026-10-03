@@ -43,6 +43,8 @@ git log --oneline HEAD..origin/$(git branch --show-current) 2>/dev/null
 
 Inside an existing linked worktree, refresh and rebase before editing. From the canonical checkout, let `worktree-helper.sh add` refresh `origin/<default>` while creating the linked worktree. Preserve unrelated uncommitted work; never stash/reset/clean another session's changes.
 
+**Stale remote branches (GH#33381):** `full-loop-helper.sh commit-and-pr` classifies the remote branch before pushing. It overwrites only its own history, using a lease on the observed SHA. A diverged foreign branch, such as one left by a dead worker, stays untouched, and the work is published as `<branch>-rN`. A foreign branch backing an open PR is refused unless you pass `--replace-pr`. PR creation passes the exact pushed head as `--head`. If the push succeeds but PR creation fails, the helper prints one `PR_CREATE_NEXT=` retry command. Linked worktrees on a bare common Git directory report `CANONICAL_SYNC_NOT_APPLICABLE` instead of a sync failure.
+
 **Canonical synchronization after a merge (explicit authorization only):** direct `git pull`, `fetch`, reset, clean, and merge remain blocked in canonical checkouts. A full-loop request for a maintained non-aidevops repository authorizes synchronization of the merged PR base; a standalone request to update a canonical checkout has the same narrow scope. For a clean, non-diverged mirror, use:
 
 ```bash
@@ -219,9 +221,9 @@ Git is the audit trail. Procedures: see the "## AGENTS.md User Guide Git Workflo
 
 **Origin labelling (MANDATORY):**
 
-- In managed repos, never use raw `gh pr create` or `gh issue create` directly. Always use the wrappers: `gh_create_pr` and `gh_create_issue` (defined in `shared-constants.sh`, sourced via PATH). The wrappers automatically apply `origin:interactive` or `origin:worker` based on the session context. Raw `gh` calls produce unlabelled PRs that the pulse may auto-close.
-- In managed repos, if `gh_create_pr` is unavailable (e.g. not sourced), pass `--label origin:interactive` explicitly when creating PRs in an interactive session.
-- Where the runtime blocks `source` (OpenCode Bash policy), call the executable wrapper instead: `gh-write-helper.sh issue create|comment` / `gh-write-helper.sh pr create|comment` (see `reference/gh-command-discipline.md`).
+- In managed repos, never use raw `gh pr create` or `gh issue create` directly. Prefer the executable `gh-write-helper.sh issue create` / `gh-write-helper.sh pr create`; scripts that source `shared-gh-wrappers.sh` may call `gh_create_issue` / `gh_create_pr`. Both routes automatically apply `origin:interactive` or `origin:worker` and the signature footer based on session context. Adding an origin label manually is not a substitute for the wrapper.
+- In OpenCode or any runtime that cannot source shell functions, use a single-line argv command: `gh-write-helper.sh issue create --repo owner/repo --title 'Issue title' --body-file /absolute/path/brief.md --label bug --assignee @me`. Write the body file in a separate tool call first; use the installed executable path if it is not on PATH. No `bash -c`, shell variables, redirects, or caller-side `source` are needed.
+- Use `gh-write-helper.sh issue comment` / `gh-write-helper.sh pr comment` for comments and `gh-write-helper.sh pr create` for PRs with the same body-file pattern (see `reference/gh-command-discipline.md`). This helper uses existing `gh` authentication, not the optional legacy `github-cli-helper.sh` multi-account config. Use `claim-task-id.sh --brief-file` when creating a tracked task that also needs a task ID.
 
 **External upstream repos (non-maintainer etiquette):**
 

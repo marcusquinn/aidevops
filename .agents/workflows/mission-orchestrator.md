@@ -87,7 +87,7 @@ Budget check: if >=80% spent → pause and report.
 
 ### Phase 5: Complete
 
-All milestones `passed`: final smoke test → `status: completed` → retrospective (outcomes, budget, lessons) → skill scan (`mission-skill-learner.sh scan {dir}`, promote high-scoring artifacts) → commit, push.
+All milestones `passed`: final smoke test → `status: completed` → retrospective (outcomes, budget, lessons) → memory graduation (`workflows/graduate-memories.md`, promote high-confidence lessons) → commit, push.
 
 ## Self-Organisation
 
@@ -152,4 +152,4 @@ Primary repo holds the state file; workers target secondary repos via `--dir {pa
 
 ## Related
 
-`workflows/milestone-validation.md` · `workflows/browser-qa.md` · `scripts/commands/mission.md` · `scripts/commands/dashboard.md` · `scripts/commands/pulse.md` · `scripts/commands/full-loop.md` · `templates/mission-template.md` · `workflows/mission-skill-learning.md` · `reference/orchestration.md` · `scripts/budget-analysis-helper.sh` · `scripts/budget-tracker-helper.sh`
+`workflows/milestone-validation.md` · `workflows/browser-qa.md` · `scripts/commands/mission.md` · `scripts/commands/dashboard.md` · `scripts/commands/pulse.md` · `scripts/commands/full-loop.md` · `templates/mission-template.md` · `workflows/graduate-memories.md` · `reference/orchestration.md` · `scripts/budget-analysis-helper.sh` · `scripts/budget-tracker-helper.sh`

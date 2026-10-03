@@ -338,6 +338,26 @@ _ptsw_log_sweep_outcome() {
 	local identity="$3"
 	local detail="${4:-}"
 	local log_file="${WRAPPER_LOGFILE:-${LOGFILE:-/dev/null}}"
+	local dedup_dir=""
+	local dedup_file=""
+	local today=""
+
+	# Legacy-shape and invalid-candidate entries recur for each pulse while a
+	# retained workspace remains. Keep their diagnostic value without turning a
+	# persistent malformed workspace into an unbounded wrapper log.
+	case "$reason" in
+	legacy-shape-mismatch | invalid-candidate)
+		today=$(date -u '+%Y-%m-%d' 2>/dev/null) || today=""
+		dedup_dir="${AIDEVOPS_LOG_DIR:-${HOME:-}/.aidevops/logs}/todo-sync-stale-dedup"
+		dedup_file="${dedup_dir}/${reason}-${identity}"
+		if [[ -n "$today" ]] && mkdir -p "$dedup_dir" 2>/dev/null; then
+			if [[ -f "$dedup_file" ]] && IFS= read -r previous_day <"$dedup_file" && [[ "$previous_day" == "$today" ]]; then
+				return 0
+			fi
+			printf '%s\n' "$today" >"$dedup_file" 2>/dev/null || true
+		fi
+		;;
+	esac
 	printf '[pulse-wrapper] TODO ref sync stale cleanup outcome=%s reason=%s workspace=%s%s\n' \
 		"$outcome" "$reason" "$identity" "${detail:+ ${detail}}" >>"$log_file" 2>/dev/null || true
 	return 0

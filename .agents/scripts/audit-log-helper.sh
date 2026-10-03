@@ -9,7 +9,7 @@
 # hash of the previous entry, creating a chain. Modifying or deleting any
 # entry breaks the chain, making tampering detectable via `verify`.
 #
-# Event types (17 — must match AUDIT_EVENT_TYPES array below):
+# Event types (18 — must match AUDIT_EVENT_TYPES array below):
 #   worker.dispatch    — Worker spawned by pulse/supervisor
 #   worker.complete    — Worker finished (success or failure)
 #   worker.error       — Worker encountered an error
@@ -22,6 +22,7 @@
 #   security.scan      — Security scan performed
 #   operation.verify   — High-stakes operation verified
 #   operation.block    — High-stakes operation blocked
+#   local-branch-delete — Leased deletion of a merged local branch
 #   system.startup     — Framework startup
 #   system.update      — Framework update
 #   system.rotate      — Audit log rotation
@@ -86,6 +87,7 @@ readonly -a AUDIT_EVENT_TYPES=(
 	"security.scan"
 	"operation.verify"
 	"operation.block"
+	"local-branch-delete"
 	"system.startup"
 	"system.update"
 	"system.rotate"
@@ -1478,6 +1480,7 @@ Event types:
   security.scan       Security scan performed
   operation.verify    High-stakes operation verified
   operation.block     High-stakes operation blocked
+  local-branch-delete  Leased deletion of a merged local branch
   system.startup      Framework startup
   system.update       Framework update
   system.rotate       Audit log rotation

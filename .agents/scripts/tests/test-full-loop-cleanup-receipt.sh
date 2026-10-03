@@ -163,6 +163,45 @@ source "${SCRIPTS_DIR}/worktree-clean-lib.sh"
 _clean_deferred_parent_alive "${TEST_ROOT}/worktree-one"
 printf 'PASS guarded cleanup observes the external live-owner receipt\n'
 
+# GH#32528: live interactive owners must not pin merged worktrees forever.
+registry_row_count() {
+	local wt_path=""
+	wt_path=$(_wt_registry_lookup_path "$1")
+	sqlite3 "$WORKTREE_REGISTRY_DB" \
+		"SELECT COUNT(*) FROM worktree_owners WHERE worktree_path = '$(_wt_sql_escape "$wt_path")';"
+	return 0
+}
+cp "$receipt_one" "${TEST_ROOT}/receipt-live-owner.json"
+claim_worktree_ownership "${TEST_ROOT}/worktree-one" feature/one --owner-pid "$OWNER_PID" \
+	--session session-one --task post-merge-cleanup
+jq '.created_at = "2020-01-01T00:00:00Z"' "$receipt_one" >"${receipt_one}.tmp"
+mv "${receipt_one}.tmp" "$receipt_one"
+deferred_state=0
+_clean_deferred_parent_alive "${TEST_ROOT}/worktree-one" 2>/dev/null || deferred_state=$?
+[[ "$deferred_state" -eq 2 && "$(registry_row_count "${TEST_ROOT}/worktree-one")" == "0" ]]
+printf 'PASS aged live-owner lease expires and releases only its post-merge registry claim\n'
+
+cp "${TEST_ROOT}/receipt-live-owner.json" "$receipt_one"
+claim_worktree_ownership "${TEST_ROOT}/worktree-one" feature/one --owner-pid "$OWNER_PID" \
+	--session session-one --task post-merge-cleanup
+claim_worktree_ownership "${TEST_ROOT}/worktree-two" feature/two --owner-pid "$OWNER_PID" \
+	--session session-one --task next-task
+sqlite3 "$WORKTREE_REGISTRY_DB" "UPDATE worktree_owners SET created_at = '2099-01-01T00:00:00Z'
+	WHERE worktree_path = '$(_wt_sql_escape "$(_wt_registry_lookup_path "${TEST_ROOT}/worktree-two")")';"
+jq '.owner.session = "full-loop-lifecycle"' "$receipt_one" >"${receipt_one}.tmp"
+mv "${receipt_one}.tmp" "$receipt_one"
+_clean_deferred_parent_alive "${TEST_ROOT}/worktree-one"
+printf 'PASS generic shared session never infers that the owner moved on\n'
+
+cp "${TEST_ROOT}/receipt-live-owner.json" "$receipt_one"
+deferred_state=0
+_clean_deferred_parent_alive "${TEST_ROOT}/worktree-one" 2>/dev/null || deferred_state=$?
+[[ "$deferred_state" -eq 2 && "$(registry_row_count "${TEST_ROOT}/worktree-one")" == "0" ]]
+[[ "$(registry_row_count "${TEST_ROOT}/worktree-two")" == "1" ]]
+printf 'PASS newer claim by the same session expires the older post-merge lease\n'
+sqlite3 "$WORKTREE_REGISTRY_DB" "DELETE FROM worktree_owners;"
+cp "${TEST_ROOT}/receipt-live-owner.json" "$receipt_one"
+
 jq '.owner.process_identity = "different process generation"' "$receipt_one" >"${receipt_one}.tmp"
 mv "${receipt_one}.tmp" "$receipt_one"
 if full_loop_cleanup_owner_alive "$receipt_one"; then

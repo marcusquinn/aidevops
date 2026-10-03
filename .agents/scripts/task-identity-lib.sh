@@ -132,11 +132,13 @@ task_identity_ere() {
 
 # Extract the first complete canonical task ID from free text. A dot or an
 # alphanumeric character is not a token boundary because accepting one would
-# turn malformed or truncated IDs into valid shorter IDs. Hyphens and
-# underscores remain valid branch-name delimiters.
+# turn malformed or truncated IDs into valid shorter IDs. The exception is one
+# sentence-ending dot followed by end of text or a non-alphanumeric, non-dot
+# character ("into t112."), which is ordinary punctuation (GH#33183). Hyphens
+# and underscores remain valid branch-name delimiters.
 task_identity_extract_first() {
 	local text="${1:-}"
-	local boundary_ere="(^|[^[:alnum:].])(${TASK_IDENTITY_TOKEN_ERE})($|[^[:alnum:].])"
+	local boundary_ere="(^|[^[:alnum:].])(${TASK_IDENTITY_TOKEN_ERE})($|[^[:alnum:].]|\\.($|[^[:alnum:].]))"
 	local candidate=""
 
 	[[ "$text" =~ $boundary_ere ]] || return 1
@@ -149,7 +151,7 @@ task_identity_extract_first() {
 # Print every complete canonical task ID in encounter order.
 task_identity_extract_all() {
 	local remaining="${1:-}"
-	local boundary_ere="(^|[^[:alnum:].])(${TASK_IDENTITY_TOKEN_ERE})($|[^[:alnum:].])"
+	local boundary_ere="(^|[^[:alnum:].])(${TASK_IDENTITY_TOKEN_ERE})($|[^[:alnum:].]|\\.($|[^[:alnum:].]))"
 	local matched=""
 	local candidate=""
 
@@ -210,6 +212,12 @@ task_identity_has_malformed_candidate() {
 	while [[ "$remaining" =~ $candidate_ere ]]; do
 		matched="${BASH_REMATCH[0]}"
 		candidate="${BASH_REMATCH[2]}"
+		# The greedy continuation always stops before end of text or a
+		# non-alphanumeric, non-dot character, so one trailing dot is sentence
+		# punctuation. Inner and repeated dots (t7.0, t7.x, t7..) stay malformed.
+		if [[ "$candidate" == *. && "$candidate" != *.. ]]; then
+			candidate="${candidate%.}"
+		fi
 		if ! task_identity_validate "$candidate"; then
 			return 0
 		fi

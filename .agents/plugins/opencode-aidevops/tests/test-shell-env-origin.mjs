@@ -189,6 +189,17 @@ test("shell env records the effective model against only its session", async () 
   assert.equal(store.resolve("session-missing"), "");
 });
 
+test("shell env uses the latest remembered model when tool input omits it", async () => {
+  const store = createSessionModelStore();
+  const hook = makeHook();
+  store.remember("switched-session", "openai/first-model");
+  store.remember("switched-session", "anthropic/current-model");
+  const output = { env: { PATH: "/usr/bin:/bin" } };
+  await hook({ sessionID: "switched-session" }, output);
+  assert.equal(output.env.AIDEVOPS_SIG_MODEL, "anthropic/current-model");
+  assert.equal(output.env.OPENCODE_SESSION_ID, "switched-session");
+});
+
 test("session model store evicts old entries at its bound", () => {
   const store = createSessionModelStore(2);
   store.remember("session-a", "model-a");
@@ -263,6 +274,35 @@ test("headless shell preserves explicit worker lineage", async () => {
       if (saved[key] === undefined) delete process.env[key];
       else process.env[key] = saved[key];
     }
+  }
+});
+
+test("worker shell PATH re-applies the selected project Node bin (GH#33290)", async () => {
+  const root = mkdtempSync(join(tmpdir(), "aidevops-project-node-"));
+  const nodeBin = join(root, "node24", "bin");
+  mkdirSync(nodeBin, { recursive: true });
+  writeFileSync(join(nodeBin, "node"), "#!/bin/sh\n", { mode: 0o755 });
+  const saved = process.env.AIDEVOPS_PROJECT_NODE_BIN;
+  try {
+    process.env.AIDEVOPS_PROJECT_NODE_BIN = nodeBin;
+    const worker = { env: { PATH: `/opt/homebrew/bin:${nodeBin}:/usr/bin`, OPENCODE_HEADLESS: "true" } };
+    await makeHook()({ sessionID: "worker-session" }, worker);
+    assert.equal(worker.env.PATH, `${nodeBin}:/opt/homebrew/bin:/usr/bin`);
+
+    await withCleanHeadlessProcessEnv(async () => {
+      const interactive = { env: { PATH: "/opt/homebrew/bin:/usr/bin" } };
+      await makeHook()({ sessionID: "interactive-session" }, interactive);
+      assert.equal(interactive.env.PATH, "/opt/homebrew/bin:/usr/bin");
+    });
+
+    process.env.AIDEVOPS_PROJECT_NODE_BIN = join(root, "missing");
+    const invalid = { env: { PATH: "/opt/homebrew/bin:/usr/bin", OPENCODE_HEADLESS: "true" } };
+    await makeHook()({ sessionID: "worker-session" }, invalid);
+    assert.equal(invalid.env.PATH, "/opt/homebrew/bin:/usr/bin");
+  } finally {
+    if (saved === undefined) delete process.env.AIDEVOPS_PROJECT_NODE_BIN;
+    else process.env.AIDEVOPS_PROJECT_NODE_BIN = saved;
+    rmSync(root, { recursive: true, force: true });
   }
 });
 

@@ -200,6 +200,28 @@ test_infer_init_scope() {
 	result=$(_infer_init_scope "$test_dir3")
 	assert_equals "minimal" "$result" "Empty .aidevops.json plus no remote → minimal"
 
+	# A linked worktree must look up the canonical registration, not its own path.
+	local main_dir="$TEST_ROOT/canonical-repo" linked_dir="$TEST_ROOT/linked-repo"
+	mkdir -p "$main_dir"
+	git -C "$main_dir" init --quiet
+	git -C "$main_dir" -c user.name=Test -c user.email=test@example.invalid commit --quiet --allow-empty -m initial
+	git -C "$main_dir" worktree add --quiet -b linked "$linked_dir"
+	REPOS_FILE="$TEST_ROOT/repos.json"
+	jq -n --arg path "$main_dir" '{initialized_repos:[{path:$path,init_scope:"public"}]}' >"$REPOS_FILE"
+	result=$(_infer_init_scope "$linked_dir")
+	assert_equals "public" "$result" "Linked worktree respects canonical registration scope"
+	unset REPOS_FILE
+
+	# Stub only the GitHub visibility call; never depend on network in this test.
+	git -C "$test_dir2" remote add origin https://github.com/example/test-repo.git
+	gh() { [[ "$*" == *"test-repo"* ]] && printf 'PUBLIC\n' || printf 'PRIVATE\n'; }
+	result=$(_infer_init_scope "$test_dir2")
+	assert_equals "public" "$result" "Public GitHub remote infers public"
+	gh() { printf 'PRIVATE\n'; }
+	result=$(_infer_init_scope "$test_dir2")
+	assert_equals "standard" "$result" "Private GitHub remote remains standard"
+	unset -f gh
+
 	# Clean up
 	rm -rf "$TEST_ROOT"
 	TEST_ROOT=""

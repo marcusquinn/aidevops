@@ -69,6 +69,7 @@ tools:
   2. `agent-loader.mjs` `AGENT_MCP_TOOLS`: `"my-agent": ["foo_*"]`
   Then add `foo_*: true` to the agent's frontmatter `tools:` block for documentation.
 - **Source of truth**: `.agents/` → deployed to `~/.aidevops/agents/` by `setup.sh`. Stubs: `~/.config/opencode/agent/` via `generate-opencode-agents.sh`.
+- **OpenCode V1 and V2 parity**: Maintain the root agent source and `subagent-index.toon`, not a V2 copy. V1's config generator and V2's `v2-agent-profiles.mjs` consume those sources differently; when changing a primary agent's name, tools, or mode, verify both adapters and the parity test in `plugins/opencode-aidevops/tests/test-v2-agent-profiles.mjs`. See `tools/opencode/opencode.md` "Maintaining agent parity".
 - **Deployment sync**: changes in `.agents/` require `./setup.sh`. Offer to run on create/rename/move/merge/delete.
 
 ## Folder Organization
@@ -186,7 +187,7 @@ Verify the target through its delivered runtime context, applicable existing che
 | Search contents | `rg` | `mcp_grep` |
 | Read/Edit files | `mcp_read` / `mcp_edit` | `cat`/`sed` via bash |
 | Web content | `mcp_webfetch` | `curl` via bash |
-| Remote repo | `mcp_webfetch` README first | `npx repomix --remote` |
+| Remote repo | `gh api` README + tree first | Bulk-loading the whole repo |
 | Parallel AI dispatch | OpenCode server API | Multiple TUI instances |
 
 Self-checks: "Faster CLI alternative?" and "Could this return >50K tokens?" See `tools/context/context-guardrails.md`.

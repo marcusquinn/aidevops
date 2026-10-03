@@ -124,7 +124,6 @@ let results = items
 
 | Tool | Role |
 |------|------|
-| DSPy | Prompt optimization — optimized prompts work in agent definitions |
 | Context7 | Inject library docs into session context |
 | TOON | Token-efficient serialization (40-70% fewer tokens) — encode large context before passing between sessions |
 
@@ -165,4 +164,4 @@ if **any checks failed**:
 
 ## Related
 
-`overview.md` · `workflows/ralph-loop.md` · `scripts/commands/full-loop.md` · `tools/context/dspy.md` · `tools/context/toon.md` · [Repo](https://github.com/openprose/prose) · [Language Spec](https://github.com/openprose/prose/blob/main/skills/open-prose/docs.md) · [VM Semantics](https://github.com/openprose/prose/blob/main/skills/open-prose/prose.md) · [Examples](https://github.com/openprose/prose/tree/main/examples)
+`overview.md` · `scripts/commands/full-loop.md` · `tools/context/toon.md` · [Repo](https://github.com/openprose/prose) · [Language Spec](https://github.com/openprose/prose/blob/main/skills/open-prose/docs.md) · [VM Semantics](https://github.com/openprose/prose/blob/main/skills/open-prose/prose.md) · [Examples](https://github.com/openprose/prose/tree/main/examples)

@@ -1,333 +1,137 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
-# shellcheck disable=SC2034,SC2317
-
-# System Cleanup & Maintenance Script
+# Prune stale agent-workspace scratch, never session checkpoints or live leases.
+# Manual invocation is dry-run; pulse passes --force on its scheduled cycle.
 #
-# Performs garbage collection, removes cruft, and maintains system hygiene
-# for the AI DevOps Framework. Includes lock file protection and 90-day logging.
-#
-# Usage: ./system-cleanup.sh [--force] [--dry-run]
-#
-# Author: AI DevOps Framework
-# Version: 1.0.0
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
-source "${SCRIPT_DIR}/shared-constants.sh"
-
-# Strict mode
+# Options:
+#   --dry-run            Report eligible entries without moving them (default)
+#   --force              Move eligible entries to the trash
+#   --max-seconds N      Stop starting new work after N seconds (0 = unbounded).
+#                        The pulse passes a small budget so a large backlog is
+#                        drained across cycles instead of consuming the whole
+#                        preflight stage timeout (GH#32485 regression).
+#   --batch-size N       Paths per trash invocation (default 200). Spawning one
+#                        trash process per entry made 40k-entry backlogs take
+#                        hours; batching amortises the process and Finder cost.
 set -euo pipefail
 
-# Constants
-readonly SCRIPT_NAME="system-cleanup"
-# VERSION is kept for reference and future use
-readonly VERSION="1.0.0"
-readonly LOG_DIR="$HOME/.agents/logs"
-readonly LOG_FILE="${LOG_DIR}/operations.log"
-readonly LOCK_FILE="/tmp/aidevops-${SCRIPT_NAME}.lock"
-readonly TMP_DIR="$HOME/.agents/tmp"
-readonly AGENT_DIR="$HOME/.agents"
-readonly PROJECT_DIR="$HOME/git/aidevops"
-readonly RETENTION_DAYS_LOGS=90
-readonly RETENTION_DAYS_TMP=7
+_sc_log_dir=""
+_sc_trashed=0
 
-# Global state
-DRY_RUN=true
-
-# -----------------------------------------------------------------------------
-# Logging & Output
-# -----------------------------------------------------------------------------
-
-setup_logging() {
-	# Create log directory if it doesn't exist
-	if [[ ! -d "$LOG_DIR" ]]; then
-		mkdir -p "$LOG_DIR"
-	fi
-	return 0
-}
-
-log() {
-	local level="$1"
-	local message="$2"
-	local timestamp
-	timestamp=$(date "+%Y-%m-%dT%H:%M:%S%z")
-
-	# Console output
-	local color="$NC"
-	case "$level" in
-	"INFO") color="$GREEN" ;;
-	"WARN") color="$YELLOW" ;;
-	"ERROR") color="$RED" ;;
-	"DEBUG") color="$BLUE" ;;
-	*) color="$NC" ;;
-	esac
-
-	echo -e "${color}[${level}] ${message}${NC}"
-
-	# File output (append)
-	if [[ -d "$LOG_DIR" ]]; then
-		echo "${timestamp} [${level}] ${message}" >>"$LOG_FILE"
-	fi
-
-	return 0
-}
-
-rotate_logs() {
-	log "INFO" "Checking log retention policy (${RETENTION_DAYS_LOGS} days)..."
-
-	if [[ ! -f "$LOG_FILE" ]]; then
+# Move a batch of paths to the trash. Falls back to per-entry moves when a
+# batch fails so one unmovable entry cannot hide the rest.
+# Args: paths...
+_sc_trash_batch() {
+	local path=""
+	[[ $# -gt 0 ]] || return 0
+	if command -v trash >/dev/null 2>&1 && trash "$@" >/dev/null 2>&1; then
+		_sc_trashed=$((_sc_trashed + $#))
+		for path in "$@"; do
+			printf 'Trashed: %s\n' "$path" >>"$_sc_log_dir/system-cleanup.log"
+		done
 		return 0
 	fi
-
-	# Use a temporary file to filter logs
-	local temp_log="${LOG_FILE}.tmp"
-	local cutoff_date
-
-	# Calculate cutoff date timestamp for comparison (cross-platform compatible approximation)
-	# Note: Precise date math in bash across OS versions is tricky.
-	# Here we'll rely on finding lines that don't match old dates if possible,
-	# or simply use find to remove archived log files if we were rotating files.
-	# Since we are appending to a single file, we'll inspect the file content.
-
-	# For this implementation, we will archive the log file if it gets too large
-	# or just rely on the user to not have massive logs.
-	# A simpler robust approach for a single file is difficult without external tools.
-	# Let's stick to the requirement: "keeps 90 days of records".
-
-	# We will use a simple grep strategy assuming ISO dates: YYYY-MM-DD
-	# Current date minus 90 days
-	if date -v -90d >/dev/null 2>&1; then
-		# BSD/macOS date
-		cutoff_date=$(date -v -${RETENTION_DAYS_LOGS}d +%Y-%m-%d)
-	else
-		# GNU date
-		cutoff_date=$(date -d "${RETENTION_DAYS_LOGS} days ago" +%Y-%m-%d)
-	fi
-
-	log "DEBUG" "Pruning logs older than $cutoff_date"
-
-	# Filter the log file: Keep lines where date >= cutoff_date
-	# This is a string comparison which works for ISO 8601 dates
-	awk -v cutoff="$cutoff_date" '$1 >= cutoff' "$LOG_FILE" >"$temp_log"
-
-	mv "$temp_log" "$LOG_FILE"
-
-	return 0
-}
-
-# -----------------------------------------------------------------------------
-# Lock File Management
-# -----------------------------------------------------------------------------
-
-acquire_lock() {
-	if [[ -f "$LOCK_FILE" ]]; then
-		# Check if process is still running
-		local pid
-		pid=$(cat "$LOCK_FILE")
-		if ps -p "$pid" >/dev/null 2>&1; then
-			log "ERROR" "Script is already running (PID: $pid). Lock file exists at $LOCK_FILE"
-			return 1
-		else
-			log "WARN" "Found stale lock file from PID $pid. Removing..."
-			rm -f "$LOCK_FILE"
-		fi
-	fi
-
-	echo $$ >"$LOCK_FILE"
-	return 0
-}
-
-release_lock() {
-	if [[ -f "$LOCK_FILE" ]]; then
-		rm -f "$LOCK_FILE"
-	fi
-	return 0
-}
-
-cleanup_exit() {
-	local exit_code=$?
-	release_lock
-	if [[ $exit_code -eq 0 ]]; then
-		log "INFO" "Cleanup completed successfully"
-	else
-		log "ERROR" "Cleanup finished with error (Code: $exit_code)"
-	fi
-	exit "$exit_code"
-	return 0
-}
-
-# -----------------------------------------------------------------------------
-# Garbage Collection
-# -----------------------------------------------------------------------------
-
-cleanup_directory() {
-	local dir="$1"
-	local pattern="$2"
-	local days="${3:-0}" # 0 means ignore age
-	local desc="$4"
-
-	if [[ ! -d "$dir" ]]; then
-		log "DEBUG" "Directory not found, skipping: $dir"
+	if command -v gio >/dev/null 2>&1 && gio trash "$@" >/dev/null 2>&1; then
+		_sc_trashed=$((_sc_trashed + $#))
+		for path in "$@"; do
+			printf 'Trashed: %s\n' "$path" >>"$_sc_log_dir/system-cleanup.log"
+		done
 		return 0
 	fi
-
-	log "INFO" "Scanning $desc ($dir)..."
-
-	# Build find arguments as an array (safe, no eval needed)
-	local find_args=("$dir" "-name" "$pattern")
-
-	# Add depth limit to avoid scanning entire system if path is wrong
-	find_args+=("-maxdepth" "4")
-
-	# Add age filter if specified
-	if [[ "$days" -gt 0 ]]; then
-		find_args+=("-mtime" "+${days}")
+	if ! command -v trash >/dev/null 2>&1 && ! command -v gio >/dev/null 2>&1; then
+		printf 'No trash backend available; %s entries retained\n' "$#" >>"$_sc_log_dir/system-cleanup.log"
+		return 1
 	fi
-
-	# Exclude common directories
-	find_args+=("-not" "-path" "*/.git/*" "-not" "-path" "*/node_modules/*")
-
-	# Process matches — use process substitution to handle filenames with
-	# spaces, tabs, or other special characters safely. Process substitution
-	# (< <(...)) keeps the loop in the current shell so $count is accessible.
-	local count=0
-	while IFS= read -r file; do
-		if [[ -z "$file" ]]; then continue; fi
-
-		if [[ "$DRY_RUN" == "true" ]]; then
-			log "INFO" "[DRY-RUN] Would delete: $file"
+	# Batch failed with a backend present: retry individually so a single
+	# vanished or locked entry does not block its siblings.
+	for path in "$@"; do
+		[[ -e "$path" ]] || continue
+		if { command -v trash >/dev/null 2>&1 && trash "$path" >/dev/null 2>&1; } ||
+			{ command -v gio >/dev/null 2>&1 && gio trash "$path" >/dev/null 2>&1; }; then
+			_sc_trashed=$((_sc_trashed + 1))
+			printf 'Trashed: %s\n' "$path" >>"$_sc_log_dir/system-cleanup.log"
 		else
-			if rm -f "$file"; then
-				log "INFO" "Deleted: $file"
-			else
-				log "ERROR" "Failed to delete: $file"
-			fi
+			printf 'Trash move failed: %s\n' "$path" >>"$_sc_log_dir/system-cleanup.log"
 		fi
-		count=$((count + 1))
-	done < <(find "${find_args[@]}" 2>/dev/null)
-
-	if [[ "$count" -eq 0 ]]; then
-		log "DEBUG" "No matching files found for $desc"
-	else
-		log "INFO" "Processed $count files in $desc"
-	fi
-
-	return 0
-}
-
-cleanup_tmp_dir() {
-	# Special handling for tmp directory to clean everything older than X days
-	# Not just specific patterns
-
-	if [[ ! -d "$TMP_DIR" ]]; then return 0; fi
-
-	log "INFO" "Cleaning temporary directory ($TMP_DIR) - items older than $RETENTION_DAYS_TMP days..."
-
-	# Build find arguments as an array (safe, no eval needed)
-	# Using -mindepth 1 to not delete the dir itself
-	local find_args=("$TMP_DIR" "-mindepth" "1" "-mtime" "+${RETENTION_DAYS_TMP}")
-
-	# Exclude README.md
-	find_args+=("-not" "-name" "README.md")
-
-	# Process items — use process substitution to handle filenames with
-	# spaces, tabs, or other special characters safely.
-	local found=0
-	while IFS= read -r item; do
-		if [[ -z "$item" ]]; then continue; fi
-		found=1
-
-		if [[ "$DRY_RUN" == "true" ]]; then
-			log "INFO" "[DRY-RUN] Would delete: $item"
-		else
-			# Use rm -rf for directories
-			if rm -rf "$item"; then
-				log "INFO" "Deleted: $item"
-			else
-				log "ERROR" "Failed to delete: $item"
-			fi
-		fi
-	done < <(find "${find_args[@]}" 2>/dev/null)
-
-	if [[ "$found" -eq 0 ]]; then
-		log "DEBUG" "No old temporary items found"
-	fi
-
-	return 0
-}
-
-# -----------------------------------------------------------------------------
-# Main Execution
-# -----------------------------------------------------------------------------
-
-show_help() {
-	echo "Usage: $0 [options]"
-	echo
-	echo "Options:"
-	echo "  --force      Execute deletions (disable dry-run)"
-	echo "  --dry-run    Simulate deletions (default)"
-	echo "  --help       Show this help message"
-	echo
+	done
 	return 0
 }
 
 main() {
-	# Parse arguments
+	local dry_run_mode="dry-run"
+	local mode="$dry_run_mode" days="${AIDEVOPS_TMP_RETENTION_DAYS:-7}"
+	local root="${AIDEVOPS_TEMP_DIR:-${HOME:?}/.aidevops/.agent-workspace/tmp}"
+	local log_dir="${AIDEVOPS_LOG_DIR:-${HOME:?}/.aidevops/logs}"
+	local max_seconds="${AIDEVOPS_TMP_CLEANUP_MAX_SECONDS:-0}"
+	local batch_size="${AIDEVOPS_TMP_CLEANUP_BATCH_SIZE:-200}"
+	local entry="" descendants="" minutes=0 start_seconds=$SECONDS
+	local budget_exhausted=0 scanned=0
+	local -a batch=()
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
-		--force)
-			DRY_RUN=false
+		--force) mode="force" ;;
+		--dry-run) mode="$dry_run_mode" ;;
+		--max-seconds)
+			[[ $# -ge 2 ]] || { printf 'Missing value for --max-seconds\n' >&2; return 1; }
+			max_seconds="$2"
 			shift
 			;;
-		--dry-run)
-			DRY_RUN=true
+		--batch-size)
+			[[ $# -ge 2 ]] || { printf 'Missing value for --batch-size\n' >&2; return 1; }
+			batch_size="$2"
 			shift
 			;;
-		--help | -h)
-			show_help
-			exit 0
+		--help)
+			printf 'Usage: %s [--dry-run|--force] [--max-seconds N] [--batch-size N]\n' "$0"
+			return 0
 			;;
-		*)
-			log "ERROR" "Unknown option: $1"
-			show_help
-			exit 1
-			;;
+		*) printf 'Unknown option: %s\n' "$1" >&2; return 1 ;;
 		esac
+		shift
 	done
-
-	setup_logging
-
-	# Trap signals for cleanup
-	trap cleanup_exit INT TERM EXIT
-
-	log "INFO" "Starting System Cleanup (Dry Run: $DRY_RUN)"
-
-	if ! acquire_lock; then
-		exit 1
+	[[ "$days" =~ ^[1-9][0-9]*$ && "$max_seconds" =~ ^[0-9]+$ && "$batch_size" =~ ^[1-9][0-9]*$ ]] || return 1
+	# Never follow a redirected root, or operate on a broad/relative path.
+	[[ "$root" == /*/tmp && "$root" != /tmp && ! -L "$root" ]] || return 1
+	[[ -d "$root" ]] || return 0
+	minutes=$((days * 1440))
+	mkdir -p "$log_dir" || return 1
+	_sc_log_dir="$log_dir"
+	while IFS= read -r -d '' entry; do
+		if [[ "$max_seconds" -gt 0 && $((SECONDS - start_seconds)) -ge "$max_seconds" ]]; then
+			budget_exhausted=1
+			break
+		fi
+		case "${entry##*/}" in
+		session-checkpoints | locks | pulse | repository-campaigns | README.md) continue ;;
+		esac
+		# A symlink could redirect trash to an unrelated location; only owned,
+		# ordinary entries are eligible. An active session may keep a parent
+		# directory old while refreshing files inside it.
+		[[ ! -L "$entry" ]] || continue
+		if [[ -d "$entry" ]]; then
+			# A failed scan cannot establish that a directory is inactive.
+			descendants=$(find "$entry" -mindepth 1 \( -mmin "-${minutes}" -o -name '*.lock' -o -name '*.lease' \) -print -quit) || return 1
+			[[ -z "$descendants" ]] || continue
+		fi
+		scanned=$((scanned + 1))
+		if [[ "$mode" == "$dry_run_mode" ]]; then
+			printf '[dry-run] Would trash: %s\n' "$entry" | tee -a "$log_dir/system-cleanup.log"
+			continue
+		fi
+		batch+=("$entry")
+		if [[ "${#batch[@]}" -ge "$batch_size" ]]; then
+			_sc_trash_batch "${batch[@]}" || return 1
+			batch=()
+		fi
+	done < <(find "$root" -mindepth 1 -maxdepth 1 -mmin "+${minutes}" -print0)
+	if [[ "${#batch[@]}" -gt 0 ]]; then
+		_sc_trash_batch "${batch[@]}" || return 1
 	fi
-
-	# 1. Log Rotation
-	rotate_logs
-
-	# 2. Clean Agent Directory Cruft
-	cleanup_directory "$AGENT_DIR" ".DS_Store" 0 "Agent Directory System Files"
-	cleanup_directory "$AGENT_DIR" "*.backup.*" 0 "Agent Directory Backups"
-	cleanup_directory "$AGENT_DIR" "*.bak" 0 "Agent Directory Bak Files"
-
-	# 3. Clean Project Directory Cruft
-	cleanup_directory "$PROJECT_DIR" ".DS_Store" 0 "Project Directory System Files"
-	cleanup_directory "$PROJECT_DIR" "*.backup" 0 "Project Directory Backups"
-	cleanup_directory "$PROJECT_DIR" "*.bak" 0 "Project Directory Bak Files"
-	cleanup_directory "$PROJECT_DIR" "*~" 0 "Project Directory Swap Files"
-
-	# 4. Clean Temporary Directory (Age-based)
-	cleanup_tmp_dir
-
-	# 5. Clean Stale Lock Files (globally in /tmp related to this project)
-	# Be careful here, only target our specific locks
-	cleanup_directory "/tmp" "aidevops-*.lock" 1 "Stale Lock Files (>24h)"
-
+	# One summary line for the caller's log (the pulse log) instead of one
+	# line per entry; per-entry detail stays in system-cleanup.log.
+	printf '[system-cleanup] mode=%s eligible=%s trashed=%s elapsed_s=%s budget_s=%s budget_exhausted=%s\n' \
+		"$mode" "$scanned" "$_sc_trashed" "$((SECONDS - start_seconds))" "$max_seconds" "$budget_exhausted"
 	return 0
 }
 

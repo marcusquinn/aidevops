@@ -37,6 +37,7 @@ PROFILE_PUBLICATION_WORKTREE=""
 PROFILE_PUBLICATION_CANONICAL_REPO=""
 PROFILE_PUBLICATION_WORKTREE_BASE=""
 PROFILE_PUBLICATION_CANONICAL_HEAD=""
+PROFILE_PUBLICATION_CANONICAL_STATUS=""
 PROFILE_PUBLICATION_INTENT_PATH=""
 PROFILE_PUBLICATION_REGISTRY_TASK="profile-readme"
 PROFILE_CONTRIBUTIONS_REFRESHED=false
@@ -235,6 +236,7 @@ _profile_clear_publication_state() {
 	PROFILE_PUBLICATION_CANONICAL_REPO=""
 	PROFILE_PUBLICATION_WORKTREE_BASE=""
 	PROFILE_PUBLICATION_CANONICAL_HEAD=""
+	PROFILE_PUBLICATION_CANONICAL_STATUS=""
 	PROFILE_PUBLICATION_INTENT_PATH=""
 	return 0
 }
@@ -329,7 +331,9 @@ _profile_publication_worktree_recovery_is_safe() {
 	canonical_head=$(git -C "$PROFILE_PUBLICATION_CANONICAL_REPO" rev-parse HEAD 2>/dev/null) || return 1
 	[[ "$canonical_head" == "$PROFILE_PUBLICATION_CANONICAL_HEAD" ]] || return 1
 	canonical_status=$(git -C "$PROFILE_PUBLICATION_CANONICAL_REPO" status --porcelain --untracked-files=all) || return 1
-	[[ -z "$canonical_status" ]] || return 1
+	# Publication already permits pre-existing untracked files in the canonical
+	# mirror. Preserve its captured state instead of requiring unrelated cleanup.
+	[[ "$canonical_status" == "$PROFILE_PUBLICATION_CANONICAL_STATUS" ]] || return 1
 	_profile_publication_worktree_has_no_active_owner "$worktree_path" || return 1
 	return 0
 }
@@ -2053,6 +2057,7 @@ _profile_run_in_worktree() {
 	PROFILE_PUBLICATION_WORKTREE="$worktree_path"
 	PROFILE_PUBLICATION_CANONICAL_REPO="$canonical_repo"
 	PROFILE_PUBLICATION_CANONICAL_HEAD="$canonical_head_before"
+	PROFILE_PUBLICATION_CANONICAL_STATUS="$canonical_status_before"
 	if ! _profile_write_publication_intent "$worktree_path" "$canonical_repo"; then
 		echo "Error: could not write profile publication intent" >&2
 		_profile_clear_publication_state

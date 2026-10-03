@@ -17,7 +17,7 @@ fi
 # AI Assistant Server Access Framework Setup Script
 # Helps developers set up the framework for their infrastructure
 #
-# Version: 3.36.4
+# Version: 3.38.0
 #
 # Quick Install:
 #   npm install -g aidevops && aidevops update          (recommended)
@@ -157,17 +157,6 @@ if [[ -f "$_SHARED_CONSTANTS" ]]; then
 	source "$_SHARED_CONSTANTS"
 fi
 unset _SHARED_CONSTANTS
-
-# Secure the optional DSPy disk cache before setup installs or imports DSPy.
-_DSPY_CACHE_SECURITY="${INSTALL_DIR}/.agents/scripts/dspy-cache-security.sh"
-if [[ ! -f "$_DSPY_CACHE_SECURITY" ]]; then
-	_DSPY_CACHE_SECURITY="$HOME/.aidevops/agents/scripts/dspy-cache-security.sh"
-fi
-if [[ -f "$_DSPY_CACHE_SECURITY" ]]; then
-	# shellcheck disable=SC1090  # Dynamic path resolved at runtime
-	source "$_DSPY_CACHE_SECURITY"
-fi
-unset _DSPY_CACHE_SECURITY
 
 # Escape a string for safe embedding in XML (plist heredocs).
 # Prevents XML injection if paths contain &, <, >, ", or ' characters.
@@ -361,6 +350,10 @@ source "${SETUP_IMPL_MODULES_DIR}/core.sh"
 # shellcheck disable=SC1091
 source "${SETUP_IMPL_MODULES_DIR}/migrations.sh"
 # shellcheck disable=SC1091
+source "${SETUP_IMPL_MODULES_DIR}/migration-compaction-target.sh"
+# shellcheck disable=SC1091
+source "${SETUP_IMPL_MODULES_DIR}/migration-sonnet-5-5.sh"
+# shellcheck disable=SC1091
 source "${SETUP_IMPL_MODULES_DIR}/shell-env.sh"
 # shellcheck disable=SC1091
 source "${SETUP_IMPL_MODULES_DIR}/tool-install.sh"
@@ -370,8 +363,6 @@ source "${SETUP_IMPL_MODULES_DIR}/mcp-setup.sh"
 source "${SETUP_IMPL_MODULES_DIR}/agent-deploy.sh"
 # shellcheck disable=SC1091
 source "${SETUP_IMPL_MODULES_DIR}/agent-runtime.sh"
-# shellcheck disable=SC1091
-source "${SETUP_IMPL_MODULES_DIR}/tool-beads.sh"
 # shellcheck disable=SC1091
 source "${SETUP_IMPL_MODULES_DIR}/config.sh"
 # shellcheck disable=SC1091
@@ -833,7 +824,7 @@ _setup_guard_active_release_lane() {
 	[[ "$repo_slug" == "marcusquinn/aidevops" ]] || return 0
 	# shellcheck source=.agents/scripts/release-lane-helper.sh
 	source "$lane_helper"
-	release_lane_setup_guard "$repo_slug"
+	release_lane_setup_guard "$repo_slug" "${BASH_SOURCE[0]%/*}"
 	return $?
 }
 
@@ -1548,6 +1539,12 @@ reconcile_buzz_desktop_compatibility() {
 	esac
 }
 
+# GH#33249: best-effort one-shot cleanup; a refusal must not abort deployment.
+_setup_cleanup_retired_prompt_tooling_nonfatal() {
+	cleanup_retired_prompt_tooling || print_warning "Retired prompt tooling cleanup incomplete; setup will retry next time"
+	return 0
+}
+
 _setup_run_noninteractive_migrations() {
 	_time_step "migrate_old_backups" migrate_old_backups
 	_time_step "migrate_loop_state_directories" migrate_loop_state_directories
@@ -1555,9 +1552,13 @@ _setup_run_noninteractive_migrations() {
 	_time_step "migrate_mcp_env_to_credentials" migrate_mcp_env_to_credentials
 	_time_step "migrate_pulse_repos_to_repos_json" migrate_pulse_repos_to_repos_json
 	_time_step "cleanup_deprecated_paths" cleanup_deprecated_paths
+	_time_step "cleanup_retired_prompt_tooling" _setup_cleanup_retired_prompt_tooling_nonfatal
 	_time_step "migrate_orphaned_supervisor" migrate_orphaned_supervisor
 	_time_step "migrate_custom_model_routing_reasoning_defaults" migrate_custom_model_routing_reasoning_defaults
 	_time_step "migrate_obsolete_settings_model_routing" migrate_obsolete_settings_model_routing
+	_time_step "migrate_worker_capacity_reset" migrate_worker_capacity_reset
+	_time_step "migrate_compaction_target_240k" migrate_compaction_target_240k
+	_time_step "migrate_sonnet_5_5_settings" migrate_sonnet_5_5_settings
 	_time_step "backfill_issue_relationships" backfill_issue_relationships
 	_time_step "cleanup_deprecated_mcps" cleanup_deprecated_mcps
 	_time_step "cleanup_stale_bun_opencode" cleanup_stale_bun_opencode
@@ -1566,6 +1567,7 @@ _setup_run_noninteractive_migrations() {
 	_time_step "cleanup_worktree_entries_in_repos_json" cleanup_worktree_entries_in_repos_json
 	_time_step "_cleanup_legacy_model_config" _cleanup_legacy_model_config
 	_time_step "cleanup_legacy_dashboard_launchagent" cleanup_legacy_dashboard_launchagent
+	_time_step "cleanup_legacy_agents_md_templates" cleanup_legacy_agents_md_templates
 	return 0
 }
 
@@ -1629,6 +1631,8 @@ _setup_run_non_interactive() {
 	_time_step "update_codex_config" update_codex_config
 	_time_step "update_cursor_config" update_cursor_config
 	_time_step "disable_ondemand_mcps" disable_ondemand_mcps
+	# Update-if-installed only; never installs Nostr VPN (GH#23846).
+	_time_step "setup_nostr_vpn" _setup_run_noncritical_stage_bounded "Nostr VPN update check" "${AIDEVOPS_SETUP_NOSTR_VPN_TIMEOUT:-120}" setup_nostr_vpn
 	# Scaffold personal routines repo if not already present (idempotent).
 	# Creates local git repo + private GitHub remote for personal repo only.
 	# Org repos require explicit: aidevops init-routines --org <name>
@@ -1675,11 +1679,8 @@ _setup_run_non_interactive() {
 _setup_run_interactive_runtime_tools() {
 	confirm_step "Deploy aidevops agents to runtime agent directories" && deploy_agents_to_runtimes
 	confirm_step "Setup isolated Vault crypto runtime" && setup_vault_python_env
-	confirm_step "Setup Python environment (DSPy, crawl4ai)" && setup_python_env
-	confirm_step "Setup Node.js environment" && setup_nodejs_env
 	confirm_step "Install MCP packages globally (fast startup)" && install_mcp_packages
 	confirm_step "Setup LocalWP MCP server" && setup_localwp_mcp
-	confirm_step "Setup Beads task management" && setup_beads
 	confirm_step "Setup SEO integrations (curl subagents)" && setup_seo_mcps
 	confirm_step "Setup Google Analytics MCP" && setup_google_analytics_mcp
 	confirm_step "Setup QuickFile MCP (UK accounting)" && setup_quickfile_mcp
@@ -1687,12 +1688,28 @@ _setup_run_interactive_runtime_tools() {
 	confirm_step "Setup AI orchestration frameworks info" && setup_ai_orchestration
 	confirm_step "Setup Ollama (local LLM for knowledge plane pii/sensitive/privileged tiers)" && setup_ollama_for_knowledge
 	confirm_step "Setup Google Workspace CLI (Gmail, Calendar, Drive)" && setup_google_workspace_cli
+	confirm_step "Setup Cloudflare cf CLI (full Cloudflare API)" && setup_cloudflare_cf_cli
 	confirm_step "Setup OpenCode V1 and isolated V2 preview CLIs" && setup_opencode_runtimes
 	confirm_step "Install OpenCode AIDevOps Desktop app wrapper" && setup_opencode_desktop_launcher
 	confirm_step "Setup OpenCode plugins" && setup_opencode_runtime_plugins
 	confirm_step "Setup persistent OpenCode owner (preserve existing histories)" && setup_opencode_service
 	confirm_step "Setup Codex CLI (OpenAI AI coding tool)" && setup_codex_cli
 	confirm_step "Setup Droid CLI (Factory.AI coding tool)" && setup_droid_cli
+	confirm_step "Update Nostr VPN nvpn CLI (only if Nostr VPN is installed)" && setup_nostr_vpn
+	return 0
+}
+
+# Silent one-shot migrations for the interactive path (idempotent, flag-guarded
+# — no prompt needed). The non-interactive path times the same steps in
+# _setup_run_noninteractive_migrations.
+_setup_run_interactive_silent_migrations() {
+	_setup_cleanup_retired_prompt_tooling_nonfatal
+	cleanup_stale_health_issue_caches
+	cleanup_legacy_aidevops_temp_artifacts
+	cleanup_worktree_entries_in_repos_json
+	_cleanup_legacy_model_config
+	cleanup_legacy_dashboard_launchagent
+	cleanup_legacy_agents_md_templates
 	return 0
 }
 
@@ -1737,7 +1754,7 @@ _setup_run_interactive() {
 	confirm_step "Set secure permissions on config files" && set_permissions
 	confirm_step "Setup shell aliases" && setup_aliases
 	confirm_step "Setup terminal title integration" && setup_terminal_title
-	confirm_step "Deploy AI templates to home directories" && deploy_ai_templates
+	confirm_step "Deploy agent workspace template" && deploy_ai_templates
 	confirm_step "Migrate old backups to new structure" && migrate_old_backups
 	confirm_step "Migrate loop state from .claude/.agent/ to .agents/loop-state/" && migrate_loop_state_directories
 	confirm_step "Migrate .agent -> .agents in user projects" && migrate_agent_to_agents_folder
@@ -1747,15 +1764,13 @@ _setup_run_interactive() {
 	confirm_step "Migrate orphaned supervisor to pulse-wrapper" && migrate_orphaned_supervisor
 	migrate_custom_model_routing_reasoning_defaults
 	migrate_obsolete_settings_model_routing
+	migrate_worker_capacity_reset
+	migrate_compaction_target_240k
+	migrate_sonnet_5_5_settings
 	confirm_step "Backfill GitHub issue relationships (blocked-by, sub-issues)" && backfill_issue_relationships
 	confirm_step "Cleanup deprecated MCP entries (hetzner, serper, etc.)" && cleanup_deprecated_mcps
 	confirm_step "Cleanup stale bun opencode install" && cleanup_stale_bun_opencode
-	# Silent one-shot migrations (idempotent, flag-guarded — no prompt needed).
-	cleanup_stale_health_issue_caches
-	cleanup_legacy_aidevops_temp_artifacts
-	cleanup_worktree_entries_in_repos_json
-	_cleanup_legacy_model_config
-	cleanup_legacy_dashboard_launchagent
+	_setup_run_interactive_silent_migrations
 	confirm_step "Validate and repair OpenCode config schema" && validate_opencode_config
 	confirm_step "Extract OpenCode prompts" && extract_opencode_prompts
 	confirm_step "Check OpenCode prompt drift" && check_opencode_prompt_drift
@@ -1864,6 +1879,7 @@ _setup_noninteractive_schedulers() {
 	fi
 	# Repo sync handles non-interactive mode internally (systemd detection fixed in GH#17861)
 	_time_step "setup_repo_sync" setup_repo_sync
+	_time_step "setup_mirror_sync" setup_mirror_sync
 	# r914 repo-aidevops-health — daily drift keeper (t2366)
 	_time_step "setup_repo_aidevops_health" setup_repo_aidevops_health
 	if _should_setup_noninteractive_scheduler "Profile README" "sh.aidevops.profile-readme-update" "aidevops: profile-readme-update" "aidevops-profile-readme-update"; then
@@ -1919,6 +1935,7 @@ _setup_post_setup_steps() {
 	setup_stats_wrapper "${PULSE_ENABLED:-}"
 	setup_failure_miner "${PULSE_ENABLED:-}"
 	setup_repo_sync
+	setup_mirror_sync
 	# r914 repo-aidevops-health — daily drift keeper (t2366)
 	setup_repo_aidevops_health
 	setup_process_guard

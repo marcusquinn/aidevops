@@ -226,4 +226,18 @@ eval "$original_sync_definition"
 	exit 1
 }
 
+# The aggregate deadline is capped before spawning any repository job.
+# shellcheck source=../pulse-watchdog.sh
+source "${SCRIPTS_DIR}/pulse-watchdog.sh"
+PULSE_START_EPOCH=0 PULSE_STALE_THRESHOLD=1800 PULSE_LOCK_MAX_AGE_S=1100
+date() { [[ "${1:-}" == '+%s' ]] || return 1; printf '1000\n'; return 0; }
+_pulse_sync_todo_repo_bounded() { printf '%s\n' "$5" >>"$CALL_LOG"; return 0; }
+: >"$CALL_LOG"
+sync_todo_refs_all_repos
+unset -f date
+[[ "$(<"$CALL_LOG")" == 1010 ]] || {
+	printf 'FAIL TODO aggregate deadline exceeded cycle budget: %s\n' "$(<"$CALL_LOG")" >&2
+	exit 1
+}
+
 printf 'PASS TODO reference sync uses bounded parallel jobs and preserves aggregate retry budgets\n'

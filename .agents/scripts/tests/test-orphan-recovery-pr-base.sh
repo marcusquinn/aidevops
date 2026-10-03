@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # test-orphan-recovery-pr-base.sh — GH#24795/GH#24798 regression guard.
+# Also guards GH#32933: recovery PR bodies use non-closing `For #N` references.
 
 set -euo pipefail
 
@@ -41,6 +42,9 @@ setup_test_env() {
 	mkdir -p "${TEST_ROOT}/bin" "${TEST_ROOT}/calls" "${TEST_ROOT}/home/.config/aidevops"
 	export HOME="${TEST_ROOT}/home"
 	export PATH="${TEST_ROOT}/bin:${PATH}"
+	# Issue identity must come from the session key under test, not from an
+	# enclosing headless worker environment running this suite.
+	unset WORKER_ISSUE_NUMBER
 	cat >"${HOME}/.config/aidevops/repos.json" <<'JSON'
 {
   "initialized_repos": [
@@ -120,7 +124,9 @@ install_test_overrides() {
 		local issue_number="$3"
 		local repo_slug="$4"
 		[[ -n "$work_dir" && -n "$branch_name" && -n "$issue_number" && -n "$repo_slug" ]] || return 1
-		printf 'remote'
+		# TEST_RECOVERY_BRANCH_STATE selects remote (worker_branch_orphan) or
+		# published (worker_local_branch_unpushed) recovery body modes.
+		printf '%s' "${TEST_RECOVERY_BRANCH_STATE:-remote}"
 		return 0
 	}
 
@@ -158,6 +164,74 @@ test_dirty_recovery_creates_draft_checkpoint() {
 		return 0
 	fi
 	print_result "dirty recovery creates draft checkpoint PR" 1 "argv=${argv}"
+	return 0
+}
+
+# GH#32933: recovery PRs must never close the incomplete implementation issue.
+# Asserts the captured PR body uses a non-closing `For #N` reference, contains
+# no GitHub closing keyword for the issue, and carries the expected mode marker.
+assert_recovery_body_non_closing() {
+	local test_name="$1"
+	local issue_number="$2"
+	local expected_marker="$3"
+	local argv=""
+	if [[ ! -f "${TEST_ROOT}/calls/pr-create.argv" ]]; then
+		print_result "$test_name" 1 "gh pr create was not called"
+		return 0
+	fi
+	argv=$(<"${TEST_ROOT}/calls/pr-create.argv")
+
+	if ! printf '%s\n' "$argv" | grep -qE "^For #${issue_number}\$"; then
+		print_result "$test_name" 1 "missing standalone 'For #${issue_number}' line; argv=${argv}"
+		return 0
+	fi
+	if printf '%s\n' "$argv" | grep -qiE "(close[ds]?|fix(es|ed)?|resolve[ds]?)[[:space:]]+#${issue_number}([^0-9]|\$)"; then
+		print_result "$test_name" 1 "closing keyword found for #${issue_number}; argv=${argv}"
+		return 0
+	fi
+	if [[ "$argv" != *"$expected_marker"* ]]; then
+		print_result "$test_name" 1 "missing marker '${expected_marker}'; argv=${argv}"
+		return 0
+	fi
+	print_result "$test_name" 0
+	return 0
+}
+
+test_remote_orphan_recovery_body_is_non_closing() {
+	rm -f "${TEST_ROOT}/calls/pr-create.argv"
+	TEST_RECOVERY_BRANCH_STATE="remote"
+	if ! _attempt_orphan_recovery_pr "issue-32933" "$TEST_ROOT" "feature/auto-gh32933" "owner/repo"; then
+		print_result "worker_branch_orphan recovery body uses For #N" 1 "_attempt_orphan_recovery_pr failed"
+		return 0
+	fi
+	assert_recovery_body_non_closing "worker_branch_orphan recovery body uses For #N" \
+		"32933" "aidevops:orphan-recovery worker_branch_orphan"
+	return 0
+}
+
+test_local_unpushed_recovery_body_is_non_closing() {
+	rm -f "${TEST_ROOT}/calls/pr-create.argv"
+	TEST_RECOVERY_BRANCH_STATE="published"
+	if ! _attempt_orphan_recovery_pr "issue-32934" "$TEST_ROOT" "feature/auto-gh32934" "owner/repo"; then
+		TEST_RECOVERY_BRANCH_STATE="remote"
+		print_result "worker_local_branch_unpushed recovery body uses For #N" 1 "_attempt_orphan_recovery_pr failed"
+		return 0
+	fi
+	TEST_RECOVERY_BRANCH_STATE="remote"
+	assert_recovery_body_non_closing "worker_local_branch_unpushed recovery body uses For #N" \
+		"32934" "aidevops:orphan-recovery worker_local_branch_unpushed"
+	return 0
+}
+
+test_draft_checkpoint_recovery_body_is_non_closing() {
+	rm -f "${TEST_ROOT}/calls/pr-create.argv"
+	TEST_RECOVERY_BRANCH_STATE="remote"
+	if ! _attempt_orphan_recovery_pr "issue-32935" "$TEST_ROOT" "feature/auto-gh32935" "owner/repo" "draft"; then
+		print_result "draft checkpoint recovery body uses For #N" 1 "_attempt_orphan_recovery_pr failed"
+		return 0
+	fi
+	assert_recovery_body_non_closing "draft checkpoint recovery body uses For #N" \
+		"32935" "aidevops:orphan-recovery worker_branch_orphan"
 	return 0
 }
 
@@ -204,6 +278,9 @@ main() {
 	setup_test_env
 	test_orphan_recovery_uses_configured_pr_base
 	test_dirty_recovery_creates_draft_checkpoint
+	test_remote_orphan_recovery_body_is_non_closing
+	test_local_unpushed_recovery_body_is_non_closing
+	test_draft_checkpoint_recovery_body_is_non_closing
 	test_configured_pr_base_overrides_default_branch
 	test_explicit_dispatch_pr_base_overrides_repo_config
 	test_unconfigured_repo_falls_back_to_github_default_branch

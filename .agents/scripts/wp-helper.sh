@@ -5,7 +5,7 @@
 
 # WordPress CLI Helper Script
 # Runs WP-CLI commands on sites configured in wordpress-sites.json
-# Supports multiple hosting types: LocalWP, Hostinger, Hetzner, Cloudways, Closte
+# Supports multiple hosting types: LocalWP, Hostinger, Hetzner, Cloudways, Cloudron
 # Supports per-tenant configs: ~/.config/aidevops/tenants/{tenant}/wordpress-sites.json
 # Tenant resolution: project (.aidevops-tenant) > active-tenant > "default" > global
 
@@ -192,7 +192,7 @@ check_dependencies() {
 # Check sshpass for password-based SSH (called only when needed)
 check_sshpass() {
 	if ! command -v sshpass &>/dev/null; then
-		print_error "sshpass is required for Hostinger/Closte sites but not installed"
+		print_error "sshpass is required for password-based SSH sites but not installed"
 		print_info "Install with: brew install hudochenkov/sshpass/sshpass (macOS)"
 		print_info "Install with: apt-get install sshpass (Ubuntu)"
 		exit 1
@@ -323,7 +323,7 @@ execute_wp_via_ssh() {
 		(cd "$expanded_path" && wp "${wp_args[@]}")
 		return $?
 		;;
-	hostinger | closte)
+	hostinger)
 		# Prefer SSH key auth if configured (Hostinger supports and recommends it)
 		if [[ -n "$ssh_identity_file" ]]; then
 			ssh -n "${ssh_identity_flag[@]}" -p "$ssh_port" "${ssh_user}@${ssh_host}" "$remote_cmd"
@@ -338,11 +338,7 @@ execute_wp_via_ssh() {
 		if [[ -n "$password_file" ]]; then
 			expanded_password_file="${password_file/#\~/$HOME}"
 		else
-			if [[ "$site_type" == "hostinger" ]]; then
-				expanded_password_file="${HOME}/.ssh/hostinger_password"
-			else
-				expanded_password_file="${HOME}/.ssh/closte_password"
-			fi
+			expanded_password_file="${HOME}/.ssh/hostinger_password"
 		fi
 
 		if [[ ! -f "$expanded_password_file" ]]; then
@@ -369,6 +365,7 @@ execute_wp_via_ssh() {
 		;;
 	*)
 		print_error "Unknown hosting type: $site_type"
+		print_info "Supported types: localwp, hostinger, hetzner, cloudways, cloudron"
 		return 1
 		;;
 	esac
@@ -707,7 +704,6 @@ SSH Config Integration:
 Hosting Types:
   localwp   - Local by Flywheel (direct path access)
   hostinger - Hostinger (sshpass, port 65002)
-  closte    - Closte (sshpass)
   hetzner   - Hetzner VPS (SSH key)
   cloudways - Cloudways (SSH key)
   cloudron  - Cloudron (SSH key)

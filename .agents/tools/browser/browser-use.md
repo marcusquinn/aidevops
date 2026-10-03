@@ -83,13 +83,13 @@ if __name__ == "__main__":
 from browser_use import Agent, ChatAnthropic, ChatBrowserUse, ChatGoogle
 
 # Browser Use API key can route provider-prefixed model IDs.
-agent = Agent(task="...", llm=ChatBrowserUse(model="anthropic/claude-sonnet-4-6"))
+agent = Agent(task="...", llm=ChatBrowserUse(model="anthropic/claude-sonnet-5-5"))
 
 # Google Gemini
 agent = Agent(task="...", llm=ChatGoogle(model="gemini-3-flash-preview"))
 
 # Anthropic Claude
-agent = Agent(task="...", llm=ChatAnthropic(model="claude-sonnet-4-6"))
+agent = Agent(task="...", llm=ChatAnthropic(model="claude-sonnet-5-5"))
 ```
 
 ## CLI 3.0
@@ -188,9 +188,15 @@ store API keys with `aidevops secret` or `~/.config/aidevops/credentials.sh`.
 | Agent skill install | Yes (`browser-use skill`) | No | No |
 | CLI/control loop | CLI 3.0 + Browser Harness | Playwright API/CLI | SDK/API |
 | Cloud/stealth | Cloud agent, proxies, CAPTCHA | No | Browserbase |
-| Speed | Faster with `ChatBrowserUse`; slower than deterministic scripts | Fastest for known flows | Medium |
-| Benchmarking | Upstream 100-task BU Bench | Local deterministic benchmarks | Local deterministic benchmarks |
-| Own model | Yes (`ChatBrowserUse`, `bu-*`) | N/A | No |
+| Speed | Model-dependent; upstream `ChatBrowserUse` claim is not a local comparison | Fast for known flows | No verified v4 speed advantage over a known locator |
+| Benchmarking | Upstream 100-task BU Bench (different product) | Historical local deterministic matrix | v3 in historical matrix; v4 partial heading probes only |
+| Own model | Yes (`ChatBrowserUse`, `bu-*`) | N/A | Explicit configured model/API key or client-side callback |
+
+The historical local matrix in `browser-automation.md` used Stagehand v3, not
+v4. The isolated v4 probes in `browser-benchmark.md` do not benchmark Browser
+Use or the legacy Playwriter existing-tab lane. Compare total workflow success,
+retries, latency and spend on the same task before claiming that any model-backed
+route is faster or more reliable.
 
 ## When to Prefer Other Tools
 

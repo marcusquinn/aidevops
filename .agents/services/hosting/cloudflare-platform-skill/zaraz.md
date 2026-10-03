@@ -1,58 +1,111 @@
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Cloudflare Zaraz
 
-Server-side tag manager: offloads third-party scripts (analytics, ads, chat) to Cloudflare's edge. Zero client-side JS; single HTTP request for all tools; privacy-first data control.
+Expert guidance for Cloudflare Zaraz - server-side tag manager for loading third-party tools at the edge.
 
-## Setup
+## What is Zaraz?
 
-Dashboard: domain > Zaraz > Start setup > add tools > configure triggers/actions. Config (`zaraz.toml`):
+Zaraz offloads third-party scripts (analytics, ads, chat, marketing) to Cloudflare's edge, improving site speed, privacy, and security. Zero client-side performance impact.
 
-```toml
-[settings]
-auto_inject = true
-debug_mode = false
+**Core Concepts:**
+- **Server-side execution** - Scripts run on Cloudflare, not user's browser
+- **Single HTTP request** - All tools loaded via one endpoint
+- **Privacy-first** - Control data sent to third parties
+- **No client-side JS overhead** - Minimal browser impact
 
-[[tools]]
-type = "google-analytics"
-id = "G-XXXXXXXXXX"
+## Quick Start
 
-[[tools.triggers]]
-match_rule = "Pageview"
-```
-
-## Web API
+1. Navigate to domain > Zaraz in Cloudflare dashboard
+2. Click "Start setup"
+3. Add tools (Google Analytics, Facebook Pixel, etc.)
+4. Configure triggers (when tools fire)
+5. Add tracking code to your site:
 
 ```javascript
-zaraz.track('button_click');
-zaraz.track('purchase', { value: 99.99, currency: 'USD', item_id: '12345' });
-zaraz.set('userId', 'user_12345');
-zaraz.set({ email: '[email protected]', country: 'US' });
+// Track page view
+zaraz.track('page_view');
+
+// Track custom event
+zaraz.track('button_click', { button_id: 'cta' });
+
+// Set user properties
+zaraz.set('userId', 'user_123');
 ```
 
-Event names follow platform conventions (GA4: `sign_up`; Facebook Pixel: `Purchase`; Google Ads: `conversion` with `send_to`).
+## When to Use Zaraz
 
-Data layer: `window.zaraz.dataLayer = { user_id: '12345', page_type: 'product' }`. Access in triggers: `{{client.__zarazTrack.page_type}}`.
+**Use Zaraz when:**
+- Adding multiple third-party tools (analytics, ads, marketing)
+- Site performance is critical (no client-side JS overhead)
+- Privacy compliance required (GDPR, CCPA)
+- Non-technical teams need to manage tools
 
-## Triggers
-
-Types: Pageview, DOM Ready, Click (CSS selector), Form submission, Scroll depth (%), Timer, Variable match (custom conditions).
-
-Example: Trigger `Button Click` on `.buy-button` → action `Track event "purchase_intent"`.
-
-## Privacy & Limits
-
-Automatic IP anonymization, consent-based cookie control, GDPR/CCPA compliant. Tools/events unlimited; request size 100 KB; data retention per tool's policy.
+**Use Workers directly when:**
+- Building custom server-side tracking logic
+- Need full control over data processing
+- Integrating with complex backend systems
+- Zaraz's tool library doesn't meet needs
 
 ## In This Reference
 
-- [zaraz-patterns.md](./zaraz-patterns.md) - E-commerce, SPA tracking, consent management, custom components
-- [zaraz-gotchas.md](./zaraz-gotchas.md) - Debugging, trigger troubleshooting, consent issues
+| File | Purpose | When to Read |
+|------|---------|--------------|
+| [api.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/zaraz/api.md) | Web API, zaraz object, consent methods | Implementing tracking calls |
+| [configuration.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/zaraz/configuration.md) | Dashboard setup, triggers, tools | Initial setup, adding tools |
+| [patterns.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/zaraz/patterns.md) | SPA, e-commerce, Worker integration | Best practices, common scenarios |
+| [gotchas.md](zaraz-gotchas.md) | Troubleshooting, limits, pitfalls | Debugging issues |
 
-## See Also
+## Reading Order by Task
 
-- [Zaraz Docs](https://developers.cloudflare.com/zaraz/)
-- [Web API](https://developers.cloudflare.com/zaraz/web-api/)
-- [Managed Components](https://developers.cloudflare.com/zaraz/advanced/load-custom-managed-component/)
-- `cloudflare-workers` skill — Workers integration
+| Task | Files to Read |
+|------|---------------|
+| Add analytics to site | README → configuration.md |
+| Track custom events | README → api.md |
+| Debug tracking issues | gotchas.md |
+| SPA tracking | api.md → patterns.md (SPA section) |
+| E-commerce tracking | api.md#ecommerce → patterns.md#ecommerce |
+| Worker integration | patterns.md#worker-integration |
+| GDPR compliance | api.md#consent → configuration.md#consent |
+
+## Decision Tree
+
+```text
+What do you need?
+
+├─ Track events in browser → api.md
+│   ├─ Page views, clicks → zaraz.track()
+│   ├─ User properties → zaraz.set()
+│   └─ E-commerce → zaraz.ecommerce()
+│
+├─ Configure Zaraz → configuration.md
+│   ├─ Add GA4/Facebook → tools setup
+│   ├─ When tools fire → triggers
+│   └─ GDPR consent → consent purposes
+│
+├─ Integrate with Workers → patterns.md#worker-integration
+│   ├─ Enrich context → Context Enrichers
+│   └─ Inject tracking → HTML rewriting
+│
+└─ Debug issues → gotchas.md
+    ├─ Events not firing → troubleshooting
+    ├─ Consent issues → consent debugging
+    └─ Performance → debugging tools
+```
+
+## Key Features
+
+- **100+ Pre-built Tools** - GA4, Facebook, Google Ads, TikTok, etc.
+- **Zero Client Impact** - Runs at Cloudflare's edge, not browser
+- **Privacy Controls** - Consent management, data filtering
+- **Custom Tools** - Build Managed Components for proprietary systems
+- **Worker Integration** - Enrich context, compute dynamic values
+- **Debug Mode** - Real-time event inspection
+
+## Reference
+
+- [Zaraz Docs](https://developers.cloudflare.com/zaraz/index.md)
+- [Web API](https://developers.cloudflare.com/zaraz/web-api/index.md)
+- [Managed Components](https://developers.cloudflare.com/zaraz/advanced/load-custom-managed-component/index.md)
+
+---
+
+This skill focuses exclusively on Zaraz. For Workers development, see `cloudflare-workers` skill.

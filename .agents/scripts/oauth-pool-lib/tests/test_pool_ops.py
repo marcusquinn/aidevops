@@ -797,6 +797,49 @@ class RefreshTests(PoolOpsTestCase):
         self.assertFalse(pool_ops_refresh._should_refresh_account(account, "all", now_ms))
         self.assertTrue(pool_ops_refresh._should_refresh_account(account, "all", now_ms + 60_001))
 
+    def test_refresh_revalidates_auth_error_with_unexpired_token(self) -> None:
+        # GH#32927: auto-clear leaves auth-error + cooldownUntil=0; a token far
+        # from expiry must not keep the account permanently unavailable.
+        now_ms = int(time.time() * 1000)
+        week_ms = 7 * 24 * 3_600_000
+        for cleared in (0, None, now_ms - 1):
+            account = {
+                "email": "a@example.com",
+                "access": "old",
+                "refresh": "secret-refresh",
+                "expires": now_ms + week_ms,
+                "status": "auth-error",
+                "cooldownUntil": cleared,
+            }
+            self.assertTrue(pool_ops_refresh._should_refresh_account(account, "all", now_ms))
+
+        account["cooldownUntil"] = now_ms + 60_000
+        self.assertFalse(pool_ops_refresh._should_refresh_account(account, "all", now_ms))
+
+        healthy = dict(account, status="active", cooldownUntil=0)
+        self.assertFalse(pool_ops_refresh._should_refresh_account(healthy, "all", now_ms))
+
+    def test_revalidation_failure_keeps_auth_error_with_new_backoff(self) -> None:
+        now_ms = int(time.time() * 1000)
+        account = {
+            "email": "a@example.com",
+            "access": "old",
+            "refresh": "secret-refresh",
+            "expires": now_ms + 7 * 24 * 3_600_000,
+            "status": "auth-error",
+            "cooldownUntil": 0,
+        }
+        ctx = pool_ops_refresh._RefreshContext("https://auth.example.invalid/token", "client", "ua", "all")
+
+        with mock.patch.object(pool_ops_refresh, "call_token_endpoint", return_value={_common.TOKEN_REFRESH_ERROR_KEY: "http_401"}):
+            refreshed, failed = pool_ops_refresh._refresh_all_eligible([account], ctx, now_ms)
+
+        self.assertEqual(refreshed, [])
+        self.assertEqual(len(failed), 1)
+        self.assertEqual(account["status"], "auth-error")
+        self.assertGreater(account["cooldownUntil"], now_ms)
+        self.assertFalse(pool_ops_refresh._should_refresh_account(account, "all", now_ms + 1))
+
     def test_successful_refresh_clears_retry_backoff_state(self) -> None:
         now_ms = int(time.time() * 1000)
         account = {

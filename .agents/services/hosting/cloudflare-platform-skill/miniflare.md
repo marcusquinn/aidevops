@@ -1,50 +1,22 @@
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Miniflare
 
-Local simulator for Cloudflare Workers. Runs Workers in workerd sandbox with full runtime API support — no internet required.
+Miniflare provides programmatic control of local Workers simulation. Read the linked documentation before choosing APIs, configuration, or a migration path.
 
-> **Most users should use Wrangler (`wrangler dev`).** Use Miniflare for advanced testing requiring programmatic control.
+## Choose the testing tool
 
-## When to Use
+| Need | Start here |
+|------|------------|
+| Unit tests that execute in the Workers runtime | [Workers Vitest setup](https://developers.cloudflare.com/workers/testing/vitest-integration/write-your-first-test/index.md) |
+| Integration tests against built Workers | [Integration test harness](https://developers.cloudflare.com/workers/testing/test-harness/index.md) |
+| Low-level simulator control for a custom harness | [Miniflare testing guide](https://developers.cloudflare.com/workers/testing/miniflare/writing-tests/index.md) |
+| Binding access from a Node.js process | [Wrangler getPlatformProxy](https://developers.cloudflare.com/workers/wrangler/api/index.md#getplatformproxy) |
 
-- Integration tests for Workers with bindings (KV, DO, R2, D1, Queues, WebSockets)
-- Fine-grained test control: dispatch events without HTTP, simulate Worker connections
-- Multiple Workers with service bindings
+For interactive local development, use the project's Wrangler or Cloudflare Vite workflow. Direct Miniflare is useful when the higher-level testing tools do not expose the control needed.
 
-## Setup
+## Read for the task
 
-```bash
-npm i -D miniflare
-# Requires "type": "module" in package.json
-```
-
-## Quick Start
-
-```js
-import { Miniflare } from "miniflare";
-
-const mf = new Miniflare({
-  modules: true,
-  script: `
-    export default {
-      async fetch(request, env, ctx) {
-        return new Response("Hello Miniflare!");
-      }
-    }
-  `,
-});
-
-const res = await mf.dispatchFetch("http://localhost:8787/");
-console.log(await res.text()); // Hello Miniflare!
-await mf.dispose();
-```
-
-## References
-
-- [patterns.md](./patterns.md) — Testing patterns, CI, mocking
-- [gotchas.md](./gotchas.md) — Compatibility issues, limits, debugging
-- [Miniflare Docs](https://developers.cloudflare.com/workers/testing/miniflare/)
-- [Miniflare GitHub](https://github.com/cloudflare/workers-sdk/tree/main/packages/miniflare)
-- [Vitest Integration](https://developers.cloudflare.com/workers/testing/vitest-integration/) (recommended)
+- [Get started](https://developers.cloudflare.com/workers/testing/miniflare/get-started/index.md) — installation, scripts, lifecycle, and event dispatch.
+- [API routing](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/miniflare/api.md) — events and access to local resources.
+- [Configuration](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/miniflare/configuration.md) — modules, bindings, compatibility, and multiple Workers.
+- [Testing patterns](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/miniflare/patterns.md) — runtime choice, mocking, and test lifecycle.
+- [Troubleshooting and migrations](miniflare-gotchas.md) — build/configuration differences and existing test suites.

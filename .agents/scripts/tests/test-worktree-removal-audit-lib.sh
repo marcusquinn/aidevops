@@ -1779,6 +1779,40 @@ test_privileged_inspector_uses_bounded_execution() {
 	return 0
 }
 
+# GH#32871: the installed inspector accepts same-user setuid-root helpers
+# (real UID = caller; other UIDs caller or root) and refuses other identities.
+test_privileged_inspector_uid_rule() {
+	local rc=0
+	python3 - "${SCRIPT_DIR}/../worktree-cwd-inspect.py" <<'PY' || rc=1
+import importlib.util
+import sys
+
+spec = importlib.util.spec_from_file_location("inspector", sys.argv[1])
+inspector = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(inspector)
+accept = inspector.uid_fields_accepted
+cases = [
+    (["1000", "1000", "1000", "1000"], 1000, True),
+    (["1000", "0", "0", "0"], 1000, True),
+    (["1000", "0", "0", "1000"], 1000, True),
+    (["1000", "1001", "1001", "1001"], 1000, False),
+    (["0", "1000", "1000", "1000"], 1000, False),
+    (["0", "0", "0", "0"], 1000, False),
+    (["1000", "1000", "1000", "1001"], 1000, False),
+    (["1000", "0", "0"], 1000, False),
+    (["1000", "x", "0", "0"], 1000, False),
+    (["0", "0", "0", "0"], 0, False),
+]
+failed = [case for case in cases if accept(case[0], case[1]) is not case[2]]
+if failed:
+    print(f"  unexpected UID decisions: {failed}")
+    raise SystemExit(1)
+PY
+	print_result "privileged_inspector_uid_rule" "$rc" \
+		"Expected same-user setuid-root processes to be accepted and other identities refused"
+	return 0
+}
+
 test_proc_snapshot_rejects_failed_inspector_output() {
 	local proc_root="${TEST_DIR}/fake-proc-failed-inspector"
 	local current_uid=""
@@ -2127,7 +2161,16 @@ for _ in range(3):
         assert 'recovery-archive-incomplete' in str(error)
     else:
         raise AssertionError('interrupted attempt must block another copy')
-assert list(store.glob('aidevops-worktree-cleanup-*')) == [bucket]
+# reserve_archive resolves the store, but glob retains the caller's path spelling
+# (e.g. /var vs /private/var on macOS). Compare identities, not spellings.
+buckets = list(store.glob('aidevops-worktree-cleanup-*'))
+assert [path.resolve() for path in buckets] == [bucket.resolve()], (buckets, bucket)
+# Exercise the same alias discrepancy on Linux, where /var is not a symlink.
+alias = scratch / 'bounded-attempts-alias'
+alias.symlink_to(store, target_is_directory=True)
+alias_buckets = list(alias.glob('aidevops-worktree-cleanup-*'))
+assert alias_buckets != [bucket], (alias_buckets, bucket)
+assert [path.resolve() for path in alias_buckets] == [bucket.resolve()], (alias_buckets, bucket)
 assert source.is_dir()
 PY
 	AIDEVOPS_WORKTREE_TRASH_ROOT="${TEST_DIR}/reuse-completed" AIDEVOPS_REAL_GIT_BIN="$GIT_BIN" \
@@ -2247,6 +2290,7 @@ test_proc_snapshot_marks_same_uid_unreadable_entry_degraded
 test_proc_snapshot_recovers_protected_same_uid_cwd
 test_privileged_inspector_rejects_untrusted_proc_root
 test_privileged_inspector_uses_bounded_execution
+test_privileged_inspector_uid_rule
 test_proc_snapshot_rejects_failed_inspector_output
 test_proc_snapshot_skips_zombie_cwd_denial
 test_proc_snapshot_marks_same_uid_daemon_denial_degraded

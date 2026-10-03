@@ -7,6 +7,7 @@ import { dirname, join } from "path";
 import { homedir } from "os";
 import { appendWorkerBlockerEvent } from "../../scripts/worker-blocker-log.mjs";
 import { isManagedToolOutputRead } from "./permission-broker-tool-output.mjs";
+import { impossibleExternalRead as classifyImpossibleRead, rejectImpossibleToolRead } from "./permission-broker-read-target.mjs";
 
 const REQUEST_SCHEMA = "aidevops-permission-capture/v1";
 const MAX_PATTERN_LENGTH = 500;
@@ -112,8 +113,13 @@ function recordPermissionToolCall(toolCalls, isHeadless, home, input, output) {
   toolCalls.set(callID, {
     tool: sanitizePermissionText(input?.tool || input?.name || "unknown", { home, maxLength: 100 }),
     intent: sanitizePermissionText(args?.agent__intent || "", { home, maxLength: MAX_INTENT_LENGTH }),
+    target: args.filePath || args.path || "",
   });
   while (toolCalls.size > 100) toolCalls.delete(toolCalls.keys().next().value);
+}
+
+function impossibleExternalRead(context, raw) {
+  return classifyImpossibleRead(context, raw, FORBIDDEN_PATTERN);
 }
 
 function recordPermissionBlocker({ loggedEvents, home, blockerLogPath, capture, request, event, reason, detail }) {
@@ -220,6 +226,10 @@ async function handlePermissionEvent(context, input) {
   const event = input?.event;
   if (!isHeadless() || event?.type !== "permission.asked") return;
   const request = event.properties || {};
+  if (impossibleExternalRead(context, request)) {
+    await replyPermissionRequest(client, request, "reject");
+    return;
+  }
   if (isManagedToolOutputRead(toolCalls, request, dataHome)
     && await replyPermissionRequest(client, request, "once")) return;
   capturePermissionRequest(toolCalls, loggedEvents, home, blockerLogPath, request);
@@ -229,6 +239,12 @@ async function handlePermissionEvent(context, input) {
 function handlePermissionAsk(context, input, output) {
   const { isHeadless, toolCalls, loggedEvents, home, dataHome, blockerLogPath } = context;
   if (!isHeadless()) return;
+  const impossible = impossibleExternalRead(context, input);
+  if (impossible) {
+    output.status = "deny";
+    output.message = impossible;
+    return;
+  }
   if (isManagedToolOutputRead(toolCalls, input, dataHome)) {
     output.status = "allow";
     return;
@@ -256,7 +272,10 @@ export function createPermissionBroker({
     blockerLogPath,
   };
   return {
-    recordToolCall: (input, output) => recordPermissionToolCall(toolCalls, isHeadless, home, input, output),
+    recordToolCall: (input, output) => {
+      recordPermissionToolCall(toolCalls, isHeadless, home, input, output);
+      rejectImpossibleToolRead(context, input, FORBIDDEN_PATTERN);
+    },
     handleEvent: (input) => handlePermissionEvent(context, input),
     permissionAsk: (input, output) => handlePermissionAsk(context, input, output),
   };

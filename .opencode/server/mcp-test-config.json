@@ -22,12 +22,6 @@
       "args": ["-y", "@context7/mcp-server@latest"],
       "description": "Library documentation retrieval"
     },
-    "repomix": {
-      "type": "stdio",
-      "command": "npx",
-      "args": ["-y", "repomix@latest", "--mcp"],
-      "description": "Repository packaging for AI analysis"
-    },
     "filesystem": {
       "type": "stdio",
       "command": "npx",

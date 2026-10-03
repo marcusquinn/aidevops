@@ -80,7 +80,7 @@ assert_contains "contains formatted tokens" "1,234 tokens on this" "$result"
 # ─────────────────────────────────────────────────────────────────────────────
 echo ""
 echo "Test 2: explicit --tokens 0 omits tokens"
-result=$("$HELPER" generate --cli "Claude Code" --cli-version "2.0.1" --model "anthropic/claude-sonnet-4-6" --tokens 0)
+result=$("$HELPER" generate --cli "Claude Code" --cli-version "2.0.1" --model "anthropic/claude-sonnet-5-5" --tokens 0)
 assert_contains "contains Claude Code" "plugin for [Claude Code](https://claude.ai/code) v2.0.1" "$result"
 assert_not_contains "no tokens field" "tokens" "$result"
 
@@ -110,7 +110,7 @@ assert_contains "contains aidevops" "aidevops.sh" "$result"
 # ─────────────────────────────────────────────────────────────────────────────
 echo ""
 echo "Test 5: footer includes --- separator and HTML marker"
-result=$("$HELPER" footer --cli "OpenCode" --cli-version "1.0.0" --model "anthropic/claude-sonnet-4-6" --tokens 5000)
+result=$("$HELPER" footer --cli "OpenCode" --cli-version "1.0.0" --model "anthropic/claude-sonnet-5-5" --tokens 5000)
 assert_contains "contains HTML sig marker" "<!-- aidevops:sig -->" "$result"
 assert_contains "contains ---" "---" "$result"
 assert_contains "contains signature" "plugin for [OpenCode](https://opencode.ai) v1.0.0" "$result"
@@ -478,6 +478,14 @@ INSERT INTO message (id,session_id,time_created,time_updated,data) VALUES
 	result=$(OPENCODE=1 OPENCODE_SESSION_ID="ses_current" AIDEVOPS_SIG_MODEL="" XDG_DATA_HOME="${tmp_home_19}/.local/share" HOME="$tmp_home_19" "$HELPER" generate --cli "OpenCode")
 	assert_contains "explicit OPENCODE_SESSION_ID model used" "with gpt-5.5" "$result"
 	assert_contains "explicit OPENCODE_SESSION_ID tokens used" "22 tokens on this" "$result"
+
+	sqlite3 "$db_path_19" "INSERT INTO message (id,session_id,time_created,time_updated,data) VALUES ('msg_switched','ses_current',${now_epoch_19}000,${now_epoch_19}000,'{\"providerID\":\"anthropic\",\"modelID\":\"claude-current\",\"role\":\"assistant\"}');"
+	result=$(OPENCODE=1 OPENCODE_SESSION_ID="ses_current" AIDEVOPS_SIG_MODEL="" XDG_DATA_HOME="${tmp_home_19}/.local/share" HOME="$tmp_home_19" "$HELPER" generate --cli "OpenCode")
+	assert_contains "latest message model wins after switch" "with claude-current" "$result"
+
+	sqlite3 "$db_path_19" "ALTER TABLE session ADD COLUMN model TEXT; UPDATE session SET model='{\"id\":\"gpt-session-current\",\"providerID\":\"openai\",\"variant\":\"xhigh\"}' WHERE id='ses_current';"
+	result=$(OPENCODE=1 OPENCODE_SESSION_ID="ses_current" AIDEVOPS_SIG_MODEL="" XDG_DATA_HOME="${tmp_home_19}/.local/share" HOME="$tmp_home_19" "$HELPER" generate --cli "OpenCode")
+	assert_contains "session model takes precedence over messages" "with gpt-session-current" "$result"
 else
 	echo "  SKIP: sqlite3 not available"
 fi
@@ -536,6 +544,24 @@ assert_contains "explicit OpenCode version shown" "plugin for [OpenCode](https:/
 result=$(HOME="$tmp_home_21" OPENCODE_VERSION="1.14.34" "$HELPER" generate --no-session --cli "OpenCode")
 assert_contains "OpenCode CLI override still detects version" "plugin for [OpenCode](https://opencode.ai) v1.14.34" "$result"
 rm -rf "$tmp_home_21"
+
+# Profile caches must never be overridden by the shared last-writer cache.
+echo "Test 21b: runtime-specific version precedence"
+tmp_home_21b=$(mktemp -d 2>/dev/null || mktemp -d -t sighelper21b)
+mkdir -p "${tmp_home_21b}/.aidevops/cache"
+framework_version=$(<"${SCRIPT_DIR}/../../../VERSION")
+printf '%s\n' 'aidevops v0.0.0 running in OpenCode v9.9.9' >"${tmp_home_21b}/.aidevops/cache/session-greeting.txt"
+printf 'aidevops v%s running in OpenCode v1.18.32\n' "$framework_version" >"${tmp_home_21b}/.aidevops/cache/session-greeting-opencode.txt"
+printf 'aidevops v%s running in OpenCode v2.0.3\n' "$framework_version" >"${tmp_home_21b}/.aidevops/cache/session-greeting-opencode-v2.txt"
+result=$(env -u OPENCODE_VERSION -u AIDEVOPS_SIG_CLI_VERSION OPENCODE_PID=0 HOME="$tmp_home_21b" "$HELPER" generate --no-session --cli OpenCode)
+assert_contains "OC1 cache wins over shared cache" "OpenCode](https://opencode.ai) v1.18.32" "$result"
+result=$(env -u OPENCODE_VERSION -u AIDEVOPS_SIG_CLI_VERSION OPENCODE_PID=0 AIDEVOPS_OPENCODE_PROFILE=v2 HOME="$tmp_home_21b" "$HELPER" generate --no-session --cli OpenCode)
+assert_contains "OC2 profile selects OC2 cache" "OpenCode](https://opencode.ai) v2.0.3" "$result"
+result=$(OPENCODE_PID=0 OPENCODE_VERSION=3.1.4 AIDEVOPS_SIG_CLI_VERSION=4.1.5 HOME="$tmp_home_21b" "$HELPER" generate --no-session --cli OpenCode)
+assert_contains "signature override wins" "OpenCode](https://opencode.ai) v4.1.5" "$result"
+result=$(OPENCODE_PID=0 OPENCODE_VERSION=3.1.4 AIDEVOPS_SIG_CLI_VERSION='' HOME="$tmp_home_21b" "$HELPER" generate --no-session --cli OpenCode)
+assert_contains "runtime env wins over caches" "OpenCode](https://opencode.ai) v3.1.4" "$result"
+rm -rf "$tmp_home_21b"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Test 22: footer dedup uses only a standalone canonical marker line

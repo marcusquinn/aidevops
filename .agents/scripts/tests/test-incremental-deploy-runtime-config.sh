@@ -53,6 +53,8 @@ new_root="$HOME/.aidevops/runtime-bundles/new/agents"
 mkdir -p "$new_root/scripts"
 cp "$repo_root/.agents/scripts/example-helper.sh" "$new_root/scripts/example-helper.sh"
 cp "$repo_root/VERSION" "$new_root/VERSION"
+release_sha=$(git -C "$repo_root" rev-parse HEAD)
+printf 'schema=1\nstatus=validated\nbundle_id=new\nframework_version=3.32.107\ngit_sha=%s\n' "$release_sha" >"$new_root/.bundle-manifest"
 link_tmp="$HOME/.aidevops/agents.tmp.$$"
 rm -f "$link_tmp"
 ln -s "$new_root" "$link_tmp"
@@ -61,6 +63,7 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
 else
 	mv -Tf "$link_tmp" "$HOME/.aidevops/agents"
 fi
+printf '%s\n' "$release_sha" >"$HOME/.aidevops/.deployed-sha"
 exit 0
 EOF_SETUP
 chmod +x "$FIXTURE_REPO/setup.sh"
@@ -80,6 +83,31 @@ grep -Fxq 'old immutable sentinel' "$OLD_BUNDLE/scripts/example-helper.sh"
 ACTIVE_ROOT=$(cd "$TEST_HOME/.aidevops/agents" && pwd -P)
 [[ "$ACTIVE_ROOT" != "$OLD_BUNDLE" ]]
 grep -Fxq '#!/usr/bin/env bash' "$ACTIVE_ROOT/scripts/example-helper.sh"
+
+SETUP_CALLS_BEFORE=$(<"$SETUP_CALLS")
+rm -f "$MARKER"
+fast_path_output=$(HOME="$TEST_HOME" SETUP_CALLS="$SETUP_CALLS" \
+	bash "$REPO_ROOT/.agents/scripts/deploy-agents-on-merge.sh" \
+	--repo "$FIXTURE_REPO" --expected-sha "$SOURCE_SHA" --scripts-only 2>&1)
+[[ "$fast_path_output" == *"already deployed by active bundle new"* ]]
+[[ ! -e "$MARKER" ]]
+[[ "$(<"$SETUP_CALLS")" == "$SETUP_CALLS_BEFORE" ]]
+
+# A newer stamped SHA must never make an older active bundle look like a
+# verified descendant. The exact-tag checkout is still at SOURCE_SHA; setup
+# repairs the inconsistent stamp without rolling back the active bundle.
+printf 'later commit\n' >"$FIXTURE_REPO/later.txt"
+/usr/bin/git -C "$FIXTURE_REPO" add later.txt
+/usr/bin/git -C "$FIXTURE_REPO" commit -qm descendant
+DESCENDANT_SHA=$(/usr/bin/git -C "$FIXTURE_REPO" rev-parse HEAD)
+/usr/bin/git -C "$FIXTURE_REPO" checkout -q -b release "$SOURCE_SHA"
+printf '%s\n' "$DESCENDANT_SHA" >"$TEST_HOME/.aidevops/.deployed-sha"
+rm -f "$MARKER" "$SETUP_CALLS"
+HOME="$TEST_HOME" SETUP_CALLS="$SETUP_CALLS" \
+	bash "$REPO_ROOT/.agents/scripts/deploy-agents-on-merge.sh" \
+	--repo "$FIXTURE_REPO" --expected-sha "$SOURCE_SHA" --scripts-only --quiet
+[[ -e "$MARKER" && -e "$SETUP_CALLS" ]]
+[[ "$(<"$TEST_HOME/.aidevops/.deployed-sha")" == "$SOURCE_SHA" ]]
 
 if bash -c 'source "$1"; runtime_config_changes_detected ".agents/scripts/example-helper.sh"' \
 	_ "$REPO_ROOT/.agents/scripts/deploy-agents-on-merge.sh"; then

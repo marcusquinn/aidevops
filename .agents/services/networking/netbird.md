@@ -244,6 +244,12 @@ curl -s -X POST "https://netbird.example.com/api/setup-keys" \
 # Then install client and: sudo netbird up --setup-key "$NETBIRD_SETUP_KEY"
 ```
 
+### Remote OpenCode Workers
+
+NetBird is a transport for SSH, not an authorization layer. Register peers with `remote-dispatch-helper.sh add <name> <netbird-ip-or-fqdn> --user <user>`. The transport is auto-detected as `netbird` from `netbird status -d`; NetBird and Tailscale share `100.64.0.0/10`, so the helper doesn't guess from the address. Keep OpenCode on loopback and reach it with `ssh -L`. Full pattern and the comparison with Nostr VPN, Headscale and WireGuard: `reference/mesh-remote-workers.md`. Allow only SSH (TCP 22) from the controller group to `ai-workers` in policies.
+
+When running alongside Nostr VPN, move nvpn off UDP `51820` (`nostr-vpn-helper.sh setup-admin` does this). nvpn cannot tunnel through NetBird (it rejects CGNAT hints and pins to the physical interface), so the two run side by side as independent paths.
+
 ### Access Control Groups
 
 | Group | Members | Access |

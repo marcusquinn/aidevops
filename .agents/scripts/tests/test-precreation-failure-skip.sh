@@ -270,8 +270,9 @@ _dlw_exec_detached() {
 STUB_REFRESH_STATE="OPEN"
 
 gh() {
-	if [[ "${1:-}" == "issue" && "${2:-}" == "view" ]]; then
-		printf '%s\n' "$STUB_REFRESH_STATE"
+	# The pre-claim refresh reads the REST issue object, not a scalar state.
+	if [[ "${1:-}" == "api" && "${2:-}" == repos/owner/repo/issues/* ]]; then
+		printf '{"state":"%s","body":""}\n' "$STUB_REFRESH_STATE"
 		return 0
 	fi
 
@@ -538,6 +539,59 @@ else
 	fail "reused worktree fails closed when its atomic ownership claim is rejected" \
 		"rc=$rc claim='$CLAIMED_WORKTREE_ARGS' registration='$REGISTERED_WORKTREE_ARGS'"
 fi
+if [[ -z "${_DLW_PRECREATE_FAILURE_REASON:-}" ]]; then
+	pass "claim rejection without a live owner stays a generic precreation failure"
+else
+	fail "claim rejection without a live owner stays a generic precreation failure" \
+		"reason='${_DLW_PRECREATE_FAILURE_REASON:-}'"
+fi
+
+# =============================================================================
+# Test 3e (GH#33026): a live mismatched owner's refusal is classified and keyed
+# to its process generation; the owner row is read, never removed or replaced.
+# =============================================================================
+STUB_LIVE_OWNER_TOKEN="Wed Sep 30 10:00:00 2026"
+_wt_process_start_token_for_pid() {
+	[[ "$1" == 4242 && -n "$STUB_LIVE_OWNER_TOKEN" ]] || return 1
+	printf '%s' "$STUB_LIVE_OWNER_TOKEN"
+	return 0
+}
+OWNER_ROW_MUTATIONS=""
+unregister_worktree() { OWNER_ROW_MUTATIONS="${OWNER_ROW_MUTATIONS}unregister "; return 0; }
+release_worktree_ownership() { OWNER_ROW_MUTATIONS="${OWNER_ROW_MUTATIONS}release "; return 0; }
+live_owner_row="4242|interactive-session||t999|2026-09-29T00:00:00Z|Wed Sep 30 10:00:00 2026"
+STUB_OWNER_INFO="$live_owner_row"
+STUB_CLAIM_WORKTREE_RC=1
+: >"$LOGFILE"
+_dlw_precreate_worktree "66666" "$FAKE_REPO"
+rc=$?
+if [[ "$rc" -eq 1 && "${_DLW_PRECREATE_FAILURE_REASON:-}" == "worktree_live_owner_refused" &&
+	"${_DLW_REFUSING_OWNER_PID:-}" == "4242" &&
+	"${_DLW_REFUSING_OWNER_START:-}" == "Wed_Sep_30_10:00:00_2026" &&
+	"$STUB_OWNER_INFO" == "$live_owner_row" && -z "$OWNER_ROW_MUTATIONS" ]]; then
+	pass "live mismatched owner refusal is classified without touching the owner row"
+else
+	fail "live mismatched owner refusal is classified without touching the owner row" \
+		"rc=$rc reason='${_DLW_PRECREATE_FAILURE_REASON:-}' pid='${_DLW_REFUSING_OWNER_PID:-}' start='${_DLW_REFUSING_OWNER_START:-}' mutations='$OWNER_ROW_MUTATIONS'"
+fi
+
+STUB_LIVE_OWNER_TOKEN=""
+_dlw_precreate_worktree "66666" "$FAKE_REPO"
+if [[ -z "${_DLW_PRECREATE_FAILURE_REASON:-}" ]]; then
+	pass "dead owner refusal is not held as a live owner"
+else
+	fail "dead owner refusal is not held as a live owner" "reason='${_DLW_PRECREATE_FAILURE_REASON:-}'"
+fi
+
+STUB_LIVE_OWNER_TOKEN="Wed Sep 30 11:00:00 2026"
+_dlw_precreate_worktree "66666" "$FAKE_REPO"
+if [[ -z "${_DLW_PRECREATE_FAILURE_REASON:-}" ]]; then
+	pass "reused PID with a different process generation is not held"
+else
+	fail "reused PID with a different process generation is not held" "reason='${_DLW_PRECREATE_FAILURE_REASON:-}'"
+fi
+_dlw_reset_precreated_worktree_state
+STUB_OWNER_INFO=""
 STUB_CLAIM_WORKTREE_RC=0
 unset STUB_EXISTING_WORKTREE_LINE
 
@@ -695,7 +749,7 @@ else
 	fail "closed pre-claim refresh does not spawn worker" "setsid was called"
 fi
 
-if grep -q "refreshed issue state before claim is CLOSED" "$LOGFILE" 2>/dev/null; then
+if grep -q "refreshed issue state before claim is closed" "$LOGFILE" 2>/dev/null; then
 	pass "closed pre-claim refresh logs blocked state"
 else
 	fail "closed pre-claim refresh logs blocked state" "LOGFILE: $(cat "$LOGFILE")"
@@ -732,7 +786,14 @@ _dlw_precreate_worktree() {
 	_DLW_WORKTREE_PATH=""
 	_DLW_WORKTREE_BRANCH=""
 	_DLW_WORKTREE_REUSED=0
+	_DLW_PRECREATE_FAILURE_REASON=""
 	if [[ "$STUB_PRECREATE_RC" -ne 0 ]]; then
+		if [[ -n "${STUB_PRECREATE_LIVE_OWNER:-}" ]]; then
+			_DLW_WORKTREE_PATH="$ORCHESTRATOR_WORKTREE"
+			_DLW_PRECREATE_FAILURE_REASON="worktree_live_owner_refused"
+			_DLW_REFUSING_OWNER_PID=4242
+			_DLW_REFUSING_OWNER_START="Wed_Sep_30_10:00:00_2026"
+		fi
 		return "$STUB_PRECREATE_RC"
 	fi
 	_DLW_WORKTREE_PATH="$ORCHESTRATOR_WORKTREE"
@@ -859,6 +920,37 @@ if grep -q '^77777$' "$CLAIM_LOCK_CALLS_FILE" 2>/dev/null; then
 else
 	fail "pre-creation failure happens after claim lock" "claim lock not called"
 fi
+
+# GH#33026: a live-owner refusal emits one structured hold record and a
+# distinct launch-preflight reason instead of the generic infrastructure one.
+: >"$ORCHESTRATOR_CALLS_FILE"
+: >"${TMP}/setsid-calls.txt"
+STUB_PRECREATE_LIVE_OWNER=1
+live_owner_rc=0
+_dispatch_launch_worker "77784" "owner/repo" "test-dispatch" "Test Issue" \
+	"testuser" "$FAKE_REPO" "test prompt" "session-key-live-owner" "" "{}" || live_owner_rc=$?
+if [[ "$live_owner_rc" -eq 2 && ! -s "${TMP}/setsid-calls.txt" &&
+	"${_DLW_LAST_PRE_RUNTIME_FAILURE:-}" == "worktree_live_owner_refused" ]] &&
+	[[ "$(grep -c "WORKTREE_LIVE_OWNER_REFUSED issue=#77784 repo=owner/repo owner_pid=4242 owner_start=Wed_Sep_30_10:00:00_2026 action=hold_until_owner_exits_or_changes worktree=${ORCHESTRATOR_WORKTREE}$" "$LOGFILE")" == 1 ]] &&
+	grep -q "PRE_RUNTIME_FAILURE issue=77784 repo=owner/repo reason=worktree_live_owner_refused" "$LOGFILE" &&
+	! grep -q "Skipping #77784" "$LOGFILE"; then
+	pass "live owner refusal records one classified hold instead of a generic failure"
+else
+	fail "live owner refusal records one classified hold instead of a generic failure" \
+		"rc=$live_owner_rc reason=${_DLW_LAST_PRE_RUNTIME_FAILURE:-unset}"
+fi
+# Runners must not be penalised: the reason stays out of per-issue fast-fail.
+if (
+	# shellcheck source=../worker-lifecycle-common.sh
+	source "${SCRIPTS_DIR}/worker-lifecycle-common.sh" >/dev/null 2>&1
+	_worker_failure_reason_is_launch_preflight "worktree_live_owner_refused" &&
+		_worker_failure_reason_is_launch_preflight "worker_launch_rc_2:worktree_live_owner_refused"
+); then
+	pass "live owner refusal is classified as launch-preflight"
+else
+	fail "live owner refusal is classified as launch-preflight"
+fi
+unset STUB_PRECREATE_LIVE_OWNER
 STUB_PRECREATE_RC=0
 
 # Final dependency/orphan gate failures likewise stop before queued ownership.

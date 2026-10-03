@@ -22,50 +22,33 @@ import {
 } from "../lib/ai-research"
 
 export default tool({
+  // Sent on every request in this repository; keep wording compact (GH#32592).
   description:
-    "Spawn a focused provider-neutral research query through OpenCode without burning your context. " +
-    "Inference-only: cannot browse or inspect the repository itself. Supply narrow source excerpts via files and domain guidance via agents; paths mentioned only in the prompt are not loaded. " +
-    "Rate limit: 10 calls per session. Default workload tier: simple.",
+    "Focused provider-neutral research sub-query that spares your context. " +
+    "Inference-only (no browsing or repo access): pass source excerpts via files and guidance via agents; paths only named in the prompt are not loaded. " +
+    "10 calls per session.",
   args: {
-    prompt: tool.schema
-      .string()
-      .describe("The research question or query (required)"),
+    prompt: tool.schema.string().describe("Research question"),
     agents: tool.schema
       .string()
       .optional()
-      .describe(
-        "Comma-separated agent file paths relative to ~/.aidevops/agents/ " +
-          "(e.g. 'workflows/git-workflow.md,tools/git/github-cli.md')"
-      ),
+      .describe("Comma-separated paths under ~/.aidevops/agents/, e.g. 'workflows/git-workflow.md'"),
     domain: tool.schema
       .string()
       .optional()
-      .describe(
-        "Domain shorthand — auto-resolves to relevant agents. " +
-          "Available: " +
-          Object.keys(DOMAIN_AGENTS).join(", ")
-      ),
+      .describe("Shorthand resolving to agents: " + Object.keys(DOMAIN_AGENTS).join(", ")),
     files: tool.schema
       .string()
       .optional()
-      .describe(
-        "Source files to load into the child context, comma-separated with optional line ranges " +
-          "(e.g. 'src/index.ts:10-50,README.md')"
-      ),
+      .describe("Comma-separated files with optional line ranges, e.g. 'src/index.ts:10-50,README.md'"),
     model: tool.schema
       .enum(["simple", "standard", "thinking", "haiku", "sonnet", "opus"])
       .optional()
-      .describe(
-        "Workload tier: simple (default), standard, or thinking. " +
-          "Legacy aliases haiku, sonnet, and opus remain supported."
-      ),
+      .describe("Workload tier (default simple); haiku/sonnet/opus are legacy aliases"),
     max_tokens: tool.schema
       .number()
       .optional()
-      .describe(
-        "Approximate response-token budget (default: 500, max: 4096). " +
-          "OpenCode providers may not expose exact output-token enforcement."
-      ),
+      .describe("Approximate response-token budget (default 500, max 4096)"),
   },
   async execute(args, context) {
     try {

@@ -61,8 +61,8 @@ main() {
 		'- "2.3.0"' "$DEPENDABOT_CONFIG" || true
 	assert_present "Code quality keeps the deterministic Qlty CLI version" \
 		'QLTY_VERSION: "0.643.0"' "$CODE_QUALITY_WORKFLOW" || true
-	assert_present "Code quality keeps qlty-action install v2.2.0" \
-		'qltysh/qlty-action/install@a19242102d17e497f437d7466aa01b528537e899 # v2.2.0' \
+	assert_present "Code quality uses the pinned Qlty CLI installer" \
+		'run: bash .agents/scripts/qlty-install-pinned.sh' \
 		"$CODE_QUALITY_WORKFLOW" || true
 
 	printf '\nTests run: %d, failed: %d\n' "$TESTS_RUN" "$TESTS_FAILED"

@@ -1377,8 +1377,43 @@ _release_lane_allows_pulse_runtime_recovery() {
 	return $?
 }
 
+# Return 0 when the generic setup source checkout already contains the lane's
+# published release commit. Deploying such a tree is what the exact-tag gate
+# accepts as a release descendant, so blocking it only strands every git
+# install (auto-update included) behind one publisher's deployment (GH#32512).
+_release_lane_source_contains_tag() {
+	local source_root="$1"
+	local tag_name="$2"
+	local tag_commit=""
+	local local_tag=""
+	local remote_tags=""
+	local remote_tag=""
+	local remote_ref=""
+	[[ -n "$source_root" && -n "$tag_name" ]] || return 1
+	[[ "$tag_name" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+	git -C "$source_root" rev-parse --git-dir >/dev/null 2>&1 || return 1
+	# #aidevops:trust-boundary — the tag name comes from the remote-verified lane;
+	# Compare the tag object itself (including annotated tags), not just its
+	# peeled commit. A matching local tag needs no canonical ref mutation.
+	remote_tags=$(git -C "$source_root" ls-remote --exit-code origin "refs/tags/${tag_name}" 2>/dev/null) || return 1
+	IFS=$'\t' read -r remote_tag remote_ref <<<"$remote_tags"
+	[[ "$remote_tag" =~ ^[0-9a-f]{40}$ && "$remote_ref" == "refs/tags/${tag_name}" ]] || return 1
+	local_tag=$(git -C "$source_root" rev-parse --verify --quiet "refs/tags/${tag_name}" 2>/dev/null) || local_tag=""
+	if [[ "$local_tag" != "$remote_tag" ]]; then
+		git -C "$source_root" fetch --quiet --no-tags origin \
+			"+refs/tags/${tag_name}:refs/tags/${tag_name}" >/dev/null 2>&1 || return 1
+		local_tag=$(git -C "$source_root" rev-parse --verify --quiet "refs/tags/${tag_name}" 2>/dev/null) || return 1
+		[[ "$local_tag" == "$remote_tag" ]] || return 1
+	fi
+	tag_commit=$(git -C "$source_root" rev-parse --verify --quiet "refs/tags/${tag_name}^{commit}" 2>/dev/null) || return 1
+	[[ "$tag_commit" =~ ^[0-9a-f]{40}$ ]] || return 1
+	git -C "$source_root" merge-base --is-ancestor "$tag_commit" HEAD 2>/dev/null
+	return $?
+}
+
 release_lane_setup_guard() {
 	local repo="$1"
+	local source_root="${2:-}"
 	local source_pr="${AIDEVOPS_RELEASE_LANE_SOURCE_PR:-}"
 	local tag_name="${AIDEVOPS_RELEASE_LANE_TAG:-}"
 	local active_pr="" active_tag="" phase=""
@@ -1413,6 +1448,12 @@ release_lane_setup_guard() {
 		return 0
 	fi
 	if [[ "$source_pr" == "$active_pr" && -n "$tag_name" && "$tag_name" == "$active_tag" ]]; then
+		return 0
+	fi
+	if [[ "$remote_verified" -eq 1 && -z "$source_pr" && -z "$tag_name" ]] &&
+		_release_lane_source_contains_tag "$source_root" "$active_tag"; then
+		printf 'Active exact-tag release %s is contained in this setup source; continuing generic setup\n' \
+			"$active_tag" >&2
 		return 0
 	fi
 	printf 'Active exact-tag release deployment blocks generic setup: source_pr=%s tag=%s\n' \

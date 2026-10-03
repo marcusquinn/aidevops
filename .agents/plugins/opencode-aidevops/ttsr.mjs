@@ -1,4 +1,4 @@
-import { existsSync } from "fs";
+import { appendRuntimeEvent } from "../../scripts/runtime-events.mjs";
 import { join } from "path";
 import { compactSystemContext } from "./context-catalogue.mjs";
 import {
@@ -11,7 +11,14 @@ import {
 } from "./ttsr-rules.mjs";
 // Prompt injection and the startup toast intentionally share cache provenance
 // and freshness policy so they cannot present contradictory version pairs.
-import { greetingCacheBasename, isGreetingCacheUsable, readGreetingCache, REFRESH_TTL_MS } from "./greeting.mjs";
+import {
+  greetingCacheBasename,
+  isGreetingCacheUsable,
+  isPluginGreetingEnabled,
+  readGreetingCache,
+  REFRESH_TTL_MS,
+  stripGreetingFallback,
+} from "./greeting.mjs";
 
 // ---------------------------------------------------------------------------
 // Token Cost Advisory
@@ -77,7 +84,32 @@ function createTtsrState(ttsrRulesPath, readIfExists) {
     ttsrFiredState: new Map(),
     /** @type {Map<string, number>} Maps sessionID → highest threshold warned about. */
     tokenAdvisoryState: new Map(),
+    /** @type {Map<string, string>} Maps root sessionID → greeting block pinned at first use. */
+    pinnedGreetings: new Map(),
   };
+}
+
+const MAX_PINNED_GREETINGS = 500;
+
+/**
+ * Resolve the greeting block once per session and replay the same bytes on
+ * every later request (GH#32744). The block sits inside the cached framework
+ * prefix, so re-reading VERSION after a mid-session deploy would otherwise
+ * rewrite that prefix for every open session. Requests without a session ID
+ * are resolved fresh and never cached.
+ * @param {Map<string, string>} pinned
+ * @param {string | undefined} sessionID
+ * @param {() => string} build
+ * @returns {string}
+ */
+export function pinSessionGreeting(pinned, sessionID, build) {
+  if (!sessionID) return build();
+  const existing = pinned.get(sessionID);
+  if (existing !== undefined) return existing;
+  const greeting = build();
+  pinned.set(sessionID, greeting);
+  if (pinned.size > MAX_PINNED_GREETINGS) pinned.delete(pinned.keys().next().value);
+  return greeting;
 }
 
 // ---------------------------------------------------------------------------
@@ -213,10 +245,12 @@ export function buildSessionStartGreetingInstruction(agentsDir, readIfExists, op
     ? `We're running aidevops v${version} in ${runtime} v${runtimeVersion}.`
     : `We're running aidevops v${version}.`;
 
+  // Present on every request of a root session (stable prefix), so it stays
+  // compact; the AGENTS.md fallback it replaces is stripped by the caller.
   return [
     "## Session-start greeting order",
-    "This plugin-injected block is the authoritative greeting instruction. The version values are already resolved; do not read the greeting cache or VERSION before responding.",
-    "On the first assistant turn of an interactive session, the first visible text in the assistant response MUST be this exact aidevops greeting:",
+    "This plugin-injected block is the authoritative greeting instruction. The version values are already resolved; do not read the greeting cache or VERSION, and do not run update checks.",
+    "On the first assistant turn of an interactive session, the first visible text MUST be this exact aidevops greeting:",
     "",
     "Hi!",
     "",
@@ -224,85 +258,76 @@ export function buildSessionStartGreetingInstruction(agentsDir, readIfExists, op
     "",
     "What would you like to work on?",
     "",
-    "This greeting constrains the first visible assistant text, not the first assistant action. Tool calls may precede it when needed to start an initial task, especially when the runtime cannot interleave visible text and tool calls.",
-    "Do not include startup status or advisory messages in chat; those are already shown by the OpenCode toast/sidebar surfaces.",
-    "If the user launched the session with an initial message, the greeting is only a required prefix: immediately execute or fully answer that message in the SAME assistant turn.",
-    "A task request already authorises task work. Never emit a greeting-only response or stop after acknowledging, restating, promising, or asking the user to say continue. Call the appropriate tools immediately, before visible text if necessary, unless genuinely blocked.",
+    "Tool calls may precede it when needed to start an initial task; it constrains the first visible text, not the first action.",
+    "If the user launched the session with an initial message, the greeting is only a required prefix: execute or fully answer that message in the SAME assistant turn. A task request already authorises task work. Never emit a greeting-only response or stop after acknowledging, restating, promising, or asking the user to say continue. Call the appropriate tools immediately, before visible text if necessary, unless genuinely blocked.",
     "Do not claim that tool access is unavailable without first attempting an appropriate configured tool and reporting concrete failure evidence.",
-    "If the initial user message is only a greeting/salutation, do not add any additional salutations, greetings, introductory questions, or equivalent help prompts after the exact greeting above.",
-    "Do not repeat the greeting after the first assistant turn, and do not duplicate the framework-status toast/sidebar content.",
+    "If the initial message is only a greeting/salutation, do not add any additional salutations, greetings, introductory questions, or equivalent help prompts after the exact greeting. Never repeat the greeting after the first assistant turn.",
+    "Do not include startup status or advisory messages in chat; the OpenCode toast/sidebar already shows them. If asked about aidevops updates, direct the user to run `aidevops update` in a terminal.",
   ].join("\n");
 }
 
 /**
- * Allow the greeting instruction exactly once for each interactive root
- * session. Child sessions are subagents/subtasks and must never inherit a
- * startup greeting; otherwise a late child request can reproduce the greeting
- * immediately before the parent session's summary.
+ * Replace array contents without reassigning the array. OpenCode 1 keeps its
+ * own reference to output.system and ignores reassignment; OpenCode 2's adapter
+ * reads the same object back, so in-place mutation serves both runtimes.
  */
-export function createSessionStartGreetingGate(client, isHeadless = () => false) {
-  const attemptedSessions = new Set();
-
-  if (typeof client?.session?.get !== "function") {
-    return async () => false;
-  }
-
-  return async function shouldInjectSessionStartGreeting(input) {
-    if (isHeadless()) return false;
-
-    const sessionID = input?.sessionID;
-    if (!sessionID || attemptedSessions.has(sessionID)) return false;
-    // Claim the one startup opportunity before the asynchronous lookup. A
-    // metadata failure must not allow a later turn to inject a stale greeting.
-    attemptedSessions.add(sessionID);
-
-    try {
-      const response = await client.session.get({ path: { id: sessionID } });
-      const session = response?.data ?? response ?? {};
-      return !session.parentID;
-    } catch {
-      return false;
-    }
-  };
+function replaceArrayContents(target, values) {
+  target.splice(0, target.length, ...values);
 }
 
-/**
- * system.transform hook: prepend session-start greeting order, identity prefix,
- * and quality rules.
- */
-async function ttsrSystemTransform(input, output, context) {
-  const { state, intentField, shouldInjectGreeting, agentsDir, readIfExists, greetingOptions } = context;
-  output.system = compactSystemContext(output.system);
-  if (input.model?.providerID === "anthropic") {
-    const prefix = "You are Claude Code, Anthropic's official CLI for Claude.";
-    output.system.unshift(prefix);
-    if (output.system[1]) output.system[1] = prefix + "\n\n" + output.system[1];
-  }
+export const CLAUDE_CODE_IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude.";
 
-  const greeting = await shouldInjectGreeting(input)
-    ? buildSessionStartGreetingInstruction(agentsDir, readIfExists, greetingOptions)
-    : null;
-  // Preserve the Anthropic compatibility prefix contract. Other providers keep
-  // all durable guidance ahead of the one-shot greeting for stable prefix reuse.
-  if (greeting && input.model?.providerID === "anthropic") output.system.unshift(greeting);
+/** Prefix the first framework block with the identity, then add the exact identity block. */
+function prependAnthropicIdentity(system) {
+  if (system[0]) system[0] = `${CLAUDE_CODE_IDENTITY}\n\n${system[0]}`;
+  system.unshift(CLAUDE_CODE_IDENTITY);
+}
 
-  const rules = loadTtsrRules(state);
-  const ruleLines = rules.filter((r) => r.systemPrompt).map((r) => `- ${r.systemPrompt}`);
-
-  const intentInstruction = [
+function buildIntentInstruction(intentField) {
+  return [
     "## Intent Tracing (observability)",
     `When calling any tool, include a field named \`${intentField}\` in the tool arguments.`,
     "Value: one sentence in present participle form describing your intent (e.g., \"Reading the file to understand the existing schema\").",
     "No trailing period. This field is used for debugging and audit trails — it is stripped before tool execution.",
   ].join("\n");
+}
 
-  output.system.push(intentInstruction);
-  if (ruleLines.length > 0) output.system.push([
+function buildQualityRulesInstruction(rules) {
+  const ruleLines = rules.filter((r) => r.systemPrompt).map((r) => `- ${r.systemPrompt}`);
+  if (ruleLines.length === 0) return null;
+  return [
     "## aidevops Quality Rules (enforced)",
     "The following rules are actively enforced. Violations will be flagged.",
     ...ruleLines,
-  ].join("\n"));
-  if (greeting && input.model?.providerID !== "anthropic") output.system.push(greeting);
+  ].join("\n");
+}
+
+/**
+ * system.transform hook: compact catalogue metadata, add the Anthropic
+ * identity, then append durable intent-tracing and quality rules.
+ *
+ * Anthropic OAuth wire shape: provider-auth-body.mjs keeps the billing header
+ * and this exact identity block in system and redistributes every other block
+ * into the first user message. The identity is added exactly as OpenCode 2 has
+ * always sent it; in-place mutation now gives OpenCode 1 the same shape.
+ */
+async function ttsrSystemTransform(input, output, context) {
+  const { state, intentField, shouldInjectGreeting, agentsDir, readIfExists, greetingOptions, greetingEnabled } = context;
+  if (!Array.isArray(output.system)) return;
+  const pluginGreeting = greetingEnabled();
+  const compacted = compactSystemContext(output.system);
+  replaceArrayContents(output.system, pluginGreeting ? compacted.map(stripGreetingFallback) : compacted);
+  if (input.model?.providerID === "anthropic") prependAnthropicIdentity(output.system);
+
+  const greeting = pluginGreeting && await shouldInjectGreeting(input)
+    ? pinSessionGreeting(state.pinnedGreetings, input?.sessionID,
+      () => buildSessionStartGreetingInstruction(agentsDir, readIfExists, greetingOptions))
+    : null;
+
+  // Durable guidance stays ahead of the root-session-only greeting, so child
+  // sessions share the same prefix up to it.
+  const appended = [buildIntentInstruction(intentField), buildQualityRulesInstruction(loadTtsrRules(state)), greeting];
+  output.system.push(...appended.filter(Boolean));
 }
 
 /**
@@ -327,6 +352,7 @@ async function ttsrMessagesTransform(input, output, state, qualityLog, isHeadles
 
   const sessionID = output.messages[0]?.info?.sessionID || "";
   output.messages.push(buildCorrectionMessage(allViolations, sessionID));
+  recordViolationEvents(allViolations, sessionID, "messages.transform");
 
   qualityLog(
     "INFO",
@@ -335,18 +361,21 @@ async function ttsrMessagesTransform(input, output, state, qualityLog, isHeadles
 }
 
 /**
- * Record TTSR violations to the pattern tracker script if available.
+ * Count each detected rule through the existing fail-open observability queue.
+ * Store rule IDs and scan source only, never assistant text or rule corrections.
  * @param {Array<{ rule: object }>} violations
- * @param {{ scriptsDir: string, run: Function }} execDeps
+ * @param {string} sessionID
+ * @param {string} source
  */
-function recordViolationsToTracker(violations, execDeps) {
-  const patternTracker = join(execDeps.scriptsDir, "pattern-tracker-helper.sh");
-  if (!existsSync(patternTracker)) return;
-  const ruleIds = violations.map((v) => v.rule.id).join(",");
-  execDeps.run(
-    `bash "${patternTracker}" record "TTSR_VIOLATION" "rules: ${ruleIds}" --tag "ttsr" 2>/dev/null`,
-    5000,
-  );
+function recordViolationEvents(violations, sessionID, source) {
+  for (const { rule } of violations) {
+    appendRuntimeEvent({
+      eventType: "rule.violation",
+      subjectId: rule.id,
+      sessionId: sessionID,
+      payload: { source, observation: { count: 1 } },
+    });
+  }
 }
 
 /**
@@ -354,10 +383,9 @@ function recordViolationsToTracker(violations, execDeps) {
  * @param {object} input
  * @param {object} output
  * @param {object} state
- * @param {{ scriptsDir: string, run: Function }} execDeps
  * @param {(level: string, message: string) => void} qualityLog
  */
-async function ttsrTextComplete(input, output, state, execDeps, qualityLog) {
+async function ttsrTextComplete(input, output, state, qualityLog) {
   if (!output.text) return;
 
   const violations = scanForViolations(output.text, state);
@@ -376,7 +404,7 @@ async function ttsrTextComplete(input, output, state, execDeps, qualityLog) {
   });
 
   output.text = output.text + "\n" + markers.join("\n");
-  recordViolationsToTracker(violations, execDeps);
+  recordViolationEvents(violations, input.sessionID, "text.complete");
 }
 
 // ---------------------------------------------------------------------------
@@ -398,15 +426,15 @@ async function ttsrTextComplete(input, output, state, execDeps, qualityLog) {
  * @param {number} [deps.initializedAtMs]
  * @param {string} [deps.runtimeName] Runtime label that overrides the greeting cache
  * @param {string} [deps.runtimeVersion] Runtime version that overrides the greeting cache
+ * @param {() => boolean} [deps.greetingEnabled] - defaults to isPluginGreetingEnabled()
  * @returns {{ loadTtsrRules: Function, systemTransformHook: Function, messagesTransformHook: Function, textCompleteHook: Function }}
  */
 export function createTtsrHooks(deps) {
-  const { agentsDir, scriptsDir, readIfExists, qualityLog, run, intentField } = deps;
+  const { agentsDir, readIfExists, qualityLog, intentField } = deps;
   const isHeadless = deps.isHeadless || (() => false);
   const shouldInjectGreeting = deps.shouldInjectGreeting || (async () => !isHeadless());
   const ttsrRulesPath = join(agentsDir, "configs", "ttsr-rules.json");
   const state = createTtsrState(ttsrRulesPath, readIfExists);
-  const execDeps = { scriptsDir, run };
   const greetingOptions = {
     readGreetingCache: deps.readGreetingCache,
     now: deps.now,
@@ -415,15 +443,20 @@ export function createTtsrHooks(deps) {
     runtimeName: deps.runtimeName,
     runtimeVersion: deps.runtimeVersion,
   };
-  const systemTransformContext = { state, intentField, shouldInjectGreeting, agentsDir, readIfExists, greetingOptions };
+  const greetingEnabled = deps.greetingEnabled || (() => isPluginGreetingEnabled());
+  const systemTransformContext = {
+    state, intentField, shouldInjectGreeting, agentsDir, readIfExists, greetingOptions, greetingEnabled,
+  };
 
   return {
     loadTtsrRules: () => loadTtsrRules(state),
     systemTransformHook: (input, output) => ttsrSystemTransform(input, output, systemTransformContext),
     messagesTransformHook: (_input, output) => ttsrMessagesTransform(_input, output, state, qualityLog, isHeadless),
-    textCompleteHook: (input, output) => ttsrTextComplete(input, output, state, execDeps, qualityLog),
+    textCompleteHook: (input, output) => ttsrTextComplete(input, output, state, qualityLog),
   };
 }
 
 // Re-export BUILTIN_TTSR_RULES for callers that access it directly.
 export { BUILTIN_TTSR_RULES };
+// Greeting policy lives with the greeting cache; v2.mjs and tests import it here.
+export { isPluginGreetingEnabled };

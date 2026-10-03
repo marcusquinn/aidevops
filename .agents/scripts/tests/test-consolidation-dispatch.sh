@@ -313,9 +313,19 @@ test_child_body_contains_parent_content_and_authors() {
 		failures=$((failures + 1))
 		failmsg="${failmsg} | missing self-contained warning"
 	fi
-	if ! printf '%s' "$body" | grep -qF -- '--label "consolidated,origin:worker,auto-dispatch,<copy relevant labels from parent, excluding needs-consolidation, consolidation-task, and origin:interactive>"'; then
+	if ! printf '%s' "$body" | grep -qF -- '--label "consolidated,origin:worker,auto-dispatch,status:available,<copy relevant labels from parent, excluding all status:* labels, needs-consolidation, consolidation-task, and origin:interactive>"'; then
 		failures=$((failures + 1))
-		failmsg="${failmsg} | consolidated successor instructions omit auto-dispatch handoff"
+		failmsg="${failmsg} | consolidated successor instructions omit available handoff or parent status exclusion"
+	fi
+	if ! printf '%s' "$body" | grep -qF -- 'gh-write-helper.sh issue create --repo "owner/repo"' ||
+		! printf '%s' "$body" | grep -qF -- '--body-file "<file containing the merged body from step 2>"'; then
+		failures=$((failures + 1))
+		failmsg="${failmsg} | successor creation omits signed wrapper or body-file"
+	fi
+	if ! printf '%s' "$body" | grep -qF -- "Use \`EDIT:\` when the path already exists on the default branch" ||
+		! printf '%s' "$body" | grep -qF -- 'A stale checkout or failed API lookup is not proof of absence.'; then
+		failures=$((failures + 1))
+		failmsg="${failmsg} | scope instructions omit default-branch existence verification"
 	fi
 	if printf '%s' "$body" | grep -q 'github-actions'; then
 		failures=$((failures + 1))
@@ -543,6 +553,18 @@ JSON
 	return 0
 }
 
+# GH#32905: a missing-scope brief hold followed by its repair note (shapes from
+# GH#32849) is operational lifecycle, not scope discussion.
+fixture_brief_hold_and_repair_comments() {
+	cat <<'JSON'
+[
+  {"user": {"login": "maintainer-one", "type": "User"}, "created_at": "2026-09-28T18:50:00Z", "body": "<!-- aidevops:brief-hold reason=missing_files_scope body=f92f02a1d7ecbc037cccab11 -->\nBrief hold: reason=missing_files_scope. This operational body is intentionally long enough to clear the consolidation threshold."},
+  {"user": {"login": "maintainer-one", "type": "User"}, "created_at": "2026-09-28T21:01:00Z", "body": "Brief repaired: added a canonical Files Scope so the pre-claim scope gate passes. This operational body is intentionally long enough to clear the consolidation threshold."}
+]
+JSON
+	return 0
+}
+
 # Operational workflow comments reproduced from GH#28564-#28566. Both are
 # user-authored and exceed the production length threshold, but neither changes
 # issue scope and neither belongs in consolidation decisions or child bodies.
@@ -693,6 +715,51 @@ test_cost_circuit_breaker_comments_are_filtered() {
 	else
 		print_result "cost-circuit-breaker comments are excluded from consolidation body input" 1 \
 			"(substantive_json=$substantive_json)"
+	fi
+
+	teardown_gh_stub
+	return 0
+}
+
+# New automated comment kinds need no per-shape regex. Exercise the production
+# 500-character gate and both classification and child composition paths.
+test_structural_ops_marker_filters_unknown_comment_kind() {
+	setup_gh_stub
+	export ISSUE_CONSOLIDATION_COMMENT_MIN_CHARS=500
+	local comments_json substantive_json section
+	comments_json=$(jq -n --arg pad "$(printf '%0600d' 0)" '[range(2) | {user:{login:"maintainer",type:"User"},created_at:"2026-09-29T00:00:00Z",body:("Unrecognized lifecycle note " + $pad + "\n<!-- aidevops:ops kind=future-workflow -->")}]')
+	GH_API_COMMENTS_JSON="$comments_json"
+	export GH_API_COMMENTS_JSON
+	if _issue_needs_consolidation 32924 "marcusquinn/aidevops"; then
+		print_result "structural ops marker blocks consolidation classification" 1
+	else
+		print_result "structural ops marker blocks consolidation classification" 0
+	fi
+	substantive_json=$(_consolidation_substantive_comments 32924 "marcusquinn/aidevops")
+	section=$(_format_consolidation_comments_section "$substantive_json")
+	if [[ "$substantive_json" == "[]" && "$section" != *"Unrecognized lifecycle note"* ]]; then
+		print_result "structural ops marker excludes child composition" 0
+	else
+		print_result "structural ops marker excludes child composition" 1
+	fi
+	teardown_gh_stub
+	return 0
+}
+
+test_brief_hold_and_repair_comments_are_filtered() {
+	setup_gh_stub
+	GH_ISSUE_VIEW_LABELS="bug,tier:standard"
+	GH_API_COMMENTS_JSON=$(fixture_brief_hold_and_repair_comments)
+	GH_ISSUE_LIST_CHILD_JSON="[]"
+	GH_ISSUE_LIST_CHILD_CLOSED_JSON="[]"
+	export GH_ISSUE_VIEW_LABELS GH_API_COMMENTS_JSON
+	export GH_ISSUE_LIST_CHILD_JSON GH_ISSUE_LIST_CHILD_CLOSED_JSON
+
+	if _issue_needs_consolidation 32849 "marcusquinn/aidevops"; then
+		print_result "GH#32905: brief hold and repair comments are filtered" 1 \
+			"_issue_needs_consolidation returned 0 despite only brief-hold lifecycle noise"
+	else
+		print_result "GH#32905: brief hold and repair comments are filtered" 0
 	fi
 
 	teardown_gh_stub
@@ -995,15 +1062,30 @@ fixture_open_pr_resolving() {
 	'
 }
 
-# Helper: PR list payload with one open PR that REFERENCES the parent
-# but does NOT use a closing keyword (e.g. "For #N", "Ref #N", bare `#N`).
+# Helper: PR list payload with one open PR that only MENTIONS the parent
+# (bare `#N`, or a keyword pointing at a longer issue number).
 fixture_open_pr_non_closing() {
 	local parent_num="$1"
 	jq -n --arg n "$parent_num" '
 		[
 			{
 				"number": 19467,
-				"body": ("## Summary\n\nDocs-only follow-up that mentions #" + $n + " for context.\n\nFor #" + $n + "\n\n## Testing\n...")
+				"body": ("## Summary\n\nDocs-only follow-up that mentions #" + $n + " for context.\n\nFor #" + $n + "1\n\n## Testing\n...")
+			}
+		]
+	'
+}
+
+# Helper: PR list payload with one open PR that references the parent with a
+# non-closing in-flight keyword (GH#33284: `For #N` / `Ref #N`).
+fixture_open_pr_inflight_keyword() {
+	local parent_num="$1"
+	local keyword="$2"
+	jq -n --arg n "$parent_num" --arg k "$keyword" '
+		[
+			{
+				"number": 19468,
+				"body": ("## Summary\n\nData for a held parent.\n\n" + $k + " #" + $n + "\n\n## Testing\n...")
 			}
 		]
 	'
@@ -1026,21 +1108,35 @@ test_resolving_pr_helper_detects_closing_keyword() {
 	return 0
 }
 
-# t2161 A1 regression: helper returns 1 when only non-closing references exist.
-# `For #N`, `Ref #N`, and bare `#N` mentions must NOT be treated as resolving.
+# t2161 A1 regression: helper returns 1 when only bare mentions exist.
+# Bare `#N` and `For #N1` (a different issue) must NOT count as in-flight.
 test_resolving_pr_helper_ignores_non_closing_reference() {
 	setup_gh_stub
 	GH_PR_LIST_RESOLVING_JSON=$(fixture_open_pr_non_closing 19448)
 	export GH_PR_LIST_RESOLVING_JSON
 
 	if _consolidation_resolving_pr_exists 19448 "marcusquinn/aidevops"; then
-		print_result "t2161: helper ignores 'For #N' / bare '#N' references" 1 \
-			"_consolidation_resolving_pr_exists returned 0 for non-closing reference"
+		print_result "t2161: helper ignores bare '#N' and 'For #N1' references" 1 \
+			"_consolidation_resolving_pr_exists returned 0 for a bare mention"
 	else
-		print_result "t2161: helper ignores 'For #N' / bare '#N' references" 0
+		print_result "t2161: helper ignores bare '#N' and 'For #N1' references" 0
 	fi
 
 	teardown_gh_stub
+	return 0
+}
+
+# GH#33284: `For #N` / `Ref #N` open PRs are in-flight work on a held parent.
+test_resolving_pr_helper_detects_for_ref_keywords() {
+	local keyword="" result=0
+	for keyword in "For" "Ref" "for"; do
+		setup_gh_stub
+		GH_PR_LIST_RESOLVING_JSON=$(fixture_open_pr_inflight_keyword 19448 "$keyword")
+		export GH_PR_LIST_RESOLVING_JSON
+		_consolidation_resolving_pr_exists 19448 "marcusquinn/aidevops" || result=1
+		teardown_gh_stub
+	done
+	print_result "GH#33284: helper treats open 'For #N' / 'Ref #N' PRs as in-flight" "$result"
 	return 0
 }
 
@@ -1116,15 +1212,14 @@ test_single_bot_comment_does_not_trigger_consolidation() {
 	return 0
 }
 
-# GH#27853: terminal retry breakers must delegate to the existing dispatcher
-# rather than creating labels, comments, or child issues through a parallel
-# path. Existing child/lock tests above provide the idempotency coverage.
+# GH#27853: terminal retry breakers with a substantive comment must delegate
+# to the existing dispatcher. Existing child/lock tests cover idempotency.
 test_terminal_breaker_bridge_delegates_to_dispatcher() {
 	setup_gh_stub
 	GH_ISSUE_VIEW_TITLE="test: terminal breaker parent"
 	GH_ISSUE_VIEW_BODY="Original terminal breaker parent body."
 	GH_ISSUE_VIEW_LABELS="bug,tier:standard,needs-maintainer-review"
-	GH_API_COMMENTS_JSON="[]"
+	GH_API_COMMENTS_JSON=$(fixture_two_substantive_comments | jq '[.[0]]')
 	GH_ISSUE_LIST_CHILD_JSON="[]"
 	GH_ISSUE_LIST_CHILD_CLOSED_JSON="[]"
 	GH_PR_LIST_RESOLVING_JSON="[]"
@@ -1144,6 +1239,25 @@ test_terminal_breaker_bridge_delegates_to_dispatcher() {
 			"rc=${rc}; expected gh issue create through _dispatch_issue_consolidation"
 	fi
 
+	teardown_gh_stub
+	return 0
+}
+
+test_terminal_breaker_skips_automation_only_thread() {
+	setup_gh_stub
+	GH_API_COMMENTS_JSON=$(jq -n --arg body '<!-- triage-escalation --> Automated terminal breaker notice with lots of details and no scope discussion.' \
+		'[{user:{login:"maintainer",type:"User"},body:$body}]')
+	export GH_API_COMMENTS_JSON
+
+	local rc=0
+	_route_terminal_breaker_to_consolidation 123 owner/repo fast-fail-hard-stop || rc=$?
+	if [[ "$rc" -eq 0 ]] && ! grep -q 'issue create\|issue edit\|issue comment' "$GH_LOG" &&
+		grep -q 'terminal breaker consolidation skipped: no substantive comments' "$LOGFILE"; then
+		print_result "GH#33255: automation-only breaker preserves blocked issue without child" 0
+	else
+		print_result "GH#33255: automation-only breaker preserves blocked issue without child" 1 \
+			"rc=${rc}; unexpected issue write or missing skip log"
+	fi
 	teardown_gh_stub
 	return 0
 }
@@ -1504,6 +1618,8 @@ main() {
 	test_worker_superseded_comments_are_filtered
 	test_stale_recovery_tick_comments_are_filtered
 	test_cost_circuit_breaker_comments_are_filtered
+	test_structural_ops_marker_filters_unknown_comment_kind
+	test_brief_hold_and_repair_comments_are_filtered
 	test_operational_review_comments_are_filtered
 	test_review_feedback_markers_are_filtered
 	test_expired_dispatch_comment_releases_parent
@@ -1517,10 +1633,12 @@ main() {
 	# t2152 regression (GH#19415): single bot comment must not trigger
 	test_single_bot_comment_does_not_trigger_consolidation
 	test_terminal_breaker_bridge_delegates_to_dispatcher
+	test_terminal_breaker_skips_automation_only_thread
 
 	# t2161 regression suite
 	test_resolving_pr_helper_detects_closing_keyword
 	test_resolving_pr_helper_ignores_non_closing_reference
+	test_resolving_pr_helper_detects_for_ref_keywords
 	test_needs_consolidation_skips_with_inflight_resolving_pr
 	test_dispatch_skips_with_inflight_resolving_pr
 	test_live_interactive_claim_blocks_classification_and_clears_stale_label

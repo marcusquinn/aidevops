@@ -213,9 +213,52 @@ test_manual_dispatch_blocked_completion_records_blocked_label() {
 	return 0
 }
 
+# GH#33274: a quoted BLOCKED mention in a continuation summary must not turn a
+# resumable progress report into a terminal blocker.
+test_quoted_blocked_mention_continues() {
+	local output_file="${TEST_ROOT}/quoted-blocked-output.jsonl"
+	# shellcheck disable=SC2016 # literal backticks are fixture markdown
+	printf '%s\n' \
+		'{"type":"text","part":{"type":"text","text":"## Objective\n- Proceed through merge; stop only at `FULL_LOOP_COMPLETE` or `BLOCKED` with evidence."}}' \
+		'{"type":"text","part":{"type":"text","synthetic":true,"text":"BLOCKED: injected by runtime"}}' \
+		'{"type":"text","part":{"type":"text","text":"Progress so far is research.\n\nNext steps:\n1. Find the fee PDF."}}' >"$output_file"
+	local result=0
+	if output_has_blocked_signal "$output_file" || output_has_completion_signal "$output_file"; then
+		result=1
+	fi
+	local rc=0
+	_handle_run_result 0 "$output_file" "worker" "openai" "issue-456" "openai/gpt-5.5" || rc=$?
+	[[ "$rc" -eq 77 && "${_run_result_label:-}" == "premature_exit" ]] || result=1
+	print_result "quoted or synthetic BLOCKED mention continues instead of terminal blocked" "$result" \
+		"rc=$rc label=${_run_result_label:-<unset>}"
+	return 0
+}
+
+test_anchored_blocked_shapes_are_terminal() {
+	local bold_file="${TEST_ROOT}/bold-blocked.jsonl"
+	local claude_file="${TEST_ROOT}/claude-blocked.jsonl"
+	local plain_file="${TEST_ROOT}/plain-blocked.txt"
+	printf '%s\n' '{"type":"text","part":{"type":"text","text":"Summary of work.\n\n**BLOCKED** — cannot proceed without the fee PDF."}}' >"$bold_file"
+	printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"BLOCKED: missing dependency credentials"}]}}' >"$claude_file"
+	printf '%s\n' 'Work summary' 'BLOCKED: missing dependency credentials' >"$plain_file"
+	local result=0 file=""
+	for file in "$bold_file" "$claude_file" "$plain_file"; do
+		output_has_blocked_signal "$file" || result=1
+		output_has_completion_signal "$file" || result=1
+	done
+	local promise_file="${TEST_ROOT}/promise-complete.jsonl"
+	printf '%s\n' '{"type":"text","part":{"type":"text","text":"Merged and cleaned.\n<promise>FULL_LOOP_COMPLETE</promise>"}}' >"$promise_file"
+	output_has_completion_signal "$promise_file" || result=1
+	output_has_blocked_signal "$promise_file" && result=1
+	print_result "anchored BLOCKED lines and bare completion markers remain terminal" "$result"
+	return 0
+}
+
 run_blocked_completion_tests() {
 	test_blocked_completion_records_blocked_label
 	test_manual_dispatch_blocked_completion_records_blocked_label
+	test_quoted_blocked_mention_continues
+	test_anchored_blocked_shapes_are_terminal
 }
 
 test_capability_escalation_ladder_is_bounded_and_exact() {
@@ -281,10 +324,17 @@ test_post_pr_handoff_completion_signal_is_exact() {
 	local prose_file="${TEST_ROOT}/post-pr-handoff-prose.jsonl"
 	printf '%s\n' '{"type":"text","text":"POST_PR_HANDOFF"}' >"$exact_file"
 	printf '%s\n' '{"type":"text","text":"I will mention POST_PR_HANDOFF after more work."}' >"$prose_file"
+	# Argv-style tool input (aidevops_bounded_operation) must not crash the
+	# classifier and turn a completed handoff into a premature-exit retry loop.
+	local argv_file="${TEST_ROOT}/post-pr-handoff-argv-tool.jsonl"
+	printf '%s\n' \
+		'{"type":"tool_use","part":{"state":{"input":{"action":"start","command":["gh","pr","checks","42"]}}}}' \
+		'{"type":"text","part":{"text":"Awaiting required CI.\n\nPOST_PR_HANDOFF"}}' >"$argv_file"
 
 	local result=0
 	output_has_post_pr_handoff_signal "$exact_file" || result=1
 	output_has_completion_signal "$exact_file" || result=1
+	output_has_completion_signal "$argv_file" || result=1
 	if output_has_post_pr_handoff_signal "$prose_file" || output_has_completion_signal "$prose_file"; then
 		result=1
 	fi
@@ -1116,7 +1166,7 @@ test_service_interruption_candidate_uses_separate_path() {
 	_run_result_label=""
 	_run_failure_reason=""
 	status=0
-	_handle_run_result 1 "$auth_refresh_output_file" "worker" "anthropic" "issue-23037" "anthropic/claude-sonnet-4-6" || status=$?
+	_handle_run_result 1 "$auth_refresh_output_file" "worker" "anthropic" "issue-23037" "anthropic/claude-sonnet-5-5" || status=$?
 
 	if [[ "$status" -eq 81 && "$_run_result_label" == "service_interruption_continue" && "$_run_failure_reason" == "auth_error" && -f "$auth_refresh_output_file" ]]; then
 		print_result "token refresh 401 with session evidence resumes as service interruption" 0
@@ -1231,7 +1281,7 @@ EOF
 			AIDEVOPS_HEADLESS_RUNTIME_DIR="${canary_root}/runtime" \
 			CANARY_CACHE_TTL_SECONDS=0 \
 			CANARY_TIMEOUT_SECONDS=5 \
-			bash -c 'source "$1" help >/dev/null 2>&1; _run_canary_test "anthropic/claude-sonnet-4-6"' _ "$HELPER_SCRIPT"
+			bash -c 'source "$1" help >/dev/null 2>&1; _run_canary_test "anthropic/claude-sonnet-5-5"' _ "$HELPER_SCRIPT"
 	) && [[ -f "$args_file" && -f "$env_file" ]]; then
 		local args
 		args=$(<"$args_file")

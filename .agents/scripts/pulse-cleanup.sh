@@ -1046,8 +1046,135 @@ cleanup_orphans() {
 	return 0
 }
 
+#######################################
+# GH#32957: persistent GitHub read caches under ~/.aidevops/cache/ are written
+# by pulse, workers and interactive helpers but nothing pruned them. Every entry
+# older than its maximum TTL is dead weight (PR view/list default 3600s,
+# check-status terminal TTL <= 7 days), and gh_pr_list_cache_invalidate_repo
+# globs the whole snapshot dir on each merge/close, so its cost grows with the
+# backlog. These are private disposable caches: direct deletion, no trash.
+#######################################
+_PC_GH_READ_CACHE_MAX_AGE_DAYS=8
+_PC_GH_READ_CACHE_RM_BATCH=200
+
+# Emit candidate cache dirs, one per line: the four default locations plus any
+# env overrides. Pulse itself overrides the view/list dirs, so defaults are
+# always included to drain caches written by workers and interactive sessions.
+_pulse_gh_read_cache_dirs() {
+	local _root="${HOME}/.aidevops/cache"
+	printf '%s\n' \
+		"${_root}/pulse-pr-view-cache" \
+		"${_root}/gh-pr-list-snapshots" \
+		"${_root}/gh-pr-check-status" \
+		"${_root}/gh-pr-view-snapshots" \
+		"${AIDEVOPS_PULSE_PR_VIEW_CACHE_DIR:-}" \
+		"${AIDEVOPS_GH_PR_VIEW_CACHE_DIR:-}" \
+		"${AIDEVOPS_GH_PR_LIST_CACHE_DIR:-}" \
+		"${AIDEVOPS_GH_CHECK_STATUS_CACHE_DIR:-}"
+	return 0
+}
+
+# Reject broad, relative, symlinked or protected directories so a mistaken
+# env override can never turn the prune into a home/tmp-wide deletion.
+_pulse_gh_read_cache_dir_safe() {
+	local _dir="$1"
+	[[ "$_dir" == /* ]] || return 1
+	[[ -d "$_dir" && ! -L "$_dir" ]] || return 1
+	local _tmp_root="${TMPDIR:-/tmp}"
+	case "$_dir" in
+	/ | /tmp | /private/tmp | /var/tmp | "${_tmp_root%/}" | "${HOME%/}" | "${HOME%/}/.aidevops" | "${HOME%/}/.aidevops/cache") return 1 ;;
+	esac
+	case "${_dir##*/}" in
+	auto-dispatch-locks | bundle) return 1 ;;
+	esac
+	return 0
+}
+
+# Remove one batch of files; prints the number actually removed.
+_pulse_gh_read_cache_rm_batch() {
+	local _count="$#"
+	[[ "$_count" -gt 0 ]] || { printf '0\n'; return 0; }
+	if rm -f -- "$@" 2>/dev/null; then
+		printf '%s\n' "$_count"
+		return 0
+	fi
+	local _file=""
+	_count=0
+	for _file in "$@"; do
+		[[ -e "$_file" ]] || _count=$((_count + 1))
+	done
+	printf '%s\n' "$_count"
+	return 0
+}
+
+#######################################
+# Prune regular files older than 8 days (beyond the 7-day max TTL) from the
+# GitHub read cache dirs only, within PULSE_GH_READ_CACHE_PRUNE_MAX_SECONDS
+# (default 30). Top-level files only; symlinks and lock/lease files are never
+# touched. A large backlog drains incrementally across cycles.
+#######################################
+prune_expired_gh_read_caches() {
+	local _budget="${PULSE_GH_READ_CACHE_PRUNE_MAX_SECONDS:-30}"
+	[[ "$_budget" =~ ^[0-9]+$ ]] || _budget=30
+	local _max_age_min=$((_PC_GH_READ_CACHE_MAX_AGE_DAYS * 1440))
+	local _start="$SECONDS"
+	local _deadline=$((_start + _budget))
+	local _seen=$'\n'
+	local _dir="" _file="" _removed=0
+	local _dirs=0 _deleted=0 _timed_out=0
+	local -a _batch=()
+	while IFS= read -r _dir; do
+		[[ "$_dir" == "/" ]] || _dir="${_dir%/}"
+		[[ -n "$_dir" ]] || continue
+		[[ "$_seen" == *$'\n'"$_dir"$'\n'* ]] && continue
+		_seen="${_seen}${_dir}"$'\n'
+		_pulse_gh_read_cache_dir_safe "$_dir" || continue
+		if [[ "$SECONDS" -ge "$_deadline" ]]; then
+			_timed_out=1
+			break
+		fi
+		_dirs=$((_dirs + 1))
+		_batch=()
+		while IFS= read -r -d '' _file; do
+			_batch+=("$_file")
+			[[ "${#_batch[@]}" -ge "$_PC_GH_READ_CACHE_RM_BATCH" ]] || continue
+			_removed=$(_pulse_gh_read_cache_rm_batch "${_batch[@]}")
+			_deleted=$((_deleted + _removed))
+			_batch=()
+			if [[ "$SECONDS" -ge "$_deadline" ]]; then
+				_timed_out=1
+				break
+			fi
+		done < <(find "$_dir" -mindepth 1 -maxdepth 1 -type f -mmin "+${_max_age_min}" \
+			! -name '*.lock' ! -name '*.lease' ! -name '*.lck' -print0 2>/dev/null)
+		if [[ "${#_batch[@]}" -gt 0 ]]; then
+			_removed=$(_pulse_gh_read_cache_rm_batch "${_batch[@]}")
+			_deleted=$((_deleted + _removed))
+			_batch=()
+		fi
+		[[ "$_timed_out" -eq 0 ]] || break
+	done < <(_pulse_gh_read_cache_dirs)
+	echo "[pulse-wrapper] gh read-cache prune (GH#32957): dirs=${_dirs} deleted=${_deleted} max_age=${_PC_GH_READ_CACHE_MAX_AGE_DAYS}d elapsed=$((SECONDS - _start))s budget=${_budget}s timed_out=${_timed_out}" >>"${LOGFILE:-/dev/null}"
+	return 0
+}
+
 cleanup_stale_opencode() {
+	# GH#32957: this preflight stage also prunes expired GitHub read caches,
+	# reusing the existing scheduler with its own bounded budget.
+	prune_expired_gh_read_caches || true
 	# Consolidated into cleanup_orphans(), whose lifecycle and activity proof now
 	# safely covers eligible no-TTY and TTY-attached `opencode run` sessions.
+	# This stage is scheduled by pulse preflight; prune stale agent scratch here
+	# without introducing a second scheduler. The helper is dry-run by default
+	# for manual use; pulse explicitly opts in to recoverable trash moves.
+	# The scratch backlog can hold tens of thousands of entries; an unbounded
+	# run consumed the full 600s stage timeout every cycle and starved the
+	# stalled-worker, zombie-reap and ledger stages that follow. Bound the
+	# per-cycle budget so the backlog drains incrementally across cycles.
+	local _scratch_budget="${PULSE_SCRATCH_CLEANUP_MAX_SECONDS:-60}"
+	[[ "$_scratch_budget" =~ ^[0-9]+$ ]] || _scratch_budget=60
+	if [[ -x "${_PULSE_CLEANUP_SCRIPT_DIR}/system-cleanup.sh" ]]; then
+		"${_PULSE_CLEANUP_SCRIPT_DIR}/system-cleanup.sh" --force --max-seconds "$_scratch_budget" >>"${LOGFILE:-/dev/null}" 2>&1 || return 1
+	fi
 	return 0
 }

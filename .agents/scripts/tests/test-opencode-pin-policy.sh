@@ -19,13 +19,13 @@ assert_eq() {
 	fi
 }
 
-assert_eq "pin version is explicit" "1.18.32" "$OPENCODE_PINNED_VERSION"
+assert_eq "pin version is explicit" "1.18.33" "$OPENCODE_PINNED_VERSION"
 assert_eq "pin platform is scoped" "Linux" "$OPENCODE_PIN_PLATFORM"
 assert_eq "pin runtime is scoped" "headless" "$OPENCODE_PIN_RUNTIME_MODE"
 assert_eq "introduction date is recorded" "2026-07-30" "$OPENCODE_PIN_INTRODUCED_DATE"
-assert_eq "last canary is recorded" "2026-09-22" "$OPENCODE_PIN_LAST_CANARY_DATE"
-assert_eq "review deadline is recorded" "2026-09-29" "$OPENCODE_PIN_REVIEW_DEADLINE"
-assert_eq "plugin compatibility signal is explicit" "1.18.32" "$OPENCODE_PLUGIN_TESTED_VERSION"
+assert_eq "last canary is recorded" "2026-09-29" "$OPENCODE_PIN_LAST_CANARY_DATE"
+assert_eq "review deadline is recorded" "2026-10-06" "$OPENCODE_PIN_REVIEW_DEADLINE"
+assert_eq "plugin compatibility signal is explicit" "1.18.33" "$OPENCODE_PLUGIN_TESTED_VERSION"
 
 fixture_root=$(mktemp -d "${TMPDIR:-/tmp}/opencode-pin-policy.XXXXXX")
 trap 'rm -rf "$fixture_root"' EXIT INT TERM
@@ -86,7 +86,7 @@ status=$(
 		"$REPO_ROOT/.agents/scripts/opencode-pin-canary.sh" status
 )
 profile_tested=$(AIDEVOPS_AGENTS_DIR="$REPO_ROOT/.agents" aidevops_opencode_profile_value testedVersion v1)
-[[ "$status" == *"pinned=1.18.32"* && "$status" == *"registry-latest="* && "$status" == *"plugin-tested=${profile_tested}"* && "$status" == *"last-canary=2026-09-22"* ]] || {
+[[ "$status" == *"pinned=1.18.33"* && "$status" == *"registry-latest="* && "$status" == *"plugin-tested=${profile_tested}"* && "$status" == *"last-canary=2026-09-29"* ]] || {
 	printf 'FAIL: status omits compatibility evidence: %s\n' "$status" >&2
 	fail=$((fail + 1))
 }
@@ -119,7 +119,11 @@ else
 	printf 'FAIL: promotion lacks a credential-free same-revision comparison gate\n' >&2
 	fail=$((fail + 1))
 fi
-if grep -q 'cron:' "$workflow" && grep -q "title=\"Promote passing OpenCode compatibility candidate\"" "$workflow"; then
+# shellcheck disable=SC2016 # Match literal GitHub expressions and workflow shell variables.
+if grep -q 'cron:' "$workflow" && grep -q 'profile: \[v1, v2\]' "$workflow" &&
+	grep -q 'AIDEVOPS_OPENCODE_PROFILE: \${{ matrix.profile }}' "$workflow" &&
+	grep -q 'opencode-pin-canary-evidence-\${{ matrix.profile }}' "$workflow" &&
+	grep -q 'title="Promote passing OpenCode ${PROFILE} compatibility candidate"' "$workflow"; then
 	printf 'PASS: scheduled passing candidates create a promotion review\n'
 else
 	printf 'FAIL: scheduled passing-candidate promotion path is missing\n' >&2
@@ -135,11 +139,32 @@ else
 	printf 'FAIL: generated compatibility work is not worker-dispatchable\n' >&2
 	fail=$((fail + 1))
 fi
-if grep -q "title=\"OpenCode compatibility pin review is due\"" "$workflow" &&
+# shellcheck disable=SC2016 # Match the workflow shell variable literally.
+if grep -q 'title="OpenCode ${PROFILE} compatibility pin review is due"' "$workflow" &&
 	grep -q 'Retain the current fail-closed pin after failed or inconclusive results' "$workflow"; then
 	printf 'PASS: failed or inconclusive canaries retain the pin and create review work\n'
 else
 	printf 'FAIL: failed-canary retention path is missing\n' >&2
+	fail=$((fail + 1))
+fi
+if grep -q 'AIDEVOPS_PLUGIN_HEALTH_PROBE_FILE=' "$canary_script" &&
+	grep -q 'factory_initialized' "$canary_script" &&
+	grep -q 'aidevops_pre_edit_check aidevops_memory' "$canary_script" &&
+	grep -q "tool.get('function', {}).get('name')" "$canary_script" &&
+	grep -q 'Native tool diff (baseline -> candidate' "$canary_script"; then
+	printf 'PASS: probe requires plugin initialization and aidevops tools and reports native diff\n'
+else
+	printf 'FAIL: plugin/tool probe or native diff missing\n' >&2
+	fail=$((fail + 1))
+fi
+
+# shellcheck disable=SC2016 # Match the workflow shell variable literally.
+if grep -q "elif grep -q '\^RESULT=skip\$' canary-result.txt" "$workflow" &&
+	grep -A 4 "elif grep -q '\^RESULT=skip\$' canary-result.txt" "$workflow" | grep -q 'exit 0' &&
+	grep -q 'title="OpenCode ${PROFILE} compatibility pin review is due"' "$workflow"; then
+	printf 'PASS: unchanged pin skips review without suppressing failed or inconclusive candidates\n'
+else
+	printf 'FAIL: unchanged pin incorrectly creates a compatibility review\n' >&2
 	fail=$((fail + 1))
 fi
 

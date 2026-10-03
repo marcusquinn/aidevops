@@ -60,7 +60,6 @@ Connection overhead                  → Enable connection pooling
 | [relations.md](postgres-drizzle-skill/relations.md) | One-to-many, many-to-many, self-referential |
 | [migrations.md](postgres-drizzle-skill/migrations.md) | drizzle-kit workflows |
 | [postgres.md](postgres-drizzle-skill/postgres.md) | PG18 features, RLS, partitioning |
-| [performance.md](postgres-drizzle-skill/performance.md) | Indexing, pooling, caching, monitoring |
 | [cheatsheet.md](postgres-drizzle-skill/cheatsheet.md) | Quick reference |
 
 ## Resources

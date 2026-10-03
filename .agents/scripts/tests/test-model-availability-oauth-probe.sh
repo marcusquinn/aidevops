@@ -542,7 +542,17 @@ else
 		"(got rc=$rc — expected 0; gpt-5.4-pro should be blocked under ChatGPT OAuth)"
 fi
 
-# 5c — gpt-5.5 (non-pro) allowed under ChatGPT OAuth
+# 5c — dated snapshots of denied models are denied under ChatGPT OAuth
+_chatgpt_oauth_denylist_check openai gpt-5.5-pro-2026-01-15
+rc=$?
+if [[ "$rc" -eq 0 ]]; then
+	print_result "chatgpt-oauth-denylist: dated gpt-5.5-pro snapshot denied (rc=0)" 0
+else
+	print_result "chatgpt-oauth-denylist: dated gpt-5.5-pro snapshot denied (rc=0)" 1 \
+		"(got rc=$rc — expected 0; dated snapshots of denied models must be blocked)"
+fi
+
+# 5d — supported and prefix-only model IDs remain allowed under ChatGPT OAuth
 _chatgpt_oauth_denylist_check openai gpt-5.5
 rc=$?
 if [[ "$rc" -ne 0 ]]; then
@@ -552,7 +562,25 @@ else
 		"(got rc=$rc — expected 1; gpt-5.5 is supported and must not be blocked)"
 fi
 
-# 5d — denylist no-ops when no OAuth is present (API key auth)
+_chatgpt_oauth_denylist_check openai gpt-5.6-sol-pro
+rc=$?
+if [[ "$rc" -ne 0 ]]; then
+	print_result "chatgpt-oauth-denylist: unrelated gpt-5.6-sol-pro allowed (rc=1)" 0
+else
+	print_result "chatgpt-oauth-denylist: unrelated gpt-5.6-sol-pro allowed (rc=1)" 1 \
+		"(got rc=$rc — expected 1; unrelated Pro models must not be blocked)"
+fi
+
+_chatgpt_oauth_denylist_check openai gpt-5.5-pro-max
+rc=$?
+if [[ "$rc" -ne 0 ]]; then
+	print_result "chatgpt-oauth-denylist: prefix-only gpt-5.5-pro-max allowed (rc=1)" 0
+else
+	print_result "chatgpt-oauth-denylist: prefix-only gpt-5.5-pro-max allowed (rc=1)" 1 \
+		"(got rc=$rc — expected 1; prefix-only matches must not be blocked)"
+fi
+
+# 5e — denylist no-ops when no OAuth is present (API key auth)
 rm -f "$AUTH_FILE"
 _chatgpt_oauth_denylist_check openai gpt-5.5-pro
 rc=$?
@@ -563,7 +591,7 @@ else
 		"(got rc=$rc — expected 1; denylist must not fire when auth.json has no OpenAI OAuth)"
 fi
 
-# 5e — denylist no-ops for non-openai provider
+# 5f — denylist no-ops for non-openai provider
 cat >"$AUTH_FILE" <<JSON
 {
   "openai": {

@@ -34,6 +34,8 @@ r915|x|Pulse check — worker utilisation and self-improvement recommendations|r
 r916|x|Cloudron packages — check upstream releases|repeat:daily(@01:30)|~2m|scripts/cloudron-package-monitor-helper.sh upstream --apply|script|UTC
 r917|x|Cloudron packages — audit compatibility|repeat:weekly(sun@07:40)|~5m|scripts/cloudron-package-monitor-helper.sh compatibility --apply|script
 r918|x|Observability retention — archive bounded runtime evidence|repeat:daily(@03:10)|~2m|scripts/observability-helper.sh retention-maintenance --apply --max-partitions 20 --max-duration-seconds 120|script
+r919|x|Private mirror upstream sync|repeat:daily(@20:00)|~5m|scripts/mirror-sync-helper.sh sync|script
+r920|x|Memory audit — mine actionable learning patterns|repeat:daily(@04:00)|~2m|scripts/memory-audit-pulse.sh run --quiet|script
 ENTRIES
 	return 0
 }
@@ -454,6 +456,51 @@ $(_diag_commands "$os" "sh.aidevops.repo-sync" "sh.aidevops.repo-sync")
 - \`git -C <repo> status --short --branch\` — local state and reported drift
 - \`~/.config/aidevops/repos.json\` — registered repos
 - Repos with \`local_only: true\` are still synced locally (no fetch)
+$(_platform_footnote "$os")
+EOF
+	return 0
+}
+
+describe_r919() {
+	local os="${1:-darwin}"
+	cat <<EOF
+# r919: Private mirror upstream sync
+
+Daily at 20:00, synchronises only registered private mirrors with a string
+\`mirror_upstream\` slug and without \`mirror_sync: false\`. All merge work is
+isolated in a disposable temporary repository; canonical checkouts are read-only.
+
+Runs \`mirror-sync-helper.sh sync\`. Fast-forward pushes go only to the mirror;
+divergence creates a dated sync branch and merges without force. Conflicts leave
+the mirror default branch unchanged. Inspect \`mirror-sync-helper.sh status\`.
+$(_platform_footnote "$os")
+EOF
+	return 0
+}
+
+describe_r920() {
+	local os="${1:-darwin}"
+	cat <<EOF
+# r920: Memory audit
+
+Runs the local memory hygiene and improvement scan once daily. The scan only
+files bounded, deduplicated follow-up work for review; it never writes to a
+canonical checkout.
+
+## Schedule
+
+| Field | Value |
+|-------|-------|
+| Frequency | Daily at 04:00 |
+| Type | script |
+| Expected duration | ~2 minutes |
+| Script | \`scripts/memory-audit-pulse.sh run --quiet\` |
+$(_scheduler_row_calendar "$os" "StartCalendarInterval: Hour=4, Minute=0" "sh.aidevops.memory-audit" "sh.aidevops.memory-audit")
+
+## What to check
+
+- \`memory-audit-pulse.sh status\` — last successful audit and interval
+- \`memory-audit-pulse.sh run --dry-run --force\` — candidate and routing preview
 $(_platform_footnote "$os")
 EOF
 	return 0

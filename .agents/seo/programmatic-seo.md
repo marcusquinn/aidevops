@@ -44,7 +44,7 @@ tools:
 
 ### 1. Keyword Research and Clustering
 
-Run `/keyword-research-extended "seed keyword"`. Cluster by: same head term + varying modifier, consistent volume, similar SERP intent, low difficulty.
+Run `/keyword-research-extended "seed keyword"`. Cluster by: same head term + varying modifier, consistent volume, similar SERP intent, low difficulty. Store heads and modifiers in the project registry and generate page candidates with `aidevops keywords expand <head-id>`; group by SERP overlap with `aidevops keywords cluster --serps <file>` (`seo/keywords-standard.md`, ecommerce facets: `seo/ecommerce-seo.md`).
 
 ### 2. Template Design
 

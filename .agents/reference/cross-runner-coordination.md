@@ -372,6 +372,14 @@ writes only the body, verifies the hold and metadata remained unchanged, checks
 the post-write body hash, and requires tamper-evident audit receipts. Ordinary,
 bulk, pulse, decomposition, and dispatch paths remain fail-closed.
 
+For generated auto-dispatch issues without a task ID, use
+`issue-sync-helper.sh refresh-body <issue> --repo <owner/repo> --body-file <path>`
+instead. It requires admin/maintain authority, an open unclaimed issue outside
+queued/in-progress/in-review states, and preserves the existing signature footer
+and complete pulse feedback blocks. `--dry-run` displays a diff and exits 2.
+Unlike `sync-body`, it takes the regenerated brief file as its source and does
+not require a TODO mapping or `no-auto-dispatch` hold.
+
 ### 4.6 Simultaneous DISPATCH_CLAIM Race (fixed t2422)
 
 **Pattern:** Two runners pass Layers 1–6 together and post `DISPATCH_CLAIM`

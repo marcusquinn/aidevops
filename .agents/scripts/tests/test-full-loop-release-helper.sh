@@ -26,6 +26,19 @@ case "$*" in
 *rev-parse\ origin/main*) printf '%040d\n' 0 ;;
 *describe\ --tags*) printf 'v2.9.9\n' ;;
 *rev-parse\ refs/tags/v2.9.9*) printf '%040d\n' 1 ;;
+*rev-parse\ --is-shallow-repository*)
+	if [[ -n "${FAKE_UNSHALLOW_MARKER:-}" && -f "$FAKE_UNSHALLOW_MARKER" ]]; then
+		printf 'false\n'
+	else
+		printf '%s\n' "${FAKE_SHALLOW:-false}"
+	fi
+	;;
+*fetch\ --unshallow*)
+	if [[ "${FAKE_UNSHALLOW_EXIT:-0}" -eq 0 && -n "${FAKE_UNSHALLOW_MARKER:-}" ]]; then
+		: >"$FAKE_UNSHALLOW_MARKER"
+	fi
+	exit "${FAKE_UNSHALLOW_EXIT:-0}"
+	;;
 *worktree\ add*)
 	for arg in "$@"; do
 		case "$arg" in
@@ -202,6 +215,11 @@ if compgen -G "$ROOT/worktrees/aidevops-release-42-*" >/dev/null; then
 	exit 1
 fi
 printf 'PASS detached release runner persists publication receipt after successful gates\n'
+if grep -q 'fetch --unshallow' "$ROOT/git.log"; then
+	printf 'FAIL full-depth store attempted an unnecessary unshallow fetch\n'
+	exit 1
+fi
+printf 'PASS full-depth store skips the new shallow-history preflight step\n'
 
 cp "$ROOT/vm.log" "$ROOT/vm-after-publication.log"
 printf '%s\n' '{"schema_version":1,"repository":"marcusquinn/aidevops","pr_number":42,"release_status":"not-requested"}' \
@@ -418,8 +436,10 @@ printf 'PASS reviewed aggregate source publishes once and truthfully supersedes 
 		local source_pr="$2"
 		local requested_sources="$3"
 		local release_type="$4"
+		local retry_assertion="$5"
 		[[ "$repo" == "marcusquinn/aidevops" && "$source_pr" == "48" &&
-			"$requested_sources" == "$persisted_sources" && "$release_type" == "patch" ]] || return 1
+			"$requested_sources" == "$persisted_sources" && "$release_type" == "patch" &&
+			-z "$retry_assertion" ]] || return 1
 		expansion_calls=$((expansion_calls + 1))
 		_FULL_LOOP_AGGREGATE_RECOVERY_EXPECTED="$requested_sources"
 		return 0
@@ -615,5 +635,172 @@ printf 'PASS pending reconciliation persists its verified discovered tag\n'
 	release_lane_finalize test/repo 42 published || exit 1
 )
 printf 'PASS terminal lane writes reconcile durable state after transport uncertainty\n'
+
+# GH#33069 (t18554): a shallow control worktree self-heals via
+# `git fetch --unshallow --tags origin` before the release proceeds.
+: >"$ROOT/git.log"
+heal_rc=0
+(
+	cd "$ROOT/repo/linked-branch"
+	export PATH="$ROOT/bin:/usr/bin:/bin"
+	export GIT_CALL_LOG="$ROOT/git.log" FAKE_REPO_ROOT="$ROOT/repo"
+	export AIDEVOPS_WORKTREE_BASE_DIR="$ROOT/worktrees"
+	export FAKE_SHALLOW=true
+	export FAKE_UNSHALLOW_MARKER="$ROOT/unshallow-marker-heal"
+	rm -f "$FAKE_UNSHALLOW_MARKER"
+	source "$SCRIPT_DIR/full-loop-release-helper.sh" help >/dev/null
+	_full_loop_release_ensure_full_history
+) 2>"$ROOT/ensure-history-heal.err" || heal_rc=$?
+[[ "$heal_rc" -eq 0 ]] || {
+	printf 'FAIL shallow control worktree healing did not succeed\n' >&2
+	exit 1
+}
+grep -q 'fetch --unshallow --tags origin' "$ROOT/git.log"
+grep -qx 'RELEASE_SHALLOW_STORE action=healed' "$ROOT/ensure-history-heal.err"
+printf 'PASS shallow control worktree self-heals via fetch --unshallow before proceeding\n'
+
+# Healable shallow store: full end-to-end run still publishes, and the
+# unshallow fetch happens before worktree add --detach for the release path.
+: >"$ROOT/git.log"
+(
+	cd "$ROOT/repo/linked-branch"
+	PATH="$ROOT/bin:/usr/bin:/bin" \
+		GIT_CALL_LOG="$ROOT/git.log" \
+		VM_CALL_LOG="$ROOT/shallow-heal-vm.log" \
+		FAKE_REPO_ROOT="$ROOT/repo" \
+		FAKE_SHALLOW=true \
+		FAKE_UNSHALLOW_MARKER="$ROOT/unshallow-marker-run" \
+		AIDEVOPS_WORKTREE_BASE_DIR="$ROOT/worktrees" \
+		AIDEVOPS_FULL_LOOP_VERSION_MANAGER="../../version-manager.sh" \
+		AIDEVOPS_FULL_LOOP_SOURCE_RESOLVER="$ROOT/source-resolver.sh" \
+		AIDEVOPS_FULL_LOOP_RECEIPT_DIR="$ROOT/receipts" \
+		AIDEVOPS_FULL_LOOP_REPO=marcusquinn/aidevops \
+		bash "$SCRIPT_DIR/full-loop-release-helper.sh" patch 60 incremental
+)
+grep -qx 'published' "$ROOT/receipts/marcusquinn_aidevops-60.status"
+fetch_unshallow_line=$(grep -n 'fetch --unshallow --tags origin' "$ROOT/git.log" | head -1 | cut -d: -f1)
+worktree_add_line=$(grep -n 'worktree add --detach .*/aidevops-release-60-' "$ROOT/git.log" | head -1 | cut -d: -f1)
+[[ -n "$fetch_unshallow_line" && -n "$worktree_add_line" && "$fetch_unshallow_line" -lt "$worktree_add_line" ]]
+printf 'PASS healable shallow store unshallows before release worktree add and publishes\n'
+
+# AIDEVOPS_SHALLOW_UNSHALLOW=0: non-zero exit, RELEASE_SHALLOW_STORE
+# action=disabled, no lane write (guard_competing_lane never runs).
+disabled_rc=0
+(
+	cd "$ROOT/repo/linked-branch"
+	export PATH="$ROOT/bin:/usr/bin:/bin"
+	export GIT_CALL_LOG="$ROOT/git.log" FAKE_REPO_ROOT="$ROOT/repo"
+	export AIDEVOPS_WORKTREE_BASE_DIR="$ROOT/worktrees"
+	export FAKE_SHALLOW=true AIDEVOPS_SHALLOW_UNSHALLOW=0
+	source "$SCRIPT_DIR/full-loop-release-helper.sh" help >/dev/null
+	_full_loop_release_ensure_full_history
+) 2>"$ROOT/ensure-history-disabled.err" || disabled_rc=$?
+[[ "$disabled_rc" -eq 1 ]]
+grep -qx 'RELEASE_SHALLOW_STORE action=disabled' "$ROOT/ensure-history-disabled.err"
+printf 'PASS disabled auto-unshallow blocks with an actionable RELEASE_SHALLOW_STORE error\n'
+
+# A failing unshallow fetch: non-zero exit, action=failed.
+failed_rc=0
+(
+	cd "$ROOT/repo/linked-branch"
+	export PATH="$ROOT/bin:/usr/bin:/bin"
+	export GIT_CALL_LOG="$ROOT/git.log" FAKE_REPO_ROOT="$ROOT/repo"
+	export AIDEVOPS_WORKTREE_BASE_DIR="$ROOT/worktrees"
+	export FAKE_SHALLOW=true FAKE_UNSHALLOW_EXIT=1
+	source "$SCRIPT_DIR/full-loop-release-helper.sh" help >/dev/null
+	_full_loop_release_ensure_full_history
+) 2>"$ROOT/ensure-history-failed.err" || failed_rc=$?
+[[ "$failed_rc" -eq 1 ]]
+grep -qx 'RELEASE_SHALLOW_STORE action=failed' "$ROOT/ensure-history-failed.err"
+printf 'PASS a failed unshallow fetch blocks with RELEASE_SHALLOW_STORE action=failed\n'
+
+# The preflight gates lane reservation: when it fails, guard_competing_lane
+# (the first step that can observe/mutate the lane) must never run.
+(
+	cd "$ROOT/repo/linked-branch"
+	export PATH="$ROOT/bin:/usr/bin:/bin"
+	export GIT_CALL_LOG="$ROOT/git.log" FAKE_REPO_ROOT="$ROOT/repo"
+	export AIDEVOPS_WORKTREE_BASE_DIR="$ROOT/worktrees"
+	export AIDEVOPS_FULL_LOOP_REPO=marcusquinn/aidevops
+	source "$SCRIPT_DIR/full-loop-release-helper.sh" help >/dev/null
+	guard_calls=0
+	_full_loop_release_ensure_full_history() { return 1; }
+	_full_loop_release_guard_competing_lane() {
+		guard_calls=$((guard_calls + 1))
+		return 0
+	}
+	start_rc=0
+	_full_loop_release_start_new marcusquinn/aidevops 61 patch incremental "" || start_rc=$?
+	[[ "$start_rc" -eq 1 && "$guard_calls" -eq 0 ]]
+)
+printf 'PASS an unresolved shallow store blocks lane reservation before any lane write\n'
+
+# A competing release can only finalize a published lane through the existing
+# reconcile path, after observing a dead executor. Every uncertain case refuses.
+for scenario in published deployment live unknown unpublished reserved failed deferred lost-cas unfinalized; do
+	(
+		cd "$ROOT/repo/linked-branch"
+		export PATH="$ROOT/bin:/usr/bin:/bin"
+		export GIT_CALL_LOG="$ROOT/git.log" FAKE_REPO_ROOT="$ROOT/repo"
+		export AIDEVOPS_WORKTREE_BASE_DIR="$ROOT/worktrees"
+		source "$SCRIPT_DIR/full-loop-release-helper.sh" help >/dev/null
+		phase=remote-publication
+		[[ "$scenario" == deployment ]] && phase=exact-tag-deployment
+		[[ "$scenario" == reserved ]] && phase=reserved
+		lane_state=$(jq -cn --arg phase "$phase" \
+			'{active:true,source_pr:42,phase:$phase,tag:"v1.2.3",terminal_receipt:null}')
+		reads=0
+		inspections=0
+		reconciles=0
+		release_lane_read() {
+			_AIDEVOPS_RELEASE_LANE_JSON="$lane_state"
+			reads=$((reads + 1))
+			return 0
+		}
+		_release_lane_abandoned_reservation() { return 1; }
+		_release_lane_executor_observe() {
+			case "$scenario" in
+			live | unknown) printf '{"state":"%s"}\n' "$scenario" ;;
+			*) printf '{"state":"dead"}\n' ;;
+			esac
+			return 0
+		}
+		_full_loop_release_inspect_remote() {
+			inspections=$((inspections + 1))
+			[[ "$1" == test/repo && "$2" == v1.2.3 ]] || return 1
+			[[ "$scenario" != unpublished ]]
+		}
+		_full_loop_release_existing_with_lane() {
+			reconciles=$((reconciles + 1))
+			[[ "$1" == reconcile && "$2" == 42 ]] || return 1
+			case "$scenario" in
+			failed) return 1 ;;
+			deferred) return 8 ;;
+			lost-cas) return 75 ;;
+			unfinalized) return 0 ;;
+			esac
+			lane_state='{"active":false,"source_pr":42,"phase":"terminal","tag":"v1.2.3","terminal_receipt":"published"}'
+			return 0
+		}
+		release_lane_liveness_report() { return 0; }
+		rc=0
+		_full_loop_release_guard_competing_lane test/repo 61 >"$ROOT/competing-output" || rc=$?
+		output=$(<"$ROOT/competing-output")
+		case "$scenario" in
+		published | deployment)
+			[[ "$rc" -eq 0 && "$reads" -eq 2 && "$inspections" -eq 1 && "$reconciles" -eq 1 &&
+				"$output" == *'RELEASE_LANE_FINALIZED source_pr=42 tag=v1.2.3 receipt=published'* ]]
+			;;
+		live | unknown | reserved)
+			[[ "$rc" -eq 75 && "$inspections" -eq 0 && "$reconciles" -eq 0 && "$output" == *'ACTIVE_RELEASE_LANE source_pr=42'* ]]
+			;;
+		unpublished)
+			[[ "$rc" -eq 75 && "$inspections" -eq 1 && "$reconciles" -eq 0 && "$output" == *'ACTIVE_RELEASE_LANE source_pr=42'* ]]
+			;;
+		*) [[ "$rc" -eq 75 && "$inspections" -eq 1 && "$reconciles" -eq 1 && "$output" == *'ACTIVE_RELEASE_LANE source_pr=42'* ]] ;;
+		esac
+	) || { printf 'FAIL competing lane scenario %s\n' "$scenario" >&2; exit 1; }
+done
+printf 'PASS competing published dead lanes finalize; uncertain and failed lanes refuse\n'
 
 exit 0

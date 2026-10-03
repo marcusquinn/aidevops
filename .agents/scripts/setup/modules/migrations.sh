@@ -138,6 +138,327 @@ cleanup_legacy_aidevops_temp_artifacts() {
 	return 0
 }
 
+# GH#33140: code indexing and context packing retired (rg, targeted reads and
+# the ai-research files parameter cover them). Prints the number of paths removed.
+cleanup_retired_context_tooling() {
+	local agents_dir="$1"
+	local removed=0
+	local retired_path=""
+	for retired_path in \
+		"$agents_dir/tools/context/llm-tldr.md" \
+		"$agents_dir/tools/context/context-builder.md" \
+		"$agents_dir/tools/context/context-builder-agent.md" \
+		"$agents_dir/tools/context/rapidfuzz.md" \
+		"$agents_dir/scripts/context-builder-helper.sh" \
+		"$agents_dir/scripts/commands/context.md"; do
+		if [[ -e "$retired_path" ]]; then
+			rm -rf "$retired_path"
+			removed=$((removed + 1))
+		fi
+	done
+	printf '%s\n' "$removed"
+	return 0
+}
+
+# GH#5155: scripts archived upstream but orphaned in deployed installs (rsync
+# only adds/overwrites, doesn't delete removed files). Prints removed count.
+cleanup_retired_quality_automation_scripts() {
+	local agents_dir="$1"
+	local removed=0
+	local retired_path=""
+	for retired_path in \
+		"$agents_dir/scripts/pattern-tracker-helper.sh" \
+		"$agents_dir/scripts/quality-sweep-helper.sh" \
+		"$agents_dir/scripts/quality-loop-helper.sh" \
+		"$agents_dir/scripts/review-pulse-helper.sh" \
+		"$agents_dir/scripts/self-improve-helper.sh" \
+		"$agents_dir/scripts/coderabbit-pulse-helper.sh" \
+		"$agents_dir/scripts/coderabbit-task-creator-helper.sh" \
+		"$agents_dir/scripts/audit-task-creator-helper.sh" \
+		"$agents_dir/scripts/batch-cleanup-helper.sh" \
+		"$agents_dir/scripts/coordinator-helper.sh" \
+		"$agents_dir/scripts/finding-to-task-helper.sh" \
+		"$agents_dir/scripts/objective-runner-helper.sh" \
+		"$agents_dir/scripts/ralph-loop-helper.sh" \
+		"$agents_dir/scripts/stale-pr-helper.sh"; do
+		if [[ -e "$retired_path" ]]; then
+			rm -rf "$retired_path"
+			removed=$((removed + 1))
+		fi
+	done
+	printf '%s\n' "$removed"
+	return 0
+}
+
+# GH#33145: retired contest and response-scoring chain (unused; /cross-review
+# stays). Prints removed count.
+cleanup_retired_contest_scoring_tooling() {
+	local agents_dir="$1"
+	local removed=0
+	local retired_path=""
+	for retired_path in \
+		"$agents_dir/scripts/contest-helper.sh" \
+		"$agents_dir/scripts/contest-helper-create.sh" \
+		"$agents_dir/scripts/contest-helper-dispatch.sh" \
+		"$agents_dir/scripts/contest-helper-evaluate.sh" \
+		"$agents_dir/scripts/contest-helper-status.sh" \
+		"$agents_dir/scripts/contest-helper-apply.sh" \
+		"$agents_dir/scripts/response-scoring-helper.sh" \
+		"$agents_dir/scripts/compare-models-bench-lib.sh" \
+		"$agents_dir/scripts/commands/score-responses.md" \
+		"$agents_dir/workflows/score-responses.md" \
+		"$agents_dir/tools/ai-assistants/response-scoring.md"; do
+		if [[ -e "$retired_path" ]]; then
+			rm -rf "$retired_path"
+			removed=$((removed + 1))
+		fi
+	done
+	printf '%s\n' "$removed"
+	return 0
+}
+
+# GH#33150: Remotion skill restructured from flat tools/video/remotion-*.md
+# files into tools/video/remotion/ subfolder chapters. Prints removed count.
+_remove_retired_skill_file() {
+	local agents_dir="$1"
+	local retired_path="$2"
+	local source_agents="${BASH_SOURCE[0]%/*}/../../.."
+	# The deployed source wins over a historical retirement list. Never recursively
+	# delete resource directories: unknown user files inside them are not ours.
+	if [[ -e "$source_agents/${retired_path#"$agents_dir/"}" ]]; then
+		printf '0\n'
+		return 0
+	fi
+	if [[ -d "$retired_path" && ! -L "$retired_path" ]]; then
+		rmdir "$retired_path" 2>/dev/null || true
+		printf '0\n'
+	elif [[ -e "$retired_path" || -L "$retired_path" ]]; then
+		rm -f "$retired_path"
+		printf '1\n'
+	else
+		printf '0\n'
+	fi
+	return 0
+}
+
+cleanup_retired_remotion_flat_docs() {
+	local agents_dir="$1"
+	local removed=0
+	local retired_path=""
+	for retired_path in \
+		"$agents_dir/tools/video/remotion.md" \
+		"$agents_dir/tools/video/remotion-3d.md" \
+		"$agents_dir/tools/video/remotion-animations.md" \
+		"$agents_dir/tools/video/remotion-assets.md" \
+		"$agents_dir/tools/video/remotion-assets" \
+		"$agents_dir/tools/video/remotion-audio.md" \
+		"$agents_dir/tools/video/remotion-calculate-metadata.md" \
+		"$agents_dir/tools/video/remotion-can-decode.md" \
+		"$agents_dir/tools/video/remotion-charts.md" \
+		"$agents_dir/tools/video/remotion-compositions.md" \
+		"$agents_dir/tools/video/remotion-display-captions.md" \
+		"$agents_dir/tools/video/remotion-extract-frames.md" \
+		"$agents_dir/tools/video/remotion-fonts.md" \
+		"$agents_dir/tools/video/remotion-get-audio-duration.md" \
+		"$agents_dir/tools/video/remotion-get-video-dimensions.md" \
+		"$agents_dir/tools/video/remotion-get-video-duration.md" \
+		"$agents_dir/tools/video/remotion-gifs.md" \
+		"$agents_dir/tools/video/remotion-images.md" \
+		"$agents_dir/tools/video/remotion-import-srt-captions.md" \
+		"$agents_dir/tools/video/remotion-lottie.md" \
+		"$agents_dir/tools/video/remotion-measuring-dom-nodes.md" \
+		"$agents_dir/tools/video/remotion-measuring-text.md" \
+		"$agents_dir/tools/video/remotion-sequencing.md" \
+		"$agents_dir/tools/video/remotion-tailwind.md" \
+		"$agents_dir/tools/video/remotion-text-animations.md" \
+		"$agents_dir/tools/video/remotion-timing.md" \
+		"$agents_dir/tools/video/remotion-transcribe-captions.md" \
+		"$agents_dir/tools/video/remotion-transitions.md" \
+		"$agents_dir/tools/video/remotion-trimming.md" \
+		"$agents_dir/tools/video/remotion-videos.md"; do
+		removed=$((removed + $(_remove_retired_skill_file "$agents_dir" "$retired_path")))
+	done
+	for retired_path in charts-bar-chart.tsx text-animations-typewriter.tsx text-animations-word-highlight.tsx; do
+		removed=$((removed + $(_remove_retired_skill_file "$agents_dir" "$agents_dir/tools/video/remotion-assets/$retired_path")))
+	done
+	rmdir "$agents_dir/tools/video/remotion-assets" 2>/dev/null || true
+	printf '%s\n' "$removed"
+	return 0
+}
+
+# GH#33150: cloudflare-platform-skill re-sourced from the official
+# cloudflare/skills repo and trimmed (decision tree + gotchas always,
+# patterns only for newer products); pulumi/terraform/turnstile dropped.
+# Prints removed count.
+cleanup_retired_cloudflare_platform_skill_patterns() {
+	local agents_dir="$1"
+	local removed=0
+	local retired_path=""
+	for retired_path in \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/agents-sdk-gotchas.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/agents-sdk-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/analytics-engine-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/api-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/api-shield-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/argo-smart-routing-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/bindings-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/bot-management-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/browser-rendering-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/cache-reserve-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/cron-triggers-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/d1-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/ddos-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/do-storage-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/do-storage-patterns" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/durable-objects-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/email-routing-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/hyperdrive-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/images-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/kv-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/miniflare-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/network-interconnect-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/observability-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/pages-functions-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/pages-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/pipelines.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/pulumi-gotchas.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/pulumi-gotchas" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/pulumi-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/pulumi.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/queues-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/r2-data-catalog-gotchas.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/r2-data-catalog-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/r2-data-catalog.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/r2-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/r2-patterns" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/r2-sql.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/realtime-sfu-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/sandbox-gotchas.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/sandbox-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/sandbox-patterns" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/smart-placement-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/snippets-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/spectrum-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/static-assets-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/stream-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/terraform-gotchas.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/terraform-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/terraform.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/tunnel-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/turnstile-gotchas.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/turnstile-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/turnstile.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/vectorize-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/waf-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/web-analytics-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/workerd-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/workers-for-platforms-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/workers-gotchas.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/workers-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/workers-playground-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/wrangler-gotchas.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/wrangler-patterns.md" \
+		"$agents_dir/services/hosting/cloudflare-platform-skill/zaraz-patterns.md"; do
+		removed=$((removed + $(_remove_retired_skill_file "$agents_dir" "$retired_path")))
+	done
+	removed=$((removed + $(cleanup_retired_cloudflare_examples "$agents_dir")))
+	printf '%s\n' "$removed"
+	return 0
+}
+
+# Exact formerly shipped leaves; custom files keep their containing directory.
+cleanup_retired_cloudflare_examples() {
+	local agents_dir="$1"
+	local removed=0
+	local relative=""
+	local root="$agents_dir/services/hosting/cloudflare-platform-skill"
+	for relative in \
+		do-storage-patterns/01-schema-migration.md do-storage-patterns/02-in-memory-caching.md \
+		do-storage-patterns/03-rate-limiting.md do-storage-patterns/04-batch-processing-with-alarms.md \
+		do-storage-patterns/05-initialization-and-counters.md do-storage-patterns/06-cleanup.md \
+		pulumi-gotchas/best-practices.md pulumi-gotchas/ci-cd.md pulumi-gotchas/common-errors.md \
+		pulumi-gotchas/debugging.md pulumi-gotchas/migration.md pulumi-gotchas/performance.md \
+		pulumi-gotchas/resources.md pulumi-gotchas/security.md \
+		r2-patterns/01-streaming-large-files.md r2-patterns/02-conditional-get.md \
+		r2-patterns/03-upload-with-validation.md r2-patterns/04-multipart-with-progress.md \
+		r2-patterns/05-batch-delete.md r2-patterns/06-checksum-validation.md \
+		r2-patterns/07-storage-class-transitions.md r2-patterns/08-public-bucket-custom-domain.md \
+		sandbox-patterns/01-ai-code-execution.md sandbox-patterns/02-interactive-dev-environment.md \
+		sandbox-patterns/03-ci-cd-pipeline.md sandbox-patterns/04-multi-language-code-runner.md \
+		sandbox-patterns/05-multi-tenant.md sandbox-patterns/06-jupyter-integration.md \
+		sandbox-patterns/07-git-operations.md; do
+		removed=$((removed + $(_remove_retired_skill_file "$agents_dir" "$root/$relative")))
+	done
+	for relative in do-storage-patterns pulumi-gotchas r2-patterns sandbox-patterns; do
+		rmdir "$root/$relative" 2>/dev/null || true
+	done
+	printf '%s\n' "$removed"
+	return 0
+}
+
+# Remove the retired workflow and generated slash commands from existing installs.
+# Like other deprecated path cleanup, this runs even when the source is gone.
+cleanup_retired_ralph_commands() {
+	local agents_dir="$1"
+	local removed=0
+	local command=""
+	local path=""
+	path="$agents_dir/workflows/ralph-loop.md"
+	if [[ -e "$path" ]]; then
+		rm -f "$path"
+		removed=$((removed + 1))
+	fi
+	for command in ralph-loop ralph-task cancel-ralph ralph-status; do
+		for path in "$HOME/.claude/commands/$command.md" "$HOME/.config/opencode/command/$command.md"; do
+			if [[ -e "$path" ]]; then
+				rm -f "$path"
+				removed=$((removed + 1))
+			fi
+		done
+	done
+	printf '%s\n' "$removed"
+	return 0
+}
+
+# GH#33149: framework value audit — remove textbook skills that restate model
+# knowledge, minor branch-type docs folded into branch.md, best-practices
+# merged into code-standards.md, and the retired mission-skill-learner.
+cleanup_retired_framework_value_audit_docs() {
+	local agents_dir="$1"
+	local removed=0
+	local retired_path=""
+	for retired_path in \
+		"$agents_dir/tools/programming/modern-javascript-skill.md" \
+		"$agents_dir/tools/programming/modern-javascript-skill" \
+		"$agents_dir/tools/architecture/clean-ddd-hexagonal-skill.md" \
+		"$agents_dir/tools/architecture/clean-ddd-hexagonal-skill" \
+		"$agents_dir/tools/architecture/feature-slicing-skill.md" \
+		"$agents_dir/tools/architecture/feature-slicing-skill" \
+		"$agents_dir/services/database/postgres-drizzle-skill/performance.md" \
+		"$agents_dir/services/database/postgres-drizzle-skill/performance-caching.md" \
+		"$agents_dir/services/database/postgres-drizzle-skill/performance-explain.md" \
+		"$agents_dir/services/database/postgres-drizzle-skill/performance-indexing.md" \
+		"$agents_dir/services/database/postgres-drizzle-skill/performance-monitoring.md" \
+		"$agents_dir/services/database/postgres-drizzle-skill/performance-pagination.md" \
+		"$agents_dir/services/database/postgres-drizzle-skill/performance-pooling.md" \
+		"$agents_dir/services/database/postgres-drizzle-skill/performance-queries.md" \
+		"$agents_dir/workflows/branch/chore.md" \
+		"$agents_dir/workflows/branch/refactor.md" \
+		"$agents_dir/workflows/branch/release.md" \
+		"$agents_dir/workflows/branch/experiment.md" \
+		"$agents_dir/tools/code-review/best-practices.md" \
+		"$agents_dir/scripts/mission-skill-learner.sh" \
+		"$agents_dir/workflows/mission-skill-learning.md" \
+		"$agents_dir/tools/diagrams/mermaid-diagrams-skill"; do
+		if [[ -e "$retired_path" ]]; then
+			rm -rf "$retired_path"
+			removed=$((removed + 1))
+		fi
+	done
+	printf '%s\n' "$removed"
+	return 0
+}
+
 cleanup_deprecated_paths() {
 	local agents_dir="$HOME/.aidevops/agents"
 	local cleaned=0
@@ -166,30 +487,25 @@ cleanup_deprecated_paths() {
 		"$agents_dir/youtube"
 		# osgrep removed — disproportionate CPU/disk cost vs rg + LLM comprehension
 		"$agents_dir/tools/context/osgrep.md"
-		# GH#5155: scripts archived upstream but orphaned in deployed installs
-		# (rsync only adds/overwrites, doesn't delete removed files)
-		"$agents_dir/scripts/pattern-tracker-helper.sh"
-		"$agents_dir/scripts/quality-sweep-helper.sh"
-		"$agents_dir/scripts/quality-loop-helper.sh"
-		"$agents_dir/scripts/review-pulse-helper.sh"
-		"$agents_dir/scripts/self-improve-helper.sh"
-		"$agents_dir/scripts/coderabbit-pulse-helper.sh"
-		"$agents_dir/scripts/coderabbit-task-creator-helper.sh"
-		"$agents_dir/scripts/audit-task-creator-helper.sh"
-		"$agents_dir/scripts/batch-cleanup-helper.sh"
-		"$agents_dir/scripts/coordinator-helper.sh"
-		"$agents_dir/scripts/finding-to-task-helper.sh"
-		"$agents_dir/scripts/objective-runner-helper.sh"
-		"$agents_dir/scripts/ralph-loop-helper.sh"
-		"$agents_dir/scripts/stale-pr-helper.sh"
+		# GH#32585: Closte integration removed
+		"$agents_dir/scripts/closte-helper.sh"
+		"$agents_dir/services/hosting/closte.md"
 	)
-
 	for path in "${deprecated_paths[@]}"; do
 		if [[ -e "$path" ]]; then
 			rm -rf "$path"
 			((++cleaned))
 		fi
 	done
+
+	cleaned=$((cleaned + $(cleanup_retired_context_tooling "$agents_dir")))
+	cleaned=$((cleaned + $(cleanup_retired_ralph_commands "$agents_dir")))
+	cleaned=$((cleaned + $(cleanup_retired_framework_value_audit_docs "$agents_dir")))
+	cleaned=$((cleaned + $(cleanup_retired_quality_automation_scripts "$agents_dir")))
+	cleaned=$((cleaned + $(cleanup_retired_contest_scoring_tooling "$agents_dir")))
+	cleaned=$((cleaned + $(cleanup_retired_remotion_flat_docs "$agents_dir")))
+	cleaned=$((cleaned + $(cleanup_retired_cloudflare_platform_skill_patterns "$agents_dir")))
+	cleanup_retired_beads "$agents_dir"
 
 	if [[ $cleaned -gt 0 ]]; then
 		print_info "Cleaned up $cleaned deprecated agent path(s)"
@@ -216,6 +532,37 @@ cleanup_deprecated_paths() {
 	cleanup_antigravity_plugin
 
 	# Remove oh-my-opencode from plugin array if present — guarded by same setting
+	cleanup_oh_my_opencode_plugin_entry
+
+	return 0
+}
+
+# Only remove aidevops-deployed files. Never uninstall user binaries, delete
+# project databases, or alter independently managed Git hook sections.
+cleanup_retired_beads() {
+	local agents_dir="$1"
+	local path="" tool=""
+	for path in \
+		"$agents_dir/scripts/beads-sync-helper.sh" \
+		"$agents_dir/scripts/todo-ready.sh" \
+		"$agents_dir/tools/task-management/beads.md"; do
+		if [[ -f "$path" || -L "$path" ]]; then
+			rm -f -- "$path"
+			print_info "Removed retired aidevops task helper: $path"
+		fi
+	done
+	for tool in bd bv beads-ui bdui; do
+		if command -v "$tool" >/dev/null 2>&1; then
+			print_info "Beads integration retired; optional manual uninstall: brew uninstall steveyegge/beads/bd (bd), brew uninstall bv, npm uninstall -g beads-ui bdui (check your original installer first)."
+			break
+		fi
+	done
+	return 0
+}
+
+# Remove oh-my-opencode from the OpenCode plugin array if present, guarded by
+# the same preserve_oh_my_opencode preference as cleanup_deprecated_paths.
+cleanup_oh_my_opencode_plugin_entry() {
 	local opencode_config
 	opencode_config=$(find_opencode_config 2>/dev/null) || true
 	if [[ -n "$opencode_config" ]] && [[ -f "$opencode_config" ]] && command -v jq &>/dev/null; then
@@ -229,7 +576,6 @@ cleanup_deprecated_paths() {
 			fi
 		fi
 	fi
-
 	return 0
 }
 
@@ -245,6 +591,25 @@ should_cleanup_oh_my_opencode_artifacts() {
 	fi
 
 	return 1
+}
+
+# Remove the retired osgrep OpenCode custom tool. It kept advertising ~1K tokens
+# of osgrep skill text in every request's tool list after the CLI was removed
+# (GH#32444). Only the generated osgrep skill tool is removed, never a
+# user-authored file. Returns 0 when a file was removed, 1 otherwise.
+_cleanup_osgrep_opencode_tools() {
+	local config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
+	local tool_file
+	local removed=1
+	for tool_file in "$config_home/opencode/tool/osgrep.ts" "$config_home/opencode/tools/osgrep.ts"; do
+		[[ -f "$tool_file" ]] || continue
+		grep -q '^name: osgrep$' "$tool_file" || continue
+		grep -q '@opencode-ai/plugin' "$tool_file" || continue
+		rm -f "$tool_file"
+		print_info "Removed retired osgrep OpenCode tool: $tool_file"
+		removed=0
+	done
+	return "$removed"
 }
 
 # Remove osgrep completely — one-time cleanup for all aidevops users
@@ -299,6 +664,11 @@ cleanup_osgrep() {
 		fi
 	fi
 
+	# 3b. Remove the retired osgrep OpenCode custom tool file
+	if _cleanup_osgrep_opencode_tools; then
+		cleaned=true
+	fi
+
 	# 4. Remove osgrep from Claude Code settings
 	local claude_settings="$HOME/.claude/settings.json"
 	if [[ -f "$claude_settings" ]] && command -v jq &>/dev/null; then
@@ -331,6 +701,110 @@ cleanup_osgrep() {
 		print_success "osgrep removed (freed CPU cores and disk space)"
 	fi
 
+	return 0
+}
+
+# GH#33249: return 0 when agents_dir is a symlink to an owner-controlled
+# directory inside the owner-controlled $HOME/.aidevops/runtime-bundles root.
+_retired_prompt_tooling_agents_is_bundle() {
+	local agents_dir="$1"
+	local bundles_root="$HOME/.aidevops/runtime-bundles"
+	local bundles_real=""
+	local resolved=""
+	[[ -L "$agents_dir" ]] || return 1
+	[[ -d "$bundles_root" && ! -L "$bundles_root" && -O "$bundles_root" ]] || return 1
+	bundles_real=$(cd -P -- "$bundles_root" 2>/dev/null && pwd -P) || return 1
+	resolved=$(cd -P -- "$agents_dir" 2>/dev/null && pwd -P) || return 1
+	[[ -n "$bundles_real" && "$resolved" == "$bundles_real"/* && -d "$resolved" && -O "$resolved" ]] || return 1
+	return 0
+}
+
+# GH#33141: retire the aidevops-managed DSPy integration once per installation.
+# User projects, configs and caches remain untouched. The cache env line was
+# persisted only in python-env/dspy-env/bin/activate, removed with that venv.
+cleanup_retired_prompt_tooling() {
+	local install_dir="${INSTALL_DIR:-}"
+	local state_dir="$HOME/.aidevops/cache/migrations"
+	local install_key
+	install_key=$(printf '%s' "$install_dir" | cksum | cut -d' ' -f1) || return 1
+	local marker="$state_dir/gh33141-retired-dspy-$install_key"
+	local agents_dir="$HOME/.aidevops/agents"
+	local path
+	local mode
+	local cleaned=false
+	local bundle_agents=false
+
+	# HOME and INSTALL_DIR ancestry comes from trusted setup configuration.
+	# Refuse redirected/non-owned managed roots before deleting anything.
+	[[ "$HOME" == /* && "$install_dir" == /* && -d "$install_dir/.agents" ]] || return 1
+	# GH#33249: runtime-bundle installs make agents/ a symlink to the active
+	# bundle. Accept only an owner-controlled target inside runtime-bundles/;
+	# bundles are built from the repo, which no longer ships DSPy files, so
+	# nothing is deleted there.
+	if _retired_prompt_tooling_agents_is_bundle "$agents_dir"; then
+		bundle_agents=true
+	fi
+	local managed_paths=("$install_dir" "$install_dir/python-env" "$HOME/.aidevops"
+		"$HOME/.aidevops/cache" "$state_dir")
+	if [[ "$bundle_agents" == true ]]; then
+		managed_paths+=("$HOME/.aidevops/runtime-bundles")
+	else
+		managed_paths+=("$agents_dir" "$agents_dir/scripts" "$agents_dir/scripts/tests"
+			"$agents_dir/tools" "$agents_dir/tools/context")
+	fi
+	for path in "${managed_paths[@]}"; do
+		if [[ -L "$path" ]] || { [[ -e "$path" ]] && [[ ! -d "$path" || ! -O "$path" ]]; }; then
+			print_warning "Skipping retired DSPy cleanup: managed path is not an owner-controlled directory"
+			return 1
+		fi
+		if [[ -d "$path" ]]; then
+			mode=$(_file_perms "$path") || return 1
+			[[ "$mode" =~ ^[0-7]{3,4}$ ]] || return 1
+			if (((8#$mode & 0022) != 0)); then
+				print_warning "Skipping retired DSPy cleanup: managed directory is writable by other users"
+				return 1
+			fi
+		fi
+	done
+	[[ -L "$marker" ]] && return 1
+	if [[ -e "$marker" ]]; then
+		[[ -f "$marker" && -O "$marker" ]] || return 1
+		return 0
+	fi
+
+	local venv="$install_dir/python-env/dspy-env"
+	if [[ -e "$venv" || -L "$venv" ]]; then
+		# Unlink a redirected venv, never follow it into an independent install.
+		if [[ -L "$venv" ]]; then
+			rm -f -- "$venv" || return 1
+		else
+			[[ -d "$venv" && -O "$venv" ]] || return 1
+			rm -rf -- "$venv" || return 1
+		fi
+		cleaned=true
+	fi
+	for path in scripts/dspy-helper.sh scripts/dspyground-helper.sh \
+		scripts/dspy-cache-security.sh scripts/tests/test-dspy-cache-security.sh \
+		tools/context/dspy.md tools/context/dspyground.md tools/context/prompt-optimization.md; do
+		[[ "$bundle_agents" == true ]] && break
+		if [[ -e "$agents_dir/$path" || -L "$agents_dir/$path" ]]; then
+			rm -f -- "$agents_dir/$path" || return 1
+			cleaned=true
+		fi
+	done
+	if command -v dspyground >/dev/null 2>&1; then
+		print_info "DSPyGround is no longer managed by aidevops; optionally run: npm uninstall -g dspyground"
+	fi
+	mkdir -p -- "$state_dir" || return 1
+	local marker_tmp
+	marker_tmp=$(mktemp "$state_dir/gh33141-retired-dspy.XXXXXX") || return 1
+	if ! date -u +%Y-%m-%dT%H:%M:%SZ >"$marker_tmp" || ! mv -f -- "$marker_tmp" "$marker"; then
+		rm -f -- "$marker_tmp"
+		return 1
+	fi
+	if [[ "$cleaned" == true ]]; then
+		print_success "Removed retired DSPy environment and deployed integration files"
+	fi
 	return 0
 }
 
@@ -1448,9 +1922,11 @@ migrate_old_backups() {
 	local old_count
 	old_count=$(find "$old_backup_dir" -maxdepth 1 -type d -name "20*" 2>/dev/null | wc -l | tr -d ' ')
 
+	# config-backups/ is also the live home of one-time migration backups
+	# (config-backups/migrations/). Only legacy 20* snapshot directories are
+	# migrated or removed; the parent is removed only once it is empty.
 	if [[ $old_count -eq 0 ]]; then
-		# Empty directory, just remove it
-		rm -rf "$old_backup_dir"
+		rmdir "$old_backup_dir" 2>/dev/null || true
 		return 0
 	fi
 
@@ -1478,8 +1954,9 @@ migrate_old_backups() {
 		fi
 	done
 
-	# Remove remaining old backups and the old directory
-	rm -rf "$old_backup_dir"
+	# Remove remaining legacy snapshots; keep migration backups and other content
+	find "$old_backup_dir" -mindepth 1 -maxdepth 1 -type d -name "20*" -exec rm -rf {} + 2>/dev/null || true
+	rmdir "$old_backup_dir" 2>/dev/null || true
 
 	if [[ $migrated -gt 0 ]]; then
 		print_success "Migrated $migrated recent backups, removed $((old_count - migrated)) old backups"
@@ -1525,8 +2002,7 @@ migrate_loop_state_directories() {
 		# Migrate from .claude/ (oldest legacy path)
 		if [[ -d "$old_state_dir" ]]; then
 			local has_loop_state=false
-			if [[ -f "$old_state_dir/ralph-loop.local.state" ]] ||
-				[[ -f "$old_state_dir/loop-state.json" ]] ||
+			if [[ -f "$old_state_dir/loop-state.json" ]] ||
 				[[ -d "$old_state_dir/receipts" ]]; then
 				has_loop_state=true
 			fi
@@ -1535,7 +2011,7 @@ migrate_loop_state_directories() {
 				print_info "Found legacy loop state in: $repo_dir/.claude/"
 				mkdir -p "$new_state_dir"
 
-				for file in ralph-loop.local.state loop-state.json re-anchor.md guardrails.md; do
+				for file in loop-state.json re-anchor.md guardrails.md; do
 					if [[ -f "$old_state_dir/$file" ]]; then
 						mv "$old_state_dir/$file" "$new_state_dir/"
 						print_info "  Moved $file"
@@ -1828,6 +2304,108 @@ migrate_custom_model_routing_reasoning_defaults() {
 	return 0
 }
 
+# GH#32663: one-time reset of per-machine worker-capacity overrides. Pulse
+# efficiency fixes plus the new auto cap (50% of cores, bounded by RAM) make
+# old hand-tuned ceilings obsolete; stale low values (e.g. 2) were starving
+# runners. Removes the keys from the user config and the Pulse scheduler env
+# overrides, with backups, exactly once. Later explicit settings are honoured.
+_WORKER_CAPACITY_RESET_CONFIG_KEYS=(orchestration.max_workers_cap orchestration.min_worker_concurrency orchestration.provider_account_slot_multiplier)
+_WORKER_CAPACITY_RESET_ENV_KEYS="AIDEVOPS_MAX_WORKERS_CAP,MAX_WORKERS_CAP,AIDEVOPS_MIN_WORKER_CONCURRENCY,PULSE_PROVIDER_ACCOUNT_SLOT_MULTIPLIER,RAM_PER_WORKER_MB,RAM_RESERVE_MB"
+
+_migrate_worker_capacity_reset_config() {
+	local user_config="$1" backup_dir="$2" config_helper="$3"
+	local key="" present=""
+	[[ -f "$user_config" && ! -L "$user_config" ]] || return 0
+	[[ -x "$config_helper" ]] || {
+		print_warning "config-helper.sh unavailable; GH#32663 worker capacity reset will retry"
+		return 1
+	}
+	for key in "${_WORKER_CAPACITY_RESET_CONFIG_KEYS[@]}"; do
+		# Read the raw user override only (not the merged defaults).
+		# shellcheck disable=SC2016 # positional args expand inside the child shell
+		present=$(bash -c 'source "$1" >/dev/null 2>&1 && _jsonc_get_raw "$2" "$3"' _ \
+			"$config_helper" "$user_config" "$key" 2>/dev/null) || present=""
+		[[ -n "$present" ]] || continue
+		if [[ ! -f "$backup_dir/gh32663-config.jsonc" ]]; then
+			cp -p "$user_config" "$backup_dir/gh32663-config.jsonc" || return 1
+		fi
+		JSONC_USER="$user_config" bash "$config_helper" reset "$key" >/dev/null 2>&1 || return 1
+		print_info "Reset ${key} (was ${present}) to the auto default (GH#32663)"
+	done
+	return 0
+}
+
+_migrate_worker_capacity_reset_env_overrides() {
+	local override_file="$1" backup_dir="$2"
+	local keys_json="" temp_file=""
+	[[ -f "$override_file" && ! -L "$override_file" ]] || return 0
+	jq empty "$override_file" >/dev/null 2>&1 || return 0
+	keys_json=$(jq -cn --arg keys "$_WORKER_CAPACITY_RESET_ENV_KEYS" '$keys | split(",")') || return 1
+	jq -e --argjson keys "$keys_json" '
+		any(.[]? | objects; keys | any(. as $k | $keys | index($k)))
+	' "$override_file" >/dev/null 2>&1 || return 0
+	if [[ ! -f "$backup_dir/gh32663-plist-env-overrides.json" ]]; then
+		cp -p "$override_file" "$backup_dir/gh32663-plist-env-overrides.json" || return 1
+	fi
+	temp_file=$(mktemp "${override_file}.gh32663.XXXXXX") || return 1
+	if ! jq --argjson keys "$keys_json" '
+		(.[]? | objects) |= with_entries(select(.key as $k | ($keys | index($k)) | not))
+	' "$override_file" >"$temp_file"; then
+		rm -f "$temp_file"
+		return 1
+	fi
+	chmod 600 "$temp_file"
+	mv "$temp_file" "$override_file" || {
+		rm -f "$temp_file"
+		return 1
+	}
+	print_info "Removed worker-capacity env overrides from $(basename "$override_file") (GH#32663)"
+	return 0
+}
+
+migrate_worker_capacity_reset() {
+	local marker_dir="${HOME:+$HOME/.aidevops/cache/migrations}"
+	local marker_file="${marker_dir:+$marker_dir/gh32663-worker-capacity-reset}"
+	local backup_dir="${HOME:+$HOME/.aidevops/config-backups/migrations}"
+	local user_config="${HOME:+$HOME/.config/aidevops/config.jsonc}"
+	local override_file="${HOME:+$HOME/.config/aidevops/plist-env-overrides.json}"
+	local config_helper="${INSTALL_DIR:-.}/.agents/scripts/config-helper.sh"
+	local credentials_file="${HOME:+$HOME/.config/aidevops/credentials.sh}"
+
+	[[ -n "$marker_file" ]] || return 0
+	[[ -f "$marker_file" ]] && return 0
+	command -v jq >/dev/null 2>&1 || {
+		print_warning "jq unavailable; GH#32663 worker capacity reset will retry"
+		return 0
+	}
+	[[ -x "$config_helper" ]] || config_helper="$HOME/.aidevops/agents/scripts/config-helper.sh"
+	mkdir -p "$marker_dir" "$backup_dir" || return 0
+	_migrate_worker_capacity_reset_config "$user_config" "$backup_dir" "$config_helper" || return 0
+	_migrate_worker_capacity_reset_env_overrides "$override_file" "$backup_dir" || {
+		print_warning "Failed to update plist-env-overrides.json; GH#32663 worker capacity reset will retry"
+		return 0
+	}
+	if [[ -f "$credentials_file" ]] && grep -Eq '^[[:space:]]*(export[[:space:]]+)?(AIDEVOPS_MAX_WORKERS_CAP|MAX_WORKERS_CAP|AIDEVOPS_MIN_WORKER_CONCURRENCY)=' "$credentials_file" 2>/dev/null; then
+		print_warning "credentials.sh exports a worker-capacity override; remove it to use the auto cap (GH#32663)"
+	fi
+	date -u +%Y-%m-%dT%H:%M:%SZ >"$marker_file"
+	return 0
+}
+
+# Print a file's octal mode via portable-stat; fail when it cannot be read.
+_migration_file_mode() {
+	local target_file="$1"
+	local mode=""
+	if ! declare -F _file_perms >/dev/null 2>&1; then
+		# shellcheck source=../../portable-stat.sh
+		source "${BASH_SOURCE[0]%/*}/../../portable-stat.sh" || return 1
+	fi
+	mode=$(_file_perms "$target_file") || return 1
+	[[ -n "$mode" && "$mode" != "000" ]] || return 1
+	printf '%s\n' "$mode"
+	return 0
+}
+
 # Remove the obsolete settings.json model_routing section. Runtime routing uses
 # explicit tier labels and the canonical model-routing-table.json instead.
 migrate_obsolete_settings_model_routing() {
@@ -1859,7 +2437,7 @@ migrate_obsolete_settings_model_routing() {
 		print_warning "Failed to back up settings before obsolete model routing settings migration; migration will retry"
 		return 0
 	fi
-	file_mode=$(stat -f '%Lp' "$settings_file" 2>/dev/null || stat -c '%a' "$settings_file" 2>/dev/null) || {
+	file_mode=$(_migration_file_mode "$settings_file") || {
 		print_warning "Failed to read settings permissions; obsolete model routing settings migration will retry"
 		return 0
 	}
@@ -1883,6 +2461,80 @@ migrate_obsolete_settings_model_routing() {
 		return 0
 	fi
 	print_info "Removed obsolete model_routing settings; backup: $backup_file"
+	return 0
+}
+
+# GH#32592: setup no longer deploys the legacy home and Git-root AGENTS.md
+# templates. Runtimes that load AGENTS.md from parent directories (OpenCode 2)
+# paid ~3K characters per session for stale text that pointed at the
+# contributor guide. Only byte-identical historical template copies (matched
+# by git blob hash) are moved to a backup; edited copies are user content.
+_LEGACY_AGENTS_TEMPLATE_BLOBS=(
+	# templates/home/git/AGENTS.md history
+	f654c31b7582b9ad7918bef82ce667872dd46e4b 31dcf6bf5ef8dab7a2b16a00f9c7a3bf030411a3
+	0fb77a98504828e8d6ad54ac0dc20e46c43b7829 69c3b68b3edb5e06e8676137401eeee21e7bb0b7
+	11479e3518eb56edd9c37697e593c6536d1bfebf 2821c3c20b0655296ff06b8aa267a9ab2436f7f0
+	1541eddceabbbd3b99b20bda885c30af8c479fa3 726791e0752f6dcac60b27e9cc9bfaa57b45eec0
+	3ec86e1e7d901854ff8f128d1905bf68b7074e3f 0c9a47c6c2b6ddeedf61d688095aa1c6fa99866b
+	656c995b9632de9277a9cc88c8c9f6d5eb350ce0 6c34ba23f190dacb187cef495231abd3d2441d4e
+	be6f2cdc3f30574215ec14cdd6e6da53f2381a8a 0246aa86395201f2862d2e48bd6c4c2bf685fd9e
+	a45136f90932e985ef559df92f650b27874ae74e 361b5c7aa7143bfd2935e1291737cb5f2c04c9db
+	# templates/home/AGENTS.md history
+	8bf4429bf89cb05b459b4c4e3798f412d3bda0bf 87a66259e698b494e95667cb314f3914ffb40d06
+	0a584bfd435b690ccf0cd7a042927aa9309e402d 70c4e4495b74d1649663830765b435575730150b
+	b6e04ee2d74b4a77dc5070d73ac543b90bd47715 ff3b1d8df94ccc6c3cd2adde361c862fafaa3dbd
+	976c754168d046851a4091339cc1c097613b9500 94958695b0460bd7be5005bc1433095fe2b41571
+	de621b7faee9774373fe272e79630b01324d36eb 791e23dbd6df0892d3aa854cd9996a0ab393a942
+	145d6aafcd9d1d69484fa76f398b91d3a4e6018a 7322e36e9a98ef439987626de2bf82837c43e737
+	c2de69c6c9e04ab1e5d1749256bda418eac76e78 db60679d9831c9881d40e1817a96cd45c6ee8645
+	971a5b199ba8ac7de374bf5ad2e4ffbd83d02a41
+)
+
+# Legacy AI CLI memory files told tools to "read ~/AGENTS.md"; keep that file
+# while any of them still points at it.
+_home_agents_md_is_referenced() {
+	local memory_file
+	for memory_file in "$HOME/CLAUDE.md" "$HOME/GEMINI.md" "$HOME/.qwen/QWEN.md" "$HOME/.cursorrules" \
+		"$HOME/.github/copilot-instructions.md" "$HOME/.factory/DROID.md"; do
+		# shellcheck disable=SC2088 # literal pointer text inside memory files, not a path
+		if [[ -f "$memory_file" ]] && grep -Fq '~/AGENTS.md' "$memory_file"; then
+			return 0
+		fi
+	done
+	return 1
+}
+
+_is_legacy_agents_template_blob() {
+	local blob="$1"
+	local known=""
+	for known in "${_LEGACY_AGENTS_TEMPLATE_BLOBS[@]}"; do
+		[[ "$known" == "$blob" ]] && return 0
+	done
+	return 1
+}
+
+cleanup_legacy_agents_md_templates() {
+	[[ -n "${HOME:-}" ]] || return 0
+	command -v git >/dev/null 2>&1 || return 0
+	local backup_dir="$HOME/.aidevops/config-backups/migrations/gh32592-agents-md"
+	local candidate label blob stamp
+	# ~/git and ~/Git may be one directory (case-insensitive filesystems); the
+	# existence check below skips a path already moved via its other spelling.
+	for candidate in "$HOME/AGENTS.md" "$HOME/git/AGENTS.md" "$HOME/Git/AGENTS.md"; do
+		[[ -f "$candidate" && ! -L "$candidate" ]] || continue
+		if [[ "$candidate" == "$HOME/AGENTS.md" ]] && _home_agents_md_is_referenced; then
+			continue
+		fi
+		blob=$(git hash-object --no-filters -- "$candidate" 2>/dev/null) || continue
+		_is_legacy_agents_template_blob "$blob" || continue
+		label="home"
+		[[ "$candidate" == "$HOME/AGENTS.md" ]] || label=$(basename "$(dirname "$candidate")")
+		stamp=$(date -u +%Y%m%d%H%M%S)
+		mkdir -p "$backup_dir" || return 0
+		if mv "$candidate" "$backup_dir/${stamp}-${label}-AGENTS.md"; then
+			print_info "Removed unmodified legacy AGENTS.md template: $candidate (backup: $backup_dir)"
+		fi
+	done
 	return 0
 }
 

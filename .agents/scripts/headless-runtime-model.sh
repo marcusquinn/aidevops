@@ -233,9 +233,13 @@ _first_healthy_configured_model() {
 	local tier_name="${1:-standard}"
 	local selection_mode="${2:-adaptive}"
 	local preferred_model="${3:-}"
+	# GH#32929: capability escalation excludes the route that just failed so a
+	# tier sharing that model can offer its next distinct healthy candidate.
+	local excluded_model="${4:-}"
 	local current_model="" current_provider="" configured_count=0 fallback_model=""
 	while IFS= read -r current_model; do
 		[[ -n "$current_model" ]] || continue
+		[[ -z "$excluded_model" || "$current_model" != "$excluded_model" ]] || continue
 		if [[ "$selection_mode" == "exact-tier" ]] &&
 			! model_tier_candidate_index "$tier_name" "$current_model" >/dev/null 2>&1; then
 			continue
@@ -328,41 +332,6 @@ _choose_worker_round_robin_model() {
 	return 75
 }
 
-# _choose_model_tier_downgrade: check pattern history for a cheaper tier.
-# Prints the downgraded model name if one is recommended; prints nothing otherwise.
-# Non-blocking -- any failure falls through silently.
-_choose_model_tier_downgrade() {
-	local current_model="$1"
-	local downgrade_task_type="${AIDEVOPS_TIER_DOWNGRADE_TASK_TYPE:-}"
-	[[ -n "$downgrade_task_type" ]] || return 0
-
-	local current_tier=""
-	current_tier=$(model_tier_for_model "$current_model" 2>/dev/null || true)
-	[[ -n "$current_tier" ]] || return 0
-
-	local pattern_helper="${SCRIPT_DIR}/archived/pattern-tracker-helper.sh"
-	if [[ ! -x "$pattern_helper" ]]; then
-		pattern_helper="${HOME}/.aidevops/agents/scripts/archived/pattern-tracker-helper.sh"
-	fi
-	[[ -x "$pattern_helper" ]] || return 0
-
-	local lower_tier
-	lower_tier=$("$pattern_helper" tier-downgrade-check \
-		--requested-tier "$current_tier" \
-		--task-type "$downgrade_task_type" \
-		--min-samples "${AIDEVOPS_TIER_DOWNGRADE_MIN_SAMPLES:-3}" \
-		2>/dev/null || true)
-	[[ -n "$lower_tier" ]] || return 0
-
-	local lower_model
-	lower_model=$(_first_healthy_configured_model "$lower_tier" 2>/dev/null || true)
-	if [[ -n "$lower_model" && "$lower_model" != "$current_model" ]]; then
-		print_info "Model for dispatch: pattern data recommends ${lower_tier} over ${current_tier} (TIER_DOWNGRADE_OK, task_type=${downgrade_task_type})"
-		printf '%s' "$lower_model"
-	fi
-	return 0
-}
-
 # _choose_model_auto: select the first available model in configured order.
 # Skips models that are backed off or have no auth. Returns 75 if all are backed off.
 _choose_model_auto() {
@@ -372,7 +341,7 @@ _choose_model_auto() {
 	local preferred_model="${4:-}"
 	local current_model="" select_status=0
 	local rotated=false
-	if [[ "$role" == "worker" && "$selection_mode" == "adaptive" && -z "$preferred_model" && -z "${AIDEVOPS_TIER_DOWNGRADE_TASK_TYPE:-}" ]] &&
+	if [[ "$role" == "worker" && "$selection_mode" == "adaptive" && -z "$preferred_model" ]] &&
 		declare -F model_tier_round_robin_enabled >/dev/null &&
 		model_tier_round_robin_enabled "$tier_name"; then
 		current_model=$(_choose_worker_round_robin_model "$tier_name") || select_status=$?
@@ -390,14 +359,7 @@ _choose_model_auto() {
 	fi
 
 	case "$selection_mode" in
-	adaptive)
-		# Pattern-driven tier downgrade (t5148): non-blocking initial-dispatch
-		# optimization. Retry and capability-escalation callers use exact-tier mode.
-		local downgraded=""
-		downgraded=$(_choose_model_tier_downgrade "$current_model")
-		[[ -z "$downgraded" ]] || current_model="$downgraded"
-		;;
-	exact-tier) ;;
+	adaptive | exact-tier) ;;
 	*)
 		print_error "Unknown model selection mode: $selection_mode"
 		return 1
@@ -438,24 +400,6 @@ choose_model() {
 
 # --- Cmd Builders ---
 
-_headless_variant_should_omit_gpt55_standard() {
-	local role="$1"
-	local tier_upper="$2"
-	local selected_model="$3"
-	local variant="$4"
-
-	[[ "$role" == "worker" ]] || return 1
-	[[ -n "$variant" ]] || return 1
-	case "$tier_upper" in
-	STANDARD) ;;
-	*) return 1 ;;
-	esac
-	case "$selected_model" in
-	openai/gpt-5.5 | openai/gpt-5.5-*) return 0 ;;
-	*) return 1 ;;
-	esac
-}
-
 _headless_tier_variant() {
 	local requested_tier="$1"
 	local canonical_tier="$2"
@@ -487,7 +431,6 @@ resolve_headless_variant() {
 	local tier="${2:-}"
 	local selected_model="${3:-}"
 	local variant="${AIDEVOPS_HEADLESS_VARIANT:-}"
-	local tier_upper=""
 	local canonical_tier=""
 	# Replay cells with requested effort "default" must not inherit ambient or
 	# routed effort. Explicit --variant values bypass this resolver.
@@ -497,7 +440,6 @@ resolve_headless_variant() {
 
 	if [[ -n "$tier" ]]; then
 		canonical_tier=$(_normalize_headless_tier "$tier")
-		tier_upper=$(printf '%s' "$canonical_tier" | tr '[:lower:]-' '[:upper:]_')
 		local tier_variant
 		tier_variant=$(_headless_tier_variant "$tier" "$canonical_tier")
 		[[ -n "$tier_variant" ]] && variant="$tier_variant"
@@ -526,13 +468,21 @@ resolve_headless_variant() {
 		variant=$(_headless_routed_variant "$canonical_tier" "$selected_model")
 	fi
 
-	# GPT-5.5 currently benchmarks fastest for standard worker dispatch when
-	# OpenCode sends no explicit reasoning-effort variant. Keep explicit CLI
-	# --variant untouched (caller bypasses this resolver when provided), but
-	# ignore env-derived high/xhigh defaults for non-thinking worker tiers.
-	if _headless_variant_should_omit_gpt55_standard "$role" "$tier_upper" "$selected_model" "$variant"; then
-		variant=""
-	fi
+	# Unknown models without a configured variant keep their provider default.
+	# Explicit effort below the framework floor is raised, never silently omitted.
+	case "$variant" in
+	low | minimal | none)
+		local configured_variant=""
+		configured_variant=$(_headless_routed_variant "$canonical_tier" "$selected_model")
+		if [[ -z "$configured_variant" ]]; then
+			printf 'Warning: headless reasoning %s is below minimum; unknown model uses provider default\n' "$variant" >&2
+			variant=""
+		else
+			printf 'Warning: headless reasoning %s is below minimum; using %s\n' "$variant" "$configured_variant" >&2
+			variant="$configured_variant"
+		fi
+		;;
+	esac
 
 	printf '%s' "$variant"
 	return 0
@@ -700,8 +650,16 @@ _build_claude_cmd() {
 	return 0
 }
 
+# GH#33274: terminal BLOCKED must start a model-text line, optionally after
+# blockquote or emphasis markup (`BLOCKED:`, `**BLOCKED**`, `> BLOCKED -`).
+# Quoted instructions such as "stop only at `FULL_LOOP_COMPLETE` or `BLOCKED`"
+# are prose mentions, not a terminal state.
+# shellcheck disable=SC2016 # literal backticks are Python regex syntax, not expansion
+_HEADLESS_BLOCKED_LINE_PATTERN='^[ \t]*(?:>[ \t]*)?(?:\*\*|__|`)?BLOCKED(?:\*\*|__|`)?(?=$|[ \t:.,;!\-])'
+
 # output_has_completion_signal: check if a worker run produced a meaningful
-# completion signal (FULL_LOOP_COMPLETE, exact POST_PR_HANDOFF, BLOCKED, or PR creation).
+# completion signal (FULL_LOOP_COMPLETE, exact POST_PR_HANDOFF, anchored
+# BLOCKED, or PR creation).
 # Workers that produce tool calls but exit without these signals stopped
 # prematurely -- typically after investigation/setup but before implementation.
 #
@@ -710,8 +668,8 @@ _build_claude_cmd() {
 output_has_completion_signal() {
 	local file_path="$1"
 	[[ -f "$file_path" ]] || return 1
-	python3 - "$file_path" <<'PY'
-import sys, json
+	python3 - "$file_path" "$_HEADLESS_BLOCKED_LINE_PATTERN" <<'PY'
+import sys, json, re
 from pathlib import Path
 
 # GH#17549: Only check the MODEL'S OWN text output, not tool call results.
@@ -724,7 +682,10 @@ from pathlib import Path
 # check only those. Fall back to raw grep for non-JSON output (claude CLI).
 
 raw = Path(sys.argv[1]).read_text(errors='ignore')
-blocked_marker = chr(66) + chr(76) + chr(79) + chr(67) + chr(75) + chr(69) + chr(68)
+# GH#33274: completion markers count bare or as <promise>MARKER</promise>,
+# not when quoted or backticked as a mention.
+blocked_line = re.compile(sys.argv[2], re.MULTILINE)
+completion_marker = re.compile(r"(?<![`'\"\w])(?:FULL_LOOP_COMPLETE|TASK_COMPLETE)(?![`'\"\w])")
 
 # Extract model text from JSON stream (OpenCode format)
 model_text_parts = []
@@ -742,11 +703,10 @@ for line in raw.splitlines():
     event_type = obj.get("type", "")
     if event_type == "text":
         part = obj.get("part", {})
-        text = (
-            obj.get("text")
-            or part.get("text")
-            or ""
-        )
+        # GH#33274: runtime-injected parts are not model output.
+        if part.get("synthetic") is True:
+            continue
+        text = obj.get("text") or part.get("text") or ""
         if text:
             model_text_parts.append(text)
     # Also check tool calls where the MODEL invoked gh pr create/merge
@@ -761,10 +721,11 @@ for line in raw.splitlines():
             or state.get("input")
             or {}
         )
-        if isinstance(inp, dict):
-            cmd = inp.get("command", "")
-            if cmd:
-                model_text_parts.append(cmd)
+        cmd = inp.get("command", "") if isinstance(inp, dict) else ""
+        if isinstance(cmd, (list, tuple)):  # argv tools: a list crashed join() -> false premature_exit
+            cmd = " ".join(map(str, cmd))
+        if isinstance(cmd, str) and cmd:
+            model_text_parts.append(cmd)
 
 model_text = "\n".join(model_text_parts)
 
@@ -773,11 +734,10 @@ def has_post_pr_handoff(text):
 
 # If we extracted model text, use it exclusively
 if model_text.strip():
-    if has_post_pr_handoff(model_text):
+    if has_post_pr_handoff(model_text) or blocked_line.search(model_text):
         sys.exit(0)
-    for marker in ("FULL_LOOP_COMPLETE", blocked_marker, "TASK_COMPLETE"):
-        if marker in model_text:
-            sys.exit(0)
+    if completion_marker.search(model_text):
+        sys.exit(0)
     # GH#17596 (HIGH): verify both model intent AND actual success signal in raw.
     # Checking model_text alone may match commands the model merely mentioned
     # or invoked but that failed. Requiring a success signal in raw (same as
@@ -790,12 +750,11 @@ if model_text.strip():
         sys.exit(0)
     sys.exit(1)
 
-# Fallback for non-JSON output (claude CLI, plain text)
-if has_post_pr_handoff(raw):
+# Fallback for non-JSON output (claude CLI, plain text). Escaped newlines and
+# JSON text/result value starts count as line starts for anchored BLOCKED.
+raw_lines = re.sub(r'\\n|"(?:text|result)":\s*"', "\n", raw)
+if has_post_pr_handoff(raw) or blocked_line.search(raw_lines) or completion_marker.search(raw):
     sys.exit(0)
-for marker in ("FULL_LOOP_COMPLETE", blocked_marker, "TASK_COMPLETE"):
-    if marker in raw:
-        sys.exit(0)
 if "gh pr create" in raw and ("pull/" in raw or "Created pull request" in raw.lower()):
     sys.exit(0)
 if "gh pr merge" in raw and ("Merged" in raw or "merged" in raw):
@@ -855,16 +814,16 @@ output_has_post_pr_handoff_signal() {
 # successful implementation and must not inflate PR-throughput success metrics.
 #
 # Args: $1 = output file path
-# Returns: 0 if the model emitted BLOCKED, 1 otherwise
+# Returns: 0 if a non-synthetic model-text line starts with BLOCKED, 1 otherwise
 output_has_blocked_signal() {
 	local file_path="$1"
 	[[ -f "$file_path" ]] || return 1
-	python3 - "$file_path" <<'PY'
-import sys, json
+	python3 - "$file_path" "$_HEADLESS_BLOCKED_LINE_PATTERN" <<'PY'
+import sys, json, re
 from pathlib import Path
 
 raw = Path(sys.argv[1]).read_text(errors="ignore")
-blocked_marker = chr(66) + chr(76) + chr(79) + chr(67) + chr(75) + chr(69) + chr(68)
+blocked_line = re.compile(sys.argv[2], re.MULTILINE)
 model_text_parts = []
 for line in raw.splitlines():
     line = line.strip()
@@ -874,17 +833,21 @@ for line in raw.splitlines():
         obj = json.loads(line)
     except (json.JSONDecodeError, ValueError):
         continue
-    if obj.get("type", "") != "text":
+    if not isinstance(obj, dict) or obj.get("type", "") != "text":
         continue
     part = obj.get("part", {})
+    # GH#33274: runtime-injected parts are not model output.
+    if isinstance(part, dict) and part.get("synthetic") is True:
+        continue
     text = obj.get("text") or part.get("text") or ""
     if text:
         model_text_parts.append(text)
 
 model_text = "\n".join(model_text_parts)
-if model_text.strip():
-    sys.exit(0 if blocked_marker in model_text else 1)
-sys.exit(0 if blocked_marker in raw else 1)
+# Fallback (claude CLI stream-json, plain text): treat escaped newlines and
+# JSON text/result value starts as line starts for the anchored match.
+candidate = model_text if model_text.strip() else re.sub(r'\\n|"(?:text|result)":\s*"', "\n", raw)
+sys.exit(0 if blocked_line.search(candidate) else 1)
 PY
 	return $?
 }
@@ -948,12 +911,12 @@ PY
 output_has_missing_context_blocked_signal() {
 	local file_path="$1"
 	[[ -f "$file_path" ]] || return 1
-	python3 - "$file_path" <<'PY'
+	python3 - "$file_path" "$_HEADLESS_BLOCKED_LINE_PATTERN" <<'PY'
 import sys, json, re
 from pathlib import Path
 
 error_mode = "ign" "ore"
-blocked_marker = chr(66) + chr(76) + chr(79) + chr(67) + chr(75) + chr(69) + chr(68)
+blocked_line = re.compile(sys.argv[2], re.MULTILINE)
 raw = Path(sys.argv[1]).read_text(errors=error_mode)
 model_text_parts = []
 for line in raw.splitlines():
@@ -964,16 +927,19 @@ for line in raw.splitlines():
         obj = json.loads(line)
     except (json.JSONDecodeError, ValueError):
         continue
-    if obj.get("type", "") != "text":
+    if not isinstance(obj, dict) or obj.get("type", "") != "text":
         continue
     part = obj.get("part", {})
+    # GH#33274: runtime-injected parts are not model output.
+    if isinstance(part, dict) and part.get("synthetic") is True:
+        continue
     text = obj.get("text") or part.get("text") or ""
     if text:
         model_text_parts.append(text)
 
 model_text = "\n".join(model_text_parts)
 text = model_text if model_text.strip() else raw
-has_blocked = blocked_marker in text
+has_blocked = blocked_line.search(text) is not None
 has_missing_context = re.search(r"missing[ -]implementation[ -]context", text, re.IGNORECASE) is not None
 sys.exit(0 if has_blocked and has_missing_context else 1)
 PY

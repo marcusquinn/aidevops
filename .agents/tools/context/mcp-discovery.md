@@ -71,7 +71,7 @@ npx mcporter generate-cli --command https://mcp.context7.com/mcp --compile
 
 ## Architecture
 
-MCP tool definitions consume context tokens (e.g. `context7` ~2K, `repomix` ~5K, `chrome-devtools` ~17K for 50+ tools). Loading all MCPs globally means every conversation pays this cost even when most tools go unused.
+MCP tool definitions consume context tokens (e.g. `context7` ~2K, `chrome-devtools` ~17K for 50+ tools). Loading all MCPs globally means every conversation pays this cost even when most tools go unused.
 
 **Lazy-load pattern** (inspired by [Amp's approach](https://ampcode.com/news/lazy-load-mcp-with-skills)):
 

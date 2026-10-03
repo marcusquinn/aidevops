@@ -2,14 +2,14 @@
 // SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
 import { execFile } from "node:child_process";
-import { lstat, realpath } from "node:fs/promises";
-import { isAbsolute, join, resolve } from "node:path";
+import { lstat, readFile, realpath } from "node:fs/promises";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { promisify } from "node:util";
-import { requireProjectRoot } from "./gpt-image-paths.mjs";
+import { pathIsWithin, requireProjectRoot } from "./gpt-image-paths.mjs";
 
 const execFileAsync = promisify(execFile);
 
-async function gitPath(root, argument) {
+async function gitPath(root, argument, subject = "Image", role = "requested workdir") {
   try {
     const { stdout } = await execFileAsync("git", ["-C", root, "rev-parse", argument], {
       encoding: "utf8",
@@ -19,16 +19,16 @@ async function gitPath(root, argument) {
     if (!value) throw new Error("missing Git path");
     return realpath(isAbsolute(value) ? value : resolve(root, value));
   } catch {
-    throw new Error("Image workdir must be an existing Git worktree root.");
+    throw new Error(`${subject} workdir: the ${role} is not an existing Git worktree root.`);
   }
 }
 
-async function gitWorktreeIdentity(root) {
-  const topLevel = await gitPath(root, "--show-toplevel");
-  if (topLevel !== root) throw new Error("Image workdir must name the Git worktree root.");
+async function gitWorktreeIdentity(root, subject = "Image", role = "requested workdir") {
+  const topLevel = await gitPath(root, "--show-toplevel", subject, role);
+  if (topLevel !== root) throw new Error(`${subject} workdir must name the Git worktree root.`);
   return {
-    commonDir: await gitPath(root, "--git-common-dir"),
-    gitDir: await gitPath(root, "--git-dir"),
+    commonDir: await gitPath(root, "--git-common-dir", subject, role),
+    gitDir: await gitPath(root, "--git-dir", subject, role),
   };
 }
 
@@ -42,7 +42,44 @@ async function verifyRegisteredOwnership({ root, sessionID, scriptsDir, subject 
     );
     if (stdout.trim() !== "VERIFIED") throw new Error("unexpected verification receipt");
   } catch {
-    throw new Error(`${subject} workdir is not owned by the current OpenCode session.`);
+    throw new Error(`${subject} workdir is not owned by the current OpenCode session. For a registered previous-session worktree, run worktree-helper.sh adopt <path> <session> <task> after its owner exits; live owners cannot be adopted.`);
+  }
+}
+
+async function registeredCanonicalRoot(canonicalRoot) {
+  const reposFile = process.env.AIDEVOPS_REPOS_JSON || join(process.env.HOME || "", ".config", "aidevops", "repos.json");
+  try {
+    const config = JSON.parse(await readFile(reposFile, "utf8"));
+    for (const repo of config.initialized_repos || []) {
+      if (typeof repo.path !== "string") continue;
+      try {
+        if (await realpath(repo.path) === canonicalRoot) return true;
+      } catch {
+        // Ignore stale entries without hiding valid later entries.
+      }
+    }
+  } catch {
+    // An unavailable registry never grants access.
+  }
+  return false;
+}
+
+async function verifyRepositoryRelation(startupRoot, requestedIdentity, subject) {
+  let startupIdentity;
+  try {
+    startupIdentity = await gitWorktreeIdentity(await gitPath(startupRoot, "--show-toplevel", subject, "session project root"), subject, "session project root");
+  } catch {
+    // A parent directory containing repositories is a valid session root.
+  }
+  if (startupIdentity) {
+    if (startupIdentity.commonDir !== requestedIdentity.commonDir) {
+      throw new Error(`${subject} workdir belongs to an unrelated Git repository.`);
+    }
+    return;
+  }
+  const canonicalRoot = dirname(requestedIdentity.commonDir);
+  if (!pathIsWithin(startupRoot, canonicalRoot) && !await registeredCanonicalRoot(canonicalRoot)) {
+    throw new Error(`${subject} workdir belongs to an unrelated Git repository; start inside the repo or use a registered repo worktree.`);
   }
 }
 
@@ -70,14 +107,12 @@ export async function resolveSessionOwnedWorktreeRoot(requestedWorkdir, projectR
     throw new Error(`${subject} workdir requires a current OpenCode session identity.`);
   }
 
-  const startupIdentity = await gitWorktreeIdentity(await gitPath(startupRoot, "--show-toplevel"));
-  const requestedIdentity = await gitWorktreeIdentity(root);
-  if (startupIdentity.commonDir !== requestedIdentity.commonDir) {
-    throw new Error(`${subject} workdir belongs to an unrelated Git repository.`);
-  }
+  const requestedIdentity = await gitWorktreeIdentity(root, subject, "requested workdir");
   if (requestedIdentity.gitDir === requestedIdentity.commonDir) {
     throw new Error(`${subject} workdir must be a linked Git worktree, not a canonical checkout.`);
   }
+
+  await verifyRepositoryRelation(startupRoot, requestedIdentity, subject);
 
   const verifyOwnership = options.verifyWorktreeOwnership || verifyRegisteredOwnership;
   await verifyOwnership({ root, sessionID, scriptsDir: options.scriptsDir, subject });

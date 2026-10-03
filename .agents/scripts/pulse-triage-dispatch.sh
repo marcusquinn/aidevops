@@ -82,6 +82,8 @@ _compose_consolidation_worker_instructions() {
    - \`## Why\` — the problem and rationale
    - \`## How\` — approach with explicit file paths and line references
    - \`## Acceptance Criteria\` — testable checkboxes
+   - \`### Files Scope\` — the successor's write surface, one repo-relative path per line and nothing else on the line (\`- EDIT: path/to/file\` or \`- NEW: path/to/file\`). Carry over the parent's scope when present. Read-only references belong in \`## How\`, not here. The pulse holds \`auto-dispatch\` briefs whose scope fails \`pre-dispatch-validator-helper.sh scope-check\`, so prose after a path makes the successor undispatchable.
+     Check each path against the current default branch before copying its scope marker: use \`git ls-files\` in an up-to-date default-branch checkout or \`gh api\` for that branch's contents. Use \`EDIT:\` when the path already exists on the default branch; use \`NEW:\` only after confirming it is absent. A stale checkout or failed API lookup is not proof of absence.
    - \`## Context & Decisions\` — which commenter contributed which insight (attribution matters)
    - \`## Contributors\` — a cc line @-mentioning every author from the list below
 
@@ -90,15 +92,15 @@ _compose_consolidation_worker_instructions() {
 3. **File the new consolidated issue:**
 
 \`\`\`bash
-gh issue create --repo "${repo_slug}" \\
+~/.aidevops/agents/scripts/gh-write-helper.sh issue create --repo "${repo_slug}" \\
   --title "consolidated: <concise description derived from the merged spec>" \\
-  --label "consolidated,origin:worker,auto-dispatch,<copy relevant labels from parent, excluding needs-consolidation, consolidation-task, and origin:interactive>" \\
-  --body "<merged body from step 2>"
+  --label "consolidated,origin:worker,auto-dispatch,status:available,<copy relevant labels from parent, excluding all status:* labels, needs-consolidation, consolidation-task, and origin:interactive>" \\
+  --body-file "<file containing the merged body from step 2>"
 \`\`\`
 
-**Note (GH#18670):** \`origin:worker\` is mandatory on this label list — consolidated issues are pulse-generated artifacts, not interactive maintainer work. Without it, the issue is born \`origin:interactive\` (raw \`gh issue create\` has no origin auto-detection), which triggers the GH#18352 dispatch-dedup block and drains the queue.
+**Note (GH#18670):** \`origin:worker\` is mandatory on this label list — consolidated issues are pulse-generated artifacts, not interactive maintainer work. Use the signed wrapper above rather than the raw GitHub CLI so the successor retains the managed signature and origin metadata.
 
-**Dispatch handoff:** \`auto-dispatch\` is also mandatory. The consolidated successor marker and this explicit handoff must both be present before \`_has_consolidated_label\` permits implementation dispatch.
+**Dispatch handoff:** \`auto-dispatch\` and \`status:available\` are also mandatory. Keep exactly one \`status:*\` label on the successor: \`status:available\`, never the parent's lifecycle status. The consolidated successor marker and this explicit handoff must both be present before \`_has_consolidated_label\` permits implementation dispatch; the fill-floor enumerator also needs the available status.
 
    Capture the new issue number as \$NEW_NUM.
 
@@ -200,7 +202,7 @@ _ensure_consolidation_labels() {
 	gh label create "needs-consolidation" \
 		--repo "$repo_slug" \
 		--description "Issue held from dispatch pending comment consolidation" \
-		--color "FBCA04" --force 2>/dev/null || true
+		--color "E4007C" --force 2>/dev/null || true
 	gh label create "consolidation-task" \
 		--repo "$repo_slug" \
 		--description "Operational task: merge parent issue body + comments into a consolidated child issue" \
@@ -208,7 +210,7 @@ _ensure_consolidation_labels() {
 	gh label create "consolidated" \
 		--repo "$repo_slug" \
 		--description "Issue superseded by a consolidated child" \
-		--color "0E8A16" --force 2>/dev/null || true
+		--color "BFD4F2" --force 2>/dev/null || true
 	# t2151: cross-runner advisory lock for consolidation dispatch. Applied by
 	# `_consolidation_lock_acquire` before child issue creation; treated as an
 	# active-claim signal by `dispatch-dedup-helper.sh is-assigned` so unrelated
@@ -782,6 +784,56 @@ _consolidation_count_merged_children() {
 }
 
 #######################################
+# GH#33306: load the GH#33071 reopen-aware merge filter on demand.
+# dispatch-dedup-pr.sh is normally sourced only by dispatch-dedup-helper.sh.
+# Returns: 0 when _ddpr_first_merge_after_reopen is available, 1 otherwise
+#######################################
+_consolidation_load_reopen_helper() {
+	local lib_dir="${BASH_SOURCE[0]%/*}"
+	declare -F _ddpr_first_merge_after_reopen >/dev/null 2>&1 && return 0
+	[[ "$lib_dir" == "${BASH_SOURCE[0]}" ]] && lib_dir="."
+	[[ -f "${lib_dir}/dispatch-dedup-pr.sh" ]] || return 1
+	# shellcheck source=dispatch-dedup-pr.sh
+	source "${lib_dir}/dispatch-dedup-pr.sh" || return 1
+	declare -F _ddpr_first_merge_after_reopen >/dev/null 2>&1 || return 1
+	return 0
+}
+
+# Gate 3: a structural closing PR only resolves the current lifecycle if it
+# merged after the latest reopen. Keep the timeline lookup in dispatch-dedup-pr.
+_consolidation_skip_for_closing_pr() {
+	local issue_number="$1" repo_slug="$2" parent_json="$3"
+	local closing_pr="" closing_pr_merged_at="" merged_json="[]" blocking_pr="" reopen_rc=0
+	while IFS= read -r closing_pr; do
+		[[ "$closing_pr" =~ ^[0-9]+$ ]] || continue
+		closing_pr_merged_at=$(gh api "repos/${repo_slug}/pulls/${closing_pr}" \
+			--jq '.merged_at // empty' 2>/dev/null) || closing_pr_merged_at=""
+		if [[ -n "$closing_pr_merged_at" ]]; then
+			merged_json=$(printf '%s' "$merged_json" | jq -c --argjson n "$closing_pr" \
+				--arg m "$closing_pr_merged_at" '. + [{number: $n, mergedAt: $m}]' 2>/dev/null) || merged_json="[]"
+		fi
+	done < <(printf '%s' "$parent_json" | jq -r '.closedByPullRequestsReferences[]?.number' 2>/dev/null)
+	[[ "$merged_json" != "[]" ]] || return 1
+	if _consolidation_load_reopen_helper; then
+		blocking_pr=$(_ddpr_first_merge_after_reopen "$issue_number" "$repo_slug" "$merged_json") || reopen_rc=$?
+	else
+		reopen_rc=1
+	fi
+	if [[ "$reopen_rc" -ne 0 ]]; then
+		echo "[pulse-wrapper] _consolidation_skip_if_resolved: reopen lookup failed rc=${reopen_rc} #${issue_number} ${repo_slug} — failing open (GH#33322)" >>"$LOGFILE"
+		return 1
+	fi
+	if [[ -z "$blocking_pr" ]]; then
+		echo "[pulse-wrapper] _consolidation_skip_if_resolved: merged closing PR(s) predate latest reopen of #${issue_number} ${repo_slug} — proceeding (GH#33322)" >>"$LOGFILE"
+		return 1
+	fi
+	_consolidation_emit_skip "$issue_number" "$repo_slug" \
+		"parent already resolved by structurally linked merged PR #${blocking_pr}." \
+		"merged closing PR #${blocking_pr}"
+	return 0
+}
+
+#######################################
 # t3050: Pre-flight gate for _dispatch_issue_consolidation. Aborts when the
 # parent issue's work is already resolved, BEFORE any cross-runner lock is
 # acquired or child created.
@@ -809,7 +861,6 @@ _consolidation_skip_if_resolved() {
 	local repo_slug="$2"
 	# t2863: init all multi-var locals at declaration time so set -u is safe.
 	local parent_json="" state="" reason="" labels="" body=""
-	local closing_pr="" closing_pr_merged_at=""
 	local counts="" merged="" total="" list="" pct=""
 	parent_json=$(gh issue view "$issue_number" --repo "$repo_slug" \
 		--json state,stateReason,labels,body,closedByPullRequestsReferences 2>/dev/null) || parent_json=""
@@ -836,19 +887,8 @@ _consolidation_skip_if_resolved() {
 			"terminal completion label"
 		return 0
 	fi
-	# Gate 3: GitHub retains the structural closing relationship after an
-	# accidental reopen. Verify the linked PR actually merged before skipping.
-	while IFS= read -r closing_pr; do
-		[[ "$closing_pr" =~ ^[0-9]+$ ]] || continue
-		closing_pr_merged_at=$(gh api "repos/${repo_slug}/pulls/${closing_pr}" \
-			--jq '.merged_at // empty' 2>/dev/null) || closing_pr_merged_at=""
-		if [[ -n "$closing_pr_merged_at" ]]; then
-			_consolidation_emit_skip "$issue_number" "$repo_slug" \
-				"parent already resolved by structurally linked merged PR #${closing_pr}." \
-				"merged closing PR #${closing_pr}"
-			return 0
-		fi
-	done < <(printf '%s' "$parent_json" | jq -r '.closedByPullRequestsReferences[]?.number' 2>/dev/null)
+	# Gate 3: GitHub retains structural closing links across reopen cycles.
+	_consolidation_skip_for_closing_pr "$issue_number" "$repo_slug" "$parent_json" && return 0
 	# Gate 4: CLOSED with stateReason=NOT_PLANNED.
 	if [[ "$state" == "CLOSED" && "$reason" == "NOT_PLANNED" ]]; then
 		_consolidation_emit_skip "$issue_number" "$repo_slug" \

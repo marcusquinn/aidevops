@@ -61,6 +61,10 @@ readonly STATS_HEALTH_EX_PARTIAL="${EX_PARTIAL:-75}"
 # its title update. Optional history sections share only the remainder.
 : "${STATS_HEALTH_PUBLICATION_RESERVE_SECONDS:=10}"
 
+# Shared display tokens for public dashboard rendering.
+_DASHBOARD_NONE="none"
+_DASHBOARD_UNKNOWN="unknown"
+
 # --- Functions ---
 
 #######################################
@@ -150,7 +154,7 @@ ${worker_table}"
 # Output: "sys_load_ratio|sys_cpu_cores|sys_load_1m|sys_load_5m|sys_memory|sys_procs"
 #######################################
 _gather_system_resources() {
-	local _mem_unknown="unknown"
+	local _mem_unknown="$_DASHBOARD_UNKNOWN"
 	local sys_cpu_cores sys_load_1m sys_load_5m sys_memory sys_procs
 	sys_cpu_cores=$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo "?")
 	sys_procs=$(ps aux 2>/dev/null | wc -l | tr -d ' ')
@@ -233,17 +237,134 @@ _dashboard_provider_auth_summary() {
 	return 0
 }
 
+#######################################
+# Return the newest line in a file containing every given substring.
+# Arguments:
+#   $1 - file path
+#   $2 - required substring
+#   $3 - optional second required substring (e.g. the repo slug)
+# Output: matching line, or "none"
+#######################################
 _dashboard_latest_match() {
 	local file_path="$1"
 	local pattern="$2"
+	local scope_pattern="${3:-}"
 	local latest=""
-	[[ -f "$file_path" ]] || { printf '%s' "none"; return 0; }
+	[[ -f "$file_path" ]] || { printf '%s' "$_DASHBOARD_NONE"; return 0; }
 	while IFS= read -r _dash_line; do
 		[[ "$_dash_line" == *"$pattern"* ]] || continue
+		[[ -z "$scope_pattern" || "$_dash_line" == *"$scope_pattern"* ]] || continue
 		latest="$_dash_line"
 	done <"$file_path"
-	[[ -n "$latest" ]] || latest="none"
+	[[ -n "$latest" ]] || latest="$_DASHBOARD_NONE"
 	printf '%s' "$latest"
+	return 0
+}
+
+#######################################
+# Public-safe model access summary. Dashboards on public repositories must not
+# disclose which provider credentials an operator holds or how they are stored;
+# the detailed per-provider view stays in local logs and
+# pulse-current-state-helper.sh (GH#32730).
+# Arguments:
+#   $1 - detailed auth summary from _dashboard_provider_auth_summary
+#######################################
+_dashboard_public_model_access() {
+	local auth_summary="$1"
+	if [[ "$auth_summary" == *": oauth"* || "$auth_summary" == *": env"* ]]; then
+		printf '%s' "available"
+		return 0
+	fi
+	printf '%s' "unavailable"
+	return 0
+}
+
+#######################################
+# Summarise the newest headless-runtime metrics record for public display:
+# time, issue, outcome and duration only. Session, worker, run and attempt
+# identifiers, PIDs, models and host load stay in local telemetry.
+# Arguments:
+#   $1 - JSONL record or "none"
+#######################################
+_dashboard_summarise_worker_spawn() {
+	local record="$1"
+	[[ -n "$record" && "$record" != "$_DASHBOARD_NONE" ]] || { printf '%s' "none recorded"; return 0; }
+	local summary=""
+	summary=$(printf '%s' "$record" | jq -r '
+		[ (if (.ts | type) == "number" then (.ts | todate | sub(":[0-9]{2}Z$"; " UTC") | sub("T"; " ")) else empty end),
+		  (if .issue_number then "#\(.issue_number)" else empty end),
+		  (.result // (if .exit_code == 0 then "success" elif .exit_code then "exit \(.exit_code)" else empty end)),
+		  (if (.duration_ms | type) == "number" then "\((.duration_ms / 60000) | floor)m" else empty end)
+		] | map(select(. != null and . != "")) | join(" · ")
+	' 2>/dev/null) || summary=""
+	[[ -n "$summary" ]] || summary="recorded (details in local logs)"
+	printf '%s' "$summary"
+	return 0
+}
+
+#######################################
+# Summarise a dispatch-stages.tsv row for public display: time, issue, stage,
+# status. Drops PIDs, run identifiers and timings.
+# Arguments:
+#   $1 - TSV row or "none"
+#######################################
+_dashboard_summarise_dispatch_stage() {
+	local row="$1"
+	[[ -n "$row" && "$row" != "$_DASHBOARD_NONE" ]] || { printf '%s' "none recorded"; return 0; }
+	local ts issue _slug stage _ms status _rest
+	IFS=$'\t' read -r ts issue _slug stage _ms status _rest <<<"$row"
+	if [[ "$ts" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2} && "$issue" =~ ^#?[0-9]+$ ]]; then
+		ts="${ts:0:16}"
+		printf '%s UTC · #%s · %s · %s' "${ts/T/ }" "${issue#\#}" "${stage:-$_DASHBOARD_UNKNOWN}" "${status:-$_DASHBOARD_UNKNOWN}"
+		return 0
+	fi
+	printf '%s' "recorded (details in local logs)"
+	return 0
+}
+
+#######################################
+# Summarise a pulse launch-validation failure line: issue number only. The raw
+# line can name another (possibly private) repository.
+# Arguments:
+#   $1 - log line or "none"
+#######################################
+_dashboard_summarise_launch_failure() {
+	local line="$1"
+	[[ -n "$line" && "$line" != "$_DASHBOARD_NONE" ]] || { printf '%s' "$_DASHBOARD_NONE"; return 0; }
+	if [[ "$line" =~ issue\ \#([0-9]+) ]]; then
+		printf 'launch validation failed for #%s' "${BASH_REMATCH[1]}"
+		return 0
+	fi
+	printf '%s' "launch validation failed (details in local logs)"
+	return 0
+}
+
+#######################################
+# Coarse host pressure for public display (no core counts, free memory or
+# process counts, which fingerprint the operator's machine).
+# Arguments:
+#   $1 - load ratio percent (integer or "?")
+#   $2 - memory descriptor from _gather_system_resources
+#######################################
+_dashboard_host_pressure() {
+	local load_ratio="$1"
+	local sys_memory="$2"
+	local cpu_level="$_DASHBOARD_UNKNOWN" mem_level="$_DASHBOARD_UNKNOWN"
+	if [[ "$load_ratio" =~ ^[0-9]+$ ]]; then
+		if [[ "$load_ratio" -ge 90 ]]; then
+			cpu_level="high"
+		elif [[ "$load_ratio" -ge 70 ]]; then
+			cpu_level="elevated"
+		else
+			cpu_level="normal"
+		fi
+	fi
+	case "$sys_memory" in
+	HIGH*) mem_level="high" ;;
+	medium*) mem_level="elevated" ;;
+	low*) mem_level="normal" ;;
+	esac
+	printf 'CPU %s · memory %s' "$cpu_level" "$mem_level"
 	return 0
 }
 
@@ -254,6 +375,7 @@ _gather_worker_zero_diagnostics() {
 	local total_issue_count="$4"
 	local sys_load_ratio="$5"
 	local sys_memory="$6"
+	local repo_slug="${7:-}"
 
 	if [[ "$worker_count" != "0" ]]; then
 		printf '%s' "_Workers are active; zero-worker diagnostics not needed._"
@@ -264,9 +386,16 @@ _gather_worker_zero_diagnostics() {
 	local dispatch_stages_file="${HOME}/.aidevops/logs/dispatch-stages.tsv"
 	local pulse_log="${LOGFILE:-${HOME}/.aidevops/logs/pulse.log}"
 	local last_worker_spawn last_spawn_failure last_stage auth_summary blocker_hint
-	last_worker_spawn=$(_dashboard_latest_match "$metrics_file" '"role":"worker"')
-	last_spawn_failure=$(_dashboard_latest_match "$pulse_log" 'Launch validation failed')
-	last_stage=$(_dashboard_latest_match "$dispatch_stages_file" 'dispatch')
+	# Scope evidence to this dashboard's repository when known: the logs are
+	# shared across every managed repository, including private ones.
+	local metrics_scope="" slug_scope=""
+	if [[ -n "$repo_slug" ]]; then
+		metrics_scope="\"repo_slug\":\"${repo_slug}\""
+		slug_scope="$repo_slug"
+	fi
+	last_worker_spawn=$(_dashboard_latest_match "$metrics_file" '"role":"worker"' "$metrics_scope")
+	last_spawn_failure=$(_dashboard_latest_match "$pulse_log" 'Launch validation failed' "$slug_scope")
+	last_stage=$(_dashboard_latest_match "$dispatch_stages_file" 'dispatch' "$slug_scope")
 	auth_summary=$(_dashboard_provider_auth_summary)
 
 	blocker_hint="unknown — inspect pulse-current-state-helper.sh --window 15m"
@@ -274,7 +403,7 @@ _gather_worker_zero_diagnostics() {
 		blocker_hint="max-worker/resource gate: max_workers=0"
 	elif [[ "$assigned_issue_count" == "0" && "$total_issue_count" == "0" ]]; then
 		blocker_hint="no eligible work visible on dashboard repo"
-	elif [[ "$last_spawn_failure" != "none" ]]; then
+	elif [[ "$last_spawn_failure" != "$_DASHBOARD_NONE" ]]; then
 		blocker_hint="worker launch failure"
 	elif [[ "$auth_summary" == *"OpenAI: missing"* && "$auth_summary" == *"Anthropic: missing"* ]]; then
 		blocker_hint="auth/model unavailable"
@@ -288,11 +417,11 @@ _gather_worker_zero_diagnostics() {
 | Signal | Value |
 | --- | --- |
 | Diagnosis | ${blocker_hint} |
-| Provider/Auth Health | ${auth_summary} |
-| Last Worker Spawn | ${last_worker_spawn} |
-| Last Launch Failure | ${last_spawn_failure} |
-| Last Dispatch Stage | ${last_stage} |
-| Next Command | \`pulse-current-state-helper.sh --window 15m\` |
+| Model access | $(_dashboard_public_model_access "$auth_summary") |
+| Last worker run | $(_dashboard_summarise_worker_spawn "$last_worker_spawn") |
+| Last launch failure | $(_dashboard_summarise_launch_failure "$last_spawn_failure") |
+| Last dispatch stage | $(_dashboard_summarise_dispatch_stage "$last_stage") |
+| Operator detail | \`pulse-current-state-helper.sh --window 15m\` (local) |
 DIAG
 	return 0
 }
@@ -415,7 +544,7 @@ _gather_health_stats() {
 	local worker_zero_diagnostics_md
 	worker_zero_diagnostics_md=$(_gather_worker_zero_diagnostics \
 		"$worker_count" "$max_workers" "$assigned_issue_count" "$total_issue_count" \
-		"$sys_load_ratio" "$sys_memory")
+		"$sys_load_ratio" "$sys_memory" "$repo_slug")
 
 	# Output all stats as NUL-delimited fields.
 	printf '%s\0' \
@@ -642,14 +771,37 @@ _build_health_issue_body() {
 	local worker_success_rate_24h="${28}" worker_success_rate_7d="${29}" worker_total_runs_24h="${30}" worker_total_runs_7d="${31}"
 	local worker_zero_diagnostics_md="${32}"
 	local canonical_identity="${33:-$runner_user}" identity_aliases="${34:-$runner_user}"
-	local _worker_rate_section; _worker_rate_section=$(_format_worker_rate_section "$worker_success_rate_24h" "$worker_success_rate_7d" "$worker_total_runs_24h" "$worker_total_runs_7d")
-	local identity_aliases_display; identity_aliases_display=$(printf '%s\n' "$identity_aliases" | paste -sd ', ' -)
+	# Identity aliases drive dedup only. They can include local OS account
+	# names, so they never appear in the public body (GH#32730). Host detail
+	# (cores, raw load, free memory, process count) is reduced to a coarse
+	# pressure level for the same reason.
+	: "$identity_aliases" "$sys_cpu_cores" "$sys_load_1m" "$sys_load_5m" "$sys_procs"
+	local operator_display="\`${runner_user}\`"
+	[[ "$canonical_identity" != "$runner_user" ]] && operator_display="${operator_display} (canonical operator: \`${canonical_identity}\`)"
+	local host_pressure; host_pressure=$(_dashboard_host_pressure "$sys_load_ratio" "$sys_memory")
+	local worker_section_md="$worker_zero_diagnostics_md" worker_section_title="Worker Dispatch Diagnostics"
+	if [[ "$worker_count" =~ ^[1-9][0-9]*$ ]]; then
+		worker_section_md="$workers_md"
+		worker_section_title="Active Workers"
+	fi
+	local rate_section_md=""
+	if [[ "$worker_success_rate_24h" != "—" || "$worker_success_rate_7d" != "—" ]]; then
+		rate_section_md=$(_format_worker_rate_section "$worker_success_rate_24h" "$worker_success_rate_7d" "$worker_total_runs_24h" "$worker_total_runs_7d")
+	fi
+	local optional_sections
+	optional_sections=$(_build_health_optional_sections "$runner_user" \
+		"$worker_section_title" "$worker_section_md" "$rate_section_md" \
+		"$person_stats_md" "$cross_repo_person_stats_md" \
+		"$session_time_md" "$cross_repo_session_time_md" \
+		"$activity_md" "$cross_repo_md")
 
 	cat <<BODY
 ## Queue Health Dashboard
 
+_Automated status for one aidevops ${runner_role} operating on this repository: queue, local workers and recent activity. This issue is a status surface, not a task._
+
 **Last pulse**: \`${now_iso}\`
-**${role_display}**: \`${runner_user}\` (canonical: \`${canonical_identity}\`; aliases: \`${identity_aliases_display}\`)
+**${role_display}**: ${operator_display}
 **Repo**: \`${repo_slug}\`
 
 <!-- aidevops:dashboard-freshness -->
@@ -666,58 +818,77 @@ last_refresh: ${now_iso}
 | Max Workers | ${max_workers} |
 | Worktrees | ${wt_count} |
 | Interactive Sessions | ${session_count}${session_warning} |
+| Host pressure | ${host_pressure} |
 
-### Open PRs
+### Open PRs (repository-wide)
 
 ${prs_md}
-
-### Active Workers
-
-${workers_md}
-
-### Worker Dispatch Diagnostics
-
-${worker_zero_diagnostics_md}
-
-### Worker Success Rate
-
-${_worker_rate_section}
-
-### GitHub activity on this project (last 30 days)
-
-${person_stats_md:-_Person stats unavailable._}
-
-### GitHub activity on all projects (last 30 days)
-
-${cross_repo_person_stats_md:-_Cross-repo person stats unavailable._}
-
-### Work with AI sessions on this project (${runner_user})
-
-${session_time_md}
-
-### Work with AI sessions on all projects (${runner_user})
-
-${cross_repo_session_time_md:-_Single repo or cross-repo session data unavailable._}
-
-### Commits to this project (last 30 days)
-
-${activity_md}
-
-### Commits to all projects (last 30 days)
-
-${cross_repo_md:-_Single repo or cross-repo data unavailable._}
-
-### System Resources
-
-| Metric | Value |
-| --- | --- |
-| CPU | ${sys_load_ratio}% used (${sys_cpu_cores} cores, load: ${sys_load_1m}/${sys_load_5m}) |
-| Memory | ${sys_memory} |
-| Processes | ${sys_procs} |
+${optional_sections}
 
 ---
-_Auto-updated by ${runner_role} stats process. Do not edit manually._
+_Auto-updated by the ${runner_role} stats process. Sections without data this cycle are omitted. Do not edit manually._
 BODY
+	return 0
+}
+
+#######################################
+# Render the optional dashboard sections in display order, omitting any whose
+# content is empty or a placeholder.
+# Arguments:
+#   $1 - runner user (section titles)
+#   $2/$3 - worker section title / markdown
+#   $4 - worker success-rate markdown (empty when the sample is too small)
+#   $5/$6 - GitHub activity (this project / all projects)
+#   $7/$8 - AI session time (this project / all projects)
+#   $9/$10 - commit activity (this project / all projects)
+#######################################
+_build_health_optional_sections() {
+	local runner_user="$1"
+	local worker_title="$2" worker_md="$3" rate_md="$4"
+	local person_md="$5" cross_person_md="$6"
+	local session_md="$7" cross_session_md="$8"
+	local activity_md="$9" cross_activity_md="${10}"
+
+	_dashboard_optional_section "$worker_title" "$worker_md"
+	_dashboard_optional_section "Worker Success Rate" "$rate_md"
+	_dashboard_optional_section "GitHub activity on this project (last 30 days)" "$person_md"
+	_dashboard_optional_section "GitHub activity on all projects (last 30 days)" "$cross_person_md"
+	_dashboard_optional_section "Work with AI sessions on this project (${runner_user})" "$session_md"
+	_dashboard_optional_section "Work with AI sessions on all projects (${runner_user})" "$cross_session_md"
+	_dashboard_optional_section "Commits to this project (last 30 days)" "$activity_md"
+	_dashboard_optional_section "Commits to all projects (last 30 days)" "$cross_activity_md"
+	return 0
+}
+
+#######################################
+# Return success when a dashboard section carries data rather than a
+# single-line italic placeholder such as "_Session data unavailable._".
+# Arguments:
+#   $1 - section markdown
+#######################################
+_dashboard_section_has_data() {
+	local section_md="$1"
+	local trimmed="${section_md#"${section_md%%[![:space:]]*}"}"
+	trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
+	[[ -n "$trimmed" ]] || return 1
+	if [[ "$trimmed" != *$'\n'* && "$trimmed" == _*_ ]]; then
+		return 1
+	fi
+	return 0
+}
+
+#######################################
+# Render "### title" plus content, or nothing when the content is a
+# placeholder. Output starts with a blank line so sections concatenate.
+# Arguments:
+#   $1 - section title
+#   $2 - section markdown
+#######################################
+_dashboard_optional_section() {
+	local title="$1"
+	local section_md="$2"
+	_dashboard_section_has_data "$section_md" || return 0
+	printf '\n\n### %s\n\n%s' "$title" "$section_md"
 	return 0
 }
 

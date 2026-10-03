@@ -98,7 +98,7 @@ done | tr '\n' ':' | sed 's/:$//')
 
 For AI-agent searches, distinguish the runtime tool from the shell command:
 
-- Use the runtime's native Grep tool for bounded, structured content searches. OpenCode's native Grep invokes ripgrep and adds permission checks, output limits, path normalization, and concise previews.
+- Use the runtime's native Grep tool for bounded, structured content searches. OpenCode's native Grep invokes ripgrep and adds permission checks, output limits, and concise previews. Its `path` must be a directory: OpenCode searches a file path's whole parent directory, so the aidevops plugin rejects regular-file paths. For one file, use Read or `rg -n -- <pattern> <file>`.
 - Use shell `rg` when Bash is already available and the task needs advanced ripgrep flags, exact match counts, file-list output, or pipelines.
 - Do not replace native Grep with shell `rg` solely for performance; both use ripgrep, while native Grep also works for agents without Bash access.
 

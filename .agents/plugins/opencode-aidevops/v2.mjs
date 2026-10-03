@@ -17,6 +17,7 @@ import {
   createPoolTool,
 } from "./oauth-pool.mjs";
 import {
+  consumeV2Completion,
   handleEvent,
   initObservability,
   recordObjectiveDecision,
@@ -39,9 +40,12 @@ import {
 import { enforceConversationPathAccess } from "./team-interface-path-guard.mjs";
 import { adaptToolDefinition } from "./tool-definition.mjs";
 import { createTools, tool } from "./tools.mjs";
-import { createTtsrHooks } from "./ttsr.mjs";
+import { createTtsrHooks, isPluginGreetingEnabled } from "./ttsr.mjs";
+import { createRootSessionGreetingGate } from "./root-session-greeting-gate.mjs";
 import { isHeadless } from "./proxy-lifecycle.mjs";
 import { createV2McpRuntime } from "./v2-mcp-adapter.mjs";
+import { loadV2PrimaryProfiles, registerV2PrimaryProfiles } from "./v2-agent-profiles.mjs";
+import { applyV2ContextBudget, readV2ContextBudget } from "./v2-context-budget.mjs";
 import { createV2ProviderAuthRuntime } from "./v2-provider-auth.mjs";
 import {
   addV1ToolsToV2Editor,
@@ -72,6 +76,8 @@ export const OPENCODE_V2_CAPABILITIES = Object.freeze({
   events: true,
   mcpLifecycle: true,
   oauthRequestRotation: true,
+  primaryAgents: true,
+  optInCatalogCompactionBudget: true,
   textCompletionHook: false,
   compactionAutocontinue: false,
   tuiToast: false,
@@ -197,6 +203,22 @@ async function register(registrations, promise) {
   return registration;
 }
 
+// OpenCode 2.0.3 public SessionEvent.Step uses data + envelope.created, not
+// message.updated (or the unreleased session.next.* shape in PR #33024).
+export function createV2CompletionNormalizer() {
+  const started = new Map();
+  return (event) => {
+    const data = event?.data;
+    const key = `${data?.sessionID}/${data?.assistantMessageID}`;
+    if (started.size > 1000) started.delete(started.keys().next().value);
+    if (event?.type === "session.step.started") {
+      started.set(key, event);
+      return null;
+    }
+    return consumeV2Completion(event, started, key);
+  };
+}
+
 export async function startEventLoop(ctx, handler) {
   let iterator;
   let stopped = false;
@@ -267,7 +289,11 @@ export async function setupAidevopsV2(ctx) {
     debug: process.env.AIDEVOPS_PLUGIN_DEBUG === "1",
   });
   recordPluginHealthStage("imported", { runtime: "v2" });
-  initObservability({ aidevopsVersion: currentAidevopsVersion() });
+  initObservability({
+    aidevopsVersion: currentAidevopsVersion(),
+    runtimeVersion: (typeof ctx.app?.version === "string" && ctx.app.version) || detectOpenCodeV2RuntimeVersion(),
+    adapterId: "opencode-v2",
+  });
 
   const conversation = loadTeamInterfaceConversation(process.env, AGENTS_DIR, {
     pluginEntryPath: PLUGIN_ENTRY_PATH,
@@ -318,15 +344,13 @@ export async function setupAidevopsV2(ctx) {
       workspaceDir: WORKSPACE_DIR,
       onSessionIdentity: (sessionID, modelID) => sessionModels.remember(sessionID, modelID),
     });
-    const shouldInjectGreeting = async (input) => {
-      if (isHeadless() || !input.sessionID) return false;
-      try {
-        const session = await ctx.session.get({ sessionID: input.sessionID });
-        return !session?.parentID;
-      } catch {
-        return false;
-      }
-    };
+    const shouldInjectGreeting = createRootSessionGreetingGate({
+      getSession: (sessionID) => ctx.session.get({ sessionID }),
+      isHeadless,
+      log: qualityLog,
+    });
+    const greetingEnabled = () => isPluginGreetingEnabled(process.env, true);
+    if (!greetingEnabled()) qualityLog("INFO", "Session greeting disabled by AIDEVOPS_PLUGIN_SESSION_GREETING");
     const { systemTransformHook, messagesTransformHook } = createTtsrHooks({
       agentsDir: AGENTS_DIR,
       scriptsDir: SCRIPTS_DIR,
@@ -339,15 +363,28 @@ export async function setupAidevopsV2(ctx) {
       initializedAtMs,
       runtimeName: "OpenCode",
       runtimeVersion: (typeof ctx.app?.version === "string" && ctx.app.version) || detectOpenCodeV2RuntimeVersion(),
+      // The V2 config AGENTS.md is the framework guide, not the V1 greeting
+      // fallback, so the plugin block stays the greeting source (GH#32444, GH#32498).
+      greetingEnabled,
     });
     const permissionBroker = createPermissionBroker({ isHeadless });
     const providerAuth = createV2ProviderAuthRuntime();
     // Terminal title status is owned by the V2 TUI entrypoint (v2-plugin/tui.mjs):
     // this service process has no reliable terminal and must not write titles.
 
+    const primaryProfiles = loadV2PrimaryProfiles(ACTIVE_AGENTS_DIR);
+    await register(registrations, ctx.agent.transform((editor) => {
+      registerV2PrimaryProfiles(editor, primaryProfiles);
+    }));
+    const budget = readV2ContextBudget();
+    if (budget && typeof ctx.catalog?.transform === "function") await register(registrations, ctx.catalog.transform((editor) => {
+      applyV2ContextBudget(editor, budget);
+    }));
+
     await register(registrations, ctx.tool.transform((editor) => {
       addV1ToolsToV2Editor(editor, baseTools, tool.schema, { directory, worktree });
       editor.update("bash", (definition) => adaptToolDefinition({ toolID: "bash" }, definition));
+      editor.update("grep", (definition) => adaptToolDefinition({ toolID: "grep" }, definition));
       editor.update("apply_patch", (definition) => adaptToolDefinition({ toolID: "apply_patch" }, definition));
     }));
 
@@ -373,6 +410,7 @@ export async function setupAidevopsV2(ctx) {
       const legacy = { system: systemStrings(event.system), messages: event.messages };
       await systemTransformHook(input, legacy);
       await messagesTransformHook(input, legacy).catch((error) => qualityLog("WARN", `V2 message transform skipped: ${error.message}`));
+      legacy.system.push("OpenCode 2: if TodoWrite is unavailable, keep a short numbered task list in your responses and update it as work progresses. The Code Mode catalogue is partial; find unlisted aidevops tools with search({ namespace: \"aidevops\" }) before concluding they are unavailable.");
       try {
         applyImageSizeGuard(legacy, qualityLog);
       } catch (error) {
@@ -384,7 +422,7 @@ export async function setupAidevopsV2(ctx) {
     }));
     await register(registrations, ctx.session.hook("compaction", async (event) => {
       const output = { context: [] };
-      await compactingHook({ workspaceDir: WORKSPACE_DIR, scriptsDir: SCRIPTS_DIR }, event, output, directory);
+      await compactingHook({ workspaceDir: WORKSPACE_DIR, scriptsDir: SCRIPTS_DIR }, event, output, directory, { host: "opencode2" });
       event.system.push(...output.context.map((text) => ({ type: "text", text })));
     }));
     await register(registrations, ctx.session.hook("http.request", providerAuth.httpRequest));
@@ -394,9 +432,13 @@ export async function setupAidevopsV2(ctx) {
       applyV2PermissionEvaluation(permissionBroker, event);
     }));
 
+    const normalizeCompletion = createV2CompletionNormalizer();
     stopEvents = await startEventLoop(ctx, async (input) => {
+      const completed = normalizeCompletion(input.event);
+      const observeContext = { resolveSessionModel: (sessionID) => sessionModels.resolve(sessionID) };
       await Promise.all([
-        handleEvent(input, { resolveSessionModel: (sessionID) => sessionModels.resolve(sessionID) }),
+        handleEvent(input, observeContext),
+        completed ? handleEvent({ event: completed }, observeContext) : undefined,
         Promise.resolve(boundedOperationManager.handleEvent(input)),
         permissionBroker.handleEvent(input),
       ]);

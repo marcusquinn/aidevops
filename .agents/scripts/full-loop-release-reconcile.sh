@@ -332,7 +332,6 @@ _full_loop_release_find_tag_for_pr() {
 	local candidate_tags=""
 	local tag_body=""
 	local trailer=""
-	local source_json=""
 	local requested_present="false"
 	local textually_matched=0
 	local candidate_count=0
@@ -615,7 +614,7 @@ _full_loop_release_find_workflow_run() {
 		return 1
 	}
 	if ! gh api --method GET "repos/${repo}/actions/workflows/publish-packages.yml/runs" \
-		-f event=push -F per_page=100 --paginate >"$push_runs_file" 2>/dev/null ||
+		-f event=push -f head_sha="$tag_commit" -F per_page=100 --paginate >"$push_runs_file" 2>/dev/null ||
 		! gh api --method GET "repos/${repo}/actions/workflows/publish-packages.yml/runs" \
 			-f event=workflow_dispatch -F per_page=100 --paginate >"$recovery_runs_file" 2>/dev/null ||
 		! _full_loop_release_runs_payload_valid "$push_runs_file" ||
@@ -936,6 +935,18 @@ _full_loop_release_resolve_tag_commit() {
 	return 0
 }
 
+_full_loop_release_success_grace_expired() {
+	local run_json="$1"
+	local completed_at="" completed_epoch="" now_epoch=""
+	completed_at=$(jq -er '.updated_at | select(type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))' <<<"$run_json") || return 8
+	completed_epoch=$(jq -nr --arg completed_at "$completed_at" '$completed_at | try fromdateiso8601 catch empty') || return 8
+	[[ "$completed_epoch" =~ ^[0-9]+$ ]] || return 8
+	now_epoch=$(date -u +%s) || return 8
+	[[ "$now_epoch" -ge "$completed_epoch" ]] || return 8
+	[[ $((now_epoch - completed_epoch)) -ge 900 ]] || return 8
+	return 0
+}
+
 _full_loop_release_inspect_remote() {
 	local repo="$1"
 	local tag_name="$2"
@@ -949,6 +960,12 @@ _full_loop_release_inspect_remote() {
 	_full_loop_release_find_workflow_run "$repo" "$tag_name" "$tag_commit" || find_rc=$?
 	if [[ "$find_rc" -eq 3 ]]; then
 		printf 'RELEASE_TAG=%s\nWORKFLOW_STATUS=absent\n' "$tag_name"
+		# The run list can serve stale snapshots; published channels mean
+		# absence is uncorroborated, so do not dispatch a redundant recovery.
+		if _full_loop_release_verify_channels "$repo" "$tag_name"; then
+			printf 'WORKFLOW_LOOKUP=uncorroborated\n'
+			return 8
+		fi
 		return 3
 	fi
 	[[ "$find_rc" -eq 0 ]] || return 1
@@ -968,11 +985,19 @@ _full_loop_release_inspect_remote() {
 				printf 'RELEASE_REMOTE_STATE=published\n'
 				return 0
 			fi
+			# A successful sibling is evidence of publication; a failed newer
+			# recovery must not trigger another dispatch during propagation.
+			return 8
 		fi
 		printf 'WORKFLOW_CONCLUSION=%s\n' "${run_conclusion:-unknown}"
 		return 4
 	fi
-	_full_loop_release_verify_channels "$repo" "$tag_name" || return 5
+	if ! _full_loop_release_verify_channels "$repo" "$tag_name"; then
+		# One recovery per correlation: never loop on a successful dispatch run.
+		[[ "$(jq -r '.event' <<<"$_FULL_LOOP_RELEASE_RUN_JSON")" == "workflow_dispatch" ]] && return 8
+		_full_loop_release_success_grace_expired "$_FULL_LOOP_RELEASE_RUN_JSON" || return 8
+		return 5
+	fi
 	printf 'RELEASE_REMOTE_STATE=published\n'
 	return 0
 }
@@ -1447,6 +1472,22 @@ _full_loop_release_recover_existing_protected_pr_lane() {
 	_full_loop_release_claim_preserved_tag "$repo" "$requested_pr" "$tag_name"
 }
 
+_full_loop_release_not_requested_status() {
+	local repo="$1"
+	local requested_pr="$2"
+	release_lane_read "$repo" || return 1
+	if jq -e --argjson source_pr "$requested_pr" '
+		.active == true and .source_pr == $source_pr and .terminal_receipt == null
+	' <<<"$_AIDEVOPS_RELEASE_LANE_JSON" >/dev/null; then
+		printf 'release:queued source_pr=%s phase=%s tag=%s\n' "$requested_pr" \
+			"$(jq -r '.phase' <<<"$_AIDEVOPS_RELEASE_LANE_JSON")" \
+			"$(jq -r '.tag // "pending"' <<<"$_AIDEVOPS_RELEASE_LANE_JSON")"
+		return 8
+	fi
+	printf 'release:not-requested already recorded for PR #%s\n' "$requested_pr"
+	return 0
+}
+
 _full_loop_release_existing_command() {
 	local mode="$1"
 	local requested_pr="$2"
@@ -1472,13 +1513,13 @@ _full_loop_release_existing_command() {
 		return 1
 		;;
 	esac
+	if [[ "$receipt_status" == "$_FULL_LOOP_RELEASE_NOT_REQUESTED" && "$mode" != "$_FULL_LOOP_RELEASE_MODE_RECONCILE" ]]; then
+		_full_loop_release_not_requested_status "$repo" "$requested_pr"
+		return $?
+	fi
 	_full_loop_release_find_tag_for_pr "$repo" "$requested_pr" || return $?
 	tag_name="$_FULL_LOOP_RELEASE_FOUND_TAG"
 	if [[ "$receipt_status" == "$_FULL_LOOP_RELEASE_NOT_REQUESTED" ]]; then
-		[[ "$mode" == "$_FULL_LOOP_RELEASE_MODE_RECONCILE" ]] || {
-			printf 'Cannot reconcile terminal release:not-requested evidence for PR #%s\n' "$requested_pr" >&2
-			return 1
-		}
 		source_json=$(_full_loop_release_source_json_from_tag "$tag_name") || return 1
 		_full_loop_release_validate_explicit_reconciliation_intent \
 			"$repo" "$requested_pr" "$source_json" || {

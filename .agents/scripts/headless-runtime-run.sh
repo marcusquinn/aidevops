@@ -171,7 +171,9 @@ _select_cmd_run_model() {
 	}
 	if [[ -z "${model_override:-$initial_model}" ]]; then
 		local selected_tier=""
-		selected_tier=$(model_tier_for_model "$selected_model" 2>/dev/null || true)
+		# A model can serve several tiers (e.g. Sol: standard low, thinking
+		# medium). Keep the requested tier when it lists the selected model.
+		selected_tier=$(model_tier_for_model "$selected_model" "$tier_override" 2>/dev/null || true)
 		if [[ -n "$selected_tier" && "$selected_tier" != "$tier_override" ]]; then
 			print_info "[routing] adaptive tier selection ${tier_override}->${selected_tier} model=$selected_model"
 			tier_override="$selected_tier"
@@ -253,11 +255,32 @@ _resolve_capability_escalation() {
 		_capability_escalation_label="${current_tier} capability limit — increasing ${current_model} reasoning from ${current_variant} to ${_capability_escalation_variant}"
 		return 0
 	fi
-	_capability_escalation_tier=$(model_tier_next "$current_tier" 2>/dev/null) || return 1
-	_capability_escalation_model=$(choose_model "$role" "" "$_capability_escalation_tier" "exact-tier") || return 1
-	_capability_escalation_variant=$(resolve_headless_variant "$role" "$_capability_escalation_tier" "$_capability_escalation_model")
-	_capability_escalation_label="${current_tier} tier reported BLOCKED — escalating to ${_capability_escalation_tier} (${_capability_escalation_model}${_capability_escalation_variant:+ ${_capability_escalation_variant}})"
-	return 0
+	# GH#32929: never re-run the identical route. Tiers may share a model and
+	# reasoning (standard and thinking both start at Sol medium), so an identical
+	# next-tier route tries that tier's explicit ladder, then its next healthy
+	# distinct candidate, then the following tier. Nothing distinct is terminal.
+	local target_tier="$current_tier" target_model="" target_variant="" next_route=""
+	while target_tier=$(model_tier_next "$target_tier" 2>/dev/null); do
+		target_model=$(choose_model "$role" "" "$target_tier" "exact-tier") || return 1
+		target_variant=$(resolve_headless_variant "$role" "$target_tier" "$target_model")
+		if [[ "$target_model" == "$current_model" && "$target_variant" == "$current_variant" ]]; then
+			if [[ -n "$target_variant" ]] &&
+				next_route=$(model_tier_next_variant "$target_tier" "$target_model" "$target_variant"); then
+				target_variant="$next_route"
+			elif next_route=$(_first_healthy_configured_model "$target_tier" "exact-tier" "" "$current_model"); then
+				target_model="$next_route"
+				target_variant=$(resolve_headless_variant "$role" "$target_tier" "$target_model")
+			else
+				continue
+			fi
+		fi
+		_capability_escalation_tier="$target_tier"
+		_capability_escalation_model="$target_model"
+		_capability_escalation_variant="$target_variant"
+		_capability_escalation_label="${current_tier} tier reported BLOCKED — escalating to ${_capability_escalation_tier} (${_capability_escalation_model}${_capability_escalation_variant:+ ${_capability_escalation_variant}})"
+		return 0
+	done
+	return 1
 }
 
 # Handle attempt results that always terminate or immediately escalate.
@@ -519,6 +542,7 @@ _cmd_run_attempt_loop() {
 		export AIDEVOPS_ROUTING_REASON="$routing_reason"
 		export AIDEVOPS_ROUTING_ESCALATED="$routing_escalated"
 		export AIDEVOPS_ROUTING_VARIANT="$variant_override"
+		export AIDEVOPS_ROUTING_MODEL="$selected_model"
 		_run_failure_reason="" _run_should_retry=0 _run_result_label="failed" _run_activity_detected="0"
 		local attempt_exit=0
 		if _execute_run_attempt "$role" "$session_key" "$work_dir" "$title" "$prompt" \

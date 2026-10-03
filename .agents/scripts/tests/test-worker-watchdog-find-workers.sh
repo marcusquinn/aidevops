@@ -67,7 +67,7 @@ write_ps_stub() {
 # PIDs picked to be mutually non-substring (no "1000" inside "41000")
 # so simple glob assertions cannot false-positive.
 printf '%s\n' \
-	'81234 bash /Users/u/.aidevops/agents/scripts/headless-runtime-helper.sh run --role worker /full-loop Implement issue #1 --model anthropic/claude-sonnet-4-6' \
+	'81234 bash /Users/u/.aidevops/agents/scripts/headless-runtime-helper.sh run --role worker /full-loop Implement issue #1 --model anthropic/claude-sonnet-5-5' \
 	'82345 node /opt/homebrew/bin/opencode run --print-logs /full-loop Implement issue #2' \
 	'83456 /opt/homebrew/lib/node_modules/opencode-ai/bin/.opencode run /full-loop Implement issue #3' \
 	'84567 /opt/homebrew/bin/claude run /full-loop Implement issue #4' \
@@ -213,7 +213,7 @@ test_worker_watchdog_script_dir_retry_present() {
 	local watchdog_script="${LIB_DIR}/worker-watchdog.sh"
 	if grep -qF '_resolve_script_dir_with_retry' "$watchdog_script" && \
 		grep -qF 'AIDEVOPS_SCRIPT_DIR_ATTEMPTS' "$watchdog_script" && \
-		grep -qF "\${HOME}/.aidevops/agents/scripts" "$watchdog_script"; then
+		grep -qF '/.aidevops/agents/scripts' "$watchdog_script"; then
 		print_result "worker-watchdog retries script-dir resolution during deploy races" 0
 		return 0
 	fi

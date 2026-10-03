@@ -15,7 +15,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { spawnSync } from "node:child_process";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -24,7 +24,40 @@ import {
   createMcpActivationTool,
   enforceManagedMcpArtifactPath,
 } from "../mcp-activation-tool.mjs";
-import { createMcpSessionRuntime, getOnDemandMcpAgents, registerMcpServers } from "../mcp-registry.mjs";
+import { createMcpSessionRuntime, getMcpRegistry, getOnDemandMcpAgents, registerMcpServers } from "../mcp-registry.mjs";
+import { normalizeMcpArtifactPaths } from "../mcp-artifact-paths.mjs";
+
+test("normalizes Playwright artifact links using the MCP cwd, not the worktree", () => {
+  const runtime = createMcpSessionRuntime("/home/example/.aidevops/.agent-workspace", { nonce: "links" });
+  const workspace = runtime.workspaces.playwright;
+  const snapshot = join(workspace.outputDirectory, "page.yml");
+  const output = { output: `[Snapshot](${relative(workspace.outputDirectory, snapshot)})\n[Screenshot](./shot.png)` };
+  normalizeMcpArtifactPaths({ tool: "playwright_browser_navigate" }, output, runtime.workspaces);
+  assert.equal(output.output, `[Snapshot](${snapshot})\n[Screenshot](${join(workspace.outputDirectory, "shot.png")})`);
+
+  // A ../../.. link is valid only when its resolved destination is in this session.
+  const nested = { directory: workspace.directory, outputDirectory: join(workspace.directory, "a", "b", "c") };
+  const traversing = { output: "[Snapshot](../../../.aidevops/.agent-workspace/page.yml)\n[Escape](../../../../outside.png)\n[Web](https://example.com/a.png)" };
+  normalizeMcpArtifactPaths({ tool: "playwright_browser_snapshot" }, traversing, { playwright: nested });
+  assert.equal(traversing.output, `[Snapshot](${join(workspace.directory, ".aidevops/.agent-workspace/page.yml")})\n[Escape](../../../../outside.png)\n[Web](https://example.com/a.png)`);
+  const unrelated = { output: "[Screenshot](./shot.png)" };
+  normalizeMcpArtifactPaths({ tool: "read" }, unrelated, runtime.workspaces);
+  assert.equal(unrelated.output, "[Screenshot](./shot.png)");
+});
+
+test("leaves artifact links through a symlink escape unchanged", (t) => {
+  const root = mkdtempSync(join(tmpdir(), "aidevops-artifact-links-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const directory = join(root, "session");
+  const outputDirectory = join(directory, ".playwright-mcp");
+  const outside = join(root, "outside");
+  mkdirSync(outputDirectory, { recursive: true });
+  mkdirSync(outside);
+  symlinkSync(outside, join(outputDirectory, "linked"), "dir");
+  const output = { output: "[Screenshot](./linked/shot.png)\n[Traversal](./linked/../shot.png)" };
+  normalizeMcpArtifactPaths({ tool: "playwright_browser_take_screenshot" }, output, { playwright: { directory, outputDirectory } });
+  assert.equal(output.output, "[Screenshot](./linked/shot.png)\n[Traversal](./linked/../shot.png)");
+});
 
 const TEST_DIR = fileURLToPath(new URL(".", import.meta.url));
 const AGENTS_DIR = join(TEST_DIR, "../../..");
@@ -81,13 +114,40 @@ test("plain-text Playwriter mention in another agent never changes MCP lifecycle
   }
 });
 
+test("each registry entry has an agent source or an explicit opt-out", () => {
+  for (const mcp of getMcpRegistry()) {
+    if (!mcp.activationAgent) {
+      assert.equal(mcp.activation, "none", mcp.name);
+      assert.ok(mcp.activationReason?.trim(), mcp.name);
+      continue;
+    }
+    assert.ok(Array.isArray(mcp.agentSource) && mcp.agentSource.length > 0, mcp.name);
+    assert.ok(existsSync(join(AGENTS_DIR, ...mcp.agentSource)), mcp.name);
+    assert.ok(mcp.toolPattern, mcp.name);
+  }
+});
+
 test("registers only the explicit MCP activation profiles", () => {
   const config = { mcp: {}, tools: {} };
   registerMcpServers(config);
   const count = registerOnDemandMcpAgents(config, AGENTS_DIR);
 
-  assert.equal(count, process.platform === "darwin" ? 11 : 10);
-  assert.deepEqual(Object.keys(config.agent), ["playwriter", "posthog", "playwright", "quickfile", "mobile-mcp", "blender", ...(process.platform === "darwin" ? ["affinity"] : []), "freecad", "ableton", "davinci-resolve", "backblaze-b2"]);
+  const onDemand = getOnDemandMcpAgents();
+  assert.equal(count, onDemand.length);
+  assert.deepEqual(Object.keys(config.agent), onDemand.map((mcp) => mcp.agentName));
+  assert.equal(new Set(onDemand.map((mcp) => mcp.agentName)).size, onDemand.length);
+  if (process.platform === "darwin") {
+    assert.equal(config.agent["macos-automator"].tools.aidevops_mcp, true);
+    assert.equal(config.agent["macos-automator"].tools["macos-automator_*"], true);
+    assert.equal(config.mcp["macos-automator"].enabled, false);
+    assert.equal(config.tools["macos-automator_*"], false);
+    assert.match(config.agent["macos-automator"].prompt, /AXManualAccessibility/);
+  }
+  // Every registered MCP must be launchable on demand through a bounded agent.
+  assert.deepEqual(Object.keys(config.mcp).filter((name) => !onDemand.some((mcp) => mcp.name === name)), []);
+  for (const name of ["playwriter", "context7", "posthog", "playwright", "sentry", "shadcn", "cloudflare-mcp", "shopify", "docker-mcp"]) {
+    assert.ok(config.agent[name], `missing activation agent ${name}`);
+  }
   assert.equal(config.tools.aidevops_mcp, false);
   assert.equal(config.agent.playwriter.mode, "subagent");
   assert.equal(config.agent.playwriter.tools.aidevops_mcp, true);
@@ -560,7 +620,7 @@ done
 mkdir -p -- "$output_dir"
 printf 'snapshot' >"$output_dir/page.yml"
 printf 'console' >"$output_dir/console.log"
-printf 'named screenshot' >"$output_dir/review-home-desktop.png"
+printf 'named screenshot' >"review-home-desktop.png"
 `, { mode: 0o755 });
 
   const config = {};

@@ -286,11 +286,19 @@ Show the user: title, body preview, label. Offer: create / edit title / edit des
 Before creating the issue, run a fingerprint check against this session and prior sessions.
 This check is not subject to GitHub's search index lag — it reads a local state file.
 
+First, use the runtime Write tool—not Bash, a heredoc, or shell redirection—to
+create `aidevops-issue-body.md` at a fully resolved absolute path beneath
+`${AIDEVOPS_TEMP_DIR:-$HOME/.aidevops/.agent-workspace/tmp}`. Write only the
+approved `BODY_CONTENT`; the managed GitHub wrapper signs a private copy before
+posting.
+
 ```bash
-~/.aidevops/agents/scripts/log-issue-helper.sh check-fingerprint "EXACT_TITLE" "EXACT_BODY"
+~/.aidevops/agents/scripts/log-issue-helper.sh check-fingerprint "EXACT_TITLE" \
+  --body-file "/absolute/path/to/aidevops-issue-body.md"
 ```
 
-Replace `EXACT_TITLE` and `EXACT_BODY` with the title and body from Step 4/5.
+Replace `EXACT_TITLE` with the title from Step 4/5. The body file must contain
+the exact approved body that Step 6 posts.
 
 **If output is `OK`**: proceed to Step 6.
 
@@ -307,13 +315,7 @@ documented in GH#20322. Do not skip it even if Step 3 returned no results.
 
 ### Step 6: Create the Issue
 
-First, use the runtime Write tool—not Bash, a heredoc, or shell redirection—to
-create `aidevops-issue-body.md` at a fully resolved absolute path beneath
-`${AIDEVOPS_TEMP_DIR:-$HOME/.aidevops/.agent-workspace/tmp}`. Write only the
-approved `BODY_CONTENT`; the managed GitHub wrapper signs a private copy before
-posting.
-
-Then use a separate Bash tool call to post the already-created file. Do not
+Use a separate Bash tool call to post the body file created in Step 5.5. Do not
 combine body-file creation and the `gh issue create` write in one call.
 
 For framework bugs, validate that final body file immediately before posting.
@@ -362,7 +364,8 @@ so future sessions can detect this as a duplicate:
 ```bash
 # Extract issue number from the URL (e.g., https://github.com/marcusquinn/aidevops/issues/20312 → 20312)
 ISSUE_NUMBER=<number from created issue URL>
-~/.aidevops/agents/scripts/log-issue-helper.sh record-fingerprint "EXACT_TITLE" "EXACT_BODY" "$ISSUE_NUMBER"
+~/.aidevops/agents/scripts/log-issue-helper.sh record-fingerprint "EXACT_TITLE" \
+  --body-file "/absolute/path/to/aidevops-issue-body.md" "$ISSUE_NUMBER"
 ```
 
 This writes to `~/.aidevops/state/log-issue-fingerprints.jsonl`. On transient failures where

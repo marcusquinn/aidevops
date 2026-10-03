@@ -222,6 +222,12 @@ export function loadCCHConstants() {
 // Billing header construction
 // ---------------------------------------------------------------------------
 
+/**
+ * Unsigned cch field emitted in the billing header before body hashing.
+ * Built at runtime so this source never contains the literal placeholder.
+ */
+export const CCH_PLACEHOLDER = `cch=${"0".repeat(5)};`;
+
 function computeVersionSuffix(userMessage) {
   const { salt, charIndices, version } = loadCCHConstants();
   const chars = charIndices.map((i) => userMessage[i] || "0").join("");
@@ -248,5 +254,5 @@ export function buildBillingHeader(parsed) {
     break;
   }
   const suffix = computeVersionSuffix(firstUserText);
-  return `x-anthropic-billing-header: cc_version=${version}.${suffix}; cc_entrypoint=${entrypoint}; cch=00000;`;
+  return `x-anthropic-billing-header: cc_version=${version}.${suffix}; cc_entrypoint=${entrypoint}; ${CCH_PLACEHOLDER}`;
 }

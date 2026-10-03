@@ -7,7 +7,7 @@ model-fallback: openai/gpt-5.4
 fallback-chain:
   - anthropic/claude-opus-4-6
   - openai/gpt-5.4
-  - anthropic/claude-sonnet-4-6
+  - anthropic/claude-sonnet-5-5
   - openrouter/anthropic/claude-opus-4-6
 tools:
   read: true
@@ -70,17 +70,27 @@ Available as `claude-opus-4-7` (released 2026-04-16). Routing-table maintainers
 may place it in the `thinking` tier after validating availability, cost, and
 reliability. Task authors still request only `tier:thinking`.
 
-The framework registers 4.7 with a **250K context limit** (not the 1M API
-ceiling) so OpenCode's 80% auto-compact threshold triggers at the 200K
-reliability boundary — the point past which MRCR retrieval collapses.
-Sessions get the full still-functional window before compaction kicks in,
-instead of compacting prematurely at 160K (what an unaligned 200K cap
-produces).
+Historical routing note: aidevops registered six older 4.x Claude model IDs
+under the built-in Anthropic provider and labelled them "via aidevops". This
+made those models selectable before native catalogue support and advertised
+managed context limits, including **250K context for Opus 4.7**. The label did
+not select the OAuth pool: the separate Anthropic auth hook already handles
+native models. Those registrations also overrode native model metadata, so we
+retired them in favour of the native catalogue. The separate `claudecli/*`
+proxy entries are retained for CLI transport; they are not the Anthropic pool.
+
+OpenCode 1 applies the shared 240K usable-input budget at request time to native
+Opus 5.5+ models with larger windows (500K before GH#32807); see
+`reference/context-efficiency.md`. Opus 4.7 retains its
+more conservative **200K usable-input** reliability boundary without a picker
+entry. This expresses the historical 250K/80% intent using the current
+input-minus-reserve compaction calculation, without reducing smaller native
+windows or overriding a user's explicit per-model limit.
 
 #### User override: `AIDEVOPS_OPUS_47_CONTEXT` (t2435)
 
-The 250K cap is the right *default*, but it is not the right value for every
-user. If you want to opt into a larger context (up to the 1M API ceiling),
+The 200K usable-input boundary is the right *default*, but not for every user.
+If you want to opt into a larger context target (up to the 1M API ceiling),
 set the env var before launching OpenCode/Claude Code:
 
 ```bash
@@ -91,15 +101,15 @@ export AIDEVOPS_OPUS_47_CONTEXT=1000000
 export AIDEVOPS_OPUS_47_CONTEXT=500000
 ```
 
-Both the built-in `anthropic` provider (via the OAuth pool) and the
-`claudecli` provider read this value via the shared `model-limits.mjs`
-helper, so OpenCode's 80% auto-compact threshold moves with it
-(e.g. 1000000 → ~800K compaction trigger).
+Native `anthropic` uses the request-time budget (e.g. 500000 → up to 400K
+usable input, 1000000 → up to 800K); `claudecli` retains its independently
+advertised context via `model-limits.mjs`. The native request-time cap never
+expands a smaller window. The override does not affect Opus 5.5 or other models.
 
 **Validation:**
 
-- Unset / empty / non-numeric / `<=0` → default 250000 (silent for unset/empty;
-  warned at plugin init for invalid values).
+- Unset / empty / non-numeric / `<=0` → 200K native usable input; the CLI proxy
+  retains its 250000 context default (invalid inputs warn at plugin init).
 - `> 1000000` → clamped to the 1M API ceiling, with a warning.
 - Otherwise → the integer is used verbatim, with an MRCR-collapse warning at
   plugin init so the cost is visible in your logs.
@@ -115,7 +125,7 @@ helper, so OpenCode's 80% auto-compact threshold moves with it
   is opus-4-7-only.
 
 If you set this and find sessions degrading, unset the env var (or reduce
-the value) and restart OpenCode. The cap exists for a reason; treat the
+the value) and restart OpenCode. The boundary exists for a reason; treat the
 override as a calibrated experiment, not a free upgrade.
 
 ### When to map `thinking` to Opus 4.7

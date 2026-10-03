@@ -373,6 +373,9 @@ define_function_under_test() {
 	source "$checks_lib"
 	# shellcheck disable=SC1090  # dynamic source from sibling lib
 	source "$REQUIRED_CHECKS_SCRIPT"
+	# Empty repository contexts now require a separate exact PR-level lookup.
+	# The suite exercises repository policy; model an empty org-level policy.
+	gh_pr_checks_exact_json() { printf '[]\n'; return 0; }
 	gh_pr_view() {
 		if gh pr view "$@"; then
 			return 0

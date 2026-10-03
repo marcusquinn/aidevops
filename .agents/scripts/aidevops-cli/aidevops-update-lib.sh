@@ -142,6 +142,7 @@ _update_sync_projects() {
 		return 0
 	fi
 	local synced=0 skipped=0 failed=0 preserved=0
+	_PROJECT_CONFIG_MIGRATIONS_QUEUED=0
 	for repo in "${repos_needing_upgrade[@]}"; do
 		[[ ! -f "$repo/.aidevops.json" ]] && {
 			skipped=$((skipped + 1))

@@ -86,6 +86,8 @@ diff pre-migration.csv post-migration.txt
 
 ## Integration
 
+Choosing a new domain for a brand or product: start with `aidevops keywords brief --asset domain` and the project's pillar targets and entities (`seo/keywords-standard.md`) before comparing availability.
+
 ```bash
 # With site crawler
 domain-research-helper.sh subdomains example.com --output subs.txt

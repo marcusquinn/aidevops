@@ -39,6 +39,24 @@ _publication_task_has_dependency "$blocked_task_line"
 [[ -z "$(_publication_status_label "$desired_labels" 1 '{"labels":[{"name":"status:in-progress"}]}')" ]]
 printf 'PASS production helpers project and verify intended labels\n'
 
+# GH#32904: readiness gates only auto-dispatch projection, before any mutation.
+(
+	_publication_brief_ready() { return 1; }
+	_publication_dispatch_ready t9003 "$held_labels"
+	_publication_dispatch_ready t9001 ''
+	if _publication_dispatch_ready t9000 "$desired_labels"; then exit 1; fi
+	_publication_brief_ready() { return 0; }
+	_publication_dispatch_ready t9000 "$desired_labels"
+)
+reconcile_body=$(sed -n '/^_publication_reconcile_one()/,/^}/p' "$RECONCILER")
+readiness_line=$(grep -n -m1 '_publication_dispatch_ready ' <<<"$reconcile_body" | cut -d: -f1)
+first_edit_line=$(grep -n -m1 'gh_issue_edit_safe ' <<<"$reconcile_body" | cut -d: -f1)
+[[ -n "$readiness_line" && -n "$first_edit_line" && "$readiness_line" -lt "$first_edit_line" ]]
+if sed -n '/^_publication_validate_mapping()/,/^}/p' "$RECONCILER" | grep -Fq 'check-readiness'; then
+	exit 1
+fi
+printf 'PASS held and untagged tasks publish without worker readiness; auto-dispatch stays gated\n'
+
 grep -Fq '_publication_exact_default_snapshot' "$RECONCILER"
 grep -Fq '_publication_validate_mapping' "$RECONCILER"
 grep -Fq 'issue_sync_prepare_ci_context || return 1' "$RECONCILER"
@@ -51,7 +69,7 @@ fi
 grep -Fq 'Reconcile pending planning publication' "$WORKFLOW"
 grep -Fq -- "$WORKFLOW_PATTERN" "$WORKFLOW"
 
-remove_line=$(grep -n -- "$REMOVE_PATTERN" "$RECONCILER" | cut -d: -f1)
+remove_line=$(grep -n -- "$REMOVE_PATTERN" "$RECONCILER" | cut -d: -f1 | tail -1)
 verify_line=$(grep -n -m1 -- "$VERIFY_PATTERN" "$RECONCILER" | cut -d: -f1)
 [[ "$remove_line" -gt "$verify_line" ]]
 
@@ -84,6 +102,10 @@ _publication_validate_mapping() {
 	local task_id="$1"
 	local issue_num="$2"
 	printf -- '- [ ] %s Partial batch #auto-dispatch #bug blocked-by:t9000 ref:GH#%s\n' "$task_id" "$issue_num"
+	return 0
+}
+
+_publication_brief_ready() {
 	return 0
 }
 
@@ -148,12 +170,130 @@ printf 'PASS exact-SHA mapping validation precedes blocker removal\n'
 printf 'PASS default-branch workflow reconciles publication before maintenance\n'
 printf 'PASS partial batches leave earlier dependencies blocked and later failures pending\n'
 
+# Exercise the real mapping gate and batch classification without GitHub edits.
+(
+	# shellcheck source=../planning-publication-reconcile.sh
+	source "$RECONCILER"
+	issue_sync_prepare_ci_context() { return 0; }
+	_publication_exact_default_snapshot() { return 0; }
+	gh_issue_edit_safe() { printf 'unexpected label edit\n' >&2; return 1; }
+	gh() {
+		if [[ "$1" == repo ]]; then
+			printf 'main\n'
+		else
+			printf '[{"number":77,"title":"t9000: unpublished","createdAt":"%s"}]\n' "$fixture_created_at"
+		fi
+		return 0
+	}
+	_publication_task_line() { return 1; }
+	fixture_created_at=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+	output=$(cmd_reconcile --repo example/repo --sha 0123456789012345678901234567890123456789)
+	[[ "$output" == *'PUBLICATION_RECONCILE_SUMMARY reconciled=0 deferred=1 stale=0 failed=0'* ]]
+	fixture_created_at='2020-01-01T00:00:00Z'
+	if output=$(cmd_reconcile --repo example/repo --sha 0123456789012345678901234567890123456789); then exit 1; fi
+	[[ "$output" == *'PUBLICATION_RECONCILE_SUMMARY reconciled=0 deferred=0 stale=1 failed=0'* ]]
+	fixture_created_at='invalid'
+	if output=$(cmd_reconcile --repo example/repo --sha 0123456789012345678901234567890123456789); then exit 1; fi
+	[[ "$output" == *'PUBLICATION_RECONCILE_SUMMARY reconciled=0 deferred=0 stale=1 failed=0'* ]]
+	_publication_task_line() { printf '%s\n' '- [ ] t9000 unpublished ref:GH#77'; return 0; }
+	fixture_created_at=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+	if output=$(cmd_reconcile --repo example/repo --sha 0123456789012345678901234567890123456789); then exit 1; fi
+	[[ "$output" == *'PUBLICATION_RECONCILE_SUMMARY reconciled=0 deferred=0 stale=0 failed=1'* ]]
+)
+printf 'PASS young absent tasks defer; stale, malformed timestamp and missing brief fail without edits\n'
+
+# GH#33321: unmapped pending issues are a distinct, non-fatal class that cannot
+# consume the reconcile budget; ref:GH#N maps issues without a tNNN title.
+unmapped_tmp=$(mktemp -d)
+(
+	# shellcheck source=../planning-publication-reconcile.sh
+	source "$RECONCILER"
+	cd "$unmapped_tmp"
+	printf '%s\n' '- [ ] t9100 Benchmark roadmap item #auto-dispatch ~1h ref:GH#55 logged:2026-10-01' >TODO.md
+	[[ "$(_publication_task_id_for_ref 55)" == "t9100" ]]
+	if _publication_task_id_for_ref 5 >/dev/null; then exit 1; fi
+	if _publication_task_id_for_ref 56 >/dev/null; then exit 1; fi
+	issue_sync_prepare_ci_context() { return 0; }
+	_publication_exact_default_snapshot() { return 0; }
+	attempt_log="${unmapped_tmp}/attempts"
+	note_log="${unmapped_tmp}/notes"
+	: >"$attempt_log"
+	: >"$note_log"
+	_publication_reconcile_one() { printf '%s %s %s\n' "$2" "$3" "${4:-1}" >>"$attempt_log"; return 0; }
+	_publication_note_unmapped() { printf '%s\n' "$2" >>"$note_log"; return 0; }
+	gh() {
+		if [[ "$1" == repo ]]; then
+			printf 'main\n'
+			return 0
+		fi
+		# Newest first: twelve stale unmapped issues ahead of two mapped ones.
+		jq -cn '[range(200; 212) | {number: ., title: "PF-D\(.): Benchmark", createdAt: "2020-01-01T00:00:00Z"}]
+			+ [{number: 55, title: "PF-D03: Benchmark roadmap item", createdAt: "2020-01-01T00:00:00Z"},
+			   {number: 77, title: "t9000: Valid task", createdAt: "2020-01-01T00:00:00Z"}]'
+		return 0
+	}
+	PUBLICATION_LIMIT=10
+	output=$(cmd_reconcile --repo example/repo --sha 0123456789012345678901234567890123456789)
+	[[ "$output" == *'PUBLICATION_RECONCILE_SUMMARY reconciled=2 deferred=0 stale=0 failed=0 unmapped=12'* ]]
+	grep -qx 't9100 55 0' "$attempt_log"
+	grep -qx 't9000 77 1' "$attempt_log"
+	[[ "$(grep -c . "$note_log")" -eq 10 ]]
+)
+printf 'PASS unmapped pending issues are reported distinctly, never starve mapped tasks, and ref:GH maps untitled tasks\n'
+
+(
+	# shellcheck source=../planning-publication-reconcile.sh
+	source "$RECONCILER"
+	comment_log="${unmapped_tmp}/comments"
+	: >"$comment_log"
+	gh_issue_comment() { printf '%s\n' "$1" >>"$comment_log"; return 0; }
+	gh() {
+		if [[ "$2" == *"/issues/301/"* ]]; then printf '9001\n'; fi
+		return 0
+	}
+	_publication_note_unmapped example/repo 300
+	_publication_note_unmapped example/repo 301
+	[[ "$(cat "$comment_log")" == "300" ]]
+)
+rm -rf "$unmapped_tmp"
+printf 'PASS stale unmapped diagnostic is posted once per issue\n'
+
+# A closed sweep must verify the live state and canonical mapping before editing.
+(
+	gh_publication_default_has_ref() { [[ "$2" != "92" ]]; return $?; }
+	gh() {
+		if [[ "$1" == "issue" && "$2" == "list" ]]; then
+			printf '[{"number":90},{"number":91},{"number":92}]\n'
+		elif [[ "$3" == "90" ]] && grep -q '^90 .*--remove-label publication:pending' "$mutation_log"; then
+			printf '{"state":"CLOSED","labels":[]}\n'
+		elif [[ "$3" == "90" ]]; then
+			printf '{"state":"CLOSED","labels":[{"name":"publication:pending"}]}\n'
+		else
+			printf '{"state":"OPEN","labels":[{"name":"publication:pending"}]}\n'
+		fi
+		return 0
+	}
+	_publication_sweep_closed_one example/repo 90
+	_publication_sweep_closed_one example/repo 90
+	_publication_sweep_closed_one example/repo 91
+	_publication_sweep_closed_one example/repo 92
+)
+grep -q '^90 .*--remove-label publication:pending' "$mutation_log"
+[[ "$(grep -c '^90 .*--remove-label publication:pending' "$mutation_log")" -eq 1 ]]
+if grep -Eq '^(91|92) .*--remove-label publication:pending' "$mutation_log"; then exit 1; fi
+printf 'PASS closed sweep only removes a verified closed canonical issue label\n'
+
 ci_tmp=$(mktemp -d)
 if (
 	export HOME="$ci_tmp/reconciler-home" RUNNER_TEMP="$ci_tmp/reconciler-runner"
 	export GITHUB_ACTIONS=true GITHUB_REPOSITORY=example/repo
 	unset PRIVACY_REPOS_CONFIG AIDEVOPS_REPOS_JSON _ISSUE_SYNC_CI_CONTEXT_LOADED
 	mkdir -p "$HOME" "$RUNNER_TEMP"
+	# Production loads the wrappers before the step prepares context; the
+	# privacy guard then assigns its absent home default at source time.
+	# shellcheck source=../privacy-guard-helper.sh
+	source "$(dirname "$RECONCILER")/privacy-guard-helper.sh"
+	[[ "$PRIVACY_REPOS_CONFIG" == "$HOME/.config/aidevops/repos.json" ]]
 	_publication_exact_default_snapshot() { return 0; }
 	_publication_reconcile_one() {
 		[[ "$PRIVACY_REPOS_CONFIG" == "$AIDEVOPS_REPOS_JSON" ]]

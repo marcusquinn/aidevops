@@ -349,6 +349,19 @@ class SourceAccessHelperTests(unittest.TestCase):
                 snapshot = core.build_issue_signing_snapshot(reader, cutoff, excluded)
                 expected = self._issue_snapshot_oracle(evidence, "" if excluded is None else str(excluded), cutoff)
                 self.assertEqual(core.issue_snapshot_bytes(snapshot), expected)
+        # GH#32455: trusted same-repo sources omit mutable content; untrusted or
+        # cross-repository sources keep it. Both must match the shell oracle.
+        linked = evidence["timeline"][1]["source"]["issue"]
+        trusted_source = core.build_issue_signing_snapshot(reader, cutoff)["linked_references"][0]["source"]
+        self.assertFalse(trusted_source["content_bound"])
+        self.assertNotIn("body", trusted_source)
+        for variant in ({"author_association": "CONTRIBUTOR"}, {"repository": {"full_name": "other/repo"}}):
+            with self.subTest(variant=variant):
+                evidence["timeline"][1]["source"]["issue"] = {**linked, **variant}
+                snapshot = core.build_issue_signing_snapshot(reader, cutoff)
+                self.assertTrue(snapshot["linked_references"][0]["source"]["content_bound"])
+                self.assertEqual(core.issue_snapshot_bytes(snapshot), self._issue_snapshot_oracle(evidence, "", cutoff))
+        evidence["timeline"][1]["source"]["issue"] = linked
         reader.issue.side_effect = [evidence["issue"], {**evidence["issue"], "body": "changed"}]
         with self.assertRaisesRegex(HELPER.SourceAccessError, "changed while collecting"):
             core.build_issue_signing_snapshot(reader, cutoff)
@@ -1450,7 +1463,11 @@ else: sys.exit(1)
         self.assertFalse(outside_target.exists())
 
     def test_privileged_bootstrap_rejects_unsafe_core_and_ignores_bytecode(self) -> None:
-        broker = self.root / "broker"
+        # macOS temp paths can start with /var, a symlink to /private/var.
+        # Keep the fixture's trust boundary and both broker paths on the same
+        # canonical ancestry so the test exercises bytecode, not that alias.
+        trust_root = self.root.resolve(strict=True)
+        broker = trust_root / "broker"
         broker.mkdir(mode=0o755)
         broker.chmod(0o755)
         helper_path = broker / "source-access-helper.py"
@@ -1470,7 +1487,7 @@ else: sys.exit(1)
             with mock.patch.object(HELPER, "__file__", str(helper_path)), mock.patch.object(
                 HELPER, "_ROOT_BROKER_PATH", helper_path
             ), mock.patch.object(HELPER, "_SOURCE_CORE_PATH", core_path), mock.patch.object(
-                HELPER, "_BOOTSTRAP_TRUST_ROOT", self.root
+                HELPER, "_BOOTSTRAP_TRUST_ROOT", trust_root
             ), mock.patch.object(HELPER, "_BOOTSTRAP_TRUST_UID", self.uid), mock.patch.object(
                 HELPER.os, "geteuid", return_value=0
             ):
@@ -1583,6 +1600,39 @@ else: sys.exit(1)
         ):
             with self.assertRaisesRegex(HELPER.SourceAccessError, "root-owned source-access broker"):
                 HELPER._require_root_tty(self.config)
+
+
+    def test_root_broker_git_drops_to_authenticated_user(self) -> None:
+        """GH#32816: root broker runs Git as the requester, never as root on user repos."""
+        core = HELPER._SOURCE_CORE
+        captured: list[dict[str, object]] = []
+
+        def fake_run(command, **kwargs):
+            captured.append(kwargs)
+            return subprocess.CompletedProcess(command, 0, b"", b"")
+
+        requester = os.getuid()
+        with mock.patch.object(core.os, "geteuid", return_value=0), \
+                mock.patch.object(core, "real_user", return_value=(requester, Path.home())), \
+                mock.patch.object(core.subprocess, "run", side_effect=fake_run):
+            core._run([core.GIT, "-C", str(self.repo), "rev-parse", "--show-toplevel"])
+        self.assertEqual(captured[0]["user"], requester)
+        self.assertEqual(captured[0]["extra_groups"], [])
+        self.assertEqual(captured[0]["cwd"], "/")
+        self.assertNotIn("SUDO_UID", captured[0]["env"])
+        # No authenticated non-root requester: legacy root identity, no drop.
+        with mock.patch.object(core.os, "geteuid", return_value=0), \
+                mock.patch.object(core, "real_user", return_value=(0, Path("/"))), \
+                mock.patch.object(core.subprocess, "run", side_effect=fake_run):
+            core._run([core.GIT, "-C", str(self.repo), "rev-parse", "--show-toplevel"])
+        self.assertNotIn("user", captured[1])
+        # Unprivileged caller: unchanged.
+        with mock.patch.object(core.subprocess, "run", side_effect=fake_run):
+            core._run([core.GIT, "-C", str(self.repo), "rev-parse", "--show-toplevel"])
+        self.assertNotIn("user", captured[2])
+        # The dropped identity must still resolve a real linked-worktree toplevel.
+        result = core._run([core.GIT, "-C", str(self.repo), "rev-parse", "--show-toplevel"])
+        self.assertEqual(result.returncode, 0)
 
 
 if __name__ == "__main__":

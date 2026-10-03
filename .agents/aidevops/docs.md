@@ -36,7 +36,7 @@ tools:
 
 | Category | Guides |
 |----------|--------|
-| Infrastructure & Hosting | services/hosting/hostinger.md, services/hosting/hetzner.md, services/hosting/cloudflare.md, services/hosting/closte.md (legacy), services/hosting/cloudron.md |
+| Infrastructure & Hosting | services/hosting/hostinger.md, services/hosting/hetzner.md, services/hosting/cloudflare.md, services/hosting/cloudron.md |
 | Deployment & Content | coolify.md, mainwp.md |
 | Security & Quality | vaultwarden.md, code-auditing.md |
 | Version Control & Domains | git-platforms.md, domain-purchasing.md, spaceship.md, 101domains.md |

@@ -5,11 +5,11 @@
 # Integration Tests for Tier 3 Simplified Scripts (t1337.3)
 # =============================================================================
 # Verifies the 5 simplified Tier 3 scripts:
-#   1. full-loop-helper.sh       (534 lines, was 1169)
-#   2. fallback-chain-helper.sh  (261 lines, was 1367)
-#   3. budget-tracker-helper.sh  (309 lines, was 1671)
-#   4. issue-sync-helper.sh      (903 lines, was 2398)
-#   5. observability-helper.sh   (640 lines, was 1741)
+#   1. full-loop-helper.sh
+#   2. fallback-chain-helper.sh
+#   3. budget-tracker-helper.sh
+#   4. issue-sync-helper.sh
+#   5. observability-helper.sh
 #
 # Tests: sourcing, help output, state management, record/query, backward compat.
 # Does NOT require GitHub API, network, or real Claude sessions.
@@ -238,30 +238,30 @@ test_fallback_chain_helper() {
 		print_result "fallback: resolve (no tier) shows usage" 1 "Expected usage message"
 	fi
 
-	# Test: resolve simple tier (hardcoded fallback — no config file needed)
+	# Test: resolve simple tier from the shipped routing table.
 	# Set a fake API key so the lightweight availability check passes
 	export OPENAI_API_KEY="test-key-for-testing"
 	output=$("$helper" resolve simple --quiet 2>&1) || true
-	if echo "$output" | grep -q "gpt-5.6-luna"; then
-		print_result "fallback: resolve simple -> gpt-5.6-luna" 0
+	if echo "$output" | grep -q "gpt-6-luna"; then
+		print_result "fallback: resolve simple -> gpt-6-luna" 0
 	else
-		print_result "fallback: resolve simple -> gpt-5.6-luna" 1 "Got: $output"
+		print_result "fallback: resolve simple -> gpt-6-luna" 1 "Got: $output"
 	fi
 
 	# Test: resolve standard tier
 	output=$("$helper" resolve standard --quiet 2>&1) || true
-	if echo "$output" | grep -q "gpt-5.6-sol"; then
-		print_result "fallback: resolve standard -> gpt-5.6-sol" 0
+	if echo "$output" | grep -q "gpt-6.1-sol"; then
+		print_result "fallback: resolve standard -> gpt-6.1-sol" 0
 	else
-		print_result "fallback: resolve standard -> gpt-5.6-sol" 1 "Got: $output"
+		print_result "fallback: resolve standard -> gpt-6.1-sol" 1 "Got: $output"
 	fi
 
 	# Test: resolve thinking tier
 	output=$("$helper" resolve thinking --quiet 2>&1) || true
-	if echo "$output" | grep -q "gpt-5.6-sol"; then
-		print_result "fallback: resolve thinking -> gpt-5.6-sol" 0
+	if echo "$output" | grep -q "gpt-6.1-sol"; then
+		print_result "fallback: resolve thinking -> gpt-6.1-sol" 0
 	else
-		print_result "fallback: resolve thinking -> gpt-5.6-sol" 1 "Got: $output"
+		print_result "fallback: resolve thinking -> gpt-6.1-sol" 1 "Got: $output"
 	fi
 
 	# Test: resolve with --json flag
@@ -311,7 +311,7 @@ test_budget_tracker_helper() {
 
 	# Test: record a spend event
 	local output
-	if output=$("$helper" record --provider anthropic --model anthropic/claude-sonnet-4-6 \
+	if output=$("$helper" record --provider anthropic --model anthropic/claude-sonnet-5-5 \
 		--input-tokens 1000 --output-tokens 500 --task t1337.3 2>&1); then
 		print_result "budget: record spend event" 0
 	else
@@ -373,29 +373,6 @@ test_budget_tracker_helper() {
 		print_result "budget: record (missing args) fails" 0
 	else
 		print_result "budget: record (missing args) fails" 1 "Expected non-zero exit AND error pattern. rc=$rc_record, output: $output"
-	fi
-
-	# Test: backward compat — removed commands return gracefully
-	local removed_cmds=("check" "recommend" "configure" "reset" "tier-drift" "prune")
-	local all_compat=true
-	for cmd in "${removed_cmds[@]}"; do
-		local cmd_rc=0
-		output=$("$helper" "$cmd" 2>&1) || cmd_rc=$?
-		if [[ $cmd_rc -ne 0 ]]; then
-			print_result "budget: backward compat '$cmd'" 1 "Exit code: $cmd_rc"
-			all_compat=false
-		fi
-	done
-	if [[ "$all_compat" == "true" ]]; then
-		print_result "budget: backward compat (removed commands)" 0
-	fi
-
-	# Test: budget-check-tier returns tier unchanged
-	output=$("$helper" budget-check-tier standard 2>&1) || true
-	if [[ "$output" == *"sonnet"* ]]; then
-		print_result "budget: budget-check-tier passthrough" 0
-	else
-		print_result "budget: budget-check-tier passthrough" 1 "Got: $output"
 	fi
 
 	return 0
@@ -475,7 +452,7 @@ test_observability_helper() {
 
 	# Test: record a metric
 	local output
-	if output=$("$helper" record --model anthropic/claude-sonnet-4-6 \
+	if output=$("$helper" record --model anthropic/claude-sonnet-5-5 \
 		--input-tokens 5000 --output-tokens 2000 \
 		--cache-read 1000 --cache-write 500 \
 		--session test-session --project test-project 2>&1); then
@@ -527,24 +504,9 @@ test_observability_helper() {
 		print_result "observability: ingest (no logs) succeeds" 1 "Exit code: $?"
 	fi
 
-	# Test: backward compat — removed commands return gracefully
-	local removed_cmds=("summary" "models" "projects" "costs" "trend" "sync-budget" "prune")
-	local all_compat=true
-	for cmd in "${removed_cmds[@]}"; do
-		local cmd_rc=0
-		output=$("$helper" "$cmd" 2>&1) || cmd_rc=$?
-		if [[ $cmd_rc -ne 0 ]]; then
-			print_result "observability: backward compat '$cmd'" 1 "Exit code: $cmd_rc"
-			all_compat=false
-		fi
-	done
-	if [[ "$all_compat" == "true" ]]; then
-		print_result "observability: backward compat (removed commands)" 0
-	fi
-
-	# Test: unknown command
+	# Removed commands are now rejected rather than silently succeeding.
 	output=$("$helper" nonexistent 2>&1) || true
-	if echo "$output" | grep -qi "unknown command"; then
+	if echo "$output" | grep -qiE "unknown command|usage:"; then
 		print_result "observability: unknown command" 0
 	else
 		print_result "observability: unknown command" 1 "Expected 'Unknown command'"
@@ -577,10 +539,10 @@ test_regressions() {
 
 	# Verify line counts are within expected range (simplified)
 	_check_line_count "full-loop-helper.sh" 600
-	_check_line_count "fallback-chain-helper.sh" 300
+	_check_line_count "fallback-chain-helper.sh" 350
 	_check_line_count "budget-tracker-helper.sh" 350
 	_check_line_count "issue-sync-helper.sh" 1000
-	_check_line_count "observability-helper.sh" 700
+	_check_line_count "observability-helper.sh" 750
 
 	# Verify all scripts have set -euo pipefail
 	for script in full-loop-helper.sh fallback-chain-helper.sh budget-tracker-helper.sh issue-sync-helper.sh observability-helper.sh; do

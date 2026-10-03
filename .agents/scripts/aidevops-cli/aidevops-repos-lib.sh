@@ -218,6 +218,9 @@ _infer_init_scope() {
 		local repos_file="${REPOS_FILE:-$HOME/.config/aidevops/repos.json}"
 		local canonical_path
 		canonical_path=$(cd "$project_root" 2>/dev/null && pwd -P) || canonical_path="$project_root"
+		local main_wt
+		main_wt=$(git -C "$project_root" worktree list --porcelain 2>/dev/null | awk '/^worktree / {sub(/^worktree /, ""); print; exit}')
+		[[ -n "$main_wt" ]] && canonical_path=$(cd "$main_wt" 2>/dev/null && pwd -P) || true
 		local repo_data
 		repo_data=$(jq -r --arg path "$canonical_path" \
 			'.initialized_repos[] | select(.path == $path) | "\(.init_scope // "")|\(.local_only // "false")"' \
@@ -246,7 +249,17 @@ _infer_init_scope() {
 		return 0
 	fi
 
-	# Default: standard (backward compatible)
+	# A public GitHub remote gets the public courtesy and security files.
+	local remote_url visibility
+	remote_url=$(git -C "$project_root" remote get-url origin 2>/dev/null || true)
+	if [[ "$remote_url" == *github.com[:/]* ]] && command -v gh &>/dev/null; then
+		visibility=$(gh repo view "$remote_url" --json visibility --jq '.visibility' 2>/dev/null || true)
+		if [[ "$visibility" == "PUBLIC" ]]; then
+			echo "public"
+			return 0
+		fi
+	fi
+	# Unknown/private visibility retains the standard default.
 	echo "standard"
 	return 0
 }
@@ -434,6 +447,27 @@ _init_scaffold_design_md() {
 		print_success "Created DESIGN.md for $repo_name (design system skeleton — populate with tools/design/design-md.md)"
 	else
 		print_warning "DESIGN.md scaffolding failed"
+	fi
+	return 0
+}
+
+_init_scaffold_keywords() {
+	local project_root="$1"
+	local init_scope="${2:-standard}"
+	local helper="$AGENTS_DIR/scripts/keywords-helper.sh"
+	[[ -x "$helper" ]] || helper="$INSTALL_DIR/.agents/scripts/keywords-helper.sh"
+	if [[ ! -x "$helper" ]]; then
+		print_warning "keywords helper not found; run aidevops update, then: aidevops keywords scaffold ."
+		return 0
+	fi
+	if [[ -f "$project_root/context/keywords.md" ]]; then
+		print_info "context/keywords.md already exists, skipping"
+		return 0
+	fi
+	if "$helper" scaffold "$project_root" --init-scope "$init_scope" >/dev/null; then
+		print_success "Created context/keywords.md search targets (populate with seo/keywords-standard.md)"
+	else
+		print_warning "context/keywords.md scaffolding failed (retry: aidevops keywords scaffold .)"
 	fi
 	return 0
 }
@@ -970,7 +1004,7 @@ check_protected_branch() {
 	1)
 		local worktree_dir
 		worktree_dir="$(dirname "$project_root")/${repo_name}-${branch_type}-${branch_suffix}"
-		print_info "Creating worktree at $worktree_dir..."
+		print_info "Creating worktree for $suggested_branch..."
 		_protected_branch_create_worktree "$suggested_branch" "$_PROTECTED_BRANCH_UPSTREAM" "$worktree_dir" || return 1
 		return 0
 		;;

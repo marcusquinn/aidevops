@@ -68,6 +68,10 @@ write_stub_gh() {
 	: >"$GH_PR_LIST_JSON"
 cat >"${STUB_DIR}/gh" <<'STUBEOF'
 #!/usr/bin/env bash
+if [[ "$1" == "api" && "$2" == repos/*/issues/[0-9]* && "$2" != */comments* ]]; then
+	printf '%s\n' '{"state":"open","labels":[]}'
+	exit 0
+fi
 if [[ "$1" == "api" && "$2" == /repos/*/labels\?per_page=100 ]]; then
 	printf '%s\t%s\t%s\n' \
 		"status:available" "0e8a16" "Task is available for claiming" \

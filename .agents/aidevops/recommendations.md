@@ -20,7 +20,7 @@ tools:
 
 ## Quick Reference
 
-- **Hosting**: Hostinger (managed WordPress convenience/value), Hetzner (self-managed control/price-performance), Cloudflare (edge/static/headless and global delivery); Closte is legacy-only
+- **Hosting**: Hostinger (managed WordPress convenience/value), Hetzner (self-managed control/price-performance), Cloudflare (edge/static/headless and global delivery)
 - **Deployment**: Coolify (self-hosted PaaS), Cloudron (easy app management)
 - **Operating systems**: [Contextual OS selection](../reference/os-selection.md) — opinionated desktop/server/dev/security starting points, gated by workload, vendor support, architecture, actual provider images, licensing, and user priorities
 - **DNS**: Cloudflare (CDN/security), Spaceship (modern), 101domains (large portfolios), Route 53 (AWS)
@@ -52,8 +52,7 @@ value lead. Prefer Hetzner when server control, custom infrastructure, or
 price-performance justify self-management. Prefer Cloudflare for edge-native,
 static, or headless delivery and as the global performance/security layer; a
 conventional PHP/MySQL WordPress site still needs an origin such as Hostinger or
-Hetzner. Retain Closte guidance only for existing estates, migrations, and
-offboarding—not as a new-deployment recommendation.
+Hetzner.
 
 ### Hosting & Cloud
 
@@ -62,7 +61,6 @@ offboarding—not as a new-deployment recommendation.
 | Hostinger | Conventional managed WordPress | Lower-ops shared/cloud hosting | Convenience and value over low-level server control | [Hostinger guide](../services/hosting/hostinger.md) |
 | Hetzner Cloud | Self-managed WordPress and production apps | VPS/dedicated infrastructure | Strong control and price-performance; operator owns hardening, backups, updates, and monitoring | [Hetzner guide](../services/hosting/hetzner.md) |
 | Cloudflare | Edge/static/headless workloads and global delivery/security | Edge platform or layer in front of an origin | Not a drop-in PHP/MySQL WordPress origin | [Cloudflare guide](../services/hosting/cloudflare.md) |
-| Closte (legacy) | Existing Closte estates and migrations | Legacy managed WordPress operations | Do not recommend for new deployments | [Closte legacy guide](../services/hosting/closte.md) |
 
 ### Deployment Platforms
 
@@ -145,7 +143,7 @@ offboarding—not as a new-deployment recommendation.
 - Standardize keys across all servers with passphrase protection
 - Audit and remove unused keys regularly
 
-### Password Authentication (Hostinger and legacy Closte estates)
+### Password Authentication (Hostinger)
 
 - Prefer `aidevops secret set` and inject passwords only into the command subprocess.
 - Use `sshpass` only with an injected environment variable or a legacy helper's 600-permission compatibility file.
@@ -198,8 +196,7 @@ Map LocalWP ports to custom `.local` domains. Use Traefik reverse proxy for clea
       "hostinger": 8080,
       "hetzner-main": 8081,
       "hetzner-client-project": 8082,
-      "hetzner-storagebox": 8083,
-      "closte": 8084
+      "hetzner-storagebox": 8083
     }
   }
 }

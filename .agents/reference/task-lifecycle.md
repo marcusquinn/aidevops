@@ -155,6 +155,15 @@ routine uncertainty into `#no-auto-dispatch`.
   - automatable verification; and
   - 2+ acceptance criteria beyond generic tests/lint.
 
+  Credential-dependent execution on a configured runner is eligible when the
+  issue declares required **names** via `needs-secret:NAME` labels or the body
+  marker `<!-- aidevops:needs-secrets NAME1 NAME2 -->` (labels win). The pulse
+  compares names against `aidevops secret list` locally before claim and again
+  at the claim boundary. Missing names yield without a worker attempt; after
+  `AIDEVOPS_SECRET_STARVATION_SECONDS` (default 86400), a single marked notice
+  names the missing credentials and applies `status:blocked`. Never declare
+  values or assume the body marker hides names in a public issue.
+
   If readiness is missing, improve the brief when practical, but do not suppress useful issue publication or ask the user to perform routine triage. Publish without `#auto-dispatch`, state the missing information, and leave the issue recorded for autonomous enrichment; use `#parent`/blocked only when those semantics are true. Do not add `#no-auto-dispatch` merely because readiness is incomplete—that label is reserved for explicit durable manual intent with its reason recorded on the issue. See `workflows/plans.md` "Auto-Dispatch Tagging".
 - **Exclusions**: Omit `#auto-dispatch` only for:
   - blocker labels;

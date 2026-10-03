@@ -25,7 +25,7 @@ token efficiency, and quality control built in.**
 [![Maintainability](https://qlty.sh/gh/marcusquinn/projects/aidevops/maintainability.svg)](https://qlty.sh/gh/marcusquinn/projects/aidevops)
 [![Codacy Badge](https://app.codacy.com/project/badge/Grade/2b1adbd66c454dae92234341e801b984)](https://app.codacy.com/gh/marcusquinn/aidevops/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/Version-3.36.4-blue.svg)](https://github.com/marcusquinn/aidevops/releases)
+[![Version](https://img.shields.io/badge/Version-3.38.0-blue.svg)](https://github.com/marcusquinn/aidevops/releases)
 [![npm version](https://img.shields.io/npm/v/aidevops)](https://www.npmjs.com/package/aidevops)
 [![Homebrew](https://img.shields.io/badge/homebrew-marcusquinn%2Ftap-orange)](https://github.com/marcusquinn/homebrew-tap)
 
@@ -232,16 +232,16 @@ judgement, architecture, and synthesis, while bounded work uses the cheapest
 capable route.
 
 Progressive disclosure loads only the relevant agents, references, and tools.
-TOON registries, compact terminal summaries, semantic code search, context
+TOON registries, compact terminal summaries, exact code search, context
 bundles, prompt caching, and compaction checkpoints reduce unnecessary context
 without hiding required evidence. Model comparisons and sealed historical replay
 can inform routing, but cannot silently rewrite production policy.
 
 OpenCode defaults resolved models with larger windows to a ~240K usable-input
 compaction budget, without expanding smaller native windows or overriding
-explicit per-model context/input limits. GPT-6 Sol/Luna and their Fast variants
-also advertise the budget in their model metadata. Run `aidevops gpt6-context
-status` to check those four models in a fresh process, or `disable` to restore
+explicit per-model context/input limits. GPT-6.1 Sol, GPT-6 Sol/Luna and their
+Fast variants also advertise the budget in their model metadata. Run `aidevops
+gpt6-context status` to check those models in a fresh process, or `disable` to restore
 their native limits. Restart OpenCode after changes.
 
 See [model routing](.agents/tools/context/model-routing.md),
@@ -375,8 +375,8 @@ Integration families include:
 - GitHub, GitLab, Gitea, Forgejo, CI systems, quality platforms, and dependency scanners.
 - Hosting, DNS, cloud, deployment, object storage, networking, monitoring, and local development.
 - Product analytics, error monitoring, email, communications, social platforms, outreach, and payments.
-- Accounting, ecommerce, WordPress, documents, OCR, browser automation, and creative applications.
-- Context7, Repomix, semantic code search, OpenAPI search, local models, and model-provider account pools.
+- Accounting, ecommerce, WordPress (including [Rank Math SEO MCP](.agents/tools/wordpress/rankmath-mcp.md)), documents, OCR, browser automation, and creative applications.
+- Context7, exact code search, OpenAPI search, local models, and model-provider account pools.
 
 ### Skills and private agent sources
 
@@ -475,6 +475,9 @@ Depending on selected features and existing files, initialization can add:
 - `.agents/AGENTS.md` for project-specific AI guidance.
 - `TODO.md` and `todo/` for tasks, plans, PRDs, and verification state.
 - `DESIGN.md` for repositories with a detected interface.
+- `context/keywords.md` search targets (keywords, AI-answer questions, entities)
+  for standard-scope repositories; public repositories keep the data in a
+  private team hub ([standard](.agents/seo/keywords-standard.md)).
 - Deployment and WordPress context manifests when explicitly selected.
 - Standard project courtesy files only when they do not already exist.
 

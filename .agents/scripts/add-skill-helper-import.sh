@@ -37,6 +37,9 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
 	unset _lib_path
 fi
 
+# shellcheck source=./add-skill-helper-curated.sh
+source "${SCRIPT_DIR}/add-skill-helper-curated.sh"
+
 # =============================================================================
 # Security Scanning
 # =============================================================================
@@ -508,6 +511,12 @@ _convert_and_install_files() {
 	local target_file="$4"
 	local skill_name="$5"
 	local target_path="$6"
+
+	# Curated multi-skill layouts use explicit registry rules, not format guessing.
+	if has_curated_policy "$skill_name"; then
+		install_curated_tree "$source_dir" "$skill_name" "$TEMP_DIR/curated-stage"
+		return $?
+	fi
 
 	# Create target directory
 	local target_dir

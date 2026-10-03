@@ -39,7 +39,7 @@ the exact provider image, architecture, vendor release, and operating burden.
 **Scope**: This guide compares application platforms, not conventional WordPress
 hosting providers. For WordPress hosting, use `aidevops/recommendations.md`:
 Hostinger is the managed starting point, Hetzner is the self-managed option, and
-Cloudflare suits edge/static/headless aims; Closte is legacy-only.
+Cloudflare suits edge/static/headless aims.
 
 <!-- AI-CONTEXT-END -->
 

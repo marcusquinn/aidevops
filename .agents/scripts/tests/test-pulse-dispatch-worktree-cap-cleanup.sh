@@ -7,6 +7,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 CORE_SCRIPT="${SCRIPT_DIR}/../pulse-dispatch-core.sh"
+# The extracted helpers reference the module-level numeric guard. Load only
+# its literal assignment, not the entire dispatch module and its dependencies.
+eval "$(awk '/^_PULSE_DISPATCH_UNSIGNED_INTEGER_PATTERN=/ { print; exit }' "$CORE_SCRIPT")"
 TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "$TEST_ROOT"' EXIT
 LOGFILE="${TEST_ROOT}/pulse.log"
@@ -63,7 +66,7 @@ git() {
 	case "$GIT_MODE" in
 	nonzero) return 2 ;;
 	empty) return 0 ;;
-	valid) printf '/repo/main\n/repo/linked\n' ;;
+	valid) printf 'worktree /repo/main\nHEAD abc\nbranch refs/heads/main\n\nworktree /repo/linked\nHEAD def\ndetached\n\nworktree /tmp/tmp.gone\nHEAD 123\ndetached\nprunable gitdir file points to non-existent location\n\n' ;;
 	*) return 3 ;;
 	esac
 }
@@ -181,9 +184,9 @@ test_production_count_probe_validation() {
 	GIT_MODE="valid"
 	count=$(_production_dispatch_registered_worktree_count "$TEST_ROOT") || count="failed"
 	if [[ "$count" == "2" ]]; then
-		print_result "production counter counts verified Git inventory" 0
+		print_result "production counter counts live Git inventory, excluding prunable entries" 0
 	else
-		print_result "production counter counts verified Git inventory" 1
+		print_result "production counter counts live Git inventory, excluding prunable entries" 1
 	fi
 	GIT_MODE="empty"
 	if _production_dispatch_registered_worktree_count "$TEST_ROOT" >/dev/null; then

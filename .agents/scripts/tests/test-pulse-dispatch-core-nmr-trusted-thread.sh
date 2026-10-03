@@ -8,6 +8,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 CORE_SCRIPT="${SCRIPT_DIR}/../pulse-dispatch-core.sh"
+GATES_SCRIPT="${SCRIPT_DIR}/../pulse-dispatch-commit-gates.sh"
 AUTHORITY_SCRIPT="${SCRIPT_DIR}/../shared-gh-collaborator-permission.sh"
 
 readonly TEST_RED='\033[0;31m'
@@ -47,11 +48,13 @@ define_helpers_under_test() {
 	local helper_src
 	helper_src=$(awk '
 		/^_PULSE_DISPATCH_COLLABORATOR_ASSOCIATION=/ { print }
+		/^_PULSE_DISPATCH_JSON_ARRAY_TYPE=/ { print }
+		/^_PULSE_DISPATCH_UNSIGNED_INTEGER_PATTERN=/ { print }
 		/^_issue_thread_is_trusted_maintainer_only\(\) \{/,/^}$/ { print }
 		/^_issue_actor_has_repo_write_permission\(\) \{/,/^}$/ { print }
 		/^_check_nmr_approval_gate\(\) \{/,/^}$/ { print }
 		/^_gh_actor_has_repo_write_authority\(\) \{/,/^}$/ { print }
-	' "$CORE_SCRIPT" "$AUTHORITY_SCRIPT")
+	' "$CORE_SCRIPT" "$GATES_SCRIPT" "$AUTHORITY_SCRIPT")
 	if [[ -z "$helper_src" ]]; then
 		printf 'ERROR: could not extract helpers from %s\n' "$CORE_SCRIPT" >&2
 		return 1

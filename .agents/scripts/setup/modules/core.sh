@@ -293,7 +293,7 @@ install_packages() {
 }
 
 # Offer to install Homebrew (Linuxbrew) on Linux when brew is not available
-# Many tools in the aidevops ecosystem (Beads, Worktrunk, bv) are distributed
+# Some tools in the aidevops ecosystem (such as Worktrunk) are distributed
 # via Homebrew taps. On macOS, brew is almost always present. On Linux, this
 # function offers to install it so those tools can be installed automatically.
 # Returns: 0 if brew is now available, 1 if user declined or install failed
@@ -316,7 +316,7 @@ ensure_homebrew() {
 
 	echo ""
 	print_info "Homebrew (Linuxbrew) is not installed."
-	print_info "Several optional tools (Beads CLI, Worktrunk, bv) install via Homebrew taps."
+	print_info "Some optional tools (such as Worktrunk) install via Homebrew taps."
 	echo ""
 	local install_brew="Y"
 	setup_prompt install_brew "Install Homebrew for Linux? [Y/n]: " "Y"

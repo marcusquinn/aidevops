@@ -101,7 +101,7 @@ The opencode-aidevops plugin renders session-start framework status (version, en
 
 Do not re-run `aidevops-update-check.sh` or repeat toast content as a greeting — the user has already seen it. Respond directly to the user's message.
 
-**Fallback for agents without a Bash tool** (the plugin only fires toasts when the host runtime exposes the TUI — subagents may not see them): read `~/.aidevops/cache/session-greeting-opencode.txt` if it exists; otherwise read `~/.aidevops/agents/VERSION` for `{version}` and greet with `"Hi!\n\nWe're running https://aidevops.sh v{version}.\n\nWhat would you like to work on?"`.
+**Fallback for agents without a Bash tool** (the plugin only fires toasts when the host runtime exposes the TUI — subagents may not see them): read `~/.aidevops/agents/VERSION` first. Use `~/.aidevops/cache/session-greeting-opencode.txt` for the runtime version only when its aidevops version matches the deployed VERSION; never greet with an outdated cached version.
 
 **Update available prompt**: the raw cached output may begin with `UPDATE_AVAILABLE|<current>|<latest>|<runtime>`. When present, inform the user: "Update available (current → latest). Run `aidevops update` in a terminal session, or type `!aidevops update` below and hit Enter." If the cached output also contains `AUTO_UPDATE_ENABLED`, replace the manual instruction with: "Auto-update is enabled and will apply this within ~10 minutes."
 
@@ -129,7 +129,7 @@ done
 
 # Remove loop-state files that were incorrectly created as agents
 # These are runtime state files, not agents
-for f in ralph-loop.local.md quality-loop.local.md full-loop.local.md loop-state.md re-anchor.md postflight-loop.md; do
+for f in quality-loop.local.md full-loop.local.md loop-state.md re-anchor.md postflight-loop.md; do
 	if _opencode_generated_agent_owned "$OPENCODE_AGENT_DIR/$f"; then
 		rm -f "$OPENCODE_AGENT_DIR/$f"
 	fi
@@ -286,7 +286,7 @@ _write_sandboxed_agent() {
 			$0 == "---" { delimiters++; if (delimiters == 2) print "<!-- aidevops:generated-subagent -->" }
 		' "$f" | sed \
 			-e 's/^model: opus$/model: anthropic\/claude-opus-4-6/' \
-			-e 's/^model: sonnet$/model: anthropic\/claude-sonnet-4-6/' \
+			-e 's/^model: sonnet$/model: anthropic\/claude-sonnet-5-5/' \
 			-e 's/^model: haiku$/model: anthropic\/claude-haiku-4-5/' \
 			"$f" >"$OPENCODE_AGENT_DIR/$name.md"
 		echo 1

@@ -64,6 +64,8 @@ The OpenCode plugin consumes the first root-user `message.updated` event plus `s
 
 OpenCode V2 (`opencode2`) runs server plugins in a tty-less background service, so the status title comes from the TUI entrypoint `plugins/opencode-aidevops/v2-plugin/tui.mjs` instead. It reads the TUI session store (running → ⚪, pending permission → 🟡, otherwise 🟢), writes through the TUI renderer, writes immediately on status or title changes, and re-applies an unchanged title every 2s so V2's own `OC | <title>` writer cannot persist. `OPENCODE_DISABLE_TERMINAL_TITLE` has no effect on V2; the ownership variables above still apply.
 
+V2 session titles double as tab labels, so the `· AIDevOps <version>` suffix is not written into them. The same TUI entrypoint instead renders muted version labels into V2 UI slots: `AIDevOps <version>` in `prompt.footer.status` (home and session prompts) and `OpenCode <version> · AIDevOps <version>` in `sidebar.footer`. `sidebar.content` and `home.footer.status` are opt-in. The AIDevOps version is a live signal refreshed from the version file (cached for 60s), so `aidevops update` appears in running sessions without a restart. Choose slots with `AIDEVOPS_TUI_VERSION_SLOTS=<comma list>` or disable with `AIDEVOPS_TUI_VERSION_SLOTS=none`.
+
 ## Shell Integration
 
 | Shell | Config file | Hook |

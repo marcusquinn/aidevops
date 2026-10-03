@@ -989,8 +989,10 @@ _dd_has_trusted_completion_after_dispatch() {
 has_dispatch_comment() {
 	local issue_number="$1"
 	local repo_slug="$2"
-	# $3 = self_login — unused since GH#15317 (trusted dispatch comments from
-	# every repository actor are checked regardless of author identity)
+	# self_login: dispatch comments from every trusted actor are checked
+	# regardless of author (GH#15317); it only identifies this runner's own
+	# terminal-blocker hold evidence (GH#33025).
+	local self_login="${3:-}"
 
 	if [[ ! "$issue_number" =~ ^[0-9]+$ ]] || [[ -z "$repo_slug" ]]; then
 		return 1
@@ -1013,8 +1015,10 @@ has_dispatch_comment() {
 	if [[ -z "$comments_json" || "$comments_json" == "null" || "$comments_json" == "[]" ]]; then
 		return 1
 	fi
-	if terminal_blocker_circuit_active "$comments_json" "${ISSUE_META_JSON:-}" \
-		"$repo_slug" "$issue_number" "${DISPATCH_REPO_PATH:-}"; then
+	# GH#33025: this runner's own collaborator-authored releases count as hold
+	# evidence; see terminal-blocker-circuit.sh _TBC_HOLD_EVIDENCE_JQ.
+	if TERMINAL_BLOCKER_SELF_LOGIN="$self_login" terminal_blocker_circuit_active "$comments_json" \
+		"${ISSUE_META_JSON:-}" "$repo_slug" "$issue_number" "${DISPATCH_REPO_PATH:-}"; then
 		return 0
 	fi
 
@@ -1192,14 +1196,8 @@ _classify_structural_dispatch_blocker_reason() {
 #   $1 = blocker signal text emitted by dispatch-dedup-helper or pulse logs
 # Output: one of the dispatch_candidate_failed reason tokens
 #######################################
-classify_dispatch_blocker_reason() {
-	local signal="$1"
-	local lower_signal
-	lower_signal=$(printf '%s' "$signal" | tr '[:upper:]' '[:lower:]')
-	if _classify_structural_dispatch_blocker_reason "$lower_signal"; then
-		return 0
-	fi
-
+_classify_runtime_dispatch_blocker_reason() {
+	local lower_signal="$1"
 	case "$lower_signal" in
 		*interactive_review_hold* | *interactive*review*hold*)
 			printf 'interactive_review_hold\n'
@@ -1229,6 +1227,12 @@ classify_dispatch_blocker_reason() {
 			printf 'terminal_blocker_circuit\n'
 			return 0
 			;;
+		*terminal_blocker_backoff*)
+			# GH#33332: report the shared backoff as its own hold, not as an
+			# active claim, so pulse can cache it across cycles.
+			printf 'terminal_blocker_backoff\n'
+			return 0
+			;;
 		*dispatch_block_reason*ever_nmr_without_approval* | *blocked*ever*nmr*lacks*approval* | *requires*cryptographic*approval*)
 			printf 'ever_nmr_without_approval\n'
 			return 0
@@ -1249,8 +1253,28 @@ classify_dispatch_blocker_reason() {
 			printf 'launch_error\n'
 			return 0
 			;;
+		*brief_scope_hold*)
+			printf 'brief_scope_hold\n'
+			return 0
+			;;
+	esac
+	return 1
+}
+
+# Classify context and intake blockers before active-claim signals.
+_classify_intake_dispatch_blocker_reason() {
+	local lower_signal="$1"
+	case "$lower_signal" in
 		*missing*worker*context* | *needs-brief* | *missing*implementation*context*)
 			printf 'missing_worker_context\n'
+			return 0
+			;;
+		*dependabot_target_unverified* | *dependabot*intake*lookup*unavailable* | *invalid*dependabot*intake*evidence* | *dependabot*intake*repository*mismatch*)
+			printf 'dependabot_target_unverified\n'
+			return 0
+			;;
+		*dependabot_target_owned* | *owns*the*same*dependabot*pr*target* | *dependabot*blocked*by*target*owner*)
+			printf 'dependabot_target_owned\n'
 			return 0
 			;;
 		*renovate*dependency*dashboard*)
@@ -1261,6 +1285,14 @@ classify_dispatch_blocker_reason() {
 			printf 'local_capacity_gate\n'
 			return 0
 			;;
+	esac
+	return 1
+}
+
+# Keep claim signal precedence, including the broad unverified fallback.
+_classify_claim_dispatch_blocker_reason() {
+	local lower_signal="$1"
+	case "$lower_signal" in
 		*worker*already*running* | *live_worker=true* | *process_evidence=live*)
 			printf 'dedup_active_claim_live_owner\n'
 			return 0
@@ -1285,12 +1317,26 @@ classify_dispatch_blocker_reason() {
 			printf 'dedup_active_claim_unverified\n'
 			return 0
 			;;
-		"")
-			printf 'no_recent_log_evidence\n'
-			return 0
-			;;
 	esac
+	return 1
+}
 
+# Preserve the original ordered classification chain and its final fallback.
+classify_dispatch_blocker_reason() {
+	local signal="$1"
+	local lower_signal
+	lower_signal=$(printf '%s' "$signal" | tr '[:upper:]' '[:lower:]')
+	if _classify_structural_dispatch_blocker_reason "$lower_signal" ||
+		_classify_runtime_dispatch_blocker_reason "$lower_signal" ||
+		_classify_intake_dispatch_blocker_reason "$lower_signal" ||
+		_classify_claim_dispatch_blocker_reason "$lower_signal"; then
+		return 0
+	fi
+
+	if [[ -z "$lower_signal" ]]; then
+		printf 'no_recent_log_evidence\n'
+		return 0
+	fi
 	printf 'unclassified_signal\n'
 	return 0
 }

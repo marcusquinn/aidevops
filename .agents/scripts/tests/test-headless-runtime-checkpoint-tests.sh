@@ -545,6 +545,56 @@ test_ready_missing_linkage_preserves_in_review_handoff() {
 	return 0
 }
 
+# GH#33115: a worker that hands off a partial `For #N` PR emits POST_PR_HANDOFF,
+# but the strict confirmation rejects non-closing linkage. The durable
+# exact-head PR must be preserved, not fast-failed and tier-escalated.
+test_unverified_post_pr_handoff_with_partial_pr_is_checkpointed() {
+	local result=""
+	local transition_marker="${TEST_ROOT}/unverified-handoff-linkage-transition"
+	local fast_fail_marker="${TEST_ROOT}/unverified-handoff-linkage-fast-fail"
+	rm -f "$transition_marker" "$fast_fail_marker"
+	result=$(
+		(
+			DISPATCH_REPO_SLUG="test-owner/test-repo"
+			_run_result_label="post_pr_handoff"
+			_HRW_TERMINAL_OUTCOME="unset"
+			_HRW_FINAL_RUNTIME_EVENT="unset"
+			_HRW_FINAL_RUNTIME_STATUS="unset"
+			_HRW_FINAL_RUNTIME_CLASSIFICATION="unset"
+			_HRW_RECOVERY_CLASSIFICATION=""
+			_worker_post_pr_handoff_confirmed() { return 1; }
+			_worker_produced_output() { printf 'ready_missing_linkage'; return 0; }
+			_report_failure_to_fast_fail() { printf '%s\n' "$*" >"$fast_fail_marker"; return 0; }
+			_hrff_resolve_release_runner_login() { printf 'worker-bot'; return 0; }
+			set_issue_status() { printf '%s\n' "$*" >"$transition_marker"; return 0; }
+			gh() {
+				printf '%s\n' '{"state":"OPEN","labels":[{"name":"status:in-review"}],"assignees":[{"login":"worker-bot"}]}'
+				return 0
+			}
+			_release_dispatch_claim() { printf 'release=%s\n' "$2"; return 0; }
+
+			_hrw_finish_success_run "issue-99999" "${TEST_ROOT}"
+			printf 'rc=%s|terminal=%s|event=%s|status=%s|classification=%s\n' "$?" \
+				"$_HRW_TERMINAL_OUTCOME" "$_HRW_FINAL_RUNTIME_EVENT" \
+				"$_HRW_FINAL_RUNTIME_STATUS" "$_HRW_FINAL_RUNTIME_CLASSIFICATION"
+		)
+	)
+	local transition=""
+	[[ -f "$transition_marker" ]] && transition=$(<"$transition_marker")
+	if [[ ! -f "$fast_fail_marker" &&
+		"$transition" == *"99999 test-owner/test-repo in-review"* &&
+		"$transition" == *"--remove-label auto-dispatch"* &&
+		"$result" == *"release=worker_ready_missing_linkage"* &&
+		"$result" == *"rc=0|terminal=deferred|event=worker.deferred|status=checkpointed|classification=worker_ready_missing_linkage"* &&
+		"$result" != *"worker_post_pr_handoff_unverified"* ]]; then
+		print_result "unverified POST_PR_HANDOFF with a partial PR is checkpointed, not escalated" 0
+	else
+		print_result "unverified POST_PR_HANDOFF with a partial PR is checkpointed, not escalated" 1 \
+			"result=${result} transition=${transition:-<none>} fast_fail=$([[ -f "$fast_fail_marker" ]] && echo yes || echo no)"
+	fi
+	return 0
+}
+
 test_failed_ci_ready_pr_is_durable_handoff() {
 	local pr_json result
 	pr_json='[{"number":457,"state":"OPEN","isDraft":false,"mergedAt":null,"headRefOid":"abc123","labels":[{"name":"origin:worker"}],"statusCheckRollup":[{"name":"tests","conclusion":"FAILURE"},{"name":"tests","conclusion":"SUCCESS"}]}]'
@@ -846,6 +896,7 @@ test_pr_checkpoint_lifecycle_cases() {
 	test_checkpoint_terminal_telemetry_is_deferred
 	test_ready_missing_summary_preserves_in_review_handoff
 	test_ready_missing_linkage_preserves_in_review_handoff
+	test_unverified_post_pr_handoff_with_partial_pr_is_checkpointed
 	test_failed_ci_ready_pr_is_durable_handoff
 	test_closed_unmerged_pr_is_failed_not_completed
 	test_failed_worker_ready_pr_remains_completed_handoff

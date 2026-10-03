@@ -140,4 +140,4 @@ Cloud GPU (RunPod, Vast.ai, Lambda, NVIDIA Cloud): see **[Cloud GPU Guide](../in
 - `tools/voice/pipecat-opencode.md` — Pipecat real-time voice pipeline
 - `tools/infrastructure/cloud-gpu.md` — Cloud GPU deployment guide
 - `services/communications/twilio.md` — Phone integration
-- `tools/video/remotion.md` — Video narration
+- `tools/video/remotion/remotion.md` — Video narration

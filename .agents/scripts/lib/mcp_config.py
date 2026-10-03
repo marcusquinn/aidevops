@@ -137,10 +137,8 @@ def _register_dataforseo(config, pkg_runner):
         config['mcp']['dataforseo'] = {
             "type": "local",
             "command": ["/bin/bash", "-c",
-                        f"source ~/.config/aidevops/credentials.sh && "
-                        f"DATAFORSEO_USERNAME=$DATAFORSEO_USERNAME "
-                        f"DATAFORSEO_PASSWORD=$DATAFORSEO_PASSWORD "
-                        f"{pkg_runner} dataforseo-mcp-server"],
+                        f'source "$HOME/.aidevops/agents/scripts/dataforseo-credentials.sh" && '
+                        f'dataforseo_load_credentials && exec {pkg_runner} dataforseo-mcp-server'],
             "enabled": False
         }
         print("  Added dataforseo MCP (lazy load - SEO agent/@dataforseo subagent)")

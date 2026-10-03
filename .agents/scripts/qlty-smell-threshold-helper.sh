@@ -428,33 +428,30 @@ run_threshold_check() {
 		return 0
 	fi
 	printf '%s\n' "$_sarif" >"${_third_file}.second"
-	if ! cmp -s <(normalized_identities "$_warmup_file") <(normalized_identities "${_third_file}.second"); then
-		printf 'Qlty identities differ after two scans; collecting a third consensus attempt...\n'
-		(cd "$_scan_dir" && XDG_CACHE_HOME="$_cache_dir" "$_qlty_bin" smells --all --sarif --no-snippets --quiet) \
-			>"$_third_file" 2>>"$_diag_file" || _third_rc=$?
-		if [ ! -s "$_third_file" ] || ! jq -e '.runs[0].results | type == "array"' "$_third_file" >/dev/null 2>&1; then
-			emit_inconclusive_metadata "invalid third SARIF" "$_qlty_version" "$_scan_dir" "$_git_bin" \
-				"1:rc=$_warmup_rc,count=$(scan_result_count "$_warmup_file");2:rc=$_qlty_rc,count=$(scan_result_count "${_third_file}.second");3:rc=$_third_rc,count=$(scan_result_count "$_third_file")"
-			rm -f "$_diag_file" "$_warmup_file" "$_third_file" "${_third_file}.second"
-			rm -rf "$_cache_dir" "$_scan_tmp"
-			return 0
-		fi
-		if cmp -s <(normalized_identities "$_warmup_file") <(normalized_identities "$_third_file"); then
-			_sarif=$(<"$_third_file")
-		elif cmp -s <(normalized_identities "${_third_file}.second") <(normalized_identities "$_third_file"); then
-			_sarif=$(<"$_third_file")
-		else
-			emit_inconclusive_metadata "unstable normalized identities" "$_qlty_version" "$_scan_dir" "$_git_bin" \
-				"1:rc=$_warmup_rc,count=$(scan_result_count "$_warmup_file");2:rc=$_qlty_rc,count=$(scan_result_count "${_third_file}.second");3:rc=$_third_rc,count=$(scan_result_count "$_third_file")"
-			printf 'Identity differences (attempt 1 -> 2):\n'
-			diff -u <(normalized_identities "$_warmup_file") <(normalized_identities "${_third_file}.second") || true
-			printf 'Identity differences (attempt 2 -> 3):\n'
-			diff -u <(normalized_identities "${_third_file}.second") <(normalized_identities "$_third_file") || true
-			rm -f "$_diag_file" "$_warmup_file" "$_third_file" "${_third_file}.second"
-			rm -rf "$_cache_dir" "$_scan_tmp"
-			return 0
-		fi
+	# The warm-up intentionally populates an empty cache and can legitimately
+	# differ from subsequent scans. Require two matching post-warm-up scans;
+	# never let the warm-up plus a majority select an inflated result.
+	(cd "$_scan_dir" && XDG_CACHE_HOME="$_cache_dir" "$_qlty_bin" smells --all --sarif --no-snippets --quiet) \
+		>"$_third_file" 2>>"$_diag_file" || _third_rc=$?
+	if [ ! -s "$_third_file" ] || ! jq -e '.runs[0].results | type == "array"' "$_third_file" >/dev/null 2>&1; then
+		emit_inconclusive_metadata "invalid second authoritative SARIF" "$_qlty_version" "$_scan_dir" "$_git_bin" \
+			"warm-up:rc=$_warmup_rc,count=$(scan_result_count "$_warmup_file");1:rc=$_qlty_rc,count=$(scan_result_count "${_third_file}.second");2:rc=$_third_rc,count=$(scan_result_count "$_third_file")"
+		rm -f "$_diag_file" "$_warmup_file" "$_third_file" "${_third_file}.second"
+		rm -rf "$_cache_dir" "$_scan_tmp"
+		return 0
 	fi
+	if ! cmp -s <(normalized_identities "${_third_file}.second") <(normalized_identities "$_third_file"); then
+		# Qlty disagreement after cache warm-up is scanner uncertainty, not a
+		# repository regression. Keep the absolute ratchet diagnostic-only.
+		emit_inconclusive_metadata "unstable normalized identities" "$_qlty_version" "$_scan_dir" "$_git_bin" \
+			"warm-up:rc=$_warmup_rc,count=$(scan_result_count "$_warmup_file");1:rc=$_qlty_rc,count=$(scan_result_count "${_third_file}.second");2:rc=$_third_rc,count=$(scan_result_count "$_third_file")"
+		printf 'Identity differences (authoritative attempt 1 -> 2):\n'
+		diff -u <(normalized_identities "${_third_file}.second") <(normalized_identities "$_third_file") || true
+		rm -f "$_diag_file" "$_warmup_file" "$_third_file" "${_third_file}.second"
+		rm -rf "$_cache_dir" "$_scan_tmp"
+		return 0
+	fi
+	_sarif=$(<"$_third_file")
 	rm -f "$_warmup_file" "$_third_file" "${_third_file}.second"
 	rm -rf "$_cache_dir"
 	rm -f "$_diag_file"

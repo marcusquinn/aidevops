@@ -6,13 +6,12 @@
 // optional user override for the opus-4-7 context window.
 //
 // Why this module exists (t2435):
-//   The opus-4-7 context window is intentionally capped at 250K (not the 1M
-//   API ceiling) so OpenCode's 80% auto-compact threshold triggers right at
-//   the 200K MRCR reliability boundary. That default protects most users
-//   from coherence collapse past 200K. Some users want to opt into the full
-//   1M window anyway — to experiment, or because their prompts don't hit
-//   the cold-retrieval failure mode. The AIDEVOPS_OPUS_47_CONTEXT env var
-//   is the opt-in.
+//   The Claude CLI proxy originally advertised 250K for Opus 4.7 under an
+//   80% auto-compact threshold. Native Anthropic now uses a request-time 200K
+//   usable-input cap instead of adding an obsolete picker entry. Some users
+//   want to opt into the full 1M window anyway — to experiment, or because
+//   their prompts don't hit the cold-retrieval failure mode. The
+//   AIDEVOPS_OPUS_47_CONTEXT env var is the opt-in.
 //
 //   Previously the limits table lived inline in config-hook.mjs and a
 //   drift-prone copy lived in claude-proxy.mjs (`getClaudeProxyModels`).
@@ -46,10 +45,16 @@ export const ASTRA_COMPACTION_TARGET = 400000;
 export const ASTRA_COMPACTION_BUDGET_TARGET = 240000;
 export const ASTRA_OUTPUT_DEFAULT = 128000;
 
-/** Opt-in GPT-6 Sol/Luna compaction target, not a provider capacity claim. */
+/**
+ * Default GPT-6 Sol/Luna compaction target, not a provider capacity claim.
+ * GPT-6.1 Sol advertises 922K input natively; the cap keeps sessions below
+ * OpenAI's 272K short-context price boundary.
+ */
 export const GPT6_COMPACTION_TARGET = 240000;
 export const GPT6_OUTPUT_DEFAULT = 128000;
 export const GPT6_MODEL_IDS = [
+  "gpt-6.1-sol",
+  "gpt-6.1-sol-fast",
   "gpt-6-sol",
   "gpt-6-sol-fast",
   "gpt-6-luna",
@@ -114,14 +119,17 @@ export function describeOpus47Override() {
 
 /**
  * Single source of truth for Claude model limits.
- * Both the anthropic provider models (config-hook.mjs) and the Claude CLI
- * proxy models (claude-proxy.mjs) derive their context/output values from
- * this table.
+ * The Claude CLI proxy models (config-hook.mjs and claude-proxy.mjs) derive
+ * context/output values from this table. Native Anthropic models retain the
+ * host's registry metadata; context-budget-policy.mjs applies their budget
+ * when each resolved model is first used.
  */
 export const CLAUDE_MODEL_LIMITS = {
-  "claude-haiku-4-5":  { context: 1000000, output: 32000 },
+  "claude-haiku-4-5":  { context:  200000, output: 32000 },
   "claude-sonnet-4-5": { context:  200000, output: 64000 },
   "claude-sonnet-4-6": { context: 1000000, output: 64000 },
+  // Sonnet 5.5: models.dev publishes 1M context / 128K output.
+  "claude-sonnet-5-5": { context: 1000000, output: 128000 },
   "claude-opus-4-5":   { context:  200000, output: 64000 },
   "claude-opus-4-6":   { context: 1000000, output: 64000 },
   // Opus 4.7 context default 250K (not the 1M API ceiling). Anthropic's own

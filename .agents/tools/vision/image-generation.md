@@ -21,7 +21,7 @@ tools:
 
 ## Quick Reference
 
-- **OpenCode tool**: `gpt_image_generate`
+- **OpenCode tool**: `gpt_image_generate` (OpenCode 1: via `aidevops_on_demand` with `{"tool": "gpt_image_generate", "args": {...}}`)
 - **Default billing route**: ChatGPT subscription OAuth from the aidevops OpenAI account pool
 - **Platform billing route**: explicit `auth: "api"` plus a named account alias
 - **Image models**: OAuth is provider-managed; explicit API selection supports `gpt-image-2`, `gpt-image-2.5-flare`, and `gpt-image-2.5-sunburst`
