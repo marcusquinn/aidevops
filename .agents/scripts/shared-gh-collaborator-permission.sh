@@ -11,6 +11,7 @@ _SHARED_GH_COLLABORATOR_PERMISSION_LOADED=1
 _AIDEVOPS_GH_PERMISSION_UNKNOWN_VALUE="unknown"
 _AIDEVOPS_GH_COLLAB_APP_PREFERRED_ROUTE="app-preferred"
 _AIDEVOPS_GH_COLLAB_GH_FALLBACK_ROUTE="gh-fallback"
+_AIDEVOPS_GH_COLLAB_API_FAILURE_REASON="api-failure"
 
 #######################################
 # Decide whether an issue actor has maintainer-equivalent repository authority.
@@ -214,6 +215,8 @@ _gh_collaborator_permission_request() {
 # GitHub App installation auth is preferred when configured. If that route
 # cannot produce a trustworthy verdict, retry once with the authenticated gh
 # credential; a confirmed 404 remains a final non-collaborator verdict.
+# Without App routing, retry transient API/HTTP failures once on the same route
+# after a short backoff; parsed verdicts and malformed responses are not retried.
 # Callers can inspect the status globals after a non-zero return to distinguish
 # transient lookup failures from confirmed non-collaborators.
 #
@@ -222,7 +225,7 @@ _gh_collaborator_permission_request() {
 #   AIDEVOPS_GH_COLLAB_PERMISSION_REASON
 #
 # Args: $1=repo_slug owner/repo, $2=user login, $3=optional output variable,
-#       $4=internal auth route (app-preferred|gh-fallback)
+#       $4=internal auth route (app-preferred|gh-fallback), $5=same-route retry used
 # Output: permission value (admin|maintain|write|triage|read|none) on lookup success.
 # Returns: 0=lookup succeeded (404 maps to none), 2=lookup/API/parse failure.
 #######################################
@@ -233,6 +236,7 @@ _gh_collaborator_permission_lookup() {
 	local perm_url="/repos/${repo_slug}/collaborators/${user}/permission"
 	local api_response="" rc=0 http_status="" line="" body="" in_body=0
 	local auth_route="${4:-$_AIDEVOPS_GH_COLLAB_APP_PREFERRED_ROUTE}"
+	local same_route_retry_used="${5:-0}"
 	# Keep the internal value distinct from caller-selected output names. Bash
 	# uses dynamic scope, so a local named permission_value would shadow the
 	# common caller output variable and silently return an empty permission.
@@ -289,12 +293,12 @@ _gh_collaborator_permission_lookup() {
 	fi
 
 	if [[ "$rc" -ne 0 ]]; then
-		_gh_collaborator_permission_resolve_failure "$auth_route" "$repo_slug" "$user" "$out_var" "api-failure"
+		_gh_collaborator_permission_resolve_failure "$auth_route" "$repo_slug" "$user" "$out_var" "$_AIDEVOPS_GH_COLLAB_API_FAILURE_REASON" "$same_route_retry_used"
 		return $?
 	fi
 
 	if [[ "$http_status" != "200" ]]; then
-		_gh_collaborator_permission_resolve_failure "$auth_route" "$repo_slug" "$user" "$out_var" "unexpected-http"
+		_gh_collaborator_permission_resolve_failure "$auth_route" "$repo_slug" "$user" "$out_var" "unexpected-http" "$same_route_retry_used"
 		return $?
 	fi
 
@@ -318,7 +322,7 @@ _gh_collaborator_permission_lookup() {
 		return 0
 		;;
 	*)
-		_gh_collaborator_permission_resolve_failure "$auth_route" "$repo_slug" "$user" "$out_var" "malformed-response"
+		_gh_collaborator_permission_resolve_failure "$auth_route" "$repo_slug" "$user" "$out_var" "malformed-response" "$same_route_retry_used"
 		return $?
 		;;
 	esac
@@ -354,8 +358,9 @@ _gh_collaborator_permission_retry_with_gh() {
 #######################################
 # Resolve an uncertain permission read without weakening the fail-closed guard.
 #
-# Args: $1=route, $2=repo_slug, $3=user, $4=output variable, $5=failure reason
-# Returns: 0=confirmed fallback verdict, 2=uncertain, 3=App route unavailable.
+# Args: $1=route, $2=repo_slug, $3=user, $4=output variable, $5=failure reason,
+#       $6=same-route retry used
+# Returns: 0=confirmed retry verdict, 2=uncertain.
 #######################################
 _gh_collaborator_permission_resolve_failure() {
 	local auth_route="$1"
@@ -363,12 +368,19 @@ _gh_collaborator_permission_resolve_failure() {
 	local user="$3"
 	local out_var="$4"
 	local failure_reason="$5"
+	local same_route_retry_used="${6:-0}"
 	local retry_rc=3
 
-	if [[ "$auth_route" == "$_AIDEVOPS_GH_COLLAB_APP_PREFERRED_ROUTE" ]]; then
+	if [[ "$auth_route" == "$_AIDEVOPS_GH_COLLAB_APP_PREFERRED_ROUTE" && "$same_route_retry_used" == "0" ]]; then
 		retry_rc=0
 		_gh_collaborator_permission_retry_with_gh "$repo_slug" "$user" "$out_var" || retry_rc=$?
 		[[ "$retry_rc" -eq 0 || "$retry_rc" -eq 2 ]] && return "$retry_rc"
+		if [[ "$retry_rc" -eq 3 && ( "$failure_reason" == "$_AIDEVOPS_GH_COLLAB_API_FAILURE_REASON" || "$failure_reason" == "unexpected-http" ) ]]; then
+			#aidevops:trust-boundary -- retry uncertainty only, never a parsed verdict.
+			sleep 1
+			_gh_collaborator_permission_lookup "$repo_slug" "$user" "$out_var" "$auth_route" 1
+			return $?
+		fi
 	fi
 
 	AIDEVOPS_GH_COLLAB_PERMISSION_REASON="$failure_reason"
