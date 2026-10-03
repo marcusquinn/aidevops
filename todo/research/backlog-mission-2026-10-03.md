@@ -49,8 +49,8 @@ issue disposition, release, and durable continuation.
 | W9 | #33454 / #33455 | Onboarding guide list; parent integration | None | standard | Merged `ae41781bbc`; two list lines only, normal CLI/gates pass |
 | W10 | #33456 / #33458; #33450 | SKIPPED admission; parent integration | None | standard | Fix merged `3bca975837`; 29 assertions pass; TODO PR merged `fa1c15b150` |
 | W11 | #33467 / #33469 | V2 SDK dependency removal; parent integration | None | standard | Merged `84ce13e94dfb`; GitHub dependency alert fixed; 27/47 focused checks and native request pass |
-| W12 | #33471 | V2 compaction stable-prefix boundary; scoped worker | W11; disjoint from W13 | standard | Active local dispatch `manual-cli-33471-1791029638`; parent owns live acceptance/integration |
-| W13 | #33470 | Post-compaction next-action precedence; scoped worker | Disjoint from W12 | standard | Active local dispatch `manual-cli-33470-1791029829`; parent owns live acceptance/integration |
+| W12 | #33471 / #33472 | V2 compaction stable-prefix boundary; parent integration | W11; disjoint from W13 | standard | Head `e4127a1b084e` passes scoped checks and live compaction/resumption; native upstream prefix divergence remains unresolved |
+| W13 | #33470 / #33473 | Post-compaction next-action precedence; parent acceptance | Disjoint from W12 | standard | Merged `6f0e203ec19b`; controlled Sonnet 5.5 auto-compaction carries instruction and performs recorded read first |
 | A1 | #33278, #32829, #32820, #32523, #32273 | Manual/upstream/runtime reviews; parent | Evidence-specific | standard | OC1 and usage aggregates collected; real OC2 compaction/cache remains active, not inferred blocked |
 | A2 | #33139 | Framework value audit; parent verification | Onboarding residual W9 | thinking | Closed; final observed guide-list residual is merged |
 | R1 | Final release | Canonical publisher lane; parent | All safely solvable units verified | standard | Explicit release authority from current request |
@@ -326,3 +326,43 @@ open by design. A checkpoint is continuation evidence, not mission completion.
   manual-review disposition and evidence PR, then invoke one canonical patch
   release with the complete pinned source manifest. Verify all publication
   channels, exact-tag deployment, postflight and the terminal receipt.
+
+## W12/W13 runtime acceptance and upstream boundary
+
+- W13 is merged as `6f0e203ec19b8db6afd5b4d568b80644ffc453cb`; its issue is closed.
+  No active W12 or W13 worker remains. Parent owns the remaining integration.
+- W12 head `e4127a1b084ed3e81adc79cca255a2176b58d639` contains the unchanged
+  production adapter from `3cd1c7949f`, a detached-CI assertion repair, and the
+  merged W13 rules. The notice is required exactly when Operational State exists;
+  detached CI has no branch context and must not assume a payload. Required
+  checks, 27 adapter/TUI tests, setup tests and scoped lint pass. Independent
+  bounded defect review found no introduced P0, with source/lifecycle coverage
+  limits explicitly retained.
+- Controlled native 2.0.3 Sonnet 5.5 automatic compaction retains both original
+  aims with status/quotes and carries the resume instruction. Its first resumed
+  tool completes the recorded public-package read with identical path/intent,
+  before progress text or optional housekeeping; the final output is the marker
+  and actual package name. Permissions deny everything except that one public
+  file. This is one controlled observation, not a guarantee across models.
+- The initial Haiku 4.5 summary omitted rule fields, and its first read was denied
+  because the diagnostic permission used an absolute rather than native relative
+  resource. The released FileAccess contract established the corrected exact
+  resource. Do not adopt a cheaper compaction model based on the marker alone;
+  no persistent routing/model changes were made.
+- W12's deny-all Haiku run still had zero compaction cache reads and 91,787 writes.
+  The Sonnet run has 599 reads and 179,883 writes, not restored historical-cache
+  acceptance. Models/tool sets differ; no paired savings or causal delta is claimed.
+- Native tag `v2.0.3`, commit `d44b52ca66b6bf69626c0384626d1a9cd9555977`, adds
+  the worktree reminder only in `packages/core/src/tool/plugin/opencode.ts:28-36`'s
+  `context` hook. Wire capture shows the same normalized system/tools but a
+  240-character difference in the first message at character 5136. The adapter
+  cannot repair that host-owned hook without duplicating or patching native
+  instructions. #33471 remains open for upstream prefix parity and released-host
+  live cache acceptance; do not close it as a cache fix.
+- W12 merged as `d786b9ee5f891179689358aaff80c04b68fe1e59` after exact-head
+  required/review gates. Canonical synchronization and guarded cleanup handoff
+  converged. Non-closing references preserved #33471; its status is blocked,
+  the exact upstream prerequisite is recorded, and the parent claim was released.
+- Next: publish the observation/manual-review disposition through #33468, reconcile
+  the five external prerequisites and four dashboards, then complete the already
+  authorized canonical release. Publication has not yet been invoked.

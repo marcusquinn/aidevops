@@ -171,3 +171,55 @@ candidate request pass. Independent bounded defect review found no introduced
 P0 at the changed boundaries. GitHub subsequently reports alert 133 as `fixed`,
 and the issue is closed. The historical exposure investigation above is not a
 patch or universal safety assertion; removal is the verified remediation.
+
+## Later live acceptance of the compaction follow-ups
+
+PR #33473 is merged as `6f0e203ec19b8db6afd5b4d568b80644ffc453cb`. PR #33472's
+verified candidate is `e4127a1b084ed3e81adc79cca255a2176b58d639`; its production
+adapter is byte-identical to the initially probed `3cd1c7949f` version. Parent
+repaired an environment-dependent assertion, not the production guard: the
+historical-data notice is required iff Operational State exists. Detached-head
+CI has no branch context. Twenty-seven adapter/TUI tests, setup tests, scoped
+lint and current-head CI pass. Independent bounded source review found no
+introduced P0; it was not a cache or whole-result acceptance verdict.
+
+The deny-all Haiku candidate completed automatic compaction and resumed the
+marker, but compaction read 0 and wrote 91,787 cache tokens. Its preceding warm
+request read 87,406 and wrote 85,048. The captures preserve normalized system
+parts and tools but differ by 240 characters in the first user message, beginning
+at character 5136. The missing text is the native worktree-move reminder.
+
+Released source at `anomalyco/opencode` tag `v2.0.3`, commit
+`d44b52ca66b6bf69626c0384626d1a9cd9555977`, establishes the source boundary:
+`packages/core/src/tool/plugin/opencode.ts:28-36` registers that reminder only
+for `context`; `packages/core/src/session/model-request.ts:353-358` dispatches
+separate hooks for primary and compaction. The framework candidate repairs its
+own divergence but does not remove the host-owned difference. #33471 remains
+open with upstream parity/released-runtime cache verification as its wake
+condition. Do not claim restored historical cache reuse or sole-cause proof.
+
+A separate controlled native Sonnet 5.5 run completed automatic compaction after
+public padding. The summary carries both earlier aims with active status and
+user quotes, the recorded Read path/intent, and the next-action resume instruction.
+The first resumed assistant action is that completed Read, with no preceding
+progress text or housekeeping tool; final text returns the marker and the actual
+`opencode-aidevops` package name. Scope was deny-all except one public package
+file, and the native export shows no file changes. Its compaction usage is
+input 4, output 1213 (reasoning 667), cache read 599/write 179,883. These small
+reads are not acceptance of restored historical reuse. Different models, tool
+sets and transcripts prevent a causal comparison with the Haiku probe.
+
+The initial Haiku resumption tried the right first tool but was denied because
+the diagnostic permission used an absolute resource. Released
+`packages/core/src/file-access.ts:108,161` proves that internal resources are
+relative. The exact relative-file permission corrected the fixture without
+opening other reads. Haiku's summary also omitted several rule fields; retain
+that quality limitation rather than adopting a cheap compactor based only on
+marker preservation. No persistent compaction model or routing change was made.
+
+The manual-review findings now have their own verified delivery or explicit
+follow-up: W13 guidance/controlled resumption, W12 framework parity and upstream
+cache hold, measured summary-size/model-mix limitations, and unchanged optional
+model policy. Closing #32829 is a review disposition, not a claim that #33471's
+upstream cache criterion is solved; it follows integration and publication of
+this evidence.
