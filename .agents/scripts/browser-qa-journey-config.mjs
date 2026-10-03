@@ -109,21 +109,29 @@ function boundedMs(value, limits) {
   return value;
 }
 
+const VIEWPORT_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+
+function inRange(value, min, max) {
+  return Number.isInteger(value) && value >= min && value <= max;
+}
+
+function isCustomViewport(viewport) {
+  return viewport !== null && typeof viewport === 'object' && !Array.isArray(viewport)
+    && VIEWPORT_NAME.test(String(viewport.name))
+    && inRange(viewport.width, 320, 3840) && inRange(viewport.height, 320, 2160);
+}
+
+function viewportName(viewport) {
+  if (typeof viewport === 'string' && Object.hasOwn(VIEWPORTS, viewport)) return viewport;
+  if (isCustomViewport(viewport)) return viewport.name;
+  return fail('viewports require desktop/mobile or a custom name, integer width 320-3840 and height 320-2160');
+}
+
 function validateViewports(value) {
   const viewports = value ?? Object.keys(VIEWPORTS);
-  if (!Array.isArray(viewports) || viewports.length === 0 || viewports.length > 8) fail('viewports must contain 1-8 named or custom entries');
-  const names = new Set();
-  for (const viewport of viewports) {
-    const named = typeof viewport === 'string' && Object.hasOwn(VIEWPORTS, viewport);
-    const custom = viewport !== null && typeof viewport === 'object' && !Array.isArray(viewport)
-      && typeof viewport.name === 'string' && /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(viewport.name)
-      && Number.isInteger(viewport.width) && viewport.width >= 320 && viewport.width <= 3840
-      && Number.isInteger(viewport.height) && viewport.height >= 320 && viewport.height <= 2160;
-    if (!named && !custom) fail('viewports require desktop/mobile or a custom name, integer width 320-3840 and height 320-2160');
-    const name = named ? viewport : viewport.name;
-    if (names.has(name)) fail('viewports require unique names');
-    names.add(name);
-  }
+  if (!Array.isArray(viewports) || !inRange(viewports.length, 1, 8)) fail('viewports must contain 1-8 named or custom entries');
+  const names = viewports.map(viewportName);
+  if (new Set(names).size !== names.length) fail('viewports require unique names');
   return viewports;
 }
 

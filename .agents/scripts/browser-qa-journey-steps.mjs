@@ -67,18 +67,25 @@ function layoutEdges(box) {
   };
 }
 
+function measureBox(run, selector) {
+  return run.page.locator(selector).first().boundingBox({ timeout: probeTimeout(run) }).catch(() => null);
+}
+
+function layoutMismatches(step, boxes) {
+  const [first, second] = boxes.map(layoutEdges);
+  const tolerance = step.tolerancePx ?? 1;
+  return step.match
+    .filter((edge) => Math.abs(first[edge] - second[edge]) > tolerance)
+    .map((edge) => `${edge} ${first[edge]} vs ${second[edge]}`);
+}
+
 async function assertLayout(run, step) {
   let detail = 'element box unavailable';
   await pollUntil(run, async () => {
-    const boxes = await Promise.all([step.selector, step.compare].map((selector) =>
-      run.page.locator(selector).first().boundingBox({ timeout: probeTimeout(run) }).catch(() => null)));
-    if (boxes.some((box) => box === null)) {
-      detail = 'element box unavailable';
-      return false;
-    }
-    const [first, second] = boxes.map(layoutEdges);
-    const mismatches = step.match.filter((edge) => Math.abs(first[edge] - second[edge]) > (step.tolerancePx ?? 1));
-    detail = mismatches.map((edge) => `${edge} ${first[edge]} vs ${second[edge]}`).join(', ');
+    const boxes = await Promise.all([step.selector, step.compare].map((selector) => measureBox(run, selector)));
+    if (boxes.includes(null)) return false;
+    const mismatches = layoutMismatches(step, boxes);
+    detail = mismatches.join(', ');
     return mismatches.length === 0;
   }, () => `layout assertion failed: ${detail}`);
 }
