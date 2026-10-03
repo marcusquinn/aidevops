@@ -143,6 +143,22 @@ user-owned name collisions, and stores source identities per plugin instance, no
 in a global repository cache. Disable either generated profile with a user-owned
 `disable: true` override; restart OpenCode after changing configuration.
 
+#### Blind acceptance review
+
+Fresh-context acceptance review uses the focused roles above with a packet from
+`review-evidence-helper.sh blind build`. The envelope `evidence` carries only the
+packet; `decisions` carries only the review contract and safety limits; `tools` is
+`[]` and `authority` is `inference-only`; `output` demands the criterion table in
+`reference/review-core.md`. Do not resume a session that saw implementation
+reasoning, add transcripts, prior verdicts or the parent's confidence, or imply the
+reviewer inspected files the packet omits. If more context is needed, rebuild the
+packet with neutral evidence. The reviewer has no write, merge or network
+authority; the parent runs `blind check-result`, retains verification and
+disposition, and reports the source accurately: `fresh-context advisory` when the
+envelope path was used, otherwise `self-review`. Unsupported runtimes report the
+limitation instead of a fictional reviewer. Risk-based independent review stays
+required where `review-core.md` requires it.
+
 ### Improve efficiency during ordinary work
 
 Optimise verified completion per allowance window and human attention, not minimum

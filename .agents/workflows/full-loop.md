@@ -168,6 +168,16 @@ digest or wait for an optional remote reviewer when existing exact-head evidence
 already resolves the risk. Keep review-triggered fixes inside the task boundary;
 the shared two-cycle and scope-growth limits prevent reviewer-driven scope creep.
 
+**Final requirements check:** after implementation and applicable checks, and
+before PR readiness or any delivered/completion claim, compare the whole delivered
+result with every original criterion (and approved amendments) as an acceptance
+matrix per `reference/review-core.md` "Blind packets and acceptance review". Low
+risk: a direct structured self-check, reported as self-review. Independent
+fresh-context review is explicit or risk-based and uses the blind packet. Any
+`unmet`/`unverified` criterion blocks the delivered claim; repair in scope. A result
+is reused only for an identical `acceptance_identity`. Merge/release authority and
+the two-cycle safety stop are unchanged; a stop keeps the objective open.
+
 ### Headless Dispatch Rules (t158/t174 — MANDATORY)
 
 1. **Never prompt:** use uncertainty framework to proceed or exit.
