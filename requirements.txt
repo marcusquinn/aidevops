@@ -16,7 +16,7 @@ numpy==2.0.2
 requests==2.33.0
 
 # Data processing and storage
-datasets==4.4.1
+datasets==5.0.1
 joblib==1.5.2
 
 # Optimization and experimentation
