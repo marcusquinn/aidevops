@@ -10,7 +10,8 @@
 # Options:
 #   --title "Task title"       Task title for GitHub/GitLab issue (required unless --batch)
 #   --description "Details"    Task description (required for issue creation unless
-#                              a brief file exists at todo/tasks/{task_id}-brief.md)
+#                              --brief-file is supplied or a brief exists at
+#                              todo/tasks/{task_id}-brief.md)
 #   --labels "label1,label2"   Comma-separated labels (optional)
 #   --publication-state STATE  Issue/planning state: pending (default) withholds
 #                              dispatch labels; canonical is for verified
@@ -24,7 +25,8 @@
 #   --dry-run                  Show what would be allocated without changes
 #   --repo-path PATH           Path to git repository (default: current directory)
 #   --target-repo OWNER/REPO   Explicit intended repository; validated before allocation
-#   --brief-file PATH          Pre-allocation brief with optional Target repository field
+#   --brief-file PATH          Supplies the issue body and optional Target repository
+#                              field for pre-allocation validation
 #   --remote NAME              Git remote name for counter branch (default: origin,
 #                              or value from .aidevops.json "remote" key)
 #   --counter-branch BRANCH    Branch holding .task-counter (config value first;
