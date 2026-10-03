@@ -807,6 +807,33 @@ _pmrc_is_explicit_advisory_failure() {
 # normal handling (see _pmrc_snapshot_checks_acceptable).
 PMRC_INFORMATIONAL_PENDING_STATUS_CONTEXTS_JSON='["qlty usage"]'
 
+# Emit one TSV row per normalized check: name, informational-pending flag,
+# family, status, conclusion, required, members, link. The flag sits beside
+# the name because IFS tab splitting collapses empty fields (a pending check
+# has an empty conclusion).
+_pmrc_snapshot_check_rows() {
+	local checks_json="$1"
+	local required_json="$2"
+
+	jq -r --argjson required "$required_json" --arg failure "$PMRC_CHECK_FAILURE" \
+		--arg completed "$PMRC_CHECK_COMPLETED" \
+		--argjson informational "$PMRC_INFORMATIONAL_PENDING_STATUS_CONTEXTS_JSON" '.[] | . as $check | ($check.members // [$check]) as $members |
+		((($required | index($check.name)) != null) or any($members[]; .name as $member_name | ($required | index($member_name)) != null)) as $is_required | [
+		$check.name,
+		(($is_required | not) and $check.status != $completed
+			and ($informational | index($check.name)) != null
+			and ($members | length) == 1 and $members[0].source == "commit_status"
+			and $members[0].name == $check.name),
+		($check.family // $check.name),
+		$check.status,
+		$check.conclusion,
+		$is_required,
+		($members | map("\(.name)@\(.source)") | join(",")),
+		($check.link // ([$members[] | select(.conclusion == $failure and (.link // "") != "") | .link] | last) // "")
+	] | @tsv' <<<"$checks_json" 2>/dev/null
+	return $?
+}
+
 _pmrc_actions_incident_blocks_rerun() {
 	local helper="${AIDEVOPS_GH_STATUS_HELPER:-${_PULSE_MERGE_REQUIRED_CHECKS_DIR:-${HOME:+$HOME/.aidevops/agents/scripts}}/gh-status-helper.sh}"
 	local status_rc=0
@@ -951,24 +978,7 @@ _pmrc_snapshot_checks_acceptable() {
 			"configured advisory-context lookup"
 		return 1
 	}
-	# The informational flag sits beside the name because IFS tab splitting
-	# collapses empty fields (a pending check has an empty conclusion).
-	rows=$(jq -r --argjson required "$required_json" --arg failure "$PMRC_CHECK_FAILURE" \
-		--arg completed "$PMRC_CHECK_COMPLETED" \
-		--argjson informational "$PMRC_INFORMATIONAL_PENDING_STATUS_CONTEXTS_JSON" '.[] | . as $check | ($check.members // [$check]) as $members |
-		((($required | index($check.name)) != null) or any($members[]; .name as $member_name | ($required | index($member_name)) != null)) as $is_required | [
-		$check.name,
-		(($is_required | not) and $check.status != $completed
-			and ($informational | index($check.name)) != null
-			and ($members | length) == 1 and $members[0].source == "commit_status"
-			and $members[0].name == $check.name),
-		($check.family // $check.name),
-		$check.status,
-		$check.conclusion,
-		$is_required,
-		($members | map("\(.name)@\(.source)") | join(",")),
-		($check.link // ([$members[] | select(.conclusion == $failure and (.link // "") != "") | .link] | last) // "")
-	] | @tsv' <<<"$checks_json" 2>/dev/null) || return 1
+	rows=$(_pmrc_snapshot_check_rows "$checks_json" "$required_json") || return 1
 	while IFS=$'\t' read -r name informational family status conclusion required members link; do
 		[[ -n "$name" ]] || continue
 		if [[ "$family" == "$PMRC_MAINTAINER_GATE" && "$conclusion" == "$PMRC_CHECK_FAILURE" ]]; then
