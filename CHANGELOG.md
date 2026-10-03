@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.38.2] - 2026-10-03
+
+### Changed
+
+- Documentation: keep WordPress server backups outside the web root
+
+### Fixed
+
+- preserve live session ownership through cleanup handoff
+
 ## [3.38.1] - 2026-10-03
 
 ### Added
