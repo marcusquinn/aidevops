@@ -35,6 +35,7 @@ import { createContextBudget } from "./context-budget.mjs";
 import { adaptToolDefinition } from "./tool-definition.mjs";
 import { createMcpSessionRuntime, getOnDemandMcpAgents } from "./mcp-registry.mjs";
 import { enforceManagedMcpArtifactPath } from "./mcp-activation-tool.mjs";
+import { normalizeMcpArtifactPaths } from "./mcp-artifact-paths.mjs";
 import { createQualityHooks } from "./quality-hooks.mjs";
 import { createInstructionReminderCompactor } from "./instruction-reminders.mjs";
 import { createSourceAccessRuntime } from "./source-access-runtime.mjs";
@@ -706,6 +707,7 @@ export async function AidevopsPlugin({ directory, client }) {
       return toolExecuteBefore(input, output);
     },
     "tool.execute.after": async (input, output) => {
+      normalizeMcpArtifactPaths(input, output, mcpRuntime.workspaces);
       try {
         const replaced = instructionReminders.compactReadOutput(input, output);
         if (replaced > 0) qualityLog("INFO", `[instruction-reminders] replaced ${replaced} duplicate instruction reminder(s)`);
