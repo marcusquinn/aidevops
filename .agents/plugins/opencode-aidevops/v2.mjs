@@ -272,7 +272,11 @@ export async function setupAidevopsV2(ctx) {
     debug: process.env.AIDEVOPS_PLUGIN_DEBUG === "1",
   });
   recordPluginHealthStage("imported", { runtime: "v2" });
-  initObservability({ aidevopsVersion: currentAidevopsVersion() });
+  initObservability({
+    aidevopsVersion: currentAidevopsVersion(),
+    runtimeVersion: (typeof ctx.app?.version === "string" && ctx.app.version) || detectOpenCodeV2RuntimeVersion(),
+    adapterId: "opencode-v2",
+  });
 
   const conversation = loadTeamInterfaceConversation(process.env, AGENTS_DIR, {
     pluginEntryPath: PLUGIN_ENTRY_PATH,

@@ -1,11 +1,23 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
+export function runtimeProvenance(options = {}) {
+  const version = String(options.aidevopsVersion || process.env.AIDEVOPS_VERSION || "")
+    .trim().replace(/^v/, "");
+  const aidevopsVersion = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(version) ? version : "";
+  const adapterId = stringOrNull(options.adapterId);
+  return {
+    aidevopsVersion,
+    runtimeVersion: stringOrNull(options.runtimeVersion),
+    adapterVersion: adapterId && aidevopsVersion ? `${adapterId}@${aidevopsVersion}` : null,
+  };
+}
+
 /**
  * Normalise bounded, source-qualified request evidence for SQLite storage.
  * Runtime configuration is never represented as provider confirmation.
  */
-export function requestProvenance(msg, routing, pricing) {
+export function requestProvenance(msg, routing, pricing, runtime = {}) {
   const observedEffort = stringOrNull(msg?.variant);
   const requestedEffort = stringOrNull(routing?.requestedVariant);
   const resolvedEffort = stringOrNull(routing?.resolvedVariant || routing?.variant);
@@ -18,8 +30,8 @@ export function requestProvenance(msg, routing, pricing) {
     requested_model: stringOrNull(routing?.model),
     observed_model: stringOrNull(msg?.modelID),
     runtime_name: "opencode",
-    runtime_version: stringOrNull(process.env.OPENCODE_VERSION),
-    adapter_version: null,
+    runtime_version: stringOrNull(runtime.runtimeVersion || process.env.OPENCODE_VERSION),
+    adapter_version: stringOrNull(runtime.adapterVersion),
     policy_fingerprint: null,
     billing_mode: null,
     cost_source: "local_estimate",
