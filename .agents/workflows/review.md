@@ -27,6 +27,7 @@ Optional behavior flags:
 - `--fix`: repair verified in-scope findings when the current session has edit
   authority. This is already the default inside a workflow-owned change.
 - `--max-priority P1|P2|P3`: widen the default P0-only closeout review.
+- `--blind`: add the blind acceptance review below; it never widens defect priority.
 
 With no explicit target, prefer uncommitted changes; otherwise use the current
 branch against its open PR base or configured remote default. If neither resolves
@@ -82,6 +83,38 @@ request approval when the preflight reports that no authority is required.
    `--report-only`, recommend the repair without modifying files.
 6. Apply the shared two-cycle and scope-growth limits. Additive findings become
    follow-up work instead of expanding the current change.
+
+## Blind acceptance review (opt-in)
+
+Activate with `--blind` on a local, branch or commit target, or when risk policy
+requires independent review. Default review is unchanged.
+
+1. Write the original criteria as `ID: text` lines from their authoritative
+   source (issue/brief), and approved amendments separately. If no source exists,
+   acceptance is `unverified`; never reconstruct criteria from the implementation.
+2. Build the packet (never hand-edit it):
+
+   ```bash
+   review-evidence-helper.sh blind build branch --base origin/main \
+     --requirements REQ.txt --requirements-source "issue#N" \
+     --amendments AMEND.txt --amendments-source "approval" \
+     --verification CHECKS.txt --context path/to/adjacent-contract \
+     --output PACKET.md
+   review-evidence-helper.sh blind validate PACKET.md
+   ```
+
+   `CHECKS.txt` is raw check output with a `head: <sha>` line.
+3. Send only the packet and review contract to a fresh advisory context per
+   `reference/agent-routing.md` "Blind acceptance review". Whole-artifact
+   inspection, not changed lines only.
+4. Save the returned criterion table and run
+   `review-evidence-helper.sh blind check-result PACKET.md RESULT.md`. Exit 3 means
+   a criterion is `unmet`/`unverified` or coverage is partial: the delivered claim
+   is blocked, repair in scope, rebuild the packet and re-review. An unchanged
+   `acceptance_identity` may reuse a prior result.
+
+Result: one row per criterion, the `acceptance_identity`, reviewer source
+(`fresh-context advisory` or `self-review`), and coverage limits.
 
 ## Output
 

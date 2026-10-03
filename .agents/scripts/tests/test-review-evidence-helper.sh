@@ -239,4 +239,104 @@ if (cd "$MERGE_REPO" && AIDEVOPS_TEMP_DIR="${TEST_ROOT}/tmp" "$HELPER" bundle co
 	fail 'merge commit sensitive path was bundled'
 fi
 
+# Blind packets: allowlisted evidence, no commit rationale, identity binding.
+BLIND_REPO="${TEST_ROOT}/blind-repo"
+mkdir -p "${BLIND_REPO}/lib"
+bgit() {
+	git -C "$BLIND_REPO" -c user.name='Review Test' -c user.email='review@example.invalid' "$@"
+	return $?
+}
+bgit init -q -b main
+printf 'base\n' >"${BLIND_REPO}/lib/app.txt"
+printf 'contract-v1\n' >"${BLIND_REPO}/lib/contract.txt"
+bgit add -A
+bgit commit -qm base
+BLIND_BASE=$(bgit rev-parse HEAD)
+printf 'base\nfeature\n' >"${BLIND_REPO}/lib/app.txt"
+bgit add -A
+bgit commit -qm 'CONTAMINATION-RATIONALE: reviewed myself, confident, verdict approved'
+printf 'R1: app.txt contains the feature line\nR2: app.txt documents the feature in a changelog\n' >"${TEST_ROOT}/req.txt"
+printf 'A1: approved amendment keeps contract.txt unchanged\n' >"${TEST_ROOT}/amend.txt"
+BLIND_HEAD=$(bgit rev-parse HEAD)
+printf 'head: %s\nraw: all checks exit 0\n' "$BLIND_HEAD" >"${TEST_ROOT}/verify.txt"
+blind() {
+	(cd "$BLIND_REPO" && AIDEVOPS_TEMP_DIR="${TEST_ROOT}/tmp" "$HELPER" blind "$@")
+	return $?
+}
+BLIND_ARGS=(build branch --base "$BLIND_BASE" --requirements "${TEST_ROOT}/req.txt" --requirements-source 'issue#1'
+	--amendments "${TEST_ROOT}/amend.txt" --amendments-source 'maintainer approval'
+	--verification "${TEST_ROOT}/verify.txt" --context lib/contract.txt)
+blind "${BLIND_ARGS[@]}" --output "${TEST_ROOT}/blind1.md" >/dev/null
+blind "${BLIND_ARGS[@]}" --output "${TEST_ROOT}/blind2.md" >/dev/null
+assert_contains "${TEST_ROOT}/blind1.md" 'schema: aidevops.review-blind-packet/v1' 'blind schema'
+assert_contains "${TEST_ROOT}/blind1.md" '- R2: app.txt documents the feature in a changelog' 'criterion preserved'
+assert_contains "${TEST_ROOT}/blind1.md" 'amendments_source: maintainer approval' 'amendment provenance'
+assert_contains "${TEST_ROOT}/blind1.md" 'contract-v1' 'context file included'
+assert_contains "${TEST_ROOT}/blind1.md" 'coverage: complete' 'complete coverage'
+assert_not_contains "${TEST_ROOT}/blind1.md" 'CONTAMINATION-RATIONALE' 'branch packet excludes commit rationale'
+blind build commit --commit HEAD --output "${TEST_ROOT}/blind-commit.md" >/dev/null
+assert_not_contains "${TEST_ROOT}/blind-commit.md" 'CONTAMINATION-RATIONALE' 'commit packet excludes commit message'
+assert_not_contains "${TEST_ROOT}/blind-commit.md" 'review@example.invalid' 'commit packet excludes author metadata'
+assert_contains "${TEST_ROOT}/blind-commit.md" 'coverage: partial' 'missing requirements is partial coverage'
+assert_contains "${TEST_ROOT}/blind-commit.md" 'acceptance is unverified' 'missing requirements unavailable'
+(cd "$BLIND_REPO" && AIDEVOPS_TEMP_DIR="${TEST_ROOT}/tmp" "$HELPER" bundle commit --commit HEAD) | grep -Fq 'CONTAMINATION-RATIONALE' || fail 'legacy commit bundle changed'
+blind validate "${TEST_ROOT}/blind1.md" >/dev/null || fail 'valid packet rejected'
+[[ "$(grep '^acceptance_identity:' "${TEST_ROOT}/blind1.md")" == "$(grep '^acceptance_identity:' "${TEST_ROOT}/blind2.md")" ]] || fail 'unchanged evidence changed identity'
+if blind build pr 1 >/dev/null 2>&1; then fail 'blind packet accepted PR discussion target'; fi
+
+# Requirement, verification and artifact changes each change identity.
+BLIND_ID=$(grep '^acceptance_identity:' "${TEST_ROOT}/blind1.md")
+printf 'R1: changed\n' >"${TEST_ROOT}/req2.txt"
+blind build branch --base "$BLIND_BASE" --requirements "${TEST_ROOT}/req2.txt" --requirements-source 'issue#1' \
+	--amendments "${TEST_ROOT}/amend.txt" --amendments-source 'maintainer approval' \
+	--verification "${TEST_ROOT}/verify.txt" --context lib/contract.txt --output "${TEST_ROOT}/blind3.md" >/dev/null
+[[ "$BLIND_ID" != "$(grep '^acceptance_identity:' "${TEST_ROOT}/blind3.md")" ]] || fail 'requirement change kept identity'
+printf 'head: %s\nraw: different output\n' "$BLIND_HEAD" >"${TEST_ROOT}/verify2.txt"
+blind build branch --base "$BLIND_BASE" --requirements "${TEST_ROOT}/req.txt" --requirements-source 'issue#1' \
+	--amendments "${TEST_ROOT}/amend.txt" --amendments-source 'maintainer approval' \
+	--verification "${TEST_ROOT}/verify2.txt" --context lib/contract.txt --output "${TEST_ROOT}/blind4.md" >/dev/null
+[[ "$BLIND_ID" != "$(grep '^acceptance_identity:' "${TEST_ROOT}/blind4.md")" ]] || fail 'verification change kept identity'
+printf 'stale\n' >"${TEST_ROOT}/verify-stale.txt"
+blind build branch --base "$BLIND_BASE" --requirements "${TEST_ROOT}/req.txt" --requirements-source 'issue#1' \
+	--verification "${TEST_ROOT}/verify-stale.txt" --output "${TEST_ROOT}/blind5.md" >/dev/null
+assert_contains "${TEST_ROOT}/blind5.md" 'excluded: evidence is not bound' 'unbound verification excluded'
+assert_contains "${TEST_ROOT}/blind5.md" 'coverage: partial' 'unbound verification is partial coverage'
+printf 'changed\n' >"${BLIND_REPO}/lib/contract.txt"
+blind build branch --base "$BLIND_BASE" --requirements "${TEST_ROOT}/req.txt" --requirements-source 'issue#1' \
+	--amendments "${TEST_ROOT}/amend.txt" --amendments-source 'maintainer approval' \
+	--verification "${TEST_ROOT}/verify.txt" --context lib/contract.txt --output "${TEST_ROOT}/blind6.md" >/dev/null
+[[ "$BLIND_ID" == "$(grep '^acceptance_identity:' "${TEST_ROOT}/blind6.md")" ]] || fail 'unselected worktree edit changed branch identity'
+printf 'base\nfeature\nmore\n' >"${BLIND_REPO}/lib/app.txt"
+bgit add -A
+bgit commit -qm next
+printf 'head: %s\n' "$(bgit rev-parse HEAD)" >"${TEST_ROOT}/verify3.txt"
+blind build branch --base "$BLIND_BASE" --requirements "${TEST_ROOT}/req.txt" --requirements-source 'issue#1' \
+	--amendments "${TEST_ROOT}/amend.txt" --amendments-source 'maintainer approval' \
+	--verification "${TEST_ROOT}/verify3.txt" --context lib/contract.txt --output "${TEST_ROOT}/blind7.md" >/dev/null
+[[ "$BLIND_ID" != "$(grep '^acceptance_identity:' "${TEST_ROOT}/blind7.md")" ]] || fail 'artifact change kept identity'
+
+# Tampering and malformed schemas are not accepted as fresh-review proof.
+sed 's/feature line/other line/' "${TEST_ROOT}/blind1.md" >"${TEST_ROOT}/blind-tampered.md"
+if blind validate "${TEST_ROOT}/blind-tampered.md" >/dev/null 2>&1; then fail 'tampered packet validated'; fi
+sed 's#review-blind-packet/v1#review-blind-packet/v9#' "${TEST_ROOT}/blind1.md" >"${TEST_ROOT}/blind-schema.md"
+if blind validate "${TEST_ROOT}/blind-schema.md" >/dev/null 2>&1; then fail 'unsupported schema validated'; fi
+if blind build local --context ../escape >/dev/null 2>&1; then fail 'context path escape accepted'; fi
+if blind build local --context config/.env >/dev/null 2>&1; then fail 'sensitive context accepted'; fi
+
+# Acceptance results: one row per criterion; only all-satisfied on complete coverage passes.
+printf '| ID | status | evidence | gap |\n|---|---|---|---|\n| R1 | satisfied | lib/app.txt | |\n| R2 | unmet | no changelog in artifact | add changelog |\n| A1 | satisfied | contract unchanged | |\n' >"${TEST_ROOT}/result-unmet.md"
+RC=0
+blind check-result "${TEST_ROOT}/blind1.md" "${TEST_ROOT}/result-unmet.md" >"${TEST_ROOT}/rc.out" || RC=$?
+[[ "$RC" == 3 ]] || fail 'unmet criterion did not block delivery'
+printf '| R1 | satisfied | lib/app.txt | |\n| A1 | satisfied | contract | |\n' >"${TEST_ROOT}/result-missing.md"
+if blind check-result "${TEST_ROOT}/blind1.md" "${TEST_ROOT}/result-missing.md" >/dev/null 2>&1; then fail 'missing criterion row accepted'; fi
+printf '| R1 | satisfied | | |\n| R2 | satisfied | x | |\n| A1 | satisfied | x | |\n' >"${TEST_ROOT}/result-noevidence.md"
+if blind check-result "${TEST_ROOT}/blind1.md" "${TEST_ROOT}/result-noevidence.md" >/dev/null 2>&1; then fail 'evidence-free satisfied accepted'; fi
+printf '| R1 | satisfied | a | |\n| R2 | satisfied | b | |\n| A1 | satisfied | c | |\n' >"${TEST_ROOT}/result-ok.md"
+blind check-result "${TEST_ROOT}/blind1.md" "${TEST_ROOT}/result-ok.md" >"${TEST_ROOT}/rc.out" || fail 'complete satisfied result rejected'
+assert_contains "${TEST_ROOT}/rc.out" 'acceptance: satisfied (3 of 3 criteria)' 'satisfied verdict'
+RC=0
+blind check-result "${TEST_ROOT}/blind5.md" "${TEST_ROOT}/result-ok.md" >/dev/null 2>&1 || RC=$?
+[[ "$RC" != 0 ]] || fail 'partial-coverage packet allowed delivered claim'
+
 printf 'PASS review evidence helper builds bounded target bundles\n'
