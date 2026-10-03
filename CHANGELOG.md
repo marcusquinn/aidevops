@@ -10,6 +10,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.38.1] - 2026-10-03
+
+### Added
+
+- blind reviewer packets and final requirements acceptance review (GH#33459) (#33461)
+- affiliate programme assistance and private ledger (#33437) (#33444)
+- add targeted delete --backup ID to dirty-worktree-backup-helper (GH#33356) (#33445)
+- layout step and custom viewport widths for journeys (#33441)
+
+### Changed
+
+- Refactor: extract full-loop remote readiness gates (#33466)
+- Maintenance: sync verified TODO refs
+- Maintenance: sync GitHub issue refs to TODO.md (#33460)
+- Maintenance: sync verified TODO refs
+- Tests: cover manual dispatch wrapper ownership (#33446)
+- Maintenance: mark t18574 complete (pr:#33318 completed:2026-10-03) (#33443)
+- Maintenance: bump datasets to 5.0.1 and trust pip:datasets (#33435) (#33438)
+- Documentation: LocalWP site PHP sizing for many-plugin test sites
+- Documentation: private-to-public quality strategy for code repositories
+- Refactor: refactor manual dispatch into policy and tracking libraries
+
+### Fixed
+
+- preserve recorded next-action precedence after compaction (#33473)
+- remove unnecessary OpenCode V2 SDK dependency
+- preserve inherited stderr for fresh capability logging (GH#33464) (#33465)
+- accept legitimately skipped required checks
+- remove unsupported Augment onboarding guide listings
+- enforce runner capabilities before single-issue claims (#33453)
+- normalize Playwright artifact paths and preserve permission gates (GH#33419) (#33451)
+- resolve worker-exit refills from active bundle (#33447)
+- restore canonical sync diagnostics and health visibility (#32459)
+- avoid OpenCode pin reviews when candidate is unchanged
+- fix JSON journey sign-out requests
+- resume signed permission grants for manual workers (GH#33413) (#33415)
+- fix structured dependency cache parsing and consolidation deadlocks
+
 ## [3.38.0] - 2026-10-02
 
 ### Added
