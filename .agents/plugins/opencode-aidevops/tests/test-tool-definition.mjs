@@ -24,6 +24,12 @@ test("each captured example trim is exact, tool-specific, schema-preserving and 
       await adaptToolDefinition({ toolID }, output);
       assert.equal(output.description, prefix + replacement + suffix);
 
+      const repeated = { description: prefix + original + original + suffix };
+      await adaptToolDefinition({ toolID }, repeated);
+      assert.equal(repeated.description, prefix + replacement + replacement + suffix);
+      await adaptToolDefinition({ toolID }, repeated);
+      assert.equal(repeated.description, prefix + replacement + replacement + suffix);
+
       const otherTool = { description: prefix + original + suffix };
       await adaptToolDefinition({ toolID: "read" }, otherTool);
       assert.equal(otherTool.description, prefix + original + suffix);

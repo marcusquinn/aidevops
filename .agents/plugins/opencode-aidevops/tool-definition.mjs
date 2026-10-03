@@ -77,7 +77,7 @@ export async function adaptToolDefinition(input, output) {
     const trims = Object.hasOwn(BUILTIN_DESCRIPTION_TRIMS, input.toolID)
       ? BUILTIN_DESCRIPTION_TRIMS[input.toolID] : [];
     for (const { original, replacement } of trims) {
-      output.description = output.description.replace(original, replacement);
+      output.description = output.description.replaceAll(original, replacement);
     }
   }
   if (input.toolID === "grep" && typeof output.description === "string"
