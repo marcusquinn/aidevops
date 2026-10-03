@@ -714,9 +714,12 @@ cmd_update() {
 		fi
 
 		log_info "Updating $skill_name from $upstream_url"
-		# Pass --name to preserve the registry name (#21542: bonus bug — upstream repo
-		# self-name may differ from the registry name, causing a filename mismatch).
-		"$ADD_SKILL_HELPER" add "$upstream_url" --name "$skill_name" --force
+		# The named registry entry owns local_path and import_policy. The add helper
+		# applies its curated rules before openskills/format/path inference, including
+		# on automatic updates. Propagate scan/import failure instead of claiming success.
+		if ! "$ADD_SKILL_HELPER" add "$upstream_url" --name "$skill_name" --force; then
+			return 1
+		fi
 
 		# For URL-sourced skills, update the stored hash and cache headers after re-import (t1415.2, t1415.3)
 		local format

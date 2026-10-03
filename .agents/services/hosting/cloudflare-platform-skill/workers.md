@@ -1,66 +1,60 @@
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+---
+name: workers-best-practices
+description: Cloudflare Workers best practices for production applications. Use when writing, reviewing, or configuring Workers.
+---
 
-# Cloudflare Workers
+Your knowledge of Cloudflare Workers APIs, types, and configuration may be outdated. **Prefer retrieval over pre-training** when writing or reviewing Workers code.
 
-Cloudflare Workers run request-driven code on a global V8 isolate runtime. Prefer web platform APIs (`fetch`, `URL`, `Headers`, `Request`, `Response`) for portability.
+Use the project's installed versions, generated types, and Wrangler compatibility settings as the baseline for existing code. Retrieve relevant Cloudflare documentation to verify API, configuration, runtime behavior, and limit claims.
 
-## Best Fit
+## References
 
-- Edge APIs, proxies, routing logic, and request/response transforms
-- Authentication, authorization, rate limiting, and security layers
-- Static asset optimization, feature flags, and A/B testing
-- WebSocket applications and event-driven handlers
+Read the sections relevant to the task:
 
-## Why Use Them
+| Reference | When to use it |
+|-----------|----------------|
+| [Configuration and observability](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/workers-best-practices/references/configuration.md) | Compatibility dates, bindings, generated types, secrets, logs, and traces |
+| [Runtime patterns](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/workers-best-practices/references/runtime-patterns.md) | Streaming, promise lifetime, request state, service calls, security, and runtime tests |
+| [Platform API checks](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/workers-best-practices/references/platform-apis.md) | Handler signatures, platform classes, binding access, and serialization |
 
-- V8 isolates instead of containers or VMs
-- Cold starts under 1 ms
-- Global deployment across 300+ locations
-- JS/TS, Python, Rust, and WebAssembly support
+For missing evidence, consult [Workers best practices](https://developers.cloudflare.com/workers/best-practices/workers-best-practices/index.md) or find the affected product in the [Cloudflare docs directory](https://developers.cloudflare.com/directory/index.md). Use the installed Wrangler schema for config fields. A newer type package does not supersede the project's configured target.
 
-## Recommended Module Worker
+## Keep Compatibility Dates Current
 
-```typescript
-export default {
-  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    return new Response('Hello World!');
-  },
-};
-```
+Use today's date for new Workers. Encourage periodic updates for existing Workers, reviewing compatibility changes and running relevant tests. Assess existing behavior against its configured date and flags; see [compatibility guidance](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/workers-best-practices/references/configuration.md#keep-compatibility_date-current).
 
-- `request`: incoming `Request`
-- `env`: bindings for KV, D1, R2, secrets, and vars
-- `ctx`: `waitUntil()` and `passThroughOnException()`
+## Enable Observability
 
-## Handler Surfaces
+Enable [Workers Logs](https://developers.cloudflare.com/workers/observability/logs/workers-logs/index.md) and [Traces](https://developers.cloudflare.com/workers/observability/traces/index.md) when creating or preparing a Worker for production. Set `observability.enabled` and `observability.traces.enabled` to `true`; the top-level setting alone does not enable traces. Use structured JSON logging and configure sampling for the workload. During reviews, flag missing logs or traces. See the [configuration example](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/workers-best-practices/references/configuration.md#enable-workers-logs-and-traces).
 
-```typescript
-async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response>
-async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void>
-async queue(batch: MessageBatch, env: Env, ctx: ExecutionContext): Promise<void>
-async tail(events: TraceItem[], env: Env, ctx: ExecutionContext): Promise<void>
-```
+## Anti-Patterns to Flag
 
-## Wrangler Essentials
+| Anti-pattern | Consequence and preferred pattern |
+|-------------|-----------------------------------|
+| `await response.text()` or similar buffering on unbounded data | Can exhaust Worker memory; [stream large or unbounded bodies](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/workers-best-practices/references/runtime-patterns.md#stream-request-and-response-bodies). |
+| Hardcoded secrets in source or config | Leaks credentials through version control; use Wrangler secrets. |
+| `Math.random()` for security-sensitive tokens or IDs | Predictable values; use `crypto.randomUUID()` or `crypto.getRandomValues()`. |
+| Async work started without awaiting, returning, or attaching it to `ctx.waitUntil()` | Work can be dropped and errors missed; tie it to the request or background-work lifetime. |
+| Module-level mutable request state | Leaks data across requests and can cause I/O ownership errors; pass request state explicitly. |
+| Cloudflare REST API calls for operations available through Worker bindings | Adds network and authentication overhead; use the available binding. |
+| `ctx.passThroughOnException()` used as general error handling | Can conceal Worker failures by forwarding to the origin; use explicit error handling and structured error responses. |
+| Hand-written `Env` that duplicates Wrangler bindings | Can drift from configuration; generate binding types with `wrangler types`. |
+| Direct string comparison of secret values | Can expose timing differences; use the [Web Crypto comparison pattern](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/workers-best-practices/references/runtime-patterns.md#use-web-crypto-for-secure-token-generation). |
+| Destructuring `ctx` methods, such as `const { waitUntil } = ctx` | Loses the receiver; call `ctx.waitUntil(...)`. |
+| `any` on `Env` or handler parameters | Hides binding and handler contract errors; use the project's generated and platform types. |
+| `as unknown as T` to force a platform type match | Hides incompatibilities; fix the underlying contract. |
+| `implements` used in place of extending a platform base class | Does not inherit runtime behavior, `this.ctx`, or `this.env`; use the appropriate base class. |
+| Unbound `env.X` in a platform class method | Bindings are available through `this.env.X`; see [binding access patterns](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/workers-best-practices/references/platform-apis.md#binding-access--the-most-common-error). |
+| Applying one serialization rule across Queues, Workflow steps, storage, and WebSockets | Can reject valid payloads or accept unsupported ones; check the [specific API and encoding](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/workers-best-practices/references/platform-apis.md#serialization-boundaries). |
 
-```bash
-npm create cloudflare@latest my-worker -- --type hello-world
-cd my-worker
-npx wrangler dev                    # Local dev
-npx wrangler dev --remote           # Remote dev with actual resources
-npx wrangler deploy                 # Production
-npx wrangler deploy --env staging   # Specific environment
-npx wrangler tail                   # Stream logs
-npx wrangler secret put API_KEY     # Set secret
-```
+## Validation
 
-## Read Next
+Use the project's existing checks for affected Workers behavior: type-check binding or handler contract changes, and run relevant runtime tests for behavior changes. Preserve required repository checks; a narrow edit does not require a full Workers audit.
 
-- [workers-patterns.md](./workers-patterns.md) - Workflows, testing, and optimization
-- [workers-gotchas.md](./workers-gotchas.md) - Limits, pitfalls, and troubleshooting
-- [wrangler.md](./wrangler.md) - CLI details
-- [kv.md](./kv.md), [d1.md](./d1.md), [r2.md](./r2.md), [durable-objects.md](./durable-objects.md), [queues.md](./queues.md) - Common bindings
-- Docs: https://developers.cloudflare.com/workers/
-- Examples: https://developers.cloudflare.com/workers/examples/
-- Runtime APIs: https://developers.cloudflare.com/workers/runtime-apis/
+## Scope
+
+This skill covers Workers-specific best practices and code review. For related topics:
+
+- **Durable Objects**: load the `durable-objects` skill
+- **Workflows**: see [Rules of Workflows](https://developers.cloudflare.com/workflows/build/rules-of-workflows/index.md)
+- **Wrangler CLI commands**: load the `wrangler` skill

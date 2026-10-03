@@ -26,7 +26,7 @@ Produce short, punchy onboarding videos that show one feature working. The outpu
 - **Output**: Remotion project rendering MP4, plus optional portrait, landscape, and social variants.
 - **Default format**: 1080×1920 portrait, 30fps, 3–8 seconds per beat, rarely over 30 seconds total.
 - **Core style**: crop, mask, or extract the UI component that proves the feature works; avoid full-screen tours unless the user explicitly needs whole-screen context.
-- **Related agents**: `tools/video/remotion.md`, `tools/browser/browser-automation.md`, `tools/design/design-md.md`, `tools/vision/image-generation.md`, `tools/vision/create-screenshots.md`.
+- **Related agents**: `tools/video/remotion/remotion.md`, `tools/browser/browser-automation.md`, `tools/design/design-md.md`, `tools/vision/image-generation.md`, `tools/vision/create-screenshots.md`.
 
 ## Intake
 
@@ -82,7 +82,7 @@ Rules:
 
 ## Remotion Build Rules
 
-Load `tools/video/remotion.md` before authoring or modifying the composition. Apply these constraints:
+Load `tools/video/remotion/remotion.md` before authoring or modifying the composition. Apply these constraints:
 
 - Use `spring()`, `interpolate()`, `useCurrentFrame()`, and `<Sequence>`/`<Series>`; never CSS transitions, timers, or React state for animation values.
 - One `<Composition>` per onboarding flow; one sequence per beat.

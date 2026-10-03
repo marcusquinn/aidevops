@@ -26,7 +26,7 @@ Edit raw or assembled footage by conversation: inventory sources, plan the edit,
 - **Default engine**: `tools/video/video-use-skill.md` for transcript-first editing, EDL planning, ffmpeg rendering, subtitles, cut verification, and session memory.
 - **Runtime adapter**: Read `tools/video/video-use-runtime.md` before the imported skill. It owns executable installation/version checks, privacy/cost approval, cache validity and the common animation output contract; its aidevops-specific adaptations take precedence over upstream examples.
 - **Portrait phone reels**: Read `tools/video/talking-head-reel.md` for repeated-take selection, source-to-output beat timing, and platform-safe layout checks; keep the default engine and runtime adapter.
-- **Related agents**: `tools/video/remotion.md`, `tools/video/create-onboarding-video.md`, `tools/video/video-prompt-design.md`, `tools/video/yt-dlp.md`, `tools/voice/transcription.md`, `tools/voice/cloud-tts-apis.md`, `tools/vision/create-screenshots.md`, `content/production-video.md`.
+- **Related agents**: `tools/video/remotion/remotion.md`, `tools/video/create-onboarding-video.md`, `tools/video/video-prompt-design.md`, `tools/video/yt-dlp.md`, `tools/voice/transcription.md`, `tools/voice/cloud-tts-apis.md`, `tools/vision/create-screenshots.md`, `content/production-video.md`.
 - **Output rule**: keep user source footage untouched; write working files and renders under the project/video folder's `edit/` directory unless the user specifies another safe output path.
 
 ## Routing

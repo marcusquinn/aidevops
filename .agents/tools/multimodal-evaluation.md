@@ -18,7 +18,7 @@
 
 | Link | Purpose |
 |------|---------|
-| `speech-to-speech.md` → `tools/video/remotion.md` | Video narration |
+| `speech-to-speech.md` → `tools/video/remotion/remotion.md` | Video narration |
 | `voice-ai-models.md` → `heygen-skill/rules-voices.md` | AI voice cloning |
 | `heygen-skill.md` → voice selection | Avatar video voices |
 | `peekaboo.md` → `tools/ocr/glm-ocr.md` | Screen capture + OCR |

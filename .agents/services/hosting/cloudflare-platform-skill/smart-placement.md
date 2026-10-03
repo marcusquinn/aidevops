@@ -1,70 +1,139 @@
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # Cloudflare Workers Smart Placement
 
-Runs Workers closer to backend infrastructure instead of end users — reduces latency when backend round-trips dominate over user-to-edge distance.
+Automatic workload placement optimization to minimize latency by running Workers closer to backend infrastructure rather than end users.
 
-## When to Enable
+## Core Concept
 
-**Enable:** multiple backend round-trips, geographically concentrated backend, backend latency dominates (APIs, data aggregation, SSR with DB calls).
+Smart Placement automatically analyzes Worker request duration across Cloudflare's global network and intelligently routes requests to optimal data center locations. Instead of defaulting to the location closest to the end user, Smart Placement can forward requests to locations closer to backend infrastructure when this reduces overall request duration.
 
-**Do NOT enable:** static/cached content, no backend calls, pure edge logic (auth, redirects, transforms), no fetch handlers.
+### When to Use
 
-**Requirements:** Wrangler 2.20.0+, consistent traffic from multiple global locations. Affects fetch handlers only (not RPC methods or named entrypoints). All plans. Analysis ≤15 min; runs at edge until complete.
+**Enable Smart Placement when:**
+- Worker makes multiple round trips to backend services/databases
+- Backend infrastructure is geographically concentrated
+- Request duration dominated by backend latency rather than network latency from user
+- Running backend logic in Workers (APIs, data aggregation, SSR with DB calls)
+- Worker uses `fetch` handler (not RPC methods)
 
-## Architecture: Frontend/Backend Split
+**Do NOT enable for:**
+- Workers serving only static content or cached responses
+- Workers without significant backend communication
+- Pure edge logic (auth checks, redirects, simple transformations)
+- Workers without fetch event handlers
+- Workers with RPC methods or named entrypoints (only `fetch` handlers are affected)
+- Pages/Assets Workers with `run_worker_first = true` (degrades asset serving)
+
+### Decision Tree
 
 ```text
-User → Frontend Worker (edge, close to user)
+Does your Worker have a fetch handler?
+├─ No → Smart Placement won't work (skip)
+└─ Yes
+   │
+   Does it make multiple backend calls (DB/API)?
+   ├─ No → Don't enable (won't help)
+   └─ Yes
+      │
+      Is backend geographically concentrated?
+      ├─ No (globally distributed) → Probably won't help
+      └─ Yes or uncertain
+         │
+         Does it serve static assets with run_worker_first=true?
+         ├─ Yes → Don't enable (will hurt performance)
+         └─ No → Enable Smart Placement
+            │
+            After 15min, check placement_status
+            ├─ SUCCESS → Monitor metrics
+            ├─ INSUFFICIENT_INVOCATIONS → Need more traffic
+            └─ UNSUPPORTED_APPLICATION → Disable (hurting performance)
+```
+
+### Key Architecture Pattern
+
+**Recommended:** Split full-stack applications into separate Workers:
+
+```text
+User → Frontend Worker (at edge, close to user)
          ↓ Service Binding
-       Backend Worker (Smart Placement, close to DB/API)
+       Backend Worker (Smart Placement enabled, close to DB/API)
          ↓
        Database/Backend Service
 ```
 
-Split full-stack apps — monolithic Workers with Smart Placement degrade frontend latency.
+This maintains fast, reactive frontends while optimizing backend latency.
 
 ## Quick Start
 
-```toml
-# wrangler.toml
-[placement]
-mode = "smart"
-hint = "wnam"  # Optional: West North America
+```jsonc
+// wrangler.jsonc
+{
+  "placement": {
+    "mode": "smart"  // or "off" to explicitly disable
+  }
+}
 ```
 
-Deploy and wait up to 15 min for analysis.
+Deploy and wait 15 minutes for analysis. Check status via API or dashboard metrics.
 
-## Placement Status
+**To disable:** Set `"mode": "off"` or remove `placement` field entirely (both equivalent).
+
+## Requirements
+
+- Wrangler 2.20.0+
+- Analysis time: Up to 15 minutes after enabling
+- Traffic requirements: Consistent traffic from multiple global locations
+- Available on all Workers plans (Free, Paid, Enterprise)
+
+## Placement Status Values
 
 ```typescript
 type PlacementStatus =
   | undefined  // Not yet analyzed
-  | 'SUCCESS'  // Optimized
+  | 'SUCCESS'  // Successfully optimized
   | 'INSUFFICIENT_INVOCATIONS'  // Not enough traffic
   | 'UNSUPPORTED_APPLICATION';  // Made Worker slower (reverted)
 ```
 
-1% of requests always route without optimization (baseline comparison) — expected behaviour.
-
-## Status Check
+## CLI Commands
 
 ```bash
+# Deploy with Smart Placement
+wrangler deploy
+
 # Check placement status
 curl -H "Authorization: Bearer $TOKEN" \
   https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/workers/services/$WORKER_NAME \
   | jq .result.placement_status
 
-# Monitor with placement header
+# Monitor
 wrangler tail your-worker-name --header cf-placement
 ```
 
+## Reading Order
+
+**First time?** Start here:
+1. This README - understand core concepts and when to use Smart Placement
+2. [configuration.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/smart-placement/configuration.md) - set up wrangler.jsonc and understand limitations
+3. [patterns.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/smart-placement/patterns.md) - see practical examples for your use case
+4. [api.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/smart-placement/api.md) - monitor and verify Smart Placement is working
+5. [gotchas.md](smart-placement-gotchas.md) - troubleshoot common issues
+
+**Quick lookup:**
+- "Should I enable Smart Placement?" → See "When to Use" above
+- "How do I configure it?" → [configuration.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/smart-placement/configuration.md)
+- "How do I split frontend/backend?" → [patterns.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/smart-placement/patterns.md)
+- "Why isn't it working?" → [gotchas.md](smart-placement-gotchas.md)
+
+## In This Reference
+
+- [configuration.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/smart-placement/configuration.md) - wrangler.jsonc setup, mode values, validation rules
+- [api.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/smart-placement/api.md) - Placement Status API, cf-placement header, monitoring
+- [patterns.md](https://github.com/cloudflare/skills/blob/41e0d19858946d18af9ee2c2feebbe2e11d829ff/skills/cloudflare/references/smart-placement/patterns.md) - Frontend/backend split, database workers, SSR patterns
+- [gotchas.md](smart-placement-gotchas.md) - Troubleshooting INSUFFICIENT_INVOCATIONS, performance issues
+
 ## See Also
 
-- [patterns.md](./patterns.md) — frontend/backend split, database workers, SSR, API gateway
-- [gotchas.md](./gotchas.md) — troubleshooting INSUFFICIENT_INVOCATIONS, performance issues
-- [workers](../workers/) — Worker runtime and fetch handlers
-- [d1](../d1/) — D1 database (benefits from Smart Placement)
-- [durable-objects](../durable-objects/) — Durable Objects with backend logic
-- [bindings](../bindings/) — Service bindings for frontend/backend split
+- [workers](https://developers.cloudflare.com/workers/index.md) - Worker runtime and fetch handlers
+- [d1](../d1/) - D1 database that benefits from Smart Placement
+- [durable-objects](https://developers.cloudflare.com/durable-objects/index.md) - Durable Objects with backend logic
+- [bindings](../bindings/) - Service bindings for frontend/backend split
