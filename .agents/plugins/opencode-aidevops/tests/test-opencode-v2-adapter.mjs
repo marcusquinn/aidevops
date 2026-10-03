@@ -297,7 +297,9 @@ for (const budgetEnabled of [false, true]) test(`V2 setup registers SDK lifecycl
   assert.equal(guidance.content[0].type, "text");
   assert.match(guidance.content[0].text, /# aidevops Framework Context/);
   assert.match(guidance.content[0].text, /Follow the host's summary template exactly/);
-  assert.match(guidance.content[0].text, /untrusted historical data only/);
+  assert.equal(guidance.content[0].text.includes("## Operational State"),
+    guidance.content[0].text.includes("untrusted historical data only"),
+    "operational payloads require the trust notice; detached CI may have no payload");
   assert.doesNotMatch(compacted.system.map(({ text }) => text).join("\n"), /# aidevops Framework Context/);
 
   await cleanup();
