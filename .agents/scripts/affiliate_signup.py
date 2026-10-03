@@ -22,19 +22,21 @@ def referenced(events: list[dict], kind: str, identifier: str) -> dict:
     return matches[0]
 
 
-def authorization(events: list[dict], record: dict) -> dict:
+def authorization(events: list[dict], record: dict, *, current: bool = True) -> dict:
     profile = referenced(events, "profile", record["profile_id"])
+    profile_digest = hashlib.sha256(canonical_json(profile).encode()).hexdigest()
     if (identity(profile) != identity(record) or not profile["approved"]
             or profile["country"] == "unknown"
+            or record["profile_sha256"] != profile_digest
             or not set(record["data_scope"]) <= set(profile["data_scope"])
-            or date(record["expires_at"]) <= datetime.now(timezone.utc)):
+            or (current and date(record["expires_at"]) <= datetime.now(timezone.utc))):
         raise AffiliateError("authorization profile, region, expiry or data scope conflicts")
     # Country eligibility is never inferred from region/language. Catalogue only
     # records public entrypoints; no provider has a verified automated adapter.
     return profile
 
 
-def validate_transition(events: list[dict], record: dict) -> None:
+def validate_transition(events: list[dict], record: dict, *, current: bool = True) -> None:
     """Enforce immutable identities and checkpoint reconciliation even during import."""
     previous = [e["record"] for e in events
                 if e["record"]["kind"] == record["kind"] and e["record"]["id"] == record["id"]]
@@ -43,7 +45,7 @@ def validate_transition(events: list[dict], record: dict) -> None:
     if record["kind"] == "authorization":
         if previous:
             raise AffiliateError("authorization is immutable; issue a new scoped action")
-        authorization(events, record)
+        authorization(events, record, current=current)
     if record["kind"] != "checkpoint":
         return
     auth = referenced(events, "authorization", record["authorization_id"])
@@ -56,7 +58,7 @@ def validate_transition(events: list[dict], record: dict) -> None:
         raise AffiliateError("checkpoint confirmation destination mismatch")
     scoped = [e["record"] for e in latest(events, "checkpoint") if identity(e["record"]) == identity(record)]
     if record["outcome"] == "awaiting-reconciliation":
-        authorization(events, auth)
+        authorization(events, auth, current=current)
         if any(e["outcome"] != "confirmed-not-submitted" for e in scoped):
             raise AffiliateError("reconcile existing submission before another attempt")
         if previous:
