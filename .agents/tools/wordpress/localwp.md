@@ -1,5 +1,5 @@
 ---
-description: LocalWP database access - read-only SQL queries, schema inspection via MCP. Requires LocalWP running
+description: LocalWP database access (read-only SQL, schema via MCP) and test-site PHP sizing (OPcache, memory, workers). Requires LocalWP running
 mode: subagent
 temperature: 0.1
 tools:
@@ -44,7 +44,34 @@ DESCRIBE wp_postmeta;
 
 **Typically invoked from**: `@wp-dev` for database inspection during debugging
 
+**Site resources**: size a test site for the plugin stack it tests before trusting timings or errors; see "Site PHP resources" below.
+
 <!-- AI-CONTEXT-END -->
+
+## Site PHP resources
+
+Local's defaults (OPcache 128 MB, 8 MB strings, 10,000 files; `memory_limit` 256M; 2 static PHP-FPM workers) suit a near-empty site. A development site with dozens of plugins fills OPcache, which then restarts and recompiles, and queues admin AJAX/REST calls behind two workers. The resulting slowness and timeouts look like bugs in the code under test.
+
+Before testing a plugin or theme, size the site for the full stack it will run (every plugin the project recommends, active):
+
+| Setting | File in `<site>/conf/` | Many-plugin baseline | Local default |
+|---------|------------------------|----------------------|---------------|
+| `opcache.memory_consumption` | `php/php.ini.hbs` | `1024` | 128 |
+| `opcache.interned_strings_buffer` | `php/php.ini.hbs` | `64` | 8 |
+| `opcache.max_accelerated_files` | `php/php.ini.hbs` | `50000` | 10000 |
+| `memory_limit` | `php/php.ini.hbs` | `768M` | 256M |
+| `pm.max_children` | `php/php-fpm.d/www.conf.hbs` | `5` | 2 |
+
+Baseline evidence: 72 plugins installed filled 512 MB of OPcache (31,723 PHP files cached; 315 MB used after raising to 1 GB); pages peaked at 352 MB memory; the busiest hour needed 5 workers.
+
+- Find the site folder from the `"path"` entries in `~/Library/Application Support/Local/sites.json` (macOS). Edit the `.hbs` templates only; files under `~/Library/Application Support/Local/run/<id>/conf/` are regenerated.
+- Changes apply only after Stop site, then Start site in Local. Ask the user to restart if no CLI path is available, then verify the generated `run/<id>/conf/php/php.ini` or the site's own report (Site Health → Info → Server, or `php -i` via the site shell).
+- Comment each change with the date and reason; keep the `{{! ... }}` Handlebars and `{{#if}}` blocks intact.
+- The OPcache block sits inside `{{#unless apache}}` (nginx sites). For Apache sites, set the values outside that block.
+- Static workers each reserve memory: 5 workers × `memory_limit` plus OPcache must fit in the machine's free RAM.
+- Prefer the project's own measurement where it has one (for example a hosting-needs or Site Health report) and raise to what it asks for; record the numbers in the project's development docs so other sessions use the same baseline.
+- To reproduce a "too small" warning, lower values on a throwaway site, not a shared review site.
+- Docker test sites: put the same values in a `.ini` mounted into `/usr/local/etc/php/conf.d/` (official `wordpress`/`php` images).
 
 ## Installation
 
