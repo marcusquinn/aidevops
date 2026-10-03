@@ -80,15 +80,16 @@ stagehand_v4_run() {
 }
 
 stagehand_v4_nanogpt_probe() {
+	local mode="${1:-}"
 	[[ -f "$STAGEHAND_V4_NANOGPT_SOURCE" ]] || return 1
 	# Offline fixtures are deliberately independent of the optional SDK install.
 	# No credential or ambient browser profile is passed to the fixture runner.
-	if [[ "${1:-}" == "offline" ]]; then
+	if [[ "$mode" == "offline" ]]; then
 		shift
-		stagehand_v4_probe_source offline "$@"
-		return $?
+		stagehand_v4_probe_source offline "$@" || return 1
+		return 0
 	fi
-	[[ "${1:-}" == "live" ]] || {
+	[[ "$mode" == "live" ]] || {
 		print_error "Use probe offline <fixture> or probe live"
 		return 1
 	}
@@ -96,13 +97,15 @@ stagehand_v4_nanogpt_probe() {
 		print_error "Reviewed Stagehand v4.1.0 install required; live NanoGPT transport remains disabled"
 		return 1
 	}
-	stagehand_v4_probe_source live
+	stagehand_v4_probe_source live || return 1
+	return 0
 }
 
 stagehand_v4_probe_source() {
 	env -u OPENAI_API_KEY -u NANOGPT_API_KEY -u OPENCODE_API_KEY \
 		node -e 'require("node:vm").runInThisContext(require("node:fs").readFileSync(process.argv[1], "utf8"))' \
-		"$STAGEHAND_V4_NANOGPT_SOURCE" "$@"
+		"$STAGEHAND_V4_NANOGPT_SOURCE" "$@" || return 1
+	return 0
 }
 
 case "${1:-help}" in

@@ -47,6 +47,7 @@ assert_probe() {
 		const r = JSON.parse(process.env.PROBE_RECEIPT);
 		if (r.status !== "failed" || r.reason !== process.env.EXPECTED || r.heading !== null) process.exit(1);
 	' || return 1
+	return 0
 }
 
 assert_probe two-call 0.05 ok
