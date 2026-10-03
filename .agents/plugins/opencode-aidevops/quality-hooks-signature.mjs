@@ -50,6 +50,7 @@ import { join } from "path";
 
 import { FAIL_REASON, formatGateThrowMessage } from "./quality-hooks-signature-failures.mjs";
 import { repairBodyFile } from "./quality-hooks-signature-body-file.mjs";
+import { unquotedTokens } from "./quality-hooks-signature-shell-words.mjs";
 import {
   SIG_MARKER,
   hasTrustedSignatureSignal,
@@ -119,53 +120,6 @@ function _generateSignature(helperPath, bodyValue, log, options = {}) {
       detail: e.message,
     };
   }
-}
-
-// Preserve source offsets for surgical rewrites while ignoring flags inside
-// quoted argument values. Incomplete quoting fails closed.
-function _nextQuote(quote, ch) {
-  if (ch === "'" && quote !== '"') return quote === "'" ? "" : "'";
-  if (ch === '"' && quote !== "'") return quote === '"' ? "" : '"';
-  return quote;
-}
-
-function _unquotedTokens(cmd) {
-  const tokens = [];
-  let text = "";
-  let start = -1;
-  let quote = "";
-  let flag = false;
-  const flush = () => {
-    if (start !== -1) tokens.push({ text, start, flag });
-    text = "";
-    start = -1;
-    flag = false;
-  };
-  for (let i = 0; i < cmd.length; i++) {
-    const ch = cmd[i];
-    if (!quote && (/\s/.test(ch) || ch === ";" || ch === "|" || ch === "&")) {
-      flush();
-      continue;
-    }
-    if (start === -1) {
-      start = i;
-      flag = ch === "-";
-    }
-    const next = _nextQuote(quote, ch);
-    if (next !== quote) {
-      quote = next;
-      continue;
-    }
-    if (ch === "\\" && quote !== "'") {
-      if (++i >= cmd.length) return [];
-      text += cmd[i];
-    } else {
-      text += ch;
-    }
-  }
-  if (quote) return [];
-  flush();
-  return tokens;
 }
 
 function _bodyToken(token) {
@@ -278,7 +232,7 @@ export function tryRepairSignature(cmd, scriptsDir, log, options = {}) {
   }
 
   const helperPath = join(scriptsDir, "gh-signature-helper.sh");
-  const tokens = _unquotedTokens(cmd);
+  const tokens = unquotedTokens(cmd);
   if (_hasUnparseableBody(cmd, tokens)) {
     log("WARN", "Command has unparseable body (heredoc/command-sub); refusing auto-repair (t2685)");
     return { status: "fail", reason: FAIL_REASON.UNPARSEABLE_BODY };

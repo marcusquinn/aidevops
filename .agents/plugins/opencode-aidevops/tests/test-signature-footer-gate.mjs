@@ -451,6 +451,19 @@ describe("tryRepairSignature", () => {
     assert.equal(malformed.reason, FAIL_REASON.BODY_ARG_NO_MATCH);
   });
 
+  test("preserves literal double-quoted backslashes when selecting the body file", () => {
+    const dir = setupStubHelper();
+    const bodyFile = join(dir, "notes\\q.md");
+    const decoyFile = join(dir, "notesq.md");
+    writeFileSync(bodyFile, "intended unsigned content\n");
+    writeFileSync(decoyFile, "untouched decoy\n");
+    const { log } = makeLogger();
+    const out = tryRepairSignature(`gh issue comment 1 --body-file "${bodyFile}"`, dir, log);
+    assert.equal(out.status, "ok");
+    assert.ok(readFileSync(bodyFile, "utf-8").includes(SIG_MARKER));
+    assert.equal(readFileSync(decoyFile, "utf-8"), "untouched decoy\n");
+  });
+
   test("resolves relative --body-file from Bash tool workdir", () => {
     const dir = setupStubHelper();
     const workdir = join(dir, "linked-worktree-cwd");
