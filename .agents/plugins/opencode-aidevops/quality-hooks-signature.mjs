@@ -50,6 +50,7 @@ import { join } from "path";
 
 import { FAIL_REASON, formatGateThrowMessage } from "./quality-hooks-signature-failures.mjs";
 import { repairBodyFile } from "./quality-hooks-signature-body-file.mjs";
+import { bodyFileArgument, hasUnparseableBody, unquotedTokens } from "./quality-hooks-signature-shell-words.mjs";
 import {
   SIG_MARKER,
   hasTrustedSignatureSignal,
@@ -122,24 +123,6 @@ function _generateSignature(helperPath, bodyValue, log, options = {}) {
 }
 
 /**
- * Check if the command uses unparseable body syntax (heredoc, process
- * substitution, or command substitution in the body argument). These forms
- * are too dynamic to rewrite safely and the caller should use the helper
- * explicitly. Returns true if unparseable.
- * @param {string} cmd
- * @returns {boolean}
- */
-function _hasUnparseableBody(cmd) {
-  const bodyStart = cmd.search(/(?:--(?:body(?:-file)?|comment)|-c)(?:=|\s)/);
-  const afterBody = bodyStart === -1 ? "" : cmd.slice(bodyStart);
-  return (
-    /(?:--(?:body(?:-file)?|comment)|-c)\s*=?\s*(?:<<-?\s*['"]?\w+|<\()/.test(cmd) ||
-    afterBody.includes("$(") ||
-    /`[^`]*`/.test(afterBody)
-  );
-}
-
-/**
  * Match `--body` and issue-close `--comment`/`-c` value forms.
  * Returns { match, bodyValue, quote } on the first match, or null.
  *
@@ -149,15 +132,18 @@ function _hasUnparseableBody(cmd) {
  * @param {string} cmd
  * @returns {{ match: RegExpMatchArray, bodyValue: string, quote: string } | null}
  */
-function _matchBodyArg(cmd) {
+function _matchBodyArg(cmd, tokens) {
+  const token = tokens.find(({ text, flag }) => flag && /^(?:--body|--comment|-c)(?:=|$)/.test(text));
+  if (!token) return null;
   const patterns = [
     { re: /(?:--(?:body|comment)|-c)\s+"((?:[^"\\]|\\.)*)"/, quote: '"' },
     { re: /(?:--(?:body|comment)|-c)\s+'((?:[^'\\]|\\.)*)'/, quote: "'" },
     { re: /(?:--(?:body|comment)|-c)=(['"])((?:(?!\1).)*)\1/, quote: null },
   ];
   for (const pat of patterns) {
-    const m = cmd.match(pat.re);
+    const m = cmd.slice(token.start).match(new RegExp(`^${pat.re.source}`));
     if (!m) continue;
+    m.index = token.start;
     const quote = pat.quote !== null ? pat.quote : m[1];
     const bodyValue = pat.quote !== null ? m[1] : m[2];
     return { match: m, bodyValue, quote };
@@ -197,7 +183,7 @@ function _repairBodyArg(cmd, parsed, helperPath, log, options = {}) {
   const fullMatch = match[0];
   const newArg = fullMatch.slice(0, -1) + sig + quote;
   log("INFO", `Auto-appended signature footer to --body arg (t2685)`);
-  return { status: "ok", cmd: cmd.replace(fullMatch, newArg) };
+  return { status: "ok", cmd: cmd.slice(0, match.index) + newArg + cmd.slice(match.index + fullMatch.length) };
 }
 
 /**
@@ -224,29 +210,27 @@ export function tryRepairSignature(cmd, scriptsDir, log, options = {}) {
   }
 
   const helperPath = join(scriptsDir, "gh-signature-helper.sh");
-  if (_hasUnparseableBody(cmd)) {
+  const tokens = unquotedTokens(cmd);
+  if (hasUnparseableBody(cmd, tokens)) {
     log("WARN", "Command has unparseable body (heredoc/command-sub); refusing auto-repair (t2685)");
     return { status: "fail", reason: FAIL_REASON.UNPARSEABLE_BODY };
   }
 
   // --body-file PATH form: filesystem-side repair.
-  const bodyFileMatch = cmd.match(
-    /--body-file(?:=(['"]?)([^\s'"]+)\1|\s+(['"]?)([^\s'"]+)\3)/,
-  );
-  if (bodyFileMatch) {
-    const filePath = bodyFileMatch[2] || bodyFileMatch[4];
-    return repairBodyFile(cmd, filePath, helperPath, log, {
+  const bodyFile = bodyFileArgument(tokens);
+  if (bodyFile) {
+    return bodyFile.path ? repairBodyFile(cmd, bodyFile.path, helperPath, log, {
       commandWorkdir: options.commandWorkdir,
       sigMarker: SIG_MARKER,
       isMachineProtocolCommand,
       generateSignature: (path, body, signatureLog) =>
         _generateSignature(path, body, signatureLog, options),
-    });
+    }) : { status: "fail", reason: FAIL_REASON.BODY_ARG_NO_MATCH };
   }
 
   // --body VALUE form: command-side repair.
   const helperAvailable = existsSync(helperPath);
-  const parsed = helperAvailable ? _matchBodyArg(cmd) : null;
+  const parsed = helperAvailable ? _matchBodyArg(cmd, tokens) : null;
   if (!helperAvailable || !parsed) {
     const reason = helperAvailable ? FAIL_REASON.BODY_ARG_NO_MATCH : FAIL_REASON.HELPER_MISSING;
     const detail = helperAvailable ? undefined : helperPath;

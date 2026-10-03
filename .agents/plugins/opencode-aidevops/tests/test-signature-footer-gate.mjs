@@ -430,6 +430,40 @@ describe("tryRepairSignature", () => {
     assert.ok(fileContent.includes("unsigned content"), "original preserved");
   });
 
+  test("ignores body flags inside quoted titles", () => {
+    const dir = setupStubHelper();
+    const bodyFile = join(dir, "quoted-title.md");
+    writeFileSync(bodyFile, "unsigned content\n");
+    const { log } = makeLogger();
+    const title = '--title "accept --body-file for x and --body \'wrong\'"';
+    const file = tryRepairSignature(`gh issue create ${title} --body-file ${bodyFile}`, dir, log);
+    assert.equal(file.status, "ok");
+    assert.ok(readFileSync(bodyFile, "utf-8").includes(SIG_MARKER));
+
+    const inline = tryRepairSignature(`gh issue create ${title} --body "text"`, dir, log);
+    assert.equal(inline.status, "ok");
+    assert.ok(inline.cmd.includes(`${title} --body "text`));
+    assert.ok(inline.cmd.includes(SIG_MARKER));
+
+    const missing = tryRepairSignature(`gh issue create ${title}`, dir, log);
+    assert.equal(missing.reason, FAIL_REASON.BODY_ARG_NO_MATCH);
+    const malformed = tryRepairSignature('gh issue create --title "unfinished --body-file path', dir, log);
+    assert.equal(malformed.reason, FAIL_REASON.BODY_ARG_NO_MATCH);
+  });
+
+  test("preserves literal double-quoted backslashes when selecting the body file", () => {
+    const dir = setupStubHelper();
+    const bodyFile = join(dir, "notes\\q.md");
+    const decoyFile = join(dir, "notesq.md");
+    writeFileSync(bodyFile, "intended unsigned content\n");
+    writeFileSync(decoyFile, "untouched decoy\n");
+    const { log } = makeLogger();
+    const out = tryRepairSignature(`gh issue comment 1 --body-file "${bodyFile}"`, dir, log);
+    assert.equal(out.status, "ok");
+    assert.ok(readFileSync(bodyFile, "utf-8").includes(SIG_MARKER));
+    assert.equal(readFileSync(decoyFile, "utf-8"), "untouched decoy\n");
+  });
+
   test("resolves relative --body-file from Bash tool workdir", () => {
     const dir = setupStubHelper();
     const workdir = join(dir, "linked-worktree-cwd");
