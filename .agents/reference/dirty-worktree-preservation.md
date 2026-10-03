@@ -36,6 +36,16 @@ Use `verify` and `matches` before any explicit `clean` operation.
 
 ## Audited mirror synchronization
 
+The scheduled `repo-sync-helper.sh check` remains **read-only by default**.
+For a registered clean default-branch checkout, it reports
+`CONVERGENCE_ELIGIBLE` only when the exact remote tip is already present in
+the local object store and `HEAD` is its ancestor. It never fetches or merges
+canonical refs: a missing remote object leaves ancestry unverified, not
+implicitly eligible. Dirty (including untracked), diverged, detached and
+non-default-branch checkouts are not convergence-eligible. The operator uses
+the audited `sync-mirror` route below for a confirmed eligible mirror, rather
+than bypassing its backup, identity and compare-and-swap guards with `git merge`.
+
 An explicit request to synchronize the canonical mirror authorizes this route:
 
 ```bash
@@ -215,4 +225,14 @@ Manual prune:
 .agents/scripts/dirty-worktree-backup-helper.sh acknowledge \
   --backup <backup-id> --confirm ACKNOWLEDGE_DIRTY_WORKTREE_BACKUP
 .agents/scripts/dirty-worktree-backup-helper.sh prune --force
+```
+
+Targeted removal of one acknowledged/restored backup (refuses `open` backups
+and `.keep` markers; `--dry-run` prints `Would remove` without mutation):
+
+```bash
+.agents/scripts/dirty-worktree-backup-helper.sh delete --dry-run \
+  --backup <backup-id> --confirm DELETE_DIRTY_WORKTREE_BACKUP
+.agents/scripts/dirty-worktree-backup-helper.sh delete \
+  --backup <backup-id> --confirm DELETE_DIRTY_WORKTREE_BACKUP
 ```
