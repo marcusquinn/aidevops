@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
 import { createHash } from "crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
-import { dirname, join } from "path";
+import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
+import { dirname, isAbsolute, join, relative, resolve } from "path";
 import { homedir } from "os";
 import { appendWorkerBlockerEvent } from "../../scripts/worker-blocker-log.mjs";
 import { isManagedToolOutputRead } from "./permission-broker-tool-output.mjs";
@@ -112,8 +112,53 @@ function recordPermissionToolCall(toolCalls, isHeadless, home, input, output) {
   toolCalls.set(callID, {
     tool: sanitizePermissionText(input?.tool || input?.name || "unknown", { home, maxLength: 100 }),
     intent: sanitizePermissionText(args?.agent__intent || "", { home, maxLength: MAX_INTENT_LENGTH }),
+    target: args.filePath || args.path || "",
   });
   while (toolCalls.size > 100) toolCalls.delete(toolCalls.keys().next().value);
+}
+
+// Only an exact, demonstrably absent target is an impossible read. EACCES,
+// symlinks, wildcard-only requests and sensitive locations keep the normal gate.
+function impossibleExternalRead(context, raw) {
+  const { toolCalls, home, dataHome } = context;
+  if ((raw?.permission || raw?.type) !== "external_directory") return "";
+  const call = toolCalls.get(raw?.tool?.callID || raw?.callID || "");
+  const tool = call?.tool || raw?.metadata?.tool;
+  if (!["read", "glob", "grep", "list"].includes(tool)) return "";
+  const target = call?.target || raw?.metadata?.filepath || raw?.metadata?.path;
+  const patterns = raw?.patterns ?? raw?.pattern ?? [];
+  if (typeof target !== "string" || !isAbsolute(target) || /[*?\[\]{}\u0000]/.test(target)
+    || FORBIDDEN_PATTERN.test(target)
+    || (Array.isArray(patterns) ? patterns : [patterns]).some((pattern) => FORBIDDEN_PATTERN.test(String(pattern)))) return "";
+  let ancestor = resolve(target);
+  try {
+    lstatSync(ancestor);
+    return "";
+  } catch (err) {
+    if (err.code !== "ENOENT") return "";
+  }
+  while (true) {
+    const parent = dirname(ancestor);
+    if (parent === ancestor) return "";
+    ancestor = parent;
+    try {
+      const info = lstatSync(ancestor);
+      if (info.isSymbolicLink()) return "";
+      break;
+    } catch (err) {
+      if (err.code !== "ENOENT") return "";
+    }
+  }
+  const managed = [join(home, ".aidevops"), join(dataHome, "opencode", "tool-output"), process.env.WORKER_WORKTREE_PATH].filter(Boolean);
+  if (managed.some((root) => {
+    const within = relative(resolve(root), ancestor);
+    return within === "" || (within !== ".." && !within.startsWith("../") && !isAbsolute(within));
+  })) return "";
+  const marker = "/.aidevops/.agent-workspace/";
+  const hint = target.includes(marker)
+    ? ` Resolve MCP artifacts from the session output directory under ${join(home, ".aidevops", ".agent-workspace")}.`
+    : " Check the tool's artifact path and working directory.";
+  return `External read target does not exist; no permission approval can make this read succeed.${hint}`;
 }
 
 function recordPermissionBlocker({ loggedEvents, home, blockerLogPath, capture, request, event, reason, detail }) {
@@ -220,6 +265,10 @@ async function handlePermissionEvent(context, input) {
   const event = input?.event;
   if (!isHeadless() || event?.type !== "permission.asked") return;
   const request = event.properties || {};
+  if (impossibleExternalRead(context, request)) {
+    await replyPermissionRequest(client, request, "reject");
+    return;
+  }
   if (isManagedToolOutputRead(toolCalls, request, dataHome)
     && await replyPermissionRequest(client, request, "once")) return;
   capturePermissionRequest(toolCalls, loggedEvents, home, blockerLogPath, request);
@@ -229,6 +278,12 @@ async function handlePermissionEvent(context, input) {
 function handlePermissionAsk(context, input, output) {
   const { isHeadless, toolCalls, loggedEvents, home, dataHome, blockerLogPath } = context;
   if (!isHeadless()) return;
+  const impossible = impossibleExternalRead(context, input);
+  if (impossible) {
+    output.status = "deny";
+    output.message = impossible;
+    return;
+  }
   if (isManagedToolOutputRead(toolCalls, input, dataHome)) {
     output.status = "allow";
     return;

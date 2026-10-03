@@ -93,6 +93,7 @@ export function createMcpSessionRuntime(workspaceDir, options = {}) {
     workspaces: {
       playwright: {
         directory,
+        outputDirectory: join(directory, ".playwright-mcp"),
         markerPath: join(directory, MCP_WORKSPACE_MARKER),
         markerToken,
         tempRoot,
@@ -736,7 +737,7 @@ function buildMcpConfigEntry(mcp, runtime) {
     return { type: "local", command, enabled: mcp.eager };
   }
 
-  const outputDir = join(workspace.directory, ".playwright-mcp");
+  const outputDir = workspace.outputDirectory || join(workspace.directory, ".playwright-mcp");
   const launcher = [
     "set -eu",
     'workspace="$1"',
@@ -750,7 +751,7 @@ function buildMcpConfigEntry(mcp, runtime) {
     "umask 077",
     'mkdir -p -- "$output_dir"',
     '[[ -d "$output_dir" && ! -L "$output_dir" ]]',
-    'cd -- "$workspace"',
+    'cd -- "$output_dir"',
     'exec "$@" --output-dir "$output_dir"',
   ].join("; ");
   return {
