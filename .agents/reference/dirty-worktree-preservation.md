@@ -226,3 +226,13 @@ Manual prune:
   --backup <backup-id> --confirm ACKNOWLEDGE_DIRTY_WORKTREE_BACKUP
 .agents/scripts/dirty-worktree-backup-helper.sh prune --force
 ```
+
+Targeted removal of one acknowledged/restored backup (refuses `open` backups
+and `.keep` markers; `--dry-run` prints `Would remove` without mutation):
+
+```bash
+.agents/scripts/dirty-worktree-backup-helper.sh delete --dry-run \
+  --backup <backup-id> --confirm DELETE_DIRTY_WORKTREE_BACKUP
+.agents/scripts/dirty-worktree-backup-helper.sh delete \
+  --backup <backup-id> --confirm DELETE_DIRTY_WORKTREE_BACKUP
+```

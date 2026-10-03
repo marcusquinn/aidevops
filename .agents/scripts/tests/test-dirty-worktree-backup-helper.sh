@@ -267,6 +267,70 @@ test_prune_dry_run_overrides_force() {
 	return 0
 }
 
+test_delete_targets_single_backup() {
+	local repo_dir="${TEST_ROOT}/delete-repo"
+	local backup_root="${TEST_ROOT}/delete-backups"
+	local output=""
+	local id_a="" dir_a="" id_b="" dir_b="" ref_a="" ref_b=""
+	local out=""
+	local rc=0
+
+	setup_repo "$repo_dir" || return 1
+	printf 'first\n' >>"$repo_dir/README.md"
+	output=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
+		bash "$HELPER" backup --repo "$repo_dir" --operation-id del-a --machine 2>/dev/null) || return 1
+	IFS='|' read -r id_a dir_a <<<"$output"
+	printf 'second\n' >>"$repo_dir/README.md"
+	output=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
+		bash "$HELPER" backup --repo "$repo_dir" --operation-id del-b --machine 2>/dev/null) || return 1
+	IFS='|' read -r id_b dir_b <<<"$output"
+	[[ "$id_a" != "$id_b" ]] || rc=1
+	ref_a=$(awk -F '\t' '$1 == "backup_ref" { print $2 }' "$dir_a/manifest.tsv")
+	ref_b=$(awk -F '\t' '$1 == "backup_ref" { print $2 }' "$dir_b/manifest.tsv")
+
+	# Open backup is refused.
+	AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
+		bash "$HELPER" delete --backup "$id_a" --confirm DELETE_DIRTY_WORKTREE_BACKUP >/dev/null 2>&1 && rc=1
+	[[ -d "$dir_a" ]] || rc=1
+
+	for id in "$id_a" "$id_b"; do
+		AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" bash "$HELPER" acknowledge \
+			--backup "$id" --confirm ACKNOWLEDGE_DIRTY_WORKTREE_BACKUP >/dev/null || rc=1
+	done
+
+	# Missing confirmation is refused.
+	AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
+		bash "$HELPER" delete --backup "$id_a" >/dev/null 2>&1 && rc=1
+
+	# Dry-run does not mutate.
+	out=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
+		bash "$HELPER" delete --dry-run --backup "$id_a" --confirm DELETE_DIRTY_WORKTREE_BACKUP 2>&1) || rc=1
+	[[ "$out" == *"Would remove"* ]] || rc=1
+	[[ -d "$dir_a" ]] || rc=1
+
+	# .keep marker is refused.
+	: >"$dir_a/.keep"
+	AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
+		bash "$HELPER" delete --backup "$id_a" --confirm DELETE_DIRTY_WORKTREE_BACKUP >/dev/null 2>&1 && rc=1
+	[[ -d "$dir_a" ]] || rc=1
+	rm -f "$dir_a/.keep"
+
+	# Real delete removes only the target.
+	AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
+		bash "$HELPER" delete --backup "$id_a" --confirm DELETE_DIRTY_WORKTREE_BACKUP >/dev/null || rc=1
+	[[ ! -d "$dir_a" ]] || rc=1
+	/usr/bin/git -C "$repo_dir" rev-parse --verify --quiet "$ref_a" >/dev/null && rc=1
+	[[ -d "$dir_b" ]] || rc=1
+	/usr/bin/git -C "$repo_dir" rev-parse --verify --quiet "$ref_b" >/dev/null || rc=1
+
+	# Path traversal is rejected.
+	AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
+		bash "$HELPER" delete --backup "../$id_b" --confirm DELETE_DIRTY_WORKTREE_BACKUP >/dev/null 2>&1 && rc=1
+	[[ -d "$dir_b" ]] || rc=1
+	print_result "delete removes exactly one acknowledged backup and refuses open/kept/untargeted" "$rc"
+	return 0
+}
+
 main() {
 	TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/dirty-backup-test.XXXXXX") || exit 1
 	trap teardown EXIT
@@ -276,6 +340,7 @@ main() {
 	test_ignored_descendants_and_clean_rollback
 	test_prune_requires_terminal_state
 	test_prune_dry_run_overrides_force
+	test_delete_targets_single_backup
 
 	printf '\nTests run: %s, failed: %s\n' "$TESTS_RUN" "$TESTS_FAILED"
 	[[ "$TESTS_FAILED" -eq 0 ]]
