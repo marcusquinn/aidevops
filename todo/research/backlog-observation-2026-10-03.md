@@ -40,13 +40,15 @@ release; continue while safe next steps remain. Both retain `active` status.
 No dropped aim was found in this four-summary spot check; this is not a verdict
 on every session or an outcome-quality benchmark.
 
-All seven first resumed Bash actions begin with `git status --short --branch`,
-matching the recorded revalidation step. For example, the 08:45 summary's first
-Bash command is byte-identical to its recorded inventory command. The first tool
-overall can instead be TodoWrite or bounded-operation housekeeping. Therefore,
-the literal first-tool criterion in #32829 is not proved merely by the first-Bash
-result. The reusable SQL now bounds its sample to 2000 recently inserted messages
-and explicitly instructs the operator to use the active project DB.
+The earlier sample counted seven first resumed Bash Git revalidations. A later
+session-scoped query finds nine of nine first Bash actions starting with
+`git status --short --branch`, but only one complete first Bash command occurs
+verbatim in its corresponding summary. This does not identify the earlier 08:45
+example or prove literal first-tool compliance. All nine actual first tools are
+housekeeping: TodoWrite (six), memory recall (two), bounded-operation status (one).
+Next-action precedence is under investigation in #33470; later Git revalidation
+must not be presented as execution of the recorded command first. The reusable
+SQL bounds its samples and requires the active project DB.
 
 The refreshed 12-summary bounded sample has all five headings in 12/12 and
 explicit continuation in 12/12; 11/12 use the specifically bold status spelling.
@@ -86,9 +88,9 @@ Live mixed-provider dispatch is verified; continued index alternation is neither
 the current requirement nor grounds for changing the user's routing again.
 
 The observational checks for #32820 are complete with the limitations above. Retain
-the advisory thresholds unchanged and make no causal saving claim. #32829's V2
-compaction/cache criterion remains open until an actual completed compaction and
-resumed request have provider cache-read/write evidence.
+the advisory thresholds unchanged and make no causal saving claim. #32829 remains
+open while the first-next-action and V2 cache findings are dispositioned; a marker
+response or completed compaction alone is not a cache-success claim.
 
 ### V2 probe evidence
 
@@ -105,6 +107,25 @@ return zero native agents; their registration preconditions fail before any
 additional model request. They do not test compaction or prove a framework
 source defect. Preserve the failed evidence and establish working native agent
 registration plus retained framework hooks before any positive cache claim.
+
+### Completed V2 automatic compaction, later evidence
+
+A subsequently validated isolated V2 config registered a deny-all primary agent
+and retained the framework plugin. A real 2.0.3 request then completed compaction
+with `reason: auto`, status `completed`, and the expected public marker in the
+summary. The resumed request returned only that marker. This supersedes the failed
+registration probes above as compaction/resumption evidence; it is a deliberately
+padded diagnostic, not a broad quality or default-trigger benchmark.
+
+Provider usage for the compaction request: input 3, output 242, cache read 0,
+cache write 135,903. The immediately preceding regular request wrote 185,490
+cache tokens; resumption wrote 62,991 with zero reads. Earlier warm requests in
+the same diagnostic session read 70,358 and 125,407 cache tokens. Observability
+independently identifies runtime 2.0.3 and adapter `opencode-v2@3.38.0`; the native
+export supplies the compaction-request usage. No cache-success or causal-fix
+claim follows from these values. #33471 owns investigation/repair of the context
+versus compaction transform/prefix boundary, with live acceptance retained by
+the parent. Its worker-ready brief is `backlog-v2-cache-brief.md`.
 
 ## Verified external/manual prerequisites
 
@@ -137,3 +158,16 @@ is `@opencode/plugin@2.0.3 -> @opencode/util@2.0.3 -> @npmcli/arborist@9.4.0 ->
 npm-registry-fetch@19.1.1 -> make-fetch-happen@15.0.6 -> http-cache-semantics@4.2.0`.
 This inspected graph and its private-cache policy narrow the exposure assessment;
 the high alert remains open, undismissed and unfixed.
+
+### Dependency remediation, later verified disposition
+
+Issue #33467 / PR #33469 removed the unnecessary V2 SDK identity import and its npm-fetch
+graph while retaining the V1 SDK/schema dependency. Merged as
+`84ce13e94dfb43f8757f14b088897c8693937bfd`; all 46 remaining name/version pairs
+already existed in the original lockfile. Frozen installation and npm audit
+report zero vulnerabilities. Twenty-seven V2 adapter/TUI tests, the V2 setup
+suite, 47 atomic deployment checks, scoped lint and the isolated native V2
+candidate request pass. Independent bounded defect review found no introduced
+P0 at the changed boundaries. GitHub subsequently reports alert 133 as `fixed`,
+and the issue is closed. The historical exposure investigation above is not a
+patch or universal safety assertion; removal is the verified remediation.

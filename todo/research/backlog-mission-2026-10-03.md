@@ -48,6 +48,9 @@ issue disposition, release, and durable continuation.
 | W8 | #31068 / #33457 / #33463 | Full-loop readiness extraction; scoped worker | Gate repair W10 must be merged first | thinking | Merged `b1b35bd87c`; ten function bodies byte-identical; 29 assertions and gates pass |
 | W9 | #33454 / #33455 | Onboarding guide list; parent integration | None | standard | Merged `ae41781bbc`; two list lines only, normal CLI/gates pass |
 | W10 | #33456 / #33458; #33450 | SKIPPED admission; parent integration | None | standard | Fix merged `3bca975837`; 29 assertions pass; TODO PR merged `fa1c15b150` |
+| W11 | #33467 / #33469 | V2 SDK dependency removal; parent integration | None | standard | Merged `84ce13e94dfb`; GitHub dependency alert fixed; 27/47 focused checks and native request pass |
+| W12 | #33471 | V2 compaction stable-prefix boundary; scoped worker | W11; disjoint from W13 | standard | Active local dispatch `manual-cli-33471-1791029638`; parent owns live acceptance/integration |
+| W13 | #33470 | Post-compaction next-action precedence; scoped worker | Disjoint from W12 | standard | Active local dispatch `manual-cli-33470-1791029829`; parent owns live acceptance/integration |
 | A1 | #33278, #32829, #32820, #32523, #32273 | Manual/upstream/runtime reviews; parent | Evidence-specific | standard | OC1 and usage aggregates collected; real OC2 compaction/cache remains active, not inferred blocked |
 | A2 | #33139 | Framework value audit; parent verification | Onboarding residual W9 | thinking | Closed; final observed guide-list residual is merged |
 | R1 | Final release | Canonical publisher lane; parent | All safely solvable units verified | standard | Explicit release authority from current request |
@@ -258,7 +261,7 @@ open by design. A checkpoint is continuation evidence, not mission completion.
   current inventory, commit/publish these mission artifacts, then run the canonical
   authorized release once and verify publication, postflight and exact-tag deployment.
 
-## Current integration and observation checkpoint
+## Integration and observation checkpoint before W11-W13
 
 - #33459 / #33461 merged as `74bdf3df1dab7e144c47aee08c2d65a59ace550b`.
   Follow-on #33464 / #33465 merged as
@@ -286,3 +289,40 @@ open by design. A checkpoint is continuation evidence, not mission completion.
   Publication remains authorized and pending. Finish the bounded V2 probe,
   publish this evidence PR, then invoke the canonical patch release once with
   its complete source snapshot and verify all publication/deployment receipts.
+
+## Continuation checkpoint — 2026-10-03 12:20 UTC
+
+- Original objective remains ACTIVE; final release is authorized and pending.
+- W11 merged as `84ce13e94dfb43f8757f14b088897c8693937bfd`. Exact reviewed head
+  `7f386bb4f3c676aede0185949cf21ea431a44283` passed required/review gates.
+  Canonical synchronization, issue closure and guarded cleanup handoff converged.
+  GitHub reports the dependency alert `fixed`; no guessed override or dismissal.
+- The native V2 diagnostic did complete automatic compaction and marker-preserving
+  resumption. Its compaction had zero cache reads and 135,903 cache writes; cache
+  cause/repair remains open, not a successful cache-reuse criterion. Failed early
+  probes are retained as historical evidence, not current runtime blockers.
+- The refreshed single-session sample has nine first Bash Git revalidations, but
+  the nine literal first tools were housekeeping. One complete first Bash command
+  is present verbatim in its summary; this does not prove first-tool compliance.
+  The old blanket byte-identity wording was corrected in the observation artifact.
+- W12 owns only `v2.mjs` and its adapter test, worktree
+  `aidevops-feature-auto-20261003-121444-gh33471`, launched worker PID 44303.
+  W13 owns `compaction.mjs` and its existing focused test, worktree
+  `aidevops-feature-auto-20261003-121803-gh33470`, launched PID 62386.
+  Those PIDs and claims are point-in-time; revalidate before any side effect.
+  First 60-second launch attempts ended before active dispatch; status confirmed
+  no claim/worker, and bounded 120-second retries registered both real workers.
+  No duplicate worker, source bypass, paid Stagehand call or provider experiment
+  was authorized for either worker. Parent owns runtime evidence, review and merge.
+- #33468 remains the evidence PR for completed #32820 observations. Refresh its
+  proof/body, commit these amendments and briefs, rerun changed-file checks, and
+  resolve the planning gate with its existing `allow-planning-close` label.
+  #32829 remains open until its original review findings are dispositioned.
+- Unchanged external prerequisites: #33278 supported model availability; #32523
+  upstream response/release; #32446 fresh spend authority plus a verified hard
+  pre-inference bound; #32273 operator-approved KVM host and billing/security scope.
+  Four persistent dashboards stay open by design.
+- Next: integrate W12/W13 after risk-appropriate live evidence, complete the
+  manual-review disposition and evidence PR, then invoke one canonical patch
+  release with the complete pinned source manifest. Verify all publication
+  channels, exact-tag deployment, postflight and the terminal receipt.
