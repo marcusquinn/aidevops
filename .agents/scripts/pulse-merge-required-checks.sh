@@ -798,6 +798,42 @@ _pmrc_is_explicit_advisory_failure() {
 	return $?
 }
 
+# Some providers publish a non-required commit status as a quota/usage notice
+# and leave it pending forever (for example Qlty's "qlty usage" at 90%+ of
+# analysis minutes). It reports no code result, so waiting for it can never
+# finish and would wedge every PR on the repository. Only these exact contexts,
+# when published as a single non-required commit status that is still pending,
+# are ignored; required contexts, check runs and terminal failures keep their
+# normal handling (see _pmrc_snapshot_checks_acceptable).
+PMRC_INFORMATIONAL_PENDING_STATUS_CONTEXTS_JSON='["qlty usage"]'
+
+# Emit one TSV row per normalized check: name, informational-pending flag,
+# family, status, conclusion, required, members, link. The flag sits beside
+# the name because IFS tab splitting collapses empty fields (a pending check
+# has an empty conclusion).
+_pmrc_snapshot_check_rows() {
+	local checks_json="$1"
+	local required_json="$2"
+
+	jq -r --argjson required "$required_json" --arg failure "$PMRC_CHECK_FAILURE" \
+		--arg completed "$PMRC_CHECK_COMPLETED" \
+		--argjson informational "$PMRC_INFORMATIONAL_PENDING_STATUS_CONTEXTS_JSON" '.[] | . as $check | ($check.members // [$check]) as $members |
+		((($required | index($check.name)) != null) or any($members[]; .name as $member_name | ($required | index($member_name)) != null)) as $is_required | [
+		$check.name,
+		(($is_required | not) and $check.status != $completed
+			and ($informational | index($check.name)) != null
+			and ($members | length) == 1 and $members[0].source == "commit_status"
+			and $members[0].name == $check.name),
+		($check.family // $check.name),
+		$check.status,
+		$check.conclusion,
+		$is_required,
+		($members | map("\(.name)@\(.source)") | join(",")),
+		($check.link // ([$members[] | select(.conclusion == $failure and (.link // "") != "") | .link] | last) // "")
+	] | @tsv' <<<"$checks_json" 2>/dev/null
+	return $?
+}
+
 _pmrc_actions_incident_blocks_rerun() {
 	local helper="${AIDEVOPS_GH_STATUS_HELPER:-${_PULSE_MERGE_REQUIRED_CHECKS_DIR:-${HOME:+$HOME/.aidevops/agents/scripts}}/gh-status-helper.sh}"
 	local status_rc=0
@@ -930,7 +966,7 @@ _pmrc_snapshot_checks_acceptable() {
 	local required_contexts="$4"
 	local evidence_json="${5:-}"
 	local head_sha="${6:-}"
-	local required_json="" configured_contexts_json="" rows="" name="" family="" status="" conclusion="" required="" members="" link=""
+	local required_json="" configured_contexts_json="" rows="" name="" informational="" family="" status="" conclusion="" required="" members="" link=""
 	local blocking_names=""
 	local blockers=0 pending=0 advisory=0
 	_PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON="[]"
@@ -942,16 +978,8 @@ _pmrc_snapshot_checks_acceptable() {
 			"configured advisory-context lookup"
 		return 1
 	}
-	rows=$(jq -r --argjson required "$required_json" --arg failure "$PMRC_CHECK_FAILURE" '.[] | . as $check | ($check.members // [$check]) as $members | [
-		$check.name,
-		($check.family // $check.name),
-		$check.status,
-		$check.conclusion,
-		((($required | index($check.name)) != null) or any($members[]; .name as $member_name | ($required | index($member_name)) != null)),
-		($members | map("\(.name)@\(.source)") | join(",")),
-		($check.link // ([$members[] | select(.conclusion == $failure and (.link // "") != "") | .link] | last) // "")
-	] | @tsv' <<<"$checks_json" 2>/dev/null) || return 1
-	while IFS=$'\t' read -r name family status conclusion required members link; do
+	rows=$(_pmrc_snapshot_check_rows "$checks_json" "$required_json") || return 1
+	while IFS=$'\t' read -r name informational family status conclusion required members link; do
 		[[ -n "$name" ]] || continue
 		if [[ "$family" == "$PMRC_MAINTAINER_GATE" && "$conclusion" == "$PMRC_CHECK_FAILURE" ]]; then
 			if declare -F _ci_check_url_has_infra_failure_log >/dev/null 2>&1 &&
@@ -966,6 +994,10 @@ _pmrc_snapshot_checks_acceptable() {
 			continue
 		fi
 		if [[ "$status" != "$PMRC_CHECK_COMPLETED" || -z "$conclusion" ]]; then
+			if [[ "$informational" == "$PMRC_BOOL_TRUE" ]]; then
+				echo "[pulse-merge] pre-merge snapshot: IGNORED non-required informational pending status '${name}' for PR #${pr_number} in ${repo_slug} — it never reaches a terminal state" >>"$LOGFILE"
+				continue
+			fi
 			pending=$((pending + 1))
 			continue
 		fi

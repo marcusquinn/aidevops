@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.38.4] - 2026-10-03
+
+### Changed
+
+- Documentation: add Quick Setup onboarding section to README
+- Documentation: use primary-session release fallback in OpenCode (#33490)
+
+### Fixed
+
+- safely parse Hostinger helper command arguments (#33489)
+
 ## [3.38.3] - 2026-10-03
 
 ### Changed
