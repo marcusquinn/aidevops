@@ -5,7 +5,7 @@
 
 ## Compaction and usage: #32829 / #32820
 
-- Read-only current OC1 aggregate query in `backlog-session-review.sql` returns
+- The earlier default-DB OC1 query in `backlog-session-review.sql` returned
   12 recent summaries, all 12 with the five host headings, 11 with explicit
   continuation, 11 with the specifically bold status spelling and all 12 with a
   next-move status. Bold spelling alone is not a semantic quality verdict.
@@ -31,12 +31,80 @@
   default 240K trigger already fires first. No observed defect justifies adding
   lower-threshold advisory noise or changing the existing tested contract.
 
-Remaining review criteria: inspect at least one real summary/resumed-action pair
-semantically; report model-matched session/request cost and compaction-frequency
-comparison with limitations; verify real V2 compaction cache read/write. Current
-V2 2.0.3 provenance identifies ordinary usage but contains no qualifying
-compaction/cache observation. These remain executable work, not presumed external
-blockers, and both manual review issues stay open pending disposition.
+### Current-session semantic review
+
+The active project-isolated OC1 DB contains seven real auto-compactions in this
+mission on October 3, from 03:17 to 08:45 UTC. The four newest summaries retain
+both quoted aims: resolve safely solvable backlog work and publish the authorized
+release; continue while safe next steps remain. Both retain `active` status.
+No dropped aim was found in this four-summary spot check; this is not a verdict
+on every session or an outcome-quality benchmark.
+
+All seven first resumed Bash actions begin with `git status --short --branch`,
+matching the recorded revalidation step. For example, the 08:45 summary's first
+Bash command is byte-identical to its recorded inventory command. The first tool
+overall can instead be TodoWrite or bounded-operation housekeeping. Therefore,
+the literal first-tool criterion in #32829 is not proved merely by the first-Bash
+result. The reusable SQL now bounds its sample to 2000 recently inserted messages
+and explicitly instructs the operator to use the active project DB.
+
+The refreshed 12-summary bounded sample has all five headings in 12/12 and
+explicit continuation in 12/12; 11/12 use the specifically bold status spelling.
+Its first tools are TodoWrite (5), Bash (3), bounded operation (2), Memory (1)
+and Read (1). Seven first Bash actions revalidate Git. These are aggregate
+format/action counts, separate from the four-summary semantic spot check.
+
+### Model-matched cost and compaction frequency
+
+Read-only request data since September 26, with no recorded parent session, is
+grouped by session/version slice and its most-used non-compaction model. Costs
+and compactions include all models in that slice, including cheaper summarizers.
+This avoids attributing only Opus summarizer rows to Opus-led sessions.
+
+| Version | Dominant model | Slices | Requests | Compactions | Estimated $/slice | Estimated $/request | Compactions/100 requests |
+|---|---|---:|---:|---:|---:|---:|---:|
+| 3.37.15 | Opus 5.5 | 6 | 1501 | 4 | 29.0002 | 0.1159 | 0.266 |
+| 3.37.18 | Opus 5.5 | 3 | 425 | 2 | 6.5634 | 0.0463 | 0.471 |
+| 3.37.22 | Opus 5.5 | 7 | 2549 | 22 | 22.9833 | 0.0631 | 0.863 |
+| 3.38.0 | Opus 5.5 | 20 | 5396 | 32 | 15.4646 | 0.0573 | 0.593 |
+
+Sonnet is not adequately matched: the baseline has three Sonnet 5 slices and
+77 requests, while later observed slices are Sonnet 5.5 (five/159 in 3.37.22;
+two/four in 3.38.0). Do not compare those as a controlled same-model trial.
+The Opus observations show lower locally estimated cost per request and more
+frequent compaction, not proof of the replay's projected savings. Slice duration,
+task mix, routing, summarizer model and request mix differ; a slice is not a
+complete session, list-price estimates are not invoices, and unrecorded parent
+metadata cannot establish a purely interactive cohort.
+
+### Routing decision and review disposition
+
+The round-robin observation was superseded by the maintainer's October 1 decision
+in #32539: end the A/B early, use OpenAI-primary with `round_robin: false`, and
+retain Anthropic as availability fallback. #33342 / #33347 delivered that policy.
+Live mixed-provider dispatch is verified; continued index alternation is neither
+the current requirement nor grounds for changing the user's routing again.
+
+The observational checks for #32820 are complete with the limitations above. Retain
+the advisory thresholds unchanged and make no causal saving claim. #32829's V2
+compaction/cache criterion remains open until an actual completed compaction and
+resumed request have provider cache-read/write evidence.
+
+### V2 probe evidence
+
+The marker-only V2 2.0.3 requests returned the marker but do not establish
+compaction. Manual compaction failed with `Agent not found: Build+`; the private
+API agent list returned no registered agents. A separate owned service probe
+returned HTTP 401 at health and was stopped without changing authentication.
+The installed V2 schema uses `agents`, `system` and permission-rule arrays,
+not V1's `agent`, `prompt` and string `permission`. Both deployed and source
+framework profile loaders independently return 16 primaries including Build+;
+that source result alone does not establish native private-server registration.
+Both the inline-config and explicit-config-file private-server probes still
+return zero native agents; their registration preconditions fail before any
+additional model request. They do not test compaction or prove a framework
+source defect. Preserve the failed evidence and establish working native agent
+registration plus retained framework hooks before any positive cache claim.
 
 ## Verified external/manual prerequisites
 
@@ -63,3 +131,9 @@ with `no-store`. This inspected private npm-fetch path does not establish the
 advisory's shared-server exposure; it is not proof that every consumer is safe.
 Do not guess a version override, dismiss the alert, or claim the vulnerability
 fixed. Reassess consumer paths and upstream patch availability before remediation.
+
+Revalidation still lists no first patched version. The installed dependency path
+is `@opencode/plugin@2.0.3 -> @opencode/util@2.0.3 -> @npmcli/arborist@9.4.0 ->
+npm-registry-fetch@19.1.1 -> make-fetch-happen@15.0.6 -> http-cache-semantics@4.2.0`.
+This inspected graph and its private-cache policy narrow the exposure assessment;
+the high alert remains open, undismissed and unfixed.

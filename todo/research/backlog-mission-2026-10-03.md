@@ -45,7 +45,7 @@ issue disposition, release, and durable continuation.
 | W5 | #28838 / #33327 / #33449 | Headless library canary extraction; scoped worker | Disjoint from W2's explicit files | thinking | Merged `183e65abec`; original 1966 lines, module 366; debt and duplicate consolidation closed |
 | W6 | #33292 / #33441 | Browser-QA layout/viewport journey; parent verification | Supersedes closed #33436 | standard | Merged `a04b3b03bb5a`; 26 real-browser checks independently pass |
 | W7 | #32619 / #33440; #32622 / #33439 | OC2 observability; tool descriptions | P4/P5/P8 (plugin files) | standard | OC2 merged `f157e301057b`; descriptions merged `9c574f0d73`, live 467-token saving verified |
-| W8 | #31068 / #33457 / #33463 | Full-loop readiness extraction; scoped worker | Gate repair W10 must be merged first | thinking | Live session `manual-cli-33463-1791013816`; parent integration pending |
+| W8 | #31068 / #33457 / #33463 | Full-loop readiness extraction; scoped worker | Gate repair W10 must be merged first | thinking | Merged `b1b35bd87c`; ten function bodies byte-identical; 29 assertions and gates pass |
 | W9 | #33454 / #33455 | Onboarding guide list; parent integration | None | standard | Merged `ae41781bbc`; two list lines only, normal CLI/gates pass |
 | W10 | #33456 / #33458; #33450 | SKIPPED admission; parent integration | None | standard | Fix merged `3bca975837`; 29 assertions pass; TODO PR merged `fa1c15b150` |
 | A1 | #33278, #32829, #32820, #32523, #32273 | Manual/upstream/runtime reviews; parent | Evidence-specific | standard | OC1 and usage aggregates collected; real OC2 compaction/cache remains active, not inferred blocked |
@@ -257,3 +257,32 @@ open by design. A checkpoint is continuation evidence, not mission completion.
   original unmet criteria, integrate W8 after exact-head review, reconcile the
   current inventory, commit/publish these mission artifacts, then run the canonical
   authorized release once and verify publication, postflight and exact-tag deployment.
+
+## Current integration and observation checkpoint
+
+- #33459 / #33461 merged as `74bdf3df1dab7e144c47aee08c2d65a59ace550b`.
+  Follow-on #33464 / #33465 merged as
+  `6b1b893f67a8a9eab54361202950f619e8fea6f6`; both scope-close checks pass.
+- #33463 / #33466 merged as `b1b35bd87c1ed08dd15b4946efa62f168e583cd4`.
+  Parent proved all ten extracted function bodies byte-identical. The parent
+  shrank 2362 to 1886 lines; the sibling is 514 lines. Syntax, ShellCheck,
+  the 29-assertion remote-evidence suite, efficient-orchestration suite,
+  scoped lint and exact-head merge gates pass. No worker remains active here.
+- TODO-only PRs #33460 and #33462 merged as `ca5f36870c56` and `cab5b2f45e2f`.
+- Current inventory is six follow-up issues plus four persistent dashboards,
+  with no open PRs. Re-query before publication or another issue mutation.
+- #32820's observation review now includes four current auto-compaction summary
+  spot checks, seven resumed Git revalidations, model-matched request-cost and
+  compaction-frequency data, and the superseding maintainer routing decision.
+  Its limitations and completion rationale are in the observation artifact.
+- #32829 is not complete: standalone V2 registration and actual compaction/cache
+  evidence must be established, and first-tool housekeeping is distinguished
+  from the observed first Bash action. Failed marker/service probes are not
+  acceptance evidence. No auth or permission gate was weakened.
+- Dependabot alert 133 remains high and open, without a patched version. The
+  installed npm-fetch graph uses a private-cache policy; no universal safety,
+  patch, dismissal or remediation claim is made.
+- Release lane revalidation is inactive at terminal `v3.38.0`, source #33411.
+  Publication remains authorized and pending. Finish the bounded V2 probe,
+  publish this evidence PR, then invoke the canonical patch release once with
+  its complete source snapshot and verify all publication/deployment receipts.
