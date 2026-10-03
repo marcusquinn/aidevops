@@ -119,7 +119,7 @@ _read_cache_issues_for_slug() {
 	[[ -n "$last_prefetch" ]] || return 1
 
 	# Convert ISO8601 to epoch — cross-platform (macOS/Linux), Bash 3.2 compat
-	local last_epoch now_epoch age_secs
+	local last_epoch=0 now_epoch=0 age_secs=0
 	if [[ "$(uname)" == "Darwin" ]]; then
 		last_epoch=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$last_prefetch" "+%s" 2>/dev/null) || return 1
 	else
@@ -297,7 +297,7 @@ _normalize_get_feedback_routed_rows() {
 
 	[[ -n "$_avail_candidates" ]] || return 0
 
-	local _pair _cand_num _has_label _cand_body
+	local _pair="" _cand_num="" _has_label="" _cand_body=""
 	while IFS= read -r _pair; do
 		_cand_num="${_pair%%|*}"
 		_has_label="${_pair##*|}"
@@ -359,7 +359,7 @@ _normalize_get_stale_feedback_interactive_rows() {
 
 	[[ -n "$_stale_candidates" ]] || return 0
 
-	local _pair _cand_num _has_label _assignees _cand_body
+	local _pair="" _cand_num="" _has_label="" _assignees="" _cand_body=""
 	while IFS= read -r _pair; do
 		_cand_num="${_pair%%|*}"
 		_has_label="${_pair#*|}"
@@ -615,7 +615,7 @@ _normalize_reassign_self() {
 		local _repo_start=$SECONDS _repo_gh_calls=0
 		local _repo_timing="substage:normalize/reassign_self/repo:${slug//\//-}:direct_gh_calls="
 
-		local issue_rows issue_rows_json issue_rows_err
+		local issue_rows="" issue_rows_json="" issue_rows_err=""
 		issue_rows_err=$(mktemp)
 		# t2773: route through gh_issue_list wrapper (REST fallback on rate-limit exhaustion)
 		_repo_gh_calls=$((_repo_gh_calls + 1))
@@ -809,7 +809,7 @@ _normalize_unassign_stampless_interactive() {
 		# Flatten slug to stamp-file prefix: "owner/repo" → "owner-repo"
 		local slug_flat="${slug//\//-}"
 
-		local issue_num stamp
+		local issue_num="" stamp=""
 		while IFS= read -r issue_num; do
 			[[ "$issue_num" =~ ^[0-9]+$ ]] || continue
 			stamp="${stamp_dir}/${slug_flat}-${issue_num}.json"
@@ -976,7 +976,7 @@ normalize_active_issue_assignments() {
 #######################################
 _reconcile_labelless_slug() {
 	local slug="$1" issue_sync_helper="$2"
-	local issues_json _cache_issues_lia
+	local issues_json="" _cache_issues_lia=""
 	if _cache_issues_lia=$(_read_cache_issues_for_slug "$slug" 2>/dev/null); then
 		issues_json=$(printf '%s' "$_cache_issues_lia" | jq -c '.[0:50]' 2>/dev/null) || issues_json="[]"
 	else
@@ -998,7 +998,7 @@ _reconcile_labelless_slug() {
 	[[ "$cand_count" -gt 0 ]] || return 0
 	local i=0
 	while [[ "$i" -lt "$cand_count" ]]; do
-		local num title body
+		local num="" title="" body=""
 		num=$(printf '%s' "$candidates" | jq -r --argjson i "$i" '.[$i].number // ""')
 		title=$(printf '%s' "$candidates" | jq -r --argjson i "$i" '.[$i].title // ""')
 		body=$(printf '%s' "$candidates" | jq -r --argjson i "$i" '.[$i].body // ""')
@@ -1250,7 +1250,7 @@ This comment is idempotent; the HTML sentinel prevents duplicates on subsequent 
 		sed 's/,$//' || echo "")
 
 	# Compose label-add args (internal vs external path, t2450)
-	local labels_csv_lia comment_template_use
+	local labels_csv_lia="" comment_template_use=""
 	_lia_apply_labels "$slug" "$issue_num" "$body_tags" "$is_external" "$reported_origin" || return 1
 
 	# Wire sub-issue parent link (t2114)
@@ -1489,7 +1489,7 @@ reconcile_issues_single_pass() {
 		#   number, title, labels, updatedAt, assignees, body plus
 		#   authorAssociation/author trust metadata from canonical snapshots.
 		#   Legacy/fallback rows without trust metadata block lifecycle actions.
-		local issues_json _cache_issues_sp
+		local issues_json="" _cache_issues_sp=""
 		if _cache_issues_sp=$(_read_cache_issues_for_slug "$slug" 2>/dev/null); then
 			issues_json="$_cache_issues_sp"
 		else
