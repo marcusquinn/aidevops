@@ -54,6 +54,8 @@ Commands:
   prune [--dry-run] [--force] [--retention-days N]
       Remove only acknowledged/restored backups that are terminal or stale.
       Dry-run is the default; --dry-run always overrides --force.
+  delete --backup ID --confirm DELETE_DIRTY_WORKTREE_BACKUP [--dry-run]
+      Remove one acknowledged/restored backup (no .keep marker) by ID.
 
 Environment:
   AIDEVOPS_DIRTY_BACKUP_ROOT            Override backup directory.
@@ -1102,6 +1104,62 @@ cmd_prune() {
 	return 0
 }
 
+cmd_delete() {
+	local backup_id=""
+	local confirmation=""
+	local dry_run=false
+	while [[ $# -gt 0 ]]; do
+		local arg="$1"
+		case "$arg" in
+		--backup)
+			backup_id="${2:-}"
+			shift 2
+			;;
+		--confirm)
+			confirmation="${2:-}"
+			shift 2
+			;;
+		--dry-run)
+			dry_run=true
+			shift
+			;;
+		*)
+			print_error "Unknown delete option: $arg"
+			return 1
+			;;
+		esac
+	done
+	[[ "$confirmation" == "DELETE_DIRTY_WORKTREE_BACKUP" ]] || {
+		print_error "delete requires --confirm DELETE_DIRTY_WORKTREE_BACKUP"
+		return 1
+	}
+	local backup_dir=""
+	local state=""
+	backup_dir=$(resolve_backup_dir "$backup_id") || {
+		print_error "Unknown or invalid backup ID"
+		return 1
+	}
+	if [[ -f "$backup_dir/.keep" ]]; then
+		print_error "Refusing to delete backup with .keep marker: $backup_id"
+		return 1
+	fi
+	state=$(manifest_value "$backup_dir/manifest.tsv" state)
+	case "$state" in
+	acknowledged | restored) ;;
+	*)
+		print_error "Refusing to delete backup in state '${state}' (must be acknowledged or restored): $backup_id"
+		return 1
+		;;
+	esac
+	if [[ "$dry_run" == true ]]; then
+		remove_backup_dir "$backup_dir" false "explicit delete" || return 1
+		return 0
+	fi
+	remove_backup_dir "$backup_dir" true "explicit delete" || return 1
+	[[ ! -d "$backup_dir" ]] || return 1
+	return 0
+}
+
 main() {
 	local command_name="${1:-help}"
 	[[ $# -eq 0 ]] || shift
@@ -1140,6 +1198,10 @@ main() {
 		;;
 	prune)
 		cmd_prune "$@"
+		return $?
+		;;
+	delete)
+		cmd_delete "$@"
 		return $?
 		;;
 	help | --help | -h)
