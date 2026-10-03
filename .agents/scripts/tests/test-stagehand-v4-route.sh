@@ -17,6 +17,11 @@ if HOME="$TEST_HOME" bash "$HELPER" status >/dev/null 2>&1; then
 	exit 1
 fi
 
+if HOME="$TEST_HOME" bash "$HELPER" probe live >/dev/null 2>&1; then
+	printf 'Uninstalled Stagehand v4 must refuse live probe\n' >&2
+	exit 1
+fi
+
 INSTALL_DIR="${TEST_HOME}/.aidevops/stagehand-v4"
 mkdir -p "${INSTALL_DIR}/node_modules/@browserbasehq/stagehand" "${INSTALL_DIR}/node_modules/zod"
 printf '{"version":"4.1.0"}\n' >"${INSTALL_DIR}/node_modules/@browserbasehq/stagehand/package.json"
@@ -24,10 +29,6 @@ printf '{"version":"4.4.3"}\n' >"${INSTALL_DIR}/node_modules/zod/package.json"
 HOME="$TEST_HOME" bash "$HELPER" status >/dev/null
 
 [[ -f "$PROBE_SOURCE" ]] || exit 1
-if HOME="$TEST_HOME" bash "$HELPER" probe live >/dev/null 2>&1; then
-	printf 'Uninstalled Stagehand v4 must refuse live probe\n' >&2
-	exit 1
-fi
 
 assert_probe() {
 	local fixture="$1" cap="$2" expected="$3" output
