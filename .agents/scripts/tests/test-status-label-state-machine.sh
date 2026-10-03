@@ -118,12 +118,8 @@ STUBEOF
 	return 0
 }
 
-write_stub_gh() {
-	: >"$GH_CALLS_FILE"
-	cat >"${STUB_DIR}/gh" <<'STUBEOF'
-#!/usr/bin/env bash
-# Stub gh for test-status-label-state-machine.sh — records all calls.
-printf '%s\n' "$*" >>"${GH_CALLS_FILE}"
+append_stub_gh_labels() {
+	cat >>"${STUB_DIR}/gh" <<'STUBEOF'
 if [[ "${1:-}" == "api" && "${2:-}" == "graphql" ]]; then
 	[[ "${STUB_LABEL_LIST_FAIL:-0}" == "1" ]] && exit 1
 	case "${STUB_LABEL_MODE:-exact}" in
@@ -151,6 +147,19 @@ if [[ "${1:-}" == "api" && "${2:-}" == "graphql" ]]; then
 		{data: {repository: .}}'
 	exit 0
 fi
+STUBEOF
+	return 0
+}
+
+write_stub_gh() {
+	: >"$GH_CALLS_FILE"
+	cat >"${STUB_DIR}/gh" <<'STUBEOF'
+#!/usr/bin/env bash
+# Stub gh for test-status-label-state-machine.sh — records all calls.
+printf '%s\n' "$*" >>"${GH_CALLS_FILE}"
+STUBEOF
+	append_stub_gh_labels
+	cat >>"${STUB_DIR}/gh" <<'STUBEOF'
 if [[ "${1:-}" == "api" && "${2:-}" == /repos/*/issues/[0-9]* ]]; then
 	[[ "${STUB_ISSUE_GET_FAIL:-0}" == "1" ]] && exit 1
 	if [[ "${STUB_STATEFUL_ISSUE:-0}" == "1" && -f "${ISSUE_STATE_FILE}" ]]; then
