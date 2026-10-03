@@ -1537,6 +1537,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18555 fix(dispatch-dedup): merged-PR keyword check ignores issue reopen, permanently blocking reopened issues #auto-dispatch #bug ref:GH#33071 pr:#33080 completed:2026-09-29
 
+- [ ] t18585 docs: refresh stale README hero and inventory counts #auto-dispatch #documentation ref:GH#33501 -> [todo/tasks/t18585-brief.md]
+
 ## In Progress
 
 - [x] t18478 Repair Anthropic Opus 5.5 OAuth adaptive-thinking request shape and add opt-in local interactive model/effort defaults without changing shared routes. Verify medium/xhigh Read-tool calls, unpinned OpenCode selection, focused plugin tests and changed-file lint; publish the reviewed fix through full-loop release. #bugfix #framework #auth #interactive #auto-dispatch ~2h tier:standard started:2026-09-26 ref:GH#32415 logged:2026-09-26 pr:#32417 testing:runtime-verified release:v3.36.0 completed:2026-09-26 -> [todo/tasks/t18478-brief.md]
@@ -5091,5 +5093,3 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t18582 Extend macOS indexing/backup audit with dev churn paths and exclusion coverage #enhancement ref:GH#33398 pr:#33401 completed:2026-10-03
 
 - [ ] to1js8zy8ag99c0gfcn6b16zqrqa-50 Add blind reviewer packets and final requirements acceptance review #auto-dispatch #enhancement ref:GH#33459
-
-- [ ] t18584 fix(pulse): never-terminal 'qlty usage' pending status wedges pulse auto-merge #bug ref:GH#33495
