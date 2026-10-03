@@ -39,6 +39,14 @@ tools:
 
 <!-- AI-CONTEXT-END -->
 
+## Pre-change server backups
+
+Before changing a site, store server-side backups (settings JSON, database dumps,
+and copies of `wp-config.php` or `.htaccess`) in `~/backups/`, verified to be
+outside the web root. Use directory mode `700` and file mode `600`. Never put
+backups under `public_html`, `wp-content/uploads`, or any other web-served path;
+web-server or security-plugin blocking is not a substitute for private storage.
+
 ## Composer-Based WordPress (Bedrock)
 
 Prefer [WP Composer](https://wp-composer.com/) over WPackagist (acquired by WP Engine, March 2024). Packages: `wp-plugin/{slug}`, `wp-theme/{slug}`. Setup: `composer config repositories.wp-composer composer https://repo.wp-composer.com`. Migration: [guide](https://wp-composer.com/wp-composer-vs-wpackagist) | [script](https://github.com/roots/wp-composer/blob/main/scripts/migrate-from-wpackagist.sh)
