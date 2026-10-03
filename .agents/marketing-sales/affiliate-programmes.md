@@ -65,6 +65,11 @@ Every observation carries `version:1`, `kind`, opaque `id`, stable `programme`,
 explicit `region` and `stage` (`network` or `merchant`), timezone-aware
 `observed_at`, and a public `source_url`. IDs must not contain personal identifiers.
 Use sanitized source destinations, never verification URLs/tokens or raw screenshots.
+`programme` observations retain opaque merchant/network identities, observed signup
+and dashboard destinations, requested requirements and unknown later stages.
+`account.deadline_at` records an evidenced renewal/review deadline, never a guessed
+reminder. Link restrictions use enumerated channel/placement limits; unknown remains
+unknown. Canonical observations are bounded to 64 KiB before commit.
 
 Example **generic** legacy link observation (no approval implied):
 
@@ -92,7 +97,10 @@ Queries replay canonical bytes, so interrupted projection writes cannot lose fac
 Reimport is idempotent. Rebuild preserves raw evidence. Files/directories are
 0600/0700; insecure modes, symlinks, foreign corpus IDs and unsupported versions
 fail closed. The exclusive lock spans replay, transition validation and atomic
-raw commit. Uninstall never deletes knowledge; deletion needs independent scope.
+raw commit; busy writers fail immediately without external actions. Uninstall never
+deletes knowledge; deletion needs independent scope. Imported confirmations are
+trusted local observations of inspected evidence, not independently verified
+provider receipts or permission to enable a live adapter.
 
 ## Signup checkpoints
 

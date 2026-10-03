@@ -255,8 +255,9 @@ class AffiliateTests(unittest.TestCase):
             with self.assertRaises(OSError):
                 self.ledger.append(self.record())
         self.assertEqual(len(self.ledger.replay()), 1)
-        self.assertEqual(self.ledger.rebuild(), 1)
         self.ledger.append(self.record())
+        self.assertTrue(self.ledger.index.is_file())
+        self.assertEqual(self.ledger.rebuild(), 1)
         self.assertEqual(len(self.ledger.replay()), 1)
 
     def test_access_limited_and_wrong_product_links(self):
@@ -291,6 +292,19 @@ class AffiliateTests(unittest.TestCase):
         with self.assertRaises(AffiliateError):
             self.ledger.append(self.record(identifier="link-002"))
         self.assertEqual(len(self.ledger.replay()), 1)
+
+    def test_oversized_observation_refused_before_commit(self):
+        with self.assertRaises(AffiliateError):
+            self.ledger.append(self.record(restrictions=["unknown"] * 10000))
+        self.assertEqual(self.ledger.replay(), [])
+
+    def test_malformed_projection_outputs_sanitized_refusal(self):
+        self.ledger.index.write_text("[]")
+        self.ledger.index.chmod(0o600)
+        result = self.cli("rebuild")
+        self.assertEqual(result.returncode, 1)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertEqual(result.stdout, "")
 
 
 if __name__ == "__main__":

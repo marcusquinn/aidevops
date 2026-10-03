@@ -309,7 +309,10 @@ class Ledger:
                          0o600, dir_fd=directory)
             try:
                 private_stat(os.fstat(fd))
-                fcntl.flock(fd, fcntl.LOCK_EX)
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError as error:
+                    raise AffiliateError("affiliate writer is busy; no action executed") from error
                 self._check_projection_version()
                 yield
             finally:
@@ -335,7 +338,8 @@ class Ledger:
                 if name != digest + ".json":
                     raise AffiliateError("evidence integrity mismatch")
                 envelope = json.loads(payload)
-                if (set(envelope) != {"version", "corpus_id", "sequence", "record"}
+                if (not isinstance(envelope, dict)
+                        or set(envelope) != {"version", "corpus_id", "sequence", "record"}
                         or type(envelope["version"]) is not int or envelope["version"] != 1
                         or envelope["corpus_id"] != self.corpus
                         or type(envelope["sequence"]) is not int):
@@ -360,12 +364,15 @@ class Ledger:
             events = self.replay()
             for event in events:
                 if event["record"] == record:
+                    self._projection(events)
                     return event
             from affiliate_signup import validate_transition
             validate_transition(events, record)
             envelope = {"version": 1, "corpus_id": self.corpus,
                         "sequence": len(events) + 1, "record": record}
             payload = canonical_json(envelope).encode()
+            if len(payload) > 65536:
+                raise AffiliateError("affiliate observation exceeds bounded size")
             digest = hashlib.sha256(payload).hexdigest()
             atomic(self.raw / (digest + ".json"), payload)
             self._projection(self.replay())
@@ -377,7 +384,8 @@ class Ledger:
                 projection = json.loads(read_private(self.index.name, directory, maximum=8388608))
             except FileNotFoundError:
                 return
-        if (projection.get("version") != 1 or projection.get("corpus_id") != self.corpus):
+        if (not isinstance(projection, dict) or type(projection.get("version")) is not int
+                or projection["version"] != 1 or projection.get("corpus_id") != self.corpus):
             raise AffiliateError("unsupported or cross-corpus affiliate projection")
 
     def _projection(self, events: list[dict]) -> None:
