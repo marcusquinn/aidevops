@@ -170,8 +170,8 @@ api_call() {
 main() {
     # Assign positional parameters to local variables
     local command="${1:-help}"
-    local param2="$2"
-    local param3="$3"
+    local param2="${2:-}"
+    local param3="${3:-}"
 
     # Main command handler
     case "$command" in
@@ -179,12 +179,24 @@ main() {
         list_sites
         ;;
     "connect")
+        if [[ -z "$param2" ]]; then
+            print_error "Usage: connect [site]"
+            return 1
+        fi
         connect_site "$param2"
         ;;
     "exec")
+        if [[ -z "$param2" || -z "$param3" ]]; then
+            print_error "Usage: exec [site] [command]"
+            return 1
+        fi
         exec_on_site "$param2" "$param3"
         ;;
     "api")
+        if [[ -z "$param2" ]]; then
+            print_error "Usage: api [endpoint]"
+            return 1
+        fi
         api_call "$param2"
         ;;
     "help"|"-h"|"--help"|"")
