@@ -61,7 +61,7 @@ runner, or suite requires an explicit request.
 
 **Playground** (instant, no Docker, ephemeral): `npx @wp-playground/cli server --port=8888 --blueprint=blueprint.json`. Blueprint steps: `defineWpConfigConsts`, `installPlugin`, `enableMultisite`. [Docs](https://wordpress.github.io/wordpress-playground/blueprints). *Flaky in CI.*
 
-**LocalWP** (5-10 min, full persistence, no Docker): Sites at `~/Local Sites/`. WP-CLI: `/Applications/Local.app/Contents/Resources/extraResources/bin/wp-cli.phar`
+**LocalWP** (5-10 min, full persistence, no Docker): Sites at `~/Local Sites/` by default; the actual paths are the `"path"` entries in `~/Library/Application Support/Local/sites.json`. WP-CLI: `/Applications/Local.app/Contents/Resources/extraResources/bin/wp-cli.phar`. Local's PHP defaults (OPcache 128 MB, `memory_limit` 256M, 2 workers) are too small for many-plugin test sites: size them first (`localwp.md` → "Site PHP resources").
 
 **wp-env** (2-5 min, Docker, CI-ready): `wp-env start` (`npm install -g @wordpress/env`), `wp-env run cli wp plugin list`, `wp-env run tests-cli phpunit`. Config `.wp-env.json`:
 
