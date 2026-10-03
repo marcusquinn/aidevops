@@ -61,8 +61,8 @@ for rule in policy["rules"]:
         suffix = path.relative_to(source / rule["root"]).as_posix()
         suffix = rule.get("rename", {}).get(suffix, suffix)
         suffix = suffix.removeprefix("references/")
-        if rule.get("rename_readme"):
-            suffix = suffix.removesuffix("/README.md") + (".md" if suffix.endswith("/README.md") else "")
+        if rule.get("rename_readme") and suffix.endswith("/README.md"):
+            suffix = suffix.removesuffix("/README.md") + ".md"
         if suffix == "SKILL.md" or suffix == "index.md":
             suffix = ""
         suffix = suffix.removesuffix(".md").replace("/", "-").lower()
@@ -93,9 +93,10 @@ def transpose(text, relative, destination):
         resolved = posixpath.normpath(posixpath.join(posixpath.dirname(relative), path))
         if resolved in aliases:
             href = posixpath.relpath(aliases[resolved], posixpath.dirname(destination))
-            return "(" + href + (separator + fragment if separator else "") + ")"
-        # Trimmed references remain readable upstream, never become broken local links.
-        return "(" + entry["upstream_url"] + "/blob/" + (commit or entry["upstream_commit"]) + "/" + resolved + (separator + fragment if separator else "") + ")"
+        else:
+            # Trimmed references stay readable upstream instead of breaking locally.
+            href = f'{entry["upstream_url"]}/blob/{commit or entry["upstream_commit"]}/{resolved}'
+        return f"({href}{separator}{fragment})"
     text = re.sub(r"\(([^\s()]+\.md(?:#[^\s()]*)?)\)", link, text)
     lines, fenced = [], False
     for line in text.splitlines():
