@@ -110,39 +110,33 @@ function transportOutputLimit(maxTokens: number): number {
 
 function runtimeFailure(result: CommandResult, tier: CanonicalResearchTier): ResearchRuntimeError {
   const diagnostic = `${result.stdout}\n${result.stderr}`.toLowerCase()
-  if (/no (configured |available )?model|failed to resolve[^\n]*model/.test(diagnostic)) {
-    return new ResearchRuntimeError(
-      "MODEL_RESOLUTION_FAILED",
-      `No configured OpenCode model is available for the ${tier} tier. ` +
-        "Authenticate a supported provider or update the canonical routing table.",
-    )
+  let code: ConstructorParameters<typeof ResearchRuntimeError>[0] = "RUNTIME_FAILED"
+  let message = `OpenCode research failed for the ${tier} tier. Retry the query or inspect ` +
+    "credential-free OpenCode runtime diagnostics."
+
+  if (/public triage provider authentication unavailable|triage-provider-auth-unsupported|model not found: anthropic\//.test(diagnostic)) {
+    code = "AUTH_FAILED"
+    message = `The isolated OpenCode runtime cannot authenticate the Anthropic OAuth provider for the ${tier} tier. ` +
+      "Pure public triage does not load the provider-auth plugin; select a provider with native authentication."
+  } else if (/no (configured |available )?model|failed to resolve[^\n]*model/.test(diagnostic)) {
+    code = "MODEL_RESOLUTION_FAILED"
+    message = `No configured OpenCode model is available for the ${tier} tier. ` +
+      "Authenticate a supported provider or update the canonical routing table."
+  } else if (/unauthori[sz]ed|authentication|credential|no auth|sign in|http 401|http 403/.test(diagnostic)) {
+    code = "AUTH_FAILED"
+    message = `OpenCode could not authenticate an available provider for the ${tier} tier. ` +
+      "Run `opencode auth` for a supported provider and retry."
+  } else if (/provider[^\n]*(not found|unsupported|unavailable|disabled)|no available provider/.test(diagnostic)) {
+    code = "PROVIDER_FAILED"
+    message = `OpenCode could not run an available provider for the ${tier} tier. ` +
+      "Check provider availability and canonical routing, then retry."
+  } else if (/model[^\n]*(not found|unsupported|unavailable)/.test(diagnostic)) {
+    code = "MODEL_FAILED"
+    message = `OpenCode could not run an available model for the ${tier} tier. ` +
+      "Check the canonical routing table and configured provider models."
   }
-  if (/unauthori[sz]ed|authentication|credential|no auth|sign in|http 401|http 403/.test(diagnostic)) {
-    return new ResearchRuntimeError(
-      "AUTH_FAILED",
-      `OpenCode could not authenticate an available provider for the ${tier} tier. ` +
-        "Run `opencode auth` for a supported provider and retry.",
-    )
-  }
-  if (/provider[^\n]*(not found|unsupported|unavailable|disabled)|no available provider/.test(diagnostic)) {
-    return new ResearchRuntimeError(
-      "PROVIDER_FAILED",
-      `OpenCode could not run an available provider for the ${tier} tier. ` +
-        "Check provider availability and canonical routing, then retry.",
-    )
-  }
-  if (/model[^\n]*(not found|unsupported|unavailable)/.test(diagnostic)) {
-    return new ResearchRuntimeError(
-      "MODEL_FAILED",
-      `OpenCode could not run an available model for the ${tier} tier. ` +
-        "Check the canonical routing table and configured provider models.",
-    )
-  }
-  return new ResearchRuntimeError(
-    "RUNTIME_FAILED",
-    `OpenCode research failed for the ${tier} tier. Retry the query or inspect ` +
-      "credential-free OpenCode runtime diagnostics.",
-  )
+
+  return new ResearchRuntimeError(code, message)
 }
 
 function completedRuntimeResult(

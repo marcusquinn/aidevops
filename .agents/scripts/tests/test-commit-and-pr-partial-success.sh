@@ -152,6 +152,15 @@ eval "$(sed -n '/^_ensure_no_in_progress_integration() {/,/^}/p' "${SCRIPTS_DIR}
 eval "$(sed -n '/^_rebase_for_push() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-commit.sh")"
 
 # shellcheck disable=SC2312
+eval "$(sed -n '/^_classify_remote_branch() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-commit.sh")"
+
+# shellcheck disable=SC2312
+eval "$(sed -n '/^_replacement_branch_name() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-commit.sh")"
+
+# shellcheck disable=SC2312
+eval "$(sed -n '/^_pr_head_ref_for_repo() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-commit.sh")"
+
+# shellcheck disable=SC2312
 eval "$(sed -n '/^_push_branch() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-commit.sh")"
 
 # Extract _rebase_and_push
@@ -190,6 +199,14 @@ git() {
 		return 0
 	fi
 	if [[ "${1:-}" == "rebase" ]]; then
+		return 0
+	fi
+	if [[ "${1:-}" == "remote" && "${2:-}" == "get-url" ]]; then
+		printf 'https://github.com/owner/repo.git\n'
+		return 0
+	fi
+	if [[ "${1:-}" == "ls-remote" ]]; then
+		# GH#33381: no remote branch yet → absent classification.
 		return 0
 	fi
 	if [[ "${1:-}" == "push" ]]; then
@@ -555,6 +572,13 @@ else
 		"got '${success_pr_number}'"
 fi
 
+if grep -q "gh_create_pr --repo owner/repo --title t2767: test --body body text --head feature/t2767-test" "$STUB_LOG" 2>/dev/null; then
+	pass "normal success: _create_pr passes the exact head branch (GH#33381)"
+else
+	fail "normal success: _create_pr passes the exact head branch (GH#33381)" \
+		"stub log: $(cat "$STUB_LOG" 2>/dev/null)"
+fi
+
 if grep -q "set_origin_label num=888 repo=owner/repo origin=worker flags=--pr" "$STUB_LOG" 2>/dev/null; then
 	pass "normal success: origin label reconciled on created PR"
 else
@@ -733,7 +757,7 @@ fi
 
 if ! grep -q "git rebase" "$STUB_LOG" 2>/dev/null &&
 	grep -q "git rev-list --count origin/develop..HEAD" "$STUB_LOG" 2>/dev/null &&
-	grep -q "git push -u origin feature/t2767-test --force-with-lease" "$STUB_LOG" 2>/dev/null; then
+	grep -q "git push -u origin feature/t2767-test --force-with-lease=feature/t2767-test:" "$STUB_LOG" 2>/dev/null; then
 	pass "no-rebase recovery: skips rebase and pushes via wrapper path"
 else
 	fail "no-rebase recovery: skips rebase and pushes via wrapper path" \

@@ -60,7 +60,7 @@ import {
   rememberRoutingFeedback,
 } from "./observability-routing.mjs";
 import { normalizeProviderError } from "./provider-error-diagnostics.mjs";
-import { requestProvenance } from "./observability-provenance.mjs";
+import { requestProvenance, runtimeProvenance } from "./observability-provenance.mjs";
 
 const HOME = homedir();
 const DEFAULT_OBS_DIR = join(HOME, ".aidevops", ".agent-workspace", "observability");
@@ -222,11 +222,7 @@ const partStreamSummaries = new PartStreamSummaryTracker();
  */
 let dbReady = false;
 let aidevopsVersion = "";
-
-function normalizedAidevopsVersion(value) {
-  const version = String(value || "").trim().replace(/^v/, "");
-  return /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(version) ? version : "";
-}
+let runtime = {};
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -235,13 +231,12 @@ function normalizedAidevopsVersion(value) {
 /**
  * Initialise the observability system.
  * Call once at plugin startup.
- * @param {{ aidevopsVersion?: string }} [options]
+ * @param {{ aidevopsVersion?: string, runtimeVersion?: string, adapterId?: string }} [options]
  * @returns {boolean} Whether initialisation succeeded
  */
 export function initObservability(options = {}) {
-  aidevopsVersion = normalizedAidevopsVersion(
-    options.aidevopsVersion || process.env.AIDEVOPS_VERSION,
-  );
+  runtime = runtimeProvenance(options);
+  aidevopsVersion = runtime.aidevopsVersion;
   dbReady = initDatabase();
   if (dbReady) {
     console.error("[aidevops] Observability: SQLite DB ready at " + DB_PATH);
@@ -407,7 +402,7 @@ function handleMessageUpdated(event, context = {}) {
   // Calculate cost from tokens — OpenCode does not provide msg.cost
   const pricing = getPricingProvenance(msg.modelID);
   const cost = calculateCost(msg.tokens, msg.modelID);
-  const provenance = requestProvenance(msg, routing, pricing);
+  const provenance = requestProvenance(msg, routing, pricing, runtime);
   rememberRoutingFeedback(msg, routing, cost, errorType, aidevopsVersion, PRICING_VERSION);
 
   const sql = `INSERT INTO llm_requests (

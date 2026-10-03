@@ -10,6 +10,97 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.38.0] - 2026-10-02
+
+### Added
+
+- GH#33398: audit macOS dev churn paths and backup exclusion coverage
+
+### Changed
+
+- Refactor: keep network-op selection out of git-safety file (GH#33406) (#33407)
+- Maintenance: sync ref:GH#33398 to TODO.md (#33400)
+
+### Fixed
+
+- ignore issue-derived task titles without TODO backing (GH#33408) (#33409)
+- initialize extracted test colors before use (GH#33366) (#33405)
+- fresh runner capability admission before claim (#33404)
+
+## [3.37.41] - 2026-10-02
+
+### Fixed
+
+- fix profile scratch recovery with pre-existing untracked files
+- preserve open blocked issues after non-closing worker PRs (#33395)
+- detect nested tracked env files and explain encrypted remediation (#33386)
+
+## [3.37.40] - 2026-10-01
+
+### Changed
+
+- Refactor: remove legacy command generators (GH#33354) (#33388)
+- Maintenance: mark t18581 complete (pr:#33367 completed:2026-10-01) (#33368)
+
+### Fixed
+
+- recover full-loop PR creation from stale branches and bare shared worktrees
+- upgrade-planning preserves custom TODO sections and fails closed on loss
+- fix scope-guard false positives on tag-only pushes
+- reject edits copied from redacted Read output (#33378)
+- retry transient provenance reads (#33376)
+- cover implicit tagless snapshot retry discovery (#33372)
+- skip tap-qualified Homebrew formulas on hosts without brew
+
+## [3.37.39] - 2026-10-01
+
+### Added
+
+- record continuation outcomes and per-model premature-exit rates
+- t18580 Background routing: Opus 5.5 thinking at high; no sub-medium reasoning for subagents or new A/B arms
+- plugin release build, WordPress.org preflight and Plugin Check helper + submission guide (#33301) (#33315)
+- freshness-checked local site sync helper (#33296) (#33299)
+- surface stranded interactive draft PRs (#33265)
+
+### Changed
+
+- Maintenance: sync ref:GH#33362 to TODO.md (#33363)
+- Maintenance: mark t18580 complete (pr:#33347 completed:2026-10-01) (#33349)
+- Maintenance: sync ref:GH#33342 to TODO.md (#33224)
+- Maintenance: bump litellm to 1.93.2 (fixes open SSRF advisory) (#33319)
+- Maintenance: adopt reviewed urllib3 2.8.0 update (#33279)
+- Documentation: trim textbook skills, fold branch-type docs, merge best-practices, retire mission-skill-learner (#33280)
+- Documentation: document commit-and-pr PR body options
+- Maintenance: complete Beads retirement migration and docs (#33272)
+- Maintenance: retire Beads integration (#33270)
+
+### Fixed
+
+- secretlint false positive in env-template fixture blocks release preflight
+- match exact code extensions in large-file gate (#33358)
+- replace unavailable legacy slash commands in init output and docs
+- make dirty-worktree backup prune --dry-run non-mutating
+- classify tracked .env templates by content instead of filename
+- input_required terminal blocker class with accountable owner
+- map by ref:GH and stop unmapped pending issues starving reconcile
+- record per-cycle dispatch delta in cycle index
+- respect private planning publication targets (GH#33328) (#33329)
+- reserve dispatch budget and attribute merge-pass time
+- preserve required ShellCheck contexts (#33305)
+- skip claimed no-auto-dispatch coordinators without implementation evidence (GH#33293) (#33298)
+- correct init scaffold review findings (#33289)
+- re-apply project Node selection in OpenCode tool shells
+- keep ready-PR handoffs in review after claim release
+- anchor worker BLOCKED and completion markers
+- treat For/Ref #N open PRs as in-flight for consolidation
+- admit verified-absent NEW targets on stale mirrors (#33282)
+- skip empty terminal breaker consolidation (#33277)
+- retain interactive threshold for owned claims (#33275)
+- warn when draft PR checks lack review evidence (#33269)
+- protect live interactive claims from stale recovery (#33262)
+- fail closed on locked or missing injected secrets (#33263)
+- validate --replace-pr ancestry before WIP finalization discards it (#33264)
+
 ## [3.37.38] - 2026-09-30
 
 ### Added

@@ -103,7 +103,7 @@ If any element is missing, complete the brief before saving. Omit `#auto-dispatc
 
 1. Create PLANS.md entry using `templates/plans-template.md`. Required sections: **Status/Estimate**, **Purpose**, **Progress** (timestamped phases), **Context from Discussion**, **Decision Log**, **Surprises & Discoveries**.
 2. Add reference to TODO.md: `- [ ] {title} #plan -> [todo/PLANS.md#{slug}] ~{estimate} logged:{YYYY-MM-DD}`
-3. Optionally create PRD/tasks if scope warrants (`/create-prd`, `/generate-tasks`)
+3. Optionally create PRD/tasks if scope warrants (see "PRD and Task Generation" below)
 
 ## Starting Work from Plans
 
@@ -126,9 +126,11 @@ Update PLANS.md in place: check off Progress items with timestamps, add Decision
 
 ## PRD and Task Generation
 
-**Generate PRD** (`/create-prd`): Ask clarifying questions with numbered options. Create PRD in `todo/tasks/prd-{slug}.md` using `templates/prd-template.md`.
+No dedicated slash commands; ask the agent directly, or start from `/define` for a decision-complete brief.
 
-**Generate Tasks** (`/generate-tasks`): Phase 1 — present high-level tasks with estimates, ask "Go". Phase 2 — create in `todo/tasks/tasks-{slug}.md` with numbered hierarchy (`0.0`, `1.0`, `1.1`, etc.) using `templates/tasks-template.md`.
+**Generate PRD**: Ask clarifying questions with numbered options. Create PRD in `todo/tasks/prd-{slug}.md` using `templates/prd-template.md`.
+
+**Generate Tasks**: Phase 1 — present high-level tasks with estimates, ask "Go". Phase 2 — create in `todo/tasks/tasks-{slug}.md` with numbered hierarchy (`0.0`, `1.0`, `1.1`, etc.) using `templates/tasks-template.md`.
 
 ## Time Estimation
 

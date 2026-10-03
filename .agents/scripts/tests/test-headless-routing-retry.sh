@@ -549,7 +549,8 @@ fi
 	_resolve_capability_escalation worker standard openai/gpt-6-sol medium
 	[[ "$_capability_escalation_tier" == "thinking" ]]
 	[[ "$_capability_escalation_model" == "anthropic/claude-opus-5-5" ]]
-	[[ "$_capability_escalation_variant" == "medium" ]]
+	# Shipped thinking-tier Opus runs at high, the background ceiling (GH#33342).
+	[[ "$_capability_escalation_variant" == "high" ]]
 
 	anthropic_available=0
 	if _resolve_capability_escalation worker standard openai/gpt-6-sol medium; then

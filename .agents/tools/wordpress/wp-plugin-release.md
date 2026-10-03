@@ -64,6 +64,25 @@ wp-plugin-release-helper.sh plugin-check [--ref REF] [--slug SLUG] [--main-file 
 - **`preflight`** builds into a temp dir and prints `ok`/`warn`/`ERROR`/`note` lines, then exits 1 on any `ERROR` (or on warnings too with `--strict`). `--offline` skips the WordPress.org slug-availability API check. Negative-test a candidate commit without touching the branch: `wp-plugin-release-helper.sh preflight --ref "$(git stash create)" --offline`.
 - **`plugin-check`** builds (or accepts `--zip FILE`, repeatable) and runs the official [Plugin Check](https://wordpress.org/plugins/plugin-check/) plugin inside a disposable Docker WordPress + MariaDB stack, using `wordpress:cli-php8.3` with a raised `memory_limit` (the 128 MB default kills `wp core download`). Exits 1 if any zip has an `ERROR`-level finding or Plugin Check does not run (no `Success:`/`FILE:` output). Removes its own container, volume, and network on exit — never touches other running containers. `--keep-output DIR` saves the raw JSON per zip for inspection.
 
+## Pull Request Quality Gates
+
+A proven baseline for WordPress plugin CI. Each check is a repo script that
+runs locally and in CI. While the repository is private, keep the checks
+advisory; make them required at public launch
+(`reference/ci-gate-policy.md` → "Private repositories and public launch").
+
+| Gate | Tooling | Notes |
+|------|---------|-------|
+| Syntax | `php -l` on the minimum PHP, `node --check` | Run on every tracked file. |
+| Coding standards | Composer dev deps: `wp-coding-standards/wpcs`, `phpcompatibility/phpcompatibility-wp` | `phpcs.xml.dist` with `testVersion` and `minimum_wp_version` from the plugin header. Keep security, database and i18n sniffs on; turn off only style sniffs the codebase deliberately differs from, with a comment. Inline `phpcs:ignore Sniff -- reason` only. Exclude cache dirs (for example PHPStan's `tmpDir`) or PHPCS will tokenize them and run out of memory. |
+| Static analysis | `phpstan/phpstan`, `szepeviktor/phpstan-wordpress` | `phpVersion` from `Requires PHP`; a bootstrap file for constants WordPress and the plugin define while loading (`WPINC`, `COOKIEPATH`, plugin version constants); ignore only optional integrations' unknown symbols (WP-CLI, other plugins) by identifier and message. Baseline existing findings and shrink it; cache `tmpDir` in CI. WP-CLI stubs may lag new WordPress stubs, so prefer an ignore over pinning old stubs. |
+| Release | `wp-plugin-release-helper.sh preflight --offline` + `plugin-check` | Both zips; upload them as a short-lived artifact for branch testing. |
+| Smoke test | Disposable Docker WordPress (MariaDB, `wordpress:php<V>-apache`, `wordpress:cli-php<V>`) | Matrix: minimum WP/PHP and latest WP/PHP. Install the built zip, log in, load front-end, REST, feed, sitemap and core admin screens with defaults and with every feature switched on, run due cron, then uninstall. Fail on 5xx, the critical-error page, any `debug.log` line, or leftover options/cron hooks. Write `.htaccess` yourself (WP-CLI cannot detect `mod_rewrite`) and log a canary notice so an empty log proves logging works. |
+| Repo hygiene | ShellCheck, actionlint, Dependabot | Pin actions to SHAs. Exclude `composer.*`, `vendor/`, tool configs and `.github/` from both zips via `.distignore` **and** the preflight's development-file list. |
+
+Commit `composer.lock` (dev tools only) so CI is reproducible, and set
+`config.platform.php` to the minimum PHP.
+
 ## Preflight Checks
 
 - **Errors**: non-numeric `Version:` (including pre-release suffixes like `-beta1`); an `Update URI` header (Plugin Check: `plugin_updater_detected`); `Text Domain` not equal to the slug; `License` not GPL-compatible; a `*_VERSION` constant that differs from the `Version:` header; `readme.txt` `Stable tag` missing, `trunk`, or not equal to `Version:`; `Requires at least`/`Requires PHP` missing from the main file or mismatched between main file and `readme.txt`; a zip without exactly one `<slug>/` top-level folder; a zip missing the main file; development files in a zip (`.git`, `.github`, `.agents`, `.distignore*`, CI/VCS files, `node_modules`, `tests`, `dist`, etc.); PHP/JS syntax errors; the WordPress.org zip still containing a `.distignore-wporg` pattern or an updater header; wrong asset-name direction for either channel.

@@ -869,8 +869,15 @@ test_prelaunch_classifier_covers_runtime_guard_modes() {
 		reason=$(_triage_runtime_infra_failure_reason "$sample")
 		[[ "$reason" == 'prelaunch-contract-failure' ]] || ok=1
 	done
+	for sample in \
+		'[ERROR] Public triage provider authentication unavailable: Anthropic OAuth requires the plugin disabled by OPENCODE_PURE (Model not found)' \
+		'Model not found: anthropic/claude-opus-5-5'; do
+		reason=$(_triage_runtime_infra_failure_reason "$sample")
+		[[ "$reason" == 'triage-provider-auth-unsupported' ]] || ok=1
+	done
+	[[ "$(_triage_runtime_result_failure_reason 0 0 'Model not found: anthropic/claude-opus-5-5')" == '' ]] || ok=1
 
-	for reason in github-comment-write-failed github-review-label-write-failed triage-runtime-failed \
+	for reason in triage-provider-auth-unsupported github-comment-write-failed github-review-label-write-failed triage-runtime-failed \
 		triage-runtime-temp-failed github-current-snapshot-changed-before-post \
 		github-pr-revision-changed-before-post github-public-revision-changed-before-post \
 		triage-evidence-too-large triage-prompt-too-large; do

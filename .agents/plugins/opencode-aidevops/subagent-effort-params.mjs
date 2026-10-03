@@ -2,6 +2,17 @@
 // SPDX-FileCopyrightText: 2026 Marcus Quinn
 
 import { routingCandidateIndex, routingTierForModel, routingVariant } from "./model-routing.mjs";
+import { floorReasoning } from "./model-routing-variant.mjs";
+
+const KNOWN_VARIANTS = new Set(["none", "minimal", "low", "medium", "high", "xhigh", "max"]);
+
+// Subagent work never runs below the routing floor (GH#33342), even under a
+// lower parent ceiling or a custom table entry. Unknown provider variants and
+// explicit native pins (handled before this point) are left unchanged.
+function floorChildVariant(context, variant) {
+  if (!KNOWN_VARIANTS.has(variant)) return variant;
+  return floorReasoning(variant, context.modelRouting?.minimumReasoning);
+}
 
 function childModelFrom(context, input) {
   return context.modelIdentity({
@@ -92,7 +103,8 @@ function applyProtectedChildParams(context, input, output, policy) {
   if (!policy?.domainVariant || childModelFrom(context, input) !== policy.routedModel) {
     throw new Error("[aidevops] Domain parent ceiling unavailable or model changed");
   }
-  applyRequestedVariant(output, policy.domainVariant, policy.domainVariant);
+  const domainVariant = floorChildVariant(context, policy.domainVariant);
+  applyRequestedVariant(output, domainVariant, domainVariant);
   return true;
 }
 
@@ -129,12 +141,16 @@ export async function routeChatParams(context, input, output) {
     const policy = context.policies.get(sessionID);
     const desiredEffort = policy?.effort
       ?? context.inferSubagentEffort(input.message.agent ?? childSession.agent);
-    const requestedVariant = requestedChildVariant(context, input, policy, desiredEffort);
-    const effectiveVariant = await effectiveChildVariant(
-      context, childSession, childModel, requestedVariant, currentVariant,
+    const requestedVariant = floorChildVariant(
+      context, requestedChildVariant(context, input, policy, desiredEffort),
     );
+    const effectiveVariant = floorChildVariant(context, await effectiveChildVariant(
+      context, childSession, childModel, requestedVariant, currentVariant,
+    ));
     if (policy) policy.requestedVariant = requestedVariant;
-    applyRequestedVariant(output, requestedVariant, effectiveVariant);
+    // An inherited sub-floor variant is raised even without a routed request.
+    const raisedInherited = effectiveVariant && effectiveVariant !== currentVariant ? effectiveVariant : "";
+    applyRequestedVariant(output, requestedVariant || raisedInherited, effectiveVariant);
     await recordChildRouting(context, {
       sessionID, childSession, childModel, desiredEffort, effectiveVariant, policy,
     });

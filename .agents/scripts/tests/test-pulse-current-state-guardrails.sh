@@ -681,19 +681,31 @@ test_apply_dispatch_max_preserves_benign_ledger_across_refill() {
 }
 
 test_dispatch_max_exports_benign_ledger_for_direct_callers() {
-	local engine_file="${SCRIPT_DIR}/pulse-dispatch-engine.sh"
-	if awk '
-		/^dispatch_max\(\) \{/ { in_dispatch=1 }
-		in_dispatch && /_dispatch_begin_benign_blocks_cycle >\/dev\/null/ { saw_begin=1 }
-		in_dispatch && saw_begin && /export _DISPATCH_BENIGN_BLOCKS_FILE/ { found=1; exit 0 }
-		in_dispatch && /^}/ { exit 1 }
-		END { exit(found ? 0 : 1) }
-	' "$engine_file"; then
+	# GH#33051 extracted round setup; verify its runtime export rather than
+	# requiring the ledger implementation to remain inline in dispatch_max.
+	local dispatch_definition=""
+	dispatch_definition=$(declare -f dispatch_max)
+	if [[ "$dispatch_definition" == *"_dispatch_prepare_round \"\$active_workers\" \"\$candidates_json\" \"\$candidate_count\""* ]] && (
+		unset _DISPATCH_BENIGN_BLOCKS_FILE AIDEVOPS_PULSE_BENIGN_BLOCKS_FILE _DISPATCH_FORCE_FLOOR
+		local _dispatch_owns_benign_blocks_cycle=0 _effective_slots=1
+		local _dispatch_path="max" _dispatch_max_parallel=1
+		# Ledger inheritance is independent of live GitHub capacity probes.
+		_dispatch_rest_core_requires_serial() {
+			return 1
+		}
+		_dispatch_prepare_round 1 '[]' 0
+		local ledger_file="${_DISPATCH_BENIGN_BLOCKS_FILE:-}" child_rc=0
+		# A new shell must inherit the same usable ledger, not create its own.
+		bash -c '[[ -n "${_DISPATCH_BENIGN_BLOCKS_FILE:-}" && -f "$_DISPATCH_BENIGN_BLOCKS_FILE" ]] && printf "child-visible\n" >>"$_DISPATCH_BENIGN_BLOCKS_FILE"' || child_rc=$?
+		[[ "$_dispatch_owns_benign_blocks_cycle" == "1" && -f "$ledger_file" && "$(<"$ledger_file")" == "child-visible" ]] || child_rc=1
+		_dispatch_cleanup_benign_blocks_cycle
+		[[ "$child_rc" == "0" && ! -e "$ledger_file" && -z "${_DISPATCH_BENIGN_BLOCKS_FILE:-}" ]]
+	); then
 		print_result "guardrail: dispatch_max exports benign block ledger for direct callers" 0
 		return 0
 	fi
 
-	print_result "guardrail: dispatch_max exports benign block ledger for direct callers" 1 "missing export in dispatch_max"
+	print_result "guardrail: dispatch_max exports benign block ledger for direct callers" 1 "round setup wiring, child ledger inheritance, or cleanup failed"
 	return 0
 }
 
@@ -775,19 +787,22 @@ JSON
 		printf '%s %s\n' "$repo_slug" "$limit" >/dev/null
 		cat <<'JSON'
 [
-  {"number": 20, "title": "broad research priority", "updatedAt": "2026-05-01T00:00:00Z", "labels": [{"name": "priority:high"}, {"name": "research"}, {"name": "tier:thinking"}], "assignees": []},
-  {"number": 21, "title": "low complexity actionable fix", "updatedAt": "2026-05-02T00:00:00Z", "labels": [{"name": "enhancement"}, {"name": "low-complexity"}, {"name": "status:available"}], "assignees": []}
+  {"number": 20, "title": "broad research backlog", "updatedAt": "2026-05-01T00:00:00Z", "labels": [{"name": "research"}, {"name": "tier:thinking"}], "assignees": []},
+  {"number": 21, "title": "low complexity actionable fix", "updatedAt": "2026-05-02T00:00:00Z", "labels": [{"name": "enhancement"}, {"name": "low-complexity"}, {"name": "status:available"}], "assignees": []},
+  {"number": 22, "title": "urgent research priority", "updatedAt": "2026-05-03T00:00:00Z", "labels": [{"name": "priority:high"}, {"name": "research"}, {"name": "tier:thinking"}], "assignees": []}
 ]
 JSON
 		return 0
 	}
 
-	local first_number=""
-	first_number=$(build_ranked_dispatch_candidates_json 10 | jq -r '.[0].number' 2>/dev/null) || first_number=""
-	if [[ "$first_number" == "21" ]]; then
-		print_result "guardrail: ranked dispatch prefers low-complexity actionable work over research backlog" 0
+	# GH#32703 intentionally gives urgent labels strict precedence. Complexity
+	# still orders ordinary backlog; assert both contracts in the same snapshot.
+	local ordered_numbers=""
+	ordered_numbers=$(build_ranked_dispatch_candidates_json 10 | jq -r '[.[].number] | join(",")' 2>/dev/null) || ordered_numbers=""
+	if [[ "$ordered_numbers" == "22,21,20" ]]; then
+		print_result "guardrail: ranked dispatch prefers low-complexity actionable work over non-urgent research backlog" 0
 	else
-		print_result "guardrail: ranked dispatch prefers low-complexity actionable work over research backlog" 1 "first=${first_number}"
+		print_result "guardrail: ranked dispatch prefers low-complexity actionable work over non-urgent research backlog" 1 "order=${ordered_numbers}"
 	fi
 	return 0
 }

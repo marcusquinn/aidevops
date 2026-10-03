@@ -53,6 +53,7 @@ Commands:
       List recorded dirty-worktree backups.
   prune [--dry-run] [--force] [--retention-days N]
       Remove only acknowledged/restored backups that are terminal or stale.
+      Dry-run is the default; --dry-run always overrides --force.
 
 Environment:
   AIDEVOPS_DIRTY_BACKUP_ROOT            Override backup directory.
@@ -1022,6 +1023,13 @@ remove_backup_dir() {
 		print_info "[dry-run] Would remove backup ($reason): $(basename "$backup_dir")"
 		return 0
 	fi
+	# Revalidate eligibility immediately before mutation: a restore/acknowledge
+	# or .keep marker may have changed state since the prune scan selected it.
+	[[ -f "$manifest_path" && ! -f "$backup_dir/.keep" ]] || return 0
+	case "$(manifest_value "$manifest_path" state)" in
+	acknowledged | restored) ;;
+	*) return 0 ;;
+	esac
 	local repo_path=""
 	local backup_ref=""
 	local worktree_commit=""
@@ -1040,6 +1048,7 @@ remove_backup_dir() {
 
 cmd_prune() {
 	local force=false
+	local dry_run=false
 	local retention_days="$DEFAULT_RETENTION_DAYS"
 	while [[ $# -gt 0 ]]; do
 		local arg="$1"
@@ -1049,7 +1058,7 @@ cmd_prune() {
 			shift
 			;;
 		--dry-run)
-			force=false
+			dry_run=true
 			shift
 			;;
 		--retention-days)
@@ -1060,6 +1069,11 @@ cmd_prune() {
 		esac
 	done
 	[[ "$retention_days" =~ ^[0-9]+$ ]] || return 1
+	# --dry-run is a safety guard: it always wins over --force, in any order.
+	if [[ "$dry_run" == true && "$force" == true ]]; then
+		print_info "[dry-run] --dry-run overrides --force; no backups will be removed"
+		force=false
+	fi
 	[[ -d "$BACKUP_ROOT" ]] || return 0
 	local backup_dir=""
 	for backup_dir in "$BACKUP_ROOT"/*; do

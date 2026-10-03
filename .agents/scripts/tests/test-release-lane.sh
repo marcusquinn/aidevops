@@ -106,8 +106,23 @@ run_setup_guard_contained_release_test() (
 	git -C "$source" tag v1.2.3 || return 1
 	git -C "$source" push -q origin HEAD:refs/heads/main refs/tags/v1.2.3 || return 1
 	"${git_env[@]}" git -C "$source" commit -q --allow-empty -m later || return 1
-	# Source contains the published tag: generic setup continues.
+	# Simulate the canonical session guard: any fetch is forbidden. Matching
+	# lightweight and annotated tags must both work without mutating refs.
+	git() {
+		if [[ " $* " == *" fetch "* ]]; then return 75; fi
+		command git "$@"
+		return $?
+	}
 	release_lane_setup_guard test/repo "$source" >/dev/null 2>&1 || return 1
+	if _release_lane_source_contains_tag "$source" v9.9.9; then return 1; fi
+	command git -C "$source" tag -d v1.2.3 >/dev/null || return 1
+	"${git_env[@]}" git -C "$source" -c tag.gpgSign=false tag -a v1.2.3 HEAD~1 -m release || return 1
+	command git -C "$source" push -q --force origin refs/tags/v1.2.3 || return 1
+	release_lane_setup_guard test/repo "$source" >/dev/null 2>&1 || return 1
+	# A mismatching local ref cannot be trusted when fetch is forbidden.
+	command git -C "$source" tag -f v1.2.3 "$base" >/dev/null 2>&1 || return 1
+	if release_lane_setup_guard test/repo "$source" >/dev/null 2>&1; then return 1; fi
+	unset -f git
 	# A local tag that points elsewhere must not bypass: origin's tag wins.
 	git -C "$source" tag -f v1.2.3 "$base" >/dev/null 2>&1 || return 1
 	release_lane_setup_guard test/repo "$source" >/dev/null 2>&1 || return 1

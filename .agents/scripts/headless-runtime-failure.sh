@@ -480,6 +480,19 @@ _hrff_build_claim_released_line() {
 	if [[ -n "$session_count_arg" ]]; then
 		machine_readable_part+=" session_count=${session_count_arg}"
 	fi
+	if [[ "$reason" == "push_policy_timeout" ]]; then
+		local repo_path="${AIDEVOPS_TERMINAL_BLOCKER_REPO_PATH:-}"
+		local branch="" head=""
+		if [[ -n "$repo_path" && -d "$repo_path" ]]; then
+			branch=$(git -C "$repo_path" symbolic-ref --quiet --short HEAD 2>/dev/null) || branch=""
+			head=$(git -C "$repo_path" rev-parse --verify HEAD 2>/dev/null) || head=""
+			# Release markers are public: omit private paths, arbitrary text and
+			# unsafe ref characters. Recovery must revalidate this exact checkpoint.
+			if [[ "$branch" =~ ^[A-Za-z0-9._/-]+$ && "$head" =~ ^[a-f0-9]{40,64}$ ]]; then
+				machine_readable_part+=" branch=${branch} head=${head}"
+			fi
+		fi
+	fi
 
 	printf '%s\n' "$machine_readable_part"
 	return 0
@@ -708,13 +721,15 @@ _release_dispatch_claim() {
 	runner_name=$(_hrff_resolve_release_runner_login)
 	machine_readable_part=$(_hrff_build_claim_released_line "$reason" "$runner_name" "$exit_code_arg" "$session_count_arg")
 	local terminal_blocker_fragment=""
-	if [[ "$reason" == "blocked" ]]; then
+	case "$reason" in
+	blocked | push_policy_timeout | network_policy_timeout)
 		local terminal_blocker_rc=0
 		_hrff_handle_terminal_blocker_release "$issue_number" "$repo_slug" "$machine_readable_part" || terminal_blocker_rc=$?
 		[[ "$terminal_blocker_rc" -eq 10 ]] && return 0
 		[[ "$terminal_blocker_rc" -eq 11 ]] && return 1
 		terminal_blocker_fragment="${_HRFF_TERMINAL_BLOCKER_FRAGMENT:-}"
-	fi
+		;;
+	esac
 	if [[ "$reason" == "${_HRW_REASON_DRAFT_CHECKPOINT:-worker_draft_checkpoint}" ]]; then
 		terminal_blocker_fragment=$'\nDraft checkpoint: partial work is blocked. Next action: verify the exact head and current brief before resuming.\n'
 	fi

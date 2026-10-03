@@ -227,6 +227,46 @@ test_prune_requires_terminal_state() {
 	return 0
 }
 
+test_prune_dry_run_overrides_force() {
+	local repo_dir="${TEST_ROOT}/dry-run-repo"
+	local backup_root="${TEST_ROOT}/dry-run-backups"
+	local output=""
+	local backup_id=""
+	local backup_dir=""
+	local backup_ref=""
+	local manifest_before=""
+	local list_before=""
+	local prune_output=""
+	local flags=""
+	local rc=0
+
+	setup_repo "$repo_dir" || return 1
+	printf 'dry-run backup\n' >>"$repo_dir/README.md"
+	output=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
+		bash "$HELPER" backup --repo "$repo_dir" --operation-id dry-run --machine 2>/dev/null) || return 1
+	IFS='|' read -r backup_id backup_dir <<<"$output"
+	AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" bash "$HELPER" acknowledge \
+		--backup "$backup_id" --confirm ACKNOWLEDGE_DIRTY_WORKTREE_BACKUP >/dev/null || rc=1
+	backup_ref=$(awk -F '\t' '$1 == "backup_ref" { print $2 }' "$backup_dir/manifest.tsv")
+	[[ -n "$backup_ref" ]] || rc=1
+	manifest_before=$(cat "$backup_dir/manifest.tsv")
+	list_before=$(AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" bash "$HELPER" list 2>&1)
+
+	for flags in "--dry-run --force" "--force --dry-run"; do
+		# shellcheck disable=SC2086 # intentional word splitting of flag pairs
+		prune_output=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
+			bash "$HELPER" prune $flags --retention-days 0 2>&1) || rc=1
+		[[ "$prune_output" == *"Would remove"* ]] || rc=1
+		[[ "$prune_output" != *"Removed backup"* ]] || rc=1
+		[[ -d "$backup_dir" ]] || rc=1
+		[[ "$(cat "$backup_dir/manifest.tsv")" == "$manifest_before" ]] || rc=1
+		/usr/bin/git -C "$repo_dir" rev-parse --verify --quiet "$backup_ref" >/dev/null || rc=1
+		[[ "$(AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" bash "$HELPER" list 2>&1)" == "$list_before" ]] || rc=1
+	done
+	print_result "prune --dry-run never mutates, regardless of --force order" "$rc" "backup_id=$backup_id"
+	return 0
+}
+
 main() {
 	TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/dirty-backup-test.XXXXXX") || exit 1
 	trap teardown EXIT
@@ -235,6 +275,7 @@ main() {
 	test_clean_refuses_changed_state
 	test_ignored_descendants_and_clean_rollback
 	test_prune_requires_terminal_state
+	test_prune_dry_run_overrides_force
 
 	printf '\nTests run: %s, failed: %s\n' "$TESTS_RUN" "$TESTS_FAILED"
 	[[ "$TESTS_FAILED" -eq 0 ]]

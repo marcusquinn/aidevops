@@ -387,7 +387,11 @@ export async function AidevopsPlugin({ directory, client }) {
   }
 
   // Initialise LLM observability
-  initObservability({ aidevopsVersion: currentAidevopsVersion() });
+  initObservability({
+    aidevopsVersion: currentAidevopsVersion(),
+    runtimeVersion: DETECTED_OPENCODE_RUNTIME_VERSION,
+    adapterId: "opencode-v1",
+  });
 
   // Cursor gRPC proxy — prepare models/provider in the background so OpenCode
   // startup never waits on network-bound model discovery or OAuth refresh.

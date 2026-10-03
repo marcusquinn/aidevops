@@ -385,12 +385,11 @@ get_brew_latest() {
 		printf '%s\n' "${stable:-unknown}"
 	else
 		# No brew — fall back to GitHub Releases API for known tools.
-		# Strip tap prefix (e.g. "max-sixty/worktrunk/wt" → "wt") for matching.
-		local base_pkg="${pkg##*/}"
-		case "$base_pkg" in
+		# Tap-qualified formulas never reach here without brew (see
+		# _tool_latest_version): no system package manager can update them.
+		case "$pkg" in
 		gh) get_public_release_tag "cli/cli" ;;
 		glab) get_public_release_tag "gitlab-org/cli" ;;
-		wt) get_public_release_tag "max-sixty/worktrunk" ;;
 		jq) get_public_release_tag "jqlang/jq" ;;
 		ripgrep) get_public_release_tag "BurntSushi/ripgrep" ;;
 		shellcheck) get_public_release_tag "koalaman/shellcheck" ;;
@@ -539,8 +538,14 @@ _tool_latest_version() {
 	npm)
 		if [[ "$pkg" == playwriter ]]; then printf '%s\n' 0.5.0; else get_npm_latest "$pkg"; fi ;;
 	brew)
-		if ! command -v brew >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
-			get_apt_candidate "${pkg##*/}"
+		if ! command -v brew >/dev/null 2>&1 && [[ "$pkg" == */* ]]; then
+			# Tap-qualified formulas (owner/tap/formula) exist only in Homebrew.
+			# apt/dnf/yum cannot upgrade them, and a same-named distro package
+			# can be an unrelated tool (e.g. apt "bd" is not Beads), so report
+			# unknown rather than queue an update that cannot succeed.
+			printf '%s\n' unknown
+		elif ! command -v brew >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
+			get_apt_candidate "$pkg"
 		else
 			get_brew_latest "$pkg"
 		fi ;;

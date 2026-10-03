@@ -706,6 +706,7 @@ _full_loop_release_resolve_persisted_intent() {
 	local requested_sources="$3"
 	local persisted_sources="$4"
 	local release_type="${5:-patch}"
+	local retry_assertion="$requested_sources"
 	local persisted_prs=""
 	local requested_prs=""
 	local transaction_rc=0
@@ -731,7 +732,7 @@ _full_loop_release_resolve_persisted_intent() {
 		esac
 	fi
 	_full_loop_recovery_expand_reserved_authorization "$repo" "$source_pr" "$requested_sources" \
-		"$release_type" || return $?
+		"$release_type" "$retry_assertion" || return $?
 	_FULL_LOOP_RESERVED_RECOVERY_EXPECTED="$_FULL_LOOP_AGGREGATE_RECOVERY_EXPECTED"
 	_FULL_LOOP_RESERVED_RECOVERY_COMPLETED=true
 	return 0

@@ -661,6 +661,11 @@ readonly TASK_SIBLING_NON_ACTIVE_STATES_SQL="'verified','cancelled','deployed','
 #   echo "Remote: $(sanitize_url "$remote_url")"
 #   log_error "fetch failed: $(scrub_credentials "$error_output")"
 
+# Known credential token prefixes (ERE alternation, no grouping). Shared by
+# scrub_credentials and the security-posture tracked-template classifier
+# (GH#33339) so redaction and detection recognise the same signatures.
+[[ -z "${AIDEVOPS_CREDENTIAL_PREFIX_ERE+x}" ]] && AIDEVOPS_CREDENTIAL_PREFIX_ERE='sk-|GOCSPX-|ghp_|gho_|ghs_|ghu_|github_pat_|glpat-|xoxb-|xoxp-'
+
 scrub_credentials() {
 	local text="$1"
 	# Word-boundary anchor (^|non-word-char) prevents false positives where a
@@ -669,7 +674,7 @@ scrub_credentials() {
 	# but is NOT a credential. macOS BSD sed has no `\b`, so we capture the
 	# preceding boundary character and restore it via \1 in the replacement.
 	# (t2892, GH#21026)
-	printf '%s' "$text" | sed -E 's/(^|[^A-Za-z0-9_-])(sk-|GOCSPX-|ghp_|gho_|ghs_|ghu_|github_pat_|glpat-|xoxb-|xoxp-)[A-Za-z0-9_-]{10,}/\1[redacted-credential]/g'
+	printf '%s' "$text" | sed -E "s/(^|[^A-Za-z0-9_-])(${AIDEVOPS_CREDENTIAL_PREFIX_ERE})[A-Za-z0-9_-]{10,}/\\1[redacted-credential]/g"
 	return 0
 }
 
@@ -1403,7 +1408,8 @@ issue_brief_hold_blocks_auto_release() {
 # The current exact linked-PR state selects the projection: no linked PR is
 # available, an open draft is blocked, an open non-draft PR is in-review, and
 # an open PR with requested changes is available for repair, and a merged PR
-# is done. Unreadable or ambiguous PR metadata is a no-write error.
+# is done only after the issue is closed. Unreadable or ambiguous metadata
+# is a no-write error; an open blocked issue retains its blocker.
 #
 # Args:
 #   $1 — issue number
@@ -1430,7 +1436,7 @@ clear_active_status_on_release() {
 	# current linked PR state before writing: drafts project as blocked partial
 	# work, while non-draft OPEN PRs without requested changes project as
 	# in-review. A failed or ambiguous read preserves the prior projection.
-	local linked_prs_json="" projection=""
+	local linked_prs_json="" projection="" done_status="done"
 	local -a release_args=()
 	[[ -z "$worker_login" ]] || release_args+=(--remove-assignee "$worker_login")
 	linked_prs_json=$(gh pr list --repo "$repo_slug" --state all \
@@ -1448,6 +1454,23 @@ clear_active_status_on_release() {
 		elif any(.state == "MERGED") then "done"
 		else available end
 	' 2>/dev/null) || return 1
+	# GH#33374: a merged checkpoint (or a reopened issue) is not completion.
+	# Bound every projection to live issue state, not the release reason.
+	local issue_json="" issue_state=""
+	issue_json=$(gh api "repos/${repo_slug}/issues/${issue_num}" 2>/dev/null) || return 1
+	issue_state=$(printf '%s' "$issue_json" | jq -er '
+		select((.labels | type) == "array") | .state | ascii_downcase
+		| select(. == "open" or . == "closed")' 2>/dev/null) || return 1
+	if [[ "$issue_state" == "closed" ]]; then
+		projection="$done_status"
+	elif printf '%s' "$issue_json" | jq -e 'any(.labels[]; .name == "status:blocked")' >/dev/null 2>&1; then
+		if issue_brief_hold_blocks_auto_release "$issue_num" "$repo_slug"; then
+			return 0
+		fi
+		projection="blocked"
+	elif [[ "$projection" == "$done_status" ]]; then
+		projection="available"
+	fi
 	case "$projection" in
 	available)
 		if issue_brief_hold_blocks_auto_release "$issue_num" "$repo_slug"; then
@@ -1465,7 +1488,7 @@ clear_active_status_on_release() {
 		set_issue_status "$issue_num" "$repo_slug" in-review >/dev/null 2>&1
 		;;
 	done)
-		set_issue_status "$issue_num" "$repo_slug" "done" >/dev/null 2>&1
+		set_issue_status "$issue_num" "$repo_slug" "$done_status" >/dev/null 2>&1
 		;;
 	*) return 1 ;;
 	esac

@@ -318,6 +318,42 @@ test_external_trigger_pending_revision() {
 	return 0
 }
 
+test_input_required_owner_class() {
+	local issue='{"title":"Deploy check","body":"### Files Scope\n- deploy.sh"}'
+	local output="${TEST_ROOT}/input.ndjson" fingerprint="" revision="" changed="" fragment="" observation="" status=0
+	printf '%s\n' '{"type":"text","text":"BLOCKED: no authorized staging origin is recorded\nTERMINAL_BLOCKER_REASON=input_required\nTERMINAL_BLOCKER_INPUT_OWNER=maintainer"}' >"$output"
+	terminal_blocker_capture_output "$output" || status=1
+	fingerprint="$AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT"
+	[[ "$(_terminal_blocker_reason "$fingerprint")" == input_required ]] || status=1
+	[[ "$(_terminal_blocker_input_owner "$fingerprint")" == maintainer ]] || status=1
+	fragment=$(terminal_blocker_observation_fragment 111111111111111111111111 "$fingerprint" first)
+	[[ "$fragment" == *'reason=input_required owner=maintainer'* && "$fragment" == *'status:available'* ]] || status=1
+	# One worker cannot hold alone: first observation keeps a verification attempt.
+	revision=$(terminal_blocker_task_revision "$issue" owner/repo 42 "$TEST_ROOT" input_required) || status=1
+	[[ "$(terminal_blocker_release_mode '[]' "$revision" "$fingerprint")" == first ]] || status=1
+	observation=$(jq -nc --arg body "<!-- aidevops:terminal-blocker-observation revision=${revision} blocker=${fingerprint} -->" \
+		'[{body:$body,created_at:"2026-08-31T10:00:00Z",author_association:"MEMBER"}]')
+	[[ "$(terminal_blocker_release_mode "$observation" "$revision" "$fingerprint")" == circuit ]] || status=1
+	TEST_TARGET_REVISION='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+	changed=$(terminal_blocker_task_revision "$issue" owner/repo 42 "$TEST_ROOT" input_required) || status=1
+	[[ "$revision" == "$changed" ]] || status=1
+	changed=$(terminal_blocker_task_revision '{"title":"Deploy check","body":"### Files Scope\n- deploy.sh\nStaging origin: supplied"}' \
+		owner/repo 42 "$TEST_ROOT" input_required) || status=1
+	[[ "$revision" != "$changed" ]] || status=1
+	TEST_TARGET_REVISION='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+	# Missing, invalid or duplicated owners stay unclassified and retryable.
+	printf '%s\n' '{"type":"text","text":"BLOCKED: unsure\nTERMINAL_BLOCKER_REASON=input_required"}' >"$output"
+	terminal_blocker_capture_output "$output" || status=1
+	[[ "$(_terminal_blocker_reason "$AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT")" == unknown ]] || status=1
+	printf '%s\n' '{"type":"text","text":"BLOCKED: unsure\nTERMINAL_BLOCKER_REASON=input_required\nTERMINAL_BLOCKER_INPUT_OWNER=human"}' >"$output"
+	terminal_blocker_capture_output "$output" || status=1
+	[[ "$(_terminal_blocker_reason "$AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT")" == unknown ]] || status=1
+	_terminal_blocker_input_owner "$(_terminal_blocker_hash 'v2:target_code_blocker')" >/dev/null && status=1
+	unset AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT
+	print_result "input_required names a user/contributor/maintainer/admin owner, needs two observations and re-arms on brief change" "$status"
+	return 0
+}
+
 test_unknown_and_redaction() {
 	local output="${TEST_ROOT}/unknown.ndjson" fingerprint="" fragment="" comments="" status=0
 	printf '%s\n' '{"type":"text","text":"BLOCKED: private-token /private/runner/file.sh ambiguous failure"}' >"$output"
@@ -704,7 +740,71 @@ test_blocked_backoff_cli() {
 	return 0
 }
 
+test_push_policy_timeout_checkpoint() {
+	local output="${TEST_ROOT}/push-timeout.ndjson"
+	local status=0 fingerprint="" release="" head=""
+	printf '%s\n' '{"type":"text","text":"BLOCKED: command policy timed out under host load\nTERMINAL_BLOCKER_REASON=push_policy_timeout"}' >"$output"
+	terminal_blocker_capture_output "$output" || status=1
+	fingerprint="$AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT"
+	[[ "$(_terminal_blocker_reason "$fingerprint")" == push_policy_timeout ]] || status=1
+	[[ "$(_terminal_blocker_recovery "$fingerprint")" == *'owner=runner-recovery'* ]] || status=1
+	# Even repeated observations must not create a permanent task-revision hold.
+	local comments='[{"id":1,"body":"observation","author_association":"OWNER","created_at":"2026-10-01T00:00:00Z"}]'
+	[[ "$(terminal_blocker_release_mode "$comments" 111111111111111111111111 "$fingerprint")" == first ]] || status=1
+	local repo="${TEST_ROOT}/push-checkpoint"
+	command -p git clone -q --shared --bare "${SCRIPT_DIR}/../.." "$repo"
+	command -p git -C "$repo" branch feature/push-checkpoint
+	command -p git -C "$repo" symbolic-ref HEAD refs/heads/feature/push-checkpoint
+	head=$(command -p git -C "$repo" rev-parse HEAD)
+	release=$(AIDEVOPS_TERMINAL_BLOCKER_REPO_PATH="$repo" _hrff_build_claim_released_line push_policy_timeout fixture 0 1)
+	[[ "$release" == *'reason=push_policy_timeout'* && "$release" == *"branch=feature/push-checkpoint head=${head}"* ]] || status=1
+	[[ "$release" != *"$repo"* ]] || status=1
+	if ! (
+		# Use the existing classifier-fixture pattern from test-integration-recovery.
+		# shellcheck source=../headless-runtime-result.sh
+		source "${SCRIPT_DIR}/headless-runtime-result.sh"
+		_headless_private_workload_enabled() { return 1; }
+		output_has_completion_signal() { return 0; }
+		output_has_blocked_signal() { return 0; }
+		output_has_post_pr_handoff_signal() { return 1; }
+		output_has_missing_context_blocked_signal() { return 1; }
+		output_has_capability_blocked_signal() { return 1; }
+		print_warning() { return 0; }
+		# shellcheck disable=SC2034
+		role=worker session_key=issue-42 discovered_session="" selected_model=fixture work_dir="$repo"
+		output_file="$output"
+		result_rc=0
+		_run_failure_reason=""
+		_handle_run_result_success_output || result_rc=$?
+		[[ "$result_rc" == 83 && "$_run_failure_reason" == push_policy_timeout ]]
+	); then
+		status=1
+	fi
+	print_result "push policy timeout stays transient and releases exact branch/HEAD without paths" "$status"
+	return 0
+}
+
+test_runner_capability_class() {
+	local status=0 output="$TEST_ROOT/capability-output.jsonl" fingerprint="" revision="" fragment="" comments=""
+	printf '%s\n' '{"type":"text","text":"BLOCKED: staging secret cannot resolve\nTERMINAL_BLOCKER_REASON=runner_capability_unmet"}' >"$output"
+	terminal_blocker_capture_output "$output" || status=1
+	fingerprint="$AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT"
+	[[ "$(_terminal_blocker_reason "$fingerprint")" == runner_capability_unmet ]] || status=1
+	revision=$(terminal_blocker_task_revision '{}' owner/repo 42 '' runner_capability_unmet) || status=1
+	[[ "$(terminal_blocker_release_mode '[]' "$revision" "$fingerprint")" == first ]] || status=1
+	fragment=$(terminal_blocker_observation_fragment "$revision" "$fingerprint" first) || status=1
+	[[ "$fragment" == *'reason=runner_capability_unmet'* && "$fragment" == *'status:available'* ]] || status=1
+	terminal_blocker_circuit_comment release "$revision" "$fingerprint" >/dev/null && status=1
+	comments=$(jq -nc --arg body "CLAIM_RELEASED reason=blocked runner=maintainer ts=2026-01-01T00:00:00Z
+$fragment" '[{author_association:"OWNER",author:"maintainer",body:$body,created_at:"2026-01-01T00:00:00Z"},{author_association:"OWNER",author:"maintainer",body:$body,created_at:"2026-01-01T00:00:01Z"}]')
+	TERMINAL_BLOCKER_NOW_EPOCH=1767225660 terminal_blocker_backoff_active "$comments" >/dev/null && status=1
+	print_result "runner capability is known and never opens a shared circuit or backoff" "$status"
+	return 0
+}
+
 main() {
+	test_runner_capability_class
+	test_push_policy_timeout_checkpoint
 	test_normalized_blocker_fingerprint
 	test_worker_contract_reason_protocol
 	test_task_revision_inputs
@@ -712,6 +812,7 @@ main() {
 	test_dispatch_hold_revalidates_revision
 	test_brief_only_revision
 	test_external_trigger_pending_revision
+	test_input_required_owner_class
 	test_excluded_scope_revision
 	test_unknown_and_redaction
 	test_final_dossier_and_structural_precedence

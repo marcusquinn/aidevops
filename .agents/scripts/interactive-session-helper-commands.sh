@@ -173,6 +173,7 @@ _isc_claim_ownership_class() {
 		elif ($active | not) then "unclaimed"
 		elif ($assignees | length) == 1 and $assignees[0] == $user then "own"
 		elif $live_claim != null then "foreign-interactive:" + $live_claim.author.login
+		elif ($assignees | length) == 0 then "unclaimed"
 		else "foreign-worker" end
 	' 2>/dev/null
 	return $?
@@ -261,13 +262,13 @@ _isc_handle_existing_claim_ownership() {
 		return 1
 		;;
 	foreign-worker)
-		if [[ "$implementing" -eq 0 ]]; then
-			_isc_err "claim: #$issue is assigned to another principal; re-run with --implementing for an explicit worker takeover"
-			return 1
-		fi
 		local foreign_assignees=""
 		foreign_assignees=$(printf '%s' "$claim_metadata" | jq -r \
 			'[.assignees[]?.login] | join(",")' 2>/dev/null) || return 1
+		if [[ "$implementing" -eq 0 ]]; then
+			_isc_err "claim: #$issue is assigned to another principal ($foreign_assignees); re-run with --implementing for an explicit worker takeover"
+			return 1
+		fi
 		_isc_info "claim: #$issue has foreign worker ownership (${foreign_assignees:-unassigned}) — performing verified interactive takeover"
 		_isc_take_over_worker_claim "$issue" "$slug" "$worktree_path" "$user" "$defer_comment" "$foreign_assignees"
 		return $?

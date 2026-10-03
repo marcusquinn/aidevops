@@ -1666,8 +1666,17 @@ _init_optional_scaffolding() {
 			print_info "Reminder: set SYNC_PAT so GitHub Actions can refresh repo metrics and Star History — see: aidevops --help sync-pat"
 		fi
 	fi
-
 	_init_security_and_registration || return 1
+	_init_offer_release_verification "$repo_slug"
+	return 0
+}
+
+_init_offer_release_verification() {
+	local target_slug="$1"
+	if [[ -n "$target_slug" ]]; then
+		print_info "Manual GitHub releases: opt in with aidevops sync-workflows --repo $target_slug --workflow release-verify --install-missing --apply (read-only verification; Actions must be enabled)."
+	fi
+	print_info "Release verification callers currently support GitHub only; Gitea/Forgejo Actions are unsupported."
 	return 0
 }
 
@@ -1867,9 +1876,9 @@ _init_print_summary() {
 	else
 		echo "  ${step}. Add tasks to TODO.md"
 		((++step))
-		echo "  ${step}. Use /create-prd for complex features"
+		echo "  ${step}. Use /define to turn complex work into a decision-complete brief"
 		((++step))
-		echo "  ${step}. Use /feature to start development"
+		echo "  ${step}. Use /full-loop to implement a task end-to-end"
 	fi
 
 	return 0

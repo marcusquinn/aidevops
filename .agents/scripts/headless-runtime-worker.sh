@@ -630,6 +630,41 @@ _hrw_issue_number_for_session() {
 	_scl_worker_issue_number "$session_key"
 }
 
+# GH#33374: a merged checkpoint or reopened issue is not worker completion.
+_hrw_merged_pr_output_class() {
+	local pr_state="$1" repo_slug="$2" issue_number="$3"
+	local issue_state=""
+	issue_state=$(gh api "repos/${repo_slug}/issues/${issue_number}" --jq '.state | ascii_downcase' 2>/dev/null) || issue_state=""
+	case "${issue_state}:${pr_state}" in
+	open:*) printf 'merged_checkpoint' ;;
+	closed:merged) printf 'pr_exists' ;;
+	*) printf 'merged_missing_linkage' ;;
+	esac
+	return 0
+}
+
+_hrw_pr_output_class() {
+	local pr_state="$1" repo_slug="$2" issue_number="$3" has_pushed_branch="$4"
+	case "$pr_state" in
+	ready) printf 'pr_exists' ;;
+	merged | merged_missing_linkage)
+		_hrw_merged_pr_output_class "$pr_state" "$repo_slug" "$issue_number"
+		;;
+	draft_checkpoint | protected_draft | closed_unmerged | unverified_open_pr | head_mismatch | ready_missing_linkage | ready_missing_summary | merged_missing_summary)
+		printf '%s' "$pr_state"
+		;;
+	absent)
+		if [[ "$has_pushed_branch" -eq 1 ]]; then
+			printf 'branch_orphan'
+		else
+			printf 'local_branch_unpushed'
+		fi
+		;;
+	*) printf 'pr_exists' ;; # unknown -> fail-open
+	esac
+	return 0
+}
+
 _worker_produced_output() {
 	local session_key="$1"
 	local work_dir="$2"
@@ -714,22 +749,8 @@ _worker_produced_output() {
 	pr_handoff=$(_pr_handoff_state_for_branch_or_issue "$branch_name" "$issue_number" "$repo_slug" \
 		"branch-or-issue" "$local_head" 1)
 	pr_state="${pr_handoff%%|*}"
-	case "$pr_state" in
-		ready | merged) printf 'pr_exists'; return 0 ;;
-		draft_checkpoint | protected_draft | closed_unmerged | unverified_open_pr | head_mismatch | ready_missing_linkage | merged_missing_linkage | ready_missing_summary | merged_missing_summary)
-			printf '%s' "$pr_state"
-			return 0
-			;;
-		absent)
-			if [[ "$has_pushed_branch" -eq 1 ]]; then
-				printf 'branch_orphan'
-			else
-				printf 'local_branch_unpushed'
-			fi
-			return 0
-			;;
-		*) printf 'pr_exists'; return 0 ;; # unknown -> fail-open
-	esac
+	_hrw_pr_output_class "$pr_state" "$repo_slug" "$issue_number" "$has_pushed_branch"
+	return 0
 }
 
 #######################################
@@ -2222,6 +2243,18 @@ _hrw_preserve_draft_checkpoint_handoff() {
 	return 0
 }
 
+_hrw_preserve_merged_checkpoint_handoff() {
+	local session_key="$1"
+	# A merged PR no longer owns an in-review issue. Live-state projection
+	# preserves its blocker or releases unfinished work, never marks it done.
+	_hrw_release_dispatch_claim "$session_key" "$_HRW_REASON_DRAFT_CHECKPOINT"
+	_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_DEFERRED"
+	_HRW_FINAL_RUNTIME_EVENT="$_HRW_EVENT_DEFERRED"
+	_HRW_FINAL_RUNTIME_STATUS="$_HRW_STATUS_CHECKPOINTED"
+	_HRW_FINAL_RUNTIME_CLASSIFICATION="$_HRW_REASON_DRAFT_CHECKPOINT"
+	return 0
+}
+
 _hrw_preserve_blocked_outcome() {
 	local session_key="$1"
 	local work_dir="$2"
@@ -2265,6 +2298,7 @@ _hrw_handle_unverified_post_pr_handoff() {
 	[[ -n "$work_dir" ]] && output_class=$(_worker_produced_output "$session_key" "$work_dir")
 	case "$output_class" in
 	draft_checkpoint) _hrw_preserve_draft_checkpoint_handoff "$session_key" "$output_class" ;;
+	merged_checkpoint) _hrw_preserve_merged_checkpoint_handoff "$session_key" ;;
 	ready_missing_summary) _hrw_preserve_ready_missing_summary_handoff "$session_key" "$output_class" ;;
 	ready_missing_linkage) _hrw_preserve_ready_missing_linkage_handoff "$session_key" "$output_class" ;;
 	*)
@@ -2336,6 +2370,10 @@ _hrw_finish_success_run() {
 			;;
 		draft_checkpoint)
 			_hrw_preserve_draft_checkpoint_handoff "$session_key" "$output_class"
+			release_needed=0
+			;;
+		merged_checkpoint)
+			_hrw_preserve_merged_checkpoint_handoff "$session_key"
 			release_needed=0
 			;;
 		ready_missing_summary)

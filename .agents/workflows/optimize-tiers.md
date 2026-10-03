@@ -111,20 +111,25 @@ The standard-only preset generates this shape:
   "enrollment": {"mode": "new-standard-issues"},
   "arms": [
     {"name": "luna-max", "model": "openai/gpt-6-luna", "variant": "max"},
-    {"name": "terra-low", "model": "openai/gpt-5.6-terra", "variant": "low"}
+    {"name": "terra-medium", "model": "openai/gpt-5.6-terra", "variant": "medium"}
   ]
 }
 ```
 
+`start` refuses `none`, `minimal` and `low` arm variants. Background and
+subagent work never runs below medium, so the routing floor would silently
+raise such an arm and mislabel the comparison (GH#32539 compared medium vs
+medium for this reason). Older configs that declare `low` still validate for
+reporting.
+
 A provider-family arm replaces `model`/`variant` with a route per tier. Omit
-`variant` to keep the provider default (Haiku 4.5 has no low-effort variant).
-Both arms must use the same form.
+`variant` to keep the provider default. Both arms must use the same form.
 
 ```json
 {"name": "anthropic", "tiers": {
-  "simple": {"model": "anthropic/claude-haiku-4-5"},
-  "standard": {"model": "anthropic/claude-sonnet-5-5", "variant": "low"},
-  "thinking": {"model": "anthropic/claude-opus-5-5", "variant": "medium"}
+  "simple": {"model": "anthropic/claude-haiku-4-5", "variant": "high"},
+  "standard": {"model": "anthropic/claude-sonnet-5-5", "variant": "medium"},
+  "thinking": {"model": "anthropic/claude-opus-5-5", "variant": "high"}
 }}
 ```
 
