@@ -35,6 +35,8 @@ tools:
 
 **Prerequisites**: `php -v` (>= 7.4), `composer -V`, `wp --version`, `node -v` (>= 18). Install (macOS): `brew install php@8.2 composer wp-cli node`
 
+**New plugin**: `wp-plugin-new.md` (`/new-wp-plugin`) makes it from the latest WP Plugin Starter release; use `wp scaffold plugin` only for a bare one.
+
 **Subagents**: `@localwp` (DB), `@wp-admin` (content), `@browser-automation` (E2E), `@code-standards` (quality). **Always use Context7** for latest WP/WP-CLI/PHP docs.
 
 <!-- AI-CONTEXT-END -->

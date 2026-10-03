@@ -23,6 +23,7 @@ mode: subagent
 
 | Need | Use | Why |
 |------|-----|-----|
+| Start a new plugin | `wordpress/wp-plugin-new.md` | `/new-wp-plugin`: latest WP Plugin Starter release, your saved maker details, private GitHub repo |
 | Build or debug code | `wp-dev.md` | Development workflow, debugging, implementation patterns |
 | Manage content or routine upkeep | `wp-admin.md` | Admin tasks and site maintenance |
 | Inspect a local site or database | `localwp.md` | LocalWP setup and MCP-backed local DB access |
