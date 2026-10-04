@@ -51,8 +51,9 @@ class PostSyncTest(unittest.TestCase):
         self.advance()
 
     def git(self, *args):
-        return subprocess.run(["/usr/bin/git", *args], env=self.env, check=True,
-                              capture_output=True, text=True).stdout.strip()
+        return subprocess.run(  # nosec B603 -- fixed Git executable and test-owned fixture arguments
+            ["/usr/bin/git", *args], env=self.env, check=True,
+            capture_output=True, text=True, shell=False).stdout.strip()
 
     def identity(self, repo):
         for key, value in (("user.name", "Test"), ("user.email", "test@example.invalid"),
@@ -84,8 +85,9 @@ class PostSyncTest(unittest.TestCase):
                     else "SYNCHRONIZE_CANONICAL_MIRROR")
         if command == "fast-forward-current":
             args.extend(["--branch", "main"])
-        result = subprocess.run(args, env=dict(self.env, **env), capture_output=True,
-                                text=True, timeout=30)
+        result = subprocess.run(  # nosec B603 -- repository helper and exclusively fixture-owned argv
+            args, env=dict(self.env, **env), capture_output=True,
+            text=True, timeout=30, shell=False)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(self.git("-C", str(self.repo), "rev-parse", "HEAD"), self.after)
         self.assertEqual(self.git("-C", str(self.repo), "status", "--porcelain"), "")
@@ -126,6 +128,30 @@ class PostSyncTest(unittest.TestCase):
     def test_timeout_does_not_rollback(self):
         self.declare(run=[sys.executable, "-c", "import time; time.sleep(10)"], timeout_seconds=1)
         self.assertIn("POST_SYNC outcome=timeout", self.sync())
+
+    def test_fifo_evidence_log_does_not_block_sync(self):
+        self.declare()
+        log = self.home / ".aidevops/logs/canonical-post-sync.jsonl"
+        log.parent.mkdir(parents=True)
+        os.mkfifo(log, 0o600)
+        output = self.sync()
+        self.assertIn("POST_SYNC outcome=success", output)
+        self.assertIn("evidence_log_unavailable", output)
+
+    def test_malformed_registry_warns_without_traceback(self):
+        self.declare()
+        self.config.write_text(json.dumps({"initialized_repos": [None]}))
+        output = self.sync()
+        self.assertIn("POST_SYNC outcome=warning", output)
+        self.assertNotIn("Traceback", output)
+        self.assertFalse(self.marker.exists())
+
+    def test_invalid_later_hook_prevents_all_execution(self):
+        self.declare()
+        self.entry["post_sync"].append({"when_changed": "../journal.json", "run": ["true"]})
+        self.write_config()
+        self.assertIn("POST_SYNC outcome=warning", self.sync())
+        self.assertFalse(self.marker.exists())
 
     def test_worker_cannot_trigger_hook(self):
         self.declare()
