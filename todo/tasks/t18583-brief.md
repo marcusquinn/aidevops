@@ -27,6 +27,8 @@ paths and credentials out of shared examples and public diagnostics.
 - `.agents/scripts/repo-layout-migrate-helper.sh` and
   `.agents/reference/repo-organization.md`: owner-aware canonical locations and
   reviewed, receipt-backed migrations; never improvise directory moves.
+- `.agents/scripts/repo_layout_migrate.py`: native scoped repository planning,
+  consumer inventory, before-state validation, content hashes and receipts.
 - `.agents/scripts/canonical-recovery-helper.sh`: audited mirror convergence.
 - `.agents/scripts/headless-runtime-helper.sh`: worker runtime/canary checks.
 - Existing native init, GitHub write, secret scanning and PHP lint interfaces:
@@ -61,6 +63,53 @@ paths and credentials out of shared examples and public diagnostics.
    Require explicit execution authority for repairs. Do not create a recurring
    schedule, dispatch implementation, or deploy merely because a brief exists.
 
+## Owner-layout migration workflow
+
+Observed operational evidence: a later, explicitly authorized layout transaction
+moved 24 fleet repositories with exact Git state preserved. Native processing
+included 39 runtime databases, including an approximately 83 GB database; guarded
+apply completed in approximately 13.5 minutes. Live terminal configuration drift
+required a separately hashed plan revision. These measurements are evidence for
+budgeting on that installation, not universal timeout defaults.
+
+1. Select only the approved fleet and reuse native `plan_repository` and consumer
+   contracts. Do not use a whole-workspace migration to accomplish a fleet-only
+   request. Preserve personal-owner exceptions and unrelated registrations.
+2. Probe source, destination and linked-worktree consumers. Leave active sites in
+   place with automation enabled until their owners checkpoint and exit. Never
+   kill unowned sessions, create compatibility symlinks or bypass active-path gates.
+3. Reconcile missing local clones and registrations separately from eligible
+   moves. Do not silently recreate deliberately removed previews. Remote deletion
+   requires its own explicit authority, exact identity/admin checks, high-stakes
+   verification and owner-private backups of needed Git/API evidence.
+4. Snapshot each eligible site's exact maintenance and Pulse settings before
+   pausing it through the supported maintenance command. Restore both settings
+   after success or an unmoved abort: maintenance-on alone does not restore Pulse.
+   Preserve unrelated registry edits and record restoration proof.
+5. Inventory and retain every native database integrity, schema/row drift and
+   backup guard. Budget from observed database sizes and provide bounded progress;
+   a long integrity check is not evidence of corruption or permission to skip it.
+6. Snapshot mutable regular-file consumers after lengthy database inventory.
+   If a file drifts, revalidate the exact scope and native file contract; write a
+   new plan ID/hash while preserving the old receipt. A receipt with mutation
+   steps requires native resume/rollback, never in-place plan replacement. Apply
+   must continue to recheck all repository and consumer before-states.
+7. Apply only the exact confirmed native plan hash. Inspect the append-only
+   receipt before declaring completion, and keep pending sites explicit. A
+   safety refusal pauses the unsafe path, not the entire objective.
+8. Verify physical locations, exact Git fingerprints, linked common-directory
+   pointers, registry paths, terminal/runtime retargeting, private remote identity
+   and restored automation. Resolve current fleet paths by slug; preserve the
+   historical onboarding inventory and write a distinct post-layout report.
+9. Keep rollback receipts and backups private. Flag restoration deliberately
+   changes registry content after native completion; any later rollback must
+   reconcile this intended drift rather than overwrite unrelated configuration.
+
+Operational adapters were installation-local; do not copy customer paths, names,
+credentials or raw terminal configuration into this shared brief. A future
+implementation should expose these bounded selection/progress/restoration
+contracts through the native fleet CLI rather than accumulating one-off scripts.
+
 ## Verification and acceptance
 
 - Exercise native inventory/plan and supported CLI paths on an authorized,
@@ -73,6 +122,10 @@ paths and credentials out of shared examples and public diagnostics.
   values and scheduler health. Canary success alone is not fleet job success.
 - A partial fleet cannot produce an all-ready receipt or close failed audit
   issues. No production mutation or accidental publication is acceptable.
+- For an authorized owner-layout move, prove exact scope and preserved Git state,
+  truthful active/absent/retired classifications, receipt completion and exact
+  automation restoration through native runtime paths. Exercise drift and refusal
+  recovery with existing checks; never weaken guards to obtain a green result.
 - Run existing scoped lint/type/syntax checks for touched files. Add focused
   coverage only when needed to resolve material uncertainty; do not introduce
   new runners, mocks, test-only interfaces or CI gates by default.
