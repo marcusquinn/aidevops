@@ -143,7 +143,7 @@ async function runIsolated(pluginDir) {
     else {
       if (!realModules.has(name)) throw new Error(`Isolation denied module: ${name}`);
       const path = realpathSync(resolve(root, name));
-      if (dirname(path) !== root) throw new Error("Isolation denied outbound module symlink");
+      if (path !== resolve(root, name)) throw new Error("Isolation denied source-file symlink");
       source = readFileSync(path, "utf8");
     }
     const module = new vm.SourceTextModule(source, {
@@ -181,10 +181,11 @@ try {
     const pluginDir = resolve(dirname(script), "../plugins/opencode-aidevops");
     // No inherited credentials, NODE_OPTIONS, preloads, location overrides or proxies.
     const child = spawnSync(process.execPath, [
-      "--experimental-vm-modules", script, "--isolated", pluginDir,
+      "--no-warnings", "--experimental-vm-modules", script, "--isolated", pluginDir,
     ], { env: {}, encoding: "utf8", timeout: 10000, maxBuffer: 128 * 1024 });
     if (child.stdout) process.stdout.write(child.stdout);
     if (child.status !== 0 || child.error) {
+      if (child.stderr) process.stderr.write(child.stderr);
       throw new Error(child.error?.code === "ETIMEDOUT" ? "Offline probe timed out" : "Isolated probe failed (no live fallback)");
     }
     console.log("PASS overall offline simulated rotation (18 assertions)");
