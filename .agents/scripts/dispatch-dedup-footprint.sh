@@ -64,7 +64,11 @@ _FOOTPRINT_RESERVATION_SUPERSEDE_GRACE_SECONDS=120
 
 # Release/version files are low-information overlap: sharing only these does
 # not block dispatch, but any shared implementation file still does.
-_FOOTPRINT_LOW_INFO_BASENAMES="${AIDEVOPS_FOOTPRINT_LOW_INFO_BASENAMES:-VERSION VERSION.txt version.txt .version CHANGELOG CHANGELOG.md CHANGES.md HISTORY.md}"
+# Basenames match case-insensitively. `changelog.txt`/`readme.txt` are the
+# WordPress.org plugin conventions (GH#33522). Repos with append-only
+# README tables can opt in to more basenames via repos.json
+# `footprint_low_info_paths` (array of basenames).
+_FOOTPRINT_LOW_INFO_BASENAMES="${AIDEVOPS_FOOTPRINT_LOW_INFO_BASENAMES:-VERSION VERSION.txt version.txt .version CHANGELOG CHANGELOG.md CHANGES.md HISTORY.md changelog.txt readme.txt}"
 
 # Maximum age of the footprint cache in seconds. After this, rebuild.
 # 30s: long enough to catch concurrent same-file dispatch races (the
@@ -539,12 +543,38 @@ footprint_release_reservation() {
 	return 0
 }
 
-# Release/version files alone are low-information overlap.
+#######################################
+# Read a repo's opt-in low-information basenames from repos.json.
+# Args: $1 = repo slug (owner/repo)
+# Output: space-separated basenames (empty when unset/unavailable)
+#######################################
+_footprint_repo_low_info_basenames() {
+	local repo_slug="$1"
+	local repos_json="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
+	[[ -n "$repo_slug" && -f "$repos_json" ]] || return 0
+	jq -r --arg slug "$repo_slug" '
+		first(.initialized_repos[]? | select(.slug == $slug))
+		| (.footprint_low_info_paths // [])
+		| if type == "array" then .[] else empty end
+		| select(type == "string" and length > 0 and (test("[[:space:]]") | not))
+	' "$repos_json" 2>/dev/null | tr '\n' ' ' || true
+	return 0
+}
+
+#######################################
+# Release/version/changelog files alone are low-information overlap.
+# Matching is by basename and case-insensitive (Bash 3.2 safe).
+# Args: $1 = path, $2 = optional extra space-separated basenames
+# Exit: 0 low-information, 1 implementation file
+#######################################
 _footprint_is_low_information_path() {
 	local path="$1"
-	local base="${path##*/}"
-	local name=""
-	for name in $_FOOTPRINT_LOW_INFO_BASENAMES; do
+	local extra_names="${2:-}"
+	local base="" name=""
+	base=$(printf '%s' "${path##*/}" | tr '[:upper:]' '[:lower:]')
+	local all_names=""
+	all_names=$(printf '%s %s' "$_FOOTPRINT_LOW_INFO_BASENAMES" "$extra_names" | tr '[:upper:]' '[:lower:]')
+	for name in $all_names; do
 		[[ "$base" == "$name" ]] && return 0
 	done
 	return 1
@@ -554,19 +584,21 @@ _footprint_is_low_information_path() {
 # Find the blocking overlap between a candidate footprint and in-flight or
 # reserved footprints. Shared low-information (release/version) files are
 # ignored; any shared implementation file blocks.
-# Args: $1 = candidate files (newline list), $2 = "path|issue" lines
+# Args: $1 = candidate files (newline list), $2 = "path|issue" lines,
+#       $3 = optional extra low-information basenames (per-repo opt-in)
 # Output: "<blocking_issue><TAB><overlapping files>"
 # Exit: 0 overlap found, 1 none
 #######################################
 _footprint_find_overlap() {
 	local candidate_files="$1"
 	local inflight_data="$2"
+	local extra_low_info="${3:-}"
 	local candidate_file="" norm_candidate="" inflight_entry="" inflight_file="" inflight_issue="" norm_inflight=""
 	local overlapping_files="" blocking_issue=""
 	[[ -n "$candidate_files" && -n "$inflight_data" ]] || return 1
 	while IFS= read -r candidate_file; do
 		[[ -n "$candidate_file" ]] || continue
-		_footprint_is_low_information_path "$candidate_file" && continue
+		_footprint_is_low_information_path "$candidate_file" "$extra_low_info" && continue
 		# Normalise: strip leading ./ or .agents/ for comparison
 		norm_candidate=$(printf '%s' "$candidate_file" | sed 's|^\./||' | sed 's|^\.agents/||')
 		while IFS= read -r inflight_entry; do
@@ -907,8 +939,9 @@ _footprint_check_overlap() {
 		_footprint_reservation_log "event=store_unavailable issue=#${issue_number} repo=${repo_slug} fallback=live_only"
 	fi
 
-	local overlap="" blocking_issue="" overlapping_files=""
-	if overlap=$(_footprint_find_overlap "$candidate_files" "$inflight_data"); then
+	local overlap="" blocking_issue="" overlapping_files="" repo_low_info=""
+	repo_low_info=$(_footprint_repo_low_info_basenames "$repo_slug")
+	if overlap=$(_footprint_find_overlap "$candidate_files" "$inflight_data" "$repo_low_info"); then
 		[[ -z "$lock_dir" ]] || rm -rf "$lock_dir" 2>/dev/null || true
 		blocking_issue="${overlap%%$'\t'*}"
 		overlapping_files="${overlap#*$'\t'}"

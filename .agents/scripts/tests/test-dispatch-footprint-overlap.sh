@@ -661,6 +661,54 @@ fi
 PATH="$OLD_PATH"
 
 # =============================================================================
+# GH#33522: WordPress changelog/readme and case-insensitive low-info basenames
+# =============================================================================
+wp_candidate=$(printf '%s\n' changelog.txt readme.txt Changelog.md src/plugin.php)
+wp_inflight=$(printf '%s\n' 'changelog.txt|700' 'readme.txt|700' 'Changelog.md|700' 'src/other.php|700')
+if ! _footprint_find_overlap "$wp_candidate" "$wp_inflight" >/dev/null; then
+	print_result "low-info: changelog.txt/readme.txt/Changelog.md-only overlap does not block" 0
+else
+	print_result "low-info: changelog.txt/readme.txt/Changelog.md-only overlap does not block" 1
+fi
+
+wp_inflight_impl=$(printf '%s\n' 'changelog.txt|701' 'src/plugin.php|701')
+wp_overlap=$(_footprint_find_overlap "$wp_candidate" "$wp_inflight_impl" || true)
+if [[ "$wp_overlap" == $'701\tsrc/plugin.php' ]]; then
+	print_result "low-info: shared implementation file still blocks alongside changelog.txt" 0
+else
+	print_result "low-info: shared implementation file still blocks alongside changelog.txt" 1 "(got: ${wp_overlap})"
+fi
+
+readme_candidate=$(printf '%s\n' README.md src/a.php)
+readme_inflight=$(printf '%s\n' 'README.md|702')
+if _footprint_find_overlap "$readme_candidate" "$readme_inflight" >/dev/null; then
+	print_result "low-info: README.md still blocks by default" 0
+else
+	print_result "low-info: README.md still blocks by default" 1
+fi
+
+OLD_REPOS_JSON="${REPOS_JSON:-}"
+REPOS_JSON="${TEST_ROOT}/repos-low-info.json"
+jq -n '{initialized_repos: [
+	{slug: "wp/plugin", footprint_low_info_paths: ["README.md", "bad name", 3]},
+	{slug: "other/repo"}
+]}' >"$REPOS_JSON"
+export REPOS_JSON
+wp_repo_extra=$(_footprint_repo_low_info_basenames "wp/plugin")
+other_repo_extra=$(_footprint_repo_low_info_basenames "other/repo")
+if [[ "$wp_repo_extra" == "README.md " && -z "$other_repo_extra" ]] &&
+	! _footprint_find_overlap "$readme_candidate" "$readme_inflight" "$wp_repo_extra" >/dev/null; then
+	print_result "low-info: repos.json footprint_low_info_paths opts README.md in per repo" 0
+else
+	print_result "low-info: repos.json footprint_low_info_paths opts README.md in per repo" 1 "(wp='${wp_repo_extra}' other='${other_repo_extra}')"
+fi
+if [[ -n "$OLD_REPOS_JSON" ]]; then
+	REPOS_JSON="$OLD_REPOS_JSON"
+else
+	unset REPOS_JSON
+fi
+
+# =============================================================================
 # Summary
 # =============================================================================
 echo ""
