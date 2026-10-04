@@ -171,7 +171,7 @@ Operator-private setup:
 
 The supervisor LLM cycle triages GitHub state — issues, PRs, labels, scanner findings — but never inspects processes, logs, pulse-stats counters, or deployed-script mtimes. That gap is a structural blind spot: bugs visible to any operator running `ps`, `jq`, `tail` go unraised for hours.
 
-`r-runtime-audit` runs a registry of small detectors against **local files only** — no GitHub API or GraphQL calls (which would amplify the blind spot many of the detectors surface). When a detector fires, the orchestrator either prints the finding (`--dry-run`, default) or files an auto-dispatch issue tagged with `<!-- aidevops:generator=runtime-audit detector=<id> -->`. The pre-dispatch validator re-runs the cited detector before any worker spawns, so transient regressions (the kind that resolve before a worker arrives) are auto-closed instead of consuming worker time.
+`r-runtime-audit` runs a registry of small detectors against **local files only** — no GitHub API or GraphQL calls (which would amplify the blind spot many of the detectors surface). When a detector fires, the orchestrator either prints the finding (`--dry-run`, default) or files an issue tagged with `<!-- aidevops:generator=runtime-audit detector=<id> -->`. Findings are `auto-dispatch` only on the framework repo (`marcusquinn/aidevops`), whose worktrees contain the `.agents/scripts/` sources the briefs cite; `--apply --repo <other>` files operator-triage issues without `auto-dispatch` (GH#33574). The pre-dispatch validator re-runs the cited detector before any worker spawns, so transient regressions (the kind that resolve before a worker arrives) are auto-closed instead of consuming worker time.
 
 ### Detectors
 
@@ -190,7 +190,7 @@ Each detector lives in `.agents/scripts/runtime-audit-rules/<id>.sh` as a self-c
 1. **Dry-run first.** The routine ships **disabled** in `TODO.md` so the operator can review baseline noise: `runtime-health-audit-helper.sh --dry-run`.
 2. **Tune thresholds.** Each detector has env-overridable inputs (e.g. `REGRESSION_MULT`, `LEAK_THRESHOLD`, `DRIFT_SECONDS`). If the dry-run flags benign conditions, raise the threshold or add the routine entry to `~/.aidevops/cron-overrides.conf` with custom env.
 3. **Enable.** Flip the `[ ]` to `[x]` in the `## Routines` block once you're satisfied.
-4. **Investigate findings.** Filed issues are real — they cite local files an operator can confirm in seconds. Close with rationale if benign; otherwise the issue body itself contains the worker-ready brief (file paths, verification commands, acceptance criteria) per t1900.
+4. **Investigate findings.** Filed issues are real — they cite local files an operator can confirm in seconds. Close with rationale if benign; otherwise, on the framework repo, the issue body itself contains the worker-ready brief (file paths, verification commands, acceptance criteria) per t1900. Findings filed elsewhere are operator triage: confirm locally, then report upstream with `framework-issue-helper.sh log`.
 
 ### Anti-patterns specific to this routine
 
