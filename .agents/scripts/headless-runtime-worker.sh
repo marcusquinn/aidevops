@@ -42,6 +42,9 @@ _HRW_STATUS_CHECKPOINTED="checkpointed"
 _HRW_STATUS_BLOCKED="blocked"
 _HRW_REASON_DRAFT_CHECKPOINT="worker_draft_checkpoint"
 _HRW_REASON_DRAFT_ESCALATION_FAILED="worker_draft_checkpoint_escalation_failed"
+# GH#33545: a ready partial PR merged during the session; no draft remains and
+# the issue stays open for continuation from the brief ledger.
+_HRW_REASON_MERGED_PARTIAL="worker_merged_partial"
 _HRW_REASON_READY_MISSING_LINKAGE="worker_ready_missing_linkage"
 _HRW_REASON_READY_LINKAGE_HANDOFF_FAILED="worker_ready_missing_linkage_transition_failed"
 _HRW_REASON_READY_MISSING_SUMMARY="worker_ready_missing_summary"
@@ -2247,11 +2250,12 @@ _hrw_preserve_merged_checkpoint_handoff() {
 	local session_key="$1"
 	# A merged PR no longer owns an in-review issue. Live-state projection
 	# preserves its blocker or releases unfinished work, never marks it done.
-	_hrw_release_dispatch_claim "$session_key" "$_HRW_REASON_DRAFT_CHECKPOINT"
+	# GH#33545: no draft exists, so do not report it as a draft checkpoint.
+	_hrw_release_dispatch_claim "$session_key" "$_HRW_REASON_MERGED_PARTIAL"
 	_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_DEFERRED"
 	_HRW_FINAL_RUNTIME_EVENT="$_HRW_EVENT_DEFERRED"
 	_HRW_FINAL_RUNTIME_STATUS="$_HRW_STATUS_CHECKPOINTED"
-	_HRW_FINAL_RUNTIME_CLASSIFICATION="$_HRW_REASON_DRAFT_CHECKPOINT"
+	_HRW_FINAL_RUNTIME_CLASSIFICATION="$_HRW_REASON_MERGED_PARTIAL"
 	return 0
 }
 

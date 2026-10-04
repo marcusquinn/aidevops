@@ -168,7 +168,8 @@ API_FAIL=1
 # merged checkpoint into the open-draft in-review projection or completion.
 _hrw_release_dispatch_claim() {
 	local session="$1" reason="$2"
-	[[ "$session" == issue-42 && "$reason" == worker_draft_checkpoint ]] || return 1
+	# GH#33545: a merged partial is released with its own reason, not as a draft.
+	[[ "$session" == issue-42 && "$reason" == worker_merged_partial ]] || return 1
 	clear_active_status_on_release 42 owner/repo runner
 	return $?
 }
@@ -181,6 +182,6 @@ for _run_result_label in task_complete post_pr_handoff; do
 	_hrw_finish_success_run issue-42 "$SCRIPT_DIR"
 	assert_status blocked
 	[[ "$_HRW_TERMINAL_OUTCOME" == deferred ]]
-	[[ "$_HRW_FINAL_RUNTIME_CLASSIFICATION" == worker_draft_checkpoint ]]
+	[[ "$_HRW_FINAL_RUNTIME_CLASSIFICATION" == worker_merged_partial ]]
 done
 printf 'PASS: non-closing linkage, release, open-done healing and worker checkpoint regressions\n'

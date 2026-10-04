@@ -698,7 +698,7 @@ _ci_repair_project_outcome() {
 			failure_reason="completed"
 			next_action="monitor_pr"
 			;;
-		worker_draft_checkpoint)
+		worker_draft_checkpoint | worker_merged_partial)
 			result="deferred"
 			next_action="continue_repair"
 			;;
