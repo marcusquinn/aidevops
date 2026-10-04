@@ -12,6 +12,11 @@ import { fileURLToPath } from "node:url";
 
 import { BoundedInteractiveOperationManager } from "../bounded-interactive-operation.mjs";
 import { createOutputSandboxReader, createOutputSandboxRecorder } from "../bounded-operation-output.mjs";
+import {
+  parseProcessSnapshot,
+  recordOwnedDescendants,
+  verifiedNestedTargets,
+} from "../bounded-operation-process-tree.mjs";
 import { createBoundedInteractiveOperationTool } from "../bounded-operation-tool.mjs";
 import { resolveGptImageProjectRoot, resolveSessionOwnedWorktreeRoot } from "../gpt-image-worktree.mjs";
 
@@ -357,6 +362,98 @@ describe("bounded interactive operations", () => {
     const spawnFailureResult = await terminal(instance, spawnFailure.operation_id);
     assert.equal(spawnFailureResult.state, "failed");
     assert.equal(spawnFailureResult.restoration_state, "succeeded");
+  });
+
+  test("helper-created process groups are contained on timeout and cancellation (GH#33514)", async () => {
+    const alive = (pid) => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    const nestedPid = (recordedBefore) => {
+      const match = recorded.slice(recordedBefore).map((entry) => entry.content).join("\n").match(/nested:(\d+)/);
+      assert.ok(match, "nested child PID was not reported");
+      return Number(match[1]);
+    };
+    // An unrelated process group outside every operation must survive.
+    const unrelated = spawn("sleep", ["30"], { detached: true, stdio: "ignore" });
+    unrelated.unref();
+    try {
+      const instance = manager();
+      // `set -m` mirrors timeout_sec's fallback; GNU timeout also calls setpgid.
+      const nestedCommand = ["bash", "-c", "set -m; sleep 30 & echo nested:$!; wait"];
+      let recordedBefore = recorded.length;
+      const timed = await instance.start({ command: nestedCommand, budgetMs: 400 }, owner);
+      const timedResult = await terminal(instance, timed.operation_id, owner, 5000);
+      assert.equal(timedResult.state, "timed_out");
+      assert.equal(timedResult.containment, "owned_process_tree");
+      assert.equal(timedResult.nested_process_groups, 1);
+      assert.equal(alive(nestedPid(recordedBefore)), false, "nested process group survived the deadline");
+
+      recordedBefore = recorded.length;
+      const cancelled = await instance.start({ command: nestedCommand, budgetMs: 10_000 }, owner);
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      instance.cancel(cancelled.operation_id, owner);
+      const cancelledResult = await terminal(instance, cancelled.operation_id, owner, 5000);
+      assert.equal(cancelledResult.state, "cancelled");
+      assert.equal(alive(nestedPid(recordedBefore)), false, "nested process group survived cancellation");
+
+      const timeoutBinary = ["timeout", "gtimeout"].find((name) => {
+        try {
+          execFileSync("sh", ["-c", `command -v ${name}`], { stdio: "ignore" });
+          return true;
+        } catch {
+          return false;
+        }
+      });
+      if (timeoutBinary) {
+        const gnu = await instance.start({ command: [timeoutBinary, "30", "sleep", "30"], budgetMs: 400 }, owner);
+        const gnuResult = await terminal(instance, gnu.operation_id, owner, 5000);
+        assert.equal(gnuResult.state, "timed_out");
+        assert.equal(gnuResult.containment, "owned_process_tree");
+      }
+      assert.equal(alive(unrelated.pid), true, "an unrelated process group was signalled");
+    } finally {
+      unrelated.kill("SIGKILL");
+    }
+  });
+
+  test("descendant attribution requires a matching process start identity", () => {
+    const snapshot = parseProcessSnapshot([
+      "100 1 100 Sun Oct  4 03:00:00 2026",
+      "101 100 100 Sun Oct  4 03:00:01 2026",
+      "102 101 102 Sun Oct  4 03:00:02 2026",
+      "103 1 102 Sun Oct  4 03:00:02 2026",
+      "200 1 200 Sun Oct  4 03:00:03 2026",
+      "garbage",
+    ].join("\n"));
+    assert.equal(snapshot.length, 5);
+    const owned = new Map();
+    recordOwnedDescendants(snapshot, 100, owned);
+    assert.deepEqual([...owned.keys()].sort(), [101, 102]);
+    // 102 exited and its PID was reused by an unrelated process; 103 is a
+    // reparented member only attributable through a verified recorded parent.
+    const later = parseProcessSnapshot([
+      "100 1 100 Sun Oct  4 03:00:00 2026",
+      "102 1 102 Sun Oct  4 03:09:59 2026",
+      "103 1 102 Sun Oct  4 03:00:02 2026",
+      "200 1 200 Sun Oct  4 03:00:03 2026",
+    ].join("\n"));
+    recordOwnedDescendants(later, 100, owned);
+    assert.deepEqual(verifiedNestedTargets(later, owned, 100), [], "a reused PID must never be signalled");
+    const reparented = parseProcessSnapshot([
+      "100 1 100 Sun Oct  4 03:00:00 2026",
+      "102 1 102 Sun Oct  4 03:00:02 2026",
+      "104 102 102 Sun Oct  4 03:00:05 2026",
+      "200 1 200 Sun Oct  4 03:00:03 2026",
+    ].join("\n"));
+    const tracked = new Map(owned);
+    tracked.set(102, { pgid: 102, started: "Sun Oct  4 03:00:02 2026" });
+    recordOwnedDescendants(reparented, 100, tracked);
+    assert.deepEqual(verifiedNestedTargets(reparented, tracked, 100).sort(), [102, 104]);
   });
 
   test("a launcher cannot report success without supervisor command evidence", async () => {

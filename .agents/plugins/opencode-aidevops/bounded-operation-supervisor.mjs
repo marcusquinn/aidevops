@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 Marcus Quinn
 
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
+
+import { createProcessTreeTracker, signalEach } from "./bounded-operation-process-tree.mjs";
 
 function boundedInteger(value, fallback, minimum, maximum) {
   value = Number(value);
@@ -24,31 +26,25 @@ async function readPrivateConfig() {
   }
 }
 
-function groupMemberCount(groupID) {
-  const result = spawnSync("ps", ["-ax", "-o", "pid=", "-o", "pgid="], {
-    detached: true,
-    encoding: "utf8",
-    timeout: 1000,
-  });
-  if (result.status !== 0) return -1;
-  let count = 0;
-  for (const line of result.stdout.split(/\r?\n/)) {
-    const fields = line.trim().split(/\s+/);
-    if (Number(fields[1]) === groupID) count += 1;
+// Nested process groups created by helpers such as timeout_sec are tracked
+// separately (GH#33514); see bounded-operation-process-tree.mjs.
+const TRACK_INTERVAL_MS = 250;
+
+function signalOwnGroup(signal) {
+  try {
+    process.kill(-process.pid, signal);
+    return true;
+  } catch {
+    // The group may already contain only this supervisor.
+    return false;
   }
-  return count;
 }
 
-function reportCommandStarted(operationID) {
+function sendMessage(message) {
   if (typeof process.send !== "function") return Promise.resolve();
   return new Promise((resolve) => {
     try {
-      process.send({
-        type: "aidevops.operation",
-        event: "command_started",
-        operationID: String(operationID || ""),
-        runtime: `node ${process.version}`,
-      }, resolve);
+      process.send({ type: "aidevops.operation", ...message }, resolve);
     } catch {
       // The parent closes IPC during cancellation or an abnormal launcher exit.
       resolve();
@@ -56,67 +52,98 @@ function reportCommandStarted(operationID) {
   });
 }
 
+function reportCommandStarted(operationID) {
+  return sendMessage({
+    event: "command_started",
+    operationID: String(operationID || ""),
+    runtime: `node ${process.version}`,
+  });
+}
+
+function validCommand(command) {
+  return Array.isArray(command) && command.length > 0
+    && command.every((part) => typeof part === "string" && part);
+}
+
+// Signals nested helper groups before and after the grace period, then the
+// supervisor's own group. Containment is reported before the final SIGKILL.
+function createTerminator(tracker, killGraceMs, reportContainment) {
+  const state = { terminating: false };
+  state.terminate = () => {
+    if (state.terminating) return;
+    state.terminating = true;
+    signalEach(tracker.nestedTargets(tracker.track()), "SIGTERM");
+    signalOwnGroup("SIGTERM");
+    setTimeout(() => {
+      signalEach(tracker.nestedTargets(tracker.track()), "SIGKILL");
+      reportContainment().finally(() => {
+        if (!signalOwnGroup("SIGKILL")) process.exit(1);
+      });
+    }, killGraceMs).unref();
+  };
+  return state;
+}
+
+// True once only the supervisor remains in its group and no owned nested-group
+// descendant is alive. Nested descendants keep inherited stdio open, so the
+// operation is not drained while they live; the budget still bounds them, and
+// once termination has begun they are escalated instead of awaiting the grace.
+function ownedTreeDrained(tracker, terminator) {
+  const snapshot = tracker.track();
+  if (!snapshot || tracker.ownGroupMembers(snapshot) !== 1) return false;
+  const nested = tracker.nestedTargets(snapshot);
+  if (nested.length === 0) return true;
+  if (terminator.terminating) signalEach(nested, "SIGKILL");
+  return false;
+}
+
 export async function runSupervisor() {
   const config = await readPrivateConfig();
-  const command = config?.command;
-  if (!Array.isArray(command) || command.length === 0
-    || command.some((part) => typeof part !== "string" || !part)) return 125;
+  if (!validCommand(config?.command)) return 125;
+  const { command } = config;
+  const operationID = String(config.operationID || "");
 
   const budgetMs = boundedInteger(config.budgetMs, 15 * 60 * 1000, 10, 24 * 60 * 60 * 1000);
   const killGraceMs = boundedInteger(config.killGraceMs, 500, 10, 30 * 1000);
-  let terminating = false;
-  let childFinished = false;
-  let childExit = 1;
-  let commandStarted = Promise.resolve();
+  const result = { finished: false, exit: 1, started: Promise.resolve() };
+  const tracker = createProcessTreeTracker(process.pid);
+  const reportContainment = () => sendMessage({ event: "containment", operationID, ...tracker.containment() });
+  const terminator = createTerminator(tracker, killGraceMs, reportContainment);
 
-  const terminateOwnedGroup = () => {
-    if (terminating) return;
-    terminating = true;
-    try {
-      process.kill(-process.pid, "SIGTERM");
-    } catch {
-      // The group may already contain only this supervisor.
-    }
-    setTimeout(() => {
-      try {
-        process.kill(-process.pid, "SIGKILL");
-      } catch {
-        process.exit(1);
-      }
-    }, killGraceMs).unref();
-  };
-
-  process.on("SIGTERM", terminateOwnedGroup);
-  process.on("SIGINT", terminateOwnedGroup);
+  process.on("SIGTERM", terminator.terminate);
+  process.on("SIGINT", terminator.terminate);
   process.on("message", (message) => {
-    if (message?.action === "terminate") terminateOwnedGroup();
+    if (message?.action === "terminate") terminator.terminate();
   });
-  const budgetTimer = setTimeout(terminateOwnedGroup, budgetMs);
+  const budgetTimer = setTimeout(terminator.terminate, budgetMs);
 
   const child = spawn(command[0], command.slice(1), {
     cwd: process.cwd(),
-    env: { ...process.env, AIDEVOPS_OPERATION_ID: String(config.operationID || "") },
+    env: { ...process.env, AIDEVOPS_OPERATION_ID: operationID },
     stdio: ["ignore", "inherit", "inherit"],
   });
 
-  child.once("spawn", () => { commandStarted = reportCommandStarted(config.operationID); });
+  const trackTimer = setInterval(tracker.track, TRACK_INTERVAL_MS);
+  child.once("spawn", () => {
+    result.started = reportCommandStarted(operationID);
+    tracker.track();
+  });
   child.once("error", () => {
-    childFinished = true;
-    childExit = 127;
+    result.finished = true;
+    result.exit = 127;
   });
   child.once("exit", (code) => {
-    childFinished = true;
-    childExit = Number.isInteger(code) ? code : 1;
+    result.finished = true;
+    result.exit = Number.isInteger(code) ? code : 1;
   });
 
   return new Promise((resolve) => {
     const drainTimer = setInterval(() => {
-      if (!childFinished) return;
-      const members = groupMemberCount(process.pid);
-      if (members !== 1) return;
+      if (!result.finished || !ownedTreeDrained(tracker, terminator)) return;
       clearInterval(drainTimer);
+      clearInterval(trackTimer);
       clearTimeout(budgetTimer);
-      commandStarted.finally(() => resolve(childExit));
+      Promise.all([result.started, reportContainment()]).finally(() => resolve(result.exit));
     }, 25);
   });
 }

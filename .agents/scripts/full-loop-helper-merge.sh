@@ -1009,7 +1009,12 @@ _merge_guard_prospective_todo() (
 		print_error "Merge blocked: unable to create isolated prospective Git context"
 		return 1
 	}
-	trap 'rm -rf "$temp_dir"' EXIT HUP INT TERM
+	# Signals must terminate after cleanup; a handler that returns would resume
+	# the guard after a cancellation (GH#33514).
+	trap 'rm -rf "$temp_dir"' EXIT
+	trap 'rm -rf "$temp_dir"; exit 129' HUP
+	trap 'rm -rf "$temp_dir"; exit 130' INT
+	trap 'rm -rf "$temp_dir"; exit 143' TERM
 	object_repo=$(_merge_create_prospective_object_context "$temp_dir" "$real_git") || {
 		print_error "Merge blocked: unable to initialize isolated prospective Git context"
 		return 1
