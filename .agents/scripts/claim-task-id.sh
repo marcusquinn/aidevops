@@ -105,6 +105,12 @@
 #   - Bootstrap uses the same CAS git plumbing — safe from any branch
 #   - Emits BOOTSTRAP_COUNTER_OK / BOOTSTRAP_COUNTER_FAILED for observability
 #   - Concurrent bootstrap: if another session wins the push, we retry read
+#   - GH#33527: when the counter branch was not chosen explicitly and the
+#     default branch has no counter, bootstrap creates the dedicated
+#     task-id-counter branch (orphan commit, counter file only) and never
+#     pushes to the default branch. Opt in to the historical default-branch
+#     bootstrap with .aidevops.json counter_branch / --counter-branch or
+#     AIDEVOPS_COUNTER_BOOTSTRAP_DEFAULT_BRANCH=1.
 #
 # Migration from TODO.md scanning:
 #   - If .task-counter doesn't exist, initialize from TODO.md highest ID
@@ -220,6 +226,9 @@ DEFAULT_BRANCH="main"
 # CLI still wins because config loading only applies while the flag is false.
 _REMOTE_NAME_SET=false
 _COUNTER_BRANCH_SET=false
+# GH#33527: true when the counter was redirected to a not-yet-created
+# dedicated branch because the default branch has no counter.
+_COUNTER_BOOTSTRAP_DEDICATED=false
 # GH#33152: true once .aidevops.json "default_branch" is loaded. When false,
 # _claim_apply_detected_default_branch queries the remote's actual default
 # branch instead of leaving the DEFAULT_BRANCH="main" literal in place —
@@ -531,23 +540,31 @@ _validate_description_format() {
 	return $rc
 }
 
-# _validate_description_scope_before_allocation — reject descriptions that the
-# issue-body composer cannot canonicalize before advancing the CAS counter.
+# _validate_description_scope_before_allocation — reject bodies that issue
+# composition would refuse, before advancing the CAS counter. GH#33527: run
+# the exact post-allocation gates (_compose_issue_body) on the same inputs —
+# description normalization and the caller brief's scope-check — so a body
+# cannot pass here and then fail after an ID is spent.
 _validate_description_scope_before_allocation() {
 	[[ "$NO_ISSUE" == "true" || "$DRY_RUN" == "true" || "$OFFLINE_MODE" == "true" ]] && return 0
-	[[ -z "$TASK_DESCRIPTION" ]] && return 0
 
-	local scope_helper="${SCRIPT_DIR}/brief_scope.py"
-	if [[ ! -r "$scope_helper" ]]; then
-		log_warn "brief_scope.py is unavailable; preserving post-allocation body validation"
-		return 0
+	local fmt_helper="${SCRIPT_DIR}/issue-body-format-helper.sh"
+	local readiness_helper="${SCRIPT_DIR}/brief-readiness-helper.sh"
+
+	if [[ -n "$TASK_DESCRIPTION" && -x "$fmt_helper" ]]; then
+		if ! "$fmt_helper" normalize "$TASK_DESCRIPTION" >/dev/null; then
+			log_error "Description body cannot be canonicalized before task-ID allocation."
+			log_error "Recovery: under an existing '### Files Scope', use bare '- path/to/file' bullets."
+			return 1
+		fi
 	fi
 
-	if ! printf '%s' "$TASK_DESCRIPTION" | python3 "$scope_helper" prepare \
-		"$TASK_DESCRIPTION" "$TASK_DESCRIPTION" >/dev/null; then
-		log_error "Description body cannot be canonicalized before task-ID allocation."
-		log_error "Recovery: under an existing '### Files Scope', use bare '- path/to/file' bullets."
-		return 1
+	if [[ -n "$TASK_BRIEF_FILE" && -f "$TASK_BRIEF_FILE" && -r "$TASK_BRIEF_FILE" && -r "$readiness_helper" ]]; then
+		if ! bash "$readiness_helper" scope-check "$(<"$TASK_BRIEF_FILE")" >&2; then
+			log_error "Brief file ${TASK_BRIEF_FILE} fails the Files Scope check; no task ID was allocated."
+			log_error "Recovery: under '### Files Scope', list one bare '- path/to/file' (or '- \`path\`') bullet per line, with no notes."
+			return 1
+		fi
 	fi
 	return 0
 }
@@ -1111,7 +1128,11 @@ _main_resolve_allocation() {
 		# Non-main counter branches can lag the default branch after release or
 		# merge activity.  Reconcile before claiming so we do not allocate IDs below
 		# the default branch's observed counter and then rely on manual fallback.
-		if [[ "$CAS_RECONCILE_RETRY_ON_FAILURE" == "1" && "${DEFAULT_BRANCH:-main}" != "$COUNTER_BRANCH" ]]; then
+		# GH#33527: a dedicated branch about to be bootstrapped does not exist
+		# yet and the default branch has no counter, so there is nothing to
+		# reconcile; the bootstrap seeds from TODO.md.
+		if [[ "$CAS_RECONCILE_RETRY_ON_FAILURE" == "1" && "${DEFAULT_BRANCH:-main}" != "$COUNTER_BRANCH" &&
+			"$_COUNTER_BOOTSTRAP_DEDICATED" != "true" ]]; then
 			local _pre_reconcile_rc=0
 			_cas_reconcile_counter_branch "$REPO_PATH" "${DEFAULT_BRANCH:-main}" >/dev/null || _pre_reconcile_rc=$?
 			if [[ $_pre_reconcile_rc -ne 0 && $_pre_reconcile_rc -ne 2 ]]; then

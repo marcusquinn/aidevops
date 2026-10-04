@@ -640,6 +640,43 @@ sync_counter_branch() {
 	return 0
 }
 
+# GH#33527: a repository that has never allocated task IDs has no counter on
+# its default branch. Bootstrapping there pushes commits straight to the
+# default branch (and can ship .task-counter in release artifacts), so target
+# the dedicated branch instead unless the caller opted in. A fetch failure
+# leaves the selection unchanged; bootstrap_remote_counter still refuses an
+# implicit default-branch bootstrap.
+# Args: $1 dedicated candidate branch name.
+_counter_redirect_missing_default_counter() {
+	local candidate="$1"
+	local default_branch="${DEFAULT_BRANCH:-main}"
+	local default_counter=""
+	local depth_args=()
+
+	if [[ "${AIDEVOPS_COUNTER_BOOTSTRAP_DEFAULT_BRANCH:-0}" == "1" ]]; then
+		log_info "Dedicated counter branch ${candidate} not present; using ${default_branch} (AIDEVOPS_COUNTER_BOOTSTRAP_DEFAULT_BRANCH=1)"
+		return 0
+	fi
+	_counter_context_is_isolated && depth_args=(--depth=1)
+	if ! _run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" \
+		fetch -q "${depth_args[@]}" --no-tags "$REMOTE_NAME" \
+		"+refs/heads/${default_branch}:refs/remotes/${REMOTE_NAME}/${default_branch}" >/dev/null; then
+		log_info "Dedicated counter branch ${candidate} not present; using ${default_branch}"
+		return 0
+	fi
+	default_counter=$(_counter_git show "${REMOTE_NAME}/${default_branch}:${COUNTER_FILE}" 2>/dev/null | tr -d '[:space:]' || true)
+	if [[ "$default_counter" =~ ^[0-9]+$ ]]; then
+		log_info "Dedicated counter branch ${candidate} not present; using ${default_branch}"
+		return 0
+	fi
+
+	COUNTER_BRANCH="$candidate"
+	_COUNTER_BOOTSTRAP_DEDICATED=true
+	log_info "COUNTER_BOOTSTRAP_TARGET: ${REMOTE_NAME}/${default_branch} has no ${COUNTER_FILE}; allocation will create the dedicated branch ${candidate} and leave ${default_branch} untouched (GH#33527)"
+	log_info "To keep the counter on ${default_branch} instead, set .aidevops.json counter_branch or AIDEVOPS_COUNTER_BOOTSTRAP_DEFAULT_BRANCH=1"
+	return 0
+}
+
 # Prefer the conventional dedicated branch when neither CLI nor project config
 # selected a counter branch. The candidate is accepted only when its counter is
 # at least the default-branch counter and the TODO-derived seed, preventing an
@@ -670,7 +707,7 @@ resolve_implicit_counter_branch() {
 			ls-remote --exit-code --heads "$REMOTE_NAME" "refs/heads/${candidate}" \
 			>/dev/null || probe_rc=$?
 		if [[ $probe_rc -eq 2 ]]; then
-			log_info "Dedicated counter branch ${candidate} not present; using ${DEFAULT_BRANCH:-main}"
+			_counter_redirect_missing_default_counter "$candidate"
 			return 0
 		fi
 		log_error "COUNTER_BRANCH_DISCOVERY_ERROR: unable to fetch or classify ${REMOTE_NAME}/${candidate} (fetch_rc=${fetch_rc}, probe_rc=${probe_rc}, CAS_HTTPS_TIMEOUT_S=${CAS_HTTPS_TIMEOUT_S:-30})"
@@ -1269,11 +1306,32 @@ _compute_counter_seed() {
 # Bootstrap .task-counter on <remote>/<counter_branch> when it is missing.
 # Seeds from TODO.md highest task ID (or 1 for fresh repos).
 # Uses the same git plumbing as allocate_counter_cas to stay branch-safe.
+# GH#33527: an implicitly selected default branch is never bootstrapped
+# without opt-in; a missing dedicated branch is created as an orphan commit
+# that contains only the counter file.
 # Returns 0 on success (counter now exists on remote), 1 on failure.
 bootstrap_remote_counter() {
 	local repo_path="$1"
 
-	log_info "BOOTSTRAP_COUNTER: .task-counter missing on ${REMOTE_NAME}/${COUNTER_BRANCH} — bootstrapping"
+	if [[ "$COUNTER_BRANCH" == "${DEFAULT_BRANCH:-main}" && "${_COUNTER_BRANCH_SET:-false}" != "true" &&
+		"${AIDEVOPS_COUNTER_BOOTSTRAP_DEFAULT_BRANCH:-0}" != "1" ]]; then
+		log_error "BOOTSTRAP_COUNTER_REFUSED: ${COUNTER_FILE} is missing on ${REMOTE_NAME}/${COUNTER_BRANCH} (the default branch); refusing an unrequested push there (GH#33527)"
+		log_error "Recovery: rerun once ${REMOTE_NAME} is reachable to bootstrap the dedicated task-id-counter branch, or opt in via .aidevops.json counter_branch / AIDEVOPS_COUNTER_BOOTSTRAP_DEFAULT_BRANCH=1"
+		return 1
+	fi
+
+	local parent_sha=""
+	parent_sha=$(_counter_git rev-parse "${REMOTE_NAME}/${COUNTER_BRANCH}" 2>/dev/null) || parent_sha=""
+	if [[ -z "$parent_sha" && "${_COUNTER_BOOTSTRAP_DEDICATED:-false}" != "true" ]]; then
+		log_warn "BOOTSTRAP_COUNTER: failed to resolve ${REMOTE_NAME}/${COUNTER_BRANCH}"
+		return 1
+	fi
+
+	if [[ -n "$parent_sha" ]]; then
+		log_info "BOOTSTRAP_COUNTER: .task-counter missing on ${REMOTE_NAME}/${COUNTER_BRANCH} — bootstrapping"
+	else
+		log_info "BOOTSTRAP_COUNTER: creating dedicated counter branch ${REMOTE_NAME}/${COUNTER_BRANCH} (orphan commit containing only ${COUNTER_FILE})"
+	fi
 
 	local seed
 	seed=$(_compute_counter_seed "$repo_path")
@@ -1287,11 +1345,16 @@ bootstrap_remote_counter() {
 	}
 
 	# Check whether .task-counter already exists in the remote tree
-	local existing_tree
-	existing_tree=$(_counter_git ls-tree "${REMOTE_NAME}/${COUNTER_BRANCH}" 2>/dev/null || true)
+	local existing_tree=""
+	[[ -z "$parent_sha" ]] || existing_tree=$(_counter_git ls-tree "$parent_sha" 2>/dev/null || true)
 
 	local tree_sha
-	if echo "$existing_tree" | grep -q "${COUNTER_FILE}$"; then
+	if [[ -z "$parent_sha" ]]; then
+		tree_sha=$(printf '100644 blob %s\t%s\n' "$blob_sha" "$COUNTER_FILE" | _counter_git mktree 2>/dev/null) || {
+			log_warn "BOOTSTRAP_COUNTER: failed to create tree (orphan)"
+			return 1
+		}
+	elif echo "$existing_tree" | grep -q "${COUNTER_FILE}$"; then
 		# Replace existing (invalid) entry
 		tree_sha=$(echo "$existing_tree" | sed "s|[0-9a-f]\{40,64\}	${COUNTER_FILE}$|${blob_sha}	${COUNTER_FILE}|" | _counter_git mktree 2>/dev/null) || {
 			log_warn "BOOTSTRAP_COUNTER: failed to create tree (replace)"
@@ -1310,17 +1373,16 @@ bootstrap_remote_counter() {
 		}
 	fi
 
-	local parent_sha
-	parent_sha=$(_counter_git rev-parse "${REMOTE_NAME}/${COUNTER_BRANCH}" 2>/dev/null) || {
-		log_warn "BOOTSTRAP_COUNTER: failed to resolve ${REMOTE_NAME}/${COUNTER_BRANCH}"
-		return 1
-	}
-
-	local commit_sha
-	commit_sha=$(_counter_git commit-tree "$tree_sha" -p "$parent_sha" -m "chore: bootstrap .task-counter (seed=${seed})" 2>/dev/null) || {
+	local commit_sha="" commit_rc=0
+	if [[ -n "$parent_sha" ]]; then
+		commit_sha=$(_counter_git commit-tree "$tree_sha" -p "$parent_sha" -m "chore: bootstrap .task-counter (seed=${seed})" 2>/dev/null) || commit_rc=$?
+	else
+		commit_sha=$(_counter_git commit-tree "$tree_sha" -m "chore: bootstrap .task-counter (seed=${seed})" 2>/dev/null) || commit_rc=$?
+	fi
+	if [[ $commit_rc -ne 0 || -z "$commit_sha" ]]; then
 		log_warn "BOOTSTRAP_COUNTER: failed to create commit"
 		return 1
-	}
+	fi
 
 	# GH#21904: wrap with timeout + SSH fallback for credential-helper hangs.
 	if ! _run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" \
@@ -1419,14 +1481,16 @@ _cas_fetch_and_pin() {
 		log_warn "Failed to fetch ${REMOTE_NAME}/${COUNTER_BRANCH}"
 	fi
 
-	local pinned_sha
-	pinned_sha=$(_counter_git rev-parse "${REMOTE_NAME}/${COUNTER_BRANCH}" 2>/dev/null) || {
+	local pinned_sha=""
+	pinned_sha=$(_counter_git rev-parse "${REMOTE_NAME}/${COUNTER_BRANCH}" 2>/dev/null) || pinned_sha=""
+	# GH#33527: a redirected dedicated branch does not exist until bootstrap.
+	if [[ -z "$pinned_sha" && "${_COUNTER_BOOTSTRAP_DEDICATED:-false}" != "true" ]]; then
 		log_warn "Failed to resolve ${REMOTE_NAME}/${COUNTER_BRANCH}"
 		return 1
-	}
+	fi
 
-	local current_value
-	current_value=$(_counter_git show "${pinned_sha}:${COUNTER_FILE}" 2>/dev/null | tr -d '[:space:]')
+	local current_value=""
+	[[ -z "$pinned_sha" ]] || current_value=$(_counter_git show "${pinned_sha}:${COUNTER_FILE}" 2>/dev/null | tr -d '[:space:]')
 
 	if [[ -z "$current_value" ]] || ! [[ "$current_value" =~ ^[0-9]+$ ]]; then
 		log_info "Counter missing/invalid — attempting auto-bootstrap (GH#6569)"
