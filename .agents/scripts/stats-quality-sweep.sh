@@ -814,12 +814,24 @@ _run_sweep_tools() {
 		review_scan_section=""
 	}
 	[[ -n "$review_scan_section" ]] && tool_count=$((tool_count + 1))
+	_quality_sweep_tools_budget_exhausted "$repo_slug" "$tool_count" "$skipped_tools" && return 125
 
 	_quality_sweep_output_sections "$skipped_tools" \
 		"$tool_count" "$shellcheck_section" "$qlty_section" "$qlty_smell_count" \
 		"$qlty_grade" "$qlty_smell_delta" "$prev_qlty_smells" "$sonar_section" \
 		"$sweep_gate_status" "$sweep_total_issues" "$sweep_high_critical" \
 		"$sweep_sev_inline" "$codacy_section" "$coderabbit_section" "$review_scan_section" || return 1
+	return 0
+}
+
+# GH#33568: when no tool completed and at least one was skipped for budget
+# (rc=125), the repository was never scanned. Succeeds (0) to tell the caller
+# to return 125, which restores the batch cursor instead of reporting
+# "no tools available" and advancing past the repository.
+_quality_sweep_tools_budget_exhausted() {
+	local repo_slug="$1" tool_count="$2" skipped_tools="$3"
+	[[ "$tool_count" -eq 0 && "$skipped_tools" == *"rc=125"* ]] || return 1
+	echo "[stats] Quality sweep: tool budget exhausted for ${repo_slug}; deferring repository" >>"$LOGFILE"
 	return 0
 }
 
@@ -834,18 +846,32 @@ _quality_sweep_output_sections() {
 
 # Reserve publication time before admitting tools. A distinct no-budget result
 # lets the batch restore its retry cursor instead of reporting unavailable tools.
+# GH#33568: require a usable tool window, not merely 2s of headroom. The last
+# tool of a repository is killed at (tool deadline - 2), which leaves the next
+# repository a 0-1s window; every tool then failed rc=124 in 0s and the cursor
+# advanced past repositories that were never scanned.
 _quality_sweep_tool_deadline() {
-	local deadline="${AIDEVOPS_GH_DEADLINE_EPOCH:-$(($(date +%s) + 120))}"
+	local now deadline min_window
+	now=$(date +%s)
+	deadline="${AIDEVOPS_GH_DEADLINE_EPOCH:-$((now + 120))}"
 	deadline=$((deadline - 35))
-	[[ "$deadline" -gt "$(($(date +%s) + 2))" ]] || return 125
+	min_window=$(_stats_seconds "${QUALITY_SWEEP_MIN_TOOL_SECONDS:-20}" 20)
+	[[ "$deadline" -ge "$((now + min_window))" ]] || return 125
 	printf '%s\n' "$deadline"
 	return 0
 }
 
+# Returns 125 without running or logging timing when the shared tool deadline
+# cannot admit another bounded child; this is budget exhaustion, not a tool
+# timeout, so callers can defer the repository instead of advancing past it.
 _quality_sweep_timed_tool() {
 	local seconds="$1" deadline="$2" name="$3" start rc=0
 	shift 3
 	start=$(date +%s)
+	if [[ "$deadline" -le "$((start + 2))" ]]; then
+		printf '[stats] Quality sweep tool %s: skipped, tool budget exhausted\n' "$name" >>"$LOGFILE"
+		return 125
+	fi
 	_stats_run_bounded "$seconds" "$deadline" "$@" || rc=$?
 	printf '[stats] Quality sweep tool %s: %ss rc=%s\n' "$name" "$(($(date +%s) - start))" "$rc" >>"$LOGFILE"
 	return "$rc"
@@ -918,6 +944,10 @@ _write_sweep_sections_dir() {
 _quality_sweep_for_repo() {
 	local repo_slug="$1"
 	local repo_path="$2"
+
+	# GH#33568: check the tool budget before dashboard upkeep so a repository
+	# at the end of the batch window is deferred, not charged GitHub calls.
+	_quality_sweep_tool_deadline >/dev/null || return 125
 
 	local issue_number
 	issue_number=$(_ensure_quality_issue "$repo_slug") || return 0
