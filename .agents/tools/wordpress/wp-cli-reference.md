@@ -69,6 +69,88 @@ wp plugin search "seo" --fields=name,slug,rating
 
 ### Fleet rollout of a self-hosted plugin release
 
+#### Resumable command (operator-controlled)
+
+`wp-fleet-helper.sh` coordinates `plan`, `backup`, `deploy`, `verify` and `report`.
+It reads the allowlisted, tenant-aware `wp-helper.sh --export-sites` inventory;
+shared server references and SSH aliases retain the existing authentication path.
+Inventory, manifests, artifacts, backups and checkpoints are private: never attach
+them to public issues. Python 3.6+ and WP-CLI must already exist on selected hosts;
+the helper does not install dependencies or contact sites without explicit selection.
+
+```bash
+# Replace placeholders; use a private directory outside repository/web roots.
+wp-fleet-helper.sh plan --run-dir "<private-run-directory>" \
+  --tenant "<tenant>" --sites "<site-id>,<other-site-id>" \
+  --scan-parent "<approved-host-parent>" --remote-storage "<private-host-backup-directory>" \
+  --slug "<slug>" --repository "<owner/repository>" --tag "<published-tag>" \
+  --asset "<published-asset.zip>" --version "X.Y.Z" --sha256 "<trusted-64-character-sha256>"
+wp-fleet-helper.sh backup --run-dir "<private-run-directory>"
+# Only after reviewing the exact plan, including every logical URL/health state:
+wp-fleet-helper.sh deploy --run-dir "<private-run-directory>" \
+  --apply --approve "<exact-plan-fingerprint>"
+wp-fleet-helper.sh verify --run-dir "<private-run-directory>"
+wp-fleet-helper.sh report --run-dir "<private-run-directory>"
+```
+
+Planning is read-only on the hosts (WP-CLI bootstrap can still run installed
+plugin hooks). It pins a published asset ID, trusted SHA-256, annotated tag commit,
+signature verification and successful exact-commit CI. An unverifiable annotated
+tag requires an explicit `--trust-decision "<operator-reviewed-rationale>"` recorded
+in the fingerprint; unsigned lightweight tags are refused. No release publication,
+updater diagnostic, option write or persistent request-limiter bypass is performed.
+The expected archive entry point is `<slug>/<slug>.php`; numeric versions only.
+Custom plugin locations and symlinked config/plugin trees are refused during
+planning rather than risking a different upgrader destination.
+
+Select `--category "<category>"` instead of site IDs, or explicitly opt into bounded
+read-only discovery with `--discover-ssh "<SSH-alias>" --scan-parent "<approved-parent>"`
+instead of registry selection. Discovery never silently scans an account: depth is
+limited to four levels/10,000 directories, symlink directories are not followed,
+and canonical roots must remain under the approved parent. Registry aliases are
+deduplicated by remote account/host identity plus canonical root; every multisite
+URL and its original activation state is captured. All selected installations must
+share the approved scan parent; use separate plans otherwise.
+
+By default each URL must return 200 without fatal markers. Use
+`--health "<private-expectations.json>"` during planning for explicit per-URL exceptions
+(a JSON object mapping exact URLs to HTTP status integers, e.g. a protected staging
+URL to 401). Redirect statuses are checked rather than silently following them.
+Optional `--audit-argv '["<plugin-command>","audit"]' --audit-read-only` records an
+operator-supplied read-only WP-CLI argv and runs it once per logical URL in `verify`.
+This attestation is an authority boundary, not a sandbox for untrusted commands;
+transport/path/bootstrap override flags and arbitrary shell strings are refused.
+
+Backups contain a WP-CLI DB dump, config and plugin copies, with checksums, private
+0700 directories/0600 files, outside the approved scan parent. WP-CLI owns database
+authentication and temporary client configuration; control manifests never contain
+credential values. Use a known non-web-served host location: the helper cannot
+infer every unrelated web server alias. Deployment first checks the entire selected
+inventory, every URL, activation/version/bytes and every complete backup. It uses
+the normal WordPress upgrader without activation flags, stages one verified ZIP per
+host/plan and skips an already-installed release only when **all** files match.
+
+Repeat a phase with `--resume` to revalidate immutable release, scope, backups and
+installed bytes; completion flags alone never authorize a reinstall. Checkpoints
+are atomic and reports are sanitized counts. Fixed account/canonical-root locks
+cover different run IDs and backup directories; they do not prevent native updates
+or hosting operations. Lock contention, newer versions, retired roots, changed
+inventory, altered bytes or failed health stop the run without shrinking scope.
+An interrupted upgrader leaving partial bytes requires operator inspection, not
+blind force reinstall. An orphaned published backup/checkpoint or lock also needs
+inspection; there is no unsafe stale-lock takeover.
+
+Backups and historical evidence are retained. Failure never automatically restores
+plugin files or imports a DB, recreates retired roots, edits content/features or
+changes unrelated plugins. Rollback is deliberately not implemented: schema
+compatibility and separate authority must be established outside this helper.
+Offline stub/filesystem verification is provided by
+`bash .agents/scripts/tests/test-wp-fleet-helper.sh`; a real hosting/WordPress
+rollout is **not** verified by those tests and requires separately authorized runtime
+validation. The release builder remains build/check-only.
+
+#### Explicit updater diagnostic and manual fallback
+
 For a GitHub-updater release, use the GitHub-channel zip built by
 [the plugin release workflow](wp-plugin-release.md#release-steps-github-channel).
 Before updating the fleet, test one representative site's update check in cron
