@@ -738,6 +738,31 @@ _dispatch_cycle_budget_admits_round() {
 	return 1
 }
 
+# Enumerate the launch-path backlog without broad diagnostic counters (GH#29255).
+# Stdout: non-empty ranked JSON on success. Status: 1 unavailable, 2 empty,
+# 3 budget-deferred. Keep timing/guard logic out of the dispatch orchestrator.
+_dispatch_enumerate_ranked_round() {
+	local scan_limit="$1" normalization_mode="$2" slots="$3" started_ms="" ranked_json="" count=0
+	_dispatch_cycle_budget_admits_round "Dispatch_max" before || return 3
+	started_ms=$(_dispatch_now_ms) || started_ms=""
+	if ! ranked_json=$(_dispatch_ranked_candidates_json "$scan_limit" "$normalization_mode"); then
+		_dispatch_record_enumeration_seconds "$started_ms"
+		echo "[pulse-wrapper] Dispatch_max deferred: candidate enumeration unavailable (available=${slots}); not an empty queue" >>"$LOGFILE"
+		_dispatch_stats_increment "dispatch_candidate_enumeration_unavailable"
+		return 1
+	fi
+	_dispatch_record_enumeration_seconds "$started_ms"
+	_dispatch_cycle_budget_admits_round "Dispatch_max" after || return 3
+	count=$(printf '%s' "$ranked_json" | jq 'length' 2>/dev/null) || count=0
+	[[ "$count" =~ ^[0-9]+$ ]] || count=0
+	if [[ "$count" -eq 0 ]]; then
+		echo "[pulse-wrapper] Dispatch_max skipped: no ranked candidates (available=${slots})" >>"$LOGFILE"
+		return 2
+	fi
+	printf '%s\n' "$ranked_json"
+	return 0
+}
+
 #######################################
 # Stop dispatch loops when the GraphQL reserve is already below the circuit
 # breaker threshold. The rate_limit endpoint is free, so this protects the

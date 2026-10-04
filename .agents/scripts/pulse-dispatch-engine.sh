@@ -685,34 +685,14 @@ dispatch_max() {
 		return 0
 	fi
 
-	# GH#29255: ranked candidates are the launch-path backlog source. Do not run
-	# the broad all-repository issue+PR diagnostic counters before this snapshot.
-	if ! _dispatch_cycle_budget_admits_round "Dispatch_max" before; then
+	local candidates_json candidate_count enumeration_rc=0
+	candidates_json=$(_dispatch_enumerate_ranked_round "$PULSE_DISPATCH_CANDIDATE_SCAN_LIMIT" "$dependency_normalization_mode" "$available_slots") || enumeration_rc=$?
+	if [[ "$enumeration_rc" -ne 0 ]]; then
 		echo 0
-		return 3
+		[[ "$enumeration_rc" -ne 2 ]] || return 0
+		return "$enumeration_rc"
 	fi
-	local enumeration_started_ms=""
-	enumeration_started_ms=$(_dispatch_now_ms) || enumeration_started_ms=""
-	local candidates_json candidate_count
-	if ! candidates_json=$(_dispatch_ranked_candidates_json "$PULSE_DISPATCH_CANDIDATE_SCAN_LIMIT" "$dependency_normalization_mode"); then
-		_dispatch_record_enumeration_seconds "$enumeration_started_ms"
-		echo "[pulse-wrapper] Dispatch_max deferred: candidate enumeration unavailable (available=${available_slots}); not an empty queue" >>"$LOGFILE"
-		_dispatch_stats_increment "dispatch_candidate_enumeration_unavailable"
-		echo 0
-		return 1
-	fi
-	_dispatch_record_enumeration_seconds "$enumeration_started_ms"
-	if ! _dispatch_cycle_budget_admits_round "Dispatch_max" after; then
-		echo 0
-		return 3
-	fi
-	candidate_count=$(printf '%s' "$candidates_json" | jq 'length' 2>/dev/null) || candidate_count=0
-	[[ "$candidate_count" =~ ^[0-9]+$ ]] || candidate_count=0
-	if [[ "$candidate_count" -eq 0 ]]; then
-		echo "[pulse-wrapper] Dispatch_max skipped: no ranked candidates (available=${available_slots})" >>"$LOGFILE"
-		echo 0
-		return 0
-	fi
+	candidate_count=$(printf '%s' "$candidates_json" | jq 'length')
 	if ! _dispatch_rest_core_progress_allows_next "dispatch_post_ranking"; then
 		echo "[pulse-wrapper] Dispatch_max stopped after candidate ranking: REST-core launch headroom is unavailable" >>"$LOGFILE"
 		echo 0
