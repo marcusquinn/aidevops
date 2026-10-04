@@ -64,7 +64,7 @@ Before testing a plugin or theme, size the site for the full stack it will run (
 
 Baseline evidence: 72 plugins installed filled 512 MB of OPcache (31,723 PHP files cached; 315 MB used after raising to 1 GB); pages peaked at 352 MB memory; the busiest hour needed 5 workers.
 
-- Find the site folder from the `"path"` entries in `~/Library/Application Support/Local/sites.json` (macOS). Edit the `.hbs` templates only; files under `~/Library/Application Support/Local/run/<id>/conf/` are regenerated.
+- Find the site folder from the `"path"` entries in `~/Library/Application Support/Local/sites.json` (macOS); read only `path`, never whole registry or config files (they hold credentials). Bundled WP-CLI: `/Applications/Local.app/Contents/Resources/extraResources/bin/wp-cli/wp-cli.phar`, run with Local's PHP from `lightning-services/php-*` (see `wp-dev.md`). Edit the `.hbs` templates only; files under `~/Library/Application Support/Local/run/<id>/conf/` are regenerated.
 - Changes apply only after Stop site, then Start site in Local. Ask the user to restart if no CLI path is available, then verify the generated `run/<id>/conf/php/php.ini` or the site's own report (Site Health → Info → Server, or `php -i` via the site shell).
 - Comment each change with the date and reason; keep the `{{! ... }}` Handlebars and `{{#if}}` blocks intact.
 - The OPcache block sits inside `{{#unless apache}}` (nginx sites). For Apache sites, set the values outside that block.
