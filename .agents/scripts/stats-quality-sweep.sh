@@ -732,12 +732,8 @@ _run_sweep_tools() {
 	local sweep_high_critical=0
 	local sweep_sev_inline=""
 	local skipped_tools="" tool_rc=0
-	# Reserve time for body and rolling-comment publication after all tools.
-	local tool_deadline="${AIDEVOPS_GH_DEADLINE_EPOCH:-$(($(date +%s) + 120))}"
-	tool_deadline=$((tool_deadline - 35))
-	# Do not report unavailable tools when none can even be admitted. Propagate
-	# this distinct result to the batch owner, which restores the retry cursor.
-	[[ "$tool_deadline" -gt "$(($(date +%s) + 2))" ]] || return 125
+	local tool_deadline
+	tool_deadline=$(_quality_sweep_tool_deadline) || return 125
 
 	local prev_qlty_smells
 	prev_qlty_smells=$(_previous_qlty_smell_count "$repo_slug")
@@ -833,6 +829,16 @@ _quality_sweep_output_sections() {
 	sections_dir=$(_write_sweep_sections_dir "$@") || return 1
 	printf '%s' "$skipped_tools" >"${sections_dir}/skipped_tools"
 	printf '%s\n' "$sections_dir"
+	return 0
+}
+
+# Reserve publication time before admitting tools. A distinct no-budget result
+# lets the batch restore its retry cursor instead of reporting unavailable tools.
+_quality_sweep_tool_deadline() {
+	local deadline="${AIDEVOPS_GH_DEADLINE_EPOCH:-$(($(date +%s) + 120))}"
+	deadline=$((deadline - 35))
+	[[ "$deadline" -gt "$(($(date +%s) + 2))" ]] || return 125
+	printf '%s\n' "$deadline"
 	return 0
 }
 
