@@ -9,13 +9,18 @@ import time
 from pathlib import Path
 
 
+MAX_RESERVATION_AGE = 180  # 90s native timeout, bounded cleanup and admission margin.
+
+
 def mark_dead_reservations(budget, now, process_birth):
-    """A dead executor remains uncertain spend; caller owns the transaction."""
-    for identity, pid, birth in budget.db.execute(
-        "SELECT id,pid,birth FROM reservation WHERE scope=? AND uncertain=0",
+    """Dead or over-age executors retain uncertain spend, not probe ownership."""
+    for identity, pid, birth, started in budget.db.execute(
+        "SELECT id,pid,birth,started FROM reservation WHERE scope=? AND uncertain=0",
         (budget.scope,),
     ).fetchall():
         try:
+            if now - started >= MAX_RESERVATION_AGE:
+                raise ProcessLookupError
             os.kill(pid, 0)
             current_birth = budget.birth if pid == os.getpid() else process_birth(pid)
             if birth and current_birth and birth != current_birth:
