@@ -78,6 +78,14 @@ _DISPATCH_TERMINAL_CIRCUIT_CACHE_TTL_SECONDS="${AIDEVOPS_DISPATCH_TERMINAL_CIRCU
 _DISPATCH_TERMINAL_BACKOFF_CACHE_TTL_SECONDS="${AIDEVOPS_DISPATCH_TERMINAL_BACKOFF_CACHE_TTL_SECONDS:-900}"
 [[ "$_DISPATCH_TERMINAL_BACKOFF_CACHE_TTL_SECONDS" =~ ^[0-9]+$ ]] || _DISPATCH_TERMINAL_BACKOFF_CACHE_TTL_SECONDS=900
 ((_DISPATCH_TERMINAL_BACKOFF_CACHE_TTL_SECONDS <= 900)) || _DISPATCH_TERMINAL_BACKOFF_CACHE_TTL_SECONDS=900
+# GH#33538: maintainer-gated blocks (unverified/expired permission grant,
+# pending permission request, cost circuit breaker, comment consolidation) only
+# clear through an issue change: a signed grant comment, label edit or body
+# rewrite bumps updatedAt and invalidates the hint at once. Out-of-band changes
+# (budget config, signing keys) re-arm within this bounded TTL.
+_DISPATCH_MAINTAINER_GATE_CACHE_TTL_SECONDS="${AIDEVOPS_DISPATCH_MAINTAINER_GATE_CACHE_TTL_SECONDS:-7200}"
+[[ "$_DISPATCH_MAINTAINER_GATE_CACHE_TTL_SECONDS" =~ ^[0-9]+$ ]] || _DISPATCH_MAINTAINER_GATE_CACHE_TTL_SECONDS=7200
+((_DISPATCH_MAINTAINER_GATE_CACHE_TTL_SECONDS <= 14400)) || _DISPATCH_MAINTAINER_GATE_CACHE_TTL_SECONDS=14400
 _DISPATCH_BENIGN_BLOCKS_SCRATCH_DIR=""
 _DISPATCH_BENIGN_BLOCKS_LEGACY_MIN_AGE_SECONDS="${AIDEVOPS_PULSE_BENIGN_BLOCKS_LEGACY_MIN_AGE_SECONDS:-3600}"
 [[ "$_DISPATCH_BENIGN_BLOCKS_LEGACY_MIN_AGE_SECONDS" =~ ^[0-9]+$ ]] || _DISPATCH_BENIGN_BLOCKS_LEGACY_MIN_AGE_SECONDS=3600
@@ -168,10 +176,47 @@ _dispatch_live_owner_refusal_fields() {
 	return 0
 }
 
+# GH#33538: blocks that only a maintainer action (visible as an issue change)
+# can clear. They hold unowned available issues, so no ownership evidence.
+_dispatch_maintainer_gate_reason() {
+	local reason="$1"
+	case "$reason" in
+	permission_grant_unverified | needs_maintainer_permissions | cost_budget_exceeded | consolidated) return 0 ;;
+	esac
+	return 1
+}
+
+# Extract a deterministic maintainer gate from one candidate's attempt lines.
+# Transient verifier results (API_ERROR, HELPER_MISSING, NO_KEY, unknown) never
+# qualify: they must be re-checked on the next cycle.
+# Stdout: reason token. Returns 0 when found, 1 otherwise.
+_dispatch_maintainer_gate_from_lines() {
+	local lines="$1"
+	if [[ "$lines" =~ DISPATCH_BLOCK_REASON\ reason=permission_grant_unverified\ signal=(STALE_APPROVAL|NO_APPROVAL|UNTRUSTED_APPROVAL|LEGACY_APPROVAL|MALFORMED_APPROVAL)([[:space:]]|$) ]]; then
+		printf 'permission_grant_unverified\n'
+		return 0
+	fi
+	if [[ "$lines" == *"DISPATCH_BLOCK_REASON reason=needs_maintainer_permissions "* ]]; then
+		printf 'needs_maintainer_permissions\n'
+		return 0
+	fi
+	if [[ "$lines" == *"DISPATCH_BLOCK_REASON reason=cost_budget_exceeded signal=COST_BUDGET_EXCEEDED"* ]]; then
+		printf 'cost_budget_exceeded\n'
+		return 0
+	fi
+	if [[ "$lines" == *"Dispatch deferred for #"*": issue needs comment consolidation"* ]]; then
+		printf 'consolidated\n'
+		return 0
+	fi
+	return 1
+}
+
 _dispatch_negative_cache_record() {
 	local candidate="$1" reason="$2" pr="${3:-}" fingerprint="${4:-}" owner_path="${5:-}"
 	local fields="" issue="" repo="" updated="" file="" tmp=""
-	case "$reason" in dedup_active_claim | dedup_active_claim_live_owner | dedup_active_claim_durable_launch | worker_draft_checkpoint_blocked | terminal_blocker_circuit | terminal_blocker_backoff | "$_DISPATCH_LIVE_OWNER_HOLD_REASON") ;; *) return 0 ;; esac
+	if ! _dispatch_maintainer_gate_reason "$reason"; then
+		case "$reason" in dedup_active_claim | dedup_active_claim_live_owner | dedup_active_claim_durable_launch | worker_draft_checkpoint_blocked | terminal_blocker_circuit | terminal_blocker_backoff | "$_DISPATCH_LIVE_OWNER_HOLD_REASON") ;; *) return 0 ;; esac
+	fi
 	if [[ "$reason" == "$_DISPATCH_LIVE_OWNER_HOLD_REASON" ]]; then
 		[[ "$pr" =~ ^[1-9][0-9]*$ && "$fingerprint" =~ ^[A-Za-z0-9_.:-]+$ && -n "$owner_path" ]] || return 0
 		[[ "$owner_path" != *$'\t'* && "$owner_path" != *$'\n'* ]] || return 0
@@ -218,7 +263,8 @@ _dispatch_negative_cache_reason() {
 	[[ "$cached" == "$updated" || "$reason" == "$_DISPATCH_LIVE_OWNER_HOLD_REASON" ]] || return 1
 	if [[ "$reason" != terminal_blocker_circuit && "$reason" != terminal_blocker_backoff &&
 		"$reason" != worker_draft_checkpoint_blocked &&
-		"$reason" != "$_DISPATCH_LIVE_OWNER_HOLD_REASON" ]]; then
+		"$reason" != "$_DISPATCH_LIVE_OWNER_HOLD_REASON" ]] &&
+		! _dispatch_maintainer_gate_reason "$reason"; then
 		# Ownership hints: the snapshot must independently still show a claimed
 		# owner. The worker-draft exception uses a complete, bounded-age PR
 		# snapshot and exact fingerprint instead; neither path permits a launch.
@@ -245,6 +291,10 @@ _dispatch_negative_cache_reason() {
 		;;
 	"$_DISPATCH_LIVE_OWNER_HOLD_REASON")
 		_dispatch_live_owner_hold_valid "$pr" "$fingerprint" "$owner_path" || return 1
+		;;
+	permission_grant_unverified | needs_maintainer_permissions | cost_budget_exceeded | consolidated)
+		# GH#33538: the exact updatedAt match above is the invalidation signal.
+		ttl="$_DISPATCH_MAINTAINER_GATE_CACHE_TTL_SECONDS"
 		;;
 	*) return 1 ;;
 	esac
@@ -297,8 +347,16 @@ _dispatch_cache_confirmed_block() {
 		fi
 		return 0
 	fi
+	# GH#33538: persist deterministic maintainer gates only from exact attempt
+	# evidence, so later cycles skip them without spending a wave slot.
+	if reason=$(_dispatch_maintainer_gate_from_lines "$lines"); then
+		_dispatch_negative_cache_record "$candidate" "$reason"
+		return 0
+	fi
 	[[ "${_DISPATCH_CANDIDATE_ELIGIBILITY:-}" == "$_DISPATCH_ELIGIBILITY_INELIGIBLE" ]] || return 0
 	reason=$(_dispatch_benign_blocked_candidate_reason "$issue" "$repo") || return 0
+	# The ledger reason alone cannot distinguish a transient verifier error.
+	_dispatch_maintainer_gate_reason "$reason" && return 0
 	_dispatch_negative_cache_record "$candidate" "$reason"
 	return 0
 }
@@ -730,6 +788,13 @@ _dispatch_max_loop() {
 		processed_count=$((processed_count + 1))
 		echo "[pulse-wrapper] Dispatch_max: parallel iter=${processed_count} — entering body" >>"$LOGFILE"
 
+		# GH#33538: resolve cached blocks in the parent before capacity or the
+		# cycle-budget floor is consulted, so a single admitted wave is filled
+		# with candidates that can actually launch.
+		if _dispatch_max_prefilter_cached_block "$candidate_json" "$outcomes_file"; then
+			continue
+		fi
+
 		_dispatch_max_refresh_pids _pids
 		_dispatch_max_wait_for_capacity _pids "$max_parallel"
 
@@ -762,6 +827,32 @@ _dispatch_max_loop() {
 	local dispatched_count
 	dispatched_count=$(_dispatch_max_count_outcomes "$outcomes_file")
 	printf '%d %d\n' "$dispatched_count" "$processed_count"
+	return 0
+}
+
+#######################################
+# GH#33538: skip a candidate whose cross-cycle negative-cache hint is current,
+# without spawning a ceremony. Only the local cache file is read here (no API,
+# no process scan); the child still runs the full prefilter. Records an
+# ineligible outcome so priority phases neither retry it nor count it unknown.
+#
+# Arguments:
+#   $1 - candidate JSON
+#   $2 - outcomes file
+# Returns: 0 when skipped, 1 when the candidate must be attempted
+#######################################
+_dispatch_max_prefilter_cached_block() {
+	local candidate_json="$1"
+	local outcomes_file="$2"
+	local issue="" repo="" fields="" reason=""
+	reason=$(_dispatch_negative_cache_reason "$candidate_json") || return 1
+	fields=$(jq -r '[(.number // ""), (.repo_slug // "")] | @tsv' <<<"$candidate_json" 2>/dev/null) || return 1
+	IFS=$'\t' read -r issue repo <<<"$fields"
+	echo "[pulse-wrapper] Dispatch_max: skipping #${issue} (${repo}) — cross-cycle block:${reason} (no wave slot spent)" >>"$LOGFILE"
+	_dispatch_stats_increment "dispatch_candidate_negative_cache_hit"
+	_DISPATCH_CANDIDATE_ELIGIBILITY="$_DISPATCH_ELIGIBILITY_INELIGIBLE"
+	_dispatch_record_candidate_outcome "$candidate_json" 1 "$outcomes_file" || true
+	_DISPATCH_CANDIDATE_ELIGIBILITY="$_DISPATCH_ELIGIBILITY_UNKNOWN"
 	return 0
 }
 

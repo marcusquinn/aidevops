@@ -868,6 +868,94 @@ test_priority_verified_occupancy() {
 	return 0
 }
 
+# GH#33538: a deterministic maintainer gate is persisted only from exact attempt
+# evidence, keyed to updatedAt; transient verifier results are never cached.
+test_maintainer_gate_cache_records_only_deterministic_evidence() {
+	local stale='{"number":701,"repo_slug":"o/r","updatedAt":"2026-10-04T01:00:00Z","labels":[],"assignees":[]}'
+	local transient='{"number":702,"repo_slug":"o/r","updatedAt":"2026-10-04T01:00:00Z","labels":[],"assignees":[]}'
+	local cost='{"number":703,"repo_slug":"o/r","updatedAt":"2026-10-04T01:00:00Z","labels":[],"assignees":[]}'
+	{
+		printf '[pulse-wrapper] DISPATCH_CANDIDATE_ATTEMPT #701 (o/r)\n'
+		printf '[dispatch_with_dedup] DISPATCH_BLOCK_REASON reason=permission_grant_unverified signal=STALE_APPROVAL issue=#701 repo=o/r\n'
+		printf '[pulse-wrapper] DISPATCH_CANDIDATE_ATTEMPT #702 (o/r)\n'
+		printf '[dispatch_with_dedup] DISPATCH_BLOCK_REASON reason=permission_grant_unverified signal=API_ERROR issue=#702 repo=o/r\n'
+		printf '[pulse-wrapper] DISPATCH_CANDIDATE_ATTEMPT #703 (o/r)\n'
+		printf '[pulse-wrapper] Dedup: #703 in o/r already assigned — DISPATCH_BLOCK_REASON reason=cost_budget_exceeded signal=COST_BUDGET_EXCEEDED (spent=900K budget=800K tier=standard attempts=2)\n'
+	} >>"$LOGFILE"
+	_DISPATCH_CANDIDATE_ELIGIBILITY="$_DISPATCH_ELIGIBILITY_INELIGIBLE"
+	_dispatch_cache_confirmed_block "$stale" 701 o/r
+	_dispatch_cache_confirmed_block "$transient" 702 o/r
+	_DISPATCH_CANDIDATE_ELIGIBILITY="$_DISPATCH_ELIGIBILITY_UNKNOWN"
+	_dispatch_cache_confirmed_block "$cost" 703 o/r
+
+	local stale_reason="" transient_reason="" cost_reason="" bumped_reason=""
+	stale_reason=$(_dispatch_negative_cache_reason "$stale") || stale_reason=""
+	transient_reason=$(_dispatch_negative_cache_reason "$transient") || transient_reason=""
+	cost_reason=$(_dispatch_negative_cache_reason "$cost") || cost_reason=""
+	bumped_reason=$(_dispatch_negative_cache_reason "${stale/01:00:00/02:00:00}") || bumped_reason=""
+	if [[ "$stale_reason" == permission_grant_unverified && -z "$transient_reason" &&
+		"$cost_reason" == cost_budget_exceeded && -z "$bumped_reason" ]]; then
+		print_result "maintainer_gate_cache: deterministic gates cached, transient and updated issues re-checked" 0
+	else
+		print_result "maintainer_gate_cache: deterministic evidence only" 1 \
+			"stale=${stale_reason} transient=${transient_reason} cost=${cost_reason} bumped=${bumped_reason}"
+	fi
+	return 0
+}
+
+# GH#33538: with budget for exactly one wave, six cached maintainer-gated
+# candidates ahead of a dispatchable one must not consume that wave.
+test_parallel_loop_skips_cached_blocks_before_wave() {
+	local attempts_file="${TEST_ROOT}/hol-attempts"
+	: >"$attempts_file"
+	# shellcheck disable=SC2317  # called via name resolution from loop
+	_dispatch_process_candidate() {
+		local candidate_json="$1" issue_num
+		issue_num=$(printf '%s' "$candidate_json" | jq -r '.number // 0' 2>/dev/null)
+		printf '%s\n' "$issue_num" >>"$attempts_file"
+		[[ "$issue_num" == 716 ]] && return 0
+		sleep 0.05
+		return 1
+	}
+	# The cycle budget admits exactly one wave of max_parallel spawn decisions.
+	local budget_calls=0
+	# shellcheck disable=SC2317  # called via name resolution from loop
+	_dispatch_graphql_budget_allows_next() {
+		budget_calls=$((budget_calls + 1))
+		((budget_calls <= 6))
+		return $?
+	}
+
+	local candidate_file outcomes_file candidate i
+	candidate_file=$(mktemp)
+	outcomes_file=$(mktemp)
+	for i in 710 711 712 713 714 715 716; do
+		candidate=$(printf '{"number":%d,"repo_slug":"o/r","repo_path":"/t","url":"u","title":"t","updatedAt":"2026-10-04T01:00:00Z","labels":[],"assignees":[]}' "$i")
+		printf '%s\n' "$candidate" >>"$candidate_file"
+		[[ "$i" == 716 ]] || _dispatch_negative_cache_record "$candidate" permission_grant_unverified
+	done
+	: >"$outcomes_file"
+
+	rm -f "$STOP_FLAG"
+	local result="" s="" ineligible=""
+	result=$(_dispatch_max_loop "$candidate_file" 6 6 "test_user" 6 "$outcomes_file")
+	s=$(_dispatch_max_count_outcomes "$outcomes_file" "success")
+	ineligible=$(grep -c 'eligibility=ineligible' "$outcomes_file")
+	_dispatch_graphql_budget_allows_next() {
+		return 0
+	}
+
+	if [[ "$s" == 1 && "$ineligible" == 6 && "$(<"$attempts_file")" == 716 ]] &&
+		grep -q 'skipping #710 (o/r) — cross-cycle block:permission_grant_unverified (no wave slot spent)' "$LOGFILE"; then
+		print_result "parallel_loop: cached maintainer gates skip before the single wave; dispatchable #716 launches" 0
+	else
+		print_result "parallel_loop: head-of-line cached blocks" 1 \
+			"result=${result} s=${s} ineligible=${ineligible} attempts=$(tr '\n' ',' <"$attempts_file")"
+	fi
+	rm -f "$candidate_file" "$outcomes_file" "$attempts_file"
+	return 0
+}
+
 # =============================================================================
 # Run all tests
 # =============================================================================
@@ -906,6 +994,8 @@ test_priority_reservations empty 3 0 4
 test_priority_reservations incomplete 3 0 2
 test_priority_reservations urgent 3 0 4
 test_priority_verified_occupancy
+test_maintainer_gate_cache_records_only_deterministic_evidence
+test_parallel_loop_skips_cached_blocks_before_wave
 
 # Final summary
 echo ""
