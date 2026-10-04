@@ -69,6 +69,11 @@ on:
         required: false
         default: 'ubuntu-latest'
         type: string
+      fail_on_push_error:
+        description: 'Fail the job when the metrics push is still rejected after retries (for example a missing, expired or under-scoped SYNC_PAT on a protected branch). Set false to keep the old warning-only behaviour.'
+        required: false
+        type: boolean
+        default: true
     secrets:
       AIDEVOPS_READ_TOKEN:
         required: false
@@ -182,6 +187,8 @@ jobs:
           BADGE_DIR: ${{ inputs.badge_dir }}
           LEGACY_BADGE_DIR: ${{ inputs.legacy_badge_dir }}
           COMMIT_SUBJECT: ${{ inputs.commit_message }}
+          FAIL_ON_PUSH_ERROR: ${{ inputs.fail_on_push_error }}
+          REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           METRIC_PATHS=("$OUTPUT_DIR" "$BADGE_DIR")
@@ -201,5 +208,13 @@ jobs:
             fi
             sleep $((i * 3))
           done
-          echo "::warning::Failed to push repository metrics updates after 3 attempts (likely branch protection without SYNC_PAT)"
-          exit 0
+          # GH#33583: a rejected push must not look like a passed run, or badges
+          # and docs/metrics go stale silently.
+          if [[ "${FAIL_ON_PUSH_ERROR:-true}" == "false" ]]; then
+            echo "::warning::Failed to push repository metrics updates after 3 attempts (likely branch protection without a valid SYNC_PAT)"
+            echo "::warning::Set with: gh secret set SYNC_PAT --repo ${REPO} (Contents: Read and write)"
+            exit 0
+          fi
+          echo "::error::Failed to push repository metrics updates after 3 attempts (likely branch protection without a valid SYNC_PAT)"
+          echo "::error::Set with: gh secret set SYNC_PAT --repo ${REPO} (Contents: Read and write)"
+          exit 1

@@ -47,6 +47,7 @@ jobs:
       # legacy_badge_dir: .github/badges   # only for READMEs using legacy badge paths
       # top_n: 8
       # skip_if_fresh_hours: 24
+      # fail_on_push_error: false          # default true: a rejected push fails the job
       # extra_excludes: |
       #   fixtures/
       #   test-data/

@@ -79,7 +79,9 @@ Plus the GitHub Actions wiring:
 4. **`.github/workflows/loc-badge-reusable.yml`** — reusable workflow
    that downstream repos call from a tiny caller YAML; it runs weekly and on
    default-branch pushes, skips outputs fresher than 24h by default, and never
-   runs on pull_request events
+   runs on pull_request events. A metrics push still rejected after three
+   attempts (usually a missing or under-scoped `SYNC_PAT` on a protected
+   branch) fails the job; set `fail_on_push_error: false` to keep it a warning
 5. **`.agents/templates/workflows/loc-badge-caller.yml`** — the caller template
 
 ## Add badges to a repo (manual flow)
