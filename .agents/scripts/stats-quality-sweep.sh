@@ -110,7 +110,7 @@ _quality_sweep_batch() {
 	while IFS= read -r entry; do
 		[[ -n "$entry" ]] || continue
 		if [[ "$(date +%s)" -ge "$((deadline - 2))" ]]; then
-			echo "[stats] Quality sweep partial: attempted=$attempted remaining=$remaining; cleanup budget reserved" >>"$LOGFILE"
+			echo "[stats] Quality sweep deferred: budget exhausted; attempted=$attempted remaining=$remaining" >>"$LOGFILE"
 			return 0
 		fi
 		IFS='|' read -r slug path <<<"$entry"
@@ -120,6 +120,13 @@ _quality_sweep_batch() {
 			'.visited += [$entry] | .last_attempt=$entry | .remaining=$remaining' <<<"$state")
 		result=0
 		_stats_run_bounded "$repo_timeout" "$deadline" _quality_sweep_attempt "$cursor" "$next_state" "$slug" "$path" || result=$?
+		# 125 is an explicit no-tool-budget result, unlike a hanging repository
+		# killed by the outer runner (124). Undo admission so the next tick retries.
+		if [[ "$result" -eq 125 ]]; then
+			_quality_sweep_save_cursor "$cursor" "$state" || return 1
+			echo "[stats] Quality sweep deferred: budget exhausted; repo=${slug} remaining=$remaining" >>"$LOGFILE"
+			return 0
+		fi
 		observed=$(jq -c . "$cursor") || return 1
 		if [[ "$observed" != "$next_state" ]]; then
 			echo "[stats] Quality sweep partial: repository not admitted (rc=${result}); cursor unchanged" >>"$LOGFILE"
@@ -191,6 +198,10 @@ run_daily_quality_sweep() {
 	local sweep_deadline
 	sweep_deadline=$(_stats_work_deadline)
 	sweep_deadline=$((sweep_deadline - $(_stats_seconds "${QUALITY_SWEEP_CLEANUP_RESERVE_SECONDS:-5}" 5)))
+	if [[ "$(date +%s)" -ge "$((sweep_deadline - 2))" ]]; then
+		echo "[stats] Quality sweep deferred: budget exhausted; cursor unchanged" >>"$LOGFILE"
+		return 0
+	fi
 	# Time-of-day gate — only run during Anthropic's 2x usage boost hours.
 	# Claude doubles usage allowance outside peak: for UK/GMT that's 18:00-11:59
 	# (standard 1x is only 12:00-17:59). Weekends are 2x all day, all timezones.
@@ -724,6 +735,9 @@ _run_sweep_tools() {
 	# Reserve time for body and rolling-comment publication after all tools.
 	local tool_deadline="${AIDEVOPS_GH_DEADLINE_EPOCH:-$(($(date +%s) + 120))}"
 	tool_deadline=$((tool_deadline - 35))
+	# Do not report unavailable tools when none can even be admitted. Propagate
+	# this distinct result to the batch owner, which restores the retry cursor.
+	[[ "$tool_deadline" -gt "$(($(date +%s) + 2))" ]] || return 125
 
 	local prev_qlty_smells
 	prev_qlty_smells=$(_previous_qlty_smell_count "$repo_slug")
@@ -909,7 +923,7 @@ _quality_sweep_for_repo() {
 	# used `IFS= read -r` chains which only handled single-line values and
 	# silently truncated every multi-line markdown section.
 	local sections_dir
-	sections_dir=$(_run_sweep_tools "$repo_slug" "$repo_path") || return 1
+	sections_dir=$(_run_sweep_tools "$repo_slug" "$repo_path") || return $?
 	if [[ -z "$sections_dir" || ! -d "$sections_dir" ]]; then
 		echo "[stats] Quality sweep: _run_sweep_tools produced no sections dir for ${repo_slug}" >>"$LOGFILE"
 		[[ -n "$sections_dir" && -e "$sections_dir" ]] && rm -rf "$sections_dir"
