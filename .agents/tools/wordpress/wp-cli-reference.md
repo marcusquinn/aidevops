@@ -100,6 +100,8 @@ tag requires an explicit `--trust-decision "<operator-reviewed-rationale>"` reco
 in the fingerprint; unsigned lightweight tags are refused. No release publication,
 updater diagnostic, option write or persistent request-limiter bypass is performed.
 The expected archive entry point is `<slug>/<slug>.php`; numeric versions only.
+Custom plugin locations and symlinked config/plugin trees are refused during
+planning rather than risking a different upgrader destination.
 
 Select `--category "<category>"` instead of site IDs, or explicitly opt into bounded
 read-only discovery with `--discover-ssh "<SSH-alias>" --scan-parent "<approved-parent>"`
@@ -110,8 +112,8 @@ deduplicated by remote account/host identity plus canonical root; every multisit
 URL and its original activation state is captured. All selected installations must
 share the approved scan parent; use separate plans otherwise.
 
-By default each URL must return 200 without fatal markers. Use `--health
-"<private-expectations.json>"` during planning for explicit per-URL exceptions
+By default each URL must return 200 without fatal markers. Use
+`--health "<private-expectations.json>"` during planning for explicit per-URL exceptions
 (a JSON object mapping exact URLs to HTTP status integers, e.g. a protected staging
 URL to 401). Redirect statuses are checked rather than silently following them.
 Optional `--audit-argv '["<plugin-command>","audit"]' --audit-read-only` records an

@@ -77,16 +77,20 @@ def private_dir(path):
 def archive(data, slug, version):
     import io
     files = {}
+    members = {}
     with zipfile.ZipFile(io.BytesIO(data)) as bundle:
         require(len(bundle.infolist()) <= 10000, 'archive member limit exceeded')
         require(sum(i.file_size for i in bundle.infolist()) <= 256 * 1024 * 1024,
                 'archive expansion limit exceeded')
         for item in bundle.infolist():
-            parts = item.filename.split('/')
-            require(parts[0] == slug and '..' not in parts and
+            parts = item.filename.rstrip('/').split('/')
+            require(parts[0] == slug and not any(p in ('', '.', '..') for p in parts) and
                     '\\' not in item.filename and not item.filename.startswith('/') and
                     stat.S_IFMT(item.external_attr >> 16) in (0, stat.S_IFREG, stat.S_IFDIR),
                     'unsafe archive member')
+            normalized = '/'.join(parts)
+            require(normalized not in members, 'duplicate archive member')
+            members[normalized] = item.is_dir()
             if item.is_dir():
                 continue
             require(len(parts) > 1 and all(parts), 'unsafe archive path')
@@ -100,6 +104,10 @@ def archive(data, slug, version):
                         re.search(r'Version:\s*' + re.escape(version) + r'\s*(?:\r?\n|\*/)', header),
                         'plugin header identity mismatch')
         require(slug + '.php' in files, 'expected main plugin file missing')
+        for name in members:
+            parts = name.split('/')
+            require(all(members.get('/'.join(parts[:n]), True) for n in range(1, len(parts))),
+                    'archive file/directory collision')
     return files
 
 
@@ -129,7 +137,8 @@ def snapshot(request):
     parent = os.path.realpath(request['parent'])
     require(os.path.commonpath([root, parent]) == parent and root != parent,
             'root outside approved scan parent')
-    require(os.path.isfile(os.path.join(root, 'wp-config.php')), 'installation disappeared')
+    config = Path(root) / 'wp-config.php'
+    require(config.is_file() and not config.is_symlink(), 'installation disappeared or config symlinked')
     slug = request['slug']
     plugin = json.loads(wp(root, 'plugin', 'get', slug, '--format=json'))
     # Detect multisite without invoking arbitrary PHP or changing configuration.
@@ -141,7 +150,9 @@ def snapshot(request):
     urls = sorted(set(urls))
     statuses = {url: json.loads(wp(root, '--url=' + url, 'plugin', 'get', slug, '--format=json'))['status'] for url in urls}
     directory = os.path.join(root, 'wp-content', 'plugins', slug)
-    require(os.path.isdir(directory) and not os.path.islink(directory), 'plugin directory missing or symlinked')
+    require(wp(root, 'plugin', 'path', slug, '--dir') == directory and
+            os.path.isdir(directory) and os.path.realpath(directory) == directory,
+            'custom or symlinked plugin layout unsupported')
     files = {}
     for current, dirs, names in os.walk(directory):
         require(not any(os.path.islink(os.path.join(current, n)) for n in dirs + names), 'plugin symlink refused')
@@ -150,13 +161,28 @@ def snapshot(request):
             with open(path, 'rb') as stream:
                 files[os.path.relpath(path, directory)] = digest(stream.read())
     return {'root': root, 'urls': urls, 'version': plugin['version'],
-            'host_identity': digest(encoded([os.uname().nodename, os.getuid()])),
+             'host_identity': digest(encoded([os.uname().nodename, os.getuid()])),
+            'config_sha256': digest(config.read_bytes()),
             'activation': statuses, 'files': files,
             'health': {url: health(url) for url in urls}}
 
 
 def matches(state, release):
     return state['version'] == release['version'] and state['files'] == release['files']
+
+
+def scope_guard(state, baseline, release):
+    require(all(state[key] == baseline[key] for key in
+                ('root', 'urls', 'activation', 'host_identity', 'config_sha256', 'health')),
+            'fleet scope, activation, config or health drift')
+    require(state == baseline or matches(state, release), 'fleet version/bytes drift')
+
+
+def audit_guard(audit):
+    require(isinstance(audit, list) and all(isinstance(a, str) for a in audit),
+            'invalid read-only audit argv')
+    require(not any(a.startswith(('--path', '--url', '--ssh', '--http', '--exec', '--require'))
+                    for a in audit), 'audit transport/bootstrap overrides refused')
 
 
 def version_guard(installed, target):
@@ -173,10 +199,20 @@ def check_backup(previous, run, request):
     require(previous.get('schema') == SCHEMA and previous.get('backup') and
             previous.get('fingerprint') == request['fingerprint'] and
             previous.get('baseline') == request['baseline'], 'complete matching backup required')
+    identity = digest(request['baseline']['root'].encode())
+    expected = {identity + '/database.sql', identity + '/wp-config.php'}
+    expected.update(identity + '/plugin/' + name for name in request['baseline']['files'])
+    require(set(previous['backup']) == expected, 'incomplete backup file set')
+    require(previous['backup'][identity + '/wp-config.php'] == request['baseline']['config_sha256'],
+            'backup config identity mismatch')
+    require(all(previous['backup'][identity + '/plugin/' + name] == checksum
+                for name, checksum in request['baseline']['files'].items()), 'backup plugin identity mismatch')
     for name, checksum in previous['backup'].items():
         path = run / name
         require(os.path.commonpath([str(path.resolve()), str(run)]) == str(run) and
-                not path.is_symlink(), 'unsafe backup path')
+                not any(p.is_symlink() for p in [path] + list(path.parents)) and
+                path.is_file() and stat.S_IMODE(path.stat().st_mode) == 0o600,
+                'unsafe backup path or permissions')
         require(digest(path.read_bytes()) == checksum, 'backup checksum mismatch')
 
 
@@ -241,17 +277,18 @@ def remote(request):
                 dirs[:] = []
         return sorted(roots)
     root = os.path.realpath(request['root'])
-    storage_path = os.path.realpath(os.path.expanduser(request['storage']))
+    storage_input = Path(os.path.expanduser(request['storage']))
+    require(storage_input.is_absolute() and
+            not any(p.is_symlink() for p in [storage_input] + list(storage_input.parents)),
+            'absolute nonsymlink private storage required')
+    storage_path = os.path.realpath(str(storage_input))
     require(os.path.commonpath([storage_path, os.path.realpath(request['parent'])]) != os.path.realpath(request['parent']),
             'storage must be outside approved scan parent')
     storage = Path(storage_path) if action in ('verify', 'check-backup') else private_dir(storage_path)
     state = snapshot(request)
     baseline = request['baseline']
-    require(state['root'] == baseline['root'] and state['urls'] == baseline['urls'] and
-            state['activation'] == baseline['activation'] and
-            state['host_identity'] == baseline['host_identity'] and
-            state['health'] == baseline['health'], 'scope, activation or health drift')
     release = request['release']
+    scope_guard(state, baseline, release)
     run = storage / request['fingerprint']
     if action not in ('verify', 'check-backup'):
         run = private_dir(run)
@@ -267,9 +304,7 @@ def remote(request):
         require(state['health'] == baseline['health'], 'health expectation mismatch')
         audit = request.get('audit_argv')
         if audit:
-            require(isinstance(audit, list) and all(isinstance(a, str) for a in audit), 'invalid read-only audit argv')
-            require(not any(a.startswith(('--path', '--url', '--ssh', '--http', '--exec', '--require'))
-                            for a in audit), 'audit transport/bootstrap overrides refused')
+            audit_guard(audit)
             for url in baseline['urls']:
                 wp(root, '--url=' + url, *audit)
         return {'verified': True, 'state': state}
@@ -291,6 +326,7 @@ def remote(request):
             if previous.get('backup'):
                 check_backup(previous, run, request)
                 return previous
+            require(state == baseline, 'original baseline backup required before deployment')
             return create_backup(root, run, identity, baseline, request, checkpoint)
         require(action == 'deploy', 'unknown remote phase')
         check_backup(previous, run, request)
@@ -314,6 +350,7 @@ def remote(request):
         wp(root, 'plugin', 'install', str(staged), '--force')
         after = snapshot(request)
         require(matches(after, release) and after['activation'] == baseline['activation'] and
+                after['config_sha256'] == baseline['config_sha256'] and
                 after['health'] == baseline['health'], 'post-deploy verification failed; no automatic rollback')
         previous['deployed'] = True
         atomic(checkpoint, previous)
@@ -344,10 +381,13 @@ def transport(site, request):
     source = Path(__file__).read_bytes()
     launcher = "import sys,json;exec(compile(%r,'fleet','exec'));" % source
     # __name__ is changed so the CLI entry point is not executed remotely.
-    launcher = "__name__='fleet_rpc';" + launcher + "print(json.dumps(remote(json.load(sys.stdin))))"
+    launcher = "__name__='fleet_rpc';" + launcher + "\ntry:\n print(json.dumps({'result':remote(json.load(sys.stdin))}))\nexcept Stop as error:\n print(json.dumps({'error':str(error)}))\nexcept Exception:\n print(json.dumps({'error':'remote operation failed; private checkpoint retained'}))"
     argv += [host, 'python3 -c ' + shlex.quote(launcher)]
     result = command(argv, encoded(request), timeout=600, env=env)
-    return json.loads(result)
+    response = json.loads(result)
+    if 'error' in response:
+        raise Stop(response['error'])
+    return response['result']
 
 
 def inventory(args):
@@ -419,6 +459,8 @@ def create_plan(args, directory):
                  'scan_parent': args.scan_parent, 'slug': args.slug, 'storage': args.remote_storage,
                  'discover_ssh': args.discover_ssh, 'audit_argv': json.loads(args.audit_argv) if args.audit_argv else None}
     require(not selection['audit_argv'] or args.audit_read_only, 'operator read-only audit attestation required')
+    if selection['audit_argv']:
+        audit_guard(selection['audit_argv'])
     selected = inventory(args)
     manifest = {'schema': SCHEMA, 'release': release, 'selection': selection,
                 'installations': [], 'inventory': selected, 'aliases': []}
@@ -471,12 +513,10 @@ def run_phase(args, directory):
     for installation in manifest['aliases']:
         state = transport(installation['site'], installation['request'])
         baseline = installation['baseline']
-        require(state['root'] == baseline['root'] and state['urls'] == baseline['urls'] and
-                state['activation'] == baseline['activation'] and state['health'] == baseline['health'], 'fleet scope/health/activation drift')
-        require(state == baseline or matches(state, manifest['release']), 'fleet version/bytes drift')
-        require(state['host_identity'] == baseline['host_identity'], 'alias host identity drift')
+        scope_guard(state, baseline, manifest['release'])
     for installation in manifest['installations']:
         state = transport(installation['site'], installation['request'])
+        scope_guard(state, installation['baseline'], manifest['release'])
         states.append(state)
         if args.phase == 'deploy':
             transport(installation['site'], dict(installation['request'], action='check-backup',
@@ -486,7 +526,9 @@ def run_phase(args, directory):
         # Keep historical completed-site evidence even if a later phase fails.
         old = json.loads((directory / 'evidence.json').read_text())
         atomic(directory / ('evidence-' + digest(encoded(old)) + '.json'), old)
-    evidence = {'schema': SCHEMA, 'phase': args.phase, 'status': 'running', 'completed': []}
+    evidence = {'schema': SCHEMA, 'phase': args.phase, 'status': 'running', 'completed': [],
+                'fingerprint': manifest['fingerprint'],
+                'approval': args.approve if args.phase == 'deploy' else None}
     atomic(directory / 'evidence.json', evidence)
     try:
         for installation, state in zip(manifest['installations'], states):
@@ -527,9 +569,10 @@ def main():
             create_plan(args, directory)
         else:
             run_phase(args, directory)
-    except Exception:
+    except Exception as error:
         atomic(directory / 'recovery.json', {'schema': SCHEMA, 'phase': args.phase,
-               'status': 'stopped', 'recovery': 'Revalidate the same phase; changed scope needs a new approved plan'})
+               'status': 'stopped', 'reason': str(error) if isinstance(error, Stop) else 'operation failed',
+               'recovery': 'Revalidate the same phase; changed scope needs a new approved plan'})
         raise
 
 
