@@ -302,10 +302,12 @@ show_help() {
 
 # Main execution
 main() {
-	local _arg1="$1"
-	local _arg2="$2"
-	local command="$1"
-	shift
+	# Optional arguments: set -u must not abort on `install`, `init` or bare `help`.
+	local command="${1:-}"
+	[[ $# -gt 0 ]] && shift
+	# Subcommand options follow the command name, e.g. `smells --all ORG`.
+	local _arg1="${1:-}"
+	local _arg2="${2:-}"
 
 	case "$command" in
 	"install")
