@@ -87,8 +87,22 @@ def dependency_summary(
     ecosystems = sorted({str(record["ecosystem"]) for record in manifests})
     direct_count = len(direct_names)
     locked_count = len(locked_names)
+    # GH#33532: a name is dev-only when no manifest of its ecosystem needs it
+    # at runtime, so dev tooling never reads as runtime dependency risk.
+    dev_candidates = {
+        f"{record['ecosystem']}:{name}" for record in manifests for name in record.get("dev_dependencies", [])
+    }
+    runtime_names = {
+        f"{record['ecosystem']}:{name}"
+        for record in manifests
+        for name in record.get("dependencies", [])
+        if name not in set(record.get("dev_dependencies", []))
+    }
+    dev_names = (dev_candidates & direct_names) - runtime_names
     return {
         "direct": direct_count,
+        "runtime": direct_count - len(dev_names),
+        "dev": len(dev_names),
         "locked": locked_count,
         "total": max(direct_count, locked_count),
         "ecosystems": ecosystems,

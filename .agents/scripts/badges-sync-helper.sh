@@ -285,10 +285,16 @@ _sync_readme() {
 	fi
 
 	if [[ -f "$_METRICS_HELPER" ]]; then
+		# GH#33532: legacy .github/badges SVGs only for READMEs that still
+		# reference them; repos that sync .github/ must not copy them around.
+		local _legacy_badge_args=()
+		if grep -qF '.github/badges/' "$_readme"; then
+			_legacy_badge_args=(--legacy-badge-dir "$_path/.github/badges")
+		fi
 		if ! bash "$_METRICS_HELPER" generate \
 			--output-dir "$_path/docs/metrics" \
 			--badge-dir "$_path/docs/metrics/badges" \
-			--legacy-badge-dir "$_path/.github/badges" \
+			${_legacy_badge_args[@]+"${_legacy_badge_args[@]}"} \
 			"$_path" >/dev/null 2>&1; then
 			printf '%s\t%s\trepo metrics generation failed\n' "$_slug" "$_STATUS_FAILED"
 			git -C "$_path" checkout -q "$_default_branch" || true
@@ -297,14 +303,16 @@ _sync_readme() {
 	fi
 
 	local _changes
-	_changes=$(git -C "$_path" status --porcelain -- "README.md" "docs/metrics" ".github/badges" 2>/dev/null || true)
+	local _sync_paths=("README.md" "docs/metrics")
+	[[ ! -d "$_path/.github/badges" ]] || _sync_paths+=(".github/badges")
+	_changes=$(git -C "$_path" status --porcelain -- "${_sync_paths[@]}" 2>/dev/null || true)
 	if [[ -z "$_changes" ]]; then
 		git -C "$_path" checkout -q "$_default_branch" || true
 		printf '%s\t%s\tbadge block and repo metrics already current\n' "$_slug" "$_STATUS_SKIPPED"
 		return 0
 	fi
 
-	git -C "$_path" add "README.md" "docs/metrics" ".github/badges" >/dev/null 2>&1
+	git -C "$_path" add -- "${_sync_paths[@]}" >/dev/null 2>&1
 	if ! git -C "$_path" diff --cached --quiet; then
 		local _commit_msg="chore: refresh aidevops README badges and repo metrics"
 		if ! git -C "$_path" commit -q -m "$_commit_msg"; then

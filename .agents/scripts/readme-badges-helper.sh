@@ -36,6 +36,16 @@
 #   {{ACTIONS_WORKFLOW_FILE}} — workflow file used for the native GitHub badge
 #   {{HAS_REPO_METRICS}} — "1" if local repo metrics badges should render
 #   {{HAS_LOC_BADGE}}    — compatibility alias for HAS_REPO_METRICS
+#   {{HAS_RELEASES}}     — "1" when the repo has a published GitHub release
+#   {{HAS_LICENSE}} / {{LICENSE_BADGE}} / {{LICENSE_URL}} — SPDX licence badge
+#   {{HAS_SONARCLOUD}} / {{SONAR_PROJECT_KEY}} — SonarCloud knows the project
+#   {{HAS_CODACY}} / {{CODACY_GRADE_URL}}      — Codacy knows the repository
+#   {{HAS_CODEFACTOR}}                         — CodeFactor knows the repository
+#   {{IS_WP_PLUGIN}} / {{WP_REQUIRES}} / {{WP_TESTED}} / {{WP_REQUIRES_PHP}} /
+#   {{WP_INFO_URL}} / {{HAS_WPORG}} / {{WPORG_SLUG}} — wordpress-plugin profile
+#
+# Repo-owned template: when --template is not given and the repository has
+# .github/readme-badges.md.tmpl, that template is used for render/inject/check.
 #
 # Conditional lines: a line beginning with "{{?KEY}}" is included only
 # when KEY is non-empty; "{{!KEY}}" is included only when KEY is empty.
@@ -53,6 +63,8 @@
 #   --no-repo-metrics      Skip local LOC/language/dependency badge lines
 #   --no-loc-badge         Compatibility alias for --no-repo-metrics
 #   --has-releases 0|1     Force the "has releases" flag (skip gh probe)
+#   --offline              Skip network probes (quality services, WordPress.org,
+#                          GitHub licence/releases); use local files only
 #   -h, --help             Show usage
 #
 # Exit codes:
@@ -146,6 +158,8 @@ TEMPLATE_OVERRIDE=""
 WORKFLOW_FILE_OVERRIDE=""
 NO_REPO_METRICS=0
 HAS_RELEASES_OVERRIDE=""
+OFFLINE=0
+REPO_TEMPLATE_RELPATH=".github/readme-badges.md.tmpl"
 
 parse_args() {
 	if [[ $# -lt 1 ]]; then
@@ -214,6 +228,10 @@ parse_args() {
 				HAS_RELEASES_OVERRIDE="$_val"
 				shift 2
 				;;
+			--offline)
+				OFFLINE=1
+				shift
+				;;
 			-h | --help)
 				usage
 				exit 0
@@ -258,7 +276,7 @@ detect_has_releases() {
 		esac
 		return 0
 	fi
-	if ! command -v gh >/dev/null 2>&1; then
+	if [[ "$OFFLINE" -eq 1 ]] || ! command -v gh >/dev/null 2>&1; then
 		printf ''
 		return 0
 	fi
@@ -280,13 +298,15 @@ detect_default_branch() {
 		printf '%s' "$BRANCH_OVERRIDE"
 		return 0
 	fi
-	if ! command -v gh >/dev/null 2>&1; then
+	if [[ "$OFFLINE" -eq 1 ]] || ! command -v gh >/dev/null 2>&1; then
 		printf 'main'
 		return 0
 	fi
 	local _branch
-	_branch=$(gh api "repos/$_slug" --jq '.default_branch // "main"' 2>/dev/null || true)
-	[[ -z "$_branch" || "$_branch" == "null" ]] && _branch="main"
+	# gh prints the error body on stdout for HTTP errors (for example 404), so
+	# discard output on failure and accept only a plausible branch name.
+	_branch=$(gh api "repos/$_slug" --jq '.default_branch // "main"' 2>/dev/null) || _branch=""
+	[[ "$_branch" =~ ^[A-Za-z0-9._/-]+$ ]] || _branch="main"
 	printf '%s' "$_branch"
 	return 0
 }
@@ -377,6 +397,298 @@ detect_actions_workflow_file() {
 	return 0
 }
 
+# ───────────────────────────── local repo facts (GH#33532) ────────────────
+
+# Local checkout used for file-based detection: the README's directory for
+# inject/check, else the repos.json path. Empty when unknown.
+resolve_repo_path() {
+	local _slug="$1"
+	local _path=""
+	if [[ -n "$README_PATH" ]]; then
+		_path=$(cd "$(dirname "$README_PATH")" 2>/dev/null && pwd || true)
+	fi
+	if [[ -z "$_path" ]]; then
+		_path=$(repos_json_lookup "$_slug" "path" "")
+		[[ -z "$_path" ]] || _path=$(expand_repo_path "$_path")
+	fi
+	[[ -n "$_path" && -d "$_path" ]] || _path=""
+	printf '%s' "$_path"
+	return 0
+}
+
+# Print a "Field: value" header value from the first 8 KB of a file, the
+# range WordPress reads for plugin headers and readme.txt fields.
+file_header_field() {
+	local _file="$1"
+	local _field="$2"
+	[[ -f "$_file" ]] || return 0
+	head -c 8192 "$_file" 2>/dev/null | tr -d '\r' | awk -v f="$_field" '
+		{
+			line = $0
+			sub(/^[[:space:]\/*#@]*/, "", line)
+			if (tolower(substr(line, 1, length(f) + 1)) == tolower(f ":")) {
+				v = substr(line, length(f) + 2)
+				sub(/\*\/.*$/, "", v)
+				gsub(/^[[:space:]]+|[[:space:]]+$/, "", v)
+				print v
+				exit
+			}
+		}'
+	return 0
+}
+
+# Main WordPress plugin file: a root *.php file with a "Plugin Name:" header,
+# preferring <repo-dir-name>.php.
+find_wp_main_file() {
+	local _repo_path="$1"
+	[[ -n "$_repo_path" ]] || return 1
+	local _preferred
+	_preferred="$_repo_path/$(basename "$_repo_path").php"
+	if [[ -n "$(file_header_field "$_preferred" "Plugin Name")" ]]; then
+		printf '%s' "$_preferred"
+		return 0
+	fi
+	local _candidate
+	for _candidate in "$_repo_path"/*.php; do
+		[[ -f "$_candidate" ]] || continue
+		if [[ -n "$(file_header_field "$_candidate" "Plugin Name")" ]]; then
+			printf '%s' "$_candidate"
+			return 0
+		fi
+	done
+	return 1
+}
+
+# HTTP status for a URL, or 000 when offline/unreachable. Never fails.
+http_status() {
+	local _url="$1"
+	local _code="000"
+	if [[ "$OFFLINE" -eq 0 ]] && command -v curl >/dev/null 2>&1; then
+		_code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 "$_url" 2>/dev/null) || true
+	fi
+	[[ "$_code" =~ ^[0-9]{3}$ ]] || _code="000"
+	printf '%s' "$_code"
+	return 0
+}
+
+# GET a URL body (offline: empty). Never fails.
+http_get() {
+	local _url="$1"
+	if [[ "$OFFLINE" -eq 0 ]] && command -v curl >/dev/null 2>&1; then
+		curl -s --max-time 8 "$_url" 2>/dev/null || true
+	fi
+	return 0
+}
+
+# Normalise a licence string to an SPDX expression. Legacy WordPress forms
+# ("GPLv2 or later", "GPL-2.0+") map to their SPDX names; anything that is not
+# a plain SPDX expression is rejected (empty output).
+normalise_spdx() {
+	local _raw="$1"
+	_raw=$(printf '%s' "$_raw" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')
+	local _lower
+	_lower=$(printf '%s' "$_raw" | tr '[:upper:]' '[:lower:]')
+	case "$_lower" in
+		"gpl-2.0+" | "gplv2+" | "gpl2+" | "gplv2 or later" | "gpl v2 or later" | "gpl-2.0 or later" | "gpl-2.0-or-later")
+			printf 'GPL-2.0-or-later'
+			return 0
+			;;
+		"gpl-3.0+" | "gplv3+" | "gpl3+" | "gplv3 or later" | "gpl v3 or later" | "gpl-3.0 or later" | "gpl-3.0-or-later")
+			printf 'GPL-3.0-or-later'
+			return 0
+			;;
+		"gplv2" | "gpl v2" | "gpl2")
+			printf 'GPL-2.0'
+			return 0
+			;;
+		"gplv3" | "gpl v3" | "gpl3")
+			printf 'GPL-3.0'
+			return 0
+			;;
+		"noassertion" | "other" | "proprietary" | "")
+			return 0
+			;;
+	esac
+	if [[ "$_raw" =~ ^[A-Za-z0-9.+-]+([[:space:]]+(OR|AND|WITH)[[:space:]]+[A-Za-z0-9.+-]+)*$ ]]; then
+		printf '%s' "$_raw"
+	fi
+	return 0
+}
+
+# Licence from LICENSE text, for unambiguous licences only. GPL-family texts
+# do not say "only" or "or later", so they are left to metadata.
+spdx_from_license_text() {
+	local _file="$1"
+	[[ -f "$_file" ]] || return 0
+	local _text
+	_text=$(head -c 4096 "$_file" 2>/dev/null | tr -s '[:space:]' ' ')
+	case "$_text" in
+		*"Permission is hereby granted, free of charge"*) printf 'MIT' ;;
+		*"Apache License"*"Version 2.0"*) printf 'Apache-2.0' ;;
+		*"Mozilla Public License"*"2.0"*) printf 'MPL-2.0' ;;
+		*"This is free and unencumbered software released into the public domain"*) printf 'Unlicense' ;;
+		*"Permission to use, copy, modify, and/or distribute this software for any purpose"*) printf 'ISC' ;;
+	esac
+	return 0
+}
+
+# Shields static-badge path segment: "-" → "--", "_" → "__", URL-encode the rest.
+shields_escape() {
+	local _value="$1"
+	_value="${_value//-/--}"
+	_value="${_value//_/__}"
+	_value="${_value// /%20}"
+	_value="${_value//+/%2B}"
+	_value="${_value//(/%28}"
+	_value="${_value//)/%29}"
+	_value="${_value//\//%2F}"
+	printf '%s' "$_value"
+	return 0
+}
+
+# Sets HAS_LICENSE_VAL, LICENSE_BADGE_VAL, LICENSE_URL_VAL.
+detect_license() {
+	local _slug="$1"
+	local _repo_path="$2"
+	local _wp_main="$3"
+	local _spdx="" _license_file=""
+
+	if [[ -n "$_repo_path" ]]; then
+		local _name
+		for _name in LICENSE LICENSE.md LICENSE.txt COPYING COPYING.md license.txt; do
+			if [[ -f "$_repo_path/$_name" ]]; then
+				_license_file="$_name"
+				break
+			fi
+		done
+		if [[ -f "$_repo_path/composer.json" ]]; then
+			_spdx=$(normalise_spdx "$(jq -r 'if (.license | type) == "array" then .license | join(" OR ") else (.license // "") end' "$_repo_path/composer.json" 2>/dev/null || true)")
+		fi
+		if [[ -z "$_spdx" && -f "$_repo_path/package.json" ]]; then
+			_spdx=$(normalise_spdx "$(jq -r 'if (.license | type) == "object" then (.license.type // "") else (.license // "") end' "$_repo_path/package.json" 2>/dev/null || true)")
+		fi
+		if [[ -z "$_spdx" && -n "$_wp_main" ]]; then
+			_spdx=$(normalise_spdx "$(file_header_field "$_wp_main" "License")")
+		fi
+		if [[ -z "$_spdx" && -n "$_license_file" ]]; then
+			_spdx=$(spdx_from_license_text "$_repo_path/$_license_file")
+		fi
+	fi
+	if [[ -z "$_spdx" && "$OFFLINE" -eq 0 ]] && command -v gh >/dev/null 2>&1; then
+		local _api_spdx
+		_api_spdx=$(gh api "repos/$_slug/license" --jq '.license.spdx_id // ""' 2>/dev/null) || _api_spdx=""
+		_spdx=$(normalise_spdx "$_api_spdx")
+	fi
+
+	# Without a checkout the licence cannot be disproved, so keep the badge.
+	if [[ -n "$_repo_path" && -z "$_license_file" && -z "$_spdx" ]]; then
+		HAS_LICENSE_VAL=""
+	else
+		HAS_LICENSE_VAL="1"
+	fi
+	if [[ -n "$_spdx" ]]; then
+		LICENSE_BADGE_VAL="$(shields_escape "$_spdx")-blue"
+	else
+		LICENSE_BADGE_VAL="see%20file-yellow"
+	fi
+	if [[ -n "$_license_file" || -z "$_repo_path" ]]; then
+		LICENSE_URL_VAL="https://github.com/$_slug/blob/$DEFAULT_BRANCH_VAL/${_license_file:-LICENSE}"
+	elif [[ "$_spdx" =~ ^[A-Za-z0-9.+-]+$ ]]; then
+		LICENSE_URL_VAL="https://spdx.org/licenses/$_spdx.html"
+	else
+		LICENSE_URL_VAL="https://github.com/$_slug"
+	fi
+	return 0
+}
+
+# Sets HAS_SONARCLOUD_VAL/SONAR_PROJECT_KEY_VAL, HAS_CODACY_VAL/CODACY_GRADE_URL_VAL,
+# HAS_CODEFACTOR_VAL. Each badge renders only when the service knows the repo.
+detect_quality_services() {
+	local _slug="$1"
+	local _repo_path="$2"
+	HAS_SONARCLOUD_VAL=""
+	SONAR_PROJECT_KEY_VAL="${OWNER_VAL}_${REPO_VAL}"
+	HAS_CODACY_VAL=""
+	CODACY_GRADE_URL_VAL=""
+	HAS_CODEFACTOR_VAL=""
+	[[ "$OFFLINE" -eq 0 ]] || return 0
+
+	local _key=""
+	[[ -z "$_repo_path" ]] || _key=$(sed -n -E 's/^[[:space:]]*sonar\.projectKey[[:space:]]*=[[:space:]]*([A-Za-z0-9_.:-]+)[[:space:]]*$/\1/p' "$_repo_path/sonar-project.properties" 2>/dev/null | head -n 1)
+	[[ -z "$_key" ]] || SONAR_PROJECT_KEY_VAL="$_key"
+	if [[ "$(http_status "https://sonarcloud.io/api/components/show?component=$SONAR_PROJECT_KEY_VAL")" == "200" ]]; then
+		HAS_SONARCLOUD_VAL="1"
+	fi
+
+	local _grade=""
+	_grade=$(http_get "https://app.codacy.com/api/v3/organizations/gh/$OWNER_VAL/repositories/$REPO_VAL" | jq -r '.data.badges.grade // empty' 2>/dev/null || true)
+	if [[ "$_grade" =~ ^https://app\.codacy\.com/project/badge/Grade/[A-Za-z0-9]+$ ]]; then
+		HAS_CODACY_VAL="1"
+		CODACY_GRADE_URL_VAL="$_grade"
+	fi
+
+	if [[ "$(http_status "https://www.codefactor.io/repository/github/$_slug/badge")" == "200" ]]; then
+		HAS_CODEFACTOR_VAL="1"
+	fi
+	return 0
+}
+
+# Lowercase alphanumerics only, for comparing plugin names.
+_name_key() {
+	local _value="$1"
+	printf '%s' "$_value" | tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]'
+	return 0
+}
+
+# wordpress-plugin profile. Sets IS_WP_PLUGIN_VAL, WP_REQUIRES_VAL,
+# WP_TESTED_VAL, WP_REQUIRES_PHP_VAL, WP_INFO_URL_VAL, HAS_WPORG_VAL, WPORG_SLUG_VAL.
+detect_wp_profile() {
+	local _slug="$1"
+	local _repo_path="$2"
+	local _main="$3"
+	IS_WP_PLUGIN_VAL=""
+	WP_REQUIRES_VAL=""
+	WP_TESTED_VAL=""
+	WP_REQUIRES_PHP_VAL=""
+	WP_INFO_URL_VAL=""
+	HAS_WPORG_VAL=""
+	WPORG_SLUG_VAL=""
+	[[ -n "$_main" ]] || return 0
+	IS_WP_PLUGIN_VAL="1"
+
+	local _readme="$_repo_path/readme.txt"
+	local _version_re='^[0-9]+(\.[0-9]+){0,3}$'
+	local _value
+	_value=$(file_header_field "$_main" "Requires at least")
+	[[ -n "$_value" ]] || _value=$(file_header_field "$_readme" "Requires at least")
+	[[ ! "$_value" =~ $_version_re ]] || WP_REQUIRES_VAL="$_value"
+	_value=$(file_header_field "$_readme" "Tested up to")
+	[[ -n "$_value" ]] || _value=$(file_header_field "$_main" "Tested up to")
+	[[ ! "$_value" =~ $_version_re ]] || WP_TESTED_VAL="$_value"
+	_value=$(file_header_field "$_main" "Requires PHP")
+	[[ -n "$_value" ]] || _value=$(file_header_field "$_readme" "Requires PHP")
+	[[ ! "$_value" =~ $_version_re ]] || WP_REQUIRES_PHP_VAL="$_value"
+
+	local _info_file="readme.txt"
+	[[ -f "$_readme" ]] || _info_file="${_main##*/}"
+	WP_INFO_URL_VAL="https://github.com/$_slug/blob/$DEFAULT_BRANCH_VAL/$_info_file"
+
+	# WordPress.org listing: slug from the text domain or main file name, and
+	# the listed name must match the header so a same-slug plugin never shows.
+	local _wporg_slug
+	_wporg_slug=$(file_header_field "$_main" "Text Domain")
+	[[ -n "$_wporg_slug" ]] || _wporg_slug=$(basename "$_main" .php)
+	[[ "$_wporg_slug" =~ ^[a-z0-9-]+$ ]] || return 0
+	[[ "$OFFLINE" -eq 0 ]] || return 0
+	local _listed_name
+	_listed_name=$(http_get "https://api.wordpress.org/plugins/info/1.2/?action=plugin_information&request%5Bslug%5D=$_wporg_slug&request%5Bfields%5D%5Bsections%5D=0" | jq -r '.name // empty' 2>/dev/null || true)
+	if [[ -n "$_listed_name" && "$(_name_key "$_listed_name")" == "$(_name_key "$(file_header_field "$_main" "Plugin Name")")" ]]; then
+		HAS_WPORG_VAL="1"
+		WPORG_SLUG_VAL="$_wporg_slug"
+	fi
+	return 0
+}
+
 # ───────────────────────────── template render ────────────────────────────
 
 # Substitute {{KEY}} with the value of the corresponding env var (KEY must
@@ -385,37 +697,28 @@ detect_actions_workflow_file() {
 # HAS_LOC_BADGE / HAS_RELEASES / IS_FOSS). Conditional lines:
 #   "{{?KEY}}rest"   — included only if KEY is non-empty (prefix stripped)
 #   "{{!KEY}}rest"   — included only if KEY is empty (prefix stripped)
+BADGE_TEMPLATE_KEYS=(
+	SLUG OWNER REPO DEFAULT_BRANCH HAS_ACTIONS_WORKFLOW ACTIONS_WORKFLOW_FILE
+	HAS_REPO_METRICS HAS_LOC_BADGE HAS_RELEASES IS_FOSS
+	HAS_LICENSE LICENSE_BADGE LICENSE_URL
+	HAS_SONARCLOUD SONAR_PROJECT_KEY HAS_CODACY CODACY_GRADE_URL HAS_CODEFACTOR
+	IS_WP_PLUGIN WP_REQUIRES WP_TESTED WP_REQUIRES_PHP WP_INFO_URL HAS_WPORG WPORG_SLUG
+)
+
 render_template() {
 	local _template_path="$1"
 	[[ -f "$_template_path" ]] || die "template not found: $_template_path"
 
-	# Build env exports for awk to read.
-	awk \
-		-v slug="${SLUG_VAL}" \
-		-v owner="${OWNER_VAL}" \
-		-v repo="${REPO_VAL}" \
-		-v branch="${DEFAULT_BRANCH_VAL}" \
-		-v has_actions_workflow="${HAS_ACTIONS_WORKFLOW_VAL}" \
-		-v actions_workflow_file="${ACTIONS_WORKFLOW_FILE_VAL}" \
-		-v has_repo_metrics="${HAS_REPO_METRICS_VAL}" \
-		-v has_loc_badge="${HAS_LOC_BADGE_VAL}" \
-		-v has_releases="${HAS_RELEASES_VAL}" \
-		-v is_foss="${IS_FOSS_VAL}" \
-		-v has_license="${HAS_LICENSE_VAL}" \
-		'
+	# Expose <KEY>_VAL as _AIDEVOPS_BADGE_<KEY>; awk reads them via ENVIRON
+	# (BSD awk rejects embedded newlines in -v, and this keeps keys in one list).
+	local _key _val_name
+	for _key in "${BADGE_TEMPLATE_KEYS[@]}"; do
+		_val_name="${_key}_VAL"
+		export "_AIDEVOPS_BADGE_${_key}=${!_val_name:-}"
+	done
+	awk '
 		function get_var(k) {
-			if (k == "SLUG") return slug
-			if (k == "OWNER") return owner
-			if (k == "REPO") return repo
-			if (k == "DEFAULT_BRANCH") return branch
-			if (k == "HAS_ACTIONS_WORKFLOW") return has_actions_workflow
-			if (k == "ACTIONS_WORKFLOW_FILE") return actions_workflow_file
-			if (k == "HAS_REPO_METRICS") return has_repo_metrics
-			if (k == "HAS_LOC_BADGE") return has_loc_badge
-			if (k == "HAS_RELEASES") return has_releases
-			if (k == "IS_FOSS") return is_foss
-			if (k == "HAS_LICENSE") return has_license
-			return ""
+			return ENVIRON["_AIDEVOPS_BADGE_" k]
 		}
 		# Portable key extraction (BSD awk has no 3-arg match capture).
 		# For prefix matches "{{?KEY}}" or "{{!KEY}}" the literal length of the
@@ -481,9 +784,9 @@ prepare_render_vars() {
 	fi
 
 	# Repo metadata from repos.json (fail-soft to "")
-	local _local_only
-	_local_only=$(repos_json_lookup "$SLUG" "local_only" "")
-	if [[ "$_local_only" == "true" ]]; then
+	local _local_only=0
+	[[ "$(repos_json_lookup "$SLUG" "local_only" "")" != "true" ]] || _local_only=1
+	if [[ "$_local_only" -eq 1 ]]; then
 		# local_only repos can't be queried via gh — most badges are useless.
 		# Emit only LOC + license. Force HAS_RELEASES empty.
 		HAS_RELEASES_VAL=""
@@ -504,17 +807,38 @@ prepare_render_vars() {
 		HAS_LOC_BADGE_VAL="1"
 	fi
 
-	# License: assume present unless we're checking a real path that proves otherwise.
-	# Phase 2's check command will probe filesystem; for render we default to 1.
-	HAS_LICENSE_VAL="1"
+	# GH#33532: file-based facts (licence, WordPress profile) and quality
+	# services. local_only repos are unknown to public services.
+	REPO_PATH_VAL=$(resolve_repo_path "$SLUG")
+	local _wp_main="" _saved_offline="$OFFLINE"
+	_wp_main=$(find_wp_main_file "$REPO_PATH_VAL") || _wp_main=""
+	[[ "$_local_only" -eq 0 ]] || OFFLINE=1
+	detect_license "$SLUG" "$REPO_PATH_VAL" "$_wp_main"
+	detect_wp_profile "$SLUG" "$REPO_PATH_VAL" "$_wp_main"
+	detect_quality_services "$SLUG" "$REPO_PATH_VAL"
+	OFFLINE="$_saved_offline"
 
+	return 0
+}
+
+# Template: --template, else the repository's own .github/readme-badges.md.tmpl,
+# else the canonical aidevops template.
+resolve_template_path() {
+	if [[ -n "$TEMPLATE_OVERRIDE" ]]; then
+		printf '%s' "$TEMPLATE_OVERRIDE"
+	elif [[ -n "${REPO_PATH_VAL:-}" && -f "$REPO_PATH_VAL/$REPO_TEMPLATE_RELPATH" ]]; then
+		printf '%s' "$REPO_PATH_VAL/$REPO_TEMPLATE_RELPATH"
+	else
+		default_template_path
+	fi
 	return 0
 }
 
 # Render the template framed by the marker block.
 render_full_block() {
-	local _template_path="${TEMPLATE_OVERRIDE:-$(default_template_path)}"
 	prepare_render_vars
+	local _template_path
+	_template_path=$(resolve_template_path)
 	printf '%s\n' "$MARKER_START"
 	printf '%s\n' "$MARKER_NOTICE"
 	render_template "$_template_path"

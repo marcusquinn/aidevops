@@ -108,6 +108,8 @@ def render_markdown(metrics: dict[str, Any]) -> str:
         f"| Blank lines | {summary['blanks']:,} |",
         f"| Languages | {summary['languages']:,} |",
         f"| Direct dependencies | {deps['direct']:,} |",
+        f"| Runtime dependencies | {int(deps.get('runtime', deps['direct'])):,} |",
+        f"| Dev-only dependencies | {int(deps.get('dev', 0)):,} |",
         f"| Locked/total dependencies | {deps['total']:,} |",
         "",
         "## Languages",
@@ -124,17 +126,18 @@ def render_markdown(metrics: dict[str, Any]) -> str:
             "",
             "## Dependency manifests",
             "",
-            "| Ecosystem | Manifest | Direct | Locked |",
-            "| --- | --- | ---: | ---: |",
+            "| Ecosystem | Manifest | Direct | Dev-only | Locked |",
+            "| --- | --- | ---: | ---: | ---: |",
         ]
     )
     if deps["manifests"]:
         for item in deps["manifests"]:
             lines.append(
-                f"| {item['ecosystem']} | `{item['path']}` | {int(item['direct']):,} | {int(item['locked']):,} |"
+                f"| {item['ecosystem']} | `{item['path']}` | {int(item['direct']):,} | "
+                f"{int(item.get('dev', 0)):,} | {int(item['locked']):,} |"
             )
     else:
-        lines.append("| none detected | — | 0 | 0 |")
+        lines.append("| none detected | — | 0 | 0 | 0 |")
     lines.extend(
         [
             "",

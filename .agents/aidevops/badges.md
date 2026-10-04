@@ -31,13 +31,48 @@ Three artifacts deployed by `setup.sh`:
    - `docs/metrics/repo-metrics.md` — human-readable summary tables
    - `docs/metrics/badges/loc.svg` — lines-of-code badge
    - `docs/metrics/badges/languages.svg` — top-N language breakdown badge
-   - `docs/metrics/badges/dependencies.svg` — dependency count badge
-   - `.github/badges/loc-total.svg` and `.github/badges/loc-languages.svg` for legacy README compatibility
+   - `docs/metrics/badges/dependencies.svg` — dependency badge; shows
+     `N runtime, M dev` when dev-only dependencies (`devDependencies`,
+     `require-dev`, Cargo dev/build dependencies) exist, so development tooling
+     is not read as runtime dependency risk. Composer platform requirements
+     (`php`, `ext-*`, `lib-*`) are not counted.
+   - `.github/badges/loc-total.svg` and `.github/badges/loc-languages.svg` only
+     with `--legacy-badge-dir`, for READMEs that still reference those paths.
+     `aidevops init`/`badges sync` pass it only when the README does; the
+     reusable workflow's `legacy_badge_dir` input defaults to empty. This keeps
+     repos that copy `.github/` to other repos from shipping one repo's badges.
 2. **`.agents/scripts/readme-badges-helper.sh`** — renders the badges
    markdown for a slug, injects/checks an idempotent block in a README, and
    only emits an Actions badge after resolving an actual workflow file
 3. **`.agents/templates/readme/badges.md.tmpl`** — the canonical badges
-   block, with conditional sections for native Actions, licence, and local metrics badges
+   block, with conditional sections for native Actions, quality services,
+   licence, the WordPress plugin profile, local metrics, and releases. A repo
+   can own its block by committing `.github/readme-badges.md.tmpl`; the helper
+   uses it instead of the canonical template unless `--template` is given.
+
+### Conditional badges
+
+Each badge renders only when its fact is proven, so no README shows a broken
+or misleading image:
+
+- **SonarCloud** — `api/components/show` returns 200 for the project key from
+  `sonar-project.properties` (default `owner_repo`). The badge endpoint itself
+  returns 200 for unknown projects, so it is not used as the probe.
+- **Codacy** — the public repository API returns the project's grade badge URL.
+- **CodeFactor** — the repository badge returns 200 (404 when unknown).
+- **Licence** — SPDX from `composer.json`, `package.json`, the WordPress plugin
+  header, or an unambiguous LICENSE text (MIT, Apache-2.0, MPL-2.0, ISC,
+  Unlicense), then GitHub's licence API. Legacy WordPress forms such as
+  `GPLv2 or later` become `GPL-2.0-or-later`. With a checkout and no licence
+  file or metadata, the badge is omitted.
+- **Latest release** — only when the repo has a published GitHub release.
+- **WordPress plugin profile** — when a root `*.php` file has a `Plugin Name:`
+  header: Requires WordPress, Tested up to, and Requires PHP from the plugin
+  header and `readme.txt`; a WordPress.org version badge only when the
+  WordPress.org listing for the text-domain slug has the same plugin name.
+
+`--offline` skips all network probes. `local_only` repos never probe public
+services.
 
 Plus the GitHub Actions wiring:
 
@@ -54,13 +89,12 @@ This is the manual flow that works today. Phase 2 wraps it in
 
 ```bash
 # 1. Generate local metrics immediately
-~/.aidevops/agents/scripts/repo-metrics-helper.sh generate \
-   --legacy-badge-dir .github/badges
+~/.aidevops/agents/scripts/repo-metrics-helper.sh generate
 
 # 2. Drop in the repo metrics refresh workflow caller
 cp ~/.aidevops/agents/templates/workflows/loc-badge-caller.yml \
    .github/workflows/loc-badge.yml
-git add docs/metrics .github/badges .github/workflows/loc-badge.yml
+git add docs/metrics .github/workflows/loc-badge.yml
 git commit -m "chore(metrics): add repository metrics"
 git push
 
@@ -74,6 +108,12 @@ git push
 The README block references relative `docs/metrics/badges/*.svg` assets, so it
 renders as soon as the files are committed. The workflow refreshes the metrics
 periodically without delaying PR checks.
+
+To pin the workflow by commit SHA like other actions, put the same SHA on
+`uses:` and in `aidevops_ref` (see the caller template comment);
+`aidevops sync-workflows` keeps the two coupled. When a caller omits
+`aidevops_ref`, the reusable workflow checks out helpers at its own commit
+(`job.workflow_sha`), so helper code never drifts from the pinned YAML.
 
 Do not add GitHub-backed Shields badges such as repository size, stars,
 watchers, language count, release date, or issue counts to the canonical block.
@@ -130,7 +170,15 @@ Available variables (computed from `repos.json` + live `gh` probes):
 | `HAS_LOC_BADGE` | compatibility alias | mirrors `HAS_REPO_METRICS` |
 | `HAS_RELEASES` | `gh api releases?per_page=1` | empty for `local_only` repos |
 | `IS_FOSS` | `repos.json[].foss` | retained for compatibility; unused by the resilient template |
-| `HAS_LICENSE` | (Phase 2: filesystem probe) | currently always `1` |
+| `HAS_LICENSE` | licence file or SPDX metadata | empty when a checkout proves no licence |
+| `LICENSE_BADGE` / `LICENSE_URL` | SPDX detection | Shields-escaped `SPDX-blue`, or `see file` |
+| `HAS_SONARCLOUD` / `SONAR_PROJECT_KEY` | SonarCloud component API | key from `sonar-project.properties` |
+| `HAS_CODACY` / `CODACY_GRADE_URL` | Codacy repository API | grade badge URL from Codacy |
+| `HAS_CODEFACTOR` | CodeFactor badge probe | 200 only for known repos |
+| `IS_WP_PLUGIN` | root `*.php` with `Plugin Name:` | enables the WordPress profile |
+| `WP_REQUIRES` / `WP_TESTED` / `WP_REQUIRES_PHP` | plugin header + `readme.txt` | version strings only |
+| `WP_INFO_URL` | derived | `readme.txt` (or main plugin file) on GitHub |
+| `HAS_WPORG` / `WPORG_SLUG` | WordPress.org plugin API | name must match the plugin header |
 
 To add or remove a badge, edit the template — never edit the rendered
 block in any README directly.

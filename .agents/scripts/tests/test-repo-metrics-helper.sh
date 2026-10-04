@@ -114,6 +114,59 @@ _test_generate_outputs() {
 	return 0
 }
 
+# GH#33532: dev-only dependencies are counted apart from runtime ones, a name
+# in both sections stays runtime, Composer platform requirements are ignored,
+# and no legacy .github/badges output is written unless asked for.
+_test_runtime_dev_split() {
+	local _tmp
+	_tmp=$(mktemp -d)
+	local _repo="$_tmp/repo"
+	mkdir -p "$_repo"
+	_write_fixture_repo "$_repo"
+	cat >"$_repo/composer.json" <<'JSON'
+{"require":{"php":">=7.4","ext-json":"*","guzzlehttp/guzzle":"^7"},
+ "require-dev":{"phpunit/phpunit":"^10","guzzlehttp/guzzle":"^7"}}
+JSON
+
+	bash "$HELPER" generate \
+		--output-dir "$_repo/docs/metrics" \
+		--badge-dir "$_repo/docs/metrics/badges" \
+		"$_repo" >/dev/null
+
+	if python3 - "$_repo/docs/metrics/repo-metrics.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+deps = json.loads(Path(sys.argv[1]).read_text())["dependencies"]
+# react, requests, pytest, guzzlehttp/guzzle runtime; typescript, phpunit/phpunit dev
+expected = {"direct": 6, "runtime": 4, "dev": 2}
+actual = {key: deps[key] for key in expected}
+if actual != expected:
+    raise SystemExit(f"expected {expected}, got {actual}")
+composer = next(m for m in deps["manifests"] if m["path"] == "composer.json")
+if composer["dependencies"] != ["guzzlehttp/guzzle", "phpunit/phpunit"]:
+    raise SystemExit(f"platform packages not excluded: {composer['dependencies']}")
+PY
+	then
+		_pass "metrics JSON splits runtime and dev-only dependencies"
+	else
+		_fail "metrics JSON splits runtime and dev-only dependencies" "unexpected dependency counts"
+	fi
+	if grep -Fq '4 runtime, 2 dev' "$_repo/docs/metrics/badges/dependencies.svg"; then
+		_pass "dependency badge labels runtime and dev counts"
+	else
+		_fail "dependency badge labels runtime and dev counts" "badge text missing '4 runtime, 2 dev'"
+	fi
+	if [[ ! -e "$_repo/.github/badges" ]]; then
+		_pass "no legacy badge directory without --legacy-badge-dir"
+	else
+		_fail "no legacy badge directory without --legacy-badge-dir" "unexpected $_repo/.github/badges"
+	fi
+	rm -rf "$_tmp"
+	return 0
+}
+
 _test_legacy_loc_json() {
 	local _tmp
 	_tmp=$(mktemp -d)
@@ -151,6 +204,7 @@ main() {
 	fi
 
 	_test_generate_outputs
+	_test_runtime_dev_split
 	_test_legacy_loc_json
 
 	printf 'Tests run: %d, failed: %d\n' "$TESTS_RUN" "$TESTS_FAILED"
