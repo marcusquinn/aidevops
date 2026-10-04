@@ -69,10 +69,12 @@ else
 		fail "HOME=/tmp unexpectedly passed validation"
 	fi
 
-	if [[ "$output" == *"Security risk: /tmp is not owned by the current user."* ]]; then
-		pass "HOME=/tmp emits the ownership guard error"
+	# macOS rejects symlinked /tmp before reaching the ownership guard.
+	if [[ "$output" == *"Security risk: /tmp is not owned by the current user."* ||
+		"$output" == *"Security risk: /tmp is a symlink."* ]]; then
+		pass "HOME=/tmp emits a /tmp safety guard error"
 	else
-		fail "HOME=/tmp output did not include the ownership guard error: ${output}"
+		fail "HOME=/tmp output did not include a /tmp safety guard error: ${output}"
 	fi
 fi
 
