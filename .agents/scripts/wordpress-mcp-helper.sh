@@ -716,6 +716,15 @@ Commands:
                                   mcp-adapter-default-server) or a plugin route
                                   such as fluent-crm/mcp
 
+EOF
+    show_plugin_mcp_help
+    show_help_reference
+    return 0
+}
+
+# Show plugin MCP preset commands (part of show_help)
+show_plugin_mcp_help() {
+    cat << 'EOF'
 Plugin MCP servers (one MCP server per site and plugin):
   plugin-mcp-check <preset> <url> <user> <secret-name>
                                   Verify the site exposes the preset's tools/abilities
@@ -737,6 +746,13 @@ Plugin MCP servers (one MCP server per site and plugin):
 
   help                            Show this help
 
+EOF
+    return 0
+}
+
+# Show site types, examples and setup notes (part of show_help)
+show_help_reference() {
+    cat << 'EOF'
 Site Types:
   local/localwp    LocalWP sites in ~/Local Sites/
   wp-env           Docker-based wp-env development
