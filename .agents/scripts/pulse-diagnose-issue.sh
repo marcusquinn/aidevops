@@ -181,9 +181,30 @@ _issue_blocker_summary_json() {
 	return 0
 }
 
+# GH#33575: fail closed when the hold cannot be evaluated. Report the label
+# state (or unknown) with evaluation_error, never `active:false` while the
+# needs-maintainer-permissions label is present.
+# Args: issue_json
+_issue_permission_hold_fallback_json() {
+	local issue_json="${1:-}"
+	local label_present=""
+	label_present=$(printf '%s\n' "$issue_json" |
+		jq -r '[(.labels // [])[]?.name] | index("needs-maintainer-permissions") != null' 2>/dev/null) || label_present=""
+	case "$label_present" in
+	true | false) ;;
+	*) label_present="null" ;;
+	esac
+	printf '{"active":%s,"label_present":%s,"request_id":null,"evaluation_error":true}\n' \
+		"$label_present" "$label_present"
+	return 0
+}
+
 # GH#33330: name the permission request holding an issue, its age, whether the
 # owning session has ended, and both signed exits. Advisory only: signatures
 # are verified by `aidevops approve verify-permissions`, not here.
+# GH#33575: both documents travel on stdin. Linux caps one argv string at
+# 128 KiB (MAX_ARG_STRLEN), so `--argjson comments` failed with E2BIG on long
+# threads and hid the pending request and its withdraw command.
 # Args: issue_number repo_slug issue_json comments_json
 _issue_permission_hold_json() {
 	local issue_number="$1"
@@ -192,11 +213,12 @@ _issue_permission_hold_json() {
 	local comments_json="${4:-}"
 	[[ -n "$issue_json" ]] || issue_json='{}'
 	[[ -n "$comments_json" ]] || comments_json='[]'
-	jq -nc --argjson issue "$issue_json" --argjson comments "$comments_json" \
-		--arg number "$issue_number" --arg repo "$repo_slug" --argjson now "$(date +%s)" '
+	printf '%s\n%s\n' "$issue_json" "$comments_json" |
+		jq -sc --arg number "$issue_number" --arg repo "$repo_slug" --argjson now "$(date +%s)" '
 		def trusted: (.author_association // "") as $a | ["OWNER", "MEMBER", "COLLABORATOR"] | index($a) != null;
 		def epoch: (.created_at // "") | (try fromdateiso8601 catch null);
-		([($issue.labels // [])[]?.name] | index("needs-maintainer-permissions") != null) as $label
+		.[0] as $issue | .[1] as $comments
+		| ([($issue.labels // [])[]?.name] | index("needs-maintainer-permissions") != null) as $label
 		| [$comments[]? | select(trusted and ((.body // "") | contains("<!-- aidevops-permission-request -->")))]
 		| sort_by(.id) | last as $req
 		| if $req == null then {active: $label, label_present: $label, request_id: null}
@@ -222,17 +244,21 @@ _issue_permission_hold_json() {
 				grant_command: ("sudo aidevops approve permissions issue " + $number + " " + $repo + " --request " + ($rid // "perm-<id>")),
 				withdraw_command: ("sudo aidevops approve permissions issue " + $number + " " + $repo + " --request " + ($rid // "perm-<id>") + " --withdraw")
 			}
-		end' 2>/dev/null || printf '{"active":false,"request_id":null}'
+		end' 2>/dev/null || _issue_permission_hold_fallback_json "$issue_json"
 	return 0
 }
 
 _render_issue_permission_hold_text() {
 	local hold_json="$1"
 	[[ "$(printf '%s' "$hold_json" | jq -r '.request_id // empty' 2>/dev/null)" != "" ||
-		"$(printf '%s' "$hold_json" | jq -r '.label_present // false' 2>/dev/null)" == "true" ]] || return 0
+		"$(printf '%s' "$hold_json" | jq -r '.label_present // false' 2>/dev/null)" == "true" ||
+		"$(printf '%s' "$hold_json" | jq -r '.evaluation_error // false' 2>/dev/null)" == "true" ]] || return 0
 	printf 'Maintainer permission hold:\n'
 	printf '%s' "$hold_json" | jq -r '
 		"  Active: \(.active)  label: \(.label_present // false)",
+		(if .evaluation_error then
+			"  Hold evaluation failed; check the request with: aidevops approve verify-permissions issue <N> <owner/repo>"
+		else empty end),
 		"  Request: \(.request_id // "unknown")  requested: \(.requested_at // "unknown")  age_seconds: \(.age_seconds // "unknown")",
 		"  Signed decision: \(.decision // "none")  owner session ended (CLAIM_RELEASED): \(.owner_session_terminal // false)",
 		(if .active then
