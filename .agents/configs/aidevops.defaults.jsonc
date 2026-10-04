@@ -133,8 +133,10 @@
 
     // Close new-worker admission when one-minute load / logical cores exceeds
     // this positive threshold. Existing workers continue; unavailable telemetry
-    // leaves RAM/provider limits in force. Env: AIDEVOPS_MAX_LOAD_PER_CORE
-    "max_load_per_core": 1.5,
+    // leaves RAM/provider limits in force. Load/core 1.0 is 100% CPU busy; the
+    // 4.0 default allows full use and closes only on severe run-queue thrash.
+    // Lower it to keep CPU headroom. Env: AIDEVOPS_MAX_LOAD_PER_CORE
+    "max_load_per_core": 4.0,
 
     // Minimum active implementation-worker floor. Pulse will try to refill to
     // this target while provider/account health and host load are acceptable.

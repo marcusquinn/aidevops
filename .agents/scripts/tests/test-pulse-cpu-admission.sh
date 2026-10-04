@@ -103,8 +103,13 @@ assert_equal "$(_pulse_cpu_pressure)" '24.1 16 closed 1.5' 'just above threshold
 MAX_LOAD_PER_CORE=3
 assert_equal "$(_pulse_cpu_pressure)" '24.1 16 open 3' 'configured threshold opens'
 for MAX_LOAD_PER_CORE in invalid 0 -1; do
-	assert_equal "$(_pulse_cpu_pressure)" '24.1 16 closed 1.5' 'invalid threshold falls back'
+	assert_equal "$(_pulse_cpu_pressure)" '24.1 16 open 4.0' 'invalid threshold falls back to full-use default'
 done
+unset MAX_LOAD_PER_CORE
+MOCK_LOAD=45.1
+assert_equal "$(_pulse_cpu_pressure)" '45.1 16 open 4.0' 'default admits a fully busy host'
+MOCK_LOAD=64.1
+assert_equal "$(_pulse_cpu_pressure)" '64.1 16 closed 4.0' 'default closes on severe run-queue thrash'
 MAX_LOAD_PER_CORE=1.5 MOCK_LOAD=invalid
 assert_equal "$(_pulse_cpu_pressure)" 'unknown unknown unknown 1.5' 'malformed load fails open explicitly'
 MOCK_LOAD=41.2 MOCK_CORES=0
