@@ -7,6 +7,8 @@ import importlib.util
 import io
 import json
 import os
+import select
+import signal
 import sqlite3
 import subprocess
 import sys
@@ -183,6 +185,38 @@ class AdmissionTests(unittest.TestCase):
         self.assertEqual(self.budget.db.execute("SELECT COUNT(*) FROM reservation").fetchone()[0], 2)
         self.budget.finish(probe, "core", headers(4934), started=1063, now=1064)
         self.assertEqual(self.budget.db.execute("SELECT COUNT(*) FROM reservation").fetchone()[0], 0)
+
+    def test_stale_live_probe_releases_ownership_but_retains_quota_debt(self):
+        self.seed(763)
+        probe = self.budget.acquire("core", now=1061)
+        # This reservation belongs to the still-live test process.
+        with self.assertRaisesRegex(Deferred, "serialized quota revalidation"):
+            self.budget.acquire("core", now=1240)
+        replacement = self.budget.acquire("core", now=1241)
+        self.assertNotEqual(probe, replacement)
+        self.assertEqual(self.budget.db.execute(
+            "SELECT uncertain,started FROM reservation WHERE id=?", (probe,),
+        ).fetchone(), (1, 1241))
+        self.assertEqual(self.budget.db.execute("SELECT COUNT(*) FROM reservation").fetchone()[0], 2)
+        self.assertEqual(self.budget.db.execute("SELECT remaining FROM quota").fetchone()[0], 763)
+        with self.assertRaisesRegex(Deferred, "serialized quota revalidation"):
+            self.budget.acquire("core", now=1242)
+        self.budget.finish(replacement, "core", headers(4934), started=1241, now=1243)
+        # The replacement started at the uncertainty boundary, so retain debt
+        # until a strictly later response covers it (existing causal ordering).
+        self.assertEqual(self.budget.db.execute("SELECT COUNT(*) FROM reservation").fetchone()[0], 1)
+        later = self.budget.acquire("core", now=1244)
+        self.budget.finish(later, "core", headers(4933), started=1244, now=1245)
+        self.assertEqual(self.budget.db.execute("SELECT COUNT(*) FROM reservation").fetchone()[0], 0)
+
+    def test_stale_live_bootstrap_allows_only_one_replacement(self):
+        first = self.budget.acquire("core", now=1000)
+        self.budget.acquire("core", now=1180)
+        self.assertEqual(self.budget.db.execute(
+            "SELECT uncertain FROM reservation WHERE id=?", (first,),
+        ).fetchone()[0], 1)
+        with self.assertRaises(Deferred):
+            self.budget.acquire("core", now=1181)
 
     def test_budget_diagnostics_are_opt_in_and_identity_free(self):
         self.seed(763)
@@ -608,6 +642,41 @@ class AdmissionTests(unittest.TestCase):
         self.assertEqual(values["x-ratelimit-remaining"], "12")
         stream.seek(offset)
         self.assertEqual(stream.read(), body)
+
+    def test_signal_during_native_wait_exits_and_reaps_child(self):
+        script = (
+            "import importlib.util, os, signal, sys\n"
+            f"sys.path.insert(0, {str(SCRIPTS)!r})\n"
+            f"spec = importlib.util.spec_from_file_location('governor', {str(SCRIPTS / 'gh-transport-governor.py')!r})\n"
+            "governor = importlib.util.module_from_spec(spec)\n"
+            "spec.loader.exec_module(governor)\n"
+            "for sig in (signal.SIGHUP, signal.SIGTERM, signal.SIGINT):\n"
+            "    signal.signal(sig, governor.interrupted)\n"
+            "child_code = 'import os, signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); print(os.getpid(), flush=True); time.sleep(60)'\n"
+            "governor.execute(sys.executable, ['-c', child_code], sys.stdout, os.environ.copy())\n"
+        )
+        for sig in (signal.SIGHUP, signal.SIGTERM, signal.SIGINT):
+            with self.subTest(signal=sig):
+                parent = subprocess.Popen([sys.executable, "-c", script], stdout=subprocess.PIPE,
+                                          stderr=subprocess.PIPE, text=True)
+                child_pid = None
+                try:
+                    self.assertTrue(select.select([parent.stdout], [], [], 5)[0], "child did not start")
+                    child_pid = int(parent.stdout.readline())
+                    parent.send_signal(sig)
+                    _, stderr = parent.communicate(timeout=6)
+                    self.assertEqual(parent.returncode, 128 + sig, stderr)
+                    with self.assertRaises(ProcessLookupError):
+                        os.kill(child_pid, 0)
+                finally:
+                    if parent.poll() is None:
+                        parent.kill()
+                        parent.communicate(timeout=2)
+                    if child_pid is not None:
+                        try:
+                            os.kill(child_pid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
 
 
 if __name__ == "__main__":
