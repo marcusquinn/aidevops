@@ -219,7 +219,7 @@ _issue_permission_hold_json() {
 		def epoch: (.created_at // "") | (try fromdateiso8601 catch null);
 		.[0] as $issue | .[1] as $comments
 		| ([($issue.labels // [])[]?.name] | index("needs-maintainer-permissions") != null) as $label
-		| [$comments[]? | select(trusted and ((.body // "") | contains("<!-- aidevops-permission-request -->")))]
+		| [$comments[]? | select(trusted and ((.body // "") | startswith("<!-- aidevops-permission-request -->")))]
 		| sort_by(.id) | last as $req
 		| if $req == null then {active: $label, label_present: $label, request_id: null}
 		else
