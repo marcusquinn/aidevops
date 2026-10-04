@@ -32,6 +32,19 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+def _https_opener() -> urllib.request.OpenerDirector:
+    """Unauthenticated opener: HTTPS only, HTTPS-only redirects.
+
+    UnknownHandler makes every other scheme (file:, http:, custom) raise URLError.
+    """
+    opener = urllib.request.OpenerDirector()
+    for handler in (urllib.request.HTTPSHandler(), urllib.request.HTTPRedirectHandler(),
+                    urllib.request.HTTPDefaultErrorHandler(), urllib.request.HTTPErrorProcessor(),
+                    urllib.request.UnknownHandler()):
+        opener.add_handler(handler)
+    return opener
+
+
 def request_json(url: str, headers: dict[str, str], body: bytes | None = None):
     req = urllib.request.Request(url, data=body, headers=headers)
     with urllib.request.build_opener(_NoRedirect).open(req, timeout=30) as response:
@@ -140,7 +153,7 @@ def codefactor_badge(repo: str) -> str:
     """Return the CodeFactor badge URL only when it serves a real grade."""
     badge = f'https://www.codefactor.io/repository/github/{repo}/badge'
     try:
-        with urllib.request.urlopen(badge, timeout=30) as response:
+        with _https_opener().open(badge, timeout=30) as response:
             image = response.read(65536).decode('utf-8')
             host = urllib.parse.urlparse(response.url).hostname
     except (urllib.error.URLError, ValueError, UnicodeError) as error:
