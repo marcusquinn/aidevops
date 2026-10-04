@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 Marcus Quinn
 
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
+
+import { createProcessTreeTracker, signalEach } from "./bounded-operation-process-tree.mjs";
 
 function boundedInteger(value, fallback, minimum, maximum) {
   value = Number(value);
@@ -24,67 +26,17 @@ async function readPrivateConfig() {
   }
 }
 
-// Helpers such as timeout_sec move commands into their own process group
-// (GNU timeout calls setpgid; the bash fallback uses `set -m`), outside the
-// supervisor's group-wide signals (GH#33514). Track descendants by parent chain
-// while they are attributable, keyed by PID plus start time so a reparented
-// subtree stays owned and a reused PID is never signalled. Darwin `ps` reports
-// no session IDs, so session membership cannot replace this attribution.
+// Nested process groups created by helpers such as timeout_sec are tracked
+// separately (GH#33514); see bounded-operation-process-tree.mjs.
 const TRACK_INTERVAL_MS = 250;
 
-export function parseProcessSnapshot(text) {
-  const entries = [];
-  for (const line of String(text).split(/\r?\n/)) {
-    const match = line.trim().match(/^(\d+)\s+(\d+)\s+(\d+)\s+(\S.*)$/);
-    if (!match) continue;
-    entries.push({ pid: Number(match[1]), ppid: Number(match[2]), pgid: Number(match[3]), started: match[4] });
-  }
-  return entries;
-}
-
-export function recordOwnedDescendants(snapshot, rootPid, owned, excludePid = 0) {
-  const parents = new Set([rootPid]);
-  for (const entry of snapshot) {
-    if (owned.get(entry.pid)?.started === entry.started) parents.add(entry.pid);
-  }
-  let added = true;
-  while (added) {
-    added = false;
-    for (const entry of snapshot) {
-      if (entry.pid === rootPid || entry.pid === excludePid || parents.has(entry.pid)
-        || !parents.has(entry.ppid)) continue;
-      owned.set(entry.pid, { pgid: entry.pgid, started: entry.started });
-      parents.add(entry.pid);
-      added = true;
-    }
-  }
-  return owned;
-}
-
-export function verifiedNestedTargets(snapshot, owned, ownGroup) {
-  return snapshot
-    .filter((entry) => entry.pgid !== ownGroup && owned.get(entry.pid)?.started === entry.started)
-    .map((entry) => entry.pid);
-}
-
-function processSnapshot() {
-  const result = spawnSync("ps", ["-ax", "-o", "pid=,ppid=,pgid=,lstart="], {
-    detached: true,
-    encoding: "utf8",
-    env: { ...process.env, LC_ALL: "C" },
-    timeout: 1000,
-  });
-  if (result.status !== 0) return null;
-  return { entries: parseProcessSnapshot(result.stdout), psPid: result.pid };
-}
-
-function signalEach(pids, signal) {
-  for (const pid of pids) {
-    try {
-      process.kill(pid, signal);
-    } catch {
-      // Already exited between the snapshot and the signal.
-    }
+function signalOwnGroup(signal) {
+  try {
+    process.kill(-process.pid, signal);
+    return true;
+  } catch {
+    // The group may already contain only this supervisor.
+    return false;
   }
 }
 
@@ -108,112 +60,90 @@ function reportCommandStarted(operationID) {
   });
 }
 
-export async function runSupervisor() {
-  const config = await readPrivateConfig();
-  const command = config?.command;
-  if (!Array.isArray(command) || command.length === 0
-    || command.some((part) => typeof part !== "string" || !part)) return 125;
+function validCommand(command) {
+  return Array.isArray(command) && command.length > 0
+    && command.every((part) => typeof part === "string" && part);
+}
 
-  const budgetMs = boundedInteger(config.budgetMs, 15 * 60 * 1000, 10, 24 * 60 * 60 * 1000);
-  const killGraceMs = boundedInteger(config.killGraceMs, 500, 10, 30 * 1000);
-  let terminating = false;
-  let childFinished = false;
-  let childExit = 1;
-  let commandStarted = Promise.resolve();
-  const owned = new Map();
-  const nestedGroups = new Set();
-  let attributionComplete = true;
-
-  // Returns the current snapshot after recording newly attributable descendants.
-  const track = () => {
-    const snapshot = processSnapshot();
-    if (!snapshot) {
-      attributionComplete = false;
-      return null;
-    }
-    recordOwnedDescendants(snapshot.entries, process.pid, owned, snapshot.psPid);
-    for (const entry of snapshot.entries) {
-      if (entry.pgid !== process.pid && owned.get(entry.pid)?.started === entry.started) nestedGroups.add(entry.pgid);
-    }
-    return snapshot;
-  };
-  const nestedTargets = (snapshot) => (snapshot ? verifiedNestedTargets(snapshot.entries, owned, process.pid) : []);
-  const reportContainment = () => sendMessage({
-    event: "containment",
-    operationID: String(config.operationID || ""),
-    nestedProcessGroups: nestedGroups.size,
-    attributionComplete,
-  });
-
-  const terminateOwnedGroup = () => {
-    if (terminating) return;
-    terminating = true;
-    signalEach(nestedTargets(track()), "SIGTERM");
-    try {
-      process.kill(-process.pid, "SIGTERM");
-    } catch {
-      // The group may already contain only this supervisor.
-    }
+// Signals nested helper groups before and after the grace period, then the
+// supervisor's own group. Containment is reported before the final SIGKILL.
+function createTerminator(tracker, killGraceMs, reportContainment) {
+  const state = { terminating: false };
+  state.terminate = () => {
+    if (state.terminating) return;
+    state.terminating = true;
+    signalEach(tracker.nestedTargets(tracker.track()), "SIGTERM");
+    signalOwnGroup("SIGTERM");
     setTimeout(() => {
-      signalEach(nestedTargets(track()), "SIGKILL");
+      signalEach(tracker.nestedTargets(tracker.track()), "SIGKILL");
       reportContainment().finally(() => {
-        try {
-          process.kill(-process.pid, "SIGKILL");
-        } catch {
-          process.exit(1);
-        }
+        if (!signalOwnGroup("SIGKILL")) process.exit(1);
       });
     }, killGraceMs).unref();
   };
+  return state;
+}
 
-  process.on("SIGTERM", terminateOwnedGroup);
-  process.on("SIGINT", terminateOwnedGroup);
+// True once only the supervisor remains in its group and no owned nested-group
+// descendant is alive. Nested descendants keep inherited stdio open, so the
+// operation is not drained while they live; the budget still bounds them, and
+// once termination has begun they are escalated instead of awaiting the grace.
+function ownedTreeDrained(tracker, terminator) {
+  const snapshot = tracker.track();
+  if (!snapshot || tracker.ownGroupMembers(snapshot) !== 1) return false;
+  const nested = tracker.nestedTargets(snapshot);
+  if (nested.length === 0) return true;
+  if (terminator.terminating) signalEach(nested, "SIGKILL");
+  return false;
+}
+
+export async function runSupervisor() {
+  const config = await readPrivateConfig();
+  if (!validCommand(config?.command)) return 125;
+  const { command } = config;
+  const operationID = String(config.operationID || "");
+
+  const budgetMs = boundedInteger(config.budgetMs, 15 * 60 * 1000, 10, 24 * 60 * 60 * 1000);
+  const killGraceMs = boundedInteger(config.killGraceMs, 500, 10, 30 * 1000);
+  const result = { finished: false, exit: 1, started: Promise.resolve() };
+  const tracker = createProcessTreeTracker(process.pid);
+  const reportContainment = () => sendMessage({ event: "containment", operationID, ...tracker.containment() });
+  const terminator = createTerminator(tracker, killGraceMs, reportContainment);
+
+  process.on("SIGTERM", terminator.terminate);
+  process.on("SIGINT", terminator.terminate);
   process.on("message", (message) => {
-    if (message?.action === "terminate") terminateOwnedGroup();
+    if (message?.action === "terminate") terminator.terminate();
   });
-  const budgetTimer = setTimeout(terminateOwnedGroup, budgetMs);
+  const budgetTimer = setTimeout(terminator.terminate, budgetMs);
 
   const child = spawn(command[0], command.slice(1), {
     cwd: process.cwd(),
-    env: { ...process.env, AIDEVOPS_OPERATION_ID: String(config.operationID || "") },
+    env: { ...process.env, AIDEVOPS_OPERATION_ID: operationID },
     stdio: ["ignore", "inherit", "inherit"],
   });
 
-  const trackTimer = setInterval(track, TRACK_INTERVAL_MS);
+  const trackTimer = setInterval(tracker.track, TRACK_INTERVAL_MS);
   child.once("spawn", () => {
-    commandStarted = reportCommandStarted(config.operationID);
-    track();
+    result.started = reportCommandStarted(operationID);
+    tracker.track();
   });
   child.once("error", () => {
-    childFinished = true;
-    childExit = 127;
+    result.finished = true;
+    result.exit = 127;
   });
   child.once("exit", (code) => {
-    childFinished = true;
-    childExit = Number.isInteger(code) ? code : 1;
+    result.finished = true;
+    result.exit = Number.isInteger(code) ? code : 1;
   });
 
   return new Promise((resolve) => {
-    let draining = false;
     const drainTimer = setInterval(() => {
-      if (!childFinished || draining) return;
-      const snapshot = track();
-      if (!snapshot) return;
-      const members = snapshot.entries.filter((entry) => entry.pgid === process.pid).length;
-      if (members !== 1) return;
-      const nested = nestedTargets(snapshot);
-      // Nested-group descendants keep inherited stdio open, so the operation is
-      // not drained while they live. The budget still bounds them; once
-      // termination has begun, escalate instead of waiting for the grace timer.
-      if (nested.length > 0) {
-        if (terminating) signalEach(nested, "SIGKILL");
-        return;
-      }
-      draining = true;
+      if (!result.finished || !ownedTreeDrained(tracker, terminator)) return;
       clearInterval(drainTimer);
       clearInterval(trackTimer);
       clearTimeout(budgetTimer);
-      Promise.all([commandStarted, reportContainment()]).finally(() => resolve(childExit));
+      Promise.all([result.started, reportContainment()]).finally(() => resolve(result.exit));
     }, 25);
   });
 }

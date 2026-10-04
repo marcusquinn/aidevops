@@ -14,6 +14,7 @@ import {
   withinRoot,
 } from "./bounded-operation-values.mjs";
 import {
+  applySupervisorMessage,
   disposeOperations,
   operationReceipt,
   signalSupervisor,
@@ -102,22 +103,7 @@ export class BoundedInteractiveOperationManager {
       env: { ...process.env, OPENCODE_SESSION_ID: operation.owner },
       stdio: ["pipe", "pipe", "pipe", "ipc"],
     });
-    child.on("message", (message) => {
-      if (message?.type !== "aidevops.operation" || message.operationID !== operation.id) return;
-      if (message.event === "containment") {
-        if (stage !== "main") return;
-        operation.nestedProcessGroups = boundedInteger(message.nestedProcessGroups, 0, 0, 1_000_000);
-        operation.attributionComplete = message.attributionComplete === true;
-        return;
-      }
-      if (message.event !== "command_started") return;
-      if (stage === "main") {
-        operation.commandStarted = true;
-        operation.supervisorRuntime = scalar(message.runtime);
-      } else {
-        operation.restorationCommandStarted = true;
-      }
-    });
+    child.on("message", (message) => applySupervisorMessage(operation, stage, message));
     child.stdin.end(JSON.stringify({
       budgetMs: childBudgetMs,
       command,

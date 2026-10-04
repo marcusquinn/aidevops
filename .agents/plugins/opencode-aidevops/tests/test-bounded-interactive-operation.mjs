@@ -16,7 +16,7 @@ import {
   parseProcessSnapshot,
   recordOwnedDescendants,
   verifiedNestedTargets,
-} from "../bounded-operation-supervisor.mjs";
+} from "../bounded-operation-process-tree.mjs";
 import { createBoundedInteractiveOperationTool } from "../bounded-operation-tool.mjs";
 import { resolveGptImageProjectRoot, resolveSessionOwnedWorktreeRoot } from "../gpt-image-worktree.mjs";
 

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 Marcus Quinn
 
+import { boundedInteger, scalar } from "./bounded-operation-values.mjs";
+
 const MAX_CAPTURE_BYTES = 1024 * 1024;
 const MAX_PROGRESS_REMAINDER_BYTES = 4096;
 const RECEIPT_SCHEMA = "aidevops.interactive-operation/v1";
@@ -52,6 +54,21 @@ export function trimTerminalOperations(operations, maximum) {
     if (operations.size < maximum) return;
   }
   throw new Error("too many active bounded operations");
+}
+
+// Applies a supervisor IPC event for this operation and stage. Containment is
+// reported only for the main command (GH#33514).
+export function applySupervisorMessage(operation, stage, message) {
+  if (message?.type !== "aidevops.operation" || message.operationID !== operation.id) return;
+  if (message.event === "containment" && stage === "main") {
+    operation.nestedProcessGroups = boundedInteger(message.nestedProcessGroups, 0, 0, 1_000_000);
+    operation.attributionComplete = message.attributionComplete === true;
+  } else if (message.event === "command_started" && stage === "main") {
+    operation.commandStarted = true;
+    operation.supervisorRuntime = scalar(message.runtime);
+  } else if (message.event === "command_started") {
+    operation.restorationCommandStarted = true;
+  }
 }
 
 // The supervisor reports whether helper-created process groups were tracked
