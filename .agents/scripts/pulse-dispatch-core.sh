@@ -832,21 +832,98 @@ CLAIM_RELEASED reason=dispatch_aborted:${reason} runner=${self_login} ts=$(date 
 #
 # Exit codes:
 #   0 - worker dispatched successfully
-#   1 - hard error (metadata unavailable, dedup gate blocked)
-#   2 - explicit launch no-op (canary/precreate/orphan guard; retry later)
+#   1 - hard error (issue missing, dedup gate blocked)
+#   2 - explicit launch no-op (canary/precreate/orphan guard, transient
+#       issue-metadata failure; retry later)
 #######################################
+#######################################
+# GH#33524: reduce a gh stderr capture to one bounded, secrets-safe line.
+# Args: $1 = stderr capture file (may be empty/missing)
+# Output: summary line ("no stderr" when nothing was captured)
+#######################################
+_dispatch_metadata_error_summary() {
+	local err_file="$1"
+	local line=""
+	if [[ -n "$err_file" && -s "$err_file" ]]; then
+		# The last non-empty line carries gh's error; earlier lines are wrapper noise.
+		line=$(grep -v '^[[:space:]]*$' "$err_file" 2>/dev/null | tail -n 1) || line=""
+		line=$(printf '%s' "$line" |
+			sed -E 's/(gh[pousr]_|github_pat_)[A-Za-z0-9_]+/[REDACTED]/g; s/([Bb]earer|[Tt]oken)[[:space:]=:]+[^[:space:]]+/\1 [REDACTED]/g' |
+			tr -cd '[:print:]' | cut -c1-200) || line=""
+	fi
+	[[ -n "$line" ]] || line="no stderr"
+	printf '%s\n' "$line"
+	return 0
+}
+
+#######################################
+# GH#33524: a missing/transferred issue will not recover by retrying.
+# Args: $1 = error summary
+# Exit: 0 permanent, 1 transient (rate limit, GraphQL, network, timeout, ...)
+#######################################
+_dispatch_metadata_error_is_permanent() {
+	local summary="$1"
+	case "$summary" in
+	*"Could not resolve to an"* | *"HTTP 404"* | *"HTTP 410"* | *"Not Found"* | *"was deleted"*) return 0 ;;
+	esac
+	return 1
+}
+
+#######################################
+# GH#33524: fetch the canonical issue bundle into the caller-owned
+# issue_meta_json, retrying transient gh failures once with a short backoff
+# and logging the gh error instead of discarding it.
+# Args: $1 = issue number, $2 = repo slug
+# Env:  AIDEVOPS_DISPATCH_METADATA_ATTEMPTS (1-9, default 2)
+#       AIDEVOPS_DISPATCH_METADATA_RETRY_DELAY (seconds, default 3)
+# Exit: 0 loaded, 1 permanent failure, 2 transient failure (retry next cycle)
+#######################################
+_dispatch_fetch_issue_metadata() {
+	local issue_number="$1" repo_slug="$2"
+	local max_attempts="${AIDEVOPS_DISPATCH_METADATA_ATTEMPTS:-2}"
+	local retry_delay="${AIDEVOPS_DISPATCH_METADATA_RETRY_DELAY:-3}"
+	[[ "$max_attempts" =~ ^[1-9]$ ]] || max_attempts=2
+	[[ "$retry_delay" =~ ^[0-9]+$ ]] || retry_delay=3
+	local err_file="" attempt=1 fetch_rc=0 summary=""
+	err_file=$(mktemp "${TMPDIR:-/tmp}/aidevops-dispatch-meta.XXXXXX" 2>/dev/null) || err_file=""
+	while :; do
+		fetch_rc=0
+		[[ -z "$err_file" ]] || : >"$err_file"
+		issue_meta_json=$(gh_issue_view "$issue_number" --repo "$repo_slug" \
+			--json number,title,state,labels,assignees,body,author,createdAt 2>"${err_file:-/dev/null}") || fetch_rc=$?
+		if [[ "$fetch_rc" -eq 0 && -n "$issue_meta_json" ]]; then
+			[[ -z "$err_file" ]] || rm -f "$err_file"
+			return 0
+		fi
+		issue_meta_json=""
+		summary=$(_dispatch_metadata_error_summary "$err_file")
+		if _dispatch_metadata_error_is_permanent "$summary"; then
+			[[ -z "$err_file" ]] || rm -f "$err_file"
+			echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: unable to load issue metadata (permanent, rc=${fetch_rc}, gh: ${summary})" >>"$LOGFILE"
+			echo "[dispatch_with_dedup] DISPATCH_BLOCK_REASON reason=issue_metadata_unavailable signal=permanent issue=#${issue_number} repo=${repo_slug}" >>"$LOGFILE"
+			return 1
+		fi
+		[[ "$attempt" -lt "$max_attempts" ]] || break
+		echo "[dispatch_with_dedup] Metadata fetch attempt ${attempt}/${max_attempts} failed for #${issue_number} in ${repo_slug} (rc=${fetch_rc}, gh: ${summary}); retrying in ${retry_delay}s" >>"$LOGFILE"
+		sleep "$retry_delay"
+		attempt=$((attempt + 1))
+	done
+	[[ -z "$err_file" ]] || rm -f "$err_file"
+	echo "[dispatch_with_dedup] Dispatch deferred for #${issue_number} in ${repo_slug}: unable to load issue metadata after ${attempt} attempt(s) (transient, rc=${fetch_rc}, gh: ${summary}); retry next cycle" >>"$LOGFILE"
+	echo "[dispatch_with_dedup] DISPATCH_BLOCK_REASON reason=issue_metadata_unavailable signal=transient issue=#${issue_number} repo=${repo_slug}" >>"$LOGFILE"
+	return 2
+}
+
 _dispatch_load_and_validate_metadata() {
 	local issue_number="$1" repo_slug="$2"
-	local _ds_t0=""
+	local _ds_t0="" fetch_rc=0
 	# issue_meta_json is owned by dispatch_with_dedup in the calling scope.
 	# Do not shadow it: the fetched bundle is reused by all later gates.
 	_ds_t0=$(_ds_now_ns)
-	issue_meta_json=$(gh_issue_view "$issue_number" --repo "$repo_slug" \
-		--json number,title,state,labels,assignees,body,author,createdAt 2>/dev/null) || issue_meta_json=""
+	_dispatch_fetch_issue_metadata "$issue_number" "$repo_slug" || fetch_rc=$?
 	_ds_record "$issue_number" "$repo_slug" "gh_issue_view" "$_ds_t0"
-	if [[ -z "$issue_meta_json" ]]; then
-		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: unable to load issue metadata" >>"$LOGFILE"
-		return 1
+	if [[ "$fetch_rc" -ne 0 ]]; then
+		return "$fetch_rc"
 	fi
 	local issue_state
 	issue_state=$(printf '%s' "$issue_meta_json" | jq -r '.state // ""' 2>/dev/null | tr '[:lower:]' '[:upper:]') || issue_state=""

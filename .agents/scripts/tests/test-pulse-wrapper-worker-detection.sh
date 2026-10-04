@@ -737,17 +737,27 @@ test_check_dispatch_dedup_treats_merged_pr_as_duplicate() {
 
 test_dispatch_with_dedup_blocks_when_duplicate() {
 	local original_script_dir="$SCRIPT_DIR"
+	local original_function_definitions
+	original_function_definitions=$(capture_function_definitions gh_issue_view)
 	SCRIPT_DIR="$TEST_ROOT"
 
 	set_ps_fixture ""
 	# Dedup helper returns 0 for has-open-pr → duplicate detected → check_dispatch_dedup returns 0
 	set_dedup_helper_fixture 0 'merged PR #1145 references issue #9999 via "closes" keyword'
+	# GH#33524: load metadata so the dedup gate itself produces the block,
+	# rather than an incidental metadata-fetch failure.
+	gh_issue_view() {
+		printf '{"number":9999,"state":"OPEN","title":"Issue #9999: test dedup","labels":[],"assignees":[],"body":"## Worker Guidance","author":{"login":"testuser"}}\n'
+		return 0
+	}
+	export -f gh_issue_view
 
 	local dispatch_rc=0
 	dispatch_with_dedup "9999" "marcusquinn/aidevops" "Issue #9999: test dedup" "t9999: test dedup" \
 		"testuser" "/tmp/aidevops" "/full-loop test" || dispatch_rc=$?
 
 	SCRIPT_DIR="$original_script_dir"
+	restore_function_definitions "$original_function_definitions" gh_issue_view
 
 	if [[ "$dispatch_rc" -eq 1 ]]; then
 		print_result "dispatch_with_dedup blocks when dedup detects duplicate (GH#12436)" 0
@@ -773,20 +783,33 @@ test_dispatch_with_dedup_fails_closed_when_issue_metadata_missing() {
 	}
 	export -f gh_issue_view
 
+	# GH#33524: a failure without a permanent gh error is transient: retry once,
+	# then defer (rc=2, retry next cycle) instead of a hard block (rc=1).
 	local dispatch_rc=0
-	dispatch_with_dedup "7777" "marcusquinn/aidevops" "Issue #7777: fail-closed" "t7777: fail-closed" \
+	AIDEVOPS_DISPATCH_METADATA_RETRY_DELAY=0 \
+		dispatch_with_dedup "7777" "marcusquinn/aidevops" "Issue #7777: fail-closed" "t7777: fail-closed" \
 		"testuser" "/tmp/aidevops" "/full-loop test" || dispatch_rc=$?
+
+	# A permanent gh error (missing issue) still hard-blocks without retrying.
+	gh_issue_view() {
+		printf 'GraphQL: Could not resolve to an Issue with the number of 7778.\n' >&2
+		return 1
+	}
+	local permanent_rc=0
+	AIDEVOPS_DISPATCH_METADATA_RETRY_DELAY=0 \
+		dispatch_with_dedup "7778" "marcusquinn/aidevops" "Issue #7778: fail-closed" "t7778: fail-closed" \
+		"testuser" "/tmp/aidevops" "/full-loop test" || permanent_rc=$?
 
 	SCRIPT_DIR="$original_script_dir"
 	restore_function_definitions "$original_function_definitions" gh_issue_view
 
-	if [[ "$dispatch_rc" -eq 1 ]]; then
-		print_result "dispatch_with_dedup fails closed when issue metadata lookup fails (GH#14409)" 0
+	if [[ "$dispatch_rc" -eq 2 && "$permanent_rc" -eq 1 ]]; then
+		print_result "dispatch_with_dedup fails closed when issue metadata lookup fails (GH#14409, GH#33524)" 0
 		return 0
 	fi
 
-	print_result "dispatch_with_dedup fails closed when issue metadata lookup fails (GH#14409)" 1 \
-		"Expected exit 1 (blocked), got ${dispatch_rc}"
+	print_result "dispatch_with_dedup fails closed when issue metadata lookup fails (GH#14409, GH#33524)" 1 \
+		"Expected transient rc=2 and permanent rc=1, got ${dispatch_rc} and ${permanent_rc}"
 	return 0
 }
 

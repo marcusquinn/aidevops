@@ -855,6 +855,12 @@ _dispatch_record_nonzero_dispatch_result() {
 			_dispatch_stats_increment_candidate_failed "blocked_by_native_lookup_unavailable"
 			return 0
 		fi
+		# GH#33524: transient metadata failure; the candidate retries next cycle.
+		if [[ "$recent_lines" == *"reason=issue_metadata_unavailable signal=transient"* ]]; then
+			echo "[pulse-wrapper] Dispatch_max: #${issue_number} (${repo_slug}) pre-launch failure reason=issue_metadata_unavailable transient=true" >>"$LOGFILE"
+			_dispatch_stats_increment_candidate_failed "issue_metadata_unavailable"
+			return 0
+		fi
 		_dispatch_stats_increment "dispatch_candidate_noop"
 		return 0
 	fi
