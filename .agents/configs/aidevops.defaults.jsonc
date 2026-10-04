@@ -131,6 +131,11 @@
     // Env override: AIDEVOPS_MAX_WORKERS_CAP
     "max_workers_cap": 0,
 
+    // Close new-worker admission when one-minute load / logical cores exceeds
+    // this positive threshold. Existing workers continue; unavailable telemetry
+    // leaves RAM/provider limits in force. Env: AIDEVOPS_MAX_LOAD_PER_CORE
+    "max_load_per_core": 1.5,
+
     // Minimum active implementation-worker floor. Pulse will try to refill to
     // this target while provider/account health and host load are acceptable.
     // Never exceeds the resolved max_workers_cap.

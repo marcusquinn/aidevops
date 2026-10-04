@@ -251,10 +251,10 @@ apply_peak_hours_cap() {
 }
 
 #######################################
-# Calculate max workers from available RAM
+# Calculate max workers from available RAM and CPU admission pressure
 #
 # Formula: (free_ram - RAM_RESERVE_MB) / RAM_PER_WORKER_MB
-# Clamped to [1, MAX_WORKERS_CAP]
+# RAM bound clamped to [1, MAX_WORKERS_CAP]; CPU pressure may close admission (0)
 #
 # Writes MAX_WORKERS to a file that pulse.md reads via bash.
 #######################################
@@ -291,11 +291,17 @@ calculate_max_workers() {
 		max_workers="$MAX_WORKERS_CAP"
 	fi
 
+	local cpu_load="" cpu_cores="" cpu_gate="" cpu_threshold=""
+	read -r cpu_load cpu_cores cpu_gate cpu_threshold <<<"$(_pulse_cpu_pressure)"
+	if [[ "$cpu_gate" == "closed" ]]; then
+		max_workers=0
+	fi
+
 	# Write to a file that pulse.md can read
 	local max_workers_file="${HOME}/.aidevops/logs/pulse-max-workers"
 	echo "$max_workers" >"$max_workers_file"
 
-	echo "[pulse-wrapper] Available RAM: ${free_mb}MB, reserve: ${RAM_RESERVE_MB}MB, max workers: ${max_workers}" >>"$LOGFILE"
+	echo "[pulse-wrapper] Available RAM: ${free_mb}MB, reserve: ${RAM_RESERVE_MB}MB, max workers: ${max_workers}, load=${cpu_load}/${cpu_cores} max_load_per_core=${cpu_threshold} cpu_gate=${cpu_gate}" >>"$LOGFILE"
 	return 0
 }
 
