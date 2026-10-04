@@ -119,6 +119,12 @@ the receipt-owned before-state only when no later config drift is present.
 
 Global equivalent: `orchestration.interactive_pr_auto_merge` in `~/.config/aidevops/config.jsonc`. Env override for the current pulse/session: `AIDEVOPS_INTERACTIVE_PR_AUTO_MERGE`.
 
+### Dispatch footprint overlap
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `footprint_low_info_paths` | array of basenames | unset | Extra file basenames (case-insensitive) that never serialise dispatch when they are the only files two briefs share, e.g. `["README.md"]` for repos whose briefs append rows to a README table. Adds to the built-in list (`VERSION`, `CHANGELOG.md`, `CHANGES.md`, `HISTORY.md`, WordPress `changelog.txt`/`readme.txt`, …); a shared implementation file still blocks. Global override of the built-in list: `AIDEVOPS_FOOTPRINT_LOW_INFO_BASENAMES`. Consumed by `dispatch-dedup-footprint.sh`. |
+
 ## Workflow Runner Configuration
 
 | Field | Type | Example | Description |
