@@ -45,18 +45,19 @@ print_summary_header() {
 
     local run_info
     run_info=$(db "$AUDIT_DB" -separator '|' "
-        SELECT repo, pr_number, head_sha, started_at, completed_at, services_run
+        SELECT repo, pr_number, head_sha, started_at, completed_at, services_run, status
         FROM audit_runs WHERE id = $run_id;
     ")
     if [[ -n "$run_info" ]]; then
-        local repo pr sha started completed services
-        IFS='|' read -r repo pr sha started completed services <<<"$run_info"
+        local repo pr sha started completed services status
+        IFS='|' read -r repo pr sha started completed services status <<<"$run_info"
         echo "  Repository:  $repo"
         [[ "$pr" -gt 0 ]] && echo "  PR:          #${pr}"
         echo "  SHA:         $sha"
         echo "  Started:     $started"
         echo "  Completed:   $completed"
         echo "  Services:    $services"
+        echo "  Status:      $status"
         echo ""
     fi
     return 0

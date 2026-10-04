@@ -280,7 +280,7 @@ COMMANDS:
 AUDIT OPTIONS:
   --repo OWNER/REPO   Repository (default: auto-detect from git)
   --pr NUMBER         PR number (default: auto-detect from branch)
-  --services LIST     Comma-separated services to run (default: all configured)
+  --services LIST     Comma- or space-separated services (default: all configured)
                       Available: coderabbit, codacy, sonarcloud, codefactor
 
 REPORT OPTIONS:
@@ -301,7 +301,7 @@ EXAMPLES:
   code-audit-helper.sh audit --repo owner/repo --pr 42
 
   # Audit only SonarCloud and Codacy
-  code-audit-helper.sh audit --services "sonarcloud codacy"
+  code-audit-helper.sh audit --services "sonarcloud,codacy"
 
   # View findings as JSON
   code-audit-helper.sh report --format json
@@ -320,6 +320,9 @@ SERVICES:
   codacy       - Code quality analysis (requires CODACY_API_TOKEN)
   sonarcloud   - Security & maintainability (requires SONAR_TOKEN)
   codefactor   - Code quality grading (requires CODEFACTOR_API_TOKEN)
+
+Missing credentials are reported as skipped services and a partial audit, not
+zero findings. Unknown-only service lists and failed collections exit non-zero.
 
 DATABASE:
   SQLite database at: ~/.aidevops/.agent-workspace/work/code-audit/audit.db
