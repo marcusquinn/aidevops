@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.38.7] - 2026-10-04
+
+### Fixed
+
+- defer quality sweep repo when tool budget is exhausted
+- treat PR already merged at verified head as success
+
 ## [3.38.6] - 2026-10-04
 
 ### Added
