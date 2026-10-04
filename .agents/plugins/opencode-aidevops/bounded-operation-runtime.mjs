@@ -54,6 +54,13 @@ export function trimTerminalOperations(operations, maximum) {
   throw new Error("too many active bounded operations");
 }
 
+// The supervisor reports whether helper-created process groups were tracked
+// (GH#33514). Unverifiable attribution is reported, never upgraded to owned.
+function operationContainment(operation) {
+  if (operation.attributionComplete === false) return "incomplete";
+  return operation.nestedProcessGroups > 0 ? "owned_process_tree" : "owned_process_group";
+}
+
 export function operationReceipt(operation, now) {
   const elapsedMs = Math.max(0, now - operation.startedAt);
   const lastProgressAgeMs = operation.lastMeaningfulProgressAt === null
@@ -62,7 +69,8 @@ export function operationReceipt(operation, now) {
   return {
     schema: RECEIPT_SCHEMA,
     operation_id: operation.id,
-    containment: "owned_process_group",
+    containment: operationContainment(operation),
+    nested_process_groups: operation.nestedProcessGroups || 0,
     state: operation.state,
     elapsed_ms: elapsedMs,
     budget_ms: operation.budgetMs,

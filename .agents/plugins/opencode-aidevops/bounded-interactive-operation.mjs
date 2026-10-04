@@ -103,8 +103,14 @@ export class BoundedInteractiveOperationManager {
       stdio: ["pipe", "pipe", "pipe", "ipc"],
     });
     child.on("message", (message) => {
-      if (message?.type !== "aidevops.operation" || message.event !== "command_started"
-        || message.operationID !== operation.id) return;
+      if (message?.type !== "aidevops.operation" || message.operationID !== operation.id) return;
+      if (message.event === "containment") {
+        if (stage !== "main") return;
+        operation.nestedProcessGroups = boundedInteger(message.nestedProcessGroups, 0, 0, 1_000_000);
+        operation.attributionComplete = message.attributionComplete === true;
+        return;
+      }
+      if (message.event !== "command_started") return;
       if (stage === "main") {
         operation.commandStarted = true;
         operation.supervisorRuntime = scalar(message.runtime);
@@ -146,6 +152,8 @@ export class BoundedInteractiveOperationManager {
       processSignal: "",
       commandStarted: false,
       supervisorRuntime: "",
+      nestedProcessGroups: 0,
+      attributionComplete: null,
       restorationState: args.restorationCommand ? "pending" : "not_required",
       restorationExit: null,
       restorationCommandStarted: false,
