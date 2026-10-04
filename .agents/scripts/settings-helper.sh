@@ -92,6 +92,15 @@ _generate_defaults() {
     "work_type": "",
     "familiarity": []
   },
+  "wordpress": {
+    "plugin_defaults": {
+      "author": "",
+      "author_uri": "",
+      "contributors": "",
+      "donate": "",
+      "github_owner": ""
+    }
+  },
   "ui": {
     "color_output": true,
     "verbose": false

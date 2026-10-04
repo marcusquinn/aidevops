@@ -138,7 +138,7 @@ tools/video/,tools/video subagents,talking-head-reel|video-editor|video-prompt-d
 tools/vision/,tools/vision subagents,create-screenshots|image-editing|image-generation|image-understanding|overview
 tools/voice/,tools/voice subagents,buzz|cloud-tts-apis|cloud-voice-agents|hyprwhspr|ios-shortcut|local-tts-models|nemotron-diarization|pipecat-opencode|qwen3-tts|speech-to-speech|transcription|voice-ai-models|voice-models|voiceink-shortcut
 tools/,tools subagents,wordpress
-tools/wordpress/,tools/wordpress subagents,localwp|mainwp|rankmath-mcp|scf|wp-admin|wp-cli-reference|wp-dev|wp-plugin-release|wp-preferred
+tools/wordpress/,tools/wordpress subagents,localwp|mainwp|rankmath-mcp|scf|wp-admin|wp-cli-reference|wp-dev|wp-plugin-new|wp-plugin-release|wp-preferred
 workflows/,workflows subagents,ai-research|auto-browse|autoagent|autoresearch|branch
 workflows/branch/,workflows/branch subagents,bugfix|feature|hotfix
 workflows/,workflows subagents,brief

@@ -102,6 +102,20 @@ Tracks onboarding state. Written by `/onboarding`, readable by scripts.
 | `onboarding.work_type` | string | `""` | -- | Primary work type (e.g., `"web"`, `"devops"`, `"seo"`, `"wordpress"`). |
 | `onboarding.familiarity` | array | `[]` | -- | Concepts the user knows (e.g., `["git", "terminal", "api_keys"]`). |
 
+### wordpress.plugin_defaults
+
+The maker's details for new WordPress plugins (`tools/wordpress/wp-plugin-new.md`).
+Empty until the user gives their own: each user is asked once, never handed
+another user's details. Saved with `wp-plugin-new-helper.sh save-defaults`.
+
+| Key | Type | Default | Env Var | Description |
+|-----|------|---------|---------|-------------|
+| `wordpress.plugin_defaults.author` | string | `""` | -- | Author header. |
+| `wordpress.plugin_defaults.author_uri` | string | `""` | -- | Author URI and the settings screen's website button. |
+| `wordpress.plugin_defaults.contributors` | string | `""` | -- | readme.txt Contributors (WordPress.org usernames). |
+| `wordpress.plugin_defaults.donate` | string | `""` | -- | Donate link, or `none`; empty means none. |
+| `wordpress.plugin_defaults.github_owner` | string | `""` | -- | GitHub owner for new plugin repos; empty means your login. |
+
 ### ui
 
 | Key | Type | Default | Env Var | Description |
