@@ -32,6 +32,18 @@ VALUE_FLAGS = {
     "-t", "--template",
 }
 BOOL_FLAGS = {"--include", "-i", "--silent"}
+INTERRUPTED_SIGNAL = 0
+
+
+def interrupted(signum, _frame):
+    # Never unwind Popen.wait while it owns its non-reentrant waitpid lock.
+    global INTERRUPTED_SIGNAL
+    INTERRUPTED_SIGNAL = signum
+
+
+def check_interrupted():
+    if INTERRUPTED_SIGNAL:
+        raise SystemExit(128 + INTERRUPTED_SIGNAL)
 
 
 def _value_option(option: str, value: str) -> tuple[str, str]:
@@ -121,9 +133,19 @@ def included_headers(stream) -> tuple[int, dict[str, str], int]:
 
 
 def execute(executable: str, args: list[str], output, environment: dict[str, str]) -> int:
+    check_interrupted()
     child = subprocess.Popen([executable, *args], stdout=output, env=environment)
+    deadline = time.monotonic() + 90
     try:
-        return child.wait(timeout=90)
+        while True:
+            check_interrupted()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(child.args, 90)
+            try:
+                return child.wait(timeout=min(0.2, remaining))
+            except subprocess.TimeoutExpired:
+                pass
     except subprocess.TimeoutExpired:
         print("[gh-transport] native REST request timed out", file=sys.stderr)
         return 124
@@ -134,7 +156,11 @@ def execute(executable: str, args: list[str], output, environment: dict[str, str
                 child.wait(timeout=2)
             except subprocess.TimeoutExpired:
                 child.kill()
-                child.wait()
+                try:
+                    child.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    # An uninterruptible child must not hold admission forever.
+                    pass
 
 
 class _AdmissionTimer:
@@ -265,6 +291,7 @@ def run(metadata: Path, executable: str, args: list[str]) -> int:
         metadata.write_text('{"attempted":false}', encoding="utf-8")
         private_directory(temp_dir)
         credential, authenticated, environment = credential_identity(executable, host)
+        check_interrupted()
         phase("credential_identity")
         if not authenticated:
             # Do not mix anonymous-IP and authenticated-user allowances or
@@ -316,8 +343,8 @@ def run(metadata: Path, executable: str, args: list[str]) -> int:
 if __name__ == "__main__":
     if len(sys.argv) < 4:
         raise SystemExit(2)
-    def interrupted(signum, _frame):
-        raise SystemExit(128 + signum)
     for handled_signal in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(handled_signal, interrupted)
-    raise SystemExit(run(Path(sys.argv[1]), sys.argv[2], sys.argv[3:]))
+    exit_code = run(Path(sys.argv[1]), sys.argv[2], sys.argv[3:])
+    check_interrupted()
+    raise SystemExit(exit_code)
