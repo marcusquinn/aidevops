@@ -223,7 +223,8 @@ _issue_permission_hold_json() {
 		| sort_by(.id) | last as $req
 		| if $req == null then {active: $label, label_present: $label, request_id: null}
 		else
-			((($req.body // "") | capture("\"request_id\":\\s*\"(?<id>perm-[0-9a-f]{16})\"")?.id) // null) as $rid
+			# GH#33589: `capture(...)?.id` is a compile error on jq 1.7; pipe instead.
+			((($req.body // "") | capture("\"request_id\":\\s*\"(?<id>perm-[0-9a-f]{16})\"")? | .id) // null) as $rid
 			| [$comments[]? | select(trusted and (.id > $req.id) and ($rid != null)
 				and ((.body // "") | contains($rid))
 				and ((.body // "") | (contains("<!-- aidevops-signed-permission-grant -->")
