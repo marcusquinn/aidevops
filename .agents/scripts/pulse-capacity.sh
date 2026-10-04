@@ -37,9 +37,7 @@ get_max_workers_target() {
 	local max_workers
 	max_workers=$(cat "$max_workers_file" 2>/dev/null || echo "1")
 	[[ "$max_workers" =~ ^[0-9]+$ ]] || max_workers=1
-	if [[ "$max_workers" -lt 1 ]]; then
-		max_workers=1
-	fi
+	# Zero is a closed admission gate, not a corrupt/missing target.
 	# The file is only rewritten by the preflight_capacity stage. Clamp to the
 	# live ceiling so a lowered cap (config change, GH#32663 reset) applies to
 	# refill/drain dispatch before the next full preflight recomputes it.
@@ -256,9 +254,51 @@ _pulse_capacity_emit_gauges() {
 }
 
 #######################################
-# Apply a provider/account/terminal-health-aware cap to the raw dispatch target.
-# The historical function name remains for sourced-call compatibility; host
-# load is diagnostic-only and does not participate in capacity decisions.
+# Read one-minute load and logical cores; unavailable telemetry leaves RAM and
+# provider limits in force rather than permanently starving dispatch.
+#######################################
+_pulse_cpu_load_average() {
+	if [[ "$(uname)" == "Darwin" ]]; then
+		sysctl -n vm.loadavg 2>/dev/null | LC_ALL=C awk '{print $2}'
+	else
+		LC_ALL=C awk '{print $1; exit}' /proc/loadavg 2>/dev/null
+	fi
+	return 0
+}
+
+_pulse_cpu_core_count() {
+	if [[ "$(uname)" == "Darwin" ]]; then
+		sysctl -n hw.logicalcpu 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || true
+	else
+		nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || true
+	fi
+	return 0
+}
+
+# Stdout: "<one-minute-load> <cores> <open|closed|unknown> <threshold>".
+_pulse_cpu_pressure() {
+	local load="" cores="" gate="unknown" threshold="${MAX_LOAD_PER_CORE:-1.5}"
+	load=$(_pulse_cpu_load_average)
+	cores=$(_pulse_cpu_core_count)
+	if ! [[ "$threshold" =~ ^[0-9]+([.][0-9]+)?$ ]] ||
+		! LC_ALL=C awk -v value="$threshold" 'BEGIN {exit !(value > 0)}'; then
+		threshold=1.5
+	fi
+	if [[ "$load" =~ ^[0-9]+([.][0-9]+)?$ && "$cores" =~ ^[1-9][0-9]*$ ]]; then
+		gate="open"
+		if LC_ALL=C awk -v load="$load" -v cores="$cores" -v threshold="$threshold" 'BEGIN {exit !(load / cores > threshold)}'; then
+			gate="closed"
+		fi
+	else
+		load="unknown"
+		cores="unknown"
+	fi
+	printf '%s %s %s %s\n' "$load" "$cores" "$gate" "$threshold"
+	return 0
+}
+
+#######################################
+# Apply CPU admission and provider/account/terminal-health caps to the raw target.
 # Arguments:
 #   $1 - raw max workers
 #   $2 - active workers
@@ -272,6 +312,17 @@ pulse_apply_provider_load_capacity_cap() {
 	[[ "$raw_max_workers" =~ ^[0-9]+$ ]] || raw_max_workers=1
 	[[ "$active_workers" =~ ^[0-9]+$ ]] || active_workers=0
 	[[ "$min_worker_floor" =~ ^[0-9]+$ ]] || min_worker_floor=6
+
+	# Re-sample on refill: preflight's capacity file may be stale. The floor
+	# must not reopen a closed gate. This limits launches, not running workers.
+	local cpu_load="" cpu_cores="" cpu_gate="" cpu_threshold=""
+	read -r cpu_load cpu_cores cpu_gate cpu_threshold <<<"$(_pulse_cpu_pressure)"
+	if [[ "$cpu_gate" == "closed" ]] || ((raw_max_workers == 0)); then
+		printf '[pulse-wrapper] Dispatch_capacity: load=%s/%s max_load_per_core=%s cpu_gate=%s active_workers=%s admission=closed\n' \
+			"$cpu_load" "$cpu_cores" "$cpu_threshold" "$cpu_gate" "$active_workers" >>"${LOGFILE:-/dev/null}"
+		printf '0 0\n'
+		return 0
+	fi
 
 	local provider="" account_total="" account_available="" account_limited="" account_auth_errors=""
 	provider=$(_pulse_capacity_selected_provider)

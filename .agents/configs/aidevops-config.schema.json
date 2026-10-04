@@ -144,6 +144,12 @@
           "minimum": 0,
           "description": "Hard ceiling for pulse worker pool size after RAM-based calculation. 0 = auto (50% of logical CPU cores, bounded by total RAM, min 2, max 64). Env: AIDEVOPS_MAX_WORKERS_CAP"
         },
+        "max_load_per_core": {
+          "type": "number",
+          "default": 1.5,
+          "exclusiveMinimum": 0,
+          "description": "Close new-worker admission when one-minute load per logical core exceeds this threshold; existing workers continue. Unavailable telemetry leaves RAM/provider limits in force. Env: AIDEVOPS_MAX_LOAD_PER_CORE"
+        },
         "min_worker_concurrency": {
           "type": "integer",
           "default": 6,
