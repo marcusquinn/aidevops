@@ -34,6 +34,9 @@ assert_reason 'review-followup exemption: skipping historical ever-NMR check (GH
 assert_reason 'skipping historical ever-NMR check for bot-generated cleanup issue (GH#18648)' 'unclassified_signal'
 assert_reason 'DISPATCH_BLOCK_REASON reason=blocked_by_native_lookup_unavailable signal=native blockedBy lookup unavailable and no body blocked-by markers found' 'blocked_by_native_lookup_unavailable'
 assert_reason 'PR_LOOKUP_RESULT=uncertain reason=timeout scope=open_siblings' 'pr_lookup_uncertain'
+# GH#33524: metadata fetch failures are classified, not unclassified_signal.
+assert_reason 'DISPATCH_BLOCK_REASON reason=issue_metadata_unavailable signal=transient issue=#33524 repo=marcusquinn/aidevops' 'issue_metadata_unavailable'
+assert_reason 'Dispatch blocked for #33524 in marcusquinn/aidevops: unable to load issue metadata' 'issue_metadata_unavailable'
 assert_reason 'pre-dispatch validator failed: missing worker context; needs-brief label present' 'missing_worker_context'
 assert_reason 'dedup.worktree_cap blocked by max worktree count' 'local_capacity_gate'
 assert_reason 'dedup guard blocked #303 in some-org/infrastructure' 'dedup_active_claim_unverified'

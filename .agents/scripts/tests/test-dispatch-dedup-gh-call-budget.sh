@@ -128,8 +128,17 @@ _count_issue_view_in_function() {
 # canonical gh call with `body` (and the author fields needed by later gates).
 # ---------------------------------------------------------------------------
 test_canonical_bundle_includes_body() {
-	local body
-	body=$(_extract_function_body "$CORE_SH" "_dispatch_load_and_validate_metadata")
+	local body loader
+	# GH#33524: the loader delegates the canonical call to a bounded-retry
+	# fetcher; retries repeat the same single call only after a failure.
+	loader=$(_extract_function_body "$CORE_SH" "_dispatch_load_and_validate_metadata")
+	# shellcheck disable=SC2016 # Match literal variable names in production source.
+	if ! printf '%s' "$loader" | grep -qF '_dispatch_fetch_issue_metadata "$issue_number" "$repo_slug"'; then
+		_print_result "dispatch_with_dedup canonical gh call includes body" 0 \
+			"expected _dispatch_load_and_validate_metadata to call _dispatch_fetch_issue_metadata"
+		return 1
+	fi
+	body=$(_extract_function_body "$CORE_SH" "_dispatch_fetch_issue_metadata")
 
 	# shellcheck disable=SC2016 # Literal '$issue_number' inside regex pattern is intentional.
 	if printf '%s' "$body" | grep -qE 'gh_issue_view "\$issue_number" --repo "\$repo_slug" \\$'; then
@@ -140,7 +149,7 @@ test_canonical_bundle_includes_body() {
 		fi
 	fi
 	_print_result "dispatch_with_dedup canonical gh call includes body" 0 \
-		"expected canonical bundle in _dispatch_load_and_validate_metadata"
+		"expected canonical bundle in _dispatch_fetch_issue_metadata"
 	return 1
 }
 
@@ -151,6 +160,7 @@ test_dispatch_with_dedup_single_gh_call() {
 	local count
 	count=$(_count_issue_view_in_function "$CORE_SH" "dispatch_with_dedup")
 	count=$((count + $(_count_issue_view_in_function "$CORE_SH" "_dispatch_load_and_validate_metadata")))
+	count=$((count + $(_count_issue_view_in_function "$CORE_SH" "_dispatch_fetch_issue_metadata")))
 	local orchestrator
 	orchestrator=$(_extract_function_body "$CORE_SH" "dispatch_with_dedup")
 	# shellcheck disable=SC2016 # Match literal variable names in production source.

@@ -1241,6 +1241,11 @@ _classify_runtime_dispatch_blocker_reason() {
 			printf 'blocked_by_native_lookup_unavailable\n'
 			return 0
 			;;
+		*issue_metadata_unavailable* | *unable*to*load*issue*metadata*)
+			# GH#33524: transient gh failures retry next cycle; not unclassified.
+			printf 'issue_metadata_unavailable\n'
+			return 0
+			;;
 		*pr_lookup_uncertain* | *pr_lookup_result=uncertain*)
 			printf 'pr_lookup_uncertain\n'
 			return 0
