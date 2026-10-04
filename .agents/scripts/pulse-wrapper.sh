@@ -1232,9 +1232,10 @@ _pulse_run_deterministic_pipeline() {
 	fi
 
 	# GH#33602: hourly stale Actions queue maintenance, bounded by the same
-	# optional-stage budget and timeout as other runner maintenance.
-	if [[ ! -f "$STOP_FLAG" ]]; then
-		_pulse_run_optional_stage_with_timeout "stale_queued_runs" "$PRE_RUN_STAGE_TIMEOUT" \
+	# deferrable maintenance policy. Reuse its mapped policy for admission;
+	# unmapped stage names otherwise default to critical priority.
+	if [[ ! -f "$STOP_FLAG" ]] && ! _pulse_should_defer_budget_priority_stage "canonical_maintenance"; then
+		run_stage_with_timeout "stale_queued_runs" "$PRE_RUN_STAGE_TIMEOUT" \
 			pulse_stale_queued_runs_scan || true
 	fi
 

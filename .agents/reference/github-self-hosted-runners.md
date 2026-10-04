@@ -55,8 +55,13 @@ logged once per run ID and retained without repeated cancellation attempts.
 Turning on the explicit deletion opt-in also applies to previously recorded ghosts;
 deletion removes run history, so enable it only when that loss is acceptable.
 
-Each scan reads at most 100 candidates and handles at most 20 per repository;
-remaining candidates are revisited hourly. Logs include run ID, workflow name and
+Each scan reads one page of at most 100 candidates and handles at most 20 per
+repository. A persisted page cursor rotates hourly and resets at the end so
+retained ghosts cannot monopolise the first page. Pagination over a changing queue
+is best-effort; remaining candidates are revisited on subsequent sweeps.
+API calls require `timeout` (Linux) or `gtimeout` (macOS coreutils) and have a
+15-second deadline with a 2-second kill grace; missing timeout support fails closed.
+Logs include run ID, workflow name and
 age. A successful force-cancel log means GitHub accepted the asynchronous request,
 not that completion has already been observed.
 

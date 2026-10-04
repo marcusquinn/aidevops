@@ -6,7 +6,11 @@
 
 _sqr_log() {
 	local message="$1"
-	printf '[pulse-stale-queued-runs] %s\n' "$message" >>"${LOGFILE:-/dev/stdout}"
+	if [[ -n "${LOGFILE:-}" ]]; then
+		printf '[pulse-stale-queued-runs] %s\n' "$message" >>"$LOGFILE" || return 1
+	else
+		printf '[pulse-stale-queued-runs] %s\n' "$message" || return 1
+	fi
 	return 0
 }
 
@@ -17,10 +21,13 @@ _sqr_api() {
 	local endpoint="$2"
 	local output="$3"
 	local error_file="$4"
+	local timeout_command="timeout"
+	command -v "$timeout_command" >/dev/null || timeout_command="gtimeout"
+	command -v "$timeout_command" >/dev/null || return 1
 	if declare -F pulse_rest_core_priority_allows_next >/dev/null; then
 		pulse_rest_core_priority_allows_next deferrable stale-queued-runs || return 1
 	fi
-	if GH_HTTP_TIMEOUT=15 gh api --method "$method" "$endpoint" >"$output" 2>"$error_file"; then
+	if "$timeout_command" --kill-after=2 15 gh api --method "$method" "$endpoint" >"$output" 2>"$error_file"; then
 		return 0
 	fi
 	if grep -q 'HTTP 409' "$error_file"; then
@@ -61,7 +68,7 @@ _sqr_process_run() {
 			_sqr_api GET "$endpoint" "$output" "$error_file" || return 1
 			status=$(jq -r '.status' "$output")
 			if [[ "$status" != queued ]]; then
-				_sqr_log "cancelled run=${id} workflow=${name} age_hours=${age}"
+				_sqr_log "cancel accepted run=${id} workflow=${name} age_hours=${age} observed_status=${status}"
 				return 0
 			fi
 		elif [[ "$cancel_rc" -ne 9 ]]; then
@@ -101,7 +108,7 @@ pulse_stale_queued_runs_scan() {
 	local registry="${REPOS_JSON:-${AIDEVOPS_REPOS_JSON:-${HOME}/.config/aidevops/repos.json}}"
 	[[ -f "$registry" ]] || return 0
 	local state="${AIDEVOPS_STALE_QUEUED_RUN_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/pulse/stale-queued-runs}"
-	local now cutoff cutoff_iso repo dir last run count dry_run="${PULSE_DRY_RUN:-0}"
+	local now cutoff cutoff_iso repo dir last page page_size run id count dry_run="${PULSE_DRY_RUN:-0}"
 	now=$(date -u +%s)
 	cutoff=$((now - hours * 3600))
 	cutoff_iso=$(jq -nr --argjson epoch "$cutoff" '$epoch | strftime("%Y-%m-%dT%H:%M:%SZ")')
@@ -110,7 +117,7 @@ pulse_stale_queued_runs_scan() {
 	for repo in $repos; do
 		[[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || continue
 		dir="${state}/${repo}"
-		mkdir -p "$dir" || return 1
+		(umask 077; mkdir -p "$dir") || return 1
 		last=0
 		if [[ -f "${dir}/last-scan" ]]; then
 			read -r last <"${dir}/last-scan" || last=0
@@ -122,11 +129,28 @@ pulse_stale_queued_runs_scan() {
 		_sqr_api GET "repos/${repo}" "${dir}/response.json" "${dir}/api.err" || return 1
 		# Repo write permission is necessary; Actions-scoped denial still fails closed.
 		jq -e '.permissions.push == true or .permissions.maintain == true or .permissions.admin == true' "${dir}/response.json" >/dev/null || continue
-		# One page / 20 mutations per repo per hour; oldest returned candidates
-		# are validated locally too. No unbounded pagination or API retry loop.
-		_sqr_api GET "repos/${repo}/actions/runs?status=queued&created=%3C${cutoff_iso}&per_page=100" "${dir}/runs.json" "${dir}/api.err" || return 1
+		# Rotate one page hourly so retained ghosts cannot pin the first page.
+		page=1
+		if [[ -f "${dir}/next-page" ]]; then
+			read -r page <"${dir}/next-page" || page=1
+		fi
+		[[ "$page" =~ ^[1-9][0-9]{0,6}$ ]] || page=1
+		_sqr_api GET "repos/${repo}/actions/runs?status=queued&created=%3C${cutoff_iso}&per_page=100&page=${page}" "${dir}/runs.json" "${dir}/api.err" || return 1
+		page_size=$(jq -er '.workflow_runs | length' "${dir}/runs.json") || return 1
+		if [[ "$dry_run" != 1 ]]; then
+			if [[ "$page_size" -eq 100 ]]; then
+				printf '%s\n' "$((page + 1))" >"${dir}/next-page"
+			else
+				printf '1\n' >"${dir}/next-page"
+			fi
+		fi
 		count=0
 		while IFS= read -r run; do
+			id=$(jq -r '.id' <<<"$run")
+			# Known retained ghosts must not consume the per-scan work allowance.
+			if [[ "$dry_run" != 1 && "${AIDEVOPS_STALE_QUEUED_RUN_DELETE:-0}" != 1 && "$id" =~ ^[0-9]+$ && -f "${dir}/ghost-${id}" ]]; then
+				continue
+			fi
 			_sqr_process_run "$repo" "$run" "$dir" "$now" "$cutoff" "$dry_run" || return 1
 			count=$((count + 1))
 			[[ "$count" -lt 20 ]] || break
@@ -137,5 +161,7 @@ pulse_stale_queued_runs_scan() {
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
 	set -euo pipefail
+	# shellcheck source=./shared-constants.sh
+	source "$(dirname "${BASH_SOURCE[0]}")/shared-constants.sh"
 	pulse_stale_queued_runs_scan
 fi
