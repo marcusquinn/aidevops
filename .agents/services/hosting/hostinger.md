@@ -160,6 +160,35 @@ Set web file permissions:
 
 ## Troubleshooting
 
+### WP-CLI limits on shared hosting
+
+Observed with WP-CLI 2.12.0 and PHP 8.x: Hostinger shared hosting disables PHP CLI `proc_open()`/`proc_close()`. `wp plugin delete` calls `WP_CLI::launch()` to remove files through a subprocess, so it (and other commands that shell out) can fail with:
+
+```text
+Error: Cannot do 'launch': The PHP functions `proc_open()` and/or `proc_close()` are disabled. Please check your PHP ini directive `disable_functions` or suhosin settings.
+```
+
+`wp plugin deactivate` and `wp plugin install <zip> --force` can still work. For an authorized removal **keeping saved data**, back up first, verify the exact plugin folder and all plugin file basenames, and use WordPress's filesystem API without a subprocess. Replace `SLUG/SLUG.php` with the installed basename (check every plugin in the folder); never substitute an unchecked path. On multisite, verify inactivity on every child site and network-wide before deleting shared files; the guard below checks only the current site and network.
+
+```bash
+WP="$HOME/domains/<domain>/public_html"
+wp --path="$WP" eval 'require_once ABSPATH . "wp-admin/includes/plugin.php";
+require_once ABSPATH . "wp-admin/includes/file.php";
+if (is_plugin_active("SLUG/SLUG.php") || is_plugin_active_for_network("SLUG/SLUG.php")) {
+    WP_CLI::error("active, skipped");
+}
+if (!WP_Filesystem()) { WP_CLI::error("Filesystem initialization failed"); }
+global $wp_filesystem;
+if (!$wp_filesystem->delete(WP_PLUGIN_DIR . "/SLUG", true)) { WP_CLI::error("Deletion failed"); }
+WP_CLI::success("Files deleted; uninstall routine not run");'
+```
+
+This bypasses uninstall hooks, preserving saved data rather than asking the plugin to erase it. When uninstall/data cleanup is explicitly wanted, use `delete_plugins(array("SLUG/SLUG.php"))` inside `wp eval` with the same includes and inactivity checks instead of `$wp_filesystem->delete(...)`. It runs registered uninstall routines, like the Plugins screen's Delete; inspect its return value with `is_wp_error()` and treat anything other than `true` as failure. Verify folder removal and site health afterwards. Plain `rm -rf` over SSH also works but bypasses WordPress and these guards; do not use it as an automatic fallback.
+
+- **Account paths and logs**: One account SSH login covers its sites at `~/domains/<domain>/public_html`; inspect each site's `error_log` there.
+- **Release ZIP updates**: `scp` the ZIP once to the account, run `wp --path="$WP" plugin install ~/plugin.zip --force` per intended site, verify the update, then remove the uploaded ZIP.
+- **PHAR autoloader warnings**: `include(...vendor/composer/../psr/container/...): Failed to open stream` can be WP-CLI autoloader noise with plugins shipping prefixed vendors (observed with Kadence Pro 1.2.5), not proof of a broken install. Check the plugin's `vendor/vendor-prefixed/` files and the site's `error_log`, and verify site behavior before attempting a repair.
+
 **Connection refused**: Verify SSH is enabled on your plan, check hostname and port 65002, confirm password.
 
 **Permission denied**: Username format is `u` followed by numbers (e.g. `u123456789`). Check password file has 600 perms and sshpass is installed.
