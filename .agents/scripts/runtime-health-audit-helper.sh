@@ -13,9 +13,12 @@
 # This helper runs a registry of small detectors against local files only
 # (no GitHub or GraphQL calls — that would amplify the very problem several
 # of the detectors surface). When a detector fires, the helper either
-# prints the finding (--dry-run, default) or files an auto-dispatch issue
-# tagged with a generator marker that the pre-dispatch validator can
-# re-evaluate before a worker is spawned.
+# prints the finding (--dry-run, default) or files an issue tagged with a
+# generator marker that the pre-dispatch validator can re-evaluate before a
+# worker is spawned. Findings are auto-dispatch only on the framework repo
+# (GH#33574): their briefs use worktree-relative `.agents/scripts/` paths, so
+# a worker in any other repository cannot execute them. Other targets get an
+# operator-triage issue instead.
 #
 # Detector files live in `.agents/scripts/runtime-audit-rules/*.sh`. Each
 # file sources a single function: `runtime_audit_check`. See any rule file
@@ -51,6 +54,10 @@ GH_WRAPPERS="${SCRIPT_DIR}/shared-gh-wrappers.sh"
 
 RULES_DIR="${RUNTIME_AUDIT_RULES_DIR:-${SCRIPT_DIR}/runtime-audit-rules}"
 
+# GH#33574: detector briefs reference the framework source tree, which exists
+# only in a worktree of this repository (same slug as framework-issue-helper.sh).
+readonly RUNTIME_AUDIT_FRAMEWORK_SLUG="marcusquinn/aidevops"
+
 # ---------------------------------------------------------------------------
 # CLI parsing
 # ---------------------------------------------------------------------------
@@ -69,7 +76,7 @@ Usage: $(basename "$0") [options] [list|help]
 
 Options:
   --dry-run        Print findings to stdout, do not file issues (default)
-  --apply          File auto-dispatch issues for findings
+  --apply          File issues for findings (auto-dispatch only on ${RUNTIME_AUDIT_FRAMEWORK_SLUG})
   --only <id>      Run only the detector with the given id
   --repo <slug>    Target repo for --apply (default: current repo from gh)
   --json           Emit JSONL findings (machine-readable; implies --dry-run)
@@ -154,11 +161,30 @@ _existing_open_issue_for_detector() {
 	return 0
 }
 
+_runtime_audit_target_is_framework() {
+	local slug="$1"
+	local lowered=""
+	lowered=$(printf '%s' "$slug" | tr '[:upper:]' '[:lower:]')
+	[[ "$lowered" == "$RUNTIME_AUDIT_FRAMEWORK_SLUG" ]] && return 0
+	return 1
+}
+
 _apply_finding() {
 	local slug="$1"
 	local detector_id="$2"
 	local title="$3"
 	local body="$4"
+
+	# GH#33574: briefs need the framework source tree, so only the framework
+	# repo receives a dispatchable issue; other targets get operator triage.
+	local labels="bug,framework,source:runtime-audit"
+	if _runtime_audit_target_is_framework "$slug"; then
+		labels="${labels},auto-dispatch,tier:standard"
+	else
+		print_warning "runtime-audit: ${slug} is not ${RUNTIME_AUDIT_FRAMEWORK_SLUG}; filing detector=${detector_id} for operator triage without auto-dispatch"
+		# shellcheck disable=SC2016  # intentional literal markdown backticks
+		body=$(printf '> **Operator triage, not worker-ready.** This finding cites aidevops framework sources (`.agents/scripts/`) that do not exist in a worktree of this repository, so a worker here cannot execute it. Triage locally, or report it upstream with `framework-issue-helper.sh log`.\n\n%s' "$body")
+	fi
 
 	# Idempotency check
 	local existing
@@ -188,7 +214,6 @@ _apply_finding() {
 	fi
 	# shellcheck source=./shared-gh-wrappers.sh
 	source "$GH_WRAPPERS"
-	local labels="auto-dispatch,tier:standard,bug,framework,source:runtime-audit"
 	local issue_url
 	issue_url=$(gh_create_issue --repo "$slug" --title "$title" --body "$body" --label "$labels" 2>&1) || {
 		print_error "runtime-audit: gh_create_issue wrapper failed for detector=${detector_id}: $issue_url"

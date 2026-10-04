@@ -474,6 +474,56 @@ assert_rc "6.10 --only nonexistent detector returns 0" "0" "$rc"
 assert_empty "6.11 --only nonexistent emits no JSON output" "$out"
 
 # ---------------------------------------------------------------------------
+# Test 6b: --apply target routing (GH#33574)
+# ---------------------------------------------------------------------------
+echo ""
+echo "--- Section 6b: --apply auto-dispatch only on the framework repo ---"
+
+APPLY_DIR="$TMPDIR_TEST/apply"
+mkdir -p "$APPLY_DIR/bin" "$APPLY_DIR/rules"
+cat >"$APPLY_DIR/rules/always-fires.sh" <<'RULE'
+runtime_audit_id() { printf 'always-fires\n'; return 0; }
+runtime_audit_check() {
+	jq -n '{id: "always-fires", title: "runtime-audit: probe", body: "probe body\n<!-- aidevops:generator=runtime-audit detector=always-fires -->"}'
+	return 1
+}
+RULE
+# Recording gh stub: no open duplicate, private target, successful create.
+cat >"$APPLY_DIR/bin/gh" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$@" >>"$GH_STUB_LOG"
+case "$1 ${2:-}" in
+	"issue list") printf '[]\n' ;;
+	"issue create") printf 'https://github.com/stub/stub/issues/1\n' ;;
+	"api repos/"*) printf 'true\n' ;;
+esac
+exit 0
+STUB
+chmod +x "$APPLY_DIR/bin/gh"
+
+_apply_labels() {
+	local slug="$1"
+	local log="$APPLY_DIR/gh-${slug//\//_}.log"
+	: >"$log"
+	PRIVACY_CACHE_FILE="$APPLY_DIR/privacy.json" GH_STUB_LOG="$log" \
+		PATH="$APPLY_DIR/bin:$PATH" RUNTIME_AUDIT_RULES_DIR="$APPLY_DIR/rules" \
+		"$ORCHESTRATOR" --apply --repo "$slug" >/dev/null 2>&1
+	grep -A1 -- '^--label$' "$log" | grep -v -- '^--label$' | head -1
+	grep -c 'Operator triage, not worker-ready' "$log"
+	return 0
+}
+
+out=$(_apply_labels "marcusquinn/aidevops")
+assert_contains "6b.1 framework repo finding is auto-dispatch" "auto-dispatch,tier:standard" "$out"
+assert_contains "6b.2 framework repo finding has no triage note" $'\n0' "$out"
+out=$(_apply_labels "MarcusQuinn/AIDevOps")
+assert_contains "6b.3 framework slug match is case-insensitive" "auto-dispatch" "$out"
+out=$(_apply_labels "owner/other")
+assert_not_contains "6b.4 non-framework finding is not auto-dispatch" "auto-dispatch" "$out"
+assert_contains "6b.5 non-framework finding keeps triage labels" "bug,framework,source:runtime-audit" "$out"
+assert_contains "6b.6 non-framework finding carries triage note" $'\n1' "$out"
+
+# ---------------------------------------------------------------------------
 # Test 7: shellcheck on all new files
 # ---------------------------------------------------------------------------
 echo ""
