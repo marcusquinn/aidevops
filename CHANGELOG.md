@@ -10,6 +10,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.38.5] - 2026-10-04
+
+### Added
+
+- add safe offline Anthropic rotation diagnostic (#33506)
+
+### Changed
+
+- Documentation: document Hostinger new-site default plugin cleanup (#33517)
+- Maintenance: mark t18585 complete (pr:#33510 completed:2026-10-04) (#33511)
+- Documentation: refresh stale README hero and inventory counts (#33510)
+- Maintenance: sync ref:GH#33501 to TODO.md (#33505)
+- Maintenance: sync ref:GH#33495 to TODO.md (#33496)
+
+### Fixed
+
+- materialize criss-cross merge-base blobs for prospective merge guard
+- bound hung GitHub transport governors (GH#33512) (#33528)
+- correct LocalWP WP-CLI path and registry-backed site discovery (GH#33493) (#33509)
+- retry transient permission reads and document merge timeout (#33507)
+- ignore never-terminal 'qlty usage' pending status in merge snapshot
+
 ## [3.38.4] - 2026-10-03
 
 ### Changed
