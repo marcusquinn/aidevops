@@ -112,6 +112,29 @@ await scenario('both accounts limited (expected 429)', 0, [0, 1]);
 await scenario('alternate cooling (expected 429)', 0, [0], true);
 `;
 
+function createModuleLoader(root, context) {
+  const modules = new Map();
+  return function moduleFor(name) {
+    if (modules.has(name)) return modules.get(name);
+    let source;
+    if (name === "oauth-pool.mjs") source = poolStub;
+    else if (name === "provider-auth-request.mjs") source = requestStub;
+    else if (name === "probe-harness") source = harness;
+    else {
+      if (!realModules.has(name)) throw new Error(`Isolation denied module: ${name}`);
+      const path = realpathSync(resolve(root, name));
+      if (path !== resolve(root, name)) throw new Error("Isolation denied source-file symlink");
+      source = readFileSync(path, "utf8");
+    }
+    const module = new vm.SourceTextModule(source, {
+      context, identifier: name,
+      importModuleDynamically() { throw new Error("Isolation denied dynamic import"); },
+    });
+    modules.set(name, module);
+    return module;
+  };
+}
+
 async function runIsolated(pluginDir) {
   if (typeof vm.SourceTextModule !== "function" || typeof globalThis.Response !== "function") {
     throw new Error("Unsupported Node: requires Node.js 18+ and --experimental-vm-modules");
@@ -133,26 +156,7 @@ async function runIsolated(pluginDir) {
     globalThis.fetch = () => { throw Error('Unconfigured offline fetch'); };
     globalThis.setTimeout = () => { throw Error('Unexpected exhaustion wait'); };
   `, context, { timeout: 1000 });
-  const modules = new Map();
-  function moduleFor(name) {
-    if (modules.has(name)) return modules.get(name);
-    let source;
-    if (name === "oauth-pool.mjs") source = poolStub;
-    else if (name === "provider-auth-request.mjs") source = requestStub;
-    else if (name === "probe-harness") source = harness;
-    else {
-      if (!realModules.has(name)) throw new Error(`Isolation denied module: ${name}`);
-      const path = realpathSync(resolve(root, name));
-      if (path !== resolve(root, name)) throw new Error("Isolation denied source-file symlink");
-      source = readFileSync(path, "utf8");
-    }
-    const module = new vm.SourceTextModule(source, {
-      context, identifier: name,
-      importModuleDynamically() { throw new Error("Isolation denied dynamic import"); },
-    });
-    modules.set(name, module);
-    return module;
-  }
+  const moduleFor = createModuleLoader(root, context);
   const entry = moduleFor("probe-harness");
   await entry.link((specifier) => {
     if (!/^\.\/[a-z-]+\.mjs$/.test(specifier)) throw new Error("Isolation denied dependency specifier");
