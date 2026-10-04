@@ -278,15 +278,15 @@ _pulse_cpu_core_count() {
 # Stdout: "<one-minute-load> <cores> <open|closed|unknown> <threshold>".
 _pulse_cpu_pressure() {
 	local load="" cores="" gate="unknown" threshold="${MAX_LOAD_PER_CORE:-1.5}"
-	load=$(_pulse_cpu_load_average)
-	cores=$(_pulse_cpu_core_count)
+	load=$(_pulse_cpu_load_average) || load=""
+	cores=$(_pulse_cpu_core_count) || cores=""
 	if ! [[ "$threshold" =~ ^[0-9]+([.][0-9]+)?$ ]] ||
 		! LC_ALL=C awk -v value="$threshold" 'BEGIN {exit !(value > 0)}'; then
 		threshold=1.5
 	fi
 	if [[ "$load" =~ ^[0-9]+([.][0-9]+)?$ && "$cores" =~ ^[1-9][0-9]*$ ]]; then
 		gate="open"
-		if LC_ALL=C awk -v load="$load" -v cores="$cores" -v threshold="$threshold" 'BEGIN {exit !(load / cores > threshold)}'; then
+		if LC_ALL=C awk -v one_minute="$load" -v cores="$cores" -v threshold="$threshold" 'BEGIN {exit !(one_minute / cores > threshold)}'; then
 			gate="closed"
 		fi
 	else
