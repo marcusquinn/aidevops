@@ -68,7 +68,7 @@ ensure_db() {
 	mkdir -p "$AUDIT_DATA_DIR" 2>/dev/null || true
 
 	if [[ ! -f "$AUDIT_DB" ]]; then
-		init_db
+		init_db || return 1
 		return 0
 	fi
 
@@ -83,7 +83,7 @@ ensure_db() {
 }
 
 init_db() {
-	db "$AUDIT_DB" <<'SQL' >/dev/null
+	db "$AUDIT_DB" <<'SQL' >/dev/null || return 1
 PRAGMA journal_mode=WAL;
 
 -- Audit runs: one row per orchestrated audit invocation
@@ -228,12 +228,15 @@ deduplicate_findings() {
                 AND dedup_key != ':0'
               GROUP BY dedup_key
           );
-    " 2>/dev/null || log_warn "Deduplication query may have partially failed"
+    " 2>/dev/null || {
+		log_warn "Deduplication query failed"
+		return 1
+	}
 
 	local dup_count
-	dup_count=$(db "$AUDIT_DB" "SELECT COUNT(*) FROM audit_findings WHERE run_id = $run_id AND is_duplicate = 1;")
+	dup_count=$(db "$AUDIT_DB" "SELECT COUNT(*) FROM audit_findings WHERE run_id = $run_id AND is_duplicate = 1;") || return 1
 	local total
-	total=$(db "$AUDIT_DB" "SELECT COUNT(*) FROM audit_findings WHERE run_id = $run_id;")
+	total=$(db "$AUDIT_DB" "SELECT COUNT(*) FROM audit_findings WHERE run_id = $run_id;") || return 1
 
 	log_info "Deduplication: ${dup_count} duplicates found out of ${total} total findings"
 	return 0
@@ -409,11 +412,11 @@ _audit_create_run() {
         INSERT INTO audit_runs (repo, pr_number, head_sha)
         VALUES ('$(sql_escape "$repo")', $pr_number, '$(sql_escape "$head_sha")');
         SELECT last_insert_rowid();
-    "
+    " || return 1
 	return 0
 }
 
-# Mark an audit run as complete with services_run metadata.
+# Finalize an audit run with its service outcomes and completion status.
 _audit_finalize_run() {
 	local run_id="$1"
 	local services_run="$2"
@@ -423,9 +426,9 @@ _audit_finalize_run() {
         UPDATE audit_runs
         SET completed_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'),
             services_run = '$(sql_escape "$services_run")',
-		    status = '$(sql_escape "$status")'
+            status = '$(sql_escape "$status")'
         WHERE id = $run_id;
-    "
+    " || return 1
 	return 0
 }
 
@@ -448,13 +451,14 @@ cmd_audit() {
 	local head_sha
 	head_sha=$(get_head_sha)
 
-	ensure_db
+	ensure_db || return 1
 
 	log_info "Starting unified code audit for ${repo}"
 	[[ "$pr_number" -gt 0 ]] && log_info "PR: #${pr_number} (SHA: ${head_sha})"
 
 	local run_id
-	run_id=$(_audit_create_run "$repo" "$pr_number" "$head_sha")
+	run_id=$(_audit_create_run "$repo" "$pr_number" "$head_sha") || return 1
+	[[ "$run_id" =~ ^[0-9]+$ ]] || return 1
 	log_info "Audit run #${run_id} started"
 
 	local services
@@ -473,8 +477,8 @@ cmd_audit() {
 		status=partial
 	fi
 
-	deduplicate_findings "$run_id"
-	_audit_finalize_run "$run_id" "$services_run" "$status"
+	deduplicate_findings "$run_id" || return 1
+	_audit_finalize_run "$run_id" "$services_run" "$status" || return 1
 
 	echo ""
 	print_summary "$run_id"
@@ -497,7 +501,7 @@ main() {
 	shift || true
 
 	case "$command" in
-	audit) cmd_audit "$@" || return 1 ;;
+	audit) cmd_audit "$@" ;;
 	report) cmd_report "$@" ;;
 	summary) cmd_summary "$@" ;;
 	check-regression) cmd_check_regression "$@" ;;
