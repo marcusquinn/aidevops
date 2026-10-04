@@ -53,5 +53,6 @@ tools:
 ## Related
 
 - `wp-dev.md` — development and debugging
+- `wp-plugin-standards.md` — plugin coding standards and lint mapping
 - `wp-plugin-release.md` — release builds, WordPress.org preflight, Plugin Check
 - `reference/settings.md` — `wordpress.plugin_defaults`
