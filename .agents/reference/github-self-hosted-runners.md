@@ -34,6 +34,38 @@ existing container is a state conflict and should fail the start instead of bein
 removed implicitly. Completed ephemeral jobs are replaced after the
 `RestartSec=5` delay.
 
+## Stale queued workflow watchdog
+
+Pulse runs `pulse-stale-queued-runs.sh` as a bounded optional stage, at most once
+per hour per pulse-managed, maintenance-enabled repository with write permission.
+It respects pulse's REST reserve, rate-limit pause, stop flag and stage timeout.
+Contributor and local-only repositories are excluded. API errors are redacted.
+
+| Setting | Default | Effect |
+|---------|---------|--------|
+| `AIDEVOPS_STALE_QUEUED_RUN_MAX_AGE_HOURS` | `8` | Integer queued age threshold; `0` disables the stage. |
+| `AIDEVOPS_STALE_QUEUED_RUN_DELETE` | `0` | Only `1` permits deletion of confirmed double-409 ghosts. |
+| `AIDEVOPS_STALE_QUEUED_RUN_STATE_DIR` | Pulse workspace `pulse/stale-queued-runs` | Per-repository hourly stamps and per-run ghost deduplication. |
+
+The server-side `created=<cutoff` filter and a strict local timestamp check protect
+younger runs. Status is re-read before cancellation, force-cancellation or deletion
+so a workflow that starts meanwhile is left alone. Cancellation falls back to
+force-cancel on HTTP 409 or when the run remains queued. Double-409 ghosts are
+logged once per run ID and retained without repeated cancellation attempts.
+Turning on the explicit deletion opt-in also applies to previously recorded ghosts;
+deletion removes run history, so enable it only when that loss is acceptable.
+
+Each scan reads at most 100 candidates and handles at most 20 per repository;
+remaining candidates are revisited hourly. Logs include run ID, workflow name and
+age. A successful force-cancel log means GitHub accepted the asynchronous request,
+not that completion has already been observed.
+
+For a read-only verification, run
+`PULSE_DRY_RUN=1 bash .agents/scripts/pulse-stale-queued-runs.sh` using the configured
+repository registry. It reports eligible stale runs without cancellation, deletion
+or cadence updates. Then inspect queued runs with
+`gh api 'repos/<OWNER>/<REPO>/actions/runs?status=queued'` after a normal pulse cycle.
+
 ## Runner capacity and labels
 
 The launch script supports the enabled service instance numbers only:

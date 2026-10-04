@@ -316,6 +316,8 @@ source "${SCRIPT_DIR}/pulse-repo-meta.sh"
 source "${SCRIPT_DIR}/pulse-routines.sh"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/dependabot-alert-monitor.sh"
+# shellcheck source=/dev/null
+source "${SCRIPT_DIR}/pulse-stale-queued-runs.sh"
 # GH#23604: semantics-preserving exact-output PR-list provider cache used by
 # pulse hot paths that need GraphQL-only fields such as reviewDecision.
 # shellcheck source=/dev/null
@@ -1227,6 +1229,13 @@ _pulse_run_deterministic_pipeline() {
 			# A budget-deferred round is retryable, not a set -e cycle abort.
 			_pulse_run_budget_priority_stage "dispatch_max" apply_dispatch_max || true
 		fi
+	fi
+
+	# GH#33602: hourly stale Actions queue maintenance, bounded by the same
+	# optional-stage budget and timeout as other runner maintenance.
+	if [[ ! -f "$STOP_FLAG" ]]; then
+		_pulse_run_optional_stage_with_timeout "stale_queued_runs" "$PRE_RUN_STAGE_TIMEOUT" \
+			pulse_stale_queued_runs_scan || true
 	fi
 
 	# Dependency-alert monitor: create grouped worker-ready issues for open
