@@ -1537,6 +1537,52 @@ create_prospective_fetch_fixture() {
 	return 0
 }
 
+# Criss-cross history (two merge bases) where an existing JSON file changes on
+# both lines of history. merge-ort must read the root-side blob to build its
+# virtual merge base, which a single-level enumeration never requests (GH#33513).
+create_prospective_crisscross_fixture() {
+	local fixture_root="${TEST_ROOT}/prospective-crisscross"
+	local remote_repo="${fixture_root}/remote.git"
+	local work="${fixture_root}/work"
+	local root_sha="" x_sha="" y_sha="" base_sha="" head_sha=""
+	mkdir -p "${fixture_root}/caller" || return 1
+	/usr/bin/git init --bare --initial-branch=main "$remote_repo" >/dev/null 2>&1 || return 1
+	/usr/bin/git -C "$remote_repo" config uploadpack.allowFilter true || return 1
+	/usr/bin/git -C "$remote_repo" config uploadpack.allowAnySHA1InWant true || return 1
+	/usr/bin/git clone "$remote_repo" "$work" >/dev/null 2>&1 || return 1
+	/usr/bin/git -C "$work" config user.email test@test.local || return 1
+	/usr/bin/git -C "$work" config user.name Test || return 1
+	/usr/bin/git -C "$work" config commit.gpgsign false || return 1
+	printf '## Base tasks\n- [ ] t1 Root ref:GH#1\n' >"${work}/TODO.md"
+	printf '{\n "a": 0,\n "pad1": 1,\n "pad2": 2,\n "pad3": 3,\n "b": 0\n}\n' >"${work}/settings.json"
+	/usr/bin/git -C "$work" add -A && /usr/bin/git -C "$work" commit -q -m root || return 1
+	root_sha=$(/usr/bin/git -C "$work" rev-parse HEAD) || return 1
+	printf '{\n "a": 1,\n "pad1": 1,\n "pad2": 2,\n "pad3": 3,\n "b": 0\n}\n' >"${work}/settings.json"
+	/usr/bin/git -C "$work" commit -q -am x || return 1
+	x_sha=$(/usr/bin/git -C "$work" rev-parse HEAD) || return 1
+	/usr/bin/git -C "$work" checkout -q --detach "$root_sha" || return 1
+	printf '{\n "a": 0,\n "pad1": 1,\n "pad2": 2,\n "pad3": 3,\n "b": 1\n}\n' >"${work}/settings.json"
+	/usr/bin/git -C "$work" commit -q -am y || return 1
+	y_sha=$(/usr/bin/git -C "$work" rev-parse HEAD) || return 1
+	/usr/bin/git -C "$work" checkout -q --detach "$x_sha" || return 1
+	/usr/bin/git -C "$work" merge -q --no-edit "$y_sha" >/dev/null 2>&1 || return 1
+	printf 'base side\n' >"${work}/base.txt"
+	/usr/bin/git -C "$work" add -A && /usr/bin/git -C "$work" commit -q -m base || return 1
+	base_sha=$(/usr/bin/git -C "$work" rev-parse HEAD) || return 1
+	/usr/bin/git -C "$work" checkout -q --detach "$y_sha" || return 1
+	/usr/bin/git -C "$work" merge -q --no-edit "$x_sha" >/dev/null 2>&1 || return 1
+	printf 'head side\n' >"${work}/head.txt"
+	/usr/bin/git -C "$work" add -A && /usr/bin/git -C "$work" commit -q -m head || return 1
+	head_sha=$(/usr/bin/git -C "$work" rev-parse HEAD) || return 1
+	/usr/bin/git -C "$work" push -q origin "${base_sha}:refs/heads/main" || return 1
+	/usr/bin/git -C "$work" push -q origin "${head_sha}:refs/pull/42/head" || return 1
+	printf '%s\n' "$base_sha" >"${fixture_root}/base.sha"
+	printf '%s\n' "$head_sha" >"${fixture_root}/head.sha"
+	printf '%s\n' "$remote_repo" >"${fixture_root}/remote.url"
+	printf '%s\n' "${fixture_root}/caller"
+	return 0
+}
+
 # Native Git wrapper that records which unrelated blobs exist in the isolated
 # object store when merge-tree runs, and can delay fetches to prove the bound.
 create_prospective_git_probe() {
@@ -1554,6 +1600,11 @@ for arg in "$@"; do
 done
 if [[ "$subcommand" == "fetch" && -n "${AIDEVOPS_TEST_FETCH_DELAY:-}" ]]; then
 	sleep "$AIDEVOPS_TEST_FETCH_DELAY"
+fi
+# Simulate a blob fetch that exits zero without materializing objects.
+if [[ "$subcommand" == "fetch" && -n "${AIDEVOPS_TEST_SKIP_BLOB_FETCH:-}" && " $* " == *" --stdin "* ]]; then
+	cat >/dev/null
+	exit 0
 fi
 if [[ "$subcommand" == "merge-tree" && -n "${AIDEVOPS_TEST_TRANSFER_LOG:-}" ]]; then
 	printf 'checked\n' >>"$AIDEVOPS_TEST_TRANSFER_LOG"
@@ -1720,6 +1771,30 @@ test_prospective_todo_live_fetch_guard() {
 	return 0
 }
 
+test_prospective_todo_crisscross_fetch_guard() {
+	local fixture_dir="" fixture_root="" base_sha="" head_sha="" remote_url="" git_probe="" output="" rc=0
+	fixture_dir=$(create_prospective_crisscross_fixture) || return 0
+	fixture_root="${fixture_dir%/caller}"
+	base_sha=$(<"${fixture_root}/base.sha")
+	head_sha=$(<"${fixture_root}/head.sha")
+	remote_url=$(<"${fixture_root}/remote.url")
+	output=$(run_prospective_todo_guard "$fixture_dir" "$base_sha" "$head_sha" live "$remote_url") || rc=$?
+	print_result "prospective TODO: criss-cross virtual merge base blobs are materialized" "$rc" "output=$output"
+
+	rc=0
+	git_probe=$(create_prospective_git_probe) || return 0
+	output=$(AIDEVOPS_TEST_SKIP_BLOB_FETCH=1 \
+		run_prospective_todo_guard "$fixture_dir" "$base_sha" "$head_sha" live "$remote_url" 'testorg/testrepo' \
+		"$fixture_dir" "$git_probe") || rc=$?
+	print_result "prospective TODO: blobs missing after a zero-exit fetch fail closed with counts" \
+		"$([[ "$rc" -ne 0 && "$output" == *"required prospective blobs were not materialized"* && "$output" != *"lazy fetching disabled"* ]] && printf '0' || printf '1')" \
+		"output=$output"
+	rc=0
+	prospective_contexts_clean "$fixture_dir" || rc=$?
+	print_result "prospective TODO: criss-cross checks clean isolated contexts" "$rc"
+	return 0
+}
+
 test_local_deferral_survives_context_resolution() {
 	local result=0
 	(
@@ -1837,6 +1912,7 @@ main() {
 	test_todo_duplicate_report_large_baseline
 	test_prospective_todo_merge_guard
 	test_prospective_todo_live_fetch_guard
+	test_prospective_todo_crisscross_fetch_guard
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

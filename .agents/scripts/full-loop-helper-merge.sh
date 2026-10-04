@@ -774,10 +774,18 @@ _merge_fetch_partial_objects() {
 	return 0
 }
 
+# Upper bound on merge pairs enumerated for one prospective merge. Ordinary
+# histories need one pair; each criss-cross level adds pairs of merge bases.
+_MERGE_PROSPECTIVE_PAIR_LIMIT=32
+
 # Materialize only blobs a prospective merge can read: every path changed
 # between a merge base and either side, plus both sides' TODO.md. Unchanged
-# paths resolve by object ID without content. Lazy fetch stays disabled, so a
-# missed object makes merge-tree fail closed rather than transfer more data.
+# paths resolve by object ID without content. With several merge bases,
+# merge-ort first merges those bases into a virtual base, which reads blobs
+# changed between the bases and their own merge bases (GH#33513), so pairs of
+# merge bases are enumerated recursively. Lazy fetch stays disabled and every
+# wanted blob is verified present, so a missed object fails closed with a
+# count instead of transferring more data.
 _merge_prefetch_prospective_blobs() {
 	local real_git="$1"
 	local object_repo="$2"
@@ -786,24 +794,55 @@ _merge_prefetch_prospective_blobs() {
 	local context_root="${object_repo%/*}"
 	local candidates="${context_root}/prospective-blob-candidates"
 	local wanted="${context_root}/prospective-blobs"
+	local -a pairs=("${base_sha} ${head_sha}")
+	local -a bases=()
+	local seen_pairs=" "
+	local pair_index=0
+	local pair=""
+	local left=""
+	local right=""
 	local merge_bases=""
 	local merge_base=""
 	local side=""
 	local todo_oid=""
+	local i=0
+	local j=0
 	local rc=0
-	merge_bases=$(_merge_run_repository_isolated_git "$real_git" -C "$object_repo" \
-		merge-base --all "$base_sha" "$head_sha" 2>/dev/null) || rc=$?
-	# Exit 1 means unrelated histories; merge-tree reports that itself.
-	[[ "$rc" -eq 0 || "$rc" -eq 1 ]] || return 1
 	: >"$candidates" || return 1
-	for merge_base in $merge_bases; do
-		for side in "$base_sha" "$head_sha"; do
-			_merge_run_repository_isolated_git "$real_git" -C "$object_repo" \
-				diff-tree -r --no-renames "$merge_base" "$side" >"${candidates}.raw" || return 1
-			# Raw lines: ":<old mode> <new mode> <old oid> <new oid> <status>\t<path>".
-			# Gitlink (160000) entries name commits in other repositories.
-			awk '$1 != ":160000" { print $3 } $2 != "160000" { print $4 }' \
-				"${candidates}.raw" >>"$candidates" || return 1
+	while [[ "$pair_index" -lt "${#pairs[@]}" ]]; do
+		if [[ "$pair_index" -ge "$_MERGE_PROSPECTIVE_PAIR_LIMIT" ]]; then
+			print_error "Merge blocked: prospective merge history exceeds ${_MERGE_PROSPECTIVE_PAIR_LIMIT} merge-base pairs"
+			return 1
+		fi
+		pair="${pairs[$pair_index]}"
+		pair_index=$((pair_index + 1))
+		left="${pair% *}"
+		right="${pair#* }"
+		rc=0
+		merge_bases=$(_merge_run_repository_isolated_git "$real_git" -C "$object_repo" \
+			merge-base --all "$left" "$right" 2>/dev/null) || rc=$?
+		# Exit 1 means unrelated histories; merge-tree reports that itself.
+		[[ "$rc" -eq 0 || "$rc" -eq 1 ]] || return 1
+		bases=()
+		for merge_base in $merge_bases; do
+			bases+=("$merge_base")
+			for side in "$left" "$right"; do
+				_merge_run_repository_isolated_git "$real_git" -C "$object_repo" \
+					diff-tree -r --no-renames "$merge_base" "$side" >"${candidates}.raw" || return 1
+				# Raw lines: ":<old mode> <new mode> <old oid> <new oid> <status>\t<path>".
+				# Gitlink (160000) entries name commits in other repositories.
+				awk '$1 != ":160000" { print $3 } $2 != "160000" { print $4 }' \
+					"${candidates}.raw" >>"$candidates" || return 1
+			done
+		done
+		[[ "${#bases[@]}" -gt 1 ]] || continue
+		for ((i = 0; i < ${#bases[@]}; i++)); do
+			for ((j = i + 1; j < ${#bases[@]}; j++)); do
+				pair="${bases[$i]} ${bases[$j]}"
+				[[ "$seen_pairs" == *" ${pair} "* ]] && continue
+				seen_pairs+="${pair} "
+				pairs+=("$pair")
+			done
 		done
 	done
 	for side in "$base_sha" "$head_sha"; do
@@ -816,6 +855,30 @@ _merge_prefetch_prospective_blobs() {
 	[[ -s "$wanted" ]] || return 0
 	_merge_fetch_partial_objects "$real_git" "$object_repo" "$wanted" \
 		--no-write-fetch-head --stdin -- "$_MERGE_PROSPECTIVE_REMOTE" || return 1
+	_merge_verify_prospective_blobs "$real_git" "$object_repo" "$wanted" || return 1
+	return 0
+}
+
+# A zero fetch exit status does not prove every wanted object arrived. Check
+# presence locally (lazy fetch disabled) and report only counts, never paths.
+_merge_verify_prospective_blobs() {
+	local real_git="$1"
+	local object_repo="$2"
+	local wanted="$3"
+	local report="${wanted}.present"
+	local wanted_count=0
+	local missing_count=0
+	_merge_run_repository_isolated_git "$real_git" -C "$object_repo" \
+		cat-file --batch-check <"$wanted" >"$report" 2>/dev/null || {
+		print_error "Merge blocked: unable to verify prospective blob presence"
+		return 1
+	}
+	wanted_count=$(awk 'END { print NR }' "$wanted")
+	missing_count=$(awk '$2 != "blob" { n++ } END { print n + 0 }' "$report")
+	if [[ "$missing_count" -ne 0 ]]; then
+		print_error "Merge blocked: ${missing_count} of ${wanted_count} required prospective blobs were not materialized by the bounded fetch"
+		return 1
+	fi
 	return 0
 }
 
