@@ -180,6 +180,9 @@ source "${_PULSE_MERGE_PROCESS_DIR}/pulse-merge-rest-state.sh"
 # shellcheck source=./pulse-merge-required-checks.sh
 # shellcheck disable=SC1091  # sub-library resolved via _PULSE_MERGE_PROCESS_DIR
 source "${_PULSE_MERGE_PROCESS_DIR}/pulse-merge-required-checks.sh"
+# shellcheck source=./pulse-merge-unchanged-skip.sh
+# shellcheck disable=SC1091  # sub-library resolved via _PULSE_MERGE_PROCESS_DIR
+source "${_PULSE_MERGE_PROCESS_DIR}/pulse-merge-unchanged-skip.sh"
 
 _pmp_cache_key() {
 	local raw_key="$1"
@@ -491,6 +494,7 @@ _pmp_prepare_pr_at_cursor() {
 		fi
 		if [[ "$enrichment_rc" -ne 0 || -z "$enriched_pr_obj" ]]; then
 			echo "[pulse-wrapper] Merge pass: PR enrichment failed closed for ${repo_slug} at cursor index=${cursor_index}" >>"$LOGFILE"
+			_PMU_EVALUATION_DEGRADED=1 # GH#33569: not authoritative no-op evidence
 			prepared_pr_obj=$(printf '%s' "$prepared_pr_obj" | jq -c '. + {mergeable:"UNKNOWN", reviewDecision:"UNKNOWN", statusCheckRollup:[]}' 2>/dev/null) || prepared_pr_obj=""
 		else
 			prepared_pr_obj="$enriched_pr_obj"
@@ -761,6 +765,13 @@ _merge_ready_prs_for_repo() {
 		fi
 		return 0
 	fi
+	# GH#33569: an unchanged PR set that recently evaluated to a no-op is not
+	# re-enriched by opted-in callers; outcomes stay incomplete for this pass.
+	if [[ "$pr_list_complete" -eq 1 ]] && _pmu_should_skip_repo "$repo_slug" "$pr_json"; then
+		eval "${_merged_var}=0; ${_closed_var}=0; ${_failed_var}=0"
+		return 0
+	fi
+	local listed_pr_json="$pr_json"
 
 	local AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR="" AIDEVOPS_PULSE_AUTHOR_PERMISSION_CACHE_DIR=""
 	_pmp_setup_merge_repo_caches "$repo_slug"
@@ -781,6 +792,9 @@ _merge_ready_prs_for_repo() {
 
 	local i=0
 	_pmp_prepare_merge_pr_cursor_resume "$repo_slug" "$pr_json" "$pr_count" "$PULSE_MERGE_PR_CURSOR_FILE" "$LOGFILE" i || i=0
+	local _evaluated_from_start=0
+	[[ "$i" -eq 0 ]] && _evaluated_from_start=1
+	_PMU_EVALUATION_DEGRADED=0
 	while [[ "$i" -lt "$pr_count" ]]; do
 		local pr_obj="" _pr_start=""
 		_pr_start=$(_pmp_now_epoch) # GH#33307: time the whole per-PR unit
@@ -808,6 +822,8 @@ _merge_ready_prs_for_repo() {
 
 	_pmp_cleanup_merge_repo_caches
 	if [[ "$pr_list_complete" -eq 1 && "$outcomes_complete" -eq 1 ]]; then _pmp_mark_same_pass_repo_complete "$repo_slug" 2>/dev/null || true; fi
+	_pmu_record_repo_evaluation "$repo_slug" "$listed_pr_json" "$merged" "$closed" "$failed" \
+		"$((pr_list_complete * _evaluated_from_start * (1 - ${_PMU_EVALUATION_DEGRADED:-0})))"
 
 	eval "${_merged_var}=${merged}; ${_closed_var}=${closed}; ${_failed_var}=${failed}"
 	return 0
