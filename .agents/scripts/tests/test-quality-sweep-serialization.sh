@@ -247,8 +247,10 @@ assert_file_eq "review_scan section survives as last field" \
 	"${SECTIONS_DIR}/review_scan" "$FIXTURE_REVIEW_SCAN"
 
 # 6. tool_count and qlty metadata survive too (sanity check on numeric fields).
-assert_file_eq "tool_count is captured (5 tools succeeded + coderabbit always-on)" \
-	"${SECTIONS_DIR}/tool_count" "6"
+# t18508: only non-empty sections count, so the empty CodeRabbit fixture is
+# excluded from coverage.
+assert_file_eq "tool_count is captured (5 non-empty tool sections; empty CodeRabbit is not counted)" \
+	"${SECTIONS_DIR}/tool_count" "5"
 assert_file_eq "qlty_smell_count read independently of qlty_section" \
 	"${SECTIONS_DIR}/qlty_smell_count" "42"
 # t2066: grade is derived from the smell count via _compute_qlty_grade_from_count.
