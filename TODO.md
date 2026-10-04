@@ -1541,7 +1541,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18585 docs: refresh stale README hero and inventory counts #auto-dispatch #documentation ref:GH#33501 -> [todo/tasks/t18585-brief.md] pr:#33510 completed:2026-10-04
 
-- [ ] t18588 fix(ci): markdownlint changed-line gate never lints changed lines (quoted pathspec) #auto-dispatch #bug ref:GH#33595
+- [x] t18588 fix(ci): markdownlint changed-line gate never lints changed lines (quoted pathspec) #auto-dispatch #bug ref:GH#33595 pr:#33598 completed:2026-10-04
 
 ## In Progress
 
