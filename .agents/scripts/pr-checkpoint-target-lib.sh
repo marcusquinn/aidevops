@@ -94,6 +94,8 @@ _pr_checkpoint_pr_metadata_is_eligible() {
 # Verify that the newest trusted coordination event is the worker's explicit
 # draft-checkpoint release. This prevents old checkpoint markers from
 # overriding a later human claim or worker dispatch.
+# GH#33545: worker_merged_partial is intentionally not accepted — it means the
+# partial PR merged and no draft remains to continue on an exact head.
 # Args: $1=raw paginated comments JSON, $2=checkpoint runner
 # Returns: 0 when exact trusted evidence is current, 1 otherwise
 #######################################

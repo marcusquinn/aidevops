@@ -239,6 +239,24 @@ else
 	exit 1
 fi
 
+# GH#33545: a merged ready partial PR keeps the same projection but must not
+# be described as blocked draft work.
+: >"$CALL_LOG"
+rm -f "${TMP_HOME}/comment-attempts"
+_release_dispatch_claim "issue-12345" "worker_merged_partial" "1" "0"
+if grep -q 'CLAIM_RELEASED reason=worker_merged_partial' "$CALL_LOG" && \
+	grep -q 'Partial PR merged; issue stays open for continuation from the brief ledger' "$CALL_LOG" && \
+	! grep -q 'Draft checkpoint: partial work is blocked' "$CALL_LOG" && \
+	grep -q 'CLEAR issue=12345 repo=owner/repo runner=assigned-bot' "$CALL_LOG" && \
+	grep -q 'UNLOCK issue=12345 repo=owner/repo' "$CALL_LOG" && \
+	grep -q 'Released merged partial #12345 for continuation' "$CALL_LOG"; then
+	printf 'PASS merged-partial release projects continuation, not blocked draft work\n'
+else
+	printf 'FAIL merged-partial release wording or projection is wrong\n'
+	sed 's/^/  /' "$CALL_LOG"
+	exit 1
+fi
+
 # GH#33287: ready-PR handoffs already projected status:in-review; the generic
 # closing-keyword projection must not reset a `For #N` PR's issue to available.
 for ready_reason in worker_ready_missing_linkage worker_ready_missing_summary; do

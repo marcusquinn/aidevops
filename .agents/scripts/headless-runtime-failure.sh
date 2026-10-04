@@ -732,6 +732,8 @@ _release_dispatch_claim() {
 	esac
 	if [[ "$reason" == "${_HRW_REASON_DRAFT_CHECKPOINT:-worker_draft_checkpoint}" ]]; then
 		terminal_blocker_fragment=$'\nDraft checkpoint: partial work is blocked. Next action: verify the exact head and current brief before resuming.\n'
+	elif [[ "$reason" == "${_HRW_REASON_MERGED_PARTIAL:-worker_merged_partial}" ]]; then
+		terminal_blocker_fragment=$'\nPartial PR merged; issue stays open for continuation from the brief ledger. Next action: dispatch a continuation worker.\n'
 	fi
 	comment_body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
 ${machine_readable_part}${terminal_blocker_fragment}
@@ -775,6 +777,17 @@ _hrff_project_post_release_state() {
 		fi
 		_unlock_issue_after_dispatch_release "$issue_number" "$repo_slug"
 		print_info "Projected draft checkpoint #${issue_number} as blocked partial work"
+		return 0
+	fi
+	# GH#33545: same projection as a draft checkpoint (clear active status,
+	# keep any blocker, unlock); only the operator-facing wording differs.
+	if [[ "$reason" == "${_HRW_REASON_MERGED_PARTIAL:-worker_merged_partial}" ]]; then
+		if declare -F clear_active_status_on_release >/dev/null 2>&1; then
+			clear_active_status_on_release "$issue_number" "$repo_slug" "$runner_name" \
+				|| print_warning "Failed to project merged partial state on #${issue_number} (non-fatal)"
+		fi
+		_unlock_issue_after_dispatch_release "$issue_number" "$repo_slug"
+		print_info "Released merged partial #${issue_number} for continuation"
 		return 0
 	fi
 	# GH#33287: ready-PR handoffs have already projected and verified
@@ -1203,7 +1216,7 @@ _hrff_retry_class_for_reason() {
 	permission_required | awaiting_maintainer_permission | worker_signing_unavailable)
 		printf '%s\n' "$_HRFF_RETRY_CLASS_MAINTAINER_GATE"
 		;;
-	worker_complete | worker_draft_checkpoint)
+	worker_complete | worker_draft_checkpoint | worker_merged_partial)
 		printf '%s\n' "$_HRFF_RETRY_CLASS_REMEDIATION"
 		;;
 	clean)

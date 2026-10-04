@@ -629,6 +629,29 @@ test_closed_unmerged_pr_is_failed_not_completed() {
 	return 0
 }
 
+# GH#33545: a ready partial PR that merged is a continuation, not a draft.
+test_merged_partial_pr_is_deferred_continuation_not_draft() {
+	local result=""
+	result=$(
+		(
+			_worker_produced_output() { printf 'merged_checkpoint'; return 0; }
+			_release_dispatch_claim() { printf 'release=%s\n' "$2"; return 0; }
+			_report_failure_to_fast_fail() { return 0; }
+			_hrw_finish_success_run "issue-99999" "${TEST_ROOT}"
+			printf 'terminal=%s|%s|%s|%s\n' "$_HRW_TERMINAL_OUTCOME" "$_HRW_FINAL_RUNTIME_EVENT" \
+				"$_HRW_FINAL_RUNTIME_STATUS" "$_HRW_FINAL_RUNTIME_CLASSIFICATION"
+		)
+	)
+	if [[ "$result" == *"release=worker_merged_partial"* && \
+		"$result" == *"terminal=deferred|worker.deferred|checkpointed|worker_merged_partial"* && \
+		"$result" != *"worker_draft_checkpoint"* && "$result" != *"release=worker_complete"* ]]; then
+		print_result "merged partial PR is a deferred continuation, never a draft checkpoint" 0
+	else
+		print_result "merged partial PR is a deferred continuation, never a draft checkpoint" 1 "$result"
+	fi
+	return 0
+}
+
 test_failed_worker_ready_pr_remains_completed_handoff() {
 	local result=""
 	result=$(
@@ -899,6 +922,7 @@ test_pr_checkpoint_lifecycle_cases() {
 	test_unverified_post_pr_handoff_with_partial_pr_is_checkpointed
 	test_failed_ci_ready_pr_is_durable_handoff
 	test_closed_unmerged_pr_is_failed_not_completed
+	test_merged_partial_pr_is_deferred_continuation_not_draft
 	test_failed_worker_ready_pr_remains_completed_handoff
 	test_worker_recovery_reconciles_missing_origin_with_exact_provenance
 	test_worker_recovery_rejects_conflicting_origin_and_retains_claim
