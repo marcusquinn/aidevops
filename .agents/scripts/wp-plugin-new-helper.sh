@@ -211,6 +211,7 @@ _resolve_values() {
 		local parent="${AIDEVOPS_GIT_WORKSPACE_ROOT:-${HOME}/Git}"
 		P_DEST="$(aidevops_recommended_repo_path "$parent" github.com "$P_OWNER" "$P_SLUG")"
 	fi
+	[[ "$P_DEST" == /* ]] || P_DEST="${PWD}/${P_DEST}"
 	return 0
 }
 
@@ -287,11 +288,15 @@ _cleanup_failed() {
 	return "$status"
 }
 
-# Copy the release tag's files with a fresh history of their own.
+# Copy the release tag's files with a fresh history of their own. Clone from
+# the destination's parent, not the caller's directory: the canonical Git
+# guard blocks a clone started inside a canonical checkout.
 _copy_starter() {
-	mkdir -p "$(dirname "$P_DEST")" || return 1
+	local parent
+	parent="$(dirname "$P_DEST")"
+	mkdir -p "$parent" || return 1
 	CREATED_DEST="$P_DEST"
-	git -c advice.detachedHead=false clone --quiet --depth 1 --branch "$P_TAG" \
+	git -C "$parent" -c advice.detachedHead=false clone --quiet --depth 1 --branch "$P_TAG" \
 		"https://github.com/${STARTER_REPO}.git" "$P_DEST" || return 1
 	rm -rf -- "${P_DEST:?}/.git" || return 1
 	if ! "$P_DEST/scripts/rename-plugin.sh" --help | grep -q -- '--author-uri'; then
