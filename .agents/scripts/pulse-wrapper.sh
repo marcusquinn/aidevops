@@ -1336,7 +1336,8 @@ _pulse_run_deterministic_pipeline() {
 				pulse_stats_increment "dispatch_candidate_failed_reason_runner_health_circuit_breaker" 2>/dev/null || true
 			fi
 		elif _pulse_cycle_budget_admits_dispatch "Dispatch_max"; then
-			_pulse_run_budget_priority_stage "dispatch_max" apply_dispatch_max
+			# A budget-deferred round is retryable, not a set -e cycle abort.
+			_pulse_run_budget_priority_stage "dispatch_max" apply_dispatch_max || true
 		fi
 	fi
 
