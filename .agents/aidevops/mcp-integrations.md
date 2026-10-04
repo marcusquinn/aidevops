@@ -34,6 +34,7 @@ tools:
 | | Perplexity MCP | `PERPLEXITY_API_KEY` |
 | | Google Search Console | `GOOGLE_APPLICATION_CREDENTIALS` (service account JSON) |
 | | Rank Math MCP | Per-site WordPress Application Password via `wordpress-mcp-helper.sh rankmath-config` |
+| CRM & Business | Fluent plugins MCP (CRM, Boards, Forms, Support, Booking) | Per-site WordPress Application Password via `wordpress-mcp-helper.sh plugin-mcp-config <preset>` |
 | Document Processing | Unstract MCP | `UNSTRACT_API_KEY` + `API_BASE_URL` (Docker, self-hosted default) |
 | Mobile Testing | iOS Simulator MCP | macOS + Xcode + Facebook IDB |
 | Development | Claude Code MCP | Forked server (`github:marcusquinn/claude-code-mcp`) |
@@ -243,35 +244,17 @@ export GOOGLE_APPLICATION_CREDENTIALS="/path/to/service-account-key.json"
 claude mcp add google-search-console npx mcp-server-gsc@latest
 ```
 
-### FluentCRM MCP
+### Fluent plugins MCP (FluentCRM, Boards, Forms, Support, Booking)
 
-Not published to npm -- requires local build:
+Current Fluent plugins ship native MCP servers on plugin routes (`/wp-json/fluent-crm/mcp`, `fluent-boards/mcp`, `fluentform/mcp`, `fluent-support/mcp`, `fluent-booking/mcp`) through the WordPress MCP Adapter. Add one server per site and plugin with the same helper as Rank Math; no local build is needed:
 
 ```bash
-mkdir -p ~/.local/share/mcp-servers
-cd ~/.local/share/mcp-servers
-git clone https://github.com/netflyapp/fluentcrm-mcp-server.git
-cd fluentcrm-mcp-server && npm install && npm run build
-
-# Store in ~/.config/aidevops/credentials.sh:
-export FLUENTCRM_API_URL="https://your-domain.com/wp-json/fluent-crm/v2"
-export FLUENTCRM_API_USERNAME="your_username"
-export FLUENTCRM_API_PASSWORD="your_application_password"
+aidevops secret set EXAMPLE_WP_APP_PASSWORD   # run in your terminal
+~/.aidevops/agents/scripts/wordpress-mcp-helper.sh plugin-mcp-check fluentcrm https://example.com aidevops-bot EXAMPLE_WP_APP_PASSWORD
+~/.aidevops/agents/scripts/wordpress-mcp-helper.sh plugin-mcp-config fluentcrm example https://example.com aidevops-bot EXAMPLE_WP_APP_PASSWORD opencode
 ```
 
-OpenCode config (bash wrapper, disabled globally):
-
-```json
-{
-  "fluentcrm": {
-    "type": "local",
-    "command": ["/bin/bash", "-c", "source ~/.config/aidevops/credentials.sh && node ~/.local/share/mcp-servers/fluentcrm-mcp-server/dist/fluentcrm-mcp-server.js"],
-    "enabled": false
-  }
-}
-```
-
-Per-agent enablement: `services/crm/fluentcrm.md`. Tools: Contacts, Tags, Lists, Campaigns, Email Templates, Automations, Webhooks, Smart Links, Dashboard Stats.
+Presets: `fluentcrm`, `fluentboards`, `fluentforms`, `fluentsupport`, `fluentbooking`. Forms, Support and Booking ship with MCP off. Template: `configs/mcp-templates/fluentcrm.json`. Setup, operating rules and REST/WP-CLI fallback: `tools/wordpress/fluent-mcp.md`; FluentCRM tools: `services/crm/fluentcrm.md`.
 
 ### Rank Math MCP
 
@@ -283,7 +266,7 @@ aidevops secret set RANKMATH_EXAMPLE_WP_APP_PASSWORD   # run in your terminal
 ~/.aidevops/agents/scripts/wordpress-mcp-helper.sh rankmath-config example https://example.com aidevops-bot RANKMATH_EXAMPLE_WP_APP_PASSWORD opencode
 ```
 
-Template: `configs/mcp-templates/rankmath.json`. Abilities, write-safety rules and OAuth connector notes: `tools/wordpress/rankmath-mcp.md`.
+`rankmath-check`/`rankmath-config` are aliases for `plugin-mcp-check rankmath`/`plugin-mcp-config rankmath`. Template: `configs/mcp-templates/rankmath.json`. Abilities, write-safety rules and OAuth connector notes: `tools/wordpress/rankmath-mcp.md`.
 
 ### Unstract MCP
 

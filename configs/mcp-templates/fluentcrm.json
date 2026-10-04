@@ -1,16 +1,24 @@
 {
-  "_comment": "FluentCRM MCP template. NOTE: @netflyapp/fluentcrm-mcp-server is not published on npm. Requires local build from https://github.com/netflyapp/fluentcrm-mcp-server before enabling.",
-  "_setup": "git clone https://github.com/netflyapp/fluentcrm-mcp-server ~/.local/share/mcp-servers/fluentcrm-mcp-server && cd ~/.local/share/mcp-servers/fluentcrm-mcp-server && npm install && npm run build",
-  "_env": "Set FLUENTCRM_API_URL, FLUENTCRM_API_USERNAME, FLUENTCRM_API_PASSWORD in ~/.config/aidevops/credentials.sh",
-  "_docs": ".agents/services/crm/fluentcrm.md",
-  "fluentcrm": {
-    "type": "local",
-    "command": [
-      "/bin/bash",
-      "-c",
-      "source ~/.config/aidevops/credentials.sh && node ~/.local/share/mcp-servers/fluentcrm-mcp-server/dist/fluentcrm-mcp-server.js"
-    ],
-    "enabled": false,
-    "_comment": "Disabled by default. Enable after completing local build (see _setup above). Docs: .agents/services/crm/fluentcrm.md"
+  "_comment": "FluentCRM native MCP template (one server per WordPress site). FluentCRM registers its own server at /wp-json/fluent-crm/mcp through the WordPress MCP Adapter. Generate a site-specific entry with: wordpress-mcp-helper.sh plugin-mcp-config fluentcrm <site> <url> <user> <secret-name> [opencode|claude|json]. Other Fluent presets (fluentboards, fluentforms, fluentsupport, fluentbooking) use the same pattern.",
+  "_setup": "aidevops secret set EXAMPLE_WP_APP_PASSWORD && ~/.aidevops/agents/scripts/wordpress-mcp-helper.sh plugin-mcp-check fluentcrm https://example.com aidevops-bot EXAMPLE_WP_APP_PASSWORD",
+  "_env": "No secrets in this file. serve-http resolves the Application Password named by the secret-name argument from the environment/credentials.sh or aidevops secret at launch.",
+  "_docs": ".agents/services/crm/fluentcrm.md, .agents/tools/wordpress/fluent-mcp.md",
+  "opencode": {
+    "fluentcrm-example": {
+      "type": "local",
+      "command": [
+        "/Users/YOU/.aidevops/agents/scripts/wordpress-mcp-helper.sh",
+        "serve-http",
+        "https://example.com",
+        "aidevops-bot",
+        "EXAMPLE_WP_APP_PASSWORD",
+        "fluent-crm/mcp"
+      ],
+      "enabled": false,
+      "_comment": "Disabled by default; enable per session or via the fluentcrm subagent (tools: fluentcrm-*). Replace /Users/YOU with your home directory."
+    }
+  },
+  "claude_code": {
+    "_command": "claude mcp add-json fluentcrm-example '{\"type\":\"stdio\",\"command\":\"/Users/YOU/.aidevops/agents/scripts/wordpress-mcp-helper.sh\",\"args\":[\"serve-http\",\"https://example.com\",\"aidevops-bot\",\"EXAMPLE_WP_APP_PASSWORD\",\"fluent-crm/mcp\"]}' --scope user"
   }
 }

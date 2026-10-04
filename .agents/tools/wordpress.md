@@ -31,6 +31,7 @@ mode: subagent
 | Update many sites | `mainwp.md` | Centralized MainWP operations |
 | Choose hosting for a WordPress site | `../aidevops/recommendations.md` | Priority-led selection among Hostinger, Hetzner, and Cloudflare |
 | Audit or configure Rank Math SEO via MCP | `wordpress/rankmath-mcp.md` | `rank-math/*` abilities: site audit, settings, post analysis, redirections, GSC keywords, AI Visibility |
+| Use FluentCRM, Fluent Boards, Fluent Forms, Fluent Support or FluentBooking via MCP | `wordpress/fluent-mcp.md` | Native plugin MCP servers through one helper; REST/WP-CLI fallback when MCP is unavailable |
 | Choose plugins | `wp-preferred.md` | 127+ curated plugins across 19 categories |
 | Work with custom fields | `scf.md` | Field modeling and SCF/ACF guidance |
 

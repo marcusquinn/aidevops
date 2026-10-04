@@ -27,7 +27,8 @@ tools:
 - **Endpoints** (per site): `https://<site>/wp-json/mcp/mcp-adapter-default-server` (application password) and `https://<site>/wp-json/mcp/mcp-oauth-server` (OAuth connector).
 - **MCP tools**: the default server exposes three meta tools. Call `mcp-adapter-discover-abilities` to list, `mcp-adapter-get-ability-info` to read an input schema, then `mcp-adapter-execute-ability` with `{"ability_name": "rank-math/<name>", "parameters": {...}}`.
 - **Server naming**: one MCP server per site, named `rankmath-<site>`. OpenCode tools then match `rankmath-*`.
-- **Helper**: `wordpress-mcp-helper.sh rankmath-config|rankmath-check|serve-http`. Passwords are resolved at launch and never written into runtime config.
+- **Helper**: `wordpress-mcp-helper.sh rankmath-config|rankmath-check|serve-http` (aliases for the generic `plugin-mcp-config|plugin-mcp-check rankmath`). Passwords are resolved at launch and never written into runtime config.
+- **Other plugin MCP servers**: Fluent plugins use the same helper with their own routes; see `fluent-mcp.md`.
 - **Docs**: <https://rankmath.com/kb/mcp-tools/>, <https://rankmath.com/kb/setup-rank-math-mcp/>
 - **Related**: `wp-dev.md` (MCP Adapter internals), `wp-admin.md` (content ops), `localwp.md`, `../../seo/seo-audit.md`, `../../seo/google-search-console.md`, `../../seo/ai-visibility-monitor.md`
 
