@@ -685,22 +685,14 @@ dispatch_max() {
 		return 0
 	fi
 
-	# GH#29255: ranked candidates are the launch-path backlog source. Do not run
-	# the broad all-repository issue+PR diagnostic counters before this snapshot.
-	local candidates_json candidate_count
-	if ! candidates_json=$(_dispatch_ranked_candidates_json "$PULSE_DISPATCH_CANDIDATE_SCAN_LIMIT" "$dependency_normalization_mode"); then
-		echo "[pulse-wrapper] Dispatch_max deferred: candidate enumeration unavailable (available=${available_slots}); not an empty queue" >>"$LOGFILE"
-		_dispatch_stats_increment "dispatch_candidate_enumeration_unavailable"
+	local candidates_json candidate_count enumeration_rc=0
+	candidates_json=$(_dispatch_enumerate_ranked_round "$PULSE_DISPATCH_CANDIDATE_SCAN_LIMIT" "$dependency_normalization_mode" "$available_slots") || enumeration_rc=$?
+	if [[ "$enumeration_rc" -ne 0 ]]; then
 		echo 0
-		return 1
+		[[ "$enumeration_rc" -ne 2 ]] || return 0
+		return "$enumeration_rc"
 	fi
-	candidate_count=$(printf '%s' "$candidates_json" | jq 'length' 2>/dev/null) || candidate_count=0
-	[[ "$candidate_count" =~ ^[0-9]+$ ]] || candidate_count=0
-	if [[ "$candidate_count" -eq 0 ]]; then
-		echo "[pulse-wrapper] Dispatch_max skipped: no ranked candidates (available=${available_slots})" >>"$LOGFILE"
-		echo 0
-		return 0
-	fi
+	candidate_count=$(printf '%s' "$candidates_json" | jq 'length')
 	if ! _dispatch_rest_core_progress_allows_next "dispatch_post_ranking"; then
 		echo "[pulse-wrapper] Dispatch_max stopped after candidate ranking: REST-core launch headroom is unavailable" >>"$LOGFILE"
 		echo 0
@@ -750,6 +742,14 @@ dispatch_max() {
 	_dispatch_line_count=$(wc -l <"$_dispatch_candidate_file" 2>/dev/null | tr -d ' ' || echo 0)
 	echo "[pulse-wrapper] Dispatch_max: candidate enumeration produced ${_dispatch_line_count} lines in ${_dispatch_candidate_file}" >>"$LOGFILE"
 
+	# Prepasses and round setup can also consume the ceremony reserve. Recheck
+	# before entering a loop or assigning product reservations to an empty pass.
+	if ! _dispatch_cycle_budget_admits_round "Dispatch_max (round setup)" after; then
+		rm -f "$_dispatch_candidate_file"
+		[[ "$_dispatch_owns_benign_blocks_cycle" != "1" ]] || _dispatch_cleanup_benign_blocks_cycle
+		echo 0
+		return 3
+	fi
 	local dispatched_count=0 processed_count=0
 	_dispatch_execute_candidate_loop "$_dispatch_candidate_file" "$candidates_json" "$max_workers" "$active_workers" "$self_login" || return 1
 	rm -f "$_dispatch_candidate_file"
@@ -1248,12 +1248,19 @@ apply_dispatch_max() {
 	[[ "$apply_active_workers" =~ ^[0-9]+$ ]] || apply_active_workers=0
 	[[ "$apply_max_workers" =~ ^[0-9]+$ ]] || apply_max_workers=1
 
-	local fill_dispatched
-	fill_dispatched=$(dispatch_max "$dependency_normalization_mode") || fill_dispatched=0
+	local fill_dispatched dispatch_rc=0
+	fill_dispatched=$(dispatch_max "$dependency_normalization_mode") || dispatch_rc=$?
+	if [[ "$dispatch_rc" -eq 3 ]]; then
+		_dispatch_cleanup_benign_blocks_cycle
+		return 1
+	fi
 	[[ "$fill_dispatched" =~ ^[0-9]+$ ]] || fill_dispatched=0
 
 	_adaptive_launch_settle_wait "$fill_dispatched" "dispatch_max"
-	_dispatch_min_worker_floor_refill "$apply_max_workers" "$((apply_active_workers + fill_dispatched))" "$dependency_normalization_mode"
+	if ! _dispatch_min_worker_floor_refill "$apply_max_workers" "$((apply_active_workers + fill_dispatched))" "$dependency_normalization_mode"; then
+		_dispatch_cleanup_benign_blocks_cycle
+		return 1
+	fi
 
 	# t2749: Phase 2 — re-enumerate when consolidation created a child during
 	# Phase 1. The sentinel is written by _dispatch_issue_consolidation in
@@ -1272,11 +1279,18 @@ apply_dispatch_max() {
 		if [[ "$_p2_active" -lt "$_p2_max" ]]; then
 			echo "[pulse-wrapper] Dispatch_max Phase 2: consolidation child created during Phase 1 (active=${_p2_active}, max=${_p2_max}) — re-enumerating candidates (t2749)" >>"$LOGFILE"
 			_dispatch_invalidate_candidate_snapshot "consolidation_child_created" || true
-			local fill_dispatched_p2
-			fill_dispatched_p2=$(dispatch_max "$dependency_normalization_mode") || fill_dispatched_p2=0
+			local fill_dispatched_p2 dispatch_p2_rc=0
+			fill_dispatched_p2=$(dispatch_max "$dependency_normalization_mode") || dispatch_p2_rc=$?
+			if [[ "$dispatch_p2_rc" -eq 3 ]]; then
+				_dispatch_cleanup_benign_blocks_cycle
+				return 1
+			fi
 			[[ "$fill_dispatched_p2" =~ ^[0-9]+$ ]] || fill_dispatched_p2=0
 			_adaptive_launch_settle_wait "$fill_dispatched_p2" "dispatch_max phase 2"
-			_dispatch_min_worker_floor_refill "$_p2_max" "$((_p2_active + fill_dispatched_p2))" "$dependency_normalization_mode"
+			if ! _dispatch_min_worker_floor_refill "$_p2_max" "$((_p2_active + fill_dispatched_p2))" "$dependency_normalization_mode"; then
+				_dispatch_cleanup_benign_blocks_cycle
+				return 1
+			fi
 		else
 			echo "[pulse-wrapper] Dispatch_max Phase 2: consolidation child created but slots full (active=${_p2_active}, max=${_p2_max}) — skipping (t2749)" >>"$LOGFILE"
 		fi
@@ -1295,7 +1309,8 @@ apply_dispatch_max() {
 # dispatch_max call re-checks STOP_FLAG, GraphQL budget, candidate eligibility,
 # and per-candidate blockers; a zero-dispatch round ends the refill.
 #
-# Returns 0 always; best-effort refill should not abort the pulse cycle.
+# Returns 3 on cycle-budget deferral so the event trigger survives; other
+# best-effort refill outcomes return 0 and do not abort the pulse cycle.
 #
 # Args:
 #   $1 - optional capped max-worker target
@@ -1349,7 +1364,7 @@ _dispatch_min_worker_floor_refill() {
 
 	local refill_attempt=0
 	local max_refill_attempts="$min_worker_floor"
-	local active_workers="$capped_active_workers" active_workers_known=1 fill_dispatched
+	local active_workers="$capped_active_workers" active_workers_known=1 fill_dispatched dispatch_rc=0
 	while ((refill_attempt < max_refill_attempts)); do
 		if [[ -f "$STOP_FLAG" ]]; then
 			echo "[pulse-wrapper] Minimum worker floor refill stopped: stop flag present" >>"$LOGFILE"
@@ -1365,7 +1380,10 @@ _dispatch_min_worker_floor_refill() {
 
 		refill_attempt=$((refill_attempt + 1))
 		echo "[pulse-wrapper] Minimum worker floor refill: active=${active_workers}/${min_worker_floor}, attempt=${refill_attempt}/${max_refill_attempts} — re-enumerating candidates" >>"$LOGFILE"
-		fill_dispatched=$(dispatch_max "$dependency_normalization_mode") || fill_dispatched=0
+		dispatch_rc=0
+		fill_dispatched=$(dispatch_max "$dependency_normalization_mode") || dispatch_rc=$?
+		[[ "$dispatch_rc" -ne 3 ]] || return 3
+		[[ "$dispatch_rc" -eq 0 ]] || fill_dispatched=0
 		[[ "$fill_dispatched" =~ ^[0-9]+$ ]] || fill_dispatched=0
 		if ((fill_dispatched <= 0)); then
 			echo "[pulse-wrapper] Minimum worker floor refill stopped: dispatch_max returned ${fill_dispatched} (no eligible candidates or hard gate exhausted)" >>"$LOGFILE"

@@ -690,6 +690,79 @@ _dispatch_rest_core_requires_serial() {
 	return 1
 }
 
+# GH#33560: persisted enumeration EWMA (seconds), shared by wrapper admission
+# and direct/refill dispatch entrypoints. Keep a conservative cold-cache minimum:
+# cheap cached snapshots must not erase the reserve needed for a fresh scan.
+_dispatch_enumeration_expected_seconds() {
+	local timing_file="${HOME}/.aidevops/cache/pulse-dispatch-enumeration-seconds" expected=300
+	if [[ -f "$timing_file" && ! -L "$timing_file" ]]; then
+		read -r expected <"$timing_file" || expected=300
+	fi
+	[[ "$expected" =~ ^[0-9]{1,5}$ ]] || expected=300
+	expected=$((10#$expected))
+	((expected >= 300 && expected <= 86400)) || expected=300
+	printf '%s\n' "$expected"
+	return 0
+}
+
+_dispatch_record_enumeration_seconds() {
+	local started_ms="$1" ended_ms="" elapsed=0 expected=0 timing_dir="${HOME}/.aidevops/cache" temporary=""
+	ended_ms=$(_dispatch_now_ms) || return 0
+	[[ "$started_ms" =~ ^[0-9]{1,16}$ && "$ended_ms" =~ ^[0-9]{1,16}$ ]] || return 0
+	((ended_ms >= started_ms)) || return 0
+	elapsed=$(((ended_ms - started_ms + 999) / 1000))
+	((elapsed <= 86400)) || return 0
+	expected=$(_dispatch_enumeration_expected_seconds)
+	expected=$(((3 * expected + elapsed + 3) / 4))
+	((expected >= 300)) || expected=300
+	mkdir -p "$timing_dir" 2>/dev/null || return 0
+	temporary=$(mktemp "${timing_dir}/pulse-dispatch-enumeration.XXXXXX") || return 0
+	printf '%s\n' "$expected" >"$temporary"
+	mv -f "$temporary" "${timing_dir}/pulse-dispatch-enumeration-seconds" 2>/dev/null || rm -f "$temporary"
+	return 0
+}
+
+# A skipped round returns a distinct status to its orchestrator, not a successful
+# empty queue. That lets the existing event refill failure path restore its signal.
+_dispatch_cycle_budget_admits_round() {
+	local context="$1" stage="${2:-before}" remaining="" floor="${DISPATCH_PER_CANDIDATE_TIMEOUT_FLOOR:-600}" enumeration=0
+	[[ "${AIDEVOPS_PULSE_DISPATCH_BUDGET_RESERVE:-1}" == "1" ]] || return 0
+	declare -F _pulse_cycle_remaining_seconds >/dev/null 2>&1 || return 0
+	remaining=$(_pulse_cycle_remaining_seconds "${AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S:-90}") || return 0
+	[[ "$remaining" =~ ^-?[0-9]+$ ]] || return 0
+	[[ "$floor" =~ ^[1-9][0-9]*$ ]] || floor=600
+	[[ "$stage" != "before" ]] || enumeration=$(_dispatch_enumeration_expected_seconds)
+	((remaining >= floor + enumeration)) && return 0
+	echo "[pulse-wrapper] ${context} skipped ${stage} candidate enumeration: cycle wall-clock budget below dispatch reserve (remaining=${remaining}s floor=${floor}s enumeration=${enumeration}s); refill trigger retained for a fresh-budget pass (GH#33560)" >>"$LOGFILE"
+	_dispatch_stats_increment "pulse_dispatch_cycle_budget_skipped"
+	return 1
+}
+
+# Enumerate the launch-path backlog without broad diagnostic counters (GH#29255).
+# Stdout: non-empty ranked JSON on success. Status: 1 unavailable, 2 empty,
+# 3 budget-deferred. Keep timing/guard logic out of the dispatch orchestrator.
+_dispatch_enumerate_ranked_round() {
+	local scan_limit="$1" normalization_mode="$2" slots="$3" started_ms="" ranked_json="" count=0
+	_dispatch_cycle_budget_admits_round "Dispatch_max" before || return 3
+	started_ms=$(_dispatch_now_ms) || started_ms=""
+	if ! ranked_json=$(_dispatch_ranked_candidates_json "$scan_limit" "$normalization_mode"); then
+		_dispatch_record_enumeration_seconds "$started_ms"
+		echo "[pulse-wrapper] Dispatch_max deferred: candidate enumeration unavailable (available=${slots}); not an empty queue" >>"$LOGFILE"
+		_dispatch_stats_increment "dispatch_candidate_enumeration_unavailable"
+		return 1
+	fi
+	_dispatch_record_enumeration_seconds "$started_ms"
+	_dispatch_cycle_budget_admits_round "Dispatch_max" after || return 3
+	count=$(printf '%s' "$ranked_json" | jq 'length' 2>/dev/null) || count=0
+	[[ "$count" =~ ^[0-9]+$ ]] || count=0
+	if [[ "$count" -eq 0 ]]; then
+		echo "[pulse-wrapper] Dispatch_max skipped: no ranked candidates (available=${slots})" >>"$LOGFILE"
+		return 2
+	fi
+	printf '%s\n' "$ranked_json"
+	return 0
+}
+
 #######################################
 # Stop dispatch loops when the GraphQL reserve is already below the circuit
 # breaker threshold. The rate_limit endpoint is free, so this protects the

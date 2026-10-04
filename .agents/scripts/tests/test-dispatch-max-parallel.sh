@@ -164,6 +164,11 @@ test_compute_max_parallel_invalid_var() {
 test_compute_max_parallel_rest_reserve_forces_serial() {
 	export DISPATCH_MAX_PARALLEL=6
 	rm -f "$_DISPATCH_THROTTLE_FILE"
+	# These fixtures use the documented 250-point allowance, independently of
+	# the runner's configured allowance. Restore the real helper afterwards.
+	local saved_allowance=""
+	saved_allowance=$(declare -f _cb_rest_core_in_flight_allowance) || true
+	_cb_rest_core_in_flight_allowance() { printf '250\n'; return 0; }
 	pulse_rest_core_priority_snapshot() {
 		printf 'normal 700 5000 200 500 100 9999999999\n'
 		return 0
@@ -175,6 +180,8 @@ test_compute_max_parallel_rest_reserve_forces_serial() {
 		return 0
 	}
 	healthy_result=$(_dispatch_max_compute_parallel 24)
+	unset -f _cb_rest_core_in_flight_allowance
+	[[ -z "$saved_allowance" ]] || eval "$saved_allowance"
 	pulse_rest_core_priority_snapshot() {
 		printf 'disabled ? ? 0 0 0 ?\n'
 		return 0
@@ -956,9 +963,142 @@ test_parallel_loop_skips_cached_blocks_before_wave() {
 	return 0
 }
 
+# GH#33560: isolate clocks and cache writes in subshells, without live API calls.
+test_enumeration_budget_admission() {
+	local rc=0
+	(
+		local test_remaining=899
+		_pulse_cycle_remaining_seconds() { printf '%s\n' "$test_remaining"; return 0; }
+		_DISPATCH_TEST_CACHE="${HOME}/.aidevops/cache/pulse-dispatch-enumeration-seconds"
+		mkdir -p "${HOME}/.aidevops/cache"
+		rm -f "$_DISPATCH_TEST_CACHE"
+		[[ "$(_dispatch_enumeration_expected_seconds)" == 300 ]] || exit 1
+		_dispatch_cycle_budget_admits_round test before && exit 1
+		test_remaining=900
+		_dispatch_cycle_budget_admits_round test before || exit 1
+		printf '400\n' >"$_DISPATCH_TEST_CACHE"
+		_dispatch_cycle_budget_admits_round test before && exit 1
+		test_remaining=1000
+		_dispatch_cycle_budget_admits_round test before || exit 1
+		test_remaining=600
+		_dispatch_cycle_budget_admits_round test after || exit 1
+		test_remaining=599
+		_dispatch_cycle_budget_admits_round test after && exit 1
+		printf 'corrupt\n' >"$_DISPATCH_TEST_CACHE"
+		[[ "$(_dispatch_enumeration_expected_seconds)" == 300 ]] || exit 1
+		unset -f _pulse_cycle_remaining_seconds
+		_dispatch_cycle_budget_admits_round test before || exit 1
+		_pulse_cycle_remaining_seconds() { return 1; }
+		_dispatch_cycle_budget_admits_round test after || exit 1
+		_pulse_cycle_remaining_seconds() { printf 'invalid\n'; return 0; }
+		_dispatch_cycle_budget_admits_round test before || exit 1
+		rm -f "$_DISPATCH_TEST_CACHE"
+	) || rc=1
+	print_result "enumeration_budget: fallback, learned reserve, exact floor and missing clocks" "$rc"
+	return 0
+}
+
+test_enumeration_timing_persists_average() {
+	local rc=0
+	(
+		local timing_file="${HOME}/.aidevops/cache/pulse-dispatch-enumeration-seconds"
+		rm -f "$timing_file"
+		_dispatch_now_ms() { printf '1400000\n'; return 0; }
+		_dispatch_record_enumeration_seconds 1000000
+		[[ "$(_dispatch_enumeration_expected_seconds)" == 325 ]] || exit 1
+		_dispatch_record_enumeration_seconds 1000000
+		[[ "$(_dispatch_enumeration_expected_seconds)" == 344 ]] || exit 1
+		_dispatch_record_enumeration_seconds 1500000
+		_dispatch_record_enumeration_seconds invalid
+		[[ "$(_dispatch_enumeration_expected_seconds)" == 344 ]] || exit 1
+		rm -f "$timing_file"
+	) || rc=1
+	print_result "enumeration_timing: persists moving average and ignores invalid/backward clocks" "$rc"
+	return 0
+}
+
+test_enumeration_overrun_retains_refill() {
+	local stage="$1" rc=0
+	(
+		local remaining_file="${TEST_ROOT}/remaining" clock_file="${TEST_ROOT}/clock" enumerated="${TEST_ROOT}/enumerated"
+		local trigger="${TEST_ROOT}/refill.trigger"
+		export PULSE_EVENT_REFILL_TRIGGER_FILE="$trigger"
+		export PULSE_DISPATCH_CANDIDATE_SCAN_LIMIT=50
+		export AIDEVOPS_PULSE_DISPATCH_BUDGET_RESERVE=1
+		: >"$LOGFILE"
+		: >"$trigger"
+		rm -f "$enumerated" "${HOME}/.aidevops/cache/pulse-dispatch-enumeration-seconds"
+		printf '1000000\n' >"$clock_file"
+		if [[ "$stage" == before ]]; then
+			printf '899\n' >"$remaining_file"
+		else
+			printf '950\n' >"$remaining_file"
+		fi
+		_pulse_cycle_remaining_seconds() { read -r value <"$remaining_file"; printf '%s\n' "$value"; return 0; }
+		_dispatch_now_ms() { read -r value <"$clock_file"; printf '%s\n' "$value"; return 0; }
+		_dispatch_compute_capacity() { printf '2 0 2\n'; return 0; }
+		_dispatch_ranked_candidates_json() {
+			: >"$enumerated"
+			printf '550\n' >"$remaining_file"
+			printf '1400000\n' >"$clock_file"
+			printf '[{"number":1}]\n'
+			return 0
+		}
+		_dispatch_begin_benign_blocks_cycle() { return 0; }
+		_dispatch_cleanup_benign_blocks_cycle() { return 0; }
+		count_active_workers() { printf '0\n'; return 0; }
+		get_max_workers_target() { printf '2\n'; return 0; }
+		# shellcheck source=../pulse-event-refill.sh
+		source "${SCRIPT_DIR}/pulse-event-refill.sh"
+		pulse_event_refill_is_enabled() { return 0; }
+		pulse_event_refill_recover_processing() { return 0; }
+		_pulse_event_refill_dispatch_gate() { return 0; }
+		local expected_stage="$stage"
+		if [[ "$stage" == refill ]]; then
+			expected_stage=before
+			export AIDEVOPS_MIN_WORKER_CONCURRENCY=2
+			pulse_apply_provider_load_capacity_cap() { printf '2 1\n'; return 0; }
+			_dispatch_apply_current_state_guardrails() { printf '2 1 1\n'; return 0; }
+			_adaptive_launch_settle_wait() { return 0; }
+			# One successful launch, then the real floor-refill orchestrator must
+			# propagate a budget-deferred round rather than swallowing its status.
+			dispatch_max() {
+				if ! _dispatch_cycle_budget_admits_round "Dispatch_max" before; then
+					printf '0\n'
+					return 3
+				fi
+				: >"$enumerated"
+				printf '550\n' >"$remaining_file"
+				printf '1\n'
+				return 0
+			}
+		fi
+		pulse_event_refill_drain test
+		[[ -f "$trigger" ]] || exit 1
+		grep -q "skipped ${expected_stage} candidate enumeration.*refill trigger retained" "$LOGFILE" || exit 1
+		grep -q 'stopping early\|entering candidate loop' "$LOGFILE" && exit 1
+		if [[ "$stage" == before ]]; then
+			[[ ! -f "$enumerated" ]] || exit 1
+		elif [[ "$stage" == refill ]]; then
+			[[ -f "$enumerated" ]] || exit 1
+			grep -q 'Minimum worker floor refill:' "$LOGFILE" || exit 1
+		else
+			[[ -f "$enumerated" && "$(_dispatch_enumeration_expected_seconds)" == 325 ]] || exit 1
+		fi
+		rm -f "$trigger" "$remaining_file" "$clock_file" "$enumerated" "${HOME}/.aidevops/cache/pulse-dispatch-enumeration-seconds"
+	) || rc=1
+	print_result "enumeration_budget: ${stage}-enumeration deferral restores real refill trigger" "$rc"
+	return 0
+}
+
 # =============================================================================
 # Run all tests
 # =============================================================================
+test_enumeration_budget_admission
+test_enumeration_timing_persists_average
+test_enumeration_overrun_retains_refill before
+test_enumeration_overrun_retains_refill after
+test_enumeration_overrun_retains_refill refill
 test_compute_max_parallel_default
 test_compute_max_parallel_default_caps_at_slots
 test_compute_max_parallel_override
