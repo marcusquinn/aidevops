@@ -675,8 +675,10 @@ class AdmissionTests(unittest.TestCase):
         )
         for sig in (signal.SIGHUP, signal.SIGTERM, signal.SIGINT):
             with self.subTest(signal=sig):
-                parent = subprocess.Popen([sys.executable, "-c", script], stdout=subprocess.PIPE,
-                                          stderr=subprocess.PIPE, text=True)
+                parent = subprocess.Popen(  # nosec B603 -- current interpreter, fixed repository-owned script, no shell or untrusted argv
+                    [sys.executable, "-c", script], stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE, text=True, shell=False,
+                )
                 child_pid = None
                 try:
                     self.assertTrue(select.select([parent.stdout], [], [], 5)[0], "child did not start")
