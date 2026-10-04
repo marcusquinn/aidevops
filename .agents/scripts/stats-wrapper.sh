@@ -188,8 +188,12 @@ _stats_wrapper_remove_own_pidfile() {
 }
 
 _stats_wrapper_run_health_update() {
-	local update_ec=0
-	update_health_issues || update_ec=$?
+	# Keep one third of the existing ceiling for quality work. The health
+	# stage gets an earlier deadline, never a new/extended aggregate budget.
+	local update_ec=0 aggregate_deadline health_deadline
+	aggregate_deadline="${AIDEVOPS_GH_DEADLINE_EPOCH:-$(($(date +%s) + STATS_TIMEOUT - 30))}"
+	health_deadline=$((aggregate_deadline - STATS_TIMEOUT / 3))
+	AIDEVOPS_GH_DEADLINE_EPOCH="$health_deadline" update_health_issues || update_ec=$?
 	case "$update_ec" in
 	0)
 		return 0
@@ -228,12 +232,8 @@ _stats_wrapper_run_work() {
 	# both remain bounded by this child's aggregate GitHub deadline and the outer
 	# process-tree timeout. Preserve the dashboard failure after the sweep so the
 	# existing EXIT trap keeps its operator-visible diagnostics.
-	# Keep one third of the existing ceiling for quality work. The health
-	# stage gets an earlier deadline, never a new/extended aggregate budget.
-	local health_ec=0 aggregate_deadline health_deadline
-	aggregate_deadline="${AIDEVOPS_GH_DEADLINE_EPOCH:-$(($(date +%s) + STATS_TIMEOUT - 30))}"
-	health_deadline=$((aggregate_deadline - STATS_TIMEOUT / 3))
-	AIDEVOPS_GH_DEADLINE_EPOCH="$health_deadline" _stats_wrapper_run_health_update || health_ec=$?
+	local health_ec=0
+	_stats_wrapper_run_health_update || health_ec=$?
 
 	run_daily_quality_sweep || {
 		local sweep_ec=$?

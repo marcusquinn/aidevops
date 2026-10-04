@@ -77,6 +77,7 @@ work-health-failure | work-healthy)
 	cat >"\$HARNESS_TEMP_DIR/stats-functions.sh" <<'STATS_FUNCTIONS'
 update_health_issues() {
 	printf 'health\n' >>"\$HARNESS_TEMP_DIR/calls"
+	printf '%s\n' "\$AIDEVOPS_GH_DEADLINE_EPOCH" >"\$HARNESS_TEMP_DIR/health-deadline"
 	if [[ "\$STATS_TEST_HEALTH_RESULT" == "work-health-failure" ]]; then
 		return 124
 	fi
@@ -84,6 +85,7 @@ update_health_issues() {
 }
 run_daily_quality_sweep() {
 	printf 'sweep\n' >>"\$HARNESS_TEMP_DIR/calls"
+	printf '%s\n' "\$AIDEVOPS_GH_DEADLINE_EPOCH" >"\$HARNESS_TEMP_DIR/sweep-deadline"
 	return 0
 }
 STATS_FUNCTIONS
@@ -237,6 +239,8 @@ test_healthy_update_runs_health_then_quality_once() {
 		fail "healthy work completes" "got rc=$rc"
 	elif [[ "$calls" != $'health\nsweep' ]]; then
 		fail "healthy work runs health then one quality sweep" "calls=$calls"
+	elif [[ "$(<"$temp_dir/sweep-deadline")" -ne "$(($(<"$temp_dir/health-deadline") + 20))" ]]; then
+		fail "health leaves the reserved sweep budget intact" "stage deadlines were not isolated"
 	else
 		pass "healthy work runs health then one quality sweep"
 	fi
@@ -358,6 +362,70 @@ test_quality_sweep_publishes_completed_tools_after_timeout() {
 		pass "quality sweep bounds a slow tool and renders truthful partial coverage"
 	else
 		fail "quality sweep bounds a slow tool and renders truthful partial coverage" "fixture exit=$?"
+	fi
+	rm -rf "$batch_home"
+	return 0
+}
+
+test_quality_sweep_expired_budget_retries_and_publishes() {
+	local batch_home
+	batch_home=$(mktemp -d "${TMPDIR:-/tmp}/stats-expired.XXXXXX") || return 1
+	if (
+		export HOME="$batch_home" LOGFILE="$batch_home/stats.log"
+		export QUALITY_SWEEP_STATE_DIR="$batch_home/state" QUALITY_SWEEP_LAST_RUN="$batch_home/last-run"
+		local scripts="${SCRIPT_DIR}/.."
+		local SCRIPT_DIR="$scripts" rc=0 now sections
+		# shellcheck source=../shared-constants.sh
+		source "$scripts/shared-constants.sh"
+		# shellcheck source=../worker-lifecycle-common.sh
+		source "$scripts/worker-lifecycle-common.sh"
+		# shellcheck source=../stats-functions.sh
+		source "$scripts/stats-functions.sh"
+		_ensure_quality_issue() { printf '42'; return 0; }
+		_previous_qlty_smell_count() { printf '0'; return 0; }
+		_sweep_shellcheck() { printf '### ShellCheck findings'; return 0; }
+		_run_qlty_sweep_tool() { printf '|0|UNKNOWN'; return 0; }
+		_sweep_sonarcloud() { return 0; }
+		_sweep_codacy() { return 0; }
+		_sweep_coderabbit() { return 0; }
+		_sweep_review_scanner() { return 0; }
+		_update_quality_issue_body() { return 0; }
+		_upsert_quality_sweep_comment() { printf 'published' >"$HOME/published"; return 0; }
+		_minimize_superseded_dashboard_comments() { return 0; }
+		# An already-passed tool deadline must never run/log individual tools.
+		now=$(date +%s)
+		AIDEVOPS_GH_DEADLINE_EPOCH="$now"
+		sections=$(_run_sweep_tools owner/repo "$HOME") || rc=$?
+		[[ "$rc" -eq 125 && -z "$sections" && ! -s "$LOGFILE" ]] || exit 1
+		# Admission succeeds, but the publication reserve consumes the tool budget.
+		QUALITY_SWEEP_REPO_TIMEOUT=30
+		_quality_sweep_batch "owner/repo|$HOME" tester "$((now + 30))" || exit 2
+		jq -e '.visited == [] and .remaining == 1 and .complete == false' "$QUALITY_SWEEP_STATE_DIR/cursor.json" || exit 3
+		[[ "$(grep -c 'deferred: budget exhausted' "$LOGFILE")" -eq 1 ]] || exit 4
+		! grep -Eq 'no tools available|Quality sweep tool|all eligible repositories visited' "$LOGFILE" || exit 5
+		[[ ! -e "$QUALITY_SWEEP_LAST_RUN" && ! -e "$HOME/published" ]] || exit 6
+		# A fresh stats sweep retries that same repository and publishes a real
+		# ShellCheck section through the production aggregation/publication path.
+		local REPOS_JSON="$HOME/repos.json" QUALITY_SWEEP_OFFPEAK=0 QUALITY_SWEEP_INTERVAL=0
+		jq -n --arg path "$HOME" '{initialized_repos:[{slug:"owner/repo",path:$path,pulse:true}]}' >"$REPOS_JSON"
+		gh() { return 0; }
+		aidevops_repo_state_current_user() { printf 'tester'; return 0; }
+		aidevops_can_run_repo_routines() { return 0; }
+		QUALITY_SWEEP_REPO_TIMEOUT=120
+		AIDEVOPS_GH_DEADLINE_EPOCH=$(($(date +%s) + 180))
+		run_daily_quality_sweep || exit 7
+		[[ -s "$HOME/published" && -s "$QUALITY_SWEEP_LAST_RUN" ]] || exit 8
+		grep -q 'upserted findings on #42 in owner/repo (1 tools)' "$LOGFILE" || exit 9
+		jq -e --arg entry "owner/repo|$HOME" '.visited == [$entry] and .remaining == 0 and .complete == true' "$QUALITY_SWEEP_STATE_DIR/cursor.json" || exit 10
+		# Public entrypoint also defers before auth when the aggregate is expired.
+		QUALITY_SWEEP_INTERVAL=0
+		AIDEVOPS_GH_DEADLINE_EPOCH=$(date +%s)
+		run_daily_quality_sweep || exit 11
+		[[ "$(grep -c 'deferred: budget exhausted' "$LOGFILE")" -eq 2 ]] || exit 12
+	); then
+		pass "expired quality budget defers once, retains retry cursor and publishes next sweep"
+	else
+		fail "expired quality budget defers once, retains retry cursor and publishes next sweep" "fixture exit=$?"
 	fi
 	rm -rf "$batch_home"
 	return 0
@@ -512,6 +580,7 @@ main_test() {
 	test_healthy_update_runs_health_then_quality_once
 	test_resumable_quality_batches
 	test_quality_sweep_publishes_completed_tools_after_timeout
+	test_quality_sweep_expired_budget_retries_and_publishes
 	test_health_dashboard_slow_cross_repo_rates_are_bounded_once
 	test_health_dashboard_reserves_publication_time_from_history
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
