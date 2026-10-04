@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.38.9] - 2026-10-04
+
+### Fixed
+
+- anchor permission-request marker so quoted markers are not requests
+- markdownlint changed-line gate never lints changed lines (GH#33595)
+- accept both tmp safety guard messages (#33593)
+
 ## [3.38.8] - 2026-10-04
 
 ### Fixed
