@@ -125,7 +125,7 @@ _pulse_refresh_should_skip_repo() {
 	upstream_remote="${upstream_ref%%/*}"
 	upstream_branch="${upstream_ref#*/}"
 	if [[ "$upstream_remote" != "origin" || "$upstream_branch" != "$default_branch" ]]; then
-		echo "[pulse-wrapper] _pulse_refresh_repo: refresh skipped: noncanonical or missing upstream for ${repo_path} — upstream ${upstream_ref} is not origin/${default_branch}" >>"$LOGFILE"
+		echo "[pulse-wrapper] _pulse_refresh_repo: refresh skipped: noncanonical or missing upstream for ${repo_path} — upstream ${upstream_ref} is not origin/${default_branch}; repair: canonical-recovery-helper.sh repair-upstream --repo ${repo_path} --issue <N> --confirm REPAIR_CANONICAL_UPSTREAM" >>"$LOGFILE"
 		return 0
 	fi
 

@@ -8,6 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 FAST_FORWARD_CMD="fast-forward-current"
 SYNC_MIRROR_CMD="sync-mirror"
 VERIFY_BOOTSTRAP_CMD="verify-bootstrap-registration"
+REPAIR_UPSTREAM_CMD="repair-upstream"
 CLEAR_STALE_REBASE_CMD="clear-stale-rebase"
 CLEAR_ABANDONED_REBASE_CMD="clear-abandoned-rebase"
 AIDEVOPS_UPDATE_REASON="aidevops-update"
@@ -667,6 +668,7 @@ usage() {
 		"  canonical-recovery-helper.sh ${FAST_FORWARD_CMD} --repo PATH --branch BRANCH --reason ${AIDEVOPS_UPDATE_REASON} --confirm FAST_FORWARD_CANONICAL_BRANCH" \
 		"  canonical-recovery-helper.sh ${SYNC_MIRROR_CMD} --repo PATH --issue N --confirm SYNCHRONIZE_CANONICAL_MIRROR" \
 		"  canonical-recovery-helper.sh ${SYNC_MIRROR_CMD} --repo PATH --reason ${AIDEVOPS_UPDATE_REASON} --confirm SYNCHRONIZE_CANONICAL_MIRROR" \
+		"  canonical-recovery-helper.sh ${REPAIR_UPSTREAM_CMD} --repo PATH --issue N --confirm REPAIR_CANONICAL_UPSTREAM" \
 		"  canonical-recovery-helper.sh ${VERIFY_BOOTSTRAP_CMD} --repo PATH --slug OWNER/REPO --confirm REGISTER_CANONICAL_REPOSITORY"
 	return 0
 }
@@ -743,6 +745,13 @@ restore-default)
 	;;
 "$SYNC_MIRROR_CMD")
 	expected_confirmation="SYNCHRONIZE_CANONICAL_MIRROR"
+	[[ -z "$expected_branch" ]] || {
+		usage
+		exit 2
+	}
+	;;
+"$REPAIR_UPSTREAM_CMD")
+	expected_confirmation="REPAIR_CANONICAL_UPSTREAM"
 	[[ -z "$expected_branch" ]] || {
 		usage
 		exit 2
@@ -865,6 +874,44 @@ if [[ "$cmd" != "restore-default" && "$cmd" != "$CLEAR_STALE_REBASE_CMD" &&
 		printf 'BLOCKED: canonical worktree is on %s, expected %s\n' "$current_branch" "$target_branch" >&2
 		exit 1
 	}
+fi
+
+if [[ "$cmd" == "$REPAIR_UPSTREAM_CMD" ]]; then
+	repair_remote_ref="refs/remotes/origin/${target_branch}"
+	"$REAL_GIT" -C "$repo_path" rev-parse --verify --quiet "${repair_remote_ref}^{commit}" >/dev/null || {
+		printf 'BLOCKED: origin/%s does not exist locally; fetch origin first\n' "$target_branch" >&2
+		exit 1
+	}
+	previous_upstream=$("$REAL_GIT" -C "$repo_path" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)
+	if [[ "$previous_upstream" == "origin/${target_branch}" ]]; then
+		printf 'VERIFIED: %s already tracks origin/%s\n' "$target_branch" "$target_branch"
+		exit 0
+	fi
+	repair_audit_helper="${SCRIPT_DIR}/audit-log-helper.sh"
+	repair_audit_file="${HOME}/.aidevops/logs/canonical-recovery-audit.jsonl"
+	[[ -x "$repair_audit_helper" ]] || {
+		printf 'BLOCKED: tamper-evident audit helper is unavailable\n' >&2
+		exit 1
+	}
+	AUDIT_LOG_FILE="$repair_audit_file" "$repair_audit_helper" verify --quiet || {
+		printf 'BLOCKED: audit chain verification failed\n' >&2
+		exit 1
+	}
+	AUDIT_LOG_FILE="$repair_audit_file" AUDIT_QUIET=true "$repair_audit_helper" log \
+		operation.verify "Canonical upstream repair authorized" \
+		--detail "issue=${issue_number:-none}" --detail "repo=${repo_path}" \
+		--detail "operation=${cmd}" --detail "target=${target_branch}" \
+		--detail "previous_upstream=${previous_upstream:-none}" \
+		--detail "new_upstream=origin/${target_branch}" >/dev/null || {
+		printf 'BLOCKED: recovery audit record could not be written\n' >&2
+		exit 1
+	}
+	"$REAL_GIT" -C "$repo_path" branch --set-upstream-to="origin/${target_branch}" "$target_branch" >/dev/null || {
+		printf 'BLOCKED: upstream could not be set\n' >&2
+		exit 1
+	}
+	printf 'REPAIRED: %s upstream %s -> origin/%s\n' "$target_branch" "${previous_upstream:-none}" "$target_branch"
+	exit 0
 fi
 
 occupied_path=""
