@@ -52,55 +52,77 @@ def report(outcome, repo, before, after, **fields):
         print("WARNING: POST_SYNC evidence_log_unavailable", file=sys.stderr)
 
 
-def run(repo, before, after, git):
-    if worker_session():
-        print("POST_SYNC outcome=skipped reason=worker_session")
-        return
-    if before == after or not before:
-        return
+def validate_hook(hook):
+    """Validate each declaration before any command can execute."""
+    path = hook["when_changed"]
+    argv = hook["run"]
+    timeout = hook.get("timeout_seconds", 60)
+    if not isinstance(path, str) or not path:
+        raise ValueError("invalid_path")
+    if any(character in path for character in ("\0", "\\")):
+        raise ValueError("invalid_path")
+    if path.startswith(("/", ":")) or ".." in path.split("/"):
+        raise ValueError("invalid_path")
+    if not isinstance(argv, list) or not argv:
+        raise ValueError("invalid_argv")
+    if not all(isinstance(arg, str) and "\0" not in arg for arg in argv) or not argv[0]:
+        raise ValueError("invalid_argv")
+    if type(timeout) is not int or not 1 <= timeout <= 300:
+        raise ValueError("invalid_timeout")
+
+
+def configured_hooks(repo):
+    """Load only the user-owned registry, never project/worker overrides."""
     #aidevops:trust-boundary: never honor worker/project config path overrides.
     config = Path.home() / ".config/aidevops/repos.json"
     if not config.exists():
-        return
+        return []
+    if config.resolve().is_relative_to(repo.resolve()):
+        raise ValueError("project_config")
+    entries = trusted_file(config)["initialized_repos"]
+    matches = [entry for entry in entries if Path(
+        os.path.expanduser(entry.get("path", entry.get("repo_path", "")))
+    ).resolve() == repo.resolve()]
+    if len(matches) != 1:
+        return []
+    entry = matches[0]
+    hooks = entry.get("post_sync", [])
+    if hooks and entry.get("role") != "maintainer":
+        raise ValueError("maintainer_role_required")
+    if not isinstance(hooks, list) or len(hooks) > 16:
+        raise ValueError("invalid_hooks")
+    for hook in hooks:
+        validate_hook(hook)
+    return hooks
+
+
+def execute_hook(repo, hook, remaining):
+    """Bound a command and reap its process group on every outcome."""
+    process = None
+    outcome = "failed"
+    code = "unavailable"
     try:
-        if config.resolve().is_relative_to(repo.resolve()):
-            raise ValueError("project_config")
-        entries = trusted_file(config)["initialized_repos"]
-        matches = [entry for entry in entries if Path(
-            os.path.expanduser(entry.get("path", entry.get("repo_path", "")))
-        ).resolve() == repo.resolve()]
-        if len(matches) != 1:
-            return
-        entry = matches[0]
-        hooks = entry.get("post_sync", [])
-        if not hooks:
-            return
-        if entry.get("role") != "maintainer":
-            raise ValueError("maintainer_role_required")
-        if not isinstance(hooks, list) or len(hooks) > 16:
-            raise ValueError("invalid_hooks")
-        # Validate all declarations before executing any command.
-        for hook in hooks:
-            path = hook["when_changed"]
-            argv = hook["run"]
-            timeout = hook.get("timeout_seconds", 60)
-            if (not isinstance(path, str) or not path or "\0" in path
-                    or path.startswith("/") or ".." in path.split("/")
-                    or path.startswith(":") or "\\" in path):
-                raise ValueError("invalid_path")
-            if (not isinstance(argv, list) or not argv
-                    or not all(isinstance(arg, str) and "\0" not in arg for arg in argv)
-                    or not argv[0]):
-                raise ValueError("invalid_argv")
-            if type(timeout) is not int or not 1 <= timeout <= 300:
-                raise ValueError("invalid_timeout")
-        changed = subprocess.run(
-            [git, "-C", str(repo), "diff", "--name-only", "-z", "--no-renames", before, after, "--"],
-            check=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=15,
-        ).stdout.decode("utf-8", errors="surrogateescape").split("\0")
-    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
-        report("warning", repo, before, after, reason="config_or_diff_invalid")
-        return
+        process = subprocess.Popen(hook["run"], cwd=repo, stdin=subprocess.DEVNULL,
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                   start_new_session=True)
+        code = process.wait(timeout=min(hook.get("timeout_seconds", 60), remaining))
+        outcome = "success" if code == 0 else "failed"
+    except subprocess.TimeoutExpired:
+        outcome = "timeout"
+    except OSError:
+        outcome = "failed"
+    finally:
+        if process is not None:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.wait()
+    return outcome, code
+
+
+def execute_matching_hooks(repo, before, after, hooks, changed):
+    """Keep the entire invocation within its maintenance budget."""
     deadline = time.monotonic() + 300
     for index, hook in enumerate(hooks):
         path = hook["when_changed"].rstrip("/")
@@ -110,29 +132,28 @@ def run(repo, before, after, git):
         if remaining <= 0:
             report("warning", repo, before, after, hook=index, reason="budget_exhausted")
             break
-        process = None
-        outcome = "failed"
-        code = "unavailable"
-        try:
-            process = subprocess.Popen(hook["run"], cwd=repo, stdin=subprocess.DEVNULL,
-                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                                       start_new_session=True)
-            code = process.wait(timeout=min(hook.get("timeout_seconds", 60), remaining))
-            outcome = "success" if code == 0 else "failed"
-        except subprocess.TimeoutExpired:
-            outcome = "timeout"
-        except OSError:
-            outcome = "failed"
-        finally:
-            if process is not None:
-                try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                process.wait()
+        outcome, code = execute_hook(repo, hook, remaining)
         report(outcome, repo, before, after, hook=index, exit_code=code)
         if outcome != "success":
             print("WARNING: POST_SYNC failed; canonical synchronization remains converged", file=sys.stderr)
+
+
+def run(repo, before, after, git):
+    if worker_session():
+        print("POST_SYNC outcome=skipped reason=worker_session")
+        return
+    if before == after or not before:
+        return
+    try:
+        hooks = configured_hooks(repo)
+        if hooks:
+            changed = subprocess.run(
+                [git, "-C", str(repo), "diff", "--name-only", "-z", "--no-renames", before, after, "--"],
+                check=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=15,
+            ).stdout.decode("utf-8", errors="surrogateescape").split("\0")
+            execute_matching_hooks(repo, before, after, hooks, changed)
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+        report("warning", repo, before, after, reason="config_or_diff_invalid")
 
 
 if __name__ == "__main__":
