@@ -196,17 +196,21 @@ class AdmissionTests(unittest.TestCase):
         self.assertNotEqual(probe, replacement)
         self.assertEqual(self.budget.db.execute(
             "SELECT uncertain,started FROM reservation WHERE id=?", (probe,),
-        ).fetchone(), (1, 1241))
+        ).fetchone(), (2, 1061))
         self.assertEqual(self.budget.db.execute("SELECT COUNT(*) FROM reservation").fetchone()[0], 2)
         self.assertEqual(self.budget.db.execute("SELECT remaining FROM quota").fetchone()[0], 763)
         with self.assertRaisesRegex(Deferred, "serialized quota revalidation"):
             self.budget.acquire("core", now=1242)
         self.budget.finish(replacement, "core", headers(4934), started=1241, now=1243)
-        # The replacement started at the uncertainty boundary, so retain debt
-        # until a strictly later response covers it (existing causal ordering).
+        # A live expired executor can still resume: even later observations
+        # must not clear its debt before it completes or is confirmed dead.
         self.assertEqual(self.budget.db.execute("SELECT COUNT(*) FROM reservation").fetchone()[0], 1)
         later = self.budget.acquire("core", now=1244)
         self.budget.finish(later, "core", headers(4933), started=1244, now=1245)
+        self.assertEqual(self.budget.db.execute("SELECT COUNT(*) FROM reservation").fetchone()[0], 1)
+        self.budget.finish(probe, "core", {}, started=1061, now=1246)
+        covered = self.budget.acquire("core", now=1247)
+        self.budget.finish(covered, "core", headers(4932), started=1247, now=1248)
         self.assertEqual(self.budget.db.execute("SELECT COUNT(*) FROM reservation").fetchone()[0], 0)
 
     def test_stale_live_bootstrap_allows_only_one_replacement(self):
@@ -214,9 +218,23 @@ class AdmissionTests(unittest.TestCase):
         self.budget.acquire("core", now=1180)
         self.assertEqual(self.budget.db.execute(
             "SELECT uncertain FROM reservation WHERE id=?", (first,),
-        ).fetchone()[0], 1)
+        ).fetchone()[0], 2)
         with self.assertRaises(Deferred):
             self.budget.acquire("core", now=1181)
+
+    def test_expired_live_debt_becomes_coverable_after_executor_dies(self):
+        first = self.budget.acquire("core", now=1000)
+        replacement = self.budget.acquire("core", now=1180)
+        self.budget.finish(replacement, "core", headers(), started=1180, now=1181)
+        with patch("gh_transport_recovery.os.kill", side_effect=ProcessLookupError):
+            later = self.budget.acquire("core", now=1182)
+        self.assertEqual(self.budget.db.execute(
+            "SELECT uncertain,started FROM reservation WHERE id=?", (first,),
+        ).fetchone(), (1, 1182))
+        self.budget.finish(later, "core", headers(), started=1182, now=1183)
+        covered = self.budget.acquire("core", now=1184)
+        self.budget.finish(covered, "core", headers(), started=1184, now=1185)
+        self.assertEqual(self.budget.db.execute("SELECT COUNT(*) FROM reservation").fetchone()[0], 0)
 
     def test_budget_diagnostics_are_opt_in_and_identity_free(self):
         self.seed(763)

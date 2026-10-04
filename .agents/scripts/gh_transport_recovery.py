@@ -13,14 +13,17 @@ MAX_RESERVATION_AGE = 180  # 90s native timeout, bounded cleanup and admission m
 
 
 def mark_dead_reservations(budget, now, process_birth):
-    """Dead or over-age executors retain uncertain spend, not probe ownership."""
+    """Dead or over-age executors retain uncertain spend, not probe ownership.
+
+    uncertain=2 denotes an expired but live executor: it may resume and spend
+    after a newer observation, so finish() must not clear its debt as completed
+    uncertain=1 work. Recheck liveness until it finishes or becomes dead.
+    """
     for identity, pid, birth, started in budget.db.execute(
-        "SELECT id,pid,birth,started FROM reservation WHERE scope=? AND uncertain=0",
+        "SELECT id,pid,birth,started FROM reservation WHERE scope=? AND uncertain IN (0,2)",
         (budget.scope,),
     ).fetchall():
         try:
-            if now - started >= MAX_RESERVATION_AGE:
-                raise ProcessLookupError
             os.kill(pid, 0)
             current_birth = budget.birth if pid == os.getpid() else process_birth(pid)
             if birth and current_birth and birth != current_birth:
@@ -28,6 +31,9 @@ def mark_dead_reservations(budget, now, process_birth):
         except ProcessLookupError:
             budget.db.execute("UPDATE reservation SET uncertain=1,started=? WHERE id=?",
                               (now, identity))
+        else:
+            if now - started >= MAX_RESERVATION_AGE:
+                budget.db.execute("UPDATE reservation SET uncertain=2 WHERE id=?", (identity,))
 
 
 def reserve_probe_allowed(row, active, total, previous, now):
