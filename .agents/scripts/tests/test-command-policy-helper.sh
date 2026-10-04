@@ -753,7 +753,14 @@ test_canonical_delegation() {
 	printf '{}\n' >"${repo}/.aidevops.json"
 	git -C "$repo" add README.md .aidevops.json
 	git -C "$repo" commit -q -m seed
-	assert_decision "forbids canonical branch mutation through canonical guard" "git branch -m main renamed" forbid git.canonical-worktree 20 "$repo"
+	# GH#32849 exempts unregistered marker repos under temp roots, so the
+	# canonical case must register the fixture in a test-scoped repos.json.
+	local registry="${TEST_ROOT}/repos.json"
+	local empty_registry="${TEST_ROOT}/repos-empty.json"
+	printf '{"initialized_repos":[{"path":"%s"}]}\n' "$repo" >"$registry"
+	printf '{"initialized_repos":[]}\n' >"$empty_registry"
+	AIDEVOPS_REPOS_FILE="$registry" assert_decision "forbids canonical branch mutation through canonical guard" "git branch -m main renamed" forbid git.canonical-worktree 20 "$repo"
+	AIDEVOPS_REPOS_FILE="$empty_registry" assert_decision "allows unregistered temp marker repo branch mutation" "git branch -m main renamed" allow command.default-allow 0 "$repo"
 	git -C "$repo" worktree add -q -b feature/test "$linked"
 	assert_decision "allows linked-worktree branch creation" "git switch -c feature/child" allow command.default-allow 0 "$linked"
 	assert_decision "forbids generic Git destructive operation in linked worktree" "git reset --hard HEAD" forbid git.reset-destructive 20 "$linked"
