@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.38.8] - 2026-10-04
+
+### Fixed
+
+- loc-badge-reusable fails the job when the metrics push is rejected
+- config set accepts decimals for number-typed keys
+- quality sweep serialization expects 5 non-empty tool sections
+- auto-dispatch findings only on the framework repo
+- permission hold survives long comment threads and fails closed
+- skip unchanged no-op in-cycle merge evaluations (#33580)
+- default CPU admission gate to full-use 4.0 load per core
+- gate worker admission on CPU pressure (#33576)
+
 ## [3.38.7] - 2026-10-04
 
 ### Fixed
