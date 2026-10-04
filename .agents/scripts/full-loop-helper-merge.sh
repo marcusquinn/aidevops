@@ -1178,6 +1178,13 @@ _merge_review_state_still_clear() {
 		print_error "Could not refresh PR #${pr_number} review state immediately before merge"
 		return 1
 	}
+	# GH#33567: a merged PR is not a review/head change. Return 3 so the
+	# primary merge path can verify an exact-head merge; other callers treat any
+	# non-zero result as fail-closed and never issue a write.
+	if printf '%s\n' "$review_json" | jq -e '(.state // "") == "MERGED"' >/dev/null 2>&1; then
+		print_info "PR #${pr_number} is already MERGED; no merge write will be issued"
+		return 3
+	fi
 	#aidevops:trust-boundary — admin and REST merge paths must not bypass a review added after readiness verification.
 	if ! printf '%s\n' "$review_json" | jq -e --arg head "$expected_head" '
 		.state == "OPEN"
@@ -1195,10 +1202,55 @@ _merge_revalidate_transport_authority() {
 	local pr_number="$1"
 	local repo="$2"
 	local expected_head_sha="$3"
+	local review_rc=0
 
-	_merge_review_state_still_clear "$pr_number" "$repo" "$expected_head_sha" || return 1
+	# Propagates 3 (already MERGED) from the review-state check; 1 otherwise.
+	_merge_review_state_still_clear "$pr_number" "$repo" "$expected_head_sha" || review_rc=$?
+	[[ "$review_rc" -eq 0 || "$review_rc" -eq 3 ]] || return 1
+	[[ "$review_rc" -eq 0 ]] || return 3
 	_merge_guard_admin_merge_maintainer_review "$pr_number" "$repo" "$expected_head_sha" || return 1
 	_merge_guard_prospective_todo "$pr_number" "$repo" || return 1
+	return 0
+}
+
+# Read the PR once and succeed only when GitHub reports a completed merge of
+# exactly the reviewed head. On success, prints the merge commit OID.
+# Returns: 0 = merged at expected head, 1 = not proven (open, closed-unmerged,
+# merged at a different head, or unreadable), 2 = PR state could not be read.
+#aidevops:trust-boundary GH#33567 -- accepts only a merge that already happened
+# at the verified head; never relaxes review/check gates for an open PR.
+_merge_pr_merged_at_head() {
+	local pr_number="$1"
+	local repo="$2"
+	local expected_head_sha="$3"
+	local pr_json=""
+
+	[[ -n "$expected_head_sha" ]] || return 1
+	pr_json=$(_flm_gh_read gh pr view "$pr_number" --repo "$repo" \
+		--json state,mergedAt,mergeCommit,headRefOid 2>/dev/null) || return 2
+	printf '%s\n' "$pr_json" | jq -er --arg head "$expected_head_sha" '
+		select(
+			((.state // "") | ascii_downcase) == "merged"
+			and (.mergedAt // null) != null
+			and (.mergeCommit.oid // null) != null
+			and (.headRefOid // null) == $head
+		)
+		| .mergeCommit.oid
+	' 2>/dev/null || return 1
+	return 0
+}
+
+# GH#33567: a PR can be merged at the verified head between readiness
+# verification and the merge write (for example by GitHub auto-merge enabled
+# on the protected release PR). Treat that as idempotent success; no write.
+_merge_report_already_merged_at_head() {
+	local pr_number="$1"
+	local repo="$2"
+	local expected_head_sha="$3"
+	local merge_oid=""
+
+	merge_oid=$(_merge_pr_merged_at_head "$pr_number" "$repo" "$expected_head_sha") || return 1
+	print_success "PR #${pr_number} already merged at verified head ${expected_head_sha} (merge ${merge_oid}); no write issued"
 	return 0
 }
 
@@ -1209,20 +1261,15 @@ _merge_reconcile_timed_out_write() {
 	local pr_number="$1"
 	local repo="$2"
 	local expected_head_sha="$3"
-	local pr_json=""
+	local merged_rc=0
 
 	print_warning "Merge write timed out for PR #${pr_number}; reconciling exact remote state without retrying the mutation"
-	pr_json=$(_flm_gh_read gh pr view "$pr_number" --repo "$repo" \
-		--json state,mergedAt,mergeCommit,headRefOid 2>/dev/null) || {
+	_merge_pr_merged_at_head "$pr_number" "$repo" "$expected_head_sha" >/dev/null || merged_rc=$?
+	if [[ "$merged_rc" -eq 2 ]]; then
 		print_error "Could not reconcile timed-out merge write for PR #${pr_number}; outcome remains unknown"
 		return 1
-	}
-	if printf '%s\n' "$pr_json" | jq -e --arg head "$expected_head_sha" '
-		(.state | ascii_downcase) == "merged"
-		and (.mergedAt // null) != null
-		and (.mergeCommit.oid // null) != null
-		and (.headRefOid // null) == $head
-	' >/dev/null 2>&1; then
+	fi
+	if [[ "$merged_rc" -eq 0 ]]; then
 		print_success "PR #${pr_number} merge completed remotely before the local write timeout"
 		return 0
 	fi
@@ -1561,7 +1608,15 @@ _merge_execute() {
 	}
 	#aidevops:trust-boundary GH#17671/GH#28622 -- all merge modes pass the same
 	# live external/fork and exact-head cryptographic authority check.
-	_merge_revalidate_transport_authority "$pr_number" "$repo" "$match_head_sha" || return 1
+	local authority_rc=0
+	_merge_revalidate_transport_authority "$pr_number" "$repo" "$match_head_sha" || authority_rc=$?
+	if [[ "$authority_rc" -eq 3 ]]; then
+		# GH#33567: auto-merge may have completed after readiness verification.
+		_merge_report_already_merged_at_head "$pr_number" "$repo" "$match_head_sha" && return 0
+		print_error "PR #${pr_number} is MERGED but not proven merged at verified head ${match_head_sha}; refusing"
+		return 1
+	fi
+	[[ "$authority_rc" -eq 0 ]] || return 1
 	merge_flags+=("--match-head-commit" "$match_head_sha")
 
 	local _merge_out="" _merge_rc=0 _MERGE_WRITE_OUTPUT=""
