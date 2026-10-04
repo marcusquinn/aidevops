@@ -53,11 +53,11 @@ def manifest_record(
     root: Path,
     ecosystem: str,
     direct: set[str],
-    locked: int = 0,
     dev: set[str] | None = None,
 ) -> dict[str, Any]:
     # Dev-only names: declared only for development/build, never at runtime.
     # A name declared in both sections counts as runtime.
+    # "locked" starts at 0; repo_metrics_dependencies.py fills it from lockfiles.
     dev_only = sorted((dev or set()) & direct)
     return {
         "path": path.relative_to(root).as_posix(),
@@ -65,7 +65,7 @@ def manifest_record(
         "direct": len(direct),
         "runtime": len(direct) - len(dev_only),
         "dev": len(dev_only),
-        "locked": locked,
+        "locked": 0,
         "dependencies": sorted(direct),
         "dev_dependencies": dev_only,
     }
