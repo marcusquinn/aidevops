@@ -23,7 +23,7 @@ tools:
 - **Use for**: "make/create/start a new WordPress plugin". Command: `/new-wp-plugin`.
 - **Source**: the latest release of the public starter `wpallstars/wp-plugin-starter-template-for-ai-coding` (settings screen, Read Me tab, GitHub updater, release/check scripts, CI). Not `wp scaffold plugin`, unless the user asks for a bare plugin.
 - **Helper**: `~/.aidevops/agents/scripts/wp-plugin-new-helper.sh` — `defaults`, `save-defaults`, `create [--dry-run]`.
-- **Result**: a private GitHub repo `<owner>/<slug>`, cloned to the standard path (`reference/repo-organization.md`), registered with aidevops, with a fresh history of two commits.
+- **Result**: a private GitHub repo `<owner>/<slug>`, cloned to the standard path (`reference/repo-organization.md`), registered with aidevops, with a fresh history of two commits. The plugin starts at version 0.1.0 with a changelog of its own (starter v1.0.4+).
 - **Maker defaults**: `wordpress.plugin_defaults` in `~/.config/aidevops/settings.json` (`reference/settings.md`). They belong to this user only.
 
 <!-- AI-CONTEXT-END -->
