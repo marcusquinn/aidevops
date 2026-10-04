@@ -95,7 +95,8 @@ GOOGLE_HEALTH_CHECK_URL="https://generativelanguage.googleapis.com/v1beta/models
 # FALLBACK: if UA filtering ever causes issues, try removing the suffix or
 # switching to an axios-style UA like "axios/1.7.9".
 CLAUDE_VERSION="2.1.80"
-if command -v claude &>/dev/null; then
+# The offline diagnostic must not start a credential-bearing CLI even for version detection.
+if [[ "${1:-}" != "probe-rotation" ]] && command -v claude &>/dev/null; then
 	local_ver=$(claude --version 2>/dev/null | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
 	if [[ -n "${local_ver:-}" ]]; then
 		CLAUDE_VERSION="$local_ver"
@@ -365,6 +366,7 @@ main() {
 	assign-pending | assign_pending) cmd_assign_pending "$@" ;;
 	check | test) cmd_check "$@" ;;
 	diagnose) cmd_diagnose "$@" ;;
+	probe-rotation) cmd_probe_rotation "$@" ;;
 	import) cmd_import "$@" ;;
 	list) cmd_list "$@" ;;
 	mark-failure | mark_failure) cmd_mark_failure "$@" ;;
