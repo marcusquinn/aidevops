@@ -814,19 +814,24 @@ _run_sweep_tools() {
 		review_scan_section=""
 	}
 	[[ -n "$review_scan_section" ]] && tool_count=$((tool_count + 1))
-
-	# GH#33568: nothing ran to completion and the tool budget ran out — defer
-	# (125 restores the batch cursor) rather than reporting "no tools available".
-	if [[ "$tool_count" -eq 0 && "$skipped_tools" == *"rc=125"* ]]; then
-		echo "[stats] Quality sweep: tool budget exhausted for ${repo_slug}; deferring repository" >>"$LOGFILE"
-		return 125
-	fi
+	_quality_sweep_tools_budget_exhausted "$repo_slug" "$tool_count" "$skipped_tools" && return 125
 
 	_quality_sweep_output_sections "$skipped_tools" \
 		"$tool_count" "$shellcheck_section" "$qlty_section" "$qlty_smell_count" \
 		"$qlty_grade" "$qlty_smell_delta" "$prev_qlty_smells" "$sonar_section" \
 		"$sweep_gate_status" "$sweep_total_issues" "$sweep_high_critical" \
 		"$sweep_sev_inline" "$codacy_section" "$coderabbit_section" "$review_scan_section" || return 1
+	return 0
+}
+
+# GH#33568: when no tool completed and at least one was skipped for budget
+# (rc=125), the repository was never scanned. Succeeds (0) to tell the caller
+# to return 125, which restores the batch cursor instead of reporting
+# "no tools available" and advancing past the repository.
+_quality_sweep_tools_budget_exhausted() {
+	local repo_slug="$1" tool_count="$2" skipped_tools="$3"
+	[[ "$tool_count" -eq 0 && "$skipped_tools" == *"rc=125"* ]] || return 1
+	echo "[stats] Quality sweep: tool budget exhausted for ${repo_slug}; deferring repository" >>"$LOGFILE"
 	return 0
 }
 
