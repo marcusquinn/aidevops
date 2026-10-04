@@ -13,6 +13,7 @@
 #                                          [--contributors USERS] [--donate URL|none]
 #                                          [--github-owner OWNER]
 #   wp-plugin-new-helper.sh create --name NAME --description TEXT [options]
+#   wp-plugin-new-helper.sh quality --repo OWNER/REPO --path WORKTREE [--pr NUMBER] [--dry-run]
 #
 # create options (maker details fall back to the saved defaults):
 #   --slug SLUG            Folder, main file, text domain and repository name
@@ -275,6 +276,109 @@ _print_plan() {
 	else
 		printf 'GitHub:       %s/%s (%s)\n' "$P_OWNER" "$P_SLUG" "$P_VISIBILITY"
 	fi
+	_quality_plan "$P_VISIBILITY" "$P_NO_GITHUB"
+	return 0
+}
+
+_quality_plan() {
+	local visibility="$1" local_only="$2"
+	printf 'Quality:      preserve README badge markers; regenerate repository metrics in the first PR\n'
+	if [[ "$local_only" -eq 1 ]]; then
+		printf 'Quality:      skip hosted services and repos.json registration (--no-github)\n'
+		return 0
+	fi
+	printf 'Quality:      register repos.json features: ["code-quality"] for the daily sweep\n'
+	if [[ "$visibility" == private ]]; then
+		printf 'Quality:      defer hosted onboarding until public by default; verify any existing private-plan capacity\n'
+	else
+		printf 'Quality:      Codacy API add + grade badge with CODACY_API_TOKEN; otherwise report missing token\n'
+		printf 'Quality:      SonarCloud project with SONAR_TOKEN; org admin imports GitHub repo for its configured analysis method\n'
+	fi
+	printf 'Quality:      first PR: verify Codacy, CodeFactor, CodeRabbit, Qlty and Socket check runs/statuses\n'
+	printf 'Quality:      after customization: Code Audit Routines issue + @coderabbitai full codebase review\n'
+	printf 'Human step:   org admin imports SonarCloud project if unbound; app admin grants missing repository access\n'
+	return 0
+}
+
+# Reusable after the owner makes a private plugin public. Never publishes,
+# commits, opens issues or changes app permissions; edits stay in the caller's PR.
+cmd_quality() {
+	local repo="" path="" pr="" dry_run=0 visibility remote branch top common gitdir
+	while [[ $# -gt 0 ]]; do
+		local arg="$1"
+		local value="${2:-}"
+		case "$arg" in
+		--repo | --path | --pr)
+			[[ $# -ge 2 ]] || return 2
+			case "$arg" in
+			--repo) repo="$value" ;;
+			--path) path="$value" ;;
+			--pr) pr="$value" ;;
+			esac
+			shift 2
+			;;
+		--dry-run)
+			dry_run=1
+			shift
+			;;
+		*)
+			print_error "unknown quality option: $arg"
+			return 2
+			;;
+		esac
+	done
+	[[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ && -d "$path" ]] || {
+		print_error "quality requires --repo OWNER/REPO and --path to its worktree"
+		return 2
+	}
+	[[ -z "$pr" || "$pr" =~ ^[1-9][0-9]*$ ]] || return 2
+	path="$(cd "$path" && pwd -P)" || return 1
+	top="$(git -C "$path" rev-parse --show-toplevel)" || return 1
+	remote="$(git -C "$path" remote get-url origin)" || return 1
+	case "$remote" in
+	"https://github.com/$repo" | "https://github.com/$repo.git" | "git@github.com:$repo.git" | "ssh://git@github.com/$repo.git") ;;
+	*)
+		print_error "worktree origin does not match --repo"
+		return 1
+		;;
+	esac
+	[[ "$top" == "$path" ]] || {
+		print_error "--path must be the repository root"
+		return 1
+	}
+	visibility="$(gh repo view "$repo" --json visibility --jq '.visibility | ascii_downcase')" || return 1
+	_quality_plan "$visibility" 0
+	[[ "$dry_run" -eq 0 ]] || return 0
+	branch="$(git -C "$path" symbolic-ref --short HEAD)" || return 1
+	common="$(git -C "$path" rev-parse --path-format=absolute --git-common-dir)" || return 1
+	gitdir="$(git -C "$path" rev-parse --absolute-git-dir)" || return 1
+	if [[ "$branch" == main || "$branch" == master || "$gitdir" == "$common" ]]; then
+		print_error "quality writes require a feature branch in a linked worktree"
+		return 1
+	fi
+	command -v python3 >/dev/null 2>&1 || return 1
+	python3 "${SCRIPT_DIR}/wp_plugin_quality.py" onboard "$repo" "$path" "$visibility" || return 1
+	(cd "$path" && bash "${SCRIPT_DIR}/repo-metrics-helper.sh" generate .) || return 1
+	if [[ -n "$pr" ]]; then
+		_quality_checks "$repo" "$pr" || return 1
+	else
+		print_warning "App visibility unverified until first PR; rerun quality --repo $repo --path $path --pr NUMBER"
+	fi
+	return 0
+}
+
+_quality_checks() {
+	local repo="$1" pr="$2" head checks statuses service
+	head="$(gh pr view "$pr" --repo "$repo" --json headRefOid --jq .headRefOid)" || return 1
+	checks="$(gh api --paginate "repos/${repo}/commits/${head}/check-runs?per_page=100" --jq '.check_runs[] | [.name, .app.slug] | join(" ")')" || return 1
+	statuses="$(gh api --paginate "repos/${repo}/commits/${head}/statuses?per_page=100" --jq '.[].context')" || return 1
+	for service in Codacy CodeFactor CodeRabbit Qlty Socket; do
+		if printf '%s\n%s\n' "$checks" "$statuses" | grep -qi "$service"; then
+			printf '%s: first PR integration observed (not a passing-result claim)\n' "$service"
+		else
+			print_warning "$service: no check/status on PR #$pr; verify app repository access/plan, then rerun"
+		fi
+	done
 	return 0
 }
 
@@ -315,6 +419,9 @@ _rename() {
 		--author-uri "$P_AUTHOR_URI" --plugin-uri "$P_PLUGIN_URI"
 		--contributors "$P_CONTRIBUTORS" --donate "$P_DONATE")
 	(cd "$P_DEST" && scripts/rename-plugin.sh "${args[@]}") || return 1
+	# No hosted analysis or release exists yet. Keep the marker block, but do
+	# not ship badges that refer to unavailable services or starter results.
+	python3 "${SCRIPT_DIR}/wp_plugin_quality.py" strip-badges "$P_DEST/README.md" || return 1
 	if command -v composer >/dev/null 2>&1; then
 		(cd "$P_DEST" && composer update --lock --quiet --no-interaction 2>/dev/null) ||
 			print_warning "composer update --lock failed; run it in $P_DEST before linting"
@@ -336,7 +443,17 @@ _publish() {
 		(cd "$P_DEST" && aidevops repos add --slug "${P_OWNER}/${P_SLUG}" \
 			--confirm REGISTER_CANONICAL_REPOSITORY >/dev/null) ||
 			print_warning "could not register with aidevops; run: aidevops repos add in $P_DEST"
+		_register_quality || print_warning "code-quality registration failed; run aidevops init code-quality before the daily sweep"
+	else
+		print_warning "aidevops missing: daily quality sweep registration skipped; install it and run aidevops init code-quality"
 	fi
+	return 0
+}
+
+_register_quality() {
+	# Use the normal init/registration writer rather than a competing registry
+	# read-modify-write implementation. Its features list uses code-quality.
+	(cd "$P_DEST" && aidevops init code-quality) || return 1
 	return 0
 }
 
@@ -375,6 +492,7 @@ main() {
 	defaults) cmd_defaults || return $? ;;
 	save-defaults) cmd_save_defaults "$@" || return $? ;;
 	create) cmd_create "$@" || return $? ;;
+	quality) cmd_quality "$@" || return $? ;;
 	help | -h | --help) _usage ;;
 	*)
 		print_error "unknown command: $command"
