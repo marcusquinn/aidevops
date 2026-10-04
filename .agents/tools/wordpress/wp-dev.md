@@ -93,7 +93,9 @@ Multisite: add `WP_ALLOW_MULTISITE`, `MULTISITE`, `SUBDOMAIN_INSTALL`, `DOMAIN_C
 
 ## Plugin Development
 
-**Header** required: `Plugin Name`, `Description`, `Version`, `Author`, `License: GPL-2.0+`, `Text Domain`, `Requires at least: 6.0`, `Requires PHP: 7.4`. Hooks/filters API → use Context7 for current reference.
+**Header**: `Plugin Name`, `Description`, `Version`, `Author`, `License: GPL-2.0-or-later`, `Text Domain`, plus minimums such as `Requires at least: 6.2` and `Requires PHP: 7.4` (examples; set the plugin's real minimums, matching `readme.txt`). Hooks/filters API → use Context7 for current reference.
+
+**Coding standards** (security, structure, assets, i18n, WordPress.org, lint mapping): `wp-plugin-standards.md`.
 
 ## Plugin & Theme Analysis Workflow
 
