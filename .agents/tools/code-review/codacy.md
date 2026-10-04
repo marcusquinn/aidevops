@@ -237,6 +237,31 @@ curl -s -H "api-token: $CODACY_API_TOKEN" \
   -d '{"issueThreshold":{"threshold":10,"minimumSeverity":"Warning"}}'
 ```
 
+### Changing the organisation coding standard
+
+While a coding standard is applied, repository-level pattern changes return
+`409`; change the standard instead. All paths are under
+`/api/v3/organizations/gh/{org}` (operation IDs from the API schema):
+
+1. **Create a draft copy** (`createCodingStandard`):
+   `POST /coding-standards?sourceCodingStandard={id}` with `{name, languages}`.
+   The draft keeps the source's default status and linked repositories.
+2. **Edit the draft** (`updateCodingStandardToolConfiguration`):
+   `PATCH /coding-standards/{draft}/tools/{toolUuid}` with
+   `{"enabled": true, "patterns": [{"id": "<pattern>", "enabled": false}]}` → `204`.
+   Only listed patterns change; at most 1000 patterns per call.
+3. **Diff source and draft before promoting.** For each standard, list tools
+   (`GET /coding-standards/{id}/tools`) and enabled patterns per enabled tool
+   (`GET /coding-standards/{id}/tools/{uuid}/patterns?enabled=true&limit=1000`,
+   following `pagination.cursor`). The diff must equal the intended change.
+   Trap: a draft copy can **enable tools that were off in the source** (observed:
+   Agentlinter, 102 patterns). Disable such tools in the draft only, with
+   `{"enabled": false, "patterns": []}`; never edit the source.
+4. **Promote** (`promoteDraftCodingStandard`): `POST /coding-standards/{draft}/promote`
+   applies the draft to its repositories and replaces the old standard.
+5. **Verify the effective policy** per repository (`listRepositoryToolPatterns`):
+   `GET /api/v3/analysis/organizations/gh/{org}/repositories/{repo}/tools/{uuid}/patterns?search=<pattern>`.
+
 <!-- AI-CONTEXT-END -->
 
 ## Usage
