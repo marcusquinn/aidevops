@@ -1229,8 +1229,16 @@ _pulse_run_deterministic_pipeline() {
 	# leaving dispatch_max below its per-candidate floor.
 	local _pulse_merge_stage_reserve_s=""
 	_pulse_merge_stage_reserve_s=$(_pulse_dispatch_reserved_finalise_seconds)
+	# GH#33569: this in-cycle pass is defence-in-depth for the standalone merge
+	# routine. Give it a fixed graceful share (cursor resumes next cycle) and
+	# skip repos whose PR set is unchanged since a recent no-op evaluation, so
+	# a loaded runner no longer spends ~560s per cycle merging nothing.
+	local _pulse_merge_in_cycle_budget_s="${PULSE_MERGE_IN_CYCLE_BUDGET_SECONDS:-300}"
+	[[ "$_pulse_merge_in_cycle_budget_s" =~ ^[1-9][0-9]*$ ]] || _pulse_merge_in_cycle_budget_s=300
 	if [[ "$_pmr_skip" -eq 0 ]]; then
 		AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S="$_pulse_merge_stage_reserve_s" \
+			PULSE_MERGE_GRACEFUL_BUDGET_SECONDS="${PULSE_MERGE_GRACEFUL_BUDGET_SECONDS:-$_pulse_merge_in_cycle_budget_s}" \
+			PULSE_MERGE_UNCHANGED_SKIP="${PULSE_MERGE_UNCHANGED_SKIP:-1}" \
 			_pulse_run_budget_priority_stage_with_timeout "deterministic_merge_pass" "$PRE_RUN_STAGE_TIMEOUT" \
 			merge_ready_prs_all_repos || true
 	fi
