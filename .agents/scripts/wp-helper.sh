@@ -589,6 +589,19 @@ show_config() {
 	return 0
 }
 
+# Export only inventory and transport references, never credential values.
+export_sites() {
+	local key site
+	load_config
+	while IFS= read -r key; do
+		site=$(jq -c --arg key "$key" '.sites[$key]' "$CONFIG_FILE")
+		site=$(resolve_server_ref "$site")
+		jq -c --arg id "$key" '{id: $id, category, type, wp_path,
+			ssh_host, ssh_user, ssh_port, ssh_identity_file, ssh_password_env}' <<<"$site"
+	done < <(jq -r '.sites | keys[]' "$CONFIG_FILE")
+	return 0
+}
+
 # Print the commands, options, and examples section of the help text
 _show_help_commands() {
 	cat <<'EOF'
@@ -600,6 +613,7 @@ Supports per-tenant configs with shared server definitions and SSH config integr
 Usage: wp-helper.sh [command] [options]
 
 Commands:
+  --export-sites                     Export allowlisted private inventory (JSON lines)
   --list                              List all configured sites
   --list-category <category>          List sites in a category
   --categories                        List available categories
@@ -741,6 +755,9 @@ main() {
 	check_dependencies
 
 	case "$command" in
+	--export-sites)
+		export_sites
+		;;
 	--config)
 		show_config
 		;;
