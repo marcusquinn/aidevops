@@ -553,14 +553,17 @@ _nt_quarantine_domain() {
 #   $2 - worker ID (e.g., "worker-abc123")
 #   $3 - HTTP status code or "blocked" (optional, default "")
 #   $4 - URL path (optional, default "")
+#   $5 - effective tier override (optional; registered local-site access)
 log_access() {
 	local domain="$1"
 	local worker_id="${2:-unknown}"
 	local status_code="${3:-}"
 	local url_path="${4:-}"
+	local tier="${5:-}"
 
-	local tier
-	tier=$(classify_domain "$domain")
+	if [[ ! "$tier" =~ ^[1-5]$ ]]; then
+		tier=$(classify_domain "$domain")
+	fi
 	local label
 	label=$(tier_label "$tier")
 	local timestamp
@@ -642,6 +645,40 @@ check_domain() {
 	return 0
 }
 
+# Loopback destinations that registered local-site matching may unlock.
+# Arguments: $1 - normalized host
+_is_loopback_host() {
+	local host="$1"
+	case "$host" in
+	localhost | 127.0.0.1 | ::1) return 0 ;;
+	esac
+	return 1
+}
+
+# Decide whether the analyzer matched a destination to the worker repository's
+# registered local-hosting site (command_policy_localdev.py). Only loopback
+# hosts (otherwise Tier 5) and *.local/*.localhost names (otherwise Tier 4) can
+# use the allowance; explicit Tier 1-3 and Tier 5 domains keep their tier.
+# Arguments: $1 - host, $2 - classified tier, $3 - newline-separated matches
+_is_registered_local_site() {
+	local host="$1"
+	local tier="$2"
+	local matches="$3"
+
+	[[ -n "$matches" ]] || return 1
+	printf '%s\n' "$matches" | grep -Fxq -- "$host" || return 1
+	if _is_loopback_host "$host"; then
+		# An operator's explicit Tier 5 entry still wins over the registry.
+		_load_tier_data || return 1
+		[[ "$(_tier_lookup "exact:${host}")" == "5" ]] && return 1
+		return 0
+	fi
+	if [[ "$tier" == "4" && ("$host" == *.local || "$host" == *.localhost) ]]; then
+		return 0
+	fi
+	return 1
+}
+
 # Enforce network policy for one exact argv JSON array.
 # Arguments:
 #   $1 - JSON argv array
@@ -658,6 +695,7 @@ check_argv() {
 	local requires_destination="$NET_TIER_TRUE"
 	local unclassified=""
 	local destinations=""
+	local local_sites=""
 	local domain=""
 	local tier=""
 	local denied=false
@@ -702,6 +740,7 @@ check_argv() {
 		return 1
 	fi
 	destinations="$(printf '%s' "$analysis" | jq -r '.destinations[]?')"
+	local_sites="$(printf '%s' "$analysis" | jq -r '.local_site_hosts[]?')"
 	if [[ "$requires_destination" == "$NET_TIER_TRUE" && -z "$destinations" ]]; then
 		log_error "${NET_TIER_BLOCKED_PREFIX} recognized network client has no classifiable destination"
 		return 1
@@ -712,8 +751,13 @@ check_argv() {
 			log_error "${NET_TIER_BLOCKED_PREFIX} failed to classify domain ${domain}"
 			return 1
 		}
-		if [[ "$tier" == "5" ]]; then
+		if _is_registered_local_site "$domain" "$tier" "$local_sites"; then
+			log_access "$domain" "$worker_id" "pre-check-local-site" "" 3 || true
+		elif [[ "$tier" == "5" ]]; then
 			log_error "${NET_TIER_BLOCKED_PREFIX} ${domain} (Tier 5: DENY)"
+			if _is_loopback_host "$domain"; then
+				log_error "Loopback HTTP is allowed only for this repository's registered local-hosting site and port (services/hosting/local-hosting.md)"
+			fi
 			log_access "$domain" "$worker_id" "pre-check-deny" || true
 			denied=true
 		elif [[ "$tier" == "4" ]]; then

@@ -8,7 +8,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from command_policy_network import _add_destination
+from command_policy_network import _add_destination, _normalize_host, _valid_port
 
 
 def _option_value(argv: list[str], index: int) -> tuple[str | None, int]:
@@ -59,12 +59,14 @@ def _curl_destination_option(
 
 def _curl_resolve_option(argv: list[str], index: int, result: dict[str, Any]) -> int:
     value, next_index = _option_value(argv, index)
-    match = re.match(r"^(\[[^]]+\]|[^:]+):[^:]*:(.+)$", value or "")
+    match = re.match(r"^(\[[^]]+\]|[^:]+):([^:]*):(.+)$", value or "")
     if not match:
         result["unclassified"].append(f"resolve:{value or ''}")
     else:
-        _add_destination(result, match.group(1), "resolve-host")
-        _add_destination(result, match.group(2), "resolve-address")
+        port = _valid_port(match.group(2))
+        via = _normalize_host(match.group(1))
+        _add_destination(result, match.group(1), "resolve-host", {"port": port})
+        _add_destination(result, match.group(3), "resolve-address", {"port": port, "via": via})
     return next_index
 
 
@@ -74,10 +76,13 @@ def _curl_connect_option(argv: list[str], index: int, result: dict[str, Any]) ->
     if len(parts) != 4:
         result["unclassified"].append(f"connect-to:{value or ''}")
         return next_index
+    source = _normalize_host(parts[0]) if parts[0] else None
     if parts[0]:
-        _add_destination(result, parts[0], "connect-source")
+        _add_destination(result, parts[0], "connect-source", {"port": _valid_port(parts[1])})
     if parts[2]:
-        _add_destination(result, parts[2], "connect-target")
+        _add_destination(
+            result, parts[2], "connect-target", {"port": _valid_port(parts[3]), "via": source}
+        )
     return next_index
 
 
