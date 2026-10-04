@@ -9,10 +9,18 @@ import time
 from pathlib import Path
 
 
+MAX_RESERVATION_AGE = 180  # 90s native timeout, bounded cleanup and admission margin.
+
+
 def mark_dead_reservations(budget, now, process_birth):
-    """A dead executor remains uncertain spend; caller owns the transaction."""
-    for identity, pid, birth in budget.db.execute(
-        "SELECT id,pid,birth FROM reservation WHERE scope=? AND uncertain=0",
+    """Dead or over-age executors retain uncertain spend, not probe ownership.
+
+    uncertain=2 denotes an expired but live executor: it may resume and spend
+    after a newer observation, so finish() must not clear its debt as completed
+    uncertain=1 work. Recheck liveness until it finishes or becomes dead.
+    """
+    for identity, pid, birth, started in budget.db.execute(
+        "SELECT id,pid,birth,started FROM reservation WHERE scope=? AND uncertain IN (0,2)",
         (budget.scope,),
     ).fetchall():
         try:
@@ -23,6 +31,9 @@ def mark_dead_reservations(budget, now, process_birth):
         except ProcessLookupError:
             budget.db.execute("UPDATE reservation SET uncertain=1,started=? WHERE id=?",
                               (now, identity))
+        else:
+            if now - started >= MAX_RESERVATION_AGE:
+                budget.db.execute("UPDATE reservation SET uncertain=2 WHERE id=?", (identity,))
 
 
 def reserve_probe_allowed(row, active, total, previous, now):
