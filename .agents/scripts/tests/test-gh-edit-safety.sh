@@ -360,6 +360,65 @@ else
 	fail "rejection reason should be cleared on success" "got: '${_GH_EDIT_REJECTION_REASON}'"
 fi
 
+section "11. GH#33539 — negated closing keywords in PR bodies"
+
+for negated_body in "Do not close #123 from this PR" "Do not resolve #123" "Never fixes #123" \
+	"This PR doesn't fix owner/repo#123." "We won't close: #123 yet"; do
+	_gh_validate_pr_closing_keywords --repo "test/repo" --body "$negated_body" 2>/dev/null
+	if [[ $? -eq 1 ]]; then
+		pass "rejects negated closing keyword: '${negated_body}'"
+	else
+		fail "should reject negated closing keyword: '${negated_body}'"
+	fi
+done
+
+for safe_body in "Ref #123. The parent issue remains open." "Resolves #123" \
+	"For #123 — do not close the parent until phase 3 merges." \
+	$'Example only:\n```\nDo not close #123\n```\nRef #123' "Docs mention \`Do not close #123\` as a trap. Ref #123"; do
+	_gh_validate_pr_closing_keywords --repo "test/repo" --body "$safe_body" 2>/dev/null
+	if [[ $? -eq 0 ]]; then
+		pass "accepts safe PR body: '${safe_body%%$'\n'*}'"
+	else
+		fail "should accept safe PR body: '${safe_body%%$'\n'*}'"
+	fi
+done
+
+NEG_BODY_FILE="${TEST_ROOT}/negated-pr-body.md"
+printf '## Summary\n\nPartial work. Do not close #123 from this PR.\n' >"$NEG_BODY_FILE"
+GH_CALLS=()
+gh_pr_edit_safe 456 --repo "test/repo" --body-file "$NEG_BODY_FILE" 2>/dev/null
+if [[ $? -eq 1 && ${#GH_CALLS[@]} -eq 0 ]]; then
+	pass "gh_pr_edit_safe rejects negated closing keyword body-file before any gh call"
+else
+	fail "gh_pr_edit_safe should reject negated closing keyword body-file before gh" "calls: ${GH_CALLS[*]:-none}"
+fi
+
+GH_CALLS=()
+gh_create_pr --repo "test/repo" --title "t003: Partial docs" --body "Do not close #123 from this PR" 2>/dev/null
+if [[ $? -eq 1 && ${#GH_CALLS[@]} -eq 0 ]]; then
+	pass "gh_create_pr rejects negated closing keyword before any gh call"
+else
+	fail "gh_create_pr should reject negated closing keyword before gh" "calls: ${GH_CALLS[*]:-none}"
+fi
+
+# Later wrapper stages (e.g. the public-write privacy guard) are environment
+# dependent, so assert only that the closing-keyword check did not reject.
+GH_CALLS=()
+gh_pr_edit_safe 456 --repo "test/repo" --body "Resolves #123" >/dev/null 2>&1
+if [[ "${_GH_EDIT_REJECTION_REASON:-}" != *"closing keyword"* ]]; then
+	pass "gh_pr_edit_safe does not reject legitimate leaf closure 'Resolves #123'"
+else
+	fail "gh_pr_edit_safe should not reject 'Resolves #123'" "reason: ${_GH_EDIT_REJECTION_REASON}"
+fi
+
+GH_CALLS=()
+gh_issue_edit_safe 123 --repo "test/repo" --body "Do not close #123 until the parent completes" >/dev/null 2>&1
+if [[ "${_GH_EDIT_REJECTION_REASON:-}" != *"closing keyword"* ]]; then
+	pass "issue body edits are not subject to the PR closing-keyword check"
+else
+	fail "issue body edits should not be subject to the PR closing-keyword check" "reason: ${_GH_EDIT_REJECTION_REASON}"
+fi
+
 # ── Summary ──
 
 printf '\n%s/%s tests passed' "$((TESTS_RUN - TESTS_FAILED))" "$TESTS_RUN"

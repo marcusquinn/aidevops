@@ -1148,6 +1148,12 @@ gh_create_pr() {
 		_gh_edit_audit_rejection "gh pr create" "$_GH_EDIT_REJECTION_REASON" "$@"
 		return 1
 	fi
+	# GH#33539: negated closing keywords still close issues on merge.
+	if command -v _gh_validate_pr_closing_keywords >/dev/null 2>&1 &&
+		! _gh_validate_pr_closing_keywords "$@"; then
+		_gh_edit_audit_rejection "gh pr create" "$_GH_EDIT_REJECTION_REASON" "$@"
+		return 1
+	fi
 	local expected_origin_label=""
 	expected_origin_label=$(_gh_create_pr_expected_origin_label "$@") || return $?
 	local is_help=0
