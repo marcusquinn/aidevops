@@ -529,6 +529,64 @@ gh_issue_edit_safe() {
 }
 
 #######################################
+# GH#33539: find a negated GitHub closing keyword in PR body text.
+# GitHub parses `close/fix/resolve` + issue reference as closure intent even
+# under negation ("Do not close #123"), so merging closes the issue anyway.
+# Fenced code blocks and inline code spans are ignored, matching GitHub.
+# Args: $1 = body text
+# Output: first offending phrase on stdout
+# Exit: 0 found, 1 clean
+#######################################
+_gh_pr_body_negated_closing_ref() {
+	local body_text="$1"
+	local negation='(not|never|cannot|without|don[^[:space:]]{0,3}t|doesn[^[:space:]]{0,3}t|won[^[:space:]]{0,3}t|shouldn[^[:space:]]{0,3}t|can[^[:space:]]{0,3}t|mustn[^[:space:]]{0,3}t)'
+	local keyword='(close[sd]?|fix(e[sd])?|resolve[sd]?)'
+	local ref='(https?://[^[:space:]]+/(issues|pull)/[0-9]+|([[:alnum:]_.-]+/[[:alnum:]_.-]+)?#[0-9]+)'
+	local pattern="(^|[^[:alnum:]_])${negation}[[:space:]]+([[:alpha:]]+[[:space:]]+){0,3}${keyword}:?[[:space:]]+${ref}"
+	local stripped="" match="" backtick=$'\x60'
+	stripped=$(printf '%s\n' "$body_text" |
+		awk '/^[[:space:]]*(```|~~~)/ { fenced = !fenced; next } !fenced' |
+		sed -E "s/${backtick}[^${backtick}]*${backtick}//g")
+	match=$(printf '%s\n' "$stripped" | grep -oiE "$pattern" | head -n 1) || true
+	[[ -n "$match" ]] || return 1
+	match="${match#"${match%%[![:space:]]*}"}"
+	printf '%s\n' "$match"
+	return 0
+}
+
+#######################################
+# GH#33539: reject managed PR create/edit bodies whose negated closing keyword
+# GitHub would still treat as a closing reference. Issue bodies/comments are
+# not checked: only PR bodies feed closingIssuesReferences.
+# Args: the argument list passed to gh pr create/edit
+# Returns: 0 clean or no body, 1 rejected (stderr + _GH_EDIT_REJECTION_REASON)
+#######################################
+_gh_validate_pr_closing_keywords() {
+	local -a args=("$@")
+	local i=0 body_text="" has_body=0 body_file=""
+	while [[ $i -lt ${#args[@]} ]]; do
+		case "${args[i]}" in
+		--body) has_body=1; body_text="${args[i + 1]:-}"; i=$((i + 1)) ;;
+		--body=*) has_body=1; body_text="${args[i]#--body=}" ;;
+		--body-file) body_file="${args[i + 1]:-}"; i=$((i + 1)) ;;
+		--body-file=*) body_file="${args[i]#--body-file=}" ;;
+		*) ;;
+		esac
+		i=$((i + 1))
+	done
+	if [[ "$has_body" -eq 0 && -n "$body_file" && -f "$body_file" && -r "$body_file" ]]; then
+		body_text=$(<"$body_file")
+	fi
+	[[ -n "$body_text" ]] || return 0
+	local offending=""
+	offending=$(_gh_pr_body_negated_closing_ref "$body_text") || return 0
+	_GH_EDIT_REJECTION_REASON="negated closing keyword '${offending}' — GitHub still treats it as a closing reference"
+	printf '[SAFETY] gh pr body rejected: %s\n' "$_GH_EDIT_REJECTION_REASON" >&2
+	printf '[SAFETY] Use "Ref #N" or "For #N" with prose such as "The parent issue remains open."; never put a closing keyword next to an issue reference, even when negated.\n' >&2
+	return 1
+}
+
+#######################################
 # gh_pr_edit_safe — drop-in replacement for gh pr edit.
 # Validates --title/--body before delegating. Rejects empty/stub values.
 # Records an audit event to gh-audit.log on success.
@@ -548,6 +606,10 @@ gh_pr_edit_safe() {
 		set -- "${_GH_WRAPPER_SIG_MODIFIED_ARGS[@]}"
 	fi
 	if ! _gh_validate_edit_args "$@"; then
+		_gh_edit_audit_rejection "gh pr edit" "$_GH_EDIT_REJECTION_REASON" "$@"
+		return 1
+	fi
+	if ! _gh_validate_pr_closing_keywords "$@"; then
 		_gh_edit_audit_rejection "gh pr edit" "$_GH_EDIT_REJECTION_REASON" "$@"
 		return 1
 	fi
