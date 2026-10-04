@@ -389,29 +389,97 @@ EOF
     return 0
 }
 
-# List LocalWP sites
+# Locate the Local (LocalWP) sites.json registry; prints the path or nothing
+_localwp_registry_file() {
+    local candidate
+    for candidate in \
+        "${LOCALWP_SITES_JSON:-}" \
+        "$HOME/Library/Application Support/Local/sites.json" \
+        "${XDG_CONFIG_HOME:-$HOME/.config}/Local/sites.json"; do
+        if [[ -n "$candidate" && -f "$candidate" ]]; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+    return 0
+}
+
+# Print the listen port from a rendered nginx config (never from a template)
+_localwp_rendered_port() {
+    local conf_file="$1"
+    [[ -f "$conf_file" ]] || return 0
+    sed -n 's/^[[:space:]]*listen[[:space:]]\{1,\}\([0-9.]*:\)\{0,1\}\([0-9]\{1,\}\).*/\2/p' "$conf_file" 2>/dev/null | head -1 || true
+    return 0
+}
+
+# Print one "  - name (status)" line for a LocalWP site directory
+# Args: site_dir [run_conf_dir] - run_conf_dir is Local's rendered run/<id>/conf
+_localwp_site_line() {
+    local site_dir="$1"
+    local run_conf_dir="${2:-}"
+    local site_name
+    site_name=$(basename "$site_dir")
+    local port=""
+    local conf_file
+    for conf_file in "$run_conf_dir/nginx/site.conf" "$site_dir/conf/nginx/site.conf"; do
+        [[ "$conf_file" == "/nginx/site.conf" ]] && continue
+        port=$(_localwp_rendered_port "$conf_file")
+        [[ -n "$port" ]] && break
+    done
+    if [[ -n "$port" ]]; then
+        echo "  - $site_name (http://localhost:$port)"
+    elif [[ -d "$site_dir/conf" ]]; then
+        echo "  - $site_name (port unknown: no rendered config; start the site in Local)"
+    else
+        echo "  - $site_name (configuration not found)"
+    fi
+    return 0
+}
+
+# List LocalWP sites (read-only): registry-backed paths, then default directory
 list_localwp_sites() {
     print_info "Checking for LocalWP sites..."
 
-    local localwp_path="$HOME/Local Sites"
-    if [[ -d "$localwp_path" ]]; then
-        print_success "LocalWP sites found:"
-        for site_dir in "$localwp_path"/*; do
-            if [[ -d "$site_dir" ]]; then
-                local site_name
-                site_name=$(basename "$site_dir")
-                local conf_file="$site_dir/conf/nginx/site.conf"
-                if [[ -f "$conf_file" ]]; then
-                    local port
-                    port=$(grep -o 'listen [0-9]*' "$conf_file" 2>/dev/null | head -1 | awk '{print $param2}' || true)
-                    echo "  - $site_name (http://localhost:$port)"
-                else
-                    echo "  - $site_name (configuration not found)"
-                fi
+    local found=0
+    local seen=$'\n'
+    local registry
+    registry=$(_localwp_registry_file)
+
+    # Registry-backed sites (custom paths); read only id and path fields
+    if [[ -n "$registry" ]] && command -v jq >/dev/null 2>&1; then
+        local registry_dir
+        registry_dir=$(dirname "$registry")
+        local site_id site_path
+        while IFS=$'\t' read -r site_id site_path; do
+            [[ -n "$site_path" ]] || continue
+            site_path="${site_path/#\~/$HOME}"
+            [[ -d "$site_path" ]] || continue
+            if [[ "$found" -eq 0 ]]; then
+                print_success "LocalWP sites found:"
+                found=1
             fi
+            seen+="$site_path"$'\n'
+            _localwp_site_line "$site_path" "$registry_dir/run/$site_id/conf"
+        done < <(jq -r 'to_entries[] | select(.value.path != null) | [.key, .value.path] | @tsv' "$registry" 2>/dev/null || true)
+    fi
+
+    # Default sites directory
+    local default_path="$HOME/Local Sites"
+    if [[ -d "$default_path" ]]; then
+        local site_dir
+        for site_dir in "$default_path"/*; do
+            [[ -d "$site_dir" ]] || continue
+            [[ "$seen" == *$'\n'"$site_dir"$'\n'* ]] && continue
+            if [[ "$found" -eq 0 ]]; then
+                print_success "LocalWP sites found:"
+                found=1
+            fi
+            _localwp_site_line "$site_dir"
         done
-    else
-        print_warning "LocalWP sites directory not found at: $localwp_path"
+    fi
+
+    if [[ "$found" -eq 0 ]]; then
+        print_warning "No LocalWP sites found (checked Local sites.json registry and default sites directory)"
         print_info "Install LocalWP from: https://localwp.com/"
     fi
     return 0
