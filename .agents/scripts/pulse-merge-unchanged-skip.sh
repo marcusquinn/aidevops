@@ -125,21 +125,44 @@ _pmu_should_skip_repo() {
 }
 
 #######################################
-# Record the outcome of one per-repo evaluation. Only a complete evaluation of
-# the whole list from index 0 with no merge, close or eligible-unmerged result
-# extends the no-op streak; anything else clears it.
-# Args: $1=repo slug, $2=evaluated PR JSON, $3=merged, $4=closed, $5=failed,
-#       $6=complete (1 = whole list evaluated authoritatively)
+# Begin one per-repo evaluation: remember the listed PR set for evidence and
+# reset the degraded flag, then decide whether the evaluation may be skipped.
+# Args: $1=repo slug, $2=listed PR JSON, $3=list complete (1 = authoritative)
+# Returns: 0 to skip, 1 to evaluate normally
+#######################################
+_pmu_skip_unchanged_repo() {
+	local repo_slug="$1"
+	local pr_json="$2"
+	local list_complete="$3"
+
+	_PMU_LISTED_PR_JSON="$pr_json"
+	_PMU_EVALUATION_DEGRADED=0
+	[[ "$list_complete" == 1 ]] || return 1
+	_pmu_should_skip_repo "$repo_slug" "$pr_json" || return 1
+	_PMU_LISTED_PR_JSON=""
+	return 0
+}
+
+#######################################
+# Record the outcome of one per-repo evaluation begun by
+# _pmu_skip_unchanged_repo. Only a complete evaluation of the whole list from
+# index 0 with no merge, close or eligible-unmerged result and no fail-closed
+# enrichment (_PMU_EVALUATION_DEGRADED) extends the no-op streak; anything
+# else clears it.
+# Args: $1=repo slug, $2=merged, $3=closed, $4=failed,
+#       $5=complete (1 = whole list evaluated authoritatively from index 0)
 #######################################
 _pmu_record_repo_evaluation() {
 	local repo_slug="$1"
-	local pr_json="$2"
-	local merged="$3"
-	local closed="$4"
-	local failed="$5"
-	local complete="$6"
+	local merged="$2"
+	local closed="$3"
+	local failed="$4"
+	local complete="$5"
+	local pr_json="${_PMU_LISTED_PR_JSON:-}"
 	local state_file="" fingerprint="" stored_fingerprint="" streak=0 last_full="" tmp_file=""
 
+	_PMU_LISTED_PR_JSON=""
+	[[ "${_PMU_EVALUATION_DEGRADED:-0}" == 0 ]] || complete=0
 	state_file=$(_pmu_state_file "$repo_slug") || return 0
 	if [[ "$complete" != 1 || "$merged" != 0 || "$closed" != 0 || "$failed" != 0 ]] ||
 		! fingerprint=$(_pmu_fingerprint "$pr_json"); then
