@@ -10,6 +10,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.38.6] - 2026-10-04
+
+### Added
+
+- onboard code quality for new plugins
+- resumable guarded plugin fleet rollout
+- quality-service, SPDX licence, release and wordpress-plugin badges; runtime/dev dependency split; SHA-pinned metrics helpers
+- wp-plugin-standards.md and wp-dev.md plugin header fix
+- audited repair-upstream for canonical default branch (GH#33525) (#33551)
+
+### Fixed
+
+- parse qlty-cli.sh command options after the command name
+- register canonical fixture after GH#32849 temp-marker exemption
+- let workers verify their repository's registered local dev site
+- prevent quality sweep budget starvation (GH#33535) (#33547)
+- make unified code audit outcomes and pagination explicit (#33548)
+- reject negated closing keywords in managed PR bodies
+- footprint overlap ignores changelog.txt/readme.txt, case-insensitive, per-repo opt-in
+- fix coolify-helper optional args under nounset
+
 ## [3.38.5] - 2026-10-04
 
 ### Added
