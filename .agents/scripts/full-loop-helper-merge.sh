@@ -2042,6 +2042,8 @@ _merge_fast_forward_canonical() {
 		fast-forward-current --repo "$canonical_dir" --branch "$default_branch" \
 		--issue "$issue_number" --confirm FAST_FORWARD_CANONICAL_BRANCH 2>&1); then
 		print_info "Canonical ${default_branch} fast-forwarded through canonical-recovery-helper.sh"
+		# Surface safe outcome records; never forward command output or local paths.
+		printf '%s\n' "$helper_output" | grep '^POST_SYNC outcome=' || true
 		return 0
 	fi
 	refusal=$(printf '%s\n' "$helper_output" | grep -m1 'BLOCKED' || true)
