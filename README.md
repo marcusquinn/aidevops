@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-![AI DevOps — 17 main agents, 2,250+ sub agents, 2,060+ helper scripts, and 100+ slash commands](docs/assets/og-image.png)
+![AI DevOps — 17 main agents, 2,250+ sub agents, 2,210+ helper scripts, and 110+ slash commands](docs/assets/og-image.png)
 
 # AI DevOps Framework
 
@@ -219,7 +219,7 @@ In an AI session:
 - 100+ commands for common workflows
 
 <!-- aidevops:inventory:start -->
-Exact source inventory: **17 main agents**, **2,273 sub agents**, **2,066 helper scripts**, **108 slash commands**.
+Exact source inventory: **17 main agents**, **2,256 sub agents**, **2,217 helper scripts**, **111 slash commands**.
 <!-- aidevops:inventory:end -->
 
 These are tracked source modules and entry points, not simultaneously running
