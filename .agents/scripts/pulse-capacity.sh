@@ -277,12 +277,14 @@ _pulse_cpu_core_count() {
 
 # Stdout: "<one-minute-load> <cores> <open|closed|unknown> <threshold>".
 _pulse_cpu_pressure() {
-	local load="" cores="" gate="unknown" threshold="${MAX_LOAD_PER_CORE:-1.5}"
+	# Default 4.0: load/core 1.0 is 100% busy, so full CPU use stays admitted;
+	# only severe run-queue thrash closes the gate.
+	local load="" cores="" gate="unknown" threshold="${MAX_LOAD_PER_CORE:-4.0}"
 	load=$(_pulse_cpu_load_average) || load=""
 	cores=$(_pulse_cpu_core_count) || cores=""
 	if ! [[ "$threshold" =~ ^[0-9]+([.][0-9]+)?$ ]] ||
 		! LC_ALL=C awk -v value="$threshold" 'BEGIN {exit !(value > 0)}'; then
-		threshold=1.5
+		threshold=4.0
 	fi
 	if [[ "$load" =~ ^[0-9]+([.][0-9]+)?$ && "$cores" =~ ^[1-9][0-9]*$ ]]; then
 		gate="open"

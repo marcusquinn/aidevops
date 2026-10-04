@@ -146,9 +146,9 @@
         },
         "max_load_per_core": {
           "type": "number",
-          "default": 1.5,
+          "default": 4.0,
           "exclusiveMinimum": 0,
-          "description": "Close new-worker admission when one-minute load per logical core exceeds this threshold; existing workers continue. Unavailable telemetry leaves RAM/provider limits in force. Env: AIDEVOPS_MAX_LOAD_PER_CORE"
+          "description": "Close new-worker admission when one-minute load per logical core exceeds this threshold; existing workers continue. Load/core 1.0 is 100% CPU busy; the 4.0 default allows full use and closes only on severe run-queue thrash. Unavailable telemetry leaves RAM/provider limits in force. Env: AIDEVOPS_MAX_LOAD_PER_CORE"
         },
         "min_worker_concurrency": {
           "type": "integer",
