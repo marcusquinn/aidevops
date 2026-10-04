@@ -68,7 +68,7 @@ ensure_db() {
 	mkdir -p "$AUDIT_DATA_DIR" 2>/dev/null || true
 
 	if [[ ! -f "$AUDIT_DB" ]]; then
-		init_db
+		init_db || return 1
 		return 0
 	fi
 
@@ -83,7 +83,7 @@ ensure_db() {
 }
 
 init_db() {
-	db "$AUDIT_DB" <<'SQL' >/dev/null
+	db "$AUDIT_DB" <<'SQL' >/dev/null || return 1
 PRAGMA journal_mode=WAL;
 
 -- Audit runs: one row per orchestrated audit invocation
@@ -228,12 +228,15 @@ deduplicate_findings() {
                 AND dedup_key != ':0'
               GROUP BY dedup_key
           );
-    " 2>/dev/null || log_warn "Deduplication query may have partially failed"
+    " 2>/dev/null || {
+		log_warn "Deduplication query failed"
+		return 1
+	}
 
 	local dup_count
-	dup_count=$(db "$AUDIT_DB" "SELECT COUNT(*) FROM audit_findings WHERE run_id = $run_id AND is_duplicate = 1;")
+	dup_count=$(db "$AUDIT_DB" "SELECT COUNT(*) FROM audit_findings WHERE run_id = $run_id AND is_duplicate = 1;") || return 1
 	local total
-	total=$(db "$AUDIT_DB" "SELECT COUNT(*) FROM audit_findings WHERE run_id = $run_id;")
+	total=$(db "$AUDIT_DB" "SELECT COUNT(*) FROM audit_findings WHERE run_id = $run_id;") || return 1
 
 	log_info "Deduplication: ${dup_count} duplicates found out of ${total} total findings"
 	return 0
@@ -309,41 +312,54 @@ run_service_collectors() {
 
 	local services_run=""
 	local total_findings=0
+	local recognized=0 failed=0
 
-	local services_array
+	local services_array service
+	services=$(printf '%s' "$services" | tr ',\r\n\t' '    ')
 	read -ra services_array <<<"$services"
 	for service in "${services_array[@]}"; do
-		local count=0
+		local count=0 collector="" result_code=0
 		case "$service" in
 		coderabbit)
-			count=$(collect_coderabbit "$run_id" "$repo" "$pr_number")
+			collector=collect_coderabbit
 			;;
 		sonarcloud)
-			count=$(collect_sonarcloud "$run_id" "$repo" "$pr_number")
+			collector=collect_sonarcloud
 			;;
 		codacy)
-			count=$(collect_codacy "$run_id" "$repo" "$pr_number")
+			collector=collect_codacy
 			;;
 		codefactor)
-			count=$(collect_codefactor "$run_id" "$repo" "$pr_number")
+			collector=collect_codefactor
 			;;
 		*)
 			log_warn "Unknown service: $service — skipping"
+			services_run="${services_run:+${services_run},}${service} (skipped: unknown service)"
 			continue
 			;;
 		esac
 
-		log_info "${service}: ${count} finding(s) collected"
-		total_findings=$((total_findings + count))
-
-		if [[ -n "$services_run" ]]; then
-			services_run="${services_run},${service}"
+		recognized=$((recognized + 1))
+		count=$("$collector" "$run_id" "$repo" "$pr_number") || result_code=$?
+		if [[ "$result_code" -eq 2 ]]; then
+			service="${service} (skipped)"
+		elif [[ "$result_code" -ne 0 || ! "$count" =~ ^[0-9]+$ ]]; then
+			log_warn "${service}: collection failed — findings may be incomplete"
+			service="${service} (failed)"
+			failed=1
 		else
-			services_run="$service"
+			log_info "${service}: ${count} finding(s) collected"
+			total_findings=$((total_findings + count))
 		fi
+		services_run="${services_run:+${services_run},}${service}"
 	done
 
 	echo "${services_run}|${total_findings}"
+	if [[ "$recognized" -eq 0 ]]; then
+		log_error "No recognized audit services selected"
+		return 1
+	fi
+	[[ "$failed" -eq 0 ]] || return 1
 	return 0
 }
 
@@ -356,13 +372,14 @@ _run_audit_services() {
 
 	# Run collectors and parse result
 	local collector_result
-	collector_result=$(run_service_collectors "$run_id" "$repo" "$pr_number" "$services")
+	local result_code=0
+	collector_result=$(run_service_collectors "$run_id" "$repo" "$pr_number" "$services") || result_code=$?
 	local services_run total_findings
 	IFS='|' read -r services_run total_findings <<<"$collector_result"
 
 	# Return via stdout: "services_run|total_findings"
 	echo "${services_run}|${total_findings}"
-	return 0
+	return "$result_code"
 }
 
 # Auto-detect PR number if not already set (0 means unset).
@@ -395,22 +412,23 @@ _audit_create_run() {
         INSERT INTO audit_runs (repo, pr_number, head_sha)
         VALUES ('$(sql_escape "$repo")', $pr_number, '$(sql_escape "$head_sha")');
         SELECT last_insert_rowid();
-    "
+    " || return 1
 	return 0
 }
 
-# Mark an audit run as complete with services_run metadata.
+# Finalize an audit run with its service outcomes and completion status.
 _audit_finalize_run() {
 	local run_id="$1"
 	local services_run="$2"
+	local status="${3:-complete}"
 
 	db "$AUDIT_DB" "
         UPDATE audit_runs
         SET completed_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'),
             services_run = '$(sql_escape "$services_run")',
-            status = 'complete'
+            status = '$(sql_escape "$status")'
         WHERE id = $run_id;
-    "
+    " || return 1
 	return 0
 }
 
@@ -433,13 +451,14 @@ cmd_audit() {
 	local head_sha
 	head_sha=$(get_head_sha)
 
-	ensure_db
+	ensure_db || return 1
 
 	log_info "Starting unified code audit for ${repo}"
 	[[ "$pr_number" -gt 0 ]] && log_info "PR: #${pr_number} (SHA: ${head_sha})"
 
 	local run_id
-	run_id=$(_audit_create_run "$repo" "$pr_number" "$head_sha")
+	run_id=$(_audit_create_run "$repo" "$pr_number" "$head_sha") || return 1
+	[[ "$run_id" =~ ^[0-9]+$ ]] || return 1
 	log_info "Audit run #${run_id} started"
 
 	local services
@@ -449,17 +468,27 @@ cmd_audit() {
 		services=$(get_configured_services)
 	fi
 
-	local result services_run total_findings
-	result=$(_run_audit_services "$run_id" "$repo" "$pr_number" "$services")
+	local result services_run total_findings result_code=0 status=complete
+	result=$(_run_audit_services "$run_id" "$repo" "$pr_number" "$services") || result_code=$?
 	IFS='|' read -r services_run total_findings <<<"$result"
+	if [[ "$result_code" -ne 0 ]]; then
+		status=failed
+	elif [[ "$services_run" == *"(skipped"* ]]; then
+		status=partial
+	fi
 
-	deduplicate_findings "$run_id"
-	_audit_finalize_run "$run_id" "$services_run"
+	deduplicate_findings "$run_id" || return 1
+	_audit_finalize_run "$run_id" "$services_run" "$status" || return 1
 
 	echo ""
 	print_summary "$run_id"
 
-	log_success "Audit run #${run_id} complete: ${total_findings} total findings from ${services_run}"
+	if [[ "$status" == complete ]]; then
+		log_success "Audit run #${run_id} complete: ${total_findings} total findings from ${services_run}"
+	else
+		log_warn "Audit run #${run_id} ${status}: ${total_findings} total findings; services: ${services_run}"
+	fi
+	[[ "$result_code" -eq 0 ]] || return 1
 	return 0
 }
 

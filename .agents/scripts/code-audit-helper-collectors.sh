@@ -7,6 +7,8 @@
 # Service-specific collector functions for CodeRabbit, SonarCloud, Codacy,
 # and CodeFactor. Each collector fetches findings from its respective API
 # and inserts them into the unified audit_findings SQLite table.
+# Collector stdout is a count only: return 0 for success, 2 for skipped,
+# and 1 for failed/incomplete collection. Diagnostics go to stderr.
 #
 # Usage: source "${SCRIPT_DIR}/code-audit-helper-collectors.sh"
 #
@@ -45,16 +47,16 @@ collect_coderabbit() {
     local collector="${SCRIPT_DIR}/coderabbit-collector-helper.sh"
     if [[ ! -x "$collector" ]]; then
         log_warn "CodeRabbit collector not found: $collector"
-        return 0
+        return 2
     fi
 
     # If we have a PR, collect from it
     if [[ "$pr_number" -gt 0 ]]; then
         log_info "Collecting CodeRabbit findings for PR #${pr_number}..."
-        "$collector" collect --pr "$pr_number" 2>/dev/null || {
+        "$collector" collect --pr "$pr_number" >&2 || {
             log_warn "CodeRabbit collection failed for PR #${pr_number}"
             echo "0"
-            return 0
+            return 1
         }
 
         # Import from CodeRabbit's own DB into unified audit_findings
@@ -64,6 +66,7 @@ collect_coderabbit() {
         fi
     else
         log_info "No PR specified — skipping CodeRabbit (requires PR context)"
+        return 2
     fi
 
     echo "$count"
@@ -115,9 +118,8 @@ collect_sonarcloud() {
     local count=0
 
     if [[ -z "${SONAR_TOKEN:-}" ]]; then
-        log_warn "SONAR_TOKEN not set — skipping SonarCloud"
-        echo "0"
-        return 0
+        log_warn "sonarcloud: skipped: SONAR_TOKEN not set"
+        return 2
     fi
 
     log_info "Collecting SonarCloud findings..."
@@ -132,16 +134,21 @@ collect_sonarcloud() {
     local params="componentKeys=${project_key}&resolved=false&ps=100&statuses=OPEN,CONFIRMED,REOPENED"
 
     local response
-    response=$(curl -s -u "${SONAR_TOKEN}:" "${api_url}?${params}" 2>/dev/null) || {
+    response=$(curl --fail --silent --show-error --max-time 60 -u "${SONAR_TOKEN}:" "${api_url}?${params}" 2>/dev/null) || {
         log_warn "SonarCloud API request failed"
         echo "0"
-        return 0
+        return 1
     }
 
     if ! command -v jq &>/dev/null; then
         log_warn "jq not available — cannot parse SonarCloud response"
         echo "0"
-        return 0
+        return 1
+    fi
+
+    if ! printf '%s' "$response" | jq -e '.issues | type == "array"' >/dev/null 2>&1; then
+        log_warn "SonarCloud returned an invalid issues response"
+        return 1
     fi
 
     # Parse issues and insert into audit_findings
@@ -190,10 +197,10 @@ JQ_EOF
 
     echo "$response" | jq -r \
         --arg run_id "$run_id" \
-        -f "$jq_filter_file" >"$sql_file" 2>/dev/null || true
+        -f "$jq_filter_file" >"$sql_file" 2>/dev/null || return 1
 
     if [[ -s "$sql_file" ]]; then
-        db "$AUDIT_DB" <"$sql_file" 2>/dev/null || log_warn "Some SonarCloud imports may have failed"
+        db "$AUDIT_DB" <"$sql_file" 2>/dev/null || return 1
     fi
 
     count=$(db "$AUDIT_DB" "SELECT COUNT(*) FROM audit_findings WHERE run_id = $run_id AND source = 'sonarcloud';")
@@ -251,8 +258,7 @@ collect_codacy() {
     local api_token="${CODACY_API_TOKEN:-${CODACY_PROJECT_TOKEN:-}}"
     if [[ -z "$api_token" ]]; then
         log_warn "CODACY_API_TOKEN not set — skipping Codacy"
-        echo "0"
-        return 0
+        return 2
     fi
 
     log_info "Collecting Codacy findings..."
@@ -261,28 +267,18 @@ collect_codacy() {
     org="${CODACY_ORGANIZATION:-}"
     username="${CODACY_USERNAME:-}"
     repo_name=$(echo "$repo" | cut -d'/' -f2)
-    local provider="${org:-$username}"
+    local organization="${org:-$username}"
 
-    if [[ -z "$provider" ]]; then
-        provider=$(echo "$repo" | cut -d'/' -f1)
+    if [[ -z "$organization" ]]; then
+        organization=$(echo "$repo" | cut -d'/' -f1)
     fi
 
-    local api_url="https://app.codacy.com/api/v3/analysis/organizations/gh/${provider}/repositories/${repo_name}/issues/search"
-
-    local response
-    response=$(curl -s -H "api-token: ${api_token}" \
-        -H "Content-Type: application/json" \
-        -d '{"limit": 100}' \
-        "$api_url" 2>/dev/null) || {
-        log_warn "Codacy API request failed"
-        echo "0"
-        return 0
-    }
+    # gh is the provider; the following segment is the organization/owner.
+    local api_url="https://app.codacy.com/api/v3/analysis/organizations/gh/${organization}/repositories/${repo_name}/issues/search"
 
     if ! command -v jq &>/dev/null; then
         log_warn "jq not available — cannot parse Codacy response"
-        echo "0"
-        return 0
+        return 1
     fi
 
     local sql_file jq_filter_file
@@ -295,12 +291,45 @@ collect_codacy() {
     push_cleanup "rm -f '${jq_filter_file}'"
     _write_codacy_jq_filter "$jq_filter_file"
 
-    echo "$response" | jq -r \
-        --arg run_id "$run_id" \
-        -f "$jq_filter_file" >"$sql_file" 2>/dev/null || true
+    local cursor="" next_cursor="" seen_cursors=$'\n' page=0 response request_body
+    # Stage every page before importing: a failed page must not look complete.
+    printf 'BEGIN TRANSACTION;\n' >"$sql_file"
+    while true; do
+        page=$((page + 1))
+        if [[ "$page" -gt 1000 ]]; then
+            log_warn "Codacy pagination limit reached — collection incomplete"
+            return 1
+        fi
+        request_body=$(jq -nc --arg cursor "$cursor" \
+            '{limit: 100} + (if $cursor == "" then {} else {cursor: $cursor} end)') || return 1
+        response=$(curl --fail --silent --show-error --max-time 60 -H "api-token: ${api_token}" \
+            -H "Content-Type: application/json" -d "$request_body" "$api_url" 2>/dev/null) || {
+            log_warn "Codacy API request failed on page ${page}"
+            return 1
+        }
+        if ! printf '%s' "$response" | jq -e \
+            '(.data | type == "array") and ((.pagination.cursor // "") | type == "string")' >/dev/null 2>&1; then
+            log_warn "Codacy returned an invalid issues response on page ${page}"
+            return 1
+        fi
+        printf '%s' "$response" | jq -r --arg run_id "$run_id" \
+            -f "$jq_filter_file" >>"$sql_file" || return 1
+        next_cursor=$(printf '%s' "$response" | jq -r '.pagination.cursor // empty') || return 1
+        [[ -n "$next_cursor" ]] || break
+        if [[ "$seen_cursors" == *$'\n'"$next_cursor"$'\n'* ]]; then
+            log_warn "Codacy repeated a pagination cursor — collection incomplete"
+            return 1
+        fi
+        seen_cursors="${seen_cursors}${next_cursor}"$'\n'
+        cursor="$next_cursor"
+    done
+    printf 'COMMIT;\n' >>"$sql_file"
 
     if [[ -s "$sql_file" ]]; then
-        db "$AUDIT_DB" <"$sql_file" 2>/dev/null || log_warn "Some Codacy imports may have failed"
+        db -bail "$AUDIT_DB" <"$sql_file" 2>/dev/null || {
+            log_warn "Codacy findings import failed"
+            return 1
+        }
     fi
 
     count=$(db "$AUDIT_DB" "SELECT COUNT(*) FROM audit_findings WHERE run_id = $run_id AND source = 'codacy';")
@@ -318,8 +347,7 @@ collect_codefactor() {
     local api_token="${CODEFACTOR_API_TOKEN:-}"
     if [[ -z "$api_token" ]]; then
         log_warn "CODEFACTOR_API_TOKEN not set — skipping CodeFactor"
-        echo "0"
-        return 0
+        return 2
     fi
 
     log_info "Collecting CodeFactor findings..."
@@ -327,18 +355,23 @@ collect_codefactor() {
     local api_url="https://www.codefactor.io/api/v1/repos/github/${repo}/issues"
 
     local response
-    response=$(curl -s -H "Authorization: Bearer ${api_token}" \
+    response=$(curl --fail --silent --show-error --max-time 60 -H "Authorization: Bearer ${api_token}" \
         -H "Accept: application/json" \
         "$api_url" 2>/dev/null) || {
         log_warn "CodeFactor API request failed"
         echo "0"
-        return 0
+        return 1
     }
 
     if ! command -v jq &>/dev/null; then
         log_warn "jq not available — cannot parse CodeFactor response"
         echo "0"
-        return 0
+        return 1
+    fi
+
+    if ! printf '%s' "$response" | jq -e 'arrays' >/dev/null 2>&1; then
+        log_warn "CodeFactor returned an invalid issues response"
+        return 1
     fi
 
     local sql_file
@@ -376,10 +409,10 @@ JQ_EOF
 
     echo "$response" | jq -r \
         --arg run_id "$run_id" \
-        -f "$jq_filter_file" >"$sql_file" 2>/dev/null || true
+        -f "$jq_filter_file" >"$sql_file" 2>/dev/null || return 1
 
     if [[ -s "$sql_file" ]]; then
-        db "$AUDIT_DB" <"$sql_file" 2>/dev/null || log_warn "Some CodeFactor imports may have failed"
+        db "$AUDIT_DB" <"$sql_file" 2>/dev/null || return 1
     fi
 
     count=$(db "$AUDIT_DB" "SELECT COUNT(*) FROM audit_findings WHERE run_id = $run_id AND source = 'codefactor';")
