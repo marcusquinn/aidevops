@@ -1143,7 +1143,7 @@ _pulse_dispatch_reserved_finalise_seconds() {
 		printf '%s\n' "$finalise_seconds"
 		return 0
 	fi
-	printf '%s\n' "$((finalise_seconds + floor_seconds))"
+	printf '%s\n' "$((finalise_seconds + floor_seconds + $(_dispatch_enumeration_expected_seconds)))"
 	return 0
 }
 
@@ -1151,17 +1151,9 @@ _pulse_dispatch_reserved_finalise_seconds() {
 # the cycle clock is unavailable), 1 after logging a skip.
 # Args: $1=dispatch context for the log line
 _pulse_cycle_budget_admits_dispatch() {
-	local dispatch_context="$1" remaining_seconds="" floor_seconds=""
-	[[ "${AIDEVOPS_PULSE_DISPATCH_BUDGET_RESERVE:-1}" == "1" ]] || return 0
-	declare -F _pulse_cycle_remaining_seconds >/dev/null 2>&1 || return 0
-	remaining_seconds=$(_pulse_cycle_remaining_seconds "${AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S:-90}") || return 0
-	floor_seconds=$(_pulse_dispatch_floor_seconds)
-	[[ "$remaining_seconds" -ge "$floor_seconds" ]] && return 0
-	echo "[pulse-wrapper] ${dispatch_context} skipped before candidate enumeration: cycle wall-clock budget below per-candidate floor (remaining=${remaining_seconds}s floor=${floor_seconds}s); refill trigger retained for a fresh-budget pass (GH#33307)" >>"$LOGFILE"
-	if declare -F pulse_stats_increment >/dev/null 2>&1; then
-		pulse_stats_increment "pulse_dispatch_cycle_budget_skipped" 2>/dev/null || true
-	fi
-	return 1
+	local dispatch_context="$1"
+	_dispatch_cycle_budget_admits_round "$dispatch_context" before || return 1
+	return 0
 }
 
 # ---------------------------------------------------------------------------
