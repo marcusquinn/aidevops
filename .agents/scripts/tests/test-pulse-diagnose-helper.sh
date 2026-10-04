@@ -959,6 +959,27 @@ PERM_TEXT=$(bash -c 'source "$1"; _render_issue_permission_hold_text "$2"' _ "$S
 assert_contains "text names grant command" "Grant (signs the listed capabilities)" "$PERM_TEXT"
 assert_contains "text names withdraw command" "Withdraw (grants nothing, resumes dispatch)" "$PERM_TEXT"
 
+# GH#33575: a comment history above the argv caps (Linux 128 KiB per string,
+# macOS 1 MiB total) must still name the request; the payload reaches the
+# function from a file, not argv.
+PERM_BIG_FILE=$(mktemp)
+head -c 1100000 /dev/zero | tr '\0' 'x' |
+	jq -Rsc --argjson base "$PERM_COMMENTS" '[{id: 0, author_association: "NONE", created_at: "2026-09-17T00:00:00Z", body: .}] + $base' \
+		>"$PERM_BIG_FILE"
+PERM_BIG_HOLD=$(bash -c 'source "$1"; _issue_permission_hold_json 77 owner/repo "$2" "$(cat "$3")"' \
+	_ "$SCRIPT_DIR/../pulse-diagnose-issue.sh" "$PERM_ISSUE" "$PERM_BIG_FILE" 2>/dev/null)
+rm -f "$PERM_BIG_FILE"
+assert_eq "oversized comment history still names the request" "perm-0123456789abcdef true" \
+	"$(printf '%s' "$PERM_BIG_HOLD" | jq -r '"\(.request_id) \(.active)"')"
+
+# GH#33575: an evaluation failure with the label present fails closed.
+PERM_BAD_HOLD=$(bash -c 'source "$1"; _issue_permission_hold_json 77 owner/repo "$2" "not-json"' \
+	_ "$SCRIPT_DIR/../pulse-diagnose-issue.sh" "$PERM_ISSUE" 2>/dev/null)
+assert_eq "evaluation failure keeps label-present hold active" "true true true" \
+	"$(printf '%s' "$PERM_BAD_HOLD" | jq -r '"\(.active) \(.label_present) \(.evaluation_error)"')"
+PERM_BAD_TEXT=$(bash -c 'source "$1"; _render_issue_permission_hold_text "$2"' _ "$SCRIPT_DIR/../pulse-diagnose-issue.sh" "$PERM_BAD_HOLD" 2>/dev/null)
+assert_contains "text points to verify-permissions on evaluation failure" "aidevops approve verify-permissions" "$PERM_BAD_TEXT"
+
 # =============================================================================
 # Summary
 # =============================================================================
