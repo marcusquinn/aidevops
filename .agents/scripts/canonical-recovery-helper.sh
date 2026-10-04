@@ -1664,6 +1664,13 @@ if [[ "$cmd" == "$FAST_FORWARD_CMD" || "$cmd" == "$SYNC_MIRROR_CMD" ]]; then
 		printf 'Fast-forwarded canonical %s to %s/%s\n' \
 			"$target_branch" "$canonical_remote" "$target_branch"
 	fi
+	# Post-sync maintenance is opt-in and cannot invalidate a converged sync.
+	# The runner independently rejects worker sessions and untrusted config.
+	if [[ -n "$local_sha" && "$local_sha" != "$target_sha" ]]; then
+		if ! python3 "${SCRIPT_DIR}/canonical-post-sync.py" "$repo_path" "$local_sha" "$target_sha" "$REAL_GIT"; then
+			printf 'WARNING: POST_SYNC outcome=warning reason=runner_unavailable\n' >&2
+		fi
+	fi
 	exit 0
 fi
 if [[ -n "$preservation_ref" ]]; then

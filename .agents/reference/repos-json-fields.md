@@ -74,6 +74,50 @@ Agent-source repos receive non-destructive template management:
 
 ## Scheduling and Lifecycle Fields
 
+### `post_sync`: opt-in canonical maintenance
+
+Only a maintainer may manually declare `post_sync` in the local
+`~/.config/aidevops/repos.json` entry with explicit `"role": "maintainer"`.
+Workers must never add, edit, or execute these declarations. The registry must
+be owned by the current user, not group/world-writable, not a symlink, and outside
+the target repository. Project config and `AIDEVOPS_REPOS_CONFIG` overrides are
+not sources of post-sync authority. Local filesystem ownership is the trust
+boundary; this is not a sandbox against arbitrary programs running as that user.
+
+```json
+{
+  "post_sync": [{
+    "when_changed": "packages/db/migrations/meta/_journal.json",
+    "run": ["pnpm", "with-env", "pnpm", "-F", "@workspace/db", "db:migrate"],
+    "timeout_seconds": 60
+  }]
+}
+```
+
+The audited recovery helper executes each matching declaration once after a
+successful `fast-forward-current` or `sync-mirror` update, while holding its
+existing canonical lock. It compares the old and new commit trees, including
+deletions and both sides of renames. `when_changed` is a literal relative file
+or directory path (no glob/pathspec syntax or traversal). An unchanged commit,
+unborn checkout, undeclared repo, or worker/headless invocation runs no command.
+Merge output forwards the `POST_SYNC outcome=...` records before reporting
+`CANONICAL_SYNCED`; there is no second merge-layer hook execution.
+
+`run` must be a nonempty argv array, never a shell string. Commands run from the
+canonical checkout with closed stdin and suppressed output (to avoid credential
+leaks). They inherit the maintainer environment. Review the command and its
+project dependencies before enabling it; use idempotent, non-destructive commands.
+The default timeout is 60 seconds, allowed range 1–300; a whole invocation is
+limited to 300 seconds and 16 declarations. Timeout kills the command's process
+group. Detached/daemonizing commands are not supported.
+
+Failure, timeout, or invalid config warns without rolling back the successful
+sync. Outcomes and exit codes are recorded in a private
+`~/.aidevops/logs/canonical-post-sync.jsonl` ledger; argv/output are never logged.
+Failure is not retried on an unchanged checkout: resolve it through a separate
+maintainer-authorized operation. This feature grants no migration authority to
+workers.
+
 Registration, maintenance, and Pulse are separate scopes:
 
 - Registration retains canonical path resolution, history, privacy guards, and
