@@ -959,6 +959,20 @@ PERM_TEXT=$(bash -c 'source "$1"; _render_issue_permission_hold_text "$2"' _ "$S
 assert_contains "text names grant command" "Grant (signs the listed capabilities)" "$PERM_TEXT"
 assert_contains "text names withdraw command" "Withdraw (grants nothing, resumes dispatch)" "$PERM_TEXT"
 
+# GH#33589: trusted discussion comments are not permission requests.
+PERM_QUOTED_COMMENTS=$(printf '%s' "$PERM_COMMENTS" | jq '. + [
+	{id: 4, author_association: "OWNER", body: "Review quotes <!-- aidevops-permission-request --> for perm-fedcba9876543210"}
+]')
+PERM_QUOTED_HOLD=$(bash -c 'source "$1"; _issue_permission_hold_json 77 owner/repo "$2" "$3"' \
+	_ "$SCRIPT_DIR/../pulse-diagnose-issue.sh" "$PERM_ISSUE" "$PERM_QUOTED_COMMENTS" 2>/dev/null)
+assert_eq "quoted marker does not shadow actual request" "perm-0123456789abcdef true" \
+	"$(printf '%s' "$PERM_QUOTED_HOLD" | jq -r '"\(.request_id) \(.active)"')"
+PERM_QUOTED_ONLY=$(printf '%s' "$PERM_QUOTED_COMMENTS" | jq '[last]')
+PERM_QUOTED_ONLY_HOLD=$(bash -c 'source "$1"; _issue_permission_hold_json 77 owner/repo "$2" "$3"' \
+	_ "$SCRIPT_DIR/../pulse-diagnose-issue.sh" '{"labels":[]}' "$PERM_QUOTED_ONLY" 2>/dev/null)
+assert_eq "quoted marker alone does not create a permission hold" "false null" \
+	"$(printf '%s' "$PERM_QUOTED_ONLY_HOLD" | jq -r '"\(.active) \(.request_id)"')"
+
 # GH#33575: a comment history above the argv caps (Linux 128 KiB per string,
 # macOS 1 MiB total) must still name the request; the payload reaches the
 # function from a file, not argv.

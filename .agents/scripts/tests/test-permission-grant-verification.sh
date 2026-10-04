@@ -115,6 +115,14 @@ verification=$(cmd_verify_permissions issue 123 owner/repo)
 }
 
 [[ "$(cmd_verify_permissions issue 123 owner/repo "$request_id" manual-cli-123-100 feature/auto-gh123 "$resume_digest")" == VERIFIED ]]
+# GH#33589: a later trusted review quoting the marker and request id must not
+# shadow either latest-request discovery or explicit request-id lookup.
+jq --arg marker "$PERMISSION_REQUEST_MARKER" --arg request "$request_id" \
+	'.[0] += [{id: 5, author_association: "OWNER", body: ("Review quotes " + $marker + " for " + $request)}]' \
+	"$comments_file" >"${comments_file}.quoted"
+mv "${comments_file}.quoted" "$comments_file"
+[[ "$(cmd_verify_permissions issue 123 owner/repo)" == VERIFIED ]]
+[[ "$(_fetch_permission_request_json 123 owner/repo "$request_id" | jq -r '.request_id')" == "$request_id" ]]
 for binding in request session branch worktree; do
 	expected_request="$request_id" expected_session=manual-cli-123-100
 	expected_branch=feature/auto-gh123 expected_digest="$resume_digest"

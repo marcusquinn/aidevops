@@ -167,8 +167,9 @@ _fetch_permission_request_json() {
 	endpoint=$(_permission_comments_endpoint "$slug" "$target_number")
 	pages=$(gh api "$endpoint" --paginate --slurp 2>/dev/null) || return 1
 	comments=$(_trusted_permission_comments_json "$pages") || return 1
+	# aidevops:trust-boundary — quoted markers must not shadow real requests.
 	body=$(jq -r --arg marker "$PERMISSION_REQUEST_MARKER" --arg request "$request_id" '
-		[.[] | select((.body // "") | contains($marker) and contains($request))]
+		[.[] | select((.body // "") | startswith($marker) and contains($request))]
 		| sort_by(.id) | last | .body // ""
 	' <<<"$comments") || return 1
 	[[ -n "$body" ]] || return 1
@@ -184,7 +185,7 @@ _fetch_latest_permission_request_json() {
 	pages=$(gh api "$endpoint" --paginate --slurp 2>/dev/null) || return 2
 	comments=$(_trusted_permission_comments_json "$pages") || return 2
 	body=$(jq -r --arg marker "$PERMISSION_REQUEST_MARKER" '
-		[.[] | select((.body // "") | contains($marker))]
+		[.[] | select((.body // "") | startswith($marker))]
 		| sort_by(.id) | last | .body // ""
 	' <<<"$comments") || return 2
 	[[ -n "$body" ]] || return 1
