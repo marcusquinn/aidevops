@@ -1,5 +1,5 @@
 ---
-description: FluentCRM MCP - WordPress CRM with email marketing, automation, and contact management
+description: FluentCRM MCP - WordPress CRM with email marketing, automation, and contact management via FluentCRM's native MCP server
 mode: subagent
 tools:
   read: true
@@ -9,6 +9,7 @@ tools:
   glob: true
   grep: true
   webfetch: true
+  fluentcrm-*: true
   fluentcrm_*: true
 ---
 
@@ -21,103 +22,63 @@ tools:
 
 ## Quick Reference
 
-- **Type**: WordPress CRM plugin with REST API
-- **MCP Server**: `fluentcrm-mcp-server` (local build from GitHub)
-- **Auth**: WordPress Basic Auth (username + application password)
-- **API Base**: `https://your-domain.com/wp-json/fluent-crm/v2`
-
-**Environment Variables**:
-
-```bash
-export FLUENTCRM_API_URL="https://your-domain.com/wp-json/fluent-crm/v2"
-export FLUENTCRM_API_USERNAME="your_username"
-export FLUENTCRM_API_PASSWORD="your_application_password"
-```
-
-**MCP Tools** (prefix `fluentcrm_`): contacts (list/get/find_by_email/create/update/delete), tags (list/create/delete/attach/detach), lists (list/create/delete/attach/detach), campaigns (list/create/pause/resume/delete), email_templates (list/create), automations (list/create), webhooks (list/create), smart_links (list/create/generate_shortcode), dashboard_stats, custom_fields.
+- **Type**: WordPress CRM plugin with a native MCP server and REST API
+- **MCP endpoint**: `https://<site>/wp-json/fluent-crm/mcp` (on by default; needs the WordPress MCP Adapter on the site)
+- **Auth**: WordPress user + Application Password, resolved at launch by `wordpress-mcp-helper.sh serve-http`
+- **Helper preset**: `fluentcrm` → server `fluentcrm-<site>`
+- **REST fallback**: `https://<site>/wp-json/fluent-crm/v2`
+- **Shared setup, rules and fallback**: `tools/wordpress/fluent-mcp.md`
 
 <!-- AI-CONTEXT-END -->
 
-## Installation
-
-Clone and build locally (not published to npm):
+## Setup
 
 ```bash
-mkdir -p ~/.local/share/mcp-servers && cd ~/.local/share/mcp-servers
-git clone https://github.com/netflyapp/fluentcrm-mcp-server.git
-cd fluentcrm-mcp-server && npm install && npm run build
-ls dist/fluentcrm-mcp-server.js  # verify build
+aidevops secret set EXAMPLE_WP_APP_PASSWORD   # run in your own terminal
+~/.aidevops/agents/scripts/wordpress-mcp-helper.sh plugin-mcp-check fluentcrm https://example.com aidevops-bot EXAMPLE_WP_APP_PASSWORD
+~/.aidevops/agents/scripts/wordpress-mcp-helper.sh plugin-mcp-config fluentcrm example https://example.com aidevops-bot EXAMPLE_WP_APP_PASSWORD opencode
 ```
 
-**OpenCode** (`~/.config/opencode/opencode.json`, disabled globally for token efficiency):
+Merge the printed `mcp` object into `~/.config/opencode/opencode.json`, or run the printed `claude mcp add-json` command for Claude Code. Template: `configs/mcp-templates/fluentcrm.json`. Entries are disabled by default; enable per session or through this subagent (`fluentcrm-*` tools).
 
-```json
-{
-  "mcp": {
-    "fluentcrm": {
-      "type": "local",
-      "command": ["/bin/bash", "-c", "source ~/.config/aidevops/credentials.sh && node ~/.local/share/mcp-servers/fluentcrm-mcp-server/dist/fluentcrm-mcp-server.js"],
-      "enabled": false
-    }
-  }
-}
-```
+If `plugin-mcp-check` returns 404, follow the troubleshooting table in `tools/wordpress/fluent-mcp.md` (MCP Adapter missing, MCP disabled, plugin outdated).
 
-**Claude Desktop**: `command: node`, `args: [".../dist/fluentcrm-mcp-server.js"]`, `env: {FLUENTCRM_API_URL, FLUENTCRM_API_USERNAME, FLUENTCRM_API_PASSWORD}`.
+## Tools
 
-**Per-Agent Enablement**: FluentCRM tools enabled via `fluentcrm_*: true` in subagent `tools:` section. Main agents reference this subagent for CRM operations — MCP only loaded when needed.
+Observed on FluentCRM 3.2.5 (25 tools). Confirm the live list with `plugin-mcp-check` before relying on a name.
 
-**WordPress Setup**: Install FluentCRM plugin → create Application Password (Users > Profile) → ensure REST API enabled and permalinks not "Plain" → configure CORS if cross-domain.
+| Area | Tools | Access |
+|------|-------|--------|
+| Context | `fluent-crm-get-crm-context` | read |
+| Contacts | `list-contacts`, `get-contact`, `get-contact-filter-schema` | read |
+| Contacts | `upsert-contact`, `bulk-upsert-contacts`, `delete-contact`, `apply-segments-to-contacts` | write |
+| Notes | `add-contact-note`, `delete-contact-note` | write |
+| Tags and lists | `list-tags`, `list-lists` | read |
+| Tags and lists | `manage-tag`, `manage-list` | write |
+| Campaigns | `list-campaigns`, `get-campaign`, `render-email-preview` | read |
+| Campaigns | `upsert-campaign` | write |
+| Campaigns | `change-campaign-status` | **sends/pauses live campaigns** |
+| Email | `send-test-email`, `send-email-to-contact` | **sends email** |
+| Automations | `list-automations`, `get-automation`, `list-funnel-subscribers` | read |
+| Automations | `update-contact-automation-status` | **changes live automation state** |
 
-## Tool API Reference
+All names carry the `fluent-crm-` prefix. Tools marked in bold contact real people or change live sends: present the exact call and recipients, and run it only on an explicit request. Contact data is personal data; summarise rather than dump records.
 
-### Contacts
+## Common workflows
 
-- `fluentcrm_create_contact` — required: `email`; optional: `first_name`, `last_name`, `phone`, `address_line_1`, `city`, `country`
-- `fluentcrm_list_contacts` — pagination: `page`, `per_page`; filter: `search` (email/name)
-- `fluentcrm_find_contact_by_email` — exact email lookup
-- `fluentcrm_update_contact` — `subscriberId` + fields to update
+- **Segment review**: `get-crm-context` → `get-contact-filter-schema` → `list-contacts` with filters → report counts and samples.
+- **Contact hygiene**: `get-contact` → propose tag/list changes → `apply-segments-to-contacts` or `upsert-contact` after approval → re-read to verify.
+- **Campaign draft**: `list-campaigns` → `upsert-campaign` (draft) → `render-email-preview` → `send-test-email` to an internal address → hand back for approval before `change-campaign-status`.
+- **Automation check**: `list-automations` → `get-automation` → `list-funnel-subscribers` to explain where contacts are.
 
-### Campaigns
+## Legacy community server
 
-1. Create template: `fluentcrm_create_email_template` (`title`, `subject`, `body` as HTML)
-2. Create campaign: `fluentcrm_create_campaign` (`title`, `subject`, `template_id`, `recipient_list` as array of list IDs)
-3. Monitor: `fluentcrm_dashboard_stats`
-4. Control: `fluentcrm_pause_campaign` / `fluentcrm_resume_campaign`
-
-### Automations
-
-`fluentcrm_create_automation` (`title`, `description`, `trigger`):
-
-| Trigger | Fires when |
-|---------|------------|
-| `tag_added` | Tag applied to contact |
-| `list_added` | Contact joins a list |
-| `form_submitted` | Form submitted |
-| `link_clicked` | Email link clicked |
-| `email_opened` | Email opened |
-
-### Smart Links
-
-Trackable URLs that apply tags/lists on click. `fluentcrm_create_smart_link`: `target_url`, `apply_tags`/`remove_tags`, `apply_lists`/`remove_lists`, `auto_login`. Shortcode: `fluentcrm_generate_smart_link_shortcode` (`slug`, optional `linkText`).
-
-Smart Links API may not be available in all FluentCRM versions — use admin panel if API returns 404.
-
-### Webhooks
-
-`fluentcrm_create_webhook`: `name`, `url`, `status` (`pending`/`subscribed`), `tags`, `lists`. Events: contact created/updated, tag added/removed, list subscription changes, email events (sent/opened/clicked), form submissions.
-
-## Troubleshooting
-
-**Auth errors**: `curl -u "username:app_password" "https://your-domain.com/wp-json/fluent-crm/v2/subscribers"`
-
-**API not available**: Verify FluentCRM plugin active, REST API enabled, permalinks not "Plain", no security plugins blocking API.
-
-**Rate limiting**: Use pagination for large datasets; add delays between requests; use batch operations where available.
+Before FluentCRM shipped a native server, aidevops documented the community `netflyapp/fluentcrm-mcp-server` (local build, `fluentcrm_*` tools, credentials in `credentials.sh`). Prefer the native server: it needs no build, uses FluentCRM's own permission checks and keeps the password out of runtime config. Existing `fluentcrm_*` configurations keep working with this subagent until removed.
 
 ## Related
 
-- `marketing-sales.md` — Sales/marketing workflows, tag naming conventions, lead processing, best practices
+- `tools/wordpress/fluent-mcp.md` — all Fluent plugin MCP servers, operating rules, REST/WP-CLI fallback
+- `marketing-sales.md` — Sales/marketing workflows, tag naming conventions, lead processing
 - `services/email/ses.md` — Email delivery via SES
 - FluentCRM Docs: <https://fluentcrm.com/docs/>
 - FluentCRM REST API: <https://rest-api.fluentcrm.com/>
