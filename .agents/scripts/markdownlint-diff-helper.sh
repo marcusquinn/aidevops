@@ -74,8 +74,9 @@ get_changed_ranges() {
 	local _pattern="$3"
 
 	local _diff_output
-	# shellcheck disable=SC2086
-	_diff_output=$(git diff --unified=0 "$_base" "$_head" -- $_pattern 2>/dev/null) || true
+	# GH#33595: pass one quoted pathspec. Embedded quote characters or shell
+	# globbing against the working directory would make git match nothing.
+	_diff_output=$(git diff --unified=0 "$_base" "$_head" -- "$_pattern" 2>/dev/null) || true
 
 	local _current_file=""
 	{
@@ -155,7 +156,7 @@ run_markdownlint() {
 
 	# Get changed line ranges
 	local _ranges
-	_ranges=$(get_changed_ranges "$_base" "$_head" "'*.md'")
+	_ranges=$(get_changed_ranges "$_base" "$_head" '*.md')
 
 	if [ -z "$_ranges" ]; then
 		log "No line changes detected in markdown files"
