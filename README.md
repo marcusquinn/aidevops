@@ -219,7 +219,7 @@ In an AI session:
 - 100+ commands for common workflows
 
 <!-- aidevops:inventory:start -->
-Exact source inventory: **17 main agents**, **2,256 sub agents**, **2,217 helper scripts**, **111 slash commands**.
+Exact source inventory: **17 main agents**, **2,256 sub agents**, **2,218 helper scripts**, **111 slash commands**.
 <!-- aidevops:inventory:end -->
 
 These are tracked source modules and entry points, not simultaneously running

@@ -2,7 +2,7 @@
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="title description">
   <title id="title">17 main agents, 2,250+ sub agents, 2,210+ helper scripts, 110+ slash commands</title>
-  <desc id="description">AI DevOps source inventory: 17 main agents, 2,256 sub agents, 2,217 helper scripts, 111 slash commands. See DESIGN.md for counting rules.</desc>
+  <desc id="description">AI DevOps source inventory: 17 main agents, 2,256 sub agents, 2,218 helper scripts, 111 slash commands. See DESIGN.md for counting rules.</desc>
   <!-- Opaque card covers the previous numbers; all other pixels stay unchanged. -->
   <rect x="82" y="386" width="1036" height="102" rx="26" fill="#050b0d" stroke="#153d43"/>
   <g fill="#8ce8ff" font-family="sans-serif" font-size="34" font-weight="700" text-anchor="middle">
