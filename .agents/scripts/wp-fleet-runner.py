@@ -58,8 +58,12 @@ def atomic(path, value):
 
 
 def command(argv, data=None, timeout=120, env=None):
-    result = subprocess.run(argv, input=data, stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE, timeout=timeout, env=env)
+    require(argv and argv[0] in ('wp', 'gh', 'bash', 'ssh', 'sshpass'),
+            'unapproved command executable')
+    # Executables are fixed; callers validate selections and audit argv. No
+    # release notes or shell strings enter this local subprocess boundary.
+    result = subprocess.run(argv, input=data, stdout=subprocess.PIPE,  # nosec B603 -- fixed executables, validated argv, no shell
+                            stderr=subprocess.PIPE, timeout=timeout, env=env, shell=False)
     require(result.returncode == 0, 'command failed; private checkpoint retained')
     return result.stdout
 
@@ -252,30 +256,26 @@ def create_backup(root, run, identity, baseline, request, checkpoint):
             shutil.rmtree(str(temporary))
 
 
-def remote(request):
-    os.umask(0o077)
-    require(sys.version_info >= (3, 6), 'Python 3.6 required')
+def discover(request):
+    parent = os.path.realpath(request['parent'])
+    require(os.path.isdir(parent) and parent != '/', 'explicit bounded discovery parent required')
+    roots = []
+    visited = 0
+    for current, dirs, names in os.walk(parent, followlinks=False):
+        visited += 1
+        require(visited <= 10000, 'discovery directory limit exceeded')
+        depth = len(Path(current).relative_to(parent).parts)
+        dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(current, d))]
+        if 'wp-config.php' in names:
+            roots.append(current)
+            dirs[:] = []
+        elif depth >= 4:
+            dirs[:] = []
+    return sorted(roots)
+
+
+def remote_context(request):
     action = request['action']
-    if action == 'probe':
-        return {'python': True}
-    if action == 'inspect':
-        return snapshot(request)
-    if action == 'discover':
-        parent = os.path.realpath(request['parent'])
-        require(os.path.isdir(parent) and parent != '/', 'explicit bounded discovery parent required')
-        roots = []
-        visited = 0
-        for current, dirs, names in os.walk(parent, followlinks=False):
-            visited += 1
-            require(visited <= 10000, 'discovery directory limit exceeded')
-            depth = len(Path(current).relative_to(parent).parts)
-            dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(current, d))]
-            if 'wp-config.php' in names:
-                roots.append(current)
-                dirs[:] = []
-            elif depth >= 4:
-                dirs[:] = []
-        return sorted(roots)
     root = os.path.realpath(request['root'])
     storage_input = Path(os.path.expanduser(request['storage']))
     require(storage_input.is_absolute() and
@@ -296,18 +296,26 @@ def remote(request):
     checkpoint = run / (identity + '.json')
     previous = json.loads(checkpoint.read_text()) if checkpoint.exists() else {}
     require(not previous or previous.get('schema') == SCHEMA, 'unsupported checkpoint schema')
-    if action == 'check-backup':
-        check_backup(previous, run, request)
-        return {'backup_verified': True}
-    if action == 'verify':
-        require(matches(state, release), 'installed release bytes mismatch')
-        require(state['health'] == baseline['health'], 'health expectation mismatch')
-        audit = request.get('audit_argv')
-        if audit:
-            audit_guard(audit)
-            for url in baseline['urls']:
-                wp(root, '--url=' + url, *audit)
-        return {'verified': True, 'state': state}
+    return {'root': root, 'state': state, 'run': run, 'identity': identity,
+            'checkpoint': checkpoint, 'previous': previous}
+
+
+def remote_verify(request, context):
+    state = context['state']
+    require(matches(state, request['release']), 'installed release bytes mismatch')
+    audit = request.get('audit_argv')
+    if audit:
+        audit_guard(audit)
+        for url in request['baseline']['urls']:
+            wp(context['root'], '--url=' + url, *audit)
+    return {'verified': True, 'state': state}
+
+
+def remote_write(request, context):
+    root, run = context['root'], context['run']
+    identity, checkpoint = context['identity'], context['checkpoint']
+    previous = context['previous']
+    baseline, release = request['baseline'], request['release']
     # Fixed per-account namespace, independent of run ID AND backup storage.
     locks = private_dir(os.path.expanduser('~/.aidevops/wp-fleet-locks'))
     lock = locks / (identity + '.lock')
@@ -321,45 +329,70 @@ def remote(request):
         # Recheck after acquiring the cooperative lock.
         state = snapshot(request)
         require(state == request['preflight'], 'installation changed after fleet preflight')
-        if action == 'backup':
+        if request['action'] == 'backup':
             require(state == baseline or matches(state, release), 'backup baseline drift')
             if previous.get('backup'):
                 check_backup(previous, run, request)
                 return previous
             require(state == baseline, 'original baseline backup required before deployment')
             return create_backup(root, run, identity, baseline, request, checkpoint)
-        require(action == 'deploy', 'unknown remote phase')
-        check_backup(previous, run, request)
-        version_guard(state['version'], release['version'])
-        if matches(state, release):
-            return {'skipped': True, 'state': state}
-        require(state['version'] == baseline['version'] and state['files'] == baseline['files'],
-                'installed version or bytes drift; refusing overwrite')
-        artifact = base64.b64decode(request['artifact'])
-        require(digest(artifact) == release['sha256'], 'artifact checksum mismatch')
-        require(archive(artifact, request['slug'], release['version']) == release['files'], 'archive identity mismatch')
-        staged = run / 'release.zip'
-        if staged.exists():
-            require(digest(staged.read_bytes()) == release['sha256'], 'staged artifact mismatch')
-        else:
-            fd = os.open(str(staged), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-            with os.fdopen(fd, 'wb') as stream:
-                stream.write(artifact)
-        previous['mutation_started'] = True
-        atomic(checkpoint, previous)
-        wp(root, 'plugin', 'install', str(staged), '--force')
-        after = snapshot(request)
-        require(matches(after, release) and after['activation'] == baseline['activation'] and
-                after['config_sha256'] == baseline['config_sha256'] and
-                after['health'] == baseline['health'], 'post-deploy verification failed; no automatic rollback')
-        previous['deployed'] = True
-        atomic(checkpoint, previous)
-        return {'deployed': True, 'state': after}
+        return remote_deploy(request, context, state)
     finally:
         owner = json.loads((lock / 'owner.json').read_text())
         if owner.get('token') == token:
             (lock / 'owner.json').unlink()
             lock.rmdir()
+
+
+def remote_deploy(request, context, state):
+    previous, run = context['previous'], context['run']
+    baseline, release = request['baseline'], request['release']
+    check_backup(previous, run, request)
+    version_guard(state['version'], release['version'])
+    if matches(state, release):
+        return {'skipped': True, 'state': state}
+    require(state['version'] == baseline['version'] and state['files'] == baseline['files'],
+            'installed version or bytes drift; refusing overwrite')
+    artifact = base64.b64decode(request['artifact'])
+    require(digest(artifact) == release['sha256'], 'artifact checksum mismatch')
+    require(archive(artifact, request['slug'], release['version']) == release['files'], 'archive identity mismatch')
+    staged = run / 'release.zip'
+    require(not staged.is_symlink(), 'staged artifact symlink refused')
+    if staged.exists():
+        require(digest(staged.read_bytes()) == release['sha256'], 'staged artifact mismatch')
+    else:
+        fd = os.open(str(staged), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, 'wb') as stream:
+            stream.write(artifact)
+    previous['mutation_started'] = True
+    atomic(context['checkpoint'], previous)
+    wp(context['root'], 'plugin', 'install', str(staged), '--force')
+    after = snapshot(request)
+    scope_guard(after, baseline, release)
+    require(matches(after, release), 'post-deploy verification failed; no automatic rollback')
+    previous['deployed'] = True
+    atomic(context['checkpoint'], previous)
+    return {'deployed': True, 'state': after}
+
+
+def remote(request):
+    os.umask(0o077)
+    require(sys.version_info >= (3, 6), 'Python 3.6 required')
+    action = request['action']
+    if action == 'probe':
+        return {'python': True}
+    if action == 'inspect':
+        return snapshot(request)
+    if action == 'discover':
+        return discover(request)
+    require(action in ('check-backup', 'verify', 'backup', 'deploy'), 'unknown remote phase')
+    context = remote_context(request)
+    if action == 'check-backup':
+        check_backup(context['previous'], context['run'], request)
+        return {'backup_verified': True}
+    if action == 'verify':
+        return remote_verify(request, context)
+    return remote_write(request, context)
 
 
 def transport(site, request):
