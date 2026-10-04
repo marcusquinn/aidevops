@@ -9,8 +9,9 @@ name: Repository Metrics (reusable) — generate local README data and badges
 #   docs/metrics/repo-metrics.md
 #   docs/metrics/badges/{loc,languages,dependencies}.svg
 #
-# It also writes legacy .github/badges/loc-total.svg and loc-languages.svg so
-# older aidevops-managed README blocks keep rendering while repos migrate.
+# With `legacy_badge_dir: .github/badges` it also writes legacy loc-total.svg
+# and loc-languages.svg for older README blocks. The default is off, so repos
+# that sync `.github/` to other repos never copy one repo's badges into another.
 #
 # The scanner is dependency-light (Python stdlib + git) and skips outputs that
 # are already fresh by default, avoiding per-PR delays and noisy badge commits.
@@ -24,10 +25,10 @@ on:
         type: string
         default: 'marcusquinn/aidevops'
       aidevops_ref:
-        description: 'aidevops ref to fetch the metrics helper from (main, vX.Y.Z, or sha)'
+        description: 'aidevops ref to fetch the metrics helper from (main, vX.Y.Z, or sha). Empty (default): the commit this reusable workflow was called at, so a caller pinned by SHA gets helpers from the same SHA.'
         required: false
         type: string
-        default: 'main'
+        default: ''
       output_dir:
         description: 'Directory to write repo-metrics.json/md to'
         required: false
@@ -39,10 +40,10 @@ on:
         type: string
         default: 'docs/metrics/badges'
       legacy_badge_dir:
-        description: 'Directory for legacy loc-total/loc-languages SVGs'
+        description: 'Directory for legacy loc-total/loc-languages SVGs. Empty (default) writes none; set .github/badges only for READMEs that still use the legacy paths.'
         required: false
         type: string
-        default: '.github/badges'
+        default: ''
       top_n:
         description: 'Top-N languages in the language breakdown SVG'
         required: false
@@ -126,7 +127,10 @@ jobs:
         with:
           repository: ${{ inputs.aidevops_repository || 'marcusquinn/aidevops' }}
           path: __aidevops
-          ref: ${{ inputs.aidevops_ref || 'main' }}
+          # An explicit aidevops_ref wins. Otherwise use the commit this reusable
+          # workflow file was called at (job.workflow_sha), when helpers come from
+          # that same repository, so helpers never drift from the pinned YAML.
+          ref: ${{ inputs.aidevops_ref || ((inputs.aidevops_repository || 'marcusquinn/aidevops') == job.workflow_repository && job.workflow_sha) || 'main' }}
           fetch-depth: 1
           token: ${{ secrets.AIDEVOPS_READ_TOKEN || secrets.GITHUB_TOKEN }}
 
@@ -180,11 +184,13 @@ jobs:
           COMMIT_SUBJECT: ${{ inputs.commit_message }}
         run: |
           set -euo pipefail
-          if [[ -z "$(git status --porcelain -- "$OUTPUT_DIR" "$BADGE_DIR" "$LEGACY_BADGE_DIR")" ]]; then
+          METRIC_PATHS=("$OUTPUT_DIR" "$BADGE_DIR")
+          [[ -z "${LEGACY_BADGE_DIR:-}" ]] || METRIC_PATHS+=("$LEGACY_BADGE_DIR")
+          if [[ -z "$(git status --porcelain -- "${METRIC_PATHS[@]}")" ]]; then
             echo "No repository metrics changes to commit"
             exit 0
           fi
-          git add "$OUTPUT_DIR" "$BADGE_DIR" "$LEGACY_BADGE_DIR"
+          git add -- "${METRIC_PATHS[@]}"
           git commit -m "$COMMIT_SUBJECT"
           for i in 1 2 3; do
             echo "Push attempt $i..."

@@ -30,6 +30,13 @@ on:
 
 jobs:
   metrics:
+    # To pin like your other actions, use a release commit SHA with its tag as a
+    # comment, and set `aidevops_ref` to the same SHA (`aidevops sync-workflows`
+    # keeps the two coupled). Find the SHA with
+    # `gh api repos/marcusquinn/aidevops/commits/vX.Y.Z --jq .sha`:
+    #   uses: marcusquinn/aidevops/.github/workflows/loc-badge-reusable.yml@<40-char-sha> # vX.Y.Z
+    #   aidevops_ref: <40-char-sha> # vX.Y.Z
+    # If `aidevops_ref` is omitted, helpers come from the commit `uses:` resolved to.
     uses: marcusquinn/aidevops/.github/workflows/loc-badge-reusable.yml@main
     permissions:
       contents: write
@@ -37,6 +44,7 @@ jobs:
       # Keep this equal to the ref on `uses:` so helper code is pinned with the reusable YAML.
       aidevops_ref: main
       # Optional input overrides — uncomment and edit as needed:
+      # legacy_badge_dir: .github/badges   # only for READMEs using legacy badge paths
       # top_n: 8
       # skip_if_fresh_hours: 24
       # extra_excludes: |

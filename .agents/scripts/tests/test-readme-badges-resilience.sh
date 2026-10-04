@@ -79,8 +79,11 @@ _render_for_fixture() {
 	local _repo_path="$1"
 	local _slug="$2"
 	local _repos_json="$3"
+	shift 3
 	_write_repos_json "$_repos_json" "$_repo_path" "$_slug"
-	REPOS_JSON="$_repos_json" bash "$HELPER" render "$_slug" --branch main --template "$TEMPLATE"
+	# --offline keeps fixtures deterministic: no quality-service, WordPress.org,
+	# or GitHub probes for the fixture slugs.
+	REPOS_JSON="$_repos_json" bash "$HELPER" render "$_slug" --branch main --offline "$@"
 	return 0
 }
 
@@ -94,7 +97,7 @@ _test_native_actions_badge_uses_workflow_file() {
 	printf 'name: Code Quality Analysis\non: [push]\n' >"$_repo/.github/workflows/code-quality.yml"
 
 	local _out
-	_out=$(_render_for_fixture "$_repo" "$_slug" "$_tmp/repos.json")
+	_out=$(_render_for_fixture "$_repo" "$_slug" "$_tmp/repos.json" --template "$TEMPLATE")
 	_assert_contains_text \
 		"Actions badge uses file-scoped native endpoint" \
 		"https://github.com/example/repo/actions/workflows/code-quality.yml/badge.svg?branch=main" \
@@ -136,11 +139,99 @@ _test_actions_badge_skips_unknown_workflow() {
 	printf '# Example\n' >"$_repo/README.md"
 
 	local _out
-	_out=$(_render_for_fixture "$_repo" "$_slug" "$_tmp/repos.json")
+	_out=$(_render_for_fixture "$_repo" "$_slug" "$_tmp/repos.json" --template "$TEMPLATE")
 	_assert_not_contains_text \
 		"Unknown workflow omits Actions badge instead of rendering a broken image" \
 		"[![GitHub Actions]" \
 		"$_out"
+	rm -rf "$_tmp"
+	return 0
+}
+
+# GH#33532: wordpress-plugin profile, SPDX from a legacy plugin header, and
+# offline mode omitting every network-proven badge.
+_test_wordpress_plugin_profile() {
+	local _tmp
+	_tmp=$(mktemp -d)
+	local _repo="$_tmp/my-plugin"
+	mkdir -p "$_repo"
+	printf '# My Plugin\n' >"$_repo/README.md"
+	printf '%s\n' '<?php' '/**' ' * Plugin Name: My Plugin' ' * Requires at least: 6.2' \
+		' * Requires PHP: 7.4' ' * License: GPLv2 or later' ' * Text Domain: my-plugin' ' */' \
+		>"$_repo/my-plugin.php"
+	printf '%s\n' '=== My Plugin ===' 'Tested up to: 6.6' 'Stable tag: 1.0.0' >"$_repo/readme.txt"
+	printf 'GNU GENERAL PUBLIC LICENSE\n' >"$_repo/LICENSE"
+
+	local _out
+	_out=$(_render_for_fixture "$_repo" "example/my-plugin" "$_tmp/repos.json" --has-releases 0)
+	_assert_contains_text "WordPress profile renders Requires WordPress" \
+		"img.shields.io/badge/WordPress-6.2%2B-21759B.svg" "$_out"
+	_assert_contains_text "WordPress profile renders Tested up to from readme.txt" \
+		"img.shields.io/badge/tested%20up%20to-6.6-21759B.svg" "$_out"
+	_assert_contains_text "WordPress profile renders Requires PHP" \
+		"img.shields.io/badge/PHP-7.4%2B-777BB4.svg" "$_out"
+	_assert_contains_text "Legacy plugin licence header becomes SPDX GPL-2.0-or-later" \
+		"img.shields.io/badge/license-GPL--2.0--or--later-blue.svg" "$_out"
+	_assert_contains_text "Licence badge links to the LICENSE file" \
+		"(https://github.com/example/my-plugin/blob/main/LICENSE)" "$_out"
+	_assert_not_contains_text "Offline render omits WordPress.org badge" "wordpress.org/plugins/" "$_out"
+	_assert_not_contains_text "Offline render omits SonarCloud badge" "sonarcloud.io" "$_out"
+	_assert_not_contains_text "Offline render omits Codacy badge" "app.codacy.com" "$_out"
+	_assert_not_contains_text "Offline render omits CodeFactor badge" "codefactor.io" "$_out"
+	_assert_not_contains_text "No releases omits release badge" "[![Latest release]" "$_out"
+	rm -rf "$_tmp"
+	return 0
+}
+
+_test_license_and_release_detection() {
+	local _tmp
+	_tmp=$(mktemp -d)
+	local _repo="$_tmp/repo"
+	mkdir -p "$_repo"
+	printf '# Example\n' >"$_repo/README.md"
+	printf '{"name":"example/repo","license":"MIT"}\n' >"$_repo/composer.json"
+
+	local _out
+	_out=$(_render_for_fixture "$_repo" "example/repo" "$_tmp/repos.json" --has-releases 1)
+	_assert_contains_text "composer.json licence renders SPDX badge" \
+		"img.shields.io/badge/license-MIT-blue.svg" "$_out"
+	_assert_contains_text "Published releases render latest-release badge" \
+		"(https://github.com/example/repo/releases/latest)" "$_out"
+	_assert_not_contains_text "Non-plugin repo omits WordPress profile" "WordPress Plugin" "$_out"
+
+	rm -f "$_repo/composer.json"
+	_out=$(_render_for_fixture "$_repo" "example/repo" "$_tmp/repos.json" --has-releases 0)
+	_assert_not_contains_text "Checkout without licence omits licence badge" "[![License]" "$_out"
+	rm -rf "$_tmp"
+	return 0
+}
+
+# GH#33532: a repo-owned .github/readme-badges.md.tmpl wins over the canonical
+# template, so check reports no drift after inject.
+_test_repo_owned_template() {
+	local _tmp
+	_tmp=$(mktemp -d)
+	local _repo="$_tmp/repo"
+	mkdir -p "$_repo/.github"
+	printf '# Example\n\nBody.\n' >"$_repo/README.md"
+	printf '[![Custom](https://example.invalid/{{REPO}}.svg)](https://github.com/{{SLUG}})\n' \
+		>"$_repo/.github/readme-badges.md.tmpl"
+
+	local _out
+	_out=$(_render_for_fixture "$_repo" "example/repo" "$_tmp/repos.json")
+	_assert_contains_text "Repo-owned template is used without --template" \
+		"[![Custom](https://example.invalid/repo.svg)](https://github.com/example/repo)" "$_out"
+	_assert_not_contains_text "Repo-owned template replaces canonical lines" \
+		"docs/metrics/badges/loc.svg" "$_out"
+
+	local _rc=0
+	bash "$HELPER" inject "$_repo/README.md" "example/repo" --branch main --offline >/dev/null 2>&1 || _rc=$?
+	bash "$HELPER" check "$_repo/README.md" "example/repo" --branch main --offline >/dev/null 2>&1 || _rc=$?
+	if [[ "$_rc" -eq 0 ]] && grep -Fq 'https://example.invalid/repo.svg' "$_repo/README.md"; then
+		_pass "inject/check honour the repo-owned template without drift"
+	else
+		_fail "inject/check honour the repo-owned template without drift" "exit $_rc"
+	fi
 	rm -rf "$_tmp"
 	return 0
 }
@@ -170,6 +261,9 @@ main() {
 
 	_test_native_actions_badge_uses_workflow_file
 	_test_actions_badge_skips_unknown_workflow
+	_test_wordpress_plugin_profile
+	_test_license_and_release_detection
+	_test_repo_owned_template
 	_test_source_badge_blocks_avoid_github_shields
 
 	printf 'Tests run: %d, failed: %d\n' "$TESTS_RUN" "$TESTS_FAILED"

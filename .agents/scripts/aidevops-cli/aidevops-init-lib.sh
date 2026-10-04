@@ -1570,6 +1570,30 @@ GITATTRSEOF
 	return 0
 }
 
+# Generate committed local repo metrics (fail-soft). Legacy .github/badges
+# SVGs only for READMEs that still reference them (GH#33532): repos that sync
+# .github/ to other repos must not copy one repo's badges into another.
+_init_generate_repo_metrics() {
+	local _metrics_helper="$1"
+	local _project_root="$2"
+	local _readme_path="$3"
+	[[ -f "$_metrics_helper" ]] || return 0
+	local _legacy_badge_args=()
+	if [[ -f "$_readme_path" ]] && grep -qF '.github/badges/' "$_readme_path"; then
+		_legacy_badge_args=(--legacy-badge-dir "$_project_root/.github/badges")
+	fi
+	if bash "$_metrics_helper" generate \
+		--output-dir "$_project_root/docs/metrics" \
+		--badge-dir "$_project_root/docs/metrics/badges" \
+		${_legacy_badge_args[@]+"${_legacy_badge_args[@]}"} \
+		"$_project_root" >/dev/null; then
+		print_success "Generated local repo metrics in docs/metrics"
+	else
+		print_warning "Repo metrics generation failed — run manually: aidevops metrics generate"
+	fi
+	return 0
+}
+
 _init_optional_scaffolding() {
 
 	# Scaffold optional files gated by init_scope (collaborator pointers,
@@ -1636,17 +1660,7 @@ _init_optional_scaffolding() {
 
 		# Generate committed local metrics after README injection so LOC/language
 		# numbers include the final README badge block.
-		if [[ -f "$_metrics_helper" ]]; then
-			if bash "$_metrics_helper" generate \
-				--output-dir "$project_root/docs/metrics" \
-				--badge-dir "$project_root/docs/metrics/badges" \
-				--legacy-badge-dir "$project_root/.github/badges" \
-				"$project_root" >/dev/null; then
-				print_success "Generated local repo metrics in docs/metrics"
-			else
-				print_warning "Repo metrics generation failed — run manually: aidevops metrics generate"
-			fi
-		fi
+		_init_generate_repo_metrics "$_metrics_helper" "$project_root" "$_readme_path"
 
 		# Sync the canonical GitHub label palette for this repo. This is a
 		# best-effort external GitHub setup step: warn on auth/API/access issues, but

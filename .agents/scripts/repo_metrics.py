@@ -127,6 +127,17 @@ def outputs_fresh(json_path: Path, badge_dir: Path, legacy_badge_dir: Path | Non
     return age_seconds < max_age_hours * 3600
 
 
+def dependency_badge_value(deps: dict[str, Any]) -> str:
+    """Badge text; splits runtime from dev-only so dev tooling is not read as runtime risk."""
+    direct = int(deps["direct"])
+    dev = int(deps.get("dev", 0))
+    if dev > 0:
+        return f"{int(deps.get('runtime', direct - dev))} runtime, {dev} dev"
+    if int(deps["total"]) == direct:
+        return f"{direct} direct"
+    return f"{direct}/{int(deps['total'])}"
+
+
 def write_outputs(metrics: dict[str, Any], output_dir: Path, badge_dir: Path, legacy_badge_dir: Path | None, top_n: int) -> None:
     json_path = output_dir / "repo-metrics.json"
     md_path = output_dir / "repo-metrics.md"
@@ -138,8 +149,7 @@ def write_outputs(metrics: dict[str, Any], output_dir: Path, badge_dir: Path, le
     deps = metrics["dependencies"]
     write_text(badge_dir / "loc.svg", render_flat_badge("lines of code", human_count(total_code), "#007ec6"))
     write_text(badge_dir / "languages.svg", render_languages_svg(metrics["languages"], top_n))
-    dep_value = f"{int(deps['direct'])} direct" if int(deps["total"]) == int(deps["direct"]) else f"{int(deps['direct'])}/{int(deps['total'])}"
-    write_text(badge_dir / "dependencies.svg", render_flat_badge("dependencies", dep_value, "#4c1"))
+    write_text(badge_dir / "dependencies.svg", render_flat_badge("dependencies", dependency_badge_value(deps), "#4c1"))
 
     write_text(badge_dir / "loc-total.svg", render_flat_badge("lines of code", human_count(total_code), "#007ec6"))
     write_text(badge_dir / "loc-languages.svg", render_languages_svg(metrics["languages"], top_n))

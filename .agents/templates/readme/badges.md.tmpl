@@ -1,8 +1,17 @@
 <!-- Build & Quality Status -->
 {{?HAS_ACTIONS_WORKFLOW}}[![GitHub Actions](https://github.com/{{SLUG}}/actions/workflows/{{ACTIONS_WORKFLOW_FILE}}/badge.svg?branch={{DEFAULT_BRANCH}})](https://github.com/{{SLUG}}/actions/workflows/{{ACTIONS_WORKFLOW_FILE}})
+{{?HAS_SONARCLOUD}}[![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project={{SONAR_PROJECT_KEY}}&metric=alert_status)](https://sonarcloud.io/summary/new_code?id={{SONAR_PROJECT_KEY}})
+{{?HAS_CODACY}}[![Codacy grade]({{CODACY_GRADE_URL}})](https://app.codacy.com/gh/{{SLUG}}/dashboard)
+{{?HAS_CODEFACTOR}}[![CodeFactor](https://www.codefactor.io/repository/github/{{SLUG}}/badge)](https://www.codefactor.io/repository/github/{{SLUG}})
 
 <!-- License & Legal -->
-{{?HAS_LICENSE}}[![License](https://img.shields.io/badge/license-see%20file-yellow.svg)](https://github.com/{{SLUG}}/blob/{{DEFAULT_BRANCH}}/LICENSE)
+{{?HAS_LICENSE}}[![License](https://img.shields.io/badge/license-{{LICENSE_BADGE}}.svg)]({{LICENSE_URL}})
+{{?IS_WP_PLUGIN}}
+{{?IS_WP_PLUGIN}}<!-- WordPress Plugin -->
+{{?HAS_WPORG}}[![WordPress.org](https://img.shields.io/wordpress/plugin/v/{{WPORG_SLUG}}.svg)](https://wordpress.org/plugins/{{WPORG_SLUG}}/)
+{{?WP_REQUIRES}}[![Requires WordPress](https://img.shields.io/badge/WordPress-{{WP_REQUIRES}}%2B-21759B.svg?logo=wordpress)]({{WP_INFO_URL}})
+{{?WP_TESTED}}[![Tested up to](https://img.shields.io/badge/tested%20up%20to-{{WP_TESTED}}-21759B.svg?logo=wordpress)]({{WP_INFO_URL}})
+{{?WP_REQUIRES_PHP}}[![Requires PHP](https://img.shields.io/badge/PHP-{{WP_REQUIRES_PHP}}%2B-777BB4.svg?logo=php)]({{WP_INFO_URL}})
 
 <!-- Repository Metrics -->
 {{?HAS_REPO_METRICS}}[![Lines of code](docs/metrics/badges/loc.svg)](docs/metrics/repo-metrics.md)
@@ -10,4 +19,5 @@
 {{?HAS_REPO_METRICS}}[![Dependencies](docs/metrics/badges/dependencies.svg)](docs/metrics/repo-metrics.md)
 
 <!-- Project Links -->
+{{?HAS_RELEASES}}[![Latest release](https://img.shields.io/badge/release-latest-blue.svg)](https://github.com/{{SLUG}}/releases/latest)
 [![GitHub repository](https://img.shields.io/badge/github-repository-181717.svg?logo=github)](https://github.com/{{SLUG}})
