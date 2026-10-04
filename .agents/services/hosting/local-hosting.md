@@ -95,6 +95,15 @@ Keep the existing IPv4 hosts entry and LocalWP entries unchanged. Do not add `::
 }
 ```
 
+### Headless worker verification access
+
+Headless workers deny loopback and raw-IP HTTP by default. To let workers verify a repository's local site, register it from the canonical checkout (`localdev-helper.sh add <name>` or `run`); the app name must match that checkout's `package.json` name or directory basename. Workers can then use `curl`/`wget` against:
+
+- `https://<name>.local/` and registered branch subdomains (ports 80/443, including `--resolve <name>.local:443:127.0.0.1`).
+- `http://localhost:<port>/`, `127.0.0.1` or `[::1]` on the app's registered port or branch ports.
+
+Worker-started servers on other ports, other repositories' apps, proxies and non-HTTP clients stay denied. Worker sandboxes use a separate `HOME`, so `localdev-helper.sh` inside a worker does not change the operator registry the policy reads (`$REAL_HOME/.local-dev-proxy/ports.json`). A whole-process egress backend still enforces `loopback_action: deny`. Policy notes: `configs/network-tiers.conf`.
+
 ## CLI — localdev-helper.sh
 
 **run** — Zero-config wrapper: auto-registers, resolves port, injects `PORT`/`HOST`, execs command.

@@ -10,6 +10,7 @@ from typing import Any
 
 from command_policy_git import _analyze_git
 from command_policy_http import _analyze_curl
+from command_policy_localdev import local_site_hosts
 from command_policy_network import _add_destination
 from command_policy_transport import _analyze_scp, _analyze_ssh
 from command_policy_wget import _analyze_wget
@@ -36,6 +37,7 @@ def analyze_network_argv(argv: list[str], cwd: str) -> dict[str, Any]:
         "recognized": False,
         "requires_destination": True,
         "destinations": [],
+        "endpoints": [],
         "unclassified": [],
     }
     analyzers = {
@@ -53,6 +55,9 @@ def analyze_network_argv(argv: list[str], cwd: str) -> dict[str, Any]:
         result["recognized"] = True
         _analyze_dns_query(exact, result)
     result["destinations"] = sorted(set(result["destinations"]))
+    result["local_site_hosts"] = local_site_hosts(
+        result["endpoints"], cwd, executable in {"curl", "wget"}
+    )
     return result
 
 

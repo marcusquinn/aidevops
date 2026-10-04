@@ -83,6 +83,8 @@ def _network_action(invocations: list[list[str]], cwd: str) -> int:
             "recognized": False,
             "requires_destination": True,
             "destinations": [],
+            "endpoints": [],
+            "local_site_hosts": [],
             "unclassified": ["network analysis requires exactly one argv"],
         }
         exit_code = 20

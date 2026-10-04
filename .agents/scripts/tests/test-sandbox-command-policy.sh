@@ -145,6 +145,56 @@ test_network_check_command() {
 	return 0
 }
 
+LOCALDEV_REGISTRY="${TEST_ROOT}/ports.json"
+
+expect_local_site() {
+	local expected="$1"
+	local name="$2"
+	local argv_json="$3"
+	local cwd="$4"
+	local registry="${5:-$LOCALDEV_REGISTRY}"
+	local status=0
+	HOME="$TEST_HOME" AIDEVOPS_LOCALDEV_REGISTRY="$registry" \
+		"$NETWORK_HELPER" check-argv "$argv_json" --cwd "$cwd" --worker-id test >/dev/null 2>&1 || status=$?
+	if [[ "$expected" == "allow" && "$status" -eq 0 ]] || [[ "$expected" == "deny" && "$status" -ne 0 ]]; then
+		pass "local site: ${name}"
+	else
+		fail "local site: ${name}" "expected=${expected} status=${status}"
+	fi
+	return 0
+}
+
+# GH#33523: workers may verify only their repository's registered local site.
+test_network_local_site_allowance() {
+	local repo="${TEST_ROOT}/demoapp"
+	local worktree="${TEST_ROOT}/demoapp-feature-x"
+	printf '%s\n' '{"apps":{"demoapp":{"port":3100,"domain":"demoapp.local","branches":{"feature-x":{"port":3101,"subdomain":"feature-x.demoapp.local"}}},"otherapp":{"port":3200,"domain":"otherapp.local"}}}' >"$LOCALDEV_REGISTRY"
+	git init -q "$repo" &&
+		git -C "$repo" -c user.name=test -c user.email=test@example.invalid -c commit.gpgsign=false \
+			commit -q --allow-empty -m init &&
+		git -C "$repo" worktree add -q -b feature-x "$worktree" || {
+		fail "local site fixture repository"
+		return 0
+	}
+
+	expect_local_site allow "registered loopback app port" '["curl","-sI","http://127.0.0.1:3100/wp-admin/"]' "$repo"
+	expect_local_site allow "linked worktree uses canonical app name" '["curl","-sI","http://localhost:3101/"]' "$worktree"
+	expect_local_site allow "registered https domain" '["curl","-sI","https://demoapp.local/"]' "$worktree"
+	expect_local_site allow "registered branch subdomain" '["curl","https://feature-x.demoapp.local/"]' "$worktree"
+	expect_local_site allow "documented --resolve mitigation" '["curl","--resolve","demoapp.local:443:127.0.0.1","https://demoapp.local/"]' "$repo"
+	expect_local_site allow "wget IPv6 loopback app port" '["wget","-q","-O","-","http://[::1]:3100/"]' "$repo"
+	expect_local_site deny "unregistered loopback port" '["curl","http://127.0.0.1:9999/"]' "$repo"
+	expect_local_site deny "another repository's app port" '["curl","http://127.0.0.1:3200/"]' "$repo"
+	expect_local_site deny "proxy port without registered host" '["curl","http://127.0.0.1:443/"]' "$repo"
+	expect_local_site deny "connect-to redirect to unregistered port" '["curl","--connect-to","127.0.0.1:3100:127.0.0.1:22","http://127.0.0.1:3100/"]' "$repo"
+	expect_local_site deny "loopback proxy" '["curl","-x","http://127.0.0.1:3100","https://github.com/"]' "$repo"
+	expect_local_site deny "private raw IP" '["curl","http://10.0.0.5:3100/"]' "$repo"
+	expect_local_site deny "non-HTTP client" '["ssh","-p","3100","127.0.0.1"]' "$repo"
+	expect_local_site deny "cwd outside a repository" '["curl","http://127.0.0.1:3100/"]' "$TEST_HOME"
+	expect_local_site deny "missing registry" '["curl","http://127.0.0.1:3100/"]' "$repo" "${TEST_ROOT}/missing-ports.json"
+	return 0
+}
+
 test_network_policy_fail_closed() {
 	local malformed="${TEST_ROOT}/network-tiers.conf"
 	printf '[tier5\nrequestbin.com\n' >"$malformed"
@@ -299,6 +349,7 @@ test_sandbox_required_policy() {
 main() {
 	write_fake_network_tools
 	test_network_check_command
+	test_network_local_site_allowance
 	test_network_policy_fail_closed
 	test_network_helper_timeout
 	test_sandbox_enforcement

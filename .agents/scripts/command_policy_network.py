@@ -62,10 +62,51 @@ def _strip_host_path_and_port(candidate: str) -> str:
     return candidate.rstrip(".").lower()
 
 
-def _add_destination(result: dict[str, Any], value: str, label: str) -> None:
+_DEFAULT_SCHEME_PORTS = {"http": 80, "https": 443}
+
+
+def _valid_port(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        port = int(value)
+    except (TypeError, ValueError):
+        return None
+    return port if 0 < port < 65536 else None
+
+
+def _destination_port(value: str) -> int | None:
+    """Return the explicit or scheme-default TCP port, or None when unknown."""
+    candidate = value.strip()
+    if re.match(r"^[A-Za-z][A-Za-z0-9+.-]*://", candidate):
+        parsed = urlsplit(candidate)
+        try:
+            explicit = parsed.port
+        except ValueError:
+            return None
+        return explicit or _DEFAULT_SCHEME_PORTS.get(parsed.scheme.lower())
+    match = re.match(r"^(?:\[[^]]+\]|[^/:@\[\]]+):(\d+)(?:[/?#]|$)", candidate)
+    return _valid_port(match.group(1)) if match else None
+
+
+def _add_destination(
+    result: dict[str, Any],
+    value: str,
+    label: str,
+    context: dict[str, Any] | None = None,
+) -> None:
+    """Record a destination; context may carry an explicit port and logical host (via)."""
     host = _normalize_host(value)
     if host:
         result["destinations"].append(host)
+        context = context or {}
+        port = context.get("port")
+        result.setdefault("endpoints", []).append({
+            "host": host,
+            "label": label,
+            "port": port if port is not None else _destination_port(value),
+            "via": context.get("via"),
+        })
     else:
         result["unclassified"].append(f"{label}:{value}")
 
