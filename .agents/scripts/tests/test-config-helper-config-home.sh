@@ -85,7 +85,9 @@ fi
 
 output=$(run_validate_config_home /tmp 2>&1)
 rc=$?
-if [[ "$rc" -ne 0 && "$output" == *'not owned by the current user'* ]]; then
+# macOS rejects symlinked /tmp before reaching the ownership guard.
+if [[ "$rc" -ne 0 && ( "$output" == *'Security risk: /tmp is not owned by the current user.'* ||
+	"$output" == *'Security risk: /tmp is a symlink.'* ) ]]; then
 	print_result "rejects bare /tmp config home" 0
 else
 	print_result "rejects bare /tmp config home" 1 "rc=${rc} output=${output}"
