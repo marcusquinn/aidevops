@@ -13,6 +13,7 @@
 #                                          [--contributors USERS] [--donate URL|none]
 #                                          [--github-owner OWNER]
 #   wp-plugin-new-helper.sh create --name NAME --description TEXT [options]
+#   wp-plugin-new-helper.sh quality --repo OWNER/REPO --path WORKTREE [--pr NUMBER] [--dry-run]
 #
 # create options (maker details fall back to the saved defaults):
 #   --slug SLUG            Folder, main file, text domain and repository name
@@ -275,6 +276,234 @@ _print_plan() {
 	else
 		printf 'GitHub:       %s/%s (%s)\n' "$P_OWNER" "$P_SLUG" "$P_VISIBILITY"
 	fi
+	_quality_plan "$P_VISIBILITY" "$P_NO_GITHUB"
+	return 0
+}
+
+_quality_plan() {
+	local visibility="$1" local_only="$2"
+	printf 'Quality:      preserve README badge markers; regenerate repository metrics in the first PR\n'
+	if [[ "$local_only" -eq 1 ]]; then
+		printf 'Quality:      skip hosted services and repos.json registration (--no-github)\n'
+		return 0
+	fi
+	printf 'Quality:      register repos.json features: ["code-quality"] for the daily sweep\n'
+	if [[ "$visibility" == private ]]; then
+		printf 'Quality:      defer hosted onboarding until public by default; verify any existing private-plan capacity\n'
+	else
+		printf 'Quality:      Codacy API add + grade badge with CODACY_API_TOKEN; otherwise report missing token\n'
+		printf 'Quality:      SonarCloud project with SONAR_TOKEN; org admin imports GitHub repo for its configured analysis method\n'
+	fi
+	printf 'Quality:      first PR: verify Codacy, CodeFactor, CodeRabbit, Qlty and Socket check runs/statuses\n'
+	printf 'Quality:      after customization: Code Audit Routines issue + @coderabbitai full codebase review\n'
+	printf 'Human step:   org admin imports SonarCloud project if unbound; app admin grants missing repository access\n'
+	return 0
+}
+
+# Reusable after the owner makes a private plugin public. Never publishes,
+# commits, opens issues or changes app permissions; edits stay in the caller's PR.
+cmd_quality() {
+	local repo="" path="" pr="" dry_run=0 visibility remote branch top common gitdir
+	while [[ $# -gt 0 ]]; do
+		local arg="$1"
+		local value="${2:-}"
+		case "$arg" in
+		--repo | --path | --pr)
+			[[ $# -ge 2 ]] || return 2
+			case "$arg" in
+			--repo) repo="$value" ;;
+			--path) path="$value" ;;
+			--pr) pr="$value" ;;
+			esac
+			shift 2
+			;;
+		--dry-run)
+			dry_run=1
+			shift
+			;;
+		*)
+			print_error "unknown quality option: $arg"
+			return 2
+			;;
+		esac
+	done
+	[[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ && -d "$path" ]] || {
+		print_error "quality requires --repo OWNER/REPO and --path to its worktree"
+		return 2
+	}
+	[[ -z "$pr" || "$pr" =~ ^[1-9][0-9]*$ ]] || return 2
+	path="$(cd "$path" && pwd -P)" || return 1
+	top="$(git -C "$path" rev-parse --show-toplevel)" || return 1
+	remote="$(git -C "$path" remote get-url origin)" || return 1
+	case "$remote" in
+	"https://github.com/$repo" | "https://github.com/$repo.git" | "git@github.com:$repo.git" | "ssh://git@github.com/$repo.git") ;;
+	*)
+		print_error "worktree origin does not match --repo"
+		return 1
+		;;
+	esac
+	[[ "$top" == "$path" ]] || {
+		print_error "--path must be the repository root"
+		return 1
+	}
+	visibility="$(gh repo view "$repo" --json visibility --jq '.visibility | ascii_downcase')" || return 1
+	_quality_plan "$visibility" 0
+	[[ "$dry_run" -eq 0 ]] || return 0
+	branch="$(git -C "$path" symbolic-ref --short HEAD)" || return 1
+	common="$(git -C "$path" rev-parse --path-format=absolute --git-common-dir)" || return 1
+	gitdir="$(git -C "$path" rev-parse --absolute-git-dir)" || return 1
+	if [[ "$branch" == main || "$branch" == master || "$gitdir" == "$common" ]]; then
+		print_error "quality writes require a feature branch in a linked worktree"
+		return 1
+	fi
+	command -v python3 >/dev/null 2>&1 || return 1
+	python3 - "$repo" "$path" "$visibility" <<'PY'
+import base64
+import json
+import os
+from pathlib import Path
+import re
+import urllib.error
+import urllib.parse
+import urllib.request
+import sys
+
+repo, root, visibility = sys.argv[1:]
+owner, name = repo.split('/')
+readme = Path(root) / 'README.md'
+text = readme.read_text()
+pattern = r'(<!-- aidevops:badges:start -->)(.*?)(<!-- aidevops:badges:end -->)'
+match = re.search(pattern, text, re.S)
+if not match:
+    sys.exit('README badge markers missing; preserve/restore the starter block before onboarding')
+
+def request(url, headers, body=None):
+    # Do not follow credential-bearing redirects to another host.
+    class NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, hdrs, newurl):
+            return None
+    req = urllib.request.Request(url, data=body, headers=headers)
+    with urllib.request.build_opener(NoRedirect).open(req, timeout=30) as response:
+        return json.load(response)
+
+def report(service, error):
+    # Never print response bodies, headers or tokens.
+    print(f'{service}: unavailable ({getattr(error, "code", "network/response error")}); retry quality onboarding')
+
+grade = ''
+sonar_ready = False
+if visibility == 'public':
+    token = os.environ.get('CODACY_API_TOKEN', '')
+    if token:
+        headers = {'api-token': token, 'Content-Type': 'application/json'}
+        try:
+            try:
+                request('https://api.codacy.com/api/v3/repositories', headers,
+                        json.dumps({'provider': 'gh', 'repositoryFullPath': repo}).encode())
+            except urllib.error.HTTPError as error:
+                if error.code != 409:
+                    raise
+            data = request(f'https://api.codacy.com/api/v3/organizations/gh/{owner}/repositories/{name}', headers)
+            grade = data.get('data', {}).get('badges', {}).get('grade', '')
+            if not isinstance(grade, str) or not re.fullmatch(r'https://app\.codacy\.com/project/badge/Grade/[A-Za-z0-9-]+', grade):
+                grade = ''
+            print('Codacy: registered; grade badge ' + ('available' if grade else 'pending'))
+        except (urllib.error.URLError, ValueError, TypeError, AttributeError) as error:
+            report('Codacy', error)
+    else:
+        print('Codacy: missing CODACY_API_TOKEN; store with aidevops secret set CODACY_API_TOKEN and rerun')
+
+    token = os.environ.get('SONAR_TOKEN', '')
+    expected_org = owner
+    expected_key = repo.replace('/', '_')
+    properties = Path(root) / 'sonar-project.properties'
+    if properties.exists():
+        settings = properties.read_text()
+        configured = re.search(r'^\s*sonar\.projectKey\s*=\s*(\S+)\s*$', settings, re.M)
+        if configured:
+            expected_key = configured[1]
+        configured_org = re.search(r'^\s*sonar\.organization\s*=\s*(\S+)\s*$', settings, re.M)
+        if configured_org:
+            expected_org = configured_org[1]
+    org = os.environ.get('SONAR_ORGANIZATION', expected_org)
+    key = os.environ.get('SONAR_PROJECT_KEY', expected_key)
+    if key != expected_key or org != expected_org:
+        print('SonarCloud: project key or organization differs from this repository configuration; skipping unrelated project')
+        token = ''
+    if token:
+        headers = {'Authorization': 'Basic ' + base64.b64encode((token + ':').encode()).decode()}
+        try:
+            # An existing project is not proof it is bound or has an analysis.
+            query = urllib.parse.urlencode({'component': key, 'metricKeys': 'alert_status'})
+            try:
+                data = request('https://sonarcloud.io/api/measures/component?' + query, headers)
+                sonar_ready = any(m.get('metric') == 'alert_status' for m in data.get('component', {}).get('measures', []))
+            except urllib.error.HTTPError as error:
+                if error.code != 404:
+                    raise
+                headers['Content-Type'] = 'application/x-www-form-urlencoded'
+                request('https://sonarcloud.io/api/projects/create', headers,
+                        urllib.parse.urlencode({'organization': org, 'project': key,
+                                                'name': name, 'visibility': 'public'}).encode())
+                print('SonarCloud: project provisioned; GitHub import/automatic analysis still requires org admin')
+        except (urllib.error.URLError, ValueError, TypeError, AttributeError) as error:
+            report('SonarCloud', error)
+    if not sonar_ready:
+        method = ('disable Automatic Analysis and configure the existing Actions scanner with a repository SONAR_TOKEN'
+                  if (Path(root) / '.github/workflows/sonarcloud.yml').exists()
+                  else 'enable automatic analysis')
+        print(f'SonarCloud: https://sonarcloud.io/projects/create — an org admin must import this GitHub repository and {method}, then rerun quality.')
+    else:
+        print('SonarCloud: quality-gate measure exists; GitHub binding/automatic analysis remain unverified by the published API, so verify the project belongs to this repository.')
+
+# Keep unrelated badges, existing releases and both markers. Never copy the
+# starter's project ID; new-repository release cleanup belongs in _rename.
+lines = [line for line in match[2].splitlines()
+         if not re.search(r'codacy|sonarcloud|codefactor', line, re.I)]
+if grade:
+    lines.append(f'[![Codacy]({grade})](https://app.codacy.com/gh/{repo}/dashboard)')
+if sonar_ready:
+    query = urllib.parse.urlencode({'project': key, 'metric': 'alert_status'})
+    lines.append(f'[![SonarCloud](https://sonarcloud.io/api/project_badges/measure?{query})](https://sonarcloud.io/dashboard?id={urllib.parse.quote(key)})')
+if visibility == 'public':
+    # CodeFactor is an org app, not a provisioning API. Restore its badge only
+    # when the public endpoint serves a real grade, not an error SVG or HTML.
+    badge = f'https://www.codefactor.io/repository/github/{repo}/badge'
+    try:
+        with urllib.request.urlopen(badge, timeout=30) as response:
+            image = response.read(65536).decode('utf-8')
+            if (urllib.parse.urlparse(response.url).hostname == 'www.codefactor.io'
+                    and '<svg' in image and not re.search(r'not found|unknown|error|pending|n/a', image, re.I)):
+                lines.append(f'[![CodeFactor]({badge})](https://www.codefactor.io/repository/github/{repo})')
+            else:
+                print('CodeFactor: grade badge unavailable; verify org app repository access')
+    except (urllib.error.URLError, ValueError, UnicodeError) as error:
+        report('CodeFactor', error)
+readme.write_text(text[:match.start()] + match[1] + '\n' + '\n'.join(lines).strip() + '\n' + match[3] + text[match.end():])
+PY
+	local result=$?
+	[[ "$result" -eq 0 ]] || return "$result"
+	(cd "$path" && bash "${SCRIPT_DIR}/repo-metrics-helper.sh" generate .) || return 1
+	if [[ -n "$pr" ]]; then
+		_quality_checks "$repo" "$pr" || return 1
+	else
+		print_warning "App visibility unverified until first PR; rerun quality --repo $repo --path $path --pr NUMBER"
+	fi
+	return 0
+}
+
+_quality_checks() {
+	local repo="$1" pr="$2" head checks statuses service
+	head="$(gh pr view "$pr" --repo "$repo" --json headRefOid --jq .headRefOid)" || return 1
+	checks="$(gh api --paginate "repos/${repo}/commits/${head}/check-runs?per_page=100" --jq '.check_runs[] | [.name, .app.slug] | join(" ")')" || return 1
+	statuses="$(gh api --paginate "repos/${repo}/commits/${head}/statuses?per_page=100" --jq '.[].context')" || return 1
+	for service in Codacy CodeFactor CodeRabbit Qlty Socket; do
+		if printf '%s\n%s\n' "$checks" "$statuses" | grep -qi "$service"; then
+			printf '%s: first PR integration observed (not a passing-result claim)\n' "$service"
+		else
+			print_warning "$service: no check/status on PR #$pr; verify app repository access/plan, then rerun"
+		fi
+	done
 	return 0
 }
 
@@ -315,6 +544,20 @@ _rename() {
 		--author-uri "$P_AUTHOR_URI" --plugin-uri "$P_PLUGIN_URI"
 		--contributors "$P_CONTRIBUTORS" --donate "$P_DONATE")
 	(cd "$P_DEST" && scripts/rename-plugin.sh "${args[@]}") || return 1
+	# No hosted analysis or release exists yet. Keep the marker block, but do
+	# not ship badges that refer to unavailable services or starter results.
+	python3 - "$P_DEST/README.md" <<'PY' || return 1
+from pathlib import Path
+import re
+import sys
+path = Path(sys.argv[1])
+text = path.read_text()
+def clean(match):
+    lines = [line for line in match[2].splitlines()
+             if not re.search(r'codacy|sonarcloud|codefactor|github/v/release', line, re.I)]
+    return match[1] + '\n' + '\n'.join(lines).strip() + '\n' + match[3]
+path.write_text(re.sub(r'(<!-- aidevops:badges:start -->)(.*?)(<!-- aidevops:badges:end -->)', clean, text, flags=re.S))
+PY
 	if command -v composer >/dev/null 2>&1; then
 		(cd "$P_DEST" && composer update --lock --quiet --no-interaction 2>/dev/null) ||
 			print_warning "composer update --lock failed; run it in $P_DEST before linting"
@@ -336,7 +579,17 @@ _publish() {
 		(cd "$P_DEST" && aidevops repos add --slug "${P_OWNER}/${P_SLUG}" \
 			--confirm REGISTER_CANONICAL_REPOSITORY >/dev/null) ||
 			print_warning "could not register with aidevops; run: aidevops repos add in $P_DEST"
+		_register_quality || print_warning "code-quality registration failed; run aidevops init code-quality before the daily sweep"
+	else
+		print_warning "aidevops missing: daily quality sweep registration skipped; install it and run aidevops init code-quality"
 	fi
+	return 0
+}
+
+_register_quality() {
+	# Use the normal init/registration writer rather than a competing registry
+	# read-modify-write implementation. Its features list uses code-quality.
+	(cd "$P_DEST" && aidevops init code-quality) || return 1
 	return 0
 }
 
@@ -375,6 +628,7 @@ main() {
 	defaults) cmd_defaults || return $? ;;
 	save-defaults) cmd_save_defaults "$@" || return $? ;;
 	create) cmd_create "$@" || return $? ;;
+	quality) cmd_quality "$@" || return $? ;;
 	help | -h | --help) _usage ;;
 	*)
 		print_error "unknown command: $command"

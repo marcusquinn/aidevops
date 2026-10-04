@@ -104,6 +104,17 @@ Judgement items Plugin Check and `preflight` cannot fully automate. Sources: [De
 
 ## Release Steps (GitHub Channel)
 
+### Making a private plugin public
+
+Only after explicit owner approval, change visibility through the repository's public-launch workflow (`workflows/public-launch-checklist.md`). This is separate from tagging or publishing a release. Before the first public PR is ready:
+
+1. In a linked worktree, rerun **Code Quality Onboarding** in `wp-plugin-new.md`: `wp-plugin-new-helper.sh quality --repo OWNER/SLUG --path "$PWD" --pr PR_NUMBER`. It reads visibility, onboards Codacy, provisions SonarCloud when credentials allow, refreshes metrics and reports first-PR app visibility; it never changes visibility itself.
+2. Resolve the SonarCloud org-admin GitHub import fallback if the project is unbound, using the copied plugin's analysis method (Actions scanner: Automatic Analysis off). Verify Codacy **and CodeFactor** checks/statuses and CodeRabbit, Qlty and Socket access; repair missing app selection through the app admin, not a paid-plan purchase. Do not interpret pending analysis as success or assume private-tier settings became public automatically.
+3. Commit regenerated metrics and verified service badges while preserving the README badge block markers. Hide unavailable service badges; add the latest-release badge only once a release exists. Verify rendered badge images and links do not show starter results or "not found".
+4. Verify `repos.json` includes `code-quality`, and create/deduplicate the Code Audit Routines issue and request `@coderabbitai` full codebase review if this was deferred during private development. Apply the public-launch required-check policy above only after the integrations actually work.
+
+### Publish the GitHub release
+
 1. Version-bump PR (`Version:` header + `readme.txt` `Stable tag` + changelog entry), merged.
 2. `wp-plugin-release-helper.sh preflight` and, when Docker is available, `plugin-check` — both clean.
 3. `git tag vX.Y.Z` on the merged default-branch commit (never a branch with unmerged pre-release changes).
