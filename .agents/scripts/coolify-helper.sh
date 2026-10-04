@@ -11,8 +11,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
 
 
-# Error message constants
-# readonly USAGE_PREFIX="Usage:"  # Currently unused
+# Usage message constants (not provided by shared-constants.sh)
+readonly USAGE_COMMAND_OPTIONS="Usage: $0 [command] [options]"
+readonly HELP_USAGE_INFO="Use '$0 help' for usage information"
 
 # Configuration file
 CONFIG_FILE="../configs/coolify-config.json"
@@ -278,10 +279,12 @@ generate_ssh_configs() {
 
 # Main function
 main() {
-    # Assign positional parameters to local variables
+    # Assign positional parameters to local variables. Optional positions
+    # default to empty so `help`, `list` and one-argument commands work under
+    # `set -u`; each command keeps its own missing-argument validation.
     local command="${1:-help}"
-    local param2="$2"
-    local param3="$3"
+    local param2="${2:-}"
+    local param3="${3:-}"
 
     local server_name="$param2"
     local command_to_run="$param3"
