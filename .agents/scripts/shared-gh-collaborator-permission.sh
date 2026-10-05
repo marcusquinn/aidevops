@@ -209,6 +209,21 @@ _gh_collaborator_permission_request() {
 	return $?
 }
 
+# Emit the confirmed non-collaborator verdict (HTTP 404 maps to "none").
+# Args: $1=optional output variable
+_gh_collaborator_permission_not_collaborator() {
+	local out_var="${1:-}"
+
+	AIDEVOPS_GH_COLLAB_PERMISSION_REASON="not-collaborator"
+	export AIDEVOPS_GH_COLLAB_PERMISSION_REASON
+	if [[ -n "$out_var" ]]; then
+		printf -v "$out_var" '%s' "none"
+	else
+		printf '%s\n' "none"
+	fi
+	return 0
+}
+
 #######################################
 # Look up a repository collaborator permission through App-aware REST routing.
 #
@@ -283,13 +298,7 @@ _gh_collaborator_permission_lookup() {
 	export AIDEVOPS_GH_COLLAB_PERMISSION_HTTP
 
 	if [[ "$http_status" == "404" ]]; then
-		AIDEVOPS_GH_COLLAB_PERMISSION_REASON="not-collaborator"
-		export AIDEVOPS_GH_COLLAB_PERMISSION_REASON
-		if [[ -n "$out_var" ]]; then
-			printf -v "$out_var" '%s' "none"
-		else
-			printf '%s\n' "none"
-		fi
+		_gh_collaborator_permission_not_collaborator "$out_var"
 		return 0
 	fi
 

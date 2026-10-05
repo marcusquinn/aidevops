@@ -488,6 +488,19 @@ _merge_collect_linked_issue_authority_gaps() {
 	return 0
 }
 
+# Report a non-verdict author permission lookup: 75 is a deferral, not a denial.
+_merge_report_author_lookup_failure() {
+	local author_rc="$1"
+	local pr_author="$2"
+
+	if [[ "$author_rc" -eq 75 ]]; then
+		print_warning "Merge deferred: GitHub permission read admission deferred for PR author ${pr_author}; retry when capacity returns"
+	else
+		print_error "Merge blocked: unable to verify live repository permission for PR author ${pr_author}"
+	fi
+	return 0
+}
+
 _merge_collect_external_authority_gaps() {
 	local pr_number="$1"
 	local repo="$2"
@@ -557,12 +570,8 @@ _merge_collect_external_authority_gaps() {
 		trusted_dependabot=1
 	else
 		_merge_author_has_write_authority "$pr_author" "$repo" || author_rc=$?
-		if [[ "$author_rc" -eq 75 ]]; then
-			print_warning "Merge deferred: GitHub permission read admission deferred for PR author ${pr_author}; retry when capacity returns"
-			return 1
-		fi
-		if [[ "$author_rc" -eq 2 ]]; then
-			print_error "Merge blocked: unable to verify live repository permission for PR author ${pr_author}"
+		if [[ "$author_rc" -eq 75 || "$author_rc" -eq 2 ]]; then
+			_merge_report_author_lookup_failure "$author_rc" "$pr_author"
 			return 1
 		fi
 		if [[ "$labels_padded" == *",external-contributor,"* ]] ||

@@ -81,6 +81,7 @@ load_functions() {
 	extract_function _merge_author_has_write_authority
 	extract_function _merge_is_trusted_issue_sync_pr
 	extract_function _merge_collect_linked_issue_authority_gaps
+	extract_function _merge_report_author_lookup_failure
 	extract_function _merge_collect_external_authority_gaps
 	extract_function _merge_linked_issue_authority_clear
 	extract_function _merge_guard_admin_merge_maintainer_review
