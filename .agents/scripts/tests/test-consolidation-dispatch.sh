@@ -327,6 +327,13 @@ test_child_body_contains_parent_content_and_authors() {
 		failures=$((failures + 1))
 		failmsg="${failmsg} | scope instructions omit default-branch existence verification"
 	fi
+	if ! printf '%s' "$body" | grep -qF -- "copy verbatim every line matching \`^requires-secrets:\`" ||
+		! printf '%s' "$body" | grep -qF -- 'Preserve every wildcard scope entry verbatim from every superseded issue' ||
+		! printf '%s' "$body" | grep -qF -- 'consolidation-contract-validator.py' ||
+		! printf '%s' "$body" | grep -qF -- 'Repeat --source for each additional superseded issue body.'; then
+		failures=$((failures + 1))
+		failmsg="${failmsg} | successor contract preservation or pre-publication validation missing"
+	fi
 	if printf '%s' "$body" | grep -q 'github-actions'; then
 		failures=$((failures + 1))
 		failmsg="${failmsg} | bot comment leaked into child body"
