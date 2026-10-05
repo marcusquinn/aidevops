@@ -81,7 +81,7 @@ classify_failure() {
 	elif [[ "$has_captcha" == "true" ]]; then
 		failure_class="captcha_required"
 		temporary="true"
-		next_action="pause for authorized CAPTCHA handling; do not bypass policy"
+		next_action="stop this identity; solve manually in a headed session or back off; automated solving needs a recorded operator decision"
 		safe_to_failover="true"
 	elif [[ "$bot_block" == "true" || "$http_status" == "418" ]]; then
 		failure_class="bot_block"

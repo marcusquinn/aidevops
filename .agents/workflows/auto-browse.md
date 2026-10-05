@@ -65,7 +65,7 @@ Stop for explicit confirmation before:
 - final submit on legal, compliance, financial, government, HR, or client-impacting forms;
 - payments, purchases, subscriptions, checkouts, or saved-payment changes;
 - destructive/admin changes, deletion, permission changes, or data mutation beyond stated scope;
-- anti-detect, proxy, VPN, geo-routing, CAPTCHA solver, or profile-rotation use for a target;
+- anti-detect, proxy, VPN, geo-routing, CAPTCHA solver, or profile-rotation use for a target (exception: paced public search-result collection with a registered egress profile is pre-approved; see `aidevops/reach-capture.md` "Public Search-result Collection");
 - extracting personal/private data beyond the stated scope.
 
 Use secure references for credentials (`aidevops secret`, gopass, or documented credential refs). Never write credential values, cookies, bearer tokens, private client names, or private local paths into repo artifacts or chat.

@@ -5,7 +5,7 @@
 # =============================================================================
 # Keyword Research Helper -- API Providers Sub-Library
 # =============================================================================
-# DataForSEO, Serper, and Ahrefs API functions for keyword research.
+# DataForSEO, Serper, SerpApi, and Ahrefs API functions for keyword research.
 #
 # Usage: source "${SCRIPT_DIR}/keyword-research-helper-providers.sh"
 #
@@ -269,6 +269,105 @@ EOF
 	)
 
 	serper_request "autocomplete" "$data"
+	return 0
+}
+
+# =============================================================================
+# SerpApi Functions (https://serpapi.com/search-api)
+# =============================================================================
+
+# Resolve SERPAPI_API_KEY: environment, credentials.sh, then `aidevops secret` (gopass).
+serpapi_load_key() {
+	[[ -n "${SERPAPI_API_KEY:-}" ]] && return 0
+	source "$HOME/.config/aidevops/credentials.sh" 2>/dev/null || true
+	if [[ -z "${SERPAPI_API_KEY:-}" ]] && command -v gopass >/dev/null 2>&1; then
+		SERPAPI_API_KEY=$(gopass show -o aidevops/SERPAPI_API_KEY 2>/dev/null || true)
+	fi
+	[[ -n "${SERPAPI_API_KEY:-}" ]] || return 1
+	return 0
+}
+
+# GET serpapi.com/search.json with URL-encoded params.
+# Args: $1 = engine (google, google_autocomplete, ...), $2.. = "key=value" pairs
+# The API key is passed via a curl config on stdin so it never appears in argv.
+serpapi_request() {
+	local engine="$1"
+	shift
+
+	if ! serpapi_load_key; then
+		print_error "SerpApi API key not found. Set via: aidevops secret set SERPAPI_API_KEY"
+		return 1
+	fi
+
+	local -a query_args=(--data-urlencode "engine=${engine}")
+	local pair
+	for pair in "$@"; do
+		query_args+=(--data-urlencode "$pair")
+	done
+
+	printf 'data-urlencode = "api_key=%s"\n' "$SERPAPI_API_KEY" |
+		curl -s -G -K - "${query_args[@]}" "https://serpapi.com/search.json"
+	return 0
+}
+
+# Google organic search. Args: $1 = query, $2 = gl (country), $3 = hl (language)
+serpapi_search() {
+	local query="$1"
+	local gl="$2"
+	local hl="${3:-en}"
+
+	serpapi_request "google" "q=${query}" "gl=${gl}" "hl=${hl}"
+	return 0
+}
+
+# Google autocomplete. Args: $1 = query, $2 = gl (country), $3 = hl (language)
+serpapi_autocomplete() {
+	local query="$1"
+	local gl="$2"
+	local hl="${3:-en}"
+
+	serpapi_request "google_autocomplete" "q=${query}" "gl=${gl}" "hl=${hl}"
+	return 0
+}
+
+# =============================================================================
+# Normalized organic results (provider comparison)
+# =============================================================================
+# Each emits a JSON array of {provider, position, url, title} for the top N.
+
+serp_organic_normalized() {
+	local provider="$1"
+	local keyword="$2"
+	local location_code="$3"
+	local language_code="$4"
+	local gl="$5"
+	local depth="$6"
+
+	local response=""
+	case "$provider" in
+	"dataforseo")
+		response=$(dataforseo_serp_organic "$keyword" "$location_code" "$language_code") || return 1
+		jq --argjson n "$depth" '[.tasks[0].result[0].items[]? | select(.type == "organic")
+			| {provider: "dataforseo", position: .rank_group, url: .url, title: .title}] | .[:$n]' \
+			<<<"$response" 2>/dev/null || echo "[]"
+		;;
+	"serper")
+		response=$(serper_search "$keyword" "$gl" "$depth") || return 1
+		jq --argjson n "$depth" '[.organic[]?
+			| {provider: "serper", position: .position, url: .link, title: .title}] | .[:$n]' \
+			<<<"$response" 2>/dev/null || echo "[]"
+		;;
+	"serpapi")
+		response=$(serpapi_search "$keyword" "$gl" "$language_code") || return 1
+		jq --argjson n "$depth" '[.organic_results[]?
+			| {provider: "serpapi", position: .position, url: .link, title: .title}] | .[:$n]' \
+			<<<"$response" 2>/dev/null || echo "[]"
+		;;
+	*)
+		print_error "Unknown SERP provider: $provider"
+		return 1
+		;;
+	esac
 	return 0
 }
 
