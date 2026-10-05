@@ -84,54 +84,49 @@ function usage() {
 Proxy: set SERP_PROBE_PROXY in the environment (the wrapper resolves it from aidevops secrets).`;
 }
 
-function parseOptions(argv) {
-  const { values } = parseArgs({
-    args: argv,
-    options: {
-      'keywords-file': { type: 'string' },
-      keyword: { type: 'string', multiple: true },
-      engine: { type: 'string', default: 'google' },
-      max: { type: 'string', default: '20' },
-      'min-delay': { type: 'string', default: '45' },
-      'max-delay': { type: 'string', default: '120' },
-      gl: { type: 'string', default: 'us' },
-      hl: { type: 'string', default: 'en' },
-      locale: { type: 'string' },
-      timezone: { type: 'string' },
-      headless: { type: 'boolean', default: false },
-      hidden: { type: 'boolean', default: false },
-      'on-captcha': { type: 'string', default: 'stop' },
-      consent: { type: 'string', default: 'manual' },
-      'fresh-profile': { type: 'boolean', default: false },
-      'no-evidence': { type: 'boolean', default: false },
-      shuffle: { type: 'boolean', default: false },
-      'dry-run': { type: 'boolean', default: false },
-      help: { type: 'boolean', default: false },
-    },
-    strict: true,
-  });
-  if (values.help) return { help: true };
+const CLI_OPTIONS = {
+  'keywords-file': { type: 'string' },
+  keyword: { type: 'string', multiple: true },
+  engine: { type: 'string', default: 'google' },
+  max: { type: 'string', default: '20' },
+  'min-delay': { type: 'string', default: '45' },
+  'max-delay': { type: 'string', default: '120' },
+  gl: { type: 'string', default: 'us' },
+  hl: { type: 'string', default: 'en' },
+  locale: { type: 'string' },
+  timezone: { type: 'string' },
+  headless: { type: 'boolean', default: false },
+  hidden: { type: 'boolean', default: false },
+  'on-captcha': { type: 'string', default: 'stop' },
+  consent: { type: 'string', default: 'manual' },
+  'fresh-profile': { type: 'boolean', default: false },
+  'no-evidence': { type: 'boolean', default: false },
+  shuffle: { type: 'boolean', default: false },
+  'dry-run': { type: 'boolean', default: false },
+  help: { type: 'boolean', default: false },
+};
 
-  const fail = (message) => { throw new Error(message); };
-  const int = (name, min, max) => {
-    const value = Number(values[name]);
-    if (!Number.isInteger(value) || value < min || value > max) fail(`--${name} must be an integer from ${min} to ${max}`);
-    return value;
-  };
+const fail = (message) => { throw new Error(message); };
 
-  if (!Object.hasOwn(ENGINES, values.engine)) fail('--engine must be google or bing');
-  if (!['stop', 'wait'].includes(values['on-captcha'])) fail('--on-captcha must be stop or wait');
-  if (values['on-captcha'] === 'wait' && values.headless) fail('--on-captcha wait requires a headed browser');
-  if (!['manual', 'reject'].includes(values.consent)) fail('--consent must be manual or reject');
-  if (values.hidden && values.headless) fail('--hidden and --headless are mutually exclusive');
-  if (values.hidden && process.platform !== 'darwin') fail('--hidden is macOS-only');
-  if (!/^[a-z]{2}$/i.test(values.gl) || !/^[a-z]{2,3}(-[a-z0-9]{2,8})?$/i.test(values.hl)) fail('--gl/--hl must be short codes such as us / en');
+function validateChoices(values) {
+  const rules = [
+    [!Object.hasOwn(ENGINES, values.engine), '--engine must be google or bing'],
+    [!['stop', 'wait'].includes(values['on-captcha']), '--on-captcha must be stop or wait'],
+    [values['on-captcha'] === 'wait' && values.headless, '--on-captcha wait requires a headed browser'],
+    [!['manual', 'reject'].includes(values.consent), '--consent must be manual or reject'],
+    [values.hidden && values.headless, '--hidden and --headless are mutually exclusive'],
+    [values.hidden && process.platform !== 'darwin', '--hidden is macOS-only'],
+    [!/^[a-z]{2}$/i.test(values.gl), '--gl must be a two-letter country code such as us'],
+    [!/^[a-z]{2,3}(-[a-z0-9]{2,8})?$/i.test(values.hl), '--hl must be a language code such as en'],
+  ];
+  const broken = rules.find(([failed]) => failed);
+  if (broken) fail(broken[1]);
+}
 
-  let keywords = values.keyword ? [...values.keyword] : [];
-  if (values['keywords-file']) {
-    keywords.push(...readFileSync(values['keywords-file'], 'utf8').split('\n'));
-  }
-  keywords = keywords.map((kw) => kw.trim()).filter((kw) => kw && !kw.startsWith('#'));
+function loadKeywords(values) {
+  const raw = [...(values.keyword || [])];
+  if (values['keywords-file']) raw.push(...readFileSync(values['keywords-file'], 'utf8').split('\n'));
+  const keywords = raw.map((kw) => kw.trim()).filter((kw) => kw && !kw.startsWith('#'));
   if (keywords.length === 0) fail('Provide --keyword or --keywords-file with at least one keyword');
   if (values.shuffle) {
     for (let i = keywords.length - 1; i > 0; i -= 1) {
@@ -139,6 +134,19 @@ function parseOptions(argv) {
       [keywords[i], keywords[j]] = [keywords[j], keywords[i]];
     }
   }
+  return keywords;
+}
+
+function parseOptions(argv) {
+  const { values } = parseArgs({ args: argv, options: CLI_OPTIONS, strict: true });
+  if (values.help) return { help: true };
+  const int = (name, min, max) => {
+    const value = Number(values[name]);
+    if (!Number.isInteger(value) || value < min || value > max) fail(`--${name} must be an integer from ${min} to ${max}`);
+    return value;
+  };
+  validateChoices(values);
+  const keywords = loadKeywords(values);
 
   const minDelay = int('min-delay', 10, 3600);
   const maxDelay = int('max-delay', minDelay, 7200);
@@ -267,13 +275,11 @@ async function dwell(page) {
   }
 }
 
-async function run(options) {
+function createRun(options, proxy) {
   const runId = new Date().toISOString().replace(/[:.]/g, '-');
   const runDir = join(WORKSPACE, 'runs', runId);
   mkdirSync(runDir, { recursive: true, mode: 0o700 });
   for (const dir of [WORKSPACE, join(WORKSPACE, 'runs'), runDir]) chmodSync(dir, 0o700);
-  const engine = ENGINES[options.engine];
-  const proxy = proxyFromEnv();
   const report = {
     schema: SCHEMA,
     run_id: runId,
@@ -300,7 +306,10 @@ async function run(options) {
     report.ended_at = new Date().toISOString();
     writeFileSync(join(runDir, 'report.json'), `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 });
   };
+  return { runDir, report, save };
+}
 
+async function launchBrowser(options, runDir, proxy) {
   const runtime = await loadPlaywright();
   const executablePath = resolvePlaywrightBrowserExecutable(runtime) || undefined;
   const profileDir = options.freshProfile ? join(runDir, 'profile') : join(WORKSPACE, `profile-${options.engine}`);
@@ -318,120 +327,143 @@ async function run(options) {
     ignoreDefaultArgs: ['--enable-automation'],
     args: ['--disable-blink-features=AutomationControlled'],
   });
-  const startedMs = Date.now();
-  const browserPid = options.hidden ? findBrowserPid() : null;
+  return { context, browser: executablePath?.includes('Brave') ? 'brave' : 'chromium' };
+}
+
+// Returns window controls; showForHuman/rehide are no-ops unless --hidden worked.
+async function setupWindow(options, report) {
   report.window = options.headless ? 'headless' : 'visible';
+  const browserPid = options.hidden ? findBrowserPid() : null;
   if (options.hidden) {
     report.window = browserPid && await hideBrowser(browserPid) ? 'hidden' : 'visible';
     if (report.window !== 'hidden') log('Could not hide the browser window; continuing visible');
   }
-  const showForHuman = () => { if (report.window === 'hidden') macApp(browserPid, 'show'); };
-  const rehide = async () => { if (report.window === 'hidden') await hideBrowser(browserPid); };
+  const hidden = report.window === 'hidden';
+  return {
+    showForHuman: () => { if (hidden) macApp(browserPid, 'show'); },
+    rehide: async () => { if (hidden) await hideBrowser(browserPid); },
+  };
+}
+
+// Returns null when searching can proceed, or a stop reason.
+async function handleConsent(page, options, win) {
+  if (await detectConsent(page) && options.consent === 'reject') {
+    await sleep(randomBetween(1500, 3500));
+    await page.getByRole('button', { name: /^reject all$/i }).first().click({ timeout: 10_000 }).catch(() => {});
+    await page.waitForLoadState('domcontentloaded').catch(() => {});
+    await sleep(randomBetween(1500, 3000));
+  }
+  if (!await detectConsent(page)) return null;
+  if (options.headless) return 'consent_required';
+  log('Consent prompt shown: choose an option in the browser window (waiting up to 3 minutes)');
+  win.showForHuman();
+  if (!await waitUntil(async () => !(await detectConsent(page)), CONSENT_WAIT_MS)) return 'consent_required';
+  await win.rehide();
+  return null;
+}
+
+const evidenceName = (n, suffix = '') => `q${String(n).padStart(3, '0')}${suffix}.html`;
+
+async function searchOnce(page, engine, keyword, entry) {
+  const existing = await detectBlock(page);
+  if (existing) return existing;
   try {
+    await humanType(page, engine.input, keyword);
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForSelector(engine.results, { timeout: NAV_TIMEOUT_MS }).catch(() => {});
+  } catch (error) {
+    entry.error = error.name || 'error';
+  }
+  return detectBlock(page);
+}
+
+// Records a challenge; returns a stop reason, or null after a human solve.
+async function handleBlock(ctx, page, entry, block) {
+  const { options, report, runDir, win } = ctx;
+  const event = { at_query: entry.n, kind: block, elapsed_seconds: Math.round((Date.now() - ctx.startedMs) / 1000) };
+  report.blocks.push(event);
+  report.first_block ??= event;
+  entry.blocked = block;
+  if (options.keepEvidence) {
+    entry.evidence = evidenceName(entry.n, '-block');
+    writeFileSync(join(runDir, entry.evidence), await page.content().catch(() => ''), { mode: 0o600 });
+  }
+  log(`Query ${entry.n}: ${block} after ${report.succeeded} successful searches`);
+  if (options.onCaptcha === 'stop') return 'captcha';
+  log('Waiting for a human to solve the challenge in the browser window (up to 10 minutes)');
+  win.showForHuman();
+  if (!await waitUntil(async () => !(await detectBlock(page)), HUMAN_SOLVE_WAIT_MS)) return 'captcha_unsolved';
+  event.human_solved = true;
+  await win.rehide();
+  // Engines usually return to the pending results after a solve.
+  await page.waitForSelector(ctx.engine.results, { timeout: NAV_TIMEOUT_MS }).catch(() => {});
+  return null;
+}
+
+async function recordResults(ctx, page, entry) {
+  const { options, report } = ctx;
+  const organic = [...new Set(await page.evaluate(ctx.engine.organic).catch(() => []))];
+  entry.organic = organic.length;
+  entry.top = organic.slice(0, 10);
+  entry.ok = organic.length > 0;
+  if (entry.ok) report.succeeded += 1;
+  if (options.keepEvidence) {
+    entry.evidence = evidenceName(entry.n);
+    writeFileSync(join(ctx.runDir, entry.evidence), await page.content(), { mode: 0o600 });
+  }
+  log(`Query ${entry.n}/${options.keywords.length}: ${entry.ok ? `${organic.length} organic results` : 'no organic results parsed'}`);
+  ctx.save();
+}
+
+// Returns the stop reason for the query loop.
+async function runQueries(ctx, page) {
+  const { options, report } = ctx;
+  for (const [index, keyword] of options.keywords.entries()) {
+    if (stopRequested) return 'interrupted';
+    const entry = { n: index + 1, at: new Date().toISOString(), ok: false, organic: 0, top: [] };
+    report.attempted = entry.n;
+    report.queries.push(entry);
+    const block = await searchOnce(page, ctx.engine, keyword, entry);
+    const stop = block ? await handleBlock(ctx, page, entry, block) : null;
+    if (stop) return stop;
+    await recordResults(ctx, page, entry);
+    if (entry.n < options.keywords.length) {
+      await dwell(page);
+      const gap = randomBetween(options.minDelay, options.maxDelay) * 1000;
+      log(`Next search in ${Math.round(gap / 1000)} s`);
+      await sleep(gap);
+    }
+  }
+  return stopRequested ? 'interrupted' : 'completed';
+}
+
+async function run(options) {
+  const proxy = proxyFromEnv();
+  const { runDir, report, save } = createRun(options, proxy);
+  const engine = ENGINES[options.engine];
+  const { context, browser } = await launchBrowser(options, runDir, proxy);
+  const ctx = { options, engine, report, runDir, save, startedMs: Date.now() };
+  try {
+    ctx.win = await setupWindow(options, report);
     const page = context.pages()[0] || await context.newPage();
     page.setDefaultTimeout(NAV_TIMEOUT_MS);
     await page.goto(engine.home(options), { waitUntil: 'domcontentloaded' });
-    await rehide();
-    report.browser = executablePath?.includes('Brave') ? 'brave' : 'chromium';
+    await ctx.win.rehide();
+    report.browser = browser;
     report.automation_signals = await page.evaluate(() => ({
       webdriver: navigator.webdriver === true,
       visibility: document.visibilityState,
     })).catch(() => null);
     await sleep(randomBetween(2000, 5000));
-
-    if (await detectConsent(page) && options.consent === 'reject') {
-      await sleep(randomBetween(1500, 3500));
-      await page.getByRole('button', { name: /^reject all$/i }).first().click({ timeout: 10_000 }).catch(() => {});
-      await page.waitForLoadState('domcontentloaded').catch(() => {});
-      await sleep(randomBetween(1500, 3000));
-    }
-    if (await detectConsent(page)) {
-      if (options.headless) {
-        report.stop_reason = 'consent_required';
-        return report;
-      }
-      log('Consent prompt shown: choose an option in the browser window (waiting up to 3 minutes)');
-      showForHuman();
-      if (!await waitUntil(async () => !(await detectConsent(page)), CONSENT_WAIT_MS)) {
-        report.stop_reason = 'consent_required';
-        return report;
-      }
-      await rehide();
-    }
-
-    for (const [index, keyword] of options.keywords.entries()) {
-      if (stopRequested) { report.stop_reason = 'interrupted'; break; }
-      const n = index + 1;
-      report.attempted = n;
-      const entry = { n, at: new Date().toISOString(), ok: false, organic: 0, top: [] };
-      report.queries.push(entry);
-
-      let block = await detectBlock(page);
-      if (!block) {
-        try {
-          await humanType(page, engine.input, keyword);
-          await page.waitForLoadState('domcontentloaded');
-          await page.waitForSelector(engine.results, { timeout: NAV_TIMEOUT_MS }).catch(() => {});
-        } catch (error) {
-          entry.error = error.name || 'error';
-        }
-        block = await detectBlock(page);
-      }
-
-      if (block) {
-        const event = { at_query: n, kind: block, elapsed_seconds: Math.round((Date.now() - startedMs) / 1000) };
-        report.blocks.push(event);
-        report.first_block ??= event;
-        entry.blocked = block;
-        if (options.keepEvidence) {
-          const file = `q${String(n).padStart(3, '0')}-block.html`;
-          writeFileSync(join(runDir, file), await page.content().catch(() => ''), { mode: 0o600 });
-          entry.evidence = file;
-        }
-        log(`Query ${n}: ${block} after ${report.succeeded} successful searches`);
-        if (options.onCaptcha === 'stop') { report.stop_reason = 'captcha'; break; }
-        log('Waiting for a human to solve the challenge in the browser window (up to 10 minutes)');
-        showForHuman();
-        if (!await waitUntil(async () => !(await detectBlock(page)), HUMAN_SOLVE_WAIT_MS)) {
-          report.stop_reason = 'captcha_unsolved';
-          break;
-        }
-        event.human_solved = true;
-        await rehide();
-        // Engines usually return to the pending results after a solve.
-        await page.waitForSelector(engine.results, { timeout: NAV_TIMEOUT_MS }).catch(() => {});
-      }
-
-      const organic = [...new Set(await page.evaluate(engine.organic).catch(() => []))];
-      entry.organic = organic.length;
-      entry.top = organic.slice(0, 10);
-      entry.ok = organic.length > 0;
-      if (entry.ok) report.succeeded += 1;
-      if (options.keepEvidence) {
-        const file = `q${String(n).padStart(3, '0')}.html`;
-        writeFileSync(join(runDir, file), await page.content(), { mode: 0o600 });
-        entry.evidence = file;
-      }
-      log(`Query ${n}/${options.keywords.length}: ${entry.ok ? `${organic.length} organic results` : 'no organic results parsed'}`);
-      save();
-
-      if (n < options.keywords.length) {
-        await dwell(page);
-        const gap = randomBetween(options.minDelay, options.maxDelay) * 1000;
-        log(`Next search in ${Math.round(gap / 1000)} s`);
-        await sleep(gap);
-      }
-    }
-    if (stopRequested && report.stop_reason === 'completed') report.stop_reason = 'interrupted';
-    return report;
+    report.stop_reason = await handleConsent(page, options, ctx.win) || await runQueries(ctx, page);
   } catch (error) {
     report.stop_reason = 'error';
     report.error = error.name || 'error';
-    return report;
   } finally {
     save();
     await context.close().catch(() => {});
   }
+  return report;
 }
 
 function printPlan(options) {
