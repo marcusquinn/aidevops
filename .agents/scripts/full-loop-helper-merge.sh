@@ -1370,7 +1370,7 @@ _merge_resolve_squash_subject() {
 	local subject=""
 	local task_body=""
 	local conventional_type=""
-	local conventional_ere='^(feat|fix|docs|refactor|perf|test|chore|style|build|ci|security)(\([^()[:cntrl:]]+\))?!?:[[:space:]]+[^[:space:]].*$'
+	local conventional_ere='^(feat|fix|docs|refactor|perf|test|chore|style|build|ci|security|plan)(\([^()[:cntrl:]]+\))?!?:[[:space:]]+[^[:space:]].*$'
 	local task_ere='^(t[0-9]+|GH#[0-9]+):[[:space:]]+[^[:space:]].*$'
 
 	pr_json=$(gh pr view "$pr_number" --repo "$repo" --json title,commits 2>/dev/null) || {
